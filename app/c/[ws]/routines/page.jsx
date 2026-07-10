@@ -129,11 +129,11 @@ export default function Routines({ params }) {
             )}
             <label style={{ display: 'grid', gap: 4 }}>
               <span className="microlabel">Time</span>
-              <input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} style={selStyle} />
+              <input suppressHydrationWarning type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} style={selStyle} />
             </label>
             <label style={{ display: 'grid', gap: 4, flex: 1, minWidth: 180 }}>
               <span className="microlabel">Title</span>
-              <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="루틴 이름" style={selStyle} {...imeGuard} />
+              <input suppressHydrationWarning value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="루틴 이름" style={selStyle} {...imeGuard} />
             </label>
           </div>
           <textarea

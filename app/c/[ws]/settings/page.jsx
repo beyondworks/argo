@@ -61,7 +61,7 @@ export default function Settings({ params }) {
         <span className="card-title">회사 정보</span>
         <label style={{ display: 'grid', gap: 5 }}>
           <span className="microlabel">Company Name</span>
-          <input
+          <input suppressHydrationWarning
             value={name}
             onChange={(e) => setName(e.target.value)}
             {...imeGuard}

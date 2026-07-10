@@ -47,7 +47,7 @@ export default function Home() {
         </div>
 
         <form onSubmit={create} className="input-bar fade-up" style={{ animationDelay: '0.06s' }}>
-          <input
+          <input suppressHydrationWarning
             placeholder="새 회사 이름"
             value={name}
             onChange={(e) => setName(e.target.value)}

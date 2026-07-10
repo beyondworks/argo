@@ -252,7 +252,7 @@ function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInst
     <div style={{ padding: '0 18px 16px', display: 'grid', gap: 10 }}>
       <form onSubmit={search} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <span className="microlabel" style={{ flex: 'none' }}>{sourceLabel}</span>
-        <input
+        <input suppressHydrationWarning
           placeholder={placeholder}
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -491,13 +491,13 @@ export default function Market({ params }) {
 
             <form onSubmit={addCustom} style={{ display: 'flex', gap: 8, padding: '10px 18px 18px', alignItems: 'center', flexWrap: 'wrap' }}>
               <span className="microlabel">Custom</span>
-              <input
+              <input suppressHydrationWarning
                 placeholder="이름 (영소문자-하이픈)"
                 value={custom.name}
                 onChange={(e) => setCustom({ ...custom, name: e.target.value })}
                 style={{ width: 170, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, fontFamily: 'var(--mono)' }}
               />
-              <input
+              <input suppressHydrationWarning
                 placeholder="실행 명령 — 예: npx -y my-mcp-server"
                 value={custom.command}
                 onChange={(e) => setCustom({ ...custom, command: e.target.value })}

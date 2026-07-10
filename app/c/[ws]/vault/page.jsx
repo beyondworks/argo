@@ -90,7 +90,7 @@ function Vault({ params }) {
             <span className="card-title">지식 노트</span>
             <span className="microlabel">저장 즉시 자동 링크</span>
           </div>
-          <input
+          <input suppressHydrationWarning
             className="input-bar"
             style={{ display: 'block', height: 38, padding: '0 14px', borderRadius: 10, outline: 'none' }}
             placeholder="제목 — 예: 쿠키 브랜드 카피 톤 가이드"

@@ -113,7 +113,7 @@ export default function CompanyShell({ children, params }) {
           <Clock />
           <label className="search-pill">
             <Icon name="search" size={14} />
-            <input placeholder="검색" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input suppressHydrationWarning placeholder="검색" value={q} onChange={(e) => setQ(e.target.value)} />
             {q && (
               <button onClick={() => setQ('')} style={{ color: 'var(--fg-3)', fontSize: 12, fontWeight: 700 }} aria-label="지우기">✕</button>
             )}

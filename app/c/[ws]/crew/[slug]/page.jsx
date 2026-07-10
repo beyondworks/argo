@@ -124,7 +124,7 @@ export default function CrewChat({ params }) {
       </div>
 
       <form onSubmit={send} className="input-bar" style={{ position: 'sticky', bottom: 20, marginTop: 24, background: 'var(--card-2)' }}>
-        <input
+        <input suppressHydrationWarning
           placeholder={`${agent?.name ?? '크루'}에게 지시하기`}
           value={input}
           onChange={(e) => setInput(e.target.value)}

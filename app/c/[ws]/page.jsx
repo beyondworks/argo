@@ -140,7 +140,7 @@ export default function Deck({ params }) {
 
           <form onSubmit={hire} className="input-bar">
             <span style={{ color: 'var(--fg-3)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
-            <input
+            <input suppressHydrationWarning
               placeholder="어떤 전문가가 필요하세요? — 예: 뉴스레터를 쓰는 시니어 에디터"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
@@ -159,14 +159,14 @@ export default function Deck({ params }) {
           {hireOpts && (
             <div className="card fade-up" style={{ padding: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <span className="microlabel">Options</span>
-              <input
+              <input suppressHydrationWarning
                 placeholder="이름 (비우면 자동 작명)"
                 value={hireName}
                 onChange={(e) => setHireName(e.target.value)}
                 {...imeGuard}
                 style={{ flex: 1, minWidth: 150, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13 }}
               />
-              <input
+              <input suppressHydrationWarning
                 placeholder="팀 (예: 마케팅)"
                 value={hireTeam}
                 onChange={(e) => setHireTeam(e.target.value)}
@@ -451,15 +451,15 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 10 }}>
           <label style={{ display: 'grid', gap: 4 }}>
             <span className="microlabel">Name</span>
-            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={field} {...imeGuard} autoFocus />
+            <input suppressHydrationWarning value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={field} {...imeGuard} autoFocus />
           </label>
           <label style={{ display: 'grid', gap: 4 }}>
             <span className="microlabel">Role</span>
-            <input value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} style={field} {...imeGuard} />
+            <input suppressHydrationWarning value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} style={field} {...imeGuard} />
           </label>
           <label style={{ display: 'grid', gap: 4 }}>
             <span className="microlabel">Team — 비우면 무소속</span>
-            <input value={form.team} onChange={(e) => setForm({ ...form, team: e.target.value })} list="argo-teams-edit" style={field} {...imeGuard} />
+            <input suppressHydrationWarning value={form.team} onChange={(e) => setForm({ ...form, team: e.target.value })} list="argo-teams-edit" style={field} {...imeGuard} />
             <datalist id="argo-teams-edit">
               {teams.map((t) => <option key={t} value={t} />)}
             </datalist>
