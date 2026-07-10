@@ -8,6 +8,7 @@ import { loadThread, appendTurn } from './thread.mjs';
 import { resolveWithFollowUp } from './approval-actions.mjs';
 import { onNotify } from './notify.mjs';
 import { daemonLease } from './lock.mjs';
+import { appendEvent } from './events.mjs';
 
 const MAX_MSG = 3800; // 텔레그램 4096 제한 대비 여유
 const clip = (t) => (t.length > MAX_MSG ? `${t.slice(0, MAX_MSG)}\n…(전체 내용은 Argo 데크에서)` : t);
