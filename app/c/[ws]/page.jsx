@@ -13,6 +13,9 @@ export default function Deck({ params }) {
   const [data, setData] = useState(null);
   const [docs, setDocs] = useState(null);
   const [prompt, setPrompt] = useState('');
+  const [hireName, setHireName] = useState('');
+  const [hireTeam, setHireTeam] = useState('');
+  const [hireOpts, setHireOpts] = useState(false);
   const [hiring, setHiring] = useState(false);
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
@@ -46,8 +49,8 @@ export default function Deck({ params }) {
     if (!prompt.trim() || hiring) return;
     setHiring(true); setStage(0); setError('');
     try {
-      await api(`/api/companies/${ws}/agents`, { prompt });
-      setPrompt('');
+      await api(`/api/companies/${ws}/agents`, { prompt, name: hireName, team: hireTeam });
+      setPrompt(''); setHireName(''); setHireOpts(false);
       load();
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
@@ -144,11 +147,37 @@ export default function Deck({ params }) {
               {...imeGuard}
             />
             {!hiring && <span className="kbd">↵</span>}
+            <button type="button" className="btn sm" onClick={() => setHireOpts((v) => !v)} disabled={hiring}>
+              옵션 {hireOpts ? '▴' : '▾'}
+            </button>
             <button className="btn btn-primary" disabled={hiring || !prompt.trim()}>
               {hiring ? <Spinner /> : <Icon name="plus" size={14} />}
               크루 영입
             </button>
           </form>
+          {hireOpts && (
+            <div className="card fade-up" style={{ padding: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span className="microlabel">Options</span>
+              <input
+                placeholder="이름 (비우면 자동 작명)"
+                value={hireName}
+                onChange={(e) => setHireName(e.target.value)}
+                {...imeGuard}
+                style={{ flex: 1, minWidth: 150, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13 }}
+              />
+              <input
+                placeholder="팀 (예: 마케팅)"
+                value={hireTeam}
+                onChange={(e) => setHireTeam(e.target.value)}
+                list="argo-teams"
+                {...imeGuard}
+                style={{ flex: 1, minWidth: 130, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13 }}
+              />
+              <datalist id="argo-teams">
+                {[...new Set((data?.agents ?? []).map((a) => a.team).filter(Boolean))].map((t) => <option key={t} value={t} />)}
+              </datalist>
+            </div>
+          )}
           {hiring && <p style={{ fontSize: 12.5, color: 'var(--fg-2)', fontWeight: 600, padding: '0 4px' }}>{HIRE_STAGES[stage]}… 완료되면 바로 합류합니다.</p>}
           {error && <p style={{ fontSize: 13, color: 'var(--danger)', padding: '0 4px' }}>{error}</p>}
 
@@ -170,21 +199,32 @@ export default function Deck({ params }) {
                   <tr><th style={{ width: 170 }}>Name</th><th>Role</th><th>Expertise</th><th style={{ width: 100 }}>Status</th><th style={{ width: 90 }} /></tr>
                 </thead>
                 <tbody>
-                  {agents.map((a) => (
-                    <tr key={a.slug} onClick={() => router.push(`/c/${ws}/crew/${a.slug}`)}>
-                      <td>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                          <Avatar name={a.name} sm />
-                          <span style={{ fontWeight: 650 }}>{a.name}</span>
-                        </span>
-                      </td>
-                      <td style={{ color: 'var(--fg-2)', fontSize: 12.5 }}>{a.role}</td>
-                      <td style={{ color: 'var(--fg-3)', fontSize: 12, maxWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                        {a.expertise.join(' · ')}
-                      </td>
-                      <td><span className="pill ok"><span className="dot" />대기</span></td>
-                      <td><span className="btn sm">대화 <Icon name="arrow" size={12} /></span></td>
-                    </tr>
+                  {[...new Set(agents.map((a) => a.team || ''))].sort((a, b) => (a === '') - (b === '')).map((team) => (
+                    [
+                      agents.some((a) => (a.team || '') !== '') && (
+                        <tr key={`t-${team}`} style={{ cursor: 'default' }}>
+                          <td colSpan={5} style={{ padding: '7px 20px', background: 'var(--card-2)' }}>
+                            <span className="microlabel">{team || '무소속'}</span>
+                          </td>
+                        </tr>
+                      ),
+                      ...agents.filter((a) => (a.team || '') === team).map((a) => (
+                        <tr key={a.slug} onClick={() => router.push(`/c/${ws}/crew/${a.slug}`)}>
+                          <td>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                              <Avatar name={a.name} sm />
+                              <span style={{ fontWeight: 650 }}>{a.name}</span>
+                            </span>
+                          </td>
+                          <td style={{ color: 'var(--fg-2)', fontSize: 12.5 }}>{a.role}</td>
+                          <td style={{ color: 'var(--fg-3)', fontSize: 12, maxWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                            {a.expertise.join(' · ')}
+                          </td>
+                          <td><span className="pill ok"><span className="dot" />대기</span></td>
+                          <td><span className="btn sm">대화 <Icon name="arrow" size={12} /></span></td>
+                        </tr>
+                      )),
+                    ]
                   ))}
                 </tbody>
               </table>
@@ -260,7 +300,9 @@ export default function Deck({ params }) {
               <Constellation3D company={data.company} agents={data.agents} docs={docs} onOpen={() => setGraphOpen(true)} />
             )}
             <p className="microlabel" style={{ textAlign: 'center', padding: '2px 0 6px' }}>
-              {docs && data ? `${1 + data.agents.length + docs.length} Nodes · ${docs.length} Memories` : ''}
+              {docs && data
+                ? `${1 + new Set(data.agents.map((a) => a.team).filter(Boolean)).size + data.agents.length + docs.length} Nodes · ${docs.length} Memories`
+                : ''}
             </p>
           </div>
           <VoyageLog docs={docs} agents={data?.agents ?? []} />

@@ -29,7 +29,15 @@ export default function CompanyShell({ children, params }) {
   const agents = data?.agents ?? [];
   const crewMatch = pathname.match(/\/crew\/([^/]+)/);
   const currentCrew = crewMatch && agents.find((a) => a.slug === crewMatch[1]);
-  const title = pathname.endsWith('/vault') ? '기억' : currentCrew ? currentCrew.name : '데크';
+  const title = pathname.endsWith('/vault') ? '기억'
+    : pathname.endsWith('/routines') ? '루틴'
+    : pathname.endsWith('/market') ? '스킬·도구'
+    : pathname.endsWith('/settings') ? '설정'
+    : currentCrew ? currentCrew.name : '데크';
+  // 사이드바 크루 — 팀별 그룹 (팀 없는 크루는 마지막)
+  const teams = [...new Set(agents.map((a) => a.team).filter(Boolean))];
+  const grouped = [...teams.map((t) => [t, agents.filter((a) => a.team === t)]), ['', agents.filter((a) => !a.team)]]
+    .filter(([, list]) => list.length > 0);
 
   return (
     <div className="shell">
@@ -46,24 +54,37 @@ export default function CompanyShell({ children, params }) {
         <a href={`/c/${ws}/vault`} className={`nav-item${pathname.endsWith('/vault') ? ' active' : ''}`}>
           <Icon name="memory" size={16} /> 기억
         </a>
+        <a href={`/c/${ws}/routines`} className={`nav-item${pathname.endsWith('/routines') ? ' active' : ''}`}>
+          <Icon name="clock" size={16} /> 루틴
+        </a>
+        <a href={`/c/${ws}/market`} className={`nav-item${pathname.endsWith('/market') ? ' active' : ''}`}>
+          <Icon name="market" size={16} /> 스킬·도구
+        </a>
+        <a href={`/c/${ws}/settings`} className={`nav-item${pathname.endsWith('/settings') ? ' active' : ''}`}>
+          <Icon name="settings" size={16} /> 설정
+        </a>
 
-        <div className="side-group">크루 {agents.length > 0 && agents.length}</div>
-        {data === null && <Skeleton h={60} style={{ margin: '0 10px' }} />}
-        {agents.map((a) => {
-          const href = `/c/${ws}/crew/${a.slug}`;
-          const active = pathname === href;
-          return (
-            <a key={a.slug} href={href} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6 }}>
-              <Avatar name={a.name} sm />
-              <span style={{ minWidth: 0 }}>
-                <span style={{ display: 'block', lineHeight: 1.3 }}>{a.name}</span>
-                <span style={{ display: 'block', fontSize: 10.5, fontWeight: 400, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>
-                  {a.role}
-                </span>
-              </span>
-            </a>
-          );
-        })}
+        {data === null && <><div className="side-group">크루</div><Skeleton h={60} style={{ margin: '0 10px' }} /></>}
+        {grouped.map(([team, list]) => (
+          <div key={team || '_none'}>
+            <div className="side-group">{team || `크루 ${agents.length}`}</div>
+            {list.map((a) => {
+              const href = `/c/${ws}/crew/${a.slug}`;
+              const active = pathname === href;
+              return (
+                <a key={a.slug} href={href} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6 }}>
+                  <Avatar name={a.name} sm />
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: 'block', lineHeight: 1.3 }}>{a.name}</span>
+                    <span style={{ display: 'block', fontSize: 10.5, fontWeight: 400, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>
+                      {a.role}
+                    </span>
+                  </span>
+                </a>
+              );
+            })}
+          </div>
+        ))}
         <a href={`/c/${ws}`} className="nav-item" style={{ color: 'var(--fg-3)', fontSize: 12.5 }}>
           <Icon name="plus" size={15} /> 크루 영입
         </a>

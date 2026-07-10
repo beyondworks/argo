@@ -19,6 +19,11 @@ const PATHS = {
   search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3',
   home: 'M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5',
   bolt: 'M13 2 3 14h7l-1 8 10-12h-7z',
+  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3.5 2',
+  market: 'M21 8l-9-5-9 5v8l9 5 9-5V8zM3 8l9 5 9-5M12 21V13',
+  settings: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
+  play: 'M6 4l14 8-14 8V4z',
+  trash: 'M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 11v6M14 11v6',
 };
 
 export function Icon({ name, size = 16, strokeWidth = 1.8, ...rest }) {

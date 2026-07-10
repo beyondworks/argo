@@ -6,14 +6,15 @@ import { join } from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
 
-const CARD_PROMPT = (oneLiner) => `다음 한 줄 요청으로 AI 직원의 페르소나 카드를 작성해줘.
+const CARD_PROMPT = (oneLiner, name) => `다음 한 줄 요청으로 AI 직원의 페르소나 카드를 작성해줘.
 
 요청: "${oneLiner}"
+${name ? `이름은 반드시 "${name}"으로 한다.` : ''}
 
 정확히 아래 형식의 마크다운만 출력해(설명·코드펜스 금지):
 
 ---
-name: <한글 이름 2-3자, 사람 이름처럼>
+name: <${name ? `"${name}" 그대로` : '한글 이름 2-3자, 사람 이름처럼'}>
 slug: <영문 소문자 슬러그>
 role: <직함 한 줄>
 ---
@@ -41,11 +42,11 @@ function parseFrontmatter(md) {
   return meta;
 }
 
-/** Agent SDK 단일 턴으로 카드 생성 → agents/<slug>.md 저장. */
-export async function createAgentFromPrompt(wsId, oneLiner) {
+/** Agent SDK 단일 턴으로 카드 생성 → agents/<slug>.md 저장. name·team 지정 가능. */
+export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {}) {
   let out = '';
   for await (const msg of query({
-    prompt: CARD_PROMPT(oneLiner),
+    prompt: CARD_PROMPT(oneLiner, name?.trim()),
     options: {
       cwd: paths(wsId).root,
       allowedTools: [], // 순수 생성 — 도구 불필요
@@ -63,10 +64,12 @@ export async function createAgentFromPrompt(wsId, oneLiner) {
   for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)); n++) {
     slug = `${meta.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-${n}`;
   }
-  const body = md.replace(/^(---[\s\S]*?slug:\s*).*$/m, `$1${slug}`);
+  let body = md.replace(/^(---[\s\S]*?slug:\s*).*$/m, `$1${slug}`);
+  if (name?.trim()) body = body.replace(/^(---[\s\S]*?name:\s*).*$/m, `$1${name.trim()}`);
+  if (team?.trim()) body = body.replace(/^---\r?\n/, `---\nteam: ${team.trim()}\n`);
   const file = join(paths(wsId).agents, `${slug}.md`);
   await writeFile(file, body.endsWith('\n') ? body : `${body}\n`);
-  return { slug, name: meta.name, role: meta.role || '', file };
+  return { slug, name: name?.trim() || meta.name, role: meta.role || '', team: team?.trim() || '', file };
 }
 
 /** 카드 편집 저장 — 카드가 곧 시스템 프롬프트(투명성 원칙). frontmatter 최소 검증. */

@@ -1,5 +1,8 @@
-import { loadCompany } from '../../../../src/workspace.mjs';
+import { loadCompany, updateCompany, archiveCompany } from '../../../../src/workspace.mjs';
 import { listAgents, listDocs } from '../../../../src/hub.mjs';
+import { ensureScheduler } from '../../../../src/scheduler.mjs';
+
+ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
 
 /** 대시보드 스탯 — 고유 연결 수(양방향 중복 제거), 오늘 기록, 종류별 수. */
 function docStats(docs) {
@@ -41,5 +44,29 @@ export async function GET(_req, { params }) {
     });
   } catch {
     return Response.json({ error: '회사를 찾을 수 없습니다' }, { status: 404 });
+  }
+}
+
+/** 회사 정보 수정 — 이름. */
+export async function PUT(req, { params }) {
+  try {
+    const { ws } = await params;
+    const { name } = await req.json();
+    if (!name?.trim()) return Response.json({ error: '이름이 필요합니다' }, { status: 400 });
+    const company = await updateCompany(ws, { name: name.trim() });
+    return Response.json({ company });
+  } catch (e) {
+    return Response.json({ error: String(e.message || e) }, { status: 400 });
+  }
+}
+
+/** 회사 보관 — 삭제 대신 workspaces/.archive/로 이동(복구 가능). */
+export async function DELETE(_req, { params }) {
+  try {
+    const { ws } = await params;
+    await archiveCompany(ws);
+    return Response.json({ ok: true });
+  } catch (e) {
+    return Response.json({ error: String(e.message || e) }, { status: 400 });
   }
 }

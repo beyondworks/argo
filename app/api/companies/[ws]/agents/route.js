@@ -11,9 +11,9 @@ export async function GET(_req, { params }) {
 export async function POST(req, { params }) {
   try {
     const { ws } = await params;
-    const { prompt } = await req.json();
+    const { prompt, name, team } = await req.json();
     if (!prompt?.trim()) return Response.json({ error: '한 줄 소개가 필요합니다' }, { status: 400 });
-    const agent = await createAgentFromPrompt(ws, prompt.trim());
+    const agent = await createAgentFromPrompt(ws, prompt.trim(), { name, team });
     return Response.json({ agent });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });

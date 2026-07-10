@@ -31,7 +31,7 @@ export async function listCompanies() {
   try { entries = await readdir(WS_ROOT, { withFileTypes: true }); } catch { return []; }
   const out = [];
   for (const e of entries) {
-    if (!e.isDirectory()) continue;
+    if (!e.isDirectory() || e.name.startsWith('.')) continue;
     try {
       const company = JSON.parse(await readFile(join(WS_ROOT, e.name, 'company.json'), 'utf8'));
       const agents = await listAgents(e.name);
@@ -54,6 +54,7 @@ export async function listAgents(wsId) {
       slug: n.replace(/\.md$/, ''),
       name: meta.name || n.replace(/\.md$/, ''),
       role: meta.role || '',
+      team: meta.team || '',
       expertise: sectionBullets(md, '전문성'),
       tone: sectionBullets(md, '톤', 1)[0] || '',
     });

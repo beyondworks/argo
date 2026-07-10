@@ -6,6 +6,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
 import { readAgentCard } from './persona.mjs';
 import { saveHandover } from './memory.mjs';
+import { loadMcp } from './market.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지. */
 async function loadSkills(wsId, cap = 6000) {
@@ -40,6 +41,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null) {
   const p = paths(wsId);
   const { md, meta } = await readAgentCard(wsId, agentSlug);
   const skills = await loadSkills(wsId);
+  // 설치된 MCP 도구 — 서버 단위 allow(mcp__<name>)로 해당 서버의 전체 도구 허용
+  const { servers } = await loadMcp(wsId);
+  const mcpAllow = Object.keys(servers ?? {}).map((n) => `mcp__${n}`);
 
   let reply = '';
   let sid = sessionId;
@@ -48,7 +52,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null) {
     options: {
       cwd: p.root,
       systemPrompt: systemPromptFor(md, p.root, skills),
-      allowedTools: ['Read', 'Glob', 'Grep', 'Write'],
+      ...(mcpAllow.length ? { mcpServers: servers } : {}),
+      allowedTools: ['Read', 'Glob', 'Grep', 'Write', ...mcpAllow],
       permissionMode: 'bypassPermissions', // 스파이크 한정 — 프로덕션은 워크스페이스 샌드박스+훅 게이트
       settingSources: [], // 호스트의 CLAUDE.md/스킬 미주입(테넌트 격리)
       ...(sessionId ? { resume: sessionId } : {}),

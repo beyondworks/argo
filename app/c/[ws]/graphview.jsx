@@ -13,6 +13,8 @@ function buildGraph({ company, agents = [], docs = [] }) {
   const add = (n) => { idx.set(n.id, nodes.length); nodes.push(n); };
 
   if (company) add({ id: '@co', type: 'company', label: company.name });
+  const teams = [...new Set(agents.map((a) => a.team).filter(Boolean))];
+  for (const t of teams) add({ id: `@team:${t}`, type: 'team', label: t });
   for (const a of agents) add({ id: `@ag:${a.slug}`, type: 'agent', label: a.name, slug: a.slug });
   for (const d of docs) {
     add({ id: d.rel.replace(/\.md$/, ''), type: d.dir === 'notes' ? 'note' : 'doc', label: d.title, rel: d.rel });
@@ -23,7 +25,11 @@ function buildGraph({ company, agents = [], docs = [] }) {
     const i = idx.get(a), j = idx.get(b);
     if (i !== undefined && j !== undefined && i !== j) edges.push([i, j]);
   };
-  if (company) for (const a of agents) E('@co', `@ag:${a.slug}`);          // 회사 → 크루
+  if (company) for (const t of teams) E('@co', `@team:${t}`);              // 회사 → 팀
+  for (const a of agents) {                                                // 팀 → 크루 (팀 없으면 회사 직결)
+    if (a.team) E(`@team:${a.team}`, `@ag:${a.slug}`);
+    else if (company) E('@co', `@ag:${a.slug}`);
+  }
   for (const d of docs) {                                                   // 크루 → 기억 (작성자)
     const slug = d.rel
       .replace(/^(conversations|notes)\//, '')
@@ -121,7 +127,7 @@ function makeRenderer(canvas, graph, sim, opts) {
     return { x: W / 2 + x * k * base * 1.5, y: H / 2 + y * k * base * 1.5, k, z };
   };
 
-  const R_BY_TYPE = { company: 8, agent: 5.5, doc: 4, note: 4 };
+  const R_BY_TYPE = { company: 8, team: 6, agent: 5.5, doc: 4, note: 4 };
 
   const draw = (hover) => {
     ctx.clearRect(0, 0, W, H);
@@ -173,7 +179,7 @@ function makeRenderer(canvas, graph, sim, opts) {
       }
 
       // 라벨 — 회사·크루는 항상, 기억은 호버 시 (미니는 호버 없음)
-      if (!opts.mini && (n.type === 'company' || n.type === 'agent' || hi)) {
+      if (!opts.mini && (n.type === 'company' || n.type === 'team' || n.type === 'agent' || hi)) {
         const t = n.label.length > 24 ? `${n.label.slice(0, 24)}…` : n.label;
         ctx.font = `${hi || n.type === 'company' ? 600 : 400} ${n.type === 'company' ? 11.5 : 10.5}px "IBM Plex Mono", monospace`;
         ctx.textAlign = 'center';

@@ -1,8 +1,9 @@
 'use client';
-// 기억 — 잉크 별자리 그래프 + 기록 표 + 종이 뷰어. 탑바 검색으로 필터.
-import { Suspense, use, useEffect, useMemo, useState } from 'react';
+// 기억 — 3D 지식 그래프(공유 엔진) + 기록 표 + 종이 뷰어. 탑바 검색으로 필터.
+import { Suspense, use, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Icon, Markdown, Spinner, Skeleton, api, imeGuard, timeAgo, tsFromRel } from '../../../ui';
+import { Constellation3D, GraphModal } from '../graphview';
 
 export default function VaultPage({ params }) {
   return (
@@ -20,6 +21,8 @@ function Vault({ params }) {
   const [content, setContent] = useState('');
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [q, setQ] = useState('');
+  const [meta, setMeta] = useState(null); // 회사·크루 — 그래프 허브용
+  const [graphOpen, setGraphOpen] = useState(false);
   const [composing, setComposing] = useState(false);
   const [noteTitle, setNoteTitle] = useState('');
   const [noteBody, setNoteBody] = useState('');
@@ -29,7 +32,10 @@ function Vault({ params }) {
   function loadDocs() {
     return api(`/api/companies/${ws}/vault`).then((d) => setDocs(d.docs)).catch(() => setDocs([]));
   }
-  useEffect(() => { loadDocs(); }, [ws]);
+  useEffect(() => {
+    loadDocs();
+    api(`/api/companies/${ws}`).then(setMeta).catch(() => setMeta({}));
+  }, [ws]);
 
   async function saveNote(e) {
     e.preventDefault();
@@ -121,7 +127,21 @@ function Vault({ params }) {
         <div className="empty">아직 기록된 기억이 없습니다. 크루와 첫 대화를 나누면 여기에 쌓입니다.</div>
       ) : (
         <>
-          <Constellation docs={docs} selected={selected} onSelect={setSelected} />
+          <div className="card" style={{ padding: '14px 18px 8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span className="card-title">기억 그래프</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <span className="chip"><span className="dot" />대화</span>
+                <span className="chip"><span style={{ width: 5, height: 5, borderRadius: 999, border: '1px solid currentColor' }} />노트</span>
+                <button className="chip" onClick={() => setGraphOpen(true)} style={{ cursor: 'pointer' }}>크게 보기 ↗</button>
+              </div>
+            </div>
+            {meta ? (
+              <Constellation3D company={meta.company} agents={meta.agents ?? []} docs={docs} height={240} onOpen={() => setGraphOpen(true)} />
+            ) : (
+              <Skeleton h={240} style={{ margin: '8px 0' }} />
+            )}
+          </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 14, alignItems: 'start' }}>
             <div className="card" style={{ overflow: 'hidden', maxHeight: 560, overflowY: 'auto' }}>
@@ -169,68 +189,16 @@ function Vault({ params }) {
           </div>
         </>
       )}
-    </div>
-  );
-}
 
-/** 기억 별자리 — 잉크 점·선. 대화=채운 점, 노트=빈 점. */
-function Constellation({ docs, selected, onSelect }) {
-  const W = 1020, H = 200;
-  const layout = useMemo(() => {
-    const nodes = docs.map((d, i) => {
-      const r = 22 + 26 * Math.sqrt(i);
-      const th = i * 2.39996;
-      return {
-        ...d,
-        key: d.rel.replace(/\.md$/, ''),
-        x: W / 2 + r * Math.cos(th) * 1.9,
-        y: H / 2 + r * Math.sin(th) * 0.58,
-      };
-    });
-    const byKey = new Map(nodes.map((n) => [n.key, n]));
-    const edges = [];
-    const seen = new Set();
-    for (const n of nodes) {
-      for (const l of n.links) {
-        const m = byKey.get(l);
-        if (!m) continue;
-        const id = [n.key, m.key].sort().join('→');
-        if (seen.has(id)) continue;
-        seen.add(id);
-        edges.push([n, m]);
-      }
-    }
-    return { nodes, edges };
-  }, [docs]);
-
-  return (
-    <div className="card" style={{ padding: '14px 18px 10px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span className="card-title">기억 그래프</span>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <span className="chip"><span className="dot" />대화</span>
-          <span className="chip"><span style={{ width: 5, height: 5, borderRadius: 999, border: '1px solid currentColor' }} />노트</span>
-          <span className="chip">Link {layout.edges.length}</span>
-        </div>
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }}>
-        {layout.edges.map(([a, b], i) => (
-          <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--border)" strokeWidth="1" />
-        ))}
-        {layout.nodes.map((n) => {
-          const active = selected === n.rel;
-          return (
-            <g key={n.rel} onClick={() => onSelect(n.rel)} style={{ cursor: 'pointer' }}>
-              <circle cx={n.x} cy={n.y} r="13" fill="transparent" />
-              {active && <circle cx={n.x} cy={n.y} r="9" fill="none" stroke="var(--fg)" strokeWidth="1" strokeDasharray="2 2" />}
-              {n.dir === 'notes'
-                ? <circle cx={n.x} cy={n.y} r={active ? 4.5 : 3.5} fill="var(--card)" stroke="var(--fg)" strokeWidth="1.4" />
-                : <circle cx={n.x} cy={n.y} r={active ? 4.5 : 3.5} fill="var(--fg)" />}
-              <title>{n.title}</title>
-            </g>
-          );
-        })}
-      </svg>
+      {graphOpen && meta && docs && (
+        <GraphModal
+          company={meta.company}
+          agents={meta.agents ?? []}
+          docs={docs}
+          onClose={() => setGraphOpen(false)}
+          onSelect={(rel) => { setSelected(rel); setGraphOpen(false); }}
+        />
+      )}
     </div>
   );
 }
