@@ -53,11 +53,11 @@ export default function Settings({ params }) {
   ];
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div style={{ display: 'grid', gap: 16, maxWidth: 1060, margin: '0 auto', width: '100%' }}>
       <span className="microlabel">Settings · 회사 설정</span>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14, alignItems: 'start' }}>
-      <form onSubmit={saveName} className="card" style={{ padding: 18, display: 'grid', gap: 10, alignContent: 'start' }}>
+      <Section label="General">
+      <form onSubmit={saveName} className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span className="card-title">회사 정보</span>
         <label style={{ display: 'grid', gap: 5 }}>
           <span className="microlabel">Company Name</span>
@@ -68,7 +68,7 @@ export default function Settings({ params }) {
             style={{ height: 36, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13.5 }}
           />
         </label>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto', paddingTop: 10 }}>
           <button className="btn btn-primary sm" disabled={saving || !name.trim()}>
             {saving ? <Spinner size={12} /> : '저장'}
           </button>
@@ -96,26 +96,47 @@ export default function Settings({ params }) {
           <span className="microlabel">Sail Together</span>
         </div>
       </div>
+      </Section>
 
+      <Section label="Connections — 메신저가 회사의 정문이 됩니다">
       <ConnectionCard ws={ws} kind="telegram" title="텔레그램"
         help='@BotFather로 봇을 만들어 토큰을 붙여넣고 가동하세요. 봇에게 첫 메시지를 보내면 이 회사와 연결됩니다. "@크루이름 지시"로 특정 크루를 부를 수 있고, 결재는 버튼으로 처리됩니다.'
         agents={data?.agents ?? []} />
       <ConnectionCard ws={ws} kind="slack" title="슬랙"
         help='봇 토큰(xoxb-)과 채널 ID를 넣고 봇을 그 채널에 초대하세요. 채널 메시지가 크루에게 전달되고, 결재는 "승인 <번호>" 회신으로 처리됩니다.'
         agents={data?.agents ?? []} />
+      </Section>
 
-      <div className="card" style={{ padding: 18, borderColor: 'var(--danger)' }}>
-        <span className="card-title" style={{ color: 'var(--danger)' }}>위험 구역</span>
-        <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: '8px 0 12px' }}>
-          회사를 보관하면 목록에서 사라집니다. 데이터(크루·기억·루틴)는 삭제되지 않고
-          <span className="mono" style={{ fontSize: 11 }}> workspaces/.archive/</span>에 보존됩니다.
-        </p>
-        <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={archive}>
+      <Section label="Danger Zone">
+      <div className="card" style={{ padding: 18, borderColor: 'var(--danger)', gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <span className="card-title" style={{ color: 'var(--danger)' }}>회사 보관</span>
+          <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: '6px 0 0' }}>
+            목록에서 사라지지만 데이터(크루·기억·루틴)는 삭제되지 않고
+            <span className="mono" style={{ fontSize: 11 }}> workspaces/.archive/</span>에 보존됩니다.
+          </p>
+        </div>
+        <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)', flex: 'none' }} onClick={archive}>
           <Icon name="trash" size={13} /> 회사 보관
         </button>
       </div>
-      </div>
+      </Section>
     </div>
+  );
+}
+
+/** 설정 섹션 — 대시 룰 헤더 + 2열 등고 그리드(내용이 하나면 전체 폭). */
+function Section({ label, children }) {
+  return (
+    <section style={{ display: 'grid', gap: 10, marginTop: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span className="microlabel" style={{ flex: 'none' }}>{label}</span>
+        <span style={{ flex: 1, borderTop: '1px dashed var(--border-soft)' }} aria-hidden="true" />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 14 }}>
+        {children}
+      </div>
+    </section>
   );
 }
 
@@ -155,7 +176,7 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
 
   const on = conn?.enabled;
   return (
-    <div className="card" style={{ padding: 18, display: 'grid', gap: 10, alignContent: 'start' }}>
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span className="card-title">{title} 연결</span>
         <span className="chip">{on ? <><span className="dot" />가동</> : '중지'}{kind === 'telegram' && conn?.chatId ? ' · 페어링됨' : ''}</span>
@@ -179,7 +200,7 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
           {agents.map((a) => <option key={a.slug} value={a.slug}>{a.name} — {a.role}</option>)}
         </select>
       </label>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto', paddingTop: 10 }}>
         <button className="btn btn-primary sm" disabled={saving || (!conn?.hasToken && !token.trim())} onClick={() => save(true)}>
           {saving ? <Spinner size={12} /> : on ? '설정 저장' : '가동'}
         </button>
