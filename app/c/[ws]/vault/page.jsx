@@ -2,7 +2,7 @@
 // 기억 — 잉크 별자리 그래프 + 기록 표 + 종이 뷰어. 탑바 검색으로 필터.
 import { Suspense, use, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Icon, Markdown, Spinner, Skeleton, api, timeAgo, tsFromRel } from '../../../ui';
+import { Icon, Markdown, Spinner, Skeleton, api, imeGuard, timeAgo, tsFromRel } from '../../../ui';
 
 export default function VaultPage({ params }) {
   return (
@@ -20,10 +20,33 @@ function Vault({ params }) {
   const [content, setContent] = useState('');
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [q, setQ] = useState('');
+  const [composing, setComposing] = useState(false);
+  const [noteTitle, setNoteTitle] = useState('');
+  const [noteBody, setNoteBody] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [noteMsg, setNoteMsg] = useState('');
 
-  useEffect(() => {
-    api(`/api/companies/${ws}/vault`).then((d) => setDocs(d.docs)).catch(() => setDocs([]));
-  }, [ws]);
+  function loadDocs() {
+    return api(`/api/companies/${ws}/vault`).then((d) => setDocs(d.docs)).catch(() => setDocs([]));
+  }
+  useEffect(() => { loadDocs(); }, [ws]);
+
+  async function saveNote(e) {
+    e.preventDefault();
+    if (savingNote || !noteTitle.trim() || !noteBody.trim()) return;
+    setSavingNote(true); setNoteMsg('');
+    try {
+      const r = await api(`/api/companies/${ws}/vault`, { title: noteTitle, content: noteBody });
+      setNoteTitle(''); setNoteBody(''); setComposing(false);
+      await loadDocs();
+      setSelected(r.rel);
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (err) {
+      setNoteMsg(String(err.message));
+    } finally {
+      setSavingNote(false);
+    }
+  }
 
   useEffect(() => {
     const h = (e) => setQ(String(e.detail || '').toLowerCase());
@@ -45,10 +68,49 @@ function Vault({ params }) {
 
   return (
     <div style={{ display: 'grid', gap: 14, maxWidth: 1100 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <span className="microlabel">Vault · 회사가 쌓아온 항해일지</span>
-        <span className="microlabel">{docs ? `${docs.length} Records` : ''}</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+          <span className="microlabel">{docs ? `${docs.length} Records` : ''}</span>
+          <button className="btn sm" onClick={() => setComposing((v) => !v)}>
+            <Icon name="plus" size={13} /> 노트 작성
+          </button>
+        </span>
       </div>
+
+      {composing && (
+        <form onSubmit={saveNote} className="card fade-up" style={{ padding: 18, display: 'grid', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="card-title">지식 노트</span>
+            <span className="microlabel">저장 즉시 자동 링크</span>
+          </div>
+          <input
+            className="input-bar"
+            style={{ display: 'block', height: 38, padding: '0 14px', borderRadius: 10, outline: 'none' }}
+            placeholder="제목 — 예: 쿠키 브랜드 카피 톤 가이드"
+            value={noteTitle}
+            onChange={(e) => setNoteTitle(e.target.value)}
+            {...imeGuard}
+          />
+          <textarea
+            placeholder="회사가 기억해야 할 내용을 적어주세요. 크루가 다음 턴부터 참조합니다."
+            value={noteBody}
+            onChange={(e) => setNoteBody(e.target.value)}
+            style={{
+              width: '100%', minHeight: 130, resize: 'vertical',
+              background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12,
+              padding: '10px 14px', outline: 'none', fontSize: 13, lineHeight: 1.65,
+            }}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button className="btn btn-primary sm" disabled={savingNote || !noteTitle.trim() || !noteBody.trim()}>
+              {savingNote ? <Spinner size={12} /> : '기억에 저장'}
+            </button>
+            <button type="button" className="btn sm" onClick={() => setComposing(false)}>취소</button>
+            {noteMsg && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{noteMsg}</span>}
+          </div>
+        </form>
+      )}
 
       {docs === null ? (
         <>

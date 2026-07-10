@@ -1,6 +1,7 @@
 // 한 줄 프롬프트 → 페르소나 카드(md frontmatter + 본문) 자동 생성 — 기둥 2.
 // 카드가 곧 시스템 프롬프트: 사용자가 파일을 열어 언제든 고칠 수 있다(투명성).
-import { writeFile, readFile } from 'node:fs/promises';
+import { writeFile, readFile, mkdir, rename } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
@@ -57,10 +58,35 @@ export async function createAgentFromPrompt(wsId, oneLiner) {
   const md = out.trim().replace(/^```(?:markdown)?\n?/, '').replace(/\n?```$/, '');
   const meta = parseFrontmatter(md);
   if (!meta.slug || !meta.name) throw new Error(`카드 생성 실패 — frontmatter 누락:\n${md.slice(0, 200)}`);
-  const slug = meta.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  let slug = meta.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  // 동명 크루 중복 영입 시 기존 카드를 덮어쓰지 않는다
+  for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)); n++) {
+    slug = `${meta.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-${n}`;
+  }
+  const body = md.replace(/^(---[\s\S]*?slug:\s*).*$/m, `$1${slug}`);
   const file = join(paths(wsId).agents, `${slug}.md`);
-  await writeFile(file, md.endsWith('\n') ? md : `${md}\n`);
+  await writeFile(file, body.endsWith('\n') ? body : `${body}\n`);
   return { slug, name: meta.name, role: meta.role || '', file };
+}
+
+/** 카드 편집 저장 — 카드가 곧 시스템 프롬프트(투명성 원칙). frontmatter 최소 검증. */
+export async function saveAgentCard(wsId, slug, md) {
+  const meta = parseFrontmatter(md);
+  if (!meta.name) throw new Error('frontmatter에 name이 필요합니다');
+  const file = join(paths(wsId).agents, `${slug}.md`);
+  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+  await writeFile(file, md.endsWith('\n') ? md : `${md}\n`);
+  return { slug, name: meta.name, role: meta.role || '' };
+}
+
+/** 해고 — 카드를 지우지 않고 .archive/로 옮긴다(복구 가능). */
+export async function removeAgentCard(wsId, slug) {
+  const dir = paths(wsId).agents;
+  const file = join(dir, `${slug}.md`);
+  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+  const archive = join(dir, '.archive');
+  await mkdir(archive, { recursive: true });
+  await rename(file, join(archive, `${Date.now()}-${slug}.md`));
 }
 
 export async function readAgentCard(wsId, slug) {

@@ -2,7 +2,7 @@
 // 홈 — 회사 목록과 생성. 계기판 톤의 조용한 온보딩.
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Logo, Icon, Avatar, Spinner, Skeleton, api, timeAgo } from './ui';
+import { Logo, Icon, Avatar, Spinner, Skeleton, api, imeGuard, timeAgo } from './ui';
 
 export default function Home() {
   const router = useRouter();
@@ -53,6 +53,7 @@ export default function Home() {
             onChange={(e) => setName(e.target.value)}
             disabled={creating}
             autoFocus
+            {...imeGuard}
           />
           <button className="btn btn-primary" disabled={creating || !name.trim()}>
             {creating ? <Spinner /> : <Icon name="plus" size={14} />}

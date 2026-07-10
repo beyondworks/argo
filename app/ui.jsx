@@ -214,6 +214,11 @@ export function Markdown({ text, onWikiLink }) {
   );
 }
 
+/** 한글 IME 조합 중 Enter가 폼 전송으로 새는 것을 막는다 — 입력에 {...imeGuard} 스프레드. */
+export const imeGuard = {
+  onKeyDown: (e) => { if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault(); },
+};
+
 export async function api(path, opts) {
   const res = await fetch(path, opts && {
     method: 'POST',

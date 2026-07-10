@@ -109,6 +109,17 @@ ${reply.slice(0, 1500)}
   return { file, linked };
 }
 
+/** 사용자가 직접 쓰는 지식 노트 — 저장 즉시 자동 링크로 기존 기억과 엮인다. */
+export async function saveNote(wsId, title, content) {
+  const p = paths(wsId);
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const slug = title.trim().toLowerCase().replace(/[^a-z0-9가-힣]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'note';
+  const file = join(p.notes, `${ts}-${slug}.md`);
+  await writeFile(file, `# ${title.trim()}\n\n${content.trim()}\n`);
+  const linked = await autoLink(wsId, file);
+  return { file, linked };
+}
+
 /** vault/_index.md 재생성 — 에이전트의 기억 탐색 진입점. */
 export async function updateIndex(wsId) {
   const p = paths(wsId);

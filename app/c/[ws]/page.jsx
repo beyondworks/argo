@@ -2,7 +2,7 @@
 // 데크 — 아르고호 계기판. 좌: 본 계기(메트릭·영입·크루·기억·차트), 우: 보조 계기 레일(별자리·항해일지·명판).
 import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, api, timeAgo, tsFromRel } from '../../ui';
+import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
 import { Constellation3D, GraphModal } from './graphview';
 
 const HIRE_STAGES = ['지원서를 읽는 중', '페르소나 카드를 쓰는 중', '합류 준비 중'];
@@ -141,6 +141,7 @@ export default function Deck({ params }) {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               disabled={hiring}
+              {...imeGuard}
             />
             {!hiring && <span className="kbd">↵</span>}
             <button className="btn btn-primary" disabled={hiring || !prompt.trim()}>

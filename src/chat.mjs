@@ -1,13 +1,29 @@
-// 대화 계층 — 페르소나 카드 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
+// 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
 import { readAgentCard } from './persona.mjs';
 import { saveHandover } from './memory.mjs';
 
-function systemPromptFor(cardMd, wsRoot) {
-  return `${cardMd}
+/** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지. */
+async function loadSkills(wsId, cap = 6000) {
+  const dir = paths(wsId).skills;
+  let names = [];
+  try { names = (await readdir(dir)).filter((f) => f.endsWith('.md')).sort(); } catch { return ''; }
+  let out = '';
+  for (const n of names) {
+    const text = await readFile(join(dir, n), 'utf8');
+    if (out.length + text.length > cap) break;
+    out += `\n### 스킬: ${n.replace(/\.md$/, '')}\n${text.trim()}\n`;
+  }
+  return out;
+}
 
+function systemPromptFor(cardMd, wsRoot, skills) {
+  return `${cardMd}
+${skills ? `\n## 회사 스킬 — 해당 작업 시 아래 지침을 따른다\n${skills}` : ''}
 ## 회사 기억(vault) 사용법 — 반드시 따를 것
 - 너의 회사 기억은 ${wsRoot}/vault 폴더 전체다. 새 작업을 시작하면 먼저 vault/_index.md를 읽고,
   관련 [[링크]]를 따라 필요한 문서만 읽어 맥락을 확보하라.
@@ -23,6 +39,7 @@ function systemPromptFor(cardMd, wsRoot) {
 export async function chat(wsId, agentSlug, userMsg, sessionId = null) {
   const p = paths(wsId);
   const { md, meta } = await readAgentCard(wsId, agentSlug);
+  const skills = await loadSkills(wsId);
 
   let reply = '';
   let sid = sessionId;
@@ -30,7 +47,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null) {
     prompt: userMsg,
     options: {
       cwd: p.root,
-      systemPrompt: systemPromptFor(md, p.root),
+      systemPrompt: systemPromptFor(md, p.root, skills),
       allowedTools: ['Read', 'Glob', 'Grep', 'Write'],
       permissionMode: 'bypassPermissions', // 스파이크 한정 — 프로덕션은 워크스페이스 샌드박스+훅 게이트
       settingSources: [], // 호스트의 CLAUDE.md/스킬 미주입(테넌트 격리)

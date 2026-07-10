@@ -11,6 +11,7 @@ export function paths(wsId) {
     root,
     company: join(root, 'company.json'),
     agents: join(root, 'agents'),
+    chats: join(root, 'chats'),
     skills: join(root, 'skills'),
     vault: join(root, 'vault'),
     conversations: join(root, 'vault', 'conversations'),
