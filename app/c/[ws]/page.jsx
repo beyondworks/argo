@@ -1,8 +1,9 @@
 'use client';
 // 데크 — 아르고호 계기판. 좌: 본 계기(메트릭·영입·크루·기억·차트), 우: 보조 계기 레일(별자리·항해일지·명판).
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, api, timeAgo, tsFromRel } from '../../ui';
+import { Constellation3D, GraphModal } from './graphview';
 
 const HIRE_STAGES = ['지원서를 읽는 중', '페르소나 카드를 쓰는 중', '합류 준비 중'];
 
@@ -16,6 +17,7 @@ export default function Deck({ params }) {
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
+  const [graphOpen, setGraphOpen] = useState(false);
 
   function load() {
     api(`/api/companies/${ws}`).then(setData).catch((e) => setError(String(e.message)));
@@ -246,75 +248,33 @@ export default function Deck({ params }) {
 
         {/* ── 우측 보조 계기 레일 ── */}
         <div style={{ display: 'grid', gap: 14 }}>
-          <MiniConstellation
-            docs={docs}
-            onSelect={(rel) => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`)}
-            href={`/c/${ws}/vault`}
-          />
+          <div className="card" style={{ padding: '15px 18px 8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span className="card-title">별자리</span>
+              <button className="chip" onClick={() => setGraphOpen(true)} style={{ cursor: 'pointer' }}>크게 보기 ↗</button>
+            </div>
+            {docs === null ? (
+              <Skeleton h={190} style={{ margin: '8px 0' }} />
+            ) : docs.length === 0 ? (
+              <p className="microlabel" style={{ padding: '20px 0 16px', textAlign: 'center' }}>No Records</p>
+            ) : (
+              <Constellation3D docs={docs} onOpen={() => setGraphOpen(true)} />
+            )}
+            <p className="microlabel" style={{ textAlign: 'center', padding: '2px 0 6px' }}>
+              {docs ? `${docs.length} Memories · Linked` : ''}
+            </p>
+          </div>
           <VoyageLog docs={docs} agents={data?.agents ?? []} />
           <Nameplate company={data?.company} memoryCount={data?.memoryCount} links={stats?.links} crew={data?.agents?.length} />
         </div>
       </div>
-    </div>
-  );
-}
 
-/** 미니 별자리 — 데크에서 흘깃 보는 기억 그래프. */
-function MiniConstellation({ docs, onSelect, href }) {
-  const W = 280, H = 150;
-  const layout = useMemo(() => {
-    if (!docs) return { nodes: [], edges: [] };
-    const nodes = docs.map((d, i) => {
-      const r = 13 + 15 * Math.sqrt(i);
-      const th = i * 2.39996;
-      return {
-        ...d,
-        key: d.rel.replace(/\.md$/, ''),
-        x: W / 2 + r * Math.cos(th) * 1.55,
-        y: H / 2 + r * Math.sin(th) * 0.8,
-      };
-    });
-    const byKey = new Map(nodes.map((n) => [n.key, n]));
-    const edges = [];
-    const seen = new Set();
-    for (const n of nodes) {
-      for (const l of n.links) {
-        const m = byKey.get(l);
-        if (!m) continue;
-        const id = [n.key, m.key].sort().join('→');
-        if (seen.has(id)) continue;
-        seen.add(id);
-        edges.push([n, m]);
-      }
-    }
-    return { nodes, edges };
-  }, [docs]);
-
-  return (
-    <div className="card" style={{ padding: '15px 18px 10px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span className="card-title">별자리</span>
-        <a href={href} className="chip">기억으로 →</a>
-      </div>
-      {docs === null ? (
-        <Skeleton h={H} style={{ margin: '8px 0' }} />
-      ) : docs.length === 0 ? (
-        <p className="microlabel" style={{ padding: '20px 0 16px', textAlign: 'center' }}>No Records</p>
-      ) : (
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }}>
-          {layout.edges.map(([a, b], i) => (
-            <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--border)" strokeWidth="1" />
-          ))}
-          {layout.nodes.map((n) => (
-            <g key={n.rel} onClick={() => onSelect(n.rel)} style={{ cursor: 'pointer' }}>
-              <circle cx={n.x} cy={n.y} r="11" fill="transparent" />
-              {n.dir === 'notes'
-                ? <circle cx={n.x} cy={n.y} r="3.2" fill="var(--card)" stroke="var(--fg)" strokeWidth="1.3" />
-                : <circle cx={n.x} cy={n.y} r="3.2" fill="var(--fg)" />}
-              <title>{n.title}</title>
-            </g>
-          ))}
-        </svg>
+      {graphOpen && docs && (
+        <GraphModal
+          docs={docs}
+          onClose={() => setGraphOpen(false)}
+          onSelect={(rel) => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`)}
+        />
       )}
     </div>
   );
