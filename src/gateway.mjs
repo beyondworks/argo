@@ -102,6 +102,7 @@ function startTelegram(wsId, getCfg) {
           if (!msg?.text) continue;
           if (!cfg.chatId) { // 페어링 — 첫 발신자를 사장 채팅으로 고정
             await updateConnection(wsId, 'telegram', { chatId: String(msg.chat.id) });
+            await appendEvent(wsId, { type: 'gateway', kind: 'telegram', op: 'paired' });
             await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '이 채팅이 회사와 연결되었습니다.\n"@크루이름 지시" 또는 그냥 지시를 보내면 기본 크루가 응답합니다.' });
             continue;
           }

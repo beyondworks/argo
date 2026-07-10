@@ -80,8 +80,10 @@ export default function Deck({ params }) {
       </div>
 
       <div className="deck-grid">
-        {/* ── 본 계기 열 ── */}
+        {/* ── 본 계기 열 — "지금 판단할 것"(결재)이 지표보다 먼저다 ── */}
         <div style={{ display: 'grid', gap: 14, minWidth: 0 }}>
+          <ApprovalsCard ws={ws} agents={data?.agents ?? []} />
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
             {stats ? (
               <>
@@ -91,8 +93,14 @@ export default function Deck({ params }) {
                     <span className="chip">오늘 +{stats.today}</span>
                   </div>
                   <Num value={data.memoryCount} unit="건" size={40} />
-                  <div className="metric-sub">대화 {stats.conversations} · 노트 {stats.notes}</div>
-                  <div className="metric-sub2">{lastTs ? `마지막 기록 ${timeAgo(lastTs)}` : '아직 기록 없음'}</div>
+                  <div className="metric-sub">노트 {stats.notes} · 일지 {stats.conversations}</div>
+                  <div className="metric-sub2">
+                    {(() => { // 복리 신호 — 쓸수록 회사가 배우고 있다는 걸 보여준다
+                      const week = Date.now() - 7 * 86400000;
+                      const learned = (docs ?? []).filter((d) => d.dir === 'notes' && d.mtime > week).length;
+                      return learned > 0 ? `이번 주 배운 주제 ${learned}건` : (lastTs ? `마지막 기록 ${timeAgo(lastTs)}` : '아직 기록 없음');
+                    })()}
+                  </div>
                 </div>
                 <div className="metric card fade-up" style={{ animationDelay: '0.04s' }}>
                   <div className="metric-top">
@@ -137,8 +145,6 @@ export default function Deck({ params }) {
               [0, 1, 2, 3].map((i) => <Skeleton key={i} h={150} style={{ borderRadius: 18 }} />)
             )}
           </div>
-
-          <ApprovalsCard ws={ws} agents={data?.agents ?? []} />
 
           <form onSubmit={hire} className="input-bar">
             <span style={{ color: 'var(--fg-3)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
@@ -436,13 +442,15 @@ function VoyageLog({ docs, agents }) {
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
   const entries = (docs ?? []).slice(0, 8).map((d) => {
     const slug = d.rel
-      .replace(/^(conversations|notes)\//, '')
+      .replace(/^(conversations|notes|journal)\//, '')
       .replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-/, '')
+      .replace(/^\d{4}-\d{2}-\d{2}-/, '') // 일지: journal/YYYY-MM-DD-<slug>
       .replace(/\.md$/, '');
     const ts = tsFromRel(d.rel) ?? d.mtime;
     const t = new Date(ts);
     const hhmm = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
-    return { rel: d.rel, hhmm, name: nameOf(slug), links: d.links.length, note: d.dir === 'notes' };
+    const note = d.dir === 'notes';
+    return { rel: d.rel, hhmm, label: note ? d.title : `${nameOf(slug)} 일지`, links: d.links.length, note };
   });
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
@@ -460,7 +468,7 @@ function VoyageLog({ docs, agents }) {
             <div key={e.rel} className="row" style={{ padding: '8px 18px', gap: 10 }}>
               <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', flex: 'none' }}>{e.hhmm}</span>
               <span style={{ fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                <strong>{e.name}</strong>{e.note ? ' 지식 노트 작성' : ' 기록 남김'}
+                <strong>{e.label}</strong>{e.note ? ' — 배움' : ' 기록'}
               </span>
               {e.links > 0 && <span className="mono" style={{ fontSize: 10, color: 'var(--fg-2)', flex: 'none' }}>LINK {e.links}</span>}
             </div>

@@ -27,7 +27,7 @@ function docStats(docs) {
   return {
     links: edges.size,
     today: docs.filter((d) => d.rel.includes(today)).length,
-    conversations: docs.filter((d) => d.dir === 'conversations').length,
+    conversations: docs.filter((d) => d.dir !== 'notes').length, // 일지 + 구버전 기록
     notes: docs.filter((d) => d.dir === 'notes').length,
     daily,
   };

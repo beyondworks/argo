@@ -1,7 +1,7 @@
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { paths } from './workspace.mjs';
@@ -11,6 +11,7 @@ import { loadMcp } from './market.mjs';
 import { appendUsage } from './usage.mjs';
 import { listAgents } from './hub.mjs';
 import { addApproval } from './approvals.mjs';
+import { appendEvent } from './events.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지. */
 async function loadSkills(wsId, cap = 6000) {
@@ -108,6 +109,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   let reply = '';
   let sid = sessionId;
   const t0 = Date.now();
+  const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
+  const evBase = { type: 'turn', slug: agentSlug, source: from ? 'delegate' : (source ?? 'deck'), ...(from ? { from } : {}), gist };
+  try {
   for await (const msg of query({
     prompt: userMsg,
     options: {
@@ -138,7 +142,16 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       else throw new Error(`턴 실패: ${msg.subtype}`);
     }
   }
+  } catch (e) {
+    // 실패도 회사의 사건이다 — 활동 화면의 "오류" 필터가 이 기록을 먹는다
+    await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 200) });
+    throw e;
+  }
 
   const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
+  await appendEvent(wsId, {
+    ...evBase, ok: true, ms: Date.now() - t0,
+    journalRel: relative(p.vault, handover.file), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
+  });
   return { reply, sessionId: sid, handover };
 }

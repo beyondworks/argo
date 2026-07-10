@@ -2,7 +2,7 @@
 // (nodejs 런타임 라우트에서만 로드되므로 node: 임포트가 안전하다. P1에서 워커로 분리)
 import { listCompanies } from './hub.mjs';
 import { loadRoutines, runRoutine, isDue } from './routines.mjs';
-import { consolidateMemory } from './consolidate.mjs';
+import { consolidateMemory, rollupJournals } from './consolidate.mjs';
 import { daemonLease } from './lock.mjs';
 
 const CONSOLIDATE_AT = '04:00'; // 새벽 정리 — 사람 뇌의 수면 정리처럼
@@ -26,7 +26,9 @@ export function ensureScheduler() {
         }
         if (hhmm === CONSOLIDATE_AT) {
           console.log(`[argo] 기억 정리: ${c.id}`);
-          consolidateMemory(c.id).catch((e) => console.error(`[argo] 기억 정리 실패 ${c.id}:`, e.message));
+          consolidateMemory(c.id)
+            .then(() => rollupJournals(c.id)) // 정제가 소화한 일지만 주간으로 접힌다
+            .catch((e) => console.error(`[argo] 기억 정리 실패 ${c.id}:`, e.message));
         }
       }
     } catch (e) {

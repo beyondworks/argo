@@ -89,12 +89,18 @@ export async function listDocs(wsId) {
   return docs.sort((a, b) => b.rel.localeCompare(a.rel));
 }
 
-/** vault 문서 1건 읽기 — vault 밖 경로 차단. */
+/** vault 문서 1건 읽기 — vault 밖 경로 차단. 롤업으로 보관된 일지는 .archive/에서 폴백(링크 불사). */
 export async function readDoc(wsId, rel) {
   const p = paths(wsId);
   const file = resolve(p.vault, rel.endsWith('.md') ? rel : `${rel}.md`);
   if (!file.startsWith(resolve(p.vault) + '/') && file !== resolve(p.index)) {
     throw new Error('vault 밖 경로');
   }
-  return readFile(file, 'utf8');
+  try {
+    return await readFile(file, 'utf8');
+  } catch (e) {
+    const m = relative(p.vault, file).match(/^journal\/(.+\.md)$/);
+    if (m) return readFile(join(p.journal, '.archive', m[1]), 'utf8');
+    throw e;
+  }
 }

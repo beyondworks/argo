@@ -3,6 +3,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { paths } from './workspace.mjs';
 import { emitNotify } from './notify.mjs';
+import { appendEvent } from './events.mjs';
 
 export async function loadApprovals(wsId) {
   try {
@@ -31,6 +32,7 @@ export async function addApproval(wsId, { slug, action, reason }) {
   list.unshift(item);
   await save(wsId, list.slice(0, 200)); // 오래된 이력은 흘려보낸다
   emitNotify({ type: 'approval', wsId, item }); // 메신저로 결재 버튼 푸시
+  await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, action: item.action, status: 'pending' });
   return item;
 }
 
@@ -43,5 +45,6 @@ export async function resolveApproval(wsId, id, approve) {
   item.status = approve ? 'approved' : 'rejected';
   item.resolvedAt = new Date().toISOString();
   await save(wsId, list);
+  await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, action: item.action, status: item.status });
   return item;
 }

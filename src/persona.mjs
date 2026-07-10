@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
 import { appendUsage } from './usage.mjs';
+import { appendEvent } from './events.mjs';
 
 const CARD_PROMPT = (oneLiner, name) => `다음 한 줄 요청으로 AI 직원의 페르소나 카드를 작성해줘.
 
@@ -74,6 +75,7 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   if (team?.trim()) body = body.replace(/^---\r?\n/, `---\nteam: ${team.trim()}\n`);
   const file = join(paths(wsId).agents, `${slug}.md`);
   await writeFile(file, body.endsWith('\n') ? body : `${body}\n`);
+  await appendEvent(wsId, { type: 'crew', op: 'hire', slug, name: name?.trim() || meta.name });
   return { slug, name: name?.trim() || meta.name, role: meta.role || '', team: team?.trim() || '', file };
 }
 
@@ -112,7 +114,9 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model }) {
   if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
   if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
   await writeFile(file, md);
-  return parseFrontmatter(md);
+  const after = parseFrontmatter(md);
+  await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: after.name });
+  return after;
 }
 
 /** 팀 이름 변경 — 그 팀 소속 전 크루의 frontmatter를 일괄 갱신. */
@@ -128,6 +132,7 @@ export async function renameTeam(wsId, from, to) {
     changed += 1;
   }
   if (changed === 0) throw new Error('해당 팀의 크루가 없습니다');
+  await appendEvent(wsId, { type: 'crew', op: 'team', name: `${from} → ${to.trim()}` });
   return { changed };
 }
 
@@ -139,6 +144,7 @@ export async function removeAgentCard(wsId, slug) {
   const archive = join(dir, '.archive');
   await mkdir(archive, { recursive: true });
   await rename(file, join(archive, `${Date.now()}-${slug}.md`));
+  await appendEvent(wsId, { type: 'crew', op: 'fire', slug });
 }
 
 export async function readAgentCard(wsId, slug) {

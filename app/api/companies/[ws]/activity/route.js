@@ -1,16 +1,7 @@
-import { readActivity } from '../../../../../src/usage.mjs';
-import { loadApprovals } from '../../../../../src/approvals.mjs';
+import { readEvents } from '../../../../../src/events.mjs';
 
-/** 활동 타임라인 — 턴(대화·위임·루틴·메신저·영입) + 결재 이벤트를 시간 역순으로 병합. */
+/** 활동 — 이벤트 저널(턴·기억·결재·크루·페어링). 화면이 필터링하기 좋게 원본 그대로 최신순. */
 export async function GET(_req, { params }) {
   const { ws } = await params;
-  const [turns, approvals] = await Promise.all([readActivity(ws, 80), loadApprovals(ws)]);
-  const events = [
-    ...turns,
-    ...approvals.flatMap((a) => [
-      { ts: a.createdAt, kind: 'approval', slug: a.slug, action: a.action, status: 'pending' },
-      ...(a.resolvedAt ? [{ ts: a.resolvedAt, kind: 'approval', slug: a.slug, action: a.action, status: a.status }] : []),
-    ]),
-  ].sort((x, y) => String(y.ts).localeCompare(String(x.ts))).slice(0, 80);
-  return Response.json({ events });
+  return Response.json({ events: await readEvents(ws, 150) });
 }

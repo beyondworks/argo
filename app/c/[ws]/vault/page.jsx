@@ -71,6 +71,48 @@ function Vault({ params }) {
 
   const [consolidating, setConsolidating] = useState(false);
   const [consolidateMsg, setConsolidateMsg] = useState('');
+  const [showArchive, setShowArchive] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [mutating, setMutating] = useState(false);
+
+  useEffect(() => { setEditing(false); }, [selected]); // 문서를 바꾸면 편집 모드 해제
+
+  /** 주제 노트 직접 수정 — 크루가 다음 턴부터 바로 이 내용을 읽는다. */
+  async function saveEdit() {
+    if (mutating) return;
+    setMutating(true);
+    try {
+      await fetch(`/api/companies/${ws}/vault`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rel: selected, content: draft }),
+      }).then(async (r) => { if (!r.ok) throw new Error((await r.json()).error); });
+      setContent(draft); setEditing(false);
+      loadDocs();
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (e) {
+      alert(String(e.message));
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function removeNote() {
+    const doc = (docs ?? []).find((d) => d.rel === selected);
+    if (!window.confirm(`"${doc?.title ?? selected}" 노트를 삭제할까요?\n크루가 더 이상 이 지식을 참조하지 않습니다. (파일은 .trash/에 보관)`)) return;
+    setMutating(true);
+    try {
+      await fetch(`/api/companies/${ws}/vault?rel=${encodeURIComponent(selected)}`, { method: 'DELETE' })
+        .then(async (r) => { if (!r.ok) throw new Error((await r.json()).error); });
+      setSelected(null);
+      loadDocs();
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (e) {
+      alert(String(e.message));
+    } finally {
+      setMutating(false);
+    }
+  }
 
   async function consolidate() {
     if (consolidating) return;
@@ -89,12 +131,10 @@ function Vault({ params }) {
 
   const openWiki = (name) => setSelected(name.endsWith('.md') ? name : `${name}.md`);
   const visible = (docs ?? []).filter((d) => !q || d.title.toLowerCase().includes(q) || d.excerpt.toLowerCase().includes(q));
-  // 3층 구조 그룹 — 주제(정제수)가 먼저, 일지(원수)는 아래, 구버전 기록은 마지막
-  const groups = [
-    ['주제 노트', visible.filter((d) => d.dir === 'notes').sort((a, b) => b.mtime - a.mtime)],
-    ['일지', visible.filter((d) => d.dir === 'journal')],
-    ['이전 기록', visible.filter((d) => d.dir === 'conversations')],
-  ].filter(([, list]) => list.length > 0);
+  // 주제 노트가 1급 시민 — 일지·이전 기록은 근거 추적용 보관함(접힘)으로 강등
+  const notes = visible.filter((d) => d.dir === 'notes').sort((a, b) => b.mtime - a.mtime);
+  const archives = visible.filter((d) => d.dir !== 'notes');
+  const selectedDoc = (docs ?? []).find((d) => d.rel === selected);
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
@@ -181,31 +221,25 @@ function Vault({ params }) {
               {visible.length === 0 && (
                 <p style={{ padding: '0 18px 16px', color: 'var(--fg-2)', fontSize: 13 }}>검색과 일치하는 기억이 없습니다.</p>
               )}
-              {groups.map(([label, list]) => (
-                <div key={label}>
-                  <div className="microlabel" style={{ padding: '8px 18px 4px', borderTop: '1px dashed var(--border-soft)' }}>
-                    {label} · {list.length}
-                  </div>
-                  {list.map((d) => {
-                    const active = selected === d.rel;
-                    return (
-                      <button key={d.rel} onClick={() => setSelected(d.rel)} className={`row${active ? ' active' : ''}`}>
-                        <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}>
-                          <Icon name={d.dir === 'notes' ? 'bolt' : 'doc'} size={14} />
-                        </span>
-                        <span style={{ minWidth: 0, flex: 1 }}>
-                          <span style={{ display: 'block', fontSize: 12.5, fontWeight: active ? 700 : 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                            {d.title}
-                          </span>
-                          <span className="mono" style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)', marginTop: 1 }}>
-                            {timeAgo(tsFromRel(d.rel) ?? d.mtime)}{d.links.length > 0 && ` · LINK ${d.links.length}`}
-                          </span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
+              <div className="microlabel" style={{ padding: '8px 18px 4px' }}>
+                회사가 아는 것 · {notes.length}
+              </div>
+              {notes.length === 0 && (
+                <p style={{ padding: '4px 18px 12px', color: 'var(--fg-2)', fontSize: 12 }}>
+                  아직 정리된 지식이 없습니다 — 크루와 일하면 새벽 정리가 주제 노트로 만들어줍니다.
+                </p>
+              )}
+              {notes.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={setSelected} icon="bolt" />)}
+              {archives.length > 0 && (
+                <>
+                  <button className="microlabel" onClick={() => setShowArchive((v) => !v)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '10px 18px 6px', borderTop: '1px dashed var(--border-soft)', cursor: 'pointer' }}>
+                    <span style={{ display: 'inline-block', transform: showArchive ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
+                    일지 보관함 · {archives.length} — 결론의 근거(대화 원본)
+                  </button>
+                  {showArchive && archives.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={setSelected} icon="doc" />)}
+                </>
+              )}
             </div>
 
             <div className="card" style={{ padding: 24, minHeight: 340 }}>
@@ -217,8 +251,34 @@ function Vault({ params }) {
                 <Spinner />
               ) : (
                 <div style={{ maxWidth: 860 }}>
-                  <div className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', marginBottom: 14, letterSpacing: '0.03em' }}>{selected}</div>
-                  <Markdown text={content} onWikiLink={openWiki} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', letterSpacing: '0.03em', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected}</span>
+                    {selectedDoc?.dir === 'notes' && !editing && (
+                      <span style={{ display: 'flex', gap: 6, flex: 'none' }}>
+                        <button className="btn sm" onClick={() => { setDraft(content); setEditing(true); }}>
+                          <Icon name="edit" size={12} /> 편집
+                        </button>
+                        <button className="btn sm" onClick={removeNote} disabled={mutating} style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}>
+                          <Icon name="trash" size={12} /> 삭제
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                  {editing ? (
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
+                        style={{ width: '100%', minHeight: 380, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', outline: 'none', fontSize: 12.5, lineHeight: 1.7, fontFamily: 'var(--font-mono, monospace)' }} />
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <button className="btn btn-primary sm" onClick={saveEdit} disabled={mutating || !draft.trim()}>
+                          {mutating ? <Spinner size={12} /> : '저장'}
+                        </button>
+                        <button className="btn sm" onClick={() => setEditing(false)} disabled={mutating}>취소</button>
+                        <span className="metric-sub2">저장 즉시 크루가 이 내용을 참조합니다</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <Markdown text={content} onWikiLink={openWiki} />
+                  )}
                 </div>
               )}
             </div>
@@ -237,5 +297,24 @@ function Vault({ params }) {
         />
       )}
     </div>
+  );
+}
+
+/** 기록 패널 행 — 주제 노트와 보관함이 같은 문법을 쓴다. */
+function DocRow({ d, active, onOpen, icon }) {
+  return (
+    <button onClick={() => onOpen(d.rel)} className={`row${active ? ' active' : ''}`}>
+      <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}>
+        <Icon name={icon} size={14} />
+      </span>
+      <span style={{ minWidth: 0, flex: 1 }}>
+        <span style={{ display: 'block', fontSize: 12.5, fontWeight: active ? 700 : 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+          {d.title}
+        </span>
+        <span className="mono" style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)', marginTop: 1 }}>
+          {timeAgo(tsFromRel(d.rel) ?? d.mtime)}{d.links.length > 0 && ` · LINK ${d.links.length}`}
+        </span>
+      </span>
+    </button>
   );
 }
