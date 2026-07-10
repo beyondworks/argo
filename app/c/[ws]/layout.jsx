@@ -60,9 +60,6 @@ export default function CompanyShell({ children, params }) {
         <a href={`/c/${ws}/market`} className={`nav-item${pathname.endsWith('/market') ? ' active' : ''}`}>
           <Icon name="market" size={16} /> 스킬·도구
         </a>
-        <a href={`/c/${ws}/settings`} className={`nav-item${pathname.endsWith('/settings') ? ' active' : ''}`}>
-          <Icon name="settings" size={16} /> 설정
-        </a>
 
         {data === null && <><div className="side-group">크루</div><Skeleton h={60} style={{ margin: '0 10px' }} /></>}
         {grouped.map(([team, list]) => (
@@ -89,7 +86,14 @@ export default function CompanyShell({ children, params }) {
           <Icon name="plus" size={15} /> 크루 영입
         </a>
 
-        <div className="side-footer">
+        <a
+          href={`/c/${ws}/settings`}
+          className={`nav-item${pathname.endsWith('/settings') ? ' active' : ''}`}
+          style={{ marginTop: 'auto' }}
+        >
+          <Icon name="settings" size={16} /> 설정
+        </a>
+        <div className="side-footer" style={{ marginTop: 6 }}>
           <Avatar name={data?.company?.name} sm />
           <span style={{ minWidth: 0 }}>
             <span style={{ display: 'block', fontSize: 12.5, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

@@ -142,10 +142,11 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
             {item.needsKey && <span className="chip danger">API 키 필요</span>}
           </div>
 
+          {item.desc && <p style={{ fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.6 }}>{item.desc}</p>}
           {err && <p style={{ fontSize: 12.5, color: 'var(--danger)' }}>{err}</p>}
           {!exp && !err && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: 'var(--fg-2)', fontSize: 12.5, padding: '6px 0' }}>
-              <Spinner size={13} /> 쉬운 설명을 준비하고 있어요…
+              <Spinner size={13} /> 쉬운 설명을 준비하고 있어요… (처음 한 번만 걸려요)
             </div>
           )}
           {exp && (

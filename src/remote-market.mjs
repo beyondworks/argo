@@ -204,8 +204,28 @@ export async function topRemoteMcp() {
   });
 }
 
-/* ─── 한글 easy 설명 — 클릭 시 1턴 생성, 캐시 ─── */
+/* ─── 한글 easy 설명 — Haiku 1턴 생성, 메모리+디스크 캐시(재시작에도 유지) ─── */
+import { WS_ROOT } from './workspace.mjs';
 const explainCache = new Map();
+const EXPLAIN_FILE = join(WS_ROOT, '.cache', 'explain.json');
+let diskLoaded = false;
+
+async function loadExplainDisk() {
+  if (diskLoaded) return;
+  diskLoaded = true;
+  try {
+    const { readFile } = await import('node:fs/promises');
+    const data = JSON.parse(await readFile(EXPLAIN_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(data)) explainCache.set(k, v);
+  } catch { /* 첫 실행 */ }
+}
+
+async function saveExplainDisk() {
+  try {
+    await mkdir(join(WS_ROOT, '.cache'), { recursive: true });
+    await writeFile(EXPLAIN_FILE, JSON.stringify(Object.fromEntries(explainCache)));
+  } catch { /* 캐시 실패는 치명적이지 않다 */ }
+}
 
 async function fetchSkillRaw(githubUrl) {
   for (const url of rawCandidates(githubUrl)) {
@@ -222,6 +242,7 @@ async function fetchSkillRaw(githubUrl) {
 
 export async function explainItem(item) {
   const key = `${item.kind}:${item.name ?? item.title}`;
+  await loadExplainDisk();
   if (explainCache.has(key)) return explainCache.get(key);
 
   let raw = null;
@@ -244,7 +265,7 @@ ${raw ? `원문(일부):\n${raw.slice(0, 2500)}` : ''}`;
   let out = '';
   for await (const msg of query({
     prompt,
-    options: { allowedTools: [], settingSources: [], maxTurns: 1 },
+    options: { allowedTools: [], settingSources: [], maxTurns: 1, model: 'claude-haiku-4-5-20251001' }, // 설명 생성은 Haiku면 충분 — 속도 우선
   })) {
     if (msg.type === 'result' && msg.subtype === 'success') out = msg.result;
   }
@@ -257,5 +278,21 @@ ${raw ? `원문(일부):\n${raw.slice(0, 2500)}` : ''}`;
   }
   const result = { easy, raw: raw ? raw.slice(0, 2000) : null };
   explainCache.set(key, result);
+  saveExplainDisk(); // 비동기 — 응답을 막지 않는다
   return result;
+}
+
+/* ─── 프리워밍 — TOP 목록 로드 시 백그라운드로 설명을 미리 생성(동시 2, 평생 1회) ─── */
+const warmingKinds = new Set();
+
+export function warmExplains(items, kind) {
+  if (warmingKinds.has(kind)) return;
+  warmingKinds.add(kind);
+  (async () => {
+    await loadExplainDisk();
+    const todo = items.filter((i) => !explainCache.has(`${kind}:${i.name ?? i.title}`));
+    for (let i = 0; i < todo.length; i += 2) {
+      await Promise.allSettled(todo.slice(i, i + 2).map((it) => explainItem({ ...it, kind })));
+    }
+  })().finally(() => warmingKinds.delete(kind));
 }

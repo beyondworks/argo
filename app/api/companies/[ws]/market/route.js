@@ -6,7 +6,7 @@ import {
 import {
   searchRemoteSkills, installRemoteSkill,
   searchRemoteMcp, installRemoteMcp,
-  topRemoteSkills, topRemoteMcp, explainItem,
+  topRemoteSkills, topRemoteMcp, explainItem, warmExplains,
 } from '../../../../../src/remote-market.mjs';
 
 export const maxDuration = 120; // explain = 모델 1턴
@@ -21,6 +21,7 @@ export async function GET(req, { params }) {
   if (top) {
     try {
       const results = top === 'skills' ? await topRemoteSkills() : await topRemoteMcp();
+      warmExplains(results, top === 'skills' ? 'skill' : 'mcp'); // 백그라운드 — 응답을 막지 않는다
       return Response.json({ results });
     } catch (e) {
       return Response.json({ results: [], error: `추천 목록 로드 실패: ${String(e.message || e)}` });
