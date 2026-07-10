@@ -108,12 +108,15 @@ function startTelegram(wsId, getCfg) {
           }
           if (String(msg.chat.id) !== String(cfg.chatId)) continue; // 페어링된 채팅만
           tg(cfg.token, 'sendChatAction', { chat_id: cfg.chatId, action: 'typing' }).catch(() => {});
-          try {
-            const reply = await runTurn(wsId, cfg, msg.text);
-            await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: clip(reply) });
-          } catch (e) {
-            await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
-          }
+          // 턴을 기다리지 않는다 — 기다리면 폴이 멈춰 결재 버튼 콜백을 못 받는다(권한 게이트 데드락)
+          (async () => {
+            try {
+              const reply = await runTurn(wsId, cfg, msg.text);
+              await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: clip(reply) });
+            } catch (e) {
+              await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
+            }
+          })();
         }
       } catch (e) {
         if (!stopped) {
@@ -150,12 +153,15 @@ function startSlack(wsId, getCfg) {
         for (const m of (h.messages ?? []).reverse()) {
           if (Number(m.ts) > Number(lastTs)) lastTs = m.ts;
           if (!m.text || m.bot_id || m.user === cfg.botUserId || m.subtype) continue;
-          try {
-            const reply = await runTurn(wsId, cfg, m.text.replace(/<@[A-Z0-9]+>\s*/g, '').trim());
-            await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: clip(reply) });
-          } catch (e) {
-            await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
-          }
+          // 논블로킹 — 턴이 결재 대기 중이어도 "승인 <번호>" 회신을 계속 읽을 수 있어야 한다
+          (async () => {
+            try {
+              const reply = await runTurn(wsId, cfg, m.text.replace(/<@[A-Z0-9]+>\s*/g, '').trim());
+              await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: clip(reply) });
+            } catch (e) {
+              await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
+            }
+          })();
         }
       } catch (e) {
         if (!stopped) console.error(`[argo] 슬랙 폴 오류(${wsId}):`, e.message);

@@ -17,12 +17,12 @@ async function save(wsId, list) {
   await writeFile(paths(wsId).approvals, JSON.stringify(list, null, 2));
 }
 
-/** 결재 요청 등록 — 크루의 request_approval 도구가 부른다. */
-export async function addApproval(wsId, { slug, action, reason }) {
+/** 결재 요청 등록 — kind: 'action'(행동 결재, 승인 시 후속 턴) | 'tool'(권한 게이트, 승인 시 그 자리에서 재개). */
+export async function addApproval(wsId, { slug, action, reason, kind = 'action' }) {
   const list = await loadApprovals(wsId);
   const id = `ap-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
   const item = {
-    id, slug,
+    id, slug, kind,
     action: String(action).slice(0, 300),
     reason: String(reason ?? '').slice(0, 500),
     status: 'pending',

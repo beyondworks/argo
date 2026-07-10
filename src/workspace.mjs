@@ -18,6 +18,7 @@ export function paths(wsId) {
     usage: join(root, 'usage.jsonl'),
     approvals: join(root, 'approvals.json'),
     connections: join(root, 'connections.json'),
+    capabilities: join(root, 'capabilities.json'),
     vault: join(root, 'vault'),
     conversations: join(root, 'vault', 'conversations'), // 구버전 — 마이그레이션 후 읽기 전용
     journal: join(root, 'vault', 'journal'),

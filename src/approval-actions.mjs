@@ -3,10 +3,12 @@ import { resolveApproval } from './approvals.mjs';
 import { chat } from './chat.mjs';
 import { loadThread, appendTurn } from './thread.mjs';
 
-/** 상태 변경 + 해당 크루 스레드에서 후속 턴(승인=실행, 거절=대안 정리). 후속 턴은 await 없이 부를 수 있다. */
+/** 상태 변경 + 후속 처리. kind:'tool'은 대기 중인 턴이 스스로 재개하므로 후속 턴이 없다. */
 export async function resolveWithFollowUp(wsId, id, approve) {
   const item = await resolveApproval(wsId, id, approve);
-  followUp(wsId, item, approve).catch((e) => console.error('[argo] 결재 후속 턴 실패:', e.message));
+  if (item.kind !== 'tool') {
+    followUp(wsId, item, approve).catch((e) => console.error('[argo] 결재 후속 턴 실패:', e.message));
+  }
   return item;
 }
 

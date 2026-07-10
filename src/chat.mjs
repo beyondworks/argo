@@ -12,6 +12,8 @@ import { appendUsage } from './usage.mjs';
 import { listAgents } from './hub.mjs';
 import { addApproval } from './approvals.mjs';
 import { appendEvent } from './events.mjs';
+import { loadCapabilities } from './capabilities.mjs';
+import { makePermissionGate } from './permission-gate.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지. */
 async function loadSkills(wsId, cap = 6000) {
@@ -106,6 +108,17 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   const colleagues = from ? [] : (await listAgents(wsId)).filter((a) => a.slug !== agentSlug);
   const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues);
 
+  // 로컬 능력 — 전부 opt-in. bypass가 꺼져 있으면 부작용 도구는 allowedTools에서 빼고
+  // canUseTool 게이트가 전권 판정한다(사전 승인 목록에 든 도구는 게이트를 타지 않으므로).
+  const caps = await loadCapabilities(wsId);
+  const readTools = ['Read', 'Glob', 'Grep', ...(caps.browser ? ['WebFetch', 'WebSearch'] : []), ...mcpAllow, 'mcp__crew'];
+  const sideTools = ['Write', ...(caps.fs ? ['Edit'] : []), ...(caps.shell ? ['Bash'] : [])];
+  const capPrompt = `\n## 로컬 능력 — 회사 설정이 허용한 범위
+- 파일 시스템(워크스페이스 밖): ${caps.fs ? '허용 — 신중하게, 파괴적 변경은 결재를 먼저 올려라' : '꺼짐 — vault 밖의 파일은 읽지도 쓰지도 마라'}
+- 웹 브라우징: ${caps.browser ? '허용(WebFetch/WebSearch)' : '꺼짐'}
+- 셸 명령(Bash): ${caps.shell ? '허용' : '꺼짐'}
+${caps.bypass ? '- 권한 우회 모드: 켜짐 — 결재 없이 실행되니 되돌릴 수 없는 명령은 스스로 한 번 더 확인하라' : '- 부작용 있는 실행은 결재 승인 후 이어진다 — 승인 대기는 정상 흐름이다'}`;
+
   let reply = '';
   let sid = sessionId;
   const t0 = Date.now();
@@ -120,11 +133,22 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
         + (colleagues.length ? rosterPrompt(colleagues) : '')
         + `\n## 결재 규칙 — 반드시 따를 것
 - 되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 실행 전 request_approval 도구로 결재를 올리고, 승인 없이는 실행하지 마라.
-- 초안 작성·분석·vault 기록 같은 회사 안 작업은 결재 없이 바로 한다.`,
+- 초안 작성·분석·vault 기록 같은 회사 안 작업은 결재 없이 바로 한다.`
+        + capPrompt,
       mcpServers: { ...(servers ?? {}), crew: crewServer },
-      allowedTools: ['Read', 'Glob', 'Grep', 'Write', ...mcpAllow, 'mcp__crew'],
       ...(meta.model ? { model: meta.model } : {}), // 크루별 모델 — 카드 frontmatter가 결정
-      permissionMode: 'bypassPermissions', // 스파이크 한정 — 프로덕션은 워크스페이스 샌드박스+훅 게이트
+      ...(caps.bypass
+        ? { permissionMode: 'bypassPermissions', allowedTools: [...readTools, ...sideTools] }
+        : {
+            // 부작용 도구는 사전 승인 목록에서 제외 — canUseTool 게이트가 전권 판정(승인 대기 = interrupt-resume)
+            permissionMode: 'default',
+            allowedTools: readTools,
+            canUseTool: makePermissionGate(wsId, agentSlug, caps, p.root),
+          }),
+      disallowedTools: [
+        ...(caps.shell ? [] : ['Bash']),
+        ...(caps.browser ? [] : ['WebFetch', 'WebSearch']),
+      ],
       settingSources: [], // 호스트의 CLAUDE.md/스킬 미주입(테넌트 격리)
       ...(sessionId ? { resume: sessionId } : {}),
     },

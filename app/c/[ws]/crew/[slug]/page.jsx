@@ -31,6 +31,21 @@ export default function CrewChat({ params }) {
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [thread, busy]);
 
+  // 다른 창구(텔레그램·슬랙·루틴·결재 후속)에서 붙은 대화를 웹에도 반영 — 채널을 오가도 맥락은 하나다.
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (busy) return; // 내가 보내는 중엔 낙관적 UI를 덮지 않는다
+      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
+        .then((r) => {
+          const msgs = r.messages ?? [];
+          setThread((cur) => (cur !== null && msgs.length > cur.length ? msgs : cur));
+          if (r.sessionId) sessionRef.current = r.sessionId;
+        })
+        .catch(() => {});
+    }, 8000);
+    return () => clearInterval(t);
+  }, [ws, slug, busy]);
+
   useEffect(() => {
     if (!busy) return;
     const t = setInterval(() => setStage((s) => Math.min(s + 1, WAIT_STAGES.length - 1)), 14000);

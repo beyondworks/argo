@@ -1,0 +1,56 @@
+// 권한 게이트 — bypass가 꺼진 워크스페이스에서 부작용 도구는 여기서 멈춰 사람 승인을 기다린다.
+// 승인(데크 결재함/텔레그램 버튼/슬랙 회신)되면 그 자리에서 이어서 실행되는 interrupt-resume.
+import { resolve } from 'node:path';
+import { addApproval, loadApprovals } from './approvals.mjs';
+
+const WAIT_MS = 180_000; // 결재 대기 상한 — chat 라우트 maxDuration(300s) 안쪽
+const POLL_MS = 2_000;
+
+const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'TodoWrite', 'WebFetch', 'WebSearch']);
+const WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
+
+function describe(toolName, input) {
+  if (toolName === 'Bash') return `명령 실행: ${String(input.command ?? '').replace(/\s+/g, ' ').slice(0, 140)}`;
+  if (WRITE_TOOLS.has(toolName)) return `워크스페이스 밖 파일 ${toolName === 'Write' ? '쓰기' : '수정'}: ${String(input.file_path ?? input.notebook_path ?? '')}`;
+  return `${toolName} 실행`;
+}
+
+/** caps: {fs, browser, shell, bypass(false 전제)} — allowedTools에 없는 도구가 여기로 온다. */
+export function makePermissionGate(wsId, slug, caps, wsRoot) {
+  const root = resolve(wsRoot);
+  const inWorkspace = (p) => {
+    if (typeof p !== 'string' || !p.trim()) return false;
+    const abs = p.startsWith('/') ? resolve(p) : resolve(root, p);
+    return abs === root || abs.startsWith(`${root}/`);
+  };
+
+  return async function canUseTool(toolName, input, { signal } = {}) {
+    const allow = { behavior: 'allow', updatedInput: input };
+    if (READ_TOOLS.has(toolName) || toolName.startsWith('mcp__')) return allow; // 읽기·opt-in 도구
+
+    if (WRITE_TOOLS.has(toolName)) {
+      const target = input.file_path ?? input.notebook_path ?? '';
+      if (inWorkspace(target)) return allow; // 회사 폴더 안은 크루의 책상이다
+      if (!caps.fs) return { behavior: 'deny', message: '파일 시스템 능력이 꺼져 있다. 워크스페이스 밖에는 쓸 수 없다 — 필요하면 사장에게 설정 활성화를 요청하라.' };
+    } else if (toolName === 'Bash') {
+      if (!caps.shell) return { behavior: 'deny', message: '셸 능력이 꺼져 있다. 명령을 실행할 수 없다 — 필요하면 사장에게 설정 활성화를 요청하라.' };
+    }
+
+    // 능력은 켜져 있으나 우회 모드가 아님 — 결재를 올리고 이 자리에서 기다린다
+    const item = await addApproval(wsId, {
+      slug,
+      action: describe(toolName, input),
+      reason: '로컬 능력 실행 — 승인하면 멈춘 자리에서 바로 이어집니다',
+      kind: 'tool',
+    });
+    const t0 = Date.now();
+    while (Date.now() - t0 < WAIT_MS) {
+      if (signal?.aborted) return { behavior: 'deny', message: '턴이 중단되었다.' };
+      await new Promise((r) => setTimeout(r, POLL_MS));
+      const cur = (await loadApprovals(wsId)).find((a) => a.id === item.id);
+      if (cur?.status === 'approved') return allow;
+      if (cur?.status === 'rejected') return { behavior: 'deny', message: '사장이 이 실행을 거절했다. 실행하지 말고 대안을 한두 줄로 정리하라.' };
+    }
+    return { behavior: 'deny', message: '권한 승인 대기 시간(3분)이 지났다. 실행하지 못했다고 보고하고, 결재함에 요청이 남아있다고 안내하라.' };
+  };
+}

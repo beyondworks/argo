@@ -98,6 +98,10 @@ export default function Settings({ params }) {
       </div>
       </Section>
 
+      <Section label="Capabilities — 크루가 로컬에 손댈 수 있는 범위">
+        <CapabilitiesCard ws={ws} />
+      </Section>
+
       <Section label="Connections — 메신저가 회사의 정문이 됩니다">
       <ConnectionCard ws={ws} kind="telegram" title="텔레그램"
         help='@BotFather로 봇을 만들어 토큰을 붙여넣고 가동하세요. 봇에게 첫 메시지를 보내면 이 회사와 연결됩니다. "@크루이름 지시"로 특정 크루를 부를 수 있고, 결재는 버튼으로 처리됩니다.'
@@ -121,6 +125,66 @@ export default function Settings({ params }) {
         </button>
       </div>
       </Section>
+    </div>
+  );
+}
+
+/** 로컬 능력 토글 — 전부 opt-in. bypass 꺼짐이면 부작용 실행은 결재 게이트를 탄다. */
+function CapabilitiesCard({ ws }) {
+  const [caps, setCaps] = useState(null);
+  const [defs, setDefs] = useState([]);
+  const [busy, setBusy] = useState('');
+
+  useEffect(() => {
+    api(`/api/companies/${ws}/capabilities`).then((d) => { setCaps(d.capabilities); setDefs(d.defs); }).catch(() => setCaps({}));
+  }, [ws]);
+
+  async function toggle(key) {
+    if (busy) return;
+    setBusy(key);
+    try {
+      const d = await api(`/api/companies/${ws}/capabilities`, { [key]: !caps[key] });
+      setCaps(d.capabilities);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 4 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <span className="card-title">로컬 능력</span>
+        <span className="chip">{caps?.bypass ? '우회 모드' : '결재 게이트'}</span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '0 0 10px', lineHeight: 1.6 }}>
+        끄면 크루는 회사 폴더 안에서만 일합니다. 켜도 <strong>권한 우회 모드가 꺼져 있으면</strong> 부작용 있는 실행(명령·바깥 파일 쓰기)은
+        결재함과 메신저 버튼으로 승인을 받아야 이어집니다.
+      </p>
+      {!caps ? <Skeleton h={120} /> : defs.map(([key, title, desc]) => (
+        <div key={key} className="row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 8px', ...(key === 'bypass' ? { borderTop: '1px dashed var(--border-soft)', marginTop: 4, paddingTop: 12 } : {}) }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: key === 'bypass' ? 'var(--danger)' : 'var(--fg)' }}>{title}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-2)', marginTop: 2 }}>{desc}</div>
+          </div>
+          <button
+            onClick={() => toggle(key)}
+            disabled={busy === key}
+            role="switch"
+            aria-checked={!!caps[key]}
+            style={{
+              width: 40, height: 22, borderRadius: 999, flex: 'none', position: 'relative',
+              border: '1px solid var(--border)', transition: 'background .15s',
+              background: caps[key] ? (key === 'bypass' ? 'var(--danger)' : 'var(--fg)') : 'var(--card-2)',
+              cursor: 'pointer',
+            }}
+          >
+            <span style={{
+              position: 'absolute', top: 2, left: caps[key] ? 20 : 2, width: 16, height: 16, borderRadius: 999,
+              background: caps[key] ? 'var(--bg)' : 'var(--fg-3)', transition: 'left .15s',
+            }} />
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
