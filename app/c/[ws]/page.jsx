@@ -138,6 +138,8 @@ export default function Deck({ params }) {
             )}
           </div>
 
+          <ApprovalsCard ws={ws} agents={data?.agents ?? []} />
+
           <form onSubmit={hire} className="input-bar">
             <span style={{ color: 'var(--fg-3)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
             <input suppressHydrationWarning
@@ -371,6 +373,65 @@ export default function Deck({ params }) {
 }
 
 /** 항해일지 — 기록·연결 이벤트의 모노 타임라인. */
+/** 결재함 — 크루가 올린 대기 결재. 승인/거절 즉시 반영, 실행 결과는 해당 크루 대화에 쌓인다. */
+function ApprovalsCard({ ws, agents }) {
+  const [items, setItems] = useState(null);
+  const [busy, setBusy] = useState('');
+
+  function load() {
+    api(`/api/companies/${ws}/approvals`).then((d) => setItems(d.approvals)).catch(() => setItems([]));
+  }
+  useEffect(load, [ws]);
+  useEffect(() => {
+    window.addEventListener('argo:refresh', load);
+    const t = setInterval(load, 20000); // 크루 턴 중에 올라오는 결재를 놓치지 않게 저속 폴
+    return () => { window.removeEventListener('argo:refresh', load); clearInterval(t); };
+  }, [ws]);
+
+  const pending = (items ?? []).filter((a) => a.status === 'pending');
+  if (!pending.length) return null;
+  const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
+
+  async function resolve(id, approve) {
+    setBusy(id);
+    try {
+      await api(`/api/companies/${ws}/approvals`, { id, approve });
+      load();
+    } finally {
+      setBusy('');
+    }
+  }
+
+  return (
+    <div className="card fade-up" style={{ padding: '16px 18px' }}>
+      <div className="card-head">
+        <span className="microlabel">Approvals</span>
+        <span className="rule" />
+        <span className="chip"><span className="dot" />대기 {pending.length}</span>
+      </div>
+      <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+        {pending.map((a) => (
+          <div key={a.id} className="row" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Avatar name={nameOf(a.slug)} size={26} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{a.action}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--fg-2)', marginTop: 2 }}>
+                {nameOf(a.slug)} · {a.reason}
+              </div>
+            </div>
+            {busy === a.id ? <Spinner /> : (
+              <div style={{ display: 'flex', gap: 6, flex: 'none' }}>
+                <button className="btn sm btn-primary" onClick={() => resolve(a.id, true)}>승인</button>
+                <button className="btn sm" onClick={() => resolve(a.id, false)}>거절</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function VoyageLog({ docs, agents }) {
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
   const entries = (docs ?? []).slice(0, 8).map((d) => {

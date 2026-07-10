@@ -10,6 +10,7 @@ import { saveHandover } from './memory.mjs';
 import { loadMcp } from './market.mjs';
 import { appendUsage } from './usage.mjs';
 import { listAgents } from './hub.mjs';
+import { addApproval } from './approvals.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지. */
 async function loadSkills(wsId, cap = 6000) {
@@ -47,15 +48,26 @@ ${skills ? `\n## 회사 스킬 — 해당 작업 시 아래 지침을 따른다\
 - vault 밖의 파일은 읽지도 쓰지도 마라.`;
 }
 
-/** 위임 도구 — 대상 크루로 하위 턴을 돌리고 결과 텍스트를 돌려준다. 깊이 1 고정(연쇄 위임 금지). */
-function makeDelegateServer(wsId, fromSlug, fromName, colleagues) {
+/** 크루 도구 서버 — delegate(최상위 턴만) + request_approval(항상). */
+function makeCrewServer(wsId, fromSlug, fromName, colleagues) {
+  const text = async (t) => ({ content: [{ type: 'text', text: t }] });
+
+  const requestApproval = tool(
+    'request_approval',
+    '되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)을 실행하기 전에 사장의 결재를 요청한다. action은 하려는 행동 한 문장, reason은 왜 필요한지.',
+    { action: z.string(), reason: z.string() },
+    async ({ action, reason }) => {
+      const item = await addApproval(wsId, { slug: fromSlug, action, reason });
+      return text(`결재 요청이 등록되었다(${item.id}). 승인 전에는 절대 그 행동을 실행하지 마라. 지금은 "결재를 올렸고 승인되면 진행하겠다"고 사용자에게 알리고 턴을 마무리하라.`);
+    },
+  );
+
   let used = 0;
   const delegate = tool(
     'delegate',
     '동료 크루에게 하위 작업을 위임하고 결과를 받는다. to는 동료의 slug, task는 그 동료가 단독으로 수행할 수 있는 구체적 지시.',
     { to: z.string(), task: z.string() },
     async ({ to, task }) => {
-      const text = async (t) => ({ content: [{ type: 'text', text: t }] });
       if (used >= 2) return text('위임 한도 초과 — 이번 턴은 남은 작업을 직접 마무리하라.');
       const key = to.trim().toLowerCase();
       const target = colleagues.find((a) => a.slug === key || a.name.toLowerCase() === key);
@@ -69,7 +81,10 @@ function makeDelegateServer(wsId, fromSlug, fromName, colleagues) {
       }
     },
   );
-  return createSdkMcpServer({ name: 'crew', version: '1.0.0', tools: [delegate] });
+  return createSdkMcpServer({
+    name: 'crew', version: '1.0.0',
+    tools: [requestApproval, ...(colleagues.length ? [delegate] : [])],
+  });
 }
 
 /**
@@ -85,9 +100,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   const { servers } = await loadMcp(wsId);
   const mcpAllow = Object.keys(servers ?? {}).map((n) => `mcp__${n}`);
 
-  // 크루 간 위임 — 최상위 턴 + 동료가 있을 때만
+  // 크루 도구 — 결재 요청은 모든 턴, 위임은 최상위 턴 + 동료가 있을 때만(연쇄 위임 금지)
   const colleagues = from ? [] : (await listAgents(wsId)).filter((a) => a.slug !== agentSlug);
-  const crewServer = colleagues.length ? makeDelegateServer(wsId, agentSlug, meta.name || agentSlug, colleagues) : null;
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues);
 
   let reply = '';
   let sid = sessionId;
@@ -96,11 +111,13 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     prompt: userMsg,
     options: {
       cwd: p.root,
-      systemPrompt: systemPromptFor(md, p.root, skills) + (crewServer ? rosterPrompt(colleagues) : ''),
-      ...(mcpAllow.length || crewServer
-        ? { mcpServers: { ...(servers ?? {}), ...(crewServer ? { crew: crewServer } : {}) } }
-        : {}),
-      allowedTools: ['Read', 'Glob', 'Grep', 'Write', ...mcpAllow, ...(crewServer ? ['mcp__crew'] : [])],
+      systemPrompt: systemPromptFor(md, p.root, skills)
+        + (colleagues.length ? rosterPrompt(colleagues) : '')
+        + `\n## 결재 규칙 — 반드시 따를 것
+- 되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 실행 전 request_approval 도구로 결재를 올리고, 승인 없이는 실행하지 마라.
+- 초안 작성·분석·vault 기록 같은 회사 안 작업은 결재 없이 바로 한다.`,
+      mcpServers: { ...(servers ?? {}), crew: crewServer },
+      allowedTools: ['Read', 'Glob', 'Grep', 'Write', ...mcpAllow, 'mcp__crew'],
       permissionMode: 'bypassPermissions', // 스파이크 한정 — 프로덕션은 워크스페이스 샌드박스+훅 게이트
       settingSources: [], // 호스트의 CLAUDE.md/스킬 미주입(테넌트 격리)
       ...(sessionId ? { resume: sessionId } : {}),

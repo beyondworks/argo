@@ -16,6 +16,7 @@ export function paths(wsId) {
     routines: join(root, 'routines.json'),
     mcp: join(root, 'mcp.json'),
     usage: join(root, 'usage.jsonl'),
+    approvals: join(root, 'approvals.json'),
     vault: join(root, 'vault'),
     conversations: join(root, 'vault', 'conversations'),
     notes: join(root, 'vault', 'notes'),
