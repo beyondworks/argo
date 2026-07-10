@@ -2,8 +2,10 @@ import { loadCompany, updateCompany, archiveCompany } from '../../../../src/work
 import { listAgents, listDocs } from '../../../../src/hub.mjs';
 import { readUsageSummary, readDelegations } from '../../../../src/usage.mjs';
 import { ensureScheduler } from '../../../../src/scheduler.mjs';
+import { ensureGateway } from '../../../../src/gateway.mjs';
 
 ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
+ensureGateway(); // 메신저 게이트웨이(텔레그램/슬랙) 상주
 
 /** 대시보드 스탯 — 고유 연결 수(양방향 중복 제거), 오늘 기록, 종류별 수. */
 function docStats(docs) {

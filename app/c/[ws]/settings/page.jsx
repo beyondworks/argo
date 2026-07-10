@@ -97,6 +97,13 @@ export default function Settings({ params }) {
         </div>
       </div>
 
+      <ConnectionCard ws={ws} kind="telegram" title="텔레그램"
+        help='@BotFather로 봇을 만들어 토큰을 붙여넣고 가동하세요. 봇에게 첫 메시지를 보내면 이 회사와 연결됩니다. "@크루이름 지시"로 특정 크루를 부를 수 있고, 결재는 버튼으로 처리됩니다.'
+        agents={data?.agents ?? []} />
+      <ConnectionCard ws={ws} kind="slack" title="슬랙"
+        help='봇 토큰(xoxb-)과 채널 ID를 넣고 봇을 그 채널에 초대하세요. 채널 메시지가 크루에게 전달되고, 결재는 "승인 <번호>" 회신으로 처리됩니다.'
+        agents={data?.agents ?? []} />
+
       <div className="card" style={{ padding: 18, borderColor: 'var(--danger)' }}>
         <span className="card-title" style={{ color: 'var(--danger)' }}>위험 구역</span>
         <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: '8px 0 12px' }}>
@@ -107,6 +114,77 @@ export default function Settings({ params }) {
           <Icon name="trash" size={13} /> 회사 보관
         </button>
       </div>
+      </div>
+    </div>
+  );
+}
+
+const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, width: '100%' };
+
+/** 메신저 연결 카드 — 토큰은 서버에만 저장(화면은 마스킹), 가동 토글로 게이트웨이 시작/중지. */
+function ConnectionCard({ ws, kind, title, help, agents }) {
+  const [conn, setConn] = useState(null);
+  const [token, setToken] = useState('');
+  const [channel, setChannel] = useState('');
+  const [crew, setCrew] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  function load() {
+    api(`/api/companies/${ws}/connections`).then((d) => {
+      const c = d.connections[kind];
+      setConn(c); setChannel(c.channel ?? ''); setCrew(c.defaultCrew ?? '');
+    }).catch(() => setConn({}));
+  }
+  useEffect(load, [ws]);
+
+  async function save(enabled) {
+    setSaving(true); setMsg('');
+    try {
+      const d = await api(`/api/companies/${ws}/connections`, {
+        kind, token, enabled, defaultCrew: crew, ...(kind === 'slack' ? { channel } : {}),
+      });
+      setConn(d.connections[kind]); setToken('');
+      setMsg(enabled ? '가동 중 — 게이트웨이가 곧 연결됩니다' : '중지됨');
+    } catch (e) {
+      setMsg(String(e.message));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const on = conn?.enabled;
+  return (
+    <div className="card" style={{ padding: 18, display: 'grid', gap: 10, alignContent: 'start' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span className="card-title">{title} 연결</span>
+        <span className="chip">{on ? <><span className="dot" />가동</> : '중지'}{kind === 'telegram' && conn?.chatId ? ' · 페어링됨' : ''}</span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{help}</p>
+      <label style={{ display: 'grid', gap: 5 }}>
+        <span className="microlabel">Bot Token{conn?.hasToken ? ` · 저장됨 ${conn.token}` : ''}</span>
+        <input suppressHydrationWarning type="password" value={token} onChange={(e) => setToken(e.target.value)}
+          placeholder={conn?.hasToken ? '변경할 때만 입력' : (kind === 'telegram' ? '123456:ABC-…' : 'xoxb-…')} style={fieldStyle} />
+      </label>
+      {kind === 'slack' && (
+        <label style={{ display: 'grid', gap: 5 }}>
+          <span className="microlabel">Channel ID</span>
+          <input suppressHydrationWarning value={channel} onChange={(e) => setChannel(e.target.value)} placeholder="C0…" style={fieldStyle} />
+        </label>
+      )}
+      <label style={{ display: 'grid', gap: 5 }}>
+        <span className="microlabel">기본 크루 — 이름 없이 보낸 지시를 받는다</span>
+        <select value={crew} onChange={(e) => setCrew(e.target.value)} style={fieldStyle}>
+          <option value="">첫 번째 크루</option>
+          {agents.map((a) => <option key={a.slug} value={a.slug}>{a.name} — {a.role}</option>)}
+        </select>
+      </label>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <button className="btn btn-primary sm" disabled={saving || (!conn?.hasToken && !token.trim())} onClick={() => save(true)}>
+          {saving ? <Spinner size={12} /> : on ? '설정 저장' : '가동'}
+        </button>
+        {on && <button className="btn sm" disabled={saving} onClick={() => save(false)}>중지</button>}
+        <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{msg}</span>
       </div>
     </div>
   );

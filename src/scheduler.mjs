@@ -2,12 +2,15 @@
 // (nodejs 런타임 라우트에서만 로드되므로 node: 임포트가 안전하다. P1에서 워커로 분리)
 import { listCompanies } from './hub.mjs';
 import { loadRoutines, runRoutine, isDue } from './routines.mjs';
+import { daemonLease } from './lock.mjs';
 
 export function ensureScheduler() {
   if (globalThis.__argoScheduler) return;
   globalThis.__argoScheduler = true;
+  const lease = daemonLease('scheduler'); // Next 멀티 워커에서도 실행 주체는 하나만
   console.log('[argo] 루틴 스케줄러 시작 (60s 폴)');
   setInterval(async () => {
+    if (!lease.isLeader()) return;
     try {
       const companies = await listCompanies();
       for (const c of companies) {

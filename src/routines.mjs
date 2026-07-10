@@ -3,6 +3,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { paths } from './workspace.mjs';
 import { chat } from './chat.mjs';
+import { emitNotify } from './notify.mjs';
 
 export async function loadRoutines(wsId) {
   try { return JSON.parse(await readFile(paths(wsId).routines, 'utf8')); } catch { return []; }
@@ -55,11 +56,13 @@ export async function runRoutine(wsId, id) {
     r.lastOk = true;
     r.lastResult = t.reply.replace(/\s+/g, ' ').slice(0, 160);
     await saveRoutines(wsId, routines);
+    emitNotify({ type: 'routine', wsId, routine: r, ok: true, reply: t.reply }); // 메신저 브리핑 푸시
     return { ok: true, reply: t.reply, handover: t.handover };
   } catch (e) {
     r.lastOk = false;
     r.lastResult = String(e.message || e).slice(0, 160);
     await saveRoutines(wsId, routines);
+    emitNotify({ type: 'routine', wsId, routine: r, ok: false, reply: r.lastResult });
     throw e;
   }
 }
