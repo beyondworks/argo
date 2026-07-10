@@ -1,13 +1,14 @@
 'use client';
-// 회사 앱셸 — shadcn 스타일 사이드바(로고 → 메뉴 → 크루)를 모든 회사 화면이 공유한다.
+// 회사 앱셸 — 아이콘 레일 + 흰 탑바(검색 필·회사 칩) + 캔버스 콘텐츠.
 import { use, useCallback, useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { Logo, Icon, Avatar, Skeleton, api } from '../../ui';
+import { StarMark, Icon, Avatar, Skeleton, api } from '../../ui';
 
 export default function CompanyShell({ children, params }) {
   const { ws } = use(params);
   const pathname = usePathname();
   const [data, setData] = useState(null);
+  const [q, setQ] = useState('');
 
   const refresh = useCallback(() => {
     api(`/api/companies/${ws}`).then(setData).catch(() => setData({ missing: true }));
@@ -19,78 +20,83 @@ export default function CompanyShell({ children, params }) {
     return () => window.removeEventListener('argo:refresh', refresh);
   }, [refresh]);
 
-  const nav = [
-    { href: `/c/${ws}`, icon: 'deck', label: '데크' },
-    { href: `/c/${ws}/vault`, icon: 'memory', label: '기억' },
-  ];
+  // 탑바 검색 → 페이지가 구독해 목록을 필터링한다.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('argo:search', { detail: q }));
+  }, [q]);
+  useEffect(() => { setQ(''); }, [pathname]);
+
+  const agents = data?.agents ?? [];
+  const crewMatch = pathname.match(/\/crew\/([^/]+)/);
+  const currentCrew = crewMatch && agents.find((a) => a.slug === crewMatch[1]);
+  const title = pathname.endsWith('/vault') ? '기억' : currentCrew ? currentCrew.name : '데크';
+  const sub = pathname.endsWith('/vault')
+    ? '회사가 쌓아온 항해일지'
+    : currentCrew ? currentCrew.role : '크루와 오늘의 항해';
 
   return (
     <div className="shell">
-      <aside className="side">
-        <a href="/" className="nav-item" style={{ marginBottom: 6 }}>
-          <Logo size={14} />
+      <aside className="rail">
+        <a href="/" className="rail-logo" title="Argo 홈"><StarMark size={15} /></a>
+
+        <a href={`/c/${ws}`} className={`rail-btn${pathname === `/c/${ws}` ? ' active' : ''}`} title="데크">
+          <Icon name="deck" size={18} />
+        </a>
+        <a href={`/c/${ws}/vault`} className={`rail-btn${pathname.endsWith('/vault') ? ' active' : ''}`} title="기억">
+          <Icon name="memory" size={18} />
         </a>
 
-        <div style={{ padding: '2px 10px 12px' }}>
-          {data && !data.missing ? (
-            <>
-              <div style={{ fontSize: 14.5, fontWeight: 650, letterSpacing: '-0.015em' }}>{data.company?.name}</div>
-              <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 1 }}>
-                크루 {data.agents?.length ?? 0} · 기억 {data.memoryCount ?? 0}
-              </div>
-            </>
-          ) : (
-            <><Skeleton h={17} w={120} /><Skeleton h={12} w={80} style={{ marginTop: 6 }} /></>
-          )}
-        </div>
+        <div className="rail-sep" />
 
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {nav.map((n) => (
-            <a key={n.href} href={n.href} className={`nav-item${pathname === n.href ? ' active' : ''}`}>
-              <Icon name={n.icon} />
-              {n.label}
+        {agents.map((a) => {
+          const href = `/c/${ws}/crew/${a.slug}`;
+          const active = pathname === href;
+          return (
+            <a key={a.slug} href={href} className={`rail-btn${active ? ' active' : ''}`} title={`${a.name} — ${a.role}`}>
+              <Avatar name={a.name} sm />
             </a>
-          ))}
-        </nav>
-
-        <div style={{ marginTop: 18, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <div className="section-label" style={{ padding: '0 10px' }}>크루</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, overflowY: 'auto' }}>
-            {(data?.agents ?? []).map((a) => {
-              const href = `/c/${ws}/crew/${a.slug}`;
-              return (
-                <a key={a.slug} href={href} className={`nav-item${pathname === href ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6 }}>
-                  <Avatar name={a.name} sm />
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: 'block', lineHeight: 1.3 }}>{a.name}</span>
-                    <span style={{ display: 'block', fontSize: 11, fontWeight: 400, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>
-                      {a.role}
-                    </span>
-                  </span>
-                </a>
-              );
-            })}
-            {data && !data.missing && (data.agents ?? []).length === 0 && (
-              <span style={{ fontSize: 12, color: 'var(--fg-3)', padding: '2px 10px' }}>아직 크루가 없습니다</span>
-            )}
-          </div>
-        </div>
-
-        <a href={`/c/${ws}`} className="nav-item" style={{ color: 'var(--fg-3)', fontSize: 12 }}>
-          <Icon name="plus" size={14} />
-          크루 영입은 데크에서
+          );
+        })}
+        <a href={`/c/${ws}`} className="rail-btn" title="크루 영입 — 데크에서">
+          <Icon name="plus" size={17} />
         </a>
       </aside>
 
-      <main className="main">
-        <div className="main-inner">
+      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <header className="topbar">
+          <div style={{ minWidth: 0 }}>
+            <div className="topbar-title">{title}</div>
+            <div className="topbar-sub" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>
+          </div>
+
+          <div style={{ flex: 1 }} />
+
+          <label className="search-pill">
+            <Icon name="search" size={15} />
+            <input placeholder="검색" value={q} onChange={(e) => setQ(e.target.value)} />
+            {q && (
+              <button onClick={() => setQ('')} style={{ color: 'var(--ink-3)', fontSize: 12, fontWeight: 700 }} aria-label="지우기">✕</button>
+            )}
+          </label>
+
+          {data && !data.missing ? (
+            <a href="/" className="user-pill" title="회사 전환">
+              <Avatar name={data.company?.name} sm />
+              <span style={{ maxWidth: 140, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{data.company?.name}</span>
+            </a>
+          ) : (
+            <Skeleton h={40} w={120} style={{ borderRadius: 999 }} />
+          )}
+        </header>
+
+        <main className="content" style={{ width: '100%' }}>
           {data?.missing ? (
             <div className="empty" style={{ marginTop: 40 }}>
-              이 회사를 찾을 수 없습니다. <a href="/" style={{ color: 'var(--accent)', fontWeight: 600 }}>홈으로 돌아가기</a>
+              이 회사를 찾을 수 없습니다. <a href="/" style={{ color: 'var(--lav-strong)', fontWeight: 700 }}>홈으로 돌아가기</a>
             </div>
           ) : children}
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

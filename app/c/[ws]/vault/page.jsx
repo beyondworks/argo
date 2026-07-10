@@ -1,5 +1,5 @@
 'use client';
-// 기억 — 문서가 별, [[링크]]가 선인 그래프 + 문서 목록/뷰어. 톤은 절제.
+// 기억 — 그래프(카드) + 문서 목록(행) + 뷰어(카드). 탑바 검색으로 목록 필터.
 import { Suspense, use, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Icon, Markdown, Spinner, Skeleton, api, timeAgo, tsFromRel } from '../../../ui';
@@ -19,10 +19,17 @@ function Vault({ params }) {
   const [selected, setSelected] = useState(initialDoc || null);
   const [content, setContent] = useState('');
   const [loadingDoc, setLoadingDoc] = useState(false);
+  const [q, setQ] = useState('');
 
   useEffect(() => {
     api(`/api/companies/${ws}/vault`).then((d) => setDocs(d.docs)).catch(() => setDocs([]));
   }, [ws]);
+
+  useEffect(() => {
+    const h = (e) => setQ(String(e.detail || '').toLowerCase());
+    window.addEventListener('argo:search', h);
+    return () => window.removeEventListener('argo:search', h);
+  }, []);
 
   useEffect(() => {
     if (!selected) { setContent(''); return; }
@@ -34,37 +41,43 @@ function Vault({ params }) {
   }, [ws, selected]);
 
   const openWiki = (name) => setSelected(name.endsWith('.md') ? name : `${name}.md`);
+  const visible = (docs ?? []).filter((d) => !q || d.title.toLowerCase().includes(q) || d.excerpt.toLowerCase().includes(q));
 
   return (
-    <div style={{ maxWidth: 900 }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 className="page-title">기억</h1>
-        <p className="page-sub">모든 턴이 기록으로 남고, 비슷한 기억끼리 자동으로 이어집니다. 크루는 이 그래프를 읽고 맥락을 이어갑니다.</p>
-      </div>
-
+    <div style={{ display: 'grid', gap: 14 }}>
       {docs === null ? (
-        <div style={{ display: 'grid', gap: 12 }}>
-          <Skeleton h={200} /><Skeleton h={300} />
-        </div>
+        <>
+          <Skeleton h={210} style={{ borderRadius: 20 }} />
+          <Skeleton h={320} style={{ borderRadius: 20 }} />
+        </>
       ) : docs.length === 0 ? (
         <div className="empty">아직 기록된 기억이 없습니다. 크루와 첫 대화를 나누면 여기에 쌓입니다.</div>
       ) : (
         <>
           <Constellation docs={docs} selected={selected} onSelect={setSelected} />
 
-          <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 14, marginTop: 14, alignItems: 'start' }}>
-            <div className="card" style={{ overflow: 'hidden', maxHeight: 540, overflowY: 'auto' }}>
-              {docs.map((d) => {
+          <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 14, alignItems: 'start' }}>
+            <div className="card" style={{ overflow: 'hidden', maxHeight: 560, overflowY: 'auto' }}>
+              <div className="card-head" style={{ paddingBottom: 10 }}>
+                <span className="card-title">기록</span>
+                <span className="chip">{visible.length}</span>
+              </div>
+              {visible.length === 0 && (
+                <p style={{ padding: '0 20px 18px', color: 'var(--ink-3)', fontSize: 13 }}>검색과 일치하는 기억이 없습니다.</p>
+              )}
+              {visible.map((d) => {
                 const active = selected === d.rel;
                 return (
                   <button key={d.rel} onClick={() => setSelected(d.rel)} className={`row${active ? ' active' : ''}`}>
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ display: 'block', fontSize: 12.5, fontWeight: active ? 650 : 500, color: active ? 'var(--fg)' : 'var(--fg-2)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                    <span className={`icon-circle ${d.dir === 'notes' ? 'mint' : 'lav'}`}>
+                      <Icon name={d.dir === 'notes' ? 'bolt' : 'doc'} size={15} />
+                    </span>
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ display: 'block', fontSize: 12.5, fontWeight: active ? 700 : 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                         {d.title}
                       </span>
-                      <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)', marginTop: 1 }}>
-                        {d.dir === 'notes' ? '지식 노트' : '대화 기록'} · {timeAgo(tsFromRel(d.rel) ?? d.mtime)}
-                        {d.links.length > 0 && <span style={{ color: 'var(--accent)' }}> · 연결 {d.links.length}</span>}
+                      <span style={{ display: 'block', fontSize: 11, color: 'var(--ink-3)', marginTop: 1 }}>
+                        {timeAgo(tsFromRel(d.rel) ?? d.mtime)}{d.links.length > 0 && ` · 연결 ${d.links.length}`}
                       </span>
                     </span>
                   </button>
@@ -72,16 +85,18 @@ function Vault({ params }) {
               })}
             </div>
 
-            <div className="card" style={{ padding: 22, minHeight: 320 }}>
+            <div className="card" style={{ padding: 24, minHeight: 340 }}>
               {!selected ? (
-                <div style={{ color: 'var(--fg-3)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Icon name="doc" size={14} /> 왼쪽 목록이나 별을 눌러 기억을 열어보세요.
+                <div style={{ color: 'var(--ink-3)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Icon name="doc" size={14} /> 왼쪽 목록이나 그래프의 점을 눌러 기억을 열어보세요.
                 </div>
               ) : loadingDoc ? (
                 <Spinner />
               ) : (
                 <>
-                  <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 14, fontFamily: 'var(--mono)' }}>{selected}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                    <span className="chip" style={{ fontFamily: 'var(--mono)', fontWeight: 500 }}>{selected}</span>
+                  </div>
                   <Markdown text={content} onWikiLink={openWiki} />
                 </>
               )}
@@ -93,17 +108,17 @@ function Vault({ params }) {
   );
 }
 
-/** 기억 그래프 — 골든앵글 배치. 배경은 표면색, 별·선만 골드. */
+/** 기억 그래프 — 골든앵글 배치. 라벤더 점(대화)·민트 점(노트), 옅은 라벤더 선. */
 function Constellation({ docs, selected, onSelect }) {
-  const W = 860, H = 200;
+  const W = 1020, H = 210;
   const layout = useMemo(() => {
     const nodes = docs.map((d, i) => {
-      const r = 22 + 26 * Math.sqrt(i);
+      const r = 24 + 27 * Math.sqrt(i);
       const th = i * 2.39996;
       return {
         ...d,
         key: d.rel.replace(/\.md$/, ''),
-        x: W / 2 + r * Math.cos(th) * 1.8,
+        x: W / 2 + r * Math.cos(th) * 1.9,
         y: H / 2 + r * Math.sin(th) * 0.58,
       };
     });
@@ -124,28 +139,32 @@ function Constellation({ docs, selected, onSelect }) {
   }, [docs]);
 
   return (
-    <div className="card" style={{ padding: 6 }}>
+    <div className="card" style={{ padding: '14px 18px 10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+        <span className="card-title">기억 그래프</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <span className="chip lav"><span className="dot" />대화 기록</span>
+          <span className="chip mint"><span className="dot" />지식 노트</span>
+          <span className="chip">연결 {layout.edges.length}</span>
+        </div>
+      </div>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }}>
         {layout.edges.map(([a, b], i) => (
-          <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--accent-line)" strokeWidth="1" />
+          <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--lav-soft)" strokeWidth="2" />
         ))}
         {layout.nodes.map((n) => {
           const active = selected === n.rel;
+          const color = n.dir === 'notes' ? 'var(--mint)' : 'var(--lav)';
           return (
             <g key={n.rel} onClick={() => onSelect(n.rel)} style={{ cursor: 'pointer' }}>
-              <circle cx={n.x} cy={n.y} r="12" fill="transparent" />
-              {active && <circle cx={n.x} cy={n.y} r="9" fill="var(--accent-soft)" stroke="var(--accent-line)" />}
-              <circle cx={n.x} cy={n.y} r={active ? 4 : 3} fill={n.dir === 'notes' ? 'var(--fg-3)' : 'var(--accent)'} style={{ transition: 'r 0.15s' }} />
+              <circle cx={n.x} cy={n.y} r="13" fill="transparent" />
+              {active && <circle cx={n.x} cy={n.y} r="10" fill="none" stroke={color} strokeOpacity="0.35" strokeWidth="3" />}
+              <circle cx={n.x} cy={n.y} r={active ? 5 : 4} fill={color} />
               <title>{n.title}</title>
             </g>
           );
         })}
       </svg>
-      <div style={{ display: 'flex', gap: 14, padding: '2px 10px 6px', fontSize: 11, color: 'var(--fg-3)' }}>
-        <span><span style={{ color: 'var(--accent)' }}>●</span> 대화 기록</span>
-        <span><span style={{ color: 'var(--fg-3)' }}>●</span> 지식 노트</span>
-        <span style={{ marginLeft: 'auto' }}>기억 {docs.length} · 연결 {layout.edges.length}</span>
-      </div>
     </div>
   );
 }

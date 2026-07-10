@@ -1,5 +1,5 @@
 'use client';
-// 크루 채팅 — 유저는 버블, 크루는 플랫 문서형(코덱스 스타일). 턴마다 기억 칩.
+// 크루 채팅 — 유저는 라벤더 버블, 크루는 플랫. 턴마다 민트 기억 칩.
 import { use, useEffect, useRef, useState } from 'react';
 import { Avatar, Icon, Markdown, Dots, api } from '../../../../ui';
 
@@ -50,21 +50,21 @@ export default function CrewChat({ params }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 126px)' }}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 18, borderBottom: '1px solid var(--border)', marginBottom: 26 }}>
-        <Avatar name={agent?.name} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15.5, fontWeight: 650, letterSpacing: '-0.015em' }}>{agent?.name ?? ''}</div>
-          <div style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>{agent?.role}</div>
-        </div>
-        {sessionRef.current && <span className="chip">세션 이어가는 중</span>}
-      </header>
-
+    <div style={{ maxWidth: 760, margin: '0 auto', display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 170px)' }}>
       <div className="thread" style={{ flex: 1 }}>
         {thread.length === 0 && !busy && (
-          <div className="empty" style={{ marginTop: 12 }}>
-            {agent?.tone && <p style={{ marginBottom: 6, color: 'var(--fg-2)' }}>"{agent.tone}"</p>}
-            첫 지시를 내려보세요. 매 턴의 결과는 회사 기억에 남고, 비슷한 기억끼리 이어집니다.
+          <div className="card fade-up" style={{ padding: '30px 28px', textAlign: 'center' }}>
+            <div style={{ display: 'grid', placeItems: 'center', gap: 10 }}>
+              <Avatar name={agent?.name} />
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 750 }}>{agent?.name ?? ''}</div>
+                <span className="chip lav" style={{ marginTop: 4 }}>{agent?.role}</span>
+              </div>
+              {agent?.tone && <p style={{ color: 'var(--ink-2)', fontSize: 13 }}>"{agent.tone}"</p>}
+              <p style={{ color: 'var(--ink-3)', fontSize: 12.5 }}>
+                첫 지시를 내려보세요. 매 턴의 결과는 회사 기억에 남고, 비슷한 기억끼리 이어집니다.
+              </p>
+            </div>
           </div>
         )}
         {thread.map((m, i) =>
@@ -73,7 +73,7 @@ export default function CrewChat({ params }) {
           ) : (
             <div key={i} className="msg-crew fade-up">
               <Avatar name={agent?.name} sm />
-              <div style={{ minWidth: 0, paddingTop: 2 }}>
+              <div className="card" style={{ minWidth: 0, padding: '14px 18px' }}>
                 <Markdown text={m.text} />
                 {m.handover && (
                   <a className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
@@ -89,16 +89,16 @@ export default function CrewChat({ params }) {
         {busy && (
           <div className="msg-crew">
             <Avatar name={agent?.name} sm />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: 'var(--fg-2)', fontSize: 13, paddingTop: 4 }}>
+            <div className="card" style={{ padding: '13px 18px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--ink-2)', fontSize: 13 }}>
               <Dots /> {WAIT_STAGES[stage]}…
             </div>
           </div>
         )}
-        {error && <p style={{ fontSize: 13, color: 'var(--danger)' }}>{error}</p>}
+        {error && <p style={{ fontSize: 13, color: 'var(--coral)' }}>{error}</p>}
         <div ref={endRef} />
       </div>
 
-      <form onSubmit={send} className="input-row" style={{ position: 'sticky', bottom: 20, marginTop: 26, boxShadow: 'var(--shadow-md)' }}>
+      <form onSubmit={send} className="input-pill" style={{ position: 'sticky', bottom: 20, marginTop: 24, boxShadow: 'var(--shadow-pop)' }}>
         <input
           placeholder={`${agent?.name ?? '크루'}에게 지시하기`}
           value={input}
@@ -106,7 +106,7 @@ export default function CrewChat({ params }) {
           disabled={busy}
           autoFocus
         />
-        <button className="btn btn-primary btn-icon" disabled={busy || !input.trim()} aria-label="보내기">
+        <button className="btn btn-dark btn-icon" disabled={busy || !input.trim()} aria-label="보내기">
           <Icon name="send" size={15} />
         </button>
       </form>
