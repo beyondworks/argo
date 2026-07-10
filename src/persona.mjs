@@ -87,6 +87,49 @@ export async function saveAgentCard(wsId, slug, md) {
   return { slug, name: meta.name, role: meta.role || '' };
 }
 
+/** frontmatter 키를 갱신/삽입/삭제하며 카드 본문은 보존한다. */
+function setFrontmatterKey(md, key, value) {
+  const re = new RegExp(`^(---[\\s\\S]*?)^${key}:.*$`, 'm');
+  if (value === '' || value == null) {
+    return md.replace(new RegExp(`^${key}:.*\\n`, 'm'), ''); // 키 제거
+  }
+  if (re.test(md)) return md.replace(new RegExp(`^${key}:.*$`, 'm'), `${key}: ${value}`);
+  return md.replace(/^---\r?\n/, `---\n${key}: ${value}\n`); // 키 삽입
+}
+
+/** 이름·역할·팀 수정 — 슬러그·파일명·기록은 유지(정체성은 표시 이름만 바뀐다). */
+export async function updateAgentMeta(wsId, slug, { name, role, team }) {
+  const file = join(paths(wsId).agents, `${slug}.md`);
+  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+  let md = await readFile(file, 'utf8');
+  const before = parseFrontmatter(md);
+  if (name !== undefined && name.trim()) {
+    md = setFrontmatterKey(md, 'name', name.trim());
+    // 본문 제목의 옛 이름도 함께 (— "# 이름 — 직함" 관례)
+    if (before.name) md = md.replace(new RegExp(`^# ${before.name}(?= —|$)`, 'm'), `# ${name.trim()}`);
+  }
+  if (role !== undefined) md = setFrontmatterKey(md, 'role', role.trim());
+  if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
+  await writeFile(file, md);
+  return parseFrontmatter(md);
+}
+
+/** 팀 이름 변경 — 그 팀 소속 전 크루의 frontmatter를 일괄 갱신. */
+export async function renameTeam(wsId, from, to) {
+  const { readdir } = await import('node:fs/promises');
+  const dir = paths(wsId).agents;
+  let changed = 0;
+  for (const f of (await readdir(dir)).filter((n) => n.endsWith('.md'))) {
+    const file = join(dir, f);
+    const md = await readFile(file, 'utf8');
+    if (parseFrontmatter(md).team !== from) continue;
+    await writeFile(file, setFrontmatterKey(md, 'team', to.trim()));
+    changed += 1;
+  }
+  if (changed === 0) throw new Error('해당 팀의 크루가 없습니다');
+  return { changed };
+}
+
 /** 해고 — 카드를 지우지 않고 .archive/로 옮긴다(복구 가능). */
 export async function removeAgentCard(wsId, slug) {
   const dir = paths(wsId).agents;

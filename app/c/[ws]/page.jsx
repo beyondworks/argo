@@ -21,6 +21,7 @@ export default function Deck({ params }) {
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
   const [graphOpen, setGraphOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(null); // 크루 신원 수정 모달
 
   function load() {
     api(`/api/companies/${ws}`).then(setData).catch((e) => setError(String(e.message)));
@@ -203,8 +204,30 @@ export default function Deck({ params }) {
                     [
                       agents.some((a) => (a.team || '') !== '') && (
                         <tr key={`t-${team}`} style={{ cursor: 'default' }}>
-                          <td colSpan={5} style={{ padding: '7px 20px', background: 'var(--card-2)' }}>
-                            <span className="microlabel">{team || '무소속'}</span>
+                          <td colSpan={5} style={{ padding: '5px 20px', background: 'var(--card-2)' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                              <span className="microlabel">{team || '무소속'}</span>
+                              {team && (
+                                <button
+                                  className="microlabel"
+                                  style={{ cursor: 'pointer', color: 'var(--fg-3)', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                                  title="팀 이름 변경"
+                                  onClick={async () => {
+                                    const to = window.prompt(`"${team}" 팀의 새 이름:`, team);
+                                    if (!to?.trim() || to.trim() === team) return;
+                                    const res = await fetch(`/api/companies/${ws}/agents`, {
+                                      method: 'PATCH', headers: { 'content-type': 'application/json' },
+                                      body: JSON.stringify({ from: team, to }),
+                                    });
+                                    if (!res.ok) { setError((await res.json()).error); return; }
+                                    load();
+                                    window.dispatchEvent(new Event('argo:refresh'));
+                                  }}
+                                >
+                                  <Icon name="edit" size={11} />
+                                </button>
+                              )}
+                            </span>
                           </td>
                         </tr>
                       ),
@@ -221,7 +244,19 @@ export default function Deck({ params }) {
                             {a.expertise.join(' · ')}
                           </td>
                           <td><span className="pill ok"><span className="dot" />대기</span></td>
-                          <td><span className="btn sm">대화 <Icon name="arrow" size={12} /></span></td>
+                          <td>
+                            <span style={{ display: 'inline-flex', gap: 6 }}>
+                              <button
+                                className="btn sm btn-icon"
+                                style={{ width: 28 }}
+                                title="이름·역할·팀 수정"
+                                onClick={(e) => { e.stopPropagation(); setEditTarget(a); }}
+                              >
+                                <Icon name="edit" size={13} />
+                              </button>
+                              <span className="btn sm">대화 <Icon name="arrow" size={12} /></span>
+                            </span>
+                          </td>
                         </tr>
                       )),
                     ]
@@ -311,6 +346,16 @@ export default function Deck({ params }) {
         </div>
       </div>
 
+      {editTarget && (
+        <CrewEditModal
+          ws={ws}
+          agent={editTarget}
+          teams={[...new Set((data?.agents ?? []).map((a) => a.team).filter(Boolean))]}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => { setEditTarget(null); load(); window.dispatchEvent(new Event('argo:refresh')); }}
+        />
+      )}
+
       {graphOpen && docs && data && (
         <GraphModal
           company={data.company}
@@ -360,6 +405,74 @@ function VoyageLog({ docs, agents }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** 크루 신원 수정 — 이름·역할·팀. 슬러그·기록은 유지된다. */
+function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
+  const [form, setForm] = useState({ name: agent.name, role: agent.role, team: agent.team || '' });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  async function save(e) {
+    e.preventDefault();
+    if (saving || !form.name.trim()) return;
+    setSaving(true); setErr('');
+    try {
+      const res = await fetch(`/api/companies/${ws}/agents/${agent.slug}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      onSaved();
+    } catch (e2) {
+      setErr(String(e2.message));
+      setSaving(false);
+    }
+  }
+
+  const field = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13 };
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(37,39,30,0.25)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
+      <form onSubmit={save} className="card fade-up" style={{ width: 'min(440px, 100%)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="card-head">
+          <span className="card-title">크루 정보 수정</span>
+          <span className="microlabel">{agent.slug}</span>
+          <span className="rule" />
+          <button type="button" className="btn sm" onClick={onClose}>닫기 ESC</button>
+        </div>
+        <div style={{ padding: '0 20px 18px', display: 'grid', gap: 10 }}>
+          <label style={{ display: 'grid', gap: 4 }}>
+            <span className="microlabel">Name</span>
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={field} {...imeGuard} autoFocus />
+          </label>
+          <label style={{ display: 'grid', gap: 4 }}>
+            <span className="microlabel">Role</span>
+            <input value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} style={field} {...imeGuard} />
+          </label>
+          <label style={{ display: 'grid', gap: 4 }}>
+            <span className="microlabel">Team — 비우면 무소속</span>
+            <input value={form.team} onChange={(e) => setForm({ ...form, team: e.target.value })} list="argo-teams-edit" style={field} {...imeGuard} />
+            <datalist id="argo-teams-edit">
+              {teams.map((t) => <option key={t} value={t} />)}
+            </datalist>
+          </label>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="btn btn-primary sm" disabled={saving || !form.name.trim()}>
+              {saving ? <Spinner size={12} /> : '저장'}
+            </button>
+            <span className="metric-sub2">기록·별자리의 과거 흔적은 그대로 유지됩니다</span>
+            {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
+          </div>
+        </div>
+      </form>
     </div>
   );
 }

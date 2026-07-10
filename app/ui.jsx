@@ -23,6 +23,7 @@ const PATHS = {
   market: 'M21 8l-9-5-9 5v8l9 5 9-5V8zM3 8l9 5 9-5M12 21V13',
   settings: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
   play: 'M6 4l14 8-14 8V4z',
+  edit: 'M17 3l4 4L8 20H4v-4L17 3zM14 6l4 4',
   trash: 'M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 11v6M14 11v6',
 };
 
