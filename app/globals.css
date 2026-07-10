@@ -129,7 +129,11 @@ input, textarea { font: inherit; color: var(--fg); }
 .search-pill input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 13px; color: var(--fg); }
 .search-pill input::placeholder { color: var(--fg-3); }
 
-.content { padding: 26px 32px 88px; max-width: 1100px; }
+.content { padding: 26px 32px 88px; max-width: 1480px; }
+
+/* 데크 2열 — 본 계기 + 우측 보조 계기 레일 */
+.deck-grid { display: grid; grid-template-columns: 1fr 316px; gap: 16px; align-items: start; }
+@media (max-width: 1340px) { .deck-grid { grid-template-columns: 1fr; } }
 
 /* ─── 카드 — 종이 + 잉크 헤어라인, 그림자 없음 ─── */
 .card {

@@ -44,7 +44,7 @@ function Vault({ params }) {
   const visible = (docs ?? []).filter((d) => !q || d.title.toLowerCase().includes(q) || d.excerpt.toLowerCase().includes(q));
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div style={{ display: 'grid', gap: 14, maxWidth: 1100 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <span className="microlabel">Vault · 회사가 쌓아온 항해일지</span>
         <span className="microlabel">{docs ? `${docs.length} Records` : ''}</span>
