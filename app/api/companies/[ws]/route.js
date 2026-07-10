@@ -1,5 +1,6 @@
 import { loadCompany, updateCompany, archiveCompany } from '../../../../src/workspace.mjs';
 import { listAgents, listDocs } from '../../../../src/hub.mjs';
+import { readUsageSummary } from '../../../../src/usage.mjs';
 import { ensureScheduler } from '../../../../src/scheduler.mjs';
 
 ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
@@ -33,14 +34,15 @@ function docStats(docs) {
 export async function GET(_req, { params }) {
   try {
     const { ws } = await params;
-    const [company, agents, docs] = await Promise.all([
-      loadCompany(ws), listAgents(ws), listDocs(ws),
+    const [company, agents, docs, usage] = await Promise.all([
+      loadCompany(ws), listAgents(ws), listDocs(ws), readUsageSummary(ws),
     ]);
     return Response.json({
       company, agents,
       memories: docs.slice(0, 6),
       memoryCount: docs.length,
       stats: docStats(docs),
+      usage,
     });
   } catch {
     return Response.json({ error: '회사를 찾을 수 없습니다' }, { status: 404 });

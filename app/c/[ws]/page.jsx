@@ -307,6 +307,7 @@ export default function Deck({ params }) {
           </div>
           <VoyageLog docs={docs} agents={data?.agents ?? []} />
           <Nameplate company={data?.company} memoryCount={data?.memoryCount} links={stats?.links} crew={data?.agents?.length} />
+          <TokenPanel usage={data?.usage} />
         </div>
       </div>
 
@@ -359,6 +360,84 @@ function VoyageLog({ docs, agents }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : String(n));
+
+/** 토큰 계기 — 입력/출력·캐시 적중률·턴당 비용.
+    팩트: 에이전트 작업은 입력(맥락)≫출력이 정상. 효율 = ①캐시 적중률(캐시 읽기는 정가의 ~1/10) ②턴당 비용. */
+function TokenPanel({ usage }) {
+  if (!usage) return <Skeleton h={170} style={{ borderRadius: 18 }} />;
+  const t = usage.today.turns > 0 ? usage.today : usage.total;
+  const scope = usage.today.turns > 0 ? 'Today' : 'Total';
+  if (usage.total.turns === 0) {
+    return (
+      <div className="card" style={{ padding: '15px 18px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span className="card-title">토큰</span>
+          <span className="microlabel">Usage</span>
+        </div>
+        <p style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 8 }}>
+          다음 턴부터 사용량이 기록됩니다.
+        </p>
+      </div>
+    );
+  }
+  const hit = Math.round(t.cacheHitRate * 100);
+  return (
+    <div className="card" style={{ padding: '15px 18px 14px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <span className="card-title">토큰</span>
+        <span className="chip">{scope} · {t.turns}턴</span>
+      </div>
+
+      {/* 입력(맥락) / 출력(생성) — 입력≫출력이 정상 형태 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div>
+          <div className="microlabel">In · 읽은 맥락</div>
+          <div className="num" style={{ fontSize: 21 }}>{fmtTok(t.contextTotal)}</div>
+        </div>
+        <div>
+          <div className="microlabel">Out · 생성</div>
+          <div className="num" style={{ fontSize: 21 }}>{fmtTok(t.output)}</div>
+        </div>
+      </div>
+
+      {/* 효율 ① 캐시 적중률 */}
+      <div style={{ marginTop: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 5 }}>
+          <span style={{ fontWeight: 600 }}>캐시 적중률</span>
+          <span className="mono" style={{ color: 'var(--fg-2)' }}>{hit}%</span>
+        </div>
+        <div className="meter"><div className="meter-track"><div className="meter-fill" style={{ width: `${hit}%` }} /></div></div>
+        <div className="metric-sub2" style={{ marginTop: 4 }}>높을수록 같은 맥락을 싸게 재사용 (캐시 읽기 ≈ 정가의 1/10)</div>
+      </div>
+
+      {/* 효율 ② + 형태 지표 */}
+      <div style={{ display: 'grid', gap: 5, marginTop: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, borderBottom: '1px dashed var(--border-soft)', paddingBottom: 5 }}>
+          <span className="microlabel">턴당 비용</span>
+          <span className="mono" style={{ fontSize: 11 }}>
+            {t.costPerTurn != null ? `$${t.costPerTurn.toFixed(3)}` : '—'}
+          </span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, borderBottom: '1px dashed var(--border-soft)', paddingBottom: 5 }}>
+          <span className="microlabel">출력 1당 맥락</span>
+          <span className="mono" style={{ fontSize: 11 }}>{t.inPerOut.toFixed(0)} : 1</span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+          <span className="microlabel">누적</span>
+          <span className="mono" style={{ fontSize: 11 }}>
+            {fmtTok(usage.total.contextTotal)} in · {fmtTok(usage.total.output)} out
+            {usage.total.hasCost ? ` · $${usage.total.costUsd.toFixed(2)}` : ''}
+          </span>
+        </div>
+      </div>
+      <div className="metric-sub2" style={{ marginTop: 8 }}>
+        입력이 출력보다 큰 것이 정상입니다 — 근거를 충분히 읽고 짧게 생성하는 형태.
+      </div>
     </div>
   );
 }

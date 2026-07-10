@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
+import { appendUsage } from './usage.mjs';
 
 const CARD_PROMPT = (oneLiner, name) => `다음 한 줄 요청으로 AI 직원의 페르소나 카드를 작성해줘.
 
@@ -45,6 +46,7 @@ function parseFrontmatter(md) {
 /** Agent SDK 단일 턴으로 카드 생성 → agents/<slug>.md 저장. name·team 지정 가능. */
 export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {}) {
   let out = '';
+  const t0 = Date.now();
   for await (const msg of query({
     prompt: CARD_PROMPT(oneLiner, name?.trim()),
     options: {
@@ -54,7 +56,10 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
       maxTurns: 1,
     },
   })) {
-    if (msg.type === 'result' && msg.subtype === 'success') out = msg.result;
+    if (msg.type === 'result') {
+      await appendUsage(wsId, { kind: 'hire', usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0 });
+      if (msg.subtype === 'success') out = msg.result;
+    }
   }
   const md = out.trim().replace(/^```(?:markdown)?\n?/, '').replace(/\n?```$/, '');
   const meta = parseFrontmatter(md);

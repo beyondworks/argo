@@ -15,6 +15,7 @@ export function paths(wsId) {
     skills: join(root, 'skills'),
     routines: join(root, 'routines.json'),
     mcp: join(root, 'mcp.json'),
+    usage: join(root, 'usage.jsonl'),
     vault: join(root, 'vault'),
     conversations: join(root, 'vault', 'conversations'),
     notes: join(root, 'vault', 'notes'),

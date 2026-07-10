@@ -7,6 +7,7 @@ import { paths } from './workspace.mjs';
 import { readAgentCard } from './persona.mjs';
 import { saveHandover } from './memory.mjs';
 import { loadMcp } from './market.mjs';
+import { appendUsage } from './usage.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지. */
 async function loadSkills(wsId, cap = 6000) {
@@ -47,6 +48,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null) {
 
   let reply = '';
   let sid = sessionId;
+  const t0 = Date.now();
   for await (const msg of query({
     prompt: userMsg,
     options: {
@@ -62,6 +64,11 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null) {
     if (msg.type === 'system' && msg.subtype === 'init') sid = msg.session_id;
     if (msg.type === 'result') {
       sid = msg.session_id ?? sid;
+      // 토큰 사용량 기록 — 대시보드 효율 지표(캐시 적중률·턴당 비용)의 원천
+      await appendUsage(wsId, {
+        kind: 'chat', slug: agentSlug,
+        usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0,
+      });
       if (msg.subtype === 'success') reply = msg.result;
       else throw new Error(`턴 실패: ${msg.subtype}`);
     }
