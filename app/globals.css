@@ -1175,6 +1175,61 @@ input, textarea { font: inherit; color: var(--fg); }
 .spin { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* 아르고 스피너 — 노 젓는 박자(가속-활강)의 별 회전. reduced-motion에선 전역 규칙이 정지시킨다. */
+.argo-spin { animation: argoRow 1.7s cubic-bezier(0.45, 0.05, 0.35, 0.95) infinite; transform-origin: center; }
+@keyframes argoRow {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(0.86); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+/* 첨부 칩 — 입력바 위에 뜨는 대기 첨부 + 유저 버블 안 첨부 표기 */
+.att-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 550;
+  padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--card);
+  max-width: 220px; white-space: nowrap;
+}
+.att-chip .name { overflow: hidden; text-overflow: ellipsis; }
+.att-chip button { color: var(--fg-3); font-size: 11px; font-weight: 700; flex: none; }
+.att-chip button:hover { color: var(--danger); }
+.att-thumb { max-width: 200px; max-height: 150px; border-radius: 10px; border: 1px solid var(--primary-fg-line); display: block; }
+
+/* 드롭 오버레이 — 파일을 끌고 오면 스레드 전체가 받는 그릇이 된다 */
+.drop-overlay {
+  position: absolute; inset: 0; z-index: 30; border-radius: var(--r);
+  border: 2px dashed var(--accent); background: var(--primary-soft);
+  display: grid; place-items: center;
+  font-size: 13.5px; font-weight: 650; color: var(--fg);
+  pointer-events: none;
+}
+
+/* 백그라운드 작업 패널 — 탑바 우측 버튼으로 여는 슬라이드 오버 */
+.tasks-panel {
+  position: fixed; top: 64px; right: 14px; z-index: 90;
+  width: min(400px, calc(100vw - 28px)); max-height: calc(100vh - 84px);
+  display: flex; flex-direction: column;
+  animation: tasksIn 0.22s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@keyframes tasksIn { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: none; } }
+.tasks-list { overflow-y: auto; padding: 0 6px 8px; display: flex; flex-direction: column; }
+.task-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 12px;
+  font-size: 12.5px; text-align: left; width: 100%;
+  transition: background 0.12s;
+}
+.task-row:hover { background: var(--card-2); }
+.task-row .t-main { flex: 1; min-width: 0; }
+.task-row .t-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-row .t-sub { font-size: 11px; color: var(--fg-3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tasks-badge {
+  position: absolute; top: -3px; right: -3px;
+  width: 8px; height: 8px; border-radius: 999px;
+  background: var(--accent); border: 2px solid var(--bg);
+}
+
 /* ─── 채팅 ─── */
 .thread { display: flex; flex-direction: column; gap: 20px; }
 .msg-user {

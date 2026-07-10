@@ -26,6 +26,8 @@ const PATHS = {
   play: 'M6 4l14 8-14 8V4z',
   edit: 'M17 3l4 4L8 20H4v-4L17 3zM14 6l4 4',
   trash: 'M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 11v6M14 11v6',
+  clip: 'M21.4 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
+  tasks: 'M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01',
 };
 
 export function Icon({ name, size = 16, strokeWidth = 1.8, ...rest }) {
@@ -60,6 +62,16 @@ export function Logo({ size = 14 }) {
 
 export function Avatar({ name, sm = false }) {
   return <span className={`avatar${sm ? ' sm' : ''}`}>{(name || '?').slice(0, 1)}</span>;
+}
+
+/** 아르고 생각중 스피너 — 브랜드 별이 노 젓는 박자로 회전한다(가속-활강). 색은 테마 액센트. */
+export function ArgoSpinner({ size = 16 }) {
+  const { t } = useLang();
+  return (
+    <span className="argo-spin" role="status" aria-label={t('ui.inProgress')} style={{ display: 'inline-flex', color: 'var(--accent)' }}>
+      <StarMark size={size} />
+    </span>
+  );
 }
 
 export function Dots() {

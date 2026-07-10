@@ -16,15 +16,32 @@ const TOOL_STAGE = [
   [/^mcp__/, '도구 사용 중'],
 ];
 
+const base = (p) => String(p ?? '').split('/').pop();
+/** 도구 입력에서 "무엇을" 하는지 한 조각 — 클로드코드의 도구 라벨처럼. */
+export function detailForTool(toolName, input = {}) {
+  try {
+    if (/^(Read|Write|Edit|NotebookEdit)$/.test(toolName)) return base(input.file_path);
+    if (toolName === 'Glob' || toolName === 'Grep') return input.pattern ?? '';
+    if (toolName === 'Bash') return String(input.command ?? '').replace(/\s+/g, ' ').slice(0, 48);
+    if (toolName === 'WebFetch') return new URL(input.url).hostname;
+    if (toolName === 'WebSearch') return String(input.query ?? '').slice(0, 48);
+    if (toolName === 'mcp__crew__delegate') return input.to ?? '';
+    if (toolName.startsWith('mcp__')) return toolName.replace(/^mcp__/, '').replace(/__/g, ' · ');
+  } catch { /* 디테일은 장식 — 실패해도 단계는 남는다 */ }
+  return '';
+}
+
 export function stageForTool(toolName) {
   for (const [re, label] of TOOL_STAGE) if (re.test(toolName)) return label;
   return '작업 중';
 }
 
-export async function setTurnStatus(wsId, slug, stage) {
+export async function setTurnStatus(wsId, slug, stage, detail = '') {
   try {
     await mkdir(paths(wsId).chats, { recursive: true });
-    await writeFile(file(wsId, slug), JSON.stringify({ stage, ts: Date.now() }));
+    let startedAt = Date.now();
+    try { startedAt = JSON.parse(await readFile(file(wsId, slug), 'utf8')).startedAt ?? startedAt; } catch { /* 첫 기록 */ }
+    await writeFile(file(wsId, slug), JSON.stringify({ stage, detail, startedAt, ts: Date.now() }));
   } catch { /* 상태 표시는 베스트에포트 */ }
 }
 
@@ -32,11 +49,11 @@ export async function clearTurnStatus(wsId, slug) {
   try { await rm(file(wsId, slug), { force: true }); } catch { /* 없으면 그만 */ }
 }
 
-/** 2분 넘게 갱신이 없으면 죽은 상태로 보고 무시한다. */
+/** 2분 넘게 갱신이 없으면 죽은 상태로 보고 무시한다. 반환: { stage, detail, startedAt } | null */
 export async function getTurnStatus(wsId, slug) {
   try {
     const s = JSON.parse(await readFile(file(wsId, slug), 'utf8'));
-    return Date.now() - s.ts < 120_000 ? s.stage : null;
+    return Date.now() - s.ts < 120_000 ? { stage: s.stage, detail: s.detail ?? '', startedAt: s.startedAt ?? s.ts } : null;
   } catch {
     return null;
   }

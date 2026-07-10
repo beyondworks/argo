@@ -14,11 +14,11 @@ export async function loadThread(wsId, slug) {
   }
 }
 
-export async function appendTurn(wsId, slug, { userMsg, reply, handover, sessionId }) {
+export async function appendTurn(wsId, slug, { userMsg, reply, handover, sessionId, attachments }) {
   const t = await loadThread(wsId, slug);
   const ts = Date.now();
   t.messages.push(
-    { who: 'user', text: userMsg, ts },
+    { who: 'user', text: userMsg, ts, ...(attachments?.length ? { attachments } : {}) },
     { who: 'crew', text: reply, handover, ts },
   );
   t.sessionId = sessionId ?? t.sessionId;

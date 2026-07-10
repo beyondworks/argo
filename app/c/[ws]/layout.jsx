@@ -2,8 +2,94 @@
 // 회사 앱셸 — 라벨 사이드바(회사/크루 그룹 + 사용자 footer) + 헤더(타이틀·검색).
 import { use, useCallback, useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { StarMark, Icon, Avatar, Skeleton, Clock, api } from '../../ui';
+import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, api } from '../../ui';
 import { useLang } from '../../i18n';
+
+const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
+
+/** 백그라운드 작업 독 — 지금 도는 턴이 있으면 배지가 켜지고, 패널에서 진행·최근 작업을 본다. */
+function TasksDock({ ws }) {
+  const { t } = useLang();
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState(null);
+  const [, forceTick] = useState(0); // 경과 시간 1초 갱신용
+
+  useEffect(() => {
+    let alive = true;
+    const pull = () => api(`/api/companies/${ws}/tasks`).then((d) => { if (alive) setData(d); }).catch(() => {});
+    pull();
+    const t1 = setInterval(pull, open ? 3500 : 10000);
+    return () => { alive = false; clearInterval(t1); };
+  }, [ws, open]);
+
+  useEffect(() => {
+    if (!open || !(data?.running?.length)) return;
+    const t1 = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(t1);
+  }, [open, data?.running?.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  const running = data?.running ?? [];
+  const recent = data?.recent ?? [];
+  return (
+    <>
+      <button className="btn btn-icon" style={{ position: 'relative', flex: 'none' }} onClick={() => setOpen((o) => !o)}
+        aria-label={t('tasks.open')} title={t('tasks.title')} aria-expanded={open}>
+        <Icon name="tasks" size={15} />
+        {running.length > 0 && <span className="tasks-badge" aria-hidden="true" />}
+      </button>
+      {open && (
+        <div className="card tasks-panel" role="dialog" aria-label={t('tasks.title')}>
+          <div className="card-head">
+            <span className="card-title"><Icon name="tasks" size={13} /> {t('tasks.title')}</span>
+            <span className="rule" />
+            {running.length > 0 && <span className="chip"><span className="dot" />{t('tasks.running')} {running.length}</span>}
+            <button className="btn sm" onClick={() => setOpen(false)}>{t('tasks.close')}</button>
+          </div>
+          <div className="tasks-list">
+            {running.map((r) => (
+              <a key={r.slug} className="task-row" href={`/c/${ws}/crew/${r.slug}`} onClick={() => setOpen(false)}>
+                <ArgoSpinner size={14} />
+                <span className="t-main">
+                  <span className="t-title">{r.name} — {r.stage}</span>
+                  <span className="t-sub mono">{r.detail || ''}</span>
+                </span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmtRun(Date.now() - r.startedAt)}
+                </span>
+              </a>
+            ))}
+            {running.length === 0 && (
+              <div style={{ padding: '14px 12px', fontSize: 12.5, color: 'var(--fg-3)' }}>{t('tasks.emptyRunning')}</div>
+            )}
+            {recent.length > 0 && (
+              <div className="microlabel" style={{ padding: '10px 12px 4px' }}>{t('tasks.recent')}</div>
+            )}
+            {recent.map((e, i) => (
+              <a key={i} className="task-row" href={e.slug ? `/c/${ws}/crew/${e.slug}` : `/c/${ws}/activity`} onClick={() => setOpen(false)}>
+                <span style={{ width: 6, height: 6, borderRadius: 999, flex: 'none', background: e.ok ? 'var(--ok)' : 'var(--danger)' }} aria-hidden="true" />
+                <span className="t-main">
+                  <span className="t-title">{e.gist || t(`tasks.type.${e.type}`)}</span>
+                  <span className="t-sub">
+                    {[e.gist ? t(`tasks.type.${e.type}`) : '', e.slug ?? '', e.ok ? '' : t('tasks.failed')].filter(Boolean).join(' · ')}
+                  </span>
+                </span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>{fmtDur(e.ms)}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 export default function CompanyShell({ children, params }) {
   const { ws } = use(params);
@@ -117,6 +203,7 @@ export default function CompanyShell({ children, params }) {
           <span className="topbar-title">{title}</span>
           <div style={{ flex: 1 }} />
           <Clock />
+          <TasksDock ws={ws} />
           <label className="search-pill">
             <Icon name="search" size={14} />
             <input suppressHydrationWarning placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} />

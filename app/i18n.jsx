@@ -317,6 +317,24 @@ const DICT = {
   'chat.fireTitle': ['크루 해고', 'Fire Crew'],
   'chat.fireDesc': ['카드는 보관함으로 이동하고(복구 가능), 이 크루가 남긴 기억은 회사에 그대로 남습니다.', 'The card moves to archive (recoverable); memories this crew left stay with the company.'],
   'chat.fireConfirm': ['해고', 'Fire'],
+  'chat.attach': ['파일 첨부', 'Attach files'],
+  'chat.dropHere': ['여기에 놓아 첨부', 'Drop to attach'],
+  'chat.attachFailed': ['첨부 실패: {msg}', 'Attach failed: {msg}'],
+  'chat.uploading': ['올리는 중', 'Uploading'],
+  'chat.elapsed': ['{t} 경과', '{t} elapsed'],
+
+  // ── 백그라운드 작업 패널
+  'tasks.title': ['백그라운드 작업', 'Background Tasks'],
+  'tasks.open': ['백그라운드 작업 열기', 'Open background tasks'],
+  'tasks.running': ['진행 중', 'Running'],
+  'tasks.recent': ['최근 작업', 'Recent'],
+  'tasks.emptyRunning': ['진행 중인 작업이 없습니다 — 전원 대기 중.', 'Nothing running — all crew on standby.'],
+  'tasks.failed': ['실패', 'Failed'],
+  'tasks.done': ['완료', 'Done'],
+  'tasks.type.turn': ['지시 수행', 'Instruction'],
+  'tasks.type.routine': ['루틴', 'Routine'],
+  'tasks.type.consolidate': ['기억 정리', 'Memory organize'],
+  'tasks.close': ['닫기', 'Close'],
 
   // ── 활동
   'activity.source.deck': ['데크', 'Deck'],

@@ -2,8 +2,11 @@
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { use, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, Dots, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../../ui';
 import { useLang } from '../../../../i18n';
+
+/** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
+const fmtElapsed = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 
 export default function CrewChat({ params }) {
   const { ws, slug } = use(params);
@@ -19,6 +22,14 @@ export default function CrewChat({ params }) {
   const [cardOpen, setCardOpen] = useState(false);
   const sessionRef = useRef(null);
   const endRef = useRef(null);
+  // 첨부 — 업로드 즉시 vault/files/에 저장되고, 보내기 전까지 입력바 위에 칩으로 대기한다
+  const [att, setAtt] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileRef = useRef(null);
+  // 경과 타이머 — 보낸 순간부터 1초 단위
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef(0);
 
   useEffect(() => {
     setThread(null); setError(''); sessionRef.current = null;
@@ -53,6 +64,13 @@ export default function CrewChat({ params }) {
     return () => clearInterval(t);
   }, [busy]);
 
+  useEffect(() => {
+    if (!busy) { setElapsed(0); return; }
+    startRef.current = Date.now();
+    const t = setInterval(() => setElapsed(Date.now() - startRef.current), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
+
   // 실제 진행 단계 폴 — "작성중" 대신 지금 무엇을 하는지(기억 탐색/명령 실행/결재 대기)를 보여준다
   const [liveStage, setLiveStage] = useState(null);
   useEffect(() => {
@@ -65,21 +83,41 @@ export default function CrewChat({ params }) {
     return () => clearInterval(t);
   }, [busy, ws, slug]);
 
+  /** 파일 추가 — 드롭·붙여넣기·클립 버튼 모두 이 관문을 지난다. 업로드 즉시 vault/files/ 저장. */
+  async function addFiles(fileList) {
+    const files = [...(fileList ?? [])].filter(Boolean);
+    if (!files.length || uploading) return;
+    setUploading(true); setError('');
+    try {
+      const fd = new FormData();
+      files.forEach((f) => fd.append('file', f));
+      const r = await fetch(`/api/companies/${ws}/chat/upload`, { method: 'POST', body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      setAtt((cur) => [...cur, ...d.files].slice(0, 8));
+    } catch (err) {
+      setError(t('chat.attachFailed', { msg: String(err.message) }));
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function send(e) {
     e.preventDefault();
     const message = input.trim();
-    if (!message || busy) return;
-    setInput(''); setError(''); setBusy(true); setStage(0);
-    setThread((t) => [...(t ?? []), { who: 'user', text: message }]);
+    if (!message || busy || uploading) return;
+    const attachments = att;
+    setInput(''); setAtt([]); setError(''); setBusy(true); setStage(0);
+    setThread((t) => [...(t ?? []), { who: 'user', text: message, ...(attachments.length ? { attachments } : {}) }]);
     try {
-      const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current });
+      const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
       setThread((t) => [...t, { who: 'crew', text: r.reply, handover: r.handover }]);
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
-      // 실패 턴은 서버에 저장되지 않는다 — 입력을 복원해 바로 재시도할 수 있게
+      // 실패 턴은 서버에 저장되지 않는다 — 입력·첨부를 복원해 바로 재시도할 수 있게
       setThread((cur) => cur.slice(0, -1));
-      setInput(message);
+      setInput(message); setAtt(attachments);
       setError(t('chat.turnFailed', { msg: String(err.message) }));
     } finally {
       setBusy(false);
@@ -94,7 +132,13 @@ export default function CrewChat({ params }) {
   }
 
   return (
-    <div style={{ maxWidth: 760, margin: '0 auto', display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 160px)' }}>
+    <div
+      style={{ maxWidth: 760, margin: '0 auto', display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 160px)', position: 'relative' }}
+      onDragOver={(e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); setDragOver(true); } }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
+      onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
+    >
+      {dragOver && <div className="drop-overlay">{t('chat.dropHere')}</div>}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
         <Avatar name={agent?.name} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -122,7 +166,20 @@ export default function CrewChat({ params }) {
         )}
         {(thread ?? []).map((m, i) =>
           m.who === 'user' ? (
-            <div key={i} className="msg-user fade-up">{m.text}</div>
+            <div key={i} className="msg-user fade-up">
+              {m.attachments?.length > 0 && (
+                <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: m.text ? 8 : 0 }}>
+                  {m.attachments.map((a, j) => a.isImage ? (
+                    <img key={j} className="att-thumb" src={`/api/companies/${ws}/files?rel=${encodeURIComponent(a.rel)}`} alt={a.name} />
+                  ) : (
+                    <span key={j} className="att-chip" style={{ borderColor: 'var(--primary-fg-line)', background: 'transparent', color: 'inherit' }}>
+                      <Icon name="clip" size={11} /><span className="name">{a.name}</span>
+                    </span>
+                  ))}
+                </span>
+              )}
+              {m.text}
+            </div>
           ) : (
             <div key={i} className="msg-crew fade-up">
               <Avatar name={agent?.name} sm />
@@ -142,8 +199,18 @@ export default function CrewChat({ params }) {
         {busy && (
           <div className="msg-crew">
             <Avatar name={agent?.name} sm />
-            <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13 }}>
-              <Dots /> {t('chat.stageEllipsis', { stage: liveStage ?? WAIT_STAGES[stage] })}
+            <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13, flex: 1, minWidth: 0 }}>
+              <ArgoSpinner size={15} />
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {t('chat.stageEllipsis', { stage: liveStage?.stage ?? WAIT_STAGES[stage] })}
+                {liveStage?.detail && (
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', marginLeft: 8 }}>{liveStage.detail}</span>
+                )}
+              </span>
+              <span style={{ flex: 1 }} />
+              <span className="mono" style={{ fontSize: 11.5, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums', flex: 'none' }}>
+                {fmtElapsed(elapsed)}
+              </span>
             </div>
           </div>
         )}
@@ -151,19 +218,39 @@ export default function CrewChat({ params }) {
         <div ref={endRef} />
       </div>
 
-      <form onSubmit={send} className="input-bar" style={{ position: 'sticky', bottom: 20, marginTop: 24, background: 'var(--card-2)' }}>
-        <input suppressHydrationWarning
-          placeholder={t('chat.inputPlaceholder', { name: agent?.name ?? t('chat.crewFallback') })}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={busy}
-          autoFocus
-          {...imeGuard}
-        />
-        <button className="btn btn-primary btn-icon" disabled={busy || !input.trim()} aria-label={t('chat.send')}>
-          <Icon name="send" size={15} />
-        </button>
-      </form>
+      <div style={{ position: 'sticky', bottom: 20, marginTop: 24, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {(att.length > 0 || uploading) && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {att.map((a, i) => (
+              <span key={i} className="att-chip">
+                <Icon name="clip" size={11} />
+                <span className="name">{a.name}</span>
+                <button type="button" onClick={() => setAtt((c) => c.filter((_, j) => j !== i))} aria-label={t('common.delete')}>✕</button>
+              </span>
+            ))}
+            {uploading && <span className="att-chip"><Spinner size={11} /> {t('chat.uploading')}</span>}
+          </div>
+        )}
+        <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)' }}>
+          <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
+            onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
+            <Icon name="clip" size={14} />
+          </button>
+          <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
+          <input suppressHydrationWarning
+            placeholder={t('chat.inputPlaceholder', { name: agent?.name ?? t('chat.crewFallback') })}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
+            disabled={busy}
+            autoFocus
+            {...imeGuard}
+          />
+          <button className="btn btn-primary btn-icon" disabled={busy || uploading || !input.trim()} aria-label={t('chat.send')}>
+            <Icon name="send" size={15} />
+          </button>
+        </form>
+      </div>
 
       {cardOpen && (
         <CardPanel
