@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const WS_ROOT = process.env.CREWBASE_ROOT || join(process.cwd(), 'workspaces');
+export const WS_ROOT = process.env.ARGO_ROOT || process.env.CREWBASE_ROOT || join(process.cwd(), 'workspaces');
 
 export function paths(wsId) {
   const root = join(WS_ROOT, wsId);
