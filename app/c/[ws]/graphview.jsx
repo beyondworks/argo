@@ -7,7 +7,7 @@ const INK = '37, 39, 30'; // --fg
 const PAPER = '233, 235, 221'; // --card
 
 /* ─── 그래프 구성 — 실제 연결 관계만 엣지로 ─── */
-function buildGraph({ company, agents = [], docs = [] }) {
+function buildGraph({ company, agents = [], docs = [], delegations = [] }) {
   const nodes = [];
   const idx = new Map();
   const add = (n) => { idx.set(n.id, nodes.length); nodes.push(n); };
@@ -36,6 +36,13 @@ function buildGraph({ company, agents = [], docs = [] }) {
       .replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-/, '')
       .replace(/\.md$/, '');
     E(`@ag:${slug}`, d.rel.replace(/\.md$/, ''));
+  }
+  const dseen = new Set();
+  for (const g of delegations) {                                            // 크루 ↔ 크루 (위임 실적)
+    const id = [g.from, g.to].sort().join('→');
+    if (dseen.has(id)) continue;
+    dseen.add(id);
+    E(`@ag:${g.from}`, `@ag:${g.to}`);
   }
   const seen = new Set();
   for (const d of docs) {                                                   // 기억 ↔ 기억 ([[링크]])
@@ -194,13 +201,13 @@ function makeRenderer(canvas, graph, sim, opts) {
 }
 
 /* ─── 미니 3D 별자리 ─── */
-export function Constellation3D({ company, agents, docs, height = 200, onOpen }) {
+export function Constellation3D({ company, agents, docs, delegations, height = 200, onOpen }) {
   const ref = useRef(null);
 
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas || !docs) return;
-    const graph = buildGraph({ company, agents, docs });
+    const graph = buildGraph({ company, agents, docs, delegations });
     if (graph.nodes.length === 0) return;
     const sim = createSim(graph);
     const r = makeRenderer(canvas, graph, sim, { mini: true, zoom: 0.92 });
@@ -234,7 +241,7 @@ export function Constellation3D({ company, agents, docs, height = 200, onOpen })
       canvas.removeEventListener('mousemove', onMove);
       canvas.removeEventListener('mouseleave', onLeave);
     };
-  }, [company, agents, docs]);
+  }, [company, agents, docs, delegations]);
 
   return (
     <canvas
@@ -247,7 +254,7 @@ export function Constellation3D({ company, agents, docs, height = 200, onOpen })
 }
 
 /* ─── 전체화면 3D 그래프 — 드래그 회전 · 휠 줌 · 노드 클릭 = 열기 ─── */
-export function GraphModal({ company, agents, docs, onClose, onSelect }) {
+export function GraphModal({ company, agents, docs, delegations, onClose, onSelect }) {
   const ref = useRef(null);
   const [hoverLabel, setHoverLabel] = useState('');
 
@@ -261,7 +268,7 @@ export function GraphModal({ company, agents, docs, onClose, onSelect }) {
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas || !docs) return;
-    const graph = buildGraph({ company, agents, docs });
+    const graph = buildGraph({ company, agents, docs, delegations });
     const sim = createSim(graph);
     const r = makeRenderer(canvas, graph, sim, { mini: false, zoom: 1.3 });
 
@@ -336,7 +343,7 @@ export function GraphModal({ company, agents, docs, onClose, onSelect }) {
       window.removeEventListener('mouseup', up);
       canvas.removeEventListener('wheel', wheel);
     };
-  }, [company, agents, docs, onSelect]);
+  }, [company, agents, docs, delegations, onSelect]);
 
   const conv = docs?.filter((d) => d.dir !== 'notes').length ?? 0;
   const notes = docs?.filter((d) => d.dir === 'notes').length ?? 0;

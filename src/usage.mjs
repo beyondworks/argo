@@ -4,12 +4,13 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { paths } from './workspace.mjs';
 
-/** SDK result 메시지의 usage를 한 줄로 기록. kind: 'chat' | 'hire' */
-export async function appendUsage(wsId, { kind, slug, usage, costUsd, ms }) {
+/** SDK result 메시지의 usage를 한 줄로 기록. kind: 'chat' | 'hire' | 'delegate'(from=위임한 크루). */
+export async function appendUsage(wsId, { kind, slug, from, usage, costUsd, ms }) {
   if (!usage) return;
   const row = {
     ts: new Date().toISOString(),
     kind, slug: slug ?? '',
+    ...(from ? { from } : {}),
     input: usage.input_tokens ?? 0,
     output: usage.output_tokens ?? 0,
     cacheRead: usage.cache_read_input_tokens ?? 0,
@@ -22,12 +23,25 @@ export async function appendUsage(wsId, { kind, slug, usage, costUsd, ms }) {
   } catch { /* 기록 실패가 턴을 막으면 안 된다 */ }
 }
 
-export async function readUsageSummary(wsId) {
-  let rows = [];
+async function readRows(wsId) {
   try {
     const text = await readFile(paths(wsId).usage, 'utf8');
-    rows = text.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-  } catch { /* 아직 기록 없음 */ }
+    return text.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  } catch { return []; /* 아직 기록 없음 */ }
+}
+
+/** 위임 이력 — 그래프 크루↔크루 엣지·활동 피드의 원천. 최신순. */
+export async function readDelegations(wsId, limit = 30) {
+  const rows = await readRows(wsId);
+  return rows
+    .filter((r) => r.kind === 'delegate' && r.from && r.slug)
+    .slice(-limit)
+    .reverse()
+    .map((r) => ({ ts: r.ts, from: r.from, to: r.slug, ms: r.ms ?? null }));
+}
+
+export async function readUsageSummary(wsId) {
+  const rows = await readRows(wsId);
 
   const today = new Date().toISOString().slice(0, 10);
   const agg = () => ({ turns: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0, hasCost: false });

@@ -137,7 +137,7 @@ function Vault({ params }) {
               </div>
             </div>
             {meta ? (
-              <Constellation3D company={meta.company} agents={meta.agents ?? []} docs={docs} height={240} onOpen={() => setGraphOpen(true)} />
+              <Constellation3D company={meta.company} delegations={meta.delegations} agents={meta.agents ?? []} docs={docs} height={240} onOpen={() => setGraphOpen(true)} />
             ) : (
               <Skeleton h={240} style={{ margin: '8px 0' }} />
             )}
@@ -195,6 +195,7 @@ function Vault({ params }) {
         <GraphModal
           company={meta.company}
           agents={meta.agents ?? []}
+          delegations={meta.delegations}
           docs={docs}
           onClose={() => setGraphOpen(false)}
           onSelect={(rel) => { setSelected(rel); setGraphOpen(false); }}

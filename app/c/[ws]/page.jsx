@@ -332,7 +332,7 @@ export default function Deck({ params }) {
             {docs === null || data === null ? (
               <Skeleton h={200} style={{ margin: '8px 0' }} />
             ) : (
-              <Constellation3D company={data.company} agents={data.agents} docs={docs} onOpen={() => setGraphOpen(true)} />
+              <Constellation3D company={data.company} delegations={data.delegations} agents={data.agents} docs={docs} onOpen={() => setGraphOpen(true)} />
             )}
             <p className="microlabel" style={{ textAlign: 'center', padding: '2px 0 6px' }}>
               {docs && data
@@ -360,6 +360,7 @@ export default function Deck({ params }) {
         <GraphModal
           company={data.company}
           agents={data.agents}
+          delegations={data.delegations}
           docs={docs}
           onClose={() => setGraphOpen(false)}
           onSelect={(rel) => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`)}
