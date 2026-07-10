@@ -144,7 +144,8 @@ function Vault({ params }) {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 14, alignItems: 'start' }}>
-            <div className="card" style={{ overflow: 'hidden', maxHeight: 560, overflowY: 'auto' }}>
+            {/* 기록 패널 — 탑바(56px) 아래 고정, 목록은 자체 스크롤. 우측 뷰어만 페이지와 함께 흐른다 */}
+            <div className="card" style={{ position: 'sticky', top: 70, maxHeight: 'calc(100vh - 92px)', overflowY: 'auto' }}>
               <div className="card-head" style={{ paddingBottom: 10 }}>
                 <span className="card-title">기록</span>
                 <span className="chip">{visible.length}</span>
