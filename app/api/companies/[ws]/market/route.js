@@ -6,12 +6,26 @@ import {
 import {
   searchRemoteSkills, installRemoteSkill,
   searchRemoteMcp, installRemoteMcp,
+  topRemoteSkills, topRemoteMcp, explainItem,
 } from '../../../../../src/remote-market.mjs';
+
+export const maxDuration = 120; // explain = 모델 1턴
 
 export async function GET(req, { params }) {
   const { ws } = await params;
   const u = new URL(req.url);
   const remote = u.searchParams.get('remote');
+  const top = u.searchParams.get('top');
+
+  // 추천 TOP 20 — 스킬(skillsmp ★순) / MCP(npm 주간 다운로드순)
+  if (top) {
+    try {
+      const results = top === 'skills' ? await topRemoteSkills() : await topRemoteMcp();
+      return Response.json({ results });
+    } catch (e) {
+      return Response.json({ results: [], error: `추천 목록 로드 실패: ${String(e.message || e)}` });
+    }
+  }
 
   // 원격 마켓 검색 — skillsmp / 공식 MCP 레지스트리
   if (remote) {
@@ -42,6 +56,7 @@ export async function POST(req, { params }) {
     else if (body.kind === 'mcp-custom') await addCustomMcp(ws, body.def ?? {});
     else if (body.kind === 'remote-skill') await installRemoteSkill(ws, body.item ?? {});
     else if (body.kind === 'remote-mcp') await installRemoteMcp(ws, body.item ?? {});
+    else if (body.kind === 'explain') return Response.json(await explainItem(body.item ?? {}));
     else return Response.json({ error: '알 수 없는 kind' }, { status: 400 });
     return Response.json({ ok: true });
   } catch (e) {
