@@ -3,9 +3,27 @@ import {
   listInstalledSkills, installSkill, removeSkill,
   loadMcp, installMcp, addCustomMcp, removeMcp,
 } from '../../../../../src/market.mjs';
+import {
+  searchRemoteSkills, installRemoteSkill,
+  searchRemoteMcp, installRemoteMcp,
+} from '../../../../../src/remote-market.mjs';
 
-export async function GET(_req, { params }) {
+export async function GET(req, { params }) {
   const { ws } = await params;
+  const u = new URL(req.url);
+  const remote = u.searchParams.get('remote');
+
+  // 원격 마켓 검색 — skillsmp / 공식 MCP 레지스트리
+  if (remote) {
+    const q = u.searchParams.get('q') ?? '';
+    try {
+      const results = remote === 'skills' ? await searchRemoteSkills(q) : await searchRemoteMcp(q);
+      return Response.json({ results });
+    } catch (e) {
+      return Response.json({ results: [], error: `원격 마켓 연결 실패: ${String(e.message || e)}` });
+    }
+  }
+
   const [skills, mcp] = await Promise.all([listInstalledSkills(ws), loadMcp(ws)]);
   return Response.json({
     skillCatalog: SKILL_CATALOG.map(({ md, ...rest }) => ({ ...rest, preview: md.slice(0, 200) })),
@@ -22,6 +40,8 @@ export async function POST(req, { params }) {
     if (body.kind === 'skill') await installSkill(ws, body.id);
     else if (body.kind === 'mcp') await installMcp(ws, body.id);
     else if (body.kind === 'mcp-custom') await addCustomMcp(ws, body.def ?? {});
+    else if (body.kind === 'remote-skill') await installRemoteSkill(ws, body.item ?? {});
+    else if (body.kind === 'remote-mcp') await installRemoteMcp(ws, body.item ?? {});
     else return Response.json({ error: '알 수 없는 kind' }, { status: 400 });
     return Response.json({ ok: true });
   } catch (e) {

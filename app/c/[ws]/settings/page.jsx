@@ -53,10 +53,11 @@ export default function Settings({ params }) {
   ];
 
   return (
-    <div style={{ display: 'grid', gap: 14, maxWidth: 640 }}>
+    <div style={{ display: 'grid', gap: 14 }}>
       <span className="microlabel">Settings · 회사 설정</span>
 
-      <form onSubmit={saveName} className="card" style={{ padding: 18, display: 'grid', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14, alignItems: 'start' }}>
+      <form onSubmit={saveName} className="card" style={{ padding: 18, display: 'grid', gap: 10, alignContent: 'start' }}>
         <span className="card-title">회사 정보</span>
         <label style={{ display: 'grid', gap: 5 }}>
           <span className="microlabel">Company Name</span>
@@ -105,6 +106,7 @@ export default function Settings({ params }) {
         <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={archive}>
           <Icon name="trash" size={13} /> 회사 보관
         </button>
+      </div>
       </div>
     </div>
   );

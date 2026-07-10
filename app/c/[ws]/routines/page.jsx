@@ -76,7 +76,7 @@ export default function Routines({ params }) {
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
 
   return (
-    <div style={{ display: 'grid', gap: 14, maxWidth: 1000 }}>
+    <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span className="microlabel">Routines · 크루의 반복 항해 — 예약 시각에 자동 실행</span>
         <button className="btn sm" onClick={() => openForm()}>

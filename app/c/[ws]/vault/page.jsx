@@ -73,7 +73,7 @@ function Vault({ params }) {
   const visible = (docs ?? []).filter((d) => !q || d.title.toLowerCase().includes(q) || d.excerpt.toLowerCase().includes(q));
 
   return (
-    <div style={{ display: 'grid', gap: 14, maxWidth: 1100 }}>
+    <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <span className="microlabel">Vault · 회사가 쌓아온 항해일지</span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
@@ -143,7 +143,7 @@ function Vault({ params }) {
             )}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 14, alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 14, alignItems: 'start' }}>
             <div className="card" style={{ overflow: 'hidden', maxHeight: 560, overflowY: 'auto' }}>
               <div className="card-head" style={{ paddingBottom: 10 }}>
                 <span className="card-title">기록</span>
@@ -180,10 +180,10 @@ function Vault({ params }) {
               ) : loadingDoc ? (
                 <Spinner />
               ) : (
-                <>
+                <div style={{ maxWidth: 860 }}>
                   <div className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', marginBottom: 14, letterSpacing: '0.03em' }}>{selected}</div>
                   <Markdown text={content} onWikiLink={openWiki} />
-                </>
+                </div>
               )}
             </div>
           </div>

@@ -66,7 +66,7 @@ export default function CrewChat({ params }) {
   }
 
   return (
-    <div style={{ maxWidth: 740, display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 160px)' }}>
+    <div style={{ maxWidth: 760, margin: '0 auto', display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 160px)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
         <Avatar name={agent?.name} />
         <div style={{ flex: 1, minWidth: 0 }}>
