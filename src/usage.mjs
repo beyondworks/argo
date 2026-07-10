@@ -5,12 +5,13 @@ import { appendFile, readFile } from 'node:fs/promises';
 import { paths } from './workspace.mjs';
 
 /** SDK result 메시지의 usage를 한 줄로 기록. kind: 'chat' | 'hire' | 'delegate'(from=위임한 크루). */
-export async function appendUsage(wsId, { kind, slug, from, usage, costUsd, ms }) {
+export async function appendUsage(wsId, { kind, slug, from, model, usage, costUsd, ms }) {
   if (!usage) return;
   const row = {
     ts: new Date().toISOString(),
     kind, slug: slug ?? '',
     ...(from ? { from } : {}),
+    ...(model ? { model } : {}),
     input: usage.input_tokens ?? 0,
     output: usage.output_tokens ?? 0,
     cacheRead: usage.cache_read_input_tokens ?? 0,
@@ -28,6 +29,15 @@ async function readRows(wsId) {
     const text = await readFile(paths(wsId).usage, 'utf8');
     return text.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   } catch { return []; /* 아직 기록 없음 */ }
+}
+
+/** 활동 피드 — 모든 턴(대화·위임·루틴·메신저·영입)을 최신순으로. */
+export async function readActivity(wsId, limit = 60) {
+  const rows = await readRows(wsId);
+  return rows.slice(-limit).reverse().map((r) => ({
+    ts: r.ts, kind: r.kind, slug: r.slug, from: r.from ?? null,
+    ms: r.ms ?? null, costUsd: r.costUsd ?? null, output: r.output ?? 0,
+  }));
 }
 
 /** 위임 이력 — 그래프 크루↔크루 엣지·활동 피드의 원천. 최신순. */

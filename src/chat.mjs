@@ -90,9 +90,10 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues) {
 /**
  * 한 턴 대화. sessionId를 주면 이어서(resume), 없으면 새 세션.
  * opts.from이 있으면 위임받은 하위 턴 — 위임 도구를 붙이지 않는다(연쇄 위임 금지).
+ * opts.source: 'routine'|'messenger' — 활동 타임라인에 턴의 출처를 남긴다.
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
-export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null } = {}) {
+export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null } = {}) {
   const p = paths(wsId);
   const { md, meta } = await readAgentCard(wsId, agentSlug);
   const skills = await loadSkills(wsId);
@@ -118,6 +119,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
 - 초안 작성·분석·vault 기록 같은 회사 안 작업은 결재 없이 바로 한다.`,
       mcpServers: { ...(servers ?? {}), crew: crewServer },
       allowedTools: ['Read', 'Glob', 'Grep', 'Write', ...mcpAllow, 'mcp__crew'],
+      ...(meta.model ? { model: meta.model } : {}), // 크루별 모델 — 카드 frontmatter가 결정
       permissionMode: 'bypassPermissions', // 스파이크 한정 — 프로덕션은 워크스페이스 샌드박스+훅 게이트
       settingSources: [], // 호스트의 CLAUDE.md/스킬 미주입(테넌트 격리)
       ...(sessionId ? { resume: sessionId } : {}),
@@ -129,7 +131,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 토큰 사용량 기록 — 대시보드 효율 지표(캐시 적중률·턴당 비용)의 원천.
       // 위임받은 턴은 kind:delegate + from — 그래프 크루↔크루 엣지·활동 피드의 원천이 된다.
       await appendUsage(wsId, {
-        kind: from ? 'delegate' : 'chat', slug: agentSlug, from,
+        kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, model: meta.model,
         usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0,
       });
       if (msg.subtype === 'success') reply = msg.result;

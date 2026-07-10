@@ -62,7 +62,7 @@ async function runTurn(wsId, cfg, text) {
   const r = await routeMessage(wsId, cfg, text);
   if (r.error) return r.error;
   const t = await loadThread(wsId, r.slug);
-  const turn = await chat(wsId, r.slug, r.msg, t.sessionId);
+  const turn = await chat(wsId, r.slug, r.msg, t.sessionId, { source: 'messenger' });
   await appendTurn(wsId, r.slug, { userMsg: r.msg, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId });
   return `[${r.name}]\n${turn.reply}`;
 }

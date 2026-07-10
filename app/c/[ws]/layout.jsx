@@ -32,6 +32,7 @@ export default function CompanyShell({ children, params }) {
   const title = pathname.endsWith('/vault') ? '기억'
     : pathname.endsWith('/routines') ? '루틴'
     : pathname.endsWith('/market') ? '스킬·도구'
+    : pathname.endsWith('/activity') ? '활동'
     : pathname.endsWith('/settings') ? '설정'
     : currentCrew ? currentCrew.name : '데크';
   // 사이드바 크루 — 팀별 그룹 (팀 없는 크루는 마지막)
@@ -56,6 +57,9 @@ export default function CompanyShell({ children, params }) {
         </a>
         <a href={`/c/${ws}/routines`} className={`nav-item${pathname.endsWith('/routines') ? ' active' : ''}`}>
           <Icon name="clock" size={16} /> 루틴
+        </a>
+        <a href={`/c/${ws}/activity`} className={`nav-item${pathname.endsWith('/activity') ? ' active' : ''}`}>
+          <Icon name="bolt" size={16} /> 활동
         </a>
         <a href={`/c/${ws}/market`} className={`nav-item${pathname.endsWith('/market') ? ' active' : ''}`}>
           <Icon name="market" size={16} /> 스킬·도구

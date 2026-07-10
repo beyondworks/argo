@@ -23,12 +23,12 @@ export async function PUT(req, { params }) {
   }
 }
 
-/** 신원 수정 — 이름·역할·팀만 갱신(카드 본문·슬러그·기록 보존). */
+/** 신원 수정 — 이름·역할·팀·모델만 갱신(카드 본문·슬러그·기록 보존). */
 export async function PATCH(req, { params }) {
   try {
     const { ws, slug } = await params;
-    const { name, role, team } = await req.json();
-    const meta = await updateAgentMeta(ws, slug, { name, role, team });
+    const { name, role, team, model } = await req.json();
+    const meta = await updateAgentMeta(ws, slug, { name, role, team, model });
     return Response.json({ meta });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });

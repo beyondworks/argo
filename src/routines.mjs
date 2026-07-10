@@ -52,7 +52,7 @@ export async function runRoutine(wsId, id) {
   if (!r) throw new Error('루틴을 찾을 수 없습니다');
   r.lastRun = new Date().toISOString();
   try {
-    const t = await chat(wsId, r.agentSlug, `[루틴: ${r.title}] ${r.prompt}`, null);
+    const t = await chat(wsId, r.agentSlug, `[루틴: ${r.title}] ${r.prompt}`, null, { source: 'routine' });
     r.lastOk = true;
     r.lastResult = t.reply.replace(/\s+/g, ' ').slice(0, 160);
     await saveRoutines(wsId, routines);

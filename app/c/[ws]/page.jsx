@@ -472,8 +472,15 @@ function VoyageLog({ docs, agents }) {
 }
 
 /** 크루 신원 수정 — 이름·역할·팀. 슬러그·기록은 유지된다. */
+const MODELS = [
+  ['', '기본 — 회사 표준 모델'],
+  ['claude-opus-4-8', '오푸스 — 깊은 사고, 무거운 작업 (비용 높음)'],
+  ['claude-sonnet-5', '소네트 — 표준 균형'],
+  ['claude-haiku-4-5-20251001', '하이쿠 — 빠른 잔일 (비용 낮음)'],
+];
+
 function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
-  const [form, setForm] = useState({ name: agent.name, role: agent.role, team: agent.team || '' });
+  const [form, setForm] = useState({ name: agent.name, role: agent.role, team: agent.team || '', model: agent.model || '' });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
@@ -525,6 +532,12 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
             <datalist id="argo-teams-edit">
               {teams.map((t) => <option key={t} value={t} />)}
             </datalist>
+          </label>
+          <label style={{ display: 'grid', gap: 4 }}>
+            <span className="microlabel">Model — 이 크루의 두뇌</span>
+            <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} style={field}>
+              {MODELS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            </select>
           </label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button className="btn btn-primary sm" disabled={saving || !form.name.trim()}>
