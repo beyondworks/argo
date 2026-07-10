@@ -54,10 +54,14 @@ export async function readUsageSummary(wsId) {
   const rows = await readRows(wsId);
 
   const today = new Date().toISOString().slice(0, 10);
+  const month = today.slice(0, 7);
   const agg = () => ({ turns: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0, hasCost: false });
-  const sum = { today: agg(), total: agg() };
+  const sum = { today: agg(), month: agg(), total: agg() };
   for (const r of rows) {
-    for (const key of r.ts?.startsWith(today) ? ['today', 'total'] : ['total']) {
+    const keys = ['total'];
+    if (r.ts?.startsWith(month)) keys.push('month');
+    if (r.ts?.startsWith(today)) keys.push('today');
+    for (const key of keys) {
       const s = sum[key];
       s.turns += 1;
       s.input += r.input; s.output += r.output;
@@ -72,5 +76,15 @@ export async function readUsageSummary(wsId) {
     inPerOut: s.output > 0 ? (s.input + s.cacheRead + s.cacheCreate) / s.output : 0,     // 출력 1토큰당 읽은 맥락
     costPerTurn: s.turns > 0 && s.hasCost ? s.costUsd / s.turns : null,                   // 효율 ②
   });
-  return { today: enrich(sum.today), total: enrich(sum.total) };
+  return { today: enrich(sum.today), month: enrich(sum.month), total: enrich(sum.total) };
+}
+
+/** 이번 달 지출(USD) — 예산 상한 게이트용 경량 조회. */
+export async function monthCost(wsId) {
+  const month = new Date().toISOString().slice(0, 7);
+  let cost = 0;
+  for (const r of await readRows(wsId)) {
+    if (r.ts?.startsWith(month) && typeof r.costUsd === 'number') cost += r.costUsd;
+  }
+  return cost;
 }

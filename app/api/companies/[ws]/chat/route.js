@@ -2,6 +2,7 @@ import { relative } from 'node:path';
 import { chat } from '../../../../../src/chat.mjs';
 import { paths } from '../../../../../src/workspace.mjs';
 import { loadThread, appendTurn, resetThread } from '../../../../../src/thread.mjs';
+import { getTurnStatus } from '../../../../../src/turn-status.mjs';
 
 export const maxDuration = 300; // 에이전트 턴은 vault 탐색 포함 수 분까지 허용
 
@@ -10,7 +11,8 @@ export async function GET(req, { params }) {
   const { ws } = await params;
   const slug = new URL(req.url).searchParams.get('slug');
   if (!slug) return Response.json({ error: 'slug가 필요합니다' }, { status: 400 });
-  return Response.json(await loadThread(ws, slug));
+  const [thread, status] = await Promise.all([loadThread(ws, slug), getTurnStatus(ws, slug)]);
+  return Response.json({ ...thread, status });
 }
 
 export async function POST(req, { params }) {

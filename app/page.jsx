@@ -8,11 +8,13 @@ export default function Home() {
   const router = useRouter();
   const [companies, setCompanies] = useState(null);
   const [name, setName] = useState('');
+  const [presets, setPresets] = useState([]);
+  const [preset, setPreset] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api('/api/companies').then((d) => setCompanies(d.companies)).catch((e) => setError(String(e.message)));
+    api('/api/companies').then((d) => { setCompanies(d.companies); setPresets(d.presets ?? []); }).catch((e) => setError(String(e.message)));
   }, []);
 
   async function create(e) {
@@ -20,7 +22,7 @@ export default function Home() {
     if (!name.trim() || creating) return;
     setCreating(true); setError('');
     try {
-      const { company } = await api('/api/companies', { name });
+      const { company } = await api('/api/companies', { name, preset });
       router.push(`/c/${company.id}`);
     } catch (err) {
       setError(String(err.message)); setCreating(false);
@@ -61,6 +63,26 @@ export default function Home() {
           </button>
         </form>
         {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: 13 }}>{error}</p>}
+
+        {/* 시작 프리셋 — 고르면 크루 2명 + 아침 브리핑 루틴이 즉시 꾸려진다 (빈 배로도 출항 가능) */}
+        <div className="fade-up" style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', animationDelay: '0.1s' }}>
+          <span className="microlabel" style={{ marginRight: 2 }}>시작 크루</span>
+          <button type="button" className="chip" onClick={() => setPreset('')}
+            style={{ cursor: 'pointer', ...(preset === '' ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}) }}>
+            빈 배
+          </button>
+          {presets.map((p) => (
+            <button key={p.key} type="button" className="chip" onClick={() => setPreset(p.key)} title={p.desc}
+              style={{ cursor: 'pointer', ...(preset === p.key ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}) }}>
+              {p.label}
+            </button>
+          ))}
+          {preset && (
+            <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+              {presets.find((p) => p.key === preset)?.desc} · 아침 브리핑 포함
+            </span>
+          )}
+        </div>
 
         <section style={{ marginTop: 42 }}>
           <div className="microlabel" style={{ marginBottom: 10 }}>My Companies</div>

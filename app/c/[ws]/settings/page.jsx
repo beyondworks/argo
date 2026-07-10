@@ -9,11 +9,16 @@ export default function Settings({ params }) {
   const router = useRouter();
   const [data, setData] = useState(null);
   const [name, setName] = useState('');
+  const [budget, setBudget] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
 
   useEffect(() => {
-    api(`/api/companies/${ws}`).then((d) => { setData(d); setName(d.company?.name ?? ''); }).catch(() => setData({}));
+    api(`/api/companies/${ws}`).then((d) => {
+      setData(d);
+      setName(d.company?.name ?? '');
+      setBudget(d.company?.budgetUsd ? String(d.company.budgetUsd) : '');
+    }).catch(() => setData({}));
   }, [ws]);
 
   async function saveName(e) {
@@ -23,7 +28,7 @@ export default function Settings({ params }) {
     try {
       await fetch(`/api/companies/${ws}`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, budgetUsd: budget === '' ? 0 : Number(budget) }),
       }).then(async (r) => { if (!r.ok) throw new Error((await r.json()).error); });
       window.dispatchEvent(new Event('argo:refresh'));
       setMsg('저장됨');
@@ -65,6 +70,15 @@ export default function Settings({ params }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             {...imeGuard}
+            style={{ height: 36, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13.5 }}
+          />
+        </label>
+        <label style={{ display: 'grid', gap: 5 }}>
+          <span className="microlabel">Monthly Budget (USD) — 초과 시 턴 정지, 비우면 무제한</span>
+          <input suppressHydrationWarning
+            type="number" min="0" step="1" placeholder="예: 30"
+            value={budget}
+            onChange={(e) => setBudget(e.target.value)}
             style={{ height: 36, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13.5 }}
           />
         </label>

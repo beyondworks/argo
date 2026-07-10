@@ -350,7 +350,7 @@ export default function Deck({ params }) {
           </div>
           <VoyageLog docs={docs} agents={data?.agents ?? []} />
           <Nameplate company={data?.company} memoryCount={data?.memoryCount} links={stats?.links} crew={data?.agents?.length} />
-          <TokenPanel usage={data?.usage} />
+          <TokenPanel usage={data?.usage} budgetUsd={data?.company?.budgetUsd} />
         </div>
       </div>
 
@@ -564,7 +564,7 @@ const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n 
 
 /** 토큰 계기 — 입력/출력·캐시 적중률·턴당 비용.
     팩트: 에이전트 작업은 입력(맥락)≫출력이 정상. 효율 = ①캐시 적중률(캐시 읽기는 정가의 ~1/10) ②턴당 비용. */
-function TokenPanel({ usage }) {
+function TokenPanel({ usage, budgetUsd }) {
   if (!usage) return <Skeleton h={170} style={{ borderRadius: 18 }} />;
   const t = usage.today.turns > 0 ? usage.today : usage.total;
   const scope = usage.today.turns > 0 ? 'Today' : 'Total';
@@ -600,6 +600,20 @@ function TokenPanel({ usage }) {
           <div className="num" style={{ fontSize: 21 }}>{fmtTok(t.output)}</div>
         </div>
       </div>
+
+      {/* 월 예산 계기 — 상한 대비 지출 (오픈클로 "예측 불가 비용" 정반대편) */}
+      {budgetUsd > 0 && usage.month?.hasCost && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 5 }}>
+            <span style={{ fontWeight: 600 }}>이번 달 예산</span>
+            <span className="mono" style={{ color: usage.month.costUsd >= budgetUsd ? 'var(--danger)' : 'var(--fg-2)' }}>
+              ${usage.month.costUsd.toFixed(2)} / ${budgetUsd}
+            </span>
+          </div>
+          <div className="meter"><div className="meter-track"><div className="meter-fill" style={{ width: `${Math.min((usage.month.costUsd / budgetUsd) * 100, 100)}%` }} /></div></div>
+          <div className="metric-sub2" style={{ marginTop: 4 }}>초과하면 새 턴이 정지됩니다 — 설정에서 조정</div>
+        </div>
+      )}
 
       {/* 효율 ① 캐시 적중률 */}
       <div style={{ marginTop: 12 }}>

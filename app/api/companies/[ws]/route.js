@@ -51,13 +51,22 @@ export async function GET(_req, { params }) {
   }
 }
 
-/** 회사 정보 수정 — 이름. */
+/** 회사 정보 수정 — 이름·월 예산(USD, 0=무제한). */
 export async function PUT(req, { params }) {
   try {
     const { ws } = await params;
-    const { name } = await req.json();
-    if (!name?.trim()) return Response.json({ error: '이름이 필요합니다' }, { status: 400 });
-    const company = await updateCompany(ws, { name: name.trim() });
+    const { name, budgetUsd } = await req.json();
+    const patch = {};
+    if (name !== undefined) {
+      if (!name.trim()) return Response.json({ error: '이름이 필요합니다' }, { status: 400 });
+      patch.name = name.trim();
+    }
+    if (budgetUsd !== undefined) {
+      const n = Number(budgetUsd);
+      if (!Number.isFinite(n) || n < 0) return Response.json({ error: '예산은 0 이상의 숫자' }, { status: 400 });
+      patch.budgetUsd = n;
+    }
+    const company = await updateCompany(ws, patch);
     return Response.json({ company });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });

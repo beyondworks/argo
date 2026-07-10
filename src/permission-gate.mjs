@@ -2,6 +2,7 @@
 // 승인(데크 결재함/텔레그램 버튼/슬랙 회신)되면 그 자리에서 이어서 실행되는 interrupt-resume.
 import { resolve } from 'node:path';
 import { addApproval, loadApprovals } from './approvals.mjs';
+import { setTurnStatus } from './turn-status.mjs';
 
 const WAIT_MS = 180_000; // 결재 대기 상한 — chat 라우트 maxDuration(300s) 안쪽
 const POLL_MS = 2_000;
@@ -43,8 +44,10 @@ export function makePermissionGate(wsId, slug, caps, wsRoot) {
       reason: '로컬 능력 실행 — 승인하면 멈춘 자리에서 바로 이어집니다',
       kind: 'tool',
     });
+    await setTurnStatus(wsId, slug, '사장 결재 대기 중 — 결재함·메신저에서 승인하면 이어집니다');
     const t0 = Date.now();
     while (Date.now() - t0 < WAIT_MS) {
+      await setTurnStatus(wsId, slug, '사장 결재 대기 중 — 결재함·메신저에서 승인하면 이어집니다');
       if (signal?.aborted) return { behavior: 'deny', message: '턴이 중단되었다.' };
       await new Promise((r) => setTimeout(r, POLL_MS));
       const cur = (await loadApprovals(wsId)).find((a) => a.id === item.id);

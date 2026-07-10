@@ -52,6 +52,18 @@ export default function CrewChat({ params }) {
     return () => clearInterval(t);
   }, [busy]);
 
+  // 실제 진행 단계 폴 — "작성중" 대신 지금 무엇을 하는지(기억 탐색/명령 실행/결재 대기)를 보여준다
+  const [liveStage, setLiveStage] = useState(null);
+  useEffect(() => {
+    if (!busy) { setLiveStage(null); return; }
+    const t = setInterval(() => {
+      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
+        .then((r) => setLiveStage(r.status ?? null))
+        .catch(() => {});
+    }, 2500);
+    return () => clearInterval(t);
+  }, [busy, ws, slug]);
+
   async function send(e) {
     e.preventDefault();
     const message = input.trim();
@@ -130,7 +142,7 @@ export default function CrewChat({ params }) {
           <div className="msg-crew">
             <Avatar name={agent?.name} sm />
             <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13 }}>
-              <Dots /> {WAIT_STAGES[stage]}…
+              <Dots /> {liveStage ?? WAIT_STAGES[stage]}…
             </div>
           </div>
         )}
