@@ -22,7 +22,7 @@ function systemPromptFor(cardMd, wsRoot) {
  */
 export async function chat(wsId, agentSlug, userMsg, sessionId = null) {
   const p = paths(wsId);
-  const { md } = await readAgentCard(wsId, agentSlug);
+  const { md, meta } = await readAgentCard(wsId, agentSlug);
 
   let reply = '';
   let sid = sessionId;
@@ -45,6 +45,6 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null) {
     }
   }
 
-  const handover = await saveHandover(wsId, agentSlug, userMsg, reply);
+  const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
   return { reply, sessionId: sid, handover };
 }

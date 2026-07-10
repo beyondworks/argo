@@ -91,12 +91,12 @@ async function appendLink(file, relPath) {
   await writeFile(file, `${text.trimEnd()}\n- [[${name}]]\n`);
 }
 
-/** 턴 핸드오버 저장 — 파일명은 시각+슬러그, 첫 줄 제목이 링크 앵커가 된다. */
-export async function saveHandover(wsId, agentSlug, userMsg, reply) {
+/** 턴 핸드오버 저장 — 파일명은 시각+슬러그, 제목은 표시 이름(label). */
+export async function saveHandover(wsId, agentSlug, userMsg, reply, label = agentSlug) {
   const p = paths(wsId);
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const file = join(p.conversations, `${ts}-${agentSlug}.md`);
-  const body = `# ${agentSlug} 턴 기록 (${ts})
+  const body = `# ${label} 턴 기록 (${ts})
 
 ## 지시
 ${userMsg}
