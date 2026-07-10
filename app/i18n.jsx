@@ -50,6 +50,9 @@ const DICT = {
   'shell.backHome': ['홈으로 돌아가기', 'Back to home'],
 
   // ── 설정
+  'settings.language': ['언어', 'Language'],
+  'settings.language.desc': ['화면 표시 언어를 선택합니다. 어디서든 단축키로도 전환됩니다.', 'Choose the display language. You can also toggle it anywhere with the shortcut.'],
+  'settings.language.shortcut': ['단축키', 'Shortcut'],
   'settings.head': ['설정 · 회사 설정', 'Settings · Company'],
   'settings.general': ['일반', 'General'],
   'settings.capabilities': ['로컬 능력 — 크루가 로컬에 손댈 수 있는 범위', 'Capabilities — what crew can touch locally'],

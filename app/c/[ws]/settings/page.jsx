@@ -115,6 +115,8 @@ export default function Settings({ params }) {
           <span className="microlabel">{t('deck.sailTogether')}</span>
         </div>
       </div>
+
+      <LanguageCard />
       </Section>
 
       <Section label={t('settings.capabilities')}>
@@ -158,6 +160,39 @@ export default function Settings({ params }) {
           onClose={() => setArchiveOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+/** 언어 선택 — 각 옵션 라벨은 언제나 그 언어 자신으로 표기(국제 관례). 단축키 안내 포함. */
+function LanguageCard() {
+  const { lang, t, setLang } = useLang();
+  const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
+  const kbd = isMac ? '⌘ + /' : 'Ctrl + /';
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span className="card-title">{t('settings.language')}</span>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.language.desc')}</p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {[['ko', '한국어'], ['en', 'English']].map(([code, label]) => (
+          <button
+            key={code}
+            className="chip"
+            onClick={() => setLang(code)}
+            aria-pressed={lang === code}
+            style={{
+              cursor: 'pointer', padding: '6px 16px', fontSize: 12.5,
+              ...(lang === code ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}),
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto', paddingTop: 10 }}>
+        <span className="microlabel">{t('settings.language.shortcut')}</span>
+        <span className="kbd mono" style={{ fontSize: 11, border: '1px solid var(--border)', borderRadius: 6, padding: '2px 8px' }}>{kbd}</span>
+      </div>
     </div>
   );
 }
