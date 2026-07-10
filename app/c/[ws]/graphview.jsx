@@ -1,142 +1,226 @@
 'use client';
-// 별자리 3D + 전체화면 그래프 — 잉크 온 페이퍼 톤의 기억 시각화.
-// Constellation3D: 기억 노드가 3D 점구름으로 회전(더스트 파티클 + 마우스 틸트).
-// GraphModal: 옵시디언식 포스 그래프 — 줌·팬·노드 드래그·클릭 이동.
+// 별자리 — 완전한 3D 지식 그래프. 회사(허브)→크루(작성자)→기억(대화·노트)→기억↔기억 [[링크]]
+// 전부 실제 관계 엣지다. 3D 포스 시뮬레이션 + 원근 투영 + 잉크 할로, 모달은 드래그 회전·휠 줌.
 import { useEffect, useRef, useState } from 'react';
 
-const INK = '37, 39, 30'; // --fg #25271e
+const INK = '37, 39, 30'; // --fg
+const PAPER = '233, 235, 221'; // --card
 
-function buildEdges(docs) {
-  const byKey = new Map(docs.map((d, i) => [d.rel.replace(/\.md$/, ''), i]));
+/* ─── 그래프 구성 — 실제 연결 관계만 엣지로 ─── */
+function buildGraph({ company, agents = [], docs = [] }) {
+  const nodes = [];
+  const idx = new Map();
+  const add = (n) => { idx.set(n.id, nodes.length); nodes.push(n); };
+
+  if (company) add({ id: '@co', type: 'company', label: company.name });
+  for (const a of agents) add({ id: `@ag:${a.slug}`, type: 'agent', label: a.name, slug: a.slug });
+  for (const d of docs) {
+    add({ id: d.rel.replace(/\.md$/, ''), type: d.dir === 'notes' ? 'note' : 'doc', label: d.title, rel: d.rel });
+  }
+
   const edges = [];
+  const E = (a, b) => {
+    const i = idx.get(a), j = idx.get(b);
+    if (i !== undefined && j !== undefined && i !== j) edges.push([i, j]);
+  };
+  if (company) for (const a of agents) E('@co', `@ag:${a.slug}`);          // 회사 → 크루
+  for (const d of docs) {                                                   // 크루 → 기억 (작성자)
+    const slug = d.rel
+      .replace(/^(conversations|notes)\//, '')
+      .replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-/, '')
+      .replace(/\.md$/, '');
+    E(`@ag:${slug}`, d.rel.replace(/\.md$/, ''));
+  }
   const seen = new Set();
-  docs.forEach((d, i) => {
+  for (const d of docs) {                                                   // 기억 ↔ 기억 ([[링크]])
+    const from = d.rel.replace(/\.md$/, '');
     for (const l of d.links) {
-      const j = byKey.get(l);
-      if (j === undefined || j === i) continue;
-      const id = [i, j].sort((a, b) => a - b).join('-');
+      const id = [from, l].sort().join('→');
       if (seen.has(id)) continue;
       seen.add(id);
-      edges.push([i, j]);
+      E(from, l);
     }
+  }
+  const deg = nodes.map((_, i) => edges.filter(([a, b]) => a === i || b === i).length);
+  nodes.forEach((n, i) => { n.deg = deg[i]; });
+  return { nodes, edges };
+}
+
+/* ─── 3D 포스 시뮬레이션 ─── */
+function createSim({ nodes, edges }) {
+  const pts = nodes.map((n, i) => {
+    if (n.type === 'company') return { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+    // 피보나치 구 + 지터로 초기 배치
+    const N = Math.max(nodes.length - 1, 1);
+    const y = 1 - ((i % N) / N) * 2;
+    const r = Math.sqrt(Math.max(1 - y * y, 0.05));
+    const th = i * 2.39996;
+    const R = 90 + (i % 3) * 25;
+    return {
+      x: Math.cos(th) * r * R, y: y * R * 0.9, z: Math.sin(th) * r * R,
+      vx: 0, vy: 0, vz: 0,
+    };
   });
-  return edges;
+  const tick = () => {
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i];
+      for (let j = i + 1; j < pts.length; j++) {
+        const b = pts[j];
+        let dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+        let d2 = dx * dx + dy * dy + dz * dz || 1;
+        const f = 5200 / d2;
+        const d = Math.sqrt(d2);
+        dx /= d; dy /= d; dz /= d;
+        a.vx += dx * f; a.vy += dy * f; a.vz += dz * f;
+        b.vx -= dx * f; b.vy -= dy * f; b.vz -= dz * f;
+      }
+      a.vx -= a.x * 0.003; a.vy -= a.y * 0.003; a.vz -= a.z * 0.003;
+    }
+    for (const [i, j] of edges) {
+      const a = pts[i], b = pts[j];
+      const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+      const d = Math.hypot(dx, dy, dz) || 1;
+      const f = (d - 85) * 0.014;
+      a.vx += (dx / d) * f; a.vy += (dy / d) * f; a.vz += (dz / d) * f;
+      b.vx -= (dx / d) * f; b.vy -= (dy / d) * f; b.vz -= (dz / d) * f;
+    }
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      if (nodes[i].type === 'company') { p.x = p.y = p.z = 0; continue; } // 허브 고정
+      p.vx *= 0.8; p.vy *= 0.8; p.vz *= 0.8;
+      p.x += p.vx; p.y += p.vy; p.z += p.vz;
+    }
+  };
+  for (let k = 0; k < 120; k++) tick(); // 워밍업 — 첫 프레임부터 자리 잡힌 상태
+  return { pts, tick };
+}
+
+/* ─── 공용 렌더러 — 회전·투영·잉크 할로 ─── */
+function makeRenderer(canvas, graph, sim, opts) {
+  const ctx = canvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let W = 0, H = 0;
+  const fit = () => {
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  fit();
+
+  const view = { rotY: 0.5, rotX: 0.28, zoom: opts.zoom ?? 1 };
+  const project = (p) => {
+    const cy = Math.cos(view.rotY), sy = Math.sin(view.rotY);
+    let x = p.x * cy + p.z * sy;
+    let z = -p.x * sy + p.z * cy;
+    const cx = Math.cos(view.rotX), sx = Math.sin(view.rotX);
+    let y = p.y * cx - z * sx;
+    z = p.y * sx + z * cx;
+    const f = 460;
+    const k = f / (f + z + 260);
+    const base = (Math.min(W, H) / 320) * view.zoom;
+    return { x: W / 2 + x * k * base * 1.5, y: H / 2 + y * k * base * 1.5, k, z };
+  };
+
+  const R_BY_TYPE = { company: 8, agent: 5.5, doc: 4, note: 4 };
+
+  const draw = (hover) => {
+    ctx.clearRect(0, 0, W, H);
+    const P = sim.pts.map(project);
+
+    // 엣지 — 깊이 페이드, 호버 시 연결 추적 하이라이트
+    for (const [i, j] of graph.edges) {
+      const a = P[i], b = P[j];
+      const k = (a.k + b.k) / 2;
+      const hi = hover !== null && (i === hover || j === hover);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.strokeStyle = `rgba(${INK}, ${hi ? 0.85 : 0.1 + 0.3 * k * k})`;
+      ctx.lineWidth = hi ? 1.6 : 0.8 + 0.5 * k;
+      ctx.stroke();
+    }
+
+    // 노드 — 뒤에서 앞 순서로 (깊이 정렬), 할로 글로우 + 코어
+    const order = P.map((q, i) => [q.z, i]).sort((a, b) => b[0] - a[0]);
+    for (const [, i] of order) {
+      const n = graph.nodes[i];
+      const q = P[i];
+      const r = (R_BY_TYPE[n.type] + Math.min(n.deg, 6) * 0.35) * q.k * (opts.mini ? 0.8 : 1) * Math.min(view.zoom, 1.4);
+      const hi = hover === i;
+      const alpha = 0.3 + 0.7 * q.k;
+
+      // 잉크 할로 (레퍼런스의 글로우를 잉크 톤으로)
+      ctx.beginPath(); ctx.arc(q.x, q.y, r * 3, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${INK}, ${(hi ? 0.16 : 0.06) * q.k})`; ctx.fill();
+      ctx.beginPath(); ctx.arc(q.x, q.y, r * 1.8, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${INK}, ${(hi ? 0.28 : 0.12) * q.k})`; ctx.fill();
+
+      // 코어
+      ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, Math.PI * 2);
+      if (n.type === 'note') {
+        ctx.fillStyle = `rgba(${PAPER}, 0.95)`; ctx.fill();
+        ctx.strokeStyle = `rgba(${INK}, ${alpha})`; ctx.lineWidth = 1.4; ctx.stroke();
+      } else if (n.type === 'company') {
+        ctx.fillStyle = `rgba(${INK}, ${alpha})`; ctx.fill();
+        ctx.beginPath(); ctx.arc(q.x, q.y, r + 3.5, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${INK}, ${0.5 * q.k})`; ctx.lineWidth = 1; ctx.setLineDash([2, 3]); ctx.stroke(); ctx.setLineDash([]);
+      } else {
+        ctx.fillStyle = `rgba(${INK}, ${alpha})`; ctx.fill();
+      }
+      if (hi) {
+        ctx.beginPath(); ctx.arc(q.x, q.y, r + 6, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${INK}, 0.6)`; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+      }
+
+      // 라벨 — 회사·크루는 항상, 기억은 호버 시 (미니는 호버 없음)
+      if (!opts.mini && (n.type === 'company' || n.type === 'agent' || hi)) {
+        const t = n.label.length > 24 ? `${n.label.slice(0, 24)}…` : n.label;
+        ctx.font = `${hi || n.type === 'company' ? 600 : 400} ${n.type === 'company' ? 11.5 : 10.5}px "IBM Plex Mono", monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = `rgba(${INK}, ${hi ? 0.95 : 0.4 + 0.4 * q.k})`;
+        ctx.fillText(t, q.x, q.y + r + 15);
+      }
+    }
+    return P;
+  };
+
+  return { ctx, view, project, draw, fit, getSize: () => ({ W, H }) };
 }
 
 /* ─── 미니 3D 별자리 ─── */
-export function Constellation3D({ docs, height = 190, onOpen }) {
+export function Constellation3D({ company, agents, docs, height = 200, onOpen }) {
   const ref = useRef(null);
 
   useEffect(() => {
-    if (!docs || docs.length === 0) return;
     const canvas = ref.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (!canvas || !docs) return;
+    const graph = buildGraph({ company, agents, docs });
+    if (graph.nodes.length === 0) return;
+    const sim = createSim(graph);
+    const r = makeRenderer(canvas, graph, sim, { mini: true, zoom: 0.92 });
 
-    let W = 0, H = 0;
-    const fit = () => {
-      W = canvas.clientWidth; H = canvas.clientHeight;
-      canvas.width = W * dpr; canvas.height = H * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    fit();
-
-    // 기억 노드 — 피보나치 구 분포
-    const N = docs.length;
-    const nodes = docs.map((d, i) => {
-      const y = N === 1 ? 0 : 1 - (i / (N - 1)) * 2;
-      const r = Math.sqrt(Math.max(1 - y * y, 0));
-      const th = i * 2.39996;
-      return { x: Math.cos(th) * r, y: y * 0.8, z: Math.sin(th) * r, note: d.dir === 'notes' };
-    });
-    const edges = buildEdges(docs);
-
-    // 더스트 — 구름 질감용 미세 잉크 입자 (결정적 의사난수 — 리렌더에도 동일)
-    let seed = 7;
-    const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-    const dust = Array.from({ length: 130 }, () => {
-      const u = rand() * 2 - 1;
-      const th = rand() * Math.PI * 2;
-      const rr = 0.55 + rand() * 0.65;
-      const r = Math.sqrt(1 - u * u) * rr;
-      return { x: Math.cos(th) * r, y: u * rr * 0.85, z: Math.sin(th) * r, s: 0.5 + rand() * 0.9 };
-    });
-
-    let rotY = 0.6, tiltX = 0.12;
-    let targetTilt = 0.12, targetSpeed = 0.0035, speed = 0.0035;
+    let speed = 0.004, targetSpeed = 0.004, targetTilt = 0.28;
     const onMove = (e) => {
       const b = canvas.getBoundingClientRect();
-      const nx = (e.clientX - b.left) / b.width - 0.5;
-      const ny = (e.clientY - b.top) / b.height - 0.5;
-      targetSpeed = 0.0035 + nx * 0.012; // 좌우 = 회전 속도·방향
-      targetTilt = 0.12 + ny * 0.5;      // 상하 = 기울기
+      targetSpeed = 0.004 + ((e.clientX - b.left) / b.width - 0.5) * 0.014;
+      targetTilt = 0.28 + ((e.clientY - b.top) / b.height - 0.5) * 0.6;
     };
-    const onLeave = () => { targetSpeed = 0.0035; targetTilt = 0.12; };
+    const onLeave = () => { targetSpeed = 0.004; targetTilt = 0.28; };
     canvas.addEventListener('mousemove', onMove);
     canvas.addEventListener('mouseleave', onLeave);
 
-    const project = (p) => {
-      const c = Math.cos(rotY), s = Math.sin(rotY);
-      let x = p.x * c + p.z * s;
-      let z = -p.x * s + p.z * c;
-      const ct = Math.cos(tiltX), st = Math.sin(tiltX);
-      let y = p.y * ct - z * st;
-      z = p.y * st + z * ct;
-      const f = 3.2;
-      const k = f / (f + z);
-      const R = Math.min(W, H) * 0.42;
-      return { x: W / 2 + x * k * R, y: H / 2 + y * k * R, k, z };
-    };
-
     let raf;
     const frame = () => {
+      sim.tick();
       speed += (targetSpeed - speed) * 0.05;
-      tiltX += (targetTilt - tiltX) * 0.05;
-      rotY += speed;
-      ctx.clearRect(0, 0, W, H);
-
-      // 더스트
-      for (const d of dust) {
-        const q = project(d);
-        ctx.beginPath();
-        ctx.arc(q.x, q.y, d.s * q.k, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${INK}, ${0.07 + 0.13 * q.k * q.k})`;
-        ctx.fill();
-      }
-      // 링크 선
-      const P = nodes.map(project);
-      for (const [a, b] of edges) {
-        const ka = (P[a].k + P[b].k) / 2;
-        ctx.beginPath();
-        ctx.moveTo(P[a].x, P[a].y);
-        ctx.lineTo(P[b].x, P[b].y);
-        ctx.strokeStyle = `rgba(${INK}, ${0.12 + 0.3 * ka * ka})`;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
-      // 기억 노드
-      nodes.forEach((n, i) => {
-        const q = P[i];
-        const r = 2 + 2.4 * q.k;
-        ctx.beginPath();
-        ctx.arc(q.x, q.y, r, 0, Math.PI * 2);
-        if (n.note) {
-          ctx.fillStyle = 'rgba(233, 235, 221, 0.9)';
-          ctx.fill();
-          ctx.strokeStyle = `rgba(${INK}, ${0.35 + 0.65 * q.k})`;
-          ctx.lineWidth = 1.3;
-          ctx.stroke();
-        } else {
-          ctx.fillStyle = `rgba(${INK}, ${0.35 + 0.65 * q.k})`;
-          ctx.fill();
-        }
-      });
+      r.view.rotY += speed;
+      r.view.rotX += (targetTilt - r.view.rotX) * 0.05;
+      r.draw(null);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
 
-    const ro = new ResizeObserver(fit);
+    const ro = new ResizeObserver(r.fit);
     ro.observe(canvas);
     return () => {
       cancelAnimationFrame(raf);
@@ -144,9 +228,8 @@ export function Constellation3D({ docs, height = 190, onOpen }) {
       canvas.removeEventListener('mousemove', onMove);
       canvas.removeEventListener('mouseleave', onLeave);
     };
-  }, [docs]);
+  }, [company, agents, docs]);
 
-  if (!docs) return null;
   return (
     <canvas
       ref={ref}
@@ -157,10 +240,10 @@ export function Constellation3D({ docs, height = 190, onOpen }) {
   );
 }
 
-/* ─── 전체화면 포스 그래프 (옵시디언식) ─── */
-export function GraphModal({ docs, onClose, onSelect }) {
+/* ─── 전체화면 3D 그래프 — 드래그 회전 · 휠 줌 · 노드 클릭 = 열기 ─── */
+export function GraphModal({ company, agents, docs, onClose, onSelect }) {
   const ref = useRef(null);
-  const [hoverTitle, setHoverTitle] = useState('');
+  const [hoverLabel, setHoverLabel] = useState('');
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -172,81 +255,56 @@ export function GraphModal({ docs, onClose, onSelect }) {
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas || !docs) return;
-    const ctx = canvas.getContext('2d');
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    let W = 0, H = 0;
-    const fit = () => {
-      W = canvas.clientWidth; H = canvas.clientHeight;
-      canvas.width = W * dpr; canvas.height = H * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    fit();
+    const graph = buildGraph({ company, agents, docs });
+    const sim = createSim(graph);
+    const r = makeRenderer(canvas, graph, sim, { mini: false, zoom: 1.3 });
 
-    const edges = buildEdges(docs);
-    const deg = docs.map((_, i) => edges.filter(([a, b]) => a === i || b === i).length);
-    const nodes = docs.map((d, i) => {
-      const th = i * 2.39996;
-      const r = 60 + 40 * Math.sqrt(i);
-      return {
-        x: Math.cos(th) * r, y: Math.sin(th) * r, vx: 0, vy: 0,
-        rel: d.rel, title: d.title, note: d.dir === 'notes', deg: deg[i],
-      };
-    });
-
-    // 노드가 적을수록 초기 줌을 키워 화면을 채운다
-    let scale = Math.min(Math.max(2.1 - docs.length * 0.09, 0.7), 1.7);
-    let ox = 0, oy = 0; // 뷰 변환 (월드→화면: 화면중심 + (p+o)*scale)
-    const toScreen = (p) => ({ x: W / 2 + (p.x + ox) * scale, y: H / 2 + (p.y + oy) * scale });
-    const toWorld = (sx, sy) => ({ x: (sx - W / 2) / scale - ox, y: (sy - H / 2) / scale - oy });
-
-    let dragNode = null, panning = false, moved = 0;
-    let px = 0, py = 0, hover = null;
+    let hover = null, dragging = false, moved = 0, px = 0, py = 0;
+    let idleAt = 0; // 마지막 조작 시각 — 잠시 후 자동 회전 재개
+    let P = [];
 
     const pick = (sx, sy) => {
-      const w = toWorld(sx, sy);
-      let best = null, bd = 14 / scale;
-      for (const n of nodes) {
-        const d = Math.hypot(n.x - w.x, n.y - w.y);
-        if (d < bd) { bd = d; best = n; }
-      }
+      let best = null, bd = 16;
+      P.forEach((q, i) => {
+        const d = Math.hypot(q.x - sx, q.y - sy);
+        if (d < bd) { bd = d; best = i; }
+      });
       return best;
     };
-
-    const down = (e) => {
+    const pos = (e) => {
       const b = canvas.getBoundingClientRect();
-      px = e.clientX - b.left; py = e.clientY - b.top; moved = 0;
-      dragNode = pick(px, py);
-      panning = !dragNode;
+      return [e.clientX - b.left, e.clientY - b.top];
     };
+
+    const down = (e) => { [px, py] = pos(e); dragging = true; moved = 0; idleAt = performance.now(); };
     const move = (e) => {
-      const b = canvas.getBoundingClientRect();
-      const sx = e.clientX - b.left, sy = e.clientY - b.top;
-      if (dragNode) {
-        const w = toWorld(sx, sy);
-        dragNode.x = w.x; dragNode.y = w.y; dragNode.vx = 0; dragNode.vy = 0;
+      const [sx, sy] = pos(e);
+      if (dragging) {
+        r.view.rotY += (sx - px) * 0.006;
+        r.view.rotX = Math.min(Math.max(r.view.rotX + (sy - py) * 0.004, -1.3), 1.3);
         moved += Math.hypot(sx - px, sy - py);
-      } else if (panning) {
-        ox += (sx - px) / scale; oy += (sy - py) / scale;
-        moved += Math.hypot(sx - px, sy - py);
+        idleAt = performance.now();
       } else {
         hover = pick(sx, sy);
-        setHoverTitle(hover ? hover.title : '');
-        canvas.style.cursor = hover ? 'pointer' : 'grab';
+        const n = hover !== null ? graph.nodes[hover] : null;
+        setHoverLabel(n ? n.label : '');
+        canvas.style.cursor = n && n.rel ? 'pointer' : 'grab';
       }
       px = sx; py = sy;
     };
-    const up = () => {
-      if (moved < 5 && dragNode) { onSelect(dragNode.rel); }
-      dragNode = null; panning = false;
+    const up = (e) => {
+      if (dragging && moved < 5) {
+        const [sx, sy] = pos(e);
+        const i = pick(sx, sy);
+        const n = i !== null ? graph.nodes[i] : null;
+        if (n?.rel) onSelect(n.rel);
+      }
+      dragging = false;
     };
     const wheel = (e) => {
       e.preventDefault();
-      const b = canvas.getBoundingClientRect();
-      const sx = e.clientX - b.left, sy = e.clientY - b.top;
-      const before = toWorld(sx, sy);
-      scale = Math.min(Math.max(scale * Math.exp(-e.deltaY * 0.0012), 0.35), 3.5);
-      const after = toWorld(sx, sy);
-      ox += after.x - before.x; oy += after.y - before.y;
+      r.view.zoom = Math.min(Math.max(r.view.zoom * Math.exp(-e.deltaY * 0.0012), 0.45), 3);
+      idleAt = performance.now();
     };
     canvas.addEventListener('mousedown', down);
     window.addEventListener('mousemove', move);
@@ -254,85 +312,15 @@ export function GraphModal({ docs, onClose, onSelect }) {
     canvas.addEventListener('wheel', wheel, { passive: false });
 
     let raf;
-    const frame = () => {
-      // 포스 시뮬레이션 — 반발 + 링크 스프링 + 중심 인력
-      for (let i = 0; i < nodes.length; i++) {
-        const a = nodes[i];
-        for (let j = i + 1; j < nodes.length; j++) {
-          const b = nodes[j];
-          let dx = a.x - b.x, dy = a.y - b.y;
-          let d2 = dx * dx + dy * dy || 1;
-          const f = 2600 / d2;
-          const d = Math.sqrt(d2);
-          dx /= d; dy /= d;
-          a.vx += dx * f; a.vy += dy * f;
-          b.vx -= dx * f; b.vy -= dy * f;
-        }
-        a.vx -= a.x * 0.004; a.vy -= a.y * 0.004;
-      }
-      for (const [i, j] of edges) {
-        const a = nodes[i], b = nodes[j];
-        const dx = b.x - a.x, dy = b.y - a.y;
-        const d = Math.hypot(dx, dy) || 1;
-        const f = (d - 110) * 0.012;
-        a.vx += (dx / d) * f; a.vy += (dy / d) * f;
-        b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
-      }
-      for (const n of nodes) {
-        if (n === dragNode) continue;
-        n.vx *= 0.82; n.vy *= 0.82;
-        n.x += n.vx; n.y += n.vy;
-      }
-
-      ctx.clearRect(0, 0, W, H);
-      // 링크
-      for (const [i, j] of edges) {
-        const a = toScreen(nodes[i]), b = toScreen(nodes[j]);
-        const hi = hover && (nodes[i] === hover || nodes[j] === hover);
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-        ctx.strokeStyle = `rgba(${INK}, ${hi ? 0.75 : 0.3})`;
-        ctx.lineWidth = hi ? 1.5 : 1;
-        ctx.stroke();
-      }
-      // 노드 + 라벨
-      ctx.textAlign = 'center';
-      for (const n of nodes) {
-        const s = toScreen(n);
-        const r = (5 + n.deg * 1.6) * Math.min(scale, 1.4);
-        const hi = hover === n;
-        ctx.beginPath();
-        ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
-        if (n.note) {
-          ctx.fillStyle = 'rgba(233, 235, 221, 1)';
-          ctx.fill();
-          ctx.strokeStyle = `rgba(${INK}, ${hi ? 1 : 0.8})`;
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-        } else {
-          ctx.fillStyle = `rgba(${INK}, ${hi ? 1 : 0.85})`;
-          ctx.fill();
-        }
-        if (hi) {
-          ctx.beginPath();
-          ctx.arc(s.x, s.y, r + 5, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(${INK}, 0.5)`;
-          ctx.setLineDash([3, 3]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-        if (scale > 0.55) {
-          const t = n.title.length > 22 ? `${n.title.slice(0, 22)}…` : n.title;
-          ctx.font = `${hi ? 600 : 400} 10.5px "IBM Plex Mono", monospace`;
-          ctx.fillStyle = `rgba(${INK}, ${hi ? 0.95 : 0.55})`;
-          ctx.fillText(t, s.x, s.y + r + 14);
-        }
-      }
+    const frame = (t) => {
+      sim.tick();
+      if (!dragging && t - idleAt > 2600) r.view.rotY += 0.0022; // 유휴 시 자동 회전
+      P = r.draw(hover);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
 
-    const ro = new ResizeObserver(fit);
+    const ro = new ResizeObserver(r.fit);
     ro.observe(canvas);
     return () => {
       cancelAnimationFrame(raf);
@@ -342,7 +330,7 @@ export function GraphModal({ docs, onClose, onSelect }) {
       window.removeEventListener('mouseup', up);
       canvas.removeEventListener('wheel', wheel);
     };
-  }, [docs, onSelect]);
+  }, [company, agents, docs, onSelect]);
 
   const conv = docs?.filter((d) => d.dir !== 'notes').length ?? 0;
   const notes = docs?.filter((d) => d.dir === 'notes').length ?? 0;
@@ -354,17 +342,18 @@ export function GraphModal({ docs, onClose, onSelect }) {
     >
       <div className="topbar" style={{ flex: 'none' }}>
         <span className="topbar-title">기억 그래프</span>
-        <span className="microlabel" style={{ marginLeft: 4 }}>Constellation</span>
+        <span className="microlabel" style={{ marginLeft: 4 }}>Constellation 3D</span>
         <div style={{ flex: 1 }} />
+        <span className="chip"><span className="dot" />허브·크루 {1 + (agents?.length ?? 0)}</span>
         <span className="chip"><span className="dot" />대화 {conv}</span>
         <span className="chip"><span style={{ width: 5, height: 5, borderRadius: 999, border: '1px solid currentColor' }} />노트 {notes}</span>
-        <span className="chip">드래그 이동 · 휠 줌 · 노드 클릭 = 열기</span>
+        <span className="chip">드래그 회전 · 휠 줌 · 기억 클릭 = 열기</span>
         <button className="btn sm" onClick={onClose}>닫기 ESC</button>
       </div>
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <canvas ref={ref} style={{ width: '100%', height: '100%', display: 'block', cursor: 'grab' }} />
-        {hoverTitle && (
-          <span className="chip" style={{ position: 'absolute', left: 20, bottom: 18, background: 'var(--card)' }}>{hoverTitle}</span>
+        {hoverLabel && (
+          <span className="chip" style={{ position: 'absolute', left: 20, bottom: 18, background: 'var(--card)' }}>{hoverLabel}</span>
         )}
       </div>
     </div>

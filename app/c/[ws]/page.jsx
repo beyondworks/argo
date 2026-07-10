@@ -253,15 +253,13 @@ export default function Deck({ params }) {
               <span className="card-title">별자리</span>
               <button className="chip" onClick={() => setGraphOpen(true)} style={{ cursor: 'pointer' }}>크게 보기 ↗</button>
             </div>
-            {docs === null ? (
-              <Skeleton h={190} style={{ margin: '8px 0' }} />
-            ) : docs.length === 0 ? (
-              <p className="microlabel" style={{ padding: '20px 0 16px', textAlign: 'center' }}>No Records</p>
+            {docs === null || data === null ? (
+              <Skeleton h={200} style={{ margin: '8px 0' }} />
             ) : (
-              <Constellation3D docs={docs} onOpen={() => setGraphOpen(true)} />
+              <Constellation3D company={data.company} agents={data.agents} docs={docs} onOpen={() => setGraphOpen(true)} />
             )}
             <p className="microlabel" style={{ textAlign: 'center', padding: '2px 0 6px' }}>
-              {docs ? `${docs.length} Memories · Linked` : ''}
+              {docs && data ? `${1 + data.agents.length + docs.length} Nodes · ${docs.length} Memories` : ''}
             </p>
           </div>
           <VoyageLog docs={docs} agents={data?.agents ?? []} />
@@ -269,8 +267,10 @@ export default function Deck({ params }) {
         </div>
       </div>
 
-      {graphOpen && docs && (
+      {graphOpen && docs && data && (
         <GraphModal
+          company={data.company}
+          agents={data.agents}
           docs={docs}
           onClose={() => setGraphOpen(false)}
           onSelect={(rel) => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`)}
