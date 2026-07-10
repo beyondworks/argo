@@ -485,15 +485,14 @@ function VoyageLog({ docs, agents }) {
 /** 크루 신원 수정 — 이름·역할·팀. 슬러그·기록은 유지된다. */
 function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
   const { t } = useLang();
-  const MODELS = [
-    ['', t('deck.model.default')],
-    ['claude-opus-4-8', t('deck.model.opus')],
-    ['claude-sonnet-5', t('deck.model.sonnet')],
-    ['claude-haiku-4-5-20251001', t('deck.model.haiku')],
-  ];
-  const [form, setForm] = useState({ name: agent.name, role: agent.role, team: agent.team || '', model: agent.model || '' });
+  const [form, setForm] = useState({ name: agent.name, role: agent.role, team: agent.team || '', model: agent.model || '', runner: agent.runner || 'claude' });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  // 러너 카탈로그 + 로컬 인증 상태 — Claude Code 외에는 각 CLI의 OAuth 로그인(구독)을 빌린다
+  const [runners, setRunners] = useState(null);
+  useEffect(() => { api('/api/runners').then((d) => setRunners(d.runners)).catch(() => setRunners([])); }, []);
+  const curRunner = runners?.find((r) => r.id === form.runner);
+  const runnerLabel = (r) => r.name + (r.authed ? '' : r.installed ? ` — ${t('runner.needLogin')}` : ` — ${t('runner.notInstalled')}`);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -545,9 +544,22 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
             </datalist>
           </label>
           <label style={{ display: 'grid', gap: 4 }}>
+            <span className="microlabel">{t('deck.fieldRunnerHint')}</span>
+            <select value={form.runner} onChange={(e) => setForm({ ...form, runner: e.target.value, model: '' })} style={field} disabled={runners === null}>
+              {(runners ?? [{ id: 'claude', name: 'Claude Code', authed: true, installed: true }]).map((r) => (
+                <option key={r.id} value={r.id}>{runnerLabel(r)}</option>
+              ))}
+            </select>
+            {curRunner && !curRunner.authed && (
+              <span style={{ fontSize: 11.5, color: 'var(--warn)' }}>{t('runner.authHint', { name: curRunner.name })}</span>
+            )}
+          </label>
+          <label style={{ display: 'grid', gap: 4 }}>
             <span className="microlabel">{t('deck.fieldModelHint')}</span>
             <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} style={field}>
-              {MODELS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              {(curRunner?.models ?? [{ id: '', label: '' }]).map((m) => (
+                <option key={m.id} value={m.id}>{m.id === '' ? t('deck.model.default') : m.label}</option>
+              ))}
             </select>
           </label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

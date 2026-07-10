@@ -100,7 +100,7 @@ function setFrontmatterKey(md, key, value) {
 }
 
 /** 이름·역할·팀·모델 수정 — 슬러그·파일명·기록은 유지(정체성은 표시 이름만 바뀐다). */
-export async function updateAgentMeta(wsId, slug, { name, role, team, model }) {
+export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner }) {
   const file = join(paths(wsId).agents, `${slug}.md`);
   if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
   let md = await readFile(file, 'utf8');
@@ -113,6 +113,7 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model }) {
   if (role !== undefined) md = setFrontmatterKey(md, 'role', role.trim());
   if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
   if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
+  if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = Claude Code(기본)
   await writeFile(file, md);
   const after = parseFrontmatter(md);
   await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: after.name });

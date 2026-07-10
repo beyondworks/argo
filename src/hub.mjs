@@ -56,6 +56,7 @@ export async function listAgents(wsId) {
       role: meta.role || '',
       team: meta.team || '',
       model: meta.model || '',
+      runner: meta.runner || '',
       expertise: sectionBullets(md, '전문성'),
       tone: sectionBullets(md, '톤', 1)[0] || '',
     });

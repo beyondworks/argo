@@ -27,8 +27,8 @@ export async function PUT(req, { params }) {
 export async function PATCH(req, { params }) {
   try {
     const { ws, slug } = await params;
-    const { name, role, team, model } = await req.json();
-    const meta = await updateAgentMeta(ws, slug, { name, role, team, model });
+    const { name, role, team, model, runner } = await req.json();
+    const meta = await updateAgentMeta(ws, slug, { name, role, team, model, runner });
     return Response.json({ meta });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });
