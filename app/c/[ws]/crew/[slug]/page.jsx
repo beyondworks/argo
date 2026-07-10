@@ -2,12 +2,13 @@
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { use, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, Dots, Spinner, Skeleton, api, imeGuard } from '../../../../ui';
-
-const WAIT_STAGES = ['기억을 살피는 중', '작업 중', '결과를 정리하는 중'];
+import { Avatar, Icon, Markdown, Dots, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../../ui';
+import { useLang } from '../../../../i18n';
 
 export default function CrewChat({ params }) {
   const { ws, slug } = use(params);
+  const { t } = useLang();
+  const WAIT_STAGES = [t('chat.waitStage1'), t('chat.waitStage2'), t('chat.waitStage3')];
   const router = useRouter();
   const [agent, setAgent] = useState(null);
   const [thread, setThread] = useState(null); // null = 로딩
@@ -77,9 +78,9 @@ export default function CrewChat({ params }) {
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
       // 실패 턴은 서버에 저장되지 않는다 — 입력을 복원해 바로 재시도할 수 있게
-      setThread((t) => t.slice(0, -1));
+      setThread((cur) => cur.slice(0, -1));
       setInput(message);
-      setError(`턴 실패: ${String(err.message)} — 입력을 복원했습니다. 다시 보내보세요.`);
+      setError(t('chat.turnFailed', { msg: String(err.message) }));
     } finally {
       setBusy(false);
     }
@@ -87,7 +88,7 @@ export default function CrewChat({ params }) {
 
   async function newChat() {
     if (busy) return;
-    if (!window.confirm('새 대화를 시작할까요? 지금 스레드는 지워지지만, 회사 기억(vault)은 그대로 남습니다.')) return;
+    if (!window.confirm(t('chat.newChatConfirm'))) return;
     await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
     setThread([]); sessionRef.current = null; setError('');
   }
@@ -101,12 +102,12 @@ export default function CrewChat({ params }) {
           <div style={{ fontSize: 12, color: 'var(--fg-2)' }}>{agent?.role}</div>
         </div>
         {sessionRef.current ? (
-          <span className="pill ok"><span className="dot" />세션 이어가는 중</span>
+          <span className="pill ok"><span className="dot" />{t('chat.sessionOngoing')}</span>
         ) : (
-          <span className="pill"><span className="dot" />새 세션</span>
+          <span className="pill"><span className="dot" />{t('chat.newSession')}</span>
         )}
-        <button className="btn sm" onClick={() => setCardOpen(true)}>카드</button>
-        <button className="btn sm" onClick={newChat} disabled={busy || !(thread?.length)}>새 대화</button>
+        <button className="btn sm" onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
+        <button className="btn sm" onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
       </div>
 
       <div className="thread" style={{ flex: 1 }}>
@@ -116,7 +117,7 @@ export default function CrewChat({ params }) {
         {thread?.length === 0 && !busy && (
           <div className="empty fade-up">
             {agent?.tone && <p style={{ marginBottom: 6, color: 'var(--fg-2)' }}>"{agent.tone}"</p>}
-            첫 지시를 내려보세요. 매 턴의 결과는 회사 기억에 남고, 비슷한 기억끼리 이어집니다.
+            {t('chat.firstPrompt')}
           </div>
         )}
         {(thread ?? []).map((m, i) =>
@@ -130,8 +131,8 @@ export default function CrewChat({ params }) {
                 {m.handover && (
                   <a className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
                     <Icon name="memory" size={12} />
-                    기억에 기록됨
-                    {m.handover.linked?.length > 0 && <span>· 관련 기억 {m.handover.linked.length}건과 연결</span>}
+                    {t('chat.recordedInMemory')}
+                    {m.handover.linked?.length > 0 && <span>{t('chat.linkedMemories', { n: m.handover.linked.length })}</span>}
                   </a>
                 )}
               </div>
@@ -142,7 +143,7 @@ export default function CrewChat({ params }) {
           <div className="msg-crew">
             <Avatar name={agent?.name} sm />
             <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13 }}>
-              <Dots /> {liveStage ?? WAIT_STAGES[stage]}…
+              <Dots /> {t('chat.stageEllipsis', { stage: liveStage ?? WAIT_STAGES[stage] })}
             </div>
           </div>
         )}
@@ -152,20 +153,21 @@ export default function CrewChat({ params }) {
 
       <form onSubmit={send} className="input-bar" style={{ position: 'sticky', bottom: 20, marginTop: 24, background: 'var(--card-2)' }}>
         <input suppressHydrationWarning
-          placeholder={`${agent?.name ?? '크루'}에게 지시하기`}
+          placeholder={t('chat.inputPlaceholder', { name: agent?.name ?? t('chat.crewFallback') })}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={busy}
           autoFocus
           {...imeGuard}
         />
-        <button className="btn btn-primary btn-icon" disabled={busy || !input.trim()} aria-label="보내기">
+        <button className="btn btn-primary btn-icon" disabled={busy || !input.trim()} aria-label={t('chat.send')}>
           <Icon name="send" size={15} />
         </button>
       </form>
 
       {cardOpen && (
         <CardPanel
+          agentName={agent?.name}
           ws={ws}
           slug={slug}
           onClose={() => setCardOpen(false)}
@@ -176,11 +178,14 @@ export default function CrewChat({ params }) {
   );
 }
 
-/** 카드 패널 — 카드가 곧 시스템 프롬프트. 열람·편집·해고. */
-function CardPanel({ ws, slug, onClose, onFired }) {
+/** 카드 패널 — 카드가 곧 시스템 프롬프트. 열람·편집·해고(깃헙식 확인). */
+function CardPanel({ ws, slug, agentName, onClose, onFired }) {
+  const { t } = useLang();
   const [md, setMd] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [fireOpen, setFireOpen] = useState(false);
+  const [firing, setFiring] = useState(false);
 
   useEffect(() => {
     api(`/api/companies/${ws}/agents/${slug}`)
@@ -201,7 +206,7 @@ function CardPanel({ ws, slug, onClose, onFired }) {
         body: JSON.stringify({ md }),
       }).then(async (r) => { if (!r.ok) throw new Error((await r.json()).error); });
       window.dispatchEvent(new Event('argo:refresh'));
-      setMsg('저장됨 — 다음 턴부터 반영됩니다.');
+      setMsg(t('chat.saved'));
     } catch (e) {
       setMsg(String(e.message));
     } finally {
@@ -210,7 +215,7 @@ function CardPanel({ ws, slug, onClose, onFired }) {
   }
 
   async function fire() {
-    if (!window.confirm('이 크루를 해고할까요? 카드는 .archive/로 보관되고, 남긴 기억은 회사에 그대로 남습니다.')) return;
+    setFiring(true);
     await fetch(`/api/companies/${ws}/agents/${slug}`, { method: 'DELETE' });
     onFired();
   }
@@ -219,10 +224,10 @@ function CardPanel({ ws, slug, onClose, onFired }) {
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(37,39,30,0.25)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
       <div className="card fade-up" style={{ width: 'min(680px, 100%)', maxHeight: '86vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
-          <span className="card-title">크루 카드</span>
-          <span className="microlabel">= System Prompt</span>
+          <span className="card-title">{t('chat.cardTitle')}</span>
+          <span className="microlabel">{t('chat.systemPromptEq')}</span>
           <span className="rule" />
-          <button className="btn sm" onClick={onClose}>닫기 ESC</button>
+          <button className="btn sm" onClick={onClose}>{t('chat.closeEsc')}</button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
           {md === null ? (
@@ -242,14 +247,26 @@ function CardPanel({ ws, slug, onClose, onFired }) {
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <button className="btn btn-primary sm" onClick={save} disabled={saving || md === null}>
-              {saving ? <Spinner size={12} /> : '저장'}
+              {saving ? <Spinner size={12} /> : t('chat.save')}
             </button>
-            <span style={{ fontSize: 12, color: msg.includes('저장됨') ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>
+            <span style={{ fontSize: 12, color: msg === t('chat.saved') ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>
             <span style={{ flex: 1 }} />
-            <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={fire}>해고</button>
+            <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => setFireOpen(true)}>{t('chat.fire')}</button>
           </div>
         </div>
       </div>
+      {fireOpen && (
+        <DangerModal
+          title={t('chat.fireTitle')}
+          description={t('chat.fireDesc')}
+          requireText={agentName || slug}
+          phraseKey="danger.phrase.fire"
+          confirmLabel={t('chat.fireConfirm')}
+          busy={firing}
+          onConfirm={fire}
+          onClose={() => setFireOpen(false)}
+        />
+      )}
     </div>
   );
 }

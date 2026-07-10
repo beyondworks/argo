@@ -3,17 +3,8 @@
 // 기본 뷰는 판단이 필요한 것(결재·오류)과 상태 변경(기억·크루·연결)만, 정상 턴은 '전체'로 접는다.
 import { use, useEffect, useMemo, useState } from 'react';
 import { Avatar, Skeleton, api, timeAgo } from '../../../ui';
+import { useLang } from '../../../i18n';
 
-const SOURCE = { deck: '데크', messenger: '메신저', routine: '루틴', delegate: '위임' };
-
-// 필터 정의 — '주요'가 opinionated default (정상 대화 턴 제외)
-const FILTERS = [
-  ['main', '주요'],
-  ['approval', '결재'],
-  ['memory', '기억'],
-  ['error', '오류'],
-  ['all', '전체'],
-];
 const isError = (e) => e.ok === false;
 const inFilter = (e, f) => {
   if (f === 'all') return true;
@@ -26,6 +17,16 @@ const inFilter = (e, f) => {
 
 export default function Activity({ params }) {
   const { ws } = use(params);
+  const { t, lang } = useLang();
+  const SOURCE = { deck: t('activity.source.deck'), messenger: t('activity.source.messenger'), routine: t('activity.source.routine'), delegate: t('activity.source.delegate') };
+  // 필터 정의 — '주요'가 opinionated default (정상 대화 턴 제외)
+  const FILTERS = [
+    ['main', t('activity.filter.main')],
+    ['approval', t('activity.filter.approval')],
+    ['memory', t('activity.filter.memory')],
+    ['error', t('activity.filter.error')],
+    ['all', t('activity.filter.all')],
+  ];
   const [events, setEvents] = useState(null);
   const [agents, setAgents] = useState([]);
   const [filter, setFilter] = useState('main');
@@ -44,7 +45,7 @@ export default function Activity({ params }) {
     return () => { window.removeEventListener('argo:search', h); window.removeEventListener('argo:refresh', load); clearInterval(t); };
   }, [ws]);
 
-  const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? (slug || '회사');
+  const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? (slug || t('activity.company'));
 
   // 이벤트 → 화면 행 (제목·설명·산출물 링크·칩)
   const row = (e) => {
@@ -52,38 +53,38 @@ export default function Activity({ params }) {
       return {
         who: e.source === 'delegate' && e.from ? `${nameOf(e.from)} → ${nameOf(e.slug)}` : nameOf(e.slug),
         avatar: nameOf(e.slug),
-        desc: isError(e) ? e.error : (e.gist || '지시 수행'),
-        chip: isError(e) ? '오류' : (SOURCE[e.source] ?? '대화'),
+        desc: isError(e) ? e.error : (e.gist || t('activity.instructionDone')),
+        chip: isError(e) ? t('activity.error') : (SOURCE[e.source] ?? t('activity.conversation')),
         danger: isError(e),
         href: e.journalRel ? `/c/${ws}/vault?doc=${encodeURIComponent(e.journalRel)}` : null,
-        linkLabel: '일지',
+        linkLabel: t('deck.log'),
         ms: e.ms,
       };
     }
     if (e.type === 'memory') {
-      const verb = { edit: '사장이 직접 수정', delete: '삭제' }[e.op] ?? '갱신';
+      const verb = { edit: t('activity.editByOwner'), delete: t('activity.op.delete') }[e.op] ?? t('activity.op.update');
       return {
-        who: e.op ? '기억' : '기억 정리', avatar: '기',
-        desc: isError(e) ? e.error : (e.notes?.length ? `주제 노트 ${verb} — ${e.notes.join(', ')}` : `주제 노트 ${verb}`),
-        chip: isError(e) ? '오류' : '배움', danger: isError(e),
-        href: e.op === 'delete' ? null : `/c/${ws}/vault`, linkLabel: '기억',
+        who: e.op ? t('activity.memory') : t('activity.memoryConsolidate'), avatar: t('activity.memory').slice(0, 1),
+        desc: isError(e) ? e.error : (e.notes?.length ? t('activity.topicNoteVerb', { verb, notes: e.notes.join(', ') }) : t('activity.topicNoteVerbOnly', { verb })),
+        chip: isError(e) ? t('activity.error') : t('activity.learned'), danger: isError(e),
+        href: e.op === 'delete' ? null : `/c/${ws}/vault`, linkLabel: t('activity.memory'),
       };
     }
     if (e.type === 'approval') {
-      const st = { pending: '요청', approved: '승인', rejected: '거절' }[e.status] ?? e.status;
+      const st = { pending: t('activity.approvalStatus.pending'), approved: t('activity.approvalStatus.approved'), rejected: t('activity.approvalStatus.rejected') }[e.status] ?? e.status;
       return {
         who: nameOf(e.slug), avatar: nameOf(e.slug), desc: e.action,
-        chip: `결재 ${st}`, danger: false,
+        chip: t('activity.approvalPrefix', { status: st }), danger: false,
         href: e.status === 'pending' ? `/c/${ws}` : `/c/${ws}/crew/${e.slug}`,
-        linkLabel: e.status === 'pending' ? '결재함' : '대화',
+        linkLabel: e.status === 'pending' ? t('activity.approvalsLink') : t('activity.chatLink'),
       };
     }
     if (e.type === 'crew') {
-      const op = { hire: '영입', fire: '하선', update: '정보 변경', team: '팀 개편' }[e.op] ?? e.op;
-      return { who: e.name || nameOf(e.slug), avatar: e.name || nameOf(e.slug), desc: op, chip: '크루', href: e.slug ? `/c/${ws}/crew/${e.slug}` : null, linkLabel: '카드' };
+      const op = { hire: t('activity.crewOp.hire'), fire: t('activity.crewOp.fire'), update: t('activity.crewOp.update'), team: t('activity.crewOp.team') }[e.op] ?? e.op;
+      return { who: e.name || nameOf(e.slug), avatar: e.name || nameOf(e.slug), desc: op, chip: t('activity.crew'), href: e.slug ? `/c/${ws}/crew/${e.slug}` : null, linkLabel: t('activity.card') };
     }
     if (e.type === 'gateway') {
-      return { who: e.kind === 'telegram' ? '텔레그램' : '슬랙', avatar: '연', desc: '메신저 페어링 완료', chip: '연결', href: `/c/${ws}/settings`, linkLabel: '설정' };
+      return { who: e.kind === 'telegram' ? t('activity.telegram') : t('activity.slack'), avatar: t('activity.connected').slice(0, 1), desc: t('activity.gatewayPaired'), chip: t('activity.connected'), href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
     }
     return { who: e.type, avatar: '?', desc: '', chip: e.type };
   };
@@ -109,14 +110,14 @@ export default function Activity({ params }) {
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <span className="microlabel">Activity · 회사 활동</span>
+        <span className="microlabel">{t('activity.header')}</span>
         <span className="microlabel">{new Date().toISOString().slice(0, 10)}</span>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 316px', gap: 14, alignItems: 'start' }}>
         <div className="card" style={{ padding: '16px 18px' }}>
           <div className="card-head">
-            <span className="microlabel">Timeline</span>
+            <span className="microlabel">{t('activity.timeline')}</span>
             <span className="rule" />
             <div style={{ display: 'flex', gap: 6 }}>
               {FILTERS.map(([k, label]) => (
@@ -129,13 +130,13 @@ export default function Activity({ params }) {
           </div>
           {events === null ? <Skeleton h={300} /> : list.length === 0 ? (
             <div className="empty">
-              {filter === 'error' ? '오류가 없습니다 — 순항 중입니다.' : '해당하는 활동이 없습니다.'}
+              {filter === 'error' ? t('activity.noError') : t('activity.noMatch')}
             </div>
           ) : (
             <div style={{ display: 'grid', marginTop: 8 }}>
               {list.map(({ e, r }, i) => (
                 <div key={i} className="row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 8px' }}>
-                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', width: 62, flex: 'none' }}>{timeAgo(new Date(e.ts).getTime())}</span>
+                  <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', width: 62, flex: 'none' }}>{timeAgo(new Date(e.ts).getTime(), lang)}</span>
                   <Avatar name={r.avatar} size={24} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ fontSize: 12.5, fontWeight: 600 }}>{r.who}</span>
@@ -145,7 +146,7 @@ export default function Activity({ params }) {
                   </div>
                   {r.href && (
                     <a href={r.href} className="mono" style={{ fontSize: 10.5, color: 'var(--fg-2)', textDecoration: 'underline', textUnderlineOffset: 3, flex: 'none' }}>
-                      {r.linkLabel} ↗
+                      {t('activity.linkArrow', { label: r.linkLabel })}
                     </a>
                   )}
                   <span className="chip" style={{ flex: 'none', ...(r.danger ? { color: 'var(--danger)', borderColor: 'var(--danger)' } : {}) }}>{r.chip}</span>
@@ -161,13 +162,18 @@ export default function Activity({ params }) {
         <div style={{ display: 'grid', gap: 14 }}>
           <div className="card" style={{ padding: '16px 18px' }}>
             <div className="card-head">
-              <span className="microlabel">Today</span>
+              <span className="microlabel">{t('activity.today')}</span>
               <span className="rule" />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
-              {[['처리한 턴', stat.turns], ['배운 주제', stat.learned], ['결재 요청', stat.approvals], ['오류', stat.errors]].map(([k, v]) => (
+              {[
+                [t('activity.turnsProcessed'), stat.turns, false],
+                [t('activity.topicsLearned'), stat.learned, false],
+                [t('activity.approvalRequests'), stat.approvals, false],
+                [t('activity.errors'), stat.errors, true],
+              ].map(([k, v, errKey]) => (
                 <div key={k}>
-                  <div className="mono" style={{ fontSize: 22, fontWeight: 600, color: k === '오류' && v > 0 ? 'var(--danger)' : 'var(--fg)' }}>{v}</div>
+                  <div className="mono" style={{ fontSize: 22, fontWeight: 600, color: errKey && v > 0 ? 'var(--danger)' : 'var(--fg)' }}>{v}</div>
                   <div className="microlabel" style={{ marginTop: 2 }}>{k}</div>
                 </div>
               ))}
@@ -176,7 +182,7 @@ export default function Activity({ params }) {
 
           <div className="card" style={{ padding: '16px 18px' }}>
             <div className="card-head">
-              <span className="microlabel">Today by Crew</span>
+              <span className="microlabel">{t('activity.todayByCrew')}</span>
               <span className="rule" />
             </div>
             <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
@@ -184,7 +190,7 @@ export default function Activity({ params }) {
                 <div key={c.slug}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 5 }}>
                     <span style={{ fontWeight: 600 }}>{c.name}</span>
-                    <span className="mono" style={{ color: 'var(--fg-2)' }}>{c.count}턴</span>
+                    <span className="mono" style={{ color: 'var(--fg-2)' }}>{t('activity.turnsCount', { n: c.count })}</span>
                   </div>
                   <div className="meter"><div className="meter-track"><div className="meter-fill" style={{ width: `${(c.count / maxCount) * 100}%` }} /></div></div>
                 </div>

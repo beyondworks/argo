@@ -2,6 +2,7 @@
 // 공용 클라이언트 조각들 — 화면 전체가 같이 쓴다.
 import { useEffect, useState } from 'react';
 import { marked } from 'marked';
+import { useLang } from './i18n';
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -62,16 +63,18 @@ export function Avatar({ name, sm = false }) {
 }
 
 export function Dots() {
+  const { t } = useLang();
   return (
-    <span className="dots" role="status" aria-label="진행 중">
+    <span className="dots" role="status" aria-label={t('ui.inProgress')}>
       <i /><i /><i />
     </span>
   );
 }
 
 export function Spinner({ size = 14 }) {
+  const { t } = useLang();
   return (
-    <svg className="spin" width={size} height={size} viewBox="0 0 24 24" fill="none" aria-label="로딩">
+    <svg className="spin" width={size} height={size} viewBox="0 0 24 24" fill="none" aria-label={t('ui.loading')}>
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2.5" />
       <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
     </svg>
@@ -105,6 +108,7 @@ export function Num({ value, unit, size = 34, duration = 750, style }) {
 
 /** 도트 매트릭스 차트 — 막대 대신 잉크 도트. 마운트 시 아래에서 위로 점등. */
 export function Bars({ data, rows = 8 }) {
+  const { t } = useLang();
   const max = Math.max(...data.map((d) => d.count), 1);
   const [on, setOn] = useState(false);
   useEffect(() => {
@@ -116,7 +120,7 @@ export function Bars({ data, rows = 8 }) {
       {data.map((d, i) => {
         const filled = d.count === 0 ? 0 : Math.max(Math.round((d.count / max) * rows), 1);
         return (
-          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, minWidth: 0 }} title={`${d.date} · ${d.count}건`}>
+          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, minWidth: 0 }} title={t('ui.barTitle', { date: d.date, n: d.count })}>
             <div style={{ display: 'flex', flexDirection: 'column-reverse', gap: 3 }}>
               {Array.from({ length: rows }, (_, r) => {
                 const lit = on && r < filled;
@@ -232,14 +236,25 @@ export async function api(path, opts) {
     body: JSON.stringify(opts),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `요청 실패 (${res.status})`);
+  if (!res.ok) {
+    // api()는 훅 밖(컴포넌트 외부)에서도 호출되므로 localStorage를 직접 읽는다.
+    const lang = (typeof window !== 'undefined' && localStorage.getItem('argo-lang')) || 'ko';
+    const fallback = lang === 'en' ? `Request failed (${res.status})` : `요청 실패 (${res.status})`;
+    throw new Error(data.error || fallback);
+  }
   return data;
 }
 
-export function timeAgo(input) {
+export function timeAgo(input, lang = 'ko') {
   const t = typeof input === 'number' ? input : Date.parse(input);
   if (!t) return '';
   const s = (Date.now() - t) / 1000;
+  if (lang === 'en') {
+    if (s < 60) return 'just now';
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86400)}d ago`;
+  }
   if (s < 60) return '방금';
   if (s < 3600) return `${Math.floor(s / 60)}분 전`;
   if (s < 86400) return `${Math.floor(s / 3600)}시간 전`;
@@ -250,4 +265,52 @@ export function timeAgo(input) {
 export function tsFromRel(rel) {
   const m = rel.match(/(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/);
   return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}`) : null;
+}
+
+/** 깃헙식 파괴 확인 모달 — 이름을 똑같이 입력 + 확인 문구 입력이 맞아야 실행된다.
+ *  (규칙: 해고·회사 보관 등 파괴적 액션은 window.confirm 금지, 항상 이것 사용) */
+export function DangerModal({ title, description, requireText, phraseKey = 'danger.phrase.delete', confirmLabel, busy, onConfirm, onClose }) {
+  const { t } = useLang();
+  const [nameIn, setNameIn] = useState('');
+  const [phraseIn, setPhraseIn] = useState('');
+  const phrase = t(phraseKey);
+  const ok = nameIn === requireText && phraseIn === phrase;
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const field = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13, width: '100%' };
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(37,39,30,0.3)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
+      <div className="card fade-up" style={{ width: 'min(420px, 100%)', borderColor: 'var(--danger)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="card-head">
+          <span className="card-title" style={{ color: 'var(--danger)' }}>{title}</span>
+          <span className="rule" />
+          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+        </div>
+        <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
+          <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.65 }}>{description}</p>
+          <label style={{ display: 'grid', gap: 5 }}>
+            <span style={{ fontSize: 12 }}>{t('danger.typeName')} <strong className="mono" style={{ fontSize: 11.5 }}>{requireText}</strong></span>
+            <input suppressHydrationWarning value={nameIn} onChange={(e) => setNameIn(e.target.value)} style={field} autoFocus />
+          </label>
+          <label style={{ display: 'grid', gap: 5 }}>
+            <span style={{ fontSize: 12 }}>{t('danger.typePhrase')} <strong className="mono" style={{ fontSize: 11.5 }}>{phrase}</strong></span>
+            <input suppressHydrationWarning value={phraseIn} onChange={(e) => setPhraseIn(e.target.value)} style={field} />
+          </label>
+          <button
+            className="btn sm"
+            disabled={!ok || busy}
+            onClick={onConfirm}
+            style={{ color: 'var(--danger)', borderColor: 'var(--danger)', justifyContent: 'center', opacity: ok ? 1 : 0.4 }}
+          >
+            {busy ? <Spinner size={12} /> : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

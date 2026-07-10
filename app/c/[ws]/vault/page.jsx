@@ -2,8 +2,9 @@
 // 기억 — 3D 지식 그래프(공유 엔진) + 기록 표 + 종이 뷰어. 탑바 검색으로 필터.
 import { Suspense, use, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Icon, Markdown, Spinner, Skeleton, api, imeGuard, timeAgo, tsFromRel } from '../../../ui';
+import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo, tsFromRel } from '../../../ui';
 import { Constellation3D, GraphModal } from '../graphview';
+import { useLang } from '../../../i18n';
 
 export default function VaultPage({ params }) {
   return (
@@ -15,6 +16,7 @@ export default function VaultPage({ params }) {
 
 function Vault({ params }) {
   const { ws } = use(params);
+  const { t, lang } = useLang();
   const initialDoc = useSearchParams().get('doc');
   const [docs, setDocs] = useState(null);
   const [selected, setSelected] = useState(initialDoc || null);
@@ -65,7 +67,7 @@ function Vault({ params }) {
     setLoadingDoc(true);
     api(`/api/companies/${ws}/vault?rel=${encodeURIComponent(selected)}`)
       .then((d) => setContent(d.content))
-      .catch((e) => setContent(`(문서를 열 수 없습니다: ${e.message})`))
+      .catch((e) => setContent(t('vault.docUnavailable', { msg: e.message })))
       .finally(() => setLoadingDoc(false));
   }, [ws, selected]);
 
@@ -97,14 +99,13 @@ function Vault({ params }) {
     }
   }
 
+  const [deleteOpen, setDeleteOpen] = useState(false);
   async function removeNote() {
-    const doc = (docs ?? []).find((d) => d.rel === selected);
-    if (!window.confirm(`"${doc?.title ?? selected}" 노트를 삭제할까요?\n크루가 더 이상 이 지식을 참조하지 않습니다. (파일은 .trash/에 보관)`)) return;
     setMutating(true);
     try {
       await fetch(`/api/companies/${ws}/vault?rel=${encodeURIComponent(selected)}`, { method: 'DELETE' })
         .then(async (r) => { if (!r.ok) throw new Error((await r.json()).error); });
-      setSelected(null);
+      setSelected(null); setDeleteOpen(false);
       loadDocs();
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (e) {
@@ -119,7 +120,7 @@ function Vault({ params }) {
     setConsolidating(true); setConsolidateMsg('');
     try {
       const r = await api(`/api/companies/${ws}/vault/consolidate`, {});
-      setConsolidateMsg(r.notes.length ? `주제 노트 ${r.notes.length}건 갱신` : '정리할 새 일지가 없습니다');
+      setConsolidateMsg(r.notes.length ? t('vault.notesUpdated', { n: r.notes.length }) : t('vault.nothingToConsolidate'));
       await loadDocs();
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (e) {
@@ -139,15 +140,15 @@ function Vault({ params }) {
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-        <span className="microlabel">Vault · 회사가 쌓아온 항해일지</span>
+        <span className="microlabel">{t('vault.header')}</span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
           {consolidateMsg && <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{consolidateMsg}</span>}
-          <span className="microlabel">{docs ? `${docs.length} Records` : ''}</span>
-          <button className="btn sm" onClick={consolidate} disabled={consolidating} title="새 일지를 주제 노트로 정제합니다 (매일 새벽 자동)">
-            {consolidating ? <Spinner size={12} /> : <><Icon name="bolt" size={13} /> 기억 정리</>}
+          <span className="microlabel">{docs ? t('vault.records', { n: docs.length }) : ''}</span>
+          <button className="btn sm" onClick={consolidate} disabled={consolidating} title={t('vault.consolidateHint')}>
+            {consolidating ? <Spinner size={12} /> : <><Icon name="bolt" size={13} /> {t('vault.consolidate')}</>}
           </button>
           <button className="btn sm" onClick={() => setComposing((v) => !v)}>
-            <Icon name="plus" size={13} /> 노트 작성
+            <Icon name="plus" size={13} /> {t('vault.writeNote')}
           </button>
         </span>
       </div>
@@ -155,19 +156,19 @@ function Vault({ params }) {
       {composing && (
         <form onSubmit={saveNote} className="card fade-up" style={{ padding: 18, display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span className="card-title">지식 노트</span>
-            <span className="microlabel">저장 즉시 자동 링크</span>
+            <span className="card-title">{t('vault.knowledgeNote')}</span>
+            <span className="microlabel">{t('vault.autoLinkOnSave')}</span>
           </div>
           <input suppressHydrationWarning
             className="input-bar"
             style={{ display: 'block', height: 38, padding: '0 14px', borderRadius: 10, outline: 'none' }}
-            placeholder="제목 — 예: 쿠키 브랜드 카피 톤 가이드"
+            placeholder={t('vault.titlePlaceholder')}
             value={noteTitle}
             onChange={(e) => setNoteTitle(e.target.value)}
             {...imeGuard}
           />
           <textarea
-            placeholder="회사가 기억해야 할 내용을 적어주세요. 크루가 다음 턴부터 참조합니다."
+            placeholder={t('vault.bodyPlaceholder')}
             value={noteBody}
             onChange={(e) => setNoteBody(e.target.value)}
             style={{
@@ -178,9 +179,9 @@ function Vault({ params }) {
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <button className="btn btn-primary sm" disabled={savingNote || !noteTitle.trim() || !noteBody.trim()}>
-              {savingNote ? <Spinner size={12} /> : '기억에 저장'}
+              {savingNote ? <Spinner size={12} /> : t('vault.saveToMemory')}
             </button>
-            <button type="button" className="btn sm" onClick={() => setComposing(false)}>취소</button>
+            <button type="button" className="btn sm" onClick={() => setComposing(false)}>{t('vault.cancel')}</button>
             {noteMsg && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{noteMsg}</span>}
           </div>
         </form>
@@ -192,16 +193,16 @@ function Vault({ params }) {
           <Skeleton h={320} style={{ borderRadius: 16 }} />
         </>
       ) : docs.length === 0 ? (
-        <div className="empty">아직 기록된 기억이 없습니다. 크루와 첫 대화를 나누면 여기에 쌓입니다.</div>
+        <div className="empty">{t('vault.empty')}</div>
       ) : (
         <>
           <div className="card" style={{ padding: '14px 18px 8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span className="card-title">기억 그래프</span>
+              <span className="card-title">{t('vault.graphTitle')}</span>
               <div style={{ display: 'flex', gap: 8 }}>
-                <span className="chip"><span className="dot" />대화</span>
-                <span className="chip"><span style={{ width: 5, height: 5, borderRadius: 999, border: '1px solid currentColor' }} />노트</span>
-                <button className="chip" onClick={() => setGraphOpen(true)} style={{ cursor: 'pointer' }}>크게 보기 ↗</button>
+                <span className="chip"><span className="dot" />{t('vault.conversation')}</span>
+                <span className="chip"><span style={{ width: 5, height: 5, borderRadius: 999, border: '1px solid currentColor' }} />{t('vault.note')}</span>
+                <button className="chip" onClick={() => setGraphOpen(true)} style={{ cursor: 'pointer' }}>{t('vault.viewLarge')}</button>
               </div>
             </div>
             {meta ? (
@@ -215,29 +216,29 @@ function Vault({ params }) {
             {/* 기록 패널 — 탑바(56px) 아래 고정, 목록은 자체 스크롤. 우측 뷰어만 페이지와 함께 흐른다 */}
             <div className="card" style={{ position: 'sticky', top: 70, maxHeight: 'calc(100vh - 92px)', overflowY: 'auto' }}>
               <div className="card-head" style={{ paddingBottom: 10 }}>
-                <span className="card-title">기록</span>
+                <span className="card-title">{t('vault.records2')}</span>
                 <span className="chip">{visible.length}</span>
               </div>
               {visible.length === 0 && (
-                <p style={{ padding: '0 18px 16px', color: 'var(--fg-2)', fontSize: 13 }}>검색과 일치하는 기억이 없습니다.</p>
+                <p style={{ padding: '0 18px 16px', color: 'var(--fg-2)', fontSize: 13 }}>{t('vault.noMemoryMatch')}</p>
               )}
               <div className="microlabel" style={{ padding: '8px 18px 4px' }}>
-                회사가 아는 것 · {notes.length}
+                {t('vault.knownByCompany', { n: notes.length })}
               </div>
               {notes.length === 0 && (
                 <p style={{ padding: '4px 18px 12px', color: 'var(--fg-2)', fontSize: 12 }}>
-                  아직 정리된 지식이 없습니다 — 크루와 일하면 새벽 정리가 주제 노트로 만들어줍니다.
+                  {t('vault.noOrganizedYet')}
                 </p>
               )}
-              {notes.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={setSelected} icon="bolt" />)}
+              {notes.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={setSelected} icon="bolt" lang={lang} />)}
               {archives.length > 0 && (
                 <>
                   <button className="microlabel" onClick={() => setShowArchive((v) => !v)}
                     style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '10px 18px 6px', borderTop: '1px dashed var(--border-soft)', cursor: 'pointer' }}>
                     <span style={{ display: 'inline-block', transform: showArchive ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
-                    일지 보관함 · {archives.length} — 결론의 근거(대화 원본)
+                    {t('vault.archiveToggle', { n: archives.length })}
                   </button>
-                  {showArchive && archives.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={setSelected} icon="doc" />)}
+                  {showArchive && archives.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={setSelected} icon="doc" lang={lang} />)}
                 </>
               )}
             </div>
@@ -245,7 +246,7 @@ function Vault({ params }) {
             <div className="card" style={{ padding: 24, minHeight: 340 }}>
               {!selected ? (
                 <div style={{ color: 'var(--fg-2)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Icon name="doc" size={14} /> 왼쪽 목록이나 그래프의 별을 눌러 기억을 열어보세요.
+                  <Icon name="doc" size={14} /> {t('vault.selectHint')}
                 </div>
               ) : loadingDoc ? (
                 <Spinner />
@@ -256,10 +257,10 @@ function Vault({ params }) {
                     {selectedDoc?.dir === 'notes' && !editing && (
                       <span style={{ display: 'flex', gap: 6, flex: 'none' }}>
                         <button className="btn sm" onClick={() => { setDraft(content); setEditing(true); }}>
-                          <Icon name="edit" size={12} /> 편집
+                          <Icon name="edit" size={12} /> {t('vault.edit')}
                         </button>
-                        <button className="btn sm" onClick={removeNote} disabled={mutating} style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}>
-                          <Icon name="trash" size={12} /> 삭제
+                        <button className="btn sm" onClick={() => setDeleteOpen(true)} disabled={mutating} style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}>
+                          <Icon name="trash" size={12} /> {t('vault.delete')}
                         </button>
                       </span>
                     )}
@@ -270,10 +271,10 @@ function Vault({ params }) {
                         style={{ width: '100%', minHeight: 380, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', outline: 'none', fontSize: 12.5, lineHeight: 1.7, fontFamily: 'var(--font-mono, monospace)' }} />
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <button className="btn btn-primary sm" onClick={saveEdit} disabled={mutating || !draft.trim()}>
-                          {mutating ? <Spinner size={12} /> : '저장'}
+                          {mutating ? <Spinner size={12} /> : t('vault.save')}
                         </button>
-                        <button className="btn sm" onClick={() => setEditing(false)} disabled={mutating}>취소</button>
-                        <span className="metric-sub2">저장 즉시 크루가 이 내용을 참조합니다</span>
+                        <button className="btn sm" onClick={() => setEditing(false)} disabled={mutating}>{t('vault.cancel')}</button>
+                        <span className="metric-sub2">{t('vault.saveHint')}</span>
                       </div>
                     </div>
                   ) : (
@@ -286,6 +287,18 @@ function Vault({ params }) {
         </>
       )}
 
+      {deleteOpen && (
+        <DangerModal
+          title={t('vault.deleteTitle')}
+          description={t('vault.deleteDesc')}
+          requireText={selectedDoc?.title ?? ''}
+          phraseKey="danger.phrase.delete"
+          confirmLabel={t('vault.deleteConfirm')}
+          busy={mutating}
+          onConfirm={removeNote}
+          onClose={() => setDeleteOpen(false)}
+        />
+      )}
       {graphOpen && meta && docs && (
         <GraphModal
           company={meta.company}
@@ -301,7 +314,7 @@ function Vault({ params }) {
 }
 
 /** 기록 패널 행 — 주제 노트와 보관함이 같은 문법을 쓴다. */
-function DocRow({ d, active, onOpen, icon }) {
+function DocRow({ d, active, onOpen, icon, lang }) {
   return (
     <button onClick={() => onOpen(d.rel)} className={`row${active ? ' active' : ''}`}>
       <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}>
@@ -312,7 +325,7 @@ function DocRow({ d, active, onOpen, icon }) {
           {d.title}
         </span>
         <span className="mono" style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)', marginTop: 1 }}>
-          {timeAgo(tsFromRel(d.rel) ?? d.mtime)}{d.links.length > 0 && ` · LINK ${d.links.length}`}
+          {timeAgo(tsFromRel(d.rel) ?? d.mtime, lang)}{d.links.length > 0 && ` · LINK ${d.links.length}`}
         </span>
       </span>
     </button>

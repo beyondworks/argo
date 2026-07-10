@@ -3,12 +3,14 @@
 // 설치 즉시 모든 크루의 다음 턴에 반영된다 (스킬 → 시스템 프롬프트, MCP → mcpServers).
 import { use, useEffect, useState } from 'react';
 import { Icon, Spinner, Skeleton, api, imeGuard } from '../../../ui';
+import { useLang } from '../../../i18n';
 
 const fmtN = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 const safeId = (item) => String(item.name ?? '').toLowerCase().replace(/[^a-z0-9가-힣-]/g, '-').replace(/^-+|-+$/g, '');
 
 /** 추천 TOP 20 — 스킬(★순) / MCP(npm 주간 다운로드순). 행 클릭 = 상세. */
 function TopList({ ws, kind, installedIds, onInstalled, onDetail }) {
+  const { t } = useLang();
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
@@ -40,7 +42,7 @@ function TopList({ ws, kind, installedIds, onInstalled, onDetail }) {
   return (
     <div style={{ padding: '0 18px 14px' }}>
       <div className="microlabel" style={{ margin: '4px 0 8px' }}>
-        추천 Top 20 · {kind === 'skills' ? 'skillsmp 인기순 (★)' : 'npm 주간 다운로드순'}
+        {t('market.topLabel', { source: kind === 'skills' ? t('market.sourceSkills') : t('market.sourceMcp') })}
       </div>
       {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
       {items === null ? (
@@ -56,7 +58,7 @@ function TopList({ ws, kind, installedIds, onInstalled, onDetail }) {
                 className="row"
                 style={{ cursor: 'pointer', padding: '9px 14px', borderTop: i === 0 ? 'none' : undefined }}
                 onClick={() => onDetail({ ...item, kind: kind === 'skills' ? 'skill' : 'mcp' })}
-                title="클릭하면 쉬운 설명을 보여드립니다"
+                title={t('market.detailHint')}
               >
                 <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', width: 26, flex: 'none' }}>#{i + 1}</span>
                 <span style={{ fontWeight: 650, fontSize: 12.5, flex: 'none', maxWidth: 220, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
@@ -65,15 +67,15 @@ function TopList({ ws, kind, installedIds, onInstalled, onDetail }) {
                 <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--fg-3)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                   {item.desc}
                 </span>
-                {item.needsKey && <span className="chip" style={{ flex: 'none' }}>키 필요</span>}
+                {item.needsKey && <span className="chip" style={{ flex: 'none' }}>{t('market.needsKey')}</span>}
                 <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-2)', flex: 'none', width: 82, textAlign: 'right' }}>
-                  {kind === 'skills' ? `★ ${fmtN(item.stars ?? 0)}` : `↓ ${fmtN(item.downloads ?? 0)}/주`}
+                  {kind === 'skills' ? `★ ${fmtN(item.stars ?? 0)}` : t('market.perWeek', { n: fmtN(item.downloads ?? 0) })}
                 </span>
                 {on ? (
-                  <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />설치됨</span>
+                  <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('market.installed')}</span>
                 ) : (
                   <button className="btn sm" style={{ flex: 'none' }} onClick={(e) => install(e, item)} disabled={busy === key}>
-                    {busy === key ? <Spinner size={11} /> : '즉시 설치'}
+                    {busy === key ? <Spinner size={11} /> : t('market.installNow')}
                   </button>
                 )}
               </div>
@@ -87,6 +89,7 @@ function TopList({ ws, kind, installedIds, onInstalled, onDetail }) {
 
 /** 상세 모달 — 한글 easy 설명(생성·캐시) + 즉시 설치. */
 function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
+  const { t } = useLang();
   const [exp, setExp] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -131,33 +134,33 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
         <div className="card-head">
           <span className="card-title">{item.title ?? item.name}</span>
           <span className="rule" />
-          <button className="btn sm" onClick={onClose}>닫기 ESC</button>
+          <button className="btn sm" onClick={onClose}>{t('market.close')}</button>
         </div>
         <div style={{ padding: '0 20px 20px', display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <span className="chip"><span className="dot" />{item.kind === 'skill' ? '스킬 · 작업 지침서' : 'MCP · 외부 연결'}</span>
+            <span className="chip"><span className="dot" />{item.kind === 'skill' ? t('market.skillLabel') : t('market.mcpLabel')}</span>
             {item.stars != null && <span className="chip">★ {fmtN(item.stars)}</span>}
-            {item.downloads != null && <span className="chip">↓ {fmtN(item.downloads)}/주</span>}
+            {item.downloads != null && <span className="chip">{t('market.perWeek', { n: fmtN(item.downloads) })}</span>}
             {item.author && <span className="chip">{item.author}</span>}
-            {item.needsKey && <span className="chip danger">API 키 필요</span>}
+            {item.needsKey && <span className="chip danger">{t('market.needsKeyDanger')}</span>}
           </div>
 
           {item.desc && <p style={{ fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.6 }}>{item.desc}</p>}
           {err && <p style={{ fontSize: 12.5, color: 'var(--danger)' }}>{err}</p>}
           {!exp && !err && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: 'var(--fg-2)', fontSize: 12.5, padding: '6px 0' }}>
-              <Spinner size={13} /> 쉬운 설명을 준비하고 있어요… (처음 한 번만 걸려요)
+              <Spinner size={13} /> {t('market.preparingExplain')}
             </div>
           )}
           {exp && (
             <>
               <div>
-                <div className="microlabel" style={{ marginBottom: 4 }}>이게 뭐예요?</div>
+                <div className="microlabel" style={{ marginBottom: 4 }}>{t('market.whatIsIt')}</div>
                 <p style={{ fontSize: 13.5, lineHeight: 1.65 }}>{exp.easy?.what}</p>
               </div>
               {exp.easy?.when?.length > 0 && (
                 <div>
-                  <div className="microlabel" style={{ marginBottom: 4 }}>언제 쓰면 좋아요?</div>
+                  <div className="microlabel" style={{ marginBottom: 4 }}>{t('market.whenToUse')}</div>
                   <ul style={{ listStyle: 'none', display: 'grid', gap: 4, fontSize: 13, color: 'var(--fg-2)' }}>
                     {exp.easy.when.map((w, i) => <li key={i}>· {w}</li>)}
                   </ul>
@@ -165,7 +168,7 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
               )}
               {exp.easy?.examples?.length > 0 && (
                 <div>
-                  <div className="microlabel" style={{ marginBottom: 6 }}>크루에게 이렇게 시켜보세요</div>
+                  <div className="microlabel" style={{ marginBottom: 6 }}>{t('market.tryPrompts')}</div>
                   <div style={{ display: 'grid', gap: 6 }}>
                     {exp.easy.examples.map((ex, i) => (
                       <div key={i} className="card" style={{ background: 'var(--card-2)', padding: '8px 12px', fontSize: 12.5 }}>
@@ -176,11 +179,11 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
                 </div>
               )}
               {exp.easy?.caution && (
-                <p style={{ fontSize: 12.5, color: 'var(--danger)' }}>주의 — {exp.easy.caution}</p>
+                <p style={{ fontSize: 12.5, color: 'var(--danger)' }}>{t('market.caution', { msg: exp.easy.caution })}</p>
               )}
               {exp.raw && (
                 <div>
-                  <button className="btn sm" onClick={() => setShowRaw((v) => !v)}>원문 {showRaw ? '접기' : '보기'}</button>
+                  <button className="btn sm" onClick={() => setShowRaw((v) => !v)}>{t('market.rawToggle', { state: showRaw ? t('market.collapse') : t('market.expand') })}</button>
                   {showRaw && (
                     <pre className="mono" style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.6, background: 'var(--card-2)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: 12, whiteSpace: 'pre-wrap', maxHeight: 220, overflowY: 'auto' }}>
                       {exp.raw}
@@ -193,10 +196,10 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
             {installed ? (
-              <span className="pill ok"><span className="dot" />설치됨 — 다음 턴부터 반영</span>
+              <span className="pill ok"><span className="dot" />{t('market.installedNextTurn')}</span>
             ) : (
               <button className="btn btn-primary sm" onClick={install} disabled={busy}>
-                {busy ? <Spinner size={12} /> : '즉시 설치'}
+                {busy ? <Spinner size={12} /> : t('market.installNow')}
               </button>
             )}
           </div>
@@ -208,6 +211,7 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
 
 /** 원격 마켓 검색 + 즉시 설치 — kind: 'skills' | 'mcp' */
 function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInstalled, onDetail }) {
+  const { t } = useLang();
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -260,13 +264,13 @@ function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInst
           style={{ flex: 1, minWidth: 160, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, outline: 'none', fontSize: 12.5 }}
         />
         <button className="btn sm" disabled={searching || !q.trim()}>
-          {searching ? <Spinner size={11} /> : <Icon name="search" size={13} />} 검색
+          {searching ? <Spinner size={11} /> : <Icon name="search" size={13} />} {t('market.remoteSearchBtn')}
         </button>
       </form>
       {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
       {results !== null && (
         results.length === 0 ? (
-          <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>검색 결과가 없습니다.</span>
+          <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{t('market.noResults')}</span>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
             {results.map((item) => {
@@ -278,19 +282,19 @@ function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInst
                   className="card card-i fade-up"
                   style={{ background: 'var(--card-2)', padding: 14, display: 'flex', flexDirection: 'column', gap: 6, cursor: 'pointer' }}
                   onClick={() => onDetail?.({ ...item, kind: kind === 'skills' ? 'skill' : 'mcp' })}
-                  title="클릭하면 쉬운 설명을 보여드립니다"
+                  title={t('market.detailHint')}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{item.title ?? item.name}</span>
                     {on ? (
-                      <span className="pill ok"><span className="dot" />설치됨</span>
+                      <span className="pill ok"><span className="dot" />{t('market.installed')}</span>
                     ) : (
                       <button className="btn sm" onClick={(e) => { e.stopPropagation(); install(item); }} disabled={busy === key}>
-                        {busy === key ? <Spinner size={11} /> : '즉시 설치'}
+                        {busy === key ? <Spinner size={11} /> : t('market.installNow')}
                       </button>
                     )}
                   </div>
-                  <span style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.55 }}>{item.desc || '설명 없음'}</span>
+                  <span style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.55 }}>{item.desc || t('market.noDesc')}</span>
                   <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {kind === 'skills'
                       ? `${item.author ?? ''} · ★${item.stars ?? 0}`
@@ -308,6 +312,7 @@ function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInst
 
 export default function Market({ params }) {
   const { ws } = use(params);
+  const { t } = useLang();
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(''); // 진행 중인 항목 id
   const [error, setError] = useState('');
@@ -353,16 +358,16 @@ export default function Market({ params }) {
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span className="microlabel">Marketplace · 검색 → 즉시 설치 → 다음 턴 반영</span>
+        <span className="microlabel">{t('market.header')}</span>
         {error && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>}
       </div>
 
       {/* ── 스킬 ── */}
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-head">
-          <span className="card-title"><Icon name="bolt" size={14} />스킬 — 지시형 지침</span>
+          <span className="card-title"><Icon name="bolt" size={14} />{t('market.skillsSectionTitle')}</span>
           <span className="rule" />
-          <span className="pill"><span className="dot" />{data ? `${data.installedSkills.length} 설치됨` : '—'}</span>
+          <span className="pill"><span className="dot" />{data ? t('market.installedCount', { n: data.installedSkills.length }) : '—'}</span>
         </div>
         {data === null ? (
           <div style={{ padding: '0 18px 18px' }}><Skeleton h={90} /></div>
@@ -376,17 +381,17 @@ export default function Market({ params }) {
                   className="card card-i"
                   style={{ background: 'var(--card-2)', padding: 14, display: 'flex', flexDirection: 'column', gap: 6, cursor: 'pointer' }}
                   onClick={() => setDetail({ kind: 'skill', name: s.id, title: s.title, desc: s.desc })}
-                  title="클릭하면 쉬운 설명을 보여드립니다"
+                  title={t('market.detailHint')}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontWeight: 700, fontSize: 13 }}>{s.title}</span>
                     {on ? (
-                      <button className="pill ok" style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); remove('skill', s.id); }} title="클릭하면 제거">
-                        <span className="dot" />설치됨
+                      <button className="pill ok" style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); remove('skill', s.id); }} title={t('market.removeHint')}>
+                        <span className="dot" />{t('market.installed')}
                       </button>
                     ) : (
                       <button className="btn sm" onClick={(e) => { e.stopPropagation(); install('skill', s.id); }} disabled={busy === `skill:${s.id}`}>
-                        {busy === `skill:${s.id}` ? <Spinner size={11} /> : '설치'}
+                        {busy === `skill:${s.id}` ? <Spinner size={11} /> : t('market.install')}
                       </button>
                     )}
                   </div>
@@ -405,7 +410,7 @@ export default function Market({ params }) {
             ws={ws}
             kind="skills"
             sourceLabel="skillsmp.com"
-            placeholder="수천 개 커뮤니티 스킬 검색 — 예: newsletter, seo, youtube"
+            placeholder={t('market.skillsmpSearchPlaceholder')}
             installedIds={installedSkillIds}
             onInstalled={load}
             onDetail={setDetail}
@@ -413,7 +418,7 @@ export default function Market({ params }) {
         )}
         {data && data.installedSkills.some((s) => !data.skillCatalog.find((c) => c.id === s.id)) && (
           <div style={{ padding: '0 20px 16px' }}>
-            <div className="microlabel" style={{ marginBottom: 6 }}>설치된 외부·직접 스킬</div>
+            <div className="microlabel" style={{ marginBottom: 6 }}>{t('market.externalSkills')}</div>
             {data.installedSkills.filter((s) => !data.skillCatalog.find((c) => c.id === s.id)).map((s) => (
               <div key={s.id} className="row" style={{ borderRadius: 10 }}>
                 <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600 }}>{s.title}</span>
@@ -428,9 +433,9 @@ export default function Market({ params }) {
       {/* ── MCP 도구 ── */}
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-head">
-          <span className="card-title"><Icon name="market" size={14} />MCP 도구 — 외부 연결</span>
+          <span className="card-title"><Icon name="market" size={14} />{t('market.mcpSectionTitle')}</span>
           <span className="rule" />
-          <span className="pill"><span className="dot" />{data ? `${Object.keys(installedMcp).length} 연결됨` : '—'}</span>
+          <span className="pill"><span className="dot" />{data ? t('market.connectedCount', { n: Object.keys(installedMcp).length }) : '—'}</span>
         </div>
         {data === null ? (
           <div style={{ padding: '0 18px 18px' }}><Skeleton h={90} /></div>
@@ -445,17 +450,17 @@ export default function Market({ params }) {
                     className="card card-i"
                     style={{ background: 'var(--card-2)', padding: 14, display: 'flex', flexDirection: 'column', gap: 6, cursor: 'pointer' }}
                     onClick={() => setDetail({ kind: 'mcp', name: m.id, title: m.title, desc: m.desc })}
-                    title="클릭하면 쉬운 설명을 보여드립니다"
+                    title={t('market.detailHint')}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontWeight: 700, fontSize: 13 }}>{m.title}</span>
                       {on ? (
-                        <button className="pill ok" style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); remove('mcp', m.id); }} title="클릭하면 제거">
-                          <span className="dot" />연결됨
+                        <button className="pill ok" style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); remove('mcp', m.id); }} title={t('market.removeHint')}>
+                          <span className="dot" />{t('market.connected')}
                         </button>
                       ) : (
                         <button className="btn sm" onClick={(e) => { e.stopPropagation(); install('mcp', m.id); }} disabled={busy === `mcp:${m.id}`}>
-                          {busy === `mcp:${m.id}` ? <Spinner size={11} /> : '설치'}
+                          {busy === `mcp:${m.id}` ? <Spinner size={11} /> : t('market.install')}
                         </button>
                       )}
                     </div>
@@ -482,31 +487,31 @@ export default function Market({ params }) {
             <RemoteSearch
               ws={ws}
               kind="mcp"
-              sourceLabel="공식 레지스트리"
-              placeholder="MCP 서버 검색 — 예: fetch, github, notion, slack"
+              sourceLabel={t('market.remoteMcpSource')}
+              placeholder={t('market.mcpSearchPlaceholder')}
               installedIds={new Set(Object.keys(installedMcp))}
               onInstalled={load}
               onDetail={setDetail}
             />
 
             <form onSubmit={addCustom} style={{ display: 'flex', gap: 8, padding: '10px 18px 18px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <span className="microlabel">Custom</span>
+              <span className="microlabel">{t('market.customLabel')}</span>
               <input suppressHydrationWarning
-                placeholder="이름 (영소문자-하이픈)"
+                placeholder={t('market.customNamePlaceholder')}
                 value={custom.name}
                 onChange={(e) => setCustom({ ...custom, name: e.target.value })}
                 style={{ width: 170, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, fontFamily: 'var(--mono)' }}
               />
               <input suppressHydrationWarning
-                placeholder="실행 명령 — 예: npx -y my-mcp-server"
+                placeholder={t('market.customCmdPlaceholder')}
                 value={custom.command}
                 onChange={(e) => setCustom({ ...custom, command: e.target.value })}
                 style={{ flex: 1, minWidth: 200, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, fontFamily: 'var(--mono)' }}
               />
               <button className="btn sm" disabled={!custom.name || !custom.command || busy === 'mcp-custom'}>
-                {busy === 'mcp-custom' ? <Spinner size={11} /> : '추가'}
+                {busy === 'mcp-custom' ? <Spinner size={11} /> : t('market.addBtn')}
               </button>
-              <span className="microlabel" style={{ width: '100%' }}>시크릿이 필요한 MCP는 환경변수로만 — 여기에 키를 적지 마세요.</span>
+              <span className="microlabel" style={{ width: '100%' }}>{t('market.customSecretHint')}</span>
             </form>
           </>
         )}

@@ -1,4 +1,5 @@
 import './globals.css';
+import { LanguageProvider } from './i18n';
 
 export const metadata = {
   title: 'Argo — 한 배에 오른 AI 크루',
@@ -20,7 +21,7 @@ export default function RootLayout({ children }) {
           href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
         />
       </head>
-      <body>{children}</body>
+      <body><LanguageProvider>{children}</LanguageProvider></body>
     </html>
   );
 }

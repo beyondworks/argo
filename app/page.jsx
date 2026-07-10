@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Logo, Icon, Avatar, Spinner, Skeleton, api, imeGuard, timeAgo } from './ui';
+import { useLang } from './i18n';
 
 export default function Home() {
+  const { t, lang } = useLang();
   const router = useRouter();
   const [companies, setCompanies] = useState(null);
   const [name, setName] = useState('');
@@ -33,24 +35,23 @@ export default function Home() {
     <div>
       <header className="topbar" style={{ justifyContent: 'space-between' }}>
         <Logo />
-        <span className="microlabel">Crew · Folder Memory · Auto Link</span>
+        <span className="microlabel">{t('home.tagline')}</span>
       </header>
 
       <main style={{ maxWidth: 660, margin: '0 auto', padding: '64px 24px 90px' }}>
         <div className="fade-up" style={{ marginBottom: 30 }}>
-          <div className="microlabel" style={{ marginBottom: 12 }}>Boarding</div>
+          <div className="microlabel" style={{ marginBottom: 12 }}>{t('home.boarding')}</div>
           <h1 style={{ fontSize: 26, fontWeight: 750, letterSpacing: '-0.02em', lineHeight: 1.32 }}>
-            AI 크루와 함께 일할<br />회사를 만드세요
+            {t('home.headline1')}<br />{t('home.headline2')}
           </h1>
           <p style={{ fontSize: 14, color: 'var(--fg-2)', marginTop: 10, maxWidth: 440 }}>
-            프롬프트 한 줄이면 전문 크루가 합류합니다. 회사는 폴더 단위 기억으로
-            맥락을 쌓고, 비슷한 기억끼리 스스로 이어집니다.
+            {t('home.desc')}
           </p>
         </div>
 
         <form onSubmit={create} className="input-bar fade-up" style={{ animationDelay: '0.06s' }}>
           <input suppressHydrationWarning
-            placeholder="새 회사 이름"
+            placeholder={t('home.namePlaceholder')}
             value={name}
             onChange={(e) => setName(e.target.value)}
             disabled={creating}
@@ -59,17 +60,17 @@ export default function Home() {
           />
           <button className="btn btn-primary" disabled={creating || !name.trim()}>
             {creating ? <Spinner /> : <Icon name="plus" size={14} />}
-            회사 만들기
+            {t('home.createBtn')}
           </button>
         </form>
         {error && <p style={{ color: 'var(--danger)', marginTop: 10, fontSize: 13 }}>{error}</p>}
 
         {/* 시작 프리셋 — 고르면 크루 2명 + 아침 브리핑 루틴이 즉시 꾸려진다 (빈 배로도 출항 가능) */}
         <div className="fade-up" style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', animationDelay: '0.1s' }}>
-          <span className="microlabel" style={{ marginRight: 2 }}>시작 크루</span>
+          <span className="microlabel" style={{ marginRight: 2 }}>{t('home.startCrewLabel')}</span>
           <button type="button" className="chip" onClick={() => setPreset('')}
             style={{ cursor: 'pointer', ...(preset === '' ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}) }}>
-            빈 배
+            {t('home.emptyShip')}
           </button>
           {presets.map((p) => (
             <button key={p.key} type="button" className="chip" onClick={() => setPreset(p.key)} title={p.desc}
@@ -79,20 +80,20 @@ export default function Home() {
           ))}
           {preset && (
             <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
-              {presets.find((p) => p.key === preset)?.desc} · 아침 브리핑 포함
+              {presets.find((p) => p.key === preset)?.desc}{t('home.morningBriefingIncluded')}
             </span>
           )}
         </div>
 
         <section style={{ marginTop: 42 }}>
-          <div className="microlabel" style={{ marginBottom: 10 }}>My Companies</div>
+          <div className="microlabel" style={{ marginBottom: 10 }}>{t('home.myCompanies')}</div>
           {companies === null ? (
             <div style={{ display: 'grid', gap: 10 }}>
               <Skeleton h={70} style={{ borderRadius: 16 }} />
               <Skeleton h={70} style={{ borderRadius: 16 }} />
             </div>
           ) : companies.length === 0 ? (
-            <div className="empty">아직 회사가 없습니다. 위에서 첫 회사를 만들어보세요.</div>
+            <div className="empty">{t('home.noCompanies')}</div>
           ) : (
             <div style={{ display: 'grid', gap: 10 }}>
               {companies.map((c, i) => (
@@ -105,10 +106,10 @@ export default function Home() {
                   <Avatar name={c.name} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 700 }}>{c.name}</div>
-                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', marginTop: 1 }}>{timeAgo(c.created)} 생성</div>
+                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', marginTop: 1 }}>{timeAgo(c.created, lang)}{t('home.createdSuffix')}</div>
                   </div>
-                  <span className="chip">Crew {c.crew}</span>
-                  <span className="chip">Memory {c.memories}</span>
+                  <span className="chip">{t('nav.crewCount', { n: c.crew })}</span>
+                  <span className="chip">{t('home.memoryCount', { n: c.memories })}</span>
                   <span style={{ color: 'var(--fg-3)', display: 'inline-flex' }}><Icon name="arrow" size={15} /></span>
                 </a>
               ))}
@@ -117,7 +118,7 @@ export default function Home() {
         </section>
 
         <footer className="microlabel" style={{ marginTop: 70 }}>
-          Argo — 전문성이 다른 크루가 한 배를 타고, 같은 목표를 향해 갑니다.
+          {t('home.footer')}
         </footer>
       </main>
     </div>

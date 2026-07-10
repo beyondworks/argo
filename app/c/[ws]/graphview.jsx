@@ -2,6 +2,7 @@
 // 별자리 — 완전한 3D 지식 그래프. 회사(허브)→크루(작성자)→기억(대화·노트)→기억↔기억 [[링크]]
 // 전부 실제 관계 엣지다. 3D 포스 시뮬레이션 + 원근 투영 + 잉크 할로, 모달은 드래그 회전·휠 줌.
 import { useEffect, useRef, useState } from 'react';
+import { useLang } from '../../i18n';
 
 const INK = '37, 39, 30'; // --fg
 const PAPER = '233, 235, 221'; // --card
@@ -203,6 +204,7 @@ function makeRenderer(canvas, graph, sim, opts) {
 
 /* ─── 미니 3D 별자리 ─── */
 export function Constellation3D({ company, agents, docs, delegations, height = 200, onOpen }) {
+  const { t } = useLang();
   const ref = useRef(null);
 
   useEffect(() => {
@@ -249,13 +251,14 @@ export function Constellation3D({ company, agents, docs, delegations, height = 2
       ref={ref}
       onClick={onOpen}
       style={{ width: '100%', height, display: 'block', cursor: 'zoom-in' }}
-      title="클릭하면 크게 봅니다"
+      title={t('graph.clickToEnlarge')}
     />
   );
 }
 
 /* ─── 전체화면 3D 그래프 — 드래그 회전 · 휠 줌 · 노드 클릭 = 열기 ─── */
 export function GraphModal({ company, agents, docs, delegations, onClose, onSelect }) {
+  const { t } = useLang();
   const ref = useRef(null);
   const [hoverLabel, setHoverLabel] = useState('');
 
@@ -355,14 +358,14 @@ export function GraphModal({ company, agents, docs, delegations, onClose, onSele
       className="fade-up"
     >
       <div className="topbar" style={{ flex: 'none' }}>
-        <span className="topbar-title">기억 그래프</span>
+        <span className="topbar-title">{t('graph.title')}</span>
         <span className="microlabel" style={{ marginLeft: 4 }}>Constellation 3D</span>
         <div style={{ flex: 1 }} />
-        <span className="chip"><span className="dot" />허브·크루 {1 + (agents?.length ?? 0)}</span>
-        <span className="chip"><span className="dot" />대화 {conv}</span>
-        <span className="chip"><span style={{ width: 5, height: 5, borderRadius: 999, border: '1px solid currentColor' }} />노트 {notes}</span>
-        <span className="chip">드래그 회전 · 휠 줌 · 기억 클릭 = 열기</span>
-        <button className="btn sm" onClick={onClose}>닫기 ESC</button>
+        <span className="chip"><span className="dot" />{t('graph.hubCrew', { n: 1 + (agents?.length ?? 0) })}</span>
+        <span className="chip"><span className="dot" />{t('graph.conversation', { n: conv })}</span>
+        <span className="chip"><span style={{ width: 5, height: 5, borderRadius: 999, border: '1px solid currentColor' }} />{t('graph.note', { n: notes })}</span>
+        <span className="chip">{t('graph.controlsHint')}</span>
+        <button className="btn sm" onClick={onClose}>{t('graph.closeEsc')}</button>
       </div>
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <canvas ref={ref} style={{ width: '100%', height: '100%', display: 'block', cursor: 'grab' }} />

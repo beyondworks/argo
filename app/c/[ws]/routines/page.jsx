@@ -3,20 +3,21 @@
 // 템플릿 원클릭 생성 → 폼 프리필. 실행 결과는 vault 기억으로 남는다.
 import { use, useEffect, useState } from 'react';
 import { Icon, Avatar, Spinner, Skeleton, api, imeGuard, timeAgo } from '../../../ui';
+import { useLang } from '../../../i18n';
 
-const DOW = ['일', '월', '화', '수', '목', '금', '토'];
-const TEMPLATES = [
-  { title: '매일 아침 브리핑', prompt: '회사 기억(vault)을 훑고, 오늘 우리가 신경 써야 할 것 3가지를 근거 기록과 함께 브리핑해줘.', schedule: { type: 'daily', time: '09:00' } },
-  { title: '주간 콘텐츠 초안', prompt: '이번 주에 낼 콘텐츠(뉴스레터/블로그) 초안 아웃라인을 회사 기억의 톤에 맞춰 잡아줘.', schedule: { type: 'weekly', time: '10:00', dow: 1 } },
-  { title: '기억 정리 노트', prompt: '최근 기억을 훑고 재사용 가치가 있는 인사이트를 vault/notes/에 지식 노트로 정리해줘.', schedule: { type: 'daily', time: '18:00' } },
-];
-
-function scheduleLabel(s) {
-  return s.type === 'weekly' ? `매주 ${DOW[s.dow ?? 1]} ${s.time}` : `매일 ${s.time}`;
+function scheduleLabel(s, t, DOW) {
+  return s.type === 'weekly' ? t('routines.scheduleWeekly', { dow: DOW[s.dow ?? 1], time: s.time }) : t('routines.scheduleDaily', { time: s.time });
 }
 
 export default function Routines({ params }) {
   const { ws } = use(params);
+  const { t, lang } = useLang();
+  const DOW = [t('routines.dow.sun'), t('routines.dow.mon'), t('routines.dow.tue'), t('routines.dow.wed'), t('routines.dow.thu'), t('routines.dow.fri'), t('routines.dow.sat')];
+  const TEMPLATES = [
+    { title: t('routines.template1.title'), prompt: t('routines.template1.prompt'), schedule: { type: 'daily', time: '09:00' } },
+    { title: t('routines.template2.title'), prompt: t('routines.template2.prompt'), schedule: { type: 'weekly', time: '10:00', dow: 1 } },
+    { title: t('routines.template3.title'), prompt: t('routines.template3.prompt'), schedule: { type: 'daily', time: '18:00' } },
+  ];
   const [routines, setRoutines] = useState(null);
   const [agents, setAgents] = useState([]);
   const [form, setForm] = useState(null); // {agentSlug,title,prompt,type,time,dow}
@@ -68,7 +69,7 @@ export default function Routines({ params }) {
   }
 
   async function remove(r) {
-    if (!window.confirm(`루틴 "${r.title}"을 삭제할까요?`)) return;
+    if (!window.confirm(t('routines.deleteConfirm', { title: r.title }))) return;
     await fetch(`/api/companies/${ws}/routines?id=${r.id}`, { method: 'DELETE' });
     load();
   }
@@ -78,22 +79,22 @@ export default function Routines({ params }) {
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span className="microlabel">Routines · 크루의 반복 항해 — 예약 시각에 자동 실행</span>
+        <span className="microlabel">{t('routines.header')}</span>
         <button className="btn sm" onClick={() => openForm()}>
-          <Icon name="plus" size={13} /> 직접 만들기
+          <Icon name="plus" size={13} /> {t('routines.createDirect')}
         </button>
       </div>
 
       {/* 템플릿 — 원클릭 생성 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12 }}>
-        {TEMPLATES.map((t) => (
-          <button key={t.title} className="card card-i" style={{ padding: 16, textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 6 }} onClick={() => openForm(t)}>
+        {TEMPLATES.map((tpl) => (
+          <button key={tpl.title} className="card card-i" style={{ padding: 16, textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 6 }} onClick={() => openForm(tpl)}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 700, fontSize: 13 }}>{t.title}</span>
-              <span className="chip">{scheduleLabel(t.schedule)}</span>
+              <span style={{ fontWeight: 700, fontSize: 13 }}>{tpl.title}</span>
+              <span className="chip">{scheduleLabel(tpl.schedule, t, DOW)}</span>
             </div>
-            <span style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.55 }}>{t.prompt.slice(0, 64)}…</span>
-            <span className="microlabel" style={{ marginTop: 4 }}>+ 원클릭 생성</span>
+            <span style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.55 }}>{tpl.prompt.slice(0, 64)}…</span>
+            <span className="microlabel" style={{ marginTop: 4 }}>{t('routines.oneClick')}</span>
           </button>
         ))}
       </div>
@@ -102,49 +103,49 @@ export default function Routines({ params }) {
       {form && (
         <form onSubmit={create} className="card fade-up" style={{ padding: 18, display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className="card-title">루틴 만들기</span>
-            <button type="button" className="btn sm" onClick={() => setForm(null)}>닫기</button>
+            <span className="card-title">{t('routines.createTitle')}</span>
+            <button type="button" className="btn sm" onClick={() => setForm(null)}>{t('routines.close')}</button>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <label style={{ display: 'grid', gap: 4 }}>
-              <span className="microlabel">Crew</span>
+              <span className="microlabel">{t('routines.crew')}</span>
               <select value={form.agentSlug} onChange={(e) => setForm({ ...form, agentSlug: e.target.value })} style={selStyle}>
                 {agents.map((a) => <option key={a.slug} value={a.slug}>{a.name} — {a.role}</option>)}
               </select>
             </label>
             <label style={{ display: 'grid', gap: 4 }}>
-              <span className="microlabel">Cycle</span>
+              <span className="microlabel">{t('routines.cycle')}</span>
               <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} style={selStyle}>
-                <option value="daily">매일</option>
-                <option value="weekly">매주</option>
+                <option value="daily">{t('routines.daily')}</option>
+                <option value="weekly">{t('routines.weekly')}</option>
               </select>
             </label>
             {form.type === 'weekly' && (
               <label style={{ display: 'grid', gap: 4 }}>
-                <span className="microlabel">Day</span>
+                <span className="microlabel">{t('routines.day')}</span>
                 <select value={form.dow} onChange={(e) => setForm({ ...form, dow: e.target.value })} style={selStyle}>
-                  {DOW.map((d, i) => <option key={i} value={i}>{d}요일</option>)}
+                  {DOW.map((d, i) => <option key={i} value={i}>{t('routines.dayOf', { d })}</option>)}
                 </select>
               </label>
             )}
             <label style={{ display: 'grid', gap: 4 }}>
-              <span className="microlabel">Time</span>
+              <span className="microlabel">{t('routines.time')}</span>
               <input suppressHydrationWarning type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} style={selStyle} />
             </label>
             <label style={{ display: 'grid', gap: 4, flex: 1, minWidth: 180 }}>
-              <span className="microlabel">Title</span>
-              <input suppressHydrationWarning value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="루틴 이름" style={selStyle} {...imeGuard} />
+              <span className="microlabel">{t('routines.title')}</span>
+              <input suppressHydrationWarning value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder={t('routines.titlePlaceholder')} style={selStyle} {...imeGuard} />
             </label>
           </div>
           <textarea
             value={form.prompt}
             onChange={(e) => setForm({ ...form, prompt: e.target.value })}
-            placeholder="크루에게 반복 지시할 내용"
+            placeholder={t('routines.promptPlaceholder')}
             style={{ width: '100%', minHeight: 90, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '10px 14px', outline: 'none', fontSize: 13, lineHeight: 1.65 }}
           />
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button className="btn btn-primary sm" disabled={saving || !form.title.trim() || !form.prompt.trim() || !form.agentSlug}>
-              {saving ? <Spinner size={12} /> : '루틴 생성'}
+              {saving ? <Spinner size={12} /> : t('routines.createBtn')}
             </button>
             {error && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>}
           </div>
@@ -154,20 +155,20 @@ export default function Routines({ params }) {
       {/* 루틴 표 */}
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-head">
-          <span className="card-title"><Icon name="clock" size={14} />등록된 루틴</span>
+          <span className="card-title"><Icon name="clock" size={14} />{t('routines.registered')}</span>
           <span className="rule" />
-          <span className="pill"><span className="dot" />{routines?.filter((r) => r.enabled).length ?? 0} 가동</span>
+          <span className="pill"><span className="dot" />{t('routines.active', { n: routines?.filter((r) => r.enabled).length ?? 0 })}</span>
         </div>
         {routines === null ? (
           <div style={{ padding: '0 18px 18px' }}><Skeleton h={80} /></div>
         ) : routines.length === 0 ? (
           <p style={{ padding: '2px 20px 18px', color: 'var(--fg-2)', fontSize: 13 }}>
-            아직 루틴이 없습니다. 위 템플릿을 눌러 하나 만들어보세요.
+            {t('routines.empty')}
           </p>
         ) : (
           <table className="table">
             <thead>
-              <tr><th>Title</th><th style={{ width: 130 }}>Crew</th><th style={{ width: 120 }}>Schedule</th><th style={{ width: 170 }}>Last Run</th><th style={{ width: 84 }}>State</th><th style={{ width: 130 }} /></tr>
+              <tr><th>{t('routines.colTitle')}</th><th style={{ width: 130 }}>{t('routines.colCrew')}</th><th style={{ width: 120 }}>{t('routines.colSchedule')}</th><th style={{ width: 170 }}>{t('routines.colLastRun')}</th><th style={{ width: 84 }}>{t('routines.colState')}</th><th style={{ width: 130 }} /></tr>
             </thead>
             <tbody>
               {routines.map((r) => (
@@ -181,23 +182,23 @@ export default function Routines({ params }) {
                       <Avatar name={nameOf(r.agentSlug)} sm />{nameOf(r.agentSlug)}
                     </span>
                   </td>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{scheduleLabel(r.schedule)}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>{scheduleLabel(r.schedule, t, DOW)}</td>
                   <td style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
                     {r.lastRun ? (
                       <span title={r.lastResult}>
-                        {timeAgo(r.lastRun)} {r.lastOk === false ? <span style={{ color: 'var(--danger)' }}>실패</span> : '성공'}
+                        {timeAgo(r.lastRun, lang)} {r.lastOk === false ? <span style={{ color: 'var(--danger)' }}>{t('routines.fail')}</span> : t('routines.success')}
                       </span>
                     ) : <span style={{ color: 'var(--fg-3)' }}>—</span>}
                   </td>
                   <td>
                     <button className={`pill${r.enabled ? ' ok' : ''}`} onClick={() => toggle(r)} style={{ cursor: 'pointer' }}>
-                      <span className="dot" />{r.enabled ? '가동' : '정지'}
+                      <span className="dot" />{r.enabled ? t('routines.on') : t('routines.off')}
                     </button>
                   </td>
                   <td style={{ textAlign: 'right' }}>
                     <span style={{ display: 'inline-flex', gap: 6 }}>
-                      <button className="btn sm" onClick={() => setRunTarget(r)}><Icon name="play" size={12} /> 실행</button>
-                      <button className="btn sm btn-icon" style={{ width: 28 }} onClick={() => remove(r)} aria-label="삭제"><Icon name="trash" size={13} /></button>
+                      <button className="btn sm" onClick={() => setRunTarget(r)}><Icon name="play" size={12} /> {t('routines.run')}</button>
+                      <button className="btn sm btn-icon" style={{ width: 28 }} onClick={() => remove(r)} aria-label={t('routines.deleteAria')}><Icon name="trash" size={13} /></button>
                     </span>
                   </td>
                 </tr>
@@ -221,6 +222,8 @@ const selStyle = {
 
 /** 실행 팝업 — 예약 정보 확인 + 즉시 실행. */
 function RunPopup({ ws, routine, crewName, onClose }) {
+  const { t, lang } = useLang();
+  const DOW = [t('routines.dow.sun'), t('routines.dow.mon'), t('routines.dow.tue'), t('routines.dow.wed'), t('routines.dow.thu'), t('routines.dow.fri'), t('routines.dow.sat')];
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState('');
   const [error, setError] = useState('');
@@ -243,24 +246,24 @@ function RunPopup({ ws, routine, crewName, onClose }) {
       <div className="card fade-up" style={{ width: 'min(560px, 100%)', maxHeight: '80vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
           <span className="card-title"><Icon name="play" size={13} />{routine.title}</span>
-          <button className="btn sm" onClick={onClose} disabled={running}>닫기</button>
+          <button className="btn sm" onClick={onClose} disabled={running}>{t('routines.close')}</button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <span className="chip"><span className="dot" />{crewName}</span>
-            <span className="chip">예약 {scheduleLabel(routine.schedule)}</span>
-            {routine.lastRun && <span className="chip">마지막 {timeAgo(routine.lastRun)}</span>}
+            <span className="chip">{t('routines.scheduled', { s: scheduleLabel(routine.schedule, t, DOW) })}</span>
+            {routine.lastRun && <span className="chip">{t('routines.last', { t: timeAgo(routine.lastRun, lang) })}</span>}
           </div>
           <p style={{ fontSize: 12.5, color: 'var(--fg-2)', background: 'var(--card-2)', borderRadius: 10, padding: '10px 14px' }}>{routine.prompt}</p>
           {!result && (
             <button className="btn btn-primary" onClick={runNow} disabled={running} style={{ justifySelf: 'start' }}>
-              {running ? <><Spinner /> 실행 중 — 결과는 기억에도 남습니다</> : '지금 즉시 실행'}
+              {running ? <><Spinner /> {t('routines.running')}</> : t('routines.runNow')}
             </button>
           )}
           {error && <p style={{ fontSize: 12.5, color: 'var(--danger)' }}>{error}</p>}
           {result && (
             <div className="card" style={{ background: 'var(--card-2)', padding: '12px 16px' }}>
-              <div className="microlabel" style={{ marginBottom: 6 }}>Result · 기억에 기록됨</div>
+              <div className="microlabel" style={{ marginBottom: 6 }}>{t('routines.resultTitle')}</div>
               <p style={{ fontSize: 13, whiteSpace: 'pre-wrap', lineHeight: 1.65, maxHeight: 240, overflowY: 'auto' }}>{result}</p>
             </div>
           )}

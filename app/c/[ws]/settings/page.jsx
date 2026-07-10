@@ -2,14 +2,16 @@
 // 설정 — 회사 정보 수정, 제원, 위험 구역(보관).
 import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Icon, Spinner, Skeleton, api, imeGuard } from '../../../ui';
+import { Icon, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../ui';
+import { useLang, KRW_RATE } from '../../../i18n';
 
 export default function Settings({ params }) {
   const { ws } = use(params);
+  const { t, lang } = useLang();
   const router = useRouter();
   const [data, setData] = useState(null);
   const [name, setName] = useState('');
-  const [budget, setBudget] = useState('');
+  const [budget, setBudget] = useState(''); // 화면 표시값 — ko는 원화, en은 달러
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
 
@@ -17,21 +19,23 @@ export default function Settings({ params }) {
     api(`/api/companies/${ws}`).then((d) => {
       setData(d);
       setName(d.company?.name ?? '');
-      setBudget(d.company?.budgetUsd ? String(d.company.budgetUsd) : '');
+      const usd = d.company?.budgetUsd;
+      setBudget(usd ? (lang === 'ko' ? String(Math.round(usd * KRW_RATE)) : String(usd)) : '');
     }).catch(() => setData({}));
-  }, [ws]);
+  }, [ws, lang]);
 
   async function saveName(e) {
     e.preventDefault();
     if (saving || !name.trim()) return;
     setSaving(true); setMsg('');
     try {
+      const budgetUsd = budget === '' ? 0 : (lang === 'ko' ? Number(budget) / KRW_RATE : Number(budget));
       await fetch(`/api/companies/${ws}`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, budgetUsd: budget === '' ? 0 : Number(budget) }),
+        body: JSON.stringify({ name, budgetUsd }),
       }).then(async (r) => { if (!r.ok) throw new Error((await r.json()).error); });
       window.dispatchEvent(new Event('argo:refresh'));
-      setMsg('저장됨');
+      setMsg(t('settings.saved'));
     } catch (e2) {
       setMsg(String(e2.message));
     } finally {
@@ -39,33 +43,34 @@ export default function Settings({ params }) {
     }
   }
 
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   async function archive() {
-    const typed = window.prompt(`회사를 보관하면 목록에서 사라집니다(폴더는 .archive/에 보존).\n확인을 위해 회사 이름을 입력하세요: ${data?.company?.name}`);
-    if (typed !== data?.company?.name) return;
+    setArchiving(true);
     await fetch(`/api/companies/${ws}`, { method: 'DELETE' });
     router.push('/');
   }
 
   const c = data?.company;
   const rows = c && [
-    ['Unit', c.id],
-    ['Captain', c.owner],
-    ['Commissioned', String(c.created ?? '').slice(0, 10)],
-    ['Crew', `${data.agents?.length ?? 0}`],
-    ['Vault', `${data.memoryCount ?? 0} records · ${data.stats?.links ?? 0} links`],
-    ['Engine', 'Claude Agent SDK'],
-    ['Runtime', 'Local (P1: 클라우드 워커)'],
+    [t('deck.nameplate.unit'), c.id],
+    [t('deck.nameplate.captain'), c.owner],
+    [t('deck.nameplate.commissioned'), String(c.created ?? '').slice(0, 10)],
+    [t('deck.nameplate.crew'), `${data.agents?.length ?? 0}`],
+    [t('deck.nameplate.vault'), t('settings.nameplate.vaultVal', { n: data.memoryCount ?? 0, links: data.stats?.links ?? 0 })],
+    [t('deck.nameplate.engine'), 'Claude Agent SDK'],
+    [t('settings.nameplate.runtime'), t('settings.nameplate.runtimeVal')],
   ];
 
   return (
     <div style={{ display: 'grid', gap: 16, maxWidth: 1060, margin: '0 auto', width: '100%' }}>
-      <span className="microlabel">Settings · 회사 설정</span>
+      <span className="microlabel">{t('settings.head')}</span>
 
-      <Section label="General">
+      <Section label={t('settings.general')}>
       <form onSubmit={saveName} className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <span className="card-title">회사 정보</span>
+        <span className="card-title">{t('settings.companyInfo')}</span>
         <label style={{ display: 'grid', gap: 5 }}>
-          <span className="microlabel">Company Name</span>
+          <span className="microlabel">{t('settings.companyName')}</span>
           <input suppressHydrationWarning
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -74,9 +79,9 @@ export default function Settings({ params }) {
           />
         </label>
         <label style={{ display: 'grid', gap: 5 }}>
-          <span className="microlabel">Monthly Budget (USD) — 초과 시 턴 정지, 비우면 무제한</span>
+          <span className="microlabel">{lang === 'ko' ? t('settings.budget.ko') : t('settings.budget.en')}</span>
           <input suppressHydrationWarning
-            type="number" min="0" step="1" placeholder="예: 30"
+            type="number" min="0" step="1" placeholder={t('settings.budget.placeholder')}
             value={budget}
             onChange={(e) => setBudget(e.target.value)}
             style={{ height: 36, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13.5 }}
@@ -84,16 +89,16 @@ export default function Settings({ params }) {
         </label>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto', paddingTop: 10 }}>
           <button className="btn btn-primary sm" disabled={saving || !name.trim()}>
-            {saving ? <Spinner size={12} /> : '저장'}
+            {saving ? <Spinner size={12} /> : t('settings.save')}
           </button>
-          <span style={{ fontSize: 12, color: msg === '저장됨' ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>
+          <span style={{ fontSize: 12, color: msg === t('settings.saved') ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>
         </div>
       </form>
 
       <div className="card" style={{ padding: 18 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <span className="card-title">제원</span>
-          <span className="microlabel">S/N ARGO-01</span>
+          <span className="card-title">{t('settings.spec')}</span>
+          <span className="microlabel">{t('deck.snArgo')}</span>
         </div>
         {!rows ? <Skeleton h={130} /> : (
           <div style={{ display: 'grid', gap: 5 }}>
@@ -107,44 +112,66 @@ export default function Settings({ params }) {
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
           <span className="barcode" aria-hidden="true" />
-          <span className="microlabel">Sail Together</span>
+          <span className="microlabel">{t('deck.sailTogether')}</span>
         </div>
       </div>
       </Section>
 
-      <Section label="Capabilities — 크루가 로컬에 손댈 수 있는 범위">
+      <Section label={t('settings.capabilities')}>
         <CapabilitiesCard ws={ws} />
       </Section>
 
-      <Section label="Connections — 메신저가 회사의 정문이 됩니다">
-      <ConnectionCard ws={ws} kind="telegram" title="텔레그램"
-        help='@BotFather로 봇을 만들어 토큰을 붙여넣고 가동하세요. 봇에게 첫 메시지를 보내면 이 회사와 연결됩니다. "@크루이름 지시"로 특정 크루를 부를 수 있고, 결재는 버튼으로 처리됩니다.'
+      <Section label={t('settings.connections')}>
+      <ConnectionCard ws={ws} kind="telegram" title={t('activity.telegram')}
+        help={t('settings.conn.tgHelp')}
         agents={data?.agents ?? []} />
-      <ConnectionCard ws={ws} kind="slack" title="슬랙"
-        help='봇 토큰(xoxb-)과 채널 ID를 넣고 봇을 그 채널에 초대하세요. 채널 메시지가 크루에게 전달되고, 결재는 "승인 <번호>" 회신으로 처리됩니다.'
+      <ConnectionCard ws={ws} kind="slack" title={t('activity.slack')}
+        help={t('settings.conn.slackHelp')}
         agents={data?.agents ?? []} />
       </Section>
 
-      <Section label="Danger Zone">
+      <Section label={t('settings.danger')}>
       <div className="card" style={{ padding: 18, borderColor: 'var(--danger)', gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 260 }}>
-          <span className="card-title" style={{ color: 'var(--danger)' }}>회사 보관</span>
+          <span className="card-title" style={{ color: 'var(--danger)' }}>{t('settings.archive.title')}</span>
           <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: '6px 0 0' }}>
-            목록에서 사라지지만 데이터(크루·기억·루틴)는 삭제되지 않고
-            <span className="mono" style={{ fontSize: 11 }}> workspaces/.archive/</span>에 보존됩니다.
+            {t('settings.archive.pathPrefix')}
+            <span className="mono" style={{ fontSize: 11 }}> workspaces/.archive/</span>
+            {t('settings.archive.pathSuffix')}
           </p>
         </div>
-        <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)', flex: 'none' }} onClick={archive}>
-          <Icon name="trash" size={13} /> 회사 보관
+        <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)', flex: 'none' }} onClick={() => setArchiveOpen(true)}>
+          <Icon name="trash" size={13} /> {t('settings.archive.btn')}
         </button>
       </div>
       </Section>
+
+      {archiveOpen && (
+        <DangerModal
+          title={t('settings.archive.title')}
+          description={t('settings.archive.desc')}
+          requireText={data?.company?.name ?? ''}
+          phraseKey="danger.phrase.archive"
+          confirmLabel={t('settings.archive.btn')}
+          busy={archiving}
+          onConfirm={archive}
+          onClose={() => setArchiveOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
 /** 로컬 능력 토글 — 전부 opt-in. bypass 꺼짐이면 부작용 실행은 결재 게이트를 탄다. */
+const CAP_LABELS = {
+  fs: ['settings.caps.fs', 'settings.caps.fs.desc'],
+  browser: ['settings.caps.browser', 'settings.caps.browser.desc'],
+  shell: ['settings.caps.shell', 'settings.caps.shell.desc'],
+  bypass: ['settings.caps.bypass', 'settings.caps.bypass.desc'],
+};
+
 function CapabilitiesCard({ ws }) {
+  const { t } = useLang();
   const [caps, setCaps] = useState(null);
   const [defs, setDefs] = useState([]);
   const [busy, setBusy] = useState('');
@@ -167,18 +194,19 @@ function CapabilitiesCard({ ws }) {
   return (
     <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 4 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <span className="card-title">로컬 능력</span>
-        <span className="chip">{caps?.bypass ? '우회 모드' : '결재 게이트'}</span>
+        <span className="card-title">{t('settings.caps.title')}</span>
+        <span className="chip">{caps?.bypass ? t('settings.caps.bypassOn') : t('settings.caps.gate')}</span>
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '0 0 10px', lineHeight: 1.6 }}>
-        끄면 크루는 회사 폴더 안에서만 일합니다. 켜도 <strong>권한 우회 모드가 꺼져 있으면</strong> 부작용 있는 실행(명령·바깥 파일 쓰기)은
-        결재함과 메신저 버튼으로 승인을 받아야 이어집니다.
+        {t('settings.caps.desc')}
       </p>
-      {!caps ? <Skeleton h={120} /> : defs.map(([key, title, desc]) => (
+      {!caps ? <Skeleton h={120} /> : defs.map(([key]) => {
+        const [titleKey, descKey] = CAP_LABELS[key] ?? [];
+        return (
         <div key={key} className="row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 8px', ...(key === 'bypass' ? { borderTop: '1px dashed var(--border-soft)', marginTop: 4, paddingTop: 12 } : {}) }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: key === 'bypass' ? 'var(--danger)' : 'var(--fg)' }}>{title}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--fg-2)', marginTop: 2 }}>{desc}</div>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: key === 'bypass' ? 'var(--danger)' : 'var(--fg)' }}>{titleKey ? t(titleKey) : key}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-2)', marginTop: 2 }}>{descKey ? t(descKey) : ''}</div>
           </div>
           <button
             onClick={() => toggle(key)}
@@ -198,7 +226,8 @@ function CapabilitiesCard({ ws }) {
             }} />
           </button>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -222,6 +251,7 @@ const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--card-2)',
 
 /** 메신저 연결 카드 — 토큰은 서버에만 저장(화면은 마스킹), 가동 토글로 게이트웨이 시작/중지. */
 function ConnectionCard({ ws, kind, title, help, agents }) {
+  const { t } = useLang();
   const [conn, setConn] = useState(null);
   const [token, setToken] = useState('');
   const [channel, setChannel] = useState('');
@@ -244,7 +274,7 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
         kind, token, enabled, defaultCrew: crew, ...(kind === 'slack' ? { channel } : {}),
       });
       setConn(d.connections[kind]); setToken('');
-      setMsg(enabled ? '가동 중 — 게이트웨이가 곧 연결됩니다' : '중지됨');
+      setMsg(enabled ? t('settings.conn.enabling') : t('settings.conn.stopped'));
     } catch (e) {
       setMsg(String(e.message));
     } finally {
@@ -256,33 +286,33 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span className="card-title">{title} 연결</span>
-        <span className="chip">{on ? <><span className="dot" />가동</> : '중지'}{kind === 'telegram' && conn?.chatId ? ' · 페어링됨' : ''}</span>
+        <span className="card-title">{title}{t('settings.conn.suffix')}</span>
+        <span className="chip">{on ? <><span className="dot" />{t('settings.conn.on')}</> : t('settings.conn.off')}{kind === 'telegram' && conn?.chatId ? t('settings.conn.pairedSuffix') : ''}</span>
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{help}</p>
       <label style={{ display: 'grid', gap: 5 }}>
-        <span className="microlabel">Bot Token{conn?.hasToken ? ` · 저장됨 ${conn.token}` : ''}</span>
+        <span className="microlabel">{t('settings.conn.token')}{conn?.hasToken ? ` · ${t('settings.conn.tokenSaved')} ${conn.token}` : ''}</span>
         <input suppressHydrationWarning type="password" value={token} onChange={(e) => setToken(e.target.value)}
-          placeholder={conn?.hasToken ? '변경할 때만 입력' : (kind === 'telegram' ? '123456:ABC-…' : 'xoxb-…')} style={fieldStyle} />
+          placeholder={conn?.hasToken ? t('settings.conn.tokenPlaceholder') : (kind === 'telegram' ? t('settings.conn.telegramPlaceholder') : t('settings.conn.slackPlaceholder'))} style={fieldStyle} />
       </label>
       {kind === 'slack' && (
         <label style={{ display: 'grid', gap: 5 }}>
-          <span className="microlabel">Channel ID</span>
-          <input suppressHydrationWarning value={channel} onChange={(e) => setChannel(e.target.value)} placeholder="C0…" style={fieldStyle} />
+          <span className="microlabel">{t('settings.conn.channel')}</span>
+          <input suppressHydrationWarning value={channel} onChange={(e) => setChannel(e.target.value)} placeholder={t('settings.conn.channelPlaceholder')} style={fieldStyle} />
         </label>
       )}
       <label style={{ display: 'grid', gap: 5 }}>
-        <span className="microlabel">기본 크루 — 이름 없이 보낸 지시를 받는다</span>
+        <span className="microlabel">{t('settings.conn.defaultCrew')}</span>
         <select value={crew} onChange={(e) => setCrew(e.target.value)} style={fieldStyle}>
-          <option value="">첫 번째 크루</option>
+          <option value="">{t('settings.conn.firstCrew')}</option>
           {agents.map((a) => <option key={a.slug} value={a.slug}>{a.name} — {a.role}</option>)}
         </select>
       </label>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto', paddingTop: 10 }}>
         <button className="btn btn-primary sm" disabled={saving || (!conn?.hasToken && !token.trim())} onClick={() => save(true)}>
-          {saving ? <Spinner size={12} /> : on ? '설정 저장' : '가동'}
+          {saving ? <Spinner size={12} /> : on ? t('settings.conn.saveSettings') : t('settings.conn.on')}
         </button>
-        {on && <button className="btn sm" disabled={saving} onClick={() => save(false)}>중지</button>}
+        {on && <button className="btn sm" disabled={saving} onClick={() => save(false)}>{t('settings.conn.off')}</button>}
         <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{msg}</span>
       </div>
     </div>

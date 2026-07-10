@@ -3,9 +3,11 @@
 import { use, useCallback, useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { StarMark, Icon, Avatar, Skeleton, Clock, api } from '../../ui';
+import { useLang } from '../../i18n';
 
 export default function CompanyShell({ children, params }) {
   const { ws } = use(params);
+  const { t } = useLang();
   const pathname = usePathname();
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
@@ -29,12 +31,12 @@ export default function CompanyShell({ children, params }) {
   const agents = data?.agents ?? [];
   const crewMatch = pathname.match(/\/crew\/([^/]+)/);
   const currentCrew = crewMatch && agents.find((a) => a.slug === crewMatch[1]);
-  const title = pathname.endsWith('/vault') ? '기억'
-    : pathname.endsWith('/routines') ? '루틴'
-    : pathname.endsWith('/market') ? '스킬·도구'
-    : pathname.endsWith('/activity') ? '활동'
-    : pathname.endsWith('/settings') ? '설정'
-    : currentCrew ? currentCrew.name : '데크';
+  const title = pathname.endsWith('/vault') ? t('nav.memory')
+    : pathname.endsWith('/routines') ? t('nav.routines')
+    : pathname.endsWith('/market') ? t('nav.market')
+    : pathname.endsWith('/activity') ? t('nav.activity')
+    : pathname.endsWith('/settings') ? t('nav.settings')
+    : currentCrew ? currentCrew.name : t('nav.deck');
   // 사이드바 크루 — 팀별 그룹 (팀 없는 크루는 마지막)
   const teams = [...new Set(agents.map((a) => a.team).filter(Boolean))];
   const grouped = [...teams.map((t) => [t, agents.filter((a) => a.team === t)]), ['', agents.filter((a) => !a.team)]]
@@ -48,27 +50,27 @@ export default function CompanyShell({ children, params }) {
           <span className="mono" style={{ fontWeight: 600, fontSize: 13, color: 'var(--fg)', letterSpacing: '0.16em' }}>ARGO</span>
         </a>
 
-        <div className="side-group">회사</div>
+        <div className="side-group">{t('nav.company')}</div>
         <a href={`/c/${ws}`} className={`nav-item${pathname === `/c/${ws}` ? ' active' : ''}`}>
-          <Icon name="deck" size={16} /> 데크
+          <Icon name="deck" size={16} /> {t('nav.deck')}
         </a>
         <a href={`/c/${ws}/vault`} className={`nav-item${pathname.endsWith('/vault') ? ' active' : ''}`}>
-          <Icon name="memory" size={16} /> 기억
+          <Icon name="memory" size={16} /> {t('nav.memory')}
         </a>
         <a href={`/c/${ws}/routines`} className={`nav-item${pathname.endsWith('/routines') ? ' active' : ''}`}>
-          <Icon name="clock" size={16} /> 루틴
+          <Icon name="clock" size={16} /> {t('nav.routines')}
         </a>
         <a href={`/c/${ws}/activity`} className={`nav-item${pathname.endsWith('/activity') ? ' active' : ''}`}>
-          <Icon name="bolt" size={16} /> 활동
+          <Icon name="bolt" size={16} /> {t('nav.activity')}
         </a>
         <a href={`/c/${ws}/market`} className={`nav-item${pathname.endsWith('/market') ? ' active' : ''}`}>
-          <Icon name="market" size={16} /> 스킬·도구
+          <Icon name="market" size={16} /> {t('nav.market')}
         </a>
 
-        {data === null && <><div className="side-group">크루</div><Skeleton h={60} style={{ margin: '0 10px' }} /></>}
+        {data === null && <><div className="side-group">{t('common.crew')}</div><Skeleton h={60} style={{ margin: '0 10px' }} /></>}
         {grouped.map(([team, list]) => (
           <div key={team || '_none'}>
-            <div className="side-group">{team || `크루 ${agents.length}`}</div>
+            <div className="side-group">{team || t('nav.crewCount', { n: agents.length })}</div>
             {list.map((a) => {
               const href = `/c/${ws}/crew/${a.slug}`;
               const active = pathname === href;
@@ -87,7 +89,7 @@ export default function CompanyShell({ children, params }) {
           </div>
         ))}
         <a href={`/c/${ws}`} className="nav-item" style={{ color: 'var(--fg-3)', fontSize: 12.5 }}>
-          <Icon name="plus" size={15} /> 크루 영입
+          <Icon name="plus" size={15} /> {t('nav.hire')}
         </a>
 
         <a
@@ -95,7 +97,7 @@ export default function CompanyShell({ children, params }) {
           className={`nav-item${pathname.endsWith('/settings') ? ' active' : ''}`}
           style={{ marginTop: 'auto' }}
         >
-          <Icon name="settings" size={16} /> 설정
+          <Icon name="settings" size={16} /> {t('nav.settings')}
         </a>
         <div className="side-footer" style={{ marginTop: 6 }}>
           <Avatar name={data?.company?.name} sm />
@@ -117,9 +119,9 @@ export default function CompanyShell({ children, params }) {
           <Clock />
           <label className="search-pill">
             <Icon name="search" size={14} />
-            <input suppressHydrationWarning placeholder="검색" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input suppressHydrationWarning placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} />
             {q && (
-              <button onClick={() => setQ('')} style={{ color: 'var(--fg-3)', fontSize: 12, fontWeight: 700 }} aria-label="지우기">✕</button>
+              <button onClick={() => setQ('')} style={{ color: 'var(--fg-3)', fontSize: 12, fontWeight: 700 }} aria-label={t('common.clear')}>✕</button>
             )}
           </label>
         </header>
@@ -127,7 +129,7 @@ export default function CompanyShell({ children, params }) {
         <main className="content" style={{ width: '100%' }}>
           {data?.missing ? (
             <div className="empty" style={{ marginTop: 40 }}>
-              이 회사를 찾을 수 없습니다. <a href="/" style={{ color: 'var(--primary-strong)', fontWeight: 700 }}>홈으로 돌아가기</a>
+              {t('shell.notFound')} <a href="/" style={{ color: 'var(--primary-strong)', fontWeight: 700 }}>{t('shell.backHome')}</a>
             </div>
           ) : children}
         </main>
