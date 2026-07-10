@@ -3,3 +3,4 @@ workspaces/
 .env*
 .next/
 workspaces/.*.lock
+artifacts/
