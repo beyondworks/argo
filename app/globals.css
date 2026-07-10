@@ -1,7 +1,10 @@
-/* ─── Argo 디자인 시스템 v5 — "아르고호의 계기판" ────────────────────────
+/* ─── Argo 디자인 토큰 ────────────────────────────────────────────────
+   테마는 전부 이 토큰 세트를 통해서만 표현된다. 컴포넌트에 색 평문 금지.
+   테마 전환: <html data-theme="…"> (ThemeProvider가 관리, localStorage argo-theme)
+
+   [argo — 기본] "아르고호의 계기판"
    기준: 유건 Pinterest SaaS 보드 — 세이지 페이퍼 + 잉크 모노크롬 인스트루먼트 패널.
-   (Aeonik Fono 계열 e-ink 컨트롤 패널: 헤어라인 잉크 보더, 모노 대문자 마이크로 라벨,
-    큰 계기 숫자, 다이얼 게이지, 스케줄 표, 도트 매트릭스 차트, 인버트 블록은 딱 하나)
+   (헤어라인 잉크 보더, 모노 대문자 마이크로 라벨, 큰 계기 숫자, 인버트 블록은 딱 하나)
    색은 종이와 잉크뿐이다. 위계는 색이 아니라 굵기·크기·괘선으로 만든다. */
 
 :root {
@@ -18,6 +21,8 @@
   --primary: #22241c;       /* 프라이머리 = 잉크 인버트 블록 */
   --primary-strong: #383b2d;
   --primary-fg: #e5e7d9;
+  --primary-fg-dim: rgba(229, 231, 217, 0.68);   /* 인버트 블록 위 보조 텍스트 */
+  --primary-fg-line: rgba(229, 231, 217, 0.45);  /* 인버트 블록 위 괘선 */
   --primary-soft: rgba(34, 36, 28, 0.08);
 
   /* 모노크롬 원칙 — 기능색도 잉크 계열로 수렴, 위험만 머티드 러스트 */
@@ -31,9 +36,870 @@
   --danger-soft: rgba(154, 74, 51, 0.12);
 
   --ring: rgba(34, 36, 28, 0.5);
+  --selection: rgba(34, 36, 28, 0.18);
+  --overlay: rgba(37, 39, 30, 0.28);      /* 모달 스크림 */
+  --shadow-card: none;                    /* 계기판은 괘선으로만 — 그림자 없음 */
   --r: 18px;
   --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* 계기 액센트 — 프로그레스·게이지·도트차트·별자리 노드. 아르고는 잉크 그대로 */
+  --accent: #22241c;
+  --accent-rgb: 34, 36, 28;
+
+  /* 캔버스(기억 그래프)용 RGB 트리플릿 — --fg / --card와 항상 동기 */
+  --ink-rgb: 37, 39, 30;
+  --paper-rgb: 233, 235, 221;
+}
+
+/* [apple] Apple HIG 라이트 — 시스템 화이트 표면, 소프트 섀도, systemBlue 액센트.
+   위계는 괘선 대신 표면 대비(#fff 카드 on #f5f5f7)와 반투명 그림자로 만든다. */
+:root[data-theme='apple'] {
+  --bg: #f5f5f7;            /* apple.com 라이트 캔버스 */
+  --card: #ffffff;
+  --card-2: #f2f2f7;        /* systemGray6 */
+  --secondary: #e8e8ed;
+  --fg: #1d1d1f;
+  --fg-2: #6e6e73;
+  --fg-3: #86868b;
+  --border: rgba(0, 0, 0, 0.16);
+  --border-soft: rgba(0, 0, 0, 0.07);
+
+  --primary: #0071e3;       /* Apple 액션 블루 */
+  --primary-strong: #0077ed;
+  --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.75);
+  --primary-fg-line: rgba(255, 255, 255, 0.5);
+  --primary-soft: rgba(0, 113, 227, 0.09);
+
+  --ok: #248a3d;            /* systemGreen — 라이트 배경 접근성 변형 */
+  --ok-soft: rgba(52, 199, 89, 0.12);
+  --info: #0071e3;
+  --info-soft: rgba(0, 113, 227, 0.1);
+  --warn: #b25000;          /* systemOrange 접근성 변형 */
+  --warn-soft: rgba(255, 149, 0, 0.12);
+  --danger: #d70015;        /* systemRed 접근성 변형 */
+  --danger-soft: rgba(255, 59, 48, 0.1);
+
+  --ring: rgba(0, 113, 227, 0.45);
+  --selection: rgba(0, 113, 227, 0.2);
+  --overlay: rgba(0, 0, 0, 0.35);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --r: 16px;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Pretendard Variable', Pretendard, 'Helvetica Neue', sans-serif;
+  --mono: 'SF Mono', ui-monospace, Menlo, 'IBM Plex Mono', monospace;
+
+  --accent: #0071e3;
+  --accent-rgb: 0, 113, 227;
+
+  --ink-rgb: 29, 29, 31;
+  --paper-rgb: 255, 255, 255;
+}
+
+/* [apple-dark] Apple HIG 다크 — 시스템 블랙 위 elevated 표면, 다크 전용 밝은 시스템 컬러. */
+:root[data-theme='apple-dark'] {
+  color-scheme: dark;
+  --bg: #161617;            /* apple.com 다크 캔버스 */
+  --card: #1d1d1f;
+  --card-2: #2c2c2e;        /* elevated (systemGray5 dark) */
+  --secondary: #3a3a3c;
+  --fg: #f5f5f7;
+  --fg-2: #a1a1a6;
+  --fg-3: #6e6e73;
+  --border: rgba(255, 255, 255, 0.16);
+  --border-soft: rgba(255, 255, 255, 0.08);
+
+  --primary: #0a84ff;       /* systemBlue dark */
+  --primary-strong: #409cff;
+  --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.75);
+  --primary-fg-line: rgba(255, 255, 255, 0.5);
+  --primary-soft: rgba(10, 132, 255, 0.16);
+
+  --ok: #30d158;            /* systemGreen dark */
+  --ok-soft: rgba(48, 209, 88, 0.16);
+  --info: #0a84ff;
+  --info-soft: rgba(10, 132, 255, 0.14);
+  --warn: #ff9f0a;          /* systemOrange dark */
+  --warn-soft: rgba(255, 159, 10, 0.16);
+  --danger: #ff453a;        /* systemRed dark */
+  --danger-soft: rgba(255, 69, 58, 0.14);
+
+  --ring: rgba(10, 132, 255, 0.55);
+  --selection: rgba(10, 132, 255, 0.35);
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --r: 16px;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Pretendard Variable', Pretendard, 'Helvetica Neue', sans-serif;
+  --mono: 'SF Mono', ui-monospace, Menlo, 'IBM Plex Mono', monospace;
+
+  --accent: #0a84ff;
+  --accent-rgb: 10, 132, 255;
+
+  --ink-rgb: 235, 235, 240;
+  --paper-rgb: 29, 29, 31;
+}
+
+/* [glass] macOS Tahoe 26 리퀴드 글래스 — 그라디언트 배경 위 반투명 블러 표면.
+   유리 림은 보더가 아니라 inset 하이라이트(--shadow-card)로 만든다. 보더는 잉크 헤어라인 유지. */
+:root[data-theme='glass'] {
+  --bg: #dde4f0;            /* 폴백 — 실제 캔버스는 아래 body 그라디언트 */
+  --card: rgba(255, 255, 255, 0.55);
+  --card-2: rgba(255, 255, 255, 0.45);
+  --secondary: rgba(255, 255, 255, 0.35);
+  --fg: #1d1d1f;
+  --fg-2: rgba(60, 60, 67, 0.72);
+  --fg-3: rgba(60, 60, 67, 0.5);
+  --border: rgba(60, 60, 67, 0.26);
+  --border-soft: rgba(60, 60, 67, 0.12);
+
+  --primary: #0071e3;
+  --primary-strong: #0077ed;
+  --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.75);
+  --primary-fg-line: rgba(255, 255, 255, 0.5);
+  --primary-soft: rgba(0, 113, 227, 0.1);
+
+  --ok: #248a3d;
+  --ok-soft: rgba(52, 199, 89, 0.14);
+  --info: #0071e3;
+  --info-soft: rgba(0, 113, 227, 0.12);
+  --warn: #b25000;
+  --warn-soft: rgba(255, 149, 0, 0.14);
+  --danger: #d70015;
+  --danger-soft: rgba(255, 59, 48, 0.12);
+
+  --ring: rgba(0, 113, 227, 0.45);
+  --selection: rgba(0, 113, 227, 0.22);
+  --overlay: rgba(30, 35, 50, 0.35);
+  --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.75), inset 0 0 0 1px rgba(255, 255, 255, 0.35), 0 8px 32px rgba(31, 38, 61, 0.14);
+  --r: 22px;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Pretendard Variable', Pretendard, 'Helvetica Neue', sans-serif;
+  --mono: 'SF Mono', ui-monospace, Menlo, 'IBM Plex Mono', monospace;
+
+  --accent: #0071e3;
+  --accent-rgb: 0, 113, 227;
+
+  --ink-rgb: 29, 29, 31;
+  --paper-rgb: 255, 255, 255;
+}
+
+/* [glass-dark] 리퀴드 글래스 다크 — 딥 네이비 그라디언트 위 다크 유리 표면. */
+:root[data-theme='glass-dark'] {
+  color-scheme: dark;
+  --bg: #12142a;            /* 폴백 — 실제 캔버스는 아래 body 그라디언트 */
+  --card: rgba(36, 40, 62, 0.55);
+  --card-2: rgba(255, 255, 255, 0.08);
+  --secondary: rgba(255, 255, 255, 0.06);
+  --fg: #f2f3f7;
+  --fg-2: rgba(235, 235, 245, 0.65);
+  --fg-3: rgba(235, 235, 245, 0.42);
+  --border: rgba(255, 255, 255, 0.18);
+  --border-soft: rgba(255, 255, 255, 0.09);
+
+  --primary: #0a84ff;
+  --primary-strong: #409cff;
+  --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.75);
+  --primary-fg-line: rgba(255, 255, 255, 0.5);
+  --primary-soft: rgba(10, 132, 255, 0.2);
+
+  --ok: #30d158;
+  --ok-soft: rgba(48, 209, 88, 0.18);
+  --info: #0a84ff;
+  --info-soft: rgba(10, 132, 255, 0.16);
+  --warn: #ff9f0a;
+  --warn-soft: rgba(255, 159, 10, 0.18);
+  --danger: #ff453a;
+  --danger-soft: rgba(255, 69, 58, 0.16);
+
+  --ring: rgba(10, 132, 255, 0.55);
+  --selection: rgba(10, 132, 255, 0.4);
+  --overlay: rgba(5, 8, 20, 0.6);
+  --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 32px rgba(0, 0, 0, 0.4);
+  --r: 22px;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Pretendard Variable', Pretendard, 'Helvetica Neue', sans-serif;
+  --mono: 'SF Mono', ui-monospace, Menlo, 'IBM Plex Mono', monospace;
+
+  --accent: #0a84ff;
+  --accent-rgb: 10, 132, 255;
+
+  --ink-rgb: 235, 236, 245;
+  --paper-rgb: 36, 40, 62;
+}
+
+/* [clay] 크림 클레이 — 웜 크림 캔버스 + 딥 틸 잉크, 뉴모피즘(이중 그림자, 눌림=inset).
+   레퍼런스: FOUNDATIONS 크림·틸 디자인 시스템 보드. */
+:root[data-theme='clay'] {
+  --bg: #ede6d4;
+  --card: #f6f1e3;
+  --card-2: #ece5d2;
+  --secondary: #e3dcc8;
+  --fg: #2a2c26;
+  --fg-2: #6c6653;
+  --fg-3: #9a937d;
+  --border: rgba(90, 80, 55, 0.3);
+  --border-soft: rgba(90, 80, 55, 0.14);
+
+  --primary: #176862;       /* 딥 틸 */
+  --primary-strong: #0f4f4a;
+  --primary-fg: #f3efe2;
+  --primary-fg-dim: rgba(243, 239, 226, 0.7);
+  --primary-fg-line: rgba(243, 239, 226, 0.45);
+  --primary-soft: rgba(23, 104, 98, 0.1);
+
+  --ok: #1f6e5c;
+  --ok-soft: rgba(31, 110, 92, 0.12);
+  --info: #176862;
+  --info-soft: rgba(23, 104, 98, 0.1);
+  --warn: #a8681c;
+  --warn-soft: rgba(168, 104, 28, 0.12);
+  --danger: #c0492f;        /* 에러 레드 */
+  --danger-soft: rgba(192, 73, 47, 0.12);
+
+  --ring: rgba(23, 104, 98, 0.5);
+  --selection: rgba(23, 104, 98, 0.22);
+  --overlay: rgba(58, 50, 32, 0.35);
+  --nm-hi: rgba(255, 252, 242, 0.65);           /* 뉴모피즘 하이라이트(좌상) — 웜 화이트, 낮은 알파 */
+  --nm-lo: rgba(163, 148, 109, 0.24);           /* 뉴모피즘 로우라이트(우하) */
+  --shadow-card: -3px -3px 8px var(--nm-hi), 3px 3px 9px var(--nm-lo);
+  --r: 18px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --accent: #176862;
+  --accent-rgb: 23, 104, 98;
+
+  --ink-rgb: 42, 44, 38;
+  --paper-rgb: 246, 241, 227;
+}
+
+/* [porcelain] 포슬린 — 쿨 화이트 도자기 클레이, 모노크롬 + iOS 블루 액센트.
+   레퍼런스: Vertical 2:3 화이트 뉴모피즘 보드. */
+:root[data-theme='porcelain'] {
+  --bg: #ededeb;
+  --card: #f6f6f4;
+  --card-2: #eaeae8;
+  --secondary: #e2e2e0;
+  --fg: #2b2b2e;
+  --fg-2: #6f6f73;
+  --fg-3: #9c9ca1;
+  --border: rgba(40, 40, 45, 0.16);
+  --border-soft: rgba(40, 40, 45, 0.07);
+
+  /* 레퍼런스 원칙: 버튼·액션은 차콜 모노크롬, 블루는 데이터(슬라이더·게이지)에만 */
+  --primary: #43434a;
+  --primary-strong: #2f2f34;
+  --primary-fg: #f5f5f3;
+  --primary-fg-dim: rgba(245, 245, 243, 0.72);
+  --primary-fg-line: rgba(245, 245, 243, 0.45);
+  --primary-soft: rgba(60, 60, 70, 0.08);
+
+  --ok: #35855a;
+  --ok-soft: rgba(53, 133, 90, 0.12);
+  --info: #3478f6;
+  --info-soft: rgba(52, 120, 246, 0.1);
+  --warn: #b26a00;
+  --warn-soft: rgba(178, 106, 0, 0.12);
+  --danger: #d64541;
+  --danger-soft: rgba(214, 69, 65, 0.12);
+
+  --ring: rgba(52, 120, 246, 0.45);
+  --selection: rgba(52, 120, 246, 0.2);
+  --overlay: rgba(30, 30, 35, 0.35);
+  --nm-hi: rgba(255, 255, 255, 0.8);
+  --nm-lo: rgba(70, 70, 80, 0.1);
+  --shadow-card: -3px -3px 8px var(--nm-hi), 3px 3px 10px var(--nm-lo);
+  --r: 20px;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Pretendard Variable', Pretendard, 'Helvetica Neue', sans-serif;
+  --mono: 'SF Mono', ui-monospace, Menlo, 'IBM Plex Mono', monospace;
+
+  --accent: #3478f6;
+  --accent-rgb: 52, 120, 246;
+
+  --ink-rgb: 43, 43, 46;
+  --paper-rgb: 246, 246, 244;
+}
+
+/* [mist] 미스트 — 안개 낀 산 그라디언트 위 세이지 프로스티드 글래스.
+   레퍼런스: Mindora UI-KIT — #5E8B7E · #A7C7E7 · #2F3E46 · #F1F5F4 · #E8AEB7. */
+:root[data-theme='mist'] {
+  --bg: #b9c6cd;            /* 폴백 — 실제 캔버스는 아래 body 그라디언트 */
+  --card: rgba(241, 245, 244, 0.5);
+  --card-2: rgba(255, 255, 255, 0.35);
+  --secondary: rgba(255, 255, 255, 0.28);
+  --fg: #2f3e46;            /* 다크 슬레이트 */
+  --fg-2: rgba(47, 62, 70, 0.68);
+  --fg-3: rgba(47, 62, 70, 0.46);
+  --border: rgba(47, 62, 70, 0.28);
+  --border-soft: rgba(47, 62, 70, 0.13);
+
+  --primary: #5e8b7e;       /* 세이지 */
+  --primary-strong: #4a7568;
+  --primary-fg: #f1f5f4;
+  --primary-fg-dim: rgba(241, 245, 244, 0.75);
+  --primary-fg-line: rgba(241, 245, 244, 0.45);
+  --primary-soft: rgba(94, 139, 126, 0.14);
+
+  --ok: #4a7568;
+  --ok-soft: rgba(94, 139, 126, 0.16);
+  --info: #4a7196;          /* 라이트 블루 계열 접근성 변형 */
+  --info-soft: rgba(167, 199, 231, 0.3);
+  --warn: #b07d48;
+  --warn-soft: rgba(176, 125, 72, 0.15);
+  --danger: #b25e69;        /* 더스티 핑크 심화 */
+  --danger-soft: rgba(232, 174, 183, 0.3);
+
+  --ring: rgba(94, 139, 126, 0.5);
+  --selection: rgba(94, 139, 126, 0.25);
+  --overlay: rgba(47, 62, 70, 0.4);
+  --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.25), 0 8px 32px rgba(47, 62, 70, 0.18);
+  --r: 20px;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Pretendard Variable', Pretendard, 'Helvetica Neue', sans-serif;
+  --mono: 'SF Mono', ui-monospace, Menlo, 'IBM Plex Mono', monospace;
+
+  --accent: #5e8b7e;
+  --accent-rgb: 94, 139, 126;
+
+  --ink-rgb: 47, 62, 70;
+  --paper-rgb: 241, 245, 244;
+}
+
+/* [frost] 프로스트 — 차콜 블랙 오브 그라디언트 위 초미니멀 화이트 글래스.
+   레퍼런스: Minimal Glassmorphism (다크 하프) — Clean. Calm. Clear. */
+:root[data-theme='frost'] {
+  color-scheme: dark;
+  --bg: #0b0d12;            /* 폴백 — 실제 캔버스는 아래 body 그라디언트 */
+  --card: rgba(255, 255, 255, 0.07);
+  --card-2: rgba(255, 255, 255, 0.1);
+  --secondary: rgba(255, 255, 255, 0.05);
+  --fg: #f2f4f8;
+  --fg-2: rgba(235, 238, 245, 0.62);
+  --fg-3: rgba(235, 238, 245, 0.4);
+  --border: rgba(255, 255, 255, 0.16);
+  --border-soft: rgba(255, 255, 255, 0.08);
+
+  --primary: #3e82f7;       /* 배터리 링 블루 */
+  --primary-strong: #5d96f9;
+  --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.75);
+  --primary-fg-line: rgba(255, 255, 255, 0.5);
+  --primary-soft: rgba(62, 130, 247, 0.18);
+
+  --ok: #34c77b;
+  --ok-soft: rgba(52, 199, 123, 0.18);
+  --info: #3e82f7;
+  --info-soft: rgba(62, 130, 247, 0.16);
+  --warn: #e0a83e;
+  --warn-soft: rgba(224, 168, 62, 0.18);
+  --danger: #f45b4e;
+  --danger-soft: rgba(244, 91, 78, 0.16);
+
+  --ring: rgba(62, 130, 247, 0.55);
+  --selection: rgba(62, 130, 247, 0.35);
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 12px 40px rgba(0, 0, 0, 0.5);
+  --r: 22px;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Pretendard Variable', Pretendard, 'Helvetica Neue', sans-serif;
+  --mono: 'SF Mono', ui-monospace, Menlo, 'IBM Plex Mono', monospace;
+
+  --accent: #3e82f7;
+  --accent-rgb: 62, 130, 247;
+
+  --ink-rgb: 240, 242, 248;
+  --paper-rgb: 35, 40, 52;
+}
+
+/* [cream-pop] 크림 팝 — 크림 캔버스 + 블랙 패널 + 핑크 데이터 액센트 + 파스텔 배지.
+   레퍼런스: intelly 메디컬 대시보드. */
+:root[data-theme='cream-pop'] {
+  --bg: #faf3e8;
+  --card: #fdf9ef;
+  --card-2: #f2ead6;
+  --secondary: #eae1c8;
+  --fg: #1c1c1c;
+  --fg-2: #6d6759;
+  --fg-3: #a09a88;
+  --border: rgba(40, 36, 28, 0.35);
+  --border-soft: rgba(40, 36, 28, 0.13);
+
+  --primary: #1c1c1c;       /* 블랙 패널·버튼 */
+  --primary-strong: #333330;
+  --primary-fg: #faf3e8;
+  --primary-fg-dim: rgba(250, 243, 232, 0.7);
+  --primary-fg-line: rgba(250, 243, 232, 0.42);
+  --primary-soft: rgba(28, 28, 28, 0.07);
+
+  --ok: #67953f;
+  --ok-soft: rgba(182, 207, 117, 0.32);
+  --info: #5b82d9;
+  --info-soft: rgba(168, 198, 240, 0.35);
+  --warn: #b8860b;
+  --warn-soft: rgba(244, 211, 94, 0.38);
+  --danger: #d94f4f;
+  --danger-soft: rgba(217, 79, 79, 0.14);
+
+  --ring: rgba(236, 107, 184, 0.5);
+  --selection: rgba(236, 107, 184, 0.25);
+  --overlay: rgba(28, 28, 28, 0.4);
+  --shadow-card: 0 2px 10px rgba(60, 50, 30, 0.06);
+  --r: 20px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --accent: #ec6bb8;        /* 핑크 — 차트·게이지·하트레이트 */
+  --accent-rgb: 236, 107, 184;
+
+  --ink-rgb: 28, 28, 28;
+  --paper-rgb: 253, 249, 239;
+}
+
+/* [peach] 피치 — 피치 크림 캔버스 + 화이트 카드 + 코랄 액션 + 퍼플 데이터.
+   레퍼런스: Jewellery CRM 파스텔 카드 대시보드. */
+:root[data-theme='peach'] {
+  --bg: #fbeee1;
+  --card: #fffaf2;
+  --card-2: #f6ecdd;
+  --secondary: #f0e2cf;
+  --fg: #2e2a26;
+  --fg-2: #7c736a;
+  --fg-3: #ab9f92;
+  --border: rgba(90, 70, 50, 0.2);
+  --border-soft: rgba(90, 70, 50, 0.09);
+
+  --primary: #e2795e;       /* 코랄 */
+  --primary-strong: #cf6448;
+  --primary-fg: #fff8f2;
+  --primary-fg-dim: rgba(255, 248, 242, 0.78);
+  --primary-fg-line: rgba(255, 248, 242, 0.45);
+  --primary-soft: rgba(226, 121, 94, 0.1);
+
+  --ok: #79a86a;
+  --ok-soft: rgba(121, 168, 106, 0.16);
+  --info: #7da7e8;
+  --info-soft: rgba(170, 200, 242, 0.3);
+  --warn: #b8811c;
+  --warn-soft: rgba(245, 207, 155, 0.35);
+  --danger: #de6a5a;
+  --danger-soft: rgba(235, 156, 141, 0.3);
+
+  --ring: rgba(226, 121, 94, 0.45);
+  --selection: rgba(185, 138, 230, 0.25);
+  --overlay: rgba(80, 55, 35, 0.35);
+  --shadow-card: 0 6px 24px rgba(150, 100, 60, 0.12);
+  --r: 22px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --accent: #b98ae6;        /* 파스텔 퍼플 — 진행바·슬라이더 */
+  --accent-rgb: 185, 138, 230;
+
+  --ink-rgb: 46, 42, 38;
+  --paper-rgb: 255, 250, 242;
+}
+
+/* [retro] 레트로 프레스 — 크림 종이 + 잉크 블랙 굵은 보더 + 오렌지 필 + 모노 타이포.
+   레퍼런스: 오디오북 리더 네오 브루탈리즘 보드. */
+:root[data-theme='retro'] {
+  --bg: #efe3d0;
+  --card: #f7edda;
+  --card-2: #e9dbc1;
+  --secondary: #e0d1b1;
+  --fg: #17130e;
+  --fg-2: #4f4638;
+  --fg-3: #857a63;
+  --border: rgba(23, 19, 14, 0.85);       /* 잉크 블랙 — 보더가 주인공 */
+  --border-soft: rgba(23, 19, 14, 0.3);
+
+  --primary: #f05423;       /* 레트로 오렌지 */
+  --primary-strong: #d64414;
+  --primary-fg: #fff6e8;
+  --primary-fg-dim: rgba(255, 246, 232, 0.8);
+  --primary-fg-line: rgba(255, 246, 232, 0.5);
+  --primary-soft: rgba(240, 84, 35, 0.1);
+
+  --ok: #3e7d3a;
+  --ok-soft: rgba(62, 125, 58, 0.14);
+  --info: #2f5fa8;
+  --info-soft: rgba(47, 95, 168, 0.12);
+  --warn: #a3820a;          /* 옐로 #F5D908의 텍스트 안전 변형 */
+  --warn-soft: rgba(245, 217, 8, 0.3);
+  --danger: #d22d0e;
+  --danger-soft: rgba(210, 45, 14, 0.12);
+
+  --ring: rgba(240, 84, 35, 0.5);
+  --selection: rgba(245, 217, 8, 0.45);
+  --overlay: rgba(23, 19, 14, 0.45);
+  --shadow-card: none;                    /* 브루탈리즘 — 보더로만 */
+  --r: 4px;
+  --font: 'IBM Plex Mono', ui-monospace, 'Pretendard Variable', Pretendard, monospace; /* 라틴=모노, 한글=Pretendard 폴백 */
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --accent: #f05423;
+  --accent-rgb: 240, 84, 35;
+
+  --ink-rgb: 23, 19, 14;
+  --paper-rgb: 247, 237, 218;
+}
+
+/* [sketch] 스케치 — 종이 + 손잉크 + 옐로 형광펜이 활성 마커. 손글씨 폰트(라틴).
+   레퍼런스: 손그림 스토어 플로차트. */
+:root[data-theme='sketch'] {
+  --bg: #fbf7e4;
+  --card: #fdfaec;
+  --card-2: #f4eed2;
+  --secondary: #ede5c4;
+  --fg: #23211b;
+  --fg-2: #565246;
+  --fg-3: #8b8574;
+  --border: rgba(35, 33, 27, 0.75);       /* 손잉크 */
+  --border-soft: rgba(35, 33, 27, 0.22);
+
+  --primary: #f5e27a;       /* 형광펜 — 활성 = 하이라이트 */
+  --primary-strong: #f0d95c;
+  --primary-fg: #23211b;
+  --primary-fg-dim: rgba(35, 33, 27, 0.62);
+  --primary-fg-line: rgba(35, 33, 27, 0.35);
+  --primary-soft: rgba(245, 226, 122, 0.4);
+
+  --ok: #4e7a3a;
+  --ok-soft: rgba(78, 122, 58, 0.14);
+  --info: #4a6a8a;
+  --info-soft: rgba(74, 106, 138, 0.12);
+  --warn: #a08508;
+  --warn-soft: rgba(245, 226, 122, 0.45);
+  --danger: #c04e35;
+  --danger-soft: rgba(192, 78, 53, 0.13);
+
+  --ring: rgba(217, 181, 20, 0.55);
+  --selection: rgba(245, 226, 122, 0.65);
+  --overlay: rgba(35, 33, 27, 0.35);
+  --shadow-card: none;
+  --r: 12px;
+  --font: 'Chalkboard SE', 'Comic Sans MS', 'Pretendard Variable', Pretendard, cursive;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --accent: #c7a608;        /* 마커 옐로의 데이터 안전 변형 */
+  --accent-rgb: 199, 166, 8;
+
+  --ink-rgb: 35, 33, 27;
+  --paper-rgb: 253, 250, 236;
+}
+
+/* ─── 에디터 테마 6종 — 각 팔레트의 시맨틱 관례 매핑 (green=ok, gold=warn, red=danger) ─── */
+
+/* [tokyo-night] */
+:root[data-theme='tokyo-night'] {
+  color-scheme: dark;
+  --bg: #1a1b26; --card: #1e202e; --card-2: #292e42; --secondary: #3b4261;
+  --fg: #c0caf5; --fg-2: #a9b1d6; --fg-3: #565f89;
+  --border: rgba(86, 95, 137, 0.45); --border-soft: rgba(86, 95, 137, 0.22);
+  --primary: #7aa2f7; --primary-strong: #9ab8f9; --primary-fg: #16161e;
+  --primary-fg-dim: rgba(22, 22, 30, 0.7); --primary-fg-line: rgba(22, 22, 30, 0.4);
+  --primary-soft: rgba(122, 162, 247, 0.15);
+  --ok: #9ece6a; --ok-soft: rgba(158, 206, 106, 0.15);
+  --info: #7dcfff; --info-soft: rgba(125, 207, 255, 0.14);
+  --warn: #e0af68; --warn-soft: rgba(224, 175, 104, 0.15);
+  --danger: #f7768e; --danger-soft: rgba(247, 118, 142, 0.15);
+  --ring: rgba(122, 162, 247, 0.55); --selection: rgba(122, 162, 247, 0.35);
+  --overlay: rgba(13, 14, 22, 0.6);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --r: 14px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --accent: #bb9af7; --accent-rgb: 187, 154, 247;
+  --ink-rgb: 192, 202, 245; --paper-rgb: 30, 32, 46;
+}
+
+/* [nord] */
+:root[data-theme='nord'] {
+  color-scheme: dark;
+  --bg: #2e3440; --card: #3b4252; --card-2: #434c5e; --secondary: #4c566a;
+  --fg: #eceff4; --fg-2: #c8cfdb; --fg-3: rgba(216, 222, 233, 0.45);
+  --border: rgba(216, 222, 233, 0.22); --border-soft: rgba(216, 222, 233, 0.1);
+  --primary: #88c0d0; --primary-strong: #8fbcbb; --primary-fg: #2e3440;
+  --primary-fg-dim: rgba(46, 52, 64, 0.7); --primary-fg-line: rgba(46, 52, 64, 0.4);
+  --primary-soft: rgba(136, 192, 208, 0.14);
+  --ok: #a3be8c; --ok-soft: rgba(163, 190, 140, 0.16);
+  --info: #81a1c1; --info-soft: rgba(129, 161, 193, 0.16);
+  --warn: #ebcb8b; --warn-soft: rgba(235, 203, 139, 0.16);
+  --danger: #bf616a; --danger-soft: rgba(191, 97, 106, 0.18);
+  --ring: rgba(136, 192, 208, 0.5); --selection: rgba(136, 192, 208, 0.3);
+  --overlay: rgba(26, 30, 38, 0.6);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --r: 14px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --accent: #88c0d0; --accent-rgb: 136, 192, 208;
+  --ink-rgb: 236, 239, 244; --paper-rgb: 59, 66, 82;
+}
+
+/* [everforest] (dark medium) */
+:root[data-theme='everforest'] {
+  color-scheme: dark;
+  --bg: #2d353b; --card: #343f44; --card-2: #3d484d; --secondary: #475258;
+  --fg: #d3c6aa; --fg-2: #9da9a0; --fg-3: #7a8478;
+  --border: rgba(157, 169, 160, 0.3); --border-soft: rgba(157, 169, 160, 0.14);
+  --primary: #a7c080; --primary-strong: #b6cb92; --primary-fg: #2d353b;
+  --primary-fg-dim: rgba(45, 53, 59, 0.7); --primary-fg-line: rgba(45, 53, 59, 0.4);
+  --primary-soft: rgba(167, 192, 128, 0.14);
+  --ok: #a7c080; --ok-soft: rgba(167, 192, 128, 0.15);
+  --info: #7fbbb3; --info-soft: rgba(127, 187, 179, 0.15);
+  --warn: #dbbc7f; --warn-soft: rgba(219, 188, 127, 0.15);
+  --danger: #e67e80; --danger-soft: rgba(230, 126, 128, 0.16);
+  --ring: rgba(167, 192, 128, 0.5); --selection: rgba(167, 192, 128, 0.3);
+  --overlay: rgba(22, 28, 32, 0.6);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --r: 14px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --accent: #83c092; --accent-rgb: 131, 192, 146;
+  --ink-rgb: 211, 198, 170; --paper-rgb: 52, 63, 68;
+}
+
+/* [dracula] (Soft) */
+:root[data-theme='dracula'] {
+  color-scheme: dark;
+  --bg: #282a36; --card: #313342; --card-2: #44475a; --secondary: #3a3d4d;
+  --fg: #f8f8f2; --fg-2: #b8bacb; --fg-3: #6272a4;
+  --border: rgba(98, 114, 164, 0.4); --border-soft: rgba(98, 114, 164, 0.2);
+  --primary: #b894ec; --primary-strong: #caa5f5; --primary-fg: #282a36;
+  --primary-fg-dim: rgba(40, 42, 54, 0.7); --primary-fg-line: rgba(40, 42, 54, 0.4);
+  --primary-soft: rgba(189, 147, 249, 0.15);
+  --ok: #74d685; --ok-soft: rgba(116, 214, 133, 0.15);
+  --info: #93d8e9; --info-soft: rgba(147, 216, 233, 0.14);
+  --warn: #f0ac70; --warn-soft: rgba(240, 172, 112, 0.15);
+  --danger: #ee6666; --danger-soft: rgba(238, 102, 102, 0.15);
+  --ring: rgba(189, 147, 249, 0.5); --selection: rgba(189, 147, 249, 0.35);
+  --overlay: rgba(20, 21, 30, 0.6);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --r: 14px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --accent: #e98fc4; --accent-rgb: 233, 143, 196;
+  --ink-rgb: 248, 248, 242; --paper-rgb: 49, 51, 66;
+}
+
+/* [monokai] (Pro) */
+:root[data-theme='monokai'] {
+  color-scheme: dark;
+  --bg: #2d2a2e; --card: #353236; --card-2: #403e41; --secondary: #49474b;
+  --fg: #fcfcfa; --fg-2: #c1c0c0; --fg-3: #727072;
+  --border: rgba(193, 192, 192, 0.25); --border-soft: rgba(193, 192, 192, 0.12);
+  --primary: #ffd866; --primary-strong: #ffe38a; --primary-fg: #2d2a2e;
+  --primary-fg-dim: rgba(45, 42, 46, 0.7); --primary-fg-line: rgba(45, 42, 46, 0.4);
+  --primary-soft: rgba(255, 216, 102, 0.14);
+  --ok: #a9dc76; --ok-soft: rgba(169, 220, 118, 0.15);
+  --info: #78dce8; --info-soft: rgba(120, 220, 232, 0.14);
+  --warn: #fc9867; --warn-soft: rgba(252, 152, 103, 0.15);
+  --danger: #ff6188; --danger-soft: rgba(255, 97, 136, 0.15);
+  --ring: rgba(255, 216, 102, 0.5); --selection: rgba(255, 216, 102, 0.3);
+  --overlay: rgba(24, 22, 25, 0.6);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --r: 14px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --accent: #ffd866; --accent-rgb: 255, 216, 102;
+  --ink-rgb: 252, 252, 250; --paper-rgb: 53, 50, 54;
+}
+
+/* [rose-pine] (main) */
+:root[data-theme='rose-pine'] {
+  color-scheme: dark;
+  --bg: #191724; --card: #1f1d2e; --card-2: #26233a; --secondary: #302b4a;
+  --fg: #e0def4; --fg-2: #908caa; --fg-3: #6e6a86;
+  --border: rgba(144, 140, 170, 0.3); --border-soft: rgba(144, 140, 170, 0.14);
+  --primary: #c4a7e7; --primary-strong: #d1b9ee; --primary-fg: #191724;
+  --primary-fg-dim: rgba(25, 23, 36, 0.7); --primary-fg-line: rgba(25, 23, 36, 0.4);
+  --primary-soft: rgba(196, 167, 231, 0.14);
+  --ok: #9ccfd8; --ok-soft: rgba(156, 207, 216, 0.15);   /* foam */
+  --info: #3e8fb0; --info-soft: rgba(62, 143, 176, 0.18); /* pine */
+  --warn: #f6c177; --warn-soft: rgba(246, 193, 119, 0.15); /* gold */
+  --danger: #eb6f92; --danger-soft: rgba(235, 111, 146, 0.15); /* love */
+  --ring: rgba(196, 167, 231, 0.5); --selection: rgba(196, 167, 231, 0.3);
+  --overlay: rgba(12, 11, 18, 0.6);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --r: 14px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --accent: #ebbcba; --accent-rgb: 235, 188, 186;         /* rose */
+  --ink-rgb: 224, 222, 244; --paper-rgb: 31, 29, 46;
+}
+
+/* ─── 리퀴드 글래스 전용 표면 규칙 (라이트·다크 공통) ────────────────────
+   토큰으로 표현 불가한 blur/그라디언트만 테마 스코프로 둔다.
+   유리 원칙: 큰 표면(카드·탑바·사이드바·모달)은 blur + 레이어드 반투명,
+   작은 컨트롤은 반투명만(성능 — backdrop-filter 남발 금지). */
+:root[data-theme='glass'] body {
+  background:
+    radial-gradient(1100px 700px at 12% -8%, rgba(122, 170, 255, 0.55), transparent 60%),
+    radial-gradient(900px 640px at 88% 4%, rgba(186, 140, 255, 0.4), transparent 58%),
+    radial-gradient(1000px 800px at 50% 110%, rgba(96, 196, 255, 0.42), transparent 62%),
+    #dde4f0;
+  background-attachment: fixed;
+}
+:root[data-theme='glass-dark'] body {
+  background:
+    radial-gradient(1100px 700px at 12% -8%, rgba(64, 92, 255, 0.35), transparent 60%),
+    radial-gradient(900px 640px at 88% 4%, rgba(140, 84, 255, 0.28), transparent 58%),
+    radial-gradient(1000px 800px at 50% 110%, rgba(10, 132, 255, 0.25), transparent 62%),
+    #12142a;
+  background-attachment: fixed;
+}
+
+:root[data-theme='mist'] body {
+  background:
+    radial-gradient(1100px 720px at 15% -10%, rgba(241, 245, 244, 0.75), transparent 60%),
+    radial-gradient(950px 680px at 85% 8%, rgba(167, 199, 231, 0.5), transparent 58%),
+    radial-gradient(1000px 780px at 45% 115%, rgba(94, 139, 126, 0.32), transparent 62%),
+    linear-gradient(180deg, #c3ced4, #aebcc4);
+  background-attachment: fixed;
+}
+:root[data-theme='frost'] body {
+  background:
+    radial-gradient(900px 620px at 82% -12%, rgba(46, 54, 74, 0.75), transparent 60%),
+    radial-gradient(1000px 720px at -8% 32%, rgba(36, 42, 58, 0.6), transparent 60%),
+    radial-gradient(820px 620px at 68% 112%, rgba(28, 34, 48, 0.7), transparent 60%),
+    #0b0d12;
+  background-attachment: fixed;
+}
+
+/* 카드 — 레이어드 유리: 위→아래로 옅어지는 반투명 그라디언트 + 깊은 블러 */
+:root[data-theme='glass'] .card {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.38));
+}
+:root[data-theme='glass-dark'] .card {
+  background: linear-gradient(160deg, rgba(48, 54, 82, 0.72), rgba(28, 31, 52, 0.45));
+}
+:root[data-theme='mist'] .card {
+  background: linear-gradient(160deg, rgba(241, 245, 244, 0.62), rgba(241, 245, 244, 0.38));
+}
+:root[data-theme='frost'] .card {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.045));
+}
+:root[data-theme='glass'] .card,
+:root[data-theme='glass-dark'] .card,
+:root[data-theme='mist'] .card,
+:root[data-theme='frost'] .card {
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+/* 인버트(프라이머리) 카드 — 테마 액센트 유리로 */
+:root[data-theme='glass'] .invert {
+  background: linear-gradient(160deg, rgba(0, 113, 227, 0.88), rgba(0, 113, 227, 0.66));
+  border-color: rgba(255, 255, 255, 0.35);
+}
+:root[data-theme='glass-dark'] .invert {
+  background: linear-gradient(160deg, rgba(10, 132, 255, 0.82), rgba(10, 100, 220, 0.55));
+  border-color: rgba(255, 255, 255, 0.28);
+}
+:root[data-theme='mist'] .invert {
+  background: linear-gradient(160deg, rgba(94, 139, 126, 0.9), rgba(94, 139, 126, 0.68));
+  border-color: rgba(255, 255, 255, 0.35);
+}
+:root[data-theme='frost'] .invert {
+  background: linear-gradient(160deg, rgba(62, 130, 247, 0.75), rgba(46, 98, 200, 0.5));
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* 앱셸 — 사이드바·탑바도 유리 레이어 */
+:root[data-theme='glass'] .side { background: rgba(255, 255, 255, 0.32); }
+:root[data-theme='glass-dark'] .side { background: rgba(18, 20, 40, 0.45); }
+:root[data-theme='mist'] .side { background: rgba(241, 245, 244, 0.35); }
+:root[data-theme='frost'] .side { background: rgba(12, 14, 20, 0.5); }
+:root[data-theme='glass'] .topbar { background: rgba(255, 255, 255, 0.42); }
+:root[data-theme='glass-dark'] .topbar { background: rgba(18, 20, 40, 0.55); }
+:root[data-theme='mist'] .topbar { background: rgba(241, 245, 244, 0.45); }
+:root[data-theme='frost'] .topbar { background: rgba(12, 14, 20, 0.6); }
+:root[data-theme='glass'] .side,
+:root[data-theme='glass-dark'] .side,
+:root[data-theme='mist'] .side,
+:root[data-theme='frost'] .side,
+:root[data-theme='glass'] .topbar,
+:root[data-theme='glass-dark'] .topbar,
+:root[data-theme='mist'] .topbar,
+:root[data-theme='frost'] .topbar {
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+/* 검색필·입력바 — 얕은 블러 유리 */
+:root[data-theme='glass'] .search-pill,
+:root[data-theme='glass'] .input-bar,
+:root[data-theme='glass-dark'] .search-pill,
+:root[data-theme='glass-dark'] .input-bar,
+:root[data-theme='mist'] .search-pill,
+:root[data-theme='mist'] .input-bar,
+:root[data-theme='frost'] .search-pill,
+:root[data-theme='frost'] .input-bar {
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+}
+
+/* ─── 뉴모피즘 전용 표면 규칙 (clay · porcelain 공통) ────────────────────
+   원칙: 표면은 캔버스와 같은 재질(같은 톤), 형태는 그림자 방향으로만 —
+   튀어나옴 = --nm-hi(좌상) + --nm-lo(우하), 눌림/파임 = inset 반전. */
+:root[data-theme='clay'] .btn:not(.btn-primary),
+:root[data-theme='porcelain'] .btn:not(.btn-primary) {
+  border-color: transparent;
+  background: var(--card);
+  box-shadow: -2px -2px 4px var(--nm-hi), 2px 2px 5px var(--nm-lo);
+}
+:root[data-theme='clay'] .btn:not(.btn-primary):hover,
+:root[data-theme='porcelain'] .btn:not(.btn-primary):hover {
+  background: var(--card);
+  box-shadow: -2px -2px 6px var(--nm-hi), 3px 3px 7px var(--nm-lo);
+}
+:root[data-theme='clay'] .btn:active,
+:root[data-theme='porcelain'] .btn:active {
+  box-shadow: inset 2px 2px 4px var(--nm-lo), inset -1px -1px 3px var(--nm-hi);
+}
+:root[data-theme='clay'] .btn-primary,
+:root[data-theme='porcelain'] .btn-primary {
+  box-shadow: 2px 2px 7px var(--nm-lo);
+}
+/* 입력 표면 = 파인 그릇 (inset) */
+:root[data-theme='clay'] .search-pill,
+:root[data-theme='clay'] .input-bar,
+:root[data-theme='porcelain'] .search-pill,
+:root[data-theme='porcelain'] .input-bar {
+  border-color: transparent;
+  background: var(--card-2);
+  box-shadow: inset 2px 2px 5px var(--nm-lo), inset -1px -1px 3px var(--nm-hi);
+}
+/* 진행바 트랙도 파임 */
+:root[data-theme='clay'] .meter-track,
+:root[data-theme='porcelain'] .meter-track {
+  border-color: transparent;
+  box-shadow: inset 1px 1px 3px var(--nm-lo), inset -1px -1px 2px var(--nm-hi);
+}
+
+/* ─── 크림 팝 — 블랙 사이드 패널 (레퍼런스의 시그니처) ────────────────────
+   패널 내부는 토큰 재정의로 통째로 다크 반전 — nav·라벨·아바타·풋터가 전부 따라온다.
+   활성 항목은 핑크(레퍼런스의 액센트 규칙). */
+:root[data-theme='cream-pop'] .side {
+  background: #191919;
+  border-right-color: #191919;
+  color: #faf3e8;
+  --fg: #faf3e8;
+  --fg-2: rgba(250, 243, 232, 0.72);
+  --fg-3: rgba(250, 243, 232, 0.48);
+  --card-2: rgba(255, 255, 255, 0.1);
+  --border: rgba(255, 255, 255, 0.16);
+  --border-soft: rgba(255, 255, 255, 0.12);
+  --primary: #ec6bb8;
+  --primary-fg: #191919;
+}
+
+/* ─── 레트로 프레스 — 잉크 블랙 굵은 보더가 주인공 ─── */
+:root[data-theme='retro'] .card,
+:root[data-theme='retro'] .btn,
+:root[data-theme='retro'] .chip,
+:root[data-theme='retro'] .search-pill,
+:root[data-theme='retro'] .input-bar,
+:root[data-theme='retro'] .avatar {
+  border-width: 2px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -53,7 +919,7 @@ body {
   word-break: keep-all;
 }
 
-::selection { background: rgba(34, 36, 28, 0.18); }
+::selection { background: var(--selection); }
 
 a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
@@ -140,6 +1006,7 @@ input, textarea { font: inherit; color: var(--fg); }
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--r);
+  box-shadow: var(--shadow-card);
 }
 .card-i { transition: background 0.15s; }
 .card-i:hover { background: var(--card-2); }
@@ -157,9 +1024,9 @@ input, textarea { font: inherit; color: var(--fg); }
   background: var(--primary); color: var(--primary-fg);
   border-color: var(--primary);
 }
-.invert .microlabel, .invert .metric-sub2 { color: rgba(229, 231, 217, 0.65); }
-.invert .num small { color: rgba(229, 231, 217, 0.7); }
-.invert .chip { border-color: rgba(229, 231, 217, 0.45); color: var(--primary-fg); }
+.invert .microlabel, .invert .metric-sub2 { color: var(--primary-fg-dim); }
+.invert .num small { color: var(--primary-fg-dim); }
+.invert .chip { border-color: var(--primary-fg-line); color: var(--primary-fg); }
 
 /* 메트릭 — 마이크로 라벨 + 계기 숫자 + 보조줄 */
 .metric { padding: 19px 20px 17px; display: flex; flex-direction: column; }
@@ -266,7 +1133,7 @@ input, textarea { font: inherit; color: var(--fg); }
 }
 .meter-fill {
   position: absolute; inset: 0 auto 0 0; border-radius: 999px;
-  background: var(--fg);
+  background: var(--accent);
   transition: width 0.5s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
 

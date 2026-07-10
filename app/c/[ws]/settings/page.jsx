@@ -4,6 +4,7 @@ import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icon, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
+import { useTheme, THEMES } from '../../../theme';
 
 export default function Settings({ params }) {
   const { ws } = use(params);
@@ -117,6 +118,7 @@ export default function Settings({ params }) {
       </div>
 
       <LanguageCard />
+      <ThemeCard />
       </Section>
 
       <Section label={t('settings.capabilities')}>
@@ -192,6 +194,64 @@ function LanguageCard() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto', paddingTop: 10 }}>
         <span className="microlabel">{t('settings.language.shortcut')}</span>
         <span className="kbd mono" style={{ fontSize: 11, border: '1px solid var(--border)', borderRadius: 6, padding: '2px 8px' }}>{kbd}</span>
+      </div>
+    </div>
+  );
+}
+
+/** 테마 스와치 — 각 테마의 캔버스/카드/프라이머리 토큰을 그대로 보여주는 미니 프리뷰. */
+const THEME_SWATCHES = {
+  argo: ['#e3e5d6', '#e9ebdd', '#22241c'],
+  apple: ['#f5f5f7', '#ffffff', '#0071e3'],
+  'apple-dark': ['#161617', '#2c2c2e', '#0a84ff'],
+  glass: ['#c9d8f2', '#eef3fb', '#0071e3'],
+  'glass-dark': ['#12142a', '#303652', '#0a84ff'],
+  clay: ['#ede6d4', '#f6f1e3', '#176862'],
+  porcelain: ['#ededeb', '#f6f6f4', '#3478f6'],
+  mist: ['#b9c6cd', '#eef3f2', '#5e8b7e'],
+  frost: ['#0b0d12', '#2a303c', '#3e82f7'],
+  'cream-pop': ['#faf3e8', '#191919', '#ec6bb8'],
+  peach: ['#fbeee1', '#fffaf2', '#e2795e'],
+  retro: ['#efe3d0', '#f7edda', '#f05423'],
+  sketch: ['#fbf7e4', '#fdfaec', '#e9c93a'],
+  'tokyo-night': ['#1a1b26', '#292e42', '#7aa2f7'],
+  nord: ['#2e3440', '#434c5e', '#88c0d0'],
+  everforest: ['#2d353b', '#3d484d', '#a7c080'],
+  dracula: ['#282a36', '#44475a', '#bd93f9'],
+  monokai: ['#2d2a2e', '#403e41', '#ffd866'],
+  'rose-pine': ['#191724', '#26233a', '#c4a7e7'],
+};
+
+function ThemeCard() {
+  const { theme, setTheme } = useTheme();
+  const { t } = useLang();
+  return (
+    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span className="card-title">{t('settings.theme')}</span>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.theme.desc')}</p>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {THEMES.map((code) => {
+          const [bg, card, primary] = THEME_SWATCHES[code] ?? [];
+          return (
+            <button
+              key={code}
+              className="chip"
+              onClick={() => setTheme(code)}
+              aria-pressed={theme === code}
+              style={{
+                cursor: 'pointer', padding: '6px 16px', fontSize: 12.5, textTransform: 'none', letterSpacing: 0,
+                ...(theme === code ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}),
+              }}
+            >
+              <span aria-hidden="true" style={{ display: 'inline-flex', gap: 2, marginRight: 6 }}>
+                {[bg, card, primary].map((c, i) => (
+                  <span key={i} style={{ width: 8, height: 8, borderRadius: 999, background: c, border: '1px solid var(--border-soft)' }} />
+                ))}
+              </span>
+              {t(`settings.theme.${code}`)}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

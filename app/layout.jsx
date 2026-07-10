@@ -1,5 +1,9 @@
 import './globals.css';
 import { LanguageProvider } from './i18n';
+import { ThemeProvider } from './theme';
+
+// 첫 페인트 전에 저장된 테마를 적용 — FOUC 방지 (ThemeProvider의 effect보다 먼저 실행)
+const themeBoot = `try{var t=localStorage.getItem('argo-theme');if(t&&t!=='argo')document.documentElement.dataset.theme=t}catch(e){}`;
 
 export const metadata = {
   title: 'Argo — 한 배에 오른 AI 크루',
@@ -8,8 +12,9 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="ko">
+    <html lang="ko" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBoot }} />
         <link
           rel="stylesheet"
           href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
@@ -21,7 +26,7 @@ export default function RootLayout({ children }) {
           href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
         />
       </head>
-      <body><LanguageProvider>{children}</LanguageProvider></body>
+      <body><ThemeProvider><LanguageProvider>{children}</LanguageProvider></ThemeProvider></body>
     </html>
   );
 }

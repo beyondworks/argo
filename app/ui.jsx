@@ -127,8 +127,8 @@ export function Bars({ data, rows = 8 }) {
                 return (
                   <span key={r} style={{
                     width: 7, height: 7, borderRadius: 2,
-                    background: lit ? 'var(--fg)' : 'transparent',
-                    border: `1px solid ${lit ? 'var(--fg)' : 'var(--border-soft)'}`,
+                    background: lit ? 'var(--accent)' : 'transparent',
+                    border: `1px solid ${lit ? 'var(--accent)' : 'var(--border-soft)'}`,
                     transition: 'background 0.25s, border-color 0.25s',
                     transitionDelay: `${i * 25 + r * 55}ms`,
                   }} />
@@ -169,7 +169,7 @@ export function Dial({ value, size = 120, label }) {
       <svg width={size} height={size}>
         {ticks.map((t, i) => (
           <line key={i} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2}
-            stroke={t.on ? 'var(--fg)' : 'var(--border-soft)'} strokeWidth={t.on ? 1.5 : 1}
+            stroke={t.on ? 'var(--accent)' : 'var(--border-soft)'} strokeWidth={t.on ? 1.5 : 1}
             style={{ transition: 'stroke 0.2s', transitionDelay: `${t.delay}ms` }} />
         ))}
         {/* 바늘 — 0시 방향으로 그려두고 그룹 회전으로 스윕 */}
@@ -178,9 +178,9 @@ export function Dial({ value, size = 120, label }) {
           transformOrigin: `${cx}px ${cy}px`,
           transition: 'transform 1s cubic-bezier(0.34, 1.3, 0.4, 1)',
         }}>
-          <line x1={cx} y1={cy} x2={cx + r - 14} y2={cy} stroke="var(--fg)" strokeWidth="1.7" strokeLinecap="round" />
+          <line x1={cx} y1={cy} x2={cx + r - 14} y2={cy} stroke="var(--accent)" strokeWidth="1.7" strokeLinecap="round" />
         </g>
-        <circle cx={cx} cy={cy} r="3" fill="var(--fg)" />
+        <circle cx={cx} cy={cy} r="3" fill="var(--accent)" />
       </svg>
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 4, textAlign: 'center' }}>
         <span className="mono" style={{ fontSize: 16, fontWeight: 600 }}>{Math.round(v)}%</span>
@@ -284,7 +284,7 @@ export function DangerModal({ title, description, requireText, phraseKey = 'dang
 
   const field = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13, width: '100%' };
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(37,39,30,0.3)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
       <div className="card fade-up" style={{ width: 'min(420px, 100%)', borderColor: 'var(--danger)' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
           <span className="card-title" style={{ color: 'var(--danger)' }}>{title}</span>

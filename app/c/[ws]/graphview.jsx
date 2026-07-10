@@ -4,8 +4,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLang } from '../../i18n';
 
-const INK = '37, 39, 30'; // --fg
-const PAPER = '233, 235, 221'; // --card
+// 캔버스는 CSS 변수를 직접 못 읽으므로 테마 토큰(--ink-rgb/--paper-rgb)을 여기로 동기화한다.
+// rAF 루프가 매 프레임 이 값을 읽어 그리므로, 값만 갈아끼우면 다음 프레임부터 테마가 반영된다.
+let INK = '37, 39, 30';        // 폴백 = argo --ink-rgb (엣지·라벨 — 구조)
+let PAPER = '233, 235, 221';   // 폴백 = argo --paper-rgb (노트 코어 배경)
+let ACCENT = '37, 39, 30';     // 폴백 = argo --accent-rgb (노드·할로 — 계기 액센트)
+function syncThemeRgb() {
+  const s = getComputedStyle(document.documentElement);
+  INK = s.getPropertyValue('--ink-rgb').trim() || INK;
+  PAPER = s.getPropertyValue('--paper-rgb').trim() || PAPER;
+  ACCENT = s.getPropertyValue('--accent-rgb').trim() || ACCENT;
+}
 
 /* ─── 그래프 구성 — 실제 연결 관계만 엣지로 ─── */
 function buildGraph({ company, agents = [], docs = [], delegations = [] }) {
@@ -164,27 +173,27 @@ function makeRenderer(canvas, graph, sim, opts) {
       const hi = hover === i;
       const alpha = 0.3 + 0.7 * q.k;
 
-      // 잉크 할로 (레퍼런스의 글로우를 잉크 톤으로)
+      // 액센트 할로 (레퍼런스의 글로우를 테마 액센트 톤으로)
       ctx.beginPath(); ctx.arc(q.x, q.y, r * 3, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${INK}, ${(hi ? 0.16 : 0.06) * q.k})`; ctx.fill();
+      ctx.fillStyle = `rgba(${ACCENT}, ${(hi ? 0.16 : 0.06) * q.k})`; ctx.fill();
       ctx.beginPath(); ctx.arc(q.x, q.y, r * 1.8, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${INK}, ${(hi ? 0.28 : 0.12) * q.k})`; ctx.fill();
+      ctx.fillStyle = `rgba(${ACCENT}, ${(hi ? 0.28 : 0.12) * q.k})`; ctx.fill();
 
       // 코어
       ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, Math.PI * 2);
       if (n.type === 'note') {
         ctx.fillStyle = `rgba(${PAPER}, 0.95)`; ctx.fill();
-        ctx.strokeStyle = `rgba(${INK}, ${alpha})`; ctx.lineWidth = 1.4; ctx.stroke();
+        ctx.strokeStyle = `rgba(${ACCENT}, ${alpha})`; ctx.lineWidth = 1.4; ctx.stroke();
       } else if (n.type === 'company') {
-        ctx.fillStyle = `rgba(${INK}, ${alpha})`; ctx.fill();
+        ctx.fillStyle = `rgba(${ACCENT}, ${alpha})`; ctx.fill();
         ctx.beginPath(); ctx.arc(q.x, q.y, r + 3.5, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${INK}, ${0.5 * q.k})`; ctx.lineWidth = 1; ctx.setLineDash([2, 3]); ctx.stroke(); ctx.setLineDash([]);
+        ctx.strokeStyle = `rgba(${ACCENT}, ${0.5 * q.k})`; ctx.lineWidth = 1; ctx.setLineDash([2, 3]); ctx.stroke(); ctx.setLineDash([]);
       } else {
-        ctx.fillStyle = `rgba(${INK}, ${alpha})`; ctx.fill();
+        ctx.fillStyle = `rgba(${ACCENT}, ${alpha})`; ctx.fill();
       }
       if (hi) {
         ctx.beginPath(); ctx.arc(q.x, q.y, r + 6, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${INK}, 0.6)`; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+        ctx.strokeStyle = `rgba(${ACCENT}, 0.6)`; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
       }
 
       // 라벨 — 회사·크루는 항상, 기억은 호버 시 (미니는 호버 없음)
@@ -210,8 +219,10 @@ export function Constellation3D({ company, agents, docs, delegations, height = 2
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas || !docs) return;
+    syncThemeRgb();
+    window.addEventListener('argo:theme', syncThemeRgb);
     const graph = buildGraph({ company, agents, docs, delegations });
-    if (graph.nodes.length === 0) return;
+    if (graph.nodes.length === 0) return () => window.removeEventListener('argo:theme', syncThemeRgb);
     const sim = createSim(graph);
     const r = makeRenderer(canvas, graph, sim, { mini: true, zoom: 0.92 });
 
@@ -243,6 +254,7 @@ export function Constellation3D({ company, agents, docs, delegations, height = 2
       ro.disconnect();
       canvas.removeEventListener('mousemove', onMove);
       canvas.removeEventListener('mouseleave', onLeave);
+      window.removeEventListener('argo:theme', syncThemeRgb);
     };
   }, [company, agents, docs, delegations]);
 
@@ -272,6 +284,7 @@ export function GraphModal({ company, agents, docs, delegations, onClose, onSele
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas || !docs) return;
+    syncThemeRgb();
     const graph = buildGraph({ company, agents, docs, delegations });
     const sim = createSim(graph);
     const r = makeRenderer(canvas, graph, sim, { mini: false, zoom: 1.3 });
