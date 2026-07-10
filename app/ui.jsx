@@ -1,5 +1,6 @@
 'use client';
 // 공용 클라이언트 조각들 — 화면 전체가 같이 쓴다.
+import { useEffect, useState } from 'react';
 import { marked } from 'marked';
 
 marked.setOptions({ breaks: true, gfm: true });
@@ -41,13 +42,11 @@ export function StarMark({ size = 16 }) {
   );
 }
 
-export function Logo({ size = 15 }) {
+export function Logo({ size = 14 }) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      <span style={{ width: size + 13, height: size + 13, borderRadius: 999, background: 'var(--ink)', color: '#fff', display: 'grid', placeItems: 'center' }}>
-        <StarMark size={size - 1} />
-      </span>
-      <span style={{ fontWeight: 750, fontSize: size + 1, letterSpacing: '-0.02em' }}>Argo</span>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--fg)' }}>
+      <StarMark size={size + 1} />
+      <span className="mono" style={{ fontWeight: 600, fontSize: size, letterSpacing: '0.16em' }}>ARGO</span>
     </span>
   );
 }
@@ -77,43 +76,82 @@ export function Skeleton({ h = 16, w = '100%', style }) {
   return <span className="skeleton" style={{ display: 'block', height: h, width: w, ...style }} />;
 }
 
-/** 도넛 차트 — 레퍼런스의 라운드 세그먼트 도넛. segments: [{value, color}] */
-export function Donut({ segments, size = 150, stroke = 16, centerTop, centerSub }) {
-  const total = segments.reduce((s, x) => s + x.value, 0) || 1;
-  const r = (size - stroke) / 2;
-  const C = 2 * Math.PI * r;
-  const gap = segments.filter((s) => s.value > 0).length > 1 ? 3 : 0;
-  let offset = -90;
-  const arcs = segments.filter((s) => s.value > 0).map((s, i) => {
-    const frac = s.value / total;
-    const len = Math.max(frac * 360 - gap, 2);
-    const arc = { ...s, start: offset, len };
-    offset += frac * 360;
-    return arc;
+/** 도트 매트릭스 차트 — 계기판 스타일. 막대 대신 잉크 도트를 쌓는다. data: [{date, count}] */
+export function Bars({ data, rows = 8 }) {
+  const max = Math.max(...data.map((d) => d.count), 1);
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, padding: '0 2px' }}>
+      {data.map((d, i) => {
+        const filled = d.count === 0 ? 0 : Math.max(Math.round((d.count / max) * rows), 1);
+        return (
+          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, minWidth: 0 }} title={`${d.date} · ${d.count}건`}>
+            <div style={{ display: 'flex', flexDirection: 'column-reverse', gap: 3 }}>
+              {Array.from({ length: rows }, (_, r) => (
+                <span key={r} style={{
+                  width: 7, height: 7, borderRadius: 2,
+                  background: r < filled ? 'var(--fg)' : 'transparent',
+                  border: `1px solid ${r < filled ? 'var(--fg)' : 'var(--border-soft)'}`,
+                  transition: 'background 0.3s',
+                }} />
+              ))}
+            </div>
+            <span className="mono" style={{ fontSize: 9, color: 'var(--fg-3)', whiteSpace: 'nowrap' }}>
+              {d.date.slice(3)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** 아날로그 다이얼 게이지 — 틱 눈금 + 바늘 + 중앙 수치. value: 0~100 */
+export function Dial({ value, size = 108, label }) {
+  const cx = size / 2, cy = size / 2, r = size / 2 - 8;
+  const start = -220, sweep = 260; // 좌하단에서 우하단까지
+  const ticks = Array.from({ length: 21 }, (_, i) => {
+    const a = ((start + (i / 20) * sweep) * Math.PI) / 180;
+    const long = i % 5 === 0;
+    return {
+      x1: cx + Math.cos(a) * (r - (long ? 7 : 4)), y1: cy + Math.sin(a) * (r - (long ? 7 : 4)),
+      x2: cx + Math.cos(a) * r, y2: cy + Math.sin(a) * r,
+      on: (i / 20) * 100 <= value,
+    };
   });
+  const na = ((start + (Math.min(Math.max(value, 0), 100) / 100) * sweep) * Math.PI) / 180;
   return (
     <div style={{ position: 'relative', width: size, height: size }}>
       <svg width={size} height={size}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--surface-2)" strokeWidth={stroke} />
-        {arcs.map((a, i) => (
-          <circle
-            key={i}
-            cx={size / 2} cy={size / 2} r={r} fill="none"
-            stroke={a.color} strokeWidth={stroke} strokeLinecap="round"
-            strokeDasharray={`${(a.len / 360) * C} ${C}`}
-            transform={`rotate(${a.start} ${size / 2} ${size / 2})`}
-            style={{ transition: 'stroke-dasharray 0.5s ease' }}
-          />
+        {ticks.map((t, i) => (
+          <line key={i} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2}
+            stroke={t.on ? 'var(--fg)' : 'var(--border-soft)'} strokeWidth={t.on ? 1.6 : 1} />
         ))}
+        <line x1={cx} y1={cy} x2={cx + Math.cos(na) * (r - 13)} y2={cy + Math.sin(na) * (r - 13)}
+          stroke="var(--fg)" strokeWidth="1.8" strokeLinecap="round" />
+        <circle cx={cx} cy={cy} r="3" fill="var(--fg)" />
       </svg>
-      <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div className="num" style={{ fontSize: 26 }}>{centerTop}</div>
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: -2 }}>{centerSub}</div>
-        </div>
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 2, textAlign: 'center' }}>
+        <span className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{Math.round(value)}%</span>
+        {label && <span className="microlabel" style={{ display: 'block', marginTop: -3 }}>{label}</span>}
       </div>
     </div>
   );
+}
+
+/** 라이브 시계 — 계기판의 모노 타임코드. */
+export function Clock() {
+  const [now, setNow] = useState('');
+  useEffect(() => {
+    const tick = () => {
+      const d = new Date();
+      const p = (n) => String(n).padStart(2, '0');
+      setNow(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`);
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, []);
+  return <span className="topbar-clock" suppressHydrationWarning>{now}</span>;
 }
 
 /** 에이전트 응답(마크다운) 렌더 — raw HTML 이스케이프 + 위험 스킴 href 차단. */

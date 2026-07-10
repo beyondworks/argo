@@ -1,5 +1,5 @@
 'use client';
-// 기억 — 그래프(카드) + 문서 목록(행) + 뷰어(카드). 탑바 검색으로 목록 필터.
+// 기억 — 잉크 별자리 그래프 + 기록 표 + 종이 뷰어. 탑바 검색으로 필터.
 import { Suspense, use, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Icon, Markdown, Spinner, Skeleton, api, timeAgo, tsFromRel } from '../../../ui';
@@ -45,10 +45,15 @@ function Vault({ params }) {
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+        <span className="microlabel">Vault · 회사가 쌓아온 항해일지</span>
+        <span className="microlabel">{docs ? `${docs.length} Records` : ''}</span>
+      </div>
+
       {docs === null ? (
         <>
-          <Skeleton h={210} style={{ borderRadius: 20 }} />
-          <Skeleton h={320} style={{ borderRadius: 20 }} />
+          <Skeleton h={200} style={{ borderRadius: 16 }} />
+          <Skeleton h={320} style={{ borderRadius: 16 }} />
         </>
       ) : docs.length === 0 ? (
         <div className="empty">아직 기록된 기억이 없습니다. 크루와 첫 대화를 나누면 여기에 쌓입니다.</div>
@@ -63,21 +68,21 @@ function Vault({ params }) {
                 <span className="chip">{visible.length}</span>
               </div>
               {visible.length === 0 && (
-                <p style={{ padding: '0 20px 18px', color: 'var(--ink-3)', fontSize: 13 }}>검색과 일치하는 기억이 없습니다.</p>
+                <p style={{ padding: '0 18px 16px', color: 'var(--fg-2)', fontSize: 13 }}>검색과 일치하는 기억이 없습니다.</p>
               )}
               {visible.map((d) => {
                 const active = selected === d.rel;
                 return (
                   <button key={d.rel} onClick={() => setSelected(d.rel)} className={`row${active ? ' active' : ''}`}>
-                    <span className={`icon-circle ${d.dir === 'notes' ? 'mint' : 'lav'}`}>
-                      <Icon name={d.dir === 'notes' ? 'bolt' : 'doc'} size={15} />
+                    <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}>
+                      <Icon name={d.dir === 'notes' ? 'bolt' : 'doc'} size={14} />
                     </span>
                     <span style={{ minWidth: 0, flex: 1 }}>
                       <span style={{ display: 'block', fontSize: 12.5, fontWeight: active ? 700 : 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                         {d.title}
                       </span>
-                      <span style={{ display: 'block', fontSize: 11, color: 'var(--ink-3)', marginTop: 1 }}>
-                        {timeAgo(tsFromRel(d.rel) ?? d.mtime)}{d.links.length > 0 && ` · 연결 ${d.links.length}`}
+                      <span className="mono" style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)', marginTop: 1 }}>
+                        {timeAgo(tsFromRel(d.rel) ?? d.mtime)}{d.links.length > 0 && ` · LINK ${d.links.length}`}
                       </span>
                     </span>
                   </button>
@@ -87,16 +92,14 @@ function Vault({ params }) {
 
             <div className="card" style={{ padding: 24, minHeight: 340 }}>
               {!selected ? (
-                <div style={{ color: 'var(--ink-3)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Icon name="doc" size={14} /> 왼쪽 목록이나 그래프의 점을 눌러 기억을 열어보세요.
+                <div style={{ color: 'var(--fg-2)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Icon name="doc" size={14} /> 왼쪽 목록이나 그래프의 별을 눌러 기억을 열어보세요.
                 </div>
               ) : loadingDoc ? (
                 <Spinner />
               ) : (
                 <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-                    <span className="chip" style={{ fontFamily: 'var(--mono)', fontWeight: 500 }}>{selected}</span>
-                  </div>
+                  <div className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', marginBottom: 14, letterSpacing: '0.03em' }}>{selected}</div>
                   <Markdown text={content} onWikiLink={openWiki} />
                 </>
               )}
@@ -108,12 +111,12 @@ function Vault({ params }) {
   );
 }
 
-/** 기억 그래프 — 골든앵글 배치. 라벤더 점(대화)·민트 점(노트), 옅은 라벤더 선. */
+/** 기억 별자리 — 잉크 점·선. 대화=채운 점, 노트=빈 점. */
 function Constellation({ docs, selected, onSelect }) {
-  const W = 1020, H = 210;
+  const W = 1020, H = 200;
   const layout = useMemo(() => {
     const nodes = docs.map((d, i) => {
-      const r = 24 + 27 * Math.sqrt(i);
+      const r = 22 + 26 * Math.sqrt(i);
       const th = i * 2.39996;
       return {
         ...d,
@@ -140,26 +143,27 @@ function Constellation({ docs, selected, onSelect }) {
 
   return (
     <div className="card" style={{ padding: '14px 18px 10px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span className="card-title">기억 그래프</span>
         <div style={{ display: 'flex', gap: 8 }}>
-          <span className="chip lav"><span className="dot" />대화 기록</span>
-          <span className="chip mint"><span className="dot" />지식 노트</span>
-          <span className="chip">연결 {layout.edges.length}</span>
+          <span className="chip"><span className="dot" />대화</span>
+          <span className="chip"><span style={{ width: 5, height: 5, borderRadius: 999, border: '1px solid currentColor' }} />노트</span>
+          <span className="chip">Link {layout.edges.length}</span>
         </div>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }}>
         {layout.edges.map(([a, b], i) => (
-          <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--lav-soft)" strokeWidth="2" />
+          <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--border)" strokeWidth="1" />
         ))}
         {layout.nodes.map((n) => {
           const active = selected === n.rel;
-          const color = n.dir === 'notes' ? 'var(--mint)' : 'var(--lav)';
           return (
             <g key={n.rel} onClick={() => onSelect(n.rel)} style={{ cursor: 'pointer' }}>
               <circle cx={n.x} cy={n.y} r="13" fill="transparent" />
-              {active && <circle cx={n.x} cy={n.y} r="10" fill="none" stroke={color} strokeOpacity="0.35" strokeWidth="3" />}
-              <circle cx={n.x} cy={n.y} r={active ? 5 : 4} fill={color} />
+              {active && <circle cx={n.x} cy={n.y} r="9" fill="none" stroke="var(--fg)" strokeWidth="1" strokeDasharray="2 2" />}
+              {n.dir === 'notes'
+                ? <circle cx={n.x} cy={n.y} r={active ? 4.5 : 3.5} fill="var(--card)" stroke="var(--fg)" strokeWidth="1.4" />
+                : <circle cx={n.x} cy={n.y} r={active ? 4.5 : 3.5} fill="var(--fg)" />}
               <title>{n.title}</title>
             </g>
           );

@@ -12,11 +12,18 @@ function docStats(docs) {
     }
   }
   const today = new Date().toISOString().slice(0, 10);
+  // 최근 14일 일별 적립 수 — 관제탑 바 차트용
+  const daily = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+    daily.push({ date: d.slice(5), count: docs.filter((x) => x.rel.includes(d)).length });
+  }
   return {
     links: edges.size,
     today: docs.filter((d) => d.rel.includes(today)).length,
     conversations: docs.filter((d) => d.dir === 'conversations').length,
     notes: docs.filter((d) => d.dir === 'notes').length,
+    daily,
   };
 }
 
