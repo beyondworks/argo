@@ -19,7 +19,8 @@ export function paths(wsId) {
     approvals: join(root, 'approvals.json'),
     connections: join(root, 'connections.json'),
     vault: join(root, 'vault'),
-    conversations: join(root, 'vault', 'conversations'),
+    conversations: join(root, 'vault', 'conversations'), // 구버전 — 마이그레이션 후 읽기 전용
+    journal: join(root, 'vault', 'journal'),
     notes: join(root, 'vault', 'notes'),
     index: join(root, 'vault', '_index.md'),
   };
@@ -29,7 +30,7 @@ export function paths(wsId) {
 export async function createCompany(wsId, name, owner) {
   const p = paths(wsId);
   if (existsSync(p.company)) throw new Error(`이미 존재하는 회사: ${wsId}`);
-  for (const d of [p.agents, p.skills, p.conversations, p.notes]) {
+  for (const d of [p.agents, p.skills, p.journal, p.notes]) {
     await mkdir(d, { recursive: true });
   }
   const company = { id: wsId, name, owner, created: new Date().toISOString() };

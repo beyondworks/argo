@@ -69,15 +69,43 @@ function Vault({ params }) {
       .finally(() => setLoadingDoc(false));
   }, [ws, selected]);
 
+  const [consolidating, setConsolidating] = useState(false);
+  const [consolidateMsg, setConsolidateMsg] = useState('');
+
+  async function consolidate() {
+    if (consolidating) return;
+    setConsolidating(true); setConsolidateMsg('');
+    try {
+      const r = await api(`/api/companies/${ws}/vault/consolidate`, {});
+      setConsolidateMsg(r.notes.length ? `주제 노트 ${r.notes.length}건 갱신` : '정리할 새 일지가 없습니다');
+      await loadDocs();
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (e) {
+      setConsolidateMsg(String(e.message));
+    } finally {
+      setConsolidating(false);
+    }
+  }
+
   const openWiki = (name) => setSelected(name.endsWith('.md') ? name : `${name}.md`);
   const visible = (docs ?? []).filter((d) => !q || d.title.toLowerCase().includes(q) || d.excerpt.toLowerCase().includes(q));
+  // 3층 구조 그룹 — 주제(정제수)가 먼저, 일지(원수)는 아래, 구버전 기록은 마지막
+  const groups = [
+    ['주제 노트', visible.filter((d) => d.dir === 'notes').sort((a, b) => b.mtime - a.mtime)],
+    ['일지', visible.filter((d) => d.dir === 'journal')],
+    ['이전 기록', visible.filter((d) => d.dir === 'conversations')],
+  ].filter(([, list]) => list.length > 0);
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <span className="microlabel">Vault · 회사가 쌓아온 항해일지</span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+          {consolidateMsg && <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{consolidateMsg}</span>}
           <span className="microlabel">{docs ? `${docs.length} Records` : ''}</span>
+          <button className="btn sm" onClick={consolidate} disabled={consolidating} title="새 일지를 주제 노트로 정제합니다 (매일 새벽 자동)">
+            {consolidating ? <Spinner size={12} /> : <><Icon name="bolt" size={13} /> 기억 정리</>}
+          </button>
           <button className="btn sm" onClick={() => setComposing((v) => !v)}>
             <Icon name="plus" size={13} /> 노트 작성
           </button>
@@ -153,24 +181,31 @@ function Vault({ params }) {
               {visible.length === 0 && (
                 <p style={{ padding: '0 18px 16px', color: 'var(--fg-2)', fontSize: 13 }}>검색과 일치하는 기억이 없습니다.</p>
               )}
-              {visible.map((d) => {
-                const active = selected === d.rel;
-                return (
-                  <button key={d.rel} onClick={() => setSelected(d.rel)} className={`row${active ? ' active' : ''}`}>
-                    <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}>
-                      <Icon name={d.dir === 'notes' ? 'bolt' : 'doc'} size={14} />
-                    </span>
-                    <span style={{ minWidth: 0, flex: 1 }}>
-                      <span style={{ display: 'block', fontSize: 12.5, fontWeight: active ? 700 : 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                        {d.title}
-                      </span>
-                      <span className="mono" style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)', marginTop: 1 }}>
-                        {timeAgo(tsFromRel(d.rel) ?? d.mtime)}{d.links.length > 0 && ` · LINK ${d.links.length}`}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
+              {groups.map(([label, list]) => (
+                <div key={label}>
+                  <div className="microlabel" style={{ padding: '8px 18px 4px', borderTop: '1px dashed var(--border-soft)' }}>
+                    {label} · {list.length}
+                  </div>
+                  {list.map((d) => {
+                    const active = selected === d.rel;
+                    return (
+                      <button key={d.rel} onClick={() => setSelected(d.rel)} className={`row${active ? ' active' : ''}`}>
+                        <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}>
+                          <Icon name={d.dir === 'notes' ? 'bolt' : 'doc'} size={14} />
+                        </span>
+                        <span style={{ minWidth: 0, flex: 1 }}>
+                          <span style={{ display: 'block', fontSize: 12.5, fontWeight: active ? 700 : 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                            {d.title}
+                          </span>
+                          <span className="mono" style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)', marginTop: 1 }}>
+                            {timeAgo(tsFromRel(d.rel) ?? d.mtime)}{d.links.length > 0 && ` · LINK ${d.links.length}`}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
 
             <div className="card" style={{ padding: 24, minHeight: 340 }}>

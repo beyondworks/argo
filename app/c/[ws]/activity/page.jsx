@@ -9,6 +9,7 @@ const KIND = {
   routine: { label: '루틴', desc: '예약 자동 실행' },
   delegate: { label: '위임', desc: '동료에게 받은 하위 작업' },
   hire: { label: '영입', desc: '페르소나 카드 생성' },
+  consolidate: { label: '기억 정리', desc: '일지를 주제 노트로 정제' },
   approval: { label: '결재', desc: '' },
 };
 const AP_STATUS = { pending: '요청', approved: '승인', rejected: '거절' };

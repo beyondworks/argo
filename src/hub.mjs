@@ -67,7 +67,8 @@ export async function listAgents(wsId) {
 export async function listDocs(wsId) {
   const p = paths(wsId);
   const docs = [];
-  for (const dir of [p.conversations, p.notes]) {
+  const dirName = new Map([[p.journal, 'journal'], [p.conversations, 'conversations'], [p.notes, 'notes']]);
+  for (const dir of [p.journal, p.conversations, p.notes]) {
     let names = [];
     try { names = await readdir(dir); } catch { continue; }
     for (const n of names) {
@@ -77,7 +78,7 @@ export async function listDocs(wsId) {
       const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, '');
       docs.push({
         rel: relative(p.vault, file),
-        dir: dir === p.conversations ? 'conversations' : 'notes',
+        dir: dirName.get(dir),
         title: body.match(/^#\s*(.+)$/m)?.[1] ?? n.replace(/\.md$/, ''),
         links: [...new Set([...text.matchAll(/\[\[(.+?)\]\]/g)].map((m) => m[1]))],
         excerpt: body.replace(/^#.*$/gm, '').replace(/\[\[|\]\]/g, '').trim().slice(0, 140),

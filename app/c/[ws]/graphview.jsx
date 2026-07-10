@@ -32,8 +32,9 @@ function buildGraph({ company, agents = [], docs = [], delegations = [] }) {
   }
   for (const d of docs) {                                                   // 크루 → 기억 (작성자)
     const slug = d.rel
-      .replace(/^(conversations|notes)\//, '')
+      .replace(/^(conversations|notes|journal)\//, '')
       .replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-/, '')
+      .replace(/^\d{4}-\d{2}-\d{2}-/, '') // 일지: journal/YYYY-MM-DD-<slug>
       .replace(/\.md$/, '');
     E(`@ag:${slug}`, d.rel.replace(/\.md$/, ''));
   }
