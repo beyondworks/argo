@@ -9,21 +9,12 @@ export default function RootLayout({ children }) {
   return (
     <html lang="ko">
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
           rel="stylesheet"
           href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
         />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&display=swap"
-        />
       </head>
-      <body>
-        <div className="stars" aria-hidden="true" />
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

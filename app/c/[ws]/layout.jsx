@@ -1,8 +1,8 @@
 'use client';
-// 회사 셸 — 좌측 항해 사이드바(회사 정보·메뉴·크루)를 모든 회사 화면이 공유한다.
+// 회사 앱셸 — shadcn 스타일 사이드바(로고 → 메뉴 → 크루)를 모든 회사 화면이 공유한다.
 import { use, useCallback, useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { Wordmark, Avatar, api } from '../../ui';
+import { Logo, Icon, Avatar, Skeleton, api } from '../../ui';
 
 export default function CompanyShell({ children, params }) {
   const { ws } = use(params);
@@ -20,83 +20,76 @@ export default function CompanyShell({ children, params }) {
   }, [refresh]);
 
   const nav = [
-    { href: `/c/${ws}`, label: '데크', hint: '크루와 오늘의 항해' },
-    { href: `/c/${ws}/vault`, label: '기억', hint: '회사가 쌓아온 항해일지' },
+    { href: `/c/${ws}`, icon: 'deck', label: '데크' },
+    { href: `/c/${ws}/vault`, icon: 'memory', label: '기억' },
   ];
 
   return (
     <div className="shell">
       <aside className="side">
-        <a href="/" style={{ display: 'block' }}>
-          <Wordmark size={17} />
+        <a href="/" className="nav-item" style={{ marginBottom: 6 }}>
+          <Logo size={14} />
         </a>
 
-        <div>
-          <div className="display" style={{ fontSize: 22, lineHeight: 1.25 }}>
-            {data?.company?.name ?? ' '}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 3 }}>
-            {data ? `크루 ${data.agents?.length ?? 0} · 기억 ${data.memoryCount ?? 0}` : ' '}
-          </div>
+        <div style={{ padding: '2px 10px 12px' }}>
+          {data && !data.missing ? (
+            <>
+              <div style={{ fontSize: 14.5, fontWeight: 650, letterSpacing: '-0.015em' }}>{data.company?.name}</div>
+              <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 1 }}>
+                크루 {data.agents?.length ?? 0} · 기억 {data.memoryCount ?? 0}
+              </div>
+            </>
+          ) : (
+            <><Skeleton h={17} w={120} /><Skeleton h={12} w={80} style={{ marginTop: 6 }} /></>
+          )}
         </div>
 
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {nav.map((n) => {
-            const active = pathname === n.href;
-            return (
-              <a
-                key={n.href}
-                href={n.href}
-                style={{
-                  padding: '9px 12px', borderRadius: 10, fontWeight: 600, fontSize: 13.5,
-                  color: active ? 'var(--gold-2)' : 'var(--ink-2)',
-                  background: active ? 'var(--gold-dim)' : 'transparent',
-                  border: `1px solid ${active ? 'var(--gold-line)' : 'transparent'}`,
-                }}
-              >
-                {n.label}
-                <span style={{ display: 'block', fontSize: 11, fontWeight: 500, color: 'var(--ink-3)' }}>{n.hint}</span>
-              </a>
-            );
-          })}
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {nav.map((n) => (
+            <a key={n.href} href={n.href} className={`nav-item${pathname === n.href ? ' active' : ''}`}>
+              <Icon name={n.icon} />
+              {n.label}
+            </a>
+          ))}
         </nav>
 
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div className="eyebrow">크루</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto' }}>
+        <div style={{ marginTop: 18, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <div className="section-label" style={{ padding: '0 10px' }}>크루</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, overflowY: 'auto' }}>
             {(data?.agents ?? []).map((a) => {
               const href = `/c/${ws}/crew/${a.slug}`;
-              const active = pathname === href;
               return (
-                <a
-                  key={a.slug}
-                  href={href}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px',
-                    borderRadius: 10, background: active ? 'rgba(154,173,214,0.08)' : 'transparent',
-                  }}
-                >
+                <a key={a.slug} href={href} className={`nav-item${pathname === href ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6 }}>
                   <Avatar name={a.name} sm />
                   <span style={{ minWidth: 0 }}>
-                    <span style={{ display: 'block', fontSize: 13, fontWeight: 650, color: active ? 'var(--ink)' : 'var(--ink-2)' }}>{a.name}</span>
-                    <span style={{ display: 'block', fontSize: 11, color: 'var(--ink-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.role}</span>
+                    <span style={{ display: 'block', lineHeight: 1.3 }}>{a.name}</span>
+                    <span style={{ display: 'block', fontSize: 11, fontWeight: 400, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>
+                      {a.role}
+                    </span>
                   </span>
                 </a>
               );
             })}
             {data && !data.missing && (data.agents ?? []).length === 0 && (
-              <span style={{ fontSize: 12, color: 'var(--ink-3)', padding: '2px 10px' }}>아직 크루가 없습니다</span>
+              <span style={{ fontSize: 12, color: 'var(--fg-3)', padding: '2px 10px' }}>아직 크루가 없습니다</span>
             )}
           </div>
         </div>
+
+        <a href={`/c/${ws}`} className="nav-item" style={{ color: 'var(--fg-3)', fontSize: 12 }}>
+          <Icon name="plus" size={14} />
+          크루 영입은 데크에서
+        </a>
       </aside>
 
       <main className="main">
-        {data?.missing ? (
-          <div className="empty" style={{ marginTop: 60 }}>
-            이 회사를 찾을 수 없습니다. <a href="/" style={{ color: 'var(--gold-2)' }}>항구로 돌아가기</a>
-          </div>
-        ) : children}
+        <div className="main-inner">
+          {data?.missing ? (
+            <div className="empty" style={{ marginTop: 40 }}>
+              이 회사를 찾을 수 없습니다. <a href="/" style={{ color: 'var(--accent)', fontWeight: 600 }}>홈으로 돌아가기</a>
+            </div>
+          ) : children}
+        </div>
       </main>
     </div>
   );

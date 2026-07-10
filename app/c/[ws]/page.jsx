@@ -1,9 +1,9 @@
 'use client';
-// 데크(Deck) — 크루를 영입하고, 크루 카드와 최근 기억을 한눈에 본다.
+// 데크 — 크루 영입과 크루 카드, 최근 기억.
 import { use, useEffect, useState } from 'react';
-import { Avatar, Oars, api, timeAgo, tsFromRel } from '../../ui';
+import { Avatar, Icon, Spinner, Skeleton, api, timeAgo, tsFromRel } from '../../ui';
 
-const HIRE_STAGES = ['지원서를 읽는 중', '페르소나 카드를 쓰는 중', '승선 준비 중'];
+const HIRE_STAGES = ['지원서를 읽는 중', '페르소나 카드를 쓰는 중', '합류 준비 중'];
 
 export default function Deck({ params }) {
   const { ws } = use(params);
@@ -43,84 +43,85 @@ export default function Deck({ params }) {
   const agents = data?.agents ?? [];
 
   return (
-    <div style={{ maxWidth: 780 }}>
-      <div className="eyebrow">데크</div>
-      <h1 className="display" style={{ fontSize: 30, margin: '6px 0 26px' }}>
-        어떤 전문가와 항해할까요?
-      </h1>
+    <div>
+      <div style={{ marginBottom: 24 }}>
+        <h1 className="page-title">데크</h1>
+        <p className="page-sub">필요한 전문가를 한 줄로 적으면 크루로 합류합니다.</p>
+      </div>
 
-      <form onSubmit={hire} className="card" style={{ display: 'flex', gap: 10, padding: 13, alignItems: 'center' }}>
+      <form onSubmit={hire} className="input-row">
         <input
-          className="input"
-          style={{ border: 'none', background: 'transparent', boxShadow: 'none', fontSize: 15 }}
-          placeholder="한 줄로 적어주세요 — 예: 뉴스레터를 쓰는 시니어 에디터"
+          placeholder="예: 뉴스레터를 쓰는 시니어 에디터"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           disabled={hiring}
         />
-        <button className="btn btn-gold" disabled={hiring || !prompt.trim()}>
-          {hiring ? <Oars /> : '크루 영입'}
+        {!hiring && <span className="kbd">↵</span>}
+        <button className="btn btn-primary" disabled={hiring || !prompt.trim()}>
+          {hiring ? <Spinner /> : <Icon name="plus" size={14} />}
+          크루 영입
         </button>
       </form>
       {hiring && (
-        <p style={{ marginTop: 10, fontSize: 12.5, color: 'var(--gold-2)' }}>
-          {HIRE_STAGES[stage]}… 카드가 완성되면 바로 승선합니다.
+        <p style={{ marginTop: 10, fontSize: 12.5, color: 'var(--fg-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {HIRE_STAGES[stage]}… 완료되면 바로 합류합니다.
         </p>
       )}
       {error && <p style={{ marginTop: 10, fontSize: 13, color: 'var(--danger)' }}>{error}</p>}
 
-      <section style={{ marginTop: 40 }}>
+      <section style={{ marginTop: 36 }}>
+        <div className="section-label">크루 {agents.length > 0 && agents.length}</div>
         {data === null ? (
-          <div className="empty"><Oars /></div>
-        ) : agents.length === 0 ? (
-          <div className="empty">
-            아직 크루가 없습니다. 위에 한 줄만 적으면 전문 크루가 승선합니다.
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Skeleton h={150} /><Skeleton h={150} />
           </div>
+        ) : agents.length === 0 ? (
+          <div className="empty">아직 크루가 없습니다. 위에 한 줄만 적으면 전문 크루가 합류합니다.</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
             {agents.map((a, i) => (
-              <div key={a.slug} className="card lift fade-up" style={{ padding: 20, animationDelay: `${0.05 * i}s`, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <a
+                key={a.slug}
+                href={`/c/${ws}/crew/${a.slug}`}
+                className="card card-i fade-up"
+                style={{ padding: 18, animationDelay: `${0.04 * i}s`, display: 'flex', flexDirection: 'column', gap: 12 }}
+              >
+                <div style={{ display: 'flex', gap: 11, alignItems: 'center' }}>
                   <Avatar name={a.name} />
                   <div style={{ minWidth: 0 }}>
-                    <strong style={{ fontSize: 16 }}>{a.name}</strong>
-                    <div style={{ fontSize: 12.5, color: 'var(--gold-2)' }}>{a.role}</div>
+                    <div style={{ fontSize: 14.5, fontWeight: 650 }}>{a.name}</div>
+                    <div style={{ fontSize: 12, color: 'var(--fg-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.role}</div>
                   </div>
                 </div>
                 {a.expertise.length > 0 && (
-                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12.5, color: 'var(--ink-2)' }}>
+                  <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12.5, color: 'var(--fg-2)' }}>
                     {a.expertise.map((x) => (
-                      <li key={x} style={{ display: 'flex', gap: 8 }}>
-                        <span style={{ color: 'var(--gold)', flex: 'none' }}>·</span>
+                      <li key={x} style={{ display: 'flex', gap: 7, minWidth: 0 }}>
+                        <span style={{ color: 'var(--accent)', flex: 'none' }}>·</span>
                         <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{x}</span>
                       </li>
                     ))}
                   </ul>
                 )}
-                <a href={`/c/${ws}/crew/${a.slug}`} className="btn" style={{ justifyContent: 'center', marginTop: 'auto' }}>
-                  대화하기
-                </a>
-              </div>
+                <span style={{ marginTop: 'auto', fontSize: 12.5, fontWeight: 550, color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  대화하기 <Icon name="back" size={13} style={{ transform: 'rotate(180deg)' }} />
+                </span>
+              </a>
             ))}
           </div>
         )}
       </section>
 
       {(data?.memories ?? []).length > 0 && (
-        <section style={{ marginTop: 44 }}>
-          <div className="eyebrow" style={{ marginBottom: 12 }}>최근 기억</div>
-          <div className="card" style={{ padding: '6px 0' }}>
+        <section style={{ marginTop: 36 }}>
+          <div className="section-label">최근 기억</div>
+          <div className="card" style={{ overflow: 'hidden' }}>
             {data.memories.map((m) => (
-              <a
-                key={m.rel}
-                href={`/c/${ws}/vault?doc=${encodeURIComponent(m.rel)}`}
-                style={{ display: 'flex', justifyContent: 'space-between', gap: 14, padding: '10px 18px', borderBottom: '1px solid var(--line-soft)' }}
-              >
-                <span style={{ fontSize: 13, color: 'var(--ink-2)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{m.title}</span>
-                <span style={{ fontSize: 11.5, color: 'var(--ink-3)', flex: 'none' }}>
-                  {m.links.length > 0 && <span style={{ color: 'var(--gold)', marginRight: 8 }}>연결 {m.links.length}</span>}
-                  {timeAgo(tsFromRel(m.rel) ?? m.mtime)}
-                </span>
+              <a key={m.rel} href={`/c/${ws}/vault?doc=${encodeURIComponent(m.rel)}`} className="row">
+                <span style={{ color: 'var(--fg-3)', display: 'inline-flex', flex: 'none' }}><Icon name="doc" size={14} /></span>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{m.title}</span>
+                {m.links.length > 0 && <span className="chip gold">연결 {m.links.length}</span>}
+                <span style={{ fontSize: 12, color: 'var(--fg-3)', flex: 'none' }}>{timeAgo(tsFromRel(m.rel) ?? m.mtime)}</span>
               </a>
             ))}
           </div>

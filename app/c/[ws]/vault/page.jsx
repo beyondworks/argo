@@ -1,9 +1,8 @@
 'use client';
-// 기억(Vault) — 회사의 뇌. 별자리 그래프 + 문서 목록 + 뷰어.
-// 문서 하나하나가 별, [[링크]]가 별자리 선 — 기억이 쌓일수록 하늘이 찬다.
+// 기억 — 문서가 별, [[링크]]가 선인 그래프 + 문서 목록/뷰어. 톤은 절제.
 import { Suspense, use, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Markdown, Oars, api, timeAgo, tsFromRel } from '../../../ui';
+import { Icon, Markdown, Spinner, Skeleton, api, timeAgo, tsFromRel } from '../../../ui';
 
 export default function VaultPage({ params }) {
   return (
@@ -38,54 +37,51 @@ function Vault({ params }) {
 
   return (
     <div style={{ maxWidth: 900 }}>
-      <div className="eyebrow">기억</div>
-      <h1 className="display" style={{ fontSize: 30, margin: '6px 0 8px' }}>회사의 밤하늘</h1>
-      <p style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 24 }}>
-        모든 항해가 별로 남고, 비슷한 기억끼리 별자리로 이어집니다. 크루는 이 하늘을 읽고 맥락을 이어갑니다.
-      </p>
+      <div style={{ marginBottom: 24 }}>
+        <h1 className="page-title">기억</h1>
+        <p className="page-sub">모든 턴이 기록으로 남고, 비슷한 기억끼리 자동으로 이어집니다. 크루는 이 그래프를 읽고 맥락을 이어갑니다.</p>
+      </div>
 
       {docs === null ? (
-        <div className="empty"><Oars /></div>
+        <div style={{ display: 'grid', gap: 12 }}>
+          <Skeleton h={200} /><Skeleton h={300} />
+        </div>
       ) : docs.length === 0 ? (
-        <div className="empty">아직 기록된 기억이 없습니다. 크루와 첫 대화를 나누면 별이 뜹니다.</div>
+        <div className="empty">아직 기록된 기억이 없습니다. 크루와 첫 대화를 나누면 여기에 쌓입니다.</div>
       ) : (
         <>
           <Constellation docs={docs} selected={selected} onSelect={setSelected} />
 
-          <div style={{ display: 'grid', gridTemplateColumns: '290px 1fr', gap: 16, marginTop: 18, alignItems: 'start' }}>
-            <div className="card" style={{ padding: '6px 0', maxHeight: 520, overflowY: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 14, marginTop: 14, alignItems: 'start' }}>
+            <div className="card" style={{ overflow: 'hidden', maxHeight: 540, overflowY: 'auto' }}>
               {docs.map((d) => {
                 const active = selected === d.rel;
                 return (
-                  <button
-                    key={d.rel}
-                    onClick={() => setSelected(d.rel)}
-                    style={{
-                      display: 'block', width: '100%', textAlign: 'left', padding: '10px 16px',
-                      borderBottom: '1px solid var(--line-soft)',
-                      background: active ? 'var(--gold-dim)' : 'transparent',
-                    }}
-                  >
-                    <span style={{ display: 'block', fontSize: 12.5, fontWeight: 650, color: active ? 'var(--gold-2)' : 'var(--ink-2)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                      {d.title}
-                    </span>
-                    <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                      {d.dir === 'notes' ? '지식 노트' : '대화 기록'} · {timeAgo(tsFromRel(d.rel) ?? d.mtime)}
-                      {d.links.length > 0 && <span style={{ color: 'var(--gold)' }}> · 연결 {d.links.length}</span>}
+                  <button key={d.rel} onClick={() => setSelected(d.rel)} className={`row${active ? ' active' : ''}`}>
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: 'block', fontSize: 12.5, fontWeight: active ? 650 : 500, color: active ? 'var(--fg)' : 'var(--fg-2)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                        {d.title}
+                      </span>
+                      <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)', marginTop: 1 }}>
+                        {d.dir === 'notes' ? '지식 노트' : '대화 기록'} · {timeAgo(tsFromRel(d.rel) ?? d.mtime)}
+                        {d.links.length > 0 && <span style={{ color: 'var(--accent)' }}> · 연결 {d.links.length}</span>}
+                      </span>
                     </span>
                   </button>
                 );
               })}
             </div>
 
-            <div className="card" style={{ padding: 22, minHeight: 300 }}>
+            <div className="card" style={{ padding: 22, minHeight: 320 }}>
               {!selected ? (
-                <p style={{ color: 'var(--ink-3)', fontSize: 13 }}>왼쪽 목록이나 별을 눌러 기억을 열어보세요.</p>
+                <div style={{ color: 'var(--fg-3)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Icon name="doc" size={14} /> 왼쪽 목록이나 별을 눌러 기억을 열어보세요.
+                </div>
               ) : loadingDoc ? (
-                <Oars />
+                <Spinner />
               ) : (
                 <>
-                  <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 12, fontFamily: 'ui-monospace, monospace' }}>{selected}</div>
+                  <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 14, fontFamily: 'var(--mono)' }}>{selected}</div>
                   <Markdown text={content} onWikiLink={openWiki} />
                 </>
               )}
@@ -97,18 +93,18 @@ function Vault({ params }) {
   );
 }
 
-/** 별자리 그래프 — 골든앵글 나선 배치, 링크는 은은한 금선. */
+/** 기억 그래프 — 골든앵글 배치. 배경은 표면색, 별·선만 골드. */
 function Constellation({ docs, selected, onSelect }) {
-  const W = 860, H = 240;
+  const W = 860, H = 200;
   const layout = useMemo(() => {
     const nodes = docs.map((d, i) => {
-      const r = 26 + 30 * Math.sqrt(i);
-      const th = i * 2.39996; // golden angle
+      const r = 22 + 26 * Math.sqrt(i);
+      const th = i * 2.39996;
       return {
         ...d,
         key: d.rel.replace(/\.md$/, ''),
-        x: W / 2 + r * Math.cos(th) * 1.75,
-        y: H / 2 + r * Math.sin(th) * 0.62,
+        x: W / 2 + r * Math.cos(th) * 1.8,
+        y: H / 2 + r * Math.sin(th) * 0.58,
       };
     });
     const byKey = new Map(nodes.map((n) => [n.key, n]));
@@ -128,32 +124,27 @@ function Constellation({ docs, selected, onSelect }) {
   }, [docs]);
 
   return (
-    <div className="card" style={{ padding: 8 }}>
+    <div className="card" style={{ padding: 6 }}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }}>
-        <defs>
-          <radialGradient id="starGlow">
-            <stop offset="0%" stopColor="rgba(240,210,148,0.85)" />
-            <stop offset="100%" stopColor="rgba(240,210,148,0)" />
-          </radialGradient>
-        </defs>
         {layout.edges.map(([a, b], i) => (
-          <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="rgba(217,172,92,0.28)" strokeWidth="1" />
+          <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--accent-line)" strokeWidth="1" />
         ))}
         {layout.nodes.map((n) => {
           const active = selected === n.rel;
           return (
             <g key={n.rel} onClick={() => onSelect(n.rel)} style={{ cursor: 'pointer' }}>
-              <circle cx={n.x} cy={n.y} r={active ? 16 : 11} fill="url(#starGlow)" opacity={active ? 1 : 0.55} />
-              <circle cx={n.x} cy={n.y} r={active ? 4 : 2.6} fill={active ? '#F0D294' : n.dir === 'notes' ? '#7FB4A8' : '#D9AC5C'} />
+              <circle cx={n.x} cy={n.y} r="12" fill="transparent" />
+              {active && <circle cx={n.x} cy={n.y} r="9" fill="var(--accent-soft)" stroke="var(--accent-line)" />}
+              <circle cx={n.x} cy={n.y} r={active ? 4 : 3} fill={n.dir === 'notes' ? 'var(--fg-3)' : 'var(--accent)'} style={{ transition: 'r 0.15s' }} />
               <title>{n.title}</title>
             </g>
           );
         })}
       </svg>
-      <div style={{ display: 'flex', gap: 14, padding: '4px 10px 6px', fontSize: 11, color: 'var(--ink-3)' }}>
-        <span><span style={{ color: 'var(--gold)' }}>●</span> 대화 기록</span>
-        <span><span style={{ color: 'var(--sea)' }}>●</span> 지식 노트</span>
-        <span style={{ marginLeft: 'auto' }}>별 {docs.length} · 별자리 선 {layout.edges.length}</span>
+      <div style={{ display: 'flex', gap: 14, padding: '2px 10px 6px', fontSize: 11, color: 'var(--fg-3)' }}>
+        <span><span style={{ color: 'var(--accent)' }}>●</span> 대화 기록</span>
+        <span><span style={{ color: 'var(--fg-3)' }}>●</span> 지식 노트</span>
+        <span style={{ marginLeft: 'auto' }}>기억 {docs.length} · 연결 {layout.edges.length}</span>
       </div>
     </div>
   );
