@@ -76,24 +76,54 @@ export function Skeleton({ h = 16, w = '100%', style }) {
   return <span className="skeleton" style={{ display: 'block', height: h, width: w, ...style }} />;
 }
 
-/** 도트 매트릭스 차트 — 계기판 스타일. 막대 대신 잉크 도트를 쌓는다. data: [{date, count}] */
+/** 계기 숫자 카운트업 — 마운트 시 0에서 목표까지 이징. */
+export function Num({ value, unit, size = 34, duration = 750, style }) {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    let raf;
+    const t0 = performance.now();
+    const step = (t) => {
+      const k = Math.min((t - t0) / duration, 1);
+      setV(Math.round(value * (1 - Math.pow(1 - k, 3))));
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [value, duration]);
+  return (
+    <div className="num" style={{ fontSize: size, ...style }}>
+      {v}{unit && <small>{unit}</small>}
+    </div>
+  );
+}
+
+/** 도트 매트릭스 차트 — 막대 대신 잉크 도트. 마운트 시 아래에서 위로 점등. */
 export function Bars({ data, rows = 8 }) {
   const max = Math.max(...data.map((d) => d.count), 1);
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => requestAnimationFrame(() => setOn(true)));
+    return () => cancelAnimationFrame(raf);
+  }, []);
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, padding: '0 2px' }}>
       {data.map((d, i) => {
         const filled = d.count === 0 ? 0 : Math.max(Math.round((d.count / max) * rows), 1);
         return (
-          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, minWidth: 0 }} title={`${d.date} · ${d.count}건`}>
+          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, minWidth: 0 }} title={`${d.date} · ${d.count}건`}>
             <div style={{ display: 'flex', flexDirection: 'column-reverse', gap: 3 }}>
-              {Array.from({ length: rows }, (_, r) => (
-                <span key={r} style={{
-                  width: 7, height: 7, borderRadius: 2,
-                  background: r < filled ? 'var(--fg)' : 'transparent',
-                  border: `1px solid ${r < filled ? 'var(--fg)' : 'var(--border-soft)'}`,
-                  transition: 'background 0.3s',
-                }} />
-              ))}
+              {Array.from({ length: rows }, (_, r) => {
+                const lit = on && r < filled;
+                return (
+                  <span key={r} style={{
+                    width: 7, height: 7, borderRadius: 2,
+                    background: lit ? 'var(--fg)' : 'transparent',
+                    border: `1px solid ${lit ? 'var(--fg)' : 'var(--border-soft)'}`,
+                    transition: 'background 0.25s, border-color 0.25s',
+                    transitionDelay: `${i * 25 + r * 55}ms`,
+                  }} />
+                );
+              })}
             </div>
             <span className="mono" style={{ fontSize: 9, color: 'var(--fg-3)', whiteSpace: 'nowrap' }}>
               {d.date.slice(3)}
@@ -105,34 +135,46 @@ export function Bars({ data, rows = 8 }) {
   );
 }
 
-/** 아날로그 다이얼 게이지 — 틱 눈금 + 바늘 + 중앙 수치. value: 0~100 */
-export function Dial({ value, size = 108, label }) {
+/** 아날로그 다이얼 게이지 — 틱 눈금 + 바늘 스윕 애니메이션. value: 0~100 */
+export function Dial({ value, size = 120, label }) {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(() => setV(Math.min(Math.max(value, 0), 100)), 120);
+    return () => clearTimeout(t);
+  }, [value]);
   const cx = size / 2, cy = size / 2, r = size / 2 - 8;
   const start = -220, sweep = 260; // 좌하단에서 우하단까지
-  const ticks = Array.from({ length: 21 }, (_, i) => {
-    const a = ((start + (i / 20) * sweep) * Math.PI) / 180;
+  const ticks = Array.from({ length: 26 }, (_, i) => {
+    const a = ((start + (i / 25) * sweep) * Math.PI) / 180;
     const long = i % 5 === 0;
     return {
-      x1: cx + Math.cos(a) * (r - (long ? 7 : 4)), y1: cy + Math.sin(a) * (r - (long ? 7 : 4)),
+      x1: cx + Math.cos(a) * (r - (long ? 8 : 4.5)), y1: cy + Math.sin(a) * (r - (long ? 8 : 4.5)),
       x2: cx + Math.cos(a) * r, y2: cy + Math.sin(a) * r,
-      on: (i / 20) * 100 <= value,
+      on: (i / 25) * 100 <= v && v > 0,
+      delay: i * 28,
     };
   });
-  const na = ((start + (Math.min(Math.max(value, 0), 100) / 100) * sweep) * Math.PI) / 180;
   return (
     <div style={{ position: 'relative', width: size, height: size }}>
       <svg width={size} height={size}>
         {ticks.map((t, i) => (
           <line key={i} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2}
-            stroke={t.on ? 'var(--fg)' : 'var(--border-soft)'} strokeWidth={t.on ? 1.6 : 1} />
+            stroke={t.on ? 'var(--fg)' : 'var(--border-soft)'} strokeWidth={t.on ? 1.5 : 1}
+            style={{ transition: 'stroke 0.2s', transitionDelay: `${t.delay}ms` }} />
         ))}
-        <line x1={cx} y1={cy} x2={cx + Math.cos(na) * (r - 13)} y2={cy + Math.sin(na) * (r - 13)}
-          stroke="var(--fg)" strokeWidth="1.8" strokeLinecap="round" />
+        {/* 바늘 — 0시 방향으로 그려두고 그룹 회전으로 스윕 */}
+        <g style={{
+          transform: `rotate(${start + (v / 100) * sweep}deg)`,
+          transformOrigin: `${cx}px ${cy}px`,
+          transition: 'transform 1s cubic-bezier(0.34, 1.3, 0.4, 1)',
+        }}>
+          <line x1={cx} y1={cy} x2={cx + r - 14} y2={cy} stroke="var(--fg)" strokeWidth="1.7" strokeLinecap="round" />
+        </g>
         <circle cx={cx} cy={cy} r="3" fill="var(--fg)" />
       </svg>
-      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 2, textAlign: 'center' }}>
-        <span className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{Math.round(value)}%</span>
-        {label && <span className="microlabel" style={{ display: 'block', marginTop: -3 }}>{label}</span>}
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 4, textAlign: 'center' }}>
+        <span className="mono" style={{ fontSize: 16, fontWeight: 600 }}>{Math.round(v)}%</span>
+        {label && <span className="microlabel" style={{ display: 'block', marginTop: -2 }}>{label}</span>}
       </div>
     </div>
   );

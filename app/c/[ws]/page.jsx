@@ -2,7 +2,7 @@
 // 데크 — 아르고호 계기판: 계기 숫자·다이얼·틱 진행바·스케줄 표·도트 매트릭스.
 import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Bars, Dial, Spinner, Skeleton, api, timeAgo, tsFromRel } from '../../ui';
+import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, api, timeAgo, tsFromRel } from '../../ui';
 
 const HIRE_STAGES = ['지원서를 읽는 중', '페르소나 카드를 쓰는 중', '합류 준비 중'];
 
@@ -74,9 +74,9 @@ export default function Deck({ params }) {
             <div className="metric card invert fade-up">
               <div className="metric-top">
                 <span className="microlabel">Memory</span>
-                <span className="chip" style={{ borderColor: 'rgba(229,231,217,0.4)', color: 'var(--primary-fg)' }}>오늘 +{stats.today}</span>
+                <span className="chip">오늘 +{stats.today}</span>
               </div>
-              <div className="num">{data.memoryCount}<small style={{ color: 'rgba(229,231,217,0.7)' }}>건</small></div>
+              <Num value={data.memoryCount} unit="건" size={40} />
               <div className="metric-sub">대화 {stats.conversations} · 노트 {stats.notes}</div>
               <div className="metric-sub2">{lastTs ? `마지막 기록 ${timeAgo(lastTs)}` : '아직 기록 없음'}</div>
             </div>
@@ -85,7 +85,7 @@ export default function Deck({ params }) {
                 <span className="microlabel">Crew</span>
                 <span className="chip"><span className="dot" />Standby</span>
               </div>
-              <div className="num">{data.agents.length}<small>명</small></div>
+              <Num value={data.agents.length} unit="명" />
               <div className="metric-sub">전원 대기 중</div>
               <div className="metric-sub2">한 줄 프롬프트로 영입</div>
             </div>
@@ -146,6 +146,7 @@ export default function Deck({ params }) {
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-head">
           <span className="card-title"><Icon name="user" size={14} />크루</span>
+          <span className="rule" />
           <span className="pill"><span className="dot" />{agents.length}명 상주</span>
         </div>
         {data === null ? (
@@ -185,6 +186,7 @@ export default function Deck({ params }) {
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="card-head">
           <span className="card-title"><Icon name="doc" size={14} />최근 기억</span>
+          <span className="rule" />
           <a href={`/c/${ws}/vault`} className="btn sm">기억 전체</a>
         </div>
         {data === null ? (

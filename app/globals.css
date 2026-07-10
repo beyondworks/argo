@@ -5,15 +5,15 @@
    색은 종이와 잉크뿐이다. 위계는 색이 아니라 굵기·크기·괘선으로 만든다. */
 
 :root {
-  --bg: #e0e3d3;            /* 세이지 페이퍼 캔버스 */
-  --card: #e5e7d9;          /* 카드 — 종이보다 반 톤 밝게 */
-  --card-2: #d9dcc9;        /* 중첩 표면 */
-  --secondary: #d3d6c2;
-  --fg: #22241c;            /* 잉크 */
+  --bg: #e3e5d6;            /* 세이지 페이퍼 캔버스 */
+  --card: #e9ebdd;          /* 카드 — 종이보다 반 톤 밝게 */
+  --card-2: #dcdfcc;        /* 중첩 표면 */
+  --secondary: #d3d6c1;
+  --fg: #25271e;            /* 잉크 */
   --fg-2: #5c5f4e;
   --fg-3: #8b8e79;
-  --border: rgba(34, 36, 28, 0.4);        /* 잉크 헤어라인 */
-  --border-soft: rgba(34, 36, 28, 0.16);
+  --border: rgba(37, 39, 30, 0.5);        /* 잉크 헤어라인 */
+  --border-soft: rgba(37, 39, 30, 0.15);
 
   --primary: #22241c;       /* 프라이머리 = 잉크 인버트 블록 */
   --primary-strong: #383b2d;
@@ -31,7 +31,7 @@
   --danger-soft: rgba(154, 74, 51, 0.12);
 
   --ring: rgba(34, 36, 28, 0.5);
-  --r: 16px;
+  --r: 18px;
   --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
@@ -64,8 +64,8 @@ input, textarea { font: inherit; color: var(--fg); }
 /* 마이크로 라벨 — 모노 대문자, 넓은 트래킹 (계기판 라벨) */
 .microlabel {
   font-family: var(--mono);
-  font-size: 10px; font-weight: 500;
-  letter-spacing: 0.09em; text-transform: uppercase;
+  font-size: 9.5px; font-weight: 500;
+  letter-spacing: 0.13em; text-transform: uppercase;
   color: var(--fg-2);
 }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -114,7 +114,7 @@ input, textarea { font: inherit; color: var(--fg); }
 }
 .topbar-title { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
 .topbar-clock {
-  font-family: var(--mono); font-size: 15px; font-weight: 500;
+  font-family: var(--mono); font-size: 16.5px; font-weight: 500;
   font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
 }
 
@@ -129,7 +129,7 @@ input, textarea { font: inherit; color: var(--fg); }
 .search-pill input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 13px; color: var(--fg); }
 .search-pill input::placeholder { color: var(--fg-3); }
 
-.content { padding: 22px 26px 80px; max-width: 1100px; }
+.content { padding: 26px 32px 88px; max-width: 1100px; }
 
 /* ─── 카드 — 종이 + 잉크 헤어라인, 그림자 없음 ─── */
 .card {
@@ -141,10 +141,11 @@ input, textarea { font: inherit; color: var(--fg); }
 .card-i:hover { background: var(--card-2); }
 
 .card-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 14px 18px 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 17px 20px 12px;
 }
-.card-title { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: 7px; }
+.card-head .rule { flex: 1; border-top: 1px dashed var(--border-soft); margin: 0 2px; }
+.card-title { font-size: 12.5px; font-weight: 700; letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: 7px; }
 .card-title svg { color: var(--fg-2); }
 
 /* 인버트 블록 — 페이지당 한 번만 (계기판의 다크 카드) */
@@ -153,17 +154,19 @@ input, textarea { font: inherit; color: var(--fg); }
   border-color: var(--primary);
 }
 .invert .microlabel, .invert .metric-sub2 { color: rgba(229, 231, 217, 0.65); }
+.invert .num small { color: rgba(229, 231, 217, 0.7); }
+.invert .chip { border-color: rgba(229, 231, 217, 0.45); color: var(--primary-fg); }
 
 /* 메트릭 — 마이크로 라벨 + 계기 숫자 + 보조줄 */
-.metric { padding: 15px 18px; display: flex; flex-direction: column; }
-.metric-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.metric { padding: 19px 20px 17px; display: flex; flex-direction: column; }
+.metric-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 13px; }
 .num {
   font-family: var(--mono);
-  font-size: 27px; font-weight: 500; letter-spacing: -0.01em; line-height: 1.15;
+  font-size: 34px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
 .num small { font-family: var(--font); font-size: 13px; font-weight: 550; color: var(--fg-2); margin-left: 2px; }
-.metric-sub { font-size: 12.5px; font-weight: 600; margin-top: 8px; }
+.metric-sub { font-size: 12.5px; font-weight: 600; margin-top: 11px; }
 .metric-sub2 { font-size: 12px; color: var(--fg-3); }
 
 /* ─── 버튼 — 아웃라인 필 + 잉크 인버트 프라이머리 ─── */
@@ -240,11 +243,11 @@ input, textarea { font: inherit; color: var(--fg); }
 .table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .table th {
   text-align: left;
-  font-family: var(--mono); font-size: 9.5px; font-weight: 500;
-  letter-spacing: 0.09em; text-transform: uppercase; color: var(--fg-3);
-  padding: 8px 18px; border-bottom: 1px solid var(--border);
+  font-family: var(--mono); font-size: 9px; font-weight: 500;
+  letter-spacing: 0.13em; text-transform: uppercase; color: var(--fg-3);
+  padding: 9px 20px; border-bottom: 1px solid var(--border);
 }
-.table td { padding: 10px 18px; border-bottom: 1px solid var(--border-soft); }
+.table td { padding: 13px 20px; border-bottom: 1px solid var(--border-soft); }
 .table tbody tr { transition: background 0.12s; cursor: pointer; }
 .table tbody tr:hover { background: var(--card-2); }
 .table tbody tr:last-child td { border-bottom: 0; }
@@ -266,7 +269,7 @@ input, textarea { font: inherit; color: var(--fg); }
 /* ─── 목록 행 ─── */
 .row {
   display: flex; align-items: center; gap: 11px;
-  padding: 10px 16px; width: 100%; text-align: left;
+  padding: 12px 18px; width: 100%; text-align: left;
   border-top: 1px solid var(--border-soft);
   transition: background 0.12s;
 }
@@ -352,6 +355,15 @@ input, textarea { font: inherit; color: var(--fg); }
   transition: background 0.15s;
 }
 .wikilink:hover { background: var(--primary-soft); }
+
+/* 바코드 디테일 — 티켓/계기판 모티프 */
+.barcode {
+  display: inline-block; width: 58px; height: 14px; opacity: 0.75;
+  background: repeating-linear-gradient(90deg,
+    var(--fg) 0 1px, transparent 1px 3px,
+    var(--fg) 3px 6px, transparent 6px 7px,
+    var(--fg) 7px 8px, transparent 8px 11px);
+}
 
 /* ─── 스크롤바 ─── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
