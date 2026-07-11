@@ -1,6 +1,7 @@
 'use client';
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { use, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../../ui';
 import { useLang } from '../../../../i18n';
@@ -20,6 +21,9 @@ export default function CrewChat({ params }) {
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
   const [cardOpen, setCardOpen] = useState(false);
+  // 타이틀바 슬롯 — 크루 컨트롤(세션 상태·카드·새 대화)을 topbar에 포털로 꽂는다
+  const [slotEl, setSlotEl] = useState(null);
+  useEffect(() => { setSlotEl(document.getElementById('argo-topbar-slot')); }, []);
   // 세션 적재 레일 — 새 대화로 넘긴 이전 대화들이 좌측에 쌓이고, 클릭으로 읽기 전용 열람
   const [sessions, setSessions] = useState([]);
   const [viewing, setViewing] = useState(null); // 보관 세션 id (null = 현재 대화)
@@ -211,29 +215,20 @@ export default function CrewChat({ params }) {
       onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
     >
       {dragOver && <div className="drop-overlay">{t('chat.dropHere')}</div>}
-      {/* 스티키 헤더 — 긴 대화를 내려도 이름·카드·새 대화가 항상 손에 닿는다(topbar 56px 아래 고정).
-          배경은 블러+반투명 — 단색(--bg)은 그라데이션 캔버스 테마에서 이질적인 띠로 보인다 */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12,
-        position: 'sticky', top: 56, zIndex: 15, padding: '12px 14px 10px',
-        margin: '0 -14px 12px',
-        background: 'color-mix(in srgb, var(--bg) 62%, transparent)',
-        backdropFilter: 'blur(16px) saturate(1.3)', WebkitBackdropFilter: 'blur(16px) saturate(1.3)',
-        borderRadius: '0 0 14px 14px',
-      }}>
-        <Avatar name={agent?.name} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14.5, fontWeight: 650 }}>{agent?.name ?? ''}</div>
-          <div style={{ fontSize: 12, color: 'var(--fg-2)' }}>{agent?.role}</div>
-        </div>
-        {sessionRef.current ? (
-          <span className="pill ok"><span className="dot" />{t('chat.sessionOngoing')}</span>
-        ) : (
-          <span className="pill"><span className="dot" />{t('chat.newSession')}</span>
-        )}
-        <button className="btn sm" onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
-        <button className="btn sm" onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
-      </div>
+      {/* 크루 컨트롤은 타이틀바 슬롯으로 — 콘텐츠 위 스티키 밴드 대신 topbar에 상주(테마 무관) */}
+      {slotEl && createPortal(
+        <>
+          <span className="nav-sub" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent?.role}</span>
+          {sessionRef.current ? (
+            <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('chat.sessionOngoing')}</span>
+          ) : (
+            <span className="pill" style={{ flex: 'none' }}><span className="dot" />{t('chat.newSession')}</span>
+          )}
+          <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
+          <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
+        </>,
+        slotEl,
+      )}
 
       <div className="thread" style={{ flex: 1 }}>
         {thread === null && (

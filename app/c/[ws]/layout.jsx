@@ -228,6 +228,8 @@ export default function CompanyShell({ children, params }) {
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <header className="topbar">
           <span className="topbar-title">{title}</span>
+          {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체) */}
+          <div id="argo-topbar-slot" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }} />
           <div style={{ flex: 1 }} />
           <Clock />
           <TasksDock ws={ws} />
