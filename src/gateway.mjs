@@ -9,9 +9,10 @@ import { resolveWithFollowUp } from './approval-actions.mjs';
 import { onNotify } from './notify.mjs';
 import { daemonLease } from './lock.mjs';
 import { appendEvent } from './events.mjs';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
+import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath } from './tg-format.mjs';
 
 /** 폴러 하트비트 — 연결 카드의 "가동 중 · N초 전 응답" 표시의 원천. root의 dotfile이라 vault 스캔 무관. */
 async function beatGateway(wsId, kind, ok, error = '') {
@@ -22,6 +23,52 @@ async function beatGateway(wsId, kind, ok, error = '') {
 
 const MAX_MSG = 3800; // 텔레그램 4096 제한 대비 여유
 const clip = (t) => (t.length > MAX_MSG ? `${t.slice(0, MAX_MSG)}\n…(전체 내용은 Argo 데크에서)` : t);
+
+/** 크루 응답 발신 — 마크다운을 텔레그램 HTML로, 길면 분할, 본문 속 vault 파일은 사진/문서로 동봉. */
+async function sendTgReply(token, chatId, wsId, text) {
+  const html = mdToTelegramHtml(text);
+  for (const chunk of splitForTelegram(html)) {
+    try {
+      await tg(token, 'sendMessage', { chat_id: chatId, text: chunk, parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
+    } catch {
+      // HTML 파싱 실패 폴백 — 태그 제거한 플레인 텍스트로라도 반드시 전달한다
+      await tg(token, 'sendMessage', { chat_id: chatId, text: chunk.replace(/<[^>]+>/g, '') }).catch(() => {});
+    }
+  }
+  for (const rel of extractFileRefs(text)) {
+    try {
+      const buf = await readFile(join(paths(wsId).vault, rel));
+      const name = rel.split('/').pop();
+      const fd = new FormData();
+      fd.append('chat_id', String(chatId));
+      fd.append(isImagePath(rel) ? 'photo' : 'document', new Blob([buf]), name);
+      await fetch(`https://api.telegram.org/bot${token}/${isImagePath(rel) ? 'sendPhoto' : 'sendDocument'}`, {
+        method: 'POST', body: fd, signal: AbortSignal.timeout(60_000),
+      });
+    } catch { /* 파일 동봉 실패는 본문 전달을 막지 않는다 */ }
+  }
+}
+
+/** 수신 미디어(사진·문서·영상·음성) 다운로드 → vault/files/ 저장. 봇 API 다운로드 한계 20MB. */
+async function tgDownload(token, wsId, msg) {
+  let f = null; let name = 'file'; let mime = '';
+  if (msg.photo?.length) { f = msg.photo[msg.photo.length - 1]; name = `photo-${f.file_unique_id}.jpg`; mime = 'image/jpeg'; }
+  else if (msg.document) { f = msg.document; name = msg.document.file_name || `doc-${msg.document.file_unique_id}`; mime = msg.document.mime_type || ''; }
+  else if (msg.video) { f = msg.video; name = `video-${f.file_unique_id}.mp4`; mime = 'video/mp4'; }
+  else if (msg.voice) { f = msg.voice; name = `voice-${f.file_unique_id}.ogg`; mime = 'audio/ogg'; }
+  else if (msg.audio) { f = msg.audio; name = msg.audio.file_name || `audio-${msg.audio.file_unique_id}`; mime = msg.audio.mime_type || ''; }
+  if (!f) return null;
+  if ((f.file_size ?? 0) > 19_500_000) throw new Error('20MB를 넘는 파일은 텔레그램 봇이 내려받을 수 없습니다');
+  const info = await tg(token, 'getFile', { file_id: f.file_id });
+  const res = await fetch(`https://api.telegram.org/file/bot${token}/${info.file_path}`, { signal: AbortSignal.timeout(120_000) });
+  if (!res.ok) throw new Error(`파일 다운로드 실패(${res.status})`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const safe = name.replace(/[^\w.\-가-힣]/g, '_').slice(-80);
+  const rel = `files/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}-${safe}`;
+  await mkdir(join(paths(wsId).vault, 'files'), { recursive: true });
+  await writeFile(join(paths(wsId).vault, rel), buf);
+  return { rel, name: safe, mime, isImage: /^image\/(png|jpeg|webp|gif)$/.test(mime) };
+}
 
 async function tg(token, method, body, timeoutMs = 35_000) {
   const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
@@ -62,8 +109,8 @@ async function routeMessage(wsId, cfg, text) {
   return { slug: def.slug, name: def.name, msg: text.trim() };
 }
 
-/** 메신저발 지시 1턴 — 웹과 동일 경로(스레드 이어쓰기 + vault 기억). */
-async function runTurn(wsId, cfg, text) {
+/** 메신저발 지시 1턴 — 웹과 동일 경로(스레드 이어쓰기 + vault 기억 + 첨부 비전). */
+async function runTurn(wsId, cfg, text, attachments = []) {
   // "승인 ap-xxx" / "거절 ap-xxx" 텍스트 결재 (슬랙·텔레그램 공용)
   const ap = text.match(/^(승인|거절)\s+(ap-[a-z0-9]+)/);
   if (ap) {
@@ -73,8 +120,8 @@ async function runTurn(wsId, cfg, text) {
   const r = await routeMessage(wsId, cfg, text);
   if (r.error) return r.error;
   const t = await loadThread(wsId, r.slug);
-  const turn = await chat(wsId, r.slug, r.msg, t.sessionId, { source: 'messenger' });
-  await appendTurn(wsId, r.slug, { userMsg: r.msg, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId });
+  const turn = await chat(wsId, r.slug, r.msg, t.sessionId, { source: 'messenger', attachments });
+  await appendTurn(wsId, r.slug, { userMsg: r.msg, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments });
   return `[${r.name}]\n${turn.reply}`;
 }
 
@@ -82,6 +129,19 @@ async function runTurn(wsId, cfg, text) {
 function startTelegram(wsId, getCfg) {
   let stopped = false;
   let offset = 0;
+  // 앨범(media_group) 버퍼 — 여러 장이 개별 업데이트로 나뉘어 오므로 2초 모아 한 턴으로 처리
+  const albums = new Map(); // groupId → { atts, caption, timer }
+  const runWithAtts = (cfg, text, atts) => {
+    (async () => {
+      try {
+        const note = atts.some((a) => !a.isImage) ? '\n(이미지가 아닌 첨부는 vault 경로로 저장되어 있다)' : '';
+        const reply = await runTurn(wsId, cfg, text || '첨부한 파일을 확인하고 필요한 걸 처리해줘.' + note, atts);
+        await sendTgReply(cfg.token, cfg.chatId, wsId, reply);
+      } catch (e) {
+        await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
+      }
+    })();
+  };
   (async () => {
     console.log(`[argo] 텔레그램 게이트웨이 시작: ${wsId}`);
     while (!stopped) {
@@ -111,7 +171,7 @@ function startTelegram(wsId, getCfg) {
           }
 
           const msg = u.message;
-          if (!msg?.text) continue;
+          if (!msg || (!msg.text && !msg.photo && !msg.document && !msg.video && !msg.voice && !msg.audio)) continue;
           if (!cfg.chatId) { // 페어링 — 첫 발신자를 사장 채팅으로 고정
             await updateConnection(wsId, 'telegram', { chatId: String(msg.chat.id) });
             await appendEvent(wsId, { type: 'gateway', kind: 'telegram', op: 'paired' });
@@ -120,15 +180,33 @@ function startTelegram(wsId, getCfg) {
           }
           if (String(msg.chat.id) !== String(cfg.chatId)) continue; // 페어링된 채팅만
           tg(cfg.token, 'sendChatAction', { chat_id: cfg.chatId, action: 'typing' }).catch(() => {});
-          // 턴을 기다리지 않는다 — 기다리면 폴이 멈춰 결재 버튼 콜백을 못 받는다(권한 게이트 데드락)
-          (async () => {
+
+          // 미디어 수신 — 다운로드해 vault/files/로. 앨범은 2초 버퍼로 모아 한 턴.
+          if (msg.photo || msg.document || msg.video || msg.voice || msg.audio) {
+            let att = null;
             try {
-              const reply = await runTurn(wsId, cfg, msg.text);
-              await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: clip(reply) });
+              att = await tgDownload(cfg.token, wsId, msg);
             } catch (e) {
-              await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
+              await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: `첨부 수신 실패: ${String(e.message).slice(0, 150)}` }).catch(() => {});
+              continue;
             }
-          })();
+            if (!att) continue;
+            if (msg.media_group_id) {
+              const key = `${msg.chat.id}:${msg.media_group_id}`;
+              const g = albums.get(key) ?? { atts: [], caption: '' };
+              g.atts.push(att);
+              if (msg.caption) g.caption = msg.caption;
+              clearTimeout(g.timer);
+              g.timer = setTimeout(() => { albums.delete(key); runWithAtts(getCfg() ?? cfg, g.caption, g.atts); }, 2000);
+              albums.set(key, g);
+            } else {
+              runWithAtts(cfg, msg.caption ?? '', [att]);
+            }
+            continue;
+          }
+
+          // 턴을 기다리지 않는다 — 기다리면 폴이 멈춰 결재 버튼 콜백을 못 받는다(권한 게이트 데드락)
+          runWithAtts(cfg, msg.text, []);
         }
       } catch (e) {
         if (!stopped) {
@@ -208,10 +286,8 @@ async function pushEvent(event) {
       }).catch((e) => console.error('[argo] 텔레그램 결재 푸시 실패:', e.message));
     }
     if (event.type === 'routine') {
-      await tg(t.token, 'sendMessage', {
-        chat_id: t.chatId,
-        text: clip(`[루틴] ${event.routine.title} ${event.ok ? '' : '(실패)'}\n\n${event.reply}`),
-      }).catch((e) => console.error('[argo] 텔레그램 루틴 푸시 실패:', e.message));
+      await sendTgReply(t.token, t.chatId, event.wsId, `**[루틴] ${event.routine.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`)
+        .catch((e) => console.error('[argo] 텔레그램 루틴 푸시 실패:', e.message));
     }
   }
   const s = all.slack;
