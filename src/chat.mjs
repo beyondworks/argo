@@ -86,7 +86,7 @@ ${skills ? `\n## 회사 스킬 — 해당 작업 시 아래 지침을 따른다\
 }
 
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단). */
-function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = []) {
+function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null) {
   const text = async (t) => ({ content: [{ type: 'text', text: t }] });
 
   const requestApproval = tool(
@@ -129,8 +129,9 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
         await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null })
           .catch(() => {});
         // 그룹 대화 미러 — 메신저 그룹에서 시작된 턴이면 상대 크루 봇이 같은 방에 결과를 발화한다(게이트웨이가 수신)
+        // mirrorCtx를 이벤트에 직접 실어 보낸다 — 전역 맵 조회(동시 턴 오배달 위험)를 없앤다
         const { emitNotify } = await import('./notify.mjs');
-        emitNotify({ type: 'delegate', wsId, from: fromSlug, fromName, to: target.slug, toName: target.name, task, reply: r.reply });
+        emitNotify({ type: 'delegate', wsId, from: fromSlug, fromName, to: target.slug, toName: target.name, task, reply: r.reply, ctx: mirrorCtx });
         return text(`[${target.name}의 작업 결과]\n${r.reply}`);
       } catch (e) {
         return text(`위임 실패(${target.name}): ${String(e.message || e)}`);
@@ -151,7 +152,7 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
  *   이미지는 SDK content 블록으로 크루가 직접 보고, 그 외 파일은 경로를 알려 Read로 열게 한다.
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
-export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [] } = {}) {
+export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], mirrorCtx = null } = {}) {
   const p = paths(wsId);
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지)
   const { budgetUsd } = await loadCompany(wsId).catch(() => ({}));
@@ -213,7 +214,7 @@ ${sharedBlock || '## 사장의 새 지시\n'}${userMsg}${attNote}
 
   // 크루 도구 — 결재 요청은 모든 턴. 위임은 hop 2단계까지(사장→A→B→C에서 끝), 이미 거친 크루로는 금지(순환 차단).
   const colleagues = hop >= 2 ? [] : (await listAgents(wsId)).filter((a) => a.slug !== agentSlug && !chain.includes(a.slug));
-  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain);
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx);
 
   // 로컬 능력 — 전부 opt-in. bypass가 꺼져 있으면 부작용 도구는 allowedTools에서 빼고
   // canUseTool 게이트가 전권 판정한다(사전 승인 목록에 든 도구는 게이트를 타지 않으므로).

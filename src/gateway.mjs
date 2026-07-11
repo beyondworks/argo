@@ -9,7 +9,7 @@ import { resolveWithFollowUp } from './approval-actions.mjs';
 import { onNotify } from './notify.mjs';
 import { daemonLease } from './lock.mjs';
 import { appendEvent } from './events.mjs';
-import { mkdir, readFile, writeFile, readdir, stat, rename } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, stat, rename, copyFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath } from './tg-format.mjs';
@@ -21,9 +21,15 @@ async function beatGateway(wsId, kind, ok, error = '') {
   } catch { /* 하트비트는 베스트에포트 */ }
 }
 
-// 진행 중 메신저 턴의 발화 위치 — 위임이 일어나면 상대 크루 봇이 같은 방에 발화할 수 있게 한다.
-// `${wsId}:${slug}` → { chatId, chatType } (턴 시작 시 등록, 종료 시 해제. 웹발 턴은 등록 없음 → 미러 생략)
-const activeAgentChat = new Map();
+// 폴러 offset 영속화 — 재시작·리더 교체 시 offset=0으로 되돌아가 마지막 배치를 재수신·재실행하는 것을 막는다.
+async function loadOffset(wsId, key) {
+  try { return JSON.parse(await readFile(join(paths(wsId).root, `.gw-offset-${key}.json`), 'utf8')).offset ?? 0; }
+  catch { return 0; }
+}
+async function saveOffset(wsId, key, offset) {
+  try { await writeFile(join(paths(wsId).root, `.gw-offset-${key}.json`), JSON.stringify({ offset })); }
+  catch { /* 베스트에포트 */ }
+}
 
 const MAX_MSG = 3800; // 텔레그램 4096 제한 대비 여유
 const clip = (t) => (t.length > MAX_MSG ? `${t.slice(0, MAX_MSG)}\n…(전체 내용은 Argo 데크에서)` : t);
@@ -148,13 +154,8 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
   const r = await routeMessage(wsId, cfg, text);
   if (r.error) return r.error;
   const t = await loadThread(wsId, r.slug);
-  if (ctx) activeAgentChat.set(`${wsId}:${r.slug}`, ctx);
-  let turn;
-  try {
-    turn = await chat(wsId, r.slug, r.msg, t.sessionId, { source: 'messenger', attachments });
-  } finally {
-    activeAgentChat.delete(`${wsId}:${r.slug}`);
-  }
+  // 그룹에서 온 턴이면 mirrorCtx로 전달 — 위임 미러가 이 턴의 방으로만 발화(전역 맵 오배달 제거)
+  const turn = await chat(wsId, r.slug, r.msg, t.sessionId, { source: 'messenger', attachments, mirrorCtx: /group/.test(ctx?.chatType ?? '') ? ctx : null });
   await appendTurn(wsId, r.slug, { userMsg: r.msg, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments });
   // cc 크루에게 맥락 공유 — 실행은 to 크루만(폭주 방지), 나머지는 다음 턴에 이 맥락을 알고 시작한다
   let footer = '';
@@ -188,20 +189,23 @@ function startTelegram(wsId, getCfg) {
   };
   (async () => {
     console.log(`[argo] 텔레그램 게이트웨이 시작: ${wsId}`);
+    offset = await loadOffset(wsId, 'telegram'); // 재시작 이어받기
     while (!stopped) {
       const cfg = getCfg();
       if (!cfg?.enabled || !cfg.token) break;
       try {
         const updates = await tg(cfg.token, 'getUpdates', { offset, timeout: 25 });
         await beatGateway(wsId, 'telegram', true);
+        if (updates.length) { offset = updates[updates.length - 1].update_id + 1; await saveOffset(wsId, 'telegram', offset); } // 처리 전 커밋 — 재시작 시 재수신 방지
         for (const u of updates) {
-          offset = u.update_id + 1;
           if (stopped) break;
 
           if (u.callback_query) { // 결재 인라인 버튼
             const cq = u.callback_query;
             const m = String(cq.data ?? '').match(/^ap:(ap-[a-z0-9]+):([01])$/);
-            if (m && String(cq.message?.chat?.id) === String(cfg.chatId)) {
+            // 채팅 일치 + (페어링된 사장 본인일 때만). 그룹 페어링 시 아무 멤버나 결재를 확정하는 것을 막는다.
+            const bySender = !cfg.ownerId || String(cq.from?.id) === String(cfg.ownerId);
+            if (m && String(cq.message?.chat?.id) === String(cfg.chatId) && bySender) {
               const approve = m[2] === '1';
               try {
                 const item = await resolveWithFollowUp(wsId, m[1], approve);
@@ -216,8 +220,9 @@ function startTelegram(wsId, getCfg) {
 
           const msg = u.message;
           if (!msg || (!msg.text && !msg.photo && !msg.document && !msg.video && !msg.voice && !msg.audio)) continue;
-          if (!cfg.chatId) { // 페어링 — 첫 발신자를 사장 채팅으로 고정
-            await updateConnection(wsId, 'telegram', { chatId: String(msg.chat.id) });
+          if (!cfg.chatId) { // 페어링 — 첫 발신자를 사장 채팅+신원으로 고정(결재 확정 권한 대조 근거)
+            await updateConnection(wsId, 'telegram', { chatId: String(msg.chat.id), ownerId: msg.from?.id ?? null });
+            Object.assign(cfg, { chatId: String(msg.chat.id), ownerId: msg.from?.id ?? null });
             await appendEvent(wsId, { type: 'gateway', kind: 'telegram', op: 'paired' });
             await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '이 채팅이 회사와 연결되었습니다.\n"@크루이름 지시" 또는 그냥 지시를 보내면 기본 크루가 응답합니다.\n"@이름1 @이름2 지시"는 첫 크루가 실행하고 나머지에게 맥락을 공유(cc)합니다.\n"크루"라고 보내면 연결된 크루 현황을 보여드립니다.' });
             continue;
@@ -276,13 +281,7 @@ async function runAgentTurn(wsId, slug, text, attachments, ctx) {
     return `결재 ${ap[1]} 처리: ${item.action}\n실행 결과는 이어서 보고합니다.`;
   }
   const t = await loadThread(wsId, slug);
-  activeAgentChat.set(`${wsId}:${slug}`, ctx);
-  let turn;
-  try {
-    turn = await chat(wsId, slug, text, t.sessionId, { source: 'messenger', attachments });
-  } finally {
-    activeAgentChat.delete(`${wsId}:${slug}`);
-  }
+  const turn = await chat(wsId, slug, text, t.sessionId, { source: 'messenger', attachments, mirrorCtx: /group/.test(ctx?.chatType ?? '') ? ctx : null });
   await appendTurn(wsId, slug, { userMsg: text, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments });
   return turn.reply; // 봇 자체가 그 크루 — 이름 프리픽스 불필요
 }
@@ -304,14 +303,15 @@ function startAgentTelegram(wsId, slug, getCfg) {
   };
   (async () => {
     console.log(`[argo] 텔레그램 크루 봇 시작: ${wsId}/${slug}`);
+    offset = await loadOffset(wsId, `tg-${slug}`); // 재시작 이어받기
     while (!stopped) {
       const cfg = getCfg();
       if (!cfg?.token) break;
       try {
         const updates = await tg(cfg.token, 'getUpdates', { offset, timeout: 25 });
         await beatGateway(wsId, `tg-${slug}`, true);
+        if (updates.length) { offset = updates[updates.length - 1].update_id + 1; await saveOffset(wsId, `tg-${slug}`, offset); }
         for (const u of updates) {
-          offset = u.update_id + 1;
           if (stopped) break;
           const msg = u.message;
           if (!msg || (!msg.text && !msg.photo && !msg.document && !msg.video && !msg.voice && !msg.audio)) continue;
@@ -368,6 +368,7 @@ function startAgentTelegram(wsId, slug, getCfg) {
 }
 
 /* ─── 받은 서류함(inbox) — 폴더에 파일을 넣는 것이 곧 지시. 기본 크루가 읽고 처리해 보고한다. ─── */
+const INBOX_MAX_INFLIGHT = 2; // 파일 여러 개를 한꺼번에 떨궈도 동시 크루 턴을 제한(비용 폭주 방지)
 function startInboxWatcher(wsId) {
   let stopped = false;
   const busy = new Set();
@@ -379,6 +380,7 @@ function startInboxWatcher(wsId) {
       try { names = await readdir(dir); } catch { return; }
       for (const n of names) {
         if (n.startsWith('.') || busy.has(n)) continue;
+        if (busy.size >= INBOX_MAX_INFLIGHT) break; // 상한 도달 — 남은 파일은 다음 틱에 처리
         const fp = join(dir, n);
         const st = await stat(fp).catch(() => null);
         if (!st?.isFile() || Date.now() - st.mtimeMs < 5000) continue; // 아직 복사 중일 수 있다 — 5초 안정 후 처리
@@ -388,7 +390,13 @@ function startInboxWatcher(wsId) {
             const safe = n.replace(/[^\w.\-가-힣 ()]/g, '_').slice(-80);
             const rel = `files/${Date.now().toString(36)}-${safe}`;
             await mkdir(join(paths(wsId).vault, 'files'), { recursive: true });
-            await rename(fp, join(paths(wsId).vault, rel)); // inbox에서 꺼내 기억으로 — 재처리 방지
+            // inbox에서 꺼내 기억으로 — 재처리 방지. 다른 마운트면 rename이 EXDEV로 실패하므로 copy+unlink 폴백(무한 재처리 루프 차단)
+            try {
+              await rename(fp, join(paths(wsId).vault, rel));
+            } catch {
+              await copyFile(fp, join(paths(wsId).vault, rel));
+              await unlink(fp);
+            }
             const ext = safe.split('.').pop()?.toLowerCase() ?? '';
             const isImage = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext);
             const att = { rel, name: safe, mime: isImage ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : '', isImage };
@@ -463,7 +471,7 @@ async function pushEvent(event) {
   const all = await loadConnections(event.wsId);
   // 위임 미러 — 그룹 대화 중 A가 B에게 위임하면, B의 봇이 같은 방에 자기 이름으로 결과를 올린다(크루 간 대화 가시화).
   if (event.type === 'delegate') {
-    const ctx = activeAgentChat.get(`${event.wsId}:${event.from}`);
+    const ctx = event.ctx; // 위임 이벤트에 실려온 발화 위치 — 전역 맵 조회 없이 이 턴의 방으로만
     if (!ctx || !/group/.test(ctx.chatType ?? '')) return; // 그룹에서만 — DM엔 상대 봇이 없다
     const bot = all.telegram.agents?.[event.to];
     if (!bot?.token) return; // 상대가 봇이 없으면 위임 결과는 A의 답에 통합돼 있으니 생략

@@ -6,7 +6,7 @@ import { paths } from './workspace.mjs';
 
 const EMPTY = {
   // agents: { [slug]: { token, botUsername, ownerId, ownerChat } } — 크루별 직통 봇(연락처처럼 1크루 1봇)
-  telegram: { token: '', chatId: null, defaultCrew: '', enabled: false, botUsername: '', agents: {} },
+  telegram: { token: '', chatId: null, ownerId: null, defaultCrew: '', enabled: false, botUsername: '', agents: {} },
   slack: { token: '', channel: '', botUserId: null, defaultCrew: '', enabled: false, botUsername: '' },
 };
 
@@ -109,7 +109,7 @@ export async function updateConnection(wsId, kind, patch) {
 
 /** 화면용 — 토큰을 절대 그대로 내보내지 않는다. */
 export function maskConnections(all) {
-  const mask = (t) => (t ? `${t.slice(0, 5)}***${t.slice(-3)}` : '');
+  const mask = (t) => (t ? `${t.slice(0, 3)}***` : ''); // 접두사 최소 노출(보안 규칙) — 뒤 3자도 감춤
   const agents = {};
   for (const [slug, a] of Object.entries(all.telegram.agents ?? {})) {
     agents[slug] = { botUsername: a.botUsername ?? '', paired: !!a.ownerId, hasToken: !!a.token };
