@@ -1,12 +1,23 @@
 // 워크스페이스 = 회사 1개의 격리 폴더 트리. SaaS에서는 유저별로 이 트리가 격리 컨테이너/볼륨에 산다.
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 export const WS_ROOT = process.env.ARGO_ROOT || process.env.CREWBASE_ROOT || join(process.cwd(), 'workspaces');
 
+// 워크스페이스 id는 회사 생성 규칙(route.js: base-base36)이 내는 문자셋만 허용.
+// paths()가 모든 파일 접근의 단일 관문이므로 여기서 막으면 전 API 라우트의 경로 탈출(../, %2f)이 차단된다.
+const WS_ID_RE = /^[a-z0-9][a-z0-9-]{0,127}$/;
+
 export function paths(wsId) {
+  if (typeof wsId !== 'string' || !WS_ID_RE.test(wsId)) {
+    throw new Error('잘못된 워크스페이스 id');
+  }
   const root = join(WS_ROOT, wsId);
+  // 심층 방어 — 조립 결과가 WS_ROOT 경계 안임을 재확인(정규식을 뚫는 예외 케이스 대비)
+  if (!resolve(root).startsWith(resolve(WS_ROOT) + '/')) {
+    throw new Error('워크스페이스 경계 위반');
+  }
   return {
     root,
     company: join(root, 'company.json'),

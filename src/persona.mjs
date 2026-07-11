@@ -32,6 +32,13 @@ role: <직함 한 줄>
 ## 톤
 (사용자와 대화할 때의 말투 한 줄)`;
 
+// 크루 카드 파일 경로 — slug는 URL 경로 파라미터로 들어오므로 조립 직전 검증(경로 탈출 차단).
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+function cardPath(wsId, slug) {
+  if (typeof slug !== 'string' || !SLUG_RE.test(slug)) throw new Error('잘못된 크루 slug');
+  return join(paths(wsId).agents, `${slug}.md`);
+}
+
 function parseFrontmatter(md) {
   const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   const meta = {};
@@ -73,7 +80,7 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   let body = md.replace(/^(---[\s\S]*?slug:\s*).*$/m, `$1${slug}`);
   if (name?.trim()) body = body.replace(/^(---[\s\S]*?name:\s*).*$/m, `$1${name.trim()}`);
   if (team?.trim()) body = body.replace(/^---\r?\n/, `---\nteam: ${team.trim()}\n`);
-  const file = join(paths(wsId).agents, `${slug}.md`);
+  const file = cardPath(wsId, slug);
   await writeFile(file, body.endsWith('\n') ? body : `${body}\n`);
   await appendEvent(wsId, { type: 'crew', op: 'hire', slug, name: name?.trim() || meta.name });
   return { slug, name: name?.trim() || meta.name, role: meta.role || '', team: team?.trim() || '', file };
@@ -83,7 +90,7 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
 export async function saveAgentCard(wsId, slug, md) {
   const meta = parseFrontmatter(md);
   if (!meta.name) throw new Error('frontmatter에 name이 필요합니다');
-  const file = join(paths(wsId).agents, `${slug}.md`);
+  const file = cardPath(wsId, slug);
   if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
   await writeFile(file, md.endsWith('\n') ? md : `${md}\n`);
   return { slug, name: meta.name, role: meta.role || '' };
@@ -101,7 +108,7 @@ function setFrontmatterKey(md, key, value) {
 
 /** 이름·역할·팀·모델 수정 — 슬러그·파일명·기록은 유지(정체성은 표시 이름만 바뀐다). */
 export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner }) {
-  const file = join(paths(wsId).agents, `${slug}.md`);
+  const file = cardPath(wsId, slug);
   if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
   let md = await readFile(file, 'utf8');
   const before = parseFrontmatter(md);
@@ -143,8 +150,8 @@ export async function renameTeam(wsId, from, to) {
 
 /** 해고 — 카드를 지우지 않고 .archive/로 옮긴다(복구 가능). */
 export async function removeAgentCard(wsId, slug) {
+  const file = cardPath(wsId, slug); // slug 검증 포함
   const dir = paths(wsId).agents;
-  const file = join(dir, `${slug}.md`);
   if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
   const archive = join(dir, '.archive');
   await mkdir(archive, { recursive: true });
@@ -153,6 +160,6 @@ export async function removeAgentCard(wsId, slug) {
 }
 
 export async function readAgentCard(wsId, slug) {
-  const md = await readFile(join(paths(wsId).agents, `${slug}.md`), 'utf8');
+  const md = await readFile(cardPath(wsId, slug), "utf8");
   return { md, meta: parseFrontmatter(md) };
 }
