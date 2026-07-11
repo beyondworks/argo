@@ -1,6 +1,6 @@
 'use client';
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
-import { use, useEffect, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../../ui';
 import { useLang } from '../../../../i18n';
@@ -326,15 +326,54 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
   const [msg, setMsg] = useState('');
   const [fireOpen, setFireOpen] = useState(false);
   const [firing, setFiring] = useState(false);
+  // 텔레그램 직통 봇 — 이 크루의 개인 연락처
+  const [tgBot, setTgBot] = useState(null); // { hasToken, botUsername, paired }
+  const [tgAlive, setTgAlive] = useState(false);
+  const [tgToken, setTgToken] = useState('');
+  const [tgBusy, setTgBusy] = useState(false);
+  const [tgMsg, setTgMsg] = useState('');
+
+  const loadTg = useCallback(() => {
+    api(`/api/companies/${ws}/connections`).then((d) => {
+      setTgBot(d.connections?.telegram?.agents?.[slug] ?? { hasToken: false });
+      setTgAlive(!!d.gateway?.agents?.[slug]?.alive);
+    }).catch(() => {});
+  }, [ws, slug]);
 
   useEffect(() => {
     api(`/api/companies/${ws}/agents/${slug}`)
       .then((d) => { setMd(d.md); setProfile({ recent: d.recent ?? [], skills: d.skills ?? [] }); })
       .catch((e) => setMsg(String(e.message)));
+    loadTg();
+    const iv = setInterval(loadTg, 10000);
+    return () => clearInterval(iv);
+  }, [ws, slug, loadTg]);
+
+  async function tgConnect() {
+    if (tgBusy || !tgToken.trim()) return;
+    setTgBusy(true); setTgMsg('');
+    try {
+      const d = await api(`/api/companies/${ws}/agents/${slug}/telegram`, { token: tgToken });
+      setTgBot(d.connections?.telegram?.agents?.[slug] ?? { hasToken: true });
+      setTgToken(''); setTgMsg(t('chat.tg.pairHint'));
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (e) { setTgMsg(String(e.message)); } finally { setTgBusy(false); }
+  }
+  async function tgDisconnect() {
+    if (tgBusy) return;
+    setTgBusy(true); setTgMsg('');
+    try {
+      await fetch(`/api/companies/${ws}/agents/${slug}/telegram`, { method: 'DELETE' });
+      setTgBot({ hasToken: false }); setTgAlive(false);
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (e) { setTgMsg(String(e.message)); } finally { setTgBusy(false); }
+  }
+
+  useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [ws, slug, onClose]);
+  }, [onClose]);
 
   async function save() {
     if (saving || md === null) return;
@@ -393,6 +432,36 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
                 </div>
               </>
             )}
+          </div>
+          {/* 텔레그램 직통 봇 — 이 크루의 개인 연락처. 연결되면 그린 도트 */}
+          <div style={{ display: 'grid', gap: 7, padding: '12px 14px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="microlabel">{t('chat.tg.title')}</span>
+              {tgBot?.hasToken && (
+                <span className="chip" style={{ color: tgAlive ? 'var(--ok)' : 'var(--warn)', borderColor: 'currentColor' }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor', display: 'inline-block', marginRight: 5 }} />
+                  {tgAlive ? t('chat.tg.live') : t('chat.tg.waiting')}
+                  {tgBot.paired ? ` · ${t('chat.tg.paired')}` : ''}
+                </span>
+              )}
+              {tgBot?.botUsername && <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)' }}>{tgBot.botUsername}</span>}
+            </div>
+            <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('chat.tg.help')}</p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {tgBot?.hasToken ? (
+                <button className="btn sm" disabled={tgBusy} onClick={tgDisconnect}>{t('chat.tg.disconnect')}</button>
+              ) : (
+                <>
+                  <input suppressHydrationWarning type="password" value={tgToken} onChange={(e) => setTgToken(e.target.value)}
+                    placeholder={t('chat.tg.placeholder')}
+                    style={{ flex: 1, height: 30, padding: '0 10px', background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12 }} />
+                  <button className="btn btn-primary sm" disabled={tgBusy || !tgToken.trim()} onClick={tgConnect}>
+                    {tgBusy ? <Spinner size={12} /> : t('chat.tg.connect')}
+                  </button>
+                </>
+              )}
+              <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{tgMsg}</span>
+            </div>
           </div>
           {md === null ? (
             <Skeleton h={220} />

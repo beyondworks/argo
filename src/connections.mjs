@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 
 const EMPTY = {
-  telegram: { token: '', chatId: null, defaultCrew: '', enabled: false, botUsername: '' },
+  // agents: { [slug]: { token, botUsername, ownerId, ownerChat } } — 크루별 직통 봇(연락처처럼 1크루 1봇)
+  telegram: { token: '', chatId: null, defaultCrew: '', enabled: false, botUsername: '', agents: {} },
   slack: { token: '', channel: '', botUserId: null, defaultCrew: '', enabled: false, botUsername: '' },
 };
 
@@ -38,16 +39,39 @@ export async function gatewayStatus(wsId) {
       return { alive: false, lastTs: null, error: '' };
     }
   };
-  return { telegram: await read('telegram'), slack: await read('slack') };
+  const out = { telegram: await read('telegram'), slack: await read('slack'), agents: {} };
+  const all = await loadConnections(wsId);
+  for (const slug of Object.keys(all.telegram.agents ?? {})) out.agents[slug] = await read(`tg-${slug}`);
+  return out;
 }
 
 export async function loadConnections(wsId) {
   try {
     const raw = JSON.parse(await readFile(paths(wsId).connections, 'utf8'));
-    return { telegram: { ...EMPTY.telegram, ...raw.telegram }, slack: { ...EMPTY.slack, ...raw.slack } };
+    return {
+      telegram: { ...EMPTY.telegram, ...raw.telegram, agents: raw.telegram?.agents ?? {} },
+      slack: { ...EMPTY.slack, ...raw.slack },
+    };
   } catch {
     return structuredClone(EMPTY);
   }
+}
+
+/** 크루 직통 봇 연결/해제 — patch=null이면 해제. 토큰이 바뀌면 페어링(ownerId) 초기화. */
+export async function updateAgentBot(wsId, slug, patch) {
+  const all = await loadConnections(wsId);
+  const agents = { ...all.telegram.agents };
+  if (!patch) {
+    delete agents[slug];
+  } else {
+    const prev = agents[slug] ?? {};
+    const next = { ...prev, ...patch };
+    if (patch.token && patch.token !== prev.token) { next.ownerId = null; next.ownerChat = null; }
+    agents[slug] = next;
+  }
+  all.telegram.agents = agents;
+  await writeFile(paths(wsId).connections, JSON.stringify(all, null, 2));
+  return all;
 }
 
 export async function updateConnection(wsId, kind, patch) {
@@ -67,8 +91,12 @@ export async function updateConnection(wsId, kind, patch) {
 /** 화면용 — 토큰을 절대 그대로 내보내지 않는다. */
 export function maskConnections(all) {
   const mask = (t) => (t ? `${t.slice(0, 5)}***${t.slice(-3)}` : '');
+  const agents = {};
+  for (const [slug, a] of Object.entries(all.telegram.agents ?? {})) {
+    agents[slug] = { botUsername: a.botUsername ?? '', paired: !!a.ownerId, hasToken: !!a.token };
+  }
   return {
-    telegram: { ...all.telegram, token: mask(all.telegram.token), hasToken: !!all.telegram.token },
+    telegram: { ...all.telegram, token: mask(all.telegram.token), hasToken: !!all.telegram.token, agents },
     slack: { ...all.slack, token: mask(all.slack.token), hasToken: !!all.slack.token },
   };
 }

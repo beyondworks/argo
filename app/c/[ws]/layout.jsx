@@ -108,6 +108,22 @@ export default function CompanyShell({ children, params }) {
     return () => window.removeEventListener('argo:refresh', refresh);
   }, [refresh]);
 
+  // 크루별 텔레그램 직통 봇 상태 — 연결된 크루는 사이드바에 그린 도트
+  const [tgAgents, setTgAgents] = useState({});
+  useEffect(() => {
+    const load = () => api(`/api/companies/${ws}/connections`).then((d) => {
+      const map = {};
+      for (const [slug, a] of Object.entries(d.connections?.telegram?.agents ?? {})) {
+        if (a.hasToken) map[slug] = !!d.gateway?.agents?.[slug]?.alive;
+      }
+      setTgAgents(map);
+    }).catch(() => {});
+    load();
+    window.addEventListener('argo:refresh', load);
+    const iv = setInterval(load, 30000);
+    return () => { window.removeEventListener('argo:refresh', load); clearInterval(iv); };
+  }, [ws]);
+
   // 헤더 검색 → 페이지가 구독해 목록을 필터링한다.
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('argo:search', { detail: q }));
@@ -162,7 +178,16 @@ export default function CompanyShell({ children, params }) {
               const active = pathname === href;
               return (
                 <a key={a.slug} href={href} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6 }}>
-                  <Avatar name={a.name} sm />
+                  <span style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
+                    <Avatar name={a.name} sm />
+                    {a.slug in tgAgents && (
+                      <span title={t('nav.tgConnected')} style={{
+                        position: 'absolute', right: -1, bottom: -1, width: 7, height: 7, borderRadius: 999,
+                        background: tgAgents[a.slug] ? 'var(--ok)' : 'var(--warn)',
+                        boxShadow: '0 0 0 2px var(--bg)',
+                      }} />
+                    )}
+                  </span>
                   <span style={{ minWidth: 0 }}>
                     <span style={{ display: 'block', lineHeight: 1.3 }}>{a.name}</span>
                     <span className="nav-sub">{a.role}</span>
