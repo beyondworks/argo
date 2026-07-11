@@ -147,10 +147,10 @@
 /* [glass] macOS Tahoe 26 리퀴드 글래스 — 그라디언트 배경 위 반투명 블러 표면.
    유리 림은 보더가 아니라 inset 하이라이트(--shadow-card)로 만든다. 보더는 잉크 헤어라인 유지. */
 :root[data-theme='glass'] {
-  --bg: #dde4f0;            /* 폴백 — 실제 캔버스는 아래 body 그라디언트 */
-  --card: rgba(255, 255, 255, 0.55);
-  --card-2: rgba(255, 255, 255, 0.45);
-  --secondary: rgba(255, 255, 255, 0.35);
+  --bg: #eceef2;            /* 폴백 — 실제 캔버스는 아래 body 그라디언트 */
+  --card: rgba(255, 255, 255, 0.42);
+  --card-2: rgba(255, 255, 255, 0.34);
+  --secondary: rgba(255, 255, 255, 0.26);
   --fg: #1d1d1f;
   --fg-2: rgba(50, 50, 58, 0.82);
   --fg-3: rgba(50, 50, 58, 0.62);
@@ -191,10 +191,10 @@
 /* [glass-dark] 리퀴드 글래스 다크 — 딥 네이비 그라디언트 위 다크 유리 표면. */
 :root[data-theme='glass-dark'] {
   color-scheme: dark;
-  --bg: #12142a;            /* 폴백 — 실제 캔버스는 아래 body 그라디언트 */
-  --card: rgba(36, 40, 62, 0.55);
-  --card-2: rgba(255, 255, 255, 0.08);
-  --secondary: rgba(255, 255, 255, 0.06);
+  --bg: #1a1a1c;            /* 폴백 — 실제 캔버스는 아래 body 그라디언트 (#1c1c1c 계열) */
+  --card: rgba(255, 255, 255, 0.07);
+  --card-2: rgba(255, 255, 255, 0.1);
+  --secondary: rgba(255, 255, 255, 0.055);
   --fg: #f2f3f7;
   --fg-2: rgba(235, 235, 245, 0.65);
   --fg-3: rgba(235, 235, 245, 0.42);
@@ -219,7 +219,7 @@
 
   --ring: rgba(10, 132, 255, 0.55);
   --selection: rgba(10, 132, 255, 0.4);
-  --overlay: rgba(5, 8, 20, 0.6);
+  --overlay: rgba(0, 0, 0, 0.62);
   --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 32px rgba(0, 0, 0, 0.4);
   --r: 22px;
   --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Pretendard Variable', Pretendard, 'Helvetica Neue', sans-serif;
@@ -228,8 +228,8 @@
   --accent: #0a84ff;
   --accent-rgb: 10, 132, 255;
 
-  --ink-rgb: 235, 236, 245;
-  --paper-rgb: 36, 40, 62;
+  --ink-rgb: 240, 240, 244;
+  --paper-rgb: 42, 42, 46;
 }
 
 /* [clay] 크림 클레이 — 웜 크림 캔버스 + 딥 틸 잉크, 뉴모피즘(이중 그림자, 눌림=inset).
@@ -744,10 +744,10 @@
 }
 :root[data-theme='glass-dark'] body {
   background:
-    radial-gradient(1100px 700px at 12% -8%, rgba(64, 92, 255, 0.35), transparent 60%),
-    radial-gradient(900px 640px at 88% 4%, rgba(140, 84, 255, 0.28), transparent 58%),
-    radial-gradient(1000px 800px at 50% 110%, rgba(10, 132, 255, 0.25), transparent 62%),
-    #12142a;
+    radial-gradient(1400px 900px at 18% -12%, rgba(58, 58, 62, 0.6), transparent 65%),
+    radial-gradient(1200px 860px at 86% 6%, rgba(48, 48, 54, 0.5), transparent 62%),
+    radial-gradient(1300px 1000px at 50% 115%, rgba(52, 52, 56, 0.55), transparent 65%),
+    linear-gradient(180deg, #202022, #161618);
   background-attachment: fixed;
 }
 
@@ -770,10 +770,10 @@
 
 /* 카드 — 레이어드 유리: 위→아래로 옅어지는 반투명 그라디언트 + 깊은 블러 */
 :root[data-theme='glass'] .card {
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.38));
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.24));
 }
 :root[data-theme='glass-dark'] .card {
-  background: linear-gradient(160deg, rgba(48, 54, 82, 0.72), rgba(28, 31, 52, 0.45));
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.04));
 }
 :root[data-theme='mist'] .card {
   background: linear-gradient(160deg, rgba(241, 245, 244, 0.62), rgba(241, 245, 244, 0.38));
@@ -791,7 +791,7 @@
 
 /* 인버트(프라이머리) 카드 — 테마 액센트 유리로 */
 :root[data-theme='glass'] .invert {
-  background: linear-gradient(160deg, rgba(0, 113, 227, 0.88), rgba(0, 113, 227, 0.66));
+  background: linear-gradient(160deg, rgba(0, 113, 227, 0.82), rgba(0, 113, 227, 0.58));
   border-color: rgba(255, 255, 255, 0.35);
 }
 :root[data-theme='glass-dark'] .invert {
@@ -808,12 +808,12 @@
 }
 
 /* 앱셸 — 사이드바·탑바도 유리 레이어 */
-:root[data-theme='glass'] .side { background: rgba(255, 255, 255, 0.32); }
-:root[data-theme='glass-dark'] .side { background: rgba(18, 20, 40, 0.45); }
+:root[data-theme='glass'] .side { background: rgba(255, 255, 255, 0.22); }
+:root[data-theme='glass-dark'] .side { background: rgba(16, 16, 18, 0.42); }
 :root[data-theme='mist'] .side { background: rgba(241, 245, 244, 0.35); }
 :root[data-theme='frost'] .side { background: rgba(12, 14, 20, 0.5); }
-:root[data-theme='glass'] .topbar { background: rgba(255, 255, 255, 0.42); }
-:root[data-theme='glass-dark'] .topbar { background: rgba(18, 20, 40, 0.55); }
+:root[data-theme='glass'] .topbar { background: rgba(255, 255, 255, 0.3); }
+:root[data-theme='glass-dark'] .topbar { background: rgba(16, 16, 18, 0.52); }
 :root[data-theme='mist'] .topbar { background: rgba(241, 245, 244, 0.45); }
 :root[data-theme='frost'] .topbar { background: rgba(12, 14, 20, 0.6); }
 :root[data-theme='glass'] .side,

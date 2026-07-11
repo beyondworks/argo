@@ -56,7 +56,7 @@ const DICT = {
   'settings.theme.apple': ['Apple — 밝은 시스템 화이트', 'Apple — light system white'],
   'settings.theme.apple-dark': ['Apple 다크 — 시스템 블랙', 'Apple Dark — system black'],
   'settings.theme.glass': ['리퀴드 글래스 — Tahoe 반투명', 'Liquid Glass — Tahoe translucency'],
-  'settings.theme.glass-dark': ['리퀴드 글래스 다크 — 딥 네이비 유리', 'Liquid Glass Dark — deep navy glass'],
+  'settings.theme.glass-dark': ['리퀴드 글래스 다크 — 딥 블랙 유리', 'Liquid Glass Dark — deep black glass'],
   'settings.theme.clay': ['크림 클레이 — 틸 뉴모피즘', 'Cream Clay — teal neumorphism'],
   'settings.theme.porcelain': ['포슬린 — 화이트 클레이', 'Porcelain — white clay'],
   'settings.theme.mist': ['미스트 — 세이지 글래스', 'Mist — sage glass'],

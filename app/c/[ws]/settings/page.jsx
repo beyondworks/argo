@@ -205,7 +205,7 @@ const THEME_SWATCHES = {
   apple: ['#f5f5f7', '#ffffff', '#0071e3'],
   'apple-dark': ['#161617', '#2c2c2e', '#0a84ff'],
   glass: ['#c9d8f2', '#eef3fb', '#0071e3'],
-  'glass-dark': ['#12142a', '#303652', '#0a84ff'],
+  'glass-dark': ['#1c1c1e', '#39393d', '#0a84ff'],
   clay: ['#ede6d4', '#f6f1e3', '#176862'],
   porcelain: ['#ededeb', '#f6f6f4', '#3478f6'],
   mist: ['#b9c6cd', '#eef3f2', '#5e8b7e'],
