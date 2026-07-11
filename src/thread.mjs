@@ -3,8 +3,11 @@
 import { mkdir, readFile, writeFile, rm, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
+import { withLock } from './mutex.mjs';
 
 const file = (wsId, slug) => join(paths(wsId).chats, `${slug.replace(/[^a-z0-9-]/g, '')}.json`);
+// 같은 크루 스레드의 read-modify-write를 직렬화 — 웹·텔레그램 동시 턴의 lost-update 방지
+const lockKey = (wsId, slug) => `thread:${wsId}:${slug.replace(/[^a-z0-9-]/g, '')}`;
 
 export async function loadThread(wsId, slug) {
   try {
@@ -15,43 +18,51 @@ export async function loadThread(wsId, slug) {
 }
 
 export async function appendTurn(wsId, slug, { userMsg, reply, handover, sessionId, attachments }) {
-  const t = await loadThread(wsId, slug);
-  const ts = Date.now();
-  t.messages.push(
-    { who: 'user', text: userMsg, ts, ...(attachments?.length ? { attachments } : {}) },
-    { who: 'crew', text: reply, handover, ts },
-  );
-  t.sessionId = sessionId ?? t.sessionId;
-  await mkdir(paths(wsId).chats, { recursive: true });
-  await writeFile(file(wsId, slug), JSON.stringify(t, null, 2));
-  return t;
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
+    const ts = Date.now();
+    t.messages.push(
+      { who: 'user', text: userMsg, ts, ...(attachments?.length ? { attachments } : {}) },
+      { who: 'crew', text: reply, handover, ts },
+    );
+    t.sessionId = sessionId ?? t.sessionId;
+    await mkdir(paths(wsId).chats, { recursive: true });
+    await writeFile(file(wsId, slug), JSON.stringify(t, null, 2));
+    return t;
+  });
 }
 
 /** 참조(cc) 공유 — 대상 크루 스레드에 노트를 남긴다. pending 표시는 "아직 그 크루가 못 본 맥락"이라는 뜻. */
 export async function appendSharedNote(wsId, slug, text) {
-  const t = await loadThread(wsId, slug);
-  t.messages.push({ who: 'user', shared: true, pending: true, text, ts: Date.now() });
-  await mkdir(paths(wsId).chats, { recursive: true });
-  await writeFile(file(wsId, slug), JSON.stringify(t, null, 2));
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug);
+    t.messages.push({ who: 'user', shared: true, pending: true, text, ts: Date.now() });
+    await mkdir(paths(wsId).chats, { recursive: true });
+    await writeFile(file(wsId, slug), JSON.stringify(t, null, 2));
+  });
 }
 
 /** 미소비 공유 노트 회수 — 다음 턴 프롬프트에 1회만 주입되도록 pending을 해제하며 반환한다. */
 export async function takeSharedNotes(wsId, slug) {
-  const t = await loadThread(wsId, slug);
-  const notes = t.messages.filter((m) => m.shared && m.pending);
-  if (!notes.length) return [];
-  for (const m of notes) delete m.pending;
-  await writeFile(file(wsId, slug), JSON.stringify(t, null, 2));
-  return notes.map((m) => m.text);
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug);
+    const notes = t.messages.filter((m) => m.shared && m.pending);
+    if (!notes.length) return [];
+    for (const m of notes) delete m.pending;
+    await writeFile(file(wsId, slug), JSON.stringify(t, null, 2));
+    return notes.map((m) => m.text);
+  });
 }
 
 /** 보관된 세션 목록 — 새 대화로 적재된 이전 스레드들(최신순). 크루 채팅 좌측 레일의 원천. */
 export async function listArchivedSessions(wsId, slug) {
   const dir = join(paths(wsId).chats, '.archive');
   const safe = slug.replace(/[^a-z0-9-]/g, '');
+  // 엄격 매칭(^slug-<ts>.json$) — startsWith만 쓰면 sales가 sales-lead 아카이브까지 잡아 못 여는 유령 항목이 생긴다
+  const re = new RegExp(`^${safe}-\\d+\\.json$`);
   let names = [];
   try {
-    names = (await readdir(dir)).filter((n) => n.startsWith(`${safe}-`) && n.endsWith('.json'));
+    names = (await readdir(dir)).filter((n) => re.test(n));
   } catch {
     return [];
   }
@@ -79,11 +90,13 @@ export async function readArchivedSession(wsId, slug, id) {
 
 /** 새 대화 — 삭제가 아니라 적재. 이전 대화는 chats/.archive/에 보관되고, vault 기억은 그대로다(그게 제품의 핵심). */
 export async function resetThread(wsId, slug) {
-  const t = await loadThread(wsId, slug);
-  if (t.messages?.length) {
-    const dir = join(paths(wsId).chats, '.archive');
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, `${slug.replace(/[^a-z0-9-]/g, '')}-${Date.now()}.json`), JSON.stringify(t, null, 2));
-  }
-  await rm(file(wsId, slug), { force: true });
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug);
+    if (t.messages?.length) {
+      const dir = join(paths(wsId).chats, '.archive');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, `${slug.replace(/[^a-z0-9-]/g, '')}-${Date.now()}.json`), JSON.stringify(t, null, 2));
+    }
+    await rm(file(wsId, slug), { force: true });
+  });
 }

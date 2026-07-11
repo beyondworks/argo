@@ -6,8 +6,12 @@ import { paths } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
 import { chat } from './chat.mjs';
 import { updateIndex } from './memory.mjs';
+import { withLock } from './mutex.mjs';
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
+const rkey = (wsId) => `room:${wsId}`;
+// 회의 아카이브 접두사 — 크루 slug는 [a-z0-9-]라 '_'를 못 쓰므로, 크루 세션 아카이브와 절대 겹치지 않는다
+const MEETING_RE = /^_room-\d+\.json$/;
 
 export async function loadRoom(wsId) {
   try {
@@ -27,7 +31,7 @@ export async function listArchivedMeetings(wsId) {
   const dir = join(paths(wsId).chats, '.archive');
   let names = [];
   try {
-    names = (await readdir(dir)).filter((n) => /^room-\d+\.json$/.test(n));
+    names = (await readdir(dir)).filter((n) => MEETING_RE.test(n));
   } catch {
     return [];
   }
@@ -38,7 +42,7 @@ export async function listArchivedMeetings(wsId) {
       const first = (r.messages ?? []).find((m) => m.who === 'user');
       out.push({
         id: n,
-        ts: Number(n.match(/^room-(\d+)\.json$/)[1]),
+        ts: Number(n.match(/^_room-(\d+)\.json$/)[1]),
         count: r.messages?.length ?? 0,
         topic: String(first?.text ?? '').replace(/@\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 42),
       });
@@ -48,12 +52,15 @@ export async function listArchivedMeetings(wsId) {
 }
 
 export async function readArchivedMeeting(wsId, id) {
-  if (!/^room-\d+\.json$/.test(id)) throw new Error('잘못된 회의 id');
+  if (!MEETING_RE.test(id)) throw new Error('잘못된 회의 id');
   return JSON.parse(await readFile(join(paths(wsId).chats, '.archive', id), 'utf8'));
 }
 
 /** 회의 마치기 — 회의록을 일지(vault/journal)로 남겨 회사 기억으로 적재하고, 방은 보관 후 비운다(회의 1건 = 적재 1건). */
 export async function endMeeting(wsId) {
+  return withLock(rkey(wsId), () => endMeetingLocked(wsId));
+}
+async function endMeetingLocked(wsId) {
   const room = await loadRoom(wsId);
   if (!room.messages?.length) return { archived: false };
   const agents = await listAgents(wsId);
@@ -76,18 +83,35 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
   await updateIndex(wsId).catch(() => {});
   const dir = join(p.chats, '.archive');
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `room-${Date.now()}.json`), JSON.stringify(room, null, 2));
-  await saveRoom(wsId, { messages: [] });
+  await writeFile(join(dir, `_room-${Date.now()}.json`), JSON.stringify(room, null, 2));
+  // sid 증가 — 진행 중이던 runRoomTurn의 잔여 발언이 빈 방에 유령으로 남지 않도록 무효화한다
+  await saveRoom(wsId, { messages: [], sid: (room.sid ?? 0) + 1 });
   return { archived: true, journal: `journal/${journalName}` };
 }
 
 /** 사장 발언 1건 → 멘션된 크루가 순서대로 응답(폭주 방지: 최대 3명). 멘션 없으면 첫 크루. */
+// 락 안에서 방을 읽어 sid가 맞을 때만 메시지 추가. sid 불일치(회의 마침)면 false — 발언을 버린다.
+async function pushRoomMsg(wsId, msg, expectSid) {
+  return withLock(rkey(wsId), async () => {
+    const room = await loadRoom(wsId);
+    if (expectSid !== undefined && (room.sid ?? 0) !== expectSid) return false;
+    room.messages.push(msg);
+    await saveRoom(wsId, room);
+    return true;
+  });
+}
+
 export async function runRoomTurn(wsId, text) {
   const agents = await listAgents(wsId);
   if (!agents.length) throw new Error('아직 크루가 없습니다. 데크에서 먼저 영입해 주세요.');
-  const room = await loadRoom(wsId);
-  room.messages.push({ who: 'user', text, ts: Date.now() });
-  await saveRoom(wsId, room);
+  // 사장 발언 추가 + 현재 세션 sid 확보(이후 발언은 이 sid가 유지될 때만 기록)
+  const sid = await withLock(rkey(wsId), async () => {
+    const room = await loadRoom(wsId);
+    const s = room.sid ?? 0;
+    room.messages.push({ who: 'user', text, ts: Date.now() });
+    await saveRoom(wsId, room);
+    return s;
+  });
 
   const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase(); // 한글 NFC/NFD 불일치 방어
   const mentioned = [];
@@ -113,9 +137,8 @@ ${transcript}
 ## 지시
 사장의 마지막 발언에 "${a.name}"로서 답하라. 동료가 이미 말한 내용은 반복하지 말고 너의 전문성으로 보태라. 회의 발언답게 5줄 이내로 간결히.`;
     const r = await chat(wsId, a.slug, prompt, null, { source: 'room' });
-    const cur = await loadRoom(wsId);
-    cur.messages.push({ who: a.slug, text: r.reply, ts: Date.now() });
-    await saveRoom(wsId, cur);
+    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now() }, sid);
+    if (!live) break; // 회의가 마쳐졌다 — 남은 발언을 빈 방에 남기지 않는다
     replies.push({ slug: a.slug, name: a.name, reply: r.reply });
   }
   return { replies, room: await loadRoom(wsId) };
