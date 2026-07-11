@@ -183,8 +183,8 @@ export default function CrewChat({ params }) {
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
-      {/* 세션 레일 — 대화가 여기 적재된다. 새 대화로 넘길 때마다 쌓이고, 클릭으로 언제든 다시 본다 */}
-      <div style={{ position: 'sticky', top: 72, display: 'grid', gap: 4 }}>
+      {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정 */}
+      <div style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('chat.sessions.title')}{sessions.length ? ` · ${sessions.length + 1}` : ''}
         </span>
@@ -211,8 +211,16 @@ export default function CrewChat({ params }) {
       onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
     >
       {dragOver && <div className="drop-overlay">{t('chat.dropHere')}</div>}
-      {/* 스티키 헤더 — 긴 대화를 내려도 이름·카드·새 대화가 항상 손에 닿는다(topbar 56px 아래 고정) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, position: 'sticky', top: 56, zIndex: 15, padding: '12px 0 10px', background: 'var(--bg)' }}>
+      {/* 스티키 헤더 — 긴 대화를 내려도 이름·카드·새 대화가 항상 손에 닿는다(topbar 56px 아래 고정).
+          배경은 블러+반투명 — 단색(--bg)은 그라데이션 캔버스 테마에서 이질적인 띠로 보인다 */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12,
+        position: 'sticky', top: 56, zIndex: 15, padding: '12px 14px 10px',
+        margin: '0 -14px 12px',
+        background: 'color-mix(in srgb, var(--bg) 62%, transparent)',
+        backdropFilter: 'blur(16px) saturate(1.3)', WebkitBackdropFilter: 'blur(16px) saturate(1.3)',
+        borderRadius: '0 0 14px 14px',
+      }}>
         <Avatar name={agent?.name} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14.5, fontWeight: 650 }}>{agent?.name ?? ''}</div>
