@@ -319,9 +319,13 @@ export default function CrewChat({ params }) {
 
 /** 카드 패널 — 카드가 곧 시스템 프롬프트. 열람·편집·해고(깃헙식 확인). */
 function CardPanel({ ws, slug, agentName, onClose, onFired }) {
-  const { t } = useLang();
+  const { t, fmtMoney } = useLang();
+  const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n ?? 0));
   const [md, setMd] = useState(null);
   const [profile, setProfile] = useState({ recent: [], skills: [] });
+  const [meta, setMeta] = useState({});
+  const [stats, setStats] = useState(null); // { turns, contextTotal, output, costUsd, avgMs, topTools }
+  const [ruleInput, setRuleInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [fireOpen, setFireOpen] = useState(false);
@@ -342,7 +346,7 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
 
   useEffect(() => {
     api(`/api/companies/${ws}/agents/${slug}`)
-      .then((d) => { setMd(d.md); setProfile({ recent: d.recent ?? [], skills: d.skills ?? [] }); })
+      .then((d) => { setMd(d.md); setMeta(d.meta ?? {}); setStats(d.stats ?? null); setProfile({ recent: d.recent ?? [], skills: d.skills ?? [] }); })
       .catch((e) => setMsg(String(e.message)));
     loadTg();
     const iv = setInterval(loadTg, 10000);
@@ -375,14 +379,14 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  async function save() {
-    if (saving || md === null) return;
+  async function save(next = md) {
+    if (saving || next === null) return;
     setSaving(true); setMsg('');
     try {
       await fetch(`/api/companies/${ws}/agents/${slug}`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ md }),
+        body: JSON.stringify({ md: next }),
       }).then(async (r) => { if (!r.ok) throw new Error((await r.json()).error); });
       window.dispatchEvent(new Event('argo:refresh'));
       setMsg(t('chat.saved'));
@@ -391,6 +395,28 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
     } finally {
       setSaving(false);
     }
+  }
+
+  // 규칙(## 일하는 방식) — 카드 md에서 파싱해 보여주고, 추가하면 그 섹션에 불릿으로 append 후 즉시 저장
+  const rules = (() => {
+    const m = (md ?? '').match(/## 일하는 방식\s*\n([\s\S]*?)(?=\n## |$)/);
+    return m ? m[1].split('\n').map((l) => l.replace(/^[-*]\s*/, '').trim()).filter((l) => l && !l.startsWith('(')) : [];
+  })();
+  function addRule() {
+    const text = ruleInput.trim();
+    if (!text || md === null) return;
+    const h = '## 일하는 방식';
+    let next;
+    const i = md.indexOf(h);
+    if (i === -1) {
+      next = `${md.trimEnd()}\n\n${h}\n- ${text}\n`;
+    } else {
+      const rest = md.indexOf('\n## ', i + h.length);
+      const end = rest === -1 ? md.length : rest;
+      next = `${md.slice(0, end).trimEnd()}\n- ${text}\n${rest === -1 ? '' : md.slice(end)}`;
+    }
+    setMd(next); setRuleInput('');
+    save(next);
   }
 
   async function fire() {
@@ -433,6 +459,67 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
               </>
             )}
           </div>
+          {/* 상세 정보 — 처리량·토큰·비용·많이 쓴 도구 (usage.jsonl 집계) */}
+          <div style={{ display: 'grid', gap: 8 }}>
+            <span className="microlabel">
+              {t('chat.card.stats')}
+              {(meta.runner || meta.model) && (
+                <span className="mono" style={{ marginLeft: 8, color: 'var(--fg-3)', textTransform: 'none', letterSpacing: 0 }}>
+                  {meta.runner || 'claude'}{meta.model ? ` · ${meta.model}` : ''}
+                </span>
+              )}
+            </span>
+            {!stats || stats.turns === 0 ? (
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{t('chat.card.noStats')}</span>
+            ) : (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                  {[
+                    [t('chat.card.turns'), String(stats.turns)],
+                    [t('chat.card.tokens'), `${fmtTok(stats.contextTotal)} / ${fmtTok(stats.output)}`],
+                    [t('chat.card.cost'), stats.costUsd != null ? fmtMoney(stats.costUsd, { approx: false }) : '—'],
+                    [t('chat.card.avgTime'), stats.avgMs != null ? `${(stats.avgMs / 1000).toFixed(0)}s` : '—'],
+                  ].map(([k, v]) => (
+                    <div key={k}>
+                      <div className="mono" style={{ fontSize: 15, fontWeight: 650 }}>{v}</div>
+                      <div className="microlabel" style={{ marginTop: 2 }}>{k}</div>
+                    </div>
+                  ))}
+                </div>
+                {stats.topTools?.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
+                    <span className="microlabel">{t('chat.card.topTools')}</span>
+                    {stats.topTools.map((tool) => (
+                      <span key={tool.name} className="chip mono" style={{ fontSize: 10.5 }}>{tool.name} ×{tool.count}</span>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          {/* 규칙 — 카드의 "일하는 방식" 섹션을 그대로 파싱. 추가하면 카드에 불릿으로 붙고 즉시 저장 */}
+          <div style={{ display: 'grid', gap: 7 }}>
+            <span className="microlabel">{t('chat.card.rules')} · {rules.length}</span>
+            {rules.length === 0 ? (
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{t('chat.card.noRules')}</span>
+            ) : (
+              <div style={{ display: 'grid', gap: 4 }}>
+                {rules.map((r, i) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', gap: 7 }}>
+                    <span style={{ color: 'var(--fg-3)', flex: 'none' }}>{i + 1}.</span>
+                    <span>{r}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input suppressHydrationWarning value={ruleInput} onChange={(e) => setRuleInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !imeGuard(e)) { e.preventDefault(); addRule(); } }}
+                placeholder={t('chat.card.addRulePh')}
+                style={{ flex: 1, height: 30, padding: '0 10px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12 }} />
+              <button className="btn sm" disabled={saving || !ruleInput.trim()} onClick={addRule}>{t('chat.card.add')}</button>
+            </div>
+          </div>
           {/* 텔레그램 직통 봇 — 이 크루의 개인 연락처. 연결되면 그린 도트 */}
           <div style={{ display: 'grid', gap: 7, padding: '12px 14px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -463,6 +550,7 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
               <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{tgMsg}</span>
             </div>
           </div>
+          <span className="microlabel">{t('chat.card.raw')}</span>
           {md === null ? (
             <Skeleton h={220} />
           ) : (
@@ -479,7 +567,7 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
             />
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button className="btn btn-primary sm" onClick={save} disabled={saving || md === null}>
+            <button className="btn btn-primary sm" onClick={() => save()} disabled={saving || md === null}>
               {saving ? <Spinner size={12} /> : t('chat.save')}
             </button>
             <span style={{ fontSize: 12, color: msg === t('chat.saved') ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>

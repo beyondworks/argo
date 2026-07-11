@@ -5,9 +5,10 @@ export async function GET(_req, { params }) {
   try {
     const { ws, slug } = await params;
     const { md, meta } = await readAgentCard(ws, slug);
-    const [{ readEvents }, { listInstalledSkills }] = await Promise.all([
+    const [{ readEvents }, { listInstalledSkills }, { agentStats }] = await Promise.all([
       import('../../../../../../src/events.mjs'),
       import('../../../../../../src/market.mjs'),
+      import('../../../../../../src/usage.mjs'),
     ]);
     const events = await readEvents(ws, 300).catch(() => []);
     const recent = events
@@ -15,7 +16,8 @@ export async function GET(_req, { params }) {
       .slice(-8).reverse()
       .map((e) => ({ gist: e.gist, ts: e.ts, ok: e.ok !== false, ms: e.ms ?? null }));
     const skills = await listInstalledSkills(ws).catch(() => []);
-    return Response.json({ md, meta, recent, skills });
+    const stats = await agentStats(ws, slug).catch(() => null);
+    return Response.json({ md, meta, recent, skills, stats });
   } catch {
     return Response.json({ error: '크루를 찾을 수 없습니다' }, { status: 404 });
   }

@@ -117,6 +117,10 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
   await writeFile(file, md);
   const after = parseFrontmatter(md);
   await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: after.name });
+  if (name !== undefined && name.trim() && before.name !== after.name) {
+    // 텔레그램 직통 봇의 표시 이름도 따라가게 — 실패(레이트리밋)해도 카드 수정은 완료된 것
+    import('./connections.mjs').then((m) => m.syncAgentBotName(wsId, slug, after.name)).catch(() => {});
+  }
   return after;
 }
 

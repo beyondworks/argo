@@ -5,7 +5,7 @@ import { appendFile, readFile } from 'node:fs/promises';
 import { paths } from './workspace.mjs';
 
 /** SDK result 메시지의 usage를 한 줄로 기록. kind: 'chat' | 'hire' | 'delegate'(from=위임한 크루). */
-export async function appendUsage(wsId, { kind, slug, from, model, usage, costUsd, ms }) {
+export async function appendUsage(wsId, { kind, slug, from, model, usage, costUsd, ms, tools }) {
   if (!usage) return;
   const row = {
     ts: new Date().toISOString(),
@@ -18,6 +18,7 @@ export async function appendUsage(wsId, { kind, slug, from, model, usage, costUs
     cacheCreate: usage.cache_creation_input_tokens ?? 0,
     costUsd: costUsd ?? null,
     ms: ms ?? null,
+    ...(tools && Object.keys(tools).length ? { tools } : {}),
   };
   try {
     await appendFile(paths(wsId).usage, `${JSON.stringify(row)}\n`);
@@ -77,6 +78,31 @@ export async function readUsageSummary(wsId) {
     costPerTurn: s.turns > 0 && s.hasCost ? s.costUsd / s.turns : null,                   // 효율 ②
   });
   return { today: enrich(sum.today), month: enrich(sum.month), total: enrich(sum.total) };
+}
+
+/** 크루 1명의 누적 통계 — 카드 패널 "상세 정보"의 원천. */
+export async function agentStats(wsId, slug) {
+  const rows = (await readRows(wsId)).filter((r) => r.slug === slug);
+  const s = { turns: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0, hasCost: false, ms: 0, msCount: 0 };
+  const tools = {};
+  for (const r of rows) {
+    s.turns += 1;
+    s.input += r.input ?? 0; s.output += r.output ?? 0;
+    s.cacheRead += r.cacheRead ?? 0; s.cacheCreate += r.cacheCreate ?? 0;
+    if (typeof r.costUsd === 'number') { s.costUsd += r.costUsd; s.hasCost = true; }
+    if (typeof r.ms === 'number') { s.ms += r.ms; s.msCount += 1; }
+    for (const [k, v] of Object.entries(r.tools ?? {})) tools[k] = (tools[k] ?? 0) + v;
+  }
+  const topTools = Object.entries(tools).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([name, count]) => ({ name: name.replace(/^mcp__/, '').replace(/__/g, '·'), count }));
+  return {
+    turns: s.turns,
+    contextTotal: s.input + s.cacheRead + s.cacheCreate, // 읽은 맥락
+    output: s.output,                                     // 생성
+    costUsd: s.hasCost ? s.costUsd : null,
+    avgMs: s.msCount ? Math.round(s.ms / s.msCount) : null,
+    topTools,
+  };
 }
 
 /** 이번 달 지출(USD) — 예산 상한 게이트용 경량 조회. */

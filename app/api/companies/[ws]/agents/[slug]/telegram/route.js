@@ -1,4 +1,5 @@
-import { validateConnection, updateAgentBot, maskConnections, gatewayStatus } from '../../../../../../../src/connections.mjs';
+import { validateConnection, updateAgentBot, maskConnections, gatewayStatus, syncAgentBotName } from '../../../../../../../src/connections.mjs';
+import { readAgentCard } from '../../../../../../../src/persona.mjs';
 import { ensureGateway } from '../../../../../../../src/gateway.mjs';
 import { appendEvent } from '../../../../../../../src/events.mjs';
 
@@ -13,6 +14,8 @@ export async function POST(req, { params }) {
     const botUsername = await validateConnection('telegram', token.trim());
     const all = await updateAgentBot(ws, slug, { token: token.trim(), botUsername });
     await appendEvent(ws, { type: 'gateway', kind: 'telegram', op: 'agent-bot', slug });
+    // 봇 표시 이름을 크루 이름으로 — 텔레그램에서 크루 이름 그대로 보이게(베스트에포트)
+    readAgentCard(ws, slug).then(({ meta }) => syncAgentBotName(ws, slug, meta.name)).catch(() => {});
     return Response.json({ connections: maskConnections(all), gateway: await gatewayStatus(ws) });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });

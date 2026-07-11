@@ -1225,6 +1225,12 @@ input, textarea { font: inherit; color: var(--fg); }
   width: min(400px, calc(100vw - 28px)); max-height: calc(100vh - 84px);
   display: flex; flex-direction: column;
   animation: tasksIn 0.22s cubic-bezier(0.23, 1, 0.32, 1) both;
+  isolation: isolate;
+}
+/* 오버레이 패널은 뒤가 비치면 안 된다 — 글래스 테마의 반투명 .card 아래에 불투명 캔버스를 깐다 */
+.tasks-panel::before {
+  content: ''; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; background: var(--bg);
 }
 @keyframes tasksIn { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: none; } }
 .tasks-list { overflow-y: auto; padding: 0 6px 8px; display: flex; flex-direction: column; }

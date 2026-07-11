@@ -29,6 +29,25 @@ export async function validateConnection(kind, token) {
   return '';
 }
 
+/** 크루 이름 변경을 봇 표시 이름에 동기화(setMyName). @username은 BotFather 전용이라 불가.
+    텔레그램이 이름 변경 빈도를 제한하므로 베스트에포트 — 실패해도 카드 수정은 막지 않는다. */
+export async function syncAgentBotName(wsId, slug, name) {
+  const all = await loadConnections(wsId);
+  const bot = all.telegram.agents?.[slug];
+  if (!bot?.token || !name?.trim()) return false;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${bot.token}/setMyName`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: name.trim().slice(0, 64) }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return !!(await res.json().catch(() => ({}))).ok;
+  } catch {
+    return false;
+  }
+}
+
 /** 게이트웨이 폴러 하트비트 조회 — 40초 내 성공 비트가 있어야 "가동 중". */
 export async function gatewayStatus(wsId) {
   const read = async (kind) => {
