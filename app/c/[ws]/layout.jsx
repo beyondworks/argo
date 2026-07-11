@@ -140,10 +140,19 @@ export default function CompanyShell({ children, params }) {
     : pathname.endsWith('/activity') ? t('nav.activity')
     : pathname.endsWith('/settings') ? t('nav.settings')
     : currentCrew ? currentCrew.name : t('nav.deck');
-  // 사이드바 크루 — 팀별 그룹 (팀 없는 크루는 마지막)
+  // 사이드바 크루 — 팀별 그룹 (팀 없는 크루는 마지막). 아코디언 접힘 상태는 localStorage 유지.
   const teams = [...new Set(agents.map((a) => a.team).filter(Boolean))];
   const grouped = [...teams.map((t) => [t, agents.filter((a) => a.team === t)]), ['', agents.filter((a) => !a.team)]]
     .filter(([, list]) => list.length > 0);
+  const [collapsed, setCollapsed] = useState({});
+  useEffect(() => {
+    try { setCollapsed(JSON.parse(localStorage.getItem('argo-nav-teams') || '{}')); } catch { /* 손상 시 전부 펼침 */ }
+  }, []);
+  const toggleTeam = (key) => setCollapsed((c) => {
+    const next = { ...c, [key]: !c[key] };
+    try { localStorage.setItem('argo-nav-teams', JSON.stringify(next)); } catch { /* 저장 실패해도 동작 */ }
+    return next;
+  });
 
   return (
     <div className="shell">
@@ -174,10 +183,19 @@ export default function CompanyShell({ children, params }) {
         </a>
 
         {data === null && <><div className="side-group">{t('common.crew')}</div><Skeleton h={60} style={{ margin: '0 10px' }} /></>}
-        {grouped.map(([team, list]) => (
-          <div key={team || '_none'}>
-            <div className="side-group">{team || t('nav.crewCount', { n: agents.length })}</div>
-            {list.map((a) => {
+        {grouped.map(([team, list]) => {
+          const key = team || '_none';
+          const isCollapsed = !!collapsed[key];
+          return (
+          <div key={key}>
+            <button className="side-group" onClick={() => toggleTeam(key)}
+              style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', background: 'none', border: 0, padding: undefined }}
+              aria-expanded={!isCollapsed}>
+              <span aria-hidden="true" style={{ display: 'inline-block', fontSize: 8, transition: 'transform 0.16s cubic-bezier(0.23, 1, 0.32, 1)', transform: isCollapsed ? 'rotate(-90deg)' : 'none' }}>▾</span>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team || t('nav.crewCount', { n: agents.length })}</span>
+              {isCollapsed && <span className="mono" style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--fg-3)' }}>{list.length}</span>}
+            </button>
+            {!isCollapsed && list.map((a) => {
               const href = `/c/${ws}/crew/${a.slug}`;
               const active = pathname === href;
               return (
@@ -200,7 +218,8 @@ export default function CompanyShell({ children, params }) {
               );
             })}
           </div>
-        ))}
+          );
+        })}
         <a href={`/c/${ws}`} className="nav-item" style={{ color: 'var(--fg-3)', fontSize: 12.5 }}>
           <Icon name="plus" size={15} /> {t('nav.hire')}
         </a>

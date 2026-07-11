@@ -1,6 +1,6 @@
 // 회의실 — 사장 + 여러 크루가 한 방에서 대화한다(맥락 공유가 눈에 보이는 곳).
 // @멘션한 크루가 답하고, 뒤 순서 크루는 앞 크루의 발언을 보고 보탠다. 회의 내용은 각 턴의 일지로 회사 기억이 된다.
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
@@ -20,6 +20,36 @@ export async function loadRoom(wsId) {
 async function saveRoom(wsId, room) {
   await mkdir(paths(wsId).chats, { recursive: true });
   await writeFile(file(wsId), JSON.stringify(room, null, 2));
+}
+
+/** 지난 회의 목록 — "회의 마치기"로 적재된 방들(최신순). 회의실 좌측 레일의 원천. */
+export async function listArchivedMeetings(wsId) {
+  const dir = join(paths(wsId).chats, '.archive');
+  let names = [];
+  try {
+    names = (await readdir(dir)).filter((n) => /^room-\d+\.json$/.test(n));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const n of names) {
+    try {
+      const r = JSON.parse(await readFile(join(dir, n), 'utf8'));
+      const first = (r.messages ?? []).find((m) => m.who === 'user');
+      out.push({
+        id: n,
+        ts: Number(n.match(/^room-(\d+)\.json$/)[1]),
+        count: r.messages?.length ?? 0,
+        topic: String(first?.text ?? '').replace(/@\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 42),
+      });
+    } catch { /* 깨진 보관본은 건너뛴다 */ }
+  }
+  return out.sort((a, b) => b.ts - a.ts);
+}
+
+export async function readArchivedMeeting(wsId, id) {
+  if (!/^room-\d+\.json$/.test(id)) throw new Error('잘못된 회의 id');
+  return JSON.parse(await readFile(join(paths(wsId).chats, '.archive', id), 'utf8'));
 }
 
 /** 회의 마치기 — 회의록을 일지(vault/journal)로 남겨 회사 기억으로 적재하고, 방은 보관 후 비운다(회의 1건 = 적재 1건). */
