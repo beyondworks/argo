@@ -172,10 +172,11 @@ ${userMsg}${attNote}
   const caps = await loadCapabilities(wsId);
   const readTools = ['Read', 'Glob', 'Grep', ...(caps.browser ? ['WebFetch', 'WebSearch'] : []), ...mcpAllow, 'mcp__crew'];
   const sideTools = ['Write', ...(caps.fs ? ['Edit'] : []), ...(caps.shell ? ['Bash'] : [])];
+  const offGuide = '필요한 작업이면 거절로 끝내지 말고 "설정 > 로컬 능력"에서 켜 주시면 바로 해드리겠다고 안내하라';
   const capPrompt = `\n## 로컬 능력 — 회사 설정이 허용한 범위
-- 파일 시스템(워크스페이스 밖): ${caps.fs ? '허용 — 신중하게, 파괴적 변경은 결재를 먼저 올려라' : '꺼짐 — vault 밖의 파일은 읽지도 쓰지도 마라'}
-- 웹 브라우징: ${caps.browser ? '허용(WebFetch/WebSearch)' : '꺼짐'}
-- 셸 명령(Bash): ${caps.shell ? '허용' : '꺼짐'}
+- 파일 시스템(워크스페이스 밖): ${caps.fs ? '허용 — 신중하게, 파괴적 변경은 결재를 먼저 올려라' : `꺼짐 — vault 밖의 파일은 읽지도 쓰지도 마라. ${offGuide}`}
+- 웹 브라우징: ${caps.browser ? '허용(WebFetch/WebSearch)' : `꺼짐 — ${offGuide}`}
+- 셸 명령(Bash): ${caps.shell ? '허용' : `꺼짐 — ${offGuide}`}
 ${caps.bypass ? '- 권한 우회 모드: 켜짐 — 결재 없이 실행되니 되돌릴 수 없는 명령은 스스로 한 번 더 확인하라' : '- 부작용 있는 실행은 결재 승인 후 이어진다 — 승인 대기는 정상 흐름이다'}`;
 
   // 첨부 — 이미지는 base64 블록으로, 문서·데이터 파일은 vault 경로로 안내(Read 열람)

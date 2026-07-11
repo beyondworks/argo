@@ -7,7 +7,8 @@ import { setTurnStatus } from './turn-status.mjs';
 const WAIT_MS = 180_000; // 결재 대기 상한 — chat 라우트 maxDuration(300s) 안쪽
 const POLL_MS = 2_000;
 
-const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'TodoWrite', 'WebFetch', 'WebSearch']);
+const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'TodoWrite']);
+const WEB_TOOLS = new Set(['WebFetch', 'WebSearch']); // 읽기지만 회사 밖으로 나간다 — browser 능력을 따른다
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
 
 function describe(toolName, input) {
@@ -28,6 +29,11 @@ export function makePermissionGate(wsId, slug, caps, wsRoot) {
   return async function canUseTool(toolName, input, { signal } = {}) {
     const allow = { behavior: 'allow', updatedInput: input };
     if (READ_TOOLS.has(toolName) || toolName.startsWith('mcp__')) return allow; // 읽기·opt-in 도구
+
+    if (WEB_TOOLS.has(toolName)) {
+      if (caps.browser) return allow; // 웹 열람은 읽기 — 능력만 켜져 있으면 결재 없이
+      return { behavior: 'deny', message: '웹 브라우징 능력이 꺼져 있다. 웹을 열람할 수 없다 — 사장에게 "설정 > 로컬 능력 > 웹 브라우징"을 켜 달라고 안내하라.' };
+    }
 
     if (WRITE_TOOLS.has(toolName)) {
       const target = input.file_path ?? input.notebook_path ?? '';
