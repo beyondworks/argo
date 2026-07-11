@@ -444,7 +444,7 @@ function ApprovalsCard({ ws, agents }) {
 function VoyageLog({ docs, agents }) {
   const { t } = useLang();
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
-  const entries = (docs ?? []).slice(0, 8).map((d) => {
+  const entries = (docs ?? []).slice(0, 30).map((d) => {
     const slug = d.rel
       .replace(/^(conversations|notes|journal)\//, '')
       .replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-/, '')
@@ -467,7 +467,8 @@ function VoyageLog({ docs, agents }) {
       ) : entries.length === 0 ? (
         <p style={{ padding: '0 18px 16px', color: 'var(--fg-3)', fontSize: 12.5 }}>{t('deck.noLogYet')}</p>
       ) : (
-        <div style={{ padding: '0 0 8px' }}>
+        <div /* 기록이 늘어도 카드가 자라지 않는다 — 하단 라인 고정, 안에서 스크롤 */
+          style={{ padding: '0 0 8px', maxHeight: 330, overflowY: 'auto' }}>
           {entries.map((e) => (
             <div key={e.rel} className="row" style={{ padding: '8px 18px', gap: 10 }}>
               <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', flex: 'none' }}>{e.hhmm}</span>
