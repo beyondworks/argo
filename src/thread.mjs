@@ -27,6 +27,24 @@ export async function appendTurn(wsId, slug, { userMsg, reply, handover, session
   return t;
 }
 
+/** 참조(cc) 공유 — 대상 크루 스레드에 노트를 남긴다. pending 표시는 "아직 그 크루가 못 본 맥락"이라는 뜻. */
+export async function appendSharedNote(wsId, slug, text) {
+  const t = await loadThread(wsId, slug);
+  t.messages.push({ who: 'user', shared: true, pending: true, text, ts: Date.now() });
+  await mkdir(paths(wsId).chats, { recursive: true });
+  await writeFile(file(wsId, slug), JSON.stringify(t, null, 2));
+}
+
+/** 미소비 공유 노트 회수 — 다음 턴 프롬프트에 1회만 주입되도록 pending을 해제하며 반환한다. */
+export async function takeSharedNotes(wsId, slug) {
+  const t = await loadThread(wsId, slug);
+  const notes = t.messages.filter((m) => m.shared && m.pending);
+  if (!notes.length) return [];
+  for (const m of notes) delete m.pending;
+  await writeFile(file(wsId, slug), JSON.stringify(t, null, 2));
+  return notes.map((m) => m.text);
+}
+
 /** 새 대화 — 스레드와 세션을 함께 비운다. vault 기억은 그대로다(그게 제품의 핵심). */
 export async function resetThread(wsId, slug) {
   await rm(file(wsId, slug), { force: true });

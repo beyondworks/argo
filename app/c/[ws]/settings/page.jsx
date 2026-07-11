@@ -427,6 +427,18 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
           {agents.map((a) => <option key={a.slug} value={a.slug}>{a.name} — {a.role}</option>)}
         </select>
       </label>
+      {kind === 'telegram' && agents.length > 0 && (
+        <div style={{ display: 'grid', gap: 6 }}>
+          <span className="microlabel">{t('settings.conn.reachable')}</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {agents.map((a) => (
+              <span key={a.slug} className="chip" title={a.role}>
+                @{a.name}{(crew ? a.slug === crew : a.slug === agents[0]?.slug) ? ` · ${t('settings.conn.defaultChip')}` : ''}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto', paddingTop: 10 }}>
         <button className="btn btn-primary sm" disabled={saving || (!conn?.hasToken && !token.trim())} onClick={() => save(true)}>
           {saving ? <Spinner size={12} /> : on ? t('settings.conn.saveSettings') : t('settings.conn.on')}

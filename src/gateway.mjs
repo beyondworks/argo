@@ -4,7 +4,7 @@
 import { listCompanies, listAgents } from './hub.mjs';
 import { loadConnections, updateConnection } from './connections.mjs';
 import { chat } from './chat.mjs';
-import { loadThread, appendTurn } from './thread.mjs';
+import { loadThread, appendTurn, appendSharedNote } from './thread.mjs';
 import { resolveWithFollowUp } from './approval-actions.mjs';
 import { onNotify } from './notify.mjs';
 import { daemonLease } from './lock.mjs';
@@ -94,19 +94,41 @@ async function slackApi(token, method, body) {
   return j;
 }
 
-/** "@이름 지시" → 크루 슬러그 + 본문. 이름 미지정이면 기본 크루. */
-async function routeMessage(wsId, cfg, text) {
+/** "@이름 지시" → to 크루, "@이름1 @이름2 지시" → 첫 번째가 to, 나머지는 cc(맥락 공유). 이름 미지정이면 기본 크루. (export는 테스트용) */
+export async function routeMessage(wsId, cfg, text) {
   const agents = await listAgents(wsId);
   if (!agents.length) return { error: '아직 크루가 없습니다. Argo 데크에서 먼저 영입해 주세요.' };
-  const m = text.match(/^@(\S+)\s+([\s\S]+)/);
-  if (m) {
-    const key = m[1].toLowerCase();
-    const target = agents.find((a) => a.slug === key || a.name.toLowerCase() === key);
-    if (!target) return { error: `"${m[1]}" 크루를 못 찾았습니다. 크루: ${agents.map((a) => a.name).join(', ')}` };
-    return { slug: target.slug, name: target.name, msg: m[2].trim() };
+  let body = text.trim();
+  // 그룹방에서 봇 멘션(@봇이름)으로 시작하면 벗겨낸다 — 그 뒤의 @크루 멘션이 라우팅 대상
+  if (cfg.botUsername) body = body.replace(new RegExp(`^@?${cfg.botUsername.replace(/^@/, '')}\\s+`, 'i'), '');
+  const find = (key) => agents.find((a) => a.slug === key.toLowerCase() || a.name.toLowerCase() === key.toLowerCase());
+  const mentions = [];
+  let m;
+  while ((m = body.match(/^@(\S+)\s+/))) {
+    const target = find(m[1]);
+    if (!target) break; // 크루가 아닌 @단어는 본문의 일부로 남긴다
+    if (!mentions.some((a) => a.slug === target.slug)) mentions.push(target);
+    body = body.slice(m[0].length);
   }
+  if (!mentions.length && /^@\S+\s+\S/.test(body)) {
+    const bad = body.match(/^@(\S+)/)[1];
+    return { error: `"${bad}" 크루를 못 찾았습니다. 크루: ${agents.map((a) => a.name).join(', ')} — "크루"라고 보내면 현황을 보여드립니다.` };
+  }
+  const to = mentions[0] ?? (agents.find((a) => a.slug === cfg.defaultCrew) ?? agents[0]);
+  return { slug: to.slug, name: to.name, msg: body.trim(), cc: mentions.slice(1) };
+}
+
+/** "크루"/"/crew"/"현황" — 어떤 크루가 이 채팅에 연결되어 있는지 즉답(모델 호출 없음). */
+async function crewStatusReply(wsId, cfg) {
+  const agents = await listAgents(wsId);
+  if (!agents.length) return '아직 크루가 없습니다. Argo 데크에서 먼저 영입해 주세요.';
   const def = agents.find((a) => a.slug === cfg.defaultCrew) ?? agents[0];
-  return { slug: def.slug, name: def.name, msg: text.trim() };
+  return [
+    `**연결된 크루 ${agents.length}명**`,
+    ...agents.map((a) => `• ${a.name} (@${a.slug})${a.role ? ` — ${a.role}` : ''}${a.runner && a.runner !== 'claude' ? ` · ${a.runner}` : ''}${a.slug === def?.slug ? ' · 기본' : ''}`),
+    '',
+    '"@이름 지시"로 특정 크루를 부르고, "@이름1 @이름2 지시"처럼 여러 명을 적으면 첫 번째가 실행하고 나머지에게 맥락이 공유됩니다(cc).',
+  ].join('\n');
 }
 
 /** 메신저발 지시 1턴 — 웹과 동일 경로(스레드 이어쓰기 + vault 기억 + 첨부 비전). */
@@ -117,12 +139,23 @@ async function runTurn(wsId, cfg, text, attachments = []) {
     const item = await resolveWithFollowUp(wsId, ap[2], ap[1] === '승인');
     return `결재 ${ap[1]} 처리: ${item.action}\n실행 결과는 담당 크루가 이어서 보고합니다.`;
   }
+  if (/^\/?(크루|현황|crew|status)$/i.test(text.trim())) return crewStatusReply(wsId, cfg);
   const r = await routeMessage(wsId, cfg, text);
   if (r.error) return r.error;
   const t = await loadThread(wsId, r.slug);
   const turn = await chat(wsId, r.slug, r.msg, t.sessionId, { source: 'messenger', attachments });
   await appendTurn(wsId, r.slug, { userMsg: r.msg, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments });
-  return `[${r.name}]\n${turn.reply}`;
+  // cc 크루에게 맥락 공유 — 실행은 to 크루만(폭주 방지), 나머지는 다음 턴에 이 맥락을 알고 시작한다
+  let footer = '';
+  if (r.cc?.length) {
+    const note = `(참조 공유) 사장이 ${r.name}에게 지시: ${r.msg}\n\n${r.name}의 답변:\n${String(turn.reply).slice(0, 2000)}`;
+    const shared = [];
+    for (const c of r.cc.slice(0, 3)) {
+      try { await appendSharedNote(wsId, c.slug, note); shared.push(c.name); } catch { /* 공유 실패는 본답변을 막지 않는다 */ }
+    }
+    if (shared.length) footer = `\n\n(참조 공유: ${shared.join(', ')} — 다음 대화부터 이 맥락을 알고 시작합니다)`;
+  }
+  return `[${r.name}]\n${turn.reply}${footer}`;
 }
 
 /* ─── 텔레그램 — long-poll. 첫 발신자가 회사와 페어링되고 이후 그 채팅만 듣는다. ─── */
@@ -175,7 +208,7 @@ function startTelegram(wsId, getCfg) {
           if (!cfg.chatId) { // 페어링 — 첫 발신자를 사장 채팅으로 고정
             await updateConnection(wsId, 'telegram', { chatId: String(msg.chat.id) });
             await appendEvent(wsId, { type: 'gateway', kind: 'telegram', op: 'paired' });
-            await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '이 채팅이 회사와 연결되었습니다.\n"@크루이름 지시" 또는 그냥 지시를 보내면 기본 크루가 응답합니다.' });
+            await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '이 채팅이 회사와 연결되었습니다.\n"@크루이름 지시" 또는 그냥 지시를 보내면 기본 크루가 응답합니다.\n"@이름1 @이름2 지시"는 첫 크루가 실행하고 나머지에게 맥락을 공유(cc)합니다.\n"크루"라고 보내면 연결된 크루 현황을 보여드립니다.' });
             continue;
           }
           if (String(msg.chat.id) !== String(cfg.chatId)) continue; // 페어링된 채팅만
@@ -306,6 +339,8 @@ export function ensureGateway() {
   globalThis.__argoGateway = true;
   const lease = daemonLease('gateway'); // Next 멀티 워커에서도 폴러 주체는 하나만(중복 폴 = 텔레그램 409)
   console.log('[argo] 메신저 게이트웨이 매니저 시작');
+  // 기동 시 전 회사 스캐폴드 백필 — 웹/데스크톱 어느 채널로 켜도 표준 트리·기본 설정이 전역 보장된다
+  import('./provision.mjs').then((m) => m.ensureAllScaffolds()).catch(() => {});
 
   const running = new Map(); // `${wsId}:${kind}` → { stop, key }
   // 푸시는 이벤트가 난 워커가 직접 보낸다(1회 발생 = 1회 발송, 충돌 없음). 리더 단일화는 폴러에만.

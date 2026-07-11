@@ -27,16 +27,15 @@ export function paths(wsId) {
   };
 }
 
-/** 회사 생성 — 가입 직후 1회. 폴더 트리 + company.json 시드. */
+/** 회사 생성 — 가입 직후 1회. 표준 스캐폴드(폴더 트리 + 기본 설정) + company.json 시드. */
 export async function createCompany(wsId, name, owner) {
   const p = paths(wsId);
   if (existsSync(p.company)) throw new Error(`이미 존재하는 회사: ${wsId}`);
-  for (const d of [p.agents, p.skills, p.journal, p.notes]) {
-    await mkdir(d, { recursive: true });
-  }
+  const { ensureScaffold } = await import('./provision.mjs'); // 동적 — provision→workspace 순환 방지
+  await ensureScaffold(wsId);
   const company = { id: wsId, name, owner, created: new Date().toISOString() };
   await writeFile(p.company, JSON.stringify(company, null, 2));
-  await writeFile(p.index, `# ${name} — 회사 기억 인덱스\n\n(아직 기록 없음)\n`);
+  await writeFile(p.index, `# ${name} — 회사 기억 인덱스\n\n(아직 기록 없음)\n`); // 회사 이름 반영 — 스캐폴드 기본을 덮는다
   return company;
 }
 
