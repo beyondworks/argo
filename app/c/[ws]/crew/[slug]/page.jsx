@@ -330,6 +330,20 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
   const [msg, setMsg] = useState('');
   const [fireOpen, setFireOpen] = useState(false);
   const [firing, setFiring] = useState(false);
+  // 기억 카드 — 회사가 아는 사장 (vault/notes/사장-프로필.md)
+  const [boss, setBoss] = useState(null); // { items: [{section, text}] }
+  const [bossInput, setBossInput] = useState('');
+  const [bossSection, setBossSection] = useState('취향');
+  async function saveBoss(items) {
+    try {
+      const r = await fetch(`/api/companies/${ws}/boss-profile`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      setBoss(d);
+    } catch (e) { setMsg(String(e.message)); }
+  }
   // 텔레그램 직통 봇 — 이 크루의 개인 연락처
   const [tgBot, setTgBot] = useState(null); // { hasToken, botUsername, paired }
   const [tgAlive, setTgAlive] = useState(false);
@@ -348,6 +362,7 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
     api(`/api/companies/${ws}/agents/${slug}`)
       .then((d) => { setMd(d.md); setMeta(d.meta ?? {}); setStats(d.stats ?? null); setProfile({ recent: d.recent ?? [], skills: d.skills ?? [] }); })
       .catch((e) => setMsg(String(e.message)));
+    api(`/api/companies/${ws}/boss-profile`).then(setBoss).catch(() => setBoss({ items: [] }));
     loadTg();
     const iv = setInterval(loadTg, 10000);
     return () => clearInterval(iv);
@@ -514,10 +529,45 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
             )}
             <div style={{ display: 'flex', gap: 8 }}>
               <input suppressHydrationWarning value={ruleInput} onChange={(e) => setRuleInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !imeGuard(e)) { e.preventDefault(); addRule(); } }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); addRule(); } }}
                 placeholder={t('chat.card.addRulePh')}
                 style={{ flex: 1, height: 30, padding: '0 10px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12 }} />
               <button className="btn sm" disabled={saving || !ruleInput.trim()} onClick={addRule}>{t('chat.card.add')}</button>
+            </div>
+          </div>
+          {/* 기억 카드 — 회사가 아는 사장. 크루가 대화에서 자동 축적, 여기서 정정("그거 잊어") */}
+          <div style={{ display: 'grid', gap: 7 }}>
+            <span className="microlabel">{t('chat.boss.title')}{boss?.items?.length ? ` · ${boss.items.length}` : ''}</span>
+            {!boss ? <Skeleton h={40} /> : boss.items.length === 0 ? (
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{t('chat.boss.empty')}</span>
+            ) : (
+              <div style={{ display: 'grid', gap: 4 }}>
+                {boss.items.map((it, i) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', gap: 7, alignItems: 'center', minWidth: 0 }}>
+                    <span className="chip" style={{ flex: 'none', fontSize: 10 }}>{t(`chat.boss.sec.${it.section}`)}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>{it.text}</span>
+                    <button className="btn sm" style={{ flex: 'none', padding: '1px 8px', fontSize: 10.5 }}
+                      title={t('chat.boss.forget')}
+                      onClick={() => saveBoss(boss.items.filter((_, j) => j !== i))}>
+                      {t('chat.boss.forget')}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <select value={bossSection} onChange={(e) => setBossSection(e.target.value)}
+                style={{ height: 30, padding: '0 8px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12 }}>
+                {['취향', '결정', '금지'].map((s) => <option key={s} value={s}>{t(`chat.boss.sec.${s}`)}</option>)}
+              </select>
+              <input suppressHydrationWarning value={bossInput} onChange={(e) => setBossInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && bossInput.trim()) { e.preventDefault(); saveBoss([...(boss?.items ?? []), { section: bossSection, text: bossInput.trim() }]); setBossInput(''); } }}
+                placeholder={t('chat.boss.addPh')}
+                style={{ flex: 1, height: 30, padding: '0 10px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12 }} />
+              <button className="btn sm" disabled={!bossInput.trim()}
+                onClick={() => { saveBoss([...(boss?.items ?? []), { section: bossSection, text: bossInput.trim() }]); setBossInput(''); }}>
+                {t('chat.card.add')}
+              </button>
             </div>
           </div>
           {/* 텔레그램 직통 봇 — 이 크루의 개인 연락처. 연결되면 그린 도트 */}

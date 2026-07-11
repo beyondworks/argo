@@ -160,3 +160,39 @@ ${notes.map(line).join('\n') || '(아직 없음)'}
 ${journals.map(line).join('\n') || '(아직 없음)'}
 ${legacy.length ? `\n## 이전 기록\n${legacy.map(line).join('\n')}\n` : ''}`);
 }
+
+/* ── 사장 프로필 — "회사가 아는 사장". 크루가 자동 기록·갱신하고, 사장이 크루 카드에서 정정한다. */
+export const BOSS_PROFILE_REL = 'notes/사장-프로필.md';
+export const BOSS_SECTIONS = ['취향', '결정', '금지'];
+
+export async function readBossProfile(wsId) {
+  let md = '';
+  try { md = await readFile(join(paths(wsId).vault, BOSS_PROFILE_REL), 'utf8'); } catch { /* 아직 없음 */ }
+  const items = [];
+  for (const section of BOSS_SECTIONS) {
+    const m = md.match(new RegExp(`## ${section}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`));
+    if (!m) continue;
+    for (const l of m[1].split('\n')) {
+      const text = l.replace(/^[-*]\s*/, '').trim();
+      if (text && !text.startsWith('(')) items.push({ section, text });
+    }
+  }
+  return { md, items };
+}
+
+/** 항목 배열로 정규 md를 재구성해 저장 — 카드의 정정("그거 잊어")이 곧 파일 수정이다. */
+export async function writeBossProfile(wsId, items) {
+  const p = paths(wsId);
+  const sec = (name) => {
+    const list = items.filter((i) => i.section === name && i.text?.trim());
+    return `## ${name}\n${list.length ? list.map((i) => `- ${i.text.trim()}`).join('\n') : '(아직 없음)'}\n`;
+  };
+  const md = `# 사장 프로필 — 회사가 아는 사장
+
+(크루가 대화에서 알게 된 사장의 취향·확정 결정·금지사항을 기록한다. 사장이 크루 카드에서 직접 정정할 수 있다.)
+
+${BOSS_SECTIONS.map(sec).join('\n')}`;
+  await mkdir(p.notes, { recursive: true });
+  await writeFile(join(p.vault, BOSS_PROFILE_REL), md);
+  return readBossProfile(wsId);
+}

@@ -88,5 +88,13 @@ export async function applyPreset(wsId, presetKey) {
   // 리서치 기본기 — 프리셋 회사에 딥 리서치 스킬 기본 장착(막히면 우회하는 조사 사다리)
   const { installSkill } = await import('./market.mjs');
   await installSkill(wsId, 'deep-research').catch(() => { /* 스킬은 부가 — 온보딩을 막지 않는다 */ });
+  // 주간 업무 보고 — 매주 금 17:00, 직원이 진짜 회사처럼 주간 보고서를 올린다
+  await addRoutine(wsId, {
+    agentSlug, title: '주간 업무 보고',
+    prompt: '이번 주 vault 일지(journal)를 훑고 사장에게 주간 업무 보고서를 작성하라: ① 크루별로 한 일 요약 ② 만들어진 산출물·배운 것 ③ 다음 주 제안 3가지. 전체 15줄 이내, 근거 파일명을 짧게 표기.',
+    schedule: { type: 'weekly', time: '17:00', dow: 5 },
+  }).catch(() => {});
+  // 영입 시운전 — 첫 크루가 30초 안에 자기소개+샘플 산출물을 만들어 "빈 화면"을 없앤다(백그라운드)
+  import('./trial.mjs').then((m) => m.runTrialTurn(wsId, preset.crews[0][1])).catch(() => {});
   return { crews: preset.crews.length };
 }

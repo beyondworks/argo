@@ -105,6 +105,19 @@ export async function agentStats(wsId, slug) {
   };
 }
 
+/** 이번 달 크루별 인건비 — 급여 대장(데크). 비용 큰 순. */
+export async function monthCostByCrew(wsId) {
+  const month = new Date().toISOString().slice(0, 7);
+  const by = {};
+  for (const r of await readRows(wsId)) {
+    if (!r.ts?.startsWith(month) || !r.slug) continue;
+    const b = (by[r.slug] ??= { slug: r.slug, costUsd: 0, turns: 0, hasCost: false });
+    b.turns += 1;
+    if (typeof r.costUsd === 'number') { b.costUsd += r.costUsd; b.hasCost = true; }
+  }
+  return Object.values(by).sort((a, b) => b.costUsd - a.costUsd);
+}
+
 /** 이번 달 지출(USD) — 예산 상한 게이트용 경량 조회. */
 export async function monthCost(wsId) {
   const month = new Date().toISOString().slice(0, 7);

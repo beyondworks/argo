@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 
-export const SCAFFOLD_VERSION = 1;
+export const SCAFFOLD_VERSION = 2; // v2: inbox(받은 서류함 — 파일을 넣으면 크루가 처리)
 
 // 크루가 스스로 폴더 규율을 지키게 하는 안내 노트 — 시스템 프롬프트(폴더 정리 규칙)와 같은 내용의 사람용 버전
 const GUIDE = `---
@@ -21,6 +21,7 @@ title: Argo 폴더 사용법
 - **vault/notes/** — 주제 노트. 재사용 가치가 있는 지식이 [[링크]]로 이어집니다.
 - **vault/files/** — 주고받은 첨부(이미지·문서).
 - **vault/projects/** — 프로젝트성 산출물. 폴더명은 \`날짜_프로젝트명\` (예: \`20260711_뉴스레터-리뉴얼\`). 랜덤 영숫자 이름 금지.
+- **inbox/** — 받은 서류함. 파일을 넣으면 기본 크루가 알아서 읽고 처리해 보고합니다(넣는 것이 곧 지시).
 - **skills/** — 회사 스킬. 같은 일을 2번 하면 크루가 여기 규격을 남기고, 다음 턴부터 지침이 됩니다.
 - **agents/** — 크루 카드(md가 곧 시스템 프롬프트 — 열어서 고칠 수 있습니다).
 `;
@@ -32,7 +33,7 @@ export async function ensureScaffold(wsId) {
   try {
     if (JSON.parse(await readFile(stamp, 'utf8')).version >= SCAFFOLD_VERSION) return false;
   } catch { /* 스탬프 없음/손상 → 프로비저닝 진행 */ }
-  for (const d of [p.agents, p.chats, p.skills, p.journal, p.notes, join(p.vault, 'files'), join(p.vault, 'projects')]) {
+  for (const d of [p.agents, p.chats, p.skills, p.journal, p.notes, join(p.vault, 'files'), join(p.vault, 'projects'), join(p.root, 'inbox')]) {
     await mkdir(d, { recursive: true });
   }
   if (!existsSync(p.index)) await writeFile(p.index, '# 회사 기억 인덱스\n\n(아직 기록 없음)\n');

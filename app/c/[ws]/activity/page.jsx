@@ -18,7 +18,7 @@ const inFilter = (e, f) => {
 export default function Activity({ params }) {
   const { ws } = use(params);
   const { t, lang } = useLang();
-  const SOURCE = { deck: t('activity.source.deck'), messenger: t('activity.source.messenger'), routine: t('activity.source.routine'), delegate: t('activity.source.delegate') };
+  const SOURCE = { deck: t('activity.source.deck'), messenger: t('activity.source.messenger'), routine: t('activity.source.routine'), delegate: t('activity.source.delegate'), trial: t('activity.source.trial'), room: t('activity.source.room') };
   // 필터 정의 — '주요'가 opinionated default (정상 대화 턴 제외)
   const FILTERS = [
     ['main', t('activity.filter.main')],

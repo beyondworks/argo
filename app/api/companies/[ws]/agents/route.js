@@ -27,6 +27,8 @@ export async function POST(req, { params }) {
     const { prompt, name, team } = await req.json();
     if (!prompt?.trim()) return Response.json({ error: '한 줄 소개가 필요합니다' }, { status: 400 });
     const agent = await createAgentFromPrompt(ws, prompt.trim(), { name, team });
+    // 영입 시운전 — 백그라운드로 첫 인사+샘플 산출물을 만들어 채팅 첫 화면을 채운다
+    import('../../../../../src/trial.mjs').then((m) => m.runTrialTurn(ws, agent.slug)).catch(() => {});
     return Response.json({ agent });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });

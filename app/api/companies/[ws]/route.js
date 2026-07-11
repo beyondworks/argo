@@ -1,6 +1,6 @@
 import { loadCompany, updateCompany, archiveCompany } from '../../../../src/workspace.mjs';
 import { listAgents, listDocs } from '../../../../src/hub.mjs';
-import { readUsageSummary, readDelegations } from '../../../../src/usage.mjs';
+import { readUsageSummary, readDelegations, monthCostByCrew } from '../../../../src/usage.mjs';
 import { ensureScheduler } from '../../../../src/scheduler.mjs';
 import { ensureGateway } from '../../../../src/gateway.mjs';
 
@@ -36,15 +36,15 @@ function docStats(docs) {
 export async function GET(_req, { params }) {
   try {
     const { ws } = await params;
-    const [company, agents, docs, usage, delegations] = await Promise.all([
-      loadCompany(ws), listAgents(ws), listDocs(ws), readUsageSummary(ws), readDelegations(ws),
+    const [company, agents, docs, usage, delegations, payroll] = await Promise.all([
+      loadCompany(ws), listAgents(ws), listDocs(ws), readUsageSummary(ws), readDelegations(ws), monthCostByCrew(ws),
     ]);
     return Response.json({
       company, agents,
       memories: docs.slice(0, 6),
       memoryCount: docs.length,
       stats: docStats(docs),
-      usage, delegations,
+      usage, delegations, payroll,
     });
   } catch {
     return Response.json({ error: '회사를 찾을 수 없습니다' }, { status: 404 });

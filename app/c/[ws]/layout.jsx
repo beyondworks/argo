@@ -134,6 +134,7 @@ export default function CompanyShell({ children, params }) {
   const crewMatch = pathname.match(/\/crew\/([^/]+)/);
   const currentCrew = crewMatch && agents.find((a) => a.slug === crewMatch[1]);
   const title = pathname.endsWith('/vault') ? t('nav.memory')
+    : pathname.endsWith('/room') ? t('nav.room')
     : pathname.endsWith('/routines') ? t('nav.routines')
     : pathname.endsWith('/market') ? t('nav.market')
     : pathname.endsWith('/activity') ? t('nav.activity')
@@ -155,6 +156,9 @@ export default function CompanyShell({ children, params }) {
         <div className="side-group">{t('nav.company')}</div>
         <a href={`/c/${ws}`} className={`nav-item${pathname === `/c/${ws}` ? ' active' : ''}`}>
           <Icon name="deck" size={16} /> {t('nav.deck')}
+        </a>
+        <a href={`/c/${ws}/room`} className={`nav-item${pathname.endsWith('/room') ? ' active' : ''}`}>
+          <Icon name="user" size={16} /> {t('nav.room')}
         </a>
         <a href={`/c/${ws}/vault`} className={`nav-item${pathname.endsWith('/vault') ? ' active' : ''}`}>
           <Icon name="memory" size={16} /> {t('nav.memory')}

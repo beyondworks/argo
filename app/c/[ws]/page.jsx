@@ -83,6 +83,7 @@ export default function Deck({ params }) {
       <div className="deck-grid">
         {/* ── 본 계기 열 — "지금 판단할 것"(결재)이 지표보다 먼저다 ── */}
         <div style={{ display: 'grid', gap: 14, minWidth: 0 }}>
+          <MorningBrief ws={ws} agents={data?.agents ?? []} />
           <ApprovalsCard ws={ws} agents={data?.agents ?? []} />
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
@@ -351,7 +352,7 @@ export default function Deck({ params }) {
           </div>
           <VoyageLog docs={docs} agents={data?.agents ?? []} />
           <Nameplate company={data?.company} memoryCount={data?.memoryCount} links={stats?.links} crew={data?.agents?.length} />
-          <TokenPanel usage={data?.usage} budgetUsd={data?.company?.budgetUsd} />
+          <TokenPanel usage={data?.usage} budgetUsd={data?.company?.budgetUsd} payroll={data?.payroll} agents={data?.agents ?? []} />
         </div>
       </div>
 
@@ -579,7 +580,48 @@ const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n 
 
 /** 토큰 계기 — 입력/출력·캐시 적중률·턴당 비용.
     팩트: 에이전트 작업은 입력(맥락)≫출력이 정상. 효율 = ①캐시 적중률(캐시 읽기는 정가의 ~1/10) ②턴당 비용. */
-function TokenPanel({ usage, budgetUsd }) {
+/** 아침 조회 — 출근하면 책상 위 보고서. 최근 16시간의 일과 결재 대기를 한 장으로(모델 호출 없음). */
+function MorningBrief({ ws, agents }) {
+  const { t, lang } = useLang();
+  const [ev, setEv] = useState(null);
+  const [pending, setPending] = useState(0);
+  useEffect(() => {
+    api(`/api/companies/${ws}/activity`).then((d) => setEv(d.events ?? [])).catch(() => setEv([]));
+    api(`/api/companies/${ws}/approvals`).then((d) => setPending((d.approvals ?? []).filter((a) => (a.status ?? 'pending') === 'pending').length)).catch(() => {});
+  }, [ws]);
+  if (!ev) return null;
+  const since = Date.now() - 16 * 3600_000;
+  const recent = ev.filter((e) => new Date(e.ts).getTime() > since);
+  const turns = recent.filter((e) => e.type === 'turn' && e.ok !== false);
+  const errors = recent.filter((e) => e.ok === false);
+  const learned = recent.filter((e) => e.type === 'memory' && e.ok !== false);
+  if (!recent.length && !pending) return null; // 보고할 게 없으면 조용히 — 노이즈 금지
+  const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug ?? '';
+  return (
+    <div className="card fade-up" style={{ padding: '14px 18px', display: 'grid', gap: 8 }}>
+      <div className="card-head" style={{ padding: 0, border: 'none' }}>
+        <span className="microlabel">{t('deck.brief.title')}</span>
+        <span className="rule" />
+        <span className="microlabel">{t('deck.brief.window')}</span>
+      </div>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12.5 }}>
+        <span><b className="mono">{turns.length}</b> {t('deck.brief.turns')}</span>
+        <span><b className="mono">{learned.length}</b> {t('deck.brief.learned')}</span>
+        <span style={errors.length ? { color: 'var(--danger)' } : { color: 'var(--fg-3)' }}><b className="mono">{errors.length}</b> {t('deck.brief.errors')}</span>
+        <span style={pending ? { fontWeight: 650 } : { color: 'var(--fg-3)' }}><b className="mono">{pending}</b> {t('deck.brief.pending')}</span>
+      </div>
+      {turns.slice(-3).reverse().map((e, i) => (
+        <div key={i} style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', gap: 8, alignItems: 'center', minWidth: 0 }}>
+          <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', flex: 'none', width: 56 }}>{timeAgo(new Date(e.ts).getTime(), lang)}</span>
+          <span style={{ fontWeight: 600, flex: 'none' }}>{nameOf(e.slug)}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.gist}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TokenPanel({ usage, budgetUsd, payroll, agents }) {
   const { t, fmtMoney } = useLang();
   if (!usage) return <Skeleton h={170} style={{ borderRadius: 18 }} />;
   const u = usage.today.turns > 0 ? usage.today : usage.total;
@@ -628,6 +670,26 @@ function TokenPanel({ usage, budgetUsd }) {
           </div>
           <div className="meter"><div className="meter-track"><div className="meter-fill" style={{ width: `${Math.min((usage.month.costUsd / budgetUsd) * 100, 100)}%` }} /></div></div>
           <div className="metric-sub2" style={{ marginTop: 4 }}>{t('deck.budgetStop')}</div>
+        </div>
+      )}
+
+      {/* 급여 대장 — 이번 달 크루별 인건비. 비용을 회사 언어로 */}
+      {payroll?.some((p) => p.hasCost) && (
+        <div style={{ marginTop: 12, display: 'grid', gap: 7 }}>
+          <span className="microlabel">{t('deck.payroll')}</span>
+          {payroll.filter((p) => p.hasCost).slice(0, 5).map((p) => {
+            const max = Math.max(...payroll.map((x) => x.costUsd), 0.0001);
+            const crew = agents?.find((a) => a.slug === p.slug);
+            return (
+              <div key={p.slug}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 3 }}>
+                  <span style={{ fontWeight: 600 }}>{crew?.name ?? p.slug}</span>
+                  <span className="mono" style={{ color: 'var(--fg-2)' }}>{fmtMoney(p.costUsd, { approx: false })} · {t('deck.payrollTurns', { n: p.turns })}</span>
+                </div>
+                <div className="meter"><div className="meter-track"><div className="meter-fill" style={{ width: `${(p.costUsd / max) * 100}%` }} /></div></div>
+              </div>
+            );
+          })}
         </div>
       )}
 

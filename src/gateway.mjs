@@ -9,7 +9,7 @@ import { resolveWithFollowUp } from './approval-actions.mjs';
 import { onNotify } from './notify.mjs';
 import { daemonLease } from './lock.mjs';
 import { appendEvent } from './events.mjs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, stat, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath } from './tg-format.mjs';
@@ -366,6 +366,49 @@ function startAgentTelegram(wsId, slug, getCfg) {
   return () => { stopped = true; };
 }
 
+/* ─── 받은 서류함(inbox) — 폴더에 파일을 넣는 것이 곧 지시. 기본 크루가 읽고 처리해 보고한다. ─── */
+function startInboxWatcher(wsId) {
+  let stopped = false;
+  const busy = new Set();
+  const iv = setInterval(async () => {
+    if (stopped) return;
+    try {
+      const dir = join(paths(wsId).root, 'inbox');
+      let names = [];
+      try { names = await readdir(dir); } catch { return; }
+      for (const n of names) {
+        if (n.startsWith('.') || busy.has(n)) continue;
+        const fp = join(dir, n);
+        const st = await stat(fp).catch(() => null);
+        if (!st?.isFile() || Date.now() - st.mtimeMs < 5000) continue; // 아직 복사 중일 수 있다 — 5초 안정 후 처리
+        busy.add(n);
+        (async () => {
+          try {
+            const safe = n.replace(/[^\w.\-가-힣 ()]/g, '_').slice(-80);
+            const rel = `files/${Date.now().toString(36)}-${safe}`;
+            await mkdir(join(paths(wsId).vault, 'files'), { recursive: true });
+            await rename(fp, join(paths(wsId).vault, rel)); // inbox에서 꺼내 기억으로 — 재처리 방지
+            const ext = safe.split('.').pop()?.toLowerCase() ?? '';
+            const isImage = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext);
+            const att = { rel, name: safe, mime: isImage ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : '', isImage };
+            const cfg = (await loadConnections(wsId)).telegram;
+            console.log(`[argo] 받은 서류함 처리 시작: ${wsId}/${safe}`);
+            const reply = await runTurn(wsId, cfg, `(받은 서류함) 사장이 inbox 폴더에 "${safe}" 파일을 넣었다. 내용을 확인하고 필요한 처리를 한 뒤 5줄 이내로 보고하라.`, [att]);
+            if (cfg.enabled && cfg.token && cfg.chatId) { // 자리에 없어도 결과가 도착한다
+              await sendTgReply(cfg.token, cfg.chatId, wsId, `[받은 서류함] ${safe}\n\n${reply}`).catch(() => {});
+            }
+          } catch (e) {
+            console.error(`[argo] inbox 처리 실패(${wsId}/${n}):`, e.message);
+          } finally {
+            busy.delete(n);
+          }
+        })();
+      }
+    } catch { /* 감시 루프는 죽지 않는다 */ }
+  }, 15_000);
+  return () => { stopped = true; clearInterval(iv); };
+}
+
 /* ─── 슬랙 — 공개 URL 없이 동작하도록 conversations.history 폴링. 봇을 채널에 초대해야 한다. ─── */
 function startSlack(wsId, getCfg) {
   let stopped = false;
@@ -496,6 +539,12 @@ export function ensureGateway() {
           running.set(id, { key, stop: kind === 'telegram' ? startTelegram(c.id, getCfg) : startSlack(c.id, getCfg) });
         }
         if (globalThis.__argoGwCfg) globalThis.__argoGwCfg[id] = cfg;
+      }
+      // 받은 서류함 감시 — 회사마다 1개(리더만). 파일 드롭 = 지시
+      {
+        const id = `${c.id}:inbox`;
+        alive.add(id);
+        if (!running.has(id)) running.set(id, { key: 'v1', stop: startInboxWatcher(c.id) });
       }
       // 크루 직통 봇 — 토큰이 있으면 곧 연결(별도 토글 없음: 연결 해제 = 토큰 제거)
       for (const [slug, bot] of Object.entries(all.telegram.agents ?? {})) {
