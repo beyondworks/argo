@@ -105,7 +105,8 @@ export async function routeMessage(wsId, cfg, text) {
   let body = text.trim();
   // 그룹방에서 봇 멘션(@봇이름)으로 시작하면 벗겨낸다 — 그 뒤의 @크루 멘션이 라우팅 대상
   if (cfg.botUsername) body = body.replace(new RegExp(`^@?${cfg.botUsername.replace(/^@/, '')}\\s+`, 'i'), '');
-  const find = (key) => agents.find((a) => a.slug === key.toLowerCase() || a.name.toLowerCase() === key.toLowerCase());
+  const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase(); // 한글 NFC/NFD 불일치 방어 — 파일 유래 이름과 입력 이름의 유니코드가 다를 수 있다
+  const find = (key) => agents.find((a) => norm(a.slug) === norm(key) || norm(a.name) === norm(key));
   const mentions = [];
   let m;
   while ((m = body.match(/^@(\S+)\s+/))) {

@@ -56,6 +56,18 @@ export default function Room({ params }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="microlabel">{t('room.header')}</span>
         <span className="rule" style={{ flex: 1 }} />
+        {(messages?.length ?? 0) > 0 && (
+          <button className="btn sm" disabled={busy} onClick={async () => {
+            if (!window.confirm(t('room.endConfirm'))) return;
+            try {
+              const r = await fetch(`/api/companies/${ws}/room`, { method: 'DELETE' });
+              const d = await r.json();
+              if (!r.ok) throw new Error(d.error);
+              setMessages([]); setError('');
+              window.dispatchEvent(new Event('argo:refresh')); // 항해일지에 회의록이 바로 잡힌다
+            } catch (e2) { setError(String(e2.message)); }
+          }}>{t('room.end')}</button>
+        )}
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
           {agents.map((a) => (
             <button key={a.slug} className="chip" style={{ cursor: 'pointer' }} title={a.role}

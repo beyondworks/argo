@@ -20,6 +20,22 @@ export default function CrewChat({ params }) {
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
   const [cardOpen, setCardOpen] = useState(false);
+  // 세션 적재 레일 — 새 대화로 넘긴 이전 대화들이 좌측에 쌓이고, 클릭으로 읽기 전용 열람
+  const [sessions, setSessions] = useState([]);
+  const [viewing, setViewing] = useState(null); // 보관 세션 id (null = 현재 대화)
+  const [archMsgs, setArchMsgs] = useState(null);
+  const loadSessions = useCallback(() => {
+    api(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}`)
+      .then((d) => setSessions(d.sessions ?? [])).catch(() => {});
+  }, [ws, slug]);
+  useEffect(loadSessions, [loadSessions]);
+  async function openSession(id) {
+    if (!id) { setViewing(null); setArchMsgs(null); return; }
+    try {
+      const d = await api(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}&id=${encodeURIComponent(id)}`);
+      setViewing(id); setArchMsgs(d.messages ?? []);
+    } catch (e) { setError(String(e.message)); }
+  }
   const sessionRef = useRef(null);
   const endRef = useRef(null);
   // 첨부 — 업로드 즉시 vault/files/에 저장되고, 보내기 전까지 입력바 위에 칩으로 대기한다
@@ -161,17 +177,42 @@ export default function CrewChat({ params }) {
     if (!window.confirm(t('chat.newChatConfirm'))) return;
     await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
     setThread([]); sessionRef.current = null; setError('');
+    setViewing(null); setArchMsgs(null);
+    loadSessions(); // 방금 넘긴 대화가 좌측 레일에 적재된다
   }
 
   return (
+    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
+      {/* 세션 레일 — 대화가 여기 적재된다. 새 대화로 넘길 때마다 쌓이고, 클릭으로 언제든 다시 본다 */}
+      <div style={{ position: 'sticky', top: 72, display: 'grid', gap: 4 }}>
+        <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
+          {t('chat.sessions.title')}{sessions.length ? ` · ${sessions.length + 1}` : ''}
+        </span>
+        <button className={`nav-item${!viewing ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => openSession(null)}>
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>{t('chat.sessions.current')}</span>
+            <span className="nav-sub">{thread?.length ? t('chat.sessions.msgs', { n: thread.length }) : t('chat.newSession')}</span>
+          </span>
+        </button>
+        {sessions.map((s) => (
+          <button key={s.id} className={`nav-item${viewing === s.id ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => openSession(s.id)}>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.gist || t('chat.sessions.untitled')}</span>
+              <span className="nav-sub">{new Date(s.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: s.count })}</span>
+            </span>
+          </button>
+        ))}
+        {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('chat.sessions.empty')}</span>}
+      </div>
     <div
-      style={{ maxWidth: 760, margin: '0 auto', display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 160px)', position: 'relative' }}
+      style={{ maxWidth: 760, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 160px)', position: 'relative' }}
       onDragOver={(e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); setDragOver(true); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
       onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
     >
       {dragOver && <div className="drop-overlay">{t('chat.dropHere')}</div>}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+      {/* 스티키 헤더 — 긴 대화를 내려도 이름·카드·새 대화가 항상 손에 닿는다(topbar 56px 아래 고정) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, position: 'sticky', top: 56, zIndex: 15, padding: '12px 0 10px', background: 'var(--bg)' }}>
         <Avatar name={agent?.name} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14.5, fontWeight: 650 }}>{agent?.name ?? ''}</div>
@@ -190,13 +231,13 @@ export default function CrewChat({ params }) {
         {thread === null && (
           <><Skeleton h={46} w="60%" /><Skeleton h={90} /></>
         )}
-        {thread?.length === 0 && !busy && (
+        {!viewing && thread?.length === 0 && !busy && (
           <div className="empty fade-up">
             {agent?.tone && <p style={{ marginBottom: 6, color: 'var(--fg-2)' }}>"{agent.tone}"</p>}
             {t('chat.firstPrompt')}
           </div>
         )}
-        {(thread ?? []).map((m, i) =>
+        {((viewing ? archMsgs : thread) ?? []).map((m, i) =>
           m.who === 'user' ? (
             <div key={i} className="msg-user fade-up">
               {m.attachments?.length > 0 && (
@@ -228,7 +269,7 @@ export default function CrewChat({ params }) {
             </div>
           )
         )}
-        {pendings.map((p) => (
+        {!viewing && pendings.map((p) => (
           <div key={p.id} className="msg-crew fade-up">
             <Avatar name={agent?.name} sm />
             <div className="card" style={{ padding: '13px 16px', minWidth: 0, flex: 1, borderColor: 'var(--accent)' }}>
@@ -248,7 +289,7 @@ export default function CrewChat({ params }) {
             </div>
           </div>
         ))}
-        {working && (
+        {!viewing && working && (
           <div className="msg-crew">
             <Avatar name={agent?.name} sm />
             <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13, flex: 1, minWidth: 0 }}>
@@ -270,6 +311,13 @@ export default function CrewChat({ params }) {
         <div ref={endRef} />
       </div>
 
+      {viewing ? (
+        <div className="card" style={{ position: 'sticky', bottom: 20, marginTop: 24, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
+          <Icon name="doc" size={13} /> {t('chat.sessions.readonly')}
+          <span style={{ flex: 1 }} />
+          <button className="btn btn-primary sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
+        </div>
+      ) : (
       <div style={{ position: 'sticky', bottom: 20, marginTop: 24, display: 'flex', flexDirection: 'column', gap: 8 }}>
         {(att.length > 0 || uploading) && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -303,6 +351,7 @@ export default function CrewChat({ params }) {
           </button>
         </form>
       </div>
+      )}
 
       {cardOpen && (
         <CardPanel
@@ -313,6 +362,7 @@ export default function CrewChat({ params }) {
           onFired={() => { window.dispatchEvent(new Event('argo:refresh')); router.push(`/c/${ws}`); }}
         />
       )}
+    </div>
     </div>
   );
 }

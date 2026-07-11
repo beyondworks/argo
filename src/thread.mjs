@@ -1,6 +1,6 @@
 // 채팅 스레드 영속화 — 크루별 chats/<slug>.json 에 대화·세션을 남긴다.
 // 새로고침해도 대화가 이어지는 것이 제품의 기본 자세다.
-import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 
@@ -45,7 +45,45 @@ export async function takeSharedNotes(wsId, slug) {
   return notes.map((m) => m.text);
 }
 
-/** 새 대화 — 스레드와 세션을 함께 비운다. vault 기억은 그대로다(그게 제품의 핵심). */
+/** 보관된 세션 목록 — 새 대화로 적재된 이전 스레드들(최신순). 크루 채팅 좌측 레일의 원천. */
+export async function listArchivedSessions(wsId, slug) {
+  const dir = join(paths(wsId).chats, '.archive');
+  const safe = slug.replace(/[^a-z0-9-]/g, '');
+  let names = [];
+  try {
+    names = (await readdir(dir)).filter((n) => n.startsWith(`${safe}-`) && n.endsWith('.json'));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const n of names) {
+    try {
+      const t = JSON.parse(await readFile(join(dir, n), 'utf8'));
+      const firstUser = (t.messages ?? []).find((m) => m.who === 'user' && !m.shared);
+      out.push({
+        id: n,
+        ts: Number(n.match(/-(\d+)\.json$/)?.[1] ?? 0),
+        count: t.messages?.length ?? 0,
+        gist: String(firstUser?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 42),
+      });
+    } catch { /* 깨진 보관본은 건너뛴다 */ }
+  }
+  return out.sort((a, b) => b.ts - a.ts);
+}
+
+export async function readArchivedSession(wsId, slug, id) {
+  const safe = slug.replace(/[^a-z0-9-]/g, '');
+  if (!new RegExp(`^${safe}-\\d+\\.json$`).test(id)) throw new Error('잘못된 세션 id');
+  return JSON.parse(await readFile(join(paths(wsId).chats, '.archive', id), 'utf8'));
+}
+
+/** 새 대화 — 삭제가 아니라 적재. 이전 대화는 chats/.archive/에 보관되고, vault 기억은 그대로다(그게 제품의 핵심). */
 export async function resetThread(wsId, slug) {
+  const t = await loadThread(wsId, slug);
+  if (t.messages?.length) {
+    const dir = join(paths(wsId).chats, '.archive');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, `${slug.replace(/[^a-z0-9-]/g, '')}-${Date.now()}.json`), JSON.stringify(t, null, 2));
+  }
   await rm(file(wsId, slug), { force: true });
 }
