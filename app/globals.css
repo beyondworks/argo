@@ -1260,6 +1260,17 @@ input, textarea { font: inherit; color: var(--fg); }
 }
 .msg-crew { display: flex; gap: 11px; max-width: 94%; }
 
+/* 메시지 호버 액션 — 복사·다시 보내기. 평소엔 숨고 그 메시지에 올렸을 때만 드러난다 */
+.msg-wrap { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.msg-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s ease; }
+.msg-wrap:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
+.msg-actions button {
+  border: 0; background: none; cursor: pointer;
+  font-size: 10.5px; color: var(--fg-3); padding: 2px 7px; border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+.msg-actions button:hover { background: var(--card-2); color: var(--fg); }
+
 .memo-chip {
   display: inline-flex; align-items: center; gap: 6px; margin-top: 10px;
   font-family: var(--mono);

@@ -36,12 +36,17 @@ export function stageForTool(toolName) {
   return '작업 중';
 }
 
-export async function setTurnStatus(wsId, slug, stage, detail = '') {
+export async function setTurnStatus(wsId, slug, stage, detail = '', partial) {
   try {
     await mkdir(paths(wsId).chats, { recursive: true });
-    let startedAt = Date.now();
-    try { startedAt = JSON.parse(await readFile(file(wsId, slug), 'utf8')).startedAt ?? startedAt; } catch { /* 첫 기록 */ }
-    await writeFile(file(wsId, slug), JSON.stringify({ stage, detail, startedAt, ts: Date.now() }));
+    let prev = {};
+    try { prev = JSON.parse(await readFile(file(wsId, slug), 'utf8')); } catch { /* 첫 기록 */ }
+    await writeFile(file(wsId, slug), JSON.stringify({
+      stage, detail,
+      // partial — 완료 전 크루가 이미 말한 텍스트(스트리밍 체감). 미전달 시 이전 값 유지, 뒤 4000자만
+      partial: String(partial ?? prev.partial ?? '').slice(-4000),
+      startedAt: prev.startedAt ?? Date.now(), ts: Date.now(),
+    }));
   } catch { /* 상태 표시는 베스트에포트 */ }
 }
 
@@ -49,11 +54,13 @@ export async function clearTurnStatus(wsId, slug) {
   try { await rm(file(wsId, slug), { force: true }); } catch { /* 없으면 그만 */ }
 }
 
-/** 2분 넘게 갱신이 없으면 죽은 상태로 보고 무시한다. 반환: { stage, detail, startedAt } | null */
+/** 2분 넘게 갱신이 없으면 죽은 상태로 보고 무시한다. 반환: { stage, detail, partial, startedAt } | null */
 export async function getTurnStatus(wsId, slug) {
   try {
     const s = JSON.parse(await readFile(file(wsId, slug), 'utf8'));
-    return Date.now() - s.ts < 120_000 ? { stage: s.stage, detail: s.detail ?? '', startedAt: s.startedAt ?? s.ts } : null;
+    return Date.now() - s.ts < 120_000
+      ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', startedAt: s.startedAt ?? s.ts }
+      : null;
   } catch {
     return null;
   }

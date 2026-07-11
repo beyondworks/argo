@@ -59,7 +59,8 @@ export default function CrewChat({ params }) {
       .then((d) => setAgent(d.agents.find((a) => a.slug === slug) ?? { name: slug, role: '' }))
       .catch(() => setAgent({ name: slug, role: '' }));
     api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
-      .then((t) => { setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; })
+      // status도 첫 로드에 반영 — 온보딩 직행 시 시운전 진행 카드가 8초 폴을 기다리지 않고 바로 보인다
+      .then((t) => { setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); })
       .catch(() => setThread([]));
   }, [ws, slug]);
 
@@ -124,16 +125,17 @@ export default function CrewChat({ params }) {
     return () => clearInterval(t);
   }, [busy, working, liveStage?.startedAt]);
 
-  // 진행 단계 고빈도 폴 — 내 턴이 도는 동안 2.5초 간격
+  // 진행 단계 고빈도 폴 — 턴이 도는 동안(내 턴 + 시운전·루틴·메신저발) 2.5초 간격.
+  // 서버가 턴 종료 시 상태 파일을 지우므로, status가 null로 돌아오면 스스로 멎는다.
   useEffect(() => {
-    if (!busy) { setLiveStage(null); return; }
+    if (!working) return;
     const t = setInterval(() => {
       api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
         .then((r) => setLiveStage(r.status ?? null))
         .catch(() => {});
     }, 2500);
     return () => clearInterval(t);
-  }, [busy, ws, slug]);
+  }, [working, ws, slug]);
 
   /** 파일 추가 — 드롭·붙여넣기·클립 버튼 모두 이 관문을 지난다. 업로드 즉시 vault/files/ 저장. */
   async function addFiles(fileList) {
@@ -154,12 +156,9 @@ export default function CrewChat({ params }) {
     }
   }
 
-  async function send(e) {
-    e.preventDefault();
-    const message = input.trim();
+  async function sendMessage(message, attachments = []) {
     if (!message || busy || uploading) return;
-    const attachments = att;
-    setInput(''); setAtt([]); setError(''); setBusy(true); setStage(0);
+    setError(''); setBusy(true); setStage(0);
     setThread((t) => [...(t ?? []), { who: 'user', text: message, ...(attachments.length ? { attachments } : {}) }]);
     try {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
@@ -170,10 +169,39 @@ export default function CrewChat({ params }) {
       // 실패 턴은 서버에 저장되지 않는다 — 입력·첨부를 복원해 바로 재시도할 수 있게
       setThread((cur) => cur.slice(0, -1));
       setInput(message); setAtt(attachments);
-      setError(t('chat.turnFailed', { msg: String(err.message) }));
+      const msg = String(err.message);
+      setError(msg === '중단됨' ? t('chat.aborted') : t('chat.turnFailed', { msg }));
     } finally {
       setBusy(false);
+      setLiveStage(null); // 내 턴 종료 — 마지막 partial이 완성 답변과 겹쳐 보이지 않게 즉시 내린다
     }
+  }
+
+  async function send(e) {
+    e.preventDefault();
+    const message = input.trim();
+    if (!message) return;
+    const attachments = att;
+    setInput(''); setAtt([]);
+    await sendMessage(message, attachments);
+  }
+
+  // 사장의 정지 버튼 — 진행 중 턴(내 턴·루틴·메신저발 모두)을 멈춘다
+  const [aborting, setAborting] = useState(false);
+  async function abortTurn() {
+    if (aborting) return;
+    setAborting(true);
+    try { await api(`/api/companies/${ws}/chat/abort`, { slug }); } catch { /* 이미 끝난 턴 */ }
+    finally { setAborting(false); }
+  }
+
+  // 메시지 복사 — 잠깐 "복사됨"으로 바뀌는 피드백
+  const [copied, setCopied] = useState(-1);
+  function copyMsg(i, text) {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied(i);
+      setTimeout(() => setCopied((c) => (c === i ? -1 : c)), 1500);
+    }).catch(() => {});
   }
 
   async function newChat() {
@@ -242,32 +270,43 @@ export default function CrewChat({ params }) {
         )}
         {((viewing ? archMsgs : thread) ?? []).map((m, i) =>
           m.who === 'user' ? (
-            <div key={i} className="msg-user fade-up">
-              {m.attachments?.length > 0 && (
-                <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: m.text ? 8 : 0 }}>
-                  {m.attachments.map((a, j) => a.isImage ? (
-                    <img key={j} className="att-thumb" src={`/api/companies/${ws}/files?rel=${encodeURIComponent(a.rel)}`} alt={a.name} />
-                  ) : (
-                    <span key={j} className="att-chip" style={{ borderColor: 'var(--primary-fg-line)', background: 'transparent', color: 'inherit' }}>
-                      <Icon name="clip" size={11} /><span className="name">{a.name}</span>
-                    </span>
-                  ))}
-                </span>
-              )}
-              {m.text}
+            <div key={i} className="msg-wrap fade-up" style={{ alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '75%' }}>
+              <div className="msg-user" style={{ alignSelf: 'auto', maxWidth: '100%' }}>
+                {m.attachments?.length > 0 && (
+                  <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: m.text ? 8 : 0 }}>
+                    {m.attachments.map((a, j) => a.isImage ? (
+                      <img key={j} className="att-thumb" src={`/api/companies/${ws}/files?rel=${encodeURIComponent(a.rel)}`} alt={a.name} />
+                    ) : (
+                      <span key={j} className="att-chip" style={{ borderColor: 'var(--primary-fg-line)', background: 'transparent', color: 'inherit' }}>
+                        <Icon name="clip" size={11} /><span className="name">{a.name}</span>
+                      </span>
+                    ))}
+                  </span>
+                )}
+                {m.text}
+              </div>
+              <div className="msg-actions">
+                <button type="button" onClick={() => copyMsg(i, m.text)}>{copied === i ? t('chat.copied') : t('chat.copy')}</button>
+                {!viewing && <button type="button" disabled={busy || uploading} onClick={() => sendMessage(m.text)}>{t('chat.resend')}</button>}
+              </div>
             </div>
           ) : (
             <div key={i} className="msg-crew fade-up">
               <Avatar name={agent?.name} sm />
-              <div className="card" style={{ minWidth: 0, padding: '13px 16px' }}>
-                <Markdown text={m.text} />
-                {m.handover && (
-                  <a className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
-                    <Icon name="memory" size={12} />
-                    {t('chat.recordedInMemory')}
-                    {m.handover.linked?.length > 0 && <span>{t('chat.linkedMemories', { n: m.handover.linked.length })}</span>}
-                  </a>
-                )}
+              <div className="msg-wrap">
+                <div className="card" style={{ minWidth: 0, padding: '13px 16px' }}>
+                  <Markdown text={m.text} />
+                  {m.handover && (
+                    <a className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
+                      <Icon name="memory" size={12} />
+                      {t('chat.recordedInMemory')}
+                      {m.handover.linked?.length > 0 && <span>{t('chat.linkedMemories', { n: m.handover.linked.length })}</span>}
+                    </a>
+                  )}
+                </div>
+                <div className="msg-actions">
+                  <button type="button" onClick={() => copyMsg(i, m.text)}>{copied === i ? t('chat.copied') : t('chat.copy')}</button>
+                </div>
               </div>
             </div>
           )
@@ -295,18 +334,27 @@ export default function CrewChat({ params }) {
         {!viewing && working && (
           <div className="msg-crew">
             <Avatar name={agent?.name} sm />
-            <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13, flex: 1, minWidth: 0 }}>
-              <ArgoSpinner size={15} />
-              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {t('chat.stageEllipsis', { stage: liveStage?.stage ?? WAIT_STAGES[stage] })}
-                {liveStage?.detail && (
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', marginLeft: 8 }}>{liveStage.detail}</span>
-                )}
-              </span>
-              <span style={{ flex: 1 }} />
-              <span className="mono" style={{ fontSize: 11.5, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums', flex: 'none' }}>
-                {fmtElapsed(elapsed)}
-              </span>
+            <div className="card" style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 9, flex: 1, minWidth: 0 }}>
+              {/* 크루가 이미 말한 부분 — 완료를 기다리지 않고 흘러 들어온다(스트리밍 체감) */}
+              {liveStage?.partial && (
+                <div style={{ color: 'var(--fg-2)', fontSize: 13 }}><Markdown text={liveStage.partial} /></div>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13, minWidth: 0 }}>
+                <ArgoSpinner size={15} />
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {t('chat.stageEllipsis', { stage: liveStage?.stage ?? WAIT_STAGES[stage] })}
+                  {liveStage?.detail && (
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', marginLeft: 8 }}>{liveStage.detail}</span>
+                  )}
+                </span>
+                <span style={{ flex: 1 }} />
+                <span className="mono" style={{ fontSize: 11.5, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums', flex: 'none' }}>
+                  {fmtElapsed(elapsed)}
+                </span>
+                <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={aborting} onClick={abortTurn}>
+                  {aborting ? <Spinner size={11} /> : t('chat.stop')}
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -24,8 +24,9 @@ export default function Home() {
     if (!name.trim() || creating) return;
     setCreating(true); setError('');
     try {
-      const { company } = await api('/api/companies', { name, preset });
-      router.push(`/c/${company.id}`);
+      const { company, firstCrew } = await api('/api/companies', { name, preset });
+      // 아하 모먼트 — 프리셋 회사는 첫 크루 채팅으로 직행: 시운전(첫 인사+샘플 산출물)이 눈앞에서 도착한다
+      router.push(firstCrew ? `/c/${company.id}/crew/${firstCrew}` : `/c/${company.id}`);
     } catch (err) {
       setError(String(err.message)); setCreating(false);
     }

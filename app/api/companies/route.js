@@ -17,7 +17,9 @@ export async function POST(req) {
     const wsId = `${base || 'co'}-${Date.now().toString(36).slice(-4)}`;
     const company = await createCompany(wsId, name.trim(), owner?.trim() || 'captain');
     if (preset) await applyPreset(wsId, preset); // 즉시 — 정적 카드라 기다림 없음
-    return Response.json({ company });
+    // 아하 모먼트 동선 — 프리셋 회사는 첫 크루 채팅으로 직행시켜 시운전이 눈앞에서 도착하게
+    const firstCrew = preset ? (PRESETS[preset]?.crews?.[0]?.[1] ?? null) : null;
+    return Response.json({ company, firstCrew });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });
   }
