@@ -165,9 +165,7 @@ export default function CompanyShell({ children, params }) {
                   <Avatar name={a.name} sm />
                   <span style={{ minWidth: 0 }}>
                     <span style={{ display: 'block', lineHeight: 1.3 }}>{a.name}</span>
-                    <span style={{ display: 'block', fontSize: 10.5, fontWeight: 400, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>
-                      {a.role}
-                    </span>
+                    <span className="nav-sub">{a.role}</span>
                   </span>
                 </a>
               );
