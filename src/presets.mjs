@@ -85,5 +85,8 @@ export async function applyPreset(wsId, presetKey) {
   }
   const [agentSlug, title, prompt] = preset.routine;
   await addRoutine(wsId, { agentSlug, title, prompt, schedule: { type: 'daily', time: '09:00' } });
+  // 리서치 기본기 — 프리셋 회사에 딥 리서치 스킬 기본 장착(막히면 우회하는 조사 사다리)
+  const { installSkill } = await import('./market.mjs');
+  await installSkill(wsId, 'deep-research').catch(() => { /* 스킬은 부가 — 온보딩을 막지 않는다 */ });
   return { crews: preset.crews.length };
 }
