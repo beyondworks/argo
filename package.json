@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "demo": "node demo.mjs"
+    "demo": "node demo.mjs",
+    "service": "node scripts/service.mjs"
   },
   "license": "UNLICENSED",
   "private": true,

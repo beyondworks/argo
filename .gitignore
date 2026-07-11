@@ -8,3 +8,4 @@ artifacts/
 # macOS / 로컬 도구 상태
 .DS_Store
 .omc/
+argo-service.cmd
