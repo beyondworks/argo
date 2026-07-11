@@ -321,6 +321,7 @@ export default function CrewChat({ params }) {
 function CardPanel({ ws, slug, agentName, onClose, onFired }) {
   const { t } = useLang();
   const [md, setMd] = useState(null);
+  const [profile, setProfile] = useState({ recent: [], skills: [] });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [fireOpen, setFireOpen] = useState(false);
@@ -328,7 +329,7 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
 
   useEffect(() => {
     api(`/api/companies/${ws}/agents/${slug}`)
-      .then((d) => setMd(d.md))
+      .then((d) => { setMd(d.md); setProfile({ recent: d.recent ?? [], skills: d.skills ?? [] }); })
       .catch((e) => setMsg(String(e.message)));
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -368,7 +369,31 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
           <span className="rule" />
           <button className="btn sm" onClick={onClose}>{t('chat.closeEsc')}</button>
         </div>
-        <div style={{ padding: '0 20px 18px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+        <div style={{ padding: '0 20px 18px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, overflowY: 'auto' }}>
+          {/* 크루 프로필 — 자주 하는 업무와 적용 스킬이 카드에서 한눈에 */}
+          <div style={{ display: 'grid', gap: 8 }}>
+            <span className="microlabel">{t('chat.recentWork')}</span>
+            {profile.recent.length === 0 ? (
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{t('chat.noRecentWork')}</span>
+            ) : (
+              <div style={{ display: 'grid', gap: 3 }}>
+                {profile.recent.slice(0, 5).map((r, i) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', gap: 7, alignItems: 'center', minWidth: 0 }}>
+                    <span style={{ width: 5, height: 5, borderRadius: 999, flex: 'none', background: r.ok ? 'var(--ok)' : 'var(--danger)' }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.gist}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {profile.skills.length > 0 && (
+              <>
+                <span className="microlabel" style={{ marginTop: 4 }}>{t('chat.activeSkills')} · {profile.skills.length}</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {profile.skills.map((s) => <span key={s.id} className="chip">{s.title}</span>)}
+                </div>
+              </>
+            )}
+          </div>
           {md === null ? (
             <Skeleton h={220} />
           ) : (

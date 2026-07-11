@@ -1,11 +1,21 @@
 import { readAgentCard, saveAgentCard, removeAgentCard, updateAgentMeta } from '../../../../../../src/persona.mjs';
 
-/** 카드 열람 — 카드가 곧 시스템 프롬프트(투명성). */
+/** 카드 열람 — 카드가 곧 시스템 프롬프트(투명성) + 최근 업무·적용 스킬(크루 프로필). */
 export async function GET(_req, { params }) {
   try {
     const { ws, slug } = await params;
     const { md, meta } = await readAgentCard(ws, slug);
-    return Response.json({ md, meta });
+    const [{ readEvents }, { listInstalledSkills }] = await Promise.all([
+      import('../../../../../../src/events.mjs'),
+      import('../../../../../../src/market.mjs'),
+    ]);
+    const events = await readEvents(ws, 300).catch(() => []);
+    const recent = events
+      .filter((e) => e.slug === slug && e.type === 'turn' && e.gist)
+      .slice(-8).reverse()
+      .map((e) => ({ gist: e.gist, ts: e.ts, ok: e.ok !== false, ms: e.ms ?? null }));
+    const skills = await listInstalledSkills(ws).catch(() => []);
+    return Response.json({ md, meta, recent, skills });
   } catch {
     return Response.json({ error: '크루를 찾을 수 없습니다' }, { status: 404 });
   }

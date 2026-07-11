@@ -133,14 +133,16 @@ export default function Activity({ params }) {
               {filter === 'error' ? t('activity.noError') : t('activity.noMatch')}
             </div>
           ) : (
-            <div style={{ display: 'grid', marginTop: 8 }}>
+            <div /* 템플릿 없는 grid는 트랙이 max-content로 자라 nowrap 텍스트가 카드를 뚫는다 — minmax(0,1fr) 고정 */
+              style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', marginTop: 8 }}>
               {list.map(({ e, r }, i) => (
                 <div key={i} className="row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 8px' }}>
                   <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', width: 62, flex: 'none' }}>{timeAgo(new Date(e.ts).getTime(), lang)}</span>
                   <Avatar name={r.avatar} size={24} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
+                  {/* 클리핑은 블록 컨테이너에 — 인라인 span은 overflow를 자르지 못해 긴 오류문이 레이아웃을 뚫는다 */}
+                  <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.desc}>
                     <span style={{ fontSize: 12.5, fontWeight: 600 }}>{r.who}</span>
-                    <span style={{ fontSize: 11.5, color: r.danger ? 'var(--danger)' : 'var(--fg-2)', marginLeft: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ fontSize: 11.5, color: r.danger ? 'var(--danger)' : 'var(--fg-2)', marginLeft: 8 }}>
                       {r.desc}
                     </span>
                   </div>
