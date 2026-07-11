@@ -223,6 +223,8 @@ export function Markdown({ text, onWikiLink }) {
   const escaped = String(text ?? '').replace(/</g, '&lt;');
   let html = marked.parse(escaped);
   html = html.replace(/href="(?!https?:|#|\/)[^"]*"/gi, 'href="#"');
+  // 크루가 주는 링크는 항상 새 창 — 대화 흐름을 벗어나지 않는다
+  html = html.replace(/<a /gi, '<a target="_blank" rel="noopener noreferrer" ');
   html = html.replace(/\[\[(.+?)\]\]/g, (_, p) => `<span class="wikilink" data-wiki="${p}">${p}</span>`);
   return (
     <div

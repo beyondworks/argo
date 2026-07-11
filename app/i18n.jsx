@@ -326,6 +326,10 @@ const DICT = {
   'chat.attachFailed': ['첨부 실패: {msg}', 'Attach failed: {msg}'],
   'chat.uploading': ['올리는 중', 'Uploading'],
   'chat.elapsed': ['{t} 경과', '{t} elapsed'],
+  'chat.approval.capTitle': ['권한 요청 — 승인하면 바로 이어서 실행합니다', 'Permission request — approve to continue right away'],
+  'chat.approval.pendingTitle': ['결재 대기 — 대화창에서 바로 처리할 수 있습니다', 'Approval needed — you can resolve it right here'],
+  'chat.approval.yes': ['네, 켜고 진행', 'Yes, enable & continue'],
+  'chat.approval.no': ['아니오', 'No'],
 
   // ── 백그라운드 작업 패널
   'tasks.title': ['백그라운드 작업', 'Background Tasks'],

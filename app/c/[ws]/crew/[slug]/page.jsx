@@ -30,6 +30,8 @@ export default function CrewChat({ params }) {
   // 경과 타이머 — 보낸 순간부터 1초 단위
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(0);
+  // 실제 진행 단계 — "작성중" 대신 지금 무엇을 하는지 (기억 탐색/명령 실행/결재 대기)
+  const [liveStage, setLiveStage] = useState(null);
 
   useEffect(() => {
     setThread(null); setError(''); sessionRef.current = null;
@@ -52,11 +54,39 @@ export default function CrewChat({ params }) {
           const msgs = r.messages ?? [];
           setThread((cur) => (cur !== null && msgs.length > cur.length ? msgs : cur));
           if (r.sessionId) sessionRef.current = r.sessionId;
+          setLiveStage(r.status ?? null); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
         })
         .catch(() => {});
     }, 8000);
     return () => clearInterval(t);
   }, [ws, slug, busy]);
+
+  // 이 크루의 대기 결재 — 대화창에서 바로 승인/거절 (데크 결재함은 백업 창구)
+  const [pendings, setPendings] = useState([]);
+  const [resolving, setResolving] = useState('');
+  useEffect(() => {
+    let alive = true;
+    const pull = () => api(`/api/companies/${ws}/approvals`)
+      .then((d) => { if (alive) setPendings((d.approvals ?? []).filter((a) => a.status === 'pending' && a.slug === slug)); })
+      .catch(() => {});
+    pull();
+    const t1 = setInterval(pull, busy ? 2500 : 5000);
+    return () => { alive = false; clearInterval(t1); };
+  }, [ws, slug, busy]);
+
+  async function resolvePending(id, approve) {
+    if (resolving) return;
+    setResolving(id);
+    try {
+      await api(`/api/companies/${ws}/approvals`, { id, approve });
+      setPendings((cur) => cur.filter((p) => p.id !== id));
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (e) {
+      setError(String(e.message));
+    } finally {
+      setResolving('');
+    }
+  }
 
   useEffect(() => {
     if (!busy) return;
@@ -64,15 +94,17 @@ export default function CrewChat({ params }) {
     return () => clearInterval(t);
   }, [busy]);
 
+  const working = busy || !!liveStage; // 내가 보낸 턴 + 결재 후속·루틴·메신저발 턴
   useEffect(() => {
-    if (!busy) { setElapsed(0); return; }
-    startRef.current = Date.now();
-    const t = setInterval(() => setElapsed(Date.now() - startRef.current), 1000);
+    if (!working) { setElapsed(0); return; }
+    if (busy) startRef.current = Date.now();
+    const tick = () => setElapsed(Date.now() - (busy ? startRef.current : (liveStage?.startedAt ?? Date.now())));
+    tick();
+    const t = setInterval(tick, 1000);
     return () => clearInterval(t);
-  }, [busy]);
+  }, [busy, working, liveStage?.startedAt]);
 
-  // 실제 진행 단계 폴 — "작성중" 대신 지금 무엇을 하는지(기억 탐색/명령 실행/결재 대기)를 보여준다
-  const [liveStage, setLiveStage] = useState(null);
+  // 진행 단계 고빈도 폴 — 내 턴이 도는 동안 2.5초 간격
   useEffect(() => {
     if (!busy) { setLiveStage(null); return; }
     const t = setInterval(() => {
@@ -196,7 +228,27 @@ export default function CrewChat({ params }) {
             </div>
           )
         )}
-        {busy && (
+        {pendings.map((p) => (
+          <div key={p.id} className="msg-crew fade-up">
+            <Avatar name={agent?.name} sm />
+            <div className="card" style={{ padding: '13px 16px', minWidth: 0, flex: 1, borderColor: 'var(--accent)' }}>
+              <div className="microlabel" style={{ marginBottom: 6, color: 'var(--accent)' }}>
+                {p.kind === 'capability' ? t('chat.approval.capTitle') : t('chat.approval.pendingTitle')}
+              </div>
+              <div style={{ fontSize: 13.5, fontWeight: 650 }}>{p.action}</div>
+              {p.reason && <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 0', lineHeight: 1.55 }}>{p.reason}</p>}
+              <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>
+                <button className="btn btn-primary sm" disabled={!!resolving} onClick={() => resolvePending(p.id, true)}>
+                  {resolving === p.id ? <Spinner size={12} /> : (p.kind === 'capability' ? t('chat.approval.yes') : t('common.approve'))}
+                </button>
+                <button className="btn sm" disabled={!!resolving} onClick={() => resolvePending(p.id, false)}>
+                  {p.kind === 'capability' ? t('chat.approval.no') : t('common.reject')}
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+        {working && (
           <div className="msg-crew">
             <Avatar name={agent?.name} sm />
             <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13, flex: 1, minWidth: 0 }}>

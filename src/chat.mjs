@@ -14,7 +14,7 @@ import { listAgents } from './hub.mjs';
 import { addApproval } from './approvals.mjs';
 import { appendEvent } from './events.mjs';
 import { loadCapabilities } from './capabilities.mjs';
-import { makePermissionGate } from './permission-gate.mjs';
+import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { externalExec, glmEnv, GLM_DEFAULT_MODEL, RUNNERS } from './runners.mjs';
 import { loadThread } from './thread.mjs';
@@ -69,6 +69,16 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues) {
     },
   );
 
+  const requestCapability = tool(
+    'request_capability',
+    '작업에 필요한 로컬 능력(fs=파일 시스템, browser=웹 브라우징, shell=셸)이 꺼져 있을 때 사장에게 켜 달라고 요청한다. 요청하면 사장의 대화창에 Yes/No 카드가 뜨고, 승인되면 능력이 켜진 뒤 이어서 실행하라는 후속 지시가 온다. why에는 왜 필요한지 한 문장.',
+    { cap: z.enum(['fs', 'browser', 'shell']), why: z.string() },
+    async ({ cap, why }) => {
+      const item = await suggestCapability(wsId, fromSlug, cap, why);
+      return text(`요청이 등록되었다${item ? `(${item.id})` : ''}. 사장에게 "카드에서 승인하시면 바로 이어서 하겠다"고 짧게 안내하고 턴을 마무리하라. 승인 전에는 그 능력을 쓰려 하지 마라.`);
+    },
+  );
+
   let used = 0;
   const delegate = tool(
     'delegate',
@@ -95,7 +105,7 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues) {
   );
   return createSdkMcpServer({
     name: 'crew', version: '1.0.0',
-    tools: [requestApproval, ...(colleagues.length ? [delegate] : [])],
+    tools: [requestApproval, requestCapability, ...(colleagues.length ? [delegate] : [])],
   });
 }
 
@@ -172,7 +182,7 @@ ${userMsg}${attNote}
   const caps = await loadCapabilities(wsId);
   const readTools = ['Read', 'Glob', 'Grep', ...(caps.browser ? ['WebFetch', 'WebSearch'] : []), ...mcpAllow, 'mcp__crew'];
   const sideTools = ['Write', ...(caps.fs ? ['Edit'] : []), ...(caps.shell ? ['Bash'] : [])];
-  const offGuide = '필요한 작업이면 거절로 끝내지 말고 "설정 > 로컬 능력"에서 켜 주시면 바로 해드리겠다고 안내하라';
+  const offGuide = '필요한 작업이면 "할 수 없다"로 끝내지 말고 request_capability 도구로 사장에게 켜기를 요청하라(대화창에 Yes/No 카드가 뜬다)';
   const capPrompt = `\n## 로컬 능력 — 회사 설정이 허용한 범위
 - 파일 시스템(워크스페이스 밖): ${caps.fs ? '허용 — 신중하게, 파괴적 변경은 결재를 먼저 올려라' : `꺼짐 — vault 밖의 파일은 읽지도 쓰지도 마라. ${offGuide}`}
 - 웹 브라우징: ${caps.browser ? '허용(WebFetch/WebSearch)' : `꺼짐 — ${offGuide}`}

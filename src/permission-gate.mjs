@@ -17,6 +17,20 @@ function describe(toolName, input) {
   return `${toolName} 실행`;
 }
 
+/** 능력 켜기 제안 결재 — 대화창 Yes/No 카드의 원천. 게이트 거절 시와 크루의 request_capability 도구가 함께 쓴다. */
+const CAP_LABEL = { fs: '파일 시스템', browser: '웹 브라우징', shell: '셸·컴퓨터' };
+export async function suggestCapability(wsId, slug, cap, why) {
+  try {
+    const dup = (await loadApprovals(wsId)).find((a) => a.status === 'pending' && a.kind === 'capability' && a.cap === cap);
+    if (dup) return dup;
+    return await addApproval(wsId, {
+      slug, cap, kind: 'capability',
+      action: `로컬 능력 켜기: ${CAP_LABEL[cap] ?? cap}`,
+      reason: why?.trim() || '크루가 이 능력이 필요한 작업을 받았습니다 — 승인하면 능력을 켜고 이어서 실행합니다',
+    });
+  } catch { return null; /* 제안 실패는 거절 응답을 막지 않는다 */ }
+}
+
 /** caps: {fs, browser, shell, bypass(false 전제)} — allowedTools에 없는 도구가 여기로 온다. */
 export function makePermissionGate(wsId, slug, caps, wsRoot) {
   const root = resolve(wsRoot);
@@ -32,15 +46,22 @@ export function makePermissionGate(wsId, slug, caps, wsRoot) {
 
     if (WEB_TOOLS.has(toolName)) {
       if (caps.browser) return allow; // 웹 열람은 읽기 — 능력만 켜져 있으면 결재 없이
-      return { behavior: 'deny', message: '웹 브라우징 능력이 꺼져 있다. 웹을 열람할 수 없다 — 사장에게 "설정 > 로컬 능력 > 웹 브라우징"을 켜 달라고 안내하라.' };
+      await suggestCapability(wsId, slug, 'browser');
+      return { behavior: 'deny', message: '웹 브라우징 능력이 꺼져 있다. 사장의 대화창에 "켤까요?" 카드를 띄웠으니, 승인하면 이어서 하겠다고 짧게 안내하라.' };
     }
 
     if (WRITE_TOOLS.has(toolName)) {
       const target = input.file_path ?? input.notebook_path ?? '';
       if (inWorkspace(target)) return allow; // 회사 폴더 안은 크루의 책상이다
-      if (!caps.fs) return { behavior: 'deny', message: '파일 시스템 능력이 꺼져 있다. 워크스페이스 밖에는 쓸 수 없다 — 필요하면 사장에게 설정 활성화를 요청하라.' };
+      if (!caps.fs) {
+        await suggestCapability(wsId, slug, 'fs');
+        return { behavior: 'deny', message: '파일 시스템 능력이 꺼져 있다. 사장의 대화창에 "켤까요?" 카드를 띄웠으니, 승인하면 이어서 하겠다고 짧게 안내하라.' };
+      }
     } else if (toolName === 'Bash') {
-      if (!caps.shell) return { behavior: 'deny', message: '셸 능력이 꺼져 있다. 명령을 실행할 수 없다 — 필요하면 사장에게 설정 활성화를 요청하라.' };
+      if (!caps.shell) {
+        await suggestCapability(wsId, slug, 'shell');
+        return { behavior: 'deny', message: '셸 능력이 꺼져 있다. 사장의 대화창에 "켤까요?" 카드를 띄웠으니, 승인하면 이어서 하겠다고 짧게 안내하라.' };
+      }
     }
 
     // 능력은 켜져 있으나 우회 모드가 아님 — 결재를 올리고 이 자리에서 기다린다
