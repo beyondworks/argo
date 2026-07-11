@@ -9,6 +9,16 @@ import { resolveWithFollowUp } from './approval-actions.mjs';
 import { onNotify } from './notify.mjs';
 import { daemonLease } from './lock.mjs';
 import { appendEvent } from './events.mjs';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { paths } from './workspace.mjs';
+
+/** 폴러 하트비트 — 연결 카드의 "가동 중 · N초 전 응답" 표시의 원천. root의 dotfile이라 vault 스캔 무관. */
+async function beatGateway(wsId, kind, ok, error = '') {
+  try {
+    await writeFile(join(paths(wsId).root, `.gateway-${kind}.json`), JSON.stringify({ ts: Date.now(), ok, error: String(error).slice(0, 200) }));
+  } catch { /* 하트비트는 베스트에포트 */ }
+}
 
 const MAX_MSG = 3800; // 텔레그램 4096 제한 대비 여유
 const clip = (t) => (t.length > MAX_MSG ? `${t.slice(0, MAX_MSG)}\n…(전체 내용은 Argo 데크에서)` : t);
@@ -79,6 +89,7 @@ function startTelegram(wsId, getCfg) {
       if (!cfg?.enabled || !cfg.token) break;
       try {
         const updates = await tg(cfg.token, 'getUpdates', { offset, timeout: 25 });
+        await beatGateway(wsId, 'telegram', true);
         for (const u of updates) {
           offset = u.update_id + 1;
           if (stopped) break;
@@ -121,7 +132,9 @@ function startTelegram(wsId, getCfg) {
         }
       } catch (e) {
         if (!stopped) {
-          console.error(`[argo] 텔레그램 폴 오류(${wsId}):`, e.message);
+          const hint = /Conflict/.test(String(e.message)) ? ' — 같은 토큰을 다른 인스턴스가 폴링 중일 수 있음' : '';
+          console.error(`[argo] 텔레그램 폴 오류(${wsId}):`, e.message, hint);
+          await beatGateway(wsId, 'telegram', false, e.message);
           await new Promise((r) => setTimeout(r, 5000)); // 잘못된 토큰·네트워크 단절에도 루프는 살아있는다
         }
       }
@@ -135,6 +148,7 @@ function startTelegram(wsId, getCfg) {
 function startSlack(wsId, getCfg) {
   let stopped = false;
   let lastTs = String(Date.now() / 1000);
+  let lastBeat = 0;
   (async () => {
     console.log(`[argo] 슬랙 게이트웨이 시작: ${wsId}`);
     const cfg0 = getCfg();
@@ -151,6 +165,7 @@ function startSlack(wsId, getCfg) {
       if (!cfg?.enabled || !cfg.token || !cfg.channel) break;
       try {
         const h = await slackApi(cfg.token, 'conversations.history', { channel: cfg.channel, oldest: lastTs, limit: 20 });
+        if (Date.now() - lastBeat > 10_000) { lastBeat = Date.now(); await beatGateway(wsId, 'slack', true); }
         for (const m of (h.messages ?? []).reverse()) {
           if (Number(m.ts) > Number(lastTs)) lastTs = m.ts;
           if (!m.text || m.bot_id || m.user === cfg.botUserId || m.subtype) continue;
@@ -165,7 +180,10 @@ function startSlack(wsId, getCfg) {
           })();
         }
       } catch (e) {
-        if (!stopped) console.error(`[argo] 슬랙 폴 오류(${wsId}):`, e.message);
+        if (!stopped) {
+          console.error(`[argo] 슬랙 폴 오류(${wsId}):`, e.message);
+          await beatGateway(wsId, 'slack', false, e.message);
+        }
       }
       await new Promise((r) => setTimeout(r, 4000));
     }
@@ -216,8 +234,14 @@ export function ensureGateway() {
   const running = new Map(); // `${wsId}:${kind}` → { stop, key }
   // 푸시는 이벤트가 난 워커가 직접 보낸다(1회 발생 = 1회 발송, 충돌 없음). 리더 단일화는 폴러에만.
   onNotify(pushEvent);
+  let wasLeader = false;
   const sync = async () => {
-    if (!lease.isLeader()) { // 리더가 아니면 내 폴러를 모두 내린다
+    const leader = lease.isLeader();
+    if (leader !== wasLeader) { // 리더십 전환은 반드시 로그 — "폴러가 왜 안 도나" 1차 단서
+      console.log(`[argo] 게이트웨이 리더 ${leader ? '획득' : '양보'} (pid ${process.pid})`);
+      wasLeader = leader;
+    }
+    if (!leader) { // 리더가 아니면 내 폴러를 모두 내린다
       for (const [id, cur] of running) { cur.stop(); running.delete(id); }
       return;
     }

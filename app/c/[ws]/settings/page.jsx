@@ -348,6 +348,7 @@ const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--card-2)',
 function ConnectionCard({ ws, kind, title, help, agents }) {
   const { t } = useLang();
   const [conn, setConn] = useState(null);
+  const [gw, setGw] = useState(null);
   const [token, setToken] = useState('');
   const [channel, setChannel] = useState('');
   const [crew, setCrew] = useState('');
@@ -357,10 +358,20 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
   function load() {
     api(`/api/companies/${ws}/connections`).then((d) => {
       const c = d.connections[kind];
-      setConn(c); setChannel(c.channel ?? ''); setCrew(c.defaultCrew ?? '');
+      setConn(c); setGw(d.gateway?.[kind] ?? null);
+      setChannel(c.channel ?? ''); setCrew(c.defaultCrew ?? '');
     }).catch(() => setConn({}));
   }
   useEffect(load, [ws]);
+
+  // 가동 중엔 폴러 하트비트를 8초마다 — "연동 안 됨"이 화면에서 바로 보인다
+  useEffect(() => {
+    if (!conn?.enabled) return;
+    const t = setInterval(() => {
+      api(`/api/companies/${ws}/connections`).then((d) => setGw(d.gateway?.[kind] ?? null)).catch(() => {});
+    }, 8000);
+    return () => clearInterval(t);
+  }, [ws, kind, conn?.enabled]);
 
   async function save(enabled) {
     setSaving(true); setMsg('');
@@ -380,10 +391,23 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
   const on = conn?.enabled;
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span className="card-title">{title}{t('settings.conn.suffix')}</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <span className="card-title" style={{ minWidth: 0 }}>
+          {title}{t('settings.conn.suffix')}
+          {conn?.botUsername && <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', marginLeft: 7 }}>{conn.botUsername}</span>}
+        </span>
         <span className="chip">{on ? <><span className="dot" />{t('settings.conn.on')}</> : t('settings.conn.off')}{kind === 'telegram' && conn?.chatId ? t('settings.conn.pairedSuffix') : ''}</span>
       </div>
+      {on && gw && (
+        <div style={{ fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 6, color: gw.alive ? 'var(--ok)' : gw.error ? 'var(--danger)' : 'var(--warn)' }}>
+          <span style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} aria-hidden="true" />
+          {gw.alive
+            ? t('settings.conn.gwAlive', { s: Math.max(0, Math.round((Date.now() - gw.lastTs) / 1000)) })
+            : gw.error
+              ? t('settings.conn.gwError', { msg: String(gw.error).slice(0, 80) })
+              : t('settings.conn.gwWaiting')}
+        </div>
+      )}
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{help}</p>
       <label style={{ display: 'grid', gap: 5 }}>
         <span className="microlabel">{t('settings.conn.token')}{conn?.hasToken ? ` · ${t('settings.conn.tokenSaved')} ${conn.token}` : ''}</span>

@@ -1,12 +1,45 @@
 // 메신저 연결 — connections.json. 봇 토큰은 워크스페이스 파일에만 두고(로그·API 응답 금지),
 // 화면에는 항상 마스킹해서 내보낸다. SaaS(P1)에서는 서버측 암호화 보관으로 이전한다.
 import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 
 const EMPTY = {
-  telegram: { token: '', chatId: null, defaultCrew: '', enabled: false },
-  slack: { token: '', channel: '', botUserId: null, defaultCrew: '', enabled: false },
+  telegram: { token: '', chatId: null, defaultCrew: '', enabled: false, botUsername: '' },
+  slack: { token: '', channel: '', botUserId: null, defaultCrew: '', enabled: false, botUsername: '' },
 };
+
+/** 가동 전 토큰 즉시 검증 — "연동 안 됨"을 저장 시점에 잡는다. 반환: 봇 표시명. 실패 시 throw. */
+export async function validateConnection(kind, token) {
+  if (kind === 'telegram') {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, { signal: AbortSignal.timeout(10_000) });
+    const j = await res.json().catch(() => ({}));
+    if (!j.ok) throw new Error(`텔레그램 토큰 검증 실패: ${j.description ?? res.status}`);
+    return `@${j.result.username}`;
+  }
+  if (kind === 'slack') {
+    const res = await fetch('https://slack.com/api/auth.test', {
+      method: 'POST', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!j.ok) throw new Error(`슬랙 토큰 검증 실패: ${j.error ?? res.status}`);
+    return j.user ?? '';
+  }
+  return '';
+}
+
+/** 게이트웨이 폴러 하트비트 조회 — 40초 내 성공 비트가 있어야 "가동 중". */
+export async function gatewayStatus(wsId) {
+  const read = async (kind) => {
+    try {
+      const s = JSON.parse(await readFile(join(paths(wsId).root, `.gateway-${kind}.json`), 'utf8'));
+      return { alive: s.ok && Date.now() - s.ts < 40_000, lastTs: s.ts, error: s.ok ? '' : s.error };
+    } catch {
+      return { alive: false, lastTs: null, error: '' };
+    }
+  };
+  return { telegram: await read('telegram'), slack: await read('slack') };
+}
 
 export async function loadConnections(wsId) {
   try {
