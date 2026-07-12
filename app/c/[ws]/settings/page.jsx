@@ -332,34 +332,61 @@ function CapabilitiesCard({ ws }) {
   );
 }
 
-/** AI 연결(Claude BYOK) — 일반 사용자가 첫 턴에서 막히지 않게 키를 넣는 관문.
-    상태(연결됨/키 필요) · 키 입력(붙여넣기, 마스킹) · 저장 · 연결 확인(실검증) · 제거 + 발급 가이드. */
+/** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
+    러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
+    (c) 방식별 입력·저장·검증·제거 또는 CLI 로그인 안내. 응답엔 마스킹만 실린다(보안 규칙). */
+const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', glm: 'GLM' };
+const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'glm'];
+
 function AiConnectionCard({ ws }) {
   const { t } = useLang();
-  const [status, setStatus] = useState(null); // { connected, masked }
-  const [key, setKey] = useState('');
+  const [runners, setRunners] = useState(null); // { [id]: status } | null(로딩)
+
+  function load() {
+    api(`/api/companies/${ws}/keys`).then((d) => setRunners(d.runners ?? {})).catch(() => setRunners({}));
+  }
+  useEffect(load, [ws]);
+
+  return (
+    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <span className="card-title">{t('settings.runners.title')}</span>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 6px', lineHeight: 1.6 }}>{t('settings.runners.help')}</p>
+      {!runners ? <Skeleton h={180} /> : RUNNER_ORDER.map((id, i) => (
+        <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={i === 0} />
+      ))}
+    </div>
+  );
+}
+
+/** 러너 1행 — 상태 칩 + 방식 탭 + (API키/붙여넣기 토큰 입력) 또는 (CLI 로그인 안내). */
+function RunnerRow({ ws, id, st, onChange, first }) {
+  const { t } = useLang();
+  const methods = st?.methods ?? ['apikey'];
+  const hasOauth = methods.includes('oauth');
+  const oauthPaste = !!st?.oauthPasteable;
+  const company = st?.company ?? { connected: false };
+  const [method, setMethod] = useState(company.connected ? company.type : 'apikey');
+  const [value, setValue] = useState('');
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const [ok, setOk] = useState(false);
 
-  function load() {
-    api(`/api/companies/${ws}/keys`).then(setStatus).catch(() => setStatus({ connected: false, masked: '' }));
-  }
-  useEffect(load, [ws]);
+  // 연결/제거로 상태가 바뀌면 선택 방식을 회사 연결 방식에 맞춘다
+  useEffect(() => { if (company.connected) setMethod(company.type); }, [company.connected, company.type]);
 
   async function save(verify) {
-    if (busy || !key.trim()) return;
+    if (busy || !value.trim()) return;
     setBusy(verify ? 'verify' : 'save'); setMsg(''); setOk(false);
     try {
       const res = await fetch(`/api/companies/${ws}/keys`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key: key.trim(), verify }),
+        body: JSON.stringify({ runner: id, type: method, value: value.trim(), verify }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error);
-      setStatus(d); setKey('');
-      setOk(true); setMsg(verify ? t('settings.ai.verified') : t('settings.ai.saved'));
+      setValue(''); setOk(true); setMsg(verify ? t('settings.runners.verified') : t('settings.runners.saved'));
       window.dispatchEvent(new Event('argo:refresh'));
+      onChange();
     } catch (e) {
       setMsg(String(e.message));
     } finally {
@@ -371,49 +398,89 @@ function AiConnectionCard({ ws }) {
     if (busy) return;
     setBusy('remove'); setMsg(''); setOk(false);
     try {
-      await fetch(`/api/companies/${ws}/keys`, { method: 'DELETE' });
-      setStatus({ connected: false, masked: '' }); setKey('');
+      await fetch(`/api/companies/${ws}/keys?runner=${encodeURIComponent(id)}`, { method: 'DELETE' });
       window.dispatchEvent(new Event('argo:refresh'));
+      onChange();
     } finally {
       setBusy('');
     }
   }
 
-  const connected = status?.connected;
+  const chip = company.connected ? (
+    <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
+      <span className="dot" />{t('settings.runners.companyConnected')} · {t(`settings.runners.method.${company.type}`)} · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span>
+    </span>
+  ) : st?.hostAuthed ? (
+    <span className="chip"><span className="dot" />{t('settings.runners.hostInUse')}</span>
+  ) : (
+    <span className="chip">{t('settings.runners.none')}</span>
+  );
+
+  const cliBranch = method === 'oauth' && !oauthPaste;
   return (
-    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span className="card-title">{t('settings.ai.title')}</span>
-        <span className="chip">{connected ? <><span className="dot" />{t('settings.ai.connected')}</> : t('settings.ai.needKey')}</span>
+    <div style={{ display: 'grid', gap: 8, padding: '12px 0', ...(first ? {} : { borderTop: '1px dashed var(--border-soft)' }) }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13.5, fontWeight: 650 }}>{RUNNER_NAMES[id]}</span>
+        {chip}
       </div>
-      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.ai.help')}</p>
-      <label style={{ display: 'grid', gap: 5 }}>
-        <span className="microlabel">
-          {t('settings.ai.keyLabel')}
-          {connected && status?.masked ? ` · ${t('settings.ai.keySaved')} ${status.masked}` : ''}
-        </span>
-        <input suppressHydrationWarning type="password" value={key} onChange={(e) => setKey(e.target.value)}
-          placeholder={connected ? t('settings.ai.replacePlaceholder') : t('settings.ai.placeholder')} style={fieldStyle} />
-      </label>
-      <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>
-        {t('settings.ai.guide')}{' '}
-        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer"
-          style={{ color: 'var(--fg)', textDecoration: 'underline' }}>{t('settings.ai.guideLink')}</a>
-      </p>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 'auto', paddingTop: 6 }}>
-        <button className="btn btn-primary sm" disabled={!!busy || !key.trim()} onClick={() => save(false)}>
-          {busy === 'save' ? <Spinner size={12} /> : t('settings.ai.save')}
-        </button>
-        <button className="btn sm" disabled={!!busy || !key.trim()} onClick={() => save(true)}>
-          {busy === 'verify' ? <Spinner size={12} /> : t('settings.ai.verify')}
-        </button>
-        {connected && (
-          <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={remove}>
-            {busy === 'remove' ? <Spinner size={12} /> : t('settings.ai.remove')}
-          </button>
-        )}
-        {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
-      </div>
+      {hasOauth && (
+        <div style={{ display: 'flex', gap: 6 }}>
+          {methods.map((m) => (
+            <button key={m} className="chip" onClick={() => { setMethod(m); setMsg(''); }} aria-pressed={method === m}
+              style={{ cursor: 'pointer', padding: '4px 12px', fontSize: 12, ...(method === m ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}) }}>
+              {t(`settings.runners.method.${m}`)}
+            </button>
+          ))}
+        </div>
+      )}
+      {cliBranch ? (
+        <div style={{ display: 'grid', gap: 8 }}>
+          <div style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.6 }}>
+            {t('settings.runners.cliLogin', { cmd: `${id} login` })}
+            <span style={{ marginLeft: 8, color: st?.hostAuthed ? 'var(--ok)' : 'var(--warn)' }}>
+              {st?.hostAuthed ? t('settings.runners.hostAuthed') : t('settings.runners.hostNotAuthed')}
+            </span>
+          </div>
+          {company.connected && (
+            <div>
+              <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={remove}>
+                {busy === 'remove' ? <Spinner size={12} /> : t('settings.runners.remove')}
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
+            placeholder={method === 'oauth' ? t('settings.runners.tokenPlaceholder') : t('settings.runners.keyPlaceholder')} style={fieldStyle} />
+          <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>
+            {method === 'oauth' ? (
+              t('settings.runners.oauthGuide')
+            ) : (
+              <>
+                {t('settings.runners.keyGuide')}{' '}
+                {st?.keyUrl && (
+                  <a href={st.keyUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--fg)', textDecoration: 'underline' }}>{t('settings.runners.keyLink')}</a>
+                )}
+              </>
+            )}
+          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary sm" disabled={!!busy || !value.trim()} onClick={() => save(true)}>
+              {busy === 'verify' ? <Spinner size={12} /> : t('settings.runners.saveVerify')}
+            </button>
+            <button className="btn sm" disabled={!!busy || !value.trim()} onClick={() => save(false)}>
+              {busy === 'save' ? <Spinner size={12} /> : t('settings.runners.saveOnly')}
+            </button>
+            {company.connected && (
+              <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={remove}>
+                {busy === 'remove' ? <Spinner size={12} /> : t('settings.runners.remove')}
+              </button>
+            )}
+            {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
+          </div>
+        </>
+      )}
     </div>
   );
 }

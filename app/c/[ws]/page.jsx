@@ -392,11 +392,12 @@ function AiKeyBanner({ ws }) {
     let alive = true;
     Promise.all([
       api('/api/runners').catch(() => ({ runners: [] })),
-      api(`/api/companies/${ws}/keys`).catch(() => ({ connected: false })),
+      api(`/api/companies/${ws}/keys`).catch(() => ({ runners: {} })),
     ]).then(([r, k]) => {
       if (!alive) return;
       const claude = (r.runners ?? []).find((x) => x.id === 'claude');
-      setShow(!!claude && !claude.authed && !k.connected);
+      const claudeConnected = !!k.runners?.claude?.company?.connected;
+      setShow(!!claude && !claude.authed && !claudeConnected);
     });
     return () => { alive = false; };
   }, [ws]);

@@ -110,18 +110,31 @@ export async function detectRunners() {
   return cache;
 }
 
-/** 외부 CLI 러너 1턴 — 워크스페이스를 cwd로, 프롬프트 하나로 실행하고 마지막 응답을 받는다. */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000 }) {
+/** codex 격리홈 — 'clean'이면 auth.json 심링크 없이(회사 API키 모드), 아니면 호스트 로그인 상속. */
+async function codexHomeClean() {
+  const dir = join(homedir(), '.argo', 'codex-home-apikey');
+  await mkdir(dir, { recursive: true });
+  if (!(await exists(join(dir, 'config.toml')))) {
+    await writeFile(join(dir, 'config.toml'), '# Argo API키 모드 — 계정 로그인 미상속\n').catch(() => {});
+  }
+  return dir;
+}
+
+/** 외부 CLI 러너 1턴 — 워크스페이스를 cwd로, 프롬프트 하나로 실행하고 마지막 응답을 받는다.
+    cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인. */
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null }) {
   if (runner === 'codex') {
     const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
     const out = join(dir, 'last.txt');
+    // 회사 API키 모드면 깨끗한 홈(계정 OAuth 무시), 아니면 호스트 로그인 상속
+    const CODEX_HOME = cred?.home === 'clean' ? await codexHomeClean() : await codexHome();
     try {
       await exec('codex', [
         'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check',
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
         '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록
-      ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, env: { ...process.env, CODEX_HOME: await codexHome() } })
+      ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, env: { ...process.env, ...(cred?.env ?? {}), CODEX_HOME } })
         .catch((e) => { throw apiError(e); });
       return (await readFile(out, 'utf8')).trim();
     } finally {
@@ -133,7 +146,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
       '-p', prompt,
       ...(model ? ['-m', model] : []),
       '--approval-mode', 'auto_edit', // 편집류만 자동 승인 — 셸 등은 비대화 모드에서 실행되지 않는다
-    ], { cwd, timeout: timeoutMs, maxBuffer: 32e6 })
+    ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, env: { ...process.env, ...(cred?.env ?? {}) } })
       .catch((e) => { throw apiError(e); });
     return stdout
       .replace(/^(Loaded cached credentials\.|Data collection is .*|\[STARTUP\].*|\[dotenv.*)\s*$/gim, '')
@@ -142,53 +155,135 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
   throw new Error(`알 수 없는 외부 러너: ${runner}`);
 }
 
-// ── 회사 Claude 키(BYOK) — 일반 사용자가 Claude Code 없이도 크루를 굴리게 하는 자격 저장소.
-// 회사 루트 .secrets.json에 보관. 시크릿이므로 (a) API 응답·로그엔 마스킹만, (b) 동기화 제외 대상.
-// 주의: sync EXCLUDE에 '.secrets.json' 추가 필요 — 현재 미포함이면 시크릿이 기기 간 복제된다(sync.mjs는 이 작업 범위 밖).
+// ── 회사별 러너 자격(BYOK/BYOA) — 일반 사용자가 호스트 CLI 로그인 없이도 어떤 러너든 굴리게 한다.
+// 회사 루트 .secrets.json의 runners.{id} = { type:'apikey'|'oauth', value } 에 보관.
+// 시크릿이므로 (a) API 응답·로그엔 마스킹만, (b) 동기화 제외(sync EXCLUDE에 .secrets.json 포함됨).
 const secretsFile = (wsId) => join(paths(wsId).root, '.secrets.json');
 
-/** 회사 Claude API 키 로드 — 없으면 null. */
-export async function loadClaudeKey(wsId) {
+// 러너별 지원 인증 방식. apikey=붙여넣기(4러너 공통), oauth=붙여넣기 토큰(claude) 또는 호스트 로그인(codex/gemini).
+// glm은 Anthropic 호환 토큰(사실상 apikey)만.
+export const RUNNER_AUTH = {
+  claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPasteable: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', keyUrl: 'https://console.anthropic.com/settings/keys' },
+  codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, keyUrl: 'https://platform.openai.com/api-keys' },
+  gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://aistudio.google.com/apikey' },
+  glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
+};
+
+async function loadSecrets(wsId) {
   const s = await readJsonLenient(secretsFile(wsId), {}).catch(() => ({}));
-  const k = s?.claude;
-  return typeof k === 'string' && k.trim() ? k.trim() : null;
+  // 레거시 마이그레이션: 옛 { claude:"key" } → runners.claude.{apikey}
+  if (typeof s.claude === 'string' && s.claude.trim() && !s.runners?.claude) {
+    s.runners = { ...(s.runners ?? {}), claude: { type: 'apikey', value: s.claude.trim() } };
+  }
+  if (!s.runners) s.runners = {};
+  return s;
 }
 
-/** 회사 Claude API 키 저장 — 원자적 쓰기. 다른 시크릿 필드는 보존. */
-export async function saveClaudeKey(wsId, key) {
-  const s = await readJsonLenient(secretsFile(wsId), {}).catch(() => ({}));
-  await writeJsonAtomic(secretsFile(wsId), { ...s, claude: String(key).trim() });
+/** 회사에 저장된 러너 자격 — { type, value } | null. */
+export async function loadRunnerCred(wsId, runner) {
+  const c = (await loadSecrets(wsId)).runners?.[runner];
+  return c && typeof c.value === 'string' && c.value.trim() ? { type: c.type === 'oauth' ? 'oauth' : 'apikey', value: c.value.trim() } : null;
 }
 
-/** 회사 Claude API 키 제거 — 파일의 다른 시크릿은 유지. */
-export async function clearClaudeKey(wsId) {
-  const s = await readJsonLenient(secretsFile(wsId), {}).catch(() => ({}));
-  const { claude, ...rest } = s;
+/** 러너 자격 저장 — 원자적. 다른 러너·필드는 보존. 레거시 claude 필드는 정리. */
+export async function saveRunnerCred(wsId, runner, type, value) {
+  if (!RUNNER_AUTH[runner]) throw new Error('알 수 없는 러너');
+  const s = await loadSecrets(wsId);
+  const { claude, ...rest } = s; // 레거시 평문 필드 제거
+  rest.runners = { ...rest.runners, [runner]: { type: type === 'oauth' ? 'oauth' : 'apikey', value: String(value).trim() } };
   await writeJsonAtomic(secretsFile(wsId), rest);
 }
 
-/** 마스킹 — 접두사만 노출(보안 규칙). 평문은 답변·로그 어디에도 남기지 않는다. */
-export function maskClaudeKey(key) {
-  return key ? `${key.slice(0, 6)}***` : '';
+/** 러너 자격 제거 — 다른 러너는 유지. */
+export async function clearRunnerCred(wsId, runner) {
+  const s = await loadSecrets(wsId);
+  const { claude, ...rest } = s;
+  if (rest.runners) delete rest.runners[runner];
+  await writeJsonAtomic(secretsFile(wsId), rest);
 }
 
-/** SDK env 주입값 — 회사 키가 있으면 ANTHROPIC_API_KEY로 넣고, 없으면 null(기존 CLI/env 자격으로 폴백 — 회귀 0). */
-export async function claudeEnvFor(wsId) {
-  const key = await loadClaudeKey(wsId);
-  return key ? { ...process.env, ANTHROPIC_API_KEY: key } : null;
+/** 마스킹 — 접두사만(보안 규칙). 평문은 어디에도 남기지 않는다. */
+export const maskCred = (v) => (v ? `${v.slice(0, 6)}***` : '');
+
+/** 러너 실행에 주입할 env(부분) — 회사 자격이 있으면 러너 종류에 맞는 변수로. 없으면 null(호스트 자격 폴백=회귀 0).
+    반환: { env, home } — env=주입 변수 dict, home=codex 격리홈 오버라이드('clean'=계정 로그인 무시하고 API키 사용). */
+export async function runnerCredEnv(wsId, runner) {
+  const cred = await loadRunnerCred(wsId, runner);
+  if (!cred) return null;
+  const v = cred.value;
+  if (runner === 'claude') {
+    return cred.type === 'oauth'
+      ? { env: { CLAUDE_CODE_OAUTH_TOKEN: v, ANTHROPIC_API_KEY: '' } }
+      : { env: { ANTHROPIC_API_KEY: v, CLAUDE_CODE_OAUTH_TOKEN: '' } };
+  }
+  if (runner === 'glm') {
+    return { env: { ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '' } };
+  }
+  if (runner === 'codex') {
+    // apikey면 계정 OAuth를 무시하고 OPENAI_API_KEY로 — 격리홈을 '깨끗한' 것으로 써 auth.json 상속 차단.
+    return cred.type === 'apikey' ? { env: { OPENAI_API_KEY: v }, home: 'clean' } : null; // oauth는 호스트 로그인 사용(null)
+  }
+  if (runner === 'gemini') {
+    return cred.type === 'apikey' ? { env: { GEMINI_API_KEY: v } } : null; // oauth는 호스트 로그인
+  }
+  return null;
 }
 
-/** 키 인증 확인 — Anthropic models 엔드포인트로 저비용 검증(토큰 미소모).
-    반환: { ok:true } 통과 · { ok:false } 인증 거부(401/403) · { ok:null } 네트워크 불가(판정 보류). */
-export async function verifyClaudeKey(key) {
+/** Claude/GLM(SDK) 러너용 완전 env — 회사 자격 우선, 없으면 기존 폴백(glm은 호스트 GLM_API_KEY, claude는 CLI/env). */
+export async function sdkEnvFor(wsId, runner) {
+  const cred = await runnerCredEnv(wsId, runner);
+  if (cred) return { ...process.env, ...cred.env };
+  if (runner === 'glm') return glmEnv(); // 회사 자격 없으면 호스트 GLM_API_KEY 폴백
+  return null; // claude: 회사 자격 없으면 null → 기존 CLI/env 자격
+}
+
+/** 러너별 회사+호스트 연결 상태 — 설정 UI·크루 카드가 먹는다. */
+export async function runnerStatus(wsId) {
+  const host = await detectRunners();
+  const secrets = await loadSecrets(wsId);
+  const out = {};
+  for (const [id, meta] of Object.entries(RUNNER_AUTH)) {
+    const cred = secrets.runners?.[id];
+    out[id] = {
+      methods: meta.methods,
+      oauthPasteable: !!meta.oauthPasteable,
+      keyUrl: meta.keyUrl,
+      hostInstalled: host[id]?.installed ?? false,
+      hostAuthed: host[id]?.authed ?? false, // 호스트 CLI 로그인/env (OAuth 폴백 경로)
+      company: cred?.value ? { connected: true, type: cred.type === 'oauth' ? 'oauth' : 'apikey', masked: maskCred(cred.value) } : { connected: false },
+    };
+  }
+  return out;
+}
+
+/** 자격 인증 확인 — 러너별 저비용 검증. { ok:true|false|null }(null=네트워크 불가, 형식만으로 저장 허용). */
+export async function verifyRunnerCred(runner, type, value) {
+  const v = String(value).trim();
   try {
-    const res = await fetch('https://api.anthropic.com/v1/models?limit=1', {
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (res.status === 401 || res.status === 403) return { ok: false };
-    return { ok: true };
+    if (runner === 'claude' && type === 'apikey') {
+      const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { 'x-api-key': v, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
+      return { ok: !(r.status === 401 || r.status === 403) };
+    }
+    if (runner === 'glm') {
+      const base = process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic';
+      const r = await fetch(`${base}/v1/models?limit=1`, { headers: { 'x-api-key': v, authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
+      return { ok: !(r.status === 401 || r.status === 403) };
+    }
+    if (runner === 'codex' && type === 'apikey') {
+      const r = await fetch('https://api.openai.com/v1/models?limit=1', { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
+      return { ok: !(r.status === 401 || r.status === 403) };
+    }
+    if (runner === 'gemini' && type === 'apikey') {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(v)}&pageSize=1`, { signal: AbortSignal.timeout(10_000) });
+      return { ok: !(r.status === 401 || r.status === 403) };
+    }
+    return { ok: null }; // oauth 토큰·미지원 조합은 형식 검증만
   } catch {
     return { ok: null };
   }
 }
+
+// ── 하위호환 얇은 래퍼 (기존 호출부 유지) ──
+export const loadClaudeKey = async (wsId) => (await loadRunnerCred(wsId, 'claude'))?.value ?? null;
+export const maskClaudeKey = maskCred;
+export const claudeEnvFor = (wsId) => sdkEnvFor(wsId, 'claude');
