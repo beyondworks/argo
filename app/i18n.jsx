@@ -160,6 +160,16 @@ const DICT = {
 
   // ── 홈
   'home.tagline': ['크루 · 폴더 기억 · 자동 연결', 'Crew · Folder Memory · Auto Link'],
+  'login.title': ['아르고에 승선', 'Board the Argo'],
+  'login.subtitle': ['이메일로 로그인 링크를 보내드립니다. 비밀번호는 없습니다.', 'We\'ll email you a sign-in link. No passwords.'],
+  'login.emailPlaceholder': ['이메일 주소', 'Email address'],
+  'login.sendLink': ['로그인 링크 보내기', 'Send sign-in link'],
+  'login.sent': ['{email} 메일함을 확인하세요 — 로그인 링크를 보냈습니다.', 'Check {email} — we sent you a sign-in link.'],
+  'login.or': ['또는', 'or'],
+  'login.google': ['Google로 계속하기', 'Continue with Google'],
+  'login.localMode': ['로컬 모드로 실행 중입니다 — 로그인 없이 이 컴퓨터의 회사를 사용합니다.', 'Running in local mode — use companies on this computer without signing in.'],
+  'login.goHome': ['홈으로', 'Go home'],
+  'login.signOut': ['로그아웃', 'Sign out'],
   'home.boarding': ['승선', 'Boarding'],
   'home.headline1': ['AI 크루와 함께 일할', 'Build a company'],
   'home.headline2': ['회사를 만드세요', 'to work with AI crew'],

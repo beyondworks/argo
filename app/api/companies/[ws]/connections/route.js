@@ -1,11 +1,13 @@
 import { loadConnections, updateConnection, maskConnections, validateConnection, gatewayStatus } from '../../../../../src/connections.mjs';
 import { ensureGateway } from '../../../../../src/gateway.mjs';
+import { guardCompany } from '../../../../auth.mjs';
 
 ensureGateway();
 
 /** 연결 상태 — 토큰은 항상 마스킹, 게이트웨이 폴러 하트비트 동봉("연동 안 됨"을 화면에서 진단). */
 export async function GET(_req, { params }) {
   const { ws } = await params;
+  const denied = await guardCompany(ws); if (denied) return denied;
   const [all, gateway] = await Promise.all([loadConnections(ws), gatewayStatus(ws)]);
   return Response.json({ connections: maskConnections(all), gateway });
 }
@@ -15,6 +17,7 @@ export async function GET(_req, { params }) {
 export async function POST(req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const { kind, ...patch } = await req.json();
     const allowed = {};
     for (const k of ['token', 'enabled', 'defaultCrew', 'channel']) {

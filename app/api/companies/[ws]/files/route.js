@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join, normalize } from 'node:path';
 import { paths } from '../../../../../src/workspace.mjs';
+import { guardCompany } from '../../../../auth.mjs';
 
 // 첨부 파일 서빙 — vault/files/ 만, 경로 탈출 차단. 채팅 버블 썸네일이 이 경로를 쓴다.
 const MIME = {
@@ -11,6 +12,7 @@ const MIME = {
 
 export async function GET(req, { params }) {
   const { ws } = await params;
+  const denied = await guardCompany(ws); if (denied) return denied;
   const rel = new URL(req.url).searchParams.get('rel') ?? '';
   const norm = normalize(rel);
   if (!norm.startsWith('files/') || norm.includes('..')) {

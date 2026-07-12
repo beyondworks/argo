@@ -3,6 +3,7 @@ import { listAgents, listDocs } from '../../../../src/hub.mjs';
 import { readUsageSummary, readDelegations, monthCostByCrew } from '../../../../src/usage.mjs';
 import { ensureScheduler } from '../../../../src/scheduler.mjs';
 import { ensureGateway } from '../../../../src/gateway.mjs';
+import { guardCompany } from '../../../auth.mjs';
 
 ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
 ensureGateway(); // 메신저 게이트웨이(텔레그램/슬랙) 상주
@@ -36,6 +37,7 @@ function docStats(docs) {
 export async function GET(_req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const [company, agents, docs, usage, delegations, payroll] = await Promise.all([
       loadCompany(ws), listAgents(ws), listDocs(ws), readUsageSummary(ws), readDelegations(ws), monthCostByCrew(ws),
     ]);
@@ -55,6 +57,7 @@ export async function GET(_req, { params }) {
 export async function PUT(req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const { name, budgetUsd } = await req.json();
     const patch = {};
     if (name !== undefined) {
@@ -77,6 +80,7 @@ export async function PUT(req, { params }) {
 export async function DELETE(_req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     await archiveCompany(ws);
     return Response.json({ ok: true });
   } catch (e) {

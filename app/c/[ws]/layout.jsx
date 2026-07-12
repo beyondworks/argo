@@ -97,6 +97,9 @@ export default function CompanyShell({ children, params }) {
   const pathname = usePathname();
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
+  // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
+  const [me, setMe] = useState(null);
+  useEffect(() => { api('/api/me').then(setMe).catch(() => {}); }, []);
 
   const refresh = useCallback(() => {
     api(`/api/companies/${ws}`).then(setData).catch(() => setData({ missing: true }));
@@ -233,14 +236,19 @@ export default function CompanyShell({ children, params }) {
         </a>
         <div className="side-footer" style={{ marginTop: 6 }}>
           <Avatar name={data?.company?.name} sm />
-          <span style={{ minWidth: 0 }}>
+          <span style={{ minWidth: 0, flex: 1 }}>
             <span style={{ display: 'block', fontSize: 12.5, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {data?.company?.name ?? ''}
             </span>
-            <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)' }}>
-              {data?.company?.owner ?? ''}
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {me?.authOn ? (me.user?.email || '') : (data?.company?.owner ?? '')}
             </span>
           </span>
+          {me?.authOn && (
+            <form action="/auth/signout" method="post" style={{ flex: 'none' }}>
+              <button className="btn sm" title={t('login.signOut')}>{t('login.signOut')}</button>
+            </form>
+          )}
         </div>
       </aside>
 

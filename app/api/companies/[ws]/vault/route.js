@@ -4,6 +4,7 @@ import { listDocs, readDoc } from '../../../../../src/hub.mjs';
 import { saveNote, updateIndex } from '../../../../../src/memory.mjs';
 import { paths } from '../../../../../src/workspace.mjs';
 import { appendEvent } from '../../../../../src/events.mjs';
+import { guardCompany } from '../../../../auth.mjs';
 
 /** notes/ 안의 안전한 절대 경로만 통과 — 기억 통제(편집/삭제)는 주제 노트에만 허용된다. */
 function noteFile(ws, rel) {
@@ -16,6 +17,7 @@ function noteFile(ws, rel) {
 export async function GET(req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const rel = new URL(req.url).searchParams.get('rel');
     if (rel) return Response.json({ rel, content: await readDoc(ws, rel) });
     const docs = await listDocs(ws);
@@ -31,6 +33,7 @@ export async function GET(req, { params }) {
 export async function POST(req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const { title, content } = await req.json();
     if (!title?.trim() || !content?.trim()) {
       return Response.json({ error: '제목과 내용이 필요합니다' }, { status: 400 });
@@ -46,6 +49,7 @@ export async function POST(req, { params }) {
 export async function PUT(req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const { rel, content } = await req.json();
     if (!rel || !content?.trim()) return Response.json({ error: 'rel·content가 필요합니다' }, { status: 400 });
     await writeFile(noteFile(ws, rel), content.endsWith('\n') ? content : `${content}\n`);
@@ -61,6 +65,7 @@ export async function PUT(req, { params }) {
 export async function DELETE(req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const rel = new URL(req.url).searchParams.get('rel');
     const file = noteFile(ws, rel ?? '');
     const trash = join(paths(ws).vault, '.trash');

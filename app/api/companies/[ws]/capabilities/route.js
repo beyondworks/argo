@@ -1,7 +1,9 @@
 import { loadCapabilities, updateCapabilities, CAPABILITY_DEFS } from '../../../../../src/capabilities.mjs';
+import { guardCompany } from '../../../../auth.mjs';
 
 export async function GET(_req, { params }) {
   const { ws } = await params;
+  const denied = await guardCompany(ws); if (denied) return denied;
   return Response.json({ capabilities: await loadCapabilities(ws), defs: CAPABILITY_DEFS });
 }
 
@@ -9,6 +11,7 @@ export async function GET(_req, { params }) {
 export async function POST(req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const capabilities = await updateCapabilities(ws, await req.json());
     return Response.json({ capabilities });
   } catch (e) {

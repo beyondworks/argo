@@ -1,10 +1,12 @@
 import { listAgents } from '../../../../../src/hub.mjs';
 import { getTurnStatus } from '../../../../../src/turn-status.mjs';
 import { readEvents } from '../../../../../src/events.mjs';
+import { guardCompany } from '../../../../auth.mjs';
 
 // 백그라운드 작업 패널의 데이터 — 지금 도는 턴(크루별 상태 파일) + 최근 끝난 작업(events).
 export async function GET(req, { params }) {
   const { ws } = await params;
+  const denied = await guardCompany(ws); if (denied) return denied;
   const agents = await listAgents(ws).catch(() => []);
   const running = (await Promise.all(
     agents.map(async (a) => {

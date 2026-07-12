@@ -1,10 +1,12 @@
 import { createAgentFromPrompt, renameTeam } from '../../../../../src/persona.mjs';
 import { listAgents } from '../../../../../src/hub.mjs';
+import { guardCompany } from '../../../../auth.mjs';
 
 /** 팀 이름 일괄 변경. */
 export async function PATCH(req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const { from, to } = await req.json();
     if (!from || !to?.trim()) return Response.json({ error: 'from·to가 필요합니다' }, { status: 400 });
     const r = await renameTeam(ws, from, to);
@@ -18,12 +20,14 @@ export const maxDuration = 120; // 페르소나 카드 생성은 모델 1턴 —
 
 export async function GET(_req, { params }) {
   const { ws } = await params;
+  const denied = await guardCompany(ws); if (denied) return denied;
   return Response.json({ agents: await listAgents(ws) });
 }
 
 export async function POST(req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const { prompt, name, team } = await req.json();
     if (!prompt?.trim()) return Response.json({ error: '한 줄 소개가 필요합니다' }, { status: 400 });
     const agent = await createAgentFromPrompt(ws, prompt.trim(), { name, team });

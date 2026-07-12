@@ -1,9 +1,11 @@
 import { readAgentCard, saveAgentCard, removeAgentCard, updateAgentMeta } from '../../../../../../src/persona.mjs';
+import { guardCompany } from '../../../../../auth.mjs';
 
 /** 카드 열람 — 카드가 곧 시스템 프롬프트(투명성) + 최근 업무·적용 스킬(크루 프로필). */
 export async function GET(_req, { params }) {
   try {
     const { ws, slug } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const { md, meta } = await readAgentCard(ws, slug);
     const [{ readEvents }, { listInstalledSkills }, { agentStats }] = await Promise.all([
       import('../../../../../../src/events.mjs'),
@@ -26,6 +28,7 @@ export async function GET(_req, { params }) {
 export async function PUT(req, { params }) {
   try {
     const { ws, slug } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const { md } = await req.json();
     if (!md?.trim()) return Response.json({ error: '카드 내용이 필요합니다' }, { status: 400 });
     const agent = await saveAgentCard(ws, slug, md);
@@ -39,6 +42,7 @@ export async function PUT(req, { params }) {
 export async function PATCH(req, { params }) {
   try {
     const { ws, slug } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const { name, role, team, model, runner } = await req.json();
     const meta = await updateAgentMeta(ws, slug, { name, role, team, model, runner });
     return Response.json({ meta });
@@ -51,6 +55,7 @@ export async function PATCH(req, { params }) {
 export async function DELETE(_req, { params }) {
   try {
     const { ws, slug } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     await removeAgentCard(ws, slug);
     return Response.json({ ok: true });
   } catch (e) {

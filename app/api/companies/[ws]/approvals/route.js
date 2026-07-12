@@ -1,8 +1,10 @@
 import { loadApprovals } from '../../../../../src/approvals.mjs';
 import { resolveWithFollowUp } from '../../../../../src/approval-actions.mjs';
+import { guardCompany } from '../../../../auth.mjs';
 
 export async function GET(_req, { params }) {
   const { ws } = await params;
+  const denied = await guardCompany(ws); if (denied) return denied;
   const approvals = await loadApprovals(ws);
   return Response.json({
     approvals,
@@ -14,6 +16,7 @@ export async function GET(_req, { params }) {
 export async function POST(req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const { id, approve } = await req.json();
     if (!id) return Response.json({ error: 'id가 필요합니다' }, { status: 400 });
     const item = await resolveWithFollowUp(ws, id, !!approve);

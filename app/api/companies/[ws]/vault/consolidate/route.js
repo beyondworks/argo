@@ -1,4 +1,5 @@
 import { consolidateMemory, rollupJournals } from '../../../../../../src/consolidate.mjs';
+import { guardCompany } from '../../../../../auth.mjs';
 
 export const maxDuration = 120; // 하이쿠 1턴 — 수십 초
 
@@ -6,6 +7,7 @@ export const maxDuration = 120; // 하이쿠 1턴 — 수십 초
 export async function POST(_req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const r = await consolidateMemory(ws);
     const { rolled } = await rollupJournals(ws);
     return Response.json({ ...r, rolled });

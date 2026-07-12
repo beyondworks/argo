@@ -2,6 +2,7 @@ import { validateConnection, updateAgentBot, maskConnections, gatewayStatus, syn
 import { readAgentCard } from '../../../../../../../src/persona.mjs';
 import { ensureGateway } from '../../../../../../../src/gateway.mjs';
 import { appendEvent } from '../../../../../../../src/events.mjs';
+import { guardCompany } from '../../../../../../auth.mjs';
 
 ensureGateway(); // 연결 즉시 폴러가 뜨도록 매니저 상주
 
@@ -9,6 +10,7 @@ ensureGateway(); // 연결 즉시 폴러가 뜨도록 매니저 상주
 export async function POST(req, { params }) {
   try {
     const { ws, slug } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const { token } = await req.json();
     if (!token?.trim()) return Response.json({ error: '봇 토큰이 필요합니다' }, { status: 400 });
     const botUsername = await validateConnection('telegram', token.trim());
@@ -26,6 +28,7 @@ export async function POST(req, { params }) {
 export async function DELETE(_req, { params }) {
   try {
     const { ws, slug } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const all = await updateAgentBot(ws, slug, null);
     return Response.json({ connections: maskConnections(all) });
   } catch (e) {

@@ -8,11 +8,13 @@ import {
   searchRemoteMcp, installRemoteMcp,
   topRemoteSkills, topRemoteMcp, explainItem, warmExplains,
 } from '../../../../../src/remote-market.mjs';
+import { guardCompany } from '../../../../auth.mjs';
 
 export const maxDuration = 120; // explain = 모델 1턴
 
 export async function GET(req, { params }) {
   const { ws } = await params;
+  const denied = await guardCompany(ws); if (denied) return denied;
   const u = new URL(req.url);
   const remote = u.searchParams.get('remote');
   const top = u.searchParams.get('top');
@@ -51,6 +53,7 @@ export async function GET(req, { params }) {
 export async function POST(req, { params }) {
   try {
     const { ws } = await params;
+    const denied = await guardCompany(ws); if (denied) return denied;
     const body = await req.json();
     if (body.kind === 'skill') await installSkill(ws, body.id);
     else if (body.kind === 'mcp') await installMcp(ws, body.id);
@@ -67,6 +70,7 @@ export async function POST(req, { params }) {
 
 export async function DELETE(req, { params }) {
   const { ws } = await params;
+  const denied = await guardCompany(ws); if (denied) return denied;
   const u = new URL(req.url);
   const kind = u.searchParams.get('kind');
   const id = u.searchParams.get('id');
