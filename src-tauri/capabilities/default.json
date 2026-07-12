@@ -10,9 +10,14 @@
     {
       "identifier": "opener:allow-open-url",
       "allow": [
-        { "url": "https://*" },
-        { "url": "http://localhost:*" }
+        {
+          "url": "https://*"
+        },
+        {
+          "url": "http://localhost:*"
+        }
       ]
-    }
+    },
+    "core:window:allow-set-focus"
   ]
 }

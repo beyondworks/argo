@@ -25,45 +25,15 @@ export default function Login() {
 
   useEffect(() => {
     setIsApp('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri'));
-    const params = new URLSearchParams(window.location.search);
-    const err = params.get('error');
+    const err = new URLSearchParams(window.location.search).get('error');
     if (err) setError(t('login.oauthFailed', { msg: err }));
-
-    // 브라우저 쪽: ?pair=CODE 로 열렸다면 = 앱의 로그인 창. 로그인이 끝나면 세션을 그 코드에 봉인.
-    const pair = params.get('pair');
-    if (pair && supabase) {
-      supabase.auth.getSession().then(({ data }) => {
-        if (data.session) bindAndClose(pair, data.session);
-      });
-      const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-        if (session) bindAndClose(pair, session);
-      });
-      return () => sub.subscription.unsubscribe();
-    }
   }, [t]); // eslint-disable-line
-
-  async function bindAndClose(pair, session) {
-    await fetch('/api/auth/pair/bind', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code: pair, access_token: session.access_token, refresh_token: session.refresh_token }),
-    }).catch(() => {});
-    setError(''); setWaiting(false); setSent(false);
-    document.title = 'Argo';
-    window.__argoPaired = true; // 화면 전환용
-    location.replace('/login?paired=1');
-  }
 
   if (!URL_ENV || !KEY_ENV) {
     return (
       <Shell><p style={{ color: 'var(--fg-2)', fontSize: 13.5 }}>{t('login.localMode')}</p>
         <a className="btn btn-primary sm" href="/">{t('login.goHome')}</a></Shell>
     );
-  }
-
-  // 브라우저: 페어링 완료 안내(앱으로 돌아가라)
-  if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('paired')) {
-    return <Shell><h1 style={{ fontSize: 19, fontWeight: 700, margin: 0 }}>{t('login.pairedTitle')}</h1>
-      <p style={{ fontSize: 13, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('login.pairedBody')}</p></Shell>;
   }
 
   async function sendLink(e) {
@@ -108,8 +78,8 @@ export default function Login() {
     try {
       await fetch('/api/auth/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: pair }) });
       const origin = window.location.origin;
-      // 브라우저에서 provider 로그인 → 완료되면 /login?pair= 로 되돌아와 세션 봉인
-      const authUrl = `${URL_ENV}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(`${origin}/login?pair=${pair}`)}`;
+      // 브라우저에서 provider 로그인 → 허용된 /auth/callback으로 복귀, pair 봉인은 콜백이 서버측 처리
+      const authUrl = `${URL_ENV}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(`${origin}/auth/paired?pair=${pair}`)}`;
       const { openUrl } = await import('@tauri-apps/plugin-opener');
       try {
         await openUrl(authUrl);
@@ -125,6 +95,10 @@ export default function Login() {
         const res = await fetch(`/api/auth/pair?code=${pair}`).then((r) => r.json()).catch(() => ({ status: 'pending' }));
         if (res.status === 'ready') {
           await supabase.auth.setSession(res.session); // 앱 웹뷰 쿠키에 세션 설정
+          try { // 앱을 스스로 전면으로 — 브라우저에서 돌아올 필요 없이 이어진다
+            const { getCurrentWindow } = await import('@tauri-apps/api/window');
+            await getCurrentWindow().setFocus();
+          } catch { /* 포커스는 장식 — 실패해도 로그인은 완료 */ }
           window.location.href = '/';
           return;
         }
