@@ -10,13 +10,15 @@ export default {
   // 스니핑을 막고 CSP로 한 겹 더. Next 하이드레이션 인라인 스크립트/앱 인라인 스타일 때문에
   // script/style은 'unsafe-inline'을 허용하되, frame-ancestors 'none'으로 프레임 삽입은 차단.
   async headers() {
+    // 폰트 CDN 허용 — layout.jsx가 Pretendard(jsdelivr)·IBM Plex Mono(Google Fonts)를 로드한다.
+    // 스타일시트는 style-src, @font-face 파일은 font-src의 통제를 받으므로 두 곳 모두 등록.
     const csp = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
-      "font-src 'self' data:",
-      "connect-src 'self' https:",
+      "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net",
+      "connect-src 'self' https: wss:",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
