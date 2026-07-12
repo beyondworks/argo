@@ -2,7 +2,7 @@
 // OAuth 로그인(구독)을 그대로 빌리는 어댑터, GLM은 Anthropic 호환 엔드포인트로 SDK를 태운다.
 // 원칙: Argo가 새 API 키를 보관하지 않는다 — 이미 인증된 도구의 자격을 쓴다(BYOK/BYOA).
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -162,9 +162,13 @@ const secretsFile = (wsId) => join(paths(wsId).root, '.secrets.json');
 
 // 러너별 지원 인증 방식. apikey=붙여넣기(4러너 공통), oauth=붙여넣기 토큰(claude) 또는 호스트 로그인(codex/gemini).
 // glm은 Anthropic 호환 토큰(사실상 apikey)만.
+// connect: 벤더 CLI의 브라우저 로그인을 서버가 대신 실행할 수 있는 러너(로컬/데스크톱 전용).
+//   bin/loginArgs=로그인 실행, statusArgs=읽기전용 상태확인, ok=로그인됨 판정 정규식.
+//   codex만 spawn 가능한 login이 있다. claude는 이 CLI에 login 서브커맨드가 없어(구독은 키체인)
+//   oauthPasteable 토큰 붙여넣기로, gemini는 CLI 설치 후 로그인 안내로 대체한다.
 export const RUNNER_AUTH = {
   claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPasteable: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', keyUrl: 'https://console.anthropic.com/settings/keys' },
-  codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, keyUrl: 'https://platform.openai.com/api-keys' },
+  codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
   gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
 };
@@ -239,6 +243,32 @@ export async function sdkEnvFor(wsId, runner) {
   return null; // claude: 회사 자격 없으면 null → 기존 CLI/env 자격
 }
 
+/** OAuth 연결 시작 — 벤더 CLI의 브라우저 로그인을 서버가 대신 실행한다(서버가 사용자 PC에 있는
+    로컬/데스크톱 전용). detached spawn이라 서버 응답을 막지 않고, CLI가 시스템 브라우저를 연다.
+    완료는 runnerLoginStatus 폴링으로 감지. runner는 RUNNER_AUTH 화이트리스트 + 고정 인자라 인젝션 없음. */
+export async function startRunnerLogin(runner) {
+  const c = RUNNER_AUTH[runner]?.connect;
+  if (!c) return { ok: false, reason: 'unsupported' }; // claude(토큰 붙여넣기)·glm(API키)
+  const host = await detectRunners();
+  if (!host[runner]?.installed) return { ok: false, reason: 'not-installed' }; // gemini 등 미설치
+  try {
+    const child = spawn(c.bin, c.loginArgs, { detached: true, stdio: 'ignore' });
+    child.unref(); // 서버와 독립 실행 — 브라우저 로그인이 끝날 때까지 서버를 막지 않는다
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: 'spawn-failed', message: String(e.message || e) };
+  }
+}
+
+/** OAuth 연결 상태 — 벤더 CLI status를 읽기전용으로 확인(폴링용). */
+export async function runnerLoginStatus(runner) {
+  const c = RUNNER_AUTH[runner]?.connect;
+  if (!c) return { supported: false, authed: false };
+  // codex login status는 "Logged in ..."을 stderr로 낸다 — stdout·stderr 둘 다 검사
+  const r = await exec(c.bin, c.statusArgs).catch((e) => e); // 비영점 종료도 출력은 캡처됨
+  return { supported: true, authed: !!r && c.ok.test(`${r.stdout || ''}\n${r.stderr || ''}`) };
+}
+
 /** 러너별 회사+호스트 연결 상태 — 설정 UI·크루 카드가 먹는다. */
 export async function runnerStatus(wsId) {
   const host = await detectRunners();
@@ -249,6 +279,7 @@ export async function runnerStatus(wsId) {
     out[id] = {
       methods: meta.methods,
       oauthPasteable: !!meta.oauthPasteable,
+      connectable: !!meta.connect, // Connect 버튼(CLI 브라우저 로그인 대행) 지원 여부 — codex
       keyUrl: meta.keyUrl,
       hostInstalled: host[id]?.installed ?? false,
       hostAuthed: host[id]?.authed ?? false, // 호스트 CLI 로그인/env (OAuth 폴백 경로)

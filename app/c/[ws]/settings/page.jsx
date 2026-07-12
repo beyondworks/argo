@@ -1,6 +1,6 @@
 'use client';
 // 설정 — 회사 정보 수정, 제원, 위험 구역(보관).
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icon, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
@@ -364,15 +364,77 @@ function RunnerRow({ ws, id, st, onChange, first }) {
   const methods = st?.methods ?? ['apikey'];
   const hasOauth = methods.includes('oauth');
   const oauthPaste = !!st?.oauthPasteable;
+  const connectable = !!st?.connectable;
   const company = st?.company ?? { connected: false };
   const [method, setMethod] = useState(company.connected ? company.type : 'apikey');
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const [ok, setOk] = useState(false);
+  const [polling, setPolling] = useState(false);
+  const pollRef = useRef(null);   // setInterval 핸들
+  const pollN = useRef(0);        // 폴링 횟수 (최대 60 = 약 2분)
+  const alive = useRef(true);     // 언마운트 후 stale setState 차단
 
   // 연결/제거로 상태가 바뀌면 선택 방식을 회사 연결 방식에 맞춘다
   useEffect(() => { if (company.connected) setMethod(company.type); }, [company.connected, company.type]);
+
+  // 언마운트 시 폴링 정리 — stale 폴링/setState 누수 방지
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  }, []);
+
+  function stopPoll() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (alive.current) setPolling(false);
+  }
+
+  function startPoll() {
+    pollN.current = 0;
+    setPolling(true);
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      pollN.current += 1;
+      if (pollN.current > 60) { stopPoll(); return; }
+      try {
+        const res = await fetch(`/api/companies/${ws}/keys/connect?runner=${encodeURIComponent(id)}`);
+        const d = await res.json();
+        if (!alive.current) return;
+        if (d.authed) {
+          stopPoll();
+          setOk(true); setMsg(t('settings.runners.connected'));
+          window.dispatchEvent(new Event('argo:refresh'));
+          onChange();
+        }
+      } catch { /* 폴링 실패는 조용히 재시도 */ }
+    }, 2000);
+  }
+
+  async function connect() {
+    if (busy || polling) return;
+    setBusy('connect'); setMsg(''); setOk(false);
+    try {
+      const res = await fetch(`/api/companies/${ws}/keys/connect`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runner: id }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.ok) {
+        setOk(false);
+        setMsg(d.reason === 'not-installed'
+          ? t('settings.runners.connectNotInstalled', { runner: id })
+          : t('settings.runners.connectFailed'));
+        return;
+      }
+      setOk(true); setMsg(t('settings.runners.connectOpened'));
+      startPoll();
+    } catch {
+      setOk(false); setMsg(t('settings.runners.connectFailed'));
+    } finally {
+      setBusy('');
+    }
+  }
 
   async function save(verify) {
     if (busy || !value.trim()) return;
@@ -416,7 +478,14 @@ function RunnerRow({ ws, id, st, onChange, first }) {
     <span className="chip">{t('settings.runners.none')}</span>
   );
 
-  const cliBranch = method === 'oauth' && !oauthPaste;
+  const oauthCli = method === 'oauth' && !oauthPaste; // 붙여넣기 불가한 OAuth (codex/gemini)
+  const removeBtn = company.connected && (
+    <div>
+      <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={remove}>
+        {busy === 'remove' ? <Spinner size={12} /> : t('settings.runners.remove')}
+      </button>
+    </div>
+  );
   return (
     <div style={{ display: 'grid', gap: 8, padding: '12px 0', ...(first ? {} : { borderTop: '1px dashed var(--border-soft)' }) }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -433,22 +502,37 @@ function RunnerRow({ ws, id, st, onChange, first }) {
           ))}
         </div>
       )}
-      {cliBranch ? (
-        <div style={{ display: 'grid', gap: 8 }}>
-          <div style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.6 }}>
-            {t('settings.runners.cliLogin', { cmd: `${id} login` })}
-            <span style={{ marginLeft: 8, color: st?.hostAuthed ? 'var(--ok)' : 'var(--warn)' }}>
-              {st?.hostAuthed ? t('settings.runners.hostAuthed') : t('settings.runners.hostNotAuthed')}
-            </span>
-          </div>
-          {company.connected && (
-            <div>
-              <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={remove}>
-                {busy === 'remove' ? <Spinner size={12} /> : t('settings.runners.remove')}
+      {oauthCli ? (
+        connectable ? (
+          /* codex — 벤더 CLI 브라우저 로그인 대행 (Connect 버튼 + 폴링) */
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button className="btn btn-primary sm" disabled={!!busy || polling} onClick={connect}>
+                {busy === 'connect' || polling ? <Spinner size={12} /> : t('settings.runners.connect')}
               </button>
+              {st?.hostAuthed && (
+                <span className="chip"><span className="dot" />{t('settings.runners.hostInUse')}</span>
+              )}
+              {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
             </div>
-          )}
-        </div>
+            {removeBtn}
+          </div>
+        ) : (
+          /* gemini 등 — 설치·로그인은 이 컴퓨터에서 (입력창 없음) */
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.6 }}>
+              {st?.hostInstalled
+                ? t('settings.runners.hostLoginUsed', { runner: id })
+                : t('settings.runners.hostInstall', { runner: id })}
+              {st?.hostInstalled && (
+                <span style={{ marginLeft: 8, color: st?.hostAuthed ? 'var(--ok)' : 'var(--warn)' }}>
+                  {st?.hostAuthed ? t('settings.runners.hostAuthed') : t('settings.runners.hostNotAuthed')}
+                </span>
+              )}
+            </div>
+            {removeBtn}
+          </div>
+        )
       ) : (
         <>
           <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
