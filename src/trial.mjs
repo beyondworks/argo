@@ -24,7 +24,8 @@ export function runTrialTurn(wsId, slug) {
       if (/anthropic|api[\s._-]?key|x-api-key|credit|balance|401|authentication|unauthorized/i.test(m)) {
         await appendTurn(wsId, slug, {
           userMsg: '(영입 시운전) 첫 인사와 샘플 산출물을 보여주세요.',
-          reply: 'AI 연결이 아직 안 되어 있어요. 설정 → AI 연결에서 Claude API 키를 넣어주시면 바로 일을 시작할게요. (Anthropic 콘솔에서 키를 발급받아 붙여넣으면 됩니다.)',
+          // 서버측이라 UI 언어를 모른다 — ko/en 병기(다국어 규칙: 하드코딩 단일언어 금지)
+          reply: 'AI 연결이 아직 안 되어 있어요. 설정 → 러너 연결에서 Claude API 키 또는 OAuth를 연결하면 바로 일을 시작할게요.\n\nAI isn\'t connected yet. Connect a Claude API key or OAuth in Settings → Runner connections to get started.',
           handover: null, sessionId: null,
         }).catch(() => {});
       }

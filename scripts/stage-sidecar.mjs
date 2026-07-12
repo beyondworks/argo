@@ -5,7 +5,7 @@
 //   - src-tauri/resources/server/               : standalone 서버 트리(resources)
 // 사용: node scripts/stage-sidecar.mjs   (npm run build:standalone 이후, 또는 자체 빌드 포함)
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, rmSync, existsSync, copyFileSync } from 'node:fs';
+import { cpSync, mkdirSync, rmSync, existsSync, copyFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,9 +32,26 @@ rmSync(serverDest, { recursive: true, force: true });
 mkdirSync(dirname(serverDest), { recursive: true });
 cpSync(standalone, serverDest, { recursive: true });
 
+// 3.5) 시크릿·개발자 데이터·런타임 잔재 제거 (배포 아티팩트 유출 차단 — 가장 중요)
+//   standalone/사본에 workspaces(회사 데이터·봇 토큰·.secrets.json)나 캐시가 섞여 들어오면
+//   설치본 압축해제로 누구나 추출 가능. 여기서 물리적으로 지운다.
+for (const junk of ['workspaces', '.next/cache', '.device-id']) {
+  rmSync(join(serverDest, junk), { recursive: true, force: true });
+}
+// 안전 가드 — 시크릿류 파일이 하나라도 남으면 스테이징 실패(배포 차단)
+const leaks = [];
+(function scan(dir) {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) { if (e.name !== 'node_modules') scan(p); continue; }
+    if (/^(connections\.json|\.secrets\.json)$/.test(e.name) || e.name.endsWith('.env') || e.name.endsWith('.env.local')) leaks.push(p);
+  }
+})(serverDest);
+if (leaks.length) { console.error('[stage] 시크릿 파일 잔존 — 배포 차단:\n' + leaks.join('\n')); process.exit(1); }
+
 // 4) node 런타임을 사이드카로 복사
 const binDir = join(TAURI, 'binaries');
 mkdirSync(binDir, { recursive: true });
 copyFileSync(process.execPath, join(binDir, `node-${triple}`));
 
-console.log(`[stage] 완료 — triple=${triple}, server=${serverDest}, node=binaries/node-${triple}`);
+console.log(`[stage] 완료 — triple=${triple}, server=${serverDest}, node=binaries/node-${triple} (시크릿 스캔 통과)`);

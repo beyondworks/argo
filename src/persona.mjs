@@ -7,6 +7,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
 import { appendUsage } from './usage.mjs';
 import { appendEvent } from './events.mjs';
+import { sdkEnvFor } from './runners.mjs';
 
 const CARD_PROMPT = (oneLiner, name) => `다음 한 줄 요청으로 AI 직원의 페르소나 카드를 작성해줘.
 
@@ -55,6 +56,10 @@ function parseFrontmatter(md) {
 export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {}) {
   let out = '';
   const t0 = Date.now();
+  // 카드 생성도 채팅과 동일하게 회사 자격(claude 키/OAuth)을 주입 — 없으면 호스트 자격 폴백.
+  // (이게 없으면 웹 사용자가 키를 넣어도 영입만 호스트 키를 찾다 실패했다)
+  const sdkEnv = await sdkEnvFor(wsId, 'claude');
+  let failed = null;
   for await (const msg of query({
     prompt: CARD_PROMPT(oneLiner, name?.trim()),
     options: {
@@ -62,16 +67,22 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
       allowedTools: [], // 순수 생성 — 도구 불필요
       settingSources: [], // 호스트 머신의 CLAUDE.md 등 미주입(테넌트 격리)
       maxTurns: 1,
+      ...(sdkEnv ? { env: sdkEnv } : {}),
     },
   })) {
     if (msg.type === 'result') {
       await appendUsage(wsId, { kind: 'hire', usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0 });
       if (msg.subtype === 'success') out = msg.result;
+      else failed = msg.subtype;
     }
   }
   const md = out.trim().replace(/^```(?:markdown)?\n?/, '').replace(/\n?```$/, '');
   const meta = parseFrontmatter(md);
-  if (!meta.slug || !meta.name) throw new Error(`카드 생성 실패 — frontmatter 누락:\n${md.slice(0, 200)}`);
+  if (!meta.slug || !meta.name) {
+    // 대개 AI 연결 부재 — 개발자 에러 대신 사용자 안내로 던진다(온보딩 첫 행동이 영입일 수 있음)
+    if (!out.trim() || failed) throw new Error('AI 연결이 필요합니다 — 설정 → 러너 연결에서 Claude API 키 또는 OAuth를 연결하면 영입할 수 있어요.');
+    throw new Error(`카드 생성 실패 — frontmatter 누락:\n${md.slice(0, 200)}`);
+  }
   let slug = meta.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
   // 동명 크루 중복 영입 시 기존 카드를 덮어쓰지 않는다
   for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)); n++) {

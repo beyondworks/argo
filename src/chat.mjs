@@ -142,13 +142,18 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
   // 러너·모델 인자 검증 — 카탈로그 대조 + 회사/호스트 연결 확인. 문제면 사용자에게 물어볼 안내문을 돌려준다.
   const runnerCatalog = () => Object.entries(RUNNERS)
     .map(([id, r]) => `${id}(${r.name}): ${r.models.map((m) => m.id).join(', ')}`).join(' | ');
-  async function checkRunnerModel(runner, model) {
+  // effRunner — 이 변경 후 크루가 실제로 쓸 러너(runner 미지정이면 현재 크루의 러너). 모델은 이 러너 기준으로 검증한다.
+  async function checkRunnerModel(runner, model, effRunner = null) {
     if (!runner && !model) return null;
     if (runner && !RUNNERS[runner]) return `알 수 없는 러너 "${runner}". 가능한 값: ${Object.keys(RUNNERS).join(', ')}`;
     if (model) {
-      const pool = runner ? [runner] : Object.keys(RUNNERS);
-      const hit = pool.find((id) => RUNNERS[id].models.some((m) => m.id === model));
-      if (!hit) return `모델 "${model}"이 카탈로그에 없다. 카탈로그: ${runnerCatalog()}`;
+      const target = runner || effRunner; // 지정 러너 우선, 없으면 크루의 현재 러너
+      if (target && RUNNERS[target] && !RUNNERS[target].models.some((m) => m.id === model)) {
+        return `모델 "${model}"은 ${RUNNERS[target].name} 러너의 모델이 아니다. ${RUNNERS[target].name} 모델: ${RUNNERS[target].models.map((m) => m.id).join(', ')} (다른 러너 모델을 쓰려면 runner도 함께 바꿔라)`;
+      }
+      if (!target && !Object.keys(RUNNERS).some((id) => RUNNERS[id].models.some((m) => m.id === model))) {
+        return `모델 "${model}"이 카탈로그에 없다. 카탈로그: ${runnerCatalog()}`;
+      }
     }
     if (runner) {
       const st = await runnerStatus(wsId).catch(() => null);
@@ -182,6 +187,12 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
     async ({ target, name, role, team, rule, runner, model, why }) => {
       const who = findCrew(target);
       if (!who) return text(`"${target}"는 크루 명단에 없다. 가능한 대상: me, ${colleagues.map((a) => a.name).join(', ')}`);
+      // 모델만 지정하고 러너를 안 바꾸면 다음 턴에서 러너/모델 불일치가 난다 —
+      // 모델의 소속 러너를 자동 도출해 함께 설정(항상 정합).
+      if (model && !runner) {
+        const owner = Object.keys(RUNNERS).find((id) => RUNNERS[id].models.some((m) => m.id === model));
+        if (owner) runner = owner;
+      }
       const bad = await checkRunnerModel(runner, model);
       if (bad) return text(bad);
       const changes = {

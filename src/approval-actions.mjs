@@ -63,7 +63,17 @@ async function followUp(wsId, item, approve) {
       : `(사장 결재) 요청한 "${item.action}" 이(가) 거절되었다. 실행하지 말고, 대안이 있으면 한두 줄로 정리하라.`;
   }
   const t = await loadThread(wsId, item.slug);
-  const r = await chat(wsId, item.slug, msg, t.sessionId);
-  await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId });
-  return r;
+  try {
+    const r = await chat(wsId, item.slug, msg, t.sessionId);
+    await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId });
+    return r;
+  } catch (e) {
+    // 크루의 자연어 보고 턴이 실패해도(예산 초과·크루 삭제·모델 장애) 사용자는 결과를 알아야 한다.
+    // profile/hire는 부작용이 이미 적용됐으므로, 최소한 처리 결과를 스레드에 남긴다(무통보 방지).
+    const note = (item.kind === 'profile' || item.kind === 'hire') && approve
+      ? `${msg}\n\n(자동 보고 실패 — 하지만 위 처리는 완료되었습니다: ${String(e.message || e).slice(0, 120)})`
+      : `${msg}\n\n(후속 실행 실패: ${String(e.message || e).slice(0, 160)})`;
+    await appendTurn(wsId, item.slug, { userMsg: msg, reply: note, handover: null, sessionId: t.sessionId }).catch(() => {});
+    throw e;
+  }
 }

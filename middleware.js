@@ -6,8 +6,19 @@ import { createServerClient } from '@supabase/ssr';
 const URL_ENV = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const KEY_ENV = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
+const LOCAL_HOST_RE = /^(127\.0\.0\.1|localhost|\[::1\]|::1)(:\d+)?$/;
+
 export async function middleware(req) {
-  if (!URL_ENV || !KEY_ENV) return NextResponse.next();
+  // 로컬 무인증 모드(Supabase env 없음)에서는 Host가 반드시 루프백이어야 한다 —
+  // 원격 악성 사이트가 DNS 리바인딩으로 127.0.0.1을 자기 도메인에 붙여 로컬 API를 호출하는 것을 차단.
+  // 클라우드(인증 on, 리버스 프록시 뒤)에는 적용하지 않는다.
+  if (!URL_ENV || !KEY_ENV) {
+    const host = req.headers.get('host') || '';
+    if (!LOCAL_HOST_RE.test(host)) {
+      return NextResponse.json({ error: 'invalid host' }, { status: 421 });
+    }
+    return NextResponse.next();
+  }
   let res = NextResponse.next({ request: req });
   const supabase = createServerClient(URL_ENV, KEY_ENV, {
     cookies: {
