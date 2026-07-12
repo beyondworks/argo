@@ -4,6 +4,21 @@ import { paths } from './workspace.mjs';
 import { chat } from './chat.mjs';
 import { emitNotify } from './notify.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
+import { withLock } from './mutex.mjs';
+
+const lockKey = (wsId) => `routines:${wsId}`;
+
+/** 락 안에서 목록 재로드 → 해당 id만 patch → 저장. 실행 중 삭제/비활성이 되돌려지는 것을 막는다. */
+async function patchRoutine(wsId, id, patch) {
+  return withLock(lockKey(wsId), async () => {
+    const routines = await loadRoutines(wsId);
+    const r = routines.find((x) => x.id === id);
+    if (!r) return null; // 실행 중 삭제됐으면 조용히 포기(부활 금지)
+    Object.assign(r, patch, { id: r.id });
+    await saveRoutines(wsId, routines);
+    return { ...r };
+  });
+}
 
 export async function loadRoutines(wsId) {
   // 예약 지시는 유실 시 재생성 불가 — 손상을 조용히 빈 목록으로 리셋하지 않고 throw로 드러낸다.
@@ -27,43 +42,43 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
     created: new Date().toISOString(),
     lastRun: null, lastOk: null, lastResult: '',
   };
-  routines.push(routine);
-  await saveRoutines(wsId, routines);
-  return routine;
+  return withLock(lockKey(wsId), async () => {
+    const routines = await loadRoutines(wsId);
+    routines.push(routine);
+    await saveRoutines(wsId, routines);
+    return routine;
+  });
 }
 
 export async function updateRoutine(wsId, id, patch) {
-  const routines = await loadRoutines(wsId);
-  const r = routines.find((x) => x.id === id);
+  const r = await patchRoutine(wsId, id, patch);
   if (!r) throw new Error('루틴을 찾을 수 없습니다');
-  Object.assign(r, patch, { id: r.id });
-  await saveRoutines(wsId, routines);
   return r;
 }
 
 export async function removeRoutine(wsId, id) {
-  const routines = await loadRoutines(wsId);
-  await saveRoutines(wsId, routines.filter((x) => x.id !== id));
+  return withLock(lockKey(wsId), async () => {
+    const routines = await loadRoutines(wsId);
+    await saveRoutines(wsId, routines.filter((x) => x.id !== id));
+  });
 }
 
-/** 루틴 실행 — 새 세션 1턴. 결과 요약을 루틴에 기록(전체는 vault 핸드오버에). */
+/** 루틴 실행 — 새 세션 1턴. 결과 요약을 루틴에 기록(전체는 vault 핸드오버에).
+    chat()은 수 분 걸리므로 락 밖에서 돌리고, 결과 기록만 락 안에서 해당 루틴 필드에 반영한다
+    — 실행 도중 사용자가 다른 루틴을 지우거나 이 루틴을 꺼도 낡은 전체 스냅샷으로 되돌리지 않는다. */
 export async function runRoutine(wsId, id) {
-  const routines = await loadRoutines(wsId);
-  const r = routines.find((x) => x.id === id);
-  if (!r) throw new Error('루틴을 찾을 수 없습니다');
-  r.lastRun = new Date().toISOString();
+  const r0 = await patchRoutine(wsId, id, { lastRun: new Date().toISOString() });
+  if (!r0) throw new Error('루틴을 찾을 수 없습니다');
   try {
-    const t = await chat(wsId, r.agentSlug, `[루틴: ${r.title}] ${r.prompt}`, null, { source: 'routine' });
-    r.lastOk = true;
-    r.lastResult = t.reply.replace(/\s+/g, ' ').slice(0, 160);
-    await saveRoutines(wsId, routines);
-    emitNotify({ type: 'routine', wsId, routine: r, ok: true, reply: t.reply }); // 메신저 브리핑 푸시
+    const t = await chat(wsId, r0.agentSlug, `[루틴: ${r0.title}] ${r0.prompt}`, null, { source: 'routine' });
+    const summary = t.reply.replace(/\s+/g, ' ').slice(0, 160);
+    const r = await patchRoutine(wsId, id, { lastOk: true, lastResult: summary });
+    emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: true, reply: t.reply }); // 메신저 브리핑 푸시
     return { ok: true, reply: t.reply, handover: t.handover };
   } catch (e) {
-    r.lastOk = false;
-    r.lastResult = String(e.message || e).slice(0, 160);
-    await saveRoutines(wsId, routines);
-    emitNotify({ type: 'routine', wsId, routine: r, ok: false, reply: r.lastResult });
+    const msg = String(e.message || e).slice(0, 160);
+    const r = await patchRoutine(wsId, id, { lastOk: false, lastResult: msg });
+    emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: false, reply: msg });
     throw e;
   }
 }

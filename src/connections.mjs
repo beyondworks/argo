@@ -3,6 +3,9 @@
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { writeJsonAtomic, readJson, readJsonLenient } from './jsonstore.mjs';
+import { withLock } from './mutex.mjs';
+
+const lockKey = (wsId) => `connections:${wsId}`;
 
 const EMPTY = {
   // agents: { [slug]: { token, botUsername, ownerId, ownerChat } } — 크루별 직통 봇(연락처처럼 1크루 1봇)
@@ -74,33 +77,38 @@ export async function loadConnections(wsId) {
 
 /** 크루 직통 봇 연결/해제 — patch=null이면 해제. 토큰이 바뀌면 페어링(ownerId) 초기화. */
 export async function updateAgentBot(wsId, slug, patch) {
-  const all = await loadConnections(wsId);
-  const agents = { ...all.telegram.agents };
-  if (!patch) {
-    delete agents[slug];
-  } else {
-    const prev = agents[slug] ?? {};
-    const next = { ...prev, ...patch };
-    if (patch.token && patch.token !== prev.token) { next.ownerId = null; next.ownerChat = null; }
-    agents[slug] = next;
-  }
-  all.telegram.agents = agents;
-  await writeJsonAtomic(paths(wsId).connections, all);
-  return all;
+  // 락 안에서 read-modify-write — 폴러 자동 페어링과 UI 설정 변경이 같은 파일을 경쟁해도 유실 없음
+  return withLock(lockKey(wsId), async () => {
+    const all = await loadConnections(wsId);
+    const agents = { ...all.telegram.agents };
+    if (!patch) {
+      delete agents[slug];
+    } else {
+      const prev = agents[slug] ?? {};
+      const next = { ...prev, ...patch };
+      if (patch.token && patch.token !== prev.token) { next.ownerId = null; next.ownerChat = null; }
+      agents[slug] = next;
+    }
+    all.telegram.agents = agents;
+    await writeJsonAtomic(paths(wsId).connections, all);
+    return all;
+  });
 }
 
 export async function updateConnection(wsId, kind, patch) {
   if (!['telegram', 'slack'].includes(kind)) throw new Error('알 수 없는 연결 종류');
-  const all = await loadConnections(wsId);
-  const next = { ...all[kind], ...patch };
-  if (patch.token === '') next.token = all[kind].token; // 빈 토큰 = 기존 유지(토글만 바꿀 때)
-  if (patch.token && patch.token !== all[kind].token) {
-    next.chatId = null; // 토큰이 바뀌면 페어링 초기화
-    next.botUserId = null;
-  }
-  all[kind] = next;
-  await writeJsonAtomic(paths(wsId).connections, all);
-  return all;
+  return withLock(lockKey(wsId), async () => {
+    const all = await loadConnections(wsId);
+    const next = { ...all[kind], ...patch };
+    if (patch.token === '') next.token = all[kind].token; // 빈 토큰 = 기존 유지(토글만 바꿀 때)
+    if (patch.token && patch.token !== all[kind].token) {
+      next.chatId = null; // 토큰이 바뀌면 페어링 초기화
+      next.botUserId = null;
+    }
+    all[kind] = next;
+    await writeJsonAtomic(paths(wsId).connections, all);
+    return all;
+  });
 }
 
 /** 화면용 — 토큰을 절대 그대로 내보내지 않는다. */

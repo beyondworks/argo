@@ -2,6 +2,7 @@
 // bypass(권한 우회)가 꺼져 있으면 부작용 있는 도구는 결재 게이트에서 사람 승인을 기다린다.
 import { paths } from './workspace.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
+import { withLock } from './mutex.mjs';
 
 export const CAPABILITY_DEFS = [
   ['fs', '파일 시스템', '워크스페이스 밖 파일 읽기/쓰기/편집 — 문서 정리, 폴더 관리'],
@@ -19,10 +20,12 @@ export async function loadCapabilities(wsId) {
 }
 
 export async function updateCapabilities(wsId, patch) {
-  const caps = { ...(await loadCapabilities(wsId)) };
-  for (const [key] of CAPABILITY_DEFS) {
-    if (typeof patch[key] === 'boolean') caps[key] = patch[key];
-  }
-  await writeJsonAtomic(paths(wsId).capabilities, caps);
-  return caps;
+  return withLock(`capabilities:${wsId}`, async () => {
+    const caps = { ...(await loadCapabilities(wsId)) };
+    for (const [key] of CAPABILITY_DEFS) {
+      if (typeof patch[key] === 'boolean') caps[key] = patch[key];
+    }
+    await writeJsonAtomic(paths(wsId).capabilities, caps);
+    return caps;
+  });
 }

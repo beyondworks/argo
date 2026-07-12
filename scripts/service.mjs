@@ -22,6 +22,10 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.ARGO_PORT || 3999);
+// 로컬 상주 서비스는 이 기기 전용 — 루프백에만 바인딩해 같은 와이파이의 타인이
+// (로컬 모드는 무인증) 전 API에 닿는 것을 차단한다. 클라우드/멀티유저는 인증을 켠 뒤
+// ARGO_HOST=0.0.0.0 으로 명시 opt-in(리버스 프록시 뒤 권장).
+const HOST = process.env.ARGO_HOST || '127.0.0.1';
 const LABEL = 'com.beyondworks.argo';
 const NODE = process.execPath;
 const NEXT_BIN = join(ROOT, 'node_modules', 'next', 'dist', 'bin', 'next');
@@ -71,7 +75,7 @@ function darwinInstall() {
 <plist version="1.0"><dict>
   <key>Label</key><string>${LABEL}</string>
   <key>ProgramArguments</key><array>
-    <string>${NODE}</string><string>${NEXT_BIN}</string><string>start</string><string>-p</string><string>${PORT}</string>
+    <string>${NODE}</string><string>${NEXT_BIN}</string><string>start</string><string>-H</string><string>${HOST}</string><string>-p</string><string>${PORT}</string>
   </array>
   <key>WorkingDirectory</key><string>${ROOT}</string>
   <key>RunAtLoad</key><true/>
@@ -117,7 +121,7 @@ Description=Argo — AI crew company server
 After=network-online.target
 
 [Service]
-ExecStart=${NODE} ${NEXT_BIN} start -p ${PORT}
+ExecStart=${NODE} ${NEXT_BIN} start -H ${HOST} -p ${PORT}
 WorkingDirectory=${ROOT}
 Restart=always
 RestartSec=10
@@ -147,7 +151,7 @@ function winInstall() {
 cd /d "${ROOT}"\r
 set NODE_ENV=production\r
 :loop\r
-"${NODE}" "${NEXT_BIN}" start -p ${PORT} >> "${out}" 2>&1\r
+"${NODE}" "${NEXT_BIN}" start -H ${HOST} -p ${PORT} >> "${out}" 2>&1\r
 timeout /t 10 /nobreak >nul\r
 goto loop\r
 `);

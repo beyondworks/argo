@@ -283,6 +283,9 @@ function startTelegram(wsId, getCfg) {
             continue;
           }
           if (String(msg.chat.id) !== String(cfg.chatId)) continue; // 페어링된 채팅만
+          // 발신자도 사장이어야 함 — 그룹에 봇을 초대해도 아무 멤버가 크루 구동·텍스트 결재를
+          // 하지 못하게(콜백 버튼·크루 직통 봇과 동일 인가). ownerId 없으면(구 페어링) 통과.
+          if (cfg.ownerId && String(msg.from?.id) !== String(cfg.ownerId)) continue;
           tg(cfg.token, 'sendChatAction', { chat_id: cfg.chatId, action: 'typing' }).catch(() => {});
 
           // 미디어 수신 — 다운로드해 vault/files/로. 앨범은 2초 버퍼로 모아 한 턴.
