@@ -183,6 +183,7 @@ const DICT = {
   'login.appHandoffNote': ['앱에서는 버튼을 누르면 브라우저가 열립니다 — 로그인하면 앱으로 자동 연결됩니다.', 'In the app these open your browser — sign in there and the app connects automatically.'],
   'login.waitingBrowser': ['브라우저에서 로그인을 마치면 자동으로 이어집니다…', 'Finish signing in on your browser — this will continue automatically…'],
   'login.pairTimeout': ['시간이 초과됐습니다. 다시 시도해 주세요.', 'Timed out. Please try again.'],
+  'login.openFailed': ['브라우저를 열지 못했습니다. 앱을 다시 시작한 뒤 시도해 주세요.', 'Could not open the browser. Restart the app and try again.'],
   'login.pairedTitle': ['로그인 완료', 'Signed in'],
   'login.pairedBody': ['이 창을 닫고 Argo 앱으로 돌아가세요. 앱이 자동으로 연결됩니다.', 'Close this window and return to the Argo app — it connects automatically.'],
   'login.localMode': ['로컬 모드로 실행 중입니다 — 로그인 없이 이 컴퓨터의 회사를 사용합니다.', 'Running in local mode — use companies on this computer without signing in.'],

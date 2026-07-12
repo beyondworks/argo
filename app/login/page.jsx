@@ -111,7 +111,13 @@ export default function Login() {
       // 브라우저에서 provider 로그인 → 완료되면 /login?pair= 로 되돌아와 세션 봉인
       const authUrl = `${URL_ENV}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(`${origin}/login?pair=${pair}`)}`;
       const { openUrl } = await import('@tauri-apps/plugin-opener');
-      await openUrl(authUrl);
+      try {
+        await openUrl(authUrl);
+      } catch {
+        setWaiting(false);
+        setError(t('login.openFailed')); // 긴 URL 노출 없이 짧게 — 스코프·플러그인 문제 시
+        return;
+      }
       // 폴링 — 브라우저가 세션을 봉인하면 회수
       const started = Date.now();
       while (Date.now() - started < 5 * 60_000) {
@@ -177,7 +183,7 @@ export default function Login() {
           {isApp && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', lineHeight: 1.5 }}>{t('login.appHandoffNote')}</span>}
         </div>
       )}
-      {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
+      {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0, minWidth: 0, overflowWrap: 'anywhere' }}>{error}</p>}
     </Shell>
   );
 }
@@ -185,7 +191,7 @@ export default function Login() {
 function Shell({ children }) {
   return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
-      <div className="card fade-up" style={{ width: 'min(420px, 100%)', padding: '34px 32px', display: 'grid', gap: 18 }}>
+      <div className="card fade-up" style={{ width: 'min(420px, 100%)', maxWidth: '100%', padding: '34px 32px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 18 }}>
         <Logo />
         {children}
       </div>
