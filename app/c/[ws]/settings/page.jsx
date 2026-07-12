@@ -132,6 +132,7 @@ export default function Settings({ params }) {
       <ConnectionCard ws={ws} kind="slack" title={t('activity.slack')}
         help={t('settings.conn.slackHelp')}
         agents={data?.agents ?? []} />
+      <SyncCard ws={ws} />
       </Section>
 
       <Section label={t('settings.danger')}>
@@ -446,6 +447,44 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
         {on && <button className="btn sm" disabled={saving} onClick={() => save(false)}>{t('settings.conn.off')}</button>}
         <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{msg}</span>
       </div>
+    </div>
+  );
+}
+
+/** 기기 간 동기화 카드 — 회사 폴더가 클라우드에 복제되는 상태를 보이게 한다("보이는 상태" 원칙). */
+function SyncCard({ ws }) {
+  const { t, lang } = useLang();
+  const [sync, setSync] = useState(null);
+  useEffect(() => {
+    const pull = () => api(`/api/companies/${ws}/connections`).then((d) => setSync(d.sync ?? null)).catch(() => {});
+    pull();
+    const iv = setInterval(pull, 15000);
+    return () => clearInterval(iv);
+  }, [ws]);
+  const mine = sync?.companies?.[ws];
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span className="card-title">{t('settings.sync.title')}</span>
+        <span style={{ flex: 1 }} />
+        {sync === null ? <Skeleton h={18} w={70} /> : sync.on ? (
+          <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('settings.sync.on')}</span>
+        ) : (
+          <span className="pill" style={{ flex: 'none' }}><span className="dot" />{t('settings.sync.off')}</span>
+        )}
+      </div>
+      {sync?.on ? (
+        <div style={{ display: 'grid', gap: 4, fontSize: 12.5, color: 'var(--fg-2)' }}>
+          <span>{sync.leader ? t('settings.sync.leader') : t('settings.sync.follower')}</span>
+          <span>
+            {t('settings.sync.last')}: {sync.lastTs ? new Date(sync.lastTs).toLocaleTimeString(lang === 'ko' ? 'ko-KR' : 'en-US') : '—'}
+            {mine ? ` · ↑${mine.pushed} ↓${mine.pulled}` : ''}
+          </span>
+          {sync.lastError && <span style={{ color: 'var(--danger)', fontSize: 12 }}>{sync.lastError}</span>}
+        </div>
+      ) : (
+        <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offHelp')}</p>
+      )}
     </div>
   );
 }

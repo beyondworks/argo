@@ -4,6 +4,7 @@ import { listCompanies } from './hub.mjs';
 import { loadRoutines, runRoutine, isDue } from './routines.mjs';
 import { consolidateMemory, rollupJournals } from './consolidate.mjs';
 import { daemonLease } from './lock.mjs';
+import { isCloudLeader } from './sync.mjs';
 
 const CONSOLIDATE_AT = '04:00'; // 새벽 정리 — 사람 뇌의 수면 정리처럼
 
@@ -13,7 +14,7 @@ export function ensureScheduler() {
   const lease = daemonLease('scheduler'); // Next 멀티 워커에서도 실행 주체는 하나만
   console.log('[argo] 루틴 스케줄러 시작 (60s 폴)');
   setInterval(async () => {
-    if (!lease.isLeader()) return;
+    if (!lease.isLeader() || !isCloudLeader()) return; // 루틴도 기기 간 단일 실행
     try {
       const companies = await listCompanies();
       const now = new Date();

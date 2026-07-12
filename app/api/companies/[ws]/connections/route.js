@@ -1,5 +1,6 @@
 import { loadConnections, updateConnection, maskConnections, validateConnection, gatewayStatus } from '../../../../../src/connections.mjs';
 import { ensureGateway } from '../../../../../src/gateway.mjs';
+import { syncStatus } from '../../../../../src/sync.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
 ensureGateway();
@@ -9,7 +10,7 @@ export async function GET(_req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
   const [all, gateway] = await Promise.all([loadConnections(ws), gatewayStatus(ws)]);
-  return Response.json({ connections: maskConnections(all), gateway });
+  return Response.json({ connections: maskConnections(all), gateway, sync: syncStatus() });
 }
 
 /** 연결 설정 — { kind: 'telegram'|'slack', token?, enabled?, defaultCrew?, channel? }. 빈 token은 기존 유지.

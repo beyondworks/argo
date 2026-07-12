@@ -8,6 +8,7 @@ import { loadThread, appendTurn, appendSharedNote } from './thread.mjs';
 import { resolveWithFollowUp } from './approval-actions.mjs';
 import { onNotify } from './notify.mjs';
 import { daemonLease } from './lock.mjs';
+import { isCloudLeader } from './sync.mjs';
 import { appendEvent } from './events.mjs';
 import { mkdir, readFile, writeFile, readdir, stat, rename, copyFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -520,7 +521,7 @@ export function ensureGateway() {
   onNotify(pushEvent);
   let wasLeader = false;
   const sync = async () => {
-    const leader = lease.isLeader();
+    const leader = lease.isLeader() && isCloudLeader(); // 기기 간에도 폴러 주체는 하나(클라우드 리스)
     if (leader !== wasLeader) { // 리더십 전환은 반드시 로그 — "폴러가 왜 안 도나" 1차 단서
       console.log(`[argo] 게이트웨이 리더 ${leader ? '획득' : '양보'} (pid ${process.pid})`);
       wasLeader = leader;
