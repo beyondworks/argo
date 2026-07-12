@@ -1,5 +1,6 @@
 // 메신저 연결 — connections.json. 봇 토큰은 워크스페이스 파일에만 두고(로그·API 응답 금지),
 // 화면에는 항상 마스킹해서 내보낸다. SaaS(P1)에서는 서버측 암호화 보관으로 이전한다.
+import { randomInt } from 'node:crypto';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { writeJsonAtomic, readJson, readJsonLenient } from './jsonstore.mjs';
@@ -7,9 +8,18 @@ import { withLock } from './mutex.mjs';
 
 const lockKey = (wsId) => `connections:${wsId}`;
 
+// 페어링 코드 — 봇에 먼저 말건 사람이 주인이 되는 TOFU를 막는다. 사장이 설정에 표시된 이 코드를
+// 봇에 보내야만 소유자로 고정된다. 헷갈리는 글자(0/O/1/I) 제외한 6자.
+const PAIR_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export function makePairCode() {
+  let c = '';
+  for (let i = 0; i < 6; i++) c += PAIR_ALPHABET[randomInt(PAIR_ALPHABET.length)];
+  return c;
+}
+
 const EMPTY = {
   // agents: { [slug]: { token, botUsername, ownerId, ownerChat } } — 크루별 직통 봇(연락처처럼 1크루 1봇)
-  telegram: { token: '', chatId: null, ownerId: null, defaultCrew: '', enabled: false, botUsername: '', agents: {} },
+  telegram: { token: '', chatId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '', agents: {} },
   slack: { token: '', channel: '', botUserId: null, defaultCrew: '', enabled: false, botUsername: '' },
 };
 
@@ -86,7 +96,8 @@ export async function updateAgentBot(wsId, slug, patch) {
     } else {
       const prev = agents[slug] ?? {};
       const next = { ...prev, ...patch };
-      if (patch.token && patch.token !== prev.token) { next.ownerId = null; next.ownerChat = null; }
+      if (patch.token && patch.token !== prev.token) { next.ownerId = null; next.ownerChat = null; next.pairCode = makePairCode(); }
+      if (next.token && !next.ownerId && !next.pairCode) next.pairCode = makePairCode(); // 미페어링인데 코드 없으면 발급
       agents[slug] = next;
     }
     all.telegram.agents = agents;
@@ -104,7 +115,10 @@ export async function updateConnection(wsId, kind, patch) {
     if (patch.token && patch.token !== all[kind].token) {
       next.chatId = null; // 토큰이 바뀌면 페어링 초기화
       next.botUserId = null;
+      if (kind === 'telegram') { next.ownerId = null; next.pairCode = makePairCode(); } // 새 토큰 = 새 페어링 코드
     }
+    // 텔레그램에 토큰이 있는데 아직 미페어링이고 코드가 없으면 발급(레거시/초기 상태 보정)
+    if (kind === 'telegram' && next.token && !next.chatId && !next.pairCode) next.pairCode = makePairCode();
     all[kind] = next;
     await writeJsonAtomic(paths(wsId).connections, all);
     return all;
@@ -116,10 +130,11 @@ export function maskConnections(all) {
   const mask = (t) => (t ? `${t.slice(0, 3)}***` : ''); // 접두사 최소 노출(보안 규칙) — 뒤 3자도 감춤
   const agents = {};
   for (const [slug, a] of Object.entries(all.telegram.agents ?? {})) {
-    agents[slug] = { botUsername: a.botUsername ?? '', paired: !!a.ownerId, hasToken: !!a.token };
+    agents[slug] = { botUsername: a.botUsername ?? '', paired: !!a.ownerId, hasToken: !!a.token, pairCode: a.ownerId ? '' : (a.pairCode || '') };
   }
   return {
-    telegram: { ...all.telegram, token: mask(all.telegram.token), hasToken: !!all.telegram.token, agents },
+    // pairCode는 미페어링(chatId 없음)일 때만 노출 — 페어링 후엔 화면에서 감춘다(더 이상 필요없고 재사용 방지)
+    telegram: { ...all.telegram, token: mask(all.telegram.token), hasToken: !!all.telegram.token, pairCode: all.telegram.chatId ? '' : (all.telegram.pairCode || ''), agents },
     slack: { ...all.slack, token: mask(all.slack.token), hasToken: !!all.slack.token },
   };
 }

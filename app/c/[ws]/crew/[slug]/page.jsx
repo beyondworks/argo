@@ -822,6 +822,15 @@ function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose,
               {tgBot?.botUsername && <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)' }}>{tgBot.botUsername}</span>}
             </div>
             <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('chat.tg.help')}</p>
+            {/* 페어링 코드 — 봇에 먼저 말건 사람이 주인이 되는 것 차단. 미페어링 상태에서만 노출 */}
+            {tgBot?.hasToken && !tgBot?.paired && tgBot?.pairCode && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, background: 'var(--card)', border: '1px solid var(--border)' }}>
+                <span className="microlabel" style={{ flex: 'none' }}>{t('settings.conn.pairCodeLabel')}</span>
+                <span className="mono" style={{ fontSize: 17, letterSpacing: 3, fontWeight: 600 }}>{tgBot.pairCode}</span>
+                <button type="button" className="btn sm" style={{ flex: 'none' }}
+                  onClick={() => navigator.clipboard?.writeText(tgBot.pairCode).catch(() => {})}>{t('common.copy')}</button>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {tgBot?.hasToken ? (
                 <button className="btn sm" disabled={tgBusy} onClick={tgDisconnect}>{t('chat.tg.disconnect')}</button>

@@ -658,6 +658,18 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
         <input suppressHydrationWarning type="password" value={token} onChange={(e) => setToken(e.target.value)}
           placeholder={conn?.hasToken ? t('settings.conn.tokenPlaceholder') : (kind === 'telegram' ? t('settings.conn.telegramPlaceholder') : t('settings.conn.slackPlaceholder'))} style={fieldStyle} />
       </label>
+      {/* 페어링 코드 — 봇에 먼저 말건 사람이 주인이 되는 것을 막는다. 사장이 이 코드를 봇에 보내야 연결된다. */}
+      {kind === 'telegram' && on && conn?.hasToken && !conn?.chatId && conn?.pairCode && (
+        <div style={{ display: 'grid', gap: 5, padding: '10px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border)' }}>
+          <span className="microlabel">{t('settings.conn.pairCodeLabel')}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span className="mono" style={{ fontSize: 22, letterSpacing: 4, fontWeight: 600, color: 'var(--accent, var(--fg))' }}>{conn.pairCode}</span>
+            <button type="button" className="btn sm" style={{ flex: 'none' }}
+              onClick={() => navigator.clipboard?.writeText(conn.pairCode).catch(() => {})}>{t('common.copy')}</button>
+          </div>
+          <span style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.5 }}>{t('settings.conn.pairCodeHelp')}</span>
+        </div>
+      )}
       {kind === 'slack' && (
         <label style={{ display: 'grid', gap: 5 }}>
           <span className="microlabel">{t('settings.conn.channel')}</span>

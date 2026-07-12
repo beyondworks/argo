@@ -275,11 +275,18 @@ function startTelegram(wsId, getCfg) {
 
           const msg = u.message;
           if (!msg || (!msg.text && !msg.photo && !msg.document && !msg.video && !msg.voice && !msg.audio)) continue;
-          if (!cfg.chatId) { // 페어링 — 첫 발신자를 사장 채팅+신원으로 고정(결재 확정 권한 대조 근거)
-            await updateConnection(wsId, 'telegram', { chatId: String(msg.chat.id), ownerId: msg.from?.id ?? null });
-            Object.assign(cfg, { chatId: String(msg.chat.id), ownerId: msg.from?.id ?? null });
+          if (!cfg.chatId) { // 페어링 — 설정에 표시된 코드를 보낸 사람만 사장으로 고정(TOFU 차단)
+            const sent = String(msg.text ?? '').trim().toUpperCase();
+            if (!cfg.pairCode || sent !== cfg.pairCode) {
+              // 코드 불일치 — 아무나 먼저 말 걸어도 소유권을 못 가져간다. 안내만 보낸다.
+              await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '이 봇을 회사와 연결하려면, 설정 → 연결에 표시된 6자리 연결 코드를 여기에 보내주세요.' }).catch(() => {});
+              continue;
+            }
+            // 코드 일치 — 소유자 고정 + 코드 소비(재사용 방지)
+            await updateConnection(wsId, 'telegram', { chatId: String(msg.chat.id), ownerId: msg.from?.id ?? null, pairCode: '' });
+            Object.assign(cfg, { chatId: String(msg.chat.id), ownerId: msg.from?.id ?? null, pairCode: '' });
             await appendEvent(wsId, { type: 'gateway', kind: 'telegram', op: 'paired' });
-            await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '이 채팅이 회사와 연결되었습니다.\n"@크루이름 지시" 또는 그냥 지시를 보내면 기본 크루가 응답합니다.\n"@이름1 @이름2 지시"는 첫 크루가 실행하고 나머지에게 맥락을 공유(cc)합니다.\n"크루"라고 보내면 연결된 크루 현황을 보여드립니다.' });
+            await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '연결 코드 확인 — 이 채팅이 회사와 연결되었습니다.\n"@크루이름 지시" 또는 그냥 지시를 보내면 기본 크루가 응답합니다.\n"@이름1 @이름2 지시"는 첫 크루가 실행하고 나머지에게 맥락을 공유(cc)합니다.\n"크루"라고 보내면 연결된 크루 현황을 보여드립니다.' });
             continue;
           }
           if (String(msg.chat.id) !== String(cfg.chatId)) continue; // 페어링된 채팅만
@@ -382,10 +389,15 @@ function startAgentTelegram(wsId, slug, getCfg) {
           const isDm = msg.chat.type === 'private';
           if (!cfg.ownerId) {
             if (!isDm) continue; // 페어링 전 그룹 메시지는 무시 — 먼저 DM으로 페어링
-            await updateAgentBot(wsId, slug, { ownerId: msg.from.id, ownerChat: String(msg.chat.id) });
-            Object.assign(cfg, { ownerId: msg.from.id, ownerChat: String(msg.chat.id) }); // sync 주기(10s) 전에도 즉시 반영
+            const sent = String(msg.text ?? '').trim().toUpperCase();
+            if (!cfg.pairCode || sent !== cfg.pairCode) { // 설정에 표시된 코드를 보낸 사람만 소유자(TOFU 차단)
+              await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '이 크루 봇을 연결하려면, 설정 → 연결의 크루 봇 항목에 표시된 6자리 연결 코드를 여기에 보내주세요.' }).catch(() => {});
+              continue;
+            }
+            await updateAgentBot(wsId, slug, { ownerId: msg.from.id, ownerChat: String(msg.chat.id), pairCode: '' });
+            Object.assign(cfg, { ownerId: msg.from.id, ownerChat: String(msg.chat.id), pairCode: '' }); // sync 주기(10s) 전에도 즉시 반영
             await appendEvent(wsId, { type: 'gateway', kind: 'telegram', op: 'paired', slug });
-            await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '이 봇은 이 크루와의 1:1 직통입니다. 그대로 지시를 보내면 됩니다.\n그룹에 초대한 뒤 @멘션하거나 봇 메시지에 답장하면 그룹에서도 함께 일합니다.' });
+            await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '연결 코드 확인 — 이 봇은 이 크루와의 1:1 직통입니다. 그대로 지시를 보내면 됩니다.\n그룹에 초대한 뒤 @멘션하거나 봇 메시지에 답장하면 그룹에서도 함께 일합니다.' });
             continue;
           }
           if (msg.from?.id !== cfg.ownerId) continue; // 페어링한 사장만 (소규모 팀 허용은 후속)
