@@ -131,6 +131,28 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
   return after;
 }
 
+/** 카드 "## 일하는 방식"에 규칙 한 줄 추가 — CardPanel의 addRule과 동일 규약(서버측). */
+export async function appendAgentRule(wsId, slug, text) {
+  const file = cardPath(wsId, slug);
+  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+  const md = await readFile(file, 'utf8');
+  const rule = String(text).trim();
+  if (!rule) return parseFrontmatter(md);
+  const h = '## 일하는 방식';
+  let next;
+  const i = md.indexOf(h);
+  if (i === -1) {
+    next = `${md.trimEnd()}\n\n${h}\n- ${rule}\n`;
+  } else {
+    const rest = md.indexOf('\n## ', i + h.length);
+    const end = rest === -1 ? md.length : rest;
+    next = `${md.slice(0, end).trimEnd()}\n- ${rule}\n${rest === -1 ? '' : md.slice(end)}`;
+  }
+  await writeFile(file, next);
+  await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: parseFrontmatter(next).name });
+  return parseFrontmatter(next);
+}
+
 /** 팀 이름 변경 — 그 팀 소속 전 크루의 frontmatter를 일괄 갱신. */
 export async function renameTeam(wsId, from, to) {
   const { readdir } = await import('node:fs/promises');
