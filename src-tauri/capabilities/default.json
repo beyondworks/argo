@@ -5,6 +5,12 @@
   "windows": [
     "main"
   ],
+  "remote": {
+    "urls": [
+      "http://localhost:3001",
+      "http://localhost:3999"
+    ]
+  },
   "permissions": [
     "core:default",
     {
