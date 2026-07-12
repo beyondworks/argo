@@ -47,10 +47,10 @@ export default function Login() {
     }
   }
 
-  async function google() {
+  async function oauth(provider) {
     setError('');
     const { error: err } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
+      provider,
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
     if (err) setError(String(err.message || err));
@@ -84,7 +84,10 @@ export default function Login() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-3)', fontSize: 11 }}>
           <span className="rule" style={{ flex: 1 }} /> {t('login.or')} <span className="rule" style={{ flex: 1 }} />
         </div>
-        <button className="btn" onClick={google} style={{ justifyContent: 'center' }}>{t('login.google')}</button>
+        <div style={{ display: 'grid', gap: 8 }}>
+          <button className="btn" onClick={() => oauth('google')} style={{ justifyContent: 'center' }}>{t('login.google')}</button>
+          <button className="btn" onClick={() => oauth('github')} style={{ justifyContent: 'center' }}>{t('login.github')}</button>
+        </div>
         {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
       </div>
     </div>

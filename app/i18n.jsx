@@ -167,6 +167,7 @@ const DICT = {
   'login.sent': ['{email} 메일함을 확인하세요 — 로그인 링크를 보냈습니다.', 'Check {email} — we sent you a sign-in link.'],
   'login.or': ['또는', 'or'],
   'login.google': ['Google로 계속하기', 'Continue with Google'],
+  'login.github': ['GitHub로 계속하기', 'Continue with GitHub'],
   'login.localMode': ['로컬 모드로 실행 중입니다 — 로그인 없이 이 컴퓨터의 회사를 사용합니다.', 'Running in local mode — use companies on this computer without signing in.'],
   'login.goHome': ['홈으로', 'Go home'],
   'login.signOut': ['로그아웃', 'Sign out'],
