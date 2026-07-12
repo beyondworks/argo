@@ -1,6 +1,6 @@
 import {
   SKILL_CATALOG, MCP_CATALOG,
-  listInstalledSkills, installSkill, removeSkill,
+  listInstalledSkills, installSkill, removeSkill, saveCustomSkill,
   loadMcp, installMcp, addCustomMcp, removeMcp,
 } from '../../../../../src/market.mjs';
 import {
@@ -58,6 +58,7 @@ export async function POST(req, { params }) {
     if (body.kind === 'skill') await installSkill(ws, body.id);
     else if (body.kind === 'mcp') await installMcp(ws, body.id);
     else if (body.kind === 'mcp-custom') await addCustomMcp(ws, body.def ?? {});
+    else if (body.kind === 'skill-custom') await saveCustomSkill(ws, body.def ?? {}); // 공방 — 직접 쓰는 스킬
     else if (body.kind === 'remote-skill') await installRemoteSkill(ws, body.item ?? {});
     else if (body.kind === 'remote-mcp') await installRemoteMcp(ws, body.item ?? {});
     else if (body.kind === 'explain') return Response.json(await explainItem(body.item ?? {}));

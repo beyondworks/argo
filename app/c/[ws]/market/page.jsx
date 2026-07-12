@@ -352,6 +352,16 @@ export default function Market({ params }) {
     setCustom({ name: '', command: '' });
   }
 
+  // 공방 — 직접 쓰는 스킬. 저장 즉시 모든 크루의 다음 턴에 적용된다.
+  const [workshop, setWorkshop] = useState({ name: '', md: '' });
+  async function addSkill(e) {
+    e.preventDefault();
+    if (!workshop.name.trim() || !workshop.md.trim()) return;
+    setBusy('skill-custom');
+    await act('POST', { kind: 'skill-custom', def: { name: workshop.name.trim(), md: workshop.md.trim() } });
+    setWorkshop({ name: '', md: '' });
+  }
+
   const installedSkillIds = new Set((data?.installedSkills ?? []).map((s) => s.id));
   const installedMcp = data?.installedMcp ?? {};
 
@@ -428,6 +438,24 @@ export default function Market({ params }) {
             ))}
           </div>
         )}
+        {/* 공방 — 사장이 직접 쓰는 스킬(업무 매뉴얼 한 장). 만능 작업대의 아르고식 흡수 */}
+        <form onSubmit={addSkill} style={{ display: 'grid', gap: 8, padding: '10px 18px 18px' }}>
+          <span className="microlabel">{t('market.workshopLabel')}</span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div className="input-bar" style={{ background: 'var(--card-2)', flex: '0 0 220px' }}>
+              <input placeholder={t('market.workshopNamePlaceholder')} value={workshop.name}
+                onChange={(e) => setWorkshop({ ...workshop, name: e.target.value })} {...imeGuard} />
+            </div>
+            <div className="input-bar" style={{ background: 'var(--card-2)', flex: 1, minWidth: 240 }}>
+              <input placeholder={t('market.workshopMdPlaceholder')} value={workshop.md}
+                onChange={(e) => setWorkshop({ ...workshop, md: e.target.value })} {...imeGuard} />
+            </div>
+            <button className="btn btn-primary sm" disabled={!workshop.name.trim() || !workshop.md.trim() || busy === 'skill-custom'} style={{ flex: 'none' }}>
+              {busy === 'skill-custom' ? <Spinner size={11} /> : t('market.workshopCreate')}
+            </button>
+          </div>
+          <span style={{ fontSize: 11.5, color: 'var(--fg-3)', lineHeight: 1.5 }}>{t('market.workshopHint')}</span>
+        </form>
       </div>
 
       {/* ── MCP 도구 ── */}

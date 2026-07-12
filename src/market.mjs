@@ -109,6 +109,19 @@ export async function installSkill(wsId, id) {
   await writeFile(join(paths(wsId).skills, `${id}.md`), item.md);
 }
 
+/** 공방 — 사장이 직접 쓰는 스킬(업무 매뉴얼 한 장). skills/에 저장돼 기존 주입·목록 파이프라인을 그대로 탄다.
+    4000자 캡 — loadSkills 총 주입 상한(6000) 안에서 한 스킬이 전부를 먹지 않게. */
+export async function saveCustomSkill(wsId, { name, md }) {
+  const title = String(name ?? '').trim().slice(0, 40);
+  const body = String(md ?? '').trim();
+  if (!title || !body) throw new Error('스킬 이름과 지시 내용이 필요합니다');
+  const slug = title.toLowerCase().replace(/[^a-z0-9가-힣]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'skill';
+  await mkdir(paths(wsId).skills, { recursive: true });
+  const text = body.startsWith('#') ? body : `# ${title}\n\n${body}`;
+  await writeFile(join(paths(wsId).skills, `custom-${slug}.md`), `${text.slice(0, 4000)}\n`);
+  return { id: `custom-${slug}` };
+}
+
 export async function removeSkill(wsId, id) {
   const safe = id.replace(/[^a-z0-9가-힣-]/gi, '');
   await rm(join(paths(wsId).skills, `${safe}.md`), { force: true });
