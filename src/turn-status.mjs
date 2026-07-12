@@ -1,8 +1,9 @@
 // 턴 진행 단계 — "작성중" 한 마디로 뭉개지 않는다(Hermes 교훈: 지연과 먹통을 구분 못 하면 신뢰 붕괴).
 // chat이 단계를 파일로 남기고, 크루 화면이 폴링해 보여준다.
-import { writeFile, readFile, rm, mkdir } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
+import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 
 const file = (wsId, slug) => join(paths(wsId).chats, `${slug.replace(/[^a-z0-9-]/g, '')}.status.json`);
 
@@ -38,15 +39,14 @@ export function stageForTool(toolName) {
 
 export async function setTurnStatus(wsId, slug, stage, detail = '', partial) {
   try {
-    await mkdir(paths(wsId).chats, { recursive: true });
-    let prev = {};
-    try { prev = JSON.parse(await readFile(file(wsId, slug), 'utf8')); } catch { /* 첫 기록 */ }
-    await writeFile(file(wsId, slug), JSON.stringify({
+    // 상태 파일은 캐시성 — 손상은 관용(readJsonLenient). writeJsonAtomic가 mkdir까지 처리.
+    const prev = await readJsonLenient(file(wsId, slug), {});
+    await writeJsonAtomic(file(wsId, slug), {
       stage, detail,
       // partial — 완료 전 크루가 이미 말한 텍스트(스트리밍 체감). 미전달 시 이전 값 유지, 뒤 4000자만
       partial: String(partial ?? prev.partial ?? '').slice(-4000),
       startedAt: prev.startedAt ?? Date.now(), ts: Date.now(),
-    }));
+    });
   } catch { /* 상태 표시는 베스트에포트 */ }
 }
 
@@ -57,7 +57,8 @@ export async function clearTurnStatus(wsId, slug) {
 /** 2분 넘게 갱신이 없으면 죽은 상태로 보고 무시한다. 반환: { stage, detail, partial, startedAt } | null */
 export async function getTurnStatus(wsId, slug) {
   try {
-    const s = JSON.parse(await readFile(file(wsId, slug), 'utf8'));
+    const s = await readJsonLenient(file(wsId, slug), null);
+    if (!s || !s.ts) return null;
     return Date.now() - s.ts < 120_000
       ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', startedAt: s.startedAt ?? s.ts }
       : null;

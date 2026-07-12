@@ -1,20 +1,17 @@
 // 결재함 — 되돌리기 어렵거나 외부로 나가는 행동은 크루가 실행 전 사장 승인을 받는다.
 // 크루는 request_approval 도구로 요청만 등록하고 대기, 사장이 승인하면 후속 턴이 실행을 잇는다.
-import { readFile, writeFile } from 'node:fs/promises';
 import { paths } from './workspace.mjs';
 import { emitNotify } from './notify.mjs';
 import { appendEvent } from './events.mjs';
+import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 
 export async function loadApprovals(wsId) {
-  try {
-    return JSON.parse(await readFile(paths(wsId).approvals, 'utf8'));
-  } catch {
-    return [];
-  }
+  // 결재 대기열은 유실이 치명적 — 손상을 조용히 빈 목록으로 리셋하지 않고 throw로 드러낸다.
+  return readJson(paths(wsId).approvals, []);
 }
 
 async function save(wsId, list) {
-  await writeFile(paths(wsId).approvals, JSON.stringify(list, null, 2));
+  await writeJsonAtomic(paths(wsId).approvals, list);
 }
 
 /** 결재 요청 등록 — kind: 'action'(행동 결재, 승인 시 후속 턴) | 'tool'(권한 게이트, 승인 시 그 자리에서 재개)

@@ -1,20 +1,18 @@
 // 채팅 스레드 영속화 — 크루별 chats/<slug>.json 에 대화·세션을 남긴다.
 // 새로고침해도 대화가 이어지는 것이 제품의 기본 자세다.
-import { mkdir, readFile, writeFile, rm, readdir } from 'node:fs/promises';
+import { readFile, rm, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
+import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 
 const file = (wsId, slug) => join(paths(wsId).chats, `${slug.replace(/[^a-z0-9-]/g, '')}.json`);
 // 같은 크루 스레드의 read-modify-write를 직렬화 — 웹·텔레그램 동시 턴의 lost-update 방지
 const lockKey = (wsId, slug) => `thread:${wsId}:${slug.replace(/[^a-z0-9-]/g, '')}`;
 
 export async function loadThread(wsId, slug) {
-  try {
-    return JSON.parse(await readFile(file(wsId, slug), 'utf8'));
-  } catch {
-    return { sessionId: null, messages: [] };
-  }
+  // 대화는 유실이 치명적 — 손상 시 조용히 빈 상태로 리셋하지 않고 throw로 드러낸다(readJson).
+  return readJson(file(wsId, slug), { sessionId: null, messages: [] });
 }
 
 export async function appendTurn(wsId, slug, { userMsg, reply, handover, sessionId, attachments }) {
@@ -26,8 +24,7 @@ export async function appendTurn(wsId, slug, { userMsg, reply, handover, session
       { who: 'crew', text: reply, handover, ts },
     );
     t.sessionId = sessionId ?? t.sessionId;
-    await mkdir(paths(wsId).chats, { recursive: true });
-    await writeFile(file(wsId, slug), JSON.stringify(t, null, 2));
+    await writeJsonAtomic(file(wsId, slug), t);
     return t;
   });
 }
@@ -37,8 +34,7 @@ export async function appendSharedNote(wsId, slug, text) {
   return withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug);
     t.messages.push({ who: 'user', shared: true, pending: true, text, ts: Date.now() });
-    await mkdir(paths(wsId).chats, { recursive: true });
-    await writeFile(file(wsId, slug), JSON.stringify(t, null, 2));
+    await writeJsonAtomic(file(wsId, slug), t);
   });
 }
 
@@ -49,7 +45,7 @@ export async function takeSharedNotes(wsId, slug) {
     const notes = t.messages.filter((m) => m.shared && m.pending);
     if (!notes.length) return [];
     for (const m of notes) delete m.pending;
-    await writeFile(file(wsId, slug), JSON.stringify(t, null, 2));
+    await writeJsonAtomic(file(wsId, slug), t);
     return notes.map((m) => m.text);
   });
 }
@@ -94,8 +90,7 @@ export async function resetThread(wsId, slug) {
     const t = await loadThread(wsId, slug);
     if (t.messages?.length) {
       const dir = join(paths(wsId).chats, '.archive');
-      await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, `${slug.replace(/[^a-z0-9-]/g, '')}-${Date.now()}.json`), JSON.stringify(t, null, 2));
+      await writeJsonAtomic(join(dir, `${slug.replace(/[^a-z0-9-]/g, '')}-${Date.now()}.json`), t);
     }
     await rm(file(wsId, slug), { force: true });
   });

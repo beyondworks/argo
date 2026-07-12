@@ -7,6 +7,7 @@ import { listAgents } from './hub.mjs';
 import { chat } from './chat.mjs';
 import { updateIndex } from './memory.mjs';
 import { withLock } from './mutex.mjs';
+import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 const rkey = (wsId) => `room:${wsId}`;
@@ -14,16 +15,12 @@ const rkey = (wsId) => `room:${wsId}`;
 const MEETING_RE = /^_room-\d+\.json$/;
 
 export async function loadRoom(wsId) {
-  try {
-    return JSON.parse(await readFile(file(wsId), 'utf8'));
-  } catch {
-    return { messages: [] };
-  }
+  // 회의 대화는 유실이 치명적 — 손상을 조용히 빈 방으로 리셋하지 않고 throw로 드러낸다(readJson).
+  return readJson(file(wsId), { messages: [] });
 }
 
 async function saveRoom(wsId, room) {
-  await mkdir(paths(wsId).chats, { recursive: true });
-  await writeFile(file(wsId), JSON.stringify(room, null, 2));
+  await writeJsonAtomic(file(wsId), room);
 }
 
 /** 지난 회의 목록 — "회의 마치기"로 적재된 방들(최신순). 회의실 좌측 레일의 원천. */
@@ -82,8 +79,7 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
   await writeFile(join(p.journal, journalName), md);
   await updateIndex(wsId).catch(() => {});
   const dir = join(p.chats, '.archive');
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `_room-${Date.now()}.json`), JSON.stringify(room, null, 2));
+  await writeJsonAtomic(join(dir, `_room-${Date.now()}.json`), room);
   // sid 증가 — 진행 중이던 runRoomTurn의 잔여 발언이 빈 방에 유령으로 남지 않도록 무효화한다
   await saveRoom(wsId, { messages: [], sid: (room.sid ?? 0) + 1 });
   return { archived: true, journal: `journal/${journalName}` };

@@ -1,16 +1,17 @@
 // 자동화 루틴 — 크루에게 반복 지시를 예약(매일/매주)하거나 즉시 실행한다.
 // 실행 = 일반 채팅 턴과 동일 경로(chat) → 결과가 vault 기억으로 남고 자동 링크된다.
-import { readFile, writeFile } from 'node:fs/promises';
 import { paths } from './workspace.mjs';
 import { chat } from './chat.mjs';
 import { emitNotify } from './notify.mjs';
+import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 
 export async function loadRoutines(wsId) {
-  try { return JSON.parse(await readFile(paths(wsId).routines, 'utf8')); } catch { return []; }
+  // 예약 지시는 유실 시 재생성 불가 — 손상을 조용히 빈 목록으로 리셋하지 않고 throw로 드러낸다.
+  return readJson(paths(wsId).routines, []);
 }
 
 async function saveRoutines(wsId, routines) {
-  await writeFile(paths(wsId).routines, JSON.stringify(routines, null, 2));
+  await writeJsonAtomic(paths(wsId).routines, routines);
 }
 
 /** schedule: { type: 'daily'|'weekly', time: 'HH:MM', dow?: 0-6 } */

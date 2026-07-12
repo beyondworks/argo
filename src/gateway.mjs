@@ -10,6 +10,7 @@ import { onNotify } from './notify.mjs';
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader } from './sync.mjs';
 import { appendEvent } from './events.mjs';
+import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 import { mkdir, readFile, writeFile, readdir, stat, rename, copyFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
@@ -23,13 +24,62 @@ async function beatGateway(wsId, kind, ok, error = '') {
 }
 
 // 폴러 offset 영속화 — 재시작·리더 교체 시 offset=0으로 되돌아가 마지막 배치를 재수신·재실행하는 것을 막는다.
+// offset은 lenient 로드(손상 시 0부터 재개 — 재수신은 아래 디스크 큐가 멱등 재적재로 방어).
 async function loadOffset(wsId, key) {
-  try { return JSON.parse(await readFile(join(paths(wsId).root, `.gw-offset-${key}.json`), 'utf8')).offset ?? 0; }
-  catch { return 0; }
+  const o = await readJsonLenient(join(paths(wsId).root, `.gw-offset-${key}.json`), { offset: 0 });
+  return o?.offset ?? 0;
 }
 async function saveOffset(wsId, key, offset) {
-  try { await writeFile(join(paths(wsId).root, `.gw-offset-${key}.json`), JSON.stringify({ offset })); }
+  try { await writeJsonAtomic(join(paths(wsId).root, `.gw-offset-${key}.json`), { offset }); }
   catch { /* 베스트에포트 */ }
+}
+
+/* ─── 지시 처리 큐 (at-least-once) ───
+   문제(감사 D5): 텔레그램 폴러가 offset을 처리 for-루프 '앞'에서 커밋하고, 실제 턴(runWithAtts/run)은
+   await 없는 fire-and-forget이라 offset 저장 후 크래시 시 그 지시가 재수신·재처리 안 되고 영구 유실(at-most-once).
+
+   처방(디스크 큐): 폴 루프는 update를 디스크 큐에 '적재한 직후'에만 offset을 전진시킨다(=Telegram에 수신 확정).
+   별도 워커가 큐를 드레인해 턴을 실행하고 '성공적으로 끝난 뒤에만' 파일을 삭제한다. 처리 도중 크래시면
+   파일이 남아 재기동 시 재처리된다. 파일명 = update_id라 재수신 시 재적재가 멱등(중복 큐 항목 없음).
+   트레이드오프: 응답 전송 후 unlink 전에 크래시하면 재기동 때 같은 지시를 한 번 더 처리(중복 응답 가능).
+   at-most-once(유실)보다 at-least-once(중복)를 택한다 — 지시 유실이 훨씬 치명적이다.
+   블로킹 회피: 폴 루프는 '빠른 디스크 적재'만 await하고 긴 턴은 워커가 뒤에서 돌리므로, 결재 버튼 콜백을
+   막지 않는다(권한 게이트 데드락 방지 — 기존 논블로킹 성질 보존). */
+const GW_MAX_INFLIGHT = 2; // 동시 크루 턴 상한 — 큐가 쌓여도 비용 폭주를 막는다
+function queueDir(wsId, key) { return join(paths(wsId).root, `.gw-queue-${key}`); }
+async function enqueueJob(wsId, key, id, job) {
+  await writeJsonAtomic(join(queueDir(wsId, key), `${id}.json`), job); // 원자적 — 부분 쓰기가 워커에 보이지 않는다
+}
+/** 큐 드레인 워커 — 1초 폴. handler(job)이 정상 반환하면 파일 삭제(처리 완료), 던지면 유지(다음 틱 재시도·재기동 복구). */
+function startQueueWorker(wsId, key, handler) {
+  let stopped = false;
+  const busy = new Set();
+  const iv = setInterval(async () => {
+    if (stopped) return;
+    let names = [];
+    try { names = await readdir(queueDir(wsId, key)); } catch { return; } // 큐 디렉터리 없음 — 할 일 없음
+    names = names.filter((n) => n.endsWith('.json') && !n.startsWith('.'))
+      .sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0)); // update_id 오름차순(대략적 도착 순서 보존)
+    for (const n of names) {
+      if (busy.has(n)) continue;
+      if (busy.size >= GW_MAX_INFLIGHT) break; // 상한 도달 — 남은 잡은 다음 틱
+      busy.add(n);
+      (async () => {
+        const fp = join(queueDir(wsId, key), n);
+        try {
+          const job = await readJsonLenient(fp, null); // 손상 잡은 null → 처리 스킵 후 삭제(무한 재시도 방지)
+          if (job) await handler(job); // handler는 턴 실패를 내부 처리(에러 회신)하고 정상 반환 → 아래서 삭제
+          await unlink(fp).catch(() => {}); // 처리 완료분만 제거. 처리 중 크래시면 파일이 남아 재기동 시 재처리
+        } catch (e) {
+          console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}):`, e.message); // 인프라 예외 — 파일 유지, 다음 틱 재시도
+        } finally {
+          busy.delete(n);
+        }
+      })();
+    }
+  }, 1000);
+  iv.unref?.();
+  return () => { stopped = true; clearInterval(iv); };
 }
 
 const MAX_MSG = 3800; // 텔레그램 4096 제한 대비 여유
@@ -175,29 +225,33 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
 function startTelegram(wsId, getCfg) {
   let stopped = false;
   let offset = 0;
+  const KEY = 'telegram';
   // 앨범(media_group) 버퍼 — 여러 장이 개별 업데이트로 나뉘어 오므로 2초 모아 한 턴으로 처리
   const albums = new Map(); // groupId → { atts, caption, timer }
-  const runWithAtts = (cfg, text, atts, ctx = null) => {
-    (async () => {
-      try {
-        const note = atts.some((a) => !a.isImage) ? '\n(이미지가 아닌 첨부는 vault 경로로 저장되어 있다)' : '';
-        const reply = await runTurn(wsId, cfg, text || '첨부한 파일을 확인하고 필요한 걸 처리해줘.' + note, atts, ctx);
-        await sendTgReply(cfg.token, cfg.chatId, wsId, reply);
-      } catch (e) {
-        await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
-      }
-    })();
+  // 큐 워커의 처리 단위 — 폴 루프는 이 잡을 디스크에 적재만 하고, 실행은 여기서 뒤따른다(논블로킹 보존).
+  const handler = async (job) => {
+    const cfg = getCfg();
+    if (!cfg?.token || !cfg.chatId) return; // 연결이 사라짐 — 잡 폐기(재시도 불가)
+    try {
+      const atts = job.atts ?? [];
+      const note = atts.some((a) => !a.isImage) ? '\n(이미지가 아닌 첨부는 vault 경로로 저장되어 있다)' : '';
+      const reply = await runTurn(wsId, cfg, job.text || ('첨부한 파일을 확인하고 필요한 걸 처리해줘.' + note), atts, job.ctx ?? null);
+      await sendTgReply(cfg.token, cfg.chatId, wsId, reply);
+    } catch (e) {
+      // 턴 실패는 여기서 종결(에러 회신) — 던지지 않으므로 잡은 완료 처리된다(무한 재시도 방지)
+      await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
+    }
   };
+  const stopWorker = startQueueWorker(wsId, KEY, handler);
   (async () => {
     console.log(`[argo] 텔레그램 게이트웨이 시작: ${wsId}`);
-    offset = await loadOffset(wsId, 'telegram'); // 재시작 이어받기
+    offset = await loadOffset(wsId, KEY); // 재시작 이어받기
     while (!stopped) {
       const cfg = getCfg();
       if (!cfg?.enabled || !cfg.token) break;
       try {
         const updates = await tg(cfg.token, 'getUpdates', { offset, timeout: 25 });
-        await beatGateway(wsId, 'telegram', true);
-        if (updates.length) { offset = updates[updates.length - 1].update_id + 1; await saveOffset(wsId, 'telegram', offset); } // 처리 전 커밋 — 재시작 시 재수신 방지
+        await beatGateway(wsId, KEY, true);
         for (const u of updates) {
           if (stopped) break;
 
@@ -248,29 +302,33 @@ function startTelegram(wsId, getCfg) {
               if (msg.caption) g.caption = msg.caption;
               g.ctx = { chatId: msg.chat.id, chatType: msg.chat.type };
               clearTimeout(g.timer);
-              g.timer = setTimeout(() => { albums.delete(key); runWithAtts(getCfg() ?? cfg, g.caption, g.atts, g.ctx); }, 2000);
+              // 앨범은 2초 버퍼 후 한 잡으로 적재(파일명=앨범id, 멱등). 버퍼 중 크래시하면 앨범은 유실(첨부 한정, 기존과 동일 베스트에포트).
+              g.timer = setTimeout(() => { albums.delete(key); enqueueJob(wsId, KEY, `alb-${msg.media_group_id}`, { text: g.caption, atts: g.atts, ctx: g.ctx }).catch(() => {}); }, 2000);
               albums.set(key, g);
             } else {
-              runWithAtts(cfg, msg.caption ?? '', [att], { chatId: msg.chat.id, chatType: msg.chat.type });
+              await enqueueJob(wsId, KEY, u.update_id, { text: msg.caption ?? '', atts: [att], ctx: { chatId: msg.chat.id, chatType: msg.chat.type } });
             }
             continue;
           }
 
-          // 턴을 기다리지 않는다 — 기다리면 폴이 멈춰 결재 버튼 콜백을 못 받는다(권한 게이트 데드락)
-          runWithAtts(cfg, msg.text, [], { chatId: msg.chat.id, chatType: msg.chat.type });
+          // 큐에 적재만 하고 턴은 기다리지 않는다 — 기다리면 폴이 멈춰 결재 버튼 콜백을 못 받는다(권한 게이트 데드락)
+          await enqueueJob(wsId, KEY, u.update_id, { text: msg.text, atts: [], ctx: { chatId: msg.chat.id, chatType: msg.chat.type } });
         }
+        // 이번 배치를 디스크 큐에 다 적재한 뒤에만 offset 전진 — 적재 전 크래시면 재수신·재처리(at-least-once).
+        // 중단 중이면 전진하지 않는다(미적재분을 다음 리더가 다시 받도록).
+        if (!stopped && updates.length) { offset = updates[updates.length - 1].update_id + 1; await saveOffset(wsId, KEY, offset); }
       } catch (e) {
         if (!stopped) {
           const hint = /Conflict/.test(String(e.message)) ? ' — 같은 토큰을 다른 인스턴스가 폴링 중일 수 있음' : '';
           console.error(`[argo] 텔레그램 폴 오류(${wsId}):`, e.message, hint);
-          await beatGateway(wsId, 'telegram', false, e.message);
+          await beatGateway(wsId, KEY, false, e.message);
           await new Promise((r) => setTimeout(r, 5000)); // 잘못된 토큰·네트워크 단절에도 루프는 살아있는다
         }
       }
     }
     console.log(`[argo] 텔레그램 게이트웨이 종료: ${wsId}`);
   })();
-  return () => { stopped = true; };
+  return () => { stopped = true; stopWorker(); };
 }
 
 /* ─── 크루 직통 봇 — 크루 1명 = 봇 1개(연락처처럼). DM은 1:1(웹과 같은 스레드),
@@ -290,28 +348,30 @@ async function runAgentTurn(wsId, slug, text, attachments, ctx) {
 function startAgentTelegram(wsId, slug, getCfg) {
   let stopped = false;
   let offset = 0;
+  const KEY = `tg-${slug}`;
   const albums = new Map();
-  const run = (cfg, text, atts, ctx) => {
-    (async () => {
-      try {
-        const note = atts.some((a) => !a.isImage) ? '\n(이미지가 아닌 첨부는 vault 경로로 저장되어 있다)' : '';
-        const reply = await runAgentTurn(wsId, slug, text || '첨부한 파일을 확인하고 필요한 걸 처리해줘.' + note, atts, ctx);
-        await sendTgReply(cfg.token, ctx.chatId, wsId, reply);
-      } catch (e) {
-        await tg(cfg.token, 'sendMessage', { chat_id: ctx.chatId, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
-      }
-    })();
+  const handler = async (job) => {
+    const cfg = getCfg();
+    if (!cfg?.token || !job.ctx?.chatId) return; // 연결/발화 위치 소실 — 잡 폐기
+    try {
+      const atts = job.atts ?? [];
+      const note = atts.some((a) => !a.isImage) ? '\n(이미지가 아닌 첨부는 vault 경로로 저장되어 있다)' : '';
+      const reply = await runAgentTurn(wsId, slug, job.text || ('첨부한 파일을 확인하고 필요한 걸 처리해줘.' + note), atts, job.ctx);
+      await sendTgReply(cfg.token, job.ctx.chatId, wsId, reply);
+    } catch (e) {
+      await tg(cfg.token, 'sendMessage', { chat_id: job.ctx.chatId, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
+    }
   };
+  const stopWorker = startQueueWorker(wsId, KEY, handler);
   (async () => {
     console.log(`[argo] 텔레그램 크루 봇 시작: ${wsId}/${slug}`);
-    offset = await loadOffset(wsId, `tg-${slug}`); // 재시작 이어받기
+    offset = await loadOffset(wsId, KEY); // 재시작 이어받기
     while (!stopped) {
       const cfg = getCfg();
       if (!cfg?.token) break;
       try {
         const updates = await tg(cfg.token, 'getUpdates', { offset, timeout: 25 });
-        await beatGateway(wsId, `tg-${slug}`, true);
-        if (updates.length) { offset = updates[updates.length - 1].update_id + 1; await saveOffset(wsId, `tg-${slug}`, offset); }
+        await beatGateway(wsId, KEY, true);
         for (const u of updates) {
           if (stopped) break;
           const msg = u.message;
@@ -345,27 +405,29 @@ function startAgentTelegram(wsId, slug, getCfg) {
               if (msg.caption) g.caption = strip(msg.caption);
               g.ctx = ctx;
               clearTimeout(g.timer);
-              g.timer = setTimeout(() => { albums.delete(key); run(getCfg() ?? cfg, g.caption, g.atts, g.ctx); }, 2000);
+              g.timer = setTimeout(() => { albums.delete(key); enqueueJob(wsId, KEY, `alb-${msg.media_group_id}`, { text: g.caption, atts: g.atts, ctx: g.ctx }).catch(() => {}); }, 2000);
               albums.set(key, g);
             } else {
-              run(cfg, strip(msg.caption ?? ''), [att], ctx);
+              await enqueueJob(wsId, KEY, u.update_id, { text: strip(msg.caption ?? ''), atts: [att], ctx });
             }
             continue;
           }
-          run(cfg, strip(msg.text), [], ctx); // 논블로킹 — 폴은 계속 돈다
+          await enqueueJob(wsId, KEY, u.update_id, { text: strip(msg.text), atts: [], ctx }); // 큐 적재만 — 폴은 계속 돈다
         }
+        // 배치를 다 적재한 뒤에만 offset 전진(at-least-once). 중단 중이면 전진하지 않는다.
+        if (!stopped && updates.length) { offset = updates[updates.length - 1].update_id + 1; await saveOffset(wsId, KEY, offset); }
       } catch (e) {
         if (!stopped) {
           const hint = /Conflict/.test(String(e.message)) ? ' — 같은 토큰을 다른 인스턴스가 폴링 중일 수 있음' : '';
           console.error(`[argo] 크루 봇 폴 오류(${wsId}/${slug}):`, e.message, hint);
-          await beatGateway(wsId, `tg-${slug}`, false, e.message);
+          await beatGateway(wsId, KEY, false, e.message);
           await new Promise((r) => setTimeout(r, 5000));
         }
       }
     }
     console.log(`[argo] 텔레그램 크루 봇 종료: ${wsId}/${slug}`);
   })();
-  return () => { stopped = true; };
+  return () => { stopped = true; stopWorker(); };
 }
 
 /* ─── 받은 서류함(inbox) — 폴더에 파일을 넣는 것이 곧 지시. 기본 크루가 읽고 처리해 보고한다. ─── */
@@ -389,26 +451,30 @@ function startInboxWatcher(wsId) {
         (async () => {
           try {
             const safe = n.replace(/[^\w.\-가-힣 ()]/g, '_').slice(-80);
-            const rel = `files/${Date.now().toString(36)}-${safe}`;
+            // 처리용 사본을 vault에 둔다(원본은 inbox에 유지). 파일명을 inbox명 기준으로 고정 — 실패 재시도 시 같은 경로에 덮어써 사본이 쌓이지 않는다.
+            const rel = `files/inbox-${safe}`;
             await mkdir(join(paths(wsId).vault, 'files'), { recursive: true });
-            // inbox에서 꺼내 기억으로 — 재처리 방지. 다른 마운트면 rename이 EXDEV로 실패하므로 copy+unlink 폴백(무한 재처리 루프 차단)
-            try {
-              await rename(fp, join(paths(wsId).vault, rel));
-            } catch {
-              await copyFile(fp, join(paths(wsId).vault, rel));
-              await unlink(fp);
-            }
+            await copyFile(fp, join(paths(wsId).vault, rel)); // 원본은 아직 옮기지 않는다 — 핸드오버 영속 성공 뒤에만 제거
             const ext = safe.split('.').pop()?.toLowerCase() ?? '';
             const isImage = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext);
             const att = { rel, name: safe, mime: isImage ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : '', isImage };
             const cfg = (await loadConnections(wsId)).telegram;
             console.log(`[argo] 받은 서류함 처리 시작: ${wsId}/${safe}`);
+            // runTurn 반환 = chat 핸드오버 + appendTurn(스레드) 영속 완료. 여기까지 와야 처리를 종결(원본 제거)한다.
             const reply = await runTurn(wsId, cfg, `(받은 서류함) 사장이 inbox 폴더에 "${safe}" 파일을 넣었다. 내용을 확인하고 필요한 처리를 한 뒤 5줄 이내로 보고하라.`, [att]);
+            // 영속 성공 후에만 원본을 .done/으로 이동(재처리 종결). 실패 시 원본이 inbox에 남아 다음 틱에 재시도(at-least-once).
+            const done = join(dir, '.done');
+            await mkdir(done, { recursive: true });
+            try {
+              await rename(fp, join(done, `${Date.now().toString(36)}-${n}`));
+            } catch {
+              await unlink(fp).catch(() => {}); // 다른 마운트 등 rename 실패 시 — 최소한 원본은 제거해 무한 재처리 차단
+            }
             if (cfg.enabled && cfg.token && cfg.chatId) { // 자리에 없어도 결과가 도착한다
               await sendTgReply(cfg.token, cfg.chatId, wsId, `[받은 서류함] ${safe}\n\n${reply}`).catch(() => {});
             }
           } catch (e) {
-            console.error(`[argo] inbox 처리 실패(${wsId}/${n}):`, e.message);
+            console.error(`[argo] inbox 처리 실패(${wsId}/${n}):`, e.message); // 원본을 inbox에 유지 → 다음 틱 재시도
           } finally {
             busy.delete(n);
           }

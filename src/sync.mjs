@@ -16,9 +16,11 @@
 import { mkdir, readFile, writeFile, readdir, stat, rm, utimes } from 'node:fs/promises';
 import { join, dirname, sep } from 'node:path';
 import { hostname } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, paths } from './workspace.mjs';
+import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
+import { withLock } from './mutex.mjs';
 
 const BUCKET = 'companies';
 const CYCLE_MS = 45_000;
@@ -33,10 +35,12 @@ export const SYNC_ON = !!(
 const EXCLUDE = (rel) => {
   const base = rel.split('/').pop();
   return (
-    rel === 'connections.json' ||
+    rel === 'connections.json' || rel === '.secrets.json' || // 봇 토큰·Claude 키 — 시크릿은 기기마다, 클라우드 복제 금지
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
+    base.startsWith('.gw-queue') || // 디스크 큐(지시 대기) — 로컬 처리 상태, 동기화 대상 아님
     base === '.sync-state.json' || base === '.device-id' || base === '.DS_Store' ||
-    base.endsWith('.status.json') || base.endsWith('.lock')
+    base.endsWith('.status.json') || base.endsWith('.lock') ||
+    base.startsWith('.tmp-') || base.endsWith('.corrupt') || rel.includes('.corrupt-') // 원자쓰기 임시·손상 백업
   );
 };
 
@@ -93,17 +97,28 @@ async function renewLease(owner) {
     leaseState.checkedAt = Date.now();
     return;
   }
-  // 내 것이거나 만료 — 갱신/획득
+  // 내 것이거나 만료 — 획득 시도. 스토리지엔 진짜 CAS가 없으므로 write-후-재확인으로
+  // 이중 리더 창을 좁힌다: 내 토큰을 쓰고, 잠깐 뒤 다시 읽어 최종 승자가 나인지 확인.
+  const token = randomUUID();
   await client().storage.from(BUCKET).upload(
-    key, new Blob([JSON.stringify({ deviceId: me, ts: Date.now() })]),
+    key, new Blob([JSON.stringify({ deviceId: me, token, ts: Date.now() })]),
     { upsert: true, contentType: 'application/json' },
   );
-  if (!leaseState.leader) console.log(`[argo] 동기화: 실행 리더 획득 (${me})`);
-  leaseState.leader = true;
+  await new Promise((r) => setTimeout(r, 800)); // 동시 기동한 다른 기기의 쓰기가 도착할 여유
+  let winner = null;
+  try {
+    const { data } = await client().storage.from(BUCKET).download(`${key}?t=${Date.now()}`);
+    if (data) winner = JSON.parse(Buffer.from(await data.arrayBuffer()).toString());
+  } catch { /* 재확인 실패 — 보수적으로 팔로워 */ }
+  const iWon = winner && winner.token === token; // 내가 마지막 승자여야만 리더
+  if (iWon && !leaseState.leader) console.log(`[argo] 동기화: 실행 리더 획득 (${me})`);
+  if (!iWon && leaseState.leader) console.log(`[argo] 동기화: 실행 리더 경합 양보 (${me})`);
+  leaseState.leader = !!iWon;
   leaseState.checkedAt = Date.now();
 }
 
-/* ─── 로컬 스캔 ─── */
+/* ─── 로컬 스캔 (내용 해시 포함 — 변경 판별의 진실) ─── */
+const hashBuf = (buf) => createHash('sha1').update(buf).digest('hex').slice(0, 16);
 async function walk(dir, base = dir, out = {}) {
   let entries = [];
   try { entries = await readdir(dir, { withFileTypes: true }); } catch { return out; }
@@ -112,17 +127,38 @@ async function walk(dir, base = dir, out = {}) {
     const rel = full.slice(base.length + 1).split(sep).join('/');
     if (e.isDirectory()) await walk(full, base, out);
     else if (!EXCLUDE(rel)) {
-      const st = await stat(full).catch(() => null);
-      if (st) out[rel] = { m: Math.round(st.mtimeMs), s: st.size };
+      try {
+        const buf = await readFile(full);
+        const st = await stat(full).catch(() => null);
+        out[rel] = { m: st ? Math.round(st.mtimeMs) : Date.now(), s: buf.length, h: hashBuf(buf) };
+      } catch { /* 읽는 중 사라진 파일 — 스킵 */ }
     }
   }
   return out;
 }
 
-const stateFile = (wsId) => join(paths(wsId).root, '.sync-state.json');
-async function loadState(wsId) {
-  try { return JSON.parse(await readFile(stateFile(wsId), 'utf8')); } catch { return { files: {} }; }
+// 파일 종류 — 충돌 처리 전략이 갈린다. (export: 회귀 테스트용 순수 함수)
+export const isLedger = (rel) => rel.endsWith('.jsonl'); // usage.jsonl, events.jsonl — append-only 원장(행 병합)
+export const isText = (rel) => rel.endsWith('.md');       // 노트·일지 — 충돌 시 양쪽 보존
+export const isThread = (rel) => /^chats\/[^/]+\.json$/.test(rel); // 진행 중 턴과 레이스 → 스레드 락
+const threadLockKey = (wsId, rel) => `thread:${wsId}:${rel.slice(6).replace(/\.json$/, '').replace(/[^a-z0-9-]/g, '')}`;
+
+/** 원장 병합 — 원격+로컬 행의 합집합(동일 행 dedup). 순서: 원격 먼저 후 로컬 신규. blob LWW의 행 유실 방지. */
+export function mergeLedger(localBuf, remoteBuf) {
+  const seen = new Set();
+  const out = [];
+  for (const buf of [remoteBuf, localBuf]) {
+    for (const line of buf.toString('utf8').split('\n')) {
+      if (!line.trim() || seen.has(line)) continue;
+      seen.add(line);
+      out.push(line);
+    }
+  }
+  return Buffer.from(out.length ? out.join('\n') + '\n' : '');
 }
+
+const stateFile = (wsId) => join(paths(wsId).root, '.sync-state.json');
+const loadState = (wsId) => readJsonLenient(stateFile(wsId), { files: {} });
 
 async function download(key) {
   const { data, error } = await client().storage.from(BUCKET).download(key);
@@ -137,76 +173,115 @@ async function upload(key, buf) {
   if (error) throw new Error(error.message);
 }
 
-/* ─── 회사 1개 동기화 사이클 — 풀(원격이 최신) → 푸시(로컬이 최신) → 삭제 전파 ─── */
+/* ─── 회사 1개 동기화 — base(마지막 동기화 상태) 대비 3-way 병합.
+   "누가 바꿨나"를 해시로 판별해, 한쪽만 바뀌면 그쪽을 반영하고, 양쪽이 바뀌면 파일 종류별로
+   충돌을 해소한다(원장=행 병합, 텍스트=양쪽 보존, 스레드=락). blind LWW로 조용히 파기하지 않는다. */
 export async function syncCompany(wsId, owner) {
   const root = paths(wsId).root;
+  const me = await getDeviceId();
   const manifestKey = skey(owner, wsId, '__manifest__.json');
   let remote = { files: {} };
   try { remote = JSON.parse((await download(manifestKey)).toString()); } catch { /* 최초 푸시 */ }
   const local = await walk(root);
-  const state = await loadState(wsId);
-  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, failed = 0;
+  const state = (await loadState(wsId)).files ?? {};
+  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0;
 
-  // ① 풀 — 원격에 있고 (로컬에 없거나 원격이 더 최신)인 파일. 단, "내가 방금 지운 파일"은 제외
-  for (const [rel, r] of Object.entries(remote.files)) {
-    const l = local[rel];
-    const deletedLocally = !l && state.files[rel]; // 지난 동기화엔 있었는데 지금 없다 = 로컬 삭제
-    if (deletedLocally) continue;
-    if (!l || r.m > l.m + 1500) { // 1.5초 여유 — mtime 해상도·시계 오차 완충
-      try {
-        const buf = await download(skey(owner, wsId, rel));
-        const full = join(root, ...rel.split('/'));
-        await mkdir(dirname(full), { recursive: true });
-        await writeFile(full, buf);
-        await utimes(full, new Date(r.m), new Date(r.m)); // mtime 정렬 — 재푸시 루프 방지
-        local[rel] = { m: r.m, s: buf.length };
-        pulled++;
-      } catch { failed++; } // 파일 하나가 막혀도 나머지는 계속 — 다음 사이클이 재시도한다
-    }
-  }
+  const relFull = (rel) => join(root, ...rel.split('/'));
+  const remoteKey = (rel) => skey(owner, wsId, rel);
+  // 로컬 쓰기 — 스레드 파일이면 진행 중 턴과 직렬화(레이스 방지)
+  const writeLocal = async (rel, buf, mtime) => {
+    const doWrite = async () => {
+      const full = relFull(rel);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, buf);
+      if (mtime) await utimes(full, new Date(mtime), new Date(mtime));
+    };
+    if (isThread(rel)) await withLock(threadLockKey(wsId, rel), doWrite);
+    else await doWrite();
+  };
+  const rmLocal = async (rel) => {
+    if (isThread(rel)) await withLock(threadLockKey(wsId, rel), () => rm(relFull(rel), { force: true }));
+    else await rm(relFull(rel), { force: true });
+  };
+  const changed = (a, b) => !a || !b || (a.h ?? `${a.m}:${a.s}`) !== (b.h ?? `${b.m}:${b.s}`);
 
-  // ② 푸시 — 로컬에 있고 (원격에 없거나 로컬이 더 최신)인 파일
-  for (const [rel, l] of Object.entries(local)) {
-    const r = remote.files[rel];
-    if (!r || l.m > r.m + 1500) {
-      try {
-        const buf = await readFile(join(root, ...rel.split('/')));
-        await upload(skey(owner, wsId, rel), buf);
-        remote.files[rel] = { m: l.m, s: l.s };
-        pushed++;
-      } catch { failed++; }
-    }
-  }
-
-  // ③ 삭제 전파 — 로컬 삭제 → 원격 제거 / 원격 삭제(매니페스트에서 사라짐) → 로컬 제거
-  for (const rel of Object.keys(state.files)) {
-    const inLocal = !!local[rel];
-    const inRemote = !!remote.files[rel];
-    if (!inLocal && inRemote) { // 이 기기에서 지움 → 원격에도 반영
-      await client().storage.from(BUCKET).remove([skey(owner, wsId, rel)]);
-      delete remote.files[rel];
-      deletedR++;
-    } else if (inLocal && !inRemote) { // 다른 기기에서 지움 → 로컬도 제거
-      await rm(join(root, ...rel.split('/')), { force: true });
-      delete local[rel];
-      deletedL++;
-    }
+  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)]);
+  for (const rel of allRels) {
+    const l = local[rel], r = remote.files[rel], base = state[rel];
+    const localChg = changed(base, l);   // base 대비 로컬 변경(생성/수정/삭제)
+    const remoteChg = changed(base, r);   // base 대비 원격 변경
+    try {
+      // ── 삭제 전파 ──
+      if (!l && r) { // 로컬에 없음
+        if (base && !remoteChg) { // 내가 지웠고 원격은 그대로 → 원격도 삭제
+          await client().storage.from(BUCKET).remove([remoteKey(rel)]);
+          delete remote.files[rel]; deletedR++;
+        } else if (!base) { // 원격 신규 → 받기
+          await writeLocal(rel, await download(remoteKey(rel)), r.m); local[rel] = r; pulled++;
+        } else { // 내가 지웠지만 원격도 바뀜 = 충돌 → 원격 부활본을 받아 유실 방지
+          await writeLocal(rel, await download(remoteKey(rel)), r.m); local[rel] = r; pulled++; conflicts++;
+        }
+        continue;
+      }
+      if (l && !r) { // 원격에 없음
+        if (base && !localChg) { await rmLocal(rel); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
+        else { await upload(remoteKey(rel), await readFile(relFull(rel))); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
+        continue;
+      }
+      // ── 양쪽 존재 ──
+      if (!localChg && !remoteChg) continue;      // 변경 없음
+      if (remoteChg && !localChg) { // 원격만 변경 → 받기
+        await writeLocal(rel, await download(remoteKey(rel)), r.m); local[rel] = r; pulled++; continue;
+      }
+      if (localChg && !remoteChg) { // 로컬만 변경 → 밀기
+        await upload(remoteKey(rel), await readFile(relFull(rel))); remote.files[rel] = l; pushed++; continue;
+      }
+      // ── 양쪽 변경 = 충돌 ──
+      if ((l.h ?? '') === (r.h ?? '')) { // 내용이 우연히 같아짐 → 상태만 정렬
+        remote.files[rel] = l; continue;
+      }
+      const localBuf = await readFile(relFull(rel));
+      const remoteBuf = await download(remoteKey(rel));
+      if (isLedger(rel)) { // 원장 — 행 합집합 병합 후 양쪽 수렴
+        const mBuf = mergeLedger(localBuf, remoteBuf);
+        await writeLocal(rel, mBuf);
+        await upload(remoteKey(rel), mBuf);
+        local[rel] = { m: Date.now(), s: mBuf.length, h: hashBuf(mBuf) };
+        remote.files[rel] = local[rel]; merged++;
+      } else if (isText(rel)) { // 텍스트 — 원격을 정본으로 받고, 로컬본은 .conflict로 보존(양쪽 유실 없음)
+        const cRel = rel.replace(/\.md$/, `.conflict-${me}-${Date.now()}.md`);
+        await writeLocal(cRel, localBuf);
+        await upload(remoteKey(cRel), localBuf);
+        await writeLocal(rel, remoteBuf, r.m);
+        local[rel] = r; local[cRel] = { m: Date.now(), s: localBuf.length, h: hashBuf(localBuf) };
+        remote.files[cRel] = local[cRel]; pulled++; conflicts++;
+      } else { // 기타(json 등) — 최근 mtime 승(LWW), 단 카운트해 관측 가능하게
+        if ((r.m ?? 0) >= (l.m ?? 0)) { await writeLocal(rel, remoteBuf, r.m); local[rel] = r; pulled++; }
+        else { await upload(remoteKey(rel), localBuf); remote.files[rel] = l; pushed++; }
+        conflicts++;
+      }
+    } catch { failed++; } // 파일 하나 실패는 다음 사이클이 재시도
   }
 
   await upload(manifestKey, Buffer.from(JSON.stringify(remote)));
-  await writeFile(stateFile(wsId), JSON.stringify({ files: remote.files, ts: Date.now() }));
-  return { pulled, pushed, deletedL, deletedR };
+  await writeJsonAtomic(stateFile(wsId), { files: remote.files, ts: Date.now() });
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed };
 }
 
-/* ─── 원격 회사 발견 — 새 기기가 계정의 회사들을 자동으로 들여온다 ─── */
-async function discoverRemote() {
+// 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.
+// ARGO_SYNC_OWNER(설치 시 지정한 소유자 id) 있으면 그것만. 없으면 로컬에 이미 있는 오너만
+// (버킷 전체를 무차별 순회해 남의 테넌트를 로컬로 빨아들이지 않는다 — 감사 지적).
+const SYNC_OWNER = process.env.ARGO_SYNC_OWNER || null;
+
+/* ─── 원격 회사 발견 — 내가 책임지는 오너의 회사만. 새 기기가 자기 회사를 복원하는 경로. ─── */
+async function discoverRemote(localOwners) {
+  const allow = SYNC_OWNER ? new Set([SYNC_OWNER]) : new Set(localOwners);
+  if (allow.size === 0) return []; // 지정 오너도, 로컬 회사도 없으면 발견 안 함(무차별 복제 차단)
   const out = []; // [{ owner, wsId }]
-  const { data: owners } = await client().storage.from(BUCKET).list('', { limit: 100 });
-  for (const o of owners ?? []) {
-    if (o.id) continue; // 파일은 스킵 — 폴더(오너)만
-    const { data: companies } = await client().storage.from(BUCKET).list(o.name, { limit: 100 });
+  for (const owner of allow) {
+    const { data: companies } = await client().storage.from(BUCKET).list(owner, { limit: 200 }).catch(() => ({ data: [] }));
     for (const c of companies ?? []) {
-      if (!c.id) out.push({ owner: o.name, wsId: c.name }); // 오너 UUID·회사 slug는 항상 ASCII — 인코딩 안 탄다
+      if (!c.id) out.push({ owner, wsId: c.name }); // 오너 id·회사 slug는 ASCII
     }
   }
   return out;
@@ -230,8 +305,9 @@ async function cycle() {
       if (meta.ownerId) targets.set(meta.id, meta.ownerId);
     } catch { /* 회사 아님 */ }
   }
-  // 원격에만 있는 회사 발견 → 로컬 복제 대상에 추가 (새 기기 시나리오)
-  for (const { owner, wsId } of await discoverRemote()) {
+  // 원격에만 있는 내 회사 발견 → 로컬 복제 대상에 추가 (새 기기가 자기 회사 복원). 남의 테넌트는 안 봄.
+  const localOwners = [...new Set(targets.values())];
+  for (const { owner, wsId } of await discoverRemote(localOwners)) {
     if (!targets.has(wsId)) targets.set(wsId, owner);
   }
   const owners = [...new Set(targets.values())];

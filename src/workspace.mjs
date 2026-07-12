@@ -2,6 +2,7 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { writeJsonAtomic } from './jsonstore.mjs';
 
 export const WS_ROOT = process.env.ARGO_ROOT || process.env.CREWBASE_ROOT || join(process.cwd(), 'workspaces');
 
@@ -46,7 +47,7 @@ export async function createCompany(wsId, name, owner, ownerId = null) {
   const { ensureScaffold } = await import('./provision.mjs'); // 동적 — provision→workspace 순환 방지
   await ensureScaffold(wsId);
   const company = { id: wsId, name, owner, ...(ownerId ? { ownerId } : {}), created: new Date().toISOString() };
-  await writeFile(p.company, JSON.stringify(company, null, 2));
+  await writeJsonAtomic(p.company, company);
   await writeFile(p.index, `# ${name} — 회사 기억 인덱스\n\n(아직 기록 없음)\n`); // 회사 이름 반영 — 스캐폴드 기본을 덮는다
   return company;
 }
@@ -58,7 +59,7 @@ export async function loadCompany(wsId) {
 /** 회사 정보 수정 — 이름 등. id/created는 불변. */
 export async function updateCompany(wsId, patch) {
   const company = { ...(await loadCompany(wsId)), ...patch, id: wsId };
-  await writeFile(paths(wsId).company, JSON.stringify(company, null, 2));
+  await writeJsonAtomic(paths(wsId).company, company);
   return company;
 }
 

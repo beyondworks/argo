@@ -1,8 +1,8 @@
 // 메신저 연결 — connections.json. 봇 토큰은 워크스페이스 파일에만 두고(로그·API 응답 금지),
 // 화면에는 항상 마스킹해서 내보낸다. SaaS(P1)에서는 서버측 암호화 보관으로 이전한다.
-import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
+import { writeJsonAtomic, readJson, readJsonLenient } from './jsonstore.mjs';
 
 const EMPTY = {
   // agents: { [slug]: { token, botUsername, ownerId, ownerChat } } — 크루별 직통 봇(연락처처럼 1크루 1봇)
@@ -51,12 +51,10 @@ export async function syncAgentBotName(wsId, slug, name) {
 /** 게이트웨이 폴러 하트비트 조회 — 40초 내 성공 비트가 있어야 "가동 중". */
 export async function gatewayStatus(wsId) {
   const read = async (kind) => {
-    try {
-      const s = JSON.parse(await readFile(join(paths(wsId).root, `.gateway-${kind}.json`), 'utf8'));
-      return { alive: s.ok && Date.now() - s.ts < 40_000, lastTs: s.ts, error: s.ok ? '' : s.error };
-    } catch {
-      return { alive: false, lastTs: null, error: '' };
-    }
+    // 게이트웨이 하트비트는 캐시성(재생성 가능) — 손상은 관용하고 "가동 안 함"으로 본다(readJsonLenient).
+    const s = await readJsonLenient(join(paths(wsId).root, `.gateway-${kind}.json`), null);
+    if (!s) return { alive: false, lastTs: null, error: '' };
+    return { alive: s.ok && Date.now() - s.ts < 40_000, lastTs: s.ts, error: s.ok ? '' : s.error };
   };
   const out = { telegram: await read('telegram'), slack: await read('slack'), agents: {} };
   const all = await loadConnections(wsId);
@@ -65,15 +63,13 @@ export async function gatewayStatus(wsId) {
 }
 
 export async function loadConnections(wsId) {
-  try {
-    const raw = JSON.parse(await readFile(paths(wsId).connections, 'utf8'));
-    return {
-      telegram: { ...EMPTY.telegram, ...raw.telegram, agents: raw.telegram?.agents ?? {} },
-      slack: { ...EMPTY.slack, ...raw.slack },
-    };
-  } catch {
-    return structuredClone(EMPTY);
-  }
+  // 봇 토큰은 유실이 치명적 — 손상을 조용히 빈 연결로 리셋하지 않고 throw로 드러낸다(readJson).
+  // 부재(ENOENT)만 EMPTY로 시드된다.
+  const raw = await readJson(paths(wsId).connections, EMPTY);
+  return {
+    telegram: { ...EMPTY.telegram, ...raw.telegram, agents: raw.telegram?.agents ?? {} },
+    slack: { ...EMPTY.slack, ...raw.slack },
+  };
 }
 
 /** 크루 직통 봇 연결/해제 — patch=null이면 해제. 토큰이 바뀌면 페어링(ownerId) 초기화. */
@@ -89,7 +85,7 @@ export async function updateAgentBot(wsId, slug, patch) {
     agents[slug] = next;
   }
   all.telegram.agents = agents;
-  await writeFile(paths(wsId).connections, JSON.stringify(all, null, 2));
+  await writeJsonAtomic(paths(wsId).connections, all);
   return all;
 }
 
@@ -103,7 +99,7 @@ export async function updateConnection(wsId, kind, patch) {
     next.botUserId = null;
   }
   all[kind] = next;
-  await writeFile(paths(wsId).connections, JSON.stringify(all, null, 2));
+  await writeJsonAtomic(paths(wsId).connections, all);
   return all;
 }
 

@@ -8,6 +8,7 @@ import { paths } from './workspace.mjs';
 import { saveNote, updateIndex } from './memory.mjs';
 import { appendUsage } from './usage.mjs';
 import { appendEvent } from './events.mjs';
+import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 
 const WATERMARK = (wsId) => join(paths(wsId).vault, '.consolidate.json');
 const CAP = 14_000; // 정리 1회당 읽는 일지 총량 — 넘치면 다음 실행이 이어서 정리
@@ -28,7 +29,8 @@ const PROMPT = (journals, noteTitles) => `당신은 회사 기억의 사서다. 
 ${journals}`;
 
 async function readWatermark(wsId) {
-  try { return JSON.parse(await readFile(WATERMARK(wsId), 'utf8')); } catch { return { offsets: {} }; }
+  // 워터마크는 재생성 가능(원본 일지가 진실) — 손상은 관용하고 처음부터 재정리(readJsonLenient).
+  return readJsonLenient(WATERMARK(wsId), { offsets: {} });
 }
 
 /** 워터마크 이후의 새 일지 내용만 모은다. sources = 이번 정리에 기여한 일지(근거 링크용). */
@@ -111,7 +113,7 @@ export async function consolidateMemory(wsId) {
     await addSources(file, sources); // 이 결론의 근거 일지 — 드릴다운 경로
     written.push(n.title.trim());
   }
-  await writeFile(WATERMARK(wsId), JSON.stringify(next, null, 2)); // 정리 성공 후에만 전진
+  await writeJsonAtomic(WATERMARK(wsId), next); // 정리 성공 후에만 전진
   await updateIndex(wsId);
   if (written.length) await appendEvent(wsId, { type: 'memory', ok: true, notes: written });
   return { notes: written };
