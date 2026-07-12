@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Argo</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #10141c; color: #d9c98a;
+    font-family: -apple-system, "Pretendard", system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center; }
+  .box { text-align: center; }
+  .star { font-size: 44px; color: #d9b23a; }
+  .msg { margin-top: 12px; font-size: 14px; opacity: .8; }
+  .sub { margin-top: 6px; font-size: 12px; opacity: .5; }
+  a { color: #d9b23a; }
+</style>
+</head>
+<body>
+  <!-- 데스크톱 앱 셸 — 회사가 사는 로컬 상주 서버(3001)를 연다. 서버는 부팅 시 자동 기동(launchd/systemd). -->
+  <div class="box">
+    <div class="star">✦</div>
+    <div class="msg">Argo에 연결 중…</div>
+    <div class="sub" id="hint"></div>
+  </div>
+  <script>
+    var TARGET = 'http://localhost:3001';
+    // 상주 서버가 떠 있으면 이동, 아니면 잠시 후 재시도(부팅 직후 서버 준비 대기)
+    function go() {
+      fetch(TARGET + '/login', { mode: 'no-cors' })
+        .then(function () { location.replace(TARGET); })
+        .catch(function () {
+          document.getElementById('hint').textContent = '로컬 서버 준비 중… 잠시만요';
+          setTimeout(go, 1500);
+        });
+    }
+    go();
+  </script>
+</body>
+</html>
