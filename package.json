@@ -8,6 +8,8 @@
     "start": "next start",
     "demo": "node demo.mjs",
     "service": "node scripts/service.mjs",
+    "stage:sidecar": "node scripts/stage-sidecar.mjs",
+    "app:build": "node scripts/stage-sidecar.mjs && cd src-tauri && npx @tauri-apps/cli@^2 build",
     "test": "node --test test/*.test.mjs"
   },
   "license": "UNLICENSED",

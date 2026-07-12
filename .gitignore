@@ -9,3 +9,7 @@ artifacts/
 .DS_Store
 .omc/
 argo-service.cmd
+
+# 사이드카 스테이징(빌드 산출물)
+src-tauri/binaries/
+src-tauri/resources/server/
