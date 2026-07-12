@@ -7,6 +7,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { Logo, Spinner, imeGuard } from '../ui';
 import { useLang } from '../i18n';
 
+const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const URL_ENV = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const KEY_ENV = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -159,6 +160,10 @@ export default function Login() {
         </div>
       )}
       {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0, minWidth: 0, overflowWrap: 'anywhere' }}>{error}</p>}
+      <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--fg-3)', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        <a href="/legal" style={{ color: 'inherit' }}>{t('legal.link')}</a>
+        {CONTACT && <a href={`mailto:${CONTACT}?subject=${encodeURIComponent('Argo 피드백')}`} style={{ color: 'inherit' }}>{t('legal.feedback')}</a>}
+      </div>
     </Shell>
   );
 }

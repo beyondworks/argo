@@ -6,6 +6,8 @@ import { Icon, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../ui
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 
+const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
+
 export default function Settings({ params }) {
   const { ws } = use(params);
   const { t, lang } = useLang();
@@ -154,6 +156,11 @@ export default function Settings({ params }) {
         </button>
       </div>
       </Section>
+
+      <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--fg-3)', padding: '6px 2px 4px' }}>
+        <a href="/legal" style={{ color: 'inherit' }}>{t('legal.link')}</a>
+        {CONTACT && <a href={`mailto:${CONTACT}?subject=${encodeURIComponent('Argo 피드백')}`} style={{ color: 'inherit' }}>{t('legal.feedback')}</a>}
+      </div>
 
       {archiveOpen && (
         <DangerModal

@@ -18,7 +18,7 @@ export async function middleware(req) {
   const { data: { user } } = await supabase.auth.getUser();
   const p = req.nextUrl.pathname;
   // /api/auth/pair* — 앱 로그인 브리지는 세션 이전에 호출되므로 공개(코드 단명·1회 소비로 보호)
-  const isPublic = p === '/login' || p.startsWith('/auth') || p.startsWith('/api/auth/pair');
+  const isPublic = p === '/login' || p === '/legal' || p.startsWith('/auth') || p.startsWith('/api/auth/pair');
   if (!user && !isPublic) {
     if (p.startsWith('/api')) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
     return NextResponse.redirect(new URL('/login', req.url));
