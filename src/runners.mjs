@@ -56,13 +56,20 @@ export const RUNNERS = {
     name: 'Codex', kind: 'cli',
     models: [
       { id: '', label: '' }, // 기본 = 계정 기본 모델 — 계정 세대별 지원 모델이 달라 기본값이 가장 안전
+      // GPT-5.6 패밀리(2026-07-09) — Sol(플래그십)·Terra(중간)·Luna(경량). sol id는 로컬 codex 설정으로 실증
       { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+      { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+      { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+      { id: 'gpt-5.5', label: 'GPT-5.5' },
     ],
   },
   gemini: {
     name: 'Gemini', kind: 'cli',
     models: [
       { id: '', label: '' },
+      // ai.google.dev 모델 문서(2026-07) — 3.5 Flash가 GA 최신, 3.1 Pro는 프리뷰
+      { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+      { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
       { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
       { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
     ],
@@ -70,14 +77,17 @@ export const RUNNERS = {
   glm: {
     name: 'GLM', kind: 'sdk-compat',
     models: [
-      { id: '', label: '' }, // 기본 = glm-4.6 (chat에서 보정)
+      { id: '', label: '' }, // 기본 = glm-5.2 (chat에서 보정)
+      // docs.z.ai(2026-06-13 출시) — 5.2가 플래그십(1M 컨텍스트)
+      { id: 'glm-5.2', label: 'GLM-5.2' },
+      { id: 'glm-5.1', label: 'GLM-5.1' },
       { id: 'glm-4.6', label: 'GLM-4.6' },
       { id: 'glm-4.5-air', label: 'GLM-4.5 Air' },
     ],
   },
 };
 
-export const GLM_DEFAULT_MODEL = 'glm-4.6';
+export const GLM_DEFAULT_MODEL = 'glm-5.2';
 export const glmEnv = () => ({
   ...process.env,
   ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic',
