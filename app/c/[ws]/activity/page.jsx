@@ -2,7 +2,7 @@
 // 활동 — "내가 없는 동안 무슨 일이, 무엇을 남겼나". 리서치 원칙: 검증 비용을 줄이는 화면.
 // 기본 뷰는 판단이 필요한 것(결재·오류)과 상태 변경(기억·크루·연결)만, 정상 턴은 '전체'로 접는다.
 import { use, useEffect, useMemo, useState } from 'react';
-import { Avatar, Skeleton, api, timeAgo } from '../../../ui';
+import { Avatar, Skeleton, Spinner, api, timeAgo } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 const isError = (e) => e.ok === false;
@@ -31,6 +31,10 @@ export default function Activity({ params }) {
   const [agents, setAgents] = useState([]);
   const [filter, setFilter] = useState('main');
   const [q, setQ] = useState('');
+  // 실행 이력 드릴다운 — 펼친 행 인덱스 / 재실행 중 표시 / 재실행 시작 안내
+  const [open, setOpen] = useState(-1);
+  const [rerunning, setRerunning] = useState(-1);
+  const [rerunNote, setRerunNote] = useState(-1);
 
   function load() {
     api(`/api/companies/${ws}/activity`).then((d) => setEvents(d.events)).catch(() => setEvents([]));
@@ -46,6 +50,23 @@ export default function Activity({ params }) {
   }, [ws]);
 
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? (slug || t('activity.company'));
+
+  // 재실행 — 같은 크루에게 원 지시를 다시 보낸다(실패 지점 재실행). 완료를 기다리지 않는다.
+  async function rerun(i, e) {
+    if (rerunning >= 0) return;
+    setRerunning(i); setRerunNote(-1);
+    try {
+      // 결과는 크루 스레드에 쌓인다 — 활동 화면은 시작만 확인하고 손을 뗀다
+      fetch(`/api/companies/${ws}/chat`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ slug: e.slug, message: e.msg }),
+      }).then(() => window.dispatchEvent(new Event('argo:refresh'))).catch(() => {});
+      await new Promise((r) => setTimeout(r, 600)); // 시작 체감 — 버튼이 즉시 되돌아오지 않게
+      setRerunNote(i);
+    } finally {
+      setRerunning(-1);
+    }
+  }
 
   // 이벤트 → 화면 행 (제목·설명·산출물 링크·칩)
   const row = (e) => {
@@ -135,8 +156,12 @@ export default function Activity({ params }) {
           ) : (
             <div /* 템플릿 없는 grid는 트랙이 max-content로 자라 nowrap 텍스트가 카드를 뚫는다 — minmax(0,1fr) 고정 */
               style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', marginTop: 8 }}>
-              {list.map(({ e, r }, i) => (
-                <div key={i} className="row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 8px' }}>
+              {list.map(({ e, r }, i) => {
+                const expandable = e.type === 'turn' && (e.msg || e.steps?.length); // 실행 이력 드릴다운 대상
+                return (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)' }}>
+                <div className="row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 8px', cursor: expandable ? 'pointer' : 'default' }}
+                  onClick={() => expandable && setOpen((o) => (o === i ? -1 : i))}>
                   <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', width: 62, flex: 'none' }}>{timeAgo(new Date(e.ts).getTime(), lang)}</span>
                   <Avatar name={r.avatar} size={24} />
                   {/* 클리핑은 블록 컨테이너에 — 인라인 span은 overflow를 자르지 못해 긴 오류문이 레이아웃을 뚫는다 */}
@@ -147,7 +172,7 @@ export default function Activity({ params }) {
                     </span>
                   </div>
                   {r.href && (
-                    <a href={r.href} className="mono" style={{ fontSize: 10.5, color: 'var(--fg-2)', textDecoration: 'underline', textUnderlineOffset: 3, flex: 'none' }}>
+                    <a href={r.href} className="mono" onClick={(ev) => ev.stopPropagation()} style={{ fontSize: 10.5, color: 'var(--fg-2)', textDecoration: 'underline', textUnderlineOffset: 3, flex: 'none' }}>
                       {t('activity.linkArrow', { label: r.linkLabel })}
                     </a>
                   )}
@@ -156,7 +181,47 @@ export default function Activity({ params }) {
                     {r.ms != null ? `${(r.ms / 1000).toFixed(0)}s` : ''}
                   </span>
                 </div>
-              ))}
+                {open === i && expandable && (
+                  <div className="fade-up" style={{ margin: '0 8px 10px 74px', padding: '11px 14px', borderRadius: 10, background: 'var(--card-2)', display: 'grid', gap: 9, fontSize: 12 }}>
+                    {e.msg && (
+                      <div style={{ minWidth: 0 }}>
+                        <span className="microlabel">{t('activity.instruction')}</span>
+                        <p style={{ margin: '3px 0 0', color: 'var(--fg-2)', lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{e.msg}</p>
+                      </div>
+                    )}
+                    <div style={{ minWidth: 0 }}>
+                      <span className="microlabel">{t('activity.steps')}</span>
+                      {e.steps?.length ? (
+                        <div style={{ display: 'grid', gap: 3, marginTop: 4 }}>
+                          {e.steps.map((s, j) => (
+                            <div key={j} className="mono" style={{ fontSize: 11, color: 'var(--fg-2)', display: 'flex', gap: 10, minWidth: 0 }}>
+                              <span style={{ color: 'var(--fg-3)', width: 42, flex: 'none', textAlign: 'right' }}>+{(s.t / 1000).toFixed(0)}s</span>
+                              <span style={{ flex: 'none' }}>{s.stage}</span>
+                              {s.detail && <span style={{ color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.detail}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p style={{ margin: '3px 0 0', color: 'var(--fg-3)' }}>{t('activity.noSteps')}</p>
+                      )}
+                    </div>
+                    {e.msg && e.source !== 'delegate' && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <button className="btn sm" disabled={rerunning >= 0} onClick={() => rerun(i, e)}>
+                          {rerunning === i ? <Spinner size={11} /> : t('activity.rerun')}
+                        </button>
+                        {rerunNote === i && (
+                          <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+                            {t('activity.rerunStarted')} <a href={`/c/${ws}/crew/${e.slug}`} style={{ textDecoration: 'underline', textUnderlineOffset: 3 }}>{t('activity.chatLink')} ↗</a>
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                </div>
+                );
+              })}
             </div>
           )}
         </div>
