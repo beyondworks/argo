@@ -64,11 +64,13 @@ function Vault({ params }) {
 
   useEffect(() => {
     if (!selected) { setContent(''); return; }
+    let live = true; // 문서 A→B 빠른 전환 시 느린 A 응답이 B 화면을 덮는 것 차단
     setLoadingDoc(true);
     api(`/api/companies/${ws}/vault?rel=${encodeURIComponent(selected)}`)
-      .then((d) => setContent(d.content))
-      .catch((e) => setContent(t('vault.docUnavailable', { msg: e.message })))
-      .finally(() => setLoadingDoc(false));
+      .then((d) => { if (live) setContent(d.content); })
+      .catch((e) => { if (live) setContent(t('vault.docUnavailable', { msg: e.message })); })
+      .finally(() => { if (live) setLoadingDoc(false); });
+    return () => { live = false; };
   }, [ws, selected]);
 
   const [consolidating, setConsolidating] = useState(false);

@@ -114,7 +114,7 @@ export default function Activity({ params }) {
     .filter((e) => inFilter(e, filter))
     .map((e) => ({ e, r: row(e) }))
     .filter(({ r }) => !q || `${r.who} ${r.desc} ${r.chip}`.toLowerCase().includes(q)),
-  [events, filter, q, agents]);
+  [events, filter, q, agents, lang]); // lang — 언어 토글 시 행 라벨(row가 t() 사용) 재계산
 
   // 우측 레일 — 오늘 요약 + 크루별 처리량
   const today = new Date().toISOString().slice(0, 10);
