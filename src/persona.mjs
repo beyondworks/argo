@@ -160,6 +160,13 @@ export async function removeAgentCard(wsId, slug) {
 }
 
 export async function readAgentCard(wsId, slug) {
-  const md = await readFile(cardPath(wsId, slug), "utf8");
+  let md;
+  try {
+    md = await readFile(cardPath(wsId, slug), "utf8");
+  } catch (e) {
+    // 없는 크루 — 전체 파일 경로가 API 응답에 새지 않도록 깔끔한 메시지로(경로 노출 방지)
+    if (e.code === "ENOENT") throw new Error(`크루를 찾을 수 없습니다: ${slug}`);
+    throw e;
+  }
   return { md, meta: parseFrontmatter(md) };
 }

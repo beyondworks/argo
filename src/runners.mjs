@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readJsonLenient, writeJsonAtomic } from './jsonstore.mjs';
+import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { paths } from './workspace.mjs';
 
 const execP = promisify(execFile);
@@ -170,7 +170,9 @@ export const RUNNER_AUTH = {
 };
 
 async function loadSecrets(wsId) {
-  const s = await readJsonLenient(secretsFile(wsId), {}).catch(() => ({}));
+  // 자격(키·토큰)은 유실이 치명적 — 손상 시 조용히 호스트 계정으로 폴백(오과금)하지 않고
+  // readJson이 .corrupt 백업 후 throw(1회 명시 실패 → 다음 로드는 빈 상태로 자가치유, UI엔 미연결로 노출)
+  const s = await readJson(secretsFile(wsId), {});
   // 레거시 마이그레이션: 옛 { claude:"key" } → runners.claude.{apikey}
   if (typeof s.claude === 'string' && s.claude.trim() && !s.runners?.claude) {
     s.runners = { ...(s.runners ?? {}), claude: { type: 'apikey', value: s.claude.trim() } };
