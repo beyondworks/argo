@@ -12,37 +12,57 @@ const KEY_ENV = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export default function Paired() {
   const { t } = useLang();
-  const [state, setState] = useState('binding'); // binding | done | error
+  const [state, setState] = useState('checking'); // checking | confirm | binding | done | error
   const [msg, setMsg] = useState('');
+  const [session, setSession] = useState(null);
+  const [pair, setPair] = useState('');
 
   useEffect(() => {
     if (!URL_ENV || !KEY_ENV) { setState('error'); setMsg('config'); return; }
-    const pair = new URLSearchParams(window.location.search).get('pair');
-    if (!pair) { setState('error'); setMsg('no_pair'); return; }
+    const p = new URLSearchParams(window.location.search).get('pair');
+    if (!p) { setState('error'); setMsg('no_pair'); return; }
+    setPair(p);
     const supabase = createBrowserClient(URL_ENV, KEY_ENV); // detectSessionInUrl 기본 on — 조각 파싱
     (async () => {
       // 조각 파싱이 끝나길 잠깐 기다린 뒤 세션 확보(getSession 재시도)
-      let session = null;
-      for (let i = 0; i < 10 && !session; i++) {
+      let s = null;
+      for (let i = 0; i < 10 && !s; i++) {
         const { data } = await supabase.auth.getSession();
-        session = data.session;
-        if (!session) await new Promise((r) => setTimeout(r, 400));
+        s = data.session;
+        if (!s) await new Promise((r) => setTimeout(r, 400));
       }
-      if (!session) { setState('error'); setMsg('no_session'); return; }
-      const res = await fetch('/api/auth/pair/bind', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code: pair, access_token: session.access_token, refresh_token: session.refresh_token }),
-      }).then((r) => r.json()).catch(() => ({ ok: false }));
-      setState(res.ok ? 'done' : 'error');
-      if (!res.ok) setMsg('bind_failed');
       history.replaceState(null, '', '/auth/paired'); // 조각(토큰) URL에서 제거
+      if (!s) { setState('error'); setMsg('no_session'); return; }
+      // 자동 봉인하지 않는다 — drive-by(무클릭) 링크로 세션이 탈취되지 않도록 명시적 승인 대기.
+      setSession(s);
+      setState('confirm');
     })();
   }, []);
+
+  // 사용자가 "이 기기 로그인"을 눌렀을 때만 세션을 code에 봉인한다.
+  async function approve() {
+    if (!session || !pair) return;
+    setState('binding');
+    const res = await fetch('/api/auth/pair/bind', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: pair, access_token: session.access_token, refresh_token: session.refresh_token }),
+    }).then((r) => r.json()).catch(() => ({ ok: false }));
+    setState(res.ok ? 'done' : 'error');
+    if (!res.ok) setMsg('bind_failed');
+  }
 
   return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
       <div className="card fade-up" style={{ width: 'min(420px, 100%)', padding: '34px 32px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}>
         <Logo />
+        {state === 'checking' && <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13.5 }}><Spinner size={14} /> {t('login.pairing')}</div>}
+        {state === 'confirm' && (
+          <>
+            <h1 style={{ fontSize: 19, fontWeight: 700, margin: 0 }}>{t('login.pairConfirmTitle')}</h1>
+            <p style={{ fontSize: 13, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('login.pairConfirmBody')}</p>
+            <button className="btn btn-primary sm" onClick={approve} style={{ justifySelf: 'start' }}>{t('login.pairApprove')}</button>
+          </>
+        )}
         {state === 'binding' && <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13.5 }}><Spinner size={14} /> {t('login.pairing')}</div>}
         {state === 'done' && (
           <>

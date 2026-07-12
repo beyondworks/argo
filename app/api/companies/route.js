@@ -7,8 +7,9 @@ export async function GET() {
   const user = await currentUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다' }, { status: 401 });
   const all = await listCompanies();
-  // 인증 on = 내 회사만 (레거시 무주 회사는 최초 접근자 귀속 대상이라 보인다). off = 로컬 전부.
-  const companies = AUTH_ON ? all.filter((c) => c.ownerId === user.id || !c.ownerId) : all;
+  // 인증 on = 내 회사만. 무주(레거시) 회사는 아무에게나 노출하지 않는다 — 최초 소유자 지정은
+  // guardCompany의 ARGO_ADOPT_OWNER 게이트로만 처리한다. off = 로컬 전부.
+  const companies = AUTH_ON ? all.filter((c) => c.ownerId === user.id) : all;
   return Response.json({
     companies,
     presets: Object.entries(PRESETS).map(([key, p]) => ({ key, label: p.label, desc: p.desc })),

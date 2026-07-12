@@ -121,6 +121,10 @@ export default function Settings({ params }) {
       <ThemeCard />
       </Section>
 
+      <Section label={t('settings.ai.section')}>
+        <AiConnectionCard ws={ws} />
+      </Section>
+
       <Section label={t('settings.capabilities')}>
         <CapabilitiesCard ws={ws} />
       </Section>
@@ -324,6 +328,92 @@ function CapabilitiesCard({ ws }) {
         </div>
         );
       })}
+    </div>
+  );
+}
+
+/** AI 연결(Claude BYOK) — 일반 사용자가 첫 턴에서 막히지 않게 키를 넣는 관문.
+    상태(연결됨/키 필요) · 키 입력(붙여넣기, 마스킹) · 저장 · 연결 확인(실검증) · 제거 + 발급 가이드. */
+function AiConnectionCard({ ws }) {
+  const { t } = useLang();
+  const [status, setStatus] = useState(null); // { connected, masked }
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [ok, setOk] = useState(false);
+
+  function load() {
+    api(`/api/companies/${ws}/keys`).then(setStatus).catch(() => setStatus({ connected: false, masked: '' }));
+  }
+  useEffect(load, [ws]);
+
+  async function save(verify) {
+    if (busy || !key.trim()) return;
+    setBusy(verify ? 'verify' : 'save'); setMsg(''); setOk(false);
+    try {
+      const res = await fetch(`/api/companies/${ws}/keys`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: key.trim(), verify }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error);
+      setStatus(d); setKey('');
+      setOk(true); setMsg(verify ? t('settings.ai.verified') : t('settings.ai.saved'));
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (e) {
+      setMsg(String(e.message));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function remove() {
+    if (busy) return;
+    setBusy('remove'); setMsg(''); setOk(false);
+    try {
+      await fetch(`/api/companies/${ws}/keys`, { method: 'DELETE' });
+      setStatus({ connected: false, masked: '' }); setKey('');
+      window.dispatchEvent(new Event('argo:refresh'));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  const connected = status?.connected;
+  return (
+    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span className="card-title">{t('settings.ai.title')}</span>
+        <span className="chip">{connected ? <><span className="dot" />{t('settings.ai.connected')}</> : t('settings.ai.needKey')}</span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.ai.help')}</p>
+      <label style={{ display: 'grid', gap: 5 }}>
+        <span className="microlabel">
+          {t('settings.ai.keyLabel')}
+          {connected && status?.masked ? ` · ${t('settings.ai.keySaved')} ${status.masked}` : ''}
+        </span>
+        <input suppressHydrationWarning type="password" value={key} onChange={(e) => setKey(e.target.value)}
+          placeholder={connected ? t('settings.ai.replacePlaceholder') : t('settings.ai.placeholder')} style={fieldStyle} />
+      </label>
+      <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>
+        {t('settings.ai.guide')}{' '}
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer"
+          style={{ color: 'var(--fg)', textDecoration: 'underline' }}>{t('settings.ai.guideLink')}</a>
+      </p>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 'auto', paddingTop: 6 }}>
+        <button className="btn btn-primary sm" disabled={!!busy || !key.trim()} onClick={() => save(false)}>
+          {busy === 'save' ? <Spinner size={12} /> : t('settings.ai.save')}
+        </button>
+        <button className="btn sm" disabled={!!busy || !key.trim()} onClick={() => save(true)}>
+          {busy === 'verify' ? <Spinner size={12} /> : t('settings.ai.verify')}
+        </button>
+        {connected && (
+          <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={remove}>
+            {busy === 'remove' ? <Spinner size={12} /> : t('settings.ai.remove')}
+          </button>
+        )}
+        {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
+      </div>
     </div>
   );
 }

@@ -6,6 +6,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readJsonLenient, writeJsonAtomic } from './jsonstore.mjs';
+import { paths } from './workspace.mjs';
 
 const execP = promisify(execFile);
 const exists = (p) => access(p).then(() => true, () => false);
@@ -138,4 +140,55 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
       .trim();
   }
   throw new Error(`알 수 없는 외부 러너: ${runner}`);
+}
+
+// ── 회사 Claude 키(BYOK) — 일반 사용자가 Claude Code 없이도 크루를 굴리게 하는 자격 저장소.
+// 회사 루트 .secrets.json에 보관. 시크릿이므로 (a) API 응답·로그엔 마스킹만, (b) 동기화 제외 대상.
+// 주의: sync EXCLUDE에 '.secrets.json' 추가 필요 — 현재 미포함이면 시크릿이 기기 간 복제된다(sync.mjs는 이 작업 범위 밖).
+const secretsFile = (wsId) => join(paths(wsId).root, '.secrets.json');
+
+/** 회사 Claude API 키 로드 — 없으면 null. */
+export async function loadClaudeKey(wsId) {
+  const s = await readJsonLenient(secretsFile(wsId), {}).catch(() => ({}));
+  const k = s?.claude;
+  return typeof k === 'string' && k.trim() ? k.trim() : null;
+}
+
+/** 회사 Claude API 키 저장 — 원자적 쓰기. 다른 시크릿 필드는 보존. */
+export async function saveClaudeKey(wsId, key) {
+  const s = await readJsonLenient(secretsFile(wsId), {}).catch(() => ({}));
+  await writeJsonAtomic(secretsFile(wsId), { ...s, claude: String(key).trim() });
+}
+
+/** 회사 Claude API 키 제거 — 파일의 다른 시크릿은 유지. */
+export async function clearClaudeKey(wsId) {
+  const s = await readJsonLenient(secretsFile(wsId), {}).catch(() => ({}));
+  const { claude, ...rest } = s;
+  await writeJsonAtomic(secretsFile(wsId), rest);
+}
+
+/** 마스킹 — 접두사만 노출(보안 규칙). 평문은 답변·로그 어디에도 남기지 않는다. */
+export function maskClaudeKey(key) {
+  return key ? `${key.slice(0, 6)}***` : '';
+}
+
+/** SDK env 주입값 — 회사 키가 있으면 ANTHROPIC_API_KEY로 넣고, 없으면 null(기존 CLI/env 자격으로 폴백 — 회귀 0). */
+export async function claudeEnvFor(wsId) {
+  const key = await loadClaudeKey(wsId);
+  return key ? { ...process.env, ANTHROPIC_API_KEY: key } : null;
+}
+
+/** 키 인증 확인 — Anthropic models 엔드포인트로 저비용 검증(토큰 미소모).
+    반환: { ok:true } 통과 · { ok:false } 인증 거부(401/403) · { ok:null } 네트워크 불가(판정 보류). */
+export async function verifyClaudeKey(key) {
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/models?limit=1', {
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.status === 401 || res.status === 403) return { ok: false };
+    return { ok: true };
+  } catch {
+    return { ok: null };
+  }
 }

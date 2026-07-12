@@ -80,6 +80,8 @@ export default function Deck({ params }) {
         <span className="microlabel">{new Date().toISOString().slice(0, 10)}</span>
       </div>
 
+      <AiKeyBanner ws={ws} />
+
       <div className="deck-grid">
         {/* ── 본 계기 열 — "지금 판단할 것"(결재)이 지표보다 먼저다 ── */}
         <div style={{ display: 'grid', gap: 14, minWidth: 0 }}>
@@ -376,6 +378,36 @@ export default function Deck({ params }) {
           onSelect={(rel) => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`)}
         />
       )}
+    </div>
+  );
+}
+
+/** AI 연결 배너 — 이 컴퓨터에 Claude 자격이 없고 회사 키도 없으면(일반 사용자 첫 실행) 데크 상단에 안내.
+    빈 화면에서 크루가 모두 실패하는 대신, 키를 넣으러 갈 곳을 명확히 보여준다. */
+function AiKeyBanner({ ws }) {
+  const { t } = useLang();
+  const router = useRouter();
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      api('/api/runners').catch(() => ({ runners: [] })),
+      api(`/api/companies/${ws}/keys`).catch(() => ({ connected: false })),
+    ]).then(([r, k]) => {
+      if (!alive) return;
+      const claude = (r.runners ?? []).find((x) => x.id === 'claude');
+      setShow(!!claude && !claude.authed && !k.connected);
+    });
+    return () => { alive = false; };
+  }, [ws]);
+  if (!show) return null;
+  return (
+    <div className="card fade-up" style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--warn)' }}>
+      <span style={{ color: 'var(--warn)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
+      <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t('deck.aiKey.banner')}</span>
+      <button className="btn btn-primary sm" style={{ flex: 'none' }} onClick={() => router.push(`/c/${ws}/settings`)}>
+        {t('deck.aiKey.cta')}
+      </button>
     </div>
   );
 }

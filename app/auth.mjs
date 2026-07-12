@@ -22,7 +22,8 @@ export async function currentUser() {
 }
 
 /** 회사 소유권 가드 — 위반 시 Response를 돌려준다(핸들러가 그대로 return). 통과 시 null.
-    레거시 회사(ownerId 없음 — 로컬 시절 생성)는 최초 로그인 접근자에게 귀속된다(로컬→클라우드 이행 경로). */
+    레거시 회사(ownerId 없음 — 로컬 시절 생성)는 아무에게나 귀속되지 않는다. 로컬→클라우드 이행을 위해
+    ARGO_ADOPT_OWNER(이메일)와 현재 사용자 이메일이 일치할 때만 최초 소유자로 귀속한다 — 그 외엔 403. */
 export async function guardCompany(wsId) {
   const user = await currentUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다' }, { status: 401 });
@@ -34,8 +35,12 @@ export async function guardCompany(wsId) {
     return Response.json({ error: '회사를 찾을 수 없습니다' }, { status: 404 });
   }
   if (!meta.ownerId) {
-    await writeFile(paths(wsId).company, JSON.stringify({ ...meta, ownerId: user.id }, null, 2));
-    return null;
+    const adopt = process.env.ARGO_ADOPT_OWNER?.trim().toLowerCase();
+    if (adopt && user.email && adopt === user.email.trim().toLowerCase()) {
+      await writeFile(paths(wsId).company, JSON.stringify({ ...meta, ownerId: user.id }, null, 2));
+      return null;
+    }
+    return Response.json({ error: '이 회사에 접근할 권한이 없습니다' }, { status: 403 });
   }
   if (meta.ownerId !== user.id) {
     return Response.json({ error: '이 회사에 접근할 권한이 없습니다' }, { status: 403 });

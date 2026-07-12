@@ -9,7 +9,6 @@ import { useLang } from '../i18n';
 
 const URL_ENV = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const KEY_ENV = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const randCode = () => Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
 
 export default function Login() {
   const { t } = useLang();
@@ -73,13 +72,15 @@ export default function Login() {
 
   // 앱: 진짜 브라우저를 열어 로그인 → pairing code로 세션 회수 → 앱 웹뷰에 세션 설정
   async function oauthViaBrowser(provider) {
-    const pair = randCode();
     setWaiting(true); setError('');
     try {
-      await fetch('/api/auth/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: pair }) });
+      // 서버가 code(브라우저용)+verifier(앱 전용 시크릿)를 생성 — 브라우저엔 code만 넘긴다
+      const reg = await fetch('/api/auth/pair', { method: 'POST' }).then((r) => r.json()).catch(() => null);
+      if (!reg?.code || !reg?.verifier) { setWaiting(false); setError(t('login.openFailed')); return; }
+      const { code, verifier } = reg;
       const origin = window.location.origin;
-      // 브라우저에서 provider 로그인 → 허용된 /auth/callback으로 복귀, pair 봉인은 콜백이 서버측 처리
-      const authUrl = `${URL_ENV}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(`${origin}/auth/paired?pair=${pair}`)}`;
+      // 브라우저에서 provider 로그인 → /auth/paired가 사용자 승인 후 세션을 이 code에 봉인
+      const authUrl = `${URL_ENV}/auth/v1/authorize?provider=${provider}&redirect_to=${encodeURIComponent(`${origin}/auth/paired?pair=${code}`)}`;
       const { openUrl } = await import('@tauri-apps/plugin-opener');
       try {
         await openUrl(authUrl);
@@ -88,11 +89,11 @@ export default function Login() {
         setError(t('login.openFailed')); // 긴 URL 노출 없이 짧게 — 스코프·플러그인 문제 시
         return;
       }
-      // 폴링 — 브라우저가 세션을 봉인하면 회수
+      // 폴링 — 브라우저가 세션을 봉인하면 code+verifier로 회수
       const started = Date.now();
       while (Date.now() - started < 5 * 60_000) {
         await new Promise((r) => setTimeout(r, 2000));
-        const res = await fetch(`/api/auth/pair?code=${pair}`).then((r) => r.json()).catch(() => ({ status: 'pending' }));
+        const res = await fetch(`/api/auth/pair?code=${code}&verifier=${verifier}`).then((r) => r.json()).catch(() => ({ status: 'pending' }));
         if (res.status === 'ready') {
           await supabase.auth.setSession(res.session); // 앱 웹뷰 쿠키에 세션 설정
           try { // 앱을 스스로 전면으로 — 브라우저에서 돌아올 필요 없이 이어진다

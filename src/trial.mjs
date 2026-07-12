@@ -19,6 +19,15 @@ export function runTrialTurn(wsId, slug) {
         reply: r.reply, handover: r.handover, sessionId: r.sessionId,
       });
     } catch (e) {
+      const m = String(e.message || e);
+      // 키 미설정/인증 실패로 첫 턴이 터지면 빈 화면 대신 크루 첫 메시지로 안내를 남긴다(가장 저비용 경로)
+      if (/anthropic|api[\s._-]?key|x-api-key|credit|balance|401|authentication|unauthorized/i.test(m)) {
+        await appendTurn(wsId, slug, {
+          userMsg: '(영입 시운전) 첫 인사와 샘플 산출물을 보여주세요.',
+          reply: 'AI 연결이 아직 안 되어 있어요. 설정 → AI 연결에서 Claude API 키를 넣어주시면 바로 일을 시작할게요. (Anthropic 콘솔에서 키를 발급받아 붙여넣으면 됩니다.)',
+          handover: null, sessionId: null,
+        }).catch(() => {});
+      }
       console.error(`[argo] 시운전 실패(${wsId}/${slug}):`, e.message);
     }
   })();
