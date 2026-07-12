@@ -473,7 +473,9 @@ function RunnerRow({ ws, id, st, onChange, first }) {
       <span className="dot" />{t('settings.runners.companyConnected')} · {t(`settings.runners.method.${company.type}`)} · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span>
     </span>
   ) : st?.hostAuthed ? (
-    <span className="chip"><span className="dot" />{t('settings.runners.hostInUse')}</span>
+    <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
+      <span className="dot" />{t('settings.runners.hostConnected')}
+    </span>
   ) : (
     <span className="chip">{t('settings.runners.none')}</span>
   );

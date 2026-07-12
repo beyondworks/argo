@@ -21,6 +21,9 @@ export default function CrewChat({ params }) {
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
   const [cardOpen, setCardOpen] = useState(false);
+  // 러너·모델 — 카드 패널과 채팅 셀렉터가 공유하는 단일 상태. 회사 자격(설정 러너 연결)을 병합한 카탈로그.
+  const [runners, setRunners] = useState(null);
+  const [sel, setSel] = useState({ runner: 'claude', model: '' });
   // 타이틀바 슬롯 — 크루 컨트롤(세션 상태·카드·새 대화)을 topbar에 포털로 꽂는다
   const [slotEl, setSlotEl] = useState(null);
   useEffect(() => { setSlotEl(document.getElementById('argo-topbar-slot')); }, []);
@@ -53,10 +56,29 @@ export default function CrewChat({ params }) {
   // 실제 진행 단계 — "작성중" 대신 지금 무엇을 하는지 (기억 탐색/명령 실행/결재 대기)
   const [liveStage, setLiveStage] = useState(null);
 
+  // 러너 카탈로그 — 회사 자격 병합(?ws=). 회사 키가 있으면 호스트 로그인 없이도 authed=true.
+  useEffect(() => { api(`/api/runners?ws=${ws}`).then((d) => setRunners(d.runners)).catch(() => setRunners([])); }, [ws]);
+
+  // 러너·모델 저장 — 카드·채팅 공용. 프론트매터 meta에 PATCH(다음 턴부터 적용).
+  const saveRunner = useCallback(async (next) => {
+    setSel(next);
+    try {
+      await fetch(`/api/companies/${ws}/agents/${slug}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runner: next.runner, model: next.model }),
+      });
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch { /* 저장 실패는 다음 시도에서 복구 */ }
+  }, [ws, slug]);
+
   useEffect(() => {
     setThread(null); setError(''); sessionRef.current = null;
     api(`/api/companies/${ws}`)
-      .then((d) => setAgent(d.agents.find((a) => a.slug === slug) ?? { name: slug, role: '' }))
+      .then((d) => {
+        const a = d.agents.find((a) => a.slug === slug) ?? { name: slug, role: '' };
+        setAgent(a);
+        setSel({ runner: a.runner || 'claude', model: a.model || '' });
+      })
       .catch(() => setAgent({ name: slug, role: '' }));
     api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
       // status도 첫 로드에 반영 — 온보딩 직행 시 시운전 진행 카드가 8초 폴을 기다리지 않고 바로 보인다
@@ -370,6 +392,11 @@ export default function CrewChat({ params }) {
         </div>
       ) : (
       <div style={{ position: 'sticky', bottom: 20, marginTop: 24, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {/* 이 대화의 두뇌 — 러너·모델을 여기서 바로 바꾼다(다음 턴부터 적용). 카드 패널과 같은 상태. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="microlabel" style={{ flex: 'none' }}>{t('chat.engineLabel')}</span>
+          <RunnerPicker runners={runners} sel={sel} onChange={saveRunner} disabled={busy} compact />
+        </div>
         {(att.length > 0 || uploading) && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {att.map((a, i) => (
@@ -409,6 +436,9 @@ export default function CrewChat({ params }) {
           agentName={agent?.name}
           ws={ws}
           slug={slug}
+          runners={runners}
+          sel={sel}
+          onRunnerChange={saveRunner}
           onClose={() => setCardOpen(false)}
           onFired={() => { window.dispatchEvent(new Event('argo:refresh')); router.push(`/c/${ws}`); }}
         />
@@ -418,13 +448,44 @@ export default function CrewChat({ params }) {
   );
 }
 
+/** 러너·모델 셀렉터 — 카드 패널·채팅바 공용. authed=false 러너는 "— 연결 필요" 접미.
+    회사 자격(?ws=)이 반영된 카탈로그라 호스트 로그인이 없어도 회사 키가 있으면 authed=true. */
+function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
+  const { t } = useLang();
+  const cur = runners?.find((r) => r.id === sel.runner);
+  const runnerLabel = (r) => r.name + (r.authed ? '' : ` — ${t('runner.needConnect')}`);
+  const box = {
+    height: compact ? 28 : 30,
+    padding: compact ? '0 7px' : '0 9px',
+    background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8,
+    outline: 'none', fontSize: compact ? 11.5 : 12, color: 'var(--fg)',
+    fontFamily: 'var(--mono)', maxWidth: compact ? 190 : 260,
+  };
+  const busy = disabled || runners === null;
+  return (
+    <>
+      <select value={sel.runner} disabled={busy} style={box}
+        onChange={(e) => onChange({ runner: e.target.value, model: '' })}>
+        {(runners ?? [{ id: 'claude', name: 'Claude Code', authed: true }]).map((r) => (
+          <option key={r.id} value={r.id}>{runnerLabel(r)}</option>
+        ))}
+      </select>
+      <select value={sel.model} disabled={busy} style={box}
+        onChange={(e) => onChange({ runner: sel.runner, model: e.target.value })}>
+        {(cur?.models ?? [{ id: '', label: '' }]).map((m) => (
+          <option key={m.id} value={m.id}>{m.id === '' ? t('deck.model.default') : m.label}</option>
+        ))}
+      </select>
+    </>
+  );
+}
+
 /** 카드 패널 — 카드가 곧 시스템 프롬프트. 열람·편집·해고(깃헙식 확인). */
-function CardPanel({ ws, slug, agentName, onClose, onFired }) {
+function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose, onFired }) {
   const { t, fmtMoney } = useLang();
   const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n ?? 0));
   const [md, setMd] = useState(null);
   const [profile, setProfile] = useState({ recent: [], skills: [] });
-  const [meta, setMeta] = useState({});
   const [stats, setStats] = useState(null); // { turns, contextTotal, output, costUsd, avgMs, topTools }
   const [ruleInput, setRuleInput] = useState('');
   const [saving, setSaving] = useState(false);
@@ -461,7 +522,7 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
 
   useEffect(() => {
     api(`/api/companies/${ws}/agents/${slug}`)
-      .then((d) => { setMd(d.md); setMeta(d.meta ?? {}); setStats(d.stats ?? null); setProfile({ recent: d.recent ?? [], skills: d.skills ?? [] }); })
+      .then((d) => { setMd(d.md); setStats(d.stats ?? null); setProfile({ recent: d.recent ?? [], skills: d.skills ?? [] }); })
       .catch((e) => setMsg(String(e.message)));
     api(`/api/companies/${ws}/boss-profile`).then(setBoss).catch(() => setBoss({ items: [] }));
     loadTg();
@@ -575,16 +636,16 @@ function CardPanel({ ws, slug, agentName, onClose, onFired }) {
               </>
             )}
           </div>
+          {/* 엔진 — 러너·모델을 카드에서 바로 선택. 채팅 셀렉터와 같은 상태(즉시 저장). */}
+          <div style={{ display: 'grid', gap: 7 }}>
+            <span className="microlabel">{t('chat.card.engine')}</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <RunnerPicker runners={runners} sel={sel} onChange={onRunnerChange} />
+            </div>
+          </div>
           {/* 상세 정보 — 처리량·토큰·비용·많이 쓴 도구 (usage.jsonl 집계) */}
           <div style={{ display: 'grid', gap: 8 }}>
-            <span className="microlabel">
-              {t('chat.card.stats')}
-              {(meta.runner || meta.model) && (
-                <span className="mono" style={{ marginLeft: 8, color: 'var(--fg-3)', textTransform: 'none', letterSpacing: 0 }}>
-                  {meta.runner || 'claude'}{meta.model ? ` · ${meta.model}` : ''}
-                </span>
-              )}
-            </span>
+            <span className="microlabel">{t('chat.card.stats')}</span>
             {!stats || stats.turns === 0 ? (
               <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{t('chat.card.noStats')}</span>
             ) : (

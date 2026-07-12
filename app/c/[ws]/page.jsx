@@ -391,7 +391,7 @@ function AiKeyBanner({ ws }) {
   useEffect(() => {
     let alive = true;
     Promise.all([
-      api('/api/runners').catch(() => ({ runners: [] })),
+      api(`/api/runners?ws=${ws}`).catch(() => ({ runners: [] })),
       api(`/api/companies/${ws}/keys`).catch(() => ({ runners: {} })),
     ]).then(([r, k]) => {
       if (!alive) return;
@@ -525,7 +525,7 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
   const [err, setErr] = useState('');
   // 러너 카탈로그 + 로컬 인증 상태 — Claude Code 외에는 각 CLI의 OAuth 로그인(구독)을 빌린다
   const [runners, setRunners] = useState(null);
-  useEffect(() => { api('/api/runners').then((d) => setRunners(d.runners)).catch(() => setRunners([])); }, []);
+  useEffect(() => { api(`/api/runners?ws=${ws}`).then((d) => setRunners(d.runners)).catch(() => setRunners([])); }, [ws]);
   const curRunner = runners?.find((r) => r.id === form.runner);
   const runnerLabel = (r) => r.name + (r.authed ? '' : r.installed ? ` — ${t('runner.needLogin')}` : ` — ${t('runner.notInstalled')}`);
 
