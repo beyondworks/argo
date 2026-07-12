@@ -580,7 +580,12 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
           </label>
           <label style={{ display: 'grid', gap: 4 }}>
             <span className="microlabel">{t('deck.fieldRunnerHint')}</span>
-            <select value={form.runner} onChange={(e) => setForm({ ...form, runner: e.target.value, model: '' })} style={field} disabled={runners === null}>
+            <select value={form.runner} style={field} disabled={runners === null}
+              onChange={(e) => {
+                const next = runners?.find((r) => r.id === e.target.value);
+                // 러너를 바꾸면 그 러너의 첫 모델을 바로 선택 — "기본" 가짜 항목 없이 항상 실제 모델
+                setForm({ ...form, runner: e.target.value, model: next?.models?.[0]?.id ?? '' });
+              }}>
               {(runners ?? [{ id: 'claude', name: 'Claude Code', authed: true, installed: true }]).map((r) => (
                 <option key={r.id} value={r.id}>{runnerLabel(r)}</option>
               ))}
@@ -592,8 +597,9 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
           <label style={{ display: 'grid', gap: 4 }}>
             <span className="microlabel">{t('deck.fieldModelHint')}</span>
             <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} style={field}>
-              {(curRunner?.models ?? [{ id: '', label: '' }]).map((m) => (
-                <option key={m.id} value={m.id}>{m.id === '' ? t('deck.model.default') : m.label}</option>
+              {!form.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
+              {(curRunner?.models ?? []).map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
               ))}
             </select>
           </label>

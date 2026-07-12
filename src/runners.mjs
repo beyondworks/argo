@@ -45,7 +45,6 @@ export const RUNNERS = {
   claude: {
     name: 'Claude Code', kind: 'sdk',
     models: [
-      { id: '', label: '' }, // 기본 — UI가 i18n 라벨을 붙인다
       { id: 'claude-fable-5', label: 'Fable 5' },
       { id: 'claude-opus-4-8', label: 'Opus 4.8' },
       { id: 'claude-sonnet-5', label: 'Sonnet 5' },
@@ -55,7 +54,6 @@ export const RUNNERS = {
   codex: {
     name: 'Codex', kind: 'cli',
     models: [
-      { id: '', label: '' }, // 기본 = 계정 기본 모델 — 계정 세대별 지원 모델이 달라 기본값이 가장 안전
       // GPT-5.6 패밀리(2026-07-09) — Sol(플래그십)·Terra(중간)·Luna(경량). sol id는 로컬 codex 설정으로 실증
       { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
       { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
@@ -66,7 +64,6 @@ export const RUNNERS = {
   gemini: {
     name: 'Gemini', kind: 'cli',
     models: [
-      { id: '', label: '' },
       // ai.google.dev 모델 문서(2026-07) — 3.5 Flash가 GA 최신, 3.1 Pro는 프리뷰
       { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
       { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
@@ -77,7 +74,6 @@ export const RUNNERS = {
   glm: {
     name: 'GLM', kind: 'sdk-compat',
     models: [
-      { id: '', label: '' }, // 기본 = glm-5.2 (chat에서 보정)
       // docs.z.ai(2026-06-13 출시) — 5.2가 플래그십(1M 컨텍스트)
       { id: 'glm-5.2', label: 'GLM-5.2' },
       { id: 'glm-5.1', label: 'GLM-5.1' },

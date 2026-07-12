@@ -466,7 +466,8 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
   }, [open]);
   const cur = runners?.find((r) => r.id === sel.runner);
   const curModel = cur?.models?.find((m) => m.id === sel.model);
-  const label = `${cur?.name ?? 'Claude Code'} · ${sel.model ? (curModel?.label ?? sel.model) : t('chat.model.defaultShort')}`;
+  // 모델 미선택(레거시 크루)이면 러너 이름만 — "기본" 같은 가짜 항목을 만들지 않는다
+  const label = sel.model ? `${cur?.name ?? 'Claude Code'} · ${curModel?.label ?? sel.model}` : (cur?.name ?? 'Claude Code');
   return (
     <div ref={boxRef} style={{ position: 'relative' }}>
       <button type="button" disabled={disabled || runners === null} onClick={() => setOpen((v) => !v)}
@@ -492,7 +493,7 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
               <div className="microlabel" style={{ padding: '4px 8px 2px', color: r.authed ? undefined : 'var(--fg-3)' }}>
                 {r.name}{r.authed ? '' : ` — ${t('runner.needConnect')}`}
               </div>
-              {(r.models ?? [{ id: '', label: '' }]).map((m) => {
+              {(r.models ?? []).map((m) => {
                 const active = sel.runner === r.id && (sel.model || '') === m.id;
                 return (
                   <button key={`${r.id}:${m.id}`} type="button" role="menuitemradio" aria-checked={active}
@@ -500,7 +501,7 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
                     style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
                       background: active ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7, cursor: 'pointer',
                       padding: '6px 8px', fontSize: 12.5, color: 'var(--fg)' }}>
-                    <span style={{ flex: 1 }}>{m.id === '' ? t('deck.model.default') : m.label}</span>
+                    <span style={{ flex: 1 }}>{m.label}</span>
                     {active && <span aria-hidden style={{ fontSize: 11, color: 'var(--fg-2)' }}>✓</span>}
                   </button>
                 );
@@ -530,15 +531,20 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
   return (
     <>
       <select value={sel.runner} disabled={busy} style={box}
-        onChange={(e) => onChange({ runner: e.target.value, model: '' })}>
+        onChange={(e) => {
+          const next = runners?.find((r) => r.id === e.target.value);
+          // 러너를 바꾸면 그 러너의 첫 모델을 바로 선택 — "기본" 가짜 항목 없이 항상 실제 모델
+          onChange({ runner: e.target.value, model: next?.models?.[0]?.id ?? '' });
+        }}>
         {(runners ?? [{ id: 'claude', name: 'Claude Code', authed: true }]).map((r) => (
           <option key={r.id} value={r.id}>{runnerLabel(r)}</option>
         ))}
       </select>
       <select value={sel.model} disabled={busy} style={box}
         onChange={(e) => onChange({ runner: sel.runner, model: e.target.value })}>
-        {(cur?.models ?? [{ id: '', label: '' }]).map((m) => (
-          <option key={m.id} value={m.id}>{m.id === '' ? t('deck.model.default') : m.label}</option>
+        {!sel.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
+        {(cur?.models ?? []).map((m) => (
+          <option key={m.id} value={m.id}>{m.label}</option>
         ))}
       </select>
     </>
