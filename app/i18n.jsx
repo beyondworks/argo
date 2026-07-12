@@ -338,6 +338,7 @@ const DICT = {
   'runner.needConnect': ['연결 필요', 'connect needed'],
   'runner.authHint': ['{name} CLI에 터미널에서 로그인하면 이 러너를 쓸 수 있습니다 (구독 OAuth).', 'Log in to the {name} CLI in your terminal to use this runner (subscription OAuth).'],
   'deck.model.default': ['기본 — 회사 표준 모델', 'Default — company standard model'],
+  'chat.model.defaultShort': ['기본', 'Default'], // 채팅바 텍스트 버튼용 짧은 라벨
   'deck.model.opus': ['오푸스 — 깊은 사고, 무거운 작업 (비용 높음)', 'Opus — deep reasoning, heavy tasks (higher cost)'],
   'deck.model.sonnet': ['소네트 — 표준 균형', 'Sonnet — balanced standard'],
   'deck.model.haiku': ['하이쿠 — 빠른 잔일 (비용 낮음)', 'Haiku — fast for light tasks (lower cost)'],

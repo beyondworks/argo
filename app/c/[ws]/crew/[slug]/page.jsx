@@ -385,18 +385,14 @@ export default function CrewChat({ params }) {
       </div>
 
       {viewing ? (
-        <div className="card" style={{ position: 'sticky', bottom: 20, marginTop: 24, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
+        <div className="card" style={{ position: 'sticky', bottom: 20, marginTop: 'auto', paddingTop: 24, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
           <Icon name="doc" size={13} /> {t('chat.sessions.readonly')}
           <span style={{ flex: 1 }} />
           <button className="btn btn-primary sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
         </div>
       ) : (
-      <div style={{ position: 'sticky', bottom: 20, marginTop: 24, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {/* 이 대화의 두뇌 — 러너·모델을 여기서 바로 바꾼다(다음 턴부터 적용). 카드 패널과 같은 상태. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="microlabel" style={{ flex: 'none' }}>{t('chat.engineLabel')}</span>
-          <RunnerPicker runners={runners} sel={sel} onChange={saveRunner} disabled={busy} compact />
-        </div>
+      // marginTop:auto — 메시지가 적어도 컴포저가 항상 하단에 붙는다(flex column). 긴 스레드는 sticky가 잡는다.
+      <div style={{ position: 'sticky', bottom: 12, marginTop: 'auto', paddingTop: 24, display: 'flex', flexDirection: 'column', gap: 8, background: 'linear-gradient(to top, var(--bg) 78%, transparent)' }}>
         {(att.length > 0 || uploading) && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {att.map((a, i) => (
@@ -428,6 +424,10 @@ export default function CrewChat({ params }) {
             <Icon name="send" size={15} />
           </button>
         </form>
+        {/* 입력창 아래 슬림 줄 — 우측 텍스트형 모델 버튼(클릭 시 위로 팝오버). 레퍼런스: Claude Code 입력바 */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 6px', minHeight: 18 }}>
+          <ModelMenu runners={runners} sel={sel} onChange={saveRunner} disabled={busy} />
+        </div>
       </div>
       )}
 
@@ -448,7 +448,72 @@ export default function CrewChat({ params }) {
   );
 }
 
-/** 러너·모델 셀렉터 — 카드 패널·채팅바 공용. authed=false 러너는 "— 연결 필요" 접미.
+/** 채팅바 모델 메뉴 — 텍스트 버튼("Claude Code · Fable 5") 클릭 시 위로 뜨는 팝오버.
+    러너를 그룹 헤더로, 그 아래 모델(기본 포함)을 항목으로. 선택 즉시 저장(다음 턴부터 적용). */
+function ModelMenu({ runners, sel, onChange, disabled }) {
+  const { t } = useLang();
+  const [open, setOpen] = useState(false);
+  const [entered, setEntered] = useState(false); // 두 프레임 마운트 — scale 0.97→1 진입(끊김 없는 transition)
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!open) { setEntered(false); return; }
+    const raf = requestAnimationFrame(() => setEntered(true));
+    const away = (e) => { if (!boxRef.current?.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', esc);
+    return () => { cancelAnimationFrame(raf); document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  const cur = runners?.find((r) => r.id === sel.runner);
+  const curModel = cur?.models?.find((m) => m.id === sel.model);
+  const label = `${cur?.name ?? 'Claude Code'} · ${sel.model ? (curModel?.label ?? sel.model) : t('chat.model.defaultShort')}`;
+  return (
+    <div ref={boxRef} style={{ position: 'relative' }}>
+      <button type="button" disabled={disabled || runners === null} onClick={() => setOpen((v) => !v)}
+        aria-label={t('chat.engineLabel')} aria-expanded={open}
+        style={{ background: 'none', border: 0, cursor: 'pointer', padding: '2px 4px', fontSize: 11.5,
+          fontFamily: 'var(--mono)', color: 'var(--fg-3)', transition: 'color 150ms ease-out' }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--fg)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--fg-3)'; }}>
+        {label} <span aria-hidden style={{ fontSize: 9 }}>▾</span>
+      </button>
+      {open && (
+        <div className="card" role="menu" style={{
+          position: 'absolute', bottom: 'calc(100% + 6px)', right: 0, zIndex: 40,
+          minWidth: 230, maxHeight: 320, overflowY: 'auto', padding: 6,
+          boxShadow: '0 8px 28px rgba(0,0,0,.14)',
+          transformOrigin: 'bottom right',
+          transform: entered ? 'scale(1) translateY(0)' : 'scale(0.97) translateY(4px)',
+          opacity: entered ? 1 : 0,
+          transition: 'transform 160ms cubic-bezier(0.23, 1, 0.32, 1), opacity 160ms cubic-bezier(0.23, 1, 0.32, 1)',
+        }}>
+          {(runners ?? []).map((r) => (
+            <div key={r.id} style={{ padding: '2px 0' }}>
+              <div className="microlabel" style={{ padding: '4px 8px 2px', color: r.authed ? undefined : 'var(--fg-3)' }}>
+                {r.name}{r.authed ? '' : ` — ${t('runner.needConnect')}`}
+              </div>
+              {(r.models ?? [{ id: '', label: '' }]).map((m) => {
+                const active = sel.runner === r.id && (sel.model || '') === m.id;
+                return (
+                  <button key={`${r.id}:${m.id}`} type="button" role="menuitemradio" aria-checked={active}
+                    onClick={() => { onChange({ runner: r.id, model: m.id }); setOpen(false); }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                      background: active ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7, cursor: 'pointer',
+                      padding: '6px 8px', fontSize: 12.5, color: 'var(--fg)' }}>
+                    <span style={{ flex: 1 }}>{m.id === '' ? t('deck.model.default') : m.label}</span>
+                    {active && <span aria-hidden style={{ fontSize: 11, color: 'var(--fg-2)' }}>✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 러너·모델 셀렉터 — 카드 패널 공용. authed=false 러너는 "— 연결 필요" 접미.
     회사 자격(?ws=)이 반영된 카탈로그라 호스트 로그인이 없어도 회사 키가 있으면 authed=true. */
 function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
   const { t } = useLang();
