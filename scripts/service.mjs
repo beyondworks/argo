@@ -87,10 +87,16 @@ ${Object.entries(env).map(([k, v]) => `    <key>${k}</key><string>${v}</string>`
   writeFileSync(plistPath(), plist);
   const uid = process.getuid();
   sh('launchctl', ['bootout', `gui/${uid}/${LABEL}`]); // 재설치 대비 — 실패 무시
-  const r = sh('launchctl', ['bootstrap', `gui/${uid}`, plistPath()]);
+  // bootout 직후 bootstrap은 종료 중인 잡과 경합해 "Bad request"로 실패할 수 있다 — 잠깐 쉬며 재시도
+  let r = { ok: false, out: '' };
+  for (let i = 0; i < 5 && !r.ok; i++) {
+    if (i) execFileSync(NODE, ['-e', 'setTimeout(()=>{},1500)']); // 1.5초 대기(sleep 대용, 크로스 셸 안전)
+    r = sh('launchctl', ['bootstrap', `gui/${uid}`, plistPath()]);
+  }
   if (!r.ok) { // 구형 macOS 폴백
     const legacy = sh('launchctl', ['load', '-w', plistPath()]);
-    if (!legacy.ok) { console.error('[argo] launchd 등록 실패:', r.out || legacy.out); process.exit(1); }
+    // legacy load는 실패해도 0을 돌려줄 수 있다 — 등록 여부를 직접 재확인
+    if (!legacy.ok || !darwinRegistered()) { console.error('[argo] launchd 등록 실패:', r.out || legacy.out); process.exit(1); }
   }
 }
 const darwinUninstall = () => {
