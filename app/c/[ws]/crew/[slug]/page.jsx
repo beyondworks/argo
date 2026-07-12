@@ -495,12 +495,16 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
               </div>
               {(r.models ?? []).map((m) => {
                 const active = sel.runner === r.id && (sel.model || '') === m.id;
+                // 미연결 러너의 모델은 선택 불가 — 설정에서 연결(키/OAuth) 후에만 활성화
                 return (
                   <button key={`${r.id}:${m.id}`} type="button" role="menuitemradio" aria-checked={active}
+                    disabled={!r.authed}
                     onClick={() => { onChange({ runner: r.id, model: m.id }); setOpen(false); }}
                     style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
-                      background: active ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7, cursor: 'pointer',
-                      padding: '6px 8px', fontSize: 12.5, color: 'var(--fg)' }}>
+                      background: active ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7,
+                      cursor: r.authed ? 'pointer' : 'not-allowed',
+                      padding: '6px 8px', fontSize: 12.5, color: r.authed ? 'var(--fg)' : 'var(--fg-3)',
+                      opacity: r.authed ? 1 : 0.55 }}>
                     <span style={{ flex: 1 }}>{m.label}</span>
                     {active && <span aria-hidden style={{ fontSize: 11, color: 'var(--fg-2)' }}>✓</span>}
                   </button>
@@ -537,10 +541,11 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
           onChange({ runner: e.target.value, model: next?.models?.[0]?.id ?? '' });
         }}>
         {(runners ?? [{ id: 'claude', name: 'Claude Code', authed: true }]).map((r) => (
-          <option key={r.id} value={r.id}>{runnerLabel(r)}</option>
+          <option key={r.id} value={r.id} disabled={!r.authed}>{runnerLabel(r)}</option>
         ))}
       </select>
-      <select value={sel.model} disabled={busy} style={box}
+      {/* 현재 러너가 미연결(레거시)이면 모델 선택도 잠금 — 설정에서 연결 후 활성화 */}
+      <select value={sel.model} disabled={busy || (cur && !cur.authed)} style={box}
         onChange={(e) => onChange({ runner: sel.runner, model: e.target.value })}>
         {!sel.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
         {(cur?.models ?? []).map((m) => (

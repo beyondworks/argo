@@ -587,7 +587,7 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
                 setForm({ ...form, runner: e.target.value, model: next?.models?.[0]?.id ?? '' });
               }}>
               {(runners ?? [{ id: 'claude', name: 'Claude Code', authed: true, installed: true }]).map((r) => (
-                <option key={r.id} value={r.id}>{runnerLabel(r)}</option>
+                <option key={r.id} value={r.id} disabled={!r.authed}>{runnerLabel(r)}</option>
               ))}
             </select>
             {curRunner && !curRunner.authed && (
@@ -596,7 +596,9 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
           </label>
           <label style={{ display: 'grid', gap: 4 }}>
             <span className="microlabel">{t('deck.fieldModelHint')}</span>
-            <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} style={field}>
+            {/* 현재 러너가 미연결(레거시)이면 모델 선택도 잠금 — 설정에서 연결 후 활성화 */}
+            <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} style={field}
+              disabled={curRunner && !curRunner.authed}>
               {!form.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
               {(curRunner?.models ?? []).map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>
