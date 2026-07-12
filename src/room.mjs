@@ -10,7 +10,9 @@ import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
-const rkey = (wsId) => `room:${wsId}`;
+// sync가 chats/room-main.json을 쓸 때 쓰는 락 키(thread:ws:room-main)와 동일하게 맞춘다 —
+// 동기화 풀과 로컬 회의 쓰기가 같은 파일을 경쟁할 때 상호배제되도록(락 키가 다르면 배제 실패).
+const rkey = (wsId) => `thread:${wsId}:room-main`;
 // 회의 아카이브 접두사 — 크루 slug는 [a-z0-9-]라 '_'를 못 쓰므로, 크루 세션 아카이브와 절대 겹치지 않는다
 const MEETING_RE = /^_room-\d+\.json$/;
 
