@@ -312,6 +312,7 @@ const DICT = {
   'home.pair.desc': ['기존 기기의 설정 → 기기에서 연결 코드를 만들어 여기 붙여넣으세요.', 'Create a link code in Settings → Devices on your other device and paste it here.'],
   'home.pair.placeholder': ['연결 코드 붙여넣기 (argo-pair.v1.…)', 'Paste link code (argo-pair.v1.…)'],
   'home.pair.btn': ['연결', 'Link'],
+  'home.pair.timeout': ['아직 수신되지 않았습니다 — 네트워크를 확인하고 다시 시도하세요.', 'Nothing received yet — check your network and try again.'],
   'home.pair.waiting': ['회사 수신 중 — 잠시 후 위 목록에 나타납니다', 'Receiving your companies — they will appear above shortly'],
   'home.pair.done': ['수신 완료', 'Received'],
 

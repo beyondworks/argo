@@ -48,12 +48,13 @@ export default function Home() {
       setPairState('waiting'); setPairCode('');
       // 동기화 첫 사이클이 회사를 내려줄 때까지 폴링 (2초 × 최대 60회 — RunnerRow 관례)
       let n = 0;
+      if (pairPollRef.current) clearInterval(pairPollRef.current);
       pairPollRef.current = setInterval(async () => {
         try {
           const d = await api('/api/companies');
           if (d.companies.length > 0) { setCompanies(d.companies); setPairState('done'); clearInterval(pairPollRef.current); pairPollRef.current = null; }
         } catch { /* 다음 틱 재시도 */ }
-        if (++n >= 60) { clearInterval(pairPollRef.current); pairPollRef.current = null; }
+        if (++n >= 60) { clearInterval(pairPollRef.current); pairPollRef.current = null; setPairState(''); setPairError(t('home.pair.timeout')); }
       }, 2000);
     } catch (err) { setPairError(String(err.message)); }
   }
