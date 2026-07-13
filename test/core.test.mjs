@@ -2,7 +2,7 @@
 // 실행: npm test (node --test). 외부 의존 없이 순수·파일 단위만 검증(Supabase·SDK 미호출).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -145,4 +145,27 @@ test('페어링 코드 — 형식 불일치·필드 누락 거부', () => {
   assert.throws(() => parsePairCode('argo-pair.v1.' + Buffer.from('{"u":"x"}').toString('base64url'))); // k,o 누락
   assert.throws(() => parsePairCode(''));
   assert.throws(() => makePairCode({ url: 'x', key: '', owner: 'y' })); // 누락 값
+});
+
+/* ── 동기화 자격 단일 출처 (M-1 기기 페어링 — Task 2) ── */
+import { loadSyncCreds, saveSyncCreds, credsEpoch } from '../src/synccreds.mjs';
+
+test('동기화 자격 — env 우선, 파일 폴백, 저장 후 epoch 증가', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-test-'));
+  try {
+    // env 우선
+    const env = { NEXT_PUBLIC_SUPABASE_URL: 'https://e.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'ek', ARGO_SYNC_OWNER: 'eo' };
+    assert.deepEqual(loadSyncCreds({ root, env }), { url: 'https://e.supabase.co', key: 'ek', owner: 'eo' });
+    // env 없고 파일 없음 → null
+    assert.equal(loadSyncCreds({ root, env: {} }), null);
+    // 저장 → 파일 폴백 + epoch 증가 + 0600
+    const e0 = credsEpoch();
+    await saveSyncCreds({ url: 'https://f.supabase.co', key: 'fk', owner: 'fo' }, { root });
+    assert.equal(credsEpoch(), e0 + 1);
+    assert.deepEqual(loadSyncCreds({ root, env: {} }), { url: 'https://f.supabase.co', key: 'fk', owner: 'fo' });
+    const st = await stat(join(root, '.sync-credentials.json'));
+    assert.equal(st.mode & 0o777, 0o600);
+    // 누락 값 저장 거부
+    await assert.rejects(() => saveSyncCreds({ url: 'x', key: '', owner: 'y' }, { root }));
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
