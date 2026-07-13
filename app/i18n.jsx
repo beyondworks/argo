@@ -183,6 +183,7 @@ const DICT = {
   'settings.devices.desc': ['연결 코드를 만들어 다른 기기의 홈 화면에 붙여넣으면, 이 회사(기억·크루·대화)가 그 기기로 내려갑니다.', 'Create a link code and paste it on another device’s home screen — this company (memory, crews, chats) syncs down there.'],
   'settings.devices.generate': ['연결 코드 만들기', 'Create link code'],
   'settings.devices.warn': ['이 코드는 비밀번호와 같습니다 — 붙여넣은 뒤 어디에도 남기지 마세요.', 'Treat this code like a password — do not leave it anywhere after pasting.'],
+  'settings.devices.loginMode': ['이 회사는 계정 동기화로 연결됩니다 — 새 기기에서 Argo를 열고 같은 계정으로 로그인하면 자동으로 내려옵니다. 연결 코드는 셀프호스팅 전용입니다.', 'This company syncs with your account — open Argo on a new device and sign in with the same account; it arrives automatically. Link codes are for self-hosting only.'],
   // ── 러너 연결 관리자 (4러너 × API키/OAuth)
   'settings.runners.title': ['러너 연결', 'Runner connections'],
   'settings.runners.help': ['크루의 두뇌 엔진을 회사 계정에 연결합니다. 러너마다 API 키를 넣거나, OAuth(구독)로 연결하세요. 연결하지 않으면 이 컴퓨터에 로그인된 자격을 대신 씁니다.', 'Connect each crew brain engine to this company. Add an API key per runner, or connect with OAuth (subscription). Without a connection, crews fall back to the credentials signed in on this computer.'],
@@ -315,6 +316,7 @@ const DICT = {
   'home.pair.timeout': ['아직 수신되지 않았습니다 — 네트워크를 확인하고 다시 시도하세요.', 'Nothing received yet — check your network and try again.'],
   'home.pair.waiting': ['회사 수신 중 — 잠시 후 위 목록에 나타납니다', 'Receiving your companies — they will appear above shortly'],
   'home.pair.done': ['수신 완료', 'Received'],
+  'home.pair.loginMode': ['다른 기기의 회사는 같은 계정으로 로그인하면 자동으로 이어집니다.', 'Companies from your other devices continue automatically when you sign in with the same account.'],
 
   // ── 사이드바 추가
   'nav.uncrewedCount': ['크루 {n}', 'Crew {n}'],

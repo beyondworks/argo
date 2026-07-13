@@ -18,9 +18,12 @@ export default function Home() {
   const [pairState, setPairState] = useState(''); // '' | 'waiting' | 'done'
   const [pairError, setPairError] = useState('');
   const pairPollRef = useRef(null); // 폴링 setInterval — 언마운트 시 정리해 누수 방지
+  // 호스팅 인증(authOn)이면 다른 기기 회사는 계정 동기화로 자동 수신 — 코드 붙여넣기 UI는 authOn=false일 때만
+  const [authOn, setAuthOn] = useState(false);
 
   useEffect(() => {
     api('/api/companies').then((d) => { setCompanies(d.companies); setPresets(d.presets ?? []); }).catch((e) => setError(String(e.message)));
+    api('/api/me').then((d) => setAuthOn(!!d.authOn)).catch(() => {});
   }, []);
 
   // 컴포넌트 언마운트(회사 생성으로 페이지 이탈 등) 시 폴링 interval 누수 방지 — 브리프 코드에 없던 보강
@@ -147,21 +150,27 @@ export default function Home() {
 
         {/* M-1 페어링 — 다른 기기의 회사를 연결 코드로 가져온다 (회사가 이미 있어도 추가 연결 가능) */}
         <section style={{ marginTop: 34 }}>
-          <div className="microlabel" style={{ marginBottom: 8 }}>{t('home.pair.title')}</div>
-          <p style={{ fontSize: 12.5, color: 'var(--fg-2)', marginBottom: 10 }}>{t('home.pair.desc')}</p>
-          {pairState === 'waiting' ? (
-            <p style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={13} />{t('home.pair.waiting')}</p>
-          ) : pairState === 'done' ? (
-            <p style={{ fontSize: 13, color: 'var(--fg-2)' }}>{t('home.pair.done')}</p>
+          {authOn ? (
+            <p className="microlabel">{t('home.pair.loginMode')}</p>
           ) : (
-            <form onSubmit={pair} className="input-bar">
-              <input suppressHydrationWarning className="mono" style={{ fontSize: 12 }}
-                placeholder={t('home.pair.placeholder')}
-                value={pairCode} onChange={(e) => setPairCode(e.target.value)} {...imeGuard} />
-              <button className="btn" disabled={!pairCode.trim()}>{t('home.pair.btn')}</button>
-            </form>
+            <>
+              <div className="microlabel" style={{ marginBottom: 8 }}>{t('home.pair.title')}</div>
+              <p style={{ fontSize: 12.5, color: 'var(--fg-2)', marginBottom: 10 }}>{t('home.pair.desc')}</p>
+              {pairState === 'waiting' ? (
+                <p style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={13} />{t('home.pair.waiting')}</p>
+              ) : pairState === 'done' ? (
+                <p style={{ fontSize: 13, color: 'var(--fg-2)' }}>{t('home.pair.done')}</p>
+              ) : (
+                <form onSubmit={pair} className="input-bar">
+                  <input suppressHydrationWarning className="mono" style={{ fontSize: 12 }}
+                    placeholder={t('home.pair.placeholder')}
+                    value={pairCode} onChange={(e) => setPairCode(e.target.value)} {...imeGuard} />
+                  <button className="btn" disabled={!pairCode.trim()}>{t('home.pair.btn')}</button>
+                </form>
+              )}
+              {pairError && <p style={{ color: 'var(--danger)', marginTop: 8, fontSize: 12.5 }}>{pairError}</p>}
+            </>
           )}
-          {pairError && <p style={{ color: 'var(--danger)', marginTop: 8, fontSize: 12.5 }}>{pairError}</p>}
         </section>
 
         <footer className="microlabel" style={{ marginTop: 70 }}>

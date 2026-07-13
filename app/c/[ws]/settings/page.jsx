@@ -859,6 +859,9 @@ function DevicesCard({ ws }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  // 호스팅 인증(authOn)이면 계정 동기화로 대체됨 — 셀프호스팅 연결 코드 UI는 authOn=false일 때만
+  const [authOn, setAuthOn] = useState(false);
+  useEffect(() => { api('/api/me').then((d) => setAuthOn(!!d.authOn)).catch(() => {}); }, []);
 
   async function generate() {
     setBusy(true); setError(''); setCopied(false);
@@ -870,26 +873,32 @@ function DevicesCard({ ws }) {
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.devices.title')}</span>
-      <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>{t('settings.devices.desc')}</p>
-      {!code ? (
-        <button type="button" className="btn btn-primary sm" onClick={generate} disabled={busy} style={{ alignSelf: 'flex-start' }}>
-          {busy ? <Spinner size={12} /> : null}{t('settings.devices.generate')}
-        </button>
+      {authOn ? (
+        <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>{t('settings.devices.loginMode')}</p>
       ) : (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="mono" style={{ fontSize: 11, color: 'var(--fg-2)', wordBreak: 'break-all' }}>
-              {code.slice(0, 26)}…{code.slice(-6)}
-            </span>
-            <button type="button" className="btn sm"
-              onClick={() => { navigator.clipboard?.writeText(code).catch(() => {}); setCopied(true); }}>
-              {copied ? t('common.copied') : t('common.copy')}
+          <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>{t('settings.devices.desc')}</p>
+          {!code ? (
+            <button type="button" className="btn btn-primary sm" onClick={generate} disabled={busy} style={{ alignSelf: 'flex-start' }}>
+              {busy ? <Spinner size={12} /> : null}{t('settings.devices.generate')}
             </button>
-          </div>
-          <p style={{ fontSize: 11.5, color: 'var(--warn, var(--fg-2))' }}>{t('settings.devices.warn')}</p>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--fg-2)', wordBreak: 'break-all' }}>
+                  {code.slice(0, 26)}…{code.slice(-6)}
+                </span>
+                <button type="button" className="btn sm"
+                  onClick={() => { navigator.clipboard?.writeText(code).catch(() => {}); setCopied(true); }}>
+                  {copied ? t('common.copied') : t('common.copy')}
+                </button>
+              </div>
+              <p style={{ fontSize: 11.5, color: 'var(--warn, var(--fg-2))' }}>{t('settings.devices.warn')}</p>
+            </>
+          )}
+          {error && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</p>}
         </>
       )}
-      {error && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</p>}
     </div>
   );
 }

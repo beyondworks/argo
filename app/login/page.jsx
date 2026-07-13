@@ -55,8 +55,12 @@ export default function Login() {
     if (!code.trim() || busy) return;
     setBusy(true); setError('');
     try {
-      const { error: err } = await supabase.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: 'email' });
-      if (err) throw err;
+      // 서버가 OTP를 검증 — 세션은 브라우저에 남지 않고 기기 파일로만 발급된다
+      const res = await fetch('/api/device/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), token: code.trim() }),
+      }).then((r) => r.json());
+      if (res.error) throw new Error(res.error);
       window.location.href = '/';
     } catch (err) { setError(String(err.message || err)); setBusy(false); }
   }
@@ -96,7 +100,12 @@ export default function Login() {
         await new Promise((r) => setTimeout(r, 2000));
         const res = await fetch(`/api/auth/pair?code=${code}&verifier=${verifier}`).then((r) => r.json()).catch(() => ({ status: 'pending' }));
         if (res.status === 'ready') {
-          await supabase.auth.setSession(res.session); // 앱 웹뷰 쿠키에 세션 설정
+          // 브라우저가 회수한 세션을 서버가 검증해 기기 파일로 귀속 — 브라우저 세션은 앱에 남기지 않는다
+          const link = await fetch('/api/device/link', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ access_token: res.session.access_token, refresh_token: res.session.refresh_token }),
+          }).then((r) => r.json());
+          if (link.error) { setError(String(link.error)); setWaiting(false); return; }
           try { // 앱을 스스로 전면으로 — 브라우저에서 돌아올 필요 없이 이어진다
             const { getCurrentWindow } = await import('@tauri-apps/api/window');
             await getCurrentWindow().setFocus();
