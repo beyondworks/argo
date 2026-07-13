@@ -66,6 +66,8 @@ const DICT = {
   'settings.runners.codeSubmit': ['코드 제출', 'Submit code'],
   'settings.runners.webUrlReady': ['링크가 준비됐습니다 — 열어서 승인하세요.', 'Link ready — open and approve.'],
   'settings.runners.webNoCli': ['이 서버에 Claude CLI가 없습니다.', 'Claude CLI missing on this server.'],
+  'settings.runners.webConnectHintUrl': ['클릭해 로그인 링크를 받으세요. 승인 후 브라우저가 localhost로 이동하며 "연결할 수 없음"이 떠도 정상입니다 — 그 주소 전체를 복사해 붙여넣으세요.', 'Click for a sign-in link. After approval the browser lands on localhost and fails to load — that is expected; copy the full address and paste it.'],
+  'settings.runners.codePhUrl': ['리다이렉트된 주소 전체 붙여넣기 (주소창에서 복사)', 'Paste the full redirected URL (copy from the address bar)'],
   'settings.runners.month': ['이번 달 {n}턴', '{n} turns this month'],
   'settings.runners.monthTitle': ['이번 달 이 러너로 실행된 턴 수와 비용', 'Turns and cost on this runner this month'],
   'nav.compete': ['경쟁 시안', 'Contest'],

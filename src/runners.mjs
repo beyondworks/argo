@@ -135,7 +135,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
     const out = join(dir, 'last.txt');
     // 회사 API키 모드면 깨끗한 홈(계정 OAuth 무시), 아니면 호스트 로그인 상속
-    const CODEX_HOME = cred?.home === 'clean' ? await codexHomeClean() : await codexHome();
+    const CODEX_HOME = cred?.home === 'clean' ? await codexHomeClean()
+      : cred?.home ? cred.home // 회사 OAuth 격리 홈(웹 브리지)
+      : await codexHome();     // 호스트 로그인 상속
     try {
       await exec('codex', [
         'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check',
@@ -176,8 +178,8 @@ const secretsFile = (wsId) => join(paths(wsId).root, '.secrets.json');
 //   oauthPasteable 토큰 붙여넣기로, gemini는 CLI 설치 후 로그인 안내로 대체한다.
 export const RUNNER_AUTH = {
   claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPasteable: true, webConnect: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', keyUrl: 'https://console.anthropic.com/settings/keys' },
-  codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
-  gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://aistudio.google.com/apikey' },
+  codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
+  gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
 };
 
@@ -206,6 +208,9 @@ export async function saveRunnerCred(wsId, runner, type, value) {
   const { claude, ...rest } = s; // 레거시 평문 필드 제거
   rest.runners = { ...rest.runners, [runner]: { type: type === 'oauth' ? 'oauth' : 'apikey', value: String(value).trim() } };
   await writeJsonAtomic(secretsFile(wsId), rest);
+  // 격리 홈 리셋 — 재연결 시 이전 토큰 파일이 새 자격을 가리지 않게(runnerCredEnv가 재생성)
+  if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+  if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
 }
 
 /** 러너 자격 제거 — 다른 러너는 유지. */
@@ -235,10 +240,27 @@ export async function runnerCredEnv(wsId, runner) {
   }
   if (runner === 'codex') {
     // apikey면 계정 OAuth를 무시하고 OPENAI_API_KEY로 — 격리홈을 '깨끗한' 것으로 써 auth.json 상속 차단.
-    return cred.type === 'apikey' ? { env: { OPENAI_API_KEY: v }, home: 'clean' } : null; // oauth는 호스트 로그인 사용(null)
+    if (cred.type === 'apikey') return { env: { OPENAI_API_KEY: v }, home: 'clean' };
+    // 회사 OAuth(웹 브리지) — 저장된 auth.json을 회사별 격리 CODEX_HOME에 풀어 CLI가 읽게 한다.
+    // CLI가 토큰을 갱신하면 이 파일에 다시 쓴다(다음 턴도 같은 홈을 쓰므로 이어진다).
+    const dir = join(homedir(), '.argo', `codex-home-${wsId}`);
+    await mkdir(dir, { recursive: true });
+    if (!(await exists(join(dir, 'auth.json')))) await writeFile(join(dir, 'auth.json'), v);
+    if (!(await exists(join(dir, 'config.toml')))) await writeFile(join(dir, 'config.toml'), '# Argo 회사 자격 codex 홈\n');
+    return { env: {}, home: dir };
   }
   if (runner === 'gemini') {
-    return cred.type === 'apikey' ? { env: { GEMINI_API_KEY: v } } : null; // oauth는 호스트 로그인
+    if (cred.type === 'apikey') return { env: { GEMINI_API_KEY: v } };
+    // 회사 OAuth(웹 브리지) — oauth_creds.json을 회사별 격리 HOME의 .gemini에 풀어준다.
+    const home = join(homedir(), '.argo', `gemini-home-${wsId}`);
+    await mkdir(join(home, '.gemini'), { recursive: true });
+    if (!(await exists(join(home, '.gemini', 'oauth_creds.json')))) {
+      await writeFile(join(home, '.gemini', 'oauth_creds.json'), v);
+    }
+    if (!(await exists(join(home, '.gemini', 'settings.json')))) {
+      await writeFile(join(home, '.gemini', 'settings.json'), JSON.stringify({ selectedAuthType: 'oauth-personal' }));
+    }
+    return { env: { HOME: home } };
   }
   return null;
 }
@@ -268,55 +290,104 @@ export async function startRunnerLogin(runner) {
   }
 }
 
-/* ─── Claude OAuth 웹 브리지 — "버튼 클릭 = 로그인 페이지" ───
-   setup-token CLI가 내부에서 쓰는 표준 PKCE 플로우를 서버가 직접 수행한다(CLI는 TTY 없이는
-   무출력이라 headless 대행 불가 — 실측). client_id는 Claude Code에 내장된 공개 상수.
+/* ─── 러너 OAuth 웹 브리지(공통) — "버튼 클릭 = 로그인 페이지" ───
+   각 CLI가 내부에서 쓰는 표준 PKCE 플로우를 서버가 직접 수행한다(CLI는 TTY/localhost 콜백
+   요구로 headless 대행 불가 — 실측). client id들은 각 CLI에 내장된 공개 상수
+   (installed app의 client_secret은 시크릿으로 취급되지 않음 — Google 문서).
    흐름: 서버가 verifier/challenge 생성 → 인증 URL을 UI에 반환(사용자 기기에서 열림) →
-   승인 후 표시되는 코드(code#state)를 UI에 붙여넣으면 서버가 토큰으로 교환 →
-   장기 토큰(sk-ant-oat…)을 회사 자격으로 저장 → 암호화 동기화로 전 기기 전파. */
-const CLAUDE_OAUTH = {
-  authorize: 'https://claude.ai/oauth/authorize',
-  token: 'https://console.anthropic.com/v1/oauth/token',
-  clientId: '9d1c250a-e61b-44d9-88ed-5944d1962f5e', // Claude Code 공개 클라이언트 id (CLI 내장)
-  redirect: 'https://console.anthropic.com/oauth/code/callback',
-  scopes: 'org:create_api_key user:profile user:inference',
+   승인 후 받은 코드(claude: code#state 표시 / codex·gemini: localhost로 리다이렉트된 주소 전체)를
+   UI에 붙여넣으면 서버가 토큰으로 교환 → 회사 자격으로 저장 → 암호화 동기화로 전 기기 전파. */
+const WEB_OAUTH = {
+  claude: {
+    authorize: 'https://claude.ai/oauth/authorize',
+    token: 'https://console.anthropic.com/v1/oauth/token',
+    clientId: '9d1c250a-e61b-44d9-88ed-5944d1962f5e', // Claude Code 공개 클라이언트 id
+    redirect: 'https://console.anthropic.com/oauth/code/callback',
+    scopes: 'org:create_api_key user:profile user:inference',
+    jsonBody: true, // Anthropic 토큰 엔드포인트는 JSON
+    extra: { code: 'true' },
+  },
+  codex: {
+    authorize: 'https://auth.openai.com/oauth/authorize',
+    token: 'https://auth.openai.com/oauth/token',
+    clientId: 'app_EMoamEEZ73f0CkXaXp7hrann', // Codex CLI 공개 클라이언트 id
+    redirect: 'http://localhost:1455/auth/callback', // CLI 등록 콜백 — 사용자는 리다이렉트된 주소를 붙여넣는다
+    scopes: 'openid profile email offline_access',
+  },
+  gemini: {
+    authorize: 'https://accounts.google.com/o/oauth2/v2/auth',
+    token: 'https://oauth2.googleapis.com/token',
+    clientId: '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com', // gemini-cli 공개
+    clientSecret: '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', // installed app 공개 상수 — 시크릿 아님(Google 문서)
+    redirect: 'http://localhost:45289/oauth2callback',
+    scopes: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
+    extra: { access_type: 'offline', prompt: 'consent' }, // refresh_token 확보
+  },
 };
-const setupState = (globalThis.__argoClaudeSetup ??= { verifier: '', ts: 0 });
+const webAuthState = (globalThis.__argoWebAuth ??= {}); // { [runner]: { verifier, ts } }
 
-export async function startClaudeSetup() {
+export function startRunnerWebAuth(runner) {
+  const cfg = WEB_OAUTH[runner];
+  if (!cfg) return { ok: false, reason: 'unsupported' };
   const verifier = randomBytes(32).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');
-  setupState.verifier = verifier;
-  setupState.ts = Date.now();
-  const u = new URL(CLAUDE_OAUTH.authorize);
-  u.searchParams.set('code', 'true');
-  u.searchParams.set('client_id', CLAUDE_OAUTH.clientId);
+  webAuthState[runner] = { verifier, ts: Date.now() };
+  const u = new URL(cfg.authorize);
+  for (const [k, v] of Object.entries(cfg.extra ?? {})) u.searchParams.set(k, v);
+  u.searchParams.set('client_id', cfg.clientId);
   u.searchParams.set('response_type', 'code');
-  u.searchParams.set('redirect_uri', CLAUDE_OAUTH.redirect);
-  u.searchParams.set('scope', CLAUDE_OAUTH.scopes);
+  u.searchParams.set('redirect_uri', cfg.redirect);
+  u.searchParams.set('scope', cfg.scopes);
   u.searchParams.set('code_challenge', challenge);
   u.searchParams.set('code_challenge_method', 'S256');
   u.searchParams.set('state', verifier);
   return { ok: true, url: u.toString() };
 }
 
-export async function submitClaudeSetupCode(wsId, code) {
-  if (!setupState.verifier) return { ok: false, reason: 'no-session' };
-  if (Date.now() - setupState.ts > 10 * 60_000) return { ok: false, reason: 'expired' }; // 10분 초과 — 다시 시작
-  const [authCode, stateFromCode] = String(code).trim().split('#');
+/** 붙여넣은 값에서 인증 코드 추출 — 전체 URL(localhost 콜백)·code#state·생 코드 모두 수용. */
+function extractAuthCode(pasted) {
+  const s = String(pasted).trim();
+  if (s.includes('://')) {
+    try {
+      const u = new URL(s);
+      return { code: u.searchParams.get('code') ?? '', state: u.searchParams.get('state') ?? '' };
+    } catch { /* URL 아님 — 아래로 */ }
+  }
+  const [code, state] = s.split('#');
+  return { code, state: state ?? '' };
+}
+
+/** id_token(JWT) 페이로드 디코드 — 서명 검증 불필요(우리가 방금 토큰 엔드포인트에서 직접 받은 값). */
+function jwtPayload(tok) {
+  try {
+    const p = String(tok).split('.')[1];
+    return JSON.parse(Buffer.from(p, 'base64url').toString());
+  } catch { return {}; }
+}
+
+export async function submitRunnerWebAuth(wsId, runner, pasted) {
+  const cfg = WEB_OAUTH[runner];
+  const st = webAuthState[runner];
+  if (!cfg) return { ok: false, reason: 'unsupported' };
+  if (!st?.verifier) return { ok: false, reason: 'no-session' };
+  if (Date.now() - st.ts > 10 * 60_000) return { ok: false, reason: 'expired' }; // 10분 — 다시 시작
+  const { code, state } = extractAuthCode(pasted);
+  if (!code) return { ok: false, reason: 'no-code' };
+  const params = {
+    grant_type: 'authorization_code',
+    code,
+    client_id: cfg.clientId,
+    redirect_uri: cfg.redirect,
+    code_verifier: st.verifier,
+    ...(cfg.clientSecret ? { client_secret: cfg.clientSecret } : {}),
+    ...(runner === 'claude' ? { state: state || st.verifier } : {}),
+  };
   let res;
   try {
-    res = await fetch(CLAUDE_OAUTH.token, {
+    res = await fetch(cfg.token, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'authorization_code',
-        code: authCode,
-        state: stateFromCode ?? setupState.verifier,
-        client_id: CLAUDE_OAUTH.clientId,
-        redirect_uri: CLAUDE_OAUTH.redirect,
-        code_verifier: setupState.verifier,
-      }),
+      headers: { 'content-type': cfg.jsonBody ? 'application/json' : 'application/x-www-form-urlencoded' },
+      body: cfg.jsonBody ? JSON.stringify(params) : new URLSearchParams(params).toString(),
       signal: AbortSignal.timeout(20_000),
     });
   } catch (e) {
@@ -327,9 +398,31 @@ export async function submitClaudeSetupCode(wsId, code) {
     return { ok: false, reason: 'exchange-failed', detail: `${res.status} ${body.slice(0, 160)}` };
   }
   const d = await res.json().catch(() => ({}));
-  if (!d.access_token) return { ok: false, reason: 'no-token' };
-  await saveRunnerCred(wsId, 'claude', 'oauth', d.access_token);
-  setupState.verifier = ''; // 세션 종료 — verifier 재사용 금지
+  if (runner === 'claude') {
+    if (!d.access_token) return { ok: false, reason: 'no-token' };
+    await saveRunnerCred(wsId, 'claude', 'oauth', d.access_token);
+  } else if (runner === 'codex') {
+    if (!d.access_token || !d.refresh_token) return { ok: false, reason: 'no-token' };
+    // codex CLI의 auth.json 형식 그대로 저장 — runnerCredEnv가 격리 CODEX_HOME에 풀어준다
+    const accountId = jwtPayload(d.id_token)?.['https://api.openai.com/auth']?.chatgpt_account_id ?? null;
+    await saveRunnerCred(wsId, 'codex', 'oauth', JSON.stringify({
+      OPENAI_API_KEY: null,
+      tokens: { id_token: d.id_token, access_token: d.access_token, refresh_token: d.refresh_token, account_id: accountId },
+      last_refresh: new Date().toISOString(),
+    }));
+  } else if (runner === 'gemini') {
+    if (!d.access_token || !d.refresh_token) return { ok: false, reason: 'no-token' };
+    // gemini CLI의 oauth_creds.json 형식 그대로 저장
+    await saveRunnerCred(wsId, 'gemini', 'oauth', JSON.stringify({
+      access_token: d.access_token,
+      refresh_token: d.refresh_token,
+      scope: d.scope ?? cfg.scopes,
+      token_type: d.token_type ?? 'Bearer',
+      ...(d.id_token ? { id_token: d.id_token } : {}),
+      expiry_date: Date.now() + (d.expires_in ?? 3600) * 1000,
+    }));
+  }
+  webAuthState[runner] = null; // 세션 종료 — verifier 재사용 금지
   return { ok: true };
 }
 

@@ -521,7 +521,11 @@ function RunnerRow({ ws, id, st, onChange, first }) {
     <span className="chip">{t('settings.runners.none')}</span>
   );
 
-  const oauthCli = method === 'oauth' && !oauthPaste; // 붙여넣기 불가한 OAuth (codex/gemini)
+  // 웹 브리지(claude·codex·gemini)는 붙여넣기 분기에서 처리 — CLI 대행 분기는 webConnect 없는 러너만
+  const oauthCli = method === 'oauth' && !oauthPaste && !st?.webConnect;
+  // 웹 브리지 러너 중 claude만 토큰 수동 붙여넣기 폴백을 노출(codex/gemini 토큰은 JSON이라 비실용)
+  const showPaste = !(method === 'oauth' && st?.webConnect && id !== 'claude');
+  const urlPaste = id !== 'claude'; // codex/gemini — 승인 후 리다이렉트된 주소 전체를 붙여넣는 방식
   const removeBtn = company.connected && (
     <div>
       <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={remove}>
@@ -591,7 +595,7 @@ function RunnerRow({ ws, id, st, onChange, first }) {
                   <button className="btn btn-primary sm" disabled={webBusy} onClick={webStart}>
                     {webBusy ? <Spinner size={12} /> : t('settings.runners.webConnect')}
                   </button>
-                  <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.webConnectHint')}</span>
+                  <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t(urlPaste ? 'settings.runners.webConnectHintUrl' : 'settings.runners.webConnectHint')}</span>
                 </div>
               ) : (
                 <>
@@ -600,7 +604,7 @@ function RunnerRow({ ws, id, st, onChange, first }) {
                   </a>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <input suppressHydrationWarning value={webCode} onChange={(e) => setWebCode(e.target.value)}
-                      placeholder={t('settings.runners.codePh')} style={{ ...fieldStyle, flex: 1 }} />
+                      placeholder={t(urlPaste ? 'settings.runners.codePhUrl' : 'settings.runners.codePh')} style={{ ...fieldStyle, flex: 1 }} />
                     <button className="btn btn-primary sm" disabled={webBusy || !webCode.trim()} onClick={webSubmit} style={{ flex: 'none' }}>
                       {webBusy ? <Spinner size={12} /> : t('settings.runners.codeSubmit')}
                     </button>
@@ -610,6 +614,14 @@ function RunnerRow({ ws, id, st, onChange, first }) {
               {webMsg && <span style={{ fontSize: 12, color: webOk ? 'var(--fg-2)' : 'var(--danger)' }}>{webMsg}</span>}
             </div>
           )}
+          {/* codex/gemini 웹 브리지 — 붙여넣기 대신 호스트 상태·제거만 노출 */}
+          {!showPaste && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {st?.hostAuthed && <span className="chip"><span className="dot" />{t('settings.runners.hostInUse')}</span>}
+              {removeBtn}
+            </div>
+          )}
+          {showPaste && (<>
           <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
             placeholder={method === 'oauth' ? t('settings.runners.tokenPlaceholder') : t('settings.runners.keyPlaceholder')} style={fieldStyle} />
           <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>
@@ -638,6 +650,7 @@ function RunnerRow({ ws, id, st, onChange, first }) {
             )}
             {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
           </div>
+          </>)}
         </>
       )}
     </div>
