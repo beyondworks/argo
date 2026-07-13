@@ -8,6 +8,18 @@ import { paths } from '../src/workspace.mjs';
 
 export const AUTH_ON = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
+// 테넌트 바인딩 — 클라우드 워커는 인스턴스 1대 = 계정 1개(microVM 격리 설계).
+// ARGO_TENANT_OWNER(Supabase user id)가 설정되면 그 계정 외 요청을 전부 거부한다.
+// 로컬/공용 모드(미설정)는 무영향. 인증 off면 의미 없으므로 함께 무시한다.
+const TENANT = process.env.ARGO_TENANT_OWNER?.trim() || null;
+export function tenantDenied(user) {
+  if (!TENANT || !AUTH_ON || !user) return null;
+  if (user.id !== TENANT) {
+    return Response.json({ error: '이 서버는 다른 계정 전용입니다' }, { status: 403 });
+  }
+  return null;
+}
+
 /** 현재 로그인 사용자. 인증 off = 로컬 1인 모드('local'). 인증 on + 미로그인 = null. */
 export async function currentUser() {
   if (!AUTH_ON) return { id: 'local', email: '' };
@@ -28,6 +40,7 @@ export async function guardCompany(wsId) {
   const user = await currentUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다' }, { status: 401 });
   if (!AUTH_ON) return null;
+  const td = tenantDenied(user); if (td) return td; // 테넌트 바인딩 — 소유권 검사보다 먼저
   let meta;
   try {
     meta = JSON.parse(await readFile(paths(wsId).company, 'utf8'));

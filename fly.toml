@@ -1,0 +1,27 @@
+# Argo 클라우드 워커 — 부재 중 대리 근무자(리더 승계). 인스턴스 1대 = 계정 1개.
+# 배포 절차·시크릿 이름: docs/deploy-fly.md (값 평문 금지 — fly secrets로만)
+app = "argo-worker"
+primary_region = "nrt" # 도쿄 — 한국에서 최저 지연
+
+[env]
+  ARGO_ROOT = "/data"
+  PORT = "8080"
+  HOSTNAME = "0.0.0.0"
+
+[mounts]
+  source = "argo_data"
+  destination = "/data" # 회사 폴더(workspaces)가 사는 볼륨 — 테넌트의 데이터 전부
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false # 게이트웨이 폴러·루틴 스케줄러 상주 — 재우지 않는다
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/login"

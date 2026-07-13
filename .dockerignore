@@ -1,0 +1,17 @@
+# 시크릿·사용자 데이터 — 이미지에 절대 실리면 안 되는 것들
+workspaces
+.env
+.env.*
+*.env
+.device-id
+
+# 빌드 산출물·로컬 상태
+node_modules
+.next
+artifacts
+src-tauri
+.git
+.DS_Store
+.omc
+.claude
+.fablize
