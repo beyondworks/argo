@@ -252,6 +252,7 @@ const DICT = {
   'settings.conn.pairCodeHelp': ['텔레그램에서 봇을 열고 이 6자리 코드를 그대로 보내면 이 회사와 연결됩니다. 코드를 아는 사람만 연결할 수 있어요.', 'Open the bot in Telegram and send this 6-character code to connect it to this company. Only someone with the code can pair.'],
   'settings.conn.pairCodeChip': ['코드 {code}', 'code {code}'],
   'common.copy': ['복사', 'Copy'],
+  'common.copied': ['복사됨', 'Copied'],
   'legal.link': ['약관 및 개인정보', 'Terms & Privacy'],
   'legal.feedback': ['피드백 보내기', 'Send feedback'],
   'settings.conn.gwAlive': ['게이트웨이 가동 중 · {s}초 전 응답', 'Gateway live · replied {s}s ago'],

@@ -883,7 +883,7 @@ function DevicesCard({ ws }) {
             </span>
             <button type="button" className="btn sm"
               onClick={() => { navigator.clipboard?.writeText(code).catch(() => {}); setCopied(true); }}>
-              {copied ? '✓' : t('common.copy')}
+              {copied ? t('common.copied') : t('common.copy')}
             </button>
           </div>
           <p style={{ fontSize: 11.5, color: 'var(--warn, var(--fg-2))' }}>{t('settings.devices.warn')}</p>
