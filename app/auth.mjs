@@ -5,6 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { paths } from '../src/workspace.mjs';
+import { loadDeviceSession } from '../src/devicesession.mjs';
 
 export const AUTH_ON = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
@@ -23,6 +24,11 @@ export function tenantDenied(user) {
 /** 현재 로그인 사용자. 인증 off = 로컬 1인 모드('local'). 인증 on + 미로그인 = null. */
 export async function currentUser() {
   if (!AUTH_ON) return { id: 'local', email: '' };
+  // 기기 연동 모드 — 이 기기가 계정에 귀속됨(로그인=연동). 워커(TENANT)는 쿠키 경로 유지.
+  if (!TENANT) {
+    const dev = loadDeviceSession();
+    if (dev) return { id: dev.user.id, email: dev.user.email };
+  }
   const store = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,

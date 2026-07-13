@@ -2,6 +2,8 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { publicUrl } from '../../http-origin.mjs';
+import { saveDeviceSession } from '../../../src/devicesession.mjs';
+import { ensureSync } from '../../../src/sync.mjs';
 
 export async function GET(req) {
   const url = new URL(req.url);
@@ -12,17 +14,32 @@ export async function GET(req) {
   if (providerErr) return fail(providerErr);
   if (!code || !process.env.NEXT_PUBLIC_SUPABASE_URL) return fail('no_code');
   const res = NextResponse.redirect(publicUrl(req, '/'));
+  const isWorker = !!process.env.ARGO_TENANT_OWNER?.trim();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
       cookies: {
         getAll: () => req.cookies.getAll(),
-        setAll: (list) => { for (const { name, value, options } of list) res.cookies.set(name, value, options); },
+        // 회전 충돌 금지 — 기기 연동 모드에서는 세션 쿠키를 아예 남기지 않는다(기기 파일이 단일 소유자).
+        // 워커(TENANT)는 기기 세션이 없으므로 기존 쿠키 경로를 그대로 유지한다(회귀 0).
+        setAll: isWorker
+          ? (list) => { for (const { name, value, options } of list) res.cookies.set(name, value, options); }
+          : () => {},
       },
     },
   );
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) return fail(error.message);
+  // 기기 연동 — OAuth 로그인도 기기 파일이 세션의 단일 소유자가 된다(브라우저는 세션 쿠키를 아예 받지 않는다).
+  if (!isWorker && data?.session) {
+    await saveDeviceSession({
+      url: process.env.NEXT_PUBLIC_SUPABASE_URL,
+      anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      session: data.session,
+    });
+    ensureSync(); // 자격이 방금 생겼다 — 재시작 없이 동기화 기동
+    res.cookies.set('argo-device', '1', { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 24 * 365 });
+  }
   return res;
 }

@@ -30,7 +30,17 @@ export async function middleware(req) {
   const { data: { user } } = await supabase.auth.getUser();
   const p = req.nextUrl.pathname;
   // /api/auth/pair* — 앱 로그인 브리지는 세션 이전에 호출되므로 공개(코드 단명·1회 소비로 보호)
-  const isPublic = p === '/login' || p === '/legal' || p.startsWith('/auth') || p.startsWith('/api/auth/pair');
+  // /api/device/* — 기기 로그인/링크 자체가 세션을 만드는 진입점이라 공개(라우트 내부에서 검증)
+  const isPublic = p === '/login' || p === '/legal' || p.startsWith('/auth') || p.startsWith('/api/auth/pair') || p.startsWith('/api/device/');
+  // 기기 연동 모드 — 마커 쿠키는 UX 게이트(리다이렉트 회피)일 뿐, 권한은 라우트 currentUser(기기 파일)가 검증.
+  // 루프백 한정: 원격에서 마커만 들고 오는 요청은 통과시키지 않는다. 워커(TENANT)는 이 분기 없음.
+  if (!process.env.ARGO_TENANT_OWNER && req.cookies.get('argo-device')?.value === '1') {
+    const host = req.headers.get('host') || '';
+    if (LOCAL_HOST_RE.test(host)) {
+      if (req.nextUrl.pathname === '/login') return NextResponse.redirect(publicUrl(req, '/'));
+      return NextResponse.next();
+    }
+  }
   if (!user && !isPublic) {
     if (p.startsWith('/api')) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
     return NextResponse.redirect(publicUrl(req, '/login'));

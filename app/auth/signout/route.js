@@ -2,6 +2,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { publicUrl } from '../../http-origin.mjs';
+import { clearDeviceSession } from '../../../src/devicesession.mjs';
 
 // CSRF 방어 — same-origin(Origin/Referer가 요청 host와 일치)만 허용. 크로스사이트 강제 로그아웃 차단.
 function sameOrigin(req) {
@@ -25,5 +26,11 @@ export async function POST(req) {
     },
   );
   await supabase.auth.signOut().catch(() => {});
+  // 기기 연동 해제 — 로그인=연동의 역과정. 이 기기의 세션 파일을 지우고 마커 쿠키를 제거한다.
+  // 워커(TENANT)는 기기 세션을 쓰지 않으므로 대상 없음(호출해도 무해하지만 회귀 0 원칙상 명시적으로 건너뜀).
+  if (!process.env.ARGO_TENANT_OWNER?.trim()) {
+    await clearDeviceSession();
+    res.cookies.set('argo-device', '', { path: '/', maxAge: 0 });
+  }
   return res;
 }
