@@ -2,7 +2,7 @@
 // 앱 핸드오프 착지점 — 브라우저가 여기로 돌아온다. Supabase가 세션을 URL 조각(#access_token)으로
 // 주므로(implicit) 서버는 못 읽는다 → 클라이언트가 supabase-js로 조각을 파싱해 세션을 얻고,
 // pair 코드에 봉인한다. 그러면 앱이 폴링으로 회수해 스스로 로그인·전면화된다.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { Logo, Spinner } from '../../ui';
 import { useLang } from '../../i18n';
@@ -16,6 +16,7 @@ export default function Paired() {
   const [msg, setMsg] = useState('');
   const [session, setSession] = useState(null);
   const [pair, setPair] = useState('');
+  const supabaseRef = useRef(null); // approve()에서 로컬 사인아웃에 재사용
 
   useEffect(() => {
     if (!URL_ENV || !KEY_ENV) { setState('error'); setMsg('config'); return; }
@@ -23,6 +24,7 @@ export default function Paired() {
     if (!p) { setState('error'); setMsg('no_pair'); return; }
     setPair(p);
     const supabase = createBrowserClient(URL_ENV, KEY_ENV); // detectSessionInUrl 기본 on — 조각 파싱
+    supabaseRef.current = supabase;
     (async () => {
       // 조각 파싱이 끝나길 잠깐 기다린 뒤 세션 확보(getSession 재시도)
       let s = null;
@@ -47,6 +49,11 @@ export default function Paired() {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ code: pair, access_token: session.access_token, refresh_token: session.refresh_token }),
     }).then((r) => r.json()).catch(() => ({ ok: false }));
+    if (res.ok) {
+      // 로컬 사본 파기 — 단일 소유자 원칙(봉인된 토큰은 앱이 이어받는다). 서버 revoke 없이 이 탭의
+      // 세션만 지워 refresh 토큰 이중 소유(원본 브라우저 vs 앱)를 막는다. 실패해도 흐름은 진행.
+      try { await supabaseRef.current?.auth.signOut({ scope: 'local' }); } catch {}
+    }
     setState(res.ok ? 'done' : 'error');
     if (!res.ok) setMsg('bind_failed');
   }

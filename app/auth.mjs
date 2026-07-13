@@ -9,6 +9,11 @@ import { loadDeviceSession } from '../src/devicesession.mjs';
 
 export const AUTH_ON = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
+// 기기 세션 쓰기 경로 공통 게이트 — 미들웨어(middleware.js)의 LOCAL_HOST_RE와 동일 정규식이나
+// 여긴 Node 런타임 라우트 전용(middleware.js는 edge 번들이라 fs 딸린 이 파일을 import하지 않는다 — 자체 정의 유지).
+// X-Forwarded-Host는 신뢰하지 않는다(host 헤더만 검사) — 원격이 이 헤더를 위조해 루프백을 가장할 수 있어서다.
+export const isLoopbackHost = (host) => /^(127\.0\.0\.1|localhost|\[::1\]|::1)(:\d+)?$/.test(host || '');
+
 // 테넌트 바인딩 — 클라우드 워커는 인스턴스 1대 = 계정 1개(microVM 격리 설계).
 // ARGO_TENANT_OWNER(Supabase user id)가 설정되면 그 계정 외 요청을 전부 거부한다.
 // 로컬/공용 모드(미설정)는 무영향. 인증 off면 의미 없으므로 함께 무시한다.
