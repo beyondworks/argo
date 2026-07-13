@@ -5,8 +5,10 @@
 // 삭제 전파는 로컬 .sync-state.json(마지막 동기화 시점의 매니페스트)과의 대조로 판별 —
 // "내가 지운 것"과 "아직 안 받은 것"을 구분한다.
 //
-// 제외(동기화 금지): connections.json(봇 토큰 — 시크릿은 기기마다), .gateway*·.gw-offset*(폴러 상태),
-// *.status.json(턴 일시 상태), *.lock, .sync-state.json, .device-id.
+// 시크릿(connections.json·.secrets.json): 서비스 키가 있으면 봉투 암호화(secretbox)로 동기화 —
+// 스토리지엔 암호문만 놓이고, 기기마다 재입력할 필요가 없다. 키 없는 환경은 기존대로 제외.
+// 그 외 제외(동기화 금지): .gateway*·.gw-offset*(폴러 상태), *.status.json(턴 일시 상태),
+// *.lock, .sync-state.json, .device-id.
 //
 // C-2 최소형: 오너별 _device-lease.json 클라우드 리스 — 두 기기가 동시에 켜져도
 // 폴러·루틴 실행 주체는 한 기기만(게이트웨이·스케줄러가 isCloudLeader를 함께 본다).
@@ -21,6 +23,7 @@ import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, paths } from './workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
+import { cryptoOn, isSecretRel, sealSecret, openSecret } from './secretbox.mjs';
 
 const BUCKET = 'companies';
 const CYCLE_MS = 45_000;
@@ -33,9 +36,10 @@ export const SYNC_ON = !!(
 );
 
 const EXCLUDE = (rel) => {
+  // 시크릿 — 봉투 암호화 가능하면 동기화(암호문으로만), 키 없으면 기존대로 제외(기기별 입력)
+  if (isSecretRel(rel)) return !cryptoOn();
   const base = rel.split('/').pop();
   return (
-    rel === 'connections.json' || rel === '.secrets.json' || // 봇 토큰·Claude 키 — 시크릿은 기기마다, 클라우드 복제 금지
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
     base.startsWith('.gw-queue') || // 디스크 큐(지시 대기) — 로컬 처리 상태, 동기화 대상 아님
     base === '.sync-state.json' || base === '.device-id' || base === '.DS_Store' ||
@@ -188,6 +192,10 @@ export async function syncCompany(wsId, owner) {
 
   const relFull = (rel) => join(root, ...rel.split('/'));
   const remoteKey = (rel) => skey(owner, wsId, rel);
+  // 시크릿 봉투 — 밀 때 암호화, 받을 때 복호화. 스토리지엔 평문 크레덴셜이 절대 놓이지 않는다.
+  // (복호화 실패 = 위변조/키 불일치 → throw → per-file catch가 failed로 집계, 다음 사이클 재시도)
+  const pullBuf = async (rel) => { const b = await download(remoteKey(rel)); return isSecretRel(rel) ? openSecret(b) : b; };
+  const pushBuf = async (rel) => { const b = await readFile(relFull(rel)); return isSecretRel(rel) ? sealSecret(b) : b; };
   // 로컬 쓰기 — 스레드 파일이면 진행 중 턴과 직렬화(레이스 방지)
   const writeLocal = async (rel, buf, mtime) => {
     const doWrite = async () => {
@@ -217,31 +225,31 @@ export async function syncCompany(wsId, owner) {
           await client().storage.from(BUCKET).remove([remoteKey(rel)]);
           delete remote.files[rel]; deletedR++;
         } else if (!base) { // 원격 신규 → 받기
-          await writeLocal(rel, await download(remoteKey(rel)), r.m); local[rel] = r; pulled++;
+          await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++;
         } else { // 내가 지웠지만 원격도 바뀜 = 충돌 → 원격 부활본을 받아 유실 방지
-          await writeLocal(rel, await download(remoteKey(rel)), r.m); local[rel] = r; pulled++; conflicts++;
+          await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; conflicts++;
         }
         continue;
       }
       if (l && !r) { // 원격에 없음
         if (base && !localChg) { await rmLocal(rel); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
-        else { await upload(remoteKey(rel), await readFile(relFull(rel))); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
+        else { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
         continue;
       }
       // ── 양쪽 존재 ──
       if (!localChg && !remoteChg) continue;      // 변경 없음
       if (remoteChg && !localChg) { // 원격만 변경 → 받기
-        await writeLocal(rel, await download(remoteKey(rel)), r.m); local[rel] = r; pulled++; continue;
+        await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; continue;
       }
       if (localChg && !remoteChg) { // 로컬만 변경 → 밀기
-        await upload(remoteKey(rel), await readFile(relFull(rel))); remote.files[rel] = l; pushed++; continue;
+        await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; continue;
       }
       // ── 양쪽 변경 = 충돌 ──
       if ((l.h ?? '') === (r.h ?? '')) { // 내용이 우연히 같아짐 → 상태만 정렬
         remote.files[rel] = l; continue;
       }
       const localBuf = await readFile(relFull(rel));
-      const remoteBuf = await download(remoteKey(rel));
+      const remoteBuf = await pullBuf(rel);
       if (isLedger(rel)) { // 원장 — 행 합집합 병합 후 양쪽 수렴
         const mBuf = mergeLedger(localBuf, remoteBuf);
         await writeLocal(rel, mBuf);
@@ -257,7 +265,7 @@ export async function syncCompany(wsId, owner) {
         remote.files[cRel] = local[cRel]; pulled++; conflicts++;
       } else { // 기타(json 등) — 최근 mtime 승(LWW), 단 카운트해 관측 가능하게
         if ((r.m ?? 0) >= (l.m ?? 0)) { await writeLocal(rel, remoteBuf, r.m); local[rel] = r; pulled++; }
-        else { await upload(remoteKey(rel), localBuf); remote.files[rel] = l; pushed++; }
+        else { await upload(remoteKey(rel), isSecretRel(rel) ? sealSecret(localBuf) : localBuf); remote.files[rel] = l; pushed++; }
         conflicts++;
       }
     } catch { failed++; } // 파일 하나 실패는 다음 사이클이 재시도

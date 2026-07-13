@@ -112,3 +112,20 @@ test('claimPairing: 봉인 전엔 pending', () => {
   createPairing('code-2', 'ver-2');
   assert.equal(claimPairing('code-2', 'ver-2').status, 'pending');
 });
+
+/* ─── secretbox — 시크릿 봉투 암호화 (동기화로 흐르는 크레덴셜의 방어선) ─── */
+import { sealSecret, openSecret, isSecretRel } from '../src/secretbox.mjs';
+
+test('secretbox — 왕복·평문 미노출·위변조 거부', () => {
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'test-key-for-secretbox-only';
+  const pt = Buffer.from(JSON.stringify({ telegram: { token: 'plain-token-abc' } }));
+  const box = sealSecret(pt);
+  assert.ok(!box.toString('latin1').includes('plain-token-abc')); // 암호문에 평문 없음
+  assert.deepEqual(openSecret(box), pt);                          // 왕복 무손실
+  const tampered = Buffer.from(box);
+  tampered[tampered.length - 1] ^= 1;
+  assert.throws(() => openSecret(tampered));                      // 위변조(GCM tag) 거부
+  assert.throws(() => openSecret(Buffer.from('not-a-box')));      // 봉투 형식 아님 거부
+  assert.ok(isSecretRel('connections.json') && isSecretRel('.secrets.json'));
+  assert.ok(!isSecretRel('company.json') && !isSecretRel('chats/duri.json'));
+});
