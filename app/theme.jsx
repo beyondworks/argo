@@ -4,7 +4,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 export const THEMES = [
-  'argo', 'apple', 'apple-dark', 'glass', 'glass-dark',
+  'argo', 'swiss', 'swiss-dark', 'apple', 'apple-dark', 'glass', 'glass-dark',
   'clay', 'porcelain', 'mist', 'frost',
   'cream-pop', 'peach', 'retro', 'sketch',
   'tokyo-night', 'nord', 'everforest', 'dracula', 'monokai', 'rose-pine',

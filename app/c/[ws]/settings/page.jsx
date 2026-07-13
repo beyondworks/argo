@@ -214,6 +214,8 @@ function LanguageCard() {
 /** 테마 스와치 — 각 테마의 캔버스/카드/프라이머리 토큰을 그대로 보여주는 미니 프리뷰. */
 const THEME_SWATCHES = {
   argo: ['#e3e5d6', '#e9ebdd', '#22241c'],
+  swiss: ['#f0f0f0', '#e6e6e6', '#1c1c1c'],
+  'swiss-dark': ['#1c1c1c', '#262626', '#f0f0f0'],
   apple: ['#f5f5f7', '#ffffff', '#0071e3'],
   'apple-dark': ['#161617', '#2c2c2e', '#0a84ff'],
   glass: ['#c9d8f2', '#eef3fb', '#0071e3'],

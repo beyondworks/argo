@@ -102,6 +102,8 @@ const DICT = {
   'settings.theme': ['테마', 'Theme'],
   'settings.theme.desc': ['화면의 색과 질감을 선택합니다. 크루의 작업 방식에는 영향이 없습니다.', 'Choose the look of the interface. This does not affect how your crew works.'],
   'settings.theme.argo': ['아르고 — 세이지 계기판', 'Argo — sage instrument panel'],
+  'settings.theme.swiss': ['스위스 — 선과 여백, 종이', 'Swiss — rules, whitespace, paper'],
+  'settings.theme.swiss-dark': ['스위스 다크 — 잉크 위 백선', 'Swiss Dark — white rules on ink'],
   'settings.theme.apple': ['Apple — 밝은 시스템 화이트', 'Apple — light system white'],
   'settings.theme.apple-dark': ['Apple 다크 — 시스템 블랙', 'Apple Dark — system black'],
   'settings.theme.glass': ['리퀴드 글래스 — Tahoe 반투명', 'Liquid Glass — Tahoe translucency'],
