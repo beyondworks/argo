@@ -832,9 +832,23 @@
 :root[data-theme='swiss-dark'] .card {
   background: transparent;
   border: 0;
-  border-top: 1px solid var(--border);
+  /* 선 굵기 위계 — 섹션 시작은 굵은 잉크 바(Wästberg 문법). 행·중첩 구간은 아래에서 헤어라인으로 */
+  border-top: 2px solid var(--fg);
   border-radius: 0;
   box-shadow: none;
+}
+/* 중첩 카드(카드 안 카드 = 행·컬럼·패널)는 헤어라인 — 굵은 바는 최상위 섹션에만 */
+:root[data-theme='swiss'] .card .card,
+:root[data-theme='swiss-dark'] .card .card {
+  border-top-width: 1px;
+  border-top-color: var(--border);
+}
+/* 선이 얇아진 만큼 제목이 위계를 진다 — 섹션 제목 강화 */
+:root[data-theme='swiss'] .card-title,
+:root[data-theme='swiss-dark'] .card-title {
+  font-size: 14.5px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
 }
 :root[data-theme='swiss'] .card-float,
 :root[data-theme='swiss-dark'] .card-float,
