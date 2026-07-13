@@ -85,7 +85,7 @@ export default function Room({ params }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 118px)' }}>
       {/* 회의 레일 — 마친 회의가 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr) */}
-      <div style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
+      <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('room.sessions.title')}{sessions.length ? ` · ${sessions.length}` : ''}
         </span>

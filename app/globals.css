@@ -850,6 +850,27 @@
   font-weight: 750;
   letter-spacing: -0.01em;
 }
+/* 선의 연결 — 스위스 그리드의 선은 끊기지 않고 만난다(T자 교차).
+   ① 페이지 헤더 아래 전폭 가로 괘선 ② 본문↔레일 사이 세로 괘선(가장 긴 컬럼에 부착, gap 중앙 배치) */
+:root[data-theme='swiss'] .page-head,
+:root[data-theme='swiss-dark'] .page-head {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+@media (min-width: 1341px) { /* deck-grid가 1열로 접히는 폭에서는 세로선 제거 */
+  :root[data-theme='swiss'] .deck-grid > :first-child,
+  :root[data-theme='swiss-dark'] .deck-grid > :first-child {
+    border-right: 1px solid var(--border);
+    margin-right: -8px;
+    padding-right: 8px;
+  }
+}
+:root[data-theme='swiss'] .side-rail + *,
+:root[data-theme='swiss-dark'] .side-rail + * {
+  border-left: 1px solid var(--border);
+  margin-left: -9px;
+  padding-left: 9px;
+}
 :root[data-theme='swiss'] .card-float,
 :root[data-theme='swiss-dark'] .card-float,
 :root[data-theme='swiss'] .tasks-panel,
