@@ -339,6 +339,7 @@ async function cycle() {
   }
   const owners = [...new Set(targets.values())];
   if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
+  let companyFailed = 0;
   for (const [wsId, owner] of targets) {
     try {
       const r = await syncCompany(wsId, owner);
@@ -346,7 +347,12 @@ async function cycle() {
     } catch (e) {
       status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;
       console.error(`[argo] 동기화 실패(${wsId}):`, e.message);
+      companyFailed++;
     }
+  }
+  // 모든 회사 동기화 성공 시 스테일 에러 제거 — 회복되면 오래된 에러가 남지 않도록
+  if (companyFailed === 0) {
+    status.lastError = '';
   }
   status.lastTs = Date.now();
 }
