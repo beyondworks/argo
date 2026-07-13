@@ -169,3 +169,20 @@ test('동기화 자격 — env 우선, 파일 폴백, 저장 후 epoch 증가', 
     await assert.rejects(() => saveSyncCreds({ url: 'x', key: '', owner: 'y' }, { root }));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('동기화 자격 — 손상된 파일은 null (경고만, throw 없음)', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-test-'));
+  try {
+    await writeFile(join(root, '.sync-credentials.json'), '이것은 유효한 JSON이 아니다{{{');
+    assert.equal(loadSyncCreds({ root, env: {} }), null);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('동기화 자격 — 존재하지 않는 하위 경로 root에도 저장 성공(mkdir recursive)', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'argo-test-'));
+  const root = join(base, 'nested', 'deeper');
+  try {
+    await saveSyncCreds({ url: 'https://n.supabase.co', key: 'nk', owner: 'no' }, { root });
+    assert.deepEqual(loadSyncCreds({ root, env: {} }), { url: 'https://n.supabase.co', key: 'nk', owner: 'no' });
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
