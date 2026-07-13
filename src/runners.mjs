@@ -2,7 +2,7 @@
 // OAuth 로그인(구독)을 그대로 빌리는 어댑터, GLM은 Anthropic 호환 엔드포인트로 SDK를 태운다.
 // 원칙: Argo가 새 API 키를 보관하지 않는다 — 이미 인증된 도구의 자격을 쓴다(BYOK/BYOA).
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { randomBytes, createHash } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir, tmpdir } from 'node:os';
@@ -268,77 +268,69 @@ export async function startRunnerLogin(runner) {
   }
 }
 
-/* ─── Claude OAuth 웹 브리지 — "버튼 클릭 = 로그인 페이지" (setup-token 대행) ───
-   headless(워커)·로컬 공통: 브라우저는 서버가 아니라 사용자 기기에서 열려야 하므로,
-   CLI(setup-token)가 출력한 인증 URL을 캡처해 UI에 링크로 띄우고, 사용자가 승인 후 받은
-   코드를 UI에 붙여넣으면 stdin으로 전달 → CLI가 발급한 장기 토큰을 회사 자격으로 저장한다.
-   저장된 자격은 암호화 동기화로 전 기기에 전파 — "어디서든 1회" 원칙. 세션은 인메모리(기기당 1개). */
-function claudeCliPath() {
-  const base = join(process.cwd(), 'node_modules', '@anthropic-ai');
-  for (const pkg of [
-    `claude-agent-sdk-${process.platform}-${process.arch}`,
-    `claude-agent-sdk-${process.platform}-${process.arch}-musl`,
-  ]) {
-    const p = join(base, pkg, 'claude');
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
-
-const setupState = (globalThis.__argoClaudeSetup ??= { proc: null, buf: '', url: '', token: '', error: '', done: false });
+/* ─── Claude OAuth 웹 브리지 — "버튼 클릭 = 로그인 페이지" ───
+   setup-token CLI가 내부에서 쓰는 표준 PKCE 플로우를 서버가 직접 수행한다(CLI는 TTY 없이는
+   무출력이라 headless 대행 불가 — 실측). client_id는 Claude Code에 내장된 공개 상수.
+   흐름: 서버가 verifier/challenge 생성 → 인증 URL을 UI에 반환(사용자 기기에서 열림) →
+   승인 후 표시되는 코드(code#state)를 UI에 붙여넣으면 서버가 토큰으로 교환 →
+   장기 토큰(sk-ant-oat…)을 회사 자격으로 저장 → 암호화 동기화로 전 기기 전파. */
+const CLAUDE_OAUTH = {
+  authorize: 'https://claude.ai/oauth/authorize',
+  token: 'https://console.anthropic.com/v1/oauth/token',
+  clientId: '9d1c250a-e61b-44d9-88ed-5944d1962f5e', // Claude Code 공개 클라이언트 id (CLI 내장)
+  redirect: 'https://console.anthropic.com/oauth/code/callback',
+  scopes: 'org:create_api_key user:profile user:inference',
+};
+const setupState = (globalThis.__argoClaudeSetup ??= { verifier: '', ts: 0 });
 
 export async function startClaudeSetup() {
-  const bin = claudeCliPath();
-  if (!bin) return { ok: false, reason: 'no-cli' };
-  try { setupState.proc?.kill(); } catch { /* 이전 세션 없음 */ }
-  Object.assign(setupState, { proc: null, buf: '', url: '', token: '', error: '', done: false });
-  let proc;
-  try {
-    proc = spawn(bin, ['setup-token'], { env: { ...process.env } });
-  } catch (e) {
-    return { ok: false, reason: 'spawn-failed', detail: String(e.message || e).slice(0, 120) };
-  }
-  setupState.proc = proc;
-  const onData = (d) => {
-    setupState.buf += d.toString();
-    if (!setupState.url) {
-      const m = setupState.buf.match(/https:\/\/\S*(oauth|authorize)\S*/i) || setupState.buf.match(/https:\/\/claude\.ai\S+/);
-      if (m) setupState.url = m[0].replace(/[)\]'".,…]+$/, '');
-    }
-    const t = setupState.buf.match(/sk-ant-[A-Za-z0-9_-]{20,}/);
-    if (t) { setupState.token = t[0]; setupState.done = true; }
-  };
-  proc.stdout.on('data', onData);
-  proc.stderr.on('data', onData);
-  proc.on('exit', () => {
-    setupState.done = true;
-    if (!setupState.token && !setupState.error) setupState.error = setupState.buf.slice(-300);
-  });
-  // 인증 URL이 출력될 때까지 대기 (최대 12초 — CLI 기동 포함)
-  for (let i = 0; i < 48 && !setupState.url && !setupState.done; i++) {
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  if (!setupState.url) {
-    return { ok: false, reason: 'no-url', detail: setupState.buf.slice(-200) };
-  }
-  return { ok: true, url: setupState.url };
+  const verifier = randomBytes(32).toString('base64url');
+  const challenge = createHash('sha256').update(verifier).digest('base64url');
+  setupState.verifier = verifier;
+  setupState.ts = Date.now();
+  const u = new URL(CLAUDE_OAUTH.authorize);
+  u.searchParams.set('code', 'true');
+  u.searchParams.set('client_id', CLAUDE_OAUTH.clientId);
+  u.searchParams.set('response_type', 'code');
+  u.searchParams.set('redirect_uri', CLAUDE_OAUTH.redirect);
+  u.searchParams.set('scope', CLAUDE_OAUTH.scopes);
+  u.searchParams.set('code_challenge', challenge);
+  u.searchParams.set('code_challenge_method', 'S256');
+  u.searchParams.set('state', verifier);
+  return { ok: true, url: u.toString() };
 }
 
 export async function submitClaudeSetupCode(wsId, code) {
-  const st = setupState;
-  if (!st.proc || st.proc.exitCode !== null) return { ok: false, reason: 'no-session' };
-  try { st.proc.stdin.write(`${String(code).trim()}\n`); } catch (e) {
-    return { ok: false, reason: 'stdin-failed', detail: String(e.message || e).slice(0, 120) };
+  if (!setupState.verifier) return { ok: false, reason: 'no-session' };
+  if (Date.now() - setupState.ts > 10 * 60_000) return { ok: false, reason: 'expired' }; // 10분 초과 — 다시 시작
+  const [authCode, stateFromCode] = String(code).trim().split('#');
+  let res;
+  try {
+    res = await fetch(CLAUDE_OAUTH.token, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'authorization_code',
+        code: authCode,
+        state: stateFromCode ?? setupState.verifier,
+        client_id: CLAUDE_OAUTH.clientId,
+        redirect_uri: CLAUDE_OAUTH.redirect,
+        code_verifier: setupState.verifier,
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (e) {
+    return { ok: false, reason: 'network', detail: String(e.message || e).slice(0, 120) };
   }
-  for (let i = 0; i < 120 && !st.done; i++) await new Promise((r) => setTimeout(r, 250)); // 최대 30초
-  if (st.token) {
-    await saveRunnerCred(wsId, 'claude', 'oauth', st.token);
-    try { st.proc.kill(); } catch { /* 이미 종료 */ }
-    st.proc = null;
-    st.token = ''; st.buf = ''; // 토큰을 메모리에 남기지 않는다
-    return { ok: true };
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    return { ok: false, reason: 'exchange-failed', detail: `${res.status} ${body.slice(0, 160)}` };
   }
-  return { ok: false, reason: 'no-token', detail: (st.error || st.buf.slice(-200)).slice(0, 200) };
+  const d = await res.json().catch(() => ({}));
+  if (!d.access_token) return { ok: false, reason: 'no-token' };
+  await saveRunnerCred(wsId, 'claude', 'oauth', d.access_token);
+  setupState.verifier = ''; // 세션 종료 — verifier 재사용 금지
+  return { ok: true };
 }
 
 /** OAuth 연결 상태 — 벤더 CLI status를 읽기전용으로 확인(폴링용). */
