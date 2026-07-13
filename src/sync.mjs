@@ -25,14 +25,14 @@ import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, sealSecret, openSecret } from './secretbox.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
+import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 
 const BUCKET = 'companies';
 const CYCLE_MS = 45_000;
 const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다
 
-// 동기화 스위치 — env(자가 호스팅) 또는 페어링 자격 파일. 호출 시점 평가:
-// 페어링으로 자격이 런타임에 생겨도 재시작 없이 ensureSync 재호출로 켤 수 있다.
-export const syncOn = () => !!loadSyncCreds() && process.env.ARGO_SYNC !== '0';
+// 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선.
+export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && process.env.ARGO_SYNC !== '0';
 
 const EXCLUDE = (rel) => {
   // 시크릿 — 봉투 암호화 가능하면 동기화(암호문으로만), 키 없으면 기존대로 제외(기기별 입력)
@@ -41,25 +41,41 @@ const EXCLUDE = (rel) => {
   return (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
     base.startsWith('.gw-queue') || // 디스크 큐(지시 대기) — 로컬 처리 상태, 동기화 대상 아님
-    base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' || base === '.DS_Store' ||
+    base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' ||
+    base === '.device-session.json' || base === '.DS_Store' ||
     base.endsWith('.status.json') || base.endsWith('.lock') ||
     base.startsWith('.tmp-') || base.endsWith('.corrupt') || rel.includes('.corrupt-') // 원자쓰기 임시·손상 백업
   );
 };
 
-let sb = null, sbEpoch = -1;
-const client = () => {
-  if (!sb || sbEpoch !== credsEpoch()) {
-    const { url, key } = loadSyncCreds(); // syncOn() 게이트 뒤에서만 호출됨
-    sb = createClient(url, key, {
-      auth: { persistSession: false },
-      // 타임아웃 필수 — 기본 fetch는 무한 대기라 요청 하나가 걸리면 동기화 전체가 영원히 멈춘다(실측)
-      global: { fetch: (url, opts) => fetch(url, { ...opts, signal: AbortSignal.timeout(30_000) }) },
-    });
-    sbEpoch = credsEpoch();
-  }
-  return sb;
+const CLIENT_OPTS = {
+  auth: { persistSession: false },
+  // 타임아웃 필수 — 기본 fetch는 무한 대기라 요청 하나가 걸리면 동기화 전체가 영원히 멈춘다(실측)
+  global: { fetch: (url, opts) => fetch(url, { ...opts, signal: AbortSignal.timeout(30_000) }) },
 };
+let sb = null, sbKey = '';
+// cycle 시작마다 호출 — 서비스 모드는 epoch, 세션 모드는 access token으로 캐시 키를 삼아
+// 자격 회전 시에만 클라이언트를 재생성한다. false = 쓸 자격 없음(이번 사이클 스킵).
+async function ensureClient() {
+  const svc = loadSyncCreds();
+  if (svc) {
+    const k = `svc:${credsEpoch()}`;
+    if (sbKey !== k) { sb = createClient(svc.url, svc.key, CLIENT_OPTS); sbKey = k; }
+    return true;
+  }
+  const sess = await getFreshDeviceSession();
+  if (!sess) return false;
+  const k = `sess:${sess.access_token.slice(-24)}`;
+  if (sbKey !== k) {
+    sb = createClient(sess.url, sess.anonKey, {
+      ...CLIENT_OPTS,
+      global: { ...CLIENT_OPTS.global, headers: { Authorization: `Bearer ${sess.access_token}` } },
+    });
+    sbKey = k;
+  }
+  return true;
+}
+const client = () => sb; // ensureClient() 성공 뒤에만 호출된다 (cycle/ensureSync 게이트)
 
 // 스토리지 키 — 한글·특수문자 세그먼트는 base64url로(스토리지가 %·비ASCII 키를 거부, 실측).
 // 매니페스트에 논리 경로를 담고 키는 항상 이 함수로 파생하므로 역디코딩은 불필요하다.
@@ -284,7 +300,7 @@ export async function syncCompany(wsId, owner) {
 
 /* ─── 원격 회사 발견 — 내가 책임지는 오너의 회사만. 새 기기가 자기 회사를 복원하는 경로. ─── */
 async function discoverRemote(localOwners) {
-  const fixed = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || null;
+  const fixed = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
   const allow = fixed ? new Set([fixed]) : new Set(localOwners);
   if (allow.size === 0) return []; // 지정 오너도, 로컬 회사도 없으면 발견 안 함(무차별 복제 차단)
   const out = []; // [{ owner, wsId }]
@@ -304,6 +320,7 @@ export function syncStatus() {
 }
 
 async function cycle() {
+  if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; return; }
   // 로컬 회사 수집 (ownerId 있는 것만 — 소유자가 있어야 클라우드에 자리가 있다)
   const targets = new Map(); // wsId → owner
   let entries = [];
@@ -339,9 +356,9 @@ export function ensureSync() {
   if (globalThis.__argoSync) return;
   globalThis.__argoSync = true;
   (async () => {
-    try {
-      await client().storage.createBucket(BUCKET, { public: false });
-    } catch { /* 이미 있음 */ }
+    if (loadSyncCreds()) {
+      try { await ensureClient(); await client().storage.createBucket(BUCKET, { public: false }); } catch { /* 이미 있음 */ }
+    }
     console.log('[argo] 기기 간 동기화 시작 (45s 주기)');
     for (;;) {
       try { await cycle(); } catch (e) { status.lastError = String(e.message).slice(0, 120); }
