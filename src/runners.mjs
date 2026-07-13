@@ -2,6 +2,7 @@
 // OAuth 로그인(구독)을 그대로 빌리는 어댑터, GLM은 Anthropic 호환 엔드포인트로 SDK를 태운다.
 // 원칙: Argo가 새 API 키를 보관하지 않는다 — 이미 인증된 도구의 자격을 쓴다(BYOK/BYOA).
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir, tmpdir } from 'node:os';
@@ -174,7 +175,7 @@ const secretsFile = (wsId) => join(paths(wsId).root, '.secrets.json');
 //   codex만 spawn 가능한 login이 있다. claude는 이 CLI에 login 서브커맨드가 없어(구독은 키체인)
 //   oauthPasteable 토큰 붙여넣기로, gemini는 CLI 설치 후 로그인 안내로 대체한다.
 export const RUNNER_AUTH = {
-  claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPasteable: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', keyUrl: 'https://console.anthropic.com/settings/keys' },
+  claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPasteable: true, webConnect: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', keyUrl: 'https://console.anthropic.com/settings/keys' },
   codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
   gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
@@ -267,6 +268,79 @@ export async function startRunnerLogin(runner) {
   }
 }
 
+/* ─── Claude OAuth 웹 브리지 — "버튼 클릭 = 로그인 페이지" (setup-token 대행) ───
+   headless(워커)·로컬 공통: 브라우저는 서버가 아니라 사용자 기기에서 열려야 하므로,
+   CLI(setup-token)가 출력한 인증 URL을 캡처해 UI에 링크로 띄우고, 사용자가 승인 후 받은
+   코드를 UI에 붙여넣으면 stdin으로 전달 → CLI가 발급한 장기 토큰을 회사 자격으로 저장한다.
+   저장된 자격은 암호화 동기화로 전 기기에 전파 — "어디서든 1회" 원칙. 세션은 인메모리(기기당 1개). */
+function claudeCliPath() {
+  const base = join(process.cwd(), 'node_modules', '@anthropic-ai');
+  for (const pkg of [
+    `claude-agent-sdk-${process.platform}-${process.arch}`,
+    `claude-agent-sdk-${process.platform}-${process.arch}-musl`,
+  ]) {
+    const p = join(base, pkg, 'claude');
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+const setupState = (globalThis.__argoClaudeSetup ??= { proc: null, buf: '', url: '', token: '', error: '', done: false });
+
+export async function startClaudeSetup() {
+  const bin = claudeCliPath();
+  if (!bin) return { ok: false, reason: 'no-cli' };
+  try { setupState.proc?.kill(); } catch { /* 이전 세션 없음 */ }
+  Object.assign(setupState, { proc: null, buf: '', url: '', token: '', error: '', done: false });
+  let proc;
+  try {
+    proc = spawn(bin, ['setup-token'], { env: { ...process.env } });
+  } catch (e) {
+    return { ok: false, reason: 'spawn-failed', detail: String(e.message || e).slice(0, 120) };
+  }
+  setupState.proc = proc;
+  const onData = (d) => {
+    setupState.buf += d.toString();
+    if (!setupState.url) {
+      const m = setupState.buf.match(/https:\/\/\S*(oauth|authorize)\S*/i) || setupState.buf.match(/https:\/\/claude\.ai\S+/);
+      if (m) setupState.url = m[0].replace(/[)\]'".,…]+$/, '');
+    }
+    const t = setupState.buf.match(/sk-ant-[A-Za-z0-9_-]{20,}/);
+    if (t) { setupState.token = t[0]; setupState.done = true; }
+  };
+  proc.stdout.on('data', onData);
+  proc.stderr.on('data', onData);
+  proc.on('exit', () => {
+    setupState.done = true;
+    if (!setupState.token && !setupState.error) setupState.error = setupState.buf.slice(-300);
+  });
+  // 인증 URL이 출력될 때까지 대기 (최대 12초 — CLI 기동 포함)
+  for (let i = 0; i < 48 && !setupState.url && !setupState.done; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  if (!setupState.url) {
+    return { ok: false, reason: 'no-url', detail: setupState.buf.slice(-200) };
+  }
+  return { ok: true, url: setupState.url };
+}
+
+export async function submitClaudeSetupCode(wsId, code) {
+  const st = setupState;
+  if (!st.proc || st.proc.exitCode !== null) return { ok: false, reason: 'no-session' };
+  try { st.proc.stdin.write(`${String(code).trim()}\n`); } catch (e) {
+    return { ok: false, reason: 'stdin-failed', detail: String(e.message || e).slice(0, 120) };
+  }
+  for (let i = 0; i < 120 && !st.done; i++) await new Promise((r) => setTimeout(r, 250)); // 최대 30초
+  if (st.token) {
+    await saveRunnerCred(wsId, 'claude', 'oauth', st.token);
+    try { st.proc.kill(); } catch { /* 이미 종료 */ }
+    st.proc = null;
+    st.token = ''; st.buf = ''; // 토큰을 메모리에 남기지 않는다
+    return { ok: true };
+  }
+  return { ok: false, reason: 'no-token', detail: (st.error || st.buf.slice(-200)).slice(0, 200) };
+}
+
 /** OAuth 연결 상태 — 벤더 CLI status를 읽기전용으로 확인(폴링용). */
 export async function runnerLoginStatus(runner) {
   const c = RUNNER_AUTH[runner]?.connect;
@@ -289,6 +363,7 @@ export async function runnerStatus(wsId) {
       methods: meta.methods,
       oauthPasteable: !!meta.oauthPasteable,
       connectable: !!meta.connect, // Connect 버튼(CLI 브라우저 로그인 대행) 지원 여부 — codex
+      webConnect: !!meta.webConnect, // 웹 브리지(로그인 URL 표시 + 코드 입력) — claude
       keyUrl: meta.keyUrl,
       hostInstalled: host[id]?.installed ?? false,
       hostAuthed: host[id]?.authed ?? false, // 호스트 CLI 로그인/env (OAuth 폴백 경로)

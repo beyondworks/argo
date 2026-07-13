@@ -385,6 +385,38 @@ function RunnerRow({ ws, id, st, onChange, first }) {
   const pollN = useRef(0);        // 폴링 횟수 (최대 60 = 약 2분)
   const alive = useRef(true);     // 언마운트 후 stale setState 차단
 
+  // Claude 웹 브리지 — 버튼 → 로그인 URL 표시 → 승인 코드 제출 → 회사 자격 저장(전 기기 동기화)
+  const [webUrl, setWebUrl] = useState('');
+  const [webCode, setWebCode] = useState('');
+  const [webBusy, setWebBusy] = useState(false);
+  const [webMsg, setWebMsg] = useState('');
+  const [webOk, setWebOk] = useState(false);
+  async function webStart() {
+    setWebBusy(true); setWebMsg(''); setWebOk(false);
+    try {
+      const r = await fetch(`/api/companies/${ws}/keys/connect`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runner: id }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.reason === 'no-cli' ? t('settings.runners.webNoCli') : (d.detail || d.reason || 'failed'));
+      setWebUrl(d.url); setWebOk(true); setWebMsg(t('settings.runners.webUrlReady'));
+    } catch (e) { setWebMsg(String(e.message)); } finally { setWebBusy(false); }
+  }
+  async function webSubmit() {
+    setWebBusy(true); setWebMsg('');
+    try {
+      const r = await fetch(`/api/companies/${ws}/keys/connect`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runner: id, code: webCode.trim() }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.detail || d.reason || 'failed');
+      setWebOk(true); setWebMsg(t('settings.runners.connected'));
+      setWebUrl(''); setWebCode('');
+      window.dispatchEvent(new Event('argo:refresh'));
+      onChange();
+    } catch (e) { setWebOk(false); setWebMsg(String(e.message)); } finally { setWebBusy(false); }
+  }
+
   // 연결/제거로 상태가 바뀌면 선택 방식을 회사 연결 방식에 맞춘다
   useEffect(() => { if (company.connected) setMethod(company.type); }, [company.connected, company.type]);
 
@@ -551,6 +583,33 @@ function RunnerRow({ ws, id, st, onChange, first }) {
         )
       ) : (
         <>
+          {/* Claude OAuth 웹 브리지 — "버튼 클릭 = 로그인 페이지". 워커·로컬 공통, 붙여넣기는 아래 폴백 */}
+          {method === 'oauth' && st?.webConnect && (
+            <div style={{ display: 'grid', gap: 8, padding: '10px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border-soft)' }}>
+              {!webUrl ? (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button className="btn btn-primary sm" disabled={webBusy} onClick={webStart}>
+                    {webBusy ? <Spinner size={12} /> : t('settings.runners.webConnect')}
+                  </button>
+                  <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.webConnectHint')}</span>
+                </div>
+              ) : (
+                <>
+                  <a className="btn btn-primary sm" href={webUrl} target="_blank" rel="noreferrer" style={{ justifySelf: 'start' }}>
+                    {t('settings.runners.openLogin')} ↗
+                  </a>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input suppressHydrationWarning value={webCode} onChange={(e) => setWebCode(e.target.value)}
+                      placeholder={t('settings.runners.codePh')} style={{ ...fieldStyle, flex: 1 }} />
+                    <button className="btn btn-primary sm" disabled={webBusy || !webCode.trim()} onClick={webSubmit} style={{ flex: 'none' }}>
+                      {webBusy ? <Spinner size={12} /> : t('settings.runners.codeSubmit')}
+                    </button>
+                  </div>
+                </>
+              )}
+              {webMsg && <span style={{ fontSize: 12, color: webOk ? 'var(--fg-2)' : 'var(--danger)' }}>{webMsg}</span>}
+            </div>
+          )}
           <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
             placeholder={method === 'oauth' ? t('settings.runners.tokenPlaceholder') : t('settings.runners.keyPlaceholder')} style={fieldStyle} />
           <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>
