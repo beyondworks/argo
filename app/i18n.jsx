@@ -177,6 +177,12 @@ const DICT = {
   'settings.ai.remove': ['키 제거', 'Remove key'],
   'settings.ai.saved': ['저장되었습니다', 'Saved'],
   'settings.ai.verified': ['연결 확인됨', 'Connection verified'],
+  // ── 기기 페어링 — 다른 기기에 연결 코드로 회사(기억·크루·대화) 넘기기
+  'settings.devices.section': ['기기', 'Devices'],
+  'settings.devices.title': ['다른 기기와 연결', 'Link another device'],
+  'settings.devices.desc': ['연결 코드를 만들어 다른 기기의 홈 화면에 붙여넣으면, 이 회사(기억·크루·대화)가 그 기기로 내려갑니다.', 'Create a link code and paste it on another device’s home screen — this company (memory, crews, chats) syncs down there.'],
+  'settings.devices.generate': ['연결 코드 만들기', 'Create link code'],
+  'settings.devices.warn': ['이 코드는 비밀번호와 같습니다 — 붙여넣은 뒤 어디에도 남기지 마세요.', 'Treat this code like a password — do not leave it anywhere after pasting.'],
   // ── 러너 연결 관리자 (4러너 × API키/OAuth)
   'settings.runners.title': ['러너 연결', 'Runner connections'],
   'settings.runners.help': ['크루의 두뇌 엔진을 회사 계정에 연결합니다. 러너마다 API 키를 넣거나, OAuth(구독)로 연결하세요. 연결하지 않으면 이 컴퓨터에 로그인된 자격을 대신 씁니다.', 'Connect each crew brain engine to this company. Add an API key per runner, or connect with OAuth (subscription). Without a connection, crews fall back to the credentials signed in on this computer.'],

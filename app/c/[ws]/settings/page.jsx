@@ -127,6 +127,10 @@ export default function Settings({ params }) {
         <AiConnectionCard ws={ws} />
       </Section>
 
+      <Section label={t('settings.devices.section')}>
+        <DevicesCard ws={ws} />
+      </Section>
+
       <Section label={t('settings.capabilities')}>
         <CapabilitiesCard ws={ws} />
       </Section>
@@ -844,6 +848,48 @@ function SyncCard({ ws }) {
       ) : (
         <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offHelp')}</p>
       )}
+    </div>
+  );
+}
+
+/** 기기 페어링 카드 — 연결 코드를 발급해 다른 기기 홈 화면에 붙여넣으면 이 회사가 그 기기로 내려간다. */
+function DevicesCard({ ws }) {
+  const { t } = useLang();
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  async function generate() {
+    setBusy(true); setError(''); setCopied(false);
+    try { setCode((await api(`/api/companies/${ws}/devices`, {})).code); }
+    catch (e) { setError(String(e.message)); }
+    setBusy(false);
+  }
+
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span className="card-title">{t('settings.devices.title')}</span>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>{t('settings.devices.desc')}</p>
+      {!code ? (
+        <button type="button" className="btn btn-primary sm" onClick={generate} disabled={busy} style={{ alignSelf: 'flex-start' }}>
+          {busy ? <Spinner size={12} /> : null}{t('settings.devices.generate')}
+        </button>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--fg-2)', wordBreak: 'break-all' }}>
+              {code.slice(0, 26)}…{code.slice(-6)}
+            </span>
+            <button type="button" className="btn sm"
+              onClick={() => { navigator.clipboard?.writeText(code).catch(() => {}); setCopied(true); }}>
+              {copied ? '✓' : t('common.copy')}
+            </button>
+          </div>
+          <p style={{ fontSize: 11.5, color: 'var(--warn, var(--fg-2))' }}>{t('settings.devices.warn')}</p>
+        </>
+      )}
+      {error && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</p>}
     </div>
   );
 }
