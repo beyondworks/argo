@@ -1,26 +1,32 @@
 // 시크릿 봉투 암호화 — 동기화로 흐르는 크레덴셜(봇 토큰·러너 키)은 스토리지에 항상 암호문으로만 놓인다.
-// 키는 양쪽 기기(로컬 상주·클라우드 워커)가 이미 공유한 SUPABASE_SERVICE_ROLE_KEY에서 HKDF로 파생 —
-// 새 비밀을 만들지 않으면서, 스토리지가 유출돼도 평문 크레덴셜은 노출되지 않는다.
+// 키는 양쪽 기기(로컬 상주·클라우드 워커)가 이미 공유한 SUPABASE_SERVICE_ROLE_KEY에서 HKDF로 파생
+// (페어링 기기는 자격 파일의 동일 키) — 새 비밀을 만들지 않으면서, 스토리지가 유출돼도 평문
+// 크레덴셜은 노출되지 않는다.
 // (패키징 앱 등 서비스 키 없는 환경은 CRYPTO_ON=false — 시크릿은 기존대로 동기화 제외, 기기별 입력)
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
+import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 
 const MAGIC = Buffer.from('argosecret.v1:');
 const IV_LEN = 12;
 const TAG_LEN = 16;
 
-// 호출 시점 평가 — 테스트·런타임에서 env 주입 순서에 안전
-export const cryptoOn = () => !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+// 호출 시점 평가 — env(자가 호스팅) 또는 페어링 자격 파일의 서비스 키. 테스트·런타임 주입 순서에 안전.
+const serviceKey = () => process.env.SUPABASE_SERVICE_ROLE_KEY || loadSyncCreds()?.key || null;
+export const cryptoOn = () => !!serviceKey();
 
-let cachedKey = null;
+let cachedKey = null, keyEpoch = -1;
 function key() {
-  if (!cryptoOn()) throw new Error('시크릿 암호화 키 없음 (SUPABASE_SERVICE_ROLE_KEY)');
-  cachedKey ??= Buffer.from(hkdfSync(
-    'sha256',
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
-    'argo-secret-sync-v1', // salt — 용도 고정
-    'secretbox',           // info
-    32,
-  ));
+  const sk = serviceKey();
+  if (!sk) throw new Error('시크릿 암호화 키 없음 (SUPABASE_SERVICE_ROLE_KEY)');
+  if (!cachedKey || keyEpoch !== credsEpoch()) {
+    cachedKey = Buffer.from(hkdfSync(
+      'sha256', sk,
+      'argo-secret-sync-v1', // salt — 용도 고정
+      'secretbox',           // info
+      32,
+    ));
+    keyEpoch = credsEpoch();
+  }
   return cachedKey;
 }
 

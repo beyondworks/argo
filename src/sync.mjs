@@ -24,16 +24,15 @@ import { WS_ROOT, paths } from './workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, sealSecret, openSecret } from './secretbox.mjs';
+import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 
 const BUCKET = 'companies';
 const CYCLE_MS = 45_000;
 const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다
 
-export const SYNC_ON = !!(
-  process.env.NEXT_PUBLIC_SUPABASE_URL &&
-  process.env.SUPABASE_SERVICE_ROLE_KEY &&
-  process.env.ARGO_SYNC !== '0'
-);
+// 동기화 스위치 — env(자가 호스팅) 또는 페어링 자격 파일. 호출 시점 평가:
+// 페어링으로 자격이 런타임에 생겨도 재시작 없이 ensureSync 재호출로 켤 수 있다.
+export const syncOn = () => !!loadSyncCreds() && process.env.ARGO_SYNC !== '0';
 
 const EXCLUDE = (rel) => {
   // 시크릿 — 봉투 암호화 가능하면 동기화(암호문으로만), 키 없으면 기존대로 제외(기기별 입력)
@@ -42,22 +41,25 @@ const EXCLUDE = (rel) => {
   return (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
     base.startsWith('.gw-queue') || // 디스크 큐(지시 대기) — 로컬 처리 상태, 동기화 대상 아님
-    base === '.sync-state.json' || base === '.device-id' || base === '.DS_Store' ||
+    base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' || base === '.DS_Store' ||
     base.endsWith('.status.json') || base.endsWith('.lock') ||
     base.startsWith('.tmp-') || base.endsWith('.corrupt') || rel.includes('.corrupt-') // 원자쓰기 임시·손상 백업
   );
 };
 
-let sb = null;
-const client = () => (sb ??= createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  {
-    auth: { persistSession: false },
-    // 타임아웃 필수 — 기본 fetch는 무한 대기라 요청 하나가 걸리면 동기화 전체가 영원히 멈춘다(실측)
-    global: { fetch: (url, opts) => fetch(url, { ...opts, signal: AbortSignal.timeout(30_000) }) },
-  },
-));
+let sb = null, sbEpoch = -1;
+const client = () => {
+  if (!sb || sbEpoch !== credsEpoch()) {
+    const { url, key } = loadSyncCreds(); // syncOn() 게이트 뒤에서만 호출됨
+    sb = createClient(url, key, {
+      auth: { persistSession: false },
+      // 타임아웃 필수 — 기본 fetch는 무한 대기라 요청 하나가 걸리면 동기화 전체가 영원히 멈춘다(실측)
+      global: { fetch: (url, opts) => fetch(url, { ...opts, signal: AbortSignal.timeout(30_000) }) },
+    });
+    sbEpoch = credsEpoch();
+  }
+  return sb;
+};
 
 // 스토리지 키 — 한글·특수문자 세그먼트는 base64url로(스토리지가 %·비ASCII 키를 거부, 실측).
 // 매니페스트에 논리 경로를 담고 키는 항상 이 함수로 파생하므로 역디코딩은 불필요하다.
@@ -83,7 +85,7 @@ async function getDeviceId() {
    상태는 globalThis에 — Next가 라우트/instrumentation을 별도 번들로 복제해도 하나를 본다. */
 const leaseState = (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0 }); // off면 항상 리더(단일 기기)
 export function isCloudLeader() {
-  return !SYNC_ON || leaseState.leader;
+  return !syncOn() || leaseState.leader;
 }
 
 async function renewLease(owner) {
@@ -277,13 +279,13 @@ export async function syncCompany(wsId, owner) {
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.
-// ARGO_SYNC_OWNER(설치 시 지정한 소유자 id) 있으면 그것만. 없으면 로컬에 이미 있는 오너만
-// (버킷 전체를 무차별 순회해 남의 테넌트를 로컬로 빨아들이지 않는다 — 감사 지적).
-const SYNC_OWNER = process.env.ARGO_SYNC_OWNER || null;
+// ARGO_SYNC_OWNER(설치 시 지정한 소유자 id) 또는 페어링 자격의 owner 있으면 그것만. 없으면 로컬에 이미
+// 있는 오너만 (버킷 전체를 무차별 순회해 남의 테넌트를 로컬로 빨아들이지 않는다 — 감사 지적).
 
 /* ─── 원격 회사 발견 — 내가 책임지는 오너의 회사만. 새 기기가 자기 회사를 복원하는 경로. ─── */
 async function discoverRemote(localOwners) {
-  const allow = SYNC_OWNER ? new Set([SYNC_OWNER]) : new Set(localOwners);
+  const fixed = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || null;
+  const allow = fixed ? new Set([fixed]) : new Set(localOwners);
   if (allow.size === 0) return []; // 지정 오너도, 로컬 회사도 없으면 발견 안 함(무차별 복제 차단)
   const out = []; // [{ owner, wsId }]
   for (const owner of allow) {
@@ -296,9 +298,9 @@ async function discoverRemote(localOwners) {
 }
 
 /* ─── 상주 루프 ─── */
-const status = (globalThis.__argoSyncStatus ??= { on: SYNC_ON, lastTs: null, lastError: '', companies: {} });
+const status = (globalThis.__argoSyncStatus ??= { lastTs: null, lastError: '', companies: {} });
 export function syncStatus() {
-  return { ...status, leader: isCloudLeader(), companies: { ...status.companies } };
+  return { ...status, on: syncOn(), leader: isCloudLeader(), companies: { ...status.companies } };
 }
 
 async function cycle() {
@@ -333,7 +335,7 @@ async function cycle() {
 }
 
 export function ensureSync() {
-  if (!SYNC_ON) return;
+  if (!syncOn()) return;
   if (globalThis.__argoSync) return;
   globalThis.__argoSync = true;
   (async () => {

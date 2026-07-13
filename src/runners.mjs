@@ -167,7 +167,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
 
 // ── 회사별 러너 자격(BYOK/BYOA) — 일반 사용자가 호스트 CLI 로그인 없이도 어떤 러너든 굴리게 한다.
 // 회사 루트 .secrets.json의 runners.{id} = { type:'apikey'|'oauth', value } 에 보관.
-// 시크릿이므로 (a) API 응답·로그엔 마스킹만, (b) 동기화 제외(sync EXCLUDE에 .secrets.json 포함됨).
+// 시크릿이므로 (a) API 응답·로그엔 마스킹만, (b) cryptoOn이면 봉투 암호문으로 동기화됨(secretbox).
 const secretsFile = (wsId) => join(paths(wsId).root, '.secrets.json');
 
 // 러너별 지원 인증 방식. apikey=붙여넣기(4러너 공통), oauth=붙여넣기 토큰(claude) 또는 호스트 로그인(codex/gemini).
