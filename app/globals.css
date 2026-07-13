@@ -831,69 +831,24 @@
 :root[data-theme='swiss'] .card,
 :root[data-theme='swiss-dark'] .card {
   background: transparent;
-  /* 가로선만 — 바깥 세로 변 없음(Energy University 문법). 세로선은 컬럼 분할선만 따로 긋는다 */
   border: 0;
-  border-top: 1.5px solid var(--fg);
-  border-bottom: 1.5px solid var(--fg);
+  /* 선 굵기 위계 — 섹션 시작은 굵은 잉크 바(Wästberg 문법). 행·중첩 구간은 아래에서 헤어라인으로 */
+  border-top: 2px solid var(--fg);
   border-radius: 0;
   box-shadow: none;
 }
-/* 중첩 카드(카드 안 카드 = 행·컬럼·패널)는 헤어라인 */
+/* 중첩 카드(카드 안 카드 = 행·컬럼·패널)는 헤어라인 — 굵은 바는 최상위 섹션에만 */
 :root[data-theme='swiss'] .card .card,
 :root[data-theme='swiss-dark'] .card .card {
-  border-width: 1px;
-  border-color: var(--border);
+  border-top-width: 1px;
+  border-top-color: var(--border);
 }
-/* 나란한 셀 사이 세로 분할선 — 프레임이 아니라 분할선만 */
-:root[data-theme='swiss'] .grid-cells > .card + .card,
-:root[data-theme='swiss-dark'] .grid-cells > .card + .card {
-  border-left: 1.5px solid var(--fg);
-}
-/* 전폭 블리드 — 가로선이 콘텐츠 패딩을 뚫고 좌우 끝까지 달린다 */
-:root[data-theme='swiss'] .content,
-:root[data-theme='swiss-dark'] .content {
-  padding-left: 0;
-  padding-right: 0;
-}
-:root[data-theme='swiss'] .page-head,
-:root[data-theme='swiss-dark'] .page-head {
-  padding-left: 18px;
-  padding-right: 18px;
-}
-/* 격자 붕괴 — 셀들이 간격 없이 맞붙어 선을 공유한다(Female Faces/신문 조판 문법). 틈 금지.
-   인라인 gap은 !important로만 이긴다 — 스위스 테마 한정 의도적 사용 */
-:root[data-theme='swiss'] .page-root,
-:root[data-theme='swiss-dark'] .page-root { gap: 0 !important; }
-:root[data-theme='swiss'] .page-head,
-:root[data-theme='swiss-dark'] .page-head { margin-bottom: 0; }
-:root[data-theme='swiss'] .deck-grid,
-:root[data-theme='swiss-dark'] .deck-grid { gap: 0 !important; }
-:root[data-theme='swiss'] .deck-main,
-:root[data-theme='swiss-dark'] .deck-main,
-:root[data-theme='swiss'] .deck-rail,
-:root[data-theme='swiss-dark'] .deck-rail,
-:root[data-theme='swiss'] .grid-cells,
-:root[data-theme='swiss-dark'] .grid-cells { gap: 0 !important; }
-:root[data-theme='swiss'] .deck-main > .card,
-:root[data-theme='swiss-dark'] .deck-main > .card,
-:root[data-theme='swiss'] .deck-rail > .card,
-:root[data-theme='swiss-dark'] .deck-rail > .card { margin-top: -1.5px; }
-:root[data-theme='swiss'] .grid-cells > .card,
-:root[data-theme='swiss-dark'] .grid-cells > .card { margin-top: -1.5px; margin-left: -1.5px; }
-:root[data-theme='swiss'] .deck-rail,
-:root[data-theme='swiss-dark'] .deck-rail {
-  margin-left: -1.5px;
-  align-self: stretch;
-  align-content: start;
-  border-left: 1.5px solid var(--fg); /* 본문↔레일 컬럼 분할선 — 카드 세로변 대신 컬럼에 연속선 */
-}
-/* 선이 얇아진 만큼 제목이 위계를 진다 — 대문자 디스플레이 제목(IDENTIFONT 문법) */
+/* 선이 얇아진 만큼 제목이 위계를 진다 — 섹션 제목 강화 */
 :root[data-theme='swiss'] .card-title,
 :root[data-theme='swiss-dark'] .card-title {
   font-size: 14.5px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+  font-weight: 750;
+  letter-spacing: -0.01em;
 }
 /* 선의 연결 — 스위스 그리드의 선은 끊기지 않고 만난다(T자 교차).
    ① 페이지 헤더 아래 전폭 가로 괘선 ② 본문↔레일 사이 세로 괘선(가장 긴 컬럼에 부착, gap 중앙 배치) */
@@ -902,12 +857,19 @@
   border-bottom: 1px solid var(--border);
   padding-bottom: 10px;
 }
-/* (deck 세로선은 셀 격자의 공유 보더가 대신한다 — deck-rail margin-left 참조) */
+@media (min-width: 1341px) { /* deck-grid가 1열로 접히는 폭에서는 세로선 제거 */
+  :root[data-theme='swiss'] .deck-grid > :first-child,
+  :root[data-theme='swiss-dark'] .deck-grid > :first-child {
+    border-right: 1px solid var(--border);
+    margin-right: -8px;
+    padding-right: 8px;
+  }
+}
 :root[data-theme='swiss'] .side-rail + *,
 :root[data-theme='swiss-dark'] .side-rail + * {
   border-left: 1px solid var(--border);
   margin-left: -9px;
-  padding-left: 0; /* 카드 가로선이 레일 분할선에 닿는다(교차) */
+  padding-left: 9px;
 }
 :root[data-theme='swiss'] .card-float,
 :root[data-theme='swiss-dark'] .card-float,
