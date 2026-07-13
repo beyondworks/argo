@@ -3,9 +3,10 @@
 // 채택된 시안만 승자 크루의 스레드에 기록으로 편입된다(기억이 되는 건 채택본뿐).
 import { mkdir, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { paths } from './workspace.mjs';
+import { paths, loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
 import { chat } from './chat.mjs';
+import { monthCost } from './usage.mjs';
 import { appendTurn } from './thread.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
@@ -54,6 +55,15 @@ export async function startCompetition(wsId, prompt, slugs) {
   const uniq = [...new Set((slugs ?? []).map(String))];
   if (uniq.length < MIN_ENTRANTS || uniq.length > MAX_ENTRANTS) {
     throw new Error(`크루 ${MIN_ENTRANTS}~${MAX_ENTRANTS}명을 선택해 주세요`);
+  }
+  // 예산 사전 게이트 — N명이 동시에 발화하면 chat()의 개별 게이트는 같은 지출액을 읽어
+  // 전원 통과할 수 있다(TOCTOU). 개설 시점에 1회 점검해 임계 초과 폭을 줄인다(폭주 통제).
+  const { budgetUsd } = await loadCompany(wsId).catch(() => ({}));
+  if (budgetUsd > 0) {
+    const spent = await monthCost(wsId);
+    if (spent >= budgetUsd) {
+      throw new Error(`월 예산 초과: $${spent.toFixed(2)} / $${budgetUsd} — 설정에서 예산을 올리거나 다음 달을 기다려 주세요`);
+    }
   }
   const agents = await listAgents(wsId);
   const entrants = uniq.map((slug) => {

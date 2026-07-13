@@ -5,12 +5,13 @@ import { appendFile, readFile } from 'node:fs/promises';
 import { paths } from './workspace.mjs';
 
 /** SDK result 메시지의 usage를 한 줄로 기록. kind: 'chat' | 'hire' | 'delegate'(from=위임한 크루). */
-export async function appendUsage(wsId, { kind, slug, from, model, usage, costUsd, ms, tools }) {
+export async function appendUsage(wsId, { kind, slug, from, runner, model, usage, costUsd, ms, tools }) {
   if (!usage) return;
   const row = {
     ts: new Date().toISOString(),
     kind, slug: slug ?? '',
     ...(from ? { from } : {}),
+    ...(runner ? { runner } : {}), // 러너 명시 기록 — 모델명 파싱 대신 이 값이 정본
     ...(model ? { model } : {}),
     input: usage.input_tokens ?? 0,
     output: usage.output_tokens ?? 0,
@@ -126,7 +127,9 @@ export async function monthCostByRunner(wsId) {
   for (const r of await readRows(wsId)) {
     if (!r.ts?.startsWith(month)) continue;
     const m = String(r.model ?? '');
-    const runner = m.includes(':') ? m.split(':')[0]
+    // 명시 runner 필드 우선(정본) — 없는 구행만 모델명에서 도출(폴백)
+    const runner = r.runner ? String(r.runner)
+      : m.includes(':') ? m.split(':')[0]
       : /^glm/i.test(m) ? 'glm'
       : 'claude';
     const b = (by[runner] ??= { turns: 0, costUsd: 0, hasCost: false });
