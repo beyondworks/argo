@@ -308,6 +308,12 @@ const DICT = {
   'home.createdSuffix': [' 생성', ''],
   'home.memoryCount': ['기억 {n}', 'Memory {n}'],
   'home.footer': ['Argo — 전문성이 다른 크루가 한 배를 타고, 같은 목표를 향해 갑니다.', 'Argo — crew of different expertise, one ship, one destination.'],
+  'home.pair.title': ['다른 기기에서 가져오기', 'Bring from another device'],
+  'home.pair.desc': ['기존 기기의 설정 → 기기에서 연결 코드를 만들어 여기 붙여넣으세요.', 'Create a link code in Settings → Devices on your other device and paste it here.'],
+  'home.pair.placeholder': ['연결 코드 붙여넣기 (argo-pair.v1.…)', 'Paste link code (argo-pair.v1.…)'],
+  'home.pair.btn': ['연결', 'Link'],
+  'home.pair.waiting': ['회사 수신 중 — 잠시 후 위 목록에 나타납니다', 'Receiving your companies — they will appear above shortly'],
+  'home.pair.done': ['수신 완료', 'Received'],
 
   // ── 사이드바 추가
   'nav.uncrewedCount': ['크루 {n}', 'Crew {n}'],

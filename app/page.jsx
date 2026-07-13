@@ -1,6 +1,6 @@
 'use client';
 // 홈 — 회사 목록과 생성. 계기판 톤의 조용한 온보딩.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Logo, Icon, Avatar, Spinner, Skeleton, api, imeGuard, timeAgo } from './ui';
 import { useLang } from './i18n';
@@ -14,10 +14,17 @@ export default function Home() {
   const [preset, setPreset] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  const [pairCode, setPairCode] = useState('');
+  const [pairState, setPairState] = useState(''); // '' | 'waiting' | 'done'
+  const [pairError, setPairError] = useState('');
+  const pairPollRef = useRef(null); // 폴링 setInterval — 언마운트 시 정리해 누수 방지
 
   useEffect(() => {
     api('/api/companies').then((d) => { setCompanies(d.companies); setPresets(d.presets ?? []); }).catch((e) => setError(String(e.message)));
   }, []);
+
+  // 컴포넌트 언마운트(회사 생성으로 페이지 이탈 등) 시 폴링 interval 누수 방지 — 브리프 코드에 없던 보강
+  useEffect(() => () => { if (pairPollRef.current) clearInterval(pairPollRef.current); }, []);
 
   async function create(e) {
     e.preventDefault();
@@ -30,6 +37,25 @@ export default function Home() {
     } catch (err) {
       setError(String(err.message)); setCreating(false);
     }
+  }
+
+  async function pair(e) {
+    e.preventDefault();
+    if (!pairCode.trim() || pairState === 'waiting') return;
+    setPairError('');
+    try {
+      await api('/api/pair/accept', { code: pairCode.trim() });
+      setPairState('waiting'); setPairCode('');
+      // 동기화 첫 사이클이 회사를 내려줄 때까지 폴링 (2초 × 최대 60회 — RunnerRow 관례)
+      let n = 0;
+      pairPollRef.current = setInterval(async () => {
+        try {
+          const d = await api('/api/companies');
+          if (d.companies.length > 0) { setCompanies(d.companies); setPairState('done'); clearInterval(pairPollRef.current); pairPollRef.current = null; }
+        } catch { /* 다음 틱 재시도 */ }
+        if (++n >= 60) { clearInterval(pairPollRef.current); pairPollRef.current = null; }
+      }, 2000);
+    } catch (err) { setPairError(String(err.message)); }
   }
 
   return (
@@ -116,6 +142,25 @@ export default function Home() {
               ))}
             </div>
           )}
+        </section>
+
+        {/* M-1 페어링 — 다른 기기의 회사를 연결 코드로 가져온다 (회사가 이미 있어도 추가 연결 가능) */}
+        <section style={{ marginTop: 34 }}>
+          <div className="microlabel" style={{ marginBottom: 8 }}>{t('home.pair.title')}</div>
+          <p style={{ fontSize: 12.5, color: 'var(--fg-2)', marginBottom: 10 }}>{t('home.pair.desc')}</p>
+          {pairState === 'waiting' ? (
+            <p style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={13} />{t('home.pair.waiting')}</p>
+          ) : pairState === 'done' ? (
+            <p style={{ fontSize: 13, color: 'var(--fg-2)' }}>{t('home.pair.done')}</p>
+          ) : (
+            <form onSubmit={pair} className="input-bar">
+              <input suppressHydrationWarning className="mono" style={{ fontSize: 12 }}
+                placeholder={t('home.pair.placeholder')}
+                value={pairCode} onChange={(e) => setPairCode(e.target.value)} {...imeGuard} />
+              <button className="btn" disabled={!pairCode.trim()}>{t('home.pair.btn')}</button>
+            </form>
+          )}
+          {pairError && <p style={{ color: 'var(--danger)', marginTop: 8, fontSize: 12.5 }}>{pairError}</p>}
         </section>
 
         <footer className="microlabel" style={{ marginTop: 70 }}>
