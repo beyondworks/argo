@@ -39,11 +39,12 @@ curl -s -o /dev/null -w "%{http_code}\n" https://argo-worker.fly.dev/login   # 2
 fly logs --app argo-worker | head    # 부팅 로그 — 게이트웨이/스케줄러 기동 확인
 ```
 
-## 5. 텔레그램 (1회 수동)
+## 5. 텔레그램·러너 크레덴셜 — 자동 동기화 (봉투 암호화)
 
-크레덴셜은 동기화 제외라 워커에 자동으로 넘어가지 않는다(의도된 격리).
-워커 웹 UI(`https://argo-worker.fly.dev`) 로그인 → 설정 → 연결에서 봇 토큰을 1회 입력하면
-워커 볼륨(/data)에만 저장된다. 러너도 같은 방식(API 키 경로 — Connect 버튼은 로컬 전용).
+크레덴셜(connections.json·.secrets.json)은 **어느 기기에서든 1회만 입력**하면 동기화로 전 기기에
+흐른다. 스토리지엔 항상 암호문(secretbox — AES-256-GCM, 키는 SUPABASE_SERVICE_ROLE_KEY에서
+HKDF 파생)으로만 놓인다. 서비스 키 없는 환경(순수 로컬)은 기존대로 동기화 제외·기기별 입력.
+러너 OAuth Connect 버튼만 로컬 전용(CLI 대행) — 워커에선 API 키 경로 또는 동기화된 키를 쓴다.
 
 ## 6. E2E 판정전 — "부재 중 대리 근무"
 
