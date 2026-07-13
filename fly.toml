@@ -1,6 +1,6 @@
 # Argo 클라우드 워커 — 부재 중 대리 근무자(리더 승계). 인스턴스 1대 = 계정 1개.
 # 배포 절차·시크릿 이름: docs/deploy-fly.md (값 평문 금지 — fly secrets로만)
-app = "argo-worker"
+app = "argo-worker-lean"
 primary_region = "nrt" # 도쿄 — 한국에서 최저 지연
 
 [env]
