@@ -37,6 +37,7 @@ export default function CrewChat({ params }) {
   }, [ws, slug]);
   useEffect(loadSessions, [loadSessions]);
   async function openSession(id) {
+    resetAnnot(); // 세션을 오가며 빨간펜 상태가 다른 메시지에 유령으로 남지 않게
     if (!id) { setViewing(null); setArchMsgs(null); return; }
     try {
       const d = await api(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}&id=${encodeURIComponent(id)}`);
@@ -226,12 +227,38 @@ export default function CrewChat({ params }) {
     }).catch(() => {});
   }
 
+  // 부분 코멘트(빨간펜) — 답변에서 고칠 부분을 드래그로 인용하고, 코멘트를 모아 묶음 수정 지시로 보낸다.
+  // "전체 다시 써" 대신 "여기 이 문장만" — 상사가 보고서에 빨간펜 긋는 방식 그대로.
+  const [annotIdx, setAnnotIdx] = useState(null);   // 코멘트 다는 중인 답변 index
+  const [annotItems, setAnnotItems] = useState([]); // [{quote, note}]
+  const [pendQuote, setPendQuote] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
+  function resetAnnot() { setAnnotIdx(null); setAnnotItems([]); setPendQuote(''); setNoteDraft(''); }
+  function toggleAnnot(i) { annotIdx === i ? resetAnnot() : (resetAnnot(), setAnnotIdx(i)); }
+  function captureQuote() {
+    const sel = String(window.getSelection?.() ?? '').replace(/\s+/g, ' ').trim();
+    if (sel) setPendQuote(sel.slice(0, 240));
+  }
+  function addAnnot() {
+    if (!pendQuote || !noteDraft.trim()) return;
+    setAnnotItems((cur) => [...cur, { quote: pendQuote, note: noteDraft.trim() }].slice(0, 8));
+    setPendQuote(''); setNoteDraft('');
+    window.getSelection?.()?.removeAllRanges?.();
+  }
+  async function sendAnnots() {
+    if (!annotItems.length || busy) return;
+    const body = annotItems.map((a, j) => `${j + 1}. "${a.quote}"\n   → ${a.note}`).join('\n\n');
+    const message = `${t('chat.annotate.msgHead')}\n\n${body}`;
+    resetAnnot();
+    await sendMessage(message);
+  }
+
   async function newChat() {
     if (busy) return;
     if (!window.confirm(t('chat.newChatConfirm'))) return;
     await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
     setThread([]); sessionRef.current = null; setError('');
-    setViewing(null); setArchMsgs(null);
+    setViewing(null); setArchMsgs(null); resetAnnot();
     loadSessions(); // 방금 넘긴 대화가 좌측 레일에 적재된다
   }
 
@@ -316,7 +343,8 @@ export default function CrewChat({ params }) {
             <div key={i} className="msg-crew fade-up">
               <Avatar name={agent?.name} sm />
               <div className="msg-wrap">
-                <div className="card" style={{ minWidth: 0, padding: '13px 16px' }}>
+                <div className="card" style={{ minWidth: 0, padding: '13px 16px', ...(annotIdx === i ? { borderColor: 'var(--primary)', cursor: 'text' } : {}) }}
+                  onMouseUp={annotIdx === i ? captureQuote : undefined}>
                   <Markdown text={m.text} />
                   {m.handover && (
                     <a className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
@@ -328,7 +356,50 @@ export default function CrewChat({ params }) {
                 </div>
                 <div className="msg-actions">
                   <button type="button" onClick={() => copyMsg(i, m.text)}>{copied === i ? t('chat.copied') : t('chat.copy')}</button>
+                  {!viewing && (
+                    <button type="button" disabled={busy} onClick={() => toggleAnnot(i)}>
+                      {annotIdx === i ? t('common.cancel') : t('chat.annotate')}
+                    </button>
+                  )}
                 </div>
+                {/* 부분 코멘트 패널 — 인용 수집 + 묶음 전송 */}
+                {!viewing && annotIdx === i && (
+                  <div className="card fade-up" style={{ padding: '12px 14px', display: 'grid', gap: 9, borderColor: 'var(--primary)', minWidth: 0 }}>
+                    <span className="microlabel">{t('chat.annotate.title')}</span>
+                    {annotItems.map((a, j) => (
+                      <div key={j} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5 }}>
+                        <span style={{ flex: 'none', fontWeight: 700, color: 'var(--primary-strong)' }}>{j + 1}</span>
+                        <span style={{ minWidth: 0, flex: 1 }}>
+                          <span style={{ display: 'block', color: 'var(--fg-2)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{a.quote}"</span>
+                          <span style={{ display: 'block' }}>→ {a.note}</span>
+                        </span>
+                        <button type="button" className="btn sm" style={{ flex: 'none' }} aria-label={t('common.cancel')}
+                          onClick={() => setAnnotItems((c) => c.filter((_, k) => k !== j))}>✕</button>
+                      </div>
+                    ))}
+                    {pendQuote ? (
+                      <div style={{ display: 'grid', gap: 6 }}>
+                        <span style={{ fontSize: 12, color: 'var(--fg-2)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{pendQuote}"</span>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <input suppressHydrationWarning autoFocus
+                            value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)}
+                            placeholder={t('chat.annotate.notePh')}
+                            onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); addAnnot(); } }}
+                            style={{ flex: 1, minWidth: 0, background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '7px 10px', fontSize: 12.5, outline: 'none' }} />
+                          <button type="button" className="btn sm" disabled={!noteDraft.trim()} onClick={addAnnot}>{t('chat.annotate.add')}</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('chat.annotate.hint')}</p>
+                    )}
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button type="button" className="btn btn-primary sm" disabled={busy || !annotItems.length} onClick={sendAnnots}>
+                        {t('chat.annotate.send', { n: annotItems.length })}
+                      </button>
+                      <button type="button" className="btn sm" onClick={resetAnnot}>{t('common.cancel')}</button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )

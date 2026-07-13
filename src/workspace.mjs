@@ -29,6 +29,7 @@ export function paths(wsId) {
     mcp: join(root, 'mcp.json'),
     usage: join(root, 'usage.jsonl'),
     approvals: join(root, 'approvals.json'),
+    competitions: join(root, 'competitions'), // 경쟁 시안 — 같은 지시 N명 병렬 시안 기록
     connections: join(root, 'connections.json'),
     capabilities: join(root, 'capabilities.json'),
     vault: join(root, 'vault'),

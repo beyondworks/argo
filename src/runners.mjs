@@ -8,6 +8,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { paths } from './workspace.mjs';
+import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 
 const execP = promisify(execFile);
 const exists = (p) => access(p).then(() => true, () => false);
@@ -279,10 +280,12 @@ export async function runnerLoginStatus(runner) {
 export async function runnerStatus(wsId) {
   const host = await detectRunners();
   const secrets = await loadSecrets(wsId);
+  const usage = await monthCostByRunner(wsId).catch(() => ({})); // 표시용 — 실패해도 상태를 막지 않는다
   const out = {};
   for (const [id, meta] of Object.entries(RUNNER_AUTH)) {
     const cred = secrets.runners?.[id];
     out[id] = {
+      month: usage[id] ?? null, // 이번 달 사용량(턴·비용) — 러너 카드에 "보이는 상태"
       methods: meta.methods,
       oauthPasteable: !!meta.oauthPasteable,
       connectable: !!meta.connect, // Connect 버튼(CLI 브라우저 로그인 대행) 지원 여부 — codex

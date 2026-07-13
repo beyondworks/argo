@@ -118,6 +118,24 @@ export async function monthCostByCrew(wsId) {
   return Object.values(by).sort((a, b) => b.costUsd - a.costUsd);
 }
 
+/** 이번 달 러너별 사용량 — 설정 러너 카드 표시용. 러너는 기록된 모델명에서 도출한다
+    (외부 CLI는 'codex:모델'로 기록, GLM은 SDK 경유라 모델명이 glm-*, 그 외·미기록은 기본 러너 claude). */
+export async function monthCostByRunner(wsId) {
+  const month = new Date().toISOString().slice(0, 7);
+  const by = {};
+  for (const r of await readRows(wsId)) {
+    if (!r.ts?.startsWith(month)) continue;
+    const m = String(r.model ?? '');
+    const runner = m.includes(':') ? m.split(':')[0]
+      : /^glm/i.test(m) ? 'glm'
+      : 'claude';
+    const b = (by[runner] ??= { turns: 0, costUsd: 0, hasCost: false });
+    b.turns += 1;
+    if (typeof r.costUsd === 'number') { b.costUsd += r.costUsd; b.hasCost = true; }
+  }
+  return by;
+}
+
 /** 이번 달 지출(USD) — 예산 상한 게이트용 경량 조회. */
 export async function monthCost(wsId) {
   const month = new Date().toISOString().slice(0, 7);

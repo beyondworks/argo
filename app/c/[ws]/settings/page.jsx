@@ -367,7 +367,7 @@ function AiConnectionCard({ ws }) {
 
 /** 러너 1행 — 상태 칩 + 방식 탭 + (API키/붙여넣기 토큰 입력) 또는 (CLI 로그인 안내). */
 function RunnerRow({ ws, id, st, onChange, first }) {
-  const { t } = useLang();
+  const { t, fmtMoney } = useLang();
   const methods = st?.methods ?? ['apikey'];
   const hasOauth = methods.includes('oauth');
   const oauthPaste = !!st?.oauthPasteable;
@@ -500,6 +500,11 @@ function RunnerRow({ ws, id, st, onChange, first }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13.5, fontWeight: 650 }}>{RUNNER_NAMES[id]}</span>
         {chip}
+        {st?.month?.turns > 0 && (
+          <span className="chip mono" title={t('settings.runners.monthTitle')} style={{ fontSize: 10.5 }}>
+            {t('settings.runners.month', { n: st.month.turns })}{st.month.hasCost ? ` · ${fmtMoney(st.month.costUsd)}` : ''}
+          </span>
+        )}
       </div>
       {hasOauth && (
         <div style={{ display: 'flex', gap: 6 }}>

@@ -138,6 +138,7 @@ export default function CompanyShell({ children, params }) {
   const currentCrew = crewMatch && agents.find((a) => a.slug === crewMatch[1]);
   const title = pathname.endsWith('/vault') ? t('nav.memory')
     : pathname.endsWith('/room') ? t('nav.room')
+    : pathname.endsWith('/compete') ? t('nav.compete')
     : pathname.endsWith('/routines') ? t('nav.routines')
     : pathname.endsWith('/market') ? t('nav.market')
     : pathname.endsWith('/activity') ? t('nav.activity')
@@ -171,6 +172,9 @@ export default function CompanyShell({ children, params }) {
         </a>
         <a href={`/c/${ws}/room`} className={`nav-item${pathname.endsWith('/room') ? ' active' : ''}`}>
           <Icon name="user" size={16} /> {t('nav.room')}
+        </a>
+        <a href={`/c/${ws}/compete`} className={`nav-item${pathname.endsWith('/compete') ? ' active' : ''}`}>
+          <Icon name="bolt" size={16} /> {t('nav.compete')}
         </a>
         <a href={`/c/${ws}/vault`} className={`nav-item${pathname.endsWith('/vault') ? ' active' : ''}`}>
           <Icon name="memory" size={16} /> {t('nav.memory')}
