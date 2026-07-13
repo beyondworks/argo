@@ -129,3 +129,20 @@ test('secretbox — 왕복·평문 미노출·위변조 거부', () => {
   assert.ok(isSecretRel('connections.json') && isSecretRel('.secrets.json'));
   assert.ok(!isSecretRel('company.json') && !isSecretRel('chats/duri.json'));
 });
+
+/* ── 페어링: 연결 코드 인코더/파서 (M-1 자가완결 자격) ── */
+import { makePairCode, parsePairCode } from '../src/pairing.mjs';
+
+test('페어링 코드 — 왕복', () => {
+  const creds = { url: 'https://example.supabase.co', key: 'service-key-123', owner: 'owner-abc' };
+  const code = makePairCode(creds);
+  assert.ok(code.startsWith('argo-pair.v1.'));
+  assert.deepEqual(parsePairCode(code), creds);
+});
+
+test('페어링 코드 — 형식 불일치·필드 누락 거부', () => {
+  assert.throws(() => parsePairCode('garbage'));
+  assert.throws(() => parsePairCode('argo-pair.v1.' + Buffer.from('{"u":"x"}').toString('base64url'))); // k,o 누락
+  assert.throws(() => parsePairCode(''));
+  assert.throws(() => makePairCode({ url: 'x', key: '', owner: 'y' })); // 누락 값
+});
