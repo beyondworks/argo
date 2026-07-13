@@ -216,3 +216,73 @@ test('기기 세션 — 저장/로드/삭제, 0600, 손상 안전', async () => 
     assert.equal(loadDeviceSession({ root }), null);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('기기 세션 회전 — 성공 시 회전된 토큰 저장 + epoch 증가 + 디스크 영속', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-test-'));
+  try {
+    const session = { access_token: 'at1', refresh_token: 'rt1', expires_at: 0, user: { id: 'u-1', email: 'a@b.c' } };
+    await saveDeviceSession({ url: 'https://x.supabase.co', anonKey: 'anon', session }, { root });
+    const e0 = deviceEpoch();
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    const fakeClient = {
+      auth: {
+        refreshSession: async () => ({
+          data: { session: { access_token: 'at2', refresh_token: 'rt2', expires_at: future, user: { id: 'u-1', email: 'a@b.c' } } },
+          error: null,
+        }),
+      },
+    };
+    const fresh = await getFreshDeviceSession({ root, _mkClient: () => fakeClient });
+    assert.equal(fresh.access_token, 'at2');
+    assert.equal(deviceEpoch(), e0 + 1);
+    // persist()가 캐시를 비우므로 이 호출은 디스크에서 다시 읽는다 — rt2가 실제로 영속됐는지 확인
+    const reloaded = loadDeviceSession({ root });
+    assert.equal(reloaded.refresh_token, 'rt2');
+    assert.equal(reloaded.access_token, 'at2');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('기기 세션 회전 — 실패 시 null 반환 + 기존 세션 파일 보존', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-test-'));
+  try {
+    const session = { access_token: 'at1', refresh_token: 'rt1', expires_at: 0, user: { id: 'u-1', email: 'a@b.c' } };
+    await saveDeviceSession({ url: 'https://x.supabase.co', anonKey: 'anon', session }, { root });
+    const fakeClient = { auth: { refreshSession: async () => ({ data: null, error: { message: 'boom' } }) } };
+    const fresh = await getFreshDeviceSession({ root, _mkClient: () => fakeClient });
+    assert.equal(fresh, null);
+    // 회전 실패는 persist를 호출하지 않는다 — 재로그인 전까지 기존 rt1 세션 그대로
+    const reloaded = loadDeviceSession({ root });
+    assert.equal(reloaded.refresh_token, 'rt1');
+    assert.equal(reloaded.access_token, 'at1');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('기기 세션 — 회전 대기 중 저장 요청은 같은 락 뒤로 큐잉되어 최종 파일이 저장 세션', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-test-'));
+  try {
+    const initial = { access_token: 'at1', refresh_token: 'rt1', expires_at: 0, user: { id: 'u-1', email: 'a@b.c' } };
+    await saveDeviceSession({ url: 'https://x.supabase.co', anonKey: 'anon', session: initial }, { root });
+
+    let resolveRefresh;
+    const pending = new Promise((resolve) => { resolveRefresh = resolve; });
+    const fakeClient = { auth: { refreshSession: () => pending } };
+
+    // p1: 락을 먼저 잡고 refreshSession 응답을 기다리는 중 (아직 미해결)
+    const p1 = getFreshDeviceSession({ root, _mkClient: () => fakeClient });
+    // p2: 그 사이 새 로그인이 저장을 시도 — 같은 락 키(devsess:root)라 p1 뒤로 큐잉되어야 함
+    const newLogin = { access_token: 'atN', refresh_token: 'rtN', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: 'u-2', email: 'b@c.d' } };
+    const p2 = saveDeviceSession({ url: 'https://y.supabase.co', anonKey: 'anon2', session: newLogin }, { root });
+
+    // 이제 refresh 응답 도착 → p1이 회전 저장을 마친 뒤에야 p2(save)가 실행됨
+    resolveRefresh({
+      data: { session: { access_token: 'at2', refresh_token: 'rt2', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: 'u-1', email: 'a@b.c' } } },
+      error: null,
+    });
+    await Promise.all([p1, p2]);
+
+    // 락 직렬화 덕분에 회전-스테일 쓰기가 새 로그인 세션을 덮어쓰지 않는다 — 최종 파일 = save 세션
+    const final = loadDeviceSession({ root });
+    assert.equal(final.refresh_token, 'rtN');
+    assert.equal(final.user.id, 'u-2');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

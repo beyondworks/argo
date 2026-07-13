@@ -38,33 +38,40 @@ async function persist(sess, root) {
   epoch++;
 }
 
-/** 로그인/링크 시 저장. session = Supabase Auth 세션(user 포함). */
+/** 로그인/링크 시 저장. session = Supabase Auth 세션(user 포함).
+ * getFreshDeviceSession의 회전과 같은 락(devsess:root)으로 직렬화 — 회전 대기 중 끼어들어도 lost update 없음. */
 export async function saveDeviceSession({ url, anonKey, session }, { root = WS_ROOT } = {}) {
-  if (!url || !anonKey || !session?.access_token || !session?.refresh_token || !session?.user?.id) {
-    throw new Error('기기 세션 저장에 필요한 값 누락 (url/anonKey/session)');
-  }
-  await persist({
-    url, anonKey,
-    user: { id: session.user.id, email: session.user.email ?? '' },
-    access_token: session.access_token,
-    refresh_token: session.refresh_token,
-    expires_at: session.expires_at ?? 0,
-  }, root);
+  return withLock(`devsess:${root}`, async () => {
+    if (!url || !anonKey || !session?.access_token || !session?.refresh_token || !session?.user?.id) {
+      throw new Error('기기 세션 저장에 필요한 값 누락 (url/anonKey/session)');
+    }
+    await persist({
+      url, anonKey,
+      user: { id: session.user.id, email: session.user.email ?? '' },
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+      expires_at: session.expires_at ?? 0,
+    }, root);
+  });
 }
 
+/** 같은 락(devsess:root)으로 직렬화 — 회전 중 삭제가 끼어들어도 순서 보장. */
 export async function clearDeviceSession({ root = WS_ROOT } = {}) {
-  await rm(fileOf(root), { force: true });
-  cache = null;
-  epoch++;
+  return withLock(`devsess:${root}`, async () => {
+    await rm(fileOf(root), { force: true });
+    cache = null;
+    epoch++;
+  });
 }
 
-/** 유효한 access token 보장 — 만료 60초 전이면 회전 후 저장(락으로 직렬화). null = 세션 없음/회전 실패. */
-export async function getFreshDeviceSession({ root = WS_ROOT } = {}) {
+/** 유효한 access token 보장 — 만료 60초 전이면 회전 후 저장(락으로 직렬화). null = 세션 없음/회전 실패.
+ * _mkClient: 테스트 주입용 — 기본값은 실제 Supabase 클라이언트 팩토리(createClient). 프로덕션 호출부는 지정하지 않는다. */
+export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = createClient } = {}) {
   return withLock(`devsess:${root}`, async () => {
     const sess = loadDeviceSession({ root });
     if (!sess) return null;
     if ((sess.expires_at ?? 0) * 1000 - Date.now() > 60_000) return sess;
-    const sb = createClient(sess.url, sess.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    const sb = _mkClient(sess.url, sess.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data, error } = await sb.auth.refreshSession({ refresh_token: sess.refresh_token });
     if (error || !data?.session) {
       console.warn('[argo] 기기 세션 갱신 실패 — 재로그인 필요:', error?.message ?? 'no session');
