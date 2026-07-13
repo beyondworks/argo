@@ -229,6 +229,8 @@ const DICT = {
   'settings.archive.pathSuffix': ['에 보존됩니다.', '.'],
   'settings.conn.suffix': [' 연결', ''],
   'settings.conn.on': ['가동', 'On'],
+  'settings.conn.onStandby': ['대기', 'Standby'],
+  'settings.conn.gwFollower': ['다른 기기가 실행 담당 — 이 기기는 연결 정보를 유지하다가, 그 기기가 꺼지면 자동으로 이어받습니다.', 'Another device runs the poller — this one keeps credentials warm and takes over automatically if it goes offline.'],
   'settings.conn.off': ['중지', 'Off'],
   'settings.conn.pairedSuffix': [' · 페어링됨', ' · paired'],
   'settings.conn.pairCodeLabel': ['연결 코드 — 봇에 이 코드를 보내세요', 'Pairing code — send this to your bot'],

@@ -607,6 +607,9 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
   const { t } = useLang();
   const [conn, setConn] = useState(null);
   const [gw, setGw] = useState(null);
+  // 실행 리더 여부 — 크레덴셜은 전 기기에 동기화되지만 폴러는 리더 한 기기만 돈다.
+  // 팔로워에서 "중지"로 보이면 연결이 안 된 걸로 오해한다(유건 지적) → "대기"로 구분 표시.
+  const [leader, setLeader] = useState(true);
   const [token, setToken] = useState('');
   const [channel, setChannel] = useState('');
   const [crew, setCrew] = useState('');
@@ -617,6 +620,7 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
     api(`/api/companies/${ws}/connections`).then((d) => {
       const c = d.connections[kind];
       setConn(c); setGw(d.gateway?.[kind] ?? null);
+      setLeader(d.sync?.on ? !!d.sync.leader : true);
       setChannel(c.channel ?? ''); setCrew(c.defaultCrew ?? '');
     }).catch(() => setConn({}));
   }
@@ -626,7 +630,10 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
   useEffect(() => {
     if (!conn?.enabled) return;
     const t = setInterval(() => {
-      api(`/api/companies/${ws}/connections`).then((d) => setGw(d.gateway?.[kind] ?? null)).catch(() => {});
+      api(`/api/companies/${ws}/connections`).then((d) => {
+        setGw(d.gateway?.[kind] ?? null);
+        setLeader(d.sync?.on ? !!d.sync.leader : true);
+      }).catch(() => {});
     }, 8000);
     return () => clearInterval(t);
   }, [ws, kind, conn?.enabled]);
@@ -654,9 +661,20 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
           {title}{t('settings.conn.suffix')}
           {conn?.botUsername && <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', marginLeft: 7 }}>{conn.botUsername}</span>}
         </span>
-        <span className="chip">{on ? <><span className="dot" />{t('settings.conn.on')}</> : t('settings.conn.off')}{kind === 'telegram' && conn?.chatId ? t('settings.conn.pairedSuffix') : ''}</span>
+        <span className="chip">
+          {on
+            ? (leader ? <><span className="dot" />{t('settings.conn.on')}</> : <><span className="dot" style={{ background: 'var(--warn)' }} />{t('settings.conn.onStandby')}</>)
+            : t('settings.conn.off')}
+          {kind === 'telegram' && conn?.chatId ? t('settings.conn.pairedSuffix') : ''}
+        </span>
       </div>
-      {on && gw && (
+      {on && !leader ? (
+        // 팔로워 — 폴러는 리더 기기에서 돈다. "중지"처럼 보이지 않게 승계 대기임을 명시.
+        <div style={{ fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--fg-2)' }}>
+          <span style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} aria-hidden="true" />
+          {t('settings.conn.gwFollower')}
+        </div>
+      ) : on && gw && (
         <div style={{ fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 6, color: gw.alive ? 'var(--ok)' : gw.error ? 'var(--danger)' : 'var(--warn)' }}>
           <span style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} aria-hidden="true" />
           {gw.alive
