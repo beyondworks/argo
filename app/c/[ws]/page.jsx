@@ -74,7 +74,7 @@ export default function Deck({ params }) {
     : 0;
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div className="page-root" style={{ display: 'grid', gap: 14 }}>
       <div className="page-head" style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <span className="microlabel">{t('deck.crewControl', { name: data?.company?.name ?? '' })}</span>
         <span className="microlabel">{new Date().toISOString().slice(0, 10)}</span>

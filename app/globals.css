@@ -831,21 +831,43 @@
 :root[data-theme='swiss'] .card,
 :root[data-theme='swiss-dark'] .card {
   background: transparent;
-  /* 셀 격자 문법 — 카드는 균일한 굵은 선의 셀. 인접 셀은 선을 공유한다(아래 격자 붕괴) */
-  border: 1.5px solid var(--fg);
+  /* 가로선만 — 바깥 세로 변 없음(Energy University 문법). 세로선은 컬럼 분할선만 따로 긋는다 */
+  border: 0;
+  border-top: 1.5px solid var(--fg);
+  border-bottom: 1.5px solid var(--fg);
   border-radius: 0;
   box-shadow: none;
 }
-/* 중첩 카드(카드 안 카드 = 행·컬럼·패널)는 헤어라인 셀 */
+/* 중첩 카드(카드 안 카드 = 행·컬럼·패널)는 헤어라인 */
 :root[data-theme='swiss'] .card .card,
 :root[data-theme='swiss-dark'] .card .card {
   border-width: 1px;
   border-color: var(--border);
 }
-/* 격자 붕괴 — 데크의 셀들이 간격 없이 맞붙어 선을 공유한다(Female Faces/신문 조판 문법).
+/* 나란한 셀 사이 세로 분할선 — 프레임이 아니라 분할선만 */
+:root[data-theme='swiss'] .grid-cells > .card + .card,
+:root[data-theme='swiss-dark'] .grid-cells > .card + .card {
+  border-left: 1.5px solid var(--fg);
+}
+/* 전폭 블리드 — 가로선이 콘텐츠 패딩을 뚫고 좌우 끝까지 달린다 */
+:root[data-theme='swiss'] .content,
+:root[data-theme='swiss-dark'] .content {
+  padding-left: 0;
+  padding-right: 0;
+}
+:root[data-theme='swiss'] .page-head,
+:root[data-theme='swiss-dark'] .page-head {
+  padding-left: 18px;
+  padding-right: 18px;
+}
+/* 격자 붕괴 — 셀들이 간격 없이 맞붙어 선을 공유한다(Female Faces/신문 조판 문법). 틈 금지.
    인라인 gap은 !important로만 이긴다 — 스위스 테마 한정 의도적 사용 */
+:root[data-theme='swiss'] .page-root,
+:root[data-theme='swiss-dark'] .page-root { gap: 0 !important; }
+:root[data-theme='swiss'] .page-head,
+:root[data-theme='swiss-dark'] .page-head { margin-bottom: 0; }
 :root[data-theme='swiss'] .deck-grid,
-:root[data-theme='swiss-dark'] .deck-grid { gap: 0; }
+:root[data-theme='swiss-dark'] .deck-grid { gap: 0 !important; }
 :root[data-theme='swiss'] .deck-main,
 :root[data-theme='swiss-dark'] .deck-main,
 :root[data-theme='swiss'] .deck-rail,
@@ -859,7 +881,12 @@
 :root[data-theme='swiss'] .grid-cells > .card,
 :root[data-theme='swiss-dark'] .grid-cells > .card { margin-top: -1.5px; margin-left: -1.5px; }
 :root[data-theme='swiss'] .deck-rail,
-:root[data-theme='swiss-dark'] .deck-rail { margin-left: -1.5px; align-self: stretch; align-content: start; }
+:root[data-theme='swiss-dark'] .deck-rail {
+  margin-left: -1.5px;
+  align-self: stretch;
+  align-content: start;
+  border-left: 1.5px solid var(--fg); /* 본문↔레일 컬럼 분할선 — 카드 세로변 대신 컬럼에 연속선 */
+}
 /* 선이 얇아진 만큼 제목이 위계를 진다 — 대문자 디스플레이 제목(IDENTIFONT 문법) */
 :root[data-theme='swiss'] .card-title,
 :root[data-theme='swiss-dark'] .card-title {
@@ -880,7 +907,7 @@
 :root[data-theme='swiss-dark'] .side-rail + * {
   border-left: 1px solid var(--border);
   margin-left: -9px;
-  padding-left: 9px;
+  padding-left: 0; /* 카드 가로선이 레일 분할선에 닿는다(교차) */
 }
 :root[data-theme='swiss'] .card-float,
 :root[data-theme='swiss-dark'] .card-float,
