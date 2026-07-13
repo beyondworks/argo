@@ -2,6 +2,7 @@
 // 역할: ① 세션 쿠키 갱신 ② 미로그인 차단(페이지 → /login, API → 401). 소유권은 라우트의 guardCompany가 맡는다.
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
+import { publicUrl } from './app/http-origin.mjs';
 
 const URL_ENV = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const KEY_ENV = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -32,9 +33,9 @@ export async function middleware(req) {
   const isPublic = p === '/login' || p === '/legal' || p.startsWith('/auth') || p.startsWith('/api/auth/pair');
   if (!user && !isPublic) {
     if (p.startsWith('/api')) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
-    return NextResponse.redirect(new URL('/login', req.url));
+    return NextResponse.redirect(publicUrl(req, '/login'));
   }
-  if (user && p === '/login') return NextResponse.redirect(new URL('/', req.url));
+  if (user && p === '/login') return NextResponse.redirect(publicUrl(req, '/'));
   return res;
 }
 

@@ -1,6 +1,7 @@
 // 로그아웃 — 세션 쿠키 제거 후 로그인 화면으로.
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
+import { publicUrl } from '../../http-origin.mjs';
 
 // CSRF 방어 — same-origin(Origin/Referer가 요청 host와 일치)만 허용. 크로스사이트 강제 로그아웃 차단.
 function sameOrigin(req) {
@@ -11,8 +12,8 @@ function sameOrigin(req) {
 
 export async function POST(req) {
   if (!sameOrigin(req)) return NextResponse.json({ error: '잘못된 요청' }, { status: 403 });
-  const res = NextResponse.redirect(new URL('/login', req.url), { status: 303 });
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return NextResponse.redirect(new URL('/', req.url), { status: 303 });
+  const res = NextResponse.redirect(publicUrl(req, '/login'), { status: 303 });
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return NextResponse.redirect(publicUrl(req, '/'), { status: 303 });
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,

@@ -2,15 +2,16 @@
 // /auth/callback(?code= PKCE)과 상호보완 — 관리자 발급 링크·커스텀 템플릿은 이 경로를 쓴다.
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
+import { publicUrl } from '../../http-origin.mjs';
 
 export async function GET(req) {
   const url = new URL(req.url);
   const tokenHash = url.searchParams.get('token_hash');
   const type = url.searchParams.get('type') ?? 'email';
   if (!tokenHash || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
-    return NextResponse.redirect(new URL('/login', req.url));
+    return NextResponse.redirect(publicUrl(req, '/login'));
   }
-  const res = NextResponse.redirect(new URL('/', req.url));
+  const res = NextResponse.redirect(publicUrl(req, '/'));
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
@@ -22,6 +23,6 @@ export async function GET(req) {
     },
   );
   const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
-  if (error) return NextResponse.redirect(new URL('/login', req.url));
+  if (error) return NextResponse.redirect(publicUrl(req, '/login'));
   return res;
 }
