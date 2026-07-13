@@ -456,7 +456,7 @@ export default function CrewChat({ params }) {
       </div>
 
       {viewing ? (
-        <div className="card" style={{ position: 'sticky', bottom: 20, marginTop: 'auto', paddingTop: 24, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
+        <div className="card card-float" style={{ position: 'sticky', bottom: 20, marginTop: 'auto', paddingTop: 24, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
           <Icon name="doc" size={13} /> {t('chat.sessions.readonly')}
           <span style={{ flex: 1 }} />
           <button className="btn btn-primary sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
@@ -550,7 +550,7 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
         {label} <span aria-hidden style={{ fontSize: 9 }}>▾</span>
       </button>
       {open && (
-        <div className="card" role="menu" style={{
+        <div className="card card-float" role="menu" style={{
           position: 'absolute', bottom: 'calc(100% + 6px)', right: 0, zIndex: 40,
           minWidth: 230, maxHeight: 320, overflowY: 'auto', padding: 6,
           boxShadow: '0 8px 28px rgba(0,0,0,.14)',
@@ -751,7 +751,7 @@ function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose,
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <div className="card fade-up" style={{ width: 'min(680px, 100%)', maxHeight: '86vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+      <div className="card card-float fade-up" style={{ width: 'min(680px, 100%)', maxHeight: '86vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
           <span className="card-title">{t('chat.cardTitle')}</span>
           <span className="microlabel">{t('chat.systemPromptEq')}</span>

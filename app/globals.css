@@ -824,6 +824,57 @@
    토큰으로 표현 불가한 blur/그라디언트만 테마 스코프로 둔다.
    유리 원칙: 큰 표면(카드·탑바·사이드바·모달)은 blur + 레이어드 반투명,
    작은 컨트롤은 반투명만(성능 — backdrop-filter 남발 금지). */
+/* ─── 스위스 — "박스가 아니라 선" 오버라이드 ───
+   카드는 면(box)이 아니라 상단 괘선으로 구획된 구간(section)이다 — Wästberg 스펙시트 문법.
+   예외: 떠 있는 표면(.card-float 모달·팝오버·스티키 바, .tasks-panel)은 기능상 면이 필요해
+   캔버스색 + 헤어라인 박스를 유지한다. */
+:root[data-theme='swiss'] .card,
+:root[data-theme='swiss-dark'] .card {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+:root[data-theme='swiss'] .card-float,
+:root[data-theme='swiss-dark'] .card-float,
+:root[data-theme='swiss'] .tasks-panel,
+:root[data-theme='swiss-dark'] .tasks-panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+/* 인버트 블록(잉크 바)은 스위스의 유일한 면 — 포스터의 검은 바처럼 남긴다 */
+:root[data-theme='swiss'] .invert,
+:root[data-theme='swiss-dark'] .invert {
+  background: var(--primary);
+  border-top-color: var(--primary);
+}
+/* 호버 면 채움 → 잉크 워시로 절제 */
+:root[data-theme='swiss'] .card-i:hover,
+:root[data-theme='swiss-dark'] .card-i:hover {
+  background: var(--primary-soft);
+}
+/* 빈 상태 — 점선 박스 대신 위아래 점괘선 구간 */
+:root[data-theme='swiss'] .empty,
+:root[data-theme='swiss-dark'] .empty {
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
+}
+/* 입력 — 면 없는 밑줄 입력(스위스 폼 관용구). 포커스는 밑줄이 짙어진다 */
+:root[data-theme='swiss'] .input-bar,
+:root[data-theme='swiss-dark'] .input-bar {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding-left: 2px;
+}
+:root[data-theme='swiss'] .input-bar:focus-within,
+:root[data-theme='swiss-dark'] .input-bar:focus-within {
+  box-shadow: 0 1px 0 0 var(--fg);
+}
+
 /* 스위스 — 종이 질감: 미세 그레인 노이즈(중간 회색 저알파 — 라이트/다크 양쪽에서 결이 산다) */
 :root[data-theme='swiss'] body,
 :root[data-theme='swiss-dark'] body {
