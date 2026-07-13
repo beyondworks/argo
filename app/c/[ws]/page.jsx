@@ -84,11 +84,11 @@ export default function Deck({ params }) {
 
       <div className="deck-grid">
         {/* ── 본 계기 열 — "지금 판단할 것"(결재)이 지표보다 먼저다 ── */}
-        <div style={{ display: 'grid', gap: 14, minWidth: 0 }}>
+        <div className="deck-main" style={{ display: 'grid', gap: 14, minWidth: 0 }}>
           <MorningBrief ws={ws} agents={data?.agents ?? []} />
           <ApprovalsCard ws={ws} agents={data?.agents ?? []} />
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+          <div className="grid-cells" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
             {stats ? (
               <>
                 <div className="metric card invert fade-up">
@@ -335,7 +335,7 @@ export default function Deck({ params }) {
         </div>
 
         {/* ── 우측 보조 계기 레일 ── */}
-        <div style={{ display: 'grid', gap: 14 }}>
+        <div className="deck-rail" style={{ display: 'grid', gap: 14 }}>
           <div className="card" style={{ padding: '15px 18px 8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span className="card-title">{t('deck.constellation')}</span>
