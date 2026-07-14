@@ -4,7 +4,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
-import { loadMcp } from './market.mjs';
+import { loadMcp, assertArbitraryMcpAllowed } from './market.mjs';
 
 const TTL = 10 * 60 * 1000;
 const cache = new Map(); // key → {at, data}
@@ -104,6 +104,7 @@ export async function installRemoteMcp(wsId, { name, install }) {
   if (!safe) throw new Error('MCP 이름이 없습니다');
   let def;
   if (install?.kind === 'npm' && install.pkg) {
+    assertArbitraryMcpAllowed(); // npm MCP = npx로 로컬 임의 코드 실행 → 호스팅 차단(P0-2). http(원격)은 로컬 실행 없어 허용
     def = { command: 'npx', args: ['-y', install.pkg] };
   } else if (install?.kind === 'http' && /^https:\/\//.test(install.url ?? '')) {
     def = { type: 'http', url: install.url };

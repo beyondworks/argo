@@ -185,6 +185,13 @@ export const isThread = (rel) => /^chats\/[^/]+\.json$/.test(rel); // 진행 중
    큰 배치(8개↑ 또는 절반↑)면 중단. 삭제는 비가역이라 "안 지우고 보류"가 항상 옳다. (export: 회귀 테스트용) */
 export const massDeleteBrake = (deletes, baseCount) =>
   baseCount >= 2 && (deletes >= baseCount || deletes >= Math.max(8, Math.ceil(baseCount * 0.5)));
+/** 안전한 상대 경로인가 — 원격 매니페스트 키를 FS에 join하기 전 검증(경로 탈출 차단, P1-7).
+   원격 키는 신뢰할 수 없다(변조된 __manifest__.json이 `../../etc/x` 같은 키로 워크스페이스 밖 파일을
+   쓰거나 지우게 할 수 있다). 절대경로·빈/`.`/`..` 세그먼트·NUL을 거부한다. (export: 회귀 테스트용) */
+export const safeRel = (rel) =>
+  typeof rel === 'string' && rel.length > 0 && !rel.startsWith('/') && !rel.includes('\0')
+  && !rel.includes('\\') && !/^[a-zA-Z]:/.test(rel) // Windows: 백슬래시·드라이브문자(C:) 거부(데스크톱/Electron 대비)
+  && !rel.split('/').some((s) => s === '' || s === '.' || s === '..');
 const threadLockKey = (wsId, rel) => `thread:${wsId}:${rel.slice(6).replace(/\.json$/, '').replace(/[^a-z0-9-]/g, '')}`;
 
 /** 원장 병합 — 원격+로컬 행의 합집합(동일 행 dedup). 순서: 원격 먼저 후 로컬 신규. blob LWW의 행 유실 방지. */
@@ -239,11 +246,20 @@ export async function syncCompany(wsId, owner) {
       catch (e) { throw new Error(`매니페스트 파싱 실패 — 삭제 보류: ${String(e.message).slice(0, 80)}`); }
     }
   }
+  // 원격 매니페스트 키 위생(P1-7) — 변조된 키(경로 탈출 `../..`)를 FS 반영 전에 걸러낸다. 걸러진 키는 이 사이클 무시.
+  if (remote.files && typeof remote.files === 'object') {
+    let dropped = 0;
+    for (const k of Object.keys(remote.files)) if (!safeRel(k)) { delete remote.files[k]; dropped++; }
+    if (dropped) console.warn(`[sync] 안전하지 않은 원격 매니페스트 키 ${dropped}개 무시(경로 탈출 차단) — ws=${wsId}`);
+  }
   const local = await walk(root);
   const state = (await loadState(wsId)).files ?? {};
   let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0;
 
-  const relFull = (rel) => join(root, ...rel.split('/'));
+  const relFull = (rel) => {
+    if (!safeRel(rel)) throw new Error(`안전하지 않은 동기화 키 차단(경로 탈출): ${String(rel).slice(0, 80)}`);
+    return join(root, ...rel.split('/'));
+  };
   const remoteKey = (rel) => skey(owner, wsId, rel);
   // 시크릿 봉투 — 밀 때 암호화, 받을 때 복호화. 스토리지엔 평문 크레덴셜이 절대 놓이지 않는다.
   // (복호화 실패 = 위변조/키 불일치 → throw → per-file catch가 failed로 집계, 다음 사이클 재시도)
@@ -254,7 +270,8 @@ export async function syncCompany(wsId, owner) {
     const doWrite = async () => {
       const full = relFull(rel);
       await mkdir(dirname(full), { recursive: true });
-      await writeFile(full, buf);
+      // 복호화된 시크릿(.secrets.json·connections)이 신규 기기 복원 시 0644로 생기지 않게 0600 강제(P1-8).
+      await writeFile(full, buf, isSecretRel(rel) ? { mode: 0o600 } : undefined);
       if (mtime) await utimes(full, new Date(mtime), new Date(mtime));
     };
     if (isThread(rel)) await withLock(threadLockKey(wsId, rel), doWrite);

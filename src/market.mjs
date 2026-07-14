@@ -138,6 +138,19 @@ async function saveMcp(wsId, cfg) {
 
 const NAME_RE = /^[a-z0-9-]{1,32}$/;
 
+/** 호스팅(멀티테넌트 워커) 감지 — 프로세스에 크로스테넌트 크라운주얼(서비스 키)이 있거나 테넌트 바인딩이면
+   임의 코드 실행형 MCP(사용자 정의 command·원격 npm)를 막는다. 로컬(자기 PC) 앱만 유지. 명시 opt-in으로 해제.
+   근거(P0-2): 임의 프로세스를 서비스 키 곁에서 돌리면 env·/proc로 키가 유출돼 전 테넌트 데이터가 뚫린다.
+   카탈로그(installMcp)의 검증된 공식 MCP는 계속 허용한다. (export: 회귀 테스트용) */
+export const arbitraryMcpBlocked = () =>
+  process.env.ARGO_ALLOW_CUSTOM_MCP !== '1'
+  && !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.ARGO_TENANT_OWNER);
+export function assertArbitraryMcpAllowed() {
+  if (arbitraryMcpBlocked()) {
+    throw new Error('호스팅 모드에서는 임의 명령을 실행하는 사용자 정의·원격 MCP를 추가할 수 없습니다 — 보안상 로컬 앱에서만 지원됩니다(카탈로그의 검증된 MCP는 사용 가능).');
+  }
+}
+
 export async function installMcp(wsId, id) {
   const item = MCP_CATALOG.find((s) => s.id === id);
   if (!item) throw new Error('카탈로그에 없는 MCP입니다');
@@ -148,6 +161,7 @@ export async function installMcp(wsId, id) {
 
 /** 커스텀 MCP — command/args만 허용, env 평문 시크릿은 받지 않는다(참조는 P1 서버측에서). */
 export async function addCustomMcp(wsId, { name, command, args = [] }) {
+  assertArbitraryMcpAllowed(); // 호스팅 모드 차단(P0-2) — 임의 command 프로세스가 서비스 키 곁에서 실행되는 것 방지
   if (!NAME_RE.test(name || '')) throw new Error('이름은 영소문자·숫자·하이픈 1~32자');
   if (!command?.trim()) throw new Error('command가 필요합니다');
   const cfg = await loadMcp(wsId);

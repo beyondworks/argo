@@ -1,0 +1,9 @@
+/* 데스크톱 셸 로딩 화면 스타일 — index.html에서 인라인 분리(CSP 견고성, P0-4). */
+html, body { margin: 0; height: 100%; background: #10141c; color: #d9c98a;
+  font-family: -apple-system, "Pretendard", system-ui, sans-serif;
+  display: flex; align-items: center; justify-content: center; }
+.box { text-align: center; }
+.star { font-size: 44px; color: #d9b23a; }
+.msg { margin-top: 12px; font-size: 14px; opacity: .8; }
+.sub { margin-top: 6px; font-size: 12px; opacity: .5; }
+a { color: #d9b23a; }

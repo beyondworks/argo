@@ -17,7 +17,9 @@ export async function writeJsonAtomic(file, data) {
   const body = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
   let fh;
   try {
-    fh = await open(tmp, 'w');
+    // 0600 — 워크스페이스 JSON은 시크릿(.secrets.json·connections·페어링 자격)을 담을 수 있어 소유자만 읽게 한다.
+    // rename이 tmp의 모드를 보존하므로 기존 0644 파일도 다음 쓰기에 0600으로 조여진다(업그레이드 안전). (P1-8)
+    fh = await open(tmp, 'w', 0o600);
     await fh.writeFile(body);
     await fh.sync(); // 디스크까지 내려쓴 뒤 rename — 크래시 창 최소화
   } finally {

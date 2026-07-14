@@ -60,7 +60,7 @@ export async function POST(req, { params }) {
     else if (body.kind === 'mcp-custom') await addCustomMcp(ws, body.def ?? {});
     else if (body.kind === 'skill-custom') await saveCustomSkill(ws, body.def ?? {}); // 공방 — 직접 쓰는 스킬
     else if (body.kind === 'remote-skill') await installRemoteSkill(ws, body.item ?? {});
-    else if (body.kind === 'remote-mcp') await installRemoteMcp(ws, body.item ?? {});
+    else if (body.kind === 'remote-mcp') await installRemoteMcp(ws, body.item ?? {}); // npm 분기 가드는 installRemoteMcp 내부(P0-2). http 원격은 로컬 실행 없어 허용
     else if (body.kind === 'explain') return Response.json(await explainItem(body.item ?? {}));
     else return Response.json({ error: '알 수 없는 kind' }, { status: 400 });
     return Response.json({ ok: true });
