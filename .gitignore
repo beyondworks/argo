@@ -14,3 +14,4 @@ argo-service.cmd
 src-tauri/binaries/
 src-tauri/resources/server/
 .superpowers/
+supabase/.temp/
