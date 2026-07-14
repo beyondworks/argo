@@ -90,7 +90,14 @@ workspaces/<id>/
   ~~M-2d entitlement 스캐폴드~~(완료 2026-07-14 — entitlements 테이블(plan, 서버만 쓰기) +
   세션 모드 동기화 게이트. **강제는 off** — M-4에서 `ARGO_ENFORCE_PLAN=1` 켜며 강제-on 실서버
   E2E와 페이월 UI(차단 중 lastTs 정지 표시 포함)가 M-4 의무) →
-  M-3 무결성 → M-4 LS 결제 → (게이트 통과 후) 워커 편입.
+  M-3 무결성 → **M-4 LS 결제 기계 완료**(2026-07-14 — 웹훅 Edge Function(서명 검증·entitlements
+  유일 쓰기 경로, 라이프사이클 화이트리스트·미지상태 무시) + plan pill + 페이월/고장 구분 UI +
+  체크아웃 버튼. E2E: 위조 401·pro/free 왕복·payment_success 무강등·UI 3상태 실측. **LS 실물 연결
+  (체크아웃 URL·webhook secret)·강제 전환(`ARGO_ENFORCE_PLAN=1`)은 출시 스텝** — `docs/billing-ls-setup.md`) →
+  (게이트 통과 후) 워커 편입.
+
+> **순서 조정(2026-07-14 유건 승인)**: 팔 물건(기억+크레덴셜 동기화)이 M-2에서 완성돼, M-4 결제를
+> M-3 앞으로 당김. M-3(진짜 E2E 암호화·동기화 무결성 하드닝)은 결제 뒤 신뢰 강화 단계로 이동.
 
 ## 단계
 
