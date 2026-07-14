@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { hkdfSync, createCipheriv, randomBytes } from 'node:crypto';
 
 import { writeJsonAtomic, readJson, readJsonLenient } from '../src/jsonstore.mjs';
-import { mergeLedger, isLedger, isText, isThread } from '../src/sync.mjs';
+import { mergeLedger, isLedger, isText, isThread, massDeleteBrake } from '../src/sync.mjs';
 import { isDue } from '../src/routines.mjs';
 import { createPairing, bindPairing, claimPairing } from '../app/api/auth/pair/store.mjs';
 
@@ -68,6 +68,18 @@ test('mergeLedger: 두 기기 append 행 합집합(유실 없음)', () => {
 test('mergeLedger: 빈 입력 안전', () => {
   assert.equal(mergeLedger(Buffer.from(''), Buffer.from('')).length, 0);
   assert.equal(mergeLedger(Buffer.from('{"a":1}\n'), Buffer.from('')).toString().trim(), '{"a":1}');
+});
+
+test('massDeleteBrake: 회사 통째 삭제·대량 배치는 중단, 소량 삭제는 허용', () => {
+  assert.equal(massDeleteBrake(0, 0), false);      // 빈 상태
+  assert.equal(massDeleteBrake(1, 10), false);     // 소량 삭제 허용
+  assert.equal(massDeleteBrake(5, 10), false);     // 절반이지만 절대치 미만 허용
+  assert.equal(massDeleteBrake(10, 10), true);     // 전부 삭제 → 중단
+  assert.equal(massDeleteBrake(4, 4), true);       // 작은 회사 통째 삭제 → 중단(핵심)
+  assert.equal(massDeleteBrake(2, 2), true);       // 2개 회사 전멸 → 중단
+  assert.equal(massDeleteBrake(1, 2), false);      // 2개 중 1개 → 허용
+  assert.equal(massDeleteBrake(8, 16), true);      // 대량 배치(8↑) → 중단
+  assert.equal(massDeleteBrake(7, 16), false);     // 8 미만·절반 미만 → 허용
 });
 
 test('파일 분류', () => {

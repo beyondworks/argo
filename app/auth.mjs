@@ -1,7 +1,8 @@
 // 인증 계층 — env가 있으면 켜지고, 없으면 로컬 1인 모드 그대로(회귀 0)라는 게이트가 원칙.
 // 코어(src/*.mjs)는 인증을 모른다 — 요청 문맥(쿠키)이 필요한 이 계층은 라우트/미들웨어에서만 임포트한다.
 // env: NEXT_PUBLIC_SUPABASE_URL · NEXT_PUBLIC_SUPABASE_ANON_KEY (.env.local 또는 배포 env — 값 평문 기록 금지)
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { writeJsonAtomic } from '../src/jsonstore.mjs';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { paths } from '../src/workspace.mjs';
@@ -61,7 +62,7 @@ export async function guardCompany(wsId) {
   if (!meta.ownerId) {
     const adopt = process.env.ARGO_ADOPT_OWNER?.trim().toLowerCase();
     if (adopt && user.email && adopt === user.email.trim().toLowerCase()) {
-      await writeFile(paths(wsId).company, JSON.stringify({ ...meta, ownerId: user.id }, null, 2));
+      await writeJsonAtomic(paths(wsId).company, { ...meta, ownerId: user.id });
       return null;
     }
     return Response.json({ error: '이 회사에 접근할 권한이 없습니다' }, { status: 403 });

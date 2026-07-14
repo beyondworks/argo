@@ -1,6 +1,7 @@
 // 한 줄 프롬프트 → 페르소나 카드(md frontmatter + 본문) 자동 생성 — 기둥 2.
 // 카드가 곧 시스템 프롬프트: 사용자가 파일을 열어 언제든 고칠 수 있다(투명성).
-import { writeFile, readFile, mkdir, rename } from 'node:fs/promises';
+import { readFile, mkdir, rename } from 'node:fs/promises';
+import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
@@ -139,7 +140,7 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   const finalMd = `${fm.join('\n')}\n\n${stripFrontmatter(md)}\n`;
 
   const file = cardPath(wsId, slug);
-  await writeFile(file, finalMd);
+  await writeJsonAtomic(file, finalMd);
   await appendEvent(wsId, { type: 'crew', op: 'hire', slug, name: nameFinal });
   return { slug, name: nameFinal, role: roleFinal, team: team?.trim() || '', file };
 }
@@ -150,7 +151,7 @@ export async function saveAgentCard(wsId, slug, md) {
   if (!meta.name) throw new Error('frontmatter에 name이 필요합니다');
   const file = cardPath(wsId, slug);
   if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
-  await writeFile(file, md.endsWith('\n') ? md : `${md}\n`);
+  await writeJsonAtomic(file, md.endsWith('\n') ? md : `${md}\n`);
   return { slug, name: meta.name, role: meta.role || '' };
 }
 
@@ -179,7 +180,7 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
   if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
   if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
   if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = Claude Code(기본)
-  await writeFile(file, md);
+  await writeJsonAtomic(file, md);
   const after = parseFrontmatter(md);
   await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: after.name });
   if (name !== undefined && name.trim() && before.name !== after.name) {
@@ -206,7 +207,7 @@ export async function appendAgentRule(wsId, slug, text) {
     const end = rest === -1 ? md.length : rest;
     next = `${md.slice(0, end).trimEnd()}\n- ${rule}\n${rest === -1 ? '' : md.slice(end)}`;
   }
-  await writeFile(file, next);
+  await writeJsonAtomic(file, next);
   await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: parseFrontmatter(next).name });
   return parseFrontmatter(next);
 }
@@ -220,7 +221,7 @@ export async function renameTeam(wsId, from, to) {
     const file = join(dir, f);
     const md = await readFile(file, 'utf8');
     if (parseFrontmatter(md).team !== from) continue;
-    await writeFile(file, setFrontmatterKey(md, 'team', to.trim()));
+    await writeJsonAtomic(file, setFrontmatterKey(md, 'team', to.trim()));
     changed += 1;
   }
   if (changed === 0) throw new Error('해당 팀의 크루가 없습니다');

@@ -61,7 +61,7 @@ async function addSources(file, rels) {
   if (!fresh.length) return;
   if (!/\n## 근거\n/.test(text)) text = `${text.trimEnd()}\n\n## 근거\n`;
   else text = text.trimEnd() + '\n';
-  await writeFile(file, `${text}${fresh.map((r) => `- [[${r}]]`).join('\n')}\n`);
+  await writeJsonAtomic(file, `${text}${fresh.map((r) => `- [[${r}]]`).join('\n')}\n`);
 }
 
 /** 정리 1회 실행 — 반환: 갱신/생성된 노트 목록. 새 내용 없으면 빈 배열. */

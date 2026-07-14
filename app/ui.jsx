@@ -236,7 +236,10 @@ export function Markdown({ text, onWikiLink }) {
   html = html.replace(/href="(?!https?:|#|\/)[^"]*"/gi, 'href="#"');
   // 크루가 주는 링크는 항상 새 창 — 대화 흐름을 벗어나지 않는다
   html = html.replace(/<a /gi, '<a target="_blank" rel="noopener noreferrer" ');
-  html = html.replace(/\[\[(.+?)\]\]/g, (_, p) => `<span class="wikilink" data-wiki="${p}">${p}</span>`);
+  html = html.replace(/\[\[(.+?)\]\]/g, (_, p) => {
+    const attr = p.replace(/"/g, '&quot;'); // marked 이스케이프에 의존하지 않고 속성 breakout 자체 차단
+    return `<span class="wikilink" data-wiki="${attr}">${p}</span>`;
+  });
   return (
     <div
       className="md"

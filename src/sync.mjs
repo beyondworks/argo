@@ -99,6 +99,22 @@ async function getDeviceId() {
   return deviceId;
 }
 
+/* ─── 크로스 프로세스 단일 동기화 락 ───
+   같은 데이터 루트에 두 서버가 뜨면(실수로 dev + 상주 동시 기동 등) 서로의 로컬·원격·.sync-state를
+   두고 레이스하며 삭제 피드백 루프를 만든다(실측 대형 유실). 한 root당 한 프로세스만 동기화하도록
+   pidfile로 막는다. .lock은 EXCLUDE라 동기화 대상 아님. */
+async function holdSyncLock() {
+  const f = join(WS_ROOT, '.sync-process.lock');
+  try {
+    const cur = JSON.parse(await readFile(f, 'utf8'));
+    if (cur.pid !== process.pid && Date.now() - cur.ts < CYCLE_MS * 3) {
+      try { process.kill(cur.pid, 0); return false; } catch { /* 죽은 pid → 탈취 */ }
+    }
+  } catch { /* 없음/손상 → 획득 */ }
+  try { await mkdir(WS_ROOT, { recursive: true }); await writeFile(f, JSON.stringify({ pid: process.pid, ts: Date.now() })); } catch { /* 쓰기 실패 시에도 진행 */ }
+  return true;
+}
+
 /* ─── 클라우드 리스 (C-2 최소형) — 실행(폴러·루틴) 주체는 한 기기만 ───
    상태는 globalThis에 — Next가 라우트/instrumentation을 별도 번들로 복제해도 하나를 본다. */
 const leaseState = (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0 }); // off면 항상 리더(단일 기기)
@@ -165,6 +181,10 @@ async function walk(dir, base = dir, out = {}) {
 export const isLedger = (rel) => rel.endsWith('.jsonl'); // usage.jsonl, events.jsonl — append-only 원장(행 병합)
 export const isText = (rel) => rel.endsWith('.md');       // 노트·일지 — 충돌 시 양쪽 보존
 export const isThread = (rel) => /^chats\/[^/]+\.json$/.test(rel); // 진행 중 턴과 레이스 → 스레드 락
+/** 대량 삭제 브레이크 — 삭제 예정 수가 위험하면 true(중단). 회사 파일을 통째로 지우거나(전부 삭제)
+   큰 배치(8개↑ 또는 절반↑)면 중단. 삭제는 비가역이라 "안 지우고 보류"가 항상 옳다. (export: 회귀 테스트용) */
+export const massDeleteBrake = (deletes, baseCount) =>
+  baseCount >= 2 && (deletes >= baseCount || deletes >= Math.max(8, Math.ceil(baseCount * 0.5)));
 const threadLockKey = (wsId, rel) => `thread:${wsId}:${rel.slice(6).replace(/\.json$/, '').replace(/[^a-z0-9-]/g, '')}`;
 
 /** 원장 병합 — 원격+로컬 행의 합집합(동일 행 dedup). 순서: 원격 먼저 후 로컬 신규. blob LWW의 행 유실 방지. */
@@ -204,8 +224,21 @@ export async function syncCompany(wsId, owner) {
   const root = paths(wsId).root;
   const me = await getDeviceId();
   const manifestKey = skey(owner, wsId, '__manifest__.json');
+  // 매니페스트 읽기 — "없음(최초 푸시)"과 "읽기 실패(네트워크·타임아웃·5xx)"를 반드시 구분한다.
+  // 실패를 빈 원격으로 오인하면 base의 전 파일을 '원격에서 삭제됨'으로 판정해 로컬을 통째로 지운다(대형 유실 원인).
   let remote = { files: {} };
-  try { remote = JSON.parse((await download(manifestKey)).toString()); } catch { /* 최초 푸시 */ }
+  {
+    const { data, error } = await client().storage.from(BUCKET).download(manifestKey);
+    if (error) {
+      const msg = String(error.message || error);
+      const notFound = /not[ _]?found|does not exist|no such|404/i.test(msg) || error.status === 404 || error.statusCode === 404;
+      if (!notFound) throw new Error(`매니페스트 읽기 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
+      // notFound = 원격 진짜 없음(최초 푸시). 이때 base(.sync-state)도 비어 삭제 분기가 안 타므로 안전.
+    } else {
+      try { remote = JSON.parse(Buffer.from(await data.arrayBuffer()).toString()); }
+      catch (e) { throw new Error(`매니페스트 파싱 실패 — 삭제 보류: ${String(e.message).slice(0, 80)}`); }
+    }
+  }
   const local = await walk(root);
   const state = (await loadState(wsId)).files ?? {};
   let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0;
@@ -234,6 +267,23 @@ export async function syncCompany(wsId, owner) {
   const changed = (a, b) => !a || !b || (a.h ?? `${a.m}:${a.s}`) !== (b.h ?? `${b.m}:${b.s}`);
 
   const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)]);
+
+  // 대량 삭제 브레이크 — 한 사이클이 회사 파일 대부분을 지우려 하면 중단(원격 오판·레이스·walk 실패 방어).
+  // 삭제는 비가역이라 "보류"가 항상 안전. 의도된 대량 삭제만 env로 명시 허용.
+  {
+    const baseCount = Object.keys(state).length;
+    let delL = 0, delR = 0;
+    for (const rel of allRels) {
+      if (isSecretRel(rel) && !cryptoOn()) continue;
+      const l = local[rel], r = remote.files[rel], base = state[rel];
+      if (l && !r && base && !changed(base, l)) delL++;  // 로컬 삭제 예정
+      if (!l && r && base && !changed(base, r)) delR++;  // 원격 삭제 예정
+    }
+    if (process.env.ARGO_SYNC_ALLOW_MASS_DELETE !== '1' && (massDeleteBrake(delL, baseCount) || massDeleteBrake(delR, baseCount))) {
+      throw new Error(`대량 삭제 감지(로컬 ${delL}·원격 ${delR} / base ${baseCount}) — 동기화 보류. 의도면 ARGO_SYNC_ALLOW_MASS_DELETE=1`);
+    }
+  }
+
   for (const rel of allRels) {
     if (isSecretRel(rel) && !cryptoOn()) continue; // 키 미확보 사이클 — 시크릿은 diff 자체에서 불가시(삭제 오인 차단)
     const l = local[rel], r = remote.files[rel], base = state[rel];
@@ -326,6 +376,8 @@ export function syncStatus() {
 
 async function cycle() {
   if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; return; }
+  // 크로스 프로세스 락 — 같은 root를 다른 살아있는 프로세스가 동기화 중이면 대기(이중 동기화=대형 유실 차단)
+  if (!(await holdSyncLock())) { status.lastError = '같은 데이터 루트를 다른 프로세스가 동기화 중 — 이 인스턴스는 대기'; return; }
   // 계정 키 확보 — 크레덴셜 봉투(v2)의 열쇠. 실패해도 사이클은 계속(크레덴셜만 이번 사이클 제외).
   const keyOwner = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
   await ensureAccountKey(client(), keyOwner);
