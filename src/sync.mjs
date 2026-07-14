@@ -234,6 +234,7 @@ export async function syncCompany(wsId, owner) {
 
   const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)]);
   for (const rel of allRels) {
+    if (isSecretRel(rel) && !cryptoOn()) continue; // 키 미확보 사이클 — 시크릿은 diff 자체에서 불가시(삭제 오인 차단)
     const l = local[rel], r = remote.files[rel], base = state[rel];
     const localChg = changed(base, l);   // base 대비 로컬 변경(생성/수정/삭제)
     const remoteChg = changed(base, r);   // base 대비 원격 변경
