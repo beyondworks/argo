@@ -56,10 +56,19 @@ export default function Login() {
     setBusy(true); setError('');
     try {
       // 서버가 OTP를 검증 — 세션은 브라우저에 남지 않고 기기 파일로만 발급된다
-      const res = await fetch('/api/device/login', {
+      const resp = await fetch('/api/device/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim(), token: code.trim() }),
-      }).then((r) => r.json());
+      });
+      // 비루프백(클라우드/워커) — 기기 세션 대신 쿠키 모델(기존 경로). 루프백은 서버 경유가 세션 단일 소유자.
+      // 라우트의 루프백 게이트는 verifyOtp 호출 전에 403을 반환하므로 코드는 아직 소비되지 않았다.
+      if (resp.status === 403) {
+        const { error: err } = await supabase.auth.verifyOtp({ email: email.trim(), token: code.trim(), type: 'email' });
+        if (err) throw err;
+        window.location.href = '/';
+        return;
+      }
+      const res = await resp.json();
       if (res.error) throw new Error(res.error);
       window.location.href = '/';
     } catch (err) { setError(String(err.message || err)); setBusy(false); }
