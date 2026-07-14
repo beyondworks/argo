@@ -276,6 +276,7 @@ const DICT = {
 
   // ── 홈
   'home.tagline': ['크루 · 폴더 기억 · 자동 연결', 'Crew · Folder Memory · Auto Link'],
+  'home.signIn': ['로그인', 'Sign in'],
   'login.title': ['아르고에 승선', 'Board the Argo'],
   'login.subtitle': ['이메일로 로그인 링크를 보내드립니다. 비밀번호는 없습니다.', 'We\'ll email you a sign-in link. No passwords.'],
   'login.emailPlaceholder': ['이메일 주소', 'Email address'],

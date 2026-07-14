@@ -20,10 +20,11 @@ export default function Home() {
   const pairPollRef = useRef(null); // 폴링 setInterval — 언마운트 시 정리해 누수 방지
   // 호스팅 인증(authOn)이면 다른 기기 회사는 계정 동기화로 자동 수신 — 코드 붙여넣기 UI는 authOn=false일 때만
   const [authOn, setAuthOn] = useState(false);
+  const [me, setMe] = useState(null); // /api/me = { authOn, user } — 상단바 계정 컨트롤(로그인/로그아웃)의 원천
 
   useEffect(() => {
     api('/api/companies').then((d) => { setCompanies(d.companies); setPresets(d.presets ?? []); }).catch((e) => setError(String(e.message)));
-    api('/api/me').then((d) => setAuthOn(!!d.authOn)).catch(() => {});
+    api('/api/me').then((d) => { setMe(d); setAuthOn(!!d.authOn); }).catch(() => {});
   }, []);
 
   // 컴포넌트 언마운트(회사 생성으로 페이지 이탈 등) 시 폴링 interval 누수 방지 — 브리프 코드에 없던 보강
@@ -66,7 +67,27 @@ export default function Home() {
     <div>
       <header className="topbar" style={{ justifyContent: 'space-between' }}>
         <Logo />
-        <span className="microlabel">{t('home.tagline')}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
+          <span className="microlabel" style={{ whiteSpace: 'nowrap' }}>{t('home.tagline')}</span>
+          {/* 계정 컨트롤 — 인증 모드(authOn)일 때만. 로그인 상태면 이메일+로그아웃, 아니면 로그인.
+              로컬 1인 모드(authOn=false)는 계정 개념이 없어 표시하지 않는다. */}
+          {me?.authOn && (
+            me.user ? (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                {me.user.email && (
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', maxWidth: 180, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {me.user.email}
+                  </span>
+                )}
+                <form action="/auth/signout" method="post" style={{ flex: 'none' }}>
+                  <button className="btn sm" title={t('login.signOut')}>{t('login.signOut')}</button>
+                </form>
+              </span>
+            ) : (
+              <a className="btn sm" href="/login">{t('home.signIn')}</a>
+            )
+          )}
+        </div>
       </header>
 
       <main style={{ maxWidth: 660, margin: '0 auto', padding: '64px 24px 90px' }}>
