@@ -914,7 +914,7 @@
   --info: #5a7a9a; --info-soft: rgba(90, 122, 154, 0.14);
   --warn: #b08a40; --warn-soft: rgba(176, 138, 64, 0.15);
   --danger: #b05050; --danger-soft: rgba(176, 80, 80, 0.15);
-  --ring: rgba(176, 138, 64, 0.5); --selection: rgba(217, 207, 186, 0.5019607843137255);
+  --ring: rgba(176, 138, 64, 0.5); --selection: rgba(217, 207, 186, 0.5);
   --overlay: rgba(38, 37, 36, 0.55);
   --shadow-card: 0 6px 20px rgba(0, 0, 0, 0.08);
   --r: 14px;
