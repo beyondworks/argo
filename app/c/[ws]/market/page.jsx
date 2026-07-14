@@ -2,7 +2,7 @@
 // 스킬·도구 — 마켓플레이스. 내장 카탈로그 + 원격 마켓(skillsmp·공식 MCP 레지스트리) 검색·즉시 설치.
 // 설치 즉시 모든 크루의 다음 턴에 반영된다 (스킬 → 시스템 프롬프트, MCP → mcpServers).
 import { use, useEffect, useState } from 'react';
-import { Icon, Spinner, Skeleton, api, imeGuard } from '../../../ui';
+import { Icon, Spinner, Skeleton, useScrollLock, api, imeGuard } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 const fmtN = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
@@ -90,6 +90,7 @@ function TopList({ ws, kind, installedIds, onInstalled, onDetail }) {
 /** 상세 모달 — 한글 easy 설명(생성·캐시) + 즉시 설치. */
 function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
   const { t } = useLang();
+  useScrollLock();
   const [exp, setExp] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);

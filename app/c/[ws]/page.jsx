@@ -1,8 +1,8 @@
 'use client';
 // 데크 — 아르고호 계기판. 좌: 본 계기(메트릭·영입·크루·기억·차트), 우: 보조 계기 레일(별자리·항해일지·명판).
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
+import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, useScrollLock, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
 import { Constellation3D, GraphModal } from './graphview';
 import { useLang } from '../../i18n';
 
@@ -23,6 +23,7 @@ export default function Deck({ params }) {
   const [q, setQ] = useState('');
   const [graphOpen, setGraphOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null); // 크루 신원 수정 모달
+  const hireRef = useRef(null); // 사이드바 '크루 추가'가 포커스+깜빡 대상으로 삼는 입력창
 
   function load() {
     api(`/api/companies/${ws}`).then(setData).catch((e) => setError(String(e.message)));
@@ -45,6 +46,28 @@ export default function Deck({ params }) {
     const t = setInterval(() => setStage((s) => Math.min(s + 1, HIRE_STAGES.length - 1)), 9000);
     return () => clearInterval(t);
   }, [hiring]);
+
+  // 사이드바 '크루 추가' → 이 입력창으로 스크롤·포커스 + 하이라이트 깜빡 (새로고침 대신).
+  // 같은 페이지는 argo:hire 이벤트로, 다른 페이지에서 넘어온 경우는 sessionStorage 플래그로.
+  useEffect(() => {
+    const focusHire = () => {
+      const el = hireRef.current;
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.querySelector('input')?.focus();
+      el.classList.remove('blink-focus');
+      void el.offsetWidth; // 리플로우로 애니메이션 재시작
+      el.classList.add('blink-focus');
+      setTimeout(() => el.classList.remove('blink-focus'), 1600);
+    };
+    let pending;
+    try {
+      if (sessionStorage.getItem('argo:hire')) { sessionStorage.removeItem('argo:hire'); pending = setTimeout(focusHire, 140); }
+    } catch { /* 프라이빗 모드 */ }
+    const onHire = () => { try { sessionStorage.removeItem('argo:hire'); } catch { /* noop */ } focusHire(); };
+    window.addEventListener('argo:hire', onHire);
+    return () => { window.removeEventListener('argo:hire', onHire); clearTimeout(pending); };
+  }, []);
 
   async function hire(e) {
     e.preventDefault();
@@ -150,7 +173,7 @@ export default function Deck({ params }) {
             )}
           </div>
 
-          <form onSubmit={hire} className="input-bar">
+          <form ref={hireRef} onSubmit={hire} className="input-bar">
             <span style={{ color: 'var(--fg-3)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
             <input suppressHydrationWarning
               placeholder={t('deck.hirePlaceholder')}
@@ -520,6 +543,7 @@ function VoyageLog({ docs, agents }) {
 /** 크루 신원 수정 — 이름·역할·팀. 슬러그·기록은 유지된다. */
 function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
   const { t } = useLang();
+  useScrollLock();
   const [form, setForm] = useState({ name: agent.name, role: agent.role, team: agent.team || '', model: agent.model || '', runner: agent.runner || 'claude' });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');

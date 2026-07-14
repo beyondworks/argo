@@ -19,6 +19,7 @@ const DICT = {
   'common.running': ['가동', 'On'],
   'common.saved': ['저장됨', 'Saved'],
   'common.search': ['검색', 'Search'],
+  'topbar.version': ['설치된 버전', 'Installed version'],
   'common.approve': ['승인', 'Approve'],
   'common.reject': ['거절', 'Reject'],
   'common.chat': ['대화', 'Chat'],

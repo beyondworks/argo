@@ -1,5 +1,10 @@
+import { readFileSync } from 'node:fs';
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+
 /** @type {import('next').NextConfig} */
 export default {
+  // 상단바 버전 표시 — 빌드 시점 package.json 버전을 클라이언트에 노출(업데이트 버튼 기반).
+  env: { NEXT_PUBLIC_APP_VERSION: pkg.version },
   // Agent SDK가 claude CLI를 서브프로세스로 스폰한다 — 번들에 포함하지 않는다.
   serverExternalPackages: ['@anthropic-ai/claude-agent-sdk'],
   outputFileTracingRoot: import.meta.dirname, // 상위 폴더 lockfile 오인 방지

@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, useScrollLock, api, imeGuard } from '../../../../ui';
 import { useLang } from '../../../../i18n';
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
@@ -630,6 +630,7 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
 /** 카드 패널 — 카드가 곧 시스템 프롬프트. 열람·편집·해고(깃헙식 확인). */
 function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose, onFired }) {
   const { t, fmtMoney } = useLang();
+  useScrollLock();
   const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n ?? 0));
   const [md, setMd] = useState(null);
   const [profile, setProfile] = useState({ recent: [], skills: [] });

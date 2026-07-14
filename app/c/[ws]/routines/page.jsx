@@ -2,7 +2,7 @@
 // 루틴 — 크루에게 반복 지시를 예약하고, 원클릭으로 즉시 실행한다.
 // 템플릿 원클릭 생성 → 폼 프리필. 실행 결과는 vault 기억으로 남는다.
 import { use, useEffect, useState } from 'react';
-import { Icon, Avatar, Spinner, Skeleton, api, imeGuard, timeAgo } from '../../../ui';
+import { Icon, Avatar, Spinner, Skeleton, useScrollLock, api, imeGuard, timeAgo } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 function scheduleLabel(s, t, DOW) {
@@ -223,6 +223,7 @@ const selStyle = {
 /** 실행 팝업 — 예약 정보 확인 + 즉시 실행. */
 function RunPopup({ ws, routine, crewName, onClose }) {
   const { t, lang } = useLang();
+  useScrollLock();
   const DOW = [t('routines.dow.sun'), t('routines.dow.mon'), t('routines.dow.tue'), t('routines.dow.wed'), t('routines.dow.thu'), t('routines.dow.fri'), t('routines.dow.sat')];
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState('');

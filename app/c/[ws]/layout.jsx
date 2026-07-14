@@ -1,7 +1,7 @@
 'use client';
 // 회사 앱셸 — 라벨 사이드바(회사/크루 그룹 + 사용자 footer) + 헤더(타이틀·검색).
 import { use, useCallback, useEffect, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, api } from '../../ui';
 import { useLang } from '../../i18n';
 
@@ -95,6 +95,7 @@ export default function CompanyShell({ children, params }) {
   const { ws } = use(params);
   const { t } = useLang();
   const pathname = usePathname();
+  const router = useRouter();
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
   // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
@@ -227,7 +228,18 @@ export default function CompanyShell({ children, params }) {
           </div>
           );
         })}
-        <a href={`/c/${ws}`} className="nav-item" style={{ color: 'var(--fg-3)', fontSize: 12.5 }}>
+        <a
+          href={`/c/${ws}`}
+          className="nav-item"
+          style={{ color: 'var(--fg-3)', fontSize: 12.5 }}
+          onClick={(e) => {
+            // 새로고침 대신 — Deck의 크루 추가 입력창으로 스크롤·포커스 + 깜빡.
+            e.preventDefault();
+            try { sessionStorage.setItem('argo:hire', '1'); } catch { /* 프라이빗 모드 */ }
+            if (pathname === `/c/${ws}`) window.dispatchEvent(new Event('argo:hire'));
+            else router.push(`/c/${ws}`);
+          }}
+        >
           <Icon name="plus" size={15} /> {t('nav.hire')}
         </a>
 
@@ -262,6 +274,11 @@ export default function CompanyShell({ children, params }) {
           {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체) */}
           <div id="argo-topbar-slot" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }} />
           <div style={{ flex: 1 }} />
+          {process.env.NEXT_PUBLIC_APP_VERSION && (
+            <span className="chip mono" title={t('topbar.version')} style={{ flex: 'none', fontSize: 10.5, color: 'var(--fg-3)' }}>
+              v{process.env.NEXT_PUBLIC_APP_VERSION}
+            </span>
+          )}
           <Clock />
           <TasksDock ws={ws} />
           <label className="search-pill">

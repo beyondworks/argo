@@ -6,6 +6,17 @@ import { useLang } from './i18n';
 
 marked.setOptions({ breaks: true, gfm: true });
 
+/* ─── 스크롤 락 — 모달/팝업 열림 동안 body 스크롤 차단(뒷 페이지 간섭·스크롤 체이닝 방지).
+   중첩 모달 대비 참조 카운트 — 마지막 하나가 닫힐 때만 원복. ─── */
+let _lockCount = 0, _prevOverflow = '';
+export function useScrollLock() {
+  useEffect(() => {
+    if (_lockCount === 0) { _prevOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'; }
+    _lockCount += 1;
+    return () => { _lockCount -= 1; if (_lockCount <= 0) { _lockCount = 0; document.body.style.overflow = _prevOverflow; } };
+  }, []);
+}
+
 /* ─── 아이콘 (lucide 계열 미니 세트) ─── */
 const PATHS = {
   deck: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
@@ -285,6 +296,7 @@ export function tsFromRel(rel) {
  *  (규칙: 해고·회사 보관 등 파괴적 액션은 window.confirm 금지, 항상 이것 사용) */
 export function DangerModal({ title, description, requireText, phraseKey = 'danger.phrase.delete', confirmLabel, busy, onConfirm, onClose }) {
   const { t } = useLang();
+  useScrollLock();
   const [nameIn, setNameIn] = useState('');
   const [phraseIn, setPhraseIn] = useState('');
   const phrase = t(phraseKey);
