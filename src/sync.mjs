@@ -26,6 +26,7 @@ import { withLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, sealSecret, openSecret } from './secretbox.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
+import { ensureAccountKey } from './accountkey.mjs';
 
 const BUCKET = 'companies';
 const CYCLE_MS = 45_000;
@@ -321,6 +322,9 @@ export function syncStatus() {
 
 async function cycle() {
   if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; return; }
+  // 계정 키 확보 — 크레덴셜 봉투(v2)의 열쇠. 실패해도 사이클은 계속(크레덴셜만 이번 사이클 제외).
+  const keyOwner = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
+  await ensureAccountKey(client(), keyOwner);
   // 로컬 회사 수집 (ownerId 있는 것만 — 소유자가 있어야 클라우드에 자리가 있다)
   const targets = new Map(); // wsId → owner
   let entries = [];
@@ -338,6 +342,8 @@ async function cycle() {
     if (!targets.has(wsId)) targets.set(wsId, owner);
   }
   const owners = [...new Set(targets.values())];
+  // ARGO_SYNC_OWNER/페어링/세션 어디에도 오너가 없던 서비스 셀프호스트 — 로컬 회사에서 찾은 오너로 한 번 더 시도
+  if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
   if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
   let companyFailed = 0;
   for (const [wsId, owner] of targets) {

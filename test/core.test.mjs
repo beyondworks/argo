@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { hkdfSync, createCipheriv, randomBytes } from 'node:crypto';
 
 import { writeJsonAtomic, readJson, readJsonLenient } from '../src/jsonstore.mjs';
 import { mergeLedger, isLedger, isText, isThread } from '../src/sync.mjs';
@@ -113,21 +114,38 @@ test('claimPairing: 봉인 전엔 pending', () => {
   assert.equal(claimPairing('code-2', 'ver-2').status, 'pending');
 });
 
-/* ─── secretbox — 시크릿 봉투 암호화 (동기화로 흐르는 크레덴셜의 방어선) ─── */
-import { sealSecret, openSecret, isSecretRel } from '../src/secretbox.mjs';
+/* ─── secretbox — 시크릿 봉투 암호화 v2 (계정 키 파생) + v1 레거시 열기 (M-2c Task 3) ─── */
+import { sealSecret, openSecret, isSecretRel, cryptoOn } from '../src/secretbox.mjs';
 
-test('secretbox — 왕복·평문 미노출·위변조 거부', () => {
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'test-key-for-secretbox-only';
-  const pt = Buffer.from(JSON.stringify({ telegram: { token: 'plain-token-abc' } }));
-  const box = sealSecret(pt);
-  assert.ok(!box.toString('latin1').includes('plain-token-abc')); // 암호문에 평문 없음
-  assert.deepEqual(openSecret(box), pt);                          // 왕복 무손실
-  const tampered = Buffer.from(box);
-  tampered[tampered.length - 1] ^= 1;
-  assert.throws(() => openSecret(tampered));                      // 위변조(GCM tag) 거부
-  assert.throws(() => openSecret(Buffer.from('not-a-box')));      // 봉투 형식 아님 거부
+test('secretbox — 파일 대상 판별', () => {
   assert.ok(isSecretRel('connections.json') && isSecretRel('.secrets.json'));
   assert.ok(!isSecretRel('company.json') && !isSecretRel('chats/duri.json'));
+});
+
+test('봉투 v2 — 계정 키 왕복, v1 레거시 열기, 위변조 거부', async () => {
+  // v2 왕복: 계정 키 캐시를 fake로 채움
+  clearAccountKey();
+  const store2 = new Map();
+  await ensureAccountKey(fakeSb(store2), 'u-crypt');
+  assert.equal(cryptoOn(), true);
+  const sealed = sealSecret(Buffer.from('{"bot":"tok"}'));
+  assert.equal(sealed.subarray(0, 14).toString(), 'argosecret.v2:');
+  assert.equal(openSecret(sealed).toString(), '{"bot":"tok"}');
+  // 위변조 거부
+  const bad = Buffer.from(sealed); bad[bad.length - 1] ^= 0xff;
+  assert.throws(() => openSecret(bad));
+  // v1 레거시 열기: 서비스 키 HKDF로 v1 봉투를 수제 조립 → openSecret이 해독
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'test-legacy-service-key';
+  const lk = Buffer.from(hkdfSync('sha256', process.env.SUPABASE_SERVICE_ROLE_KEY, 'argo-secret-sync-v1', 'secretbox', 32));
+  const iv = randomBytes(12);
+  const c = createCipheriv('aes-256-gcm', lk, iv);
+  const ct = Buffer.concat([c.update(Buffer.from('legacy-secret')), c.final()]);
+  const v1 = Buffer.concat([Buffer.from('argosecret.v1:'), iv, c.getAuthTag(), ct]);
+  assert.equal(openSecret(v1).toString(), 'legacy-secret');
+  // 계정 키 없으면 cryptoOn false + seal throw
+  clearAccountKey();
+  assert.equal(cryptoOn(), false);
+  assert.throws(() => sealSecret(Buffer.from('x')));
 });
 
 /* ── 페어링: 연결 코드 인코더/파서 (M-1 자가완결 자격) ── */
