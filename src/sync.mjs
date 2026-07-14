@@ -27,6 +27,7 @@ import { cryptoOn, isSecretRel, sealSecret, openSecret } from './secretbox.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { ensureAccountKey } from './accountkey.mjs';
+import { syncEntitled, lastPlan } from './entitlement.mjs';
 
 const BUCKET = 'companies';
 const CYCLE_MS = 45_000;
@@ -318,7 +319,7 @@ async function discoverRemote(localOwners) {
 /* ─── 상주 루프 ─── */
 const status = (globalThis.__argoSyncStatus ??= { lastTs: null, lastError: '', companies: {} });
 export function syncStatus() {
-  return { ...status, on: syncOn(), leader: isCloudLeader(), companies: { ...status.companies } };
+  return { ...status, on: syncOn(), leader: isCloudLeader(), plan: lastPlan(), companies: { ...status.companies } };
 }
 
 async function cycle() {
@@ -345,6 +346,12 @@ async function cycle() {
   const owners = [...new Set(targets.values())];
   // ARGO_SYNC_OWNER/페어링/세션 어디에도 오너가 없던 서비스 셀프호스트 — 로컬 회사에서 찾은 오너로 한 번 더 시도
   if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
+  // 요금제 게이트(M-2d 스캐폴드) — 세션 모드에만. 서비스 모드(셀프호스트·워커)는 자기 인프라라 통과.
+  // 강제는 ARGO_ENFORCE_PLAN=1일 때만(기본 off). 차단 = 조기 return — diff가 안 돌아 부작용 없음.
+  if (!loadSyncCreds()) {
+    const ent = await syncEntitled(client(), keyOwner || owners[0] || null);
+    if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; return; }
+  }
   if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
   let companyFailed = 0;
   for (const [wsId, owner] of targets) {

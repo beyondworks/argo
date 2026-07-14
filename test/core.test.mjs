@@ -360,3 +360,28 @@ test('계정 키 — 생성·재사용·경합·캐시', async () => {
   assert.equal(await ensureAccountKey(fakeSb(store), null), null);
   assert.equal(accountKey(), null);
 });
+
+/* ── 요금제 게이트 — plan 조회 fail-safe + 강제 스위치 (M-2d Task 2) ── */
+import { fetchPlan, syncEntitled, lastPlan } from '../src/entitlement.mjs';
+
+function fakePlanSb(rows) {
+  return { from: () => ({ select: () => ({ eq: (_c, uid) => ({ maybeSingle: async () => rows.error ? { data: null, error: rows.error } : { data: rows[uid] ? { plan: rows[uid] } : null, error: null } }) }) }) };
+}
+
+test('entitlement — 부재 free·존재 pro·오류 free·강제 게이트', async () => {
+  assert.equal(await fetchPlan(fakePlanSb({ 'u-p': 'pro' }), 'u-p'), 'pro');
+  assert.equal(await fetchPlan(fakePlanSb({}), 'u-x'), 'free');            // 행 부재
+  assert.equal(await fetchPlan(fakePlanSb({ error: { message: 'boom' } }), 'u-x'), 'free'); // 오류 fail-safe
+  assert.equal(await fetchPlan(fakePlanSb({}), null), 'free');             // 오너 없음
+  const prev = process.env.ARGO_ENFORCE_PLAN;
+  try {
+    delete process.env.ARGO_ENFORCE_PLAN;                                  // 강제 off(기본)
+    assert.deepEqual(await syncEntitled(fakePlanSb({}), 'u-x'), { ok: true, plan: 'free' });
+    process.env.ARGO_ENFORCE_PLAN = '1';                                   // 강제 on
+    assert.deepEqual(await syncEntitled(fakePlanSb({}), 'u-x'), { ok: false, plan: 'free' });
+    assert.deepEqual(await syncEntitled(fakePlanSb({ 'u-p': 'pro' }), 'u-p'), { ok: true, plan: 'pro' });
+    assert.equal(lastPlan(), 'pro');
+  } finally {
+    if (prev === undefined) delete process.env.ARGO_ENFORCE_PLAN; else process.env.ARGO_ENFORCE_PLAN = prev;
+  }
+});

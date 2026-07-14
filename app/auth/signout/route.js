@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { publicUrl } from '../../http-origin.mjs';
 import { clearDeviceSession } from '../../../src/devicesession.mjs';
+import { clearAccountKey } from '../../../src/accountkey.mjs';
 
 // CSRF 방어 — same-origin(Origin/Referer가 요청 host와 일치)만 허용. 크로스사이트 강제 로그아웃 차단.
 function sameOrigin(req) {
@@ -30,6 +31,7 @@ export async function POST(req) {
   // 워커(TENANT)는 기기 세션을 쓰지 않으므로 대상 없음(호출해도 무해하지만 회귀 0 원칙상 명시적으로 건너뜀).
   if (!process.env.ARGO_TENANT_OWNER?.trim()) {
     await clearDeviceSession();
+    clearAccountKey(); // 방어적 캐시 정리(계정 전환 대비) — 메모리 캐시라 무해, 다음 로그인이 새로 확보
     res.cookies.set('argo-device', '', { path: '/', maxAge: 0 });
   }
   return res;

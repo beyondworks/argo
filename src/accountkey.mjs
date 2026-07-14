@@ -34,7 +34,7 @@ export async function ensureAccountKey(sb, ownerId) {
       else if (error.code === '23505') b64 = await fetchKey(sb, ownerId); // 경합 — 승자 키 채택
       else throw new Error(`계정 키 생성 실패: ${error.message}`);
     }
-    if (!b64) return null;
+    if (!b64) { console.warn('[argo] 계정 키 경합 재조회도 비어 있음 — 다음 사이클 재시도'); return null; }
     cached = Buffer.from(b64, 'base64');
     cachedOwner = ownerId;
     return cached;
