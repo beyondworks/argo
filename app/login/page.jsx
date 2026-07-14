@@ -29,6 +29,23 @@ export default function Login() {
     if (err) setError(t('login.oauthFailed', { msg: err }));
   }, [t]); // eslint-disable-line
 
+  // 매직링크는 이메일의 링크를 새 탭에서 열어 로그인한다 — 그때 이 "원래 창"이 멈춰있지 않고 홈으로 자동 복귀하도록
+  // 세션 성립을 폴링한다. (같은 탭 코드 입력은 verifyCode가 즉시 이동하므로 무관. 로컬 모드는 sent가 없어 미동작.)
+  // device·cookie 모드 모두: 다른 탭이 로그인하면 공유 쿠키/마커로 이 창의 /api/me가 사용자를 반환한다.
+  useEffect(() => {
+    if (!sent) return;
+    let stop = false;
+    const iv = setInterval(async () => {
+      try {
+        const r = await fetch('/api/me');
+        if (!r.ok) return; // 미로그인 = 미들웨어 401 → 계속 대기
+        const d = await r.json();
+        if (!stop && d?.user) { stop = true; clearInterval(iv); window.location.href = '/'; }
+      } catch { /* 다음 틱 재시도 */ }
+    }, 2500);
+    return () => { stop = true; clearInterval(iv); };
+  }, [sent]);
+
   if (!URL_ENV || !KEY_ENV) {
     return (
       <Shell><p style={{ color: 'var(--fg-2)', fontSize: 13.5 }}>{t('login.localMode')}</p>
