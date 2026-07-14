@@ -19,6 +19,29 @@ const DICT = {
   ],
   'hero.scroll': ['스크롤로 기능 보기', 'Scroll to explore'],
 
+  // Core Four — Argo만의 후킹 포인트 (2026-07-14 유건 지정: 최우선 강조 4개)
+  'core.kicker': ['Argo가 다른 이유', 'Why Argo is different'],
+  'core1.title': ['무한 장기 기억', 'Infinite memory'],
+  'core1.body': [
+    '대화가 끝나도 잊지 않습니다. 한계 없는 로컬 장기기억이 계속 쌓입니다.',
+    'Nothing is forgotten when the chat ends — unlimited local long-term memory keeps growing.',
+  ],
+  'core2.title': ['LLM 위키 내장', 'Built-in LLM wiki'],
+  'core2.body': [
+    '기억이 위키처럼 서로 연결되고 에이전트끼리 공유됩니다. 맥락이 자산이 됩니다.',
+    'Memories link like a wiki and are shared across agents — context becomes an asset.',
+  ],
+  'core3.title': ['로그인 = 맥락 동기화', 'Log in, context follows'],
+  'core3.body': [
+    '기기가 바뀌어도 로그인 한 번이면 모든 맥락이 그대로 따라옵니다.',
+    'Switch devices and just sign in — every bit of context follows you.',
+  ],
+  'core4.title': ['PC 대화를 텔레그램으로', 'Continue on Telegram'],
+  'core4.body': [
+    '책상에서 하던 대화를 이동 중에 텔레그램에서 그대로 이어갑니다.',
+    'The conversation you started at your desk continues on Telegram, seamlessly.',
+  ],
+
   // 1장 — 에이전트 생성
   'ch1.num': ['제 1 장', 'Chapter I'],
   'ch1.short': ['에이전트 생성', 'Create Agents'],
@@ -62,11 +85,11 @@ const DICT = {
     '메모 한 장 수준이 아닙니다. 폴더 전체가 에이전트의 기억이 되어 프로젝트 맥락이 통째로 보존됩니다.',
     'Not a single markdown note: entire folders become the agent’s memory, preserving full project context.',
   ],
-  'feat5.label': ['데모 — 지식 복리', 'Demo — Compounding knowledge'],
-  'feat5.title': ['기억이 서로 연결되어, 지식이 복리로 쌓입니다', 'Memories link — knowledge compounds'],
+  'feat5.label': ['데모 — LLM 위키', 'Demo — LLM wiki'],
+  'feat5.title': ['LLM 위키 — 기억이 서로 연결됩니다', 'A built-in LLM wiki'],
   'feat5.body': [
-    '유사한 기억끼리 자동으로 링크됩니다. 쓰면 쓸수록 에이전트가 아는 것이 곱해집니다.',
-    'Similar memories link automatically. The more you use it, the more your agents know.',
+    '유사한 기억이 위키 문서처럼 자동으로 링크되고 에이전트들이 함께 씁니다. 지식이 복리로 쌓입니다.',
+    'Memories link like wiki pages and every agent shares them. Knowledge compounds.',
   ],
   'feat6.label': ['데모 — 토큰 절약 검색', 'Demo — Token-saving recall'],
   'feat6.title': ['필요한 기억만 읽어 토큰을 아낍니다', 'Reads only what the task needs'],
@@ -75,26 +98,32 @@ const DICT = {
     'Keyword search pulls only task-relevant memory into context. Unlimited memory, minimal token cost.',
   ],
 
-  // 3장 — 텔레그램 연동
+  // 3장 — 이어지는 맥락 (텔레그램 이어가기 · 기기 동기화)
   'ch3.num': ['제 3 장', 'Chapter III'],
-  'ch3.short': ['텔레그램 연동', 'Telegram'],
-  'ch3.sub': ['주머니 속에서 에이전트에게 지시', 'Command your agents from your pocket'],
+  'ch3.short': ['이어지는 맥락', 'Continuity'],
+  'ch3.sub': ['어디서든, 어떤 기기서든 이어집니다', 'Pick up anywhere, on any device'],
   'ch3.tagline': [
-    '클릭 한 번으로 텔레그램과 연결됩니다. 어디서든 메시지로 일을 시키고 결과를 받아보세요.',
-    'One click connects Telegram. Assign work and get results by message, wherever you are.',
+    'PC에서 하던 대화를 텔레그램으로, 기기가 바뀌면 로그인 한 번으로 — 일과 맥락이 당신을 따라다닙니다.',
+    'Hand off desktop conversations to Telegram, or sign in on a new device — your work and context follow you.',
   ],
-  'ch3.cap': ['원클릭 연결 · 헤르메스 대비 2배 속도', 'One-click connect · 2× Hermes speed'],
+  'ch3.cap': ['텔레그램 이어가기 · 기기 간 맥락 동기화', 'Telegram hand-off · device context sync'],
   'feat7.label': ['데모 — 텔레그램 연결', 'Demo — Telegram connect'],
   'feat7.title': ['텔레그램, 클릭 한 번에 연결', 'One-click Telegram'],
   'feat7.body': [
-    '복잡한 설정 없이 클릭 한 번이면 연결됩니다. 메시지로 지시하고, 메시지로 보고받습니다.',
-    'No setup maze — one click and you’re connected. Assign by message, get reports by message.',
+    '복잡한 설정 없이 클릭 한 번이면 연결됩니다. 송수신 속도는 헤르메스의 2배 — 지시와 보고가 즉각적입니다.',
+    'One click and you’re connected — with round-trips 2× faster than Hermes. Assign and get reports instantly.',
   ],
-  'feat8.label': ['데모 — 2배 빠른 송수신', 'Demo — 2× faster messaging'],
-  'feat8.title': ['송수신 속도, 헤르메스의 2배', '2× faster than Hermes'],
+  'feat8.label': ['데모 — 대화 이어가기', 'Demo — Conversation hand-off'],
+  'feat8.title': ['PC에서 하던 대화, 텔레그램으로 이어서', 'Start on desktop, continue on Telegram'],
   'feat8.body': [
-    '텔레그램 송수신이 헤르메스 대비 2배 빠릅니다. 지시와 응답의 왕복이 즉각적입니다.',
-    'Telegram round-trips run twice as fast as Hermes. Ask and answer, instantly.',
+    '책상에서 시작한 대화를 이동 중에 그대로 이어갑니다. 맥락도 기억도 끊기지 않습니다.',
+    'Pick up the exact conversation you left at your desk — context and memory intact.',
+  ],
+  'feat13.label': ['데모 — 기기 간 동기화', 'Demo — Device sync'],
+  'feat13.title': ['기기가 바뀌어도, 로그인하면 그대로', 'New device? Just log in'],
+  'feat13.body': [
+    '새 컴퓨터든 다른 작업실이든 로그인 한 번이면 기억·규칙·진행 중인 일이 전부 동기화됩니다.',
+    'On any new machine, one sign-in restores your memory, rules, and work in progress.',
   ],
 
   // 4장 — 스킬 자동화

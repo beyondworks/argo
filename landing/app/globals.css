@@ -359,6 +359,78 @@ video {
   50% { transform: translateY(5px); }
 }
 
+/* ── Core Four — Argo만의 후킹 포인트 (히어로 직후 최상단 강조) ── */
+
+.core-section {
+  background: var(--bg);
+  border-top: 1px solid var(--rule);
+  padding: clamp(36px, 6svh, 64px) var(--pad-x) clamp(44px, 8svh, 84px);
+}
+
+.core-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 12px;
+}
+
+.core-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--rule);
+  border-top: none;
+}
+
+.core-cell {
+  padding: 26px clamp(16px, 1.8vw, 28px) 30px;
+  border-right: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: background 0.18s ease-out;
+}
+.core-cell:last-child {
+  border-right: none;
+}
+.core-cell:hover {
+  background: var(--bg-2);
+}
+
+.core-num {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  color: var(--gold);
+}
+
+.core-title {
+  font-size: clamp(20px, 1.9vw, 30px);
+  font-weight: 790;
+  letter-spacing: -0.02em;
+  line-height: 1.14;
+  text-wrap: balance;
+}
+
+.core-body {
+  font-size: 13.5px;
+  color: var(--fg-2);
+  max-width: 30ch;
+}
+
+@media (max-width: 860px) {
+  .core-grid {
+    grid-template-columns: 1fr;
+  }
+  .core-cell {
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+  }
+  .core-cell:last-child {
+    border-bottom: none;
+  }
+}
+
 /* ── chapters ── */
 
 .chapter {

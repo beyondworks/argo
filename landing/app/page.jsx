@@ -1,6 +1,7 @@
 import Image from 'next/image';
 import Nav from '@/components/Nav';
 import Hero from '@/components/Hero';
+import CoreFour from '@/components/CoreFour';
 import Chapter from '@/components/Chapter';
 import DownloadSection from '@/components/DownloadSection';
 import PricingSection from '@/components/PricingSection';
@@ -14,6 +15,7 @@ export default function Page() {
     <main>
       <Nav />
       <Hero />
+      <CoreFour />
       {CHAPTERS.map((chapter, i) => {
         const offset = orderOffset;
         orderOffset += chapter.features.length;

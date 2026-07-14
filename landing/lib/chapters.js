@@ -1,4 +1,4 @@
-// 데이터 단일 진실 — 5개 챕터 × 12개 기능. 문자열은 전부 i18n 키. tc = 데모 타임코드 표기.
+// 데이터 단일 진실 — 5개 챕터 × 13개 기능. 문자열은 전부 i18n 키. tc = 데모 타임코드 표기.
 export const CHAPTERS = [
   {
     id: 'ch1',
@@ -30,6 +30,7 @@ export const CHAPTERS = [
     features: [
       { id: 'feat7', tc: '00:09' },
       { id: 'feat8', tc: '00:13' },
+      { id: 'feat13', tc: '00:14' },
     ],
   },
   {
@@ -53,3 +54,5 @@ export const CHAPTERS = [
     ],
   },
 ];
+
+export const TOTAL_FEATURES = CHAPTERS.reduce((n, c) => n + c.features.length, 0);

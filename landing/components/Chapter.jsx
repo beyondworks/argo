@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { useGSAP } from '@gsap/react';
 import { gsap } from '@/lib/gsap';
 import { useLang } from '@/lib/i18n';
+import { TOTAL_FEATURES } from '@/lib/chapters';
 import FeatureBlock from '@/components/FeatureBlock';
 
 // 범용 핀 씬 — 마스터 타임라인 1개, [인트로 1슬라이스 + 기능 n슬라이스].
@@ -125,7 +126,7 @@ export default function Chapter({ chapter, orderOffset }) {
           <div className="rule-top" />
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <span className="mono-label">{t(`${chapter.id}.num`)}</span>
-            <span className="mono-label mono-dim">{chapter.features.length} / 12</span>
+            <span className="mono-label mono-dim">{chapter.features.length} / {TOTAL_FEATURES}</span>
           </div>
           <h2 className="chapter-title">{t(`${chapter.id}.short`)}</h2>
           <p className="chapter-sub">{t(`${chapter.id}.sub`)}</p>
