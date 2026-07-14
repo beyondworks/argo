@@ -233,6 +233,8 @@ export default function CompanyShell({ children, params }) {
           className="nav-item"
           style={{ color: 'var(--fg-3)', fontSize: 12.5 }}
           onClick={(e) => {
+            // 새 탭/새 창(cmd·ctrl·shift·중클릭)은 기본 앵커 동작 보존 — 좌클릭만 가로챈다.
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
             // 새로고침 대신 — Deck의 크루 추가 입력창으로 스크롤·포커스 + 깜빡.
             e.preventDefault();
             try { sessionStorage.setItem('argo:hire', '1'); } catch { /* 프라이빗 모드 */ }

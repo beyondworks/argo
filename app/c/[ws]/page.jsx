@@ -58,15 +58,16 @@ export default function Deck({ params }) {
       el.classList.remove('blink-focus');
       void el.offsetWidth; // 리플로우로 애니메이션 재시작
       el.classList.add('blink-focus');
-      setTimeout(() => el.classList.remove('blink-focus'), 1600);
+      clearTimeout(blinkT);
+      blinkT = setTimeout(() => el.classList.remove('blink-focus'), 1600);
     };
-    let pending;
+    let pending, blinkT;
     try {
       if (sessionStorage.getItem('argo:hire')) { sessionStorage.removeItem('argo:hire'); pending = setTimeout(focusHire, 140); }
     } catch { /* 프라이빗 모드 */ }
     const onHire = () => { try { sessionStorage.removeItem('argo:hire'); } catch { /* noop */ } focusHire(); };
     window.addEventListener('argo:hire', onHire);
-    return () => { window.removeEventListener('argo:hire', onHire); clearTimeout(pending); };
+    return () => { window.removeEventListener('argo:hire', onHire); clearTimeout(pending); clearTimeout(blinkT); };
   }, []);
 
   async function hire(e) {
