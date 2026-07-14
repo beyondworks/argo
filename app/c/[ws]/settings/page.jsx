@@ -7,6 +7,8 @@ import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
+const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
+const LS_YEARLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_YEARLY || '';
 
 export default function Settings({ params }) {
   const { ws } = use(params);
@@ -830,6 +832,11 @@ function SyncCard({ ws }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="card-title">{t('settings.sync.title')}</span>
         <span style={{ flex: 1 }} />
+        {sync?.plan === 'pro' ? (
+          <span className="pill ok" style={{ flex: 'none' }}>{t('billing.plan.pro')}</span>
+        ) : sync?.plan === 'free' ? (
+          <span className="pill" style={{ flex: 'none' }}>{t('billing.plan.free')}</span>
+        ) : null}
         {sync === null ? <Skeleton h={18} w={70} /> : sync.on ? (
           <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('settings.sync.on')}</span>
         ) : (
@@ -843,10 +850,44 @@ function SyncCard({ ws }) {
             {t('settings.sync.last')}: {sync.lastTs ? new Date(sync.lastTs).toLocaleTimeString(lang === 'ko' ? 'ko-KR' : 'en-US') : '—'}
             {mine ? ` · ↑${mine.pushed} ↓${mine.pulled}` : ''}
           </span>
-          {sync.lastError && <span style={{ color: 'var(--danger)', fontSize: 12 }}>{sync.lastError}</span>}
+          {sync.paywalled ? (
+            // "고장"(lastError)과 "페이월"은 다른 상태 — 여기선 빨간 에러 줄 대신 안내+업그레이드를 보인다.
+            <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
+              <span style={{ color: 'var(--danger)', fontSize: 12 }}>{t('billing.paywall')}</span>
+              <UpgradeButtons />
+            </div>
+          ) : sync.lastError ? (
+            <span style={{ color: 'var(--danger)', fontSize: 12 }}>{sync.lastError}</span>
+          ) : sync.plan === 'free' ? (
+            // 아직 막히진 않았지만(강제 게이트 off 등) free 플랜에 안내 차원으로 노출 — pro면 숨김
+            <UpgradeButtons />
+          ) : null}
         </div>
       ) : (
         <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offHelp')}</p>
+      )}
+    </div>
+  );
+}
+
+/** 업그레이드 버튼 — /api/me로 user(id/email) 확보 후 LS 체크아웃 링크에 붙인다.
+    env 미설정이면 comingSoon, user 미확보(로딩·실패) 중엔 버튼을 렌더하지 않는다(안전). */
+function UpgradeButtons() {
+  const { t } = useLang();
+  const [user, setUser] = useState(null);
+  useEffect(() => { api('/api/me').then((d) => setUser(d.user ?? null)).catch(() => {}); }, []);
+
+  if (!LS_MONTHLY && !LS_YEARLY) return <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('billing.comingSoon')}</p>;
+  if (!user) return null; // /api/me 미확보 — user_id/email 없이 링크를 만들지 않는다
+
+  const withRef = (base) => `${base}${base.includes('?') ? '&' : '?'}checkout[custom][user_id]=${encodeURIComponent(user.id)}&checkout[email]=${encodeURIComponent(user.email)}`;
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      {LS_MONTHLY && (
+        <a className="btn btn-primary sm" href={withRef(LS_MONTHLY)} target="_blank" rel="noreferrer">{t('billing.upgradeMonthly')}</a>
+      )}
+      {LS_YEARLY && (
+        <a className="btn sm" href={withRef(LS_YEARLY)} target="_blank" rel="noreferrer">{t('billing.upgradeYearly')}</a>
       )}
     </div>
   );

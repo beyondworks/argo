@@ -317,7 +317,7 @@ async function discoverRemote(localOwners) {
 }
 
 /* ─── 상주 루프 ─── */
-const status = (globalThis.__argoSyncStatus ??= { lastTs: null, lastError: '', companies: {} });
+const status = (globalThis.__argoSyncStatus ??= { lastTs: null, lastError: '', paywalled: false, companies: {} });
 export function syncStatus() {
   return { ...status, on: syncOn(), leader: isCloudLeader(), plan: lastPlan(), companies: { ...status.companies } };
 }
@@ -350,7 +350,8 @@ async function cycle() {
   // 강제는 ARGO_ENFORCE_PLAN=1일 때만(기본 off). 차단 = 조기 return — diff가 안 돌아 부작용 없음.
   if (!loadSyncCreds()) {
     const ent = await syncEntitled(client(), keyOwner || owners[0] || null);
-    if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; return; }
+    if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
+    status.paywalled = false;
   }
   if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
   let companyFailed = 0;
