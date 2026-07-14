@@ -319,7 +319,7 @@ async function discoverRemote(localOwners) {
 /* ─── 상주 루프 ─── */
 const status = (globalThis.__argoSyncStatus ??= { lastTs: null, lastError: '', paywalled: false, plan: null, companies: {} });
 export function syncStatus() {
-  // plan은 status(globalThis)로 나른다 — 모듈 변수(lastPlan)는 Next의 라우트/instrumentation
+  // plan은 status(globalThis)로 나른다 — 모듈 변수는 Next의 라우트/instrumentation
   // 별도 번들에서 사본이 갈라져 항상 null이 되는 함정(위 lease 주석과 동일 클래스).
   return { ...status, on: syncOn(), leader: isCloudLeader(), companies: { ...status.companies } };
 }
