@@ -62,9 +62,14 @@ function looseField(md, key) {
 function stripFrontmatter(md) {
   const m = md.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
   if (m) return md.slice(m[0].length).trim();
-  if (/^---/.test(md)) {          // 여는 ---만 있고 닫는 게 없음 → 첫 '#' 헤딩부터 본문
+  if (/^---/.test(md)) {          // 여는 ---만 있고 닫는 게 없음
     const h = md.search(/^#\s/m);
-    if (h > 0) return md.slice(h).trim();
+    if (h > 0) return md.slice(h).trim();  // 첫 '#' 헤딩부터 본문
+    // 헤딩도 닫는 ---도 없음 → 선두 '---' + 이어지는 key: value 잔재를 걷어낸다
+    const lines = md.split('\n');
+    let i = 1;
+    while (i < lines.length && (/^\s*[\w-]+\s*:/.test(lines[i]) || lines[i].trim() === '' || lines[i].trim() === '---')) i++;
+    return lines.slice(i).join('\n').trim();
   }
   return md.trim();
 }
