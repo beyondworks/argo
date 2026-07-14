@@ -463,7 +463,7 @@ export default function CrewChat({ params }) {
         </div>
       ) : (
       // marginTop:auto — 메시지가 적어도 컴포저가 항상 하단에 붙는다(flex column). 긴 스레드는 sticky가 잡는다.
-      <div style={{ position: 'sticky', bottom: 12, marginTop: 'auto', paddingTop: 24, display: 'flex', flexDirection: 'column', gap: 8, background: 'linear-gradient(to top, var(--bg) 78%, transparent)' }}>
+      <div style={{ position: 'sticky', bottom: 12, marginTop: 'auto', paddingTop: 24, display: 'flex', flexDirection: 'column', gap: 8, background: 'linear-gradient(to top, var(--composer-scrim, var(--bg)) 78%, transparent)' }}>
         {(att.length > 0 || uploading) && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {att.map((a, i) => (

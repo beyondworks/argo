@@ -220,8 +220,6 @@ function LanguageCard() {
 /** 테마 스와치 — 각 테마의 캔버스/카드/프라이머리 토큰을 그대로 보여주는 미니 프리뷰. */
 const THEME_SWATCHES = {
   argo: ['#e3e5d6', '#e9ebdd', '#22241c'],
-  swiss: ['#f0f0f0', '#e6e6e6', '#1c1c1c'],
-  'swiss-dark': ['#1c1c1c', '#262626', '#f0f0f0'],
   apple: ['#f5f5f7', '#ffffff', '#0071e3'],
   'apple-dark': ['#161617', '#2c2c2e', '#0a84ff'],
   glass: ['#c9d8f2', '#eef3fb', '#0071e3'],
@@ -240,6 +238,12 @@ const THEME_SWATCHES = {
   dracula: ['#282a36', '#44475a', '#bd93f9'],
   monokai: ['#2d2a2e', '#403e41', '#ffd866'],
   'rose-pine': ['#191724', '#26233a', '#c4a7e7'],
+  // VS Code 임포트 (마켓플레이스 팔레트 정밀 이식)
+  'codex-gh-light': ['#ffffff', '#f6f8fa', '#28a745'],
+  'codex-gh-dark': ['#0d1117', '#010409', '#238636'],
+  enjoyer: ['#f5f5f5', '#eeeeee', '#818181'],
+  'minimal-light': ['#fafafa', '#ffffff', '#007acc'],
+  'minimal-dark': ['#2e3440', '#373d48', '#81a1c1'],
 };
 
 function ThemeCard() {
