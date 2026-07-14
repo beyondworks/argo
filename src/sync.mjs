@@ -27,7 +27,7 @@ import { cryptoOn, isSecretRel, sealSecret, openSecret } from './secretbox.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { ensureAccountKey } from './accountkey.mjs';
-import { syncEntitled, lastPlan } from './entitlement.mjs';
+import { syncEntitled } from './entitlement.mjs';
 
 const BUCKET = 'companies';
 const CYCLE_MS = 45_000;
@@ -317,9 +317,11 @@ async function discoverRemote(localOwners) {
 }
 
 /* ─── 상주 루프 ─── */
-const status = (globalThis.__argoSyncStatus ??= { lastTs: null, lastError: '', paywalled: false, companies: {} });
+const status = (globalThis.__argoSyncStatus ??= { lastTs: null, lastError: '', paywalled: false, plan: null, companies: {} });
 export function syncStatus() {
-  return { ...status, on: syncOn(), leader: isCloudLeader(), plan: lastPlan(), companies: { ...status.companies } };
+  // plan은 status(globalThis)로 나른다 — 모듈 변수(lastPlan)는 Next의 라우트/instrumentation
+  // 별도 번들에서 사본이 갈라져 항상 null이 되는 함정(위 lease 주석과 동일 클래스).
+  return { ...status, on: syncOn(), leader: isCloudLeader(), companies: { ...status.companies } };
 }
 
 async function cycle() {
@@ -351,6 +353,7 @@ async function cycle() {
   status.paywalled = false; // 매 사이클 리셋 — 모드 전환(세션→서비스) 시 stale true 잔존 차단
   if (!loadSyncCreds()) {
     const ent = await syncEntitled(client(), keyOwner || owners[0] || null);
+    status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
     if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
   }
   if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
