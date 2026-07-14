@@ -52,6 +52,39 @@ function parseFrontmatter(md) {
   return meta;
 }
 
+/** frontmatter가 깨졌어도(닫는 --- 누락 등) "key: value" 첫 줄에서 값을 복원한다. */
+function looseField(md, key) {
+  const m = md.match(new RegExp(`^\\s*${key}\\s*:\\s*(.+)$`, 'mi'));
+  return m ? m[1].trim().replace(/^["']|["']$/g, '') : '';
+}
+
+/** 카드 본문만 — 정상/비정상 frontmatter를 떼어낸다(닫는 --- 없이 곧장 본문인 경우 포함). */
+function stripFrontmatter(md) {
+  const m = md.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  if (m) return md.slice(m[0].length).trim();
+  if (/^---/.test(md)) {          // 여는 ---만 있고 닫는 게 없음 → 첫 '#' 헤딩부터 본문
+    const h = md.search(/^#\s/m);
+    if (h > 0) return md.slice(h).trim();
+  }
+  return md.trim();
+}
+
+/** 역할(직함)을 AI가 한 줄로 추천 — 카드에서 역할을 못 뽑았을 때의 폴백. 생성 실패로 두지 않는다. */
+async function recommendRole(wsId, oneLiner, sdkEnv) {
+  try {
+    let out = '';
+    for await (const msg of query({
+      prompt: `다음 요청에 어울리는 AI 직원의 직함을 한국어 한 줄(2-12자, 설명·기호·따옴표 없이 직함만)로 답해줘.\n요청: "${oneLiner}"`,
+      options: { cwd: paths(wsId).root, allowedTools: [], settingSources: [], maxTurns: 1, ...(sdkEnv ? { env: sdkEnv } : {}) },
+    })) {
+      if (msg.type === 'result' && msg.subtype === 'success') out = msg.result;
+    }
+    const role = (out || '').trim().split('\n')[0].replace(/^["'#*\-\s]+|["'\s]+$/g, '').slice(0, 40);
+    if (role) return role;
+  } catch { /* 아래 폴백 */ }
+  return ((oneLiner || '').split(/[-—·,.\n]/)[0].trim().slice(0, 30)) || 'AI 직원';
+}
+
 /** Agent SDK 단일 턴으로 카드 생성 → agents/<slug>.md 저장. name·team 지정 가능. */
 export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {}) {
   let out = '';
@@ -76,25 +109,34 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
       else failed = msg.subtype;
     }
   }
-  const md = out.trim().replace(/^```(?:markdown)?\n?/, '').replace(/\n?```$/, '');
+  const md = out.trim().replace(/^```(?:markdown)?\r?\n?/, '').replace(/\r?\n?```$/, '').trim();
+  // AI가 아예 응답을 못 준 경우만 진짜 실패. 형식이 어긋난 건 아래에서 복원한다(생성 실패로 두지 않는다).
+  if (!md || failed) throw new Error('AI 연결이 필요합니다 — 설정 → 러너 연결에서 Claude API 키 또는 OAuth를 연결하면 영입할 수 있어요.');
+
+  // 관대한 필드 복원 — frontmatter(닫는 --- 없어도)·본문 H1("# 이름 — 역할")·입력에서 긁는다.
   const meta = parseFrontmatter(md);
-  if (!meta.slug || !meta.name) {
-    // 대개 AI 연결 부재 — 개발자 에러 대신 사용자 안내로 던진다(온보딩 첫 행동이 영입일 수 있음)
-    if (!out.trim() || failed) throw new Error('AI 연결이 필요합니다 — 설정 → 러너 연결에서 Claude API 키 또는 OAuth를 연결하면 영입할 수 있어요.');
-    throw new Error(`카드 생성 실패 — frontmatter 누락:\n${md.slice(0, 200)}`);
-  }
-  let slug = meta.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-  // 동명 크루 중복 영입 시 기존 카드를 덮어쓰지 않는다
-  for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)); n++) {
-    slug = `${meta.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-${n}`;
-  }
-  let body = md.replace(/^(---[\s\S]*?slug:\s*).*$/m, `$1${slug}`);
-  if (name?.trim()) body = body.replace(/^(---[\s\S]*?name:\s*).*$/m, `$1${name.trim()}`);
-  if (team?.trim()) body = body.replace(/^---\r?\n/, `---\nteam: ${team.trim()}\n`);
+  const h1 = (md.match(/^#\s+(.+)$/m)?.[1] || '').split(/\s+[—–-]\s+/);
+  const nameFinal = (name?.trim() || meta.name || looseField(md, 'name') || h1[0] || 'AI 직원').trim();
+  let roleFinal = (meta.role || looseField(md, 'role') || (h1[1] || '')).trim();
+  // 역할을 못 뽑으면 AI가 직함을 추천해 채운다.
+  if (!roleFinal) roleFinal = await recommendRole(wsId, oneLiner, sdkEnv);
+
+  // slug — 지정값→이름 슬러그화→crew. 동명 크루 중복 영입 시 기존 카드를 덮어쓰지 않는다(-n).
+  const slugify = (s) => (s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+  const base = slugify(meta.slug || looseField(md, 'slug') || nameFinal) || 'crew';
+  let slug = base;
+  for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)); n++) slug = `${base}-${n}`;
+
+  // frontmatter는 항상 정규 형식으로 재조립 — AI 출력 편차에 강건. 본문(전문성·톤 등)은 그대로 보존.
+  const fm = ['---', `name: ${nameFinal}`, `slug: ${slug}`, `role: ${roleFinal}`];
+  if (team?.trim()) fm.push(`team: ${team.trim()}`);
+  fm.push('---');
+  const finalMd = `${fm.join('\n')}\n\n${stripFrontmatter(md)}\n`;
+
   const file = cardPath(wsId, slug);
-  await writeFile(file, body.endsWith('\n') ? body : `${body}\n`);
-  await appendEvent(wsId, { type: 'crew', op: 'hire', slug, name: name?.trim() || meta.name });
-  return { slug, name: name?.trim() || meta.name, role: meta.role || '', team: team?.trim() || '', file };
+  await writeFile(file, finalMd);
+  await appendEvent(wsId, { type: 'crew', op: 'hire', slug, name: nameFinal });
+  return { slug, name: nameFinal, role: roleFinal, team: team?.trim() || '', file };
 }
 
 /** 카드 편집 저장 — 카드가 곧 시스템 프롬프트(투명성 원칙). frontmatter 최소 검증. */
