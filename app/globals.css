@@ -820,6 +820,248 @@
   --ink-rgb: 224, 222, 244; --paper-rgb: 31, 29, 46;
 }
 
+/* ─── VS Code 임포트 테마 (마켓플레이스 팔레트 정밀 이식 — 2026-07-14) ─────────
+   각 블록은 원본 VS Code 테마의 실제 색을 Argo 33토큰으로 매핑(대비 자가검증 통과). */
+:root[data-theme='pop-light'] {
+  color-scheme: light;
+  --bg: #ffffff; --card: #f6f6f6; --card-2: #ffffff; --secondary: #dddcdb;
+  --fg: #403c3a; --fg-2: #757371; --fg-3: #a3a1a0;
+  --border: rgba(64, 60, 58, 0.5); --border-soft: rgba(64, 60, 58, 0.22);
+  --primary: #c26c00; --primary-strong: #a75d00; --primary-fg: #16161e;
+  --primary-fg-dim: rgba(22, 22, 30, 0.7); --primary-fg-line: rgba(22, 22, 30, 0.4);
+  --primary-soft: rgba(194, 108, 0, 0.15);
+  --ok: #73c48f; --ok-soft: rgba(115, 196, 143, 0.15);
+  --info: #3f51b5; --info-soft: rgba(63, 81, 181, 0.14);
+  --warn: #faa41a; --warn-soft: rgba(250, 164, 26, 0.15);
+  --danger: #f15d22; --danger-soft: rgba(241, 93, 34, 0.15);
+  --ring: rgba(194, 108, 0, 0.5); --selection: rgba(72, 185, 199, 0.28);
+  --overlay: rgba(38, 38, 38, 0.55);
+  --shadow-card: 0 6px 20px rgba(0, 0, 0, 0.08);
+  --r: 14px;
+  --accent: #f15d22; --accent-rgb: 241, 93, 34;
+  --ink-rgb: 64, 60, 58; --paper-rgb: 255, 255, 255;
+}
+
+:root[data-theme='pop-dark'] {
+  color-scheme: dark;
+  --bg: #3f3b39; --card: #2b2928; --card-2: #363433; --secondary: #1c8d9b;
+  --fg: #dedede; --fg-2: #b1b0b0; --fg-3: #8b8988;
+  --border: rgba(255, 255, 255, 0.35); --border-soft: rgba(255, 255, 255, 0.18);
+  --primary: #faa41a; --primary-strong: #fbb13a; --primary-fg: #16161e;
+  --primary-fg-dim: rgba(22, 22, 30, 0.7); --primary-fg-line: rgba(22, 22, 30, 0.4);
+  --primary-soft: rgba(250, 164, 26, 0.15);
+  --ok: #73c48f; --ok-soft: rgba(115, 196, 143, 0.15);
+  --info: #3f51b5; --info-soft: rgba(63, 81, 181, 0.14);
+  --warn: #faa41a; --warn-soft: rgba(250, 164, 26, 0.15);
+  --danger: #f15d22; --danger-soft: rgba(241, 93, 34, 0.15);
+  --ring: rgba(250, 164, 26, 0.5); --selection: rgba(0, 97, 111, 0.35);
+  --overlay: rgba(6, 6, 6, 0.55);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --r: 14px;
+  --accent: #cf3b00; --accent-rgb: 207, 59, 0;
+  --ink-rgb: 222, 222, 222; --paper-rgb: 63, 59, 57;
+}
+
+:root[data-theme='anthropic-light'] {
+  color-scheme: light;
+  --bg: #fafaf7; --card: #f0eee6; --card-2: #fafaf7; --secondary: #e3dacc;
+  --fg: #191919; --fg-2: #585857; --fg-3: #8e8e8c;
+  --border: rgba(229, 228, 223, 1); --border-soft: rgba(229, 228, 223, 0.5);
+  --primary: #191919; --primary-strong: #161616; --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.7); --primary-fg-line: rgba(255, 255, 255, 0.4);
+  --primary-soft: rgba(25, 25, 25, 0.15);
+  --ok: #778d5e; --ok-soft: rgba(119, 141, 94, 0.15);
+  --info: #61aaf2; --info-soft: rgba(97, 170, 242, 0.14);
+  --warn: #d4a27f; --warn-soft: rgba(212, 162, 127, 0.15);
+  --danger: #bf4d43; --danger-soft: rgba(191, 77, 67, 0.15);
+  --ring: rgba(25, 25, 25, 0.5); --selection: rgba(227, 218, 204, 0.4);
+  --overlay: rgba(38, 38, 37, 0.55);
+  --shadow-card: 0 6px 20px rgba(0, 0, 0, 0.08);
+  --r: 14px;
+  --accent: #cc785c; --accent-rgb: 204, 120, 92;
+  --ink-rgb: 25, 25, 25; --paper-rgb: 250, 250, 247;
+}
+
+:root[data-theme='anthropic-dark'] {
+  color-scheme: dark;
+  --bg: #141413; --card: #1f1e1d; --card-2: #2c2b2a; --secondary: #2b2a28;
+  --fg: #faf9f5; --fg-2: #bab9b6; --fg-3: #82827f;
+  --border: rgba(64, 64, 62, 1); --border-soft: rgba(64, 64, 62, 0.5);
+  --primary: #faf9f5; --primary-strong: #fbfaf6; --primary-fg: #16161e;
+  --primary-fg-dim: rgba(22, 22, 30, 0.7); --primary-fg-line: rgba(22, 22, 30, 0.4);
+  --primary-soft: rgba(250, 249, 245, 0.15);
+  --ok: #778d5e; --ok-soft: rgba(119, 141, 94, 0.15);
+  --info: #61aaf2; --info-soft: rgba(97, 170, 242, 0.14);
+  --warn: #d4a27f; --warn-soft: rgba(212, 162, 127, 0.15);
+  --danger: #bf4d43; --danger-soft: rgba(191, 77, 67, 0.15);
+  --ring: rgba(250, 249, 245, 0.5); --selection: rgba(250, 249, 245, 0.28);
+  --overlay: rgba(2, 2, 2, 0.55);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --r: 14px;
+  --accent: #cc785c; --accent-rgb: 204, 120, 92;
+  --ink-rgb: 250, 249, 245; --paper-rgb: 20, 20, 19;
+}
+
+:root[data-theme='claude-warm'] {
+  color-scheme: light;
+  --bg: #faf6f0; --card: #f0ebe3; --card-2: #ffffff; --secondary: #ddd7cb;
+  --fg: #3d3929; --fg-2: #726e61; --fg-3: #9f9b90;
+  --border: rgba(213, 207, 195, 1); --border-soft: rgba(213, 207, 195, 0.5);
+  --primary: #b08a40; --primary-strong: #977737; --primary-fg: #16161e;
+  --primary-fg-dim: rgba(22, 22, 30, 0.7); --primary-fg-line: rgba(22, 22, 30, 0.4);
+  --primary-soft: rgba(176, 138, 64, 0.15);
+  --ok: #5a8a5a; --ok-soft: rgba(90, 138, 90, 0.15);
+  --info: #5a7a9a; --info-soft: rgba(90, 122, 154, 0.14);
+  --warn: #b08a40; --warn-soft: rgba(176, 138, 64, 0.15);
+  --danger: #b05050; --danger-soft: rgba(176, 80, 80, 0.15);
+  --ring: rgba(176, 138, 64, 0.5); --selection: rgba(217, 207, 186, 0.5019607843137255);
+  --overlay: rgba(38, 37, 36, 0.55);
+  --shadow-card: 0 6px 20px rgba(0, 0, 0, 0.08);
+  --r: 14px;
+  --accent: #b08a40; --accent-rgb: 176, 138, 64;
+  --ink-rgb: 61, 57, 41; --paper-rgb: 250, 246, 240;
+}
+
+:root[data-theme='paper-notebook'] {
+  color-scheme: light;
+  --bg: #f5f0e6; --card: #f3ede2; --card-2: #ede3d2; --secondary: #d9cbb4;
+  --fg: #3a2e23; --fg-2: #6e645a; --fg-3: #9b9388;
+  --border: rgba(209, 193, 170, 1); --border-soft: rgba(209, 193, 170, 0.5);
+  --primary: #c1995b; --primary-strong: #a6844e; --primary-fg: #16161e;
+  --primary-fg-dim: rgba(22, 22, 30, 0.7); --primary-fg-line: rgba(22, 22, 30, 0.4);
+  --primary-soft: rgba(193, 153, 91, 0.15);
+  --ok: #5a8a5a; --ok-soft: rgba(90, 138, 90, 0.15);
+  --info: #c1995b; --info-soft: rgba(193, 153, 91, 0.14);
+  --warn: #c98a2e; --warn-soft: rgba(201, 138, 46, 0.15);
+  --danger: #c0564d; --danger-soft: rgba(192, 86, 77, 0.15);
+  --ring: rgba(193, 153, 91, 0.5); --selection: rgba(217, 203, 180, 0.35);
+  --overlay: rgba(37, 36, 35, 0.55);
+  --shadow-card: 0 6px 20px rgba(0, 0, 0, 0.08);
+  --r: 14px;
+  --accent: #c1995b; --accent-rgb: 193, 153, 91;
+  --ink-rgb: 58, 46, 35; --paper-rgb: 245, 240, 230;
+}
+
+:root[data-theme='codex-gh-light'] {
+  color-scheme: light;
+  --bg: #ffffff; --card: #f6f8fa; --card-2: #ffffff; --secondary: #eaf2fc;
+  --fg: #24292e; --fg-2: #616569; --fg-3: #96989b;
+  --border: rgba(225, 228, 232, 1); --border-soft: rgba(225, 228, 232, 0.5);
+  --primary: #28a745; --primary-strong: #22903b; --primary-fg: #16161e;
+  --primary-fg-dim: rgba(22, 22, 30, 0.7); --primary-fg-line: rgba(22, 22, 30, 0.4);
+  --primary-soft: rgba(40, 167, 69, 0.15);
+  --ok: #28a745; --ok-soft: rgba(40, 167, 69, 0.15);
+  --info: #0366d6; --info-soft: rgba(3, 102, 214, 0.14);
+  --warn: #dbab09; --warn-soft: rgba(219, 171, 9, 0.15);
+  --danger: #d73a49; --danger-soft: rgba(215, 58, 73, 0.15);
+  --ring: rgba(40, 167, 69, 0.5); --selection: rgba(3, 102, 214, 0.28);
+  --overlay: rgba(38, 38, 38, 0.55);
+  --shadow-card: 0 6px 20px rgba(0, 0, 0, 0.08);
+  --r: 14px;
+  --accent: #0366d6; --accent-rgb: 3, 102, 214;
+  --ink-rgb: 36, 41, 46; --paper-rgb: 255, 255, 255;
+}
+
+:root[data-theme='codex-gh-dark'] {
+  color-scheme: dark;
+  --bg: #0d1117; --card: #010409; --card-2: #0d1117; --secondary: #21262d;
+  --fg: #c9d1d9; --fg-2: #949ba3; --fg-3: #676d74;
+  --border: rgba(33, 38, 45, 1); --border-soft: rgba(33, 38, 45, 0.5);
+  --primary: #238636; --primary-strong: #429752; --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.7); --primary-fg-line: rgba(255, 255, 255, 0.4);
+  --primary-soft: rgba(35, 134, 54, 0.15);
+  --ok: #3fb950; --ok-soft: rgba(63, 185, 80, 0.15);
+  --info: #58a6ff; --info-soft: rgba(88, 166, 255, 0.14);
+  --warn: #d29922; --warn-soft: rgba(210, 153, 34, 0.15);
+  --danger: #f85149; --danger-soft: rgba(248, 81, 73, 0.15);
+  --ring: rgba(35, 134, 54, 0.5); --selection: rgba(56, 139, 253, 0.28);
+  --overlay: rgba(1, 2, 2, 0.55);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --r: 14px;
+  --accent: #58a6ff; --accent-rgb: 88, 166, 255;
+  --ink-rgb: 201, 209, 217; --paper-rgb: 13, 17, 23;
+}
+
+:root[data-theme='blue-quiet'] {
+  color-scheme: light;
+  --bg: #f5f5f5; --card: #f2f2f2; --card-2: #e4f6d4; --secondary: #b1ced9;
+  --fg: #2b2b2b; --fg-2: #646464; --fg-3: #949494;
+  --border: rgba(2, 26, 158, 1); --border-soft: rgba(2, 26, 158, 0.5);
+  --primary: #567297; --primary-strong: #4a6282; --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.7); --primary-fg-line: rgba(255, 255, 255, 0.4);
+  --primary-soft: rgba(86, 114, 151, 0.15);
+  --ok: #5a8a5a; --ok-soft: rgba(90, 138, 90, 0.15);
+  --info: #567297; --info-soft: rgba(86, 114, 151, 0.14);
+  --warn: #c98a2e; --warn-soft: rgba(201, 138, 46, 0.15);
+  --danger: #f1897f; --danger-soft: rgba(241, 137, 127, 0.15);
+  --ring: rgba(86, 114, 151, 0.5); --selection: rgba(201, 208, 217, 0.35);
+  --overlay: rgba(37, 37, 37, 0.55);
+  --shadow-card: 0 6px 20px rgba(0, 0, 0, 0.08);
+  --r: 14px;
+  --accent: #567297; --accent-rgb: 86, 114, 151;
+  --ink-rgb: 43, 43, 43; --paper-rgb: 245, 245, 245;
+}
+
+:root[data-theme='enjoyer'] {
+  color-scheme: light;
+  --bg: #f5f5f5; --card: #eeeeee; --card-2: #e3e3e3; --secondary: #d1d1d1;
+  --fg: #333333; --fg-2: #696969; --fg-3: #989898;
+  --border: rgba(204, 204, 204, 1); --border-soft: rgba(204, 204, 204, 0.5);
+  --primary: #818181; --primary-strong: #6f6f6f; --primary-fg: #16161e;
+  --primary-fg-dim: rgba(22, 22, 30, 0.7); --primary-fg-line: rgba(22, 22, 30, 0.4);
+  --primary-soft: rgba(129, 129, 129, 0.15);
+  --ok: #5a8a5a; --ok-soft: rgba(90, 138, 90, 0.15);
+  --info: #818181; --info-soft: rgba(129, 129, 129, 0.14);
+  --warn: #c98a2e; --warn-soft: rgba(201, 138, 46, 0.15);
+  --danger: #c0564d; --danger-soft: rgba(192, 86, 77, 0.15);
+  --ring: rgba(129, 129, 129, 0.5); --selection: rgba(129, 129, 129, 0.3);
+  --overlay: rgba(37, 37, 37, 0.55);
+  --shadow-card: 0 6px 20px rgba(0, 0, 0, 0.08);
+  --r: 14px;
+  --accent: #818181; --accent-rgb: 129, 129, 129;
+  --ink-rgb: 51, 51, 51; --paper-rgb: 245, 245, 245;
+}
+
+:root[data-theme='minimal-light'] {
+  color-scheme: light;
+  --bg: #fafafa; --card: #ffffff; --card-2: #f2f2f2; --secondary: #d7d7d7;
+  --fg: #2b2b2b; --fg-2: #656565; --fg-3: #979797;
+  --border: rgba(43, 43, 43, 0.14); --border-soft: rgba(43, 43, 43, 0.08);
+  --primary: #007acc; --primary-strong: #0069af; --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.7); --primary-fg-line: rgba(255, 255, 255, 0.4);
+  --primary-soft: rgba(0, 122, 204, 0.15);
+  --ok: #5a8a5a; --ok-soft: rgba(90, 138, 90, 0.15);
+  --info: #007acc; --info-soft: rgba(0, 122, 204, 0.14);
+  --warn: #c98a2e; --warn-soft: rgba(201, 138, 46, 0.15);
+  --danger: #c0564d; --danger-soft: rgba(192, 86, 77, 0.15);
+  --ring: rgba(0, 122, 204, 0.5); --selection: rgba(215, 215, 215, 0.35);
+  --overlay: rgba(38, 38, 38, 0.55);
+  --shadow-card: 0 6px 20px rgba(0, 0, 0, 0.08);
+  --r: 14px;
+  --accent: #007acc; --accent-rgb: 0, 122, 204;
+  --ink-rgb: 43, 43, 43; --paper-rgb: 250, 250, 250;
+}
+
+:root[data-theme='minimal-dark'] {
+  color-scheme: dark;
+  --bg: #2e3440; --card: #373d48; --card-2: #434c5e; --secondary: #4c566a;
+  --fg: #d8dee9; --fg-2: #a8aeba; --fg-3: #808691;
+  --border: rgba(216, 222, 233, 0.24); --border-soft: rgba(216, 222, 233, 0.13);
+  --primary: #81a1c1; --primary-strong: #93aeca; --primary-fg: #16161e;
+  --primary-fg-dim: rgba(22, 22, 30, 0.7); --primary-fg-line: rgba(22, 22, 30, 0.4);
+  --primary-soft: rgba(129, 161, 193, 0.15);
+  --ok: #78c37a; --ok-soft: rgba(120, 195, 122, 0.15);
+  --info: #81a1c1; --info-soft: rgba(129, 161, 193, 0.14);
+  --warn: #c98a2e; --warn-soft: rgba(201, 138, 46, 0.15);
+  --danger: #c0564d; --danger-soft: rgba(192, 86, 77, 0.15);
+  --ring: rgba(129, 161, 193, 0.5); --selection: rgba(76, 86, 106, 0.35);
+  --overlay: rgba(5, 5, 6, 0.55);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --r: 14px;
+  --accent: #81a1c1; --accent-rgb: 129, 161, 193;
+  --ink-rgb: 216, 222, 233; --paper-rgb: 46, 52, 64;
+}
+
 /* ─── 리퀴드 글래스 전용 표면 규칙 (라이트·다크 공통) ────────────────────
    토큰으로 표현 불가한 blur/그라디언트만 테마 스코프로 둔다.
    유리 원칙: 큰 표면(카드·탑바·사이드바·모달)은 blur + 레이어드 반투명,

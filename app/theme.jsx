@@ -8,6 +8,10 @@ export const THEMES = [
   'clay', 'porcelain', 'mist', 'frost',
   'cream-pop', 'peach', 'retro', 'sketch',
   'tokyo-night', 'nord', 'everforest', 'dracula', 'monokai', 'rose-pine',
+  // VS Code 임포트 (마켓플레이스 팔레트 정밀 이식)
+  'pop-light', 'pop-dark', 'anthropic-light', 'anthropic-dark', 'claude-warm',
+  'paper-notebook', 'codex-gh-light', 'codex-gh-dark', 'blue-quiet', 'enjoyer',
+  'minimal-light', 'minimal-dark',
 ]; // 첫 항목이 기본값
 const KEY = 'argo-theme';
 
