@@ -131,9 +131,13 @@ test('봉투 v2 — 계정 키 왕복, v1 레거시 열기, 위변조 거부', a
   const sealed = sealSecret(Buffer.from('{"bot":"tok"}'));
   assert.equal(sealed.subarray(0, 14).toString(), 'argosecret.v2:');
   assert.equal(openSecret(sealed).toString(), '{"bot":"tok"}');
+  // 암호문에 평문 미노출
+  assert.equal(sealed.toString('latin1').includes('{"bot":"tok"}'), false);
   // 위변조 거부
   const bad = Buffer.from(sealed); bad[bad.length - 1] ^= 0xff;
   assert.throws(() => openSecret(bad));
+  // 봉투 아닌 버퍼 거부
+  assert.throws(() => openSecret(Buffer.from('not-a-box')));
   // v1 레거시 열기: 서비스 키 HKDF로 v1 봉투를 수제 조립 → openSecret이 해독
   process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'test-legacy-service-key';
   const lk = Buffer.from(hkdfSync('sha256', process.env.SUPABASE_SERVICE_ROLE_KEY, 'argo-secret-sync-v1', 'secretbox', 32));
