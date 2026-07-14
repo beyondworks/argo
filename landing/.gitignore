@@ -1,0 +1,12 @@
+node_modules/
+.next/
+out/
+*.log
+.DS_Store
+.env*
+public/assets/hero/candidates/
+artifacts/
+# 생성 원본·중간 산출물 — 웹에서 쓰는 webp/webm만 추적
+public/assets/art/*.png
+public/assets/art/*.mp4
+public/assets/art/.omc/

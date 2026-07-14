@@ -1,0 +1,872 @@
+/* ── Argo Landing — The Voyage Edition: black + cream editorial ──
+   레퍼런스: Shopify Editions Winter '26 (Renaissance Edition)
+   블랙 캔버스 + 크림 #f7f7ee 전경, 초대형 그로테스크 + 세리프 이탤릭 액센트,
+   황금비 헤어라인 그리드, 프레임(액자) 속 표지 → 아트 리빌 ── */
+
+:root {
+  /* 순수 #000 고정 — 콜라주 레이어 이미지의 검정 배경과 완전히 일치해야 사각형 경계가 사라진다 */
+  --bg: #000000;
+  --bg-2: #0c0c0b;
+  --fg: #f7f7ee;
+  --fg-2: rgba(247, 247, 238, 0.7);
+  --fg-3: rgba(247, 247, 238, 0.45);
+  --rule: rgba(247, 247, 238, 0.55);
+  --rule-soft: rgba(247, 247, 238, 0.22);
+  --rule-faint: rgba(247, 247, 238, 0.1);
+  --gold: #d9b23a;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
+    'Apple SD Gothic Neo', 'Segoe UI', sans-serif;
+  --serif: 'Instrument Serif', Georgia, serif;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --pad-x: clamp(20px, 3.4vw, 48px);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scrollbar-color: var(--fg-3) var(--bg);
+}
+
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  word-break: keep-all;
+}
+
+::selection {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img,
+canvas,
+video {
+  display: block;
+  max-width: 100%;
+}
+
+/* ── primitives ── */
+
+.mono-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+
+.mono-dim {
+  color: var(--fg-3);
+}
+
+/* 세리프 이탤릭 액센트 — Ren-ai-ssance 문법. 한글은 var(--font)로 폴백(합성 이탤릭 방지) */
+.serif-accent {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  font-synthesis: none;
+  letter-spacing: 0;
+}
+
+/* ── nav ── */
+
+.nav {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--pad-x);
+  height: 58px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.nav-wordmark {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.42em;
+}
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nav-lang {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--fg-2);
+  padding: 8px 12px;
+  transition: color 0.18s ease-out;
+}
+.nav-lang:hover {
+  color: var(--fg);
+}
+
+.nav-cta {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bg);
+  background: var(--fg);
+  padding: 11px 20px;
+  border-radius: 999px;
+  transition: opacity 0.18s ease-out;
+}
+.nav-cta:hover {
+  opacity: 0.85;
+}
+
+/* ── hero — 표지(액자) ── */
+
+.hero-section {
+  position: relative;
+}
+
+.hero-stage {
+  position: relative;
+  height: 100svh;
+  overflow: hidden;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hero-grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.cover-frame {
+  position: relative;
+  z-index: 10;
+  width: min(74vw, 980px);
+  aspect-ratio: 16 / 10;
+  max-height: 74svh;
+  border: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(14px, 2.4svh, 26px);
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* ── 콜라주 레이어 (Shopify식 조립) — 순수 블랙 배경 프레스코 조각들 ── */
+
+.collage {
+  position: absolute;
+  inset: 0;
+  will-change: transform, opacity;
+}
+
+.collage .layer {
+  position: absolute;
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+.collage .layer img {
+  width: 100%;
+  height: auto;
+  /* 레이어는 진짜 알파 컷아웃(luminance 키잉으로 베이크) — 블렌드 꼼수 불필요 */
+}
+
+.collage .layer .layer-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* 재생 시작 전엔 숨김 — 검은 프레임이 정지 이미지를 덮는 문제 방지 */
+  opacity: 0;
+  transition: opacity 0.4s ease-out;
+}
+.collage .layer .layer-video.is-playing {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collage .layer .layer-video {
+    display: none;
+  }
+}
+
+/* 바다 그룹 — 폭 하나로 전체 구도가 비율 고정되어 스케일된다.
+   vh 캡: 낮고 넓은 화면에서 파도가 화면을 다 삼키지 않도록 (바다 = 항상 하단 ~40%) */
+.sea-group {
+  --sea-w: min(118vw, 130vh);
+  left: 50%;
+  bottom: calc(var(--sea-w) * -0.135); /* 파도 하단을 뷰포트 밖으로 — 크레스트만 수면선으로 */
+  width: var(--sea-w);
+  max-width: none;
+  z-index: 3;
+}
+.sea-group .l-wave-img {
+  position: relative;
+  z-index: 2; /* 전경 크레스트 거품이 선체 하단을 덮는다 */
+}
+.sea-group .l-ship {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 66%; /* 선체 하단 ~1/3이 크레스트 밴드에 잠겨 프레임 세로 중앙에 배가 온다 */
+  width: 70%;
+  z-index: 1;
+}
+.l-cloud-left {
+  left: -7%;
+  top: -9%;
+  width: 42vw;
+}
+.l-cloud-right {
+  right: -7%;
+  top: -11%;
+  width: 44vw;
+}
+.l-figure-left {
+  left: 2.5%;
+  bottom: 7%;
+  width: clamp(130px, 16vw, 250px);
+}
+.l-figure-right {
+  right: 2.5%;
+  bottom: 9%;
+  width: clamp(130px, 16vw, 250px);
+}
+
+
+@media (max-width: 860px) {
+  .l-figure-left,
+  .l-figure-right,
+  .l-cloud-left,
+  .l-cloud-right {
+    display: none;
+  }
+  .sea-group {
+    --sea-w: min(200vw, 130vh); /* 내부 비율은 그대로 — 폭만 키워 모바일에서 배가 충분히 크게 */
+  }
+}
+
+.hero-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.cover-copy {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: clamp(12px, 2svh, 22px);
+  padding: 0 clamp(18px, 3vw, 40px);
+}
+
+.cover-display {
+  font-size: clamp(64px, 9.5vw, 150px);
+  font-weight: 780;
+  line-height: 0.96;
+  letter-spacing: -0.03em;
+}
+
+.cover-display .serif-accent {
+  font-size: 0.98em;
+}
+
+.cover-statement {
+  font-size: clamp(15px, 1.5vw, 20px);
+  color: var(--fg-2);
+  max-width: 44ch;
+  text-wrap: balance;
+}
+.cover-statement .serif-accent {
+  color: var(--fg);
+  font-size: 1.12em;
+}
+
+.hero-scrollcue {
+  position: absolute;
+  bottom: 3.2svh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--fg-3);
+}
+
+.hero-scrollcue .arrows {
+  font-size: 14px;
+  animation: cue-nudge 2.4s ease-in-out infinite;
+}
+
+@keyframes cue-nudge {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(5px); }
+}
+
+/* ── chapters ── */
+
+.chapter {
+  position: relative;
+}
+
+.chapter-stage {
+  position: relative;
+  height: 100svh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.chapter-bg {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+}
+
+.chapter-numeral {
+  position: absolute;
+  top: 50%;
+  right: clamp(16px, 4vw, 72px);
+  transform: translateY(-50%);
+  font-family: var(--mono);
+  font-size: clamp(180px, 34vw, 460px);
+  font-weight: 300;
+  line-height: 1;
+  color: transparent;
+  -webkit-text-stroke: 1px var(--rule-faint);
+  pointer-events: none;
+  user-select: none;
+}
+
+.chapter-vignette {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(54vw, 760px);
+  opacity: 0;
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+
+@media (max-width: 860px) {
+  .chapter-vignette {
+    width: 92vw;
+  }
+}
+
+.chapter-intro {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 22px;
+  padding: 0 var(--pad-x);
+}
+
+.chapter-intro .rule-top {
+  width: 100%;
+  height: 1px;
+  background: var(--rule);
+}
+
+.chapter-title {
+  font-size: clamp(44px, 8.4vw, 150px);
+  font-weight: 800;
+  letter-spacing: -0.028em;
+  line-height: 0.98;
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+
+.chapter-sub {
+  font-family: var(--serif);
+  font-style: italic;
+  font-synthesis: none;
+  font-size: clamp(22px, 2.5vw, 40px);
+  line-height: 1.2;
+  margin-top: -6px;
+}
+:lang(ko) .chapter-sub {
+  font-weight: 600;
+}
+
+.chapter-tagline {
+  max-width: 520px;
+  color: var(--fg-2);
+  font-size: clamp(14px, 1.25vw, 18px);
+}
+
+.chapter-rail {
+  position: absolute;
+  right: var(--pad-x);
+  bottom: 26px;
+  display: flex;
+  gap: 8px;
+  z-index: 8;
+}
+.chapter-rail .tick {
+  width: 22px;
+  height: 2px;
+  background: var(--fg);
+  opacity: 0.18;
+  transition: opacity 0.18s ease-out;
+}
+.chapter-rail .tick.on {
+  opacity: 1;
+  background: var(--gold);
+}
+
+/* ── feature blocks ── */
+
+.feature-block {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  align-items: center;
+  gap: clamp(26px, 4.4vw, 72px);
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 var(--pad-x);
+}
+
+.feature-block.mirror .feature-copy {
+  order: 2;
+}
+.feature-block.mirror .feature-media {
+  order: 1;
+}
+
+.feature-copy .feature-index {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 10px;
+  margin-bottom: 22px;
+}
+
+/* Shopify H3(HWCigars) 문법 — 피처 타이틀은 세리프 이탤릭 (한글은 폴백 산세리프) */
+.feature-title {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  font-synthesis: none;
+  font-size: clamp(28px, 3.2vw, 52px);
+  letter-spacing: -0.008em;
+  line-height: 1.12;
+  margin-bottom: 14px;
+  text-wrap: balance;
+}
+
+/* 한국어 모드에서 세리프 폴백 시 굵기 보정 */
+:lang(ko) .feature-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.feature-body {
+  color: var(--fg-2);
+  font-size: clamp(13.5px, 1.15vw, 16px);
+  max-width: 42ch;
+}
+
+/* ── demo placeholder — bordered cell (Female Faces) ── */
+
+.demo-ph {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.demo-ph .demo-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.demo-ph .demo-body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.demo-ph .demo-play {
+  width: 54px;
+  height: 54px;
+  border: 1px solid var(--fg);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.18s ease-out;
+}
+.demo-ph:hover .demo-play {
+  background: var(--fg);
+}
+.demo-ph .demo-play svg {
+  margin-left: 3px;
+}
+.demo-ph .demo-play svg path {
+  fill: var(--fg);
+  transition: fill 0.18s ease-out;
+}
+.demo-ph:hover .demo-play svg path {
+  fill: var(--bg);
+}
+
+.demo-ph .demo-bottombar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--rule-soft);
+}
+
+.demo-ph video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ── interlude — 크림 라인아트 '도판(plate)' ── */
+
+.interlude {
+  position: relative;
+  padding: clamp(40px, 8svh, 90px) var(--pad-x);
+  background: var(--bg);
+  border-top: 1px solid var(--rule-soft);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.interlude .plate {
+  /* 아트 배경이 페이지와 동일한 순수 검정 — 보더 없이 유기적으로 녹인다 */
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.interlude img {
+  width: 100%;
+  height: auto;
+}
+.interlude .interlude-caption {
+  display: block;
+  margin-top: 14px;
+}
+
+/* ── download ── */
+
+.download-section {
+  position: relative;
+  padding: clamp(70px, 13svh, 140px) var(--pad-x);
+  background: var(--bg);
+  border-top: 1px solid var(--rule);
+}
+
+.download-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 12px;
+  margin-bottom: clamp(26px, 5svh, 52px);
+}
+
+.download-title {
+  font-size: clamp(44px, 7.4vw, 120px);
+  font-weight: 800;
+  letter-spacing: -0.028em;
+  line-height: 1.0;
+  text-transform: uppercase;
+  text-wrap: balance;
+  max-width: 12em;
+}
+
+.download-sub {
+  color: var(--fg-2);
+  max-width: 46ch;
+  margin-top: 20px;
+}
+
+.download-buttons {
+  display: flex;
+  gap: 0;
+  flex-wrap: wrap;
+  margin-top: clamp(28px, 5svh, 48px);
+  border: 1px solid var(--fg);
+  width: fit-content;
+}
+
+.dl-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 34px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: opacity 0.18s ease-out, background 0.18s ease-out, color 0.18s ease-out;
+}
+.dl-btn.primary {
+  background: var(--fg);
+  color: var(--bg);
+}
+.dl-btn.primary:hover {
+  opacity: 0.85;
+}
+.dl-btn.ghost {
+  border-left: 1px solid var(--fg);
+  color: var(--fg);
+}
+.dl-btn.ghost:hover {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.download-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--fg-3);
+  margin-top: 18px;
+  display: block;
+}
+
+/* ── pricing — hairline table ── */
+
+.pricing-section {
+  padding: clamp(60px, 11svh, 120px) var(--pad-x);
+  background: var(--bg);
+  border-top: 1px solid var(--rule);
+}
+
+.pricing-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 12px;
+}
+
+.pricing-title {
+  font-size: clamp(30px, 4.4vw, 64px);
+  font-weight: 800;
+  letter-spacing: -0.026em;
+  line-height: 1.05;
+  text-transform: uppercase;
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--rule);
+  border-top: none;
+}
+
+.price-card {
+  padding: 26px clamp(18px, 2vw, 30px) 30px;
+  border-right: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: background 0.18s ease-out;
+}
+.price-card:last-child {
+  border-right: none;
+}
+.price-card:hover {
+  background: var(--bg-2);
+}
+.price-card.hot .mono-label {
+  color: var(--gold);
+}
+
+.price-card .price {
+  font-size: clamp(34px, 3.4vw, 52px);
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  margin: 14px 0 4px;
+}
+.price-card .per {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-3);
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+.price-card ul {
+  list-style: none;
+  margin-top: 16px;
+}
+.price-card li {
+  font-size: 13.5px;
+  color: var(--fg-2);
+  padding: 9px 0;
+  border-top: 1px solid var(--rule-soft);
+}
+.price-card li:first-child {
+  border-top: none;
+}
+
+.pricing-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--fg-3);
+  margin-top: 14px;
+}
+
+/* ── footer ── */
+
+.footer {
+  padding: 34px var(--pad-x) 40px;
+  background: var(--bg);
+  border-top: 1px solid var(--rule-soft);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.footer-line {
+  color: var(--fg-2);
+  font-size: 13px;
+}
+
+.footer .mono-label {
+  font-size: 10px;
+  color: var(--fg-3);
+}
+
+/* ── reveal (GSAP 구동) ── */
+
+[data-reveal] {
+  opacity: 0;
+}
+
+.no-motion [data-reveal],
+.no-motion .feature-block {
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+.no-motion .chapter-stage {
+  height: auto;
+  min-height: 0;
+  padding: 10svh 0;
+}
+.no-motion .feature-block {
+  position: relative;
+  inset: auto;
+  margin-bottom: 9svh;
+}
+.no-motion .chapter-intro {
+  position: relative;
+  padding: 7svh var(--pad-x);
+}
+
+/* ── responsive ── */
+
+@media (max-width: 860px) {
+  .cover-frame {
+    width: 88vw;
+    aspect-ratio: 4 / 5;
+  }
+  .feature-block,
+  .feature-block.mirror {
+    grid-template-columns: 1fr;
+    gap: 22px;
+    align-content: center;
+  }
+  .feature-block.mirror .feature-copy {
+    order: 1;
+  }
+  .feature-block.mirror .feature-media {
+    order: 2;
+  }
+  .feature-body {
+    max-width: none;
+  }
+  .pricing-grid {
+    grid-template-columns: 1fr;
+  }
+  .price-card {
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+  }
+  .price-card:last-child {
+    border-bottom: none;
+  }
+  .footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
