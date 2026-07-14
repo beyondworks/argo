@@ -1,7 +1,10 @@
 // LS(Lemon Squeezy) 결제 웹훅 — entitlements의 유일한 쓰기 경로(서비스 롤).
 // 서명(X-Signature, HMAC-SHA256 hex) 검증 실패는 401 — 위조 페이로드로 plan을 못 바꾼다.
-// 매핑: subscription_* 이벤트 status가 active/on_trial/past_due/cancelled(말일까지 이용 유지) → pro,
-//       그 외(expired/paused/unpaid…) → free. subscription_* 외 이벤트는 200 무시(LS 재전송 폭주 방지).
+// 이벤트: 라이프사이클 이벤트만 화이트리스트 처리(LIFECYCLE). subscription_payment_*는 인보이스
+//       객체라 status 시맨틱이 달라 명시 제외 — 안 그러면 payment_success(status:'paid')가
+//       구독 상태로 오인되어 유료 사용자를 강등시킬 수 있다. 화이트리스트 밖은 200 무시.
+// 매핑: status가 active/on_trial/past_due/cancelled(말일까지 이용 유지) → pro,
+//       expired/unpaid/paused → free. 그 외 미지 상태는 쓰기 없이 200 무시(신규 상태 방어).
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const enc = new TextEncoder();
@@ -22,7 +25,18 @@ function safeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-const PRO_STATUS = new Set(['active', 'on_trial', 'past_due', 'cancelled']);
+const LIFECYCLE = new Set([
+  'subscription_created',
+  'subscription_updated',
+  'subscription_cancelled',
+  'subscription_resumed',
+  'subscription_expired',
+  'subscription_paused',
+  'subscription_unpaused',
+  'subscription_plan_changed',
+]);
+const PRO_STATUS = new Set(['active', 'on_trial', 'past_due', 'cancelled']); // cancelled = 말일까지 유지
+const FREE_STATUS = new Set(['expired', 'unpaid', 'paused']);
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('method not allowed', { status: 405 });
@@ -35,11 +49,14 @@ Deno.serve(async (req) => {
   let evt: { meta?: { event_name?: string; custom_data?: { user_id?: string } }; data?: { attributes?: { status?: string } } };
   try { evt = JSON.parse(raw); } catch { return new Response('bad json', { status: 400 }); }
   const name = String(evt?.meta?.event_name ?? '');
-  if (!name.startsWith('subscription_')) return new Response('ignored', { status: 200 });
+  if (!LIFECYCLE.has(name)) return new Response('ignored', { status: 200 });
   const userId = evt?.meta?.custom_data?.user_id;
   if (!userId) return new Response('missing user_id', { status: 400 });
   const status = String(evt?.data?.attributes?.status ?? '');
-  const plan = PRO_STATUS.has(status) ? 'pro' : 'free';
+  let plan: string;
+  if (PRO_STATUS.has(status)) plan = 'pro';
+  else if (FREE_STATUS.has(status)) plan = 'free';
+  else return new Response('unknown status ignored', { status: 200 }); // 미지 상태 — 강등 금지(순서 역전·신규 상태 방어)
 
   const sb = createClient(
     Deno.env.get('SUPABASE_URL')!,
