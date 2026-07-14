@@ -286,3 +286,55 @@ test('기기 세션 — 회전 대기 중 저장 요청은 같은 락 뒤로 큐
     assert.equal(final.user.id, 'u-2');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+/* ── 계정 키 — get-or-create + 동기 캐시 (M-2c Task 2) ── */
+import { ensureAccountKey, accountKey, clearAccountKey } from '../src/accountkey.mjs';
+
+// fake supabase — from('account_keys') 체인 최소 구현
+function fakeSb(store) {
+  return {
+    from: () => ({
+      select: () => ({ eq: (_c, uid) => ({ maybeSingle: async () => ({ data: store.get(uid) ? { key_b64: store.get(uid) } : null, error: null }) }) }),
+      insert: async (row) => {
+        if (store.has(row.user_id)) return { error: { code: '23505', message: 'duplicate key' } };
+        store.set(row.user_id, row.key_b64);
+        return { error: null };
+      },
+    }),
+  };
+}
+
+test('계정 키 — 생성·재사용·경합·캐시', async () => {
+  clearAccountKey();
+  const store = new Map();
+  // 최초: 생성 + 캐시
+  const k1 = await ensureAccountKey(fakeSb(store), 'u-1');
+  assert.equal(k1.length, 32);
+  assert.equal(accountKey().equals(k1), true);
+  assert.equal(store.size, 1);
+  // 재호출: 캐시 (store 접근 불필요 — 같은 버퍼)
+  const k2 = await ensureAccountKey(fakeSb(store), 'u-1');
+  assert.equal(k2.equals(k1), true);
+  // 다른 기기 시뮬레이션: 캐시 비우고 다시 — 기존 행 재사용(새 키 생성 아님)
+  clearAccountKey();
+  const k3 = await ensureAccountKey(fakeSb(store), 'u-1');
+  assert.equal(k3.equals(k1), true);
+  // 삽입 경합: 빈 캐시 + select는 null이지만 insert가 23505 → 재조회로 승자 키 채택
+  clearAccountKey();
+  let first = true;
+  const racing = {
+    from: () => ({
+      select: () => ({ eq: () => ({ maybeSingle: async () => {
+        if (first) { first = false; return { data: null, error: null }; } // 첫 조회는 비어 보임
+        return { data: { key_b64: store.get('u-1') }, error: null };      // 재조회는 승자 키
+      } }) }),
+      insert: async () => ({ error: { code: '23505', message: 'duplicate key' } }),
+    }),
+  };
+  const k4 = await ensureAccountKey(racing, 'u-1');
+  assert.equal(k4.equals(k1), true);
+  // 오너 없음 → null, 캐시 없음
+  clearAccountKey();
+  assert.equal(await ensureAccountKey(fakeSb(store), null), null);
+  assert.equal(accountKey(), null);
+});
