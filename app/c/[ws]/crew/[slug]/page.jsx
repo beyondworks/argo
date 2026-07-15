@@ -37,6 +37,30 @@ export default function CrewChat({ params }) {
   const [archMsgs, setArchMsgs] = useState(null);
   const [renameSess, setRenameSess] = useState(null); // 대화명 편집 모달 대상 세션
   const [trashSess, setTrashSess] = useState(null);   // 삭제(보관) 확인 모달 대상 세션
+  // 우측 드로어 — 백그라운드 작업 / 파일 탭. 채팅 폭은 유지하고 우측에서 덮으며 내려온다.
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState('tasks'); // 'tasks' | 'files'
+  const [panelTasks, setPanelTasks] = useState(null); // /tasks 응답을 이 크루 slug로 필터한 것
+  useEffect(() => {
+    if (!panelOpen || panelTab !== 'tasks') return;
+    let alive = true;
+    const pull = () => api(`/api/companies/${ws}/tasks`).then((d) => {
+      if (!alive) return;
+      setPanelTasks({
+        running: (d.running ?? []).filter((r) => r.slug === slug),
+        recent: (d.recent ?? []).filter((r) => r.slug === slug),
+      });
+    }).catch(() => {});
+    pull();
+    const iv = setInterval(pull, 4000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [panelOpen, panelTab, ws, slug]);
+  useEffect(() => {
+    if (!panelOpen) return;
+    const onKey = (e) => { if (e.key === 'Escape') setPanelOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [panelOpen]);
   const loadSessions = useCallback(() => {
     api(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}`)
       .then((d) => setSessions(d.sessions ?? [])).catch(() => {});
@@ -314,8 +338,9 @@ export default function CrewChat({ params }) {
   }
 
   return (
-    // maxWidth 1002 = 세션레일216 + gap18 + 채팅레인768 → 채팅 컬럼이 레인 폭에 딱 맞아 레일 바로 옆에 붙는다(일반 LLM 챗 레이아웃). marginLeft/Right auto로 콘텐츠 영역 중앙 정렬.
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70, maxWidth: 1002, marginLeft: 'auto', marginRight: 'auto' }}>
+    // 세션레일(216, 좌측 원위치) + 채팅 컬럼(나머지 전체). 채팅은 .thread를 컬럼 전체폭으로 두고 안쪽 레인만 중앙정렬 →
+    // 스크롤바는 컬럼 우측 끝에 고정되고 메시지는 중앙 레인에 담긴다(가장 LLM다운 형태).
+    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
       {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지. 회의실·컨테스트와 동일(입력창 하향·대화영역 확대, 스레드만 내부 스크롤). */}
       {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정 */}
       <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
@@ -378,13 +403,17 @@ export default function CrewChat({ params }) {
           ) : (
             <span className="pill" style={{ flex: 'none' }}><span className="dot" />{t('chat.newSession')}</span>
           )}
+          <button className="btn sm" style={{ flex: 'none' }} onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen}>{t('crew.panel.open')}</button>
           <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
           <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
         </>,
         slotEl,
       )}
 
-      <div className="thread" style={{ overflowY: 'auto', minHeight: 0, width: '100%', maxWidth: LANE, margin: '0 auto' }}>
+      <div className="thread" style={{ overflowY: 'auto', minHeight: 0 }}>
+        {/* 안쪽 레인만 중앙정렬 — .thread(스크롤 컨테이너)는 컬럼 전체폭이라 스크롤바가 우측 끝에 고정된다.
+            레인 래퍼가 flex 컬럼이어야 메시지 간 gap·유저버블 우측정렬(align-self)이 유지된다(.thread의 flex를 이 레인이 이어받음). */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%', maxWidth: LANE, margin: '0 auto' }}>
         {thread === null && (
           <><Skeleton h={46} w="60%" /><Skeleton h={90} /></>
         )}
@@ -530,6 +559,7 @@ export default function CrewChat({ params }) {
         )}
         {error && <p style={{ fontSize: 13, color: 'var(--danger)' }}>{error}</p>}
         <div ref={endRef} />
+        </div>
       </div>
 
       {viewing ? (
@@ -591,6 +621,61 @@ export default function CrewChat({ params }) {
           onClose={() => setCardOpen(false)}
           onFired={() => { window.dispatchEvent(new Event('argo:refresh')); router.push(`/c/${ws}`); }}
         />
+      )}
+
+      {panelOpen && (
+        <aside className="crew-drawer" role="dialog" aria-label={t('crew.panel.title')}>
+          <div className="crew-drawer-tabs">
+            <button type="button" className={`crew-tab${panelTab === 'tasks' ? ' active' : ''}`} onClick={() => setPanelTab('tasks')}>{t('crew.panel.tab.tasks')}</button>
+            <button type="button" className={`crew-tab${panelTab === 'files' ? ' active' : ''}`} onClick={() => setPanelTab('files')}>{t('crew.panel.tab.files')}</button>
+            <span style={{ flex: 1 }} />
+            <button type="button" className="btn sm" onClick={() => setPanelOpen(false)}>{t('crew.panel.close')}</button>
+          </div>
+          <div className="crew-drawer-body">
+            {panelTab === 'tasks' && (() => {
+              const run = panelTasks?.running ?? [];
+              const rec = panelTasks?.recent ?? [];
+              if (!run.length && !rec.length) return <div className="crew-drawer-empty">{t('crew.panel.tasks.empty')}</div>;
+              return (
+                <>
+                  {run.map((r) => (
+                    <div key={r.slug} className="task-row">
+                      <ArgoSpinner size={14} />
+                      <span className="t-main">
+                        <span className="t-title">{r.stage}</span>
+                        <span className="t-sub mono">{r.detail || ''}</span>
+                      </span>
+                    </div>
+                  ))}
+                  {rec.length > 0 && <div className="microlabel" style={{ padding: '10px 12px 4px' }}>{t('crew.panel.tasks.recent')}</div>}
+                  {rec.map((e, i) => (
+                    <a key={e.ts ?? i} className="task-row" href={`/c/${ws}/activity`}>
+                      <span style={{ width: 6, height: 6, borderRadius: 999, flex: 'none', background: e.ok ? 'var(--ok)' : 'var(--danger)' }} aria-hidden="true" />
+                      <span className="t-main"><span className="t-title">{e.gist || t(`tasks.type.${e.type}`)}</span></span>
+                    </a>
+                  ))}
+                </>
+              );
+            })()}
+            {panelTab === 'files' && (() => {
+              const files = ((viewing ? archMsgs : thread) ?? []).flatMap((m) => m.attachments ?? []);
+              if (!files.length) return <div className="crew-drawer-empty">{t('crew.panel.files.empty')}</div>;
+              return (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '6px 8px' }}>
+                  {files.map((a, i) => a.isImage ? (
+                    <a key={i} href={`/api/companies/${ws}/files?rel=${encodeURIComponent(a.rel)}`} target="_blank" rel="noopener noreferrer">
+                      <img className="att-thumb" src={`/api/companies/${ws}/files?rel=${encodeURIComponent(a.rel)}`} alt={a.name} />
+                    </a>
+                  ) : (
+                    <a key={i} className="att-chip" href={`/api/companies/${ws}/files?rel=${encodeURIComponent(a.rel)}`} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
+                      <Icon name="clip" size={11} /><span className="name">{a.name}</span>
+                    </a>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        </aside>
       )}
 
       {renameSess && (

@@ -1409,6 +1409,23 @@ input, textarea { font: inherit; color: var(--fg); }
 }
 @keyframes tasksIn { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: none; } }
 .tasks-list { overflow-y: auto; padding: 0 6px 8px; display: flex; flex-direction: column; }
+
+/* 크루 채팅 우측 드로어 — 백그라운드 작업/파일 탭. 채팅 폭은 유지하고 우측에서 덮으며 내려온다(사용자 지정 형태). */
+.crew-drawer {
+  position: fixed; top: 56px; right: 0; bottom: 0; z-index: 91;
+  width: min(380px, 100vw);
+  display: flex; flex-direction: column;
+  background: var(--bg); border-left: 1px solid var(--border);
+  box-shadow: -16px 0 44px -24px var(--overlay);
+  animation: drawerIn 0.22s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@keyframes drawerIn { from { transform: translateX(22px); opacity: 0; } to { transform: none; opacity: 1; } }
+.crew-drawer-tabs { display: flex; align-items: center; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--border-soft); flex: none; }
+.crew-tab { border: 0; background: transparent; color: var(--fg-3); font-size: 12.5px; font-weight: 600; padding: 5px 10px; border-radius: 7px; cursor: pointer; }
+.crew-tab:hover { color: var(--fg); }
+.crew-tab.active { background: var(--card-2); color: var(--fg); }
+.crew-drawer-body { flex: 1; overflow-y: auto; padding: 8px 6px; display: flex; flex-direction: column; gap: 2px; }
+.crew-drawer-empty { padding: 22px 12px; font-size: 12.5px; color: var(--fg-3); text-align: center; line-height: 1.6; }
 .task-row {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 12px; border-radius: 12px;
