@@ -83,6 +83,9 @@ async function ensureClient() {
   return true;
 }
 const client = () => sb; // ensureClient() 성공 뒤에만 호출된다 (cycle/ensureSync 게이트)
+// 테스트 전용 — fake storage를 주입해 syncCompany를 실 Supabase 없이 실행 검증한다.
+// 프로덕션 경로는 절대 호출하지 않는다(ensureClient가 실 클라이언트를 세팅). (export: 통합 테스트용)
+export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; }
 
 // 스토리지 키 — 한글·특수문자 세그먼트는 base64url로(스토리지가 %·비ASCII 키를 거부, 실측).
 // 매니페스트에 논리 경로를 담고 키는 항상 이 함수로 파생하므로 역디코딩은 불필요하다.
