@@ -255,7 +255,8 @@ export default function CrewChat({ params }) {
 
   async function newChat() {
     if (busy) return;
-    if (!window.confirm(t('chat.newChatConfirm'))) return;
+    // 현재 대화는 서버(resetThread)가 .archive로 적재한 뒤 비우므로 비파괴 — 확인창 없이 바로 새 대화.
+    // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작(버튼이 안 열리던 원인) → 제거. 파괴적 액션만 DangerModal.
     await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
     setThread([]); sessionRef.current = null; setError('');
     setViewing(null); setArchMsgs(null); resetAnnot();

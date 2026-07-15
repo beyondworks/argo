@@ -63,7 +63,9 @@ export default function Room({ params }) {
   }
 
   async function endMeeting() {
-    if (busy || !window.confirm(t('room.endConfirm'))) return;
+    if (busy) return;
+    // 회의록은 서버(endMeeting)가 journal + .archive로 남기므로 비파괴 — 확인창 없이 바로 마친다.
+    // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작 → 제거(새 대화와 동일 근본 원인).
     try {
       const r = await fetch(`/api/companies/${ws}/room`, { method: 'DELETE' });
       const d = await r.json();
