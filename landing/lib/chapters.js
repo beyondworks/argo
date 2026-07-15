@@ -6,8 +6,8 @@ export const CHAPTERS = [
     glyph: 'star',
     vignette: '/assets/art/vignette-ch1.webp',
     features: [
-      { id: 'feat1', tc: '00:12' },
-      { id: 'feat2', tc: '00:18' },
+      { id: 'feat1', tc: '01:08', video: '/assets/demos/feat1.mp4' },
+      { id: 'feat2', tc: '00:36', video: '/assets/demos/feat2.mp4' },
     ],
   },
   {
