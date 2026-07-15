@@ -121,8 +121,12 @@ export default function Settings({ params }) {
         </div>
       </div>
 
-      <LanguageCard />
-      <CrewLanguageCard ws={ws} sysLang={data?.company?.lang} />
+      {/* 화면 언어 + 크루 응답 언어 — 의미상 한 쌍이라 한 열에 세로로 묶는다
+          (묶지 않으면 일반 카드 4장이 3열 그리드에서 4번째만 다음 줄에 홀로 떨어짐) */}
+      <div style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
+        <LanguageCard />
+        <CrewLanguageCard ws={ws} sysLang={data?.company?.lang} />
+      </div>
       <ThemeCard />
       <TrashCard ws={ws} />
       </Section>
