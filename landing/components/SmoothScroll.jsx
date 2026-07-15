@@ -43,6 +43,28 @@ export default function SmoothScroll({ children }) {
   useEffect(() => {
     if (!lenis) return undefined;
 
+    // 풀높이 섹션(--app-vh)을 실제 innerHeight로 고정 — 모바일 주소창 높이 변화로
+    // svh가 흔들리며 핀 높이와 어긋나 콘텐츠가 아래로 쏠리는 문제 방지.
+    const root = document.documentElement;
+    const setVH = () => {
+      const vh = window.innerHeight;
+      if (vh > 0) root.style.setProperty('--app-vh', `${vh}px`); // 순간 0 보고 시 레이아웃 붕괴 방지
+    };
+    setVH();
+    let lastW = window.innerWidth;
+    // 폭이 바뀐 실제 리사이즈/회전만 반영(주소창 높이 변화는 무시 → 재계산 churn 없음)
+    const onResize = () => {
+      if (window.innerWidth !== lastW) {
+        lastW = window.innerWidth;
+        setVH();
+        ScrollTrigger.refresh();
+      }
+    };
+    const onOrient = () => {
+      setVH();
+      ScrollTrigger.refresh();
+    };
+
     const maxScroll = () =>
       Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
 
@@ -185,13 +207,19 @@ export default function SmoothScroll({ children }) {
     ScrollTrigger.addEventListener('refresh', rebuild);
     window.__snaps = () => snaps;
     build(); // 자식 useGSAP가 이미 트리거를 만든 뒤라 즉시 계산 가능
-    const settle = setTimeout(build, 300); // 폰트·이미지 로드로 위치가 밀린 경우 보정
+    // 폰트·이미지 로드로 뷰포트/위치가 밀린 경우 보정 — 핀을 실제 높이로 재측정
+    const settle = setTimeout(() => {
+      setVH();
+      ScrollTrigger.refresh();
+    }, 300);
 
     window.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('touchstart', onTouchStart, { passive: true });
     window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', onTouchEnd, { passive: true });
     window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onOrient);
 
     return () => {
       clearTimeout(settle);
@@ -202,6 +230,8 @@ export default function SmoothScroll({ children }) {
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('touchend', onTouchEnd);
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onOrient);
     };
   }, [lenis]);
 

@@ -170,7 +170,7 @@ video {
 
 .hero-stage {
   position: relative;
-  height: 100svh;
+  height: var(--app-vh, 100svh);
   overflow: hidden;
   background: var(--bg);
   display: flex;
@@ -439,7 +439,7 @@ video {
 
 .chapter-stage {
   position: relative;
-  height: 100svh;
+  height: var(--app-vh, 100svh);
   overflow: hidden;
   background: var(--bg);
 }
