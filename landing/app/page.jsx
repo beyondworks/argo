@@ -4,7 +4,6 @@ import Hero from '@/components/Hero';
 import CoreFour from '@/components/CoreFour';
 import Chapter from '@/components/Chapter';
 import DownloadSection from '@/components/DownloadSection';
-import PricingSection from '@/components/PricingSection';
 import Footer from '@/components/Footer';
 import Interlude from '@/components/Interlude';
 import { CHAPTERS } from '@/lib/chapters';
@@ -38,7 +37,6 @@ export default function Page() {
         );
       })}
       <DownloadSection />
-      <PricingSection />
       <Footer />
     </main>
   );

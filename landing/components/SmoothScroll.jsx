@@ -95,7 +95,7 @@ export default function SmoothScroll({ children }) {
       });
 
       // 핀 아닌 전체 섹션 — 상단을 뷰포트에 맞춤
-      ['.core-section', '.interlude', '.download-section', '.pricing-section'].forEach((sel) => {
+      ['.core-section', '.interlude', '.download-section'].forEach((sel) => {
         const el = document.querySelector(sel);
         if (el) pts.push(el.getBoundingClientRect().top + window.scrollY);
       });
