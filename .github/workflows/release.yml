@@ -3,9 +3,10 @@
 #
 # 트리거: v* 태그 push (예: git tag v0.1.0 && git push origin v0.1.0) 또는 수동 실행.
 #
-# 사전 준비(리포지토리 설정 → Secrets and variables → Actions에 등록):
-#   NEXT_PUBLIC_SUPABASE_URL        (공개값 — 빌드시 클라이언트에 인라인, 로그인 가능하게)
+# 사전 준비(beyondworks/argo 저장소 설정 → Secrets and variables → Actions에 등록):
+#   NEXT_PUBLIC_SUPABASE_URL        (공개값 — 빌드시 클라이언트에 인라인, 로그인/기기 맥락공유 가능하게)
 #   NEXT_PUBLIC_SUPABASE_ANON_KEY   (공개값 — anon 키. 서비스키는 절대 넣지 말 것)
+#   RELEASE_TOKEN                   (공개 배포 repo beyondworks/argo-agent에 릴리스 발행용 PAT — contents:write)
 #   ※ SUPABASE_SERVICE_ROLE_KEY 등 서버 시크릿은 데스크톱 빌드에 넣지 않는다(설치본 유출 방지).
 #
 # 주의(후속):
@@ -82,16 +83,25 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      # draft=true — 자동 공개하지 않는다. 검토 후 사람이 게시.
+      # 공개 배포 repo(beyondworks/argo-agent)에 발행 — 소스(private argo)는 유출되지 않는다.
+      # cross-repo라 RELEASE_TOKEN(argo-agent contents:write PAT) 필요. draft=true라 검토 후 사람이 게시.
       - uses: softprops/action-gh-release@v2
         with:
+          repository: beyondworks/argo-agent
+          token: ${{ secrets.RELEASE_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           files: dist/**/*
           draft: true
-          generate_release_notes: true
+          body: |
+            ## 설치 — 첫 실행 안내
+            현재 빌드는 코드 서명 전이라 처음 실행 시 OS 보안 경고가 뜹니다. 정상이며 안전합니다.
+            - **macOS**: 앱 우클릭 → 열기 → 다시 열기 (또는 시스템 설정 → 개인정보 보호 및 보안 → 확인 없이 열기)
+            - **Windows**: SmartScreen 화면에서 추가 정보 → 실행
+
+            설치파일: macOS `.dmg`(Apple Silicon `aarch64` / Intel `x64`), Windows `-setup.exe`.
