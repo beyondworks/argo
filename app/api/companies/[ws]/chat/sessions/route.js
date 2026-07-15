@@ -1,4 +1,4 @@
-import { listArchivedSessions, readArchivedSession, resumeSession, renameSession, trashSession } from '../../../../../../src/thread.mjs';
+import { listArchivedSessions, readArchivedSession, resumeSession, renameSession, trashSession, setPinned } from '../../../../../../src/thread.mjs';
 import { guardCompany } from '../../../../../auth.mjs';
 
 /** 세션 적재 레일 — 목록(slug) 또는 보관 세션 1건(slug+id, 읽기 전용). */
@@ -31,13 +31,15 @@ export async function POST(req, { params }) {
   }
 }
 
-/** 대화명 편집 — 보관 세션에 title 기록. body: { slug, id, title } */
+/** 대화명 편집 또는 고정 토글 — 보관 세션에 title/pinned 기록. body: { slug, id, title } | { slug, id, pinned } */
 export async function PATCH(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
-  const { slug, id, title } = await req.json().catch(() => ({}));
+  const { slug, id, title, pinned } = await req.json().catch(() => ({}));
   if (!slug || !id) return Response.json({ error: 'slug·id가 필요합니다' }, { status: 400 });
   try {
+    // pinned가 오면 고정 토글, 아니면 대화명 편집(둘은 배타 — 한 요청에 하나만)
+    if (pinned !== undefined) return Response.json(await setPinned(ws, slug, id, pinned === true));
     return Response.json(await renameSession(ws, slug, id, title));
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });

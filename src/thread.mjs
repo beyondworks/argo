@@ -72,11 +72,13 @@ export async function listArchivedSessions(wsId, slug) {
         ts: Number(n.match(/-(\d+)\.json$/)?.[1] ?? 0),
         count: t.messages?.length ?? 0,
         title: t.title ?? null, // 사용자가 붙인 대화명(있으면 레일에서 gist 대신 표시)
+        pinned: t.pinned === true, // 고정 세션 — 레일 상단에 최근순으로 묶인다(title과 동일 in-file 저장)
         gist: String(firstUser?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 42),
       });
     } catch { /* 깨진 보관본은 건너뛴다 */ }
   }
-  return out.sort((a, b) => b.ts - a.ts);
+  // 고정 먼저, 그 안에서 최근순 — 각 그룹 내부는 기존과 동일(ts 내림차순)
+  return out.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.ts - a.ts);
 }
 
 export async function readArchivedSession(wsId, slug, id) {
@@ -134,6 +136,20 @@ export async function renameSession(wsId, slug, id, title) {
     if (clean) t.title = clean; else delete t.title;
     await writeJsonAtomic(f, t);
     return { id, title: t.title ?? null };
+  });
+}
+
+/** 세션 고정/해제 — 보관 세션 파일에 pinned를 기록(renameSession과 동일 in-file·원자적 쓰기 패턴).
+    고정 세션은 레일 상단에 최근순으로 묶인다. resume로 아카이브가 사라지면 핀도 함께 사라진다(핀=보관 대화 표식). */
+export async function setPinned(wsId, slug, id, pinned) {
+  const safe = slug.replace(/[^a-z0-9-]/g, '');
+  if (!ARCH_ID(safe).test(id)) throw new Error('잘못된 세션 id');
+  return withLock(lockKey(wsId, slug), async () => {
+    const f = join(paths(wsId).chats, '.archive', id);
+    const t = JSON.parse(await readFile(f, 'utf8'));
+    if (pinned) t.pinned = true; else delete t.pinned;
+    await writeJsonAtomic(f, t);
+    return { id, pinned: t.pinned === true };
   });
 }
 
