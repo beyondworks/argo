@@ -28,9 +28,9 @@ export const CHAPTERS = [
     glyph: 'wing',
     vignette: '/assets/art/vignette-ch3.webp',
     features: [
-      { id: 'feat7', tc: '00:09' },
-      { id: 'feat8', tc: '00:13' },
-      { id: 'feat13', tc: '00:14' },
+      { id: 'feat7', tc: '00:55', video: '/assets/demos/feat7.mp4' },
+      { id: 'feat8', tc: '00:28', video: '/assets/demos/feat8.mp4' },
+      { id: 'feat13', tc: '00:05', video: '/assets/demos/feat13.mp4' },
     ],
   },
   {
@@ -39,8 +39,8 @@ export const CHAPTERS = [
     glyph: 'forge',
     vignette: '/assets/art/vignette-ch4.webp',
     features: [
-      { id: 'feat9', tc: '00:16' },
-      { id: 'feat10', tc: '00:10' },
+      { id: 'feat9', tc: '00:05', video: '/assets/demos/feat9.mp4' },
+      { id: 'feat10', tc: '00:38', video: '/assets/demos/feat10.mp4' },
     ],
   },
   {
@@ -49,8 +49,8 @@ export const CHAPTERS = [
     glyph: 'moon',
     vignette: '/assets/art/vignette-ch5.webp',
     features: [
-      { id: 'feat11', tc: '00:17' },
-      { id: 'feat12', tc: '00:08' },
+      { id: 'feat11', tc: '00:28', video: '/assets/demos/feat11.mp4' },
+      { id: 'feat12', tc: '00:05', video: '/assets/demos/feat12.mp4' },
     ],
   },
 ];
