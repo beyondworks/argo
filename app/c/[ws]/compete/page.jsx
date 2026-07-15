@@ -74,8 +74,8 @@ export default function Compete({ params }) {
   const winnerName = comp?.winner ? (comp.entrants.find((x) => x.slug === comp.winner)?.name ?? comp.winner) : null;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 170px)' }}>
-      {/* 170px = topbar(56) + .content 패딩(26+88). 이 값이 작으면 페이지 전체가 스크롤돼 입력창 미고정·사이드바 딸림. 아래 본문 컬럼 minHeight:0과 한 세트(회의실과 동일). */}
+    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
+      {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지(입력창 하향·대화영역 확대). 본문 컬럼 minHeight:0과 한 세트(회의실·DM 동일). */}
       {/* 경쟁 레일 — 지난 경쟁이 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr) */}
       <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>

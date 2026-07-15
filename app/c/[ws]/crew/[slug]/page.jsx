@@ -263,8 +263,8 @@ export default function CrewChat({ params }) {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 170px)' }}>
-      {/* 170px = topbar(56) + .content 패딩(위 26 + 아래 88). 회의실·컨테스트와 동일 오프셋 — 페이지 전체 스크롤 대신 스레드만 내부 스크롤(입력창 하단 고정, 뒤로 콘텐츠 안 비침). */}
+    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
+      {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지. 회의실·컨테스트와 동일(입력창 하향·대화영역 확대, 스레드만 내부 스크롤). */}
       {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정 */}
       <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
@@ -287,7 +287,7 @@ export default function CrewChat({ params }) {
         {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('chat.sessions.empty')}</span>}
       </div>
     <div
-      style={{ maxWidth: 760, width: '100%', margin: '0 auto', display: 'grid', gridTemplateRows: '1fr auto', height: '100%', minHeight: 0, position: 'relative' }}
+      style={{ width: '100%', display: 'grid', gridTemplateRows: '1fr auto', height: '100%', minHeight: 0, position: 'relative' }}
       onDragOver={(e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); setDragOver(true); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
       onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
