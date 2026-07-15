@@ -6,6 +6,16 @@ import { useLang } from '@/lib/i18n';
 // video src가 준비되면 <video>로 스왑 (라벨/타임코드 유지)
 export default function DemoPlaceholder({ label, tc = '00:00', video = null, poster = null }) {
   const { t } = useLang();
+
+  // 영상이 연결된 셀은 프레임(보더·상단바·하단바) 없이 영상만 인라인으로 표시
+  if (video) {
+    return (
+      <div className="demo-video">
+        <video src={video} poster={poster ?? undefined} muted loop playsInline autoPlay />
+      </div>
+    );
+  }
+
   return (
     <div className="demo-ph">
       <div className="demo-topbar">

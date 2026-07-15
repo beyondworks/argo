@@ -667,6 +667,22 @@ video {
   object-fit: cover;
 }
 
+/* 영상 연결 셀 — 프레임 없이 영상만 인라인 (보더·상단바·하단바 제거) */
+.demo-video {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  overflow: hidden;
+}
+.demo-video video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 /* ── interlude — 크림 라인아트 '도판(plate)' ── */
 
 .interlude {
