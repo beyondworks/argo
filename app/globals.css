@@ -57,9 +57,10 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
-    --bg: #0f0e0b; --card: #17150f; --card-2: #211e15; --secondary: #2a2619;
-    --fg: #f2eee1; --fg-2: #b4ad97; --fg-3: #7b7560;
-    --border: rgba(214, 180, 110, 0.15); --border-soft: rgba(214, 180, 110, 0.08);
+    /* 명암 완화 — near-black 대신 웜 차콜로 올려 극단적 대비를 압축. 카드·2·3차 텍스트·보더도 올려 가시성 확보 */
+    --bg: #1c1813; --card: #26211a; --card-2: #322c21; --secondary: #3d371f;
+    --fg: #ece6d7; --fg-2: #c5bda2; --fg-3: #979073;
+    --border: rgba(224, 192, 122, 0.21); --border-soft: rgba(224, 192, 122, 0.11);
     --primary: #c6a052; --primary-strong: #d8ba6e; --primary-fg: #221b08;
     --primary-fg-dim: rgba(34, 27, 8, 0.74); --primary-fg-line: rgba(34, 27, 8, 0.32);
     --primary-soft: rgba(198, 160, 82, 0.16);
@@ -68,10 +69,10 @@
     --warn: #d8a24a; --warn-soft: rgba(216, 162, 74, 0.16);
     --danger: #e5735c; --danger-soft: rgba(229, 115, 92, 0.15);
     --ring: rgba(198, 160, 82, 0.55); --selection: rgba(198, 160, 82, 0.30);
-    --overlay: rgba(0, 0, 0, 0.6);
-    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 12px 34px rgba(0, 0, 0, 0.45);
+    --overlay: rgba(0, 0, 0, 0.55);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px rgba(0, 0, 0, 0.4);
     --accent: #c6a052; --accent-rgb: 198, 160, 82;
-    --ink-rgb: 242, 238, 225; --paper-rgb: 23, 21, 15;
+    --ink-rgb: 236, 230, 215; --paper-rgb: 38, 33, 26;
   }
 }
 /* 수동 라이트 — base :root(라이트)를 그대로 쓰되, data-theme가 있어 위 @media 다크 전환에서 제외된다 */
@@ -79,9 +80,10 @@
 /* 수동 다크 — 위 @media 블록과 동일한 다크 값 */
 :root[data-theme='argo-dark'] {
   color-scheme: dark;
-  --bg: #0f0e0b; --card: #17150f; --card-2: #211e15; --secondary: #2a2619;
-  --fg: #f2eee1; --fg-2: #b4ad97; --fg-3: #7b7560;
-  --border: rgba(214, 180, 110, 0.15); --border-soft: rgba(214, 180, 110, 0.08);
+  /* 명암 완화 — @media 블록과 동일 값 유지 */
+  --bg: #1c1813; --card: #26211a; --card-2: #322c21; --secondary: #3d371f;
+  --fg: #ece6d7; --fg-2: #c5bda2; --fg-3: #979073;
+  --border: rgba(224, 192, 122, 0.21); --border-soft: rgba(224, 192, 122, 0.11);
   --primary: #c6a052; --primary-strong: #d8ba6e; --primary-fg: #221b08;
   --primary-fg-dim: rgba(34, 27, 8, 0.74); --primary-fg-line: rgba(34, 27, 8, 0.32);
   --primary-soft: rgba(198, 160, 82, 0.16);
@@ -90,10 +92,10 @@
   --warn: #d8a24a; --warn-soft: rgba(216, 162, 74, 0.16);
   --danger: #e5735c; --danger-soft: rgba(229, 115, 92, 0.15);
   --ring: rgba(198, 160, 82, 0.55); --selection: rgba(198, 160, 82, 0.30);
-  --overlay: rgba(0, 0, 0, 0.6);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 12px 34px rgba(0, 0, 0, 0.45);
+  --overlay: rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px rgba(0, 0, 0, 0.4);
   --accent: #c6a052; --accent-rgb: 198, 160, 82;
-  --ink-rgb: 242, 238, 225; --paper-rgb: 23, 21, 15;
+  --ink-rgb: 236, 230, 215; --paper-rgb: 38, 33, 26;
 }
 
 /* [apple] Apple HIG 라이트 — 시스템 화이트 표면, 소프트 섀도, systemBlue 액센트.
