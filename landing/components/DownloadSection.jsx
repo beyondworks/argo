@@ -29,11 +29,11 @@ export default function DownloadSection() {
       <h2 className="download-title">{t('download.title')}</h2>
       <p className="download-sub">{t('download.sub')}</p>
       <div className="download-buttons">
-        <a className="dl-btn primary" href="#" onClick={(e) => e.preventDefault()}>
+        <a className="dl-btn primary" href="https://github.com/beyondworks/argo-agent/releases/latest" target="_blank" rel="noopener noreferrer">
           <AppleIcon />
           {t('download.mac')}
         </a>
-        <a className="dl-btn ghost" href="#" onClick={(e) => e.preventDefault()}>
+        <a className="dl-btn ghost" href="https://github.com/beyondworks/argo-agent/releases/latest" target="_blank" rel="noopener noreferrer">
           <WindowsIcon />
           {t('download.win')}
         </a>
