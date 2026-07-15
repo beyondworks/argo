@@ -39,6 +39,7 @@ const PATHS = {
   trash: 'M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 11v6M14 11v6',
   clip: 'M21.4 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
   tasks: 'M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01',
+  pin: 'M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z',
 };
 
 export function Icon({ name, size = 16, strokeWidth = 1.8, ...rest }) {
@@ -234,6 +235,9 @@ export function Markdown({ text, onWikiLink }) {
   const escaped = String(text ?? '').replace(/</g, '&lt;');
   let html = marked.parse(escaped);
   html = html.replace(/href="(?!https?:|#|\/)[^"]*"/gi, 'href="#"');
+  // 이미지 src는 동일출처 파일 라우트("/...")만 허용 — 크루 답변 속 외부 http/data 이미지는
+  // 추적 픽셀·데이터 유출 벡터라 태그째 제거한다. "//evil.com"(프로토콜 상대)도 차단.
+  html = html.replace(/<img\b[^>]*>/gi, (tag) => /\ssrc="\/(?!\/)[^"]*"/i.test(tag) ? tag : '');
   // 크루가 주는 링크는 항상 새 창 — 대화 흐름을 벗어나지 않는다
   html = html.replace(/<a /gi, '<a target="_blank" rel="noopener noreferrer" ');
   html = html.replace(/\[\[(.+?)\]\]/g, (_, p) => {
