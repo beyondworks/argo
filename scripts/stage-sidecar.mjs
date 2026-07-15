@@ -49,9 +49,10 @@ const leaks = [];
 })(serverDest);
 if (leaks.length) { console.error('[stage] 시크릿 파일 잔존 — 배포 차단:\n' + leaks.join('\n')); process.exit(1); }
 
-// 4) node 런타임을 사이드카로 복사
+// 4) node 런타임을 사이드카로 복사 — Windows는 .exe 확장자 필수(Tauri가 node-<triple>.exe를 찾는다)
 const binDir = join(TAURI, 'binaries');
 mkdirSync(binDir, { recursive: true });
-copyFileSync(process.execPath, join(binDir, `node-${triple}`));
+const nodeExt = process.platform === 'win32' ? '.exe' : '';
+copyFileSync(process.execPath, join(binDir, `node-${triple}${nodeExt}`));
 
-console.log(`[stage] 완료 — triple=${triple}, server=${serverDest}, node=binaries/node-${triple} (시크릿 스캔 통과)`);
+console.log(`[stage] 완료 — triple=${triple}, server=${serverDest}, node=binaries/node-${triple}${nodeExt} (시크릿 스캔 통과)`);
