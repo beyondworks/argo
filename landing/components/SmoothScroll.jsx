@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import Lenis from 'lenis';
 import { gsap, ScrollTrigger, prefersReducedMotion } from '@/lib/gsap';
 
@@ -15,9 +16,12 @@ const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2
 export default function SmoothScroll({ children }) {
   const [lenis, setLenis] = useState(null);
   const rafCb = useRef(null);
+  const pathname = usePathname();
 
   // ── Lenis: 프로그램 스크롤 애니메이터로만 사용 (휠 스무딩 끔 — 스냅이 스크롤을 직접 몬다) ──
+  // 랜딩(/)에서만 스냅 스크롤 활성 — /docs·/terms 등 문서 페이지는 일반 네이티브 스크롤.
   useEffect(() => {
+    if (pathname !== '/') return undefined;
     if (prefersReducedMotion()) {
       document.documentElement.classList.add('no-motion');
       return undefined;
@@ -37,7 +41,7 @@ export default function SmoothScroll({ children }) {
       instance.destroy();
       setLenis(null);
     };
-  }, []);
+  }, [pathname]);
 
   // ── 스냅 컨트롤러: 한 제스처 = 한 장면, 자석처럼 정착 (풀페이지식) ──
   useEffect(() => {
@@ -70,9 +74,12 @@ export default function SmoothScroll({ children }) {
 
     // 스크롤 위치(px) 스냅 지점들을 계산 — 핀 챕터는 타임라인 라벨 시간을 스크롤 위치로 환산
     let snaps = [];
+    // 내비 클릭 타깃 — 섹션별 "내용이 보이는" 스크롤 위치(핀 챕터는 인트로 지점, 핀-시작 검정 아님)
+    let navTargets = {};
     const build = () => {
       const pts = [];
       const triggers = ScrollTrigger.getAll();
+      navTargets = { top: 0 };
 
       const hero = triggers.find((t) => t.trigger?.classList?.contains('hero-section'));
       if (hero) {
@@ -88,6 +95,8 @@ export default function SmoothScroll({ children }) {
         const range = t.end - t.start;
         const at = (time) => t.start + (time / total) * range;
         pts.push(at(0.5)); // 인트로
+        const cid = stage.closest('.chapter')?.id;
+        if (cid) navTargets[cid] = at(0.5); // 내비 클릭 → 검정 핀-시작이 아닌 인트로로
         const labels = t.animation.labels || {};
         Object.keys(labels)
           .filter((k) => k.startsWith('feat'))
@@ -95,12 +104,16 @@ export default function SmoothScroll({ children }) {
       });
 
       // 핀 아닌 전체 섹션 — 상단을 뷰포트에 맞춤
-      ['.core-section', '.interlude', '.download-section'].forEach((sel) => {
+      ['.interlude', '.download-section', '.contact-section'].forEach((sel) => {
         const el = document.querySelector(sel);
         if (el) pts.push(el.getBoundingClientRect().top + window.scrollY);
       });
+      const dlEl = document.querySelector('.download-section');
+      if (dlEl) navTargets.download = dlEl.getBoundingClientRect().top + window.scrollY;
+      const ctEl = document.querySelector('.contact-section');
+      if (ctEl) navTargets.contact = ctEl.getBoundingClientRect().top + window.scrollY;
 
-      pts.push(maxScroll()); // 마지막(가격 하단 + 푸터)
+      pts.push(maxScroll()); // 마지막(푸터)
 
       const mx = maxScroll();
       const uniq = [...new Set(pts.map((y) => Math.round(Math.min(mx, Math.max(0, y)))))].sort(
@@ -206,6 +219,7 @@ export default function SmoothScroll({ children }) {
     const rebuild = () => build();
     ScrollTrigger.addEventListener('refresh', rebuild);
     window.__snaps = () => snaps;
+    window.__navTargets = () => navTargets;
     build(); // 자식 useGSAP가 이미 트리거를 만든 뒤라 즉시 계산 가능
     // 폰트·이미지 로드로 뷰포트/위치가 밀린 경우 보정 — 핀을 실제 높이로 재측정
     const settle = setTimeout(() => {

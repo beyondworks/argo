@@ -1,11 +1,12 @@
 import Image from 'next/image';
 import Nav from '@/components/Nav';
 import Hero from '@/components/Hero';
-import CoreFour from '@/components/CoreFour';
 import Chapter from '@/components/Chapter';
 import DownloadSection from '@/components/DownloadSection';
+import ContactSection from '@/components/ContactSection';
 import Footer from '@/components/Footer';
 import Interlude from '@/components/Interlude';
+import SideNav from '@/components/SideNav';
 import { CHAPTERS } from '@/lib/chapters';
 
 export default function Page() {
@@ -13,8 +14,8 @@ export default function Page() {
   return (
     <main>
       <Nav />
+      <SideNav />
       <Hero />
-      <CoreFour />
       {CHAPTERS.map((chapter, i) => {
         const offset = orderOffset;
         orderOffset += chapter.features.length;
@@ -37,6 +38,7 @@ export default function Page() {
         );
       })}
       <DownloadSection />
+      <ContactSection />
       <Footer />
     </main>
   );

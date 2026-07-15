@@ -680,9 +680,11 @@ video {
 }
 .demo-video video {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  /* 2px 오버슈트 — object-fit:cover + 라운드 클립 경계에서 생기는 엣지 프린지(녹색/밝은 줄)를
+     overflow:hidden으로 잘라낸다. 콘텐츠 손실 0.2%로 무시 가능. */
+  inset: -2px;
+  width: calc(100% + 4px);
+  height: calc(100% + 4px);
   object-fit: cover;
   display: block;
 }
@@ -742,10 +744,12 @@ video {
   to { transform: scale(1); opacity: 1; }
 }
 .lightbox-stage video {
-  width: 100%;
-  height: 100%;
+  /* 인라인과 동일하게 2px 오버슈트로 엣지 프린지 클립 (16:9 정합이라 크롭 없음) */
+  width: calc(100% + 4px);
+  height: calc(100% + 4px);
+  margin: -2px;
   display: block;
-  object-fit: contain;
+  object-fit: cover;
   background: #000;
 }
 .lightbox-close {
@@ -1054,5 +1058,433 @@ video {
   .dl-btn.ghost {
     border-left: none;
     border-top: 1px solid var(--fg);
+  }
+}
+
+/* ── nav additions (brand button · links · github) ── */
+.nav-brand-btn {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  text-decoration: none;
+}
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.nav-link {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  text-decoration: none;
+  padding: 8px 12px;
+  transition: color 0.18s ease-out;
+}
+.nav-link:hover {
+  color: var(--fg);
+}
+.nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: var(--fg-2);
+  transition: color 0.18s ease-out;
+}
+.nav-icon:hover {
+  color: var(--fg);
+}
+.nav-icon-soon {
+  color: var(--fg-3);
+  cursor: default;
+}
+
+/* ── side nav — 데스크톱 좌측 컴팩트 내비 ── */
+/* 상단 좌측 수평 별 스트립 — 챕터 본문 텍스트와 겹치지 않게 네비 밴드에 배치.
+   라벨은 별 호버 시에만 툴팁으로(항상 표시하지 않아 겹침 없음). */
+.side-nav {
+  position: fixed;
+  top: 74px;
+  left: var(--pad-x);
+  z-index: 90;
+  display: none;
+}
+@media (min-width: 1080px) {
+  .side-nav {
+    display: block;
+  }
+}
+.side-nav ul {
+  list-style: none;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+}
+.side-nav li {
+  position: relative;
+  display: flex;
+}
+.side-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--fg-3);
+  transition: color 0.2s ease-out;
+}
+.side-nav-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  flex: 0 0 auto;
+  opacity: 0.5;
+  transition: opacity 0.2s ease-out, filter 0.2s ease-out;
+}
+.side-nav-label {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  font-family: 'Caveat', 'Nanum Pen Script', var(--serif), cursive;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--fg-2);
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(-50%) translateY(-3px);
+  pointer-events: none;
+  transition: opacity 0.18s ease-out, transform 0.18s ease-out;
+}
+.side-nav-item:hover {
+  color: var(--fg-2);
+}
+.side-nav-item:hover .side-nav-star {
+  opacity: 1;
+}
+.side-nav-item:hover .side-nav-label,
+.side-nav-item:focus-visible .side-nav-label {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.side-nav-item.on {
+  color: var(--fg);
+}
+.side-nav-item.on .side-nav-star {
+  opacity: 1;
+  filter: drop-shadow(0 0 5px rgba(247, 247, 238, 0.4));
+}
+
+/* ── contact ── */
+.contact-section {
+  position: relative;
+  padding: clamp(70px, 12svh, 130px) var(--pad-x);
+  background: var(--bg);
+  border-top: 1px solid var(--rule);
+}
+.contact-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 12px;
+  margin-bottom: clamp(22px, 4svh, 40px);
+}
+.contact-mail {
+  text-decoration: none;
+}
+.contact-mail:hover {
+  color: var(--fg);
+}
+.contact-title {
+  font-size: clamp(36px, 6vw, 92px);
+  font-weight: 800;
+  letter-spacing: -0.026em;
+  line-height: 1.02;
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+.contact-sub {
+  color: var(--fg-2);
+  max-width: 48ch;
+  margin-top: 18px;
+}
+.contact-form {
+  margin-top: clamp(28px, 5svh, 48px);
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.contact-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.contact-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.contact-flabel {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.contact-field input,
+.contact-field textarea {
+  font-family: var(--font);
+  font-size: 15px;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--rule-soft);
+  border-radius: 8px;
+  padding: 13px 14px;
+  transition: border-color 0.18s ease-out;
+  resize: vertical;
+}
+.contact-field input:focus,
+.contact-field textarea:focus {
+  outline: none;
+  border-color: var(--fg-2);
+}
+.contact-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.contact-submit {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bg);
+  background: var(--fg);
+  border: 0;
+  cursor: pointer;
+  padding: 14px 26px;
+  border-radius: 999px;
+  transition: opacity 0.18s ease-out;
+}
+.contact-submit:hover {
+  opacity: 0.85;
+}
+.contact-note {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--fg-3);
+}
+
+/* ── footer restructure ── */
+.footer-brandline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.footer-links {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.footer-links a {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+  text-decoration: none;
+  transition: color 0.18s ease-out;
+}
+.footer-links a:hover {
+  color: var(--fg);
+}
+
+/* ── doc / legal pages ── */
+.doc-main {
+  min-height: 100svh;
+  background: var(--bg);
+}
+.doc {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: calc(58px + clamp(40px, 8svh, 90px)) var(--pad-x) clamp(60px, 12svh, 120px);
+}
+.doc-head {
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 22px;
+  margin-bottom: 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.doc-title {
+  font-size: clamp(38px, 6vw, 76px);
+  font-weight: 800;
+  letter-spacing: -0.026em;
+  line-height: 1.03;
+}
+.doc-lede {
+  font-size: clamp(17px, 2vw, 20px);
+  color: var(--fg-2);
+  max-width: 60ch;
+  margin-bottom: 40px;
+}
+.doc-toc {
+  border: 1px solid var(--rule-soft);
+  border-radius: 10px;
+  padding: 18px 20px;
+  margin-bottom: 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.doc-toc ul {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+}
+.doc-toc a {
+  color: var(--fg-2);
+  text-decoration: none;
+  font-size: 14px;
+}
+.doc-toc a:hover {
+  color: var(--gold);
+}
+.doc-section {
+  scroll-margin-top: 80px;
+  margin-bottom: 38px;
+}
+.doc-section h2 {
+  font-size: clamp(20px, 2.4vw, 26px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 12px;
+}
+.doc-section p {
+  color: var(--fg-2);
+  margin-bottom: 12px;
+  max-width: 66ch;
+}
+.doc-code {
+  background: var(--bg-2);
+  border: 1px solid var(--rule-soft);
+  border-radius: 10px;
+  padding: 18px 20px;
+  overflow-x: auto;
+  margin: 14px 0;
+}
+.doc-code code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--fg);
+  white-space: pre;
+}
+.doc-fine {
+  font-size: 13px;
+  color: var(--fg-3);
+}
+
+/* docs — 독자 안내 · 그룹 · 콜아웃 */
+.doc-audience {
+  color: var(--fg-3);
+  font-size: 14px;
+  max-width: 62ch;
+  margin: -24px 0 38px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--rule-faint);
+}
+.doc-toc-group {
+  margin-top: 6px;
+}
+.doc-toc-gtitle {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg);
+  margin-bottom: 4px;
+}
+.doc-group-title {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule-soft);
+  margin: 46px 0 24px;
+}
+.doc-section h3 {
+  font-size: clamp(19px, 2.2vw, 24px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 12px;
+}
+.doc-callout {
+  border-left: 2px solid var(--rule-soft);
+  padding: 2px 0 2px 16px;
+  margin: 16px 0 6px;
+}
+.doc-callout p {
+  color: var(--fg-2);
+  max-width: 64ch;
+  margin: 4px 0 0;
+  font-size: 15px;
+}
+.doc-callout-label {
+  display: block;
+}
+.doc-callout-insight {
+  border-left-color: var(--gold);
+}
+.doc-callout-insight .doc-callout-label {
+  color: var(--gold);
+}
+.doc-callout-verified {
+  border-left-color: rgba(120, 200, 140, 0.55);
+}
+.doc-callout-verified .doc-callout-label {
+  color: rgba(150, 210, 165, 0.9);
+}
+.doc-callout-caveat {
+  border-left-color: rgba(205, 125, 90, 0.7);
+}
+.doc-callout-caveat .doc-callout-label {
+  color: rgba(214, 150, 120, 0.95);
+}
+
+/* ── mobile: 상단 링크는 푸터로, 폼 1열 ── */
+@media (max-width: 860px) {
+  .nav-links {
+    display: none;
+  }
+  .contact-row {
+    grid-template-columns: 1fr;
+  }
+  .footer-links {
+    gap: 14px;
   }
 }

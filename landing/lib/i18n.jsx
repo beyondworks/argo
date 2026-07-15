@@ -9,6 +9,9 @@ const DICT = {
   // nav
   'nav.cta': ['다운로드', 'Download'],
   'nav.lang': ['EN', 'KO'],
+  'nav.docs': ['문서', 'Docs'],
+  'nav.contact': ['문의', 'Contact'],
+  'nav.githubSoon': ['GitHub — 공개 예정', 'GitHub — coming soon'],
 
   // hero — 표지
   'hero.kicker': ['자율형 AI 에이전트', 'The autonomous AI agent'],
@@ -219,6 +222,54 @@ const DICT = {
     'Argo — autonomous AI agents that work on their own.',
   ],
   'footer.copy': ['© 2026 Argo. All rights reserved.', '© 2026 Argo. All rights reserved.'],
+  'footer.nav': ['푸터 내비게이션', 'Footer navigation'],
+
+  // side nav (데스크톱 좌측)
+  'side.top': ['표지', 'Cover'],
+  'side.core': ['핵심', 'Why Argo'],
+
+  // contact
+  'contact.kicker': ['문의', 'Contact'],
+  'contact.title': ['무엇이든 물어보세요', 'Tell us what you need'],
+  'contact.sub': [
+    '도입·협업·기술 문의 무엇이든 좋습니다. 보내주시면 빠르게 답변드립니다.',
+    'Adoption, partnership, or technical questions — send a note and we’ll reply promptly.',
+  ],
+  'contact.subject': ['문의', 'Inquiry'],
+  'contact.f.name': ['이름', 'Name'],
+  'contact.f.email': ['이메일', 'Email'],
+  'contact.f.msg': ['내용', 'Message'],
+  'contact.send': ['문의 보내기', 'Send message'],
+  'contact.note': [
+    '보내기를 누르면 메일 앱이 열리며 내용이 채워집니다.',
+    'Sending opens your mail app with the message prefilled.',
+  ],
+
+  // docs
+  'docs.kicker': ['문서', 'Docs'],
+  'docs.title': ['Argo 사용 설명서', 'Argo documentation'],
+  'docs.updated': ['업데이트 2026-07-15', 'Updated 2026-07-15'],
+  'docs.lede': [
+    '프롬프트 한 줄로 AI 직원 회사를 만들고, 폴더 단위 기억으로 일을 시키는 방법을 안내합니다.',
+    'How to build a company of AI employees from a single prompt and put them to work with folder-scale memory.',
+  ],
+  'docs.sp.h': ['시스템 프롬프트', 'System prompt'],
+  'docs.sp.p': [
+    '각 크루는 하나의 시스템 프롬프트 카드로 정의됩니다. runner·model·역할·팀 메타와 전문성·규칙으로 구성되며, 대화 중 축적된 회사 기억이 함께 주입됩니다. 아래는 예시 카드입니다.',
+    'Each crew is defined by one system-prompt card: runner/model/role/team metadata plus expertise and rules, with the company memory accumulated over conversations injected alongside. Example card below.',
+  ],
+  'docs.sp.note': [
+    '실제 카드는 앱의 크루 상세(Card)에서 확인·편집할 수 있습니다.',
+    'The live card can be viewed and edited from the crew detail (Card) inside the app.',
+  ],
+
+  // legal (약관·개인정보)
+  'legal.kicker': ['정책', 'Legal'],
+  'legal.updated': ['시행일 2026-07-15', 'Effective 2026-07-15'],
+  'legal.terms': ['이용약관', 'Terms of Service'],
+  'legal.privacy': ['개인정보처리방침', 'Privacy Policy'],
+  'terms.title': ['이용약관', 'Terms of Service'],
+  'privacy.title': ['개인정보처리방침', 'Privacy Policy'],
 };
 
 const LangContext = createContext(null);

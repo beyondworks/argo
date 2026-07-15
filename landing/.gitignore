@@ -10,3 +10,4 @@ artifacts/
 public/assets/art/*.png
 public/assets/art/*.mp4
 public/assets/art/.omc/
+.vercel
