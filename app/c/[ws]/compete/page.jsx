@@ -184,7 +184,7 @@ export default function Compete({ params }) {
                 return (
                   <button type="button" key={a.slug} className="chip" onClick={() => togglePick(a.slug)}
                     aria-pressed={on} title={a.role}
-                    style={{ cursor: 'pointer', ...(on ? { background: 'var(--primary)', color: '#fff', borderColor: 'var(--primary)' } : {}) }}>
+                    style={{ cursor: 'pointer', ...(on ? { background: 'var(--primary)', color: 'var(--primary-fg)', borderColor: 'var(--primary)' } : {}) }}>
                     {a.name} — {a.role}
                   </button>
                 );

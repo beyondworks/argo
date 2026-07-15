@@ -124,7 +124,7 @@ export default function Room({ params }) {
             <div style={{ display: 'grid', gap: 14 }}>
               {shown.map((m, i) => m.who === 'user' ? (
                 <div key={i} style={{ justifySelf: 'end', maxWidth: '78%' }}>
-                  <div className="bubble-user" style={{ background: 'var(--primary)', color: '#fff', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>{m.text}</div>
+                  <div className="bubble-user" style={{ background: 'var(--primary)', color: 'var(--primary-fg)', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>{m.text}</div>
                 </div>
               ) : (
                 <div key={i} style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>

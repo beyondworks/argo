@@ -112,7 +112,9 @@ const DICT = {
   // ── 설정
   'settings.theme': ['테마', 'Theme'],
   'settings.theme.desc': ['화면의 색과 질감을 선택합니다. 크루의 작업 방식에는 영향이 없습니다.', 'Choose the look of the interface. This does not affect how your crew works.'],
-  'settings.theme.argo': ['아르고 — 세이지 계기판', 'Argo — sage instrument panel'],
+  'settings.theme.argo': ['아르고 — 다크·골드 (시스템 자동)', 'Argo — Dark · Gold (auto)'],
+  'settings.theme.argo-light': ['아르고 라이트 — 웜 아이보리·골드', 'Argo Light — ivory · gold'],
+  'settings.theme.argo-dark': ['아르고 다크 — 차콜·골드', 'Argo Dark — charcoal · gold'],
   'settings.theme.apple': ['Apple — 밝은 시스템 화이트', 'Apple — light system white'],
   'settings.theme.apple-dark': ['Apple 다크 — 시스템 블랙', 'Apple Dark — system black'],
   'settings.theme.glass': ['리퀴드 글래스 — Tahoe 반투명', 'Liquid Glass — Tahoe translucency'],
