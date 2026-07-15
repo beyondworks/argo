@@ -32,6 +32,10 @@ import { syncEntitled } from './entitlement.mjs';
 const BUCKET = 'companies';
 // 준실시간 — 기본 8s(웹↔앱 지연 단축). ARGO_SYNC_CYCLE_MS로 조정(비용/지연 트레이드오프).
 const CYCLE_MS = Number(process.env.ARGO_SYNC_CYCLE_MS) || 8_000;
+// 크로스 프로세스 락 스테일 판정 — CYCLE_MS와 분리한다. 주기 단축(45→8s)이 이중 동기화 방어막을
+// 좁히면(느린 사이클의 살아있는 리더를 오탈취) 삭제 피드백 루프=대형 유실이 날 수 있다(리뷰 H1).
+// 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
+const LOCK_STALE_MS = Math.max(CYCLE_MS * 3, 120_000);
 const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다
 
 // 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선.
@@ -108,7 +112,7 @@ async function holdSyncLock() {
   const f = join(WS_ROOT, '.sync-process.lock');
   try {
     const cur = JSON.parse(await readFile(f, 'utf8'));
-    if (cur.pid !== process.pid && Date.now() - cur.ts < CYCLE_MS * 3) {
+    if (cur.pid !== process.pid && Date.now() - cur.ts < LOCK_STALE_MS) {
       try { process.kill(cur.pid, 0); return false; } catch { /* 죽은 pid → 탈취 */ }
     }
   } catch { /* 없음/손상 → 획득 */ }
@@ -182,6 +186,9 @@ async function walk(dir, base = dir, out = {}) {
 export const isLedger = (rel) => rel.endsWith('.jsonl'); // usage.jsonl, events.jsonl — append-only 원장(행 병합)
 export const isText = (rel) => rel.endsWith('.md');       // 노트·일지 — 충돌 시 양쪽 보존
 export const isThread = (rel) => /^chats\/[^/]+\.json$/.test(rel); // 진행 중 턴과 레이스 → 스레드 락
+// 아카이브(.archive)·휴지통(.trash)은 content 삭제가 아니라 이동(비파괴) — 대량삭제 브레이크 집계에서 제외한다.
+// 세션 여러 개 삭제(=.archive→.trash 이동)가 브레이크를 걸어 소규모 회사 동기화를 영구 정지시키던 문제 방지(리뷰 M2). 동기화 push/pull 자체는 정상 진행.
+export const isArchival = (rel) => /(^|\/)\.(archive|trash)\//.test(rel);
 /** 대량 삭제 브레이크 — 삭제 예정 수가 위험하면 true(중단). 회사 파일을 통째로 지우거나(전부 삭제)
    큰 배치(8개↑ 또는 절반↑)면 중단. 삭제는 비가역이라 "안 지우고 보류"가 항상 옳다. (export: 회귀 테스트용) */
 export const massDeleteBrake = (deletes, baseCount) =>
@@ -293,6 +300,7 @@ export async function syncCompany(wsId, owner) {
     let delL = 0, delR = 0;
     for (const rel of allRels) {
       if (isSecretRel(rel) && !cryptoOn()) continue;
+      if (isArchival(rel)) continue; // 아카이브/휴지통 이동은 브레이크 대상 아님(M2)
       const l = local[rel], r = remote.files[rel], base = state[rel];
       if (l && !r && base && !changed(base, l)) delL++;  // 로컬 삭제 예정
       if (!l && r && base && !changed(base, r)) delR++;  // 원격 삭제 예정

@@ -127,7 +127,6 @@ const DICT = {
   'settings.trash.purge': ['영구 삭제', 'Delete forever'],
   'settings.trash.purgeTitle': ['영구 삭제', 'Delete forever'],
   'settings.trash.purgeConfirm': ['이 대화를 영구히 삭제할까요? 복구할 수 없습니다.', 'Permanently delete this conversation? This cannot be undone.'],
-  'settings.trash.count': ['{n}개 대화', '{n} conversations'],
   'settings.theme.argo': ['아르고 — 다크·골드 (시스템 자동)', 'Argo — Dark · Gold (auto)'],
   'settings.theme.argo-light': ['아르고 라이트 — 웜 아이보리·골드', 'Argo Light — ivory · gold'],
   'settings.theme.argo-dark': ['아르고 다크 — 차콜·골드', 'Argo Dark — charcoal · gold'],

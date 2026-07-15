@@ -73,8 +73,8 @@ export default function Routines({ params }) {
   async function doRemove() {
     const r = delTarget;
     if (!r) return;
+    setDelTarget(null); // 모달을 await 전에 닫아 확인 버튼 더블클릭(이중 DELETE) 차단
     await fetch(`/api/companies/${ws}/routines?id=${r.id}`, { method: 'DELETE' });
-    setDelTarget(null);
     load();
   }
 
