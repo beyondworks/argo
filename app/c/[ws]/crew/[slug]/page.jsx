@@ -263,7 +263,8 @@ export default function CrewChat({ params }) {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 170px)' }}>
+      {/* 170px = topbar(56) + .content 패딩(위 26 + 아래 88). 회의실·컨테스트와 동일 오프셋 — 페이지 전체 스크롤 대신 스레드만 내부 스크롤(입력창 하단 고정, 뒤로 콘텐츠 안 비침). */}
       {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정 */}
       <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
@@ -286,7 +287,7 @@ export default function CrewChat({ params }) {
         {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('chat.sessions.empty')}</span>}
       </div>
     <div
-      style={{ maxWidth: 760, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 160px)', position: 'relative' }}
+      style={{ maxWidth: 760, width: '100%', margin: '0 auto', display: 'grid', gridTemplateRows: '1fr auto', height: '100%', minHeight: 0, position: 'relative' }}
       onDragOver={(e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); setDragOver(true); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
       onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
@@ -307,7 +308,7 @@ export default function CrewChat({ params }) {
         slotEl,
       )}
 
-      <div className="thread" style={{ flex: 1 }}>
+      <div className="thread" style={{ overflowY: 'auto', minHeight: 0 }}>
         {thread === null && (
           <><Skeleton h={46} w="60%" /><Skeleton h={90} /></>
         )}
@@ -456,14 +457,14 @@ export default function CrewChat({ params }) {
       </div>
 
       {viewing ? (
-        <div className="card card-float" style={{ position: 'sticky', bottom: 20, marginTop: 'auto', paddingTop: 24, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
+        <div className="card card-float" style={{ marginTop: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
           <Icon name="doc" size={13} /> {t('chat.sessions.readonly')}
           <span style={{ flex: 1 }} />
           <button className="btn btn-primary sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
         </div>
       ) : (
-      // marginTop:auto — 메시지가 적어도 컴포저가 항상 하단에 붙는다(flex column). 긴 스레드는 sticky가 잡는다.
-      <div style={{ position: 'sticky', bottom: 12, marginTop: 'auto', paddingTop: 24, display: 'flex', flexDirection: 'column', gap: 8, background: 'linear-gradient(to top, var(--composer-scrim, var(--bg)) 78%, transparent)' }}>
+      // 하단 고정 행(grid auto) — 스레드는 위 1fr 행에서 자체 스크롤되므로 컴포저는 겹침 없이 항상 하단. sticky·스크림 불필요(스크롤 시 입력창 뒤로 콘텐츠가 비치던 버그 제거).
+      <div style={{ paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
         {(att.length > 0 || uploading) && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {att.map((a, i) => (

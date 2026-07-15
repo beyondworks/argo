@@ -49,6 +49,7 @@ const DICT = {
   'nav.tgConnected': ['텔레그램 직통 봇 연결됨', 'Telegram bot connected'],
   'nav.room': ['회의실', 'Meeting Room'],
   'room.header': ['회의실 — 여러 크루와 한 방에서', 'Meeting room — several crews, one thread'],
+  'room.mention': ['부를 크루', 'Mention'],
   'room.empty': ['"@이름 안건"으로 크루를 불러 회의를 시작하세요. 여러 명을 부르면 순서대로 발언하고, 서로의 발언을 보고 보탭니다.', 'Start with "@name topic". Mention several crews and they speak in turn, building on each other.'],
   'room.meeting': ['회의 중 — 크루들이 차례로 발언합니다', 'In session — crews are speaking in turn'],
   'room.placeholder': ['@이름 을 붙여 안건을 던지세요 (여러 명 가능, 최대 3명 발언)', 'Mention @name(s) and drop a topic (up to 3 speak)'],

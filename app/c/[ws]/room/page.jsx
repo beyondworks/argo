@@ -115,14 +115,6 @@ export default function Room({ params }) {
           {!viewing && (messages?.length ?? 0) > 0 && (
             <button className="btn sm" disabled={busy} onClick={endMeeting}>{t('room.end')}</button>
           )}
-          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-            {agents.map((a) => (
-              <button key={a.slug} className="chip" style={{ cursor: 'pointer' }} title={a.role}
-                onClick={() => setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}@${a.name} `)}>
-                @{a.name}
-              </button>
-            ))}
-          </div>
         </div>
 
         <div className="card" style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0 }}>
@@ -161,6 +153,18 @@ export default function Room({ params }) {
           </div>
         ) : (
           <div style={{ display: 'grid', gap: 6 }}>
+            {/* 크루 칩 — 입력창 좌측 상단(컨테스트와 동일 배치). 클릭하면 @이름을 입력에 넣는다. */}
+            {agents.length > 0 && (
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span className="microlabel">{t('room.mention')}</span>
+                {agents.map((a) => (
+                  <button key={a.slug} className="chip" style={{ cursor: 'pointer' }} title={a.role}
+                    onClick={() => setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}@${a.name} `)}>
+                    @{a.name}
+                  </button>
+                ))}
+              </div>
+            )}
             {suggests.length > 0 && (
               <div style={{ display: 'flex', gap: 5 }}>
                 {suggests.map((a) => (
