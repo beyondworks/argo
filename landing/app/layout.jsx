@@ -1,6 +1,7 @@
 import './globals.css';
 import { LanguageProvider } from '@/lib/i18n';
 import SmoothScroll from '@/components/SmoothScroll';
+import LightboxProvider from '@/components/Lightbox';
 
 export const metadata = {
   title: 'Argo — With a single line, a company is created',
@@ -30,7 +31,9 @@ export default function RootLayout({ children }) {
       </head>
       <body>
         <LanguageProvider>
-          <SmoothScroll>{children}</SmoothScroll>
+          <SmoothScroll>
+            <LightboxProvider>{children}</LightboxProvider>
+          </SmoothScroll>
         </LanguageProvider>
       </body>
     </html>

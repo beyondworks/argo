@@ -1,18 +1,26 @@
 'use client';
 
 import { useLang } from '@/lib/i18n';
+import { useLightbox } from '@/components/Lightbox';
 
 // 데모 영상 플레이스홀더 — Female Faces식 보더 테이블 셀.
 // video src가 준비되면 <video>로 스왑 (라벨/타임코드 유지)
 export default function DemoPlaceholder({ label, tc = '00:00', video = null, poster = null }) {
   const { t } = useLang();
+  const { open } = useLightbox();
 
-  // 영상이 연결된 셀은 프레임(보더·상단바·하단바) 없이 영상만 인라인으로 표시
+  // 영상이 연결된 셀은 프레임 없이 영상만 인라인 — 클릭하면 라이트박스로 확대
   if (video) {
     return (
-      <div className="demo-video">
+      <button type="button" className="demo-video" onClick={() => open(video)} aria-label={label}>
         <video src={video} poster={poster ?? undefined} muted loop playsInline autoPlay />
-      </div>
+        <span className="demo-expand" aria-hidden>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M9 4H5a1 1 0 0 0-1 1v4M15 4h4a1 1 0 0 1 1 1v4M9 20H5a1 1 0 0 1-1-1v-4M15 20h4a1 1 0 0 0 1-1v-4"
+              stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </span>
+      </button>
     );
   }
 

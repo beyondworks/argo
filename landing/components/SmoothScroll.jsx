@@ -106,6 +106,8 @@ export default function SmoothScroll({ children }) {
     // 타이머 기반 트윈 — 매 스텝 immediate 스크롤 적용.
     // (rAF/Lenis 애니메이션 scrollTo는 백그라운드·특정 환경에서 멈추므로 setTimeout으로 확실히 구동)
     const go = (dir) => {
+      // 라이트박스 열려 있으면 스냅 내비 정지
+      if (document.documentElement.classList.contains('lightbox-open')) return;
       if (locked || snaps.length < 2) return;
       const cur = lenis.animatedScroll ?? window.scrollY;
       const idx = nearest(cur);

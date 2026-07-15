@@ -667,13 +667,16 @@ video {
   object-fit: cover;
 }
 
-/* 영상 연결 셀 — 프레임 없이 영상만 인라인 (보더·상단바·하단바 제거) */
+/* 영상 연결 셀 — 프레임 없이 영상만 인라인 (보더·상단바·하단바 제거), 클릭 시 확대 */
 .demo-video {
+  display: block;
   position: relative;
   aspect-ratio: 16 / 9;
   width: 100%;
+  padding: 0;
   overflow: hidden;
   border-radius: 10px;
+  cursor: pointer;
 }
 .demo-video video {
   position: absolute;
@@ -682,6 +685,86 @@ video {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+/* 확대 가능 힌트 — hover 시 우상단에 나타남 */
+.demo-video .demo-expand {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  border-radius: 8px;
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  pointer-events: none;
+}
+.demo-video:hover .demo-expand {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* ── 라이트박스: 데모 영상 확대 뷰어 (화면 80%) ── */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.86);
+  backdrop-filter: blur(10px);
+  animation: lightbox-in 0.22s ease-out;
+}
+@keyframes lightbox-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.lightbox-stage {
+  position: relative;
+  width: min(80vw, calc(80vh * 16 / 9));
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 40px 120px -30px rgba(0, 0, 0, 0.8);
+  animation: lightbox-pop 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes lightbox-pop {
+  from { transform: scale(0.94); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.lightbox-stage video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  background: #000;
+}
+.lightbox-close {
+  position: absolute;
+  top: 22px;
+  right: 26px;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg);
+  background: rgba(247, 247, 238, 0.08);
+  border: 1px solid var(--rule-soft);
+  border-radius: 50%;
+  transition: background 0.18s ease-out;
+}
+.lightbox-close:hover {
+  background: rgba(247, 247, 238, 0.18);
 }
 
 /* ── interlude — 크림 라인아트 '도판(plate)' ── */
