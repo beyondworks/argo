@@ -13,7 +13,8 @@ export default function DemoPlaceholder({ label, tc = '00:00', video = null, pos
   if (video) {
     return (
       <button type="button" className="demo-video" onClick={() => open(video)} aria-label={label}>
-        <video src={video} poster={poster ?? undefined} muted loop playsInline autoPlay />
+        {/* autoPlay 제거 — 스크롤이 도착해 활성 슬롯이 되면 Chapter가 play(), 벗어나면 pause() */}
+        <video src={video} poster={poster ?? undefined} muted loop playsInline preload="metadata" />
         <span className="demo-expand" aria-hidden>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
             <path d="M9 4H5a1 1 0 0 0-1 1v4M15 4h4a1 1 0 0 1 1 1v4M9 20H5a1 1 0 0 1-1-1v-4M15 20h4a1 1 0 0 0 1-1v-4"

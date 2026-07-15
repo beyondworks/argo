@@ -45,9 +45,18 @@ export default function Chapter({ chapter, orderOffset }) {
               railRef.current?.querySelectorAll('.tick').forEach((el, i) => {
                 el.classList.toggle('on', i === slot);
               });
-              // 활성(보이는) 기능 블록만 클릭 가능 — 겹친 투명 블록이 클릭 가로채는 문제 방지
+              // 활성(보이는) 기능 블록만 클릭 가능 + 영상 재생 — 나머지는 클릭 차단 + 정지(프레임 유지)
               features.forEach((el, i) => {
-                el.style.pointerEvents = i === slot ? 'auto' : 'none';
+                const active = i === slot;
+                el.style.pointerEvents = active ? 'auto' : 'none';
+                const vid = el.querySelector('.demo-video video');
+                if (vid) {
+                  if (active) {
+                    if (vid.paused) vid.play().catch(() => {});
+                  } else if (!vid.paused) {
+                    vid.pause();
+                  }
+                }
               });
             },
           },
