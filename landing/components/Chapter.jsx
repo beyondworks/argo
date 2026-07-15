@@ -27,7 +27,8 @@ export default function Chapter({ chapter, orderOffset }) {
 
       mm.add('(prefers-reduced-motion: no-preference)', () => {
         const features = featureRefs.current.filter(Boolean);
-        gsap.set(features, { opacity: 0 });
+        // 겹쳐 쌓인 블록 중 활성 블록만 클릭 가능하도록 (나머지는 클릭 가로채지 않게)
+        gsap.set(features, { opacity: 0, pointerEvents: 'none' });
 
         const tl = gsap.timeline({
           defaults: { ease: 'none' },
@@ -43,6 +44,10 @@ export default function Chapter({ chapter, orderOffset }) {
               const slot = Math.floor(self.progress * units) - 1;
               railRef.current?.querySelectorAll('.tick').forEach((el, i) => {
                 el.classList.toggle('on', i === slot);
+              });
+              // 활성(보이는) 기능 블록만 클릭 가능 — 겹친 투명 블록이 클릭 가로채는 문제 방지
+              features.forEach((el, i) => {
+                el.style.pointerEvents = i === slot ? 'auto' : 'none';
               });
             },
           },
