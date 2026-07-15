@@ -112,6 +112,13 @@ const DICT = {
   // ── 설정
   'settings.theme': ['테마', 'Theme'],
   'settings.theme.desc': ['화면의 색과 질감을 선택합니다. 크루의 작업 방식에는 영향이 없습니다.', 'Choose the look of the interface. This does not affect how your crew works.'],
+  'settings.mode': ['모드', 'Appearance'],
+  'settings.mode.desc': ['라이트·다크·시스템 자동 중에서 고릅니다. (아르고 시그니처 — 다크+골드)', 'Light, dark, or follow the system. (Argo signature — dark + gold)'],
+  'settings.mode.system': ['시스템', 'System'],
+  'settings.mode.light': ['라이트', 'Light'],
+  'settings.mode.dark': ['다크', 'Dark'],
+  'settings.theme.skin': ['다른 스킨', 'Other skins'],
+  'settings.theme.skin.desc': ['아르고 대신 다른 색 테마를 쓰고 싶다면 선택하세요.', 'Prefer a different look instead of Argo? Pick one here.'],
   'settings.theme.argo': ['아르고 — 다크·골드 (시스템 자동)', 'Argo — Dark · Gold (auto)'],
   'settings.theme.argo-light': ['아르고 라이트 — 웜 아이보리·골드', 'Argo Light — ivory · gold'],
   'settings.theme.argo-dark': ['아르고 다크 — 차콜·골드', 'Argo Dark — charcoal · gold'],

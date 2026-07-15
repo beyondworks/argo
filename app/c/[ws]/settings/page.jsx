@@ -246,36 +246,62 @@ const THEME_SWATCHES = {
   'minimal-dark': ['#2e3440', '#373d48', '#81a1c1'],
 };
 
+// 아르고 시그니처 = 라이트/다크/시스템 3-모드. 나머지 테마는 "다른 스킨"으로 분리(모드 토글과 중복 제거).
+const MODE_OPTS = [['argo', 'settings.mode.system'], ['argo-light', 'settings.mode.light'], ['argo-dark', 'settings.mode.dark']];
+const ARGO_CODES = ['argo', 'argo-light', 'argo-dark'];
 function ThemeCard() {
   const { theme, setTheme } = useTheme();
   const { t } = useLang();
+  const skins = THEMES.filter((c) => !ARGO_CODES.includes(c));
   return (
-    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <span className="card-title">{t('settings.theme')}</span>
-      <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.theme.desc')}</p>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {THEMES.map((code) => {
-          const [bg, card, primary] = THEME_SWATCHES[code] ?? [];
-          return (
-            <button
-              key={code}
-              className="chip"
-              onClick={() => setTheme(code)}
-              aria-pressed={theme === code}
+    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* 모드 — 시스템/라이트/다크 세그먼트 (아르고 시그니처 테마의 밝기) */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        <span className="card-title">{t('settings.mode')}</span>
+        <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.mode.desc')}</p>
+        <div role="group" aria-label={t('settings.mode')}
+          style={{ display: 'inline-flex', gap: 3, alignSelf: 'flex-start', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
+          {MODE_OPTS.map(([code, label]) => (
+            <button key={code} onClick={() => setTheme(code)} aria-pressed={theme === code}
               style={{
-                cursor: 'pointer', padding: '6px 16px', fontSize: 12.5, textTransform: 'none', letterSpacing: 0,
-                ...(theme === code ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}),
-              }}
-            >
-              <span aria-hidden="true" style={{ display: 'inline-flex', gap: 2, marginRight: 6 }}>
-                {[bg, card, primary].map((c, i) => (
-                  <span key={i} style={{ width: 8, height: 8, borderRadius: 999, background: c, border: '1px solid var(--border-soft)' }} />
-                ))}
-              </span>
-              {t(`settings.theme.${code}`)}
+                cursor: 'pointer', border: 0, borderRadius: 999, padding: '6px 18px', fontSize: 12.5, fontWeight: 600,
+                background: theme === code ? 'var(--primary)' : 'transparent',
+                color: theme === code ? 'var(--primary-fg)' : 'var(--fg-2)',
+                transition: 'background 0.15s, color 0.15s',
+              }}>
+              {t(label)}
             </button>
-          );
-        })}
+          ))}
+        </div>
+      </div>
+      {/* 다른 스킨 — 아르고 대신 다른 색 테마 */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        <span className="card-title">{t('settings.theme.skin')}</span>
+        <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.theme.skin.desc')}</p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {skins.map((code) => {
+            const [bg, card, primary] = THEME_SWATCHES[code] ?? [];
+            return (
+              <button
+                key={code}
+                className="chip"
+                onClick={() => setTheme(code)}
+                aria-pressed={theme === code}
+                style={{
+                  cursor: 'pointer', padding: '6px 16px', fontSize: 12.5, textTransform: 'none', letterSpacing: 0,
+                  ...(theme === code ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}),
+                }}
+              >
+                <span aria-hidden="true" style={{ display: 'inline-flex', gap: 2, marginRight: 6 }}>
+                  {[bg, card, primary].map((c, i) => (
+                    <span key={i} style={{ width: 8, height: 8, borderRadius: 999, background: c, border: '1px solid var(--border-soft)' }} />
+                  ))}
+                </span>
+                {t(`settings.theme.${code}`)}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
