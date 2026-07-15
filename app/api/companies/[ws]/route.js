@@ -58,11 +58,16 @@ export async function PUT(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { name, budgetUsd, lang } = await req.json();
+    const { name, budgetUsd, lang, crewPinned } = await req.json();
     const patch = {};
     if (name !== undefined) {
       if (!name.trim()) return Response.json({ error: '이름이 필요합니다' }, { status: 400 });
       patch.name = name.trim();
+    }
+    if (crewPinned !== undefined) {
+      // 고정 크루 slug 목록 — 배열·slug 형식·중복제거·상한만 통과시킨다(임의 데이터 기입 차단).
+      if (!Array.isArray(crewPinned)) return Response.json({ error: '고정 목록은 배열이어야 합니다' }, { status: 400 });
+      patch.crewPinned = [...new Set(crewPinned.filter((s) => typeof s === 'string' && /^[a-z0-9-]{1,64}$/.test(s)))].slice(0, 50);
     }
     if (lang !== undefined) {
       if (lang !== 'ko' && lang !== 'en') return Response.json({ error: '언어는 ko 또는 en이어야 합니다' }, { status: 400 });

@@ -5,6 +5,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, api } from '../../ui';
 import { useLang } from '../../i18n';
 
+// 베타 피드백 수신처 — 설정/로그인/약관 페이지와 동일 env(mailto). 없으면 버튼 미노출.
+const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
 
@@ -106,6 +108,22 @@ export default function CompanyShell({ children, params }) {
     api(`/api/companies/${ws}`).then(setData).catch(() => setData({ missing: true }));
   }, [ws]);
 
+  // 크루 고정/해제 — company.json.crewPinned 갱신 후 재조회. 비파괴·즉시(확인 불필요).
+  const togglePin = useCallback(async (slug) => {
+    const cur = new Set(data?.company?.crewPinned ?? []);
+    cur.has(slug) ? cur.delete(slug) : cur.add(slug);
+    const next = [...cur];
+    // 낙관적 반영 — 연속 클릭 시 다음 핸들러가 stale 스냅샷을 읽어 이전 핀을 덮는 것을 막는다(lost-update 방지).
+    setData((d) => (d?.company ? { ...d, company: { ...d.company, crewPinned: next } } : d));
+    try {
+      await fetch(`/api/companies/${ws}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ crewPinned: next }),
+      });
+      refresh();
+    } catch { refresh(); /* 실패 시 서버 정본으로 되돌린다 */ }
+  }, [ws, data, refresh]);
+
   useEffect(() => {
     refresh();
     window.addEventListener('argo:refresh', refresh);
@@ -145,10 +163,17 @@ export default function CompanyShell({ children, params }) {
     : pathname.endsWith('/activity') ? t('nav.activity')
     : pathname.endsWith('/settings') ? t('nav.settings')
     : currentCrew ? currentCrew.name : t('nav.deck');
-  // 사이드바 크루 — 팀별 그룹 (팀 없는 크루는 마지막). 아코디언 접힘 상태는 localStorage 유지.
-  const teams = [...new Set(agents.map((a) => a.team).filter(Boolean))];
-  const grouped = [...teams.map((t) => [t, agents.filter((a) => a.team === t)]), ['', agents.filter((a) => !a.team)]]
-    .filter(([, list]) => list.length > 0);
+  // 사이드바 크루 — 고정(pin) 크루는 최상단 '고정' 그룹으로, 나머지는 팀별 그룹(팀 없는 크루는 마지막).
+  // 고정은 company.json.crewPinned(slug 배열). 아코디언 접힘 상태는 localStorage 유지.
+  const pinnedSet = new Set(data?.company?.crewPinned ?? []);
+  const pinnedAgents = agents.filter((a) => pinnedSet.has(a.slug));
+  const rest = agents.filter((a) => !pinnedSet.has(a.slug));
+  const teams = [...new Set(rest.map((a) => a.team).filter(Boolean))];
+  const grouped = [
+    ...(pinnedAgents.length ? [['__pinned__', pinnedAgents]] : []),
+    ...teams.map((tm) => [tm, rest.filter((a) => a.team === tm)]),
+    ['', rest.filter((a) => !a.team)],
+  ].filter(([, list]) => list.length > 0);
   const [collapsed, setCollapsed] = useState({});
   useEffect(() => {
     try { setCollapsed(JSON.parse(localStorage.getItem('argo-nav-teams') || '{}')); } catch { /* 손상 시 전부 펼침 */ }
@@ -200,29 +225,43 @@ export default function CompanyShell({ children, params }) {
               style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', background: 'none', border: 0, padding: undefined }}
               aria-expanded={!isCollapsed}>
               <span aria-hidden="true" style={{ display: 'inline-block', fontSize: 8, transition: 'transform 0.16s cubic-bezier(0.23, 1, 0.32, 1)', transform: isCollapsed ? 'rotate(-90deg)' : 'none' }}>▾</span>
-              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team || t('nav.crewCount', { n: agents.length })}</span>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {team === '__pinned__' && <Icon name="pin" size={10} style={{ color: 'var(--primary)' }} />}
+                {team === '__pinned__' ? t('nav.pinned') : (team || t('nav.crewCount', { n: list.length }))}
+              </span>
               {isCollapsed && <span className="mono" style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--fg-3)' }}>{list.length}</span>}
             </button>
             {!isCollapsed && list.map((a) => {
               const href = `/c/${ws}/crew/${a.slug}`;
               const active = pathname === href;
+              const pinned = pinnedSet.has(a.slug);
               return (
-                <a key={a.slug} href={href} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6 }}>
-                  <span style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
-                    <Avatar name={a.name} sm />
-                    {a.slug in tgAgents && (
-                      <span title={t('nav.tgConnected')} style={{
-                        position: 'absolute', right: -1, bottom: -1, width: 7, height: 7, borderRadius: 999,
-                        background: tgAgents[a.slug] ? 'var(--ok)' : 'var(--warn)',
-                        boxShadow: '0 0 0 2px var(--bg)',
-                      }} />
-                    )}
-                  </span>
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: 'block', lineHeight: 1.3 }}>{a.name}</span>
-                    <span className="nav-sub">{a.role}</span>
-                  </span>
-                </a>
+                // pin 버튼은 <a>의 형제로 둔다 — a 안에 button을 넣으면 hydration mismatch(React #418). div로 감싸 position 기준을 잡는다(세션 레일 .rail-item과 동일 패턴).
+                <div key={a.slug} className="crew-row" style={{ position: 'relative' }}>
+                  <a href={href} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6, paddingRight: 30 }}>
+                    <span style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
+                      <Avatar name={a.name} sm />
+                      {a.slug in tgAgents && (
+                        <span title={t('nav.tgConnected')} style={{
+                          position: 'absolute', right: -1, bottom: -1, width: 7, height: 7, borderRadius: 999,
+                          background: tgAgents[a.slug] ? 'var(--ok)' : 'var(--warn)',
+                          boxShadow: '0 0 0 2px var(--bg)',
+                        }} />
+                      )}
+                    </span>
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: 'block', lineHeight: 1.3 }}>{a.name}</span>
+                      <span className="nav-sub">{a.role}</span>
+                    </span>
+                  </a>
+                  {/* 고정 토글 — pinned면 상시 골드, 아니면 행 hover 시 노출(.crew-row:hover .crew-pin). preventDefault로 링크 이동 차단 */}
+                  <button type="button" className={`crew-pin${pinned ? ' pinned' : ''}`}
+                    title={pinned ? t('nav.unpin') : t('nav.pin')} aria-label={pinned ? t('nav.unpin') : t('nav.pin')}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePin(a.slug); }}
+                    style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: pinned ? 'var(--primary)' : 'var(--fg-3)', cursor: 'pointer', borderRadius: 6 }}>
+                    <Icon name="pin" size={12} />
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -245,10 +284,23 @@ export default function CompanyShell({ children, params }) {
           <Icon name="plus" size={15} /> {t('nav.hire')}
         </a>
 
+        {/* 베타 피드백 — 메일 앱으로 lean8kim@ 열기(mailto). CONTACT env 없으면 미노출. */}
+        {CONTACT && (
+          <a
+            href={`mailto:${CONTACT}?subject=${encodeURIComponent(t('legal.feedbackSubject'))}`}
+            className="nav-item"
+            style={{ marginTop: 'auto', color: 'var(--fg-2)' }}
+            title={t('nav.feedback')}
+          >
+            <Icon name="send" size={15} />
+            <span style={{ flex: 1 }}>{t('nav.feedback')}</span>
+            <span className="mono" style={{ fontSize: 9, letterSpacing: '0.06em', color: 'var(--primary)', border: '1px solid var(--primary-fg-line)', borderRadius: 4, padding: '1px 4px' }}>{t('feedback.beta')}</span>
+          </a>
+        )}
         <a
           href={`/c/${ws}/settings`}
           className={`nav-item${pathname.endsWith('/settings') ? ' active' : ''}`}
-          style={{ marginTop: 'auto' }}
+          style={CONTACT ? undefined : { marginTop: 'auto' }}
         >
           <Icon name="settings" size={16} /> {t('nav.settings')}
         </a>

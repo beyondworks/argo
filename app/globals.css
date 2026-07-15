@@ -1141,6 +1141,11 @@ input, textarea { font: inherit; color: var(--fg); }
 .rail-item:hover .rail-actions, .rail-item .rail-actions:focus-within { opacity: 1; }
 .rail-item .rail-actions button:hover { background: var(--card-2); color: var(--fg); }
 
+/* 크루 고정 버튼 — 평소 숨김, 행 hover 시 노출. 단 고정된 크루(.pinned)는 상시 표시(어느 크루가 고정됐는지 한눈에) */
+.crew-row .crew-pin { opacity: 0; transition: opacity 0.12s; }
+.crew-row:hover .crew-pin, .crew-row .crew-pin.pinned, .crew-row .crew-pin:focus-visible { opacity: 1; }
+.crew-row .crew-pin:hover { background: var(--card-2); }
+
 .side-footer {
   margin-top: auto; padding: 10px;
   display: flex; align-items: center; gap: 9px;
