@@ -20,12 +20,12 @@
   --border: rgba(74, 58, 20, 0.22);       /* 웜 골드-브라운 헤어라인 */
   --border-soft: rgba(74, 58, 20, 0.10);
 
-  --primary: #cb9b2c;       /* 프라이머리 = 리치 골드(라이트 전용 — 아이보리 위에서 탁하지 않게 블루 낮춤) */
-  --primary-strong: #b5851e;
+  --primary: #e7bc63;       /* 프라이머리 = 라이트 골드(#E7BC63 — 유건 지정 톤) */
+  --primary-strong: #d6a845;
   --primary-fg: #2a2109;    /* 골드 위 다크 잉크 */
   --primary-fg-dim: rgba(42, 33, 9, 0.72);
   --primary-fg-line: rgba(42, 33, 9, 0.30);
-  --primary-soft: rgba(203, 155, 44, 0.16);
+  --primary-soft: rgba(231, 188, 99, 0.16);
 
   --ok: #3c6b45;
   --ok-soft: rgba(60, 107, 69, 0.12);
@@ -36,16 +36,16 @@
   --danger: #a24a33;
   --danger-soft: rgba(162, 74, 51, 0.12);
 
-  --ring: rgba(203, 155, 44, 0.55);
-  --selection: rgba(203, 155, 44, 0.28);
+  --ring: rgba(231, 188, 99, 0.55);
+  --selection: rgba(231, 188, 99, 0.28);
   --overlay: rgba(40, 33, 18, 0.30);      /* 모달 스크림 */
   --shadow-card: 0 1px 2px rgba(60, 50, 20, 0.05), 0 10px 30px rgba(60, 50, 20, 0.08);
   --r: 18px;
   --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
-  --accent: #c0912a;       /* 계기 액센트 — 골드 */
-  --accent-rgb: 192, 145, 42;
+  --accent: #d8ab4a;       /* 계기 액센트 — 골드(계기·게이지 가독 위해 primary보다 살짝 깊게) */
+  --accent-rgb: 216, 171, 74;
 
   /* 캔버스(기억 그래프)용 RGB 트리플릿 — --fg / --card와 동기 */
   --ink-rgb: 34, 30, 21;
