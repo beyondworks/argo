@@ -22,11 +22,12 @@ export async function POST(req) {
     const user = await currentUser();
     if (!user) return Response.json({ error: '로그인이 필요합니다' }, { status: 401 });
     const td = tenantDenied(user); if (td) return td;
-    const { name, owner, preset } = await req.json();
+    const { name, owner, preset, lang } = await req.json();
     if (!name?.trim()) return Response.json({ error: '회사 이름이 필요합니다' }, { status: 400 });
     const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const wsId = `${base || 'co'}-${Date.now().toString(36).slice(-4)}`;
-    const company = await createCompany(wsId, name.trim(), owner?.trim() || 'captain', AUTH_ON ? user.id : null);
+    // lang = 클라이언트 UI 언어(argo-lang)를 시드로 — 신규 회사의 시스템 언어. createCompany가 ko/en으로 정규화.
+    const company = await createCompany(wsId, name.trim(), owner?.trim() || 'captain', AUTH_ON ? user.id : null, lang);
     if (preset) await applyPreset(wsId, preset); // 즉시 — 정적 카드라 기다림 없음
     // 아하 모먼트 동선 — 프리셋 회사는 첫 크루 채팅으로 직행시켜 시운전이 눈앞에서 도착하게
     const firstCrew = preset ? (PRESETS[preset]?.crews?.[0]?.[1] ?? null) : null;

@@ -58,11 +58,15 @@ export async function PUT(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { name, budgetUsd } = await req.json();
+    const { name, budgetUsd, lang } = await req.json();
     const patch = {};
     if (name !== undefined) {
       if (!name.trim()) return Response.json({ error: '이름이 필요합니다' }, { status: 400 });
       patch.name = name.trim();
+    }
+    if (lang !== undefined) {
+      if (lang !== 'ko' && lang !== 'en') return Response.json({ error: '언어는 ko 또는 en이어야 합니다' }, { status: 400 });
+      patch.lang = lang; // 시스템(크루 생성) 언어 — 크루 답변·기억이 이 언어를 따른다
     }
     if (budgetUsd !== undefined) {
       const n = Number(budgetUsd);

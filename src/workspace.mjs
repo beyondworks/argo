@@ -42,12 +42,13 @@ export function paths(wsId) {
 
 /** 회사 생성 — 가입 직후 1회. 표준 스캐폴드(폴더 트리 + 기본 설정) + company.json 시드.
     ownerId = 인증 사용자 귀속(SaaS). 로컬 모드는 null — 코어는 인증을 모르고 필드만 기록한다. */
-export async function createCompany(wsId, name, owner, ownerId = null) {
+export async function createCompany(wsId, name, owner, ownerId = null, lang = 'ko') {
   const p = paths(wsId);
   if (existsSync(p.company)) throw new Error(`이미 존재하는 회사: ${wsId}`);
   const { ensureScaffold } = await import('./provision.mjs'); // 동적 — provision→workspace 순환 방지
   await ensureScaffold(wsId);
-  const company = { id: wsId, name, owner, ...(ownerId ? { ownerId } : {}), created: new Date().toISOString() };
+  // lang = 시스템(크루 생성) 언어. 크루 답변·페르소나·기억 노트가 이 언어를 따른다(company.json이 단일 진실).
+  const company = { id: wsId, name, owner, ...(ownerId ? { ownerId } : {}), lang: lang === 'en' ? 'en' : 'ko', created: new Date().toISOString() };
   await writeJsonAtomic(p.company, company);
   await writeFile(p.index, `# ${name} — 회사 기억 인덱스\n\n(아직 기록 없음)\n`); // 회사 이름 반영 — 스캐폴드 기본을 덮는다
   return company;

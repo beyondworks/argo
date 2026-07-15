@@ -121,7 +121,7 @@ export default function Settings({ params }) {
         </div>
       </div>
 
-      <LanguageCard />
+      <LanguageCard ws={ws} />
       <ThemeCard />
       <TrashCard ws={ws} />
       </Section>
@@ -166,7 +166,7 @@ export default function Settings({ params }) {
 
       <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--fg-3)', padding: '6px 2px 4px' }}>
         <a href="/legal" style={{ color: 'inherit' }}>{t('legal.link')}</a>
-        {CONTACT && <a href={`mailto:${CONTACT}?subject=${encodeURIComponent('Argo 피드백')}`} style={{ color: 'inherit' }}>{t('legal.feedback')}</a>}
+        {CONTACT && <a href={`mailto:${CONTACT}?subject=${encodeURIComponent(t('legal.feedbackSubject'))}`} style={{ color: 'inherit' }}>{t('legal.feedback')}</a>}
       </div>
 
       {archiveOpen && (
@@ -186,10 +186,18 @@ export default function Settings({ params }) {
 }
 
 /** 언어 선택 — 각 옵션 라벨은 언제나 그 언어 자신으로 표기(국제 관례). 단축키 안내 포함. */
-function LanguageCard() {
+function LanguageCard({ ws }) {
   const { lang, t, setLang } = useLang();
   const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
   const kbd = isMac ? '⌘ + /' : 'Ctrl + /';
+  // 언어 = UI 표시 + 시스템(크루 생성) 언어를 함께 전환. 회사 lang을 PUT해 크루 답변·페르소나·기억이 이 언어를 따르게 한다.
+  const pick = (code) => {
+    setLang(code);
+    if (ws) fetch(`/api/companies/${ws}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lang: code }),
+    }).then(() => window.dispatchEvent(new Event('argo:refresh'))).catch(() => {});
+  };
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.language')}</span>
@@ -199,7 +207,7 @@ function LanguageCard() {
           <button
             key={code}
             className="chip"
-            onClick={() => setLang(code)}
+            onClick={() => pick(code)}
             aria-pressed={lang === code}
             style={{
               cursor: 'pointer', padding: '6px 16px', fontSize: 12.5,

@@ -197,7 +197,7 @@ export default function Login() {
       {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0, minWidth: 0, overflowWrap: 'anywhere' }}>{error}</p>}
       <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--fg-3)', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
         <a href="/legal" style={{ color: 'inherit' }}>{t('legal.link')}</a>
-        {CONTACT && <a href={`mailto:${CONTACT}?subject=${encodeURIComponent('Argo 피드백')}`} style={{ color: 'inherit' }}>{t('legal.feedback')}</a>}
+        {CONTACT && <a href={`mailto:${CONTACT}?subject=${encodeURIComponent(t('legal.feedbackSubject'))}`} style={{ color: 'inherit' }}>{t('legal.feedback')}</a>}
       </div>
     </Shell>
   );
