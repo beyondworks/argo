@@ -83,7 +83,9 @@ export default function Room({ params }) {
   const shown = viewing ? archMsgs : messages;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 118px)' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 170px)' }}>
+      {/* 170px = topbar(56) + .content 패딩(위 26 + 아래 88). 이 오프셋이 실제보다 작으면 페이지 전체가 스크롤돼
+          입력창이 안 고정되고 사이드바까지 딸려 스크롤된다(실측 수정). 아래 메시지 컬럼의 minHeight:0과 한 세트. */}
       {/* 회의 레일 — 마친 회의가 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr) */}
       <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
@@ -106,7 +108,7 @@ export default function Room({ params }) {
         {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('room.sessions.empty')}</span>}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0 }}>
+      <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className="microlabel">{t('room.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
