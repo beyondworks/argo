@@ -154,6 +154,8 @@ const DICT = {
   'settings.theme.minimal-light': ['Minimal Light — 클린 화이트', 'Minimal Light — clean white'],
   'settings.theme.minimal-dark': ['Minimal Dark — 노르딕 슬레이트', 'Minimal Dark — nordic slate'],
   'settings.language': ['언어', 'Language'],
+  'settings.crewLanguage': ['크루 응답 언어', 'Crew response language'],
+  'settings.crewLanguage.desc': ['크루(AI 직원)가 답변·페르소나·기억을 작성할 때 쓰는 언어입니다. 화면 언어와 별개로 회사마다 설정됩니다.', 'The language your crew uses to reply, create personas, and write memory — set per company, separately from the screen language.'],
   'settings.language.desc': ['화면 표시 언어를 선택합니다. 어디서든 단축키로도 전환됩니다.', 'Choose the display language. You can also toggle it anywhere with the shortcut.'],
   'settings.language.shortcut': ['단축키', 'Shortcut'],
   'settings.head': ['설정 · 회사 설정', 'Settings · Company'],

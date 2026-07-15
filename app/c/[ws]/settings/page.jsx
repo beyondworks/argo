@@ -121,7 +121,8 @@ export default function Settings({ params }) {
         </div>
       </div>
 
-      <LanguageCard ws={ws} />
+      <LanguageCard />
+      <CrewLanguageCard ws={ws} sysLang={data?.company?.lang} />
       <ThemeCard />
       <TrashCard ws={ws} />
       </Section>
@@ -186,18 +187,10 @@ export default function Settings({ params }) {
 }
 
 /** 언어 선택 — 각 옵션 라벨은 언제나 그 언어 자신으로 표기(국제 관례). 단축키 안내 포함. */
-function LanguageCard({ ws }) {
+function LanguageCard() {
   const { lang, t, setLang } = useLang();
   const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
   const kbd = isMac ? '⌘ + /' : 'Ctrl + /';
-  // 언어 = UI 표시 + 시스템(크루 생성) 언어를 함께 전환. 회사 lang을 PUT해 크루 답변·페르소나·기억이 이 언어를 따르게 한다.
-  const pick = (code) => {
-    setLang(code);
-    if (ws) fetch(`/api/companies/${ws}`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ lang: code }),
-    }).then(() => window.dispatchEvent(new Event('argo:refresh'))).catch(() => {});
-  };
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.language')}</span>
@@ -207,7 +200,7 @@ function LanguageCard({ ws }) {
           <button
             key={code}
             className="chip"
-            onClick={() => pick(code)}
+            onClick={() => setLang(code)}
             aria-pressed={lang === code}
             style={{
               cursor: 'pointer', padding: '6px 16px', fontSize: 12.5,
@@ -221,6 +214,43 @@ function LanguageCard({ ws }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto', paddingTop: 10 }}>
         <span className="microlabel">{t('settings.language.shortcut')}</span>
         <span className="kbd mono" style={{ fontSize: 11, border: '1px solid var(--border)', borderRadius: 6, padding: '2px 8px' }}>{kbd}</span>
+      </div>
+    </div>
+  );
+}
+
+/** 크루 응답 언어 — 시스템(크루 생성) 언어. 화면 언어(argo-lang)와 별개로 회사 단위(company.lang) 저장.
+    크루 답변·페르소나·기억이 이 언어를 따른다(백엔드 chat.mjs가 회사 lang을 강제). */
+function CrewLanguageCard({ ws, sysLang }) {
+  const { t } = useLang();
+  const [cur, setCur] = useState(sysLang === 'en' ? 'en' : 'ko');
+  useEffect(() => { setCur(sysLang === 'en' ? 'en' : 'ko'); }, [sysLang]);
+  const pick = (code) => {
+    setCur(code);
+    fetch(`/api/companies/${ws}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lang: code }),
+    }).then(() => window.dispatchEvent(new Event('argo:refresh'))).catch(() => {});
+  };
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span className="card-title">{t('settings.crewLanguage')}</span>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.crewLanguage.desc')}</p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {[['ko', '한국어'], ['en', 'English']].map(([code, label]) => (
+          <button
+            key={code}
+            className="chip"
+            onClick={() => pick(code)}
+            aria-pressed={cur === code}
+            style={{
+              cursor: 'pointer', padding: '6px 16px', fontSize: 12.5,
+              ...(cur === code ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}),
+            }}
+          >
+            {label}
+          </button>
+        ))}
       </div>
     </div>
   );
