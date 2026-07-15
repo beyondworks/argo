@@ -1,8 +1,8 @@
 'use client';
 // 설정 — 회사 정보 수정, 제원, 위험 구역(보관).
-import { use, useEffect, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Icon, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../ui';
+import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 
@@ -123,6 +123,7 @@ export default function Settings({ params }) {
 
       <LanguageCard />
       <ThemeCard />
+      <TrashCard ws={ws} />
       </Section>
 
       <Section label={t('settings.ai.section')}>
@@ -303,6 +304,66 @@ function ThemeCard() {
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 보관함 — 삭제된 대화(회사 전체)를 모아 복구·영구삭제. 삭제=chats/.trash/로 이동(비파괴). */
+function TrashCard({ ws }) {
+  const { t } = useLang();
+  const [items, setItems] = useState(null);
+  const [busy, setBusy] = useState('');            // 처리 중 항목 id
+  const [purgeTarget, setPurgeTarget] = useState(null);
+  const load = useCallback(() => {
+    api(`/api/companies/${ws}/trash`).then((d) => setItems(d.items ?? [])).catch(() => setItems([]));
+  }, [ws]);
+  useEffect(load, [load]);
+  async function restore(it) {
+    setBusy(it.id);
+    try { await api(`/api/companies/${ws}/trash`, { id: it.id }); load(); }
+    catch { /* 실패는 다음 시도 */ } finally { setBusy(''); }
+  }
+  async function doPurge() {
+    const it = purgeTarget; setPurgeTarget(null);
+    if (!it) return;
+    setBusy(it.id);
+    try { await fetch(`/api/companies/${ws}/trash?id=${encodeURIComponent(it.id)}`, { method: 'DELETE' }); load(); }
+    catch { /* */ } finally { setBusy(''); }
+  }
+  return (
+    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span className="card-title">{t('settings.trash')}{items?.length ? ` · ${items.length}` : ''}</span>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.trash.desc')}</p>
+      {items === null ? <Skeleton h={40} /> : items.length === 0 ? (
+        <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{t('settings.trash.empty')}</span>
+      ) : (
+        <div style={{ display: 'grid', gap: 6 }}>
+          {items.map((it) => (
+            <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid var(--border-soft)', borderRadius: 10, minWidth: 0 }}>
+              <span style={{ minWidth: 0, flex: 1 }}>
+                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title || it.gist || t('chat.sessions.untitled')}</span>
+                <span className="nav-sub">{it.crew} · {new Date(it.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: it.count })}</span>
+              </span>
+              <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy === it.id} onClick={() => restore(it)}>
+                {busy === it.id ? <Spinner size={11} /> : t('settings.trash.restore')}
+              </button>
+              <button type="button" className="btn sm" style={{ flex: 'none', color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={busy === it.id} onClick={() => setPurgeTarget(it)}>
+                {t('settings.trash.purge')}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {purgeTarget && (
+        <ConfirmModal
+          title={t('settings.trash.purgeTitle')}
+          description={t('settings.trash.purgeConfirm')}
+          confirmLabel={t('settings.trash.purge')}
+          tone="danger"
+          onConfirm={doPurge}
+          onClose={() => setPurgeTarget(null)}
+        />
+      )}
     </div>
   );
 }

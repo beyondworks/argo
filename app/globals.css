@@ -1136,6 +1136,11 @@ input, textarea { font: inherit; color: var(--fg); }
 }
 .nav-item.active .nav-sub { color: var(--primary-fg-dim); }
 
+/* 세션 레일 액션(대화명 편집·삭제) — 항목 호버/포커스 시에만 노출 */
+.rail-item .rail-actions { opacity: 0; transition: opacity 0.12s; }
+.rail-item:hover .rail-actions, .rail-item .rail-actions:focus-within { opacity: 1; }
+.rail-item .rail-actions button:hover { background: var(--card-2); color: var(--fg); }
+
 .side-footer {
   margin-top: auto; padding: 10px;
   display: flex; align-items: center; gap: 9px;
