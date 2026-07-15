@@ -1,15 +1,41 @@
 // 한 줄 프롬프트 → 페르소나 카드(md frontmatter + 본문) 자동 생성 — 기둥 2.
 // 카드가 곧 시스템 프롬프트: 사용자가 파일을 열어 언제든 고칠 수 있다(투명성).
-import { writeFile, readFile, mkdir, rename } from 'node:fs/promises';
+import { readFile, mkdir, rename } from 'node:fs/promises';
+import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { paths } from './workspace.mjs';
+import { paths, loadCompany } from './workspace.mjs';
 import { appendUsage } from './usage.mjs';
 import { appendEvent } from './events.mjs';
 import { sdkEnvFor } from './runners.mjs';
 
-const CARD_PROMPT = (oneLiner, name) => `다음 한 줄 요청으로 AI 직원의 페르소나 카드를 작성해줘.
+// 카드 = 시스템 프롬프트. lang='en'이면 이름·직함·본문을 영어로 생성하되, 세 섹션 헤더(## 전문성/일하는 방식/톤)는
+// 한국어 고정 토큰으로 유지한다 — 백엔드·프론트 여러 파서(persona.mjs:appendAgentRule, hub.mjs, crew page)가 이
+// 리터럴을 앵커로 쓰므로 헤더를 바꾸면 파서가 깨진다(회귀 0 위해 헤더 불변, 내용만 언어 전환).
+const CARD_PROMPT = (oneLiner, name, lang = 'ko') => lang === 'en' ? `Write an AI employee's persona card from this one-line request.
+
+Request: "${oneLiner}"
+${name ? `The name must be "${name}".` : ''}
+
+Output ONLY markdown in exactly this format (no explanation, no code fences). Keep the three section headers in Korean exactly as shown (전문성 / 일하는 방식 / 톤), but write ALL content in English:
+
+---
+name: <${name ? `"${name}" as-is` : 'a natural English first name (1-2 words), like a real person'}>
+slug: <lowercase english slug>
+role: <one-line job title in English>
+---
+
+# <name> — <role>
+
+## 전문성
+(3-5 areas this employee knows deeply — bullets, in English)
+
+## 일하는 방식
+(output format, quality bar, checking habits — 3-4 bullets, in English)
+
+## 톤
+(one line on how they speak with the user, in English)` : `다음 한 줄 요청으로 AI 직원의 페르소나 카드를 작성해줘.
 
 요청: "${oneLiner}"
 ${name ? `이름은 반드시 "${name}"으로 한다.` : ''}
@@ -75,11 +101,13 @@ function stripFrontmatter(md) {
 }
 
 /** 역할(직함)을 AI가 한 줄로 추천 — 카드에서 역할을 못 뽑았을 때의 폴백. 생성 실패로 두지 않는다. */
-async function recommendRole(wsId, oneLiner, sdkEnv) {
+async function recommendRole(wsId, oneLiner, sdkEnv, lang = 'ko') {
   try {
     let out = '';
     for await (const msg of query({
-      prompt: `다음 요청에 어울리는 AI 직원의 직함을 한국어 한 줄(2-12자, 설명·기호·따옴표 없이 직함만)로 답해줘.\n요청: "${oneLiner}"`,
+      prompt: lang === 'en'
+        ? `Reply with a fitting job title for this AI employee in one short English line (2-4 words; title only, no punctuation or quotes).\nRequest: "${oneLiner}"`
+        : `다음 요청에 어울리는 AI 직원의 직함을 한국어 한 줄(2-12자, 설명·기호·따옴표 없이 직함만)로 답해줘.\n요청: "${oneLiner}"`,
       options: { cwd: paths(wsId).root, allowedTools: [], settingSources: [], maxTurns: 1, ...(sdkEnv ? { env: sdkEnv } : {}) },
     })) {
       if (msg.type === 'result' && msg.subtype === 'success') out = msg.result;
@@ -87,7 +115,7 @@ async function recommendRole(wsId, oneLiner, sdkEnv) {
     const role = (out || '').trim().split('\n')[0].replace(/^["'#*\-\s]+|["'\s]+$/g, '').slice(0, 40);
     if (role) return role;
   } catch { /* 아래 폴백 */ }
-  return ((oneLiner || '').split(/[-—·,.\n]/)[0].trim().slice(0, 30)) || 'AI 직원';
+  return ((oneLiner || '').split(/[-—·,.\n]/)[0].trim().slice(0, 30)) || (lang === 'en' ? 'AI employee' : 'AI 직원');
 }
 
 /** Agent SDK 단일 턴으로 카드 생성 → agents/<slug>.md 저장. name·team 지정 가능. */
@@ -97,9 +125,10 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   // 카드 생성도 채팅과 동일하게 회사 자격(claude 키/OAuth)을 주입 — 없으면 호스트 자격 폴백.
   // (이게 없으면 웹 사용자가 키를 넣어도 영입만 호스트 키를 찾다 실패했다)
   const sdkEnv = await sdkEnvFor(wsId, 'claude');
+  const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({})); // 시스템 언어 — 카드 생성 언어
   let failed = null;
   for await (const msg of query({
-    prompt: CARD_PROMPT(oneLiner, name?.trim()),
+    prompt: CARD_PROMPT(oneLiner, name?.trim(), lang),
     options: {
       cwd: paths(wsId).root,
       allowedTools: [], // 순수 생성 — 도구 불필요
@@ -124,7 +153,7 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   const nameFinal = (name?.trim() || meta.name || looseField(md, 'name') || h1[0] || 'AI 직원').trim();
   let roleFinal = (meta.role || looseField(md, 'role') || (h1[1] || '')).trim();
   // 역할을 못 뽑으면 AI가 직함을 추천해 채운다.
-  if (!roleFinal) roleFinal = await recommendRole(wsId, oneLiner, sdkEnv);
+  if (!roleFinal) roleFinal = await recommendRole(wsId, oneLiner, sdkEnv, lang);
 
   // slug — 지정값→이름 슬러그화→crew. 동명 크루 중복 영입 시 기존 카드를 덮어쓰지 않는다(-n).
   const slugify = (s) => (s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
@@ -139,7 +168,7 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   const finalMd = `${fm.join('\n')}\n\n${stripFrontmatter(md)}\n`;
 
   const file = cardPath(wsId, slug);
-  await writeFile(file, finalMd);
+  await writeJsonAtomic(file, finalMd);
   await appendEvent(wsId, { type: 'crew', op: 'hire', slug, name: nameFinal });
   return { slug, name: nameFinal, role: roleFinal, team: team?.trim() || '', file };
 }
@@ -150,7 +179,7 @@ export async function saveAgentCard(wsId, slug, md) {
   if (!meta.name) throw new Error('frontmatter에 name이 필요합니다');
   const file = cardPath(wsId, slug);
   if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
-  await writeFile(file, md.endsWith('\n') ? md : `${md}\n`);
+  await writeJsonAtomic(file, md.endsWith('\n') ? md : `${md}\n`);
   return { slug, name: meta.name, role: meta.role || '' };
 }
 
@@ -179,7 +208,7 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
   if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
   if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
   if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = Claude Code(기본)
-  await writeFile(file, md);
+  await writeJsonAtomic(file, md);
   const after = parseFrontmatter(md);
   await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: after.name });
   if (name !== undefined && name.trim() && before.name !== after.name) {
@@ -206,7 +235,7 @@ export async function appendAgentRule(wsId, slug, text) {
     const end = rest === -1 ? md.length : rest;
     next = `${md.slice(0, end).trimEnd()}\n- ${rule}\n${rest === -1 ? '' : md.slice(end)}`;
   }
-  await writeFile(file, next);
+  await writeJsonAtomic(file, next);
   await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: parseFrontmatter(next).name });
   return parseFrontmatter(next);
 }
@@ -220,7 +249,7 @@ export async function renameTeam(wsId, from, to) {
     const file = join(dir, f);
     const md = await readFile(file, 'utf8');
     if (parseFrontmatter(md).team !== from) continue;
-    await writeFile(file, setFrontmatterKey(md, 'team', to.trim()));
+    await writeJsonAtomic(file, setFrontmatterKey(md, 'team', to.trim()));
     changed += 1;
   }
   if (changed === 0) throw new Error('해당 팀의 크루가 없습니다');

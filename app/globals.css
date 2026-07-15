@@ -2,54 +2,100 @@
    테마는 전부 이 토큰 세트를 통해서만 표현된다. 컴포넌트에 색 평문 금지.
    테마 전환: <html data-theme="…"> (ThemeProvider가 관리, localStorage argo-theme)
 
-   [argo — 기본] "아르고호의 계기판"
-   기준: 유건 Pinterest SaaS 보드 — 세이지 페이퍼 + 잉크 모노크롬 인스트루먼트 패널.
-   (헤어라인 잉크 보더, 모노 대문자 마이크로 라벨, 큰 계기 숫자, 인버트 블록은 딱 하나)
-   색은 종이와 잉크뿐이다. 위계는 색이 아니라 굵기·크기·괘선으로 만든다. */
+   [argo — 기본 시그니처] "다크 + 골드" — 앱 아이콘의 무광(새틴) 골드.
+   base :root = 라이트(웜 아이보리 + 골드). 시스템이 다크면 아래 @media가 자동으로 다크로 전환한다.
+   수동 고정은 data-theme='argo-light' / 'argo-dark'. 골드는 위가 밝은 방향광의 계조지만
+   토큰은 대표색 1개(--primary=새틴 골드)로 두고, 그라디언트가 필요하면 컴포넌트에서 얹는다.
+   주의: --font/--mono는 일부 테마(codex-gh-*, minimal-*, enjoyer)가 여기서 상속하므로 값 유지. */
 
 :root {
-  --bg: #e3e5d6;            /* 세이지 페이퍼 캔버스 */
-  --card: #e9ebdd;          /* 카드 — 종이보다 반 톤 밝게 */
-  --card-2: #dcdfcc;        /* 중첩 표면 */
-  --secondary: #d3d6c1;
-  --fg: #25271e;            /* 잉크 */
-  --fg-2: #5c5f4e;
-  --fg-3: #797c66;
-  --border: rgba(37, 39, 30, 0.5);        /* 잉크 헤어라인 */
-  --border-soft: rgba(37, 39, 30, 0.15);
+  /* ── Argo 라이트 (웜 아이보리 + 새틴 골드) ── */
+  --bg: #f5f0e3;            /* 웜 아이보리 캔버스 */
+  --card: #fcfaf2;
+  --card-2: #ece5d3;
+  --secondary: #e3dbc6;
+  --fg: #221e15;            /* 웜 잉크 */
+  --fg-2: #585240;
+  --fg-3: #8a8368;
+  --border: rgba(74, 58, 20, 0.22);       /* 웜 골드-브라운 헤어라인 */
+  --border-soft: rgba(74, 58, 20, 0.10);
 
-  --primary: #22241c;       /* 프라이머리 = 잉크 인버트 블록 */
-  --primary-strong: #383b2d;
-  --primary-fg: #e5e7d9;
-  --primary-fg-dim: rgba(229, 231, 217, 0.68);   /* 인버트 블록 위 보조 텍스트 */
-  --primary-fg-line: rgba(229, 231, 217, 0.45);  /* 인버트 블록 위 괘선 */
-  --primary-soft: rgba(34, 36, 28, 0.08);
+  --primary: #e7bc63;       /* 프라이머리 = 라이트 골드(#E7BC63 — 유건 지정 톤) */
+  --primary-strong: #d6a845;
+  --primary-fg: #2a2109;    /* 골드 위 다크 잉크 */
+  --primary-fg-dim: rgba(42, 33, 9, 0.72);
+  --primary-fg-line: rgba(42, 33, 9, 0.30);
+  --primary-soft: rgba(231, 188, 99, 0.16);
 
-  /* 모노크롬 원칙 — 기능색도 잉크 계열로 수렴, 위험만 머티드 러스트 */
-  --ok: #3d4433;
-  --ok-soft: rgba(61, 68, 51, 0.1);
-  --info: #4a4d3d;
-  --info-soft: rgba(74, 77, 61, 0.1);
-  --warn: #5c5f4e;
-  --warn-soft: rgba(92, 95, 78, 0.1);
-  --danger: #9a4a33;
-  --danger-soft: rgba(154, 74, 51, 0.12);
+  --ok: #3c6b45;
+  --ok-soft: rgba(60, 107, 69, 0.12);
+  --info: #6e5a2e;
+  --info-soft: rgba(110, 90, 46, 0.10);
+  --warn: #9a7a2e;
+  --warn-soft: rgba(154, 122, 46, 0.14);
+  --danger: #a24a33;
+  --danger-soft: rgba(162, 74, 51, 0.12);
 
-  --ring: rgba(34, 36, 28, 0.5);
-  --selection: rgba(34, 36, 28, 0.18);
-  --overlay: rgba(37, 39, 30, 0.28);      /* 모달 스크림 */
-  --shadow-card: none;                    /* 계기판은 괘선으로만 — 그림자 없음 */
+  --ring: rgba(231, 188, 99, 0.55);
+  --selection: rgba(231, 188, 99, 0.28);
+  --overlay: rgba(40, 33, 18, 0.30);      /* 모달 스크림 */
+  --shadow-card: 0 1px 2px rgba(60, 50, 20, 0.05), 0 10px 30px rgba(60, 50, 20, 0.08);
   --r: 18px;
   --font: 'Pretendard Variable', Pretendard, -apple-system, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
-  /* 계기 액센트 — 프로그레스·게이지·도트차트·별자리 노드. 아르고는 잉크 그대로 */
-  --accent: #22241c;
-  --accent-rgb: 34, 36, 28;
+  --accent: #d8ab4a;       /* 계기 액센트 — 골드(계기·게이지 가독 위해 primary보다 살짝 깊게) */
+  --accent-rgb: 216, 171, 74;
 
-  /* 캔버스(기억 그래프)용 RGB 트리플릿 — --fg / --card와 항상 동기 */
-  --ink-rgb: 37, 39, 30;
-  --paper-rgb: 233, 235, 221;
+  /* 캔버스(기억 그래프)용 RGB 트리플릿 — --fg / --card와 동기 */
+  --ink-rgb: 34, 30, 21;
+  --paper-rgb: 252, 250, 242;
+}
+
+/* Argo 다크 (웜 차콜 + 새틴 골드) — 시스템 자동(@media)과 수동(data-theme='argo-dark')이 같은 값을 공유.
+   두 블록의 토큰 값은 항상 동일하게 유지한다(한쪽을 고치면 다른 쪽도). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    /* 명암 완화 — near-black 대신 웜 차콜로 올려 극단적 대비를 압축. 카드·2·3차 텍스트·보더도 올려 가시성 확보 */
+    --bg: #1c1813; --card: #26211a; --card-2: #322c21; --secondary: #3d371f;
+    --fg: #ece6d7; --fg-2: #c5bda2; --fg-3: #979073;
+    --border: rgba(224, 192, 122, 0.21); --border-soft: rgba(224, 192, 122, 0.11);
+    --primary: #c6a052; --primary-strong: #d8ba6e; --primary-fg: #221b08;
+    --primary-fg-dim: rgba(34, 27, 8, 0.74); --primary-fg-line: rgba(34, 27, 8, 0.32);
+    --primary-soft: rgba(198, 160, 82, 0.16);
+    --ok: #63b47e; --ok-soft: rgba(99, 180, 126, 0.16);
+    --info: #b49a6a; --info-soft: rgba(180, 154, 106, 0.14);
+    --warn: #d8a24a; --warn-soft: rgba(216, 162, 74, 0.16);
+    --danger: #e5735c; --danger-soft: rgba(229, 115, 92, 0.15);
+    --ring: rgba(198, 160, 82, 0.55); --selection: rgba(198, 160, 82, 0.30);
+    --overlay: rgba(0, 0, 0, 0.55);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px rgba(0, 0, 0, 0.4);
+    --accent: #c6a052; --accent-rgb: 198, 160, 82;
+    --ink-rgb: 236, 230, 215; --paper-rgb: 38, 33, 26;
+  }
+}
+/* 수동 라이트 — base :root(라이트)를 그대로 쓰되, data-theme가 있어 위 @media 다크 전환에서 제외된다 */
+:root[data-theme='argo-light'] { color-scheme: light; }
+/* 수동 다크 — 위 @media 블록과 동일한 다크 값 */
+:root[data-theme='argo-dark'] {
+  color-scheme: dark;
+  /* 명암 완화 — @media 블록과 동일 값 유지 */
+  --bg: #1c1813; --card: #26211a; --card-2: #322c21; --secondary: #3d371f;
+  --fg: #ece6d7; --fg-2: #c5bda2; --fg-3: #979073;
+  --border: rgba(224, 192, 122, 0.21); --border-soft: rgba(224, 192, 122, 0.11);
+  --primary: #c6a052; --primary-strong: #d8ba6e; --primary-fg: #221b08;
+  --primary-fg-dim: rgba(34, 27, 8, 0.74); --primary-fg-line: rgba(34, 27, 8, 0.32);
+  --primary-soft: rgba(198, 160, 82, 0.16);
+  --ok: #63b47e; --ok-soft: rgba(99, 180, 126, 0.16);
+  --info: #b49a6a; --info-soft: rgba(180, 154, 106, 0.14);
+  --warn: #d8a24a; --warn-soft: rgba(216, 162, 74, 0.16);
+  --danger: #e5735c; --danger-soft: rgba(229, 115, 92, 0.15);
+  --ring: rgba(198, 160, 82, 0.55); --selection: rgba(198, 160, 82, 0.30);
+  --overlay: rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px rgba(0, 0, 0, 0.4);
+  --accent: #c6a052; --accent-rgb: 198, 160, 82;
+  --ink-rgb: 236, 230, 215; --paper-rgb: 38, 33, 26;
 }
 
 /* [apple] Apple HIG 라이트 — 시스템 화이트 표면, 소프트 섀도, systemBlue 액센트.
@@ -1089,6 +1135,11 @@ input, textarea { font: inherit; color: var(--fg); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .nav-item.active .nav-sub { color: var(--primary-fg-dim); }
+
+/* 세션 레일 액션(대화명 편집·삭제) — 항목 호버/포커스 시에만 노출 */
+.rail-item .rail-actions { opacity: 0; transition: opacity 0.12s; }
+.rail-item:hover .rail-actions, .rail-item .rail-actions:focus-within { opacity: 1; }
+.rail-item .rail-actions button:hover { background: var(--card-2); color: var(--fg); }
 
 .side-footer {
   margin-top: auto; padding: 10px;

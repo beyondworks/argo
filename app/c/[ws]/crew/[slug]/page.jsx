@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, useScrollLock, api, imeGuard } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
 import { useLang } from '../../../../i18n';
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
@@ -31,6 +31,8 @@ export default function CrewChat({ params }) {
   const [sessions, setSessions] = useState([]);
   const [viewing, setViewing] = useState(null); // 보관 세션 id (null = 현재 대화)
   const [archMsgs, setArchMsgs] = useState(null);
+  const [renameSess, setRenameSess] = useState(null); // 대화명 편집 모달 대상 세션
+  const [trashSess, setTrashSess] = useState(null);   // 삭제(보관) 확인 모달 대상 세션
   const loadSessions = useCallback(() => {
     api(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}`)
       .then((d) => setSessions(d.sessions ?? [])).catch(() => {});
@@ -42,6 +44,40 @@ export default function CrewChat({ params }) {
     try {
       const d = await api(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}&id=${encodeURIComponent(id)}`);
       setViewing(id); setArchMsgs(d.messages ?? []);
+    } catch (e) { setError(String(e.message)); }
+  }
+  // 대화 이어가기 — 보관 세션을 활성으로 되살린다(서버가 현재 대화를 자동 보관). 이후 그대로 이어서 지시 가능.
+  async function resumeViewing() {
+    if (!viewing || busy) return;
+    try {
+      const r = await api(`/api/companies/${ws}/chat/sessions`, { slug, id: viewing });
+      setThread(r.thread?.messages ?? []);
+      sessionRef.current = r.thread?.sessionId ?? null;
+      setViewing(null); setArchMsgs(null); setError(''); resetAnnot();
+      loadSessions();
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (e) { setError(String(e.message)); }
+  }
+  // 대화명 편집 — 보관 세션에 title 기록(레일 표시는 title 우선).
+  async function doRenameSess(title) {
+    const s = renameSess; setRenameSess(null);
+    if (!s) return;
+    try {
+      await fetch(`/api/companies/${ws}/chat/sessions`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ slug, id: s.id, title }),
+      });
+      loadSessions();
+    } catch (e) { setError(String(e.message)); }
+  }
+  // 세션 삭제(보관) — .archive → .trash 이동. 설정 보관함에서 복구 가능(비파괴).
+  async function doTrashSess() {
+    const s = trashSess; setTrashSess(null);
+    if (!s) return;
+    try {
+      await fetch(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}&id=${encodeURIComponent(s.id)}`, { method: 'DELETE' });
+      if (viewing === s.id) openSession(null); // 열람 중이던 대화를 지웠으면 현재 대화로
+      loadSessions();
     } catch (e) { setError(String(e.message)); }
   }
   const sessionRef = useRef(null);
@@ -101,7 +137,7 @@ export default function CrewChat({ params }) {
           setLiveStage(r.status ?? null); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
         })
         .catch(() => {});
-    }, 8000);
+    }, 3000); // 준실시간 — 동기화(≈8s)로 당겨온 다른 기기의 대화를 더 빨리 표시(기존 8s)
     return () => clearInterval(t);
   }, [ws, slug, busy]);
 
@@ -255,7 +291,8 @@ export default function CrewChat({ params }) {
 
   async function newChat() {
     if (busy) return;
-    if (!window.confirm(t('chat.newChatConfirm'))) return;
+    // 현재 대화는 서버(resetThread)가 .archive로 적재한 뒤 비우므로 비파괴 — 확인창 없이 바로 새 대화.
+    // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작(버튼이 안 열리던 원인) → 제거. 파괴적 액션만 DangerModal.
     await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
     setThread([]); sessionRef.current = null; setError('');
     setViewing(null); setArchMsgs(null); resetAnnot();
@@ -263,7 +300,8 @@ export default function CrewChat({ params }) {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
+      {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지. 회의실·컨테스트와 동일(입력창 하향·대화영역 확대, 스레드만 내부 스크롤). */}
       {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정 */}
       <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
@@ -276,17 +314,32 @@ export default function CrewChat({ params }) {
           </span>
         </button>
         {sessions.map((s) => (
-          <button key={s.id} className={`nav-item${viewing === s.id ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => openSession(s.id)}>
-            <span style={{ minWidth: 0 }}>
-              <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.gist || t('chat.sessions.untitled')}</span>
-              <span className="nav-sub">{new Date(s.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: s.count })}</span>
+          <div key={s.id} className="rail-item" style={{ position: 'relative' }}>
+            <button className={`nav-item${viewing === s.id ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer', paddingRight: 44 }} onClick={() => openSession(s.id)}>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title || s.gist || t('chat.sessions.untitled')}</span>
+                <span className="nav-sub">{new Date(s.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: s.count })}</span>
+              </span>
+            </button>
+            {/* 호버 시 노출 — 대화명 편집 / 삭제(보관함으로) */}
+            <span className="rail-actions" style={{ position: 'absolute', right: 5, top: 7, display: 'flex', gap: 1 }}>
+              <button type="button" title={t('chat.sessions.rename')} aria-label={t('chat.sessions.rename')}
+                onClick={(e) => { e.stopPropagation(); setRenameSess(s); }}
+                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: 'var(--fg-3)', cursor: 'pointer', borderRadius: 6 }}>
+                <Icon name="edit" size={12} />
+              </button>
+              <button type="button" title={t('chat.sessions.delete')} aria-label={t('chat.sessions.delete')}
+                onClick={(e) => { e.stopPropagation(); setTrashSess(s); }}
+                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: 'var(--fg-3)', cursor: 'pointer', borderRadius: 6 }}>
+                <Icon name="trash" size={12} />
+              </button>
             </span>
-          </button>
+          </div>
         ))}
         {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('chat.sessions.empty')}</span>}
       </div>
     <div
-      style={{ maxWidth: 760, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 160px)', position: 'relative' }}
+      style={{ width: '100%', display: 'grid', gridTemplateRows: '1fr auto', height: '100%', minHeight: 0, position: 'relative' }}
       onDragOver={(e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); setDragOver(true); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
       onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
@@ -307,7 +360,7 @@ export default function CrewChat({ params }) {
         slotEl,
       )}
 
-      <div className="thread" style={{ flex: 1 }}>
+      <div className="thread" style={{ overflowY: 'auto', minHeight: 0 }}>
         {thread === null && (
           <><Skeleton h={46} w="60%" /><Skeleton h={90} /></>
         )}
@@ -456,14 +509,15 @@ export default function CrewChat({ params }) {
       </div>
 
       {viewing ? (
-        <div className="card card-float" style={{ position: 'sticky', bottom: 20, marginTop: 'auto', paddingTop: 24, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
+        <div className="card card-float" style={{ marginTop: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
           <Icon name="doc" size={13} /> {t('chat.sessions.readonly')}
           <span style={{ flex: 1 }} />
-          <button className="btn btn-primary sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
+          <button className="btn btn-primary sm" disabled={busy} onClick={resumeViewing}>{t('chat.sessions.resume')}</button>
+          <button className="btn sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
         </div>
       ) : (
-      // marginTop:auto — 메시지가 적어도 컴포저가 항상 하단에 붙는다(flex column). 긴 스레드는 sticky가 잡는다.
-      <div style={{ position: 'sticky', bottom: 12, marginTop: 'auto', paddingTop: 24, display: 'flex', flexDirection: 'column', gap: 8, background: 'linear-gradient(to top, var(--composer-scrim, var(--bg)) 78%, transparent)' }}>
+      // 하단 고정 행(grid auto) — 스레드는 위 1fr 행에서 자체 스크롤되므로 컴포저는 겹침 없이 항상 하단. sticky·스크림 불필요(스크롤 시 입력창 뒤로 콘텐츠가 비치던 버그 제거).
+      <div style={{ paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
         {(att.length > 0 || uploading) && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {att.map((a, i) => (
@@ -512,6 +566,27 @@ export default function CrewChat({ params }) {
           onRunnerChange={saveRunner}
           onClose={() => setCardOpen(false)}
           onFired={() => { window.dispatchEvent(new Event('argo:refresh')); router.push(`/c/${ws}`); }}
+        />
+      )}
+
+      {renameSess && (
+        <InputModal
+          title={t('chat.sessions.renameTitle')}
+          defaultValue={renameSess.title || renameSess.gist || ''}
+          placeholder={t('chat.sessions.renamePh')}
+          confirmLabel={t('common.save')}
+          onConfirm={doRenameSess}
+          onClose={() => setRenameSess(null)}
+        />
+      )}
+      {trashSess && (
+        <ConfirmModal
+          title={t('chat.sessions.deleteTitle')}
+          description={t('chat.sessions.deleteConfirm')}
+          confirmLabel={t('chat.sessions.deleteDo')}
+          tone="danger"
+          onConfirm={doTrashSess}
+          onClose={() => setTrashSess(null)}
         />
       )}
     </div>

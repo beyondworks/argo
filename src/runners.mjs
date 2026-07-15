@@ -21,6 +21,23 @@ function exec(cmd, args, opts) {
   return p;
 }
 
+/* ─── 서버 시크릿 세척 (P1-6) ───
+   테넌트 에이전트가 spawn하는 자식(외부 러너 CLI·SDK가 띄우는 Bash/MCP)에 크로스테넌트 크라운주얼이
+   상속되면, 프롬프트 인젝션이 `printenv` 한 번으로 그 값을 유출할 수 있다. SUPABASE_SERVICE_ROLE_KEY는
+   RLS를 우회해 모든 테넌트 데이터를 여는 열쇠라 유출 = 전면 침해. 자식 env에서 제거한다.
+   러너 자신의 모델 키(ANTHROPIC/GLM/OPENAI/GEMINI)는 러너 동작에 필요하므로 보존(denylist).
+   ⚠ 방어심층이지 완전한 경계가 아니다 — 자식이 /proc/<ppid>/environ으로 부모 워커 env를 직접 읽을 수 있다.
+      근본 해법은 서비스 키를 에이전트 워커 밖 별도 신뢰 서비스로 분리하는 것(로드맵). 론칭 전 키 회전 권장. */
+const EXPLICIT_SERVER_SECRETS = new Set(['SUPABASE_SERVICE_ROLE_KEY']);
+const SERVER_SECRET_RE = /(SERVICE_ROLE|_SECRET$|_SECRET_|DATABASE_URL|PRIVATE_KEY|WEBHOOK_SECRET|SESSION_SECRET|JWT_SECRET)/i;
+export const isServerSecretKey = (k) => EXPLICIT_SERVER_SECRETS.has(k) || SERVER_SECRET_RE.test(k);
+/** 서버 시크릿만 제거한 env 사본 — 러너 모델 키·운영 변수는 그대로 둔다. (export: 회귀 테스트용) */
+export function scrubServerSecrets(env = process.env) {
+  const out = {};
+  for (const [k, v] of Object.entries(env)) if (!isServerSecretKey(k)) out[k] = v;
+  return out;
+}
+
 /** 실패 출력에서 API 에러 메시지만 뽑는다 — 이벤트 로그에 명령·프롬프트 전문을 흘리지 않는다. */
 function apiError(e) {
   const raw = `${e.stdout ?? ''}\n${e.stderr ?? ''}`;
@@ -87,7 +104,7 @@ export const RUNNERS = {
 
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
 export const glmEnv = () => ({
-  ...process.env,
+  ...scrubServerSecrets(process.env),
   ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic',
   ANTHROPIC_AUTH_TOKEN: process.env.GLM_API_KEY ?? '',
   ANTHROPIC_API_KEY: '',
@@ -144,7 +161,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
         '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록
-      ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, env: { ...process.env, ...(cred?.env ?? {}), CODEX_HOME } })
+      ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, env: { ...scrubServerSecrets(process.env), ...(cred?.env ?? {}), CODEX_HOME } })
         .catch((e) => { throw apiError(e); });
       return (await readFile(out, 'utf8')).trim();
     } finally {
@@ -156,7 +173,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
       '-p', prompt,
       ...(model ? ['-m', model] : []),
       '--approval-mode', 'auto_edit', // 편집류만 자동 승인 — 셸 등은 비대화 모드에서 실행되지 않는다
-    ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, env: { ...process.env, ...(cred?.env ?? {}) } })
+    ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, env: { ...scrubServerSecrets(process.env), ...(cred?.env ?? {}) } })
       .catch((e) => { throw apiError(e); });
     return stdout
       .replace(/^(Loaded cached credentials\.|Data collection is .*|\[STARTUP\].*|\[dotenv.*)\s*$/gim, '')
@@ -244,8 +261,8 @@ export async function runnerCredEnv(wsId, runner) {
     // 회사 OAuth(웹 브리지) — 저장된 auth.json을 회사별 격리 CODEX_HOME에 풀어 CLI가 읽게 한다.
     // CLI가 토큰을 갱신하면 이 파일에 다시 쓴다(다음 턴도 같은 홈을 쓰므로 이어진다).
     const dir = join(homedir(), '.argo', `codex-home-${wsId}`);
-    await mkdir(dir, { recursive: true });
-    if (!(await exists(join(dir, 'auth.json')))) await writeFile(join(dir, 'auth.json'), v);
+    await mkdir(dir, { recursive: true, mode: 0o700 }); // OAuth 토큰 보관 — 소유자만
+    if (!(await exists(join(dir, 'auth.json')))) await writeFile(join(dir, 'auth.json'), v, { mode: 0o600 });
     if (!(await exists(join(dir, 'config.toml')))) await writeFile(join(dir, 'config.toml'), '# Argo 회사 자격 codex 홈\n');
     return { env: {}, home: dir };
   }
@@ -253,9 +270,9 @@ export async function runnerCredEnv(wsId, runner) {
     if (cred.type === 'apikey') return { env: { GEMINI_API_KEY: v } };
     // 회사 OAuth(웹 브리지) — oauth_creds.json을 회사별 격리 HOME의 .gemini에 풀어준다.
     const home = join(homedir(), '.argo', `gemini-home-${wsId}`);
-    await mkdir(join(home, '.gemini'), { recursive: true });
+    await mkdir(join(home, '.gemini'), { recursive: true, mode: 0o700 }); // OAuth 토큰 보관 — 소유자만
     if (!(await exists(join(home, '.gemini', 'oauth_creds.json')))) {
-      await writeFile(join(home, '.gemini', 'oauth_creds.json'), v);
+      await writeFile(join(home, '.gemini', 'oauth_creds.json'), v, { mode: 0o600 });
     }
     if (!(await exists(join(home, '.gemini', 'settings.json')))) {
       await writeFile(join(home, '.gemini', 'settings.json'), JSON.stringify({ selectedAuthType: 'oauth-personal' }));
@@ -268,9 +285,11 @@ export async function runnerCredEnv(wsId, runner) {
 /** Claude/GLM(SDK) 러너용 완전 env — 회사 자격 우선, 없으면 기존 폴백(glm은 호스트 GLM_API_KEY, claude는 CLI/env). */
 export async function sdkEnvFor(wsId, runner) {
   const cred = await runnerCredEnv(wsId, runner);
-  if (cred) return { ...process.env, ...cred.env };
-  if (runner === 'glm') return glmEnv(); // 회사 자격 없으면 호스트 GLM_API_KEY 폴백
-  return null; // claude: 회사 자격 없으면 null → 기존 CLI/env 자격
+  // SDK가 띄우는 Bash/MCP 자식도 서버 시크릿(서비스 키)을 상속하지 않도록 항상 세척된 env를 준다(P1-6).
+  // claude 호스트 폴백도 이제 null 대신 세척 env를 반환한다 — 러너 인증(ANTHROPIC_*)은 보존, 크라운주얼만 제거.
+  if (cred) return { ...scrubServerSecrets(process.env), ...cred.env };
+  if (runner === 'glm') return glmEnv(); // 회사 자격 없으면 호스트 GLM_API_KEY 폴백(glmEnv 자체가 세척됨)
+  return scrubServerSecrets(process.env);
 }
 
 /** OAuth 연결 시작 — 벤더 CLI의 브라우저 로그인을 서버가 대신 실행한다(서버가 사용자 PC에 있는

@@ -3,6 +3,7 @@ import { chat } from '../../../../../src/chat.mjs';
 import { paths } from '../../../../../src/workspace.mjs';
 import { loadThread, appendTurn, resetThread } from '../../../../../src/thread.mjs';
 import { getTurnStatus } from '../../../../../src/turn-status.mjs';
+import { nudgeSync } from '../../../../../src/sync.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
 export const maxDuration = 300; // 에이전트 턴은 vault 탐색 포함 수 분까지 허용
@@ -33,6 +34,7 @@ export async function POST(req, { params }) {
     const t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
     const handover = { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked };
     await appendTurn(ws, slug, { userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments });
+    nudgeSync(); // 로컬 변경 즉시 다른 기기로 전파(준실시간 — 다음 대기 건너뜀)
     return Response.json({ reply: t.reply, sessionId: t.sessionId, handover });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });

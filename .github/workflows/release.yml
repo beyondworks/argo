@@ -1,0 +1,107 @@
+# 데스크톱 앱 릴리스 빌드 — 맥(arm64·Intel)·Windows 설치파일을 CI에서 만든다.
+# Tauri 소스는 하나지만 설치파일은 OS별로 각 러너에서 빌드해야 한다(맥에선 win을 못 만듦).
+#
+# 트리거: v* 태그 push (예: git tag v0.1.0 && git push origin v0.1.0) 또는 수동 실행.
+#
+# 사전 준비(beyondworks/argo 저장소 설정 → Secrets and variables → Actions에 등록):
+#   NEXT_PUBLIC_SUPABASE_URL        (공개값 — 빌드시 클라이언트에 인라인, 로그인/기기 맥락공유 가능하게)
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY   (공개값 — anon 키. 서비스키는 절대 넣지 말 것)
+#   RELEASE_TOKEN                   (공개 배포 repo beyondworks/argo-agent에 릴리스 발행용 PAT — contents:write)
+#   ※ SUPABASE_SERVICE_ROLE_KEY 등 서버 시크릿은 데스크톱 빌드에 넣지 않는다(설치본 유출 방지).
+#
+# 주의(후속):
+#   - 산출물은 미서명(ad-hoc)이다. 배포 시 macOS Gatekeeper·Windows SmartScreen 경고가 뜬다.
+#     정식 배포는 Apple Developer 서명+공증, Windows 코드서명 인증서 설정이 필요하다(별도).
+#   - Windows 빌드는 첫 실행 시 검증 필요(이 CI는 이 맥에서 실행 검증 불가).
+
+name: Build desktop apps
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14          # Apple Silicon
+            rust_target: aarch64-apple-darwin
+          - os: macos-13          # Intel
+            rust_target: x86_64-apple-darwin
+          - os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # 프로젝트 고유 빌드: stage-sidecar(next standalone + node 사이드카) → tauri build.
+      # bash 셸로 고정해 npm 스크립트의 &&·cd가 Windows에서도 동일하게 동작하게 한다.
+      - name: Build desktop app (stage-sidecar + tauri)
+        shell: bash
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: npm run app:build
+
+      - name: Collect installers
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp src-tauri/target/release/bundle/dmg/*.dmg   dist/ 2>/dev/null || true
+          cp src-tauri/target/release/bundle/msi/*.msi   dist/ 2>/dev/null || true
+          cp src-tauri/target/release/bundle/nsis/*.exe  dist/ 2>/dev/null || true
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: argo-${{ matrix.rust_target }}
+          path: dist/*
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # 공개 배포 repo(beyondworks/argo-agent)에 발행 — 소스(private argo)는 유출되지 않는다.
+      # cross-repo라 RELEASE_TOKEN(argo-agent contents:write PAT) 필요. draft=true라 검토 후 사람이 게시.
+      - uses: softprops/action-gh-release@v2
+        with:
+          repository: beyondworks/argo-agent
+          token: ${{ secrets.RELEASE_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: dist/**/*
+          draft: true
+          body: |
+            ## 설치 — 첫 실행 안내
+            현재 빌드는 코드 서명 전이라 처음 실행 시 OS 보안 경고가 뜹니다. 정상이며 안전합니다.
+            - **macOS**: 앱 우클릭 → 열기 → 다시 열기 (또는 시스템 설정 → 개인정보 보호 및 보안 → 확인 없이 열기)
+            - **Windows**: SmartScreen 화면에서 추가 정보 → 실행
+
+            설치파일: macOS `.dmg`(Apple Silicon `aarch64` / Intel `x64`), Windows `-setup.exe`.

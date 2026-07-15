@@ -1,8 +1,8 @@
 'use client';
 // 설정 — 회사 정보 수정, 제원, 위험 구역(보관).
-import { use, useEffect, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Icon, Spinner, Skeleton, DangerModal, api, imeGuard } from '../../../ui';
+import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 
@@ -121,8 +121,9 @@ export default function Settings({ params }) {
         </div>
       </div>
 
-      <LanguageCard />
+      <LanguageCard ws={ws} />
       <ThemeCard />
+      <TrashCard ws={ws} />
       </Section>
 
       <Section label={t('settings.ai.section')}>
@@ -165,7 +166,7 @@ export default function Settings({ params }) {
 
       <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--fg-3)', padding: '6px 2px 4px' }}>
         <a href="/legal" style={{ color: 'inherit' }}>{t('legal.link')}</a>
-        {CONTACT && <a href={`mailto:${CONTACT}?subject=${encodeURIComponent('Argo 피드백')}`} style={{ color: 'inherit' }}>{t('legal.feedback')}</a>}
+        {CONTACT && <a href={`mailto:${CONTACT}?subject=${encodeURIComponent(t('legal.feedbackSubject'))}`} style={{ color: 'inherit' }}>{t('legal.feedback')}</a>}
       </div>
 
       {archiveOpen && (
@@ -185,10 +186,18 @@ export default function Settings({ params }) {
 }
 
 /** 언어 선택 — 각 옵션 라벨은 언제나 그 언어 자신으로 표기(국제 관례). 단축키 안내 포함. */
-function LanguageCard() {
+function LanguageCard({ ws }) {
   const { lang, t, setLang } = useLang();
   const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
   const kbd = isMac ? '⌘ + /' : 'Ctrl + /';
+  // 언어 = UI 표시 + 시스템(크루 생성) 언어를 함께 전환. 회사 lang을 PUT해 크루 답변·페르소나·기억이 이 언어를 따르게 한다.
+  const pick = (code) => {
+    setLang(code);
+    if (ws) fetch(`/api/companies/${ws}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lang: code }),
+    }).then(() => window.dispatchEvent(new Event('argo:refresh'))).catch(() => {});
+  };
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.language')}</span>
@@ -198,7 +207,7 @@ function LanguageCard() {
           <button
             key={code}
             className="chip"
-            onClick={() => setLang(code)}
+            onClick={() => pick(code)}
             aria-pressed={lang === code}
             style={{
               cursor: 'pointer', padding: '6px 16px', fontSize: 12.5,
@@ -246,37 +255,123 @@ const THEME_SWATCHES = {
   'minimal-dark': ['#2e3440', '#373d48', '#81a1c1'],
 };
 
+// 아르고 시그니처 = 라이트/다크/시스템 3-모드. 나머지 테마는 "다른 스킨"으로 분리(모드 토글과 중복 제거).
+const MODE_OPTS = [['argo', 'settings.mode.system'], ['argo-light', 'settings.mode.light'], ['argo-dark', 'settings.mode.dark']];
+const ARGO_CODES = ['argo', 'argo-light', 'argo-dark'];
 function ThemeCard() {
   const { theme, setTheme } = useTheme();
   const { t } = useLang();
+  const skins = THEMES.filter((c) => !ARGO_CODES.includes(c));
+  return (
+    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* 모드 — 시스템/라이트/다크 세그먼트 (아르고 시그니처 테마의 밝기) */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        <span className="card-title">{t('settings.mode')}</span>
+        <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.mode.desc')}</p>
+        <div role="group" aria-label={t('settings.mode')}
+          style={{ display: 'inline-flex', gap: 3, alignSelf: 'flex-start', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
+          {MODE_OPTS.map(([code, label]) => (
+            <button key={code} onClick={() => setTheme(code)} aria-pressed={theme === code}
+              style={{
+                cursor: 'pointer', border: 0, borderRadius: 999, padding: '6px 18px', fontSize: 12.5, fontWeight: 600,
+                background: theme === code ? 'var(--primary)' : 'transparent',
+                color: theme === code ? 'var(--primary-fg)' : 'var(--fg-2)',
+                transition: 'background 0.15s, color 0.15s',
+              }}>
+              {t(label)}
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* 다른 스킨 — 아르고 대신 다른 색 테마 */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        <span className="card-title">{t('settings.theme.skin')}</span>
+        <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.theme.skin.desc')}</p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {skins.map((code) => {
+            const [bg, card, primary] = THEME_SWATCHES[code] ?? [];
+            return (
+              <button
+                key={code}
+                className="chip"
+                onClick={() => setTheme(code)}
+                aria-pressed={theme === code}
+                style={{
+                  cursor: 'pointer', padding: '6px 16px', fontSize: 12.5, textTransform: 'none', letterSpacing: 0,
+                  ...(theme === code ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}),
+                }}
+              >
+                <span aria-hidden="true" style={{ display: 'inline-flex', gap: 2, marginRight: 6 }}>
+                  {[bg, card, primary].map((c, i) => (
+                    <span key={i} style={{ width: 8, height: 8, borderRadius: 999, background: c, border: '1px solid var(--border-soft)' }} />
+                  ))}
+                </span>
+                {t(`settings.theme.${code}`)}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 보관함 — 삭제된 대화(회사 전체)를 모아 복구·영구삭제. 삭제=chats/.trash/로 이동(비파괴). */
+function TrashCard({ ws }) {
+  const { t } = useLang();
+  const [items, setItems] = useState(null);
+  const [busy, setBusy] = useState('');            // 처리 중 항목 id
+  const [purgeTarget, setPurgeTarget] = useState(null);
+  const load = useCallback(() => {
+    api(`/api/companies/${ws}/trash`).then((d) => setItems(d.items ?? [])).catch(() => setItems([]));
+  }, [ws]);
+  useEffect(load, [load]);
+  async function restore(it) {
+    setBusy(it.id);
+    try { await api(`/api/companies/${ws}/trash`, { id: it.id }); load(); }
+    catch { /* 실패는 다음 시도 */ } finally { setBusy(''); }
+  }
+  async function doPurge() {
+    const it = purgeTarget; setPurgeTarget(null);
+    if (!it) return;
+    setBusy(it.id);
+    try { await fetch(`/api/companies/${ws}/trash?id=${encodeURIComponent(it.id)}`, { method: 'DELETE' }); load(); }
+    catch { /* */ } finally { setBusy(''); }
+  }
   return (
     <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <span className="card-title">{t('settings.theme')}</span>
-      <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.theme.desc')}</p>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {THEMES.map((code) => {
-          const [bg, card, primary] = THEME_SWATCHES[code] ?? [];
-          return (
-            <button
-              key={code}
-              className="chip"
-              onClick={() => setTheme(code)}
-              aria-pressed={theme === code}
-              style={{
-                cursor: 'pointer', padding: '6px 16px', fontSize: 12.5, textTransform: 'none', letterSpacing: 0,
-                ...(theme === code ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}),
-              }}
-            >
-              <span aria-hidden="true" style={{ display: 'inline-flex', gap: 2, marginRight: 6 }}>
-                {[bg, card, primary].map((c, i) => (
-                  <span key={i} style={{ width: 8, height: 8, borderRadius: 999, background: c, border: '1px solid var(--border-soft)' }} />
-                ))}
+      <span className="card-title">{t('settings.trash')}{items?.length ? ` · ${items.length}` : ''}</span>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.trash.desc')}</p>
+      {items === null ? <Skeleton h={40} /> : items.length === 0 ? (
+        <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{t('settings.trash.empty')}</span>
+      ) : (
+        <div style={{ display: 'grid', gap: 6 }}>
+          {items.map((it) => (
+            <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid var(--border-soft)', borderRadius: 10, minWidth: 0 }}>
+              <span style={{ minWidth: 0, flex: 1 }}>
+                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title || it.gist || t('chat.sessions.untitled')}</span>
+                <span className="nav-sub">{it.crew} · {new Date(it.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: it.count })}</span>
               </span>
-              {t(`settings.theme.${code}`)}
-            </button>
-          );
-        })}
-      </div>
+              <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy === it.id} onClick={() => restore(it)}>
+                {busy === it.id ? <Spinner size={11} /> : t('settings.trash.restore')}
+              </button>
+              <button type="button" className="btn sm" style={{ flex: 'none', color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={busy === it.id} onClick={() => setPurgeTarget(it)}>
+                {t('settings.trash.purge')}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {purgeTarget && (
+        <ConfirmModal
+          title={t('settings.trash.purgeTitle')}
+          description={t('settings.trash.purgeConfirm')}
+          confirmLabel={t('settings.trash.purge')}
+          tone="danger"
+          onConfirm={doPurge}
+          onClose={() => setPurgeTarget(null)}
+        />
+      )}
     </div>
   );
 }

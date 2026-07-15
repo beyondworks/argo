@@ -4,16 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Argo</title>
-<style>
-  html, body { margin: 0; height: 100%; background: #10141c; color: #d9c98a;
-    font-family: -apple-system, "Pretendard", system-ui, sans-serif;
-    display: flex; align-items: center; justify-content: center; }
-  .box { text-align: center; }
-  .star { font-size: 44px; color: #d9b23a; }
-  .msg { margin-top: 12px; font-size: 14px; opacity: .8; }
-  .sub { margin-top: 6px; font-size: 12px; opacity: .5; }
-  a { color: #d9b23a; }
-</style>
+<link rel="stylesheet" href="/boot.css" />
 </head>
 <body>
   <!-- 데스크톱 앱 셸 — 회사가 사는 로컬 상주 서버(3001)를 연다. 서버는 부팅 시 자동 기동(launchd/systemd). -->
@@ -22,20 +13,7 @@
     <div class="msg">Argo에 연결 중…</div>
     <div class="sub" id="hint"></div>
   </div>
-  <script>
-    // 상주 서버 후보 — 이 기기(3001) 우선, 설치기 기본(3999) 폴백. 준비 안 됐으면 재시도.
-    var TARGETS = ['http://localhost:3001', 'http://localhost:3999'];
-    function probe(i) {
-      if (i >= TARGETS.length) {
-        document.getElementById('hint').textContent = '로컬 서버 준비 중… 잠시만요';
-        setTimeout(function () { probe(0); }, 1500);
-        return;
-      }
-      fetch(TARGETS[i] + '/login', { mode: 'no-cors' })
-        .then(function () { location.replace(TARGETS[i]); })
-        .catch(function () { probe(i + 1); });
-    }
-    probe(0);
-  </script>
+  <!-- CSP 견고성(P0-4): 인라인 스크립트를 self-served 파일로 분리 — Tauri가 nonce를 주입해 'unsafe-inline'이 무시돼도 막히지 않게 -->
+  <script src="/boot.js"></script>
 </body>
 </html>

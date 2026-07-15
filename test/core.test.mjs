@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hkdfSync, createCipheriv, randomBytes } from 'node:crypto';
 
-import { writeJsonAtomic, readJson, readJsonLenient } from '../src/jsonstore.mjs';
-import { mergeLedger, isLedger, isText, isThread } from '../src/sync.mjs';
+import { writeJsonAtomic, writeFileAtomic, readJson, readJsonLenient } from '../src/jsonstore.mjs';
+import { mergeLedger, mergeThread, isLedger, isText, isThread, massDeleteBrake, isUnderFailed, archivalCreateNames } from '../src/sync.mjs';
 import { isDue } from '../src/routines.mjs';
 import { createPairing, bindPairing, claimPairing } from '../app/api/auth/pair/store.mjs';
 
@@ -68,6 +68,75 @@ test('mergeLedger: 두 기기 append 행 합집합(유실 없음)', () => {
 test('mergeLedger: 빈 입력 안전', () => {
   assert.equal(mergeLedger(Buffer.from(''), Buffer.from('')).length, 0);
   assert.equal(mergeLedger(Buffer.from('{"a":1}\n'), Buffer.from('')).toString().trim(), '{"a":1}');
+});
+
+test('massDeleteBrake: 회사 통째 삭제·대량 배치는 중단, 소량 삭제는 허용', () => {
+  assert.equal(massDeleteBrake(0, 0), false);      // 빈 상태
+  assert.equal(massDeleteBrake(1, 10), false);     // 소량 삭제 허용
+  assert.equal(massDeleteBrake(5, 10), false);     // 절반이지만 절대치 미만 허용
+  assert.equal(massDeleteBrake(10, 10), true);     // 전부 삭제 → 중단
+  assert.equal(massDeleteBrake(4, 4), true);       // 작은 회사 통째 삭제 → 중단(핵심)
+  assert.equal(massDeleteBrake(2, 2), true);       // 2개 회사 전멸 → 중단
+  assert.equal(massDeleteBrake(1, 2), false);      // 2개 중 1개 → 허용
+  assert.equal(massDeleteBrake(8, 16), true);      // 대량 배치(8↑) → 중단
+  assert.equal(massDeleteBrake(7, 16), false);     // 8 미만·절반 미만 → 허용
+});
+
+/* ── [B] 스레드 충돌 union 병합 — 웹↔앱 동시 편집 turn 유실 방지 ── */
+test('mergeThread: 동시 편집 turn 합집합(양쪽 유실 없음, ts 정렬, 공통 dedup)', () => {
+  const local = Buffer.from(JSON.stringify({ sessionId: 'sL', messages: [
+    { who: 'user', text: 'hi', ts: 1 }, { who: 'crew', text: 'hello', ts: 2 }, { who: 'user', text: '앱에서 씀', ts: 5 },
+  ] }));
+  const remote = Buffer.from(JSON.stringify({ sessionId: 'sR', messages: [
+    { who: 'user', text: 'hi', ts: 1 }, { who: 'crew', text: 'hello', ts: 2 }, { who: 'user', text: '웹에서 씀', ts: 4 },
+  ] }));
+  const merged = JSON.parse(mergeThread(local, remote, 'remote').toString());
+  const texts = merged.messages.map((m) => m.text);
+  assert.ok(texts.includes('앱에서 씀') && texts.includes('웹에서 씀'), '양쪽 고유 turn 보존(LWW 유실 없음)');
+  assert.equal(merged.messages.filter((m) => m.text === 'hi').length, 1, '공통 turn dedup');
+  assert.deepEqual(merged.messages.map((m) => m.ts), [1, 2, 4, 5], 'ts 오름차순');
+  assert.equal(merged.sessionId, 'sR', 'prefer=remote → 원격 sessionId로 수렴');
+  assert.equal(JSON.parse(mergeThread(local, remote, 'local').toString()).sessionId, 'sL', 'prefer=local → 로컬');
+});
+test('mergeThread: 파싱 불가한 쪽은 반대쪽 blob 채택(빈 상태 리셋 금지)', () => {
+  const good = Buffer.from(JSON.stringify({ sessionId: 's', messages: [{ who: 'user', text: 'x', ts: 1 }] }));
+  const broken = Buffer.from('{ not json');
+  assert.equal(mergeThread(broken, good, 'remote'), good, '로컬 손상 → 원격 정상 blob');
+  assert.equal(mergeThread(good, broken, 'remote'), good, '원격 손상 → 로컬 정상 blob');
+});
+
+/* ── [A] walk 실패·아카이브 이동 판별 — 브레이크 무력화/오삭제 방지 ── */
+test('isUnderFailed: walk 실패 subtree만 삭제 보류 대상(prefix 오탐 없음)', () => {
+  const failed = new Set(['chats/.archive']);
+  assert.equal(isUnderFailed('chats/.archive/sales-1.json', failed), true, '실패 subtree 하위');
+  assert.equal(isUnderFailed('chats/.archive', failed), true, '실패 dir 자신');
+  assert.equal(isUnderFailed('chats/sales.json', failed), false, '무관 경로');
+  assert.equal(isUnderFailed('chats/.archive2/x.json', failed), false, 'prefix 오탐 방지(.archive2≠.archive)');
+  assert.equal(isUnderFailed('x', new Set()), false, '실패 없음 → false');
+  assert.equal(isUnderFailed('anything', new Set([''])), true, '루트 실패 → 전부 unknown');
+});
+test('archivalCreateNames: 이번 사이클 새로 나타난 아카이브 파일 basename(이동 목적지만)', () => {
+  const state = { 'chats/.archive/sales-1.json': { h: 'a' } };            // base엔 .archive에만
+  const local = {
+    'chats/.archive/sales-1.json': { h: 'a' },                            // 그대로(이동 원본)
+    'chats/.trash/sales-1.json': { h: 'a' },                              // 새로 생김(이동 목적지)
+    'chats/sales.json': { h: 'b' },                                       // 아카이브 아님
+  };
+  const names = archivalCreateNames(local, state);
+  assert.ok(names.has('sales-1.json'), '이동 목적지 basename 포함(브레이크 제외 근거)');
+  assert.equal(names.has('sales.json'), false, '비아카이브 제외');
+});
+
+/* ── [C] 원자 버퍼 쓰기 — 크래시로 파일이 잘려 손상되는 씨앗 제거 ── */
+test('writeFileAtomic: 버퍼 원자쓰기 + mode, 동시 쓰기에도 원본 오염 없음', async () => {
+  const d = await tmp();
+  const f = join(d, 'blob.bin');
+  await writeFileAtomic(f, Buffer.from('한글 bytes'), { mode: 0o600 });
+  assert.equal((await readFile(f)).toString(), '한글 bytes');
+  assert.equal((await stat(f)).mode & 0o777, 0o600, '지정 mode 적용');
+  await Promise.all(Array.from({ length: 20 }, (_, i) => writeFileAtomic(f, Buffer.from(`v${i}`))));
+  assert.ok((await readFile(f)).toString().startsWith('v'), '항상 완전한 내용(tmp→rename)');
+  await rm(d, { recursive: true, force: true });
 });
 
 test('파일 분류', () => {

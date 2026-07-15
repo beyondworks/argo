@@ -3,7 +3,7 @@
 // 격리: 경쟁 중 시안은 크루 개인 대화를 오염시키지 않고, 채택본만 승자 스레드에 기록된다.
 // 레이아웃은 회의실과 같은 문법 — 헤더 라인 → 전체 높이 카드 → 하단 고정 컴포저 → 힌트 (UI 일관성).
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, api, imeGuard } from '../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, ConfirmModal, api, imeGuard } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 const MAX_PICK = 3;
@@ -18,6 +18,7 @@ export default function Compete({ params }) {
   const [picked, setPicked] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [adoptTarget, setAdoptTarget] = useState(null); // 채택 확인 모달 대상 slug
   const compRef = useRef(null);
   compRef.current = comp;
 
@@ -60,10 +61,11 @@ export default function Compete({ params }) {
     catch (e) { setError(String(e.message)); }
   }
 
-  async function adopt(slug) {
-    const name = comp?.entrants.find((x) => x.slug === slug)?.name ?? slug;
-    if (busy || !window.confirm(t('compete.confirmAdopt', { name }))) return;
-    setBusy(true); setError('');
+  function adopt(slug) { if (!busy) setAdoptTarget(slug); } // window.confirm(Tauri 무동작) 대신 인앱 ConfirmModal
+  async function doAdopt() {
+    const slug = adoptTarget;
+    if (!slug || busy) return;
+    setBusy(true); setError(''); setAdoptTarget(null);
     try {
       const d = await api(`/api/companies/${ws}/compete/${comp.id}`, { action: 'adopt', slug });
       setComp(d); loadList();
@@ -74,7 +76,19 @@ export default function Compete({ params }) {
   const winnerName = comp?.winner ? (comp.entrants.find((x) => x.slug === comp.winner)?.name ?? comp.winner) : null;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 118px)' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
+      {adoptTarget && (
+        <ConfirmModal
+          title={t('compete.adopt')}
+          description={t('compete.confirmAdopt', { name: comp?.entrants.find((x) => x.slug === adoptTarget)?.name ?? adoptTarget })}
+          confirmLabel={t('common.confirm')}
+          tone="primary"
+          busy={busy}
+          onConfirm={doAdopt}
+          onClose={() => setAdoptTarget(null)}
+        />
+      )}
+      {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지(입력창 하향·대화영역 확대). 본문 컬럼 minHeight:0과 한 세트(회의실·DM 동일). */}
       {/* 경쟁 레일 — 지난 경쟁이 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr) */}
       <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
@@ -104,7 +118,7 @@ export default function Compete({ params }) {
       </div>
 
       {/* 본문 — 회의실과 동일 문법: 헤더 라인 / 전체 높이 카드 / 하단 컴포저 */}
-      <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0 }}>
+      <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className="microlabel">{t('compete.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
@@ -183,7 +197,7 @@ export default function Compete({ params }) {
                 return (
                   <button type="button" key={a.slug} className="chip" onClick={() => togglePick(a.slug)}
                     aria-pressed={on} title={a.role}
-                    style={{ cursor: 'pointer', ...(on ? { background: 'var(--primary)', color: '#fff', borderColor: 'var(--primary)' } : {}) }}>
+                    style={{ cursor: 'pointer', ...(on ? { background: 'var(--primary)', color: 'var(--primary-fg)', borderColor: 'var(--primary)' } : {}) }}>
                     {a.name} — {a.role}
                   </button>
                 );

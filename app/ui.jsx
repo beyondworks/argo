@@ -236,7 +236,10 @@ export function Markdown({ text, onWikiLink }) {
   html = html.replace(/href="(?!https?:|#|\/)[^"]*"/gi, 'href="#"');
   // 크루가 주는 링크는 항상 새 창 — 대화 흐름을 벗어나지 않는다
   html = html.replace(/<a /gi, '<a target="_blank" rel="noopener noreferrer" ');
-  html = html.replace(/\[\[(.+?)\]\]/g, (_, p) => `<span class="wikilink" data-wiki="${p}">${p}</span>`);
+  html = html.replace(/\[\[(.+?)\]\]/g, (_, p) => {
+    const attr = p.replace(/"/g, '&quot;'); // marked 이스케이프에 의존하지 않고 속성 breakout 자체 차단
+    return `<span class="wikilink" data-wiki="${attr}">${p}</span>`;
+  });
   return (
     <div
       className="md"
@@ -335,6 +338,80 @@ export function DangerModal({ title, description, requireText, phraseKey = 'dang
           >
             {busy ? <Spinner size={12} /> : confirmLabel}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 경량 확인 모달 — 파괴/확정 액션용(타입-투-컨펌 없이). window.confirm 대체(Tauri 데스크톱 웹뷰 호환).
+    tone: 'danger'(삭제류) | 'primary'(확정류). */
+export function ConfirmModal({ title, description, confirmLabel, tone = 'danger', busy, onConfirm, onClose }) {
+  const { t } = useLang();
+  useScrollLock();
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const danger = tone === 'danger';
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
+      <div className="card card-float fade-up" style={{ width: 'min(400px, 100%)', ...(danger ? { borderColor: 'var(--danger)' } : {}) }} onClick={(e) => e.stopPropagation()}>
+        <div className="card-head">
+          <span className="card-title" style={danger ? { color: 'var(--danger)' } : undefined}>{title}</span>
+          <span className="rule" />
+          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+        </div>
+        <div style={{ padding: '0 20px 18px', display: 'grid', gap: 14 }}>
+          <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.65 }}>{description}</p>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn sm" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
+            <button type="button" className={danger ? 'btn sm' : 'btn btn-primary sm'} disabled={busy} onClick={onConfirm}
+              style={danger ? { color: 'var(--danger)', borderColor: 'var(--danger)' } : undefined}>
+              {busy ? <Spinner size={12} /> : confirmLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 경량 입력 모달 — 텍스트 한 줄 입력(예: 이름 변경). window.prompt 대체(Tauri 데스크톱 웹뷰 호환).
+    onConfirm(value)로 트림된 값을 넘긴다. 빈 값이면 확정 불가. */
+export function InputModal({ title, label, defaultValue = '', placeholder, confirmLabel, busy, onConfirm, onClose }) {
+  const { t } = useLang();
+  useScrollLock();
+  const [val, setVal] = useState(defaultValue);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const submit = () => { const v = val.trim(); if (v && !busy) onConfirm(v); };
+  const field = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13, width: '100%' };
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
+      <div className="card card-float fade-up" style={{ width: 'min(400px, 100%)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="card-head">
+          <span className="card-title">{title}</span>
+          <span className="rule" />
+          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+        </div>
+        <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
+          <label style={{ display: 'grid', gap: 5 }}>
+            {label && <span style={{ fontSize: 12 }}>{label}</span>}
+            <input suppressHydrationWarning value={val} onChange={(e) => setVal(e.target.value)} placeholder={placeholder}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}
+              style={field} autoFocus {...imeGuard} />
+          </label>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn sm" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
+            <button type="button" className="btn btn-primary sm" disabled={busy || !val.trim()} onClick={submit}>
+              {busy ? <Spinner size={12} /> : confirmLabel}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -2,7 +2,7 @@
 // 루틴 — 크루에게 반복 지시를 예약하고, 원클릭으로 즉시 실행한다.
 // 템플릿 원클릭 생성 → 폼 프리필. 실행 결과는 vault 기억으로 남는다.
 import { use, useEffect, useState } from 'react';
-import { Icon, Avatar, Spinner, Skeleton, useScrollLock, api, imeGuard, timeAgo } from '../../../ui';
+import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, api, imeGuard, timeAgo } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 function scheduleLabel(s, t, DOW) {
@@ -24,6 +24,7 @@ export default function Routines({ params }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [runTarget, setRunTarget] = useState(null); // 실행 팝업 대상 루틴
+  const [delTarget, setDelTarget] = useState(null); // 삭제 확인 모달 대상 루틴
 
   function load() {
     api(`/api/companies/${ws}/routines`).then((d) => setRoutines(d.routines)).catch(() => setRoutines([]));
@@ -68,8 +69,11 @@ export default function Routines({ params }) {
     load();
   }
 
-  async function remove(r) {
-    if (!window.confirm(t('routines.deleteConfirm', { title: r.title }))) return;
+  function remove(r) { setDelTarget(r); } // window.confirm(Tauri 무동작) 대신 인앱 ConfirmModal
+  async function doRemove() {
+    const r = delTarget;
+    if (!r) return;
+    setDelTarget(null); // 모달을 await 전에 닫아 확인 버튼 더블클릭(이중 DELETE) 차단
     await fetch(`/api/companies/${ws}/routines?id=${r.id}`, { method: 'DELETE' });
     load();
   }
@@ -78,6 +82,16 @@ export default function Routines({ params }) {
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
+      {delTarget && (
+        <ConfirmModal
+          title={t('routines.deleteTitle')}
+          description={t('routines.deleteConfirm', { title: delTarget.title })}
+          confirmLabel={t('common.delete')}
+          tone="danger"
+          onConfirm={doRemove}
+          onClose={() => setDelTarget(null)}
+        />
+      )}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span className="microlabel">{t('routines.header')}</span>
         <button className="btn sm" onClick={() => openForm()}>

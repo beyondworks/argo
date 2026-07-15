@@ -10,20 +10,28 @@
 import { readFile, writeFile, rename, mkdir, open, rm } from 'node:fs/promises';
 import { dirname, join, basename } from 'node:path';
 
-/** 원자적 쓰기 — tmp write → fsync → rename. 같은 디렉터리 tmp라야 rename이 원자적(동일 파일시스템). */
-export async function writeJsonAtomic(file, data) {
+/** 원자적 파일 쓰기(버퍼/문자열) — tmp write → fsync → rename. 같은 디렉터리 tmp라야 rename이 원자적(동일 파일시스템).
+    부분 쓰기가 원본을 오염 못 한다. 동기화가 스레드·blob을 쓸 때 크래시로 파일이 잘려 '손상→삭제 오전파'로
+    번지는 것을 막는 토대(.tmp-는 동기화 EXCLUDE 대상이라 원격에 새지 않는다). */
+export async function writeFileAtomic(file, body, { mode = 0o644 } = {}) {
   await mkdir(dirname(file), { recursive: true });
   const tmp = join(dirname(file), `.tmp-${basename(file)}-${process.pid}-${randomSuffix()}`);
-  const body = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
   let fh;
   try {
-    fh = await open(tmp, 'w');
+    fh = await open(tmp, 'w', mode);
     await fh.writeFile(body);
     await fh.sync(); // 디스크까지 내려쓴 뒤 rename — 크래시 창 최소화
   } finally {
     await fh?.close();
   }
   await rename(tmp, file); // 원자적 교체 — 원본은 항상 완전한 이전 상태 또는 완전한 새 상태
+}
+
+/** 원자적 JSON 저장 — 0600(워크스페이스 JSON은 시크릿: .secrets.json·connections·페어링 자격을 담을 수 있어 소유자만).
+    rename이 tmp의 모드를 보존하므로 기존 0644 파일도 다음 쓰기에 0600으로 조여진다(업그레이드 안전). (P1-8) */
+export async function writeJsonAtomic(file, data) {
+  const body = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  await writeFileAtomic(file, body, { mode: 0o600 });
 }
 
 /** 손상 안전 로드. 반환: 파싱된 값 | (부재 시) fallback.

@@ -4,7 +4,7 @@
 import { readFile, writeFile, readdir, stat, rename, mkdir, appendFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { paths } from './workspace.mjs';
+import { paths, loadCompany } from './workspace.mjs';
 import { saveNote, updateIndex } from './memory.mjs';
 import { appendUsage } from './usage.mjs';
 import { appendEvent } from './events.mjs';
@@ -13,7 +13,20 @@ import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 const WATERMARK = (wsId) => join(paths(wsId).vault, '.consolidate.json');
 const CAP = 14_000; // 정리 1회당 읽는 일지 총량 — 넘치면 다음 실행이 이어서 정리
 
-const PROMPT = (journals, noteTitles) => `당신은 회사 기억의 사서다. 아래 일지(대화 원본)를 읽고 재사용 가치가 있는 지식만 주제 노트로 정제하라.
+const PROMPT = (journals, noteTitles, lang = 'ko') => lang === 'en' ? `You are the librarian of the company's memory. Read the journals (raw conversations) below and distill only knowledge worth reusing into topic notes.
+Do not call any tools — the text provided below is all the material you have.
+
+Rules:
+- Each topic note is the single source of truth for its topic. If a topic matches an existing note title, reuse that exact title to update it (don't spawn new titles).
+- Note content should center on conclusions, decisions, numbers, and rules that "the next crew handling this topic can use right away." No conversation quotes or process narration.
+- signal gate: keep only content that passes "does this record help future crew work better?" If it doesn't pass, drop it.
+- If the journals hold nothing worth distilling, return an empty array.
+- Output ONLY JSON (no code fences, no explanation): {"notes":[{"title":"...","content":"markdown body"}]}
+
+Existing topic note titles: ${noteTitles.length ? noteTitles.join(' | ') : '(none)'}
+
+--- journals ---
+${journals}` : `당신은 회사 기억의 사서다. 아래 일지(대화 원본)를 읽고 재사용 가치가 있는 지식만 주제 노트로 정제하라.
 도구를 호출하지 마라 — 아래 제공된 텍스트가 자료의 전부다.
 
 규칙:
@@ -61,7 +74,7 @@ async function addSources(file, rels) {
   if (!fresh.length) return;
   if (!/\n## 근거\n/.test(text)) text = `${text.trimEnd()}\n\n## 근거\n`;
   else text = text.trimEnd() + '\n';
-  await writeFile(file, `${text}${fresh.map((r) => `- [[${r}]]`).join('\n')}\n`);
+  await writeJsonAtomic(file, `${text}${fresh.map((r) => `- [[${r}]]`).join('\n')}\n`);
 }
 
 /** 정리 1회 실행 — 반환: 갱신/생성된 노트 목록. 새 내용 없으면 빈 배열. */
@@ -72,6 +85,7 @@ export async function consolidateMemory(wsId) {
   if (text.trim().length < 400) return { notes: [] };
 
   const p = paths(wsId);
+  const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({})); // 시스템 언어 — 주제 노트 정제 언어(기존 회사=ko 폴백)
   let noteTitles = [];
   try {
     for (const n of (await readdir(p.notes)).filter((f) => f.endsWith('.md'))) {
@@ -83,7 +97,7 @@ export async function consolidateMemory(wsId) {
   let out = '';
   const t0 = Date.now();
   for await (const msg of query({
-    prompt: PROMPT(text, noteTitles),
+    prompt: PROMPT(text, noteTitles, lang),
     options: {
       cwd: p.root,
       allowedTools: [],

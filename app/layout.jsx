@@ -5,9 +5,10 @@ import { ThemeProvider } from './theme';
 // 첫 페인트 전에 저장된 테마를 적용 — FOUC 방지 (ThemeProvider의 effect보다 먼저 실행)
 const themeBoot = `try{var t=localStorage.getItem('argo-theme');if(t&&t!=='argo')document.documentElement.dataset.theme=t}catch(e){}`;
 
+// 글로벌 타깃 — 탭 제목·SEO는 영어 기본(서버 metadata라 t() 자동전환 불가). 앱 UI는 argo-lang로 한/영 전환된다.
 export const metadata = {
-  title: 'Argo — 한 배에 오른 AI 크루',
-  description: '프롬프트 한 줄로 전문 AI 크루를 영입하고, 회사가 폴더 단위 기억으로 항해합니다.',
+  title: 'Argo — AI crew on one ship',
+  description: 'Hire expert AI crew with one prompt; your company sails on folder-based memory.',
 };
 
 export default function RootLayout({ children }) {

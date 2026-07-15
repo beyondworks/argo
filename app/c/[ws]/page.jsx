@@ -2,7 +2,7 @@
 // 데크 — 아르고호 계기판. 좌: 본 계기(메트릭·영입·크루·기억·차트), 우: 보조 계기 레일(별자리·항해일지·명판).
 import { use, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, useScrollLock, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
+import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, useScrollLock, InputModal, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
 import { Constellation3D, GraphModal } from './graphview';
 import { useLang } from '../../i18n';
 
@@ -23,7 +23,22 @@ export default function Deck({ params }) {
   const [q, setQ] = useState('');
   const [graphOpen, setGraphOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null); // 크루 신원 수정 모달
+  const [renameTarget, setRenameTarget] = useState(null); // 팀 이름변경 입력 모달 대상(현재 팀명)
   const hireRef = useRef(null); // 사이드바 '크루 추가'가 포커스+깜빡 대상으로 삼는 입력창
+
+  // 팀 이름변경 — window.prompt(Tauri 무동작) 대신 인앱 InputModal. onConfirm(새 이름)
+  async function doRenameTeam(to) {
+    const team = renameTarget;
+    setRenameTarget(null);
+    if (!to?.trim() || to.trim() === team) return;
+    const res = await fetch(`/api/companies/${ws}/agents`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ from: team, to: to.trim() }),
+    });
+    if (!res.ok) { setError((await res.json()).error); return; }
+    load();
+    window.dispatchEvent(new Event('argo:refresh'));
+  }
 
   function load() {
     api(`/api/companies/${ws}`).then(setData).catch((e) => setError(String(e.message)));
@@ -248,17 +263,7 @@ export default function Deck({ params }) {
                                   className="microlabel"
                                   style={{ cursor: 'pointer', color: 'var(--fg-3)', display: 'inline-flex', alignItems: 'center', gap: 3 }}
                                   title={t('deck.renameTeam')}
-                                  onClick={async () => {
-                                    const to = window.prompt(t('deck.renameTeamPrompt', { team }), team);
-                                    if (!to?.trim() || to.trim() === team) return;
-                                    const res = await fetch(`/api/companies/${ws}/agents`, {
-                                      method: 'PATCH', headers: { 'content-type': 'application/json' },
-                                      body: JSON.stringify({ from: team, to }),
-                                    });
-                                    if (!res.ok) { setError((await res.json()).error); return; }
-                                    load();
-                                    window.dispatchEvent(new Event('argo:refresh'));
-                                  }}
+                                  onClick={() => setRenameTarget(team)}
                                 >
                                   <Icon name="edit" size={11} />
                                 </button>
@@ -400,6 +405,17 @@ export default function Deck({ params }) {
           docs={docs}
           onClose={() => setGraphOpen(false)}
           onSelect={(rel) => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`)}
+        />
+      )}
+
+      {renameTarget != null && (
+        <InputModal
+          title={t('deck.renameTeam')}
+          label={t('deck.renameTeamPrompt', { team: renameTarget })}
+          defaultValue={renameTarget}
+          confirmLabel={t('common.save')}
+          onConfirm={doRenameTeam}
+          onClose={() => setRenameTarget(null)}
         />
       )}
     </div>

@@ -1,7 +1,8 @@
 // 회사의 뇌(vault) — 기둥 4. 3층 구조: 일지(journal, 턴 원본 append) → 주제 노트(notes, 정제된 단일 진실)
 // → 정리 데몬(consolidate)이 매일 일지를 주제 노트로 통합한다. 자동 [[링크]] + 인덱스 갱신.
 // 스파이크: TF-IDF 코사인 유사도(무의존). 프로덕션: pgvector 임베딩으로 교체(인터페이스 동일).
-import { readFile, writeFile, readdir, appendFile, mkdir } from 'node:fs/promises';
+import { readFile, readdir, appendFile, mkdir } from 'node:fs/promises';
+import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
 import { join, basename, relative } from 'node:path';
 import { paths } from './workspace.mjs';
@@ -91,7 +92,7 @@ async function appendLink(file, relPath) {
   let text = await readFile(file, 'utf8');
   if (text.includes(`[[${name}]]`)) return; // 중복 링크 방지
   if (!/\n## 관련\n/.test(text)) text = `${text.trimEnd()}\n\n## 관련\n`;
-  await writeFile(file, `${text.trimEnd()}\n- [[${name}]]\n`);
+  await writeJsonAtomic(file, `${text.trimEnd()}\n- [[${name}]]\n`);
 }
 
 /** 턴 핸드오버 — 크루별 하루 1파일 일지에 append(원수 층). 링크·정제는 정리 데몬이 맡는다. */
@@ -130,7 +131,7 @@ export async function saveNote(wsId, title, content, { merge = false } = {}) {
     // 기존 '## 관련' 링크는 보존한다 — 정제 내용만 교체
     related = (await readFile(file, 'utf8')).match(/\n## 관련\n[\s\S]*$/)?.[0] ?? '';
   }
-  await writeFile(file, `---\nupdated: ${new Date().toISOString().slice(0, 10)}\n---\n# ${title.trim()}\n\n${content.trim()}\n${related}`);
+  await writeJsonAtomic(file, `---\nupdated: ${new Date().toISOString().slice(0, 10)}\n---\n# ${title.trim()}\n\n${content.trim()}\n${related}`);
   const linked = await autoLink(wsId, file);
   return { file, linked };
 }
@@ -149,7 +150,7 @@ export async function updateIndex(wsId) {
   const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
   const journals = docs.filter((d) => d.rel.startsWith('journal/') && basename(d.rel) >= cutoff);
   const legacy = docs.filter((d) => d.rel.startsWith('conversations/')).slice(0, 10);
-  await writeFile(p.index, `# 회사 기억 인덱스
+  await writeJsonAtomic(p.index, `# 회사 기억 인덱스
 
 주제 노트가 정리된 지식이다 — 먼저 여기서 찾고, 상세 근거가 필요할 때만 일지를 열어라.
 
@@ -193,6 +194,6 @@ export async function writeBossProfile(wsId, items) {
 
 ${BOSS_SECTIONS.map(sec).join('\n')}`;
   await mkdir(p.notes, { recursive: true });
-  await writeFile(join(p.vault, BOSS_PROFILE_REL), md);
+  await writeJsonAtomic(join(p.vault, BOSS_PROFILE_REL), md);
   return readBossProfile(wsId);
 }

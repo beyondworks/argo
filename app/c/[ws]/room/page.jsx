@@ -63,7 +63,9 @@ export default function Room({ params }) {
   }
 
   async function endMeeting() {
-    if (busy || !window.confirm(t('room.endConfirm'))) return;
+    if (busy) return;
+    // 회의록은 서버(endMeeting)가 journal + .archive로 남기므로 비파괴 — 확인창 없이 바로 마친다.
+    // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작 → 제거(새 대화와 동일 근본 원인).
     try {
       const r = await fetch(`/api/companies/${ws}/room`, { method: 'DELETE' });
       const d = await r.json();
@@ -83,7 +85,9 @@ export default function Room({ params }) {
   const shown = viewing ? archMsgs : messages;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 118px)' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
+      {/* height offset 100 = topbar(56)+상단패딩(26)+하단여백(18). marginBottom -70 = 원래 오프셋 170과의 차 —
+          .content 하단 패딩(88) 중 70을 상쇄해 body 스크롤을 막으면서 입력창을 아래로 내려 대화 영역을 넓힌다. 메시지 컬럼 minHeight:0과 한 세트(회의실·컨테스트·DM 동일). */}
       {/* 회의 레일 — 마친 회의가 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr) */}
       <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
@@ -106,21 +110,13 @@ export default function Room({ params }) {
         {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('room.sessions.empty')}</span>}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0 }}>
+      <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className="microlabel">{t('room.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
           {!viewing && (messages?.length ?? 0) > 0 && (
             <button className="btn sm" disabled={busy} onClick={endMeeting}>{t('room.end')}</button>
           )}
-          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-            {agents.map((a) => (
-              <button key={a.slug} className="chip" style={{ cursor: 'pointer' }} title={a.role}
-                onClick={() => setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}@${a.name} `)}>
-                @{a.name}
-              </button>
-            ))}
-          </div>
         </div>
 
         <div className="card" style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0 }}>
@@ -130,7 +126,7 @@ export default function Room({ params }) {
             <div style={{ display: 'grid', gap: 14 }}>
               {shown.map((m, i) => m.who === 'user' ? (
                 <div key={i} style={{ justifySelf: 'end', maxWidth: '78%' }}>
-                  <div className="bubble-user" style={{ background: 'var(--primary)', color: '#fff', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>{m.text}</div>
+                  <div className="bubble-user" style={{ background: 'var(--primary)', color: 'var(--primary-fg)', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>{m.text}</div>
                 </div>
               ) : (
                 <div key={i} style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
@@ -159,6 +155,18 @@ export default function Room({ params }) {
           </div>
         ) : (
           <div style={{ display: 'grid', gap: 6 }}>
+            {/* 크루 칩 — 입력창 좌측 상단(컨테스트와 동일 배치). 클릭하면 @이름을 입력에 넣는다. */}
+            {agents.length > 0 && (
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span className="microlabel">{t('room.mention')}</span>
+                {agents.map((a) => (
+                  <button key={a.slug} className="chip" style={{ cursor: 'pointer' }} title={a.role}
+                    onClick={() => setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}@${a.name} `)}>
+                    @{a.name}
+                  </button>
+                ))}
+              </div>
+            )}
             {suggests.length > 0 && (
               <div style={{ display: 'flex', gap: 5 }}>
                 {suggests.map((a) => (

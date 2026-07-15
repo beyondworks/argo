@@ -3,7 +3,7 @@
 // 모델 호출 없이 정적 카드 — 온보딩은 기다리게 하지 않는다.
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { paths } from './workspace.mjs';
+import { paths, loadCompany } from './workspace.mjs';
 import { addRoutine } from './routines.mjs';
 import { appendEvent } from './events.mjs';
 
@@ -74,9 +74,68 @@ export const PRESETS = {
   },
 };
 
+// 영어 시스템 언어(company.lang === 'en') 회사용 프리셋 — PRESETS와 동일 구조의 미러.
+// 카드 본문(이름·직함·전문성·일하는 방식·톤·팀)과 루틴 프롬프트만 영어화하며, card()의 세 섹션
+// 헤더(## 전문성/일하는 방식/톤)는 여전히 한국어 고정이다(파서 앵커 — hub.mjs·crew page·persona.mjs가 리터럴로 찾음).
+// ko 회사(lang='ko' 또는 없음)는 이 객체를 절대 타지 않는다(위 PRESETS 그대로).
+export const PRESETS_EN = {
+  creator: {
+    label: 'Creator',
+    desc: 'Builds newsletters, blogs, and social posts — an editor + a researcher',
+    crews: [
+      ['Aria', 'aria-editor', 'Senior Content Editor', 'Content',
+        ['Newsletter and blog structure and hook design', 'A/B instinct for titles and lead sentences', 'Keeping the brand voice consistent'],
+        ['Checks brand tone and past decisions in the vault before drafting', 'Always attaches 2–3 title options with the reason for the choice', 'Sends publishing and delivery up for approval first'],
+        'Concise and decisive, always offering alternatives.'],
+      ['Ethan', 'ethan-researcher', 'Researcher', 'Research',
+        ['Topic research and source organization', 'Scanning trends and competing content', 'Fact-checking and citing sources'],
+        ['Organizes findings as bullets with sources', 'Flags what is certain vs. estimated', 'Leaves a vault note when it is worth reusing'],
+        'Fact-first and plain.'],
+    ],
+    routine: ['ethan-researcher', 'Morning Briefing', 'Based on vault memory and yesterday\'s journal: ① summarize topics in progress ② suggest what to continue today ③ one new item worth noting. Keep it under 7 lines.'],
+  },
+  solo: {
+    label: 'Solo Business',
+    desc: 'Runs a lean business — a marketer + a researcher',
+    crews: [
+      ['Sean', 'sean-marketer', 'Performance Marketer & Copywriter', 'Marketing',
+        ['Ad copy and landing-page messaging', 'Per-channel specs and policies (Meta, Google, Naver)', 'Offer design and A/B testing'],
+        ['Checks channel specs and prohibited expressions before writing copy', 'Sends spend, delivery, and posting up for approval first', 'Attaches a one-line performance hypothesis'],
+        'Execution-focused and clear.'],
+      ['Ethan', 'ethan-researcher', 'Researcher', 'Research',
+        ['Market and competitor research', 'Analyzing customer reviews and reactions', 'Fact-checking and citing sources'],
+        ['Organizes findings as bullets with sources', 'Flags what is certain vs. estimated', 'Leaves a vault note when it is worth reusing'],
+        'Fact-first and plain.'],
+    ],
+    routine: ['ethan-researcher', 'Morning Briefing', 'Based on vault memory and yesterday\'s journal: ① summarize work in progress ② suggest today\'s priorities ③ one thing to watch in the market. Keep it under 7 lines.'],
+  },
+  knowledge: {
+    label: 'Knowledge Worker',
+    desc: 'Researches, writes, and decides — a researcher + an editor',
+    crews: [
+      ['Ethan', 'ethan-researcher', 'Researcher', 'Research',
+        ['Source research and evidence organization', 'Summarizing reports and meeting materials', 'Fact-checking and citing sources'],
+        ['Organizes findings as bullets with sources', 'Flags what is certain vs. estimated', 'Leaves a vault note when it is worth reusing'],
+        'Fact-first and plain.'],
+      ['Aria', 'aria-editor', 'Document Editor', 'Documents',
+        ['Drafting and proofreading reports, emails, and proposals', 'Logical structure and paragraph reordering', 'Adjusting the difficulty to the reader'],
+        ['Leaves a one-line reason when editing an existing document', 'Sends external delivery up for approval first', 'Adds a recommendation when there are two or more drafts'],
+        'No fluff, from the reader\'s perspective.'],
+    ],
+    routine: ['ethan-researcher', 'Morning Briefing', 'Based on vault memory and yesterday\'s journal: ① summarize topics in progress ② suggest today\'s to-dos ③ one piece of info too good to miss. Keep it under 7 lines.'],
+  },
+};
+
+/** presetKey + 회사 언어 → 언어별 프리셋 소스. en에 없으면 ko로 폴백. lang 미상은 항상 기존 한국어 프리셋. */
+export function presetFor(presetKey, lang = 'ko') {
+  return lang === 'en' ? (PRESETS_EN[presetKey] || PRESETS[presetKey]) : PRESETS[presetKey];
+}
+
 /** 회사 생성 직후 1회 — 크루 카드 시드 + 아침 브리핑 루틴. 즉시 완료(모델 호출 없음). */
-export async function applyPreset(wsId, presetKey) {
-  const preset = PRESETS[presetKey];
+export async function applyPreset(wsId, presetKey, lang) {
+  // lang 미전달 시 회사 시스템 언어로 폴백(기존 ko 회사·lang 없음 → 'ko'). 소비측 표준 폴백 패턴.
+  if (lang == null) ({ lang = 'ko' } = await loadCompany(wsId).catch(() => ({})));
+  const preset = presetFor(presetKey, lang);
   if (!preset) return { crews: 0 };
   const dir = paths(wsId).agents;
   for (const [name, slug, role, team, expertise, style, tone] of preset.crews) {
@@ -88,10 +147,12 @@ export async function applyPreset(wsId, presetKey) {
   // 리서치 기본기 — 프리셋 회사에 딥 리서치 스킬 기본 장착(막히면 우회하는 조사 사다리)
   const { installSkill } = await import('./market.mjs');
   await installSkill(wsId, 'deep-research').catch(() => { /* 스킬은 부가 — 온보딩을 막지 않는다 */ });
-  // 주간 업무 보고 — 매주 금 17:00, 직원이 진짜 회사처럼 주간 보고서를 올린다
+  // 주간 업무 보고 — 매주 금 17:00, 직원이 진짜 회사처럼 주간 보고서를 올린다(회사 언어에 맞춰 분기, ko는 기존 그대로)
+  const weekly = lang === 'en'
+    ? { title: 'Weekly Report', prompt: 'Review this week\'s vault journal and write a weekly report for the owner: ① a summary of what each crew did ② the deliverables produced and lessons learned ③ three suggestions for next week. Keep it under 15 lines, with short reference filenames.' }
+    : { title: '주간 업무 보고', prompt: '이번 주 vault 일지(journal)를 훑고 사장에게 주간 업무 보고서를 작성하라: ① 크루별로 한 일 요약 ② 만들어진 산출물·배운 것 ③ 다음 주 제안 3가지. 전체 15줄 이내, 근거 파일명을 짧게 표기.' };
   await addRoutine(wsId, {
-    agentSlug, title: '주간 업무 보고',
-    prompt: '이번 주 vault 일지(journal)를 훑고 사장에게 주간 업무 보고서를 작성하라: ① 크루별로 한 일 요약 ② 만들어진 산출물·배운 것 ③ 다음 주 제안 3가지. 전체 15줄 이내, 근거 파일명을 짧게 표기.',
+    agentSlug, title: weekly.title, prompt: weekly.prompt,
     schedule: { type: 'weekly', time: '17:00', dow: 5 },
   }).catch(() => {});
   // 영입 시운전 — 첫 크루가 30초 안에 자기소개+샘플 산출물을 만들어 "빈 화면"을 없앤다(백그라운드)
