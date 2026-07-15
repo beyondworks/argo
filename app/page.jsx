@@ -23,9 +23,10 @@ export default function Home() {
   const [me, setMe] = useState(null); // /api/me = { authOn, user } — 상단바 계정 컨트롤(로그인/로그아웃)의 원천
 
   useEffect(() => {
-    api('/api/companies').then((d) => { setCompanies(d.companies); setPresets(d.presets ?? []); }).catch((e) => setError(String(e.message)));
+    // lang 의존 — 프리셋 picker 라벨이 UI 언어를 따르고, cmd+/ 전환 시 즉시 갱신된다
+    api(`/api/companies?lang=${lang}`).then((d) => { setCompanies(d.companies); setPresets(d.presets ?? []); }).catch((e) => setError(String(e.message)));
     api('/api/me').then((d) => { setMe(d); setAuthOn(!!d.authOn); }).catch(() => {});
-  }, []);
+  }, [lang]);
 
   // 컴포넌트 언마운트(회사 생성으로 페이지 이탈 등) 시 폴링 interval 누수 방지 — 브리프 코드에 없던 보강
   useEffect(() => () => { if (pairPollRef.current) clearInterval(pairPollRef.current); }, []);

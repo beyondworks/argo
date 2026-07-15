@@ -63,6 +63,67 @@ export const SKILL_CATALOG = [
   },
 ];
 
+// 영어 시스템 언어(company.lang === 'en') 회사용 스킬 카탈로그 — SKILL_CATALOG와 동일 id의 미러.
+// 설치 시 md 본문까지 영어로 내려간다. ko 회사(lang='ko' 또는 없음)는 이 객체를 절대 타지 않는다.
+// 글자수 규격은 영어 매체 관례로 적응(한글 22자 → ~45 chars 등) — 직역이 아니라 같은 목적의 규격.
+export const SKILL_CATALOG_EN = [
+  {
+    id: 'deep-research',
+    title: 'Deep Research',
+    desc: 'Multi-fallback web research that routes around blocks — cross-checking and sources required',
+    md: `# Deep Research skill
+
+When asked to research the web, never end with "I couldn't find it." Climb this ladder in order.
+
+## Search ladder (blocked above → go below)
+1. WebSearch — vary the query 2–3 ways for multiple angles (English + Korean, with/without the year)
+2. WebFetch — open the primary sources directly. Don't trust summaries alone
+3. On 403 / blocks / login walls → retry the same URL prefixed with \`https://r.jina.ai/\` (reader proxy)
+4. Still blocked and shell capability is on → retry with \`curl -sL -A "Mozilla/5.0 (iPhone)"\` (mobile UA)
+5. If everything is blocked → state which routes you tried, then ask the captain via request_capability for the needed capability (web browsing/shell) or suggest installing the browser MCP (playwright) from the market
+
+## Verification rules
+- Cross-check numbers, dates, and proper nouns against 2+ independent sources. If they disagree, show both
+- Attach a source URL to every claim. Sentences without a source are marked "Estimate"
+- Beware stale info — check the publication date and state the as-of point in your results
+
+## Output format
+- 3-line key conclusion → evidence bullets (with source links) → unverified/counter-evidence
+- If it's worth reusing, leave a topic note in vault/notes/ and add [[links]]
+`,
+  },
+  {
+    id: 'newsletter-title',
+    title: 'Newsletter Titles',
+    desc: 'Title-writing spec with mobile-truncation and no-clickbait rules',
+    md: `# Newsletter Title skill\n\nWhen asked for a newsletter title, always follow these rules.\n\n- Format: \`[one-word brand] title body\` — the bracket prefix is required\n- Length: under 45 characters (avoids mobile preview truncation)\n- Include at least one number (e.g. 3 ways, 12g)\n- No clickbait — only promise what the body actually answers\n`,
+  },
+  {
+    id: 'ad-copy-qa',
+    title: 'Ad Copy QA',
+    desc: 'Self-review checklist for policy, appeal, and evidence before submitting copy',
+    md: `# Ad Copy QA skill\n\nBefore submitting ad copy, self-review the items below and show the results as a checklist.\n\n- [ ] No policy-violating claims (no weight-loss promises, medical efficacy, or exaggerated guarantees)\n- [ ] One appeal per copy (never multiple promises in one piece)\n- [ ] Every promise carries evidence (ingredient, number, review)\n- [ ] Does the hook read as "this is about me" to the target within 3 seconds\n- [ ] Length: headline around 40 characters\n`,
+  },
+  {
+    id: 'meeting-notes',
+    title: 'Meeting Notes',
+    desc: 'Standard minutes format centered on decisions, action items, and owners',
+    md: `# Meeting Notes skill\n\nWhen asked to organize meeting content, follow this format.\n\n## Decisions\n(bullets — decisions only, no discussion process)\n\n## Action items\n(checkboxes — \`- [ ] task — owner, due date\`)\n\n## Deferred / next discussion\n(bullets)\n\nNever invent decisions that aren't in the source. Mark unclear items "TBD".\n`,
+  },
+  {
+    id: 'seo-outline',
+    title: 'SEO Blog Outline',
+    desc: 'From search intent → H2/H3 structure → internal link suggestions',
+    md: `# SEO Blog Outline skill\n\nGiven a blog topic, build the outline before writing the body.\n\n1. Define the search intent in one line (informational/comparative/transactional)\n2. 3 title options — keyword up front, under 60 characters\n3. 4–6 H2s + H3 points under each H2\n4. Note the evidence (data, examples) to include per section\n5. Suggest past posts from company memory (vault) to connect with [[links]]\n`,
+  },
+  {
+    id: 'cold-email',
+    title: 'Cold Email Frame',
+    desc: 'Observation → value → evidence → small CTA: a 4-paragraph cold email spec',
+    md: `# Cold Email skill\n\nFollow the 4-paragraph frame for cold emails. Under 120 words total.\n\n1. Observation — one concrete fact about their company (no flattery)\n2. Value — the problem we solve, in their language, one line\n3. Evidence — one number (case, result)\n4. CTA — small (not "a 15-min call" but "want me to send one resource?")\n\nSubject line: a short lowercase-feel phrase; no spam words (free, urgent, best).\n`,
+  },
+];
+
 /* ─── MCP 카탈로그 — 설치 = mcp.json에 서버 정의 추가 ─── */
 export const MCP_CATALOG = [
   {
@@ -85,6 +146,38 @@ export const MCP_CATALOG = [
   },
 ];
 
+// 영어 미러 — def는 언어 무관 동일값(중복이지만 구조 대칭 우선, PRESETS_EN 관례).
+export const MCP_CATALOG_EN = [
+  {
+    id: 'sequential-thinking',
+    title: 'Sequential Thinking',
+    desc: 'Official MCP for solving complex problems with step-by-step thinking',
+    def: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-sequential-thinking'] },
+  },
+  {
+    id: 'memory',
+    title: 'Knowledge Graph Memory',
+    desc: 'Entity/relation-based knowledge graph memory (official)',
+    def: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory'] },
+  },
+  {
+    id: 'puppeteer',
+    title: 'Puppeteer Browser',
+    desc: 'Web page browsing and screenshots (official, uses a local browser)',
+    def: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-puppeteer'] },
+  },
+];
+
+/** 회사 언어 → 언어별 카탈로그. en에 없는 id는 ko 항목으로 폴백(presetFor와 동일 관례). */
+export function skillCatalogFor(lang = 'ko') {
+  if (lang !== 'en') return SKILL_CATALOG;
+  return SKILL_CATALOG.map((s) => SKILL_CATALOG_EN.find((e) => e.id === s.id) || s);
+}
+export function mcpCatalogFor(lang = 'ko') {
+  if (lang !== 'en') return MCP_CATALOG;
+  return MCP_CATALOG.map((m) => MCP_CATALOG_EN.find((e) => e.id === m.id) || m);
+}
+
 /* ─── 스킬 설치 상태 ─── */
 export async function listInstalledSkills(wsId) {
   const dir = paths(wsId).skills;
@@ -102,8 +195,8 @@ export async function listInstalledSkills(wsId) {
   return out;
 }
 
-export async function installSkill(wsId, id) {
-  const item = SKILL_CATALOG.find((s) => s.id === id);
+export async function installSkill(wsId, id, lang = 'ko') {
+  const item = skillCatalogFor(lang).find((s) => s.id === id);
   if (!item) throw new Error('카탈로그에 없는 스킬입니다');
   await mkdir(paths(wsId).skills, { recursive: true });
   await writeFile(join(paths(wsId).skills, `${id}.md`), item.md);

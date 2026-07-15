@@ -146,7 +146,7 @@ export async function applyPreset(wsId, presetKey, lang) {
   await addRoutine(wsId, { agentSlug, title, prompt, schedule: { type: 'daily', time: '09:00' } });
   // 리서치 기본기 — 프리셋 회사에 딥 리서치 스킬 기본 장착(막히면 우회하는 조사 사다리)
   const { installSkill } = await import('./market.mjs');
-  await installSkill(wsId, 'deep-research').catch(() => { /* 스킬은 부가 — 온보딩을 막지 않는다 */ });
+  await installSkill(wsId, 'deep-research', lang).catch(() => { /* 스킬은 부가 — 온보딩을 막지 않는다 */ });
   // 주간 업무 보고 — 매주 금 17:00, 직원이 진짜 회사처럼 주간 보고서를 올린다(회사 언어에 맞춰 분기, ko는 기존 그대로)
   const weekly = lang === 'en'
     ? { title: 'Weekly Report', prompt: 'Review this week\'s vault journal and write a weekly report for the owner: ① a summary of what each crew did ② the deliverables produced and lessons learned ③ three suggestions for next week. Keep it under 15 lines, with short reference filenames.' }

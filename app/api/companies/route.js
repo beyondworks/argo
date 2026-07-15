@@ -3,7 +3,7 @@ import { listCompanies } from '../../../src/hub.mjs';
 import { applyPreset, PRESETS, presetFor } from '../../../src/presets.mjs';
 import { AUTH_ON, currentUser, tenantDenied } from '../../auth.mjs';
 
-export async function GET() {
+export async function GET(req) {
   const user = await currentUser();
   if (!user) return Response.json({ error: '로그인이 필요합니다' }, { status: 401 });
   const td = tenantDenied(user); if (td) return td;
@@ -11,9 +11,14 @@ export async function GET() {
   // 인증 on = 내 회사만. 무주(레거시) 회사는 아무에게나 노출하지 않는다 — 최초 소유자 지정은
   // guardCompany의 ARGO_ADOPT_OWNER 게이트로만 처리한다. off = 로컬 전부.
   const companies = AUTH_ON ? all.filter((c) => c.ownerId === user.id) : all;
+  // 프리셋 picker 라벨 — 클라이언트 UI 언어(?lang=en)를 따른다. presetFor가 en 미비 키를 ko로 폴백.
+  const lang = new URL(req.url).searchParams.get('lang') === 'en' ? 'en' : 'ko';
   return Response.json({
     companies,
-    presets: Object.entries(PRESETS).map(([key, p]) => ({ key, label: p.label, desc: p.desc })),
+    presets: Object.keys(PRESETS).map((key) => {
+      const p = presetFor(key, lang);
+      return { key, label: p.label, desc: p.desc };
+    }),
   });
 }
 

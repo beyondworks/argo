@@ -1,5 +1,5 @@
 import {
-  SKILL_CATALOG, MCP_CATALOG,
+  skillCatalogFor, mcpCatalogFor,
   listInstalledSkills, installSkill, removeSkill, saveCustomSkill,
   loadMcp, installMcp, addCustomMcp, removeMcp,
 } from '../../../../../src/market.mjs';
@@ -43,10 +43,13 @@ export async function GET(req, { params }) {
     }
   }
 
-  const [skills, mcp] = await Promise.all([listInstalledSkills(ws), loadMcp(ws)]);
+  // 카탈로그 — 회사 시스템 언어를 따른다(설치 md 본문까지 같은 언어, installSkill과 동일 소스)
+  const [skills, mcp, { lang = 'ko' }] = await Promise.all([
+    listInstalledSkills(ws), loadMcp(ws), loadCompany(ws).catch(() => ({})),
+  ]);
   return Response.json({
-    skillCatalog: SKILL_CATALOG.map(({ md, ...rest }) => ({ ...rest, preview: md.slice(0, 200) })),
-    mcpCatalog: MCP_CATALOG,
+    skillCatalog: skillCatalogFor(lang).map(({ md, ...rest }) => ({ ...rest, preview: md.slice(0, 200) })),
+    mcpCatalog: mcpCatalogFor(lang),
     installedSkills: skills,
     installedMcp: mcp.servers ?? {},
   });
@@ -57,7 +60,10 @@ export async function POST(req, { params }) {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
     const body = await req.json();
-    if (body.kind === 'skill') await installSkill(ws, body.id);
+    if (body.kind === 'skill') {
+      const { lang = 'ko' } = await loadCompany(ws).catch(() => ({})); // 회사 시스템 언어 — 설치 md가 이 언어를 따른다
+      await installSkill(ws, body.id, lang);
+    }
     else if (body.kind === 'mcp') await installMcp(ws, body.id);
     else if (body.kind === 'mcp-custom') await addCustomMcp(ws, body.def ?? {});
     else if (body.kind === 'skill-custom') await saveCustomSkill(ws, body.def ?? {}); // 공방 — 직접 쓰는 스킬
