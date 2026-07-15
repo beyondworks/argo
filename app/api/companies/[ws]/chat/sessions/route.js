@@ -1,4 +1,4 @@
-import { listArchivedSessions, readArchivedSession } from '../../../../../../src/thread.mjs';
+import { listArchivedSessions, readArchivedSession, resumeSession } from '../../../../../../src/thread.mjs';
 import { guardCompany } from '../../../../../auth.mjs';
 
 /** 세션 적재 레일 — 목록(slug) 또는 보관 세션 1건(slug+id, 읽기 전용). */
@@ -12,6 +12,20 @@ export async function GET(req, { params }) {
   try {
     if (id) return Response.json(await readArchivedSession(ws, slug, id));
     return Response.json({ sessions: await listArchivedSessions(ws, slug) });
+  } catch (e) {
+    return Response.json({ error: String(e.message || e) }, { status: 400 });
+  }
+}
+
+/** 대화 이어가기 — 보관 세션을 활성 스레드로 되살린다(현재 대화는 자동 보관). body: { slug, id } */
+export async function POST(req, { params }) {
+  const { ws } = await params;
+  const denied = await guardCompany(ws); if (denied) return denied;
+  const { slug, id } = await req.json().catch(() => ({}));
+  if (!slug || !id) return Response.json({ error: 'slug·id가 필요합니다' }, { status: 400 });
+  try {
+    const thread = await resumeSession(ws, slug, id);
+    return Response.json({ thread });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });
   }

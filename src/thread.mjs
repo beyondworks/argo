@@ -95,3 +95,23 @@ export async function resetThread(wsId, slug) {
     await rm(file(wsId, slug), { force: true });
   });
 }
+
+/** 대화 이어가기 — 보관 세션을 다시 활성 스레드로 되살린다. 현재 활성 대화는 먼저 보관(비파괴).
+    sessionId(SDK 세션)까지 복원해 크루가 맥락을 이어서 답한다. 반환 = 되살린 스레드({sessionId, messages}). */
+export async function resumeSession(wsId, slug, id) {
+  const safe = slug.replace(/[^a-z0-9-]/g, '');
+  if (!new RegExp(`^${safe}-\\d+\\.json$`).test(id)) throw new Error('잘못된 세션 id');
+  return withLock(lockKey(wsId, slug), async () => {
+    const dir = join(paths(wsId).chats, '.archive');
+    const restored = JSON.parse(await readFile(join(dir, id), 'utf8'));
+    // 현재 활성 대화가 있으면 먼저 보관(유실 방지) — 새 타임스탬프로 적재
+    const cur = await loadThread(wsId, slug);
+    if (cur.messages?.length) {
+      await writeJsonAtomic(join(dir, `${safe}-${Date.now()}.json`), cur);
+    }
+    // 보관본을 활성으로 되살리고, 원래 보관 파일은 제거(레일에 중복 노출 방지)
+    await writeJsonAtomic(file(wsId, slug), restored);
+    await rm(join(dir, id), { force: true });
+    return restored;
+  });
+}

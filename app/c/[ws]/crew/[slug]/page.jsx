@@ -44,6 +44,18 @@ export default function CrewChat({ params }) {
       setViewing(id); setArchMsgs(d.messages ?? []);
     } catch (e) { setError(String(e.message)); }
   }
+  // 대화 이어가기 — 보관 세션을 활성으로 되살린다(서버가 현재 대화를 자동 보관). 이후 그대로 이어서 지시 가능.
+  async function resumeViewing() {
+    if (!viewing || busy) return;
+    try {
+      const r = await api(`/api/companies/${ws}/chat/sessions`, { slug, id: viewing });
+      setThread(r.thread?.messages ?? []);
+      sessionRef.current = r.thread?.sessionId ?? null;
+      setViewing(null); setArchMsgs(null); setError(''); resetAnnot();
+      loadSessions();
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (e) { setError(String(e.message)); }
+  }
   const sessionRef = useRef(null);
   const endRef = useRef(null);
   // 첨부 — 업로드 즉시 vault/files/에 저장되고, 보내기 전까지 입력바 위에 칩으로 대기한다
@@ -101,7 +113,7 @@ export default function CrewChat({ params }) {
           setLiveStage(r.status ?? null); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
         })
         .catch(() => {});
-    }, 8000);
+    }, 3000); // 준실시간 — 동기화(≈8s)로 당겨온 다른 기기의 대화를 더 빨리 표시(기존 8s)
     return () => clearInterval(t);
   }, [ws, slug, busy]);
 
@@ -461,7 +473,8 @@ export default function CrewChat({ params }) {
         <div className="card card-float" style={{ marginTop: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
           <Icon name="doc" size={13} /> {t('chat.sessions.readonly')}
           <span style={{ flex: 1 }} />
-          <button className="btn btn-primary sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
+          <button className="btn btn-primary sm" disabled={busy} onClick={resumeViewing}>{t('chat.sessions.resume')}</button>
+          <button className="btn sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
         </div>
       ) : (
       // 하단 고정 행(grid auto) — 스레드는 위 1fr 행에서 자체 스크롤되므로 컴포저는 겹침 없이 항상 하단. sticky·스크림 불필요(스크롤 시 입력창 뒤로 콘텐츠가 비치던 버그 제거).

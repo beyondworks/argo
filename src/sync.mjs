@@ -30,7 +30,8 @@ import { ensureAccountKey } from './accountkey.mjs';
 import { syncEntitled } from './entitlement.mjs';
 
 const BUCKET = 'companies';
-const CYCLE_MS = 45_000;
+// 준실시간 — 기본 8s(웹↔앱 지연 단축). ARGO_SYNC_CYCLE_MS로 조정(비용/지연 트레이드오프).
+const CYCLE_MS = Number(process.env.ARGO_SYNC_CYCLE_MS) || 8_000;
 const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다
 
 // 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선.
@@ -444,6 +445,14 @@ async function cycle() {
   status.lastTs = Date.now();
 }
 
+/** 즉시 동기화 요청 — 로컬 변경(메시지 전송 등) 직후 호출하면 다음 대기를 건너뛰고 바로 push/pull.
+    Next는 라우트·instrumentation 번들이 갈려 모듈 변수가 공유 안 되므로 globalThis로 신호한다(status와 동일 패턴). */
+export function nudgeSync() {
+  globalThis.__argoSyncPending = true;
+  const wake = globalThis.__argoSyncWake;
+  if (wake) { globalThis.__argoSyncWake = null; wake(); }
+}
+
 export function ensureSync() {
   if (!syncOn()) return;
   if (globalThis.__argoSync) return;
@@ -452,10 +461,17 @@ export function ensureSync() {
     if (loadSyncCreds()) {
       try { await ensureClient(); await client().storage.createBucket(BUCKET, { public: false }); } catch { /* 이미 있음 */ }
     }
-    console.log('[argo] 기기 간 동기화 시작 (45s 주기)');
+    console.log(`[argo] 기기 간 동기화 시작 (${Math.round(CYCLE_MS / 1000)}s 주기 · 로컬 변경 시 즉시)`);
     for (;;) {
+      globalThis.__argoSyncPending = false;
       try { await cycle(); } catch (e) { status.lastError = String(e.message).slice(0, 120); }
-      await new Promise((r) => setTimeout(r, CYCLE_MS));
+      if (globalThis.__argoSyncPending) continue; // 사이클 도중 nudge 도착 → 대기 없이 즉시 재실행
+      await new Promise((resolve) => {
+        let done = false;
+        const finish = () => { if (done) return; done = true; clearTimeout(t); globalThis.__argoSyncWake = null; resolve(); };
+        const t = setTimeout(finish, CYCLE_MS);
+        globalThis.__argoSyncWake = finish;
+      });
     }
   })();
 }
