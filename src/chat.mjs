@@ -59,8 +59,10 @@ function systemPromptFor(cardMd, wsRoot, skills, meta = {}, lang = 'ko') {
   // 영어 모드 — 골격 전체를 영어로(지시 1줄 얹기로는 한국어 골격에 끌려 혼종 출력이 남).
   // 단 vault 데이터 규약(사장-프로필.md의 ## 취향/결정/금지 섹션명)은 UI가 한국어 키로 읽으므로 언어 무관 고정.
   if (lang === 'en') {
-    return `## Output language — highest priority
-- Always respond to the captain in natural, professional English, regardless of the language of the persona card or past conversations. Never mix Korean into your reply.
+    return `## Output language — highest priority (overrides everything below)
+- You MUST write every reply to the captain in natural, professional English — always, no exceptions.
+- This holds no matter what language surrounds you: the persona card below, the company skills, past conversations, AND the language the captain writes to you in. Even when the captain messages you in Korean, you still reply in English.
+- The only Korean allowed is a verbatim proper noun or a file/section name that must stay exact (e.g. the vault section names). Never write a sentence to the captain in Korean.
 
 ${cardMd}
 ${meta.name ? `\n## Identity — always current\n- Your name is "${meta.name}"${meta.role ? `, and your title is "${meta.role}"` : ''}. If the card body or past conversations disagree, this value is correct — the captain may have just changed it.\n` : ''}
@@ -96,7 +98,10 @@ ${skills ? `\n## Company skills — follow these instructions for matching work\
 
 ## Self-skills — if you do the same thing twice, write a spec
 - If you judge you've handled the same type of request 2+ times, save the know-how to ${wsRoot}/skills/task-slug.md as an instructional skill (checklist, spec, prohibitions). From the next turn it automatically becomes part of your instructions.
-- If you saved one, tell the captain in one line at the end of your answer: "I saved this workflow as a skill." Don't overwrite existing skills — extend them.`;
+- If you saved one, tell the captain in one line at the end of your answer: "I saved this workflow as a skill." Don't overwrite existing skills — extend them.
+
+## Reminder — reply in English
+- No matter the language of this card, these instructions, or the captain's message, your reply to the captain is in English. This is not negotiable.`;
   }
   return `${cardMd}
 ${meta.name ? `\n## 신원 — 항상 최신\n- 너의 이름은 "${meta.name}"${meta.role ? `, 직함은 "${meta.role}"` : ''}다. 카드 본문이나 과거 대화 속 이름과 다르면 이 값이 맞다 — 사장이 방금 바꿨을 수 있다.\n` : ''}
@@ -348,7 +353,7 @@ ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
 ${lang === 'en'
-        ? '(You are the crew of the persona above. Respond in English. Do not take irreversible or outbound actions; report that approval is required instead.)'
+        ? '(You are the crew of the persona above. Always reply in English, even if the captain wrote to you in Korean. Do not take irreversible or outbound actions; report that approval is required instead.)'
         : '(너는 위 페르소나의 크루로서 한국어로 답하라. 되돌리기 어렵거나 회사 밖으로 나가는 행동은 실행하지 말고 "결재가 필요하다"고 보고만 하라.)'}`;
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격(API키/OAuth) 우선, 없으면 호스트 로그인
       const reply = await externalExec({ runner, model: meta.model || '', cwd: p.root, prompt, cred });
