@@ -1,6 +1,6 @@
 import { createCompany } from '../../../src/workspace.mjs';
 import { listCompanies } from '../../../src/hub.mjs';
-import { applyPreset, PRESETS } from '../../../src/presets.mjs';
+import { applyPreset, PRESETS, presetFor } from '../../../src/presets.mjs';
 import { AUTH_ON, currentUser, tenantDenied } from '../../auth.mjs';
 
 export async function GET() {
@@ -28,9 +28,10 @@ export async function POST(req) {
     const wsId = `${base || 'co'}-${Date.now().toString(36).slice(-4)}`;
     // lang = 클라이언트 UI 언어(argo-lang)를 시드로 — 신규 회사의 시스템 언어. createCompany가 ko/en으로 정규화.
     const company = await createCompany(wsId, name.trim(), owner?.trim() || 'captain', AUTH_ON ? user.id : null, lang);
-    if (preset) await applyPreset(wsId, preset); // 즉시 — 정적 카드라 기다림 없음
-    // 아하 모먼트 동선 — 프리셋 회사는 첫 크루 채팅으로 직행시켜 시운전이 눈앞에서 도착하게
-    const firstCrew = preset ? (PRESETS[preset]?.crews?.[0]?.[1] ?? null) : null;
+    // company.lang = createCompany가 정규화한 시스템 언어('ko'|'en') — 프리셋 카드·루틴이 이 언어를 따른다.
+    if (preset) await applyPreset(wsId, preset, company.lang); // 즉시 — 정적 카드라 기다림 없음
+    // 아하 모먼트 동선 — 프리셋 회사는 첫 크루 채팅으로 직행시켜 시운전이 눈앞에서 도착하게(en은 en 슬러그로)
+    const firstCrew = preset ? (presetFor(preset, company.lang)?.crews?.[0]?.[1] ?? null) : null;
     return Response.json({ company, firstCrew });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });

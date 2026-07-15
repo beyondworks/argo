@@ -241,8 +241,8 @@ async function fetchSkillRaw(githubUrl) {
   return null;
 }
 
-export async function explainItem(item) {
-  const key = `${item.kind}:${item.name ?? item.title}`;
+export async function explainItem(item, lang = 'ko') {
+  const key = `${lang}:${item.kind}:${item.name ?? item.title}`;
   await loadExplainDisk();
   if (explainCache.has(key)) return explainCache.get(key);
 
@@ -250,7 +250,20 @@ export async function explainItem(item) {
   if (item.kind === 'skill' && item.githubUrl) raw = await fetchSkillRaw(item.githubUrl);
 
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
-  const prompt = `너는 어려운 개발 도구를 비전문가 사장님에게 설명하는 안내자다.
+  const prompt = lang === 'en'
+    ? `You are a guide who explains hard developer tools to a non-technical business owner.
+Read the item below and output exactly one JSON object (no code fences, no prose):
+
+{"what":"what this is in one sentence — use an analogy, keep it very simple","when":["when you'd reach for it — 2~3 concrete situations"],"examples":["say this to your crew — 2~3 ready-to-copy real instructions"],"caution":"one line of caution (empty string if none)"}
+
+Write everything in plain, professional English; unpack any jargon. examples should be natural English instructions that would actually trigger this tool.
+
+## Item
+Type: ${item.kind === 'skill' ? 'Skill (task playbook)' : 'MCP tool (external connection)'}
+Name: ${item.title ?? item.name}
+Description: ${item.desc ?? ''}
+${raw ? `Source (excerpt):\n${raw.slice(0, 2500)}` : ''}`
+    : `너는 어려운 개발 도구를 비전문가 사장님에게 설명하는 안내자다.
 아래 항목을 읽고, 정확히 JSON 하나만 출력해(코드펜스·설명 금지):
 
 {"what":"이게 뭔지 한 문장 — 비유를 써서 아주 쉽게","when":["이럴 때 쓰세요 — 구체적 상황 2~3개"],"examples":["크루에게 이렇게 말해보세요 — 바로 복사해 쓸 실제 지시문 2~3개"],"caution":"주의할 점 한 줄 (없으면 빈 문자열)"}
@@ -286,14 +299,15 @@ ${raw ? `원문(일부):\n${raw.slice(0, 2500)}` : ''}`;
 /* ─── 프리워밍 — TOP 목록 로드 시 백그라운드로 설명을 미리 생성(동시 2, 평생 1회) ─── */
 const warmingKinds = new Set();
 
-export function warmExplains(items, kind) {
-  if (warmingKinds.has(kind)) return;
-  warmingKinds.add(kind);
+export function warmExplains(items, kind, lang = 'ko') {
+  const wk = `${lang}:${kind}`; // 언어별로 각각 프리워밍 — ko/en 프리워밍이 서로를 막지 않게
+  if (warmingKinds.has(wk)) return;
+  warmingKinds.add(wk);
   (async () => {
     await loadExplainDisk();
-    const todo = items.filter((i) => !explainCache.has(`${kind}:${i.name ?? i.title}`));
+    const todo = items.filter((i) => !explainCache.has(`${lang}:${kind}:${i.name ?? i.title}`));
     for (let i = 0; i < todo.length; i += 2) {
-      await Promise.allSettled(todo.slice(i, i + 2).map((it) => explainItem({ ...it, kind })));
+      await Promise.allSettled(todo.slice(i, i + 2).map((it) => explainItem({ ...it, kind }, lang)));
     }
-  })().finally(() => warmingKinds.delete(kind));
+  })().finally(() => warmingKinds.delete(wk));
 }

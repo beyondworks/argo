@@ -8,6 +8,7 @@ import {
   searchRemoteMcp, installRemoteMcp,
   topRemoteSkills, topRemoteMcp, explainItem, warmExplains,
 } from '../../../../../src/remote-market.mjs';
+import { loadCompany } from '../../../../../src/workspace.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
 export const maxDuration = 120; // explain = 모델 1턴
@@ -22,8 +23,9 @@ export async function GET(req, { params }) {
   // 추천 TOP 20 — 스킬(skillsmp ★순) / MCP(npm 주간 다운로드순)
   if (top) {
     try {
+      const { lang = 'ko' } = await loadCompany(ws).catch(() => ({})); // 회사 시스템 언어 — 없으면 ko 폴백
       const results = top === 'skills' ? await topRemoteSkills() : await topRemoteMcp();
-      warmExplains(results, top === 'skills' ? 'skill' : 'mcp'); // 백그라운드 — 응답을 막지 않는다
+      warmExplains(results, top === 'skills' ? 'skill' : 'mcp', lang); // 백그라운드 — 응답을 막지 않는다
       return Response.json({ results });
     } catch (e) {
       return Response.json({ results: [], error: `추천 목록 로드 실패: ${String(e.message || e)}` });
@@ -61,7 +63,10 @@ export async function POST(req, { params }) {
     else if (body.kind === 'skill-custom') await saveCustomSkill(ws, body.def ?? {}); // 공방 — 직접 쓰는 스킬
     else if (body.kind === 'remote-skill') await installRemoteSkill(ws, body.item ?? {});
     else if (body.kind === 'remote-mcp') await installRemoteMcp(ws, body.item ?? {}); // npm 분기 가드는 installRemoteMcp 내부(P0-2). http 원격은 로컬 실행 없어 허용
-    else if (body.kind === 'explain') return Response.json(await explainItem(body.item ?? {}));
+    else if (body.kind === 'explain') {
+      const { lang = 'ko' } = await loadCompany(ws).catch(() => ({})); // 회사 시스템 언어 — 없으면 ko 폴백
+      return Response.json(await explainItem(body.item ?? {}, lang));
+    }
     else return Response.json({ error: '알 수 없는 kind' }, { status: 400 });
     return Response.json({ ok: true });
   } catch (e) {

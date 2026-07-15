@@ -13,7 +13,7 @@ import { appendEvent } from './events.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 import { mkdir, readFile, writeFile, readdir, stat, rename, copyFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { paths } from './workspace.mjs';
+import { paths, loadCompany } from './workspace.mjs';
 import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath } from './tg-format.mjs';
 
 /** 폴러 하트비트 — 연결 카드의 "가동 중 · N초 전 응답" 표시의 원천. root의 dotfile이라 vault 스캔 무관. */
@@ -85,6 +85,9 @@ function startQueueWorker(wsId, key, handler) {
 const MAX_MSG = 3800; // 텔레그램 4096 제한 대비 여유
 const clip = (t) => (t.length > MAX_MSG ? `${t.slice(0, MAX_MSG)}\n…(전체 내용은 Argo 데크에서)` : t);
 
+// 회사 시스템 언어(ko|en) 기반 코드 방출 문자열 선택. 기존 회사(lang 없음/'ko')는 항상 ko 반환 → 기존 동작 그대로.
+const pick = (ko, en, lang) => (lang === 'en' ? en : ko);
+
 /** 크루 응답 발신 — 마크다운을 텔레그램 HTML로, 길면 분할, 본문 속 vault 파일은 사진/문서로 동봉. */
 async function sendTgReply(token, chatId, wsId, text) {
   const html = mdToTelegramHtml(text);
@@ -119,10 +122,11 @@ async function tgDownload(token, wsId, msg) {
   else if (msg.voice) { f = msg.voice; name = `voice-${f.file_unique_id}.ogg`; mime = 'audio/ogg'; }
   else if (msg.audio) { f = msg.audio; name = msg.audio.file_name || `audio-${msg.audio.file_unique_id}`; mime = msg.audio.mime_type || ''; }
   if (!f) return null;
-  if ((f.file_size ?? 0) > 19_500_000) throw new Error('20MB를 넘는 파일은 텔레그램 봇이 내려받을 수 없습니다');
+  const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+  if ((f.file_size ?? 0) > 19_500_000) throw new Error(pick('20MB를 넘는 파일은 텔레그램 봇이 내려받을 수 없습니다', 'Files larger than 20MB cannot be downloaded by the Telegram bot', lang));
   const info = await tg(token, 'getFile', { file_id: f.file_id });
   const res = await fetch(`https://api.telegram.org/file/bot${token}/${info.file_path}`, { signal: AbortSignal.timeout(120_000) });
-  if (!res.ok) throw new Error(`파일 다운로드 실패(${res.status})`);
+  if (!res.ok) throw new Error(pick(`파일 다운로드 실패(${res.status})`, `File download failed (${res.status})`, lang));
   const buf = Buffer.from(await res.arrayBuffer());
   const safe = name.replace(/[^\w.\-가-힣]/g, '_').slice(-80);
   const rel = `files/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}-${safe}`;
@@ -158,7 +162,8 @@ async function slackApi(token, method, body) {
 /** "@이름 지시" → to 크루, "@이름1 @이름2 지시" → 첫 번째가 to, 나머지는 cc(맥락 공유). 이름 미지정이면 기본 크루. (export는 테스트용) */
 export async function routeMessage(wsId, cfg, text) {
   const agents = await listAgents(wsId);
-  if (!agents.length) return { error: '아직 크루가 없습니다. Argo 데크에서 먼저 영입해 주세요.' };
+  const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+  if (!agents.length) return { error: pick('아직 크루가 없습니다. Argo 데크에서 먼저 영입해 주세요.', 'No crew yet. Hire your first crew from the Argo deck.', lang) };
   let body = text.trim();
   // 그룹방에서 봇 멘션(@봇이름)으로 시작하면 벗겨낸다 — 그 뒤의 @크루 멘션이 라우팅 대상
   if (cfg.botUsername) body = body.replace(new RegExp(`^@?${cfg.botUsername.replace(/^@/, '')}\\s+`, 'i'), '');
@@ -174,7 +179,11 @@ export async function routeMessage(wsId, cfg, text) {
   }
   if (!mentions.length && /^@\S+\s+\S/.test(body)) {
     const bad = body.match(/^@(\S+)/)[1];
-    return { error: `"${bad}" 크루를 못 찾았습니다. 크루: ${agents.map((a) => a.name).join(', ')} — "크루"라고 보내면 현황을 보여드립니다.` };
+    return { error: pick(
+      `"${bad}" 크루를 못 찾았습니다. 크루: ${agents.map((a) => a.name).join(', ')} — "크루"라고 보내면 현황을 보여드립니다.`,
+      `Couldn't find crew "${bad}". Crew: ${agents.map((a) => a.name).join(', ')} — send "crew" to see the roster.`,
+      lang,
+    ) };
   }
   const to = mentions[0] ?? (agents.find((a) => a.slug === cfg.defaultCrew) ?? agents[0]);
   return { slug: to.slug, name: to.name, msg: body.trim(), cc: mentions.slice(1) };
@@ -183,23 +192,34 @@ export async function routeMessage(wsId, cfg, text) {
 /** "크루"/"/crew"/"현황" — 어떤 크루가 이 채팅에 연결되어 있는지 즉답(모델 호출 없음). */
 async function crewStatusReply(wsId, cfg) {
   const agents = await listAgents(wsId);
-  if (!agents.length) return '아직 크루가 없습니다. Argo 데크에서 먼저 영입해 주세요.';
+  const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+  if (!agents.length) return pick('아직 크루가 없습니다. Argo 데크에서 먼저 영입해 주세요.', 'No crew yet. Hire your first crew from the Argo deck.', lang);
   const def = agents.find((a) => a.slug === cfg.defaultCrew) ?? agents[0];
   return [
-    `**연결된 크루 ${agents.length}명**`,
-    ...agents.map((a) => `• ${a.name} (@${a.slug})${a.role ? ` — ${a.role}` : ''}${a.runner && a.runner !== 'claude' ? ` · ${a.runner}` : ''}${a.slug === def?.slug ? ' · 기본' : ''}`),
+    pick(`**연결된 크루 ${agents.length}명**`, `**${agents.length} crew connected**`, lang),
+    ...agents.map((a) => `• ${a.name} (@${a.slug})${a.role ? ` — ${a.role}` : ''}${a.runner && a.runner !== 'claude' ? ` · ${a.runner}` : ''}${a.slug === def?.slug ? pick(' · 기본', ' · default', lang) : ''}`),
     '',
-    '"@이름 지시"로 특정 크루를 부르고, "@이름1 @이름2 지시"처럼 여러 명을 적으면 첫 번째가 실행하고 나머지에게 맥락이 공유됩니다(cc).',
+    pick(
+      '"@이름 지시"로 특정 크루를 부르고, "@이름1 @이름2 지시"처럼 여러 명을 적으면 첫 번째가 실행하고 나머지에게 맥락이 공유됩니다(cc).',
+      'Address a specific crew with "@name instruction". List several like "@name1 @name2 instruction" and the first one acts while the rest receive the shared context (cc).',
+      lang,
+    ),
   ].join('\n');
 }
 
 /** 메신저발 지시 1턴 — 웹과 동일 경로(스레드 이어쓰기 + vault 기억 + 첨부 비전). ctx = 발화 위치(위임 미러용). */
 async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
-  // "승인 ap-xxx" / "거절 ap-xxx" 텍스트 결재 (슬랙·텔레그램 공용)
+  const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+  // "승인 ap-xxx" / "거절 ap-xxx" 텍스트 결재 (슬랙·텔레그램 공용) — 결재 토큰(승인/거절)은 파서 앵커라 고정
   const ap = text.match(/^(승인|거절)\s+(ap-[a-z0-9]+)/);
   if (ap) {
-    const item = await resolveWithFollowUp(wsId, ap[2], ap[1] === '승인');
-    return `결재 ${ap[1]} 처리: ${item.action}\n실행 결과는 담당 크루가 이어서 보고합니다.`;
+    const approve = ap[1] === '승인';
+    const item = await resolveWithFollowUp(wsId, ap[2], approve);
+    return pick(
+      `결재 ${ap[1]} 처리: ${item.action}\n실행 결과는 담당 크루가 이어서 보고합니다.`,
+      `Approval ${approve ? 'approved' : 'rejected'}: ${item.action}\nThe assigned crew will follow up with the result.`,
+      lang,
+    );
   }
   if (/^\/?(크루|현황|crew|status)$/i.test(text.trim())) return crewStatusReply(wsId, cfg);
   const r = await routeMessage(wsId, cfg, text);
@@ -211,12 +231,20 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
   // cc 크루에게 맥락 공유 — 실행은 to 크루만(폭주 방지), 나머지는 다음 턴에 이 맥락을 알고 시작한다
   let footer = '';
   if (r.cc?.length) {
-    const note = `(참조 공유) 사장이 ${r.name}에게 지시: ${r.msg}\n\n${r.name}의 답변:\n${String(turn.reply).slice(0, 2000)}`;
+    const note = pick(
+      `(참조 공유) 사장이 ${r.name}에게 지시: ${r.msg}\n\n${r.name}의 답변:\n${String(turn.reply).slice(0, 2000)}`,
+      `(Shared context) The owner instructed ${r.name}: ${r.msg}\n\n${r.name}'s reply:\n${String(turn.reply).slice(0, 2000)}`,
+      lang,
+    );
     const shared = [];
     for (const c of r.cc.slice(0, 3)) {
       try { await appendSharedNote(wsId, c.slug, note); shared.push(c.name); } catch { /* 공유 실패는 본답변을 막지 않는다 */ }
     }
-    if (shared.length) footer = `\n\n(참조 공유: ${shared.join(', ')} — 다음 대화부터 이 맥락을 알고 시작합니다)`;
+    if (shared.length) footer = pick(
+      `\n\n(참조 공유: ${shared.join(', ')} — 다음 대화부터 이 맥락을 알고 시작합니다)`,
+      `\n\n(Shared with: ${shared.join(', ')} — they'll start the next conversation aware of this context)`,
+      lang,
+    );
   }
   return `[${r.name}]\n${turn.reply}${footer}`;
 }
@@ -232,14 +260,15 @@ function startTelegram(wsId, getCfg) {
   const handler = async (job) => {
     const cfg = getCfg();
     if (!cfg?.token || !cfg.chatId) return; // 연결이 사라짐 — 잡 폐기(재시도 불가)
+    const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
     try {
       const atts = job.atts ?? [];
-      const note = atts.some((a) => !a.isImage) ? '\n(이미지가 아닌 첨부는 vault 경로로 저장되어 있다)' : '';
-      const reply = await runTurn(wsId, cfg, job.text || ('첨부한 파일을 확인하고 필요한 걸 처리해줘.' + note), atts, job.ctx ?? null);
+      const note = atts.some((a) => !a.isImage) ? pick('\n(이미지가 아닌 첨부는 vault 경로로 저장되어 있다)', '\n(Non-image attachments are saved under the vault path)', lang) : '';
+      const reply = await runTurn(wsId, cfg, job.text || (pick('첨부한 파일을 확인하고 필요한 걸 처리해줘.', "Check the attached files and handle what's needed.", lang) + note), atts, job.ctx ?? null);
       await sendTgReply(cfg.token, cfg.chatId, wsId, reply);
     } catch (e) {
       // 턴 실패는 여기서 종결(에러 회신) — 던지지 않으므로 잡은 완료 처리된다(무한 재시도 방지)
-      await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
+      await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang) }).catch(() => {});
     }
   };
   const stopWorker = startQueueWorker(wsId, KEY, handler);
@@ -262,10 +291,11 @@ function startTelegram(wsId, getCfg) {
             const bySender = !cfg.ownerId || String(cq.from?.id) === String(cfg.ownerId);
             if (m && String(cq.message?.chat?.id) === String(cfg.chatId) && bySender) {
               const approve = m[2] === '1';
+              const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
               try {
                 const item = await resolveWithFollowUp(wsId, m[1], approve);
-                await tg(cfg.token, 'answerCallbackQuery', { callback_query_id: cq.id, text: approve ? '승인됨' : '거절됨' });
-                await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: `결재 ${approve ? '승인' : '거절'}: ${item.action}\n담당 크루가 이어서 보고합니다.` });
+                await tg(cfg.token, 'answerCallbackQuery', { callback_query_id: cq.id, text: pick(approve ? '승인됨' : '거절됨', approve ? 'Approved' : 'Rejected', lang) });
+                await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: pick(`결재 ${approve ? '승인' : '거절'}: ${item.action}\n담당 크루가 이어서 보고합니다.`, `Approval ${approve ? 'approved' : 'rejected'}: ${item.action}\nThe assigned crew will follow up.`, lang) });
               } catch (e) {
                 await tg(cfg.token, 'answerCallbackQuery', { callback_query_id: cq.id, text: String(e.message).slice(0, 60) }).catch(() => {});
               }
@@ -276,17 +306,18 @@ function startTelegram(wsId, getCfg) {
           const msg = u.message;
           if (!msg || (!msg.text && !msg.photo && !msg.document && !msg.video && !msg.voice && !msg.audio)) continue;
           if (!cfg.chatId) { // 페어링 — 설정에 표시된 코드를 보낸 사람만 사장으로 고정(TOFU 차단)
+            const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
             const sent = String(msg.text ?? '').trim().toUpperCase();
             if (!cfg.pairCode || sent !== cfg.pairCode) {
               // 코드 불일치 — 아무나 먼저 말 걸어도 소유권을 못 가져간다. 안내만 보낸다.
-              await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '이 봇을 회사와 연결하려면, 설정 → 연결에 표시된 6자리 연결 코드를 여기에 보내주세요.' }).catch(() => {});
+              await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: pick('이 봇을 회사와 연결하려면, 설정 → 연결에 표시된 6자리 연결 코드를 여기에 보내주세요.', 'To connect this bot to your company, send the 6-digit connection code shown in Settings → Connections here.', lang) }).catch(() => {});
               continue;
             }
             // 코드 일치 — 소유자 고정 + 코드 소비(재사용 방지)
             await updateConnection(wsId, 'telegram', { chatId: String(msg.chat.id), ownerId: msg.from?.id ?? null, pairCode: '' });
             Object.assign(cfg, { chatId: String(msg.chat.id), ownerId: msg.from?.id ?? null, pairCode: '' });
             await appendEvent(wsId, { type: 'gateway', kind: 'telegram', op: 'paired' });
-            await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '연결 코드 확인 — 이 채팅이 회사와 연결되었습니다.\n"@크루이름 지시" 또는 그냥 지시를 보내면 기본 크루가 응답합니다.\n"@이름1 @이름2 지시"는 첫 크루가 실행하고 나머지에게 맥락을 공유(cc)합니다.\n"크루"라고 보내면 연결된 크루 현황을 보여드립니다.' });
+            await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: pick('연결 코드 확인 — 이 채팅이 회사와 연결되었습니다.\n"@크루이름 지시" 또는 그냥 지시를 보내면 기본 크루가 응답합니다.\n"@이름1 @이름2 지시"는 첫 크루가 실행하고 나머지에게 맥락을 공유(cc)합니다.\n"크루"라고 보내면 연결된 크루 현황을 보여드립니다.', 'Code confirmed — this chat is now connected to your company.\nSend "@crewname instruction" or just an instruction and the default crew responds.\n"@name1 @name2 instruction" — the first crew acts and shares context (cc) with the rest.\nSend "crew" to see the connected crew roster.', lang) });
             continue;
           }
           if (String(msg.chat.id) !== String(cfg.chatId)) continue; // 페어링된 채팅만
@@ -301,7 +332,8 @@ function startTelegram(wsId, getCfg) {
             try {
               att = await tgDownload(cfg.token, wsId, msg);
             } catch (e) {
-              await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: `첨부 수신 실패: ${String(e.message).slice(0, 150)}` }).catch(() => {});
+              const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+              await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: pick(`첨부 수신 실패: ${String(e.message).slice(0, 150)}`, `Attachment failed: ${String(e.message).slice(0, 150)}`, lang) }).catch(() => {});
               continue;
             }
             if (!att) continue;
@@ -344,10 +376,16 @@ function startTelegram(wsId, getCfg) {
 /* ─── 크루 직통 봇 — 크루 1명 = 봇 1개(연락처처럼). DM은 1:1(웹과 같은 스레드),
    그룹에 초대하면 @멘션·답장이 그 크루에게 전달된다(텔레그램 기본 프라이버시 모드가 멘션만 전달 → 폭주 없음). ─── */
 async function runAgentTurn(wsId, slug, text, attachments, ctx) {
-  const ap = text.match(/^(승인|거절)\s+(ap-[a-z0-9]+)/);
+  const ap = text.match(/^(승인|거절)\s+(ap-[a-z0-9]+)/); // 결재 토큰(승인/거절)은 파서 앵커라 고정
   if (ap) {
-    const item = await resolveWithFollowUp(wsId, ap[2], ap[1] === '승인');
-    return `결재 ${ap[1]} 처리: ${item.action}\n실행 결과는 이어서 보고합니다.`;
+    const approve = ap[1] === '승인';
+    const item = await resolveWithFollowUp(wsId, ap[2], approve);
+    const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+    return pick(
+      `결재 ${ap[1]} 처리: ${item.action}\n실행 결과는 이어서 보고합니다.`,
+      `Approval ${approve ? 'approved' : 'rejected'}: ${item.action}\nThe result will follow.`,
+      lang,
+    );
   }
   const t = await loadThread(wsId, slug);
   const turn = await chat(wsId, slug, text, t.sessionId, { source: 'messenger', attachments, mirrorCtx: /group/.test(ctx?.chatType ?? '') ? ctx : null });
@@ -363,13 +401,14 @@ function startAgentTelegram(wsId, slug, getCfg) {
   const handler = async (job) => {
     const cfg = getCfg();
     if (!cfg?.token || !job.ctx?.chatId) return; // 연결/발화 위치 소실 — 잡 폐기
+    const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
     try {
       const atts = job.atts ?? [];
-      const note = atts.some((a) => !a.isImage) ? '\n(이미지가 아닌 첨부는 vault 경로로 저장되어 있다)' : '';
-      const reply = await runAgentTurn(wsId, slug, job.text || ('첨부한 파일을 확인하고 필요한 걸 처리해줘.' + note), atts, job.ctx);
+      const note = atts.some((a) => !a.isImage) ? pick('\n(이미지가 아닌 첨부는 vault 경로로 저장되어 있다)', '\n(Non-image attachments are saved under the vault path)', lang) : '';
+      const reply = await runAgentTurn(wsId, slug, job.text || (pick('첨부한 파일을 확인하고 필요한 걸 처리해줘.', "Check the attached files and handle what's needed.", lang) + note), atts, job.ctx);
       await sendTgReply(cfg.token, job.ctx.chatId, wsId, reply);
     } catch (e) {
-      await tg(cfg.token, 'sendMessage', { chat_id: job.ctx.chatId, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
+      await tg(cfg.token, 'sendMessage', { chat_id: job.ctx.chatId, text: pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang) }).catch(() => {});
     }
   };
   const stopWorker = startQueueWorker(wsId, KEY, handler);
@@ -389,15 +428,16 @@ function startAgentTelegram(wsId, slug, getCfg) {
           const isDm = msg.chat.type === 'private';
           if (!cfg.ownerId) {
             if (!isDm) continue; // 페어링 전 그룹 메시지는 무시 — 먼저 DM으로 페어링
+            const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
             const sent = String(msg.text ?? '').trim().toUpperCase();
             if (!cfg.pairCode || sent !== cfg.pairCode) { // 설정에 표시된 코드를 보낸 사람만 소유자(TOFU 차단)
-              await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '이 크루 봇을 연결하려면, 설정 → 연결의 크루 봇 항목에 표시된 6자리 연결 코드를 여기에 보내주세요.' }).catch(() => {});
+              await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: pick('이 크루 봇을 연결하려면, 설정 → 연결의 크루 봇 항목에 표시된 6자리 연결 코드를 여기에 보내주세요.', 'To connect this crew bot, send the 6-digit connection code shown under the crew-bot entry in Settings → Connections here.', lang) }).catch(() => {});
               continue;
             }
             await updateAgentBot(wsId, slug, { ownerId: msg.from.id, ownerChat: String(msg.chat.id), pairCode: '' });
             Object.assign(cfg, { ownerId: msg.from.id, ownerChat: String(msg.chat.id), pairCode: '' }); // sync 주기(10s) 전에도 즉시 반영
             await appendEvent(wsId, { type: 'gateway', kind: 'telegram', op: 'paired', slug });
-            await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: '연결 코드 확인 — 이 봇은 이 크루와의 1:1 직통입니다. 그대로 지시를 보내면 됩니다.\n그룹에 초대한 뒤 @멘션하거나 봇 메시지에 답장하면 그룹에서도 함께 일합니다.' });
+            await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: pick('연결 코드 확인 — 이 봇은 이 크루와의 1:1 직통입니다. 그대로 지시를 보내면 됩니다.\n그룹에 초대한 뒤 @멘션하거나 봇 메시지에 답장하면 그룹에서도 함께 일합니다.', 'Code confirmed — this bot is your 1:1 direct line to this crew. Just send instructions.\nInvite it to a group and @mention it (or reply to its messages) to work together there too.', lang) });
             continue;
           }
           if (msg.from?.id !== cfg.ownerId) continue; // 페어링한 사장만 (소규모 팀 허용은 후속)
@@ -409,7 +449,8 @@ function startAgentTelegram(wsId, slug, getCfg) {
             try {
               att = await tgDownload(cfg.token, wsId, msg);
             } catch (e) {
-              await tg(cfg.token, 'sendMessage', { chat_id: ctx.chatId, text: `첨부 수신 실패: ${String(e.message).slice(0, 150)}` }).catch(() => {});
+              const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+              await tg(cfg.token, 'sendMessage', { chat_id: ctx.chatId, text: pick(`첨부 수신 실패: ${String(e.message).slice(0, 150)}`, `Attachment failed: ${String(e.message).slice(0, 150)}`, lang) }).catch(() => {});
               continue;
             }
             if (!att) continue;
@@ -474,9 +515,10 @@ function startInboxWatcher(wsId) {
             const isImage = ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext);
             const att = { rel, name: safe, mime: isImage ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : '', isImage };
             const cfg = (await loadConnections(wsId)).telegram;
+            const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
             console.log(`[argo] 받은 서류함 처리 시작: ${wsId}/${safe}`);
             // runTurn 반환 = chat 핸드오버 + appendTurn(스레드) 영속 완료. 여기까지 와야 처리를 종결(원본 제거)한다.
-            const reply = await runTurn(wsId, cfg, `(받은 서류함) 사장이 inbox 폴더에 "${safe}" 파일을 넣었다. 내용을 확인하고 필요한 처리를 한 뒤 5줄 이내로 보고하라.`, [att]);
+            const reply = await runTurn(wsId, cfg, pick(`(받은 서류함) 사장이 inbox 폴더에 "${safe}" 파일을 넣었다. 내용을 확인하고 필요한 처리를 한 뒤 5줄 이내로 보고하라.`, `(Inbox) The owner dropped the file "${safe}" into the inbox folder. Review it, handle what's needed, then report back in 5 lines or fewer.`, lang), [att]);
             // 영속 성공 후에만 원본을 .done/으로 이동(재처리 종결). 실패 시 원본이 inbox에 남아 다음 틱에 재시도(at-least-once).
             const done = join(dir, '.done');
             await mkdir(done, { recursive: true });
@@ -486,7 +528,7 @@ function startInboxWatcher(wsId) {
               await unlink(fp).catch(() => {}); // 다른 마운트 등 rename 실패 시 — 최소한 원본은 제거해 무한 재처리 차단
             }
             if (cfg.enabled && cfg.token && cfg.chatId) { // 자리에 없어도 결과가 도착한다
-              await sendTgReply(cfg.token, cfg.chatId, wsId, `[받은 서류함] ${safe}\n\n${reply}`).catch(() => {});
+              await sendTgReply(cfg.token, cfg.chatId, wsId, pick(`[받은 서류함] ${safe}\n\n${reply}`, `[Inbox] ${safe}\n\n${reply}`, lang)).catch(() => {});
             }
           } catch (e) {
             console.error(`[argo] inbox 처리 실패(${wsId}/${n}):`, e.message); // 원본을 inbox에 유지 → 다음 틱 재시도
@@ -531,7 +573,8 @@ function startSlack(wsId, getCfg) {
               const reply = await runTurn(wsId, cfg, m.text.replace(/<@[A-Z0-9]+>\s*/g, '').trim());
               await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: clip(reply) });
             } catch (e) {
-              await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: `처리 실패: ${String(e.message).slice(0, 200)}` }).catch(() => {});
+              const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+              await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang) }).catch(() => {});
             }
           })();
         }
@@ -551,13 +594,14 @@ function startSlack(wsId, getCfg) {
 /* ─── 알림 푸시 — 결재는 버튼과 함께, 루틴은 브리핑으로, 위임은 상대 크루 봇의 발화로 ─── */
 async function pushEvent(event) {
   const all = await loadConnections(event.wsId);
+  const { lang = 'ko' } = await loadCompany(event.wsId).catch(() => ({}));
   // 위임 미러 — 그룹 대화 중 A가 B에게 위임하면, B의 봇이 같은 방에 자기 이름으로 결과를 올린다(크루 간 대화 가시화).
   if (event.type === 'delegate') {
     const ctx = event.ctx; // 위임 이벤트에 실려온 발화 위치 — 전역 맵 조회 없이 이 턴의 방으로만
     if (!ctx || !/group/.test(ctx.chatType ?? '')) return; // 그룹에서만 — DM엔 상대 봇이 없다
     const bot = all.telegram.agents?.[event.to];
     if (!bot?.token) return; // 상대가 봇이 없으면 위임 결과는 A의 답에 통합돼 있으니 생략
-    await sendTgReply(bot.token, ctx.chatId, event.wsId, `(${event.fromName}의 요청: ${String(event.task).replace(/\s+/g, ' ').slice(0, 80)})\n\n${event.reply}`)
+    await sendTgReply(bot.token, ctx.chatId, event.wsId, pick(`(${event.fromName}의 요청: ${String(event.task).replace(/\s+/g, ' ').slice(0, 80)})\n\n${event.reply}`, `(${event.fromName}'s request: ${String(event.task).replace(/\s+/g, ' ').slice(0, 80)})\n\n${event.reply}`, lang))
       .catch((e) => console.error('[argo] 위임 미러 실패:', e.message));
     return;
   }
@@ -566,23 +610,31 @@ async function pushEvent(event) {
     if (event.type === 'approval') {
       await tg(t.token, 'sendMessage', {
         chat_id: t.chatId,
-        text: `결재 요청\n${event.item.action}\n\n사유: ${event.item.reason}`,
+        text: pick(`결재 요청\n${event.item.action}\n\n사유: ${event.item.reason}`, `Approval request\n${event.item.action}\n\nReason: ${event.item.reason}`, lang),
         reply_markup: { inline_keyboard: [[
-          { text: '승인', callback_data: `ap:${event.item.id}:1` },
-          { text: '거절', callback_data: `ap:${event.item.id}:0` },
+          { text: pick('승인', 'Approve', lang), callback_data: `ap:${event.item.id}:1` },
+          { text: pick('거절', 'Reject', lang), callback_data: `ap:${event.item.id}:0` },
         ]] },
       }).catch((e) => console.error('[argo] 텔레그램 결재 푸시 실패:', e.message));
     }
     if (event.type === 'routine') {
-      await sendTgReply(t.token, t.chatId, event.wsId, `**[루틴] ${event.routine.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`)
+      await sendTgReply(t.token, t.chatId, event.wsId, pick(`**[루틴] ${event.routine.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Routine] ${event.routine.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang))
         .catch((e) => console.error('[argo] 텔레그램 루틴 푸시 실패:', e.message));
     }
   }
   const s = all.slack;
   if (s.enabled && s.token && s.channel) {
     const text = event.type === 'approval'
-      ? `결재 요청: ${event.item.action}\n사유: ${event.item.reason}\n→ 이 채널에 "승인 ${event.item.id}" 또는 "거절 ${event.item.id}" 로 회신`
-      : `[루틴] ${event.routine.title} ${event.ok ? '' : '(실패)'}\n${event.reply}`;
+      ? pick(
+          `결재 요청: ${event.item.action}\n사유: ${event.item.reason}\n→ 이 채널에 "승인 ${event.item.id}" 또는 "거절 ${event.item.id}" 로 회신`,
+          `Approval request: ${event.item.action}\nReason: ${event.item.reason}\n→ Reply in this channel with "승인 ${event.item.id}" (approve) or "거절 ${event.item.id}" (reject)`,
+          lang,
+        )
+      : pick(
+          `[루틴] ${event.routine.title} ${event.ok ? '' : '(실패)'}\n${event.reply}`,
+          `[Routine] ${event.routine.title} ${event.ok ? '' : '(failed)'}\n${event.reply}`,
+          lang,
+        );
     await slackApi(s.token, 'chat.postMessage', { channel: s.channel, text: clip(text) })
       .catch((e) => console.error('[argo] 슬랙 푸시 실패:', e.message));
   }
