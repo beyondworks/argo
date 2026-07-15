@@ -16,10 +16,10 @@ export const CHAPTERS = [
     glyph: 'vault',
     vignette: '/assets/art/vignette-ch2.webp',
     features: [
-      { id: 'feat3', tc: '00:15' },
-      { id: 'feat4', tc: '00:11' },
-      { id: 'feat5', tc: '00:20' },
-      { id: 'feat6', tc: '00:14' },
+      { id: 'feat3', tc: '00:10', video: '/assets/demos/feat3.mp4' },
+      { id: 'feat4', tc: '00:10', video: '/assets/demos/feat4.mp4' },
+      { id: 'feat5', tc: '00:10', video: '/assets/demos/feat5.mp4' },
+      { id: 'feat6', tc: '00:10', video: '/assets/demos/feat6.mp4' },
     ],
   },
   {

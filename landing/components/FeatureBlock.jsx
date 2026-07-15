@@ -18,7 +18,7 @@ const FeatureBlock = forwardRef(function FeatureBlock({ feature, chapterId, orde
         <p className="feature-body">{t(`${feature.id}.body`)}</p>
       </div>
       <div className="feature-media">
-        <DemoPlaceholder label={t(`${feature.id}.label`)} tc={feature.tc} />
+        <DemoPlaceholder label={t(`${feature.id}.label`)} tc={feature.tc} video={feature.video} />
       </div>
     </div>
   );
