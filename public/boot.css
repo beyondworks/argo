@@ -1,9 +1,48 @@
-/* 데스크톱 셸 로딩 화면 스타일 — index.html에서 인라인 분리(CSP 견고성, P0-4). */
-html, body { margin: 0; height: 100%; background: #10141c; color: #d9c98a;
+/* 데스크톱 셸 부트 화면 — 파도 위를 항해하는 배 + 실시간 단계/진행률. 배경 #212121 고정. */
+html, body { margin: 0; height: 100%; background: #212121; color: #f2ecdd;
   font-family: -apple-system, "Pretendard", system-ui, sans-serif;
-  display: flex; align-items: center; justify-content: center; }
-.box { text-align: center; }
-.star { font-size: 44px; color: #d9b23a; }
-.msg { margin-top: 12px; font-size: 14px; opacity: .8; }
-.sub { margin-top: 6px; font-size: 12px; opacity: .5; }
+  display: flex; align-items: center; justify-content: center; overflow: hidden; }
+
+.box { text-align: center; width: min(480px, calc(100vw - 48px)); }
+
+/* 장면 — 배(뒤) 위로 파도(앞)가 겹쳐 선체가 물에 잠겨 보이게 */
+.scene { position: relative; height: 210px; margin-bottom: 6px; }
+/* 에셋이 검은 배경 위 그림이라 screen 블렌드로 검정을 녹인다 — #212121 위에서 검정 = 배경색 */
+.ship { position: absolute; left: 50%; bottom: 58px; width: 210px; margin-left: -105px;
+  z-index: 1; mix-blend-mode: screen; animation: sail 7s ease-in-out infinite alternate; will-change: transform; }
+.wave { position: absolute; left: 50%; bottom: 0; width: 480px; margin-left: -240px;
+  z-index: 2; mix-blend-mode: screen; animation: sway 5.5s ease-in-out infinite alternate; will-change: transform; }
+
+@keyframes sail {
+  0%   { transform: translateX(-34px) translateY(2px) rotate(-2.4deg); }
+  50%  { transform: translateX(0)     translateY(-4px) rotate(0.6deg); }
+  100% { transform: translateX(34px)  translateY(1px) rotate(2.4deg); }
+}
+@keyframes sway {
+  0%   { transform: translateX(-10px) translateY(0); }
+  100% { transform: translateX(10px)  translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ship, .wave { animation: none; }
+}
+
+.msg { margin-top: 10px; font-size: 15px; letter-spacing: .2px; opacity: .92; }
+.sub { margin-top: 7px; font-size: 12.5px; opacity: .6; min-height: 16px; }
+
+/* 진행률 바 — 골드 */
+.bar { margin: 16px auto 0; width: 260px; height: 3px; border-radius: 2px;
+  background: rgba(242, 236, 221, 0.14); overflow: hidden; }
+.fill { height: 100%; width: 4%; border-radius: 2px; background: #d9b23a;
+  transition: width .45s ease; }
+
+/* 느릴 때 서버 로그 테일 — 무슨 일이 벌어지는지 보여준다 */
+.logtail { margin: 14px auto 0; width: min(420px, 90vw); font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 10.5px; line-height: 1.6; color: rgba(242, 236, 221, 0.38); text-align: left;
+  white-space: pre-wrap; word-break: break-all; max-height: 52px; overflow: hidden; }
+
+/* 실패 — 숨기지 않는다 */
+.err { margin: 14px auto 0; width: min(420px, 90vw); padding: 10px 12px; border-radius: 8px;
+  background: rgba(224, 92, 92, 0.12); border: 1px solid rgba(224, 92, 92, 0.35);
+  color: #e8a0a0; font-size: 12px; line-height: 1.6; text-align: left; white-space: pre-wrap; }
+
 a { color: #d9b23a; }

@@ -8,6 +8,7 @@
     "devUrl": "http://localhost:3001"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Argo",
