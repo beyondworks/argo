@@ -1,6 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import { useLang } from '@/lib/i18n';
+import StarModal, { RELEASES, starAsked } from './StarModal';
 
 function AppleIcon() {
   return (
@@ -20,6 +22,13 @@ function WindowsIcon() {
 
 export default function DownloadSection() {
   const { t } = useLang();
+  const [starOpen, setStarOpen] = useState(false);
+  // 첫 다운로드 클릭에서만 스타 모달 — 이미 스타했거나 "그냥 다운로드"를 고른 사람에겐 다시 묻지 않는다
+  const gate = (e) => {
+    if (starAsked()) return;
+    e.preventDefault();
+    setStarOpen(true);
+  };
   return (
     <section className="download-section" id="download">
       <div className="download-head">
@@ -29,16 +38,17 @@ export default function DownloadSection() {
       <h2 className="download-title">{t('download.title')}</h2>
       <p className="download-sub">{t('download.sub')}</p>
       <div className="download-buttons">
-        <a className="dl-btn primary" href="https://github.com/beyondworks/argo-agent/releases/latest" target="_blank" rel="noopener noreferrer">
+        <a className="dl-btn primary" href={RELEASES} target="_blank" rel="noopener noreferrer" onClick={gate}>
           <AppleIcon />
           {t('download.mac')}
         </a>
-        <a className="dl-btn ghost" href="https://github.com/beyondworks/argo-agent/releases/latest" target="_blank" rel="noopener noreferrer">
+        <a className="dl-btn ghost" href={RELEASES} target="_blank" rel="noopener noreferrer" onClick={gate}>
           <WindowsIcon />
           {t('download.win')}
         </a>
       </div>
       <span className="download-note">{t('download.note')}</span>
+      {starOpen && <StarModal onClose={() => setStarOpen(false)} />}
     </section>
   );
 }
