@@ -486,13 +486,19 @@ export async function runnerStatus(wsId) {
     가용 = 회사 자격(BYOK/OAuth) 또는 호스트 자격(CLI 로그인·env). 반환 { runner, fellBack, available }. */
 export async function resolveRunner(wsId, want) {
   const st = await runnerStatus(wsId);
-  const usable = (id) => !!st[id] && (st[id].company.connected || st[id].hostAuthed);
+  // 외부 CLI 러너(codex/gemini)는 실행 주체가 벤더 CLI라, 회사 자격(OAuth/키)이 있어도 이 컴퓨터에
+  // CLI가 없으면 spawn ENOENT로 죽는다 — 자격만 보고 가용 판정하면 안 된다(웹 브리지로 연결한 새 기기 사례).
+  // claude/glm은 번들 SDK CLI로 실행되므로 호스트 설치 불필요.
+  const executable = (id) => (id === 'codex' || id === 'gemini' ? !!st[id]?.hostInstalled : true);
+  const usable = (id) => !!st[id] && executable(id) && (st[id].company.connected || st[id].hostAuthed);
   if (usable(want)) return { runner: want, fellBack: false, available: true };
   for (const id of Object.keys(RUNNER_AUTH)) {
     if (usable(id)) return { runner: id, fellBack: true, available: true };
   }
-  // 아무 러너도 없음 — 호출부가 안내 에러를 만든다(원래 러너 반환은 에러 문구용)
-  return { runner: want, fellBack: false, available: false };
+  // 아무 러너도 없음 — 호출부가 안내 에러를 만든다(원래 러너 반환은 에러 문구용).
+  // credButNoCli: 자격은 연결했는데 벤더 CLI가 없어 못 쓰는 러너 — "연결했는데 왜 안 되냐"에 정확히 답하기 위한 재료.
+  const credButNoCli = Object.keys(RUNNER_AUTH).filter((id) => st[id]?.company.connected && !executable(id));
+  return { runner: want, fellBack: false, available: false, credButNoCli };
 }
 
 /** 자격 인증 확인 — 러너별 저비용 검증. { ok:true|false|null }(null=네트워크 불가, 형식만으로 저장 허용). */
