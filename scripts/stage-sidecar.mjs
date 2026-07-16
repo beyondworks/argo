@@ -33,6 +33,22 @@ rmSync(serverDest, { recursive: true, force: true });
 mkdirSync(dirname(serverDest), { recursive: true });
 cpSync(standalone, serverDest, { recursive: true });
 
+// 3.4) Claude Agent SDK 네이티브 CLI 보장 — 플랫폼 패키지(claude-agent-sdk-<os>-<arch>)는 동적 로드라
+// standalone 추적에서 누락된다(실측: Windows에서 "Native CLI binary for win32-x64 not found"로 크루 턴 전멸).
+// 실제 node_modules의 @anthropic-ai 스코프를 통째로 덮어쓴다 — 각 빌드 러너 OS가 자기 플랫폼 패키지를 가진다.
+{
+  const scopeSrc = join(ROOT, 'node_modules', '@anthropic-ai');
+  const scopeDest = join(serverDest, 'node_modules', '@anthropic-ai');
+  rmSync(scopeDest, { recursive: true, force: true });
+  cpSync(scopeSrc, scopeDest, { recursive: true });
+  const native = readdirSync(scopeSrc).find((n) => n.startsWith('claude-agent-sdk-'));
+  if (!native || !existsSync(join(scopeDest, native))) {
+    console.error('[stage] Claude Agent SDK 플랫폼 CLI 패키지 없음 — 크루 턴이 전부 실패한다. npm ci 상태 확인');
+    process.exit(1);
+  }
+  console.log(`[stage] SDK 네이티브 CLI 포함: ${native}`);
+}
+
 // 3.5) 시크릿·개발자 데이터·런타임 잔재 제거 (배포 아티팩트 유출 차단 — 가장 중요)
 //   standalone/사본에 workspaces(회사 데이터·봇 토큰·.secrets.json)나 캐시가 섞여 들어오면
 //   설치본 압축해제로 누구나 추출 가능. 여기서 물리적으로 지운다.
