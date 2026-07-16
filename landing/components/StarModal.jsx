@@ -2,6 +2,7 @@
 // 다운로드 전 깃헙 스타 요청 모달 — 다운로드를 볼모로 잡지 않는다("그냥 다운로드" 항상 제공).
 // "스타 누르고 다운로드" → /api/star/start?t=<타깃> (깃헙 승인 → 서버가 스타 → 해당 설치파일 직다운로드).
 import { useEffect, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useLang } from '@/lib/i18n';
 
 export const RELEASES = 'https://github.com/beyondworks/argo-agent/releases/latest';
@@ -67,7 +68,9 @@ export default function StarModal({ target = 'silicon', onClose }) {
     onClose();
   };
 
-  return (
+  // 포털로 body에 직접 렌더 — 랜딩의 스무스 스크롤(transform 조상) 안에서는
+  // position:fixed 기준이 뷰포트가 아니라 그 조상이 되어 모달이 엉뚱한 위치에 뜬다(실측).
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -75,13 +78,13 @@ export default function StarModal({ target = 'silicon', onClose }) {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
         position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center',
-        justifyContent: 'center', background: 'rgba(4, 10, 22, 0.72)', backdropFilter: 'blur(6px)',
+        justifyContent: 'center', background: 'rgba(0, 0, 0, 0.62)', backdropFilter: 'blur(6px)',
       }}
     >
       <div
         style={{
           width: 'min(420px, calc(100vw - 40px))', padding: '28px 26px', borderRadius: 16,
-          background: '#0b1526', border: '1px solid rgba(214, 178, 94, 0.25)',
+          background: '#212121', border: '1px solid rgba(214, 178, 94, 0.25)',
           boxShadow: '0 24px 80px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: 14,
         }}
       >
@@ -114,6 +117,7 @@ export default function StarModal({ target = 'silicon', onClose }) {
         </div>
         <span style={{ fontSize: 11.5, color: 'rgba(242, 236, 221, 0.45)' }}>{t('star.hint')}</span>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
