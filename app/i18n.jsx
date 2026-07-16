@@ -112,6 +112,12 @@ const DICT = {
   'nav.unpin': ['고정 해제', 'Unpin'],
   'nav.feedback': ['피드백', 'Feedback'],
   'feedback.beta': ['베타', 'Beta'],
+  'feedback.title': ['베타 피드백', 'Beta feedback'],
+  'feedback.desc': ['불편했던 점·바라는 점 무엇이든 적어주세요. 그대로 전달됩니다.', 'Tell us what felt off or what you wish it did — anything helps.'],
+  'feedback.placeholder': ['여기에 적어주세요', 'Write here'],
+  'feedback.send': ['보내기', 'Send'],
+  'feedback.sent': ['보냈어요. 고맙습니다.', 'Sent. Thank you.'],
+  'feedback.error': ['보내지 못했어요. 잠시 후 다시 시도해 주세요.', 'Could not send. Please try again shortly.'],
   'shell.notFound': ['이 회사를 찾을 수 없습니다.', 'Company not found.'],
   'shell.backHome': ['홈으로 돌아가기', 'Back to home'],
 

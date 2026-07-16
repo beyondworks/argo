@@ -421,3 +421,60 @@ export function InputModal({ title, label, defaultValue = '', placeholder, confi
     </div>
   );
 }
+
+/** 베타 피드백 — 인앱에서 작성하면 서버(/api/feedback)가 Supabase에 저장한다. 브라우저(메일앱)를 열지 않는다. */
+export function FeedbackModal({ onClose }) {
+  const { t } = useLang();
+  useScrollLock();
+  const [text, setText] = useState('');
+  const [state, setState] = useState(''); // '' | 'sending' | 'sent' | 'error'
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const send = async () => {
+    const v = text.trim();
+    if (!v || state === 'sending') return;
+    setState('sending');
+    try {
+      const r = await fetch('/api/feedback', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: v }),
+      });
+      if (!r.ok) throw new Error();
+      setState('sent');
+      setTimeout(onClose, 1300);
+    } catch { setState('error'); }
+  };
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
+      <div className="card card-float fade-up" style={{ width: 'min(440px, 100%)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="card-head">
+          <span className="card-title">{t('feedback.title')}</span>
+          <span className="rule" />
+          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+        </div>
+        <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
+          {state === 'sent' ? (
+            <p style={{ fontSize: 13, color: 'var(--fg-2)', padding: '14px 2px', textAlign: 'center' }}>{t('feedback.sent')}</p>
+          ) : (
+            <>
+              <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('feedback.desc')}</p>
+              <textarea suppressHydrationWarning value={text} onChange={(e) => setText(e.target.value)} placeholder={t('feedback.placeholder')}
+                rows={5} autoFocus {...imeGuard}
+                style={{ padding: '10px 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }} />
+              {state === 'error' && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{t('feedback.error')}</span>}
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button type="button" className="btn sm" onClick={onClose} disabled={state === 'sending'}>{t('common.cancel')}</button>
+                <button type="button" className="btn btn-primary sm" disabled={state === 'sending' || !text.trim()} onClick={send}>
+                  {state === 'sending' ? <Spinner size={12} /> : t('feedback.send')}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

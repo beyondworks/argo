@@ -2,11 +2,9 @@
 // 회사 앱셸 — 라벨 사이드바(회사/크루 그룹 + 사용자 footer) + 헤더(타이틀·검색).
 import { use, useCallback, useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, api } from '../../ui';
+import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, api } from '../../ui';
 import { useLang } from '../../i18n';
 
-// 베타 피드백 수신처 — 설정/로그인/약관 페이지와 동일 env(mailto). 없으면 버튼 미노출.
-const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
 
@@ -102,6 +100,7 @@ export default function CompanyShell({ children, params }) {
   const [q, setQ] = useState('');
   // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
   const [me, setMe] = useState(null);
+  const [fbOpen, setFbOpen] = useState(false); // 베타 피드백 모달
   useEffect(() => { api('/api/me').then(setMe).catch(() => {}); }, []);
 
   const refresh = useCallback(() => {
@@ -284,23 +283,24 @@ export default function CompanyShell({ children, params }) {
           <Icon name="plus" size={15} /> {t('nav.hire')}
         </a>
 
-        {/* 베타 피드백 — 메일 앱으로 lean8kim@ 열기(mailto). CONTACT env 없으면 미노출. */}
-        {CONTACT && (
-          <a
-            href={`mailto:${CONTACT}?subject=${encodeURIComponent(t('legal.feedbackSubject'))}`}
+        {/* 베타 피드백 — 인앱 모달로 작성 후 서버가 Supabase에 저장(브라우저 안 열림). 클라우드(로그인) 모드에서만. */}
+        {me?.authOn && (
+          <button
+            type="button"
             className="nav-item"
-            style={{ marginTop: 'auto', color: 'var(--fg-2)' }}
+            style={{ marginTop: 'auto', color: 'var(--fg-2)', width: '100%', textAlign: 'left', cursor: 'pointer', background: 'none', border: 0 }}
+            onClick={() => setFbOpen(true)}
             title={t('nav.feedback')}
           >
             <Icon name="send" size={15} />
             <span style={{ flex: 1 }}>{t('nav.feedback')}</span>
             <span className="mono" style={{ fontSize: 9, letterSpacing: '0.06em', color: 'var(--primary)', border: '1px solid var(--primary-fg-line)', borderRadius: 4, padding: '1px 4px' }}>{t('feedback.beta')}</span>
-          </a>
+          </button>
         )}
         <a
           href={`/c/${ws}/settings`}
           className={`nav-item${pathname.endsWith('/settings') ? ' active' : ''}`}
-          style={CONTACT ? undefined : { marginTop: 'auto' }}
+          style={me?.authOn ? undefined : { marginTop: 'auto' }}
         >
           <Icon name="settings" size={16} /> {t('nav.settings')}
         </a>
@@ -352,6 +352,7 @@ export default function CompanyShell({ children, params }) {
           ) : children}
         </main>
       </div>
+      {fbOpen && <FeedbackModal onClose={() => setFbOpen(false)} />}
     </div>
   );
 }
