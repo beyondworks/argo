@@ -83,6 +83,16 @@ jobs:
           for f in src-tauri/target/release/bundle/macos/*.app.tar.gz.sig; do
             if [ -e "$f" ]; then cp "$f" "dist/argo-${{ matrix.rust_target }}.app.tar.gz.sig"; fi
           done
+          # 고정 파일명 사본 — README·랜딩의 releases/latest 직다운로드 링크가 버전과 무관하게 유지되도록
+          for f in src-tauri/target/release/bundle/dmg/*aarch64.dmg; do
+            if [ -e "$f" ]; then cp "$f" dist/argo-macos-apple-silicon.dmg; fi
+          done
+          for f in src-tauri/target/release/bundle/dmg/*x64.dmg; do
+            if [ -e "$f" ]; then cp "$f" dist/argo-macos-intel.dmg; fi
+          done
+          for f in src-tauri/target/release/bundle/nsis/*-setup.exe; do
+            if [ -e "$f" ]; then cp "$f" dist/argo-windows-setup.exe; fi
+          done
           ls -la dist
 
       - uses: actions/upload-artifact@v4
@@ -120,7 +130,7 @@ jobs:
           for (const [key, re] of [
             ['darwin-aarch64', /aarch64-apple-darwin\.app\.tar\.gz$/],
             ['darwin-x86_64', /x86_64-apple-darwin\.app\.tar\.gz$/],
-            ['windows-x86_64', /-setup\.exe$/],
+            ['windows-x86_64', /_x64-setup\.exe$/], // 고정 파일명(argo-windows-setup.exe, sig 없음)과 구분 — 버전명 파일만
           ]) {
             const f = pick(re);
             if (f && fs.existsSync(`${dir}/${f}.sig`)) platforms[key] = entry(f);
@@ -148,9 +158,20 @@ jobs:
           files: dist/**/*
           draft: true
           body: |
-            ## 설치 — 첫 실행 안내
-            현재 빌드는 코드 서명 전이라 처음 실행 시 OS 보안 경고가 뜹니다. 정상이며 안전합니다.
-            - **macOS**: 앱 우클릭 → 열기 → 다시 열기 (또는 시스템 설정 → 개인정보 보호 및 보안 → 확인 없이 열기)
-            - **Windows**: SmartScreen 화면에서 추가 정보 → 실행
+            ## ⬇ 어떤 파일을 받아야 하나요? / Which file should I download?
 
-            설치파일: macOS `.dmg`(Apple Silicon `aarch64` / Intel `x64`), Windows `-setup.exe`.
+            | 내 컴퓨터 / Your machine | 받을 파일 / Download |
+            |---|---|
+            | **Mac — Apple Silicon** (M1·M2·M3·M4) | [argo-macos-apple-silicon.dmg](https://github.com/beyondworks/argo-agent/releases/download/${{ github.ref_name }}/argo-macos-apple-silicon.dmg) |
+            | **Mac — Intel** | [argo-macos-intel.dmg](https://github.com/beyondworks/argo-agent/releases/download/${{ github.ref_name }}/argo-macos-intel.dmg) |
+            | **Windows 10+** | [argo-windows-setup.exe](https://github.com/beyondworks/argo-agent/releases/download/${{ github.ref_name }}/argo-windows-setup.exe) |
+
+            >  → 이 Mac에 관하여 → "칩"이 Apple M1~M4면 Apple Silicon, Intel이면 Intel용. /  → About This Mac → "Chip".
+
+            기존 설치 사용자는 앱 안에서: **설정 → 기기 → 앱 업데이트**. / Existing users: **Settings → Devices → App updates**.
+
+            ## 설치 — 첫 실행 안내 / First-run notes
+            현재 빌드는 코드 서명 전이라 처음 실행 시 OS 보안 경고가 뜹니다. 정상이며 안전합니다.
+            Builds are not yet code-signed; the one-time OS prompt is expected and safe.
+            - **macOS**: 앱 우클릭 → 열기 → 다시 열기 (또는 시스템 설정 → 개인정보 보호 및 보안 → 확인 없이 열기) / Right-click → Open → Open (or Privacy & Security → "Open Anyway")
+            - **Windows**: SmartScreen에서 추가 정보 → 실행 / More info → Run anyway
