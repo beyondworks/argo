@@ -20,7 +20,8 @@ const triple = execFileSync('rustc', ['-vV'], { encoding: 'utf8' })
 const standalone = join(ROOT, '.next', 'standalone');
 if (!existsSync(join(standalone, 'server.js'))) {
   console.log('[stage] standalone 빌드…');
-  execFileSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'inherit', env: { ...process.env, ARGO_STANDALONE: '1' } });
+  // Windows: npm은 npm.cmd라 shell 없이는 spawn ENOENT (v0.1.0 CI 실측)
+  execFileSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'inherit', shell: process.platform === 'win32', env: { ...process.env, ARGO_STANDALONE: '1' } });
 }
 // standalone엔 정적 자산이 안 들어오므로 직접 복사(Next 권장 절차)
 cpSync(join(ROOT, '.next', 'static'), join(standalone, '.next', 'static'), { recursive: true });
