@@ -99,6 +99,29 @@ test('통합: 백업 없는 진짜 삭제는 원격으로 정상 전파', async 
   assert.ok(!fake._store.has(`${OWNER}/${wsId}/chats/gone.json`), '원격 blob 삭제됨');
 });
 
+test('통합: 원격에서 발견된 빈 회사(재설치)는 대량삭제 브레이크 대신 전체 복원', async () => {
+  const wsId = 'corestore';
+  // 로컬 통째로 빔(재설치) · base엔 과거 매니페스트(21개 상당) · 원격 온전. isRestore=true 경로.
+  const files = {}, blobs = {};
+  for (let i = 0; i < 21; i++) {
+    const b = Buffer.from(`# note ${i}\n`);
+    files[`vault/notes/n${i}.md`] = meta(b);
+    blobs[`vault/notes/n${i}.md`] = b;
+  }
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: {},          // 로컬 비어 있음
+    state: files,            // base = 원격과 동일(과거 pull 성공 기록, 로컬만 유실)
+    remoteFiles: files,
+    remoteBlobs: blobs,
+  });
+  const r = await syncCompany(wsId, OWNER, true); // isRestore
+
+  assert.equal(r.deletedR, 0, '원격 삭제 전파 없음(브레이크 오탐 방지)');
+  assert.equal(r.pulled, 21, '21개 전부 로컬로 복원');
+  assert.ok(existsSync(join(wsRoot, 'vault', 'notes', 'n0.md')), '복원 파일이 실제로 로컬에 씀');
+  assert.ok(fake._store.has(`${OWNER}/${wsId}/vault/notes/n0.md`), '원격은 그대로 보존');
+});
+
 /* ── [B] 스레드 충돌: 웹↔앱 동시 편집 turn을 union 병합(양쪽 보존) ── */
 test('통합: 스레드 양쪽 편집 충돌은 union 병합으로 양쪽 turn 보존', async () => {
   const wsId = 'comerge';

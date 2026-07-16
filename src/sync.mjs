@@ -280,7 +280,7 @@ async function upload(key, buf) {
 /* ─── 회사 1개 동기화 — base(마지막 동기화 상태) 대비 3-way 병합.
    "누가 바꿨나"를 해시로 판별해, 한쪽만 바뀌면 그쪽을 반영하고, 양쪽이 바뀌면 파일 종류별로
    충돌을 해소한다(원장=행 병합, 텍스트=양쪽 보존, 스레드=락). blind LWW로 조용히 파기하지 않는다. */
-export async function syncCompany(wsId, owner) {
+export async function syncCompany(wsId, owner, isRestore = false) {
   const root = paths(wsId).root;
   const me = await getDeviceId();
   const manifestKey = skey(owner, wsId, '__manifest__.json');
@@ -308,6 +308,16 @@ export async function syncCompany(wsId, owner) {
   const failedDirs = new Set();
   const local = await walk(root, root, {}, failedDirs);
   const state = (await loadState(wsId)).files ?? {};
+  // 신규 복원 가드 — 이 회사가 원격에서만 발견됐고(isRestore: 로컬에 company.json조차 없음) 로컬이
+  // 통째로 비었는데 base(.sync-state)만 남아 있으면, 삭제 의도가 아니라 복원이다(재설치·루트 리셋·과거
+  // 쓰기 실패 잔재). base를 비워 전체를 새로 pull한다 — 원격은 온전하니 유실 위험 없음.
+  // isRestore로 좁히는 게 핵심: 로컬에 회사가 있고 일부만 지운 '진짜 삭제'는 이 분기를 타지 않는다.
+  // walk 실패(failedDirs)가 있으면 '비어 보임'을 못 믿으므로 리셋하지 않는다(유실 방어 유지).
+  // (실측: v0.1.1 Windows 경계 버그가 pull 쓰기를 막고 state만 남겨 → 대량삭제 브레이크 오탐 → 동기화 영구 보류)
+  if (isRestore && Object.keys(local).length === 0 && Object.keys(state).length > 0 && failedDirs.size === 0) {
+    console.warn(`[argo] 동기화(${wsId}): 원격에서 발견된 빈 회사 — 신규 복원으로 간주, base 리셋`);
+    for (const k of Object.keys(state)) delete state[k];
+  }
   let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0;
 
   const relFull = (rel) => {
@@ -509,9 +519,11 @@ async function cycle() {
     } catch { /* 회사 아님 */ }
   }
   // 원격에만 있는 내 회사 발견 → 로컬 복제 대상에 추가 (새 기기가 자기 회사 복원). 남의 테넌트는 안 봄.
+  // restoreSet: 로컬에 회사(company.json)가 없어 원격에서 처음 발견된 것 — 신규 복원 가드의 신호.
   const localOwners = [...new Set(targets.values())];
+  const restoreSet = new Set();
   for (const { owner, wsId } of await discoverRemote(localOwners)) {
-    if (!targets.has(wsId)) targets.set(wsId, owner);
+    if (!targets.has(wsId)) { targets.set(wsId, owner); restoreSet.add(wsId); }
   }
   const owners = [...new Set(targets.values())];
   // ARGO_SYNC_OWNER/페어링/세션 어디에도 오너가 없던 서비스 셀프호스트 — 로컬 회사에서 찾은 오너로 한 번 더 시도
@@ -528,7 +540,7 @@ async function cycle() {
   let companyFailed = 0;
   for (const [wsId, owner] of targets) {
     try {
-      const r = await syncCompany(wsId, owner);
+      const r = await syncCompany(wsId, owner, restoreSet.has(wsId));
       status.companies[wsId] = { ts: Date.now(), ...r };
     } catch (e) {
       status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;

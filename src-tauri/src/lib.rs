@@ -14,6 +14,10 @@ fn boot_status(app: &tauri::AppHandle, phase: &str, detail: &str) {
 
 const PORT: u16 = 3001;
 
+// 앱이 띄운 사이드카 핸들 — 종료 시 함께 죽인다.
+// (실측: Windows에서 앱을 닫아도 node가 고아로 남아 3001을 점유 → 다음 실행이 구버전/죽은 서버에 붙는다)
+struct Sidecar(std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
+
 fn port_open() -> bool {
     TcpStream::connect_timeout(&(([127, 0, 0, 1], PORT).into()), Duration::from_millis(300)).is_ok()
 }
@@ -30,6 +34,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init()) // 앱에서 외부 브라우저 열기(로그인 핸드오프)
         .setup(|app| {
+            app.manage(Sidecar(std::sync::Mutex::new(None)));
             // 인앱 업데이트(설정 → 앱 업데이트 버튼) — 데스크톱 전용. 서명 검증은 tauri.conf.json pubkey.
             #[cfg(desktop)]
             {
@@ -83,9 +88,13 @@ pub fn run() {
                         .args(["server.js"])
                         .spawn();
                     match child {
-                        Ok((mut rx, _child)) => {
+                        Ok((mut rx, child)) => {
                             log::info!("[argo] 회사 서버 사이드카 기동 (포트 {PORT})");
                             boot_status(&handle, "started", "local server process launched");
+                            // 종료 시 kill할 수 있게 보관
+                            if let Some(st) = handle.try_state::<Sidecar>() {
+                                *st.0.lock().unwrap() = Some(child);
+                            }
                             while let Some(ev) = rx.recv().await {
                                 match ev {
                                     CommandEvent::Stderr(line) | CommandEvent::Stdout(line) => {
@@ -114,6 +123,16 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // 앱 종료 = 사이드카도 종료 — 고아 node가 3001을 계속 점유하지 않게
+            if let tauri::RunEvent::Exit = event {
+                if let Some(st) = app.try_state::<Sidecar>() {
+                    if let Some(child) = st.0.lock().unwrap().take() {
+                        let _ = child.kill();
+                    }
+                }
+            }
+        });
 }
