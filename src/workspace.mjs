@@ -1,5 +1,5 @@
 // 워크스페이스 = 회사 1개의 격리 폴더 트리. SaaS에서는 유저별로 이 트리가 격리 컨테이너/볼륨에 산다.
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { writeJsonAtomic } from './jsonstore.mjs';
@@ -51,6 +51,9 @@ export async function createCompany(wsId, name, owner, ownerId = null, lang = 'k
   // lang = 시스템(크루 생성) 언어. 크루 답변·페르소나·기억 노트가 이 언어를 따른다(company.json이 단일 진실).
   const company = { id: wsId, name, owner, ...(ownerId ? { ownerId } : {}), lang: lang === 'en' ? 'en' : 'ko', created: new Date().toISOString() };
   await writeJsonAtomic(p.company, company);
+  // 같은 wsId의 잔재 tombstone 청소 — slug 접미가 타임스탬프 하위 4자라 재순환 충돌이 가능하다.
+  // 안 걷으면 새 회사가 보관 신호에 걸려 동기화에서 배제/보관될 수 있다(원격 쪽은 mtime 가드가 철회).
+  await rm(join(TOMBSTONE_DIR, `${wsId}.json`), { force: true }).catch(() => {});
   await writeFile(p.index, `# ${name} — 회사 기억 인덱스\n\n(아직 기록 없음)\n`); // 회사 이름 반영 — 스캐폴드 기본을 덮는다
   return company;
 }
@@ -70,5 +73,23 @@ export async function updateCompany(wsId, patch) {
 export async function archiveCompany(wsId) {
   const archive = join(WS_ROOT, '.archive');
   await mkdir(archive, { recursive: true });
+  // tombstone 먼저 — 클라우드 사본이 있는 회사는 보관 사실을 동기화로 전파해야 한다.
+  // 없으면 discoverRemote가 "원격에만 있는 회사 = 새 기기 복원"으로 판단해 8초 뒤 되살린다(실측).
+  // ownerId 없는 회사(클라우드 미동기)는 되살릴 원본이 없지만, tombstone은 무해하니 일괄 기록한다.
+  // 회사 보관 해제(unarchive) 기능을 만들게 되면 반드시 이 tombstone(로컬+원격)을 지워야 한다.
+  let ownerId = null;
+  try { ownerId = JSON.parse(await readFile(paths(wsId).company, 'utf8'))?.ownerId ?? null; } catch { /* 손상/부재 */ }
+  await writeTombstone(wsId, ownerId);
   await rename(paths(wsId).root, join(archive, `${Date.now()}-${wsId}`));
+}
+
+/* ─── 회사 tombstone — "이 회사는 보관됐다"는 기기 간 공유 마커 ───
+   로컬 파일이 정본 신호(오프라인에서도 기록됨), 동기화가 원격 {owner}/.tombstones/로 push하고
+   다른 기기의 로컬 사본을 보관 처리한다(전파). 적용 판정은 sync.mjs가 한다. */
+export const TOMBSTONE_DIR = join(WS_ROOT, '.tombstones');
+
+export async function writeTombstone(wsId, ownerId, at = Date.now()) {
+  paths(wsId); // id 검증(경로 탈출 차단) — 실패 시 throw
+  await mkdir(TOMBSTONE_DIR, { recursive: true });
+  await writeJsonAtomic(join(TOMBSTONE_DIR, `${wsId}.json`), { wsId, ownerId, at });
 }
