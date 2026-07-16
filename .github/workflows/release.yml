@@ -7,11 +7,16 @@
 #   NEXT_PUBLIC_SUPABASE_URL        (공개값 — 빌드시 클라이언트에 인라인, 로그인/기기 맥락공유 가능하게)
 #   NEXT_PUBLIC_SUPABASE_ANON_KEY   (공개값 — anon 키. 서비스키는 절대 넣지 말 것)
 #   RELEASE_TOKEN                   (공개 배포 repo beyondworks/argo-agent에 릴리스 발행용 PAT — contents:write)
+#   APPLE_CERTIFICATE               (Developer ID Application .p12의 base64 — 맥 서명·공증용)
+#   APPLE_CERTIFICATE_PASSWORD      (.p12 비밀번호)
+#   APPLE_SIGNING_IDENTITY          ("Developer ID Application: 이름 (팀ID)")
+#   APPLE_ID / APPLE_PASSWORD       (Apple 계정 이메일 / 앱 암호 — 공증 업로드용, 본 비밀번호 아님)
+#   APPLE_TEAM_ID                   (10자리 팀 ID)
+#   ※ APPLE_* 6종이 비면 맥 서명 스텝에서 env를 아예 안 내보내 ad-hoc 서명으로 빌드된다(공증 없음 — Gatekeeper 경고).
 #   ※ SUPABASE_SERVICE_ROLE_KEY 등 서버 시크릿은 데스크톱 빌드에 넣지 않는다(설치본 유출 방지).
 #
 # 주의(후속):
-#   - 산출물은 미서명(ad-hoc)이다. 배포 시 macOS Gatekeeper·Windows SmartScreen 경고가 뜬다.
-#     정식 배포는 Apple Developer 서명+공증, Windows 코드서명 인증서 설정이 필요하다(별도).
+#   - Windows 산출물은 미서명 — SmartScreen 경고. Windows 코드서명 인증서 설정이 필요하다(별도).
 #   - Windows 빌드는 첫 실행 시 검증 필요(이 CI는 이 맥에서 실행 검증 불가).
 
 name: Build desktop apps
@@ -54,6 +59,28 @@ jobs:
           workspaces: src-tauri
 
       - run: npm ci
+
+      # 맥 서명·공증 env — 시크릿이 채워져 있을 때만 내보낸다. 비어 있으면 Tauri가 ad-hoc 서명으로
+      # 빌드(공증 없음). 빈 문자열을 그대로 넘기면 tauri 번들러가 빈 인증서 import를 시도하다 죽는다.
+      - name: Export Apple signing env (secrets 있을 때만)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            for k in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              printf '%s=%s\n' "$k" "$(printenv "$k")" >> "$GITHUB_ENV"
+            done
+            echo "Apple 서명·공증 env 내보냄"
+          else
+            echo "APPLE_CERTIFICATE 미설정 — ad-hoc 서명으로 빌드(공증 생략)"
+          fi
 
       # 프로젝트 고유 빌드: stage-sidecar(next standalone + node 사이드카) → tauri build.
       # bash 셸로 고정해 npm 스크립트의 &&·cd가 Windows에서도 동일하게 동작하게 한다.
