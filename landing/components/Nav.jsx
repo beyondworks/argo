@@ -4,9 +4,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useLang } from '@/lib/i18n';
 import { useLenis } from '@/components/SmoothScroll';
+import { DL, useStarGate } from '@/components/StarModal';
 
-// 배포판(GitHub) 공개 시 이 값만 채우면 상단 로고가 실제 링크로 활성화됨.
-const GITHUB_URL = '';
+// 공개 배포 repo — 스타가 쌓이는 곳
+const GITHUB_URL = 'https://github.com/beyondworks/argo-agent';
 
 function StarMark({ size = 18 }) {
   // 아르고 나침반 별 — 잉크 단색
@@ -33,6 +34,7 @@ export default function Nav() {
   const { lenis } = useLenis();
   const pathname = usePathname();
   const onLanding = pathname === '/';
+  const { gate, modal } = useStarGate(); // 상단 DOWNLOAD = 스타 게이트 → 기기 맞춤 직다운로드
 
   const scrollTo = (id) => {
     const el = document.getElementById(id);
@@ -105,10 +107,11 @@ export default function Nav() {
         <button className="nav-lang" onClick={toggle} title="cmd+/">
           {t('nav.lang')}
         </button>
-        <a className="nav-cta" {...anchorProps('download')}>
+        <a className="nav-cta" href={DL.silicon} onClick={(e) => gate(e)}>
           {t('nav.cta')}
         </a>
       </nav>
+      {modal}
     </header>
   );
 }

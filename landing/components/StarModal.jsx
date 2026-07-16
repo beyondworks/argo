@@ -1,16 +1,60 @@
 'use client';
 // 다운로드 전 깃헙 스타 요청 모달 — 다운로드를 볼모로 잡지 않는다("그냥 다운로드" 항상 제공).
-// "스타 누르고 다운로드" → /api/star/start (깃헙 승인 → 서버가 스타 → 릴리스로 이동).
-import { useEffect } from 'react';
+// "스타 누르고 다운로드" → /api/star/start?t=<타깃> (깃헙 승인 → 서버가 스타 → 해당 설치파일 직다운로드).
+import { useEffect, useState, useCallback } from 'react';
 import { useLang } from '@/lib/i18n';
 
 export const RELEASES = 'https://github.com/beyondworks/argo-agent/releases/latest';
+const BASE = 'https://github.com/beyondworks/argo-agent/releases/latest/download/';
+// 고정 파일명 직다운로드 — release.yml이 매 릴리스마다 같은 이름으로 발행한다
+export const DL = {
+  silicon: `${BASE}argo-macos-apple-silicon.dmg`,
+  intel: `${BASE}argo-macos-intel.dmg`,
+  win: `${BASE}argo-windows-setup.exe`,
+};
+
 // 스타 완료(서버 쿠키) 또는 "그냥 다운로드" 선택(localStorage) 후에는 다시 묻지 않는다
 export const starAsked = () =>
   typeof document !== 'undefined' &&
   (/(?:^|;\s*)argo_starred=1/.test(document.cookie) || localStorage.getItem('argo-star-skip') === '1');
 
-export default function StarModal({ onClose }) {
+// mac에서 Intel 감지 — WebGL 렌더러 문자열(Chrome 계열에서 유효, Safari는 둘 다 'Apple GPU' → Silicon 기본)
+function isIntelMac() {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    const info = gl.getExtension('WEBGL_debug_renderer_info');
+    return /intel/i.test(String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)));
+  } catch { return false; }
+}
+
+/** 접속 기기에 맞는 설치파일 타깃 추정 */
+export function detectTarget() {
+  if (typeof navigator === 'undefined') return 'silicon';
+  if (/windows/i.test(navigator.userAgent)) return 'win';
+  return isIntelMac() ? 'intel' : 'silicon';
+}
+
+/** mac 전용 버튼용 — Windows에서 눌러도 mac 파일을 준다 */
+export function detectMacTarget() {
+  if (typeof navigator === 'undefined') return 'silicon';
+  return isIntelMac() ? 'intel' : 'silicon';
+}
+
+/** 스타 게이트 훅 — 버튼 onClick에 gate(e, 타깃)를 걸면:
+ *  이미 스타/스킵한 사람 → 즉시 직다운로드, 아니면 → 모달. */
+export function useStarGate() {
+  const [target, setTarget] = useState(null); // null = 모달 닫힘
+  const gate = useCallback((e, t) => {
+    e.preventDefault();
+    const resolved = t || detectTarget();
+    if (starAsked()) { window.open(DL[resolved], '_blank', 'noopener'); return; }
+    setTarget(resolved);
+  }, []);
+  const modal = target ? <StarModal target={target} onClose={() => setTarget(null)} /> : null;
+  return { gate, modal };
+}
+
+export default function StarModal({ target = 'silicon', onClose }) {
   const { t } = useLang();
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -49,7 +93,7 @@ export default function StarModal({ onClose }) {
         <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
           <a
             className="dl-btn primary"
-            href="/api/star/start"
+            href={`/api/star/start?t=${target}`}
             target="_blank"
             rel="noopener noreferrer"
             onClick={onClose}
@@ -59,7 +103,7 @@ export default function StarModal({ onClose }) {
           </a>
           <a
             className="dl-btn ghost"
-            href={RELEASES}
+            href={DL[target]}
             target="_blank"
             rel="noopener noreferrer"
             onClick={skip}

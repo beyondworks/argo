@@ -1,8 +1,7 @@
 'use client';
 
-import { useState } from 'react';
 import { useLang } from '@/lib/i18n';
-import StarModal, { RELEASES, starAsked } from './StarModal';
+import { DL, useStarGate, detectMacTarget } from './StarModal';
 
 function AppleIcon() {
   return (
@@ -22,13 +21,7 @@ function WindowsIcon() {
 
 export default function DownloadSection() {
   const { t } = useLang();
-  const [starOpen, setStarOpen] = useState(false);
-  // 첫 다운로드 클릭에서만 스타 모달 — 이미 스타했거나 "그냥 다운로드"를 고른 사람에겐 다시 묻지 않는다
-  const gate = (e) => {
-    if (starAsked()) return;
-    e.preventDefault();
-    setStarOpen(true);
-  };
+  const { gate, modal } = useStarGate();
   return (
     <section className="download-section" id="download">
       <div className="download-head">
@@ -38,17 +31,25 @@ export default function DownloadSection() {
       <h2 className="download-title">{t('download.title')}</h2>
       <p className="download-sub">{t('download.sub')}</p>
       <div className="download-buttons">
-        <a className="dl-btn primary" href={RELEASES} target="_blank" rel="noopener noreferrer" onClick={gate}>
+        <a className="dl-btn primary" href={DL.silicon} onClick={(e) => gate(e, detectMacTarget())}>
           <AppleIcon />
           {t('download.mac')}
         </a>
-        <a className="dl-btn ghost" href={RELEASES} target="_blank" rel="noopener noreferrer" onClick={gate}>
+        <a className="dl-btn ghost" href={DL.win} onClick={(e) => gate(e, 'win')}>
           <WindowsIcon />
           {t('download.win')}
         </a>
       </div>
-      <span className="download-note">{t('download.note')}</span>
-      {starOpen && <StarModal onClose={() => setStarOpen(false)} />}
+      <span className="download-note">
+        {t('download.note')}
+        {' · '}
+        <a href={DL.silicon} onClick={(e) => gate(e, 'silicon')} style={{ color: 'inherit', textDecoration: 'underline' }}>Apple Silicon</a>
+        {' / '}
+        <a href={DL.intel} onClick={(e) => gate(e, 'intel')} style={{ color: 'inherit', textDecoration: 'underline' }}>Intel Mac</a>
+        {' / '}
+        <a href={DL.win} onClick={(e) => gate(e, 'win')} style={{ color: 'inherit', textDecoration: 'underline' }}>Windows</a>
+      </span>
+      {modal}
     </section>
   );
 }
