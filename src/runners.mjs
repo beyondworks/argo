@@ -116,15 +116,19 @@ let cacheAt = 0;
 export async function detectRunners() {
   if (cache && Date.now() - cacheAt < 60_000) return cache;
   const home = homedir();
-  const [codexV, geminiV, codexAuth, geminiAuth, claudeCredFile, claudeCfg] = await Promise.all([
+  const [codexV, geminiV, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
     exec('codex', ['--version']).then((r) => r.stdout.trim(), () => null),
     exec('gemini', ['--version']).then((r) => r.stdout.trim(), () => null),
     exists(join(home, '.codex', 'auth.json')),
     exists(join(home, '.gemini', 'oauth_creds.json')),
     exists(join(home, '.claude', '.credentials.json')), // 리눅스 — 파일 보관
-    exists(join(home, '.claude.json')),                 // macOS — OAuth는 키체인, 로그인 흔적은 이 파일
+    // macOS/Windows — OAuth 토큰은 키체인/OS 보관이라 .claude.json의 로그인 계정 기록(oauthAccount)으로
+    // 판정한다. 파일 존재만으론 안 됨: 로그인 없이 CLI가 실행만 돼도(번들 SDK 포함) 생성된다 — 미로그인
+    // 기기가 설정에서 "연결중 · 이 컴퓨터 로그인"으로 오표시되고 턴은 Not logged in으로 죽던 원인.
+    readFile(join(home, '.claude.json'), 'utf8')
+      .then((s) => !!JSON.parse(s)?.oauthAccount?.accountUuid, () => false),
   ]);
-  const claudeCred = claudeCredFile || claudeCfg;
+  const claudeCred = claudeCredFile || claudeCfgLogin;
   cache = {
     claude: { installed: true, authed: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || claudeCred) },
     codex: { installed: !!codexV, authed: !!codexV && codexAuth },
@@ -475,6 +479,20 @@ export async function runnerStatus(wsId) {
     };
   }
   return out;
+}
+
+/** 턴에 실제로 쓸 러너 결정 — 크루의 러너가 미가용(회사 자격도 호스트 자격도 없음)이면 가용한
+    러너로 폴백한다. 어떤 러너든 하나만 연결돼 있으면 모든 크루가 응답하게 하는 관문.
+    가용 = 회사 자격(BYOK/OAuth) 또는 호스트 자격(CLI 로그인·env). 반환 { runner, fellBack, available }. */
+export async function resolveRunner(wsId, want) {
+  const st = await runnerStatus(wsId);
+  const usable = (id) => !!st[id] && (st[id].company.connected || st[id].hostAuthed);
+  if (usable(want)) return { runner: want, fellBack: false, available: true };
+  for (const id of Object.keys(RUNNER_AUTH)) {
+    if (usable(id)) return { runner: id, fellBack: true, available: true };
+  }
+  // 아무 러너도 없음 — 호출부가 안내 에러를 만든다(원래 러너 반환은 에러 문구용)
+  return { runner: want, fellBack: false, available: false };
 }
 
 /** 자격 인증 확인 — 러너별 저비용 검증. { ok:true|false|null }(null=네트워크 불가, 형식만으로 저장 허용). */
