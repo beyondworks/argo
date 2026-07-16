@@ -5,20 +5,21 @@ import LightboxProvider from '@/components/Lightbox';
 
 export const metadata = {
   metadataBase: new URL('https://argo.ceo'),
-  title: 'Argo — 모든 맥락을 기억하고 끊기지 않는 AI 에이전트',
+  title: 'Argo — The AI agent that remembers everything and never loses the thread',
   description:
-    '폴더째 기억하는 장기기억으로 대화가 끊기지 않습니다. 기기가 바뀌어도, 며칠이 지나도 하던 맥락 그대로 이어가는 AI 에이전트 — 프롬프트 한 줄로 시작하는 Argo.',
+    'Folder-scale long-term memory keeps every conversation intact. Switch devices or come back days later — your AI agent picks up exactly where you left off. Start with a single prompt.',
   applicationName: 'Argo',
   keywords: [
-    'AI 에이전트',
-    'AI 에이전트 회사',
-    'AI 크루',
-    '맥락 기억 AI',
-    '장기 기억 AI 에이전트',
-    '프롬프트로 AI 직원 만들기',
-    'Argo',
     'AI agent',
     'persistent memory AI agent',
+    'AI agent with long-term memory',
+    'context-aware AI assistant',
+    'AI crew',
+    'AI employees from a prompt',
+    'AI agent company',
+    'Argo',
+    'AI 에이전트',
+    '맥락 기억 AI',
   ],
   alternates: { canonical: '/' },
   robots: { index: true, follow: true },
@@ -26,24 +27,25 @@ export const metadata = {
     type: 'website',
     url: 'https://argo.ceo',
     siteName: 'Argo',
-    locale: 'ko_KR',
-    alternateLocale: ['en_US'],
-    title: 'Argo — 모든 맥락을 기억하고, 절대 끊기지 않는 AI 에이전트',
+    locale: 'en_US',
+    alternateLocale: ['ko_KR'],
+    title: 'Argo — Remembers everything. Never loses the thread.',
     description:
-      '폴더째 기억하는 장기기억으로 대화가 끊기지 않습니다. 기기가 바뀌어도, 며칠이 지나도 하던 맥락 그대로.',
+      'Folder-scale memory holds every context. Switch devices or come back days later — your AI agent picks up exactly where you left off.',
     images: [
       {
         url: '/assets/og.png',
         width: 2400,
         height: 1260,
-        alt: '별을 향해 항해하는 아르고호 — 모든 맥락을 기억하고 끊기지 않는 AI 에이전트 Argo',
+        alt: 'The ship Argo sailing toward a guiding star — Argo, the AI agent that remembers everything and never loses the thread',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Argo — 모든 맥락을 기억하고, 절대 끊기지 않는 AI 에이전트',
-    description: '폴더째 기억하는 장기기억으로 대화가 끊기지 않는 AI 에이전트. 프롬프트 한 줄로 시작.',
+    title: 'Argo — Remembers everything. Never loses the thread.',
+    description:
+      'An AI agent with folder-scale memory that never drops context. Start with a single prompt.',
     images: ['/assets/og.png'],
   },
 };
@@ -60,7 +62,7 @@ const JSON_LD = {
   operatingSystem: 'macOS, Web',
   url: 'https://argo.ceo',
   description:
-    '프롬프트 한 줄로 AI 직원 회사를 만들고, 폴더 단위 기억으로 모든 맥락을 기억하며, 기기가 바뀌어도 끊기지 않는 AI 에이전트 SaaS.',
+    'An AI agent SaaS that builds a company of AI crew from a single prompt, remembers every context with folder-scale memory, and never loses the thread across devices.',
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
   publisher: { '@type': 'Organization', name: 'Argo', url: 'https://argo.ceo' },
 };
