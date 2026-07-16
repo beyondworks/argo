@@ -7,7 +7,7 @@ export const metadata = {
   metadataBase: new URL('https://argo.ceo'),
   title: 'Argo — The AI agent that remembers everything and never loses the thread',
   description:
-    'Folder-scale long-term memory keeps every conversation intact. Switch devices or come back days later — your AI agent picks up exactly where you left off. Start with a single prompt.',
+    'Not one markdown note — Argo remembers whole folders. Leave your PC and pick up the thread anywhere. A built-in LLM wiki links related work so knowledge compounds, repeated work becomes skills automatically, and idle time costs zero tokens.',
   applicationName: 'Argo',
   keywords: [
     'llm wiki',
@@ -15,9 +15,9 @@ export const metadata = {
     'self-updating wiki for AI agents',
     'AI knowledge base that grows on its own',
     'AI agent with folder-scale memory',
-    'AI chief of staff',
+    'AI that turns repeated work into skills',
     'pick up AI conversation on Telegram',
-    'AI crew that works while you sleep',
+    'AI agent zero idle cost',
     'Argo',
     'AI 에이전트',
   ],
@@ -31,7 +31,7 @@ export const metadata = {
     alternateLocale: ['ko_KR'],
     title: 'Argo — Remembers everything. Never loses the thread.',
     description:
-      'Folder-scale memory holds every context. Switch devices or come back days later — your AI agent picks up exactly where you left off.',
+      'Infinite folder-scale memory, not one markdown note. Leave your PC — the thread follows you. Knowledge compounds in a built-in LLM wiki. Idle costs zero.',
     images: [
       {
         url: '/assets/og.png',
@@ -45,7 +45,7 @@ export const metadata = {
     card: 'summary_large_image',
     title: 'Argo — Remembers everything. Never loses the thread.',
     description:
-      'An AI agent with folder-scale memory that never drops context. Start with a single prompt.',
+      'Infinite folder-scale memory. Leave your PC — the thread follows you. Knowledge compounds, repeated work becomes skills, idle costs zero.',
     images: ['/assets/og.png'],
   },
 };
@@ -62,13 +62,14 @@ const JSON_LD = {
   operatingSystem: 'macOS, Web',
   url: 'https://argo.ceo',
   description:
-    'An AI agent SaaS that builds a company of AI crew from a single prompt, remembers every context with folder-scale memory, and never loses the thread across devices.',
+    'An AI agent with infinite folder-scale memory that never loses the thread — leave your PC and the context follows you. Knowledge compounds in a built-in LLM wiki, repeated work becomes skills automatically, and idle time costs zero tokens.',
   featureList: [
-    'Built-in LLM wiki — memories link like wiki pages and update themselves',
-    'Folder-scale long-term memory — remembers whole folders, not one note',
-    'Pick up any conversation on Telegram or a new device, context intact',
-    'AI chief of staff and specialist crew from a single prompt',
-    'Scheduled routines that run while you sleep, zero idle cost',
+    'Infinite folder-scale memory — remembers whole folders, not a single markdown note',
+    'Never loses the thread — leave your PC and pick up on Telegram or any device, context intact',
+    'Built-in LLM wiki — related work links itself, so knowledge compounds over time',
+    'Do it twice and it becomes a skill — repeated work turns into reusable skills automatically',
+    'Zero tokens while idle — pay for work, not waiting',
+    'Specialist AI crew from a single prompt',
   ],
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
   publisher: { '@type': 'Organization', name: 'Argo', url: 'https://argo.ceo' },
