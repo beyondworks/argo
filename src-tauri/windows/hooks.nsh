@@ -8,12 +8,14 @@
   ; 실행 중 업데이트 — 앱 프로세스 트리(자식 사이드카 포함) 종료. 없으면 조용히 지나간다.
   nsExec::ExecToLog 'taskkill /F /T /IM argo.exe'
   ; 고아 사이드카 — 설치 폴더에서 실행 중인 node.exe만 골라 종료
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like $\"$INSTDIR\*$\" } | Stop-Process -Force"'
+  ; 경로 패턴은 PS 홑따옴표 — 설치 경로에 공백이 있어도 -Command 바깥 큰따옴표와 충돌하지 않는다
+  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like $\'$INSTDIR\*$\' } | Stop-Process -Force"'
   Sleep 500
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
   nsExec::ExecToLog 'taskkill /F /T /IM argo.exe'
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like $\"$INSTDIR\*$\" } | Stop-Process -Force"'
+  ; 경로 패턴은 PS 홑따옴표 — 설치 경로에 공백이 있어도 -Command 바깥 큰따옴표와 충돌하지 않는다
+  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-Process node -ErrorAction SilentlyContinue | Where-Object { $$_.Path -like $\'$INSTDIR\*$\' } | Stop-Process -Force"'
   Sleep 500
 !macroend
