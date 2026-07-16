@@ -137,6 +137,7 @@ export default function Settings({ params }) {
 
       <Section label={t('settings.devices.section')}>
         <DevicesCard ws={ws} />
+        <UpdateCard />
       </Section>
 
       <Section label={t('settings.capabilities')}>
@@ -1027,6 +1028,62 @@ function UpgradeButtons() {
 }
 
 /** 기기 페어링 카드 — 연결 코드를 발급해 다른 기기 홈 화면에 붙여넣으면 이 회사가 그 기기로 내려간다. */
+// 앱 업데이트 — Tauri 데스크톱 안에서만 노출. 버튼 하나로 확인 → 다운로드·설치 → 재시작.
+// 서명 검증·다운로드는 Rust(updater 플러그인)가 수행, 매니페스트는 argo-agent 릴리스의 latest.json.
+function UpdateCard() {
+  const { t } = useLang();
+  const [isApp, setIsApp] = useState(false);
+  const [version, setVersion] = useState('');
+  const [state, setState] = useState('idle'); // idle | checking | none | found | installing | ready | error
+  const [next, setNext] = useState('');
+  const updRef = useRef(null);
+  useEffect(() => {
+    const inApp = '__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri');
+    setIsApp(inApp);
+    if (inApp) import('@tauri-apps/api/app').then((m) => m.getVersion()).then(setVersion).catch(() => {});
+  }, []);
+  const check = useCallback(async () => {
+    setState('checking');
+    try {
+      const upd = await (await import('@tauri-apps/plugin-updater')).check();
+      if (!upd) { setState('none'); return; }
+      updRef.current = upd; setNext(upd.version); setState('found');
+    } catch { setState('error'); }
+  }, []);
+  const install = useCallback(async () => {
+    setState('installing');
+    try {
+      await updRef.current.downloadAndInstall();
+      setState('ready');
+      await (await import('@tauri-apps/plugin-process')).relaunch();
+    } catch { setState('error'); }
+  }, []);
+  if (!isApp) return null;
+  const busy = state === 'checking' || state === 'installing';
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span className="card-title">{t('settings.update.title')}</span>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>
+        {t('settings.update.current', { v: version || '—' })}
+        {state === 'found' || state === 'installing' ? ` · ${t('settings.update.found', { v: next })}` : ''}
+        {state === 'none' ? ` · ${t('settings.update.none')}` : ''}
+      </p>
+      {state === 'found' || state === 'installing' ? (
+        <button type="button" className="btn btn-primary sm" onClick={install} disabled={busy} style={{ alignSelf: 'flex-start' }}>
+          {busy ? <Spinner size={12} /> : null}
+          {state === 'installing' ? t('settings.update.installing') : t('settings.update.install', { v: next })}
+        </button>
+      ) : (
+        <button type="button" className="btn sm" onClick={check} disabled={busy} style={{ alignSelf: 'flex-start' }}>
+          {busy ? <Spinner size={12} /> : null}{t('settings.update.check')}
+        </button>
+      )}
+      {state === 'ready' && <p style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('settings.update.restarting')}</p>}
+      {state === 'error' && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.update.error')}</p>}
+    </div>
+  );
+}
+
 function DevicesCard({ ws }) {
   const { t } = useLang();
   const [code, setCode] = useState('');

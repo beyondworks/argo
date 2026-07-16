@@ -32,7 +32,7 @@ jobs:
         include:
           - os: macos-14          # Apple Silicon
             rust_target: aarch64-apple-darwin
-          - os: macos-13          # Intel
+          - os: macos-15-intel    # Intel (macos-13 러너 은퇴 — v0.1.0에서 17시간 queued 실측)
             rust_target: x86_64-apple-darwin
           - os: windows-latest
             rust_target: x86_64-pc-windows-msvc
@@ -62,6 +62,9 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          # 인앱 업데이터 서명 — 키는 ~/.tauri/argo-updater.key에서 생성(비밀번호 없음 → 빈 문자열 고정)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: npm run app:build
 
       - name: Collect installers
@@ -71,6 +74,15 @@ jobs:
           cp src-tauri/target/release/bundle/dmg/*.dmg   dist/ 2>/dev/null || true
           cp src-tauri/target/release/bundle/msi/*.msi   dist/ 2>/dev/null || true
           cp src-tauri/target/release/bundle/nsis/*.exe  dist/ 2>/dev/null || true
+          # 인앱 업데이터 아티팩트 — Windows는 -setup.exe 서명(.sig), 맥은 .app.tar.gz(+.sig).
+          # 맥 두 아치가 같은 파일명(argo.app.tar.gz)이라 릴리스 자산 충돌 방지를 위해 target별 리네임.
+          cp src-tauri/target/release/bundle/nsis/*.sig  dist/ 2>/dev/null || true
+          for f in src-tauri/target/release/bundle/macos/*.app.tar.gz; do
+            if [ -e "$f" ]; then cp "$f" "dist/argo-${{ matrix.rust_target }}.app.tar.gz"; fi
+          done
+          for f in src-tauri/target/release/bundle/macos/*.app.tar.gz.sig; do
+            if [ -e "$f" ]; then cp "$f" "dist/argo-${{ matrix.rust_target }}.app.tar.gz.sig"; fi
+          done
           ls -la dist
 
       - uses: actions/upload-artifact@v4
@@ -90,6 +102,41 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # 인앱 업데이터 매니페스트 — 앱의 updater 엔드포인트(releases/latest/download/latest.json)가 읽는다.
+      # draft 게시 전엔 latest/download가 이전 릴리스를 가리키므로, 사람이 draft를 게시해야 업데이트가 활성화된다.
+      - name: Generate updater manifest (latest.json)
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+          const tag = process.env.TAG;
+          const dir = 'dist';
+          const base = `https://github.com/beyondworks/argo-agent/releases/download/${tag}`;
+          const entry = (f) => ({ url: `${base}/${f}`, signature: fs.readFileSync(`${dir}/${f}.sig`, 'utf8').trim() });
+          const pick = (re) => fs.readdirSync(dir).find((f) => re.test(f));
+          const platforms = {};
+          for (const [key, re] of [
+            ['darwin-aarch64', /aarch64-apple-darwin\.app\.tar\.gz$/],
+            ['darwin-x86_64', /x86_64-apple-darwin\.app\.tar\.gz$/],
+            ['windows-x86_64', /-setup\.exe$/],
+          ]) {
+            const f = pick(re);
+            if (f && fs.existsSync(`${dir}/${f}.sig`)) platforms[key] = entry(f);
+            else console.warn(`[manifest] ${key} updater artifact missing — skipped`);
+          }
+          if (Object.keys(platforms).length) {
+            fs.writeFileSync(`${dir}/latest.json`, JSON.stringify({
+              version: tag.replace(/^v/, ''),
+              pub_date: new Date().toISOString(),
+              platforms,
+            }, null, 2));
+            console.log(fs.readFileSync(`${dir}/latest.json`, 'utf8'));
+          } else {
+            console.warn('[manifest] no updater artifacts — latest.json skipped');
+          }
+          EOF
       # 공개 배포 repo(beyondworks/argo-agent)에 발행 — 소스(private argo)는 유출되지 않는다.
       # cross-repo라 RELEASE_TOKEN(argo-agent contents:write PAT) 필요. draft=true라 검토 후 사람이 게시.
       - uses: softprops/action-gh-release@v2

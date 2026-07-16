@@ -219,6 +219,16 @@ const DICT = {
   'settings.devices.generate': ['연결 코드 만들기', 'Create link code'],
   'settings.devices.warn': ['이 코드는 비밀번호와 같습니다 — 붙여넣은 뒤 어디에도 남기지 마세요.', 'Treat this code like a password — do not leave it anywhere after pasting.'],
   'settings.devices.loginMode': ['이 회사는 계정 동기화로 연결됩니다 — 새 기기에서 Argo를 열고 같은 계정으로 로그인하면 자동으로 내려옵니다. 연결 코드는 셀프호스팅 전용입니다.', 'This company syncs with your account — open Argo on a new device and sign in with the same account; it arrives automatically. Link codes are for self-hosting only.'],
+  // ── 앱 업데이트 (데스크톱 전용 카드)
+  'settings.update.title': ['앱 업데이트', 'App updates'],
+  'settings.update.current': ['현재 버전 {v}', 'Current version {v}'],
+  'settings.update.found': ['새 버전 {v}', 'New version {v}'],
+  'settings.update.none': ['최신 버전입니다', 'You are up to date'],
+  'settings.update.check': ['업데이트 확인', 'Check for updates'],
+  'settings.update.install': ['{v} 설치 후 재시작', 'Install {v} and restart'],
+  'settings.update.installing': ['설치 중…', 'Installing…'],
+  'settings.update.restarting': ['재시작합니다…', 'Restarting…'],
+  'settings.update.error': ['업데이트를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.', 'Could not check for updates. Please try again shortly.'],
   // ── 러너 연결 관리자 (4러너 × API키/OAuth)
   'settings.runners.title': ['러너 연결', 'Runner connections'],
   'settings.runners.help': ['크루의 두뇌 엔진을 회사 계정에 연결합니다. 러너마다 API 키를 넣거나, OAuth(구독)로 연결하세요. 연결하지 않으면 이 컴퓨터에 로그인된 자격을 대신 씁니다.', 'Connect each crew brain engine to this company. Add an API key per runner, or connect with OAuth (subscription). Without a connection, crews fall back to the credentials signed in on this computer.'],
