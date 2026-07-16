@@ -1,7 +1,10 @@
 // 웹 UI 전용 읽기 뷰 — 워크스페이스/크루/vault를 화면이 먹기 좋은 형태로 가공한다.
 // 쓰기는 전부 기존 코어(workspace/persona/chat/memory)를 그대로 쓴다.
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
+
+// Windows relative()는 백슬래시 — rel은 논리 경로('/' 고정)로 통일해야 notes/·journal/ 필터가 산다
+const relSlash = (from, to) => relative(from, to).split(sep).join('/');
 import { WS_ROOT, paths } from './workspace.mjs';
 
 function parseFrontmatter(md) {
@@ -78,7 +81,7 @@ export async function listDocs(wsId) {
       const [text, st] = await Promise.all([readFile(file, 'utf8'), stat(file)]);
       const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, '');
       docs.push({
-        rel: relative(p.vault, file),
+        rel: relSlash(p.vault, file),
         dir: dirName.get(dir),
         title: body.match(/^#\s*(.+)$/m)?.[1] ?? n.replace(/\.md$/, ''),
         links: [...new Set([...text.matchAll(/\[\[(.+?)\]\]/g)].map((m) => m[1]))],
@@ -94,13 +97,13 @@ export async function listDocs(wsId) {
 export async function readDoc(wsId, rel) {
   const p = paths(wsId);
   const file = resolve(p.vault, rel.endsWith('.md') ? rel : `${rel}.md`);
-  if (!file.startsWith(resolve(p.vault) + '/') && file !== resolve(p.index)) {
+  if (!file.startsWith(resolve(p.vault) + sep) && file !== resolve(p.index)) {
     throw new Error('vault 밖 경로');
   }
   try {
     return await readFile(file, 'utf8');
   } catch (e) {
-    const m = relative(p.vault, file).match(/^journal\/(.+\.md)$/);
+    const m = relSlash(p.vault, file).match(/^journal\/(.+\.md)$/);
     if (m) return readFile(join(p.journal, '.archive', m[1]), 'utf8');
     throw e;
   }

@@ -4,7 +4,7 @@
 import { readFile, readdir, appendFile, mkdir } from 'node:fs/promises';
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
-import { join, basename, relative } from 'node:path';
+import { join, basename, relative, sep } from 'node:path';
 import { paths } from './workspace.mjs';
 
 // ── 토큰화 — 한글(2gram)+영문 단어. 짧은 조사류 노이즈를 줄이는 최소 구현.
@@ -48,7 +48,8 @@ async function vaultDocs(wsId) {
     for (const n of names) {
       if (!n.endsWith('.md')) continue;
       const file = join(dir, n);
-      docs.push({ file, rel: relative(p.vault, file), text: await readFile(file, 'utf8') });
+      // rel은 논리 경로('/' 고정) — Windows relative()의 백슬래시가 notes/·journal/ 필터를 깨지 않게
+      docs.push({ file, rel: relative(p.vault, file).split(sep).join('/'), text: await readFile(file, 'utf8') });
     }
   }
   return docs;

@@ -1,7 +1,7 @@
 // 워크스페이스 = 회사 1개의 격리 폴더 트리. SaaS에서는 유저별로 이 트리가 격리 컨테이너/볼륨에 산다.
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { writeJsonAtomic } from './jsonstore.mjs';
 
 export const WS_ROOT = process.env.ARGO_ROOT || process.env.CREWBASE_ROOT || join(process.cwd(), 'workspaces');
@@ -16,7 +16,8 @@ export function paths(wsId) {
   }
   const root = join(WS_ROOT, wsId);
   // 심층 방어 — 조립 결과가 WS_ROOT 경계 안임을 재확인(정규식을 뚫는 예외 케이스 대비)
-  if (!resolve(root).startsWith(resolve(WS_ROOT) + '/')) {
+  // sep 사용 필수: Windows resolve()는 백슬래시라 '/' 하드코딩이면 전 워크스페이스가 오차단된다 (v0.1.1 실측)
+  if (!resolve(root).startsWith(resolve(WS_ROOT) + sep)) {
     throw new Error('워크스페이스 경계 위반');
   }
   return {

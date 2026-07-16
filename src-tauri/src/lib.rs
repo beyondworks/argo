@@ -18,6 +18,12 @@ fn port_open() -> bool {
     TcpStream::connect_timeout(&(([127, 0, 0, 1], PORT).into()), Duration::from_millis(300)).is_ok()
 }
 
+// Windows 리소스 경로의 \\?\ (UNC) 프리픽스 제거 — node가 스크립트 경로 인자로 받지 못해
+// 사이드카가 침묵 사망한다 (실측: 같은 서버를 수동 실행하면 578ms에 정상 기동).
+fn de_unc(p: String) -> String {
+    p.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(p)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -45,17 +51,17 @@ pub fn run() {
                 let handle = app.handle().clone();
                 boot_status(&handle, "starting", "launching local server");
                 // 데이터 루트 = OS 앱 로컬 데이터 폴더. 여기 workspaces/ 아래 회사 폴더가 쌓인다.
-                let data_root = app
+                let data_root = de_unc(app
                     .path()
                     .app_local_data_dir()
                     .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
+                    .unwrap_or_default());
                 // 번들 리소스의 standalone 서버 경로
-                let server_dir = app
+                let server_dir = de_unc(app
                     .path()
                     .resolve("server", tauri::path::BaseDirectory::Resource)
                     .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
+                    .unwrap_or_default());
 
                 tauri::async_runtime::spawn(async move {
                     let sidecar = match handle.shell().sidecar("node") {
@@ -73,7 +79,8 @@ pub fn run() {
                         .env("ARGO_ROOT", format!("{data_root}/workspaces"))
                         .env("ARGO_STANDALONE", "1")
                         .env("NODE_ENV", "production")
-                        .args([format!("{server_dir}/server.js")])
+                        // 상대경로 — current_dir(server_dir) 기준. 절대경로 조합은 Windows UNC에서 깨진다.
+                        .args(["server.js"])
                         .spawn();
                     match child {
                         Ok((mut rx, _child)) => {
