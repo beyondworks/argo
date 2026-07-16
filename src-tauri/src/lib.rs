@@ -84,6 +84,8 @@ pub fn run() {
                         .env("ARGO_ROOT", format!("{data_root}/workspaces"))
                         .env("ARGO_STANDALONE", "1")
                         .env("NODE_ENV", "production")
+                        // 부모 감시 — 서버가 이 PID(셸)를 지켜보다 사라지면 스스로 종료(고아 방지)
+                        .env("ARGO_PARENT_PID", std::process::id().to_string())
                         // 상대경로 — current_dir(server_dir) 기준. 절대경로 조합은 Windows UNC에서 깨진다.
                         .args(["server.js"])
                         .spawn();

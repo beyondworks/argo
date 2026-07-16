@@ -1,4 +1,4 @@
-import { relative, join, resolve, basename } from 'node:path';
+import { relative, join, resolve, basename, sep } from 'node:path';
 import { writeFile, rename, mkdir } from 'node:fs/promises';
 import { listDocs, readDoc } from '../../../../../src/hub.mjs';
 import { saveNote, updateIndex } from '../../../../../src/memory.mjs';
@@ -10,7 +10,8 @@ import { guardCompany } from '../../../../auth.mjs';
 function noteFile(ws, rel) {
   const p = paths(ws);
   const file = resolve(p.vault, rel);
-  if (!file.startsWith(resolve(p.notes) + '/') || !file.endsWith('.md')) throw new Error('주제 노트만 수정할 수 있습니다');
+  // sep 사용 — Windows resolve()는 백슬래시라 '/' 하드코딩이면 정상 노트도 오차단
+  if (!file.startsWith(resolve(p.notes) + sep) || !file.endsWith('.md')) throw new Error('주제 노트만 수정할 수 있습니다');
   return file;
 }
 
