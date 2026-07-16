@@ -4,12 +4,15 @@
     {
       "name": "argo-landing",
       "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "dev"
-      ],
+      "runtimeArgs": ["run", "dev"],
       "cwd": "landing",
       "port": 3020
+    },
+    {
+      "name": "argo-preview",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["ARGO_ROOT=/tmp/argo-preview", "npx", "next", "dev", "/Users/yoogeon/lean-projects/_worktrees/argo-preview", "-p", "3021"],
+      "port": 3021
     }
   ]
 }

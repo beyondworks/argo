@@ -14,3 +14,17 @@ argo-service.cmd
 src-tauri/binaries/
 src-tauri/resources/server/
 demo-install/
+
+# 도구·임시 아티팩트
+.playwright-mcp/
+supabase/.temp/
+
+# 대용량 로컬 미디어 (원본 녹화·Remotion 렌더 — git 미추적, 로컬 보관)
+demo-real/
+demo-video/
+
+# 미참조 브랜드/히어로 소스 (로컬 보관)
+/Argo_app.svg
+/Argo_app_02.svg
+/Argo_gold.svg
+landing/public/assets/hero/fresco.png
