@@ -20,7 +20,7 @@ import { join, dirname, basename, sep } from 'node:path';
 import { hostname } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import { WS_ROOT, paths } from './workspace.mjs';
+import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, sealSecret, openSecret } from './secretbox.mjs';
@@ -486,11 +486,108 @@ async function discoverRemote(localOwners) {
   for (const owner of allow) {
     const { data: companies } = await client().storage.from(BUCKET).list(owner, { limit: 200 }).catch(() => ({ data: [] }));
     for (const c of companies ?? []) {
-      if (!c.id) out.push({ owner, wsId: c.name }); // 오너 id·회사 slug는 ASCII
+      // 점 접두 폴더(.tombstones 등)는 회사가 아니다 — wsId 규칙(WS_ID_RE)도 점 접두를 거부한다
+      if (!c.id && !String(c.name).startsWith('.')) out.push({ owner, wsId: c.name }); // 오너 id·회사 slug는 ASCII
     }
   }
   return out;
 }
+
+/* ─── 회사 tombstone 동기화 — 보관을 기기 간 전파하고 복원 루프를 차단한다 ───
+   문제(실측): archiveCompany는 로컬 이동일 뿐이라 discoverRemote가 클라우드 사본을
+   "새 기기 복원"으로 판단, 8초 뒤 회사를 되살렸다(같은 회사 4회 보관 → 4회 부활).
+   설계: 로컬 .tombstones/{wsId}.json(오프라인에서도 즉시 기록)이 신호의 정본,
+   여기서 원격 {owner}/.tombstones/{wsId}.json과 양방향 동기화한다.
+   반환: 보관된 wsId Set — cycle이 발견(discover) 결과에서 제외한다. */
+async function syncTombstones(fixedOwner) {
+  // 1) 로컬 tombstone 로드
+  const local = new Map(); // wsId → { ownerId, at }
+  try {
+    for (const f of await readdir(TOMBSTONE_DIR)) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const t = JSON.parse(await readFile(join(TOMBSTONE_DIR, f), 'utf8'));
+        if (t?.wsId) local.set(t.wsId, { ownerId: t.ownerId ?? null, at: t.at ?? 0 });
+      } catch { /* 손상 marker 무시 — 회사를 지우는 신호이므로 보수적으로 */ }
+    }
+  } catch { /* 디렉토리 없음 = tombstone 없음 */ }
+
+  // 1.5) 로컬 tombstone인데 회사가 아직 로컬에 있는 경우(보관 실패 잔재·픽스 전 부활 좀비·수정 경합).
+  //      판정 기준은 company.json 수정 시각(한계: 콘텐츠 편집은 company.json을 안 올림 — 시계 오차와
+  //      함께 감수, 오차는 비파괴 방향으로): tombstone 이후 수정이면 철회, 아니면 보관 재적용.
+  //      오너 불일치(wsId 재순환으로 다른 오너가 같은 slug를 받은 경우)면 이 회사의 tombstone이 아니다.
+  for (const [wsId, t] of [...local]) {
+    let mt = 0, owner0 = null;
+    try { mt = (await stat(paths(wsId).company)).mtimeMs; } catch { continue; /* 회사 없음 — 정상 */ }
+    try { owner0 = JSON.parse(await readFile(paths(wsId).company, 'utf8'))?.ownerId ?? null; } catch { /* 손상 */ }
+    const at = Number(t.at) || 0;
+    const sameOwner = owner0 === (t.ownerId ?? null);
+    if (!sameOwner || (at && mt >= at)) {
+      await rm(join(TOMBSTONE_DIR, `${wsId}.json`), { force: true }).catch(() => {});
+      // 원격 철회는 같은 오너의 수정 경합일 때만 — 오너가 다르면 남의(또는 옛) 신호라 로컬 마커만 걷는다
+      if (sameOwner && t.ownerId) await client().storage.from(BUCKET).remove([skey(t.ownerId, '.tombstones', `${wsId}.json`)]).catch(() => {});
+      local.delete(wsId);
+      console.log(`[argo] 동기화: tombstone 철회 (${wsId}${sameOwner ? ' — 보관 이후 수정' : ' — 오너 불일치'})`);
+    } else {
+      try { await archiveCompany(wsId); console.log(`[argo] 동기화: 잔여 사본 보관 재적용 (${wsId})`); }
+      catch { /* rename 실패 — 다음 사이클 재시도 */ }
+    }
+  }
+
+  // 2) 원격 tombstone 목록 — 내가 책임지는 오너만(discoverRemote와 같은 테넌트 격리 원칙).
+  //    기기 세션이 없는 셀프호스트에서 로컬 tombstone의 ownerId도 오너로 인정한다.
+  const owners = new Set(fixedOwner ? [fixedOwner] : []);
+  for (const t of local.values()) if (t.ownerId) owners.add(t.ownerId);
+  const remote = new Map(); // wsId → owner
+  for (const owner of owners) {
+    const { data } = await client().storage.from(BUCKET).list(skey(owner, '.tombstones'), { limit: 500 }).catch(() => ({ data: [] }));
+    for (const e of data ?? []) {
+      if (e.id && String(e.name).endsWith('.json')) remote.set(String(e.name).slice(0, -5), owner);
+    }
+  }
+
+  // 3) 원격에만 있는 tombstone → 이 기기에 적용. 단 회사가 tombstone 이후에 수정됐으면
+  //    (다른 기기의 삭제 vs 이 기기의 편집 경합) 조용히 파기하지 않고 tombstone을 철회한다
+  //    — syncCompany의 "blind LWW 금지" 원칙과 동일. 시계 오차 한계는 감수(비파괴 방향 오차).
+  for (const [wsId, owner] of remote) {
+    if (local.has(wsId)) continue;
+    let t;
+    try { t = JSON.parse((await download(skey(owner, '.tombstones', `${wsId}.json`))).toString()); }
+    catch { continue; /* 읽기 실패 — 다음 사이클 재시도 */ }
+    const at = Number(t?.at) || 0;
+    let companyMtime = 0, owner0 = null;
+    try { companyMtime = (await stat(paths(wsId).company)).mtimeMs; } catch { /* 로컬에 회사 없음 */ }
+    if (companyMtime) {
+      try { owner0 = JSON.parse(await readFile(paths(wsId).company, 'utf8'))?.ownerId ?? null; } catch { /* 손상 */ }
+      if (at && companyMtime >= at) {
+        await client().storage.from(BUCKET).remove([skey(owner, '.tombstones', `${wsId}.json`)]).catch(() => {});
+        console.log(`[argo] 동기화: 보관 이후 수정된 회사 — tombstone 철회 (${wsId})`);
+        continue;
+      }
+      // 테넌트 격리 — tombstone 오너와 로컬 회사 오너가 일치할 때만 보관 전파. wsId 생성 규칙이
+      // 타임스탬프 하위 4자라 재순환 충돌이 가능(멀티오너 셀프호스트에서 실질 위험, 검수 지적 H).
+      if (owner0 !== owner) continue;
+      // 미push 편집 고립 방지 — 보관 직전 마지막 push. 실패해도 사본은 .archive에 남아 복구 가능.
+      try { await syncCompany(wsId, owner, false); } catch { /* 오프라인 등 — 보관은 계속 */ }
+      try { await archiveCompany(wsId); console.log(`[argo] 동기화: 다른 기기의 회사 보관 전파 (${wsId})`); }
+      catch (e) { console.warn(`[argo] 동기화: 보관 전파 실패(${wsId}): ${e.message}`); continue; }
+    }
+    await writeTombstone(wsId, owner, at || Date.now()).catch(() => {});
+    local.set(wsId, { ownerId: owner, at });
+  }
+
+  // 4) 로컬에만 있는 tombstone → 원격 push. ownerId 없는 회사(클라우드 미동기)는 원본이
+  //    원격에 없어 복원될 일도 없으므로 로컬 마커만으로 충분하다.
+  for (const [wsId, t] of local) {
+    if (!t.ownerId || remote.has(wsId)) continue;
+    await upload(skey(t.ownerId, '.tombstones', `${wsId}.json`), Buffer.from(JSON.stringify({ wsId, at: t.at })))
+      .catch(() => { /* push 실패 — 로컬 마커가 남아 다음 사이클 재시도 */ });
+  }
+
+  return new Set(local.keys());
+}
+// 테스트 전용 — cycle 없이 tombstone 로직만 fake storage로 실행 검증한다.
+export const _tombstonesForTest = { syncTombstones, discoverRemote };
 
 /* ─── 상주 루프 ─── */
 const status = (globalThis.__argoSyncStatus ??= { lastTs: null, lastError: '', paywalled: false, plan: null, companies: {} });
@@ -507,6 +604,9 @@ async function cycle() {
   // 계정 키 확보 — 크레덴셜 봉투(v2)의 열쇠. 실패해도 사이클은 계속(크레덴셜만 이번 사이클 제외).
   const keyOwner = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
   await ensureAccountKey(client(), keyOwner);
+  // 회사 tombstone 동기화 — 로컬 스캔보다 먼저: 원격 tombstone이 이 기기의 사본을 보관 처리하면
+  // 그 회사는 이번 사이클의 push/pull 대상에서 자연히 빠진다. 실패해도 사이클은 계속(빈 Set).
+  const tombs = await syncTombstones(keyOwner).catch((e) => { console.warn('[argo] tombstone 동기화 실패:', e.message); return new Set(); });
   // 로컬 회사 수집 (ownerId 있는 것만 — 소유자가 있어야 클라우드에 자리가 있다)
   const targets = new Map(); // wsId → owner
   let entries = [];
@@ -523,6 +623,7 @@ async function cycle() {
   const localOwners = [...new Set(targets.values())];
   const restoreSet = new Set();
   for (const { owner, wsId } of await discoverRemote(localOwners)) {
+    if (tombs.has(wsId)) continue; // 보관된 회사 — 클라우드 사본이 남아 있어도 복원하지 않는다
     if (!targets.has(wsId)) { targets.set(wsId, owner); restoreSet.add(wsId); }
   }
   const owners = [...new Set(targets.values())];
