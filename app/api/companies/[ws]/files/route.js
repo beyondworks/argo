@@ -14,7 +14,8 @@ export async function GET(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
   const rel = new URL(req.url).searchParams.get('rel') ?? '';
-  const norm = normalize(rel);
+  // Windows normalize()는 백슬래시를 반환 — 슬래시로 통일해야 files/ 접두 검사가 통과한다
+  const norm = normalize(rel).split('\\').join('/');
   if (!norm.startsWith('files/') || norm.includes('..')) {
     return new Response('잘못된 경로', { status: 400 });
   }

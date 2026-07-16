@@ -15,4 +15,6 @@ alter table public.feedback enable row level security;
 drop policy if exists feedback_insert on public.feedback;
 create policy feedback_insert on public.feedback
   for insert to authenticated
-  with check (true);
+  with check (user_id = (select auth.uid()));
+-- with check(true)였으면 anon 키(설치본에 공개 포함)로 JWT만 발급받아 타인 user_id로 위조 insert 가능.
+-- default auth.uid()가 채우는 정상 경로는 이 조건을 항상 통과한다.
