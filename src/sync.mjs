@@ -22,7 +22,7 @@ import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
-import { cryptoOn, isSecretRel, sealSecret, openSecret } from './secretbox.mjs';
+import { cryptoOn, isSecretRel, sealSecret, openSecret, openSecretCompat } from './secretbox.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { ensureAccountKey } from './accountkey.mjs';
@@ -327,7 +327,9 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   const remoteKey = (rel) => skey(owner, wsId, rel);
   // 시크릿 봉투 — 밀 때 암호화, 받을 때 복호화. 스토리지엔 평문 크레덴셜이 절대 놓이지 않는다.
   // (복호화 실패 = 위변조/키 불일치 → throw → per-file catch가 failed로 집계, 다음 사이클 재시도)
-  const pullBuf = async (rel) => { const b = await download(remoteKey(rel)); return isSecretRel(rel) ? openSecret(b) : b; };
+  // mcp.json만 겸용 개봉(봉투 도입 전 평문 레거시 수용) — connections/.secrets는 처음부터 봉투라
+  // 엄격 openSecret 유지(무결성 검증 유지, 검수 LOW-5). rel별로 개봉기를 가른다.
+  const pullBuf = async (rel) => { const b = await download(remoteKey(rel)); return isSecretRel(rel) ? (rel === 'mcp.json' ? openSecretCompat(b) : openSecret(b)) : b; };
   const pushBuf = async (rel) => { const b = await readFile(relFull(rel)); return isSecretRel(rel) ? sealSecret(b) : b; };
   // 로컬 쓰기 — 스레드 파일이면 진행 중 턴과 직렬화(레이스 방지). 원자쓰기(tmp→fsync→rename)로
   // 크래시 시 파일이 잘려 '손상→삭제 오전파'로 번지는 것을 차단(.tmp-는 EXCLUDE라 원격에 안 샌다).

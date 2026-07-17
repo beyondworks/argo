@@ -29,6 +29,15 @@ async function applyPayload(wsId, item) {
     if (p.rule) after = await appendAgentRule(wsId, p.slug, p.rule);
     return `적용 완료 — ${after?.name ?? p.slug}의 프로필이 변경되었다.`;
   }
+  if (item.kind === 'mcp') {
+    // 크루 주도 도구 설치 — 카탈로그(검증된 목록) 또는 호스트 가져오기(이 컴퓨터의 Claude Code
+    // 등록분)만 허용. 임의 command 지정은 크루에게 열지 않는다(프롬프트 인젝션 방어).
+    const { installMcp, importHostMcp } = await import('./market.mjs');
+    const src = p.source;
+    const id = String(p.id ?? '');
+    const r = src === 'host' ? await importHostMcp(wsId, id) : await installMcp(wsId, id);
+    return `설치 완료 — 도구 "${r?.name ?? id}"가 이 회사에 연결되었다. 다음 턴부터 사용할 수 있다.`;
+  }
   if (item.kind === 'hire') {
     const { createAgentFromPrompt, updateAgentMeta } = await import('./persona.mjs');
     const agent = await createAgentFromPrompt(wsId, p.brief, { name: p.name, team: p.team });
@@ -44,7 +53,7 @@ async function applyPayload(wsId, item) {
 
 async function followUp(wsId, item, approve) {
   let msg;
-  if ((item.kind === 'profile' || item.kind === 'hire') && approve) {
+  if ((item.kind === 'profile' || item.kind === 'hire' || item.kind === 'mcp') && approve) {
     // 서버가 payload를 먼저 적용하고, 결과를 크루가 사용자에게 보고한다(크루 재실행 금지 — 이중 적용 방지)
     let outcome;
     try {

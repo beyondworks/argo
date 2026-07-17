@@ -5,7 +5,10 @@ import { realpath } from 'node:fs/promises';
 import { addApproval, loadApprovals } from './approvals.mjs';
 import { setTurnStatus } from './turn-status.mjs';
 
-const WAIT_MS = 180_000; // 결재 대기 상한 — chat 라우트 maxDuration(300s) 안쪽
+// 결재 대기 상한 — chat 라우트 maxDuration(300s) 안쪽. 원격(메신저) 승인은 3분이 빠듯해
+// env로 조정 가능하게 하되 라우트 한도 아래로 캡한다. 만료돼도 요청은 결재함에 남아
+// 나중 승인 시 후속 턴이 잇는다(실패 아님 — 아래 deny 문구가 그 사실을 크루에게 전달).
+const WAIT_MS = Math.min(Number(process.env.ARGO_APPROVAL_WAIT_MS) || 180_000, 240_000);
 const POLL_MS = 2_000;
 
 // 경로 인자를 갖는 읽기 도구 — 워크스페이스 경계를 적용한다(P1-5). TodoWrite는 경로가 없어 별도(항상 허용).
@@ -108,6 +111,6 @@ export function makePermissionGate(wsId, slug, caps, wsRoot) {
       if (cur?.status === 'approved') return allow;
       if (cur?.status === 'rejected') return { behavior: 'deny', message: '사장이 이 실행을 거절했다. 실행하지 말고 대안을 한두 줄로 정리하라.' };
     }
-    return { behavior: 'deny', message: '권한 승인 대기 시간(3분)이 지났다. 실행하지 못했다고 보고하고, 결재함에 요청이 남아있다고 안내하라.' };
+    return { behavior: 'deny', message: `권한 승인 대기 시간(${Math.round(WAIT_MS / 60_000)}분)이 지났다 — 실패가 아니라 대기다. 요청은 결재함에 그대로 남아 있고, 사장이 웹 결재함이나 텔레그램/슬랙 버튼으로 나중에 승인하면 후속 턴에서 이어서 실행된다고 안내하라.` };
   };
 }

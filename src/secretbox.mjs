@@ -38,8 +38,16 @@ function key1() {
   return k1;
 }
 
-/** 동기화에서 봉투 대상 파일 — 회사 폴더의 크레덴셜 저장소 2종. */
-export const isSecretRel = (rel) => rel === 'connections.json' || rel === '.secrets.json';
+/** 동기화에서 봉투 대상 파일 — 회사 폴더의 크레덴셜 저장소.
+    mcp.json 포함: 호스트 MCP 가져오기가 env(토큰)를 담으므로 클라우드에는 항상 암호문으로. */
+export const isSecretRel = (rel) => rel === 'connections.json' || rel === '.secrets.json' || rel === 'mcp.json';
+
+/** 봉투/레거시 평문 겸용 개봉 — 봉투 도입 전에 클라우드에 올라간 평문(mcp.json 등)을 수용한다.
+    평문이면 그대로 반환하고, 다음 로컬 변경 push에서 봉투로 승격된다. */
+export function openSecretCompat(buf) {
+  const enveloped = buf.subarray(0, MAGIC2.length).equals(MAGIC2) || buf.subarray(0, MAGIC1.length).equals(MAGIC1);
+  return enveloped ? openSecret(buf) : buf;
+}
 
 /** 평문 → v2 봉투(MAGIC ∥ iv ∥ tag ∥ ct). */
 export function sealSecret(buf) {

@@ -2,6 +2,7 @@
 // 스킬은 다음 턴 시스템 프롬프트에, MCP는 다음 턴 mcpServers에 자동 반영된다.
 import { mkdir, readFile, writeFile, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { paths } from './workspace.mjs';
 
 /* ─── 스킬 카탈로그 — 지시형 md, 설치 = skills/<id>.md 복사 ─── */
@@ -266,4 +267,59 @@ export async function removeMcp(wsId, name) {
   const cfg = await loadMcp(wsId);
   delete cfg.servers[name];
   await saveMcp(wsId, cfg);
+}
+
+/* ─── 호스트(이 컴퓨터) Claude Code MCP 가져오기 — 로컬 앱 전용 ───
+   "이 컴퓨터에 이미 연결된 도구를 회사에서도 그대로" — 사용자가 Claude Code에 등록해 둔
+   MCP(user 스코프, ~/.claude.json mcpServers)를 env(토큰)까지 복사해 회사 mcp.json에 넣는다.
+   보안: ① 호스팅(멀티테넌트)에선 assertArbitraryMcpAllowed가 차단(임의 command 실행 클래스)
+   ② env가 회사 mcp.json에 들어가므로 mcp.json은 시크릿 봉투(secretbox) 대상 — 동기화 시 암호문. */
+export async function listHostMcp() {
+  try {
+    const cfg = JSON.parse(await readFile(join(homedir(), '.claude.json'), 'utf8'));
+    return Object.entries(cfg.mcpServers ?? {})
+      .filter(([, s]) => s && typeof s === 'object')
+      .map(([name, s]) => ({
+        name,
+        type: s.type ?? (s.command ? 'stdio' : s.url ? 'http' : 'unknown'),
+        // 표시용 요약 — command/url만. env 값은 절대 내보내지 않는다(마스킹 규칙).
+        summary: String(s.command ?? s.url ?? '').slice(0, 80),
+        hasEnv: !!(s.env && Object.keys(s.env).length),
+      }));
+  } catch { return []; } // 파일 없음/손상 = 가져올 것 없음
+}
+
+/* ─── 런타임 실행 게이트 — 호스팅(멀티테넌트 워커)에서 임의 command MCP를 spawn하지 않는다 ───
+   추가(add) 게이트만으로는 부족하다: mcp.json이 봉투로 동기화되므로, 로컬에서 넣은 임의 command가
+   서비스 키를 든 워커로 흘러가 실행되면 전 테넌트가 뚫린다(검수 HIGH). 그래서 실행 직전에도 거른다.
+   - 로컬(자기 PC) 앱: 전부 실행 허용(사용자 자신의 환경).
+   - 호스팅 모드: 로컬 프로세스를 spawn하는 stdio(command) 서버는 카탈로그의 검증된 command만 허용.
+     원격(url/http) 서버는 로컬 프로세스가 없어 그 클래스의 위험이 없으므로 통과. */
+export function safeMcpServersForRuntime(servers = {}) {
+  if (!arbitraryMcpBlocked()) return servers; // 로컬 앱 — 제한 없음
+  const okCommands = new Set(MCP_CATALOG.map((s) => `${s.def?.command} ${(s.def?.args ?? []).join(' ')}`.trim()));
+  const out = {};
+  for (const [name, def] of Object.entries(servers)) {
+    if (!def?.command) { out[name] = def; continue; } // url/http 원격 — 로컬 spawn 없음, 허용
+    const sig = `${def.command} ${(def.args ?? []).join(' ')}`.trim();
+    if (okCommands.has(sig)) out[name] = def; // 카탈로그의 검증된 command만
+    else console.warn(`[argo] 호스팅 모드 — 미검증 command MCP 실행 차단: ${name}`);
+  }
+  return out;
+}
+
+export async function importHostMcp(wsId, name) {
+  assertArbitraryMcpAllowed(); // 호스팅 모드 차단 — 임의 프로세스가 서비스 키 곁에서 도는 것 방지
+  let cfg;
+  try { cfg = JSON.parse(await readFile(join(homedir(), '.claude.json'), 'utf8')); }
+  catch { throw new Error('이 컴퓨터의 Claude Code 설정(~/.claude.json)을 읽을 수 없습니다'); }
+  const src = cfg.mcpServers?.[name];
+  if (!src || typeof src !== 'object') throw new Error(`이 컴퓨터의 Claude Code에 "${name}" MCP가 없습니다`);
+  const safe = String(name).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+  if (!NAME_RE.test(safe)) throw new Error('가져올 수 없는 이름입니다');
+  const company = await loadMcp(wsId);
+  // 설정 원형 보존(command/args/env/type/url/headers) — SDK mcpServers가 그대로 먹는 형태
+  company.servers[safe] = JSON.parse(JSON.stringify(src));
+  await saveMcp(wsId, company);
+  return { name: safe, hasEnv: !!(src.env && Object.keys(src.env).length) };
 }
