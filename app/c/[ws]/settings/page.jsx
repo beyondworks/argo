@@ -889,7 +889,7 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
           {on
             ? (leader ? <><span className="dot" />{t('settings.conn.on')}</> : <><span className="dot" style={{ background: 'var(--warn)' }} />{t('settings.conn.onStandby')}</>)
             : t('settings.conn.off')}
-          {kind === 'telegram' && conn?.chatId ? t('settings.conn.pairedSuffix') : ''}
+          {(kind === 'telegram' ? conn?.chatId : conn?.paired) ? t('settings.conn.pairedSuffix') : ''}
         </span>
       </div>
       {on && !leader ? (
@@ -931,6 +931,18 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
           <span className="microlabel">{t('settings.conn.channel')}</span>
           <input suppressHydrationWarning value={channel} onChange={(e) => setChannel(e.target.value)} placeholder={t('settings.conn.channelPlaceholder')} style={fieldStyle} />
         </label>
+      )}
+      {/* 슬랙 페어링 코드 — 채널에 이 코드를 보낸 사람이 사장으로 고정된다(그 전엔 봇이 지시를 실행하지 않음) */}
+      {kind === 'slack' && on && conn?.hasToken && !conn?.paired && conn?.pairCode && (
+        <div style={{ display: 'grid', gap: 5, padding: '10px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border)' }}>
+          <span className="microlabel">{t('settings.conn.pairCodeLabelSlack')}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span className="mono" style={{ fontSize: 22, letterSpacing: 4, fontWeight: 600, color: 'var(--accent, var(--fg))' }}>{conn.pairCode}</span>
+            <button type="button" className="btn sm" style={{ flex: 'none' }}
+              onClick={() => navigator.clipboard?.writeText(conn.pairCode).catch(() => {})}>{t('common.copy')}</button>
+          </div>
+          <span style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.5 }}>{t('settings.conn.pairCodeHelpSlack')}</span>
+        </div>
       )}
       <label style={{ display: 'grid', gap: 5 }}>
         <span className="microlabel">{t('settings.conn.defaultCrew')}</span>

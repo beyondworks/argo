@@ -306,6 +306,8 @@ const DICT = {
   'settings.conn.pairCodeLabel': ['연결 코드 — 봇에 이 코드를 보내세요', 'Pairing code — send this to your bot'],
   'settings.conn.pairCodeHelp': ['텔레그램에서 봇을 열고 이 6자리 코드를 그대로 보내면 이 회사와 연결됩니다. 코드를 아는 사람만 연결할 수 있어요.', 'Open the bot in Telegram and send this 6-character code to connect it to this company. Only someone with the code can pair.'],
   'settings.conn.pairCodeChip': ['코드 {code}', 'code {code}'],
+  'settings.conn.pairCodeLabelSlack': ['연결 코드 — 채널에 이 코드를 보내세요', 'Pairing code — post this in the channel'],
+  'settings.conn.pairCodeHelpSlack': ['봇을 채널에 초대한 뒤 이 6자리 코드를 채널에 그대로 보내면, 보낸 사람이 사장으로 고정됩니다. 이후 사장만 크루 구동·결재를 할 수 있어요.', 'Invite the bot to the channel, then post this 6-character code there. The sender is locked in as the owner — only the owner can run crew and approve requests.'],
   'common.copy': ['복사', 'Copy'],
   'common.copied': ['복사됨', 'Copied'],
   'legal.link': ['약관 및 개인정보', 'Terms & Privacy'],
