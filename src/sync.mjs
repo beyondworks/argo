@@ -318,7 +318,19 @@ export async function syncCompany(wsId, owner, isRestore = false) {
     console.warn(`[argo] 동기화(${wsId}): 원격에서 발견된 빈 회사 — 신규 복원으로 간주, base 리셋`);
     for (const k of Object.keys(state)) delete state[k];
   }
-  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0;
+  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0;
+  const deletedRels = new Set(); // 이번 사이클에 내가 원격 삭제한 rel — 매니페스트 병합에서 재추가 금지
+  // blob 실존 검사 — 매니페스트 항목 부재가 "삭제"인지 "동시 쓰기로 항목만 유실"인지 가르는 판별자.
+  // 404만 "없음"이다. 타임아웃·5xx 등 확인 불가는 throw → per-file catch가 이번 사이클 보류(failed++).
+  // "확인 불가 = 없음"으로 떨어뜨리면 네트워크 열화 시 이 방어가 역으로 오삭제를 만든다(검수 CRITICAL).
+  // 판정 규칙은 위 매니페스트 읽기의 notFound 구분과 동일하게 유지한다.
+  const blobExists = async (key) => {
+    const { error } = await client().storage.from(BUCKET).download(key);
+    if (!error) return true;
+    const msg = String(error.message || error);
+    if (/not[ _]?found|does not exist|no such|404/i.test(msg) || error.status === 404 || error.statusCode === 404) return false;
+    throw new Error(`blob 확인 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
+  };
 
   const relFull = (rel) => {
     if (!safeRel(rel)) throw new Error(`안전하지 않은 동기화 키 차단(경로 탈출): ${String(rel).slice(0, 80)}`);
@@ -408,9 +420,11 @@ export async function syncCompany(wsId, owner, isRestore = false) {
         if (base && !remoteChg) { // 삭제로 보임 — 단 로컬 손상(.corrupt-)이면 삭제가 아니라 복구
           if (corruptHeal.has(rel)) { // 로컬 손상 → 원격 정상본을 받아 self-heal
             await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; conflicts++; revived = true;
-          } else { // 진짜 삭제 → 원격도 삭제
-            await client().storage.from(BUCKET).remove([remoteKey(rel)]);
-            delete remote.files[rel]; deletedR++;
+          } else { // 진짜 삭제 → 원격도 삭제. remove 실패면 항목을 유지하고 보류 — 항목만 지우고 blob이
+            // 살아남으면 blob 실존 검사가 이 삭제를 '매니페스트 유실'로 오판해 부활시킨다(검수 HIGH).
+            const { error: rmErr } = await client().storage.from(BUCKET).remove([remoteKey(rel)]);
+            if (rmErr) throw new Error(`원격 blob 삭제 실패 — 보류: ${String(rmErr.message || rmErr).slice(0, 80)}`);
+            delete remote.files[rel]; deletedR++; deletedRels.add(rel); // 매니페스트 병합에서 재추가 금지
           }
         } else if (!base) { // 원격 신규 → 받기
           await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; revived = true;
@@ -423,7 +437,13 @@ export async function syncCompany(wsId, owner, isRestore = false) {
         continue;
       }
       if (l && !r) { // 원격에 없음
-        if (base && !localChg) { await rmLocal(rel); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
+        if (base && !localChg) {
+          // 매니페스트 lost-update 방어 — 진짜 삭제(다른 기기의 삭제 전파)는 blob도 함께 지워져 있다.
+          // blob이 살아 있으면 동시 동기화 중인 기기가 매니페스트를 통째로 덮어써 항목만 유실된 것
+          // (실측: 영입 직후 크루 카드가 8초 안에 오삭제) → 지우지 말고 항목을 복원한다(자기치유).
+          if (await blobExists(remoteKey(rel))) { remote.files[rel] = base; healed++; }
+          else { await rmLocal(rel); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
+        }
         else { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
         continue;
       }
@@ -468,9 +488,31 @@ export async function syncCompany(wsId, owner, isRestore = false) {
     } catch { failed++; } // 파일 하나 실패는 다음 사이클이 재시도
   }
 
-  await upload(manifestKey, Buffer.from(JSON.stringify(remote)));
+  // 매니페스트 재읽기 병합 — 매니페스트는 whole-file 덮어쓰기(LWW)라, diff를 도는 동안 다른 기기가
+  // 올린 신규 항목을 병합 없이 덮으면 그 항목이 유실되고, 그 기기의 base에는 남아 다음 사이클에
+  // '원격에서 삭제됨'으로 오판돼 파일이 지워진다(실측: 영입 직후 크루 카드 오삭제). 재읽기로 경합
+  // 창을 ms 단위로 줄이고, 남는 창은 위 blob 실존 검사가 최종 방어한다.
+  // 주의: 병합 항목은 업로드 매니페스트에만 넣고 내 base(state)에는 넣지 않는다 — base에 넣으면
+  // "로컬에 없는데 base에 있음 = 내가 지움"으로 오판해 다음 사이클에 원격 삭제를 전파해 버린다.
+  // base에 없으니 다음 사이클에 '원격 신규 → 받기'로 정상 pull된다.
+  const uploadFiles = { ...remote.files };
+  try {
+    const { data } = await client().storage.from(BUCKET).download(manifestKey);
+    if (data) {
+      const fresh = JSON.parse(Buffer.from(await data.arrayBuffer()).toString());
+      for (const [rel, meta] of Object.entries(fresh.files ?? {})) {
+        if (!(rel in uploadFiles) && !deletedRels.has(rel) && safeRel(rel)) {
+          // 다른 기기가 "삭제 진행 중"(blob은 지웠고 매니페스트 drop 전)인 항목을 되살리면 그 삭제가
+          // 미전파되고 죽은 항목이 남는다(검수 MEDIUM) — blob이 실존할 때만 병합, 확인 불가면 생략
+          // (그 기기의 다음 매니페스트 업로드가 자체 반영하므로 유실 없음).
+          try { if (await blobExists(remoteKey(rel))) uploadFiles[rel] = meta; } catch { /* 생략 */ }
+        }
+      }
+    }
+  } catch { /* 재읽기 실패 — 병합 없이 진행(남는 경합은 blob 검사가 방어, 다음 사이클 self-heal) */ }
+  await upload(manifestKey, Buffer.from(JSON.stringify({ ...remote, files: uploadFiles })));
   await writeJsonAtomic(stateFile(wsId), { files: remote.files, ts: Date.now() });
-  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed };
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed };
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.

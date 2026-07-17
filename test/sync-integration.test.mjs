@@ -280,3 +280,152 @@ test('통합 T8: at 결측 tombstone은 철회가 아니라 적용(신호 보존
   assert.ok(tombs.has(wsId), '결측 at도 유효한 보관 신호');
   assert.ok(!existsSync(join(ROOT, wsId)), '보관 전파됨');
 });
+
+/* ── [M] 매니페스트 경합 — 동시 동기화가 새 파일을 오삭제하지 않는다 ── */
+
+test('통합 M1: 매니페스트 항목만 유실(blob 생존)이면 삭제 대신 항목 복원(자기치유)', async () => {
+  const wsId = 'race-heal';
+  const card = Buffer.from('---\nname: Shuri\n---\n# Shuri\n');
+  // base와 로컬엔 카드가 있고(무변경), 원격 매니페스트엔 항목이 없다(다른 기기가 덮어씀).
+  // 단 blob은 스토리지에 살아 있다 — 진짜 삭제라면 blob도 지워졌을 것.
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'agents/shuri.md': card },
+    state: { 'agents/shuri.md': meta(card) },
+    remoteFiles: {}, remoteBlobs: {},
+  });
+  fake._store.set(`${OWNER}/${wsId}/agents/shuri.md`, card); // blob 생존
+  const r = await syncCompany(wsId, OWNER);
+
+  assert.ok(existsSync(join(wsRoot, 'agents', 'shuri.md')), '로컬 카드 오삭제 안 됨');
+  assert.equal(r.deletedL, 0, '로컬 삭제 0');
+  assert.equal(r.healed, 1, '자기치유 1건');
+  const man = JSON.parse(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`).toString());
+  assert.ok(man.files['agents/shuri.md'], '매니페스트 항목 복원됨');
+});
+
+test('통합 M2(회귀): 진짜 삭제(blob도 없음)는 여전히 로컬로 전파된다', async () => {
+  const wsId = 'race-del';
+  const card = Buffer.from('---\nname: Gone\n---\n');
+  const { wsRoot } = await setup(wsId, {
+    localFiles: { 'agents/gone.md': card },
+    state: { 'agents/gone.md': meta(card) },
+    remoteFiles: {}, remoteBlobs: {}, // 매니페스트에도 blob에도 없음 = 다른 기기가 삭제 완료
+  });
+  const r = await syncCompany(wsId, OWNER);
+  assert.ok(!existsSync(join(wsRoot, 'agents', 'gone.md')), '진짜 삭제는 로컬 반영');
+  assert.equal(r.deletedL, 1);
+  assert.equal(r.healed ?? 0, 0);
+});
+
+test('통합 M3: 업로드 직전 재읽기 병합 — 다른 기기가 방금 올린 항목을 보존하고 base에는 안 넣는다', async () => {
+  const wsId = 'race-merge';
+  const mine = Buffer.from('mine');
+  const theirs = Buffer.from('theirs');
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'vault/notes/mine.md': mine }, // 내 신규 → push될 것
+    state: {}, remoteFiles: {}, remoteBlobs: {},
+  });
+  // 다른 기기가 diff 도중 올린 항목 시뮬 — 매니페스트 2번째 다운로드(업로드 직전 재읽기)부터 보인다
+  const manifestKey = `${OWNER}/${wsId}/__manifest__.json`;
+  const origDownload = fake.storage.from().download.bind(fake.storage.from());
+  let manifestReads = 0;
+  const bucket = fake.storage.from();
+  const patched = {
+    ...bucket,
+    async download(key) {
+      if (key === manifestKey) {
+        manifestReads++;
+        if (manifestReads >= 2) {
+          fake._store.set(`${OWNER}/${wsId}/vault/notes/theirs.md`, theirs);
+          const cur = JSON.parse(fake._store.get(manifestKey).toString());
+          cur.files['vault/notes/theirs.md'] = { m: 2000, s: theirs.length, h: 'x'.repeat(16) };
+          fake._store.set(manifestKey, Buffer.from(JSON.stringify(cur)));
+        }
+      }
+      return origDownload(key);
+    },
+  };
+  _setSyncClientForTest({ ...fake, storage: { from: () => patched } });
+  await syncCompany(wsId, OWNER);
+
+  const man = JSON.parse(fake._store.get(manifestKey).toString());
+  assert.ok(man.files['vault/notes/mine.md'], '내 신규 항목 업로드됨');
+  assert.ok(man.files['vault/notes/theirs.md'], '다른 기기의 동시 추가 항목 보존됨(lost-update 방지)');
+  const st = JSON.parse(await readFile(join(wsRoot, '.sync-state.json'), 'utf8'));
+  assert.ok(!st.files['vault/notes/theirs.md'], '병합 항목은 내 base에 없음 — 다음 사이클에 원격 신규로 pull');
+  assert.ok(st.files['vault/notes/mine.md'], '내 항목은 base에 있음');
+});
+
+test('통합 M4(치명 회귀 가드): blob 확인이 네트워크 에러(비404)면 삭제가 아니라 보류', async () => {
+  const wsId = 'race-neterr';
+  const card = Buffer.from('---\nname: Keep\n---\n');
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'agents/keep.md': card },
+    state: { 'agents/keep.md': meta(card) },
+    remoteFiles: {}, remoteBlobs: {},
+  });
+  // blob 다운로드만 503으로 실패시키는 패치 — 404가 아니므로 "확인 불가"
+  const bucket = fake.storage.from();
+  const orig = bucket.download.bind(bucket);
+  const patched = { ...bucket, async download(key) {
+    if (key.endsWith('agents/keep.md')) return { data: null, error: { message: 'Service Unavailable', status: 503 } };
+    return orig(key);
+  } };
+  _setSyncClientForTest({ ...fake, storage: { from: () => patched } });
+  const r = await syncCompany(wsId, OWNER);
+
+  assert.ok(existsSync(join(wsRoot, 'agents', 'keep.md')), '확인 불가 시 로컬 파일 보존(보류)');
+  assert.equal(r.deletedL, 0, '오삭제 0');
+  assert.ok(r.failed >= 1, '보류로 집계 — 다음 사이클 재시도');
+});
+
+test('통합 M5(회귀 가드): 원격 blob 삭제 실패 시 매니페스트 항목 유지 — 부활 오판 차단', async () => {
+  const wsId = 'race-rmfail';
+  const buf = Buffer.from('bye');
+  const { fake } = await setup(wsId, {
+    localFiles: {}, // 내가 로컬에서 지움
+    state: { 'vault/notes/bye.md': meta(buf) },
+    remoteFiles: { 'vault/notes/bye.md': meta(buf) },
+    remoteBlobs: { 'vault/notes/bye.md': buf },
+  });
+  const bucket = fake.storage.from();
+  const patched = { ...bucket, async remove() { return { error: { message: 'boom 500' } }; } };
+  _setSyncClientForTest({ ...fake, storage: { from: () => patched } });
+  const r = await syncCompany(wsId, OWNER);
+
+  assert.equal(r.deletedR, 0, '삭제 전파 안 됨(보류)');
+  assert.ok(r.failed >= 1, '보류 집계');
+  const man = JSON.parse(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`).toString());
+  assert.ok(man.files['vault/notes/bye.md'], '항목 유지 — blob만 살아남아 부활 오판되는 상태를 안 만든다');
+  assert.ok(fake._store.has(`${OWNER}/${wsId}/vault/notes/bye.md`), 'blob도 그대로');
+});
+
+test('통합 M6: 재읽기 병합은 blob이 죽은 항목(남의 삭제 진행 중)을 되살리지 않는다', async () => {
+  const wsId = 'race-deadmerge';
+  const mine = Buffer.from('mine2');
+  const { fake } = await setup(wsId, {
+    localFiles: { 'vault/notes/mine2.md': mine },
+    state: {}, remoteFiles: {}, remoteBlobs: {},
+  });
+  const manifestKey = `${OWNER}/${wsId}/__manifest__.json`;
+  const bucket = fake.storage.from();
+  const orig = bucket.download.bind(bucket);
+  let manifestReads = 0;
+  const patched = { ...bucket, async download(key) {
+    if (key === manifestKey) {
+      manifestReads++;
+      if (manifestReads >= 2) { // 재읽기 시점: 매니페스트엔 항목이 있지만 blob은 이미 제거된 상태
+        const cur = JSON.parse(fake._store.get(manifestKey).toString());
+        cur.files['vault/notes/dead.md'] = { m: 2000, s: 4, h: 'y'.repeat(16) };
+        fake._store.set(manifestKey, Buffer.from(JSON.stringify(cur)));
+      }
+    }
+    return orig(key);
+  } };
+  _setSyncClientForTest({ ...fake, storage: { from: () => patched } });
+  await syncCompany(wsId, OWNER);
+
+  const man = JSON.parse(fake._store.get(manifestKey).toString());
+  assert.ok(man.files['vault/notes/mine2.md'], '내 항목은 업로드');
+  assert.ok(!man.files['vault/notes/dead.md'], '죽은 blob 항목은 병합하지 않음(삭제 미전파 방지)');
+});
