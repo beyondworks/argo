@@ -17,10 +17,9 @@
 // 충돌은 LWW(더 최근 mtime 승) — md 양쪽 보존은 후속.
 import { mkdir, readFile, writeFile, readdir, stat, rm, utimes } from 'node:fs/promises';
 import { join, dirname, basename, sep } from 'node:path';
-import { hostname } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR } from './workspace.mjs';
+import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, sealSecret, openSecret } from './secretbox.mjs';
@@ -92,20 +91,7 @@ export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; }
 const encSeg = (s) => (/^[A-Za-z0-9._-]+$/.test(s) ? s : `u8-${Buffer.from(s).toString('base64url')}`);
 const skey = (...segs) => segs.flatMap((s) => s.split('/')).map(encSeg).join('/');
 
-/* ─── 기기 식별 ─── */
-let deviceId = null;
-async function getDeviceId() {
-  if (deviceId) return deviceId;
-  const f = join(WS_ROOT, '.device-id');
-  try {
-    deviceId = (await readFile(f, 'utf8')).trim();
-  } catch {
-    deviceId = `${hostname().split('.')[0]}-${randomUUID().slice(0, 8)}`;
-    await mkdir(WS_ROOT, { recursive: true });
-    await writeFile(f, deviceId);
-  }
-  return deviceId;
-}
+/* ─── 기기 식별 — 정의는 workspace.mjs(getDeviceId). 세션 소유 판정(thread/chat)과 공유한다. ─── */
 
 /* ─── 크로스 프로세스 단일 동기화 락 ───
    같은 데이터 루트에 두 서버가 뜨면(실수로 dev + 상주 동시 기동 등) 서로의 로컬·원격·.sync-state를
@@ -258,6 +244,8 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   const primary = prefer === 'local' ? L : R, other = prefer === 'local' ? R : L;
   const merged = { ...other, ...primary, messages: msgs };
   merged.sessionId = primary.sessionId ?? other.sessionId ?? null; // 이어가기 세션은 최근 편집 쪽으로 수렴
+  // sessionDevice는 sessionId를 제공한 쪽과 짝으로 — 어긋나면 남의 기기 세션을 내 것으로 오판한다
+  merged.sessionDevice = (primary.sessionId != null ? primary.sessionDevice : other.sessionDevice) ?? null;
   return Buffer.from(JSON.stringify(merged, null, 2));
 }
 

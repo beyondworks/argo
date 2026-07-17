@@ -2,9 +2,26 @@
 import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
+import { hostname } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { writeJsonAtomic } from './jsonstore.mjs';
 
 export const WS_ROOT = process.env.ARGO_ROOT || process.env.CREWBASE_ROOT || join(process.cwd(), 'workspaces');
+
+/* ─── 기기 식별 — 동기화 리스(sync)·세션 소유 판정(thread/chat)이 공유 (WS_ROOT/.device-id) ─── */
+let deviceId = null;
+export async function getDeviceId() {
+  if (deviceId) return deviceId;
+  const f = join(WS_ROOT, '.device-id');
+  try {
+    deviceId = (await readFile(f, 'utf8')).trim();
+  } catch {
+    deviceId = `${hostname().split('.')[0]}-${randomUUID().slice(0, 8)}`;
+    await mkdir(WS_ROOT, { recursive: true });
+    await writeFile(f, deviceId);
+  }
+  return deviceId;
+}
 
 // 워크스페이스 id는 회사 생성 규칙(route.js: base-base36)이 내는 문자셋만 허용.
 // paths()가 모든 파일 접근의 단일 관문이므로 여기서 막으면 전 API 라우트의 경로 탈출(../, %2f)이 차단된다.

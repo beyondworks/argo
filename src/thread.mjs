@@ -2,7 +2,7 @@
 // 새로고침해도 대화가 이어지는 것이 제품의 기본 자세다.
 import { readFile, rm, readdir, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import { paths } from './workspace.mjs';
+import { paths, getDeviceId } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 
@@ -23,7 +23,12 @@ export async function appendTurn(wsId, slug, { userMsg, reply, handover, session
       { who: 'user', text: userMsg, ts, ...(attachments?.length ? { attachments } : {}) },
       { who: 'crew', text: reply, handover, ts },
     );
-    t.sessionId = sessionId ?? t.sessionId;
+    if (sessionId) {
+      // SDK 세션 저장소는 기기 로컬이라 소유 기기를 함께 기록한다 — 다른 기기가 이 sessionId를
+      // resume하면 CLI가 'No conversation found'로 죽는다(실측: 기기 전환 실패). chat이 사전 분기.
+      t.sessionId = sessionId;
+      t.sessionDevice = await getDeviceId().catch(() => t.sessionDevice ?? null);
+    }
     await writeJsonAtomic(file(wsId, slug), t);
     return t;
   });
