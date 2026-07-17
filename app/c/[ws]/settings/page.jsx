@@ -520,6 +520,7 @@ function RunnerRow({ ws, id, st, onChange, first }) {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const [ok, setOk] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false); // 러너 연결 제거 확인(전 기기·전 크루 영향)
   const [polling, setPolling] = useState(false);
   const pollRef = useRef(null);   // setInterval 핸들
   const pollN = useRef(0);        // 폴링 횟수 (최대 60 = 약 2분)
@@ -668,9 +669,20 @@ function RunnerRow({ ws, id, st, onChange, first }) {
   const urlPaste = id !== 'claude'; // codex/gemini — 승인 후 리다이렉트된 주소 전체를 붙여넣는 방식
   const removeBtn = company.connected && (
     <div>
-      <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={remove}>
+      {/* 파괴적(전 기기·전 크루 영향) — 확인 없이 즉시 실행하지 않는다(프로젝트 삭제류 액션 규칙). */}
+      <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={() => setConfirmRemove(true)}>
         {busy === 'remove' ? <Spinner size={12} /> : t('settings.runners.remove')}
       </button>
+      {confirmRemove && (
+        <ConfirmModal
+          title={t('settings.runners.removeConfirmTitle', { runner: RUNNER_NAMES[id] })}
+          description={t('settings.runners.removeConfirm')}
+          confirmLabel={t('settings.runners.remove')}
+          tone="danger"
+          onConfirm={() => { setConfirmRemove(false); remove(); }}
+          onClose={() => setConfirmRemove(false)}
+        />
+      )}
     </div>
   );
   return (

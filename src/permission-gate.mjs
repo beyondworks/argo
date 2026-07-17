@@ -2,7 +2,7 @@
 // 승인(데크 결재함/텔레그램 버튼/슬랙 회신)되면 그 자리에서 이어서 실행되는 interrupt-resume.
 import { resolve, dirname } from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { addApproval, loadApprovals } from './approvals.mjs';
+import { addApproval, loadApprovals, expireApproval } from './approvals.mjs';
 import { setTurnStatus } from './turn-status.mjs';
 
 // 결재 대기 상한 — chat 라우트 maxDuration(300s) 안쪽. 원격(메신저) 승인은 3분이 빠듯해
@@ -101,16 +101,19 @@ export function makePermissionGate(wsId, slug, caps, wsRoot) {
       reason: '로컬 능력 실행 — 승인하면 멈춘 자리에서 바로 이어집니다',
       kind: 'tool',
     });
-    await setTurnStatus(wsId, slug, '사장 결재 대기 중 — 결재함·메신저에서 승인하면 이어집니다');
+    await setTurnStatus(wsId, slug, 'awaiting_approval'); // 코드 — 클라가 i18n으로 번역
     const t0 = Date.now();
     while (Date.now() - t0 < WAIT_MS) {
-      await setTurnStatus(wsId, slug, '사장 결재 대기 중 — 결재함·메신저에서 승인하면 이어집니다');
+      await setTurnStatus(wsId, slug, 'awaiting_approval'); // 코드 — 클라가 i18n으로 번역
       if (signal?.aborted) return { behavior: 'deny', message: '턴이 중단되었다.' };
       await new Promise((r) => setTimeout(r, POLL_MS));
       const cur = (await loadApprovals(wsId)).find((a) => a.id === item.id);
       if (cur?.status === 'approved') return allow;
       if (cur?.status === 'rejected') return { behavior: 'deny', message: '사장이 이 실행을 거절했다. 실행하지 말고 대안을 한두 줄로 정리하라.' };
     }
-    return { behavior: 'deny', message: `권한 승인 대기 시간(${Math.round(WAIT_MS / 60_000)}분)이 지났다 — 실패가 아니라 대기다. 요청은 결재함에 그대로 남아 있고, 사장이 웹 결재함이나 텔레그램/슬랙 버튼으로 나중에 승인하면 후속 턴에서 이어서 실행된다고 안내하라.` };
+    // 만료 — tool 결재는 대기 자리를 떠나면 나중에 승인해도 자동 재개되지 않는다(약속 위반 방지).
+    // 죽은 버튼이 결재함/아침보고 카운트에 남지 않게 'expired'로 내리고, 크루가 정직하게 안내하게 한다.
+    await expireApproval(wsId, item.id).catch(() => {});
+    return { behavior: 'deny', message: `권한 승인 대기 시간(${Math.round(WAIT_MS / 60_000)}분)이 지났다. 이 실행은 대기 자리를 떠나 지금은 이어지지 않는다 — 사장에게 "승인이 필요하면, 승인하신 뒤 같은 지시를 한 번 더 주시면 바로 이어서 하겠다"고 정직하게 안내하고 턴을 마무리하라.` };
   };
 }

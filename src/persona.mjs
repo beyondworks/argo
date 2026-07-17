@@ -173,14 +173,27 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   return { slug, name: nameFinal, role: roleFinal, team: team?.trim() || '', file };
 }
 
+// 정규식 메타문자 리터럴화 — 이름 등 사용자 값으로 RegExp를 만들 때 오작동/rename 실패 방지.
+const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /** 카드 편집 저장 — 카드가 곧 시스템 프롬프트(투명성 원칙). frontmatter 최소 검증. */
 export async function saveAgentCard(wsId, slug, md) {
   const meta = parseFrontmatter(md);
   if (!meta.name) throw new Error('frontmatter에 name이 필요합니다');
   const file = cardPath(wsId, slug);
   if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
-  await writeJsonAtomic(file, md.endsWith('\n') ? md : `${md}\n`);
-  return { slug, name: meta.name, role: meta.role || '' };
+  // 엔진(runner/model)은 PATCH 경로가 소유한다 — 본문/규칙 저장(PUT)이 통째로 덮어써 엔진 선택을
+  // 조용히 원복시키던 문제(패널 stale) 방어: 들어온 md에 엔진 키가 없으면 디스크의 현재 값을 보존한다.
+  // (사용자가 raw 편집기에서 직접 엔진 키를 넣었으면 그때만 incoming에 존재 → 그 값 존중)
+  let out = md.endsWith('\n') ? md : `${md}\n`;
+  try {
+    const cur = parseFrontmatter(await readFile(file, 'utf8'));
+    if (cur.runner && meta.runner === undefined) out = setFrontmatterKey(out, 'runner', cur.runner);
+    if (cur.model && meta.model === undefined) out = setFrontmatterKey(out, 'model', cur.model);
+  } catch { /* 디스크 읽기 실패 시 들어온 md 그대로 저장 */ }
+  await writeJsonAtomic(file, out);
+  const saved = parseFrontmatter(out);
+  return { slug, name: saved.name, role: saved.role || '' };
 }
 
 /** frontmatter 키를 갱신/삽입/삭제하며 카드 본문은 보존한다. */
@@ -201,8 +214,9 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
   const before = parseFrontmatter(md);
   if (name !== undefined && name.trim()) {
     md = setFrontmatterKey(md, 'name', name.trim());
-    // 본문 제목의 옛 이름도 함께 (— "# 이름 — 직함" 관례)
-    if (before.name) md = md.replace(new RegExp(`^# ${before.name}(?= —|$)`, 'm'), `# ${name.trim()}`);
+    // 본문 제목의 옛 이름도 함께 (— "# 이름 — 직함" 관례). 이름을 정규식 리터럴로 이스케이프하고
+    // 치환값은 함수 리플레이서로 넘겨 새 이름의 '$'가 캡처참조로 오해석되는 것까지 막는다.
+    if (before.name) md = md.replace(new RegExp(`^# ${escRe(before.name)}(?= —|$)`, 'm'), () => `# ${name.trim()}`);
   }
   if (role !== undefined) md = setFrontmatterKey(md, 'role', role.trim());
   if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());

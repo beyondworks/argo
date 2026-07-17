@@ -87,10 +87,16 @@ export async function listDocs(wsId) {
         links: [...new Set([...text.matchAll(/\[\[(.+?)\]\]/g)].map((m) => m[1]))],
         excerpt: body.replace(/^#.*$/gm, '').replace(/\[\[|\]\]/g, '').trim().slice(0, 140),
         mtime: st.mtimeMs,
+        // 정렬·표시용 유효 시각 — 파일명에 풀 타임스탬프(대화)가 있으면 그것, 없으면(일지·노트) 수정시각.
+        // 예전엔 rel 문자열순 정렬이라 notes/>journal/>conversations/ 접두사 탓에 방금 한 대화가 안 떴다.
+        ts: (() => {
+          const m = relSlash(p.vault, file).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})/);
+          return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : st.mtimeMs;
+        })(),
       });
     }
   }
-  return docs.sort((a, b) => b.rel.localeCompare(a.rel));
+  return docs.sort((a, b) => b.ts - a.ts); // 최근 활동순 — 오늘 갱신된 일지가 최상단
 }
 
 /** vault 문서 1건 읽기 — vault 밖 경로 차단. 롤업으로 보관된 일지는 .archive/에서 폴백(링크 불사). */

@@ -151,7 +151,7 @@ async function codexHomeClean() {
 
 /** 외부 CLI 러너 1턴 — 워크스페이스를 cwd로, 프롬프트 하나로 실행하고 마지막 응답을 받는다.
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인. */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null }) {
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null }) {
   if (runner === 'codex') {
     const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
     const out = join(dir, 'last.txt');
@@ -165,7 +165,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
         '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록
-      ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, env: { ...scrubServerSecrets(process.env), ...(cred?.env ?? {}), CODEX_HOME } })
+      ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env), ...(cred?.env ?? {}), CODEX_HOME } })
         .catch((e) => { throw apiError(e); });
       return (await readFile(out, 'utf8')).trim();
     } finally {
@@ -177,7 +177,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
       '-p', prompt,
       ...(model ? ['-m', model] : []),
       '--approval-mode', 'auto_edit', // 편집류만 자동 승인 — 셸 등은 비대화 모드에서 실행되지 않는다
-    ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, env: { ...scrubServerSecrets(process.env), ...(cred?.env ?? {}) } })
+    ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env), ...(cred?.env ?? {}) } })
       .catch((e) => { throw apiError(e); });
     return stdout
       .replace(/^(Loaded cached credentials\.|Data collection is .*|\[STARTUP\].*|\[dotenv.*)\s*$/gim, '')

@@ -27,7 +27,10 @@ export default function Routines({ params }) {
   const [delTarget, setDelTarget] = useState(null); // 삭제 확인 모달 대상 루틴
 
   function load() {
-    api(`/api/companies/${ws}/routines`).then((d) => setRoutines(d.routines)).catch(() => setRoutines([]));
+    // 불러오기 실패(손상 등)를 '루틴 없음'([])으로 붕괴시키지 않는다 — 에러를 표시하고 목록은 미확정으로 둔다.
+    api(`/api/companies/${ws}/routines`)
+      .then((d) => { setRoutines(d.routines ?? []); setError(''); })
+      .catch((e) => { setRoutines(null); setError(String(e?.message || '') || t('routines.loadFail')); });
     api(`/api/companies/${ws}`).then((d) => setAgents(d.agents)).catch(() => {});
   }
   useEffect(load, [ws]);
@@ -174,7 +177,9 @@ export default function Routines({ params }) {
           <span className="pill"><span className="dot" />{t('routines.active', { n: routines?.filter((r) => r.enabled).length ?? 0 })}</span>
         </div>
         {routines === null ? (
-          <div style={{ padding: '0 18px 18px' }}><Skeleton h={80} /></div>
+          error
+            ? <div style={{ padding: '0 18px 18px', fontSize: 12.5, color: 'var(--danger)' }}>{t('routines.loadFail')}</div>
+            : <div style={{ padding: '0 18px 18px' }}><Skeleton h={80} /></div>
         ) : routines.length === 0 ? (
           <p style={{ padding: '2px 20px 18px', color: 'var(--fg-2)', fontSize: 13 }}>
             {t('routines.empty')}

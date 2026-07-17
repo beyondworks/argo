@@ -3,7 +3,7 @@
 // 기본 뷰는 판단이 필요한 것(결재·오류)과 상태 변경(기억·크루·연결)만, 정상 턴은 '전체'로 접는다.
 import { use, useEffect, useMemo, useState } from 'react';
 import { Avatar, Skeleton, Spinner, api, timeAgo } from '../../../ui';
-import { useLang } from '../../../i18n';
+import { useLang, stageLabel } from '../../../i18n';
 
 const isError = (e) => e.ok === false;
 const inFilter = (e, f) => {
@@ -117,8 +117,11 @@ export default function Activity({ params }) {
   [events, filter, q, agents, lang]); // lang — 언어 토글 시 행 라벨(row가 t() 사용) 재계산
 
   // 우측 레일 — 오늘 요약 + 크루별 처리량
-  const today = new Date().toISOString().slice(0, 10);
-  const todayEv = (events ?? []).filter((e) => String(e.ts).startsWith(today));
+  // '오늘' 경계는 로컬(KST 등) 기준 — UTC로 자르면 KST 오전엔 오늘 한 일이 0으로 보였다.
+  // sv-SE 로케일은 로컬 시간대의 YYYY-MM-DD를 낸다(일지·room·settings가 이미 쓰는 방식).
+  const localDay = (d) => new Date(d).toLocaleDateString('sv-SE');
+  const today = localDay(Date.now());
+  const todayEv = (events ?? []).filter((e) => localDay(e.ts) === today);
   const stat = {
     turns: todayEv.filter((e) => e.type === 'turn' && e.ok !== false).length,
     approvals: todayEv.filter((e) => e.type === 'approval' && e.status === 'pending').length,
@@ -132,7 +135,7 @@ export default function Activity({ params }) {
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <span className="microlabel">{t('activity.header')}</span>
-        <span className="microlabel">{new Date().toISOString().slice(0, 10)}</span>
+        <span className="microlabel">{new Date().toLocaleDateString('sv-SE')}</span>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 316px', gap: 14, alignItems: 'start' }}>
@@ -196,7 +199,7 @@ export default function Activity({ params }) {
                           {e.steps.map((s, j) => (
                             <div key={j} className="mono" style={{ fontSize: 11, color: 'var(--fg-2)', display: 'flex', gap: 10, minWidth: 0 }}>
                               <span style={{ color: 'var(--fg-3)', width: 42, flex: 'none', textAlign: 'right' }}>+{(s.t / 1000).toFixed(0)}s</span>
-                              <span style={{ flex: 'none' }}>{s.stage}</span>
+                              <span style={{ flex: 'none' }}>{stageLabel(t, s.stage, s.detail)}</span>
                               {s.detail && <span style={{ color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.detail}</span>}
                             </div>
                           ))}

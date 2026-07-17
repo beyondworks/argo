@@ -94,6 +94,7 @@ const DICT = {
   'compete.hint': ['크루를 2~3명 고르고 과제를 던지세요. 시안이 나란히 도착합니다.', 'Pick 2–3 crews and drop a brief. Drafts arrive side by side.'],
   'compete.runningBar': ['시안 작성 중 — 완성되는 대로 이 화면에 나란히 표시됩니다.', 'Drafting — results appear here side by side as they finish.'],
   'compete.closedBar': ['채택이 끝난 경쟁입니다 — 읽기 전용입니다.', 'This contest is closed — read only.'],
+  'compete.doneBar': ['시안이 완성됐습니다 — 채택할 시안을 골라 주세요.', 'Drafts are ready — pick one to adopt.'],
   'compete.goCrew': ['크루 대화로 이동', 'Open crew thread'],
   'activity.source.compete': ['경쟁 시안', 'contest'],
   'deck.brief.title': ['아침 조회 — 자리 비운 사이', 'Morning brief — while you were away'],
@@ -249,6 +250,8 @@ const DICT = {
   'settings.runners.saveVerify': ['저장·확인', 'Save & test'],
   'settings.runners.saveOnly': ['저장만', 'Save only'],
   'settings.runners.remove': ['연결 해제', 'Disconnect'],
+  'settings.runners.removeConfirmTitle': ['{runner} 연결을 해제할까요?', 'Disconnect {runner}?'],
+  'settings.runners.removeConfirm': ['이 회사의 모든 기기·모든 크루에서 이 러너 연결이 사라집니다. 다시 쓰려면 재연결해야 합니다.', 'This removes the connection for every device and every crew in this company. You’ll need to reconnect to use it again.'],
   'settings.runners.saved': ['저장되었습니다', 'Saved'],
   'settings.runners.verified': ['연결 확인됨', 'Connection verified'],
   'settings.runners.connect': ['연결', 'Connect'],
@@ -542,6 +545,19 @@ const DICT = {
   'chat.recordedInMemory': ['기억에 기록됨', 'Recorded in memory'],
   'chat.linkedMemories': ['· 관련 기억 {n}건과 연결', '· linked with {n} related memories'],
   'chat.stageEllipsis': ['{stage}…', '{stage}…'],
+  // 진행 단계 — 서버는 코드만 남기고 여기서 번역(stageLabel). detail(파일명·명령)은 코드 밖 값이라 그대로.
+  'chat.stage.boot': ['시동 거는 중', 'Starting up'],
+  'chat.stage.memory': ['기억을 살피는 중', 'Checking memory'],
+  'chat.stage.write': ['기록하는 중', 'Writing'],
+  'chat.stage.shell': ['명령 실행 중', 'Running a command'],
+  'chat.stage.web': ['웹을 살피는 중', 'Searching the web'],
+  'chat.stage.delegate': ['동료에게 위임 중', 'Delegating to a colleague'],
+  'chat.stage.approval': ['결재 올리는 중', 'Filing for approval'],
+  'chat.stage.tool': ['도구 사용 중', 'Using a tool'],
+  'chat.stage.work': ['작업 중', 'Working'],
+  'chat.stage.think': ['생각을 정리하는 중', 'Thinking'],
+  'chat.stage.runner': ['{name} 러너 실행 중', 'Running on {name}'],
+  'chat.stage.awaiting_approval': ['사장 결재 대기 중 — 결재함·메신저에서 승인하면 이어집니다', 'Waiting for your approval — approve in the inbox or messenger to continue'],
   'chat.turnFailed': ['턴 실패: {msg} — 입력을 복원했습니다. 다시 보내보세요.', 'Turn failed: {msg} — your input was restored. Try sending again.'],
   'chat.inputPlaceholder': ['{name}에게 지시하기', 'Instruct {name}'],
   'chat.crewFallback': ['크루', 'crew'],
@@ -699,6 +715,7 @@ const DICT = {
   'activity.turnsCount': ['{n}턴', '{n} turns'],
 
   // ── 루틴
+  'routines.loadFail': ['루틴을 불러오지 못했습니다 — 설정 파일이 손상됐을 수 있습니다. 잠시 후 다시 시도해 주세요.', 'Couldn’t load routines — the settings file may be corrupted. Please try again shortly.'],
   'routines.dow.sun': ['일', 'Sun'],
   'routines.dow.mon': ['월', 'Mon'],
   'routines.dow.tue': ['화', 'Tue'],
@@ -869,4 +886,13 @@ export function useLang() {
   const ctx = useContext(LangCtx);
   if (!ctx) throw new Error('useLang은 LanguageProvider 안에서만');
   return ctx;
+}
+
+// 진행 단계 코드 → 사람이 읽는 라벨. 알려진 코드만 번역하고, 미지/레거시 문자열(옛 상태 파일의
+// 한국어 라벨 등)은 원문 그대로 반환해 무회귀. runner 코드는 detail(러너명)을 이름으로 보간한다.
+const STAGE_CODES = new Set(['boot', 'memory', 'write', 'shell', 'web', 'delegate', 'approval', 'tool', 'work', 'think', 'runner', 'awaiting_approval']);
+export function stageLabel(t, stage, detail = '') {
+  if (!stage) return '';
+  if (!STAGE_CODES.has(stage)) return stage; // 레거시/미지 — 원문 표시
+  return stage === 'runner' ? t('chat.stage.runner', { name: detail || '' }) : t(`chat.stage.${stage}`);
 }

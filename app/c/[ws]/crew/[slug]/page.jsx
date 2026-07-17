@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
-import { useLang } from '../../../../i18n';
+import { useLang, stageLabel } from '../../../../i18n';
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
 const fmtElapsed = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
@@ -442,7 +442,7 @@ export default function CrewChat({ params }) {
               </div>
               <div className="msg-actions">
                 <button type="button" onClick={() => copyMsg(i, m.text)}>{copied === i ? t('chat.copied') : t('chat.copy')}</button>
-                {!viewing && <button type="button" disabled={busy || uploading} onClick={() => sendMessage(m.text)}>{t('chat.resend')}</button>}
+                {!viewing && <button type="button" disabled={busy || uploading} onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>}
               </div>
             </div>
           ) : (
@@ -541,8 +541,8 @@ export default function CrewChat({ params }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13, minWidth: 0 }}>
                 <ArgoSpinner size={15} />
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {t('chat.stageEllipsis', { stage: liveStage?.stage ?? WAIT_STAGES[stage] })}
-                  {liveStage?.detail && (
+                  {t('chat.stageEllipsis', { stage: liveStage ? stageLabel(t, liveStage.stage, liveStage.detail) : WAIT_STAGES[stage] })}
+                  {liveStage?.detail && liveStage.stage !== 'runner' && (
                     <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', marginLeft: 8 }}>{liveStage.detail}</span>
                   )}
                 </span>
@@ -642,8 +642,8 @@ export default function CrewChat({ params }) {
                     <div key={r.slug} className="task-row">
                       <ArgoSpinner size={14} />
                       <span className="t-main">
-                        <span className="t-title">{r.stage}</span>
-                        <span className="t-sub mono">{r.detail || ''}</span>
+                        <span className="t-title">{stageLabel(t, r.stage, r.detail)}</span>
+                        <span className="t-sub mono">{r.stage === 'runner' ? '' : (r.detail || '')}</span>
                       </span>
                     </div>
                   ))}

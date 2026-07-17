@@ -84,12 +84,24 @@ export async function runRoutine(wsId, id) {
 }
 
 /** 스케줄러용 — 이 분(minute)에 실행해야 하나. */
+// 예약 시각을 놓쳐도(슬립·재시작으로 폴러가 그 분을 건너뜀) 당일 안에서 1회 catch-up 한다.
+// 예전엔 정확히 그 분에만 due라, 그 분을 놓치면 그날은 조용히 스킵돼(아침 브리핑 유실) 스케줄러
+// 신뢰가 무너졌다. 지연 상한(4h)으로 23:59에 09:00을 늦게 쏘는 것은 막는다.
+const CATCHUP_MS = 4 * 60 * 60 * 1000;
 export function isDue(routine, now = new Date()) {
   if (!routine.enabled) return false;
-  const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  if (routine.schedule.time !== hhmm) return false;
+  const [h, m] = String(routine.schedule?.time ?? '').split(':').map(Number);
+  if (!Number.isInteger(h) || !Number.isInteger(m)) return false;
   if (routine.schedule.type === 'weekly' && now.getDay() !== routine.schedule.dow) return false;
-  // 같은 분에 중복 실행 방지
-  if (routine.lastRun && new Date(routine.lastRun).toISOString().slice(0, 16) === now.toISOString().slice(0, 16)) return false;
+  const sched = new Date(now); sched.setHours(h, m, 0, 0); // 오늘의 예약 시각(로컬)
+  if (now < sched) return false;              // 아직 예약 시각 전
+  if (now - sched > CATCHUP_MS) return false;  // 지연 상한 초과 — 낡은 실행 억제
+  if (routine.lastRun) {
+    if (new Date(routine.lastRun) >= sched) return false; // 오늘 예약분 이미 실행됨
+  } else if (routine.created && sched < new Date(routine.created)) {
+    // 신규 루틴 — 생성 이전 시각은 '놓친 실행'이 아니다. 예약 시각이 지난 뒤 만든 루틴이
+    // catch-up으로 즉시 발화하던 것을 막는다(예: 11시에 만든 09:00 루틴은 내일부터).
+    return false;
+  }
   return true;
 }

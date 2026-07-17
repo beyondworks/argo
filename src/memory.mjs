@@ -122,11 +122,16 @@ export function noteSlug(title) {
   return title.trim().toLowerCase().replace(/[^a-z0-9가-힣]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'note';
 }
 
-/** 주제 노트 저장 — 주제당 1파일이 단일 진실. 같은 슬러그면 갱신(updated 갱신), 링크는 자동. */
-export async function saveNote(wsId, title, content, { merge = false } = {}) {
+/** 주제 노트 저장 — 주제당 1파일이 단일 진실. 같은 슬러그면 갱신(updated 갱신), 링크는 자동.
+    create=true(신규 작성 액션)면 슬러그 충돌 시 기존 노트를 덮지 않고 접미 번호(-2,-3…)로 분리 저장한다
+    — 서로 다른 주제가 같은 정규화 슬러그로 수렴해 앞 노트를 조용히 파괴하던 기억 유실 방지. */
+export async function saveNote(wsId, title, content, { merge = false, create = false } = {}) {
   const p = paths(wsId);
   await mkdir(p.notes, { recursive: true });
-  const file = join(p.notes, `${noteSlug(title)}.md`);
+  const base = noteSlug(title);
+  let slug = base;
+  if (create) { for (let n = 2; existsSync(join(p.notes, `${slug}.md`)); n++) slug = `${base}-${n}`; }
+  const file = join(p.notes, `${slug}.md`);
   let related = '';
   if (merge && existsSync(file)) {
     // 기존 '## 관련' 링크는 보존한다 — 정제 내용만 교체
