@@ -2,7 +2,8 @@
 // 화면에는 항상 마스킹해서 내보낸다. SaaS(P1)에서는 서버측 암호화 보관으로 이전한다.
 import { randomInt } from 'node:crypto';
 import { join } from 'node:path';
-import { paths } from './workspace.mjs';
+import { readdir, readFile } from 'node:fs/promises';
+import { paths, WS_ROOT } from './workspace.mjs';
 import { writeJsonAtomic, readJson, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 
@@ -95,6 +96,10 @@ export async function updateAgentBot(wsId, slug, patch) {
       delete agents[slug];
     } else {
       const prev = agents[slug] ?? {};
+      if (patch.token && patch.token !== prev.token) {
+        const used = await findTelegramTokenUse(patch.token, { exceptWs: wsId, exceptSlug: slug });
+        if (used) throw new Error(tokenInUseMsg(used));
+      }
       const next = { ...prev, ...patch };
       if (patch.token && patch.token !== prev.token) { next.ownerId = null; next.ownerChat = null; next.pairCode = makePairCode(); }
       if (next.token && !next.ownerId && !next.pairCode) next.pairCode = makePairCode(); // 미페어링인데 코드 없으면 발급
@@ -106,12 +111,50 @@ export async function updateAgentBot(wsId, slug, patch) {
   });
 }
 
+/** 텔레그램 봇 토큰의 기존 사용처 탐색 — 텔레그램은 토큰당 폴러 1개(getUpdates Conflict)라
+    회사 게이트웨이·크루 직통 봇·다른 회사까지 전 표면의 중복을 저장 시점에 막는다(실측:
+    같은 봇을 설정과 크루 카드에 각각 연결 → 폴러 2개 → 한쪽이 Conflict로 죽음).
+    반환: null | { wsId, where: 'gateway' | 'agent', slug? } */
+export async function findTelegramTokenUse(token, { exceptWs = null, exceptSlug = null, exceptGateway = false } = {}) {
+  if (!token) return null;
+  let entries = [];
+  try { entries = await readdir(WS_ROOT, { withFileTypes: true }); } catch { return null; }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith('.')) continue;
+    const ws = e.name;
+    // 검사용 순수 읽기 — readJson류는 손상 시 .corrupt- rename(쓰기)을 하므로 여기선 안 쓴다.
+    // 무관한 회사의 파일을 검사가 건드리면 안 되고, 손상은 관용(불확실하면 통과가 안전)한다.
+    let raw = null;
+    try { raw = JSON.parse(await readFile(join(WS_ROOT, ws, 'connections.json'), 'utf8')); } catch { continue; }
+    if (!raw?.telegram) continue;
+    if (raw.telegram.token === token && !(exceptGateway && ws === exceptWs)) return { wsId: ws, where: 'gateway' };
+    for (const [slug, a] of Object.entries(raw.telegram.agents ?? {})) {
+      if (a?.token === token && !(ws === exceptWs && slug === exceptSlug)) return { wsId: ws, where: 'agent', slug };
+    }
+  }
+  return null;
+}
+
+const tokenInUseMsg = (used) => used.where === 'gateway'
+  ? `이 봇 토큰은 이미 회사 텔레그램 연결(설정 화면)에서 사용 중입니다 (회사: ${used.wsId}). 텔레그램 봇 하나는 한 곳에만 연결할 수 있어요 — @BotFather로 전용 봇을 새로 만들거나, 기존 연결을 해제한 뒤 저장하세요.`
+  : `이 봇 토큰은 이미 크루 직통 봇(${used.slug})에서 사용 중입니다 (회사: ${used.wsId}). 텔레그램 봇 하나는 한 곳에만 연결할 수 있어요 — @BotFather로 전용 봇을 새로 만들거나, 그 크루 카드에서 연결을 해제하세요.`;
+
 export async function updateConnection(wsId, kind, patch) {
   if (!['telegram', 'slack'].includes(kind)) throw new Error('알 수 없는 연결 종류');
   return withLock(lockKey(wsId), async () => {
     const all = await loadConnections(wsId);
     const next = { ...all[kind], ...patch };
     if (patch.token === '') next.token = all[kind].token; // 빈 토큰 = 기존 유지(토글만 바꿀 때)
+    if (kind === 'telegram' && patch.token && patch.token !== all[kind].token) {
+      const used = await findTelegramTokenUse(patch.token, { exceptWs: wsId, exceptGateway: true });
+      if (used) throw new Error(tokenInUseMsg(used));
+    }
+    // 켜기 토글도 검사 — 레거시/동기화 유입 중복이 있으면 "왜 안 도는지"를 저장 시점에 알려준다
+    // (매니저의 토큰 클레임이 실제 409는 막지만, 조용한 하트비트 에러보다 명시적 거절이 낫다)
+    if (kind === 'telegram' && patch.enabled === true && next.token) {
+      const used = await findTelegramTokenUse(next.token, { exceptWs: wsId, exceptGateway: true });
+      if (used) throw new Error(tokenInUseMsg(used));
+    }
     if (patch.token && patch.token !== all[kind].token) {
       next.chatId = null; // 토큰이 바뀌면 페어링 초기화
       next.botUserId = null;

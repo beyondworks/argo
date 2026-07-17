@@ -432,3 +432,34 @@ test('통합 M6: 재읽기 병합은 blob이 죽은 항목(남의 삭제 진행 
   assert.ok(man.files['vault/notes/mine2.md'], '내 항목은 업로드');
   assert.ok(!man.files['vault/notes/dead.md'], '죽은 blob 항목은 병합하지 않음(삭제 미전파 방지)');
 });
+
+/* ── [TG] 텔레그램 토큰 유일성 — 한 토큰은 전 표면·전 회사에서 한 곳만 ── */
+
+test('통합 TG1: 토큰 교차 사용 검사 — 게이트웨이↔직통 봇↔타 회사 전부 차단, 자기 자리는 허용', async () => {
+  const { updateConnection, updateAgentBot, findTelegramTokenUse } = await import('../src/connections.mjs');
+  const mk = async (ws, conn) => {
+    await mkdir(join(ROOT, ws), { recursive: true });
+    await writeFile(join(ROOT, ws, 'company.json'), JSON.stringify({ id: ws }));
+    await writeFile(join(ROOT, ws, 'connections.json'), JSON.stringify(conn));
+  };
+  await mk('tg-a', { telegram: { token: 'T-GW', enabled: true, agents: { shuri: { token: 'T-CREW' } } }, slack: {} });
+  await mk('tg-b', { telegram: { token: '', agents: {} }, slack: {} });
+
+  await assert.rejects(() => updateAgentBot('tg-a', 'pepper', { token: 'T-GW' }), /텔레그램 연결.*사용 중/, '직통에 게이트웨이 토큰 차단');
+  await assert.rejects(() => updateConnection('tg-a', 'telegram', { token: 'T-CREW' }), /직통 봇\(shuri\)/, '게이트웨이에 직통 토큰 차단');
+  await assert.rejects(() => updateConnection('tg-b', 'telegram', { token: 'T-GW' }), /회사: tg-a/, '타 회사 토큰 차단');
+  await updateAgentBot('tg-a', 'shuri', { token: 'T-CREW-2' }); // 자기 토큰 교체 허용
+  const use = await findTelegramTokenUse('T-CREW-2');
+  assert.deepEqual({ wsId: use.wsId, where: use.where, slug: use.slug }, { wsId: 'tg-a', where: 'agent', slug: 'shuri' });
+});
+
+test('통합 TG2: 켜기 토글도 중복이면 명시적으로 거절(레거시 중복 안내)', async () => {
+  const { updateConnection } = await import('../src/connections.mjs');
+  // 레거시 중복 상태 시뮬 — 같은 토큰이 게이트웨이(꺼짐)와 직통 봇에 이미 들어가 있음
+  await mkdir(join(ROOT, 'tg-c'), { recursive: true });
+  await writeFile(join(ROOT, 'tg-c', 'company.json'), JSON.stringify({ id: 'tg-c' }));
+  await writeFile(join(ROOT, 'tg-c', 'connections.json'), JSON.stringify({
+    telegram: { token: 'T-DUP', enabled: false, agents: { shuri: { token: 'T-DUP' } } }, slack: {},
+  }));
+  await assert.rejects(() => updateConnection('tg-c', 'telegram', { enabled: true }), /직통 봇\(shuri\)/, '켜기 전에 충돌 안내');
+});

@@ -665,14 +665,30 @@ export function ensureGateway() {
     }
     const companies = await listCompanies().catch(() => []);
     const alive = new Set();
+    // 텔레그램 토큰 클레임 — 토큰당 폴러 1개(getUpdates Conflict). 저장 가드(connections.mjs
+    // findTelegramTokenUse)가 신규 중복을 막지만, 기존 데이터·동기화 유입 중복은 여기서 한쪽만
+    // 기동한다. 1패스: 회사 게이트웨이가 전 회사에 걸쳐 선클레임(모든 크루를 @멘션으로 부르는
+    // 상위 기능이라 우선). 2패스: 기동 — 밀린 쪽은 하트비트에 이유를 남겨 카드에서 보이게 한다.
+    const claimedTg = new Map(); // token → { id, label }
+    const loaded = [];
     for (const c of companies) {
       const all = await loadConnections(c.id).catch(() => null);
       if (!all) continue;
+      loaded.push([c, all]);
+      const t = all.telegram;
+      if (t.enabled && t.token && !claimedTg.has(t.token)) {
+        claimedTg.set(t.token, { id: `${c.id}:telegram`, label: `회사(${c.id})의 텔레그램 연결(설정)` });
+      }
+    }
+    for (const [c, all] of loaded) {
       for (const kind of ['telegram', 'slack']) {
         const cfg = all[kind];
         const id = `${c.id}:${kind}`;
         const key = `${cfg.enabled}:${cfg.token}:${cfg.channel ?? ''}`;
-        if (cfg.enabled && cfg.token && (kind === 'telegram' || cfg.channel)) {
+        const tgDupe = kind === 'telegram' && cfg.enabled && cfg.token && claimedTg.get(cfg.token)?.id !== id;
+        if (tgDupe) { // 같은 토큰을 다른 회사 게이트웨이가 선점 — alive 미등록 → 아래 정리 루프가 폴러도 내린다
+          beatGateway(c.id, 'telegram', false, `토큰 중복 — ${claimedTg.get(cfg.token).label}에서 사용 중. 텔레그램 봇은 한 곳에만 연결할 수 있습니다`).catch(() => {});
+        } else if (cfg.enabled && cfg.token && (kind === 'telegram' || cfg.channel)) {
           alive.add(id);
           const cur = running.get(id);
           if (cur && cur.key === key) continue;
@@ -693,6 +709,12 @@ export function ensureGateway() {
       for (const [slug, bot] of Object.entries(all.telegram.agents ?? {})) {
         if (!bot?.token) continue;
         const id = `${c.id}:tg-agent:${slug}`;
+        const holder = claimedTg.get(bot.token);
+        if (holder && holder.id !== id) { // 게이트웨이 또는 다른 크루가 선점 — 이 직통 봇은 쉰다
+          beatGateway(c.id, `tg-${slug}`, false, `토큰 중복 — ${holder.label}에서 사용 중. 이 크루 전용 봇을 @BotFather로 새로 만들어 연결하세요`).catch(() => {});
+          continue;
+        }
+        if (!holder) claimedTg.set(bot.token, { id, label: `크루 직통 봇(${slug})` });
         alive.add(id);
         (globalThis.__argoGwCfg ??= {})[id] = bot;
         const cur = running.get(id);

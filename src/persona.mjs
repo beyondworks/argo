@@ -265,6 +265,10 @@ export async function removeAgentCard(wsId, slug) {
   const archive = join(dir, '.archive');
   await mkdir(archive, { recursive: true });
   await rename(file, join(archive, `${Date.now()}-${slug}.md`));
+  // 직통 봇 연결도 함께 정리 — 안 걷으면 유령 폴러가 계속 돌고, 토큰 중복 검사가
+  // UI에 보이지 않는 해고 크루를 지목해 사용자가 풀 방법이 없어진다(검수 지적).
+  const { updateAgentBot } = await import('./connections.mjs'); // 동적 — 모듈 간 순환 방지
+  await updateAgentBot(wsId, slug, null).catch(() => {});
   await appendEvent(wsId, { type: 'crew', op: 'fire', slug });
 }
 
