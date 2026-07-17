@@ -460,7 +460,8 @@ ${lang === 'en'
     } catch (e) {
       const aborted = abortReg.wasAborted();
       if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
-      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 200) });
+      // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
+      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400) });
       await clearTurnStatus(wsId, agentSlug);
       throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : e;
     } finally {
