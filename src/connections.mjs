@@ -21,7 +21,8 @@ export function makePairCode() {
 const EMPTY = {
   // agents: { [slug]: { token, botUsername, ownerId, ownerChat } } — 크루별 직통 봇(연락처처럼 1크루 1봇)
   telegram: { token: '', chatId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '', agents: {} },
-  slack: { token: '', channel: '', botUserId: null, defaultCrew: '', enabled: false, botUsername: '' },
+  // slack ownerId = 페어링된 사장의 슬랙 user id — 채널 멤버 전원이 크루 구동·결재하던 구멍을 막는다(텔레그램과 동일 모델)
+  slack: { token: '', channel: '', botUserId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '' },
 };
 
 /** 가동 전 토큰 즉시 검증 — "연동 안 됨"을 저장 시점에 잡는다. 반환: 봇 표시명. 실패 시 throw. */
@@ -158,10 +159,11 @@ export async function updateConnection(wsId, kind, patch) {
     if (patch.token && patch.token !== all[kind].token) {
       next.chatId = null; // 토큰이 바뀌면 페어링 초기화
       next.botUserId = null;
-      if (kind === 'telegram') { next.ownerId = null; next.pairCode = makePairCode(); } // 새 토큰 = 새 페어링 코드
+      next.ownerId = null; next.pairCode = makePairCode(); // 새 토큰 = 새 페어링 코드(텔레그램·슬랙 공통)
     }
-    // 텔레그램에 토큰이 있는데 아직 미페어링이고 코드가 없으면 발급(레거시/초기 상태 보정)
+    // 토큰이 있는데 아직 미페어링이고 코드가 없으면 발급(레거시/초기 상태 보정)
     if (kind === 'telegram' && next.token && !next.chatId && !next.pairCode) next.pairCode = makePairCode();
+    if (kind === 'slack' && next.token && !next.ownerId && !next.pairCode) next.pairCode = makePairCode();
     all[kind] = next;
     await writeJsonAtomic(paths(wsId).connections, all);
     return all;
@@ -176,8 +178,8 @@ export function maskConnections(all) {
     agents[slug] = { botUsername: a.botUsername ?? '', paired: !!a.ownerId, hasToken: !!a.token, pairCode: a.ownerId ? '' : (a.pairCode || '') };
   }
   return {
-    // pairCode는 미페어링(chatId 없음)일 때만 노출 — 페어링 후엔 화면에서 감춘다(더 이상 필요없고 재사용 방지)
+    // pairCode는 미페어링일 때만 노출 — 페어링 후엔 화면에서 감춘다(더 이상 필요없고 재사용 방지)
     telegram: { ...all.telegram, token: mask(all.telegram.token), hasToken: !!all.telegram.token, pairCode: all.telegram.chatId ? '' : (all.telegram.pairCode || ''), agents },
-    slack: { ...all.slack, token: mask(all.slack.token), hasToken: !!all.slack.token },
+    slack: { ...all.slack, token: mask(all.slack.token), hasToken: !!all.slack.token, paired: !!all.slack.ownerId, pairCode: all.slack.ownerId ? '' : (all.slack.pairCode || '') },
   };
 }
