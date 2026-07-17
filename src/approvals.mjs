@@ -60,3 +60,19 @@ export async function resolveApproval(wsId, id, approve) {
   await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, action: item.action, status: item.status });
   return item;
 }
+
+/** 만료 — 대기 자리를 떠난 tool 결재를 'expired'로 내린다(승인해도 아무 일 없는 죽은 버튼 제거).
+    이미 처리(승인/거절)된 건 건드리지 않는다. 반환: 만료시켰으면 item, 아니면 null. */
+export async function expireApproval(wsId, id) {
+  const item = await withLock(lockKey(wsId), async () => {
+    const list = await loadApprovals(wsId);
+    const it = list.find((a) => a.id === id);
+    if (!it || it.status !== 'pending') return null;
+    it.status = 'expired';
+    it.resolvedAt = new Date().toISOString();
+    await save(wsId, list);
+    return it;
+  });
+  if (item) await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, action: item.action, status: 'expired' });
+  return item;
+}

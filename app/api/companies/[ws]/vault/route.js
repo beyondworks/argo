@@ -39,7 +39,8 @@ export async function POST(req, { params }) {
     if (!title?.trim() || !content?.trim()) {
       return Response.json({ error: '제목과 내용이 필요합니다' }, { status: 400 });
     }
-    const { file, linked } = await saveNote(ws, title, content);
+    // 신규 작성 — 슬러그 충돌 시 기존 노트를 덮지 않고 접미 번호로 분리 저장(기억 유실 방지).
+    const { file, linked } = await saveNote(ws, title, content, { create: true });
     return Response.json({ rel: relative(paths(ws).vault, file), linked });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });

@@ -183,7 +183,7 @@ export default function Compete({ params }) {
         {comp ? (
           /* 열람 중 — 회의실 보관 열람과 동일한 하단 바 문법 */
           <div className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
-            <Icon name="bolt" size={13} /> {comp.winner ? t('compete.closedBar') : t('compete.runningBar')}
+            <Icon name="bolt" size={13} /> {comp.winner ? t('compete.closedBar') : comp.status === 'running' ? t('compete.runningBar') : t('compete.doneBar')}
             <span style={{ flex: 1 }} />
             <button className="btn btn-primary sm" onClick={() => openComp(null)}>{t('compete.new')}</button>
           </div>

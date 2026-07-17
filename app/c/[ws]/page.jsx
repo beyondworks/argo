@@ -116,7 +116,7 @@ export default function Deck({ params }) {
     <div style={{ display: 'grid', gap: 14 }}>
       <div className="page-head" style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <span className="microlabel">{t('deck.crewControl', { name: data?.company?.name ?? '' })}</span>
-        <span className="microlabel">{new Date().toISOString().slice(0, 10)}</span>
+        <span className="microlabel">{new Date().toLocaleDateString('sv-SE')}</span>
       </div>
 
       <AiKeyBanner ws={ws} />
@@ -693,7 +693,7 @@ function MorningBrief({ ws, agents }) {
         <span style={errors.length ? { color: 'var(--danger)' } : { color: 'var(--fg-3)' }}><b className="mono">{errors.length}</b> {t('deck.brief.errors')}</span>
         <span style={pending ? { fontWeight: 650 } : { color: 'var(--fg-3)' }}><b className="mono">{pending}</b> {t('deck.brief.pending')}</span>
       </div>
-      {turns.slice(-3).reverse().map((e, i) => (
+      {turns.slice(0, 3).reverse().map((e, i) => (
         <div key={i} style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', gap: 8, alignItems: 'center', minWidth: 0 }}>
           <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', flex: 'none', width: 56 }}>{timeAgo(new Date(e.ts).getTime(), lang)}</span>
           <span style={{ fontWeight: 600, flex: 'none' }}>{nameOf(e.slug)}</span>

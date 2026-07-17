@@ -7,14 +7,16 @@ import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 
 const file = (wsId, slug) => join(paths(wsId).chats, `${slug.replace(/[^a-z0-9-]/g, '')}.status.json`);
 
+// 안정적인 stage 코드만 기록한다 — 사람이 읽는 라벨은 클라이언트가 i18n으로 번역한다(영어 회사에 한국어
+// 진행 라벨이 노출되던 다국어 규칙 위반 수정). detail(파일명·명령 등 고유값)은 번역 대상이 아니라 그대로.
 const TOOL_STAGE = [
-  [/^(Read|Glob|Grep)$/, '기억을 살피는 중'],
-  [/^(Write|Edit|NotebookEdit)$/, '기록하는 중'],
-  [/^Bash$/, '명령 실행 중'],
-  [/^(WebFetch|WebSearch)$/, '웹을 살피는 중'],
-  [/^mcp__crew__delegate$/, '동료에게 위임 중'],
-  [/^mcp__crew__request_approval$/, '결재 올리는 중'],
-  [/^mcp__/, '도구 사용 중'],
+  [/^(Read|Glob|Grep)$/, 'memory'],
+  [/^(Write|Edit|NotebookEdit)$/, 'write'],
+  [/^Bash$/, 'shell'],
+  [/^(WebFetch|WebSearch)$/, 'web'],
+  [/^mcp__crew__delegate$/, 'delegate'],
+  [/^mcp__crew__request_approval$/, 'approval'],
+  [/^mcp__/, 'tool'],
 ];
 
 const base = (p) => String(p ?? '').split('/').pop();
@@ -33,8 +35,8 @@ export function detailForTool(toolName, input = {}) {
 }
 
 export function stageForTool(toolName) {
-  for (const [re, label] of TOOL_STAGE) if (re.test(toolName)) return label;
-  return '작업 중';
+  for (const [re, code] of TOOL_STAGE) if (re.test(toolName)) return code;
+  return 'work';
 }
 
 export async function setTurnStatus(wsId, slug, stage, detail = '', partial) {

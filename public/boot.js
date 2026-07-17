@@ -37,7 +37,7 @@ render();
 
 // 진행률 크리프 + 느린 부팅 안내(15초) — 로그 테일 공개
 setInterval(function () {
-  if (phase === 'ready') return;
+  if (phase === 'ready' || phase === 'error') return; // 실패도 종결 — 진행바 크리프와 'Still working' 안내를 멈춘다
   progress += (90 - progress) * 0.025;
   render();
   var elapsed = Date.now() - startedAt;
@@ -53,6 +53,7 @@ try {
     window.__TAURI__.event.listen('boot', function (e) {
       var p = e.payload || {};
       if (p.phase === 'error') {
+        phase = 'error'; // 종결 상태 — 진행바 크리프·slow 안내 정지(위 인터벌 가드). probe/goto는 회복 대비 계속.
         errEl.hidden = false;
         errEl.textContent = 'The local server hit a problem: ' + (p.detail || 'unknown') +
           '\nStill retrying — if this screen stays for minutes, quit and reopen Argo.';

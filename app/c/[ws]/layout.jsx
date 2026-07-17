@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, api } from '../../ui';
-import { useLang } from '../../i18n';
+import { useLang, stageLabel } from '../../i18n';
 
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
@@ -58,8 +58,8 @@ function TasksDock({ ws }) {
               <a key={r.slug} className="task-row" href={`/c/${ws}/crew/${r.slug}`} onClick={() => setOpen(false)}>
                 <ArgoSpinner size={14} />
                 <span className="t-main">
-                  <span className="t-title">{r.name} — {r.stage}</span>
-                  <span className="t-sub mono">{r.detail || ''}</span>
+                  <span className="t-title">{r.name} — {stageLabel(t, r.stage, r.detail)}</span>
+                  <span className="t-sub mono">{r.stage === 'runner' ? '' : (r.detail || '')}</span>
                 </span>
                 <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums' }}>
                   {fmtRun(Date.now() - r.startedAt)}

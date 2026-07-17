@@ -32,7 +32,8 @@ export async function POST(req, { params }) {
       .map((a) => ({ rel: a.rel, name: String(a.name ?? ''), mime: String(a.mime ?? ''), isImage: !!a.isImage }))
       .slice(0, 8);
     const t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
-    const handover = { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked };
+    // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
+    const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
     await appendTurn(ws, slug, { userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments });
     nudgeSync(); // 로컬 변경 즉시 다른 기기로 전파(준실시간 — 다음 대기 건너뜀)
     return Response.json({ reply: t.reply, sessionId: t.sessionId, handover });
