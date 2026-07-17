@@ -523,6 +523,36 @@ export default function Market({ params }) {
               onDetail={setDetail}
             />
 
+            {/* 이 컴퓨터의 Claude Code MCP 가져오기 — 로컬 앱 전용(호스팅에선 서버가 빈 배열).
+                env(토큰)까지 복사돼 바로 동작한다 — 값은 화면에 안 싣고 여부만 표시. */}
+            {(data.hostMcp ?? []).length > 0 && (
+              <div style={{ padding: '4px 18px 6px', display: 'grid', gap: 6 }}>
+                <span className="microlabel">{t('market.hostLabel')}</span>
+                {data.hostMcp.map((h) => {
+                  const safeId = h.name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+                  const on = !!installedMcp[safeId];
+                  return (
+                    <div key={h.name} className="row">
+                      <span style={{ fontWeight: 650, fontSize: 12.5 }}>{h.name}</span>
+                      <span className="mono" style={{ flex: 1, fontSize: 10.5, color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.summary}</span>
+                      {h.hasEnv && <span className="chip" style={{ fontSize: 10 }}>{t('market.hostEnvChip')}</span>}
+                      {on
+                        ? <span className="pill" style={{ fontSize: 10.5 }}>{t('market.installed')}</span>
+                        : (
+                          <button className="btn sm" disabled={busy === `mcp-host:${h.name}`} onClick={async () => {
+                            setBusy(`mcp-host:${h.name}`);
+                            try { await act('POST', { kind: 'mcp-host', id: h.name }); } finally { setBusy(''); }
+                          }}>
+                            {busy === `mcp-host:${h.name}` ? <Spinner size={11} /> : t('market.hostImport')}
+                          </button>
+                        )}
+                    </div>
+                  );
+                })}
+                <span className="microlabel">{t('market.hostHint')}</span>
+              </div>
+            )}
+
             <form onSubmit={addCustom} style={{ display: 'flex', gap: 8, padding: '10px 18px 18px', alignItems: 'center', flexWrap: 'wrap' }}>
               <span className="microlabel">{t('market.customLabel')}</span>
               <input suppressHydrationWarning

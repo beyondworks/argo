@@ -463,3 +463,44 @@ test('통합 TG2: 켜기 토글도 중복이면 명시적으로 거절(레거시
   }));
   await assert.rejects(() => updateConnection('tg-c', 'telegram', { enabled: true }), /직통 봇\(shuri\)/, '켜기 전에 충돌 안내');
 });
+
+/* ── [MCP] 호스트 MCP 가져오기 + 런타임 실행 게이트 ── */
+test('통합 MCP1: 런타임 게이트 — 호스팅 모드는 미검증 command 차단·url 통과, 로컬은 전부 통과', async () => {
+  const { safeMcpServersForRuntime, MCP_CATALOG } = await import('../src/market.mjs');
+  const catCmd = `${MCP_CATALOG[0].def.command} ${(MCP_CATALOG[0].def.args ?? []).join(' ')}`.trim().split(' ');
+  const servers = {
+    evil: { command: 'node', args: ['/tmp/x.js'] },
+    good: { command: catCmd[0], args: catCmd.slice(1) },
+    remote: { type: 'http', url: 'https://x.com/mcp' },
+  };
+  const prev = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake'; // arbitraryMcpBlocked=true
+  try {
+    const hosted = safeMcpServersForRuntime(servers);
+    assert.ok(!hosted.evil, '미검증 command 차단');
+    assert.ok(hosted.good, '카탈로그 command 허용');
+    assert.ok(hosted.remote, 'url 원격 허용(로컬 spawn 없음)');
+  } finally { if (prev === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY; else process.env.SUPABASE_SERVICE_ROLE_KEY = prev; }
+  const local = safeMcpServersForRuntime(servers); // 로컬(서비스 키 없음)
+  assert.equal(Object.keys(local).length, 3, '로컬은 전부 통과');
+});
+
+test('통합 MCP2: 호스트 가져오기 — env 포함 복사, 이름 정규화, 목록은 env 값 미노출', async () => {
+  const { listHostMcp, importHostMcp, loadMcp } = await import('../src/market.mjs');
+  const home = join(ROOT, 'fakehome-mcp');
+  await mkdir(home, { recursive: true });
+  await writeFile(join(home, '.claude.json'), JSON.stringify({ mcpServers: {
+    'notion-agent': { command: 'node', args: ['/x.js'], env: { NOTION_TOKEN: 'secret-xyz' } },
+  } }));
+  const prevHome = process.env.HOME; process.env.HOME = home;
+  try {
+    const list = await listHostMcp();
+    assert.ok(!JSON.stringify(list).includes('secret-xyz'), '목록에 env 값 미노출');
+    await mkdir(join(ROOT, 'mcp-imp'), { recursive: true });
+    await writeFile(join(ROOT, 'mcp-imp', 'company.json'), JSON.stringify({ id: 'mcp-imp' }));
+    const r = await importHostMcp('mcp-imp', 'notion-agent');
+    assert.equal(r.name, 'notion-agent');
+    const cfg = await loadMcp('mcp-imp');
+    assert.equal(cfg.servers['notion-agent'].env.NOTION_TOKEN, 'secret-xyz', 'env 토큰 복사됨');
+  } finally { if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome; }
+});

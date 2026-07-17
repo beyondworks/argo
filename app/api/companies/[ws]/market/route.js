@@ -2,6 +2,7 @@ import {
   skillCatalogFor, mcpCatalogFor,
   listInstalledSkills, installSkill, removeSkill, saveCustomSkill,
   loadMcp, installMcp, addCustomMcp, removeMcp,
+  listHostMcp, importHostMcp, arbitraryMcpBlocked,
 } from '../../../../../src/market.mjs';
 import {
   searchRemoteSkills, installRemoteSkill,
@@ -51,7 +52,13 @@ export async function GET(req, { params }) {
     skillCatalog: skillCatalogFor(lang).map(({ md, ...rest }) => ({ ...rest, preview: md.slice(0, 200) })),
     mcpCatalog: mcpCatalogFor(lang),
     installedSkills: skills,
-    installedMcp: mcp.servers ?? {},
+    // env(토큰 값)는 응답에서 제거 — 화면은 command/args만 쓴다(로그·프록시·캐시 유출 방지, 검수 MEDIUM).
+    installedMcp: Object.fromEntries(Object.entries(mcp.servers ?? {}).map(([n, d]) => {
+      const { env, headers, ...safe } = d ?? {};
+      return [n, { ...safe, ...((env && Object.keys(env).length) || (headers && Object.keys(headers).length) ? { hasSecrets: true } : {}) }];
+    })),
+    // 이 컴퓨터의 Claude Code MCP — 로컬 앱 전용(호스팅 모드에선 숨김). env 값은 안 실린다(요약만).
+    hostMcp: arbitraryMcpBlocked() ? [] : await listHostMcp(),
   });
 }
 
@@ -66,6 +73,7 @@ export async function POST(req, { params }) {
     }
     else if (body.kind === 'mcp') await installMcp(ws, body.id);
     else if (body.kind === 'mcp-custom') await addCustomMcp(ws, body.def ?? {});
+    else if (body.kind === 'mcp-host') await importHostMcp(ws, String(body.id ?? '')); // 이 컴퓨터에서 가져오기(env 포함)
     else if (body.kind === 'skill-custom') await saveCustomSkill(ws, body.def ?? {}); // 공방 — 직접 쓰는 스킬
     else if (body.kind === 'remote-skill') await installRemoteSkill(ws, body.item ?? {});
     else if (body.kind === 'remote-mcp') await installRemoteMcp(ws, body.item ?? {}); // npm 분기 가드는 installRemoteMcp 내부(P0-2). http 원격은 로컬 실행 없어 허용
