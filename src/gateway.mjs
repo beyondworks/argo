@@ -665,6 +665,7 @@ function startSlack(wsId, getCfg) {
             Object.assign(cfg, { ownerId: c.user, pairCode: '' });
             await appendEvent(wsId, { type: 'gateway', kind: 'slack', op: 'paired' });
             await slackApi(cfg.token, 'chat.postMessage', { channel: cfg.channel, text: pick('연결 코드 확인 — 이 코드를 보낸 분이 사장으로 고정되었습니다. 이제 사장만 크루 구동·결재를 할 수 있습니다.', 'Code confirmed — the sender is now locked in as the owner. Only the owner can run crew and approve requests.', lang) }).catch(() => {});
+            lastTs = m.ts; await saveSlackCursor(wsId, m.ts); // 코드는 소비 완료 — 재기동 시 크루 턴으로 재적재되지 않게 즉시 전진
             continue;
           }
           if (c.kind === 'hint') { // 미페어링 — 실행하지 않고 페어링 안내만(10분 스로틀)

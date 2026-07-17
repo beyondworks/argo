@@ -378,6 +378,11 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   // side 'L'=로컬 삭제 예정, 'R'=원격 삭제 예정. walk 실패 subtree·로컬 손상·아카이브 '이동'(짝 있음)은 삭제가 아니다.
   const isRealDelete = (rel, l, r, base, side) => {
     if (isSecretRel(rel) && !cryptoOn()) return false;
+    // 디스크 큐 잔재(.gw-queue-*/) — EXCLUDE 전환(픽스 전엔 잡 파일이 동기화됐다)의 원격 청소는
+    // 회사 데이터 삭제가 아니다. 브레이크 '집계'에서만 제외해, 잔재가 많던 회사의 동기화가
+    // 대량삭제 오탐으로 영구 보류되는 것을 막는다(전파 루프는 그대로 원격 잔재를 정리한다 —
+    // 집계·전파 동일 규칙 원칙의 의도된 예외, 검수 MEDIUM).
+    if (rel.split('/')[0].startsWith('.gw-queue')) return false;
     if (isUnderFailed(rel, failedDirs)) return false;                        // walk가 못 읽음 → 부재는 unknown
     if (corruptHeal.has(rel)) return false;                                   // 로컬 손상 → self-heal 대상(삭제 아님)
     if (isArchival(rel) && archMoves.has(rel.split('/').pop())) return false; // 진짜 이동(목적지 생성 있음)
@@ -403,6 +408,7 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   for (const rel of allRels) {
     if (isSecretRel(rel) && !cryptoOn()) continue; // 키 미확보 사이클 — 시크릿은 diff 자체에서 불가시(삭제 오인 차단)
     const l = local[rel], r = remote.files[rel], base = state[rel];
+    if (!l && !r) continue; // state에만 남은 항목(EXCLUDE 전환·타기기 선정리) — 사이클 말미 state 갱신이 정리한다
     const localChg = changed(base, l);   // base 대비 로컬 변경(생성/수정/삭제)
     const remoteChg = changed(base, r);   // base 대비 원격 변경
     try {

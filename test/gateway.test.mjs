@@ -76,7 +76,13 @@ test('큐 워커: 내 잡·신선한 레거시 잡만 실행, 남의 사본·오
   await writeFile(join(dir, '400.json'), JSON.stringify({ text: '구형식 신선' })); // 픽스 배포 직후의 미처리 잡
   const ran = [];
   const stop = startQueueWorker(WS, 'telegram', async (job) => { ran.push(job.text); });
-  await new Promise((r) => setTimeout(r, 3500)); // 1s 틱 워커 — 3틱 여유
+  // 폴링 대기 — 고정 sleep은 CI 부하에서 플레이크. 조건 충족 시 즉시 통과(최대 8s).
+  const deadline = Date.now() + 8000;
+  for (;;) {
+    const left = (await readdir(dir).catch(() => [])).filter((n) => n.endsWith('.json'));
+    if ((left.length === 0 && ran.length >= 2) || Date.now() > deadline) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   stop();
   assert.ok(ran.includes('내 잡'), '이 기기가 적재한 잡은 실행된다');
   assert.ok(ran.includes('구형식 신선'), 'dev 태그 없는 신선한 잡은 실행(업그레이드 직후 유실 방지)');
