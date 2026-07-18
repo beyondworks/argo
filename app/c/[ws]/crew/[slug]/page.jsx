@@ -1,9 +1,9 @@
 'use client';
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
-import { use, useCallback, useEffect, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api } from '../../../../ui';
 import { useLang, stageLabel } from '../../../../i18n';
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
@@ -21,6 +21,42 @@ export default function CrewChat({ params }) {
   const [agent, setAgent] = useState(null);
   const [thread, setThread] = useState(null); // null = 로딩
   const [input, setInput] = useState('');
+  // 입력 보존 — 새로고침·페이지 이탈에도 쓰던 내용이 남는다. input 상태를 그대로 따라가므로
+  // 전송(setInput(''))이면 자동 삭제되고, 턴 실패 복원(setInput(message))이면 자동 재저장된다.
+  const draftKey = `argo-draft:${ws}:${slug}`;
+  useEffect(() => {
+    try { const d = localStorage.getItem(draftKey); if (d) setInput((cur) => cur || d); } catch { /* 사파리 프라이빗 등 — 보존은 부가기능이라 실패해도 무시 */ }
+  }, [draftKey]);
+  useEffect(() => {
+    try { if (input) localStorage.setItem(draftKey, input); else localStorage.removeItem(draftKey); } catch { /* 저장 불가 환경 — 무시 */ }
+  }, [input, draftKey]);
+  // 프롬프트 히스토리 — 터미널처럼 ↑/↓로 이전 지시를 다시 불러온다(원천 = 스레드의 사장 메시지라 기기 간에도 이어진다).
+  const histIdx = useRef(-1);   // -1 = 탐색 중 아님
+  const histStash = useRef(''); // 탐색 시작 시점 입력 보관 — ↓로 끝까지 내려오면 복원
+  const history = useMemo(() => {
+    const out = [];
+    for (const m of thread ?? []) {
+      if (m.who !== 'user' || !String(m.text ?? '').trim()) continue;
+      if (out[out.length - 1] !== m.text) out.push(m.text); // 연속 중복 제거
+    }
+    return out.slice(-50);
+  }, [thread]);
+  function onInputKeyDown(e) {
+    // imeGuard 병합 — 이 입력은 스프레드 대신 여기서 IME Enter를 막는다({...imeGuard}가 onKeyDown을 덮는 문제)
+    if (e.key === 'Enter' && e.nativeEvent.isComposing) { e.preventDefault(); return; }
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (e.nativeEvent.isComposing || !history.length) return; // IME 조합 중엔 개입하지 않는다
+    e.preventDefault();
+    if (e.key === 'ArrowUp') {
+      if (histIdx.current === -1) histStash.current = input;
+      histIdx.current = Math.min(histIdx.current + 1, history.length - 1);
+      setInput(history[history.length - 1 - histIdx.current]);
+    } else {
+      if (histIdx.current === -1) return;
+      histIdx.current -= 1;
+      setInput(histIdx.current === -1 ? histStash.current : history[history.length - 1 - histIdx.current]);
+    }
+  }
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
@@ -279,6 +315,7 @@ export default function CrewChat({ params }) {
     const message = input.trim();
     if (!message) return;
     const attachments = att;
+    histIdx.current = -1; // 히스토리로 불러온 지시를 전송했으면 탐색 위치 초기화
     setInput(''); setAtt([]);
     await sendMessage(message, attachments);
   }
@@ -599,11 +636,11 @@ export default function CrewChat({ params }) {
           <input suppressHydrationWarning
             placeholder={t('chat.inputPlaceholder', { name: agent?.name ?? t('chat.crewFallback') })}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => { histIdx.current = -1; setInput(e.target.value); }}
+            onKeyDown={onInputKeyDown}
             onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
             disabled={busy}
             autoFocus
-            {...imeGuard}
           />
           <button className="btn btn-primary btn-icon" disabled={busy || uploading || !input.trim()} aria-label={t('chat.send')}>
             <Icon name="send" size={15} />
