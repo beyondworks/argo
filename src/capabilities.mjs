@@ -1,14 +1,14 @@
 // 로컬 능력 토글 — 크루가 워크스페이스 밖 세상(파일·웹·셸)에 손대는 것은 전부 opt-in이다.
-// bypass(권한 우회)가 꺼져 있으면 부작용 있는 도구는 결재 게이트에서 사람 승인을 기다린다.
+// 켜면 그 범위는 결재 없이 바로 실행된다(2026-07-18 모델 단순화 — permission-gate.mjs 주석 참조).
+// 이전의 별도 bypass 토글은 잉여가 되어 설정 UI에서 내렸다(저장값은 하위호환으로 보존·무해).
 import { paths } from './workspace.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 
 export const CAPABILITY_DEFS = [
-  ['fs', '파일 시스템', '워크스페이스 밖 파일 읽기/쓰기/편집 — 문서 정리, 폴더 관리'],
-  ['browser', '웹 브라우징', '웹 페이지 열람·검색(WebFetch/WebSearch) — 조사, 링크 확인'],
-  ['shell', '셸·컴퓨터', '명령 실행(Bash) — 스크립트, 앱 실행, 시스템 작업'],
-  ['bypass', '권한 우회 모드', '위 능력을 결재 없이 즉시 실행 — 신뢰하는 회사에서만'],
+  ['fs', '파일 시스템', '워크스페이스 밖 파일 읽기/쓰기/편집 — 켜면 결재 없이 바로 실행됩니다'],
+  ['browser', '웹 브라우징', '웹 페이지 열람·검색(WebFetch/WebSearch) — 켜면 결재 없이 바로 실행됩니다'],
+  ['shell', '셸·컴퓨터', '명령 실행(Bash) — 켜면 결재 없이 바로 실행됩니다'],
 ];
 
 const EMPTY = { fs: false, browser: false, shell: false, bypass: false };

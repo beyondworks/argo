@@ -1,13 +1,17 @@
 import { loadApprovals } from '../../../../../src/approvals.mjs';
 import { resolveWithFollowUp } from '../../../../../src/approval-actions.mjs';
+import { listAgents } from '../../../../../src/hub.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
 export async function GET(_req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
   const approvals = await loadApprovals(ws);
+  // 표시용 이름 매핑 — 카드가 "누가 올린 결재인지(위임 출처 포함)"를 바로 보여준다(업무 흐름 가시화)
+  const agents = await listAgents(ws).catch(() => []);
+  const nameOf = (s) => agents.find((a) => a.slug === s)?.name ?? s;
   return Response.json({
-    approvals,
+    approvals: approvals.map((a) => ({ ...a, crewName: nameOf(a.slug), ...(a.from ? { fromName: nameOf(a.from) } : {}) })),
     pending: approvals.filter((a) => a.status === 'pending').length,
   });
 }

@@ -185,7 +185,7 @@ export default function CrewChat({ params }) {
   useEffect(() => {
     let alive = true;
     const pull = () => api(`/api/companies/${ws}/approvals`)
-      .then((d) => { if (alive) setPendings((d.approvals ?? []).filter((a) => a.status === 'pending' && a.slug === slug)); })
+      .then((d) => { if (alive) setPendings((d.approvals ?? []).filter((a) => a.status === 'pending' && (a.slug === slug || a.from === slug))); })
       .catch(() => {});
     pull();
     const t1 = setInterval(pull, busy ? 2500 : 5000);
@@ -517,6 +517,12 @@ export default function CrewChat({ params }) {
               <div className="microlabel" style={{ marginBottom: 6, color: 'var(--accent)' }}>
                 {p.kind === 'capability' ? t('chat.approval.capTitle') : t('chat.approval.pendingTitle')}
               </div>
+              {/* 위임 흐름 표기 — 이 카드가 누구의 결재인지(이 크루가 위임한 동료의 요청 / 위임받아 진행 중) */}
+              {p.slug !== slug ? (
+                <div style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: '-2px 0 6px' }}>{t('chat.approval.viaDelegate', { name: p.crewName ?? p.slug })}</div>
+              ) : p.from ? (
+                <div style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: '-2px 0 6px' }}>{t('chat.approval.fromNote', { name: p.fromName ?? p.from })}</div>
+              ) : null}
               <div style={{ fontSize: 13.5, fontWeight: 650 }}>{p.action}</div>
               {p.reason && <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 0', lineHeight: 1.55 }}>{p.reason}</p>}
               <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>

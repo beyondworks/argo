@@ -19,13 +19,14 @@ async function save(wsId, list) {
 
 /** 결재 요청 등록 — kind: 'action'(행동 결재, 승인 시 후속 턴) | 'tool'(권한 게이트, 승인 시 그 자리에서 재개)
     | 'capability'(능력 켜기 제안 — 승인 시 능력 on + 후속 턴이 원래 요청 재개). cap은 capability 전용. */
-export async function addApproval(wsId, { slug, action, reason, kind = 'action', cap, payload }) {
+export async function addApproval(wsId, { slug, from, action, reason, kind = 'action', cap, payload }) {
   // 락 안에서 read-modify-write — 두 크루가 동시에 결재를 등록해도 유실 없음
   const item = await withLock(lockKey(wsId), async () => {
     const list = await loadApprovals(wsId);
     const it = {
       id: `ap-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
-      slug, kind, ...(cap ? { cap } : {}),
+      // from = 위임 원 크루 slug — 카드·메신저가 "누구의 위임으로 온 요청인지"를 보여준다(업무 흐름 가시화)
+      slug, kind, ...(from ? { from } : {}), ...(cap ? { cap } : {}),
       // payload — 승인 시 서버가 실행할 구조화 데이터(profile 변경·hire 스펙). 300자 상한의 action과 별개
       ...(payload ? { payload } : {}),
       action: String(action).slice(0, 300),

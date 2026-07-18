@@ -498,7 +498,7 @@ function ApprovalsCard({ ws, agents }) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 12.5, fontWeight: 600 }}>{a.action}</div>
               <div style={{ fontSize: 11.5, color: 'var(--fg-2)', marginTop: 2 }}>
-                {nameOf(a.slug)} · {a.reason}
+                {nameOf(a.slug)}{a.from ? ` (${t('deck.approvalFrom', { name: nameOf(a.from) })})` : ''} · {a.reason}
               </div>
             </div>
             {busy === a.id ? <Spinner /> : (
