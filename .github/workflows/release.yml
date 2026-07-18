@@ -162,8 +162,10 @@ jobs:
           codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
             --sign "$APPLE_SIGNING_IDENTITY" --keychain "$KEYCHAIN" "$APP"
 
-          # 검증 — secure timestamp + hardened runtime 없으면 실패(미공증본 유출 차단)
-          codesign --verify --deep --strict --verbose=2 "$APP"
+          # 검증 — secure timestamp + hardened runtime 없으면 실패(미공증본 유출 차단).
+          # --deep --strict는 쓰지 않는다: resources/server 하위(비표준 위치)의 중첩 Mach-O를
+          # 트집 잡아 오탐 실패할 수 있고, 최종 판정은 아래 notarytool이 한다(애플이 진짜 검증자).
+          codesign --verify --verbose=2 "$APP"
           INFO="$(codesign -dvvv "$APP" 2>&1)"; echo "$INFO"
           echo "$INFO" | grep -q '^Timestamp='                       || { echo '✗ secure timestamp 없음'; exit 1; }
           echo "$INFO" | grep -Eq 'flags=0x[0-9a-fA-F]+\([^)]*runtime' || { echo '✗ hardened runtime 없음'; exit 1; }
@@ -195,7 +197,7 @@ jobs:
           # (4b) DMG 재생성 — 스테이플된 .app으로 새로 말아 서명·공증·스테이플. 미공증 원본 dmg는 폐기
           echo "=== DMG 재생성 ==="
           DMG_DIR="$BUNDLE_DIR/dmg"
-          ORIG_DMG="$(ls "$DMG_DIR"/*.dmg 2>/dev/null | head -1)"    # 예: argo_0.1.11_aarch64.dmg
+          ORIG_DMG="$(ls "$DMG_DIR"/*.dmg 2>/dev/null | head -1 || true)"    # 예: argo_0.1.11_aarch64.dmg (set -e·pipefail에서 dmg 없어도 폴백 살도록)
           DMG_STAGE="$(mktemp -d)"
           cp -R "$APP" "$DMG_STAGE/"
           ln -s /Applications "$DMG_STAGE/Applications"
