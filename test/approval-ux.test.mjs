@@ -59,3 +59,16 @@ test('CAPABILITY_DEFS: bypass 토글 제거(능력 토글이 곧 즉시 실행) 
   assert.equal(CAPABILITY_DEFS.length, 3);
   assert.ok(CAPABILITY_DEFS.every(([, , desc]) => desc.includes('결재 없이')), '켜면 결재 없음이 설명에 보인다');
 });
+
+test('loadCapabilities: 레거시 bypass:true는 3능력 켬으로 1회 이행(전권 고착 방지)', async () => {
+  const { loadCapabilities } = await import('../src/capabilities.mjs');
+  const { writeJsonAtomic } = await import('../src/jsonstore.mjs');
+  const { paths } = await import('../src/workspace.mjs');
+  const ws2 = 'apvco2';
+  await mkdir(join(process.env.ARGO_ROOT, ws2), { recursive: true });
+  await writeJsonAtomic(paths(ws2).capabilities, { fs: false, browser: false, shell: false, bypass: true });
+  const caps = await loadCapabilities(ws2);
+  assert.deepEqual(caps, { fs: true, browser: true, shell: true, bypass: false }, '전권 → 3능력 켬 동등 이행');
+  const again = await loadCapabilities(ws2);
+  assert.equal(again.bypass, false, '이행은 1회로 고정(멱등)');
+});

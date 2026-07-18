@@ -95,6 +95,8 @@ export function makePermissionGate(wsId, slug, caps, wsRoot, from = null) {
       await suggestCapability(wsId, slug, 'shell', null, from);
       return deny('셸 능력이 꺼져 있다.');
     }
-    return allow; // 그 외 도구 — 경계 개념 없음
+    // 그 외 도구 — 능력 분류 밖(SDK 내장 Task 등). 이전 모델도 결재만 걸고 결국 허용했으므로
+    // allow가 동작 등가·회귀 제로다(부작용 도구가 새로 생기면 위 분류에 추가하는 것이 대응 지점).
+    return allow;
   };
 }

@@ -14,9 +14,17 @@ export const CAPABILITY_DEFS = [
 const EMPTY = { fs: false, browser: false, shell: false, bypass: false };
 
 export async function loadCapabilities(wsId) {
-  // 능력 토글(특히 bypass)은 보안 설정 — 손상을 조용히 리셋해 보안 자세를 바꾸지 않고 throw로 드러낸다.
+  // 능력 토글은 보안 설정 — 손상을 조용히 리셋해 보안 자세를 바꾸지 않고 throw로 드러낸다.
   // 부재(ENOENT)만 EMPTY로 시드된다.
-  return { ...EMPTY, ...(await readJson(paths(wsId).capabilities, EMPTY)) };
+  const caps = { ...EMPTY, ...(await readJson(paths(wsId).capabilities, EMPTY)) };
+  // 레거시 bypass:true — 새 2단 모델의 동등값(3능력 켬)으로 1회 이행하고 끈다. DEFS에서 bypass가
+  // 빠져 UI/API로 끌 수 없게 된 고착을 방지(검수 MEDIUM). 멱등이라 동시 로드 경합도 무해.
+  if (caps.bypass) {
+    const migrated = { fs: true, browser: true, shell: true, bypass: false };
+    await writeJsonAtomic(paths(wsId).capabilities, migrated).catch(() => { /* 다음 로드가 재시도 */ });
+    return migrated;
+  }
+  return caps;
 }
 
 export async function updateCapabilities(wsId, patch) {
