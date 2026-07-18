@@ -309,9 +309,15 @@ function startTelegram(wsId, getCfg) {
               try {
                 const item = await resolveWithFollowUp(wsId, m[1], approve);
                 await tg(cfg.token, 'answerCallbackQuery', { callback_query_id: cq.id, text: pick(approve ? '승인됨' : '거절됨', approve ? 'Approved' : 'Rejected', lang) });
-                await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: pick(`결재 ${approve ? '승인' : '거절'}: ${item.action}\n담당 크루가 이어서 보고합니다.`, `Approval ${approve ? 'approved' : 'rejected'}: ${item.action}\nThe assigned crew will follow up.`, lang) });
+                // 원 메시지를 결과로 교체 — 버튼이 함께 사라져 이중 클릭·죽은 버튼이 없다(결재 UX)
+                await tg(cfg.token, 'editMessageText', {
+                  chat_id: cfg.chatId, message_id: cq.message.message_id,
+                  text: pick(`${approve ? '✅ 결재 승인' : '❌ 결재 거절'} — ${item.action}\n담당 크루가 이어서 보고합니다.`, `${approve ? '✅ Approved' : '❌ Rejected'} — ${item.action}\nThe assigned crew will follow up.`, lang),
+                }).catch(() => {});
               } catch (e) {
                 await tg(cfg.token, 'answerCallbackQuery', { callback_query_id: cq.id, text: String(e.message).slice(0, 60) }).catch(() => {});
+                // 이미 처리된 결재 등 — 죽은 버튼만 걷어낸다(재클릭 오류 반복 방지)
+                await tg(cfg.token, 'editMessageReplyMarkup', { chat_id: cfg.chatId, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
               }
             }
             continue;
@@ -708,9 +714,18 @@ function startSlack(wsId, getCfg) {
 }
 
 /* ─── 알림 푸시 — 결재는 버튼과 함께, 루틴은 브리핑으로, 위임은 상대 크루 봇의 발화로 ─── */
+/** 결재 주체 표기 — "크루명" 또는 "크루명 (위임자명 위임)". 누가 올린 결재인지 흐름을 보이게 한다. */
+async function approvalWho(wsId, item, lang) {
+  const agents = await listAgents(wsId).catch(() => []);
+  const nameOf = (s) => agents.find((a) => a.slug === s)?.name ?? s;
+  const base = nameOf(item.slug);
+  return item.from ? (lang === 'en' ? `${base} (delegated by ${nameOf(item.from)})` : `${base} (${nameOf(item.from)} 위임)`) : base;
+}
+
 async function pushEvent(event) {
   const all = await loadConnections(event.wsId);
   const { lang = 'ko' } = await loadCompany(event.wsId).catch(() => ({}));
+  const who = event.type === 'approval' ? await approvalWho(event.wsId, event.item, lang) : '';
   // 위임 미러 — 그룹 대화 중 A가 B에게 위임하면, B의 봇이 같은 방에 자기 이름으로 결과를 올린다(크루 간 대화 가시화).
   if (event.type === 'delegate') {
     const ctx = event.ctx; // 위임 이벤트에 실려온 발화 위치 — 전역 맵 조회 없이 이 턴의 방으로만
@@ -726,10 +741,10 @@ async function pushEvent(event) {
     if (event.type === 'approval') {
       await tg(t.token, 'sendMessage', {
         chat_id: t.chatId,
-        text: pick(`결재 요청\n${event.item.action}\n\n사유: ${event.item.reason}`, `Approval request\n${event.item.action}\n\nReason: ${event.item.reason}`, lang),
+        text: pick(`결재 요청 · ${who}\n${event.item.action}\n\n사유: ${event.item.reason}`, `Approval request · ${who}\n${event.item.action}\n\nReason: ${event.item.reason}`, lang),
         reply_markup: { inline_keyboard: [[
-          { text: pick('승인', 'Approve', lang), callback_data: `ap:${event.item.id}:1` },
-          { text: pick('거절', 'Reject', lang), callback_data: `ap:${event.item.id}:0` },
+          { text: pick('✅ 승인', '✅ Approve', lang), callback_data: `ap:${event.item.id}:1` },
+          { text: pick('❌ 거절', '❌ Reject', lang), callback_data: `ap:${event.item.id}:0` },
         ]] },
       }).catch((e) => console.error('[argo] 텔레그램 결재 푸시 실패:', e.message));
     }
@@ -742,8 +757,8 @@ async function pushEvent(event) {
   if (s.enabled && s.token && s.channel) {
     const text = event.type === 'approval'
       ? pick(
-          `결재 요청: ${event.item.action}\n사유: ${event.item.reason}\n→ 이 채널에 "승인 ${event.item.id}" 또는 "거절 ${event.item.id}" 로 회신`,
-          `Approval request: ${event.item.action}\nReason: ${event.item.reason}\n→ Reply in this channel with "승인 ${event.item.id}" (approve) or "거절 ${event.item.id}" (reject)`,
+          `결재 요청 · ${who}: ${event.item.action}\n사유: ${event.item.reason}\n→ 이 채널에 "승인 ${event.item.id}" 또는 "거절 ${event.item.id}" 로 회신`,
+          `Approval request · ${who}: ${event.item.action}\nReason: ${event.item.reason}\n→ Reply in this channel with "승인 ${event.item.id}" (approve) or "거절 ${event.item.id}" (reject)`,
           lang,
         )
       : pick(

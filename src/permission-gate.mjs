@@ -1,15 +1,13 @@
-// 권한 게이트 — bypass가 꺼진 워크스페이스에서 부작용 도구는 여기서 멈춰 사람 승인을 기다린다.
-// 승인(데크 결재함/텔레그램 버튼/슬랙 회신)되면 그 자리에서 이어서 실행되는 interrupt-resume.
+// 권한 게이트 — 능력(fs/browser/shell)이 꺼진 워크스페이스에서 부작용 도구는 여기서 멈춰
+// "켤까요?" 제안 카드를 올린다. 능력을 켰다면 결재 없이 바로 실행한다.
+//
+// 2026-07-18 모델 단순화(유건 지시): 이전엔 능력을 켜도 도구 실행마다 결재를 올리고 기다려
+// 결재 폭탄·raw 명령 노출·흐름 끊김이 났다(실사용: grep/ls 하나하나 결재 카드). 사장이 설정에서
+// 능력을 켠 것 = 그 범위의 신뢰 위임이다 — 켜짐은 즉시 실행, 꺼짐은 켜기 제안 카드 한 장.
+// (별도 bypass 토글은 이 모델에서 잉여가 되어 설정 UI에서 내렸다 — capabilities.mjs)
 import { resolve, dirname } from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { addApproval, loadApprovals, expireApproval } from './approvals.mjs';
-import { setTurnStatus } from './turn-status.mjs';
-
-// 결재 대기 상한 — chat 라우트 maxDuration(300s) 안쪽. 원격(메신저) 승인은 3분이 빠듯해
-// env로 조정 가능하게 하되 라우트 한도 아래로 캡한다. 만료돼도 요청은 결재함에 남아
-// 나중 승인 시 후속 턴이 잇는다(실패 아님 — 아래 deny 문구가 그 사실을 크루에게 전달).
-const WAIT_MS = Math.min(Number(process.env.ARGO_APPROVAL_WAIT_MS) || 180_000, 240_000);
-const POLL_MS = 2_000;
+import { addApproval, loadApprovals } from './approvals.mjs';
 
 // 경로 인자를 갖는 읽기 도구 — 워크스페이스 경계를 적용한다(P1-5). TodoWrite는 경로가 없어 별도(항상 허용).
 const READ_FILE_TOOLS = new Set(['Read', 'Glob', 'Grep']);
@@ -44,76 +42,61 @@ export function makeInWorkspace(wsRoot) {
   };
 }
 
-function describe(toolName, input) {
-  if (toolName === 'Bash') return `명령 실행: ${String(input.command ?? '').replace(/\s+/g, ' ').slice(0, 140)}`;
-  if (WRITE_TOOLS.has(toolName)) return `워크스페이스 밖 파일 ${toolName === 'Write' ? '쓰기' : '수정'}: ${String(input.file_path ?? input.notebook_path ?? '')}`;
-  return `${toolName} 실행`;
-}
-
-/** 능력 켜기 제안 결재 — 대화창 Yes/No 카드의 원천. 게이트 거절 시와 크루의 request_capability 도구가 함께 쓴다. */
+/** 능력 켜기 제안 결재 — 대화창 Yes/No 카드의 원천. 게이트 거절 시와 크루의 request_capability 도구가 함께 쓴다.
+    from = 위임 원 크루 slug(있으면) — 카드가 "누구의 위임으로 온 요청인지"를 보여준다. */
 const CAP_LABEL = { fs: '파일 시스템', browser: '웹 브라우징', shell: '셸·컴퓨터' };
-export async function suggestCapability(wsId, slug, cap, why) {
+export async function suggestCapability(wsId, slug, cap, why, from = null) {
   try {
     const dup = (await loadApprovals(wsId)).find((a) => a.status === 'pending' && a.kind === 'capability' && a.cap === cap);
     if (dup) return dup;
     return await addApproval(wsId, {
-      slug, cap, kind: 'capability',
+      slug, cap, kind: 'capability', ...(from ? { from } : {}),
       action: `로컬 능력 켜기: ${CAP_LABEL[cap] ?? cap}`,
       reason: why?.trim() || '크루가 이 능력이 필요한 작업을 받았습니다 — 승인하면 능력을 켜고 이어서 실행합니다',
     });
   } catch { return null; /* 제안 실패는 거절 응답을 막지 않는다 */ }
 }
 
-/** caps: {fs, browser, shell, bypass(false 전제)} — allowedTools에 없는 도구가 여기로 온다. */
-export function makePermissionGate(wsId, slug, caps, wsRoot) {
+/** caps: {fs, browser, shell} — allowedTools에 없는 도구가 여기로 온다. 켜짐=허용, 꺼짐=켜기 제안 카드.
+    from = 위임 원 크루 slug(제안 카드 표기용). */
+export function makePermissionGate(wsId, slug, caps, wsRoot, from = null) {
   const inWorkspace = makeInWorkspace(wsRoot);
   const deny = (what) => ({ behavior: 'deny', message: `${what} 사장의 대화창에 "켤까요?" 카드를 띄웠으니, 승인하면 이어서 하겠다고 짧게 안내하라.` });
 
-  return async function canUseTool(toolName, input, { signal } = {}) {
+  return async function canUseTool(toolName, input) {
     const allow = { behavior: 'allow', updatedInput: input };
     if (toolName === 'TodoWrite' || toolName.startsWith('mcp__')) return allow; // 경로 없음·opt-in 도구
 
     if (READ_FILE_TOOLS.has(toolName)) {
-      // 파일 읽기(Read/Glob/Grep) — 워크스페이스 안(또는 경로 미지정=cwd)은 허용, 밖이면 fs 능력 결재.
+      // 파일 읽기(Read/Glob/Grep) — 워크스페이스 안(또는 경로 미지정=cwd)은 허용, 밖은 fs 능력을 따른다.
       // capabilities.mjs 계약: fs = "워크스페이스 밖 파일 읽기/쓰기/편집". 읽기도 이 경계를 지킨다(P1-5).
       const targets = readToolTargets(toolName, input); // Read=file_path, Grep=path, Glob=path+pattern
       let outside = false;
       for (const t of targets) { if (!(await inWorkspace(t))) { outside = true; break; } }
       if (!outside) return allow; // 경로형 인자가 없거나(빈 배열) 전부 워크스페이스 안 → 허용
-      if (!caps.fs) { await suggestCapability(wsId, slug, 'fs'); return deny('워크스페이스 밖 파일 읽기는 파일 시스템 능력이 필요하다.'); }
-      // fs 켜짐 + 밖 읽기 → 결재 대기(아래 공통 흐름). 밖은 부작용처럼 사람 승인.
-    } else if (WEB_TOOLS.has(toolName)) {
-      if (caps.browser) return allow; // 웹 열람은 읽기 — 능력만 켜져 있으면 결재 없이
-      await suggestCapability(wsId, slug, 'browser');
+      if (caps.fs) return allow; // 사장이 켠 능력 — 결재 없이 실행
+      await suggestCapability(wsId, slug, 'fs', null, from);
+      return deny('워크스페이스 밖 파일 읽기는 파일 시스템 능력이 필요하다.');
+    }
+    if (WEB_TOOLS.has(toolName)) {
+      if (caps.browser) return allow;
+      await suggestCapability(wsId, slug, 'browser', null, from);
       return deny('웹 브라우징 능력이 꺼져 있다.');
-    } else if (WRITE_TOOLS.has(toolName)) {
+    }
+    if (WRITE_TOOLS.has(toolName)) {
       const target = input.file_path ?? input.notebook_path ?? '';
       if (await inWorkspace(target)) return allow; // 회사 폴더 안은 크루의 책상이다
-      if (!caps.fs) { await suggestCapability(wsId, slug, 'fs'); return deny('파일 시스템 능력이 꺼져 있다.'); }
-    } else if (toolName === 'Bash') {
-      if (!caps.shell) { await suggestCapability(wsId, slug, 'shell'); return deny('셸 능력이 꺼져 있다.'); }
+      if (caps.fs) return allow;
+      await suggestCapability(wsId, slug, 'fs', null, from);
+      return deny('파일 시스템 능력이 꺼져 있다.');
     }
-
-    // 능력은 켜져 있으나 우회 모드가 아님 — 결재를 올리고 이 자리에서 기다린다
-    const item = await addApproval(wsId, {
-      slug,
-      action: describe(toolName, input),
-      reason: '로컬 능력 실행 — 승인하면 멈춘 자리에서 바로 이어집니다',
-      kind: 'tool',
-    });
-    await setTurnStatus(wsId, slug, 'awaiting_approval'); // 코드 — 클라가 i18n으로 번역
-    const t0 = Date.now();
-    while (Date.now() - t0 < WAIT_MS) {
-      await setTurnStatus(wsId, slug, 'awaiting_approval'); // 코드 — 클라가 i18n으로 번역
-      if (signal?.aborted) return { behavior: 'deny', message: '턴이 중단되었다.' };
-      await new Promise((r) => setTimeout(r, POLL_MS));
-      const cur = (await loadApprovals(wsId)).find((a) => a.id === item.id);
-      if (cur?.status === 'approved') return allow;
-      if (cur?.status === 'rejected') return { behavior: 'deny', message: '사장이 이 실행을 거절했다. 실행하지 말고 대안을 한두 줄로 정리하라.' };
+    if (toolName === 'Bash') {
+      if (caps.shell) return allow;
+      await suggestCapability(wsId, slug, 'shell', null, from);
+      return deny('셸 능력이 꺼져 있다.');
     }
-    // 만료 — tool 결재는 대기 자리를 떠나면 나중에 승인해도 자동 재개되지 않는다(약속 위반 방지).
-    // 죽은 버튼이 결재함/아침보고 카운트에 남지 않게 'expired'로 내리고, 크루가 정직하게 안내하게 한다.
-    await expireApproval(wsId, item.id).catch(() => {});
-    return { behavior: 'deny', message: `권한 승인 대기 시간(${Math.round(WAIT_MS / 60_000)}분)이 지났다. 이 실행은 대기 자리를 떠나 지금은 이어지지 않는다 — 사장에게 "승인이 필요하면, 승인하신 뒤 같은 지시를 한 번 더 주시면 바로 이어서 하겠다"고 정직하게 안내하고 턴을 마무리하라.` };
+    // 그 외 도구 — 능력 분류 밖(SDK 내장 Task 등). 이전 모델도 결재만 걸고 결국 허용했으므로
+    // allow가 동작 등가·회귀 제로다(부작용 도구가 새로 생기면 위 분류에 추가하는 것이 대응 지점).
+    return allow;
   };
 }

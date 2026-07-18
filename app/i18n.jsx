@@ -650,6 +650,9 @@ const DICT = {
   'chat.elapsed': ['{t} 경과', '{t} elapsed'],
   'chat.approval.capTitle': ['권한 요청 — 승인하면 바로 이어서 실행합니다', 'Permission request — approve to continue right away'],
   'chat.approval.pendingTitle': ['결재 대기 — 대화창에서 바로 처리할 수 있습니다', 'Approval needed — you can resolve it right here'],
+  'chat.approval.viaDelegate': ['위임한 작업 — {name}의 결재 요청입니다', 'Delegated task — approval request from {name}'],
+  'chat.approval.fromNote': ['{name}의 위임으로 진행 중인 작업입니다', 'Working on a task delegated by {name}'],
+  'deck.approvalFrom': ['{name} 위임', 'delegated by {name}'],
   'chat.approval.yes': ['네, 켜고 진행', 'Yes, enable & continue'],
   'chat.approval.no': ['아니오', 'No'],
 
