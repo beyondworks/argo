@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Logo, Icon, Avatar, Spinner, Skeleton, api, imeGuard, timeAgo } from './ui';
+import { AiConnectionCard, ACCOUNT_WS, anyRunnerUsable, runnerNeedsReconnect } from './runner-connect';
 import { useLang } from './i18n';
 
 export default function Home() {
@@ -21,12 +22,42 @@ export default function Home() {
   // 호스팅 인증(authOn)이면 다른 기기 회사는 계정 동기화로 자동 수신 — 코드 붙여넣기 UI는 authOn=false일 때만
   const [authOn, setAuthOn] = useState(false);
   const [me, setMe] = useState(null); // /api/me = { authOn, user } — 상단바 계정 컨트롤(로그인/로그아웃)의 원천
+  // 첫 항해 온보딩 — 회사 0개면 "로그인 → 러너 연결 → 회사 만들기" 순서를 화면 구조로 강제한다
+  // (실사용 신고: 러너 없이 크루를 만들었다 첫 대화에서 키 에러 — 그 동선을 입구에서 차단).
+  const [acctRunners, setAcctRunners] = useState(null); // 계정 스코프(@account) 러너 상태
+  const [skipRunner, setSkipRunner] = useState(false);  // "나중에 연결" 탈출구 — 데크 배너가 이어받는다
+  const [runnerNotice, setRunnerNotice] = useState(null); // 러너 없는/끊긴 기존 회사 안내 { ws, name, invalid }
+  const onboarding = companies !== null && companies.length === 0;
+  const runnerReady = !!acctRunners && anyRunnerUsable(acctRunners);
 
   useEffect(() => {
     // lang 의존 — 프리셋 picker 라벨이 UI 언어를 따르고, cmd+/ 전환 시 즉시 갱신된다
     api(`/api/companies?lang=${lang}`).then((d) => { setCompanies(d.companies); setPresets(d.presets ?? []); }).catch((e) => setError(String(e.message)));
     api('/api/me').then((d) => { setMe(d); setAuthOn(!!d.authOn); }).catch(() => {});
   }, [lang]);
+
+  // 온보딩 러너 상태 — 카드가 연결/제거 시 쏘는 argo:refresh로 즉시 재판정(연결되면 3단계가 풀린다)
+  useEffect(() => {
+    if (!onboarding) return;
+    let alive = true;
+    const load = () => api('/api/account/keys').then((d) => { if (alive) setAcctRunners(d.runners ?? {}); }).catch(() => { if (alive) setAcctRunners({}); });
+    load();
+    window.addEventListener('argo:refresh', load);
+    return () => { alive = false; window.removeEventListener('argo:refresh', load); };
+  }, [onboarding]);
+
+  // 기존 회사 러너 점검 — 재로그인·연결 끊김(무효 토큰)을 홈에서 바로 알리고 연결 섹션으로 보낸다
+  useEffect(() => {
+    if (!companies || companies.length === 0) { setRunnerNotice(null); return; }
+    let alive = true;
+    Promise.all(companies.map((c) => api(`/api/companies/${c.id}/keys`).then((d) => ({ c, runners: d.runners })).catch(() => null)))
+      .then((list) => {
+        if (!alive) return;
+        const bad = list.filter(Boolean).find((x) => !anyRunnerUsable(x.runners));
+        setRunnerNotice(bad ? { ws: bad.c.id, name: bad.c.name, invalid: runnerNeedsReconnect(bad.runners) } : null);
+      });
+    return () => { alive = false; };
+  }, [companies]);
 
   // 컴포넌트 언마운트(회사 생성으로 페이지 이탈 등) 시 폴링 interval 누수 방지 — 브리프 코드에 없던 보강
   useEffect(() => () => { if (pairPollRef.current) clearInterval(pairPollRef.current); }, []);
@@ -92,6 +123,15 @@ export default function Home() {
       </header>
 
       <main style={{ maxWidth: 660, margin: '0 auto', padding: '64px 24px 90px' }}>
+        {runnerNotice && (
+          /* 러너 미연결/끊김 안내 — 누르면 그 회사 설정의 러너 연결 섹션으로 직행(?ai=1) */
+          <a href={`/c/${runnerNotice.ws}/settings?ai=1`} className="card card-i fade-up"
+            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', borderColor: 'var(--warn)', marginBottom: 22 }}>
+            <span style={{ color: 'var(--warn)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
+            <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t(runnerNotice.invalid ? 'home.runnerReconnect' : 'home.runnerNotice', { name: runnerNotice.name })}</span>
+            <span className="chip" style={{ flex: 'none' }}>{t('deck.aiKey.cta')}</span>
+          </a>
+        )}
         <div className="fade-up" style={{ marginBottom: 30 }}>
           <div className="microlabel" style={{ marginBottom: 12 }}>{t('home.boarding')}</div>
           <h1 style={{ fontSize: 26, fontWeight: 750, letterSpacing: '-0.02em', lineHeight: 1.32 }}>
@@ -102,6 +142,30 @@ export default function Home() {
           </p>
         </div>
 
+        {onboarding && (
+          /* 첫 항해 — 러너 연결이 회사 만들기보다 먼저(카드가 쏘는 argo:refresh가 runnerReady를 푼다) */
+          <div className="fade-up" style={{ display: 'grid', gap: 10, margin: '0 0 22px' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
+                <span className="dot" />{t(me?.authOn ? 'onboard.step1' : 'onboard.step1Local')}
+              </span>
+              <span className="chip" style={{ color: runnerReady ? 'var(--ok)' : 'var(--warn)', borderColor: 'currentColor' }}>
+                {runnerReady && <span className="dot" />}{t(runnerReady ? 'onboard.step2done' : 'onboard.step2')}
+              </span>
+              <span className="chip" style={runnerReady || skipRunner ? { color: 'var(--warn)', borderColor: 'currentColor' } : {}}>
+                {t('onboard.step3')}
+              </span>
+            </div>
+            {!runnerReady && <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0 }}>{t('onboard.help')}</p>}
+            <AiConnectionCard ws={ACCOUNT_WS} />
+            {!runnerReady && !skipRunner && (
+              <button type="button" onClick={() => setSkipRunner(true)}
+                style={{ justifySelf: 'start', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: 'var(--fg-3)', textDecoration: 'underline' }}>
+                {t('onboard.skip')}
+              </button>
+            )}
+          </div>
+        )}
         <form onSubmit={create} className="input-bar fade-up" style={{ animationDelay: '0.06s' }}>
           <input suppressHydrationWarning
             placeholder={t('home.namePlaceholder')}
@@ -111,7 +175,7 @@ export default function Home() {
             autoFocus
             {...imeGuard}
           />
-          <button className="btn btn-primary" disabled={creating || !name.trim()}>
+          <button className="btn btn-primary" disabled={creating || !name.trim() || (onboarding && !runnerReady && !skipRunner)}>
             {creating ? <Spinner /> : <Icon name="plus" size={14} />}
             {t('home.createBtn')}
           </button>

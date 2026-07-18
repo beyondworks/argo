@@ -4,6 +4,7 @@ import { use, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, useScrollLock, InputModal, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
 import { Constellation3D, GraphModal } from './graphview';
+import { anyRunnerUsable, runnerNeedsReconnect } from '../../runner-connect';
 import { useLang } from '../../i18n';
 
 export default function Deck({ params }) {
@@ -423,31 +424,30 @@ export default function Deck({ params }) {
   );
 }
 
-/** AI 연결 배너 — 이 컴퓨터에 Claude 자격이 없고 회사 키도 없으면(일반 사용자 첫 실행) 데크 상단에 안내.
-    빈 화면에서 크루가 모두 실패하는 대신, 키를 넣으러 갈 곳을 명확히 보여준다. */
+/** AI 러너 배너 — 쓸 수 있는 러너가 하나도 없으면(첫 실행·재로그인·연결 끊김) 데크 상단에 안내.
+    Claude만 보던 옛 판정은 Codex 등 다른 러너 연결자에게 오경보를 냈다(실사용 신고) — 러너 전체 판정으로 교체.
+    클릭 시 설정의 러너 연결 섹션으로 직행(?ai=1 딥링크), 연결 직후 argo:refresh로 자동 소거. */
 function AiKeyBanner({ ws }) {
   const { t } = useLang();
   const router = useRouter();
-  const [show, setShow] = useState(false);
+  const [state, setState] = useState(null); // null(양호·로딩) | 'missing' | 'invalid'(끊김 — 재연결)
   useEffect(() => {
     let alive = true;
-    Promise.all([
-      api(`/api/runners?ws=${ws}`).catch(() => ({ runners: [] })),
-      api(`/api/companies/${ws}/keys`).catch(() => ({ runners: {} })),
-    ]).then(([r, k]) => {
+    const check = () => api(`/api/companies/${ws}/keys`).then((k) => {
       if (!alive) return;
-      const claude = (r.runners ?? []).find((x) => x.id === 'claude');
-      const claudeConnected = !!k.runners?.claude?.company?.connected;
-      setShow(!!claude && !claude.authed && !claudeConnected);
-    });
-    return () => { alive = false; };
+      if (anyRunnerUsable(k.runners)) setState(null);
+      else setState(runnerNeedsReconnect(k.runners) ? 'invalid' : 'missing');
+    }).catch(() => { /* 상태 확인 실패 — 오경보 대신 침묵 */ });
+    check();
+    window.addEventListener('argo:refresh', check);
+    return () => { alive = false; window.removeEventListener('argo:refresh', check); };
   }, [ws]);
-  if (!show) return null;
+  if (!state) return null;
   return (
     <div className="card fade-up" style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--warn)' }}>
       <span style={{ color: 'var(--warn)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
-      <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t('deck.aiKey.banner')}</span>
-      <button className="btn btn-primary sm" style={{ flex: 'none' }} onClick={() => router.push(`/c/${ws}/settings`)}>
+      <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t(state === 'invalid' ? 'deck.runner.reconnect' : 'deck.runner.banner')}</span>
+      <button className="btn btn-primary sm" style={{ flex: 'none' }} onClick={() => router.push(`/c/${ws}/settings?ai=1`)}>
         {t('deck.aiKey.cta')}
       </button>
     </div>

@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
-import { paths } from './workspace.mjs';
+import { WS_ROOT, paths } from './workspace.mjs';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 
 const execP = promisify(execFile);
@@ -189,7 +189,13 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
 // ── 회사별 러너 자격(BYOK/BYOA) — 일반 사용자가 호스트 CLI 로그인 없이도 어떤 러너든 굴리게 한다.
 // 회사 루트 .secrets.json의 runners.{id} = { type:'apikey'|'oauth', value } 에 보관.
 // 시크릿이므로 (a) API 응답·로그엔 마스킹만, (b) cryptoOn이면 봉투 암호문으로 동기화됨(secretbox).
-const secretsFile = (wsId) => join(paths(wsId).root, '.secrets.json');
+/** 계정 스코프 센티널 — 회사 생성 전(온보딩)에 연결한 러너 자격의 저장 대상.
+    WS_ROOT 닷파일(.account-secrets.json)에 산다(.sync-credentials.json과 같은 계층 — 워크스페이스 동기화 제외, 기기 로컬).
+    '@'는 paths()의 wsId 검증(WS_ID_RE)을 통과하지 않는 문자라 일반 워크스페이스와 충돌하지 않는다. */
+export const ACCOUNT_SCOPE = '@account';
+const secretsFile = (wsId) => (wsId === ACCOUNT_SCOPE
+  ? join(WS_ROOT, '.account-secrets.json')
+  : join(paths(wsId).root, '.secrets.json'));
 
 // 러너별 지원 인증 방식. apikey=붙여넣기(4러너 공통), oauth=붙여넣기 토큰(claude) 또는 호스트 로그인(codex/gemini).
 // glm은 Anthropic 호환 토큰(사실상 apikey)만.
@@ -243,6 +249,20 @@ export async function clearRunnerCred(wsId, runner) {
   const { claude, ...rest } = s;
   if (rest.runners) delete rest.runners[runner];
   await writeJsonAtomic(secretsFile(wsId), rest);
+}
+
+/** 온보딩 시드 — 회사 생성 전 계정 스코프(@account)에 연결한 자격을 새 회사로 복사한다.
+    계정 자격은 남겨 다음 회사도 시드받는다(온보딩 1회 = 전 회사 혜택). 회사에 이미 있는 러너는 덮지 않는다. */
+export async function seedRunnerCreds(wsId) {
+  const acct = await loadSecrets(ACCOUNT_SCOPE).catch(() => ({ runners: {} }));
+  let seeded = 0;
+  for (const [id, c] of Object.entries(acct.runners ?? {})) {
+    if (!RUNNER_AUTH[id] || typeof c?.value !== 'string' || !c.value.trim()) continue;
+    if (await loadRunnerCred(wsId, id)) continue;
+    await saveRunnerCred(wsId, id, c.type, c.value);
+    seeded += 1;
+  }
+  return seeded;
 }
 
 /** 마스킹 — 접두사만(보안 규칙). 평문은 어디에도 남기지 않는다. */
