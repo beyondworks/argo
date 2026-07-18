@@ -3,19 +3,25 @@
 //   승인 코드/리다이렉트 주소를 받아 토큰 교환 → 회사 자격 저장(암호화 동기화로 전 기기 전파). 워커·로컬 공통.
 // · CLI 대행(codex — 레거시 폴백): 벤더 CLI 브라우저 로그인을 서버가 실행(로컬/데스크톱 전용).
 // POST { runner }: 시작(url 반환). POST { runner, code }: 코드 제출. POST { runner, cli:true }: CLI 대행.
-// GET: 완료 폴링(읽기전용).
+// POST { runner:'claude', setup:true }: 공식 setup-token PTY 대행(로컬 전용 — 원클릭 연결).
+// GET: 완료 폴링(읽기전용). GET ?setup=1: setup-token 진행 상태.
 import {
   startRunnerLogin, runnerLoginStatus, RUNNER_AUTH,
   startRunnerWebAuth, submitRunnerWebAuth, loadRunnerCred,
+  startClaudeSetupToken, setupTokenStatus,
 } from '../../../../../../src/runners.mjs';
 import { guardCompany } from '../../../../../auth.mjs';
 
 export async function POST(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
-  const { runner, code, cli } = await req.json();
+  const { runner, code, cli, setup } = await req.json();
   const meta = RUNNER_AUTH[runner];
   if (!meta) return Response.json({ error: '알 수 없는 러너' }, { status: 400 });
+  if (runner === 'claude' && setup) { // 원클릭 — 서버가 setup-token을 대행, 토큰은 자동 저장
+    const r = await startClaudeSetupToken(ws);
+    return Response.json(r, { status: r.ok ? 200 : 400 });
+  }
   if (meta.webConnect && !cli) {
     const r = code ? await submitRunnerWebAuth(ws, runner, code) : startRunnerWebAuth(runner);
     return Response.json(r, { status: r.ok ? 200 : 400 });
@@ -28,9 +34,13 @@ export async function POST(req, { params }) {
 export async function GET(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
-  const runner = new URL(req.url).searchParams.get('runner');
+  const u = new URL(req.url);
+  const runner = u.searchParams.get('runner');
   const meta = RUNNER_AUTH[runner];
   if (!meta) return Response.json({ error: '알 수 없는 러너' }, { status: 400 });
+  if (runner === 'claude' && u.searchParams.get('setup')) {
+    return Response.json(setupTokenStatus(ws)); // { status: idle|running|saved|failed, error }
+  }
   if (meta.webConnect) {
     // 웹 브리지 완료 = 회사 자격 존재
     return Response.json({ supported: true, authed: !!(await loadRunnerCred(ws, runner)) });

@@ -554,6 +554,88 @@ export async function verifyRunnerCred(runner, type, value) {
   }
 }
 
+/* ─── Claude 원클릭 연결 — 공식 `claude setup-token`을 서버가 PTY로 대행(로컬/데스크톱 전용) ───
+   왜 이 방식인가: 웹 브리지(구세대 엔드포인트 재현)는 러너가 거절하는 토큰을 저장해 철회했다
+   (WEB_OAUTH 주석). setup-token은 CLAUDE_CODE_OAUTH_TOKEN의 유일한 공식 발급 경로라, 명령을
+   그대로 대행하면 내부 플로우가 개편돼도 안전하다. 실측(2026-07-18): 비TTY에선 조용히 종료하므로
+   script(1)로 PTY를 입힌다. PTY에선 코드 프롬프트 없이 브라우저를 열어 승인을 자동 수신하고,
+   완료 시 stdout의 sk-ant-oat01- 토큰을 형식 검증 후 회사 자격으로 저장한다(터미널 불필요).
+   기존 수동 붙여넣기 경로는 그대로 유지 — 이 대행이 실패하는 환경의 폴백이다(회귀 없음). */
+const SETUP_TOKEN_TIMEOUT_MS = 10 * 60_000; // 브라우저 승인 대기 상한
+
+/** PTY 출력에서 setup-token의 최종 토큰 추출(순수) — ANSI 제거 후 첫 매치. (export: 회귀 테스트용) */
+export function extractSetupToken(text) {
+  const clean = String(text ?? '').replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(\x07|\x1b\\)/g, '');
+  return clean.match(/sk-ant-oat01-[A-Za-z0-9_-]{16,}/)?.[0] ?? null;
+}
+
+/** setup-token을 실행할 claude CLI 경로 — env 오버라이드 → PATH. 없으면 null(수동 붙여넣기 안내). */
+async function resolveClaudeCli() {
+  if (process.env.CLAUDE_CLI?.trim()) return process.env.CLAUDE_CLI.trim();
+  try { const r = await exec('which', ['claude']); const p = r.stdout.trim(); if (p) return p; } catch { /* 미설치 */ }
+  return null;
+}
+
+const setupState = (globalThis.__argoSetupToken ??= {}); // wsId → { status: running|saved|failed, error, ts }
+
+export function setupTokenStatus(wsId) {
+  const s = setupState[wsId];
+  return s ? { status: s.status, error: s.error ?? '' } : { status: 'idle' };
+}
+
+export async function startClaudeSetupToken(wsId) {
+  // 호스팅 워커에선 금지 — 사용자 브라우저가 없는 곳에서 프로세스만 남는다(로컬/데스크톱 전용).
+  if (process.env.ARGO_TENANT_OWNER || process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, reason: 'hosted' };
+  if (process.platform === 'win32') return { ok: false, reason: 'unsupported-platform' }; // script(1) 부재 — 후속(node-pty 검토)
+  if (setupState[wsId]?.status === 'running') return { ok: false, reason: 'busy' };
+  const cli = await resolveClaudeCli();
+  if (!cli) return { ok: false, reason: 'no-cli' };
+  // macOS script는 인자 배열(셸 미개입), linux(util-linux)는 -c 문자열이라 sh를 타므로
+  // CLI 경로를 단일인용 이스케이프한다(공백 경로·메타문자 인젝션 차단 — env/PATH 유래 값).
+  const args = process.platform === 'darwin'
+    ? ['-q', '/dev/null', cli, 'setup-token']
+    : ['-qec', `'${cli.replace(/'/g, `'\\''`)}' setup-token`, '/dev/null'];
+  let child;
+  try {
+    child = spawn('script', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    return { ok: false, reason: 'spawn-failed', message: String(e.message || e) };
+  }
+  setupState[wsId] = { status: 'running', ts: Date.now() };
+  let buf = '';
+  let done = false;
+  const finish = (status, error = '') => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    setupState[wsId] = { status, error, ts: Date.now() };
+    try { child.kill(); } catch { /* 이미 종료 */ }
+  };
+  const timer = setTimeout(() => finish('failed', '승인 대기 시간(10분)이 지났습니다 — 다시 시도하거나 토큰을 직접 붙여넣어 주세요'), SETUP_TOKEN_TIMEOUT_MS);
+  timer.unref?.();
+  const onData = (d) => {
+    if (done) return;
+    buf = (buf + d.toString()).slice(-20_000); // 꼬리만 유지 — 토큰은 마지막에 출력된다
+    const token = extractSetupToken(buf);
+    if (!token) return;
+    // 토큰 감지 즉시 선점 — setup-token은 토큰 출력 직후 종료하므로, 비동기 저장이 끝나기 전의
+    // 정상 exit가 finish('failed')로 덮으면 "저장됐는데 실패 표시"가 된다(검수 MEDIUM: 저장-exit 레이스).
+    // done을 먼저 잠그고 저장 결과가 최종 상태를 정한다(그동안 상태는 running 유지 — UI는 진행 중 표시).
+    done = true;
+    clearTimeout(timer);
+    // 토큰 평문은 저장 외 어디에도 남기지 않는다(로그·상태 객체 금지)
+    saveRunnerCred(wsId, 'claude', 'oauth', token)
+      .then(() => { setupState[wsId] = { status: 'saved', ts: Date.now() }; })
+      .catch((e) => { setupState[wsId] = { status: 'failed', error: String(e.message || e).slice(0, 160), ts: Date.now() }; })
+      .finally(() => { try { child.kill(); } catch { /* 이미 종료 */ } });
+  };
+  child.stdout.on('data', onData);
+  child.stderr.on('data', onData);
+  child.on('exit', () => finish('failed', '로그인이 완료되지 않았습니다 — 다시 시도하거나 토큰을 직접 붙여넣어 주세요'));
+  child.on('error', (e) => finish('failed', String(e.message || e).slice(0, 160)));
+  return { ok: true };
+}
+
 // ── 하위호환 얇은 래퍼 (기존 호출부 유지) ──
 export const loadClaudeKey = async (wsId) => (await loadRunnerCred(wsId, 'claude'))?.value ?? null;
 export const maskClaudeKey = maskCred;
