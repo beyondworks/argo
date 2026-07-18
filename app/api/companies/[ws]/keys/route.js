@@ -1,7 +1,8 @@
 // 러너 연결(BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) × (API키·OAuth) 회사별 자격 관리.
 // 일반 사용자가 호스트 CLI 로그인 없이도 어떤 러너든 자기 계정으로 연결하게 하는 관문.
 // 응답에는 평문 대신 마스킹만 실린다(보안 규칙).
-import { runnerStatus, saveRunnerCred, clearRunnerCred, maskCred, verifyRunnerCred, RUNNER_AUTH } from '../../../../../src/runners.mjs';
+import { runnerStatus, saveRunnerCred, clearRunnerCred, maskCred, verifyRunnerCred, oauthFormatError, RUNNER_AUTH } from '../../../../../src/runners.mjs';
+import { loadCompany } from '../../../../../src/workspace.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
 /** 상태 — 러너별 회사 연결 + 호스트 로그인 여부 + 지원 인증 방식. */
@@ -25,6 +26,13 @@ export async function PUT(req, { params }) {
     if (!v) throw new Error('키 또는 토큰을 붙여넣어 주세요');
     if (type === 'apikey' && meta.apikeyPrefix && !v.startsWith(meta.apikeyPrefix)) {
       throw new Error(`${meta.apikeyPrefix} 로 시작하는 키를 붙여넣어 주세요`);
+    }
+    if (type === 'oauth') {
+      // 형식이 다른 값(setup-token 중간 인증 코드 등)이 저장을 통과하면 모든 턴이 401로만 드러난다
+      // (실측 2026-07-18) — apikey 접두사 검사와 대칭으로 저장 시점에 잡는다. 안내는 회사 언어로.
+      const { lang = 'ko' } = await loadCompany(ws).catch(() => ({}));
+      const fmtErr = oauthFormatError(runner, v, lang);
+      if (fmtErr) throw new Error(fmtErr);
     }
     if (verify) {
       const r = await verifyRunnerCred(runner, type, v);
