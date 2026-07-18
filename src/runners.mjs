@@ -618,10 +618,16 @@ export async function startClaudeSetupToken(wsId) {
     buf = (buf + d.toString()).slice(-20_000); // 꼬리만 유지 — 토큰은 마지막에 출력된다
     const token = extractSetupToken(buf);
     if (!token) return;
+    // 토큰 감지 즉시 선점 — setup-token은 토큰 출력 직후 종료하므로, 비동기 저장이 끝나기 전의
+    // 정상 exit가 finish('failed')로 덮으면 "저장됐는데 실패 표시"가 된다(검수 MEDIUM: 저장-exit 레이스).
+    // done을 먼저 잠그고 저장 결과가 최종 상태를 정한다(그동안 상태는 running 유지 — UI는 진행 중 표시).
+    done = true;
+    clearTimeout(timer);
     // 토큰 평문은 저장 외 어디에도 남기지 않는다(로그·상태 객체 금지)
     saveRunnerCred(wsId, 'claude', 'oauth', token)
-      .then(() => finish('saved'))
-      .catch((e) => finish('failed', String(e.message || e).slice(0, 160)));
+      .then(() => { setupState[wsId] = { status: 'saved', ts: Date.now() }; })
+      .catch((e) => { setupState[wsId] = { status: 'failed', error: String(e.message || e).slice(0, 160), ts: Date.now() }; })
+      .finally(() => { try { child.kill(); } catch { /* 이미 종료 */ } });
   };
   child.stdout.on('data', onData);
   child.stderr.on('data', onData);
