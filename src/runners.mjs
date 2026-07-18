@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
-import { paths, loadCompany } from './workspace.mjs';
+import { paths } from './workspace.mjs';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 
 const execP = promisify(execFile);
@@ -198,7 +198,10 @@ const secretsFile = (wsId) => join(paths(wsId).root, '.secrets.json');
 //   codex만 spawn 가능한 login이 있다. claude는 이 CLI에 login 서브커맨드가 없어(구독은 키체인)
 //   oauthPasteable 토큰 붙여넣기로, gemini는 CLI 설치 후 로그인 안내로 대체한다.
 export const RUNNER_AUTH = {
-  claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPrefix: 'sk-ant-oat01-', oauthPasteable: true, webConnect: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', keyUrl: 'https://console.anthropic.com/settings/keys' },
+  // claude 웹 브리지(webConnect)는 철회(2026-07-18) — 구세대 엔드포인트 교환이 러너가 거절하는
+  // 비 oat01 토큰을 저장해 "연결됨인데 전 턴 401"을 만들었다(실측). CLAUDE_CODE_OAUTH_TOKEN은
+  // 공식 규격상 `claude setup-token`으로만 발급 — UI는 붙여넣기 안내로 일원화(WEB_OAUTH 주석 참조).
+  claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPrefix: 'sk-ant-oat01-', oauthPasteable: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', keyUrl: 'https://console.anthropic.com/settings/keys' },
   codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
   gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
@@ -320,16 +323,16 @@ export async function startRunnerLogin(runner) {
    흐름: 서버가 verifier/challenge 생성 → 인증 URL을 UI에 반환(사용자 기기에서 열림) →
    승인 후 받은 코드(claude: code#state 표시 / codex·gemini: localhost로 리다이렉트된 주소 전체)를
    UI에 붙여넣으면 서버가 토큰으로 교환 → 회사 자격으로 저장 → 암호화 동기화로 전 기기 전파. */
+// claude는 WEB_OAUTH에서 제외(2026-07-18 철회). 이전 브리지(authorize=claude.ai/oauth/authorize,
+// token=console.anthropic.com/v1/oauth/token, client 9d1c250a-…, scopes 'org:create_api_key
+// user:profile user:inference')는 교환엔 성공하지만 러너(SDK)가 401로 거절하는 비 sk-ant-oat01
+// 토큰(92자)을 반환했다 — "연결됨" 표시 후 전 턴 실패(실측, 장기 미궁 "러너 연결해도 대화 안 됨"의 원인).
+// 현행 Claude Code CLI 바이너리 상수 실측: TOKEN_URL=platform.claude.com/v1/oauth/token,
+// authorize=claude.com/cai/oauth/authorize·platform.claude.com/oauth/authorize,
+// API_KEY_URL=api.anthropic.com/api/oauth/claude_cli/create_api_key(교환 후 후속 발급 단계),
+// ROLES_URL=…/claude_cli/roles — 전혀 다른 세대의 미공개 플로우다. 역공학 재현은 다음 개편 때
+// 같은 조용한 파손을 재발시키므로, 공식 발급 경로(claude setup-token) 붙여넣기로 일원화한다.
 const WEB_OAUTH = {
-  claude: {
-    authorize: 'https://claude.ai/oauth/authorize',
-    token: 'https://console.anthropic.com/v1/oauth/token',
-    clientId: '9d1c250a-e61b-44d9-88ed-5944d1962f5e', // Claude Code 공개 클라이언트 id
-    redirect: 'https://console.anthropic.com/oauth/code/callback',
-    scopes: 'org:create_api_key user:profile user:inference',
-    jsonBody: true, // Anthropic 토큰 엔드포인트는 JSON
-    extra: { code: 'true' },
-  },
   codex: {
     authorize: 'https://auth.openai.com/oauth/authorize',
     token: 'https://auth.openai.com/oauth/token',
@@ -421,14 +424,7 @@ export async function submitRunnerWebAuth(wsId, runner, pasted) {
     return { ok: false, reason: 'exchange-failed', detail: `${res.status} ${body.slice(0, 160)}` };
   }
   const d = await res.json().catch(() => ({}));
-  if (runner === 'claude') {
-    if (!d.access_token) return { ok: false, reason: 'no-token' };
-    // 교환이 성공해도 러너가 거절하는 형식이면 저장하지 않는다 — 조용한 '연결됨' 뒤 모든 턴이
-    // 401로 죽는 것(실측 2026-07-18)보다 명확한 실패가 낫다. detail은 UI가 그대로 표시한다.
-    const fmtErr = oauthFormatError('claude', d.access_token, (await loadCompany(wsId).catch(() => ({}))).lang ?? 'ko');
-    if (fmtErr) return { ok: false, reason: 'invalid-token', detail: fmtErr };
-    await saveRunnerCred(wsId, 'claude', 'oauth', d.access_token);
-  } else if (runner === 'codex') {
+  if (runner === 'codex') {
     if (!d.access_token || !d.refresh_token) return { ok: false, reason: 'no-token' };
     // codex CLI의 auth.json 형식 그대로 저장 — runnerCredEnv가 격리 CODEX_HOME에 풀어준다
     const accountId = jwtPayload(d.id_token)?.['https://api.openai.com/auth']?.chatgpt_account_id ?? null;
@@ -479,7 +475,13 @@ export async function runnerStatus(wsId) {
       keyUrl: meta.keyUrl,
       hostInstalled: host[id]?.installed ?? false,
       hostAuthed: host[id]?.authed ?? false, // 호스트 CLI 로그인/env (OAuth 폴백 경로)
-      company: cred?.value ? { connected: true, type: cred.type === 'oauth' ? 'oauth' : 'apikey', masked: maskCred(cred.value) } : { connected: false },
+      company: cred?.value ? {
+        connected: true,
+        type: cred.type === 'oauth' ? 'oauth' : 'apikey',
+        masked: maskCred(cred.value),
+        // 저장 검증 도입 전(철회된 웹 브리지 등)에 들어온 무효 형식 토큰 — 카드가 "재연결 필요"를 보여준다
+        ...(cred.type === 'oauth' && oauthFormatError(id, cred.value, 'ko') ? { invalid: true } : {}),
+      } : { connected: false },
     };
   }
   return out;

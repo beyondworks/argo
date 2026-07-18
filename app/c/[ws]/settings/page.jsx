@@ -651,9 +651,16 @@ function RunnerRow({ ws, id, st, onChange, first }) {
   }
 
   const chip = company.connected ? (
-    <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
-      <span className="dot" />{t('settings.runners.companyConnected')} · {t(`settings.runners.method.${company.type}`)} · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span>
-    </span>
+    company.invalid ? (
+      // 무효 형식 토큰(철회된 웹 브리지 산출물 등) — 연결된 척하지 않고 재연결을 요구한다
+      <span className="chip" style={{ color: 'var(--danger)', borderColor: 'currentColor' }}>
+        <span className="dot" />{t('settings.runners.companyInvalid')} · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span>
+      </span>
+    ) : (
+      <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
+        <span className="dot" />{t('settings.runners.companyConnected')} · {t(`settings.runners.method.${company.type}`)} · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span>
+      </span>
+    )
   ) : st?.hostAuthed ? (
     <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
       <span className="dot" />{t('settings.runners.hostConnected')}
