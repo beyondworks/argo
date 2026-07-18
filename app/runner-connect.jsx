@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Skeleton, Spinner, ConfirmModal, api } from './ui';
 import { useLang } from './i18n';
 
-/** 계정 스코프 센티널 — 백엔드 ACCOUNT_SCOPE(src/runners.mjs)와 값이 같아야 한다. */
+/** 계정 스코프 라우팅 토큰 — keysBase가 이 값이면 /api/account/keys로 보낸다(경로 분기용).
+    실제 저장 스코프는 서버가 currentUser().id로 결정하므로(사용자별 파일 격리) 이 값은 백엔드와 일치할 필요가 없다. */
 export const ACCOUNT_WS = '@account';
 const keysBase = (ws) => (ws === ACCOUNT_WS ? '/api/account/keys' : `/api/companies/${ws}/keys`);
 
