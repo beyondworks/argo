@@ -1,6 +1,6 @@
 'use client';
 // 기억 — 3D 지식 그래프(공유 엔진) + 기록 표 + 종이 뷰어. 탑바 검색으로 필터.
-import { Suspense, use, useEffect, useState } from 'react';
+import { Suspense, use, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo, tsFromRel } from '../../../ui';
 import { Constellation3D, GraphModal } from '../graphview';
@@ -79,8 +79,15 @@ function Vault({ params }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [mutating, setMutating] = useState(false);
+  const [actionMsg, setActionMsg] = useState(''); // 편집·삭제 실패 인라인 표시 — 네이티브 alert 금지(Tauri 무동작)
+  const viewerRef = useRef(null);
+  /** 그래프에서 기억 클릭 — 뷰어에 열고 화면을 그 자리로 끌어온다(클릭했는데 아무 변화 없어 보이는 것 방지). */
+  const openFromGraph = (rel) => {
+    setSelected(rel);
+    requestAnimationFrame(() => viewerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
 
-  useEffect(() => { setEditing(false); }, [selected]); // 문서를 바꾸면 편집 모드 해제
+  useEffect(() => { setEditing(false); setActionMsg(''); }, [selected]); // 문서를 바꾸면 편집 모드·에러 해제
 
   /** 주제 노트 직접 수정 — 크루가 다음 턴부터 바로 이 내용을 읽는다. */
   async function saveEdit() {
@@ -95,7 +102,7 @@ function Vault({ params }) {
       loadDocs();
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (e) {
-      alert(String(e.message));
+      setActionMsg(String(e.message));
     } finally {
       setMutating(false);
     }
@@ -111,7 +118,8 @@ function Vault({ params }) {
       loadDocs();
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (e) {
-      alert(String(e.message));
+      setDeleteOpen(false); // 모달을 내리고 뷰어에 실패 사유 표시
+      setActionMsg(String(e.message));
     } finally {
       setMutating(false);
     }
@@ -208,7 +216,7 @@ function Vault({ params }) {
               </div>
             </div>
             {meta ? (
-              <Constellation3D company={meta.company} delegations={meta.delegations} agents={meta.agents ?? []} docs={docs} height={240} onOpen={() => setGraphOpen(true)} />
+              <Constellation3D company={meta.company} delegations={meta.delegations} agents={meta.agents ?? []} docs={docs} height={240} onOpen={() => setGraphOpen(true)} onSelectDoc={openFromGraph} />
             ) : (
               <Skeleton h={240} style={{ margin: '8px 0' }} />
             )}
@@ -245,7 +253,7 @@ function Vault({ params }) {
               )}
             </div>
 
-            <div className="card" style={{ padding: 24, minHeight: 340 }}>
+            <div ref={viewerRef} className="card" style={{ padding: 24, minHeight: 340, scrollMarginTop: 84 }}>
               {!selected ? (
                 <div style={{ color: 'var(--fg-2)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Icon name="doc" size={14} /> {t('vault.selectHint')}
@@ -267,6 +275,7 @@ function Vault({ params }) {
                       </span>
                     )}
                   </div>
+                  {actionMsg && <p style={{ margin: '-6px 0 12px', fontSize: 12, color: 'var(--danger)' }}>{actionMsg}</p>}
                   {editing ? (
                     <div style={{ display: 'grid', gap: 10 }}>
                       <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
@@ -303,12 +312,13 @@ function Vault({ params }) {
       )}
       {graphOpen && meta && docs && (
         <GraphModal
+          ws={ws}
           company={meta.company}
           agents={meta.agents ?? []}
           delegations={meta.delegations}
           docs={docs}
           onClose={() => setGraphOpen(false)}
-          onSelect={(rel) => { setSelected(rel); setGraphOpen(false); }}
+          onSelect={(rel) => { setGraphOpen(false); openFromGraph(rel); }}
         />
       )}
     </div>

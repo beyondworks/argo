@@ -846,6 +846,7 @@ const DICT = {
   'graph.note': ['노트 {n}', 'Note {n}'],
   'graph.controlsHint': ['드래그 회전 · 휠 줌 · 기억 클릭 = 열기', 'Drag to rotate · Scroll to zoom · Click a memory to open'],
   'graph.closeEsc': ['닫기 ESC', 'Close ESC'],
+  'graph.openInRecords': ['기록 화면에서 열기', 'Open in records'],
 };
 
 const LangCtx = createContext(null);
