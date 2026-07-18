@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api } from '../../../../ui';
 import { useLang, stageLabel } from '../../../../i18n';
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
@@ -25,12 +25,10 @@ export default function CrewChat({ params }) {
   // 전송(setInput(''))이면 자동 삭제되고, 턴 실패 복원(setInput(message))이면 자동 재저장된다.
   const draftKey = `argo-draft:${ws}:${slug}`;
   useEffect(() => {
-    const d = localStorage.getItem(draftKey);
-    if (d) setInput((cur) => cur || d);
+    try { const d = localStorage.getItem(draftKey); if (d) setInput((cur) => cur || d); } catch { /* 사파리 프라이빗 등 — 보존은 부가기능이라 실패해도 무시 */ }
   }, [draftKey]);
   useEffect(() => {
-    if (input) localStorage.setItem(draftKey, input);
-    else localStorage.removeItem(draftKey);
+    try { if (input) localStorage.setItem(draftKey, input); else localStorage.removeItem(draftKey); } catch { /* 저장 불가 환경 — 무시 */ }
   }, [input, draftKey]);
   // 프롬프트 히스토리 — 터미널처럼 ↑/↓로 이전 지시를 다시 불러온다(원천 = 스레드의 사장 메시지라 기기 간에도 이어진다).
   const histIdx = useRef(-1);   // -1 = 탐색 중 아님
@@ -317,6 +315,7 @@ export default function CrewChat({ params }) {
     const message = input.trim();
     if (!message) return;
     const attachments = att;
+    histIdx.current = -1; // 히스토리로 불러온 지시를 전송했으면 탐색 위치 초기화
     setInput(''); setAtt([]);
     await sendMessage(message, attachments);
   }
