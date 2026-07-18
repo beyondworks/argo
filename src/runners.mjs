@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
-import { paths } from './workspace.mjs';
+import { paths, loadCompany } from './workspace.mjs';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 
 const execP = promisify(execFile);
@@ -198,7 +198,7 @@ const secretsFile = (wsId) => join(paths(wsId).root, '.secrets.json');
 //   codex만 spawn 가능한 login이 있다. claude는 이 CLI에 login 서브커맨드가 없어(구독은 키체인)
 //   oauthPasteable 토큰 붙여넣기로, gemini는 CLI 설치 후 로그인 안내로 대체한다.
 export const RUNNER_AUTH = {
-  claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPasteable: true, webConnect: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', keyUrl: 'https://console.anthropic.com/settings/keys' },
+  claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPrefix: 'sk-ant-oat01-', oauthPasteable: true, webConnect: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', keyUrl: 'https://console.anthropic.com/settings/keys' },
   codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
   gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
@@ -423,6 +423,10 @@ export async function submitRunnerWebAuth(wsId, runner, pasted) {
   const d = await res.json().catch(() => ({}));
   if (runner === 'claude') {
     if (!d.access_token) return { ok: false, reason: 'no-token' };
+    // 교환이 성공해도 러너가 거절하는 형식이면 저장하지 않는다 — 조용한 '연결됨' 뒤 모든 턴이
+    // 401로 죽는 것(실측 2026-07-18)보다 명확한 실패가 낫다. detail은 UI가 그대로 표시한다.
+    const fmtErr = oauthFormatError('claude', d.access_token, (await loadCompany(wsId).catch(() => ({}))).lang ?? 'ko');
+    if (fmtErr) return { ok: false, reason: 'invalid-token', detail: fmtErr };
     await saveRunnerCred(wsId, 'claude', 'oauth', d.access_token);
   } else if (runner === 'codex') {
     if (!d.access_token || !d.refresh_token) return { ok: false, reason: 'no-token' };
@@ -501,12 +505,32 @@ export async function resolveRunner(wsId, want) {
   return { runner: want, fellBack: false, available: false, credButNoCli };
 }
 
+/** claude OAuth 토큰 형식 안내(순수) — 형식이 다른 값(웹 브리지 교환 산출물·setup-token 중간 인증
+    코드 오입력)이 저장을 통과한 뒤 모든 턴이 401로만 드러나던 것을 저장 시점에 잡는다
+    (실측 2026-07-18: 92자 비접두사 값 저장 → 전 턴 "401 Invalid authentication credentials").
+    반환: null(정상) | 사용자 안내 문자열. (export: 회귀 테스트용) */
+export function oauthFormatError(runner, value, lang = 'ko') {
+  const prefix = RUNNER_AUTH[runner]?.oauthPrefix;
+  if (!prefix || String(value ?? '').trim().startsWith(prefix)) return null;
+  return lang === 'en'
+    ? `That value isn't a Claude OAuth token. Run claude setup-token in your terminal and paste the token it prints at the end — it starts with ${prefix}. (The code shown in the browser is an intermediate value you paste into the terminal, not here.)`
+    : `이 값은 Claude OAuth 토큰이 아닙니다. 터미널에서 claude setup-token 을 실행해 마지막에 출력되는 ${prefix} 로 시작하는 토큰을 붙여넣어 주세요. (브라우저에 표시되는 인증 코드는 터미널에 넣는 중간 단계 값이지, 여기 넣는 값이 아닙니다.)`;
+}
+
 /** 자격 인증 확인 — 러너별 저비용 검증. { ok:true|false|null }(null=네트워크 불가, 형식만으로 저장 허용). */
 export async function verifyRunnerCred(runner, type, value) {
   const v = String(value).trim();
   try {
     if (runner === 'claude' && type === 'apikey') {
       const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { 'x-api-key': v, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
+      return { ok: !(r.status === 401 || r.status === 403) };
+    }
+    if (runner === 'claude' && type === 'oauth') {
+      // CLAUDE_CODE_OAUTH_TOKEN 검증 — Bearer + oauth 베타 헤더. 실측(2026-07-18): 무효 토큰에
+      // 401 {"type":"authentication_error","message":"OAuth access token is invalid."} — 엔드포인트가
+      // Bearer OAuth를 명시적으로 검증한다. 유효 토큰의 200 응답은 실토큰 부재로 미실측 —
+      // verify는 '검증 후 저장' 버튼의 opt-in 경로라, 만에 하나 오탐이 있어도 일반 저장은 막지 않는다.
+      const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20' }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'glm') {
