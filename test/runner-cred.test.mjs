@@ -2,8 +2,13 @@
 // 401로만 드러나던 실사용 사고(2026-07-18, 92자 비접두사 값) 재발 방지.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-const { oauthFormatError, RUNNER_AUTH } = await import('../src/runners.mjs');
+// 임시 ARGO_ROOT — WS_ROOT는 모듈 로드 시 고정되므로 import보다 먼저 심는다(실데이터 미접촉)
+process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-credtest-'));
+const { oauthFormatError, RUNNER_AUTH, startRunnerWebAuth, runnerStatus, saveRunnerCred } = await import('../src/runners.mjs');
 
 test('RUNNER_AUTH: claude OAuth 접두사 규격 고정', () => {
   assert.equal(RUNNER_AUTH.claude.oauthPrefix, 'sk-ant-oat01-', 'CLAUDE_CODE_OAUTH_TOKEN 접두사');
@@ -34,4 +39,26 @@ test('oauthFormatError: 올바른 토큰·비대상 러너는 통과(null)', () 
 test('oauthFormatError: sk-ant-(API키)를 OAuth 자리에 넣은 경우도 잡는다', () => {
   // apikey 접두사(sk-ant-)만 있고 oat01이 아니면 OAuth 토큰이 아니다 — 키/토큰 혼동 방어
   assert.ok(oauthFormatError('claude', 'sk-ant-api03-xxxx', 'ko'), 'API 키는 OAuth 자리에서 거절');
+});
+
+test('claude 웹 브리지 철회: webConnect 내림 + 브리지 시작 경로 폐쇄', () => {
+  // 구세대 엔드포인트 교환이 러너가 거절하는 비 oat01 토큰을 저장하던 사고(2026-07-18) — 재개방 방지
+  assert.ok(!RUNNER_AUTH.claude.webConnect, 'claude 웹 브리지는 철회 상태여야 한다');
+  assert.deepEqual(startRunnerWebAuth('claude'), { ok: false, reason: 'unsupported' }, '브리지 시작이 거절된다');
+  assert.equal(startRunnerWebAuth('codex').ok, true, 'codex 브리지는 유지(벤더 공개 OAuth)');
+});
+
+test('runnerStatus: 저장된 무효 형식 oauth 토큰에 invalid 표시(재연결 필요 신호)', async () => {
+  const ws = 'credco';
+  await mkdir(join(process.env.ARGO_ROOT, ws), { recursive: true });
+  await saveRunnerCred(ws, 'claude', 'oauth', 'LHT4-bridge-artifact-not-a-token');
+  let st = await runnerStatus(ws);
+  assert.equal(st.claude.company.connected, true, '연결 표시는 유지(마스킹 값 존재)');
+  assert.equal(st.claude.company.invalid, true, '무효 형식이면 재연결 필요 신호');
+  await saveRunnerCred(ws, 'claude', 'oauth', 'sk-ant-oat01-valid-form');
+  st = await runnerStatus(ws);
+  assert.ok(!st.claude.company.invalid, '정상 형식은 invalid 없음');
+  await saveRunnerCred(ws, 'claude', 'apikey', 'sk-ant-api03-xxxx');
+  st = await runnerStatus(ws);
+  assert.ok(!st.claude.company.invalid, 'apikey 타입은 oauth 형식 검사 비대상');
 });
