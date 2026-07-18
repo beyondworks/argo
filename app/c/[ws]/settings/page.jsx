@@ -558,6 +558,46 @@ function RunnerRow({ ws, id, st, onChange, first }) {
     } catch (e) { setWebOk(false); setWebMsg(String(e.message)); } finally { setWebBusy(false); }
   }
 
+  // Claude 원클릭 연결 — 서버가 공식 setup-token을 PTY로 대행(브라우저 승인만 하면 자동 저장).
+  // 수동 붙여넣기 경로는 그대로 유지(이 버튼이 실패하는 환경의 폴백 — 회귀 없음).
+  const [setupBusy, setSetupBusy] = useState(false);
+  const [setupMsg, setSetupMsg] = useState('');
+  const [setupOk, setSetupOk] = useState(false);
+  const setupPollRef = useRef(null);
+  useEffect(() => () => { if (setupPollRef.current) { clearInterval(setupPollRef.current); setupPollRef.current = null; } }, []);
+  async function setupConnect() {
+    if (setupBusy) return;
+    setSetupBusy(true); setSetupOk(false); setSetupMsg(t('settings.runners.setupWaiting'));
+    try {
+      const r = await fetch(`/api/companies/${ws}/keys/connect`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runner: 'claude', setup: true }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        throw new Error(d.reason === 'no-cli' ? t('settings.runners.setupNoCli')
+          : d.reason === 'unsupported-platform' ? t('settings.runners.setupNoWin')
+            : d.reason === 'busy' ? t('settings.runners.setupWaiting')
+              : (d.message || d.reason || 'failed'));
+      }
+      const t0 = Date.now();
+      if (setupPollRef.current) clearInterval(setupPollRef.current);
+      setupPollRef.current = setInterval(async () => {
+        if (!alive.current || Date.now() - t0 > 11 * 60_000) { clearInterval(setupPollRef.current); setupPollRef.current = null; if (alive.current) { setSetupBusy(false); setSetupMsg(t('settings.runners.setupFailedShort')); } return; }
+        try {
+          const s = await (await fetch(`/api/companies/${ws}/keys/connect?runner=claude&setup=1`)).json();
+          if (s.status === 'saved') {
+            clearInterval(setupPollRef.current); setupPollRef.current = null;
+            setSetupBusy(false); setSetupOk(true); setSetupMsg(t('settings.runners.connected'));
+            window.dispatchEvent(new Event('argo:refresh')); onChange();
+          } else if (s.status === 'failed') {
+            clearInterval(setupPollRef.current); setupPollRef.current = null;
+            setSetupBusy(false); setSetupMsg(s.error || t('settings.runners.setupFailedShort'));
+          }
+        } catch { /* 다음 틱 재시도 */ }
+      }, 2000);
+    } catch (e) { setSetupBusy(false); setSetupMsg(String(e.message)); }
+  }
+
   // 연결/제거로 상태가 바뀌면 선택 방식을 회사 연결 방식에 맞춘다
   useEffect(() => { if (company.connected) setMethod(company.type); }, [company.connected, company.type]);
 
@@ -781,6 +821,18 @@ function RunnerRow({ ws, id, st, onChange, first }) {
             </div>
           )}
           {showPaste && (<>
+          {/* Claude 원클릭 — 공식 setup-token 대행. 아래 수동 붙여넣기는 폴백으로 유지 */}
+          {id === 'claude' && method === 'oauth' && (
+            <div style={{ display: 'grid', gap: 6, padding: '10px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="btn btn-primary sm" disabled={setupBusy} onClick={setupConnect}>
+                  {setupBusy ? <Spinner size={12} /> : t('settings.runners.setupConnect')}
+                </button>
+                <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.setupHint')}</span>
+              </div>
+              {setupMsg && <span style={{ fontSize: 12, color: setupOk ? 'var(--ok)' : setupBusy ? 'var(--fg-2)' : 'var(--danger)' }}>{setupMsg}</span>}
+            </div>
+          )}
           <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
             placeholder={method === 'oauth' ? t('settings.runners.tokenPlaceholder') : t('settings.runners.keyPlaceholder')} style={fieldStyle} />
           <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>
