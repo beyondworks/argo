@@ -14,7 +14,10 @@
 #   APPLE_SIGNING_IDENTITY          ("Developer ID Application: 이름 (팀ID)")
 #   APPLE_ID / APPLE_PASSWORD       (Apple 계정 이메일 / 앱 암호 — 공증 업로드용, 본 비밀번호 아님)
 #   APPLE_TEAM_ID                   (10자리 팀 ID)
-#   ※ APPLE_* 6종이 비면 맥 서명 스텝에서 env를 아예 안 내보내 ad-hoc 서명으로 빌드된다(공증 없음 — Gatekeeper 경고).
+#   ※ macOS 서명·공증 흐름: tauri v2 번들러는 codesign에 --timestamp(secure timestamp)를 안 붙여 애플
+#     공증이 거부한다(설정으로 못 고치는 갭). 그래서 tauri는 ad-hoc으로 빌드하게 두고, 빌드 후 전용 스텝에서
+#     이 인증서로 번들 내 전 Mach-O를 --timestamp --options runtime 재서명 → notarytool 공증 → stapler 스테이플한다.
+#   ※ APPLE_* 6종 중 인증서/APPLE_ID가 없으면 그 스텝을 스킵해 ad-hoc(미공증) 빌드로 남는다 — Gatekeeper 경고.
 #   ※ SUPABASE_SERVICE_ROLE_KEY 등 서버 시크릿은 데스크톱 빌드에 넣지 않는다(설치본 유출 방지).
 #
 # 주의(후속):
@@ -60,30 +63,14 @@ jobs:
 
       - run: npm ci
 
-      # 맥 서명·공증 env — 시크릿이 채워져 있을 때만 내보낸다. 비어 있으면 Tauri가 ad-hoc 서명으로
-      # 빌드(공증 없음). 빈 문자열을 그대로 넘기면 tauri 번들러가 빈 인증서 import를 시도하다 죽는다.
-      - name: Export Apple signing env (secrets 있을 때만)
-        if: startsWith(matrix.os, 'macos')
-        shell: bash
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          if [ -n "$APPLE_CERTIFICATE" ]; then
-            for k in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-              printf '%s=%s\n' "$k" "$(printenv "$k")" >> "$GITHUB_ENV"
-            done
-            echo "Apple 서명·공증 env 내보냄"
-          else
-            echo "APPLE_CERTIFICATE 미설정 — ad-hoc 서명으로 빌드(공증 생략)"
-          fi
-
       # 프로젝트 고유 빌드: stage-sidecar(next standalone + node 사이드카) → tauri build.
       # bash 셸로 고정해 npm 스크립트의 &&·cd가 Windows에서도 동일하게 동작하게 한다.
+      #
+      # macOS: Apple 서명·공증 env를 여기서 안 넘긴다 — tauri v2 번들러가 codesign에 --timestamp
+      # (secure timestamp)를 안 붙여 애플 공증이 거부하기 때문(설정으로 못 고침). tauri는 ad-hoc으로
+      # 빌드하게 두고, 아래 "Sign, notarize & staple (macOS)" 스텝에서 우리가 전 Mach-O를 재서명→공증→
+      # 스테이플한다. (어차피 재서명으로 덮이므로 tauri에 인증서를 주는 건 불필요한 이중 서명일 뿐. 또
+      # APPLE_ID/PASSWORD/TEAM_ID 중 일부만 있으면 tauri가 MissingTeamId로 하드 에러 → 아예 안 넘긴다.)
       - name: Build desktop app (stage-sidecar + tauri)
         shell: bash
         env:
@@ -93,6 +80,142 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: npm run app:build
+
+      # ── macOS 전용: 서명·공증·스테이플 (Windows는 if로 스킵, 기존 경로 그대로) ──────────────
+      # 왜 필요한가: tauri v2가 codesign에 --timestamp를 안 붙여(secure timestamp 누락) 애플 공증이
+      #   "not signed with a valid Developer ID / signature does not include a secure timestamp"로 거부한다.
+      # 무엇을 하나(안쪽→바깥쪽 순서가 핵심):
+      #   (1) 재서명용 임시 키체인 생성 후 Developer ID p12 로드 (tauri 임시 키체인은 빌드 후 삭제됨)
+      #   (2) 번들 내 "모든" Mach-O 재서명 — 메인 app, node 사이드카뿐 아니라 resources/server 안의
+      #       @anthropic-ai claude CLI(실행파일), @next swc·sharp 등 *.node 애드온, libvips *.dylib까지.
+      #       하나라도 미서명/미타임스탬프면 공증이 거부하므로 find로 재귀 서명한다.
+      #   (3) notarytool 공증(--wait) 실패 시 log 출력 후 실패, 성공 시 stapler 스테이플·검증
+      #   (4) 스테이플된 .app으로 업데이터 tar.gz(+.sig)·dmg를 재생성·재서명·재공증 → 미공증 원본 폐기
+      # entitlements: node/claude는 arm64에서 V8/JSC JIT을 써서 hardened runtime 아래선 allow-jit 등이
+      #   있어야 실행된다(dylib엔 무해). 없으면 서명은 되지만 실행 시 크래시할 수 있어 함께 부여한다.
+      - name: Sign, notarize & staple (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # 업데이터 .sig 재생성용 — 빌드 때와 동일 키(비밀번호 없음)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          set -euo pipefail
+
+          # 인증서/APPLE_ID 미설정이면 스킵 — ad-hoc(미공증) 빌드 유지 (fork·시크릿 없는 실행 안전장치)
+          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_ID:-}" ]; then
+            echo "Apple 시크릿 미설정 — 서명·공증 스킵(ad-hoc 빌드 유지)"; exit 0
+          fi
+
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          APP="$(ls -d "$BUNDLE_DIR"/macos/*.app | head -1)"
+          echo "APP=$APP"
+
+          # 임시파일·키체인 경로 + 종료 시 정리 트랩(실패해도 시크릿 잔재 제거)
+          KEYCHAIN="$RUNNER_TEMP/argo-signing.keychain-db"
+          P12="$RUNNER_TEMP/cert.p12"
+          ENTITLEMENTS="$RUNNER_TEMP/entitlements.plist"
+          APP_ZIP="$RUNNER_TEMP/notarize-app.zip"
+          DMG_TMP="$RUNNER_TEMP/argo-signed.dmg"
+          cleanup() { security delete-keychain "$KEYCHAIN" 2>/dev/null || true; rm -f "$P12" "$ENTITLEMENTS" "$APP_ZIP" "$DMG_TMP"; }
+          trap cleanup EXIT
+
+          # (1) 재서명용 임시 키체인 — 랜덤 비번은 이 스텝 셸에만 존재(GITHUB_ENV 노출 없음)
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings "$KEYCHAIN"                 # 자동 잠금 해제(타임아웃 없음)
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/["[:space:]]//g')
+          rm -f "$P12"
+
+          # entitlements (node/claude JIT용; dylib에 붙어도 무해)
+          printf '%s\n' \
+            '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0"><dict>' \
+            '<key>com.apple.security.cs.allow-jit</key><true/>' \
+            '<key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>' \
+            '<key>com.apple.security.cs.disable-library-validation</key><true/>' \
+            '</dict></plist>' > "$ENTITLEMENTS"
+
+          # (2) 번들 내 모든 Mach-O 재서명(안쪽 먼저), 그다음 번들 seal(바깥)
+          echo "=== 재서명: nested Mach-O ==="
+          while IFS= read -r f; do
+            if file -b "$f" 2>/dev/null | grep -q 'Mach-O'; then
+              echo "sign: $f"
+              codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
+                --sign "$APPLE_SIGNING_IDENTITY" --keychain "$KEYCHAIN" "$f"
+            fi
+          done < <(find "$APP" -type f)
+
+          echo "=== 재서명: 번들 seal ==="
+          codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
+            --sign "$APPLE_SIGNING_IDENTITY" --keychain "$KEYCHAIN" "$APP"
+
+          # 검증 — secure timestamp + hardened runtime 없으면 실패(미공증본 유출 차단)
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          INFO="$(codesign -dvvv "$APP" 2>&1)"; echo "$INFO"
+          echo "$INFO" | grep -q '^Timestamp='                       || { echo '✗ secure timestamp 없음'; exit 1; }
+          echo "$INFO" | grep -Eq 'flags=0x[0-9a-fA-F]+\([^)]*runtime' || { echo '✗ hardened runtime 없음'; exit 1; }
+          echo "✓ secure timestamp + hardened runtime 확인"
+
+          # (3) .app 공증 + 스테이플
+          echo "=== 공증: .app ==="
+          ditto -c -k --keepParent --sequesterRsrc "$APP" "$APP_ZIP"
+          SUB="$(xcrun notarytool submit "$APP_ZIP" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --output-format json --wait)"
+          echo "$SUB"
+          if [ "$(echo "$SUB" | jq -r '.status')" != "Accepted" ]; then
+            echo "✗ .app 공증 실패 — 로그:"
+            xcrun notarytool log "$(echo "$SUB" | jq -r '.id')" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+            exit 1
+          fi
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          echo "✓ .app 공증·스테이플 완료"
+
+          # (4a) 업데이터 tar.gz(+.sig) 재생성 — 스테이플된 .app으로. Collect 글롭이 그대로 집도록 원래 이름 유지
+          echo "=== 업데이터 아티팩트 재생성 ==="
+          MACOS_DIR="$BUNDLE_DIR/macos"
+          APP_BASENAME="$(basename "$APP")"                          # 예: argo.app
+          rm -f "$MACOS_DIR"/*.app.tar.gz "$MACOS_DIR"/*.app.tar.gz.sig
+          ( cd "$MACOS_DIR" && COPYFILE_DISABLE=1 tar czf "${APP_BASENAME}.tar.gz" "$APP_BASENAME" )
+          npx @tauri-apps/cli@^2 signer sign "$MACOS_DIR/${APP_BASENAME}.tar.gz" </dev/null   # 키·비번은 env에서
+          ls -la "$MACOS_DIR"/*.app.tar.gz*
+
+          # (4b) DMG 재생성 — 스테이플된 .app으로 새로 말아 서명·공증·스테이플. 미공증 원본 dmg는 폐기
+          echo "=== DMG 재생성 ==="
+          DMG_DIR="$BUNDLE_DIR/dmg"
+          ORIG_DMG="$(ls "$DMG_DIR"/*.dmg 2>/dev/null | head -1)"    # 예: argo_0.1.11_aarch64.dmg
+          DMG_STAGE="$(mktemp -d)"
+          cp -R "$APP" "$DMG_STAGE/"
+          ln -s /Applications "$DMG_STAGE/Applications"
+          hdiutil create -volname "Argo" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_TMP"
+          rm -rf "$DMG_STAGE"
+          codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" --keychain "$KEYCHAIN" "$DMG_TMP"
+          echo "=== 공증: dmg ==="
+          SUB="$(xcrun notarytool submit "$DMG_TMP" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --output-format json --wait)"
+          echo "$SUB"
+          if [ "$(echo "$SUB" | jq -r '.status')" != "Accepted" ]; then
+            echo "✗ dmg 공증 실패 — 로그:"
+            xcrun notarytool log "$(echo "$SUB" | jq -r '.id')" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+            exit 1
+          fi
+          xcrun stapler staple "$DMG_TMP"
+          xcrun stapler validate "$DMG_TMP"
+          rm -f "$DMG_DIR"/*.dmg
+          if [ -n "$ORIG_DMG" ]; then cp "$DMG_TMP" "$ORIG_DMG"; else cp "$DMG_TMP" "$DMG_DIR/argo_aarch64.dmg"; fi
+          ls -la "$DMG_DIR"
+          echo "✓ DMG 공증·스테이플 완료 — 재서명·공증·스테이플 전 산출물 준비됨"
 
       - name: Collect installers
         shell: bash
