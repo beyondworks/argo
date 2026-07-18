@@ -3,7 +3,7 @@
 // 전부 실제 관계 엣지다. 3D 포스 시뮬레이션 + 원근 투영 + 잉크 할로, 모달은 드래그 회전·휠 줌.
 import { useEffect, useRef, useState } from 'react';
 import { useLang } from '../../i18n';
-import { useScrollLock } from '../../ui';
+import { Markdown, Spinner, api, timeAgo, tsFromRel, useScrollLock } from '../../ui';
 
 // 캔버스는 CSS 변수를 직접 못 읽으므로 테마 토큰(--ink-rgb/--paper-rgb)을 여기로 동기화한다.
 // rAF 루프가 매 프레임 이 값을 읽어 그리므로, 값만 갈아끼우면 다음 프레임부터 테마가 반영된다.
@@ -197,8 +197,8 @@ function makeRenderer(canvas, graph, sim, opts) {
         ctx.strokeStyle = `rgba(${ACCENT}, 0.6)`; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
       }
 
-      // 라벨 — 회사·크루는 항상, 기억은 호버 시 (미니는 호버 없음)
-      if (!opts.mini && (n.type === 'company' || n.type === 'team' || n.type === 'agent' || hi)) {
+      // 라벨 — 회사·크루는 항상, 기억은 호버 시 (미니는 호버된 노드만 — 픽킹 피드백)
+      if ((!opts.mini || hi) && (n.type === 'company' || n.type === 'team' || n.type === 'agent' || hi)) {
         const t = n.label.length > 24 ? `${n.label.slice(0, 24)}…` : n.label;
         ctx.font = `${hi || n.type === 'company' ? 600 : 400} ${n.type === 'company' ? 11.5 : 10.5}px "IBM Plex Mono", monospace`;
         ctx.textAlign = 'center';
@@ -212,10 +212,12 @@ function makeRenderer(canvas, graph, sim, opts) {
   return { ctx, view, project, draw, fit, getSize: () => ({ W, H }) };
 }
 
-/* ─── 미니 3D 별자리 ─── */
-export function Constellation3D({ company, agents, docs, delegations, height = 200, onOpen }) {
+/* ─── 미니 3D 별자리 — 기억 노드 클릭 = 그 기억 열기, 그 외 = 크게 보기 ─── */
+export function Constellation3D({ company, agents, docs, delegations, height = 200, onOpen, onSelectDoc }) {
   const { t } = useLang();
   const ref = useRef(null);
+  const cbRef = useRef({});
+  cbRef.current = { onOpen, onSelectDoc }; // 최신 콜백 참조 — 시뮬 재초기화 없이 교체
 
   useEffect(() => {
     const canvas = ref.current;
@@ -228,14 +230,39 @@ export function Constellation3D({ company, agents, docs, delegations, height = 2
     const r = makeRenderer(canvas, graph, sim, { mini: true, zoom: 0.92 });
 
     let speed = 0.004, targetSpeed = 0.004, targetTilt = 0.28;
+    let hover = null;
+    let P = []; // 마지막 프레임의 투영 좌표 — 픽킹은 항상 화면에 보이는 그대로
+    const pick = (sx, sy) => {
+      let best = null, bd = 14;
+      P.forEach((q, i) => {
+        const d = Math.hypot(q.x - sx, q.y - sy);
+        if (d < bd) { bd = d; best = i; }
+      });
+      return best;
+    };
     const onMove = (e) => {
       const b = canvas.getBoundingClientRect();
-      targetSpeed = 0.004 + ((e.clientX - b.left) / b.width - 0.5) * 0.014;
-      targetTilt = 0.28 + ((e.clientY - b.top) / b.height - 0.5) * 0.6;
+      const sx = e.clientX - b.left, sy = e.clientY - b.top;
+      targetSpeed = 0.004 + (sx / b.width - 0.5) * 0.014;
+      targetTilt = 0.28 + (sy / b.height - 0.5) * 0.6;
+      if (cbRef.current.onSelectDoc) { // 픽킹 켜짐 — 기억 위에서 포인터 + 라벨
+        hover = pick(sx, sy);
+        const n = hover !== null ? graph.nodes[hover] : null;
+        canvas.style.cursor = n?.rel ? 'pointer' : 'zoom-in';
+        canvas.title = n?.rel ? n.label : t('graph.clickToEnlarge');
+      }
     };
-    const onLeave = () => { targetSpeed = 0.004; targetTilt = 0.28; };
+    const onLeave = () => { targetSpeed = 0.004; targetTilt = 0.28; hover = null; };
+    const onClick = (e) => {
+      const b = canvas.getBoundingClientRect();
+      const i = pick(e.clientX - b.left, e.clientY - b.top);
+      const n = i !== null ? graph.nodes[i] : null;
+      if (n?.rel && cbRef.current.onSelectDoc) cbRef.current.onSelectDoc(n.rel); // 기억 클릭 = 그 기억 열기
+      else cbRef.current.onOpen?.(); // 그 외 = 크게 보기
+    };
     canvas.addEventListener('mousemove', onMove);
     canvas.addEventListener('mouseleave', onLeave);
+    canvas.addEventListener('click', onClick);
 
     let raf;
     const frame = () => {
@@ -243,7 +270,7 @@ export function Constellation3D({ company, agents, docs, delegations, height = 2
       speed += (targetSpeed - speed) * 0.05;
       r.view.rotY += speed;
       r.view.rotX += (targetTilt - r.view.rotX) * 0.05;
-      r.draw(null);
+      P = r.draw(hover);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
@@ -255,33 +282,55 @@ export function Constellation3D({ company, agents, docs, delegations, height = 2
       ro.disconnect();
       canvas.removeEventListener('mousemove', onMove);
       canvas.removeEventListener('mouseleave', onLeave);
+      canvas.removeEventListener('click', onClick);
       window.removeEventListener('argo:theme', syncThemeRgb);
     };
-  }, [company, agents, docs, delegations]);
+  }, [company, agents, docs, delegations, t]);
 
   return (
     <canvas
       ref={ref}
-      onClick={onOpen}
       style={{ width: '100%', height, display: 'block', cursor: 'zoom-in' }}
       title={t('graph.clickToEnlarge')}
     />
   );
 }
 
-/* ─── 전체화면 3D 그래프 — 드래그 회전 · 휠 줌 · 노드 클릭 = 열기 ─── */
-export function GraphModal({ company, agents, docs, delegations, onClose, onSelect }) {
-  const { t } = useLang();
+/* ─── 전체화면 3D 그래프 — 드래그 회전 · 휠 줌 · 기억 클릭 = 우측 패널에서 열람 ─── */
+export function GraphModal({ ws, company, agents, docs, delegations, onClose, onSelect }) {
+  const { t, lang } = useLang();
   useScrollLock();
   const ref = useRef(null);
   const [hoverLabel, setHoverLabel] = useState('');
+  // 우측 패널 — 기억 노드를 클릭하면 그래프를 떠나지 않고 내용을 읽는다
+  const [panelRel, setPanelRel] = useState(null);
+  const [panelContent, setPanelContent] = useState('');
+  const [panelLoading, setPanelLoading] = useState(false);
+  const panelRelRef = useRef(null);
+  panelRelRef.current = panelRel;
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (panelRelRef.current) setPanelRel(null); // 패널이 열려 있으면 패널부터 닫는다
+      else onClose();
+    };
     window.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
   }, [onClose]);
+
+  // 패널 문서 로드 — A→B 빠른 전환 시 느린 A 응답이 B 화면을 덮는 것 차단
+  useEffect(() => {
+    if (!panelRel) { setPanelContent(''); return; }
+    let live = true;
+    setPanelLoading(true);
+    api(`/api/companies/${ws}/vault?rel=${encodeURIComponent(panelRel)}`)
+      .then((d) => { if (live) setPanelContent(d.content); })
+      .catch((e) => { if (live) setPanelContent(t('vault.docUnavailable', { msg: e.message })); })
+      .finally(() => { if (live) setPanelLoading(false); });
+    return () => { live = false; };
+  }, [ws, panelRel]);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -329,7 +378,8 @@ export function GraphModal({ company, agents, docs, delegations, onClose, onSele
         const [sx, sy] = pos(e);
         const i = pick(sx, sy);
         const n = i !== null ? graph.nodes[i] : null;
-        if (n?.rel) onSelect(n.rel);
+        if (n?.rel) setPanelRel(n.rel); // 기억 클릭 = 우측 패널에서 열기
+        else if (i === null) setPanelRel(null); // 빈 공간 클릭 = 패널 닫기
       }
       dragging = false;
     };
@@ -362,7 +412,7 @@ export function GraphModal({ company, agents, docs, delegations, onClose, onSele
       window.removeEventListener('mouseup', up);
       canvas.removeEventListener('wheel', wheel);
     };
-  }, [company, agents, docs, delegations, onSelect]);
+  }, [company, agents, docs, delegations]);
 
   const conv = docs?.filter((d) => d.dir !== 'notes').length ?? 0;
   const notes = docs?.filter((d) => d.dir === 'notes').length ?? 0;
@@ -387,6 +437,32 @@ export function GraphModal({ company, agents, docs, delegations, onClose, onSele
         {hoverLabel && (
           <span className="chip" style={{ position: 'absolute', left: 20, bottom: 18, background: 'var(--card)' }}>{hoverLabel}</span>
         )}
+        {panelRel && (() => {
+          const doc = docs?.find((d) => d.rel === panelRel);
+          return (
+            <div className="card fade-up" style={{
+              position: 'absolute', top: 12, right: 12, bottom: 12, zIndex: 2,
+              width: 'min(430px, calc(100% - 24px))', display: 'flex', flexDirection: 'column',
+              overflow: 'hidden', boxShadow: '0 12px 40px rgba(0,0,0,.28)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 16px 12px', borderBottom: '1px solid var(--border-soft)' }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc?.title ?? panelRel}</div>
+                  <div className="mono" style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {panelRel}{doc ? ` · ${timeAgo(tsFromRel(doc.rel) ?? doc.mtime, lang)}` : ''}
+                  </div>
+                </div>
+                <button className="btn sm" style={{ flex: 'none' }} onClick={() => onSelect(panelRel)}>{t('graph.openInRecords')}</button>
+                <button className="btn sm" style={{ flex: 'none' }} onClick={() => setPanelRel(null)} aria-label={t('graph.closeEsc')}>✕</button>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px' }}>
+                {panelLoading ? <Spinner /> : (
+                  <Markdown text={panelContent} onWikiLink={(name) => setPanelRel(name.endsWith('.md') ? name : `${name}.md`)} />
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
