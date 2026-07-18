@@ -1,7 +1,7 @@
 // 러너 — 크루의 두뇌 엔진. Claude Code(SDK)가 1급 시민이고, Codex/Gemini는 로컬 CLI의
 // OAuth 로그인(구독)을 그대로 빌리는 어댑터, GLM은 Anthropic 호환 엔드포인트로 SDK를 태운다.
 // 원칙: Argo가 새 API 키를 보관하지 않는다 — 이미 인증된 도구의 자격을 쓴다(BYOK/BYOA).
-import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { randomBytes, createHash } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -189,13 +189,26 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
 // ── 회사별 러너 자격(BYOK/BYOA) — 일반 사용자가 호스트 CLI 로그인 없이도 어떤 러너든 굴리게 한다.
 // 회사 루트 .secrets.json의 runners.{id} = { type:'apikey'|'oauth', value } 에 보관.
 // 시크릿이므로 (a) API 응답·로그엔 마스킹만, (b) cryptoOn이면 봉투 암호문으로 동기화됨(secretbox).
-/** 계정 스코프 센티널 — 회사 생성 전(온보딩)에 연결한 러너 자격의 저장 대상.
-    WS_ROOT 닷파일(.account-secrets.json)에 산다(.sync-credentials.json과 같은 계층 — 워크스페이스 동기화 제외, 기기 로컬).
-    '@'는 paths()의 wsId 검증(WS_ID_RE)을 통과하지 않는 문자라 일반 워크스페이스와 충돌하지 않는다. */
-export const ACCOUNT_SCOPE = '@account';
-const secretsFile = (wsId) => (wsId === ACCOUNT_SCOPE
-  ? join(WS_ROOT, '.account-secrets.json')
-  : join(paths(wsId).root, '.secrets.json'));
+/** 계정 스코프 — 회사 생성 전(온보딩)에 연결한 러너 자격의 저장 대상. **사용자별로 격리**한다.
+    파일: WS_ROOT/.account-secrets-{uid}.json (uid = 인증 사용자 id, 로컬 무인증 모드는 'local').
+    .sync-credentials.json과 같은 계층 — 워크스페이스 동기화 제외, 기기 로컬.
+    격리 불변식: 회사 자격(회사 .secrets.json)은 guardCompany의 ownerId로 교차접근이 막히지만
+    계정 자격은 회사 이전 스코프라 그 가드가 없다. 그래서 파일 자체를 uid로 나눠, 공유 WS_ROOT +
+    다중 쿠키 사용자 배포(AUTH_ON·非TENANT·기기세션 없음)에서도 A의 자격이 B에게 시드되지 않게 한다.
+    '@'는 paths()의 wsId 검증(WS_ID_RE)을 통과하지 않아 일반 워크스페이스와 충돌하지 않는다. */
+const ACCOUNT_PREFIX = '@account:';
+/** uid를 파일명 안전 형태로 — supabase user.id(UUID)·'local'만 허용, 이상값은 'local'로 격리(경로 탈출 차단). */
+const safeUid = (uid) => (/^[a-z0-9-]{1,64}$/.test(String(uid ?? '').toLowerCase()) ? String(uid).toLowerCase() : 'local');
+/** 계정 스코프 토큰 — 라우트가 currentUser().id(또는 로컬 'local')로 만들어 저장/조회 함수에 wsId 자리로 넘긴다. */
+export const accountScope = (uid) => `${ACCOUNT_PREFIX}${safeUid(uid)}`;
+const isAccountScope = (wsId) => typeof wsId === 'string' && wsId.startsWith(ACCOUNT_PREFIX);
+const secretsFile = (wsId) => {
+  if (isAccountScope(wsId)) {
+    const uid = safeUid(wsId.slice(ACCOUNT_PREFIX.length)); // accountScope를 안 거친 직접 호출도 재검증
+    return join(WS_ROOT, `.account-secrets-${uid}.json`);
+  }
+  return join(paths(wsId).root, '.secrets.json');
+};
 
 // 러너별 지원 인증 방식. apikey=붙여넣기(4러너 공통), oauth=붙여넣기 토큰(claude) 또는 호스트 로그인(codex/gemini).
 // glm은 Anthropic 호환 토큰(사실상 apikey)만.
@@ -213,7 +226,20 @@ export const RUNNER_AUTH = {
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
 };
 
+// 레거시 계정 파일(사용자 스코프 도입 전 무스코프 .account-secrets.json) → local 스코프로 1회 이관.
+// accountScope('local') 로드 때만 트리거되므로 로컬 무인증 모드에서만 실행된다(인증 모드의 무스코프
+// 파일은 소유자 불명이라 건드리지 않는다 — 그 경우 재연결 유도). 프로세스당 1회.
+let legacyAccountMigrated = false;
+async function migrateLegacyAccountFile() {
+  if (legacyAccountMigrated) return;
+  legacyAccountMigrated = true;
+  const legacy = join(WS_ROOT, '.account-secrets.json');
+  const scoped = join(WS_ROOT, '.account-secrets-local.json');
+  if ((await exists(legacy)) && !(await exists(scoped))) await rename(legacy, scoped).catch(() => {});
+}
+
 async function loadSecrets(wsId) {
+  if (wsId === accountScope('local')) await migrateLegacyAccountFile();
   // 자격(키·토큰)은 유실이 치명적 — 손상 시 조용히 호스트 계정으로 폴백(오과금)하지 않고
   // readJson이 .corrupt 백업 후 throw(1회 명시 실패 → 다음 로드는 빈 상태로 자가치유, UI엔 미연결로 노출)
   const s = await readJson(secretsFile(wsId), {});
@@ -238,9 +264,12 @@ export async function saveRunnerCred(wsId, runner, type, value) {
   const { claude, ...rest } = s; // 레거시 평문 필드 제거
   rest.runners = { ...rest.runners, [runner]: { type: type === 'oauth' ? 'oauth' : 'apikey', value: String(value).trim() } };
   await writeJsonAtomic(secretsFile(wsId), rest);
-  // 격리 홈 리셋 — 재연결 시 이전 토큰 파일이 새 자격을 가리지 않게(runnerCredEnv가 재생성)
-  if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
-  if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+  // 격리 홈 리셋 — 재연결 시 이전 토큰 파일이 새 자격을 가리지 않게(runnerCredEnv가 재생성).
+  // 계정 스코프엔 실행 홈이 없다(온보딩 저장용 — 실행은 회사 wsId로) — 스킵.
+  if (!isAccountScope(wsId)) {
+    if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+    if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /** 러너 자격 제거 — 다른 러너는 유지. */
@@ -251,10 +280,11 @@ export async function clearRunnerCred(wsId, runner) {
   await writeJsonAtomic(secretsFile(wsId), rest);
 }
 
-/** 온보딩 시드 — 회사 생성 전 계정 스코프(@account)에 연결한 자격을 새 회사로 복사한다.
-    계정 자격은 남겨 다음 회사도 시드받는다(온보딩 1회 = 전 회사 혜택). 회사에 이미 있는 러너는 덮지 않는다. */
-export async function seedRunnerCreds(wsId) {
-  const acct = await loadSecrets(ACCOUNT_SCOPE).catch(() => ({ runners: {} }));
+/** 온보딩 시드 — 회사 생성 전 그 사용자의 계정 스코프에 연결한 자격을 새 회사로 복사한다.
+    uid = 회사를 만든 사용자(로컬 모드 'local'). 계정 자격은 남겨 다음 회사도 시드받는다(온보딩 1회 = 전 회사 혜택).
+    회사에 이미 있는 러너는 덮지 않는다. */
+export async function seedRunnerCreds(wsId, uid) {
+  const acct = await loadSecrets(accountScope(uid)).catch(() => ({ runners: {} }));
   let seeded = 0;
   for (const [id, c] of Object.entries(acct.runners ?? {})) {
     if (!RUNNER_AUTH[id] || typeof c?.value !== 'string' || !c.value.trim()) continue;
