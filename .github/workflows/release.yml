@@ -127,6 +127,28 @@ jobs:
           cleanup() { security delete-keychain "$KEYCHAIN" 2>/dev/null || true; rm -f "$P12" "$ENTITLEMENTS" "$APP_ZIP" "$DMG_TMP"; }
           trap cleanup EXIT
 
+          # 공증 헬퍼 — notarytool은 애플 서버 큐라 응답이 늦을 수 있다. --timeout으로 무한 hang을 막고
+          # (실측: --wait에 타임아웃 없으면 큐 지연 시 2시간+ 매달림), 큐 지연·일시 장애는 재시도한다.
+          # 단 Invalid/Rejected(내용 문제)는 즉시 실패 — 재시도해도 같은 결과라 로그만 남기고 끝낸다.
+          notarize() {
+            local f="$1" attempt sub status id
+            for attempt in 1 2 3; do
+              echo "=== 공증 시도 $attempt/3: $(basename "$f") ==="
+              sub="$(xcrun notarytool submit "$f" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --output-format json --wait --timeout 30m || true)"
+              echo "$sub"
+              status="$(printf '%s' "$sub" | jq -r '.status // "unknown"' 2>/dev/null || echo unknown)"
+              id="$(printf '%s' "$sub" | jq -r '.id // empty' 2>/dev/null || true)"
+              if [ "$status" = "Accepted" ]; then return 0; fi
+              if [ "$status" = "Invalid" ] || [ "$status" = "Rejected" ]; then
+                echo "✗ 공증 거부(status=$status) — 로그:"
+                [ -n "$id" ] && xcrun notarytool log "$id" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+                return 1
+              fi
+              echo "⚠ 공증 미완(status=$status — 타임아웃/큐 지연) — 60초 후 재시도"; sleep 60
+            done
+            echo "✗ 공증 3회 모두 미완(애플 큐 지연/장애 지속)"; return 1
+          }
+
           # (1) 재서명용 임시 키체인 — 랜덤 비번은 이 스텝 셸에만 존재(GITHUB_ENV 노출 없음)
           KEYCHAIN_PW="$(openssl rand -base64 24)"
           printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$P12"
@@ -174,13 +196,7 @@ jobs:
           # (3) .app 공증 + 스테이플
           echo "=== 공증: .app ==="
           ditto -c -k --keepParent --sequesterRsrc "$APP" "$APP_ZIP"
-          SUB="$(xcrun notarytool submit "$APP_ZIP" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --output-format json --wait)"
-          echo "$SUB"
-          if [ "$(echo "$SUB" | jq -r '.status')" != "Accepted" ]; then
-            echo "✗ .app 공증 실패 — 로그:"
-            xcrun notarytool log "$(echo "$SUB" | jq -r '.id')" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
-            exit 1
-          fi
+          notarize "$APP_ZIP" || exit 1
           xcrun stapler staple "$APP"
           xcrun stapler validate "$APP"
           echo "✓ .app 공증·스테이플 완료"
@@ -205,13 +221,7 @@ jobs:
           rm -rf "$DMG_STAGE"
           codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" --keychain "$KEYCHAIN" "$DMG_TMP"
           echo "=== 공증: dmg ==="
-          SUB="$(xcrun notarytool submit "$DMG_TMP" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --output-format json --wait)"
-          echo "$SUB"
-          if [ "$(echo "$SUB" | jq -r '.status')" != "Accepted" ]; then
-            echo "✗ dmg 공증 실패 — 로그:"
-            xcrun notarytool log "$(echo "$SUB" | jq -r '.id')" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
-            exit 1
-          fi
+          notarize "$DMG_TMP" || exit 1
           xcrun stapler staple "$DMG_TMP"
           xcrun stapler validate "$DMG_TMP"
           rm -f "$DMG_DIR"/*.dmg
