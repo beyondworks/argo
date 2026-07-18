@@ -1,6 +1,7 @@
 import { createCompany } from '../../../src/workspace.mjs';
 import { listCompanies } from '../../../src/hub.mjs';
 import { applyPreset, PRESETS, presetFor } from '../../../src/presets.mjs';
+import { seedRunnerCreds } from '../../../src/runners.mjs';
 import { AUTH_ON, currentUser, tenantDenied } from '../../auth.mjs';
 
 export async function GET(req) {
@@ -33,6 +34,9 @@ export async function POST(req) {
     const wsId = `${base || 'co'}-${Date.now().toString(36).slice(-4)}`;
     // lang = 클라이언트 UI 언어(argo-lang)를 시드로 — 신규 회사의 시스템 언어. createCompany가 ko/en으로 정규화.
     const company = await createCompany(wsId, name.trim(), owner?.trim() || 'captain', AUTH_ON ? user.id : null, lang);
+    // 온보딩(@account)에서 연결한 러너 자격을 새 회사로 시드 — "로그인 → 러너 연결 → 회사 만들기" 순서의 접합점.
+    // 시드 실패가 회사 생성 자체를 막지 않는다(자격은 설정에서 언제든 다시 연결 가능).
+    await seedRunnerCreds(wsId).catch(() => {});
     // company.lang = createCompany가 정규화한 시스템 언어('ko'|'en') — 프리셋 카드·루틴이 이 언어를 따른다.
     if (preset) await applyPreset(wsId, preset, company.lang); // 즉시 — 정적 카드라 기다림 없음
     // 아하 모먼트 동선 — 프리셋 회사는 첫 크루 채팅으로 직행시켜 시운전이 눈앞에서 도착하게(en은 en 슬러그로)

@@ -1,16 +1,25 @@
 'use client';
 // 설정 — 회사 정보 수정, 제원, 위험 구역(보관).
-import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
+import { AiConnectionCard, fieldStyle } from '../../../runner-connect';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
 const LS_YEARLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_YEARLY || '';
 
-export default function Settings({ params }) {
+export default function SettingsPage({ params }) {
+  return (
+    <Suspense>
+      <Settings params={params} />
+    </Suspense>
+  );
+}
+
+function Settings({ params }) {
   const { ws } = use(params);
   const { t, lang } = useLang();
   const router = useRouter();
@@ -19,6 +28,13 @@ export default function Settings({ params }) {
   const [budget, setBudget] = useState(''); // 화면 표시값 — ko는 원화, en은 달러
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  // 딥링크 ?ai=1 — 데크/홈의 "연결하기"가 러너 연결 섹션으로 바로 데려온다(vault ?doc= 패턴)
+  const aiRef = useRef(null);
+  const wantAi = useSearchParams().get('ai');
+  useEffect(() => {
+    if (!wantAi) return;
+    requestAnimationFrame(() => aiRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  }, [wantAi, data]);
 
   useEffect(() => {
     api(`/api/companies/${ws}`).then((d) => {
@@ -131,9 +147,11 @@ export default function Settings({ params }) {
       <TrashCard ws={ws} />
       </Section>
 
-      <Section label={t('settings.ai.section')}>
-        <AiConnectionCard ws={ws} />
-      </Section>
+      <div ref={aiRef} style={{ scrollMarginTop: 84 }}>
+        <Section label={t('settings.ai.section')}>
+          <AiConnectionCard ws={ws} />
+        </Section>
+      </div>
 
       <Section label={t('settings.devices.section')}>
         <DevicesCard ws={ws} />
@@ -481,392 +499,6 @@ function CapabilitiesCard({ ws }) {
   );
 }
 
-/** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
-    러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
-    (c) 방식별 입력·저장·검증·제거 또는 CLI 로그인 안내. 응답엔 마스킹만 실린다(보안 규칙). */
-const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', glm: 'GLM' };
-const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'glm'];
-
-function AiConnectionCard({ ws }) {
-  const { t } = useLang();
-  const [runners, setRunners] = useState(null); // { [id]: status } | null(로딩)
-
-  function load() {
-    api(`/api/companies/${ws}/keys`).then((d) => setRunners(d.runners ?? {})).catch(() => setRunners({}));
-  }
-  useEffect(load, [ws]);
-
-  return (
-    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <span className="card-title">{t('settings.runners.title')}</span>
-      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 6px', lineHeight: 1.6 }}>{t('settings.runners.help')}</p>
-      {!runners ? <Skeleton h={180} /> : RUNNER_ORDER.map((id, i) => (
-        <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={i === 0} />
-      ))}
-    </div>
-  );
-}
-
-/** 러너 1행 — 상태 칩 + 방식 탭 + (API키/붙여넣기 토큰 입력) 또는 (CLI 로그인 안내). */
-function RunnerRow({ ws, id, st, onChange, first }) {
-  const { t, fmtMoney } = useLang();
-  const methods = st?.methods ?? ['apikey'];
-  const hasOauth = methods.includes('oauth');
-  const oauthPaste = !!st?.oauthPasteable;
-  const connectable = !!st?.connectable;
-  const company = st?.company ?? { connected: false };
-  const [method, setMethod] = useState(company.connected ? company.type : 'apikey');
-  const [value, setValue] = useState('');
-  const [busy, setBusy] = useState('');
-  const [msg, setMsg] = useState('');
-  const [ok, setOk] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState(false); // 러너 연결 제거 확인(전 기기·전 크루 영향)
-  const [polling, setPolling] = useState(false);
-  const pollRef = useRef(null);   // setInterval 핸들
-  const pollN = useRef(0);        // 폴링 횟수 (최대 60 = 약 2분)
-  const alive = useRef(true);     // 언마운트 후 stale setState 차단
-
-  // Claude 웹 브리지 — 버튼 → 로그인 URL 표시 → 승인 코드 제출 → 회사 자격 저장(전 기기 동기화)
-  const [webUrl, setWebUrl] = useState('');
-  const [webCode, setWebCode] = useState('');
-  const [webBusy, setWebBusy] = useState(false);
-  const [webMsg, setWebMsg] = useState('');
-  const [webOk, setWebOk] = useState(false);
-  async function webStart() {
-    setWebBusy(true); setWebMsg(''); setWebOk(false);
-    try {
-      const r = await fetch(`/api/companies/${ws}/keys/connect`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runner: id }),
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.ok) throw new Error(d.reason === 'no-cli' ? t('settings.runners.webNoCli') : (d.detail || d.reason || 'failed'));
-      setWebUrl(d.url); setWebOk(true); setWebMsg(t('settings.runners.webUrlReady'));
-    } catch (e) { setWebMsg(String(e.message)); } finally { setWebBusy(false); }
-  }
-  async function webSubmit() {
-    setWebBusy(true); setWebMsg('');
-    try {
-      const r = await fetch(`/api/companies/${ws}/keys/connect`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runner: id, code: webCode.trim() }),
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.ok) throw new Error(d.detail || d.reason || 'failed');
-      setWebOk(true); setWebMsg(t('settings.runners.connected'));
-      setWebUrl(''); setWebCode('');
-      window.dispatchEvent(new Event('argo:refresh'));
-      onChange();
-    } catch (e) { setWebOk(false); setWebMsg(String(e.message)); } finally { setWebBusy(false); }
-  }
-
-  // Claude 원클릭 연결 — 서버가 공식 setup-token을 PTY로 대행(브라우저 승인만 하면 자동 저장).
-  // 수동 붙여넣기 경로는 그대로 유지(이 버튼이 실패하는 환경의 폴백 — 회귀 없음).
-  const [setupBusy, setSetupBusy] = useState(false);
-  const [setupMsg, setSetupMsg] = useState('');
-  const [setupOk, setSetupOk] = useState(false);
-  const setupPollRef = useRef(null);
-  useEffect(() => () => { if (setupPollRef.current) { clearInterval(setupPollRef.current); setupPollRef.current = null; } }, []);
-  async function setupConnect() {
-    if (setupBusy) return;
-    setSetupBusy(true); setSetupOk(false); setSetupMsg(t('settings.runners.setupWaiting'));
-    try {
-      const r = await fetch(`/api/companies/${ws}/keys/connect`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runner: 'claude', setup: true }),
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.ok) {
-        throw new Error(d.reason === 'no-cli' ? t('settings.runners.setupNoCli')
-          : d.reason === 'unsupported-platform' ? t('settings.runners.setupNoWin')
-            : d.reason === 'busy' ? t('settings.runners.setupWaiting')
-              : (d.message || d.reason || 'failed'));
-      }
-      const t0 = Date.now();
-      if (setupPollRef.current) clearInterval(setupPollRef.current);
-      setupPollRef.current = setInterval(async () => {
-        if (!alive.current || Date.now() - t0 > 11 * 60_000) { clearInterval(setupPollRef.current); setupPollRef.current = null; if (alive.current) { setSetupBusy(false); setSetupMsg(t('settings.runners.setupFailedShort')); } return; }
-        try {
-          const s = await (await fetch(`/api/companies/${ws}/keys/connect?runner=claude&setup=1`)).json();
-          if (s.status === 'saved') {
-            clearInterval(setupPollRef.current); setupPollRef.current = null;
-            setSetupBusy(false); setSetupOk(true); setSetupMsg(t('settings.runners.connected'));
-            window.dispatchEvent(new Event('argo:refresh')); onChange();
-          } else if (s.status === 'failed') {
-            clearInterval(setupPollRef.current); setupPollRef.current = null;
-            setSetupBusy(false); setSetupMsg(s.error || t('settings.runners.setupFailedShort'));
-          }
-        } catch { /* 다음 틱 재시도 */ }
-      }, 2000);
-    } catch (e) { setSetupBusy(false); setSetupMsg(String(e.message)); }
-  }
-
-  // 연결/제거로 상태가 바뀌면 선택 방식을 회사 연결 방식에 맞춘다
-  useEffect(() => { if (company.connected) setMethod(company.type); }, [company.connected, company.type]);
-
-  // 언마운트 시 폴링 정리 — stale 폴링/setState 누수 방지
-  useEffect(() => {
-    alive.current = true;
-    return () => { alive.current = false; if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
-  }, []);
-
-  function stopPoll() {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    if (alive.current) setPolling(false);
-  }
-
-  function startPoll() {
-    pollN.current = 0;
-    setPolling(true);
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      pollN.current += 1;
-      if (pollN.current > 60) { stopPoll(); return; }
-      try {
-        const res = await fetch(`/api/companies/${ws}/keys/connect?runner=${encodeURIComponent(id)}`);
-        const d = await res.json();
-        if (!alive.current) return;
-        if (d.authed) {
-          stopPoll();
-          setOk(true); setMsg(t('settings.runners.connected'));
-          window.dispatchEvent(new Event('argo:refresh'));
-          onChange();
-        }
-      } catch { /* 폴링 실패는 조용히 재시도 */ }
-    }, 2000);
-  }
-
-  async function connect() {
-    if (busy || polling) return;
-    setBusy('connect'); setMsg(''); setOk(false);
-    try {
-      const res = await fetch(`/api/companies/${ws}/keys/connect`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ runner: id }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok || !d.ok) {
-        setOk(false);
-        setMsg(d.reason === 'not-installed'
-          ? t('settings.runners.connectNotInstalled', { runner: id })
-          : t('settings.runners.connectFailed'));
-        return;
-      }
-      setOk(true); setMsg(t('settings.runners.connectOpened'));
-      startPoll();
-    } catch {
-      setOk(false); setMsg(t('settings.runners.connectFailed'));
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function save(verify) {
-    if (busy || !value.trim()) return;
-    setBusy(verify ? 'verify' : 'save'); setMsg(''); setOk(false);
-    try {
-      const res = await fetch(`/api/companies/${ws}/keys`, {
-        method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ runner: id, type: method, value: value.trim(), verify }),
-      });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.error);
-      setValue(''); setOk(true); setMsg(verify ? t('settings.runners.verified') : t('settings.runners.saved'));
-      window.dispatchEvent(new Event('argo:refresh'));
-      onChange();
-    } catch (e) {
-      setMsg(String(e.message));
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function remove() {
-    if (busy) return;
-    setBusy('remove'); setMsg(''); setOk(false);
-    try {
-      await fetch(`/api/companies/${ws}/keys?runner=${encodeURIComponent(id)}`, { method: 'DELETE' });
-      window.dispatchEvent(new Event('argo:refresh'));
-      onChange();
-    } finally {
-      setBusy('');
-    }
-  }
-
-  const chip = company.connected ? (
-    company.invalid ? (
-      // 무효 형식 토큰(철회된 웹 브리지 산출물 등) — 연결된 척하지 않고 재연결을 요구한다
-      <span className="chip" style={{ color: 'var(--danger)', borderColor: 'currentColor' }}>
-        <span className="dot" />{t('settings.runners.companyInvalid')} · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span>
-      </span>
-    ) : (
-      <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
-        <span className="dot" />{t('settings.runners.companyConnected')} · {t(`settings.runners.method.${company.type}`)} · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span>
-      </span>
-    )
-  ) : st?.hostAuthed ? (
-    <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
-      <span className="dot" />{t('settings.runners.hostConnected')}
-    </span>
-  ) : (
-    <span className="chip">{t('settings.runners.none')}</span>
-  );
-
-  // 웹 브리지(claude·codex·gemini)는 붙여넣기 분기에서 처리 — CLI 대행 분기는 webConnect 없는 러너만
-  const oauthCli = method === 'oauth' && !oauthPaste && !st?.webConnect;
-  // 웹 브리지 러너 중 claude만 토큰 수동 붙여넣기 폴백을 노출(codex/gemini 토큰은 JSON이라 비실용)
-  const showPaste = !(method === 'oauth' && st?.webConnect && id !== 'claude');
-  const urlPaste = id !== 'claude'; // codex/gemini — 승인 후 리다이렉트된 주소 전체를 붙여넣는 방식
-  const removeBtn = company.connected && (
-    <div>
-      {/* 파괴적(전 기기·전 크루 영향) — 확인 없이 즉시 실행하지 않는다(프로젝트 삭제류 액션 규칙). */}
-      <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={() => setConfirmRemove(true)}>
-        {busy === 'remove' ? <Spinner size={12} /> : t('settings.runners.remove')}
-      </button>
-      {confirmRemove && (
-        <ConfirmModal
-          title={t('settings.runners.removeConfirmTitle', { runner: RUNNER_NAMES[id] })}
-          description={t('settings.runners.removeConfirm')}
-          confirmLabel={t('settings.runners.remove')}
-          tone="danger"
-          onConfirm={() => { setConfirmRemove(false); remove(); }}
-          onClose={() => setConfirmRemove(false)}
-        />
-      )}
-    </div>
-  );
-  return (
-    <div style={{ display: 'grid', gap: 8, padding: '12px 0', ...(first ? {} : { borderTop: '1px dashed var(--border-soft)' }) }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 13.5, fontWeight: 650 }}>{RUNNER_NAMES[id]}</span>
-        {chip}
-        {st?.month?.turns > 0 && (
-          <span className="chip mono" title={t('settings.runners.monthTitle')} style={{ fontSize: 10.5 }}>
-            {t('settings.runners.month', { n: st.month.turns })}{st.month.hasCost ? ` · ${fmtMoney(st.month.costUsd)}` : ''}
-          </span>
-        )}
-      </div>
-      {hasOauth && (
-        <div style={{ display: 'flex', gap: 6 }}>
-          {methods.map((m) => (
-            <button key={m} className="chip" onClick={() => { setMethod(m); setMsg(''); }} aria-pressed={method === m}
-              style={{ cursor: 'pointer', padding: '4px 12px', fontSize: 12, ...(method === m ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}) }}>
-              {t(`settings.runners.method.${m}`)}
-            </button>
-          ))}
-        </div>
-      )}
-      {oauthCli ? (
-        connectable ? (
-          /* codex — 벤더 CLI 브라우저 로그인 대행 (Connect 버튼 + 폴링) */
-          <div style={{ display: 'grid', gap: 8 }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button className="btn btn-primary sm" disabled={!!busy || polling} onClick={connect}>
-                {busy === 'connect' || polling ? <Spinner size={12} /> : t('settings.runners.connect')}
-              </button>
-              {st?.hostAuthed && (
-                <span className="chip"><span className="dot" />{t('settings.runners.hostInUse')}</span>
-              )}
-              {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
-            </div>
-            {removeBtn}
-          </div>
-        ) : (
-          /* gemini 등 — 설치·로그인은 이 컴퓨터에서 (입력창 없음) */
-          <div style={{ display: 'grid', gap: 8 }}>
-            <div style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.6 }}>
-              {st?.hostInstalled
-                ? t('settings.runners.hostLoginUsed', { runner: id })
-                : t('settings.runners.hostInstall', { runner: id })}
-              {st?.hostInstalled && (
-                <span style={{ marginLeft: 8, color: st?.hostAuthed ? 'var(--ok)' : 'var(--warn)' }}>
-                  {st?.hostAuthed ? t('settings.runners.hostAuthed') : t('settings.runners.hostNotAuthed')}
-                </span>
-              )}
-            </div>
-            {removeBtn}
-          </div>
-        )
-      ) : (
-        <>
-          {/* Claude OAuth 웹 브리지 — "버튼 클릭 = 로그인 페이지". 워커·로컬 공통, 붙여넣기는 아래 폴백 */}
-          {method === 'oauth' && st?.webConnect && (
-            <div style={{ display: 'grid', gap: 8, padding: '10px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border-soft)' }}>
-              {!webUrl ? (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button className="btn btn-primary sm" disabled={webBusy} onClick={webStart}>
-                    {webBusy ? <Spinner size={12} /> : t('settings.runners.webConnect')}
-                  </button>
-                  <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t(urlPaste ? 'settings.runners.webConnectHintUrl' : 'settings.runners.webConnectHint')}</span>
-                </div>
-              ) : (
-                <>
-                  <a className="btn btn-primary sm" href={webUrl} target="_blank" rel="noreferrer" style={{ justifySelf: 'start' }}>
-                    {t('settings.runners.openLogin')} ↗
-                  </a>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <input suppressHydrationWarning value={webCode} onChange={(e) => setWebCode(e.target.value)}
-                      placeholder={t(urlPaste ? 'settings.runners.codePhUrl' : 'settings.runners.codePh')} style={{ ...fieldStyle, flex: 1 }} />
-                    <button className="btn btn-primary sm" disabled={webBusy || !webCode.trim()} onClick={webSubmit} style={{ flex: 'none' }}>
-                      {webBusy ? <Spinner size={12} /> : t('settings.runners.codeSubmit')}
-                    </button>
-                  </div>
-                </>
-              )}
-              {webMsg && <span style={{ fontSize: 12, color: webOk ? 'var(--fg-2)' : 'var(--danger)' }}>{webMsg}</span>}
-            </div>
-          )}
-          {/* codex/gemini 웹 브리지 — 붙여넣기 대신 호스트 상태·제거만 노출 */}
-          {!showPaste && (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              {st?.hostAuthed && <span className="chip"><span className="dot" />{t('settings.runners.hostInUse')}</span>}
-              {removeBtn}
-            </div>
-          )}
-          {showPaste && (<>
-          {/* Claude 원클릭 — 공식 setup-token 대행. 아래 수동 붙여넣기는 폴백으로 유지 */}
-          {id === 'claude' && method === 'oauth' && (
-            <div style={{ display: 'grid', gap: 6, padding: '10px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <button className="btn btn-primary sm" disabled={setupBusy} onClick={setupConnect}>
-                  {setupBusy ? <Spinner size={12} /> : t('settings.runners.setupConnect')}
-                </button>
-                <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.setupHint')}</span>
-              </div>
-              {setupMsg && <span style={{ fontSize: 12, color: setupOk ? 'var(--ok)' : setupBusy ? 'var(--fg-2)' : 'var(--danger)' }}>{setupMsg}</span>}
-            </div>
-          )}
-          <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
-            placeholder={method === 'oauth' ? t('settings.runners.tokenPlaceholder') : t('settings.runners.keyPlaceholder')} style={fieldStyle} />
-          <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>
-            {method === 'oauth' ? (
-              t('settings.runners.oauthGuide')
-            ) : (
-              <>
-                {t('settings.runners.keyGuide')}{' '}
-                {st?.keyUrl && (
-                  <a href={st.keyUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--fg)', textDecoration: 'underline' }}>{t('settings.runners.keyLink')}</a>
-                )}
-              </>
-            )}
-          </p>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button className="btn btn-primary sm" disabled={!!busy || !value.trim()} onClick={() => save(true)}>
-              {busy === 'verify' ? <Spinner size={12} /> : t('settings.runners.saveVerify')}
-            </button>
-            <button className="btn sm" disabled={!!busy || !value.trim()} onClick={() => save(false)}>
-              {busy === 'save' ? <Spinner size={12} /> : t('settings.runners.saveOnly')}
-            </button>
-            {company.connected && (
-              <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={remove}>
-                {busy === 'remove' ? <Spinner size={12} /> : t('settings.runners.remove')}
-              </button>
-            )}
-            {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
-          </div>
-          </>)}
-        </>
-      )}
-    </div>
-  );
-}
 
 /** 설정 섹션 — 대시 룰 헤더 + 2열 등고 그리드(내용이 하나면 전체 폭). */
 function Section({ label, children }) {
@@ -883,7 +515,6 @@ function Section({ label, children }) {
   );
 }
 
-const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, width: '100%' };
 
 /** 메신저 연결 카드 — 토큰은 서버에만 저장(화면은 마스킹), 가동 토글로 게이트웨이 시작/중지. */
 function ConnectionCard({ ws, kind, title, help, agents }) {

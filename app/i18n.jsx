@@ -382,13 +382,25 @@ const DICT = {
   'home.pair.waiting': ['회사 수신 중 — 잠시 후 위 목록에 나타납니다', 'Receiving your companies — they will appear above shortly'],
   'home.pair.done': ['수신 완료', 'Received'],
   'home.pair.loginMode': ['다른 기기의 회사는 같은 계정으로 로그인하면 자동으로 이어집니다.', 'Companies from your other devices continue automatically when you sign in with the same account.'],
+  'home.runnerNotice': ['「{name}」에 AI 러너 연결이 필요합니다 — 크루가 일하지 못하는 상태입니다.', '"{name}" needs an AI runner — crews cannot work until one is connected.'],
+  'home.runnerReconnect': ['「{name}」의 러너 연결이 끊겼습니다 — 다시 연결해 주세요.', '"{name}" lost its runner connection — please reconnect.'],
+
+  // ── 첫 항해 온보딩 (회사 0개 — 로그인 → 러너 연결 → 회사 만들기)
+  'onboard.step1': ['① 로그인 완료', '① Signed in'],
+  'onboard.step1Local': ['① 이 컴퓨터 (로컬 모드)', '① This computer (local mode)'],
+  'onboard.step2': ['② AI 러너 연결', '② Connect an AI runner'],
+  'onboard.step2done': ['② 러너 연결됨', '② Runner connected'],
+  'onboard.step3': ['③ 회사 만들기', '③ Create your company'],
+  'onboard.help': ['크루의 두뇌부터 연결하세요 — 러너 없이 회사를 만들면 크루가 일할 수 없습니다.', 'Connect your crew’s brain first — without a runner, crews cannot work.'],
+  'onboard.skip': ['나중에 연결하고 회사부터 만들기', 'Connect later — create the company first'],
 
   // ── 사이드바 추가
   'nav.uncrewedCount': ['크루 {n}', 'Crew {n}'],
 
   // ── 데크
   'deck.crewControl': ['크루 관제 · {name}', 'Crew Control · {name}'],
-  'deck.aiKey.banner': ['AI 연결이 필요합니다 — 크루가 일하려면 Claude 키를 넣어주세요.', 'AI connection required — add a Claude key so your crews can work.'],
+  'deck.runner.banner': ['AI 러너 연결이 필요합니다 — 크루가 일하려면 러너를 하나 연결해 주세요.', 'An AI runner is required — connect one so your crews can work.'],
+  'deck.runner.reconnect': ['러너 연결이 끊겼습니다 — 다시 연결해 주세요.', 'Runner connection lost — please reconnect.'],
   'deck.aiKey.cta': ['설정에서 연결하기', 'Connect in Settings'],
   'deck.memory': ['기억', 'Memory'],
   'deck.todayPlus': ['오늘 +{n}', 'Today +{n}'],
