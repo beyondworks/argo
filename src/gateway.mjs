@@ -6,6 +6,7 @@ import { loadConnections, updateConnection, updateAgentBot } from './connections
 import { chat } from './chat.mjs';
 import { loadThread, appendTurn, appendSharedNote } from './thread.mjs';
 import { resolveWithFollowUp } from './approval-actions.mjs';
+import { setApprovalMeta } from './approvals.mjs';
 import { onNotify } from './notify.mjs';
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader } from './sync.mjs';
@@ -726,6 +727,21 @@ async function pushEvent(event) {
   const all = await loadConnections(event.wsId);
   const { lang = 'ko' } = await loadCompany(event.wsId).catch(() => ({}));
   const who = event.type === 'approval' ? await approvalWho(event.wsId, event.item, lang) : '';
+  // 결재 처리 완료 — 어느 창구(웹·대화창·텔레그램·슬랙)에서 확정됐든 텔레그램 카드의 버튼을 걷어낸다.
+  // 푸시 때 저장해 둔 tg:{chatId,messageId}가 있어야 어느 메시지를 편집할지 안다(웹 승인 시 버튼 잔존 갭 해소).
+  if (event.type === 'approval_resolved') {
+    const it = event.item;
+    if (it?.tg?.messageId && all.telegram.token) {
+      const label = it.status === 'expired'
+        ? pick('⏳ 만료됨', '⏳ Expired', lang)
+        : pick(it.status === 'approved' ? '✅ 결재 승인' : '❌ 결재 거절', it.status === 'approved' ? '✅ Approved' : '❌ Rejected', lang);
+      await tg(all.telegram.token, 'editMessageText', {
+        chat_id: it.tg.chatId, message_id: it.tg.messageId,
+        text: pick(`${label} — ${it.action}\n담당 크루가 이어서 보고합니다.`, `${label} — ${it.action}\nThe assigned crew will follow up.`, lang),
+      }).catch(() => { /* 이미 편집됐거나(텔레그램 버튼 직접 클릭 경로와 중복) 메시지 없음 — 무해 */ });
+    }
+    return;
+  }
   // 위임 미러 — 그룹 대화 중 A가 B에게 위임하면, B의 봇이 같은 방에 자기 이름으로 결과를 올린다(크루 간 대화 가시화).
   if (event.type === 'delegate') {
     const ctx = event.ctx; // 위임 이벤트에 실려온 발화 위치 — 전역 맵 조회 없이 이 턴의 방으로만
@@ -739,14 +755,18 @@ async function pushEvent(event) {
   const t = all.telegram;
   if (t.enabled && t.token && t.chatId) {
     if (event.type === 'approval') {
-      await tg(t.token, 'sendMessage', {
-        chat_id: t.chatId,
-        text: pick(`결재 요청 · ${who}\n${event.item.action}\n\n사유: ${event.item.reason}`, `Approval request · ${who}\n${event.item.action}\n\nReason: ${event.item.reason}`, lang),
-        reply_markup: { inline_keyboard: [[
-          { text: pick('✅ 승인', '✅ Approve', lang), callback_data: `ap:${event.item.id}:1` },
-          { text: pick('❌ 거절', '❌ Reject', lang), callback_data: `ap:${event.item.id}:0` },
-        ]] },
-      }).catch((e) => console.error('[argo] 텔레그램 결재 푸시 실패:', e.message));
+      try {
+        const res = await tg(t.token, 'sendMessage', {
+          chat_id: t.chatId,
+          text: pick(`결재 요청 · ${who}\n${event.item.action}\n\n사유: ${event.item.reason}`, `Approval request · ${who}\n${event.item.action}\n\nReason: ${event.item.reason}`, lang),
+          reply_markup: { inline_keyboard: [[
+            { text: pick('✅ 승인', '✅ Approve', lang), callback_data: `ap:${event.item.id}:1` },
+            { text: pick('❌ 거절', '❌ Reject', lang), callback_data: `ap:${event.item.id}:0` },
+          ]] },
+        });
+        // 메시지 참조를 결재에 저장 — 나중에 어느 창구에서 승인해도 이 카드의 버튼을 정리할 수 있다
+        if (res?.message_id) await setApprovalMeta(event.wsId, event.item.id, { tg: { chatId: String(t.chatId), messageId: res.message_id } }).catch(() => {});
+      } catch (e) { console.error('[argo] 텔레그램 결재 푸시 실패:', e.message); }
     }
     if (event.type === 'routine') {
       await sendTgReply(t.token, t.chatId, event.wsId, pick(`**[루틴] ${event.routine.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Routine] ${event.routine.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang))

@@ -59,7 +59,23 @@ export async function resolveApproval(wsId, id, approve) {
     return it;
   });
   await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, action: item.action, status: item.status });
+  // 어느 창구(웹·대화창·텔레그램·슬랙)에서 확정됐든 메신저 카드의 버튼을 걷어내게 알린다(결재 UX).
+  // item에 push 때 저장된 tg:{chatId,messageId}가 있으면 게이트웨이가 그 카드를 결과로 편집한다.
+  emitNotify({ type: 'approval_resolved', wsId, item });
   return item;
+}
+
+/** 결재 항목에 메타 필드 병합(락 안) — 푸시 시 메신저 메시지 참조(tg:{chatId,messageId})를 심어
+    나중에 어느 창구에서 승인하든 그 카드의 버튼을 정리할 수 있게 한다. */
+export async function setApprovalMeta(wsId, id, patch) {
+  return withLock(lockKey(wsId), async () => {
+    const list = await loadApprovals(wsId);
+    const it = list.find((a) => a.id === id);
+    if (!it) return null;
+    Object.assign(it, patch);
+    await save(wsId, list);
+    return it;
+  });
 }
 
 /** 만료 — 대기 자리를 떠난 tool 결재를 'expired'로 내린다(승인해도 아무 일 없는 죽은 버튼 제거).
@@ -74,6 +90,9 @@ export async function expireApproval(wsId, id) {
     await save(wsId, list);
     return it;
   });
-  if (item) await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, action: item.action, status: 'expired' });
+  if (item) {
+    await appendEvent(wsId, { type: 'approval', slug: item.slug, id: item.id, action: item.action, status: 'expired' });
+    emitNotify({ type: 'approval_resolved', wsId, item }); // 만료된 죽은 버튼도 메신저에서 정리
+  }
   return item;
 }
