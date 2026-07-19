@@ -701,12 +701,27 @@ export function extractSetupToken(text) {
   return extractSetupTokenCandidates(text)[0] ?? null;
 }
 
-/** setup-token을 실행할 claude CLI 경로 — env 오버라이드 → PATH. 없으면 null(수동 붙여넣기 안내). */
+/** 내장 SDK 네이티브 claude CLI 경로 — 앱/서버가 이미 품고 있는 바이너리(stage-sidecar 3.4가 보장).
+    실측: setup-token 서브커맨드 지원. 터미널 무경험 초보자도 설치 0으로 원클릭(브라우저 승인) 연결이
+    되게 하는 핵심 폴백이다(유건 지시 2026-07-19: 초보자 여정에서 터미널 요구 제거).
+    (export: 회귀 테스트용) */
+export async function bundledClaudeCli() {
+  try {
+    const { createRequire } = await import('node:module');
+    const req = createRequire(import.meta.url);
+    const p = req.resolve(`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude`);
+    if (await exists(p)) return p;
+  } catch { /* 플랫폼 패키지 미포함 — 아래 null */ }
+  return null;
+}
+
+/** setup-token을 실행할 claude CLI 경로 — env 오버라이드 → 호스트 PATH → 내장 SDK CLI 폴백.
+    전부 없으면 null(수동 붙여넣기 안내). */
 async function resolveClaudeCli() {
   if (process.env.CLAUDE_CLI?.trim()) return process.env.CLAUDE_CLI.trim();
   await ensureCliPath(); // GUI 기동 PATH 보강 — which가 로그인 셸 PATH를 본다
   try { const r = await exec('which', ['claude']); const p = r.stdout.trim(); if (p) return p; } catch { /* 미설치 */ }
-  return null;
+  return bundledClaudeCli();
 }
 
 const setupState = (globalThis.__argoSetupToken ??= {}); // wsId → { status: running|saved|failed, error, ts }
@@ -764,11 +779,16 @@ export async function startClaudeSetupToken(wsId) {
     (async () => {
       let chosen = null;
       let sawInvalid = false;
+      let sawOffline = false;
       for (const t of candidates) {
         const v = await verifyRunnerCred('claude', 'oauth', t);
         if (v.ok === false) { sawInvalid = true; continue; }
-        chosen = t; break; // ok:true 또는 네트워크 불가(null) — 사용
+        if (v.ok === true) { chosen = t; break; }
+        sawOffline = true; // ok:null — 판정 불가. 확정하지 않고 다음 후보를 계속 본다(검수 LOW:
+        // 첫 후보(접합본)가 흡수 오염본일 때 블립이 겹치면 오염 저장 — 관용은 아래에서 원본으로만)
       }
+      // 전 후보 판정 불가(무효 판정 0)일 때만 관용 저장 — 마지막 후보(원본)를 쓴다(흡수 오염 회피)
+      if (!chosen && sawOffline && !sawInvalid) chosen = candidates[candidates.length - 1];
       if (!chosen) {
         setupState[wsId] = { status: 'failed', error: sawInvalid ? '토큰 검증에 실패했습니다(잘려 읽혔거나 무효) — 다시 시도해 주세요' : '토큰을 읽지 못했습니다 — 다시 시도해 주세요', ts: Date.now() };
         return;
