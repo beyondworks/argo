@@ -277,12 +277,14 @@ ${raw ? `Source (excerpt):\n${raw.slice(0, 2500)}` : ''}`
 ${raw ? `원문(일부):\n${raw.slice(0, 2500)}` : ''}`;
 
   let out = '';
-  for await (const msg of query({
-    prompt,
-    options: { allowedTools: [], settingSources: [], maxTurns: 1, model: 'claude-haiku-4-5-20251001' }, // 설명 생성은 Haiku면 충분 — 속도 우선
-  })) {
-    if (msg.type === 'result' && msg.subtype === 'success') out = msg.result;
-  }
+  try {
+    for await (const msg of query({
+      prompt,
+      options: { allowedTools: [], settingSources: [], maxTurns: 1, model: 'claude-haiku-4-5-20251001' }, // 설명 생성은 Haiku면 충분 — 속도 우선
+    })) {
+      if (msg.type === 'result' && msg.subtype === 'success') out = msg.result;
+    }
+  } catch { /* 러너 미가용 — 쉬운 설명은 장식이다. 실패해도 스킬/도구 설치 흐름을 막지 않는다(아래 파싱 폴백). */ }
   const jsonText = out.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   let easy;
   try {

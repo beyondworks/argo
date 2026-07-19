@@ -457,6 +457,11 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
 /** 대체 실행 실패의 맥락 프리픽스(순수) — 성공 턴의 자가 고지(fallbackDirective)와 달리, 대체
     러너마저 실패하면 사용자는 지정한 러너와 다른 러너의 에러만 보게 된다("Codex를 골랐는데 왜
     Claude 에러?" — 실사용 신고). 실패 경로에선 이 프리픽스가 유일한 설명이다. (export: 회귀 테스트용) */
+/** 러너 인증성 실패 판별 — 감지(detectRunners)가 스테일 자격 흔적으로 러너를 가용 오판해 턴이
+    인증 에러로 죽는 패턴(실사용 2026-07-19: 죽은 Claude 흔적 → "Not logged in · Please run /login").
+    이 에러면 그 러너를 제외하고 다른 가용 러너로 1회 재실행한다(아래 catch들). (export: 회귀 테스트용) */
+export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|invalid authentication|authentication[_ ]error|oauth token (?:is )?(?:expired|revoked|invalid)|\b401\b/i;
+
 export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko') {
   if (!fellBack) return '';
   const rn = (id) => RUNNERS[id]?.name ?? id;
@@ -473,7 +478,7 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko') {
  *   이미지는 SDK content 블록으로 크루가 직접 보고, 그 외 파일은 경로를 알려 Read로 열게 한다.
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
-export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], mirrorCtx = null, __freshRetry = false, __seedNotes = null } = {}) {
+export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], mirrorCtx = null, __freshRetry = false, __seedNotes = null, __excludeRunner = null } = {}) {
   const p = paths(wsId);
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지)
   const { budgetUsd, lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
@@ -500,8 +505,10 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   const skills = await loadSkills(wsId, 6000, lang);
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
-  const wantRunner = (meta.runner || 'claude').toLowerCase();
-  const resolved = await resolveRunner(wsId, wantRunner).catch(() => ({ runner: wantRunner, fellBack: false, available: true }));
+  // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
+  const wantRunner = (meta.runner || '').toLowerCase() || null;
+  // __excludeRunner = 방금 인증 실패한 러너(아래 catch의 자가 치유 재시도) — 다시 뽑히지 않게 제외
+  const resolved = await resolveRunner(wsId, wantRunner, { exclude: __excludeRunner }).catch(() => ({ runner: wantRunner ?? 'claude', fellBack: false, available: true }));
   if (!resolved.available) {
     // 자격은 있는데 벤더 CLI가 없는 러너(codex/gemini)는 원인을 정확히 알려준다 — "연결했는데 왜 안 돼"의 답.
     const noCli = (resolved.credButNoCli ?? []).map((id) => RUNNERS[id]?.name || id);
@@ -515,7 +522,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   }
   const runner = resolved.runner;
   // 폴백이면 크루에 지정된 model은 원래 러너의 것이라 무효 — 폴백 러너의 기본 모델로 실행한다.
-  const effModel = resolved.fellBack ? '' : (meta.model || '');
+  // 무선호(want=null)로 뽑힌 러너도 카드 model이 그 러너 소속일 때만 적용(다른 러너 모델 오적용 방지).
+  const effModel = resolved.fellBack ? ''
+    : (meta.model && RUNNERS[runner]?.models.some((m) => m.id === meta.model) ? meta.model : '');
   // 러너 대체 고지 — 조용한 폴백은 사용자가 "왜 딴 모델 말투/비용?"을 겪게 한다(신뢰 훼손). 크루가
   // 스스로 한 줄 알리게 지시한다(UI 변경 없이 chat·회의실·경쟁·위임·메신저 전 경로에 자연 반영).
   const rn = (id) => RUNNERS[id]?.name ?? id;
@@ -585,6 +594,16 @@ ${lang === 'en'
       return { reply, sessionId: null, handover };
     } catch (e) {
       const aborted = abortReg.wasAborted();
+      // 인증 오탐 자가 치유 — 이 러너의 자격이 실은 죽어 있던 경우, 제외하고 다른 가용 러너로 1회
+      // 재실행(__excludeRunner 가드로 재귀 1회 제한). 외부 CLI엔 세션 개념이 없어 스레드 맥락은 유지된다.
+      if (!aborted && !__excludeRunner && AUTH_ERR_RE.test(String(e.message || e))) {
+        const alt = await resolveRunner(wsId, wantRunner, { exclude: runner }).catch(() => null);
+        if (alt?.available && alt.runner !== runner) {
+          console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug})`);
+          // finally의 release는 identity 가드(turn-abort.mjs)라 재귀가 등록한 새 핸들을 지우지 않는다
+          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, mirrorCtx, __seedNotes: sharedNotes, __excludeRunner: runner });
+        }
+      }
       if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
       await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400) });
@@ -768,7 +787,17 @@ ${lang === 'en'
     // 다음부터는 사전 분기로 온다. __freshRetry 가드로 재귀 1회 제한.
     if (!aborted && resumeId && !__freshRetry && /no conversation found/i.test(String(e.message || e))) {
       console.warn(`[argo] 세션이 이 기기에 없음(${wsId}/${agentSlug}) — 새 세션으로 재시도`);
-      return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, __freshRetry: true, __seedNotes: sharedNotes });
+      return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner });
+    }
+    // 인증 오탐 자가 치유 — SDK 러너의 자격이 실은 죽어 있던 경우(스테일 로그인 흔적 등), 그 러너를
+    // 제외하고 다른 가용 러너로 1회 재실행. 러너가 바뀌면 세션 resume이 무의미하므로 새 세션 +
+    // 최근 대화 접붙임(__freshRetry)으로 맥락을 잇는다. __excludeRunner 가드로 재귀 1회 제한.
+    if (!aborted && !__excludeRunner && AUTH_ERR_RE.test(String(e.message || e))) {
+      const alt = await resolveRunner(wsId, wantRunner, { exclude: runner }).catch(() => null);
+      if (alt?.available && alt.runner !== runner) {
+        console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug})`);
+        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner: runner });
+      }
     }
     if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
     // 실패도 회사의 사건이다 — 활동 화면의 "오류" 필터가 이 기록을 먹는다

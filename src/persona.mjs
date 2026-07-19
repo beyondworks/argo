@@ -4,11 +4,10 @@ import { readFile, mkdir, rename } from 'node:fs/promises';
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths, loadCompany } from './workspace.mjs';
 import { appendUsage } from './usage.mjs';
 import { appendEvent } from './events.mjs';
-import { sdkEnvFor } from './runners.mjs';
+import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 Codex/Gemini/GLM만 연결해도 영입 가능
 
 // 카드 = 시스템 프롬프트. lang='en'이면 이름·직함·본문을 영어로 생성하되, 세 섹션 헤더(## 전문성/일하는 방식/톤)는
 // 한국어 고정 토큰으로 유지한다 — 백엔드·프론트 여러 파서(persona.mjs:appendAgentRule, hub.mjs, crew page)가 이
@@ -101,51 +100,32 @@ function stripFrontmatter(md) {
 }
 
 /** 역할(직함)을 AI가 한 줄로 추천 — 카드에서 역할을 못 뽑았을 때의 폴백. 생성 실패로 두지 않는다. */
-async function recommendRole(wsId, oneLiner, sdkEnv, lang = 'ko') {
+async function recommendRole(wsId, oneLiner, lang = 'ko') {
   try {
-    let out = '';
-    for await (const msg of query({
-      prompt: lang === 'en'
-        ? `Reply with a fitting job title for this AI employee in one short English line (2-4 words; title only, no punctuation or quotes).\nRequest: "${oneLiner}"`
-        : `다음 요청에 어울리는 AI 직원의 직함을 한국어 한 줄(2-12자, 설명·기호·따옴표 없이 직함만)로 답해줘.\n요청: "${oneLiner}"`,
-      options: { cwd: paths(wsId).root, allowedTools: [], settingSources: [], maxTurns: 1, ...(sdkEnv ? { env: sdkEnv } : {}) },
-    })) {
-      if (msg.type === 'result' && msg.subtype === 'success') out = msg.result;
-    }
-    const role = (out || '').trim().split('\n')[0].replace(/^["'#*\-\s]+|["'\s]+$/g, '').slice(0, 40);
+    const { text } = await runOneShot(wsId, lang === 'en'
+      ? `Reply with a fitting job title for this AI employee in one short English line (2-4 words; title only, no punctuation or quotes).\nRequest: "${oneLiner}"`
+      : `다음 요청에 어울리는 AI 직원의 직함을 한국어 한 줄(2-12자, 설명·기호·따옴표 없이 직함만)로 답해줘.\n요청: "${oneLiner}"`, { lang });
+    const role = (text || '').trim().split('\n')[0].replace(/^["'#*\-\s]+|["'\s]+$/g, '').slice(0, 40);
     if (role) return role;
   } catch { /* 아래 폴백 */ }
   return ((oneLiner || '').split(/[-—·,.\n]/)[0].trim().slice(0, 30)) || (lang === 'en' ? 'AI employee' : 'AI 직원');
 }
 
-/** Agent SDK 단일 턴으로 카드 생성 → agents/<slug>.md 저장. name·team 지정 가능. */
+/** 원샷 1턴으로 카드 생성 → agents/<slug>.md 저장. name·team 지정 가능.
+    러너 독립(runOneShot) — 가용 러너(회사 자격 우선)로 실행하고, 죽은 러너는 자가 치유 재시도.
+    (이전: Claude SDK 하드코딩 — Codex만 연결한 실사용자가 영입 자체 불가 + "Claude 키" 오안내, 2026-07-19) */
 export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {}) {
-  let out = '';
   const t0 = Date.now();
-  // 카드 생성도 채팅과 동일하게 회사 자격(claude 키/OAuth)을 주입 — 없으면 호스트 자격 폴백.
-  // (이게 없으면 웹 사용자가 키를 넣어도 영입만 호스트 키를 찾다 실패했다)
-  const sdkEnv = await sdkEnvFor(wsId, 'claude');
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({})); // 시스템 언어 — 카드 생성 언어
-  let failed = null;
-  for await (const msg of query({
-    prompt: CARD_PROMPT(oneLiner, name?.trim(), lang),
-    options: {
-      cwd: paths(wsId).root,
-      allowedTools: [], // 순수 생성 — 도구 불필요
-      settingSources: [], // 호스트 머신의 CLAUDE.md 등 미주입(테넌트 격리)
-      maxTurns: 1,
-      ...(sdkEnv ? { env: sdkEnv } : {}),
-    },
-  })) {
-    if (msg.type === 'result') {
-      await appendUsage(wsId, { kind: 'hire', usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0 });
-      if (msg.subtype === 'success') out = msg.result;
-      else failed = msg.subtype;
-    }
-  }
-  const md = out.trim().replace(/^```(?:markdown)?\r?\n?/, '').replace(/\r?\n?```$/, '').trim();
+  const { runner, text, usage, costUsd } = await runOneShot(wsId, CARD_PROMPT(oneLiner, name?.trim(), lang), { lang });
+  await appendUsage(wsId, { kind: 'hire', runner, usage, costUsd, ms: Date.now() - t0 });
+  const md = text.trim().replace(/^```(?:markdown)?\r?\n?/, '').replace(/\r?\n?```$/, '').trim();
   // AI가 아예 응답을 못 준 경우만 진짜 실패. 형식이 어긋난 건 아래에서 복원한다(생성 실패로 두지 않는다).
-  if (!md || failed) throw new Error('AI 연결이 필요합니다 — 설정 → 러너 연결에서 Claude API 키 또는 OAuth를 연결하면 영입할 수 있어요.');
+  if (!md) {
+    throw new Error(lang === 'en'
+      ? 'AI connection is needed — connect any runner (Claude, Codex, Gemini, or GLM) in Settings → AI connections to hire.'
+      : 'AI 연결이 필요합니다 — 설정 → AI 연결에서 아무 러너나(Claude·Codex·Gemini·GLM) 연결하면 영입할 수 있어요.');
+  }
 
   // 관대한 필드 복원 — frontmatter(닫는 --- 없어도)·본문 H1("# 이름 — 역할")·입력에서 긁는다.
   const meta = parseFrontmatter(md);
@@ -153,7 +133,7 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   const nameFinal = (name?.trim() || meta.name || looseField(md, 'name') || h1[0] || 'AI 직원').trim();
   let roleFinal = (meta.role || looseField(md, 'role') || (h1[1] || '')).trim();
   // 역할을 못 뽑으면 AI가 직함을 추천해 채운다.
-  if (!roleFinal) roleFinal = await recommendRole(wsId, oneLiner, sdkEnv, lang);
+  if (!roleFinal) roleFinal = await recommendRole(wsId, oneLiner, lang);
 
   // slug — 지정값→이름 슬러그화→crew. 동명 크루 중복 영입 시 기존 카드를 덮어쓰지 않는다(-n).
   const slugify = (s) => (s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
