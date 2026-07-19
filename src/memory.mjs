@@ -93,19 +93,26 @@ export async function autoLink(wsId, newFile, { topK = 3, threshold = 0.12 } = {
    이제 섹션이 어디에 몇 번 있든 전부 뽑아 정규 순서(본문 → ## 근거 → ## 관련)로 재조립한다. */
 const LINK_SECTIONS = ['근거', '관련'];
 
-/** 문서에서 링크 섹션들을 분리 — { body, links: { 근거: [], 관련: [] } }. 중복 섹션도 전부 회수. */
+/** 문서에서 링크 섹션들을 분리 — { body, links: { 근거: [], 관련: [] } }. 중복 섹션도 전부 회수.
+    링크 전용(모든 줄이 "- [[..]]" 불릿) 또는 빈 섹션만 흡수한다 — 산문이 섞인 섹션은 통째로 body에
+    남긴다(검수 MEDIUM 2026-07-19: 섹션 안 산문을 침묵 유실하면 "기억 유실 금지" 원칙 위반.
+    남은 섹션의 링크는 include 중복 검사가 재추가를 막아 이중화되지 않는다). */
 export function splitLinkSections(text) {
   const links = { 근거: [], 관련: [] };
-  let body = text;
-  for (const name of LINK_SECTIONS) {
-    const re = new RegExp(`\\n## ${name}\\n([\\s\\S]*?)(?=\\n## |$)`);
-    let m;
-    while ((m = body.match(re))) {
-      for (const l of m[1].matchAll(/\[\[(.+?)\]\]/g)) links[name].push(l[1]);
-      body = body.replace(re, '\n');
-    }
+  const re = /\n## (근거|관련)\n([\s\S]*?)(?=\n## |$)/g;
+  let out = '';
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    const [whole, name, content] = m;
+    const lines = content.split('\n').filter((l) => l.trim());
+    const absorbable = lines.every((l) => /^\s*[-*]\s*\[\[.+?\]\]\s*$/.test(l)); // 빈 섹션([])도 true — 잃을 게 없다
+    if (!absorbable) continue; // 산문 섞임 — body에 그대로 남긴다
+    for (const l of content.matchAll(/\[\[(.+?)\]\]/g)) links[name].push(l[1]);
+    out += text.slice(last, m.index) + '\n';
+    last = m.index + whole.length;
   }
-  return { body: body.replace(/\n{3,}/g, '\n\n'), links };
+  out += text.slice(last);
+  return { body: out.replace(/\n{3,}/g, '\n\n'), links };
 }
 
 /** 링크 섹션 재조립 — 정규 순서·중복 제거. 빈 섹션은 만들지 않는다. */

@@ -627,7 +627,7 @@ ${lang === 'en'
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, journalRel: relative(p.vault, handover.file), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
       return { reply, sessionId: null, handover };
     } catch (e) {
-      const aborted = abortReg.wasAborted();
+      let aborted = abortReg.wasAborted();
       // 인증 오탐 자가 치유 — 이 러너의 자격이 실은 죽어 있던 경우, 제외하고 다른 가용 러너로 1회
       // 재실행(__excludeRunner 가드로 재귀 1회 제한). 외부 CLI엔 세션 개념이 없어 스레드 맥락은 유지된다.
       if (!aborted && !__excludeRunner && AUTH_ERR_RE.test(String(e.message || e))) {
@@ -638,7 +638,7 @@ ${lang === 'en'
           try {
             return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, mirrorCtx, __seedNotes: sharedNotes, __excludeRunner: runner });
           } catch (e2) {
-            e = e2; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하
+            e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
           }
         }
       }
@@ -824,7 +824,8 @@ ${lang === 'en'
     }
   }
   } catch (e) {
-    const aborted = abortReg.wasAborted();
+    let aborted = abortReg.wasAborted();
+    let retriedDown = false; // 재시도 실패 낙하 표시 — 낙하한 에러로 다음 자가 치유를 또 발동하지 않는다(중복 실행·이중 과금 방지, 검수 MEDIUM)
     // 이 기기에 없는 세션을 resume한 경우(sessionDevice 없는 레거시 스레드의 기기 전환·CLI 세션
     // 소실) — 실패 이벤트 없이 새 세션으로 1회 재시도. 성공하면 appendTurn이 소유 기기를 갱신해
     // 다음부터는 사전 분기로 온다. __freshRetry 가드로 재귀 1회 제한.
@@ -833,20 +834,21 @@ ${lang === 'en'
       try {
         return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner });
       } catch (e2) {
-        e = e2; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하
+        e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
       }
     }
     // 인증 오탐 자가 치유 — SDK 러너의 자격이 실은 죽어 있던 경우(스테일 로그인 흔적 등), 그 러너를
     // 제외하고 다른 가용 러너로 1회 재실행. 러너가 바뀌면 세션 resume이 무의미하므로 새 세션 +
     // 최근 대화 접붙임(__freshRetry)으로 맥락을 잇는다. __excludeRunner 가드로 재귀 1회 제한.
-    if (!aborted && !__excludeRunner && AUTH_ERR_RE.test(String(e.message || e))) {
+    // retriedDown 제외 — fresh-retry 프레임이 이미 자기 자가 치유를 소진했으므로 여기서 또 돌리면 중복.
+    if (!aborted && !retriedDown && !__excludeRunner && AUTH_ERR_RE.test(String(e.message || e))) {
       const alt = await resolveRunner(wsId, wantRunner, { exclude: runner }).catch(() => null);
       if (alt?.available && alt.runner !== runner) {
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug})`);
         try {
           return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner: runner });
         } catch (e2) {
-          e = e2; // 재시도도 실패 — 아래 공통 실패 처리로 낙하
+          e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하
         }
       }
     }
