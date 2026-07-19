@@ -856,6 +856,11 @@ const DICT = {
   'market.skillsmpSearchPlaceholder': ['수천 개 커뮤니티 스킬 검색 — 예: newsletter, seo, youtube', 'Search thousands of community skills — e.g. newsletter, seo, youtube'],
   'market.mcpSearchPlaceholder': ['MCP 서버 검색 — 예: fetch, github, notion, slack', 'Search MCP servers — e.g. fetch, github, notion, slack'],
   'market.remoteMcpSource': ['공식 레지스트리', 'Official Registry'],
+  // MCP 로컬 실행 경계 — 서비스 키를 든 웹(자가호스팅·클라우드)에선 npx로 로컬 프로세스를 띄우는 커스텀·npm MCP를 막는다(키 유출 방지). 데스크톱 앱에선 전부 열림.
+  'market.localOnlyBanner': ['이 웹에선 카탈로그·원격(HTTP) MCP를 원클릭으로 쓸 수 있어요. npx로 여는 커스텀·npm MCP는 보안상 데스크톱 앱에서만 실행됩니다.', 'On this web you can one-click catalog & remote (HTTP) MCP. Custom/npm MCP launched via npx run only in the desktop app, for security.'],
+  'market.localOnlyBadge': ['데스크톱 앱 전용', 'Desktop app only'],
+  'market.runtimeBlockedBadge': ['이 환경에선 실행 안 됨', "Won't run here"],
+  'market.customLocalOnlyHint': ['커스텀·npm MCP 추가는 데스크톱 앱에서 하세요. 이 웹에선 위 카탈로그와 원격(HTTP) MCP를 쓸 수 있어요.', 'Add custom/npm MCP from the desktop app. On this web, use the catalog above and remote (HTTP) MCP.'],
 
   // ── ui.jsx 공용 조각
   'ui.inProgress': ['진행 중', 'In progress'],

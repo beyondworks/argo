@@ -237,8 +237,13 @@ const NAME_RE = /^[a-z0-9-]{1,32}$/;
    근거(P0-2): 임의 프로세스를 서비스 키 곁에서 돌리면 env·/proc로 키가 유출돼 전 테넌트 데이터가 뚫린다.
    카탈로그(installMcp)의 검증된 공식 MCP는 계속 허용한다. (export: 회귀 테스트용) */
 export const arbitraryMcpBlocked = () =>
-  process.env.ARGO_ALLOW_CUSTOM_MCP !== '1'
-  && !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.ARGO_TENANT_OWNER);
+  // ARGO_TENANT_OWNER(멀티테넌트 바인딩)는 무엇으로도 못 여는 하드 차단 — standalone·opt-in belt가 들어올리지 못한다.
+  // runners.mjs startClaudeSetupToken와 동일 불변식("호스팅 런타임에 ARGO_STANDALONE=1이 실수로 새어들어도 다중테넌트에선 재개방 금지").
+  // 이 게이트가 지키는 능력(임의 프로세스 spawn = 서비스 키 곁 유출→전 테넌트 침해)이 더 상위라 방어도 최소한 대칭이어야 한다(검수 HIGH).
+  !!process.env.ARGO_TENANT_OWNER
+  || (process.env.ARGO_STANDALONE !== '1' // 데스크톱 사이드카 = 로컬·단일사용자 앱 → 서비스 키가 env로 새어들어도 안 막는 벨트(사이드카는 키를 안 받지만 회귀 방어)
+      && process.env.ARGO_ALLOW_CUSTOM_MCP !== '1'
+      && !!process.env.SUPABASE_SERVICE_ROLE_KEY);
 export function assertArbitraryMcpAllowed() {
   if (arbitraryMcpBlocked()) {
     throw new Error('호스팅 모드에서는 임의 명령을 실행하는 사용자 정의·원격 MCP를 추가할 수 없습니다 — 보안상 로컬 앱에서만 지원됩니다(카탈로그의 검증된 MCP는 사용 가능).');
