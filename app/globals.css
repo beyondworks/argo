@@ -1284,7 +1284,9 @@ input, textarea { font: inherit; color: var(--fg); }
 }
 .input-bar:focus-within { box-shadow: 0 0 0 2px var(--ring); }
 .input-bar input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; height: 32px; font-size: 13.5px; }
-.input-bar input::placeholder { color: var(--fg-3); }
+/* 여러 줄 채팅 입력(textarea) — Enter 전송·Shift+Enter 줄바꿈. 자동 높이는 JS(scrollHeight), 최대 6줄 후 내부 스크롤 */
+.input-bar textarea { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 13.5px; font-family: inherit; line-height: 1.45; padding: 6.5px 0; resize: none; max-height: 132px; overflow-y: auto; }
+.input-bar input::placeholder, .input-bar textarea::placeholder { color: var(--fg-3); }
 
 .kbd {
   font-family: var(--mono); font-size: 10px; color: var(--fg-3);

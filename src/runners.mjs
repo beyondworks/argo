@@ -4,6 +4,7 @@
 import { access, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { randomBytes, createHash } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { promisify } from 'node:util';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -116,6 +117,15 @@ export const RUNNERS = {
       { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
     ],
   },
+  kimi: {
+    name: 'Kimi', kind: 'sdk-compat',
+    models: [
+      // platform.kimi.ai 모델 문서(2026-07 확인) — K3가 플래그십(1M 컨텍스트), K2.7-code는 코딩 특화
+      { id: 'kimi-k3', label: 'Kimi K3' },
+      { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code' },
+      { id: 'kimi-k2.6', label: 'Kimi K2.6' },
+    ],
+  },
   glm: {
     name: 'GLM', kind: 'sdk-compat',
     models: [
@@ -129,6 +139,15 @@ export const RUNNERS = {
 };
 
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
+export const KIMI_DEFAULT_MODEL = 'kimi-k3';
+/** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
+    베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
+export const kimiEnv = () => ({
+  ...scrubServerSecrets(process.env),
+  ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic',
+  ANTHROPIC_AUTH_TOKEN: process.env.KIMI_API_KEY ?? '',
+  ANTHROPIC_API_KEY: '',
+});
 export const glmEnv = () => ({
   ...scrubServerSecrets(process.env),
   ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic',
@@ -165,6 +184,7 @@ export async function detectRunners() {
     codex: { installed: !!codexV, authed: !!codexV && codexAuth },
     gemini: { installed: !!geminiV, authed: !!geminiV && (geminiAuth || !!process.env.GEMINI_API_KEY) },
     glm: { installed: true, authed: !!process.env.GLM_API_KEY },
+    kimi: { installed: true, authed: !!process.env.KIMI_API_KEY }, // env 주입 = 운영자 명시 옵트인(glm 관례)
   };
   cacheAt = Date.now();
   return cache;
@@ -276,6 +296,7 @@ export const RUNNER_AUTH = {
   codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
   gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
+  kimi: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' }, // 접두사 무차단(GLM 관례) — 리전·미래 키 형식 변화에 저장이 막히지 않게, 판정은 verifyRunnerCred가
 };
 
 // 레거시 계정 파일(사용자 스코프 도입 전 무스코프 .account-secrets.json) → local 스코프로 1회 이관.
@@ -371,6 +392,9 @@ export async function runnerCredEnv(wsId, runner) {
   if (runner === 'glm') {
     return { env: { ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '' } };
   }
+  if (runner === 'kimi') {
+    return { env: { ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '' } };
+  }
   if (runner === 'codex') {
     // apikey면 계정 OAuth를 무시하고 OPENAI_API_KEY로 — 격리홈을 '깨끗한' 것으로 써 auth.json 상속 차단.
     if (cred.type === 'apikey') return { env: { OPENAI_API_KEY: v }, home: 'clean' };
@@ -405,6 +429,7 @@ export async function sdkEnvFor(wsId, runner) {
   // claude 호스트 폴백도 이제 null 대신 세척 env를 반환한다 — 러너 인증(ANTHROPIC_*)은 보존, 크라운주얼만 제거.
   if (cred) return { ...scrubServerSecrets(process.env), ...cred.env };
   if (runner === 'glm') return glmEnv(); // 회사 자격 없으면 호스트 GLM_API_KEY 폴백(glmEnv 자체가 세척됨)
+  if (runner === 'kimi') return kimiEnv(); // 동일 — 호스트 KIMI_API_KEY 폴백(env 주입 = 명시 옵트인)
   return scrubServerSecrets(process.env);
 }
 
@@ -460,13 +485,44 @@ const WEB_OAUTH = {
   },
 };
 const webAuthState = (globalThis.__argoWebAuth ??= {}); // { [runner]: { verifier, ts } }
+const webAuthListeners = (globalThis.__argoWebAuthSrv ??= {}); // { [runner]: http.Server } — 1회용 콜백 리스너
 
-export function startRunnerWebAuth(runner) {
+/** 로컬 콜백 리스너 — 승인 후 브라우저가 돌아오는 localhost 콜백을 서버가 직접 받아 자동 교환한다.
+    이전엔 "사이트에 연결할 수 없음" 오류 화면이 뜨고 사용자가 그 주소를 복사해 붙여넣어야 했다
+    (실사용 신고 2026-07-19: 오류로 읽혀 연결 실패로 인지). 리스너가 받으면 복사 단계 자체가 없어지고
+    브라우저에는 "연결되었습니다" 페이지가 뜬다. 포트 선점 실패(벤더 CLI 로그인 동시 실행 등)나
+    호스팅 워커(사용자 기기가 아님)에선 조용히 건너뛴다 — 기존 붙여넣기 폴백이 그대로 동작한다. */
+function startWebAuthListener(runner, wsId, cfg) {
+  if (process.env.ARGO_TENANT_OWNER || process.env.SUPABASE_SERVICE_ROLE_KEY) return; // 호스팅 — 리스너 위치가 사용자 기기가 아니다
+  try { webAuthListeners[runner]?.close(); } catch { /* 이전 리스너 정리 */ }
+  const target = new URL(cfg.redirect);
+  const page = (title, body) => `<!doctype html><meta charset="utf-8"><title>Argo</title><body style="font-family:system-ui;display:grid;place-items:center;height:90vh"><div style="text-align:center"><h2>${title}</h2><p style="color:#666">${body}</p></div>`;
+  const srv = createServer(async (req, res) => {
+    try {
+      const u = new URL(req.url, cfg.redirect);
+      if (u.pathname !== target.pathname || !u.searchParams.get('code')) { res.statusCode = 404; res.end(); return; }
+      const r = await submitRunnerWebAuth(wsId, runner, u.toString()); // 기존 검증 경로 그대로(state/verifier 확인 포함)
+      res.setHeader('content-type', 'text/html; charset=utf-8');
+      res.end(r.ok
+        ? page('연결되었습니다', '이 창을 닫고 Argo로 돌아가세요 — 화면에 곧 "연결됨"이 표시됩니다.')
+        : page('연결에 실패했습니다', 'Argo로 돌아가 다시 시도하거나, 이 페이지 주소를 복사해 붙여넣어 주세요.'));
+      if (r.ok) { try { srv.close(); } catch { /* 이미 닫힘 */ } delete webAuthListeners[runner]; }
+    } catch { res.statusCode = 500; res.end(); }
+  });
+  srv.on('error', () => { delete webAuthListeners[runner]; /* EADDRINUSE 등 — 붙여넣기 폴백 */ });
+  srv.listen(Number(target.port), '127.0.0.1');
+  webAuthListeners[runner] = srv;
+  const ttl = setTimeout(() => { try { srv.close(); } catch { /* 이미 닫힘 */ } delete webAuthListeners[runner]; }, 10 * 60_000);
+  ttl.unref?.();
+}
+
+export function startRunnerWebAuth(runner, wsId = null) {
   const cfg = WEB_OAUTH[runner];
   if (!cfg) return { ok: false, reason: 'unsupported' };
   const verifier = randomBytes(32).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');
   webAuthState[runner] = { verifier, ts: Date.now() };
+  if (wsId) startWebAuthListener(runner, wsId, cfg); // 자동 수신 — 실패해도 붙여넣기 폴백 유지
   const u = new URL(cfg.authorize);
   for (const [k, v] of Object.entries(cfg.extra ?? {})) u.searchParams.set(k, v);
   u.searchParams.set('client_id', cfg.clientId);
@@ -662,6 +718,11 @@ export async function verifyRunnerCred(runner, type, value) {
       const r = await fetch(`${base}/v1/models?limit=1`, { headers: { 'x-api-key': v, authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
+    if (runner === 'kimi') {
+      const base = process.env.KIMI_OPENAI_BASE_URL || 'https://api.moonshot.ai/v1';
+      const r = await fetch(`${base}/models`, { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
+      return { ok: !(r.status === 401 || r.status === 403) };
+    }
     if (runner === 'codex' && type === 'apikey') {
       const r = await fetch('https://api.openai.com/v1/models?limit=1', { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
@@ -685,18 +746,43 @@ export async function verifyRunnerCred(runner, type, value) {
    기존 수동 붙여넣기 경로는 그대로 유지 — 이 대행이 실패하는 환경의 폴백이다(회귀 없음). */
 const SETUP_TOKEN_TIMEOUT_MS = 10 * 60_000; // 브라우저 승인 대기 상한
 
-/** PTY 출력에서 setup-token의 최종 토큰 추출(순수) — ANSI 제거 후 첫 매치. (export: 회귀 테스트용) */
-export function extractSetupToken(text) {
+/** PTY 출력에서 setup-token의 최종 토큰 추출(순수) — ANSI 제거 후 매치.
+    PTY(기본 80칸)가 긴 토큰을 줄바꿈으로 감싼다 — 토큰 문자 사이의 개행을 접합해 복원한다
+    (실사고 2026-07-19 재현: 108자 토큰이 80자로 절단 저장 → '연결됨'인데 전 호출 인증 실패).
+    접합이 뒤따르는 텍스트를 흡수하는 엣지에 대비해 [접합본, 원본] 두 후보를 반환하고,
+    호출부(startClaudeSetupToken)가 저장 전 HTTP 검증으로 유효한 쪽만 저장한다.
+    (export: 회귀 테스트용 — 첫 번째 후보가 기본값) */
+export function extractSetupTokenCandidates(text) {
   const clean = String(text ?? '').replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(\x07|\x1b\\)/g, '');
-  return clean.match(/sk-ant-oat01-[A-Za-z0-9_-]{16,}/)?.[0] ?? null;
+  const joined = clean.replace(/([A-Za-z0-9_-])\r?\n(?=[A-Za-z0-9_-])/g, '$1');
+  const re = /sk-ant-oat01-[A-Za-z0-9_-]{16,}/;
+  return [...new Set([joined.match(re)?.[0], clean.match(re)?.[0]].filter(Boolean))];
+}
+export function extractSetupToken(text) {
+  return extractSetupTokenCandidates(text)[0] ?? null;
 }
 
-/** setup-token을 실행할 claude CLI 경로 — env 오버라이드 → PATH. 없으면 null(수동 붙여넣기 안내). */
+/** 내장 SDK 네이티브 claude CLI 경로 — 앱/서버가 이미 품고 있는 바이너리(stage-sidecar 3.4가 보장).
+    실측: setup-token 서브커맨드 지원. 터미널 무경험 초보자도 설치 0으로 원클릭(브라우저 승인) 연결이
+    되게 하는 핵심 폴백이다(유건 지시 2026-07-19: 초보자 여정에서 터미널 요구 제거).
+    (export: 회귀 테스트용) */
+export async function bundledClaudeCli() {
+  try {
+    const { createRequire } = await import('node:module');
+    const req = createRequire(import.meta.url);
+    const p = req.resolve(`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude`);
+    if (await exists(p)) return p;
+  } catch { /* 플랫폼 패키지 미포함 — 아래 null */ }
+  return null;
+}
+
+/** setup-token을 실행할 claude CLI 경로 — env 오버라이드 → 호스트 PATH → 내장 SDK CLI 폴백.
+    전부 없으면 null(수동 붙여넣기 안내). */
 async function resolveClaudeCli() {
   if (process.env.CLAUDE_CLI?.trim()) return process.env.CLAUDE_CLI.trim();
   await ensureCliPath(); // GUI 기동 PATH 보강 — which가 로그인 셸 PATH를 본다
   try { const r = await exec('which', ['claude']); const p = r.stdout.trim(); if (p) return p; } catch { /* 미설치 */ }
-  return null;
+  return bundledClaudeCli();
 }
 
 const setupState = (globalThis.__argoSetupToken ??= {}); // wsId → { status: running|saved|failed, error, ts }
@@ -739,18 +825,40 @@ export async function startClaudeSetupToken(wsId) {
   const onData = (d) => {
     if (done) return;
     buf = (buf + d.toString()).slice(-20_000); // 꼬리만 유지 — 토큰은 마지막에 출력된다
-    const token = extractSetupToken(buf);
-    if (!token) return;
+    const candidates = extractSetupTokenCandidates(buf);
+    if (!candidates.length) return;
     // 토큰 감지 즉시 선점 — setup-token은 토큰 출력 직후 종료하므로, 비동기 저장이 끝나기 전의
     // 정상 exit가 finish('failed')로 덮으면 "저장됐는데 실패 표시"가 된다(검수 MEDIUM: 저장-exit 레이스).
     // done을 먼저 잠그고 저장 결과가 최종 상태를 정한다(그동안 상태는 running 유지 — UI는 진행 중 표시).
     done = true;
     clearTimeout(timer);
-    // 토큰 평문은 저장 외 어디에도 남기지 않는다(로그·상태 객체 금지)
-    saveRunnerCred(wsId, 'claude', 'oauth', token)
-      .then(() => { setupState[wsId] = { status: 'saved', ts: Date.now() }; })
-      .catch((e) => { setupState[wsId] = { status: 'failed', error: String(e.message || e).slice(0, 160), ts: Date.now() }; })
-      .finally(() => { try { child.kill(); } catch { /* 이미 종료 */ } });
+    try { child.kill(); } catch { /* 이미 종료 */ }
+    // 저장 전 실검증(HTTP Bearer, verifyRunnerCred) — 잘린/무효 토큰이 '연결됨'으로 저장되는 것을
+    // 원천 차단(실사고 2026-07-19: PTY 줄바꿈 절단 토큰 저장 → 연결됨 표시인데 전 호출 인증 실패).
+    // 후보(접합본→원본) 중 검증을 통과한 것만 저장. 네트워크 불가(ok:null)는 첫 후보 관용 저장(오프라인 온보딩).
+    // 토큰 평문은 저장 외 어디에도 남기지 않는다(로그·상태 객체 금지).
+    (async () => {
+      let chosen = null;
+      let sawInvalid = false;
+      let sawOffline = false;
+      for (const t of candidates) {
+        const v = await verifyRunnerCred('claude', 'oauth', t);
+        if (v.ok === false) { sawInvalid = true; continue; }
+        if (v.ok === true) { chosen = t; break; }
+        sawOffline = true; // ok:null — 판정 불가. 확정하지 않고 다음 후보를 계속 본다(검수 LOW:
+        // 첫 후보(접합본)가 흡수 오염본일 때 블립이 겹치면 오염 저장 — 관용은 아래에서 원본으로만)
+      }
+      // 관용 저장은 후보가 하나뿐일 때만 — 둘 이상인데 전부 판정 불가면 어느 쪽이 온전한지 알 수
+      // 없으므로(줄바꿈 케이스에선 마지막=절단본!) 저장하지 않고 재시도를 유도한다(검수 LOW 반영).
+      if (!chosen && sawOffline && !sawInvalid && candidates.length === 1) chosen = candidates[0];
+      if (!chosen) {
+        setupState[wsId] = { status: 'failed', error: sawInvalid ? '토큰 검증에 실패했습니다(잘려 읽혔거나 무효) — 다시 시도해 주세요' : '토큰을 읽지 못했습니다 — 다시 시도해 주세요', ts: Date.now() };
+        return;
+      }
+      await saveRunnerCred(wsId, 'claude', 'oauth', chosen)
+        .then(() => { setupState[wsId] = { status: 'saved', ts: Date.now() }; })
+        .catch((e) => { setupState[wsId] = { status: 'failed', error: String(e.message || e).slice(0, 160), ts: Date.now() }; });
+    })();
   };
   child.stdout.on('data', onData);
   child.stderr.on('data', onData);

@@ -23,7 +23,7 @@ export async function POST(req, { params }) {
     return Response.json(r, { status: r.ok ? 200 : 400 });
   }
   if (meta.webConnect && !cli) {
-    const r = code ? await submitRunnerWebAuth(ws, runner, code) : startRunnerWebAuth(runner);
+    const r = code ? await submitRunnerWebAuth(ws, runner, code) : startRunnerWebAuth(runner, ws); // wsId 전달 — 로컬 콜백 리스너가 자동 저장
     return Response.json(r, { status: r.ok ? 200 : 400 });
   }
   const r = await startRunnerLogin(runner);

@@ -443,9 +443,10 @@ function AiKeyBanner({ ws }) {
     return () => { alive = false; window.removeEventListener('argo:refresh', check); };
   }, [ws]);
   if (!state) return null;
+  // 테두리·아이콘 = 테마 액센트 — 경고색 고정 링이 테마와 무관하게 튀던 것 교정(유건 지시 2026-07-19)
   return (
-    <div className="card fade-up" style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--warn)' }}>
-      <span style={{ color: 'var(--warn)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
+    <div className="card fade-up" style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--accent)' }}>
+      <span style={{ color: 'var(--accent)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
       <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t(state === 'invalid' ? 'deck.runner.reconnect' : 'deck.runner.banner')}</span>
       <button className="btn btn-primary sm" style={{ flex: 'none' }} onClick={() => router.push(`/c/${ws}/settings?ai=1`)}>
         {t('deck.aiKey.cta')}

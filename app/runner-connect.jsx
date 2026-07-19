@@ -21,8 +21,8 @@ export { anyRunnerUsable, runnerNeedsReconnect } from './runner-usable.mjs';
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
     (c) 방식별 입력·저장·검증·제거 또는 CLI 로그인 안내. 응답엔 마스킹만 실린다(보안 규칙). */
-const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', glm: 'GLM' };
-const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'glm'];
+const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', glm: 'GLM', kimi: 'Kimi' };
+const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'glm', 'kimi'];
 
 export function AiConnectionCard({ ws, accordion = false }) {
   const { t } = useLang();
@@ -83,6 +83,26 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
       setWebUrl(d.url); setWebOk(true); setWebMsg(t('settings.runners.webUrlReady'));
     } catch (e) { setWebMsg(String(e.message)); } finally { setWebBusy(false); }
   }
+  // 웹 브리지 자동 수신 폴링 — 서버의 로컬 콜백 리스너가 승인 코드를 받아 저장을 끝내면
+  // 여기서 잡아 "연결됨"으로 전환한다(주소 복사·붙여넣기 없이 완료 — 실사용 신고 2026-07-19).
+  // 리스너가 못 떠도(포트 선점·호스팅) 이 폴링은 무해하고, 아래 붙여넣기 폴백이 그대로 동작한다.
+  useEffect(() => {
+    if (!webUrl) return;
+    let liveFlag = true;
+    const iv = setInterval(async () => {
+      try {
+        const d = await (await fetch(`${keysBase(ws)}/connect?runner=${encodeURIComponent(id)}`)).json();
+        if (!liveFlag || !d.authed) return;
+        setWebOk(true); setWebMsg(t('settings.runners.connected'));
+        setWebUrl(''); setWebCode('');
+        window.dispatchEvent(new Event('argo:refresh'));
+        onChange();
+      } catch { /* 다음 틱 재시도 */ }
+    }, 2000);
+    const ttl = setTimeout(() => clearInterval(iv), 10 * 60_000);
+    return () => { liveFlag = false; clearInterval(iv); clearTimeout(ttl); };
+  }, [webUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function webSubmit() {
     setWebBusy(true); setWebMsg('');
     try {
@@ -117,7 +137,8 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
         throw new Error(d.reason === 'no-cli' ? t('settings.runners.setupNoCli')
           : d.reason === 'unsupported-platform' ? t('settings.runners.setupNoWin')
             : d.reason === 'busy' ? t('settings.runners.setupWaiting')
-              : (d.message || d.reason || 'failed'));
+              : d.reason === 'hosted' ? t('settings.runners.setupHosted') // 원문 'hosted' 노출이 연결 불가로 읽혔다(실사용 신고)
+                : (d.message || d.reason || 'failed'));
       }
       const t0 = Date.now();
       if (setupPollRef.current) clearInterval(setupPollRef.current);

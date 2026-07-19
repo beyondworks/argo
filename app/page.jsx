@@ -125,8 +125,8 @@ export default function Home() {
         {runnerNotice && (
           /* 러너 미연결/끊김 안내 — 누르면 그 회사 설정의 러너 연결 섹션으로 직행(?ai=1) */
           <a href={`/c/${runnerNotice.ws}/settings?ai=1`} className="card card-i fade-up"
-            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', borderColor: 'var(--warn)', marginBottom: 22 }}>
-            <span style={{ color: 'var(--warn)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
+            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', borderColor: 'var(--accent)', marginBottom: 22 }}>
+            <span style={{ color: 'var(--accent)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
             <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t(runnerNotice.invalid ? 'home.runnerReconnect' : 'home.runnerNotice', { name: runnerNotice.name })}</span>
             <span className="chip" style={{ flex: 'none' }}>{t('deck.aiKey.cta')}</span>
           </a>

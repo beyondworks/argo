@@ -27,7 +27,7 @@ export async function POST(req) {
     return Response.json(r, { status: r.ok ? 200 : 400 });
   }
   if (meta.webConnect && !cli) {
-    const r = code ? await submitRunnerWebAuth(g.scope, runner, code) : startRunnerWebAuth(runner);
+    const r = code ? await submitRunnerWebAuth(g.scope, runner, code) : startRunnerWebAuth(runner, g.scope); // 자동 수신
     return Response.json(r, { status: r.ok ? 200 : 400 });
   }
   const r = await startRunnerLogin(runner);

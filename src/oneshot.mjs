@@ -3,7 +3,7 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
-import { GLM_DEFAULT_MODEL, externalExec, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, externalExec, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     제외하고 1회 재시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와 같은 원칙, 재귀 1회).
@@ -36,7 +36,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         settingSources: [], // 호스트 머신의 CLAUDE.md 등 미주입(테넌트 격리)
         maxTurns,
         ...(sdkEnv ? { env: sdkEnv } : {}),
-        ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : (model ? { model } : {})),
+        ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: KIMI_DEFAULT_MODEL } : (model ? { model } : {})),
       },
     })) {
       if (msg.type === 'result') {
