@@ -70,8 +70,12 @@ export default function Compete({ params }) {
     return () => clearInterval(iv);
   }, [ws, comp?.id, comp?.status, loadList]);
 
-  const toggleModel = (pair) => setPickedModels((p) =>
-    p.includes(pair) ? p.filter((x) => x !== pair) : p.length >= MAX_PICK ? p : [...p, pair]);
+  // 모델 슬롯 편집 — pickedModels[i]를 드롭다운 슬롯 단위로 바꾼다(빈 값=슬롯 비움, 뒤 슬롯이 당겨짐)
+  const setModelSlot = (i, v) => setPickedModels((prev) => {
+    const next = [...prev];
+    if (v) next[i] = v; else next.splice(i, 1);
+    return next.filter(Boolean).slice(0, MAX_PICK);
+  });
 
   async function start(e) {
     e.preventDefault();
@@ -271,22 +275,43 @@ export default function Compete({ params }) {
                 <a href={`/c/${ws}`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('nav.hire')} →</a>
               )}
             </div>
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <span className="microlabel" style={{ marginRight: 3 }}>{t('compete.pickModels')}</span>
-              {/* 연결된 러너의 모델만 선택 가능 — 미연결 러너 모델은 비활성(설정에서 연결 후) */}
-              {(runners ?? []).flatMap((r) => r.models.map((m) => {
-                const pair = `${r.id}:${m.id}`;
-                const on = pickedModels.includes(pair);
-                return (
-                  <button type="button" key={pair} className="chip" onClick={() => toggleModel(pair)} disabled={!r.authed || busy}
-                    aria-pressed={on} title={`${r.name} · ${m.label}`}
-                    style={{ cursor: r.authed ? 'pointer' : 'not-allowed', opacity: r.authed ? 1 : 0.45,
-                      ...(on ? { background: 'var(--primary)', color: 'var(--primary-fg)', borderColor: 'var(--primary)' } : {}) }}>
-                    {m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : ''}
-                  </button>
-                );
-              }))}
-              {runners === null && <Skeleton h={22} w={160} />}
+              {/* 드롭다운 슬롯 — 연결된 러너의 모델만, 러너별 그룹. 다른 슬롯이 고른 모델은 비활성(중복 방지).
+                  칩 나열은 러너가 늘며 두 줄로 흘러 지저분했다(유건 지시 2026-07-19 — 드롭박스로 정리). */}
+              {runners === null ? <Skeleton h={28} w={220} /> : (() => {
+                const connected = (runners ?? []).filter((r) => r.authed && r.models?.length);
+                if (!connected.length) {
+                  return <a href={`/c/${ws}/settings`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.connectFirst')} →</a>;
+                }
+                const selBox = { height: 28, padding: '0 8px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12, color: 'var(--fg)', maxWidth: 210 };
+                const opts = (slot) => connected.map((r) => (
+                  <optgroup key={r.id} label={r.name}>
+                    {r.models.map((m) => {
+                      const pair = `${r.id}:${m.id}`;
+                      const taken = pickedModels.includes(pair) && pickedModels[slot] !== pair;
+                      return <option key={pair} value={pair} disabled={taken}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : ''}</option>;
+                    })}
+                  </optgroup>
+                ));
+                return (<>
+                  <select value={pickedModels[0] ?? ''} onChange={(e) => setModelSlot(0, e.target.value)} disabled={busy} style={selBox}>
+                    <option value="" disabled>{t('compete.modelSlotPh')}</option>
+                    {opts(0)}
+                  </select>
+                  <span className="microlabel" aria-hidden>vs</span>
+                  <select value={pickedModels[1] ?? ''} onChange={(e) => setModelSlot(1, e.target.value)} disabled={busy} style={selBox}>
+                    <option value="" disabled>{t('compete.modelSlotPh')}</option>
+                    {opts(1)}
+                  </select>
+                  {/* 3번째는 선택 — 앞 2개를 고른 뒤에만 열린다. 빈 값 선택 = 슬롯 비우기 */}
+                  <select value={pickedModels[2] ?? ''} onChange={(e) => setModelSlot(2, e.target.value)}
+                    disabled={busy || pickedModels.length < 2} style={{ ...selBox, opacity: pickedModels.length < 2 ? 0.55 : 1 }}>
+                    <option value="">{t('compete.modelSlotOptPh')}</option>
+                    {opts(2)}
+                  </select>
+                </>);
+              })()}
             </div>
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
             <form onSubmit={start} className="input-bar">
