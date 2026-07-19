@@ -685,10 +685,20 @@ export async function verifyRunnerCred(runner, type, value) {
    기존 수동 붙여넣기 경로는 그대로 유지 — 이 대행이 실패하는 환경의 폴백이다(회귀 없음). */
 const SETUP_TOKEN_TIMEOUT_MS = 10 * 60_000; // 브라우저 승인 대기 상한
 
-/** PTY 출력에서 setup-token의 최종 토큰 추출(순수) — ANSI 제거 후 첫 매치. (export: 회귀 테스트용) */
-export function extractSetupToken(text) {
+/** PTY 출력에서 setup-token의 최종 토큰 추출(순수) — ANSI 제거 후 매치.
+    PTY(기본 80칸)가 긴 토큰을 줄바꿈으로 감싼다 — 토큰 문자 사이의 개행을 접합해 복원한다
+    (실사고 2026-07-19 재현: 108자 토큰이 80자로 절단 저장 → '연결됨'인데 전 호출 인증 실패).
+    접합이 뒤따르는 텍스트를 흡수하는 엣지에 대비해 [접합본, 원본] 두 후보를 반환하고,
+    호출부(startClaudeSetupToken)가 저장 전 HTTP 검증으로 유효한 쪽만 저장한다.
+    (export: 회귀 테스트용 — 첫 번째 후보가 기본값) */
+export function extractSetupTokenCandidates(text) {
   const clean = String(text ?? '').replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(\x07|\x1b\\)/g, '');
-  return clean.match(/sk-ant-oat01-[A-Za-z0-9_-]{16,}/)?.[0] ?? null;
+  const joined = clean.replace(/([A-Za-z0-9_-])\r?\n(?=[A-Za-z0-9_-])/g, '$1');
+  const re = /sk-ant-oat01-[A-Za-z0-9_-]{16,}/;
+  return [...new Set([joined.match(re)?.[0], clean.match(re)?.[0]].filter(Boolean))];
+}
+export function extractSetupToken(text) {
+  return extractSetupTokenCandidates(text)[0] ?? null;
 }
 
 /** setup-token을 실행할 claude CLI 경로 — env 오버라이드 → PATH. 없으면 null(수동 붙여넣기 안내). */
@@ -739,18 +749,34 @@ export async function startClaudeSetupToken(wsId) {
   const onData = (d) => {
     if (done) return;
     buf = (buf + d.toString()).slice(-20_000); // 꼬리만 유지 — 토큰은 마지막에 출력된다
-    const token = extractSetupToken(buf);
-    if (!token) return;
+    const candidates = extractSetupTokenCandidates(buf);
+    if (!candidates.length) return;
     // 토큰 감지 즉시 선점 — setup-token은 토큰 출력 직후 종료하므로, 비동기 저장이 끝나기 전의
     // 정상 exit가 finish('failed')로 덮으면 "저장됐는데 실패 표시"가 된다(검수 MEDIUM: 저장-exit 레이스).
     // done을 먼저 잠그고 저장 결과가 최종 상태를 정한다(그동안 상태는 running 유지 — UI는 진행 중 표시).
     done = true;
     clearTimeout(timer);
-    // 토큰 평문은 저장 외 어디에도 남기지 않는다(로그·상태 객체 금지)
-    saveRunnerCred(wsId, 'claude', 'oauth', token)
-      .then(() => { setupState[wsId] = { status: 'saved', ts: Date.now() }; })
-      .catch((e) => { setupState[wsId] = { status: 'failed', error: String(e.message || e).slice(0, 160), ts: Date.now() }; })
-      .finally(() => { try { child.kill(); } catch { /* 이미 종료 */ } });
+    try { child.kill(); } catch { /* 이미 종료 */ }
+    // 저장 전 실검증(HTTP Bearer, verifyRunnerCred) — 잘린/무효 토큰이 '연결됨'으로 저장되는 것을
+    // 원천 차단(실사고 2026-07-19: PTY 줄바꿈 절단 토큰 저장 → 연결됨 표시인데 전 호출 인증 실패).
+    // 후보(접합본→원본) 중 검증을 통과한 것만 저장. 네트워크 불가(ok:null)는 첫 후보 관용 저장(오프라인 온보딩).
+    // 토큰 평문은 저장 외 어디에도 남기지 않는다(로그·상태 객체 금지).
+    (async () => {
+      let chosen = null;
+      let sawInvalid = false;
+      for (const t of candidates) {
+        const v = await verifyRunnerCred('claude', 'oauth', t);
+        if (v.ok === false) { sawInvalid = true; continue; }
+        chosen = t; break; // ok:true 또는 네트워크 불가(null) — 사용
+      }
+      if (!chosen) {
+        setupState[wsId] = { status: 'failed', error: sawInvalid ? '토큰 검증에 실패했습니다(잘려 읽혔거나 무효) — 다시 시도해 주세요' : '토큰을 읽지 못했습니다 — 다시 시도해 주세요', ts: Date.now() };
+        return;
+      }
+      await saveRunnerCred(wsId, 'claude', 'oauth', chosen)
+        .then(() => { setupState[wsId] = { status: 'saved', ts: Date.now() }; })
+        .catch((e) => { setupState[wsId] = { status: 'failed', error: String(e.message || e).slice(0, 160), ts: Date.now() }; });
+    })();
   };
   child.stdout.on('data', onData);
   child.stderr.on('data', onData);

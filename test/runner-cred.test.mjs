@@ -72,6 +72,20 @@ test('extractSetupToken: PTY 출력(ANSI 혼입)에서 최종 토큰만 추출',
   assert.equal(extractSetupToken(null), null, 'null 안전');
 });
 
+test('extractSetupToken: PTY 80칸 줄바꿈으로 감싸인 토큰 복원 — 절단 저장 실사고 재발 방지(2026-07-19)', async () => {
+  const { extractSetupToken, extractSetupTokenCandidates } = await import('../src/runners.mjs');
+  // 실사고 재현 조건 — 108자 토큰이 PTY 기본 80칸에서 두 줄로 갈라진다
+  const full = `sk-ant-oat01-${'A'.repeat(95)}`;
+  const wrapped = `${full.slice(0, 80)}\n${full.slice(80)}\n\n다음 단계 안내…\n`;
+  assert.equal(extractSetupToken(wrapped), full, '줄바꿈 접합으로 108자 전체 복원(이전엔 80자 절단 저장 → 연결됨인데 전 호출 401)');
+  // 접합이 토큰 뒤 텍스트를 흡수하는 엣지 — 원본 후보가 함께 남아 저장 전 HTTP 검증이 고른다
+  const absorbing = `${full}\nDone\n`;
+  const cands = extractSetupTokenCandidates(absorbing);
+  assert.ok(cands.includes(full), '흡수 엣지에서도 온전한 원본 후보 유지');
+  // CRLF 줄바꿈(맥 PTY)도 동일
+  assert.equal(extractSetupToken(`${full.slice(0, 80)}\r\n${full.slice(80)}\n`), full, 'CRLF 접합');
+});
+
 test('startClaudeSetupToken: 호스팅 워커에선 spawn 없이 거절', async () => {
   const { startClaudeSetupToken } = await import('../src/runners.mjs');
   const prev = process.env.SUPABASE_SERVICE_ROLE_KEY;
