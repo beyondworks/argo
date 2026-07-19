@@ -3,7 +3,7 @@
 // ws가 ACCOUNT_WS('@account')면 회사 생성 전 계정 자격(/api/account/keys)에 저장되고,
 // 회사 생성 시 seedRunnerCreds가 새 회사 .secrets.json으로 복사한다(백엔드 src/runners.mjs 참조).
 import { useEffect, useRef, useState } from 'react';
-import { Skeleton, Spinner, ConfirmModal, api } from './ui';
+import { Icon, Skeleton, Spinner, ConfirmModal, api } from './ui';
 import { useLang } from './i18n';
 
 /** 계정 스코프 라우팅 토큰 — keysBase가 이 값이면 /api/account/keys로 보낸다(경로 분기용).
@@ -14,18 +14,9 @@ const keysBase = (ws) => (ws === ACCOUNT_WS ? '/api/account/keys' : `/api/compan
 /** 공용 입력 스타일 — 설정 페이지 폼들과 러너 카드가 공유. */
 export const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, width: '100%' };
 
-/** 러너 상태 dict(runnerStatus 응답)에서 실제 쓸 수 있는 러너가 하나라도 있는가 — 데크 배너·홈 안내가 공유.
-    Claude만 보던 옛 판정은 Codex 등 다른 러너 연결자에게 오경보를 냈다(실사용 신고 2026-07-18).
-    외부 CLI 러너(codex/gemini)는 회사 자격이 있어도 CLI 미설치면 실행 불가(resolveRunner와 동일 규칙). */
-export function anyRunnerUsable(runners) {
-  return Object.entries(runners ?? {}).some(([id, r]) => r.hostAuthed
-    || (r.company?.connected && !r.company?.invalid && ((id !== 'codex' && id !== 'gemini') || r.hostInstalled)));
-}
-
-/** 저장 자격이 있는데 무효(재연결 필요)인 러너가 있는가 — "미연결"과 "끊김" 안내 문구 분기용. */
-export function runnerNeedsReconnect(runners) {
-  return Object.values(runners ?? {}).some((r) => r.company?.connected && r.company?.invalid);
-}
+// 가용 판정(순수)은 runner-usable.mjs로 분리 — 데크 배너·홈 안내·온보딩 게이트·회귀 테스트가 공유.
+// 기존 소비처(import from './runner-connect') 호환을 위해 재수출한다.
+export { anyRunnerUsable, runnerNeedsReconnect } from './runner-usable.mjs';
 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
@@ -33,9 +24,10 @@ export function runnerNeedsReconnect(runners) {
 const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', glm: 'GLM' };
 const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'glm'];
 
-export function AiConnectionCard({ ws }) {
+export function AiConnectionCard({ ws, accordion = false }) {
   const { t } = useLang();
   const [runners, setRunners] = useState(null); // { [id]: status } | null(로딩)
+  const [openId, setOpenId] = useState(null);   // accordion 모드 — 한 번에 한 러너만 펼친다
 
   function load() {
     api(`${keysBase(ws)}`).then((d) => setRunners(d.runners ?? {})).catch(() => setRunners({}));
@@ -47,14 +39,16 @@ export function AiConnectionCard({ ws }) {
       <span className="card-title">{t('settings.runners.title')}</span>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 6px', lineHeight: 1.6 }}>{t('settings.runners.help')}</p>
       {!runners ? <Skeleton h={180} /> : RUNNER_ORDER.map((id, i) => (
-        <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={i === 0} />
+        <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={i === 0}
+          {...(accordion ? { open: openId === id, onToggle: () => setOpenId(openId === id ? null : id) } : {})} />
       ))}
     </div>
   );
 }
 
-/** 러너 1행 — 상태 칩 + 방식 탭 + (API키/붙여넣기 토큰 입력) 또는 (CLI 로그인 안내). */
-function RunnerRow({ ws, id, st, onChange, first }) {
+/** 러너 1행 — 상태 칩 + 방식 탭 + (API키/붙여넣기 토큰 입력) 또는 (CLI 로그인 안내).
+    onToggle이 오면 아코디언 모드(온보딩) — 헤더만 보이고 클릭으로 본문을 펼친다. 설정은 기존 그대로. */
+function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }) {
   const { t, fmtMoney } = useLang();
   const methods = st?.methods ?? ['apikey'];
   const hasOauth = methods.includes('oauth');
@@ -278,17 +272,35 @@ function RunnerRow({ ws, id, st, onChange, first }) {
       )}
     </div>
   );
+  const accordion = typeof onToggle === 'function';
+  const header = (
+    <>
+      {accordion && (
+        <span aria-hidden style={{ display: 'inline-flex', color: 'var(--fg-3)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.18s ease' }}>
+          <Icon name="play" size={10} />
+        </span>
+      )}
+      <span style={{ fontSize: 13.5, fontWeight: 650 }}>{RUNNER_NAMES[id]}</span>
+      {chip}
+      {st?.month?.turns > 0 && (
+        <span className="chip mono" title={t('settings.runners.monthTitle')} style={{ fontSize: 10.5 }}>
+          {t('settings.runners.month', { n: st.month.turns })}{st.month.hasCost ? ` · ${fmtMoney(st.month.costUsd)}` : ''}
+        </span>
+      )}
+    </>
+  );
   return (
     <div style={{ display: 'grid', gap: 8, padding: '12px 0', ...(first ? {} : { borderTop: '1px dashed var(--border-soft)' }) }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 13.5, fontWeight: 650 }}>{RUNNER_NAMES[id]}</span>
-        {chip}
-        {st?.month?.turns > 0 && (
-          <span className="chip mono" title={t('settings.runners.monthTitle')} style={{ fontSize: 10.5 }}>
-            {t('settings.runners.month', { n: st.month.turns })}{st.month.hasCost ? ` · ${fmtMoney(st.month.costUsd)}` : ''}
-          </span>
-        )}
-      </div>
+      {accordion ? (
+        /* 아코디언 헤더(온보딩) — 행 전체가 토글. 접힌 채로도 상태 칩으로 연결 여부가 보인다 */
+        <button type="button" onClick={onToggle} aria-expanded={open}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: 'none', border: 'none', padding: 0, margin: 0, cursor: 'pointer', textAlign: 'left', font: 'inherit', color: 'inherit' }}>
+          {header}
+        </button>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>{header}</div>
+      )}
+      {open && <>
       {hasOauth && (
         <div style={{ display: 'flex', gap: 6 }}>
           {methods.map((m) => (
@@ -410,6 +422,7 @@ function RunnerRow({ ws, id, st, onChange, first }) {
           </>)}
         </>
       )}
+      </>}
     </div>
   );
 }
