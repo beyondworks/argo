@@ -137,7 +137,8 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
         throw new Error(d.reason === 'no-cli' ? t('settings.runners.setupNoCli')
           : d.reason === 'unsupported-platform' ? t('settings.runners.setupNoWin')
             : d.reason === 'busy' ? t('settings.runners.setupWaiting')
-              : (d.message || d.reason || 'failed'));
+              : d.reason === 'hosted' ? t('settings.runners.setupHosted') // 원문 'hosted' 노출이 연결 불가로 읽혔다(실사용 신고)
+                : (d.message || d.reason || 'failed'));
       }
       const t0 = Date.now();
       if (setupPollRef.current) clearInterval(setupPollRef.current);
