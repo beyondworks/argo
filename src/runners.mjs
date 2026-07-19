@@ -38,7 +38,8 @@ if (process.platform !== 'win32') {
 let cliPathP = null; // 프로세스당 1회 — 실패해도 정적 병합만으로 진행(설치 후엔 앱 재시작 안내가 관례)
 function ensureCliPath() {
   if (process.platform !== 'darwin') return Promise.resolve();
-  return (cliPathP ??= execP(process.env.SHELL?.trim() || '/bin/zsh', ['-ilc', 'echo "::ARGO_PATH::$PATH::ARGO_PATH::"'], { timeout: 5000 })
+  // 플래그는 분리해 전달 — fish 등 결합 단축(-ilc)을 거부하는 셸에서도 동작(zsh/bash/fish/sh 공통)
+  return (cliPathP ??= execP(process.env.SHELL?.trim() || '/bin/zsh', ['-i', '-l', '-c', 'echo "::ARGO_PATH::$PATH::ARGO_PATH::"'], { timeout: 5000 })
     .then(({ stdout }) => {
       // rc 파일이 stdout에 내는 잡음과 분리하기 위해 마커 사이만 취한다
       const m = String(stdout).match(/::ARGO_PATH::(.*?)::ARGO_PATH::/s);
