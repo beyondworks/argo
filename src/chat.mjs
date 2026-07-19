@@ -487,7 +487,7 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko') {
  *   이미지는 SDK content 블록으로 크루가 직접 보고, 그 외 파일은 경로를 알려 Read로 열게 한다.
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
-export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], mirrorCtx = null, __freshRetry = false, __seedNotes = null, __excludeRunner = null } = {}) {
+export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], mirrorCtx = null, runnerOverride = null, modelOverride = null, __freshRetry = false, __seedNotes = null, __excludeRunner = null } = {}) {
   const p = paths(wsId);
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지)
   const { budgetUsd, lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
@@ -519,7 +519,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
-  const wantRunner = (meta.runner || '').toLowerCase() || null;
+  // runnerOverride(경쟁 등) 우선 — 카드 러너 대신 이 턴만 지정 러너로. 미가용이면 기존 폴백 체인이 동일하게 처리.
+  const wantRunner = ((runnerOverride || meta.runner || '')).toLowerCase() || null;
   // __excludeRunner = 방금 인증 실패한 러너(아래 catch의 자가 치유 재시도) — 다시 뽑히지 않게 제외.
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — available:true 폴백은 명시 연결 원칙 위반(검수 MEDIUM:
   // 최악의 상태에서 조용히 호스트 자격을 스캐빈징하게 된다). 아래 !available 분기가 재연결을 안내한다.
@@ -538,8 +539,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   const runner = resolved.runner;
   // 폴백이면 크루에 지정된 model은 원래 러너의 것이라 무효 — 폴백 러너의 기본 모델로 실행한다.
   // 무선호(want=null)로 뽑힌 러너도 카드 model이 그 러너 소속일 때만 적용(다른 러너 모델 오적용 방지).
+  const wantModel = modelOverride || meta.model;
   const effModel = resolved.fellBack ? ''
-    : (meta.model && RUNNERS[runner]?.models.some((m) => m.id === meta.model) ? meta.model : '');
+    : (wantModel && RUNNERS[runner]?.models.some((m) => m.id === wantModel) ? wantModel : '');
   // 러너 대체 고지 — 조용한 폴백은 사용자가 "왜 딴 모델 말투/비용?"을 겪게 한다(신뢰 훼손). 크루가
   // 스스로 한 줄 알리게 지시한다(UI 변경 없이 chat·회의실·경쟁·위임·메신저 전 경로에 자연 반영).
   const rn = (id) => RUNNERS[id]?.name ?? id;
@@ -636,7 +638,7 @@ ${lang === 'en'
           console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug})`);
           // finally의 release는 identity 가드(turn-abort.mjs)라 재귀가 등록한 새 핸들을 지우지 않는다
           try {
-            return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, mirrorCtx, __seedNotes: sharedNotes, __excludeRunner: runner });
+            return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunner: runner });
           } catch (e2) {
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
           }
@@ -832,7 +834,7 @@ ${lang === 'en'
     if (!aborted && resumeId && !__freshRetry && /no conversation found/i.test(String(e.message || e))) {
       console.warn(`[argo] 세션이 이 기기에 없음(${wsId}/${agentSlug}) — 새 세션으로 재시도`);
       try {
-        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner });
+        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner });
       } catch (e2) {
         e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
       }
@@ -846,7 +848,7 @@ ${lang === 'en'
       if (alt?.available && alt.runner !== runner) {
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug})`);
         try {
-          return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner: runner });
+          return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner: runner });
         } catch (e2) {
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하
         }

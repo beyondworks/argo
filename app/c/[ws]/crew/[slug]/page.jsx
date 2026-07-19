@@ -226,6 +226,7 @@ export default function CrewChat({ params }) {
           setThread((cur) => (cur !== null && msgs.length > cur.length ? msgs : cur));
           if (r.sessionId) sessionRef.current = r.sessionId;
           setLiveStage(r.status ?? null); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
+          setThreadTitle(r.title ?? null); // 다른 기기에서 바꾼 현재 대화명도 준실시간 반영(검수 LOW)
         })
         .catch(() => {});
     }, 3000); // 준실시간 — 동기화(≈8s)로 당겨온 다른 기기의 대화를 더 빨리 표시(기존 8s)
