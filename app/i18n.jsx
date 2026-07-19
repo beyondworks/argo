@@ -245,7 +245,6 @@ const DICT = {
   'settings.runners.setupNoWin': ['Windows에서는 아직 버튼 연결을 지원하지 않습니다 — 아래 안내대로 토큰을 붙여넣어 주세요.', 'Button connect isn’t supported on Windows yet — paste a token below as guided.'],
   'settings.runners.setupFailedShort': ['연결이 완료되지 않았습니다 — 다시 시도하거나 아래에 토큰을 붙여넣어 주세요.', 'The connection didn’t complete — try again or paste a token below.'],
   'settings.runners.none': ['미연결', 'Not connected'],
-  'settings.runners.hostDetected': ['이 컴퓨터 로그인 감지됨 — 사용하려면 연결', 'This computer\u2019s login detected — connect to use'],
   'settings.runners.useHost': ['이 컴퓨터 로그인 사용', 'Use this computer\u2019s login'],
   'settings.runners.useHostHint': ['이 컴퓨터 CLI에 로그인된 계정을 이 회사에서 사용합니다', 'Use the account signed in on this computer\u2019s CLI for this company'],
   'settings.runners.hostLinked': ['연결됨 — 이 컴퓨터 로그인', 'Connected — this computer\u2019s login'],
@@ -391,11 +390,10 @@ const DICT = {
   // ── 첫 항해 온보딩 (회사 0개 — 로그인 → 러너 연결 → 회사 만들기)
   'onboard.step1': ['① 로그인 완료', '① Signed in'],
   'onboard.step1Local': ['① 이 컴퓨터 (로컬 모드)', '① This computer (local mode)'],
-  'onboard.step2': ['② AI 러너 연결', '② Connect an AI runner'],
+  'onboard.step2': ['② AI 러너 연결 (선택)', '② Connect an AI runner (optional)'],
   'onboard.step2done': ['② 러너 연결됨', '② Runner connected'],
   'onboard.step3': ['③ 회사 만들기', '③ Create your company'],
-  'onboard.help': ['크루의 두뇌부터 연결하세요 — 러너 없이 회사를 만들면 크루가 일할 수 없습니다.', 'Connect your crew’s brain first — without a runner, crews cannot work.'],
-  'onboard.skip': ['나중에 연결하고 회사부터 만들기', 'Connect later — create the company first'],
+  'onboard.help': ['러너는 크루의 두뇌입니다 — 지금 연결하거나, 회사를 만든 뒤 데크의 안내를 따라 연결할 수 있어요.', 'Runners are the crew brains — connect now, or later from the deck banner after creating your company.'],
 
   // ── 사이드바 추가
   'nav.uncrewedCount': ['크루 {n}', 'Crew {n}'],

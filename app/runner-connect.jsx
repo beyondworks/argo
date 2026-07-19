@@ -251,9 +251,10 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
       setBusy('');
     }
   }
-  // 옵트인 버튼 노출 조건 — 지원 러너 + 이 컴퓨터 로그인 감지 + 아직 미연결
-  const hostOptIn = !!st?.hostUsable && !!st?.hostAuthed && !company.connected && (
-    <button className="btn btn-primary sm" disabled={!!busy} onClick={useHost}>
+  // 옵트인 버튼 — 지원 러너(codex/gemini)면 감지와 무관하게 항상 노출. 사전 스캔은 복잡하고 오류
+  // 소지가 있어(유건 지시) 클릭 시점에 서버가 설치·로그인을 검증하고 아니면 정확한 안내를 돌려준다.
+  const hostOptIn = !!st?.hostUsable && !company.connected && (
+    <button className="btn sm" disabled={!!busy} onClick={useHost}>
       {busy === 'host' ? <Spinner size={12} /> : t('settings.runners.useHost')}
     </button>
   );
@@ -269,13 +270,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
         <span className="dot" />{t('settings.runners.companyConnected')} · {t(`settings.runners.method.${company.type}`)}{company.masked && <> · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span></>}
       </span>
     )
-  ) : st?.hostAuthed && st?.hostUsable ? (
-    // 감지는 안내일 뿐 연결이 아니다(명시 연결 정본) — "이 컴퓨터 로그인 사용" 버튼이 유일한 연결 관문.
-    // 이전엔 감지만으로 '연결중'을 띄워, 새 기기에서 죽은 자격이 연결된 척했다(실사용 2026-07-19).
-    <span className="chip" style={{ color: 'var(--warn)', borderColor: 'currentColor' }}>
-      {t('settings.runners.hostDetected')}
-    </span>
   ) : (
+    // 감지 기반 상태 표시는 하지 않는다(유건 지시 2026-07-19: 로그인 기록 스캔은 복잡하고 오류 소지 —
+    // 상태는 연결됨/미연결 둘뿐, 호스트 로그인 사용은 아래 옵트인 버튼 클릭 시 서버가 검증한다).
     <span className="chip">{t('settings.runners.none')}</span>
   );
 
