@@ -21,6 +21,31 @@ function exec(cmd, args, opts) {
   return p;
 }
 
+/* ─── GUI 기동 PATH 보강 ───
+   데스크톱(tauri sidecar)은 GUI 최소 PATH(/usr/bin:/bin:…)로 뜬다 — homebrew/npm 전역으로 설치한
+   codex/gemini CLI를 감지(detectRunners)도 실행(externalExec)도 못 한다(실사용 신고 2026-07-19:
+   "codex 연결됨인데 안 됨" = hostInstalled 오탐 + spawn ENOENT의 뿌리). 터미널 기동(웹 dev/상주)은
+   이미 PATH에 있어 no-op. ① 표준 경로 정적 병합(동기) ② macOS는 로그인 셸 PATH 1회 캡처(비동기,
+   VS Code 방식). Windows는 GUI PATH = 사용자 PATH라 불필요(구분자 ';'라 병합도 건너뛴다). */
+const mergePath = (dirs) => {
+  const cur = (process.env.PATH ?? '').split(':').filter(Boolean);
+  const add = dirs.filter((d) => d.startsWith('/') && !cur.includes(d));
+  if (add.length) process.env.PATH = [...cur, ...add].join(':');
+};
+if (process.platform !== 'win32') {
+  mergePath(['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin'), join(homedir(), '.npm-global', 'bin')]);
+}
+let cliPathP = null; // 프로세스당 1회 — 실패해도 정적 병합만으로 진행(설치 후엔 앱 재시작 안내가 관례)
+function ensureCliPath() {
+  if (process.platform !== 'darwin') return Promise.resolve();
+  return (cliPathP ??= execP(process.env.SHELL?.trim() || '/bin/zsh', ['-ilc', 'echo "::ARGO_PATH::$PATH::ARGO_PATH::"'], { timeout: 5000 })
+    .then(({ stdout }) => {
+      // rc 파일이 stdout에 내는 잡음과 분리하기 위해 마커 사이만 취한다
+      const m = String(stdout).match(/::ARGO_PATH::(.*?)::ARGO_PATH::/s);
+      if (m) mergePath(m[1].split(':').map((s) => s.trim()).filter(Boolean));
+    }, () => { /* 셸 실패·타임아웃 — 정적 병합으로 충분한 환경이 대부분 */ }));
+}
+
 /* ─── 서버 시크릿 세척 (P1-6) ───
    테넌트 에이전트가 spawn하는 자식(외부 러너 CLI·SDK가 띄우는 Bash/MCP)에 크로스테넌트 크라운주얼이
    상속되면, 프롬프트 인젝션이 `printenv` 한 번으로 그 값을 유출할 수 있다. SUPABASE_SERVICE_ROLE_KEY는
@@ -115,6 +140,7 @@ let cache = null;
 let cacheAt = 0;
 export async function detectRunners() {
   if (cache && Date.now() - cacheAt < 60_000) return cache;
+  await ensureCliPath(); // GUI 기동 PATH 보강 — homebrew/npm 전역 CLI 오탐 방지
   const home = homedir();
   const [codexV, geminiV, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
     exec('codex', ['--version']).then((r) => r.stdout.trim(), () => null),
@@ -149,9 +175,26 @@ async function codexHomeClean() {
   return dir;
 }
 
+/** 능력 → codex 샌드박스 매핑(순수) — SDK 러너의 권한 게이트(permission-gate)를 근사한다.
+    fs ON = 워크스페이스 밖 쓰기 허용(읽기는 workspace-write가 원래 전역), browser ON = 네트워크 허용.
+    ⚠ 등가는 아니다(검수 MEDIUM 2026-07-19): codex는 셸 실행이 도구와 분리되지 않아 shell 능력을
+    따로 막을 수 없고, fs/browser를 켜면 그 셸 명령 전체에 밖 쓰기/네트워크가 열린다 — SDK처럼
+    도구(Write/Edit·WebFetch) 단위가 아니라 프로세스 단위 허용이다. 사용자 본인 데스크톱에서
+    사장이 명시적으로 켠 토글 뒤라 수용하되, 이 비대칭을 아는 상태로 유지·변경할 것.
+    키·-c 오버라이드는 codex-cli 0.144.1 바이너리에서 실측 확인(sandbox_workspace_write.*) —
+    미래 codex가 키를 거부하면 fs/browser 켠 턴만 실패한다(기본은 빈 배열이라 무영향).
+    실사용 신고 대응(2026-07-19): 사장이 fs를 켜도 "읽기전용이라 불가"로 막히던 외부 자료 가져오기.
+    (export: 회귀 테스트용) */
+export const codexSandboxArgs = (caps) => [
+  ...(caps?.fs ? ['-c', 'sandbox_workspace_write.writable_roots=["/"]'] : []),
+  ...(caps?.browser ? ['-c', 'sandbox_workspace_write.network_access=true'] : []),
+];
+
 /** 외부 CLI 러너 1턴 — 워크스페이스를 cwd로, 프롬프트 하나로 실행하고 마지막 응답을 받는다.
-    cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인. */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null }) {
+    cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
+    caps = 회사 로컬 능력({ fs, browser, shell }) — 사장이 켠 능력을 codex 샌드박스에 반영(codexSandboxArgs). */
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null }) {
+  await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   if (runner === 'codex') {
     const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
     const out = join(dir, 'last.txt');
@@ -162,6 +205,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     try {
       await exec('codex', [
         'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check',
+        ...codexSandboxArgs(caps),
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
         '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록
@@ -503,6 +547,7 @@ export async function submitRunnerWebAuth(wsId, runner, pasted) {
 export async function runnerLoginStatus(runner) {
   const c = RUNNER_AUTH[runner]?.connect;
   if (!c) return { supported: false, authed: false };
+  await ensureCliPath(); // GUI 기동 PATH 보강
   // codex login status는 "Logged in ..."을 stderr로 낸다 — stdout·stderr 둘 다 검사
   const r = await exec(c.bin, c.statusArgs).catch((e) => e); // 비영점 종료도 출력은 캡처됨
   return { supported: true, authed: !!r && c.ok.test(`${r.stdout || ''}\n${r.stderr || ''}`) };
@@ -622,6 +667,7 @@ export function extractSetupToken(text) {
 /** setup-token을 실행할 claude CLI 경로 — env 오버라이드 → PATH. 없으면 null(수동 붙여넣기 안내). */
 async function resolveClaudeCli() {
   if (process.env.CLAUDE_CLI?.trim()) return process.env.CLAUDE_CLI.trim();
+  await ensureCliPath(); // GUI 기동 PATH 보강 — which가 로그인 셸 PATH를 본다
   try { const r = await exec('which', ['claude']); const p = r.stdout.trim(); if (p) return p; } catch { /* 미설치 */ }
   return null;
 }

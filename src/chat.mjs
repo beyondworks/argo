@@ -572,7 +572,8 @@ ${lang === 'en'
         ? '(You are the crew of the persona above. Always reply in English, even if the captain wrote to you in Korean.)'
         : '(너는 위 페르소나의 크루로서 한국어로 답하라.)'}`;
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격(API키/OAuth) 우선, 없으면 호스트 로그인
-      const reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal });
+      // caps 전달 — 사장이 켠 능력(fs/browser)을 codex 샌드박스에 반영(SDK 게이트의 근사 — codexSandboxArgs 주석 참조)
+      const reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps });
       if (!reply) throw new Error(`${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
       await appendUsage(wsId, {
         kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, runner,

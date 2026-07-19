@@ -157,7 +157,7 @@ export default function Home() {
               </span>
             </div>
             {!runnerReady && <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0 }}>{t('onboard.help')}</p>}
-            <AiConnectionCard ws={ACCOUNT_WS} />
+            <AiConnectionCard ws={ACCOUNT_WS} accordion />
             {!runnerReady && !skipRunner && (
               <button type="button" onClick={() => setSkipRunner(true)}
                 style={{ justifySelf: 'start', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: 'var(--fg-3)', textDecoration: 'underline' }}>
