@@ -3,7 +3,7 @@
 // 격리: 경쟁 중 시안은 크루 개인 대화를 오염시키지 않고, 채택본만 승자 스레드에 기록된다.
 // 레이아웃은 회의실과 같은 문법 — 헤더 라인 → 전체 높이 카드 → 하단 고정 컴포저 → 힌트 (UI 일관성).
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, ConfirmModal, api, imeGuard } from '../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, ConfirmModal, InputModal, api, imeGuard } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 const MAX_PICK = 3;
@@ -13,6 +13,28 @@ export default function Compete({ params }) {
   const { t } = useLang();
   const [agents, setAgents] = useState([]);
   const [list, setList] = useState(null);      // 좌측 레일 — 경쟁 목록
+  const [renameComp, setRenameComp] = useState(null); // 경쟁명 편집 모달 대상
+  // 경쟁명 편집·고정 — 세션 레일과 동일 계약(PATCH /compete/[id] {title}|{pinned})
+  async function doRenameComp(title) {
+    const c = renameComp; setRenameComp(null);
+    if (!c) return;
+    try {
+      await fetch(`/api/companies/${ws}/compete/${c.id}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      loadList();
+    } catch { /* 레일 갱신 실패는 다음 로드에서 복구 */ }
+  }
+  async function doTogglePin(c) {
+    try {
+      await fetch(`/api/companies/${ws}/compete/${c.id}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pinned: !c.pinned }),
+      });
+      loadList();
+    } catch { /* 동일 */ }
+  }
   const [comp, setComp] = useState(null);      // 열람 중 경쟁 (null = 새 경쟁)
   const [prompt, setPrompt] = useState('');
   const [picked, setPicked] = useState([]);
@@ -100,22 +122,55 @@ export default function Compete({ params }) {
             <span className="nav-sub">{t('compete.sessions.newSub')}</span>
           </span>
         </button>
-        {(list ?? []).map((c) => (
-          <button key={c.id} className={`nav-item${comp?.id === c.id ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => openComp(c.id)}>
-            <span style={{ minWidth: 0 }}>
-              <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.topic}</span>
-              <span className="nav-sub" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                {c.status === 'running' && <ArgoSpinner size={10} />}
-                {new Date(c.createdAt).toLocaleDateString('sv-SE')} · {c.entrants.map((e) => e.name).join(' · ')}
+        {(list ?? []).map((c) => {
+          const active = comp?.id === c.id;
+          const pinColor = active ? 'var(--primary-fg)' : 'var(--primary)'; // 활성 골드 배경 위 골드 핀 겹침 방지(세션 레일 공통)
+          const actColor = active ? 'var(--primary-fg)' : 'var(--fg-3)';
+          return (
+          <div key={c.id} className="rail-item" style={{ position: 'relative' }}>
+            <button className={`nav-item${active ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer', paddingRight: 48 }} onClick={() => openComp(c.id)}>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 600 }}>
+                  {c.pinned && <Icon name="pin" size={11} style={{ flex: 'none', color: pinColor }} />}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title || c.topic}</span>
+                </span>
+                <span className="nav-sub" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  {c.status === 'running' && <ArgoSpinner size={10} />}
+                  {new Date(c.createdAt).toLocaleDateString('sv-SE')} · {c.entrants.map((e) => e.name).join(' · ')}
+                </span>
               </span>
+            </button>
+            <span className="rail-actions" style={{ position: 'absolute', right: 5, top: 7, display: 'flex', gap: 1 }}>
+              <button type="button" title={c.pinned ? t('chat.sessions.unpin') : t('chat.sessions.pin')} aria-label={c.pinned ? t('chat.sessions.unpin') : t('chat.sessions.pin')}
+                onClick={(e) => { e.stopPropagation(); doTogglePin(c); }}
+                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: c.pinned ? pinColor : actColor, cursor: 'pointer', borderRadius: 6 }}>
+                <Icon name="pin" size={12} />
+              </button>
+              <button type="button" title={t('chat.sessions.rename')} aria-label={t('chat.sessions.rename')}
+                onClick={(e) => { e.stopPropagation(); setRenameComp(c); }}
+                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: actColor, cursor: 'pointer', borderRadius: 6 }}>
+                <Icon name="edit" size={12} />
+              </button>
             </span>
-          </button>
-        ))}
+          </div>
+          );
+        })}
         {list !== null && list.length === 0 && (
           <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('compete.sessions.empty')}</span>
         )}
         {list === null && <Skeleton h={48} />}
       </div>
+
+      {renameComp && (
+        <InputModal
+          title={t('chat.sessions.renameTitle')}
+          defaultValue={renameComp.title || renameComp.topic || ''}
+          placeholder={t('chat.sessions.renamePh')}
+          confirmLabel={t('common.save')}
+          onConfirm={doRenameComp}
+          onClose={() => setRenameComp(null)}
+        />
+      )}
 
       {/* 본문 — 회의실과 동일 문법: 헤더 라인 / 전체 높이 카드 / 하단 컴포저 */}
       <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>

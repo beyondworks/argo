@@ -116,11 +116,27 @@ export async function listCompetitions(wsId, limit = 30) {
     if (!c?.id) continue;
     out.push({
       id: c.id, status: c.status, createdAt: c.createdAt, winner: c.winner,
+      title: c.title ?? null,  // 사장이 붙인 경쟁명(있으면 레일에서 topic 대신 표시) — 세션 레일 규약 공통
+      pinned: c.pinned === true,
       topic: String(c.prompt).replace(/\s+/g, ' ').trim().slice(0, 48),
       entrants: c.entrants.map((e) => ({ slug: e.slug, name: e.name, status: e.status })),
     });
   }
-  return out.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '')).slice(0, limit);
+  // 고정 먼저, 그 안에서 최신순 — 채팅·회의 레일과 동일 정렬
+  return out.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.createdAt ?? '').localeCompare(a.createdAt ?? '')).slice(0, limit);
+}
+
+/** 경쟁명 편집 — 레코드에 title 기록(레일 표시는 title 우선, 없으면 topic). 세션 rename 규약 공통. */
+export async function renameCompetition(wsId, id, title) {
+  const clean = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const comp = await update(wsId, id, (c) => { if (clean) c.title = clean; else delete c.title; });
+  return { id, title: comp.title ?? null };
+}
+
+/** 경쟁 고정/해제 — 레코드에 pinned 기록. 세션 setPinned 규약 공통. */
+export async function setCompetitionPinned(wsId, id, pinned) {
+  const comp = await update(wsId, id, (c) => { if (pinned) c.pinned = true; else delete c.pinned; });
+  return { id, pinned: comp.pinned === true };
 }
 
 export async function getCompetition(wsId, id) {

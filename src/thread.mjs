@@ -144,6 +144,18 @@ const trashDir = (wsId) => join(paths(wsId).chats, '.trash');
 const ARCH_ID = (safe) => new RegExp(`^${safe}-\\d+\\.json$`);
 const ANY_ARCH_ID = /^[a-z0-9-]+-\d+\.json$/; // 보관함은 회사 전체(여러 크루) — id 앞부분이 slug
 
+/** 현재(활성) 대화명 편집 — 활성 스레드 파일에 title 기록. '새 대화'로 적재되면 보관본에 그대로 승계된다
+    (resetThread가 t 통째 보관 — 이름 붙인 대화가 레일에서도 그 이름으로 남는 것이 자연스러운 기대). */
+export async function renameActiveThread(wsId, slug, title) {
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug);
+    const clean = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (clean) t.title = clean; else delete t.title;
+    await writeJsonAtomic(file(wsId, slug), t);
+    return { id: null, title: t.title ?? null };
+  });
+}
+
 /** 대화명 편집 — 보관 세션 파일에 title을 기록(레일·보관함 표시는 title 우선, 없으면 gist). */
 export async function renameSession(wsId, slug, id, title) {
   const safe = slug.replace(/[^a-z0-9-]/g, '');

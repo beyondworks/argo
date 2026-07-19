@@ -1,4 +1,4 @@
-import { listArchivedSessions, readArchivedSession, resumeSession, renameSession, trashSession, setPinned } from '../../../../../../src/thread.mjs';
+import { listArchivedSessions, readArchivedSession, resumeSession, renameSession, renameActiveThread, trashSession, setPinned } from '../../../../../../src/thread.mjs';
 import { guardCompany } from '../../../../../auth.mjs';
 
 /** 세션 적재 레일 — 목록(slug) 또는 보관 세션 1건(slug+id, 읽기 전용). */
@@ -36,8 +36,13 @@ export async function PATCH(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
   const { slug, id, title, pinned } = await req.json().catch(() => ({}));
-  if (!slug || !id) return Response.json({ error: 'slug·id가 필요합니다' }, { status: 400 });
+  if (!slug) return Response.json({ error: 'slug가 필요합니다' }, { status: 400 });
   try {
+    // id 없음 = 현재(활성) 대화 — 이름 편집만 지원(핀은 보관 대화 표식이라 활성엔 무의미)
+    if (!id) {
+      if (pinned !== undefined) return Response.json({ error: '현재 대화는 고정할 수 없습니다' }, { status: 400 });
+      return Response.json(await renameActiveThread(ws, slug, title));
+    }
     // pinned가 오면 고정 토글, 아니면 대화명 편집(둘은 배타 — 한 요청에 하나만)
     if (pinned !== undefined) return Response.json(await setPinned(ws, slug, id, pinned === true));
     return Response.json(await renameSession(ws, slug, id, title));

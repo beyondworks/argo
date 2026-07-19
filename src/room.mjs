@@ -43,16 +43,44 @@ export async function listArchivedMeetings(wsId) {
         id: n,
         ts: Number(n.match(/^_room-(\d+)\.json$/)[1]),
         count: r.messages?.length ?? 0,
+        title: r.title ?? null,  // 사장이 붙인 회의명(있으면 레일에서 topic 대신 표시) — 채팅 세션과 동일 규약
+        pinned: r.pinned === true, // 고정 회의 — 레일 상단에 최근순으로 묶인다
         topic: String(first?.text ?? '').replace(/@\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 42),
       });
     } catch { /* 깨진 보관본은 건너뛴다 */ }
   }
-  return out.sort((a, b) => b.ts - a.ts);
+  // 고정 먼저, 그 안에서 최근순 — 채팅 세션 레일과 동일 정렬
+  return out.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.ts - a.ts);
 }
 
 export async function readArchivedMeeting(wsId, id) {
   if (!MEETING_RE.test(id)) throw new Error('잘못된 회의 id');
   return JSON.parse(await readFile(join(paths(wsId).chats, '.archive', id), 'utf8'));
+}
+
+/** 회의명 편집 — 보관 회의 파일에 title 기록(레일 표시는 title 우선, 없으면 topic). 채팅 renameSession과 동일 계약. */
+export async function renameMeeting(wsId, id, title) {
+  if (!MEETING_RE.test(id)) throw new Error('잘못된 회의 id');
+  return withLock(rkey(wsId), async () => {
+    const f = join(paths(wsId).chats, '.archive', id);
+    const r = JSON.parse(await readFile(f, 'utf8'));
+    const clean = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (clean) r.title = clean; else delete r.title;
+    await writeJsonAtomic(f, r);
+    return { id, title: r.title ?? null };
+  });
+}
+
+/** 회의 고정/해제 — 보관 회의 파일에 pinned 기록. 채팅 setPinned와 동일 계약. */
+export async function setMeetingPinned(wsId, id, pinned) {
+  if (!MEETING_RE.test(id)) throw new Error('잘못된 회의 id');
+  return withLock(rkey(wsId), async () => {
+    const f = join(paths(wsId).chats, '.archive', id);
+    const r = JSON.parse(await readFile(f, 'utf8'));
+    if (pinned) r.pinned = true; else delete r.pinned;
+    await writeJsonAtomic(f, r);
+    return { id, pinned: r.pinned === true };
+  });
 }
 
 /** 회의 마치기 — 회의록을 일지(vault/journal)로 남겨 회사 기억으로 적재하고, 방은 보관 후 비운다(회의 1건 = 적재 1건). */
