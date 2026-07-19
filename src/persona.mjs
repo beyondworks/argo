@@ -178,6 +178,8 @@ export async function saveAgentCard(wsId, slug, md) {
 
 /** frontmatter 키를 갱신/삽입/삭제하며 카드 본문은 보존한다. */
 function setFrontmatterKey(md, key, value) {
+  // 개행 세척 — 값에 개행이 섞이면 frontmatter 구조가 갈라진다(키 인젝션·본문 분리). 전 키 공통 방어(검수 LOW).
+  if (typeof value === 'string') value = value.replace(/\r?\n/g, ' ').trim();
   const re = new RegExp(`^(---[\\s\\S]*?)^${key}:.*$`, 'm');
   if (value === '' || value == null) {
     return md.replace(new RegExp(`^${key}:.*\\n`, 'm'), ''); // 키 제거
@@ -187,7 +189,17 @@ function setFrontmatterKey(md, key, value) {
 }
 
 /** 이름·역할·팀·모델 수정 — 슬러그·파일명·기록은 유지(정체성은 표시 이름만 바뀐다). */
-export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner }) {
+/** 크루 능력 범위 필드 해석(순수) — 카드 frontmatter `skills:`/`mcp:` 계약(유건 지시 2026-07-19):
+    미기재/빈 값 = 전체 사용(null — 설치된 것 전부, 회사 공용 기본), 'none' = 사용 안 함(빈 배열),
+    그 외 = 쉼표 목록(지정한 것만). (export: chat 턴 필터·회귀 테스트 공용) */
+export function parseScopeList(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return null; // 전체(기본)
+  if (s.toLowerCase() === 'none') return [];
+  return s.split(',').map((x) => x.trim()).filter(Boolean);
+}
+
+export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner, skills, mcp }) {
   const file = cardPath(wsId, slug);
   if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
   let md = await readFile(file, 'utf8');
@@ -201,7 +213,9 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
   if (role !== undefined) md = setFrontmatterKey(md, 'role', role.trim());
   if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
   if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
-  if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = Claude Code(기본)
+  if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = 회사 연결 러너(기본)
+  if (skills !== undefined) md = setFrontmatterKey(md, 'skills', String(skills).trim()); // 빈 값 = 전체, 'none' = 없음, csv = 지정만
+  if (mcp !== undefined) md = setFrontmatterKey(md, 'mcp', String(mcp).trim());          // 동일 계약(parseScopeList)
   await writeJsonAtomic(file, md);
   const after = parseFrontmatter(md);
   await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: after.name });

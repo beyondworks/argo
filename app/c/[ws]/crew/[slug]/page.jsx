@@ -855,12 +855,47 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
 }
 
 /** 카드 패널 — 카드가 곧 시스템 프롬프트. 열람·편집·해고(깃헙식 확인). */
+/** 능력 범위 원문 해석 — 백엔드 parseScopeList와 동일 계약(''=전체→null, 'none'=[], csv=목록). */
+const parseScopeStr = (v) => {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  if (s.toLowerCase() === 'none') return [];
+  return s.split(',').map((x) => x.trim()).filter(Boolean);
+};
+
+/** 능력 범위 그룹 — 칩 토글(켜짐=사용). 설치 목록이 비면 렌더하지 않는다. */
+function ScopeGroup({ label, items, value, onToggle, t }) {
+  if (!items.length) return null;
+  const cur = parseScopeStr(value);
+  const ids = items.map((i) => i.id);
+  const on = new Set(cur ?? ids);
+  return (
+    <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
+      <span className="microlabel">
+        {label} · {on.size}/{items.length}{cur === null ? ` — ${t('chat.card.scopeAll')}` : on.size === 0 ? ` — ${t('chat.card.scopeNone')}` : ''}
+      </span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+        {items.map((it) => {
+          const active = on.has(it.id);
+          return (
+            <button key={it.id} type="button" className="chip" onClick={() => onToggle(it.id, ids)} aria-pressed={active}
+              style={{ cursor: 'pointer', ...(active ? { color: 'var(--ok)', borderColor: 'currentColor' } : { opacity: 0.5 }) }}>
+              {active && <span className="dot" />}{it.title}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose, onFired }) {
   const { t, fmtMoney } = useLang();
   useScrollLock();
   const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n ?? 0));
   const [md, setMd] = useState(null);
-  const [profile, setProfile] = useState({ recent: [], skills: [] });
+  const [profile, setProfile] = useState({ recent: [], skills: [], mcp: [] });
+  const [scope, setScope] = useState({ skills: '', mcp: '' }); // 카드 능력 범위 원문('' = 전체 사용)
   const [stats, setStats] = useState(null); // { turns, contextTotal, output, costUsd, avgMs, topTools }
   const [ruleInput, setRuleInput] = useState('');
   const [saving, setSaving] = useState(false);
@@ -871,6 +906,23 @@ function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose,
   const [boss, setBoss] = useState(null); // { items: [{section, text}] }
   const [bossInput, setBossInput] = useState('');
   const [bossSection, setBossSection] = useState('취향');
+  // 능력 범위 저장 — 칩 토글 즉시 PATCH(엔진 셀렉터와 동일 관례). 전부 켬=''(전체), 전부 끔='none'.
+  async function saveScope(field, next) {
+    setScope((s) => ({ ...s, [field]: next }));
+    try {
+      const r = await fetch(`/api/companies/${ws}/agents/${slug}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ [field]: next }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+    } catch (e) { setMsg(String(e.message)); }
+  }
+  function toggleScope(field, ids, id) {
+    const on = new Set(parseScopeStr(scope[field]) ?? ids);
+    if (on.has(id)) on.delete(id); else on.add(id);
+    const next = on.size === ids.length ? '' : on.size === 0 ? 'none' : ids.filter((x) => on.has(x)).join(', ');
+    saveScope(field, next);
+  }
   async function saveBoss(items) {
     try {
       const r = await fetch(`/api/companies/${ws}/boss-profile`, {
@@ -897,7 +949,11 @@ function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose,
 
   useEffect(() => {
     api(`/api/companies/${ws}/agents/${slug}`)
-      .then((d) => { setMd(d.md); setStats(d.stats ?? null); setProfile({ recent: d.recent ?? [], skills: d.skills ?? [] }); })
+      .then((d) => {
+        setMd(d.md); setStats(d.stats ?? null);
+        setProfile({ recent: d.recent ?? [], skills: d.skills ?? [], mcp: d.mcp ?? [] });
+        setScope({ skills: d.meta?.skills ?? '', mcp: d.meta?.mcp ?? '' });
+      })
       .catch((e) => setMsg(String(e.message)));
     api(`/api/companies/${ws}/boss-profile`).then(setBoss).catch(() => setBoss({ items: [] }));
     loadTg();
@@ -1002,14 +1058,12 @@ function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose,
                 ))}
               </div>
             )}
-            {profile.skills.length > 0 && (
-              <>
-                <span className="microlabel" style={{ marginTop: 4 }}>{t('chat.activeSkills')} · {profile.skills.length}</span>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                  {profile.skills.map((s) => <span key={s.id} className="chip">{s.title}</span>)}
-                </div>
-              </>
-            )}
+            {/* 능력 범위 — 설치는 회사 공용(모든 크루 기본), 크루별로 좁힐 수 있다(유건 지시 2026-07-19).
+                칩 토글 = 즉시 저장(엔진 셀렉터와 동일 관례). 전부 켬=''(전체 — 새 설치 자동 포함), 전부 끔='none'. */}
+            <ScopeGroup label={t('chat.card.scopeSkills')} items={profile.skills.map((s) => ({ id: s.id, title: s.title }))}
+              value={scope.skills} onToggle={(id, ids) => toggleScope('skills', ids, id)} t={t} />
+            <ScopeGroup label={t('chat.card.scopeMcp')} items={profile.mcp.map((n) => ({ id: n, title: n }))}
+              value={scope.mcp} onToggle={(id, ids) => toggleScope('mcp', ids, id)} t={t} />
           </div>
           {/* 엔진 — 러너·모델을 카드에서 바로 선택. 채팅 셀렉터와 같은 상태(즉시 저장). */}
           <div style={{ display: 'grid', gap: 7 }}>

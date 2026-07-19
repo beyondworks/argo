@@ -7,7 +7,7 @@ export async function GET(_req, { params }) {
     const { ws, slug } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
     const { md, meta } = await readAgentCard(ws, slug);
-    const [{ readEvents }, { listInstalledSkills }, { agentStats }] = await Promise.all([
+    const [{ readEvents }, { listInstalledSkills, loadMcp }, { agentStats }] = await Promise.all([
       import('../../../../../../src/events.mjs'),
       import('../../../../../../src/market.mjs'),
       import('../../../../../../src/usage.mjs'),
@@ -18,8 +18,9 @@ export async function GET(_req, { params }) {
       .slice(-8).reverse()
       .map((e) => ({ gist: e.gist, ts: e.ts, ok: e.ok !== false, ms: e.ms ?? null }));
     const skills = await listInstalledSkills(ws).catch(() => []);
+    const mcp = Object.keys((await loadMcp(ws).catch(() => ({ servers: {} }))).servers ?? {}); // 설치 MCP 이름 — 크루별 범위 편집 UI용
     const stats = await agentStats(ws, slug).catch(() => null);
-    return Response.json({ md, meta, recent, skills, stats });
+    return Response.json({ md, meta, recent, skills, mcp, stats });
   } catch {
     return Response.json({ error: '크루를 찾을 수 없습니다' }, { status: 404 });
   }
@@ -38,13 +39,13 @@ export async function PUT(req, { params }) {
   }
 }
 
-/** 신원 수정 — 이름·역할·팀·모델만 갱신(카드 본문·슬러그·기록 보존). */
+/** 신원·범위 수정 — 이름·역할·팀·모델·러너 + 능력 범위(skills/mcp — 빈 값=전체, 'none'=없음, csv=지정만). */
 export async function PATCH(req, { params }) {
   try {
     const { ws, slug } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { name, role, team, model, runner } = await req.json();
-    const meta = await updateAgentMeta(ws, slug, { name, role, team, model, runner });
+    const { name, role, team, model, runner, skills, mcp } = await req.json();
+    const meta = await updateAgentMeta(ws, slug, { name, role, team, model, runner, skills, mcp });
     return Response.json({ meta });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });
