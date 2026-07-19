@@ -114,7 +114,7 @@ export default function Compete({ params }) {
       {adoptTarget && (
         <ConfirmModal
           title={t('compete.adopt')}
-          description={t('compete.confirmAdopt', { name: comp?.entrants.find((x) => x.slug === adoptTarget)?.name ?? adoptTarget })}
+          description={t('compete.confirmAdopt', { name: (() => { const e = comp?.entrants.find((x) => (x.key ?? x.slug) === adoptTarget); return e ? `${e.name}${e.modelLabel ? ` · ${e.modelLabel}` : ''}` : adoptTarget; })() })}
           confirmLabel={t('common.confirm')}
           tone="primary"
           busy={busy}
@@ -205,7 +205,7 @@ export default function Compete({ params }) {
               {comp.winner && (
                 <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0 }}>
                   {t('compete.adoptedNote', { name: winnerName })}{' '}
-                  <a href={`/c/${ws}/crew/${comp.winner}`} style={{ color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.goCrew')} →</a>
+                  <a href={`/c/${ws}/crew/${winnerEnt?.slug ?? comp.winner}`} style={{ color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.goCrew')} →</a>
                 </p>
               )}
               {/* 무템플릿 grid 함정 방지 — 컬럼형 grid에는 항상 minmax(0,1fr) */}
