@@ -5,7 +5,7 @@ import { join, relative } from 'node:path';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
-import { readAgentCard } from './persona.mjs';
+import { readAgentCard, parseScopeList } from './persona.mjs';
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
 import { appendUsage, monthCost } from './usage.mjs';
@@ -20,11 +20,15 @@ import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner } from './runners.mjs';
 import { loadThread, takeSharedNotes } from './thread.mjs';
 
-/** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지. */
-async function loadSkills(wsId, cap = 6000, lang = 'ko') {
+/** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
+    allow = 크루별 사용 범위(parseScopeList 결과): null=전체(기본), []=없음, [이름]=지정만.
+    설치는 회사 공용(모든 크루 기본 사용), 축소는 크루 카드 `skills:` 필드로(유건 지시 2026-07-19).
+    (export: 회귀 테스트용) */
+export async function loadSkills(wsId, cap = 6000, lang = 'ko', allow = null) {
   const dir = paths(wsId).skills;
   let names = [];
   try { names = (await readdir(dir)).filter((f) => f.endsWith('.md')).sort(); } catch { return ''; }
+  if (allow) names = names.filter((n) => allow.includes(n.replace(/\.md$/, '')));
   let out = '';
   for (const n of names) {
     const text = await readFile(join(dir, n), 'utf8');
@@ -502,7 +506,11 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     }
   }
   const { md, meta } = await readAgentCard(wsId, agentSlug);
-  const skills = await loadSkills(wsId, 6000, lang);
+  // 크루별 능력 범위 — 카드 skills:/mcp: 필드(미기재=전체 사용이 기본, 'none'=없음, csv=지정만).
+  // 설치는 회사 공용이되 크루 단위로 좁힐 수 있다(유건 지시 2026-07-19 — 크루 카드에서 선택·편집).
+  const skillScope = parseScopeList(meta.skills);
+  const mcpScope = parseScopeList(meta.mcp);
+  const skills = await loadSkills(wsId, 6000, lang, skillScope);
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
@@ -571,7 +579,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 러너 공통 지시(결재·능력·환경·도구 활용) — SDK 경로와 같은 규율을 외부 러너에도 적용(러너 독립성).
       // 외부 CLI에는 크루 도구가 없으므로 hasTools:false — 같은 규칙이 "보고·안내" 형태로 들어간다.
       const cliCaps = await loadCapabilities(wsId);
-      const cliMcp = Object.keys(safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {}));
+      const cliMcp = Object.keys(safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {}))
+        .filter((n) => !mcpScope || mcpScope.includes(n)); // 크루별 MCP 범위(안내문도 동일 기준)
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
@@ -617,8 +626,10 @@ ${lang === 'en'
   }
   // 설치된 MCP 도구 — 서버 단위 allow(mcp__<name>)로 해당 서버의 전체 도구 허용
   // 실행 게이트 — 호스팅 모드에선 미검증 command MCP를 spawn하지 않는다(검수 HIGH: mcp.json이
-  // 봉투로 동기화돼 서비스 키를 든 워커로 흘러가면 임의 프로세스가 키 곁에서 실행될 위험).
-  const servers = safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {});
+  // 봉투로 동기화돼 서비스 키를 든 워커로 흘러가면 임의 프로세스가 키 곁에서 실행되는 위험).
+  let servers = safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {});
+  // 크루별 MCP 범위 — 지정된 크루는 그 서버만 스폰·허용(불필요한 프로세스·권한 축소)
+  if (mcpScope) servers = Object.fromEntries(Object.entries(servers).filter(([n]) => mcpScope.includes(n)));
   const mcpAllow = Object.keys(servers).map((n) => `mcp__${n}`);
 
   // 크루 도구 — 결재 요청은 모든 턴. 위임은 hop 2단계까지(사장→A→B→C에서 끝), 이미 거친 크루로는 금지(순환 차단).
