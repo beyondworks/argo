@@ -87,13 +87,61 @@ export async function autoLink(wsId, newFile, { topK = 3, threshold = 0.12 } = {
   return linked;
 }
 
-// "## 관련" 섹션은 항상 문서 마지막에 두는 규약 — 링크는 끝에 append만 하면 된다.
+/* ── 링크 섹션(## 근거 · ## 관련) — 위치 가정 없는 파서.
+   과거엔 "관련은 항상 마지막" 규약에 기대 파일 끝 append를 썼는데, 근거(정리 데몬)도 끝에 붙으면서
+   규약이 깨져 관련 링크가 근거 섹션 안에 들어가고(오표기), merge가 근거 섹션을 통째로 유실했다.
+   이제 섹션이 어디에 몇 번 있든 전부 뽑아 정규 순서(본문 → ## 근거 → ## 관련)로 재조립한다. */
+const LINK_SECTIONS = ['근거', '관련'];
+
+/** 문서에서 링크 섹션들을 분리 — { body, links: { 근거: [], 관련: [] } }. 중복 섹션도 전부 회수.
+    링크 전용(모든 줄이 "- [[..]]" 불릿) 또는 빈 섹션만 흡수한다 — 산문이 섞인 섹션은 통째로 body에
+    남긴다(검수 MEDIUM 2026-07-19: 섹션 안 산문을 침묵 유실하면 "기억 유실 금지" 원칙 위반.
+    남은 섹션의 링크는 include 중복 검사가 재추가를 막아 이중화되지 않는다). */
+export function splitLinkSections(text) {
+  const links = { 근거: [], 관련: [] };
+  const re = /\n## (근거|관련)\n([\s\S]*?)(?=\n## |$)/g;
+  let out = '';
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    const [whole, name, content] = m;
+    const lines = content.split('\n').filter((l) => l.trim());
+    const absorbable = lines.every((l) => /^\s*[-*]\s*\[\[.+?\]\]\s*$/.test(l)); // 빈 섹션([])도 true — 잃을 게 없다
+    if (!absorbable) continue; // 산문 섞임 — body에 그대로 남긴다
+    for (const l of content.matchAll(/\[\[(.+?)\]\]/g)) links[name].push(l[1]);
+    out += text.slice(last, m.index) + '\n';
+    last = m.index + whole.length;
+  }
+  out += text.slice(last);
+  return { body: out.replace(/\n{3,}/g, '\n\n'), links };
+}
+
+/** 링크 섹션 재조립 — 정규 순서·중복 제거. 빈 섹션은 만들지 않는다. */
+export function renderLinkSections(links) {
+  let out = '';
+  for (const name of LINK_SECTIONS) {
+    const uniq = [...new Set(links[name] ?? [])];
+    if (uniq.length) out += `\n## ${name}\n${uniq.map((l) => `- [[${l}]]`).join('\n')}\n`;
+  }
+  return out;
+}
+
 async function appendLink(file, relPath) {
   const name = relPath.replace(/\.md$/, '');
-  let text = await readFile(file, 'utf8');
-  if (text.includes(`[[${name}]]`)) return; // 중복 링크 방지
-  if (!/\n## 관련\n/.test(text)) text = `${text.trimEnd()}\n\n## 관련\n`;
-  await writeJsonAtomic(file, `${text.trimEnd()}\n- [[${name}]]\n`);
+  const text = await readFile(file, 'utf8');
+  if (text.includes(`[[${name}]]`)) return; // 중복 링크 방지(본문 언급 포함)
+  const { body, links } = splitLinkSections(text);
+  links.관련.push(name);
+  await writeJsonAtomic(file, `${body.trimEnd()}\n${renderLinkSections(links)}`);
+}
+
+/** 근거 링크 추가(정리 데몬용) — 결론이 어느 일지에서 왔는지 역추적. 섹션 파서 경유라 관련과 안 섞인다. */
+export async function appendSourceLinks(file, rels) {
+  const text = await readFile(file, 'utf8');
+  const fresh = rels.filter((r) => !text.includes(`[[${r}]]`));
+  if (!fresh.length) return;
+  const { body, links } = splitLinkSections(text);
+  links.근거.push(...fresh);
+  await writeJsonAtomic(file, `${body.trimEnd()}\n${renderLinkSections(links)}`);
 }
 
 /** 턴 핸드오버 — 크루별 하루 1파일 일지에 append(원수 층). 링크·정제는 정리 데몬이 맡는다. */
@@ -107,11 +155,14 @@ export async function saveHandover(wsId, agentSlug, userMsg, reply, label = agen
   await mkdir(p.journal, { recursive: true });
   const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 48);
   const head = existsSync(file) ? '' : `# ${day} ${label} 일지\n`;
+  // 장문 응답은 절단 표시를 남긴다 — 표시 없이 자르면 크루·정리 데몬이 잘린 걸 완전한 기록으로 오인한다
+  const full = reply.trim();
+  const body = full.length > 1500 ? `${full.slice(0, 1500).trim()}\n…(길이 초과로 생략 — 전체 ${full.length}자, 원문은 대화 스레드에)` : full;
   const section = `\n## ${hm} — ${gist}
 
 지시: ${userMsg.trim()}
 
-${reply.slice(0, 1500).trim()}
+${body}
 `;
   await appendFile(file, head + section);
   await updateIndex(wsId);
@@ -132,12 +183,15 @@ export async function saveNote(wsId, title, content, { merge = false, create = f
   let slug = base;
   if (create) { for (let n = 2; existsSync(join(p.notes, `${slug}.md`)); n++) slug = `${base}-${n}`; }
   const file = join(p.notes, `${slug}.md`);
-  let related = '';
+  // merge = 기존 링크 섹션(근거·관련)을 전부 보존하고 본문만 갱신 — 과거엔 '관련이 마지막' 가정의
+  // 정규식이라 근거가 뒤에 붙은 파일에서 근거만 남고 관련이 유실되거나 그 반대가 났다(파서로 교체).
+  let kept = { 근거: [], 관련: [] };
   if (merge && existsSync(file)) {
-    // 기존 '## 관련' 링크는 보존한다 — 정제 내용만 교체
-    related = (await readFile(file, 'utf8')).match(/\n## 관련\n[\s\S]*$/)?.[0] ?? '';
+    kept = splitLinkSections(await readFile(file, 'utf8')).links;
   }
-  await writeJsonAtomic(file, `---\nupdated: ${new Date().toISOString().slice(0, 10)}\n---\n# ${title.trim()}\n\n${content.trim()}\n${related}`);
+  const cur = splitLinkSections(content.trim()); // LLM/사용자가 섹션을 본문에 섞어 보내도 회수해 합친다
+  const links = { 근거: [...kept.근거, ...cur.links.근거], 관련: [...kept.관련, ...cur.links.관련] };
+  await writeJsonAtomic(file, `---\nupdated: ${new Date().toISOString().slice(0, 10)}\n---\n# ${title.trim()}\n\n${cur.body.trim()}\n${renderLinkSections(links)}`);
   const linked = await autoLink(wsId, file);
   return { file, linked };
 }
@@ -154,7 +208,10 @@ export async function updateIndex(wsId) {
   };
   const notes = docs.filter((d) => d.rel.startsWith('notes/'));
   const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
-  const journals = docs.filter((d) => d.rel.startsWith('journal/') && basename(d.rel) >= cutoff);
+  // 일별(YYYY-MM-DD-*)과 주간 롤업(YYYY-Wnn)을 분리 — 'W' > 숫자라 문자열 비교 컷오프를 주간 파일이
+  // 항상 통과해 "최근 일지"에 영구 누적되고, 미정리 14일+ 일지는 실종되던 문제의 교정.
+  const journals = docs.filter((d) => d.rel.startsWith('journal/') && /^\d{4}-\d{2}-\d{2}-/.test(basename(d.rel)) && basename(d.rel) >= cutoff);
+  const weeklies = docs.filter((d) => d.rel.startsWith('journal/') && /^\d{4}-W\d{2}\.md$/.test(basename(d.rel))).slice(0, 8);
   const legacy = docs.filter((d) => d.rel.startsWith('conversations/')).slice(0, 10);
   await writeJsonAtomic(p.index, `# 회사 기억 인덱스
 
@@ -165,7 +222,7 @@ ${notes.map(line).join('\n') || '(아직 없음)'}
 
 ## 최근 일지 (턴 원본, 14일)
 ${journals.map(line).join('\n') || '(아직 없음)'}
-${legacy.length ? `\n## 이전 기록\n${legacy.map(line).join('\n')}\n` : ''}`);
+${weeklies.length ? `\n## 주간 일지 (7일 지난 기억의 요약, 최근 8주)\n${weeklies.map(line).join('\n')}\n` : ''}${legacy.length ? `\n## 이전 기록\n${legacy.map(line).join('\n')}\n` : ''}`);
 }
 
 /* ── 사장 프로필 — "회사가 아는 사장". 크루가 자동 기록·갱신하고, 사장이 크루 카드에서 정정한다. */

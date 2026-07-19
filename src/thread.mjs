@@ -55,6 +55,20 @@ export async function takeSharedNotes(wsId, slug) {
   });
 }
 
+/** 소비했던 공유 노트 복원 — 턴이 최종 실패하면 pending을 되살려 다음 턴에 다시 주입한다.
+    (소비가 러너 실행 전이라, 복원 없이는 실패한 턴이 cc 맥락을 영구 소실시켰다 — 검증 2026-07-19) */
+export async function restoreSharedNotes(wsId, slug, texts) {
+  if (!texts?.length) return;
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug);
+    const want = new Set(texts);
+    for (const m of t.messages) {
+      if (m.shared && !m.pending && want.has(m.text)) { m.pending = true; want.delete(m.text); }
+    }
+    await writeJsonAtomic(file(wsId, slug), t);
+  });
+}
+
 /** 보관된 세션 목록 — 새 대화로 적재된 이전 스레드들(최신순). 크루 채팅 좌측 레일의 원천. */
 export async function listArchivedSessions(wsId, slug) {
   const dir = join(paths(wsId).chats, '.archive');
