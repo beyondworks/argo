@@ -37,10 +37,12 @@ export default function Compete({ params }) {
   }
   const [comp, setComp] = useState(null);      // 열람 중 경쟁 (null = 새 경쟁)
   const [prompt, setPrompt] = useState('');
-  const [picked, setPicked] = useState([]);
+  const [pickedCrew, setPickedCrew] = useState(''); // 경쟁을 받을 크루 1명(slug)
+  const [pickedModels, setPickedModels] = useState([]); // "runner:model" 페어 2~3개
+  const [runners, setRunners] = useState(null); // 러너 카탈로그(연결 상태 포함) — 모델 선택지
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [adoptTarget, setAdoptTarget] = useState(null); // 채택 확인 모달 대상 slug
+  const [adoptTarget, setAdoptTarget] = useState(null); // 채택 확인 모달 대상(entrant key — 레거시는 slug)
   const compRef = useRef(null);
   compRef.current = comp;
 
@@ -49,7 +51,12 @@ export default function Compete({ params }) {
   }, [ws]);
   useEffect(() => {
     loadList();
-    api(`/api/companies/${ws}/agents`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
+    api(`/api/companies/${ws}/agents`).then((d) => {
+      const list = d.agents ?? [];
+      setAgents(list);
+      setPickedCrew((cur) => cur || (list[0]?.slug ?? '')); // 크루가 있으면 첫 크루 기본 선택(빈 드롭다운 방지)
+    }).catch(() => {});
+    api(`/api/runners?ws=${ws}`).then((d) => setRunners(d.runners ?? [])).catch(() => setRunners([]));
   }, [ws, loadList]);
 
   // 진행 중 경쟁 폴링 — 열람 중인 경쟁이 running이면 4초마다 갱신
@@ -63,16 +70,20 @@ export default function Compete({ params }) {
     return () => clearInterval(iv);
   }, [ws, comp?.id, comp?.status, loadList]);
 
-  const togglePick = (slug) => setPicked((p) =>
-    p.includes(slug) ? p.filter((s) => s !== slug) : p.length >= MAX_PICK ? p : [...p, slug]);
+  const toggleModel = (pair) => setPickedModels((p) =>
+    p.includes(pair) ? p.filter((x) => x !== pair) : p.length >= MAX_PICK ? p : [...p, pair]);
 
   async function start(e) {
     e.preventDefault();
-    if (busy || !prompt.trim() || picked.length < 2) return;
+    if (busy || !prompt.trim() || !pickedCrew || pickedModels.length < 2) return;
     setBusy(true); setError('');
     try {
-      const d = await api(`/api/companies/${ws}/compete`, { prompt: prompt.trim(), slugs: picked });
-      setComp(d); setPrompt(''); setPicked([]);
+      const entrants = pickedModels.map((pair) => {
+        const [runner, ...rest] = pair.split(':');
+        return { slug: pickedCrew, runner, model: rest.join(':') };
+      });
+      const d = await api(`/api/companies/${ws}/compete`, { prompt: prompt.trim(), entrants });
+      setComp(d); setPrompt(''); setPickedModels([]);
       loadList();
     } catch (err) { setError(String(err.message)); } finally { setBusy(false); }
   }
@@ -83,19 +94,20 @@ export default function Compete({ params }) {
     catch (e) { setError(String(e.message)); }
   }
 
-  function adopt(slug) { if (!busy) setAdoptTarget(slug); } // window.confirm(Tauri 무동작) 대신 인앱 ConfirmModal
+  function adopt(ref) { if (!busy) setAdoptTarget(ref); } // window.confirm(Tauri 무동작) 대신 인앱 ConfirmModal
   async function doAdopt() {
-    const slug = adoptTarget;
-    if (!slug || busy) return;
+    const ref = adoptTarget;
+    if (!ref || busy) return;
     setBusy(true); setError(''); setAdoptTarget(null);
     try {
-      const d = await api(`/api/companies/${ws}/compete/${comp.id}`, { action: 'adopt', slug });
+      const d = await api(`/api/companies/${ws}/compete/${comp.id}`, { action: 'adopt', slug: ref });
       setComp(d); loadList();
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) { setError(String(err.message)); } finally { setBusy(false); }
   }
 
-  const winnerName = comp?.winner ? (comp.entrants.find((x) => x.slug === comp.winner)?.name ?? comp.winner) : null;
+  const winnerEnt = comp?.winner ? comp.entrants.find((x) => (x.key ?? x.slug) === comp.winner) : null;
+  const winnerName = winnerEnt ? `${winnerEnt.name}${winnerEnt.modelLabel ? ` · ${winnerEnt.modelLabel}` : ''}` : null;
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
@@ -136,7 +148,7 @@ export default function Compete({ params }) {
                 </span>
                 <span className="nav-sub" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                   {c.status === 'running' && <ArgoSpinner size={10} />}
-                  {new Date(c.createdAt).toLocaleDateString('sv-SE')} · {c.entrants.map((e) => e.name).join(' · ')}
+                  {new Date(c.createdAt).toLocaleDateString('sv-SE')} · {c.entrants[0]?.modelLabel ? `${c.entrants[0].name} · ${c.entrants.map((e) => e.modelLabel ?? '?').join(' vs ')}` : c.entrants.map((e) => e.name).join(' · ')}
                 </span>
               </span>
             </button>
@@ -199,9 +211,10 @@ export default function Compete({ params }) {
               {/* 무템플릿 grid 함정 방지 — 컬럼형 grid에는 항상 minmax(0,1fr) */}
               <div style={{ display: 'grid', gridTemplateColumns: `repeat(${comp.entrants.length}, minmax(0, 1fr))`, gap: 12, alignItems: 'start' }}>
                 {comp.entrants.map((e) => {
-                  const isWinner = comp.winner === e.slug;
+                  const ref = e.key ?? e.slug; // 신형=key(모델 경쟁), 레거시=slug(크루 경쟁)
+                  const isWinner = comp.winner === ref;
                   return (
-                    <div key={e.slug} className="card" style={{
+                    <div key={ref} className="card" style={{
                       padding: '14px 16px', display: 'grid', gap: 10, minWidth: 0,
                       ...(isWinner ? { borderColor: 'var(--warn)', boxShadow: '0 0 0 1px var(--warn)' } : {}),
                       ...(comp.winner && !isWinner ? { opacity: 0.55 } : {}),
@@ -210,7 +223,8 @@ export default function Compete({ params }) {
                         <Avatar name={e.name} size={24} />
                         <span style={{ minWidth: 0 }}>
                           <span style={{ display: 'block', fontSize: 12.5, fontWeight: 650 }}>{e.name}</span>
-                          <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)' }}>{e.role}</span>
+                          {/* 모델 경쟁이면 어떤 모델의 답인지가 비교 축 — 역할 대신 모델을 보인다 */}
+                          <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)', fontFamily: e.modelLabel ? 'var(--mono)' : undefined }}>{e.modelLabel || e.role}</span>
                         </span>
                         <span style={{ flex: 1 }} />
                         {e.status === 'running' && <ArgoSpinner size={13} />}
@@ -223,7 +237,7 @@ export default function Compete({ params }) {
                         {e.status === 'done' && <Markdown text={e.reply ?? ''} />}
                       </div>
                       {e.status === 'done' && !comp.winner && (
-                        <button className="btn btn-primary sm" disabled={busy} onClick={() => adopt(e.slug)} style={{ justifySelf: 'start' }}>
+                        <button className="btn btn-primary sm" disabled={busy} onClick={() => adopt(ref)} style={{ justifySelf: 'start' }}>
                           {t('compete.adopt')}
                         </button>
                       )}
@@ -245,21 +259,34 @@ export default function Compete({ params }) {
         ) : (
           /* 새 경쟁 컴포저 — 회의실 컴포저와 동일 문법: 칩 행 → input-bar → 힌트 */
           <div style={{ display: 'grid', gap: 6 }}>
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <span className="microlabel" style={{ marginRight: 3 }}>{t('compete.pick')}</span>
-              {agents.map((a) => {
-                const on = picked.includes(a.slug);
-                return (
-                  <button type="button" key={a.slug} className="chip" onClick={() => togglePick(a.slug)}
-                    aria-pressed={on} title={a.role}
-                    style={{ cursor: 'pointer', ...(on ? { background: 'var(--primary)', color: 'var(--primary-fg)', borderColor: 'var(--primary)' } : {}) }}>
-                    {a.name} — {a.role}
-                  </button>
-                );
-              })}
+              {/* 크루 1명 — 등록된 모든 크루 중 선택(드롭다운) */}
+              <select value={pickedCrew} onChange={(e) => setPickedCrew(e.target.value)} disabled={busy}
+                style={{ height: 28, padding: '0 8px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12, color: 'var(--fg)', maxWidth: 220 }}>
+                {agents.length === 0 && <option value="">—</option>}
+                {agents.map((a) => <option key={a.slug} value={a.slug}>{a.name} — {a.role}</option>)}
+              </select>
               {agents.length === 0 && (
                 <a href={`/c/${ws}`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('nav.hire')} →</a>
               )}
+            </div>
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span className="microlabel" style={{ marginRight: 3 }}>{t('compete.pickModels')}</span>
+              {/* 연결된 러너의 모델만 선택 가능 — 미연결 러너 모델은 비활성(설정에서 연결 후) */}
+              {(runners ?? []).flatMap((r) => r.models.map((m) => {
+                const pair = `${r.id}:${m.id}`;
+                const on = pickedModels.includes(pair);
+                return (
+                  <button type="button" key={pair} className="chip" onClick={() => toggleModel(pair)} disabled={!r.authed || busy}
+                    aria-pressed={on} title={`${r.name} · ${m.label}`}
+                    style={{ cursor: r.authed ? 'pointer' : 'not-allowed', opacity: r.authed ? 1 : 0.45,
+                      ...(on ? { background: 'var(--primary)', color: 'var(--primary-fg)', borderColor: 'var(--primary)' } : {}) }}>
+                    {m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : ''}
+                  </button>
+                );
+              }))}
+              {runners === null && <Skeleton h={22} w={160} />}
             </div>
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
             <form onSubmit={start} className="input-bar">
@@ -270,12 +297,12 @@ export default function Compete({ params }) {
                 disabled={busy}
                 {...imeGuard}
               />
-              <button className="btn btn-primary btn-icon" disabled={busy || !prompt.trim() || picked.length < 2} aria-label={t('compete.start')}>
+              <button className="btn btn-primary btn-icon" disabled={busy || !prompt.trim() || !pickedCrew || pickedModels.length < 2} aria-label={t('compete.start')}>
                 {busy ? <ArgoSpinner size={14} /> : <Icon name="send" size={15} />}
               </button>
             </form>
-            <p style={{ fontSize: 11, color: picked.length >= 2 ? 'var(--warn)' : 'var(--fg-3)', margin: 0 }}>
-              {picked.length >= 2 ? t('compete.costNote', { n: picked.length }) : t('compete.hint')}
+            <p style={{ fontSize: 11, color: pickedModels.length >= 2 ? 'var(--warn)' : 'var(--fg-3)', margin: 0 }}>
+              {pickedModels.length >= 2 ? t('compete.costNote', { n: pickedModels.length }) : t('compete.hint')}
             </p>
           </div>
         )}
