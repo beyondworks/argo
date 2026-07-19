@@ -17,7 +17,7 @@ import { loadCapabilities } from './capabilities.mjs';
 import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner } from './runners.mjs';
+import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
@@ -813,10 +813,9 @@ ${lang === 'en'
         // 기기 간 동기화·영속되므로 명령/프롬프트 전문·원본 stderr를 흘리지 않는다), 그것도 없으면
         // 마스킹·정리한 꼬리만. 이 에러 메시지는 catch에서 이벤트(400자)로도 실린다.
         // (전제: 1 query = 1 턴 = 1 result — 스트리밍 다중 턴으로 바뀌면 result 사이 stderrTail 리셋 필요)
-        const clean = (s) => String(s)
-          .replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(\x07|\x1b\\)/g, '') // ANSI CSI/OSC 제거
-          .replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,})\b/g, 'sk-***') // 키 형태 마스킹(방어심층)
-          .replace(/\s+/g, ' ').trim();
+        const clean = (s) => maskKeyLike( // 키 마스킹은 apiError(외부 CLI 실패 경로)와 공용 — 두 경로 드리프트 방지
+          String(s).replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(\x07|\x1b\\)/g, ''), // ANSI CSI/OSC 제거
+        ).replace(/\s+/g, ' ').trim();
         const fromErrors = (msg.errors ?? []).filter(Boolean).join(' | ');
         const fromStderr = stderrTail.match(/"message"\s*:\s*"([^"]+)"/)?.[1] || stderrTail.slice(-400);
         const detail = clean(fromErrors || fromStderr);
