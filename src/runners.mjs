@@ -854,7 +854,9 @@ export async function startClaudeSetupToken(wsId) {
   // ERR_CONNECTION_REFUSED — 실사용 신고 2026-07-19) 스피너만 돈다. 그 환경들은 원클릭을 열지 않고
   // 'manual'(터미널에서 claude setup-token 실행 → 토큰 붙여넣기)로 안내한다.
   // (앞선 #44의 loopback 판정은 이 완주 조건을 담지 못해 상주에서 스피너 함정을 만들었다 — standalone으로 교정.)
-  if (process.env.ARGO_STANDALONE !== '1') return { ok: false, reason: 'manual' };
+  // ARGO_TENANT_OWNER는 벨트앤서스펜더 하드 차단 — 누군가 호스팅 런타임에 실수로 ARGO_STANDALONE=1을
+  // 넣어도(standalone 서버라 "필요해 보이는" 흔한 실수) 다중테넌트에선 원클릭이 재개방되지 않도록(검수 LOW).
+  if (process.env.ARGO_TENANT_OWNER || process.env.ARGO_STANDALONE !== '1') return { ok: false, reason: 'manual' };
   if (process.platform === 'win32') return { ok: false, reason: 'unsupported-platform' }; // script(1) 부재 — 후속(node-pty 검토)
   if (setupState[wsId]?.status === 'running') return { ok: false, reason: 'busy' };
   const cli = await resolveClaudeCli();
