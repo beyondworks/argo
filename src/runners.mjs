@@ -169,11 +169,14 @@ export const glmEnv = () => ({
   ANTHROPIC_API_KEY: '',
 });
 
-/** 설치·인증 감지 — 각 CLI의 로그인 산출물(OAuth 크리덴셜 파일)을 본다. 60초 캐시. */
+/** 설치·인증 감지 — 각 CLI의 로그인 산출물(OAuth 크리덴셜 파일)을 본다. 60초 캐시.
+    force=true는 캐시 우회 — host 옵트인 클릭처럼 "지금 이 순간"의 로그인 검증이 목적인 경로용
+    (감사 2026-07-20: 방금 `codex login`을 마친 사용자가 페이지 로드 때 예열된 authed:false 캐시에
+    최대 60초간 오거절되던 함정 — 신선도가 정확성보다 싼 캐시를 검증 경로에 쓰면 안 된다). */
 let cache = null;
 let cacheAt = 0;
-export async function detectRunners() {
-  if (cache && Date.now() - cacheAt < 60_000) return cache;
+export async function detectRunners(force = false) {
+  if (!force && cache && Date.now() - cacheAt < 60_000) return cache;
   await ensureCliPath(); // GUI 기동 PATH 보강 — homebrew/npm 전역 CLI 오탐 방지
   const home = homedir();
   const [codexV, geminiV, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
@@ -395,6 +398,27 @@ export async function seedRunnerCreds(wsId, uid) {
 /** 마스킹 — 접두사만(보안 규칙). 평문은 어디에도 남기지 않는다. */
 export const maskCred = (v) => (v ? `${v.slice(0, 6)}***` : '');
 
+/** 격리 홈 자격 파일 시드 — "어느 원본으로 시드했나"를 마커(.argo-seed-<name>)에 해시로 남겨,
+    원본이 바뀌면(타 기기 재연결이 동기화로 도착, 호스트 재로그인 등) 파일을 재시드한다.
+    write-if-absent만으로는 동기화된 새 자격이 영영 주입되지 않았다(감사 2026-07-20: 기기 B가 죽은
+    토큰으로 계속 실행되는데 UI는 '연결됨'). CLI가 갱신해 쓴 토큰은 원본이 그대로인 한 보존된다
+    (마커는 원본 해시 — 갱신 보존이라는 write-if-absent의 원래 목적 유지).
+    adopt=true: 마커 없는 기존 홈은 현재 파일을 그대로 채택하고 마커만 기록(마이그레이션 —
+    회전됐을 수 있는 갱신 토큰을 구본으로 덮어 단일 기기 사용자를 깨지 않기 위함. 이미 갭이
+    발현된 홈은 재연결 1회로 해소). host 모드는 adopt=false — 호스트가 항상 단일 진실. */
+async function seedAuthFile(dir, name, content, { adopt = true } = {}) {
+  const file = join(dir, name);
+  const marker = join(dir, `.argo-seed-${name}`);
+  const hash = createHash('sha256').update(content).digest('hex').slice(0, 32);
+  const cur = await readFile(marker, 'utf8').catch(() => null);
+  const has = await exists(file);
+  if (cur === hash && has) return false;
+  if (adopt && cur === null && has) { await writeFile(marker, hash, { mode: 0o600 }); return false; }
+  await writeFile(file, content, { mode: 0o600 });
+  await writeFile(marker, hash, { mode: 0o600 });
+  return true;
+}
+
 /** 러너 실행에 주입할 env(부분) — 회사 자격이 있으면 러너 종류에 맞는 변수로. 없으면 null(호스트 자격 폴백=회귀 0).
     반환: { env, home } — env=주입 변수 dict, home=codex 격리홈 오버라이드('clean'=계정 로그인 무시하고 API키 사용). */
 export async function runnerCredEnv(wsId, runner) {
@@ -429,7 +453,7 @@ export async function runnerCredEnv(wsId, runner) {
     // CLI가 토큰을 갱신하면 이 파일에 다시 쓴다(다음 턴도 같은 홈을 쓰므로 이어진다).
     const dir = join(homedir(), '.argo', `codex-home-${wsId}`);
     await mkdir(dir, { recursive: true, mode: 0o700 }); // OAuth 토큰 보관 — 소유자만
-    if (!(await exists(join(dir, 'auth.json')))) await writeFile(join(dir, 'auth.json'), v, { mode: 0o600 });
+    await seedAuthFile(dir, 'auth.json', v); // 저장 자격이 바뀌면(동기화 포함) 재시드 — CLI 갱신분은 보존
     if (!(await exists(join(dir, 'config.toml')))) await writeFile(join(dir, 'config.toml'), '# Argo 회사 자격 codex 홈\n');
     return { env: {}, home: dir };
   }
@@ -447,19 +471,22 @@ async function geminiTurnHome(wsId, cred) {
   await mkdir(gdir, { recursive: true, mode: 0o700 }); // 자격 보관 — 소유자만
   if (cred.type === 'apikey') return { home, authType: 'gemini-api-key', env: { GEMINI_API_KEY: cred.value } };
   if (cred.type === 'oauth') {
-    if (!(await exists(join(gdir, 'oauth_creds.json')))) await writeFile(join(gdir, 'oauth_creds.json'), cred.value, { mode: 0o600 });
+    await seedAuthFile(gdir, 'oauth_creds.json', cred.value); // 저장 자격 변경(동기화 포함) 시 재시드 — CLI 갱신분은 보존
     return { home, authType: 'oauth-personal', env: {} };
   }
   // host — 이 컴퓨터 로그인을 빌리되 격리 HOME에서 실행. detectRunners가 authed로 인정하는 두 경로를
   // 모두 격리한다(둘 다 안 잡으면 검수 HIGH: env키 경로가 무격리 호스트 HOME으로 새 도구 게이팅 우회).
   const hostG = join(homedir(), '.gemini');
-  if (await exists(join(hostG, 'oauth_creds.json'))) {
-    if (!(await exists(join(gdir, 'oauth_creds.json')))) {
-      await copyFile(join(hostG, 'oauth_creds.json'), join(gdir, 'oauth_creds.json'));
-      // google_accounts.json은 있으면 함께(계정 식별) — 없어도 로그인은 동작
-      if (await exists(join(hostG, 'google_accounts.json'))) {
-        await copyFile(join(hostG, 'google_accounts.json'), join(gdir, 'google_accounts.json')).catch(() => {});
-      }
+  const hostCreds = await readFile(join(hostG, 'oauth_creds.json'), 'utf8').catch(() => null);
+  if (hostCreds) {
+    // "이 컴퓨터 로그인 사용"의 의미 그대로 — 호스트 로그인이 바뀌면(재로그인·계정 교체·철회 후 재발급)
+    // 격리 사본을 따라간다. 1회 복사 동결은 철회된 옛 계정 스냅샷으로 계속 실행하면서 UI만 '연결됨'이던
+    // 감사 결함(2026-07-20, codex 심링크와 비대칭). adopt=false — 호스트가 항상 단일 진실이라
+    // 기존 동결 사본도 첫 턴에 즉시 해동된다. CLI가 격리 사본에 쓴 갱신은 호스트가 그대로인 한 보존.
+    const reseeded = await seedAuthFile(gdir, 'oauth_creds.json', hostCreds, { adopt: false });
+    // google_accounts.json은 있으면 함께(계정 식별) — 없어도 로그인은 동작
+    if ((reseeded || !(await exists(join(gdir, 'google_accounts.json')))) && (await exists(join(hostG, 'google_accounts.json')))) {
+      await copyFile(join(hostG, 'google_accounts.json'), join(gdir, 'google_accounts.json')).catch(() => {});
     }
     return { home, authType: 'oauth-personal', env: {} };
   }
@@ -672,8 +699,17 @@ export async function submitRunnerWebAuth(wsId, runner, pasted) {
       expiry_date: Date.now() + (d.expires_in ?? 3600) * 1000,
     }));
   }
-  webAuthState[runner] = null; // 세션 종료 — verifier 재사용 금지
+  // 세션 종료 — verifier 재사용 금지. 완료 마커를 남겨 폴링(GET connect)이 "이번 브리지 세션이
+  // 실제로 저장을 마쳤나"를 본다. 자격 존재만 보면 기존 자격 보유 러너의 재연결·방식 전환이
+  // OAuth 승인 전에 2초 만에 거짓 '연결됨'이 된다(감사 2026-07-20 — 구독 전환했다고 믿는데 옛 키 과금).
+  webAuthState[runner] = { saved: true, savedWs: wsId, ts: Date.now() };
   return { ok: true };
+}
+
+/** 웹 브리지 완료 여부(폴링용) — "이번 세션에서 이 스코프의 저장이 끝났나"만 true. 자격 존재와 무관. */
+export function webAuthDone(runner, wsId) {
+  const st = webAuthState[runner];
+  return !!(st?.saved && st.savedWs === wsId);
 }
 
 /** OAuth 연결 상태 — 벤더 CLI status를 읽기전용으로 확인(폴링용). */

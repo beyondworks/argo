@@ -7,7 +7,7 @@
 // GET: 완료 폴링(읽기전용). GET ?setup=1: setup-token 진행 상태.
 import {
   startRunnerLogin, runnerLoginStatus, RUNNER_AUTH,
-  startRunnerWebAuth, submitRunnerWebAuth, loadRunnerCred,
+  startRunnerWebAuth, submitRunnerWebAuth, webAuthDone,
   startClaudeSetupToken, setupTokenStatus,
 } from '../../../../../../src/runners.mjs';
 import { guardCompany } from '../../../../../auth.mjs';
@@ -42,8 +42,9 @@ export async function GET(req, { params }) {
     return Response.json(setupTokenStatus(ws)); // { status: idle|running|saved|failed, error }
   }
   if (meta.webConnect) {
-    // 웹 브리지 완료 = 회사 자격 존재
-    return Response.json({ supported: true, authed: !!(await loadRunnerCred(ws, runner)) });
+    // 웹 브리지 완료 = "이번 브리지 세션의 저장 완료"(webAuthDone). 자격 '존재'로 판정하면 기존 자격
+    // 보유 러너의 재연결·방식 전환이 승인 전에 거짓 '연결됨'이 된다(감사 2026-07-20).
+    return Response.json({ supported: true, authed: webAuthDone(runner, ws) });
   }
   return Response.json(await runnerLoginStatus(runner));
 }

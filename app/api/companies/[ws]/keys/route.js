@@ -25,7 +25,7 @@ export async function PUT(req, { params }) {
     // 마커만 저장한다(자격 값 없음). 자동 스캐빈징 금지 원칙에서 이 버튼이 유일한 호스트 사용 관문.
     if (type === 'host') {
       if (!hostOptInAllowed(runner)) throw new Error('이 환경에서는 이 컴퓨터 로그인 사용을 쓸 수 없습니다'); // claude는 데스크톱 번들에서 제외(키체인)
-      const host = (await detectRunners())[runner];
+      const host = (await detectRunners(true))[runner]; // 캐시 우회 — 방금 로그인한 CLI를 예열 캐시가 60초 오거절하지 않게(감사 2026-07-20)
       if (!host?.installed) throw new Error('이 컴퓨터에서 해당 CLI가 감지되지 않습니다 — 먼저 설치해 주세요');
       if (!host?.authed) throw new Error('이 컴퓨터의 CLI가 로그인돼 있지 않습니다 — 터미널에서 로그인 후 다시 시도해 주세요');
       await saveRunnerCred(ws, runner, 'host', 'host');
