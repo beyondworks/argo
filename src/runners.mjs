@@ -4,6 +4,7 @@
 import { access, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { randomBytes, createHash } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { promisify } from 'node:util';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -460,13 +461,44 @@ const WEB_OAUTH = {
   },
 };
 const webAuthState = (globalThis.__argoWebAuth ??= {}); // { [runner]: { verifier, ts } }
+const webAuthListeners = (globalThis.__argoWebAuthSrv ??= {}); // { [runner]: http.Server } — 1회용 콜백 리스너
 
-export function startRunnerWebAuth(runner) {
+/** 로컬 콜백 리스너 — 승인 후 브라우저가 돌아오는 localhost 콜백을 서버가 직접 받아 자동 교환한다.
+    이전엔 "사이트에 연결할 수 없음" 오류 화면이 뜨고 사용자가 그 주소를 복사해 붙여넣어야 했다
+    (실사용 신고 2026-07-19: 오류로 읽혀 연결 실패로 인지). 리스너가 받으면 복사 단계 자체가 없어지고
+    브라우저에는 "연결되었습니다" 페이지가 뜬다. 포트 선점 실패(벤더 CLI 로그인 동시 실행 등)나
+    호스팅 워커(사용자 기기가 아님)에선 조용히 건너뛴다 — 기존 붙여넣기 폴백이 그대로 동작한다. */
+function startWebAuthListener(runner, wsId, cfg) {
+  if (process.env.ARGO_TENANT_OWNER || process.env.SUPABASE_SERVICE_ROLE_KEY) return; // 호스팅 — 리스너 위치가 사용자 기기가 아니다
+  try { webAuthListeners[runner]?.close(); } catch { /* 이전 리스너 정리 */ }
+  const target = new URL(cfg.redirect);
+  const page = (title, body) => `<!doctype html><meta charset="utf-8"><title>Argo</title><body style="font-family:system-ui;display:grid;place-items:center;height:90vh"><div style="text-align:center"><h2>${title}</h2><p style="color:#666">${body}</p></div>`;
+  const srv = createServer(async (req, res) => {
+    try {
+      const u = new URL(req.url, cfg.redirect);
+      if (u.pathname !== target.pathname || !u.searchParams.get('code')) { res.statusCode = 404; res.end(); return; }
+      const r = await submitRunnerWebAuth(wsId, runner, u.toString()); // 기존 검증 경로 그대로(state/verifier 확인 포함)
+      res.setHeader('content-type', 'text/html; charset=utf-8');
+      res.end(r.ok
+        ? page('연결되었습니다', '이 창을 닫고 Argo로 돌아가세요 — 화면에 곧 "연결됨"이 표시됩니다.')
+        : page('연결에 실패했습니다', 'Argo로 돌아가 다시 시도하거나, 이 페이지 주소를 복사해 붙여넣어 주세요.'));
+      if (r.ok) { try { srv.close(); } catch { /* 이미 닫힘 */ } delete webAuthListeners[runner]; }
+    } catch { res.statusCode = 500; res.end(); }
+  });
+  srv.on('error', () => { delete webAuthListeners[runner]; /* EADDRINUSE 등 — 붙여넣기 폴백 */ });
+  srv.listen(Number(target.port), '127.0.0.1');
+  webAuthListeners[runner] = srv;
+  const ttl = setTimeout(() => { try { srv.close(); } catch { /* 이미 닫힘 */ } delete webAuthListeners[runner]; }, 10 * 60_000);
+  ttl.unref?.();
+}
+
+export function startRunnerWebAuth(runner, wsId = null) {
   const cfg = WEB_OAUTH[runner];
   if (!cfg) return { ok: false, reason: 'unsupported' };
   const verifier = randomBytes(32).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');
   webAuthState[runner] = { verifier, ts: Date.now() };
+  if (wsId) startWebAuthListener(runner, wsId, cfg); // 자동 수신 — 실패해도 붙여넣기 폴백 유지
   const u = new URL(cfg.authorize);
   for (const [k, v] of Object.entries(cfg.extra ?? {})) u.searchParams.set(k, v);
   u.searchParams.set('client_id', cfg.clientId);

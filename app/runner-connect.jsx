@@ -83,6 +83,26 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
       setWebUrl(d.url); setWebOk(true); setWebMsg(t('settings.runners.webUrlReady'));
     } catch (e) { setWebMsg(String(e.message)); } finally { setWebBusy(false); }
   }
+  // 웹 브리지 자동 수신 폴링 — 서버의 로컬 콜백 리스너가 승인 코드를 받아 저장을 끝내면
+  // 여기서 잡아 "연결됨"으로 전환한다(주소 복사·붙여넣기 없이 완료 — 실사용 신고 2026-07-19).
+  // 리스너가 못 떠도(포트 선점·호스팅) 이 폴링은 무해하고, 아래 붙여넣기 폴백이 그대로 동작한다.
+  useEffect(() => {
+    if (!webUrl) return;
+    let liveFlag = true;
+    const iv = setInterval(async () => {
+      try {
+        const d = await (await fetch(`${keysBase(ws)}/connect?runner=${encodeURIComponent(id)}`)).json();
+        if (!liveFlag || !d.authed) return;
+        setWebOk(true); setWebMsg(t('settings.runners.connected'));
+        setWebUrl(''); setWebCode('');
+        window.dispatchEvent(new Event('argo:refresh'));
+        onChange();
+      } catch { /* 다음 틱 재시도 */ }
+    }, 2000);
+    const ttl = setTimeout(() => clearInterval(iv), 10 * 60_000);
+    return () => { liveFlag = false; clearInterval(iv); clearTimeout(ttl); };
+  }, [webUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function webSubmit() {
     setWebBusy(true); setWebMsg('');
     try {
