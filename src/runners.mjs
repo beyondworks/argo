@@ -543,7 +543,7 @@ const WEB_OAUTH = {
     extra: { access_type: 'offline', prompt: 'consent' }, // refresh_token 확보
   },
 };
-const webAuthState = (globalThis.__argoWebAuth ??= {}); // { [runner]: { verifier, ts } }
+const webAuthState = (globalThis.__argoWebAuth ??= {}); // { [runner]: { verifier, state, ts } }
 const webAuthListeners = (globalThis.__argoWebAuthSrv ??= {}); // { [runner]: http.Server } — 1회용 콜백 리스너
 
 /** 로컬 콜백 리스너 — 승인 후 브라우저가 돌아오는 localhost 콜백을 서버가 직접 받아 자동 교환한다.
@@ -583,7 +583,12 @@ export function startRunnerWebAuth(runner, wsId = null) {
   if (!cfg) return { ok: false, reason: 'unsupported' };
   const verifier = randomBytes(32).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');
-  webAuthState[runner] = { verifier, ts: Date.now() };
+  // state는 verifier와 무관한 별도 난수여야 한다. verifier를 state로 실으면(과거 설계) 사용자가
+  // 붙여넣기 폴백에서 복사·공유하는 리다이렉트 주소에 code+verifier가 함께 실려, 그 주소만으로
+  // 제3자가 어디서든 토큰 교환을 완료할 수 있다 — PKCE가 막으려던 코드 탈취의 재개방(감사 HIGH 2026-07-20).
+  // verifier는 서버 메모리에만 두고, state는 submitRunnerWebAuth가 대조하는 1회용 CSRF 난수로만 쓴다.
+  const state = randomBytes(16).toString('base64url');
+  webAuthState[runner] = { verifier, state, ts: Date.now() };
   if (wsId) startWebAuthListener(runner, wsId, cfg); // 자동 수신 — 실패해도 붙여넣기 폴백 유지
   const u = new URL(cfg.authorize);
   for (const [k, v] of Object.entries(cfg.extra ?? {})) u.searchParams.set(k, v);
@@ -593,7 +598,7 @@ export function startRunnerWebAuth(runner, wsId = null) {
   u.searchParams.set('scope', cfg.scopes);
   u.searchParams.set('code_challenge', challenge);
   u.searchParams.set('code_challenge_method', 'S256');
-  u.searchParams.set('state', verifier);
+  u.searchParams.set('state', state);
   return { ok: true, url: u.toString() };
 }
 
@@ -626,6 +631,9 @@ export async function submitRunnerWebAuth(wsId, runner, pasted) {
   if (Date.now() - st.ts > 10 * 60_000) return { ok: false, reason: 'expired' }; // 10분 — 다시 시작
   const { code, state } = extractAuthCode(pasted);
   if (!code) return { ok: false, reason: 'no-code' };
+  // state 대조(CSRF·주소 위조 방어) — 발급 시 저장한 1회용 난수와 다르면 거절. 리스너·전체 URL 붙여넣기는
+  // 벤더가 state를 항상 에코하므로 상시 대조되고, state 없는 생 코드 붙여넣기만 관용(PKCE 교환이 위조 코드 차단).
+  if (state && st.state && state !== st.state) return { ok: false, reason: 'state-mismatch' };
   const params = {
     grant_type: 'authorization_code',
     code,
@@ -633,7 +641,6 @@ export async function submitRunnerWebAuth(wsId, runner, pasted) {
     redirect_uri: cfg.redirect,
     code_verifier: st.verifier,
     ...(cfg.clientSecret ? { client_secret: cfg.clientSecret } : {}),
-    ...(runner === 'claude' ? { state: state || st.verifier } : {}),
   };
   let res;
   try {
