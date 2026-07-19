@@ -117,6 +117,15 @@ export const RUNNERS = {
       { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
     ],
   },
+  kimi: {
+    name: 'Kimi', kind: 'sdk-compat',
+    models: [
+      // platform.kimi.ai 모델 문서(2026-07 확인) — K3가 플래그십(1M 컨텍스트), K2.7-code는 코딩 특화
+      { id: 'kimi-k3', label: 'Kimi K3' },
+      { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code' },
+      { id: 'kimi-k2.6', label: 'Kimi K2.6' },
+    ],
+  },
   glm: {
     name: 'GLM', kind: 'sdk-compat',
     models: [
@@ -130,6 +139,15 @@ export const RUNNERS = {
 };
 
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
+export const KIMI_DEFAULT_MODEL = 'kimi-k3';
+/** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
+    베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
+export const kimiEnv = () => ({
+  ...scrubServerSecrets(process.env),
+  ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic',
+  ANTHROPIC_AUTH_TOKEN: process.env.KIMI_API_KEY ?? '',
+  ANTHROPIC_API_KEY: '',
+});
 export const glmEnv = () => ({
   ...scrubServerSecrets(process.env),
   ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic',
@@ -166,6 +184,7 @@ export async function detectRunners() {
     codex: { installed: !!codexV, authed: !!codexV && codexAuth },
     gemini: { installed: !!geminiV, authed: !!geminiV && (geminiAuth || !!process.env.GEMINI_API_KEY) },
     glm: { installed: true, authed: !!process.env.GLM_API_KEY },
+    kimi: { installed: true, authed: !!process.env.KIMI_API_KEY }, // env 주입 = 운영자 명시 옵트인(glm 관례)
   };
   cacheAt = Date.now();
   return cache;
@@ -277,6 +296,7 @@ export const RUNNER_AUTH = {
   codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
   gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
+  kimi: { methods: ['apikey'], apikeyPrefix: 'sk-', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' },
 };
 
 // 레거시 계정 파일(사용자 스코프 도입 전 무스코프 .account-secrets.json) → local 스코프로 1회 이관.
@@ -372,6 +392,9 @@ export async function runnerCredEnv(wsId, runner) {
   if (runner === 'glm') {
     return { env: { ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '' } };
   }
+  if (runner === 'kimi') {
+    return { env: { ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '' } };
+  }
   if (runner === 'codex') {
     // apikey면 계정 OAuth를 무시하고 OPENAI_API_KEY로 — 격리홈을 '깨끗한' 것으로 써 auth.json 상속 차단.
     if (cred.type === 'apikey') return { env: { OPENAI_API_KEY: v }, home: 'clean' };
@@ -406,6 +429,7 @@ export async function sdkEnvFor(wsId, runner) {
   // claude 호스트 폴백도 이제 null 대신 세척 env를 반환한다 — 러너 인증(ANTHROPIC_*)은 보존, 크라운주얼만 제거.
   if (cred) return { ...scrubServerSecrets(process.env), ...cred.env };
   if (runner === 'glm') return glmEnv(); // 회사 자격 없으면 호스트 GLM_API_KEY 폴백(glmEnv 자체가 세척됨)
+  if (runner === 'kimi') return kimiEnv(); // 동일 — 호스트 KIMI_API_KEY 폴백(env 주입 = 명시 옵트인)
   return scrubServerSecrets(process.env);
 }
 
@@ -692,6 +716,10 @@ export async function verifyRunnerCred(runner, type, value) {
     if (runner === 'glm') {
       const base = process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic';
       const r = await fetch(`${base}/v1/models?limit=1`, { headers: { 'x-api-key': v, authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
+      return { ok: !(r.status === 401 || r.status === 403) };
+    }
+    if (runner === 'kimi') {
+      const r = await fetch('https://api.moonshot.ai/v1/models', { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'codex' && type === 'apikey') {

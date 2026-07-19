@@ -21,8 +21,8 @@ export { anyRunnerUsable, runnerNeedsReconnect } from './runner-usable.mjs';
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
     (c) 방식별 입력·저장·검증·제거 또는 CLI 로그인 안내. 응답엔 마스킹만 실린다(보안 규칙). */
-const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', glm: 'GLM' };
-const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'glm'];
+const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', glm: 'GLM', kimi: 'Kimi' };
+const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'glm', 'kimi'];
 
 export function AiConnectionCard({ ws, accordion = false }) {
   const { t } = useLang();
