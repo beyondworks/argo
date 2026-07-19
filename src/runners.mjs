@@ -440,17 +440,22 @@ async function geminiTurnHome(wsId, cred) {
     if (!(await exists(join(gdir, 'oauth_creds.json')))) await writeFile(join(gdir, 'oauth_creds.json'), cred.value, { mode: 0o600 });
     return { home, authType: 'oauth-personal', env: {} };
   }
-  // host — 호스트 로그인 파일을 격리 HOME으로 복사(존재분만). 없으면 옵트인 무효(폴백 안 함).
+  // host — 이 컴퓨터 로그인을 빌리되 격리 HOME에서 실행. detectRunners가 authed로 인정하는 두 경로를
+  // 모두 격리한다(둘 다 안 잡으면 검수 HIGH: env키 경로가 무격리 호스트 HOME으로 새 도구 게이팅 우회).
   const hostG = join(homedir(), '.gemini');
-  if (!(await exists(join(hostG, 'oauth_creds.json')))) return null;
-  if (!(await exists(join(gdir, 'oauth_creds.json')))) {
-    await copyFile(join(hostG, 'oauth_creds.json'), join(gdir, 'oauth_creds.json'));
-    // google_accounts.json은 있으면 함께(계정 식별) — 없어도 로그인은 동작
-    if (await exists(join(hostG, 'google_accounts.json'))) {
-      await copyFile(join(hostG, 'google_accounts.json'), join(gdir, 'google_accounts.json')).catch(() => {});
+  if (await exists(join(hostG, 'oauth_creds.json'))) {
+    if (!(await exists(join(gdir, 'oauth_creds.json')))) {
+      await copyFile(join(hostG, 'oauth_creds.json'), join(gdir, 'oauth_creds.json'));
+      // google_accounts.json은 있으면 함께(계정 식별) — 없어도 로그인은 동작
+      if (await exists(join(hostG, 'google_accounts.json'))) {
+        await copyFile(join(hostG, 'google_accounts.json'), join(gdir, 'google_accounts.json')).catch(() => {});
+      }
     }
+    return { home, authType: 'oauth-personal', env: {} };
   }
-  return { home, authType: 'oauth-personal', env: {} };
+  // OAuth 파일은 없지만 호스트에 GEMINI_API_KEY env가 있으면 그 키로 — 격리 HOME + api-key 인증 고정.
+  if (process.env.GEMINI_API_KEY) return { home, authType: 'gemini-api-key', env: { GEMINI_API_KEY: process.env.GEMINI_API_KEY } };
+  return null; // 진짜 미로그인 — 옵트인 무효(폴백 안 함, 명시 연결 원칙)
 }
 
 /** gemini 격리 HOME에 이번 턴 settings.json을 쓴다 — 인증 방식 고정 + caps 기반 도구 게이팅.
