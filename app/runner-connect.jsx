@@ -138,7 +138,8 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
           : d.reason === 'unsupported-platform' ? t('settings.runners.setupNoWin')
             : d.reason === 'busy' ? t('settings.runners.setupWaiting')
               : d.reason === 'hosted' ? t('settings.runners.setupHosted') // 원문 'hosted' 노출이 연결 불가로 읽혔다(실사용 신고)
-                : (d.message || d.reason || 'failed'));
+                : d.reason === 'manual' ? t('settings.runners.setupManual') // 이 환경(상주/웹)은 붙여넣기가 정식 경로
+                  : (d.message || d.reason || 'failed'));
       }
       const t0 = Date.now();
       if (setupPollRef.current) clearInterval(setupPollRef.current);
@@ -441,8 +442,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
             </div>
           )}
           {showPaste && (<>
-          {/* Claude 원클릭 — 공식 setup-token 대행. 아래 수동 붙여넣기는 폴백으로 유지 */}
-          {id === 'claude' && method === 'oauth' && (
+          {/* Claude 원클릭 — 데스크톱 번들에서만 완주(브라우저 열기 + 콜백 리스너 수명). 상주/웹은 완주 못 해
+              스피너 함정이 되므로 노출하지 않는다(실사용 신고 2026-07-19). 그 환경은 아래 붙여넣기가 정식 경로. */}
+          {id === 'claude' && method === 'oauth' && st?.setupOneClick && (
             <div style={{ display: 'grid', gap: 6, padding: '10px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <button className="btn btn-primary sm" disabled={setupBusy} onClick={setupConnect}>

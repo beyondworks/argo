@@ -7,7 +7,7 @@ import {
   startRunnerWebAuth, submitRunnerWebAuth, loadRunnerCred,
   startClaudeSetupToken, setupTokenStatus,
 } from '../../../../../src/runners.mjs';
-import { currentUser, tenantDenied, isLoopbackHost } from '../../../../auth.mjs';
+import { currentUser, tenantDenied } from '../../../../auth.mjs';
 
 /** 통과 시 { scope }(그 사용자의 계정 스코프), 위반 시 { denied: Response }. */
 async function guardAccount() {
@@ -22,9 +22,8 @@ export async function POST(req) {
   const { runner, code, cli, setup } = await req.json();
   const meta = RUNNER_AUTH[runner];
   if (!meta) return Response.json({ error: '알 수 없는 러너' }, { status: 400 });
-  if (runner === 'claude' && setup) { // 원클릭 — 서버가 setup-token을 대행, 토큰은 사용자 계정 스코프로 자동 저장
-    // loopback(사용자 본인 기기)이면 허용 — 원격 호스팅만 차단(companies 라우트와 동일 계약, #36 동류)
-    const r = await startClaudeSetupToken(g.scope, { local: isLoopbackHost(req.headers.get('host')) });
+  if (runner === 'claude' && setup) { // 원클릭 — 데스크톱 번들에서만 완주(ARGO_STANDALONE 게이트, companies 라우트와 동일)
+    const r = await startClaudeSetupToken(g.scope);
     return Response.json(r, { status: r.ok ? 200 : 400 });
   }
   if (meta.webConnect && !cli) {
