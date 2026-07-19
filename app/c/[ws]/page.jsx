@@ -644,7 +644,7 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
               disabled={curRunner && !curRunner.authed}>
               {!form.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
               {(curRunner?.models ?? []).map((m) => (
-                <option key={m.id} value={m.id}>{m.label}</option>
+                <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : ''}</option>
               ))}
             </select>
           </label>
