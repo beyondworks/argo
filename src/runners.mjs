@@ -493,7 +493,10 @@ const webAuthListeners = (globalThis.__argoWebAuthSrv ??= {}); // { [runner]: ht
     브라우저에는 "연결되었습니다" 페이지가 뜬다. 포트 선점 실패(벤더 CLI 로그인 동시 실행 등)나
     호스팅 워커(사용자 기기가 아님)에선 조용히 건너뛴다 — 기존 붙여넣기 폴백이 그대로 동작한다. */
 function startWebAuthListener(runner, wsId, cfg) {
-  if (process.env.ARGO_TENANT_OWNER || process.env.SUPABASE_SERVICE_ROLE_KEY) return; // 호스팅 — 리스너 위치가 사용자 기기가 아니다
+  // 호스팅 가드 없음(2026-07-19 수정): 서비스 키를 가진 상주 웹(:3001)도 사용자 본인 맥이라 리스너가
+  // 꺼지면 자동 연결이 안 됐다(실사용 신고 — 격리 dev에선 켜져서 검증이 또 가려짐). 원격 호스팅에서도
+  // 리스너는 워커 루프백에서 놀다 TTL로 닫힐 뿐 무해하고, 위조 코드는 PKCE 교환이 차단한다(검수 확인).
+  // 알려진 한계: webAuthState/리스너가 러너 단위 전역이라 다중 테넌트 동시 연결은 마지막 시작이 이긴다(기존과 동일).
   try { webAuthListeners[runner]?.close(); } catch { /* 이전 리스너 정리 */ }
   const target = new URL(cfg.redirect);
   const page = (title, body) => `<!doctype html><meta charset="utf-8"><title>Argo</title><body style="font-family:system-ui;display:grid;place-items:center;height:90vh"><div style="text-align:center"><h2>${title}</h2><p style="color:#666">${body}</p></div>`;
