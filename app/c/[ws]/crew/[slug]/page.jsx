@@ -37,6 +37,7 @@ export default function CrewChat({ params }) {
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
+    if (!input) { el.style.height = ''; return; } // 빈 값 = 인라인 제거 → rows=1 자연 높이(수축 보장)
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 132)}px`; // 최대 ~6줄 — 넘으면 내부 스크롤
   }, [input]);
@@ -641,7 +642,7 @@ export default function CrewChat({ params }) {
           </div>
         )}
         {/* 여러 줄 입력 — textarea(Enter 전송·Shift+Enter 줄바꿈). 버튼은 하단 정렬(입력이 자라도 자리 고정) */}
-        <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end' }}>
+        <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
           <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
             onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
             <Icon name="clip" size={14} />
