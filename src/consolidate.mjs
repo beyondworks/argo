@@ -3,8 +3,8 @@
 // + 주간 롤업: 7일 지난 일지는 주간 요약 1파일로 접히고 원본은 .archive/로 — 기억은 쌓일수록 정제된다.
 import { readFile, writeFile, readdir, stat, rename, mkdir, appendFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
-import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths, loadCompany } from './workspace.mjs';
+import { runOneShot } from './oneshot.mjs'; // 러너 독립 — 어떤 러너든 연결만 되면 기억 정리가 돈다
 import { saveNote, updateIndex } from './memory.mjs';
 import { appendUsage } from './usage.mjs';
 import { appendEvent } from './events.mjs';
@@ -94,23 +94,13 @@ export async function consolidateMemory(wsId) {
     }
   } catch { /* 노트 폴더 없음 */ }
 
-  let out = '';
   const t0 = Date.now();
-  for await (const msg of query({
-    prompt: PROMPT(text, noteTitles, lang),
-    options: {
-      cwd: p.root,
-      allowedTools: [],
-      settingSources: [],
-      maxTurns: 4, // 모델이 도구를 시도하다 거부당해도 최종 답까지 이어지게 여유
-      model: 'claude-haiku-4-5-20251001', // 정리는 잔일 — 저비용 모델
-    },
-  })) {
-    if (msg.type === 'result') {
-      await appendUsage(wsId, { kind: 'consolidate', slug: '', usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0 });
-      if (msg.subtype === 'success') out = msg.result;
-    }
-  }
+  // 러너 독립(runOneShot) — Claude 없이 Codex/Gemini/GLM만 연결한 회사도 기억 정리가 돈다.
+  // (이전: SDK 직호출 + env 미주입 — 호스트 Claude 로그인에만 의존해 BYOK 웹 사용자·타 러너 사용자는 조용히 실패)
+  // model은 claude 러너일 때만 haiku 적용(정리는 잔일 — 저비용), maxTurns 4 = 도구 거부돼도 최종 답까지.
+  const { runner, text: out, usage, costUsd } = await runOneShot(wsId, PROMPT(text, noteTitles, lang),
+    { lang, model: 'claude-haiku-4-5-20251001', maxTurns: 4 });
+  await appendUsage(wsId, { kind: 'consolidate', slug: '', runner, usage, costUsd, ms: Date.now() - t0 });
 
   let parsed;
   try {

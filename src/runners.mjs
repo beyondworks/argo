@@ -148,7 +148,11 @@ export async function detectRunners() {
     exec('gemini', ['--version']).then((r) => r.stdout.trim(), () => null),
     exists(join(home, '.codex', 'auth.json')),
     exists(join(home, '.gemini', 'oauth_creds.json')),
-    exists(join(home, '.claude', '.credentials.json')), // 리눅스 — 파일 보관
+    // 리눅스 — 파일 보관(macOS도 키체인 불가 환경은 이 파일 폴백이라 무시하면 역회귀).
+    // ⚠ 스테일 잔재가 authed 오탐을 낼 수 있다(실사용 2026-07-19: 죽은 Claude 흔적이 유효한 Codex를
+    // 밀어내고 "Not logged in"으로 턴 사망) — 그 케이스는 chat/runOneShot의 인증 오류 자가 치유
+    // (다른 가용 러너 1회 재시도)가 회수한다. 감지 단계에서 유효성까지는 판정하지 않는다.
+    exists(join(home, '.claude', '.credentials.json')),
     // macOS/Windows — OAuth 토큰은 키체인/OS 보관이라 .claude.json의 로그인 계정 기록(oauthAccount)으로
     // 판정한다. 파일 존재만으론 안 됨: 로그인 없이 CLI가 실행만 돼도(번들 SDK 포함) 생성된다 — 미로그인
     // 기기가 설정에서 "연결중 · 이 컴퓨터 로그인"으로 오표시되고 턴은 Not logged in으로 죽던 원인.
@@ -266,8 +270,11 @@ export const RUNNER_AUTH = {
   // 비 oat01 토큰을 저장해 "연결됨인데 전 턴 401"을 만들었다(실측). CLAUDE_CODE_OAUTH_TOKEN은
   // 공식 규격상 `claude setup-token`으로만 발급 — UI는 붙여넣기 안내로 일원화(WEB_OAUTH 주석 참조).
   claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPrefix: 'sk-ant-oat01-', oauthPasteable: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', keyUrl: 'https://console.anthropic.com/settings/keys' },
-  codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
-  gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, keyUrl: 'https://aistudio.google.com/apikey' },
+  // hostUsable: "이 컴퓨터 로그인 사용" 옵트인(host 타입) 지원 — 파일 기반 자격(~/.codex, ~/.gemini)이라
+  // 앱이 읽을 수 있다. claude는 키체인 보관이라 다른 서명 주체(Argo 앱)의 접근이 불안정해 미제공 —
+  // 원클릭 setup-token/API키/토큰 붙여넣기로 연결한다(실사용 2026-07-19: 앱에서 "Not logged in"의 원인).
+  codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
+  gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
 };
 
@@ -297,9 +304,14 @@ async function loadSecrets(wsId) {
 }
 
 /** 회사에 저장된 러너 자격 — { type, value } | null. */
+/** 자격 type 정규화 — 'apikey' | 'oauth' | 'host'. host = "이 컴퓨터 CLI 로그인 사용" 명시 옵트인 마커
+    (codex/gemini 전용 — 파일 기반 자격이라 앱이 읽을 수 있다. claude는 키체인이라 앱 접근이 불안정해 미제공).
+    자동 스캐빈징 금지(유건 지시 2026-07-19): 호스트 로그인은 감지돼도 사장이 이 마커로 옵트인해야만 쓴다. */
+const credType = (t) => (t === 'oauth' ? 'oauth' : t === 'host' ? 'host' : 'apikey');
+
 export async function loadRunnerCred(wsId, runner) {
   const c = (await loadSecrets(wsId)).runners?.[runner];
-  return c && typeof c.value === 'string' && c.value.trim() ? { type: c.type === 'oauth' ? 'oauth' : 'apikey', value: c.value.trim() } : null;
+  return c && typeof c.value === 'string' && c.value.trim() ? { type: credType(c.type), value: c.value.trim() } : null;
 }
 
 /** 러너 자격 저장 — 원자적. 다른 러너·필드는 보존. 레거시 claude 필드는 정리. */
@@ -307,7 +319,7 @@ export async function saveRunnerCred(wsId, runner, type, value) {
   if (!RUNNER_AUTH[runner]) throw new Error('알 수 없는 러너');
   const s = await loadSecrets(wsId);
   const { claude, ...rest } = s; // 레거시 평문 필드 제거
-  rest.runners = { ...rest.runners, [runner]: { type: type === 'oauth' ? 'oauth' : 'apikey', value: String(value).trim() } };
+  rest.runners = { ...rest.runners, [runner]: { type: credType(type), value: String(value).trim() } };
   await writeJsonAtomic(secretsFile(wsId), rest);
   // 격리 홈 리셋 — 재연결 시 이전 토큰 파일이 새 자격을 가리지 않게(runnerCredEnv가 재생성).
   // 계정 스코프엔 실행 홈이 없다(온보딩 저장용 — 실행은 회사 wsId로) — 스킵.
@@ -348,6 +360,8 @@ export const maskCred = (v) => (v ? `${v.slice(0, 6)}***` : '');
 export async function runnerCredEnv(wsId, runner) {
   const cred = await loadRunnerCred(wsId, runner);
   if (!cred) return null;
+  // host 마커 — 이 컴퓨터 CLI 로그인 경로(codexHome 상속 등)를 명시 옵트인으로 사용. env 주입 없음.
+  if (cred.type === 'host') return null;
   const v = cred.value;
   if (runner === 'claude') {
     return cred.type === 'oauth'
@@ -568,39 +582,51 @@ export async function runnerStatus(wsId) {
       oauthPasteable: !!meta.oauthPasteable,
       connectable: !!meta.connect, // Connect 버튼(CLI 브라우저 로그인 대행) 지원 여부 — codex
       webConnect: !!meta.webConnect, // 웹 브리지(로그인 URL 표시 + 코드 입력) — claude
+      hostUsable: !!meta.hostUsable, // "이 컴퓨터 로그인 사용" 옵트인 지원(codex/gemini)
       keyUrl: meta.keyUrl,
       hostInstalled: host[id]?.installed ?? false,
       hostAuthed: host[id]?.authed ?? false, // 호스트 CLI 로그인/env (OAuth 폴백 경로)
       company: cred?.value ? {
         connected: true,
-        type: cred.type === 'oauth' ? 'oauth' : 'apikey',
-        masked: maskCred(cred.value),
+        type: credType(cred.type),
+        masked: cred.type === 'host' ? '' : maskCred(cred.value),
         // 저장 검증 도입 전(철회된 웹 브리지 등)에 들어온 무효 형식 토큰 — 카드가 "재연결 필요"를 보여준다
         ...(cred.type === 'oauth' && oauthFormatError(id, cred.value, 'ko') ? { invalid: true } : {}),
+        // host 마커는 이 컴퓨터 CLI 로그인이 살아 있어야 유효 — 로그아웃·미설치면 "재연결 필요"
+        ...(cred.type === 'host' && !(host[id]?.installed && host[id]?.authed) ? { invalid: true } : {}),
       } : { connected: false },
     };
   }
   return out;
 }
 
-/** 턴에 실제로 쓸 러너 결정 — 크루의 러너가 미가용(회사 자격도 호스트 자격도 없음)이면 가용한
-    러너로 폴백한다. 어떤 러너든 하나만 연결돼 있으면 모든 크루가 응답하게 하는 관문.
-    가용 = 회사 자격(BYOK/OAuth) 또는 호스트 자격(CLI 로그인·env). 반환 { runner, fellBack, available }. */
-export async function resolveRunner(wsId, want) {
-  const st = await runnerStatus(wsId);
-  // 외부 CLI 러너(codex/gemini)는 실행 주체가 벤더 CLI라, 회사 자격(OAuth/키)이 있어도 이 컴퓨터에
-  // CLI가 없으면 spawn ENOENT로 죽는다 — 자격만 보고 가용 판정하면 안 된다(웹 브리지로 연결한 새 기기 사례).
-  // claude/glm은 번들 SDK CLI로 실행되므로 호스트 설치 불필요.
+/** 러너 선택(순수) — st = runnerStatus 결과. 반환 { runner, fellBack, available, credButNoCli? }.
+    가용 = **사장이 명시적으로 연결한 자격(유효)뿐** — 호스트 로그인 흔적의 자동 사용(스캐빈징)은
+    하지 않는다(유건 지시 2026-07-19: 감지는 안내로만, 연결은 사장이. 실사용: 스테일/키체인 접근 불가
+    호스트 흔적이 '연결중'으로 오표시되고 유효한 Codex를 밀어내 턴 사망). 호스트 로그인을 쓰려면
+    "이 컴퓨터 로그인 사용" 옵트인(host 타입 자격)으로 연결한다 — 그때부터 connected로 잡힌다.
+    무효(invalid) 자격은 가용이 아니다(게이트 anyRunnerUsable과 판정 일치).
+    want = 크루 지정 러너(null이면 무선호 — 첫 연결 러너를 대체 고지 없이 쓴다).
+    exclude = 방금 인증 실패한 러너(자가 치유 재시도 시 제외). (export: 회귀 테스트용) */
+export function pickRunner(st, want, exclude = null) {
+  // 외부 CLI 러너(codex/gemini)는 실행 주체가 벤더 CLI라, 자격이 있어도 이 컴퓨터에 CLI가 없으면
+  // spawn ENOENT로 죽는다(웹 브리지로 연결한 새 기기 사례). claude/glm은 번들 SDK CLI라 설치 불필요.
   const executable = (id) => (id === 'codex' || id === 'gemini' ? !!st[id]?.hostInstalled : true);
-  const usable = (id) => !!st[id] && executable(id) && (st[id].company.connected || st[id].hostAuthed);
-  if (usable(want)) return { runner: want, fellBack: false, available: true };
-  for (const id of Object.keys(RUNNER_AUTH)) {
-    if (usable(id)) return { runner: id, fellBack: true, available: true };
-  }
+  const usable = (id) => !!st[id]?.company.connected && !st[id]?.company.invalid && id !== exclude && executable(id);
+  if (want && usable(want)) return { runner: want, fellBack: false, available: true };
+  const ids = Object.keys(RUNNER_AUTH);
+  const next = ids.find(usable);
+  if (next) return { runner: next, fellBack: !!want, available: true }; // 무선호(want=null)는 대체가 아니다
   // 아무 러너도 없음 — 호출부가 안내 에러를 만든다(원래 러너 반환은 에러 문구용).
   // credButNoCli: 자격은 연결했는데 벤더 CLI가 없어 못 쓰는 러너 — "연결했는데 왜 안 되냐"에 정확히 답하기 위한 재료.
-  const credButNoCli = Object.keys(RUNNER_AUTH).filter((id) => st[id]?.company.connected && !executable(id));
-  return { runner: want, fellBack: false, available: false, credButNoCli };
+  const credButNoCli = ids.filter((id) => st[id]?.company.connected && !executable(id));
+  return { runner: want ?? 'claude', fellBack: false, available: false, credButNoCli };
+}
+
+/** 턴에 실제로 쓸 러너 결정 — 크루의 러너가 미가용이면 가용한 러너로 폴백(pickRunner).
+    어떤 러너든 하나만 연결돼 있으면 모든 크루가 응답하게 하는 관문. */
+export async function resolveRunner(wsId, want, { exclude = null } = {}) {
+  return pickRunner(await runnerStatus(wsId), want, exclude);
 }
 
 /** claude OAuth 토큰 형식 안내(순수) — 형식이 다른 값(웹 브리지 교환 산출물·setup-token 중간 인증

@@ -199,7 +199,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   }
 
   async function save(verify) {
-    if (busy || !value.trim()) return;
+    if (busy || !value.trim() || method === 'host') return; // host 상태 방어 — 라우트가 value를 무시해 입력이 조용히 버려진다(검수 MEDIUM)
     setBusy(verify ? 'verify' : 'save'); setMsg(''); setOk(false);
     try {
       const res = await fetch(`${keysBase(ws)}`, {
@@ -230,22 +230,49 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
     }
   }
 
+  // "이 컴퓨터 로그인 사용" — 호스트 CLI 로그인의 명시 옵트인(codex/gemini). 감지만으론 절대 자동
+  // 사용하지 않는다(명시 연결 정본 — 유건 지시 2026-07-19). 서버가 로그인 상태 검증 후 마커 저장.
+  async function useHost() {
+    if (busy) return;
+    setBusy('host'); setMsg(''); setOk(false);
+    try {
+      const res = await fetch(`${keysBase(ws)}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runner: id, type: 'host' }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error);
+      setOk(true); setMsg(t('settings.runners.hostLinked'));
+      window.dispatchEvent(new Event('argo:refresh'));
+      onChange();
+    } catch (e) {
+      setMsg(String(e.message));
+    } finally {
+      setBusy('');
+    }
+  }
+  // 옵트인 버튼 — 지원 러너(codex/gemini)면 감지와 무관하게 항상 노출. 사전 스캔은 복잡하고 오류
+  // 소지가 있어(유건 지시) 클릭 시점에 서버가 설치·로그인을 검증하고 아니면 정확한 안내를 돌려준다.
+  const hostOptIn = !!st?.hostUsable && !company.connected && (
+    <button className="btn sm" disabled={!!busy} onClick={useHost}>
+      {busy === 'host' ? <Spinner size={12} /> : t('settings.runners.useHost')}
+    </button>
+  );
+
   const chip = company.connected ? (
     company.invalid ? (
-      // 무효 형식 토큰(철회된 웹 브리지 산출물 등) — 연결된 척하지 않고 재연결을 요구한다
+      // 무효 자격(형식 불량 토큰·로그아웃된 host 마커) — 연결된 척하지 않고 재연결을 요구한다
       <span className="chip" style={{ color: 'var(--danger)', borderColor: 'currentColor' }}>
-        <span className="dot" />{t('settings.runners.companyInvalid')} · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span>
+        <span className="dot" />{t('settings.runners.companyInvalid')}{company.masked && <> · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span></>}
       </span>
     ) : (
       <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
-        <span className="dot" />{t('settings.runners.companyConnected')} · {t(`settings.runners.method.${company.type}`)} · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span>
+        <span className="dot" />{t('settings.runners.companyConnected')} · {t(`settings.runners.method.${company.type}`)}{company.masked && <> · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span></>}
       </span>
     )
-  ) : st?.hostAuthed ? (
-    <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
-      <span className="dot" />{t('settings.runners.hostConnected')}
-    </span>
   ) : (
+    // 감지 기반 상태 표시는 하지 않는다(유건 지시 2026-07-19: 로그인 기록 스캔은 복잡하고 오류 소지 —
+    // 상태는 연결됨/미연결 둘뿐, 호스트 로그인 사용은 아래 옵트인 버튼 클릭 시 서버가 검증한다).
     <span className="chip">{t('settings.runners.none')}</span>
   );
 
@@ -273,6 +300,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
     </div>
   );
   const accordion = typeof onToggle === 'function';
+  // host 타입으로 연결됨 — 연결 폼(탭·붙여넣기)을 숨긴다: 이 상태의 API키 폼은 저장 시 입력이
+  // 조용히 버려지는 오폼이었다(검수 MEDIUM). 해제 후 다른 방식으로 재연결하는 흐름만 남긴다.
+  const hostLinked = company.connected && company.type === 'host';
   const header = (
     <>
       {accordion && (
@@ -301,6 +331,13 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>{header}</div>
       )}
       {open && <>
+      {hostLinked ? (
+        /* host 연결됨 — 상태 칩이 전부다. 연결 폼은 숨기고 해제만 노출(오폼 입력 유실 방지). */
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
+          {removeBtn}
+        </div>
+      ) : (<>
       {hasOauth && (
         <div style={{ display: 'flex', gap: 6 }}>
           {methods.map((m) => (
@@ -311,6 +348,13 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
           ))}
         </div>
       )}
+      {/* 호스트 로그인 옵트인 — 방식 탭과 무관한 제3의 연결 경로라 항상 보인다(기본 탭에 숨으면 발견 불가). */}
+      {hostOptIn && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {hostOptIn}
+          <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.useHostHint')}</span>
+        </div>
+      )}
       {oauthCli ? (
         connectable ? (
           /* codex — 벤더 CLI 브라우저 로그인 대행 (Connect 버튼 + 폴링) */
@@ -319,9 +363,6 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
               <button className="btn btn-primary sm" disabled={!!busy || polling} onClick={connect}>
                 {busy === 'connect' || polling ? <Spinner size={12} /> : t('settings.runners.connect')}
               </button>
-              {st?.hostAuthed && (
-                <span className="chip"><span className="dot" />{t('settings.runners.hostInUse')}</span>
-              )}
               {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
             </div>
             {removeBtn}
@@ -371,10 +412,10 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
               {webMsg && <span style={{ fontSize: 12, color: webOk ? 'var(--fg-2)' : 'var(--danger)' }}>{webMsg}</span>}
             </div>
           )}
-          {/* codex/gemini 웹 브리지 — 붙여넣기 대신 호스트 상태·제거만 노출 */}
+          {/* codex/gemini 웹 브리지 — 붙여넣기 대신 제거만 노출(호스트 옵트인은 탭 아래 공통 행) */}
           {!showPaste && (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              {st?.hostAuthed && <span className="chip"><span className="dot" />{t('settings.runners.hostInUse')}</span>}
+              {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
               {removeBtn}
             </div>
           )}
@@ -422,6 +463,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
           </>)}
         </>
       )}
+      </>)}
       </>}
     </div>
   );

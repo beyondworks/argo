@@ -232,9 +232,10 @@ const DICT = {
   'settings.update.error': ['업데이트를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.', 'Could not check for updates. Please try again shortly.'],
   // ── 러너 연결 관리자 (4러너 × API키/OAuth)
   'settings.runners.title': ['러너 연결', 'Runner connections'],
-  'settings.runners.help': ['크루의 두뇌 엔진을 회사 계정에 연결합니다. 러너마다 API 키를 넣거나, OAuth(구독)로 연결하세요. 연결하지 않으면 이 컴퓨터에 로그인된 자격을 대신 씁니다.', 'Connect each crew brain engine to this company. Add an API key per runner, or connect with OAuth (subscription). Without a connection, crews fall back to the credentials signed in on this computer.'],
+  'settings.runners.help': ['크루의 두뇌 엔진을 회사 계정에 연결합니다. 러너마다 API 키·OAuth(구독)로 연결하거나, Codex·Gemini는 "이 컴퓨터 로그인 사용"으로 이 컴퓨터의 CLI 로그인을 연결할 수 있습니다. 연결한 러너만 크루가 사용합니다.', 'Connect each crew brain engine to this company. Add an API key or OAuth (subscription) per runner — for Codex/Gemini you can also link this computer\u2019s CLI login. Crews only use runners you connect.'],
   'settings.runners.method.apikey': ['API 키', 'API key'],
   'settings.runners.method.oauth': ['OAuth', 'OAuth'],
+  'settings.runners.method.host': ['이 컴퓨터 로그인', 'This computer\u2019s login'],
   'settings.runners.companyConnected': ['연결중', 'Connected'],
   'settings.runners.companyInvalid': ['재연결 필요 — 저장된 토큰이 유효한 형식이 아닙니다', 'Reconnect needed — the stored token isn’t in a valid format'],
   'settings.runners.setupConnect': ['브라우저로 바로 연결', 'Connect via browser'],
@@ -243,9 +244,10 @@ const DICT = {
   'settings.runners.setupNoCli': ['이 컴퓨터에서 Claude Code 실행 파일을 찾지 못했습니다 — 아래 안내대로 토큰을 직접 붙여넣어 주세요.', 'Couldn’t find the Claude Code executable on this computer — paste a token below as guided instead.'],
   'settings.runners.setupNoWin': ['Windows에서는 아직 버튼 연결을 지원하지 않습니다 — 아래 안내대로 토큰을 붙여넣어 주세요.', 'Button connect isn’t supported on Windows yet — paste a token below as guided.'],
   'settings.runners.setupFailedShort': ['연결이 완료되지 않았습니다 — 다시 시도하거나 아래에 토큰을 붙여넣어 주세요.', 'The connection didn’t complete — try again or paste a token below.'],
-  'settings.runners.hostInUse': ['이 컴퓨터 로그인 사용 중', 'Using this computer’s login'],
-  'settings.runners.hostConnected': ['연결중 · OAuth — 이 컴퓨터 로그인', 'Connected · OAuth — this computer’s login'],
   'settings.runners.none': ['미연결', 'Not connected'],
+  'settings.runners.useHost': ['이 컴퓨터 로그인 사용', 'Use this computer\u2019s login'],
+  'settings.runners.useHostHint': ['이 컴퓨터 CLI에 로그인된 계정을 이 회사에서 사용합니다', 'Use the account signed in on this computer\u2019s CLI for this company'],
+  'settings.runners.hostLinked': ['연결됨 — 이 컴퓨터 로그인', 'Connected — this computer\u2019s login'],
   'settings.runners.keyPlaceholder': ['API 키를 붙여넣기', 'Paste an API key'],
   'settings.runners.tokenPlaceholder': ['OAuth 토큰을 붙여넣기', 'Paste an OAuth token'],
   'settings.runners.keyGuide': ['발급처에서 키를 만들어 붙여넣으세요.', 'Create a key at the provider and paste it here.'],
@@ -388,11 +390,10 @@ const DICT = {
   // ── 첫 항해 온보딩 (회사 0개 — 로그인 → 러너 연결 → 회사 만들기)
   'onboard.step1': ['① 로그인 완료', '① Signed in'],
   'onboard.step1Local': ['① 이 컴퓨터 (로컬 모드)', '① This computer (local mode)'],
-  'onboard.step2': ['② AI 러너 연결', '② Connect an AI runner'],
+  'onboard.step2': ['② AI 러너 연결 (선택)', '② Connect an AI runner (optional)'],
   'onboard.step2done': ['② 러너 연결됨', '② Runner connected'],
   'onboard.step3': ['③ 회사 만들기', '③ Create your company'],
-  'onboard.help': ['크루의 두뇌부터 연결하세요 — 러너 없이 회사를 만들면 크루가 일할 수 없습니다.', 'Connect your crew’s brain first — without a runner, crews cannot work.'],
-  'onboard.skip': ['나중에 연결하고 회사부터 만들기', 'Connect later — create the company first'],
+  'onboard.help': ['러너는 크루의 두뇌입니다 — 지금 연결하거나, 회사를 만든 뒤 데크의 안내를 따라 연결할 수 있어요.', 'Runners are the crew brains — connect now, or later from the deck banner after creating your company.'],
 
   // ── 사이드바 추가
   'nav.uncrewedCount': ['크루 {n}', 'Crew {n}'],
