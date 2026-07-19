@@ -1,7 +1,7 @@
 // 러너 — 크루의 두뇌 엔진. Claude Code(SDK)가 1급 시민이고, Codex/Gemini는 로컬 CLI의
 // OAuth 로그인(구독)을 그대로 빌리는 어댑터, GLM은 Anthropic 호환 엔드포인트로 SDK를 태운다.
 // 원칙: Argo가 새 API 키를 보관하지 않는다 — 이미 인증된 도구의 자격을 쓴다(BYOK/BYOA).
-import { access, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { randomBytes, createHash } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -248,6 +248,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     }
   }
   if (runner === 'gemini') {
+    // 회사/host 자격이면 격리 HOME — 이번 턴 settings.json(인증 방식 + caps 도구 게이팅)을 매 턴 쓴다.
+    // (자격 없는 경로는 명시 연결 원칙상 도달 안 하지만, 도달 시 호스트 HOME으로 폴백 — 도구 게이팅 없음)
+    if (cred?.home && cred?.authType) await writeGeminiTurnSettings(cred.home, cred.authType, caps);
     const { stdout } = await exec('gemini', [
       '-p', prompt,
       ...(model ? ['-m', model] : []),
@@ -387,6 +390,14 @@ export const maskCred = (v) => (v ? `${v.slice(0, 6)}***` : '');
 export async function runnerCredEnv(wsId, runner) {
   const cred = await loadRunnerCred(wsId, runner);
   if (!cred) return null;
+  // gemini는 host 옵트인도 격리 HOME으로 실행한다(아래 geminiTurnHome) — codex(CODEX_HOME)·SDK(settingSources:[])와
+  // 달리 gemini는 HOME 전역 config(GEMINI.md·save_memory·전 도구)를 상속해 테넌트 격리가 없었다. host는 로그인만 빌리고
+  // 나머지는 격리한다. 그래서 아래 일반 host→null 분기보다 먼저 처리한다.
+  if (runner === 'gemini') {
+    const g = await geminiTurnHome(wsId, cred);
+    if (!g) return null; // host인데 호스트 로그인이 없음 — 폴백 없음(명시 연결 원칙)
+    return { env: { HOME: g.home, ...g.env }, home: g.home, authType: g.authType };
+  }
   // host 마커 — 이 컴퓨터 CLI 로그인 경로(codexHome 상속 등)를 명시 옵트인으로 사용. env 주입 없음.
   if (cred.type === 'host') return null;
   const v = cred.value;
@@ -412,20 +423,52 @@ export async function runnerCredEnv(wsId, runner) {
     if (!(await exists(join(dir, 'config.toml')))) await writeFile(join(dir, 'config.toml'), '# Argo 회사 자격 codex 홈\n');
     return { env: {}, home: dir };
   }
-  if (runner === 'gemini') {
-    if (cred.type === 'apikey') return { env: { GEMINI_API_KEY: v } };
-    // 회사 OAuth(웹 브리지) — oauth_creds.json을 회사별 격리 HOME의 .gemini에 풀어준다.
-    const home = join(homedir(), '.argo', `gemini-home-${wsId}`);
-    await mkdir(join(home, '.gemini'), { recursive: true, mode: 0o700 }); // OAuth 토큰 보관 — 소유자만
-    if (!(await exists(join(home, '.gemini', 'oauth_creds.json')))) {
-      await writeFile(join(home, '.gemini', 'oauth_creds.json'), v, { mode: 0o600 });
-    }
-    if (!(await exists(join(home, '.gemini', 'settings.json')))) {
-      await writeFile(join(home, '.gemini', 'settings.json'), JSON.stringify({ selectedAuthType: 'oauth-personal' }));
-    }
-    return { env: { HOME: home } };
-  }
   return null;
+}
+
+/** gemini 턴용 격리 HOME 준비 — 세 자격 모드 공통. 반환 { home, authType, env } | null.
+    settings.json(도구 게이팅 포함)은 turn마다 caps가 바뀌므로 externalExec가 매 턴 쓴다(여기선 자격만 시드).
+    - apikey: 격리 HOME + GEMINI_API_KEY. authType=gemini-api-key로 고정 → 호스트 oauth로 조용히 새지 않음(스캐빈징 차단).
+    - oauth(웹 브리지): 회사 oauth_creds.json을 격리 HOME에 푼다. CLI가 갱신 토큰을 여기 다시 쓴다(다음 턴 이어짐).
+    - host(이 컴퓨터 로그인): 호스트 ~/.gemini의 로그인 파일만 격리 HOME으로 복사 — 로그인은 빌리되 config·기억·도구는 격리. */
+async function geminiTurnHome(wsId, cred) {
+  const home = join(homedir(), '.argo', `gemini-home-${wsId}`);
+  const gdir = join(home, '.gemini');
+  await mkdir(gdir, { recursive: true, mode: 0o700 }); // 자격 보관 — 소유자만
+  if (cred.type === 'apikey') return { home, authType: 'gemini-api-key', env: { GEMINI_API_KEY: cred.value } };
+  if (cred.type === 'oauth') {
+    if (!(await exists(join(gdir, 'oauth_creds.json')))) await writeFile(join(gdir, 'oauth_creds.json'), cred.value, { mode: 0o600 });
+    return { home, authType: 'oauth-personal', env: {} };
+  }
+  // host — 이 컴퓨터 로그인을 빌리되 격리 HOME에서 실행. detectRunners가 authed로 인정하는 두 경로를
+  // 모두 격리한다(둘 다 안 잡으면 검수 HIGH: env키 경로가 무격리 호스트 HOME으로 새 도구 게이팅 우회).
+  const hostG = join(homedir(), '.gemini');
+  if (await exists(join(hostG, 'oauth_creds.json'))) {
+    if (!(await exists(join(gdir, 'oauth_creds.json')))) {
+      await copyFile(join(hostG, 'oauth_creds.json'), join(gdir, 'oauth_creds.json'));
+      // google_accounts.json은 있으면 함께(계정 식별) — 없어도 로그인은 동작
+      if (await exists(join(hostG, 'google_accounts.json'))) {
+        await copyFile(join(hostG, 'google_accounts.json'), join(gdir, 'google_accounts.json')).catch(() => {});
+      }
+    }
+    return { home, authType: 'oauth-personal', env: {} };
+  }
+  // OAuth 파일은 없지만 호스트에 GEMINI_API_KEY env가 있으면 그 키로 — 격리 HOME + api-key 인증 고정.
+  if (process.env.GEMINI_API_KEY) return { home, authType: 'gemini-api-key', env: { GEMINI_API_KEY: process.env.GEMINI_API_KEY } };
+  return null; // 진짜 미로그인 — 옵트인 무효(폴백 안 함, 명시 연결 원칙)
+}
+
+/** gemini 격리 HOME에 이번 턴 settings.json을 쓴다 — 인증 방식 고정 + caps 기반 도구 게이팅.
+    매 턴 덮어쓴다(caps가 턴마다 다를 수 있음). 워크스페이스 GEMINI.md·전역 도구 상속을 이 파일이 차단한다. */
+async function writeGeminiTurnSettings(home, authType, caps) {
+  const exclude = [];
+  if (!caps?.browser) exclude.push('google_web_search', 'web_fetch'); // 웹 능력 OFF면 검색·페치 차단(광고·실행 방지)
+  // 셸은 caps 무관 항상 제외 — 비대화 --approval-mode auto_edit에서 셸은 어차피 승인 불가로 실행이 안 되는데,
+  // 도구만 보이면 크루가 시도→실패를 반복한다(할루시네이션 유도). yolo 승격은 gemini에 샌드박스가 없어 금지.
+  exclude.push('run_shell_command');
+  exclude.push('save_memory'); // 기억은 vault가 단일 진실 — gemini 병행 기억(GEMINI.md) 차단
+  await writeFile(join(home, '.gemini', 'settings.json'),
+    JSON.stringify({ security: { auth: { selectedType: authType } }, tools: { exclude } }));
 }
 
 /** Claude/GLM(SDK) 러너용 완전 env — 회사 자격 우선, 없으면 기존 폴백(glm은 호스트 GLM_API_KEY, claude는 CLI/env). */
