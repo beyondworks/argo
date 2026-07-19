@@ -404,13 +404,19 @@ export default function CrewChat({ params }) {
             <span className="nav-sub">{thread?.length ? t('chat.sessions.msgs', { n: thread.length }) : t('chat.newSession')}</span>
           </span>
         </button>
-        {sessions.map((s) => (
+        {sessions.map((s) => {
+          const active = viewing === s.id;
+          // 활성 행 배경은 골드(--primary)라 골드 핀이 묻힌다 — 활성이면 온-골드 전경색(--primary-fg)으로 대비 확보.
+          // 인라인 색이 .nav-item.active svg CSS를 특이도로 이기므로 여기서 활성 분기해야 실제로 바뀐다.
+          const pinColor = active ? 'var(--primary-fg)' : 'var(--primary)';
+          const actColor = active ? 'var(--primary-fg)' : 'var(--fg-3)';
+          return (
           <div key={s.id} className="rail-item" style={{ position: 'relative' }}>
-            <button className={`nav-item${viewing === s.id ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer', paddingRight: 66 }} onClick={() => openSession(s.id)}>
+            <button className={`nav-item${active ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer', paddingRight: 66 }} onClick={() => openSession(s.id)}>
               <span style={{ minWidth: 0 }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 600 }}>
                   {/* 고정 표식 — 상시 노출(hover 아니어도) so 어느 대화가 고정됐는지 한눈에 */}
-                  {s.pinned && <Icon name="pin" size={11} style={{ flex: 'none', color: 'var(--primary)' }} />}
+                  {s.pinned && <Icon name="pin" size={11} style={{ flex: 'none', color: pinColor }} />}
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title || s.gist || t('chat.sessions.untitled')}</span>
                 </span>
                 <span className="nav-sub">{new Date(s.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: s.count })}</span>
@@ -420,22 +426,23 @@ export default function CrewChat({ params }) {
             <span className="rail-actions" style={{ position: 'absolute', right: 5, top: 7, display: 'flex', gap: 1 }}>
               <button type="button" title={s.pinned ? t('chat.sessions.unpin') : t('chat.sessions.pin')} aria-label={s.pinned ? t('chat.sessions.unpin') : t('chat.sessions.pin')}
                 onClick={(e) => { e.stopPropagation(); doTogglePin(s); }}
-                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: s.pinned ? 'var(--primary)' : 'var(--fg-3)', cursor: 'pointer', borderRadius: 6 }}>
+                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: s.pinned ? pinColor : actColor, cursor: 'pointer', borderRadius: 6 }}>
                 <Icon name="pin" size={12} />
               </button>
               <button type="button" title={t('chat.sessions.rename')} aria-label={t('chat.sessions.rename')}
                 onClick={(e) => { e.stopPropagation(); setRenameSess(s); }}
-                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: 'var(--fg-3)', cursor: 'pointer', borderRadius: 6 }}>
+                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: actColor, cursor: 'pointer', borderRadius: 6 }}>
                 <Icon name="edit" size={12} />
               </button>
               <button type="button" title={t('chat.sessions.delete')} aria-label={t('chat.sessions.delete')}
                 onClick={(e) => { e.stopPropagation(); setTrashSess(s); }}
-                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: 'var(--fg-3)', cursor: 'pointer', borderRadius: 6 }}>
+                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: actColor, cursor: 'pointer', borderRadius: 6 }}>
                 <Icon name="trash" size={12} />
               </button>
             </span>
           </div>
-        ))}
+          );
+        })}
         {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('chat.sessions.empty')}</span>}
       </div>
     <div
