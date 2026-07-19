@@ -148,7 +148,9 @@ export const RUNNERS = {
     codex/gemini(파일 자격)는 환경 무관. claude(키체인)는 SDK가 키체인을 열 수 있는 non-standalone에서만
     — 데스크톱 번들(ARGO_STANDALONE)은 재서명 node가 키체인에 막혀 회귀를 내므로 제외(setup-token이 정식). */
 export const hostOptInAllowed = (runner) =>
-  !!RUNNER_AUTH[runner]?.hostUsable && (runner !== 'claude' || process.env.ARGO_STANDALONE !== '1');
+  !!RUNNER_AUTH[runner]?.hostUsable
+  && !process.env.ARGO_TENANT_OWNER // 다중테넌트 호스팅에선 운영자 CLI 로그인을 테넌트가 빌리지 못하게(setupOneClick과 대칭, 검수 LOW)
+  && (runner !== 'claude' || process.env.ARGO_STANDALONE !== '1');
 
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
@@ -710,8 +712,11 @@ export async function runnerStatus(wsId) {
         masked: cred.type === 'host' ? '' : maskCred(cred.value),
         // 저장 검증 도입 전(철회된 웹 브리지 등)에 들어온 무효 형식 토큰 — 카드가 "재연결 필요"를 보여준다
         ...(cred.type === 'oauth' && oauthFormatError(id, cred.value, 'ko') ? { invalid: true } : {}),
-        // host 마커는 이 컴퓨터 CLI 로그인이 살아 있어야 유효 — 로그아웃·미설치면 "재연결 필요"
-        ...(cred.type === 'host' && !(host[id]?.installed && host[id]?.authed) ? { invalid: true } : {}),
+        // host 마커는 이 컴퓨터 CLI 로그인이 살아 있어야 유효 — 로그아웃·미설치면 "재연결 필요".
+        // + 이 환경에서 host 옵트인이 허용되지 않으면(예: non-standalone에서 저장된 claude host 마커가
+        //   동기화로 데스크톱 standalone에 넘어온 경우 — 재서명 node가 키체인에 막혀 "Not logged in")
+        //   invalid로 표시해 pickRunner가 스킵하고 setup-token 재연결을 유도한다(검수 HIGH — 소비 측 대칭 게이트).
+        ...(cred.type === 'host' && (!(host[id]?.installed && host[id]?.authed) || !hostOptInAllowed(id)) ? { invalid: true } : {}),
       } : { connected: false },
     };
   }
