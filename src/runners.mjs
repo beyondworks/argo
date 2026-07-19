@@ -110,11 +110,17 @@ export const RUNNERS = {
   gemini: {
     name: 'Gemini', kind: 'cli',
     models: [
-      // OAuth(Code Assist) 경로 실턴 통과 id만 싣는다(2026-07-19 실측). 문서(ai.google.dev)의 3.x id는
-      // API키 경로용이라 OAuth 경로에선 "Requested entity was not found"로 턴이 죽는다(실사용 신고 재현).
-      // 카탈로그 규칙: 실행 경로에서 실측 통과한 id만 — 문서만 보고 추가 금지.
+      // 실측(2026-07-19): OAuth(Code Assist) 경로 실턴 통과 = 2.5 Pro/Flash. 3.x id는 실존하나
+      // (gemini-cli 공식 문서 get-started/gemini-3) Google AI Ultra 구독·유료 계정에만 개방 —
+      // 무료 로그인 계정은 "Requested entity was not found"로 턴이 죽는다(실사용 신고 재현·원인 확정).
+      // 카탈로그 규칙: 실행 경로 실턴 통과 id만 — 문서만 보고 추가 금지. 단, 접근권 게이트 모델은
+      // gated:true(모델 메뉴 배지 표시) + 채팅 런타임 강등 가드(chat.mjs GATED_MODEL_ERR_RE —
+      // 기본 모델 1회 자동 재시도) 전제로 허용한다. 첫 항목은 무권한 계정도 도는 모델일 것
+      // (러너 전환 시 models[0]이 기본 선택되므로 게이트 모델을 앞에 두면 무료 계정이 이유 없이 죽는다).
       { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
       { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+      { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', gated: true },
+      { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', gated: true },
     ],
   },
   kimi: {

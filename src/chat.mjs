@@ -387,9 +387,11 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
   };
 
   const catalogLine = Object.entries(RUNNERS).map(([id, r]) => `${id}=${r.models.map((m) => m.id).join('/')}`).join(' · ');
+  // 접근권 게이트 모델 고지 — 크루가 무권한 계정에 게이트 모델을 권하기 전에 알고 안내하게 한다(강등 가드가 최종 안전망).
+  const gatedIds = Object.values(RUNNERS).flatMap((r) => r.models.filter((m) => m.gated).map((m) => m.id));
   const updateProfile = tool(
     'update_profile',
-    `크루 프로필 변경을 사장 결재로 올린다(승인 시 시스템이 적용). 자기 자신("me") 또는 동료의 이름·역할·팀·일하는 방식 규칙 추가·러너·모델을 바꿀 수 있다. 사장이 러너/모델을 정하지 않았으면 선택지를 제시하고 물어본 뒤 올려라. 러너·모델 카탈로그: ${catalogLine}`,
+    `크루 프로필 변경을 사장 결재로 올린다(승인 시 시스템이 적용). 자기 자신("me") 또는 동료의 이름·역할·팀·일하는 방식 규칙 추가·러너·모델을 바꿀 수 있다. 사장이 러너/모델을 정하지 않았으면 선택지를 제시하고 물어본 뒤 올려라. 러너·모델 카탈로그: ${catalogLine}${gatedIds.length ? ` (접근권 게이트 모델 — Ultra·유료 계정 전용, 무권한 계정은 턴이 기본 모델로 자동 강등: ${gatedIds.join(', ')})` : ''}`,
     {
       target: z.string().describe('바꿀 크루 — "me"(자기 자신) 또는 동료 이름/slug'),
       name: z.string().optional(), role: z.string().optional(), team: z.string().optional(),
@@ -465,6 +467,9 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
     인증 에러로 죽는 패턴(실사용 2026-07-19: 죽은 Claude 흔적 → "Not logged in · Please run /login").
     이 에러면 그 러너를 제외하고 다른 가용 러너로 1회 재실행한다(아래 catch들). (export: 회귀 테스트용) */
 export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|invalid authentication|authentication[_ ]error|oauth token (?:is )?(?:expired|revoked|invalid)|\b401\b/i;
+/** 접근권 게이트 모델(gated:true) 실패 시그니처 — 모델이 없어서가 아니라 이 계정에 권한이 없어서 나는
+    에러(Gemini 3.x는 Ultra·유료 전용 — 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
+export const GATED_MODEL_ERR_RE = /requested entity was not found|NOT_FOUND|PERMISSION_DENIED/i;
 
 export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko') {
   if (!fellBack) return '';
@@ -593,15 +598,33 @@ ${lang === 'en'
         : '(너는 위 페르소나의 크루로서 한국어로 답하라.)'}`;
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격(API키/OAuth) 우선, 없으면 호스트 로그인
       // caps 전달 — 사장이 켠 능력(fs/browser)을 codex 샌드박스에 반영(SDK 게이트의 근사 — codexSandboxArgs 주석 참조)
-      const reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps });
+      // 접근권 게이트 모델 강등 가드 — gated 모델(예: Gemini 3.x = Ultra·유료 전용)에 권한 없는 계정이면
+      // 턴이 "Requested entity was not found"류로 죽는다. 같은 러너의 기본 모델로 1회 자동 재시도하고
+      // 답변 머리에 강등 안내 한 줄을 남긴다 — 접근권 있는 계정은 게이트 모델 그대로, 없는 계정도 채팅 단절 없음.
+      let usedModel = effModel;
+      let reply;
+      try {
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps });
+      } catch (e) {
+        const gated = !!(effModel && RUNNERS[runner]?.models.find((m) => m.id === effModel)?.gated);
+        if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
+        console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
+        usedModel = ''; // '' = 러너 기본 모델
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps });
+        if (reply) {
+          reply = (lang === 'en'
+            ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
+            : `(이 계정에는 ${effModel} 접근 권한이 없어 — Ultra·유료 전용 모델 — 러너 기본 모델로 대신 답했습니다.)`) + `\n\n${reply}`;
+        }
+      }
       if (!reply) throw new Error(`${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
       await appendUsage(wsId, {
         kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, runner,
-        model: `${runner}${effModel ? `:${effModel}` : ''}`, usage: {}, costUsd: null, ms: Date.now() - t0,
+        model: `${runner}${usedModel ? `:${usedModel}` : ''}`, usage: {}, costUsd: null, ms: Date.now() - t0,
       });
       await clearTurnStatus(wsId, agentSlug);
       const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
-      await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, journalRel: relative(p.vault, handover.file) });
+      await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, journalRel: relative(p.vault, handover.file), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
       return { reply, sessionId: null, handover };
     } catch (e) {
       const aborted = abortReg.wasAborted();
