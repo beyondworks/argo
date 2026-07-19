@@ -465,8 +465,11 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
     Claude 에러?" — 실사용 신고). 실패 경로에선 이 프리픽스가 유일한 설명이다. (export: 회귀 테스트용) */
 /** 러너 인증성 실패 판별 — 감지(detectRunners)가 스테일 자격 흔적으로 러너를 가용 오판해 턴이
     인증 에러로 죽는 패턴(실사용 2026-07-19: 죽은 Claude 흔적 → "Not logged in · Please run /login").
-    이 에러면 그 러너를 제외하고 다른 가용 러너로 1회 재실행한다(아래 catch들). (export: 회귀 테스트용) */
-export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|invalid authentication|authentication[_ ]error|oauth token (?:is )?(?:expired|revoked|invalid)|\b401\b/i;
+    이 에러면 그 러너를 제외하고 다른 가용 러너로 1회 재실행한다(아래 catch들). (export: 회귀 테스트용)
+    러너별 문구 차이 주의(실측 2026-07-20): gemini는 "API key not valid"/API_KEY_INVALID(401 아닌 400),
+    glm은 "token expired or incorrect"(HTTP 200 바디의 code:401)로 인증 실패를 알린다 — 401·"invalid api key"
+    문구만 보면 이 둘의 만료·무효 자격이 자가치유 없이 턴을 죽인다(저장 게이트의 자매 갭). 함께 포함한다. */
+export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|invalid authentication|authentication[_ ]error|api[_ ]?key[_ ]?(?:not valid|invalid)|token (?:is )?(?:expired|revoked|invalid|incorrect)|\b401\b/i;
 /** 접근권 게이트 모델(gated:true) 실패 시그니처 — 모델이 없어서가 아니라 이 계정에 권한이 없어서 나는
     에러(Gemini 3.x는 Ultra·유료 전용 — 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
 export const GATED_MODEL_ERR_RE = /requested entity was not found|NOT_FOUND|PERMISSION_DENIED/i;
