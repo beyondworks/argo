@@ -33,6 +33,13 @@ export default function CrewChat({ params }) {
   // 프롬프트 히스토리 — 터미널처럼 ↑/↓로 이전 지시를 다시 불러온다(원천 = 스레드의 사장 메시지라 기기 간에도 이어진다).
   const histIdx = useRef(-1);   // -1 = 탐색 중 아님
   const histStash = useRef(''); // 탐색 시작 시점 입력 보관 — ↓로 끝까지 내려오면 복원
+  const inputRef = useRef(null); // textarea 자동 높이 — 값이 어떤 경로로 바뀌든(타이핑·히스토리·초안 복원) 재계산
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`; // 최대 ~6줄 — 넘으면 내부 스크롤
+  }, [input]);
   const history = useMemo(() => {
     const out = [];
     for (const m of thread ?? []) {
@@ -44,8 +51,14 @@ export default function CrewChat({ params }) {
   function onInputKeyDown(e) {
     // imeGuard 병합 — 이 입력은 스프레드 대신 여기서 IME Enter를 막는다({...imeGuard}가 onKeyDown을 덮는 문제)
     if (e.key === 'Enter' && e.nativeEvent.isComposing) { e.preventDefault(); return; }
+    // Enter=전송, Shift+Enter=줄바꿈(textarea 기본 동작) — 유건 지시 2026-07-19
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e); return; }
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
     if (e.nativeEvent.isComposing || !history.length) return; // IME 조합 중엔 개입하지 않는다
+    // 여러 줄 입력 중엔 ↑/↓가 커서 이동이어야 한다 — 히스토리 탐색은 캐럿이 첫 줄(↑)/마지막 줄(↓)일 때만
+    const el = e.target;
+    if (e.key === 'ArrowUp' && el.value.slice(0, el.selectionStart ?? 0).includes('\n')) return;
+    if (e.key === 'ArrowDown' && el.value.slice(el.selectionEnd ?? 0).includes('\n')) return;
     e.preventDefault();
     if (e.key === 'ArrowUp') {
       if (histIdx.current === -1) histStash.current = input;
@@ -463,7 +476,7 @@ export default function CrewChat({ params }) {
         {((viewing ? archMsgs : thread) ?? []).map((m, i) =>
           m.who === 'user' ? (
             <div key={i} className="msg-wrap fade-up" style={{ alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '75%' }}>
-              <div className="msg-user" style={{ alignSelf: 'auto', maxWidth: '100%' }}>
+              <div className="msg-user" style={{ alignSelf: 'auto', maxWidth: '100%', whiteSpace: 'pre-wrap' }}>
                 {m.attachments?.length > 0 && (
                   <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: m.text ? 8 : 0 }}>
                     {m.attachments.map((a, j) => a.isImage ? (
@@ -627,13 +640,16 @@ export default function CrewChat({ params }) {
             {uploading && <span className="att-chip"><Spinner size={11} /> {t('chat.uploading')}</span>}
           </div>
         )}
-        <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)' }}>
+        {/* 여러 줄 입력 — textarea(Enter 전송·Shift+Enter 줄바꿈). 버튼은 하단 정렬(입력이 자라도 자리 고정) */}
+        <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end' }}>
           <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
             onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
             <Icon name="clip" size={14} />
           </button>
           <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
-          <input suppressHydrationWarning
+          <textarea suppressHydrationWarning
+            ref={inputRef}
+            rows={1}
             placeholder={t('chat.inputPlaceholder', { name: agent?.name ?? t('chat.crewFallback') })}
             value={input}
             onChange={(e) => { histIdx.current = -1; setInput(e.target.value); }}

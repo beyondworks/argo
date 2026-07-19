@@ -787,8 +787,9 @@ export async function startClaudeSetupToken(wsId) {
         sawOffline = true; // ok:null — 판정 불가. 확정하지 않고 다음 후보를 계속 본다(검수 LOW:
         // 첫 후보(접합본)가 흡수 오염본일 때 블립이 겹치면 오염 저장 — 관용은 아래에서 원본으로만)
       }
-      // 전 후보 판정 불가(무효 판정 0)일 때만 관용 저장 — 마지막 후보(원본)를 쓴다(흡수 오염 회피)
-      if (!chosen && sawOffline && !sawInvalid) chosen = candidates[candidates.length - 1];
+      // 관용 저장은 후보가 하나뿐일 때만 — 둘 이상인데 전부 판정 불가면 어느 쪽이 온전한지 알 수
+      // 없으므로(줄바꿈 케이스에선 마지막=절단본!) 저장하지 않고 재시도를 유도한다(검수 LOW 반영).
+      if (!chosen && sawOffline && !sawInvalid && candidates.length === 1) chosen = candidates[0];
       if (!chosen) {
         setupState[wsId] = { status: 'failed', error: sawInvalid ? '토큰 검증에 실패했습니다(잘려 읽혔거나 무효) — 다시 시도해 주세요' : '토큰을 읽지 못했습니다 — 다시 시도해 주세요', ts: Date.now() };
         return;
