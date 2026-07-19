@@ -86,6 +86,7 @@ export default function CrewChat({ params }) {
   const [viewing, setViewing] = useState(null); // 보관 세션 id (null = 현재 대화)
   const [archMsgs, setArchMsgs] = useState(null);
   const [renameSess, setRenameSess] = useState(null); // 대화명 편집 모달 대상 세션
+  const [threadTitle, setThreadTitle] = useState(null); // 현재(활성) 대화의 사용자 지정 이름
   const [trashSess, setTrashSess] = useState(null);   // 삭제(보관) 확인 모달 대상 세션
   // 우측 드로어 — 백그라운드 작업 / 파일 탭. 채팅 폭은 유지하고 우측에서 덮으며 내려온다.
   const [panelOpen, setPanelOpen] = useState(false);
@@ -131,6 +132,7 @@ export default function CrewChat({ params }) {
       const r = await api(`/api/companies/${ws}/chat/sessions`, { slug, id: viewing });
       setThread(r.thread?.messages ?? []);
       sessionRef.current = r.thread?.sessionId ?? null;
+      setThreadTitle(r.thread?.title ?? null);
       setViewing(null); setArchMsgs(null); setError(''); resetAnnot();
       loadSessions();
       window.dispatchEvent(new Event('argo:refresh'));
@@ -141,11 +143,12 @@ export default function CrewChat({ params }) {
     const s = renameSess; setRenameSess(null);
     if (!s) return;
     try {
-      await fetch(`/api/companies/${ws}/chat/sessions`, {
+      const res = await fetch(`/api/companies/${ws}/chat/sessions`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slug, id: s.id, title }),
-      });
-      loadSessions();
+        body: JSON.stringify({ slug, id: s.id ?? null, title }),
+      }).then((r) => r.json());
+      if (!s.id) setThreadTitle(res?.title ?? null); // 현재 대화 — 라벨 즉시 반영
+      else loadSessions();
     } catch (e) { setError(String(e.message)); }
   }
   // 세션 삭제(보관) — .archive → .trash 이동. 설정 보관함에서 복구 가능(비파괴).
@@ -207,7 +210,7 @@ export default function CrewChat({ params }) {
       .catch(() => setAgent({ name: slug, role: '' }));
     api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
       // status도 첫 로드에 반영 — 온보딩 직행 시 시운전 진행 카드가 8초 폴을 기다리지 않고 바로 보인다
-      .then((t) => { setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); })
+      .then((t) => { setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); })
       .catch(() => setThread([]));
   }, [ws, slug]);
 
@@ -383,7 +386,7 @@ export default function CrewChat({ params }) {
     // 현재 대화는 서버(resetThread)가 .archive로 적재한 뒤 비우므로 비파괴 — 확인창 없이 바로 새 대화.
     // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작(버튼이 안 열리던 원인) → 제거. 파괴적 액션만 DangerModal.
     await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
-    setThread([]); sessionRef.current = null; setError('');
+    setThread([]); sessionRef.current = null; setError(''); setThreadTitle(null);
     setViewing(null); setArchMsgs(null); resetAnnot();
     loadSessions(); // 방금 넘긴 대화가 좌측 레일에 적재된다
   }
@@ -398,12 +401,22 @@ export default function CrewChat({ params }) {
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('chat.sessions.title')}{sessions.length ? ` · ${sessions.length + 1}` : ''}
         </span>
-        <button className={`nav-item${!viewing ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => openSession(null)}>
-          <span style={{ minWidth: 0 }}>
-            <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>{t('chat.sessions.current')}</span>
-            <span className="nav-sub">{thread?.length ? t('chat.sessions.msgs', { n: thread.length }) : t('chat.newSession')}</span>
+        <div className="rail-item" style={{ position: 'relative' }}>
+          <button className={`nav-item${!viewing ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer', paddingRight: 30 }} onClick={() => openSession(null)}>
+            <span style={{ minWidth: 0 }}>
+              {/* 사장이 이름을 붙였으면 그 이름을 — '현재 대화'는 이름 없을 때의 기본 라벨일 뿐 */}
+              <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{threadTitle || t('chat.sessions.current')}</span>
+              <span className="nav-sub">{thread?.length ? t('chat.sessions.msgs', { n: thread.length }) : t('chat.newSession')}</span>
+            </span>
+          </button>
+          <span className="rail-actions" style={{ position: 'absolute', right: 5, top: 7, display: 'flex' }}>
+            <button type="button" title={t('chat.sessions.rename')} aria-label={t('chat.sessions.rename')}
+              onClick={(e) => { e.stopPropagation(); setRenameSess({ id: null, title: threadTitle, gist: '' }); }}
+              style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: !viewing ? 'var(--primary-fg)' : 'var(--fg-3)', cursor: 'pointer', borderRadius: 6 }}>
+              <Icon name="edit" size={12} />
+            </button>
           </span>
-        </button>
+        </div>
         {sessions.map((s) => {
           const active = viewing === s.id;
           // 활성 행 배경은 골드(--primary)라 골드 핀이 묻힌다 — 활성이면 온-골드 전경색(--primary-fg)으로 대비 확보.

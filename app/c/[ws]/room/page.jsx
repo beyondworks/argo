@@ -2,7 +2,7 @@
 // 회의실 — 사장 + 여러 크루가 한 방에서. "@이름"으로 부르면 그 크루들이 순서대로 발언한다.
 // 좌측 레일에 지난 회의가 적재되고(회의 마치기), 클릭으로 읽기 전용 열람 — 맥락 공유가 눈에 보이는 화면.
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, api, imeGuard } from '../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, InputModal, api, imeGuard } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 export default function Room({ params }) {
@@ -16,6 +16,28 @@ export default function Room({ params }) {
   const endRef = useRef(null);
   // 회의 적재 레일 — 마친 회의들이 좌측에 쌓인다
   const [sessions, setSessions] = useState([]);
+  const [renameSess, setRenameSess] = useState(null); // 회의명 편집 모달 대상
+  // 회의명 편집·고정 — 채팅 세션 레일과 동일 계약(PATCH {id,title}|{id,pinned})
+  async function doRenameSess(title) {
+    const sess = renameSess; setRenameSess(null);
+    if (!sess) return;
+    try {
+      await fetch(`/api/companies/${ws}/room/sessions`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: sess.id, title }),
+      });
+      loadSessions();
+    } catch { /* 레일 갱신 실패는 다음 로드에서 복구 */ }
+  }
+  async function doTogglePin(sess) {
+    try {
+      await fetch(`/api/companies/${ws}/room/sessions`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: sess.id, pinned: !sess.pinned }),
+      });
+      loadSessions();
+    } catch { /* 동일 */ }
+  }
   const [viewing, setViewing] = useState(null); // 보관 회의 id (null = 현재 회의)
   const [archMsgs, setArchMsgs] = useState(null);
 
@@ -99,16 +121,49 @@ export default function Room({ params }) {
             <span className="nav-sub">{messages?.length ? t('chat.sessions.msgs', { n: messages.length }) : t('room.sessions.idle')}</span>
           </span>
         </button>
-        {sessions.map((s) => (
-          <button key={s.id} className={`nav-item${viewing === s.id ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => openSession(s.id)}>
-            <span style={{ minWidth: 0 }}>
-              <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.topic || t('chat.sessions.untitled')}</span>
-              <span className="nav-sub">{new Date(s.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: s.count })}</span>
+        {sessions.map((s) => {
+          const active = viewing === s.id;
+          const pinColor = active ? 'var(--primary-fg)' : 'var(--primary)'; // 활성 골드 배경 위 골드 핀 겹침 방지(세션 레일 공통)
+          const actColor = active ? 'var(--primary-fg)' : 'var(--fg-3)';
+          return (
+          <div key={s.id} className="rail-item" style={{ position: 'relative' }}>
+            <button className={`nav-item${active ? ' active' : ''}`} style={{ width: '100%', textAlign: 'left', cursor: 'pointer', paddingRight: 48 }} onClick={() => openSession(s.id)}>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 600 }}>
+                  {s.pinned && <Icon name="pin" size={11} style={{ flex: 'none', color: pinColor }} />}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title || s.topic || t('chat.sessions.untitled')}</span>
+                </span>
+                <span className="nav-sub">{new Date(s.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: s.count })}</span>
+              </span>
+            </button>
+            <span className="rail-actions" style={{ position: 'absolute', right: 5, top: 7, display: 'flex', gap: 1 }}>
+              <button type="button" title={s.pinned ? t('chat.sessions.unpin') : t('chat.sessions.pin')} aria-label={s.pinned ? t('chat.sessions.unpin') : t('chat.sessions.pin')}
+                onClick={(e) => { e.stopPropagation(); doTogglePin(s); }}
+                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: s.pinned ? pinColor : actColor, cursor: 'pointer', borderRadius: 6 }}>
+                <Icon name="pin" size={12} />
+              </button>
+              <button type="button" title={t('chat.sessions.rename')} aria-label={t('chat.sessions.rename')}
+                onClick={(e) => { e.stopPropagation(); setRenameSess(s); }}
+                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: actColor, cursor: 'pointer', borderRadius: 6 }}>
+                <Icon name="edit" size={12} />
+              </button>
             </span>
-          </button>
-        ))}
+          </div>
+          );
+        })}
         {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('room.sessions.empty')}</span>}
       </div>
+
+      {renameSess && (
+        <InputModal
+          title={t('chat.sessions.renameTitle')}
+          defaultValue={renameSess.title || renameSess.topic || ''}
+          placeholder={t('chat.sessions.renamePh')}
+          confirmLabel={t('common.save')}
+          onConfirm={doRenameSess}
+          onClose={() => setRenameSess(null)}
+        />
+      )}
 
       <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
