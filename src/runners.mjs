@@ -110,9 +110,9 @@ export const RUNNERS = {
   gemini: {
     name: 'Gemini', kind: 'cli',
     models: [
-      // ai.google.dev 모델 문서(2026-07) — 3.5 Flash가 GA 최신, 3.1 Pro는 프리뷰
-      { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
-      { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
+      // OAuth(Code Assist) 경로 실턴 통과 id만 싣는다(2026-07-19 실측). 문서(ai.google.dev)의 3.x id는
+      // API키 경로용이라 OAuth 경로에선 "Requested entity was not found"로 턴이 죽는다(실사용 신고 재현).
+      // 카탈로그 규칙: 실행 경로에서 실측 통과한 id만 — 문서만 보고 추가 금지.
       { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
       { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
     ],
