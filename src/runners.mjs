@@ -296,7 +296,7 @@ export const RUNNER_AUTH = {
   codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
   gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
-  kimi: { methods: ['apikey'], apikeyPrefix: 'sk-', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' },
+  kimi: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' }, // 접두사 무차단(GLM 관례) — 리전·미래 키 형식 변화에 저장이 막히지 않게, 판정은 verifyRunnerCred가
 };
 
 // 레거시 계정 파일(사용자 스코프 도입 전 무스코프 .account-secrets.json) → local 스코프로 1회 이관.
@@ -719,7 +719,8 @@ export async function verifyRunnerCred(runner, type, value) {
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'kimi') {
-      const r = await fetch('https://api.moonshot.ai/v1/models', { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
+      const base = process.env.KIMI_OPENAI_BASE_URL || 'https://api.moonshot.ai/v1';
+      const r = await fetch(`${base}/models`, { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'codex' && type === 'apikey') {
