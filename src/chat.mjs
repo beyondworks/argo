@@ -507,8 +507,10 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
   const wantRunner = (meta.runner || '').toLowerCase() || null;
-  // __excludeRunner = 방금 인증 실패한 러너(아래 catch의 자가 치유 재시도) — 다시 뽑히지 않게 제외
-  const resolved = await resolveRunner(wsId, wantRunner, { exclude: __excludeRunner }).catch(() => ({ runner: wantRunner ?? 'claude', fellBack: false, available: true }));
+  // __excludeRunner = 방금 인증 실패한 러너(아래 catch의 자가 치유 재시도) — 다시 뽑히지 않게 제외.
+  // 해석 실패(.secrets.json 손상 등)는 미가용으로 — available:true 폴백은 명시 연결 원칙 위반(검수 MEDIUM:
+  // 최악의 상태에서 조용히 호스트 자격을 스캐빈징하게 된다). 아래 !available 분기가 재연결을 안내한다.
+  const resolved = await resolveRunner(wsId, wantRunner, { exclude: __excludeRunner }).catch(() => ({ runner: wantRunner ?? 'claude', fellBack: false, available: false, credButNoCli: [] }));
   if (!resolved.available) {
     // 자격은 있는데 벤더 CLI가 없는 러너(codex/gemini)는 원인을 정확히 알려준다 — "연결했는데 왜 안 돼"의 답.
     const noCli = (resolved.credButNoCli ?? []).map((id) => RUNNERS[id]?.name || id);

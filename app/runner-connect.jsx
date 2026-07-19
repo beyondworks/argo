@@ -199,7 +199,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   }
 
   async function save(verify) {
-    if (busy || !value.trim()) return;
+    if (busy || !value.trim() || method === 'host') return; // host 상태 방어 — 라우트가 value를 무시해 입력이 조용히 버려진다(검수 MEDIUM)
     setBusy(verify ? 'verify' : 'save'); setMsg(''); setOk(false);
     try {
       const res = await fetch(`${keysBase(ws)}`, {
@@ -303,6 +303,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
     </div>
   );
   const accordion = typeof onToggle === 'function';
+  // host 타입으로 연결됨 — 연결 폼(탭·붙여넣기)을 숨긴다: 이 상태의 API키 폼은 저장 시 입력이
+  // 조용히 버려지는 오폼이었다(검수 MEDIUM). 해제 후 다른 방식으로 재연결하는 흐름만 남긴다.
+  const hostLinked = company.connected && company.type === 'host';
   const header = (
     <>
       {accordion && (
@@ -331,6 +334,13 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>{header}</div>
       )}
       {open && <>
+      {hostLinked ? (
+        /* host 연결됨 — 상태 칩이 전부다. 연결 폼은 숨기고 해제만 노출(오폼 입력 유실 방지). */
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
+          {removeBtn}
+        </div>
+      ) : (<>
       {hasOauth && (
         <div style={{ display: 'flex', gap: 6 }}>
           {methods.map((m) => (
@@ -456,6 +466,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
           </>)}
         </>
       )}
+      </>)}
       </>}
     </div>
   );

@@ -10,8 +10,9 @@ import { GLM_DEFAULT_MODEL, externalExec, resolveRunner, runnerCredEnv, sdkEnvFo
     model은 claude 러너일 때만 적용(다른 러너는 각자 기본 모델). 반환 { runner, text, usage, costUsd }. */
 export async function runOneShot(wsId, prompt, opts = {}) {
   const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, __exclude = null } = opts;
+  // 해석 실패(.secrets.json 손상 등)는 미가용으로 — 조용한 호스트 스캐빈징 금지(검수 MEDIUM, chat.mjs와 동일)
   const resolved = await resolveRunner(wsId, 'claude', { exclude: __exclude })
-    .catch(() => ({ runner: 'claude', available: true, fellBack: false }));
+    .catch(() => ({ runner: 'claude', available: false, fellBack: false }));
   if (!resolved.available) {
     throw new Error(lang === 'en'
       ? 'No AI runner is connected — connect Claude, Codex, Gemini, or GLM in Settings → AI connections.'

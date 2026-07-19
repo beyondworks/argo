@@ -244,8 +244,6 @@ const DICT = {
   'settings.runners.setupNoCli': ['이 컴퓨터에서 Claude Code 실행 파일을 찾지 못했습니다 — 아래 안내대로 토큰을 직접 붙여넣어 주세요.', 'Couldn’t find the Claude Code executable on this computer — paste a token below as guided instead.'],
   'settings.runners.setupNoWin': ['Windows에서는 아직 버튼 연결을 지원하지 않습니다 — 아래 안내대로 토큰을 붙여넣어 주세요.', 'Button connect isn’t supported on Windows yet — paste a token below as guided.'],
   'settings.runners.setupFailedShort': ['연결이 완료되지 않았습니다 — 다시 시도하거나 아래에 토큰을 붙여넣어 주세요.', 'The connection didn’t complete — try again or paste a token below.'],
-  'settings.runners.hostInUse': ['이 컴퓨터 로그인 사용 중', 'Using this computer’s login'],
-  'settings.runners.hostConnected': ['연결중 · OAuth — 이 컴퓨터 로그인', 'Connected · OAuth — this computer’s login'],
   'settings.runners.none': ['미연결', 'Not connected'],
   'settings.runners.hostDetected': ['이 컴퓨터 로그인 감지됨 — 사용하려면 연결', 'This computer\u2019s login detected — connect to use'],
   'settings.runners.useHost': ['이 컴퓨터 로그인 사용', 'Use this computer\u2019s login'],
