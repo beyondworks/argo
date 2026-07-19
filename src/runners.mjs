@@ -844,9 +844,13 @@ export function setupTokenStatus(wsId) {
   return s ? { status: s.status, error: s.error ?? '' } : { status: 'idle' };
 }
 
-export async function startClaudeSetupToken(wsId) {
-  // 호스팅 워커에선 금지 — 사용자 브라우저가 없는 곳에서 프로세스만 남는다(로컬/데스크톱 전용).
-  if (process.env.ARGO_TENANT_OWNER || process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, reason: 'hosted' };
+export async function startClaudeSetupToken(wsId, { local = false } = {}) {
+  // 원격 호스팅 워커에선 금지 — 사용자 브라우저가 없는 곳에 프로세스만 남는다. 단 '서비스 키 존재'만으로
+  // 원격을 판정하지 않는다: 로컬 상주(:3001)도 Supabase 동기화용 서비스 키를 갖는다 → 데스크톱 앱이 그
+  // 상주에 붙으면(lib.rs: 3001 선점) 원클릭이 hosted로 오차단됐다(실사용 신고 2026-07-19 — #36 리스너
+  // 가드와 동류의 "서비스 키=원격" 오판정). 판정 축을 요청 출처로: loopback(사용자 본인 기기)이면 허용,
+  // 다중테넌트 마커(ARGO_TENANT_OWNER)나 비-loopback 원격 접근이면 차단.
+  if (process.env.ARGO_TENANT_OWNER || !local) return { ok: false, reason: 'hosted' };
   if (process.platform === 'win32') return { ok: false, reason: 'unsupported-platform' }; // script(1) 부재 — 후속(node-pty 검토)
   if (setupState[wsId]?.status === 'running') return { ok: false, reason: 'busy' };
   const cli = await resolveClaudeCli();
