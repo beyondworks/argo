@@ -8,8 +8,12 @@ import { isCloudLeader } from './sync.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { paths } from './workspace.mjs';
+import { join } from 'node:path';
 
 const CONSOLIDATE_AT = '04:00'; // 새벽 정리 — 사람 뇌의 수면 정리처럼
+// 하루 1회 실행 스탬프 — 정각(hhmm===) 일치는 그 1분에 기기가 수면·앱 종료면 그날 정리가 영영 스킵된다.
+// "04:00 이후 첫 틱에 아직 오늘 안 돌았으면 실행"으로 캐치업한다(랩탑 현실 대응).
+const RUN_STAMP = (wsId) => join(paths(wsId).vault, '.consolidate-run.json');
 
 // 실행 직전 lastRun 선점(원자적 CAS) — 리더 교체·클라우드 리스 45s 지연으로 두 리더가 겹치는 창에서
 // 같은 루틴을 각자 실행(이중 과금)하는 것을 막는다. withLock으로 같은 프로세스의 동시 클레임을 직렬화하고,
@@ -51,11 +55,17 @@ export function ensureScheduler() {
           console.log(`[argo] 루틴 실행: ${c.id}/${r.title}`);
           runRoutine(c.id, r.id).catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message));
         }
-        if (hhmm === CONSOLIDATE_AT) {
-          console.log(`[argo] 기억 정리: ${c.id}`);
-          consolidateMemory(c.id)
-            .then(() => rollupJournals(c.id)) // 정제가 소화한 일지만 주간으로 접힌다
-            .catch((e) => console.error(`[argo] 기억 정리 실패 ${c.id}:`, e.message));
+        if (hhmm >= CONSOLIDATE_AT) {
+          const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          let st = { day: '' };
+          try { st = await readJson(RUN_STAMP(c.id), { day: '' }); } catch { /* 부재/손상 — 오늘 미실행으로 간주 */ }
+          if ((st.day ?? '') < today) {
+            await writeJsonAtomic(RUN_STAMP(c.id), { day: today }); // 실행 전 선점 — 리더 겹침 창 이중 실행 방지(claimRoutine과 동일 원칙)
+            console.log(`[argo] 기억 정리: ${c.id}`);
+            consolidateMemory(c.id)
+              .then(() => rollupJournals(c.id)) // 정제가 소화한 일지만 주간으로 접힌다
+              .catch((e) => console.error(`[argo] 기억 정리 실패 ${c.id}:`, e.message));
+          }
         }
       }
     } catch (e) {

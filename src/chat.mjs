@@ -18,7 +18,7 @@ import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner } from './runners.mjs';
-import { loadThread, takeSharedNotes } from './thread.mjs';
+import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
     allow = 크루별 사용 범위(parseScopeList 결과): null=전체(기본), []=없음, [이름]=지정만.
@@ -635,13 +635,20 @@ ${lang === 'en'
         if (alt?.available && alt.runner !== runner) {
           console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug})`);
           // finally의 release는 identity 가드(turn-abort.mjs)라 재귀가 등록한 새 핸들을 지우지 않는다
-          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, mirrorCtx, __seedNotes: sharedNotes, __excludeRunner: runner });
+          try {
+            return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, mirrorCtx, __seedNotes: sharedNotes, __excludeRunner: runner });
+          } catch (e2) {
+            e = e2; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하
+          }
         }
       }
       if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
       await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400) });
       await clearTurnStatus(wsId, agentSlug);
+      // cc 공유 노트 복원 — 소비(takeSharedNotes)가 러너 실행 전이라, 복원 없이는 실패한 턴이 동료가
+      // 공유한 맥락을 영구 소실시킨다. 이 프레임이 직접 소비한 경우만(__seedNotes 재시도 프레임 제외).
+      if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
       throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : e;
     } finally {
       abortReg.release();
@@ -823,7 +830,11 @@ ${lang === 'en'
     // 다음부터는 사전 분기로 온다. __freshRetry 가드로 재귀 1회 제한.
     if (!aborted && resumeId && !__freshRetry && /no conversation found/i.test(String(e.message || e))) {
       console.warn(`[argo] 세션이 이 기기에 없음(${wsId}/${agentSlug}) — 새 세션으로 재시도`);
-      return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner });
+      try {
+        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner });
+      } catch (e2) {
+        e = e2; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하
+      }
     }
     // 인증 오탐 자가 치유 — SDK 러너의 자격이 실은 죽어 있던 경우(스테일 로그인 흔적 등), 그 러너를
     // 제외하고 다른 가용 러너로 1회 재실행. 러너가 바뀌면 세션 resume이 무의미하므로 새 세션 +
@@ -832,7 +843,11 @@ ${lang === 'en'
       const alt = await resolveRunner(wsId, wantRunner, { exclude: runner }).catch(() => null);
       if (alt?.available && alt.runner !== runner) {
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug})`);
-        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner: runner });
+        try {
+          return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner: runner });
+        } catch (e2) {
+          e = e2; // 재시도도 실패 — 아래 공통 실패 처리로 낙하
+        }
       }
     }
     if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
@@ -842,6 +857,8 @@ ${lang === 'en'
       error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), // 진단 상세(errors[]/stderr 꼬리)까지 실리도록 400
     });
     await clearTurnStatus(wsId, agentSlug);
+    // cc 공유 노트 복원 — CLI 경로와 동일: 이 프레임이 직접 소비한 노트만 최종 실패 시 pending으로 되살린다
+    if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
     throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : e;
   } finally {
     abortReg.release();

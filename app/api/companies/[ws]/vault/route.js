@@ -20,7 +20,15 @@ export async function GET(req, { params }) {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
     const rel = new URL(req.url).searchParams.get('rel');
-    if (rel) return Response.json({ rel, content: await readDoc(ws, rel) });
+    if (rel) {
+      try {
+        return Response.json({ rel, content: await readDoc(ws, rel) });
+      } catch (e) {
+        // 깨진 위키링크(삭제·이동된 문서) — raw ENOENT는 서버 절대 경로를 UI에 노출한다(SaaS 레이아웃 유출)
+        if (e?.code === 'ENOENT') return Response.json({ error: `문서를 찾을 수 없습니다: ${rel}` }, { status: 404 });
+        throw e;
+      }
+    }
     const docs = await listDocs(ws);
     let index = '';
     try { index = await readDoc(ws, '_index.md'); } catch {}
