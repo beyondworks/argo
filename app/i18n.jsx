@@ -240,7 +240,7 @@ const DICT = {
   'settings.runners.method.apikey': ['API 키', 'API key'],
   'settings.runners.method.oauth': ['OAuth', 'OAuth'],
   'settings.runners.method.host': ['이 컴퓨터 로그인', 'This computer\u2019s login'],
-  'settings.runners.companyConnected': ['연결중', 'Connected'],
+  'settings.runners.companyConnected': ['연결됨', 'Connected'],
   'settings.runners.companyInvalid': ['재연결 필요 — 저장된 토큰이 유효한 형식이 아닙니다', 'Reconnect needed — the stored token isn’t in a valid format'],
   'settings.runners.setupConnect': ['브라우저로 바로 연결', 'Connect via browser'],
   'settings.runners.setupHint': ['클릭하면 브라우저가 열립니다 — 로그인을 승인하면 토큰이 자동 저장됩니다 (Claude 구독 필요)', 'Opens your browser — approve the sign-in and the token is saved automatically (Claude subscription required)'],
