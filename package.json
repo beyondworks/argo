@@ -1,6 +1,6 @@
 {
   "name": "argo",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Argo — 프롬프트 한 줄로 전문 AI 크루를 영입하고, 회사가 폴더 단위 기억으로 항해하는 개인용 AI 회사 SaaS",
   "scripts": {
     "dev": "next dev",
