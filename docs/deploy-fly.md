@@ -20,7 +20,7 @@ fly volumes create argo_data --region nrt --size 3 --app argo-worker
 ```bash
 fly secrets set --app argo-worker \
   SUPABASE_SERVICE_ROLE_KEY=***   # Supabase → Settings → API (service_role)
-  ARGO_TENANT_OWNER=***           # Supabase → Auth → Users의 내 user id — 이 계정 외 전부 403
+  ARGO_TENANT_OWNER=***           # Supabase → Auth → Users의 내 user id — 이 계정 외 전부 403 + Claude 원클릭(setup-token) 하드 차단축(공개 셀프호스트 필수)
   ARGO_SYNC_OWNER=***             # 동일 user id — 동기화도 이 계정 회사만
 ```
 
