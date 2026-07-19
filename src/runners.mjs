@@ -144,6 +144,12 @@ export const RUNNERS = {
   },
 };
 
+/** "이 컴퓨터 로그인 사용" 옵트인 허용 여부 — runnerStatus·저장(PUT) 라우트가 공유(단일 판정).
+    codex/gemini(파일 자격)는 환경 무관. claude(키체인)는 SDK가 키체인을 열 수 있는 non-standalone에서만
+    — 데스크톱 번들(ARGO_STANDALONE)은 재서명 node가 키체인에 막혀 회귀를 내므로 제외(setup-token이 정식). */
+export const hostOptInAllowed = (runner) =>
+  !!RUNNER_AUTH[runner]?.hostUsable && (runner !== 'claude' || process.env.ARGO_STANDALONE !== '1');
+
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
@@ -298,10 +304,12 @@ export const RUNNER_AUTH = {
   // claude 웹 브리지(webConnect)는 철회(2026-07-18) — 구세대 엔드포인트 교환이 러너가 거절하는
   // 비 oat01 토큰을 저장해 "연결됨인데 전 턴 401"을 만들었다(실측). CLAUDE_CODE_OAUTH_TOKEN은
   // 공식 규격상 `claude setup-token`으로만 발급 — UI는 붙여넣기 안내로 일원화(WEB_OAUTH 주석 참조).
-  claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPrefix: 'sk-ant-oat01-', oauthPasteable: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', keyUrl: 'https://console.anthropic.com/settings/keys' },
-  // hostUsable: "이 컴퓨터 로그인 사용" 옵트인(host 타입) 지원 — 파일 기반 자격(~/.codex, ~/.gemini)이라
-  // 앱이 읽을 수 있다. claude는 키체인 보관이라 다른 서명 주체(Argo 앱)의 접근이 불안정해 미제공 —
-  // 원클릭 setup-token/API키/토큰 붙여넣기로 연결한다(실사용 2026-07-19: 앱에서 "Not logged in"의 원인).
+  // claude hostUsable: "이 컴퓨터 로그인 사용" 옵트인 지원. 단 codex/gemini(파일 자격)와 달리 claude는
+  // 키체인 보관이라, SDK가 그 키체인을 열 수 있는 환경에서만 유효하다 — 일반 node(상주/웹/dev)에서는
+  // SDK query()가 호스트 Claude Code 로그인으로 인증됨을 실측(2026-07-19). 데스크톱 번들(ARGO_STANDALONE)의
+  // 재서명 node는 키체인 ACL이 막아 "Not logged in" 회귀를 낸 전례가 있어, claude host는 non-standalone에서만
+  // 노출한다(claudeHostAllowed). 데스크톱은 setup-token 원클릭이 정식 경로.
+  claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPrefix: 'sk-ant-oat01-', oauthPasteable: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', hostUsable: true, keyUrl: 'https://console.anthropic.com/settings/keys' },
   codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
   gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
@@ -690,7 +698,7 @@ export async function runnerStatus(wsId) {
       oauthPasteable: !!meta.oauthPasteable,
       connectable: !!meta.connect, // Connect 버튼(CLI 브라우저 로그인 대행) 지원 여부 — codex
       webConnect: !!meta.webConnect, // 웹 브리지(로그인 URL 표시 + 코드 입력) — claude
-      hostUsable: !!meta.hostUsable, // "이 컴퓨터 로그인 사용" 옵트인 지원(codex/gemini)
+      hostUsable: hostOptInAllowed(id), // "이 컴퓨터 로그인 사용" 옵트인 — claude는 non-standalone에서만(키체인)
       // claude 원클릭(setup-token)은 데스크톱 번들 사이드카에서만 완주 — 상주/웹은 붙여넣기가 정식 경로
       setupOneClick: id === 'claude' && process.env.ARGO_STANDALONE === '1',
       keyUrl: meta.keyUrl,

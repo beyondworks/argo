@@ -4,7 +4,7 @@
 // 응답에는 평문 대신 마스킹만 실린다(보안 규칙).
 import {
   accountScope, runnerStatus, saveRunnerCred, clearRunnerCred,
-  maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH,
+  maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH, hostOptInAllowed,
 } from '../../../../src/runners.mjs';
 import { currentUser, tenantDenied } from '../../../auth.mjs';
 
@@ -32,7 +32,7 @@ export async function PUT(req) {
     if (!meta) throw new Error('알 수 없는 러너');
     // host — "이 컴퓨터 로그인 사용" 명시 옵트인(codex/gemini). 회사 라우트와 동일 검증·마커 저장.
     if (type === 'host') {
-      if (!meta.hostUsable) throw new Error('이 러너는 이 컴퓨터 로그인 사용을 지원하지 않습니다');
+      if (!hostOptInAllowed(runner)) throw new Error('이 환경에서는 이 컴퓨터 로그인 사용을 쓸 수 없습니다'); // claude는 데스크톱 번들에서 제외(키체인)
       const host = (await detectRunners())[runner];
       if (!host?.installed) throw new Error('이 컴퓨터에서 해당 CLI가 감지되지 않습니다 — 먼저 설치해 주세요');
       if (!host?.authed) throw new Error('이 컴퓨터의 CLI가 로그인돼 있지 않습니다 — 터미널에서 로그인 후 다시 시도해 주세요');
