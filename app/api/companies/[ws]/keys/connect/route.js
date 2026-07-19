@@ -10,7 +10,7 @@ import {
   startRunnerWebAuth, submitRunnerWebAuth, loadRunnerCred,
   startClaudeSetupToken, setupTokenStatus,
 } from '../../../../../../src/runners.mjs';
-import { guardCompany, isLoopbackHost } from '../../../../../auth.mjs';
+import { guardCompany } from '../../../../../auth.mjs';
 
 export async function POST(req, { params }) {
   const { ws } = await params;
@@ -18,9 +18,8 @@ export async function POST(req, { params }) {
   const { runner, code, cli, setup } = await req.json();
   const meta = RUNNER_AUTH[runner];
   if (!meta) return Response.json({ error: '알 수 없는 러너' }, { status: 400 });
-  if (runner === 'claude' && setup) { // 원클릭 — 서버가 setup-token을 대행, 토큰은 자동 저장
-    // 요청이 사용자 본인 기기(loopback: 데스크톱 웹뷰·로컬 상주)면 원클릭 허용 — 원격 호스팅만 차단(#36 동류)
-    const r = await startClaudeSetupToken(ws, { local: isLoopbackHost(req.headers.get('host')) });
+  if (runner === 'claude' && setup) { // 원클릭 — 데스크톱 번들에서만 완주(startClaudeSetupToken이 ARGO_STANDALONE 게이트)
+    const r = await startClaudeSetupToken(ws);
     return Response.json(r, { status: r.ok ? 200 : 400 });
   }
   if (meta.webConnect && !cli) {

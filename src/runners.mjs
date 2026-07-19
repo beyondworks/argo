@@ -691,6 +691,8 @@ export async function runnerStatus(wsId) {
       connectable: !!meta.connect, // Connect 버튼(CLI 브라우저 로그인 대행) 지원 여부 — codex
       webConnect: !!meta.webConnect, // 웹 브리지(로그인 URL 표시 + 코드 입력) — claude
       hostUsable: !!meta.hostUsable, // "이 컴퓨터 로그인 사용" 옵트인 지원(codex/gemini)
+      // claude 원클릭(setup-token)은 데스크톱 번들 사이드카에서만 완주 — 상주/웹은 붙여넣기가 정식 경로
+      setupOneClick: id === 'claude' && process.env.ARGO_STANDALONE === '1',
       keyUrl: meta.keyUrl,
       hostInstalled: host[id]?.installed ?? false,
       hostAuthed: host[id]?.authed ?? false, // 호스트 CLI 로그인/env (OAuth 폴백 경로)
@@ -844,13 +846,15 @@ export function setupTokenStatus(wsId) {
   return s ? { status: s.status, error: s.error ?? '' } : { status: 'idle' };
 }
 
-export async function startClaudeSetupToken(wsId, { local = false } = {}) {
-  // 원격 호스팅 워커에선 금지 — 사용자 브라우저가 없는 곳에 프로세스만 남는다. 단 '서비스 키 존재'만으로
-  // 원격을 판정하지 않는다: 로컬 상주(:3001)도 Supabase 동기화용 서비스 키를 갖는다 → 데스크톱 앱이 그
-  // 상주에 붙으면(lib.rs: 3001 선점) 원클릭이 hosted로 오차단됐다(실사용 신고 2026-07-19 — #36 리스너
-  // 가드와 동류의 "서비스 키=원격" 오판정). 판정 축을 요청 출처로: loopback(사용자 본인 기기)이면 허용,
-  // 다중테넌트 마커(ARGO_TENANT_OWNER)나 비-loopback 원격 접근이면 차단.
-  if (process.env.ARGO_TENANT_OWNER || !local) return { ok: false, reason: 'hosted' };
+export async function startClaudeSetupToken(wsId) {
+  // 원클릭(setup-token PTY 대행)이 완주하려면 서버가 (a) 사용자 GUI 세션에서 브라우저를 열 수 있고
+  // (b) setup-token의 localhost 콜백 리스너가 승인 시점까지 살아 있어야 한다. 이 둘이 성립하는 곳은
+  // 데스크톱 번들 사이드카(ARGO_STANDALONE=1 — Tauri가 GUI·프로세스 수명을 관리)뿐이다.
+  // 상주(launchd 백그라운드 데몬)·웹·dev는 브라우저를 못 열거나 콜백이 끊겨(승인 후 localhost:콜백이
+  // ERR_CONNECTION_REFUSED — 실사용 신고 2026-07-19) 스피너만 돈다. 그 환경들은 원클릭을 열지 않고
+  // 'manual'(터미널에서 claude setup-token 실행 → 토큰 붙여넣기)로 안내한다.
+  // (앞선 #44의 loopback 판정은 이 완주 조건을 담지 못해 상주에서 스피너 함정을 만들었다 — standalone으로 교정.)
+  if (process.env.ARGO_STANDALONE !== '1') return { ok: false, reason: 'manual' };
   if (process.platform === 'win32') return { ok: false, reason: 'unsupported-platform' }; // script(1) 부재 — 후속(node-pty 검토)
   if (setupState[wsId]?.status === 'running') return { ok: false, reason: 'busy' };
   const cli = await resolveClaudeCli();
