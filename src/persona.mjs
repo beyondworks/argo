@@ -178,6 +178,8 @@ export async function saveAgentCard(wsId, slug, md) {
 
 /** frontmatter 키를 갱신/삽입/삭제하며 카드 본문은 보존한다. */
 function setFrontmatterKey(md, key, value) {
+  // 개행 세척 — 값에 개행이 섞이면 frontmatter 구조가 갈라진다(키 인젝션·본문 분리). 전 키 공통 방어(검수 LOW).
+  if (typeof value === 'string') value = value.replace(/\r?\n/g, ' ').trim();
   const re = new RegExp(`^(---[\\s\\S]*?)^${key}:.*$`, 'm');
   if (value === '' || value == null) {
     return md.replace(new RegExp(`^${key}:.*\\n`, 'm'), ''); // 키 제거
