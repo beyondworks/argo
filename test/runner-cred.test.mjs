@@ -96,13 +96,29 @@ test('bundledClaudeCli: 내장 SDK CLI 폴백 — 초보자 원클릭의 전제(
   }
 });
 
-test('startClaudeSetupToken: 호스팅 워커에선 spawn 없이 거절', async () => {
+test('startClaudeSetupToken: 판정 축은 요청 loopback — 서비스 키 존재가 아님', async () => {
   const { startClaudeSetupToken } = await import('../src/runners.mjs');
-  const prev = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  process.env.SUPABASE_SERVICE_ROLE_KEY = 'crown-test';
+  const prevKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const prevOwner = process.env.ARGO_TENANT_OWNER;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'crown-test'; // 로컬 상주도 동기화용으로 보유 — 더 이상 차단 근거 아님
+  delete process.env.ARGO_TENANT_OWNER;
   try {
-    assert.deepEqual(await startClaudeSetupToken('credco'), { ok: false, reason: 'hosted' }, '서비스 키 환경 = 호스팅 — 로컬 전용 기능 차단');
+    // 비-loopback(원격 접근) → 차단. 기본값 local=false도 차단(fail-closed).
+    assert.deepEqual(await startClaudeSetupToken('credco', { local: false }), { ok: false, reason: 'hosted' }, '비-loopback = 원격 접근 차단');
+    assert.deepEqual(await startClaudeSetupToken('credco'), { ok: false, reason: 'hosted' }, 'local 미전달 = fail-closed 차단');
+    // 다중테넌트 마커는 loopback이어도 하드 차단
+    process.env.ARGO_TENANT_OWNER = 'acct-1';
+    assert.deepEqual(await startClaudeSetupToken('credco', { local: true }), { ok: false, reason: 'hosted' }, 'ARGO_TENANT_OWNER = loopback이어도 차단');
+    delete process.env.ARGO_TENANT_OWNER;
+    // loopback(사용자 본인 기기) → 서비스 키 있어도 게이트 통과(hosted 아님). 실제 setup-token spawn(브라우저
+    // hang)을 피하려고 그 wsId를 'running'으로 선점 → 게이트 통과 후 busy 가드에 걸려 spawn 없이 반환.
+    // reason='busy'(≠'hosted')가 곧 "게이트가 서비스 키가 아니라 loopback으로 판정"의 증거.
+    (globalThis.__argoSetupToken ??= {})['credco-local'] = { status: 'running', ts: Date.now() };
+    const r = await startClaudeSetupToken('credco-local', { local: true });
+    assert.deepEqual(r, { ok: false, reason: 'busy' }, 'loopback = 서비스 키 있어도 hosted 아님(게이트 통과 후 busy)');
+    delete globalThis.__argoSetupToken['credco-local'];
   } finally {
-    if (prev === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY; else process.env.SUPABASE_SERVICE_ROLE_KEY = prev;
+    if (prevKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY; else process.env.SUPABASE_SERVICE_ROLE_KEY = prevKey;
+    if (prevOwner === undefined) delete process.env.ARGO_TENANT_OWNER; else process.env.ARGO_TENANT_OWNER = prevOwner;
   }
 });
