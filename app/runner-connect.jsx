@@ -220,17 +220,18 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
     }
   }
 
-  async function save(verify) {
+  async function save() {
     if (busy || !value.trim() || method === 'host') return; // host 상태 방어 — 라우트가 value를 무시해 입력이 조용히 버려진다(검수 MEDIUM)
-    setBusy(verify ? 'verify' : 'save'); setMsg(''); setOk(false);
+    setBusy('verify'); setMsg(''); setOk(false);
     try {
+      // verify는 서버가 항상 강제한다(무검증 '저장만' 함정 제거 — 2026-07-20). 플래그는 하위호환 전송.
       const res = await fetch(`${keysBase(ws)}`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ runner: id, type: method, value: value.trim(), verify }),
+        body: JSON.stringify({ runner: id, type: method, value: value.trim(), verify: true }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error);
-      setValue(''); setOk(true); setMsg(verify ? t('settings.runners.verified') : t('settings.runners.saved'));
+      setValue(''); setOk(true); setMsg(t('settings.runners.verified'));
       window.dispatchEvent(new Event('argo:refresh'));
       onChange();
     } catch (e) {
@@ -470,11 +471,10 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
             )}
           </p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button className="btn btn-primary sm" disabled={!!busy || !value.trim()} onClick={() => save(true)}>
+            {/* 단일 버튼 — '저장만'(무검증 저장)은 무효 자격을 '연결됨'으로 저장해 전 턴이 API 오류로만
+                드러나는 함정이었다(실사용 2026-07-20). 서버도 실검증을 강제하므로 우회 경로 자체가 없다. */}
+            <button className="btn btn-primary sm" disabled={!!busy || !value.trim()} onClick={save}>
               {busy === 'verify' ? <Spinner size={12} /> : t('settings.runners.saveVerify')}
-            </button>
-            <button className="btn sm" disabled={!!busy || !value.trim()} onClick={() => save(false)}>
-              {busy === 'save' ? <Spinner size={12} /> : t('settings.runners.saveOnly')}
             </button>
             {company.connected && (
               <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={remove}>
