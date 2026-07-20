@@ -1,7 +1,10 @@
 // 데스크톱 셸 부팅 스크립트 — 실시간 단계 표시 + 진행률 + 실패 노출.
-// 상주 서버 후보: 이 기기(3001) 우선, 설치기 기본(3999) 폴백. 준비되면 그리로 이동.
-// Rust(lib.rs)가 emit하는 'boot'(phase/detail)와 'boot-log'(서버 로그 라인)를 수신한다.
-var TARGETS = ['http://localhost:3001', 'http://localhost:3999'];
+// 상주 서버 후보: 이 기기(3001) 우선, 폴백 3011/3021(포트 선점 대비), 설치기 기본(3999).
+// Rust(lib.rs)가 emit하는 'boot'(phase/detail/port)와 'boot-log'(서버 로그 라인)를 수신한다.
+// 이동 전 /api/ping 신원 마커로 "진짜 Argo인가"를 확인한다 — 타 앱이 포트를 선점한 기기에서
+// no-cors fetch가 아무 응답이나 성공 처리해 낯선 서버로 이동하던 실사용 사고(2026-07-20,
+// Windows 설치 직후 "Cannot GET /") 방지. lib.rs의 PORTS 후보와 일치해야 한다.
+var TARGETS = ['http://localhost:3001', 'http://localhost:3011', 'http://localhost:3021', 'http://localhost:3999'];
 var DEMO = /[?&]demo\b/.test(location.search); // 시각 QA용 — 리다이렉트 없이 단계 순환
 
 var statusEl = document.getElementById('status');
@@ -52,6 +55,13 @@ try {
   if (window.__TAURI__ && window.__TAURI__.event) {
     window.__TAURI__.event.listen('boot', function (e) {
       var p = e.payload || {};
+      // 셸이 확정한 서버 포트 — 후보 목록 맨 앞에 넣어 다음 프로브가 우선 확인(폴백 포트 스폰 대응)
+      if (p.port) {
+        var u = 'http://localhost:' + p.port;
+        var at = TARGETS.indexOf(u);
+        if (at > 0) TARGETS.splice(at, 1);
+        if (at !== 0) TARGETS.unshift(u);
+      }
       if (p.phase === 'error') {
         phase = 'error'; // 종결 상태 — 진행바 크리프·slow 안내 정지(위 인터벌 가드). probe/goto는 회복 대비 계속.
         errEl.hidden = false;
@@ -78,11 +88,23 @@ function probe(i) {
   if (phase === 'ready') return;
   if (i >= TARGETS.length) {
     if (phase === 'shell') setPhase('waiting');
+    // 60초 넘게 신원 확인이 한 번도 성공하지 못하면 침묵 대기 대신 행동 안내를 띄운다
+    // (재시도는 계속 — 회복 대비). 검수 LOW: 프로브 측 실패의 무한 'Still working' 방지.
+    if (Date.now() - startedAt > 60000 && phase !== 'error' && errEl.hidden) {
+      errEl.hidden = false;
+      errEl.textContent = 'The server has not responded for a minute. Quit and reopen Argo — if it persists, another app may be using ports 3001/3011/3021.';
+    }
     setTimeout(function () { probe(0); }, 1200);
     return;
   }
-  fetch(TARGETS[i] + '/login', { mode: 'no-cors' })
-    .then(function () { goto(TARGETS[i]); })
+  var target = TARGETS[i];
+  // 신원 확인 후에만 이동 — 기존 no-cors '/login' 프로브는 어떤 서버가 응답해도 성공 처리돼
+  // 포트를 선점한 타 앱으로 이동했다(실사용 "Cannot GET /"). /api/ping은 CORS 개방이라 본문 판독 가능.
+  fetch(target + '/api/ping', { cache: 'no-store' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (d && d.argo === true) { goto(target); } else { probe(i + 1); }
+    })
     .catch(function () { probe(i + 1); });
 }
 if (!DEMO) probe(0);
