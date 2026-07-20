@@ -126,7 +126,8 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   const setupPollRef = useRef(null);
   useEffect(() => () => { if (setupPollRef.current) { clearInterval(setupPollRef.current); setupPollRef.current = null; } }, []);
   async function setupConnect() {
-    if (setupBusy) return;
+    // 진행 중 재클릭 허용 — 서버가 이전 시도를 죽이고 새로 연다(브라우저를 승인 없이 닫은 사용자가
+    // 10분 타임아웃을 기다리지 않고 즉시 재시도, 실사용 신고 2026-07-20). busy 가드 제거가 의도.
     setSetupBusy(true); setSetupOk(false); setSetupMsg(t('settings.runners.setupWaiting'));
     try {
       const r = await fetch(`${keysBase(ws)}/connect`, {
@@ -448,8 +449,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
           {id === 'claude' && method === 'oauth' && st?.setupOneClick && (
             <div style={{ display: 'grid', gap: 6, padding: '10px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <button className="btn btn-primary sm" disabled={setupBusy} onClick={setupConnect}>
-                  {setupBusy ? <Spinner size={12} /> : t('settings.runners.setupConnect')}
+                {/* 진행 중에도 활성 — 누르면 이전 시도를 접고 브라우저를 다시 연다(취소 후 재시도 상식) */}
+                <button className="btn btn-primary sm" onClick={setupConnect}>
+                  {setupBusy ? <><Spinner size={12} /> {t('settings.runners.setupRetry')}</> : t('settings.runners.setupConnect')}
                 </button>
                 <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.setupHint')}</span>
               </div>

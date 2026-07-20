@@ -248,6 +248,7 @@ const DICT = {
   'settings.runners.setupHint': ['클릭하면 브라우저가 열립니다 — 로그인을 승인하면 토큰이 자동 저장됩니다 (Claude 구독 필요)', 'Opens your browser — approve the sign-in and the token is saved automatically (Claude subscription required)'],
   'settings.runners.setupWaiting': ['브라우저에서 로그인을 승인해 주세요 — 완료되면 자동으로 저장됩니다…', 'Approve the sign-in in your browser — it saves automatically when done…'],
   'settings.runners.setupHosted': ['이 서버 환경에서는 브라우저 대행 연결을 쓸 수 없습니다 — 아래에 OAuth 토큰을 붙여넣거나 API 키로 연결해 주세요. (데스크톱 앱에서는 원클릭이 됩니다)', 'Browser-assisted connect is unavailable in this server environment — paste an OAuth token below or use an API key. (One-click works in the desktop app)'],
+  'settings.runners.setupRetry': ['브라우저 다시 열기', 'Reopen browser'],
   'settings.runners.setupManual': ['이 환경에선 아래 붙여넣기로 연결해 주세요 — 터미널에서 claude setup-token 실행 후 출력되는 토큰을 붙여넣으면 됩니다.', 'Connect with the paste field below — run claude setup-token in your terminal and paste the printed token.'],
   'settings.runners.setupNoCli': ['이 컴퓨터에서 Claude Code 실행 파일을 찾지 못했습니다 — 아래 안내대로 토큰을 직접 붙여넣어 주세요.', 'Couldn’t find the Claude Code executable on this computer — paste a token below as guided instead.'],
   'settings.runners.setupNoWin': ['Windows에서는 아직 버튼 연결을 지원하지 않습니다 — 아래 안내대로 토큰을 붙여넣어 주세요.', 'Button connect isn’t supported on Windows yet — paste a token below as guided.'],

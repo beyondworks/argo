@@ -820,6 +820,8 @@ export function startRunnerWebAuth(runner, wsId = null) {
   const state = randomBytes(16).toString('base64url');
   webAuthState[runner] = { verifier, state, ts: Date.now() };
   if (wsId) startWebAuthListener(runner, wsId, cfg); // 자동 수신 — 실패해도 붙여넣기 폴백 유지
+  // 사용자가 브라우저에서 승인하는 동안 실행기를 미리 조달 — 저장 관문 프로브(probeGeminiOAuth)가 안 기다리게
+  if (runner === 'gemini') provisionGeminiCli().catch(() => {});
   const u = new URL(cfg.authorize);
   for (const [k, v] of Object.entries(cfg.extra ?? {})) u.searchParams.set(k, v);
   u.searchParams.set('client_id', cfg.clientId);
@@ -851,6 +853,42 @@ function jwtPayload(tok) {
     const p = String(tok).split('.')[1];
     return JSON.parse(Buffer.from(p, 'base64url').toString());
   } catch { return {}; }
+}
+
+/** gemini OAuth 자격을 실제 실행기(geminiCmd 해석 결과)로 초소형 1콜 검증 — "연결됨인데 첫 사용 실패" 차단.
+    구글이 개인 무료 OAuth를 신형 CLI에서 거절(IneligibleTier)하므로 저장 전에 관문에서 잡는다
+    (실사용 신고 2026-07-20: 로그인 인증은 '연결됨' → 크루 영입에서야 오류. 안내문만으론 관문 위반).
+    반환 { ok: true | false(부적격 확정) | null(판정 불가 — 오프라인 등, 기존 verifyRunnerCred 관용과 동일) }. */
+export async function probeGeminiOAuth(credsJson) {
+  let home = null;
+  try {
+    home = await mkdtemp(join(tmpdir(), 'argo-gemini-probe-'));
+    await mkdir(join(home, '.gemini'), { recursive: true });
+    await writeFile(join(home, '.gemini', 'oauth_creds.json'), credsJson, { mode: 0o600 });
+    await writeGeminiTurnSettings(home, 'oauth-personal', null);
+    const cmd = await geminiCmd(); // 실제 턴과 같은 해석(PATH>관리본>조달) — 프로브=런타임 동일 경로
+    const r = await exec(cmd.file, [...cmd.args, '-p', 'reply with exactly: ok', '--approval-mode', 'auto_edit'], {
+      timeout: 90_000, maxBuffer: 8e6,
+      // 호스트에 API 키 env가 있으면 oauth 대신 그 키로 성공해 오탐 통과 — 이 프로브는 oauth만 본다
+      env: { ...scrubServerSecrets(process.env, 'gemini'), HOME: home, GEMINI_API_KEY: '', GOOGLE_API_KEY: '' },
+    }).then(
+      (x) => ({ out: `${x.stdout}\n${x.stderr}`, failed: false }),
+      (e) => ({ out: `${e.stdout ?? ''}\n${e.stderr ?? ''}\n${e.message ?? ''}`, failed: true }),
+    );
+    if (/IneligibleTierError|no longer supported for Gemini Code Assist/i.test(r.out)) return { ok: false, reason: 'ineligible' };
+    return r.failed ? { ok: null } : { ok: true };
+  } catch {
+    return { ok: null }; // 프로브 자체 실패(조달 불가 등) — 확정 불가는 관용(첫 턴이 정직한 안내로 받는다)
+  } finally {
+    if (home) await rm(home, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** 호스트 ~/.gemini 로그인의 사용 가능성 프로브 — "이 컴퓨터 로그인 사용" 옵트인 관문용. */
+export async function probeGeminiHostOAuth() {
+  const creds = await readFile(join(homedir(), '.gemini', 'oauth_creds.json'), 'utf8').catch(() => null);
+  if (!creds) return { ok: null }; // 자격 부재 판정은 기존 detect가 담당
+  return probeGeminiOAuth(creds);
 }
 
 export async function submitRunnerWebAuth(wsId, runner, pasted) {
@@ -899,15 +937,25 @@ export async function submitRunnerWebAuth(wsId, runner, pasted) {
     }));
   } else if (runner === 'gemini') {
     if (!d.access_token || !d.refresh_token) return { ok: false, reason: 'no-token' };
-    // gemini CLI의 oauth_creds.json 형식 그대로 저장
-    await saveRunnerCred(wsId, 'gemini', 'oauth', JSON.stringify({
+    // gemini CLI의 oauth_creds.json 형식
+    const credsJson = JSON.stringify({
       access_token: d.access_token,
       refresh_token: d.refresh_token,
       scope: d.scope ?? cfg.scopes,
       token_type: d.token_type ?? 'Bearer',
       ...(d.id_token ? { id_token: d.id_token } : {}),
       expiry_date: Date.now() + (d.expires_in ?? 3600) * 1000,
-    }));
+    });
+    // 저장 전 실사용 프로브 — 부적격(구글 개인 OAuth 차단) 확정이면 '연결됨'을 만들지 않는다.
+    // 안내문만 붙이고 저장을 통과시키면 사용자는 첫 크루 영입에서야 실패를 만난다(실사용 신고 2026-07-20).
+    const probe = await probeGeminiOAuth(credsJson);
+    if (probe.ok === false) {
+      return {
+        ok: false, reason: 'ineligible',
+        detail: '로그인은 성공했지만 저장하지 않았습니다 — 구글이 이 계정의 Gemini 개인 OAuth(무료 Code Assist)를 최신 CLI에서 지원하지 않습니다. API 키 방식으로 연결해 주세요(Google AI Studio에서 무료 발급). Login succeeded but was not saved — Google no longer supports personal OAuth on the current Gemini CLI. Connect with an API key instead.',
+      };
+    }
+    await saveRunnerCred(wsId, 'gemini', 'oauth', credsJson);
   }
   // 세션 종료 — verifier 재사용 금지. 완료 마커를 남겨 폴링(GET connect)이 "이번 브리지 세션이
   // 실제로 저장을 마쳤나"를 본다. 자격 존재만 보면 기존 자격 보유 러너의 재연결·방식 전환이
@@ -1145,7 +1193,11 @@ export async function startClaudeSetupToken(wsId) {
   // 넣어도(standalone 서버라 "필요해 보이는" 흔한 실수) 다중테넌트에선 원클릭이 재개방되지 않도록(검수 LOW).
   if (process.env.ARGO_TENANT_OWNER || process.env.ARGO_STANDALONE !== '1') return { ok: false, reason: 'manual' };
   if (process.platform === 'win32') return { ok: false, reason: 'unsupported-platform' }; // script(1) 부재 — 후속(node-pty 검토)
-  if (setupState[wsId]?.status === 'running') return { ok: false, reason: 'busy' };
+  // 재클릭 = 재시작 — 승인 없이 브라우저를 닫으면 이전 시도가 10분 타임아웃까지 'running'으로 잠겨
+  // 모든 재클릭이 busy로 거절되고 브라우저가 다시는 안 열리던 함정 제거(실사용 신고 2026-07-20:
+  // "인증을 취소했으면 처음부터 다시 시도할 수 있어야 한다"). 이전 시도는 죽이고 새로 연다.
+  const prev = setupState[wsId];
+  if (prev?.status === 'running') { try { prev.cancel?.(); } catch { /* 이미 종료 */ } }
   const cli = await resolveClaudeCli();
   if (!cli) return { ok: false, reason: 'no-cli' };
   // macOS script는 인자 배열(셸 미개입), linux(util-linux)는 -c 문자열이라 sh를 타므로
@@ -1159,18 +1211,23 @@ export async function startClaudeSetupToken(wsId) {
   } catch (e) {
     return { ok: false, reason: 'spawn-failed', message: String(e.message || e) };
   }
-  setupState[wsId] = { status: 'running', ts: Date.now() };
   let buf = '';
   let done = false;
+  let timer;
+  const gen = (prev?.gen ?? 0) + 1; // 세대 — 구시도의 늦은 finish/저장이 새 시도 상태를 덮지 않게
+  const cancel = () => { done = true; clearTimeout(timer); try { child.kill(); } catch { /* 이미 종료 */ } };
+  // 슬롯의 세대가 내 것일 때만 기록 — 새 시도가 인수했거나 슬롯이 폐기(삭제)됐으면 늦은 결과는 버린다
+  const commit = (next) => { if (setupState[wsId]?.gen !== gen) return; setupState[wsId] = { ...next, gen, cancel }; };
   const finish = (status, error = '') => {
     if (done) return;
     done = true;
     clearTimeout(timer);
-    setupState[wsId] = { status, error, ts: Date.now() };
+    commit({ status, error, ts: Date.now() });
     try { child.kill(); } catch { /* 이미 종료 */ }
   };
-  const timer = setTimeout(() => finish('failed', '승인 대기 시간(10분)이 지났습니다 — 다시 시도하거나 토큰을 직접 붙여넣어 주세요'), SETUP_TOKEN_TIMEOUT_MS);
+  timer = setTimeout(() => finish('failed', '승인 대기 시간(10분)이 지났습니다 — 다시 시도하거나 토큰을 직접 붙여넣어 주세요'), SETUP_TOKEN_TIMEOUT_MS);
   timer.unref?.();
+  setupState[wsId] = { status: 'running', ts: Date.now(), gen, cancel };
   const onData = (d) => {
     if (done) return;
     buf = (buf + d.toString()).slice(-20_000); // 꼬리만 유지 — 토큰은 마지막에 출력된다
@@ -1201,12 +1258,12 @@ export async function startClaudeSetupToken(wsId) {
       // 없으므로(줄바꿈 케이스에선 마지막=절단본!) 저장하지 않고 재시도를 유도한다(검수 LOW 반영).
       if (!chosen && sawOffline && !sawInvalid && candidates.length === 1) chosen = candidates[0];
       if (!chosen) {
-        setupState[wsId] = { status: 'failed', error: sawInvalid ? '토큰 검증에 실패했습니다(잘려 읽혔거나 무효) — 다시 시도해 주세요' : '토큰을 읽지 못했습니다 — 다시 시도해 주세요', ts: Date.now() };
+        commit({ status: 'failed', error: sawInvalid ? '토큰 검증에 실패했습니다(잘려 읽혔거나 무효) — 다시 시도해 주세요' : '토큰을 읽지 못했습니다 — 다시 시도해 주세요', ts: Date.now() });
         return;
       }
       await saveRunnerCred(wsId, 'claude', 'oauth', chosen)
-        .then(() => { setupState[wsId] = { status: 'saved', ts: Date.now() }; })
-        .catch((e) => { setupState[wsId] = { status: 'failed', error: String(e.message || e).slice(0, 160), ts: Date.now() }; });
+        .then(() => { commit({ status: 'saved', ts: Date.now() }); })
+        .catch((e) => { commit({ status: 'failed', error: String(e.message || e).slice(0, 160), ts: Date.now() }); });
     })();
   };
   child.stdout.on('data', onData);
