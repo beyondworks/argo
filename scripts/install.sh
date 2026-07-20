@@ -19,7 +19,8 @@ die() { printf '\033[31m[argo] %s\033[0m\n' "$*" >&2; exit 1; }
 
 # 0) 플랫폼·의존성
 [ "$(uname -s)" = "Linux" ] || die "1차 지원은 리눅스입니다. 맥은 데스크톱 앱(dmg)을, 윈도는 후속 지원을 이용해 주세요."
-ARCH=$(uname -m); case "$ARCH" in x86_64) PLAT="linux-x64" ;; aarch64) PLAT="linux-arm64" ;; *) die "미지원 아키텍처: $ARCH" ;; esac
+# arm64는 CI가 아직 안 만든다(2차 예정) — 광고하면 조용한 404가 되므로 정직하게 거절(검수 MEDIUM)
+ARCH=$(uname -m); case "$ARCH" in x86_64) PLAT="linux-x64" ;; aarch64) die "arm64는 후속 지원 예정입니다 — 현재 x86_64만 지원합니다" ;; *) die "미지원 아키텍처: $ARCH" ;; esac
 command -v curl >/dev/null || die "curl이 필요합니다"
 command -v tar >/dev/null || die "tar가 필요합니다"
 command -v systemctl >/dev/null || die "systemd가 필요합니다(systemctl 부재)"
@@ -33,12 +34,14 @@ NODE_MAJOR=$(node -e 'process.stdout.write(String(process.versions.node.split(".
 say "최신 릴리스 확인 중…"
 TARBALL_URL=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
   | grep -o "\"browser_download_url\": *\"[^\"]*argo-server-[^\"]*-$PLAT\.tar\.gz\"" \
-  | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')
+  | head -1 | sed 's/.*"\(https[^"]*\)"/\1/' || true)
+# ⚠ || true — grep 무매칭이 pipefail로 대입 자체를 죽이면 아래 안내가 영영 안 나온다(검수 MEDIUM 실증)
 [ -n "$TARBALL_URL" ] || die "최신 릴리스에 $PLAT 서버 타르볼이 없습니다 — 릴리스 자산을 확인해 주세요"
 say "다운로드: $TARBALL_URL"
 
 # 2) 설치(원자적 교체 — 실패해도 기존 설치 보존)
 mkdir -p "$BASE_DIR" "$DATA_DIR"
+chmod 700 "$BASE_DIR" # 공유 호스트에서 디렉터리 목록 노출 방지
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 curl -fsSL "$TARBALL_URL" -o "$TMP/server.tar.gz"
@@ -71,14 +74,15 @@ WantedBy=default.target
 EOF
 systemctl --user daemon-reload
 systemctl --user enable --now argo.service
-loginctl enable-linger "$USER" 2>/dev/null || say "linger 설정 실패(sudo 필요할 수 있음) — 로그아웃 시 서비스가 멈출 수 있습니다: sudo loginctl enable-linger $USER"
+ME=$(id -un) # $USER는 curl|bash 비로그인 컨텍스트에서 미정의일 수 있다(set -u 중단 방지 — 검수 LOW)
+loginctl enable-linger "$ME" 2>/dev/null || say "linger 설정 실패(sudo 필요할 수 있음) — 로그아웃 시 서비스가 멈출 수 있습니다: sudo loginctl enable-linger $ME"
 
 # 4) 검증(배포 규칙: 기동 후 엔드포인트 응답 확인) — /api/ping 신원 마커
 say "기동 검증 중…"
 for i in $(seq 1 20); do
   if curl -fsS "http://127.0.0.1:$PORT/api/ping" 2>/dev/null | grep -q '"argo":true'; then
     say "설치 완료 — http://127.0.0.1:$PORT (버전: $(curl -fsS http://127.0.0.1:$PORT/api/ping | sed 's/.*version":"\([^"]*\)".*/\1/'))"
-    say "원격에서 쓰려면(보안 기본): ssh -L $PORT:127.0.0.1:$PORT $USER@이서버"
+    say "원격에서 쓰려면(보안 기본): ssh -L $PORT:127.0.0.1:$PORT $ME@이서버"
     say "업데이트: 이 스크립트를 다시 실행하면 됩니다. 로그: journalctl --user -u argo -f"
     exit 0
   fi

@@ -61,7 +61,7 @@ const leaks = [];
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
     if (e.isDirectory()) { if (e.name !== 'node_modules') scan(p); continue; }
-    if (/^(connections\.json|\.secrets\.json)$/.test(e.name) || e.name.endsWith('.env') || e.name.endsWith('.env.local')) leaks.push(p);
+    if (/(^|\.)((account-)?secrets(-[\w-]+)?|sync-credentials|connections|mcp)\.json$/.test(e.name) || /\.env(\..+)?$/.test(e.name)) leaks.push(p);
   }
 })(serverDest);
 if (leaks.length) { console.error('[stage] 시크릿 파일 잔존 — 배포 차단:\n' + leaks.join('\n')); process.exit(1); }
