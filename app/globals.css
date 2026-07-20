@@ -1194,11 +1194,10 @@ input, textarea { font: inherit; color: var(--fg); }
 
 /* ─── 앱셸 ─── */
 /* 스크롤 격리 — 안쪽 영역이 끝에 닿아도 바깥(문서)이 딸려 올라가지 않는다(체이닝 차단).
-   앱 안 스크롤 영역이 16곳(좌측 패널·스레드·드로어·모달·팝오버…)이라 개별 선언으로 막으면
-   새 영역이 생길 때마다 재발한다. 스크롤 컨테이너가 아닌 요소에는 무효한 속성이라 일괄 적용이 안전.
-   html/body는 제외 — 페이지 자체의 고무줄 스크롤 같은 네이티브 감각은 남긴다.
-   :where()라 특이도 0 → 개별로 체이닝이 필요해지면 그냥 덮어쓰면 된다. */
-:where(body *) { overscroll-behavior: contain; }
+   ⚠ 전 요소 일괄(:where(body *)) 금지 — overflow:hidden 요소(카드·말줄임 래퍼)도 스크롤 컨테이너로
+   취급돼 그 위에서 휠이 문서로 전파되지 못하고 죽는다(실사고 2026-07-20: 콘텐츠 위 휠 무반응).
+   반드시 실제 스크롤 영역에만 선언한다 — 새 스크롤 영역을 만들면 여기(또는 인라인)에 함께 추가. */
+.side, .thread, .tasks-list, .crew-drawer-body, .input-bar textarea { overscroll-behavior: contain; }
 
 .shell { display: grid; grid-template-columns: 228px 1fr; min-height: 100vh; }
 
