@@ -48,11 +48,19 @@ test('pickRunner: exclude — 인증 실패한 러너를 제외하고 다음 연
   assert.equal(retry.fellBack, true, '지정 러너 대체는 크루가 사장에게 고지');
 });
 
-test('pickRunner: 무효(invalid) 자격 제외 + 자격은 있는데 CLI 없음은 credButNoCli로', () => {
+test('pickRunner: 무효(invalid) 자격 제외 + CLI 미설치는 차단 사유가 아니다(자동 조달)', () => {
   assert.equal(pickRunner(st({ codex: { hostInstalled: true, company: { connected: true, invalid: true } } }), 'claude').available, false);
-  const r = pickRunner(st({ codex: { hostInstalled: false, company: { connected: true } } }), 'claude');
-  assert.equal(r.available, false);
-  assert.deepEqual(r.credButNoCli, ['codex'], '"연결했는데 왜 안 되냐"에 답할 재료');
+  // 실사용 신고(2026-07-20) 재현: codex/gemini OAuth만 연결, 이 컴퓨터에 벤더 CLI 없음.
+  // 예전엔 available:false + credButNoCli 안내 → 이제 턴 시점 자동 조달(provision*Cli)이 있어 가용이다.
+  // "설정은 연결됨, 영입은 러너 없음" 모순의 본체 수정 — 게이트가 아니라 실행기가 따라온다.
+  for (const id of ['codex', 'gemini']) {
+    const r = pickRunner(st({ [id]: { hostInstalled: false, company: { connected: true, type: 'oauth' } } }), 'claude');
+    assert.equal(r.available, true, `${id}: 자격 연결이면 CLI 미설치여도 가용`);
+    assert.equal(r.runner, id);
+  }
+  const none = pickRunner(st(), 'claude');
+  assert.equal(none.available, false);
+  assert.deepEqual(none.credButNoCli, [], '조달 도입 후 항상 빈 배열(호환 유지 필드)');
 });
 
 test('AUTH_ERR_RE: 인증성 실패만 매칭 — 자가 치유 오발동 방지', () => {
