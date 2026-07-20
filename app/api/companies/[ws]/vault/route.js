@@ -1,6 +1,6 @@
 import { relative, join, resolve, basename, sep } from 'node:path';
 import { writeFile, rename, mkdir } from 'node:fs/promises';
-import { listDocs, readDoc } from '../../../../../src/hub.mjs';
+import { listDocs, listProjectDocs, readDoc } from '../../../../../src/hub.mjs';
 import { saveNote, updateIndex } from '../../../../../src/memory.mjs';
 import { paths } from '../../../../../src/workspace.mjs';
 import { appendEvent } from '../../../../../src/events.mjs';
@@ -29,10 +29,11 @@ export async function GET(req, { params }) {
         throw e;
       }
     }
-    const docs = await listDocs(ws);
+    // projects = 크루 산출물(별도 축) — 기억(docs)과 분리 반환. 기억 수·별자리 그래프에 산출물이 섞이지 않는다.
+    const [docs, projects] = await Promise.all([listDocs(ws), listProjectDocs(ws)]);
     let index = '';
     try { index = await readDoc(ws, '_index.md'); } catch {}
-    return Response.json({ docs, index });
+    return Response.json({ docs, projects, index });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });
   }

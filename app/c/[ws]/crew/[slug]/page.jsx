@@ -387,7 +387,7 @@ export default function CrewChat({ params }) {
     try {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
-      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover }]);
+      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts }]);
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
       // 실패 턴은 서버에 저장되지 않는다 — 글은 스레드에 남겨 두고 실패 표시만 붙인다(재전송 버튼이 그대로 재시도 경로)
@@ -611,6 +611,23 @@ export default function CrewChat({ params }) {
                       {t('chat.recordedInMemory')}
                       {m.handover.linked?.length > 0 && <span>{t('chat.linkedMemories', { n: m.handover.linked.length })}</span>}
                     </a>
+                  )}
+                  {/* 이 턴에 만든 문서 — 만든 자리에서 바로 연다(md=뷰어, 그 외=다운로드).
+                      "문서 생성했는데 Finder로 폴더까지 찾아가야 하나요" 고객 신고(2026-07-20)의 근본 대응. */}
+                  {m.artifacts?.length > 0 && (
+                    <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                      {m.artifacts.map((rel) => {
+                        const name = rel.split('/').pop();
+                        const md = rel.endsWith('.md');
+                        return (
+                          <a key={rel} className="memo-chip" download={md ? undefined : name}
+                            href={md ? `/c/${ws}/vault?doc=${encodeURIComponent(rel)}` : `/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`}
+                            title={`${t('chat.createdDocs')} — ${rel}`}>
+                            <Icon name="doc" size={12} />{name}
+                          </a>
+                        );
+                      })}
+                    </span>
                   )}
                 </div>
                 <div className="msg-actions">

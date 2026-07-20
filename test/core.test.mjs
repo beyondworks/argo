@@ -453,3 +453,4 @@ test('entitlement — 부재 free·존재 pro·오류 free·강제 게이트', a
     if (prev === undefined) delete process.env.ARGO_ENFORCE_PLAN; else process.env.ARGO_ENFORCE_PLAN = prev;
   }
 });
+

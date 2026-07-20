@@ -99,6 +99,43 @@ export async function listDocs(wsId) {
   return docs.sort((a, b) => b.ts - a.ts); // 최근 활동순 — 오늘 갱신된 일지가 최상단
 }
 
+/** 프로젝트 산출물 목록 — vault/projects/ 전체를 재귀로 훑는다(md + 비md 모두).
+    listDocs(지식 기억: 일지·대화·노트)와 분리 — 산출물은 기억 수·별자리 그래프에 섞지 않는다.
+    고객 신고(2026-07-20): 크루가 만든 문서를 앱에서 못 열고 Finder로 긴 경로를 찾아가야 했다 —
+    projects/가 어떤 목록에도 안 잡혔던 것이 원인(비재귀 + 허용 목록 누락). */
+export async function listProjectDocs(wsId) {
+  const p = paths(wsId);
+  const out = [];
+  async function walk(dir) {
+    let entries = [];
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue; // .DS_Store 등
+      const f = join(dir, e.name);
+      if (e.isDirectory()) { await walk(f); continue; }
+      const st = await stat(f);
+      const rel = relSlash(p.vault, f);
+      const md = e.name.endsWith('.md');
+      let title = e.name;
+      if (md) {
+        try { title = (await readFile(f, 'utf8')).match(/^#\s*(.+)$/m)?.[1] ?? e.name.replace(/\.md$/, ''); }
+        catch { /* 제목은 장식 — 파일명 폴백 */ }
+      }
+      out.push({
+        rel, // vault 기준 — md는 뷰어(?doc=), 비md는 files?rel= 다운로드
+        title,
+        // 프로젝트 폴더명(projects/ 바로 아래) — 목록 그룹 라벨. 루트 직치 파일은 ''.
+        project: rel.split('/').slice(1, -1)[0] ?? '',
+        binary: !md,
+        size: st.size,
+        mtime: st.mtimeMs,
+      });
+    }
+  }
+  await walk(p.projects);
+  return out.sort((a, b) => b.mtime - a.mtime);
+}
+
 /** vault 문서 1건 읽기 — vault 밖 경로 차단. 롤업으로 보관된 일지는 .archive/에서 폴백(링크 불사). */
 export async function readDoc(wsId, rel) {
   const p = paths(wsId);

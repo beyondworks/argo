@@ -54,6 +54,10 @@ export function paths(wsId) {
     conversations: join(root, 'vault', 'conversations'), // 구버전 — 마이그레이션 후 읽기 전용
     journal: join(root, 'vault', 'journal'),
     notes: join(root, 'vault', 'notes'),
+    // 크루 산출물(projects)·첨부(files) — 스캐폴드(provision)만 만들고 paths에 없던 탓에
+    // listDocs 허용 목록에서 빠져 UI 어디서도 안 보였다(고객 신고 2026-07-20: "Finder로 찾아가야 하나").
+    projects: join(root, 'vault', 'projects'),
+    files: join(root, 'vault', 'files'),
     index: join(root, 'vault', '_index.md'),
   };
 }

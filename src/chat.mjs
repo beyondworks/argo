@@ -1,7 +1,7 @@
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
 import { readdir, readFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
@@ -775,6 +775,10 @@ ${lang === 'en'
   const abortReg = registerTurn(wsId, agentSlug, () => q.interrupt());
   let partial = ''; // 완료 전 크루가 이미 말한 텍스트 — 상태 파일로 흘려 스트리밍 체감
   let actualModel = null; // SDK가 실제로 사용한 모델 — 선택한 모델이 진짜 적용됐는지의 증거(요청값이 아닌 실사용값)
+  // 이 턴에 만든/고친 vault 문서 — 답변에 링크 칩으로 붙는다("문서 만들었는데 어디 갔지"의 근본 대응,
+  // 고객 신고 2026-07-20). vault 밖 쓰기(코드 등)는 서빙 불가라 제외. 외부 CLI 러너 턴은 도구 호출을
+  // 관측할 수 없어 미수집(정직한 한계).
+  const artifacts = new Set();
   try {
   for await (const msg of q) {
     if (msg.type === 'system' && msg.subtype === 'init') {
@@ -785,6 +789,13 @@ ${lang === 'en'
       if (msg.message?.model) actualModel = msg.message.model; // SDK가 이 응답을 낸 실제 모델
       const tus = (msg.message?.content ?? []).filter((b) => b.type === 'tool_use');
       for (const b of tus) toolCounts[b.name] = (toolCounts[b.name] ?? 0) + 1;
+      for (const b of tus) {
+        if (!/^(Write|Edit|NotebookEdit)$/.test(b.name)) continue;
+        const fp = String(b.input?.file_path ?? '');
+        if (!fp) continue;
+        const abs = resolve(p.root, fp); // 절대 경로는 resolve가 그대로 통과
+        if (abs.startsWith(resolve(p.vault) + sep)) artifacts.add(relative(p.vault, abs).split(sep).join('/'));
+      }
       const tu = tus[0];
       // 크루가 이미 말한 텍스트를 상태 파일로 흘린다 — UI 폴이 완료 전에도 부분 표시(스트리밍 체감)
       const said = (msg.message?.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
@@ -876,5 +887,6 @@ ${lang === 'en'
     ...evBase, ok: true, ms: Date.now() - t0, steps,
     journalRel: relative(p.vault, handover.file), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
   });
-  return { reply, sessionId: sid, handover };
+  // 일지(handover)는 전용 칩이 이미 있다 — 산출물 칩과 중복 방지
+  return { reply, sessionId: sid, handover, artifacts: [...artifacts].filter((r) => !r.startsWith('journal/')) };
 }

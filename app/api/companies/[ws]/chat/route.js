@@ -34,9 +34,9 @@ export async function POST(req, { params }) {
     const t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
     // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
-    await appendTurn(ws, slug, { userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments });
+    await appendTurn(ws, slug, { userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts });
     nudgeSync(); // 로컬 변경 즉시 다른 기기로 전파(준실시간 — 다음 대기 건너뜀)
-    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover });
+    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });
   }
