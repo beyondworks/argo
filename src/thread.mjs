@@ -15,13 +15,14 @@ export async function loadThread(wsId, slug) {
   return readJson(file(wsId, slug), { sessionId: null, messages: [] });
 }
 
-export async function appendTurn(wsId, slug, { userMsg, reply, handover, sessionId, attachments }) {
+export async function appendTurn(wsId, slug, { userMsg, reply, handover, sessionId, attachments, artifacts }) {
   return withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();
     t.messages.push(
       { who: 'user', text: userMsg, ts, ...(attachments?.length ? { attachments } : {}) },
-      { who: 'crew', text: reply, handover, ts },
+      // artifacts = 이 턴에 크루가 만든/고친 vault 문서(rel) — 답변 칩으로 바로 연다
+      { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}) },
     );
     if (sessionId) {
       // SDK 세션 저장소는 기기 로컬이라 소유 기기를 함께 기록한다 — 다른 기기가 이 sessionId를

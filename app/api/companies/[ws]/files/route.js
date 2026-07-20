@@ -3,7 +3,9 @@ import { join, normalize } from 'node:path';
 import { paths } from '../../../../../src/workspace.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
-// 첨부 파일 서빙 — vault/files/ 만, 경로 탈출 차단. 채팅 버블 썸네일이 이 경로를 쓴다.
+// 파일 서빙 — vault/files/(첨부) + vault/projects/(크루 산출물), 경로 탈출 차단.
+// 채팅 버블 썸네일·기억 화면의 산출물 다운로드가 이 경로를 쓴다.
+// vault 전체를 열지 않는 이유: journal/notes는 뷰어(readDoc) 전용으로 남겨 서빙 표면 최소화.
 const MIME = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif',
   pdf: 'application/pdf', txt: 'text/plain; charset=utf-8', md: 'text/plain; charset=utf-8',
@@ -16,7 +18,7 @@ export async function GET(req, { params }) {
   const rel = new URL(req.url).searchParams.get('rel') ?? '';
   // Windows normalize()는 백슬래시를 반환 — 슬래시로 통일해야 files/ 접두 검사가 통과한다
   const norm = normalize(rel).split('\\').join('/');
-  if (!norm.startsWith('files/') || norm.includes('..')) {
+  if (!(norm.startsWith('files/') || norm.startsWith('projects/')) || norm.includes('..')) {
     return new Response('잘못된 경로', { status: 400 });
   }
   try {

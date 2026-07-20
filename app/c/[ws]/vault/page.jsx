@@ -19,6 +19,7 @@ function Vault({ params }) {
   const { t, lang } = useLang();
   const initialDoc = useSearchParams().get('doc');
   const [docs, setDocs] = useState(null);
+  const [projects, setProjects] = useState([]); // 크루 산출물(vault/projects/) — 기억과 별도 축
   const [selected, setSelected] = useState(initialDoc || null);
   const [content, setContent] = useState('');
   const [loadingDoc, setLoadingDoc] = useState(false);
@@ -32,7 +33,9 @@ function Vault({ params }) {
   const [noteMsg, setNoteMsg] = useState('');
 
   function loadDocs() {
-    return api(`/api/companies/${ws}/vault`).then((d) => setDocs(d.docs)).catch(() => setDocs([]));
+    return api(`/api/companies/${ws}/vault`)
+      .then((d) => { setDocs(d.docs); setProjects(d.projects ?? []); })
+      .catch(() => setDocs([]));
   }
   useEffect(() => {
     loadDocs();
@@ -145,6 +148,8 @@ function Vault({ params }) {
   // 주제 노트가 1급 시민 — 일지·이전 기록은 근거 추적용 보관함(접힘)으로 강등
   const notes = visible.filter((d) => d.dir === 'notes').sort((a, b) => b.mtime - a.mtime);
   const archives = visible.filter((d) => d.dir !== 'notes');
+  // 산출물도 탑바 검색을 태운다 — 제목·프로젝트 폴더명 매칭
+  const visibleProjects = (projects ?? []).filter((d) => !q || d.title.toLowerCase().includes(q) || d.project.toLowerCase().includes(q));
   const selectedDoc = (docs ?? []).find((d) => d.rel === selected);
 
   return (
@@ -202,7 +207,7 @@ function Vault({ params }) {
           <Skeleton h={200} style={{ borderRadius: 16 }} />
           <Skeleton h={320} style={{ borderRadius: 16 }} />
         </>
-      ) : docs.length === 0 ? (
+      ) : docs.length === 0 && (projects?.length ?? 0) === 0 ? (
         <div className="empty">{t('vault.empty')}</div>
       ) : (
         <>
@@ -241,6 +246,31 @@ function Vault({ params }) {
                 </p>
               )}
               {notes.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={setSelected} icon="bolt" lang={lang} />)}
+              {/* 크루 산출물(projects/) — md는 종이 뷰어, 그 외는 즉시 다운로드.
+                  이전엔 어떤 목록에도 안 잡혀 Finder로 긴 경로를 찾아가야 했다(고객 신고 2026-07-20). */}
+              {visibleProjects.length > 0 && (
+                <>
+                  <div className="microlabel" style={{ padding: '10px 18px 4px', borderTop: '1px dashed var(--border-soft)' }}>
+                    {t('vault.projectsGroup', { n: visibleProjects.length })}
+                  </div>
+                  {visibleProjects.map((d) => d.binary ? (
+                    <a key={d.rel} className="row" download
+                      href={`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}`}
+                      style={{ textDecoration: 'none', color: 'inherit' }}>
+                      <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}><Icon name="clip" size={14} /></span>
+                      <span style={{ minWidth: 0, flex: 1 }}>
+                        <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
+                        <span className="mono" style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)', marginTop: 1 }}>
+                          {d.project && `${d.project} · `}{fmtSize(d.size)} · {timeAgo(d.mtime, lang)}
+                        </span>
+                      </span>
+                      <span className="microlabel" style={{ flex: 'none' }}>{t('vault.download')}</span>
+                    </a>
+                  ) : (
+                    <DocRow key={d.rel} d={{ ...d, links: d.links ?? [] }} active={selected === d.rel} onOpen={setSelected} icon="doc" lang={lang} />
+                  ))}
+                </>
+              )}
               {archives.length > 0 && (
                 <>
                   <button className="microlabel" onClick={() => setShowArchive((v) => !v)}
@@ -326,6 +356,9 @@ function Vault({ params }) {
 }
 
 /** 기록 패널 행 — 주제 노트와 보관함이 같은 문법을 쓴다. */
+/** 파일 크기 표시 — 산출물 다운로드 행 전용(대략치면 충분). */
+const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round((b ?? 0) / 1024))}KB`);
+
 function DocRow({ d, active, onOpen, icon, lang }) {
   return (
     <button onClick={() => onOpen(d.rel)} className={`row${active ? ' active' : ''}`}>
