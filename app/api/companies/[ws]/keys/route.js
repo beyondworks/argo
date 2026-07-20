@@ -1,7 +1,7 @@
 // 러너 연결(BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) × (API키·OAuth) 회사별 자격 관리.
 // 일반 사용자가 호스트 CLI 로그인 없이도 어떤 러너든 자기 계정으로 연결하게 하는 관문.
 // 응답에는 평문 대신 마스킹만 실린다(보안 규칙).
-import { runnerStatus, saveRunnerCred, clearRunnerCred, maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH, hostOptInAllowed, normalizePastedCred } from '../../../../../src/runners.mjs';
+import { runnerStatus, saveRunnerCred, clearRunnerCred, maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH, hostOptInAllowed, normalizePastedCred, probeGeminiHostOAuth } from '../../../../../src/runners.mjs';
 import { loadCompany } from '../../../../../src/workspace.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
@@ -28,6 +28,11 @@ export async function PUT(req, { params }) {
       const host = (await detectRunners(true))[runner]; // 캐시 우회 — 방금 로그인한 CLI를 예열 캐시가 60초 오거절하지 않게(감사 2026-07-20)
       if (!host?.installed) throw new Error('이 컴퓨터에서 해당 CLI가 감지되지 않습니다 — 먼저 설치해 주세요');
       if (!host?.authed) throw new Error('이 컴퓨터의 CLI가 로그인돼 있지 않습니다 — 터미널에서 로그인 후 다시 시도해 주세요');
+      // gemini는 로그인이 살아 있어도 구글이 개인 OAuth를 신형 CLI에서 거절할 수 있다 — 실사용 프로브로
+      // 확정 부적격이면 '연결됨'을 만들지 않는다(웹 브리지 관문과 대칭, 실사용 신고 2026-07-20)
+      if (runner === 'gemini' && (await probeGeminiHostOAuth()).ok === false) {
+        throw new Error('이 컴퓨터의 Gemini 로그인(개인 OAuth)은 구글이 최신 CLI에서 지원을 중단해 사용할 수 없습니다 — API 키로 연결해 주세요(Google AI Studio에서 무료 발급)');
+      }
       await saveRunnerCred(ws, runner, 'host', 'host');
       return Response.json({ ok: true, runner, connected: true, type: 'host', masked: '' });
     }
