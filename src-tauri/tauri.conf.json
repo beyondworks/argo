@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' http://localhost:3001 http://localhost:3999; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' http://localhost:3001 http://localhost:3999 https://*.supabase.co wss://*.supabase.co; frame-ancestors 'none'; object-src 'none'"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' http://localhost:3001 http://localhost:3011 http://localhost:3021 http://localhost:3999; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' http://localhost:3001 http://localhost:3011 http://localhost:3021 http://localhost:3999 https://*.supabase.co wss://*.supabase.co; frame-ancestors 'none'; object-src 'none'"
     }
   },
   "plugins": {
