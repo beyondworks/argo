@@ -258,6 +258,9 @@ export async function provisionGeminiCli() {
   if (await exists(geminiManagedEntry())) return geminiManagedEntry();
   if (geminiProvisioning) return geminiProvisioning;
   geminiProvisioning = (async () => {
+    // 파괴적 rm 전 재확인 — exists(258행)가 이전 조달의 rename 직전에 false를 읽고 finally의
+    // null 대입 뒤에 도착하면 정상 설치본을 지우고 재다운로드하는 TOCTOU가 있다(릴리스 검수 M-1)
+    if (await exists(geminiManagedEntry())) return geminiManagedEntry();
     const meta = await fetch('https://registry.npmjs.org/@google/gemini-cli/latest', { signal: AbortSignal.timeout(15_000) }).then((r) => {
       if (!r.ok) throw new Error(`레지스트리 응답 ${r.status}`);
       return r.json();
@@ -265,11 +268,18 @@ export async function provisionGeminiCli() {
     const tmp = await mkdtemp(join(tmpdir(), 'argo-gemini-cli-'));
     try {
       const tar = join(tmp, 'pkg.tgz');
-      const buf = await fetch(meta.dist.tarball, { signal: AbortSignal.timeout(180_000) }).then((r) => {
+      const buf = Buffer.from(await fetch(meta.dist.tarball, { signal: AbortSignal.timeout(180_000) }).then((r) => {
         if (!r.ok) throw new Error(`타르볼 다운로드 실패 ${r.status}`);
         return r.arrayBuffer();
-      });
-      await writeFile(tar, Buffer.from(buf));
+      }));
+      // 무결성 대조 — 레지스트리가 주는 sha512(integrity)와 다운로드 바이트를 대조(공급망, 릴리스 검수 M-4).
+      // npm install이 하는 검증과 동일 수준. integrity 필드가 없으면(구식 레지스트리) 검증 없이 진행.
+      const integ = String(meta.dist?.integrity ?? '');
+      if (integ.startsWith('sha512-')) {
+        const got = createHash('sha512').update(buf).digest('base64');
+        if (got !== integ.slice(7)) throw new Error('타르볼 무결성 불일치 — 다운로드가 손상됐거나 변조됐습니다');
+      }
+      await writeFile(tar, buf);
       await exec('tar', ['-xzf', tar, '-C', tmp]); // macOS/리눅스 기본, Windows 10+ 내장 tar
       // 부팅 검증 후 원자적 채택 — 반쯤 풀린 트리가 '설치됨'으로 잡히지 않게
       const entry = join(tmp, 'package', 'bundle', 'gemini.js');
@@ -327,6 +337,8 @@ export async function provisionCodexCli() {
   if (await exists(codexManagedBin())) return codexManagedBin();
   if (codexProvisioning) return codexProvisioning;
   codexProvisioning = (async () => {
+    // 파괴적 rm 전 재확인 — gemini와 동일한 TOCTOU 방어(릴리스 검수 M-1). codex는 ~100MB라 낭비가 더 크다
+    if (await exists(codexManagedBin())) return codexManagedBin();
     const asset = codexAssetName();
     if (!asset) throw new Error(`미지원 플랫폼: ${process.platform}/${process.arch}`);
     const tmp = await mkdtemp(join(tmpdir(), 'argo-codex-cli-'));

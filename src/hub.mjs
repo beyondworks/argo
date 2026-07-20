@@ -111,9 +111,15 @@ export async function listProjectDocs(wsId) {
     try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
       if (e.name.startsWith('.')) continue; // .DS_Store 등
+      // 심링크는 목록·서빙 모두 제외 — vault 밖을 가리키는 링크가 다운로드로 유출되는 통로가 된다
+      // (릴리스 검수 M-3: 데스크톱은 본인 파일이라 경미하지만 호스팅 합류 시 테넌트 경계 구멍).
+      if (e.isSymbolicLink()) continue;
       const f = join(dir, e.name);
       if (e.isDirectory()) { await walk(f); continue; }
-      const st = await stat(f);
+      // stat 무방어면 워크 중 삭제·동기화 이동 한 건에 목록 전체가 죽고, 화면에선 기억까지 사라져
+      // 보인다(릴리스 검수 M-2 — 산출물 한 건 때문에 기억 뷰 붕괴 금지)
+      let st;
+      try { st = await stat(f); } catch { continue; }
       const rel = relSlash(p.vault, f);
       const md = e.name.endsWith('.md');
       let title = e.name;
