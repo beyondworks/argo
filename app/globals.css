@@ -878,6 +878,100 @@
   --ink-rgb: 216, 222, 233; --paper-rgb: 46, 52, 64;
 }
 
+/* [calm] 차분 — 장시간 봐도 눈이 덜 피로한 저대비·저채도 라이트 (유건 요청 2026-07-20).
+   설계 원칙 셋: ① 순백(#fff) 캔버스 금지 — 반사광이 눈부심의 주범이라 한 톤 내린 회청색을 쓴다.
+   ② 순흑 글자 금지 — 먹색 대신 슬레이트(#3b4256)로 최대 대비를 피한다(본문 대비 약 9:1로 접근성은 유지).
+   ③ 채도 억제 — 액센트까지 회색을 섞어 색이 시선을 잡아채지 않게 한다. */
+:root[data-theme='calm'] {
+  color-scheme: light;
+  --bg: #eff1f4;            /* Cloud Cover 계열 — 눈부심을 줄인 회청 캔버스 */
+  --card: #f8f9fb;
+  --card-2: #e9ecf1;
+  --secondary: #e2e6ed;
+  --fg: #3b4256;            /* Stygian Slate — 먹색 대신 */
+  /* 눈부심은 배경 휘도로 잡고 글자 대비는 기준을 지킨다 — 흐린 글자는 오히려 초점을 계속 다시 맞추게 해
+     피로를 키운다. 팔레트 원색(#6b7285·#9096a8)은 대비 미달이라 한 단계씩 눌렀다(contrast-audit 기준). */
+  --fg-2: #646b7e;          /* Blue Zephyr 계열 — 캔버스 대비 4.70 */
+  --fg-3: #80879a;          /* 캔버스 대비 3.17 */
+  --border: rgba(59, 66, 86, 0.15);
+  --border-soft: rgba(59, 66, 86, 0.08);
+
+  --primary: #5a6b8c;       /* 회색을 섞은 슬레이트 블루 — 채도를 낮춰 잔상을 줄인다 */
+  --primary-strong: #47566f;
+  --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.78);
+  --primary-fg-line: rgba(255, 255, 255, 0.5);
+  --primary-soft: rgba(90, 107, 140, 0.12);
+
+  --ok: #3f7a55;
+  --ok-soft: rgba(63, 122, 85, 0.12);
+  --info: #4a6f96;
+  --info-soft: rgba(74, 111, 150, 0.12);
+  --warn: #8a6425;
+  --warn-soft: rgba(138, 100, 37, 0.13);
+  --danger: #9c4a41;
+  --danger-soft: rgba(156, 74, 65, 0.11);
+
+  --ring: rgba(90, 107, 140, 0.4);
+  --selection: rgba(90, 107, 140, 0.18);
+  --overlay: rgba(38, 43, 56, 0.38);
+  --shadow-card: 0 1px 2px rgba(59, 66, 86, 0.05), 0 6px 18px rgba(59, 66, 86, 0.06);
+  --r: 14px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, 'IBM Plex Mono', monospace;
+
+  --accent: #5a6b8c;
+  --accent-rgb: 90, 107, 140;
+
+  --ink-rgb: 59, 66, 86;
+  --paper-rgb: 248, 249, 251;
+}
+
+/* [calm-dark] 차분 다크 — 눈부심을 없앤 야간용. 순흑 배경 + 순백 글자 조합은 대비가 과해
+   글자가 번져 보이는(할레이션) 주범이라, 배경은 들어올린 먹회색·글자는 은회색으로 낮춘다. */
+:root[data-theme='calm-dark'] {
+  color-scheme: dark;
+  --bg: #1b1e24;            /* 순흑 대신 들어올린 먹회색 */
+  --card: #22262e;
+  --card-2: #292e37;
+  --secondary: #2f3540;
+  --fg: #cdd0d9;            /* Spindrift — 순백 대신(할레이션 억제) */
+  --fg-2: #9ca1b4;          /* Haze Blue */
+  --fg-3: #757b8d;
+  --border: rgba(205, 208, 217, 0.14);
+  --border-soft: rgba(205, 208, 217, 0.07);
+
+  --primary: #8098bd;
+  --primary-strong: #9aafce;
+  --primary-fg: #1b1e24;
+  --primary-fg-dim: rgba(27, 30, 36, 0.78);
+  --primary-fg-line: rgba(27, 30, 36, 0.45);
+  --primary-soft: rgba(128, 152, 189, 0.18);
+
+  --ok: #7fb391;
+  --ok-soft: rgba(127, 179, 145, 0.15);
+  --info: #8098bd;
+  --info-soft: rgba(128, 152, 189, 0.14);
+  --warn: #c2a05f;
+  --warn-soft: rgba(194, 160, 95, 0.15);
+  --danger: #c58279;
+  --danger-soft: rgba(197, 130, 121, 0.15);
+
+  --ring: rgba(128, 152, 189, 0.5);
+  --selection: rgba(128, 152, 189, 0.3);
+  --overlay: rgba(10, 12, 15, 0.55);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 22px rgba(0, 0, 0, 0.26);
+  --r: 14px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, 'IBM Plex Mono', monospace;
+
+  --accent: #8098bd;
+  --accent-rgb: 128, 152, 189;
+
+  --ink-rgb: 205, 208, 217;
+  --paper-rgb: 34, 38, 46;
+}
+
 /* ─── 리퀴드 글래스 전용 표면 규칙 (라이트·다크 공통) ────────────────────
    토큰으로 표현 불가한 blur/그라디언트만 테마 스코프로 둔다.
    유리 원칙: 큰 표면(카드·탑바·사이드바·모달)은 blur + 레이어드 반투명,
@@ -947,23 +1041,8 @@
   -webkit-backdrop-filter: blur(24px) saturate(180%);
 }
 
-/* 인버트(프라이머리) 카드 — 테마 액센트 유리로 */
-:root[data-theme='glass'] .invert {
-  background: linear-gradient(160deg, rgba(0, 113, 227, 0.82), rgba(0, 113, 227, 0.58));
-  border-color: rgba(255, 255, 255, 0.35);
-}
-:root[data-theme='glass-dark'] .invert {
-  background: linear-gradient(160deg, rgba(10, 132, 255, 0.82), rgba(10, 100, 220, 0.55));
-  border-color: rgba(255, 255, 255, 0.28);
-}
-:root[data-theme='mist'] .invert {
-  background: linear-gradient(160deg, rgba(94, 139, 126, 0.9), rgba(94, 139, 126, 0.68));
-  border-color: rgba(255, 255, 255, 0.35);
-}
-:root[data-theme='frost'] .invert {
-  background: linear-gradient(160deg, rgba(62, 130, 247, 0.75), rgba(46, 98, 200, 0.5));
-  border-color: rgba(255, 255, 255, 0.25);
-}
+/* 강조 카드는 유리 테마에서도 면을 칠하지 않는다 — 액센트 그라디언트 오버라이드를 걷어내고
+   공통 규칙(외곽선 강조)을 그대로 상속시킨다. 유리 질감은 .card 규칙에서 이미 나온다. */
 
 /* 앱셸 — 사이드바·탑바도 유리 레이어 */
 :root[data-theme='glass'] .side { background: rgba(255, 255, 255, 0.22); }
@@ -1036,6 +1115,17 @@
   border-color: transparent;
   box-shadow: inset 1px 1px 3px var(--nm-lo), inset -1px -1px 2px var(--nm-hi);
 }
+/* 카드·칩·아바타도 실선을 걷는다 — 뉴모피즘은 외곽선이 남아 있으면 재질감이 죽는다(유건 지시 2026-07-20).
+   버튼·입력은 위에서 이미 걷었는데 카드만 빠져 있어 테마 의도와 어긋나 있었다.
+   .invert(기억 카드)만 예외 — 면을 안 칠하는 대신 외곽선이 유일한 강조 수단이라 남긴다. */
+:root[data-theme='clay'] .card:not(.invert),
+:root[data-theme='porcelain'] .card:not(.invert),
+:root[data-theme='clay'] .chip,
+:root[data-theme='porcelain'] .chip,
+:root[data-theme='clay'] .avatar,
+:root[data-theme='porcelain'] .avatar {
+  border-color: transparent;
+}
 
 /* ─── 크림 팝 — 블랙 사이드 패널 (레퍼런스의 시그니처) ────────────────────
    패널 내부는 토큰 재정의로 통째로 다크 반전 — nav·라벨·아바타·풋터가 전부 따라온다.
@@ -1056,14 +1146,16 @@
   --primary-fg-line: rgba(25, 25, 25, 0.4);
 }
 
-/* ─── 레트로 프레스 — 잉크 블랙 굵은 보더가 주인공 ─── */
+/* ─── 레트로 프레스 — 잉크 블랙 보더가 주인공 ───
+   2px는 촘촘한 표(크루 목록·항해일지)에서 선이 글자를 눌러 가독성을 떨어뜨렸다.
+   1.5px로 낮춰 브루탈리즘 인상은 유지하되 글자가 먼저 읽히게 한다(유건 지시 2026-07-20). */
 :root[data-theme='retro'] .card,
 :root[data-theme='retro'] .btn,
 :root[data-theme='retro'] .chip,
 :root[data-theme='retro'] .search-pill,
 :root[data-theme='retro'] .input-bar,
 :root[data-theme='retro'] .avatar {
-  border-width: 2px;
+  border-width: 1.5px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1101,6 +1193,13 @@ input, textarea { font: inherit; color: var(--fg); }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 /* ─── 앱셸 ─── */
+/* 스크롤 격리 — 안쪽 영역이 끝에 닿아도 바깥(문서)이 딸려 올라가지 않는다(체이닝 차단).
+   앱 안 스크롤 영역이 16곳(좌측 패널·스레드·드로어·모달·팝오버…)이라 개별 선언으로 막으면
+   새 영역이 생길 때마다 재발한다. 스크롤 컨테이너가 아닌 요소에는 무효한 속성이라 일괄 적용이 안전.
+   html/body는 제외 — 페이지 자체의 고무줄 스크롤 같은 네이티브 감각은 남긴다.
+   :where()라 특이도 0 → 개별로 체이닝이 필요해지면 그냥 덮어쓰면 된다. */
+:where(body *) { overscroll-behavior: contain; }
+
 .shell { display: grid; grid-template-columns: 228px 1fr; min-height: 100vh; }
 
 .side {
@@ -1201,14 +1300,14 @@ input, textarea { font: inherit; color: var(--fg); }
 .card-title { font-size: 12.5px; font-weight: 700; letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: 7px; }
 .card-title svg { color: var(--fg-2); }
 
-/* 인버트 블록 — 페이지당 한 번만 (계기판의 다크 카드) */
+/* 강조 카드 — 면을 통째로 칠하지 않고 외곽선과 수치 색으로만 강조한다(유건 지시 2026-07-20).
+   전면 채움은 테마마다 대비가 널뛰고 계기판에서 시선을 먼저 뺏어 정보 위계를 흐렸다.
+   .invert가 붙는 곳은 데크의 '기억' 카드 한 곳뿐 (app/c/[ws]/page.jsx). */
 .invert {
-  background: var(--primary); color: var(--primary-fg);
   border-color: var(--primary);
 }
-.invert .microlabel, .invert .metric-sub2 { color: var(--primary-fg-dim); }
-.invert .num small { color: var(--primary-fg-dim); }
-.invert .chip { border-color: var(--primary-fg-line); color: var(--primary-fg); }
+.invert .num { color: var(--primary-strong); }
+.invert .chip { border-color: var(--primary); color: var(--primary-strong); }
 
 /* 메트릭 — 마이크로 라벨 + 계기 숫자 + 보조줄 */
 .metric { padding: 19px 20px 17px; display: flex; flex-direction: column; }

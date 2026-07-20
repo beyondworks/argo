@@ -9,6 +9,27 @@ import { useLang, stageLabel } from '../../../../i18n';
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
 const fmtElapsed = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 
+/** 이 드래그가 파일을 싣고 있는가. dragover 단계는 보호 모드라 내용을 못 읽으므로 타입·kind로만 판정한다.
+    'Files'만 보면 안 된다 — 맥 데스크톱 셸(WKWebView)은 public.* UTI로 광고하는 경우가 있고,
+    dragover에서 preventDefault를 못 하면 drop 이벤트 자체가 발생하지 않아 조용히 실패한다. */
+const dragHasFiles = (dt) => {
+  const types = [...(dt?.types ?? [])];
+  if (types.includes('Files')) return true;
+  if ([...(dt?.items ?? [])].some((i) => i.kind === 'file')) return true;
+  return types.some((ty) => ty.startsWith('public.') || ty.startsWith('image/') || ty === 'application/x-moz-file');
+};
+
+/** 드롭에서 실제 File을 꺼낸다. 맥 화면 캡처 직후 우측 하단 썸네일처럼 아직 디스크에 저장되기 전
+    (promise) 드래그는 dataTransfer.files가 비고 items[].getAsFile()로만 잡히므로 두 경로를 모두 훑는다. */
+const filesFromTransfer = (dt) => {
+  const direct = [...(dt?.files ?? [])].filter(Boolean);
+  if (direct.length) return direct;
+  return [...(dt?.items ?? [])]
+    .filter((i) => i.kind === 'file')
+    .map((i) => i.getAsFile())
+    .filter(Boolean);
+};
+
 /** 채팅 읽기 레인 폭 — 일반 LLM 챗처럼 메시지·컴포저를 중앙 좁은 레인에 담는다(가독성).
     .thread·컴포저·열람바 세 곳이 공유하는 단일 진실. 좁은 화면에선 100%로 안전 폴백. */
 const LANE = 'min(768px, 100%)';
@@ -333,9 +354,11 @@ export default function CrewChat({ params }) {
   }, [working, ws, slug]);
 
   /** 파일 추가 — 드롭·붙여넣기·클립 버튼 모두 이 관문을 지난다. 업로드 즉시 vault/files/ 저장. */
-  async function addFiles(fileList) {
+  async function addFiles(fileList, { announceEmpty = false } = {}) {
     const files = [...(fileList ?? [])].filter(Boolean);
-    if (!files.length || uploading) return;
+    // 조용한 실패 금지 — 드롭에서 아무것도 못 꺼내면 왜 안 됐는지와 대안을 알려준다(예전엔 무반응이라 "그냥 안 됨"으로 보였다)
+    if (!files.length) { if (announceEmpty) setError(t('chat.dropUnreadable')); return; }
+    if (uploading) return;
     setUploading(true); setError('');
     try {
       const fd = new FormData();
