@@ -4,7 +4,7 @@ import { use, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, useScrollLock, InputModal, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
 import { Constellation3D, GraphModal } from './graphview';
-import { anyRunnerUsable, runnerNeedsReconnect } from '../../runner-connect';
+import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames } from '../../runner-connect';
 import { useLang } from '../../i18n';
 
 export default function Deck({ params }) {
@@ -563,7 +563,8 @@ function VoyageLog({ docs, agents }) {
 function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
   const { t } = useLang();
   useScrollLock();
-  const [form, setForm] = useState({ name: agent.name, role: agent.role, team: agent.team || '', model: agent.model || '', runner: agent.runner || 'claude' });
+  // runner '' = 미지정(자동) — 'claude' 기본값을 박으면 저장 시 자동 크루가 클로드 고정으로 둔갑한다(러너 오표시 계열)
+  const [form, setForm] = useState({ name: agent.name, role: agent.role, team: agent.team || '', model: agent.model || '', runner: agent.runner || '' });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   // 러너 카탈로그 + 로컬 인증 상태 — Claude Code 외에는 각 CLI의 OAuth 로그인(구독)을 빌린다
@@ -629,7 +630,9 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
                 // 러너를 바꾸면 그 러너의 첫 모델을 바로 선택 — "기본" 가짜 항목 없이 항상 실제 모델
                 setForm({ ...form, runner: e.target.value, model: next?.models?.[0]?.id ?? '' });
               }}>
-              {(runners ?? [{ id: 'claude', name: 'Claude Code', authed: true, installed: true }]).map((r) => (
+              {/* 로딩 폴백으로 가짜 Claude 항목을 만들지 않는다 — select 자체가 disabled(runners === null) */}
+              <option value="">{t('runner.autoOption')}</option>
+              {(runners ?? []).map((r) => (
                 <option key={r.id} value={r.id} disabled={!r.authed}>{runnerLabel(r)}</option>
               ))}
             </select>
@@ -818,6 +821,20 @@ function TokenPanel({ usage, budgetUsd, payroll, agents }) {
 /** 명판 — 선박 제원판. 회사의 스펙을 계기판 명판처럼. */
 function Nameplate({ company, memoryCount, links, crew }) {
   const { t } = useLang();
+  // 엔진 = 실제 연결된 러너 이름 — 'Claude Agent SDK' 하드코딩은 Gemini만 연결한 사용자에게
+  // "클로드로 도는 건가" 혼란을 줬다(실사용 신고 2026-07-20). 연결 직후 argo:refresh로 즉시 갱신.
+  const [engines, setEngines] = useState(null); // null = 로딩
+  const wsId = company?.id;
+  useEffect(() => {
+    if (!wsId) return;
+    let alive = true;
+    const pull = () => api(`/api/companies/${wsId}/keys`)
+      .then((k) => { if (alive) setEngines(usableRunnerNames(k.runners)); })
+      .catch(() => {});
+    pull();
+    window.addEventListener('argo:refresh', pull);
+    return () => { alive = false; window.removeEventListener('argo:refresh', pull); };
+  }, [wsId]);
   if (!company) return <Skeleton h={150} style={{ borderRadius: 18 }} />;
   const rows = [
     [t('deck.nameplate.unit'), company.id],
@@ -825,7 +842,7 @@ function Nameplate({ company, memoryCount, links, crew }) {
     [t('deck.nameplate.commissioned'), String(company.created ?? '').slice(0, 10)],
     [t('deck.nameplate.crew'), `${crew ?? 0}`],
     [t('deck.nameplate.vault'), t('deck.nameplate.vaultVal', { n: memoryCount ?? 0, links: links ?? 0 })],
-    [t('deck.nameplate.engine'), 'Claude Agent SDK'],
+    [t('deck.nameplate.engine'), engines === null ? '—' : (engines.join(' · ') || t('deck.nameplate.engineNone'))],
   ];
   return (
     <div className="card" style={{ padding: '15px 18px 14px' }}>

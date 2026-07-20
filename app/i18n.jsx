@@ -668,6 +668,9 @@ const DICT = {
   'chat.fireDesc': ['카드는 보관함으로 이동하고(복구 가능), 이 크루가 남긴 기억은 회사에 그대로 남습니다.', 'The card moves to archive (recoverable); memories this crew left stay with the company.'],
   'chat.fireConfirm': ['해고', 'Fire'],
   'chat.attach': ['파일 첨부', 'Attach files'],
+  'chat.runnerAuto': ['자동', 'Auto'],
+  'runner.autoOption': ['자동 — 첫 연결 러너', 'Auto — first connected runner'],
+  'deck.nameplate.engineNone': ['미연결', 'Not connected'],
   'chat.dropHere': ['여기에 놓아 첨부', 'Drop to attach'],
   'chat.attachFailed': ['첨부 실패: {msg}', 'Attach failed: {msg}'],
   'chat.dropUnreadable': [

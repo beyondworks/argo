@@ -4,6 +4,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api } from '../../../../ui';
+import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
@@ -240,7 +241,8 @@ export default function CrewChat({ params }) {
       .then((d) => {
         const a = d.agents.find((a) => a.slug === slug) ?? { name: slug, role: '' };
         setAgent(a);
-        setSel({ runner: a.runner || 'claude', model: a.model || '' });
+        // '' = 미지정(자동) — 'claude'를 박으면 자동 크루가 화면·저장 모두 클로드 고정으로 둔갑(K2 오표시 계열)
+        setSel({ runner: a.runner || '', model: a.model || '' });
       })
       .catch(() => setAgent({ name: slug, role: '' }));
     api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
@@ -885,8 +887,12 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
   }, [open]);
   const cur = runners?.find((r) => r.id === sel.runner);
   const curModel = cur?.models?.find((m) => m.id === sel.model);
+  // 미지정(자동) 크루는 서버 pickRunner가 고를 첫 연결 러너를 그대로 보여준다 — 'Claude Code' 폴백은
+  // Codex/Gemini만 연결한 사용자에게 오표시였다(K2 실사용 신고 2026-07-20). 로딩 중엔 중립 '…'.
+  const auto = !sel.runner ? PICK_ORDER.map((id) => runners?.find((r) => r.id === id)).find((r) => r?.authed) : null;
+  const base = cur?.name ?? (runners === null ? '…' : (auto ? `${t('chat.runnerAuto')} · ${auto.name}` : t('chat.runnerAuto')));
   // 모델 미선택(레거시 크루)이면 러너 이름만 — "기본" 같은 가짜 항목을 만들지 않는다
-  const label = sel.model ? `${cur?.name ?? 'Claude Code'} · ${curModel?.label ?? sel.model}` : (cur?.name ?? 'Claude Code');
+  const label = sel.model ? `${base} · ${curModel?.label ?? sel.model}` : base;
   return (
     <div ref={boxRef} style={{ position: 'relative' }}>
       <button type="button" disabled={disabled || runners === null} onClick={() => setOpen((v) => !v)}
@@ -961,7 +967,9 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
           // 러너를 바꾸면 그 러너의 첫 모델을 바로 선택 — "기본" 가짜 항목 없이 항상 실제 모델
           onChange({ runner: e.target.value, model: next?.models?.[0]?.id ?? '' });
         }}>
-        {(runners ?? [{ id: 'claude', name: 'Claude Code', authed: true }]).map((r) => (
+        {/* 로딩 폴백으로 가짜 Claude 항목을 만들지 않는다 — '' = 자동(첫 연결 러너) */}
+        <option value="">{t('runner.autoOption')}</option>
+        {(runners ?? []).map((r) => (
           <option key={r.id} value={r.id} disabled={!r.authed}>{runnerLabel(r)}</option>
         ))}
       </select>
