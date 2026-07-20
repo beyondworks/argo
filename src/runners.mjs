@@ -93,6 +93,14 @@ export const maskKeyLike = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{1
     키 패턴은 마스킹(벤더 401 바디의 "Incorrect API key provided: sk-…" 류가 그대로 영속되지 않게). */
 function apiError(e) {
   const raw = `${e.stdout ?? ''}\n${e.stderr ?? ''}`;
+  // 구글이 개인 무료 OAuth(Code Assist for individuals)를 신형 CLI에서 차단(실측 2026-07-20:
+  // 번들판 0.36~0.51 전부 IneligibleTierError, 구형 0.21만 통과 — 서버측 판정이라 버전 고정 우회는 시한부).
+  // 영어 스택트레이스 대신 대안이 담긴 안내로 번역한다.
+  if (/IneligibleTierError|no longer supported for Gemini Code Assist/i.test(raw)) {
+    return new Error('구글이 Gemini 개인 OAuth(무료 Code Assist) 지원을 최신 CLI에서 중단했습니다. '
+      + '설정 → AI 연결에서 Gemini를 API 키로 다시 연결해 주세요(Google AI Studio에서 무료 발급). '
+      + 'Google policy now blocks personal OAuth on current Gemini CLI — reconnect Gemini with an API key.');
+  }
   const m = raw.match(/"message"\s*:\s*"([^"]+)"/);
   return new Error(maskKeyLike(m ? m[1] : `러너 실행 실패 (exit ${e.code ?? '?'}): ${String(e.stderr ?? e.message).replace(/\s+/g, ' ').slice(-160)}`));
 }
@@ -206,9 +214,11 @@ export async function detectRunners(force = false) {
   if (!force && cache && Date.now() - cacheAt < 60_000) return cache;
   await ensureCliPath(); // GUI 기동 PATH 보강 — homebrew/npm 전역 CLI 오탐 방지
   const home = homedir();
-  const [codexV, geminiV, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
+  const [codexV, codexManaged, geminiV, geminiManaged, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
     exec('codex', ['--version']).then((r) => r.stdout.trim(), () => null),
+    exists(codexManagedBin()),    // 관리본(자동 조달)도 설치로 취급 — PATH 없이도 돈다
     exec('gemini', ['--version']).then((r) => r.stdout.trim(), () => null),
+    exists(geminiManagedEntry()),
     exists(join(home, '.codex', 'auth.json')),
     exists(join(home, '.gemini', 'oauth_creds.json')),
     // 리눅스 — 파일 보관(macOS도 키체인 불가 환경은 이 파일 폴백이라 무시하면 역회귀).
@@ -225,13 +235,143 @@ export async function detectRunners(force = false) {
   const claudeCred = claudeCredFile || claudeCfgLogin;
   cache = {
     claude: { installed: true, authed: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || claudeCred) },
-    codex: { installed: !!codexV, authed: !!codexV && codexAuth },
-    gemini: { installed: !!geminiV, authed: !!geminiV && (geminiAuth || !!process.env.GEMINI_API_KEY) },
+    codex: { installed: !!codexV || codexManaged, authed: (!!codexV || codexManaged) && codexAuth }, // gemini와 대칭 — 관리본도 로그인 파일을 상속해 돈다
+    gemini: { installed: !!geminiV || geminiManaged, authed: (!!geminiV || geminiManaged) && (geminiAuth || !!process.env.GEMINI_API_KEY) },
     glm: { installed: true, authed: !!process.env.GLM_API_KEY },
     kimi: { installed: true, authed: !!process.env.KIMI_API_KEY }, // env 주입 = 운영자 명시 옵트인(glm 관례)
   };
   cacheAt = Date.now();
   return cache;
+}
+
+/* ─── Gemini CLI 자동 조달 — "구독 연결 = 바로 사용"의 본체 (실사용 신고 2026-07-20) ───
+   Gemini 러너는 벤더 CLI로 실행되는데, 지금까지는 사용자가 직접 설치해야 했다 — OAuth로
+   "연결됨"인데 크루 영입은 "러너 없음"이 되는 모순의 뿌리. @google/gemini-cli는 의존성 0의
+   단일 번들 JS(bundle/gemini.js, node>=20)라서 npm 없이도 레지스트리 타르볼을 받아
+   우리 node(process.execPath)로 그대로 실행할 수 있다(0.51.0 실측: --version 부팅,
+   -p/--approval-mode 플래그 현행 호출과 일치). PATH 설치본이 있으면 그것을 우선한다. */
+const GEMINI_TOOL_DIR = join(homedir(), '.argo', 'tools', 'gemini-cli');
+const geminiManagedEntry = () => join(GEMINI_TOOL_DIR, 'package', 'bundle', 'gemini.js');
+let geminiProvisioning = null; // 단일 비행 — 연결 직후 워밍업과 첫 턴이 겹쳐도 다운로드는 1회
+
+export async function provisionGeminiCli() {
+  if (await exists(geminiManagedEntry())) return geminiManagedEntry();
+  if (geminiProvisioning) return geminiProvisioning;
+  geminiProvisioning = (async () => {
+    const meta = await fetch('https://registry.npmjs.org/@google/gemini-cli/latest', { signal: AbortSignal.timeout(15_000) }).then((r) => {
+      if (!r.ok) throw new Error(`레지스트리 응답 ${r.status}`);
+      return r.json();
+    });
+    const tmp = await mkdtemp(join(tmpdir(), 'argo-gemini-cli-'));
+    try {
+      const tar = join(tmp, 'pkg.tgz');
+      const buf = await fetch(meta.dist.tarball, { signal: AbortSignal.timeout(180_000) }).then((r) => {
+        if (!r.ok) throw new Error(`타르볼 다운로드 실패 ${r.status}`);
+        return r.arrayBuffer();
+      });
+      await writeFile(tar, Buffer.from(buf));
+      await exec('tar', ['-xzf', tar, '-C', tmp]); // macOS/리눅스 기본, Windows 10+ 내장 tar
+      // 부팅 검증 후 원자적 채택 — 반쯤 풀린 트리가 '설치됨'으로 잡히지 않게
+      const entry = join(tmp, 'package', 'bundle', 'gemini.js');
+      const v = (await exec(process.execPath, [entry, '--version'], { timeout: 30_000 })).stdout.trim();
+      if (!v) throw new Error('내려받은 Gemini CLI가 부팅하지 않습니다');
+      await rm(GEMINI_TOOL_DIR, { recursive: true, force: true });
+      await mkdir(GEMINI_TOOL_DIR, { recursive: true }); // rename 대상의 부모 — 누락 시 ENOENT(격리 HOME 실검증에서 실측)
+      await rename(join(tmp, 'package'), join(GEMINI_TOOL_DIR, 'package')).catch(async (e) => {
+        // 크로스 디바이스(tmp가 다른 볼륨) rename 불가 폴백
+        if (e?.code !== 'EXDEV') throw e;
+        await mkdir(GEMINI_TOOL_DIR, { recursive: true });
+        await exec('tar', ['-xzf', tar, '-C', GEMINI_TOOL_DIR]);
+      });
+      return geminiManagedEntry();
+    } finally {
+      geminiProvisioning = null;
+      await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  })();
+  return geminiProvisioning;
+}
+
+/** gemini 실행 커맨드 해석 — PATH 설치본 > 관리본 > 즉석 조달. 실패 시 사람이 읽는 원인으로. */
+async function geminiCmd() {
+  const onPath = await exec('gemini', ['--version']).then(() => true, () => false);
+  if (onPath) return { file: 'gemini', args: [] };
+  if (await exists(geminiManagedEntry())) return { file: process.execPath, args: [geminiManagedEntry()] };
+  try {
+    return { file: process.execPath, args: [await provisionGeminiCli()] };
+  } catch (e) {
+    throw new Error(`Gemini 실행기를 준비하지 못했습니다(네트워크 확인 후 재시도): ${String(e.message || e)}`);
+  }
+}
+
+/* ─── Codex CLI 자동 조달 — gemini와 같은 원리, 배포처만 다르다 ───
+   npm 래퍼(@openai/codex)의 플랫폼 바이너리 패키지는 공개 레지스트리 packument가 404라(실측)
+   레지스트리 경로가 못 쓰인다. 정본 배포처는 GitHub 릴리스의 플랫폼별 단일 바이너리 타르볼
+   (rust-v* 태그, 실측: codex-aarch64-apple-darwin.tar.gz → 압축 해제 후 --version 부팅 확인). */
+const CODEX_TOOL_DIR = join(homedir(), '.argo', 'tools', 'codex-cli');
+const CODEX_BIN = process.platform === 'win32' ? 'codex.exe' : 'codex';
+const codexManagedBin = () => join(CODEX_TOOL_DIR, CODEX_BIN);
+/** 플랫폼 → 릴리스 자산 이름. 래퍼 bin/codex.js의 트리플 표와 동일 매핑. */
+function codexAssetName() {
+  const triple = {
+    'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin',
+    'linux-arm64': 'aarch64-unknown-linux-musl', 'linux-x64': 'x86_64-unknown-linux-musl',
+    'win32-arm64': 'aarch64-pc-windows-msvc', 'win32-x64': 'x86_64-pc-windows-msvc',
+  }[`${process.platform}-${process.arch}`];
+  if (!triple) return null;
+  return process.platform === 'win32' ? `codex-${triple}.exe.tar.gz` : `codex-${triple}.tar.gz`;
+}
+let codexProvisioning = null; // 단일 비행 — ~100MB 다운로드 중복 방지
+
+export async function provisionCodexCli() {
+  if (await exists(codexManagedBin())) return codexManagedBin();
+  if (codexProvisioning) return codexProvisioning;
+  codexProvisioning = (async () => {
+    const asset = codexAssetName();
+    if (!asset) throw new Error(`미지원 플랫폼: ${process.platform}/${process.arch}`);
+    const tmp = await mkdtemp(join(tmpdir(), 'argo-codex-cli-'));
+    try {
+      // latest/download 리다이렉트 — API 레이트리밋·JSON 파싱 없이 항상 최신
+      const url = `https://github.com/openai/codex/releases/latest/download/${asset}`;
+      const buf = await fetch(url, { signal: AbortSignal.timeout(300_000) }).then((r) => {
+        if (!r.ok) throw new Error(`바이너리 다운로드 실패 ${r.status}`);
+        return r.arrayBuffer();
+      });
+      const tar = join(tmp, 'codex.tgz');
+      await writeFile(tar, Buffer.from(buf));
+      await exec('tar', ['-xzf', tar, '-C', tmp]);
+      // 타르볼 안 파일명 = 자산명에서 .tar.gz만 뗀 것(실측) — 표준 이름(codex)으로 채택
+      const inner = join(tmp, asset.replace(/\.tar\.gz$/, ''));
+      const src = (await exists(inner)) ? inner : join(tmp, CODEX_BIN); // 미래 이름 변경 대비 폴백
+      if (process.platform !== 'win32') await exec('chmod', ['+x', src]);
+      const v = (await exec(src, ['--version'], { timeout: 30_000 })).stdout.trim();
+      if (!v) throw new Error('내려받은 Codex CLI가 부팅하지 않습니다');
+      await rm(CODEX_TOOL_DIR, { recursive: true, force: true });
+      await mkdir(CODEX_TOOL_DIR, { recursive: true });
+      await rename(src, codexManagedBin()).catch(async (e) => {
+        if (e?.code !== 'EXDEV') throw e; // 크로스 디바이스 rename 불가 폴백
+        await copyFile(src, codexManagedBin());
+        if (process.platform !== 'win32') await exec('chmod', ['+x', codexManagedBin()]);
+      });
+      return codexManagedBin();
+    } finally {
+      codexProvisioning = null;
+      await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  })();
+  return codexProvisioning;
+}
+
+/** codex 실행 커맨드 해석 — PATH 설치본 > 관리본 > 즉석 조달(첫 회 ~100MB, 연결 시 워밍업이 선다운로드). */
+async function codexCmd() {
+  const onPath = await exec('codex', ['--version']).then(() => true, () => false);
+  if (onPath) return { file: 'codex', args: [] };
+  if (await exists(codexManagedBin())) return { file: codexManagedBin(), args: [] };
+  try {
+    return { file: await provisionCodexCli(), args: [] };
+  } catch (e) {
+    throw new Error(`Codex 실행기를 준비하지 못했습니다(네트워크 확인 후 재시도): ${String(e.message || e)}`);
+  }
 }
 
 /** codex 격리홈 — 'clean'이면 auth.json 심링크 없이(회사 API키 모드), 아니면 호스트 로그인 상속. */
@@ -271,8 +411,10 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     const CODEX_HOME = cred?.home === 'clean' ? await codexHomeClean()
       : cred?.home ? cred.home // 회사 OAuth 격리 홈(웹 브리지)
       : await codexHome();     // 호스트 로그인 상속
+    const cmd = await codexCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     try {
-      await exec('codex', [
+      await exec(cmd.file, [
+        ...cmd.args,
         'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check',
         ...codexSandboxArgs(caps),
         '--output-last-message', out,
@@ -289,7 +431,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     // 회사/host 자격이면 격리 HOME — 이번 턴 settings.json(인증 방식 + caps 도구 게이팅)을 매 턴 쓴다.
     // (자격 없는 경로는 명시 연결 원칙상 도달 안 하지만, 도달 시 호스트 HOME으로 폴백 — 도구 게이팅 없음)
     if (cred?.home && cred?.authType) await writeGeminiTurnSettings(cred.home, cred.authType, caps);
-    const { stdout } = await exec('gemini', [
+    const cmd = await geminiCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
+    const { stdout } = await exec(cmd.file, [
+      ...cmd.args,
       '-p', prompt,
       ...(model ? ['-m', model] : []),
       '--approval-mode', 'auto_edit', // 편집류만 자동 승인 — 셸 등은 비대화 모드에서 실행되지 않는다
@@ -397,6 +541,10 @@ export async function saveRunnerCred(wsId, runner, type, value) {
     if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
     if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
   }
+  // 연결 즉시 실행기 워밍업 — 첫 턴이 다운로드를 기다리지 않게(백그라운드, 실패는 턴 시점 조달이 재시도).
+  // 모든 연결 경로(회사 키·계정 키·웹 브리지)가 이 함수를 지나므로 여기가 단일 관문이다.
+  if (runner === 'gemini') provisionGeminiCli().catch(() => {});
+  if (runner === 'codex') provisionCodexCli().catch(() => {}); // ~100MB — 연결 시점에 미리 받아 첫 턴 대기 제거
 }
 
 /** 러너 자격 제거 — 다른 러너는 유지. */
@@ -544,7 +692,10 @@ async function writeGeminiTurnSettings(home, authType, caps) {
   exclude.push('run_shell_command');
   exclude.push('save_memory'); // 기억은 vault가 단일 진실 — gemini 병행 기억(GEMINI.md) 차단
   await writeFile(join(home, '.gemini', 'settings.json'),
-    JSON.stringify({ security: { auth: { selectedType: authType } }, tools: { exclude } }));
+    // folderTrust off — 신형 CLI(0.51 실측)가 headless에서 미신뢰 폴더를 exit 55로 거절한다.
+    // 격리 홈 + 워크스페이스 한정 실행이라 폴더 신뢰 게이트는 우리 쪽 권한 모델(caps)이 대신한다.
+    // 구버전(0.21 실측)은 이 키를 무해하게 무시한다.
+    JSON.stringify({ security: { auth: { selectedType: authType }, folderTrust: { enabled: false } }, tools: { exclude } }));
 }
 
 /** Claude/GLM(SDK) 러너용 완전 env — 회사 자격 우선, 없으면 기존 폴백(glm은 호스트 GLM_API_KEY, claude는 CLI/env). */
@@ -816,18 +967,19 @@ export async function runnerStatus(wsId) {
     want = 크루 지정 러너(null이면 무선호 — 첫 연결 러너를 대체 고지 없이 쓴다).
     exclude = 방금 인증 실패한 러너(자가 치유 재시도 시 제외). (export: 회귀 테스트용) */
 export function pickRunner(st, want, exclude = null) {
-  // 외부 CLI 러너(codex/gemini)는 실행 주체가 벤더 CLI라, 자격이 있어도 이 컴퓨터에 CLI가 없으면
-  // spawn ENOENT로 죽는다(웹 브리지로 연결한 새 기기 사례). claude/glm은 번들 SDK CLI라 설치 불필요.
-  const executable = (id) => (id === 'codex' || id === 'gemini' ? !!st[id]?.hostInstalled : true);
-  const usable = (id) => !!st[id]?.company.connected && !st[id]?.company.invalid && id !== exclude && executable(id);
+  // 가용 = 연결(유효) 자격이 전부다. 예전엔 codex/gemini가 벤더 CLI 설치를 추가로 요구해
+  // "OAuth 연결됨 + 크루 영입은 러너 없음" 모순(실사용 신고 2026-07-20)을 만들었다 — 이제 두 러너 모두
+  // 자동 조달(provisionCodexCli/provisionGeminiCli — 턴 시점 자가 설치)이 있어 설치 게이트가 없다.
+  // 조달 실패(오프라인 등)는 턴이 원인 문구로 실패한다 — 거짓 차단보다 정직한 실패가 낫다.
+  const usable = (id) => !!st[id]?.company.connected && !st[id]?.company.invalid && id !== exclude;
   if (want && usable(want)) return { runner: want, fellBack: false, available: true };
   const ids = Object.keys(RUNNER_AUTH);
   const next = ids.find(usable);
   if (next) return { runner: next, fellBack: !!want, available: true }; // 무선호(want=null)는 대체가 아니다
   // 아무 러너도 없음 — 호출부가 안내 에러를 만든다(원래 러너 반환은 에러 문구용).
-  // credButNoCli: 자격은 연결했는데 벤더 CLI가 없어 못 쓰는 러너 — "연결했는데 왜 안 되냐"에 정확히 답하기 위한 재료.
-  const credButNoCli = ids.filter((id) => st[id]?.company.connected && !executable(id));
-  return { runner: want ?? 'claude', fellBack: false, available: false, credButNoCli };
+  // credButNoCli — 자동 조달 도입으로 "자격은 있는데 CLI가 없어 차단"이 사라져 항상 빈 배열이다.
+  // 필드는 소비처(chat/oneshot의 안내 분기) 호환으로 유지 — 미래에 조달 불가 플랫폼이 생기면 되살린다.
+  return { runner: want ?? 'claude', fellBack: false, available: false, credButNoCli: [] };
 }
 
 /** 턴에 실제로 쓸 러너 결정 — 크루의 러너가 미가용이면 가용한 러너로 폴백(pickRunner).
