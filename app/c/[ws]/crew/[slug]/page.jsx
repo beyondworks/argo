@@ -55,9 +55,19 @@ export default function CrewChat({ params }) {
     // Enter=전송, Shift+Enter=줄바꿈(textarea 기본 동작) — 유건 지시 2026-07-19
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e); return; }
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    if (e.nativeEvent.isComposing || !history.length) return; // IME 조합 중엔 개입하지 않는다
-    // 여러 줄 입력 중엔 ↑/↓가 커서 이동이어야 한다 — 히스토리 탐색은 캐럿이 첫 줄(↑)/마지막 줄(↓)일 때만
+    if (e.nativeEvent.isComposing) return; // IME 조합 중엔 개입하지 않는다
     const el = e.target;
+    // 쓰던 글이 있으면 ↑/↓는 편집키다 — ↑=맨 앞, ↓=맨 뒤(유건 지시 2026-07-20). 히스토리는 입력창이 빈 상태에서만
+    // 시작한다. 단 이미 히스토리를 걷는 중(histIdx≠-1)이면 불러온 글이 채워져 있어도 계속 걸을 수 있어야 한다.
+    const navigating = histIdx.current !== -1;
+    if (el.value && !navigating) {
+      e.preventDefault();
+      const pos = e.key === 'ArrowUp' ? 0 : el.value.length;
+      el.setSelectionRange(pos, pos);
+      return;
+    }
+    if (!history.length) return;
+    // 불러온 지시가 여러 줄이면 그 안에서의 커서 이동이 우선 — 첫 줄(↑)/마지막 줄(↓)에서만 히스토리를 넘긴다
     if (e.key === 'ArrowUp' && el.value.slice(0, el.selectionStart ?? 0).includes('\n')) return;
     if (e.key === 'ArrowDown' && el.value.slice(el.selectionEnd ?? 0).includes('\n')) return;
     e.preventDefault();
@@ -173,6 +183,10 @@ export default function CrewChat({ params }) {
   }
   const sessionRef = useRef(null);
   const endRef = useRef(null);
+  const threadRef = useRef(null);   // 스크롤 컨테이너(.thread)
+  const pinRef = useRef(null);      // 상단에 붙일 내 메시지의 mid — 전송 직후 1회 소비
+  const msgRefs = useRef(new Map()); // mid → DOM 노드
+  const atBottomRef = useRef(true);  // 하단 근처면 새 내용을 따라간다. 위로 올려 읽는 중이면 끌어내리지 않는다.
   // 첨부 — 업로드 즉시 vault/files/에 저장되고, 보내기 전까지 입력바 위에 칩으로 대기한다
   const [att, setAtt] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -214,7 +228,32 @@ export default function CrewChat({ params }) {
       .catch(() => setThread([]));
   }, [ws, slug]);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [thread, busy]);
+  // 하단 근처 여부를 실제 스크롤에서 읽어 둔다 — 사장이 위로 올려 읽는 중이면 새 내용이 와도 끌어내리지 않는다.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    const onScroll = () => { atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; };
+    onScroll();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+  // 스크롤 규율 두 가지.
+  //  ① 전송 직후 — 방금 보낸 내 글을 컨테이너 상단에 붙인다. 그 아래 공간에서 작업 과정과 답변이 흐른다.
+  //  ② 그 외 — 하단 근처일 때만 따라간다.
+  // liveStage.partial이 의존성에 있어야 스트리밍으로 답변이 자라는 동안에도 시야가 따라간다.
+  // (이게 빠져 있어 답변이 길어지면 내용이 화면 아래로 밀려 "스크롤이 위에 멈춰 있다"로 보였다 — 2026-07-20 신고)
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    const pin = pinRef.current && msgRefs.current.get(pinRef.current);
+    if (pin) {
+      pinRef.current = null;
+      atBottomRef.current = false;
+      el.scrollTop += pin.getBoundingClientRect().top - el.getBoundingClientRect().top - 12;
+      return;
+    }
+    if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+  }, [thread, busy, liveStage?.partial]);
 
   // 다른 창구(텔레그램·슬랙·루틴·결재 후속)에서 붙은 대화를 웹에도 반영 — 채널을 오가도 맥락은 하나다.
   useEffect(() => {
@@ -223,7 +262,12 @@ export default function CrewChat({ params }) {
       api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
         .then((r) => {
           const msgs = r.messages ?? [];
-          setThread((cur) => (cur !== null && msgs.length > cur.length ? msgs : cur));
+          setThread((cur) => {
+            if (cur === null || msgs.length <= cur.length) return cur;
+            // 다른 창구의 새 대화로 갈아끼울 때도 실패한 내 글은 잃지 않는다(서버엔 없는 사본이라 덮으면 소실)
+            const unsent = cur.filter((m) => m.failed);
+            return unsent.length ? [...msgs, ...unsent] : msgs;
+          });
           if (r.sessionId) sessionRef.current = r.sessionId;
           setLiveStage(r.status ?? null); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
           setThreadTitle(r.title ?? null); // 다른 기기에서 바꾼 현재 대화명도 준실시간 반영(검수 LOW)
@@ -310,18 +354,21 @@ export default function CrewChat({ params }) {
   async function sendMessage(message, attachments = []) {
     if (!message || busy || uploading) return;
     setError(''); setBusy(true); setStage(0);
-    setThread((t) => [...(t ?? []), { who: 'user', text: message, ...(attachments.length ? { attachments } : {}) }]);
+    // 낙관적 표시 — 서버는 턴이 끝난 뒤에야 저장하므로(route.js appendTurn) 도중엔 이 사본이 사장 글의 유일한 원본이다.
+    // 그래서 실패해도 스레드에서 빼지 않는다. 빼면 글이 어디에도 남지 않고 입력창으로 되돌아가 "보낸 게 사라졌다"가 된다.
+    const mid = `s${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setThread((t) => [...(t ?? []), { who: 'user', text: message, mid, ...(attachments.length ? { attachments } : {}) }]);
+    pinRef.current = mid; // 방금 보낸 글을 화면 상단에 붙인다 — 그 아래로 작업 과정·답변이 흐르도록
     try {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
-      setThread((t) => [...t, { who: 'crew', text: r.reply, handover: r.handover }]);
+      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover }]);
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
-      // 실패 턴은 서버에 저장되지 않는다 — 입력·첨부를 복원해 바로 재시도할 수 있게
-      setThread((cur) => cur.slice(0, -1));
-      setInput(message); setAtt(attachments);
+      // 실패 턴은 서버에 저장되지 않는다 — 글은 스레드에 남겨 두고 실패 표시만 붙인다(재전송 버튼이 그대로 재시도 경로)
       const msg = String(err.message);
-      setError(msg === '중단됨' ? t('chat.aborted') : t('chat.turnFailed', { msg }));
+      const label = msg === '중단됨' ? t('chat.aborted') : t('chat.turnFailed', { msg });
+      setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed: label } : m)));
     } finally {
       setBusy(false);
       setLiveStage(null); // 내 턴 종료 — 마지막 partial이 완성 답변과 겹쳐 보이지 않게 즉시 내린다
@@ -482,7 +529,7 @@ export default function CrewChat({ params }) {
         slotEl,
       )}
 
-      <div className="thread" style={{ overflowY: 'auto', minHeight: 0 }}>
+      <div className="thread" ref={threadRef} style={{ overflowY: 'auto', minHeight: 0 }}>
         {/* 안쪽 레인만 중앙정렬 — .thread(스크롤 컨테이너)는 컬럼 전체폭이라 스크롤바가 우측 끝에 고정된다.
             레인 래퍼가 flex 컬럼이어야 메시지 간 gap·유저버블 우측정렬(align-self)이 유지된다(.thread의 flex를 이 레인이 이어받음). */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%', maxWidth: LANE, margin: '0 auto' }}>
@@ -497,8 +544,9 @@ export default function CrewChat({ params }) {
         )}
         {((viewing ? archMsgs : thread) ?? []).map((m, i) =>
           m.who === 'user' ? (
-            <div key={i} className="msg-wrap fade-up" style={{ alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '75%' }}>
-              <div className="msg-user" style={{ alignSelf: 'auto', maxWidth: '100%', whiteSpace: 'pre-wrap' }}>
+            <div key={i} className="msg-wrap fade-up" style={{ alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '75%' }}
+              ref={(el) => { if (!m.mid) return; if (el) msgRefs.current.set(m.mid, el); else msgRefs.current.delete(m.mid); }}>
+              <div className="msg-user" style={{ alignSelf: 'auto', maxWidth: '100%', whiteSpace: 'pre-wrap', ...(m.failed ? { opacity: 0.72 } : {}) }}>
                 {m.attachments?.length > 0 && (
                   <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: m.text ? 8 : 0 }}>
                     {m.attachments.map((a, j) => a.isImage ? (
@@ -512,6 +560,14 @@ export default function CrewChat({ params }) {
                 )}
                 {m.text}
               </div>
+              {/* 실패한 턴 — 글은 스레드에 그대로 두고 사유와 재시도만 붙인다(호버로 숨지 않게 항상 표시) */}
+              {m.failed && !viewing && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, fontSize: 12, color: 'var(--danger)', maxWidth: '100%' }}>
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.failed}</span>
+                  <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy || uploading}
+                    onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
+                </div>
+              )}
               <div className="msg-actions">
                 <button type="button" onClick={() => copyMsg(i, m.text)}>{copied === i ? t('chat.copied') : t('chat.copy')}</button>
                 {!viewing && <button type="button" disabled={busy || uploading} onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>}
@@ -636,6 +692,10 @@ export default function CrewChat({ params }) {
           </div>
         )}
         {error && <p style={{ fontSize: 13, color: 'var(--danger)' }}>{error}</p>}
+        {/* 작업 중 여백 — 방금 보낸 글을 화면 상단까지 밀어올릴 스크롤 여유를 만든다.
+            이게 없으면 마지막 메시지가 컨테이너 바닥에 걸려 "내 글 위 / 작업 과정 아래" 배치가 성립하지 않는다.
+            턴이 끝나면 사라져 대화가 자연스럽게 정렬된다. */}
+        {!viewing && working && <div aria-hidden style={{ flex: 'none', height: 'calc(100vh - 180px)' }} />}
         <div ref={endRef} />
         </div>
       </div>
