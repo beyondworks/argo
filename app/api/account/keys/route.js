@@ -4,7 +4,7 @@
 // 응답에는 평문 대신 마스킹만 실린다(보안 규칙).
 import {
   accountScope, runnerStatus, saveRunnerCred, clearRunnerCred,
-  maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH, hostOptInAllowed,
+  maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH, hostOptInAllowed, normalizePastedCred,
 } from '../../../../src/runners.mjs';
 import { currentUser, tenantDenied } from '../../../auth.mjs';
 
@@ -40,7 +40,8 @@ export async function PUT(req) {
       return Response.json({ ok: true, runner, connected: true, type: 'host', masked: '' });
     }
     if (!meta.methods.includes(type)) throw new Error(`${runner}는 ${type} 방식을 지원하지 않습니다`);
-    const v = String(value ?? '').trim();
+    // 정규화 — 터미널 줄바꿈이 섞인 복사본을 자기치유(내부 공백 제거). 회사 라우트와 대칭(2026-07-20 신고).
+    const v = normalizePastedCred(value);
     if (!v) throw new Error('키 또는 토큰을 붙여넣어 주세요');
     if (type === 'apikey' && meta.apikeyPrefix && !v.startsWith(meta.apikeyPrefix)) {
       throw new Error(`${meta.apikeyPrefix} 로 시작하는 키를 붙여넣어 주세요`);
@@ -50,9 +51,15 @@ export async function PUT(req) {
       const fmtErr = oauthFormatError(runner, v, lang === 'en' ? 'en' : 'ko');
       if (fmtErr) throw new Error(fmtErr);
     }
-    if (verify) {
+    // 실검증은 항상 — '저장만' 무효 자격의 거짓 '연결됨' 함정 제거(회사 라우트와 대칭, 2026-07-20).
+    // 네트워크 불가(ok:null)만 형식 검증으로 저장. verify 파라미터는 하위호환으로 수용만(무시).
+    {
       const r = await verifyRunnerCred(runner, type, v);
-      if (r.ok === false) throw new Error('키가 거부되었습니다 (인증 실패). 콘솔에서 키를 확인하세요');
+      if (r.ok === false) {
+        throw new Error(lang === 'en'
+          ? 'This credential failed authentication — it may be expired, revoked, or mis-issued. Please issue a new one and paste it again.'
+          : '이 자격이 인증에 실패했습니다 — 만료·철회됐거나 잘못 발급된 값입니다. 새로 발급해 다시 붙여넣어 주세요.');
+      }
     }
     await saveRunnerCred(g.scope, runner, type, v);
     return Response.json({ ok: true, runner, connected: true, type, masked: maskCred(v) });

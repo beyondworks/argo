@@ -446,6 +446,16 @@ async function seedAuthFile(dir, name, content, { adopt = true } = {}) {
   return true;
 }
 
+/** 붙여넣은 자격 정규화 — 키·토큰은 공백·개행을 절대 포함하지 않으므로 내부 혼입분을 제거한다.
+    터미널 80칸에서 108자 setup-token은 줄바꿈돼 보이고, 복사 방식에 따라 개행이 값에 섞인다
+    (실사용 2026-07-20 신고: 접두사는 멀쩡해 형식검사를 통과 → 검증만 거절 → '저장만'이 깨진 토큰을
+    '연결됨'으로 저장 → 전 턴 API 오류). 유효 토큰의 검증 통과는 실측 확인(키체인 토큰 200).
+    JSON 블롭('{' 시작 — codex/gemini oauth 내부 형식)은 trim만(문자열 값 보존). (export: 회귀 테스트용) */
+export const normalizePastedCred = (value) => {
+  const s = String(value ?? '').trim();
+  return s.startsWith('{') ? s : s.replace(/\s+/g, '');
+};
+
 /** 러너 실행에 주입할 env(부분) — 회사 자격이 있으면 러너 종류에 맞는 변수로. 없으면 null(호스트 자격 폴백=회귀 0).
     반환: { env, home } — env=주입 변수 dict, home=codex 격리홈 오버라이드('clean'=계정 로그인 무시하고 API키 사용). */
 export async function runnerCredEnv(wsId, runner) {
@@ -861,8 +871,10 @@ export async function verifyRunnerCred(runner, type, value) {
     if (runner === 'claude' && type === 'oauth') {
       // CLAUDE_CODE_OAUTH_TOKEN 검증 — Bearer + oauth 베타 헤더. 실측(2026-07-18): 무효 토큰에
       // 401 {"type":"authentication_error","message":"OAuth access token is invalid."} — 엔드포인트가
-      // Bearer OAuth를 명시적으로 검증한다. 유효 토큰의 200 응답은 실토큰 부재로 미실측 —
-      // verify는 '검증 후 저장' 버튼의 opt-in 경로라, 만에 하나 오탐이 있어도 일반 저장은 막지 않는다.
+      // Bearer OAuth를 명시적으로 검증한다. 유효 토큰의 200 통과도 실측 확인(2026-07-20, 키체인
+      // 실토큰 — oauth 베타 헤더 유무 모두 200). 이제 검증은 저장의 필수 관문이라(무검증 '저장만'
+      // 제거) 오탐이 곧 저장 차단이지만, 원클릭(setup-token)도 같은 호출로 게이트해 왔고 양방향
+      // 실측이 갖춰져 오탐 위험은 근거 있이 낮다.
       const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20' }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
