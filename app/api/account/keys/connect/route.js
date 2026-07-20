@@ -4,7 +4,7 @@
 // GET: 완료 폴링. GET ?setup=1: setup-token 진행 상태.
 import {
   accountScope, startRunnerLogin, runnerLoginStatus, RUNNER_AUTH,
-  startRunnerWebAuth, submitRunnerWebAuth, loadRunnerCred,
+  startRunnerWebAuth, submitRunnerWebAuth, webAuthDone,
   startClaudeSetupToken, setupTokenStatus,
 } from '../../../../../src/runners.mjs';
 import { currentUser, tenantDenied } from '../../../../auth.mjs';
@@ -46,7 +46,8 @@ export async function GET(req) {
   }
   if (meta.webConnect) {
     // 웹 브리지 완료 = 계정 자격 존재
-    return Response.json({ supported: true, authed: !!(await loadRunnerCred(g.scope, runner)) });
+    // 완료 = 이번 브리지 세션의 저장 완료(webAuthDone) — 자격 존재 판정은 재연결이 승인 전 거짓 '연결됨'(감사 2026-07-20)
+    return Response.json({ supported: true, authed: webAuthDone(runner, g.scope) });
   }
   return Response.json(await runnerLoginStatus(runner));
 }
