@@ -8,6 +8,8 @@
   "remote": {
     "urls": [
       "http://localhost:3001",
+      "http://localhost:3011",
+      "http://localhost:3021",
       "http://localhost:3999"
     ]
   },
