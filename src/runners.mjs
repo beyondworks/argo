@@ -764,6 +764,19 @@ export function oauthFormatError(runner, value, lang = 'ko') {
     : `이 값은 Claude OAuth 토큰이 아닙니다. 터미널에서 claude setup-token 을 실행해 마지막에 출력되는 ${prefix} 로 시작하는 토큰을 붙여넣어 주세요. (브라우저에 표시되는 인증 코드는 터미널에 넣는 중간 단계 값이지, 여기 넣는 값이 아닙니다.)`;
 }
 
+/** HTTP 200인데 바디에 인증 실패가 담긴 응답(z.ai/GLM류) 감지 — 순수.
+    유효 키의 정상 응답 바디는 success·code 필드가 없어 오탐하지 않는다(유효 키 오거절 방지가 최우선 제약). */
+function bodyIndicatesAuthError(body) {
+  try {
+    const j = JSON.parse(body);
+    if (!j || typeof j !== 'object') return false;
+    // z.ai/GLM류는 인증 실패를 HTTP 200 바디의 code(401/403)로 알린다. success:false는 레이트리밋·계정정지
+    // 등 비인증 실패에도 붙는 제네릭 플래그라 무효 판정 신호로 쓰지 않는다 — 유효 키 오거절 방지가 최우선(검수 HIGH).
+    const code = j.code ?? j.error?.code;
+    return code === 401 || code === 403 || code === '401' || code === '403';
+  } catch { return false; }
+}
+
 /** 자격 인증 확인 — 러너별 저비용 검증. { ok:true|false|null }(null=네트워크 불가, 형식만으로 저장 허용). */
 export async function verifyRunnerCred(runner, type, value) {
   const v = String(value).trim();
@@ -783,7 +796,11 @@ export async function verifyRunnerCred(runner, type, value) {
     if (runner === 'glm') {
       const base = process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic';
       const r = await fetch(`${base}/v1/models?limit=1`, { headers: { 'x-api-key': v, authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
-      return { ok: !(r.status === 401 || r.status === 403) };
+      if (r.status === 401 || r.status === 403) return { ok: false };
+      // z.ai(GLM)는 무효 키에도 HTTP 200을 주고 바디에 인증 실패를 담는다({code:401,success:false}) — 실측 2026-07-20.
+      // 상태코드만 보면 '연결됨'으로 저장돼 전 호출이 실패한다(거짓 연결). 바디 레벨 에러도 무효로 본다.
+      if (bodyIndicatesAuthError(await r.text().catch(() => ''))) return { ok: false };
+      return { ok: r.ok ? true : null };
     }
     if (runner === 'kimi') {
       const base = process.env.KIMI_OPENAI_BASE_URL || 'https://api.moonshot.ai/v1';
@@ -796,7 +813,14 @@ export async function verifyRunnerCred(runner, type, value) {
     }
     if (runner === 'gemini' && type === 'apikey') {
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(v)}&pageSize=1`, { signal: AbortSignal.timeout(10_000) });
-      return { ok: !(r.status === 401 || r.status === 403) };
+      if (r.status === 401 || r.status === 403) return { ok: false };
+      // Google Generative Language API는 무효 키에 HTTP 400 + reason:API_KEY_INVALID를 준다(401 아님) — 실측 2026-07-20.
+      // 400을 무조건 무효로 몰면 키와 무관한 요청 오류까지 키 탓이 되므로, 키 무효 신호가 있을 때만 거절한다.
+      if (r.status === 400) {
+        const body = await r.text().catch(() => '');
+        return /API_KEY_INVALID|API key not valid/i.test(body) ? { ok: false } : { ok: null };
+      }
+      return { ok: r.ok ? true : null };
     }
     return { ok: null }; // oauth 토큰·미지원 조합은 형식 검증만
   } catch {

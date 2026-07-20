@@ -62,10 +62,14 @@ test('AUTH_ERR_RE: 인증성 실패만 매칭 — 자가 치유 오발동 방지
     '401 invalid authentication credentials',
     'Not logged in, please run codex login', // codex CLI
     'OAuth token is expired',
+    'API key not valid. Please pass a valid API key.', // gemini 무효 키(HTTP 400 — 실측 2026-07-20)
+    '턴 실패: error — got status: 400 Bad Request. API_KEY_INVALID', // gemini
+    '턴 실패: authenticate_error — token expired or incorrect', // glm 만료(HTTP 200 바디 401 — 실측)
   ]) assert.ok(AUTH_ERR_RE.test(s), `매칭돼야 함: ${s}`);
   for (const s of [
     '턴 실패: error_during_execution — MCP 서버 연결 실패',
     'network timeout after 300s',
     'HTTP 4011 custom code', // 401 단어 경계 확인
+    'context token limit exceeded', // 'token' 오탐 방지 — expired/invalid/incorrect가 뒤따르지 않음
   ]) assert.ok(!AUTH_ERR_RE.test(s), `매칭되면 안 됨: ${s}`);
 });
