@@ -2,7 +2,7 @@ import {
   skillCatalogFor, mcpCatalogFor,
   listInstalledSkills, installSkill, removeSkill, saveCustomSkill,
   loadMcp, installMcp, addCustomMcp, removeMcp,
-  listHostMcp, importHostMcp, arbitraryMcpBlocked,
+  listHostMcp, importHostMcp, arbitraryMcpBlocked, safeMcpServersForRuntime,
 } from '../../../../../src/market.mjs';
 import {
   searchRemoteSkills, installRemoteSkill,
@@ -48,6 +48,9 @@ export async function GET(req, { params }) {
   const [skills, mcp, { lang = 'ko' }] = await Promise.all([
     listInstalledSkills(ws), loadMcp(ws), loadCompany(ws).catch(() => ({})),
   ]);
+  // 이 환경에서 실제 spawn될 서버 집합 — 차단 환경이면 safeMcpServersForRuntime가 미검증 command를 걸러낸다.
+  // 설치 목록엔 있지만 여기 없는 서버 = "설치됨" 표시만 되고 런타임에 조용히 제거됨(거짓 유효). 그걸 정직하게 표기한다.
+  const runnable = safeMcpServersForRuntime(mcp.servers ?? {});
   return Response.json({
     skillCatalog: skillCatalogFor(lang).map(({ md, ...rest }) => ({ ...rest, preview: md.slice(0, 200) })),
     mcpCatalog: mcpCatalogFor(lang),
@@ -55,10 +58,18 @@ export async function GET(req, { params }) {
     // env(토큰 값)는 응답에서 제거 — 화면은 command/args만 쓴다(로그·프록시·캐시 유출 방지, 검수 MEDIUM).
     installedMcp: Object.fromEntries(Object.entries(mcp.servers ?? {}).map(([n, d]) => {
       const { env, headers, ...safe } = d ?? {};
-      return [n, { ...safe, ...((env && Object.keys(env).length) || (headers && Object.keys(headers).length) ? { hasSecrets: true } : {}) }];
+      return [n, {
+        ...safe,
+        ...((env && Object.keys(env).length) || (headers && Object.keys(headers).length) ? { hasSecrets: true } : {}),
+        // 이 환경에서 실행 안 됨(로컬 프로세스 spawn 차단) — UI가 "설치됨"이 아니라 "로컬 앱 전용"으로 정직 표기
+        ...(n in runnable ? {} : { runtimeBlocked: true }),
+      }];
     })),
     // 이 컴퓨터의 Claude Code MCP — 로컬 앱 전용(호스팅 모드에선 숨김). env 값은 안 실린다(요약만).
     hostMcp: arbitraryMcpBlocked() ? [] : await listHostMcp(),
+    // 로컬 프로세스를 spawn하는 커스텀·npm MCP를 이 환경에서 추가·실행할 수 있는가(데스크톱=예, 서비스키 웹=아니오).
+    // 카탈로그·원격(HTTP) MCP는 이 값과 무관하게 항상 원클릭 가능하다.
+    customMcpAllowed: !arbitraryMcpBlocked(),
   });
 }
 

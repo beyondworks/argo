@@ -9,7 +9,7 @@ const fmtN = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.
 const safeId = (item) => String(item.name ?? '').toLowerCase().replace(/[^a-z0-9가-힣-]/g, '-').replace(/^-+|-+$/g, '');
 
 /** 추천 TOP 20 — 스킬(★순) / MCP(npm 주간 다운로드순). 행 클릭 = 상세. */
-function TopList({ ws, kind, installedIds, onInstalled, onDetail }) {
+function TopList({ ws, kind, installedIds, onInstalled, onDetail, customMcpAllowed = true }) {
   const { t } = useLang();
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState('');
@@ -52,6 +52,9 @@ function TopList({ ws, kind, installedIds, onInstalled, onDetail }) {
           {items.map((item, i) => {
             const key = item.id ?? item.name;
             const on = installedIds.has(safeId(item));
+            // npm(로컬 npx spawn) MCP는 서비스키 웹에선 실행 불가 — 실패하는 버튼 대신 정직하게 "데스크톱 앱 전용"으로 표기.
+            // 원격(HTTP) MCP·스킬은 로컬 실행이 없어 항상 허용.
+            const localOnly = kind === 'mcp' && !customMcpAllowed && item.install?.kind !== 'http';
             return (
               <div
                 key={key}
@@ -73,6 +76,8 @@ function TopList({ ws, kind, installedIds, onInstalled, onDetail }) {
                 </span>
                 {on ? (
                   <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('market.installed')}</span>
+                ) : localOnly ? (
+                  <span className="chip" style={{ flex: 'none', opacity: 0.75 }} title={t('market.localOnlyBanner')}>{t('market.localOnlyBadge')}</span>
                 ) : (
                   <button className="btn sm" style={{ flex: 'none' }} onClick={(e) => install(e, item)} disabled={busy === key}>
                     {busy === key ? <Spinner size={11} /> : t('market.installNow')}
@@ -88,7 +93,7 @@ function TopList({ ws, kind, installedIds, onInstalled, onDetail }) {
 }
 
 /** 상세 모달 — 한글 easy 설명(생성·캐시) + 즉시 설치. */
-function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
+function DetailModal({ ws, item, installedIds, onInstalled, onClose, customMcpAllowed = true }) {
   const { t } = useLang();
   useScrollLock();
   const [exp, setExp] = useState(null);
@@ -96,6 +101,9 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
   const [busy, setBusy] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
   const installed = installedIds.has(safeId(item));
+  // npm(로컬 npx spawn) MCP는 서비스키 웹에선 실행 불가 — 실패하는 설치 버튼 대신 "데스크톱 앱 전용" 표기(원격 목록과 동일 규칙).
+  // 카탈로그(item.install 없음)·원격(HTTP)은 항상 허용.
+  const localOnly = item.kind !== 'skill' && !customMcpAllowed && !!item.install && item.install.kind !== 'http';
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -198,6 +206,8 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
             {installed ? (
               <span className="pill ok"><span className="dot" />{t('market.installedNextTurn')}</span>
+            ) : localOnly ? (
+              <span className="chip" style={{ opacity: 0.8 }} title={t('market.localOnlyBanner')}>{t('market.localOnlyBadge')}</span>
             ) : (
               <button className="btn btn-primary sm" onClick={install} disabled={busy}>
                 {busy ? <Spinner size={12} /> : t('market.installNow')}
@@ -211,7 +221,7 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose }) {
 }
 
 /** 원격 마켓 검색 + 즉시 설치 — kind: 'skills' | 'mcp' */
-function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInstalled, onDetail }) {
+function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInstalled, onDetail, customMcpAllowed = true }) {
   const { t } = useLang();
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
@@ -277,6 +287,8 @@ function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInst
             {results.map((item) => {
               const key = item.id ?? item.name;
               const on = installedIds.has(safeId(item));
+              // npm(로컬 npx spawn) MCP는 서비스키 웹에선 실행 불가 — 실패 버튼 대신 "데스크톱 앱 전용" 표기. 원격(HTTP)은 항상 허용.
+              const localOnly = kind === 'mcp' && !customMcpAllowed && item.install?.kind !== 'http';
               return (
                 <div
                   key={key}
@@ -289,6 +301,8 @@ function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInst
                     <span style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{item.title ?? item.name}</span>
                     {on ? (
                       <span className="pill ok"><span className="dot" />{t('market.installed')}</span>
+                    ) : localOnly ? (
+                      <span className="chip" style={{ flex: 'none', opacity: 0.75 }} title={t('market.localOnlyBanner')}>{t('market.localOnlyBadge')}</span>
                     ) : (
                       <button className="btn sm" onClick={(e) => { e.stopPropagation(); install(item); }} disabled={busy === key}>
                         {busy === key ? <Spinner size={11} /> : t('market.installNow')}
@@ -365,6 +379,8 @@ export default function Market({ params }) {
 
   const installedSkillIds = new Set((data?.installedSkills ?? []).map((s) => s.id));
   const installedMcp = data?.installedMcp ?? {};
+  // 이 환경에서 로컬 spawn 커스텀·npm MCP를 쓸 수 있나(데스크톱=예, 서비스키 웹=아니오). 카탈로그·HTTP는 무관하게 항상 가능.
+  const customMcpAllowed = data?.customMcpAllowed !== false;
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
@@ -508,11 +524,19 @@ export default function Market({ params }) {
                 <span className="mono" style={{ flex: 1, fontSize: 10.5, color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {def.command} {(def.args ?? []).join(' ')}
                 </span>
+                {def.runtimeBlocked && (
+                  <span className="chip" style={{ flex: 'none', fontSize: 10, color: 'var(--danger)' }} title={t('market.localOnlyBanner')}>{t('market.runtimeBlockedBadge')}</span>
+                )}
                 <button className="btn sm btn-icon" style={{ width: 26 }} onClick={() => remove('mcp', n)}><Icon name="trash" size={12} /></button>
               </div>
             ))}
 
-            <TopList ws={ws} kind="mcp" installedIds={new Set(Object.keys(installedMcp))} onInstalled={load} onDetail={setDetail} />
+            {!customMcpAllowed && (
+              <div className="microlabel" style={{ margin: '0 18px 8px', padding: '8px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border-soft)', color: 'var(--fg-2)', lineHeight: 1.55 }}>
+                {t('market.localOnlyBanner')}
+              </div>
+            )}
+            <TopList ws={ws} kind="mcp" installedIds={new Set(Object.keys(installedMcp))} onInstalled={load} onDetail={setDetail} customMcpAllowed={customMcpAllowed} />
             <RemoteSearch
               ws={ws}
               kind="mcp"
@@ -521,6 +545,7 @@ export default function Market({ params }) {
               installedIds={new Set(Object.keys(installedMcp))}
               onInstalled={load}
               onDetail={setDetail}
+              customMcpAllowed={customMcpAllowed}
             />
 
             {/* 이 컴퓨터의 Claude Code MCP 가져오기 — 로컬 앱 전용(호스팅에선 서버가 빈 배열).
@@ -553,24 +578,26 @@ export default function Market({ params }) {
               </div>
             )}
 
-            <form onSubmit={addCustom} style={{ display: 'flex', gap: 8, padding: '10px 18px 18px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <form onSubmit={addCustom} style={{ display: 'flex', gap: 8, padding: '10px 18px 18px', alignItems: 'center', flexWrap: 'wrap', opacity: customMcpAllowed ? 1 : 0.6 }}>
               <span className="microlabel">{t('market.customLabel')}</span>
               <input suppressHydrationWarning
                 placeholder={t('market.customNamePlaceholder')}
                 value={custom.name}
+                disabled={!customMcpAllowed}
                 onChange={(e) => setCustom({ ...custom, name: e.target.value })}
                 style={{ width: 170, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, fontFamily: 'var(--mono)' }}
               />
               <input suppressHydrationWarning
                 placeholder={t('market.customCmdPlaceholder')}
                 value={custom.command}
+                disabled={!customMcpAllowed}
                 onChange={(e) => setCustom({ ...custom, command: e.target.value })}
                 style={{ flex: 1, minWidth: 200, height: 32, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12.5, fontFamily: 'var(--mono)' }}
               />
-              <button className="btn sm" disabled={!custom.name || !custom.command || busy === 'mcp-custom'}>
+              <button className="btn sm" disabled={!customMcpAllowed || !custom.name || !custom.command || busy === 'mcp-custom'}>
                 {busy === 'mcp-custom' ? <Spinner size={11} /> : t('market.addBtn')}
               </button>
-              <span className="microlabel" style={{ width: '100%' }}>{t('market.customSecretHint')}</span>
+              <span className="microlabel" style={{ width: '100%' }}>{customMcpAllowed ? t('market.customSecretHint') : t('market.customLocalOnlyHint')}</span>
             </form>
           </>
         )}
@@ -583,6 +610,7 @@ export default function Market({ params }) {
           installedIds={detail.kind === 'skill' ? installedSkillIds : new Set(Object.keys(installedMcp))}
           onInstalled={() => { load(); }}
           onClose={() => setDetail(null)}
+          customMcpAllowed={customMcpAllowed}
         />
       )}
     </div>
