@@ -15,3 +15,4 @@ src-tauri/binaries/
 src-tauri/resources/server/
 .superpowers/
 supabase/.temp/
+dist-server/

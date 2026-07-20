@@ -259,9 +259,37 @@ jobs:
           name: argo-${{ matrix.rust_target }}
           path: dist/*
           if-no-files-found: warn
+          # 발행본은 argo-agent 릴리스에 영구 보관 — CI 아티팩트를 90일 쌓으면 저장 용량(무료 500MB)만
+          # 태운다(빌드 1회 ~730MB). 발행 드릴 완료까지만 있으면 되므로 3일.
+          retention-days: 3
+
+  # 셀프호스트 서버 타르볼(CLI 설치 트랙 — 배포 전략 2026-07-20). 리눅스 러너(과금 배율 ×1 —
+  # 데스크톱 맥 잡의 ×10 대비 릴리스 버짓 대폭 절감). Supabase env 없이 빌드 = 로컬 모드(무인증
+  # 단일 사용자) 서버 — 셀프호스트 1차 기본(127.0.0.1 + SSH 터널, install.sh가 강제).
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Stage server tarball
+        run: node scripts/stage-server.mjs
+      - name: Attach install script
+        run: cp scripts/install.sh dist-server/install.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: argo-server-linux-x64
+          path: |
+            dist-server/*.tar.gz
+            dist-server/install.sh
+          if-no-files-found: error
+          retention-days: 3
 
   release:
-    needs: build
+    needs: [build, server] # server 타르볼 없이 릴리스가 먼저 만들어지는 레이스 방지(검수 MEDIUM) — if:always()로 실패 시에도 draft는 유지
     # always() — build matrix 일부(예: Windows)가 실패해도 성공한 OS 산출물로 draft를 만든다.
     # (없으면 needs 하나라도 실패 시 release가 스킵돼 draft가 안 생긴다 — v0.1.0 실측 이슈)
     if: always() && startsWith(github.ref, 'refs/tags/')
