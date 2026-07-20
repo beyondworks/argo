@@ -778,6 +778,7 @@ export async function runnerStatus(wsId) {
   for (const [id, meta] of Object.entries(RUNNER_AUTH)) {
     const cred = secrets.runners?.[id];
     out[id] = {
+      name: RUNNERS[id]?.name ?? id, // 표시 이름의 단일 진실 — 클라 하드코딩('Claude Agent SDK' 명판 실사고 2026-07-20) 방지
       month: usage[id] ?? null, // 이번 달 사용량(턴·비용) — 러너 카드에 "보이는 상태"
       methods: meta.methods,
       oauthPasteable: !!meta.oauthPasteable,

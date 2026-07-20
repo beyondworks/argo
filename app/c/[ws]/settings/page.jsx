@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
-import { AiConnectionCard, fieldStyle } from '../../../runner-connect';
+import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
@@ -64,6 +64,18 @@ function Settings({ params }) {
     }
   }
 
+  // 명판 '엔진' = 실제 연결 러너 — 데크 명판과 같은 단일 진실(usableRunnerNames). 연결/해제 시 argo:refresh로 갱신.
+  const [engines, setEngines] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const pull = () => api(`/api/companies/${ws}/keys`)
+      .then((k) => { if (alive) setEngines(usableRunnerNames(k.runners)); })
+      .catch(() => {});
+    pull();
+    window.addEventListener('argo:refresh', pull);
+    return () => { alive = false; window.removeEventListener('argo:refresh', pull); };
+  }, [ws]);
+
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiving, setArchiving] = useState(false);
   async function archive() {
@@ -79,7 +91,7 @@ function Settings({ params }) {
     [t('deck.nameplate.commissioned'), String(c.created ?? '').slice(0, 10)],
     [t('deck.nameplate.crew'), `${data.agents?.length ?? 0}`],
     [t('deck.nameplate.vault'), t('settings.nameplate.vaultVal', { n: data.memoryCount ?? 0, links: data.stats?.links ?? 0 })],
-    [t('deck.nameplate.engine'), 'Claude Agent SDK'],
+    [t('deck.nameplate.engine'), engines === null ? '—' : (engines.join(' · ') || t('deck.nameplate.engineNone'))],
     [t('settings.nameplate.runtime'), t('settings.nameplate.runtimeVal')],
   ];
 

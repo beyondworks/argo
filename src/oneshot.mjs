@@ -3,7 +3,7 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
-import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, externalExec, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, externalExec, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     제외하고 1회 재시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와 같은 원칙, 재귀 1회).
@@ -11,12 +11,21 @@ import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, externalExec, resolveRunner, run
 export async function runOneShot(wsId, prompt, opts = {}) {
   const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, __exclude = null } = opts;
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — 조용한 호스트 스캐빈징 금지(검수 MEDIUM, chat.mjs와 동일)
-  const resolved = await resolveRunner(wsId, 'claude', { exclude: __exclude })
-    .catch(() => ({ runner: 'claude', available: false, fellBack: false }));
+  // want=null(무선호) — 이 경로는 러너 독립이 명세라 claude 선호를 가장하지 않는다(선택 순서는 동일)
+  const resolved = await resolveRunner(wsId, null, { exclude: __exclude })
+    .catch(() => ({ runner: 'claude', available: false, fellBack: false, credButNoCli: [] }));
   if (!resolved.available) {
-    throw new Error(lang === 'en'
-      ? 'No AI runner is connected — connect Claude, Codex, Gemini, or GLM in Settings → AI connections.'
-      : 'AI 러너가 하나도 연결돼 있지 않습니다 — 설정 → AI 연결에서 Claude·Codex·Gemini·GLM 중 하나를 연결해 주세요.');
+    // 자격은 연결됐는데 벤더 CLI가 없는 러너(codex/gemini)는 원인을 정확히 — chat.mjs 게이트와 같은 안내.
+    // (실사고 2026-07-20: Gemini OAuth만 연결한 Windows 사용자가 "하나도 연결돼 있지 않습니다"를 받아
+    //  설정의 '연결됨' 배지와 정면 모순 — 어느 쪽도 거짓말은 아니었지만 사용자에겐 둘 다 거짓이 된다)
+    const noCli = (resolved.credButNoCli ?? []).map((id) => RUNNERS[id]?.name || id);
+    throw new Error(noCli.length
+      ? (lang === 'en'
+          ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — install it, or connect Claude (no install needed) in Settings → AI connections.`
+          : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
+      : (lang === 'en'
+          ? 'No AI runner is connected — connect Claude, Codex, Gemini, or GLM in Settings → AI connections.'
+          : 'AI 러너가 하나도 연결돼 있지 않습니다 — 설정 → AI 연결에서 Claude·Codex·Gemini·GLM 중 하나를 연결해 주세요.'));
   }
   const runner = resolved.runner;
   try {

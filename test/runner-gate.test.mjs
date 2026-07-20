@@ -53,3 +53,21 @@ test('codexSandboxArgs: 능력 → 샌드박스 매핑 고정(fs=밖 쓰기, bro
     '-c', 'sandbox_workspace_write.network_access=true',
   ], '둘 다 ON = 두 오버라이드 모두');
 });
+
+test('usableRunnerNames: 연결(유효)만, pickRunner 순서(glm→kimi), 이름은 서버 name 필드', async () => {
+  const { usableRunnerNames } = await import('../app/runner-usable.mjs');
+  // 실사고(2026-07-20): 명판 'Claude Agent SDK' 하드코딩 — Gemini만 연결한 사용자가 "클로드로 도는 줄" 혼란
+  assert.deepEqual(usableRunnerNames({
+    gemini: { name: 'Gemini', company: { connected: true } },
+    claude: { name: 'Claude Code', company: { connected: false } },
+  }), ['Gemini'], 'Gemini만 연결 → Gemini만');
+  assert.deepEqual(usableRunnerNames({
+    kimi: { name: 'Kimi', company: { connected: true } },
+    glm: { name: 'GLM', company: { connected: true } },
+  }), ['GLM', 'Kimi'], '입력 순서 무관 pickRunner(RUNNER_AUTH) 순 — 자동 표시가 서버 선택과 일치');
+  assert.deepEqual(usableRunnerNames({
+    codex: { name: 'Codex', company: { connected: true, invalid: true } },
+  }), [], '무효(재연결 필요) 자격은 엔진에 세지 않는다');
+  assert.deepEqual(usableRunnerNames({}), []);
+  assert.deepEqual(usableRunnerNames(null), []);
+});

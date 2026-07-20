@@ -16,7 +16,7 @@ export const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--ca
 
 // 가용 판정(순수)은 runner-usable.mjs로 분리 — 데크 배너·홈 안내·온보딩 게이트·회귀 테스트가 공유.
 // 기존 소비처(import from './runner-connect') 호환을 위해 재수출한다.
-export { anyRunnerUsable, runnerNeedsReconnect } from './runner-usable.mjs';
+export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, PICK_ORDER } from './runner-usable.mjs';
 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)

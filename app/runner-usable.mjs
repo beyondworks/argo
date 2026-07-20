@@ -16,3 +16,17 @@ export function anyRunnerUsable(runners) {
 export function runnerNeedsReconnect(runners) {
   return Object.values(runners ?? {}).some((r) => r.company?.connected && r.company?.invalid);
 }
+
+/** 서버 자동 선택(pickRunner = RUNNER_AUTH 정의 순) 순서 — "자동" 표시가 실제 실행 러너와 어긋나지 않게.
+    카탈로그(/api/runners = RUNNERS 순)는 kimi·glm 순서가 달라 첫 authed를 그냥 집으면 오표시가 난다. */
+export const PICK_ORDER = ['claude', 'codex', 'gemini', 'glm', 'kimi'];
+
+/** 연결(유효)된 러너의 표시 이름 목록 — 명판 '엔진' 표기의 단일 진실.
+    'Claude Agent SDK' 하드코딩이 Gemini만 연결한 사용자에게 "클로드로 떠 있다" 혼란을 준
+    실사고(2026-07-20)의 교체재. 이름은 서버 runnerStatus가 실어 준다(name 필드). */
+export function usableRunnerNames(runners) {
+  return Object.entries(runners ?? {})
+    .filter(([, r]) => r.company?.connected && !r.company?.invalid)
+    .sort(([a], [b]) => PICK_ORDER.indexOf(a) - PICK_ORDER.indexOf(b))
+    .map(([id, r]) => r.name || id);
+}
