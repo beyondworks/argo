@@ -58,18 +58,43 @@ function ensureCliPath() {
 const EXPLICIT_SERVER_SECRETS = new Set(['SUPABASE_SERVICE_ROLE_KEY']);
 const SERVER_SECRET_RE = /(SERVICE_ROLE|_SECRET$|_SECRET_|DATABASE_URL|PRIVATE_KEY|WEBHOOK_SECRET|SESSION_SECRET|JWT_SECRET)/i;
 export const isServerSecretKey = (k) => EXPLICIT_SERVER_SECRETS.has(k) || SERVER_SECRET_RE.test(k);
-/** 서버 시크릿만 제거한 env 사본 — 러너 모델 키·운영 변수는 그대로 둔다. (export: 회귀 테스트용) */
-export function scrubServerSecrets(env = process.env) {
+/** 제공사 인증 변수 소유권 — 어느 러너가 어떤 인증 env를 정당하게 쓰는가.
+    실행 러너 외 제공사 키가 자식(외부 CLI·SDK가 띄우는 Bash/MCP)에 상속되면, 러너 하나가 프롬프트
+    인젝션에 뚫릴 때 printenv 한 번으로 '다른' 제공사 자격까지 한꺼번에 유출된다(감사 2026-07-20 —
+    크로스 러너 폭발 반경). ANTHROPIC_AUTH_TOKEN은 Anthropic 호환 프로토콜 공용(claude·glm·kimi). */
+const PROVIDER_AUTH_OWNERS = {
+  ANTHROPIC_API_KEY: ['claude'],
+  CLAUDE_CODE_OAUTH_TOKEN: ['claude'],
+  ANTHROPIC_AUTH_TOKEN: ['claude', 'glm', 'kimi'],
+  OPENAI_API_KEY: ['codex'],
+  GEMINI_API_KEY: ['gemini'],
+  GOOGLE_API_KEY: ['gemini'],
+  GLM_API_KEY: ['glm'],
+  KIMI_API_KEY: ['kimi'],
+};
+/** 서버 시크릿(+실행 러너 외 제공사 키)을 제거한 env 사본. runner 미지정 = 서버 시크릿만(기존 동작).
+    runner 지정 = 그 러너 소유가 아닌 제공사 인증 변수도 제거 — 크로스 러너 키 상속 차단. (export: 회귀 테스트용) */
+export function scrubServerSecrets(env = process.env, runner = null) {
   const out = {};
-  for (const [k, v] of Object.entries(env)) if (!isServerSecretKey(k)) out[k] = v;
+  for (const [k, v] of Object.entries(env)) {
+    if (isServerSecretKey(k)) continue;
+    if (runner && PROVIDER_AUTH_OWNERS[k] && !PROVIDER_AUTH_OWNERS[k].includes(runner)) continue;
+    out[k] = v;
+  }
   return out;
 }
 
-/** 실패 출력에서 API 에러 메시지만 뽑는다 — 이벤트 로그에 명령·프롬프트 전문을 흘리지 않는다. */
+/** 키 형태 마스킹(방어심층) — 에러·로그에 실릴 문자열에서 벤더 키 패턴을 가린다.
+    chat.mjs SDK 실패 경로와 아래 apiError(외부 CLI 실패 경로)가 공유 — 한쪽만 마스킹하면
+    CLI stderr의 키 조각이 동기화되는 이벤트 로그(events.jsonl)에 영속된다(감사 2026-07-20). */
+export const maskKeyLike = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,})\b/g, 'sk-***');
+
+/** 실패 출력에서 API 에러 메시지만 뽑는다 — 이벤트 로그에 명령·프롬프트 전문을 흘리지 않는다.
+    키 패턴은 마스킹(벤더 401 바디의 "Incorrect API key provided: sk-…" 류가 그대로 영속되지 않게). */
 function apiError(e) {
   const raw = `${e.stdout ?? ''}\n${e.stderr ?? ''}`;
   const m = raw.match(/"message"\s*:\s*"([^"]+)"/);
-  return new Error(m ? m[1] : `러너 실행 실패 (exit ${e.code ?? '?'}): ${String(e.stderr ?? e.message).replace(/\s+/g, ' ').slice(-160)}`);
+  return new Error(maskKeyLike(m ? m[1] : `러너 실행 실패 (exit ${e.code ?? '?'}): ${String(e.stderr ?? e.message).replace(/\s+/g, ' ').slice(-160)}`));
 }
 
 /** Argo 전용 CODEX_HOME — 사용자 전역 config(커스텀 에이전트·모델 핀)와 격리하고 auth만 빌린다.
@@ -157,16 +182,18 @@ export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
 export const kimiEnv = () => ({
-  ...scrubServerSecrets(process.env),
+  ...scrubServerSecrets(process.env, 'kimi'),
   ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic',
   ANTHROPIC_AUTH_TOKEN: process.env.KIMI_API_KEY ?? '',
   ANTHROPIC_API_KEY: '',
+  CLAUDE_CODE_OAUTH_TOKEN: '', // claude 분기와 대칭 — Anthropic 구독 토큰이 제3자 향 턴에 남지 않게(감사 2026-07-20)
 });
 export const glmEnv = () => ({
-  ...scrubServerSecrets(process.env),
+  ...scrubServerSecrets(process.env, 'glm'),
   ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic',
   ANTHROPIC_AUTH_TOKEN: process.env.GLM_API_KEY ?? '',
   ANTHROPIC_API_KEY: '',
+  CLAUDE_CODE_OAUTH_TOKEN: '', // claude 분기와 대칭(감사 2026-07-20)
 });
 
 /** 설치·인증 감지 — 각 CLI의 로그인 산출물(OAuth 크리덴셜 파일)을 본다. 60초 캐시.
@@ -251,7 +278,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
         '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록
-      ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env), ...(cred?.env ?? {}), CODEX_HOME } })
+      ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME } })
         .catch((e) => { throw apiError(e); });
       return (await readFile(out, 'utf8')).trim();
     } finally {
@@ -266,7 +293,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
       '-p', prompt,
       ...(model ? ['-m', model] : []),
       '--approval-mode', 'auto_edit', // 편집류만 자동 승인 — 셸 등은 비대화 모드에서 실행되지 않는다
-    ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env), ...(cred?.env ?? {}) } })
+    ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'gemini'), ...(cred?.env ?? {}) } })
       .catch((e) => { throw apiError(e); });
     return stdout
       .replace(/^(Loaded cached credentials\.|Data collection is .*|\[STARTUP\].*|\[dotenv.*)\s*$/gim, '')
@@ -441,10 +468,12 @@ export async function runnerCredEnv(wsId, runner) {
       : { env: { ANTHROPIC_API_KEY: v, CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'glm') {
-    return { env: { ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '' } };
+    // CLAUDE_CODE_OAUTH_TOKEN 명시 소거 — claude 분기와 대칭. Anthropic 구독 토큰이 제3자(z.ai) 향
+    // 턴 env에 남으면 자식 프로세스에서 열람 가능(감사 2026-07-20 — scrub 러너 인자와 벨트앤서스펜더).
+    return { env: { ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'kimi') {
-    return { env: { ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '' } };
+    return { env: { ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'codex') {
     // apikey면 계정 OAuth를 무시하고 OPENAI_API_KEY로 — 격리홈을 '깨끗한' 것으로 써 auth.json 상속 차단.
@@ -513,10 +542,11 @@ export async function sdkEnvFor(wsId, runner) {
   const cred = await runnerCredEnv(wsId, runner);
   // SDK가 띄우는 Bash/MCP 자식도 서버 시크릿(서비스 키)을 상속하지 않도록 항상 세척된 env를 준다(P1-6).
   // claude 호스트 폴백도 이제 null 대신 세척 env를 반환한다 — 러너 인증(ANTHROPIC_*)은 보존, 크라운주얼만 제거.
-  if (cred) return { ...scrubServerSecrets(process.env), ...cred.env };
+  // runner 인자 = 실행 러너 외 제공사 키도 제거(크로스 러너 유출 차단, 감사 2026-07-20).
+  if (cred) return { ...scrubServerSecrets(process.env, runner), ...cred.env };
   if (runner === 'glm') return glmEnv(); // 회사 자격 없으면 호스트 GLM_API_KEY 폴백(glmEnv 자체가 세척됨)
   if (runner === 'kimi') return kimiEnv(); // 동일 — 호스트 KIMI_API_KEY 폴백(env 주입 = 명시 옵트인)
-  return scrubServerSecrets(process.env);
+  return scrubServerSecrets(process.env, runner);
 }
 
 /** OAuth 연결 시작 — 벤더 CLI의 브라우저 로그인을 서버가 대신 실행한다(서버가 사용자 PC에 있는
