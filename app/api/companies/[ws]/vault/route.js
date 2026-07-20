@@ -30,7 +30,8 @@ export async function GET(req, { params }) {
       }
     }
     // projects = 크루 산출물(별도 축) — 기억(docs)과 분리 반환. 기억 수·별자리 그래프에 산출물이 섞이지 않는다.
-    const [docs, projects] = await Promise.all([listDocs(ws), listProjectDocs(ws)]);
+    // 산출물 목록 실패가 기억 뷰까지 무너뜨리지 않게 격벽(릴리스 검수 M-2)
+    const [docs, projects] = await Promise.all([listDocs(ws), listProjectDocs(ws).catch(() => [])]);
     let index = '';
     try { index = await readDoc(ws, '_index.md'); } catch {}
     return Response.json({ docs, projects, index });

@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { join, normalize } from 'node:path';
+import { readFile, realpath } from 'node:fs/promises';
+import { join, normalize, sep } from 'node:path';
 import { paths } from '../../../../../src/workspace.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
@@ -22,7 +22,14 @@ export async function GET(req, { params }) {
     return new Response('잘못된 경로', { status: 400 });
   }
   try {
-    const buf = await readFile(join(paths(ws).vault, norm));
+    // realpath 봉인 — '..' 문자열 검사만으론 심링크를 못 막는다. 에이전트(셸·fs 능력)가 vault 밖을
+    // 가리키는 심링크를 만들면 그대로 서빙되던 통로 차단(릴리스 검수 M-3 — 호스팅 합류 시 HIGH 승격 지점).
+    const vault = paths(ws).vault;
+    const real = await realpath(join(vault, norm));
+    if (!real.startsWith((await realpath(vault)) + sep)) {
+      return new Response('잘못된 경로', { status: 400 });
+    }
+    const buf = await readFile(real);
     const ext = norm.split('.').pop().toLowerCase();
     return new Response(buf, {
       headers: { 'content-type': MIME[ext] ?? 'application/octet-stream', 'cache-control': 'private, max-age=86400' },
