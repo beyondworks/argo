@@ -236,19 +236,25 @@ export default function CrewChat({ params }) {
   }, [ws, slug]);
 
   useEffect(() => {
+    // alive 가드 — 크루를 오가면 이전 슬러그의 fetch가 취소되지 않고 늦게 도착해 현재 스레드를
+    // 통째로 덮어쓴다(setThread는 병합이 아니라 교체). 총괄팀장처럼 스레드가 크고 위임으로 턴이 긴
+    // 크루는 in-flight 창이 넓어 "다른 크루 다녀오니 대화가 사라짐"으로 나타났다(실사용 신고 2026-07-20).
+    let alive = true;
     setThread(null); setError(''); sessionRef.current = null;
     api(`/api/companies/${ws}`)
       .then((d) => {
+        if (!alive) return;
         const a = d.agents.find((a) => a.slug === slug) ?? { name: slug, role: '' };
         setAgent(a);
         // '' = 미지정(자동) — 'claude'를 박으면 자동 크루가 화면·저장 모두 클로드 고정으로 둔갑(K2 오표시 계열)
         setSel({ runner: a.runner || '', model: a.model || '' });
       })
-      .catch(() => setAgent({ name: slug, role: '' }));
+      .catch(() => { if (alive) setAgent({ name: slug, role: '' }); });
     api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
       // status도 첫 로드에 반영 — 온보딩 직행 시 시운전 진행 카드가 8초 폴을 기다리지 않고 바로 보인다
-      .then((t) => { setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); })
-      .catch(() => setThread([]));
+      .then((t) => { if (!alive) return; setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); })
+      .catch(() => { if (alive) setThread([]); });
+    return () => { alive = false; };
   }, [ws, slug]);
 
   // 하단 근처 여부를 실제 스크롤에서 읽어 둔다 — 사장이 위로 올려 읽는 중이면 새 내용이 와도 끌어내리지 않는다.
