@@ -126,6 +126,9 @@ export const RUNNERS = {
     models: [
       { id: 'claude-fable-5', label: 'Fable 5' },
       { id: 'claude-opus-4-8', label: 'Opus 4.8' },
+      // Opus 4.7·4.6 — 이전 세대 Opus(활성). id는 claude-api 모델 카탈로그 정본 표기 그대로(날짜 접미 금지).
+      { id: 'claude-opus-4-7', label: 'Opus 4.7' },
+      { id: 'claude-opus-4-6', label: 'Opus 4.6' },
       { id: 'claude-sonnet-5', label: 'Sonnet 5' },
       { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
     ],

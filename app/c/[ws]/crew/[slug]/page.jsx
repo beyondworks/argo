@@ -75,7 +75,12 @@ export default function CrewChat({ params }) {
     // imeGuard 병합 — 이 입력은 스프레드 대신 여기서 IME Enter를 막는다({...imeGuard}가 onKeyDown을 덮는 문제)
     if (e.key === 'Enter' && e.nativeEvent.isComposing) { e.preventDefault(); return; }
     // Enter=전송, Shift+Enter=줄바꿈(textarea 기본 동작) — 유건 지시 2026-07-19
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e); return; }
+    // 단 '/' 커맨더 후보가 떠 있으면 Enter는 첫 후보 실행(명령은 크루에게 전송되지 않는다)
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (slashMatches.length) { runSlash(slashMatches[0]); return; }
+      send(e); return;
+    }
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
     if (e.nativeEvent.isComposing) return; // IME 조합 중엔 개입하지 않는다
     const el = e.target;
@@ -209,6 +214,10 @@ export default function CrewChat({ params }) {
   const pinRef = useRef(null);      // 상단에 붙일 내 메시지의 mid — 전송 직후 1회 소비
   const msgRefs = useRef(new Map()); // mid → DOM 노드
   const atBottomRef = useRef(true);  // 하단 근처면 새 내용을 따라간다. 위로 올려 읽는 중이면 끌어내리지 않는다.
+  const spacerRef = useRef(null);    // 작업 중 하단 여백 — 스크롤 기준(콘텐츠 바닥)에서 이 높이를 뺀다
+  // 여백은 턴이 끝나도 이 대화에 머무는 동안 유지한다(spacerHold). 끝나는 순간 빼면 scrollHeight가
+  // 100vh 줄며 브라우저가 scrollTop을 강제 클램프해 화면이 위로 튄다(실사용 신고 2026-07-21 "밀려 올라감").
+  const [spacerHold, setSpacerHold] = useState(false);
   // 첨부 — 업로드 즉시 vault/files/에 저장되고, 보내기 전까지 입력바 위에 칩으로 대기한다
   const [att, setAtt] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -241,6 +250,7 @@ export default function CrewChat({ params }) {
     // 크루는 in-flight 창이 넓어 "다른 크루 다녀오니 대화가 사라짐"으로 나타났다(실사용 신고 2026-07-20).
     let alive = true;
     setThread(null); setError(''); sessionRef.current = null;
+    setSpacerHold(false); // 대화(크루) 전환 — 이전 대화의 작업 여백을 끌고 오지 않는다
     api(`/api/companies/${ws}`)
       .then((d) => {
         if (!alive) return;
@@ -257,18 +267,21 @@ export default function CrewChat({ params }) {
     return () => { alive = false; };
   }, [ws, slug]);
 
+  // 콘텐츠 바닥 = scrollHeight − 작업 여백. 하단 판정·추종 모두 이 값을 쓴다 — scrollHeight를 그대로 쓰면
+  // 여백(100vh)까지 "바닥"으로 취급해 자동 추종이 실제 대화를 화면 위로 밀어낸다(2026-07-21 "밀려 올라감"의 또 다른 축).
+  const contentBottom = (el) => el.scrollHeight - (spacerRef.current?.offsetHeight ?? 0);
   // 하단 근처 여부를 실제 스크롤에서 읽어 둔다 — 사장이 위로 올려 읽는 중이면 새 내용이 와도 끌어내리지 않는다.
   useEffect(() => {
     const el = threadRef.current;
     if (!el) return;
-    const onScroll = () => { atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; };
+    const onScroll = () => { atBottomRef.current = contentBottom(el) - el.scrollTop - el.clientHeight < 80; };
     onScroll();
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
   // 스크롤 규율 두 가지.
   //  ① 전송 직후 — 방금 보낸 내 글을 컨테이너 상단에 붙인다. 그 아래 공간에서 작업 과정과 답변이 흐른다.
-  //  ② 그 외 — 하단 근처일 때만 따라간다.
+  //  ② 그 외 — 하단 근처일 때만 따라간다(추종 목표는 콘텐츠 바닥 — 작업 여백으로는 안 내려간다).
   // liveStage.partial이 의존성에 있어야 스트리밍으로 답변이 자라는 동안에도 시야가 따라간다.
   // (이게 빠져 있어 답변이 길어지면 내용이 화면 아래로 밀려 "스크롤이 위에 멈춰 있다"로 보였다 — 2026-07-20 신고)
   useEffect(() => {
@@ -281,7 +294,7 @@ export default function CrewChat({ params }) {
       el.scrollTop += pin.getBoundingClientRect().top - el.getBoundingClientRect().top - 12;
       return;
     }
-    if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    if (atBottomRef.current) el.scrollTop = Math.max(0, contentBottom(el) - el.clientHeight);
   }, [thread, busy, liveStage?.partial]);
 
   // 다른 창구(텔레그램·슬랙·루틴·결재 후속)에서 붙은 대화를 웹에도 반영 — 채널을 오가도 맥락은 하나다.
@@ -340,6 +353,8 @@ export default function CrewChat({ params }) {
   }, [busy]);
 
   const working = busy || !!liveStage; // 내가 보낸 턴 + 결재 후속·루틴·메신저발 턴
+  // 턴이 돌기 시작하면 하단 작업 여백을 켠다 — 끄는 건 대화 전환·새 대화에서만(spacerHold 선언부 주석 참조)
+  useEffect(() => { if (working) setSpacerHold(true); }, [working]);
   useEffect(() => {
     if (!working) { setElapsed(0); return; }
     if (busy) startRef.current = Date.now();
@@ -408,6 +423,8 @@ export default function CrewChat({ params }) {
 
   async function send(e) {
     e.preventDefault();
+    // 전송 버튼 경로에서도 '/' 커맨더 우선 — '/new' 같은 명령 토큰이 크루에게 전송되지 않게
+    if (slashMatches.length) { runSlash(slashMatches[0]); return; }
     const message = input.trim();
     if (!message) return;
     const attachments = att;
@@ -466,8 +483,27 @@ export default function CrewChat({ params }) {
     // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작(버튼이 안 열리던 원인) → 제거. 파괴적 액션만 DangerModal.
     await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
     setThread([]); sessionRef.current = null; setError(''); setThreadTitle(null);
-    setViewing(null); setArchMsgs(null); resetAnnot();
+    setViewing(null); setArchMsgs(null); resetAnnot(); setSpacerHold(false);
     loadSessions(); // 방금 넘긴 대화가 좌측 레일에 적재된다
+  }
+
+  // '/' 커맨더 — 입력이 슬래시 토큰 하나일 때만 발동(문장 속 '/'는 일반 텍스트로 그대로 전송).
+  // 회의실 @멘션 힌트와 같은 문법: 후보 칩 노출, Enter/클릭이 첫 후보 실행. ko/en alias 동시 지원.
+  const SLASH_CMDS = [
+    { id: 'new', aliases: ['new', '새대화'], label: t('chat.newChat'), run: () => newChat() },
+    { id: 'card', aliases: ['card', '카드'], label: t('chat.card'), run: () => setCardOpen(true) },
+    { id: 'panel', aliases: ['panel', '작업', 'files', '파일'], label: t('crew.panel.open'), run: () => setPanelOpen(true) },
+    { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(`/c/${ws}/vault`) },
+    { id: 'room', aliases: ['room', '회의', '회의실'], label: t('nav.room'), run: () => router.push(`/c/${ws}/room`) },
+    { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(`/c/${ws}`) },
+  ];
+  const slashToken = !viewing ? input.match(/^\/(\S*)$/) : null;
+  const slashQ = slashToken ? slashToken[1].toLowerCase() : '';
+  const slashMatches = slashToken ? SLASH_CMDS.filter((c) => c.aliases.some((al) => al.startsWith(slashQ))) : [];
+  function runSlash(cmd) {
+    histIdx.current = -1;
+    setInput('');
+    cmd.run();
   }
 
   return (
@@ -742,8 +778,8 @@ export default function CrewChat({ params }) {
         {error && <p style={{ fontSize: 13, color: 'var(--danger)' }}>{error}</p>}
         {/* 작업 중 여백 — 방금 보낸 글을 화면 상단까지 밀어올릴 스크롤 여유를 만든다.
             이게 없으면 마지막 메시지가 컨테이너 바닥에 걸려 "내 글 위 / 작업 과정 아래" 배치가 성립하지 않는다.
-            턴이 끝나면 사라져 대화가 자연스럽게 정렬된다. */}
-        {!viewing && working && <div aria-hidden style={{ flex: 'none', height: 'calc(100vh - 180px)' }} />}
+            턴이 끝나도 이 대화에 있는 동안 유지(spacerHold) — 즉시 빼면 scrollTop 클램프로 화면이 위로 튄다. */}
+        {!viewing && (working || spacerHold) && <div ref={spacerRef} aria-hidden style={{ flex: 'none', height: 'calc(100vh - 180px)' }} />}
         <div ref={endRef} />
         </div>
       </div>
@@ -768,6 +804,17 @@ export default function CrewChat({ params }) {
               </span>
             ))}
             {uploading && <span className="att-chip"><Spinner size={11} /> {t('chat.uploading')}</span>}
+          </div>
+        )}
+        {/* '/' 커맨더 후보 — 회의실 @멘션 힌트와 같은 칩 문법. Enter=첫 후보, 클릭=해당 명령 */}
+        {slashMatches.length > 0 && (
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span className="microlabel">{t('chat.commands')}</span>
+            {slashMatches.map((c) => (
+              <button key={c.id} type="button" className="chip" style={{ cursor: 'pointer' }} onClick={() => runSlash(c)}>
+                /{c.aliases[0]} — {c.label}
+              </button>
+            ))}
           </div>
         )}
         {/* 여러 줄 입력 — textarea(Enter 전송·Shift+Enter 줄바꿈). 버튼은 하단 정렬(입력이 자라도 자리 고정) */}

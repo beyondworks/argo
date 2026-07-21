@@ -146,7 +146,9 @@ export async function runRoomTurn(wsId, text) {
     const a = agents.find((x) => norm(x.slug) === key || norm(x.name) === key);
     if (a && !mentioned.some((y) => y.slug === a.slug)) mentioned.push(a);
   }
-  const speakers = (mentioned.length ? mentioned : [agents[0]]).slice(0, 3);
+  // @all/@전체 — 전 크루 호출(명시적 요청이므로 3명 폭주 상한을 적용하지 않는다). 이름 멘션은 기존 상한 유지.
+  const allCall = /@(all|전체)(?=\s|$)/i.test(text);
+  const speakers = allCall ? agents : (mentioned.length ? mentioned : [agents[0]]).slice(0, 3);
 
   const nameOf = (slug) => agents.find((x) => x.slug === slug)?.name ?? slug;
   const replies = [];

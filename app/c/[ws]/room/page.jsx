@@ -214,6 +214,13 @@ export default function Room({ params }) {
             {agents.length > 0 && (
               <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
                 <span className="microlabel">{t('room.mention')}</span>
+                {/* @all — 전 크루 호출(서버 runRoomTurn이 @all/@전체를 전원 발언으로 해석) */}
+                {agents.length > 1 && (
+                  <button type="button" className="chip" style={{ cursor: 'pointer', color: 'var(--primary-strong)' }} title={t('room.allCrew')}
+                    onClick={() => setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}@all `)}>
+                    @all
+                  </button>
+                )}
                 {agents.map((a) => (
                   <button key={a.slug} className="chip" style={{ cursor: 'pointer' }} title={a.role}
                     onClick={() => setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}@${a.name} `)}>

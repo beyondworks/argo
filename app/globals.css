@@ -1180,6 +1180,11 @@ body {
 a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
 input, textarea { font: inherit; color: var(--fg); }
+/* 네이티브 셀렉트 드롭다운 — option은 UA 기본색을 타서 다크 테마에서 밝은 목록 배경 + 상속된 밝은 글자로
+   "항목이 흰색이라 안 보임"이 된다(고객 제보 2026-07-21). 목록 색을 테마 토큰으로 명시 고정한다.
+   (macOS 네이티브 팝업은 시스템이 그리므로 영향 없음 — Windows/WebView2·크로뮴 계열에서 적용) */
+select { font: inherit; color: var(--fg); }
+select option, select optgroup { background: var(--card); color: var(--fg); }
 
 :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 8px; }
 
@@ -1242,7 +1247,8 @@ input, textarea { font: inherit; color: var(--fg); }
 /* 크루 고정 버튼 — 평소 숨김, 행 hover 시 노출. 단 고정된 크루(.pinned)는 상시 표시(어느 크루가 고정됐는지 한눈에) */
 .crew-row .crew-pin { opacity: 0; transition: opacity 0.12s; }
 .crew-row:hover .crew-pin, .crew-row .crew-pin.pinned, .crew-row .crew-pin:focus-visible { opacity: 1; }
-.crew-row .crew-pin:hover { background: var(--card-2); }
+/* 핀 버튼 자체 hover — 행 hover 배경(card-2)과 같으면 버튼 경계가 안 보인다 → 한 단계 진한 토큰 */
+.crew-row .crew-pin:hover { background: var(--border-soft); }
 
 .side-footer {
   margin-top: auto; padding: 10px;
@@ -1549,6 +1555,7 @@ input, textarea { font: inherit; color: var(--fg); }
   background: var(--primary); color: var(--primary-fg);
   border-radius: 16px 16px 5px 16px;
   padding: 9px 15px; font-size: 13.5px;
+  overflow-wrap: break-word; /* 긴 URL 등 무공백 문자열이 말풍선 폭을 뚫지 않게 */
 }
 .msg-crew { display: flex; gap: 11px; max-width: 94%; }
 
@@ -1574,7 +1581,9 @@ input, textarea { font: inherit; color: var(--fg); }
 .memo-chip:hover { background: var(--primary-soft); color: var(--fg); }
 
 /* ─── 마크다운 ─── */
-.md { font-size: 13.5px; line-height: 1.68; }
+/* 가로 격리 — 넓은 표·긴 무공백 문자열이 말풍선/레인을 밀어내 채팅 전체에 가로 스크롤을 만든다
+   (실사용 신고 2026-07-21: "채팅창 가로 영역 늘어남"). 넘치는 건 자기 블록 안에서만 스크롤/줄바꿈. */
+.md { font-size: 13.5px; line-height: 1.68; min-width: 0; overflow-wrap: break-word; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md h1, .md h2, .md h3 { margin: 1.15em 0 0.4em; line-height: 1.35; letter-spacing: -0.01em; }
@@ -1593,7 +1602,8 @@ input, textarea { font: inherit; color: var(--fg); }
 .md blockquote { border-left: 2px solid var(--border); padding-left: 12px; color: var(--fg-2); }
 .md a { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
 .md hr { border: 0; border-top: 1px solid var(--border-soft); margin: 1em 0; }
-.md table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+/* display:block — 표는 min-content가 셀 내용만큼 커져 컨테이너를 뚫는 유일한 블록. 자기 폭 안에서 가로 스크롤 */
+.md table { border-collapse: collapse; font-size: 12.5px; display: block; max-width: 100%; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--border-soft); padding: 6px 10px; text-align: left; }
 
 .wikilink {
