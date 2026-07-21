@@ -1549,7 +1549,9 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 }
 
 /* ─── 채팅 ─── */
-.thread { display: flex; flex-direction: column; gap: 20px; }
+/* overflow-anchor 차단 — 크롬 scroll anchoring이 턴 종료(작업 카드 unmount) 같은 DOM 변화에
+   scrollTop을 수백 px 보정해 화면이 튄다(실측 1068→540). 스크롤은 페이지 코드가 전담한다. */
+.thread { display: flex; flex-direction: column; gap: 20px; overflow-anchor: none; }
 .msg-user {
   align-self: flex-end; max-width: 75%;
   background: var(--primary); color: var(--primary-fg);

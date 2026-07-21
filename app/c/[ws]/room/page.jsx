@@ -98,11 +98,16 @@ export default function Room({ params }) {
     } catch (e2) { setError(String(e2.message)); }
   }
 
-  // @자동 힌트 — 입력 끝이 @word면 매칭 크루 제안
+  // @멘션 드롭업 — 입력 끝이 @word면 입력창 위로 후보 패널이 열린다(칩 가로 나열이 크루 수만큼
+  // 옆으로 흘러 지저분했다 — 유건 지시 2026-07-21: 드롭다운식 + 위로). @all이 항상 첫 후보.
   const mention = input.match(/@(\S*)$/);
+  const mq = mention ? mention[1].toLowerCase() : '';
   const suggests = mention
-    ? agents.filter((a) => a.name.toLowerCase().startsWith(mention[1].toLowerCase()) || a.slug.startsWith(mention[1].toLowerCase())).slice(0, 4)
+    ? agents.filter((a) => !mq || a.name.toLowerCase().startsWith(mq) || a.slug.startsWith(mq)).slice(0, 12)
     : [];
+  const suggestAll = !!mention && agents.length > 1 && (!mq || 'all'.startsWith(mq) || '전체'.startsWith(mention[1]));
+  const completeMention = (name) => setInput(input.replace(/@\S*$/, `@${name} `));
+  const mentionOpen = !!mention && (suggestAll || suggests.length > 0);
 
   const shown = viewing ? archMsgs : messages;
 
@@ -210,46 +215,53 @@ export default function Room({ params }) {
           </div>
         ) : (
           <div style={{ display: 'grid', gap: 6 }}>
-            {/* 크루 칩 — 입력창 좌측 상단(컨테스트와 동일 배치). 클릭하면 @이름을 입력에 넣는다. */}
-            {agents.length > 0 && (
-              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span className="microlabel">{t('room.mention')}</span>
-                {/* @all — 전 크루 호출(서버 runRoomTurn이 @all/@전체를 전원 발언으로 해석) */}
-                {agents.length > 1 && (
-                  <button type="button" className="chip" style={{ cursor: 'pointer', color: 'var(--primary-strong)' }} title={t('room.allCrew')}
-                    onClick={() => setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}@all `)}>
-                    @all
-                  </button>
-                )}
-                {agents.map((a) => (
-                  <button key={a.slug} className="chip" style={{ cursor: 'pointer' }} title={a.role}
-                    onClick={() => setInput((v) => `${v}${v && !v.endsWith(' ') ? ' ' : ''}@${a.name} `)}>
-                    @{a.name}
-                  </button>
-                ))}
-              </div>
-            )}
-            {suggests.length > 0 && (
-              <div style={{ display: 'flex', gap: 5 }}>
-                {suggests.map((a) => (
-                  <button key={a.slug} className="chip" style={{ cursor: 'pointer' }}
-                    onClick={() => setInput(input.replace(/@\S*$/, `@${a.name} `))}>@{a.name} — {a.role}</button>
-                ))}
-              </div>
-            )}
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
-            <form onSubmit={send} className="input-bar">
-              <input suppressHydrationWarning
-                placeholder={t('room.placeholder')}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                disabled={busy}
-                {...imeGuard}
-              />
-              <button className="btn btn-primary btn-icon" disabled={busy || !input.trim()} aria-label={t('chat.send')}>
-                <Icon name="send" size={15} />
-              </button>
-            </form>
+            {/* 멘션 드롭업의 위치 기준 — 입력바를 relative로 감싼다 */}
+            <div style={{ position: 'relative' }}>
+              {mentionOpen && (
+                <div className="card card-float" role="listbox" style={{
+                  position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 40,
+                  minWidth: 280, maxWidth: 420, maxHeight: 300, overflowY: 'auto', padding: 6,
+                  boxShadow: '0 8px 28px rgba(0,0,0,.14)',
+                }}>
+                  <div className="microlabel" style={{ padding: '4px 8px 2px' }}>{t('room.mention')}</div>
+                  {/* @all — 전 크루 호출(서버 runRoomTurn이 @all/@전체를 전원 발언으로 해석). 항상 첫 후보 = Enter 완성 대상 */}
+                  {suggestAll && (
+                    <button type="button" role="option" onClick={() => completeMention('all')}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', background: 'none', border: 0, borderRadius: 7, cursor: 'pointer', padding: '6px 8px', fontSize: 12.5 }}>
+                      <span className="mono" style={{ color: 'var(--primary-strong)', fontWeight: 650 }}>@all</span>
+                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-3)', fontSize: 11.5 }}>{t('room.allCrew')}</span>
+                    </button>
+                  )}
+                  {suggests.map((a) => (
+                    <button key={a.slug} type="button" role="option" onClick={() => completeMention(a.name)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', background: 'none', border: 0, borderRadius: 7, cursor: 'pointer', padding: '6px 8px', fontSize: 12.5, color: 'var(--fg)' }}>
+                      <span style={{ fontWeight: 650, flex: 'none' }}>@{a.name}</span>
+                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-3)', fontSize: 11.5 }}>{a.role}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <form onSubmit={send} className="input-bar">
+                <input suppressHydrationWarning
+                  placeholder={t('room.placeholder')}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  disabled={busy}
+                  {...imeGuard}
+                  onKeyDown={(e) => {
+                    // {...imeGuard} 뒤에 두어 onKeyDown을 이 핸들러가 갖는다 — IME 조합 Enter 차단 포함
+                    if (e.key !== 'Enter') return;
+                    if (e.nativeEvent.isComposing) { e.preventDefault(); return; }
+                    // 멘션 패널이 열려 있으면 Enter = 첫 후보 완성(전송 아님)
+                    if (mentionOpen) { e.preventDefault(); completeMention(suggestAll ? 'all' : suggests[0].name); }
+                  }}
+                />
+                <button className="btn btn-primary btn-icon" disabled={busy || !input.trim()} aria-label={t('chat.send')}>
+                  <Icon name="send" size={15} />
+                </button>
+              </form>
+            </div>
             <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0 }}>{t('room.hint')}</p>
           </div>
         )}

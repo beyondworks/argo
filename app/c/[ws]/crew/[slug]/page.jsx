@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 
@@ -75,13 +75,18 @@ export default function CrewChat({ params }) {
     // imeGuard 병합 — 이 입력은 스프레드 대신 여기서 IME Enter를 막는다({...imeGuard}가 onKeyDown을 덮는 문제)
     if (e.key === 'Enter' && e.nativeEvent.isComposing) { e.preventDefault(); return; }
     // Enter=전송, Shift+Enter=줄바꿈(textarea 기본 동작) — 유건 지시 2026-07-19
-    // 단 '/' 커맨더 후보가 떠 있으면 Enter는 첫 후보 실행(명령은 크루에게 전송되지 않는다)
+    // 단 '/' 커맨더가 떠 있으면 Enter=선택 항목 실행, ↑↓=항목 이동(명령은 크루에게 전송되지 않는다)
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (slashMatches.length) { runSlash(slashMatches[0]); return; }
+      if (slashMatches.length) { runSlash(slashMatches[Math.min(slashIdx, slashMatches.length - 1)]); return; }
       send(e); return;
     }
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (slashMatches.length) {
+      e.preventDefault();
+      setSlashIdx((i) => (e.key === 'ArrowDown' ? (i + 1) % slashMatches.length : (i - 1 + slashMatches.length) % slashMatches.length));
+      return;
+    }
     if (e.nativeEvent.isComposing) return; // IME 조합 중엔 개입하지 않는다
     const el = e.target;
     // 쓰던 글이 있으면 ↑/↓는 편집키다 — ↑=맨 앞, ↓=맨 뒤(유건 지시 2026-07-20). 히스토리는 입력창이 빈 상태에서만
@@ -112,6 +117,10 @@ export default function CrewChat({ params }) {
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
   const [cardOpen, setCardOpen] = useState(false);
+  // '/' 커맨더 데이터 — 사용자 별칭(company.json.aliases) + 회사 스킬(마켓 installedSkills, 첫 사용 시 로드)
+  const [aliases, setAliases] = useState([]);
+  const [skillCmds, setSkillCmds] = useState(null);
+  const [aliasModal, setAliasModal] = useState(false);
   // 러너·모델 — 카드 패널과 채팅 셀렉터가 공유하는 단일 상태. 회사 자격(설정 러너 연결)을 병합한 카탈로그.
   const [runners, setRunners] = useState(null);
   const [sel, setSel] = useState({ runner: 'claude', model: '' });
@@ -214,10 +223,15 @@ export default function CrewChat({ params }) {
   const pinRef = useRef(null);      // 상단에 붙일 내 메시지의 mid — 전송 직후 1회 소비
   const msgRefs = useRef(new Map()); // mid → DOM 노드
   const atBottomRef = useRef(true);  // 하단 근처면 새 내용을 따라간다. 위로 올려 읽는 중이면 끌어내리지 않는다.
-  const spacerRef = useRef(null);    // 작업 중 하단 여백 — 스크롤 기준(콘텐츠 바닥)에서 이 높이를 뺀다
-  // 여백은 턴이 끝나도 이 대화에 머무는 동안 유지한다(spacerHold). 끝나는 순간 빼면 scrollHeight가
-  // 100vh 줄며 브라우저가 scrollTop을 강제 클램프해 화면이 위로 튄다(실사용 신고 2026-07-21 "밀려 올라감").
-  const [spacerHold, setSpacerHold] = useState(false);
+  const spacerRef = useRef(null);    // 하단 여백 — 스크롤 기준(콘텐츠 바닥)에서 이 높이를 뺀다
+  // 여백 높이는 "핀 메시지부터 한 화면을 정확히 채울 만큼"만 동적으로 잡는다(스크롤 효과에서 계산).
+  // v0.1.21의 고정 100vh + 유지(spacerHold) 방식은 턴이 끝난 뒤 화면 하나 크기의 빈 공간이 남아
+  // "스크롤이 무한대로 위로 올라간다"로 나타났다(실사용 신고 2026-07-21) — 필요량 사이징으로 근절.
+  const pinMidRef = useRef(null);    // 이번 방문에서 마지막으로 핀 고정한 내 메시지 mid — 여백 계산 기준
+  // 여백 높이 사본 — 렌더의 style에 이 값을 넣는다. 조건부 형제(작업 카드)가 사라질 때 React가 여백 div를
+  // remount하면 인라인 height가 일순 0이 되고, 그 프레임에 브라우저가 scrollTop을 클램프해 화면이 튄다(실측
+  // 858→330). ref 값이 style로 들어가면 remount 프레임에도 마지막 높이로 마운트돼 기하가 끊기지 않는다.
+  const spacerHRef = useRef(0);
   // 첨부 — 업로드 즉시 vault/files/에 저장되고, 보내기 전까지 입력바 위에 칩으로 대기한다
   const [att, setAtt] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -250,12 +264,13 @@ export default function CrewChat({ params }) {
     // 크루는 in-flight 창이 넓어 "다른 크루 다녀오니 대화가 사라짐"으로 나타났다(실사용 신고 2026-07-20).
     let alive = true;
     setThread(null); setError(''); sessionRef.current = null;
-    setSpacerHold(false); // 대화(크루) 전환 — 이전 대화의 작업 여백을 끌고 오지 않는다
+    pinMidRef.current = null; spacerHRef.current = 0; // 대화(크루) 전환 — 이전 대화의 핀·여백을 끌고 오지 않는다
     api(`/api/companies/${ws}`)
       .then((d) => {
         if (!alive) return;
         const a = d.agents.find((a) => a.slug === slug) ?? { name: slug, role: '' };
         setAgent(a);
+        setAliases(d.company?.aliases ?? []); // '/' 커맨더 사용자 별칭 — 회사 단위 공유
         // '' = 미지정(자동) — 'claude'를 박으면 자동 크루가 화면·저장 모두 클로드 고정으로 둔갑(K2 오표시 계열)
         setSel({ runner: a.runner || '', model: a.model || '' });
       })
@@ -279,14 +294,26 @@ export default function CrewChat({ params }) {
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
-  // 스크롤 규율 두 가지.
+  // 스크롤 규율.
+  //  ⓪ 여백 사이징 — 핀 메시지 상단부터 콘텐츠 끝까지가 한 화면이 되도록 부족분만 여백으로 채운다.
+  //     답변이 자라면 여백이 같이 줄어 scrollHeight가 출렁이지 않고, 턴이 끝나도 그 값에 머물러
+  //     scrollTop 클램프 점프가 없다. 답변이 한 화면을 넘으면 여백 0 — 빈 공간이 남지 않는다.
   //  ① 전송 직후 — 방금 보낸 내 글을 컨테이너 상단에 붙인다. 그 아래 공간에서 작업 과정과 답변이 흐른다.
-  //  ② 그 외 — 하단 근처일 때만 따라간다(추종 목표는 콘텐츠 바닥 — 작업 여백으로는 안 내려간다).
+  //  ② 그 외 — 하단 근처일 때만 따라간다(추종 목표는 콘텐츠 바닥 — 여백으로는 안 내려간다).
   // liveStage.partial이 의존성에 있어야 스트리밍으로 답변이 자라는 동안에도 시야가 따라간다.
   // (이게 빠져 있어 답변이 길어지면 내용이 화면 아래로 밀려 "스크롤이 위에 멈춰 있다"로 보였다 — 2026-07-20 신고)
   useEffect(() => {
     const el = threadRef.current;
     if (!el) return;
+    const spacer = spacerRef.current;
+    if (spacer) {
+      const pinned = pinMidRef.current && msgRefs.current.get(pinMidRef.current);
+      const h = pinned && !viewing
+        ? Math.max(0, el.clientHeight - (spacer.getBoundingClientRect().top - pinned.getBoundingClientRect().top) - 12)
+        : 0;
+      spacerHRef.current = h;
+      spacer.style.height = `${h}px`;
+    }
     const pin = pinRef.current && msgRefs.current.get(pinRef.current);
     if (pin) {
       pinRef.current = null;
@@ -294,8 +321,11 @@ export default function CrewChat({ params }) {
       el.scrollTop += pin.getBoundingClientRect().top - el.getBoundingClientRect().top - 12;
       return;
     }
-    if (atBottomRef.current) el.scrollTop = Math.max(0, contentBottom(el) - el.clientHeight);
-  }, [thread, busy, liveStage?.partial]);
+    // 추종은 아래 방향으로만 — 핀 위치는 정의상 콘텐츠 바닥보다 아래(여백 구간)라 onScroll이 곧바로
+    // atBottom=true가 되는데, 위로도 끌면 턴 갱신마다 핀이 풀려 화면이 위로 튄다(실측 -528px, 2026-07-21 신고 본체).
+    if (atBottomRef.current) el.scrollTop = Math.max(el.scrollTop, contentBottom(el) - el.clientHeight);
+    // working은 아래에서 선언되는 파생값(busy||liveStage)이라 deps에 못 쓴다(TDZ) — stage/partial이 같은 전환을 잡는다
+  }, [thread, busy, liveStage?.partial, liveStage?.stage, viewing]);
 
   // 다른 창구(텔레그램·슬랙·루틴·결재 후속)에서 붙은 대화를 웹에도 반영 — 채널을 오가도 맥락은 하나다.
   useEffect(() => {
@@ -353,8 +383,6 @@ export default function CrewChat({ params }) {
   }, [busy]);
 
   const working = busy || !!liveStage; // 내가 보낸 턴 + 결재 후속·루틴·메신저발 턴
-  // 턴이 돌기 시작하면 하단 작업 여백을 켠다 — 끄는 건 대화 전환·새 대화에서만(spacerHold 선언부 주석 참조)
-  useEffect(() => { if (working) setSpacerHold(true); }, [working]);
   useEffect(() => {
     if (!working) { setElapsed(0); return; }
     if (busy) startRef.current = Date.now();
@@ -405,6 +433,7 @@ export default function CrewChat({ params }) {
     const mid = `s${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setThread((t) => [...(t ?? []), { who: 'user', text: message, mid, ...(attachments.length ? { attachments } : {}) }]);
     pinRef.current = mid; // 방금 보낸 글을 화면 상단에 붙인다 — 그 아래로 작업 과정·답변이 흐르도록
+    pinMidRef.current = mid; // 여백 계산 기준(핀부터 한 화면) — 다음 전송/대화 전환까지 유지
     try {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
@@ -424,7 +453,7 @@ export default function CrewChat({ params }) {
   async function send(e) {
     e.preventDefault();
     // 전송 버튼 경로에서도 '/' 커맨더 우선 — '/new' 같은 명령 토큰이 크루에게 전송되지 않게
-    if (slashMatches.length) { runSlash(slashMatches[0]); return; }
+    if (slashMatches.length) { runSlash(slashMatches[Math.min(slashIdx, slashMatches.length - 1)]); return; }
     const message = input.trim();
     if (!message) return;
     const attachments = att;
@@ -483,12 +512,13 @@ export default function CrewChat({ params }) {
     // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작(버튼이 안 열리던 원인) → 제거. 파괴적 액션만 DangerModal.
     await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
     setThread([]); sessionRef.current = null; setError(''); setThreadTitle(null);
-    setViewing(null); setArchMsgs(null); resetAnnot(); setSpacerHold(false);
+    setViewing(null); setArchMsgs(null); resetAnnot(); pinMidRef.current = null; spacerHRef.current = 0;
     loadSessions(); // 방금 넘긴 대화가 좌측 레일에 적재된다
   }
 
   // '/' 커맨더 — 입력이 슬래시 토큰 하나일 때만 발동(문장 속 '/'는 일반 텍스트로 그대로 전송).
-  // 회의실 @멘션 힌트와 같은 문법: 후보 칩 노출, Enter/클릭이 첫 후보 실행. ko/en alias 동시 지원.
+  // 클로드코드 커맨더와 같은 문법: 입력창 위로 열리는 세로 드롭업, ↑↓ 이동·Enter 실행(유건 지시 2026-07-21).
+  // 후보 = 내장 명령 + 회사 스킬(/스킬명 → 사용 지시 삽입) + 사용자 별칭(/별칭 → 저장된 지시 삽입).
   const SLASH_CMDS = [
     { id: 'new', aliases: ['new', '새대화'], label: t('chat.newChat'), run: () => newChat() },
     { id: 'card', aliases: ['card', '카드'], label: t('chat.card'), run: () => setCardOpen(true) },
@@ -499,11 +529,37 @@ export default function CrewChat({ params }) {
   ];
   const slashToken = !viewing ? input.match(/^\/(\S*)$/) : null;
   const slashQ = slashToken ? slashToken[1].toLowerCase() : '';
-  const slashMatches = slashToken ? SLASH_CMDS.filter((c) => c.aliases.some((al) => al.startsWith(slashQ))) : [];
+  // 회사 스킬 — 커맨더를 처음 여는 순간 1회 로드(마켓 GET의 installedSkills 재사용)
+  useEffect(() => {
+    if (!slashToken || skillCmds !== null) return;
+    api(`/api/companies/${ws}/market`).then((d) => setSkillCmds(d.installedSkills ?? [])).catch(() => setSkillCmds([]));
+  }, [slashToken, skillCmds, ws]); // eslint-disable-line react-hooks/exhaustive-deps
+  const matchTok = (tok) => tok.toLowerCase().startsWith(slashQ) || (!slashQ && true);
+  const slashMatches = slashToken ? [
+    ...SLASH_CMDS.filter((c) => c.aliases.some((al) => al.startsWith(slashQ)))
+      .map((c) => ({ kind: 'builtin', key: `b:${c.id}`, cmd: c.aliases[0], desc: c.label, run: c.run })),
+    ...aliases.filter((a) => matchTok(a.cmd))
+      .map((a) => ({ kind: 'alias', key: `a:${a.cmd}`, cmd: a.cmd, desc: a.text, insert: a.text })),
+    ...(skillCmds ?? []).filter((s) => matchTok(s.id) || matchTok(s.title))
+      .map((s) => ({ kind: 'skill', key: `s:${s.id}`, cmd: s.id, desc: s.title, insert: t('chat.cmd.skillPrefix', { name: s.title }) })),
+  ] : [];
+  const [slashIdx, setSlashIdx] = useState(0);
+  useEffect(() => { setSlashIdx(0); }, [slashQ, slashToken?.[0]]); // eslint-disable-line react-hooks/exhaustive-deps
   function runSlash(cmd) {
     histIdx.current = -1;
-    setInput('');
-    cmd.run();
+    if (cmd.kind === 'builtin') { setInput(''); cmd.run(); }
+    else setInput(cmd.insert); // 별칭·스킬 = 지시 텍스트 삽입(바로 전송하지 않는다 — 사장이 덧붙여 보냄)
+    inputRef.current?.focus();
+  }
+  // 별칭 저장/삭제 — company.json.aliases(PUT). 낙관 반영 없이 서버 정본을 다시 받는다(단순 유지).
+  async function saveAliases(next) {
+    setAliases(next);
+    try {
+      await fetch(`/api/companies/${ws}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ aliases: next }),
+      });
+    } catch { /* 실패해도 다음 로드에서 서버 정본으로 복구 */ }
   }
 
   return (
@@ -776,10 +832,10 @@ export default function CrewChat({ params }) {
           </div>
         )}
         {error && <p style={{ fontSize: 13, color: 'var(--danger)' }}>{error}</p>}
-        {/* 작업 중 여백 — 방금 보낸 글을 화면 상단까지 밀어올릴 스크롤 여유를 만든다.
-            이게 없으면 마지막 메시지가 컨테이너 바닥에 걸려 "내 글 위 / 작업 과정 아래" 배치가 성립하지 않는다.
-            턴이 끝나도 이 대화에 있는 동안 유지(spacerHold) — 즉시 빼면 scrollTop 클램프로 화면이 위로 튄다. */}
-        {!viewing && (working || spacerHold) && <div ref={spacerRef} aria-hidden style={{ flex: 'none', height: 'calc(100vh - 180px)' }} />}
+        {/* 하단 여백 — 방금 보낸 글을 화면 상단까지 밀어올릴 스크롤 여유. 높이는 스크롤 효과(⓪)가
+            "핀부터 한 화면"이 되도록 필요분만 잡는다(고정 100vh 금지 — 빈 공간이 남아 "무한 스크롤" 신고).
+            style에 ref 사본을 쓰는 이유는 spacerHRef 선언부 주석 참조(remount 클램프 점프 방지). */}
+        {!viewing && <div key="turn-spacer" ref={spacerRef} aria-hidden style={{ flex: 'none', height: spacerHRef.current }} />}
         <div ref={endRef} />
         </div>
       </div>
@@ -806,15 +862,46 @@ export default function CrewChat({ params }) {
             {uploading && <span className="att-chip"><Spinner size={11} /> {t('chat.uploading')}</span>}
           </div>
         )}
-        {/* '/' 커맨더 후보 — 회의실 @멘션 힌트와 같은 칩 문법. Enter=첫 후보, 클릭=해당 명령 */}
-        {slashMatches.length > 0 && (
-          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span className="microlabel">{t('chat.commands')}</span>
-            {slashMatches.map((c) => (
-              <button key={c.id} type="button" className="chip" style={{ cursor: 'pointer' }} onClick={() => runSlash(c)}>
-                /{c.aliases[0]} — {c.label}
-              </button>
+        {/* '/' 커맨더 드롭업 — 클로드코드 커맨더 문법(입력창 위 세로 목록, ↑↓ 이동·Enter 실행).
+            위치 기준은 이 relative 래퍼(입력바). 별칭 행은 ✕로 삭제, 하단 고정 행으로 새 별칭 등록. */}
+        <div style={{ position: 'relative' }}>
+        {slashToken && (
+          <div className="card card-float" role="listbox" style={{
+            position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 40,
+            minWidth: 320, maxWidth: 480, maxHeight: 320, overflowY: 'auto', padding: 6,
+            boxShadow: '0 8px 28px rgba(0,0,0,.14)',
+          }}>
+            <div className="microlabel" style={{ padding: '4px 8px 2px' }}>{t('chat.commands')}</div>
+            {slashMatches.map((c, i) => (
+              <div key={c.key} style={{ position: 'relative' }}>
+                <button type="button" role="option" aria-selected={i === slashIdx}
+                  onClick={() => runSlash(c)} onMouseEnter={() => setSlashIdx(i)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                    background: i === slashIdx ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7,
+                    cursor: 'pointer', padding: '6px 8px', fontSize: 12.5, color: 'var(--fg)',
+                    paddingRight: c.kind === 'alias' ? 30 : 8 }}>
+                  <span className="mono" style={{ flex: 'none', fontWeight: 650 }}>/{c.cmd}</span>
+                  <span style={{ minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-3)', fontSize: 11.5 }}>{c.desc}</span>
+                  {c.kind !== 'builtin' && (
+                    <span className="microlabel" style={{ flex: 'none', fontSize: 9 }}>
+                      {c.kind === 'skill' ? t('chat.cmd.skills') : t('chat.cmd.aliases')}
+                    </span>
+                  )}
+                </button>
+                {c.kind === 'alias' && (
+                  <button type="button" title={t('chat.cmd.aliasDelete')} aria-label={t('chat.cmd.aliasDelete')}
+                    onClick={(e) => { e.stopPropagation(); saveAliases(aliases.filter((a) => a.cmd !== c.cmd)); }}
+                    style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', display: 'grid', placeItems: 'center', width: 20, height: 20, border: 0, background: 'transparent', color: 'var(--fg-3)', cursor: 'pointer', borderRadius: 5, fontSize: 11 }}>
+                    ✕
+                  </button>
+                )}
+              </div>
             ))}
+            <div style={{ borderTop: '1px solid var(--border-soft)', margin: '4px 2px 2px' }} />
+            <button type="button" onClick={() => setAliasModal(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', background: 'none', border: 0, borderRadius: 7, cursor: 'pointer', padding: '6px 8px', fontSize: 12, color: 'var(--fg-2)' }}>
+              ＋ {t('chat.cmd.aliasAdd')}
+            </button>
           </div>
         )}
         {/* 여러 줄 입력 — textarea(Enter 전송·Shift+Enter 줄바꿈). 버튼은 하단 정렬(입력이 자라도 자리 고정) */}
@@ -839,11 +926,19 @@ export default function CrewChat({ params }) {
             <Icon name="send" size={15} />
           </button>
         </form>
+        </div>
         {/* 입력창 아래 슬림 줄 — 우측 텍스트형 모델 버튼(클릭 시 위로 팝오버). 레퍼런스: Claude Code 입력바 */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 6px', minHeight: 18 }}>
           <ModelMenu runners={runners} sel={sel} onChange={saveRunner} disabled={busy} />
         </div>
       </div>
+      )}
+
+      {aliasModal && (
+        <AliasModal
+          onSave={(cmd, text) => { saveAliases([...aliases.filter((a) => a.cmd !== cmd), { cmd, text }]); setAliasModal(false); }}
+          onClose={() => setAliasModal(false)}
+        />
       )}
 
       {cardOpen && (
@@ -935,6 +1030,52 @@ export default function CrewChat({ params }) {
         />
       )}
     </div>
+    </div>
+  );
+}
+
+/** '/' 커맨더 별칭 등록 — 이름(/명령) + 지시 내용 두 칸. window.prompt 금지(Tauri 웹뷰 무동작) — 인앱 모달. */
+function AliasModal({ onSave, onClose }) {
+  const { t } = useLang();
+  useScrollLock();
+  const [cmd, setCmd] = useState('');
+  const [text, setText] = useState('');
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const cmdOk = /^[a-z0-9가-힣_-]{1,24}$/i.test(cmd.trim());
+  const submit = () => { if (cmdOk && text.trim()) onSave(cmd.trim().toLowerCase(), text.trim()); };
+  const field = { padding: '8px 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13, width: '100%' };
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
+      <div className="card card-float fade-up" style={{ width: 'min(440px, 100%)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="card-head">
+          <span className="card-title">{t('chat.cmd.aliasAdd')}</span>
+          <span className="rule" />
+          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+        </div>
+        <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
+          <label style={{ display: 'grid', gap: 5 }}>
+            <span style={{ fontSize: 12 }}>{t('chat.cmd.aliasName')}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="mono" style={{ color: 'var(--fg-3)' }}>/</span>
+              <input suppressHydrationWarning value={cmd} onChange={(e) => setCmd(e.target.value)} placeholder={t('chat.cmd.aliasNamePh')}
+                style={field} autoFocus {...imeGuard} />
+            </div>
+          </label>
+          <label style={{ display: 'grid', gap: 5 }}>
+            <span style={{ fontSize: 12 }}>{t('chat.cmd.aliasText')}</span>
+            <textarea suppressHydrationWarning value={text} onChange={(e) => setText(e.target.value)} rows={4}
+              placeholder={t('chat.cmd.aliasTextPh')} style={{ ...field, resize: 'vertical', fontFamily: 'inherit' }} />
+          </label>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn sm" onClick={onClose}>{t('common.cancel')}</button>
+            <button type="button" className="btn btn-primary sm" disabled={!cmdOk || !text.trim()} onClick={submit}>{t('common.save')}</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

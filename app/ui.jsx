@@ -1,6 +1,6 @@
 'use client';
 // 공용 클라이언트 조각들 — 화면 전체가 같이 쓴다.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { marked } from 'marked';
 import { useLang } from './i18n';
 
@@ -418,6 +418,65 @@ export function InputModal({ title, label, defaultValue = '', placeholder, confi
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 위로 열리는 드롭박스 — 네이티브 <select>는 팝업 방향을 못 정해 하단 배치 화면에서 아래로 열려 잘린다
+    (유건 지시 2026-07-21: 입력바 위 컨트롤은 전부 위로 연다). 채팅 ModelMenu와 같은 팝오버 문법.
+    groups = [{ label?, items: [{ value, label, disabled?, badge? }] }] — 러너별 optgroup 대응. */
+export function DropUp({ value, placeholder = '—', groups, onChange, disabled, width = 210, align = 'left' }) {
+  const [open, setOpen] = useState(false);
+  const [entered, setEntered] = useState(false);
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!open) { setEntered(false); return; }
+    const raf = requestAnimationFrame(() => setEntered(true));
+    const onDown = (e) => { if (!boxRef.current?.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey); };
+  }, [open]);
+  const cur = groups.flatMap((g) => g.items).find((i) => i.value === value);
+  return (
+    <div ref={boxRef} style={{ position: 'relative', display: 'inline-flex' }}>
+      <button type="button" disabled={disabled} onClick={() => setOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={open}
+        style={{ height: 28, padding: '0 9px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8,
+          fontSize: 12, color: cur ? 'var(--fg)' : 'var(--fg-3)', cursor: disabled ? 'not-allowed' : 'pointer',
+          display: 'inline-flex', alignItems: 'center', gap: 7, maxWidth: width, opacity: disabled ? 0.55 : 1 }}>
+        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cur?.label ?? placeholder}</span>
+        <span aria-hidden style={{ fontSize: 8, color: 'var(--fg-3)', flex: 'none' }}>▴</span>
+      </button>
+      {open && (
+        <div className="card card-float" role="listbox" style={{
+          position: 'absolute', bottom: 'calc(100% + 6px)', [align === 'right' ? 'right' : 'left']: 0, zIndex: 40,
+          minWidth: Math.max(width, 190), maxHeight: 300, overflowY: 'auto', padding: 6,
+          boxShadow: '0 8px 28px rgba(0,0,0,.14)', transformOrigin: `bottom ${align}`,
+          transform: entered ? 'none' : 'scale(0.97) translateY(4px)', opacity: entered ? 1 : 0,
+          transition: 'transform 160ms cubic-bezier(0.23,1,0.32,1), opacity 160ms cubic-bezier(0.23,1,0.32,1)' }}>
+          {groups.map((g, gi) => (
+            <div key={g.label ?? gi} style={{ padding: '2px 0' }}>
+              {g.label && <div className="microlabel" style={{ padding: '4px 8px 2px' }}>{g.label}</div>}
+              {g.items.map((it) => {
+                const active = it.value === value;
+                return (
+                  <button key={String(it.value)} type="button" role="option" aria-selected={active} disabled={it.disabled}
+                    onClick={() => { onChange(it.value); setOpen(false); }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                      background: active ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7,
+                      cursor: it.disabled ? 'not-allowed' : 'pointer', padding: '6px 8px', fontSize: 12.5,
+                      color: it.disabled ? 'var(--fg-3)' : 'var(--fg)', opacity: it.disabled ? 0.55 : 1 }}>
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label}</span>
+                    {it.badge && <span className="microlabel" style={{ fontSize: 9.5, color: 'var(--fg-3)' }}>{it.badge}</span>}
+                    {active && <span aria-hidden style={{ fontSize: 11, color: 'var(--fg-2)' }}>✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
