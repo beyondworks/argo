@@ -103,6 +103,40 @@ export default function CompanyShell({ children, params }) {
   const [fbOpen, setFbOpen] = useState(false); // 베타 피드백 모달
   useEffect(() => { api('/api/me').then(setMe).catch(() => {}); }, []);
 
+  // 업데이트 배지 — 서버(/api/version)가 GitHub latest.json을 1시간 캐시로 대조. 새 버전이면 버전 칩이 골드로 바뀐다.
+  const [upd, setUpd] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const check = () => api('/api/version').then((d) => { if (alive) setUpd(d); }).catch(() => {});
+    check();
+    const iv = setInterval(check, 60 * 60 * 1000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+
+  // 크루 안읽음 배지 — 서버 chatTs(chats/<slug>.json mtime) vs 로컬 확인 시각(localStorage argo-seen:{ws}).
+  // null = 로드 전(오탐 방지). 처음 보는 크루는 현재 상태를 기준선으로 삼아 설치 직후 전 크루 배지가 켜지지 않게 한다.
+  const seenKey = `argo-seen:${ws}`;
+  const [seen, setSeen] = useState(null);
+  useEffect(() => {
+    try { setSeen(JSON.parse(localStorage.getItem(seenKey) || '{}')); } catch { setSeen({}); }
+  }, [seenKey]);
+  useEffect(() => {
+    if (!seen || !data?.agents) return;
+    const next = { ...seen };
+    let dirty = false;
+    for (const a of data.agents) {
+      if (a.chatTs == null) continue;
+      // 보고 있는 크루는 즉시 확인 처리, 기준선 없는 크루는 지금 상태를 확인으로 기록
+      if ((pathname === `/c/${ws}/crew/${a.slug}` || next[a.slug] === undefined) && next[a.slug] !== a.chatTs) {
+        next[a.slug] = a.chatTs; dirty = true;
+      }
+    }
+    if (dirty) {
+      setSeen(next);
+      try { localStorage.setItem(seenKey, JSON.stringify(next)); } catch { /* 프라이빗 모드 — 배지만 부정확 */ }
+    }
+  }, [data, seen, pathname, ws, seenKey]);
+
   const refresh = useCallback(() => {
     api(`/api/companies/${ws}`).then(setData).catch(() => setData({ missing: true }));
   }, [ws]);
@@ -126,8 +160,23 @@ export default function CompanyShell({ children, params }) {
   useEffect(() => {
     refresh();
     window.addEventListener('argo:refresh', refresh);
-    return () => window.removeEventListener('argo:refresh', refresh);
+    // 주기 재조회 — 루틴·메신저발 턴처럼 이 탭이 모르는 대화 갱신을 안읽음 배지가 잡아내려면 폴이 필요하다(로컬 API라 가볍다)
+    const iv = setInterval(refresh, 30000);
+    return () => { window.removeEventListener('argo:refresh', refresh); clearInterval(iv); };
   }, [refresh]);
+
+  // 크루 순서 저장 — company.json.crewOrder(slug 배열). 낙관 반영 후 서버 기록(crewPinned과 동일 계약).
+  const [dragSlug, setDragSlug] = useState(null);
+  const [dropSlug, setDropSlug] = useState(null);
+  const saveOrder = useCallback(async (next) => {
+    setData((d) => (d?.company ? { ...d, company: { ...d.company, crewOrder: next } } : d));
+    try {
+      await fetch(`/api/companies/${ws}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ crewOrder: next }),
+      });
+    } catch { refresh(); /* 실패 시 서버 정본으로 되돌린다 */ }
+  }, [ws, refresh]);
 
   // 크루별 텔레그램 직통 봇 상태 — 연결된 크루는 사이드바에 그린 도트
   const [tgAgents, setTgAgents] = useState({});
@@ -151,7 +200,9 @@ export default function CompanyShell({ children, params }) {
   }, [q]);
   useEffect(() => { setQ(''); }, [pathname]);
 
-  const agents = data?.agents ?? [];
+  // 표시 순서 — crewOrder에 있는 크루가 그 순서대로 앞에, 없는 크루는 기본(이름순) 뒤에. sort는 안정 정렬.
+  const orderIdx = new Map((data?.company?.crewOrder ?? []).map((s, i) => [s, i]));
+  const agents = [...(data?.agents ?? [])].sort((a, b) => (orderIdx.get(a.slug) ?? 1e9) - (orderIdx.get(b.slug) ?? 1e9));
   const crewMatch = pathname.match(/\/crew\/([^/]+)/);
   const currentCrew = crewMatch && agents.find((a) => a.slug === crewMatch[1]);
   const title = pathname.endsWith('/vault') ? t('nav.memory')
@@ -234,10 +285,28 @@ export default function CompanyShell({ children, params }) {
               const href = `/c/${ws}/crew/${a.slug}`;
               const active = pathname === href;
               const pinned = pinnedSet.has(a.slug);
+              // 안읽음 — 기준선(seen)이 있고 그 뒤에 대화 파일이 갱신됐으면. 보고 있는 크루는 위 효과가 즉시 확인 처리.
+              const unread = !active && a.chatTs != null && seen?.[a.slug] !== undefined && a.chatTs > seen[a.slug];
               return (
                 // pin 버튼은 <a>의 형제로 둔다 — a 안에 button을 넣으면 hydration mismatch(React #418). div로 감싸 position 기준을 잡는다(세션 레일 .rail-item과 동일 패턴).
-                <div key={a.slug} className="crew-row" style={{ position: 'relative' }}>
-                  <a href={href} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6, paddingRight: 30 }}>
+                // 행 자체가 드래그 소스/타깃 — 놓으면 끌던 크루가 이 행 앞으로 온다(crewOrder 저장).
+                // 드롭은 같은 그룹(고정/팀) 안에서만 허용 — crewOrder는 그룹 내부 순서만 정하므로, 그룹을
+                // 가로지르는 드롭은 표시선만 뜨고 반영이 안 되는 거짓 피드백이 된다(분리 검수 지적 2026-07-21).
+                <div key={a.slug} className="crew-row" draggable
+                  onDragStart={(e) => { setDragSlug(a.slug); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', a.slug); } catch { /* 구형 브라우저 */ } }}
+                  onDragEnd={() => { setDragSlug(null); setDropSlug(null); }}
+                  onDragOver={(e) => { if (dragSlug && dragSlug !== a.slug && list.some((x) => x.slug === dragSlug)) { e.preventDefault(); setDropSlug(a.slug); } }}
+                  onDragLeave={() => setDropSlug((s) => (s === a.slug ? null : s))}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (!dragSlug || dragSlug === a.slug || !list.some((x) => x.slug === dragSlug)) return;
+                    const flat = agents.map((x) => x.slug).filter((s) => s !== dragSlug);
+                    flat.splice(flat.indexOf(a.slug), 0, dragSlug);
+                    saveOrder(flat);
+                    setDragSlug(null); setDropSlug(null);
+                  }}
+                  style={{ position: 'relative', ...(dragSlug === a.slug ? { opacity: 0.45 } : {}), ...(dropSlug === a.slug && dragSlug ? { boxShadow: 'inset 0 2px 0 var(--primary)' } : {}) }}>
+                  <a href={href} draggable={false} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6, paddingRight: 30 }}>
                     <span style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
                       <Avatar name={a.name} sm />
                       {a.slug in tgAgents && (
@@ -249,15 +318,19 @@ export default function CompanyShell({ children, params }) {
                       )}
                     </span>
                     <span style={{ minWidth: 0 }}>
-                      <span style={{ display: 'block', lineHeight: 1.3 }}>{a.name}</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.3 }}>
+                        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                        {unread && <span title={t('nav.unread')} aria-label={t('nav.unread')} style={{ flex: 'none', width: 6, height: 6, borderRadius: 999, background: 'var(--primary)' }} />}
+                      </span>
                       <span className="nav-sub">{a.role}</span>
                     </span>
                   </a>
-                  {/* 고정 토글 — pinned면 상시 골드, 아니면 행 hover 시 노출(.crew-row:hover .crew-pin). preventDefault로 링크 이동 차단 */}
+                  {/* 고정 토글 — pinned면 상시 골드, 아니면 행 hover 시 노출(.crew-row:hover .crew-pin). preventDefault로 링크 이동 차단.
+                      활성 행 배경이 골드(--primary)라 골드 핀이 묻힌다 — 활성이면 온-골드 전경색(--primary-fg)으로 대비 확보(세션 레일과 동일 규칙, 실사용 신고 2026-07-21). */}
                   <button type="button" className={`crew-pin${pinned ? ' pinned' : ''}`}
                     title={pinned ? t('nav.unpin') : t('nav.pin')} aria-label={pinned ? t('nav.unpin') : t('nav.pin')}
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePin(a.slug); }}
-                    style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: pinned ? 'var(--primary)' : 'var(--fg-3)', cursor: 'pointer', borderRadius: 6 }}>
+                    style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: pinned ? (active ? 'var(--primary-fg)' : 'var(--primary)') : (active ? 'var(--primary-fg-dim)' : 'var(--fg-3)'), cursor: 'pointer', borderRadius: 6 }}>
                     <Icon name="pin" size={12} />
                   </button>
                 </div>
@@ -328,11 +401,18 @@ export default function CompanyShell({ children, params }) {
           {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체) */}
           <div id="argo-topbar-slot" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }} />
           <div style={{ flex: 1 }} />
-          {process.env.NEXT_PUBLIC_APP_VERSION && (
+          {process.env.NEXT_PUBLIC_APP_VERSION && (upd?.updateAvailable ? (
+            // 새 버전 발행됨 — 칩이 골드 '업데이트'로 바뀌고, 클릭하면 설정(기기 → 앱 업데이트)으로 간다
+            <a href={`/c/${ws}/settings`} className="chip mono" title={t('topbar.updateTitle', { v: upd.latest })}
+              style={{ flex: 'none', fontSize: 10.5, color: 'var(--primary-strong)', borderColor: 'var(--primary)', cursor: 'pointer' }}>
+              <span className="dot" style={{ background: 'var(--primary)' }} aria-hidden="true" />
+              v{process.env.NEXT_PUBLIC_APP_VERSION} · {t('topbar.update')}
+            </a>
+          ) : (
             <span className="chip mono" title={t('topbar.version')} style={{ flex: 'none', fontSize: 10.5, color: 'var(--fg-3)' }}>
               v{process.env.NEXT_PUBLIC_APP_VERSION}
             </span>
-          )}
+          ))}
           <Clock />
           <TasksDock ws={ws} />
           <label className="search-pill">

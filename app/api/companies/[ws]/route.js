@@ -1,4 +1,6 @@
-import { loadCompany, updateCompany, archiveCompany } from '../../../../src/workspace.mjs';
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { loadCompany, updateCompany, archiveCompany, paths } from '../../../../src/workspace.mjs';
 import { listAgents, listDocs } from '../../../../src/hub.mjs';
 import { readUsageSummary, readDelegations, monthCostByCrew } from '../../../../src/usage.mjs';
 import { ensureScheduler } from '../../../../src/scheduler.mjs';
@@ -41,6 +43,12 @@ export async function GET(_req, { params }) {
     const [company, agents, docs, usage, delegations, payroll] = await Promise.all([
       loadCompany(ws), listAgents(ws), listDocs(ws), readUsageSummary(ws), readDelegations(ws), monthCostByCrew(ws),
     ]);
+    // 크루별 마지막 대화 시각 — chats/<slug>.json mtime(스레드 영속화의 단일 파일). 사이드바 안읽음 배지 판정용.
+    // 대화 파일이 없으면(신규 크루) 필드 자체를 생략 — 클라이언트가 "기록 없음"으로 본다.
+    const chatsDir = paths(ws).chats;
+    await Promise.all(agents.map(async (a) => {
+      try { a.chatTs = (await stat(join(chatsDir, `${a.slug}.json`))).mtimeMs; } catch { /* 대화 없음 */ }
+    }));
     return Response.json({
       company, agents,
       memories: docs.slice(0, 6),
@@ -58,7 +66,7 @@ export async function PUT(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { name, budgetUsd, lang, crewPinned } = await req.json();
+    const { name, budgetUsd, lang, crewPinned, crewOrder } = await req.json();
     const patch = {};
     if (name !== undefined) {
       if (!name.trim()) return Response.json({ error: '이름이 필요합니다' }, { status: 400 });
@@ -68,6 +76,11 @@ export async function PUT(req, { params }) {
       // 고정 크루 slug 목록 — 배열·slug 형식·중복제거·상한만 통과시킨다(임의 데이터 기입 차단).
       if (!Array.isArray(crewPinned)) return Response.json({ error: '고정 목록은 배열이어야 합니다' }, { status: 400 });
       patch.crewPinned = [...new Set(crewPinned.filter((s) => typeof s === 'string' && /^[a-z0-9-]{1,64}$/.test(s)))].slice(0, 50);
+    }
+    if (crewOrder !== undefined) {
+      // 사이드바 크루 표시 순서(slug 배열) — crewPinned와 동일 검증 규칙(배열·slug 형식·중복 제거·상한).
+      if (!Array.isArray(crewOrder)) return Response.json({ error: '순서 목록은 배열이어야 합니다' }, { status: 400 });
+      patch.crewOrder = [...new Set(crewOrder.filter((s) => typeof s === 'string' && /^[a-z0-9-]{1,64}$/.test(s)))].slice(0, 200);
     }
     if (lang !== undefined) {
       if (lang !== 'ko' && lang !== 'en') return Response.json({ error: '언어는 ko 또는 en이어야 합니다' }, { status: 400 });
