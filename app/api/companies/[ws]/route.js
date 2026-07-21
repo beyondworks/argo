@@ -66,8 +66,19 @@ export async function PUT(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { name, budgetUsd, lang, crewPinned, crewOrder } = await req.json();
+    const { name, budgetUsd, lang, crewPinned, crewOrder, aliases } = await req.json();
     const patch = {};
+    if (aliases !== undefined) {
+      // '/' 커맨더 사용자 별칭 — [{cmd, text}]. cmd는 슬래시 뒤 토큰(한글 허용), text는 입력창에 넣을 지시.
+      if (!Array.isArray(aliases)) return Response.json({ error: '별칭 목록은 배열이어야 합니다' }, { status: 400 });
+      const seen = new Set();
+      patch.aliases = aliases
+        .filter((a) => a && typeof a.cmd === 'string' && typeof a.text === 'string'
+          && /^[a-z0-9가-힣_-]{1,24}$/i.test(a.cmd.trim()) && a.text.trim().length >= 1 && a.text.length <= 2000)
+        .map((a) => ({ cmd: a.cmd.trim().toLowerCase(), text: a.text.trim() }))
+        .filter((a) => !seen.has(a.cmd) && seen.add(a.cmd))
+        .slice(0, 50);
+    }
     if (name !== undefined) {
       if (!name.trim()) return Response.json({ error: '이름이 필요합니다' }, { status: 400 });
       patch.name = name.trim();

@@ -3,7 +3,7 @@
 // 격리: 경쟁 중 시안은 크루 개인 대화를 오염시키지 않고, 채택본만 승자 스레드에 기록된다.
 // 레이아웃은 회의실과 같은 문법 — 헤더 라인 → 전체 높이 카드 → 하단 고정 컴포저 → 힌트 (UI 일관성).
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, ConfirmModal, InputModal, api, imeGuard } from '../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, ConfirmModal, InputModal, DropUp, api, imeGuard } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 const MAX_PICK = 3;
@@ -263,55 +263,53 @@ export default function Compete({ params }) {
         ) : (
           /* 새 경쟁 컴포저 — 회의실 컴포저와 동일 문법: 칩 행 → input-bar → 힌트 */
           <div style={{ display: 'grid', gap: 6 }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <span className="microlabel" style={{ marginRight: 3 }}>{t('compete.pick')}</span>
-              {/* 크루 1명 — 등록된 모든 크루 중 선택(드롭다운) */}
-              <select value={pickedCrew} onChange={(e) => setPickedCrew(e.target.value)} disabled={busy}
-                style={{ height: 28, padding: '0 8px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12, color: 'var(--fg)', maxWidth: 220 }}>
-                {agents.length === 0 && <option value="">—</option>}
-                {agents.map((a) => <option key={a.slug} value={a.slug}>{a.name} — {a.role}</option>)}
-              </select>
-              {agents.length === 0 && (
-                <a href={`/c/${ws}`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('nav.hire')} →</a>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <span className="microlabel" style={{ marginRight: 3 }}>{t('compete.pickModels')}</span>
-              {/* 드롭다운 슬롯 — 연결된 러너의 모델만, 러너별 그룹. 다른 슬롯이 고른 모델은 비활성(중복 방지).
-                  칩 나열은 러너가 늘며 두 줄로 흘러 지저분했다(유건 지시 2026-07-19 — 드롭박스로 정리). */}
-              {runners === null ? <Skeleton h={28} w={220} /> : (() => {
-                const connected = (runners ?? []).filter((r) => r.authed && r.models?.length);
-                if (!connected.length) {
-                  return <a href={`/c/${ws}/settings`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.connectFirst')} →</a>;
-                }
-                const selBox = { height: 28, padding: '0 8px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12, color: 'var(--fg)', maxWidth: 210 };
-                const opts = (slot) => connected.map((r) => (
-                  <optgroup key={r.id} label={r.name}>
-                    {r.models.map((m) => {
-                      const pair = `${r.id}:${m.id}`;
-                      const taken = pickedModels.includes(pair) && pickedModels[slot] !== pair;
-                      return <option key={pair} value={pair} disabled={taken}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : ''}</option>;
-                    })}
-                  </optgroup>
-                ));
-                return (<>
-                  <select value={pickedModels[0] ?? ''} onChange={(e) => setModelSlot(0, e.target.value)} disabled={busy} style={selBox}>
-                    <option value="" disabled>{t('compete.modelSlotPh')}</option>
-                    {opts(0)}
-                  </select>
-                  <span className="microlabel" aria-hidden>vs</span>
-                  <select value={pickedModels[1] ?? ''} onChange={(e) => setModelSlot(1, e.target.value)} disabled={busy} style={selBox}>
-                    <option value="" disabled>{t('compete.modelSlotPh')}</option>
-                    {opts(1)}
-                  </select>
-                  {/* 3번째는 선택 — 앞 2개를 고른 뒤에만 열린다. 빈 값 선택 = 슬롯 비우기 */}
-                  <select value={pickedModels[2] ?? ''} onChange={(e) => setModelSlot(2, e.target.value)}
-                    disabled={busy || pickedModels.length < 2} style={{ ...selBox, opacity: pickedModels.length < 2 ? 0.55 : 1 }}>
-                    <option value="">{t('compete.modelSlotOptPh')}</option>
-                    {opts(2)}
-                  </select>
-                </>);
-              })()}
+            {/* 라벨 열 공유 grid — 두 행의 박스 좌측 라인이 정렬된다(모델 선택 왼편 기준, 유건 지시 2026-07-21).
+                드롭다운은 전부 DropUp(위로 열림) — 하단 배치라 네이티브 select 팝업이 아래로 열려 잘렸다. */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '6px 10px', alignItems: 'center' }}>
+              <span className="microlabel">{t('compete.pick')}</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                {/* 크루 1명 — 등록된 모든 크루 중 선택 */}
+                <DropUp value={pickedCrew} disabled={busy} width={220} placeholder="—"
+                  groups={[{ items: agents.map((a) => ({ value: a.slug, label: `${a.name} — ${a.role}` })) }]}
+                  onChange={setPickedCrew} />
+                {agents.length === 0 && (
+                  <a href={`/c/${ws}`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('nav.hire')} →</a>
+                )}
+              </div>
+              <span className="microlabel">{t('compete.pickModels')}</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                {/* 슬롯 — 연결된 러너의 모델만, 러너별 그룹. 다른 슬롯이 고른 모델은 비활성(중복 방지). */}
+                {runners === null ? <Skeleton h={28} w={220} /> : (() => {
+                  const connected = (runners ?? []).filter((r) => r.authed && r.models?.length);
+                  if (!connected.length) {
+                    return <a href={`/c/${ws}/settings`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.connectFirst')} →</a>;
+                  }
+                  const slotGroups = (slot, clearable) => [
+                    ...(clearable ? [{ items: [{ value: '', label: t('compete.modelSlotOptPh') }] }] : []),
+                    ...connected.map((r) => ({
+                      label: r.name,
+                      items: r.models.map((m) => {
+                        const pair = `${r.id}:${m.id}`;
+                        return {
+                          value: pair, label: m.label,
+                          disabled: pickedModels.includes(pair) && pickedModels[slot] !== pair,
+                          badge: m.gated ? t('runner.gatedBadge') : undefined,
+                        };
+                      }),
+                    })),
+                  ];
+                  return (<>
+                    <DropUp value={pickedModels[0] ?? ''} disabled={busy} width={210} placeholder={t('compete.modelSlotPh')}
+                      groups={slotGroups(0, false)} onChange={(v) => setModelSlot(0, v)} />
+                    <span className="microlabel" aria-hidden>vs</span>
+                    <DropUp value={pickedModels[1] ?? ''} disabled={busy} width={210} placeholder={t('compete.modelSlotPh')}
+                      groups={slotGroups(1, false)} onChange={(v) => setModelSlot(1, v)} />
+                    {/* 3번째는 선택 — 앞 2개를 고른 뒤에만 열린다. 빈 값 선택 = 슬롯 비우기 */}
+                    <DropUp value={pickedModels[2] ?? ''} disabled={busy || pickedModels.length < 2} width={210}
+                      placeholder={t('compete.modelSlotOptPh')} groups={slotGroups(2, true)} onChange={(v) => setModelSlot(2, v)} />
+                  </>);
+                })()}
+              </div>
             </div>
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
             <form onSubmit={start} className="input-bar">
