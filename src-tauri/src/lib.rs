@@ -14,7 +14,8 @@ use tauri_plugin_shell::process::CommandEvent;
 // 부트 화면(public/index.html)에 실시간 상태를 알린다 — 실패도 화면에 보이게(무한 대기 방지).
 // port: 프론트가 이동할 서버 포트(선택 확정 후) — boot.js가 후보 목록 맨 앞에 넣는다.
 fn boot_status(app: &tauri::AppHandle, phase: &str, detail: &str, port: Option<u16>) {
-    let _ = app.emit("boot", serde_json::json!({ "phase": phase, "detail": detail, "port": port }));
+    // version — boot.js가 프로브 시 "같은 버전의 Argo인가"를 대조한다(아래 is_same_version_argo와 한 쌍).
+    let _ = app.emit("boot", serde_json::json!({ "phase": phase, "detail": detail, "port": port, "version": env!("CARGO_PKG_VERSION") }));
 }
 
 // 포트 후보 — 3001(상주 서비스·기존 관례) 우선, 선점 시 폴백. boot.js의 후보 목록과 일치해야 한다.
@@ -28,9 +29,13 @@ fn tcp_open(port: u16) -> bool {
     TcpStream::connect_timeout(&(([127, 0, 0, 1], port).into()), Duration::from_millis(300)).is_ok()
 }
 
-// 이 포트의 서버가 Argo인가 — /api/ping 신원 마커를 최소 HTTP로 확인(외부 크레이트 불요).
+// 이 포트의 서버가 "같은 버전의" Argo인가 — /api/ping 신원 마커 + 버전을 최소 HTTP로 확인.
 // TCP 열림 ≠ Argo(타 앱 선점·좀비) — 신원 확인 없이는 붙지도, 그 포트를 쓰지도 않는다.
-fn is_argo(port: u16) -> bool {
+// 버전 대조(2026-07-22 실사용 신고): 버전 불문 adopt는 앱(쉘) 버전과 화면(UI) 버전을 어긋나게 한다 —
+// v0.1.20 앱이 상주 v0.1.22 서버에 붙어 "업데이트 안 했는데 다음 버전이 표시"되고, 업데이트 뱃지도
+// 무의미해진다. 같은 버전일 때만 붙고(같은 앱 이중 실행 방지라는 원 목적), 다르면 자기 사이드카를
+// 다음 빈 포트에 띄운다(상주 서버는 건드리지 않는다).
+fn is_same_version_argo(port: u16) -> bool {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(300)) else { return false };
     let _ = s.set_write_timeout(Some(Duration::from_millis(300)));
@@ -40,7 +45,10 @@ fn is_argo(port: u16) -> bool {
     let mut buf = Vec::new();
     let _ = s.take(16_384).read_to_end(&mut buf); // 타임아웃/조기 종료여도 읽힌 만큼 판정
     let text = String::from_utf8_lossy(&buf);
-    text.contains("\"argo\":true") || text.contains("\"argo\": true")
+    let is_argo = text.contains("\"argo\":true") || text.contains("\"argo\": true");
+    let same_ver = text.contains(&format!("\"version\":\"{}\"", env!("CARGO_PKG_VERSION")))
+        || text.contains(&format!("\"version\": \"{}\"", env!("CARGO_PKG_VERSION")));
+    is_argo && same_ver
 }
 
 // Windows 리소스 경로의 \\?\ (UNC) 프리픽스 제거 — node가 스크립트 경로 인자로 받지 못해
@@ -70,9 +78,10 @@ pub fn run() {
                 )?;
             }
 
-            // 포트 결정 — ① 후보 중 이미 Argo가 떠 있으면(상주 서비스·개발 서버) 그 포트에 붙는다(이중 기동 방지)
-            // ② 아니면 첫 빈 포트에 사이드카 스폰 ③ 전부 타 앱 점유면 명확한 에러(낯선 서버 부착·무한 대기 방지).
-            let adopt = PORTS.iter().copied().find(|&p| tcp_open(p) && is_argo(p));
+            // 포트 결정 — ① 후보 중 "같은 버전의" Argo가 떠 있으면 그 포트에 붙는다(같은 앱 이중 기동 방지)
+            // ② 아니면 첫 빈 포트에 사이드카 스폰(다른 버전의 상주 Argo는 그대로 두고 공존)
+            // ③ 전부 타 앱 점유면 명확한 에러(낯선 서버 부착·무한 대기 방지).
+            let adopt = PORTS.iter().copied().find(|&p| tcp_open(p) && is_same_version_argo(p));
             let spawn_port = if adopt.is_none() { PORTS.iter().copied().find(|&p| !tcp_open(p)) } else { None };
             if let Some(p) = adopt {
                 boot_status(app.handle(), "started", "server already running", Some(p));

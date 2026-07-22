@@ -41,15 +41,18 @@ test('runnerNeedsReconnect: 무효 자격이 있으면 "끊김" 분기', () => {
   assert.equal(runnerNeedsReconnect({}), false);
 });
 
-test('codexSandboxArgs: 능력 → 샌드박스 매핑 고정(fs=밖 쓰기, browser=네트워크)', () => {
+test('codexSandboxArgs: 능력 → 샌드박스 매핑 고정(fs=홈 한정 쓰기, browser=네트워크)', async () => {
+  const { homedir } = await import('node:os');
+  const HOME_ROOT = `sandbox_workspace_write.writable_roots=["${homedir()}"]`;
   assert.deepEqual(codexSandboxArgs(null), [], '능력 미전달 = 기존 workspace-write 그대로(회귀 없음)');
   assert.deepEqual(codexSandboxArgs({ fs: false, browser: false }), [], '전부 꺼짐 = 오버라이드 없음');
-  assert.deepEqual(codexSandboxArgs({ fs: true }), ['-c', 'sandbox_workspace_write.writable_roots=["/"]'],
-    'fs ON = 워크스페이스 밖 쓰기 허용(실사용 신고: 외부 자료 가져오기)');
+  // fs ON = 홈 디렉토리 한정 — "/"(루트 전체)는 /Applications의 앱 본체까지 열었다(크리티컬 2026-07-22)
+  assert.deepEqual(codexSandboxArgs({ fs: true }), ['-c', HOME_ROOT],
+    'fs ON = 사용자 문서 접근은 유지하되 앱 본체(/Applications)는 샌드박스 밖');
   assert.deepEqual(codexSandboxArgs({ browser: true }), ['-c', 'sandbox_workspace_write.network_access=true'],
     'browser ON = 네트워크 허용');
   assert.deepEqual(codexSandboxArgs({ fs: true, browser: true }), [
-    '-c', 'sandbox_workspace_write.writable_roots=["/"]',
+    '-c', HOME_ROOT,
     '-c', 'sandbox_workspace_write.network_access=true',
   ], '둘 다 ON = 두 오버라이드 모두');
 });

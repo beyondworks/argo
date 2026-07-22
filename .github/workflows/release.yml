@@ -63,6 +63,14 @@ jobs:
 
       - run: npm ci
 
+      # 신규 기기 스모크 — CI macOS 러너는 claude CLI 미설치·빈 키체인·헤드리스라 신규 맥과 등가 조건.
+      # 원클릭(setup-token 대행)이 번들 CLI로 시작돼 인증 URL·코드 프롬프트까지 도달하는지 검증한다.
+      # 개발 PC(전부 설치·로그인된 환경) 실측은 이 실패 조건을 재현하지 못한다(실사용 신고 2026-07-22).
+      - name: Fresh-device smoke (macOS one-click connect)
+        if: matrix.os == 'macos-14'
+        shell: bash
+        run: node scripts/smoke-fresh-device.mjs
+
       # 프로젝트 고유 빌드: stage-sidecar(next standalone + node 사이드카) → tauri build.
       # bash 셸로 고정해 npm 스크립트의 &&·cd가 Windows에서도 동일하게 동작하게 한다.
       #

@@ -123,12 +123,30 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   const [setupBusy, setSetupBusy] = useState(false);
   const [setupMsg, setSetupMsg] = useState('');
   const [setupOk, setSetupOk] = useState(false);
+  // 신형 CLI 코드 플로우(2026-07-22) — 승인 후 브라우저에 표시된 코드를 여기서 받아 서버(stdin)로 보낸다.
+  // authUrl = 브라우저가 안 열린 기기(신규 맥 신고)의 폴백 링크.
+  const [setupAuthUrl, setSetupAuthUrl] = useState('');
+  const [setupAwaitCode, setSetupAwaitCode] = useState(false);
+  const [setupCode, setSetupCode] = useState('');
+  async function submitSetupCode() {
+    const v = setupCode.trim();
+    if (!v) return;
+    setSetupCode('');
+    setSetupMsg(t('settings.runners.setupWaiting'));
+    try {
+      await fetch(`${keysBase(ws)}/connect`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runner: 'claude', setup: true, code: v }),
+      });
+    } catch { /* 폴링이 결과(saved/failed)를 알려준다 */ }
+  }
   const setupPollRef = useRef(null);
   useEffect(() => () => { if (setupPollRef.current) { clearInterval(setupPollRef.current); setupPollRef.current = null; } }, []);
   async function setupConnect() {
     // 진행 중 재클릭 허용 — 서버가 이전 시도를 죽이고 새로 연다(브라우저를 승인 없이 닫은 사용자가
     // 10분 타임아웃을 기다리지 않고 즉시 재시도, 실사용 신고 2026-07-20). busy 가드 제거가 의도.
     setSetupBusy(true); setSetupOk(false); setSetupMsg(t('settings.runners.setupWaiting'));
+    setSetupAuthUrl(''); setSetupAwaitCode(false); setSetupCode('');
     try {
       const r = await fetch(`${keysBase(ws)}/connect`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runner: 'claude', setup: true }),
@@ -148,13 +166,15 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
         if (!alive.current || Date.now() - t0 > 11 * 60_000) { clearInterval(setupPollRef.current); setupPollRef.current = null; if (alive.current) { setSetupBusy(false); setSetupMsg(t('settings.runners.setupFailedShort')); } return; }
         try {
           const s = await (await fetch(`${keysBase(ws)}/connect?runner=claude&setup=1`)).json();
+          if (s.authUrl) setSetupAuthUrl(s.authUrl); // 브라우저 미개방 폴백 링크
+          if (s.awaitCode) { setSetupAwaitCode(true); setSetupMsg(t('settings.runners.setupCodeHint')); } // 코드 입력칸 개방
           if (s.status === 'saved') {
             clearInterval(setupPollRef.current); setupPollRef.current = null;
-            setSetupBusy(false); setSetupOk(true); setSetupMsg(t('settings.runners.connected'));
+            setSetupBusy(false); setSetupOk(true); setSetupAwaitCode(false); setSetupAuthUrl(''); setSetupMsg(t('settings.runners.connected'));
             window.dispatchEvent(new Event('argo:refresh')); onChange();
           } else if (s.status === 'failed') {
             clearInterval(setupPollRef.current); setupPollRef.current = null;
-            setSetupBusy(false); setSetupMsg(s.error || t('settings.runners.setupFailedShort'));
+            setSetupBusy(false); setSetupAwaitCode(false); setSetupMsg(s.error || t('settings.runners.setupFailedShort'));
           }
         } catch { /* 다음 틱 재시도 */ }
       }, 2000);
@@ -456,6 +476,23 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
                 <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.setupHint')}</span>
               </div>
               {setupMsg && <span style={{ fontSize: 12, color: setupOk ? 'var(--ok)' : setupBusy ? 'var(--fg-2)' : 'var(--danger)' }}>{setupMsg}</span>}
+              {/* 브라우저가 안 열린 기기(신규 설치 신고 2026-07-22) — 같은 인증 링크를 직접 연다 */}
+              {setupBusy && setupAuthUrl && (
+                <a href={setupAuthUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11.5, color: 'var(--primary-strong)', fontWeight: 650 }}>
+                  {t('settings.runners.setupOpenLink')} →
+                </a>
+              )}
+              {/* 신형 CLI 코드 플로우 — 승인 후 브라우저에 표시된 코드를 여기 붙여넣으면 서버가 CLI에 전달해 완료 */}
+              {setupBusy && setupAwaitCode && (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <input suppressHydrationWarning value={setupCode} onChange={(e) => setSetupCode(e.target.value)}
+                    placeholder={t('settings.runners.setupCodePh')} style={{ ...fieldStyle, flex: 1 }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); submitSetupCode(); } }} />
+                  <button className="btn btn-primary sm" style={{ flex: 'none' }} disabled={!setupCode.trim()} onClick={submitSetupCode}>
+                    {t('settings.runners.setupCodeSubmit')}
+                  </button>
+                </div>
+              )}
             </div>
           )}
           <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
