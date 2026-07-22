@@ -5,7 +5,7 @@
 import {
   accountScope, startRunnerLogin, runnerLoginStatus, RUNNER_AUTH,
   startRunnerWebAuth, submitRunnerWebAuth, webAuthDone,
-  startClaudeSetupToken, setupTokenStatus,
+  startClaudeSetupToken, setupTokenStatus, submitSetupCode,
 } from '../../../../../src/runners.mjs';
 import { currentUser, tenantDenied } from '../../../../auth.mjs';
 
@@ -23,6 +23,8 @@ export async function POST(req) {
   const meta = RUNNER_AUTH[runner];
   if (!meta) return Response.json({ error: '알 수 없는 러너' }, { status: 400 });
   if (runner === 'claude' && setup) { // 원클릭 — 데스크톱 번들에서만 완주(ARGO_STANDALONE 게이트, companies 라우트와 동일)
+    // 코드 왕복 — 신형 CLI(코드 표시형 플로우)에서 브라우저 승인 후 표시된 코드를 stdin으로 전달
+    if (code) { const r = submitSetupCode(g.scope, code); return Response.json(r, { status: r.ok ? 200 : 400 }); }
     const r = await startClaudeSetupToken(g.scope);
     return Response.json(r, { status: r.ok ? 200 : 400 });
   }

@@ -6,6 +6,9 @@
 // Windows 설치 직후 "Cannot GET /") 방지. lib.rs의 PORTS 후보와 일치해야 한다.
 var TARGETS = ['http://localhost:3001', 'http://localhost:3011', 'http://localhost:3021', 'http://localhost:3999'];
 var DEMO = /[?&]demo\b/.test(location.search); // 시각 QA용 — 리다이렉트 없이 단계 순환
+// 앱(쉘) 버전 — lib.rs boot 이벤트가 실어 준다. 있으면 "같은 버전의 Argo"에만 이동한다.
+// (버전 불문 이동은 v0.1.20 앱이 상주 v0.1.22 서버 화면을 띄우는 어긋남을 만들었다 — 2026-07-22 신고)
+var APP_VER = null;
 
 var statusEl = document.getElementById('status');
 var fillEl = document.getElementById('fill');
@@ -55,12 +58,11 @@ try {
   if (window.__TAURI__ && window.__TAURI__.event) {
     window.__TAURI__.event.listen('boot', function (e) {
       var p = e.payload || {};
-      // 셸이 확정한 서버 포트 — 후보 목록 맨 앞에 넣어 다음 프로브가 우선 확인(폴백 포트 스폰 대응)
+      if (p.version) APP_VER = p.version; // 이후 프로브는 같은 버전의 Argo에만 이동
+      // 셸이 확정한 서버 포트 — 그 포트로 고정. 다른 후보(예: 다른 버전의 상주 3001)로 새지 않게
+      // 목록을 교체한다(스폰이 3011인데 3001 상주가 먼저 응답해 이동하던 레이스 차단).
       if (p.port) {
-        var u = 'http://localhost:' + p.port;
-        var at = TARGETS.indexOf(u);
-        if (at > 0) TARGETS.splice(at, 1);
-        if (at !== 0) TARGETS.unshift(u);
+        TARGETS = ['http://localhost:' + p.port];
       }
       if (p.phase === 'error') {
         phase = 'error'; // 종결 상태 — 진행바 크리프·slow 안내 정지(위 인터벌 가드). probe/goto는 회복 대비 계속.
@@ -103,7 +105,8 @@ function probe(i) {
   fetch(target + '/api/ping', { cache: 'no-store' })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
-      if (d && d.argo === true) { goto(target); } else { probe(i + 1); }
+      // 신원 + (셸 버전을 아는 경우) 버전까지 일치해야 이동 — 다른 버전의 Argo는 건너뛴다
+      if (d && d.argo === true && (!APP_VER || d.version === APP_VER)) { goto(target); } else { probe(i + 1); }
     })
     .catch(function () { probe(i + 1); });
 }

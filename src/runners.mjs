@@ -2,6 +2,7 @@
 // OAuth 로그인(구독)을 그대로 빌리는 어댑터, GLM은 Anthropic 호환 엔드포인트로 SDK를 태운다.
 // 원칙: Argo가 새 API 키를 보관하지 않는다 — 이미 인증된 도구의 자격을 쓴다(BYOK/BYOA).
 import { access, copyFile, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { openSync, writeSync, closeSync } from 'node:fs'; // setup-token 코드 왕복 fifo(동기 fd — 이벤트 핸들러에서 사용)
 import { randomBytes, createHash } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -92,7 +93,11 @@ export const maskKeyLike = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{1
 /** 실패 출력에서 API 에러 메시지만 뽑는다 — 이벤트 로그에 명령·프롬프트 전문을 흘리지 않는다.
     키 패턴은 마스킹(벤더 401 바디의 "Incorrect API key provided: sk-…" 류가 그대로 영속되지 않게). */
 function apiError(e) {
-  const raw = `${e.stdout ?? ''}\n${e.stderr ?? ''}`;
+  // codex가 호스트 전역 스킬 디렉토리(~/.claude/skills, ~/.agents/skills)를 CODEX_HOME과 무관하게 읽어
+  // 매 실행 ERROR 로그를 뱉는다(실측 2026-07-22) — 실패 시 이 노이즈가 stderr 꼬리를 덮어 빨간 메시지가
+  // "failed to load skill …"로 오도된다. 진단에서 제거해 진짜 원인만 남긴다.
+  const scrub = (s) => String(s ?? '').replace(/^.*ERROR codex_core.*failed to load skill.*$/gim, '').trim();
+  const raw = `${scrub(e.stdout)}\n${scrub(e.stderr)}`;
   // 구글이 개인 무료 OAuth(Code Assist for individuals)를 신형 CLI에서 차단(실측 2026-07-20:
   // 번들판 0.36~0.51 전부 IneligibleTierError, 구형 0.21만 통과 — 서버측 판정이라 버전 고정 우회는 시한부).
   // 영어 스택트레이스 대신 대안이 담긴 안내로 번역한다.
@@ -410,9 +415,28 @@ async function codexHomeClean() {
     실사용 신고 대응(2026-07-19): 사장이 fs를 켜도 "읽기전용이라 불가"로 막히던 외부 자료 가져오기.
     (export: 회귀 테스트용) */
 export const codexSandboxArgs = (caps) => [
-  ...(caps?.fs ? ['-c', 'sandbox_workspace_write.writable_roots=["/"]'] : []),
+  // fs 능력 — 이전엔 "/"(루트 전체)를 열어 실행 중인 Argo 앱 코드까지 쓰기 가능했다(실사용 신고
+  // 2026-07-22 크리티컬). 홈 디렉토리로 좁힌다 — 사용자 문서 접근(fs 능력의 목적)은 유지되고
+  // /Applications의 앱 본체는 샌드박스 밖이 된다. (홈 안의 Argo 데이터는 프로세스 단위 샌드박스의
+  // 한계로 완전 차단 불가 — commonDirectives 금지 지시가 2차 방어. SDK 러너는 게이트가 하드 차단.)
+  ...(caps?.fs ? ['-c', `sandbox_workspace_write.writable_roots=["${homedir()}"]`] : []),
   ...(caps?.browser ? ['-c', 'sandbox_workspace_write.network_access=true'] : []),
 ];
+
+/** 능력 매핑을 codex config.toml에 매 턴 써넣는다 — `-c` CLI 오버라이드의 버전-안정 대체(주 경로).
+    실사용 신고(2026-07-22, 김남): caps를 다 켜도 codex 크루만 "로컬능력 권한 실패", 사용자가 config.toml을
+    수동 수정해 해결. 원인 = `-c sandbox_workspace_write.*` 오버라이드 키 경로가 codex 버전마다 갈려
+    거부/무시됨. config.toml의 [sandbox_workspace_write] 섹션은 안정 인터페이스라 버전 불문 먹는다.
+    Argo 관리 config.toml(코멘트 전용)을 통째로 다시 써 파싱 불필요. writable_roots=홈(앱 본체 보호 유지). */
+export async function writeCodexTurnConfig(home, caps) {
+  const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)에서 재생성됩니다.'];
+  if (caps?.fs || caps?.browser) {
+    lines.push('[sandbox_workspace_write]');
+    if (caps?.fs) lines.push(`writable_roots = ["${homedir()}"]`); // 홈 한정 — /Applications 앱 본체는 밖
+    if (caps?.browser) lines.push('network_access = true');
+  }
+  await writeFile(join(home, 'config.toml'), lines.join('\n') + '\n').catch(() => { /* 실패해도 -c 폴백이 있다 */ });
+}
 
 /** 외부 CLI 러너 1턴 — 워크스페이스를 cwd로, 프롬프트 하나로 실행하고 마지막 응답을 받는다.
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
@@ -423,15 +447,21 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
     const out = join(dir, 'last.txt');
     // 회사 API키 모드면 깨끗한 홈(계정 OAuth 무시), 아니면 호스트 로그인 상속
-    const CODEX_HOME = cred?.home === 'clean' ? await codexHomeClean()
+    const baseHome = cred?.home === 'clean' ? await codexHomeClean()
       : cred?.home ? cred.home // 회사 OAuth 격리 홈(웹 브리지)
       : await codexHome();     // 호스트 로그인 상속
+    // per-turn CODEX_HOME — baseHome은 회사 간 공유(codexHome)라 config.toml에 caps를 직접 쓰면 경합한다.
+    // 이번 턴 전용 홈을 만들고 auth.json만 베이스에서 심링크한 뒤 config.toml에 caps를 써넣는다(격리 + 버전 안정).
+    const CODEX_HOME = join(dir, 'home');
+    await mkdir(CODEX_HOME, { recursive: true, mode: 0o700 });
+    await symlink(join(baseHome, 'auth.json'), join(CODEX_HOME, 'auth.json')).catch(() => { /* auth 없는 모드(clean+env키)는 심링크 불요 */ });
+    await writeCodexTurnConfig(CODEX_HOME, caps); // [sandbox_workspace_write] — `-c`가 안 먹는 codex 버전 방어(실사용 신고 2026-07-22)
     const cmd = await codexCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     try {
       await exec(cmd.file, [
         ...cmd.args,
         'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check',
-        ...codexSandboxArgs(caps),
+        ...codexSandboxArgs(caps), // config.toml과 이중 — 신버전은 `-c`, 구버전은 config.toml이 받는다
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
         '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록
@@ -1154,6 +1184,19 @@ export function extractSetupToken(text) {
   return extractSetupTokenCandidates(text)[0] ?? null;
 }
 
+/** PTY 출력에서 인증 URL 추출(순수) — 신형 CLI(2.1.x)의 setup-token은 승인 후 브라우저에 코드를
+    표시하고 터미널 입력을 요구한다(redirect_uri=platform.claude.com/oauth/code/callback — 실측
+    2026-07-22). 브라우저가 안 열린 기기(신규 맥 신고)를 위해 이 URL을 UI에 링크로 노출한다.
+    PTY 80칸 줄바꿈을 접합해 복원(extractSetupTokenCandidates와 동일 처리). (export: 회귀 테스트용) */
+export function extractSetupAuthUrl(text) {
+  const clean = String(text ?? '').replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(\x07|\x1b\\)/g, '');
+  const joined = clean.replace(/([!-~])\r?\n(?=[!-~])/g, '$1'); // URL 문자(인쇄 가능 비공백) 사이 개행 접합
+  const url = joined.match(/https:\/\/claude\.com\/[A-Za-z0-9/_.~?&=%+-]+/)?.[0] ?? null;
+  // 접합이 URL 바로 뒤에 붙은 프롬프트 문구("Paste code here…")까지 흡수하는 오염 제거(검수 MED —
+  // 빈 줄 없이 이어지는 실측 레이아웃에서 state 값 끝에 문구가 접합된다). CLI 문구는 영어 고정.
+  return url ? url.replace(/Paste.*$/i, '') : null;
+}
+
 /** 내장 SDK 네이티브 claude CLI 경로 — 앱/서버가 이미 품고 있는 바이너리(stage-sidecar 3.4가 보장).
     실측: setup-token 서브커맨드 지원. 터미널 무경험 초보자도 설치 0으로 원클릭(브라우저 승인) 연결이
     되게 하는 핵심 폴백이다(유건 지시 2026-07-19: 초보자 여정에서 터미널 요구 제거).
@@ -1181,7 +1224,19 @@ const setupState = (globalThis.__argoSetupToken ??= {}); // wsId → { status: r
 
 export function setupTokenStatus(wsId) {
   const s = setupState[wsId];
-  return s ? { status: s.status, error: s.error ?? '' } : { status: 'idle' };
+  // authUrl = 브라우저가 안 열린 기기의 폴백 링크, awaitCode = 신형 CLI 코드 프롬프트 감지(UI가 입력칸을 연다)
+  return s ? { status: s.status, error: s.error ?? '', authUrl: s.authUrl ?? '', awaitCode: !!s.awaitCode } : { status: 'idle' };
+}
+
+/** 신형 CLI 코드 플로우 — 브라우저 승인 후 표시되는 코드를 UI에서 받아 CLI stdin으로 전달한다.
+    (setup-token이 localhost 자동 콜백에서 코드 표시형으로 바뀌어 — 실측 2026-07-22 — stdin 없는
+    PTY 대행은 영원히 완주 불가였다. 이 왕복이 원클릭 연결의 완결 경로다.) */
+export function submitSetupCode(wsId, code) {
+  const s = setupState[wsId];
+  const v = String(code ?? '').trim();
+  if (!s || s.status !== 'running' || typeof s.write !== 'function') return { ok: false, reason: 'not-running' };
+  if (!v || v.length > 4096 || /[\r\n]/.test(v)) return { ok: false, reason: 'bad-code' };
+  try { s.write(`${v}\n`); return { ok: true }; } catch (e) { return { ok: false, reason: String(e.message || e).slice(0, 120) }; }
 }
 
 export async function startClaudeSetupToken(wsId) {
@@ -1201,39 +1256,86 @@ export async function startClaudeSetupToken(wsId) {
   // "인증을 취소했으면 처음부터 다시 시도할 수 있어야 한다"). 이전 시도는 죽이고 새로 연다.
   const prev = setupState[wsId];
   if (prev?.status === 'running') { try { prev.cancel?.(); } catch { /* 이미 종료 */ } }
+  // 조기 반환(no-cli·fifo/spawn 실패) 시 이전 'running' 잔상이 슬롯에 남으면 — cancel로 이미 죽어
+  // finish가 영영 안 옴 — UI 폴링이 11분을 헛돈다(검수 LOW). 시작 실패는 슬롯을 비워 idle로 돌린다.
+  const bail = (r) => { delete setupState[wsId]; return r; };
   const cli = await resolveClaudeCli();
-  if (!cli) return { ok: false, reason: 'no-cli' };
-  // macOS script는 인자 배열(셸 미개입), linux(util-linux)는 -c 문자열이라 sh를 타므로
-  // CLI 경로를 단일인용 이스케이프한다(공백 경로·메타문자 인젝션 차단 — env/PATH 유래 값).
+  if (!cli) return bail({ ok: false, reason: 'no-cli' });
+  // 코드 왕복 채널 — 신형 CLI(2.1.x)는 승인 후 브라우저에 표시된 코드를 stdin으로 받아야 완주한다
+  // (실측 2026-07-22 "Paste code here if prompted"). node의 pipe는 socketpair라 macOS script(1)가
+  // stdin에서 tcgetattr 실패로 즉사한다(실측 exit 1, "Operation not supported on socket") — script의
+  // stdin은 /dev/null로 두고, **CLI의 stdin만** named fifo로 리다이렉트해 UI가 받은 코드를 흘려보낸다.
+  let fifoDir = null, fifo = null, wfd = null;
+  try {
+    fifoDir = await mkdtemp(join(tmpdir(), 'argo-setup-'));
+    fifo = join(fifoDir, 'in');
+    await exec('mkfifo', [fifo]);
+    wfd = openSync(fifo, 'r+'); // r+ — reader(CLI)보다 먼저 열어도 블록되지 않는다
+  } catch (e) {
+    return bail({ ok: false, reason: 'spawn-failed', message: String(e.message || e) });
+  }
+  // 경로는 단일인용 이스케이프(공백·메타문자 인젝션 차단 — env/PATH 유래 값). fifo는 mkdtemp 산출이라 안전.
+  const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+  const shCmd = `exec ${q(cli)} setup-token < ${q(fifo)}`;
   const args = process.platform === 'darwin'
-    ? ['-q', '/dev/null', cli, 'setup-token']
-    : ['-qec', `'${cli.replace(/'/g, `'\\''`)}' setup-token`, '/dev/null'];
+    ? ['-q', '/dev/null', 'sh', '-c', shCmd]
+    : ['-qec', shCmd, '/dev/null'];
+  const cleanupFifo = () => {
+    try { if (wfd != null) closeSync(wfd); } catch { /* 이미 닫힘 */ }
+    wfd = null;
+    if (fifoDir) rm(fifoDir, { recursive: true, force: true }).catch(() => {});
+  };
   let child;
   try {
     child = spawn('script', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
-    return { ok: false, reason: 'spawn-failed', message: String(e.message || e) };
+    cleanupFifo();
+    return bail({ ok: false, reason: 'spawn-failed', message: String(e.message || e) });
   }
   let buf = '';
   let done = false;
   let timer;
   const gen = (prev?.gen ?? 0) + 1; // 세대 — 구시도의 늦은 finish/저장이 새 시도 상태를 덮지 않게
-  const cancel = () => { done = true; clearTimeout(timer); try { child.kill(); } catch { /* 이미 종료 */ } };
+  const cancel = () => { done = true; clearTimeout(timer); try { child.kill(); } catch { /* 이미 종료 */ } cleanupFifo(); };
+  const write = (s) => { if (wfd != null) writeSync(wfd, s); }; // 코드 왕복(fifo → CLI stdin) — submitSetupCode가 부른다
   // 슬롯의 세대가 내 것일 때만 기록 — 새 시도가 인수했거나 슬롯이 폐기(삭제)됐으면 늦은 결과는 버린다
-  const commit = (next) => { if (setupState[wsId]?.gen !== gen) return; setupState[wsId] = { ...next, gen, cancel }; };
+  const commit = (next) => { if (setupState[wsId]?.gen !== gen) return; setupState[wsId] = { ...next, gen, cancel, write }; };
+  // 부분 갱신(authUrl·awaitCode) — running 상태를 유지한 채 필드만 덧댄다
+  const patch = (fields) => { if (setupState[wsId]?.gen !== gen) return; setupState[wsId] = { ...setupState[wsId], ...fields }; };
   const finish = (status, error = '') => {
     if (done) return;
     done = true;
     clearTimeout(timer);
-    commit({ status, error, ts: Date.now() });
+    // 실패 진단 표면화 — 신규 기기에서만 나는 실패는 개발 PC에서 재현이 안 된다("내 PC 테스트는 소용
+    // 없다" — 유건 지적 2026-07-22). CLI가 마지막에 뱉은 말을 화면까지 들고 온다(토큰류는 마스킹).
+    let diag = '';
+    if (status === 'failed') {
+      const clean = buf.replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(\x07|\x1b\\)/g, '')
+        .replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-***')
+        .replace(/[?&](code|state|code_challenge)=[^&\s]+/g, '')
+        .replace(/\s+/g, ' ').trim().slice(-180);
+      if (clean) diag = ` (CLI: …${clean})`;
+    }
+    commit({ status, error: error ? `${error}${diag}` : error, ts: Date.now() });
     try { child.kill(); } catch { /* 이미 종료 */ }
+    cleanupFifo();
   };
   timer = setTimeout(() => finish('failed', '승인 대기 시간(10분)이 지났습니다 — 다시 시도하거나 토큰을 직접 붙여넣어 주세요'), SETUP_TOKEN_TIMEOUT_MS);
   timer.unref?.();
-  setupState[wsId] = { status: 'running', ts: Date.now(), gen, cancel };
+  setupState[wsId] = { status: 'running', ts: Date.now(), gen, cancel, write };
   const onData = (d) => {
     if (done) return;
     buf = (buf + d.toString()).slice(-20_000); // 꼬리만 유지 — 토큰은 마지막에 출력된다
+    // 신형 CLI 코드 플로우 관측 — 인증 URL(브라우저 미개방 기기의 폴백 링크)과 코드 프롬프트를
+    // 상태로 노출해 UI가 링크·코드 입력칸을 연다(submitSetupCode → stdin 왕복).
+    if (!setupState[wsId]?.authUrl) {
+      const url = extractSetupAuthUrl(buf);
+      if (url) patch({ authUrl: url });
+    }
+    if (!setupState[wsId]?.awaitCode) {
+      const clean = buf.replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(\x07|\x1b\\)/g, '').replace(/\s+/g, '');
+      if (/pastecodehere/i.test(clean)) patch({ awaitCode: true });
+    }
     const candidates = extractSetupTokenCandidates(buf);
     if (!candidates.length) return;
     // 토큰 감지 즉시 선점 — setup-token은 토큰 출력 직후 종료하므로, 비동기 저장이 끝나기 전의
@@ -1242,6 +1344,7 @@ export async function startClaudeSetupToken(wsId) {
     done = true;
     clearTimeout(timer);
     try { child.kill(); } catch { /* 이미 종료 */ }
+    cleanupFifo(); // 성공 경로에서도 fifo fd·임시 디렉토리 정리 — 상주 사이드카의 fd 누적 방지(검수 MED)
     // 저장 전 실검증(HTTP Bearer, verifyRunnerCred) — 잘린/무효 토큰이 '연결됨'으로 저장되는 것을
     // 원천 차단(실사고 2026-07-19: PTY 줄바꿈 절단 토큰 저장 → 연결됨 표시인데 전 호출 인증 실패).
     // 후보(접합본→원본) 중 검증을 통과한 것만 저장. 네트워크 불가(ok:null)는 첫 후보 관용 저장(오프라인 온보딩).
@@ -1271,7 +1374,7 @@ export async function startClaudeSetupToken(wsId) {
   };
   child.stdout.on('data', onData);
   child.stderr.on('data', onData);
-  child.on('exit', () => finish('failed', '로그인이 완료되지 않았습니다 — 다시 시도하거나 토큰을 직접 붙여넣어 주세요'));
+  child.on('exit', () => finish('failed', '로그인이 완료되지 않았습니다 — 브라우저에서 승인한 뒤 표시된 코드를 입력칸에 붙여넣어야 완료됩니다. 다시 시도하거나 토큰을 직접 붙여넣어 주세요'));
   child.on('error', (e) => finish('failed', String(e.message || e).slice(0, 160)));
   return { ok: true };
 }
