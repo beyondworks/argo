@@ -63,11 +63,22 @@ const CLIENT_OPTS = {
   global: { fetch: (url, opts) => fetch(url, { ...opts, signal: AbortSignal.timeout(30_000) }) },
 };
 let sb = null, sbKey = '';
+
+/** 서비스롤(RLS 우회) 동기화가 정당한 컨텍스트인가 — 서비스롤 클라이언트 제거 완주(2026-07-23).
+    허용: 자가호스트(공개키 미빌드 = AUTH off, 사용자가 곧 테넌트) 또는 워커(ARGO_TENANT_OWNER 바인딩, 오너 전용 인스턴스).
+    금지: 호스티드 클라이언트(공개키 빌드 = AUTH_ON, 워커 아님) — 오설정으로 크라운주얼이 런타임에 새어들어도
+    절대 service-mode로 RLS를 우회하지 않고 세션(JWT+RLS)만 쓴다. 정상 경로(서비스롤 부재)엔 무영향. (export: 회귀 테스트용) */
+export function serviceCredsAllowed(env = process.env) {
+  const authOn = !!(env.NEXT_PUBLIC_SUPABASE_URL && env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  const isWorker = !!env.ARGO_TENANT_OWNER?.trim();
+  return !authOn || isWorker;
+}
+
 // cycle 시작마다 호출 — 서비스 모드는 epoch, 세션 모드는 access token으로 캐시 키를 삼아
 // 자격 회전 시에만 클라이언트를 재생성한다. false = 쓸 자격 없음(이번 사이클 스킵).
 async function ensureClient() {
   const svc = loadSyncCreds();
-  if (svc) {
+  if (svc && serviceCredsAllowed()) {
     const k = `svc:${credsEpoch()}`;
     if (sbKey !== k) { sb = createClient(svc.url, svc.key, CLIENT_OPTS); sbKey = k; }
     return true;
