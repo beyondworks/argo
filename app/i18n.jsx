@@ -22,7 +22,7 @@ const DICT = {
   'common.search': ['검색', 'Search'],
   'topbar.version': ['설치된 버전', 'Installed version'],
   'topbar.update': ['업데이트', 'Update'],
-  'topbar.updateTitle': ['새 버전 v{v} 발행됨 — 설정 → 기기에서 업데이트', 'v{v} is out — update in Settings → Devices'],
+  'topbar.updateTitle': ['새 버전 v{v} — 클릭하면 바로 설치·재시작', 'v{v} available — click to install & restart'],
   'common.approve': ['승인', 'Approve'],
   'common.reject': ['거절', 'Reject'],
   'common.chat': ['대화', 'Chat'],
