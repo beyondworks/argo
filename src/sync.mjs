@@ -726,10 +726,12 @@ async function cycle() {
   // 전부 무제한·단일 기기). 페이월 뒤에 두면 무료 계정이 중재를 아예 못 해 미획득 기본값 leader:true가
   // 두 기기에 남거나(이중 실행), 강등해 버리면 정상 무료 사용자의 루틴이 멈춘다 — 둘 다 제품 약속과 어긋난다.
   // 리스 키는 Storage RLS의 Pro 게이트에서 예외 처리돼 있다(마이그레이션 20260723001629, 오너 경계는 유지).
+  // 리셋은 renewLease보다 **앞**에 둔다 — 뒤에 두면 renewLease가 throw할 때 직전 사이클의 paywalled가
+  // stale로 남아 UI가 잘못된 페이월을 표시한다(architect 지적 2026-07-23).
+  status.paywalled = false; // 매 사이클 리셋 — 모드 전환(세션→서비스) 시 stale true 잔존 차단
   if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
   // 요금제 게이트(M-2d 스캐폴드) — 세션 모드에만. 서비스 모드(셀프호스트·워커)는 자기 인프라라 통과.
   // 강제는 ARGO_ENFORCE_PLAN=1일 때만(기본 off). 차단 = 조기 return — diff가 안 돌아 부작용 없음.
-  status.paywalled = false; // 매 사이클 리셋 — 모드 전환(세션→서비스) 시 stale true 잔존 차단
   if (!loadSyncCreds()) {
     const ent = await syncEntitled(client(), keyOwner || owners[0] || null);
     status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
