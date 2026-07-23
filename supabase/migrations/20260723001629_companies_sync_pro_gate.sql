@@ -27,6 +27,10 @@ create or replace function public.is_pro() returns boolean
 $$;
 -- Postgres는 함수 생성 시 PUBLIC에 EXECUTE를 기본 부여한다 — 익명(anon) RPC 호출을 막으려면 명시 회수 필수.
 revoke all on function public.is_pro() from public;
+-- ⚠ Supabase는 default privileges로 anon/authenticated에 '명시' EXECUTE를 추가 부여한다(프로덕션 ACL 실측
+--   2026-07-23: revoke from public 후에도 anon=X 잔존). PUBLIC 회수만으론 anon이 남으므로 별도 회수 필수.
+--   (무파라미터라 anon 호출 시 auth.uid()=null → false 반환뿐이라 실해악은 없으나, 의도는 익명 차단이다.)
+revoke execute on function public.is_pro() from anon;
 grant execute on function public.is_pro() to authenticated;
 
 -- 쓰기(insert)에 Pro 게이트 추가 — 소유자 경계(foldername[1]=auth.uid())는 유지.
