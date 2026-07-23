@@ -22,6 +22,16 @@ const DICT = {
   ],
   'hero.scroll': ['스크롤로 기능 보기', 'Scroll to explore'],
 
+  // install — 히어로와 1장 사이 터미널 한 줄 인터루드 (2026-07-23)
+  'install.kicker': ['터미널 설치', 'Install via terminal'],
+  'install.line': ['설치도, *한 줄*이면 충분합니다.', 'Installing takes just *one line*, too.'],
+  'install.copy': ['복사', 'Copy'],
+  'install.copied': ['복사됨', 'Copied'],
+  'install.note': [
+    'macOS · Linux 터미널에 붙여넣으면 최신 버전이 설치됩니다. 앱이 편하시면 아래에서 다운로드하세요.',
+    'Paste into a macOS · Linux terminal to install the latest build. Prefer an app? Download below.',
+  ],
+
   // Core Four — Argo만의 후킹 포인트 (2026-07-14 유건 지정: 최우선 강조 4개)
   'core.kicker': ['Argo가 다른 이유', 'Why Argo is different'],
   'core1.title': ['무한 장기 기억', 'Infinite memory'],

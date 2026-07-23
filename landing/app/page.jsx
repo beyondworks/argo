@@ -2,6 +2,7 @@ import Image from 'next/image';
 import Nav from '@/components/Nav';
 import Hero from '@/components/Hero';
 import Chapter from '@/components/Chapter';
+import InstallSection from '@/components/InstallSection';
 import DownloadSection from '@/components/DownloadSection';
 import ContactSection from '@/components/ContactSection';
 import Footer from '@/components/Footer';
@@ -16,6 +17,7 @@ export default function Page() {
       <Nav />
       <SideNav />
       <Hero />
+      <InstallSection />
       {CHAPTERS.map((chapter, i) => {
         const offset = orderOffset;
         orderOffset += chapter.features.length;
