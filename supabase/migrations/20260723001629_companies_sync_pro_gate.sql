@@ -8,10 +8,10 @@
 --    반드시 함께 켠다. 마이그레이션만 먼저 적용되면 무료 계정에서 비대칭이 생긴다 —
 --    클라이언트 페이월 게이트가 통과해 동기화가 진입하는데, delete 정책은 그대로라 **삭제는 전파되고**
 --    insert/update는 RLS가 거부해 **push만 실패** → 클라우드 사본이 줄어들기만 한다.
---    2차 피해: 리스 업로드도 같은 버킷이라 거부된다. src/sync.mjs는 두 경로 모두에서 이중 리더를 막는다 —
---    (ㄱ) 쓰기 거부 시 확인된 보유자·TTL 내에서만 유지(그 외 강등), (ㄴ) 페이월 조기 return 직전 명시 강등
---    (그 return이 리스 중재를 건너뛰므로). 다만 지속 거부 시 리더가 사라져 요금제와 무관한 루틴·메신저
---    폴러가 멈추는 것은 남는다 — 원자적 활성화가 필요한 또 하나의 이유다.
+--    리더 선출은 이 게이트의 영향을 받지 않는다: 리스 키(_device-lease.json)를 아래 정책에서 Pro 예외로 두고,
+--    src/sync.mjs가 리스 중재를 요금제 게이트보다 **먼저** 수행한다 → 무료 계정도 정확히 한 대만 리더가 되어
+--    루틴·메신저가 정상 동작한다(PRODUCT-SPEC의 "Free=로컬 전부 무제한·단일 기기"와 일치). 쓰기 거부 시
+--    리더십은 확인된 보유자·TTL 내에서만 유지되므로(그 외 강등) 이중 리더도 나지 않는다.
 --    적용 전엔 기존 동작 불변.
 
 -- 계정이 Pro인가 — entitlements를 안전 조회(무행=false=무료). RLS 정책에서 호출.
@@ -36,7 +36,10 @@ create policy companies_owner_insert on storage.objects
   with check (
     bucket_id = 'companies'
     and (storage.foldername(name))[1] = (select auth.uid()::text)
-    and public.is_pro()
+    -- 리스 파일(_device-lease.json)은 Pro 게이트 예외 — 리더 선출은 과금 대상이 아니라 이중 실행 방지용
+    -- 조정이고, 무료 계정도 단일 기기에서 루틴·메신저가 돌아야 한다(PRODUCT-SPEC: Free=로컬 전부 무제한).
+    -- 오너 경계는 바로 위 조건이 그대로 유지하므로 남의 리스는 건드릴 수 없다.
+    and (public.is_pro() or name = (select auth.uid()::text) || '/_device-lease.json')
   );
 
 -- 쓰기(update)에 Pro 게이트 추가 — using(대상 행 선택)은 소유자 경계, with check(새 값)에 Pro 결합.
@@ -47,7 +50,10 @@ create policy companies_owner_update on storage.objects
   with check (
     bucket_id = 'companies'
     and (storage.foldername(name))[1] = (select auth.uid()::text)
-    and public.is_pro()
+    -- 리스 파일(_device-lease.json)은 Pro 게이트 예외 — 리더 선출은 과금 대상이 아니라 이중 실행 방지용
+    -- 조정이고, 무료 계정도 단일 기기에서 루틴·메신저가 돌아야 한다(PRODUCT-SPEC: Free=로컬 전부 무제한).
+    -- 오너 경계는 바로 위 조건이 그대로 유지하므로 남의 리스는 건드릴 수 없다.
+    and (public.is_pro() or name = (select auth.uid()::text) || '/_device-lease.json')
   );
 
 -- companies_owner_select / companies_owner_delete 는 변경하지 않는다(소유자 경계만):

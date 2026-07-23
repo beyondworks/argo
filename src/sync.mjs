@@ -721,21 +721,20 @@ async function cycle() {
   const owners = [...new Set(targets.values())];
   // ARGO_SYNC_OWNER/페어링/세션 어디에도 오너가 없던 서비스 셀프호스트 — 로컬 회사에서 찾은 오너로 한 번 더 시도
   if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
+  // 리스 중재는 요금제 게이트보다 **먼저** 한다(architect 권고 2026-07-23). 리더 선출은 과금 대상이 아니라
+  // 이중 실행 방지용 조정이고, 무료 계정도 단일 기기에서 루틴·메신저가 돌아야 한다(PRODUCT-SPEC: Free=로컬
+  // 전부 무제한·단일 기기). 페이월 뒤에 두면 무료 계정이 중재를 아예 못 해 미획득 기본값 leader:true가
+  // 두 기기에 남거나(이중 실행), 강등해 버리면 정상 무료 사용자의 루틴이 멈춘다 — 둘 다 제품 약속과 어긋난다.
+  // 리스 키는 Storage RLS의 Pro 게이트에서 예외 처리돼 있다(마이그레이션 20260723001629, 오너 경계는 유지).
+  if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
   // 요금제 게이트(M-2d 스캐폴드) — 세션 모드에만. 서비스 모드(셀프호스트·워커)는 자기 인프라라 통과.
   // 강제는 ARGO_ENFORCE_PLAN=1일 때만(기본 off). 차단 = 조기 return — diff가 안 돌아 부작용 없음.
   status.paywalled = false; // 매 사이클 리셋 — 모드 전환(세션→서비스) 시 stale true 잔존 차단
   if (!loadSyncCreds()) {
     const ent = await syncEntitled(client(), keyOwner || owners[0] || null);
     status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
-    if (!ent.ok) {
-      // 이 return은 renewLease(아래)를 건너뛰므로 리스 중재가 아예 실행되지 않는다 → 미획득 기본값
-      // leader:true가 낮춰질 기회가 없어, 다운그레이드된 두 기기가 모두 리더로 남아 루틴 이중 실행·
-      // 텔레그램 409가 난다(architect 지적 2026-07-23). 획득을 확인하지 못한 프로세스는 리더가 아니다.
-      leaseState.leader = false; leaseState.ownedAt = 0;
-      status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return;
-    }
+    if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
   }
-  if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
   let companyFailed = 0;
   for (const [wsId, owner] of targets) {
     try {
