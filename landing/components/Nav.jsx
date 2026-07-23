@@ -39,7 +39,8 @@ export default function Nav() {
   const scrollTo = (id) => {
     const el = document.getElementById(id);
     if (!el) return;
-    if (lenis) lenis.scrollTo(el, { duration: 1.6 });
+    // 고정 네비(58px)에 섹션 머리가 가리지 않도록 오프셋 — CSS scroll-margin은 lenis가 무시한다
+    if (lenis) lenis.scrollTo(el, { duration: 1.6, offset: -76 });
     else el.scrollIntoView({ behavior: 'smooth' });
   };
   const toTop = () => {
@@ -79,6 +80,9 @@ export default function Nav() {
           <Link className="nav-link" href="/docs">
             {t('nav.docs')}
           </Link>
+          <a className="nav-link" {...anchorProps('install')}>
+            {t('nav.install')}
+          </a>
           <a className="nav-link" {...anchorProps('contact')}>
             {t('nav.contact')}
           </a>

@@ -10,6 +10,7 @@ const DICT = {
   'nav.cta': ['다운로드', 'Download'],
   'nav.lang': ['EN', 'KO'],
   'nav.docs': ['문서', 'Docs'],
+  'nav.install': ['설치', 'Install'],
   'nav.contact': ['문의', 'Contact'],
   'nav.githubSoon': ['GitHub — 공개 예정', 'GitHub — coming soon'],
 
