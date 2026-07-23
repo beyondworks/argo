@@ -1,7 +1,10 @@
 'use client';
-// 로그인 — 이메일 코드(비밀번호 없음) + Google·GitHub.
+// 로그인 — Google·GitHub + 로컬 전용 시작(게스트). 이메일 OTP는 제거됨(발송돼도 코드 누락 혼란·기본 SMTP 상한).
+//   주의: 이메일 백엔드 라우트(/api/device/login verifyOtp, /auth/confirm)는 아직 살아있다 — UI에서만 뺀 상태.
+//   Supabase 이메일 프로바이더 비활성화 또는 라우트 폐기는 후속(현재는 노출 경로가 없어 실사용 0).
 // 데스크톱 앱(웹뷰)은 소셜 로그인 창을 못 띄운다(Google이 임베디드 웹뷰 차단, 패스키 팝업 불가) →
 // 앱은 "브라우저 핸드오프": 진짜 브라우저를 열어 로그인하고, pairing code로 세션을 앱에 넘긴다.
+// 로컬 전용(게스트)은 로그인 없이 이 컴퓨터에서만 — 나중에 소셜 로그인하면 회사를 계정에 귀속(클레임)한다.
 import { useEffect, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { Logo, Spinner } from '../ui';

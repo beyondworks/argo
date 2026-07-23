@@ -15,6 +15,18 @@ export const AUTH_ON = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NE
 // X-Forwarded-Host는 신뢰하지 않는다(host 헤더만 검사) — 원격이 이 헤더를 위조해 루프백을 가장할 수 있어서다.
 export const isLoopbackHost = (host) => /^(127\.0\.0\.1|localhost|\[::1\]|::1)(:\d+)?$/.test(host || '');
 
+// CSRF 가드 — 브라우저가 붙이는 Sec-Fetch-Site만 검사한다. 로컬 서버를 띄운 채 악성 웹페이지를 열면
+// simple POST(preflight 없음)로 로컬 상태변경 라우트를 때릴 수 있는데, Host 검사는 그걸 못 막는다(브라우저가
+// 실 타깃으로 Host를 채우므로 루프백 통과). 크로스사이트 요청엔 브라우저가 Sec-Fetch-Site: cross-site를 붙인다.
+// same-origin(우리 페이지의 fetch)·none(주소창/북마크)만 허용. 헤더 부재(비브라우저·curl)는 CSRF 대상이 아니라 통과.
+export function csrfDenied(req) {
+  const sfs = req.headers.get('sec-fetch-site');
+  if (sfs && sfs !== 'same-origin' && sfs !== 'none') {
+    return Response.json({ error: '교차 출처 요청은 허용되지 않습니다' }, { status: 403 });
+  }
+  return null;
+}
+
 // 테넌트 바인딩 — 클라우드 워커는 인스턴스 1대 = 계정 1개(microVM 격리 설계).
 // ARGO_TENANT_OWNER(Supabase user id)가 설정되면 그 계정 외 요청을 전부 거부한다.
 // 로컬/공용 모드(미설정)는 무영향. 인증 off면 의미 없으므로 함께 무시한다.
