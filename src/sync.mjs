@@ -143,7 +143,8 @@ export function isCloudLeader() {
 export const holdsLeaseOnWriteFailure = (state, now = Date.now()) =>
   !!(state?.leader && state.ownedAt > 0 && now - state.ownedAt < LEASE_TTL_MS);
 
-async function renewLease(owner) {
+// (export: 회귀 테스트용 — 판정식이 아닌 **배선**을 잠그기 위해. 프로덕션 호출부는 cycle() 하나다.)
+export async function renewLease(owner) {
   const me = await getDeviceId();
   const key = skey(owner, '_device-lease.json');
   let cur = null;
@@ -726,7 +727,13 @@ async function cycle() {
   if (!loadSyncCreds()) {
     const ent = await syncEntitled(client(), keyOwner || owners[0] || null);
     status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
-    if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
+    if (!ent.ok) {
+      // 이 return은 renewLease(아래)를 건너뛰므로 리스 중재가 아예 실행되지 않는다 → 미획득 기본값
+      // leader:true가 낮춰질 기회가 없어, 다운그레이드된 두 기기가 모두 리더로 남아 루틴 이중 실행·
+      // 텔레그램 409가 난다(architect 지적 2026-07-23). 획득을 확인하지 못한 프로세스는 리더가 아니다.
+      leaseState.leader = false; leaseState.ownedAt = 0;
+      status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return;
+    }
   }
   if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
   let companyFailed = 0;
