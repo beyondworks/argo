@@ -37,7 +37,8 @@ const CYCLE_MS = Number(process.env.ARGO_SYNC_CYCLE_MS) || 8_000;
 const LOCK_STALE_MS = Math.max(CYCLE_MS * 3, 120_000);
 export const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다 (export: 회귀 테스트용)
 
-// 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선.
+// 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선하되,
+// 호스티드 클라이언트에선 serviceCredsAllowed()가 서비스 모드를 금지해 세션이 쓰인다(ensureClient 참조).
 export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && process.env.ARGO_SYNC !== '0';
 
 export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
@@ -732,7 +733,9 @@ async function cycle() {
   if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
   // 요금제 게이트(M-2d 스캐폴드) — 세션 모드에만. 서비스 모드(셀프호스트·워커)는 자기 인프라라 통과.
   // 강제는 ARGO_ENFORCE_PLAN=1일 때만(기본 off). 차단 = 조기 return — diff가 안 돌아 부작용 없음.
-  if (!loadSyncCreds()) {
+  // 판정은 ensureClient()의 실효 모드와 동일 조건(자격 존재 && serviceCredsAllowed) — 자격만 보면
+  // 호스티드 오설정(자격 유출로 존재하지만 세션으로 강등)에서 세션 모드인데 게이트가 스킵된다(검수 2026-07-23).
+  if (!(loadSyncCreds() && serviceCredsAllowed())) {
     const ent = await syncEntitled(client(), keyOwner || owners[0] || null);
     status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
     if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
