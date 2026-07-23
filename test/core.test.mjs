@@ -9,7 +9,7 @@ import { hkdfSync, createCipheriv, randomBytes } from 'node:crypto';
 
 import { writeJsonAtomic, writeFileAtomic, readJson, readJsonLenient } from '../src/jsonstore.mjs';
 import { mergeLedger, mergeThread, isLedger, isText, isThread, massDeleteBrake, isUnderFailed, archivalCreateNames } from '../src/sync.mjs';
-import { isDue } from '../src/routines.mjs';
+import { isDue, sanitizeRoutinePatch } from '../src/routines.mjs';
 import { createPairing, bindPairing, claimPairing } from '../app/api/auth/pair/store.mjs';
 
 const tmp = () => mkdtemp(join(tmpdir(), 'argo-test-'));
@@ -155,6 +155,25 @@ test('isDue: 시각 일치 + 같은 분 재실행 차단', () => {
   assert.equal(isDue({ ...base, enabled: false }, now), false, '비활성');
   // 이미 이 분에 실행됨 → 차단(이중 과금 방지)
   assert.equal(isDue({ ...base, lastRun: now.toISOString() }, now), false, '같은 분 재실행 차단');
+});
+
+/* ── routines: 편집 API 패치 정제 — 화이트리스트 + 필드별 검증 ── */
+test('sanitizeRoutinePatch: 편집 가능 필드만 통과, 실행 기록 덮어쓰기 차단', () => {
+  // 실행 기록·식별자는 API 패치로 못 덮는다 — runRoutine 내부 전용
+  const out = sanitizeRoutinePatch({ title: ' 새 이름 ', lastRun: 'x', lastOk: false, lastResult: 'x', created: 'x', id: 'hijack' });
+  assert.deepEqual(out, { title: '새 이름' }, '화이트리스트 외 필드 제거 + trim');
+  // enabled 토글(기존 동작)은 그대로
+  assert.deepEqual(sanitizeRoutinePatch({ enabled: 0 }), { enabled: false });
+  // schedule은 addRoutine과 같은 규칙으로 정규화
+  assert.deepEqual(
+    sanitizeRoutinePatch({ schedule: { type: 'weird', time: '10:30' } }).schedule,
+    { type: 'daily', time: '10:30', dow: 1 },
+    '알 수 없는 type은 daily로, dow 기본 1',
+  );
+  // 무효 값은 저장 전에 throw — 빈 제목·형식 밖 시각이 디스크에 못 닿는다
+  assert.throws(() => sanitizeRoutinePatch({ title: '  ' }), /제목/);
+  assert.throws(() => sanitizeRoutinePatch({ prompt: '' }), /지시/);
+  assert.throws(() => sanitizeRoutinePatch({ schedule: { type: 'daily', time: '9시' } }), /HH:MM/);
 });
 
 test('isDue: 주간은 요일까지', () => {

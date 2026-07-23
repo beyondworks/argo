@@ -37,6 +37,7 @@ export default function Routines({ params }) {
 
   function openForm(tpl) {
     setForm({
+      id: null, // null = 생성, 값 있으면 수정 모드
       agentSlug: agents[0]?.slug ?? '',
       title: tpl?.title ?? '',
       prompt: tpl?.prompt ?? '',
@@ -46,15 +47,37 @@ export default function Routines({ params }) {
     });
   }
 
-  async function create(e) {
+  // 기존 루틴을 같은 폼으로 편집 — 저장은 PUT(서버가 편집 가능 필드만 화이트리스트 검증)
+  function openEdit(r) {
+    setForm({
+      id: r.id,
+      agentSlug: r.agentSlug,
+      title: r.title,
+      prompt: r.prompt,
+      type: r.schedule?.type ?? 'daily',
+      time: r.schedule?.time ?? '09:00',
+      dow: r.schedule?.dow ?? 1,
+    });
+  }
+
+  async function submitForm(e) {
     e.preventDefault();
     if (saving || !form) return;
     setSaving(true); setError('');
     try {
-      await api(`/api/companies/${ws}/routines`, {
+      const body = {
         agentSlug: form.agentSlug, title: form.title, prompt: form.prompt,
         schedule: { type: form.type, time: form.time, dow: Number(form.dow) },
-      });
+      };
+      if (form.id) {
+        const res = await fetch(`/api/companies/${ws}/routines`, {
+          method: 'PUT', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id: form.id, ...body }),
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || t('routines.saveFail'));
+      } else {
+        await api(`/api/companies/${ws}/routines`, body);
+      }
       setForm(null);
       load();
     } catch (err) {
@@ -118,9 +141,9 @@ export default function Routines({ params }) {
 
       {/* 생성 폼 */}
       {form && (
-        <form onSubmit={create} className="card fade-up" style={{ padding: 18, display: 'grid', gap: 10 }}>
+        <form onSubmit={submitForm} className="card fade-up" style={{ padding: 18, display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className="card-title">{t('routines.createTitle')}</span>
+            <span className="card-title">{form.id ? t('routines.editTitle') : t('routines.createTitle')}</span>
             <button type="button" className="btn sm" onClick={() => setForm(null)}>{t('routines.close')}</button>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -162,7 +185,7 @@ export default function Routines({ params }) {
           />
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button className="btn btn-primary sm" disabled={saving || !form.title.trim() || !form.prompt.trim() || !form.agentSlug}>
-              {saving ? <Spinner size={12} /> : t('routines.createBtn')}
+              {saving ? <Spinner size={12} /> : form.id ? t('routines.saveBtn') : t('routines.createBtn')}
             </button>
             {error && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>}
           </div>
@@ -187,7 +210,7 @@ export default function Routines({ params }) {
         ) : (
           <table className="table">
             <thead>
-              <tr><th>{t('routines.colTitle')}</th><th style={{ width: 130 }}>{t('routines.colCrew')}</th><th style={{ width: 120 }}>{t('routines.colSchedule')}</th><th style={{ width: 170 }}>{t('routines.colLastRun')}</th><th style={{ width: 84 }}>{t('routines.colState')}</th><th style={{ width: 130 }} /></tr>
+              <tr><th>{t('routines.colTitle')}</th><th style={{ width: 130 }}>{t('routines.colCrew')}</th><th style={{ width: 120 }}>{t('routines.colSchedule')}</th><th style={{ width: 170 }}>{t('routines.colLastRun')}</th><th style={{ width: 84 }}>{t('routines.colState')}</th><th style={{ width: 164 }} /></tr>
             </thead>
             <tbody>
               {routines.map((r) => (
@@ -217,6 +240,7 @@ export default function Routines({ params }) {
                   <td style={{ textAlign: 'right' }}>
                     <span style={{ display: 'inline-flex', gap: 6 }}>
                       <button className="btn sm" onClick={() => setRunTarget(r)}><Icon name="play" size={12} /> {t('routines.run')}</button>
+                      <button className="btn sm btn-icon" style={{ width: 28 }} onClick={() => openEdit(r)} aria-label={t('routines.editAria')}><Icon name="edit" size={13} /></button>
                       <button className="btn sm btn-icon" style={{ width: 28 }} onClick={() => remove(r)} aria-label={t('routines.deleteAria')}><Icon name="trash" size={13} /></button>
                     </span>
                   </td>
