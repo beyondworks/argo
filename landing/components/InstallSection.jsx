@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useLang } from '@/lib/i18n';
-import Accent from '@/components/Accent';
 
-// 히어로(황금빛 '한 줄')와 1장 사이의 인터루드 — "설치도 한 줄" 터미널 창.
+// 히어로와 1장 사이의 설치 인터루드 — 챕터 인트로와 동일한 시각 문법(rule-top → 키커/카운터 →
+// 초대형 타이틀 → 세리프 부제 → 태그라인)을 따르고, 챕터의 아트 자리에 터미널 창을 놓는다.
 // OS별 명령은 전부 실동작 검증 경로만: linux=install.sh(정본), mac=최신 dmg 직다운+열기,
 // win=고정 파일명 설치본 직다운+실행 (argo-agent Latest 자산 — 파일명 고정이라 URL 안정).
 const BASE = 'https://github.com/beyondworks/argo-agent/releases/latest/download';
@@ -48,20 +48,18 @@ export default function InstallSection() {
 
   return (
     <section className="install-section" id="install">
-      <div className="install-head">
+      <div className="rule-top" />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <span className="mono-label">{t('install.kicker')}</span>
         <span className="mono-label mono-dim">MAC · WIN · LINUX</span>
       </div>
+      <h2 className="chapter-title">{t('install.title')}</h2>
+      <p className="chapter-sub">{t('install.sub')}</p>
 
-      <div className="install-grid">
-        <div className="install-copyblock">
-          <p className="install-line">
-            <Accent text={t('install.line')} />
-          </p>
-          <span className="install-note">{t(`install.note.${os.id}`)}</span>
-        </div>
+      <div className="install-row">
+        <p className="chapter-tagline">{t(`install.note.${os.id}`)}</p>
 
-        {/* 터미널 창 — 모노크롬 트래픽 닷 + OS 탭 + 블링킹 커서 */}
+        {/* 터미널 창 — 챕터의 아트 자리(우측). 모노크롬 트래픽 닷 + OS 탭 + 블링킹 커서 */}
         <div className="install-term">
           <div className="term-bar">
             <span className="term-dot" aria-hidden />

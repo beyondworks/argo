@@ -876,45 +876,39 @@ video {
 
 /* ── install — 히어로와 1장 사이 터미널 한 줄 인터루드 ── */
 
+/* 챕터 인트로와 동일 문법·동일 수치(chapter-intro 참조) — 풀스크린 센터 정렬, 정적 섹션 */
 .install-section {
   position: relative;
-  padding: clamp(48px, 8svh, 88px) var(--pad-x) clamp(52px, 9svh, 96px);
+  min-height: var(--app-vh, 100svh);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 22px;
+  padding: 0 var(--pad-x);
   background: var(--bg);
-  border-top: 1px solid var(--rule);
-  scroll-margin-top: 76px; /* 네이티브 앵커 폴백 — lenis 경로는 Nav offset이 처리 */
 }
 
-.install-head {
+.install-section .rule-top {
+  width: 100%;
+  height: 1px;
+  background: var(--rule);
+}
+
+/* 태그라인(좌) + 터미널 창(우 — 챕터의 아트 자리). 모바일 세로 스택 */
+.install-row {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  border-bottom: 1px solid var(--rule);
-  padding-bottom: 12px;
-  margin-bottom: clamp(24px, 4.5svh, 44px);
+  align-items: flex-start;
+  gap: clamp(32px, 6vw, 96px);
+  margin-top: 6px;
 }
-
-/* 카피(좌상) ↔ 터미널 창(우하) — 대각 구도로 우측 대공백 해소. 모바일은 세로 스택 */
-.install-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-  gap: clamp(28px, 5vw, 72px);
-  align-items: start;
-}
-.install-term {
-  /* 유건 지정 위치(2026-07-23) — 헤드라인 아래 우측, 섹션의 빈 우하단을 채운다 */
-  margin-top: clamp(120px, 20svh, 240px);
+.install-row .install-term {
+  flex: 1;
+  max-width: min(680px, 52vw);
 }
 @media (max-width: 900px) {
-  .install-grid { grid-template-columns: 1fr; gap: 28px; }
-  .install-term { margin-top: 0; }
-}
-
-.install-line {
-  font-size: clamp(26px, 3.2vw, 46px);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.14;
-  text-wrap: balance;
+  .install-row { flex-direction: column; }
+  .install-row .install-term { max-width: 100%; width: 100%; }
 }
 
 /* ── 터미널 창 — 모노크롬 트래픽 닷 + OS 탭 + 커서 ── */

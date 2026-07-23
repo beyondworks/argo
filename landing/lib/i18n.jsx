@@ -25,7 +25,8 @@ const DICT = {
 
   // install — 히어로와 1장 사이 터미널 한 줄 인터루드 (2026-07-23)
   'install.kicker': ['터미널 설치', 'Install via terminal'],
-  'install.line': ['설치도, *한 줄*이면 충분합니다.', 'Installing takes just *one line*, too.'],
+  'install.title': ['한 줄 설치', 'One-line install'],
+  'install.sub': ['설치도, 한 줄이면 충분합니다.', 'Installing takes just one line, too.'],
   'install.copy': ['복사', 'Copy'],
   'install.copied': ['복사됨', 'Copied'],
   'install.note.mac': [

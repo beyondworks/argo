@@ -39,8 +39,8 @@ export default function Nav() {
   const scrollTo = (id) => {
     const el = document.getElementById(id);
     if (!el) return;
-    // 고정 네비(58px)에 섹션 머리가 가리지 않도록 오프셋 — CSS scroll-margin은 lenis가 무시한다
-    if (lenis) lenis.scrollTo(el, { duration: 1.6, offset: -76 });
+    // 설치 섹션이 풀스크린 센터 정렬로 바뀌어(챕터 문법) 오프셋 불필요 — 섹션 상단 = 화면 상단
+    if (lenis) lenis.scrollTo(el, { duration: 1.6 });
     else el.scrollIntoView({ behavior: 'smooth' });
   };
   const toTop = () => {
