@@ -1,39 +1,108 @@
 # Argo
 
-> 프롬프트 한 줄로 전문 AI 크루를 영입하고, 회사가 폴더 단위 기억으로 항해하는
-> 개인용 AI 회사 SaaS. 아르고호(Argo) — 전문성이 다른 영웅들이 한 배를 타고
-> 황금양털을 향해 함께 항해한 배.
+> **The AI agent company that remembers everything.** One prompt hires a crew of
+> specialist AI agents; they share a folder-based long-term memory and finish work
+> together — on your machine, with your own model accounts.
+>
+> Named after the *Argo* — the ship that carried heroes of different crafts on one
+> voyage for the Golden Fleece.
 
-- 도메인: saas · 생성일 2026-07-10 · 제품명 확정 2026-07-10 (구 코드네임 crewbase)
-- 설계서: [PRODUCT-SPEC.md](PRODUCT-SPEC.md)
-- 실행: `npm run dev` → http://localhost:3000 (웹 UI) · `npm run demo` (P0 코어 CLI 데모)
-- 인증: 로컬 Claude Code 세션 그대로 사용. BYOK는 `ANTHROPIC_API_KEY` 또는 `CLAUDE_CODE_OAUTH_TOKEN` (환경변수로만 — 평문 저장 금지)
+- **Website / download**: [argo.ceo](https://argo.ceo) · **Releases**: [beyondworks/argo-agent](https://github.com/beyondworks/argo-agent/releases/latest)
+- **Product spec**: [PRODUCT-SPEC.md](PRODUCT-SPEC.md) · **Current design**: [docs/local-first-design.md](docs/local-first-design.md)
 
-## 24시간 상주 운항 (자가복구)
+## What makes it different
 
-회사는 배처럼 항상 떠 있어야 한다 — 한 명령으로 재부팅·크래시·네트워크 단절을 모두 자가복구하는 상주 서비스로 만든다.
+- **Folder-scale memory** — every conversation, note and artifact lands in a per-company
+  vault (`journal/`, `notes/`, `projects/`) with wiki-style `[[links]]`. Memory is files
+  you own, not a black box.
+- **Local-first** — runners, memory and orchestration all run on your machine.
+  The cloud (Supabase Auth + Storage + RLS) is used for **one thing only**: syncing your
+  memory across devices when you sign in. Sync payloads support envelope encryption.
+- **Bring your own runner** — connect any of five engines with your own account:
+  Claude (Agent SDK / subscription OAuth), Codex, Gemini, GLM, Kimi. No middleman keys.
+- **A crew, not a chatbot** — agents message each other (`to/cc`, inbox, delegation),
+  compete on drafts, hold meeting-room discussions, and run scheduled routines.
+- **Leave your desk, keep the thread** — hand off any conversation to Telegram/Slack;
+  your PC stays the leader device.
+
+## Install
+
+**Desktop app (recommended)** — [argo.ceo](https://argo.ceo) or grab the
+[latest release](https://github.com/beyondworks/argo-agent/releases/latest)
+(macOS Apple Silicon dmg, signed & notarized · Windows installer).
+
+**One line (macOS · Linux, self-host/CLI track):**
 
 ```bash
-npm run service install    # 지금 켜고, 로그인/재부팅 시 자동 시작 + 죽으면 10초 내 재기동
-npm run service status     # 등록 여부 + 실제 응답 확인
-npm run service logs       # 로그 위치 + 최근 로그
-npm run service uninstall  # 상주 해제
+curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/install.sh | bash
 ```
 
-- 플랫폼: macOS launchd LaunchAgent / Linux systemd user unit(+linger) / Windows 작업 스케줄러 — 모두 사용자 권한, sudo 불필요
-- 기본 포트 3999 (`ARGO_PORT`로 변경, 데이터 루트는 설치 시점 `ARGO_ROOT`를 구움)
-- 서버가 뜨면 즉시 게이트웨이 폴러·루틴 스케줄러가 상주한다(`instrumentation.js`) — UI를 열지 않아도 텔레그램이 산다
-- 네트워크 단절은 폴러가 5초 백오프 무한 재시도로 스스로 복구(`src/gateway.mjs`)
-- node를 갈아끼웠다면(`nvm` 등) `install`을 다시 실행 — 절대 경로를 새로 굽는다
+Installs the latest server build under `~/.argo-selfhost`, binds to loopback
+(`127.0.0.1:3001`), and registers a self-healing user service. Re-run the same
+command to update. Details & security defaults: [docs/selfhost.md](docs/selfhost.md).
 
-## 기기 추가
+## Run from source
 
-**로그인 = 연동 (기본).** 새 기기에서 Argo를 열고 같은 계정으로 로그인(이메일 코드 또는
-Google/GitHub)하면 회사(기억·크루·대화, **봇 토큰·러너 키까지**)가 자동으로 내려온다 —
-크레덴셜은 계정 키 봉투 암호문으로만 클라우드를 지난다. 세션은 기기 파일
-(`.device-session.json`, 0600)에만 저장되고 스토리지는 소유자 RLS로 잠긴다 — 서비스 키가
-사용자 기기에 존재하지 않는다.
+```bash
+npm install
+npm run dev        # web UI → http://localhost:3000
+```
 
-**연결 코드 (셀프호스팅 전용 백업).** 인증 없이 자체 Supabase로 운영하는 경우에만:
-기존 기기 설정 → 기기 → **연결 코드 만들기** → 새 기기 홈의 **다른 기기에서 가져오기**에
-붙여넣기. 코드는 동기화 자격을 담으므로 비밀번호처럼 다룰 것.
+- Runner credentials are entered in **Settings → AI connections** (validated before save)
+  or via env (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, …). Nothing is stored in
+  plaintext outside your data root.
+- Data root defaults to `workspaces/` (override with `ARGO_ROOT`). It is gitignored —
+  user data never enters the repo.
+
+### Always-on service (optional)
+
+```bash
+npm run service install    # start now + auto-start at login, self-restart within 10s
+npm run service status
+npm run service logs
+npm run service uninstall
+```
+
+macOS launchd / Linux systemd user unit (+linger) / Windows Task Scheduler — all
+user-level, no sudo. With the service up, the Telegram/Slack gateway and routine
+scheduler run without the UI open (`ARGO_PORT` to change the default 3999).
+
+## Adding a device
+
+**Sign-in = sync (default).** Install Argo on the new device and sign in with the same
+account — companies (memory, crew, conversations, bot tokens and runner credentials)
+come down automatically. Credentials cross the cloud only as account-key envelope
+ciphertext; sessions live in a `0600` device file; storage is locked per-owner by RLS.
+
+**Link code (self-host backup path).** Only for auth-less self-hosted setups:
+Settings → Devices → **Create link code** on the old device, paste on the new one.
+Treat the code like a password.
+
+## Docs
+
+| Doc | What it covers |
+|---|---|
+| [docs/local-first-design.md](docs/local-first-design.md) | **Current canonical design** — local-first + slim cloud sync |
+| [docs/selfhost.md](docs/selfhost.md) | Linux VPS / CLI install, security defaults, headless runner connect |
+| [docs/security-encryption-roadmap.md](docs/security-encryption-roadmap.md) | Memory envelope-encryption roadmap |
+| [docs/cloud-hybrid-design.md](docs/cloud-hybrid-design.md) | Superseded — kept for a future 24/7 cloud-worker scope |
+| [docs/deploy-fly.md](docs/deploy-fly.md) | Superseded — cloud worker is out of the current scope |
+| [PRODUCT-SPEC.md](PRODUCT-SPEC.md) | Product vision, pricing anchor, milestones |
+
+## License
+
+No license yet — all rights reserved for now (source visible, redistribution not granted).
+A proper license decision is tracked for an upcoming release.
+
+---
+
+## 한국어
+
+프롬프트 한 줄로 전문 AI 크루를 영입하고, 회사가 **폴더 단위 기억**으로 일하는 개인용
+AI 회사입니다. 러너·기억·오케스트레이션은 전부 로컬에서 돌고, 클라우드(Supabase)는
+**로그인 시 기기 간 기억 동기화에만** 쓰입니다.
+
+- 다운로드: [argo.ceo](https://argo.ceo) (맥 실리콘 dmg 서명·공증 / Windows 설치본)
+- 터미널 한 줄 설치(맥·리눅스 셀프호스트): 위 [Install](#install) 명령 그대로
+- 러너 연결은 설정 → AI 연결에서 본인 계정으로(BYOK — Claude·Codex·Gemini·GLM·Kimi)
+- 셀프호스트 보안 기본값·헤드리스 연결: [docs/selfhost.md](docs/selfhost.md)
