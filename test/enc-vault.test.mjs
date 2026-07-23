@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isSecretRel, isEncRel, encVaultOn, sealSecret, openSecretCompat, cryptoOn } from '../src/secretbox.mjs';
 import { ensureAccountKey, clearAccountKey } from '../src/accountkey.mjs';
+import { EXCLUDE } from '../src/sync.mjs';
 
 const withFlag = async (val, fn) => {
   const prev = process.env.ARGO_ENC_VAULT;
@@ -56,4 +57,40 @@ test('봉투 왕복 — seal → 관용 개봉으로 평문 복원, 암호문은
 test('관용 개봉 — 봉투 아닌 기존 평문은 그대로 통과(전환기 무중단)', () => {
   const plain = Buffer.from('예전에 평문으로 올라간 노트');
   assert.deepEqual(openSecretCompat(plain), plain);
+});
+
+// ⚠ 검수 CRITICAL 회귀 방지(2026-07-23): 이전 구현은 EXCLUDE 첫 줄에서 암호화 대상을 먼저 판정해,
+// 스위치 ON + 계정키 보유 시 isEncRel이 모든 rel에 true → 조기 반환으로 **구조적 제외 규칙 전체가 우회**됐다.
+// 그 결과 .sync-state.json(다른 기기 base가 로컬 base를 덮어써 삭제 오판)·.gw-queue-*(지시 이중 실행)까지
+// 동기화 대상이 됐다. 아래 테스트가 그 순서 불변식을 잠근다. (기존 테스트는 플래그 off만 봐서 못 잡았다)
+test('스위치 on + 계정키 보유 — 구조적 제외 규칙이 여전히 우선한다', async () => {
+  clearAccountKey();
+  await ensureAccountKey(fakeKeySb(Buffer.alloc(32, 9).toString('base64')), 'owner-exclude-test');
+  assert.equal(cryptoOn(), true, '전제: 계정 키 보유');
+  try {
+    await withFlag('1', () => {
+      for (const rel of [
+        '.gw-queue-telegram/12345.json', // 디스크 큐 안의 파일 — 이중 실행 방지
+        '.sync-state.json',              // 로컬 base — 덮어쓰면 삭제 오판
+        '.gw-offset-telegram.json', '.gateway-slack.json', // 기기별 폴러 상태
+        'chats/luca.status.json',        // 전이 상태
+        '.tmp-abc',                      // 원자쓰기 임시본
+        'vault/notes/a.md.corrupt-123',  // 손상 백업
+        '.sync-process.lock', '.device-id', '.device-session.json', '.sync-credentials.json',
+      ]) assert.equal(EXCLUDE(rel), true, `${rel} 은 스위치 on에서도 반드시 제외돼야 한다`);
+      // 반대로 실제 회사 콘텐츠는 동기화 대상이어야 한다(암호문으로 나간다)
+      assert.equal(EXCLUDE('vault/notes/기억.md'), false);
+      assert.equal(EXCLUDE('chats/sales.json'), false);
+      assert.equal(EXCLUDE('agents/pepper.md'), false);
+    });
+  } finally { clearAccountKey(); }
+});
+
+test('스위치 on + 계정키 미확보 — 암호화 대상은 전부 제외(삭제 오인 차단)', async () => {
+  clearAccountKey(); // 키 없음
+  assert.equal(cryptoOn(), false);
+  await withFlag('1', () => {
+    assert.equal(EXCLUDE('vault/notes/기억.md'), true, '키 없으면 불가시 — 삭제로 오인하면 안 된다');
+    assert.equal(EXCLUDE('connections.json'), true);
+  });
 });

@@ -103,7 +103,10 @@ export function apiError(e) {
   // 신호는 e.code==='ENOENT'(execFile 스폰 미발견의 확정 신호) + 셸 "command not found"/리터럴 ENOENT로 한정한다 —
   // bare "not found"는 게이트 모델 에러("requested entity was not found")와 충돌하므로 절대 쓰지 않는다(오분류 시 강등 로직 파괴).
   // 인증 실패는 여기서 손대지 않는다: 아래 제네릭으로 흘려보내 AUTH_ERR_RE 자가치유 재시도(chat.mjs)가 그대로 동작하게 한다.
-  if (e.code === 'ENOENT' || /command not found|\bENOENT\b/i.test(raw)) {
+  // 텍스트 매칭은 stderr로 한정한다(검수 2026-07-23): raw에는 stdout이 섞여 있어, 크루가 셸 도구로 실행한
+  // 명령의 "command not found" 출력이 stdout에 실리면 무관한 실패(인증 만료·rate limit)를 CLI 미발견으로
+  // 오분류하고 원래 벤더 메시지를 지워 자가치유(AUTH_ERR_RE)까지 막는다. e.code가 확정 신호.
+  if (e.code === 'ENOENT' || /command not found|\bENOENT\b/i.test(String(e.stderr ?? ''))) {
     return new Error('러너 CLI를 찾지 못했습니다 (설치 또는 PATH 문제). 설정 → AI 연결에서 다시 연결하거나 앱을 재시작해 주세요. '
       + 'Runner CLI not found (install or PATH issue) — reconnect in Settings → AI, or restart the app.');
   }

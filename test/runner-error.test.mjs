@@ -35,6 +35,18 @@ test('apiError: gemini IneligibleTier 번역 유지', () => {
   assert.match(m, /API 키|API key/i);
 });
 
+// 검수 지적(2026-07-23): raw에 stdout이 섞여 있어 크루가 셸로 실행한 명령의 "command not found" 출력이
+// 무관한 실패를 CLI 미발견으로 오분류하고 진짜 원인(인증)을 지워 자가치유까지 막았다 → stderr 한정 매칭으로 수정.
+test('apiError: stdout에 섞인 "command not found"로 오분류하지 않음(진짜 원인 보존)', () => {
+  const m = apiError({
+    code: 1,
+    stdout: '$ foo\nbash: foo: command not found\n', // 크루가 실행한 명령의 출력(무관)
+    stderr: '{"message":"invalid api key"}',          // 진짜 원인
+  }).message;
+  assert.doesNotMatch(m, /CLI를 찾지 못했습니다/, 'stdout 오염으로 오분류되면 안 된다');
+  assert.match(m, AUTH_ERR_RE, '인증 문구가 보존돼야 자가치유가 트리거된다');
+});
+
 test('apiError: 그 외 실패는 벤더 message 추출(제네릭 폴백)', () => {
   const m = apiError({ code: 1, stderr: '{"message":"rate limit exceeded"}' }).message;
   assert.match(m, /rate limit exceeded/);
