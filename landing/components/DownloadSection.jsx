@@ -45,7 +45,7 @@ export default function DownloadSection() {
         {' · '}
         <a href={DL.silicon} onClick={(e) => gate(e, 'silicon')} style={{ color: 'inherit', textDecoration: 'underline' }}>Apple Silicon</a>
         {' / '}
-        <a href={DL.intel} onClick={(e) => gate(e, 'intel')} style={{ color: 'inherit', textDecoration: 'underline' }}>Intel Mac</a>
+        <a href={DL.intel} onClick={(e) => gate(e, 'intel')} style={{ color: 'inherit', textDecoration: 'underline' }}>Intel Mac (v0.1.6)</a>
         {' / '}
         <a href={DL.win} onClick={(e) => gate(e, 'win')} style={{ color: 'inherit', textDecoration: 'underline' }}>Windows</a>
       </span>

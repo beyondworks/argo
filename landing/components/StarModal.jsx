@@ -10,7 +10,8 @@ const BASE = 'https://github.com/beyondworks/argo-agent/releases/latest/download
 // 고정 파일명 직다운로드 — release.yml이 매 릴리스마다 같은 이름으로 발행한다
 export const DL = {
   silicon: `${BASE}argo-macos-apple-silicon.dmg`,
-  intel: `${BASE}argo-macos-intel.dmg`,
+  // 인텔 맥은 v0.1.6이 마지막 지원(2026-07-17 결정) — latest엔 자산이 없어 latest 포인터면 조용한 404가 된다(실측 2026-07-23)
+  intel: 'https://github.com/beyondworks/argo-agent/releases/download/v0.1.6/argo-macos-intel.dmg',
   win: `${BASE}argo-windows-setup.exe`,
 };
 
