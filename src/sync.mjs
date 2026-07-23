@@ -35,7 +35,7 @@ const CYCLE_MS = Number(process.env.ARGO_SYNC_CYCLE_MS) || 8_000;
 // 좁히면(느린 사이클의 살아있는 리더를 오탈취) 삭제 피드백 루프=대형 유실이 날 수 있다(리뷰 H1).
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
 const LOCK_STALE_MS = Math.max(CYCLE_MS * 3, 120_000);
-const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다
+export const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다 (export: 회귀 테스트용)
 
 // 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선.
 export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && process.env.ARGO_SYNC !== '0';
@@ -129,10 +129,19 @@ async function holdSyncLock() {
 
 /* ─── 클라우드 리스 (C-2 최소형) — 실행(폴러·루틴) 주체는 한 기기만 ───
    상태는 globalThis에 — Next가 라우트/instrumentation을 별도 번들로 복제해도 하나를 본다. */
-const leaseState = (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0 }); // off면 항상 리더(단일 기기)
+// leader 기본 true = "동기화 off인 단일 기기" 전제. ownedAt = 리스를 **확인된 CAS로 획득한** 시각(0=미획득).
+// 이 둘을 반드시 구분한다(검수 2026-07-23): 기본값 true는 '획득한 리더십'이 아니므로, 판정 불가 상황에서
+// 기본값을 리더로 존중하면 리스를 얻은 적 없는 프로세스가 리더로 굳어 루틴 이중 실행·이중 과금·텔레그램 409가 난다.
+const leaseState = (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0, ownedAt: 0 });
 export function isCloudLeader() {
   return !syncOn() || leaseState.leader;
 }
+
+/** 리스 쓰기 실패(판정 불가) 시 리더십을 유지해도 되는가 — **확인된 CAS 획득자이고 TTL 내**일 때만 참.
+    기본값 leader:true(미획득)는 여기서 반드시 거짓이어야 한다: 참이면 리스를 얻은 적 없는 프로세스가
+    리더로 고착해 루틴 이중 실행·이중 과금·텔레그램 409가 난다(검수 2026-07-23). (export: 회귀 테스트용) */
+export const holdsLeaseOnWriteFailure = (state, now = Date.now()) =>
+  !!(state?.leader && state.ownedAt > 0 && now - state.ownedAt < LEASE_TTL_MS);
 
 async function renewLease(owner) {
   const me = await getDeviceId();
@@ -146,6 +155,7 @@ async function renewLease(owner) {
   if (fresh && cur.deviceId !== me) {
     if (leaseState.leader) console.log(`[argo] 동기화: 실행 리더 양보 → ${cur.deviceId}`);
     leaseState.leader = false;
+    leaseState.ownedAt = 0; // 남에게 넘겼으니 보유 이력 소멸
     leaseState.checkedAt = Date.now();
     return;
   }
@@ -156,11 +166,14 @@ async function renewLease(owner) {
     key, new Blob([JSON.stringify({ deviceId: me, token, ts: Date.now() })]),
     { upsert: true, contentType: 'application/json' },
   );
-  // 쓰기 실패(네트워크·RLS 거부 등)면 리더십 판정을 **보류**한다(검수 2026-07-23 HIGH).
-  // 이전엔 실패를 무시하고 재확인으로 넘어가 winner≠me → 강등됐는데, 그러면 요금제와 무관한
-  // 루틴·메신저 폴러(isCloudLeader 게이트)가 조용히 멈춘다. 판정 불가는 현 상태 유지가 안전하다.
+  // 쓰기 실패(네트워크·RLS 거부 등) = 판정 불가. **확인된 보유자이고 TTL 내일 때만** 유지하고,
+  // 그 밖(미획득 기본값 포함)은 강등한다(검수 2026-07-23). 무조건 보류하면 리스를 얻은 적 없는 프로세스가
+  // 리더로 고착해 이중 실행이 나고(조용한 정지보다 나쁨), 무조건 강등하면 일시 장애로 루틴·폴러가 멈춘다.
+  // 이 절충은 일시 실패는 흡수하고 지속 실패는 TTL 경과로 자연 강등돼 수렴한다.
   if (upErr) {
-    console.warn(`[argo] 리스 갱신 실패 — 리더십 판정 보류: ${String(upErr.message || upErr).slice(0, 80)}`);
+    const heldByMe = holdsLeaseOnWriteFailure(leaseState);
+    console.warn(`[argo] 리스 갱신 실패 — ${heldByMe ? '보유 리스 TTL 내: 리더 유지' : '리더 강등'}: ${String(upErr.message || upErr).slice(0, 80)}`);
+    if (!heldByMe) { leaseState.leader = false; leaseState.ownedAt = 0; }
     leaseState.checkedAt = Date.now();
     return;
   }
@@ -174,6 +187,7 @@ async function renewLease(owner) {
   if (iWon && !leaseState.leader) console.log(`[argo] 동기화: 실행 리더 획득 (${me})`);
   if (!iWon && leaseState.leader) console.log(`[argo] 동기화: 실행 리더 경합 양보 (${me})`);
   leaseState.leader = !!iWon;
+  leaseState.ownedAt = iWon ? Date.now() : 0; // 확인된 획득만 보유 이력으로 인정(위 upErr 분기의 근거)
   leaseState.checkedAt = Date.now();
 }
 

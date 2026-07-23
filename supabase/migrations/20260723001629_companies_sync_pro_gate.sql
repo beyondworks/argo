@@ -8,7 +8,9 @@
 --    반드시 함께 켠다. 마이그레이션만 먼저 적용되면 무료 계정에서 비대칭이 생긴다 —
 --    클라이언트 페이월 게이트가 통과해 동기화가 진입하는데, delete 정책은 그대로라 **삭제는 전파되고**
 --    insert/update는 RLS가 거부해 **push만 실패** → 클라우드 사본이 줄어들기만 한다.
---    (리스 갱신 거부로 리더가 강등되던 2차 피해는 src/sync.mjs renewLease의 upErr 보류 처리로 별도 차단됨.)
+--    2차 피해: 리스 업로드도 같은 버킷이라 거부된다 → src/sync.mjs renewLease는 확인된 보유자만 TTL 내
+--    유지하고 그 외는 강등하므로 **이중 리더는 나지 않지만**, 지속 거부 시 리더가 사라져 요금제와 무관한
+--    루틴·메신저 폴러가 멈춘다. 원자적 활성화가 필요한 또 하나의 이유다.
 --    적용 전엔 기존 동작 불변.
 
 -- 계정이 Pro인가 — entitlements를 안전 조회(무행=false=무료). RLS 정책에서 호출.
@@ -16,7 +18,8 @@
 -- ⚠ 파라미터를 두지 않는다(보안 검수 2026-07-23): uid를 받으면 security definer가 entitlements RLS를
 -- 우회하므로, Supabase가 public 스키마 함수를 /rest/v1/rpc로 자동 노출하는 특성과 결합해
 -- "임의 사용자의 결제 상태 조회 오라클"이 된다. 내부에서 auth.uid()만 보면 호출자 본인 상태만 반환된다.
-drop function if exists public.is_pro(uuid); -- 구 시그니처가 적용된 환경 정리(멱등)
+-- (구 시그니처 is_pro(uuid) 정리는 **정책 재생성 이후** 맨 아래에서 한다 — 먼저 drop하면 기존 정책이
+--  그 함수에 의존해 "cannot drop … because other objects depend on it"으로 중단되고 이 파일 전체가 미적용된다.)
 create or replace function public.is_pro() returns boolean
   language sql stable security definer set search_path = public, pg_temp as $$
     select coalesce((select plan = 'pro' from public.entitlements where user_id = auth.uid()), false)
@@ -48,3 +51,6 @@ create policy companies_owner_update on storage.objects
 
 -- companies_owner_select / companies_owner_delete 는 변경하지 않는다(소유자 경계만):
 -- 무료·다운그레이드 계정도 기존 클라우드 데이터를 pull(내보내기)·삭제(정리)할 수 있어야 한다(데이터 소유권).
+
+-- 마지막에 구 시그니처 제거 — 위 정책들이 이제 무파라미터 is_pro()를 참조하므로 의존성이 없다(멱등).
+drop function if exists public.is_pro(uuid);
