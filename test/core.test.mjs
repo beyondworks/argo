@@ -437,11 +437,11 @@ function fakePlanSb(rows) {
   return { from: () => ({ select: () => ({ eq: (_c, uid) => ({ maybeSingle: async () => rows.error ? { data: null, error: rows.error } : { data: rows[uid] ? { plan: rows[uid] } : null, error: null } }) }) }) };
 }
 
-test('entitlement — 부재 free·존재 pro·오류 free·강제 게이트', async () => {
+test('entitlement — 부재 free·존재 pro·오류/무오너 null·강제 게이트', async () => {
   assert.equal(await fetchPlan(fakePlanSb({ 'u-p': 'pro' }), 'u-p'), 'pro');
-  assert.equal(await fetchPlan(fakePlanSb({}), 'u-x'), 'free');            // 행 부재
-  assert.equal(await fetchPlan(fakePlanSb({ error: { message: 'boom' } }), 'u-x'), 'free'); // 오류 fail-safe
-  assert.equal(await fetchPlan(fakePlanSb({}), null), 'free');             // 오너 없음
+  assert.equal(await fetchPlan(fakePlanSb({}), 'u-x'), 'free');            // 행 부재 → 무료(RLS is_pro=false와 일치)
+  assert.equal(await fetchPlan(fakePlanSb({ error: { message: 'boom' } }), 'u-x'), null); // 오류 → null(미확인·낙관, 유료 오차단 방지)
+  assert.equal(await fetchPlan(fakePlanSb({}), null), null);               // 오너 없음 → null(미확인)
   const prev = process.env.ARGO_ENFORCE_PLAN;
   try {
     delete process.env.ARGO_ENFORCE_PLAN;                                  // 강제 off(기본)
