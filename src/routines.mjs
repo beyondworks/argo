@@ -50,8 +50,33 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
   });
 }
 
+/** API 경유 수정 패치 정제 — 편집 가능 필드만 통과(화이트리스트), 각 필드는 addRoutine과 같은 규칙으로 검증.
+    실행 기록(lastRun/lastOk/lastResult/created/id)은 API로 덮어쓸 수 없다 — 그건 runRoutine 내부(patchRoutine) 전용.
+    (export: 단위 테스트용 — 순수 함수) */
+export function sanitizeRoutinePatch(patch = {}) {
+  const out = {};
+  if ('title' in patch) {
+    if (!patch.title?.trim()) throw new Error('제목이 필요합니다');
+    out.title = patch.title.trim();
+  }
+  if ('prompt' in patch) {
+    if (!patch.prompt?.trim()) throw new Error('지시가 필요합니다');
+    out.prompt = patch.prompt.trim();
+  }
+  if ('agentSlug' in patch) {
+    if (!patch.agentSlug) throw new Error('크루가 필요합니다');
+    out.agentSlug = patch.agentSlug;
+  }
+  if ('schedule' in patch) {
+    if (!/^\d{2}:\d{2}$/.test(patch.schedule?.time || '')) throw new Error('예약 시각은 HH:MM 형식');
+    out.schedule = { type: patch.schedule.type === 'weekly' ? 'weekly' : 'daily', time: patch.schedule.time, dow: patch.schedule.dow ?? 1 };
+  }
+  if ('enabled' in patch) out.enabled = !!patch.enabled;
+  return out;
+}
+
 export async function updateRoutine(wsId, id, patch) {
-  const r = await patchRoutine(wsId, id, patch);
+  const r = await patchRoutine(wsId, id, sanitizeRoutinePatch(patch));
   if (!r) throw new Error('루틴을 찾을 수 없습니다');
   return r;
 }

@@ -1341,8 +1341,11 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
 .btn-primary:hover { background: var(--primary-strong); }
 
-.btn-icon { width: 34px; padding: 0; flex: none; }
 .btn.sm { height: 28px; padding: 0 12px; font-size: 11.5px; }
+/* .btn.sm보다 뒤 + 같은 특이도(0,2,0) — 이전엔 .btn-icon(0,1,0)이 .btn.sm에 져서 좌우 12px 패딩이
+   살아남아, 폭 28px 아이콘 버튼의 콘텐츠 영역이 4px가 되고 svg가 2px로 압착됐다(루틴 삭제/수정,
+   마켓 삭제 등 'btn sm btn-icon' 전부 — 실측 2026-07-23). 순서·특이도로 근본 수정. */
+.btn.btn-icon { width: 34px; padding: 0; flex: none; }
 
 /* ─── 칩/필 — 전부 아웃라인 잉크 (모노크롬 원칙) ─── */
 .chip {
