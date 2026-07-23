@@ -4,7 +4,8 @@
 import { cookies } from 'next/headers';
 
 const RELEASES = 'https://github.com/beyondworks/argo-agent/releases/latest';
-const REPO = 'beyondworks/argo-agent';
+// 스타 대상 = 소스 레포(2026-07-23 공개 후 전환). 다운로드 자산(RELEASES·DL)은 argo-agent 유지.
+const REPO = 'beyondworks/argo';
 // 스타 후 직다운로드 — start가 심은 쿠키(argo_star_dl)의 타깃으로 바로 파일을 내려준다
 const DL = {
   silicon: `${RELEASES}/download/argo-macos-apple-silicon.dmg`,

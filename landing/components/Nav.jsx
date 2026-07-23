@@ -6,8 +6,8 @@ import { useLang } from '@/lib/i18n';
 import { useLenis } from '@/components/SmoothScroll';
 import { DL, useStarGate } from '@/components/StarModal';
 
-// 공개 배포 repo — 스타가 쌓이는 곳
-const GITHUB_URL = 'https://github.com/beyondworks/argo-agent';
+// 소스 레포(2026-07-23 공개) — 코드·README·LICENSE·스타가 쌓이는 정문. 릴리스 자산은 argo-agent(StarModal DL) 유지.
+const GITHUB_URL = 'https://github.com/beyondworks/argo';
 
 function StarMark({ size = 18 }) {
   // 아르고 나침반 별 — 잉크 단색
