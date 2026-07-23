@@ -91,8 +91,10 @@ Treat the code like a password.
 
 ## License
 
-No license yet — all rights reserved for now (source visible, redistribution not granted).
-A proper license decision is tracked for an upcoming release.
+**Source-available, not open source** — see [LICENSE.md](LICENSE.md).
+You may read the code and run it unmodified (including self-hosting for your own
+account). Modifying, redistributing, or offering it as a service requires written
+consent from beyondworks.
 
 ---
 
