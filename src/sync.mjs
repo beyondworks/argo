@@ -22,7 +22,7 @@ import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
-import { cryptoOn, isSecretRel, sealSecret, openSecret, openSecretCompat } from './secretbox.mjs';
+import { cryptoOn, isSecretRel, isEncRel, encVaultOn, sealSecret, openSecret, openSecretCompat } from './secretbox.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { ensureAccountKey } from './accountkey.mjs';
@@ -42,7 +42,7 @@ export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && proc
 
 export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // 시크릿 — 봉투 암호화 가능하면 동기화(암호문으로만), 키 없으면 기존대로 제외(기기별 입력)
-  if (isSecretRel(rel)) return !cryptoOn();
+  if (isEncRel(rel)) return !cryptoOn();
   // 디스크 큐(.gw-queue-*/) — 잡을 적재한 기기만의 로컬 처리 상태. 디렉터리 '안의 파일'까지 제외해야
   // 한다(basename만 보면 통과) — 큐가 동기화를 타면 두 기기가 같은 지시를 이중 실행한다.
   if (rel.split('/')[0].startsWith('.gw-queue')) return true;
@@ -297,7 +297,8 @@ export async function syncCompany(wsId, owner, isRestore = false) {
       if (!notFound) throw new Error(`매니페스트 읽기 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
       // notFound = 원격 진짜 없음(최초 푸시). 이때 base(.sync-state)도 비어 삭제 분기가 안 타므로 안전.
     } else {
-      try { remote = JSON.parse(Buffer.from(await data.arrayBuffer()).toString()); }
+      // 관용 개봉 — 매니페스트가 봉투일 수도(다른 기기가 스위치 on), 평문일 수도 있다. 둘 다 수용.
+      try { remote = JSON.parse(openSecretCompat(Buffer.from(await data.arrayBuffer())).toString()); }
       catch (e) { throw new Error(`매니페스트 파싱 실패 — 삭제 보류: ${String(e.message).slice(0, 80)}`); }
     }
   }
@@ -343,8 +344,15 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   // (복호화 실패 = 위변조/키 불일치 → throw → per-file catch가 failed로 집계, 다음 사이클 재시도)
   // mcp.json만 겸용 개봉(봉투 도입 전 평문 레거시 수용) — connections/.secrets는 처음부터 봉투라
   // 엄격 openSecret 유지(무결성 검증 유지, 검수 LOW-5). rel별로 개봉기를 가른다.
-  const pullBuf = async (rel) => { const b = await download(remoteKey(rel)); return isSecretRel(rel) ? (rel === 'mcp.json' ? openSecretCompat(b) : openSecret(b)) : b; };
-  const pushBuf = async (rel) => { const b = await readFile(relFull(rel)); return isSecretRel(rel) ? sealSecret(b) : b; };
+  // 읽기는 스위치와 무관하게 항상 봉투 개봉 가능 — 2단계 롤아웃의 핵심(다른 기기가 먼저 sealing을 켜도 안전).
+  // 태생부터 봉투인 크레덴셜 2종만 엄격(깨진 평문 수용 금지), 그 외는 관용 개봉(기존 평문 그대로 통과 → 전환 무중단).
+  const pullBuf = async (rel) => {
+    const b = await download(remoteKey(rel));
+    return (rel === 'connections.json' || rel === '.secrets.json') ? openSecret(b) : openSecretCompat(b);
+  };
+  /** 업로드 직전 봉투 — 모든 업로드 경로가 이걸 거쳐야 평문이 새지 않는다(병합 분기 포함). */
+  const sealFor = (rel, buf) => (isEncRel(rel) ? sealSecret(buf) : buf);
+  const pushBuf = async (rel) => sealFor(rel, await readFile(relFull(rel)));
   // 로컬 쓰기 — 스레드 파일이면 진행 중 턴과 직렬화(레이스 방지). 원자쓰기(tmp→fsync→rename)로
   // 크래시 시 파일이 잘려 '손상→삭제 오전파'로 번지는 것을 차단(.tmp-는 EXCLUDE라 원격에 안 샌다).
   const writeLocal = async (rel, buf, mtime) => {
@@ -388,7 +396,7 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   // 삭제 판별 단일 출처 — 브레이크 집계와 실제 전파가 같은 규칙을 쓴다(불일치가 M2 회귀의 원인이었다).
   // side 'L'=로컬 삭제 예정, 'R'=원격 삭제 예정. walk 실패 subtree·로컬 손상·아카이브 '이동'(짝 있음)은 삭제가 아니다.
   const isRealDelete = (rel, l, r, base, side) => {
-    if (isSecretRel(rel) && !cryptoOn()) return false;
+    if (isEncRel(rel) && !cryptoOn()) return false;
     // 디스크 큐 잔재(.gw-queue-*/) — EXCLUDE 전환(픽스 전엔 잡 파일이 동기화됐다)의 원격 청소는
     // 회사 데이터 삭제가 아니다. 브레이크 '집계'에서만 제외해, 잔재가 많던 회사의 동기화가
     // 대량삭제 오탐으로 영구 보류되는 것을 막는다(전파 루프는 그대로 원격 잔재를 정리한다 —
@@ -417,7 +425,7 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   }
 
   for (const rel of allRels) {
-    if (isSecretRel(rel) && !cryptoOn()) continue; // 키 미확보 사이클 — 시크릿은 diff 자체에서 불가시(삭제 오인 차단)
+    if (isEncRel(rel) && !cryptoOn()) continue; // 키 미확보 사이클 — 암호화 대상은 diff 자체에서 불가시(삭제 오인 차단)
     const l = local[rel], r = remote.files[rel], base = state[rel];
     if (!l && !r) continue; // state에만 남은 항목(EXCLUDE 전환·타기기 선정리) — 사이클 말미 state 갱신이 정리한다
     const localChg = changed(base, l);   // base 대비 로컬 변경(생성/수정/삭제)
@@ -474,25 +482,25 @@ export async function syncCompany(wsId, owner, isRestore = false) {
       if (isLedger(rel)) { // 원장 — 행 합집합 병합 후 양쪽 수렴
         const mBuf = mergeLedger(localBuf, remoteBuf);
         await writeLocal(rel, mBuf);
-        await upload(remoteKey(rel), mBuf);
+        await upload(remoteKey(rel), sealFor(rel, mBuf));
         local[rel] = { m: Date.now(), s: mBuf.length, h: hashBuf(mBuf) };
         remote.files[rel] = local[rel]; merged++;
       } else if (isThread(rel)) { // 스레드 blob — 메시지 배열 union 병합(양쪽 turn 보존), 스칼라는 최근 편집 쪽
         const mBuf = mergeThread(localBuf, remoteBuf, (r.m ?? 0) >= (l.m ?? 0) ? 'remote' : 'local');
         await writeLocal(rel, mBuf);
-        await upload(remoteKey(rel), mBuf);
+        await upload(remoteKey(rel), sealFor(rel, mBuf));
         local[rel] = { m: Date.now(), s: mBuf.length, h: hashBuf(mBuf) };
         remote.files[rel] = local[rel]; merged++;
       } else if (isText(rel)) { // 텍스트 — 원격을 정본으로 받고, 로컬본은 .conflict로 보존(양쪽 유실 없음)
         const cRel = rel.replace(/\.md$/, `.conflict-${me}-${Date.now()}.md`);
         await writeLocal(cRel, localBuf);
-        await upload(remoteKey(cRel), localBuf);
+        await upload(remoteKey(cRel), sealFor(cRel, localBuf));
         await writeLocal(rel, remoteBuf, r.m);
         local[rel] = r; local[cRel] = { m: Date.now(), s: localBuf.length, h: hashBuf(localBuf) };
         remote.files[cRel] = local[cRel]; pulled++; conflicts++;
       } else { // 기타(json 등) — 최근 mtime 승(LWW), 단 카운트해 관측 가능하게
         if ((r.m ?? 0) >= (l.m ?? 0)) { await writeLocal(rel, remoteBuf, r.m); local[rel] = r; pulled++; }
-        else { await upload(remoteKey(rel), isSecretRel(rel) ? sealSecret(localBuf) : localBuf); remote.files[rel] = l; pushed++; }
+        else { await upload(remoteKey(rel), sealFor(rel, localBuf)); remote.files[rel] = l; pushed++; }
         conflicts++;
       }
     } catch { failed++; } // 파일 하나 실패는 다음 사이클이 재시도
@@ -509,7 +517,7 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   try {
     const { data } = await client().storage.from(BUCKET).download(manifestKey);
     if (data) {
-      const fresh = JSON.parse(Buffer.from(await data.arrayBuffer()).toString());
+      const fresh = JSON.parse(openSecretCompat(Buffer.from(await data.arrayBuffer())).toString()); // 재읽기도 관용 개봉
       for (const [rel, meta] of Object.entries(fresh.files ?? {})) {
         if (!(rel in uploadFiles) && !deletedRels.has(rel) && safeRel(rel)) {
           // 다른 기기가 "삭제 진행 중"(blob은 지웠고 매니페스트 drop 전)인 항목을 되살리면 그 삭제가
@@ -520,7 +528,10 @@ export async function syncCompany(wsId, owner, isRestore = false) {
       }
     }
   } catch { /* 재읽기 실패 — 병합 없이 진행(남는 경합은 blob 검사가 방어, 다음 사이클 self-heal) */ }
-  await upload(manifestKey, Buffer.from(JSON.stringify({ ...remote, files: uploadFiles })));
+  // 매니페스트도 봉투 대상(E-b) — 경로(노트 제목)만으로 맥락이 새므로. 읽기 두 지점이 관용 개봉이라
+  // 스위치 off 기기도 안전하게 읽는다. off면 평문 그대로(동작 불변).
+  const manifestBuf = Buffer.from(JSON.stringify({ ...remote, files: uploadFiles }));
+  await upload(manifestKey, encVaultOn() ? sealSecret(manifestBuf) : manifestBuf);
   await writeJsonAtomic(stateFile(wsId), { files: remote.files, ts: Date.now() });
   return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed };
 }
