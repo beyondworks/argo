@@ -6,6 +6,7 @@ import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard } fro
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
+import { useAppUpdate } from '../../../use-app-update';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
@@ -760,54 +761,30 @@ function UpgradeButtons() {
 // 서명 검증·다운로드는 Rust(updater 플러그인)가 수행, 매니페스트는 argo-agent 릴리스의 latest.json.
 function UpdateCard() {
   const { t } = useLang();
-  const [isApp, setIsApp] = useState(false);
-  const [version, setVersion] = useState('');
-  const [state, setState] = useState('idle'); // idle | checking | none | found | installing | ready | error
-  const [next, setNext] = useState('');
-  const updRef = useRef(null);
-  useEffect(() => {
-    const inApp = '__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri');
-    setIsApp(inApp);
-    if (inApp) import('@tauri-apps/api/app').then((m) => m.getVersion()).then(setVersion).catch(() => {});
-  }, []);
-  const check = useCallback(async () => {
-    setState('checking');
-    try {
-      const upd = await (await import('@tauri-apps/plugin-updater')).check();
-      if (!upd) { setState('none'); return; }
-      updRef.current = upd; setNext(upd.version); setState('found');
-    } catch { setState('error'); }
-  }, []);
-  const install = useCallback(async () => {
-    setState('installing');
-    try {
-      await updRef.current.downloadAndInstall();
-      setState('ready');
-      await (await import('@tauri-apps/plugin-process')).relaunch();
-    } catch { setState('error'); }
-  }, []);
+  // 상단 뱃지와 동일한 단일 출처(use-app-update) — 네이티브 설치 버전 + Tauri 업데이터.
+  const { isApp, current, available, checked, phase, check, install } = useAppUpdate();
   if (!isApp) return null;
-  const busy = state === 'checking' || state === 'installing';
+  const busy = phase === 'checking' || phase === 'installing';
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.update.title')}</span>
       <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>
-        {t('settings.update.current', { v: version || '—' })}
-        {state === 'found' || state === 'installing' ? ` · ${t('settings.update.found', { v: next })}` : ''}
-        {state === 'none' ? ` · ${t('settings.update.none')}` : ''}
+        {t('settings.update.current', { v: current || '—' })}
+        {available ? ` · ${t('settings.update.found', { v: available })}` : ''}
+        {!available && checked ? ` · ${t('settings.update.none')}` : ''}
       </p>
-      {state === 'found' || state === 'installing' ? (
+      {available ? (
         <button type="button" className="btn btn-primary sm" onClick={install} disabled={busy} style={{ alignSelf: 'flex-start' }}>
           {busy ? <Spinner size={12} /> : null}
-          {state === 'installing' ? t('settings.update.installing') : t('settings.update.install', { v: next })}
+          {phase === 'installing' ? t('settings.update.installing') : t('settings.update.install', { v: available })}
         </button>
       ) : (
         <button type="button" className="btn sm" onClick={check} disabled={busy} style={{ alignSelf: 'flex-start' }}>
           {busy ? <Spinner size={12} /> : null}{t('settings.update.check')}
         </button>
       )}
-      {state === 'ready' && <p style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('settings.update.restarting')}</p>}
-      {state === 'error' && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.update.error')}</p>}
+      {phase === 'ready' && <p style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('settings.update.restarting')}</p>}
+      {phase === 'error' && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.update.error')}</p>}
     </div>
   );
 }

@@ -42,6 +42,16 @@ function key1() {
     mcp.json 포함: 호스트 MCP 가져오기가 env(토큰)를 담으므로 클라우드에는 항상 암호문으로. */
 export const isSecretRel = (rel) => rel === 'connections.json' || rel === '.secrets.json' || rel === 'mcp.json';
 
+/** M-ENC-1 롤아웃 스위치 — 켜면 동기되는 회사 폴더 전체(기억·대화·크루·스킬·원장)를 봉투 암호화한다.
+    off(기본)면 기존과 동일(크레덴셜 3종만) = 동작 불변.
+    ⚠ 2단계 롤아웃 강제: "봉투를 읽을 수 있는" 버전이 전 기기에 배포된 뒤에만 켠다.
+    구버전은 암호문을 평문으로 오인해 로컬에 기록 → 그 기기의 기억이 손상된다. */
+export const encVaultOn = () => process.env.ARGO_ENC_VAULT === '1';
+
+/** 봉투 암호화 대상 — 크레덴셜은 항상, 그 외 동기 대상은 스위치가 켜졌을 때.
+    읽기(개봉)는 이 예측자와 무관하게 항상 관용 개봉이라, 다른 기기가 먼저 켜도 안전하다(sync.mjs pullBuf). */
+export const isEncRel = (rel) => isSecretRel(rel) || encVaultOn();
+
 /** 봉투/레거시 평문 겸용 개봉 — 봉투 도입 전에 클라우드에 올라간 평문(mcp.json 등)을 수용한다.
     평문이면 그대로 반환하고, 다음 로컬 변경 push에서 봉투로 승격된다. */
 export function openSecretCompat(buf) {

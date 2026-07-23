@@ -22,7 +22,7 @@ import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
-import { cryptoOn, isSecretRel, sealSecret, openSecret, openSecretCompat } from './secretbox.mjs';
+import { cryptoOn, isSecretRel, isEncRel, encVaultOn, sealSecret, openSecret, openSecretCompat } from './secretbox.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { ensureAccountKey } from './accountkey.mjs';
@@ -35,26 +35,31 @@ const CYCLE_MS = Number(process.env.ARGO_SYNC_CYCLE_MS) || 8_000;
 // 좁히면(느린 사이클의 살아있는 리더를 오탈취) 삭제 피드백 루프=대형 유실이 날 수 있다(리뷰 H1).
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
 const LOCK_STALE_MS = Math.max(CYCLE_MS * 3, 120_000);
-const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다
+export const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다 (export: 회귀 테스트용)
 
-// 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선.
+// 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선하되,
+// 호스티드 클라이언트에선 serviceCredsAllowed()가 서비스 모드를 금지해 세션이 쓰인다(ensureClient 참조).
 export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && process.env.ARGO_SYNC !== '0';
 
 export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
-  // 시크릿 — 봉투 암호화 가능하면 동기화(암호문으로만), 키 없으면 기존대로 제외(기기별 입력)
-  if (isSecretRel(rel)) return !cryptoOn();
+  // ⚠ 순서 불변식(2026-07-23 검수 CRITICAL): **구조적 제외를 반드시 먼저** 평가한다.
+  // 암호화 대상 판정을 앞에 두면 ARGO_ENC_VAULT=1일 때 isEncRel이 모든 rel에 true라 조기 반환하면서
+  // 아래 규칙 전부가 우회된다 → .sync-state.json(다른 기기 base가 로컬 base를 덮어써 삭제 오판)·
+  // .gw-queue-*(같은 지시 이중 실행)·.tmp-*·.corrupt-*까지 동기화 대상이 되어 데이터 유실급이다.
   // 디스크 큐(.gw-queue-*/) — 잡을 적재한 기기만의 로컬 처리 상태. 디렉터리 '안의 파일'까지 제외해야
   // 한다(basename만 보면 통과) — 큐가 동기화를 타면 두 기기가 같은 지시를 이중 실행한다.
   if (rel.split('/')[0].startsWith('.gw-queue')) return true;
   const base = rel.split('/').pop();
-  return (
+  if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
     base.startsWith('.gw-queue') ||
     base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' ||
     base === '.device-session.json' || base === '.DS_Store' ||
     base.endsWith('.status.json') || base.endsWith('.lock') ||
     base.startsWith('.tmp-') || base.endsWith('.corrupt') || rel.includes('.corrupt-') // 원자쓰기 임시·손상 백업
-  );
+  ) return true;
+  // 암호화 대상인데 키 미확보 — 이번 사이클 불가시(삭제 오인 차단). 키가 있으면 암호문으로 동기화한다.
+  return isEncRel(rel) && !cryptoOn();
 };
 
 const CLIENT_OPTS = {
@@ -63,11 +68,22 @@ const CLIENT_OPTS = {
   global: { fetch: (url, opts) => fetch(url, { ...opts, signal: AbortSignal.timeout(30_000) }) },
 };
 let sb = null, sbKey = '';
+
+/** 서비스롤(RLS 우회) 동기화가 정당한 컨텍스트인가 — 서비스롤 클라이언트 제거 완주(2026-07-23).
+    허용: 자가호스트(공개키 미빌드 = AUTH off, 사용자가 곧 테넌트) 또는 워커(ARGO_TENANT_OWNER 바인딩, 오너 전용 인스턴스).
+    금지: 호스티드 클라이언트(공개키 빌드 = AUTH_ON, 워커 아님) — 오설정으로 크라운주얼이 런타임에 새어들어도
+    절대 service-mode로 RLS를 우회하지 않고 세션(JWT+RLS)만 쓴다. 정상 경로(서비스롤 부재)엔 무영향. (export: 회귀 테스트용) */
+export function serviceCredsAllowed(env = process.env) {
+  const authOn = !!(env.NEXT_PUBLIC_SUPABASE_URL && env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  const isWorker = !!env.ARGO_TENANT_OWNER?.trim();
+  return !authOn || isWorker;
+}
+
 // cycle 시작마다 호출 — 서비스 모드는 epoch, 세션 모드는 access token으로 캐시 키를 삼아
 // 자격 회전 시에만 클라이언트를 재생성한다. false = 쓸 자격 없음(이번 사이클 스킵).
 async function ensureClient() {
   const svc = loadSyncCreds();
-  if (svc) {
+  if (svc && serviceCredsAllowed()) {
     const k = `svc:${credsEpoch()}`;
     if (sbKey !== k) { sb = createClient(svc.url, svc.key, CLIENT_OPTS); sbKey = k; }
     return true;
@@ -114,12 +130,22 @@ async function holdSyncLock() {
 
 /* ─── 클라우드 리스 (C-2 최소형) — 실행(폴러·루틴) 주체는 한 기기만 ───
    상태는 globalThis에 — Next가 라우트/instrumentation을 별도 번들로 복제해도 하나를 본다. */
-const leaseState = (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0 }); // off면 항상 리더(단일 기기)
+// leader 기본 true = "동기화 off인 단일 기기" 전제. ownedAt = 리스를 **확인된 CAS로 획득한** 시각(0=미획득).
+// 이 둘을 반드시 구분한다(검수 2026-07-23): 기본값 true는 '획득한 리더십'이 아니므로, 판정 불가 상황에서
+// 기본값을 리더로 존중하면 리스를 얻은 적 없는 프로세스가 리더로 굳어 루틴 이중 실행·이중 과금·텔레그램 409가 난다.
+const leaseState = (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0, ownedAt: 0 });
 export function isCloudLeader() {
   return !syncOn() || leaseState.leader;
 }
 
-async function renewLease(owner) {
+/** 리스 쓰기 실패(판정 불가) 시 리더십을 유지해도 되는가 — **확인된 CAS 획득자이고 TTL 내**일 때만 참.
+    기본값 leader:true(미획득)는 여기서 반드시 거짓이어야 한다: 참이면 리스를 얻은 적 없는 프로세스가
+    리더로 고착해 루틴 이중 실행·이중 과금·텔레그램 409가 난다(검수 2026-07-23). (export: 회귀 테스트용) */
+export const holdsLeaseOnWriteFailure = (state, now = Date.now()) =>
+  !!(state?.leader && state.ownedAt > 0 && now - state.ownedAt < LEASE_TTL_MS);
+
+// (export: 회귀 테스트용 — 판정식이 아닌 **배선**을 잠그기 위해. 프로덕션 호출부는 cycle() 하나다.)
+export async function renewLease(owner) {
   const me = await getDeviceId();
   const key = skey(owner, '_device-lease.json');
   let cur = null;
@@ -131,16 +157,28 @@ async function renewLease(owner) {
   if (fresh && cur.deviceId !== me) {
     if (leaseState.leader) console.log(`[argo] 동기화: 실행 리더 양보 → ${cur.deviceId}`);
     leaseState.leader = false;
+    leaseState.ownedAt = 0; // 남에게 넘겼으니 보유 이력 소멸
     leaseState.checkedAt = Date.now();
     return;
   }
   // 내 것이거나 만료 — 획득 시도. 스토리지엔 진짜 CAS가 없으므로 write-후-재확인으로
   // 이중 리더 창을 좁힌다: 내 토큰을 쓰고, 잠깐 뒤 다시 읽어 최종 승자가 나인지 확인.
   const token = randomUUID();
-  await client().storage.from(BUCKET).upload(
+  const { error: upErr } = await client().storage.from(BUCKET).upload(
     key, new Blob([JSON.stringify({ deviceId: me, token, ts: Date.now() })]),
     { upsert: true, contentType: 'application/json' },
   );
+  // 쓰기 실패(네트워크·RLS 거부 등) = 판정 불가. **확인된 보유자이고 TTL 내일 때만** 유지하고,
+  // 그 밖(미획득 기본값 포함)은 강등한다(검수 2026-07-23). 무조건 보류하면 리스를 얻은 적 없는 프로세스가
+  // 리더로 고착해 이중 실행이 나고(조용한 정지보다 나쁨), 무조건 강등하면 일시 장애로 루틴·폴러가 멈춘다.
+  // 이 절충은 일시 실패는 흡수하고 지속 실패는 TTL 경과로 자연 강등돼 수렴한다.
+  if (upErr) {
+    const heldByMe = holdsLeaseOnWriteFailure(leaseState);
+    console.warn(`[argo] 리스 갱신 실패 — ${heldByMe ? '보유 리스 TTL 내: 리더 유지' : '리더 강등'}: ${String(upErr.message || upErr).slice(0, 80)}`);
+    if (!heldByMe) { leaseState.leader = false; leaseState.ownedAt = 0; }
+    leaseState.checkedAt = Date.now();
+    return;
+  }
   await new Promise((r) => setTimeout(r, 800)); // 동시 기동한 다른 기기의 쓰기가 도착할 여유
   let winner = null;
   try {
@@ -151,6 +189,7 @@ async function renewLease(owner) {
   if (iWon && !leaseState.leader) console.log(`[argo] 동기화: 실행 리더 획득 (${me})`);
   if (!iWon && leaseState.leader) console.log(`[argo] 동기화: 실행 리더 경합 양보 (${me})`);
   leaseState.leader = !!iWon;
+  leaseState.ownedAt = iWon ? Date.now() : 0; // 확인된 획득만 보유 이력으로 인정(위 upErr 분기의 근거)
   leaseState.checkedAt = Date.now();
 }
 
@@ -286,7 +325,8 @@ export async function syncCompany(wsId, owner, isRestore = false) {
       if (!notFound) throw new Error(`매니페스트 읽기 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
       // notFound = 원격 진짜 없음(최초 푸시). 이때 base(.sync-state)도 비어 삭제 분기가 안 타므로 안전.
     } else {
-      try { remote = JSON.parse(Buffer.from(await data.arrayBuffer()).toString()); }
+      // 관용 개봉 — 매니페스트가 봉투일 수도(다른 기기가 스위치 on), 평문일 수도 있다. 둘 다 수용.
+      try { remote = JSON.parse(openSecretCompat(Buffer.from(await data.arrayBuffer())).toString()); }
       catch (e) { throw new Error(`매니페스트 파싱 실패 — 삭제 보류: ${String(e.message).slice(0, 80)}`); }
     }
   }
@@ -332,8 +372,15 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   // (복호화 실패 = 위변조/키 불일치 → throw → per-file catch가 failed로 집계, 다음 사이클 재시도)
   // mcp.json만 겸용 개봉(봉투 도입 전 평문 레거시 수용) — connections/.secrets는 처음부터 봉투라
   // 엄격 openSecret 유지(무결성 검증 유지, 검수 LOW-5). rel별로 개봉기를 가른다.
-  const pullBuf = async (rel) => { const b = await download(remoteKey(rel)); return isSecretRel(rel) ? (rel === 'mcp.json' ? openSecretCompat(b) : openSecret(b)) : b; };
-  const pushBuf = async (rel) => { const b = await readFile(relFull(rel)); return isSecretRel(rel) ? sealSecret(b) : b; };
+  // 읽기는 스위치와 무관하게 항상 봉투 개봉 가능 — 2단계 롤아웃의 핵심(다른 기기가 먼저 sealing을 켜도 안전).
+  // 태생부터 봉투인 크레덴셜 2종만 엄격(깨진 평문 수용 금지), 그 외는 관용 개봉(기존 평문 그대로 통과 → 전환 무중단).
+  const pullBuf = async (rel) => {
+    const b = await download(remoteKey(rel));
+    return (rel === 'connections.json' || rel === '.secrets.json') ? openSecret(b) : openSecretCompat(b);
+  };
+  /** 업로드 직전 봉투 — 모든 업로드 경로가 이걸 거쳐야 평문이 새지 않는다(병합 분기 포함). */
+  const sealFor = (rel, buf) => (isEncRel(rel) ? sealSecret(buf) : buf);
+  const pushBuf = async (rel) => sealFor(rel, await readFile(relFull(rel)));
   // 로컬 쓰기 — 스레드 파일이면 진행 중 턴과 직렬화(레이스 방지). 원자쓰기(tmp→fsync→rename)로
   // 크래시 시 파일이 잘려 '손상→삭제 오전파'로 번지는 것을 차단(.tmp-는 EXCLUDE라 원격에 안 샌다).
   const writeLocal = async (rel, buf, mtime) => {
@@ -377,7 +424,7 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   // 삭제 판별 단일 출처 — 브레이크 집계와 실제 전파가 같은 규칙을 쓴다(불일치가 M2 회귀의 원인이었다).
   // side 'L'=로컬 삭제 예정, 'R'=원격 삭제 예정. walk 실패 subtree·로컬 손상·아카이브 '이동'(짝 있음)은 삭제가 아니다.
   const isRealDelete = (rel, l, r, base, side) => {
-    if (isSecretRel(rel) && !cryptoOn()) return false;
+    if (isEncRel(rel) && !cryptoOn()) return false;
     // 디스크 큐 잔재(.gw-queue-*/) — EXCLUDE 전환(픽스 전엔 잡 파일이 동기화됐다)의 원격 청소는
     // 회사 데이터 삭제가 아니다. 브레이크 '집계'에서만 제외해, 잔재가 많던 회사의 동기화가
     // 대량삭제 오탐으로 영구 보류되는 것을 막는다(전파 루프는 그대로 원격 잔재를 정리한다 —
@@ -406,7 +453,7 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   }
 
   for (const rel of allRels) {
-    if (isSecretRel(rel) && !cryptoOn()) continue; // 키 미확보 사이클 — 시크릿은 diff 자체에서 불가시(삭제 오인 차단)
+    if (isEncRel(rel) && !cryptoOn()) continue; // 키 미확보 사이클 — 암호화 대상은 diff 자체에서 불가시(삭제 오인 차단)
     const l = local[rel], r = remote.files[rel], base = state[rel];
     if (!l && !r) continue; // state에만 남은 항목(EXCLUDE 전환·타기기 선정리) — 사이클 말미 state 갱신이 정리한다
     const localChg = changed(base, l);   // base 대비 로컬 변경(생성/수정/삭제)
@@ -463,25 +510,25 @@ export async function syncCompany(wsId, owner, isRestore = false) {
       if (isLedger(rel)) { // 원장 — 행 합집합 병합 후 양쪽 수렴
         const mBuf = mergeLedger(localBuf, remoteBuf);
         await writeLocal(rel, mBuf);
-        await upload(remoteKey(rel), mBuf);
+        await upload(remoteKey(rel), sealFor(rel, mBuf));
         local[rel] = { m: Date.now(), s: mBuf.length, h: hashBuf(mBuf) };
         remote.files[rel] = local[rel]; merged++;
       } else if (isThread(rel)) { // 스레드 blob — 메시지 배열 union 병합(양쪽 turn 보존), 스칼라는 최근 편집 쪽
         const mBuf = mergeThread(localBuf, remoteBuf, (r.m ?? 0) >= (l.m ?? 0) ? 'remote' : 'local');
         await writeLocal(rel, mBuf);
-        await upload(remoteKey(rel), mBuf);
+        await upload(remoteKey(rel), sealFor(rel, mBuf));
         local[rel] = { m: Date.now(), s: mBuf.length, h: hashBuf(mBuf) };
         remote.files[rel] = local[rel]; merged++;
       } else if (isText(rel)) { // 텍스트 — 원격을 정본으로 받고, 로컬본은 .conflict로 보존(양쪽 유실 없음)
         const cRel = rel.replace(/\.md$/, `.conflict-${me}-${Date.now()}.md`);
         await writeLocal(cRel, localBuf);
-        await upload(remoteKey(cRel), localBuf);
+        await upload(remoteKey(cRel), sealFor(cRel, localBuf));
         await writeLocal(rel, remoteBuf, r.m);
         local[rel] = r; local[cRel] = { m: Date.now(), s: localBuf.length, h: hashBuf(localBuf) };
         remote.files[cRel] = local[cRel]; pulled++; conflicts++;
       } else { // 기타(json 등) — 최근 mtime 승(LWW), 단 카운트해 관측 가능하게
         if ((r.m ?? 0) >= (l.m ?? 0)) { await writeLocal(rel, remoteBuf, r.m); local[rel] = r; pulled++; }
-        else { await upload(remoteKey(rel), isSecretRel(rel) ? sealSecret(localBuf) : localBuf); remote.files[rel] = l; pushed++; }
+        else { await upload(remoteKey(rel), sealFor(rel, localBuf)); remote.files[rel] = l; pushed++; }
         conflicts++;
       }
     } catch { failed++; } // 파일 하나 실패는 다음 사이클이 재시도
@@ -498,7 +545,7 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   try {
     const { data } = await client().storage.from(BUCKET).download(manifestKey);
     if (data) {
-      const fresh = JSON.parse(Buffer.from(await data.arrayBuffer()).toString());
+      const fresh = JSON.parse(openSecretCompat(Buffer.from(await data.arrayBuffer())).toString()); // 재읽기도 관용 개봉
       for (const [rel, meta] of Object.entries(fresh.files ?? {})) {
         if (!(rel in uploadFiles) && !deletedRels.has(rel) && safeRel(rel)) {
           // 다른 기기가 "삭제 진행 중"(blob은 지웠고 매니페스트 drop 전)인 항목을 되살리면 그 삭제가
@@ -509,7 +556,12 @@ export async function syncCompany(wsId, owner, isRestore = false) {
       }
     }
   } catch { /* 재읽기 실패 — 병합 없이 진행(남는 경합은 blob 검사가 방어, 다음 사이클 self-heal) */ }
-  await upload(manifestKey, Buffer.from(JSON.stringify({ ...remote, files: uploadFiles })));
+  // 매니페스트도 봉투 대상(E-b) — 경로(노트 제목)만으로 맥락이 새므로. 읽기 두 지점이 관용 개봉이라
+  // 스위치 off 기기도 안전하게 읽는다. off면 평문 그대로(동작 불변).
+  const manifestBuf = Buffer.from(JSON.stringify({ ...remote, files: uploadFiles }));
+  // cryptoOn() 동반 확인(보안 검수 2026-07-23) — 파일 경로의 가드(`isEncRel && !cryptoOn()` continue)와 동일 규약.
+  // 키 미확보 사이클에 sealSecret이 throw해 동기화가 멈추던 비대칭 제거(데이터 위험은 없었으나 가용성 문제).
+  await upload(manifestKey, encVaultOn() && cryptoOn() ? sealSecret(manifestBuf) : manifestBuf);
   await writeJsonAtomic(stateFile(wsId), { files: remote.files, ts: Date.now() });
   return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed };
 }
@@ -670,15 +722,24 @@ async function cycle() {
   const owners = [...new Set(targets.values())];
   // ARGO_SYNC_OWNER/페어링/세션 어디에도 오너가 없던 서비스 셀프호스트 — 로컬 회사에서 찾은 오너로 한 번 더 시도
   if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
+  // 리스 중재는 요금제 게이트보다 **먼저** 한다(architect 권고 2026-07-23). 리더 선출은 과금 대상이 아니라
+  // 이중 실행 방지용 조정이고, 무료 계정도 단일 기기에서 루틴·메신저가 돌아야 한다(PRODUCT-SPEC: Free=로컬
+  // 전부 무제한·단일 기기). 페이월 뒤에 두면 무료 계정이 중재를 아예 못 해 미획득 기본값 leader:true가
+  // 두 기기에 남거나(이중 실행), 강등해 버리면 정상 무료 사용자의 루틴이 멈춘다 — 둘 다 제품 약속과 어긋난다.
+  // 리스 키는 Storage RLS의 Pro 게이트에서 예외 처리돼 있다(마이그레이션 20260723001629, 오너 경계는 유지).
+  // 리셋은 renewLease보다 **앞**에 둔다 — 뒤에 두면 renewLease가 throw할 때 직전 사이클의 paywalled가
+  // stale로 남아 UI가 잘못된 페이월을 표시한다(architect 지적 2026-07-23).
+  status.paywalled = false; // 매 사이클 리셋 — 모드 전환(세션→서비스) 시 stale true 잔존 차단
+  if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
   // 요금제 게이트(M-2d 스캐폴드) — 세션 모드에만. 서비스 모드(셀프호스트·워커)는 자기 인프라라 통과.
   // 강제는 ARGO_ENFORCE_PLAN=1일 때만(기본 off). 차단 = 조기 return — diff가 안 돌아 부작용 없음.
-  status.paywalled = false; // 매 사이클 리셋 — 모드 전환(세션→서비스) 시 stale true 잔존 차단
-  if (!loadSyncCreds()) {
+  // 판정은 ensureClient()의 실효 모드와 동일 조건(자격 존재 && serviceCredsAllowed) — 자격만 보면
+  // 호스티드 오설정(자격 유출로 존재하지만 세션으로 강등)에서 세션 모드인데 게이트가 스킵된다(검수 2026-07-23).
+  if (!(loadSyncCreds() && serviceCredsAllowed())) {
     const ent = await syncEntitled(client(), keyOwner || owners[0] || null);
     status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
     if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
   }
-  if (owners[0]) await renewLease(owners[0]); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
   let companyFailed = 0;
   for (const [wsId, owner] of targets) {
     try {

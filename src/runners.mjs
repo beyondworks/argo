@@ -92,12 +92,24 @@ export const maskKeyLike = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{1
 
 /** 실패 출력에서 API 에러 메시지만 뽑는다 — 이벤트 로그에 명령·프롬프트 전문을 흘리지 않는다.
     키 패턴은 마스킹(벤더 401 바디의 "Incorrect API key provided: sk-…" 류가 그대로 영속되지 않게). */
-function apiError(e) {
+export function apiError(e) {
   // codex가 호스트 전역 스킬 디렉토리(~/.claude/skills, ~/.agents/skills)를 CODEX_HOME과 무관하게 읽어
   // 매 실행 ERROR 로그를 뱉는다(실측 2026-07-22) — 실패 시 이 노이즈가 stderr 꼬리를 덮어 빨간 메시지가
   // "failed to load skill …"로 오도된다. 진단에서 제거해 진짜 원인만 남긴다.
   const scrub = (s) => String(s ?? '').replace(/^.*ERROR codex_core.*failed to load skill.*$/gim, '').trim();
   const raw = `${scrub(e.stdout)}\n${scrub(e.stderr)}`;
+  // A0 원인 분류(2026-07-23): 스폰 실패(바이너리 미발견) = PATH 누락/미설치가 원인 — 사용자가 겪는
+  // "환경에 따른 러너 연결 오류"의 최다 케이스인데 이전엔 제네릭 "exit ?"로 뭉개졌다. 원인+처방을 준다.
+  // 신호는 e.code==='ENOENT'(execFile 스폰 미발견의 확정 신호) + 셸 "command not found"/리터럴 ENOENT로 한정한다 —
+  // bare "not found"는 게이트 모델 에러("requested entity was not found")와 충돌하므로 절대 쓰지 않는다(오분류 시 강등 로직 파괴).
+  // 인증 실패는 여기서 손대지 않는다: 아래 제네릭으로 흘려보내 AUTH_ERR_RE 자가치유 재시도(chat.mjs)가 그대로 동작하게 한다.
+  // 텍스트 매칭은 stderr로 한정한다(검수 2026-07-23): raw에는 stdout이 섞여 있어, 크루가 셸 도구로 실행한
+  // 명령의 "command not found" 출력이 stdout에 실리면 무관한 실패(인증 만료·rate limit)를 CLI 미발견으로
+  // 오분류하고 원래 벤더 메시지를 지워 자가치유(AUTH_ERR_RE)까지 막는다. e.code가 확정 신호.
+  if (e.code === 'ENOENT' || /command not found|\bENOENT\b/i.test(String(e.stderr ?? ''))) {
+    return new Error('러너 CLI를 찾지 못했습니다 (설치 또는 PATH 문제). 설정 → AI 연결에서 다시 연결하거나 앱을 재시작해 주세요. '
+      + 'Runner CLI not found (install or PATH issue) — reconnect in Settings → AI, or restart the app.');
+  }
   // 구글이 개인 무료 OAuth(Code Assist for individuals)를 신형 CLI에서 차단(실측 2026-07-20:
   // 번들판 0.36~0.51 전부 IneligibleTierError, 구형 0.21만 통과 — 서버측 판정이라 버전 고정 우회는 시한부).
   // 영어 스택트레이스 대신 대안이 담긴 안내로 번역한다.
