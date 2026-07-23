@@ -42,7 +42,14 @@ export async function currentUser() {
     { cookies: { getAll: () => store.getAll(), setAll: () => { /* 라우트에서는 세션 갱신 안 함 — 미들웨어 담당 */ } } },
   );
   const { data: { user } } = await supabase.auth.getUser();
-  return user ? { id: user.id, email: user.email ?? '' } : null;
+  if (user) return { id: user.id, email: user.email ?? '' };
+  // 게스트(로컬 전용) 폴백 — 실로그인(기기 세션·쿠키 세션)이 전부 없을 때만. 로컬 모드와 같은 신원.
+  // 파일이 권한의 근거(gueststate), 쿠키는 미들웨어 UX 게이트일 뿐 — 기기 세션 모델과 같은 계약.
+  if (!TENANT) {
+    const { guestModeOn } = await import('../src/gueststate.mjs'); // 동적 — edge 번들 오염 방지 관례
+    if (guestModeOn()) return { id: 'local', email: '' };
+  }
+  return null;
 }
 
 /** 회사 소유권 가드 — 위반 시 Response를 돌려준다(핸들러가 그대로 return). 통과 시 null.
@@ -58,6 +65,12 @@ export async function guardCompany(wsId) {
     meta = JSON.parse(await readFile(paths(wsId).company, 'utf8'));
   } catch {
     return Response.json({ error: '회사를 찾을 수 없습니다' }, { status: 404 });
+  }
+  // 게스트(로컬 전용) — 주인 없는(로컬 생성) 회사만 접근. 계정 귀속 회사는 로그인해야 열린다.
+  if (user.id === 'local') {
+    return meta.ownerId
+      ? Response.json({ error: '이 회사는 계정에 연결되어 있습니다 — 로그인해 주세요' }, { status: 403 })
+      : null;
   }
   if (!meta.ownerId) {
     const adopt = process.env.ARGO_ADOPT_OWNER?.trim().toLowerCase();

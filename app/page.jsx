@@ -2,7 +2,7 @@
 // 홈 — 회사 목록과 생성. 계기판 톤의 조용한 온보딩.
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Logo, Icon, Avatar, Spinner, Skeleton, api, imeGuard, timeAgo } from './ui';
+import { Logo, Icon, Avatar, Spinner, Skeleton, ConfirmModal, api, imeGuard, timeAgo } from './ui';
 import { AiConnectionCard, ACCOUNT_WS, anyRunnerUsable, runnerNeedsReconnect } from './runner-connect';
 import { useLang } from './i18n';
 
@@ -26,6 +26,9 @@ export default function Home() {
   // 항상 가능하고(유건 지시 2026-07-19: 게이트 제거), 미연결이면 데크 배너가 연결을 안내한다.
   const [acctRunners, setAcctRunners] = useState(null); // 계정 스코프(@account) 러너 상태
   const [runnerNotice, setRunnerNotice] = useState(null); // 러너 없는/끊긴 기존 회사 안내 { ws, name, invalid }
+  const [claim, setClaim] = useState(null); // 계정 미연결(주인 없는) 로컬 회사 { count, names, userEmail }
+  const [claimAsk, setClaimAsk] = useState(false); // 클레임 확인 모달
+  const isGuest = me?.authOn && me?.user?.id === 'local'; // 게스트(로컬 전용) — 상단바에 로그인 CTA
   const onboarding = companies !== null && companies.length === 0;
   const runnerReady = !!acctRunners && anyRunnerUsable(acctRunners);
 
@@ -60,6 +63,24 @@ export default function Home() {
 
   // 컴포넌트 언마운트(회사 생성으로 페이지 이탈 등) 시 폴링 interval 누수 방지 — 브리프 코드에 없던 보강
   useEffect(() => () => { if (pairPollRef.current) clearInterval(pairPollRef.current); }, []);
+
+  // 클레임 배너 — 실로그인 상태에서 주인 없는(게스트/로컬 시절) 회사가 있으면 계정 귀속을 제안
+  useEffect(() => {
+    if (!me?.authOn || !me?.user || me.user.id === 'local') { setClaim(null); return; }
+    let alive = true;
+    api('/api/account/claim')
+      .then((d) => { if (alive) setClaim(d.count > 0 ? d : null); })
+      .catch(() => { if (alive) setClaim(null); }); // 비루프백 403 등 — 배너 없음이 정상
+    return () => { alive = false; };
+  }, [me]);
+
+  async function doClaim() {
+    setClaimAsk(false);
+    try {
+      await api('/api/account/claim', {});
+      window.location.reload(); // 귀속된 회사 목록 + 동기화 상태 재로드
+    } catch (err) { setError(String(err.message)); }
+  }
 
   async function create(e) {
     e.preventDefault();
@@ -103,7 +124,7 @@ export default function Home() {
           {/* 계정 컨트롤 — 인증 모드(authOn)일 때만. 로그인 상태면 이메일+로그아웃, 아니면 로그인.
               로컬 1인 모드(authOn=false)는 계정 개념이 없어 표시하지 않는다. */}
           {me?.authOn && (
-            me.user ? (
+            me.user && me.user.id !== 'local' ? (
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                 {me.user.email && (
                   <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', maxWidth: 180, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -115,13 +136,37 @@ export default function Home() {
                 </form>
               </span>
             ) : (
-              <a className="btn sm" href="/login">{t('home.signIn')}</a>
+              /* 미로그인 + 게스트(로컬 전용) 공통 — 게스트는 로그인하면 클레임 배너로 이어진다 */
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {isGuest && <span className="microlabel" style={{ color: 'var(--fg-3)' }}>{t('home.localOnly')}</span>}
+                <a className="btn sm" href="/login">{t('home.signIn')}</a>
+              </span>
             )
           )}
         </div>
       </header>
 
       <main style={{ maxWidth: 660, margin: '0 auto', padding: '64px 24px 90px' }}>
+        {/* 클레임 — 게스트/로컬 시절 회사를 로그인 계정에 연결(연결 즉시 동기화 시작) */}
+        {claim && (
+          <div className="card" style={{ padding: '14px 18px', marginBottom: 18, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.55 }}>
+              {t('home.claimBanner', { n: claim.count })}
+            </span>
+            <button className="btn btn-primary sm" onClick={() => setClaimAsk(true)} style={{ flex: 'none' }}>
+              {t('home.claimBtn')}
+            </button>
+          </div>
+        )}
+        {claimAsk && claim && (
+          <ConfirmModal
+            title={t('home.claimConfirmTitle')}
+            description={t('home.claimConfirm', { names: claim.names.join(', '), email: claim.userEmail })}
+            confirmLabel={t('home.claimBtn')}
+            onConfirm={doClaim}
+            onClose={() => setClaimAsk(false)}
+          />
+        )}
         {runnerNotice && (
           /* 러너 미연결/끊김 안내 — 누르면 그 회사 설정의 러너 연결 섹션으로 직행(?ai=1) */
           <a href={`/c/${runnerNotice.ws}/settings?ai=1`} className="card card-i fade-up"

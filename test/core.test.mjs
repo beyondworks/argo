@@ -183,6 +183,21 @@ test('isDue: 주간은 요일까지', () => {
   assert.equal(isDue({ ...wk, schedule: { ...wk.schedule, dow: 0 } }, sun), true, '일요일 일치');
 });
 
+/* ── 게스트(로컬 전용) 모드 — 파일이 권한의 근거(devicesession과 같은 계약) ── */
+test('gueststate: enable → on → clear 왕복, 부재/손상은 게스트 아님', async () => {
+  const { guestModeOn, enableGuestMode, clearGuestMode } = await import('../src/gueststate.mjs');
+  const d = await tmp();
+  assert.equal(guestModeOn({ root: d }), false, '부재 = 게스트 아님');
+  await enableGuestMode({ root: d });
+  assert.equal(guestModeOn({ root: d }), true, '켠 뒤 on');
+  await writeFile(join(d, '.guest-mode.json'), '{ broken');
+  assert.equal(guestModeOn({ root: d }), false, '손상 = 관용적으로 게스트 아님(잠금 아님)');
+  await enableGuestMode({ root: d });
+  await clearGuestMode({ root: d });
+  assert.equal(guestModeOn({ root: d }), false, '클레임 후 해제');
+  await rm(d, { recursive: true, force: true });
+});
+
 /* ── 페어링: verifier로 세션 탈취 차단 (L2 보안) ── */
 test('claimPairing: verifier 불일치는 회수 불가(탈취 차단)', () => {
   createPairing('code-abc', 'verifier-xyz');
