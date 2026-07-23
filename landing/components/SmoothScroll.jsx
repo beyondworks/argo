@@ -104,10 +104,12 @@ export default function SmoothScroll({ children }) {
       });
 
       // 핀 아닌 전체 섹션 — 상단을 뷰포트에 맞춤
-      ['.interlude', '.download-section', '.contact-section'].forEach((sel) => {
+      ['.install-section', '.interlude', '.download-section', '.contact-section'].forEach((sel) => {
         const el = document.querySelector(sel);
         if (el) pts.push(el.getBoundingClientRect().top + window.scrollY);
       });
+      const inEl = document.querySelector('.install-section');
+      if (inEl) navTargets.install = inEl.getBoundingClientRect().top + window.scrollY;
       const dlEl = document.querySelector('.download-section');
       if (dlEl) navTargets.download = dlEl.getBoundingClientRect().top + window.scrollY;
       const ctEl = document.querySelector('.contact-section');

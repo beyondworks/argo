@@ -24,6 +24,7 @@ export default function SideNav() {
 
   const items = [
     { id: 'top', label: t('side.top'), selector: '.hero-section' },
+    { id: 'install', label: t('nav.install'), selector: '#install' },
     ...CHAPTERS.map((c) => ({ id: c.id, label: t(`${c.id}.short`), selector: `#${c.id}` })),
     { id: 'download', label: t('nav.cta'), selector: '#download' },
     { id: 'contact', label: t('nav.contact'), selector: '#contact' },

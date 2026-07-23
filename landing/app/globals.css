@@ -893,15 +893,20 @@ video {
   margin-bottom: clamp(24px, 4.5svh, 44px);
 }
 
-/* 카피(좌) ↔ 터미널 창(우) — 우측 대공백 해소. 모바일은 세로 스택 */
+/* 카피(좌상) ↔ 터미널 창(우하) — 대각 구도로 우측 대공백 해소. 모바일은 세로 스택 */
 .install-grid {
   display: grid;
   grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
   gap: clamp(28px, 5vw, 72px);
-  align-items: center;
+  align-items: start;
+}
+.install-term {
+  /* 유건 지정 위치(2026-07-23) — 헤드라인 아래 우측, 섹션의 빈 우하단을 채운다 */
+  margin-top: clamp(120px, 20svh, 240px);
 }
 @media (max-width: 900px) {
   .install-grid { grid-template-columns: 1fr; gap: 28px; }
+  .install-term { margin-top: 0; }
 }
 
 .install-line {
@@ -912,10 +917,43 @@ video {
   text-wrap: balance;
 }
 
-/* ── 터미널 창 — 모노크롬 트래픽 닷 + 타이틀바 + 커서 ── */
+/* ── 터미널 창 — 모노크롬 트래픽 닷 + OS 탭 + 커서 ── */
 .install-term {
   border: 1px solid var(--rule);
   background: var(--bg-2);
+}
+
+.term-tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.term-tab {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  color: var(--fg-3);
+  padding: 5px 10px;
+  border-bottom: 1px solid transparent;
+  transition: color 0.16s ease-out, border-color 0.16s ease-out;
+}
+.term-tab:hover { color: var(--fg-2); }
+.term-tab.on { color: var(--fg); border-bottom-color: var(--gold); }
+
+.term-shell {
+  display: block;
+  font-size: 9.5px;
+  margin-bottom: 10px;
+}
+
+.term-cmdrow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
 }
 
 .term-bar {
@@ -935,19 +973,6 @@ video {
   flex: none;
 }
 
-.term-title {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--fg-3);
-  margin-left: 10px;
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
 .install-copy {
   font-family: var(--mono);
   font-size: 10px;
@@ -963,10 +988,7 @@ video {
 .install-copy:hover { color: var(--fg); border-color: var(--fg-3); }
 
 .term-body {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 20px 18px 24px;
+  padding: 16px 18px 24px;
 }
 
 .install-prompt {

@@ -28,9 +28,17 @@ const DICT = {
   'install.line': ['설치도, *한 줄*이면 충분합니다.', 'Installing takes just *one line*, too.'],
   'install.copy': ['복사', 'Copy'],
   'install.copied': ['복사됨', 'Copied'],
-  'install.note': [
-    'macOS · Linux 터미널에 붙여넣으면 최신 버전이 설치됩니다. 앱이 편하시면 아래에서 다운로드하세요.',
-    'Paste into a macOS · Linux terminal to install the latest build. Prefer an app? Download below.',
+  'install.note.mac': [
+    '최신 Apple Silicon 앱을 받아 바로 엽니다. 버튼이 편하시면 아래 다운로드 섹션을 이용하세요.',
+    'Downloads the latest Apple Silicon app and opens it. Prefer a button? Use the download section below.',
+  ],
+  'install.note.win': [
+    'PowerShell에 붙여넣으면 설치 프로그램을 받아 실행합니다.',
+    'Paste into PowerShell — downloads and runs the installer.',
+  ],
+  'install.note.linux': [
+    '리눅스(x86_64) 서버에 상주 서비스로 설치됩니다. 업데이트는 같은 명령 재실행.',
+    'Installs as a self-healing service on Linux (x86_64). Re-run the same line to update.',
   ],
 
   // Core Four — Argo만의 후킹 포인트 (2026-07-14 유건 지정: 최우선 강조 4개)
