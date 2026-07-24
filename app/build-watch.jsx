@@ -17,13 +17,13 @@ export default function BuildWatch() {
         if (first === null) { first = j.buildId; return; }
         if (j.buildId === first) return;
         // 같은 buildId로의 재로드는 1회만 — 플랩(서버 교대 등)이 있어도 새로고침 루프에 빠지지 않는다
-        try {
-          if (sessionStorage.getItem('argo-reloaded-for') === j.buildId) return;
-          sessionStorage.setItem('argo-reloaded-for', j.buildId);
-        } catch { /* 프라이빗 모드 — 가드 없이 1회 시도 */ }
-        // 작성 중인 입력이 있으면 이번 주기는 미룬다 — 새로고침으로 입력을 날리지 않는다
+        try { if (sessionStorage.getItem('argo-reloaded-for') === j.buildId) return; } catch { /* 프라이빗 모드 */ }
+        // 작성 중인 입력이 있으면 이번 주기는 미룬다 — 새로고침으로 입력을 날리지 않는다.
+        // 마커 기록은 반드시 이 가드 뒤, reload 직전에 — 가드에서 미뤄진 배포가 마커 선기록 탓에
+        // 영구 취소되던 결함(사후 검수 2026-07-25) 방지.
         const el = document.activeElement;
         if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.value) return;
+        try { sessionStorage.setItem('argo-reloaded-for', j.buildId); } catch { /* 프라이빗 모드 — 가드 없이 1회 시도 */ }
         window.location.reload();
       } catch { /* 서버 재시작 중 — 다음 주기에 재시도 */ }
     };

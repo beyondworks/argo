@@ -425,9 +425,12 @@ export function InputModal({ title, label, defaultValue = '', placeholder, confi
 /** 위로 열리는 드롭박스 — 네이티브 <select>는 팝업 방향을 못 정해 하단 배치 화면에서 아래로 열려 잘린다
     (유건 지시 2026-07-21: 입력바 위 컨트롤은 전부 위로 연다). 채팅 ModelMenu와 같은 팝오버 문법.
     groups = [{ label?, items: [{ value, label, disabled?, badge? }] }] — 러너별 optgroup 대응. */
-export function DropUp({ value, placeholder = '—', groups, onChange, disabled, width = 210, align = 'left', height = 28 }) {
+export function DropUp({ value, placeholder = '—', groups, onChange, disabled, width = 210, align = 'left', height = 28, ariaLabel }) {
   const [open, setOpen] = useState(false);
   const [entered, setEntered] = useState(false);
+  // 위 공간이 패널(최대 300)보다 좁으면 아래로 연다 — 뷰포트 상단에서 항목이 잘려 선택 불가하던
+  // 회귀(사후 검수 실측 2026-07-25: 시각 팝업 상단 95px 잘림 → 00~03시 클릭 불가) 방지.
+  const [below, setBelow] = useState(false);
   const boxRef = useRef(null);
   useEffect(() => {
     if (!open) { setEntered(false); return; }
@@ -441,7 +444,8 @@ export function DropUp({ value, placeholder = '—', groups, onChange, disabled,
   const cur = groups.flatMap((g) => g.items).find((i) => i.value === value);
   return (
     <div ref={boxRef} style={{ position: 'relative', display: 'inline-flex' }}>
-      <button type="button" disabled={disabled} onClick={() => setOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={open}
+      <button type="button" disabled={disabled} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open}
+        onClick={() => { setBelow((boxRef.current?.getBoundingClientRect()?.top ?? Infinity) < 320); setOpen((v) => !v); }}
         style={{ height, padding: '0 9px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8,
           fontSize: 12, color: cur ? 'var(--fg)' : 'var(--fg-3)', cursor: disabled ? 'not-allowed' : 'pointer',
           display: 'inline-flex', alignItems: 'center', gap: 7, maxWidth: width, opacity: disabled ? 0.55 : 1 }}>
@@ -450,10 +454,10 @@ export function DropUp({ value, placeholder = '—', groups, onChange, disabled,
       </button>
       {open && (
         <div className="card card-float" role="listbox" style={{
-          position: 'absolute', bottom: 'calc(100% + 6px)', [align === 'right' ? 'right' : 'left']: 0, zIndex: 40,
+          position: 'absolute', [below ? 'top' : 'bottom']: 'calc(100% + 6px)', [align === 'right' ? 'right' : 'left']: 0, zIndex: 40,
           minWidth: Math.max(width, 190), maxHeight: 300, overflowY: 'auto', padding: 6,
-          boxShadow: '0 8px 28px rgba(0,0,0,.14)', transformOrigin: `bottom ${align}`,
-          transform: entered ? 'none' : 'scale(0.97) translateY(4px)', opacity: entered ? 1 : 0,
+          boxShadow: '0 8px 28px rgba(0,0,0,.14)', transformOrigin: `${below ? 'top' : 'bottom'} ${align}`,
+          transform: entered ? 'none' : `scale(0.97) translateY(${below ? -4 : 4}px)`, opacity: entered ? 1 : 0,
           transition: 'transform 160ms cubic-bezier(0.23,1,0.32,1), opacity 160ms cubic-bezier(0.23,1,0.32,1)' }}>
           {groups.map((g, gi) => (
             <div key={g.label ?? gi} style={{ padding: '2px 0' }}>

@@ -629,8 +629,12 @@ async function syncTombstones(fixedOwner) {
 
   // 2) 원격 tombstone 목록 — 내가 책임지는 오너만(discoverRemote와 같은 테넌트 격리 원칙).
   //    기기 세션이 없는 셀프호스트에서 로컬 tombstone의 ownerId도 오너로 인정한다.
-  const owners = new Set(fixedOwner ? [fixedOwner] : []);
-  for (const t of local.values()) if (t.ownerId) owners.add(t.ownerId);
+  //    세션(JWT) 모드는 cycle의 로컬 수집과 같은 소유자 게이트 — 다른 계정 소유 tombstone으로
+  //    남의 prefix에 list/upload를 매 사이클 반복하지 않는다(사후 검수 2026-07-25). 서비스 모드는 무게이트.
+  const gateUid = (loadSyncCreds() && serviceCredsAllowed()) ? null : (loadDeviceSession()?.user?.id ?? null);
+  const allowOwner = (o) => !gateUid || o === gateUid;
+  const owners = new Set(fixedOwner && allowOwner(fixedOwner) ? [fixedOwner] : []);
+  for (const t of local.values()) if (t.ownerId && allowOwner(t.ownerId)) owners.add(t.ownerId);
   const remote = new Map(); // wsId → owner
   for (const owner of owners) {
     const { data } = await client().storage.from(BUCKET).list(skey(owner, '.tombstones'), { limit: 500 }).catch(() => ({ data: [] }));
@@ -672,7 +676,7 @@ async function syncTombstones(fixedOwner) {
   // 4) 로컬에만 있는 tombstone → 원격 push. ownerId 없는 회사(클라우드 미동기)는 원본이
   //    원격에 없어 복원될 일도 없으므로 로컬 마커만으로 충분하다.
   for (const [wsId, t] of local) {
-    if (!t.ownerId || remote.has(wsId)) continue;
+    if (!t.ownerId || !allowOwner(t.ownerId) || remote.has(wsId)) continue;
     await upload(skey(t.ownerId, '.tombstones', `${wsId}.json`), Buffer.from(JSON.stringify({ wsId, at: t.at })))
       .catch(() => { /* push 실패 — 로컬 마커가 남아 다음 사이클 재시도 */ });
   }
