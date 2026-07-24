@@ -68,3 +68,7 @@ test('syncEntitled: 강제 on에서 trial은 통과', async () => {
     assert.deepEqual(r, { ok: true, plan: 'trial' });
   } finally { if (prev === undefined) delete process.env.ARGO_ENFORCE_PLAN; else process.env.ARGO_ENFORCE_PLAN = prev; }
 });
+test('fetchPlan: auth 일시 실패(error 반환) → null (미확인 낙관 — 검수 MEDIUM 반영)', async () => {
+  const sb = { ...mkSb({ data: null, error: null }), auth: { getUser: async () => ({ data: { user: null }, error: { message: 'network' } }) } };
+  assert.equal(await fetchPlan(sb, 'u'), null);
+});

@@ -13,13 +13,15 @@ export async function fetchPlan(sb, ownerId) {
     const { data, error } = await sb.from('entitlements').select('plan').eq('user_id', ownerId).maybeSingle();
     if (error) throw new Error(error.message);
     if (data?.plan === 'pro') return 'pro';
-    // 무행/free — 가입 14일 무료 체험 창인지 판정(서버 is_pro의 OR 조건과 대칭). 세션 본인일 때만 확인
-    // 가능하고, 실패하면 'free'로 관용 — 최종 집행은 어차피 서버 RLS(체험 중이면 서버가 통과시킨다).
+    // 무행/free — 가입 14일 무료 체험 창인지 판정(서버 is_pro의 OR 조건과 대칭). 세션 본인일 때만 확인 가능.
+    // 일시 실패(네트워크·GoTrue 오류)는 파일 불변식대로 null(미확인 낙관) — 체험 중 사용자를 오차단하지 않는다
+    // (검수 MEDIUM 2026-07-24). auth 자체가 없는 클라(mock·서비스 모드)만 free 폴백 — 최종 집행은 서버 RLS.
     try {
-      const { data: u } = await sb.auth.getUser();
+      const { data: u, error: aerr } = await sb.auth.getUser();
+      if (aerr) return null; // 일시 실패 — 미확인(낙관), 다음 사이클 재판정
       const created = u?.user?.id === ownerId ? Date.parse(u.user.created_at) : NaN;
       if (Number.isFinite(created) && Date.now() - created < TRIAL_DAYS * 86_400_000) return 'trial';
-    } catch { /* auth 미지원 클라(서비스 모드 등) — free 폴백 */ }
+    } catch { /* auth 미지원 클라(mock·서비스 모드) — free 폴백 */ }
     return 'free'; // 행 없음/'free' + 체험 종료 → 무료(RLS is_pro=false와 일치)
   } catch (e) {
     console.warn('[argo] 플랜 조회 실패 — 미확인(낙관 진행):', e.message);
