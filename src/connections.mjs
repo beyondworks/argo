@@ -25,17 +25,35 @@ const EMPTY = {
   slack: { token: '', channel: '', botUserId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '' },
 };
 
+/** 붙여넣은 토큰 정제 — 봇 토큰엔 공백이 없다. 앞뒤 trim만으론 BotFather 복사 시 섞인 중간 개행·공백·
+    보이지 않는 문자(zero-width·BOM·nbsp)가 남아 URL(`.../bot<token>/getMe`)을 깨뜨리고, fetch가 통째로
+    throw해 화면에 무의미한 "fetch failed"가 뜬 뒤 저장이 롤백된다(실측 2026-07-24: 새 토큰 저장 실패·옛
+    토큰 잔존). 전 공백류 + zero-width(200B-200D)·BOM(FEFF)·nbsp(00A0)를 제거해 저장·검증 양쪽을 깨끗이
+    한다. (export: 회귀 테스트용) */
+export const sanitizeToken = (t) => String(t ?? '').replace(/[\s\u200B-\u200D\uFEFF\u00A0]/g, '');
+
+/** fetch 자체가 throw(잘못된 토큰으로 URL 깨짐·네트워크·타임아웃)하면 원문 대신 사람이 읽을 안내로. */
+async function safeFetch(url, opts) {
+  try {
+    return await fetch(url, opts);
+  } catch (e) {
+    throw new Error(`서버에 연결하지 못했습니다 (토큰 형식이나 네트워크를 확인해 주세요): ${String(e.message || e).slice(0, 80)}`);
+  }
+}
+
 /** 가동 전 토큰 즉시 검증 — "연동 안 됨"을 저장 시점에 잡는다. 반환: 봇 표시명. 실패 시 throw. */
 export async function validateConnection(kind, token) {
+  const tok = sanitizeToken(token);
   if (kind === 'telegram') {
-    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, { signal: AbortSignal.timeout(10_000) });
+    if (!/^\d+:[\w-]+$/.test(tok)) throw new Error('봇 토큰 형식이 올바르지 않습니다 (BotFather의 "숫자:문자" 토큰을 공백 없이 붙여넣어 주세요)');
+    const res = await safeFetch(`https://api.telegram.org/bot${tok}/getMe`, { signal: AbortSignal.timeout(10_000) });
     const j = await res.json().catch(() => ({}));
     if (!j.ok) throw new Error(`텔레그램 토큰 검증 실패: ${j.description ?? res.status}`);
     return `@${j.result.username}`;
   }
   if (kind === 'slack') {
-    const res = await fetch('https://slack.com/api/auth.test', {
-      method: 'POST', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000),
+    const res = await safeFetch('https://slack.com/api/auth.test', {
+      method: 'POST', headers: { authorization: `Bearer ${tok}` }, signal: AbortSignal.timeout(10_000),
     });
     const j = await res.json().catch(() => ({}));
     if (!j.ok) throw new Error(`슬랙 토큰 검증 실패: ${j.error ?? res.status}`);
@@ -142,6 +160,9 @@ const tokenInUseMsg = (used) => used.where === 'gateway'
 
 export async function updateConnection(wsId, kind, patch) {
   if (!['telegram', 'slack'].includes(kind)) throw new Error('알 수 없는 연결 종류');
+  // 저장 단일 관문에서 토큰 정제 — 검증(validateConnection)과 저장이 항상 같은 깨끗한 값을 쓰게 한다.
+  // (빈 문자열은 "기존 유지" 신호라 그대로 두고, 아래에서 처리한다)
+  if (patch && typeof patch.token === 'string' && patch.token !== '') patch = { ...patch, token: sanitizeToken(patch.token) };
   return withLock(lockKey(wsId), async () => {
     const all = await loadConnections(wsId);
     const next = { ...all[kind], ...patch };

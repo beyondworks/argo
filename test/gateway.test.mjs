@@ -10,7 +10,7 @@ import { join } from 'node:path';
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-gwtest-'));
 const { EXCLUDE } = await import('../src/sync.mjs');
 const { classifySlackMessage, enqueueJob, startQueueWorker, queueDir } = await import('../src/gateway.mjs');
-const { updateConnection, maskConnections } = await import('../src/connections.mjs');
+const { updateConnection, maskConnections, sanitizeToken } = await import('../src/connections.mjs');
 const { getDeviceId } = await import('../src/workspace.mjs');
 
 /* ── sync EXCLUDE: 큐는 로컬 전용, 슬랙 커서는 동기화 ── */
@@ -125,4 +125,24 @@ test('슬랙 연결: 레거시 설정(코드·오너 없음)은 빈 patch로도 
   const all = await updateConnection(WS, 'slack', {}); // startSlack 기동 시의 레거시 보정 경로
   assert.equal(all.slack.ownerId, null);
   assert.match(all.slack.pairCode, /^[A-HJ-NP-Z2-9]{6}$/, '기존 사용자도 재저장 없이 코드를 받는다');
+});
+
+/* ── 토큰 정제 — 붙여넣기 시 섞인 공백·개행·zero-width가 URL을 깨 "fetch failed"로 저장 롤백되던 버그(2026-07-24) ── */
+test('sanitizeToken: 공백·개행·zero-width·BOM·nbsp 제거, 봇 토큰 형식 보존', () => {
+  const bot = '8825847980:AAExampleTokenABCdef-_123';
+  assert.equal(sanitizeToken(` ${bot}\n`), bot, '앞뒤 공백·개행 제거');
+  assert.equal(sanitizeToken(bot.slice(0, 10) + '​' + bot.slice(10)), bot, '중간 zero-width(200B) 제거');
+  assert.equal(sanitizeToken('﻿' + bot), bot, 'BOM 제거');
+  assert.equal(sanitizeToken('12:ab cd'), '12:abcd', 'nbsp 제거');
+  assert.equal(sanitizeToken(''), '', '빈값 안전');
+  assert.equal(sanitizeToken(null), '', 'null 안전');
+  assert.equal(sanitizeToken(bot), bot, '깨끗한 토큰은 불변');
+});
+
+test('updateConnection: 저장 시 토큰 정제 — 디스크에 깨끗한 값만 (검증과 동일값 보장)', async () => {
+  const WS = 'gwtest-tok';
+  await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
+  const bot = '8811111111:AAcleanTokenXYZ_-9';
+  const all = await updateConnection(WS, 'telegram', { token: ` ${bot}\n​` }); // 오염된 붙여넣기 재현
+  assert.equal(all.telegram.token, bot, '저장값은 정제되어 원본 토큰과 일치(URL 안 깨짐)');
 });
