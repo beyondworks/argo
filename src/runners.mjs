@@ -699,7 +699,10 @@ export async function runnerCredEnv(wsId, runner) {
     await mkdir(dir, { recursive: true, mode: 0o700 }); // OAuth 토큰 보관 — 소유자만
     await seedAuthFile(dir, 'auth.json', v); // 저장 자격이 바뀌면(동기화 포함) 재시드 — CLI 갱신분은 보존
     if (!(await exists(join(dir, 'config.toml')))) await writeFile(join(dir, 'config.toml'), '# Argo 회사 자격 codex 홈\n');
-    return { env: {}, home: dir };
+    // OPENAI_API_KEY 명시 소거(claude OAuth 대칭) — 호스트/프로세스 env에 API 키가 있으면 codex CLI가
+    // auth.json OAuth보다 그 키를 우선해 무효·타계정 키로 턴이 실패한다("api키 설정값 우선" 신고 2026-07-24).
+    // scrubServerSecrets는 이 키를 codex 소유라 남겨두므로, 여기서 빈 값으로 덮어 OAuth 경로를 보장한다.
+    return { env: { OPENAI_API_KEY: '' }, home: dir };
   }
   return null;
 }
@@ -716,7 +719,7 @@ async function geminiTurnHome(wsId, cred) {
   if (cred.type === 'apikey') return { home, authType: 'gemini-api-key', env: { GEMINI_API_KEY: cred.value } };
   if (cred.type === 'oauth') {
     await seedAuthFile(gdir, 'oauth_creds.json', cred.value); // 저장 자격 변경(동기화 포함) 시 재시드 — CLI 갱신분은 보존
-    return { home, authType: 'oauth-personal', env: {} };
+    return { home, authType: 'oauth-personal', env: { GEMINI_API_KEY: '', GOOGLE_API_KEY: '' } }; // API키 명시 소거 — 호스트 env 키가 OAuth를 누르지 않게(claude/codex 대칭, 신고 2026-07-24)
   }
   // host — 이 컴퓨터 로그인을 빌리되 격리 HOME에서 실행. detectRunners가 authed로 인정하는 두 경로를
   // 모두 격리한다(둘 다 안 잡으면 검수 HIGH: env키 경로가 무격리 호스트 HOME으로 새 도구 게이팅 우회).
@@ -732,7 +735,7 @@ async function geminiTurnHome(wsId, cred) {
     if ((reseeded || !(await exists(join(gdir, 'google_accounts.json')))) && (await exists(join(hostG, 'google_accounts.json')))) {
       await copyFile(join(hostG, 'google_accounts.json'), join(gdir, 'google_accounts.json')).catch(() => {});
     }
-    return { home, authType: 'oauth-personal', env: {} };
+    return { home, authType: 'oauth-personal', env: { GEMINI_API_KEY: '', GOOGLE_API_KEY: '' } }; // API키 명시 소거 — 호스트 env 키가 OAuth를 누르지 않게(claude/codex 대칭, 신고 2026-07-24)
   }
   // OAuth 파일은 없지만 호스트에 GEMINI_API_KEY env가 있으면 그 키로 — 격리 HOME + api-key 인증 고정.
   if (process.env.GEMINI_API_KEY) return { home, authType: 'gemini-api-key', env: { GEMINI_API_KEY: process.env.GEMINI_API_KEY } };
