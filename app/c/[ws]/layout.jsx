@@ -99,7 +99,10 @@ export default function CompanyShell({ children, params }) {
   const pathname = usePathname();
   const router = useRouter();
   // 같은 페이지 재클릭 = 무동작 — 소프트 내비 전환(Link) 후에도 동일 URL 재이동으로 페이지 상태가 리셋되는 것을 막는다.
-  const navClick = (href) => (e) => { if (pathname === href) e.preventDefault(); };
+  // 단 modifier/중클릭(새 탭·새 창)은 브라우저 기본 동작 보존 — 좌클릭만 가로챈다(분리 검수 지적 2026-07-24).
+  const navClick = (href) => (e) => {
+    if (pathname === href && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) e.preventDefault();
+  };
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
   // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
