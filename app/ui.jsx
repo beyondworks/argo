@@ -425,7 +425,7 @@ export function InputModal({ title, label, defaultValue = '', placeholder, confi
 /** 위로 열리는 드롭박스 — 네이티브 <select>는 팝업 방향을 못 정해 하단 배치 화면에서 아래로 열려 잘린다
     (유건 지시 2026-07-21: 입력바 위 컨트롤은 전부 위로 연다). 채팅 ModelMenu와 같은 팝오버 문법.
     groups = [{ label?, items: [{ value, label, disabled?, badge? }] }] — 러너별 optgroup 대응. */
-export function DropUp({ value, placeholder = '—', groups, onChange, disabled, width = 210, align = 'left' }) {
+export function DropUp({ value, placeholder = '—', groups, onChange, disabled, width = 210, align = 'left', height = 28 }) {
   const [open, setOpen] = useState(false);
   const [entered, setEntered] = useState(false);
   const boxRef = useRef(null);
@@ -442,7 +442,7 @@ export function DropUp({ value, placeholder = '—', groups, onChange, disabled,
   return (
     <div ref={boxRef} style={{ position: 'relative', display: 'inline-flex' }}>
       <button type="button" disabled={disabled} onClick={() => setOpen((v) => !v)} aria-haspopup="listbox" aria-expanded={open}
-        style={{ height: 28, padding: '0 9px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8,
+        style={{ height, padding: '0 9px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8,
           fontSize: 12, color: cur ? 'var(--fg)' : 'var(--fg-3)', cursor: disabled ? 'not-allowed' : 'pointer',
           display: 'inline-flex', alignItems: 'center', gap: 7, maxWidth: width, opacity: disabled ? 0.55 : 1 }}>
         <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cur?.label ?? placeholder}</span>
