@@ -2,6 +2,7 @@
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
@@ -704,11 +705,11 @@ export default function CrewChat({ params }) {
                   onMouseUp={annotIdx === i ? captureQuote : undefined}>
                   <Markdown text={m.text} />
                   {m.handover && (
-                    <a className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
+                    <Link className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
                       <Icon name="memory" size={12} />
                       {t('chat.recordedInMemory')}
                       {m.handover.linked?.length > 0 && <span>{t('chat.linkedMemories', { n: m.handover.linked.length })}</span>}
-                    </a>
+                    </Link>
                   )}
                   {/* 이 턴에 만든 문서 — 만든 자리에서 바로 연다(md=뷰어, 그 외=다운로드).
                       "문서 생성했는데 Finder로 폴더까지 찾아가야 하나요" 고객 신고(2026-07-20)의 근본 대응. */}
@@ -980,10 +981,10 @@ export default function CrewChat({ params }) {
                   ))}
                   {rec.length > 0 && <div className="microlabel" style={{ padding: '10px 12px 4px' }}>{t('crew.panel.tasks.recent')}</div>}
                   {rec.map((e, i) => (
-                    <a key={e.ts ?? i} className="task-row" href={`/c/${ws}/activity`}>
+                    <Link key={e.ts ?? i} className="task-row" href={`/c/${ws}/activity`}>
                       <span style={{ width: 6, height: 6, borderRadius: 999, flex: 'none', background: e.ok ? 'var(--ok)' : 'var(--danger)' }} aria-hidden="true" />
                       <span className="t-main"><span className="t-title">{e.gist || t(`tasks.type.${e.type}`)}</span></span>
-                    </a>
+                    </Link>
                   ))}
                 </>
               );

@@ -1,6 +1,7 @@
 'use client';
 // 회사 앱셸 — 라벨 사이드바(회사/크루 그룹 + 사용자 footer) + 헤더(타이틀·검색).
 import { use, useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, api } from '../../ui';
 import { useLang, stageLabel } from '../../i18n';
@@ -56,7 +57,7 @@ function TasksDock({ ws }) {
           </div>
           <div className="tasks-list">
             {running.map((r) => (
-              <a key={r.slug} className="task-row" href={`/c/${ws}/crew/${r.slug}`} onClick={() => setOpen(false)}>
+              <Link key={r.slug} className="task-row" href={`/c/${ws}/crew/${r.slug}`} onClick={() => setOpen(false)}>
                 <ArgoSpinner size={14} />
                 <span className="t-main">
                   <span className="t-title">{r.name} — {stageLabel(t, r.stage, r.detail)}</span>
@@ -65,7 +66,7 @@ function TasksDock({ ws }) {
                 <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums' }}>
                   {fmtRun(Date.now() - r.startedAt)}
                 </span>
-              </a>
+              </Link>
             ))}
             {running.length === 0 && (
               <div style={{ padding: '14px 12px', fontSize: 12.5, color: 'var(--fg-3)' }}>{t('tasks.emptyRunning')}</div>
@@ -74,7 +75,7 @@ function TasksDock({ ws }) {
               <div className="microlabel" style={{ padding: '10px 12px 4px' }}>{t('tasks.recent')}</div>
             )}
             {recent.map((e, i) => (
-              <a key={i} className="task-row" href={e.slug ? `/c/${ws}/crew/${e.slug}` : `/c/${ws}/activity`} onClick={() => setOpen(false)}>
+              <Link key={i} className="task-row" href={e.slug ? `/c/${ws}/crew/${e.slug}` : `/c/${ws}/activity`} onClick={() => setOpen(false)}>
                 <span style={{ width: 6, height: 6, borderRadius: 999, flex: 'none', background: e.ok ? 'var(--ok)' : 'var(--danger)' }} aria-hidden="true" />
                 <span className="t-main">
                   <span className="t-title">{e.gist || t(`tasks.type.${e.type}`)}</span>
@@ -83,7 +84,7 @@ function TasksDock({ ws }) {
                   </span>
                 </span>
                 <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>{fmtDur(e.ms)}</span>
-              </a>
+              </Link>
             ))}
           </div>
         </div>
@@ -97,6 +98,8 @@ export default function CompanyShell({ children, params }) {
   const { t } = useLang();
   const pathname = usePathname();
   const router = useRouter();
+  // 같은 페이지 재클릭 = 무동작 — 소프트 내비 전환(Link) 후에도 동일 URL 재이동으로 페이지 상태가 리셋되는 것을 막는다.
+  const navClick = (href) => (e) => { if (pathname === href) e.preventDefault(); };
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
   // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
@@ -232,33 +235,33 @@ export default function CompanyShell({ children, params }) {
   return (
     <div className="shell">
       <aside className="side">
-        <a href="/" className="nav-item" style={{ gap: 8, marginBottom: 4 }}>
+        <Link href="/" className="nav-item" style={{ gap: 8, marginBottom: 4 }}>
           <span style={{ color: 'var(--fg)', display: 'inline-flex' }}><StarMark size={15} /></span>
           <span className="mono" style={{ fontWeight: 600, fontSize: 13, color: 'var(--fg)', letterSpacing: '0.16em' }}>ARGO</span>
-        </a>
+        </Link>
 
         <div className="side-group">{t('nav.company')}</div>
-        <a href={`/c/${ws}`} className={`nav-item${pathname === `/c/${ws}` ? ' active' : ''}`}>
+        <Link href={`/c/${ws}`} onClick={navClick(`/c/${ws}`)} className={`nav-item${pathname === `/c/${ws}` ? ' active' : ''}`}>
           <Icon name="deck" size={16} /> {t('nav.deck')}
-        </a>
-        <a href={`/c/${ws}/room`} className={`nav-item${pathname.endsWith('/room') ? ' active' : ''}`}>
+        </Link>
+        <Link href={`/c/${ws}/room`} onClick={navClick(`/c/${ws}/room`)} className={`nav-item${pathname.endsWith('/room') ? ' active' : ''}`}>
           <Icon name="user" size={16} /> {t('nav.room')}
-        </a>
-        <a href={`/c/${ws}/compete`} className={`nav-item${pathname.endsWith('/compete') ? ' active' : ''}`}>
+        </Link>
+        <Link href={`/c/${ws}/compete`} onClick={navClick(`/c/${ws}/compete`)} className={`nav-item${pathname.endsWith('/compete') ? ' active' : ''}`}>
           <Icon name="bolt" size={16} /> {t('nav.compete')}
-        </a>
-        <a href={`/c/${ws}/vault`} className={`nav-item${pathname.endsWith('/vault') ? ' active' : ''}`}>
+        </Link>
+        <Link href={`/c/${ws}/vault`} onClick={navClick(`/c/${ws}/vault`)} className={`nav-item${pathname.endsWith('/vault') ? ' active' : ''}`}>
           <Icon name="memory" size={16} /> {t('nav.memory')}
-        </a>
-        <a href={`/c/${ws}/routines`} className={`nav-item${pathname.endsWith('/routines') ? ' active' : ''}`}>
+        </Link>
+        <Link href={`/c/${ws}/routines`} onClick={navClick(`/c/${ws}/routines`)} className={`nav-item${pathname.endsWith('/routines') ? ' active' : ''}`}>
           <Icon name="clock" size={16} /> {t('nav.routines')}
-        </a>
-        <a href={`/c/${ws}/activity`} className={`nav-item${pathname.endsWith('/activity') ? ' active' : ''}`}>
+        </Link>
+        <Link href={`/c/${ws}/activity`} onClick={navClick(`/c/${ws}/activity`)} className={`nav-item${pathname.endsWith('/activity') ? ' active' : ''}`}>
           <Icon name="bolt" size={16} /> {t('nav.activity')}
-        </a>
-        <a href={`/c/${ws}/market`} className={`nav-item${pathname.endsWith('/market') ? ' active' : ''}`}>
+        </Link>
+        <Link href={`/c/${ws}/market`} onClick={navClick(`/c/${ws}/market`)} className={`nav-item${pathname.endsWith('/market') ? ' active' : ''}`}>
           <Icon name="market" size={16} /> {t('nav.market')}
-        </a>
+        </Link>
 
         {data === null && <><div className="side-group">{t('common.crew')}</div><Skeleton h={60} style={{ margin: '0 10px' }} /></>}
         {grouped.map(([team, list]) => {
@@ -301,7 +304,7 @@ export default function CompanyShell({ children, params }) {
                     setDragSlug(null); setDropSlug(null);
                   }}
                   style={{ position: 'relative', ...(dragSlug === a.slug ? { opacity: 0.45 } : {}), ...(dropSlug === a.slug && dragSlug ? { boxShadow: 'inset 0 2px 0 var(--primary)' } : {}) }}>
-                  <a href={href} draggable={false} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6, paddingRight: 30 }}>
+                  <Link href={href} onClick={navClick(href)} draggable={false} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6, paddingRight: 30 }}>
                     <span style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
                       <Avatar name={a.name} sm />
                       {a.slug in tgAgents && (
@@ -319,7 +322,7 @@ export default function CompanyShell({ children, params }) {
                       </span>
                       <span className="nav-sub">{a.role}</span>
                     </span>
-                  </a>
+                  </Link>
                   {/* 고정 토글 — pinned면 상시 골드, 아니면 행 hover 시 노출(.crew-row:hover .crew-pin). preventDefault로 링크 이동 차단.
                       활성 행 배경이 골드(--primary)라 골드 핀이 묻힌다 — 활성이면 온-골드 전경색(--primary-fg)으로 대비 확보(세션 레일과 동일 규칙, 실사용 신고 2026-07-21). */}
                   <button type="button" className={`crew-pin${pinned ? ' pinned' : ''}`}
@@ -334,7 +337,7 @@ export default function CompanyShell({ children, params }) {
           </div>
           );
         })}
-        <a
+        <Link
           href={`/c/${ws}`}
           className="nav-item"
           style={{ color: 'var(--fg-3)', fontSize: 12.5 }}
@@ -349,7 +352,7 @@ export default function CompanyShell({ children, params }) {
           }}
         >
           <Icon name="plus" size={15} /> {t('nav.hire')}
-        </a>
+        </Link>
 
         {/* 베타 피드백 — 인앱 모달로 작성 후 서버가 Supabase에 저장(브라우저 안 열림). 클라우드(로그인) 모드에서만. */}
         {me?.authOn && (
@@ -365,13 +368,14 @@ export default function CompanyShell({ children, params }) {
             <span className="mono" style={{ fontSize: 9, letterSpacing: '0.06em', color: 'var(--primary)', border: '1px solid var(--primary-fg-line)', borderRadius: 4, padding: '1px 4px' }}>{t('feedback.beta')}</span>
           </button>
         )}
-        <a
+        <Link
           href={`/c/${ws}/settings`}
+          onClick={navClick(`/c/${ws}/settings`)}
           className={`nav-item${pathname.endsWith('/settings') ? ' active' : ''}`}
           style={me?.authOn ? undefined : { marginTop: 'auto' }}
         >
           <Icon name="settings" size={16} /> {t('nav.settings')}
-        </a>
+        </Link>
         <div className="side-footer" style={{ marginTop: 6 }}>
           <Avatar name={data?.company?.name} sm />
           <span style={{ minWidth: 0, flex: 1 }}>
@@ -423,7 +427,7 @@ export default function CompanyShell({ children, params }) {
         <main className="content" style={{ width: '100%' }}>
           {data?.missing ? (
             <div className="empty" style={{ marginTop: 40 }}>
-              {t('shell.notFound')} <a href="/" style={{ color: 'var(--primary-strong)', fontWeight: 700 }}>{t('shell.backHome')}</a>
+              {t('shell.notFound')} <Link href="/" style={{ color: 'var(--primary-strong)', fontWeight: 700 }}>{t('shell.backHome')}</Link>
             </div>
           ) : children}
         </main>

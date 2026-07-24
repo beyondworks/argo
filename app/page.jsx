@@ -1,6 +1,7 @@
 'use client';
 // 홈 — 회사 목록과 생성. 계기판 톤의 조용한 온보딩.
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Logo, Icon, Avatar, Spinner, Skeleton, ConfirmModal, api, imeGuard, timeAgo } from './ui';
 import { AiConnectionCard, ACCOUNT_WS, anyRunnerUsable, runnerNeedsReconnect } from './runner-connect';
@@ -139,7 +140,7 @@ export default function Home() {
               /* 미로그인 + 게스트(로컬 전용) 공통 — 게스트는 로그인하면 클레임 배너로 이어진다 */
               <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {isGuest && <span className="microlabel" style={{ color: 'var(--fg-3)' }}>{t('home.localOnly')}</span>}
-                <a className="btn sm" href="/login">{t('home.signIn')}</a>
+                <Link className="btn sm" href="/login">{t('home.signIn')}</Link>
               </span>
             )
           )}
@@ -169,12 +170,12 @@ export default function Home() {
         )}
         {runnerNotice && (
           /* 러너 미연결/끊김 안내 — 누르면 그 회사 설정의 러너 연결 섹션으로 직행(?ai=1) */
-          <a href={`/c/${runnerNotice.ws}/settings?ai=1`} className="card card-i fade-up"
+          <Link href={`/c/${runnerNotice.ws}/settings?ai=1`} className="card card-i fade-up"
             style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', borderColor: 'var(--accent)', marginBottom: 22 }}>
             <span style={{ color: 'var(--accent)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
             <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t(runnerNotice.invalid ? 'home.runnerReconnect' : 'home.runnerNotice', { name: runnerNotice.name })}</span>
             <span className="chip" style={{ flex: 'none' }}>{t('deck.aiKey.cta')}</span>
-          </a>
+          </Link>
         )}
         <div className="fade-up" style={{ marginBottom: 30 }}>
           <div className="microlabel" style={{ marginBottom: 12 }}>{t('home.boarding')}</div>
