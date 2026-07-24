@@ -193,13 +193,13 @@ export default function Routines({ params }) {
             {/* 네이티브 select/타임픽커 대신 앱 공용 DropUp — 브라우저 기본 팝업이 테마와 겉돌던 것 통일(신고 2026-07-25) */}
             <div style={{ display: 'grid', gap: 4 }}>
               <span className="microlabel">{t('routines.crew')}</span>
-              <DropUp value={form.agentSlug} width={220} height={34}
+              <DropUp value={form.agentSlug} width={220} height={34} ariaLabel={t('routines.crew')}
                 groups={[{ items: agents.map((a) => ({ value: a.slug, label: `${a.name} — ${a.role}` })) }]}
                 onChange={(v) => setForm({ ...form, agentSlug: v })} />
             </div>
             <div style={{ display: 'grid', gap: 4 }}>
               <span className="microlabel">{t('routines.cycle')}</span>
-              <DropUp value={form.type} width={110} height={34}
+              <DropUp value={form.type} width={110} height={34} ariaLabel={t('routines.cycle')}
                 groups={[{ items: [{ value: 'daily', label: t('routines.daily') }, { value: 'weekly', label: t('routines.weekly') }] }]}
                 onChange={(v) => setForm({ ...form, type: v })} />
             </div>
@@ -246,13 +246,13 @@ export default function Routines({ params }) {
                     )}
                   </span>
                 ))}
-                {/* 시·분 DropUp — 네이티브 타임픽커(테마 밖 팝업) 대체. 분은 5분 단위, 임의 분은 자연어 설정으로 */}
-                <DropUp value={newTime.split(':')[0]} width={72}
+                {/* 시·분 DropUp — 네이티브 타임픽커(테마 밖 팝업) 대체. 분은 00~59 전체(네이티브와 동등 — 5분 단위 축소는 사후 검수 지적) */}
+                <DropUp value={newTime.split(':')[0]} width={72} ariaLabel={`${t('routines.time')} — h`}
                   groups={[{ items: Array.from({ length: 24 }, (_, h) => { const v = String(h).padStart(2, '0'); return { value: v, label: v }; }) }]}
                   onChange={(h) => setNewTime(`${h}:${newTime.split(':')[1]}`)} />
                 <span className="mono" style={{ color: 'var(--fg-3)', fontSize: 12 }}>:</span>
-                <DropUp value={newTime.split(':')[1]} width={72}
-                  groups={[{ items: Array.from({ length: 12 }, (_, i) => { const v = String(i * 5).padStart(2, '0'); return { value: v, label: v }; }) }]}
+                <DropUp value={newTime.split(':')[1]} width={72} ariaLabel={`${t('routines.time')} — m`}
+                  groups={[{ items: Array.from({ length: 60 }, (_, m) => { const v = String(m).padStart(2, '0'); return { value: v, label: v }; }) }]}
                   onChange={(m) => setNewTime(`${newTime.split(':')[0]}:${m}`)} />
                 <button type="button" className="btn sm" disabled={form.times.length >= 8}
                   onClick={() => { if (/^\d{2}:\d{2}$/.test(newTime) && !form.times.includes(newTime)) setForm((f) => ({ ...f, times: [...f.times, newTime].sort() })); }}>

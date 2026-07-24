@@ -167,8 +167,8 @@ test('sanitizeRoutinePatch: 편집 가능 필드만 통과, 실행 기록 덮어
   // schedule은 addRoutine과 같은 규칙으로 정규화
   assert.deepEqual(
     sanitizeRoutinePatch({ schedule: { type: 'weird', time: '10:30' } }).schedule,
-    { type: 'daily', time: '10:30', dow: 1 },
-    '알 수 없는 type은 daily로, dow 기본 1',
+    { type: 'daily', time: '10:30', times: ['10:30'], dow: 1 },
+    '알 수 없는 type은 daily로, dow 기본 1 — 단수 필드는 times로 승격돼 병기(#85 스키마)',
   );
   // 무효 값은 저장 전에 throw — 빈 제목·형식 밖 시각이 디스크에 못 닿는다
   assert.throws(() => sanitizeRoutinePatch({ title: '  ' }), /제목/);
