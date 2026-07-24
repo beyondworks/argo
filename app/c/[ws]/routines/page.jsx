@@ -6,7 +6,11 @@ import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, api, imeG
 import { useLang } from '../../../i18n';
 
 function scheduleLabel(s, t, DOW) {
-  return s.type === 'weekly' ? t('routines.scheduleWeekly', { dow: DOW[s.dow ?? 1], time: s.time }) : t('routines.scheduleDaily', { time: s.time });
+  // 복수 시각·요일은 '·'로 이어 기존 라벨 템플릿에 그대로 태운다 (예: 매주 월·수 09:00·18:00)
+  const time = (s.times?.length ? s.times : [s.time]).join('·');
+  if (s.type !== 'weekly') return t('routines.scheduleDaily', { time });
+  const dow = (s.dows?.length ? s.dows : [s.dow ?? 1]).map((d) => DOW[d]).join('·');
+  return t('routines.scheduleWeekly', { dow, time });
 }
 
 export default function Routines({ params }) {
@@ -25,6 +29,32 @@ export default function Routines({ params }) {
   const [error, setError] = useState('');
   const [runTarget, setRunTarget] = useState(null); // 실행 팝업 대상 루틴
   const [delTarget, setDelTarget] = useState(null); // 삭제 확인 모달 대상 루틴
+  const [nlText, setNlText] = useState(''); // 자연어 한 줄 → 자동 설정 입력
+  const [nlBusy, setNlBusy] = useState(false);
+  const [newTime, setNewTime] = useState('09:00'); // 시각 추가 입력
+
+  // 자연어 → 초안 — 러너가 해석해 폼을 채운다. 결과는 프리필일 뿐, 저장 전 사용자가 검토·수정한다.
+  async function applyNl() {
+    if (nlBusy || !nlText.trim()) return;
+    setNlBusy(true); setError('');
+    try {
+      const d = await api(`/api/companies/${ws}/routines/parse`, { text: nlText });
+      if (d.unsupported) { setError(t('routines.nlTrigger')); return; }
+      setForm((f) => ({
+        ...f,
+        title: d.draft.title || f.title,
+        prompt: d.draft.prompt || f.prompt,
+        type: d.draft.schedule.type,
+        times: d.draft.schedule.times,
+        dows: d.draft.schedule.dows ?? f.dows,
+        agentSlug: d.draft.agentSlug || f.agentSlug,
+      }));
+    } catch (e) {
+      setError(String(e.message));
+    } finally {
+      setNlBusy(false);
+    }
+  }
 
   function load() {
     // 불러오기 실패(손상 등)를 '루틴 없음'([])으로 붕괴시키지 않는다 — 에러를 표시하고 목록은 미확정으로 둔다.
@@ -42,8 +72,8 @@ export default function Routines({ params }) {
       title: tpl?.title ?? '',
       prompt: tpl?.prompt ?? '',
       type: tpl?.schedule?.type ?? 'daily',
-      time: tpl?.schedule?.time ?? '09:00',
-      dow: tpl?.schedule?.dow ?? 1,
+      times: tpl?.schedule?.times ?? [tpl?.schedule?.time ?? '09:00'],
+      dows: tpl?.schedule?.dows ?? [tpl?.schedule?.dow ?? 1],
     });
   }
 
@@ -55,8 +85,8 @@ export default function Routines({ params }) {
       title: r.title,
       prompt: r.prompt,
       type: r.schedule?.type ?? 'daily',
-      time: r.schedule?.time ?? '09:00',
-      dow: r.schedule?.dow ?? 1,
+      times: r.schedule?.times ?? [r.schedule?.time ?? '09:00'],
+      dows: r.schedule?.dows ?? [r.schedule?.dow ?? 1],
     });
   }
 
@@ -67,7 +97,7 @@ export default function Routines({ params }) {
     try {
       const body = {
         agentSlug: form.agentSlug, title: form.title, prompt: form.prompt,
-        schedule: { type: form.type, time: form.time, dow: Number(form.dow) },
+        schedule: { type: form.type, times: form.times, dows: form.dows.map(Number) },
       };
       if (form.id) {
         const res = await fetch(`/api/companies/${ws}/routines`, {
@@ -146,6 +176,19 @@ export default function Routines({ params }) {
             <span className="card-title">{form.id ? t('routines.editTitle') : t('routines.createTitle')}</span>
             <button type="button" className="btn sm" onClick={() => setForm(null)}>{t('routines.close')}</button>
           </div>
+          {/* 자연어 → 자동 설정 — 말로 쓰면 러너가 주기·시각·지시로 해석해 아래 폼을 채운다(저장 전 수정 가능) */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', background: 'var(--card-2)', border: '1px dashed var(--border)', borderRadius: 12, padding: '10px 12px' }}>
+            <textarea
+              value={nlText}
+              onChange={(e) => setNlText(e.target.value)}
+              placeholder={t('routines.nlPlaceholder')}
+              rows={2}
+              style={{ flex: 1, resize: 'vertical', background: 'transparent', border: 0, outline: 'none', fontSize: 12.5, lineHeight: 1.6, minHeight: 38, color: 'var(--fg)' }}
+            />
+            <button type="button" className="btn sm" disabled={nlBusy || !nlText.trim()} onClick={applyNl} style={{ flex: 'none' }}>
+              {nlBusy ? <><Spinner size={11} /> {t('routines.nlParsing')}</> : <><Icon name="bolt" size={12} /> {t('routines.nlApply')}</>}
+            </button>
+          </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <label style={{ display: 'grid', gap: 4 }}>
               <span className="microlabel">{t('routines.crew')}</span>
@@ -160,22 +203,56 @@ export default function Routines({ params }) {
                 <option value="weekly">{t('routines.weekly')}</option>
               </select>
             </label>
-            {form.type === 'weekly' && (
-              <label style={{ display: 'grid', gap: 4 }}>
-                <span className="microlabel">{t('routines.day')}</span>
-                <select value={form.dow} onChange={(e) => setForm({ ...form, dow: e.target.value })} style={selStyle}>
-                  {DOW.map((d, i) => <option key={i} value={i}>{t('routines.dayOf', { d })}</option>)}
-                </select>
-              </label>
-            )}
-            <label style={{ display: 'grid', gap: 4 }}>
-              <span className="microlabel">{t('routines.time')}</span>
-              <input suppressHydrationWarning type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} style={selStyle} />
-            </label>
             <label style={{ display: 'grid', gap: 4, flex: 1, minWidth: 180 }}>
               <span className="microlabel">{t('routines.title')}</span>
               <input suppressHydrationWarning value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder={t('routines.titlePlaceholder')} style={selStyle} {...imeGuard} />
             </label>
+          </div>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            {form.type === 'weekly' && (
+              <div style={{ display: 'grid', gap: 4 }}>
+                <span className="microlabel">{t('routines.day')}</span>
+                {/* 요일 복수 선택 — 토글 칩. 최소 1개는 남긴다(저장 버튼 가드와 이중 방어) */}
+                <div style={{ display: 'flex', gap: 4 }} role="group" aria-label={t('routines.day')}>
+                  {DOW.map((d, i) => {
+                    const on = form.dows.map(Number).includes(i);
+                    return (
+                      <button key={i} type="button" aria-pressed={on}
+                        onClick={() => setForm((f) => {
+                          const cur = new Set(f.dows.map(Number));
+                          cur.has(i) ? cur.delete(i) : cur.add(i);
+                          return { ...f, dows: [...cur].sort((a, b) => a - b) };
+                        })}
+                        className="chip"
+                        style={{ cursor: 'pointer', minWidth: 34, justifyContent: 'center', ...(on ? { color: 'var(--primary-strong)', borderColor: 'var(--primary)', fontWeight: 700 } : { color: 'var(--fg-3)' }) }}>
+                        {d}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div style={{ display: 'grid', gap: 4 }}>
+              <span className="microlabel">{t('routines.time')}</span>
+              {/* 시각 복수 — 칩 목록 + 추가. 1개 남으면 삭제 버튼을 감춰 빈 스케줄을 막는다 */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                {form.times.map((tm) => (
+                  <span key={tm} className="chip mono" style={{ gap: 6 }}>
+                    {tm}
+                    {form.times.length > 1 && (
+                      <button type="button" aria-label={`${tm} ${t('common.delete')}`}
+                        onClick={() => setForm((f) => ({ ...f, times: f.times.filter((x) => x !== tm) }))}
+                        style={{ border: 0, background: 'none', color: 'var(--fg-3)', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
+                    )}
+                  </span>
+                ))}
+                <input suppressHydrationWarning type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} style={{ ...selStyle, height: 28 }} />
+                <button type="button" className="btn sm" disabled={form.times.length >= 8}
+                  onClick={() => { if (/^\d{2}:\d{2}$/.test(newTime) && !form.times.includes(newTime)) setForm((f) => ({ ...f, times: [...f.times, newTime].sort() })); }}>
+                  <Icon name="plus" size={11} /> {t('routines.addTime')}
+                </button>
+              </div>
+            </div>
           </div>
           <textarea
             value={form.prompt}
@@ -184,7 +261,7 @@ export default function Routines({ params }) {
             style={{ width: '100%', minHeight: 90, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '10px 14px', outline: 'none', fontSize: 13, lineHeight: 1.65 }}
           />
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button className="btn btn-primary sm" disabled={saving || !form.title.trim() || !form.prompt.trim() || !form.agentSlug}>
+            <button className="btn btn-primary sm" disabled={saving || !form.title.trim() || !form.prompt.trim() || !form.agentSlug || form.times.length === 0 || (form.type === 'weekly' && form.dows.length === 0)}>
               {saving ? <Spinner size={12} /> : form.id ? t('routines.saveBtn') : t('routines.createBtn')}
             </button>
             {error && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>}
