@@ -114,6 +114,15 @@ export function startQueueWorker(wsId, key, handler) {
 const MAX_MSG = 3800; // 텔레그램 4096 제한 대비 여유
 const clip = (t) => (t.length > MAX_MSG ? `${t.slice(0, MAX_MSG)}\n…(전체 내용은 Argo 데크에서)` : t);
 
+// 폴 오류 백오프 — 특히 getUpdates Conflict(같은 봇 토큰을 다른 인스턴스/기기가 폴링)는
+// 자연 치유(멀티기기 리더 전환 순간 겹침)이지만, 5초 고정 재시도는 지속 중복(같은 봇을 두 회사에
+// 연결 등) 시 텔레그램 API를 영원히 때린다(실측 2026-07-24: Conflict 하트비트 반복). 연속 실패에
+// 지수 백오프(5s→최대 60s)를 걸어 배틀 부하를 없앤다. 성공하면 리셋. 정지는 하지 않는다 —
+// Conflict가 풀리면(다른 인스턴스 종료) 그대로 재개해야 하므로(자동 정지는 재개 배선이 필요해 위험).
+const POLL_BACKOFF_BASE_MS = 5000;
+const POLL_BACKOFF_MAX_MS = 60_000;
+const pollBackoffMs = (streak) => Math.min(POLL_BACKOFF_MAX_MS, POLL_BACKOFF_BASE_MS * 2 ** Math.max(0, streak - 1));
+
 // 회사 시스템 언어(ko|en) 기반 코드 방출 문자열 선택. 기존 회사(lang 없음/'ko')는 항상 ko 반환 → 기존 동작 그대로.
 const pick = (ko, en, lang) => (lang === 'en' ? en : ko);
 
@@ -290,11 +299,13 @@ function startTelegram(wsId, getCfg) {
   (async () => {
     console.log(`[argo] 텔레그램 게이트웨이 시작: ${wsId}`);
     offset = await loadOffset(wsId, KEY); // 재시작 이어받기
+    let errStreak = 0; // 연속 폴 오류 — Conflict 등 지속 실패에 지수 백오프
     while (!stopped) {
       const cfg = getCfg();
       if (!cfg?.enabled || !cfg.token) break;
       try {
         const updates = await tg(cfg.token, 'getUpdates', { offset, timeout: 25 });
+        errStreak = 0;
         await beatGateway(wsId, KEY, true);
         for (const u of updates) {
           if (stopped) break;
@@ -382,10 +393,13 @@ function startTelegram(wsId, getCfg) {
         if (!stopped && updates.length) { offset = updates[updates.length - 1].update_id + 1; await saveOffset(wsId, KEY, offset); }
       } catch (e) {
         if (!stopped) {
-          const hint = /Conflict/.test(String(e.message)) ? ' — 같은 토큰을 다른 인스턴스가 폴링 중일 수 있음' : '';
-          console.error(`[argo] 텔레그램 폴 오류(${wsId}):`, e.message, hint);
-          await beatGateway(wsId, KEY, false, e.message);
-          await new Promise((r) => setTimeout(r, 5000)); // 잘못된 토큰·네트워크 단절에도 루프는 살아있는다
+          errStreak += 1;
+          const conflict = /Conflict/.test(String(e.message));
+          const hint = conflict ? ' — 같은 토큰을 다른 인스턴스가 폴링 중일 수 있음(봇을 한 곳에만 연결하세요)' : '';
+          const wait = pollBackoffMs(errStreak);
+          console.error(`[argo] 텔레그램 폴 오류(${wsId}):`, e.message, hint, `(재시도 ${wait / 1000}s)`);
+          await beatGateway(wsId, KEY, false, `${e.message}${hint}`);
+          await new Promise((r) => setTimeout(r, wait)); // 지수 백오프 — 지속 Conflict 배틀 방지, 루프는 유지
         }
       }
     }
@@ -469,11 +483,13 @@ function startAgentTelegram(wsId, slug, getCfg) {
   (async () => {
     console.log(`[argo] 텔레그램 크루 봇 시작: ${wsId}/${slug}`);
     offset = await loadOffset(wsId, KEY); // 재시작 이어받기
+    let errStreak = 0; // 연속 폴 오류 — Conflict 등 지속 실패에 지수 백오프
     while (!stopped) {
       const cfg = getCfg();
       if (!cfg?.token) break;
       try {
         const updates = await tg(cfg.token, 'getUpdates', { offset, timeout: 25 });
+        errStreak = 0;
         await beatGateway(wsId, KEY, true);
         for (const u of updates) {
           if (stopped) break;
@@ -528,10 +544,13 @@ function startAgentTelegram(wsId, slug, getCfg) {
         if (!stopped && updates.length) { offset = updates[updates.length - 1].update_id + 1; await saveOffset(wsId, KEY, offset); }
       } catch (e) {
         if (!stopped) {
-          const hint = /Conflict/.test(String(e.message)) ? ' — 같은 토큰을 다른 인스턴스가 폴링 중일 수 있음' : '';
-          console.error(`[argo] 크루 봇 폴 오류(${wsId}/${slug}):`, e.message, hint);
-          await beatGateway(wsId, KEY, false, e.message);
-          await new Promise((r) => setTimeout(r, 5000));
+          errStreak += 1;
+          const conflict = /Conflict/.test(String(e.message));
+          const hint = conflict ? ' — 같은 토큰을 다른 인스턴스가 폴링 중일 수 있음(봇을 한 곳에만 연결하세요)' : '';
+          const wait = pollBackoffMs(errStreak);
+          console.error(`[argo] 크루 봇 폴 오류(${wsId}/${slug}):`, e.message, hint, `(재시도 ${wait / 1000}s)`);
+          await beatGateway(wsId, KEY, false, `${e.message}${hint}`);
+          await new Promise((r) => setTimeout(r, wait));
         }
       }
     }
