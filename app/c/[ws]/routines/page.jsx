@@ -247,7 +247,7 @@ export default function Routines({ params }) {
                   </span>
                 ))}
                 <input suppressHydrationWarning type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} style={{ ...selStyle, height: 28 }} />
-                <button type="button" className="btn sm"
+                <button type="button" className="btn sm" disabled={form.times.length >= 8}
                   onClick={() => { if (/^\d{2}:\d{2}$/.test(newTime) && !form.times.includes(newTime)) setForm((f) => ({ ...f, times: [...f.times, newTime].sort() })); }}>
                   <Icon name="plus" size={11} /> {t('routines.addTime')}
                 </button>
