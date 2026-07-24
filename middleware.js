@@ -43,7 +43,12 @@ export async function middleware(req) {
       return NextResponse.next();
     }
   }
-  if (!user && !isPublic) {
+  // 게스트(로컬 전용) 마커 — 기기 마커와 같은 계약(쿠키=UX 게이트, 권한은 라우트의 currentUser/guardCompany).
+  // 루프백 한정. /login은 게스트도 접근 가능해야 한다(나중 로그인 → 클레임 경로) — 리다이렉트 없음.
+  const isGuest = !process.env.ARGO_TENANT_OWNER?.trim()
+    && req.cookies.get('argo-guest')?.value === '1'
+    && LOCAL_HOST_RE.test(req.headers.get('host') || '');
+  if (!user && !isPublic && !isGuest) {
     if (p.startsWith('/api')) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
     return NextResponse.redirect(publicUrl(req, '/login'));
   }
