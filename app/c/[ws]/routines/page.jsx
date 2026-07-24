@@ -2,7 +2,7 @@
 // 루틴 — 크루에게 반복 지시를 예약하고, 원클릭으로 즉시 실행한다.
 // 템플릿 원클릭 생성 → 폼 프리필. 실행 결과는 vault 기억으로 남는다.
 import { use, useEffect, useState } from 'react';
-import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, api, imeGuard, timeAgo } from '../../../ui';
+import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, DropUp, api, imeGuard, timeAgo } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 function scheduleLabel(s, t, DOW) {
@@ -190,19 +190,19 @@ export default function Routines({ params }) {
             </button>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <label style={{ display: 'grid', gap: 4 }}>
+            {/* 네이티브 select/타임픽커 대신 앱 공용 DropUp — 브라우저 기본 팝업이 테마와 겉돌던 것 통일(신고 2026-07-25) */}
+            <div style={{ display: 'grid', gap: 4 }}>
               <span className="microlabel">{t('routines.crew')}</span>
-              <select value={form.agentSlug} onChange={(e) => setForm({ ...form, agentSlug: e.target.value })} style={selStyle}>
-                {agents.map((a) => <option key={a.slug} value={a.slug}>{a.name} — {a.role}</option>)}
-              </select>
-            </label>
-            <label style={{ display: 'grid', gap: 4 }}>
+              <DropUp value={form.agentSlug} width={220} height={34}
+                groups={[{ items: agents.map((a) => ({ value: a.slug, label: `${a.name} — ${a.role}` })) }]}
+                onChange={(v) => setForm({ ...form, agentSlug: v })} />
+            </div>
+            <div style={{ display: 'grid', gap: 4 }}>
               <span className="microlabel">{t('routines.cycle')}</span>
-              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} style={selStyle}>
-                <option value="daily">{t('routines.daily')}</option>
-                <option value="weekly">{t('routines.weekly')}</option>
-              </select>
-            </label>
+              <DropUp value={form.type} width={110} height={34}
+                groups={[{ items: [{ value: 'daily', label: t('routines.daily') }, { value: 'weekly', label: t('routines.weekly') }] }]}
+                onChange={(v) => setForm({ ...form, type: v })} />
+            </div>
             <label style={{ display: 'grid', gap: 4, flex: 1, minWidth: 180 }}>
               <span className="microlabel">{t('routines.title')}</span>
               <input suppressHydrationWarning value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder={t('routines.titlePlaceholder')} style={selStyle} {...imeGuard} />
@@ -246,7 +246,14 @@ export default function Routines({ params }) {
                     )}
                   </span>
                 ))}
-                <input suppressHydrationWarning type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} style={{ ...selStyle, height: 28 }} />
+                {/* 시·분 DropUp — 네이티브 타임픽커(테마 밖 팝업) 대체. 분은 5분 단위, 임의 분은 자연어 설정으로 */}
+                <DropUp value={newTime.split(':')[0]} width={72}
+                  groups={[{ items: Array.from({ length: 24 }, (_, h) => { const v = String(h).padStart(2, '0'); return { value: v, label: v }; }) }]}
+                  onChange={(h) => setNewTime(`${h}:${newTime.split(':')[1]}`)} />
+                <span className="mono" style={{ color: 'var(--fg-3)', fontSize: 12 }}>:</span>
+                <DropUp value={newTime.split(':')[1]} width={72}
+                  groups={[{ items: Array.from({ length: 12 }, (_, i) => { const v = String(i * 5).padStart(2, '0'); return { value: v, label: v }; }) }]}
+                  onChange={(m) => setNewTime(`${newTime.split(':')[0]}:${m}`)} />
                 <button type="button" className="btn sm" disabled={form.times.length >= 8}
                   onClick={() => { if (/^\d{2}:\d{2}$/.test(newTime) && !form.times.includes(newTime)) setForm((f) => ({ ...f, times: [...f.times, newTime].sort() })); }}>
                   <Icon name="plus" size={11} /> {t('routines.addTime')}
