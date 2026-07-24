@@ -107,6 +107,10 @@ export async function loadConnections(wsId) {
 
 /** 크루 직통 봇 연결/해제 — patch=null이면 해제. 토큰이 바뀌면 페어링(ownerId) 초기화. */
 export async function updateAgentBot(wsId, slug, patch) {
+  // 저장 단일 관문 정제 — updateConnection과 대칭. 크루 직통 봇도 붙여넣기 오염 토큰이 그대로 저장돼
+  // 폴러 getUpdates/getMe가 깨지던 것을 막는다(검수 HIGH 2026-07-24). validateConnection이 검증 시
+  // 이미 정제하므로 저장값도 같은 정제를 거쳐야 검증-저장 값이 일치한다.
+  if (patch && typeof patch.token === 'string' && patch.token !== '') patch = { ...patch, token: sanitizeToken(patch.token) };
   // 락 안에서 read-modify-write — 폴러 자동 페어링과 UI 설정 변경이 같은 파일을 경쟁해도 유실 없음
   return withLock(lockKey(wsId), async () => {
     const all = await loadConnections(wsId);
