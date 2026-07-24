@@ -4,7 +4,7 @@ import { useLang } from '@/lib/i18n';
 
 const PLANS = [
   { id: 'p1', features: ['f1', 'f2', 'f3'] },
-  { id: 'p2', features: ['f1', 'f2', 'f3', 'f4'], hot: true },
+  { id: 'p2', features: ['f0', 'f1', 'f2', 'f3', 'f4'], hot: true }, // f0 = 멀티디바이스(유료 앵커) 최상단
   { id: 'p3', features: ['f1', 'f2', 'f3'] },
 ];
 
