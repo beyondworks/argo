@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 // 임시 ARGO_ROOT — WS_ROOT는 모듈 로드 시 고정되므로 import보다 먼저 심는다(실데이터 미접촉)
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-credtest-'));
-const { oauthFormatError, RUNNER_AUTH, startRunnerWebAuth, runnerStatus, saveRunnerCred } = await import('../src/runners.mjs');
+const { oauthFormatError, RUNNER_AUTH, startRunnerWebAuth, runnerStatus, saveRunnerCred, runnerCredEnv } = await import('../src/runners.mjs');
 
 test('RUNNER_AUTH: claude OAuth 접두사 규격 고정', () => {
   assert.equal(RUNNER_AUTH.claude.oauthPrefix, 'sk-ant-oat01-', 'CLAUDE_CODE_OAUTH_TOKEN 접두사');
@@ -197,4 +197,34 @@ test('verifyRunnerCred: 정상 401 러너(kimi·codex·claude apikey)는 회귀 
   try {
     assert.deepEqual(await verifyRunnerCred('kimi', 'apikey', 'x'), { ok: true }, 'kimi 200 유효');
   } finally { restore(); }
+});
+
+/* ── OAuth 연결 시 API키 명시 소거 — 호스트 env 키가 OAuth를 누르지 않게(claude 대칭, 신고 2026-07-24) ── */
+test('runnerCredEnv: codex OAuth는 OPENAI_API_KEY를 빈 값으로 소거(호스트 키 우선 차단)', async () => {
+  const WS = 'credenv-codex';
+  await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
+  // codex OAuth 자격 = auth.json JSON blob(형식 무관, 저장만) — 회사 스코프 저장
+  await saveRunnerCred(WS, 'codex', 'oauth', JSON.stringify({ tokens: { access_token: 'x' } }));
+  const r = await runnerCredEnv(WS, 'codex');
+  assert.equal(r.env.OPENAI_API_KEY, '', 'codex OAuth는 OPENAI_API_KEY를 빈 값으로 덮어 OAuth(auth.json)를 보장');
+  assert.ok(r.home && r.home.includes('codex-home'), '격리 CODEX_HOME 반환');
+});
+
+test('runnerCredEnv: gemini OAuth는 GEMINI/GOOGLE_API_KEY를 빈 값으로 소거', async () => {
+  const WS = 'credenv-gemini';
+  await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
+  await saveRunnerCred(WS, 'gemini', 'oauth', JSON.stringify({ access_token: 'x', refresh_token: 'y' }));
+  const r = await runnerCredEnv(WS, 'gemini');
+  assert.equal(r.env.GEMINI_API_KEY, '', 'GEMINI_API_KEY 소거');
+  assert.equal(r.env.GOOGLE_API_KEY, '', 'GOOGLE_API_KEY 소거');
+  assert.equal(r.authType, 'oauth-personal', 'OAuth 인증 방식 고정');
+});
+
+test('runnerCredEnv: codex API키 모드는 그대로 OPENAI_API_KEY 주입(회귀 아님)', async () => {
+  const WS = 'credenv-codex-key';
+  await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
+  await saveRunnerCred(WS, 'codex', 'apikey', 'sk-testkey123456');
+  const r = await runnerCredEnv(WS, 'codex');
+  assert.equal(r.env.OPENAI_API_KEY, 'sk-testkey123456', 'API키 모드는 사용자 키를 주입');
+  assert.equal(r.home, 'clean', '깨끗한 홈(계정 OAuth 무시)');
 });
