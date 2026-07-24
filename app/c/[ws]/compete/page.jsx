@@ -3,6 +3,7 @@
 // 격리: 경쟁 중 시안은 크루 개인 대화를 오염시키지 않고, 채택본만 승자 스레드에 기록된다.
 // 레이아웃은 회의실과 같은 문법 — 헤더 라인 → 전체 높이 카드 → 하단 고정 컴포저 → 힌트 (UI 일관성).
 import { use, useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, ConfirmModal, InputModal, DropUp, api, imeGuard } from '../../../ui';
 import { useLang } from '../../../i18n';
 
@@ -209,7 +210,7 @@ export default function Compete({ params }) {
               {comp.winner && (
                 <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0 }}>
                   {t('compete.adoptedNote', { name: winnerName })}{' '}
-                  <a href={`/c/${ws}/crew/${winnerEnt?.slug ?? comp.winner}`} style={{ color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.goCrew')} →</a>
+                  <Link href={`/c/${ws}/crew/${winnerEnt?.slug ?? comp.winner}`} style={{ color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.goCrew')} →</Link>
                 </p>
               )}
               {/* 무템플릿 grid 함정 방지 — 컬럼형 grid에는 항상 minmax(0,1fr) */}
@@ -273,7 +274,7 @@ export default function Compete({ params }) {
                   groups={[{ items: agents.map((a) => ({ value: a.slug, label: `${a.name} — ${a.role}` })) }]}
                   onChange={setPickedCrew} />
                 {agents.length === 0 && (
-                  <a href={`/c/${ws}`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('nav.hire')} →</a>
+                  <Link href={`/c/${ws}`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('nav.hire')} →</Link>
                 )}
               </div>
               <span className="microlabel">{t('compete.pickModels')}</span>
@@ -282,7 +283,7 @@ export default function Compete({ params }) {
                 {runners === null ? <Skeleton h={28} w={220} /> : (() => {
                   const connected = (runners ?? []).filter((r) => r.authed && r.models?.length);
                   if (!connected.length) {
-                    return <a href={`/c/${ws}/settings`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.connectFirst')} →</a>;
+                    return <Link href={`/c/${ws}/settings`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.connectFirst')} →</Link>;
                   }
                   const slotGroups = (slot, clearable) => [
                     ...(clearable ? [{ items: [{ value: '', label: t('compete.modelSlotOptPh') }] }] : []),

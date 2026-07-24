@@ -1,6 +1,7 @@
 'use client';
 // 설정 — 회사 정보 수정, 제원, 위험 구역(보관).
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
@@ -202,7 +203,7 @@ function Settings({ params }) {
       </Section>
 
       <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--fg-3)', padding: '6px 2px 4px' }}>
-        <a href="/legal" style={{ color: 'inherit' }}>{t('legal.link')}</a>
+        <Link href="/legal" style={{ color: 'inherit' }}>{t('legal.link')}</Link>
         {CONTACT && <a href={`mailto:${CONTACT}?subject=${encodeURIComponent(t('legal.feedbackSubject'))}`} style={{ color: 'inherit' }}>{t('legal.feedback')}</a>}
       </div>
 

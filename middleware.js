@@ -20,6 +20,23 @@ export async function middleware(req) {
     }
     return NextResponse.next();
   }
+  // 기기/게스트 마커 지름길(루프백 한정) — 세션 조회(GoTrue 네트워크 왕복)보다 먼저 본다. 로컬 모드가
+  // 요청마다 원격 인증에 의존하면 그 지연·장애가 전 화면 지연으로 번진다(실측 2026-07-24: 왕복 ~160ms).
+  // 마커는 UX 게이트일 뿐 권한은 라우트(currentUser/guardCompany)가 검증한다는 기존 계약 그대로.
+  // sb-* 세션 쿠키가 있으면 지름길을 타지 않는다 — 실세션의 갱신·/login 리다이렉트 의미를 아래 기존
+  // 경로가 그대로 처리한다(아래 블록들은 만료 세션 폴백용으로 유지 — 중복이 아니라 회귀 0 보장).
+  if (!process.env.ARGO_TENANT_OWNER?.trim()
+    && LOCAL_HOST_RE.test(req.headers.get('host') || '')
+    && !req.cookies.getAll().some((c) => c.name.startsWith('sb-'))) {
+    if (req.cookies.get('argo-device')?.value === '1') {
+      if (req.nextUrl.pathname === '/login') return NextResponse.redirect(publicUrl(req, '/'));
+      return NextResponse.next();
+    }
+    // 게스트는 /login을 지름길로 가로채지 않는다 — 나중 로그인(클레임 귀속) 경로 보존.
+    if (req.cookies.get('argo-guest')?.value === '1' && req.nextUrl.pathname !== '/login') {
+      return NextResponse.next();
+    }
+  }
   let res = NextResponse.next({ request: req });
   const supabase = createServerClient(URL_ENV, KEY_ENV, {
     cookies: {

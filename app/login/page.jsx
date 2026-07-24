@@ -6,6 +6,7 @@
 // 앱은 "브라우저 핸드오프": 진짜 브라우저를 열어 로그인하고, pairing code로 세션을 앱에 넘긴다.
 // 로컬 전용(게스트)은 로그인 없이 이 컴퓨터에서만 — 나중에 소셜 로그인하면 회사를 계정에 귀속(클레임)한다.
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
 import { Logo, Spinner } from '../ui';
 import { useLang } from '../i18n';
@@ -36,7 +37,7 @@ export default function Login() {
   if (!URL_ENV || !KEY_ENV) {
     return (
       <Shell><p style={{ color: 'var(--fg-2)', fontSize: 13.5 }}>{t('login.localMode')}</p>
-        <a className="btn btn-primary sm" href="/">{t('login.goHome')}</a></Shell>
+        <Link className="btn btn-primary sm" href="/">{t('login.goHome')}</Link></Shell>
     );
   }
 
@@ -140,7 +141,7 @@ export default function Login() {
       )}
       {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0, minWidth: 0, overflowWrap: 'anywhere' }}>{error}</p>}
       <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--fg-3)', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-        <a href="/legal" style={{ color: 'inherit' }}>{t('legal.link')}</a>
+        <Link href="/legal" style={{ color: 'inherit' }}>{t('legal.link')}</Link>
         {CONTACT && <a href={`mailto:${CONTACT}?subject=${encodeURIComponent(t('legal.feedbackSubject'))}`} style={{ color: 'inherit' }}>{t('legal.feedback')}</a>}
       </div>
     </Shell>

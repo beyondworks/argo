@@ -1,4 +1,5 @@
 // 워크스페이스 = 회사 1개의 격리 폴더 트리. SaaS에서는 유저별로 이 트리가 격리 컨테이너/볼륨에 산다.
+import './netdefaults.mjs'; // side-effect — 코어를 쓰는 모든 프로세스의 아웃바운드 fetch 기본값 교정(모듈 주석 참조)
 import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';

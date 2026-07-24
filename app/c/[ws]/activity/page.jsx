@@ -2,6 +2,7 @@
 // 활동 — "내가 없는 동안 무슨 일이, 무엇을 남겼나". 리서치 원칙: 검증 비용을 줄이는 화면.
 // 기본 뷰는 판단이 필요한 것(결재·오류)과 상태 변경(기억·크루·연결)만, 정상 턴은 '전체'로 접는다.
 import { use, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Avatar, Skeleton, Spinner, api, timeAgo } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
 
@@ -175,9 +176,9 @@ export default function Activity({ params }) {
                     </span>
                   </div>
                   {r.href && (
-                    <a href={r.href} className="mono" onClick={(ev) => ev.stopPropagation()} style={{ fontSize: 10.5, color: 'var(--fg-2)', textDecoration: 'underline', textUnderlineOffset: 3, flex: 'none' }}>
+                    <Link href={r.href} className="mono" onClick={(ev) => ev.stopPropagation()} style={{ fontSize: 10.5, color: 'var(--fg-2)', textDecoration: 'underline', textUnderlineOffset: 3, flex: 'none' }}>
                       {t('activity.linkArrow', { label: r.linkLabel })}
-                    </a>
+                    </Link>
                   )}
                   <span className="chip" style={{ flex: 'none', ...(r.danger ? { color: 'var(--danger)', borderColor: 'var(--danger)' } : {}) }}>{r.chip}</span>
                   <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', width: 38, textAlign: 'right', flex: 'none' }}>
@@ -215,7 +216,7 @@ export default function Activity({ params }) {
                         </button>
                         {rerunNote === i && (
                           <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
-                            {t('activity.rerunStarted')} <a href={`/c/${ws}/crew/${e.slug}`} style={{ textDecoration: 'underline', textUnderlineOffset: 3 }}>{t('activity.chatLink')} ↗</a>
+                            {t('activity.rerunStarted')} <Link href={`/c/${ws}/crew/${e.slug}`} style={{ textDecoration: 'underline', textUnderlineOffset: 3 }}>{t('activity.chatLink')} ↗</Link>
                           </span>
                         )}
                       </div>

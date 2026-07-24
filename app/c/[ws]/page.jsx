@@ -1,6 +1,7 @@
 'use client';
 // 데크 — 아르고호 계기판. 좌: 본 계기(메트릭·영입·크루·기억·차트), 우: 보조 계기 레일(별자리·항해일지·명판).
 import { use, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, useScrollLock, InputModal, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
 import { Constellation3D, GraphModal } from './graphview';
@@ -312,7 +313,7 @@ export default function Deck({ params }) {
             <div className="card-head">
               <span className="card-title"><Icon name="doc" size={14} />{t('deck.recentMemory')}</span>
               <span className="rule" />
-              <a href={`/c/${ws}/vault`} className="btn sm">{t('deck.allMemory')}</a>
+              <Link href={`/c/${ws}/vault`} className="btn sm">{t('deck.allMemory')}</Link>
             </div>
             {data === null ? (
               <div style={{ padding: '0 18px 18px' }}><Skeleton h={90} /></div>
