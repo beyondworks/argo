@@ -697,6 +697,8 @@ function SyncCard({ ws }) {
         <span style={{ flex: 1 }} />
         {sync?.plan === 'pro' ? (
           <span className="pill ok" style={{ flex: 'none' }}>{t('billing.plan.pro')}</span>
+        ) : sync?.plan === 'trial' ? (
+          <span className="pill ok" style={{ flex: 'none' }}>{t('billing.plan.trial')}</span>
         ) : sync?.plan === 'free' ? (
           <span className="pill" style={{ flex: 'none' }}>{t('billing.plan.free')}</span>
         ) : null}
