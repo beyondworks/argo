@@ -701,6 +701,11 @@ async function cycle() {
   // 그 회사는 이번 사이클의 push/pull 대상에서 자연히 빠진다. 실패해도 사이클은 계속(빈 Set).
   const tombs = await syncTombstones(keyOwner).catch((e) => { console.warn('[argo] tombstone 동기화 실패:', e.message); return new Set(); });
   // 로컬 회사 수집 (ownerId 있는 것만 — 소유자가 있어야 클라우드에 자리가 있다)
+  // 세션(JWT) 모드는 현재 계정 소유가 아닌 회사를 제외한다 — 다른 계정 소유의 로컬 사본(계정 전환·
+  // 기기 공유 흔적)을 매 사이클 남의 폴더로 밀다 스토리지 격리(RLS)에 막혀 "row-level security"
+  // 에러를 무한 반복하던 실사고(2026-07-25, lean-ax-zl5j). 격리 정책이 맞고, 남의 회사를 밀지 않는
+  // 것이 동기화의 몫이다. 서비스 모드(셀프호스트·워커)는 다중 오너가 정당하므로 게이트 없음.
+  const sessionUid = (loadSyncCreds() && serviceCredsAllowed()) ? null : (loadDeviceSession()?.user?.id ?? null);
   const targets = new Map(); // wsId → owner
   let entries = [];
   try { entries = await readdir(WS_ROOT, { withFileTypes: true }); } catch { /* 루트 없음 */ }
@@ -708,7 +713,15 @@ async function cycle() {
     if (!e.isDirectory() || e.name.startsWith('.')) continue;
     try {
       const meta = JSON.parse(await readFile(join(WS_ROOT, e.name, 'company.json'), 'utf8'));
-      if (meta.ownerId) targets.set(meta.id, meta.ownerId);
+      if (!meta.ownerId) continue;
+      if (sessionUid && meta.ownerId !== sessionUid) {
+        if (status.companies[meta.id]?.skipped !== 'foreign-owner') {
+          console.log(`[argo] 동기화: 다른 계정 소유 회사 제외 (${meta.id})`);
+        }
+        status.companies[meta.id] = { ts: Date.now(), skipped: 'foreign-owner' };
+        continue;
+      }
+      targets.set(meta.id, meta.ownerId);
     } catch { /* 회사 아님 */ }
   }
   // 원격에만 있는 내 회사 발견 → 로컬 복제 대상에 추가 (새 기기가 자기 회사 복원). 남의 테넌트는 안 봄.
