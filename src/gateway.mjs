@@ -286,7 +286,13 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
   }
   // 크루 이름 접두([페퍼]) 제거 — 1:1 봇 대화에서 중복 표기(유건 지시 2026-07-25). 어느 크루의 답인지는
   // 봇 이름·@호출 문맥이 이미 말해준다.
-  return `${turn.reply}${footer}`;
+  const body = `${turn.reply ?? ''}${footer}`;
+  // 빈 응답 가드(사후 검수 LOW-6) — 접두 제거로 non-empty 보장이 사라졌다. 빈 텍스트는 텔레그램 400 →
+  // 침묵 유실(사용자는 아무 응답도 못 받음)이 되므로 정직한 안내로 대체한다.
+  if (!body.trim()) {
+    return pick('크루가 빈 응답을 보냈습니다 — 같은 지시를 한 번 더 보내주세요.', 'The crew returned an empty reply — please resend the instruction.', lang);
+  }
+  return body;
 }
 
 /* ─── 텔레그램 — long-poll. 첫 발신자가 회사와 페어링되고 이후 그 채팅만 듣는다. ─── */
@@ -737,8 +743,13 @@ function startSlack(wsId, getCfg) {
 
 /* ─── 알림 푸시 — 결재는 버튼과 함께, 루틴은 브리핑으로, 위임은 상대 크루 봇의 발화로 ─── */
 /** 크루가 만든 결재 문구(action·reason) 정돈 — 모델 출력의 줄머리 공백·과잉 개행이 텔레그램 말풍선을
-    울퉁불퉁하게 만들던 것(실사용 신고 2026-07-25 "말풍선 찌그러짐") 방지. 내용은 보존, 모양만 편다. */
-const tidy = (s) => String(s ?? '').replace(/^[ \t]+/gm, '').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+    울퉁불퉁하게 만들던 것(실사용 신고 2026-07-25 "말풍선 찌그러짐") 방지. 내용은 보존, 모양만 편다.
+    코드펜스(```) 안은 원문 보존(사후 검수 M/L-5) — 결재는 승인 판단 표면이라 들여쓰기가 곧 내용이다. */
+const tidy = (s) => String(s ?? '')
+  .split(/(```[\s\S]*?```)/)
+  .map((seg, i) => (i % 2 ? seg : seg.replace(/^[ \t]+/gm, '').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n')))
+  .join('')
+  .trim();
 
 /** 결재 주체 표기 — "크루명" 또는 "크루명 (위임자명 위임)". 누가 올린 결재인지 흐름을 보이게 한다. */
 async function approvalWho(wsId, item, lang) {

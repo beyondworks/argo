@@ -134,15 +134,17 @@ async function holdSyncLock() {
 // leader 기본 true = "동기화 off인 단일 기기" 전제. ownedAt = 리스를 **확인된 CAS로 획득한** 시각(0=미획득).
 // 이 둘을 반드시 구분한다(검수 2026-07-23): 기본값 true는 '획득한 리더십'이 아니므로, 판정 불가 상황에서
 // 기본값을 리더로 존중하면 리스를 얻은 적 없는 프로세스가 리더로 굳어 루틴 이중 실행·이중 과금·텔레그램 409가 난다.
-const leaseState = (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0, ownedAt: 0, yieldStreak: 0 });
+const leaseState = (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0, ownedAt: 0, yieldSince: 0 });
 
 /** 러너 없는 기기의 리더 획득 양보 판정(유건 지시 2026-07-25) — 자격 있는 기기가 담당이 되도록,
-    빈 리스를 그레이스 동안 잡지 않는다. 그레이스(사이클 수)가 지나면 그래도 획득한다 — 어느 기기에도
-    러너가 없을 때 리더 공백(페어링·안내 응답까지 사망)이 자격 오류 응답보다 나쁘기 때문.
-    8s 사이클 × 20 ≈ 160s > 리스 TTL(120s): 자격 있는 기기에게 최소 한 TTL의 선점 기회를 준다.
+    빈 리스를 그레이스 동안 잡지 않는다. 그레이스가 지나면 그래도 획득한다 — 어느 기기에도 러너가
+    없을 때 리더 공백(페어링·안내 응답까지 사망)이 자격 오류 응답보다 나쁘기 때문.
+    그레이스는 **시간 기반**(사후 검수 M-4: 사이클 수 기반은 ARGO_SYNC_CYCLE_MS 변경 시 불변식이 깨짐) —
+    TTL + 40s: 자격 있는 기기에게 최소 한 TTL의 선점 기회를 준다.
     (export: 회귀 테스트용 — 순수 함수) */
-export const YIELD_GRACE_CYCLES = 20;
-export const shouldYieldAcquire = (runnerUsable, yieldStreak) => !runnerUsable && yieldStreak < YIELD_GRACE_CYCLES;
+export const YIELD_GRACE_MS = LEASE_TTL_MS + 40_000;
+export const shouldYieldAcquire = (runnerUsable, yieldSince, now = Date.now()) =>
+  !runnerUsable && (!yieldSince || now - yieldSince < YIELD_GRACE_MS);
 export function isCloudLeader() {
   return !syncOn() || leaseState.leader;
 }
@@ -168,21 +170,25 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
     leaseState.leader = false;
     leaseState.ownedAt = 0; // 남에게 넘겼으니 보유 이력 소멸
     leaseState.checkedAt = Date.now();
-    leaseState.yieldStreak = 0; // 담당자가 있으니 양보 카운트 리셋
+    leaseState.yieldSince = 0; // 담당자가 있으니 양보 타이머 리셋
     return;
   }
-  // 신규 획득(내 보유 갱신이 아님) + 이 기기에 러너 없음 → 그레이스 동안 양보(자격 있는 기기 우선).
-  // 이미 보유 중인 리스의 갱신은 막지 않는다 — 담당 교대 요동 방지.
-  const acquiring = !(fresh && cur?.deviceId === me);
-  if (acquiring && shouldYieldAcquire(runnerUsable, leaseState.yieldStreak)) {
-    leaseState.yieldStreak += 1;
-    if (leaseState.yieldStreak === 1) console.log('[argo] 동기화: 러너 미연결 — 리더 획득 양보 (자격 있는 기기 우선, 잠정 대기)');
+  // 신규 획득(이 프로세스가 **확인된 보유자**가 아님) + 러너 없음 → 그레이스 동안 양보(자격 있는 기기 우선).
+  // ownedAt > 0 조건이 핵심(사후 검수 HIGH-1): 재시작한 프로세스는 미획득(ownedAt=0)이므로, 원격에 자기
+  // 기기의 잔존 리스가 fresh해도 "갱신"이 아니라 양보 판정을 1회 거친다 — 앱 재시작·재부팅으로 러너 없는
+  // 리더가 원상복구되던 우회 차단. 진짜 보유 프로세스(ownedAt>0)의 갱신은 막지 않는다(교대 요동 방지).
+  const acquiring = !(fresh && cur?.deviceId === me && leaseState.ownedAt > 0);
+  if (acquiring && shouldYieldAcquire(runnerUsable, leaseState.yieldSince)) {
+    if (!leaseState.yieldSince) {
+      leaseState.yieldSince = Date.now();
+      console.log('[argo] 동기화: 러너 미연결 — 리더 획득 양보 (자격 있는 기기 우선, 잠정 대기)');
+    }
     leaseState.leader = false;
     leaseState.ownedAt = 0;
     leaseState.checkedAt = Date.now();
     return;
   }
-  if (runnerUsable) leaseState.yieldStreak = 0;
+  if (runnerUsable) leaseState.yieldSince = 0;
   // 내 것이거나 만료 — 획득 시도. 스토리지엔 진짜 CAS가 없으므로 write-후-재확인으로
   // 이중 리더 창을 좁힌다: 내 토큰을 쓰고, 잠깐 뒤 다시 읽어 최종 승자가 나인지 확인.
   const token = randomUUID();
@@ -770,11 +776,19 @@ async function cycle() {
   // stale로 남아 UI가 잘못된 페이월을 표시한다(architect 지적 2026-07-23).
   status.paywalled = false; // 매 사이클 리셋 — 모드 전환(세션→서비스) 시 stale true 잔존 차단
   // 리더 양보 판단 — 이 기기에 쓸 러너가 있는가(60s 캐시 — resolveRunner는 파일·호스트 프로브라 매 8s는 과함).
-  // 판정 실패는 양보하지 않는 쪽으로(available:true) — 오판으로 리더 공백을 만들지 않는다.
+  // 전 회사 OR(사후 검수 M-2: 첫 회사만 보면 자격 있는 다른 회사가 있어도 오판) + 5s 상한(M-3: CLI 프로브가
+  // 행 걸리면 사이클 전체 정지 — 리스 갱신·파일 동기화까지 조용히 죽는다). 실패·초과는 양보하지 않는 쪽(true).
   const probe = (globalThis.__argoRunnerProbe ??= { ts: 0, ok: true });
-  const probeWs = [...targets.keys()][0];
-  if (probeWs && Date.now() - probe.ts > 60_000) {
-    probe.ok = (await resolveRunner(probeWs, null).catch(() => ({ available: true }))).available;
+  if (targets.size && Date.now() - probe.ts > 60_000) {
+    probe.ok = await Promise.race([
+      (async () => {
+        for (const ws of targets.keys()) {
+          if ((await resolveRunner(ws, null).catch(() => ({ available: false }))).available) return true;
+        }
+        return false;
+      })(),
+      new Promise((r) => setTimeout(r, 5_000, true)),
+    ]);
     probe.ts = Date.now();
   }
   if (owners[0]) await renewLease(owners[0], { runnerUsable: probe.ok }); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
