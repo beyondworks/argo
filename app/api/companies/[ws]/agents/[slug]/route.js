@@ -44,8 +44,8 @@ export async function PATCH(req, { params }) {
   try {
     const { ws, slug } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { name, role, team, model, runner, skills, mcp } = await req.json();
-    const meta = await updateAgentMeta(ws, slug, { name, role, team, model, runner, skills, mcp });
+    const { name, role, team, model, runner, effort, skills, mcp } = await req.json();
+    const meta = await updateAgentMeta(ws, slug, { name, role, team, model, runner, effort, skills, mcp });
     return Response.json({ meta });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });

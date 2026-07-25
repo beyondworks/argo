@@ -124,7 +124,7 @@ export default function CrewChat({ params }) {
   const [aliasModal, setAliasModal] = useState(false);
   // 러너·모델 — 카드 패널과 채팅 셀렉터가 공유하는 단일 상태. 회사 자격(설정 러너 연결)을 병합한 카탈로그.
   const [runners, setRunners] = useState(null);
-  const [sel, setSel] = useState({ runner: 'claude', model: '' });
+  const [sel, setSel] = useState({ runner: 'claude', model: '', effort: '' });
   // 타이틀바 슬롯 — 크루 컨트롤(세션 상태·카드·새 대화)을 topbar에 포털로 꽂는다
   const [slotEl, setSlotEl] = useState(null);
   useEffect(() => { setSlotEl(document.getElementById('argo-topbar-slot')); }, []);
@@ -253,7 +253,7 @@ export default function CrewChat({ params }) {
     try {
       await fetch(`/api/companies/${ws}/agents/${slug}`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ runner: next.runner, model: next.model }),
+        body: JSON.stringify({ runner: next.runner, model: next.model, ...(next.effort !== undefined ? { effort: next.effort } : {}) }),
       });
       window.dispatchEvent(new Event('argo:refresh'));
     } catch { /* 저장 실패는 다음 시도에서 복구 */ }
@@ -273,7 +273,7 @@ export default function CrewChat({ params }) {
         setAgent(a);
         setAliases(d.company?.aliases ?? []); // '/' 커맨더 사용자 별칭 — 회사 단위 공유
         // '' = 미지정(자동) — 'claude'를 박으면 자동 크루가 화면·저장 모두 클로드 고정으로 둔갑(K2 오표시 계열)
-        setSel({ runner: a.runner || '', model: a.model || '' });
+        setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '' });
       })
       .catch(() => { if (alive) setAgent({ name: slug, role: '' }); });
     api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
@@ -1187,15 +1187,31 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
       </select>
       {/* 현재 러너가 미연결(레거시)이면 모델 선택도 잠금 — 설정에서 연결 후 활성화 */}
       <select value={sel.model} disabled={busy || (cur && !cur.authed)} style={box}
-        onChange={(e) => onChange({ runner: sel.runner, model: e.target.value })}>
+        onChange={(e) => onChange({ ...sel, runner: sel.runner, model: e.target.value })}>
         {!sel.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
         {(cur?.models ?? []).map((m) => (
           <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : ''}</option>
         ))}
       </select>
+      {/* 추론 강도(요청 2026-07-25) — SDK effort를 지원하는 claude에서만 실제로 적용된다.
+          claude 지정 + 자동('')일 때만 노출한다: 다른 러너 지정 상태에 띄우면 "설정했는데 안 먹는"
+          거짓 컨트롤이 되고, 자동에서 숨기면 기본값으로 쓰는 다수 사용자가 기능을 못 본다.
+          자동일 때는 툴팁으로 "Claude로 실행될 때 적용"을 밝혀 정직성을 지킨다. */}
+      {(sel.runner === 'claude' || !sel.runner) && (
+        <select value={sel.effort ?? ''} disabled={busy} style={box}
+          title={sel.runner ? t('runner.effortLabel') : t('runner.effortAutoHint')}
+          aria-label={t('runner.effortLabel')}
+          onChange={(e) => onChange({ ...sel, effort: e.target.value })}>
+          <option value="">{t('runner.effortDefault')}</option>
+          {EFFORT_OPTIONS.map((v) => <option key={v} value={v}>{t(`runner.effort.${v}`)}</option>)}
+        </select>
+      )}
     </>
   );
 }
+// persona.EFFORT_LEVELS와 같은 목록 — 클라이언트 번들이 서버 모듈(node:fs 의존)을 끌어오지 않게 값만 복제한다.
+// 불일치 시 저장 단계(updateAgentMeta 화이트리스트)가 정본이라 잘못된 값이 카드에 굳지는 않는다.
+const EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 /** 카드 패널 — 카드가 곧 시스템 프롬프트. 열람·편집·해고(깃헙식 확인). */
 /** 능력 범위 원문 해석 — 백엔드 parseScopeList와 동일 계약(''=전체→null, 'none'=[], csv=목록). */

@@ -46,7 +46,12 @@ export default function Room({ params }) {
   }, [ws]);
 
   function load() {
-    api(`/api/companies/${ws}/room`).then((d) => setMessages(d.messages ?? [])).catch(() => setMessages([]));
+    // 조회 실패를 '빈 회의실'로 붕괴시키지 않는다 — 회의 대화가 통째로 사라진 것처럼 보이던 실사용
+    // 신고(2026-07-25 "크루들의 대화 내용이 사라지는 경우가 많습니다, 특히 회의실에서")의 원인.
+    // 디스크의 회의록은 멀쩡한데 화면만 비는 케이스라, 실패는 에러로 드러내고 기존 표시를 유지한다.
+    api(`/api/companies/${ws}/room`)
+      .then((d) => { setMessages(d.messages ?? []); setError(''); })
+      .catch((e) => setError(String(e?.message || '') || t('room.loadFail')));
     api(`/api/companies/${ws}/agents`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
   }
   useEffect(load, [ws]);
@@ -76,7 +81,13 @@ export default function Room({ params }) {
     setInput('');
     try {
       const d = await api(`/api/companies/${ws}/room`, { message: text });
-      setMessages(d.room?.messages ?? []);
+      // 서버 스냅샷이 비어 있으면(동시 '회의 마치기'로 방이 리셋됐거나 응답 형태 이상) 화면을 지우지
+      // 않는다 — 방금까지 보던 대화가 사라지는 것으로 보이던 경로. 답변만 이어 붙이고, 8초 폴이 정본으로 수렴시킨다.
+      const snap = Array.isArray(d.room?.messages) ? d.room.messages : null;
+      if (snap?.length) setMessages(snap);
+      else if (d.replies?.length) {
+        setMessages((m) => [...(m ?? []), ...d.replies.map((r) => ({ who: r.slug, text: r.reply, ts: Date.now() }))]);
+      }
     } catch (err) {
       setError(String(err.message));
     } finally {

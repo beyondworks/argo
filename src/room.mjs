@@ -7,7 +7,7 @@ import { listAgents } from './hub.mjs';
 import { chat } from './chat.mjs';
 import { updateIndex } from './memory.mjs';
 import { withLock } from './mutex.mjs';
-import { writeJsonAtomic, readJson } from './jsonstore.mjs';
+import { writeJsonAtomic, readJson, recoverFromCorrupt } from './jsonstore.mjs';
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 // sync가 chats/room-main.json을 쓸 때 쓰는 락 키(thread:ws:room-main)와 동일하게 맞춘다 —
@@ -18,7 +18,14 @@ const MEETING_RE = /^_room-\d+\.json$/;
 
 export async function loadRoom(wsId) {
   // 회의 대화는 유실이 치명적 — 손상을 조용히 빈 방으로 리셋하지 않고 throw로 드러낸다(readJson).
-  return readJson(file(wsId), { messages: [] });
+  const room = await readJson(file(wsId), { messages: [] });
+  // 빈 방이면 격리된 손상본에서 복구를 한 번 시도한다 — 손상 직후 readJson이 .corrupt-<ts>로 옮긴 뒤
+  // 다음 로드부터 영구히 "빈 회의실"이 되던 유실 경로(실사용 신고 2026-07-25)의 되돌림.
+  if (!room.messages?.length) {
+    const r = await recoverFromCorrupt(file(wsId), 'messages').catch(() => null);
+    if (r) return readJson(file(wsId), { messages: [] });
+  }
+  return room;
 }
 
 async function saveRoom(wsId, room) {
