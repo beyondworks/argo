@@ -432,7 +432,9 @@ export const codexSandboxArgs = (caps) => [
   // 2026-07-22 크리티컬). 홈 디렉토리로 좁힌다 — 사용자 문서 접근(fs 능력의 목적)은 유지되고
   // /Applications의 앱 본체는 샌드박스 밖이 된다. (홈 안의 Argo 데이터는 프로세스 단위 샌드박스의
   // 한계로 완전 차단 불가 — commonDirectives 금지 지시가 2차 방어. SDK 러너는 게이트가 하드 차단.)
-  ...(caps?.fs ? ['-c', `sandbox_workspace_write.writable_roots=["${homedir()}"]`] : []),
+  // 경로는 TOML 문자열로 직렬화한다 — Windows 홈(C:\Users\...)의 역슬래시가 이스케이프로 해석돼
+  // 값이 깨지던 실사용 신고(2026-07-25). JSON.stringify가 TOML 기본 문자열 규칙과 호환(따옴표·역슬래시 이스케이프).
+  ...(caps?.fs ? ['-c', `sandbox_workspace_write.writable_roots=[${JSON.stringify(homedir())}]`] : []),
   ...(caps?.browser ? ['-c', 'sandbox_workspace_write.network_access=true'] : []),
 ];
 
@@ -445,7 +447,8 @@ export async function writeCodexTurnConfig(home, caps) {
   const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)에서 재생성됩니다.'];
   if (caps?.fs || caps?.browser) {
     lines.push('[sandbox_workspace_write]');
-    if (caps?.fs) lines.push(`writable_roots = ["${homedir()}"]`); // 홈 한정 — /Applications 앱 본체는 밖
+    // JSON.stringify — Windows 역슬래시 이스케이프(위 codexSandboxArgs와 동일 규칙, 신고 2026-07-25)
+    if (caps?.fs) lines.push(`writable_roots = [${JSON.stringify(homedir())}]`); // 홈 한정 — /Applications 앱 본체는 밖
     if (caps?.browser) lines.push('network_access = true');
   }
   await writeFile(join(home, 'config.toml'), lines.join('\n') + '\n').catch(() => { /* 실패해도 -c 폴백이 있다 */ });

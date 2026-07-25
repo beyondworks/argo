@@ -60,6 +60,8 @@ export async function listAgents(wsId) {
       team: meta.team || '',
       model: meta.model || '',
       runner: meta.runner || '',
+      effort: meta.effort || '', // 크루별 추론 강도('' = 모델 기본) — 카드 셀렉터의 원천
+
       expertise: sectionBullets(md, '전문성'),
       tone: sectionBullets(md, '톤', 1)[0] || '',
     });

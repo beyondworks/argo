@@ -7,7 +7,7 @@
 //  - writeJsonAtomic: 임시파일에 쓰고 fsync 후 rename(원자적 교체). 부분 쓰기가 원본을 오염 못 함.
 //  - readJson: ENOENT(부재)만 기본값. SyntaxError(손상)는 .corrupt-<ts>로 백업 후 throw —
 //    절대 조용히 리셋하지 않는다(부재와 손상을 구분).
-import { readFile, writeFile, rename, mkdir, open, rm } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir, open, rm, readdir } from 'node:fs/promises';
 import { dirname, join, basename } from 'node:path';
 
 /** 원자적 파일 쓰기(버퍼/문자열) — tmp write → fsync → rename. 같은 디렉터리 tmp라야 rename이 원자적(동일 파일시스템).
@@ -55,6 +55,61 @@ export async function readJson(file, fallback) {
     err.backup = backup;
     throw err;
   }
+}
+
+/** 손상본에서 배열 항목을 최대한 건져낸다(순수) — 대화 파일은 append-only라 손상은 대개 꼬리에만
+    생긴다(쓰기 중 크래시·디스크 가득). 앞쪽의 완결된 객체들은 멀쩡하므로, 중괄호 균형을 스캔해
+    파싱 가능한 항목까지만 복원한다. 반환: 복구된 배열(못 건지면 []).
+    (export: 회귀 테스트용 — 순수 함수)
+
+    배경(실측 2026-07-26): 손상 → readJson이 .corrupt-<ts>로 격리 → 다음 로드는 ENOENT라 **빈 방**이
+    돌아와 사용자에겐 "회의 대화가 통째로 사라짐"으로 보였다. 격리 자체는 옳지만 복구 경로가 없었다. */
+export function salvageJsonArray(raw, key) {
+  const src = String(raw ?? '');
+  const at = src.indexOf(`"${key}"`);
+  if (at < 0) return [];
+  const start = src.indexOf('[', at);
+  if (start < 0) return [];
+  const out = [];
+  let depth = 0, inStr = false, esc = false, objStart = -1;
+  for (let i = start + 1; i < src.length; i++) {
+    const c = src[i];
+    if (esc) { esc = false; continue; }
+    if (c === '\\') { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === '{') { if (depth === 0) objStart = i; depth++; continue; }
+    if (c === '}') {
+      depth--;
+      if (depth === 0 && objStart >= 0) {
+        try { out.push(JSON.parse(src.slice(objStart, i + 1))); } catch { /* 이 항목만 포기 */ }
+        objStart = -1;
+      }
+      continue;
+    }
+    if (c === ']' && depth === 0) break; // 배열 정상 종료
+  }
+  return out;
+}
+
+/** 격리된 손상본에서 복구 — file이 없고 file.corrupt-* 가 있으면 가장 최근 것에서 배열을 건져
+    원본을 되살린다. 반환: 복구했으면 { recovered: n, from } , 아니면 null.
+    호출부(loadRoom/loadThread)는 ENOENT 폴백 직전에 한 번 시도한다. */
+export async function recoverFromCorrupt(file, key) {
+  const dir = dirname(file);
+  const base = basename(file);
+  let names = [];
+  try { names = await readdir(dir); } catch { return null; }
+  const cands = names.filter((n) => n.startsWith(`${base}.corrupt-`)).sort(); // 접미 타임스탬프 = 사전순 = 시간순
+  const latest = cands[cands.length - 1];
+  if (!latest) return null;
+  let raw = '';
+  try { raw = await readFile(join(dir, latest), 'utf8'); } catch { return null; }
+  const items = salvageJsonArray(raw, key);
+  if (!items.length) return null;
+  await writeJsonAtomic(file, { [key]: items });
+  console.warn(`[argo] 손상 복구: ${latest} → ${base} (${items.length}건 복원)`);
+  return { recovered: items.length, from: latest };
 }
 
 /** 손상을 "복구 가능한 부재"로 관용해야 하는 소비자용(예: 캐시성 상태) — 손상 시 백업만 하고 fallback.

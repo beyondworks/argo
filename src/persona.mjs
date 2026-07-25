@@ -199,7 +199,11 @@ export function parseScopeList(v) {
   return s.split(',').map((x) => x.trim()).filter(Boolean);
 }
 
-export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner, skills, mcp }) {
+/** 크루별 추론 강도 — Claude Agent SDK의 effort 계약(sdk.d.ts: 'low'|'medium'|'high'|'xhigh'|'max').
+    '' = 모델 기본. (export: UI 옵션·회귀 테스트 공용 — 값 목록이 두 곳에서 갈리지 않게) */
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner, effort, skills, mcp }) {
   const file = cardPath(wsId, slug);
   if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
   let md = await readFile(file, 'utf8');
@@ -214,6 +218,12 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
   if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
   if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
   if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = 회사 연결 러너(기본)
+  // 추론 강도(요청 2026-07-25) — 화이트리스트 밖 값은 저장하지 않는다(SDK가 거부하는 값이 카드에 굳는 것 방지).
+  // 빈 값 = 모델 기본. claude(SDK) 러너에만 적용된다 — chat.mjs가 러너를 보고 전달 여부를 정한다.
+  if (effort !== undefined) {
+    const v = String(effort).trim().toLowerCase();
+    md = setFrontmatterKey(md, 'effort', EFFORT_LEVELS.includes(v) ? v : '');
+  }
   if (skills !== undefined) md = setFrontmatterKey(md, 'skills', String(skills).trim()); // 빈 값 = 전체, 'none' = 없음, csv = 지정만
   if (mcp !== undefined) md = setFrontmatterKey(md, 'mcp', String(mcp).trim());          // 동일 계약(parseScopeList)
   await writeJsonAtomic(file, md);

@@ -95,7 +95,7 @@ function TasksDock({ ws }) {
 
 export default function CompanyShell({ children, params }) {
   const { ws } = use(params);
-  const { t } = useLang();
+  const { t, fmtMoney } = useLang();
   const pathname = usePathname();
   const router = useRouter();
   // 같은 페이지 재클릭 = 무동작 — 소프트 내비 전환(Link) 후에도 동일 URL 재이동으로 페이지 상태가 리셋되는 것을 막는다.
@@ -416,6 +416,14 @@ export default function CompanyShell({ children, params }) {
               v{appVersion}
             </span>
           ))}
+          {/* 이번 달 사용액 — 상시 노출(사용자 피드백 2026-07-25: "상단이나 하단에서 사용량을 볼 수 있게").
+              비용을 보고하지 않는 러너(구독 OAuth 등)는 hasCost=false라 표시하지 않는다 — 0원 오표시 방지. */}
+          {data?.usage?.month?.hasCost && (
+            <Link href={`/c/${ws}/activity`} className="chip mono" title={t('topbar.monthCost')}
+              style={{ flex: 'none', fontSize: 10.5, color: 'var(--fg-3)', textDecoration: 'none' }}>
+              {fmtMoney(data.usage.month.costUsd, { approx: false })}
+            </Link>
+          )}
           <Clock />
           <TasksDock ws={ws} />
           <label className="search-pill">

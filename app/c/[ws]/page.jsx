@@ -209,6 +209,19 @@ export default function Deck({ params }) {
               {t('deck.hireBtn')}
             </button>
           </form>
+          {/* 페르소나 예시 — "뭐라고 써야 하지?"의 빈 화면을 없앤다(사용자 피드백 2026-07-25: 유튜브
+              설명처럼 예제가 있으면 초보자가 쓰기 편하다). 클릭하면 입력창에 채워지고 바로 수정 가능. */}
+          {!hiring && !prompt.trim() && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '0 4px' }}>
+              <span className="microlabel" style={{ flex: 'none' }}>{t('deck.hireExamples')}</span>
+              {[t('deck.hireEx1'), t('deck.hireEx2'), t('deck.hireEx3')].map((ex) => (
+                <button key={ex} type="button" className="chip" style={{ cursor: 'pointer' }}
+                  onClick={() => { setPrompt(ex); hireRef.current?.querySelector('input')?.focus(); }}>
+                  {ex}
+                </button>
+              ))}
+            </div>
+          )}
           {hireOpts && (
             <div className="card fade-up" style={{ padding: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <span className="microlabel">{t('deck.optionsLabel')}</span>
