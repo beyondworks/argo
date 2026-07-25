@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { paths } from './workspace.mjs';
+import { loadDeviceSession } from './devicesession.mjs'; // 기기 세션 = "사용자 본인 기기" 신호(호스팅 오분류 방지)
 
 /* ─── 스킬 카탈로그 — 지시형 md, 설치 = skills/<id>.md 복사 ─── */
 export const SKILL_CATALOG = [
@@ -243,6 +244,12 @@ export const arbitraryMcpBlocked = () =>
   !!process.env.ARGO_TENANT_OWNER
   || (process.env.ARGO_STANDALONE !== '1' // 데스크톱 사이드카 = 로컬·단일사용자 앱 → 서비스 키가 env로 새어들어도 안 막는 벨트(사이드카는 키를 안 받지만 회귀 방어)
       && process.env.ARGO_ALLOW_CUSTOM_MCP !== '1'
+      // 기기 세션 파일 존재 = 사용자 본인이 로그인한 기기(상주 :3001 포함) — 데스크톱과 같은 신뢰로 허용.
+      // 실사고(2026-07-25): 유건 본인 맥의 상주가 서비스 키 보유만으로 "호스팅(원격)"으로 오분류돼 host
+      // 가져오기가 막힘. 근거: ① 러너 자식(Bash/MCP)은 sdkEnvFor가 항상 세척 env를 줘 서비스 키를 상속하지
+      // 않는다(P1-6 완료 — env 유출 벡터 폐쇄) ② 기기 세션 파일은 워커·호스티드 웹엔 존재하지 않는다.
+      // 진짜 멀티테넌트(TENANT)는 위 하드 차단이 그대로 막는다.
+      && !loadDeviceSession()
       && !!process.env.SUPABASE_SERVICE_ROLE_KEY);
 export function assertArbitraryMcpAllowed() {
   if (arbitraryMcpBlocked()) {
