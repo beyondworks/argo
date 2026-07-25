@@ -7,7 +7,7 @@ import { listAgents } from './hub.mjs';
 import { chat } from './chat.mjs';
 import { updateIndex } from './memory.mjs';
 import { withLock } from './mutex.mjs';
-import { writeJsonAtomic, readJson, recoverFromCorrupt } from './jsonstore.mjs';
+import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 // sync가 chats/room-main.json을 쓸 때 쓰는 락 키(thread:ws:room-main)와 동일하게 맞춘다 —
@@ -19,11 +19,13 @@ const MEETING_RE = /^_room-\d+\.json$/;
 export async function loadRoom(wsId) {
   // 회의 대화는 유실이 치명적 — 손상을 조용히 빈 방으로 리셋하지 않고 throw로 드러낸다(readJson).
   const room = await readJson(file(wsId), { messages: [] });
-  // 빈 방이면 격리된 손상본에서 복구를 한 번 시도한다 — 손상 직후 readJson이 .corrupt-<ts>로 옮긴 뒤
-  // 다음 로드부터 영구히 "빈 회의실"이 되던 유실 경로(실사용 신고 2026-07-25)의 되돌림.
+  // 파일이 아예 없을 때만(= 손상 격리 직후) 손상본에서 건져 **화면에만** 되돌린다 — 손상 후 다음
+  // 로드부터 영구히 "빈 회의실"이 되던 유실 경로(신고 2026-07-25)의 복구.
+  // 파일이 있으면(회의 마치기로 비운 정상 상태 포함) 건드리지 않는다 — 유령 부활 차단(검수 CRITICAL-1).
+  // 파일 쓰기는 하지 않는다 — 동기화 self-heal이 원격 완전본으로 되살릴 기회를 남긴다(검수 CRITICAL-2).
   if (!room.messages?.length) {
-    const r = await recoverFromCorrupt(file(wsId), 'messages').catch(() => null);
-    if (r) return readJson(file(wsId), { messages: [] });
+    const s = await salvageFromCorrupt(file(wsId), 'messages').catch(() => null);
+    if (s) return { ...room, messages: s.items, salvagedFrom: s.from };
   }
   return room;
 }

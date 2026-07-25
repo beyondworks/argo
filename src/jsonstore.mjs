@@ -8,6 +8,7 @@
 //  - readJson: ENOENT(부재)만 기본값. SyntaxError(손상)는 .corrupt-<ts>로 백업 후 throw —
 //    절대 조용히 리셋하지 않는다(부재와 손상을 구분).
 import { readFile, writeFile, rename, mkdir, open, rm, readdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { dirname, join, basename } from 'node:path';
 
 /** 원자적 파일 쓰기(버퍼/문자열) — tmp write → fsync → rename. 같은 디렉터리 tmp라야 rename이 원자적(동일 파일시스템).
@@ -66,7 +67,9 @@ export async function readJson(file, fallback) {
     돌아와 사용자에겐 "회의 대화가 통째로 사라짐"으로 보였다. 격리 자체는 옳지만 복구 경로가 없었다. */
 export function salvageJsonArray(raw, key) {
   const src = String(raw ?? '');
-  const at = src.indexOf(`"${key}"`);
+  // 앵커는 **최상위 키**만 인정한다 — 단순 indexOf는 메시지 본문에 붙여넣은 JSON 안의 "messages"를
+  // 배열로 오인해 거짓 복구를 만든다(분리 검수 지적 2026-07-26: 개발자향 제품이라 대화에 JSON이 흔함).
+  const at = topLevelKeyIndex(src, key);
   if (at < 0) return [];
   const start = src.indexOf('[', at);
   if (start < 0) return [];
@@ -92,10 +95,40 @@ export function salvageJsonArray(raw, key) {
   return out;
 }
 
-/** 격리된 손상본에서 복구 — file이 없고 file.corrupt-* 가 있으면 가장 최근 것에서 배열을 건져
-    원본을 되살린다. 반환: 복구했으면 { recovered: n, from } , 아니면 null.
-    호출부(loadRoom/loadThread)는 ENOENT 폴백 직전에 한 번 시도한다. */
-export async function recoverFromCorrupt(file, key) {
+/** 최상위 키의 위치 — 중첩 객체·문자열 안의 동명 키를 건너뛴다(순수, salvage 앵커 전용). 없으면 -1. */
+function topLevelKeyIndex(src, key) {
+  let depth = 0, inStr = false, esc = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (esc) { esc = false; continue; }
+    if (c === '\\') { esc = true; continue; }
+    if (c === '"') {
+      // depth 1(최상위 객체 직속)에서 시작하는 문자열만 키 후보로 본다
+      if (!inStr && depth === 1 && src.startsWith(`"${key}"`, i)) return i;
+      inStr = !inStr; continue;
+    }
+    if (inStr) continue;
+    if (c === '{' || c === '[') depth++;
+    else if (c === '}' || c === ']') depth--;
+  }
+  return -1;
+}
+
+/** 격리된 손상본에서 건진 배열 — **읽기 전용**(파일에 쓰지 않는다).
+    반환: { items, from } | null.
+
+    쓰기를 하지 않는 이유(분리 검수 CRITICAL 2건, 2026-07-26):
+     ① 잘린 salvage로 로컬 파일을 되살리면 sync의 기존 self-heal("로컬 부재 + .corrupt 존재 → 원격
+        완전본 pull + 백업 청소")이 성립하지 않고, 오히려 잘린 본이 클라우드로 push돼 **로컬 손상이
+        전 기기 영구 유실로 확대**된다. 파일을 안 쓰면 sync가 유일한 writer로 남아 계약이 유지된다.
+     ② loadRoom/loadThread는 락 밖 호출부가 많아, 여기서 전 파일 write를 하면 appendTurn·pushRoomMsg·
+        sync pull과 lost-update 경합이 난다.
+    복구본은 화면·다음 정상 write(appendTurn이 락 안에서 수행)를 통해 자연히 durable해진다.
+
+    또한 **파일이 존재하면 복구하지 않는다** — "정상적으로 빈 상태"(회의 마치기·새 대화·새 크루)를
+    옛 손상본으로 덮어 유령 대화가 부활하던 결함 차단(같은 검수 CRITICAL-1). */
+export async function salvageFromCorrupt(file, key) {
+  if (existsSync(file)) return null; // 정상 파일 존재 = 복구 대상 아님(빈 배열이어도)
   const dir = dirname(file);
   const base = basename(file);
   let names = [];
@@ -107,9 +140,8 @@ export async function recoverFromCorrupt(file, key) {
   try { raw = await readFile(join(dir, latest), 'utf8'); } catch { return null; }
   const items = salvageJsonArray(raw, key);
   if (!items.length) return null;
-  await writeJsonAtomic(file, { [key]: items });
-  console.warn(`[argo] 손상 복구: ${latest} → ${base} (${items.length}건 복원)`);
-  return { recovered: items.length, from: latest };
+  console.warn(`[argo] 손상본에서 ${items.length}건 복구 표시: ${latest} (파일은 쓰지 않음 — 동기화 self-heal 보존)`);
+  return { items, from: latest };
 }
 
 /** 손상을 "복구 가능한 부재"로 관용해야 하는 소비자용(예: 캐시성 상태) — 손상 시 백업만 하고 fallback.

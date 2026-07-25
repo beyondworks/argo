@@ -25,7 +25,12 @@ export function runTrialTurn(wsId, slug) {
       // 문구는 **실제 상태로 갈린다** — 예전엔 인증류 에러를 전부 "AI 연결 안 됨 + Claude 키 연결"로
       // 뭉뚱그려, Kimi를 연결해 둔 사용자가 "연결됐는데 왜 안 됐다고 하지?"를 겪었다(실사용 문의
       // 2026-07-25). 러너 독립 원칙(2026-07-19)상 특정 러너를 하드코딩하지도 않는다.
-      const connected = await resolveRunner(wsId, null).then((r) => r.available).catch(() => false);
+      // 5초 상한 — resolveRunner는 호스트 CLI 프로브를 타므로, 행이 걸리면 안내 자체가 안 남아
+      // 이 기능이 없애려던 빈 화면으로 회귀한다(검수 LOW-9). 초과 시 보수적으로 '연결됨' 문구.
+      const connected = await Promise.race([
+        resolveRunner(wsId, null).then((r) => r.available).catch(() => false),
+        new Promise((r) => setTimeout(r, 5_000, true)),
+      ]);
       // 서버측이라 UI 언어를 모른다 — ko/en 병기(다국어 규칙: 하드코딩 단일언어 금지)
       const reply = connected
         ? `첫 시운전이 실패했어요 — AI 연결은 되어 있으니 지시를 한 번 더 보내주시면 이어서 시작할게요.\n(원인: ${m.slice(0, 200)})\n\nThe trial run failed — your AI runner is connected, so just send an instruction and I'll pick it up.\n(Reason: ${m.slice(0, 200)})`
