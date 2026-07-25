@@ -254,8 +254,8 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
     const approve = ap[1] === '승인';
     const item = await resolveWithFollowUp(wsId, ap[2], approve);
     return pick(
-      `결재 ${ap[1]} 처리: ${item.action}\n실행 결과는 담당 크루가 이어서 보고합니다.`,
-      `Approval ${approve ? 'approved' : 'rejected'}: ${item.action}\nThe assigned crew will follow up with the result.`,
+      `결재 ${ap[1]} 처리: ${tidy(item.action)}\n실행 결과는 담당 크루가 이어서 보고합니다.`,
+      `Approval ${approve ? 'approved' : 'rejected'}: ${tidy(item.action)}\nThe assigned crew will follow up with the result.`,
       lang,
     );
   }
@@ -284,7 +284,9 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
       lang,
     );
   }
-  return `[${r.name}]\n${turn.reply}${footer}`;
+  // 크루 이름 접두([페퍼]) 제거 — 1:1 봇 대화에서 중복 표기(유건 지시 2026-07-25). 어느 크루의 답인지는
+  // 봇 이름·@호출 문맥이 이미 말해준다.
+  return `${turn.reply}${footer}`;
 }
 
 /* ─── 텔레그램 — long-poll. 첫 발신자가 회사와 페어링되고 이후 그 채팅만 듣는다. ─── */
@@ -324,7 +326,7 @@ function startTelegram(wsId, getCfg) {
                 // 원 메시지를 결과로 교체 — 버튼이 함께 사라져 이중 클릭·죽은 버튼이 없다(결재 UX)
                 await tg(cfg.token, 'editMessageText', {
                   chat_id: cfg.chatId, message_id: cq.message.message_id,
-                  text: pick(`${approve ? '✅ 결재 승인' : '❌ 결재 거절'} — ${item.action}\n담당 크루가 이어서 보고합니다.`, `${approve ? '✅ Approved' : '❌ Rejected'} — ${item.action}\nThe assigned crew will follow up.`, lang),
+                  text: pick(`${approve ? '✅ 결재 승인' : '❌ 결재 거절'} — ${tidy(item.action)}\n담당 크루가 이어서 보고합니다.`, `${approve ? '✅ Approved' : '❌ Rejected'} — ${tidy(item.action)}\nThe assigned crew will follow up.`, lang),
                 }).catch(() => {});
               } catch (e) {
                 await tg(cfg.token, 'answerCallbackQuery', { callback_query_id: cq.id, text: String(e.message).slice(0, 60) }).catch(() => {});
@@ -734,6 +736,10 @@ function startSlack(wsId, getCfg) {
 }
 
 /* ─── 알림 푸시 — 결재는 버튼과 함께, 루틴은 브리핑으로, 위임은 상대 크루 봇의 발화로 ─── */
+/** 크루가 만든 결재 문구(action·reason) 정돈 — 모델 출력의 줄머리 공백·과잉 개행이 텔레그램 말풍선을
+    울퉁불퉁하게 만들던 것(실사용 신고 2026-07-25 "말풍선 찌그러짐") 방지. 내용은 보존, 모양만 편다. */
+const tidy = (s) => String(s ?? '').replace(/^[ \t]+/gm, '').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+
 /** 결재 주체 표기 — "크루명" 또는 "크루명 (위임자명 위임)". 누가 올린 결재인지 흐름을 보이게 한다. */
 async function approvalWho(wsId, item, lang) {
   const agents = await listAgents(wsId).catch(() => []);
@@ -777,7 +783,7 @@ async function pushEvent(event) {
       try {
         const res = await tg(t.token, 'sendMessage', {
           chat_id: t.chatId,
-          text: pick(`결재 요청 · ${who}\n${event.item.action}\n\n사유: ${event.item.reason}`, `Approval request · ${who}\n${event.item.action}\n\nReason: ${event.item.reason}`, lang),
+          text: pick(`결재 요청 · ${who}\n${tidy(event.item.action)}\n\n사유: ${tidy(event.item.reason)}`, `Approval request · ${who}\n${tidy(event.item.action)}\n\nReason: ${tidy(event.item.reason)}`, lang),
           reply_markup: { inline_keyboard: [[
             { text: pick('✅ 승인', '✅ Approve', lang), callback_data: `ap:${event.item.id}:1` },
             { text: pick('❌ 거절', '❌ Reject', lang), callback_data: `ap:${event.item.id}:0` },
