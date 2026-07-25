@@ -1,5 +1,7 @@
 # Argo
 
+[![Latest release](https://img.shields.io/github/v/release/beyondworks/argo-agent?label=release&color=b8860b)](https://github.com/beyondworks/argo-agent/releases/latest)
+
 > **The AI agent company that remembers everything.** One prompt hires a crew of
 > specialist AI agents; they share a folder-based long-term memory and finish work
 > together — on your machine, with your own model accounts.
