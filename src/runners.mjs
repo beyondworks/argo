@@ -142,6 +142,7 @@ export const RUNNERS = {
     name: 'Claude Code', kind: 'sdk',
     models: [
       { id: 'claude-fable-5', label: 'Fable 5' },
+      { id: 'claude-opus-5', label: 'Opus 5' }, // 실턴 통과 2026-07-25 (runOneShot 'ok' — 카탈로그 규칙: 실행 경로 검증 후에만 추가)
       { id: 'claude-opus-4-8', label: 'Opus 4.8' },
       // Opus 4.7·4.6 — 이전 세대 Opus(활성). id는 claude-api 모델 카탈로그 정본 표기 그대로(날짜 접미 금지).
       { id: 'claude-opus-4-7', label: 'Opus 4.7' },
