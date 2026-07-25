@@ -1176,8 +1176,9 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
       <select value={sel.runner} disabled={busy} style={box}
         onChange={(e) => {
           const next = runners?.find((r) => r.id === e.target.value);
-          // 러너를 바꾸면 그 러너의 첫 모델을 바로 선택 — "기본" 가짜 항목 없이 항상 실제 모델
-          onChange({ runner: e.target.value, model: next?.models?.[0]?.id ?? '' });
+          // 러너를 바꾸면 그 러너의 첫 모델을 바로 선택 — "기본" 가짜 항목 없이 항상 실제 모델.
+          // effort는 유지한다 — 떨구면 저장값(PATCH 미포함이라 보존)과 화면이 어긋난다(검수 LOW-8).
+          onChange({ ...sel, runner: e.target.value, model: next?.models?.[0]?.id ?? '' });
         }}>
         {/* 로딩 폴백으로 가짜 Claude 항목을 만들지 않는다 — '' = 자동(첫 연결 러너) */}
         <option value="">{t('runner.autoOption')}</option>

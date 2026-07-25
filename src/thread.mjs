@@ -4,7 +4,7 @@ import { readFile, rm, readdir, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { paths, getDeviceId } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
-import { writeJsonAtomic, readJson, recoverFromCorrupt } from './jsonstore.mjs';
+import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 
 const file = (wsId, slug) => join(paths(wsId).chats, `${slug.replace(/[^a-z0-9-]/g, '')}.json`);
 // 같은 크루 스레드의 read-modify-write를 직렬화 — 웹·텔레그램 동시 턴의 lost-update 방지
@@ -13,11 +13,12 @@ const lockKey = (wsId, slug) => `thread:${wsId}:${slug.replace(/[^a-z0-9-]/g, ''
 export async function loadThread(wsId, slug) {
   // 대화는 유실이 치명적 — 손상 시 조용히 빈 상태로 리셋하지 않고 throw로 드러낸다(readJson).
   const t = await readJson(file(wsId, slug), { sessionId: null, messages: [] });
-  // 회의실과 동일 복구 — 격리된 손상본이 있으면 살릴 수 있는 턴까지 되돌린다(신고 2026-07-25).
-  // sessionId는 복구 대상이 아니다(이어가기 세션은 새로 시작 — 대화 기록 보존이 우선).
+  // 회의실과 동일 계약 — 파일 부재일 때만 손상본에서 건져 화면에 되돌리고, 파일은 쓰지 않는다.
+  // (새 대화·신규 크루처럼 정상적으로 비어 있는 경우는 파일이 존재하므로 복구가 발동하지 않는다.)
+  // sessionId는 복구하지 않는다 — 이어가기 세션은 새로 시작(대화 기록 보존이 우선).
   if (!t.messages?.length) {
-    const r = await recoverFromCorrupt(file(wsId, slug), 'messages').catch(() => null);
-    if (r) return readJson(file(wsId, slug), { sessionId: null, messages: [] });
+    const s = await salvageFromCorrupt(file(wsId, slug), 'messages').catch(() => null);
+    if (s) return { ...t, messages: s.items, salvagedFrom: s.from };
   }
   return t;
 }
@@ -122,7 +123,10 @@ export async function resetThread(wsId, slug) {
       const dir = join(paths(wsId).chats, '.archive');
       await writeJsonAtomic(join(dir, `${slug.replace(/[^a-z0-9-]/g, '')}-${Date.now()}.json`), t);
     }
-    await rm(file(wsId, slug), { force: true });
+    // 삭제가 아니라 **빈 스레드로 재기록** — 파일 부재는 "손상 격리됨"의 신호로 쓰이므로(loadThread의
+    // salvage 게이트), 새 대화가 파일을 지우면 옛 손상본이 되살아난다(검수 CRITICAL-1 C 케이스 실측).
+    // 회의실 endMeeting이 {messages:[], sid+1}을 쓰는 것과 같은 계약으로 통일한다.
+    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [] });
   });
 }
 

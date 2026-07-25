@@ -40,7 +40,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14          # Apple Silicon
+          - os: macos-15          # Apple Silicon (macos-14는 2026-07-06 deprecation 시작·11-02 종료 — 검수 지적 2026-07-26)
             rust_target: aarch64-apple-darwin
           - os: macos-15-intel    # Intel Mac (v0.1.27 재지원)
             rust_target: x86_64-apple-darwin
