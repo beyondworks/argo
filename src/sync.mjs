@@ -8,7 +8,7 @@
 // 시크릿(connections.json·.secrets.json): 서비스 키가 있으면 봉투 암호화(secretbox)로 동기화 —
 // 스토리지엔 암호문만 놓이고, 기기마다 재입력할 필요가 없다. 키 없는 환경은 기존대로 제외.
 // 그 외 제외(동기화 금지): .gateway*·.gw-offset*(폴러 상태), *.status.json(턴 일시 상태),
-// *.lock, .sync-state.json, .device-id.
+// *.lock, .sync-state.json, .device-id, .index.sqlite*(기억 인덱스 캐시 — 정본에서 재구축).
 //
 // C-2 최소형: 오너별 _device-lease.json 클라우드 리스 — 두 기기가 동시에 켜져도
 // 폴러·루틴 실행 주체는 한 기기만(게이트웨이·스케줄러가 isCloudLeader를 함께 본다).
@@ -28,6 +28,7 @@ import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { ensureAccountKey } from './accountkey.mjs';
 import { syncEntitled } from './entitlement.mjs';
 import { resolveRunner } from './runners.mjs'; // 리더 양보 판단 — 이 기기에서 턴을 돌릴 러너가 있는가
+import { invalidatePath } from './memindex.mjs'; // 원격 mtime을 심는 수신 쓰기의 캐시 무효화
 
 const BUCKET = 'companies';
 // 준실시간 — 기본 8s(웹↔앱 지연 단축). ARGO_SYNC_CYCLE_MS로 조정(비용/지연 트레이드오프).
@@ -56,6 +57,7 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
     base.startsWith('.gw-queue') ||
     base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' ||
     base === '.device-session.json' || base === '.DS_Store' ||
+    base.startsWith('.index.sqlite') || // 기억 인덱스 캐시(+ -wal·-shm). 기기별 산출물이고 정본에서 재구축된다
     base.endsWith('.status.json') || base.endsWith('.lock') ||
     base.startsWith('.tmp-') || base.endsWith('.corrupt') || rel.includes('.corrupt-') // 원자쓰기 임시·손상 백업
   ) return true;
@@ -416,7 +418,14 @@ export async function syncCompany(wsId, owner, isRestore = false) {
       const full = relFull(rel);
       // 복호화된 시크릿(.secrets.json·connections)이 신규 기기 복원 시 0644로 생기지 않게 0600 강제(P1-8).
       await writeFileAtomic(full, buf, isSecretRel(rel) ? { mode: 0o600 } : undefined);
-      if (mtime) await utimes(full, new Date(mtime), new Date(mtime));
+      if (mtime) {
+        await utimes(full, new Date(mtime), new Date(mtime));
+        // 원격 mtime을 심는 쓰기 — 기억 인덱스 캐시의 변경 판정 키가 mtime+size라, 심은 mtime과
+        // 크기가 이전 행과 우연히 일치하면 캐시가 이 변경을 영영 못 본다(writeKeepingMtime과 같은
+        // 계열, 검수 MEDIUM). 인덱스가 실제로 훑는 세 폴더로만 한정한다 — vault/ 전체로 걸면
+        // 행도 없는 파일(_index.md·files/ 등)까지 건마다 DB 왕복 비용(실측 0.86ms/건)을 낸다.
+        if (/^vault\/(journal|conversations|notes)\/[^/]+\.md$/.test(rel)) await invalidatePath(full);
+      }
     };
     if (isThread(rel)) await withLock(threadLockKey(wsId, rel), doWrite);
     else await doWrite();
