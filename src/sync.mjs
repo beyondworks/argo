@@ -33,6 +33,18 @@ import { invalidatePath } from './memindex.mjs'; // 원격 mtime을 심는 수�
 const BUCKET = 'companies';
 // 준실시간 — 기본 8s(웹↔앱 지연 단축). ARGO_SYNC_CYCLE_MS로 조정(비용/지연 트레이드오프).
 const CYCLE_MS = Number(process.env.ARGO_SYNC_CYCLE_MS) || 8_000;
+// 목록 조회(discoverRemote·원격 tombstone)는 **파일 동기화와 다른 주기**로 돈다.
+//
+// 왜: Storage list()는 서버에서 storage.search()로 실행되는데 이게 압도적으로 비싸다 — 프로덕션
+// 실측(2026-07-26, Supabase CPU 80% 경보): 전체 DB CPU의 **98.3%**가 이 함수 하나였다(107만 회,
+// 평균 177ms). 기기마다 8초 사이클에 목록을 2회(발견 + tombstone) 부르니 기기당 분당 15회이고,
+// 켜져 있는 모든 기기가 각자 돈다 → 부하가 **동시 접속 기기 수에 선형**. 12대에서 이미 175회/분
+// (코어 하나의 절반)이었고 사용자 73명 규모에선 DB가 먼저 포화된다.
+//
+// 두 조회 모두 8초일 이유가 없다: 발견은 **새 기기가 자기 회사를 처음 찾는** 용도고, tombstone은
+// **보관 전파**라 분 단위 지연이 무해하다. 파일 push/pull만 CYCLE_MS로 두고 이 둘을 분리하면
+// 목록 호출이 87% 줄면서 체감 지연은 그대로다. (첫 사이클은 항상 실행 — 신규 기기 복원 보장.)
+const DISCOVER_MS = Number(process.env.ARGO_SYNC_DISCOVER_MS) || 60_000;
 // 크로스 프로세스 락 스테일 판정 — CYCLE_MS와 분리한다. 주기 단축(45→8s)이 이중 동기화 방어막을
 // 좁히면(느린 사이클의 살아있는 리더를 오탈취) 삭제 피드백 루프=대형 유실이 날 수 있다(리뷰 H1).
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
@@ -629,7 +641,7 @@ async function discoverRemote(localOwners) {
    설계: 로컬 .tombstones/{wsId}.json(오프라인에서도 즉시 기록)이 신호의 정본,
    여기서 원격 {owner}/.tombstones/{wsId}.json과 양방향 동기화한다.
    반환: 보관된 wsId Set — cycle이 발견(discover) 결과에서 제외한다. */
-async function syncTombstones(fixedOwner) {
+async function syncTombstones(fixedOwner, { remote: doRemote = true } = {}) {
   // 1) 로컬 tombstone 로드
   const local = new Map(); // wsId → { ownerId, at }
   try {
@@ -663,6 +675,12 @@ async function syncTombstones(fixedOwner) {
       catch { /* rename 실패 — 다음 사이클 재시도 */ }
     }
   }
+
+  // ── 여기까지가 로컬 단계(readdir·stat). 매 사이클 돌아도 무료다.
+  // 아래 2~4단계는 전부 원격 호출(list·download·upload)이라 DISCOVER_MS 주기에만 돈다(위 상수 주석).
+  // 로컬 tombstone 집합은 그대로 반환하므로, 건너뛰어도 보관된 회사가 복원되는 일은 없다
+  // (cycle이 이 Set으로 발견 결과를 거른다 — 안전 방향).
+  if (!doRemote) return new Set(local.keys());
 
   // 2) 원격 tombstone 목록 — 내가 책임지는 오너만(discoverRemote와 같은 테넌트 격리 원칙).
   //    기기 세션이 없는 셀프호스트에서 로컬 tombstone의 ownerId도 오너로 인정한다.
@@ -723,6 +741,11 @@ async function syncTombstones(fixedOwner) {
 // 테스트 전용 — cycle 없이 tombstone 로직만 fake storage로 실행 검증한다.
 export const _tombstonesForTest = { syncTombstones, discoverRemote };
 
+/** 이번 사이클에 원격 목록 조회를 할 차례인가(순수) — last가 없으면(첫 사이클) 반드시 한다.
+    첫 사이클을 건너뛰면 새 기기가 자기 회사를 못 찾아 최대 DISCOVER_MS 동안 빈 화면을 본다.
+    (export: 회귀 테스트용 — cycle 전체는 실 env가 필요해 단위로 못 태운다) */
+export const isDiscoverDue = (now, last, intervalMs) => !last || now - last >= intervalMs;
+
 /* ─── 상주 루프 ─── */
 const status = (globalThis.__argoSyncStatus ??= { lastTs: null, lastError: '', paywalled: false, plan: null, companies: {} });
 export function syncStatus() {
@@ -740,7 +763,11 @@ async function cycle() {
   await ensureAccountKey(client(), keyOwner);
   // 회사 tombstone 동기화 — 로컬 스캔보다 먼저: 원격 tombstone이 이 기기의 사본을 보관 처리하면
   // 그 회사는 이번 사이클의 push/pull 대상에서 자연히 빠진다. 실패해도 사이클은 계속(빈 Set).
-  const tombs = await syncTombstones(keyOwner).catch((e) => { console.warn('[argo] tombstone 동기화 실패:', e.message); return new Set(); });
+  // 이번 사이클에 원격 목록 조회(발견·tombstone)를 할 차례인가.
+  // 실패해도 시각을 갱신한다: 실패마다 재시도하면 장애 중 목록 호출이 오히려 CYCLE_MS 주기로 폭주한다.
+  const discoverDue = isDiscoverDue(Date.now(), globalThis.__argoLastDiscover, DISCOVER_MS);
+  if (discoverDue) globalThis.__argoLastDiscover = Date.now();
+  const tombs = await syncTombstones(keyOwner, { remote: discoverDue }).catch((e) => { console.warn('[argo] tombstone 동기화 실패:', e.message); return new Set(); });
   // 로컬 회사 수집 (ownerId 있는 것만 — 소유자가 있어야 클라우드에 자리가 있다)
   // 세션(JWT) 모드는 현재 계정 소유가 아닌 회사를 제외한다 — 다른 계정 소유의 로컬 사본(계정 전환·
   // 기기 공유 흔적)을 매 사이클 남의 폴더로 밀다 스토리지 격리(RLS)에 막혀 "row-level security"
@@ -769,7 +796,7 @@ async function cycle() {
   // restoreSet: 로컬에 회사(company.json)가 없어 원격에서 처음 발견된 것 — 신규 복원 가드의 신호.
   const localOwners = [...new Set(targets.values())];
   const restoreSet = new Set();
-  for (const { owner, wsId } of await discoverRemote(localOwners)) {
+  for (const { owner, wsId } of discoverDue ? await discoverRemote(localOwners) : []) {
     if (tombs.has(wsId)) continue; // 보관된 회사 — 클라우드 사본이 남아 있어도 복원하지 않는다
     if (!targets.has(wsId)) { targets.set(wsId, owner); restoreSet.add(wsId); }
   }
