@@ -1642,6 +1642,28 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
   .search-pill { width: auto; flex: 1; }
 }
 
+/* 동작 줄이기(OS 접근성 설정)에서만 적용된다 — 켜지 않은 사용자에겐 위 애니메이션이 그대로 간다.
+   지속시간만 0.01ms로 줄이면 **무한 반복이 살아남아** 초당 수만 번 돌고, 화면은 초당 60번만 그려지니
+   매 프레임이 사이클의 엉뚱한 지점을 찍어 스트로브가 된다. 정지가 아니라 번쩍임이다 — 동작 줄이기를
+   켠 사람(전정기관 장애·광민감성)에게 정확히 반대의 해를 준다(실사용 신고 2026-07-26: 로딩 중 채팅창
+   플래싱). 반복 횟수까지 잘라야 실제로 멈춘다. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* 로딩 표시는 멈춘 뒤에도 "진행 중"으로 읽혀야 한다. fill-mode 되돌림에 기대지 않고 명시로 정지시킨다
+     (이 버그의 뿌리가 축약형·기본값에 기댄 것이었다). 스켈레톤은 훑는 띠가 화면 밖으로 빠져 평범한
+     회색 자리표시자로, 점 3개는 또렷한 점으로, 별은 브랜드 마크로 각각 자연스럽게 남는다. */
+  .skeleton::after { animation: none; }
+  .dots i { animation: none; opacity: 1; }
+  .argo-spin { animation: none; }
+
+  /* 원형 스피너만 손을 더 댄다 — 멈추면 4분의 1 호가 한쪽에 남아 "고장난 바퀴"로 보인다.
+     호를 지우고 링을 또렷하게 해 완전한 원으로 정리한다(의미는 role="status"가 계속 전달). */
+  .spin { animation: none; }
+  .spin > path { display: none; }
+  .spin > circle { stroke-opacity: 0.9; }
 }
