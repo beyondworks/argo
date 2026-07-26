@@ -407,16 +407,6 @@ async function codexCmd() {
   }
 }
 
-/** codex 격리홈 — 'clean'이면 auth.json 심링크 없이(회사 API키 모드), 아니면 호스트 로그인 상속. */
-async function codexHomeClean() {
-  const dir = join(homedir(), '.argo', 'codex-home-apikey');
-  await mkdir(dir, { recursive: true });
-  if (!(await exists(join(dir, 'config.toml')))) {
-    await writeFile(join(dir, 'config.toml'), '# Argo API키 모드 — 계정 로그인 미상속\n').catch(() => {});
-  }
-  return dir;
-}
-
 /** 능력 → codex 샌드박스 매핑(순수) — SDK 러너의 권한 게이트(permission-gate)를 근사한다.
     fs ON = 워크스페이스 밖 쓰기 허용(읽기는 workspace-write가 원래 전역), browser ON = 네트워크 허용.
     ⚠ 등가는 아니다(검수 MEDIUM 2026-07-19): codex는 셸 실행이 도구와 분리되지 않아 shell 능력을
@@ -459,7 +449,8 @@ export function codexEffortArgs(effort) {
     조용히 삼켜 auth.json 없는 홈으로 실행 → codex가 401("Missing bearer or basic authentication
     in header")로 죽었다. OAuth를 정상 연결한 신규 설치 사용자가 크루 영입을 전혀 못 하던 신고
     (2026-07-26)의 근본 원인이다. 반환 handle을 턴 뒤 recoverCodexAuth에 넘겨 갱신 토큰을 회수한다.
-    자격 파일이 없는 모드(clean+env키)는 mode:'none'이 정상이다 — 던지지 않는다. */
+    베이스 홈에 자격 파일이 없는 경우(호스트 미로그인 등)는 mode:'none'이 정상이다 — 던지지 않는다.
+    (과거 'clean'+env키 모드 언급은 폐기 — codex CLI가 env 키를 안 읽어 apikey도 auth.json 경유다.) */
 export async function importCodexAuth(baseHome, turnHome) {
   const src = join(baseHome, 'auth.json');
   const dst = join(turnHome, 'auth.json');
@@ -506,10 +497,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
   if (runner === 'codex') {
     const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
     const out = join(dir, 'last.txt');
-    // 회사 API키 모드면 깨끗한 홈(계정 OAuth 무시), 아니면 호스트 로그인 상속
-    const baseHome = cred?.home === 'clean' ? await codexHomeClean()
-      : cred?.home ? cred.home // 회사 OAuth 격리 홈(웹 브리지)
-      : await codexHome();     // 호스트 로그인 상속
+    // 회사 자격(apikey·oauth 모두 격리 홈의 auth.json — 'clean'+env키 모드는 codex CLI가 env 키를
+    // 안 읽어 폐기 2026-07-26)이 있으면 그 홈, 없으면 호스트 로그인 상속
+    const baseHome = cred?.home ? cred.home : await codexHome();
     // per-turn CODEX_HOME — baseHome은 회사 간 공유(codexHome)라 config.toml에 caps를 직접 쓰면 경합한다.
     // 이번 턴 전용 홈을 만들고 auth.json만 베이스에서 심링크한 뒤 config.toml에 caps를 써넣는다(격리 + 버전 안정).
     const CODEX_HOME = join(dir, 'home');
@@ -656,12 +646,18 @@ export async function saveRunnerCred(wsId, runner, type, value) {
   if (runner === 'codex') provisionCodexCli().catch(() => {}); // ~100MB — 연결 시점에 미리 받아 첫 턴 대기 제거
 }
 
-/** 러너 자격 제거 — 다른 러너는 유지. */
+/** 러너 자격 제거 — 다른 러너는 유지. 격리 홈도 함께 지운다: 연결 해제 후에도 auth.json에 평문
+    키가 0600으로 남아 있었다(검수 — env 주입 시절엔 apikey가 디스크에 자격 파일을 안 만들었으니
+    auth.json 전환이 새로 연 표면). saveRunnerCred의 리셋과 대칭. */
 export async function clearRunnerCred(wsId, runner) {
   const s = await loadSecrets(wsId);
   const { claude, ...rest } = s;
   if (rest.runners) delete rest.runners[runner];
   await writeJsonAtomic(secretsFile(wsId), rest);
+  if (!isAccountScope(wsId)) {
+    if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+    if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /** 온보딩 시드 — 회사 생성 전 그 사용자의 계정 스코프에 연결한 자격을 새 회사로 복사한다.
@@ -714,7 +710,8 @@ export const normalizePastedCred = (value) => {
 };
 
 /** 러너 실행에 주입할 env(부분) — 회사 자격이 있으면 러너 종류에 맞는 변수로. 없으면 null(호스트 자격 폴백=회귀 0).
-    반환: { env, home } — env=주입 변수 dict, home=codex 격리홈 오버라이드('clean'=계정 로그인 무시하고 API키 사용). */
+    반환: { env, home } — env=주입 변수 dict, home=회사 자격 격리 홈 경로(codex는 apikey·oauth 모두
+    auth.json 경유 — env 키 주입('clean')은 CLI가 안 읽어 폐기 2026-07-26). */
 export async function runnerCredEnv(wsId, runner) {
   const cred = await loadRunnerCred(wsId, runner);
   if (!cred) return null;
@@ -743,17 +740,24 @@ export async function runnerCredEnv(wsId, runner) {
     return { env: { ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'codex') {
-    // apikey면 계정 OAuth를 무시하고 OPENAI_API_KEY로 — 격리홈을 '깨끗한' 것으로 써 auth.json 상속 차단.
-    if (cred.type === 'apikey') return { env: { OPENAI_API_KEY: v }, home: 'clean' };
-    // 회사 OAuth(웹 브리지) — 저장된 auth.json을 회사별 격리 CODEX_HOME에 풀어 CLI가 읽게 한다.
-    // CLI가 토큰을 갱신하면 이 파일에 다시 쓴다(다음 턴도 같은 홈을 쓰므로 이어진다).
+    // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를
+    // 더는 인정하지 않는다. 이전의 env 주입(home:'clean')은 저장 검증(OpenAI 직접 호출)만 통과하고
+    // 모든 턴이 "Missing bearer or basic authentication in header" 401이었다(실사용 신고 2026-07-26,
+    // 이 맥 재현: env 가짜키 → Missing bearer / auth.json 가짜키 → Incorrect API key = 키가 전달됨).
+    // apikey ↔ oauth 전환 시 잔재 상속은 saveRunnerCred가 자격 변경마다 격리 홈을 리셋해 차단한다.
     const dir = join(homedir(), '.argo', `codex-home-${wsId}`);
-    await mkdir(dir, { recursive: true, mode: 0o700 }); // OAuth 토큰 보관 — 소유자만
-    await seedAuthFile(dir, 'auth.json', v); // 저장 자격이 바뀌면(동기화 포함) 재시드 — CLI 갱신분은 보존
+    await mkdir(dir, { recursive: true, mode: 0o700 }); // 자격 보관 — 소유자만
+    // apikey는 codex auth.json의 API 키 형식으로 포장, oauth는 저장된 auth.json 원문 그대로.
+    const authJson = cred.type === 'apikey' ? JSON.stringify({ OPENAI_API_KEY: v, tokens: null }) : v;
+    // adopt는 oauth에만 — 마커 없는 기존 파일 채택은 CLI가 회전시킨 토큰 보존이 목적이다. apikey는
+    // CLI가 갱신할 게 없어 채택할 이유가 없고, 채택하면 rm 실패로 남은 옛 OAuth 잔재가 새 키를 영영
+    // 밀어내며 UI만 "연결됨"이 된다(검수 재현 — 2026-07-20 "죽은 자격으로 도는데 연결됨" 계열).
+    await seedAuthFile(dir, 'auth.json', authJson, { adopt: cred.type !== 'apikey' }); // 자격 변경(동기화 포함) 시 재시드
+
     if (!(await exists(join(dir, 'config.toml')))) await writeFile(join(dir, 'config.toml'), '# Argo 회사 자격 codex 홈\n');
-    // OPENAI_API_KEY 명시 소거(claude OAuth 대칭) — 호스트/프로세스 env에 API 키가 있으면 codex CLI가
-    // auth.json OAuth보다 그 키를 우선해 무효·타계정 키로 턴이 실패한다("api키 설정값 우선" 신고 2026-07-24).
-    // scrubServerSecrets는 이 키를 codex 소유라 남겨두므로, 여기서 빈 값으로 덮어 OAuth 경로를 보장한다.
+    // OPENAI_API_KEY 명시 소거(claude OAuth 대칭) — 호스트/프로세스 env에 API 키가 있으면 미래 CLI가
+    // auth.json보다 그 키를 우선할 수 있어 무효·타계정 키로 턴이 실패한다("api키 설정값 우선" 신고 2026-07-24).
+    // scrubServerSecrets는 이 키를 codex 소유라 남겨두므로, 여기서 빈 값으로 덮어 auth.json 경로를 보장한다.
     return { env: { OPENAI_API_KEY: '' }, home: dir };
   }
   return null;

@@ -41,7 +41,7 @@ test('심링크가 실패하면 복사로 폴백한다 — 자격 없는 홈으�
   assert.match(await readFile(h.dst, 'utf8'), /BASE/, '선점 파일을 베이스 자격으로 덮어써야 한다');
 });
 
-test('자격 파일이 없어도 던지지 않는다 — clean+env키 모드는 정상 경로다', async () => {
+test('자격 파일이 없어도 던지지 않는다 — 호스트 미로그인 등 자격 부재는 정상 경로다', async () => {
   const { base, turn } = await homes({ withAuth: false });
   const h = await importCodexAuth(base, turn);
   // POSIX symlink()는 대상이 없어도 성공한다(dangling) → 'link'. 심링크가 막힌 환경은 복사도 실패해 'none'.
