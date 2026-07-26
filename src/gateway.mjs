@@ -7,7 +7,7 @@ import { chat } from './chat.mjs';
 import { loadThread, appendTurn, appendSharedNote } from './thread.mjs';
 import { resolveWithFollowUp } from './approval-actions.mjs';
 import { setApprovalMeta } from './approvals.mjs';
-import { onNotify } from './notify.mjs';
+import { onNotify, emitNotify } from './notify.mjs'; // emitNotify = 장시간 작업 완료 통지(잡 핸들러)
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader } from './sync.mjs';
 import { appendEvent } from './events.mjs';
@@ -70,7 +70,7 @@ export async function enqueueJob(wsId, key, id, job) { // (export: 회귀 테스
   await writeJsonAtomic(join(queueDir(wsId, key), `${id}.json`), dev ? { ...job, dev } : job); // 원자적 — 부분 쓰기가 워커에 보이지 않는다
 }
 /** 큐 드레인 워커 — 1초 폴. handler(job)이 정상 반환하면 파일 삭제(처리 완료), 던지면 유지(다음 틱 재시도·재기동 복구). (export: 회귀 테스트용) */
-export function startQueueWorker(wsId, key, handler) {
+export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFLIGHT } = {}) {
   let stopped = false;
   let me = null; // 이 기기 id — 해석 전(null)에는 잡을 집지 않는다(남의 사본 오실행 방지). 실패 시 ''(판정 생략, 전부 실행)
   getDeviceId().then((d) => { me = d; }).catch(() => { me = ''; });
@@ -83,7 +83,7 @@ export function startQueueWorker(wsId, key, handler) {
       .sort((a, b) => ((parseInt(a, 10) || 0) - (parseInt(b, 10) || 0)) || a.localeCompare(b)); // 도착 순서 근사(동값은 사전순 고정)
     for (const n of names) {
       if (busy.has(n)) continue;
-      if (busy.size >= GW_MAX_INFLIGHT) break; // 상한 도달 — 남은 잡은 다음 틱
+      if (busy.size >= maxInflight) break; // 상한 도달 — 남은 잡은 다음 틱(큐별로 다르다: 장시간 작업은 1)
       busy.add(n);
       (async () => {
         const fp = join(queueDir(wsId, key), n);
@@ -109,6 +109,67 @@ export function startQueueWorker(wsId, key, handler) {
   }, 1000);
   iv.unref?.();
   return () => { stopped = true; clearInterval(iv); };
+}
+
+/* ─── 장시간 작업 큐(jobs) — 10분 초과 작업의 패리티 갭을 닫는다 ───
+   설계: docs/long-job-queue-design.md. 크루가 start_long_task로 적재하면 이 워커가 턴 밖에서
+   chat()을 끝까지 돌린다(워커 경로엔 HTTP 5분 상한이 없어 몇 시간도 가능). 완료되면 결과가 대화에
+   남고 메신저로 배달된다 — 사장은 기다리지 않고, 기기를 덮어도(재기동 후) 결과를 받는다.
+
+   재실행 규칙(게이트웨이 큐와 다른 점): 잡에는 발송·구매 같은 부작용이 들어갈 수 있어 크래시 후
+   무제한 재시도가 위험하다. 실행 직전에 tries를 올려 파일에 기록하고, 다시 집혔을 때 tries>=1이면
+   **자동 재실행하지 않고** "중단된 작업"으로 남겨 사장이 재시작을 결정한다
+   ("되돌릴 수 없는 것은 사람이 잠근다"와 같은 방향). */
+export const JOBS_QUEUE = 'jobs';
+export const JOBS_MAX_INFLIGHT = 1;  // 회사당 동시 1 — 장시간 작업이 메신저 응답을 굶기지 않게 큐 분리
+export const JOBS_MAX_PENDING = 10;  // 대기 상한 — 비용 폭주·큐 폭발 방지
+
+function makeJobHandler(wsId) {
+  return async (job) => {
+    const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+    const title = String(job.title ?? '').slice(0, 80) || pick('장시간 작업', 'Long task', lang);
+    const slug = job.slug;
+    if (!slug || !job.prompt) return; // 형식 불량 — 조용히 폐기(워커가 파일 삭제)
+    // 핸들러가 던지면 워커가 파일을 남겨 1초마다 무한 재시도한다(E2E에서 실측: import 누락 1건으로
+    // 24회/25초 재처리). 잡은 재실행이 위험하므로 통지·기록 실패가 재시도를 유발하지 않게 전부 감싼다.
+    const notify = (payload) => { try { emitNotify(payload); } catch (e) { console.error('[argo] 작업 통지 실패:', e.message); } };
+    // 재실행 차단 — 이미 한 번 시작된 잡(크래시·강제 종료 후 잔재)은 자동으로 다시 돌리지 않는다
+    if ((job.tries ?? 0) >= 1) {
+      await appendEvent(wsId, { type: 'job', slug, title, status: 'interrupted' }).catch(() => {});
+      notify({ type: 'job', wsId, slug, title, ok: false, reply: pick(
+        `작업 "${title}"이 실행 중 중단됐습니다 — 부작용이 있을 수 있어 자동으로 다시 시작하지 않았습니다. 다시 시킬지 알려주세요.`,
+        `Task "${title}" was interrupted mid-run — it was not restarted automatically because it may have side effects. Tell me if you want it rerun.`, lang) });
+      return;
+    }
+    // 시작 마킹 — **실행 전에** 파일에 기록해야 크래시 후 재집힘에서 위 가드가 작동한다
+    const fp = join(queueDir(wsId, JOBS_QUEUE), `${job.id}.json`);
+    await writeJsonAtomic(fp, { ...job, tries: (job.tries ?? 0) + 1, startedAt: new Date().toISOString() }).catch(() => {});
+    await appendEvent(wsId, { type: 'job', slug, title, status: 'started' }).catch(() => {});
+    try {
+      const t = await chat(wsId, slug, `[장시간 작업: ${title}] ${job.prompt}`, null, { source: 'job' });
+      await appendTurn(wsId, slug, {
+        userMsg: pick(`(장시간 작업) ${title}`, `(Long task) ${title}`, lang),
+        reply: t.reply, handover: t.handover, sessionId: t.sessionId,
+      }).catch(() => {});
+      await appendEvent(wsId, { type: 'job', slug, title, status: 'done' }).catch(() => {});
+      notify({ type: 'job', wsId, slug, title, ok: true, reply: t.reply });
+    } catch (e) {
+      const msg = String(e.message || e).slice(0, 300);
+      await appendEvent(wsId, { type: 'job', slug, title, status: 'failed', error: msg }).catch(() => {});
+      notify({ type: 'job', wsId, slug, title, ok: false, reply: pick(
+        `작업 "${title}" 실패: ${msg}`, `Task "${title}" failed: ${msg}`, lang) });
+    }
+  };
+}
+
+/** 크루 도구용 적재 — 대기 상한을 넘으면 거절(에러 메시지가 크루에게 그대로 간다). (export: 도구·테스트 공용) */
+export async function enqueueLongJob(wsId, { slug, title, prompt }) {
+  let pending = 0;
+  try { pending = (await readdir(queueDir(wsId, JOBS_QUEUE))).filter((n) => n.endsWith('.json')).length; } catch { /* 큐 없음 = 0 */ }
+  if (pending >= JOBS_MAX_PENDING) throw new Error(`대기 중인 장시간 작업이 이미 ${pending}건입니다 — 끝나기를 기다리거나 사장에게 정리를 요청하라`);
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  await enqueueJob(wsId, JOBS_QUEUE, id, { id, slug, title, prompt, createdAt: new Date().toISOString(), tries: 0 });
+  return { id, pending: pending + 1 };
 }
 
 const MAX_MSG = 3800; // 텔레그램 4096 제한 대비 여유
@@ -845,6 +906,11 @@ async function pushEvent(event) {
       await sendTgReply(t.token, t.chatId, event.wsId, pick(`**[루틴] ${event.routine.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Routine] ${event.routine.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang))
         .catch((e) => console.error('[argo] 텔레그램 루틴 푸시 실패:', e.message));
     }
+    // 장시간 작업 완료 — 사장이 앱을 안 보고 있어도 결과가 도착한다(이 큐의 존재 이유)
+    if (event.type === 'job') {
+      await sendTgReply(t.token, t.chatId, event.wsId, pick(`**[작업 완료] ${event.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Task done] ${event.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang))
+        .catch((e) => console.error('[argo] 텔레그램 작업 푸시 실패:', e.message));
+    }
   }
   const s = all.slack;
   if (s.enabled && s.token && s.channel) {
@@ -918,9 +984,11 @@ export function ensureGateway() {
         if (drainers.has(id)) continue;
         const handler = qkey === 'telegram' ? makeTgGatewayHandler(c.id, () => globalThis.__argoGwCfg?.[`${c.id}:telegram`])
           : qkey === 'slack' ? makeSlackHandler(c.id, () => globalThis.__argoGwCfg?.[`${c.id}:slack`])
-            : qkey.startsWith('tg-') ? makeTgAgentHandler(c.id, qkey.slice(3), () => globalThis.__argoGwCfg?.[`${c.id}:tg-agent:${qkey.slice(3)}`])
-              : null;
-        if (handler) drainers.set(id, startQueueWorker(c.id, qkey, handler));
+            : qkey === JOBS_QUEUE ? makeJobHandler(c.id) // 장시간 작업 — 메신저 연결과 무관하게 항상 드레인
+              : qkey.startsWith('tg-') ? makeTgAgentHandler(c.id, qkey.slice(3), () => globalThis.__argoGwCfg?.[`${c.id}:tg-agent:${qkey.slice(3)}`])
+                : null;
+        // 장시간 작업은 동시 1 — 한 회사의 긴 작업이 메신저 응답 슬롯을 다 먹지 않게 큐를 분리한다
+        if (handler) drainers.set(id, startQueueWorker(c.id, qkey, handler, qkey === JOBS_QUEUE ? { maxInflight: JOBS_MAX_INFLIGHT } : {}));
       }
     }
     for (const [id, stop] of drainers) if (!aliveDrain.has(id)) { stop(); drainers.delete(id); }

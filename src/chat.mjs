@@ -259,7 +259,8 @@ ${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and c
 ## Your environment (Argo) — guide the captain precisely when blocked
 - You work inside an Argo company. External tools (MCP) are connected PER COMPANY — this runtime does NOT inherit the computer's Claude Code config (.claude.json, .mcp.json) by design (tenant isolation). Never hunt for those files.${caps.shell ? `
 - **Long-running commands (browser automation, bulk scraping, builds) must run in the foreground until they finish.** Pass a generous Bash timeout (milliseconds, max 600000 = 10 min). Example: expecting ~5 minutes → timeout: 420000.
-- **Output from anything you background (\`&\`, nohup, run_in_background) is lost unless you collect it within this same turn.** When the turn ends the shell session closes, so the next turn cannot read that output (this differs from native Claude Code, where the session stays alive). Never fire a job into the background and end the turn expecting to pick it up later. If 10 minutes isn't enough, don't background it — instead **① split the work across turns, or ② have it write results to a file (\`> vault/files/result.txt\`) and read that file next turn.**` : ''}
+- **Output from anything you background (\`&\`, nohup, run_in_background) is lost unless you collect it within this same turn.** When the turn ends the shell session closes, so the next turn cannot read that output (this differs from native Claude Code, where the session stays alive). Never fire a job into the shell background and end the turn expecting to pick it up later.
+- **For work that needs more than 10 minutes, ${hasTools ? 'use the start_long_task tool' : 'split it across turns or have it write results to a file and read that file next turn'}** — ${hasTools ? 'it runs outside this turn without blocking the conversation, and the result is delivered to this chat and your messenger when it finishes. Unlike shell backgrounding, the output is never lost.' : ''}` : ''}
 - Approvals are granted in the web approval inbox or via Telegram/Slack buttons. A timed-out wait is NOT failure — the request stays in the inbox and, once approved later, execution continues in a follow-up turn.${hasTools ? '\n- If frequent approvals interrupt the flow, you may suggest the captain enable capabilities or "permission bypass mode" (bottom of Settings — trusted companies only).' : ''}`;
   }
   const offGuide = hasTools
@@ -288,7 +289,8 @@ ${caps.bypass ? '- 준비 작업 자동 승인: 켜짐 — 도구 설치·능력
 ## 너의 환경(Argo) — 막혔을 때 사장에게 정확히 안내하라
 - 너는 Argo 회사 안에서 일한다. 외부 도구(MCP)는 **회사별로** 연결된다 — 이 런타임은 컴퓨터의 Claude Code 설정(.claude.json, .mcp.json)을 설계상 상속하지 않는다(테넌트 격리). 그 파일들을 찾아 헤매지 마라.${caps.shell ? `
 - **오래 걸리는 명령(브라우저 자동화·대량 수집·빌드 등)은 전경에서 끝까지 기다려라.** Bash의 timeout을 넉넉히 지정하면 된다(밀리초, 최대 600000 = 10분). 예: 5분 예상이면 timeout: 420000.
-- **백그라운드(\`&\`·nohup·run_in_background)로 돌린 작업의 출력은 이 턴 안에서 회수하지 못하면 사라진다.** 턴이 끝나면 셸 세션이 닫혀 다음 턴에서 그 출력을 읽을 수 없다(네이티브 Claude Code와 다른 점 — 거기선 세션이 계속 살아 있다). 그러니 결과가 필요한 작업은 절대 백그라운드로 던지고 턴을 끝내지 마라. 10분으로도 부족한 작업이면 백그라운드 대신 **① 작업을 쪼개 여러 턴으로 나누거나 ② 결과를 파일로 쓰게 하고(\`> vault/files/결과.txt\`) 다음 턴에 그 파일을 읽어라.**` : ''}
+- **백그라운드(\`&\`·nohup·run_in_background)로 돌린 작업의 출력은 이 턴 안에서 회수하지 못하면 사라진다.** 턴이 끝나면 셸 세션이 닫혀 다음 턴에서 그 출력을 읽을 수 없다(네이티브 Claude Code와 다른 점 — 거기선 세션이 계속 살아 있다). 그러니 결과가 필요한 작업은 절대 셸 백그라운드로 던지고 턴을 끝내지 마라.
+- **10분으로 부족한 작업은 ${hasTools ? 'start_long_task 도구로 걸어라' : '작업을 쪼개 여러 턴으로 나누거나 결과를 파일로 쓰게 하고 다음 턴에 그 파일을 읽어라'}** — ${hasTools ? '대화를 막지 않고 턴 밖에서 끝까지 돌고, 완료되면 결과가 이 대화와 메신저로 배달된다. 셸 백그라운드와 달리 결과가 사라지지 않는다.' : ''}` : ''}
 - 결재는 웹 결재함 또는 텔레그램/슬랙 버튼으로 승인된다. 대기 시간이 지나도 **실패가 아니다** — 요청은 결재함에 남고, 사장이 나중에 승인하면 후속 턴에서 이어서 실행된다.${hasTools ? '\n- 승인이 잦아 흐름이 끊기면 사장에게 능력 켜기나 "준비 작업 자동 승인"(설정 → 로컬 능력 — 도구 설치·능력 켜기만 자동, 발송류는 그대로 결재)을 안내할 수 있다.' : ''}`;
 }
 
@@ -525,9 +527,30 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
     },
   );
 
+  // 장시간 작업 — 10분(Bash 상한)을 넘는 일을 대화를 막지 않고 돌린다. 워커가 턴 밖에서 끝까지
+  // 실행하고, 끝나면 결과가 이 대화와 메신저로 배달된다(docs/long-job-queue-design.md).
+  const startLongTask = tool(
+    'start_long_task',
+    '10분을 넘길 수 있는 작업(대량 수집·장시간 브라우저 자동화·큰 빌드)을 백그라운드 작업으로 걸어둔다. 지금 이 대화를 막지 않고 실행되며, 끝나면 결과가 이 대화와 메신저로 도착한다. 10분 안에 끝나는 일은 이 도구를 쓰지 말고 그냥 전경에서 실행하라(그게 더 빠르다). 걸어둔 뒤에는 "무엇을 작업으로 걸어뒀다"고 한 줄로 알리고 턴을 마쳐라.',
+    {
+      title: z.string().describe('작업 이름 — 활동·알림에 보인다'),
+      prompt: z.string().describe('작업 지시 — 지금이 아니라 별도 턴에서 읽힌다는 전제로, 필요한 맥락을 모두 담아 자세히 쓴다'),
+      agentSlug: z.string().optional().describe('실행할 크루 slug(기본 = 나 자신)'),
+    },
+    async ({ title, prompt, agentSlug }) => {
+      try {
+        const { enqueueLongJob } = await import('./gateway.mjs'); // 동적 — gateway가 chat을 import하므로 순환 회피
+        const r = await enqueueLongJob(wsId, { slug: agentSlug || fromSlug, title, prompt });
+        return text(`작업 "${title}"을 걸어뒀다(대기·진행 ${r.pending}건, 담당 ${agentSlug || fromSlug}). 끝나면 결과가 이 대화와 메신저로 온다. 지금은 걸어뒀다고만 알리고 턴을 마쳐라 — 결과를 기다리지 마라.`);
+      } catch (e) {
+        return text(`작업 적재 실패: ${String(e.message || e)}. 사장에게 알리거나 작업을 쪼개 지금 실행하라.`);
+      }
+    },
+  );
+
   return createSdkMcpServer({
     name: 'crew', version: '1.0.0',
-    tools: [requestApproval, requestCapability, requestToolInstall, updateProfile, hireCrew, scheduleTask, ...(colleagues.length ? [delegate] : [])],
+    tools: [requestApproval, requestCapability, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask, ...(colleagues.length ? [delegate] : [])],
   });
 }
 
