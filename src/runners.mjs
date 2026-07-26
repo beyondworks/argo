@@ -454,6 +454,39 @@ export function codexEffortArgs(effort) {
     수동 수정해 해결. 원인 = `-c sandbox_workspace_write.*` 오버라이드 키 경로가 codex 버전마다 갈려
     거부/무시됨. config.toml의 [sandbox_workspace_write] 섹션은 안정 인터페이스라 버전 불문 먹는다.
     Argo 관리 config.toml(코멘트 전용)을 통째로 다시 써 파싱 불필요. writable_roots=홈(앱 본체 보호 유지). */
+/** 턴 전용 CODEX_HOME에 베이스의 auth.json을 반입한다 — 심링크 우선, 실패하면 **복사 폴백**.
+    심링크는 Windows에서 권한(개발자 모드·관리자)이 없으면 EPERM으로 실패하는데, 예전엔 그 실패를
+    조용히 삼켜 auth.json 없는 홈으로 실행 → codex가 401("Missing bearer or basic authentication
+    in header")로 죽었다. OAuth를 정상 연결한 신규 설치 사용자가 크루 영입을 전혀 못 하던 신고
+    (2026-07-26)의 근본 원인이다. 반환 handle을 턴 뒤 recoverCodexAuth에 넘겨 갱신 토큰을 회수한다.
+    자격 파일이 없는 모드(clean+env키)는 mode:'none'이 정상이다 — 던지지 않는다. */
+export async function importCodexAuth(baseHome, turnHome) {
+  const src = join(baseHome, 'auth.json');
+  const dst = join(turnHome, 'auth.json');
+  try {
+    await symlink(src, dst);
+    return { mode: 'link', src, dst };
+  } catch {
+    try {
+      await copyFile(src, dst);
+      return { mode: 'copy', src, dst };
+    } catch {
+      return { mode: 'none', src, dst };
+    }
+  }
+}
+
+/** 복사 모드에서 CLI가 갱신한 토큰을 베이스로 되돌린다(임시 홈은 곧 삭제되므로 여기서만 회수 가능).
+    심링크 모드는 원본을 직접 쓰므로 불필요. 실패는 무해 — 다음 턴이 기존 토큰으로 시작하고
+    만료 시 재로그인 안내가 정상 경로로 나온다. 되돌렸으면 true. */
+export async function recoverCodexAuth(handle) {
+  if (handle?.mode !== 'copy') return false;
+  const [a, b] = await Promise.all([stat(handle.dst).catch(() => null), stat(handle.src).catch(() => null)]);
+  if (!a || !b || !(a.mtimeMs > b.mtimeMs)) return false;
+  await copyFile(handle.dst, handle.src);
+  return true;
+}
+
 export async function writeCodexTurnConfig(home, caps) {
   const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)에서 재생성됩니다.'];
   if (caps?.fs || caps?.browser) {
@@ -481,21 +514,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     // 이번 턴 전용 홈을 만들고 auth.json만 베이스에서 심링크한 뒤 config.toml에 caps를 써넣는다(격리 + 버전 안정).
     const CODEX_HOME = join(dir, 'home');
     await mkdir(CODEX_HOME, { recursive: true, mode: 0o700 });
-    // 자격 반입 — 심링크 우선, 실패하면 **복사 폴백**. 심링크는 Windows에서 권한(개발자 모드·관리자)이
-    // 없으면 EPERM으로 실패하는데, 예전엔 그 실패를 조용히 삼켜 auth.json 없는 홈으로 실행 → codex가
-    // "Missing bearer or basic authentication in header"(401)로 죽었다. 신규 설치 사용자가 OAuth를
-    // 정상 연결해도 크루 영입이 전혀 안 되던 실사용 신고(2026-07-26)의 근본 원인.
-    // 복사 모드에서는 CLI가 갱신한 토큰이 임시 홈과 함께 사라지므로, 턴 뒤에 변경분을 베이스로 되돌린다
-    // (심링크 모드는 원본을 직접 쓰므로 불필요).
-    const authSrc = join(baseHome, 'auth.json');
-    const authDst = join(CODEX_HOME, 'auth.json');
-    let authCopied = false;
-    try {
-      await symlink(authSrc, authDst);
-    } catch {
-      try { await copyFile(authSrc, authDst); authCopied = true; }
-      catch { /* auth 없는 모드(clean+env키)는 자격 파일이 없다 — 정상 */ }
-    }
+    // 자격 반입(심링크 → 복사 폴백) + 턴 뒤 갱신 토큰 회수. 계약은 importCodexAuth/recoverCodexAuth의
+    // 주석과 test/codex-auth-import.test.mjs가 잠근다(신규 설치 401의 근본 원인이었던 자리).
+    const auth = await importCodexAuth(baseHome, CODEX_HOME);
     await writeCodexTurnConfig(CODEX_HOME, caps); // [sandbox_workspace_write] — `-c`가 안 먹는 codex 버전 방어(실사용 신고 2026-07-22)
     const cmd = await codexCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     try {
@@ -511,14 +532,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
         .catch((e) => { throw apiError(e); });
       return (await readFile(out, 'utf8')).trim();
     } finally {
-      // 복사 모드 — CLI가 토큰을 갱신했으면 베이스로 되돌린다(임시 홈은 곧 삭제되므로 여기서만 회수 가능).
-      // 실패는 무해: 다음 턴이 기존 토큰으로 시작하고, 만료 시 재로그인 안내가 정상 경로로 나온다.
-      if (authCopied) {
-        await (async () => {
-          const [a, b] = await Promise.all([stat(authDst).catch(() => null), stat(authSrc).catch(() => null)]);
-          if (a && b && a.mtimeMs > b.mtimeMs) await copyFile(authDst, authSrc);
-        })().catch(() => {});
-      }
+      await recoverCodexAuth(auth).catch(() => {}); // 복사 모드의 갱신 토큰 회수 — 임시 홈 삭제 전에
       await rm(dir, { recursive: true, force: true }).catch(() => {});
     }
   }
