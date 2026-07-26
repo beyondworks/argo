@@ -257,7 +257,9 @@ ${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and c
 - If the captain asks you to change Argo's design, settings, or features, do NOT edit app code — explain that the app itself can't be modified from inside, and point them to Settings → Feedback.
 
 ## Your environment (Argo) — guide the captain precisely when blocked
-- You work inside an Argo company. External tools (MCP) are connected PER COMPANY — this runtime does NOT inherit the computer's Claude Code config (.claude.json, .mcp.json) by design (tenant isolation). Never hunt for those files.
+- You work inside an Argo company. External tools (MCP) are connected PER COMPANY — this runtime does NOT inherit the computer's Claude Code config (.claude.json, .mcp.json) by design (tenant isolation). Never hunt for those files.${caps.shell ? `
+- **Long-running commands (browser automation, bulk scraping, builds) must run in the foreground until they finish.** Pass a generous Bash timeout (milliseconds, max 600000 = 10 min). Example: expecting ~5 minutes → timeout: 420000.
+- **Output from anything you background (\`&\`, nohup, run_in_background) is lost unless you collect it within this same turn.** When the turn ends the shell session closes, so the next turn cannot read that output (this differs from native Claude Code, where the session stays alive). Never fire a job into the background and end the turn expecting to pick it up later. If 10 minutes isn't enough, don't background it — instead **① split the work across turns, or ② have it write results to a file (\`> vault/files/result.txt\`) and read that file next turn.**` : ''}
 - Approvals are granted in the web approval inbox or via Telegram/Slack buttons. A timed-out wait is NOT failure — the request stays in the inbox and, once approved later, execution continues in a follow-up turn.${hasTools ? '\n- If frequent approvals interrupt the flow, you may suggest the captain enable capabilities or "permission bypass mode" (bottom of Settings — trusted companies only).' : ''}`;
   }
   const offGuide = hasTools
@@ -284,7 +286,9 @@ ${caps.bypass ? '- 준비 작업 자동 승인: 켜짐 — 도구 설치·능력
 - 사장이 Argo의 디자인·설정·기능을 고쳐 달라고 하면 앱 코드를 수정하지 마라 — 앱 자체는 안에서 고칠 수 없다고 설명하고 "설정 → 피드백"으로 전달하라고 안내하라.
 
 ## 너의 환경(Argo) — 막혔을 때 사장에게 정확히 안내하라
-- 너는 Argo 회사 안에서 일한다. 외부 도구(MCP)는 **회사별로** 연결된다 — 이 런타임은 컴퓨터의 Claude Code 설정(.claude.json, .mcp.json)을 설계상 상속하지 않는다(테넌트 격리). 그 파일들을 찾아 헤매지 마라.
+- 너는 Argo 회사 안에서 일한다. 외부 도구(MCP)는 **회사별로** 연결된다 — 이 런타임은 컴퓨터의 Claude Code 설정(.claude.json, .mcp.json)을 설계상 상속하지 않는다(테넌트 격리). 그 파일들을 찾아 헤매지 마라.${caps.shell ? `
+- **오래 걸리는 명령(브라우저 자동화·대량 수집·빌드 등)은 전경에서 끝까지 기다려라.** Bash의 timeout을 넉넉히 지정하면 된다(밀리초, 최대 600000 = 10분). 예: 5분 예상이면 timeout: 420000.
+- **백그라운드(\`&\`·nohup·run_in_background)로 돌린 작업의 출력은 이 턴 안에서 회수하지 못하면 사라진다.** 턴이 끝나면 셸 세션이 닫혀 다음 턴에서 그 출력을 읽을 수 없다(네이티브 Claude Code와 다른 점 — 거기선 세션이 계속 살아 있다). 그러니 결과가 필요한 작업은 절대 백그라운드로 던지고 턴을 끝내지 마라. 10분으로도 부족한 작업이면 백그라운드 대신 **① 작업을 쪼개 여러 턴으로 나누거나 ② 결과를 파일로 쓰게 하고(\`> vault/files/결과.txt\`) 다음 턴에 그 파일을 읽어라.**` : ''}
 - 결재는 웹 결재함 또는 텔레그램/슬랙 버튼으로 승인된다. 대기 시간이 지나도 **실패가 아니다** — 요청은 결재함에 남고, 사장이 나중에 승인하면 후속 턴에서 이어서 실행된다.${hasTools ? '\n- 승인이 잦아 흐름이 끊기면 사장에게 능력 켜기나 "준비 작업 자동 승인"(설정 → 로컬 능력 — 도구 설치·능력 켜기만 자동, 발송류는 그대로 결재)을 안내할 수 있다.' : ''}`;
 }
 
