@@ -676,7 +676,7 @@ export async function runnerCredEnv(wsId, runner) {
   if (runner === 'gemini') {
     const g = await geminiTurnHome(wsId, cred);
     if (!g) return null; // host인데 호스트 로그인이 없음 — 폴백 없음(명시 연결 원칙)
-    return { env: { HOME: g.home, ...g.env }, home: g.home, authType: g.authType };
+    return { env: { ...homeEnv(g.home), ...g.env }, home: g.home, authType: g.authType };
   }
   // host 마커 — 이 컴퓨터 CLI 로그인 경로(codexHome 상속 등)를 명시 옵트인으로 사용. env 주입 없음.
   if (cred.type === 'host') return null;
@@ -709,6 +709,19 @@ export async function runnerCredEnv(wsId, runner) {
     return { env: { OPENAI_API_KEY: '' }, home: dir };
   }
   return null;
+}
+
+/** 격리 홈을 자식 프로세스에 알리는 env — **플랫폼별로 변수가 다르다**(순수).
+    Node의 os.homedir()는 Windows에서 USERPROFILE을 보고 HOME은 무시한다. HOME만 주면 Windows에서
+    gemini CLI가 진짜 사용자 홈(C:\Users\...\.gemini)을 읽어 인증 설정을 못 찾고 죽는다 —
+    실사용 신고 2026-07-26: "러너 실행 실패 (exit 41): ...\.gemini\settings.json or specify one of
+    the following environment variables before running: GEMINI_API_KEY". 리눅스·맥은 HOME 그대로.
+    (export: 회귀 테스트용 — 순수 함수) */
+export function homeEnv(home, platform = process.platform) {
+  if (platform !== 'win32') return { HOME: home };
+  // HOME도 함께 준다 — 일부 도구는 여전히 HOME을 본다(둘 다 같은 곳을 가리키게 해 분기 없음)
+  const m = /^([A-Za-z]:)(.*)$/.exec(home);
+  return { HOME: home, USERPROFILE: home, ...(m ? { HOMEDRIVE: m[1], HOMEPATH: m[2] } : {}) };
 }
 
 /** gemini 턴용 격리 HOME 준비 — 세 자격 모드 공통. 반환 { home, authType, env } | null.
@@ -922,7 +935,7 @@ export async function probeGeminiOAuth(credsJson) {
     const r = await exec(cmd.file, [...cmd.args, '-p', 'reply with exactly: ok', '--approval-mode', 'auto_edit'], {
       timeout: 90_000, maxBuffer: 8e6,
       // 호스트에 API 키 env가 있으면 oauth 대신 그 키로 성공해 오탐 통과 — 이 프로브는 oauth만 본다
-      env: { ...scrubServerSecrets(process.env, 'gemini'), HOME: home, GEMINI_API_KEY: '', GOOGLE_API_KEY: '' },
+      env: { ...scrubServerSecrets(process.env, 'gemini'), ...homeEnv(home), GEMINI_API_KEY: '', GOOGLE_API_KEY: '' },
     }).then(
       (x) => ({ out: `${x.stdout}\n${x.stderr}`, failed: false }),
       (e) => ({ out: `${e.stdout ?? ''}\n${e.stderr ?? ''}\n${e.message ?? ''}`, failed: true }),

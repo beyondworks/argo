@@ -74,3 +74,20 @@ test('usableRunnerNames: 연결(유효)만, pickRunner 순서(glm→kimi), 이�
   assert.deepEqual(usableRunnerNames({}), []);
   assert.deepEqual(usableRunnerNames(null), []);
 });
+
+/* ── 격리 홈 env — 플랫폼별 변수(실사용 신고 2026-07-26: Windows gemini exit 41) ── */
+test('homeEnv: Windows는 USERPROFILE까지 준다 — HOME만 주면 CLI가 진짜 홈을 읽는다', async () => {
+  const { homeEnv } = await import('../src/runners.mjs');
+  assert.deepEqual(homeEnv('/Users/x/.argo/gemini-home-ws', 'darwin'), { HOME: '/Users/x/.argo/gemini-home-ws' });
+  const win = homeEnv('C:\\Users\\kim\\.argo\\gemini-home-ws', 'win32');
+  assert.equal(win.USERPROFILE, 'C:\\Users\\kim\\.argo\\gemini-home-ws');
+  assert.equal(win.HOME, win.USERPROFILE, '두 변수가 같은 곳을 가리켜야 도구별 분기가 없다');
+  assert.equal(win.HOMEDRIVE, 'C:');
+  assert.equal(win.HOMEPATH, '\\Users\\kim\\.argo\\gemini-home-ws');
+});
+
+/* ── 준비 작업 자동 승인(bypass) — 유건 지시 2026-07-26 ── */
+test('capabilities: bypass가 정식 토글로 노출되고 로드에서 꺼지지 않는다', async () => {
+  const { CAPABILITY_DEFS } = await import('../src/capabilities.mjs');
+  assert.ok(CAPABILITY_DEFS.some(([k]) => k === 'bypass'), 'UI 목록에 bypass가 있어야 켜고 끌 수 있다');
+});

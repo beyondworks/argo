@@ -245,7 +245,7 @@ export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true
 - File system (outside the workspace): ${caps.fs ? 'allowed — be careful, and file an approval first for destructive changes' : `off — never read or write files outside the vault. ${offGuide}`}
 - Web browsing: ${caps.browser ? 'allowed (web fetch/search tools)' : `off — ${offGuide}`}
 - Shell commands: ${runner === 'gemini' ? 'not supported on this runner (Gemini) — for shell work, tell the captain to assign a crew on a shell-capable runner (e.g. Claude)' : caps.shell ? 'allowed' : `off — ${offGuide}`}
-${caps.bypass ? '- Permission bypass mode: ON — actions run without approval, so double-check irreversible commands yourself' : '- Side-effecting actions continue after approval — waiting for approval is the normal flow'}
+${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and capability grants run without approval. This does NOT extend to actions that leave the company (sending, publishing, purchasing, deleting, contracts) or to hiring/profile changes: those still require approval, so keep filing them.' : '- Side-effecting actions continue after approval — waiting for approval is the normal flow'}
 
 ## Tools & skills — use them proactively
 - Company skills (skills/*.md) are auto-injected into your instructions every turn — apply them to matching work immediately.
@@ -272,7 +272,7 @@ ${caps.bypass ? '- Permission bypass mode: ON — actions run without approval, 
 - 파일 시스템(워크스페이스 밖): ${caps.fs ? '허용 — 신중하게, 파괴적 변경은 결재를 먼저 올려라' : `꺼짐 — vault 밖의 파일은 읽지도 쓰지도 마라. ${offGuide}`}
 - 웹 브라우징: ${caps.browser ? '허용(웹 조회·검색 도구)' : `꺼짐 — ${offGuide}`}
 - 셸 명령: ${runner === 'gemini' ? '이 러너(Gemini)에서는 지원되지 않는다 — 셸이 필요한 작업은 셸을 지원하는 러너(Claude 등)의 크루에게 맡기도록 사장에게 안내하라' : caps.shell ? '허용' : `꺼짐 — ${offGuide}`}
-${caps.bypass ? '- 권한 우회 모드: 켜짐 — 결재 없이 실행되니 되돌릴 수 없는 명령은 스스로 한 번 더 확인하라' : '- 부작용 있는 실행은 결재 승인 후 이어진다 — 승인 대기는 정상 흐름이다'}
+${caps.bypass ? '- 준비 작업 자동 승인: 켜짐 — 도구 설치·능력 켜기는 결재 없이 진행된다. 단 **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이다 — 자동 승인이 그 경계를 넘지 않는다. 계속 결재를 올려라.' : '- 부작용 있는 실행은 결재 승인 후 이어진다 — 승인 대기는 정상 흐름이다'}
 
 ## 도구·스킬 — 필요하면 알아서 불러 써라
 - 회사 스킬(skills/*.md)은 매 턴 네 지침에 자동 주입된다 — 해당 유형 작업이면 즉시 적용하라.
@@ -285,7 +285,7 @@ ${caps.bypass ? '- 권한 우회 모드: 켜짐 — 결재 없이 실행되니 �
 
 ## 너의 환경(Argo) — 막혔을 때 사장에게 정확히 안내하라
 - 너는 Argo 회사 안에서 일한다. 외부 도구(MCP)는 **회사별로** 연결된다 — 이 런타임은 컴퓨터의 Claude Code 설정(.claude.json, .mcp.json)을 설계상 상속하지 않는다(테넌트 격리). 그 파일들을 찾아 헤매지 마라.
-- 결재는 웹 결재함 또는 텔레그램/슬랙 버튼으로 승인된다. 대기 시간이 지나도 **실패가 아니다** — 요청은 결재함에 남고, 사장이 나중에 승인하면 후속 턴에서 이어서 실행된다.${hasTools ? '\n- 승인이 잦아 흐름이 끊기면 사장에게 능력 켜기나 "권한 우회 모드"(설정 맨 아래 — 신뢰하는 회사 전용)를 안내할 수 있다.' : ''}`;
+- 결재는 웹 결재함 또는 텔레그램/슬랙 버튼으로 승인된다. 대기 시간이 지나도 **실패가 아니다** — 요청은 결재함에 남고, 사장이 나중에 승인하면 후속 턴에서 이어서 실행된다.${hasTools ? '\n- 승인이 잦아 흐름이 끊기면 사장에게 능력 켜기나 "준비 작업 자동 승인"(설정 → 로컬 능력 — 도구 설치·능력 켜기만 자동, 발송류는 그대로 결재)을 안내할 수 있다.' : ''}`;
 }
 
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단). */
@@ -327,6 +327,19 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
     async ({ source, id, why }) => {
       // 결재 카드 문구 조작(개행·제어문자 주입으로 사장 기만) 방어 — id를 한 줄로 살균한다.
       const cleanId = String(id).replace(/[\r\n\t\x00-\x1f]+/g, ' ').trim().slice(0, 64);
+      // 준비 작업 자동 승인(caps.bypass) — 도구 설치는 되돌리기 쉽고(설정에서 제거) 회사 밖으로
+      // 나가지 않는다. 사장이 이 모드를 켰다면 결재로 흐름을 끊지 않는다(유건 지시 2026-07-26).
+      // 발송·게시·구매·삭제는 이 분기에 없다 — 그건 request_approval이 계속 결재를 받는다.
+      if (caps?.bypass) {
+        try {
+          const { installMcp, importHostMcp } = await import('./market.mjs');
+          const r = source === 'host' ? await importHostMcp(wsId, cleanId) : await installMcp(wsId, cleanId);
+          await appendEvent(wsId, { type: 'approval', slug: fromSlug, id: 'auto', action: `도구 설치(자동 승인): ${cleanId}`, status: 'approved' });
+          return text(`도구 "${r?.name ?? cleanId}"를 설치했다(준비 작업 자동 승인 모드). 다음 턴부터 쓸 수 있다 — 사장에게 설치 사실을 한 줄로 알리고 이어서 진행하라.`);
+        } catch (e) {
+          return text(`도구 설치 실패: ${String(e.message || e).slice(0, 200)}. 사장에게 알리고 다른 방법을 찾아라.`);
+        }
+      }
       const item = await addApproval(wsId, {
         slug: fromSlug, kind: 'mcp', ...(delegatedBy ? { from: delegatedBy } : {}),
         action: `도구 설치: ${cleanId} (${source === 'host' ? '이 컴퓨터에서 가져오기' : '카탈로그'})`,

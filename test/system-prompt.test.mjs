@@ -47,7 +47,7 @@ test('commonDirectives hasTools:false — 외부 러너용 보고·안내형 동
 
 test('commonDirectives en — hasTools 분기 영어판', () => {
   const t1 = commonDirectives({ caps: { bypass: true }, connectedMcp: ['slack'], hasTools: true, lang: 'en' });
-  assert.ok(t1.includes('request_approval tool') && t1.includes('bypass mode: ON') && t1.includes('slack'));
+  assert.ok(t1.includes('request_approval tool') && t1.includes('Auto-approve for preparation work: ON') && t1.includes('still require approval') && t1.includes('slack'));
   const t0 = commonDirectives({ caps: {}, connectedMcp: [], hasTools: false, lang: 'en' });
   assert.ok(t0.includes('no approval tool') && t0.includes('(none)'));
 });

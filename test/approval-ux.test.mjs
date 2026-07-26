@@ -54,13 +54,16 @@ test('addApproval: 위임 출처(from) 저장 — 카드·메신저 표기의 �
   assert.ok(!('from' in saved2), '위임이 아니면 from 자체가 없다');
 });
 
-test('CAPABILITY_DEFS: bypass 토글 제거(능력 토글이 곧 즉시 실행) + 설명에 명시', () => {
-  assert.ok(!CAPABILITY_DEFS.some(([k]) => k === 'bypass'), 'bypass는 설정에서 내려간다');
-  assert.equal(CAPABILITY_DEFS.length, 3);
-  assert.ok(CAPABILITY_DEFS.every(([, , desc]) => desc.includes('결재 없이')), '켜면 결재 없음이 설명에 보인다');
+test('CAPABILITY_DEFS: bypass는 정식 토글(준비 작업 자동 승인) — 사람 판단은 결재 유지', () => {
+  // 유건 지시 2026-07-26로 복귀: 도구 설치·능력 켜기는 자동 승인, 발송·게시·구매·삭제는 그대로 결재.
+  const bypass = CAPABILITY_DEFS.find(([k]) => k === 'bypass');
+  assert.ok(bypass, 'UI에서 켜고 끌 수 있어야 한다');
+  assert.equal(CAPABILITY_DEFS.length, 4);
+  assert.match(bypass[2], /발송|구매|삭제/, '자동 승인이 미치지 않는 경계가 설명에 보여야 한다');
+  assert.ok(CAPABILITY_DEFS.filter(([k]) => k !== 'bypass').every(([, , d]) => d.includes('결재 없이')));
 });
 
-test('loadCapabilities: 레거시 bypass:true는 3능력 켬으로 1회 이행(전권 고착 방지)', async () => {
+test('loadCapabilities: bypass 설정이 로드에서 되돌려지지 않는다(옛 마이그레이션 제거)', async () => {
   const { loadCapabilities } = await import('../src/capabilities.mjs');
   const { writeJsonAtomic } = await import('../src/jsonstore.mjs');
   const { paths } = await import('../src/workspace.mjs');
@@ -68,7 +71,7 @@ test('loadCapabilities: 레거시 bypass:true는 3능력 켬으로 1회 이행(�
   await mkdir(join(process.env.ARGO_ROOT, ws2), { recursive: true });
   await writeJsonAtomic(paths(ws2).capabilities, { fs: false, browser: false, shell: false, bypass: true });
   const caps = await loadCapabilities(ws2);
-  assert.deepEqual(caps, { fs: true, browser: true, shell: true, bypass: false }, '전권 → 3능력 켬 동등 이행');
-  const again = await loadCapabilities(ws2);
-  assert.equal(again.bypass, false, '이행은 1회로 고정(멱등)');
+  assert.equal(caps.bypass, true, '사용자가 켠 설정을 매 로드마다 끄면 안 된다');
+  assert.equal(caps.fs, false, '다른 능력을 임의로 켜지 않는다');
+  assert.equal((await loadCapabilities(ws2)).bypass, true, '반복 로드에도 유지');
 });
