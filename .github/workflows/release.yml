@@ -68,8 +68,17 @@ jobs:
       # 신규 기기 스모크 — CI macOS 러너는 claude CLI 미설치·빈 키체인·헤드리스라 신규 맥과 등가 조건.
       # 원클릭(setup-token 대행)이 번들 CLI로 시작돼 인증 URL·코드 프롬프트까지 도달하는지 검증한다.
       # 개발 PC(전부 설치·로그인된 환경) 실측은 이 실패 조건을 재현하지 못한다(실사용 신고 2026-07-22).
+      #
+      # 조건은 **러너 라벨이 아니라 OS로** 판정한다. 전엔 `matrix.os == 'macos-14'`로 라벨을 박아뒀는데
+      # v0.1.27에서 macos-14 → macos-15로 옮기며 조건이 아무 잡과도 안 맞아 이 스텝이 **영구 스킵**됐다
+      # (2026-07-26 발견 — 릴리스 4회를 게이트 없이 통과). 라벨은 러너 폐기 주기마다 바뀌므로 다시 박지 않는다.
+      # 두 맥 잡(실리콘·인텔) 모두에서 돈다: 잡은 빌드 때문에 이미 떠 있으므로 추가 러너 비용이 없고(스텝 30초 남짓),
+      # 번들 CLI·사이드카 node는 아키텍처별 별개 바이너리라 해석 경로가 실제로 다르다.
+      #
+      # 커버 범위 주의: 이 스모크는 **claude 원클릭**만 본다. codex auth.json 반입(신규 설치 401, 2026-07-26)은
+      # 실자격이 필요해 CI로 못 태우므로 test/codex-auth-import.test.mjs가 단위로 잠근다.
       - name: Fresh-device smoke (macOS one-click connect)
-        if: matrix.os == 'macos-14'
+        if: runner.os == 'macOS'
         shell: bash
         run: node scripts/smoke-fresh-device.mjs
 
