@@ -19,7 +19,8 @@
   font-weight: 45 920;
   font-style: normal;
   font-display: swap;
-  src: local('Pretendard Variable'), url('/fonts/PretendardVariable.woff2') format('woff2-variations');
+  /* local() 없이 동봉본만 — 사용자가 설치해 둔 구버전 Pretendard가 이기면 버전 고정 목적이 깨진다(검수) */
+  src: url('/fonts/PretendardVariable.woff2') format('woff2-variations');
 }
 
 :root {

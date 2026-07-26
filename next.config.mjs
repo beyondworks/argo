@@ -36,6 +36,11 @@ export default {
         { key: 'X-Content-Type-Options', value: 'nosniff' },
         { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
       ],
+    }, {
+      // 동봉 폰트 장기 캐시 — Next는 public/ 파일에 max-age=0을 주므로(검수 실측) 명시한다.
+      // 파일 내용이 바뀌면 경로(버전)를 바꾸는 전제의 immutable — 폰트 교체 시 파일명을 갈 것.
+      source: '/fonts/:path*',
+      headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
     }];
   },
 };

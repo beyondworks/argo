@@ -74,6 +74,8 @@ export async function middleware(req) {
 }
 
 export const config = {
-  // 정적 자산 제외 — 나머지 전부 게이트
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg).*)'],
+  // 정적 자산 제외 — 나머지 전부 게이트.
+  // fonts/ — 자체 호스팅 폰트(public/fonts). 게이트에 걸리면 /login 자체가 폰트 없이 뜬다
+  // (307 → HTML 본문이라 OTS 파싱 실패, 검수 실측 2026-07-26). 공개 정적 자산이라 제외해도 무해.
+  matcher: ['/((?!_next/static|_next/image|fonts/|favicon.ico|icon.svg).*)'],
 };
