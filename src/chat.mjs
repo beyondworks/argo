@@ -1,6 +1,7 @@
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
 import { readdir, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
@@ -16,6 +17,7 @@ import { addApproval } from './approvals.mjs';
 import { appendEvent } from './events.mjs';
 import { loadCapabilities } from './capabilities.mjs';
 import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
+import { detectRunnerDenial, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner } from './runners.mjs';
@@ -723,6 +725,19 @@ ${lang === 'en'
         }
       }
       if (!reply) throw new Error(`${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
+      // 러너 독립성 — 외부 CLI의 샌드박스 거부를 SDK 러너와 같은 능력 안내로 승격한다.
+      // SDK는 permission-gate가 도구 호출 전에 카드를 띄우지만 외부 CLI는 프로세스 안에서 거부돼
+      // 생 셸 에러("operation not permitted")만 나온다 — 사장이 "권한 다 켰는데 차단"으로 읽던 자리.
+      {
+        const denial = detectRunnerDenial(reply);
+        if (denial) {
+          const capOn = !!cliCaps[denial.cap];
+          if (!capOn) await suggestCapability(wsId, agentSlug, denial.cap); // SDK와 동일한 Yes/No 카드
+          const home = homedir();
+          const outsideHome = !!denial.path && denial.path.startsWith('/') && !denial.path.startsWith(`${home}/`);
+          reply += denialNote({ ...denial, capOn, lang, outsideHome });
+        }
+      }
       await appendUsage(wsId, {
         kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, runner,
         model: `${runner}${usedModel ? `:${usedModel}` : ''}`, usage: {}, costUsd: null, ms: Date.now() - t0,
