@@ -91,3 +91,13 @@ test('capabilities: bypass가 정식 토글로 노출되고 로드에서 꺼지�
   const { CAPABILITY_DEFS } = await import('../src/capabilities.mjs');
   assert.ok(CAPABILITY_DEFS.some(([k]) => k === 'bypass'), 'UI 목록에 bypass가 있어야 켜고 끌 수 있다');
 });
+
+/* ── 추론 강도: codex도 지원(실측 2026-07-26 codex-cli 0.144.1) ── */
+test('codexEffortArgs: 지원 값은 -c 인자로, max는 xhigh로 사상, 빈/미지원은 무인자', async () => {
+  const { codexEffortArgs } = await import('../src/runners.mjs');
+  assert.deepEqual(codexEffortArgs('low'), ['-c', 'model_reasoning_effort=low']);
+  assert.deepEqual(codexEffortArgs('xhigh'), ['-c', 'model_reasoning_effort=xhigh']);
+  assert.deepEqual(codexEffortArgs('max'), ['-c', 'model_reasoning_effort=xhigh'], 'max는 Claude 전용 명칭');
+  assert.deepEqual(codexEffortArgs(''), [], '미설정이면 모델 기본');
+  assert.deepEqual(codexEffortArgs('bogus'), [], '미지원 값은 조용히 무시(턴을 깨뜨리지 않는다)');
+});

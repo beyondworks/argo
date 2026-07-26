@@ -676,13 +676,13 @@ ${lang === 'en'
       let usedModel = effModel;
       let reply;
       try {
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '' });
       } catch (e) {
         const gated = !!(effModel && RUNNERS[runner]?.models.find((m) => m.id === effModel)?.gated);
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '' });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
