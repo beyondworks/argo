@@ -150,6 +150,28 @@ test('주제 노트가 상한을 넘으면 최신순으로 자르고, 잘렸다�
   assert.equal(cached, plain);
 });
 
+// :3001 단일 프로세스에서 웹 턴과 텔레그램 턴이 겹치는 건 기본값이다(mutex.mjs가 기정사실로 문서화).
+// busy timeout으로 기다리면 동기 API가 이벤트 루프를 세우고, 락을 쥔 쪽은 그 루프가 있어야 진행하므로
+// 자기 자신과의 데드락 = 타임아웃 만료가 보장된다(검수 CRITICAL: 5초 전면 정지 실측 — HTTP·게이트웨이·
+// 스케줄러 동반 정지). 올바른 구현은 인프로세스 직렬화(withLock)라 동시 턴이 빠르게 순차 완료된다.
+test('같은 프로세스 동시 턴이 이벤트 루프를 세우지 않는다 (5초 데드락 회귀 가드)', async (t) => {
+  if (!sqliteAvailable()) return t.skip('node:sqlite 없음');
+  const p = await seed('c-parallel');
+  await updateIndex('c-parallel'); // 캐시 예열 — 경합은 예열 후 무변경 턴에서도 났다
+  let maxGap = 0; let last = Date.now();
+  const tick = setInterval(() => { const now = Date.now(); if (now - last > maxGap) maxGap = now - last; last = now; }, 25);
+  const t0 = Date.now();
+  await Promise.all([updateIndex('c-parallel'), updateIndex('c-parallel'), updateIndex('c-parallel')]);
+  const elapsed = Date.now() - t0;
+  clearInterval(tick);
+  // 결함 구현은 5초 타임아웃 만료가 "보장"이라 하한이 5,000ms다 — 4,000ms 경계는 머신이 느려도 오탐 없다
+  assert.ok(elapsed < 4000, `동시 턴 3개에 ${elapsed}ms — busy 대기가 이벤트 루프를 잡고 있다`);
+  assert.ok(maxGap < 1500, `이벤트 루프 최대 정지 ${maxGap}ms — 서버 전체가 멈추는 시간이다`);
+  assert.ok(existsSync(dbPath('c-parallel')), '동시 턴 경합으로 캐시가 삭제됐다');
+  const { plain, cached } = await renderBoth('c-parallel');
+  assert.equal(cached, plain, '동시 턴 후 캐시와 정본이 갈렸다');
+});
+
 test('캐시 DB는 동기화 대상이 아니다 — 기기별 산출물이다', () => {
   for (const rel of ['.index.sqlite', '.index.sqlite-wal', '.index.sqlite-shm', '.index.sqlite-journal']) {
     assert.equal(EXCLUDE(rel), true, `${rel}이 동기화를 탄다`);

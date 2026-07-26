@@ -13,6 +13,7 @@ import { join, relative, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { paths, WS_ROOT } from './workspace.mjs';
 import { docMeta } from './vaultdoc.mjs';
+import { withLock } from './mutex.mjs';
 
 const SCHEMA_VERSION = '1';
 const require = createRequire(import.meta.url); // 동적 import는 동기 기능 탐지에 못 쓴다
@@ -48,8 +49,13 @@ const isBusy = (e) => /database is locked|busy/i.test(String(e?.message ?? e));
 function open(wsId) {
   const p = paths(wsId);
   const file = join(p.root, '.index.sqlite');
-  // busy timeout — 기본 0이면 경합 즉시 throw다. 서버·크루·게이트웨이가 같은 워크스페이스를 동시에 만진다.
-  const db = new sqliteMod.DatabaseSync(file, { timeout: 5_000 });
+  // busy timeout은 일부러 0(기본값)이다. DatabaseSync는 동기 API라 busy 대기가 스레드를 통째로
+  // 세우는데, 락을 쥔 쪽은 await(readdir·stat·readFile)로 진행해야 하고 그 진행에 필요한 이벤트
+  // 루프를 대기자가 막는다 — 같은 프로세스에서 턴 2개가 겹치면 자기 자신과의 데드락으로 타임아웃
+  // 만료가 보장된다(검수 CRITICAL: 5초 전면 정지 실측, HTTP·게이트웨이·스케줄러까지 동반 정지).
+  // 같은 프로세스 경합은 withLock이 원천 차단하고, 다른 프로세스와의 경합은 즉시 실패 → 정본
+  // 폴백이 맞다 — 기다리는 것 자체가 이 캐시가 없애려는 지연보다 크다.
+  const db = new sqliteMod.DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL');
   db.exec(DDL);
   const ver = db.prepare("SELECT v FROM meta WHERE k = 'schema_version'").get()?.v;
@@ -137,6 +143,12 @@ export async function loadDocsMeta(wsId) {
     }
     return null;
   }
+  // 같은 프로세스의 동시 턴(웹+텔레그램 — mutex.mjs가 기정사실로 문서화)을 wsId 단위로 직렬화한다.
+  // 이게 없으면 두 턴이 같은 DB를 경쟁하고, 동기 API 특성상 대기 = 이벤트 루프 정지다(open() 주석).
+  return withLock(`memindex:${wsId}`, () => loadDocsMetaLocked(wsId));
+}
+
+async function loadDocsMetaLocked(wsId) {
   let handle;
   let busy = false;
   let failed = false;
@@ -184,12 +196,15 @@ export async function invalidatePath(absFile) {
   const rel = relative(WS_ROOT, absFile).split(sep).join('/');
   const wsId = rel.split('/')[0];
   if (!wsId || rel.startsWith('..')) return; // 워크스페이스 밖 — 캐시와 무관
-  let handle;
-  try {
-    handle = open(wsId);
-    const docRel = relative(paths(wsId).vault, absFile).split(sep).join('/');
-    handle.db.prepare('DELETE FROM docs WHERE rel = ?').run(docRel);
-  } catch { /* 캐시 무효화 실패는 치명적이지 않다 */ } finally {
-    try { handle?.db.close(); } catch { /* 이미 닫힘 */ }
-  }
+  // loadDocsMeta와 같은 락 — 같은 프로세스에서 인덱스 갱신과 겹쳐 BUSY로 조용히 무산되는 것을 막는다
+  await withLock(`memindex:${wsId}`, () => {
+    let handle;
+    try {
+      handle = open(wsId);
+      const docRel = relative(paths(wsId).vault, absFile).split(sep).join('/');
+      handle.db.prepare('DELETE FROM docs WHERE rel = ?').run(docRel);
+    } catch { /* 캐시 무효화 실패는 치명적이지 않다 — 다음 내용 변경에서 회복 */ } finally {
+      try { handle?.db.close(); } catch { /* 이미 닫힘 */ }
+    }
+  });
 }
