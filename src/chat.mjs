@@ -17,7 +17,7 @@ import { addApproval } from './approvals.mjs';
 import { appendEvent } from './events.mjs';
 import { loadCapabilities } from './capabilities.mjs';
 import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
-import { detectRunnerDenial, denialNote } from './runner-denial.mjs';
+import { detectRunnerDenial, detectDeniedNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner } from './runners.mjs';
@@ -727,23 +727,38 @@ ${lang === 'en'
       if (!reply) throw new Error(`${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
       // 러너 독립성 — 외부 CLI의 샌드박스 거부를 SDK 러너와 같은 능력 안내로 승격한다.
       // SDK는 permission-gate가 도구 호출 전에 카드를 띄우지만 외부 CLI는 프로세스 안에서 거부돼
-      // 생 셸 에러("operation not permitted")만 나온다 — 사장이 "권한 다 켰는데 차단"으로 읽던 자리.
-      // codex 한정 — gemini는 샌드박스가 없어 fs 거부가 caps와 무관한 OS 오류다(능력 원인 단정 = 거짓 안내).
+      // 크루가 생 에러를 옮기거나("zsh: operation not permitted") 자연어로 서술만 한다(실측 캡처 2건)
+      // — 사장이 "권한 다 켰는데 차단"으로 읽던 자리. codex 한정 — gemini는 샌드박스가 없어
+      // fs 거부가 caps와 무관한 OS 오류다(능력 원인 단정 = 거짓 안내, 검수 MEDIUM-2).
       if (runner === 'codex') {
-        const denial = detectRunnerDenial(reply);
+        let denial = detectRunnerDenial(reply); // strict — 생 출력 줄. 어느 능력 상태든 신뢰
+        let narrated = false;
+        if (!denial) {
+          // 서술형("쓰기 권한이 없습니다") — 해당 능력이 꺼져 있을 때만 채택한다. 오탐해도
+          // "꺼진 능력을 켤까요?"라는 사실 기반 제안에 머문다(능력 ON 오정보는 strict 전용).
+          const n = detectDeniedNarration(reply);
+          if (n && !cliCaps[n.cap]) { denial = { ...n, path: '' }; narrated = true; }
+        }
         if (denial) {
           const capOn = !!cliCaps[denial.cap];
           const home = homedir();
-          // 홈 밖 판정 — 유닉스 절대경로와 윈도우 드라이브경로 모두(윈도우는 대소문자 무시)
-          const outsideHome = !!denial.path && (
-            denial.path.startsWith('/') ? !(denial.path === home || denial.path.startsWith(`${home}/`))
-            : /^[A-Za-z]:\\/.test(denial.path) ? !denial.path.toLowerCase().startsWith(home.toLowerCase())
-            : false);
+          // 홈 밖 판정 — 판정 불가면 false(카드 유지)로 보수화(검수 2R: 드라이브 유실이
+          // outsideHome 오판 → 카드 억제 + 오안내로 이어졌다). 윈도우는 구분자 통일 + 대소문자 무시.
+          const norm = (s) => s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+          let outsideHome = false;
+          if (denial.path) {
+            if (/^[A-Za-z]:[\\/]/.test(denial.path)) {
+              const p = norm(denial.path), h = norm(home);
+              outsideHome = /^[a-z]:\//.test(h) ? !(p === h || p.startsWith(`${h}/`)) : false;
+            } else if (denial.path.startsWith('/') && home.startsWith('/')) {
+              outsideHome = !(denial.path === home || denial.path.startsWith(`${home}/`));
+            }
+          }
           // 켜도 안 열리는 조합(fs OFF + 홈 밖)에는 카드를 올리지 않는다 — 승인해 줬는데 또 막히면
           // "켰는데도 차단"이라는 신고 문구를 이 기능이 재생산한다(검수 HIGH-1).
           const wantCard = !capOn && !(denial.cap === 'fs' && outsideHome);
           const card = wantCard ? await suggestCapability(wsId, agentSlug, denial.cap, null, from) : null;
-          reply += denialNote({ ...denial, capOn, lang, outsideHome, cardShown: !!card });
+          reply += denialNote({ ...denial, capOn, lang, outsideHome, cardShown: !!card, narrated });
         }
       }
       await appendUsage(wsId, {

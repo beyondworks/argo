@@ -1,47 +1,63 @@
 // 외부 CLI 러너(codex)의 샌드박스 거부를 Argo의 능력 계층으로 승격한다.
 //
 // 왜 필요한가 — SDK(Claude Code) 러너는 permission-gate가 도구 호출을 가로채 "켤까요?" 카드를
-// 띄운다. 외부 CLI는 그 자리가 없다: 거부가 프로세스 안에서 일어나 `zsh:1: operation not
-// permitted: /path` 같은 생 셸 에러로만 흘러나온다. 사장은 카드도 못 보고 안내도 못 받은 채
-// "권한을 다 켜놨는데도 쓰기가 차단된다"로 읽는다(실사용 신고 2026-07-26, 재현 확인).
+// 띄운다. 외부 CLI는 그 자리가 없다: 거부가 프로세스 안에서 일어나고, 사장은 카드도 안내도 못
+// 받은 채 "권한을 다 켜놨는데도 쓰기가 차단된다"로 읽는다(실사용 신고 2026-07-26).
 //
-// 범위: codex 전용이다(배선도 chat.mjs에서 codex만 태운다). gemini는 샌드박스가 없어 fs 거부가
-// caps와 무관한 OS 오류다 — 능력 원인으로 단정하면 거짓 안내가 된다(검수 MEDIUM-2, 2026-07-26).
+// 두 단계 탐지 — 실측 근거(2026-07-26, codex-cli 0.144.1 캡처 2건):
+//  ① 생 에러("reply with the exact error" 지시): `zsh:1: operation not permitted: /path` 그대로.
+//  ② 크루형 지시(한국어 페르소나): 최종 메시지에 생 에러가 없고 "지정한 Desktop 경로에 쓰기
+//     권한이 없습니다"처럼 **자연어로 서술**된다 — 정규식 생 에러 탐지로는 절대 안 잡힌다.
+// 그래서 strict(생 출력 줄만, 어느 능력 상태든 신뢰) + narration(서술 표현, **능력 OFF일 때만**
+// 헤지 문구로) 2단이다. 서술 탐지를 능력 OFF로 게이트하는 이유: 오탐하더라도 "꺼져 있는 능력을
+// 켤까요?"라는 사실 기반 제안에 그쳐 오정보가 되지 않는다. 능력 ON의 오정보("켰는데도 차단"
+// 안내)는 strict 매칭에서만 나올 수 있게 잠근다(검수 2라운드 2026-07-26).
 //
-// 오탐 방어(검수 HIGH-2, 실측 5/5): 크루가 에러를 *인용·설명*하는 정상 답변("아까 나온 zsh:1:…는
-// 샌드박스가 막은 것입니다")을 거부로 오인하면, 아무것도 안 막힌 턴에 카드·오정보가 붙는다.
-// 그래서 (a) 코드펜스(``` 블록) 안은 제외하고 (b) 생 출력 형태만 — 줄 머리에서 시작하는 에러만 —
-// 인정한다. 설명 문장은 한국어·영어 서두가 붙어 줄 머리 매칭에서 자연히 걸러진다.
+// 범위: codex 전용(배선도 chat.mjs에서 codex만 태운다). gemini는 샌드박스가 없어 fs 거부가
+// caps와 무관한 OS 오류다 — 능력 원인으로 단정하면 거짓 안내가 된다(검수 MEDIUM-2).
 
-/** 파일 쓰기 거부 — 생 출력 줄 형태(줄 머리 앵커). 캡처 1 = 대상 경로(유닉스 절대/홈, 윈도우 드라이브). */
 const BT = '`'; // 백틱 — String.raw 템플릿 안에 직접 못 쓴다(리터럴 종결)
-const PATH = String.raw`((?:\/|~\/|[A-Za-z]:\\)[^\s'"${BT},)]+)`;
-const Q = String.raw`['"${BT}]?`;
+// 경로: 유닉스 절대/홈 + 윈도우 드라이브(역슬래시·슬래시 둘 다 — C:/ 형태에서 드라이브가 잘리면
+// 홈 판정이 뒤집혀 카드가 억제된다, 검수 2R MEDIUM-2). 드라이브 대안을 앞에 둬 leftmost 매칭.
+const PATH = String.raw`([A-Za-z]:[\\/][^\s'"${BT},)]+|(?:\/|~\/)[^\s'"${BT},)]+)`;
+// 접두 토큰: ASCII 계열만(명령·파일명·"Error") — 한글 서두("참고:"·"주의:")가 통과하면
+// 설명문이 생 출력으로 오인된다(검수 2R MEDIUM-1).
+const PRE = String.raw`(?:[\w./\\-]{1,40}:\s*){0,2}`;
+// 줄 머리: 공백 0~3칸만 — 4칸/탭 들여쓰기는 마크다운 코드블록(인용 예시)이다(검수 2R HIGH-2).
+const HEAD = String.raw`^ {0,3}`;
 const FS_DENIAL = [
-  new RegExp(String.raw`^\s*(?:zsh|bash|sh|dash):\s*(?:\d+:\s*)?operation not permitted:\s*${PATH}`, 'i'), // codex seatbelt 실측 형태
-  new RegExp(String.raw`^\s*(?:\S{1,40}:\s*)?(?:Error:\s*)?(?:EPERM|EACCES)\b[^\n]*?${Q}${PATH}`),
-  new RegExp(String.raw`^\s*(?:\S{1,40}:\s*)?permission denied[^\n]*?${Q}${PATH}`, 'i'),
-  new RegExp(String.raw`^\s*(?:\S{1,40}:\s*)?${PATH}[^\n]*?read-only file system`, 'i'), // cp류는 경로가 문구 앞
-  new RegExp(String.raw`^\s*(?:\S{1,40}:\s*)?read-only file system[^\n]*?${Q}${PATH}`, 'i'),
+  new RegExp(String.raw`${HEAD}(?:zsh|bash|sh|dash):\s*(?:\d+:\s*)?operation not permitted:\s*${PATH}`, 'i'), // codex seatbelt 실측 형태
+  new RegExp(String.raw`${HEAD}${PRE}(?:EPERM|EACCES):[^\n]*?['"${BT}]?${PATH}`), // 콜론 필수 — "EACCES 오류는…" 설명문 차단
+  new RegExp(String.raw`${HEAD}${PRE}permission denied[^\n]*?['"${BT}]?${PATH}`, 'i'),
+  new RegExp(String.raw`${HEAD}${PRE}${PATH}[^\n]*?read-only file system`, 'i'), // cp류는 경로가 문구 앞
+  new RegExp(String.raw`${HEAD}${PRE}read-only file system[^\n]*?['"${BT}]?${PATH}`, 'i'),
 ];
 
-/** 네트워크 거부 — codex는 browser 능력이 꺼지면 network_access=false라 DNS부터 막힌다.
-    역시 생 출력 줄만(curl/노드 에러 형태). 설명 문장 속 인용은 줄 머리 앵커가 거른다. */
+// 네트워크 거부 — codex는 browser 능력이 꺼지면 network_access=false라 DNS부터 막힌다.
+// 생 에러 줄에는 한글이 없다 — 한글 포함 줄은 설명문으로 보고 건너뛴다(NET 전용 가드).
 const NET_DENIAL = [
-  /^\s*curl:\s*\(\d+\)\s*could not resolve host/i,
-  /^\s*(?:\S{1,40}:\s*)?(?:Error:\s*)?(?:getaddrinfo\s+)?(?:ENOTFOUND|EAI_AGAIN)\b/,
-  /^\s*(?:\S{1,40}:\s*)?(?:name or service|nodename nor servname) not known/i,
-  /^\s*(?:\S{1,40}:\s*)?network is unreachable/i,
-  /^\s*(?:\S{1,40}:\s*)?temporary failure in name resolution/i,
+  new RegExp(String.raw`${HEAD}curl:\s*\(\d+\)\s*could not resolve host`, 'i'),
+  new RegExp(String.raw`${HEAD}${PRE}(?:getaddrinfo\s+)?(?:ENOTFOUND|EAI_AGAIN)\s+[\w.-]*\.[\w-]+`), // 점 있는 호스트 필수 — "ENOTFOUND는…" 차단
+  new RegExp(String.raw`${HEAD}${PRE}(?:name or service|nodename nor servname) not known`, 'i'),
+  new RegExp(String.raw`${HEAD}${PRE}network is unreachable`, 'i'),
+  new RegExp(String.raw`${HEAD}${PRE}temporary failure in name resolution`, 'i'),
 ];
 
-/** 코드펜스 밖의 줄만 남긴다 — 크루가 에러를 예시로 보여주는 정석 표기가 코드블록이다. */
+/** 코드펜스 밖의 줄만 — 크루가 에러를 예시로 보여주는 정석 표기가 코드블록이다.
+    펜스는 여는 마커의 문자·길이를 기억해 같은 종류·같은 길이 이상일 때만 닫는다
+    (```…~~~ 혼합, 4중 백틱 안 3중 백틱에서 토글이 뒤집히던 결함 — 검수 2R LOW-2). */
 function unfencedLines(text) {
   const out = [];
-  let fenced = false;
+  let fence = null; // { ch, len }
   for (const line of String(text).split('\n')) {
-    if (/^\s*(?:```|~~~)/.test(line)) { fenced = !fenced; continue; }
-    if (!fenced) out.push(line);
+    const m = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (m) {
+      const ch = m[1][0], len = m[1].length;
+      if (!fence) fence = { ch, len };
+      else if (fence.ch === ch && len >= fence.len) fence = null;
+      continue;
+    }
+    if (!fence) out.push(line);
   }
   return out;
 }
@@ -49,7 +65,7 @@ function unfencedLines(text) {
 /** 경로 꼬리 정리 — 문장 끝 마침표·따옴표가 경로에 붙어 들어오는 것 방지(검수 LOW-3). */
 const cleanPath = (p) => String(p ?? '').replace(/[.,;:'"`)]+$/, '');
 
-/** 러너 출력에서 능력 거부를 찾는다(순수) — { cap, path } 또는 null.
+/** 생 출력 거부 탐지(순수, strict) — { cap, path } 또는 null. 어느 능력 상태에서든 신뢰한다.
     fs를 먼저 본다: 네트워크 문구가 더 일반적이라 오탐 여지가 크다. */
 export function detectRunnerDenial(text) {
   const s = String(text ?? '');
@@ -62,6 +78,7 @@ export function detectRunnerDenial(text) {
     }
   }
   for (const line of lines) {
+    if (/[가-힣]/.test(line)) continue; // 생 네트워크 에러 줄에 한글은 없다
     for (const re of NET_DENIAL) {
       if (re.test(line)) return { cap: 'browser', path: '' };
     }
@@ -69,13 +86,29 @@ export function detectRunnerDenial(text) {
   return null;
 }
 
+/** 서술형 거부 탐지(순수) — 실측 캡처 ②: codex는 거부를 자연어로 서술한다
+    ("지정한 Desktop 경로에 쓰기 권한이 없습니다"). { cap } 또는 null.
+    ⚠ 호출부는 반드시 **해당 능력이 OFF일 때만** 이 결과를 써야 한다 — 오탐해도
+    "꺼진 능력을 켤까요?"라는 사실 기반 제안에 머물게 하는 안전선이다. */
+export function detectDeniedNarration(text) {
+  const s = String(text ?? '');
+  if (!s) return null;
+  if (/쓰기 권한이 없|쓰기가 (?:거부|차단|제한)|권한이 없어[^\n]{0,20}(?:쓰|저장|만들)|(?:저장|생성)할 수 없[^\n]{0,30}권한|밖(?:에|의)[^\n]{0,15}(?:쓸 수 없|저장할 수 없)|(?:not permitted|permission denied|no write (?:access|permission))/i.test(s)) {
+    return { cap: 'fs' };
+  }
+  if (/(?:네트워크|인터넷|웹)에? 접근(?:이|할 수) (?:막|없|차단|불가)|웹 검색(?:을|이) (?:할 수 없|막|차단)|네트워크가 차단|(?:network|internet) (?:access )?(?:is )?(?:blocked|disabled|unavailable)/i.test(s)) {
+    return { cap: 'browser' };
+  }
+  return null;
+}
+
 /** 거부 안내문(순수). 갈래:
-    - 능력 OFF + 홈 안 경로 → "켤까요? 카드" (cardShown=false면 설정 경로 안내로 폴백 — 검수 LOW-2)
-    - 능력 OFF + 홈 밖 경로 → 켜도 안 되는 조합이다. 카드를 약속하지 않고 홈 안 이동을 안내(검수 HIGH-1 —
-      켜기 승인 후 같은 거부를 또 겪으면 "켰는데도 차단"이라는 신고 문구를 이 기능이 재생산한다)
-    - 능력 ON인데 차단 → 원인 후보를 단정 없이 나열(검수 MEDIUM-3): 홈 밖 경로 / OS 파일 권한 /
-      codex 연결 구버전(설정 미반영 — 실사용 전례 2026-07-22) */
-export function denialNote({ cap, path = '', capOn, lang = 'ko', outsideHome = false, cardShown = true }) {
+    - 능력 OFF + 홈 안 → "켤까요? 카드" (cardShown=false면 설정 경로 폴백 — 검수 LOW-2)
+    - 능력 OFF + 홈 밖(strict의 경로 있을 때만) → 켜도 안 되는 조합. 카드를 약속하지 않고
+      홈 안 이동 안내(검수 HIGH-1 — 켜기 승인 후 또 막히면 신고 문구를 재생산한다)
+    - 능력 ON인데 차단(strict 전용) → 원인 후보를 단정 없이 나열(검수 MEDIUM-3)
+    narrated=true(서술 탐지 유래)면 단정 대신 "~여서일 가능성이 큽니다"로 헤지한다. */
+export function denialNote({ cap, path = '', capOn, lang = 'ko', outsideHome = false, cardShown = true, narrated = false }) {
   const en = lang === 'en';
   const where = path ? (en ? ` (target: ${path})` : ` (대상: ${path})`) : '';
 
@@ -85,25 +118,22 @@ export function denialNote({ cap, path = '', capOn, lang = 'ko', outsideHome = f
         ? `\n\n---\n⚠ The write was blocked${where}. The target is outside your home folder — even turning the File system capability on only opens your home folder, so this path would stay blocked. Move the file under your home folder (Documents, Desktop, …) and ask me again.`
         : `\n\n---\n⚠ 쓰기가 막혔습니다${where}. 대상이 홈 폴더 밖입니다 — 파일 시스템 능력을 켜도 열리는 범위는 홈 폴더까지라 이 경로는 계속 막힙니다. 파일을 홈 폴더 안(문서·데스크탑 등)으로 옮기고 다시 시켜 주세요.`;
     }
+    const label = cap === 'browser'
+      ? (en ? 'Web browsing' : '웹 브라우징') : (en ? 'File system' : '파일 시스템');
+    const cause = narrated
+      ? (en ? `This looks blocked because **${label}** is off` : `**${label}** 능력이 꺼져 있어 막힌 것으로 보입니다`)
+      : (en ? `This was blocked because **${label}** is off` : `**${label}** 능력이 꺼져 있어 막혔습니다`);
     if (!cardShown) {
-      return cap === 'browser'
-        ? (en
-            ? `\n\n---\n⚠ This runner was blocked from reaching the network because **Web browsing** is off. Turn it on in **Settings → Local capabilities** and ask me again.`
-            : `\n\n---\n⚠ **웹 브라우징** 능력이 꺼져 있어 네트워크가 막혔습니다. **설정 → 로컬 능력**에서 켜신 뒤 다시 시켜 주세요.`)
-        : (en
-            ? `\n\n---\n⚠ The write was blocked because **File system** is off${where}. Turn it on in **Settings → Local capabilities** and ask me again.`
-            : `\n\n---\n⚠ **파일 시스템** 능력이 꺼져 있어 쓰기가 막혔습니다${where}. **설정 → 로컬 능력**에서 켜신 뒤 다시 시켜 주세요.`);
+      return en
+        ? `\n\n---\n⚠ ${cause}${where}. Turn it on in **Settings → Local capabilities** and ask me again.`
+        : `\n\n---\n⚠ ${cause}${where}. **설정 → 로컬 능력**에서 켜신 뒤 다시 시켜 주세요.`;
     }
-    return cap === 'browser'
-      ? (en
-          ? `\n\n---\n⚠ This runner was blocked from reaching the network because **Web browsing** is off. I've put a "turn it on?" card in your chat — approve it and I'll continue from where I stopped.`
-          : `\n\n---\n⚠ **웹 브라우징** 능력이 꺼져 있어 이 러너가 네트워크에서 막혔습니다. 대화창에 "켤까요?" 카드를 띄웠습니다 — 승인하시면 멈춘 자리에서 이어서 하겠습니다.`)
-      : (en
-          ? `\n\n---\n⚠ This runner was blocked from writing outside the company folder because **File system** is off${where}. I've put a "turn it on?" card in your chat — approve it and I'll continue from where I stopped.`
-          : `\n\n---\n⚠ **파일 시스템** 능력이 꺼져 있어 회사 폴더 밖 쓰기가 막혔습니다${where}. 대화창에 "켤까요?" 카드를 띄웠습니다 — 승인하시면 멈춘 자리에서 이어서 하겠습니다.`);
+    return en
+      ? `\n\n---\n⚠ ${cause}${where}. I've put a "turn it on?" card in your chat — approve it and I'll continue from where I stopped.`
+      : `\n\n---\n⚠ ${cause}${where}. 대화창에 "켤까요?" 카드를 띄웠습니다 — 승인하시면 멈춘 자리에서 이어서 하겠습니다.`;
   }
 
-  // 능력은 켜져 있는데 막혔다 — 원인을 단정하지 않고 후보를 나열한다(검수 MEDIUM-3).
+  // 능력은 켜져 있는데 막혔다(strict 매칭 전용) — 원인을 단정하지 않고 후보를 나열한다(검수 MEDIUM-3).
   if (cap === 'browser') {
     return en
       ? `\n\n---\n⚠ **Web browsing is already on**, but the network was still blocked. Likely one of: ① an actual network problem (offline, VPN, firewall), ② the runner connection not picking up settings — try reconnecting the runner in **Settings → AI connections** (or updating its CLI).`

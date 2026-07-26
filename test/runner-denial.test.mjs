@@ -1,24 +1,36 @@
 // 러너 독립성 가드 — 실사용 신고 2026-07-26: "권한을 다 켜놨는데도 쓰기 권한이 차단이라고 뜨는데".
-// 재현(codex-cli 0.144.1): 능력 OFF면 크루 답변에 아래 생 셸 에러만 나오고
-// SDK 러너와 달리 "켤까요?" 카드도, 능력 안내도 없었다.
-//   zsh:1: operation not permitted: /Users/yoogeon/argo-captest-off.txt
-// 검수(2026-07-26) 반영: 오탐(인용 답변) 실측 5건 → 줄 머리 앵커 + 코드펜스 제외,
-// HIGH-1(fs OFF+홈 밖에 카드 약속 금지), MEDIUM-3(켜짐 분기 단정 금지) 경계를 여기서 잠근다.
+// 실측 캡처 2건(codex-cli 0.144.1)이 이 테스트의 근거다:
+//  ① "reply with the exact error" 지시 → 생 에러 그대로: zsh:1: operation not permitted: /path
+//  ② 한국어 크루형 지시 → 생 에러 없이 서술만: "…현재는 지정한 Desktop 경로에 쓰기 권한이 없습니다."
+// 검수 1R(오탐 5건)·2R(들여쓴 코드블록·한글 접두·C:/ 드라이브 유실·펜스 토글) 경계를 전부 잠근다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { detectRunnerDenial, denialNote } from '../src/runner-denial.mjs';
+import { detectRunnerDenial, detectDeniedNarration, denialNote } from '../src/runner-denial.mjs';
 
-test('codex 샌드박스 거부(실측 문자열)를 fs 능력 거부로 인식한다', () => {
+test('실측 ①: codex 샌드박스 생 에러를 fs 거부로 인식한다', () => {
   const real = 'zsh:1: operation not permitted: /Users/yoogeon/argo-captest-off.txt';
   const d = detectRunnerDenial(real);
   assert.equal(d?.cap, 'fs');
   assert.equal(d.path, '/Users/yoogeon/argo-captest-off.txt');
-  // 답변 중간에 생 출력 줄로 들어와도 잡는다(줄 단위 매칭)
-  assert.equal(detectRunnerDenial(`쓰기를 시도했지만 실패했습니다.\n${real}`)?.cap, 'fs');
+  assert.equal(detectRunnerDenial(`쓰기를 시도했지만 실패했습니다.\n${real}`)?.cap, 'fs'); // 답변 중간 줄
 });
 
-test('EACCES·EPERM·읽기전용도 생 출력 줄 형태면 fs 거부로 인식한다', () => {
+test('실측 ②: 서술형 거부("쓰기 권한이 없습니다")를 narration으로 인식한다', () => {
+  const real = '오늘 회의 내용이 제공되지 않아 요약을 작성할 수 없습니다. 또한 현재는 지정한 Desktop 경로에 쓰기 권한이 없습니다.\n\n회의록이나 핵심 메모를 보내주시면 요약한 뒤, 접근 가능한 작업공간의 `argo-cap2-report.md`로 저장해 드리겠습니다.';
+  assert.equal(detectRunnerDenial(real), null, '생 에러가 없으니 strict는 null이어야 한다');
+  assert.equal(detectDeniedNarration(real)?.cap, 'fs');
+});
+
+test('서술형: 네트워크 차단 서술은 browser, 평범한 답변은 null', () => {
+  assert.equal(detectDeniedNarration('웹 검색을 할 수 없어 최신 정보를 확인하지 못했습니다.')?.cap, 'browser');
+  assert.equal(detectDeniedNarration('네트워크가 차단되어 있어 조회가 불가합니다.')?.cap, 'browser');
+  for (const s of ['보고서를 vault/notes에 저장했습니다.', '권한 관리 기능을 설명드리겠습니다.', '']) {
+    assert.equal(detectDeniedNarration(s), null, s);
+  }
+});
+
+test('EACCES(콜론 필수)·EPERM·읽기전용 생 출력 줄을 인식한다', () => {
   for (const s of [
     "Error: EACCES: permission denied, open '/Users/kim/Documents/a.txt'",
     'EPERM: operation not permitted, mkdir /Users/kim/out',
@@ -26,18 +38,19 @@ test('EACCES·EPERM·읽기전용도 생 출력 줄 형태면 fs 거부로 인�
   ]) assert.equal(detectRunnerDenial(s)?.cap, 'fs', s);
 });
 
-test('윈도우 드라이브 경로도 인식한다 (검수 MEDIUM-1)', () => {
-  const d = detectRunnerDenial("EPERM: operation not permitted, open 'C:\\Users\\kim\\a.txt'");
-  assert.equal(d?.cap, 'fs');
-  assert.match(d.path, /^C:\\Users\\kim/);
+test('윈도우 경로: 역슬래시·슬래시 모두 드라이브를 보존한다 (검수 2R MEDIUM-2)', () => {
+  const bs = detectRunnerDenial("EPERM: operation not permitted, open 'C:\\Users\\kim\\a.txt'");
+  assert.match(bs?.path ?? '', /^C:\\Users\\kim/);
+  const fs2 = detectRunnerDenial("Error: EACCES: permission denied, open 'C:/Users/kim/a.txt'");
+  assert.match(fs2?.path ?? '', /^C:\/Users\/kim/, '슬래시형에서 드라이브가 잘리면 홈 판정이 뒤집힌다');
 });
 
-test('네트워크 차단(생 출력 줄)은 browser 거부로 인식한다', () => {
+test('네트워크 생 에러는 browser — 점 있는 호스트·비한글 줄만', () => {
   assert.equal(detectRunnerDenial('curl: (6) Could not resolve host: example.com')?.cap, 'browser');
   assert.equal(detectRunnerDenial('Error: getaddrinfo ENOTFOUND api.example.com')?.cap, 'browser');
 });
 
-test('오탐 방지: 에러를 인용·설명하는 정상 답변은 거부로 오인하지 않는다 (검수 HIGH-2 실측 5건)', () => {
+test('오탐 방지 1R: 에러를 인용·설명하는 정상 답변 5건 (실측)', () => {
   for (const s of [
     '아까 나온 zsh:1: operation not permitted: /Users/kim/a.txt 는 샌드박스가 막은 것입니다.',
     "로그를 보니 EACCES: permission denied, open '/var/log/app.log' 가 12회 있습니다.",
@@ -47,15 +60,27 @@ test('오탐 방지: 에러를 인용·설명하는 정상 답변은 거부로 �
   ]) assert.equal(detectRunnerDenial(s), null, s);
 });
 
-test('오탐 방지: 정상 답변·빈 문자열은 null', () => {
-  for (const s of ['보고서를 vault/notes에 저장했습니다.', '', 'permission 설정을 확인했습니다']) {
-    assert.equal(detectRunnerDenial(s), null, s);
-  }
+test('오탐 방지 2R: 한글 접두·설명문·들여쓴 코드블록·한글 네트워크 문장 (실측 오탐 재발 방지)', () => {
+  for (const s of [
+    '참고: permission denied: /etc/hosts 는 루트 파일입니다.',
+    '주의: EACCES: permission denied, open /Users/kim/a.txt 가 날 수 있습니다.', // 한글 접두 차단
+    'EACCES 오류는 권한 문제입니다. 보통 /Users/kim/a.txt 같은 경로에서 납니다.', // 콜론 없음
+    'ENOTFOUND는 DNS가 이름을 못 찾았다는 뜻입니다.',
+    'Network is unreachable 메시지가 보이면 VPN을 확인하세요.', // 한글 포함 줄 가드
+    '    zsh:1: operation not permitted: /Users/kim/a.txt', // 4칸 들여쓰기 = 코드블록
+    '\tzsh:1: operation not permitted: /Users/kim/a.txt', // 탭 들여쓰기
+  ]) assert.equal(detectRunnerDenial(s), null, s);
+});
+
+test('펜스 추적: 종류·길이 매칭 — 4중 백틱 안 3중 백틱이 토글을 뒤집지 않는다 (검수 2R LOW-2)', () => {
+  const quad = '````\n```\nzsh:1: operation not permitted: /Users/kim/a.txt\n```\n````\n예시였습니다.';
+  assert.equal(detectRunnerDenial(quad), null);
+  const mixed = '```\n예시 블록\n~~~\nzsh:1: operation not permitted: /Users/kim/a.txt\n~~~ 이 줄은 아직 ``` 안이다';
+  assert.equal(detectRunnerDenial(mixed), null);
 });
 
 test('경로 꼬리 문장부호를 떼어낸다 (검수 LOW-3)', () => {
-  const d = detectRunnerDenial('zsh:1: operation not permitted: /Users/kim/a.txt.');
-  assert.equal(d.path, '/Users/kim/a.txt');
+  assert.equal(detectRunnerDenial('zsh:1: operation not permitted: /Users/kim/a.txt.')?.path, '/Users/kim/a.txt');
 });
 
 test('능력 꺼짐 + 홈 안 → "켤까요? 카드" 안내', () => {
@@ -71,6 +96,13 @@ test('능력 꺼짐 + 홈 밖 → 카드를 약속하지 않고 홈 안 이동 �
   assert.doesNotMatch(note, /카드/); // 켜도 안 열리는 조합 — 승인 유도는 신고 문구 재생산
 });
 
+test('서술형 유래(narrated)는 단정 대신 헤지 문구', () => {
+  const note = denialNote({ cap: 'fs', capOn: false, lang: 'ko', narrated: true });
+  assert.match(note, /보입니다/); // "막힌 것으로 보입니다" — 서술 추정임을 드러낸다
+  const strict = denialNote({ cap: 'fs', capOn: false, lang: 'ko' });
+  assert.match(strict, /막혔습니다/); // 생 에러 유래는 단정 유지
+});
+
 test('카드 생성 실패 시 설정 경로 폴백 안내 (검수 LOW-2)', () => {
   const note = denialNote({ cap: 'fs', capOn: false, lang: 'ko', cardShown: false });
   assert.match(note, /설정 → 로컬 능력/);
@@ -80,31 +112,35 @@ test('카드 생성 실패 시 설정 경로 폴백 안내 (검수 LOW-2)', () =
 test('능력 켜짐인데도 차단 → 단정하지 않고 원인 후보 나열 (검수 MEDIUM-3)', () => {
   const note = denialNote({ cap: 'fs', path: '/Users/kim/Documents/a.txt', capOn: true, lang: 'ko', outsideHome: false });
   assert.match(note, /이미 켜져 있는데도/);
-  assert.match(note, /다음 중 하나일 수 있습니다/); // 단정 금지
-  assert.match(note, /시스템 설정/);       // 후보 ① OS 권한
-  assert.match(note, /AI 연결/);           // 후보 ② codex 연결 미반영(실사용 전례 2026-07-22)
+  assert.match(note, /다음 중 하나일 수 있습니다/);
+  assert.match(note, /시스템 설정/); // 후보 ① OS 권한
+  assert.match(note, /AI 연결/);     // 후보 ② codex 연결 미반영(실사용 전례 2026-07-22)
   assert.doesNotMatch(note, /카드/);
 });
 
 test('영어 모드 안내가 전부 영어다', () => {
   for (const args of [
     { cap: 'fs', capOn: false }, { cap: 'fs', capOn: false, outsideHome: true, path: '/x/a' },
-    { cap: 'fs', capOn: true }, { cap: 'browser', capOn: true }, { cap: 'fs', capOn: false, cardShown: false },
+    { cap: 'fs', capOn: true }, { cap: 'browser', capOn: true },
+    { cap: 'fs', capOn: false, cardShown: false }, { cap: 'browser', capOn: false, narrated: true },
   ]) {
     const s = denialNote({ ...args, lang: 'en' });
     assert.doesNotMatch(s, /[가-힣]/, JSON.stringify(args));
   }
 });
 
-// ── 배선 트립와이어 (검수 MEDIUM-4) — 부품이 아니라 배선을 잠근다.
+// ── 배선 트립와이어 (검수 MEDIUM-4, 2R에서 강화) — 부품이 아니라 배선의 판단을 잠근다.
 // chat() 전체를 단위로 태울 수 없어(러너·워크스페이스 필요) 소스 스캔으로 잠근다.
 // 선례: test/no-hardcoded-runner-label.test.mjs
-test('배선: chat.mjs 외부 러너 경로가 거부 감지→카드→안내를 실제로 태운다', async () => {
+test('배선: chat.mjs 거부 블록이 감지→능력 게이트→카드 억제→안내를 전부 태운다', async () => {
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
-  assert.match(src, /detectRunnerDenial\(reply\)/, '거부 감지가 러너 답변에 걸려 있어야 한다');
-  // 감지 블록 안에서 카드(suggestCapability)와 안내(denialNote)가 함께 쓰여야 한다
-  const block = src.split('detectRunnerDenial(reply)')[1]?.slice(0, 1200) ?? '';
+  assert.match(src, /detectRunnerDenial\(reply\)/, 'strict 감지가 러너 답변에 걸려 있어야 한다');
+  const block = src.split('detectRunnerDenial(reply)')[1]?.slice(0, 2500) ?? '';
+  assert.match(block, /detectDeniedNarration\(reply\)/, '서술형 2차 패스가 있어야 한다(실측 캡처 ②)');
+  assert.match(block, /!cliCaps\[n\.cap\]/, '서술형은 반드시 능력 OFF일 때만 채택 — 능력 ON 오정보 방지');
+  assert.match(block, /wantCard = !capOn && !\(denial\.cap === 'fs' && outsideHome\)/, 'fs OFF+홈 밖 카드 억제(HIGH-1)');
+  assert.match(block, /cardShown: !!card/, '카드 생성 실패 폴백(LOW-2)이 배선돼 있어야 한다');
   assert.match(block, /suggestCapability\(/, '능력 OFF면 SDK와 같은 카드를 올려야 한다');
   assert.match(block, /denialNote\(/, '안내문이 답변에 덧붙어야 한다');
-  assert.match(src, /runner === 'codex'[\s\S]{0,200}detectRunnerDenial/, 'codex 한정이어야 한다(gemini는 샌드박스 없음 — 거짓 안내 방지)');
+  assert.match(src, /runner === 'codex'[\s\S]{0,600}detectRunnerDenial/, 'codex 한정이어야 한다(gemini는 샌드박스 없음)');
 });
