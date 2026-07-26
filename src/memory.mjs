@@ -1,7 +1,7 @@
 // 회사의 뇌(vault) — 기둥 4. 3층 구조: 일지(journal, 턴 원본 append) → 주제 노트(notes, 정제된 단일 진실)
 // → 정리 데몬(consolidate)이 매일 일지를 주제 노트로 통합한다. 자동 [[링크]] + 인덱스 갱신.
 // 스파이크: TF-IDF 코사인 유사도(무의존). 프로덕션: pgvector 임베딩으로 교체(인터페이스 동일).
-import { readFile, readdir, appendFile, mkdir } from 'node:fs/promises';
+import { readFile, readdir, appendFile, mkdir, stat, utimes } from 'node:fs/promises';
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
 import { join, basename, relative, sep } from 'node:path';
@@ -49,7 +49,8 @@ async function vaultDocs(wsId) {
       if (!n.endsWith('.md')) continue;
       const file = join(dir, n);
       // rel은 논리 경로('/' 고정) — Windows relative()의 백슬래시가 notes/·journal/ 필터를 깨지 않게
-      docs.push({ file, rel: relative(p.vault, file).split(sep).join('/'), text: await readFile(file, 'utf8') });
+      const mtimeMs = (await stat(file).catch(() => null))?.mtimeMs ?? 0;
+      docs.push({ file, rel: relative(p.vault, file).split(sep).join('/'), text: await readFile(file, 'utf8'), mtimeMs });
     }
   }
   return docs;
@@ -125,13 +126,22 @@ export function renderLinkSections(links) {
   return out;
 }
 
+/** 링크만 덧붙이는 쓰기 — 파일의 원래 mtime을 복원한다. 역링크는 그 문서의 내용이 갱신된 게 아니라
+    이웃이 생긴 것뿐이라, mtime을 올리면 "언제 갱신됐나"가 거짓이 된다. frontmatter가 없는 노트(크루가
+    Write로 직접 쓴 것)는 mtime이 유일한 시간 근거라, 이 오염이 곧 인덱스 순서 오염이었다(검수 HIGH). */
+async function writeKeepingMtime(file, content) {
+  const before = (await stat(file).catch(() => null))?.mtime ?? null;
+  await writeJsonAtomic(file, content);
+  if (before) await utimes(file, before, before).catch(() => {}); // 복원 실패는 치명적이지 않다
+}
+
 async function appendLink(file, relPath) {
   const name = relPath.replace(/\.md$/, '');
   const text = await readFile(file, 'utf8');
   if (text.includes(`[[${name}]]`)) return; // 중복 링크 방지(본문 언급 포함)
   const { body, links } = splitLinkSections(text);
   links.관련.push(name);
-  await writeJsonAtomic(file, `${body.trimEnd()}\n${renderLinkSections(links)}`);
+  await writeKeepingMtime(file, `${body.trimEnd()}\n${renderLinkSections(links)}`);
 }
 
 /** 근거 링크 추가(정리 데몬용) — 결론이 어느 일지에서 왔는지 역추적. 섹션 파서 경유라 관련과 안 섞인다. */
@@ -141,7 +151,7 @@ export async function appendSourceLinks(file, rels) {
   if (!fresh.length) return;
   const { body, links } = splitLinkSections(text);
   links.근거.push(...fresh);
-  await writeJsonAtomic(file, `${body.trimEnd()}\n${renderLinkSections(links)}`);
+  await writeKeepingMtime(file, `${body.trimEnd()}\n${renderLinkSections(links)}`);
 }
 
 /** 턴 핸드오버 — 크루별 하루 1파일 일지에 append(원수 층). 링크·정제는 정리 데몬이 맡는다. */
@@ -191,9 +201,28 @@ export async function saveNote(wsId, title, content, { merge = false, create = f
   }
   const cur = splitLinkSections(content.trim()); // LLM/사용자가 섹션을 본문에 섞어 보내도 회수해 합친다
   const links = { 근거: [...kept.근거, ...cur.links.근거], 관련: [...kept.관련, ...cur.links.관련] };
-  await writeJsonAtomic(file, `---\nupdated: ${new Date().toISOString().slice(0, 10)}\n---\n# ${title.trim()}\n\n${cur.body.trim()}\n${renderLinkSections(links)}`);
+  await writeJsonAtomic(file, `---\nupdated: ${localDay()}\n---\n# ${title.trim()}\n\n${cur.body.trim()}\n${renderLinkSections(links)}`);
   const linked = await autoLink(wsId, file);
   return { file, linked };
+}
+
+/** 날짜(YYYY-MM-DD) — 사용자 로컬 기준. UTC로 자르면 오전에 쓴 글이 '어제'로 표기된다
+    (saveHandover가 같은 이유로 로컬을 쓴다 — 이 파일의 기존 규약). */
+export function localDay(ms = Date.now()) {
+  const t = new Date(ms);
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
+/** 주제 노트의 유효 갱신일 — { date, exact }. frontmatter `updated:`가 1순위(exact), 없으면 파일 mtime(추정).
+    크루에겐 노트 저장 도구가 없어 SDK 기본 Write로 직접 쓴다 → 그 노트엔 frontmatter가 없다. updated만으로
+    정렬하면 크루가 손으로 남긴 지식이 통째로 바닥에 깔리므로 mtime을 2순위로 둔다.
+    mtime은 근사치라 exact=false로 표시한다 — 인덱스가 근거 없는 확신을 주지 않게(검수 HIGH).
+    (export: 회귀 테스트용) */
+export function noteDate(d) {
+  const fm = d.text.replace(/^﻿/, '').match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1]; // BOM 방어 + hub.mjs·persona.mjs와 같은 파서 형태
+  const updated = fm?.match(/^\s*updated:\s*['"]?(\d{4}-\d{2}-\d{2})/m)?.[1];         // 따옴표·선행공백 허용
+  if (updated) return { date: updated, exact: true };
+  return { date: d.mtimeMs ? localDay(d.mtimeMs) : '', exact: false };
 }
 
 /** vault/_index.md 재생성 — 주제 노트(정제수) 우선, 최근 일지는 14일치만. 크루의 기억 탐색 진입점. */
@@ -201,12 +230,25 @@ export async function updateIndex(wsId) {
   const p = paths(wsId);
   const docs = await vaultDocs(wsId);
   docs.sort((a, b) => b.file.localeCompare(a.file));
-  const line = (d) => {
+  const line = (d, stamp = null) => {
     const title = d.text.match(/^#\s*(.+)$/m)?.[1] ?? basename(d.file, '.md');
     const links = [...d.text.matchAll(/\[\[(.+?)\]\]/g)].map((m) => m[1]);
-    return `- [[${d.rel.replace(/\.md$/, '')}]] — ${title}${links.length ? ` (관련: ${links.join(', ')})` : ''}`;
+    const when = stamp?.date ? ` (갱신 ${stamp.date}${stamp.exact ? '' : ' 추정'})` : '';
+    return `- [[${d.rel.replace(/\.md$/, '')}]] — ${title}${when}${links.length ? ` (관련: ${links.join(', ')})` : ''}`;
   };
-  const notes = docs.filter((d) => d.rel.startsWith('notes/'));
+  // 주제 노트는 갱신일 내림차순 — 파일명(주제 슬러그) 정렬은 시간 정보가 0이라 옛 절차와 최신 절차가
+  // 순서 없이 섞여 나온다. 일지는 파일명이 YYYY-MM-DD로 시작해 기존 파일명 정렬이 곧 최신순이라 그대로 둔다.
+  // 동일자 타이브레이크는 mtime — 파일명으로 깨면 saveNote(create)의 접미 번호(-2,-3) 계열에서
+  // 항상 v1이 최상단으로 올라와 고치려던 문제가 그대로 남는다(검수 MEDIUM).
+  // 동기화 충돌 사본(sync.mjs가 `<슬러그>.conflict-<기기>-<ts>.md`로 보존하는 패배한 로컬본)은 주제 노트에서
+  // 뺀다 — 내용은 옛것인데 파일 기록 시각이 '지금'이라(writeLocal에 mtime 미전달) 최신인 척 최상단을 차지한다.
+  // 지우지는 않는다: 기억 유실 금지 — 아래 별도 섹션에 그대로 남겨 사장이 병합·정리할 수 있게 한다.
+  const isConflictCopy = (d) => /\.conflict-.*\.md$/.test(d.rel);
+  const noteDocs = docs.filter((d) => d.rel.startsWith('notes/'));
+  const notes = noteDocs.filter((d) => !isConflictCopy(d))
+    .map((d) => ({ d, stamp: noteDate(d) }))
+    .sort((a, b) => b.stamp.date.localeCompare(a.stamp.date) || (b.d.mtimeMs - a.d.mtimeMs) || b.d.file.localeCompare(a.d.file));
+  const conflicts = noteDocs.filter(isConflictCopy);
   const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
   // 일별(YYYY-MM-DD-*)과 주간 롤업(YYYY-Wnn)을 분리 — 'W' > 숫자라 문자열 비교 컷오프를 주간 파일이
   // 항상 통과해 "최근 일지"에 영구 누적되고, 미정리 14일+ 일지는 실종되던 문제의 교정.
@@ -217,12 +259,12 @@ export async function updateIndex(wsId) {
 
 주제 노트가 정리된 지식이다 — 먼저 여기서 찾고, 상세 근거가 필요할 때만 일지를 열어라.
 
-## 주제 노트
-${notes.map(line).join('\n') || '(아직 없음)'}
+## 주제 노트 (갱신일 최신순 — 같은 주제가 여러 벌이면 위쪽이 더 최근이다. "추정"은 파일 기록 시각 기준)
+${notes.map(({ d, stamp }) => line(d, stamp)).join('\n') || '(아직 없음)'}
 
 ## 최근 일지 (턴 원본, 14일)
-${journals.map(line).join('\n') || '(아직 없음)'}
-${weeklies.length ? `\n## 주간 일지 (7일 지난 기억의 요약, 최근 8주)\n${weeklies.map(line).join('\n')}\n` : ''}${legacy.length ? `\n## 이전 기록\n${legacy.map(line).join('\n')}\n` : ''}`);
+${journals.map((d) => line(d)).join('\n') || '(아직 없음)'}
+${weeklies.length ? `\n## 주간 일지 (7일 지난 기억의 요약, 최근 8주)\n${weeklies.map((d) => line(d)).join('\n')}\n` : ''}${legacy.length ? `\n## 이전 기록\n${legacy.map((d) => line(d)).join('\n')}\n` : ''}${conflicts.length ? `\n## 동기화 충돌 사본 (다른 기기와 같은 노트를 동시에 고쳐 갈라진 것 — 내용은 옛 판일 수 있다. 확인 후 병합하고 지워라)\n${conflicts.map((d) => line(d)).join('\n')}\n` : ''}`);
 }
 
 /* ── 사장 프로필 — "회사가 아는 사장". 크루가 자동 기록·갱신하고, 사장이 크루 카드에서 정정한다. */
