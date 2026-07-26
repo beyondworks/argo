@@ -23,10 +23,8 @@ export default function RootLayout({ children }) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBoot }} />
         <script dangerouslySetInnerHTML={{ __html: desktopLinkBridge }} />
-        <link
-          rel="stylesheet"
-          href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
-        />
+        {/* Pretendard는 자체 호스팅(globals.css @font-face + public/fonts) — 오프라인·CDN 차단에도 본문 한글 유지 */}
+        <link rel="preload" href="/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
