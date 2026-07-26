@@ -1,6 +1,6 @@
 // 회의실 — 사장 + 여러 크루가 한 방에서 대화한다(맥락 공유가 눈에 보이는 곳).
 // @멘션한 크루가 답하고, 뒤 순서 크루는 앞 크루의 발언을 보고 보탠다. 회의 내용은 각 턴의 일지로 회사 기억이 된다.
-import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
@@ -122,6 +122,35 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
   // sid 증가 — 진행 중이던 runRoomTurn의 잔여 발언이 빈 방에 유령으로 남지 않도록 무효화한다
   await saveRoom(wsId, { messages: [], sid: (room.sid ?? 0) + 1 });
   return { archived: true, journal: `journal/${journalName}` };
+}
+
+/** 회의 다시 열기 — 보관된 회의를 현재 방으로 되돌려 이어서 대화한다(실사용 요청 2026-07-26).
+    "마치기"로 적재한 뒤 빠진 얘기가 생각나면 새 회의를 여는 수밖에 없었다.
+
+    설계 결정 3가지:
+    1. **현재 방이 비어 있을 때만** 연다. 진행 중 회의를 자동으로 마치고 덮으면 사장이 의도하지 않은
+       일지 적재가 생긴다 — 거절하고 "먼저 마치기"를 안내하는 쪽이 정직하다.
+    2. **방을 먼저 쓰고, 그다음 보관본을 지운다.** 순서를 뒤집으면 쓰기 실패 시 회의가 증발한다.
+       이 순서면 최악이 "레일에 중복 표시"(눈에 보이고 복구 가능) — 오차를 비파괴 방향으로 낸다.
+    3. **sid를 올린다.** 빈 방에서 돌던 잔여 턴의 발언이 되살린 회의에 유령으로 끼어들지 않게
+       (endMeeting과 같은 이유).
+
+    알려진 한계: 마칠 때 남긴 일지(회의록)는 그대로 둔다. 다시 마치면 회의록이 하나 더 쌓인다 —
+    일지는 append-only 기록이라 "두 번 마쳤다"는 사실 자체가 맞고, 지우는 건 기억 유실이라 안 한다. */
+export async function reopenMeeting(wsId, id) {
+  return withLock(rkey(wsId), async () => {
+    const cur = await loadRoom(wsId);
+    if (cur.messages?.length) {
+      const e = new Error('진행 중인 회의가 있습니다 — 먼저 "회의 마치기"로 정리한 뒤 다시 열어 주세요.');
+      e.code = 'ROOM_BUSY';
+      throw e;
+    }
+    const archived = await readArchivedMeeting(wsId, id); // 없으면 여기서 throw — 방을 건드리기 전이다
+    if (!archived?.messages?.length) throw new Error('비어 있는 보관 회의는 열 수 없습니다.');
+    await saveRoom(wsId, { ...archived, sid: (cur.sid ?? 0) + 1 });
+    await rm(join(paths(wsId).chats, '.archive', id), { force: true }).catch(() => {}); // 실패해도 유실 아님(중복 표시)
+    return { reopened: true, messages: archived.messages.length };
+  });
 }
 
 /** 사장 발언 1건 → 멘션된 크루가 순서대로 응답(폭주 방지: 최대 3명). 멘션 없으면 첫 크루. */

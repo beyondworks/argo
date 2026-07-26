@@ -61,6 +61,8 @@ const DICT = {
   'room.end': ['회의 마치기 — 회의록 남기기', 'End meeting — file the minutes'],
   'room.sessions.title': ['회의 기록', 'Meetings'],
   'room.sessions.current': ['현재 회의', 'Current meeting'],
+  'room.sessions.reopen': ['이 회의 다시 열기 — 이어서 대화', 'Reopen this meeting — continue the thread'],
+  'room.reopenFail': ['회의를 다시 열지 못했습니다', "Couldn't reopen the meeting"],
   'room.sessions.idle': ['진행 중인 안건 없음', 'No topic in session'],
   'room.loadFail': ['회의 내용을 불러오지 못했습니다 — 잠시 후 자동으로 다시 시도합니다', "Couldn't load the meeting — retrying automatically"],
   'runner.effortLabel': ['추론 강도', 'Reasoning effort'],
