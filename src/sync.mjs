@@ -100,7 +100,7 @@ async function ensureClient() {
   const svc = loadSyncCreds();
   if (svc && serviceCredsAllowed()) {
     const k = `svc:${credsEpoch()}`;
-    if (sbKey !== k) { sb = createClient(svc.url, svc.key, CLIENT_OPTS); sbKey = k; }
+    if (sbKey !== k) { sb = createClient(svc.url, svc.key, CLIENT_OPTS); sbKey = k; resetDiscoverClock(); }
     return true;
   }
   const sess = await getFreshDeviceSession();
@@ -112,9 +112,16 @@ async function ensureClient() {
       global: { ...CLIENT_OPTS.global, headers: { Authorization: `Bearer ${sess.access_token}` } },
     });
     sbKey = k;
+    resetDiscoverClock();
   }
   return true;
 }
+
+/** 자격(세션·서비스키)이 바뀌면 목록 조회 시각을 지워 다음 사이클이 즉시 발견하게 한다.
+    루프는 로그아웃을 넘어 살아 있고(ensureSync의 __argoSync 가드) 시각도 그대로라, 재로그인·계정
+    전환 직후 최대 DISCOVER_MS 동안 새 계정이 자기 회사를 못 보던 구멍(검수 HIGH). 로그아웃 라우트가
+    아니라 여기서 막는 이유: 세션 교체와 서비스키 회전을 한 지점에서 함께 덮는다. */
+function resetDiscoverClock() { globalThis.__argoLastDiscover = 0; }
 const client = () => sb; // ensureClient() 성공 뒤에만 호출된다 (cycle/ensureSync 게이트)
 // 테스트 전용 — fake storage를 주입해 syncCompany를 실 Supabase 없이 실행 검증한다.
 // 프로덕션 경로는 절대 호출하지 않는다(ensureClient가 실 클라이언트를 세팅). (export: 통합 테스트용)
@@ -676,7 +683,9 @@ async function syncTombstones(fixedOwner, { remote: doRemote = true } = {}) {
     }
   }
 
-  // ── 여기까지가 로컬 단계(readdir·stat). 매 사이클 돌아도 무료다.
+  // ── 여기까지가 로컬 단계. 목록 조회(list)가 없어 매 사이클 돌아도 이번 사고의 핫패스를 타지 않는다.
+  // ⚠ 완전 무료는 아니다: 1.5단계의 tombstone 철회 분기에 원격 remove()가 하나 있다(희귀 — 마커가
+  // 있는데 회사 폴더도 살아 있을 때만 진입). storage.search가 아니라 남겼다(검수 확인).
   // 아래 2~4단계는 전부 원격 호출(list·download·upload)이라 DISCOVER_MS 주기에만 돈다(위 상수 주석).
   // 로컬 tombstone 집합은 그대로 반환하므로, 건너뛰어도 보관된 회사가 복원되는 일은 없다
   // (cycle이 이 Set으로 발견 결과를 거른다 — 안전 방향).
@@ -765,6 +774,10 @@ async function cycle() {
   // 그 회사는 이번 사이클의 push/pull 대상에서 자연히 빠진다. 실패해도 사이클은 계속(빈 Set).
   // 이번 사이클에 원격 목록 조회(발견·tombstone)를 할 차례인가.
   // 실패해도 시각을 갱신한다: 실패마다 재시도하면 장애 중 목록 호출이 오히려 CYCLE_MS 주기로 폭주한다.
+  // ⚠ 불변식 — **discoverRemote와 원격 tombstone은 반드시 이 게이트 하나를 공유한다.** 둘을 갈라
+  // 각자 주기를 주면 "발견은 도는데 원격 tombstone은 안 도는" 사이클이 생기고, 그 사이클에 다른
+  // 기기가 보관한 회사가 로컬로 복원돼 **부활**한다(보관 전파가 tombs로 걸러지는 구조라서다).
+  // 절감이 더 필요하면 주기를 늘려라 — 나누지 마라. (검수 지적 2026-07-26, 회귀 가드: 아래 테스트)
   const discoverDue = isDiscoverDue(Date.now(), globalThis.__argoLastDiscover, DISCOVER_MS);
   if (discoverDue) globalThis.__argoLastDiscover = Date.now();
   const tombs = await syncTombstones(keyOwner, { remote: discoverDue }).catch((e) => { console.warn('[argo] tombstone 동기화 실패:', e.message); return new Set(); });
