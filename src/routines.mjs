@@ -34,7 +34,16 @@ async function saveRoutines(wsId, routines) {
     복수 필드(times/dows)가 있으면 우선, 없으면 단수 필드 — 기존 루틴·구버전 동기화 하위호환.
     (export: 단위 테스트용 — 순수 함수) */
 const TIME_RE = /^\d{2}:\d{2}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export function normalizeSchedule(schedule = {}) {
+  // once = 특정 날짜에 1회(예약 발송). 실행되면 자동으로 꺼진다(runRoutine) — 반복 예약과 구분.
+  if (schedule.type === 'once') {
+    const date = String(schedule.date ?? '').trim();
+    if (!DATE_RE.test(date)) throw new Error('1회 예약은 날짜(YYYY-MM-DD)가 필요합니다');
+    const t = String(schedule.time ?? (Array.isArray(schedule.times) ? schedule.times[0] : '')).trim();
+    if (!TIME_RE.test(t)) throw new Error('예약 시각은 HH:MM 형식');
+    return { type: 'once', date, time: t, times: [t] };
+  }
   const type = schedule.type === 'weekly' ? 'weekly' : 'daily';
   const rawTimes = Array.isArray(schedule.times) && schedule.times.length ? schedule.times : [schedule.time];
   // 잘못된 항목은 통째로 거절 — 일부만 조용히 수용하면 사용자가 지정한 시각이 소리 없이 빠진다
@@ -110,7 +119,8 @@ export async function runRoutine(wsId, id) {
   try {
     const t = await chat(wsId, r0.agentSlug, `[루틴: ${r0.title}] ${r0.prompt}`, null, { source: 'routine' });
     const summary = t.reply.replace(/\s+/g, ' ').slice(0, 160);
-    const r = await patchRoutine(wsId, id, { lastOk: true, lastResult: summary });
+    // 1회 예약은 성공 후 스스로 꺼진다 — 다음 날 같은 시각에 되살아나지 않게(실패 시엔 켜둬 당일 재시도 허용)
+    const r = await patchRoutine(wsId, id, { lastOk: true, lastResult: summary, ...(r0.schedule?.type === 'once' ? { enabled: false } : {}) });
     emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: true, reply: t.reply }); // 메신저 브리핑 푸시
     return { ok: true, reply: t.reply, handover: t.handover };
   } catch (e) {
@@ -132,6 +142,11 @@ export function isDue(routine, now = new Date()) {
   const times = Array.isArray(s.times) && s.times.length ? s.times : [s.time];
   const dows = Array.isArray(s.dows) && s.dows.length ? s.dows : [s.dow ?? 1];
   if (s.type === 'weekly' && !dows.includes(now.getDay())) return false;
+  // 1회 예약 — 지정 날짜에만. 이미 실행됐으면(lastRun) 다시 발화하지 않는다(아래 슬롯 판정과 이중 방어).
+  if (s.type === 'once') {
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    if (s.date !== today) return false;
+  }
   // 슬롯별 판정 — 각 시각이 독립 슬롯. 앞 슬롯 실행(lastRun 갱신)이 뒤 슬롯을 막지 않는다
   // (lastRun < 뒤 슬롯 sched이므로). 스케줄러의 선점 마킹(lastRun=now)과도 그대로 호환된다.
   for (const tm of times) {

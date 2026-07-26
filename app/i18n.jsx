@@ -831,6 +831,7 @@ const DICT = {
   'routines.nlParsing': ['해석 중', 'Parsing'],
   'routines.nlTrigger': ['이벤트 트리거형(메일 수신 시 등) 루틴은 아직 지원하지 않아요 — 지금은 시간 예약형만 가능해요.', "Event-triggered routines (e.g. on new mail) aren't supported yet — only scheduled ones for now."],
   'routines.addTime': ['추가', 'Add'],
+  'routines.scheduleOnce': ['{date} {time} · 1회', 'Once on {date} at {time}'],
   'routines.weekly': ['매주', 'Weekly'],
   'routines.day': ['요일', 'Day'],
   'routines.dayOf': ['{d}요일', '{d}'],
