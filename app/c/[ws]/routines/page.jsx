@@ -8,6 +8,8 @@ import { useLang } from '../../../i18n';
 function scheduleLabel(s, t, DOW) {
   // 복수 시각·요일은 '·'로 이어 기존 라벨 템플릿에 그대로 태운다 (예: 매주 월·수 09:00·18:00)
   const time = (s.times?.length ? s.times : [s.time]).join('·');
+  // 1회 예약(크루의 schedule_task로 생기는 형태) — daily로 표기하면 "매일 15:00"으로 거짓 표시된다
+  if (s.type === 'once') return t('routines.scheduleOnce', { date: s.date ?? '', time });
   if (s.type !== 'weekly') return t('routines.scheduleDaily', { time });
   const dow = (s.dows?.length ? s.dows : [s.dow ?? 1]).map((d) => DOW[d]).join('·');
   return t('routines.scheduleWeekly', { dow, time });

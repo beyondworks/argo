@@ -84,3 +84,25 @@ test('validateRoutineDraft: 트리거형 미지원 통과 + 쓰레기 입력 거
   assert.equal(u.unsupported, 'trigger');
   assert.throws(() => validateRoutineDraft({ title: '', prompt: '', schedule: {} }, {}), /제목|지시|HH:MM/);
 });
+
+/* ── 1회 예약(once) — 크루 schedule_task의 저장 형태(신고 2026-07-26: "예약 발송이 안 된다") ── */
+
+test('once: 날짜+시각 정규화, 날짜 없으면 거절', () => {
+  const s = normalizeSchedule({ type: 'once', date: '2026-08-01', time: '15:00' });
+  assert.equal(s.type, 'once');
+  assert.equal(s.date, '2026-08-01');
+  assert.deepEqual(s.times, ['15:00']);
+  assert.throws(() => normalizeSchedule({ type: 'once', time: '15:00' }), /날짜/);
+  assert.throws(() => normalizeSchedule({ type: 'once', date: '2026-08-01', time: '3시' }), /HH:MM/);
+});
+
+test('once: 지정 날짜의 시각이 지나야 발화하고, 다른 날엔 발화하지 않는다', () => {
+  const day = (y, m, d, h, mi) => new Date(y, m - 1, d, h, mi, 0, 0);
+  const r = { enabled: true, created: day(2026, 8, 1, 9, 0).toISOString(), lastRun: null,
+    schedule: normalizeSchedule({ type: 'once', date: '2026-08-01', time: '15:00' }) };
+  assert.equal(isDue(r, day(2026, 8, 1, 14, 59)), false, '예약 시각 전');
+  assert.equal(isDue(r, day(2026, 8, 1, 15, 1)), true, '예약 시각 직후');
+  assert.equal(isDue(r, day(2026, 8, 2, 15, 1)), false, '다음 날엔 발화하지 않는다');
+  r.lastRun = day(2026, 8, 1, 15, 1).toISOString();
+  assert.equal(isDue(r, day(2026, 8, 1, 15, 5)), false, '이미 실행됨');
+});
