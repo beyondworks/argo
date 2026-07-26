@@ -22,11 +22,13 @@ const dbPath = (ws) => join(paths(ws).root, '.index.sqlite');
 async function renderBoth(ws) {
   const p = paths(ws);
   await rm(dbPath(ws), { force: true });
+  // 킬 스위치 해제는 반드시 finally — 중간에 예외가 나면 이후 모든 테스트가 정본 경로로만 돌아
+  // 캐시 테스트 전체가 소리 없이 무력화된다(검수 F13). 이 파일의 존재 이유가 그걸 막는 것이다.
   process.env.ARGO_MEMINDEX = '0';                 // 정본 전수 읽기
-  await updateIndex(ws);
-  const plain = await readFile(p.index, 'utf8');
-  delete process.env.ARGO_MEMINDEX;                // 캐시
-  await updateIndex(ws);
+  let plain;
+  try { await updateIndex(ws); plain = await readFile(p.index, 'utf8'); }
+  finally { delete process.env.ARGO_MEMINDEX; }
+  await updateIndex(ws);                           // 캐시
   const cached = await readFile(p.index, 'utf8');
   return { plain, cached };
 }
@@ -198,9 +200,9 @@ test('읽을 수 없게 된 문서는 두 경로 모두 인덱스에서 뺀다',
     await updateIndex('c-unreadable');                     // 캐시 경로
     const cached = await readFile(p.index, 'utf8');
     process.env.ARGO_MEMINDEX = '0';
-    await updateIndex('c-unreadable');                     // 정본 폴백 경로
-    const plain = await readFile(p.index, 'utf8');
-    delete process.env.ARGO_MEMINDEX;
+    let plain;
+    try { await updateIndex('c-unreadable'); plain = await readFile(p.index, 'utf8'); } // 정본 폴백 경로
+    finally { delete process.env.ARGO_MEMINDEX; }          // 예외 시에도 킬 스위치 잔존 금지(검수 F13)
     assert.equal(cached, plain, '읽기 실패에서 캐시와 정본 산출물이 갈렸다');
     assert.doesNotMatch(cached, /- \[\[notes\/배포-절차\]\]/, '읽을 수 없는 문서가 옛 값으로 인덱스에 남았다');
   } finally { await chmod(f, 0o644); }
@@ -247,6 +249,67 @@ test('mtime 반올림이 두 경로에서 일치한다 (동일자 타이브레�
   }
   const { plain, cached } = await renderBoth(ws);
   assert.equal(cached, plain, '서브밀리초 mtime에서 두 경로의 타이브레이크가 갈렸다(반올림 불일치)');
+});
+
+// HIGH-3 구조 불변식: 무변경 턴은 쓰기 락을 전혀 잡지 않는다. 동시 턴 이벤트 루프 정지(CRITICAL)를
+// 실제로 닫은 다리가 이것이다 — 3라운드 검수가 결함(트랜잭션이 스캔 전체를 덮는 구조)을 복원해도
+// 기존 테스트 전부가 초록임을 보였다(복합 가드의 필수 다리가 단독 무방비). 판별력: 프로브 실측
+// busy 0 vs 94(결함 복원 시). 외부 연결이 2ms 간격으로 배타 락을 시도하며 실패 수를 센다.
+test('무변경 턴은 쓰기 락을 전혀 잡지 않는다 (HIGH-3 구조 불변식)', async (t) => {
+  if (!sqliteAvailable()) return t.skip('node:sqlite 없음');
+  const ws = 'c-lockwin';
+  const p = paths(ws);
+  await mkdir(p.notes, { recursive: true });
+  await mkdir(p.journal, { recursive: true });
+  const batch = [];
+  for (let i = 0; i < 1500; i++) { // 스캔이 프로브 간격보다 충분히 길어야 결함 복원 시 busy가 쌓인다
+    batch.push(writeFile(join(p.notes, `주제-${String(i).padStart(4, '0')}.md`), `---\nupdated: 2026-0${(i % 9) + 1}-01\n---\n# 주제 ${i}\n`));
+    if (batch.length >= 500) { await Promise.all(batch); batch.length = 0; }
+  }
+  await Promise.all(batch);
+  await updateIndex(ws); // 최초 구축
+  await updateIndex(ws); // 체크포인트 안정화 — 구축 직후 잔여 쓰기가 프로브에 오탐되지 않게
+  const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
+  const probe = new DatabaseSync(dbPath(ws));
+  let busy = 0, tries = 0;
+  const tick = setInterval(() => {
+    tries++;
+    try { probe.exec('BEGIN IMMEDIATE'); probe.exec('COMMIT'); } catch { busy++; }
+  }, 2);
+  for (let i = 0; i < 10; i++) await updateIndex(ws); // 무변경 턴 10회
+  clearInterval(tick);
+  probe.close();
+  assert.ok(tries > 20, `프로브가 충분히 돌지 않았다(${tries}회) — 판별 불가`);
+  assert.ok(busy <= 2, `무변경 턴 중 외부 쓰기 락 실패 ${busy}/${tries}회 — 스캔이 배타 락을 쥐고 있다(HIGH-3 회귀)`);
+});
+
+// 폴더가 통째로 안 읽히면(권한 회수·마운트 이탈) 삭제가 아니라 장애다 — 행을 쓸어내면 그 턴의 인덱스가
+// 침묵 속에 비고, 회복 후 전량 재구축을 문다(3라운드 검수 F3: 행 6→1 침묵 정리 + 경고 0 재현).
+// 행을 보존하고 이번 턴만 정본 폴백한다 — 폴백도 같은 장애를 겪으므로 산출물 동등성은 실패 모드에서도 유지된다.
+test('폴더가 통째로 안 읽히면 행을 보존하고 이번 턴만 정본 폴백한다', async (t) => {
+  if (!sqliteAvailable()) return t.skip('node:sqlite 없음');
+  if (process.getuid?.() === 0) return t.skip('root는 권한 검사를 우회한다');
+  const p = await seed('c-dirout');
+  await updateIndex('c-dirout');
+  const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
+  const countRows = () => { const db = new DatabaseSync(dbPath('c-dirout')); const n = db.prepare('SELECT COUNT(*) AS n FROM docs').get().n; db.close(); return n; };
+  const before = countRows();
+  assert.ok(before > 0, '예열 실패');
+  const healthy = await readFile(p.index, 'utf8');
+  await chmod(p.notes, 0o000);                               // notes 폴더 자체를 읽기 불가로
+  try {
+    await updateIndex('c-dirout');                           // 캐시 → 불건전 감지 → 정본 폴백
+    const cached = await readFile(p.index, 'utf8');
+    process.env.ARGO_MEMINDEX = '0';
+    let plain;
+    try { await updateIndex('c-dirout'); plain = await readFile(p.index, 'utf8'); }
+    finally { delete process.env.ARGO_MEMINDEX; }
+    assert.equal(cached, plain, '장애 모드에서 캐시와 정본 산출물이 갈렸다');
+    assert.equal(countRows(), before, '폴더 장애에서 캐시 행이 삭제됐다 — 회복 시 전량 재구축을 문다');
+  } finally { await chmod(p.notes, 0o755); }
+  await updateIndex('c-dirout');                             // 회복 — 보존된 행으로 즉시 복귀해야 한다
+  assert.equal(await readFile(p.index, 'utf8'), healthy, '회복 후 인덱스가 장애 전과 다르다');
+  assert.equal(countRows(), before);
 });
 
 test('캐시 DB는 동기화 대상이 아니다 — 기기별 산출물이다', () => {

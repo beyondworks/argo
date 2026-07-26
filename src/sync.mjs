@@ -422,8 +422,9 @@ export async function syncCompany(wsId, owner, isRestore = false) {
         await utimes(full, new Date(mtime), new Date(mtime));
         // 원격 mtime을 심는 쓰기 — 기억 인덱스 캐시의 변경 판정 키가 mtime+size라, 심은 mtime과
         // 크기가 이전 행과 우연히 일치하면 캐시가 이 변경을 영영 못 본다(writeKeepingMtime과 같은
-        // 계열, 검수 MEDIUM). vault 문서에 한해 해당 행을 명시적으로 무효화한다.
-        if (rel.startsWith('vault/') && rel.endsWith('.md')) await invalidatePath(full);
+        // 계열, 검수 MEDIUM). 인덱스가 실제로 훑는 세 폴더로만 한정한다 — vault/ 전체로 걸면
+        // 행도 없는 파일(_index.md·files/ 등)까지 건마다 DB 왕복 비용(실측 0.86ms/건)을 낸다.
+        if (/^vault\/(journal|conversations|notes)\/[^/]+\.md$/.test(rel)) await invalidatePath(full);
       }
     };
     if (isThread(rel)) await withLock(threadLockKey(wsId, rel), doWrite);

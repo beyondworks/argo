@@ -90,6 +90,8 @@ async function refresh(db, wsId) {
   const seen = new Set();
   const pendingUpsert = [];
   const pendingDelete = [];
+  // 폴더 → 논리 접두 매핑 — readdir 실패를 "빈 폴더"로 오인하면 그 폴더의 전 행이 삭제 대상이 된다
+  const DIR_PREFIX = new Map([[p.journal, 'journal/'], [p.conversations, 'conversations/'], [p.notes, 'notes/']]);
 
   // stat은 병렬로 — 이게 스캔 비용의 지배 항목이다. 문서 10만에서 직렬 1275ms → 병렬 363ms(실측).
   // 읽기 동시성은 stat과 분리해 훨씬 낮게 잡는다: stat은 fd를 오래 쥐지 않지만 readFile은 쥔다.
@@ -100,7 +102,16 @@ async function refresh(db, wsId) {
   let readFailed = 0;
   for (const dir of [p.journal, p.conversations, p.notes]) {
     let names = [];
-    try { names = await readdir(dir); } catch { continue; }
+    try { names = await readdir(dir); } catch {
+      // 행이 있던 폴더가 통째로 안 읽히면(권한 회수·마운트 이탈) 삭제가 아니라 장애다 — 이번 스캔을
+      // 불건전으로 판정해 캐시를 건드리지 않고 물러난다(3라운드 검수: 폴더 chmod 000에서 행 6→1
+      // 침묵 정리 + 인덱스 소멸 + 경고 0 재현). 행이 없던 폴더(신생 회사)는 기존대로 건너뛴다.
+      const prefix = DIR_PREFIX.get(dir);
+      for (const rel of known.keys()) {
+        if (rel.startsWith(prefix)) return { unhealthy: `${prefix} 폴더를 읽지 못했습니다(권한·마운트 확인)` };
+      }
+      continue;
+    }
     names = names.filter((n) => n.endsWith('.md'));
     for (let i = 0; i < names.length; i += STAT_BATCH) {
       const slice = names.slice(i, i + STAT_BATCH);
@@ -115,6 +126,9 @@ async function refresh(db, wsId) {
         seen.add(rel);
         const prev = known.get(rel);
         const mtimeMs = Math.round(st.mtimeMs);
+        // ⚠ 알려진 한계(3라운드 검수, 문서화된 잔여): 내용·mtime·size가 전부 그대로인 채 "읽기 권한만"
+        // 잃은 파일은 여기서 걸러져 옛 행이 남는다 — 정본 폴백은 읽기를 시도해 빼므로 이 실패 모드에선
+        // 두 경로가 갈린다. 감지하려면 매 스캔 파일마다 access() 왕복이 추가돼(스캔 비용 ~2배) 수용 안 함.
         if (prev && prev.mtimeMs === mtimeMs && prev.size === st.size) continue; // 안 바뀜 — 읽지 않는다
         stale.push({ file, rel, mtimeMs, size: st.size });
       }
@@ -130,13 +144,14 @@ async function refresh(db, wsId) {
             // 파일을 실어두는 건 거짓 약속이다. 행이 없으니 다음 스캔이 자동 재시도한다.
             readFailed++;
             pendingDelete.push(s.rel);
-            if (!warnedReadFail.has(s.rel)) {
-              warnedReadFail.add(s.rel);
-              console.warn(`[memindex] 문서를 읽지 못해 인덱스에서 뺍니다(권한·fd 부족 등, 회복 시 자동 복귀): ${s.rel}`);
+            const warnKey = `${wsId}:${s.rel}`; // wsId 포함 — 회사 A의 실패가 회사 B의 같은 rel 경고를 침묵시키지 않게
+            if (!warnedReadFail.has(warnKey)) {
+              warnedReadFail.add(warnKey);
+              console.warn(`[memindex] 문서를 읽지 못해 인덱스에서 뺍니다(권한·fd 부족 등, 회복 시 자동 복귀): ${wsId}/${s.rel}`);
             }
             continue;
           }
-          warnedReadFail.delete(s.rel);
+          warnedReadFail.delete(`${wsId}:${s.rel}`);
           const m = docMeta(s.rel, texts[k], s.mtimeMs);
           pendingUpsert.push([s.rel, m.kind, m.title, JSON.stringify(m.links), m.stamp.date, m.stamp.exact ? 1 : 0, s.mtimeMs, s.size]);
         }
@@ -144,6 +159,12 @@ async function refresh(db, wsId) {
     }
   }
   for (const rel of known.keys()) if (!seen.has(rel)) pendingDelete.push(rel); // 사라진 문서 정리
+
+  // 대량 읽기 실패 퓨즈 — 한두 개는 개별 파일 문제(HIGH-4 정책대로 뺀다)지만, 수십 개가 한 턴에
+  // 실패하면 파일이 아니라 환경(fd 고갈·마운트)이 아픈 것이다. 그 판단으로 행을 쓸어내면 회복 후
+  // 전량 재구축(10만 문서 기준 11~13초)을 다시 문다. 이번 턴은 캐시를 건드리지 않고 물러난다.
+  // 진짜 대량 삭제(파일이 실제로 없어진 것)는 readdir·stat이 성공한 not-seen 경로라 퓨즈에 안 걸린다.
+  if (readFailed > 20) return { unhealthy: `문서 ${readFailed}개 읽기 실패 — 일시 장애로 판단해 캐시를 보존합니다` };
 
   // 쓰기 단계 — 변경이 있을 때만, 동기 구간만 트랜잭션. autocommit이면 행마다 커밋한다
   // (검수 실측 10만 행 7,204ms → 185ms). 무변경 턴은 쓰기문 자체가 없어 락을 전혀 잡지 않는다.
@@ -174,6 +195,7 @@ async function refresh(db, wsId) {
 /** 인덱스 렌더링용 문서 메타 전체. 캐시를 쓸 수 없으면 null — 호출자가 정본 전수 읽기로 폴백한다.
     반환 형태는 정본 경로(vaultDocsMeta)와 동일해야 한다. 갈리면 캐시가 거짓말을 하게 된다. */
 let warnedUnavailable = false;
+const warnedUnhealthy = new Set(); // 같은 장애가 턴마다 로그를 쌓지 않게 — 건강해지면 리셋
 export async function loadDocsMeta(wsId) {
   if (!sqliteAvailable()) {
     if (!warnedUnavailable) { // 조용히 느려지는 것보다 한 줄 남기는 게 낫다(Node 22.5 미만 등)
@@ -195,7 +217,18 @@ async function loadDocsMetaLocked(wsId) {
     handle = open(wsId);
     // 트랜잭션은 refresh 내부의 쓰기 단계에만 있다 — 스캔(await 구간)에 걸치면 무변경 턴조차
     // 배타 락을 스윕 내내 쥔다(검수 HIGH). 경고도 refresh가 rel 단위로 1회만 낸다.
-    await refresh(handle.db, wsId);
+    const scan = await refresh(handle.db, wsId);
+    if (scan?.unhealthy) {
+      // 스캔이 온전하지 않다 — 손상도 경합도 아니므로 지우지도, 쓰지도 않는다. 이번 턴만 정본 폴백.
+      // (폴백도 같은 장애를 겪으면 같은 산출물을 낸다 — 실패 모드에서도 두 경로 동등성이 유지된다)
+      const key = `${wsId}:${scan.unhealthy}`;
+      if (!warnedUnhealthy.has(key)) {
+        warnedUnhealthy.add(key);
+        console.warn(`[memindex] 이번 턴은 캐시를 건너뜁니다(행 보존): ${scan.unhealthy}`);
+      }
+      return null;
+    }
+    warnedUnhealthy.clear(); // 건강한 스캔 — 다음 장애는 다시 경고한다
     const rows = handle.db.prepare('SELECT * FROM docs').all();
     return rows.map((r) => ({
       rel: r.rel,
@@ -237,7 +270,10 @@ export async function invalidatePath(absFile) {
       handle = open(wsId);
       const docRel = relative(paths(wsId).vault, absFile).split(sep).join('/');
       handle.db.prepare('DELETE FROM docs WHERE rel = ?').run(docRel);
-    } catch { /* 캐시 무효화 실패는 치명적이지 않다 — 다음 내용 변경에서 회복 */ } finally {
+    } catch { /* 크로스 프로세스 경합 등으로 무산될 수 있다 — 조용히 넘기는 근거: 같은 데이터 루트에
+      프로세스 둘이 같은 노트를 동시에 만지는 경우 자체가 드물고, 놓쳐도 다음 내용 변경(mtime·size
+      변동)에서 자가 회복된다. ("pidfile이 동시 기동을 막는다"던 이전 근거는 사실이 아니라 철회 —
+      sync의 holdSyncLock은 동기화 사이클만 건너뛰게 하고 턴은 계속 돈다. 3라운드 검수 확인) */ } finally {
       try { handle?.db.close(); } catch { /* 이미 닫힘 */ }
     }
   });
