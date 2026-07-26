@@ -312,6 +312,49 @@ test('폴더가 통째로 안 읽히면 행을 보존하고 이번 턴만 정본
   assert.equal(countRows(), before);
 });
 
+// "없어진 폴더"(ENOENT)와 "못 읽는 폴더"(EACCES)는 다르다. 전자를 장애로 오인하면 known에 행이
+// 남는 한 매 턴 unhealthy → 그 회사의 캐시가 영구 무력화된다(3라운드 재검수 G1 — 레거시 폴더를
+// 정리한 순간 이 PR이 없애려던 턴당 전수 읽기가 조용히 영구 복귀). 삭제는 정리로, 장애는 보류로.
+test('폴더가 정당하게 삭제되면 죽은 행을 정리하고 캐시는 계속 산다', async (t) => {
+  if (!sqliteAvailable()) return t.skip('node:sqlite 없음');
+  const p = await seed('c-dirgone');
+  await updateIndex('c-dirgone');
+  const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
+  const countRows = () => { const db = new DatabaseSync(dbPath('c-dirgone')); const n = db.prepare('SELECT COUNT(*) AS n FROM docs').get().n; db.close(); return n; };
+  const before = countRows();
+  const legacyRows = (() => { const db = new DatabaseSync(dbPath('c-dirgone')); const n = db.prepare("SELECT COUNT(*) AS n FROM docs WHERE kind='legacy'").get().n; db.close(); return n; })();
+  assert.ok(legacyRows > 0, '시드에 conversations 행이 없다 — 전제 불성립');
+  await rm(p.conversations, { recursive: true, force: true });  // 레거시 폴더를 정당하게 정리
+  await updateIndex('c-dirgone');
+  assert.equal(countRows(), before - legacyRows, '삭제된 폴더의 죽은 행이 정리되지 않았다 — 캐시가 장애로 오인해 영구 폴백 중');
+  assert.doesNotMatch(await readFile(p.index, 'utf8'), /## 이전 기록/, '삭제된 폴더가 인덱스에 남았다');
+  const { plain, cached } = await renderBoth('c-dirgone');
+  assert.equal(cached, plain);
+});
+
+// 읽기 실패 퓨즈(한 턴 20개 초과) — 폴더 퓨즈만 테스트하고 이건 안 했더니 변이가 살아남았다
+// (3라운드 재검수 G3). 대량 읽기 실패는 파일이 아니라 환경(fd·마운트)의 장애다 — 행을 보존한다.
+test('한 턴에 대량 읽기 실패가 나면 행을 보존하고 정본 폴백한다 (읽기 퓨즈)', async (t) => {
+  if (!sqliteAvailable()) return t.skip('node:sqlite 없음');
+  if (process.getuid?.() === 0) return t.skip('root는 권한 검사를 우회한다');
+  const p = await seed('c-readfuse');
+  const files = [];
+  for (let i = 0; i < 25; i++) {
+    const f = join(p.notes, `대량-${String(i).padStart(2, '0')}.md`);
+    await writeFile(f, `---\nupdated: 2026-07-01\n---\n# 대량 ${i}\n`);
+    files.push(f);
+  }
+  await updateIndex('c-readfuse');
+  const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
+  const countRows = () => { const db = new DatabaseSync(dbPath('c-readfuse')); const n = db.prepare('SELECT COUNT(*) AS n FROM docs').get().n; db.close(); return n; };
+  const before = countRows();
+  for (const f of files) { await writeFile(f, `# 갱신본\n`); await chmod(f, 0o000); }  // stale + 읽기 불가 25개
+  try {
+    await updateIndex('c-readfuse');                       // 퓨즈 발동 → 캐시 보존 + 정본 폴백
+    assert.equal(countRows(), before, '대량 읽기 실패에서 행이 삭제됐다 — 퓨즈가 동작하지 않는다');
+  } finally { for (const f of files) await chmod(f, 0o644); }
+});
+
 test('캐시 DB는 동기화 대상이 아니다 — 기기별 산출물이다', () => {
   for (const rel of ['.index.sqlite', '.index.sqlite-wal', '.index.sqlite-shm', '.index.sqlite-journal']) {
     assert.equal(EXCLUDE(rel), true, `${rel}이 동기화를 탄다`);

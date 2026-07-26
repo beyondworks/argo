@@ -102,10 +102,15 @@ async function refresh(db, wsId) {
   let readFailed = 0;
   for (const dir of [p.journal, p.conversations, p.notes]) {
     let names = [];
-    try { names = await readdir(dir); } catch {
-      // 행이 있던 폴더가 통째로 안 읽히면(권한 회수·마운트 이탈) 삭제가 아니라 장애다 — 이번 스캔을
-      // 불건전으로 판정해 캐시를 건드리지 않고 물러난다(3라운드 검수: 폴더 chmod 000에서 행 6→1
-      // 침묵 정리 + 인덱스 소멸 + 경고 0 재현). 행이 없던 폴더(신생 회사)는 기존대로 건너뛴다.
+    try { names = await readdir(dir); } catch (e) {
+      // 없는 폴더(ENOENT)는 장애가 아니라 정당한 삭제다 — 기존대로 건너뛰어 not-seen 경로가 죽은
+      // 행을 정리하게 둔다. 이걸 장애로 오인하면 known에 행이 남는 한 매 턴 unhealthy → 그 회사의
+      // 캐시가 영구 무력화된다(3라운드 재검수 G1: conversations/ 폴더를 지운 회사에서 재현 — 이
+      // PR이 없애려던 턴당 전수 읽기가 조용히 영구 복귀).
+      if (e?.code === 'ENOENT') continue;
+      // 행이 있던 폴더가 존재하는데 안 읽히면(EACCES 등 권한·마운트) 삭제가 아니라 장애다 — 이번
+      // 스캔을 불건전으로 판정해 캐시를 건드리지 않고 물러난다(3라운드 검수 F3: 폴더 chmod 000에서
+      // 행 6→1 침묵 정리 + 경고 0 재현). 행이 없던 폴더는 기존대로 건너뛴다.
       const prefix = DIR_PREFIX.get(dir);
       for (const rel of known.keys()) {
         if (rel.startsWith(prefix)) return { unhealthy: `${prefix} 폴더를 읽지 못했습니다(권한·마운트 확인)` };
@@ -228,7 +233,9 @@ async function loadDocsMetaLocked(wsId) {
       }
       return null;
     }
-    warnedUnhealthy.clear(); // 건강한 스캔 — 다음 장애는 다시 경고한다
+    // 건강한 스캔 — 이 회사의 장애 경고만 리셋한다. 전체 clear면 회사 A의 건강이 회사 B의 경고를
+    // 지운다(3라운드 재검수 LOW — F7에서 고친 것과 같은 계열의 역방향 실수).
+    for (const k of warnedUnhealthy) if (k.startsWith(`${wsId}:`)) warnedUnhealthy.delete(k);
     const rows = handle.db.prepare('SELECT * FROM docs').all();
     return rows.map((r) => ({
       rel: r.rel,
