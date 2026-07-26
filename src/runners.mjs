@@ -438,6 +438,17 @@ export const codexSandboxArgs = (caps) => [
   ...(caps?.browser ? ['-c', 'sandbox_workspace_write.network_access=true'] : []),
 ];
 
+/** 크루별 추론 강도 → codex CLI 인자(순수). codex도 강도를 지원한다 — `-c model_reasoning_effort=…`가
+    인식되는 키임을 실측(2026-07-26, codex-cli 0.144.1: 미인식 키는 --strict-config에서 즉시 에러,
+    이 키는 통과하고 low·high·xhigh 모두 실턴 성공). 'max'는 Claude 전용 명칭이라 xhigh로 사상한다.
+    빈 값·미지원 값이면 인자를 넣지 않는다(모델 기본). (export: 회귀 테스트용 — 순수 함수) */
+export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
+export function codexEffortArgs(effort) {
+  const v = String(effort ?? '').trim().toLowerCase();
+  const mapped = v === 'max' ? 'xhigh' : v;
+  return CODEX_EFFORTS.includes(mapped) ? ['-c', `model_reasoning_effort=${mapped}`] : [];
+}
+
 /** 능력 매핑을 codex config.toml에 매 턴 써넣는다 — `-c` CLI 오버라이드의 버전-안정 대체(주 경로).
     실사용 신고(2026-07-22, 김남): caps를 다 켜도 codex 크루만 "로컬능력 권한 실패", 사용자가 config.toml을
     수동 수정해 해결. 원인 = `-c sandbox_workspace_write.*` 오버라이드 키 경로가 codex 버전마다 갈려
@@ -457,7 +468,7 @@ export async function writeCodexTurnConfig(home, caps) {
 /** 외부 CLI 러너 1턴 — 워크스페이스를 cwd로, 프롬프트 하나로 실행하고 마지막 응답을 받는다.
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
     caps = 회사 로컬 능력({ fs, browser, shell }) — 사장이 켠 능력을 codex 샌드박스에 반영(codexSandboxArgs). */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null }) {
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '' }) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   if (runner === 'codex') {
     const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
@@ -477,6 +488,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
       await exec(cmd.file, [
         ...cmd.args,
         'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check',
+        ...codexEffortArgs(effort), // 크루별 추론 강도 — codex도 지원(실측 2026-07-26)
         ...codexSandboxArgs(caps), // config.toml과 이중 — 신버전은 `-c`, 구버전은 config.toml이 받는다
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),

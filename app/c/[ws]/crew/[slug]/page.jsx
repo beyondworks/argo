@@ -1194,11 +1194,11 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
           <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : ''}</option>
         ))}
       </select>
-      {/* 추론 강도(요청 2026-07-25) — SDK effort를 지원하는 claude에서만 실제로 적용된다.
-          claude 지정 + 자동('')일 때만 노출한다: 다른 러너 지정 상태에 띄우면 "설정했는데 안 먹는"
-          거짓 컨트롤이 되고, 자동에서 숨기면 기본값으로 쓰는 다수 사용자가 기능을 못 본다.
-          자동일 때는 툴팁으로 "Claude로 실행될 때 적용"을 밝혀 정직성을 지킨다. */}
-      {(sel.runner === 'claude' || !sel.runner) && (
+      {/* 추론 강도(요청 2026-07-25) — Claude(SDK effort)와 Codex(-c model_reasoning_effort, 실측
+          2026-07-26)가 지원한다. Gemini CLI엔 해당 옵션이 없고 GLM·Kimi는 SDK 호환 경로로 타 벤더
+          엔드포인트에 붙어 보장되지 않으므로 그 러너를 지정하면 감춘다("설정했는데 안 먹는" 거짓 컨트롤 방지).
+          자동('')일 때는 노출하되 툴팁으로 어느 러너에서 적용되는지 밝힌다. */}
+      {(sel.runner === 'claude' || sel.runner === 'codex' || !sel.runner) && (
         <select value={sel.effort ?? ''} disabled={busy} style={box}
           title={sel.runner ? t('runner.effortLabel') : t('runner.effortAutoHint')}
           aria-label={t('runner.effortLabel')}
