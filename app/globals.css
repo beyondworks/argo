@@ -8,6 +8,20 @@
    토큰은 대표색 1개(--primary=새틴 골드)로 두고, 그라디언트가 필요하면 컴포넌트에서 얹는다.
    주의: --font/--mono는 일부 테마(codex-gh-*, minimal-*, enjoyer)가 여기서 상속하므로 값 유지. */
 
+/* ─── 본문 폰트 자체 호스팅 ─────────────────────────────────────────
+   Pretendard를 jsdelivr CDN 대신 앱에 동봉한다(public/fonts, v1.3.9 정본 그대로).
+   이유: 데스크톱 앱이 본문 폰트를 매 실행 외부 CDN에서 받으면 오프라인·CDN 차단 시
+   한글이 시스템 폰트로 떨어진다(실사용 신고 2026-07-26 계기 — 신고 자체는 파이어폭스
+   정보성 경고였지만, 진짜 문제는 이 외부 의존이었다). CDN의 dynamic-subset(수백 조각)
+   대신 단일 가변 폰트 1파일 — 로컬 서빙이라 조각낼 이유가 없다. */
+@font-face {
+  font-family: 'Pretendard Variable';
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: swap;
+  src: local('Pretendard Variable'), url('/fonts/PretendardVariable.woff2') format('woff2-variations');
+}
+
 :root {
   /* ── Argo 라이트 (웜 아이보리 + 새틴 골드) ── */
   --bg: #f5f0e3;            /* 웜 아이보리 캔버스 */
