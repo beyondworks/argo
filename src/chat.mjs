@@ -1,7 +1,6 @@
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
 import { readdir, readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
@@ -742,7 +741,12 @@ ${lang === 'en'
         }
         if (denial) {
           const capOn = !!cliCaps[denial.cap];
-          const home = homedir();
+          // 홈 경로는 env로만 얻는다(macOS launchd=HOME, Windows=USERPROFILE). node:os의 홈 함수는
+          // 금지 — Next 파일 추적기(nft)가 그 호출을 빌드타임에 실평가해 홈 전체를 글롭하고,
+          // Windows CI 러너 홈의 보호 항목(WindowsApps 별칭 EACCES·Application Data 정션 EPERM)에서
+          // next build가 죽는다(v0.1.30 CI 실측 — 이분법 5런으로 확정). 둘 다 없으면 ''(홈 판정
+          // 불가 → outsideHome=false = 카드 유지, 아래 보수화 규칙과 동일 방향).
+          const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
           // 홈 밖 판정 — 판정 불가면 false(카드 유지)로 보수화(검수 2R: 드라이브 유실이
           // outsideHome 오판 → 카드 억제 + 오안내로 이어졌다). 윈도우는 구분자 통일 + 대소문자 무시.
           const norm = (s) => s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();

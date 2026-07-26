@@ -166,4 +166,8 @@ test('배선: chat.mjs 거부 블록이 감지→능력 게이트→카드 억�
   assert.match(block, /suggestCapability\(/, '능력 OFF면 SDK와 같은 카드를 올려야 한다');
   assert.match(block, /denialNote\(/, '안내문이 답변에 덧붙어야 한다');
   assert.match(src, /runner === 'codex'[\s\S]{0,600}detectRunnerDenial/, 'codex 한정이어야 한다(gemini는 샌드박스 없음)');
+  // Windows CI 트립와이어(v0.1.30 실측): chat.mjs에서 node:os 홈 함수를 부르면 Next 파일
+  // 추적기(nft)가 빌드타임 실평가로 홈 전체를 글롭 → CI 러너 홈의 보호 항목에서 next build가
+  // 죽는다. 홈은 env(HOME/USERPROFILE)로만 얻는다 — 이분법 5런(win-debug)으로 확정한 불변식.
+  assert.doesNotMatch(src, /homedir/, 'chat.mjs에 homedir 금지 — nft 홈 글롭으로 Windows 빌드가 깨진다');
 });
