@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useLang } from '@/lib/i18n';
 import { useLenis } from '@/components/SmoothScroll';
-import { DL, useStarGate } from '@/components/StarModal';
+import { useStarGate } from '@/components/StarModal';
+import { DL } from '@/lib/downloads';
 
 // 소스 레포(2026-07-23 공개) — 코드·README·LICENSE·스타가 쌓이는 정문. 릴리스 자산은 argo-agent(StarModal DL) 유지.
 const GITHUB_URL = 'https://github.com/beyondworks/argo';

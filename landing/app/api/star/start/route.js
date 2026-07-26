@@ -2,9 +2,9 @@
 // GitHub App(별점 권한만) 사용자 승인 화면으로 보낸다. env 미설정이면 그냥 릴리스로 폴백 —
 // 스타 장치가 다운로드를 막는 일은 어떤 경우에도 없어야 한다.
 import { cookies } from 'next/headers';
+import { RELEASES, DL } from '@/lib/downloads';
 
-const RELEASES = 'https://github.com/beyondworks/argo-agent/releases/latest';
-const TARGETS = ['silicon', 'intel', 'win']; // 화이트리스트 — 쿠키 경유라 검증 필수
+const TARGETS = Object.keys(DL); // 화이트리스트 — 쿠키 경유라 검증 필수. 링크 출처와 같이 움직인다
 
 export async function GET(req) {
   const clientId = (process.env.GITHUB_STAR_CLIENT_ID || '').trim();

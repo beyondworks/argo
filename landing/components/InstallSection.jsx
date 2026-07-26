@@ -2,19 +2,21 @@
 
 import { useState } from 'react';
 import { useLang } from '@/lib/i18n';
+import { BASE } from '@/lib/downloads'; // 링크 단일 출처
 
 // 히어로와 1장 사이의 설치 인터루드 — 챕터 인트로와 동일한 시각 문법(rule-top → 키커/카운터 →
 // 초대형 타이틀 → 세리프 부제 → 태그라인)을 따르고, 챕터의 아트 자리에 터미널 창을 놓는다.
 // OS별 명령은 전부 실동작 검증 경로만: linux=install.sh(정본), mac=최신 dmg 직다운+열기,
 // win=고정 파일명 설치본 직다운+실행 (argo-agent Latest 자산 — 파일명 고정이라 URL 안정).
-const BASE = 'https://github.com/beyondworks/argo-agent/releases/latest/download';
 const OSES = [
   {
     id: 'mac',
     tab: 'MACOS',
     shell: 'argo — zsh',
     prompt: '$',
-    cmd: `curl -fsSL -o /tmp/argo.dmg ${BASE}/argo-macos-apple-silicon.dmg && open /tmp/argo.dmg`,
+    // 칩을 uname으로 갈라 받는다 — 인텔 재지원(v0.1.27) 이후로 실리콘 dmg를 인텔 맥에 주면 실행이 안 된다.
+    // 탭을 늘리는 대신 한 줄 안에서 해결(이 섹션의 약속이 "설치도 한 줄"이다).
+    cmd: `curl -fsSL -o /tmp/argo.dmg ${BASE}/argo-macos-$([ "$(uname -m)" = arm64 ] && echo apple-silicon || echo intel).dmg && open /tmp/argo.dmg`,
   },
   {
     id: 'win',

@@ -2,16 +2,12 @@
 // 원칙: 어떤 실패(취소·만료·API 오류)든 다운로드를 막지 않는다 — 전부 릴리스로 보낸다.
 // 토큰은 스타 호출에만 쓰고 어디에도 저장하지 않는다.
 import { cookies } from 'next/headers';
+// 스타 후 직다운로드 — start가 심은 쿠키(argo_star_dl)의 타깃으로 바로 파일을 내려준다.
+// 링크는 모달·설치 섹션과 **같은 출처**를 쓴다(각자 갖고 있다 인텔만 어긋난 전력 — lib/downloads.js 주석).
+import { RELEASES, DL } from '@/lib/downloads';
 
-const RELEASES = 'https://github.com/beyondworks/argo-agent/releases/latest';
 // 스타 대상 = 소스 레포(2026-07-23 공개 후 전환). 다운로드 자산(RELEASES·DL)은 argo-agent 유지.
 const REPO = 'beyondworks/argo';
-// 스타 후 직다운로드 — start가 심은 쿠키(argo_star_dl)의 타깃으로 바로 파일을 내려준다
-const DL = {
-  silicon: `${RELEASES}/download/argo-macos-apple-silicon.dmg`,
-  intel: `${RELEASES}/download/argo-macos-intel.dmg`,
-  win: `${RELEASES}/download/argo-windows-setup.exe`,
-};
 
 export async function GET(req) {
   const u = new URL(req.url);

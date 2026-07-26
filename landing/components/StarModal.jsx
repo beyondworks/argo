@@ -4,16 +4,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useLang } from '@/lib/i18n';
-
-export const RELEASES = 'https://github.com/beyondworks/argo-agent/releases/latest';
-const BASE = 'https://github.com/beyondworks/argo-agent/releases/latest/download/';
-// 고정 파일명 직다운로드 — release.yml이 매 릴리스마다 같은 이름으로 발행한다
-export const DL = {
-  silicon: `${BASE}argo-macos-apple-silicon.dmg`,
-  // 인텔 맥은 v0.1.6이 마지막 지원(2026-07-17 결정) — latest엔 자산이 없어 latest 포인터면 조용한 404가 된다(실측 2026-07-23)
-  intel: 'https://github.com/beyondworks/argo-agent/releases/download/v0.1.6/argo-macos-intel.dmg',
-  win: `${BASE}argo-windows-setup.exe`,
-};
+import { DL } from '@/lib/downloads'; // 링크 단일 출처 — 여기서 다시 정의하지 않는다
 
 // 스타 완료(서버 쿠키) 또는 "그냥 다운로드" 선택(localStorage) 후에는 다시 묻지 않는다
 export const starAsked = () =>
