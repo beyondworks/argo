@@ -16,7 +16,7 @@ process.env.ARGO_ROOT = ROOT;
 process.env.ARGO_SYNC = '1';
 delete process.env.ARGO_SYNC_ALLOW_MASS_DELETE;
 
-const { syncCompany, _setSyncClientForTest, _tombstonesForTest } = await import('../src/sync.mjs');
+const { syncCompany, _setSyncClientForTest, _tombstonesForTest, isDiscoverDue } = await import('../src/sync.mjs');
 const { archiveCompany, TOMBSTONE_DIR } = await import('../src/workspace.mjs');
 
 const OWNER = 'o';
@@ -27,6 +27,7 @@ const meta = (buf, m = 1000) => ({ m, s: buf.length, h: hashBuf(buf) });
 function fakeStorage(initial = {}) {
   const store = new Map(Object.entries(initial));
   const bucket = {
+    _listCalls: 0,
     async download(key) {
       if (!store.has(key)) return { data: null, error: { message: 'Object not found', status: 404 } };
       const buf = store.get(key);
@@ -41,7 +42,10 @@ function fakeStorage(initial = {}) {
       return { error: null };
     },
     // Supabase storage list 모사 — prefix 바로 아래의 파일({id 있음})과 폴더({id: null})를 낸다.
+    // 호출 수를 센다: 서버에서 list는 storage.search()로 실행되고 이게 DB CPU의 지배 항목이다
+    // (프로덕션 실측 98.3%) — "몇 번 부르는가"가 이 코드의 비용 계약이라 테스트가 잠근다.
     async list(prefix) {
+      bucket._listCalls++;
       const p = prefix.endsWith('/') ? prefix : `${prefix}/`;
       const names = new Map(); // name → isFile
       for (const k of store.keys()) {
@@ -534,4 +538,34 @@ test('통합 GW1: 큐 잔재 대량(base 8개↑)도 mass-delete 브레이크를
   assert.ok(manifest.files['vault/a.md'], '회사 데이터는 매니페스트에 유지');
   assert.ok(existsSync(join(wsRoot, 'vault', 'a.md')), '로컬 회사 데이터 무사');
   assert.ok(existsSync(join(wsRoot, '.gw-queue-telegram', '100.json')), '로컬 큐 파일은 동기화가 건드리지 않는다(정리는 드레이너 몫)');
+});
+
+/* ─── 목록 조회 비용 계약 (프로덕션 실측 2026-07-26: Supabase CPU 80% 경보) ───
+   Storage list()는 서버에서 storage.search()로 실행되고, 그 하나가 DB CPU의 98.3%를 먹고 있었다
+   (107만 회 · 평균 177ms). 기기마다 8초 사이클에 목록 2회(발견 + tombstone)를 부르니 부하가
+   동시 접속 기기 수에 선형으로 붙었다 — 12대에서 175회/분(코어 절반). 파일 push/pull은 준실시간을
+   유지하되 목록 조회만 DISCOVER_MS 주기로 분리했다. 아래는 그 분리를 잠그는 가드다. */
+test('원격 미조회 사이클: tombstone이 목록을 호출하지 않고 로컬 집합은 그대로 낸다', async () => {
+  const wsId = 'listcost';
+  await rm(TOMBSTONE_DIR, { recursive: true, force: true }).catch(() => {});
+  const { fake } = await setup(wsId, { localFiles: { 'company.json': Buffer.from(JSON.stringify({ ownerId: OWNER })) } });
+  _setSyncClientForTest(fake);
+  await archiveCompany(wsId);                       // 로컬 tombstone 1건 생성
+  const before = fake.storage.from()._listCalls;
+
+  const local = await _tombstonesForTest.syncTombstones(OWNER, { remote: false });
+  assert.equal(fake.storage.from()._listCalls, before, '원격 미조회 사이클인데 list를 호출했다 — 부하 분리가 깨졌다');
+  assert.ok(local.has(wsId), '로컬 tombstone 집합은 그대로 나와야 한다(보관 회사 복원 차단이 유지된다)');
+
+  const full = await _tombstonesForTest.syncTombstones(OWNER);   // 기본값 = 원격 조회
+  assert.ok(fake.storage.from()._listCalls > before, '원격 조회 사이클은 list를 호출해야 한다');
+  assert.ok(full.has(wsId), '원격 조회 사이클도 같은 로컬 집합을 낸다');
+});
+
+test('목록 조회 주기 판정: 첫 사이클은 항상, 그다음은 간격을 채워야 한다', () => {
+  const T = 60_000;
+  assert.equal(isDiscoverDue(1_000_000, undefined, T), true, '첫 사이클(기록 없음)을 건너뛰면 신규 기기가 자기 회사를 못 찾는다');
+  assert.equal(isDiscoverDue(1_000_000, 0, T), true, '0도 기록 없음으로 본다');
+  assert.equal(isDiscoverDue(1_000_000, 1_000_000 - T + 1, T), false, '간격 미달이면 건너뛴다 — 이게 부하 절감의 전부다');
+  assert.equal(isDiscoverDue(1_000_000, 1_000_000 - T, T), true, '간격을 정확히 채우면 조회한다');
 });

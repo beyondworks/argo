@@ -627,6 +627,15 @@ export async function loadRunnerCred(wsId, runner) {
   return c && typeof c.value === 'string' && c.value.trim() ? { type: credType(c.type), value: c.value.trim() } : null;
 }
 
+/** 이 턴이 **실제로 돈이 청구되는가** — 사용액 표시의 판정 기준(순수 규칙).
+    apikey만 청구다. oauth(구독 로그인)·host(이 컴퓨터 CLI 로그인)·자격 없음(호스트 폴백)은 사용자의
+    구독 안에서 돌아가므로 청구되지 않는다. SDK는 두 경우 모두 total_cost_usd에 정가 상당액을 리포트하는데,
+    그걸 그대로 "이번 달 사용액"으로 보여주면 구독 사용자가 청구서로 오해한다(실사용 신고 2026-07-26:
+    "구독료 안에서 쓰는 건지 추가로 청구되는 건지 헷갈린다"). (export: 회귀 테스트용) */
+export async function isBilledRunner(wsId, runner) {
+  return (await loadRunnerCred(wsId, runner))?.type === 'apikey';
+}
+
 /** 러너 자격 저장 — 원자적. 다른 러너·필드는 보존. 레거시 claude 필드는 정리. */
 export async function saveRunnerCred(wsId, runner, type, value) {
   if (!RUNNER_AUTH[runner]) throw new Error('알 수 없는 러너');

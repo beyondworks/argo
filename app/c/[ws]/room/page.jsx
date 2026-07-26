@@ -54,6 +54,22 @@ export default function Room({ params }) {
       .catch((e) => setError(String(e?.message || '') || t('room.loadFail')));
     api(`/api/companies/${ws}/agents`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
   }
+  // 회의 다시 열기 — 보관 회의를 현재 방으로 되돌린다. 진행 중 회의가 있으면 서버가 409로 거절하므로
+  // 덮어쓰기가 원천 차단된다(실사용 요청 2026-07-26 "보관한 회의를 다시 열어 이어갈 수 없나요").
+  const [reopening, setReopening] = useState(null); // 진행 중인 id — 중복 클릭 차단
+  async function doReopen(sess) {
+    if (reopening) return;
+    setReopening(sess.id);
+    try {
+      const r = await fetch(`/api/companies/${ws}/room/sessions`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: sess.id, reopen: true }),
+      });
+      if (!r.ok) { setError((await r.json().catch(() => ({}))).error || t('room.reopenFail')); return; }
+      setViewing(null); setArchMsgs(null); // 보관 열람 상태 해제 — 되살린 회의는 '현재 회의'다
+      load(); loadSessions();
+    } catch { setError(t('room.reopenFail')); } finally { setReopening(null); }
+  }
   useEffect(load, [ws]);
   useEffect(loadSessions, [loadSessions]);
   useEffect(() => {
@@ -153,6 +169,12 @@ export default function Room({ params }) {
               </span>
             </button>
             <span className="rail-actions" style={{ position: 'absolute', right: 5, top: 7, display: 'flex', gap: 1 }}>
+              <button type="button" title={t('room.sessions.reopen')} aria-label={t('room.sessions.reopen')}
+                disabled={reopening === s.id}
+                onClick={(e) => { e.stopPropagation(); doReopen(s); }}
+                style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: actColor, cursor: reopening === s.id ? 'wait' : 'pointer', borderRadius: 6 }}>
+                <Icon name="play" size={12} />
+              </button>
               <button type="button" title={s.pinned ? t('chat.sessions.unpin') : t('chat.sessions.pin')} aria-label={s.pinned ? t('chat.sessions.unpin') : t('chat.sessions.pin')}
                 onClick={(e) => { e.stopPropagation(); doTogglePin(s); }}
                 style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: s.pinned ? pinColor : actColor, cursor: 'pointer', borderRadius: 6 }}>

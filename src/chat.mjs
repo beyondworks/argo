@@ -18,7 +18,7 @@ import { loadCapabilities } from './capabilities.mjs';
 import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike } from './runners.mjs';
+import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
@@ -233,9 +233,10 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true, lang = 'ko', runner = null } = {}) {
   const mcpList = connectedMcp.length ? connectedMcp.join(', ') : (lang === 'en' ? '(none)' : '(없음)');
   if (lang === 'en') {
+    // 한국어 경로와 대칭(다국어 상시 규칙) — 신고 2026-07-26: 크루가 "스킬·도구에서 추가하라"고 잘못 안내했다.
     const offGuide = hasTools
-      ? 'If the work needs it, don\'t end with "I can\'t" — ask the captain to enable it via the request_capability tool (a Yes/No card appears in the chat)'
-      : 'If the work needs it, don\'t end with "I can\'t" — tell the captain exactly which capability to enable in Settings';
+      ? 'If the work needs it, don\'t end with "I can\'t". **Do not send the captain hunting through menus** (Skills & Tools is for MCP connections and is unrelated here) — ask right there with the request_capability tool: a Yes/No card appears in the chat, one tap enables it and the work continues'
+      : 'If the work needs it, don\'t end with "I can\'t". This runner has no request tool, so name the exact place — **Settings → Local capabilities** — and which item to turn on (not Skills & Tools; that is for MCP connections)';
     return `\n## Approval rules — must follow
 - Never execute actions that are hard to reverse or leave the company (sending, publishing, purchasing, deleting, contracts, etc.) without approval. ${hasTools ? 'File an approval with the request_approval tool and wait for the decision.' : 'This turn has no approval tool — do not execute; report "approval required: <the action>" and end the turn.'}
 - In-company work like drafting, analysis, and vault notes proceeds right away without approval.
@@ -243,7 +244,7 @@ export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true
 
 ## Local capabilities — what company settings allow
 - File system (outside the workspace): ${caps.fs ? 'allowed — be careful, and file an approval first for destructive changes' : `off — never read or write files outside the vault. ${offGuide}`}
-- Web browsing: ${caps.browser ? 'allowed (web fetch/search tools)' : `off — ${offGuide}`}
+- Web browsing (includes web search / looking up current information): ${caps.browser ? 'allowed (web fetch/search tools)' : `off — ${offGuide}`}
 - Shell commands: ${runner === 'gemini' ? 'not supported on this runner (Gemini) — for shell work, tell the captain to assign a crew on a shell-capable runner (e.g. Claude)' : caps.shell ? 'allowed' : `off — ${offGuide}`}
 ${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and capability grants run without approval. This does NOT extend to actions that leave the company (sending, publishing, purchasing, deleting, contracts) or to hiring/profile changes: those still require approval, so keep filing them.' : '- Side-effecting actions continue after approval — waiting for approval is the normal flow'}
 
@@ -263,9 +264,12 @@ ${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and c
 - **For work that needs more than 10 minutes, ${hasTools ? 'use the start_long_task tool' : 'split it across turns or have it write results to a file and read that file next turn'}** — ${hasTools ? 'it runs outside this turn without blocking the conversation, and the result is delivered to this chat and your messenger when it finishes. Unlike shell backgrounding, the output is never lost.' : ''}` : ''}
 - Approvals are granted in the web approval inbox or via Telegram/Slack buttons. A timed-out wait is NOT failure — the request stays in the inbox and, once approved later, execution continues in a follow-up turn.${hasTools ? '\n- If frequent approvals interrupt the flow, you may suggest the captain enable capabilities or "permission bypass mode" (bottom of Settings — trusted companies only).' : ''}`;
   }
+  // 실사용 신고 2026-07-26: 웹 검색을 못 하자 크루가 "스킬·도구에서 추가하세요"라고 안내했다.
+  // 스킬·도구는 MCP 연결이고 웹 브라우징은 로컬 능력이라 **틀린 안내**이고, 사장이 메뉴를 헤맸다.
+  // 켜는 건 이미 request_capability 한 번이면 되니, 메뉴로 떠넘기는 것을 명시적으로 금지한다.
   const offGuide = hasTools
-    ? '필요한 작업이면 "할 수 없다"로 끝내지 말고 request_capability 도구로 사장에게 켜기를 요청하라(대화창에 Yes/No 카드가 뜬다)'
-    : '필요한 작업이면 "할 수 없다"로 끝내지 말고 설정에서 어떤 능력을 켜야 하는지 사장에게 정확히 안내하라';
+    ? '필요한 작업이면 "할 수 없다"로 끝내지 마라. **사장에게 메뉴를 찾아가라고 안내하지 말고**(스킬·도구는 MCP 연결이라 여기와 무관하다) request_capability 도구로 그 자리에서 켜기를 요청하라 — 대화창에 Yes/No 카드가 떠서 한 번 누르면 켜지고 이어서 실행된다'
+    : '필요한 작업이면 "할 수 없다"로 끝내지 마라. 이 러너에는 요청 도구가 없으니 **설정 → 로컬 능력**에서 어느 항목을 켜야 하는지 정확히 짚어 안내하라(스킬·도구가 아니다 — 거긴 MCP 연결이다)';
   return `\n## 결재 규칙 — 반드시 따를 것
 - 되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 승인 없이 절대 실행하지 마라. ${hasTools ? 'request_approval 도구로 결재를 올리고 결정을 기다려라.' : '이 턴에는 결재 도구가 없다 — 실행하지 말고 "결재가 필요하다: <하려는 행동>"을 보고하고 턴을 마쳐라.'}
 - 초안 작성·분석·vault 기록 같은 회사 안 작업은 결재 없이 바로 한다.
@@ -273,7 +277,7 @@ ${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and c
 
 ## 로컬 능력 — 회사 설정이 허용한 범위
 - 파일 시스템(워크스페이스 밖): ${caps.fs ? '허용 — 신중하게, 파괴적 변경은 결재를 먼저 올려라' : `꺼짐 — vault 밖의 파일은 읽지도 쓰지도 마라. ${offGuide}`}
-- 웹 브라우징: ${caps.browser ? '허용(웹 조회·검색 도구)' : `꺼짐 — ${offGuide}`}
+- 웹 브라우징(=웹 검색·최신 정보 조회 포함): ${caps.browser ? '허용(웹 조회·검색 도구)' : `꺼짐 — ${offGuide}`}
 - 셸 명령: ${runner === 'gemini' ? '이 러너(Gemini)에서는 지원되지 않는다 — 셸이 필요한 작업은 셸을 지원하는 러너(Claude 등)의 크루에게 맡기도록 사장에게 안내하라' : caps.shell ? '허용' : `꺼짐 — ${offGuide}`}
 ${caps.bypass ? '- 준비 작업 자동 승인: 켜짐 — 도구 설치·능력 켜기는 결재 없이 진행된다. 단 **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이다 — 자동 승인이 그 경계를 넘지 않는다. 계속 결재를 올려라.' : '- 부작용 있는 실행은 결재 승인 후 이어진다 — 승인 대기는 정상 흐름이다'}
 
@@ -357,7 +361,9 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
 
   const requestCapability = tool(
     'request_capability',
-    '작업에 필요한 로컬 능력(fs=파일 시스템, browser=웹 브라우징, shell=셸)이 꺼져 있을 때 사장에게 켜 달라고 요청한다. 요청하면 사장의 대화창에 Yes/No 카드가 뜨고, 승인되면 능력이 켜진 뒤 이어서 실행하라는 후속 지시가 온다. why에는 왜 필요한지 한 문장.',
+    '작업에 필요한 로컬 능력이 꺼져 있을 때 사장에게 켜 달라고 요청한다(메뉴로 안내하지 말고 이 도구를 써라). '
+      + 'browser = 웹 브라우징 — **웹 검색·최신 정보 조회·페이지 열람이 전부 여기다**. fs = 워크스페이스 밖 파일. shell = 셸 명령. '
+      + '요청하면 사장의 대화창에 Yes/No 카드가 뜨고, 승인되면 능력이 켜진 뒤 이어서 실행하라는 후속 지시가 온다. why에는 왜 필요한지 한 문장.',
     { cap: z.enum(['fs', 'browser', 'shell']), why: z.string() },
     async ({ cap, why }) => {
       const item = await suggestCapability(wsId, fromSlug, cap, why, delegatedBy);
@@ -589,7 +595,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지)
   const { budgetUsd, lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
   if (budgetUsd > 0) {
-    const spent = await monthCost(wsId);
+    const spent = (await monthCost(wsId)).costUsd; // 청구 턴만 — 구독(OAuth) 턴은 돈이 안 나가 예산을 갉지 않는다
     if (spent >= budgetUsd) {
       // 예산 초과 — 던지지 않고 크루가 대화로 안내한다(시스템 에러 토스트 대신 채팅 메시지).
       // 모델을 부르지 않으니 비용 0. 정상 턴과 동일한 반환 형태(handover 포함)라 모든 소비자 무변경.
@@ -720,6 +726,7 @@ ${lang === 'en'
       await appendUsage(wsId, {
         kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, runner,
         model: `${runner}${usedModel ? `:${usedModel}` : ''}`, usage: {}, costUsd: null, ms: Date.now() - t0,
+        billed: await isBilledRunner(wsId, runner), // 이 경로는 costUsd가 null이라 금액엔 무영향 — 기록 일관성용
       });
       await clearTurnStatus(wsId, agentSlug);
       const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
@@ -832,6 +839,9 @@ ${lang === 'en'
   let stderrTail = ''; // CLI stderr 마지막 2KB — 실패 진단용(성공 시 미사용)
   // SDK 러너(claude/glm) env — 회사 자격(API키/OAuth) 우선, 없으면 기존 폴백(claude=CLI/env, glm=호스트 GLM_API_KEY).
   const sdkEnv = await sdkEnvFor(wsId, runner);
+  // 이 턴이 청구되는가 — 구독(OAuth)·호스트 로그인 턴은 SDK가 정가를 리포트해도 돈이 안 나간다.
+  // 사용액 표시가 청구서로 오해되던 신고(2026-07-26)의 교정. 턴당 1회만 읽는다(파일 I/O).
+  const billed = await isBilledRunner(wsId, runner);
   await setTurnStatus(wsId, agentSlug, 'boot'); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
   const q = query({
     prompt: promptInput,
@@ -911,7 +921,7 @@ ${lang === 'en'
       if (hadWork) {
         await appendUsage(wsId, {
           kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, runner, model: actualModel || effModel || null,
-          usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0, tools: toolCounts,
+          usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0, tools: toolCounts, billed,
         });
       }
       if (msg.subtype === 'success') reply = msg.result;
