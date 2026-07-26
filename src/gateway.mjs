@@ -438,18 +438,51 @@ async function runAgentTurn(wsId, slug, text, attachments, ctx) {
 
 /* ─── 큐 잡 핸들러(채널별) — 매니저 소유 워커가 잡을 실행할 때 쓴다. 턴 실패는 에러 회신으로
    내부 종결하고 정상 반환(잡 완료 처리 — 무한 재시도 방지). 던지는 건 인프라 예외뿐. ─── */
+/* ─── 진행 표시 — 텔레그램 typing은 5초면 꺼진다 ───
+   sendChatAction을 한 번만 보내면 긴 턴(수십 초~수 분)에서 "입력중…"이 즉시 사라져 사용자는 봇이
+   죽은 줄 안다(실사용 요청 2026-07-26). 턴이 끝날 때까지 4초 주기로 갱신하고, 오래 걸리면 중간에
+   한 번 진행 상황을 말로 알린다(무소식 구간 제거). stop()으로 반드시 정리한다. */
+const TYPING_REFRESH_MS = 4_000;
+const PROGRESS_NOTICE_MS = 90_000; // 이 시간을 넘기면 1회 안내(그 뒤로는 조용히 — 알림 폭주 방지)
+function startTypingKeepalive(token, chatId, { lang = 'ko', notice = true, _send = null } = {}) {
+  let stopped = false;
+  const call = _send ?? ((method, body) => tg(token, method, body).catch(() => {})); // _send = 테스트 주입구
+  const send = () => { if (!stopped) call('sendChatAction', { chat_id: chatId, action: 'typing' }); };
+  send();
+  const iv = setInterval(send, TYPING_REFRESH_MS);
+  const noticeTimer = notice ? setTimeout(() => {
+    if (stopped) return;
+    call('sendMessage', {
+      chat_id: chatId,
+      text: pick('작업이 길어지고 있어요 — 계속 진행 중입니다. 끝나면 결과를 바로 보내드릴게요.',
+        "This is taking a while — still working on it. I'll send the result as soon as it's done.", lang),
+    });
+  }, PROGRESS_NOTICE_MS) : null;
+  return () => { stopped = true; clearInterval(iv); if (noticeTimer) clearTimeout(noticeTimer); };
+}
+// 테스트 전용 — 실 텔레그램 호출 없이 주기·정지 계약을 잠근다(프로덕션 경로는 위 두 워커).
+export const _typingForTest = {
+  start: (token, chatId, opts, sender) => startTypingKeepalive(token, chatId, { ...opts, _send: sender }),
+  refreshMs: TYPING_REFRESH_MS,
+  noticeMs: PROGRESS_NOTICE_MS,
+};
+
 function makeTgGatewayHandler(wsId, getCfg) {
   return async (job) => {
     const cfg = getCfg();
     if (!cfg?.token || !cfg.chatId) return; // 연결이 사라짐 — 잡 폐기(재시도 불가)
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+    const stopTyping = startTypingKeepalive(cfg.token, cfg.chatId, { lang });
     try {
       const atts = job.atts ?? [];
       const note = atts.some((a) => !a.isImage) ? pick('\n(이미지가 아닌 첨부는 vault 경로로 저장되어 있다)', '\n(Non-image attachments are saved under the vault path)', lang) : '';
       const reply = await runTurn(wsId, cfg, job.text || (pick('첨부한 파일을 확인하고 필요한 걸 처리해줘.', "Check the attached files and handle what's needed.", lang) + note), atts, job.ctx ?? null);
+      stopTyping(); // 답변 전송 전에 멈춘다 — 보낸 뒤에도 "입력중"이 남으면 또 오해를 만든다
       await sendTgReply(cfg.token, cfg.chatId, wsId, reply);
     } catch (e) {
       await tg(cfg.token, 'sendMessage', { chat_id: cfg.chatId, text: pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang) }).catch(() => {});
+    } finally {
+      stopTyping(); // 중복 호출 무해(멱등) — 예외·조기 반환 경로에서도 타이머가 남지 않게
     }
   };
 }
@@ -458,13 +491,17 @@ function makeTgAgentHandler(wsId, slug, getCfg) {
     const cfg = getCfg();
     if (!cfg?.token || !job.ctx?.chatId) return; // 연결/발화 위치 소실 — 잡 폐기
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+    const stopTyping = startTypingKeepalive(cfg.token, job.ctx.chatId, { lang }); // 회사 봇과 동일 계약
     try {
       const atts = job.atts ?? [];
       const note = atts.some((a) => !a.isImage) ? pick('\n(이미지가 아닌 첨부는 vault 경로로 저장되어 있다)', '\n(Non-image attachments are saved under the vault path)', lang) : '';
       const reply = await runAgentTurn(wsId, slug, job.text || (pick('첨부한 파일을 확인하고 필요한 걸 처리해줘.', "Check the attached files and handle what's needed.", lang) + note), atts, job.ctx);
+      stopTyping();
       await sendTgReply(cfg.token, job.ctx.chatId, wsId, reply);
     } catch (e) {
       await tg(cfg.token, 'sendMessage', { chat_id: job.ctx.chatId, text: pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang) }).catch(() => {});
+    } finally {
+      stopTyping();
     }
   };
 }

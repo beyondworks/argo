@@ -155,3 +155,18 @@ test('updateAgentBot: 크루 직통 봇도 저장 시 토큰 정제 (검수 HIGH
   const all = await updateAgentBot(WS, 'luca', { token: ` ${bot}\n​` }); // 오염 붙여넣기
   assert.equal(all.telegram.agents.luca.token, bot, '크루 직통 봇 저장값도 정제됨');
 });
+
+/* ── 진행 표시 유지 — 텔레그램 typing은 5초면 꺼진다(요청 2026-07-26) ── */
+test('startTypingKeepalive: 주기 갱신 + 장시간 1회 안내 + stop 후 정지', async () => {
+  const { _typingForTest } = await import('../src/gateway.mjs');
+  const calls = [];
+  const stop = _typingForTest.start('tok', 42, { lang: 'ko' }, (method, body) => calls.push({ method, text: body.text }));
+  const n0 = calls.filter((c) => c.method === 'sendChatAction').length;
+  assert.equal(n0, 1, '즉시 1회 전송(대기 없이 표시)');
+  await new Promise((r) => setTimeout(r, _typingForTest.refreshMs + 400));
+  assert.ok(calls.filter((c) => c.method === 'sendChatAction').length >= 2, '주기마다 갱신돼야 표시가 유지된다');
+  stop();
+  const after = calls.length;
+  await new Promise((r) => setTimeout(r, _typingForTest.refreshMs + 400));
+  assert.equal(calls.length, after, 'stop 후에는 더 보내지 않는다');
+});
