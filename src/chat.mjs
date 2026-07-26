@@ -734,10 +734,11 @@ ${lang === 'en'
         let denial = detectRunnerDenial(reply); // strict — 생 출력 줄. 어느 능력 상태든 신뢰
         let narrated = false;
         if (!denial) {
-          // 서술형("쓰기 권한이 없습니다") — 해당 능력이 꺼져 있을 때만 채택한다. 오탐해도
+          // 서술형("쓰기 권한이 없습니다") — 후보 중 **꺼져 있는 첫 능력**만 채택한다(3R:
+          // 켜진 능력 후보가 꺼진 후보를 삼키면 안내가 통째로 사라졌다). 오탐해도
           // "꺼진 능력을 켤까요?"라는 사실 기반 제안에 머문다(능력 ON 오정보는 strict 전용).
-          const n = detectDeniedNarration(reply);
-          if (n && !cliCaps[n.cap]) { denial = { ...n, path: '' }; narrated = true; }
+          const cap = detectDeniedNarration(reply)?.caps.find((c) => !cliCaps[c]);
+          if (cap) { denial = { cap, path: '' }; narrated = true; }
         }
         if (denial) {
           const capOn = !!cliCaps[denial.cap];

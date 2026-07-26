@@ -87,19 +87,25 @@ export function detectRunnerDenial(text) {
 }
 
 /** 서술형 거부 탐지(순수) — 실측 캡처 ②: codex는 거부를 자연어로 서술한다
-    ("지정한 Desktop 경로에 쓰기 권한이 없습니다"). { cap } 또는 null.
+    ("지정한 Desktop 경로에 쓰기 권한이 없습니다"). { caps: ['browser'?, 'fs'?] } 또는 null.
+    - 후보 배열이다: 호출부가 **OFF인 첫 능력**을 채택한다(3R: fs 단일 반환은 fs ON일 때
+      browser 거부까지 삼켰다). browser를 앞에 둔다 — 네트워크 거부 서술에 "권한" 어휘가
+      섞이는 게 흔해(3R MEDIUM: codex가 network 차단을 "not permitted"로 뱉음) fs 우선이면
+      틀린 카드가 나간다.
+    - 생 에러 토큰(bare "not permitted"·"permission denied")은 여기 없다 — 그건 strict의
+      몫이고, 산문에 나타나면 대부분 인용이다(3R: 성공 보고·IAM 설명이 fs로 잡혔다).
+    - 코드펜스 안은 제외(strict와 동일) — 펜스 인용 로그가 서술로 새지 않게.
     ⚠ 호출부는 반드시 **해당 능력이 OFF일 때만** 이 결과를 써야 한다 — 오탐해도
     "꺼진 능력을 켤까요?"라는 사실 기반 제안에 머물게 하는 안전선이다. */
+const NARR_BROWSER = /(?:네트워크|인터넷|웹)에? 접근(?:이|을|할 수)? ?(?:막|없|차단|불가|거부)|웹 검색(?:을|이)? ?(?:할 수 없|못 하|막|차단)|네트워크가 차단|(?:network|internet) (?:access )?(?:is )?(?:blocked|disabled|unavailable|restricted|not permitted|denied)/i;
+const NARR_FS = /쓰기 권한이 없|쓰기가 (?:거부|차단|제한)|권한이 없어[^\n]{0,20}(?:쓰|저장|만들)|(?:저장|생성)할 수 없[^\n]{0,30}권한|밖(?:에|의)[^\n]{0,15}(?:쓸 수 없|저장할 수 없)|no write (?:access|permission)|write (?:access|permission) (?:is )?(?:denied|restricted|missing)|(?:don't|do not|doesn't|cannot|can't) (?:have )?write (?:permission|access)/i;
 export function detectDeniedNarration(text) {
-  const s = String(text ?? '');
+  const s = unfencedLines(String(text ?? '')).join('\n');
   if (!s) return null;
-  if (/쓰기 권한이 없|쓰기가 (?:거부|차단|제한)|권한이 없어[^\n]{0,20}(?:쓰|저장|만들)|(?:저장|생성)할 수 없[^\n]{0,30}권한|밖(?:에|의)[^\n]{0,15}(?:쓸 수 없|저장할 수 없)|(?:not permitted|permission denied|no write (?:access|permission))/i.test(s)) {
-    return { cap: 'fs' };
-  }
-  if (/(?:네트워크|인터넷|웹)에? 접근(?:이|할 수) (?:막|없|차단|불가)|웹 검색(?:을|이) (?:할 수 없|막|차단)|네트워크가 차단|(?:network|internet) (?:access )?(?:is )?(?:blocked|disabled|unavailable)/i.test(s)) {
-    return { cap: 'browser' };
-  }
-  return null;
+  const caps = [];
+  if (NARR_BROWSER.test(s)) caps.push('browser');
+  if (NARR_FS.test(s)) caps.push('fs');
+  return caps.length ? { caps } : null;
 }
 
 /** 거부 안내문(순수). 갈래:

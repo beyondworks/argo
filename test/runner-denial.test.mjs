@@ -19,15 +19,38 @@ test('실측 ①: codex 샌드박스 생 에러를 fs 거부로 인식한다', (
 test('실측 ②: 서술형 거부("쓰기 권한이 없습니다")를 narration으로 인식한다', () => {
   const real = '오늘 회의 내용이 제공되지 않아 요약을 작성할 수 없습니다. 또한 현재는 지정한 Desktop 경로에 쓰기 권한이 없습니다.\n\n회의록이나 핵심 메모를 보내주시면 요약한 뒤, 접근 가능한 작업공간의 `argo-cap2-report.md`로 저장해 드리겠습니다.';
   assert.equal(detectRunnerDenial(real), null, '생 에러가 없으니 strict는 null이어야 한다');
-  assert.equal(detectDeniedNarration(real)?.cap, 'fs');
+  assert.deepEqual(detectDeniedNarration(real)?.caps, ['fs']);
 });
 
 test('서술형: 네트워크 차단 서술은 browser, 평범한 답변은 null', () => {
-  assert.equal(detectDeniedNarration('웹 검색을 할 수 없어 최신 정보를 확인하지 못했습니다.')?.cap, 'browser');
-  assert.equal(detectDeniedNarration('네트워크가 차단되어 있어 조회가 불가합니다.')?.cap, 'browser');
+  assert.deepEqual(detectDeniedNarration('웹 검색을 할 수 없어 최신 정보를 확인하지 못했습니다.')?.caps, ['browser']);
+  assert.deepEqual(detectDeniedNarration('네트워크가 차단되어 있어 조회가 불가합니다.')?.caps, ['browser']);
   for (const s of ['보고서를 vault/notes에 저장했습니다.', '권한 관리 기능을 설명드리겠습니다.', '']) {
     assert.equal(detectDeniedNarration(s), null, s);
   }
+});
+
+test('서술형 3R: 네트워크 거부 인용("not permitted")이 fs로 오분류되지 않는다 — browser 우선', () => {
+  // 3R MEDIUM 시나리오: codex가 network 차단을 "not permitted"로 뱉고 크루가 그대로 옮긴 답변
+  const s = '네트워크 접근이 막혀 검색을 못 했습니다. codex가 "network access is not permitted"라고 응답했습니다.';
+  assert.deepEqual(detectDeniedNarration(s)?.caps, ['browser'], 'fs 카드가 나가면 켜도 안 풀린다 — 신고 재생산');
+  // fs·browser 둘 다 서술되면 browser가 앞 — 호출부가 OFF인 첫 능력을 채택한다(fs ON이 browser를 삼키지 않게)
+  const both = '웹 검색을 할 수 없어 자료를 못 모았고, 결과를 저장하려 했지만 쓰기 권한이 없습니다.';
+  assert.deepEqual(detectDeniedNarration(both)?.caps, ['browser', 'fs']);
+});
+
+test('서술형 3R: 인용·설명·성공 보고는 narration도 null이어야 한다 (오탐 코퍼스 결합 단언)', () => {
+  for (const s of [
+    // 1R strict 오탐 코퍼스 — bare "not permitted"/"permission denied"는 서술 정규식에 없어야 통과한다
+    '아까 나온 zsh:1: operation not permitted: /Users/kim/a.txt 는 샌드박스가 막은 것입니다.',
+    "로그를 보니 EACCES: permission denied, open '/var/log/app.log' 가 12회 있습니다.",
+    '권한이 없으면 permission denied: /etc/nginx/nginx.conf 가 뜹니다. sudo를 쓰세요.',
+    'USB가 /Volumes/USB/x.txt: Read-only file system 로 나오면 잠금 스위치를 확인하세요.',
+    // 3R 실측 오탐 — 엔지니어링 크루의 일상 설명
+    'S3 permission denied가 나오는 이유는 IAM 정책입니다.',
+    // 펜스 안 옛 로그 인용 + 성공 보고
+    '작업을 완료했습니다.\n```\n2026-07-20 zsh:1: operation not permitted: /old/log\n```\n이번에는 문제 없이 저장됐습니다.',
+  ]) assert.equal(detectDeniedNarration(s), null, s);
 });
 
 test('EACCES(콜론 필수)·EPERM·읽기전용 생 출력 줄을 인식한다', () => {
@@ -137,7 +160,7 @@ test('배선: chat.mjs 거부 블록이 감지→능력 게이트→카드 억�
   assert.match(src, /detectRunnerDenial\(reply\)/, 'strict 감지가 러너 답변에 걸려 있어야 한다');
   const block = src.split('detectRunnerDenial(reply)')[1]?.slice(0, 2500) ?? '';
   assert.match(block, /detectDeniedNarration\(reply\)/, '서술형 2차 패스가 있어야 한다(실측 캡처 ②)');
-  assert.match(block, /!cliCaps\[n\.cap\]/, '서술형은 반드시 능력 OFF일 때만 채택 — 능력 ON 오정보 방지');
+  assert.match(block, /caps\.find\(\(c\) => !cliCaps\[c\]\)/, '서술형은 후보 중 OFF인 첫 능력만 채택 — 능력 ON 오정보 방지 + 켜진 후보가 꺼진 후보를 삼키지 않게(3R)');
   assert.match(block, /wantCard = !capOn && !\(denial\.cap === 'fs' && outsideHome\)/, 'fs OFF+홈 밖 카드 억제(HIGH-1)');
   assert.match(block, /cardShown: !!card/, '카드 생성 실패 폴백(LOW-2)이 배선돼 있어야 한다');
   assert.match(block, /suggestCapability\(/, '능력 OFF면 SDK와 같은 카드를 올려야 한다');
