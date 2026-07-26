@@ -6,6 +6,10 @@ import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
 import { join, basename, relative, sep } from 'node:path';
 import { paths } from './workspace.mjs';
+import { docMeta, localDay, noteDate } from './vaultdoc.mjs';
+import { loadDocsMeta } from './memindex.mjs';
+
+export { localDay, noteDate }; // 기존 호출·회귀 테스트 호환(판정 정본은 vaultdoc.mjs 한 곳)
 
 // ── 토큰화 — 한글(2gram)+영문 단어. 짧은 조사류 노이즈를 줄이는 최소 구현.
 function tokens(text) {
@@ -206,35 +210,22 @@ export async function saveNote(wsId, title, content, { merge = false, create = f
   return { file, linked };
 }
 
-/** 날짜(YYYY-MM-DD) — 사용자 로컬 기준. UTC로 자르면 오전에 쓴 글이 '어제'로 표기된다
-    (saveHandover가 같은 이유로 로컬을 쓴다 — 이 파일의 기존 규약). */
-export function localDay(ms = Date.now()) {
-  const t = new Date(ms);
-  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
-}
-
-/** 주제 노트의 유효 갱신일 — { date, exact }. frontmatter `updated:`가 1순위(exact), 없으면 파일 mtime(추정).
-    크루에겐 노트 저장 도구가 없어 SDK 기본 Write로 직접 쓴다 → 그 노트엔 frontmatter가 없다. updated만으로
-    정렬하면 크루가 손으로 남긴 지식이 통째로 바닥에 깔리므로 mtime을 2순위로 둔다.
-    mtime은 근사치라 exact=false로 표시한다 — 인덱스가 근거 없는 확신을 주지 않게(검수 HIGH).
-    (export: 회귀 테스트용) */
-export function noteDate(d) {
-  const fm = d.text.replace(/^﻿/, '').match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1]; // BOM 방어 + hub.mjs·persona.mjs와 같은 파서 형태
-  const updated = fm?.match(/^\s*updated:\s*['"]?(\d{4}-\d{2}-\d{2})/m)?.[1];         // 따옴표·선행공백 허용
-  if (updated) return { date: updated, exact: true };
-  return { date: d.mtimeMs ? localDay(d.mtimeMs) : '', exact: false };
+/** 캐시를 못 쓸 때의 정본 경로 — vault 전체를 읽어 메타를 만든다. 캐시 경로(loadDocsMeta)와 반환
+    형태가 같아야 한다. 문서 수에 비례해 느리므로 폴백 전용이다. */
+async function vaultDocsMeta(wsId) {
+  return (await vaultDocs(wsId)).map((d) => docMeta(d.rel, d.text, d.mtimeMs));
 }
 
 /** vault/_index.md 재생성 — 주제 노트(정제수) 우선, 최근 일지는 14일치만. 크루의 기억 탐색 진입점. */
 export async function updateIndex(wsId) {
   const p = paths(wsId);
-  const docs = await vaultDocs(wsId);
-  docs.sort((a, b) => b.file.localeCompare(a.file));
+  // 캐시(sqlite) 우선 — 못 쓰면 정본 전수 읽기로 폴백한다. 산출물은 두 경로가 동일해야 한다.
+  const docs = (await loadDocsMeta(wsId)) ?? (await vaultDocsMeta(wsId));
+  // rel 역순 = 기존 파일명 역순과 같다(구간별로 같은 폴더라 경로 접두가 동일) — 일지의 최신순이 유지된다.
+  docs.sort((a, b) => b.rel.localeCompare(a.rel));
   const line = (d, stamp = null) => {
-    const title = d.text.match(/^#\s*(.+)$/m)?.[1] ?? basename(d.file, '.md');
-    const links = [...d.text.matchAll(/\[\[(.+?)\]\]/g)].map((m) => m[1]);
     const when = stamp?.date ? ` (갱신 ${stamp.date}${stamp.exact ? '' : ' 추정'})` : '';
-    return `- [[${d.rel.replace(/\.md$/, '')}]] — ${title}${when}${links.length ? ` (관련: ${links.join(', ')})` : ''}`;
+    return `- [[${d.rel.replace(/\.md$/, '')}]] — ${d.title}${when}${d.links.length ? ` (관련: ${d.links.join(', ')})` : ''}`;
   };
   // 주제 노트는 갱신일 내림차순 — 파일명(주제 슬러그) 정렬은 시간 정보가 0이라 옛 절차와 최신 절차가
   // 순서 없이 섞여 나온다. 일지는 파일명이 YYYY-MM-DD로 시작해 기존 파일명 정렬이 곧 최신순이라 그대로 둔다.
@@ -243,18 +234,16 @@ export async function updateIndex(wsId) {
   // 동기화 충돌 사본(sync.mjs가 `<슬러그>.conflict-<기기>-<ts>.md`로 보존하는 패배한 로컬본)은 주제 노트에서
   // 뺀다 — 내용은 옛것인데 파일 기록 시각이 '지금'이라(writeLocal에 mtime 미전달) 최신인 척 최상단을 차지한다.
   // 지우지는 않는다: 기억 유실 금지 — 아래 별도 섹션에 그대로 남겨 사장이 병합·정리할 수 있게 한다.
-  const isConflictCopy = (d) => /\.conflict-.*\.md$/.test(d.rel);
-  const noteDocs = docs.filter((d) => d.rel.startsWith('notes/'));
-  const notes = noteDocs.filter((d) => !isConflictCopy(d))
-    .map((d) => ({ d, stamp: noteDate(d) }))
-    .sort((a, b) => b.stamp.date.localeCompare(a.stamp.date) || (b.d.mtimeMs - a.d.mtimeMs) || b.d.file.localeCompare(a.d.file));
-  const conflicts = noteDocs.filter(isConflictCopy);
+  const notes = docs.filter((d) => d.kind === 'note')
+    .map((d) => ({ d, stamp: d.stamp }))
+    .sort((a, b) => b.stamp.date.localeCompare(a.stamp.date) || (b.d.mtimeMs - a.d.mtimeMs) || b.d.rel.localeCompare(a.d.rel));
+  const conflicts = docs.filter((d) => d.kind === 'conflict');
   const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
   // 일별(YYYY-MM-DD-*)과 주간 롤업(YYYY-Wnn)을 분리 — 'W' > 숫자라 문자열 비교 컷오프를 주간 파일이
-  // 항상 통과해 "최근 일지"에 영구 누적되고, 미정리 14일+ 일지는 실종되던 문제의 교정.
-  const journals = docs.filter((d) => d.rel.startsWith('journal/') && /^\d{4}-\d{2}-\d{2}-/.test(basename(d.rel)) && basename(d.rel) >= cutoff);
-  const weeklies = docs.filter((d) => d.rel.startsWith('journal/') && /^\d{4}-W\d{2}\.md$/.test(basename(d.rel))).slice(0, 8);
-  const legacy = docs.filter((d) => d.rel.startsWith('conversations/')).slice(0, 10);
+  // 항상 통과해 "최근 일지"에 영구 누적되고, 미정리 14일+ 일지는 실종되던 문제의 교정(분류는 vaultdoc.docKind).
+  const journals = docs.filter((d) => d.kind === 'journal' && basename(d.rel) >= cutoff);
+  const weeklies = docs.filter((d) => d.kind === 'weekly').slice(0, 8);
+  const legacy = docs.filter((d) => d.kind === 'legacy').slice(0, 10);
   await writeJsonAtomic(p.index, `# 회사 기억 인덱스
 
 주제 노트가 정리된 지식이다 — 먼저 여기서 찾고, 상세 근거가 필요할 때만 일지를 열어라.

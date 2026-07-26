@@ -8,7 +8,7 @@
 // 시크릿(connections.json·.secrets.json): 서비스 키가 있으면 봉투 암호화(secretbox)로 동기화 —
 // 스토리지엔 암호문만 놓이고, 기기마다 재입력할 필요가 없다. 키 없는 환경은 기존대로 제외.
 // 그 외 제외(동기화 금지): .gateway*·.gw-offset*(폴러 상태), *.status.json(턴 일시 상태),
-// *.lock, .sync-state.json, .device-id.
+// *.lock, .sync-state.json, .device-id, .index.sqlite*(기억 인덱스 캐시 — 정본에서 재구축).
 //
 // C-2 최소형: 오너별 _device-lease.json 클라우드 리스 — 두 기기가 동시에 켜져도
 // 폴러·루틴 실행 주체는 한 기기만(게이트웨이·스케줄러가 isCloudLeader를 함께 본다).
@@ -56,6 +56,7 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
     base.startsWith('.gw-queue') ||
     base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' ||
     base === '.device-session.json' || base === '.DS_Store' ||
+    base.startsWith('.index.sqlite') || // 기억 인덱스 캐시(+ -wal·-shm). 기기별 산출물이고 정본에서 재구축된다
     base.endsWith('.status.json') || base.endsWith('.lock') ||
     base.startsWith('.tmp-') || base.endsWith('.corrupt') || rel.includes('.corrupt-') // 원자쓰기 임시·손상 백업
   ) return true;
