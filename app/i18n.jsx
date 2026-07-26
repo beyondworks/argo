@@ -74,6 +74,8 @@ const DICT = {
   'runner.effort.xhigh': ['매우 높음', 'Extra high'],
   'runner.effort.max': ['최대', 'Max'],
   'topbar.monthCost': ['이번 달 사용액', 'This month'],
+  'topbar.monthSubUse': ['이번 달 사용량 — 구독 연결이라 추가 청구가 없습니다', 'This month — on your subscription, no extra charge'],
+  'topbar.monthTurns': ['{n}턴', '{n} turns'],
   'deck.hireExamples': ['예시로 시작', 'Start from an example'],
   'deck.hireEx1': ['뉴스레터를 쓰는 시니어 에디터', 'A senior editor who writes newsletters'],
   'deck.hireEx2': ['경쟁사 가격을 매주 조사하는 리서처', 'A researcher who tracks competitor pricing weekly'],

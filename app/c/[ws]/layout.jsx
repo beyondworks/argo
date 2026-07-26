@@ -416,14 +416,22 @@ export default function CompanyShell({ children, params }) {
               v{appVersion}
             </span>
           ))}
-          {/* 이번 달 사용액 — 상시 노출(사용자 피드백 2026-07-25: "상단이나 하단에서 사용량을 볼 수 있게").
-              비용을 보고하지 않는 러너(구독 OAuth 등)는 hasCost=false라 표시하지 않는다 — 0원 오표시 방지. */}
-          {data?.usage?.month?.hasCost && (
+          {/* 이번 달 사용량 — 상시 노출(피드백 2026-07-25: "상단이나 하단에서 사용량을 볼 수 있게").
+              ⚠ 금액은 **실제 청구되는 턴(API 키)만**이다. 구독(OAuth) 연결은 SDK가 정가 상당액을
+              리포트하지만 그 돈이 나가지 않는다 — 예전엔 그걸 그대로 찍어 "구독료 안인지 추가 청구인지
+              헷갈린다"는 신고가 왔다(2026-07-26). 구독 턴만 있으면 금액 대신 턴 수를 보여준다:
+              사용량은 알려주되 청구서로 오해될 숫자는 내보내지 않는다. */}
+          {data?.usage?.month?.hasCost ? (
             <Link href={`/c/${ws}/activity`} className="chip mono" title={t('topbar.monthCost')}
               style={{ flex: 'none', fontSize: 10.5, color: 'var(--fg-3)', textDecoration: 'none' }}>
               {fmtMoney(data.usage.month.costUsd, { approx: false })}
             </Link>
-          )}
+          ) : data?.usage?.month?.subTurns > 0 ? (
+            <Link href={`/c/${ws}/activity`} className="chip mono" title={t('topbar.monthSubUse')}
+              style={{ flex: 'none', fontSize: 10.5, color: 'var(--fg-3)', textDecoration: 'none' }}>
+              {t('topbar.monthTurns', { n: data.usage.month.subTurns })}
+            </Link>
+          ) : null}
           <Clock />
           <TasksDock ws={ws} />
           <label className="search-pill">

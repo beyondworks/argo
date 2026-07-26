@@ -18,7 +18,7 @@ import { loadCapabilities } from './capabilities.mjs';
 import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike } from './runners.mjs';
+import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
@@ -595,7 +595,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지)
   const { budgetUsd, lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
   if (budgetUsd > 0) {
-    const spent = await monthCost(wsId);
+    const spent = (await monthCost(wsId)).costUsd; // 청구 턴만 — 구독(OAuth) 턴은 돈이 안 나가 예산을 갉지 않는다
     if (spent >= budgetUsd) {
       // 예산 초과 — 던지지 않고 크루가 대화로 안내한다(시스템 에러 토스트 대신 채팅 메시지).
       // 모델을 부르지 않으니 비용 0. 정상 턴과 동일한 반환 형태(handover 포함)라 모든 소비자 무변경.
@@ -726,6 +726,7 @@ ${lang === 'en'
       await appendUsage(wsId, {
         kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, runner,
         model: `${runner}${usedModel ? `:${usedModel}` : ''}`, usage: {}, costUsd: null, ms: Date.now() - t0,
+        billed: await isBilledRunner(wsId, runner), // 이 경로는 costUsd가 null이라 금액엔 무영향 — 기록 일관성용
       });
       await clearTurnStatus(wsId, agentSlug);
       const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
@@ -838,6 +839,9 @@ ${lang === 'en'
   let stderrTail = ''; // CLI stderr 마지막 2KB — 실패 진단용(성공 시 미사용)
   // SDK 러너(claude/glm) env — 회사 자격(API키/OAuth) 우선, 없으면 기존 폴백(claude=CLI/env, glm=호스트 GLM_API_KEY).
   const sdkEnv = await sdkEnvFor(wsId, runner);
+  // 이 턴이 청구되는가 — 구독(OAuth)·호스트 로그인 턴은 SDK가 정가를 리포트해도 돈이 안 나간다.
+  // 사용액 표시가 청구서로 오해되던 신고(2026-07-26)의 교정. 턴당 1회만 읽는다(파일 I/O).
+  const billed = await isBilledRunner(wsId, runner);
   await setTurnStatus(wsId, agentSlug, 'boot'); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
   const q = query({
     prompt: promptInput,
@@ -917,7 +921,7 @@ ${lang === 'en'
       if (hadWork) {
         await appendUsage(wsId, {
           kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, runner, model: actualModel || effModel || null,
-          usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0, tools: toolCounts,
+          usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0, tools: toolCounts, billed,
         });
       }
       if (msg.subtype === 'success') reply = msg.result;

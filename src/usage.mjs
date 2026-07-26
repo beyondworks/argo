@@ -5,7 +5,7 @@ import { appendFile, readFile } from 'node:fs/promises';
 import { paths } from './workspace.mjs';
 
 /** SDK result 메시지의 usage를 한 줄로 기록. kind: 'chat' | 'hire' | 'delegate'(from=위임한 크루). */
-export async function appendUsage(wsId, { kind, slug, from, runner, model, usage, costUsd, ms, tools }) {
+export async function appendUsage(wsId, { kind, slug, from, runner, model, usage, costUsd, ms, tools, billed }) {
   if (!usage) return;
   const row = {
     ts: new Date().toISOString(),
@@ -18,6 +18,9 @@ export async function appendUsage(wsId, { kind, slug, from, runner, model, usage
     cacheRead: usage.cache_read_input_tokens ?? 0,
     cacheCreate: usage.cache_creation_input_tokens ?? 0,
     costUsd: costUsd ?? null,
+    // 청구 여부 — false면 구독(OAuth·호스트 로그인) 턴이라 금액 집계에서 뺀다. 필드가 없는 옛 행은
+    // 청구로 본다(소급 변경 금지 — 과거 집계가 흔들린다).
+    ...(billed === false ? { billed: false } : {}),
     ms: ms ?? null,
     ...(tools && Object.keys(tools).length ? { tools } : {}),
   };
@@ -57,7 +60,10 @@ export async function readUsageSummary(wsId) {
 
   const today = new Date().toISOString().slice(0, 10);
   const month = today.slice(0, 7);
-  const agg = () => ({ turns: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0, hasCost: false });
+  // subTurns = 구독(OAuth) 연결로 돈 턴. SDK는 이런 턴에도 정가 상당액을 리포트하지만 **청구되지 않는다** —
+  // 그대로 더해 보여주면 "구독료 안인지 추가 청구인지 헷갈린다"가 된다(실사용 신고 2026-07-26).
+  // 금액에서 빼고 개수만 세어, 화면이 "얼마 나갔다"와 "구독으로 썼다"를 구분해 말할 수 있게 한다.
+  const agg = () => ({ turns: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0, hasCost: false, subTurns: 0 });
   const sum = { today: agg(), month: agg(), total: agg() };
   for (const r of rows) {
     const keys = ['total'];
@@ -68,7 +74,10 @@ export async function readUsageSummary(wsId) {
       s.turns += 1;
       s.input += r.input; s.output += r.output;
       s.cacheRead += r.cacheRead; s.cacheCreate += r.cacheCreate;
-      if (typeof r.costUsd === 'number') { s.costUsd += r.costUsd; s.hasCost = true; }
+      // billed === false(구독 턴)는 금액에서 제외. billed 없는 옛 행은 청구로 본다 — 소급해서 금액을
+      // 지우면 과거 집계가 흔들린다(이전 동작 유지).
+      if (r.billed === false) s.subTurns += 1;
+      else if (typeof r.costUsd === 'number') { s.costUsd += r.costUsd; s.hasCost = true; }
     }
   }
   const enrich = (s) => ({
@@ -139,12 +148,18 @@ export async function monthCostByRunner(wsId) {
   return by;
 }
 
-/** 이번 달 지출(USD) — 예산 상한 게이트용 경량 조회. */
+/** 이번 달 사용량 — { costUsd, subTurns }.
+    ⚠ costUsd는 **실제로 청구되는 턴만** 더한다. 구독(OAuth) 연결은 SDK가 정가 상당액을 리포트하지만
+    그 돈이 청구되지는 않는다 — 그대로 표시하면 "구독료 안인지 추가 청구인지 헷갈린다"가 된다
+    (실사용 신고 2026-07-26). billed === false인 행은 금액에서 빼고 턴 수만 센다.
+    billed가 없는 옛 행은 청구로 본다(이전 동작 유지 — 소급해서 금액을 지우면 과거 집계가 흔들린다). */
 export async function monthCost(wsId) {
   const month = new Date().toISOString().slice(0, 7);
-  let cost = 0;
+  let costUsd = 0, subTurns = 0;
   for (const r of await readRows(wsId)) {
-    if (r.ts?.startsWith(month) && typeof r.costUsd === 'number') cost += r.costUsd;
+    if (!r.ts?.startsWith(month)) continue;
+    if (r.billed === false) { subTurns += 1; continue; }
+    if (typeof r.costUsd === 'number') costUsd += r.costUsd;
   }
-  return cost;
+  return { costUsd, subTurns };
 }
