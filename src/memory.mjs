@@ -43,6 +43,8 @@ function cosine(a, b, idf) {
   return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
 }
 
+const warnedVaultReadFail = new Set(); // 같은 파일 경고 반복 방지(memindex.mjs와 동일 정책)
+
 async function vaultDocs(wsId) {
   const p = paths(wsId);
   const docs = [];
@@ -58,7 +60,14 @@ async function vaultDocs(wsId) {
       // 읽기 실패를 throw로 터뜨리지 않는다: 이 경로는 캐시 장애 시의 안전망이라 캐시보다 약하면 안 된다
       // (디렉터리인데 .md로 끝남·깨진 심링크·권한 없음에서 saveHandover 전체가 죽었다 — 검수 MEDIUM)
       const text = await readFile(file, 'utf8').catch(() => null);
-      if (text === null) { console.warn(`[memory] 문서를 읽지 못해 인덱스에서 뺍니다: ${file}`); continue; }
+      if (text === null) {
+        if (!warnedVaultReadFail.has(file)) { // 파일당 1회 — 영구 불가 파일이 턴마다 로그를 쌓지 않게
+          warnedVaultReadFail.add(file);
+          console.warn(`[memory] 문서를 읽지 못해 인덱스에서 뺍니다(회복 시 자동 복귀): ${file}`);
+        }
+        continue;
+      }
+      warnedVaultReadFail.delete(file);
       docs.push({ file, rel: relative(p.vault, file).split(sep).join('/'), text, mtimeMs });
     }
   }
@@ -253,7 +262,10 @@ export async function updateIndex(wsId) {
     .map((d) => ({ d, stamp: d.stamp }))
     .sort((a, b) => b.stamp.date.localeCompare(a.stamp.date) || (b.d.mtimeMs - a.d.mtimeMs) || b.d.rel.localeCompare(a.d.rel));
   const notes = allNotes.slice(0, NOTE_LIMIT);
-  const allConflicts = docs.filter((d) => d.kind === 'conflict');
+  // 충돌 사본도 최신순으로 자른다 — rel 순서 그대로 자르면 가장 최근 충돌이 잘려 나가는데,
+  // 이 섹션의 지시("확인 후 병합하고 지워라")가 정확히 최근 충돌부터 보라는 뜻이다(검수 MEDIUM).
+  const allConflicts = docs.filter((d) => d.kind === 'conflict')
+    .sort((a, b) => (b.mtimeMs - a.mtimeMs) || b.rel.localeCompare(a.rel));
   const conflicts = allConflicts.slice(0, CONFLICT_LIMIT);
   const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
   // 일별(YYYY-MM-DD-*)과 주간 롤업(YYYY-Wnn)을 분리 — 'W' > 숫자라 문자열 비교 컷오프를 주간 파일이

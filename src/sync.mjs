@@ -28,6 +28,7 @@ import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { ensureAccountKey } from './accountkey.mjs';
 import { syncEntitled } from './entitlement.mjs';
 import { resolveRunner } from './runners.mjs'; // 리더 양보 판단 — 이 기기에서 턴을 돌릴 러너가 있는가
+import { invalidatePath } from './memindex.mjs'; // 원격 mtime을 심는 수신 쓰기의 캐시 무효화
 
 const BUCKET = 'companies';
 // 준실시간 — 기본 8s(웹↔앱 지연 단축). ARGO_SYNC_CYCLE_MS로 조정(비용/지연 트레이드오프).
@@ -417,7 +418,13 @@ export async function syncCompany(wsId, owner, isRestore = false) {
       const full = relFull(rel);
       // 복호화된 시크릿(.secrets.json·connections)이 신규 기기 복원 시 0644로 생기지 않게 0600 강제(P1-8).
       await writeFileAtomic(full, buf, isSecretRel(rel) ? { mode: 0o600 } : undefined);
-      if (mtime) await utimes(full, new Date(mtime), new Date(mtime));
+      if (mtime) {
+        await utimes(full, new Date(mtime), new Date(mtime));
+        // 원격 mtime을 심는 쓰기 — 기억 인덱스 캐시의 변경 판정 키가 mtime+size라, 심은 mtime과
+        // 크기가 이전 행과 우연히 일치하면 캐시가 이 변경을 영영 못 본다(writeKeepingMtime과 같은
+        // 계열, 검수 MEDIUM). vault 문서에 한해 해당 행을 명시적으로 무효화한다.
+        if (rel.startsWith('vault/') && rel.endsWith('.md')) await invalidatePath(full);
+      }
     };
     if (isThread(rel)) await withLock(threadLockKey(wsId, rel), doWrite);
     else await doWrite();

@@ -67,10 +67,20 @@ function open(wsId) {
   return { db, file };
 }
 
+// 같은 파일 경고 반복 방지 — 영구적으로 못 읽는 파일 1개가 턴마다 로그를 쌓으면 진짜 신호가 묻힌다.
+// 읽기에 성공하면 지워서, 회복 후 재발 시 다시 경고한다.
+const warnedReadFail = new Set();
+
 /** 디스크를 훑어 캐시를 최신화한다. 읽는 건 mtime·size가 달라진 파일뿐.
     변경 판정 키로 해시 대신 mtime+size를 쓴다 — 해시를 쓰려면 전수 읽기가 필요해 목적과 모순된다.
-    (내용이 바뀌었는데 mtime·size가 동시에 같은 경우는 놓친다. 링크 append는 size가 늘고, 동기화
-    수신은 원격 mtime을 심으므로 실제 경로에선 발생하지 않는다.) */
+    ⚠ 내용이 바뀌었는데 mtime·size가 동시에 같은 경우는 이 판정으로 못 잡는다 — 실제로 발생한다
+    (2라운드 검수 재현: appendLink는 append가 아니라 링크 섹션 재조립이라 중복 제거·공백 정규화로
+    줄어든 크기가 새 링크와 상쇄될 수 있다). 그래서 mtime을 심는 쓰기 경로가 명시적으로 캐시를
+    무효화한다: writeKeepingMtime(memory.mjs)·동기화 수신 writeLocal(sync.mjs) → invalidatePath.
+
+    구조: [스캔 — 락 없음, await 포함] → [쓰기 — 동기 트랜잭션만]. 트랜잭션을 스캔 전체에 걸치면
+    무변경 턴조차 stat 스윕 내내 배타 락을 쥔다(검수 실측: 무변경 195ms 중 167ms 타 연결 획득 실패).
+    쓰기 단계는 await가 없어 락 보유 창이 순수 CPU 시간뿐이다. */
 async function refresh(db, wsId) {
   const p = paths(wsId);
   const known = new Map();
@@ -78,19 +88,13 @@ async function refresh(db, wsId) {
     known.set(r.rel, { mtimeMs: r.mtime_ms, size: r.size });
   }
   const seen = new Set();
-  const upsert = db.prepare(
-    `INSERT INTO docs (rel, kind, title, links, updated, updated_exact, mtime_ms, size)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(rel) DO UPDATE SET
-       kind=excluded.kind, title=excluded.title, links=excluded.links,
-       updated=excluded.updated, updated_exact=excluded.updated_exact,
-       mtime_ms=excluded.mtime_ms, size=excluded.size`);
+  const pendingUpsert = [];
+  const pendingDelete = [];
 
   // stat은 병렬로 — 이게 스캔 비용의 지배 항목이다. 문서 10만에서 직렬 1275ms → 병렬 363ms(실측).
   // 읽기 동시성은 stat과 분리해 훨씬 낮게 잡는다: stat은 fd를 오래 쥐지 않지만 readFile은 쥔다.
   // 512로 같이 뒀다가 최초 구축(전 파일이 stale)에서 EMFILE로 문서가 조용히 누락됐다
-  // — ulimit -n 256에서 1500개 중 723개만 인덱싱(검수 CRITICAL). 실패를 삼키면 "부분 인덱스"와
-  // "정상 인덱스"가 구분 불가라, 아래에서 실패 수를 세어 호출자가 알 수 있게 한다.
+  // — ulimit -n 256에서 1500개 중 723개만 인덱싱(검수 CRITICAL).
   const STAT_BATCH = 512;
   const READ_BATCH = 24;
   let readFailed = 0;
@@ -119,16 +123,51 @@ async function refresh(db, wsId) {
         const chunk = stale.slice(j, j + READ_BATCH);
         const texts = await Promise.all(chunk.map((s) => readFile(s.file, 'utf8').catch(() => null)));
         for (let k = 0; k < chunk.length; k++) {
-          if (texts[k] === null) { readFailed++; continue; }
           const s = chunk[k];
+          if (texts[k] === null) {
+            // 읽을 수 없는 문서는 인덱스에서 뺀다 — 정본 폴백도 같은 입력에서 빼므로 두 경로가
+            // 일치한다(검수 HIGH: 캐시만 옛 값을 계속 보여줘 산출물이 갈렸다). 크루도 못 읽을
+            // 파일을 실어두는 건 거짓 약속이다. 행이 없으니 다음 스캔이 자동 재시도한다.
+            readFailed++;
+            pendingDelete.push(s.rel);
+            if (!warnedReadFail.has(s.rel)) {
+              warnedReadFail.add(s.rel);
+              console.warn(`[memindex] 문서를 읽지 못해 인덱스에서 뺍니다(권한·fd 부족 등, 회복 시 자동 복귀): ${s.rel}`);
+            }
+            continue;
+          }
+          warnedReadFail.delete(s.rel);
           const m = docMeta(s.rel, texts[k], s.mtimeMs);
-          upsert.run(s.rel, m.kind, m.title, JSON.stringify(m.links), m.stamp.date, m.stamp.exact ? 1 : 0, s.mtimeMs, s.size);
+          pendingUpsert.push([s.rel, m.kind, m.title, JSON.stringify(m.links), m.stamp.date, m.stamp.exact ? 1 : 0, s.mtimeMs, s.size]);
         }
       }
     }
   }
-  const del = db.prepare('DELETE FROM docs WHERE rel = ?');
-  for (const rel of known.keys()) if (!seen.has(rel)) del.run(rel); // 사라진 문서 정리
+  for (const rel of known.keys()) if (!seen.has(rel)) pendingDelete.push(rel); // 사라진 문서 정리
+
+  // 쓰기 단계 — 변경이 있을 때만, 동기 구간만 트랜잭션. autocommit이면 행마다 커밋한다
+  // (검수 실측 10만 행 7,204ms → 185ms). 무변경 턴은 쓰기문 자체가 없어 락을 전혀 잡지 않는다.
+  if (pendingUpsert.length || pendingDelete.length) {
+    const upsert = db.prepare(
+      `INSERT INTO docs (rel, kind, title, links, updated, updated_exact, mtime_ms, size)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(rel) DO UPDATE SET
+         kind=excluded.kind, title=excluded.title, links=excluded.links,
+         updated=excluded.updated, updated_exact=excluded.updated_exact,
+         mtime_ms=excluded.mtime_ms, size=excluded.size`);
+    const del = db.prepare('DELETE FROM docs WHERE rel = ?');
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of pendingUpsert) upsert.run(...row);
+      for (const rel of pendingDelete) del.run(rel);
+      db.exec('COMMIT');
+    } catch (e) {
+      // ROLLBACK 자체가 던지면(자동 롤백된 상태 등) 원인 예외가 대체되어 BUSY가 손상으로
+      // 오분류된다(검수 MEDIUM) — 삼키고 원인을 올린다.
+      try { db.exec('ROLLBACK'); } catch { /* 이미 롤백됨 */ }
+      throw e;
+    }
+  }
   return { readFailed };
 }
 
@@ -154,14 +193,9 @@ async function loadDocsMetaLocked(wsId) {
   let failed = false;
   try {
     handle = open(wsId);
-    // 단일 트랜잭션 — autocommit이면 upsert마다 커밋한다(10만 행 7,204ms → 185ms, 검수 실측 39배).
-    // 쓰기 락 보유 창이 같이 줄어 다른 프로세스와의 경합 확률도 떨어진다.
-    handle.db.exec('BEGIN IMMEDIATE');
-    let stats;
-    try { stats = await refresh(handle.db, wsId); handle.db.exec('COMMIT'); } catch (e) { handle.db.exec('ROLLBACK'); throw e; }
-    if (stats.readFailed) { // 부분 인덱스를 정상으로 위장하지 않는다 — 다음 스캔에서 다시 시도된다
-      console.warn(`[memindex] 문서 ${stats.readFailed}개를 읽지 못해 인덱스에서 빠졌습니다(fd 부족·권한 등). 다음 갱신에서 재시도합니다.`);
-    }
+    // 트랜잭션은 refresh 내부의 쓰기 단계에만 있다 — 스캔(await 구간)에 걸치면 무변경 턴조차
+    // 배타 락을 스윕 내내 쥔다(검수 HIGH). 경고도 refresh가 rel 단위로 1회만 낸다.
+    await refresh(handle.db, wsId);
     const rows = handle.db.prepare('SELECT * FROM docs').all();
     return rows.map((r) => ({
       rel: r.rel,

@@ -3,7 +3,7 @@
 // 그래서 이 파일의 중심 테스트는 캐시 경로와 정본 전수 읽기 경로의 **바이트 동일성**이다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, utimes, rm, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, utimes, rm, stat, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -55,6 +55,9 @@ test('캐시 경로와 정본 경로의 인덱스 산출물이 바이트 동일�
   assert.equal(cached, plain, '캐시가 정본과 다른 인덱스를 만들었다');
   assert.match(cached, /## 주제 노트/);
   assert.match(cached, /## 동기화 충돌 사본/);
+  // 상한 안내는 실제로 잘렸을 때만 — 노트 4개짜리 인덱스에 "최근 N개만 실었다"가 붙으면
+  // 크루가 존재하지 않는 잘림을 찾아 나선다(검수 변이 M-A: 무조건 출력으로 바꿔도 초록이었다)
+  assert.doesNotMatch(cached, /만 실었다/, '상한 미만인데 잘림 안내가 붙었다');
 });
 
 test('증분 갱신(추가·수정·삭제)이 전체 재구축과 같은 결과를 낸다', async () => {
@@ -117,12 +120,21 @@ test('쓰기 경합에서는 캐시를 지우지 않는다 (경합 ≠ 손상)',
   await updateIndex('c-busy');
   assert.ok(existsSync(dbPath('c-busy')));
   const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
+  // 무변경 턴은 이제 쓰기문 자체가 없어 락을 안 잡는다(검수 HIGH-3 반영) — 경합을 일으키려면
+  // 실제 변경이 있어야 쓰기 단계(BEGIN IMMEDIATE)에 도달한다.
+  await writeFile(join(p.notes, '경합-중-쓴-노트.md'), '---\nupdated: 2026-07-26\n---\n# 경합 중\n');
   const blocker = new DatabaseSync(dbPath('c-busy'));       // 다른 연결이 쓰기 락을 점유
   blocker.exec('BEGIN EXCLUSIVE');
   try {
-    await updateIndex('c-busy');                            // busy timeout 만료 → 경합으로 실패
+    const t0 = Date.now();
+    await updateIndex('c-busy');                            // 즉시 busy → 정본 폴백 (대기 금지)
+    const elapsed = Date.now() - t0;
+    // busy 대기는 동기 API라 이벤트 루프 정지다 — 타임아웃을 되살리면(5s든 60s든) 여기서 잡힌다
+    assert.ok(elapsed < 3000, `경합에서 ${elapsed}ms — busy 대기가 되살아났다(즉시 폴백이어야 한다)`);
     assert.ok(existsSync(dbPath('c-busy')), '경합을 손상으로 오인해 캐시를 지웠다');
-    assert.ok((await readFile(p.index, 'utf8')).includes('## 주제 노트'), '경합 중 인덱스가 생성되지 않았다');
+    const idx = await readFile(p.index, 'utf8');
+    assert.ok(idx.includes('## 주제 노트'), '경합 중 인덱스가 생성되지 않았다');
+    assert.match(idx, /경합-중-쓴-노트/, '폴백 경로가 새 문서를 놓쳤다'); // 폴백은 캐시와 무관하게 정확해야 한다
   } finally { blocker.exec('ROLLBACK'); blocker.close(); }
 });
 
@@ -170,6 +182,71 @@ test('같은 프로세스 동시 턴이 이벤트 루프를 세우지 않는다 
   assert.ok(existsSync(dbPath('c-parallel')), '동시 턴 경합으로 캐시가 삭제됐다');
   const { plain, cached } = await renderBoth('c-parallel');
   assert.equal(cached, plain, '동시 턴 후 캐시와 정본이 갈렸다');
+});
+
+// 읽을 수 없는 문서를 캐시는 옛 값으로 계속 보여주고 폴백은 통째로 뺐다 — 같은 입력에 다른 산출물은
+// 이 캐시의 유일한 계약 위반이다(검수 HIGH-4). 둘 다 뺀다: 인덱서가 못 읽는 파일은 크루도 못 읽으므로
+// 실어두는 것 자체가 거짓 약속이고, 행이 없으면 다음 스캔이 자동 재시도한다.
+test('읽을 수 없게 된 문서는 두 경로 모두 인덱스에서 뺀다', async (t) => {
+  if (process.getuid?.() === 0) return t.skip('root는 권한 검사를 우회한다');
+  const p = await seed('c-unreadable');
+  await updateIndex('c-unreadable');                       // 예열 — 캐시에 옛 내용의 행이 존재
+  const f = join(p.notes, '배포-절차.md');
+  await writeFile(f, '# 배포 절차\n\n갱신된 내용(읽기 불가가 될 판).\n'); // stale로 만들고
+  await chmod(f, 0o000);                                   // 읽기 불가
+  try {
+    await updateIndex('c-unreadable');                     // 캐시 경로
+    const cached = await readFile(p.index, 'utf8');
+    process.env.ARGO_MEMINDEX = '0';
+    await updateIndex('c-unreadable');                     // 정본 폴백 경로
+    const plain = await readFile(p.index, 'utf8');
+    delete process.env.ARGO_MEMINDEX;
+    assert.equal(cached, plain, '읽기 실패에서 캐시와 정본 산출물이 갈렸다');
+    assert.doesNotMatch(cached, /- \[\[notes\/배포-절차\]\]/, '읽을 수 없는 문서가 옛 값으로 인덱스에 남았다');
+  } finally { await chmod(f, 0o644); }
+});
+
+// 충돌 사본 상한은 최신순으로 잘라야 한다 — rel 순서 그대로 자르면 가장 최근 충돌이 잘려 나가는데,
+// 이 섹션의 지시("확인 후 병합하고 지워라")가 정확히 최근 충돌부터 보라는 뜻이다(검수 MEDIUM-6, 변이 M-B).
+test('충돌 사본이 상한을 넘으면 최신순으로 자르고 잘림을 밝힌다', async () => {
+  const p = await seed('c-confcap');                       // seed에 충돌 1개(mtime=지금, 가장 최신) 포함
+  for (let i = 0; i < 26; i++) {
+    const f = join(p.notes, `옛-${String(i).padStart(2, '0')}.conflict-devA-${1753000000000 + i}.md`);
+    await writeFile(f, `# 옛 ${i}\n`);
+    const when = new Date(Date.parse('2026-07-01T00:00:00Z') - i * 3600_000); // i가 클수록 과거
+    await utimes(f, when, when);
+  }
+  await updateIndex('c-confcap');
+  const section = (await readFile(p.index, 'utf8')).split('## 동기화 충돌 사본')[1] ?? '';
+  const entries = [...section.matchAll(/^- \[\[notes\//gm)].length;
+  assert.equal(entries, 20, `충돌 사본 상한이 적용되지 않았다(항목 ${entries}개)`);
+  assert.match(section, /외 7개 더/);                       // 총 27(시드 1 + 26) − 20
+  assert.match(section, /보안-원칙\.conflict/, '가장 최근 충돌이 잘려 나갔다 — 최신순 절단이 아니다');
+  assert.doesNotMatch(section, /옛-25\.conflict/, '가장 오래된 충돌이 상한 안에 남았다');
+});
+
+// mtime 밀리초 반올림이 한쪽에만 있으면 동일자 타이브레이크가 두 경로에서 갈린다(검수 LOW, 변이 M-C).
+// 서브밀리초 차이는 나는데 반올림하면 같은 두 노트로 재현한다 — rel 순서를 raw mtime 순서와 반대로 두어,
+// 반올림이 빠지면 정렬이 뒤집히게 만든다.
+test('mtime 반올림이 두 경로에서 일치한다 (동일자 타이브레이크 분기 가드)', async (t) => {
+  const ws = 'c-subms';
+  const p = paths(ws);
+  await mkdir(p.notes, { recursive: true });
+  await mkdir(p.journal, { recursive: true });
+  const baseSec = Date.parse('2026-07-20T12:00:00+09:00') / 1000;
+  const aa = join(p.notes, '가나-노트.md');
+  const zz = join(p.notes, '하하-노트.md');
+  await writeFile(aa, '# 가나\n');                          // frontmatter 없음 → mtime 폴백 경로
+  await writeFile(zz, '# 하하\n');
+  // +0.4ms / +0.1ms — 반올림하면 같은 정수 ms가 되는 서브밀리초 차이(µs 해상도 안, rel이 앞서는 쪽이 raw가 크다)
+  await utimes(aa, baseSec + 0.0004, baseSec + 0.0004);
+  await utimes(zz, baseSec + 0.0001, baseSec + 0.0001);
+  const [sa, sz] = [await stat(aa), await stat(zz)];
+  if (sa.mtimeMs === sz.mtimeMs || Math.round(sa.mtimeMs) !== Math.round(sz.mtimeMs)) {
+    return t.skip('파일시스템이 서브밀리초 mtime을 보존하지 않는다 — 이 가드는 APFS 계열 전용');
+  }
+  const { plain, cached } = await renderBoth(ws);
+  assert.equal(cached, plain, '서브밀리초 mtime에서 두 경로의 타이브레이크가 갈렸다(반올림 불일치)');
 });
 
 test('캐시 DB는 동기화 대상이 아니다 — 기기별 산출물이다', () => {
