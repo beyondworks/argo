@@ -743,17 +743,20 @@ export async function runnerCredEnv(wsId, runner) {
     return { env: { ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'codex') {
-    // apikey면 계정 OAuth를 무시하고 OPENAI_API_KEY로 — 격리홈을 '깨끗한' 것으로 써 auth.json 상속 차단.
-    if (cred.type === 'apikey') return { env: { OPENAI_API_KEY: v }, home: 'clean' };
-    // 회사 OAuth(웹 브리지) — 저장된 auth.json을 회사별 격리 CODEX_HOME에 풀어 CLI가 읽게 한다.
-    // CLI가 토큰을 갱신하면 이 파일에 다시 쓴다(다음 턴도 같은 홈을 쓰므로 이어진다).
+    // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를
+    // 더는 인정하지 않는다. 이전의 env 주입(home:'clean')은 저장 검증(OpenAI 직접 호출)만 통과하고
+    // 모든 턴이 "Missing bearer or basic authentication in header" 401이었다(실사용 신고 2026-07-26,
+    // 이 맥 재현: env 가짜키 → Missing bearer / auth.json 가짜키 → Incorrect API key = 키가 전달됨).
+    // apikey ↔ oauth 전환 시 잔재 상속은 saveRunnerCred가 자격 변경마다 격리 홈을 리셋해 차단한다.
     const dir = join(homedir(), '.argo', `codex-home-${wsId}`);
-    await mkdir(dir, { recursive: true, mode: 0o700 }); // OAuth 토큰 보관 — 소유자만
-    await seedAuthFile(dir, 'auth.json', v); // 저장 자격이 바뀌면(동기화 포함) 재시드 — CLI 갱신분은 보존
+    await mkdir(dir, { recursive: true, mode: 0o700 }); // 자격 보관 — 소유자만
+    // apikey는 codex auth.json의 API 키 형식으로 포장, oauth는 저장된 auth.json 원문 그대로.
+    const authJson = cred.type === 'apikey' ? JSON.stringify({ OPENAI_API_KEY: v, tokens: null }) : v;
+    await seedAuthFile(dir, 'auth.json', authJson); // 저장 자격이 바뀌면(동기화 포함) 재시드 — CLI 갱신분은 보존
     if (!(await exists(join(dir, 'config.toml')))) await writeFile(join(dir, 'config.toml'), '# Argo 회사 자격 codex 홈\n');
-    // OPENAI_API_KEY 명시 소거(claude OAuth 대칭) — 호스트/프로세스 env에 API 키가 있으면 codex CLI가
-    // auth.json OAuth보다 그 키를 우선해 무효·타계정 키로 턴이 실패한다("api키 설정값 우선" 신고 2026-07-24).
-    // scrubServerSecrets는 이 키를 codex 소유라 남겨두므로, 여기서 빈 값으로 덮어 OAuth 경로를 보장한다.
+    // OPENAI_API_KEY 명시 소거(claude OAuth 대칭) — 호스트/프로세스 env에 API 키가 있으면 미래 CLI가
+    // auth.json보다 그 키를 우선할 수 있어 무효·타계정 키로 턴이 실패한다("api키 설정값 우선" 신고 2026-07-24).
+    // scrubServerSecrets는 이 키를 codex 소유라 남겨두므로, 여기서 빈 값으로 덮어 auth.json 경로를 보장한다.
     return { env: { OPENAI_API_KEY: '' }, home: dir };
   }
   return null;

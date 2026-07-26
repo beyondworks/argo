@@ -2,7 +2,7 @@
 // 401로만 드러나던 실사용 사고(2026-07-18, 92자 비접두사 값) 재발 방지.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -220,11 +220,29 @@ test('runnerCredEnv: gemini OAuth는 GEMINI/GOOGLE_API_KEY를 빈 값으로 소�
   assert.equal(r.authType, 'oauth-personal', 'OAuth 인증 방식 고정');
 });
 
-test('runnerCredEnv: codex API키 모드는 그대로 OPENAI_API_KEY 주입(회귀 아님)', async () => {
+// codex CLI(0.144 실측)는 env OPENAI_API_KEY를 더는 인정하지 않는다 — env 주입 시 저장 검증만 통과하고
+// 모든 턴이 "Missing bearer or basic authentication in header" 401이었다(실사용 신고 2026-07-26).
+// 실측 대조: env 가짜키 → Missing bearer(키 미전달) / auth.json 가짜키 → Incorrect API key(키 전달됨).
+test('runnerCredEnv: codex API키 모드는 격리 홈의 auth.json으로 — env 주입은 CLI가 무시한다', async () => {
   const WS = 'credenv-codex-key';
   await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
   await saveRunnerCred(WS, 'codex', 'apikey', 'sk-testkey123456');
   const r = await runnerCredEnv(WS, 'codex');
-  assert.equal(r.env.OPENAI_API_KEY, 'sk-testkey123456', 'API키 모드는 사용자 키를 주입');
-  assert.equal(r.home, 'clean', '깨끗한 홈(계정 OAuth 무시)');
+  assert.ok(r.home && r.home.includes('codex-home'), '격리 CODEX_HOME 반환(env 주입 경로는 죽은 계약)');
+  const auth = JSON.parse(await readFile(join(r.home, 'auth.json'), 'utf8'));
+  assert.equal(auth.OPENAI_API_KEY, 'sk-testkey123456', 'auth.json에 API 키가 실려야 CLI가 헤더에 붙인다');
+  assert.equal(auth.tokens, null, 'apikey 모드는 tokens 없음(codex auth.json 형식)');
+  assert.equal(r.env.OPENAI_API_KEY, '', '호스트 env 키가 회사 auth.json을 누르지 않게 소거');
+});
+
+test('runnerCredEnv: codex 키 교체(재연결) 시 auth.json이 새 키로 재시드된다', async () => {
+  const WS = 'credenv-codex-rot';
+  await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
+  await saveRunnerCred(WS, 'codex', 'apikey', 'sk-oldkey111111');
+  const r1 = await runnerCredEnv(WS, 'codex');
+  assert.equal(JSON.parse(await readFile(join(r1.home, 'auth.json'), 'utf8')).OPENAI_API_KEY, 'sk-oldkey111111');
+  await saveRunnerCred(WS, 'codex', 'apikey', 'sk-newkey222222'); // 재연결 — 격리 홈 리셋 + 재시드 경로
+  const r2 = await runnerCredEnv(WS, 'codex');
+  assert.equal(JSON.parse(await readFile(join(r2.home, 'auth.json'), 'utf8')).OPENAI_API_KEY, 'sk-newkey222222',
+    '옛 키가 남으면 재연결해도 401이 계속된다');
 });
