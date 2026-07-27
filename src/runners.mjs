@@ -226,9 +226,16 @@ export const hostOptInAllowed = (runner) =>
 
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
 
-/** OpenRouter 402(크레딧 소진) 판정 — CLI가 402를 "성공 텍스트"로 삼킨 결과물(실측). 앞머리
-    고정 매칭으로 인용·설명 답변 오탐을 배제한다. chat(안내문)·oneshot(실패 승격)이 공유한다. */
-export const isOpenRouterCreditError = (s) => String(s ?? '').trimStart().startsWith('API Error: 402');
+/** OpenRouter 402(크레딧 소진) 판정 — CLI가 402를 "성공 텍스트"로 삼킨 결과물(실측). 첫 줄 또는
+    마지막 비공백 줄이 402 에러로 시작할 때만 — 서두 문장 뒤에 에러가 붙는 변형(2R N4)은 잡되,
+    산문 중간 인용("…'API Error: 402'가 나오면…")은 여전히 배제. chat(안내문)·oneshot(실패 승격) 공유.
+    oneshot 미탐은 402 원문이 크루 카드·기억에 저장되는 방향이라 매처는 미탐 쪽이 더 해롭다. */
+export const isOpenRouterCreditError = (s) => {
+  const lines = String(s ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return false;
+  const re = /^API Error:\s*402\b/i;
+  return re.test(lines[0]) || re.test(lines[lines.length - 1]);
+};
 
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5'; // 스모크 8/8 중 저비용·도구 신뢰성 1순위(2026-07-27 실측)
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';

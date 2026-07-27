@@ -869,6 +869,7 @@ ${lang === 'en'
   }
 
   let reply = '';
+  let creditTurn = false; // OpenRouter 402 턴 표식 — 일지 기록 제외용(2R N3: 오류 원문이 기억으로 정제되지 않게)
   let sid = resumeId; // 새 세션이면 null에서 시작 — 외래 sessionId를 내 것으로 재스탬프하지 않는다
   const toolCounts = {}; // 이 턴의 도구 사용 횟수 — 크루 프로필 "많이 쓴 도구"의 원천
   const t0 = Date.now();
@@ -994,9 +995,10 @@ ${lang === 'en'
   // 사용자 전원이 이 화면을 만난다 — 원인·충전처를 붙인다. success/else 쌍 **밖**의 독립
   // 블록이어야 한다(사이에 끼우면 else가 이 if에 붙어 전 러너 성공 턴이 throw — 검수 CRITICAL 실증).
   if (runner === 'openrouter' && isOpenRouterCreditError(reply)) {
+    creditTurn = true;
     reply += lang === 'en'
-      ? `\n\n---\n⚠ Your OpenRouter credit balance is too low for this turn. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.`
-      : `\n\n---\n⚠ OpenRouter 크레딧 잔액이 부족해 이 턴을 처리하지 못했습니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.`;
+      ? `\n\n---\n⚠ Your OpenRouter credit balance is too low for this turn. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again. (If your balance isn't empty, the selected model may be too expensive for it — pick a cheaper model or top up more.)`
+      : `\n\n---\n⚠ OpenRouter 크레딧 잔액이 부족해 이 턴을 처리하지 못했습니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요. (잔액이 있는데도 이 안내가 보이면 선택한 모델이 잔액 대비 비싼 것입니다 — 더 저렴한 모델을 고르거나 충전을 늘려 주세요.)`;
   }
   } catch (e) {
     let aborted = abortReg.wasAborted();
@@ -1042,10 +1044,12 @@ ${lang === 'en'
   }
   await clearTurnStatus(wsId, agentSlug);
 
-  const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
+  // 402(크레딧 소진) 턴은 일지에 남기지 않는다 — 남기면 consolidate가 오류 원문을 기억 노트로
+  // 정제할 수 있다(2R N3, oneshot HIGH-1과 동일 논리). 화면 답변·이벤트·사용량 집계는 그대로.
+  const handover = creditTurn ? null : await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
   await appendEvent(wsId, {
     ...evBase, ok: true, ms: Date.now() - t0, steps,
-    journalRel: relative(p.vault, handover.file), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
+    ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
   });
   // 일지(handover)는 전용 칩이 이미 있다 — 산출물 칩과 중복 방지
   return { reply, sessionId: sid, handover, artifacts: [...artifacts].filter((r) => !r.startsWith('journal/')) };

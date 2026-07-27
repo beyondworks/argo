@@ -45,7 +45,12 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         settingSources: [], // 호스트 머신의 CLAUDE.md 등 미주입(테넌트 격리)
         maxTurns,
         ...(sdkEnv ? { env: sdkEnv } : {}),
-        ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: KIMI_DEFAULT_MODEL } : runner === 'openrouter' ? { model: model || OPENROUTER_DEFAULT_MODEL } : (model ? { model } : {})),
+        // openrouter는 카탈로그 검증 — 호출자가 넘긴 타 러너용 모델(예: consolidate의 claude-haiku
+        // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1: openrouter-only
+        // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
+        ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: KIMI_DEFAULT_MODEL }
+          : runner === 'openrouter' ? { model: RUNNERS.openrouter.models.some((m) => m.id === model) ? model : OPENROUTER_DEFAULT_MODEL }
+          : (model ? { model } : {})),
       },
     })) {
       if (msg.type === 'result') {
@@ -68,6 +73,13 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         console.warn(`[argo] 원샷 ${runner} 실패(${String(e.message).slice(0, 80)}) — ${alt.runner}로 재시도(${wsId})`);
         return runOneShot(wsId, prompt, { ...opts, __exclude: runner });
       }
+    }
+    // 402(크레딧 소진)는 연결 문제가 아니다 — "연결 상태 확인" 안내는 키 정상·연결됨 표시와 모순돼
+    // 사용자를 오도한다(2R 검수 N2, oneshot 상단 주석의 2026-07-20 모순과 동일 계열). 충전처를 준다.
+    if (/openrouter-credit/.test(String(e.message))) {
+      throw Object.assign(new Error(lang === 'en'
+        ? 'OpenRouter credit balance is too low. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.'
+        : 'OpenRouter 크레딧 잔액이 부족합니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.'), { cause: e });
     }
     throw Object.assign(new Error(lang === 'en'
       ? `AI call failed — check the runner connection in Settings → AI connections. (${String(e.message).slice(0, 120)})`

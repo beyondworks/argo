@@ -45,7 +45,7 @@ export const openrouterEnv = (key) => ({
 
 ### 2. 자격 — BYOK apikey 단일 (구독 없음)
 
-- `RUNNER_AUTH.openrouter = { methods: ['apikey'], apikeyPrefix: 'sk-or-', keyUrl: 'https://openrouter.ai/keys' }`
+- `RUNNER_AUTH.openrouter = { methods: ['apikey'], apikeyPrefix: '', keyUrl: 'https://openrouter.ai/keys' }` (접두사 무차단 — GLM 관례: 키 형식 변화에 저장이 막히지 않게, 판정은 실검증 프로브가)
 - 저장 전 실검증(기존 관문): `GET /api/v1/key` (잔액·한도 응답)로 유효성 프로브 — 거짓 '연결됨' 금지.
 - billing: `rowBilled` 판정에서 apikey → 청구 ✓ (#118의 단일 진실에 그대로 합류. 신규 배선 0)
 
@@ -88,4 +88,4 @@ export const openrouterEnv = (key) => ({
 |---|---|
 | Anthropic 호환이 tool_use에서 불완전 | 구현 첫 게이트에서 실키 검증 — 실패 시 설계 재검토(셰임 금지) |
 | 저품질 모델로 크루 품질 저하 신고 | 추천 셋 = tool-use 스모크 통과 모델만, 나머지는 검색 + 배지 |
-| 키 잔액 소진 시 전 턴 실패 | 402/잔액 오류를 러너 자격 오류로 매핑 — 기존 인증 자가치유 안내 재사용 |
+| 키 잔액 소진 시 전 턴 실패 | (구현됨) 402 감지 → 채팅 답변에 원인·충전처 안내, oneshot(영입·기억정리)은 실패 승격 + 충전 안내 — 자격 오류 매핑이 아니라 별도 채널 |

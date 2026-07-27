@@ -55,10 +55,13 @@ test('billing: openrouter apikey = 청구 러너 (단일 판정 합류)', async 
   assert.equal(await isBilledRunner(ws, 'openrouter'), true);
 });
 
-test('isOpenRouterCreditError: 실측 402 문구만 — 인용·설명 답변 오탐 금지', () => {
+test('isOpenRouterCreditError: 첫 줄/마지막 줄 402만 — 인용·설명 답변 오탐 금지 (2R N4)', () => {
   assert.equal(isOpenRouterCreditError('API Error: 402 This request requires more credits, or fewer max_tokens.'), true);
   assert.equal(isOpenRouterCreditError('  API Error: 402 …'), true);
-  assert.equal(isOpenRouterCreditError('OpenRouter에서 "API Error: 402"가 나오면 크레딧을 충전하세요.'), false, '인용 답변은 오탐 금지(앞머리 고정)');
+  assert.equal(isOpenRouterCreditError('알겠습니다.\n\nAPI Error: 402 This request requires more credits'), true, '서두 문장 뒤 에러(마지막 줄) — 미탐이면 402가 기억에 저장된다');
+  assert.equal(isOpenRouterCreditError('api error: 402 …'), true, '대소문자 무시');
+  assert.equal(isOpenRouterCreditError('OpenRouter에서 "API Error: 402"가 나오면 크레딧을 충전하세요.'), false, '산문 중간 인용은 오탐 금지');
+  assert.equal(isOpenRouterCreditError('첫 줄 설명입니다. API Error: 402 언급.\n마지막 줄은 정상 결론입니다.'), false, '중간 언급 + 정상 결론 = 오탐 금지');
   assert.equal(isOpenRouterCreditError(''), false);
 });
 
@@ -69,12 +72,15 @@ test('배선: chat.mjs — 402 안내는 success/else 쌍 밖 + costUsd 미기�
   assert.match(src, /if \(msg\.subtype === 'success'\) reply = msg\.result;\n      else \{/, 'success/else 쌍은 인접 불변 — 사이에 코드 삽입 금지');
   assert.match(src, /runner === 'openrouter' && isOpenRouterCreditError\(reply\)/, '402 안내 배선');
   assert.match(src, /costUsd: runner === 'openrouter' \? null : msg\.total_cost_usd/, '설계 §4 — SDK 금액은 Anthropic 단가라 openrouter에선 오액(미기록)');
+  assert.match(src, /creditTurn \? null : await saveHandover/, '402 턴은 일지 기록 제외 — 오류 원문이 기억으로 정제되지 않게(2R N3)');
 });
 
 test('배선: oneshot.mjs — 402는 성공이 아니라 실패로 승격(크루 카드·기억 오염 방지) + costUsd 미기록', async () => {
   const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
   assert.match(src, /runner === 'openrouter' && isOpenRouterCreditError\(text\)/, '402 텍스트가 성공으로 반환되면 크루 카드에 영구 저장된다(검수 HIGH-1)');
   assert.match(src, /costUsd: runner === 'openrouter' \? null : costUsd/);
+  // 2R H1: 호출자 모델을 카탈로그 검증 없이 넘기면 consolidate의 claude-haiku 하드코딩이 400으로 전멸
+  assert.match(src, /RUNNERS\.openrouter\.models\.some\(\(m\) => m\.id === model\)/, 'openrouter 원샷은 카탈로그 밖 id를 기본 모델로 강등해야 한다');
   // 외부 CLI 경로(externalExec)에 openrouter 분기가 생기면 BYOK 원칙 위반
   const runners = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
   const external = runners.split('export async function externalExec')[1]?.split('\n}')[0] ?? '';
