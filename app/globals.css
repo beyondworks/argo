@@ -1558,8 +1558,11 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 }
 .task-row:hover { background: var(--card-2); }
 .task-row .t-main { flex: 1; min-width: 0; }
-.task-row .t-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.task-row .t-sub { font-size: 11px; color: var(--fg-3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* display:block 필수 — 인라인 span엔 overflow/ellipsis가 무효라 긴 제목·경로가 드로어 밖으로
+   뚫고 나갔다(실사용 신고 2026-07-27 "패널 열면 텍스트 화면 넘침", 하네스 재현: 380px 드로어에서
+   콘텐츠 1110px). .nav-sub가 이미 같은 이유로 display:block을 쓴다. */
+.task-row .t-title { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-row .t-sub { display: block; font-size: 11px; color: var(--fg-3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tasks-badge {
   position: absolute; top: -3px; right: -3px;
   width: 8px; height: 8px; border-radius: 999px;
