@@ -42,14 +42,14 @@ async function messages(body) {
 }
 
 async function smoke(model) {
-  // ① 일반 응답
-  const a = await messages({ model, max_tokens: 32, messages: [{ role: 'user', content: 'reply with exactly: ok' }] });
+  // ① 일반 응답 — max_tokens는 추론형(thinking) 모델의 사고 예산까지 포함해 넉넉히(32면 오탐 FAIL 실측)
+  const a = await messages({ model, max_tokens: 1024, messages: [{ role: 'user', content: 'reply with exactly: ok' }] });
   const aText = a.json?.content?.find((c) => c.type === 'text')?.text ?? '';
   if (a.status !== 200 || !aText) return { model, pass: false, stage: 'basic', detail: `${a.status} ${a.text.slice(0, 120)}` };
 
   // ② tool_use 왕복 — 도구 호출을 내고, tool_result를 돌려줬을 때 답을 완성하는가
   const req = {
-    model, max_tokens: 128, tools: [TOOL], tool_choice: { type: 'auto' },
+    model, max_tokens: 1024, tools: [TOOL], tool_choice: { type: 'auto' },
     messages: [{ role: 'user', content: 'Use the get_ship_name tool, then tell me the ship name.' }],
   };
   const b = await messages(req);

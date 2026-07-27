@@ -188,10 +188,21 @@ export const RUNNERS = {
   },
   openrouter: {
     name: 'OpenRouter', kind: 'sdk-compat',
-    // BYOK 계열 일반화(설계 2026-07-27) — 키 하나로 수백 모델. 카탈로그 규칙에 따라 이 정적
-    // 목록에는 **실키 tool_use 스모크(scripts/openrouter-smoke.mjs)를 통과한 id만** 넣는다.
-    // 통과 전까지 빈 목록 = UI에서 모델 선택이 비어 연결만 가능(compete는 목록 없으면 제외).
-    models: [],
+    // BYOK 계열 일반화(설계 2026-07-27) — 키 하나로 수백 모델. 카탈로그 규칙: 이 목록에는
+    // **실키 tool_use 스모크(scripts/openrouter-smoke.mjs)를 통과한 id만** 넣는다.
+    // 아래 8종 = 2026-07-27 스모크 8/8 통과 실측(일반 응답 + tool_use 왕복).
+    // 첫 항목이 러너 전환 시 기본 선택 — 저비용·도구 신뢰성 기준(gemini 카탈로그 관례와 동일).
+    // 그 외 모델은 사용자가 id를 직접 입력해 쓸 수 있되 미검증이다(스모크 후 여기 추가).
+    models: [
+      { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
+      { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
+      { id: 'x-ai/grok-4.5', label: 'Grok 4.5' },
+      { id: 'minimax/minimax-m3', label: 'MiniMax M3' },
+      { id: 'qwen/qwen3.7-max', label: 'Qwen3.7 Max' },
+      { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+      { id: 'moonshotai/kimi-k3', label: 'Kimi K3 (OpenRouter)' }, // 직접 연결(kimi 러너)이 더 저렴 — 단일 키 사용자용
+      { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (OpenRouter)' },       // 동일 — 직접 연결(glm 러너) 우선 권장
+    ],
   },
   glm: {
     name: 'GLM', kind: 'sdk-compat',
@@ -214,8 +225,8 @@ export const hostOptInAllowed = (runner) =>
   && (runner !== 'claude' || process.env.ARGO_STANDALONE !== '1');
 
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
-// 스모크(scripts/openrouter-smoke.mjs) 통과 후 확정한다 — 카탈로그 규칙(실턴 통과 id만). 빈 값이면 chat이 모델 미지정을 거부한다.
-export const OPENROUTER_DEFAULT_MODEL = '';
+
+export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5'; // 스모크 8/8 중 저비용·도구 신뢰성 1순위(2026-07-27 실측)
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
@@ -787,8 +798,15 @@ export async function runnerCredEnv(wsId, runner) {
   }
   if (runner === 'openrouter') {
     // GLM·Kimi와 동일한 Anthropic 호환 패턴 — BYOK 계열 일반화(설계 2026-07-27).
-    // /api/v1/messages 실존은 무키 401로 실측(2026-07-27) — 최종 확정은 스모크(scripts/openrouter-smoke.mjs).
-    return { env: { ANTHROPIC_BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+    // 배관 실측(2026-07-27): 스모크 8/8(tool_use 왕복) + CLI 실요청 65KB(베타 9종·스트리밍) 수용 확인.
+    // CLAUDE_CODE_MAX_OUTPUT_TOKENS — OpenRouter는 선불 크레딧제로 max_tokens **선언분만큼 잔액을
+    // 선검사**한다(실측 402: "requested up to 32000, can only afford N"). CLI 기본 선언 32000이면
+    // 저잔액 계정은 전 턴 402 — 8192로 상한(크루 답변에 충분, env로 상향 가능).
+    return { env: {
+      ANTHROPIC_BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api',
+      ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '',
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.OPENROUTER_MAX_OUTPUT_TOKENS || '8192',
+    } };
   }
   if (runner === 'codex') {
     // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를

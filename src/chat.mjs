@@ -969,6 +969,14 @@ ${lang === 'en'
         });
       }
       if (msg.subtype === 'success') reply = msg.result;
+      // OpenRouter 크레딧 소진 — CLI가 402를 "성공한 답변 텍스트"로 삼켜 사용자에게 날 API 에러가
+      // 그대로 보인다(실측 2026-07-27: "API Error: 402 This request requires more credits…").
+      // 신규 키는 잔액 $0이 기본이라 첫 사용자 전원이 이 화면을 만난다 — 원인·해결처를 붙인다.
+      if (runner === 'openrouter' && /API Error: 402|requires more credits/i.test(reply)) {
+        reply += lang === 'en'
+          ? `\n\n---\n⚠ Your OpenRouter credit balance is too low for this turn. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.`
+          : `\n\n---\n⚠ OpenRouter 크레딧 잔액이 부족해 이 턴을 처리하지 못했습니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.`;
+      }
       else {
         // CLI가 낸 실제 원인(errors[])을 버리지 않는다 — "error_during_execution" 한 줄로는 사용자도
         // 우리도 진단 불가(Windows 실기 사례: 자격 정상인데 원인 불명 실패가 이 코드 때문에 미궁).

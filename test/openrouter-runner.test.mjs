@@ -36,6 +36,8 @@ test('runnerCredEnv: GLM·Kimi와 동일한 Anthropic 호환 env 패턴 + 토큰
   assert.equal(cred.env.ANTHROPIC_AUTH_TOKEN, 'sk-or-test-123');
   assert.equal(cred.env.ANTHROPIC_API_KEY, '', 'Anthropic 키 잔존 금지');
   assert.equal(cred.env.CLAUDE_CODE_OAUTH_TOKEN, '', '구독 토큰이 제3자 향 턴에 남으면 안 된다(감사 2026-07-20 대칭)');
+  // OpenRouter는 선불제 — max_tokens 선언분만큼 잔액 선검사(402 실측). CLI 기본 32000이면 저잔액 전 턴 402.
+  assert.equal(cred.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, '8192', '출력 상한 미선언 시 저잔액 사용자 전 턴 402');
 });
 
 test('billing: openrouter apikey = 청구 러너 (단일 판정 합류)', async () => {
