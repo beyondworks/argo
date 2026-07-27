@@ -202,6 +202,12 @@ export const RUNNERS = {
       { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
       { id: 'moonshotai/kimi-k3', label: 'Kimi K3 (OpenRouter)' }, // 직접 연결(kimi 러너)이 더 저렴 — 단일 키 사용자용
       { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (OpenRouter)' },       // 동일 — 직접 연결(glm 러너) 우선 권장
+      // ── 무료 모델(:free) — 크레딧 0으로 체험 가능(유건 요청 2026-07-27: 충전 없이 진행).
+      // 스모크 3/3 통과 실측(같은 tool_use 왕복 게이트). 무료 티어는 제공사 용량·일일 요청
+      // 제한(잔액 <$10 계정 기준 50회/일)이 있어 상시 크루보다는 체험·경량 용도 — 라벨에 명시.
+      { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 3 Super (무료)' },
+      { id: 'inclusionai/ling-3.0-flash:free', label: 'Ling 3.0 Flash (무료)' },
+      { id: 'poolside/laguna-s-2.1:free', label: 'Laguna S 2.1 (무료)' },
     ],
   },
   glm: {

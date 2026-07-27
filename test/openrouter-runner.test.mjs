@@ -20,7 +20,8 @@ test('등록: sdk-compat 계열 + BYOK apikey 단일 (CLI 래핑 금지)', () =>
 
 test('카탈로그: 스모크 전수 통과 8종 + 기본 모델 포함 + 첫 항목=기본(러너 전환 관례)', () => {
   const ids = (RUNNERS.openrouter.models ?? []).map((m) => m.id);
-  assert.equal(ids.length, 8, '2026-07-27 스모크 8/8 확정본 — 변경은 스모크 재실행 후에만');
+  assert.equal(ids.length, 11, '2026-07-27 스모크 확정본(유료 8 + 무료 3) — 변경은 스모크 재실행 후에만');
+  assert.equal(ids.filter((i) => i.endsWith(':free')).length, 3, '무료 3종 — 크레딧 0 체험 진입로(스모크 3/3)');
   assert.ok(ids.includes(OPENROUTER_DEFAULT_MODEL), '기본 모델은 반드시 검증된 목록 안에서');
   assert.equal(ids[0], OPENROUTER_DEFAULT_MODEL, '첫 항목이 러너 전환 시 기본 선택된다(gemini 관례)');
 });
