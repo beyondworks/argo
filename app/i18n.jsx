@@ -255,6 +255,8 @@ const DICT = {
   'settings.update.found': ['새 버전 {v}', 'New version {v}'],
   'settings.update.none': ['최신 버전입니다', 'You are up to date'],
   'settings.update.check': ['업데이트 확인', 'Check for updates'],
+  'settings.update.webHow': ['웹 버전 갱신: 서버 설치본은 최신 릴리스의 install.sh를 다시 실행하거나 운영자가 서버를 갱신해야 합니다. 데스크톱 앱을 설치하면 이후 업데이트는 클릭 한 번으로 됩니다.', 'To update the web version: re-run install.sh from the latest release (self-hosted) or ask the operator to redeploy. Installing the desktop app makes future updates one click.'],
+  'settings.update.webRelease': ['최신 릴리스 보기', 'View latest release'],
   'settings.update.install': ['{v} 설치 후 재시작', 'Install {v} and restart'],
   'settings.update.installing': ['설치 중…', 'Installing…'],
   'settings.update.restarting': ['재시작합니다…', 'Restarting…'],

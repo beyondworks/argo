@@ -27,7 +27,20 @@ export function useAppUpdate() {
   // 업데이트 확인 — Tauri 업데이터가 latest.json(argo-agent 릴리스)과 네이티브 버전을 대조.
   // 설치 중에는 상태를 건드리지 않는다(설치 흐름을 덮어쓰지 않게).
   const check = useCallback(async () => {
-    if (!inTauri()) return; // 웹은 자가 업데이트 불가 — no-op
+    if (!inTauri()) {
+      // 웹(상주·셀프호스트) — 자가 업데이트는 없지만 **새 버전 존재는 알 수 있어야 한다**
+      // (실사용 요청 2026-07-27 "웹버전만 쓰는 사람 업데이트 쉽게"). 서버 프록시(/api/update-check)가
+      // latest.json을 대신 읽는다(브라우저 직접 fetch는 릴리스 S3 CORS에 막힘).
+      setPhase('checking');
+      try {
+        const r = await fetch('/api/update-check').then((x) => x.json());
+        if (r.current) setCurrent(r.current);
+        setAvailable(r.hasUpdate ? r.latest : null);
+        setChecked(true);
+        setPhase('idle');
+      } catch { setPhase('error'); }
+      return;
+    }
     setPhase((p) => (p === 'installing' ? p : 'checking'));
     try {
       const upd = await (await import('@tauri-apps/plugin-updater')).check();
@@ -58,11 +71,13 @@ export function useAppUpdate() {
   useEffect(() => {
     const app = inTauri();
     setIsApp(app);
-    if (!app) return;
     let alive = true;
-    import('@tauri-apps/api/app').then((m) => m.getVersion())
-      .then((v) => { if (alive && v) setCurrent(v); })
-      .catch(() => { /* 버전 조회 실패 — 빌드타임 값 유지 */ });
+    if (app) {
+      import('@tauri-apps/api/app').then((m) => m.getVersion())
+        .then((v) => { if (alive && v) setCurrent(v); })
+        .catch(() => { /* 버전 조회 실패 — 빌드타임 값 유지 */ });
+    }
+    // 웹도 최초 확인 + 1시간 주기 재확인 — check()가 환경별 경로(Tauri 업데이터/서버 프록시)를 스스로 고른다
     check();
     const iv = setInterval(check, 60 * 60 * 1000);
     return () => { alive = false; clearInterval(iv); };

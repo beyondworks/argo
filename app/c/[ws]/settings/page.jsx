@@ -766,8 +766,35 @@ function UpdateCard() {
   const { t } = useLang();
   // 상단 뱃지와 동일한 단일 출처(use-app-update) — 네이티브 설치 버전 + Tauri 업데이터.
   const { isApp, current, available, checked, phase, check, install } = useAppUpdate();
-  if (!isApp) return null;
   const busy = phase === 'checking' || phase === 'installing';
+  // 웹(상주·셀프호스트) — 자가 설치는 없지만 새 버전 존재를 알리고 갱신 방법을 안내한다
+  // (실사용 요청 2026-07-27). 데스크톱과 같은 카드 자리·같은 훅(단일 출처).
+  if (!isApp) {
+    return (
+      <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <span className="card-title">{t('settings.update.title')}</span>
+        <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>
+          {t('settings.update.current', { v: current || '—' })}
+          {available ? ` · ${t('settings.update.found', { v: available })}` : ''}
+          {!available && checked ? ` · ${t('settings.update.none')}` : ''}
+        </p>
+        {available && (
+          <p style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.7, margin: 0 }}>{t('settings.update.webHow')}</p>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="btn sm" onClick={check} disabled={busy}>
+            {busy ? <Spinner size={12} /> : null}{t('settings.update.check')}
+          </button>
+          {available && (
+            <a className="btn btn-primary sm" href="https://github.com/beyondworks/argo-agent/releases/latest" target="_blank" rel="noopener noreferrer">
+              {t('settings.update.webRelease')}
+            </a>
+          )}
+        </div>
+        {phase === 'error' && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.update.error')}</p>}
+      </div>
+    );
+  }
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.update.title')}</span>
