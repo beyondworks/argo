@@ -1,5 +1,5 @@
 // OpenRouter 첫 게이트 — 실키 tool_use 스모크 (설계 2026-07-27의 "구현 첫 게이트").
-// 카탈로그 규칙: RUNNERS.openrouter.models와 OPENROUTER_DEFAULT_MODEL에는 **이 스모크를
+// 카탈로그 규칙: RUNNERS.openrouter.models·OPENROUTER_DEFAULT_MODEL·OPENROUTER_ONBOARD_MODEL에는 **이 스모크를
 // 통과한 id만** 넣는다. 문서·감으로 추가 금지.
 //
 // 사용법(키는 env로만 — 채팅·파일에 평문 금지):
