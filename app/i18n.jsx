@@ -756,6 +756,7 @@ const DICT = {
   'activity.source.messenger': ['메신저', 'Messenger'],
   'activity.source.routine': ['루틴', 'Routine'],
   'activity.source.delegate': ['위임', 'Delegate'],
+  'activity.source.crewmail': ['쪽지', 'Mail'],
   'activity.filter.main': ['주요', 'Main'],
   'activity.filter.approval': ['결재', 'Approval'],
   'activity.filter.memory': ['기억', 'Memory'],

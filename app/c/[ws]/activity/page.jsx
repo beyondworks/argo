@@ -19,7 +19,7 @@ const inFilter = (e, f) => {
 export default function Activity({ params }) {
   const { ws } = use(params);
   const { t, lang } = useLang();
-  const SOURCE = { deck: t('activity.source.deck'), messenger: t('activity.source.messenger'), routine: t('activity.source.routine'), delegate: t('activity.source.delegate'), trial: t('activity.source.trial'), room: t('activity.source.room') };
+  const SOURCE = { deck: t('activity.source.deck'), messenger: t('activity.source.messenger'), routine: t('activity.source.routine'), delegate: t('activity.source.delegate'), crewmail: t('activity.source.crewmail'), trial: t('activity.source.trial'), room: t('activity.source.room') };
   // 필터 정의 — '주요'가 opinionated default (정상 대화 턴 제외)
   const FILTERS = [
     ['main', t('activity.filter.main')],
@@ -73,7 +73,7 @@ export default function Activity({ params }) {
   const row = (e) => {
     if (e.type === 'turn') {
       return {
-        who: e.(source === 'delegate' || source === 'crewmail') && e.from ? `${nameOf(e.from)} → ${nameOf(e.slug)}` : nameOf(e.slug),
+        who: (e.source === 'delegate' || e.source === 'crewmail') && e.from ? `${nameOf(e.from)} → ${nameOf(e.slug)}` : nameOf(e.slug),
         avatar: nameOf(e.slug),
         desc: isError(e) ? e.error : (e.gist || t('activity.instructionDone')),
         chip: isError(e) ? t('activity.error') : (SOURCE[e.source] ?? t('activity.conversation')),
