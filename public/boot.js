@@ -64,6 +64,7 @@ try {
       if (p.port) {
         TARGETS = ['http://localhost:' + p.port];
       }
+      if (p.phase && p.phase !== 'error') errEl.hidden = true; // 폴백 재스폰으로 살아나면 이전 에러 배너 제거(2R H5)
       if (p.phase === 'error') {
         phase = 'error'; // 종결 상태 — 진행바 크리프·slow 안내 정지(위 인터벌 가드). probe/goto는 회복 대비 계속.
         errEl.hidden = false;

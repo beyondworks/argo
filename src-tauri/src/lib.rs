@@ -155,7 +155,7 @@ pub fn run() {
                             Ok(c) => c,
                             Err(e) => {
                                 log::error!("[argo] node 사이드카 없음: {e}");
-                                boot_status(&handle, "error", &format!("node sidecar missing: {e}"), Some(port));
+                                boot_error_final(&handle, &format!("node sidecar missing: {e}"), Some(port)); // 종결 — 재스폰 없음(2R H2)
                                 return;
                             }
                         };
@@ -181,12 +181,21 @@ pub fn run() {
                                 }
                                 let started = std::time::Instant::now();
                                 let mut early_exit: Option<String> = None;
-                                let mut last_err_line = String::new(); // 진짜 원인(스택 첫머리) — 최종 에러에 동봉(검수 1R: 즉사 시 로그 테일이 화면에 못 뜸)
+                                // 진짜 원인 — stderr에서 "Error"/⨯를 포함한 **첫** 줄만(2R 실측: 마지막 줄 캡처는
+                                // Next 에러 덤프의 닫는 중괄호 `}`만 실었고, stdout 공용 캡처는 스트림 순서 미보장).
+                                let mut err_cause = String::new();
                                 while let Some(ev) = rx.recv().await {
                                     match ev {
-                                        CommandEvent::Stderr(line) | CommandEvent::Stdout(line) => {
+                                        CommandEvent::Stderr(line) => {
                                             let s = String::from_utf8_lossy(&line).trim_end().to_string();
-                                            if !s.is_empty() { last_err_line = s.chars().take(180).collect(); }
+                                            if err_cause.is_empty() && (s.contains("Error") || s.contains('⨯')) {
+                                                err_cause = s.chars().take(180).collect();
+                                            }
+                                            log::info!("[server] {s}");
+                                            let _ = handle.emit("boot-log", &s);
+                                        }
+                                        CommandEvent::Stdout(line) => {
+                                            let s = String::from_utf8_lossy(&line).trim_end().to_string();
                                             log::info!("[server] {s}");
                                             // 부트 화면 로그 테일 — 느릴 때 무엇을 하는지 보여준다
                                             let _ = handle.emit("boot-log", &s);
@@ -200,7 +209,8 @@ pub fn run() {
                                             if t.code.map_or(false, |c| c != 0) && started.elapsed() < Duration::from_secs(5) {
                                                 early_exit = Some(code);
                                             } else {
-                                                boot_status(&handle, "error", &format!("server exited (code {code})"), Some(port));
+                                                // 정상/지연 종료 — 이 경로는 재스폰이 없다(종결). 2R H2.
+                                                boot_error_final(&handle, &format!("server exited (code {code})"), Some(port));
                                             }
                                         }
                                         _ => {}
@@ -223,7 +233,7 @@ pub fn run() {
                                         continue;
                                     }
                                     None => {
-                                        let tail = if last_err_line.is_empty() { String::new() } else { format!(" | last error: {last_err_line}") };
+                                        let tail = if err_cause.is_empty() { String::new() } else { format!(" | cause: {err_cause}") };
                                         boot_error_final(&handle, &format!("server exited immediately on every usable port (last code {code}) — {}{tail}", reserved_hint()), Some(port));
                                         return;
                                     }
@@ -231,7 +241,7 @@ pub fn run() {
                             }
                             Err(e) => {
                                 log::error!("[argo] 서버 사이드카 기동 실패: {e}");
-                                boot_status(&handle, "error", &format!("failed to launch server: {e}"), Some(port));
+                                boot_error_final(&handle, &format!("failed to launch server: {e}"), Some(port)); // 종결 — 재스폰 없음(2R H2)
                                 return;
                             }
                         }
