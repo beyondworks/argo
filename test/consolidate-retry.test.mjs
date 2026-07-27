@@ -16,7 +16,7 @@ import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-consolidate-'));
 const { paths } = await import('../src/workspace.mjs');
-const { planConsolidate, CONSOLIDATE_RETRY_MS, CONSOLIDATE_MAX_ATTEMPTS } = await import('../src/scheduler.mjs');
+const { planConsolidate, claimConsolidate, markConsolidateDone, CONSOLIDATE_RETRY_MS, CONSOLIDATE_MAX_ATTEMPTS } = await import('../src/scheduler.mjs');
 const { rollupJournals } = await import('../src/consolidate.mjs');
 
 const TODAY = '2026-07-27';
@@ -107,12 +107,14 @@ test('롤업 멱등: 주간 블록이 이미 있으면 다시 append하지 않�
     '같은 블록이 두 번 접히면 주간 일지가 재시도마다 부풀어 오른다');
 });
 
-test('롤업 멱등 키는 날짜+크루 — 같은 날 다른 크루의 일지가 유실되지 않는다', async () => {
+test('롤업 멱등 키는 원본 파일명 — **동명 크루**의 하루치가 유실되지 않는다 (검수 실측 회귀)', async () => {
+  // persona.mjs는 동명 영입을 허용한다(slug만 -2, 이름은 동일) → 표시 헤딩(날짜+이름)을 키로 쓰면
+  // 두 번째 크루가 append 없이 아카이브돼 하루치가 통째로 사라진다. 이름을 같게 두는 게 이 테스트의 핵심.
   const ws = 'rollup-multi';
   const old = '2026-07-02';
-  const a = `${old}-alpha.md`; const b = `${old}-beta.md`;
-  const bodyA = `# ${old} 알파 일지\n\n## 09:00 — A 작업\n`;
-  const bodyB = `# ${old} 베타 일지\n\n## 10:00 — B 작업\n`;
+  const a = `${old}-researcher.md`; const b = `${old}-researcher-2.md`;
+  const bodyA = `# ${old} 리서처 일지\n\n## 09:00 — A 작업\n`;
+  const bodyB = `# ${old} 리서처 일지\n\n## 10:00 — B 작업\n`;
   await seedJournal(ws, a, bodyA);
   await seedJournal(ws, b, bodyB);
   const p = paths(ws);
@@ -123,8 +125,47 @@ test('롤업 멱등 키는 날짜+크루 — 같은 날 다른 크루의 일지�
   await rollupJournals(ws);
   const weeklyName = (await readdir(p.journal)).find((n) => /^\d{4}-W\d{2}\.md$/.test(n));
   const text = await readFile(join(p.journal, weeklyName), 'utf8');
-  assert.match(text, /## 2026-07-02 알파/, '첫 크루');
-  assert.match(text, /## 2026-07-02 베타/, '날짜만으로 멱등을 판정하면 뒤 크루가 통째로 유실된다');
+  assert.match(text, /09:00 — A 작업/, '첫 크루의 일지');
+  assert.match(text, /10:00 — B 작업/, '동명 크루라 헤딩이 같다 — 파일명 키가 아니면 뒤 크루가 통째로 유실된다');
+  assert.equal((await readdir(paths(ws).journal)).filter((f) => f.endsWith('.md') && !/^\d{4}-W/.test(f)).length, 0, '둘 다 아카이브됐어야');
+});
+
+// ── 파일 I/O 경로 — 순수함수만 보면 "선점을 실제로 기록하는가"가 무방비다(검수 M8)
+test('claimConsolidate: 선점을 파일에 실제로 기록하고, 같은 창의 두 번째 호출은 null', async () => {
+  const ws = 'claim-io';
+  await mkdir(paths(ws).vault, { recursive: true });
+  const first = await claimConsolidate(ws, T0, TODAY);
+  assert.equal(first?.attempts, 1);
+  const onDisk = JSON.parse(await readFile(join(paths(ws).vault, '.consolidate-run.json'), 'utf8'));
+  assert.equal(onDisk.attempts, 1, '선점이 디스크에 없으면 겹친 리더·다음 폴이 즉시 또 돈다(무한 재시도 부활)');
+  assert.ok(Date.parse(onDisk.nextRetryAt) > T0);
+  assert.equal(await claimConsolidate(ws, T0 + 1_000, TODAY), null, '백오프 창 안 두 번째 선점은 거절');
+});
+
+test('markConsolidateDone: done만 세우고 attempts는 보존, 다른 날짜면 no-op (CAS)', async () => {
+  const ws = 'done-io';
+  await mkdir(paths(ws).vault, { recursive: true });
+  const file = join(paths(ws).vault, '.consolidate-run.json');
+  await writeFile(file, JSON.stringify({ day: TODAY, attempts: 3, nextRetryAt: null, done: false }));
+  await markConsolidateDone(ws, TODAY);
+  const after = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(after.done, true);
+  assert.equal(after.attempts, 3, 'attempts를 되감으면 오늘 재시도가 되살아난다');
+  // 자정을 넘겨 끝난 실행 / 다른 기기가 새 날 스탬프를 올린 경우 — 덮어쓰면 안 된다
+  await writeFile(file, JSON.stringify({ day: '2026-07-28', attempts: 1, done: false }));
+  await markConsolidateDone(ws, TODAY);
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).done, false, '남의 날짜 스탬프를 건드리면 안 된다');
+});
+
+test('오염된 attempts가 스케줄러 틱을 죽이지 않는다 (RETRY_MS 인덱스 이탈)', () => {
+  for (const bad of [-5, 1.5, '3', 'abc', null, undefined, NaN, 1e9]) {
+    assert.doesNotThrow(() => planConsolidate({ day: TODAY, attempts: bad }, T0, TODAY), `attempts=${bad}`);
+  }
+});
+
+test('오염된 먼 미래 스탬프는 자가 회복한다 (영구 비활성화 방지)', () => {
+  assert.equal(planConsolidate({ day: '2026-07-28' }, T0, TODAY), null, '하루 이내 미래 = 시계 어긋남, 양보');
+  assert.equal(planConsolidate({ day: '9999-01-01' }, T0, TODAY)?.attempts, 1, '먼 미래 = 오염 — 그대로 두면 정리가 영영 안 돈다');
 });
 
 // ── 배선 트립와이어 — 스케줄러 콜백은 단위로 못 태운다(폴 루프·리스). 소스 스캔으로 잠근다.
@@ -136,4 +177,9 @@ test('배선: 스케줄러가 선점(claim)·성공 마킹(CAS)을 거치고, �
   // 철회한 설계의 재발 방지: 실패 catch에서 스탬프를 되돌리면 무한 재시도가 된다
   const catchBlock = src.split('기억 정리 실패')[1]?.slice(0, 300) ?? '';
   assert.doesNotMatch(catchBlock, /writeJsonAtomic\(RUN_STAMP/, '실패 경로에서 스탬프를 되돌리면 60초 폴마다 무한 재시도(5b4e94e에서 철회)');
+  // 순서 — rollup **뒤**에 done. 앞에 오면 rollup 실패가 다시 '그날 영구 스킵'이 된다(검수 M12)
+  assert.ok(src.indexOf('rollupJournals(c.id)') < src.indexOf('markConsolidateDone(c.id, today)'), 'done 마킹은 rollup 성공 후');
+  // 실행이 백오프보다 길 때 다음 폴이 겹쳐 claim하는 것을 막는 in-flight 가드(검수 HIGH-2)
+  assert.match(src, /consolidating\.has\(c\.id\) \? null : await claimConsolidate/, '진행 중이면 선점 자체를 하지 않는다');
+  assert.match(src, /\.finally\(\(\) => consolidating\.delete\(c\.id\)\)/, '완료 시 반드시 해제');
 });

@@ -184,15 +184,17 @@ export async function rollupJournals(wsId) {
     const weekly = join(dir, `${weekLabel(day)}.md`);
     // append → rename 순서라 rename만 실패하면(파일 잠금·권한) 원본이 journal/에 남아 다음 실행이
     // 같은 블록을 또 접는다. 스케줄러 재시도 도입으로 노출이 커졌으므로 여기서 멱등을 보장한다.
-    // 키는 **날짜 + 크루 라벨 전체** — 같은 날 여러 크루의 일지가 각각 접히므로 날짜만 보면
-    // 첫 크루 블록에 걸려 뒤 크루의 일지가 통째로 유실된다.
+    // 키는 **원본 파일명**(= 날짜+slug, 고유)이다 — 표시용 헤딩(날짜+크루 이름)을 키로 쓰면
+    // 동명 크루에서 뒤 크루의 하루치가 append 없이 아카이브돼 통째로 유실된다(검수 실측 2026-07-27:
+    // persona.mjs가 동명 영입을 허용해 slug만 -2가 붙고 이름은 같아진다). 마커는 HTML 주석이라
+    // 읽는 사람에겐 안 보이고 파서(위키링크·헤딩)도 건드리지 않는다.
     let weeklyText = '';
     try { weeklyText = await readFile(weekly, 'utf8'); } catch { /* 첫 주간 파일 */ }
-    const heading = `\n## ${day} ${label}\n`;
-    if (!weeklyText.includes(heading)) {
+    const marker = `<!-- rolled: ${n} -->`;
+    if (!weeklyText.includes(marker)) {
       // [[..]] 리터럴 금지 — 인덱스·그래프가 위키링크로 파싱해 존재하지 않는 문서를 가리키는 유령 링크가 된다
       const head = weeklyText ? '' : `# ${weekLabel(day)} 주간 일지\n\n상세 원본은 journal/.archive/ 폴더의 일별 파일에 보관됨.\n`;
-      await appendFile(weekly, `${head}${heading}${gists.join('\n') || '- (기록 없음)'}\n`);
+      await appendFile(weekly, `${head}\n## ${day} ${label}\n${marker}\n${gists.join('\n') || '- (기록 없음)'}\n`);
     }
     await mkdir(archive, { recursive: true });
     await rename(file, join(archive, n));

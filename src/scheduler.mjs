@@ -31,7 +31,12 @@ export const CONSOLIDATE_MAX_ATTEMPTS = CONSOLIDATE_RETRY_MS.length + 1;
 export function planConsolidate(st, nowMs, today) {
   const s = st ?? {};
   const day = s.day ?? '';
-  if (day > today) return null;            // 미래 스탬프(기기 간 시계 어긋남) — 건드리지 않는다
+  // 미래 스탬프 — 하루 이내는 기기 간 시계 어긋남으로 보고 양보한다. 그보다 먼 미래는 오염이며,
+  // 그대로 두면 정리가 영구 비활성화되고 스스로 못 빠져나온다 → 새 날처럼 재개한다.
+  if (day > today) {
+    const farFuture = new Date(nowMs + 2 * 86_400_000).toISOString().slice(0, 10);
+    if (day <= farFuture) return null;
+  }
   const attempt = (n) => ({
     day: today,
     attempts: n,
@@ -39,16 +44,16 @@ export function planConsolidate(st, nowMs, today) {
     nextRetryAt: n < CONSOLIDATE_MAX_ATTEMPTS ? new Date(nowMs + CONSOLIDATE_RETRY_MS[n - 1]).toISOString() : null,
     done: false,
   });
-  if (day < today) return attempt(1);      // 새 날 — 1차 시도
+  if (day !== today) return attempt(1);    // 새 날(또는 오염된 먼 미래) — 1차 시도
   if (s.done) return null;                 // 오늘 이미 성공
-  const n = Number(s.attempts) || 0;
+  const n = Math.min(CONSOLIDATE_MAX_ATTEMPTS, Math.max(0, Math.floor(Number(s.attempts) || 0))); // 오염(음수·소수·NaN) 흡수 — RETRY_MS 인덱스 이탈이 틱 전체를 죽인다
   if (n >= CONSOLIDATE_MAX_ATTEMPTS) return null;                 // 오늘 시도 소진
   if (s.nextRetryAt && nowMs < Date.parse(s.nextRetryAt)) return null; // 백오프 대기 중
   return attempt(n + 1);
 }
 
 /** 실행 직전 선점 — 락 안에서 읽고 판정하고 쓴다(claimRoutine과 같은 원칙). 반환 = 쓴 스탬프 또는 null. */
-async function claimConsolidate(wsId, nowMs, today) {
+export async function claimConsolidate(wsId, nowMs, today) { // export: 회귀 테스트용(스탬프 실제 기록 여부)
   return withLock(`consolidate:${wsId}`, async () => {
     let st = {};
     try { st = await readJson(RUN_STAMP(wsId), {}); } catch { /* 부재/손상 — 오늘 미실행으로 간주 */ }
@@ -62,7 +67,7 @@ async function claimConsolidate(wsId, nowMs, today) {
 /** 성공 마킹 — CAS: 스탬프가 아직 오늘 것일 때만 쓴다. RUN_STAMP는 vault 안이라 기기 간 동기화
     대상이고, 자정을 넘겼거나 다른 기기가 새 날 스탬프를 올렸으면 덮어쓰면 안 된다.
     (기기 간 완전 상호배제는 sync의 리스 CAS 몫 — 여기선 마지막 쓰기의 오염만 막는다.) */
-async function markConsolidateDone(wsId, today) {
+export async function markConsolidateDone(wsId, today) { // export: 회귀 테스트용(CAS·attempts 보존)
   return withLock(`consolidate:${wsId}`, async () => {
     let cur = {};
     try { cur = await readJson(RUN_STAMP(wsId), {}); } catch { return; }
@@ -92,6 +97,12 @@ async function claimRoutine(wsId, routineId, now) {
   });
 }
 
+// 진행 중인 기억 정리 — SDK 경로엔 타임아웃이 없어 실행이 백오프(5분)를 넘길 수 있고, 그러면
+// 다음 폴이 2차를 선점해 **같은 워크스페이스에서 동시 실행**된다(검수 2026-07-27 HIGH-2:
+// consolidate·memory에 락이 없어 LLM 이중 호출·saveNote lost update·워터마크 경쟁). 이 프로세스
+// 안의 겹침은 여기서 막고, 기기 간은 리스(isCloudLeader)가 담당한다.
+const consolidating = new Set();
+
 export function ensureScheduler() {
   if (globalThis.__argoScheduler) return;
   globalThis.__argoScheduler = true;
@@ -113,8 +124,10 @@ export function ensureScheduler() {
         }
         if (hhmm >= CONSOLIDATE_AT) {
           const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-          const claimed = await claimConsolidate(c.id, now.getTime(), today);
+          // 진행 중이면 시도 횟수를 태우지 않고 그냥 넘긴다(선점 자체를 하지 않는다)
+          const claimed = consolidating.has(c.id) ? null : await claimConsolidate(c.id, now.getTime(), today);
           if (claimed) {
+            consolidating.add(c.id);
             const nth = `${claimed.attempts}/${CONSOLIDATE_MAX_ATTEMPTS}회차`;
             console.log(`[argo] 기억 정리: ${c.id} (${nth})`);
             // 재시도는 consolidate부터 다시 탄다 — 워터마크가 성공 후에만 전진하므로 이미 정제된
@@ -123,7 +136,8 @@ export function ensureScheduler() {
               .then(() => rollupJournals(c.id)) // 정제가 소화한 일지만 주간으로 접힌다
               .then(() => markConsolidateDone(c.id, today))
               .catch((e) => console.error(
-                `[argo] 기억 정리 실패 ${c.id} (${nth}, 다음 재시도 ${claimed.nextRetryAt ?? '없음 — 오늘은 종료'}):`, e.message));
+                `[argo] 기억 정리 실패 ${c.id} (${nth}, 다음 재시도 ${claimed.nextRetryAt ?? '없음 — 오늘은 종료'}):`, e.message))
+              .finally(() => consolidating.delete(c.id));
           }
         }
       }
