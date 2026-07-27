@@ -226,15 +226,29 @@ export const hostOptInAllowed = (runner) =>
 
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
 
+const OPENROUTER_402_RE = /^API Error:\s*402\b/i; // 느슨판·엄격판 공용 — 한쪽만 고치면 두 임계가 갈라진다(검수 LOW)
+
 /** OpenRouter 402(크레딧 소진) 판정 — CLI가 402를 "성공 텍스트"로 삼킨 결과물(실측). 첫 줄 또는
     마지막 비공백 줄이 402 에러로 시작할 때만 — 서두 문장 뒤에 에러가 붙는 변형(2R N4)은 잡되,
-    산문 중간 인용("…'API Error: 402'가 나오면…")은 여전히 배제. chat(안내문)·oneshot(실패 승격) 공유.
-    oneshot 미탐은 402 원문이 크루 카드·기억에 저장되는 방향이라 매처는 미탐 쪽이 더 해롭다. */
+    산문 중간 인용("…'API Error: 402'가 나오면…")은 배제. **oneshot(실패 승격) 전용** —
+    미탐이면 402 원문이 크루 카드·기억에 저장되므로 느슨한 쪽이 맞다. chat은 아래 strict를 쓴다(3R F1). */
 export const isOpenRouterCreditError = (s) => {
   const lines = String(s ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return false;
-  const re = /^API Error:\s*402\b/i;
-  return re.test(lines[0]) || re.test(lines[lines.length - 1]);
+  return OPENROUTER_402_RE.test(lines[0]) || OPENROUTER_402_RE.test(lines[lines.length - 1]);
+};
+
+/** chat용 엄격 판정 — 답변이 사실상 402 원문일 때만(에러 줄을 뺀 잔여 텍스트 ≤ 60자).
+    chat에서 오탐은 사실 아닌 충전 안내 + **그 턴 일지의 무증상 누락**(creditTurn, 3R F1 실측:
+    사장이 402 원문을 붙여넣고 물으면 크루가 그 줄로 답을 시작/끝냄)이라, 서두 인용·해설처럼
+    실질 답변이 있는 턴은 통과시킨다. 실측 402는 에러 한 줄 그 자체(±짧은 CLI 서두)다.
+    비율 기준이 아니라 **잔여량 절대 상한**인 이유(검수 권고): 비율은 402 문구 길이에 종속돼
+    OpenRouter가 문구를 바꾸면 경계가 조용히 이동하고, 긴 서두 변형의 미탐(2R N3 재발)도 빨라진다. */
+export const isOpenRouterCreditReply = (s) => {
+  if (!isOpenRouterCreditError(s)) return false;
+  const nonErr = String(s ?? '').split('\n').map((l) => l.trim())
+    .filter((l) => l && !OPENROUTER_402_RE.test(l)).join('').length;
+  return nonErr <= 60;
 };
 
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5'; // 스모크 8/8 중 저비용·도구 신뢰성 1순위(2026-07-27 실측)

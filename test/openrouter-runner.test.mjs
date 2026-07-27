@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-or-'));
 const { paths } = await import('../src/workspace.mjs');
-const { RUNNERS, RUNNER_AUTH, OPENROUTER_DEFAULT_MODEL, isOpenRouterCreditError, saveRunnerCred, runnerCredEnv, isBilledRunner } = await import('../src/runners.mjs');
+const { RUNNERS, RUNNER_AUTH, OPENROUTER_DEFAULT_MODEL, isOpenRouterCreditError, isOpenRouterCreditReply, saveRunnerCred, runnerCredEnv, isBilledRunner } = await import('../src/runners.mjs');
 
 test('등록: sdk-compat 계열 + BYOK apikey 단일 (CLI 래핑 금지)', () => {
   assert.equal(RUNNERS.openrouter?.kind, 'sdk-compat', 'CLI 래핑이면 러너 차등이 되살아난다 — BYOK 계열 원칙');
@@ -55,7 +55,7 @@ test('billing: openrouter apikey = 청구 러너 (단일 판정 합류)', async 
   assert.equal(await isBilledRunner(ws, 'openrouter'), true);
 });
 
-test('isOpenRouterCreditError: 첫 줄/마지막 줄 402만 — 인용·설명 답변 오탐 금지 (2R N4)', () => {
+test('isOpenRouterCreditError(느슨판, oneshot용): 첫 줄/마지막 줄 402만 — 인용·설명 답변 오탐 금지 (2R N4)', () => {
   assert.equal(isOpenRouterCreditError('API Error: 402 This request requires more credits, or fewer max_tokens.'), true);
   assert.equal(isOpenRouterCreditError('  API Error: 402 …'), true);
   assert.equal(isOpenRouterCreditError('알겠습니다.\n\nAPI Error: 402 This request requires more credits'), true, '서두 문장 뒤 에러(마지막 줄) — 미탐이면 402가 기억에 저장된다');
@@ -65,12 +65,36 @@ test('isOpenRouterCreditError: 첫 줄/마지막 줄 402만 — 인용·설명 �
   assert.equal(isOpenRouterCreditError(''), false);
 });
 
+test('isOpenRouterCreditReply(엄격판, chat용): 답변≈에러 원문일 때만 — 인용·해설 턴은 일지 유지 (3R F1)', () => {
+  const ERR = 'API Error: 402 This request requires more credits, or fewer max_tokens.'; // 실측 원문
+  // 진짜 402(실측 원문 그대로 / 짧은 서두 뒤 에러) — 안내 + 일지 제외가 발동해야 한다
+  assert.equal(isOpenRouterCreditReply(ERR), true, '실측 원문 = 답변 전체가 에러');
+  assert.equal(isOpenRouterCreditReply(`알겠습니다.\n${ERR}`), true, '짧은 서두 + 에러(2R N4 변형) — 잔여량이 상한 이내');
+  // 경계 스냅샷(검수 LOW) — 임계는 "비에러 잔여 ≤ 60자". 나중에 상한을 바꾸면 여기서 드러난다.
+  assert.equal(isOpenRouterCreditReply(`${'x'.repeat(60)}\n${ERR}`), true, '잔여 60자 = 경계 안(진짜 402로 판정)');
+  assert.equal(isOpenRouterCreditReply(`${'x'.repeat(61)}\n${ERR}`), false, '잔여 61자부터 정상 턴(일지 유지)');
+  // 잔여량 절대 상한이라 402 문구가 짧아져도 판정 특성이 안 움직인다(검수 MEDIUM — 비율 기준의 함정)
+  assert.equal(isOpenRouterCreditReply('짧은 서두.\nAPI Error: 402 Insufficient credits.'), true, '짧은 402 변형에서도 동일 경계');
+  // 3R 오탐 2케이스 — 사장이 402 원문을 붙여넣고 물었을 때의 정상 답변. 느슨판은 true지만
+  // 엄격판은 false여야 한다(true면 사실 아닌 충전 안내 + 그 턴 일지가 무증상 누락).
+  const quoteFirst = 'API Error: 402 This request requires more credits, or fewer max_tokens.\n말씀하신 이 오류는 OpenRouter 선불 크레딧이 부족할 때 나옵니다. 대시보드에서 잔액을 확인하고 충전하시거나, max_tokens를 낮춰 다시 시도해 보세요.';
+  assert.equal(isOpenRouterCreditError(quoteFirst), true, '전제: 느슨판은 이 케이스를 잡는다(첫 줄)');
+  assert.equal(isOpenRouterCreditReply(quoteFirst), false, '서두 인용 + 본문 해설 = 정상 턴(일지 유지)');
+  const quoteLast = '크레딧 부족 오류입니다. OpenRouter는 선불제라 잔액이 0이면 모든 요청이 거부됩니다. 충전 후 재시도하면 해결됩니다. 참고로 원문은 다음과 같습니다.\nAPI Error: 402 This request requires more credits, or fewer max_tokens.';
+  assert.equal(isOpenRouterCreditError(quoteLast), true, '전제: 느슨판은 이 케이스를 잡는다(마지막 줄)');
+  assert.equal(isOpenRouterCreditReply(quoteLast), false, '본문 해설 + 말미 인용 = 정상 턴(일지 유지)');
+  assert.equal(isOpenRouterCreditReply('완전히 무관한 정상 답변입니다.'), false);
+  assert.equal(isOpenRouterCreditReply(''), false);
+});
+
 test('배선: chat.mjs — 402 안내는 success/else 쌍 밖 + costUsd 미기록 (제어흐름 트립와이어)', async () => {
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   // CRITICAL 재발 방지(검수 실증): 402 블록이 success-if와 else 사이에 끼면 else가 402-if에 붙어
   // **전 러너 성공 턴이 throw**된다. success-if와 else의 인접(붙어 있음)을 문자 그대로 잠근다.
   assert.match(src, /if \(msg\.subtype === 'success'\) reply = msg\.result;\n      else \{/, 'success/else 쌍은 인접 불변 — 사이에 코드 삽입 금지');
-  assert.match(src, /runner === 'openrouter' && isOpenRouterCreditError\(reply\)/, '402 안내 배선');
+  // 3R F1: chat은 엄격판이어야 한다 — 느슨판을 배선하면 402 인용 답변의 일지가 무증상 누락된다
+  assert.match(src, /runner === 'openrouter' && isOpenRouterCreditReply\(reply\)/, '402 안내 배선(엄격판)');
+  assert.doesNotMatch(src, /isOpenRouterCreditError/, 'chat에 느슨판 유입 금지 — 임계 분리(3R F1)');
   assert.match(src, /costUsd: runner === 'openrouter' \? null : msg\.total_cost_usd/, '설계 §4 — SDK 금액은 Anthropic 단가라 openrouter에선 오액(미기록)');
   assert.match(src, /creditTurn \? null : await saveHandover/, '402 턴은 일지 기록 제외 — 오류 원문이 기억으로 정제되지 않게(2R N3)');
 });
