@@ -185,3 +185,39 @@ test('배선: 스케줄러가 선점(claim)·성공 마킹(CAS)을 거치고, �
   assert.match(src, /consolidating\.add\(c\.id\)/, '선점 직후 진행 중 표시 — 이 한 줄이 가드의 전부다');
   assert.match(src, /\.finally\(\(\) => consolidating\.delete\(c\.id\)\)/, '완료 시 반드시 해제');
 });
+
+// ── SDK hang 상한 — in-flight 가드가 성립하려면 실행이 **반드시 끝나야** 한다(검수 2R M-1).
+// SDK 경로엔 타임아웃이 없어 소켓 정체 시 async iterator가 영영 안 끝나고, 그러면 스케줄러의
+// consolidating 표시가 안 풀려 그 회사 기억 정리가 무증상 영구 정지한다.
+test('배선: oneshot SDK 경로에 hang 상한이 걸려 있고 타이머가 항상 해제된다', async () => {
+  const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  assert.match(src, /abortController: ac/, 'SDK query에 중단 컨트롤러를 넘겨야 상한이 실효된다');
+  assert.match(src, /hangGuard = setTimeout\(\(\) => ac\.abort\(\), timeoutMs\)/, 'hang 상한 타이머 — CLI와 같은 knob');
+  assert.match(src, /finally \{\s*if \(hangGuard\) clearTimeout\(hangGuard\);/, '성공·실패·자가치유 어느 경로로 나가도 타이머를 남기면 안 된다');
+});
+
+test('러너 독립: SDK와 CLI가 같은 timeoutMs를 쓴다 (상한이 러너에 따라 갈리면 안 된다)', async () => {
+  const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /sdkTimeoutMs|SDK_HANG_LIMIT_MS/, 'SDK 전용 상한을 두면 같은 작업이 러너에 따라 잘리고 안 잘린다');
+  assert.match(src, /externalExec\(\{[^}]*timeoutMs/s, 'CLI 경로도 같은 값');
+});
+
+test('중단 원인을 정직한 문구로 — "사용자가 중단"으로 읽히면 안 된다 (검수 M-1)', async () => {
+  const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  // abort는 루프 안에서 throw하므로(SDK 실측: "process aborted by user") catch에서 갈아끼워야 실경로다
+  assert.match(src, /catch \(err\)/, '원본 에러를 err로 받고');
+  assert.match(src, /const e = ac\.signal\.aborted[\s\S]{0,200}sdk-timeout/, '중단이면 상한 초과로 치환 — 자가치유 로그·최종 안내가 모두 정직해진다');
+});
+
+test('상한은 호출부가 용도에 맞게 명시한다 — 통일된 knob 위에서 (검수 M-2·I-1)', async () => {
+  const [oneshot, cons, persona, routines] = await Promise.all(
+    ['../src/oneshot.mjs', '../src/consolidate.mjs', '../src/persona.mjs', '../src/routines.mjs']
+      .map((f) => readFile(new URL(f, import.meta.url), 'utf8')));
+  // 기본값 자체를 잠근다 — I-3: '호출부에 문자열이 있나'만 보면 기본값을 30분으로 바꿔도 안 잡힌다
+  assert.match(oneshot, /timeoutMs = 120_000/, '명시 안 한 호출의 기본 상한');
+  assert.match(cons, /runOneShot\([\s\S]{0,400}?timeoutMs: 10 \* 60_000/, '기억 정리 = 새벽 배치, 대기자 없음');
+  // I-1: SDK 경로엔 이번에 처음 상한이 생긴다(이전 무제한). 첫 영입은 무료 모델(큐 지연) + 단일
+  // 러너(자가치유 대체 없음) 조합이라 기본 120s면 온보딩이 통째로 실패할 수 있다.
+  assert.match(persona, /CARD_PROMPT\([\s\S]{0,120}?timeoutMs: 5 \* 60_000/, '첫 영입은 기본보다 넉넉히');
+  assert.match(routines, /runOneShot\([\s\S]{0,200}?timeoutMs: 3 \* 60_000/, '루틴 초안 — 90s는 SDK 경로엔 짧다');
+});
