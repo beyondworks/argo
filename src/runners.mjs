@@ -66,7 +66,7 @@ export const isServerSecretKey = (k) => EXPLICIT_SERVER_SECRETS.has(k) || SERVER
 const PROVIDER_AUTH_OWNERS = {
   ANTHROPIC_API_KEY: ['claude'],
   CLAUDE_CODE_OAUTH_TOKEN: ['claude'],
-  ANTHROPIC_AUTH_TOKEN: ['claude', 'glm', 'kimi'],
+  ANTHROPIC_AUTH_TOKEN: ['claude', 'glm', 'kimi'], // openrouter는 미등재 — cred.env가 항상 명시 세팅하므로 불필요하고, 등재하면 cred 없는 경로에서 호스트 Anthropic 토큰이 살아남는 이론적 구멍(검수 LOW, 호스트 스캐빈징 금지)
   OPENAI_API_KEY: ['codex'],
   GEMINI_API_KEY: ['gemini'],
   GOOGLE_API_KEY: ['gemini'],
@@ -186,6 +186,24 @@ export const RUNNERS = {
       { id: 'kimi-k2.6', label: 'Kimi K2.6' },
     ],
   },
+  openrouter: {
+    name: 'OpenRouter', kind: 'sdk-compat',
+    // BYOK 계열 일반화(설계 2026-07-27) — 키 하나로 수백 모델. 카탈로그 규칙: 이 목록에는
+    // **실키 tool_use 스모크(scripts/openrouter-smoke.mjs)를 통과한 id만** 넣는다.
+    // 아래 8종 = 2026-07-27 스모크 8/8 통과 실측(일반 응답 + tool_use 왕복).
+    // 첫 항목이 러너 전환 시 기본 선택 — 저비용·도구 신뢰성 기준(gemini 카탈로그 관례와 동일).
+    // 카탈로그 밖 id는 크루 카드에 넣어도 chat이 기본 모델로 강등한다 — 추가는 스모크 통과 후 여기로만.
+    models: [
+      { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
+      { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
+      { id: 'x-ai/grok-4.5', label: 'Grok 4.5' },
+      { id: 'minimax/minimax-m3', label: 'MiniMax M3' },
+      { id: 'qwen/qwen3.7-max', label: 'Qwen3.7 Max' },
+      { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+      { id: 'moonshotai/kimi-k3', label: 'Kimi K3 (OpenRouter)' }, // 직접 연결(kimi 러너)이 더 저렴 — 단일 키 사용자용
+      { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (OpenRouter)' },       // 동일 — 직접 연결(glm 러너) 우선 권장
+    ],
+  },
   glm: {
     name: 'GLM', kind: 'sdk-compat',
     models: [
@@ -207,6 +225,19 @@ export const hostOptInAllowed = (runner) =>
   && (runner !== 'claude' || process.env.ARGO_STANDALONE !== '1');
 
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
+
+/** OpenRouter 402(크레딧 소진) 판정 — CLI가 402를 "성공 텍스트"로 삼킨 결과물(실측). 첫 줄 또는
+    마지막 비공백 줄이 402 에러로 시작할 때만 — 서두 문장 뒤에 에러가 붙는 변형(2R N4)은 잡되,
+    산문 중간 인용("…'API Error: 402'가 나오면…")은 여전히 배제. chat(안내문)·oneshot(실패 승격) 공유.
+    oneshot 미탐은 402 원문이 크루 카드·기억에 저장되는 방향이라 매처는 미탐 쪽이 더 해롭다. */
+export const isOpenRouterCreditError = (s) => {
+  const lines = String(s ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return false;
+  const re = /^API Error:\s*402\b/i;
+  return re.test(lines[0]) || re.test(lines[lines.length - 1]);
+};
+
+export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5'; // 스모크 8/8 중 저비용·도구 신뢰성 1순위(2026-07-27 실측)
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
@@ -260,6 +291,7 @@ export async function detectRunners(force = false) {
     gemini: { installed: !!geminiV || geminiManaged, authed: (!!geminiV || geminiManaged) && (geminiAuth || !!process.env.GEMINI_API_KEY) },
     glm: { installed: true, authed: !!process.env.GLM_API_KEY },
     kimi: { installed: true, authed: !!process.env.KIMI_API_KEY }, // env 주입 = 운영자 명시 옵트인(glm 관례)
+    openrouter: { installed: true, authed: false }, // 호스트 개념 없음 — 회사 자격(BYOK)만. env 폴백도 두지 않는다(설계 2026-07-27 YAGNI)
   };
   cacheAt = Date.now();
   return cache;
@@ -589,6 +621,7 @@ export const RUNNER_AUTH = {
   gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
   kimi: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' }, // 접두사 무차단(GLM 관례) — 리전·미래 키 형식 변화에 저장이 막히지 않게, 판정은 verifyRunnerCred가
+  openrouter: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://openrouter.ai/keys' }, // BYOK 단일(설계 2026-07-27) — OAuth·크레딧 대행 안 함
 };
 
 // 레거시 계정 파일(사용자 스코프 도입 전 무스코프 .account-secrets.json) → local 스코프로 1회 이관.
@@ -773,6 +806,19 @@ export async function runnerCredEnv(wsId, runner) {
   }
   if (runner === 'kimi') {
     return { env: { ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+  }
+  if (runner === 'openrouter') {
+    // GLM·Kimi와 동일한 Anthropic 호환 패턴 — BYOK 계열 일반화(설계 2026-07-27).
+    // 배관 실측(2026-07-27): 스모크 8/8(tool_use 왕복) + CLI 실요청 65KB(베타 9종·스트리밍) 수용 확인.
+    // 출력 상한은 기본으로 걸지 않는다(검수 MEDIUM-2: 다른 러너엔 없는 상한 = 러너 차등 + 긴 답변
+    // 절단이 "AI가 대충 답함"으로 읽힘). OpenRouter는 선불제로 max_tokens 선언분만큼 잔액을
+    // 선검사(실측 402)하지만, 저잔액은 402 안내문(chat.mjs·oneshot)이 원인·충전처를 알려준다.
+    // 운영자가 원하면 env로만 상한 선언(OPENROUTER_MAX_OUTPUT_TOKENS).
+    return { env: {
+      ANTHROPIC_BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api',
+      ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '',
+      ...(process.env.OPENROUTER_MAX_OUTPUT_TOKENS ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.OPENROUTER_MAX_OUTPUT_TOKENS } : {}),
+    } };
   }
   if (runner === 'codex') {
     // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를
@@ -1261,6 +1307,11 @@ export async function verifyRunnerCred(runner, type, value) {
     if (runner === 'kimi') {
       const base = process.env.KIMI_OPENAI_BASE_URL || 'https://api.moonshot.ai/v1';
       const r = await fetch(`${base}/models`, { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
+      return { ok: !(r.status === 401 || r.status === 403) };
+    }
+    if (runner === 'openrouter') {
+      // GET /api/v1/key = 키 자체 조회(잔액·한도) — 무효 키는 401. 모델 목록(공개)과 달리 키 유효성을 직접 판정한다.
+      const r = await fetch('https://openrouter.ai/api/v1/key', { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'codex' && type === 'apikey') {

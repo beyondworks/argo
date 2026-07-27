@@ -3,7 +3,7 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
-import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, externalExec, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, externalExec, isOpenRouterCreditError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     제외하고 1회 재시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와 같은 원칙, 재귀 1회).
@@ -25,7 +25,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
           : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
       : (lang === 'en'
           ? 'No AI runner is connected — connect Claude, Codex, Gemini, or GLM in Settings → AI connections.'
-          : 'AI 러너가 하나도 연결돼 있지 않습니다 — 설정 → AI 연결에서 Claude·Codex·Gemini·GLM 중 하나를 연결해 주세요.'));
+          : 'AI 러너가 하나도 연결돼 있지 않습니다 — 설정 → AI 연결에서 Claude·Codex·Gemini·GLM·Kimi·OpenRouter 중 하나를 연결해 주세요.'));
   }
   const runner = resolved.runner;
   try {
@@ -45,7 +45,12 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         settingSources: [], // 호스트 머신의 CLAUDE.md 등 미주입(테넌트 격리)
         maxTurns,
         ...(sdkEnv ? { env: sdkEnv } : {}),
-        ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: KIMI_DEFAULT_MODEL } : (model ? { model } : {})),
+        // openrouter는 카탈로그 검증 — 호출자가 넘긴 타 러너용 모델(예: consolidate의 claude-haiku
+        // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1: openrouter-only
+        // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
+        ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: KIMI_DEFAULT_MODEL }
+          : runner === 'openrouter' ? { model: RUNNERS.openrouter.models.some((m) => m.id === model) ? model : OPENROUTER_DEFAULT_MODEL }
+          : (model ? { model } : {})),
       },
     })) {
       if (msg.type === 'result') {
@@ -54,7 +59,12 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       }
     }
     if (!text?.trim()) throw new Error(failed || 'empty-reply');
-    return { runner, text: text.trim(), usage, costUsd };
+    // 402를 성공으로 두면 그 문구가 크루 카드·기억 노트에 영구 저장된다(검수 HIGH-1) — 실패로
+    // 승격해 자가치유(다른 가용 러너 1회)·정직한 오류 경로를 태운다.
+    if (runner === 'openrouter' && isOpenRouterCreditError(text)) {
+      throw new Error(`openrouter-credit: ${text.slice(0, 140)}`);
+    }
+    return { runner, text: text.trim(), usage, costUsd: runner === 'openrouter' ? null : costUsd };
   } catch (e) {
     // 자가 치유 — 방금 죽은 러너를 제외하고 다른 가용 러너로 1회. __exclude 가드로 재귀 1회 제한.
     if (!__exclude) {
@@ -63,6 +73,13 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         console.warn(`[argo] 원샷 ${runner} 실패(${String(e.message).slice(0, 80)}) — ${alt.runner}로 재시도(${wsId})`);
         return runOneShot(wsId, prompt, { ...opts, __exclude: runner });
       }
+    }
+    // 402(크레딧 소진)는 연결 문제가 아니다 — "연결 상태 확인" 안내는 키 정상·연결됨 표시와 모순돼
+    // 사용자를 오도한다(2R 검수 N2, oneshot 상단 주석의 2026-07-20 모순과 동일 계열). 충전처를 준다.
+    if (/openrouter-credit/.test(String(e.message))) {
+      throw Object.assign(new Error(lang === 'en'
+        ? 'OpenRouter credit balance is too low. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.'
+        : 'OpenRouter 크레딧 잔액이 부족합니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.'), { cause: e });
     }
     throw Object.assign(new Error(lang === 'en'
       ? `AI call failed — check the runner connection in Settings → AI connections. (${String(e.message).slice(0, 120)})`

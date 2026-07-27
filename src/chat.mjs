@@ -20,7 +20,7 @@ import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { detectRunnerDenial, detectDeniedNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner } from './runners.mjs';
+import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isOpenRouterCreditError } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
@@ -638,8 +638,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
           ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — the ${noCli.join('/')} runner executes through the vendor CLI. Install it, or connect Claude (no install needed) in Settings → AI connections.`
           : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — ${noCli.join('/')} 러너는 벤더 CLI로 실행됩니다. CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
       : (lang === 'en'
-          ? 'No AI runner is connected. Connect one in Settings → AI connections (Claude, Codex, Gemini, GLM, or Kimi), then try again.'
-          : 'AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 Claude·Codex·Gemini·GLM·Kimi 중 하나를 연결한 뒤 다시 말을 걸어 주세요.'));
+          ? 'No AI runner is connected. Connect one in Settings → AI connections (Claude, Codex, Gemini, GLM, Kimi, or OpenRouter), then try again.'
+          : 'AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 Claude·Codex·Gemini·GLM·Kimi·OpenRouter 중 하나를 연결한 뒤 다시 말을 걸어 주세요.'));
   }
   const runner = resolved.runner;
   // 폴백이면 크루에 지정된 model은 원래 러너의 것이라 무효 — 폴백 러너의 기본 모델로 실행한다.
@@ -869,6 +869,7 @@ ${lang === 'en'
   }
 
   let reply = '';
+  let creditTurn = false; // OpenRouter 402 턴 표식 — 일지 기록 제외용(2R N3: 오류 원문이 기억으로 정제되지 않게)
   let sid = resumeId; // 새 세션이면 null에서 시작 — 외래 sessionId를 내 것으로 재스탬프하지 않는다
   const toolCounts = {}; // 이 턴의 도구 사용 횟수 — 크루 프로필 "많이 쓴 도구"의 원천
   const t0 = Date.now();
@@ -900,7 +901,7 @@ ${lang === 'en'
       stderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); },
       // 회사 자격 env(claude=키/OAuth 토큰, glm=z.ai 토큰) 주입 + 크루별 모델(카드 frontmatter). glm 기본 모델 보정.
       ...(sdkEnv ? { env: sdkEnv } : {}),
-      ...(runner === 'glm' ? { model: effModel || GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: effModel || KIMI_DEFAULT_MODEL } : (effModel ? { model: effModel } : {})),
+      ...(runner === 'glm' ? { model: effModel || GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: effModel || KIMI_DEFAULT_MODEL } : runner === 'openrouter' ? { model: effModel || OPENROUTER_DEFAULT_MODEL } : (effModel ? { model: effModel } : {})),
       // 크루별 추론 강도(요청 2026-07-25) — claude 러너에만. glm/kimi는 SDK 호환 경로로 타 벤더
       // 엔드포인트에 붙어 이 파라미터를 보장하지 않으므로 보내지 않는다(카탈로그 규칙과 같은 원칙:
       // 실행 경로가 받는 것만 보낸다). 화이트리스트는 persona.EFFORT_LEVELS가 저장 시점에 이미 강제.
@@ -965,7 +966,9 @@ ${lang === 'en'
       if (hadWork) {
         await appendUsage(wsId, {
           kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, runner, model: actualModel || effModel || null,
-          usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0, tools: toolCounts, billed,
+          // openrouter는 costUsd 미기록(설계 §4) — SDK 금액은 Anthropic 단가 계산이라 타 벤더 모델에서 오액.
+          // 틀린 금액 표시·예산 차감은 이번에 죽인 신고 계열의 재발이다. 실비(P2)는 /generation API로.
+          usage: msg.usage, costUsd: runner === 'openrouter' ? null : msg.total_cost_usd, ms: Date.now() - t0, tools: toolCounts, billed,
         });
       }
       if (msg.subtype === 'success') reply = msg.result;
@@ -986,6 +989,16 @@ ${lang === 'en'
         throw new Error(`턴 실패: ${msg.subtype}${detail ? ` — ${detail.slice(0, 300)}` : ''}`);
       }
     }
+  }
+  // OpenRouter 크레딧 소진 — CLI가 402를 "성공한 답변 텍스트"로 삼킨다(실측 2026-07-27:
+  // "API Error: 402 This request requires more credits…"). 신규 키는 잔액 $0이 기본이라 첫
+  // 사용자 전원이 이 화면을 만난다 — 원인·충전처를 붙인다. success/else 쌍 **밖**의 독립
+  // 블록이어야 한다(사이에 끼우면 else가 이 if에 붙어 전 러너 성공 턴이 throw — 검수 CRITICAL 실증).
+  if (runner === 'openrouter' && isOpenRouterCreditError(reply)) {
+    creditTurn = true;
+    reply += lang === 'en'
+      ? `\n\n---\n⚠ Your OpenRouter credit balance is too low for this turn. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again. (If your balance isn't empty, the selected model may be too expensive for it — pick a cheaper model or top up more.)`
+      : `\n\n---\n⚠ OpenRouter 크레딧 잔액이 부족해 이 턴을 처리하지 못했습니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요. (잔액이 있는데도 이 안내가 보이면 선택한 모델이 잔액 대비 비싼 것입니다 — 더 저렴한 모델을 고르거나 충전을 늘려 주세요.)`;
   }
   } catch (e) {
     let aborted = abortReg.wasAborted();
@@ -1031,10 +1044,12 @@ ${lang === 'en'
   }
   await clearTurnStatus(wsId, agentSlug);
 
-  const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
+  // 402(크레딧 소진) 턴은 일지에 남기지 않는다 — 남기면 consolidate가 오류 원문을 기억 노트로
+  // 정제할 수 있다(2R N3, oneshot HIGH-1과 동일 논리). 화면 답변·이벤트·사용량 집계는 그대로.
+  const handover = creditTurn ? null : await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
   await appendEvent(wsId, {
     ...evBase, ok: true, ms: Date.now() - t0, steps,
-    journalRel: relative(p.vault, handover.file), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
+    ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
   });
   // 일지(handover)는 전용 칩이 이미 있다 — 산출물 칩과 중복 방지
   return { reply, sessionId: sid, handover, artifacts: [...artifacts].filter((r) => !r.startsWith('journal/')) };

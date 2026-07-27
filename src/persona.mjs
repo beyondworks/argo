@@ -125,8 +125,8 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   // AI가 아예 응답을 못 준 경우만 진짜 실패. 형식이 어긋난 건 아래에서 복원한다(생성 실패로 두지 않는다).
   if (!md) {
     throw new Error(lang === 'en'
-      ? 'AI connection is needed — connect any runner (Claude, Codex, Gemini, or GLM) in Settings → AI connections to hire.'
-      : 'AI 연결이 필요합니다 — 설정 → AI 연결에서 아무 러너나(Claude·Codex·Gemini·GLM) 연결하면 영입할 수 있어요.');
+      ? 'AI connection is needed — connect any runner (Claude, Codex, Gemini, GLM, Kimi, or OpenRouter) in Settings → AI connections to hire.'
+      : 'AI 연결이 필요합니다 — 설정 → AI 연결에서 아무 러너나(Claude·Codex·Gemini·GLM·Kimi·OpenRouter) 연결하면 영입할 수 있어요.');
   }
 
   // 관대한 필드 복원 — frontmatter(닫는 --- 없어도)·본문 H1("# 이름 — 역할")·입력에서 긁는다.
