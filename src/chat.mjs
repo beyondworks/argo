@@ -20,7 +20,7 @@ import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { detectRunnerDenial, detectDeniedNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
@@ -638,8 +638,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
           ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — the ${noCli.join('/')} runner executes through the vendor CLI. Install it, or connect Claude (no install needed) in Settings → AI connections.`
           : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — ${noCli.join('/')} 러너는 벤더 CLI로 실행됩니다. CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
       : (lang === 'en'
-          ? 'No AI runner is connected. Connect one in Settings → AI connections (Claude, Codex, Gemini, GLM, Kimi, or OpenRouter), then try again.'
-          : 'AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 Claude·Codex·Gemini·GLM·Kimi·OpenRouter 중 하나를 연결한 뒤 다시 말을 걸어 주세요.'));
+          ? 'No AI runner is connected. Connect one in Settings → AI connections (Claude, Codex, Gemini, Antigravity, GLM, Kimi, or OpenRouter), then try again.'
+          : 'AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 Claude·Codex·Gemini·Antigravity·GLM·Kimi·OpenRouter 중 하나를 연결한 뒤 다시 말을 걸어 주세요.'));
   }
   const runner = resolved.runner;
   // 폴백이면 크루에 지정된 model은 원래 러너의 것이라 무효 — 폴백 러너의 기본 모델로 실행한다.
@@ -670,8 +670,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
         : `## 참조로 공유된 맥락 — 사장이 동료에게 지시한 내용과 결과(너도 알아 두라고 공유됨)\n${sharedNotes.join('\n\n---\n\n')}\n\n## 사장의 새 지시\n`)
     : '';
 
-  // 외부 CLI 러너(Codex/Gemini) — 로컬 OAuth 로그인(구독)을 빌려 1턴 실행. 세션은 스레드 맥락으로 잇는다.
-  if (runner === 'codex' || runner === 'gemini') {
+  // 외부 CLI 러너(Codex/Gemini/Antigravity) — 로컬 OAuth 로그인(구독)을 빌려 1턴 실행. 세션은 스레드 맥락으로 잇는다.
+  if (isCliRunner(runner)) {
     const t0 = Date.now();
     const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
     const evBase = { type: 'turn', slug: agentSlug, source: from ? 'delegate' : (source ?? 'deck'), ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };

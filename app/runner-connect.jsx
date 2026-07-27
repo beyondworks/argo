@@ -21,8 +21,8 @@ export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, PICK_ORDER } 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
     (c) 방식별 입력·저장·검증·제거 또는 CLI 로그인 안내. 응답엔 마스킹만 실린다(보안 규칙). */
-const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter' };
-const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'glm', 'kimi', 'openrouter'];
+const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter' };
+const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter'];
 
 export function AiConnectionCard({ ws, accordion = false }) {
   const { t } = useLang();
@@ -419,8 +419,8 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
                 ? t('settings.runners.hostLoginUsed', { runner: id })
                 : t('settings.runners.hostInstall', { runner: id })}
               {st?.hostInstalled && (
-                <span style={{ marginLeft: 8, color: st?.hostAuthed ? 'var(--ok)' : 'var(--warn)' }}>
-                  {st?.hostAuthed ? t('settings.runners.hostAuthed') : t('settings.runners.hostNotAuthed')}
+                <span style={{ marginLeft: 8, color: st?.hostAuthUnknown ? 'var(--fg-3)' : st?.hostAuthed ? 'var(--ok)' : 'var(--warn)' }}>
+                  {st?.hostAuthUnknown ? t('settings.runners.hostAuthUnknown') : st?.hostAuthed ? t('settings.runners.hostAuthed') : t('settings.runners.hostNotAuthed')}
                 </span>
               )}
             </div>
