@@ -120,9 +120,11 @@ export function denialNote({ cap, path = '', capOn, lang = 'ko', outsideHome = f
 
   if (!capOn) {
     if (cap === 'fs' && outsideHome) {
+      // fsRoots 도입 후 갱신(분리 검수 M3) — "켜도 계속 막힌다"는 더는 사실이 아니다:
+      // 켜기 + 설정의 허용 폴더 추가면 열린다. 켜기 카드도 다시 올린다(chat.mjs wantCard).
       return en
-        ? `\n\n---\n⚠ The write was blocked${where}. The target is outside your home folder — even turning the File system capability on only opens your home folder, so this path would stay blocked. Move the file under your home folder (Documents, Desktop, …) and ask me again.`
-        : `\n\n---\n⚠ 쓰기가 막혔습니다${where}. 대상이 홈 폴더 밖입니다 — 파일 시스템 능력을 켜도 열리는 범위는 홈 폴더까지라 이 경로는 계속 막힙니다. 파일을 홈 폴더 안(문서·데스크탑 등)으로 옮기고 다시 시켜 주세요.`;
+        ? `\n\n---\n⚠ The write was blocked${where}. The target is outside your home folder. Turn the File system capability on and add that folder in **Settings → Capabilities → Allowed folders**, then ask me again (or move the file under your home folder).`
+        : `\n\n---\n⚠ 쓰기가 막혔습니다${where}. 대상이 홈 폴더 밖입니다. 파일 시스템 능력을 켜고 **설정 → 로컬 능력 → 허용 폴더**에 그 폴더를 추가한 뒤 다시 시켜 주세요(또는 파일을 홈 폴더 안으로 옮기셔도 됩니다).`;
     }
     const label = cap === 'browser'
       ? (en ? 'Web browsing' : '웹 브라우징') : (en ? 'File system' : '파일 시스템');

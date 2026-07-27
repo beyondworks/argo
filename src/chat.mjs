@@ -762,7 +762,9 @@ ${lang === 'en'
           }
           // 켜도 안 열리는 조합(fs OFF + 홈 밖)에는 카드를 올리지 않는다 — 승인해 줬는데 또 막히면
           // "켰는데도 차단"이라는 신고 문구를 이 기능이 재생산한다(검수 HIGH-1).
-          const wantCard = !capOn && !(denial.cap === 'fs' && outsideHome);
+          // fsRoots 도입(2026-07-27) 후 홈 밖도 켜기+허용 폴더로 열리므로 카드 억제 예외를 제거
+          // (#113 HIGH-1의 전제 "켜도 홈 밖은 안 된다"가 사실이 아니게 됨 — 분리 검수 M3).
+          const wantCard = !capOn;
           const card = wantCard ? await suggestCapability(wsId, agentSlug, denial.cap, null, from) : null;
           reply += denialNote({ ...denial, capOn, lang, outsideHome, cardShown: !!card, narrated });
         }

@@ -161,7 +161,10 @@ test('배선: chat.mjs 거부 블록이 감지→능력 게이트→카드 억�
   const block = src.split('detectRunnerDenial(reply)')[1]?.slice(0, 2500) ?? '';
   assert.match(block, /detectDeniedNarration\(reply\)/, '서술형 2차 패스가 있어야 한다(실측 캡처 ②)');
   assert.match(block, /caps\.find\(\(c\) => !cliCaps\[c\]\)/, '서술형은 후보 중 OFF인 첫 능력만 채택 — 능력 ON 오정보 방지 + 켜진 후보가 꺼진 후보를 삼키지 않게(3R)');
-  assert.match(block, /wantCard = !capOn && !\(denial\.cap === 'fs' && outsideHome\)/, 'fs OFF+홈 밖 카드 억제(HIGH-1)');
+  // HIGH-1의 카드 억제는 fsRoots 도입(2026-07-27)으로 은퇴 — "켜도 홈 밖은 안 된다"는 전제가
+  // 사실이 아니게 됐다(켜기+허용 폴더 추가로 열림). 새 계약: 능력 OFF면 홈 밖이어도 카드를 올린다.
+  assert.match(block, /wantCard = !capOn;/, '능력 OFF면 카드 — 홈 밖 억제 예외를 되살리면 fsRoots 유입 경로가 다시 막다른 길이 된다');
+  assert.doesNotMatch(block, /!\(denial\.cap === 'fs' && outsideHome\)/, '은퇴한 HIGH-1 억제가 되살아났다');
   assert.match(block, /cardShown: !!card/, '카드 생성 실패 폴백(LOW-2)이 배선돼 있어야 한다');
   assert.match(block, /suggestCapability\(/, '능력 OFF면 SDK와 같은 카드를 올려야 한다');
   assert.match(block, /denialNote\(/, '안내문이 답변에 덧붙어야 한다');

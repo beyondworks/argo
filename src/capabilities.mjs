@@ -7,6 +7,8 @@ import { withLock } from './mutex.mjs';
 import { isAbsolute, resolve, sep, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { realpath } from 'node:fs/promises';
+import { WS_ROOT } from './workspace.mjs';
 
 export const CAPABILITY_DEFS = [
   ['fs', '파일 시스템', '워크스페이스 밖 파일 읽기/쓰기/편집 — 켜면 결재 없이 바로 실행됩니다'],
@@ -29,20 +31,46 @@ const EMPTY = { fs: false, browser: false, shell: false, bypass: false, fsRoots:
    마이그레이션이 걸린 별도 트랙으로 남긴다. */
 const FSROOTS_MAX = 8;
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-/** 허용 폴더 1건 검증(순수·export 테스트용) — 절대경로 + 드라이브/루트 전체 금지 + 하드존(앱 루트·
-    ~/.argo)을 포함하거나 그 안인 경로 금지. 반환: 정규화 경로 또는 throw. */
-export function validateFsRoot(p) {
+// 하드존 — permission-gate의 금지 구역과 정렬(분리 검수 M2: ~/.argo만으론 실 데이터 루트를 못 지킨다.
+// 데스크톱 WS_ROOT는 app_local_data_dir/workspaces라 ~/.argo 밖이고, 셀프호스트는 ARGO_HOME 하위).
+// WS_ROOT의 부모까지 — 타사 워크스페이스·계정 시크릿(.account-secrets-*)이 부모 계층에 산다.
+const HARD_ZONES = () => [appRoot, resolve(homedir(), '.argo'), resolve(WS_ROOT), dirname(resolve(WS_ROOT))];
+// 케이스폴딩 비교 — APFS(맥 기본)·NTFS는 대소문자 무시라 /APPLICATIONS가 /Applications를 연다
+// (분리 검수 H1 — seatbelt subpath도 대소문자 무시 실측). 리눅스만 민감 비교.
+const fold = (p) => (process.platform === 'linux' ? p : p.toLowerCase());
+const within = (child, parent) => fold(child) === fold(parent) || fold(child).startsWith(fold(parent) + sep);
+/** 경로 정본화 — 심링크 해석(permission-gate canon 패턴 재사용: /tmp→/private/tmp, 외장 SSD 바로가기).
+    대상이 없으면 throw(등록할 폴더는 실존해야 한다 — 심링크 미해석 등록·오타를 동시에 잡는다). */
+async function canonRoot(p) {
+  try { return await realpath(p); }
+  catch { throw new Error('폴더가 존재하지 않습니다 — 실제 있는 폴더의 절대 경로를 입력해 주세요'); }
+}
+/** 허용 폴더 1건 검증(async — realpath) — 절대경로·실존·드라이브 전체 금지·제어문자 금지 +
+    하드존(앱 루트·~/.argo·WS_ROOT와 그 부모)을 포함하거나 그 안인 경로 금지(케이스폴딩·실경로 기준).
+    반환: 정규화(실경로) 또는 throw. (export: 회귀 테스트용) */
+export async function validateFsRoot(p) {
   const v = String(p ?? '').trim();
   if (!v || !isAbsolute(v)) throw new Error('절대 경로가 필요합니다 (예: /Users/me/work, D:\\projects)');
-  const r = resolve(v);
-  // 루트 전체(/, C:\)는 과광범위 — 하드존 회피가 불가능해진다
+  // NUL·제어문자·비정형 서로게이트 — spawn이 동기 throw해 codex 턴 전체가 죽는다(분리 검수 L1)
+  if (/[\x00-\x1f\x7f]/.test(v) || !v.isWellFormed()) throw new Error('경로에 쓸 수 없는 문자가 있습니다');
+  const r = await canonRoot(resolve(v));
   if (r === sep || /^[A-Za-z]:\\?$/.test(r)) throw new Error('드라이브 전체는 지정할 수 없습니다 — 하위 폴더를 지정해 주세요');
-  const within = (child, parent) => child === parent || child.startsWith(parent + sep);
-  for (const hard of [appRoot, resolve(homedir(), '.argo')]) {
-    // 하드존을 포함(상위)하거나 하드존 안(하위)이면 거부 — 앱 본체·자격 보관 보호(permission-gate와 동일 취지)
+  for (const hardRaw of HARD_ZONES()) {
+    const hard = await realpath(hardRaw).catch(() => hardRaw); // 하드존 자체도 실경로 기준(양쪽 canon — permission-gate 주석의 함정)
     if (within(hard, r) || within(r, hard)) throw new Error('앱 설치 폴더·Argo 데이터 폴더(및 그 상위)는 지정할 수 없습니다');
   }
   return r;
+}
+/** 사용 시점 기기 재검증(분리 검수 H2) — capabilities.json은 기기 간 동기화되는데 하드존(앱 루트·
+    WS_ROOT)은 기기마다 다르다. 저장 시점 검증만 믿으면 dev 기기에서 통과한 /Applications/…가
+    설치 기기의 앱 번들을 연다. 매 로드에서 이 기기 기준으로 거르고, 걸러진 항목은 로그로 드러낸다. */
+async function filterFsRootsForDevice(roots, wsId) {
+  const out = [];
+  for (const r of roots) {
+    try { out.push(await validateFsRoot(r)); }
+    catch (e) { console.warn(`[argo] 허용 폴더 제외(${wsId}): ${r} — ${e.message}`); }
+  }
+  return out;
 }
 
 export async function loadCapabilities(wsId) {
@@ -52,8 +80,9 @@ export async function loadCapabilities(wsId) {
   // 3능력 켜기로 이행하고 끄던" 마이그레이션은 제거 — 지금은 UI/API로 켜고 끌 수 있어 고착 위험이 없고,
   // 남겨두면 사용자가 켠 설정을 매 로드마다 되돌린다.
   const raw = { ...EMPTY, ...(await readJson(paths(wsId).capabilities, EMPTY)) };
-  // fsRoots 오염 흡수 — 동기화로 온 손상 값이 러너 config 직렬화를 깨지 않게 문자열만 통과
-  raw.fsRoots = Array.isArray(raw.fsRoots) ? raw.fsRoots.filter((x) => typeof x === 'string' && x.trim()) : [];
+  // fsRoots — 오염 흡수(문자열만) 후 **이 기기 기준 재검증**(H2: 동기화 값의 하드존은 기기마다 다르다)
+  const strs = Array.isArray(raw.fsRoots) ? raw.fsRoots.filter((x) => typeof x === 'string' && x.trim()) : [];
+  raw.fsRoots = strs.length ? await filterFsRootsForDevice(strs, wsId) : [];
   return raw;
 }
 
@@ -68,7 +97,7 @@ export async function updateCapabilities(wsId, patch) {
       const seen = new Set();
       const roots = [];
       for (const p of patch.fsRoots) {
-        const r = validateFsRoot(p); // 무효 항목은 throw — 일부만 조용히 수용하지 않는다(루틴 시각과 동일 원칙)
+        const r = await validateFsRoot(p); // 무효 항목은 throw — 일부만 조용히 수용하지 않는다(루틴 시각과 동일 원칙)
         if (!seen.has(r)) { seen.add(r); roots.push(r); }
       }
       if (roots.length > FSROOTS_MAX) throw new Error(`허용 폴더는 ${FSROOTS_MAX}개까지입니다`);
