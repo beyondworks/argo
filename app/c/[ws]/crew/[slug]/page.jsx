@@ -1145,6 +1145,7 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
                     <span style={{ flex: 1 }}>{m.label}</span>
                     {/* 접근권 게이트 모델(gated) — 무료 계정은 턴이 죽으므로 이유를 미리 보여준다 (강등 가드가 받쳐줌) */}
                     {m.gated && <span className="microlabel" style={{ fontSize: 9.5, color: 'var(--fg-3)' }}>{t('runner.gatedBadge')}</span>}
+                    {m.free && <span className="microlabel" style={{ fontSize: 9.5, color: 'var(--fg-3)' }}>{t('runner.freeBadge')}</span>}
                     {active && <span aria-hidden style={{ fontSize: 11, color: 'var(--fg-2)' }}>✓</span>}
                   </button>
                 );
@@ -1191,7 +1192,7 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
         onChange={(e) => onChange({ ...sel, runner: sel.runner, model: e.target.value })}>
         {!sel.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
         {(cur?.models ?? []).map((m) => (
-          <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : ''}</option>
+          <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
         ))}
       </select>
       {/* 추론 강도(요청 2026-07-25) — Claude(SDK effort)와 Codex(-c model_reasoning_effort, 실측

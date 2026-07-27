@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-or-'));
 const { paths } = await import('../src/workspace.mjs');
-const { RUNNERS, RUNNER_AUTH, OPENROUTER_DEFAULT_MODEL, isOpenRouterCreditError, isOpenRouterCreditReply, saveRunnerCred, runnerCredEnv, isBilledRunner } = await import('../src/runners.mjs');
+const { RUNNERS, RUNNER_AUTH, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, isOpenRouterCreditError, isOpenRouterCreditReply, saveRunnerCred, runnerCredEnv, isBilledRunner } = await import('../src/runners.mjs');
 
 test('등록: sdk-compat 계열 + BYOK apikey 단일 (CLI 래핑 금지)', () => {
   assert.equal(RUNNERS.openrouter?.kind, 'sdk-compat', 'CLI 래핑이면 러너 차등이 되살아난다 — BYOK 계열 원칙');
@@ -20,9 +20,25 @@ test('등록: sdk-compat 계열 + BYOK apikey 단일 (CLI 래핑 금지)', () =>
 
 test('카탈로그: 스모크 전수 통과 8종 + 기본 모델 포함 + 첫 항목=기본(러너 전환 관례)', () => {
   const ids = (RUNNERS.openrouter.models ?? []).map((m) => m.id);
-  assert.equal(ids.length, 8, '2026-07-27 스모크 8/8 확정본 — 변경은 스모크 재실행 후에만');
+  assert.equal(ids.filter((i) => !i.endsWith(':free')).length, 8, '유료 8종 — 스모크 8/8 확정본');
+  assert.equal(ids.filter((i) => i.endsWith(':free')).length, 3, '무료 3종 — 크레딧 0 체험 진입로(스모크 3/3)');
+  // 검수 CRITICAL(2026-07-27): 모델 미지정 호출(영입·기억정리·루틴 초안)이 전부 기본 모델로 오므로
+  // 유료가 기본이면 잔액 0 신규 키는 첫 영입부터 402 — 첫 항목은 반드시 무료(잔액 무관 실행 가능).
+  // 라벨에 한국어 하드코딩 금지 — 배지는 free 플래그 + i18n 사전(gated 관례, 다국어 상시 규칙)
+  for (const m of RUNNERS.openrouter.models) {
+    assert.doesNotMatch(m.label, /[가-힣]/, `라벨은 고유명사만: ${m.label}`);
+    // 양방향 — 무료인데 플래그 누락(배지 소실 = 한도 고지 소실)도, 유료인데 무료 표기(거짓)도 막는다
+    assert.equal(!!m.free, m.id.endsWith(':free'), `free 플래그와 :free 접미가 어긋남: ${m.id}`);
+  }
   assert.ok(ids.includes(OPENROUTER_DEFAULT_MODEL), '기본 모델은 반드시 검증된 목록 안에서');
-  assert.equal(ids[0], OPENROUTER_DEFAULT_MODEL, '첫 항목이 러너 전환 시 기본 선택된다(gemini 관례)');
+  assert.ok(ids.includes(OPENROUTER_ONBOARD_MODEL), '온보딩 기본도 검증된 목록 안에서');
+  // 두 기본값은 **역할이 다르다**(2R 검수 H1) — 하나로 합치면 한쪽이 반드시 깨진다.
+  //  · models[0] = 사용자가 UI에서 러너를 고를 때 선택되는 값 → 잔액 0에서도 돌아야(무료), 보이고 바꿀 수 있다
+  //  · ONBOARD = 자동 호출(영입·기억정리·루틴 초안)의 기본 → 모델 선택 화면이 없으므로 무료
+  //  · DEFAULT = 크루 카드에 model이 없을 때의 채팅 기본 → 잔액 있는 사용자의 품질을 지켜야(유료)
+  assert.ok(ids[0].endsWith(':free'), 'UI 기본 선택은 잔액 0에서도 도는 모델(gemini 카탈로그 선례)');
+  assert.ok(OPENROUTER_ONBOARD_MODEL.endsWith(':free'), '자동 호출 기본은 무료 — 신규 키 첫 영입이 402로 막히면 안 된다');
+  assert.ok(!OPENROUTER_DEFAULT_MODEL.endsWith(':free'), '채팅 기본을 무료로 두면 잔액 있는 사용자의 모든 크루가 무료로 내려간다(H1)');
 });
 
 test('runnerCredEnv: GLM·Kimi와 동일한 Anthropic 호환 env 패턴 + 토큰 위생 + 상한 미선언', async () => {
@@ -109,6 +125,43 @@ test('배선: oneshot.mjs — 402는 성공이 아니라 실패로 승격(크루
   const runners = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
   const external = runners.split('export async function externalExec')[1]?.split('\n}')[0] ?? '';
   assert.doesNotMatch(external, /openrouter/, 'openrouter는 SDK 계열 — externalExec(CLI) 분기 금지');
+});
+
+test('429(요청 한도)는 402와 대칭 — 느슨판/엄격판 양쪽 (검수 F2)', async () => {
+  const { isOpenRouterLimitError, isOpenRouterLimitReply } = await import('../src/runners.mjs');
+  assert.equal(isOpenRouterLimitError('API Error: 429 Rate limit exceeded'), true);
+  assert.equal(isOpenRouterLimitReply('API Error: 429 Rate limit exceeded'), true);
+  assert.equal(isOpenRouterLimitError('API Error: 402 …'), false, '402와 429는 서로 오인하지 않는다');
+  assert.equal(isOpenRouterCreditError('API Error: 429 …'), false);
+  // 엄격판 — 실질 답변이 있는 인용 턴은 일지를 잃지 않는다(3R F1과 동일 임계)
+  assert.equal(isOpenRouterLimitReply('API Error: 429 Rate limit exceeded\n' + '해설'.repeat(40)), false);
+});
+
+test('배선: chat·oneshot이 429를 402와 대칭으로 태운다', async () => {
+  const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  const oneshot = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  assert.match(chat, /isOpenRouterLimitReply\(reply\)/, 'chat: 429 안내 + 일지 제외');
+  assert.match(oneshot, /isOpenRouterLimitError\(text\)/, 'oneshot: 429 실패 승격(크루 카드·기억 오염 방지)');
+  assert.match(oneshot, /openrouter-limit/, '429 전용 안내 분기');
+  // M2: 429도 일지 제외여야 한다 — 402만 잠겨 있어 429 분기의 creditTurn 삭제가 안 잡혔다(2R 변이 실증)
+  const limitBlock = chat.split('isOpenRouterLimitReply(reply)')[1]?.slice(0, 400) ?? '';
+  assert.match(limitBlock, /creditTurn = true/, '429 턴도 일지 제외 — 오류 원문이 기억으로 정제되면 안 된다');
+  // L1: 두 분기는 상호배타(else if) — 앞 분기가 reply를 바꾼 뒤 뒤 분기가 그걸 판정하면 원인이 삼켜진다
+  assert.match(chat, /\}\s*\n\s*(?:\/\/[^\n]*\n\s*)*else if \(runner === 'openrouter' && isOpenRouterCreditReply/);
+  // M1: 429는 자가치유 금지 — 일시적 한도인데 다른 벤더(실과금)로 조용히 갈아타면 안 된다
+  const healIdx = oneshot.indexOf('if (!__exclude)');
+  assert.ok(oneshot.indexOf('openrouter-limit', oneshot.indexOf('catch (e)')) < healIdx, '429 분기가 자가치유보다 앞서야 한다');
+});
+
+test('배선: free 배지가 모델 선택 UI 4곳에 모두 걸려 있다 (배지 소실 = 한도 고지 소실)', async () => {
+  const files = ['../app/c/[ws]/page.jsx', '../app/c/[ws]/crew/[slug]/page.jsx', '../app/c/[ws]/compete/page.jsx'];
+  const srcs = await Promise.all(files.map((f) => readFile(new URL(f, import.meta.url), 'utf8')));
+  for (const [i, src] of srcs.entries()) {
+    assert.match(src, /runner\.freeBadge/, `free 배지 미배선: ${files[i]}`);
+  }
+  // 크루 페이지는 두 곳(카드 배지 + option) — gated와 같은 수만큼
+  const crew = srcs[1];
+  assert.equal((crew.match(/runner\.freeBadge/g) ?? []).length, (crew.match(/runner\.gatedBadge/g) ?? []).length, 'gated와 free 배지 배선 지점 수가 같아야 한다');
 });
 
 test('배선: PICK_ORDER ↔ RUNNER_AUTH 동기화 (다음 러너 추가 때 또 깨질 자리 — 불변식 수색)', async () => {
