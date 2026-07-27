@@ -1,6 +1,10 @@
 // 권한 게이트 — 능력(fs/browser/shell)이 꺼진 워크스페이스에서 부작용 도구는 여기서 멈춰
 // "켤까요?" 제안 카드를 올린다. 능력을 켰다면 결재 없이 바로 실행한다.
 //
+// ⚠ 적용 범위: 이 게이트는 **SDK 러너(claude/glm/kimi/openrouter)의 도구 호출**에만 걸린다
+// (chat.mjs의 canUseTool). codex·gemini·antigravity 같은 외부 CLI 러너는 프로세스 단위 샌드박스라
+// 여기를 지나지 않는다 — 한계와 그 근거는 docs/runner-isolation-limits.md.
+//
 // 2026-07-18 모델 단순화(유건 지시): 이전엔 능력을 켜도 도구 실행마다 결재를 올리고 기다려
 // 결재 폭탄·raw 명령 노출·흐름 끊김이 났다(실사용: grep/ls 하나하나 결재 카드). 사장이 설정에서
 // 능력을 켠 것 = 그 범위의 신뢰 위임이다 — 켜짐은 즉시 실행, 꺼짐은 켜기 제안 카드 한 장.
@@ -63,11 +67,67 @@ export function makeInWorkRoots(workRoots) {
    fs 능력이 켜진 크루에게 "앱 디자인 고쳐줘"라고 하면 실행 중인 Argo 코드를 실제로 수정할 수 있었다.
    금지 구역: ① 실행 중인 Argo 코드 루트(dev=레포, 데스크톱=Resources/server) ② ~/.argo(격리 홈·조달
    도구·자격) ③ WS_ROOT의 다른 회사 워크스페이스·계정 시크릿(교차 테넌트) ④ 자기 워크스페이스 직속
-   도트파일(.secrets.json 등 — 회사 자격). 자기 워크스페이스 일반 파일이 우선 판정(안이면 항상 허용). */
+   도트파일(.secrets.json 등 — 회사 자격) ⑤ 자기 워크스페이스 직속 제어 파일·크루 카드(아래 "회사
+   금고"). 그 외 자기 워크스페이스 파일은 크루의 책상이라 항상 허용. */
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..'); // src/의 부모 = 실행 중인 Argo 코드 루트
 
+/* ─── 회사 금고 — 워크스페이스 직속이지만 크루의 책상이 아닌 것들 ───
+   vault·skills·산출물(competitions·inbox)은 크루가 일하라고 준 책상이다. 반면 아래 파일들은 회사의 설정·자격·결재·
+   정본이고, 이것들을 바꾸는 정당한 경로는 전부 서버측이다 — 크루 MCP 도구(request_capability/
+   update_profile/hire_crew) → 사장 결재 → 시스템 적용, 또는 웹 설정 UI. 그 경로는 canUseTool을 지나지
+   않으므로 여기서 막아도 정상 흐름은 영향이 없다.
+   실측(2026-07-27, 격리 재현): 능력이 전부 꺼진 크루가 Write로 capabilities.json에
+   {"fs":true,"browser":true,"shell":true,"bypass":true}를 써넣으면, 턴마다 능력을 다시 읽는 구조
+   (chat.mjs `const caps = await loadCapabilities(wsId)`) 때문에 **다음 턴에 셸·바이패스를 획득**했다.
+   Bash가 열리고 홈 파일 읽기까지 통과 — 능력 모델 전체가 파일 쓰기 한 번으로 무력화된다. */
+const WS_CONTROL_FILES = new Set([
+  'capabilities.json', // 능력 토글 — 자가 승격의 본체
+  'mcp.json',          // MCP 서버 정의 = 임의 command 실행(secretbox도 시크릿으로 분류)
+  'connections.json',  // 러너 연결·자격(secretbox 시크릿)
+  'company.json',      // 회사 정본 — ownerId(소유권)·lang
+  'routines.json',     // 예약 실행 — 미래의 턴을 임의 지시로 채울 수 있다
+  'approvals.json',    // 결재 정본 — 위조되면 승인 모델 자체가 무너진다
+  'gw-cursor-slack.json', // 게이트웨이 커서 — 조작하면 메시지 재처리·건너뛰기(gateway.mjs)
+]);
+/* 원장 — **쓰기만** 막고 읽기는 연다. 위조되면 청구·활동의 근거가 무너지지만 자격이 아니라 유출
+   위험이 없고, 이 변경 전에는 크루가 읽을 수 있었다. 사장이 "이번 달 얼마 썼어?"라고 물었을 때
+   답할 수단을 없애는 것은 이 수정의 목적(자가 승격 차단)과 무관한 기능 후퇴다 — 크루에게 사용액
+   조회 도구가 따로 없으므로 대체 경로도 없다(분리 검수 MEDIUM). */
+const WS_LEDGER_FILES = new Set([
+  'usage.jsonl',  // 사용액 원장(청구 근거) — appendUsage가 서버측에서 쓴다
+  'events.jsonl', // 활동 원장 — 사장이 보는 활동 화면의 근거(events.mjs)
+]);
+/* 크루 카드 = 그 크루의 시스템 프롬프트이자 러너·모델·범위(skills/mcp) 선언이다. update_profile 도구는
+   자기 프로필 변경조차 사장 결재로 올리는데(chat.mjs), 파일 직접 쓰기는 그 결재를 통째로 건너뛴다 —
+   자기 범위 확대와 동료 카드 오염이 결재 없이 가능해진다. 카드 내용은 이미 시스템 프롬프트로,
+   동료 명단은 rosterPrompt로 주입되므로 크루가 이 파일을 직접 읽을 일도 없다. */
+/* chats/도 같은 이유로 금고다. `chats/<slug>.json`은 대화 정본이고, 그 안의 `who === 'user'` 항목은
+   다음 턴에 "사장:"으로 재생되어 모델 컨텍스트에 주입된다(chat.mjs). 크루가 동료 스레드에 가짜 사장
+   발화를 써 넣으면 결재 없는 동료 지시 주입 + 사장이 보는 이력 위조가 성립한다 — agents/와 같은
+   계열이다(분리 검수 MEDIUM). 크루가 이 파일을 직접 만질 정당한 흐름은 없다(이력은 프롬프트로
+   주입되고 파일은 thread.mjs가 서버측에서 관리한다). */
+const WS_CONTROL_DIRS = new Set(['agents', 'chats']);
+
+/* 비교용 이름 정규화 — 파일시스템이 이름을 "손질해서" 같은 파일에 쓰는 경로를 막는다.
+   ① Win32는 후행 점·공백을 잘라내므로 `capabilities.json.` / `capabilities.json `이 본체를 그대로
+   덮는다. ② NTFS 대체 데이터 스트림(`capabilities.json::$DATA`)도 본체에 쓰인다. ③ 대소문자 무시
+   파일시스템(macOS·Windows)에서는 `Capabilities.json`이 같은 파일이다 — 이미 있는 파일은 realpath가
+   정규화해 주지만 아직 없는 파일은 렉시컬이라 표기만 바꾼 이름이 그대로 통과한다.
+   macOS 실측으로는 후행 점이 별개 파일이라 무해했고(원본 미변경), 이 방어의 실제 대상은 Windows다 —
+   Windows 라이브 미검증, 코드 방어. sep 하드코딩으로 경계가 통째로 불발되던 계열과 같은 교훈이다.
+   ⚠ 의도적 과차단(fail-closed): 대소문자 구분 파일시스템에서 `Capabilities.json`은 실제로 별개
+   파일이고 `capabilities.json:메모`도 POSIX에선 합법이지만 둘 다 막는다. 워크스페이스 루트는 애초에
+   크루의 책상이 아니라 실질 피해가 없다 — "버그 같다"고 되돌리지 말 것. */
+const normName = (n) => n.split(':')[0].replace(/[. ]+$/, '').toLowerCase();
+
+/* Bash 리터럴 방어 대상 — 셸 명령 문자열에 이 이름이 그대로 들어간 순진한 시도를 막는다.
+   agents/는 슬래시까지 붙여 `agents.md` 같은 무관한 이름의 오탐을 줄인다. */
+const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, `agents${sep}`, 'agents/'];
+
 /** p가 금지 구역인가 — 판정 전 자기 워크스페이스 안(inWorkspace)이 먼저 통과됐다는 전제의 2차 검사.
-    canonical(실경로) 기준 — 심링크로 금지 구역을 우회하지 못한다. (export: 회귀 테스트용) */
+    canonical(실경로) 기준 — 심링크로 금지 구역을 우회하지 못한다.
+    mode='write'면 원장(usage/events.jsonl)까지 금지에 포함한다 — 읽기는 열려 있다(WS_LEDGER_FILES).
+    (export: 회귀 테스트용) */
 export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
   const wsAbs = resolve(wsRoot);
   // sep 사용 필수 — Windows resolve()는 백슬래시라 '/' 하드코딩이면 경계 비교가 전부 불발돼
@@ -78,6 +138,20 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
   // 폴딩은 deny에만 — 허용에 폴딩하면 허용이 넓어진다(원칙은 pathcase.mjs).
   const inside = (p, root) => p === root || p.startsWith(`${root}${sep}`);
   const canon = async (t) => { try { return await realpath(t); } catch { return null; } };
+  /* 아직 없는 경로의 canonical — 조상 중 실재하는 가장 가까운 것을 realpath하고 나머지 구간을 다시
+     붙인다. 부모 하나만 보면 중간 디렉토리까지 없을 때(agents/sub/x.md, 스캐폴드 전 회사) 정규화가
+     통째로 어긋나 경계 비교가 전부 불발된다 — macOS는 /var→/private/var 심링크라 ARGO_ROOT가
+     /var/... 이면 실제로 발생한다(테스트 실측: agents/ 미존재 시 카드 쓰기가 통과했다). */
+  const canonDeep = async (t, depth = 0) => {
+    const direct = await canon(t);
+    if (direct) return direct;
+    const parent = dirname(t);
+    // 상한 — 적대적으로 긴 미존재 경로가 세그먼트마다 realpath를 유발하는 비용을 막는다(200세그먼트
+    // ≈ 7ms 실측). 상한에 닿으면 렉시컬로 떨어지는데, 그건 canonical 정규화를 못 했다는 뜻이라
+    // 경계 비교가 느슨해질 수 있다 — 실제 경로는 이 깊이에 한참 못 미친다.
+    if (parent === t || depth >= 64) return t; // 루트까지 올라갔다 — 더 볼 조상이 없다
+    return join(await canonDeep(parent, depth + 1), basename(t));
+  };
   // 비교 기준(루트들)도 canonical로 — macOS /var→/private/var 같은 루트 쪽 심링크 때문에
   // 대상만 realpath하면 경계 비교가 전부 어긋난다(테스트 실측). 1회 계산 후 재사용.
   let rootsP = null;
@@ -89,15 +163,26 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
       hard: await Promise.all([resolve(appRoot), join(homedir(), '.argo')].map(async (r) => (await canon(r)) ?? r)),
     };
   })());
-  return async function isForbidden(p) {
+  return async function isForbidden(p, mode = 'read') {
     if (typeof p !== 'string' || !p.trim()) return false;
     const abs = p.startsWith('/') ? resolve(p) : resolve(wsAbs, p);
-    const real = (await canon(abs)) ?? (await canon(dirname(abs))) ?? abs; // 미존재 대상은 부모→렉시컬 순 판정
+    // 대상 자신의 경로를 유지한 채 canonical화한다. 이전처럼 미존재 대상을 부모로 통째 대체하면
+    // 대상이 워크스페이스 루트 자체로 판정되어 "직속 파일" 검사가 불발된다 — 존재하지 않는
+    // .secrets.json 생성이 그렇게 통과했다(2026-07-27 실측: 기존 테스트는 파일을 미리 만들고
+    // 검사해 이 경로를 못 봤다).
+    const real = await canonDeep(abs);
     const R = await roots();
     if (inside(real, R.ws)) {
-      // 자기 워크스페이스 안 — 직속 도트파일(.secrets.json 등)만 금지. chats/.archive처럼 한 단계
-      // 아래의 도트 경로는 정상 데이터라 통과(부모가 wsRoot 직속일 때만 검사).
-      return dirname(real) === R.ws && basename(real).startsWith('.');
+      if (real === R.ws) return false; // 워크스페이스 루트 자체
+      const rel = real.slice(R.ws.length + 1).split(sep); // sep — Windows 백슬래시
+      // 직속 도트 항목은 하위까지 전부 금지. 파일만 막으면 도트 "디렉토리" 하위가 빠져나간다 —
+      // .gw-queue-*/(게이트웨이 큐)에 항목을 넣으면 드레이너가 그대로 처리한다(전수 수색 2026-07-27).
+      // vault/.trash처럼 직속이 아닌 도트 경로는 여기 걸리지 않는다(크루 책상의 정상 데이터, 통과).
+      if (rel[0].startsWith('.')) return true;
+      const head = normName(rel[0]); // 후행 점·공백·ADS·대소문자 손질 후 비교
+      if (WS_CONTROL_DIRS.has(head)) return true; // agents/** — 크루 카드는 하위까지 전부
+      if (rel.length !== 1) return false;
+      return WS_CONTROL_FILES.has(head) || (mode === 'write' && WS_LEDGER_FILES.has(head));
     }
     for (const r of R.hard) if (insideFold(real, r)) return true;
     // 부수 효과(의도): 자기 워크스페이스의 케이스 변형+미존재 경로는 허용 분기(정확 비교)에서 떨어져
@@ -108,8 +193,10 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
 }
 
 const FORBIDDEN_MSG = {
-  ko: 'Argo 앱 자체(설치 폴더·서버 코드)와 다른 회사의 데이터, 자격 파일은 보호 구역이라 읽거나 고칠 수 없다. 앱 개선 요청이면 코드를 만지는 대신 사장에게 "설정 → 피드백"으로 전달하라고 안내하라.',
-  en: 'The Argo app itself (install folder, server code), other companies’ data, and credential files are protected — you cannot read or modify them. If the captain wants app improvements, point them to Settings → Feedback instead of touching code.',
+  // 목록을 열거하지 않고 **규칙**으로 쓴다 — 차단 대상이 늘 때마다 이 문구가 코드와 어긋나고,
+  // 크루는 막혔을 때 이 텍스트만 읽으므로 "그 목록엔 없던데"로 재시도하게 된다(분리 검수 MEDIUM).
+  ko: 'Argo 앱 자체(설치 폴더·서버 코드)와 다른 회사의 데이터, 그리고 이 회사의 설정·자격·결재·원장 파일과 크루 카드(agents/)는 보호 구역이다. 회사 폴더 바로 아래에 있는 설정 파일들과 `.`으로 시작하는 항목이 전부 여기 해당한다 — 읽기도 쓰기도 막히고, 원장(사용액·활동)만 읽기가 열려 있다. 이 설정들은 파일을 고쳐서가 아니라 도구로 바꾼다 — 능력이 필요하면 request_capability, 도구 설치는 request_tool_install, 프로필·영입은 update_profile/hire_crew로 사장 결재를 올려라. 네 책상(vault/·skills/·산출물)은 그대로 쓸 수 있다. 앱 개선 요청이면 사장에게 "설정 → 피드백"으로 전달하라고 안내하라.',
+  en: 'The Argo app itself (install folder, server code), other companies’ data, and this company’s settings, credential, approval and ledger files plus crew cards (agents/) are protected. That means every settings file sitting directly in the company folder and anything starting with `.` — blocked for both reading and writing, except the ledgers (usage, activity) which stay readable. These settings change through tools, not file edits: use request_capability for capabilities, request_tool_install for tools, and update_profile / hire_crew for crew changes, all of which go to the captain for approval. Your desk (vault/, skills/, project output) is unaffected. If the captain wants app improvements, point them to Settings → Feedback.',
 };
 
 /** 능력 켜기 제안 결재 — 대화창 Yes/No 카드의 원천. 게이트 거절 시와 크루의 request_capability 도구가 함께 쓴다.
@@ -142,25 +229,74 @@ export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang =
   // (셸은 변수·상대경로로 우회 가능한 프로세스 단위 도구 — 완전 차단이 아니라 1차 방어 + 프롬프트 지시가 계약)
   const appRootLiteral = APP_ROOT;
   const argoHome = join(homedir(), '.argo');
+  const wsAbs = resolve(wsRoot);
+
+  /* 검색 루트가 금고를 품는가 — Grep/Glob은 준 경로 **아래를 재귀**하므로, 경로 자체가 금지가 아니어도
+     그 아래 제어 파일이 걸리면 내용이 그대로 흘러나온다. 실측(분리 검수 HIGH): 워크스페이스 루트에
+     `rg "token"`을 걸면 connections.json의 봇 토큰이 평문으로 나왔다 — 즉 "제어 파일 읽기 차단"이
+     Read 단일 파일에만 성립하고 Grep 한 번에 무력화됐다. 대표 항목을 실제 판정에 태워 확인한다
+     (목록이 늘어도 자동으로 따라온다). 원장은 읽기가 허용이므로 프로브에서 뺀다. */
+  const coversControl = async (root) => {
+    // 판정은 "검색 루트가 워크스페이스를 통째로 품는가" 하나면 족하다 — 금고는 전부 워크스페이스
+    // 직속이므로, 재귀가 금고에 닿는 경우는 루트가 워크스페이스 자신이거나 그 조상일 때뿐이다.
+    // 조상까지 봐야 하는 이유: 사장이 홈처럼 넓은 폴더를 작업 폴더(workRoots)로 등록하면 워크스페이스가
+    // 그 안에 들어와, 직속만 검사하면 조상 경로에서 들어오는 재귀를 통째로 놓친다.
+    // 상대경로는 크루의 cwd(=워크스페이스) 기준 — 서버 프로세스의 cwd로 풀면 엉뚱한 곳을 가리킨다.
+    const abs = isAbsolute(root) ? resolve(root) : resolve(wsAbs, root);
+    return makeInWorkspace(abs)(wsAbs);
+  };
+  const denyScope = () => ({ behavior: 'deny', message: lang === 'en'
+    ? 'Searching the whole company folder is blocked because it would sweep in settings and credential files. Search a specific folder instead — `vault/` for documents and notes, `skills/` for company skills — and say which folder you searched.'
+    : '회사 폴더 전체 검색은 설정·자격 파일까지 훑게 되어 막혀 있다. 구체적인 폴더를 지정해 다시 검색하라 — 문서·기록은 `vault/`, 회사 스킬은 `skills/`. 어느 폴더를 뒤졌는지 밝혀라.' });
+
+  /* 도구 인자에 든 경로가 금지 구역인가 — 분류표에 없는 도구(SDK 신규 도구, 외부 MCP)가 경로를 들고
+     와도 금고를 만지지 못하게 하는 마지막 그물이다. 도구 이름 화이트리스트를 늘려 가는 대신 "어떤
+     도구든 금지 구역 경로를 인자로 주면 막는다"는 불변식으로 둔다 — 새 도구가 조용히 통과하지 않는다.
+     실측(분리 검수 HIGH): `mcp__filesystem__write_file{path: <ws>/capabilities.json}`이 allow였다. */
+  const argPathsForbidden = async (obj) => {
+    for (const v of Object.values(obj ?? {})) {
+      if (typeof v !== 'string' || !v.includes(sep)) continue; // 경로처럼 생긴 것만
+      if (await isForbidden(v, 'write')) return true; // 인자는 쓰기일 수 있다 — 넓은 쪽으로 판정
+    }
+    return false;
+  };
 
   return async function canUseTool(toolName, input) {
     const allow = { behavior: 'allow', updatedInput: input };
-    if (toolName === 'TodoWrite' || toolName.startsWith('mcp__')) return allow; // 경로 없음·opt-in 도구
+    if (toolName === 'TodoWrite') return allow; // 경로 인자가 없다
+    // 자체 크루 서버(mcp__crew__*)만 무검사 — 서버측 코드라 게이트를 지날 이유가 없다. 그 외 MCP는
+    // 사장이 연결한 임의 서버(파일 쓰기 도구 포함)라 경로 인자를 검사한다.
+    if (toolName.startsWith('mcp__')) {
+      if (toolName.startsWith('mcp__crew__') || toolName === 'mcp__crew') return allow;
+      return (await argPathsForbidden(input)) ? denyHard() : allow;
+    }
 
     if (READ_FILE_TOOLS.has(toolName)) {
       // 파일 읽기(Read/Glob/Grep) — 워크스페이스 안(또는 경로 미지정=cwd)은 허용, 밖은 fs 능력을 따른다.
       // capabilities.mjs 계약: fs = "워크스페이스 밖 파일 읽기/쓰기/편집". 읽기도 이 경계를 지킨다(P1-5).
       const targets = readToolTargets(toolName, input); // Read=file_path, Grep=path, Glob=path+pattern
+      // 금지 구역 검사를 안/밖 불문 **먼저** 전부 돌린다. 예전엔 워크스페이스 안 대상을 continue로
+      // 건너뛰고 "전부 안쪽일 때"만 따로 검사했는데, 인자 하나가 밖이면 그 블록을 못 타 안쪽 금지
+      // 대상이 미검사로 통과했다 — Glob{path: 밖의 임시디렉토리, pattern: <ws>/connections.json}이
+      // fs·bypass에서 allow였다(분리 검수 HIGH, 실행 재현 2026-07-27). 인자가 여러 개인 도구는
+      // "한 인자의 판정이 다른 인자의 검사를 건너뛰게 하지 않는다"가 계약이다.
+      for (const t of targets) if (await isForbidden(t)) return denyHard();
+      // 재귀 도구는 검색 **루트**를 따로 본다. path 생략이면 cwd = 워크스페이스 루트다(그래서 아무
+      // 인자 없는 Grep이 금고까지 훑었다). pattern은 루트가 아니라 필터라 위 루프가 맡는다.
+      if (toolName === 'Grep' || toolName === 'Glob') {
+        const root = typeof input?.path === 'string' && input.path.trim() ? input.path : wsAbs;
+        if (await coversControl(root)) return denyScope();
+      }
       let outside = false;
+      // 금지 구역 선차단은 위에서 전건 끝났다(지정 작업 폴더가 보호 구역을 품는 경우 — 예: 홈 전체
+      // 등록 — 에도 그 검사가 앞서므로 우회되지 않는다). 여기서는 안/밖 판정만 한다.
       for (const t of targets) {
-        // 금지 구역 선차단 — 위치(워크스페이스 안 도트파일 포함)·능력·bypass 불문. 지정 작업 폴더가
-        // 보호 구역을 포함하는 경우(예: 홈 전체 등록)에도 이 검사가 앞서므로 우회되지 않는다.
-        if (await isForbidden(t)) return denyHard();
         if (await inWorkspace(t)) continue;
         if (await inWorkRoots(t)) continue; // 사장이 지정한 외부 작업 폴더 = 확장 책상
         outside = true;
+        break;
       }
-      if (!outside) return allow;
+      if (!outside) return allow; // 전부 워크스페이스·작업 폴더 안(또는 경로 미지정=cwd)
       if (caps.fs || caps.bypass) return allow; // 사장이 켠 능력/전권 — 결재 없이 실행
       await suggestCapability(wsId, slug, 'fs', null, from);
       return deny('워크스페이스 밖 파일 읽기는 파일 시스템 능력이 필요하다.');
@@ -172,7 +308,7 @@ export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang =
     }
     if (WRITE_TOOLS.has(toolName)) {
       const target = input.file_path ?? input.notebook_path ?? '';
-      if (await isForbidden(target)) return denyHard(); // 금지 구역 — 워크스페이스 안 도트파일 포함
+      if (await isForbidden(target, 'write')) return denyHard(); // 금지 구역 — 제어 파일·원장·도트파일 포함
       if (await inWorkspace(target)) return allow; // 회사 폴더 안은 크루의 책상이다
       if (await inWorkRoots(target)) return allow; // 지정 작업 폴더도 책상 — fs 능력과 독립(더 좁은 위임)
       if (caps.fs || caps.bypass) return allow;
@@ -182,12 +318,20 @@ export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang =
     if (toolName === 'Bash') {
       const cmd = String(input?.command ?? '');
       if (fold(cmd).includes(fold(appRootLiteral)) || fold(cmd).includes(fold(argoHome))) return denyHard(); // 리터럴 경로 1차 방어(케이스 폴딩 — 어차피 우회 가능한 1차 방어지만 공짜 강화)
+      // 회사 금고도 같은 수준의 1차 방어를 받는다. 셸은 변수·상대경로로 우회 가능하지만, 그 논리라면
+      // 위 줄도 없어야 한다 — 같은 자리에 같은 방어를 두는 것이 일관적이다(분리 검수 MEDIUM).
+      // 이게 없으면 shell 능력이 켜진 SDK 크루가 `echo '{"bypass":true}' > capabilities.json` 한 줄로
+      // 게이트를 우회한다(실측). 오탐(그 이름을 언급한 정당한 명령 거절)은 fail-closed로 수용한다.
+      // 폴딩은 위 줄과 동일 기준(대소문자 무시 FS에서 CAPABILITIES.JSON 우회 차단 — #145 계열).
+      if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n)))) return denyHard();
       if (caps.shell || caps.bypass) return allow;
       await suggestCapability(wsId, slug, 'shell', null, from);
       return deny('셸 능력이 꺼져 있다.');
     }
-    // 그 외 도구 — 능력 분류 밖(SDK 내장 Task 등). 이전 모델도 결재만 걸고 결국 허용했으므로
-    // allow가 동작 등가·회귀 제로다(부작용 도구가 새로 생기면 위 분류에 추가하는 것이 대응 지점).
-    return allow;
+    // 그 외 도구 — 능력 분류 밖(SDK 내장 Task 등). 능력 판정은 여전히 허용 쪽이다(이전 모델도 결재만
+    // 걸고 결국 허용했으므로 동작 등가). 다만 **금고는 예외 없다** — 분류표에 없는 도구가 경로를 들고
+    // 와도 여기서 막는다. SDK가 파일 쓰기 도구를 새로 노출하면 위 분류에 추가하는 것이 정식 대응이지만,
+    // 추가하기 전까지 조용히 통과하던 창을 이 한 줄이 닫는다(분리 검수 HIGH·MEDIUM 공통 지적).
+    return (await argPathsForbidden(input)) ? denyHard() : allow;
   };
 }
