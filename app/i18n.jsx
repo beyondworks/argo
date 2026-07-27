@@ -394,6 +394,7 @@ const DICT = {
   'login.openFailed': ['브라우저를 열지 못했습니다. 앱을 다시 시작한 뒤 시도해 주세요.', 'Could not open the browser. Restart the app and try again.'],
   'login.pairedTitle': ['로그인 완료', 'Signed in'],
   'login.pairedBody': ['Argo 앱이 자동으로 연결되어 앞으로 올라옵니다. 이 창은 닫으셔도 됩니다.', 'The Argo app connects and comes to the front automatically. You can close this window.'],
+  'login.pairedAutoClose': ['Argo 앱이 자동으로 연결됩니다. 이 창은 잠시 후 자동으로 닫힙니다…', 'The Argo app connects automatically. This window will close itself in a moment…'],
   'login.closeWindow': ['이 창 닫기', 'Close this window'],
   'login.pairing': ['앱에 연결하는 중…', 'Connecting to the app…'],
   'login.pairConfirmTitle': ['이 기기를 로그인시킬까요?', 'Log in this device?'],

@@ -16,6 +16,20 @@ export default function Paired() {
   const [msg, setMsg] = useState('');
   const [session, setSession] = useState(null);
   const [pair, setPair] = useState('');
+  const [closeFailed, setCloseFailed] = useState(false); // 자동 닫기 시도 후에도 살아 있음 — 수동 안내로 전환
+
+  // 로그인 완료 후 창 자동 닫기(실사용 신고 2026-07-27: "창이 안 닫히고 앱만 열림").
+  // window.close()는 스크립트가 열지 않은 탭에서 브라우저가 거부할 수 있다 — 성공하면 이 컴포넌트째
+  // 사라지고, 거부되면(다음 틱에도 살아 있음) 수동 닫기 안내로 전환한다. 1.2초 지연은 "로그인 완료"를
+  // 읽을 시간 — 즉시 닫으면 성공했는지 못 보고 사라져 불안하다.
+  useEffect(() => {
+    if (state !== 'done') return;
+    const t1 = setTimeout(() => {
+      window.close();
+      setTimeout(() => setCloseFailed(true), 400); // 닫혔으면 실행될 일 없다
+    }, 1200);
+    return () => clearTimeout(t1);
+  }, [state]);
 
   useEffect(() => {
     if (!URL_ENV || !KEY_ENV) { setState('error'); setMsg('config'); return; }
@@ -71,8 +85,12 @@ export default function Paired() {
         {state === 'done' && (
           <>
             <h1 style={{ fontSize: 19, fontWeight: 700, margin: 0 }}>{t('login.pairedTitle')}</h1>
-            <p style={{ fontSize: 13, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('login.pairedBody')}</p>
-            <button className="btn sm" onClick={() => window.close()} style={{ justifySelf: 'start' }}>{t('login.closeWindow')}</button>
+            <p style={{ fontSize: 13, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>
+              {closeFailed ? t('login.pairedBody') : t('login.pairedAutoClose')}
+            </p>
+            {closeFailed && (
+              <button className="btn sm" onClick={() => window.close()} style={{ justifySelf: 'start' }}>{t('login.closeWindow')}</button>
+            )}
           </>
         )}
         {state === 'error' && (
