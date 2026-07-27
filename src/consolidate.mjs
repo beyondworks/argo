@@ -182,10 +182,18 @@ export async function rollupJournals(wsId) {
     const label = text.match(/^# \d{4}-\d{2}-\d{2} (.+?) 일지/m)?.[1] ?? n.slice(11).replace(/\.md$/, '');
     const gists = [...text.matchAll(/^## (\d{2}:\d{2} — .+)$/gm)].map((m) => `- ${m[1]}`);
     const weekly = join(dir, `${weekLabel(day)}.md`);
-    let head = '';
-    // [[..]] 리터럴 금지 — 인덱스·그래프가 위키링크로 파싱해 존재하지 않는 문서를 가리키는 유령 링크가 된다
-    try { await stat(weekly); } catch { head = `# ${weekLabel(day)} 주간 일지\n\n상세 원본은 journal/.archive/ 폴더의 일별 파일에 보관됨.\n`; }
-    await appendFile(weekly, `${head}\n## ${day} ${label}\n${gists.join('\n') || '- (기록 없음)'}\n`);
+    // append → rename 순서라 rename만 실패하면(파일 잠금·권한) 원본이 journal/에 남아 다음 실행이
+    // 같은 블록을 또 접는다. 스케줄러 재시도 도입으로 노출이 커졌으므로 여기서 멱등을 보장한다.
+    // 키는 **날짜 + 크루 라벨 전체** — 같은 날 여러 크루의 일지가 각각 접히므로 날짜만 보면
+    // 첫 크루 블록에 걸려 뒤 크루의 일지가 통째로 유실된다.
+    let weeklyText = '';
+    try { weeklyText = await readFile(weekly, 'utf8'); } catch { /* 첫 주간 파일 */ }
+    const heading = `\n## ${day} ${label}\n`;
+    if (!weeklyText.includes(heading)) {
+      // [[..]] 리터럴 금지 — 인덱스·그래프가 위키링크로 파싱해 존재하지 않는 문서를 가리키는 유령 링크가 된다
+      const head = weeklyText ? '' : `# ${weekLabel(day)} 주간 일지\n\n상세 원본은 journal/.archive/ 폴더의 일별 파일에 보관됨.\n`;
+      await appendFile(weekly, `${head}${heading}${gists.join('\n') || '- (기록 없음)'}\n`);
+    }
     await mkdir(archive, { recursive: true });
     await rename(file, join(archive, n));
     rolled += 1;
