@@ -124,6 +124,18 @@ test('배선 — 스케줄러가 deliverCrewMail을 부르고 스레드에 남�
   const s = read('src/scheduler.mjs');
   assert.match(s, /deliverCrewMail\(c\.id/, '스케줄러 배달 배선이 없다 — 쪽지가 영영 배달되지 않는다');
   assert.match(s, /appendTurn\(c\.id, slug/, '수신 턴이 스레드에 안 남는다 — 사장이 대화를 못 본다');
+  // 검수 변이 실험에서 이 가드 제거가 미감지였다 — 틱 겹침(LLM 턴 > 60s)이면 같은 회사에 배달
+  // 루프가 이중 진입해 rename 경합·이중 배달 조건이 된다(HIGH-4). 트립와이어로 잠근다.
+  assert.match(s, /mailDelivering\.has\(c\.id\)/, '틱 겹침 이중 진입 가드(HIGH-4)가 사라졌다');
+});
+
+test('배선 — 배달 알림이 게이트웨이 문안까지 이어진다(재검 N1 보류 해소)', () => {
+  const s = read('src/scheduler.mjs');
+  assert.match(s, /emitNotify\(\{ type: 'crewmail'/, '배달 알림 발신이 없다 — 메신저로 쪽지 결과가 안 간다');
+  const g = read('src/gateway.mjs');
+  assert.match(g, /event\.type === 'crewmail'/, 'pushEvent에 crewmail 분기가 없다 — 알림이 무동작(재검 N1 원상복귀)');
+  // 슬랙 경로는 문안 있는 타입만 — 게이트가 풀리면 job·crewmail에서 event.routine.title TypeError가 재발한다
+  assert.match(g, /event\.type === 'approval' \|\| event\.type === 'routine'/, '슬랙 타입 게이트가 풀렸다');
 });
 
 test('배선 — send_to_crew 도구가 delegate와 같은 게이트(colleagues)로 등록된다', () => {
