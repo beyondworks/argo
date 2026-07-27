@@ -3,7 +3,7 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
-import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, externalExec, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, externalExec, isCliRunner, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     제외하고 1회 재시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와 같은 원칙, 재귀 1회).
@@ -28,14 +28,14 @@ export async function runOneShot(wsId, prompt, opts = {}) {
           ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — install it, or connect Claude (no install needed) in Settings → AI connections.`
           : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
       : (lang === 'en'
-          ? 'No AI runner is connected — connect Claude, Codex, Gemini, or GLM in Settings → AI connections.'
-          : 'AI 러너가 하나도 연결돼 있지 않습니다 — 설정 → AI 연결에서 Claude·Codex·Gemini·GLM·Kimi·OpenRouter 중 하나를 연결해 주세요.'));
+          ? 'No AI runner is connected — connect Claude, Codex, Gemini, Antigravity, GLM, Kimi, or OpenRouter in Settings → AI connections.'
+          : 'AI 러너가 하나도 연결돼 있지 않습니다 — 설정 → AI 연결에서 Claude·Codex·Gemini·Antigravity·GLM·Kimi·OpenRouter 중 하나를 연결해 주세요.'));
   }
   const runner = resolved.runner;
   let hangGuard = null;            // SDK 경로 hang 상한 타이머 — 아래 finally에서 항상 해제
   const ac = new AbortController(); // catch에서도 봐야 한다(중단 원인을 정직한 문구로 바꾸기 위해)
   try {
-    if (runner === 'codex' || runner === 'gemini') {
+    if (isCliRunner(runner)) {
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격 우선, 없으면 호스트 로그인
       const text = (await externalExec({ runner, cwd: paths(wsId).root, prompt, cred, timeoutMs })).trim();
       if (!text) throw new Error('empty-reply');

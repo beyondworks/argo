@@ -115,8 +115,18 @@ export function apiError(e) {
   // 영어 스택트레이스 대신 대안이 담긴 안내로 번역한다.
   if (/IneligibleTierError|no longer supported for Gemini Code Assist/i.test(raw)) {
     return new Error('구글이 Gemini 개인 OAuth(무료 Code Assist) 지원을 최신 CLI에서 중단했습니다. '
-      + '설정 → AI 연결에서 Gemini를 API 키로 다시 연결해 주세요(Google AI Studio에서 무료 발급). '
-      + 'Google policy now blocks personal OAuth on current Gemini CLI — reconnect Gemini with an API key.');
+      + '구글 구독(로그인)으로 쓰려면 설정 → AI 연결에서 **Antigravity 러너**를 연결하고(터미널에서 agy 로그인), '
+      + 'API 키로 쓰려면 Gemini를 API 키로 다시 연결해 주세요(Google AI Studio에서 무료 발급). '
+      + 'Google moved personal OAuth to Antigravity — connect the Antigravity runner (agy login), or reconnect Gemini with an API key.');
+  }
+  // agy(Antigravity CLI)의 무응답 타임아웃 — 미로그인이 가장 흔한 원인(비대화 -p 모드는 로그인 플로우를
+  // 못 열고 응답 대기만 하다 이 문구로 죽는다 — agy 1.1.7 실측 2026-07-27). 장시간 작업 초과와 문구가
+  // 같아 구분 불가하므로 두 원인을 모두 안내한다.
+  if (/timeout waiting for response/i.test(raw)) {
+    return new Error('Antigravity가 제한 시간 안에 응답하지 않았습니다. 이 컴퓨터에서 agy 로그인이 안 되어 있으면 '
+      + '터미널에서 agy를 실행해 Google 로그인 후 다시 시도해 주세요. 로그인이 되어 있다면 작업이 제한 시간을 초과한 것입니다. '
+      + 'Antigravity timed out — if agy is not signed in on this machine, run agy in a terminal and sign in with Google; '
+      + 'otherwise the task exceeded the time limit.');
   }
   const m = raw.match(/"message"\s*:\s*"([^"]+)"/);
   return new Error(maskKeyLike(m ? m[1] : `러너 실행 실패 (exit ${e.code ?? '?'}): ${String(e.stderr ?? e.message).replace(/\s+/g, ' ').slice(-160)}`));
@@ -177,6 +187,24 @@ export const RUNNERS = {
       { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', gated: true },
     ],
   },
+  antigravity: {
+    name: 'Antigravity', kind: 'cli',
+    // BYOA 2호(2026-07-27) — 구글이 개인용 Gemini Code Assist OAuth를 폐기하고 Antigravity로 이전
+    // (피드백 38e5281d가 규명). Gemini **구독** 사용자의 유일한 경로라 CLI(agy) 래핑으로 태운다.
+    // 자격은 OS 키링(파일 아님) — 호스트 로그인 옵트인 전용, 붙여넣기·API키 없음(GEMINI_API_KEY 무시 실측).
+    // 모델 목록 = `agy models` 실측(agy 1.1.7, 2026-07-27). ⚠ 실계정 실턴은 미검증(이 맥에 agy 로그인
+    // 없음 — 카탈로그 규칙의 예외로 두되, 베타 확인 후 이 표기를 지울 것). 첫 항목이 러너 전환 기본값.
+    models: [
+      { id: 'gemini-3.6-flash-medium', label: 'Gemini 3.6 Flash' },
+      { id: 'gemini-3.6-flash-high', label: 'Gemini 3.6 Flash High' },
+      { id: 'gemini-3.6-flash-low', label: 'Gemini 3.6 Flash Low' },
+      { id: 'gemini-3.1-pro-high', label: 'Gemini 3.1 Pro High' },
+      { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro Low' },
+      { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Antigravity)' },
+      { id: 'claude-opus-4-6-thinking', label: 'Claude Opus 4.6 Thinking (Antigravity)' },
+      { id: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Antigravity)' },
+    ],
+  },
   kimi: {
     name: 'Kimi', kind: 'sdk-compat',
     models: [
@@ -228,6 +256,10 @@ export const RUNNERS = {
 /** "이 컴퓨터 로그인 사용" 옵트인 허용 여부 — runnerStatus·저장(PUT) 라우트가 공유(단일 판정).
     codex/gemini(파일 자격)는 환경 무관. claude(키체인)는 SDK가 키체인을 열 수 있는 non-standalone에서만
     — 데스크톱 번들(ARGO_STANDALONE)은 재서명 node가 키체인에 막혀 회귀를 내므로 제외(setup-token이 정식). */
+/** 외부 CLI 러너 판정 — 디스패치(chat/oneshot)의 단일 진실. 하드코딩 열거('codex'||'gemini')는
+    러너 추가 때마다 배선 누락을 만든다(#119 전수 수색의 교훈) — kind가 카탈로그에 있으니 그걸 쓴다. */
+export const isCliRunner = (r) => RUNNERS[r]?.kind === 'cli';
+
 export const hostOptInAllowed = (runner) =>
   !!RUNNER_AUTH[runner]?.hostUsable
   && !process.env.ARGO_TENANT_OWNER // 다중테넌트 호스팅에선 운영자 CLI 로그인을 테넌트가 빌리지 못하게(setupOneClick과 대칭, 검수 LOW)
@@ -301,11 +333,14 @@ export async function detectRunners(force = false) {
   if (!force && cache && Date.now() - cacheAt < 60_000) return cache;
   await ensureCliPath(); // GUI 기동 PATH 보강 — homebrew/npm 전역 CLI 오탐 방지
   const home = homedir();
-  const [codexV, codexManaged, geminiV, geminiManaged, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
+  const [codexV, codexManaged, geminiV, geminiManaged, agyV, agyLocalBin, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
     exec('codex', ['--version']).then((r) => r.stdout.trim(), () => null),
     exists(codexManagedBin()),    // 관리본(자동 조달)도 설치로 취급 — PATH 없이도 돈다
     exec('gemini', ['--version']).then((r) => r.stdout.trim(), () => null),
     exists(geminiManagedEntry()),
+    exec('agy', ['--version']).then((r) => r.stdout.trim(), () => null),
+    exists(join(home, '.local', 'bin', 'agy')), // 공식 인스톨러 고정 경로 — GUI PATH 누락 대비
+
     exists(join(home, '.codex', 'auth.json')),
     exists(join(home, '.gemini', 'oauth_creds.json')),
     // 리눅스 — 파일 보관(macOS도 키체인 불가 환경은 이 파일 폴백이라 무시하면 역회귀).
@@ -327,6 +362,11 @@ export async function detectRunners(force = false) {
     glm: { installed: true, authed: !!process.env.GLM_API_KEY },
     kimi: { installed: true, authed: !!process.env.KIMI_API_KEY }, // env 주입 = 운영자 명시 옵트인(glm 관례)
     openrouter: { installed: true, authed: false }, // 호스트 개념 없음 — 회사 자격(BYOK)만. env 폴백도 두지 않는다(설계 2026-07-27 YAGNI)
+    // antigravity: 자격이 OS 키링이라 로그인 여부를 파일로 판정할 수 없다 — authed=installed(낙관).
+    // 위 2026-07-19 주석과 같은 원칙("감지 단계에서 유효성까지는 판정하지 않는다"): 미로그인은 첫 턴의
+    // apiError 매핑("timeout waiting for response" → 로그인 안내)이 잡는다. host 마커 invalid 판정
+    // (runnerStatus)이 authed=false면 옵트인 직후부터 "재연결 필요"로 오표시되는 것을 막는 값이기도 하다.
+    antigravity: { installed: !!agyV || agyLocalBin, authed: !!agyV || agyLocalBin },
   };
   cacheAt = Date.now();
   return cache;
@@ -609,7 +649,42 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
       .replace(/^(Loaded cached credentials\.|Data collection is .*|\[STARTUP\].*|\[dotenv.*)\s*$/gim, '')
       .trim();
   }
+  if (runner === 'antigravity') {
+    // BYOA — agy CLI 래핑(권한 근사 적용, codex/gemini와 같은 정직 표기 계열).
+    // 자격은 OS 키링이라 env·격리 홈 반입이 없다(host 옵트인 전용, cred는 항상 null 경유).
+    // --mode accept-edits = gemini --approval-mode auto_edit 등가(편집류만 자동 승인).
+    // --sandbox = 셸 능력 OFF의 근사(agy "terminal restrictions") — SDK 게이트와 달리 사전 카드가
+    //   없으므로 근사임을 시스템 프롬프트 안내(commonDirectives)가 보완한다.
+    // --print-timeout은 우리 kill(timeoutMs)보다 **30초 짧게** — agy의 이 타이머는 기동(글로그 초기화
+    // ~6초+) **이후** 시작돼 총 수명이 타이머+기동이다. 마진이 그보다 작으면 agy가 자기 에러 문구
+    // ("timeout waiting for response")를 찍기 전에 우리 kill이 이겨 스트림이 빈 채(killed:true)
+    // 제네릭 "exit 1"로 떨어진다 — 5초 마진으로 불충분함을 실스모크로 확정(2026-07-27, ARGO_DEBUG_AGY
+    // 관찰: killed:true·stdout/stderr 공백). 기본 5m 방치도 금지 — 우리 상한과 어긋나 이중 대기.
+    const cmd = await agyCmd();
+    const agySec = Math.max(25, Math.ceil(timeoutMs / 1000) - 30);
+    const { stdout } = await exec(cmd.file, [
+      '-p', prompt,
+      ...(model ? ['--model', model] : []),
+      '--mode', 'accept-edits',
+      ...(caps && !caps.shell ? ['--sandbox'] : []),
+      '--print-timeout', `${agySec}s`,
+    ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'antigravity'), ...(cred?.env ?? {}) } })
+      .catch((e) => { if (process.env.ARGO_DEBUG_AGY) console.error('[debug agy]', JSON.stringify({ code: e.code, killed: e.killed, signal: e.signal, so: String(e.stdout ?? '').slice(-60), se: String(e.stderr ?? '').slice(-120) })); throw apiError(e); });
+    return stdout.replace(/^[IWEF]\d{4} .*$/gm, '').trim(); // glog 라인(I0727 …) 제거 — agy 런타임 로그
+  }
   throw new Error(`알 수 없는 외부 러너: ${runner}`);
+}
+
+/** agy(Antigravity CLI) 실행 파일 — PATH 설치본 우선, 공식 인스톨러 고정 경로(~/.local/bin/agy) 폴백.
+    codex/gemini와 달리 자동 조달은 하지 않는다(인스톨러가 바이너리 다운로드 + 셸 프로파일 수정 —
+    사용자 홈을 건드리는 부작용이 있어 명시 설치 안내가 정직하다). */
+async function agyCmd() {
+  const onPath = await exec('agy', ['--version']).then(() => true, () => false);
+  if (onPath) return { file: 'agy', args: [] };
+  const local = join(homedir(), '.local', 'bin', 'agy');
+  if (await exists(local)) return { file: local, args: [] };
+  throw new Error('Antigravity CLI(agy)가 설치되어 있지 않습니다. https://antigravity.google/docs/cli/install 에서 설치 후 터미널에서 agy를 실행해 Google 로그인해 주세요. '
+    + 'Antigravity CLI (agy) is not installed — install it and sign in with Google, then retry.');
 }
 
 // ── 회사별 러너 자격(BYOK/BYOA) — 일반 사용자가 호스트 CLI 로그인 없이도 어떤 러너든 굴리게 한다.
@@ -654,6 +729,9 @@ export const RUNNER_AUTH = {
   claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPrefix: 'sk-ant-oat01-', oauthPasteable: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', hostUsable: true, keyUrl: 'https://console.anthropic.com/settings/keys' },
   codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
   gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://aistudio.google.com/apikey' },
+  // antigravity: 자격이 OS 키링(파일 아님)이라 붙여넣기·API키·웹 브리지 전부 불가 — 호스트 로그인
+  // 옵트인이 유일한 경로다(agy가 GEMINI_API_KEY를 무시함은 공식 문서 확인). keyUrl은 설치·로그인 안내.
+  antigravity: { methods: ['oauth'], apikeyPrefix: '', oauthPasteable: false, hostUsable: true, keyUrl: 'https://antigravity.google/docs/cli/install' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
   kimi: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' }, // 접두사 무차단(GLM 관례) — 리전·미래 키 형식 변화에 저장이 막히지 않게, 판정은 verifyRunnerCred가
   openrouter: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://openrouter.ai/keys' }, // BYOK 단일(설계 2026-07-27) — OAuth·크레딧 대행 안 함
@@ -712,7 +790,7 @@ const billedByType = (type, runner) => {
   // claude: 두 인증 env 공존 시의 실행 우선순위는 SDK 내부라 추측하지 않는다 — sdkEnvFor가
   // 구독 토큰 존재 시 API 키를 소거해 **실행 자체를 구독으로 확정**한다(2R HIGH-2 결정론화).
   if (runner === 'claude') return !!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN;
-  return false; // codex·gemini 호스트 로그인 = 구독, openrouter 등은 회사 자격 필수
+  return false; // codex·gemini·antigravity 호스트 로그인 = 구독, openrouter 등은 회사 자격 필수
 };
 
 export async function isBilledRunner(wsId, runner) {

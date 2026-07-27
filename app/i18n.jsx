@@ -67,7 +67,7 @@ const DICT = {
   'room.loadFail': ['회의 내용을 불러오지 못했습니다 — 잠시 후 자동으로 다시 시도합니다', "Couldn't load the meeting — retrying automatically"],
   'runner.effortLabel': ['추론 강도', 'Reasoning effort'],
   'runner.effortDefault': ['강도 기본', 'Default effort'],
-  'runner.effortAutoHint': ['추론 강도 — Claude·Codex로 실행될 때 적용됩니다(Gemini·GLM·Kimi·OpenRouter는 미지원)', 'Reasoning effort — applies on Claude and Codex (not supported on Gemini, GLM, Kimi, OpenRouter)'],
+  'runner.effortAutoHint': ['추론 강도 — Claude·Codex로 실행될 때 적용됩니다(Gemini·Antigravity·GLM·Kimi·OpenRouter는 미지원)', 'Reasoning effort — applies on Claude and Codex (not supported on Gemini, Antigravity, GLM, Kimi, OpenRouter)'],
   'runner.effort.low': ['낮음 — 빠름', 'Low — fastest'],
   'runner.effort.medium': ['보통', 'Medium'],
   'runner.effort.high': ['높음', 'High'],
