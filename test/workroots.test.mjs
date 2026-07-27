@@ -56,6 +56,23 @@ test('validateWorkRoot: 심링크로 금지 구역을 등록하지 못한다(rea
   await assert.rejects(() => validateWorkRoot(link), (e) => e.code === 'protected');
 });
 
+test('validateWorkRoot: 앱 코드 루트의 조상 폴더도 등록 거부(분리 검수 HIGH-1 — 2026-07-22 크리티컬의 조상 변종)', async () => {
+  // APP_ROOT를 '포함'하는 폴더가 codex writable_roots에 실리면 fs 꺼짐에도 앱 본체 쓰기가 열린다
+  await assert.rejects(() => validateWorkRoot(dirname(APP_ROOT)), (e) => e.code === 'protected', 'APP_ROOT 부모');
+  await assert.rejects(() => validateWorkRoot(dirname(dirname(APP_ROOT))), (e) => e.code === 'protected', 'APP_ROOT 조부모');
+});
+
+test('loadActiveWorkRoots: 등록 후 보호 구역 심링크로 교체된 루트는 주입에서 빠진다(TOCTOU — 분리 검수 MED-2)', async () => {
+  const ws = 'wr-toctou';
+  await mkdir(join(WS_ROOT, ws), { recursive: true });
+  const swap = await mkdtemp(join(tmpdir(), 'argo-wr-swap-'));
+  await updateWorkRoots(ws, { add: swap });
+  assert.deepEqual(await loadActiveWorkRoots(ws), [await validateWorkRoot(swap)], '교체 전엔 주입');
+  await rm(swap, { recursive: true, force: true });
+  await symlink(APP_ROOT, swap); // 등록된 경로가 이제 앱 코드를 가리킨다
+  assert.deepEqual(await loadActiveWorkRoots(ws), [], '교체 후 재검증이 걸러낸다 — codex writable_roots 오염 차단');
+});
+
 test('updateWorkRoots: 추가/중복/상한/삭제 + loadActiveWorkRoots는 존재하는 폴더만', async () => {
   const ws = 'wr-co';
   assert.deepEqual(await loadWorkRoots(ws), []);

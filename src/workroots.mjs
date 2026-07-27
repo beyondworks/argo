@@ -42,11 +42,13 @@ export async function loadWorkRoots(wsId) {
   return Array.isArray(data?.roots) ? data.roots.filter((r) => typeof r === 'string' && r.trim()) : [];
 }
 
-/** 턴 주입용 — 이 기기에 지금 존재하는 디렉토리만. 분리된 외장 디스크·과거 잔재 경로가 턴을 깨거나
-    러너 설정을 오염시키지 않게 조용히 제외한다(재연결되면 다음 턴부터 자동 복귀). */
+/** 턴 주입용 — 이 기기에 지금 존재하고 **지금도 검증을 통과하는** 루트만(canonical 반환).
+    존재 필터: 분리된 외장 디스크·과거 잔재 경로가 턴을 깨지 않게 조용히 제외(재연결 시 자동 복귀).
+    재검증: 등록 후 폴더가 보호 구역 심링크로 교체돼도 주입 시점에 걸린다(TOCTOU —
+    분리 검수 MED-2 2026-07-28). 어차피 루트마다 stat을 돌던 자리라 비용 증가는 없다. */
 export async function loadActiveWorkRoots(wsId) {
   const roots = await loadWorkRoots(wsId);
-  const checks = await Promise.all(roots.map(async (r) => ((await stat(r).catch(() => null))?.isDirectory() ? r : null)));
+  const checks = await Promise.all(roots.map((r) => validateWorkRoot(r).catch(() => null)));
   return checks.filter(Boolean);
 }
 
@@ -62,13 +64,18 @@ export async function validateWorkRoot(p, { appRoot = APP_ROOT, wsRoot = WS_ROOT
   if (!st.isDirectory()) throw err('not-dir', trimmed);
   const real = (await canon(trimmed)) ?? resolve(trimmed);
   // 루트 전체는 거부 — 하위 폴더(외장 디스크 전체가 필요하면 D:\work 같은 폴더)를 지정하게 한다.
-  if (real === '/' || /^[A-Za-z]:[\\/]?$/.test(real)) throw err('too-broad', real);
-  const protectedRoots = await Promise.all(
+  // UNC 공유 루트(\\server\share)도 같은 계열(분리 검수 LOW 2026-07-28).
+  if (real === '/' || /^[A-Za-z]:[\\/]?$/.test(real) || /^\\\\[^\\]+\\[^\\]+\\?$/.test(real)) throw err('too-broad', real);
+  const [appRootCanon, argoHomeCanon, wsRootCanon] = await Promise.all(
     [resolve(appRoot), join(homedir(), '.argo'), resolve(wsRoot)].map(async (r) => (await canon(r)) ?? resolve(r)),
   );
-  for (const r of protectedRoots) if (inside(real, r)) throw err('protected', real);
-  // 주의: 보호 구역을 '포함'하는 루트(예: 홈 전체 — ~/.argo 포함)는 거부하지 않는다. SDK 게이트는
-  // isForbidden이 여전히 선행 차단하고, codex는 fs 능력의 기존 한계(프로세스 단위)와 동일 계열이다.
+  for (const r of [appRootCanon, argoHomeCanon, wsRootCanon]) if (inside(real, r)) throw err('protected', real);
+  // 조상 등록 차단(분리 검수 HIGH-1 2026-07-28): 앱 코드 루트를 '포함'하는 루트는 codex
+  // writable_roots에 실리는 순간 앱 본체 쓰기가 열린다 — writable_roots="/"였던 2026-07-22
+  // 크리티컬의 조상 변종. SDK는 게이트(isForbidden)가 막지만 codex는 프로세스 단위라 등록에서 막는다.
+  if (inside(appRootCanon, real)) throw err('protected', real);
+  // 주의: ~/.argo·WS_ROOT를 '포함'하는 루트(예: 홈 전체)는 의도적으로 허용한다 — fs 능력(홈 개방)의
+  // 기존 한계와 동일 계열이고, SDK 게이트는 여전히 선행 차단한다. 이 한계는 UI가 러너별로 정직 표기.
   return real;
 }
 

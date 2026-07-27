@@ -529,8 +529,10 @@ function WorkRootsCard({ ws }) {
   const [err, setErr] = useState('');
 
   useEffect(() => {
-    api(`/api/companies/${ws}/workroots`).then((d) => { setRoots(d.roots); setMax(d.max); }).catch(() => setRoots([]));
-  }, [ws]);
+    // 로드 실패를 빈 목록과 구분 — "없습니다"로 보이면 일시 장애가 데이터 소실처럼 읽힌다(분리 검수 LOW)
+    api(`/api/companies/${ws}/workroots`).then((d) => { setRoots(d.roots); setMax(d.max); })
+      .catch(() => { setRoots([]); setErr(t('settings.workroots.err.load')); });
+  }, [ws]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function mutate(body) {
     if (busy) return;
@@ -569,7 +571,7 @@ function WorkRootsCard({ ws }) {
             <form onSubmit={(e) => { e.preventDefault(); if (input.trim()) mutate({ add: input.trim() }); }}
               style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={t('settings.workroots.placeholder')}
-                style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
+                {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
               <button className="btn" type="submit" disabled={busy || !input.trim()}>{busy ? <Spinner /> : t('settings.workroots.add')}</button>
             </form>
           )}
