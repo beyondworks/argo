@@ -35,13 +35,14 @@ export async function writeFileAtomic(file, body, { mode = 0o644 } = {}) {
 
 /** rename 재시도 — Windows는 대상 파일이 잠깐 잠겨 있으면(동시 rename 경합·AV·인덱서) EPERM/EACCES를
     던진다(2026-07-27 CI 첫 Windows 실행 실측: 동시 20쓰기에서 EPERM — 동기화·채팅이 같은 파일을 겹쳐
-    쓰는 프로덕션 경로와 동형). POSIX는 첫 시도에 끝난다(동작 불변). 총 ~550ms 백오프 후에도 잠겨
-    있으면 진짜 오류로 올린다 — 조용히 삼키면 유실이 무증상이 된다. */
+    쓰는 프로덕션 경로와 동형). win32 한정 — POSIX의 rename EPERM/EACCES는 사실상 영구 조건(디렉터리
+    권한·sticky bit)이라 재시도가 순수 지연일 뿐이다(분리 검수 2026-07-27). 총 ~450ms 백오프 후에도
+    잠겨 있으면 진짜 오류로 올린다 — 조용히 삼키면 유실이 무증상이 된다. */
 async function renameRetry(tmp, file) {
   for (let i = 0; ; i++) {
     try { return await rename(tmp, file); }
     catch (e) {
-      if ((e.code !== 'EPERM' && e.code !== 'EACCES') || i >= 9) throw e;
+      if (process.platform !== 'win32' || (e.code !== 'EPERM' && e.code !== 'EACCES') || i >= 9) throw e;
       await new Promise((r) => setTimeout(r, 10 * (i + 1)));
     }
   }

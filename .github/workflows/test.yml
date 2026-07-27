@@ -20,9 +20,14 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 레포 기본 토큰이 이미 read지만 조직/레포 기본값 변경에도 안전하게 고정(분리 검수 권고)
+permissions:
+  contents: read
+
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # PR만 취소 — main push까지 취소하면 연속 푸시에서 앞 커밋이 판정 없이 사라진다(분리 검수 권고)
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
