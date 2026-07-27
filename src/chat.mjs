@@ -20,7 +20,7 @@ import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { detectRunnerDenial, detectDeniedNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner } from './runners.mjs';
+import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isOpenRouterCreditError } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
@@ -638,8 +638,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
           ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — the ${noCli.join('/')} runner executes through the vendor CLI. Install it, or connect Claude (no install needed) in Settings → AI connections.`
           : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — ${noCli.join('/')} 러너는 벤더 CLI로 실행됩니다. CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
       : (lang === 'en'
-          ? 'No AI runner is connected. Connect one in Settings → AI connections (Claude, Codex, Gemini, GLM, or Kimi), then try again.'
-          : 'AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 Claude·Codex·Gemini·GLM·Kimi 중 하나를 연결한 뒤 다시 말을 걸어 주세요.'));
+          ? 'No AI runner is connected. Connect one in Settings → AI connections (Claude, Codex, Gemini, GLM, Kimi, or OpenRouter), then try again.'
+          : 'AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 Claude·Codex·Gemini·GLM·Kimi·OpenRouter 중 하나를 연결한 뒤 다시 말을 걸어 주세요.'));
   }
   const runner = resolved.runner;
   // 폴백이면 크루에 지정된 model은 원래 러너의 것이라 무효 — 폴백 러너의 기본 모델로 실행한다.
@@ -965,18 +965,12 @@ ${lang === 'en'
       if (hadWork) {
         await appendUsage(wsId, {
           kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, runner, model: actualModel || effModel || null,
-          usage: msg.usage, costUsd: msg.total_cost_usd, ms: Date.now() - t0, tools: toolCounts, billed,
+          // openrouter는 costUsd 미기록(설계 §4) — SDK 금액은 Anthropic 단가 계산이라 타 벤더 모델에서 오액.
+          // 틀린 금액 표시·예산 차감은 이번에 죽인 신고 계열의 재발이다. 실비(P2)는 /generation API로.
+          usage: msg.usage, costUsd: runner === 'openrouter' ? null : msg.total_cost_usd, ms: Date.now() - t0, tools: toolCounts, billed,
         });
       }
       if (msg.subtype === 'success') reply = msg.result;
-      // OpenRouter 크레딧 소진 — CLI가 402를 "성공한 답변 텍스트"로 삼켜 사용자에게 날 API 에러가
-      // 그대로 보인다(실측 2026-07-27: "API Error: 402 This request requires more credits…").
-      // 신규 키는 잔액 $0이 기본이라 첫 사용자 전원이 이 화면을 만난다 — 원인·해결처를 붙인다.
-      if (runner === 'openrouter' && /API Error: 402|requires more credits/i.test(reply)) {
-        reply += lang === 'en'
-          ? `\n\n---\n⚠ Your OpenRouter credit balance is too low for this turn. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.`
-          : `\n\n---\n⚠ OpenRouter 크레딧 잔액이 부족해 이 턴을 처리하지 못했습니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.`;
-      }
       else {
         // CLI가 낸 실제 원인(errors[])을 버리지 않는다 — "error_during_execution" 한 줄로는 사용자도
         // 우리도 진단 불가(Windows 실기 사례: 자격 정상인데 원인 불명 실패가 이 코드 때문에 미궁).
@@ -994,6 +988,15 @@ ${lang === 'en'
         throw new Error(`턴 실패: ${msg.subtype}${detail ? ` — ${detail.slice(0, 300)}` : ''}`);
       }
     }
+  }
+  // OpenRouter 크레딧 소진 — CLI가 402를 "성공한 답변 텍스트"로 삼킨다(실측 2026-07-27:
+  // "API Error: 402 This request requires more credits…"). 신규 키는 잔액 $0이 기본이라 첫
+  // 사용자 전원이 이 화면을 만난다 — 원인·충전처를 붙인다. success/else 쌍 **밖**의 독립
+  // 블록이어야 한다(사이에 끼우면 else가 이 if에 붙어 전 러너 성공 턴이 throw — 검수 CRITICAL 실증).
+  if (runner === 'openrouter' && isOpenRouterCreditError(reply)) {
+    reply += lang === 'en'
+      ? `\n\n---\n⚠ Your OpenRouter credit balance is too low for this turn. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.`
+      : `\n\n---\n⚠ OpenRouter 크레딧 잔액이 부족해 이 턴을 처리하지 못했습니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.`;
   }
   } catch (e) {
     let aborted = abortReg.wasAborted();

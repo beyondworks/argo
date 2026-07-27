@@ -66,7 +66,7 @@ export const isServerSecretKey = (k) => EXPLICIT_SERVER_SECRETS.has(k) || SERVER
 const PROVIDER_AUTH_OWNERS = {
   ANTHROPIC_API_KEY: ['claude'],
   CLAUDE_CODE_OAUTH_TOKEN: ['claude'],
-  ANTHROPIC_AUTH_TOKEN: ['claude', 'glm', 'kimi', 'openrouter'],
+  ANTHROPIC_AUTH_TOKEN: ['claude', 'glm', 'kimi'], // openrouter는 미등재 — cred.env가 항상 명시 세팅하므로 불필요하고, 등재하면 cred 없는 경로에서 호스트 Anthropic 토큰이 살아남는 이론적 구멍(검수 LOW, 호스트 스캐빈징 금지)
   OPENAI_API_KEY: ['codex'],
   GEMINI_API_KEY: ['gemini'],
   GOOGLE_API_KEY: ['gemini'],
@@ -192,7 +192,7 @@ export const RUNNERS = {
     // **실키 tool_use 스모크(scripts/openrouter-smoke.mjs)를 통과한 id만** 넣는다.
     // 아래 8종 = 2026-07-27 스모크 8/8 통과 실측(일반 응답 + tool_use 왕복).
     // 첫 항목이 러너 전환 시 기본 선택 — 저비용·도구 신뢰성 기준(gemini 카탈로그 관례와 동일).
-    // 그 외 모델은 사용자가 id를 직접 입력해 쓸 수 있되 미검증이다(스모크 후 여기 추가).
+    // 카탈로그 밖 id는 크루 카드에 넣어도 chat이 기본 모델로 강등한다 — 추가는 스모크 통과 후 여기로만.
     models: [
       { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
       { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
@@ -225,6 +225,10 @@ export const hostOptInAllowed = (runner) =>
   && (runner !== 'claude' || process.env.ARGO_STANDALONE !== '1');
 
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
+
+/** OpenRouter 402(크레딧 소진) 판정 — CLI가 402를 "성공 텍스트"로 삼킨 결과물(실측). 앞머리
+    고정 매칭으로 인용·설명 답변 오탐을 배제한다. chat(안내문)·oneshot(실패 승격)이 공유한다. */
+export const isOpenRouterCreditError = (s) => String(s ?? '').trimStart().startsWith('API Error: 402');
 
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5'; // 스모크 8/8 중 저비용·도구 신뢰성 1순위(2026-07-27 실측)
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
@@ -799,13 +803,14 @@ export async function runnerCredEnv(wsId, runner) {
   if (runner === 'openrouter') {
     // GLM·Kimi와 동일한 Anthropic 호환 패턴 — BYOK 계열 일반화(설계 2026-07-27).
     // 배관 실측(2026-07-27): 스모크 8/8(tool_use 왕복) + CLI 실요청 65KB(베타 9종·스트리밍) 수용 확인.
-    // CLAUDE_CODE_MAX_OUTPUT_TOKENS — OpenRouter는 선불 크레딧제로 max_tokens **선언분만큼 잔액을
-    // 선검사**한다(실측 402: "requested up to 32000, can only afford N"). CLI 기본 선언 32000이면
-    // 저잔액 계정은 전 턴 402 — 8192로 상한(크루 답변에 충분, env로 상향 가능).
+    // 출력 상한은 기본으로 걸지 않는다(검수 MEDIUM-2: 다른 러너엔 없는 상한 = 러너 차등 + 긴 답변
+    // 절단이 "AI가 대충 답함"으로 읽힘). OpenRouter는 선불제로 max_tokens 선언분만큼 잔액을
+    // 선검사(실측 402)하지만, 저잔액은 402 안내문(chat.mjs·oneshot)이 원인·충전처를 알려준다.
+    // 운영자가 원하면 env로만 상한 선언(OPENROUTER_MAX_OUTPUT_TOKENS).
     return { env: {
       ANTHROPIC_BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api',
       ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '',
-      CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.OPENROUTER_MAX_OUTPUT_TOKENS || '8192',
+      ...(process.env.OPENROUTER_MAX_OUTPUT_TOKENS ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.OPENROUTER_MAX_OUTPUT_TOKENS } : {}),
     } };
   }
   if (runner === 'codex') {

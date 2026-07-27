@@ -49,12 +49,13 @@ export const openrouterEnv = (key) => ({
 - 저장 전 실검증(기존 관문): `GET /api/v1/key` (잔액·한도 응답)로 유효성 프로브 — 거짓 '연결됨' 금지.
 - billing: `rowBilled` 판정에서 apikey → 청구 ✓ (#118의 단일 진실에 그대로 합류. 신규 배선 0)
 
-### 3. 모델 카탈로그 — 동적 + 추천 셋 (하드코딩 금지)
+### 3. 모델 카탈로그 — 정적 스모크-통과 셋 (P1 확정, 2026-07-27 개정)
 
-- 342개를 드롭다운에 다 못 넣는다. **추천 셋(6~8개, tool-use 검증 통과 모델만) + 검색 자유 입력.**
-- `/api/v1/models`를 서버가 6h 캐시(파일) — 목록 API 장애 시 캐시 폴백(외부 API 의존 규칙).
-- **tool 지원 필터**: 응답의 `supported_parameters`에 `tools` 없는 모델은 숨기지 않되
-  "도구 미지원 — 크루가 손발 없이 답만 한다" 배지(정직 표기, MCP 경계 원칙과 동일).
+- **P1 정본 = 정적 8종**: 스모크(tool_use 왕복) 전수 통과 모델만 RUNNERS에 등재. 카탈로그
+  규칙("실행 경로 검증 id만")과 동일 원칙 — 미검증 모델을 UI에 내밀지 않는다.
+- 카탈로그 밖 id는 크루 카드에 넣어도 chat이 기본 모델로 강등한다(조용한 미검증 실행 차단).
+- 동적 `/api/v1/models` 검색·tool 배지·자유 입력은 **P2 후속** — 수요 확인 후. (초안의
+  "동적+검색" 구상은 P1 범위에서 철회 — 문서·구현 드리프트 방지를 위해 정본을 현실로 맞춤.)
 - 크루 카드의 model 필드 형식: `openrouter:{vendor/model}` (기존 `runner:model` 규약 그대로).
 
 ### 4. 사용액 — 정확할 때만 돈을 말한다 (신고 계열 재발 방지)
@@ -62,6 +63,7 @@ export const openrouterEnv = (key) => ({
 - SDK가 리포트하는 `total_cost_usd`는 **Anthropic 단가 계산이라 OpenRouter 모델에선 오액**.
   틀린 금액 표시는 이번에 죽인 신고 계열의 재발이다 → **P1: openrouter 턴은 `costUsd: null`**
   (턴수만 집계 — hasCost를 만들지 않는다).
+- (P1 구현됨: chat·oneshot이 openrouter 턴 costUsd를 null로 기록 — 허수 금액·예산 오차감 차단)
 - P2: OpenRouter `GET /api/v1/generation?id=` 의 실비(`total_cost`)를 턴 후 비동기 기록.
   그때부터 금액 표시·예산 게이트에 합류.
 

@@ -77,4 +77,4 @@ for (const m of CANDIDATES) {
 const passed = results.filter((r) => r.pass).map((r) => r.model);
 console.log(`\n통과 ${passed.length}/${results.length} — 카탈로그 반영 후보:`);
 console.log(passed.map((m) => `  { id: '${m}', label: '${m.split('/')[1]}' },`).join('\n') || '  (없음 — 카탈로그 비워 둘 것)');
-process.exit(passed.length ? 0 : 1);
+process.exit(passed.length === results.length && results.length > 0 ? 0 : 1); // 전수 통과만 green — 카탈로그 확정 게이트
