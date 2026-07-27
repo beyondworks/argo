@@ -1,0 +1,15 @@
+# 소스는 항상 LF로 체크아웃 — Windows(러너·개발기)의 core.autocrlf=true가 CRLF로 풀어놓으면
+# 소스를 정규식으로 읽는 배선 테스트(\n 인접 단언)가 Windows에서만 깨진다(2026-07-27 CI 첫 실행 실측).
+# 레포 저장본은 이미 전부 LF라 renormalize는 불필요 — 체크아웃 방향만 고정한다.
+* text=auto eol=lf
+
+# 바이너리 명시(개행 변환 금지) — text=auto가 대부분 자동 판별하지만 안전벨트
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.gif binary
+*.woff binary
+*.woff2 binary
+*.mp4 binary
+*.dmg binary

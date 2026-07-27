@@ -140,7 +140,8 @@ test('arbitraryMcpBlocked: 서비스키/테넌트 있으면 차단, opt-in·로�
 });
 
 /* ── P1-8: 시크릿 담는 워크스페이스 JSON은 0600으로 생성 ── */
-test('writeJsonAtomic: 0600으로 생성(소유자만)', async () => {
+test('writeJsonAtomic: 0600으로 생성(소유자만)', async (t) => {
+  if (process.platform === 'win32') return t.skip('win32: POSIX 모드 미지원(항상 666) — 이 방어는 POSIX 전용');
   const d = await tmp();
   const f = join(d, '.secrets.json');
   await writeJsonAtomic(f, { runners: { claude: { type: 'apikey', value: 'sk-x' } } });

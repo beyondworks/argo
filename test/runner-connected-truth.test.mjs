@@ -8,9 +8,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // 임시 ARGO_ROOT + 임시 HOME — 격리 홈(~/.argo/*-home-*)·호스트 파일(~/.gemini)이 실 홈을 오염하지 않게.
-// homedir()는 POSIX에서 $HOME을 호출 시점에 읽으므로 import 전에 심으면 전 경로가 격리된다.
+// homedir()는 POSIX에선 $HOME, Windows에선 %USERPROFILE%을 읽는다 — 둘 다 심어야 전 플랫폼 격리
+// (HOME만 심으면 win 러너의 실 프로필에 쓰고 테스트는 다른 경로를 읽어 ENOENT — CI 실측 2026-07-27).
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-truthtest-'));
-process.env.HOME = await mkdtemp(join(tmpdir(), 'argo-truthhome-'));
+process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-truthhome-'));
 const {
   startRunnerWebAuth, submitRunnerWebAuth, webAuthDone,
   saveRunnerCred, runnerCredEnv, detectRunners,

@@ -43,7 +43,8 @@ test('runnerNeedsReconnect: 무효 자격이 있으면 "끊김" 분기', () => {
 
 test('codexSandboxArgs: 능력 → 샌드박스 매핑 고정(fs=홈 한정 쓰기, browser=네트워크)', async () => {
   const { homedir } = await import('node:os');
-  const HOME_ROOT = `sandbox_workspace_write.writable_roots=["${homedir()}"]`;
+  // 제품과 같은 JSON.stringify 이스케이프 — Windows 홈(C:\Users\…)은 생 보간과 어긋난다(백슬래시)
+  const HOME_ROOT = `sandbox_workspace_write.writable_roots=[${JSON.stringify(homedir())}]`;
   assert.deepEqual(codexSandboxArgs(null), [], '능력 미전달 = 기존 workspace-write 그대로(회귀 없음)');
   assert.deepEqual(codexSandboxArgs({ fs: false, browser: false }), [], '전부 꺼짐 = 오버라이드 없음');
   // fs ON = 홈 디렉토리 한정 — "/"(루트 전체)는 /Applications의 앱 본체까지 열었다(크리티컬 2026-07-22)

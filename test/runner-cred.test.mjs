@@ -9,8 +9,9 @@ import { join } from 'node:path';
 
 // 임시 ARGO_ROOT — WS_ROOT는 모듈 로드 시 고정되므로 import보다 먼저 심는다(실데이터 미접촉)
 // 임시 HOME — runnerCredEnv가 ~/.argo/*-home-*에 auth.json(평문 키)을 시드하므로 실 홈 오염 차단
-// (검수 F4 실측: 테스트 더미 키가 개발자 실 홈에 생성됐다). homedir()는 POSIX에서 $HOME을 읽는다.
-process.env.HOME = await mkdtemp(join(tmpdir(), 'argo-credhome-'));
+// (검수 F4 실측: 테스트 더미 키가 개발자 실 홈에 생성됐다). homedir()는 POSIX에선 $HOME,
+// Windows에선 %USERPROFILE% — 둘 다 심어야 전 플랫폼 격리.
+process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-credhome-'));
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-credtest-'));
 const { oauthFormatError, RUNNER_AUTH, startRunnerWebAuth, runnerStatus, saveRunnerCred, runnerCredEnv } = await import('../src/runners.mjs');
 
@@ -121,18 +122,25 @@ test('startClaudeSetupToken: 원클릭은 데스크톱 번들(ARGO_STANDALONE)�
     // 승인 없이 브라우저를 닫으면 10분 타임아웃까지 재시도가 전부 막히던 실사용 신고 2026-07-20).
     // 이전 'running' 시도는 cancel되고 새 세대가 슬롯을 인수해야 한다.
     // 실제 브라우저 hang 방지: CLAUDE_CLI를 부재 경로로 → spawn된 script가 즉시 실패 종료(승인 대기 없음).
-    let cancelled = 0;
-    (globalThis.__argoSetupToken ??= {})['credco-std'] = { status: 'running', ts: Date.now(), gen: 7, cancel: () => { cancelled += 1; } };
-    const prevCli = process.env.CLAUDE_CLI;
-    process.env.CLAUDE_CLI = '/nonexistent/argo-test-claude';
-    try {
-      const r = await startClaudeSetupToken('credco-std');
-      assert.equal(r.ok, true, 'standalone = 게이트 통과(새 시도 시작)');
-      assert.equal(cancelled, 1, '이전 running 시도는 cancel — 재클릭=재시작');
-      assert.equal(globalThis.__argoSetupToken['credco-std'].gen, 8, '새 세대가 슬롯 인수(구시도 결과는 gen 가드로 무시)');
-    } finally {
-      if (prevCli === undefined) delete process.env.CLAUDE_CLI; else process.env.CLAUDE_CLI = prevCli;
-      delete globalThis.__argoSetupToken['credco-std']; // 폐기 — 늦은 commit은 gen 가드가 버린다
+    if (process.platform === 'win32') {
+      // win32는 원클릭 자체가 미지원(script(1) 부재) — 게이트 통과 대신 unsupported-platform 정직 반환이
+      // 계약이다(runners.mjs의 win32 조기 반환·smoke-fresh-device.mjs의 win32 스킵과 동일 근거).
+      assert.deepEqual(await startClaudeSetupToken('credco-std'), { ok: false, reason: 'unsupported-platform' },
+        'win32 standalone = 미지원 플랫폼 정직 반환');
+    } else {
+      let cancelled = 0;
+      (globalThis.__argoSetupToken ??= {})['credco-std'] = { status: 'running', ts: Date.now(), gen: 7, cancel: () => { cancelled += 1; } };
+      const prevCli = process.env.CLAUDE_CLI;
+      process.env.CLAUDE_CLI = '/nonexistent/argo-test-claude';
+      try {
+        const r = await startClaudeSetupToken('credco-std');
+        assert.equal(r.ok, true, 'standalone = 게이트 통과(새 시도 시작)');
+        assert.equal(cancelled, 1, '이전 running 시도는 cancel — 재클릭=재시작');
+        assert.equal(globalThis.__argoSetupToken['credco-std'].gen, 8, '새 세대가 슬롯 인수(구시도 결과는 gen 가드로 무시)');
+      } finally {
+        if (prevCli === undefined) delete process.env.CLAUDE_CLI; else process.env.CLAUDE_CLI = prevCli;
+        delete globalThis.__argoSetupToken['credco-std']; // 폐기 — 늦은 commit은 gen 가드가 버린다
+      }
     }
   } finally {
     delete process.env.ARGO_TENANT_OWNER;

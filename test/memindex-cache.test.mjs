@@ -191,6 +191,7 @@ test('같은 프로세스 동시 턴이 이벤트 루프를 세우지 않는다 
 // 실어두는 것 자체가 거짓 약속이고, 행이 없으면 다음 스캔이 자동 재시도한다.
 test('읽을 수 없게 된 문서는 두 경로 모두 인덱스에서 뺀다', async (t) => {
   if (process.getuid?.() === 0) return t.skip('root는 권한 검사를 우회한다');
+  if (process.platform === 'win32') return t.skip('win32: chmod 000으로 읽기 불가를 만들 수 없다(POSIX 권한 모델 부재)');
   const p = await seed('c-unreadable');
   await updateIndex('c-unreadable');                       // 예열 — 캐시에 옛 내용의 행이 존재
   const f = join(p.notes, '배포-절차.md');

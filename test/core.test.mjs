@@ -133,7 +133,7 @@ test('writeFileAtomic: 버퍼 원자쓰기 + mode, 동시 쓰기에도 원본 �
   const f = join(d, 'blob.bin');
   await writeFileAtomic(f, Buffer.from('한글 bytes'), { mode: 0o600 });
   assert.equal((await readFile(f)).toString(), '한글 bytes');
-  assert.equal((await stat(f)).mode & 0o777, 0o600, '지정 mode 적용');
+  if (process.platform !== 'win32') assert.equal((await stat(f)).mode & 0o777, 0o600, '지정 mode 적용'); // win32: POSIX 모드 미지원(항상 666)
   await Promise.all(Array.from({ length: 20 }, (_, i) => writeFileAtomic(f, Buffer.from(`v${i}`))));
   assert.ok((await readFile(f)).toString().startsWith('v'), '항상 완전한 내용(tmp→rename)');
   await rm(d, { recursive: true, force: true });
@@ -291,8 +291,10 @@ test('동기화 자격 — env 우선, 파일 폴백, 저장 후 epoch 증가', 
     await saveSyncCreds({ url: 'https://f.supabase.co', key: 'fk', owner: 'fo' }, { root });
     assert.equal(credsEpoch(), e0 + 1);
     assert.deepEqual(loadSyncCreds({ root, env: {} }), { url: 'https://f.supabase.co', key: 'fk', owner: 'fo' });
-    const st = await stat(join(root, '.sync-credentials.json'));
-    assert.equal(st.mode & 0o777, 0o600);
+    if (process.platform !== 'win32') { // win32: POSIX 모드 미지원
+      const st = await stat(join(root, '.sync-credentials.json'));
+      assert.equal(st.mode & 0o777, 0o600);
+    }
     // 누락 값 저장 거부
     await assert.rejects(() => saveSyncCreds({ url: 'x', key: '', owner: 'y' }, { root }));
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -329,8 +331,10 @@ test('기기 세션 — 저장/로드/삭제, 0600, 손상 안전', async () => 
     const sess = loadDeviceSession({ root });
     assert.equal(sess.user.id, 'u-1');
     assert.equal(sess.refresh_token, 'rt1');
-    const st = await stat(join(root, '.device-session.json'));
-    assert.equal(st.mode & 0o777, 0o600);
+    if (process.platform !== 'win32') { // win32: POSIX 모드 미지원
+      const st = await stat(join(root, '.device-session.json'));
+      assert.equal(st.mode & 0o777, 0o600);
+    }
     // 만료가 먼 세션은 네트워크 없이 그대로 반환
     const fresh = await getFreshDeviceSession({ root });
     assert.equal(fresh.access_token, 'at1');
