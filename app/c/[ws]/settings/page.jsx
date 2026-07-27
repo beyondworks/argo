@@ -458,6 +458,28 @@ function CapabilitiesCard({ ws }) {
   const [caps, setCaps] = useState(null);
   const [defs, setDefs] = useState([]);
   const [busy, setBusy] = useState('');
+  const [rootInput, setRootInput] = useState('');
+  const [rootErr, setRootErr] = useState('');
+
+  // 허용 폴더(fsRoots) — P0-1 (B): codex 러너의 쓰기 범위를 홈+지정 폴더로. 서버가 검증(하드존 거부)한다.
+  async function saveRoots(next) {
+    setBusy('fsRoots'); setRootErr('');
+    try {
+      const d = await api(`/api/companies/${ws}/capabilities`, { fsRoots: next });
+      setCaps(d.capabilities);
+      return true;
+    } catch (e) {
+      setRootErr(String(e.message || e));
+      return false;
+    } finally {
+      setBusy('');
+    }
+  }
+  async function addRoot() {
+    const v = rootInput.trim();
+    if (!v || busy) return;
+    if (await saveRoots([...(caps?.fsRoots ?? []), v])) setRootInput('');
+  }
 
   useEffect(() => {
     api(`/api/companies/${ws}/capabilities`).then((d) => { setCaps(d.capabilities); setDefs(d.defs); }).catch(() => setCaps({}));
@@ -511,6 +533,35 @@ function CapabilitiesCard({ ws }) {
         </div>
         );
       })}
+      {caps?.fs && (
+        <div style={{ borderTop: '1px dashed var(--border-soft)', marginTop: 4, paddingTop: 12, padding: '12px 8px 4px', display: 'grid', gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 600 }}>{t('settings.caps.fsRoots.title')}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-2)', marginTop: 2, lineHeight: 1.6 }}>{t('settings.caps.fsRoots.desc')}</div>
+          </div>
+          {(caps.fsRoots ?? []).length > 0 && (
+            <div style={{ display: 'grid', gap: 4 }}>
+              {caps.fsRoots.map((r) => (
+                <div key={r} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="mono" style={{ fontSize: 11.5, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}>{r}</span>
+                  <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={!!busy}
+                    onClick={() => saveRoots(caps.fsRoots.filter((x) => x !== r))}>{t('common.delete')}</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input suppressHydrationWarning value={rootInput} onChange={(e) => setRootInput(e.target.value)}
+              placeholder={t('settings.caps.fsRoots.ph')} disabled={!!busy}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); addRoot(); } }}
+              style={{ flex: 1, minWidth: 0, fontSize: 12, padding: '7px 10px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--card-2)', color: 'var(--fg)' }} />
+            <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={!!busy || !rootInput.trim()} onClick={addRoot}>
+              {busy === 'fsRoots' ? <Spinner size={12} /> : t('common.add')}
+            </button>
+          </div>
+          {rootErr && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{rootErr}</p>}
+        </div>
+      )}
     </div>
   );
 }

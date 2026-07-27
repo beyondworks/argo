@@ -147,8 +147,8 @@ export function denialNote({ cap, path = '', capOn, lang = 'ko', outsideHome = f
   }
   const candidates = outsideHome
     ? (en
-        ? `The target is outside your home folder — this runner can only write inside your home folder even with the capability on. Move it under your home folder and I'll retry.`
-        : `대상이 홈 폴더 밖입니다 — 이 능력을 켜도 쓰기 범위는 홈 폴더까지입니다. 홈 폴더 안으로 옮겨 주시면 다시 시도하겠습니다.`)
+        ? `The target is outside your home folder. Add that folder in **Settings → Capabilities → Allowed folders** (then retry), or move the files under your home folder.`
+        : `대상이 홈 폴더 밖입니다. **설정 → 로컬 능력 → 허용 폴더**에 그 폴더를 추가해 주시면 다시 시도하겠습니다(또는 홈 폴더 안으로 옮기셔도 됩니다).`)
     : (en
         ? `Likely one of: ① the operating system is blocking it — **System Settings → Privacy & Security → Files and Folders** (or Full Disk Access), allow Argo and restart the app; on Windows, check the folder isn't read-only or under controlled folder access. ② The runner connection isn't picking up settings — reconnect the runner in **Settings → AI connections** (or update its CLI).`
         : `다음 중 하나일 수 있습니다: ① 운영체제가 막고 있음 — **시스템 설정 → 개인정보 보호 및 보안 → 파일 및 폴더**(또는 전체 디스크 접근 권한)에서 Argo를 허용하고 앱을 다시 켜 주세요. 윈도우라면 폴더가 읽기 전용인지·제어된 폴더 액세스가 걸려 있는지 확인해 주세요. ② 러너 연결에 설정이 반영되지 않음 — **설정 → AI 연결**에서 러너 재연결(또는 CLI 업데이트)을 시도해 주세요.`);
