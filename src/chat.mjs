@@ -407,11 +407,13 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
   // 수신 크루의 새 턴으로 배달한다(다른 세션·다른 시각에도 소통 — 실사용 요청 2026-07-27).
   // hop·chain을 메시지에 실어 비동기 경로에도 연쇄 상한(2)·순환 차단이 그대로 적용된다.
   // 노출 게이트는 delegate와 동일(colleagues — hop≥2면 빈 배열이라 자동 비노출).
+  let mailSent = 0; // 한 턴 쪽지 상한(팬아웃 방어 — delegate used와 동일 패턴)
   const sendToCrew = tool(
     'send_to_crew',
     '동료 크루에게 비동기 쪽지를 보낸다(결과를 기다리지 않음 — 지금 턴은 바로 끝난다). 상대는 잠시 뒤 자기 턴에서 읽고 처리하며, 필요하면 나에게 답장을 보낸다. to는 수신 동료 slug, cc는 참조로 사본을 받을 동료 slug 목록(선택), message는 상대가 단독으로 이해할 수 있는 내용. 즉시 결과가 필요한 하위 작업은 이 도구가 아니라 delegate를 써라.',
     { to: z.string(), cc: z.array(z.string()).optional(), message: z.string() },
     async ({ to, cc, message }) => {
+      if (mailSent >= 2) return text('쪽지 한도 초과 — 이번 턴은 이미 보낸 쪽지로 충분하다. 남은 작업을 직접 마무리하라.');
       const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase().trim();
       const resolveOne = (v) => colleagues.find((a) => norm(a.slug) === norm(v) || norm(a.name) === norm(v));
       const target = resolveOne(to);
@@ -419,6 +421,7 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
       const ccSlugs = (cc ?? []).map(resolveOne).filter(Boolean).map((a) => a.slug);
       const { sendCrewMail } = await import('./crewmail.mjs');
       const id = await sendCrewMail(wsId, { from: fromSlug, fromName, to: target.slug, cc: ccSlugs, message, hop: hop + 1, chain: [...chain, fromSlug] });
+      mailSent += 1;
       return text(`쪽지를 보냈다(${id} → ${target.name}${ccSlugs.length ? `, 참조 ${ccSlugs.length}명` : ''}). 상대는 잠시 뒤 자기 턴에서 읽는다 — 결과를 기다리지 말고 지금 할 일을 마무리하라.`);
     },
   );
@@ -629,7 +632,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
         : '이번 달 회사 지출 한도에 도달해서 지금은 새 작업을 시작할 수 없어요. 설정에서 한도를 올리거나 다음 달을 기다려 주시면 바로 이어서 하겠습니다.';
       const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
       await appendEvent(wsId, {
-        type: 'turn', slug: agentSlug, source: from ? 'delegate' : (source ?? 'deck'), ...(from ? { from } : {}),
+        type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...(from ? { from } : {}),
         gist: userMsg.replace(/\s+/g, ' ').trim().slice(0, 60), ok: true, ms: 0, budgetBlocked: true,
         journalRel: relative(p.vault, handover.file),
       });
@@ -695,7 +698,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   if (isCliRunner(runner)) {
     const t0 = Date.now();
     const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
-    const evBase = { type: 'turn', slug: agentSlug, source: from ? 'delegate' : (source ?? 'deck'), ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };
+    const evBase = { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };
     await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name); // 코드+러너명(detail) — 클라가 번역
     // 중단 배선 — SDK 경로처럼 정지 버튼이 실제로 프로세스를 끊게 한다(외부 CLI는 signal로 자식 kill).
     const ac = new AbortController();
@@ -789,7 +792,7 @@ ${lang === 'en'
         }
       }
       await appendUsage(wsId, {
-        kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, runner,
+        kind: source ?? (from ? 'delegate' : 'chat'), slug: agentSlug, from, runner,
         model: `${runner}${usedModel ? `:${usedModel}` : ''}`, usage: {}, costUsd: null, ms: Date.now() - t0,
         billed: await isBilledRunner(wsId, runner), // 이 경로는 costUsd가 null이라 금액엔 무영향 — 기록 일관성용
       });
@@ -834,7 +837,11 @@ ${lang === 'en'
   const mcpAllow = Object.keys(servers).map((n) => `mcp__${n}`);
 
   // 크루 도구 — 결재 요청은 모든 턴. 위임은 hop 2단계까지(사장→A→B→C에서 끝), 이미 거친 크루로는 금지(순환 차단).
-  const colleagues = hop >= 2 ? [] : (await listAgents(wsId)).filter((a) => a.slug !== agentSlug && !chain.includes(a.slug));
+  // chain 순환 차단의 예외 — **직전 발신자에게는 회신 허용**(분리 검수 HIGH-2: 쪽지는 왕복이 목적인데
+  // chain 제외가 회신 경로를 끊고, 2명 회사에선 도구 자체가 미등록이었다). 왕복 폭주는 hop 상한이
+  // 가둔다: A(h0)→B(h1 배달 턴)→회신(h2 배달 턴)은 colleagues가 빈 배열이라 더 못 보낸다.
+  const lastSender = chain.length ? chain[chain.length - 1] : null;
+  const colleagues = hop >= 2 ? [] : (await listAgents(wsId)).filter((a) => a.slug !== agentSlug && (!chain.includes(a.slug) || a.slug === lastSender));
   const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang);
 
   // 로컬 능력 — 전부 opt-in. 파일·셸 부작용 도구는 bypass 여부와 무관하게 사전 승인 목록에서 빼고
@@ -897,7 +904,7 @@ ${lang === 'en'
   const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
   // msg = 원 지시 전문(재실행의 원천), steps = 단계 궤적(활동 드릴다운의 원천 — 실행 이력)
   const evBase = {
-    type: 'turn', slug: agentSlug, source: from ? 'delegate' : (source ?? 'deck'),
+    type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'),
     ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, msg: userMsg.slice(0, 2000),
   };
   const steps = [];
@@ -986,7 +993,7 @@ ${lang === 'en'
         || (msg.usage && ((msg.usage.input_tokens ?? 0) + (msg.usage.output_tokens ?? 0) > 0));
       if (hadWork) {
         await appendUsage(wsId, {
-          kind: from ? 'delegate' : (source ?? 'chat'), slug: agentSlug, from, runner, model: actualModel || effModel || null,
+          kind: source ?? (from ? 'delegate' : 'chat'), slug: agentSlug, from, runner, model: actualModel || effModel || null,
           // openrouter는 costUsd 미기록(설계 §4) — SDK 금액은 Anthropic 단가 계산이라 타 벤더 모델에서 오액.
           // 틀린 금액 표시·예산 차감은 이번에 죽인 신고 계열의 재발이다. 실비(P2)는 /generation API로.
           usage: msg.usage, costUsd: runner === 'openrouter' ? null : msg.total_cost_usd, ms: Date.now() - t0, tools: toolCounts, billed,

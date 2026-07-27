@@ -45,11 +45,41 @@ test('배달 성공 — runTurn 호출 후 파일 제거, cc 프레임 구분', 
   assert.equal(kinds.b, 'to'); assert.equal(kinds.c, 'cc');
 });
 
-test('mailPrompt — to는 회신 안내, cc는 회신 의무 없음 표기', () => {
-  const to = mod.mailPrompt({ kind: 'to', fromName: '알파', message: 'x' });
-  const cc = mod.mailPrompt({ kind: 'cc', fromName: '알파', message: 'x' });
+test('mailPrompt — to는 회신 안내, cc는 회신 의무 없음, hop≥2는 회신 지시 금지', () => {
+  const to = mod.mailPrompt({ kind: 'to', fromName: '알파', message: 'x', hop: 1 });
+  const cc = mod.mailPrompt({ kind: 'cc', fromName: '알파', message: 'x', hop: 1 });
   assert.match(to, /send_to_crew/); assert.match(to, /답장/);
   assert.match(cc, /참조/); assert.doesNotMatch(cc, /send_to_crew/);
+  // hop≥2 배달 턴은 colleagues가 빈 배열 = 도구 미등록 — 존재하지 않는 도구를 지시하면 안 된다(검수 HIGH-2)
+  const h2 = mod.mailPrompt({ kind: 'to', fromName: '알파', message: 'x', hop: 2 });
+  assert.doesNotMatch(h2, /send_to_crew/, 'hop 2 배달 턴에 회신 지시가 남아 있다');
+});
+
+test('선점 경합 — 두 배달 주체가 동시에 돌아도 배달은 1회(rename 원자성, 검수 CRITICAL-1)', async () => {
+  await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'race', message: '경합 검증' });
+  let calls = 0;
+  const run = () => mod.deliverCrewMail(WS, async () => { calls += 1; await new Promise((r) => setTimeout(r, 40)); });
+  await Promise.all([run(), run()]);
+  assert.equal(calls, 1, '이중 배달 — 선점이 상호배제가 아니다');
+  assert.deepEqual(await mailFiles('race'), []);
+});
+
+test('cc 상한 — CC_MAX 초과는 통째로 거절(팬아웃 총량 방어, 검수 MEDIUM)', async () => {
+  await assert.rejects(
+    () => mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'z', cc: ['c1', 'c2', 'c3', 'c4', 'c5'], message: 'x' }),
+    /참조는/);
+});
+
+test('동기화 제외 — mail/은 로컬 큐다(검수 CRITICAL-2, .gw-queue 선례)', async () => {
+  const { EXCLUDE } = await import('../src/sync.mjs');
+  assert.equal(EXCLUDE('mail/beta/m123-to.json'), true, 'mail/이 동기화를 타면 리더 교체 시 이중 배달');
+  assert.equal(EXCLUDE('mail/.dead/x.json'), true);
+  assert.equal(EXCLUDE('vault/files/mail.txt'), false, '일반 파일명 mail은 제외 대상이 아니다');
+});
+
+test('회신 예외 — 직전 발신자는 colleagues에 남는다(검수 HIGH-2, 소스 계약)', () => {
+  const src = read('src/chat.mjs');
+  assert.match(src, /a\.slug === lastSender/, '직전 발신자 회신 허용이 사라졌다 — 쪽지 왕복이 다시 불가능해진다');
 });
 
 test('유계 재시도 — 실패는 attempts 증가, 소진 시 dead/로 이동(조용한 소실 금지)', async () => {
@@ -58,9 +88,9 @@ test('유계 재시도 — 실패는 attempts 증가, 소진 시 dead/로 이동
     await mod.deliverCrewMail(WS, async () => { throw new Error('runner down'); });
   }
   assert.deepEqual(await mailFiles('b'), [], '소진된 메시지가 우편함에 남아 무한 재시도된다');
-  const dead = await readdir(join(paths(WS).root, 'mail', 'dead'));
-  assert.ok(dead.some((f) => f.includes(id)), 'dead/에 없다 — 무증상 소실');
-  const rec = JSON.parse(await readFile(join(paths(WS).root, 'mail', 'dead', dead.find((f) => f.includes(id))), 'utf8'));
+  const dead = await readdir(join(paths(WS).root, 'mail', '.dead'));
+  assert.ok(dead.some((f) => f.includes(id)), '.dead/에 없다 — 무증상 소실');
+  const rec = JSON.parse(await readFile(join(paths(WS).root, 'mail', '.dead', dead.find((f) => f.includes(id))), 'utf8'));
   assert.equal(rec.attempts, mod.MAIL_MAX_ATTEMPTS);
   assert.match(rec.lastError, /runner down/);
 });

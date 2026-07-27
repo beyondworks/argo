@@ -10,6 +10,8 @@ function scheduleLabel(s, t, DOW) {
   const time = (s.times?.length ? s.times : [s.time]).join('·');
   // 1회 예약(크루의 schedule_task로 생기는 형태) — daily로 표기하면 "매일 15:00"으로 거짓 표시된다
   if (s.type === 'once') return t('routines.scheduleOnce', { date: s.date ?? '', time });
+  // interval(크루 Start-loop) — daily로 흘리면 "매일 "(시각 없음) 거짓 표시가 된다(once와 같은 함정, 검수 MEDIUM)
+  if (s.type === 'interval') return t('routines.scheduleInterval', { min: s.everyMinutes ?? '?' });
   if (s.type !== 'weekly') return t('routines.scheduleDaily', { time });
   const dow = (s.dows?.length ? s.dows : [s.dow ?? 1]).map((d) => DOW[d]).join('·');
   return t('routines.scheduleWeekly', { dow, time });
@@ -76,6 +78,7 @@ export default function Routines({ params }) {
       type: tpl?.schedule?.type ?? 'daily',
       times: tpl?.schedule?.times ?? [tpl?.schedule?.time ?? '09:00'],
       dows: tpl?.schedule?.dows ?? [tpl?.schedule?.dow ?? 1],
+      everyMinutes: tpl?.schedule?.everyMinutes ?? 30,
     });
   }
 
@@ -89,6 +92,7 @@ export default function Routines({ params }) {
       type: r.schedule?.type ?? 'daily',
       times: r.schedule?.times ?? [r.schedule?.time ?? '09:00'],
       dows: r.schedule?.dows ?? [r.schedule?.dow ?? 1],
+      everyMinutes: r.schedule?.everyMinutes ?? 30,
     });
   }
 
@@ -99,7 +103,9 @@ export default function Routines({ params }) {
     try {
       const body = {
         agentSlug: form.agentSlug, title: form.title, prompt: form.prompt,
-        schedule: { type: form.type, times: form.times, dows: form.dows.map(Number) },
+        schedule: form.type === 'interval'
+          ? { type: 'interval', everyMinutes: Number(form.everyMinutes) } // 시각·요일 미전송 — 편집이 interval을 daily로 조용히 바꾸던 결함(검수 MEDIUM)의 교정
+          : { type: form.type, times: form.times, dows: form.dows.map(Number) },
       };
       if (form.id) {
         const res = await fetch(`/api/companies/${ws}/routines`, {
@@ -202,7 +208,7 @@ export default function Routines({ params }) {
             <div style={{ display: 'grid', gap: 4 }}>
               <span className="microlabel">{t('routines.cycle')}</span>
               <DropUp value={form.type} width={110} height={34} ariaLabel={t('routines.cycle')}
-                groups={[{ items: [{ value: 'daily', label: t('routines.daily') }, { value: 'weekly', label: t('routines.weekly') }] }]}
+                groups={[{ items: [{ value: 'daily', label: t('routines.daily') }, { value: 'weekly', label: t('routines.weekly') }, { value: 'interval', label: t('routines.interval') }] }]}
                 onChange={(v) => setForm({ ...form, type: v })} />
             </div>
             <label style={{ display: 'grid', gap: 4, flex: 1, minWidth: 180 }}>
@@ -234,6 +240,14 @@ export default function Routines({ params }) {
                 </div>
               </div>
             )}
+            {form.type === 'interval' && (
+              <label style={{ display: 'grid', gap: 4 }}>
+                <span className="microlabel">{t('routines.intervalEvery')}</span>
+                <input suppressHydrationWarning type="number" min={10} max={1440} step={5} value={form.everyMinutes}
+                  onChange={(e) => setForm({ ...form, everyMinutes: e.target.value })} style={{ ...selStyle, width: 110 }} />
+              </label>
+            )}
+            {form.type !== 'interval' && (
             <div style={{ display: 'grid', gap: 4 }}>
               <span className="microlabel">{t('routines.time')}</span>
               {/* 시각 복수 — 칩 목록 + 추가. 1개 남으면 삭제 버튼을 감춰 빈 스케줄을 막는다 */}
@@ -262,6 +276,7 @@ export default function Routines({ params }) {
                 </button>
               </div>
             </div>
+            )}
           </div>
           <textarea
             value={form.prompt}

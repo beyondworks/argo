@@ -105,6 +105,7 @@ async function claimRoutine(wsId, routineId, now) {
 // consolidate·memory에 락이 없어 LLM 이중 호출·saveNote lost update·워터마크 경쟁). 이 프로세스
 // 안의 겹침은 여기서 막고, 기기 간은 리스(isCloudLeader)가 담당한다.
 const consolidating = new Set();
+const mailDelivering = new Set(); // 회사별 우편 배달 in-flight — 틱 겹침 시 이중 진입 차단(HIGH-4)
 
 export function ensureScheduler() {
   if (globalThis.__argoScheduler) return;
@@ -126,12 +127,23 @@ export function ensureScheduler() {
           runRoutine(c.id, r.id).catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message));
         }
         // 크루 우편 배달 — 비동기 쪽지(send_to_crew)를 수신 크루의 새 턴으로. 회사당 틱 상한은
-        // crewmail이 강제. 턴 결과는 delegate와 같은 문법으로 수신 크루 스레드에 남긴다(웹에서 보임).
-        await deliverCrewMail(c.id, async (slug, msg, opts) => {
-          const prompt = mailPrompt(msg);
-          const t = await chat(c.id, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail' });
-          await appendTurn(c.id, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null }).catch(() => {});
-        }).catch((e) => console.error(`[argo] 크루 우편 배달 오류(${c.id}):`, e.message));
+        // crewmail이 강제. **await 금지**(분리 검수 HIGH-4): LLM 턴을 틱에서 기다리면 다른 회사의
+        // 루틴·기억 정리가 밀리고 틱이 겹쳐 이중 배달 조건이 된다 — 루틴과 같은 fire-and-forget +
+        // 회사별 in-flight 가드(consolidating 패턴).
+        if (!mailDelivering.has(c.id)) {
+          mailDelivering.add(c.id);
+          deliverCrewMail(c.id, async (slug, msg, opts) => {
+            const prompt = mailPrompt(msg);
+            const t = await chat(c.id, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail' });
+            // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
+            await appendTurn(c.id, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null })
+              .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${c.id}/${slug}):`, e.message));
+            // 배달 알림 — delegate의 emitNotify와 대칭(메신저 미러·활동 표면)
+            import('./notify.mjs').then((m) => m.emitNotify({ type: 'crewmail', wsId: c.id, from: opts.from, to: slug, reply: t.reply })).catch(() => {});
+          })
+            .catch((e) => console.error(`[argo] 크루 우편 배달 오류(${c.id}):`, e.message))
+            .finally(() => mailDelivering.delete(c.id));
+        }
         if (hhmm >= CONSOLIDATE_AT) {
           const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
           // 진행 중이면 시도 횟수를 태우지 않고 그냥 넘긴다(선점 자체를 하지 않는다)

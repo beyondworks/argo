@@ -68,6 +68,10 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // 디스크 큐(.gw-queue-*/) — 잡을 적재한 기기만의 로컬 처리 상태. 디렉터리 '안의 파일'까지 제외해야
   // 한다(basename만 보면 통과) — 큐가 동기화를 타면 두 기기가 같은 지시를 이중 실행한다.
   if (rel.split('/')[0].startsWith('.gw-queue')) return true;
+  // 크루 우편함(mail/) — 리더 기기만의 로컬 배달 큐(.claimed·attempts = 처리 상태). 동기화를 타면
+  // 리더 교체 시 지운 파일이 원격에서 되살아나 같은 쪽지를 이중 배달한다(.gw-queue와 동일 결함 계급,
+  // 분리 검수 CRITICAL-2 2026-07-27). 세션 간 소통은 배달 결과가 스레드(동기화 대상)로 남아 성립한다.
+  if (rel.split('/')[0] === 'mail') return true;
   const base = rel.split('/').pop();
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
