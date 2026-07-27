@@ -174,6 +174,7 @@ function Settings({ params }) {
 
       <Section label={t('settings.capabilities')}>
         <CapabilitiesCard ws={ws} />
+        <WorkRootsCard ws={ws} />
       </Section>
 
       <Section label={t('settings.connections')}>
@@ -515,6 +516,70 @@ function CapabilitiesCard({ ws }) {
   );
 }
 
+
+/** 외부 작업 폴더 — 사장이 지정한 폴더를 크루의 확장 책상으로 연다(fs 능력과 독립 — "전부"가 아니라
+    "이 폴더만" 여는 더 좁은 위임). 기기 로컬(경로는 기기 고유값 — 동기화 안 됨). 실사용 신고 최다
+    클러스터(홈 밖 경로 차단, 11건) 해소. 검증·보안 경계는 src/workroots.mjs가 정본. */
+function WorkRootsCard({ ws }) {
+  const { t } = useLang();
+  const [roots, setRoots] = useState(null);
+  const [max, setMax] = useState(8);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    api(`/api/companies/${ws}/workroots`).then((d) => { setRoots(d.roots); setMax(d.max); }).catch(() => setRoots([]));
+  }, [ws]);
+
+  async function mutate(body) {
+    if (busy) return;
+    setBusy(true); setErr('');
+    try {
+      const d = await api(`/api/companies/${ws}/workroots`, body);
+      setRoots(d.roots);
+      if (body.add) setInput('');
+    } catch (e) {
+      // 서버는 코드만 반환(K7 계열 예방) — 여기서 i18n 매핑. 미등록 코드는 일반 문구로.
+      const key = `settings.workroots.err.${String(e.message || '')}`;
+      const mapped = t(key);
+      setErr(mapped === key ? t('settings.workroots.err.invalid') : mapped);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span className="card-title">{t('settings.workroots.title')}</span>
+        <span className="chip">{t('settings.workroots.deviceLocal')}</span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.workroots.desc')}</p>
+      {roots === null ? <Skeleton h={60} /> : (
+        <>
+          {roots.length === 0 && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: '4px 0' }}>{t('settings.workroots.empty')}</p>}
+          {roots.map((r) => (
+            <div key={r} className="row" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px' }}>
+              <span className="mono" style={{ flex: 1, minWidth: 0, fontSize: 11.5, overflowWrap: 'anywhere' }}>{r}</span>
+              <button className="btn" onClick={() => mutate({ remove: r })} disabled={busy} style={{ fontSize: 11.5 }}>
+                {t('settings.workroots.remove')}
+              </button>
+            </div>
+          ))}
+          {roots.length < max && (
+            <form onSubmit={(e) => { e.preventDefault(); if (input.trim()) mutate({ add: input.trim() }); }}
+              style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={t('settings.workroots.placeholder')}
+                style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
+              <button className="btn" type="submit" disabled={busy || !input.trim()}>{busy ? <Spinner /> : t('settings.workroots.add')}</button>
+            </form>
+          )}
+          {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: '2px 0 0' }}>{err}</p>}
+          <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: '6px 0 0', lineHeight: 1.6 }}>{t('settings.workroots.runnerNote')}</p>
+        </>
+      )}
+    </div>
+  );
+}
 
 /** 설정 섹션 — 대시 룰 헤더 + 2열 등고 그리드(내용이 하나면 전체 폭). */
 function Section({ label, children }) {
