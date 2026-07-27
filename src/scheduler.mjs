@@ -2,6 +2,9 @@
 // (nodejs 런타임 라우트에서만 로드되므로 node: 임포트가 안전하다. P1에서 워커로 분리)
 import { listCompanies } from './hub.mjs';
 import { loadRoutines, runRoutine, isDue } from './routines.mjs';
+import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
+import { chat } from './chat.mjs';
+import { appendTurn } from './thread.mjs';
 import { consolidateMemory, rollupJournals } from './consolidate.mjs';
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader } from './sync.mjs';
@@ -102,6 +105,7 @@ async function claimRoutine(wsId, routineId, now) {
 // consolidate·memory에 락이 없어 LLM 이중 호출·saveNote lost update·워터마크 경쟁). 이 프로세스
 // 안의 겹침은 여기서 막고, 기기 간은 리스(isCloudLeader)가 담당한다.
 const consolidating = new Set();
+const mailDelivering = new Set(); // 회사별 우편 배달 in-flight — 틱 겹침 시 이중 진입 차단(HIGH-4)
 
 export function ensureScheduler() {
   if (globalThis.__argoScheduler) return;
@@ -121,6 +125,25 @@ export function ensureScheduler() {
           if (!(await claimRoutine(c.id, r.id, now))) continue;
           console.log(`[argo] 루틴 실행: ${c.id}/${r.title}`);
           runRoutine(c.id, r.id).catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message));
+        }
+        // 크루 우편 배달 — 비동기 쪽지(send_to_crew)를 수신 크루의 새 턴으로. 회사당 틱 상한은
+        // crewmail이 강제. **await 금지**(분리 검수 HIGH-4): LLM 턴을 틱에서 기다리면 다른 회사의
+        // 루틴·기억 정리가 밀리고 틱이 겹쳐 이중 배달 조건이 된다 — 루틴과 같은 fire-and-forget +
+        // 회사별 in-flight 가드(consolidating 패턴).
+        if (!mailDelivering.has(c.id)) {
+          mailDelivering.add(c.id);
+          deliverCrewMail(c.id, async (slug, msg, opts) => {
+            const prompt = mailPrompt(msg);
+            const t = await chat(c.id, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail' });
+            // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
+            await appendTurn(c.id, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null })
+              .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${c.id}/${slug}):`, e.message));
+            // 배달 알림은 보류(재검 N1): gateway.pushEvent에 crewmail 분기가 없어 텔레그램 무동작 +
+            // 슬랙 경로는 event.routine 접근으로 매 배달 TypeError였다. 메신저 문안·분기와 함께 별도
+            // 트랙으로(수신 결과는 스레드·활동에 이미 남는다).
+          })
+            .catch((e) => console.error(`[argo] 크루 우편 배달 오류(${c.id}):`, e.message))
+            .finally(() => mailDelivering.delete(c.id));
         }
         if (hhmm >= CONSOLIDATE_AT) {
           const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
