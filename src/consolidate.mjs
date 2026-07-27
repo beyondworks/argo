@@ -123,7 +123,9 @@ export async function consolidateMemory(wsId) {
   // (이전: SDK 직호출 + env 미주입 — 호스트 Claude 로그인에만 의존해 BYOK 웹 사용자·타 러너 사용자는 조용히 실패)
   // model은 claude 러너일 때만 haiku 적용(정리는 잔일 — 저비용), maxTurns 4 = 도구 거부돼도 최종 답까지.
   const { runner, text: out, usage, costUsd } = await runOneShot(wsId, PROMPT(text, noteTitles, lang, noteCtx),
-    { lang, model: 'claude-haiku-4-5-20251001', maxTurns: 4 });
+    // 배치 작업(새벽 자동 실행, 사용자 대기 없음)이라 공통 기본(120s)보다 넉넉히 — 상한의 목적은
+    // 지연 SLO가 아니라 "영원히 안 끝나는 것"을 끊어 스케줄러 in-flight 표시를 반드시 풀어주는 것이다.
+    { lang, model: 'claude-haiku-4-5-20251001', maxTurns: 4, timeoutMs: 10 * 60_000 });
   // billed 각인 — 구독 러너의 기억 정리 턴 금액이 청구로 새지 않게(검수 2026-07-27 부수 발견)
   await appendUsage(wsId, { kind: 'consolidate', slug: '', runner, usage, costUsd, ms: Date.now() - t0, billed: await isBilledRunner(wsId, runner).catch(() => undefined) });
 

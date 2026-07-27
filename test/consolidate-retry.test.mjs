@@ -18,7 +18,6 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-consolidate-'));
 const { paths } = await import('../src/workspace.mjs');
 const { planConsolidate, claimConsolidate, markConsolidateDone, CONSOLIDATE_RETRY_MS, CONSOLIDATE_MAX_ATTEMPTS } = await import('../src/scheduler.mjs');
 const { rollupJournals } = await import('../src/consolidate.mjs');
-const { SDK_HANG_LIMIT_MS } = await import('../src/oneshot.mjs');
 
 const TODAY = '2026-07-27';
 const T0 = Date.parse(`${TODAY}T04:00:00Z`);
@@ -193,12 +192,26 @@ test('배선: 스케줄러가 선점(claim)·성공 마킹(CAS)을 거치고, �
 test('배선: oneshot SDK 경로에 hang 상한이 걸려 있고 타이머가 항상 해제된다', async () => {
   const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
   assert.match(src, /abortController: ac/, 'SDK query에 중단 컨트롤러를 넘겨야 상한이 실효된다');
-  assert.match(src, /hangGuard = setTimeout\(\(\) => ac\.abort\(\), sdkTimeoutMs\)/, 'hang 상한 타이머');
-  assert.match(src, /finally \{\s*\n\s*if \(hangGuard\) clearTimeout\(hangGuard\);/, '성공·실패·자가치유 어느 경로로 나가도 타이머를 남기면 안 된다');
-  assert.match(src, /if \(ac\.signal\.aborted\) throw/, '중단됐으면 빈 결과를 성공으로 반환하지 않는다');
+  assert.match(src, /hangGuard = setTimeout\(\(\) => ac\.abort\(\), timeoutMs\)/, 'hang 상한 타이머 — CLI와 같은 knob');
+  assert.match(src, /finally \{\s*if \(hangGuard\) clearTimeout\(hangGuard\);/, '성공·실패·자가치유 어느 경로로 나가도 타이머를 남기면 안 된다');
 });
 
-test('SDK hang 상한은 지연 SLO가 아니라 hang 가드 — 정상 작업을 자르지 않을 만큼 넉넉하다', () => {
-  assert.ok(SDK_HANG_LIMIT_MS >= 5 * 60_000, '너무 짧으면 정상적인 긴 정리·영입이 실패로 뒤집힌다');
-  assert.ok(SDK_HANG_LIMIT_MS <= 30 * 60_000, '너무 길면 in-flight 가드가 사실상 영구 정지와 같아진다');
+test('러너 독립: SDK와 CLI가 같은 timeoutMs를 쓴다 (상한이 러너에 따라 갈리면 안 된다)', async () => {
+  const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /sdkTimeoutMs|SDK_HANG_LIMIT_MS/, 'SDK 전용 상한을 두면 같은 작업이 러너에 따라 잘리고 안 잘린다');
+  assert.match(src, /externalExec\(\{[^}]*timeoutMs/s, 'CLI 경로도 같은 값');
+});
+
+test('중단 원인을 정직한 문구로 — "사용자가 중단"으로 읽히면 안 된다 (검수 M-1)', async () => {
+  const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  // abort는 루프 안에서 throw하므로(SDK 실측: "process aborted by user") catch에서 갈아끼워야 실경로다
+  assert.match(src, /catch \(err\)/, '원본 에러를 err로 받고');
+  assert.match(src, /const e = ac\.signal\.aborted[\s\S]{0,200}sdk-timeout/, '중단이면 상한 초과로 치환 — 자가치유 로그·최종 안내가 모두 정직해진다');
+});
+
+test('기억 정리는 배치라 명시로 넉넉한 상한, 사용자 대기 경로는 기본값 보호 (검수 M-2)', async () => {
+  const cons = await readFile(new URL('../src/consolidate.mjs', import.meta.url), 'utf8');
+  const persona = await readFile(new URL('../src/persona.mjs', import.meta.url), 'utf8');
+  assert.match(cons, /timeoutMs: 10 \* 60_000/, '새벽 배치 — 사용자가 안 기다린다');
+  assert.doesNotMatch(persona, /timeoutMs/, '영입은 사용자가 화면에서 기다린다 — 기본(120s)을 늘리면 안 된다');
 });

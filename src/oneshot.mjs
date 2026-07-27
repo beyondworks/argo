@@ -3,17 +3,17 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
-
-// SDK 경로 hang 상한(기본 10분). 지연 상한이 아니라 "영원히 안 끝나는 것"만 끊는 가드다 —
-// 짧게 잡으면 정상적인 긴 정리·영입이 실패로 뒤집힌다. opts.sdkTimeoutMs로 조정 가능.
-export const SDK_HANG_LIMIT_MS = 10 * 60_000;
 import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, externalExec, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     제외하고 1회 재시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와 같은 원칙, 재귀 1회).
     model은 claude 러너일 때만 적용(다른 러너는 각자 기본 모델). 반환 { runner, text, usage, costUsd }. */
 export async function runOneShot(wsId, prompt, opts = {}) {
-  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, sdkTimeoutMs = SDK_HANG_LIMIT_MS, __exclude = null } = opts;
+  // timeoutMs는 **두 실행 경로 공통** 상한이다(검수 2026-07-27 M-3): CLI는 externalExec가, SDK는
+  // 아래 AbortController가 같은 값을 쓴다. 러너에 따라 상한이 갈리면 같은 작업이 codex로 뽑히면
+  // 잘리고 claude로 뽑히면 안 잘린다 — 이 파일의 존재 이유(러너 독립)와 정면 충돌한다.
+  // 오래 걸리는 배치(기억 정리)는 호출자가 명시로 늘린다.
+  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, __exclude = null } = opts;
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — 조용한 호스트 스캐빈징 금지(검수 MEDIUM, chat.mjs와 동일)
   // want=null(무선호) — 이 경로는 러너 독립이 명세라 claude 선호를 가장하지 않는다(선택 순서는 동일)
   const resolved = await resolveRunner(wsId, null, { exclude: __exclude })
@@ -32,7 +32,8 @@ export async function runOneShot(wsId, prompt, opts = {}) {
           : 'AI 러너가 하나도 연결돼 있지 않습니다 — 설정 → AI 연결에서 Claude·Codex·Gemini·GLM·Kimi·OpenRouter 중 하나를 연결해 주세요.'));
   }
   const runner = resolved.runner;
-  let hangGuard = null; // SDK 경로 hang 상한 타이머 — 아래 finally에서 항상 해제
+  let hangGuard = null;            // SDK 경로 hang 상한 타이머 — 아래 finally에서 항상 해제
+  const ac = new AbortController(); // catch에서도 봐야 한다(중단 원인을 정직한 문구로 바꾸기 위해)
   try {
     if (runner === 'codex' || runner === 'gemini') {
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격 우선, 없으면 호스트 로그인
@@ -46,8 +47,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // 그러면 호출자(스케줄러)의 in-flight 표시가 안 풀려 그 회사 기억 정리가 **무증상 영구 정지**한다
     // (검수 2026-07-27 M-1). 외부 CLI 경로는 이미 timeoutMs로 상한이 있어 두 경로를 맞추는 것이기도 하다.
     // 지연 SLO가 아니라 순수 hang 가드라 넉넉히 잡는다 — 정상 작업을 잘라내면 안 된다.
-    const ac = new AbortController();
-    hangGuard = setTimeout(() => ac.abort(), sdkTimeoutMs);
+    hangGuard = setTimeout(() => ac.abort(), timeoutMs);
     for await (const msg of query({
       prompt,
       options: {
@@ -70,7 +70,6 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         if (msg.subtype === 'success') text = msg.result; else failed = msg.subtype;
       }
     }
-    if (ac.signal.aborted) throw new Error(`sdk-timeout: ${Math.round(sdkTimeoutMs / 60_000)}분 안에 응답이 끝나지 않았습니다`);
     if (!text?.trim()) throw new Error(failed || 'empty-reply');
     // 402를 성공으로 두면 그 문구가 크루 카드·기억 노트에 영구 저장된다(검수 HIGH-1) — 실패로
     // 승격해 자가치유(다른 가용 러너 1회)·정직한 오류 경로를 태운다.
@@ -82,7 +81,13 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       throw new Error(`openrouter-limit: ${text.slice(0, 140)}`);
     }
     return { runner, text: text.trim(), usage, costUsd: runner === 'openrouter' ? null : costUsd };
-  } catch (e) {
+  } catch (err) {
+    // 중단 원인 정정 — abort는 루프 안에서 throw하고 SDK 메시지가 "process aborted by user"다.
+    // 그대로 두면 아무도 정지를 안 눌렀는데 "사용자가 중단"으로 읽히고, 자가치유 로그·최종 안내
+    // 어디에도 "상한에 걸렸다"는 흔적이 없다 — 이 PR이 없애려던 무증상성이 문구로 남는다(검수 M-1).
+    const e = ac.signal.aborted
+      ? Object.assign(new Error(`sdk-timeout: ${Math.round(timeoutMs / 1000)}초 안에 응답이 끝나지 않아 중단했습니다`), { cause: err })
+      : err;
     // 429(요청 한도)는 자가치유 대상이 아니다 — 일시적 한도인데 다른 벤더로 넘기면 사용자 고지 없이
     // 실제 과금 키로 갈아타게 된다(2R 검수 M1). 402(지속적 잔액 소진)와 달리 기다리면 풀린다.
     if (/openrouter-limit/.test(String(e.message))) {
