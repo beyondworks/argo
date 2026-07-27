@@ -419,10 +419,15 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
       const target = resolveOne(to);
       if (!target) return text(`"${to}"는 동료 명단에 없다. 가능한 slug: ${colleagues.map((a) => a.slug).join(', ')}`);
       const ccSlugs = (cc ?? []).map(resolveOne).filter(Boolean).map((a) => a.slug);
-      const { sendCrewMail } = await import('./crewmail.mjs');
-      const id = await sendCrewMail(wsId, { from: fromSlug, fromName, to: target.slug, cc: ccSlugs, message, hop: hop + 1, chain: [...chain, fromSlug] });
-      mailSent += 1;
-      return text(`쪽지를 보냈다(${id} → ${target.name}${ccSlugs.length ? `, 참조 ${ccSlugs.length}명` : ''}). 상대는 잠시 뒤 자기 턴에서 읽는다 — 결과를 기다리지 말고 지금 할 일을 마무리하라.`);
+      try {
+        const { sendCrewMail } = await import('./crewmail.mjs');
+        const id = await sendCrewMail(wsId, { from: fromSlug, fromName, to: target.slug, cc: ccSlugs, message, hop: hop + 1, chain: [...chain, fromSlug] });
+        mailSent += 1;
+        return text(`쪽지를 보냈다(${id} → ${target.name}${ccSlugs.length ? `, 참조 ${ccSlugs.length}명` : ''}). 상대는 잠시 뒤 자기 턴에서 읽는다 — 결과를 기다리지 말고 지금 할 일을 마무리하라.`);
+      } catch (e) {
+        // cc 상한 초과·공백 메시지 등 — 예외를 SDK로 던지지 않고 안내로 돌려 크루가 스스로 고치게(재검 N2)
+        return text(`쪽지 전송 실패: ${String(e.message || e)}`);
+      }
     },
   );
   // 러너·모델 인자 검증 — 카탈로그 대조 + 회사/호스트 연결 확인. 문제면 사용자에게 물어볼 안내문을 돌려준다.
@@ -836,7 +841,8 @@ ${lang === 'en'
   if (mcpScope) servers = Object.fromEntries(Object.entries(servers).filter(([n]) => mcpScope.includes(n)));
   const mcpAllow = Object.keys(servers).map((n) => `mcp__${n}`);
 
-  // 크루 도구 — 결재 요청은 모든 턴. 위임은 hop 2단계까지(사장→A→B→C에서 끝), 이미 거친 크루로는 금지(순환 차단).
+  // 크루 도구 — 결재 요청은 모든 턴. 위임·쪽지는 hop 2단계까지(사장→A→B→C에서 끝). 실효 바운드는
+  // hop 단독이다 — lastSender 회신 예외 도입 후 chain 제외는 도달 가능한 경로에서 무효(재검 (c) 확인).
   // chain 순환 차단의 예외 — **직전 발신자에게는 회신 허용**(분리 검수 HIGH-2: 쪽지는 왕복이 목적인데
   // chain 제외가 회신 경로를 끊고, 2명 회사에선 도구 자체가 미등록이었다). 왕복 폭주는 hop 상한이
   // 가둔다: A(h0)→B(h1 배달 턴)→회신(h2 배달 턴)은 colleagues가 빈 배열이라 더 못 보낸다.

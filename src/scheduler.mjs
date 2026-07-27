@@ -138,8 +138,9 @@ export function ensureScheduler() {
             // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
             await appendTurn(c.id, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null })
               .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${c.id}/${slug}):`, e.message));
-            // 배달 알림 — delegate의 emitNotify와 대칭(메신저 미러·활동 표면)
-            import('./notify.mjs').then((m) => m.emitNotify({ type: 'crewmail', wsId: c.id, from: opts.from, to: slug, reply: t.reply })).catch(() => {});
+            // 배달 알림은 보류(재검 N1): gateway.pushEvent에 crewmail 분기가 없어 텔레그램 무동작 +
+            // 슬랙 경로는 event.routine 접근으로 매 배달 TypeError였다. 메신저 문안·분기와 함께 별도
+            // 트랙으로(수신 결과는 스레드·활동에 이미 남는다).
           })
             .catch((e) => console.error(`[argo] 크루 우편 배달 오류(${c.id}):`, e.message))
             .finally(() => mailDelivering.delete(c.id));

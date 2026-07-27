@@ -129,6 +129,13 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
       inFlight.delete(claimedPath);
       continue;
     }
+    // 소진 선확인 — .dead 기록이 실패해 회수-재배달 루프에 들어온 메시지가 매 회차 LLM 턴을
+    // 태우지 않게, 턴 실행 **전에** 상한을 본다(재검 LOW: "상한이 결국 잡는다"가 이 경로에선 거짓이었다).
+    if ((msg.attempts ?? 0) >= MAIL_MAX_ATTEMPTS) {
+      await moveToDead(wsId, item.slug, item.file, claimedPath, { ...msg, lastError: msg.lastError ?? 'attempts exhausted' });
+      inFlight.delete(claimedPath);
+      continue;
+    }
     // claimedAt 각인 — 선점 **후** 갱신(선점 프리미티브와 분리). 실패해도 배달은 계속(mtime 폴백).
     await writeJsonAtomic(claimedPath, { ...msg, claimedAt: new Date(now).toISOString() }).catch(() => {});
     try {

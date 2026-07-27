@@ -73,7 +73,7 @@ export default function Activity({ params }) {
   const row = (e) => {
     if (e.type === 'turn') {
       return {
-        who: e.source === 'delegate' && e.from ? `${nameOf(e.from)} → ${nameOf(e.slug)}` : nameOf(e.slug),
+        who: e.(source === 'delegate' || source === 'crewmail') && e.from ? `${nameOf(e.from)} → ${nameOf(e.slug)}` : nameOf(e.slug),
         avatar: nameOf(e.slug),
         desc: isError(e) ? e.error : (e.gist || t('activity.instructionDone')),
         chip: isError(e) ? t('activity.error') : (SOURCE[e.source] ?? t('activity.conversation')),
