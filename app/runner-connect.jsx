@@ -419,8 +419,8 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
                 ? t('settings.runners.hostLoginUsed', { runner: id })
                 : t('settings.runners.hostInstall', { runner: id })}
               {st?.hostInstalled && (
-                <span style={{ marginLeft: 8, color: st?.hostAuthed ? 'var(--ok)' : 'var(--warn)' }}>
-                  {st?.hostAuthed ? t('settings.runners.hostAuthed') : t('settings.runners.hostNotAuthed')}
+                <span style={{ marginLeft: 8, color: st?.hostAuthUnknown ? 'var(--fg-3)' : st?.hostAuthed ? 'var(--ok)' : 'var(--warn)' }}>
+                  {st?.hostAuthUnknown ? t('settings.runners.hostAuthUnknown') : st?.hostAuthed ? t('settings.runners.hostAuthed') : t('settings.runners.hostNotAuthed')}
                 </span>
               )}
             </div>

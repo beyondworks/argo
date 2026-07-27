@@ -61,14 +61,43 @@ test('연결 UI — RUNNER_ORDER·RUNNER_NAMES에 antigravity가 있다', () => 
   assert.match(src, /antigravity: 'Antigravity'/);
 });
 
-test('에러 매핑 — agy 무응답 타임아웃이 로그인 안내로 번역된다', () => {
+test('에러 매핑 — agy 무응답 타임아웃이 로그인 안내로 번역된다(antigravity 한정)', () => {
   // agy 1.1.7 실측(2026-07-27): 미로그인 + -p(비대화)는 로그인 플로우를 못 열고
   // "Error: timeout waiting for response"(exit 1)로만 죽는다. 원문을 그대로 두면
   // 사용자는 자기 설정을 의심하며 시간을 태운다(P0-2와 같은 실패 모드).
   const e = Object.assign(new Error('cmd failed'), { stdout: 'Error: timeout waiting for response', stderr: '', code: 1 });
-  const mapped = apiError(e);
+  const mapped = apiError(e, 'antigravity');
   assert.match(mapped.message, /agy/, '로그인 처방(agy 실행)이 없다');
   assert.match(mapped.message, /제한 시간|timed out/i, '장시간 작업 초과 가능성도 함께 안내해야 한다(문구가 동일해 구분 불가)');
+  // AUTH_ERR_RE 계약(분리 검수 H1b) — 이 문구가 자가치유(다른 가용 러너 1회 폴백)를 발화시켜야
+  // 미로그인 antigravity가 동작하는 러너 옆에서 무한 타임아웃을 반복하지 않는다.
+  assert.match(mapped.message, /not logged in/i, 'AUTH_ERR_RE(chat.mjs)가 잡을 표현이 없다 — 자가치유 소실');
+});
+
+test('에러 매핑 — 같은 문구라도 다른 러너(stdout 오염)는 오분류하지 않는다(분리 검수 M1)', () => {
+  // 크루가 셸로 실행한 명령 출력에 같은 문구가 섞인 codex 실패 — 벤더 원인(stderr)이 보존돼야
+  // AUTH_ERR_RE 자가치유가 산다(2026-07-23 stdout 오염 원칙과 동일 클래스).
+  const e = Object.assign(new Error('x'), {
+    stdout: '$ curl …\ncurl: timeout waiting for response\n', stderr: '{"message":"invalid api key"}', code: 1,
+  });
+  const mapped = apiError(e, 'codex');
+  assert.doesNotMatch(mapped.message, /Antigravity/, 'codex 실패가 Antigravity 문구로 오분류됐다');
+  assert.match(mapped.message, /invalid api key/i, '벤더 원인이 지워졌다 — 자가치유(AUTH_ERR_RE) 소실');
+});
+
+test('자동 선택 선점 차단 — antigravity는 RUNNER_AUTH 맨 끝이다(분리 검수 H1a)', () => {
+  // authed가 낙관값인 유일한 러너 — 검증된 자격(BYOK·파일)보다 앞이면 미로그인 antigravity가
+  // 동작하는 러너를 선점해 러너 미지정 크루의 전 턴이 타임아웃으로 죽는다(검수 실증).
+  const keys = Object.keys(RUNNER_AUTH);
+  assert.equal(keys[keys.length - 1], 'antigravity');
+});
+
+test('샌드박스 fail-closed — caps 미전달이면 --sandbox가 켜진다(분리 검수 H2)', () => {
+  // oneshot(영입·기억 정리)은 caps를 전달하지 않는다 — fail-open이면 그 경로만 터미널 무제한이 된다
+  // (codex 상시 샌드박스·gemini 셸 상시 제외와 반대 방향). 배선을 소스로 잠근다.
+  const src = read('src/runners.mjs');
+  assert.ok(src.includes("...(caps?.shell ? [] : ['--sandbox'])"),
+    'antigravity --sandbox가 fail-closed가 아니다 — caps 미전달 경로가 터미널 무제한이 된다');
 });
 
 test('에러 매핑 — gemini 개인 OAuth 중단 안내가 Antigravity 대안을 담는다', () => {
