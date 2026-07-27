@@ -66,7 +66,7 @@ export const isServerSecretKey = (k) => EXPLICIT_SERVER_SECRETS.has(k) || SERVER
 const PROVIDER_AUTH_OWNERS = {
   ANTHROPIC_API_KEY: ['claude'],
   CLAUDE_CODE_OAUTH_TOKEN: ['claude'],
-  ANTHROPIC_AUTH_TOKEN: ['claude', 'glm', 'kimi'],
+  ANTHROPIC_AUTH_TOKEN: ['claude', 'glm', 'kimi', 'openrouter'],
   OPENAI_API_KEY: ['codex'],
   GEMINI_API_KEY: ['gemini'],
   GOOGLE_API_KEY: ['gemini'],
@@ -186,6 +186,13 @@ export const RUNNERS = {
       { id: 'kimi-k2.6', label: 'Kimi K2.6' },
     ],
   },
+  openrouter: {
+    name: 'OpenRouter', kind: 'sdk-compat',
+    // BYOK 계열 일반화(설계 2026-07-27) — 키 하나로 수백 모델. 카탈로그 규칙에 따라 이 정적
+    // 목록에는 **실키 tool_use 스모크(scripts/openrouter-smoke.mjs)를 통과한 id만** 넣는다.
+    // 통과 전까지 빈 목록 = UI에서 모델 선택이 비어 연결만 가능(compete는 목록 없으면 제외).
+    models: [],
+  },
   glm: {
     name: 'GLM', kind: 'sdk-compat',
     models: [
@@ -207,6 +214,8 @@ export const hostOptInAllowed = (runner) =>
   && (runner !== 'claude' || process.env.ARGO_STANDALONE !== '1');
 
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
+// 스모크(scripts/openrouter-smoke.mjs) 통과 후 확정한다 — 카탈로그 규칙(실턴 통과 id만). 빈 값이면 chat이 모델 미지정을 거부한다.
+export const OPENROUTER_DEFAULT_MODEL = '';
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
@@ -260,6 +269,7 @@ export async function detectRunners(force = false) {
     gemini: { installed: !!geminiV || geminiManaged, authed: (!!geminiV || geminiManaged) && (geminiAuth || !!process.env.GEMINI_API_KEY) },
     glm: { installed: true, authed: !!process.env.GLM_API_KEY },
     kimi: { installed: true, authed: !!process.env.KIMI_API_KEY }, // env 주입 = 운영자 명시 옵트인(glm 관례)
+    openrouter: { installed: true, authed: false }, // 호스트 개념 없음 — 회사 자격(BYOK)만. env 폴백도 두지 않는다(설계 2026-07-27 YAGNI)
   };
   cacheAt = Date.now();
   return cache;
@@ -589,6 +599,7 @@ export const RUNNER_AUTH = {
   gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://aistudio.google.com/apikey' },
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
   kimi: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' }, // 접두사 무차단(GLM 관례) — 리전·미래 키 형식 변화에 저장이 막히지 않게, 판정은 verifyRunnerCred가
+  openrouter: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://openrouter.ai/keys' }, // BYOK 단일(설계 2026-07-27) — OAuth·크레딧 대행 안 함
 };
 
 // 레거시 계정 파일(사용자 스코프 도입 전 무스코프 .account-secrets.json) → local 스코프로 1회 이관.
@@ -773,6 +784,11 @@ export async function runnerCredEnv(wsId, runner) {
   }
   if (runner === 'kimi') {
     return { env: { ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+  }
+  if (runner === 'openrouter') {
+    // GLM·Kimi와 동일한 Anthropic 호환 패턴 — BYOK 계열 일반화(설계 2026-07-27).
+    // /api/v1/messages 실존은 무키 401로 실측(2026-07-27) — 최종 확정은 스모크(scripts/openrouter-smoke.mjs).
+    return { env: { ANTHROPIC_BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'codex') {
     // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를
@@ -1261,6 +1277,11 @@ export async function verifyRunnerCred(runner, type, value) {
     if (runner === 'kimi') {
       const base = process.env.KIMI_OPENAI_BASE_URL || 'https://api.moonshot.ai/v1';
       const r = await fetch(`${base}/models`, { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
+      return { ok: !(r.status === 401 || r.status === 403) };
+    }
+    if (runner === 'openrouter') {
+      // GET /api/v1/key = 키 자체 조회(잔액·한도) — 무효 키는 401. 모델 목록(공개)과 달리 키 유효성을 직접 판정한다.
+      const r = await fetch('https://openrouter.ai/api/v1/key', { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'codex' && type === 'apikey') {
