@@ -18,6 +18,7 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-consolidate-'));
 const { paths } = await import('../src/workspace.mjs');
 const { planConsolidate, claimConsolidate, markConsolidateDone, CONSOLIDATE_RETRY_MS, CONSOLIDATE_MAX_ATTEMPTS } = await import('../src/scheduler.mjs');
 const { rollupJournals } = await import('../src/consolidate.mjs');
+const { SDK_HANG_LIMIT_MS } = await import('../src/oneshot.mjs');
 
 const TODAY = '2026-07-27';
 const T0 = Date.parse(`${TODAY}T04:00:00Z`);
@@ -184,4 +185,20 @@ test('배선: 스케줄러가 선점(claim)·성공 마킹(CAS)을 거치고, �
   // add가 빠지면 Set이 영원히 비어 가드가 완전한 no-op이 된다 — has/finally만 보면 못 잡는다(2R M-2 변이 생존)
   assert.match(src, /consolidating\.add\(c\.id\)/, '선점 직후 진행 중 표시 — 이 한 줄이 가드의 전부다');
   assert.match(src, /\.finally\(\(\) => consolidating\.delete\(c\.id\)\)/, '완료 시 반드시 해제');
+});
+
+// ── SDK hang 상한 — in-flight 가드가 성립하려면 실행이 **반드시 끝나야** 한다(검수 2R M-1).
+// SDK 경로엔 타임아웃이 없어 소켓 정체 시 async iterator가 영영 안 끝나고, 그러면 스케줄러의
+// consolidating 표시가 안 풀려 그 회사 기억 정리가 무증상 영구 정지한다.
+test('배선: oneshot SDK 경로에 hang 상한이 걸려 있고 타이머가 항상 해제된다', async () => {
+  const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  assert.match(src, /abortController: ac/, 'SDK query에 중단 컨트롤러를 넘겨야 상한이 실효된다');
+  assert.match(src, /hangGuard = setTimeout\(\(\) => ac\.abort\(\), sdkTimeoutMs\)/, 'hang 상한 타이머');
+  assert.match(src, /finally \{\s*\n\s*if \(hangGuard\) clearTimeout\(hangGuard\);/, '성공·실패·자가치유 어느 경로로 나가도 타이머를 남기면 안 된다');
+  assert.match(src, /if \(ac\.signal\.aborted\) throw/, '중단됐으면 빈 결과를 성공으로 반환하지 않는다');
+});
+
+test('SDK hang 상한은 지연 SLO가 아니라 hang 가드 — 정상 작업을 자르지 않을 만큼 넉넉하다', () => {
+  assert.ok(SDK_HANG_LIMIT_MS >= 5 * 60_000, '너무 짧으면 정상적인 긴 정리·영입이 실패로 뒤집힌다');
+  assert.ok(SDK_HANG_LIMIT_MS <= 30 * 60_000, '너무 길면 in-flight 가드가 사실상 영구 정지와 같아진다');
 });
