@@ -37,8 +37,25 @@ fn can_bind(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
 
+// 스폰 후보 선택(순수) — tried 제외 + 닫혀 있고(bind 가능) 순서 유지. 판정 함수를 주입받아
+// 실소켓 없이 단위 테스트한다(검수 1R: 폴백 로직 무테스트 지적).
+fn pick_spawn_port(tried: &[u16], open: impl Fn(u16) -> bool, bindable: impl Fn(u16) -> bool) -> Option<u16> {
+    PORTS.iter().copied().find(|&p| !tried.contains(&p) && !open(p) && bindable(p))
+}
+
 // Windows 예약 포트 자가진단 힌트 — can_bind 실패가 원인일 때만 실어 보낸다(부록 c).
 const RESERVED_HINT: &str = "ports may be reserved by Windows (Hyper-V dynamic range) — check with `netsh int ipv4 show excludedportrange protocol=tcp` in Admin PowerShell, or run `net stop winnat && net start winnat` and reopen Argo";
+
+// 플랫폼별 힌트 — netsh/winnat 안내가 macOS/Linux 사용자에게 나가면 오귀속(검수 1R MEDIUM).
+fn reserved_hint() -> &'static str {
+    if cfg!(windows) { RESERVED_HINT } else { "another program may be interfering with local ports — check the app logs" }
+}
+
+// 종결 에러 — terminal:true로 boot.js가 "재시도 중" 문구를 붙이지 않게 한다(검수 1R: 폴백
+// 소진 후에도 '재시도 중'이 떠 있으면 신고가 지적한 UX 거짓이 종료 단계로 이동할 뿐).
+fn boot_error_final(app: &tauri::AppHandle, detail: &str, port: Option<u16>) {
+    let _ = app.emit("boot", serde_json::json!({ "phase": "error", "detail": detail, "port": port, "terminal": true, "version": env!("CARGO_PKG_VERSION") }));
+}
 
 // 이 포트의 서버가 "같은 버전의" Argo인가 — /api/ping 신원 마커 + 버전을 최소 HTTP로 확인.
 // TCP 열림 ≠ Argo(타 앱 선점·좀비) — 신원 확인 없이는 붙지도, 그 포트를 쓰지도 않는다.
@@ -95,7 +112,7 @@ pub fn run() {
             let adopt = PORTS.iter().copied().find(|&p| tcp_open(p) && is_same_version_argo(p));
             // 빈 포트 판정 = connect 안 됨 **그리고 bind 됨** — connect만 보면 Hyper-V 예약 포트를
             // "빈 포트"로 오판해 스폰 즉사(실사용 신고 2026-07-27).
-            let spawn_port = if adopt.is_none() { PORTS.iter().copied().find(|&p| !tcp_open(p) && can_bind(p)) } else { None };
+            let spawn_port = if adopt.is_none() { pick_spawn_port(&[], tcp_open, can_bind) } else { None };
             if let Some(p) = adopt {
                 boot_status(app.handle(), "started", "server already running", Some(p));
             } else if spawn_port.is_none() {
@@ -105,9 +122,9 @@ pub fn run() {
                 let msg = if all_taken {
                     "ports 3001/3011/3021 are all taken by other apps — close them (or restart this computer) and reopen Argo".to_string()
                 } else {
-                    format!("no usable port among 3001/3011/3021 — {RESERVED_HINT}")
+                    format!("no usable port among 3001/3011/3021 — {}", reserved_hint())
                 };
-                boot_status(app.handle(), "error", &msg, None);
+                boot_error_final(app.handle(), &msg, None);
             } else {
                 let port = spawn_port.unwrap();
                 let handle = app.handle().clone();
@@ -164,10 +181,12 @@ pub fn run() {
                                 }
                                 let started = std::time::Instant::now();
                                 let mut early_exit: Option<String> = None;
+                                let mut last_err_line = String::new(); // 진짜 원인(스택 첫머리) — 최종 에러에 동봉(검수 1R: 즉사 시 로그 테일이 화면에 못 뜸)
                                 while let Some(ev) = rx.recv().await {
                                     match ev {
                                         CommandEvent::Stderr(line) | CommandEvent::Stdout(line) => {
                                             let s = String::from_utf8_lossy(&line).trim_end().to_string();
+                                            if !s.is_empty() { last_err_line = s.chars().take(180).collect(); }
                                             log::info!("[server] {s}");
                                             // 부트 화면 로그 테일 — 느릴 때 무엇을 하는지 보여준다
                                             let _ = handle.emit("boot-log", &s);
@@ -188,9 +207,15 @@ pub fn run() {
                                     }
                                 }
                                 let Some(code) = early_exit else { return };
-                                let next = PORTS.iter().copied()
-                                    .find(|p| !tried.contains(p) && !tcp_open(*p) && can_bind(*p));
-                                match next {
+                                // 폴백 전 adopt 재확인 — 두 인스턴스가 동시에 폴백하면 진 쪽이 다음 포트에
+                                // 자기 서버를 또 띄워 같은 ARGO_ROOT에 같은 버전 서버 2개(스케줄러·동기화
+                                // 이중 구동)가 된다(검수 1R 차단 지적 — 이 PR 전에는 없던 회귀 방향).
+                                if let Some(p) = PORTS.iter().copied().find(|&p| tcp_open(p) && is_same_version_argo(p)) {
+                                    log::info!("[argo] 폴백 중 같은 버전 Argo 발견(포트 {p}) — 스폰 대신 입양");
+                                    boot_status(&handle, "started", "server already running", Some(p));
+                                    return;
+                                }
+                                match pick_spawn_port(&tried, tcp_open, can_bind) {
                                     Some(n) => {
                                         log::warn!("[argo] 포트 {port} 사이드카 즉사(code {code}) — {n}으로 폴백");
                                         boot_status(&handle, "starting", &format!("server died instantly on port {port} (code {code}) — retrying on port {n}"), Some(n));
@@ -198,7 +223,8 @@ pub fn run() {
                                         continue;
                                     }
                                     None => {
-                                        boot_status(&handle, "error", &format!("server exited immediately on every usable port (last code {code}) — {RESERVED_HINT}"), Some(port));
+                                        let tail = if last_err_line.is_empty() { String::new() } else { format!(" | last error: {last_err_line}") };
+                                        boot_error_final(&handle, &format!("server exited immediately on every usable port (last code {code}) — {}{tail}", reserved_hint()), Some(port));
                                         return;
                                     }
                                 }
@@ -233,6 +259,18 @@ mod tests {
     use super::*;
     // can_bind — 점유 포트에서 false, 해제 후 true (Hyper-V 예약 대역은 CI/mac에서 재현 불가 —
     // 그 케이스는 Windows 커널이 EACCES를 주므로 같은 is_ok() 판정으로 걸러진다. 신고 2026-07-27)
+    #[test]
+    fn pick_spawn_port_skips_tried_open_and_unbindable() {
+        // 3001 예약(bind 불가)·3011 tried → 3021 (신고 시나리오의 폴백 경로)
+        assert_eq!(pick_spawn_port(&[3011], |_| false, |p| p != 3001), Some(3021));
+        // 열려 있는 포트(타 앱·타 버전 Argo)는 스폰 후보가 아니다
+        assert_eq!(pick_spawn_port(&[], |p| p == 3001, |_| true), Some(3011));
+        // 전부 소진 → None (무한 루프 없음)
+        assert_eq!(pick_spawn_port(&[3001, 3011, 3021], |_| false, |_| true), None);
+        // 전부 bind 불가(Hyper-V 대역이 3000번대 전체를 덮은 경우) → None
+        assert_eq!(pick_spawn_port(&[], |_| false, |_| false), None);
+    }
+
     #[test]
     fn can_bind_detects_occupied_and_freed_port() {
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();

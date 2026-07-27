@@ -67,8 +67,12 @@ try {
       if (p.phase === 'error') {
         phase = 'error'; // 종결 상태 — 진행바 크리프·slow 안내 정지(위 인터벌 가드). probe/goto는 회복 대비 계속.
         errEl.hidden = false;
-        errEl.textContent = 'The local server hit a problem: ' + (p.detail || 'unknown') +
-          '\nStill retrying — if this screen stays for minutes, quit and reopen Argo.';
+        // terminal = 셸이 후보 포트를 소진하고 재기동을 멈춘 상태 — "재시도 중"을 붙이면 거짓이 된다
+        // (실사용 신고 2026-07-27: 재시도 문구는 뜨는데 실제 재시도 0회). 폴백 도중은 셸이 재스폰하므로 기존 문구 유지.
+        errEl.textContent = p.terminal
+          ? 'The local server could not start: ' + (p.detail || 'unknown')
+          : 'The local server hit a problem: ' + (p.detail || 'unknown') +
+            '\nStill retrying — if this screen stays for minutes, quit and reopen Argo.';
       } else if (p.phase === 'starting' || p.phase === 'started') {
         setPhase(p.phase);
       }
