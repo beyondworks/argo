@@ -7,6 +7,7 @@ import { paths, loadCompany } from './workspace.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — 어떤 러너든 연결만 되면 기억 정리가 돈다
 import { saveNote, updateIndex, splitLinkSections, appendSourceLinks } from './memory.mjs';
 import { appendUsage } from './usage.mjs';
+import { isBilledRunner } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
 import { appendEvent } from './events.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 
@@ -124,7 +125,6 @@ export async function consolidateMemory(wsId) {
   const { runner, text: out, usage, costUsd } = await runOneShot(wsId, PROMPT(text, noteTitles, lang, noteCtx),
     { lang, model: 'claude-haiku-4-5-20251001', maxTurns: 4 });
   // billed 각인 — 구독 러너의 기억 정리 턴 금액이 청구로 새지 않게(검수 2026-07-27 부수 발견)
-  const { isBilledRunner } = await import('./runners.mjs');
   await appendUsage(wsId, { kind: 'consolidate', slug: '', runner, usage, costUsd, ms: Date.now() - t0, billed: await isBilledRunner(wsId, runner).catch(() => undefined) });
 
   let parsed;

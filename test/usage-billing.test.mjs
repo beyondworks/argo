@@ -59,9 +59,9 @@ test('맵 없는 직접 호출(레거시 폴백)만 표지 없는 행을 청구�
 test('isBilledRunner: apikey(회사 자격·env 폴백)만 청구, oauth·host·미연결은 구독', async () => {
   const ws = 'bill-cred';
   await mkdir(paths(ws).root, { recursive: true });
-  // env 폴백 판정이 이 기기 환경에 오염되지 않게 고정(검수 2026-07-27 HIGH-1 반영으로 env를 본다)
-  delete process.env.ANTHROPIC_API_KEY; delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-  delete process.env.GLM_API_KEY; delete process.env.KIMI_API_KEY;
+  // env 폴백 판정이 이 기기 환경에 오염되지 않게 고정 + 종료 시 복원(2R 지적 — 개발자 env 보존)
+  const saved = {};
+  for (const k of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'GLM_API_KEY', 'KIMI_API_KEY']) { saved[k] = process.env[k]; delete process.env[k]; }
   assert.equal(await isBilledRunner(ws, 'claude'), false, '자격 없음 + env 키 없음 = 구독(키체인 로그인)');
   await saveRunnerCred(ws, 'claude', 'oauth', 'sk-ant-oat01-xxx');
   assert.equal(await isBilledRunner(ws, 'claude'), false, 'OAuth = 구독 — 돈이 나가지 않는다');
@@ -78,6 +78,10 @@ test('isBilledRunner: apikey(회사 자격·env 폴백)만 청구, oauth·host·
   const wsC = 'bill-cred-c'; await mkdir(paths(wsC).root, { recursive: true });
   assert.equal(await isBilledRunner(wsC, 'claude'), true, 'claude env API 키 폴백 = 과금');
   process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat01-host';
-  assert.equal(await isBilledRunner(wsC, 'claude'), false, '구독 토큰이 있으면 SDK가 그걸 우선(#83) — 구독');
-  delete process.env.ANTHROPIC_API_KEY; delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  // 판정 근거: sdkEnvFor가 구독 토큰 존재 시 API 키를 소거해 **실행 자체가 구독으로 확정**된다(2R 결정론화)
+  assert.equal(await isBilledRunner(wsC, 'claude'), false, '실행이 구독으로 확정되므로 판정도 구독');
+  const { sdkEnvFor } = await import('../src/runners.mjs');
+  const env = await sdkEnvFor(wsC, 'claude');
+  assert.equal(env.ANTHROPIC_API_KEY, '', '두 env 공존 시 API 키 소거 — 판정·실행 정합을 코드로 보장');
+  for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
 });
