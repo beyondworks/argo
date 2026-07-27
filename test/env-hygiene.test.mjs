@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-hygtest-'));
-process.env.HOME = await mkdtemp(join(tmpdir(), 'argo-hyghome-'));
+process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-hyghome-')); // win homedir()=USERPROFILE
 const { scrubServerSecrets, maskKeyLike, saveRunnerCred, sdkEnvFor } = await import('../src/runners.mjs');
 
 const FULL_ENV = {

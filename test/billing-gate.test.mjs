@@ -126,7 +126,7 @@ test('배선: 프로덕션 소비자는 usage.mjs 금액 집계를 직접 import
       const p = join(dir, e.name);
       if (e.isDirectory()) { if (!/node_modules|\.next|test/.test(e.name)) await scan(p); continue; }
       if (!/\.(mjs|js|jsx)$/.test(e.name)) continue;
-      const rel = p.slice(process.cwd().length + 1);
+      const rel = p.slice(process.cwd().length + 1).replace(/\\/g, '/'); // win 구분자 정규화 — 아래 판정은 '/' 기준
       if (/src\/(usage|billing)\.mjs$/.test(rel)) continue;
       const isRunners = /src\/runners\.mjs$/.test(rel); // 순환 예외 — 아래 별도 테스트가 map 전달을 잠근다
       const src = await readFile(p, 'utf8');

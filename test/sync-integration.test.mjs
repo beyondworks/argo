@@ -496,7 +496,8 @@ test('통합 MCP2: 호스트 가져오기 — env 포함 복사, 이름 정규�
   await writeFile(join(home, '.claude.json'), JSON.stringify({ mcpServers: {
     'notion-agent': { command: 'node', args: ['/x.js'], env: { NOTION_TOKEN: 'secret-xyz' } },
   } }));
-  const prevHome = process.env.HOME; process.env.HOME = home;
+  const prevHome = process.env.HOME; const prevProfile = process.env.USERPROFILE;
+  process.env.HOME = process.env.USERPROFILE = home; // win homedir()=USERPROFILE — 둘 다 심어야 격리
   try {
     const list = await listHostMcp();
     assert.ok(!JSON.stringify(list).includes('secret-xyz'), '목록에 env 값 미노출');
@@ -506,7 +507,10 @@ test('통합 MCP2: 호스트 가져오기 — env 포함 복사, 이름 정규�
     assert.equal(r.name, 'notion-agent');
     const cfg = await loadMcp('mcp-imp');
     assert.equal(cfg.servers['notion-agent'].env.NOTION_TOKEN, 'secret-xyz', 'env 토큰 복사됨');
-  } finally { if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome; }
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevProfile;
+  }
 });
 
 /* ── [GW] EXCLUDE 전환: 픽스 전 동기화된 큐 잔재가 많아도 브레이크 오탐 없이 원격만 청소 ── */

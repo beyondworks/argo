@@ -19,7 +19,8 @@ async function cfg(caps) {
 test('config.toml: fs 켜면 writable_roots=홈, browser 켜면 network_access (사용자 수동 수정의 자동화)', async () => {
   const c = await cfg({ fs: true, browser: true, shell: true });
   assert.ok(c.includes('[sandbox_workspace_write]'), '샌드박스 섹션 존재');
-  assert.ok(c.includes(`writable_roots = ["${homedir()}"]`), 'fs → 홈 한정 쓰기(앱 본체 /Applications는 밖 — #16)');
+  // 기대값도 제품과 같은 JSON.stringify 이스케이프로 — Windows 홈(C:\Users\…)은 생 보간과 어긋난다(백슬래시)
+  assert.ok(c.includes(`writable_roots = [${JSON.stringify(homedir())}]`), 'fs → 홈 한정 쓰기(앱 본체 /Applications는 밖 — #16)');
   assert.ok(c.includes('network_access = true'), 'browser → 네트워크');
 });
 
@@ -34,6 +35,6 @@ test('config.toml + -c 이중 경로: 같은 능력에서 두 매핑이 일치(�
   const c = await cfg(caps);
   const flags = codexSandboxArgs(caps).join(' ');
   // -c와 config.toml이 같은 키·값을 가리킨다 — 어느 쪽이 먹든 동일 결과
-  assert.ok(flags.includes(`writable_roots=["${homedir()}"]`) && c.includes(`writable_roots = ["${homedir()}"]`));
+  assert.ok(flags.includes(`writable_roots=[${JSON.stringify(homedir())}]`) && c.includes(`writable_roots = [${JSON.stringify(homedir())}]`));
   assert.ok(flags.includes('network_access=true') && c.includes('network_access = true'));
 });

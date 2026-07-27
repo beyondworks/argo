@@ -1,0 +1,52 @@
+# 테스트 게이트 — 모든 push/PR에서 단위 테스트를 강제한다 (2026-07-27 안정화 프로그램 Phase 0).
+#
+# 왜 필요한가: 이 레포는 test/ 아래 340+ 케이스를 갖고도 그걸 돌리는 워크플로가 없어,
+# 게이트가 전부 사람 프로세스(스킬·분리 검수)에 걸려 있었다. 최근 300커밋 중 fix가 42%인
+# 구조의 근본 원인. 스모크 게이트가 러너 라벨 하드코딩으로 릴리스 4회를 무음 스킵한 전례
+# (release.yml 주석 참고)처럼, 사람이 잊으면 끝나는 게이트는 게이트가 아니다.
+#
+# 매트릭스가 macOS + Windows인 이유: 데스크톱 앱이 실제로 배포되는 두 OS다. 특히 Windows는
+# 신고 최다 환경(P0-1 11건 중 8건)인데 지금까지 CI에서 빌드만 하고 실행은 한 번도 안 했다.
+# 레포는 public이라 두 러너 모두 무료다(과금 배율 무관).
+#
+# 주의: 이 워크플로는 단위 테스트만 본다. 신규 기기 스모크(원클릭)는 release.yml에서,
+# 실자격 필요 계열(codex auth 반입 등)은 단위 테스트가 잠근다.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 레포 기본 토큰이 이미 read지만 조직/레포 기본값 변경에도 안전하게 고정(분리 검수 권고)
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  # PR만 취소 — main push까지 취소하면 연속 푸시에서 앞 커밋이 판정 없이 사라진다(분리 검수 권고)
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # 행 방지 — 테스트가 자식 프로세스를 스폰하는 계열이 있어 hang 시 기본 6시간을 태우지 않게 상한
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Windows에서도 glob이 동작한다 — cmd는 글롭 확장을 안 하지만 node --test가 패턴을 직접 해석(Node 21+)
+      - run: npm test
