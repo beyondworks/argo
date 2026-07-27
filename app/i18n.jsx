@@ -516,7 +516,7 @@ const DICT = {
   'runner.notInstalled': ['미설치', 'not installed'],
   'runner.needConnect': ['연결 필요', 'connect needed'],
   'runner.gatedBadge': ['Ultra·유료 전용', 'Ultra/paid only'],
-  'runner.freeBadge': ['무료 — 분당 20회·일 50회 한도', 'Free — 20/min, 50/day limit'],
+  'runner.freeBadge': ['무료 — 요청 한도 있음', 'Free — rate limited'],
   'runner.authHint': ['{name} CLI에 터미널에서 로그인하면 이 러너를 쓸 수 있습니다 (구독 OAuth).', 'Log in to the {name} CLI in your terminal to use this runner (subscription OAuth).'],
   'deck.model.opus': ['오푸스 — 깊은 사고, 무거운 작업 (비용 높음)', 'Opus — deep reasoning, heavy tasks (higher cost)'],
   'deck.model.sonnet': ['소네트 — 표준 균형', 'Sonnet — balanced standard'],

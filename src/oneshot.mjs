@@ -3,7 +3,7 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
-import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, externalExec, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, externalExec, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     제외하고 1회 재시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와 같은 원칙, 재귀 1회).
@@ -49,7 +49,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1: openrouter-only
         // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
         ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: KIMI_DEFAULT_MODEL }
-          : runner === 'openrouter' ? { model: RUNNERS.openrouter.models.some((m) => m.id === model) ? model : OPENROUTER_DEFAULT_MODEL }
+          : runner === 'openrouter' ? { model: RUNNERS.openrouter.models.some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL }
           : (model ? { model } : {})),
       },
     })) {
@@ -70,6 +70,13 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     }
     return { runner, text: text.trim(), usage, costUsd: runner === 'openrouter' ? null : costUsd };
   } catch (e) {
+    // 429(요청 한도)는 자가치유 대상이 아니다 — 일시적 한도인데 다른 벤더로 넘기면 사용자 고지 없이
+    // 실제 과금 키로 갈아타게 된다(2R 검수 M1). 402(지속적 잔액 소진)와 달리 기다리면 풀린다.
+    if (/openrouter-limit/.test(String(e.message))) {
+      throw Object.assign(new Error(lang === 'en'
+        ? 'OpenRouter rate limit reached (free models: 20/min, and 50/day until $10+ in lifetime credits). Wait a moment and try again, or switch to a paid model.'
+        : 'OpenRouter 요청 한도에 걸렸습니다(무료 모델은 분당 20회, 누적 구매 $10 미만이면 하루 50회). 잠시 후 다시 시도하거나 유료 모델로 바꿔 주세요.'), { cause: e });
+    }
     // 자가 치유 — 방금 죽은 러너를 제외하고 다른 가용 러너로 1회. __exclude 가드로 재귀 1회 제한.
     if (!__exclude) {
       const alt = await resolveRunner(wsId, 'claude', { exclude: runner }).catch(() => null);
@@ -80,11 +87,6 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     }
     // 402(크레딧 소진)는 연결 문제가 아니다 — "연결 상태 확인" 안내는 키 정상·연결됨 표시와 모순돼
     // 사용자를 오도한다(2R 검수 N2, oneshot 상단 주석의 2026-07-20 모순과 동일 계열). 충전처를 준다.
-    if (/openrouter-limit/.test(String(e.message))) {
-      throw Object.assign(new Error(lang === 'en'
-        ? 'OpenRouter rate limit reached (free models: 20/min, 50/day under $10 lifetime credits). Wait a moment and try again, or use a paid model.'
-        : 'OpenRouter 요청 한도에 걸렸습니다(무료 모델은 분당 20회, 누적 구매 $10 미만이면 하루 50회). 잠시 후 다시 시도하거나 유료 모델을 사용해 주세요.'), { cause: e });
-    }
     if (/openrouter-credit/.test(String(e.message))) {
       throw Object.assign(new Error(lang === 'en'
         ? 'OpenRouter credit balance is too low. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.'

@@ -60,11 +60,18 @@ export function ensureScheduler() {
           let st = { day: '' };
           try { st = await readJson(RUN_STAMP(c.id), { day: '' }); } catch { /* 부재/손상 — 오늘 미실행으로 간주 */ }
           if ((st.day ?? '') < today) {
+            const prev = st.day ?? '';
             await writeJsonAtomic(RUN_STAMP(c.id), { day: today }); // 실행 전 선점 — 리더 겹침 창 이중 실행 방지(claimRoutine과 동일 원칙)
             console.log(`[argo] 기억 정리: ${c.id}`);
             consolidateMemory(c.id)
               .then(() => rollupJournals(c.id)) // 정제가 소화한 일지만 주간으로 접힌다
-              .catch((e) => console.error(`[argo] 기억 정리 실패 ${c.id}:`, e.message));
+              .catch(async (e) => {
+                console.error(`[argo] 기억 정리 실패 ${c.id}:`, e.message);
+                // 스탬프 롤백 — 선점은 이중 실행 방지용이지 "오늘 몫 소진" 표시가 아니다.
+                // 되돌리지 않으면 일시적 실패(요청 한도·네트워크) 한 번에 그날 정리+주간 롤업이
+                // 영구 스킵된다(검수 H2 — 무료 모델 기본화로 한도 저촉이 일상 경로가 됨).
+                await writeJsonAtomic(RUN_STAMP(c.id), { day: prev }).catch(() => {});
+              });
           }
         }
       }

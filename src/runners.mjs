@@ -264,10 +264,15 @@ export const isOpenRouterCreditReply = (s) => strictReply(s, OPENROUTER_402_RE);
 export const isOpenRouterLimitError = (s) => firstOrLast(s, OPENROUTER_429_RE);
 export const isOpenRouterLimitReply = (s) => strictReply(s, OPENROUTER_429_RE);
 
-// 기본 = 무료 선두 모델. 모델 미지정 호출(persona 영입·consolidate 기억정리·routines 초안)이
-// 전부 여기로 오므로, 유료를 기본으로 두면 잔액 0 신규 키는 첫 영입부터 402다(검수 CRITICAL).
-// 잔액 있는 사용자는 크루 카드 모델 선택기에서 유료 모델을 명시 선택한다(배지로 구분 표시).
-export const OPENROUTER_DEFAULT_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
+// 채팅 기본 — 품질 우선(유료). 잔액 0이면 402가 뜨지만 안내문이 무료 모델 선택을 짚어 준다.
+// ⚠ 이 상수를 무료로 바꾸면 **잔액이 충분한 사용자의 모든 크루 채팅**까지 무료 모델로 내려간다
+//   (크루 카드는 model을 기록하지 않아 매 턴 이 기본값을 탄다 — 2R 검수 H1 실증). 온보딩 문제는
+//   아래 ONBOARD 상수로 분리해 푼다.
+export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5';
+// 온보딩·자동 실행 기본(runOneShot) — **잔액 0에서도 도는 무료 모델**. 영입·기억정리·루틴 초안은
+// 사용자가 모델을 고를 화면이 없는 자동 호출이라, 유료를 기본으로 두면 신규 키($0이 기본)가
+// 연결 직후 첫 영입부터 402로 막힌다(검수 CRITICAL 2026-07-27). 카탈로그 선두와 일치.
+export const OPENROUTER_ONBOARD_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
