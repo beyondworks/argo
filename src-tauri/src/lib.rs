@@ -90,6 +90,20 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init()) // 앱에서 외부 브라우저 열기(로그인 핸드오프)
+        // macOS: 창 닫기(빨간 버튼·cmd+W) = 앱 숨김 — Claude Desktop과 같은 관례(실사용 요청 2026-07-27).
+        // NSApp hide라 독 아이콘이 남고, 독 클릭이 OS 표준 unhide로 창을 복원한다(별도 Reopen 코드 불요).
+        // cmd+Q·메뉴 Quit은 CloseRequested가 아니라 ExitRequested 경로라 그대로 종료(사이드카 정리 포함).
+        // 크루·동기화·루틴은 사이드카에서 돌므로 "닫아도 계속 일하는" 기대와도 일치한다.
+        // Windows/Linux는 기존 동작 유지(트레이가 없어 숨기면 복귀 수단이 없다 — 트레이 도입 시 재검토).
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.app_handle().hide();
+                api.prevent_close();
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (window, event); // 미사용 경고 억제 — 타 OS는 기본 동작(닫기=종료)
+        })
         .setup(|app| {
             app.manage(Sidecar(std::sync::Mutex::new(None)));
             // 인앱 업데이트(설정 → 앱 업데이트 버튼) — 데스크톱 전용. 서명 검증은 tauri.conf.json pubkey.
