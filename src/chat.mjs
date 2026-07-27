@@ -20,7 +20,7 @@ import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { detectRunnerDenial, detectDeniedNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isOpenRouterCreditError } from './runners.mjs';
+import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isOpenRouterCreditReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
@@ -994,7 +994,9 @@ ${lang === 'en'
   // "API Error: 402 This request requires more credits…"). 신규 키는 잔액 $0이 기본이라 첫
   // 사용자 전원이 이 화면을 만난다 — 원인·충전처를 붙인다. success/else 쌍 **밖**의 독립
   // 블록이어야 한다(사이에 끼우면 else가 이 if에 붙어 전 러너 성공 턴이 throw — 검수 CRITICAL 실증).
-  if (runner === 'openrouter' && isOpenRouterCreditError(reply)) {
+  // 판정은 엄격판(답변≈에러 원문일 때만) — 오탐이면 사실 아닌 안내 + 그 턴 일지가 무증상
+  // 누락(creditTurn)되므로, 402를 인용·해설하는 정상 답변은 여기 걸리면 안 된다(3R F1).
+  if (runner === 'openrouter' && isOpenRouterCreditReply(reply)) {
     creditTurn = true;
     reply += lang === 'en'
       ? `\n\n---\n⚠ Your OpenRouter credit balance is too low for this turn. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again. (If your balance isn't empty, the selected model may be too expensive for it — pick a cheaper model or top up more.)`
