@@ -24,9 +24,14 @@ export async function POST(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { message } = await req.json();
+    const { message, attachments: rawAtt } = await req.json();
     if (!message?.trim()) return Response.json({ error: 'message가 필요합니다' }, { status: 400 });
-    return Response.json(await runRoomTurn(ws, message.trim()));
+    // 첨부는 업로드 API가 발급한 vault/files/ 상대경로만 신뢰한다(경로 탈출 차단 — chat 라우트와 동일 규칙)
+    const attachments = (Array.isArray(rawAtt) ? rawAtt : [])
+      .filter((a) => typeof a?.rel === 'string' && a.rel.startsWith('files/') && !a.rel.includes('..'))
+      .map((a) => ({ rel: a.rel, name: String(a.name ?? ''), mime: String(a.mime ?? ''), isImage: !!a.isImage }))
+      .slice(0, 8);
+    return Response.json(await runRoomTurn(ws, message.trim(), attachments));
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });
   }

@@ -2,7 +2,7 @@
 // 회의실 — 사장 + 여러 크루가 한 방에서. "@이름"으로 부르면 그 크루들이 순서대로 발언한다.
 // 좌측 레일에 지난 회의가 적재되고(회의 마치기), 클릭으로 읽기 전용 열람 — 맥락 공유가 눈에 보이는 화면.
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, InputModal, api, imeGuard } from '../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuard } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 export default function Room({ params }) {
@@ -88,15 +88,39 @@ export default function Room({ params }) {
     } catch (e) { setError(String(e.message)); }
   }
 
+  // 첨부 — 크루 채팅과 같은 관문(클립 버튼·붙여넣기, 업로드 즉시 vault/files 저장). 실사용 요청
+  // 2026-07-27 "대화창에서 파일 첨부 바로": 크루 채팅엔 있었고 회의실이 공백이었다.
+  const fileRef = useRef(null);
+  const [att, setAtt] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  async function addFiles(fileList) {
+    const files = [...(fileList ?? [])].filter(Boolean);
+    if (!files.length || uploading) return;
+    setUploading(true); setError('');
+    try {
+      const fd = new FormData();
+      files.forEach((f) => fd.append('file', f));
+      const r = await fetch(`/api/companies/${ws}/chat/upload`, { method: 'POST', body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      setAtt((cur) => [...cur, ...d.files].slice(0, 8));
+    } catch (err) {
+      setError(t('chat.attachFailed', { msg: String(err.message) }));
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function send(e) {
     e.preventDefault();
     const text = input.trim();
-    if (!text || busy) return;
+    if (!text || busy || uploading) return;
+    const attachments = att;
     setBusy(true); setError('');
-    setMessages((m) => [...(m ?? []), { who: 'user', text, ts: Date.now() }]);
-    setInput('');
+    setMessages((m) => [...(m ?? []), { who: 'user', text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) }]);
+    setInput(''); setAtt([]);
     try {
-      const d = await api(`/api/companies/${ws}/room`, { message: text });
+      const d = await api(`/api/companies/${ws}/room`, { message: text, attachments });
       // 서버 스냅샷이 비어 있으면(동시 '회의 마치기'로 방이 리셋됐거나 응답 형태 이상) 화면을 지우지
       // 않는다 — 방금까지 보던 대화가 사라지는 것으로 보이던 경로. 답변만 이어 붙이고, 8초 폴이 정본으로 수렴시킨다.
       const snap = Array.isArray(d.room?.messages) ? d.room.messages : null;
@@ -219,7 +243,20 @@ export default function Room({ params }) {
             <div style={{ display: 'grid', gap: 14 }}>
               {shown.map((m, i) => m.who === 'user' ? (
                 <div key={i} style={{ justifySelf: 'end', maxWidth: '78%' }}>
-                  <div className="bubble-user" style={{ background: 'var(--primary)', color: 'var(--primary-fg)', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>{m.text}</div>
+                  <div className="bubble-user" style={{ background: 'var(--primary)', color: 'var(--primary-fg)', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
+                    {m.attachments?.length > 0 && (
+                      <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: m.text ? 8 : 0 }}>
+                        {m.attachments.map((a, j) => a.isImage ? (
+                          <img key={j} className="att-thumb" src={`/api/companies/${ws}/files?rel=${encodeURIComponent(a.rel)}`} alt={a.name} />
+                        ) : (
+                          <span key={j} className="att-chip" style={{ borderColor: 'var(--primary-fg-line)', background: 'transparent', color: 'inherit' }}>
+                            <Icon name="clip" size={11} /><span className="name">{a.name}</span>
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                    {m.text}
+                  </div>
                 </div>
               ) : (
                 <div key={i} style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
@@ -275,11 +312,29 @@ export default function Room({ params }) {
                   ))}
                 </div>
               )}
+              {(att.length > 0 || uploading) && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+                  {att.map((a, i) => (
+                    <span key={i} className="att-chip">
+                      <Icon name="clip" size={11} />
+                      <span className="name">{a.name}</span>
+                      <button type="button" onClick={() => setAtt((c) => c.filter((_, j) => j !== i))} aria-label={t('common.delete')}>✕</button>
+                    </span>
+                  ))}
+                  {uploading && <span className="att-chip"><Spinner size={11} /> {t('chat.uploading')}</span>}
+                </div>
+              )}
               <form onSubmit={send} className="input-bar">
+                <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
+                  onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
+                  <Icon name="clip" size={14} />
+                </button>
+                <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
                 <input suppressHydrationWarning
                   placeholder={t('room.placeholder')}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
+                  onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
                   disabled={busy}
                   {...imeGuard}
                   onKeyDown={(e) => {
@@ -290,7 +345,7 @@ export default function Room({ params }) {
                     if (mentionOpen) { e.preventDefault(); completeMention(suggestAll ? 'all' : suggests[0].name); }
                   }}
                 />
-                <button className="btn btn-primary btn-icon" disabled={busy || !input.trim()} aria-label={t('chat.send')}>
+                <button className="btn btn-primary btn-icon" disabled={busy || uploading || !input.trim()} aria-label={t('chat.send')}>
                   <Icon name="send" size={15} />
                 </button>
               </form>
