@@ -528,16 +528,22 @@ async function codexCmd() {
     미래 codex가 키를 거부하면 fs/browser 켠 턴만 실패한다(기본은 빈 배열이라 무영향).
     실사용 신고 대응(2026-07-19): 사장이 fs를 켜도 "읽기전용이라 불가"로 막히던 외부 자료 가져오기.
     (export: 회귀 테스트용) */
-export const codexSandboxArgs = (caps) => [
+export const codexSandboxArgs = (caps, workRoots = []) => {
   // fs 능력 — 이전엔 "/"(루트 전체)를 열어 실행 중인 Argo 앱 코드까지 쓰기 가능했다(실사용 신고
   // 2026-07-22 크리티컬). 홈 디렉토리로 좁힌다 — 사용자 문서 접근(fs 능력의 목적)은 유지되고
   // /Applications의 앱 본체는 샌드박스 밖이 된다. (홈 안의 Argo 데이터는 프로세스 단위 샌드박스의
   // 한계로 완전 차단 불가 — commonDirectives 금지 지시가 2차 방어. SDK 러너는 게이트가 하드 차단.)
+  // workRoots — 사장이 지정한 외부 작업 폴더(workroots.mjs, 신고 11건 해소 2026-07-27). fs와
+  // 독립으로 열린다: "홈 전부"가 아니라 "이 폴더만"이 더 좁은 위임이다. 등록 시점에 금지 구역이
+  // 검증돼 있다(validateWorkRoot).
   // 경로는 TOML 문자열로 직렬화한다 — Windows 홈(C:\Users\...)의 역슬래시가 이스케이프로 해석돼
   // 값이 깨지던 실사용 신고(2026-07-25). JSON.stringify가 TOML 기본 문자열 규칙과 호환(따옴표·역슬래시 이스케이프).
-  ...(caps?.fs ? ['-c', `sandbox_workspace_write.writable_roots=[${JSON.stringify(homedir())}]`] : []),
-  ...(caps?.browser ? ['-c', 'sandbox_workspace_write.network_access=true'] : []),
-];
+  const roots = [...(caps?.fs ? [homedir()] : []), ...workRoots];
+  return [
+    ...(roots.length ? ['-c', `sandbox_workspace_write.writable_roots=[${roots.map((r) => JSON.stringify(r)).join(',')}]`] : []),
+    ...(caps?.browser ? ['-c', 'sandbox_workspace_write.network_access=true'] : []),
+  ];
+};
 
 /** 크루별 추론 강도 → codex CLI 인자(순수). codex도 강도를 지원한다 — `-c model_reasoning_effort=…`가
     인식되는 키임을 실측(2026-07-26, codex-cli 0.144.1: 미인식 키는 --strict-config에서 즉시 에러,
@@ -589,12 +595,14 @@ export async function recoverCodexAuth(handle) {
   return true;
 }
 
-export async function writeCodexTurnConfig(home, caps) {
-  const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)에서 재생성됩니다.'];
-  if (caps?.fs || caps?.browser) {
+export async function writeCodexTurnConfig(home, caps, workRoots = []) {
+  const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)·지정 작업 폴더에서 재생성됩니다.'];
+  // fs=홈(앱 본체는 밖) + 사장이 지정한 외부 작업 폴더(fs와 독립 — codexSandboxArgs와 동일 규칙)
+  const roots = [...(caps?.fs ? [homedir()] : []), ...workRoots];
+  if (roots.length || caps?.browser) {
     lines.push('[sandbox_workspace_write]');
     // JSON.stringify — Windows 역슬래시 이스케이프(위 codexSandboxArgs와 동일 규칙, 신고 2026-07-25)
-    if (caps?.fs) lines.push(`writable_roots = [${JSON.stringify(homedir())}]`); // 홈 한정 — /Applications 앱 본체는 밖
+    if (roots.length) lines.push(`writable_roots = [${roots.map((r) => JSON.stringify(r)).join(', ')}]`);
     if (caps?.browser) lines.push('network_access = true');
   }
   await writeFile(join(home, 'config.toml'), lines.join('\n') + '\n').catch(() => { /* 실패해도 -c 폴백이 있다 */ });
@@ -603,7 +611,7 @@ export async function writeCodexTurnConfig(home, caps) {
 /** 외부 CLI 러너 1턴 — 워크스페이스를 cwd로, 프롬프트 하나로 실행하고 마지막 응답을 받는다.
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
     caps = 회사 로컬 능력({ fs, browser, shell }) — 사장이 켠 능력을 codex 샌드박스에 반영(codexSandboxArgs). */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '' }) {
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '', workRoots = [] }) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   if (runner === 'codex') {
     const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
@@ -618,14 +626,14 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     // 자격 반입(심링크 → 복사 폴백) + 턴 뒤 갱신 토큰 회수. 계약은 importCodexAuth/recoverCodexAuth의
     // 주석과 test/codex-auth-import.test.mjs가 잠근다(신규 설치 401의 근본 원인이었던 자리).
     const auth = await importCodexAuth(baseHome, CODEX_HOME);
-    await writeCodexTurnConfig(CODEX_HOME, caps); // [sandbox_workspace_write] — `-c`가 안 먹는 codex 버전 방어(실사용 신고 2026-07-22)
+    await writeCodexTurnConfig(CODEX_HOME, caps, workRoots); // [sandbox_workspace_write] — `-c`가 안 먹는 codex 버전 방어(실사용 신고 2026-07-22)
     const cmd = await codexCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     try {
       await exec(cmd.file, [
         ...cmd.args,
         'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check',
         ...codexEffortArgs(effort), // 크루별 추론 강도 — codex도 지원(실측 2026-07-26)
-        ...codexSandboxArgs(caps), // config.toml과 이중 — 신버전은 `-c`, 구버전은 config.toml이 받는다
+        ...codexSandboxArgs(caps, workRoots), // config.toml과 이중 — 신버전은 `-c`, 구버전은 config.toml이 받는다
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
         '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록

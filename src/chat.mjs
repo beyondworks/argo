@@ -16,6 +16,7 @@ import { listAgents } from './hub.mjs';
 import { addApproval } from './approvals.mjs';
 import { appendEvent } from './events.mjs';
 import { loadCapabilities } from './capabilities.mjs';
+import { loadActiveWorkRoots } from './workroots.mjs';
 import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { detectRunnerDenial, detectDeniedNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
@@ -232,7 +233,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
     hasTools = 크루 도구(request_approval·request_capability·request_tool_install 등)가 실제로 있는 턴인지.
     도구가 없는 러너에는 같은 규칙을 "보고·안내" 형태로 지시한다(러너 독립성 — 어떤 러너를 연결해도
     Argo 규율대로 행동). (export: 회귀 테스트용) */
-export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true, lang = 'ko', runner = null } = {}) {
+export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true, lang = 'ko', runner = null, workRoots = [] } = {}) {
   const mcpList = connectedMcp.length ? connectedMcp.join(', ') : (lang === 'en' ? '(none)' : '(없음)');
   if (lang === 'en') {
     // 한국어 경로와 대칭(다국어 상시 규칙) — 신고 2026-07-26: 크루가 "스킬·도구에서 추가하라"고 잘못 안내했다.
@@ -245,8 +246,8 @@ export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true
 - ${hasTools ? 'If the captain asks to change a crew profile (name, role, team, rules, runner, model) or to hire a new crew, don\'t edit files directly — file an approval via the update_profile / hire_crew tools. If the runner/model is undecided, present 2-3 options from the catalog and ask before filing.' : 'For crew profile changes or hiring, don\'t edit files directly — guide the captain to the crew/settings screens.'}
 
 ## Local capabilities — what company settings allow
-- File system (outside the workspace): ${caps.fs ? 'allowed — be careful, and file an approval first for destructive changes' : `off — never read or write files outside the vault. ${offGuide}`}
-- Web browsing (includes web search / looking up current information): ${caps.browser ? 'allowed (web fetch/search tools)' : `off — ${offGuide}`}
+- File system (outside the workspace): ${caps.fs ? 'allowed — be careful, and file an approval first for destructive changes' : `off — never read or write files outside the vault${workRoots.length ? ' except the assigned work folders below' : ''}. ${offGuide}`}
+${workRoots.length ? `- Assigned work folders (the captain granted these — read/write directly, independent of the file-system toggle): ${workRoots.join(' · ')}\n` : ''}- Web browsing (includes web search / looking up current information): ${caps.browser ? 'allowed (web fetch/search tools)' : `off — ${offGuide}`}
 - Shell commands: ${runner === 'gemini' ? 'not supported on this runner (Gemini) — for shell work, tell the captain to assign a crew on a shell-capable runner (e.g. Claude)' : caps.shell ? 'allowed' : `off — ${offGuide}`}
 ${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and capability grants run without approval. This does NOT extend to actions that leave the company (sending, publishing, purchasing, deleting, contracts) or to hiring/profile changes: those still require approval, so keep filing them.' : '- Side-effecting actions continue after approval — waiting for approval is the normal flow'}
 
@@ -278,8 +279,8 @@ ${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and c
 - ${hasTools ? '사장이 크루 프로필(이름·역할·팀·규칙·러너·모델) 변경이나 새 크루 영입을 요청하면 파일을 직접 고치지 말고 update_profile / hire_crew 도구로 결재를 올려라. 러너·모델이 정해지지 않았으면 카탈로그에서 선택지를 2~3개 제시해 물어본 뒤 올려라.' : '크루 프로필 변경·영입 요청은 파일을 직접 고치지 말고 크루·설정 화면에서 진행하도록 사장을 안내하라.'}
 
 ## 로컬 능력 — 회사 설정이 허용한 범위
-- 파일 시스템(워크스페이스 밖): ${caps.fs ? '허용 — 신중하게, 파괴적 변경은 결재를 먼저 올려라' : `꺼짐 — vault 밖의 파일은 읽지도 쓰지도 마라. ${offGuide}`}
-- 웹 브라우징(=웹 검색·최신 정보 조회 포함): ${caps.browser ? '허용(웹 조회·검색 도구)' : `꺼짐 — ${offGuide}`}
+- 파일 시스템(워크스페이스 밖): ${caps.fs ? '허용 — 신중하게, 파괴적 변경은 결재를 먼저 올려라' : `꺼짐 — ${workRoots.length ? '아래 지정 작업 폴더를 제외하면 ' : ''}vault 밖의 파일은 읽지도 쓰지도 마라. ${offGuide}`}
+${workRoots.length ? `- 지정 작업 폴더(사장이 허용 — 파일 시스템 토글과 무관하게 바로 읽고 쓴다): ${workRoots.join(' · ')}\n` : ''}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): ${caps.browser ? '허용(웹 조회·검색 도구)' : `꺼짐 — ${offGuide}`}
 - 셸 명령: ${runner === 'gemini' ? '이 러너(Gemini)에서는 지원되지 않는다 — 셸이 필요한 작업은 셸을 지원하는 러너(Claude 등)의 크루에게 맡기도록 사장에게 안내하라' : caps.shell ? '허용' : `꺼짐 — ${offGuide}`}
 ${caps.bypass ? '- 준비 작업 자동 승인: 켜짐 — 도구 설치·능력 켜기는 결재 없이 진행된다. 단 **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이다 — 자동 승인이 그 경계를 넘지 않는다. 계속 결재를 올려라.' : '- 부작용 있는 실행은 결재 승인 후 이어진다 — 승인 대기는 정상 흐름이다'}
 
@@ -691,12 +692,13 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 러너 공통 지시(결재·능력·환경·도구 활용) — SDK 경로와 같은 규율을 외부 러너에도 적용(러너 독립성).
       // 외부 CLI에는 크루 도구가 없으므로 hasTools:false — 같은 규칙이 "보고·안내" 형태로 들어간다.
       const cliCaps = await loadCapabilities(wsId);
+      const cliWorkRoots = await loadActiveWorkRoots(wsId); // 사장 지정 외부 작업 폴더 — codex 샌드박스·프롬프트 안내에 주입
       const cliMcp = Object.keys(safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {}))
         .filter((n) => !mcpScope || mcpScope.includes(n)); // 크루별 MCP 범위(안내문도 동일 기준)
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang)}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, hasTools: false, lang, runner })}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang)}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, hasTools: false, lang, runner, workRoots: cliWorkRoots })}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
@@ -711,13 +713,13 @@ ${lang === 'en'
       let usedModel = effModel;
       let reply;
       try {
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '' });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots });
       } catch (e) {
         const gated = !!(effModel && RUNNERS[runner]?.models.find((m) => m.id === effModel)?.gated);
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '' });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
@@ -821,6 +823,7 @@ ${lang === 'en'
   // 2026-07-22 크리티컬)을 판정한다. 사전 승인 목록에 든 도구는 게이트를 타지 않으므로 여기엔
   // 경로가 없는 안전 도구(웹·MCP)만 남긴다.
   const caps = await loadCapabilities(wsId);
+  const workRoots = await loadActiveWorkRoots(wsId); // 사장 지정 외부 작업 폴더 — 게이트·SDK 추가 디렉토리·프롬프트에 주입
   const readTools = [...(caps.browser ? ['WebFetch', 'WebSearch'] : []), ...mcpAllow, 'mcp__crew'];
   // 결재·능력·환경·도구 활용 지시는 commonDirectives(러너 공통)로 일원화 — SDK/외부 러너 행동 통일.
   const connectedMcp = Object.keys(servers ?? {});
@@ -892,9 +895,11 @@ ${lang === 'en'
     prompt: promptInput,
     options: {
       cwd: p.root,
+      // 지정 작업 폴더 — SDK가 cwd 밖 접근을 스스로 인지·탐색하게(집행은 canUseTool 게이트가 한다)
+      ...(workRoots.length ? { additionalDirectories: workRoots } : {}),
       systemPrompt: systemPromptFor(md, p.root, skills, meta, lang)
         + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
-        + commonDirectives({ caps, connectedMcp, hasTools: true, lang })
+        + commonDirectives({ caps, connectedMcp, hasTools: true, lang, workRoots })
         + fallbackDirective,
       mcpServers: { ...(servers ?? {}), crew: crewServer },
       // CLI stderr 꼬리 보관 — 실패 시 errors[]가 비면 이걸 진단으로 쓴다(아래 결과 처리).
@@ -912,7 +917,7 @@ ${lang === 'en'
       // caps.bypass로 존중한다 — 금지 구역 외 전부 즉시 허용(permission-gate.mjs).
       permissionMode: 'default',
       allowedTools: readTools,
-      canUseTool: makePermissionGate(wsId, agentSlug, caps, p.root, chain.length ? chain[chain.length - 1] : null, lang),
+      canUseTool: makePermissionGate(wsId, agentSlug, caps, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots),
       disallowedTools: [
         ...(caps.shell ? [] : ['Bash']),
         ...(caps.browser ? [] : ['WebFetch', 'WebSearch']),

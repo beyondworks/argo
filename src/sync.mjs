@@ -74,6 +74,7 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
     base.startsWith('.gw-queue') ||
     base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' ||
     base === '.device-session.json' || base === '.DS_Store' ||
+    base === '.workroots.json' || // 외부 작업 폴더 — 기기 고유 경로라 타 기기로 넘기면 무의미하거나 의도 안 한 접근 허용이 된다
     base.startsWith('.index.sqlite') || // 기억 인덱스 캐시(+ -wal·-shm). 기기별 산출물이고 정본에서 재구축된다
     base.endsWith('.status.json') || base.endsWith('.lock') ||
     base.startsWith('.tmp-') || base.endsWith('.corrupt') || rel.includes('.corrupt-') // 원자쓰기 임시·손상 백업

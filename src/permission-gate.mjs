@@ -5,7 +5,7 @@
 // 결재 폭탄·raw 명령 노출·흐름 끊김이 났다(실사용: grep/ls 하나하나 결재 카드). 사장이 설정에서
 // 능력을 켠 것 = 그 범위의 신뢰 위임이다 — 켜짐은 즉시 실행, 꺼짐은 켜기 제안 카드 한 장.
 // (별도 bypass 토글은 이 모델에서 잉여가 되어 설정 UI에서 내렸다 — capabilities.mjs)
-import { resolve, dirname, join, basename, sep } from 'node:path';
+import { resolve, dirname, join, basename, sep, isAbsolute } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -41,6 +41,19 @@ export function makeInWorkspace(wsRoot) {
     const real = (await canon(abs)) ?? (await canon(dirname(abs))); // 대상이 없으면 부모로 심링크 재확인
     if (!real) return true; // 대상·부모 모두 부재 — 렉시컬 통과에 맡김(읽기는 어차피 실패)
     return real === realRoot || real.startsWith(`${realRoot}${sep}`);
+  };
+}
+
+/** 지정 작업 폴더(workRoots) 경계 — 사장이 설정에서 등록한 외부 폴더는 워크스페이스처럼 책상이다
+    (workroots.mjs — 신고 11건 해소 2026-07-27). 절대경로만 판정한다: 상대경로는 cwd(워크스페이스)
+    기준이라 inWorkspace가 담당하고, makeInWorkspace에 상대경로를 주면 그 루트 기준으로 오해석된다.
+    심링크 탈출 봉인은 makeInWorkspace를 그대로 재사용. (export: 회귀 테스트용) */
+export function makeInWorkRoots(workRoots) {
+  const checks = (workRoots ?? []).map((r) => makeInWorkspace(r));
+  return async function inWorkRoots(p) {
+    if (!checks.length || typeof p !== 'string' || !isAbsolute(p)) return false;
+    for (const c of checks) if (await c(p)) return true;
+    return false;
   };
 }
 
@@ -110,9 +123,11 @@ export async function suggestCapability(wsId, slug, cap, why, from = null) {
 /** caps: {fs, browser, shell, bypass} — allowedTools에 없는 도구가 여기로 온다. 켜짐=허용, 꺼짐=켜기 제안 카드.
     bypass = 결재·능력 체크 생략(전권 위임)이되 **금지 구역은 예외 없이 차단**한다 — bypass의 의미는
     "사장 확인 생략"이지 "Argo 보호 구역 해제"가 아니다(실사용 신고 2026-07-22 크리티컬).
-    from = 위임 원 크루 slug(제안 카드 표기용). lang = 거절 메시지 언어. */
-export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang = 'ko') {
+    from = 위임 원 크루 slug(제안 카드 표기용). lang = 거절 메시지 언어.
+    workRoots = 사장이 지정한 외부 작업 폴더 — 워크스페이스와 동급 책상(등록 시 금지 구역 검증됨). */
+export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang = 'ko', workRoots = []) {
   const inWorkspace = makeInWorkspace(wsRoot);
+  const inWorkRoots = makeInWorkRoots(workRoots);
   const isForbidden = makeIsForbidden(wsRoot);
   const deny = (what) => ({ behavior: 'deny', message: `${what} 사장의 대화창에 "켤까요?" 카드를 띄웠으니, 승인하면 이어서 하겠다고 짧게 안내하라.` });
   const denyHard = () => ({ behavior: 'deny', message: FORBIDDEN_MSG[lang === 'en' ? 'en' : 'ko'] });
@@ -131,15 +146,14 @@ export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang =
       const targets = readToolTargets(toolName, input); // Read=file_path, Grep=path, Glob=path+pattern
       let outside = false;
       for (const t of targets) {
+        // 금지 구역 선차단 — 위치(워크스페이스 안 도트파일 포함)·능력·bypass 불문. 지정 작업 폴더가
+        // 보호 구역을 포함하는 경우(예: 홈 전체 등록)에도 이 검사가 앞서므로 우회되지 않는다.
+        if (await isForbidden(t)) return denyHard();
         if (await inWorkspace(t)) continue;
+        if (await inWorkRoots(t)) continue; // 사장이 지정한 외부 작업 폴더 = 확장 책상
         outside = true;
-        if (await isForbidden(t)) return denyHard(); // 금지 구역 — 능력·bypass 불문(자격 유출·앱 코드 열람 차단)
       }
-      if (!outside) {
-        // 워크스페이스 안이어도 직속 도트파일(.secrets.json)은 금지 — isForbidden의 ws 내부 분기
-        for (const t of targets) if (await isForbidden(t)) return denyHard();
-        return allow;
-      }
+      if (!outside) return allow;
       if (caps.fs || caps.bypass) return allow; // 사장이 켠 능력/전권 — 결재 없이 실행
       await suggestCapability(wsId, slug, 'fs', null, from);
       return deny('워크스페이스 밖 파일 읽기는 파일 시스템 능력이 필요하다.');
@@ -153,6 +167,7 @@ export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang =
       const target = input.file_path ?? input.notebook_path ?? '';
       if (await isForbidden(target)) return denyHard(); // 금지 구역 — 워크스페이스 안 도트파일 포함
       if (await inWorkspace(target)) return allow; // 회사 폴더 안은 크루의 책상이다
+      if (await inWorkRoots(target)) return allow; // 지정 작업 폴더도 책상 — fs 능력과 독립(더 좁은 위임)
       if (caps.fs || caps.bypass) return allow;
       await suggestCapability(wsId, slug, 'fs', null, from);
       return deny('파일 시스템 능력이 꺼져 있다.');

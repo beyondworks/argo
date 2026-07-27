@@ -51,6 +51,8 @@ export function paths(wsId) {
     competitions: join(root, 'competitions'), // 경쟁 시안 — 같은 지시 N명 병렬 시안 기록
     connections: join(root, 'connections.json'),
     capabilities: join(root, 'capabilities.json'),
+    // 도트파일 — 게이트의 직속 도트파일 차단에 얹혀 크루 자가 수정 금지 + sync EXCLUDE(기기 로컬 경로)
+    workroots: join(root, '.workroots.json'),
     vault: join(root, 'vault'),
     conversations: join(root, 'vault', 'conversations'), // 구버전 — 마이그레이션 후 읽기 전용
     journal: join(root, 'vault', 'journal'),
