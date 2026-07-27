@@ -111,7 +111,7 @@ async function endMeetingLocked(wsId) {
 
 참석: 사장${attendees.length ? `, ${attendees.join(', ')}` : ''}
 
-${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: ${String(m.text).trim()}`).join('\n\n')}
+${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: ${String(m.text).trim()}${m.attachments?.length ? `\n> 첨부: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')}` : ''}`).join('\n\n')}
 `;
   const journalName = `${day}-회의록-${hm}.md`;
   await mkdir(p.journal, { recursive: true });
@@ -165,14 +165,14 @@ async function pushRoomMsg(wsId, msg, expectSid) {
   });
 }
 
-export async function runRoomTurn(wsId, text) {
+export async function runRoomTurn(wsId, text, attachments = []) {
   const agents = await listAgents(wsId);
   if (!agents.length) throw new Error('아직 크루가 없습니다. 데크에서 먼저 영입해 주세요.');
   // 사장 발언 추가 + 현재 세션 sid 확보(이후 발언은 이 sid가 유지될 때만 기록)
   const sid = await withLock(rkey(wsId), async () => {
     const room = await loadRoom(wsId);
     const s = room.sid ?? 0;
-    room.messages.push({ who: 'user', text, ts: Date.now() });
+    room.messages.push({ who: 'user', text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) });
     await saveRoom(wsId, room);
     return s;
   });
@@ -193,7 +193,9 @@ export async function runRoomTurn(wsId, text) {
   for (const a of speakers) {
     // 매 발언 직전 최신 트랜스크립트 — 뒤 크루는 앞 크루의 답을 보고 겹치지 않게 보탠다
     const transcript = (await loadRoom(wsId)).messages.slice(-20)
-      .map((m) => `${m.who === 'user' ? '사장' : nameOf(m.who)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}`)
+      // 첨부 경로 규약은 chat.mjs 스레드 맥락과 동일 문자열 — 후속 턴에서 "아까 그 파일"이 경로로
+      // 이어진다(검수 M1: 이게 없으면 1턴 첨부를 2턴 크루가 못 찾는다 — 랜덤 접두 파일명이라 탐색 불가).
+      .map((m) => `${m.who === 'user' ? '사장' : nameOf(m.who)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}${m.attachments?.length ? ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ''}`)
       .join('\n');
     const prompt = `지금 회의실에 있다 — 사장과 동료 크루가 함께 보는 방이다.
 
@@ -206,7 +208,8 @@ ${transcript}
 - 동료의 전문(검수·리뷰·다른 분야)이 필요하면 **말로만 "맡기겠다"고 하지 말고 delegate 도구(to=동료 slug, task=구체 지시)로 실제로 위임해** 그 동료의 결과를 받아 네 답에 통합하고, 어느 동료 작업인지 밝혀라.
 - 확정 정보가 부족하면 되묻기만 하고 멈추지 말고, 합리적 가정을 명시한 뒤 그 방향으로 **실제 산출물/검토 결과까지 만들어** 답하라.
 - 단순 논의·의견이면 동료가 이미 말한 건 반복 말고 네 전문성으로 간결히 보태라(이 경우엔 5줄 이내).`;
-    const r = await chat(wsId, a.slug, prompt, null, { source: 'room' });
+    // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다
+    const r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments });
     const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now() }, sid);
     if (!live) break; // 회의가 마쳐졌다 — 남은 발언을 빈 방에 남기지 않는다
     replies.push({ slug: a.slug, name: a.name, reply: r.reply });
