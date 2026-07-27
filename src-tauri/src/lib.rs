@@ -29,6 +29,34 @@ fn tcp_open(port: u16) -> bool {
     TcpStream::connect_timeout(&(([127, 0, 0, 1], port).into()), Duration::from_millis(300)).is_ok()
 }
 
+// connect 실패 ≠ bind 가능 — Windows Hyper-V/WinNAT 동적 예약 대역의 포트는 아무도 LISTEN하지
+// 않아도 커널이 bind()를 EACCES로 거부한다(실사용 신고 2026-07-27, Win11 24H2 재현: 예약 대역에
+// 3001이 걸리면 사이드카가 listen EACCES로 즉사, 재시작으로는 절대 안 풀림). 스폰 전에 실제
+// bind로 확인한다 — TcpListener는 즉시 drop되고 loopback+즉시 스폰 흐름이라 TIME_WAIT 무해.
+fn can_bind(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+// 스폰 후보 선택(순수) — tried 제외 + 닫혀 있고(bind 가능) 순서 유지. 판정 함수를 주입받아
+// 실소켓 없이 단위 테스트한다(검수 1R: 폴백 로직 무테스트 지적).
+fn pick_spawn_port(tried: &[u16], open: impl Fn(u16) -> bool, bindable: impl Fn(u16) -> bool) -> Option<u16> {
+    PORTS.iter().copied().find(|&p| !tried.contains(&p) && !open(p) && bindable(p))
+}
+
+// Windows 예약 포트 자가진단 힌트 — can_bind 실패가 원인일 때만 실어 보낸다(부록 c).
+const RESERVED_HINT: &str = "ports may be reserved by Windows (Hyper-V dynamic range) — check with `netsh int ipv4 show excludedportrange protocol=tcp` in Admin PowerShell, or run `net stop winnat && net start winnat` and reopen Argo";
+
+// 플랫폼별 힌트 — netsh/winnat 안내가 macOS/Linux 사용자에게 나가면 오귀속(검수 1R MEDIUM).
+fn reserved_hint() -> &'static str {
+    if cfg!(windows) { RESERVED_HINT } else { "another program may be interfering with local ports — check the app logs" }
+}
+
+// 종결 에러 — terminal:true로 boot.js가 "재시도 중" 문구를 붙이지 않게 한다(검수 1R: 폴백
+// 소진 후에도 '재시도 중'이 떠 있으면 신고가 지적한 UX 거짓이 종료 단계로 이동할 뿐).
+fn boot_error_final(app: &tauri::AppHandle, detail: &str, port: Option<u16>) {
+    let _ = app.emit("boot", serde_json::json!({ "phase": "error", "detail": detail, "port": port, "terminal": true, "version": env!("CARGO_PKG_VERSION") }));
+}
+
 // 이 포트의 서버가 "같은 버전의" Argo인가 — /api/ping 신원 마커 + 버전을 최소 HTTP로 확인.
 // TCP 열림 ≠ Argo(타 앱 선점·좀비) — 신원 확인 없이는 붙지도, 그 포트를 쓰지도 않는다.
 // 버전 대조(2026-07-22 실사용 신고): 버전 불문 adopt는 앱(쉘) 버전과 화면(UI) 버전을 어긋나게 한다 —
@@ -82,14 +110,21 @@ pub fn run() {
             // ② 아니면 첫 빈 포트에 사이드카 스폰(다른 버전의 상주 Argo는 그대로 두고 공존)
             // ③ 전부 타 앱 점유면 명확한 에러(낯선 서버 부착·무한 대기 방지).
             let adopt = PORTS.iter().copied().find(|&p| tcp_open(p) && is_same_version_argo(p));
-            let spawn_port = if adopt.is_none() { PORTS.iter().copied().find(|&p| !tcp_open(p)) } else { None };
+            // 빈 포트 판정 = connect 안 됨 **그리고 bind 됨** — connect만 보면 Hyper-V 예약 포트를
+            // "빈 포트"로 오판해 스폰 즉사(실사용 신고 2026-07-27).
+            let spawn_port = if adopt.is_none() { pick_spawn_port(&[], tcp_open, can_bind) } else { None };
             if let Some(p) = adopt {
                 boot_status(app.handle(), "started", "server already running", Some(p));
             } else if spawn_port.is_none() {
-                // TCP는 열려 있는데 어느 것도 Argo가 아님 — 예전 코드는 여기서 낯선 서버에 붙어
-                // "Cannot GET /"를 띄웠다(실사용 2026-07-20). 이제 정직하게 실패를 알린다.
-                boot_status(app.handle(), "error",
-                    "ports 3001/3011/3021 are all taken by other apps — close them (or restart this computer) and reopen Argo", None);
+                // 원인을 갈라 알린다 — 타 앱 점유(전부 TCP 열림)와 커널 예약(닫혀 있는데 bind 불가)은
+                // 사용자가 취할 행동이 다르다(전자=앱 종료, 후자=winnat 재시작).
+                let all_taken = PORTS.iter().copied().all(tcp_open);
+                let msg = if all_taken {
+                    "ports 3001/3011/3021 are all taken by other apps — close them (or restart this computer) and reopen Argo".to_string()
+                } else {
+                    format!("no usable port among 3001/3011/3021 — {}", reserved_hint())
+                };
+                boot_error_final(app.handle(), &msg, None);
             } else {
                 let port = spawn_port.unwrap();
                 let handle = app.handle().clone();
@@ -108,56 +143,107 @@ pub fn run() {
                     .unwrap_or_default());
 
                 tauri::async_runtime::spawn(async move {
-                    let sidecar = match handle.shell().sidecar("node") {
-                        Ok(c) => c,
-                        Err(e) => {
-                            log::error!("[argo] node 사이드카 없음: {e}");
-                            boot_status(&handle, "error", &format!("node sidecar missing: {e}"), Some(port));
-                            return;
-                        }
-                    };
-                    let child = sidecar
-                        .current_dir(std::path::PathBuf::from(&server_dir))
-                        .env("PORT", port.to_string())
-                        .env("HOSTNAME", "127.0.0.1")
-                        .env("ARGO_ROOT", format!("{data_root}/workspaces"))
-                        .env("ARGO_STANDALONE", "1")
-                        .env("NODE_ENV", "production")
-                        // 부모 감시 — 서버가 이 PID(셸)를 지켜보다 사라지면 스스로 종료(고아 방지)
-                        .env("ARGO_PARENT_PID", std::process::id().to_string())
-                        // 상대경로 — current_dir(server_dir) 기준. 절대경로 조합은 Windows UNC에서 깨진다.
-                        .args(["server.js"])
-                        .spawn();
-                    match child {
-                        Ok((mut rx, child)) => {
-                            log::info!("[argo] 회사 서버 사이드카 기동 (포트 {port})");
-                            boot_status(&handle, "started", "local server process launched", Some(port));
-                            // 종료 시 kill할 수 있게 보관
-                            if let Some(st) = handle.try_state::<Sidecar>() {
-                                *st.0.lock().unwrap() = Some(child);
+                    // 즉사 폴백(실사용 신고 2026-07-27 제안 b) — 스폰 5초 안에 비정상 종료하면
+                    // (bind 거부·모듈 로드 실패 계열) 다음 후보 포트로 재스폰한다. can_bind를
+                    // 스폰 직전에도 재확인해 경합·예약을 걸러낸다. 후보 소진 시에만 최종 에러 —
+                    // 예전엔 폴백이 없어 boot.js가 "재시도 중"을 띄우지만 실제 재시도는 0회였다(UX 거짓).
+                    let mut tried: Vec<u16> = Vec::new();
+                    let mut port = port;
+                    loop {
+                        tried.push(port);
+                        let sidecar = match handle.shell().sidecar("node") {
+                            Ok(c) => c,
+                            Err(e) => {
+                                log::error!("[argo] node 사이드카 없음: {e}");
+                                boot_error_final(&handle, &format!("node sidecar missing: {e}"), Some(port)); // 종결 — 재스폰 없음(2R H2)
+                                return;
                             }
-                            while let Some(ev) = rx.recv().await {
-                                match ev {
-                                    CommandEvent::Stderr(line) | CommandEvent::Stdout(line) => {
-                                        let s = String::from_utf8_lossy(&line).trim_end().to_string();
-                                        log::info!("[server] {s}");
-                                        // 부트 화면 로그 테일 — 느릴 때 무엇을 하는지 보여준다
-                                        let _ = handle.emit("boot-log", &s);
+                        };
+                        let child = sidecar
+                            .current_dir(std::path::PathBuf::from(&server_dir))
+                            .env("PORT", port.to_string())
+                            .env("HOSTNAME", "127.0.0.1")
+                            .env("ARGO_ROOT", format!("{data_root}/workspaces"))
+                            .env("ARGO_STANDALONE", "1")
+                            .env("NODE_ENV", "production")
+                            // 부모 감시 — 서버가 이 PID(셸)를 지켜보다 사라지면 스스로 종료(고아 방지)
+                            .env("ARGO_PARENT_PID", std::process::id().to_string())
+                            // 상대경로 — current_dir(server_dir) 기준. 절대경로 조합은 Windows UNC에서 깨진다.
+                            .args(["server.js"])
+                            .spawn();
+                        match child {
+                            Ok((mut rx, child)) => {
+                                log::info!("[argo] 회사 서버 사이드카 기동 (포트 {port})");
+                                boot_status(&handle, "started", "local server process launched", Some(port));
+                                // 종료 시 kill할 수 있게 보관
+                                if let Some(st) = handle.try_state::<Sidecar>() {
+                                    *st.0.lock().unwrap() = Some(child);
+                                }
+                                let started = std::time::Instant::now();
+                                let mut early_exit: Option<String> = None;
+                                // 진짜 원인 — stderr에서 "Error"/⨯를 포함한 **첫** 줄만(2R 실측: 마지막 줄 캡처는
+                                // Next 에러 덤프의 닫는 중괄호 `}`만 실었고, stdout 공용 캡처는 스트림 순서 미보장).
+                                let mut err_cause = String::new();
+                                while let Some(ev) = rx.recv().await {
+                                    match ev {
+                                        CommandEvent::Stderr(line) => {
+                                            let s = String::from_utf8_lossy(&line).trim_end().to_string();
+                                            if err_cause.is_empty() && (s.contains("Error") || s.contains('⨯')) {
+                                                err_cause = s.chars().take(180).collect();
+                                            }
+                                            log::info!("[server] {s}");
+                                            let _ = handle.emit("boot-log", &s);
+                                        }
+                                        CommandEvent::Stdout(line) => {
+                                            let s = String::from_utf8_lossy(&line).trim_end().to_string();
+                                            log::info!("[server] {s}");
+                                            // 부트 화면 로그 테일 — 느릴 때 무엇을 하는지 보여준다
+                                            let _ = handle.emit("boot-log", &s);
+                                        }
+                                        CommandEvent::Error(e) => {
+                                            boot_status(&handle, "error", &format!("server error: {e}"), Some(port));
+                                        }
+                                        CommandEvent::Terminated(t) => {
+                                            let code = t.code.map(|c| c.to_string()).unwrap_or_else(|| "unknown".into());
+                                            // 즉사(<5s + 비정상 코드)만 폴백 대상 — 정상 서비스 중 사망은 기존대로 알린다
+                                            if t.code.map_or(false, |c| c != 0) && started.elapsed() < Duration::from_secs(5) {
+                                                early_exit = Some(code);
+                                            } else {
+                                                // 정상/지연 종료 — 이 경로는 재스폰이 없다(종결). 2R H2.
+                                                boot_error_final(&handle, &format!("server exited (code {code})"), Some(port));
+                                            }
+                                        }
+                                        _ => {}
                                     }
-                                    CommandEvent::Error(e) => {
-                                        boot_status(&handle, "error", &format!("server error: {e}"), Some(port));
+                                }
+                                let Some(code) = early_exit else { return };
+                                // 폴백 전 adopt 재확인 — 두 인스턴스가 동시에 폴백하면 진 쪽이 다음 포트에
+                                // 자기 서버를 또 띄워 같은 ARGO_ROOT에 같은 버전 서버 2개(스케줄러·동기화
+                                // 이중 구동)가 된다(검수 1R 차단 지적 — 이 PR 전에는 없던 회귀 방향).
+                                if let Some(p) = PORTS.iter().copied().find(|&p| tcp_open(p) && is_same_version_argo(p)) {
+                                    log::info!("[argo] 폴백 중 같은 버전 Argo 발견(포트 {p}) — 스폰 대신 입양");
+                                    boot_status(&handle, "started", "server already running", Some(p));
+                                    return;
+                                }
+                                match pick_spawn_port(&tried, tcp_open, can_bind) {
+                                    Some(n) => {
+                                        log::warn!("[argo] 포트 {port} 사이드카 즉사(code {code}) — {n}으로 폴백");
+                                        boot_status(&handle, "starting", &format!("server died instantly on port {port} (code {code}) — retrying on port {n}"), Some(n));
+                                        port = n;
+                                        continue;
                                     }
-                                    CommandEvent::Terminated(t) => {
-                                        let code = t.code.map(|c| c.to_string()).unwrap_or_else(|| "unknown".into());
-                                        boot_status(&handle, "error", &format!("server exited (code {code})"), Some(port));
+                                    None => {
+                                        let tail = if err_cause.is_empty() { String::new() } else { format!(" | cause: {err_cause}") };
+                                        boot_error_final(&handle, &format!("server exited immediately on every usable port (last code {code}) — {}{tail}", reserved_hint()), Some(port));
+                                        return;
                                     }
-                                    _ => {}
                                 }
                             }
-                        }
-                        Err(e) => {
-                            log::error!("[argo] 서버 사이드카 기동 실패: {e}");
-                            boot_status(&handle, "error", &format!("failed to launch server: {e}"), Some(port));
+                            Err(e) => {
+                                log::error!("[argo] 서버 사이드카 기동 실패: {e}");
+                                boot_error_final(&handle, &format!("failed to launch server: {e}"), Some(port)); // 종결 — 재스폰 없음(2R H2)
+                                return;
+                            }
                         }
                     }
                 });
@@ -176,4 +262,31 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // can_bind — 점유 포트에서 false, 해제 후 true (Hyper-V 예약 대역은 CI/mac에서 재현 불가 —
+    // 그 케이스는 Windows 커널이 EACCES를 주므로 같은 is_ok() 판정으로 걸러진다. 신고 2026-07-27)
+    #[test]
+    fn pick_spawn_port_skips_tried_open_and_unbindable() {
+        // 3001 예약(bind 불가)·3011 tried → 3021 (신고 시나리오의 폴백 경로)
+        assert_eq!(pick_spawn_port(&[3011], |_| false, |p| p != 3001), Some(3021));
+        // 열려 있는 포트(타 앱·타 버전 Argo)는 스폰 후보가 아니다
+        assert_eq!(pick_spawn_port(&[], |p| p == 3001, |_| true), Some(3011));
+        // 전부 소진 → None (무한 루프 없음)
+        assert_eq!(pick_spawn_port(&[3001, 3011, 3021], |_| false, |_| true), None);
+        // 전부 bind 불가(Hyper-V 대역이 3000번대 전체를 덮은 경우) → None
+        assert_eq!(pick_spawn_port(&[], |_| false, |_| false), None);
+    }
+
+    #[test]
+    fn can_bind_detects_occupied_and_freed_port() {
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        assert!(!can_bind(port), "LISTEN 중인 포트는 bind 불가여야 한다");
+        drop(l);
+        assert!(can_bind(port), "해제된 포트는 bind 가능해야 한다");
+    }
 }
