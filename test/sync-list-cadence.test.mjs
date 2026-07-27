@@ -30,7 +30,22 @@ test('두 호출이 같은 변수를 쓴다 — 게이트를 나누면 보관 �
   // 복원된다(보관 전파가 tombs로 걸러지는 구조). 절감이 더 필요하면 주기를 늘려야지 나누면 안 된다.
   const gates = [...SRC.matchAll(/isDiscoverDue\(/g)].length;
   assert.equal(gates, 1, '게이트 판정이 두 곳 이상이다 — discover와 tombstone이 갈라졌을 수 있다');
-  assert.match(SRC, /const discoverDue = !freePlan && isDiscoverDue\(/, '게이트 결과는 discoverDue 하나로 모은다(freePlan 포함형 — 아래 free 스킵 테스트 참조)');
+  assert.match(SRC, /const discoverDue = !freeListSkip && isDiscoverDue\(/, '게이트 결과는 discoverDue 하나로 모은다(freeListSkip 포함형 — 아래 free 스킵 테스트 참조)');
+});
+
+test('free 스킵 판정식 — 변이 방어(분리 검수 M4: === \'free\'를 !== \'pro\'로 바꿔도 스위트가 초록이었다)', () => {
+  // trial·미확인(null)이 스킵 대상에 포함되면 정상 사용자의 멀티기기 동기화가 조용히 끊긴다.
+  assert.match(SRC, /freePlan = ent\.plan === 'free'/,
+    "free 판정은 === 'free'만 — fetchPlan의 실패·미확인은 전부 null이라 이 등호가 fail-safe의 전부다");
+  // 복구 예외(데이터 소유권): 로컬 회사 0개인 free 기기는 목록 허용 — RLS가 free에 select를 열어둔
+  // 취지(20260723001629)와 정합. 이 예외를 지우면 재설치 free 사용자의 회사가 영영 안 돌아온다.
+  assert.match(SRC, /const freeListSkip = freePlan && targets\.size > 0;/,
+    'free 목록 스킵에 복구 예외(targets 0개)가 빠졌다');
+});
+
+test('리스 오너 배선 — renewLease(localOwners[0]) (분리 검수: owners[0]로 되돌리면 TDZ 런타임 오류)', () => {
+  assert.match(SRC, /renewLease\(localOwners\[0\]/,
+    'renewLease가 localOwners[0]이 아니다 — 게이트 이동 후 owners는 이 시점에 아직 선언 전(TDZ)이다');
 });
 
 // ── 2026-07-27 DB 응답 불능 사후 — 게이트 순서·free 목록 스킵 배선 ──

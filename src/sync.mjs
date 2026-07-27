@@ -807,8 +807,9 @@ async function cycle() {
   // 리스 키는 Storage RLS의 Pro 게이트에서 예외 처리돼 있다(마이그레이션 20260723001629, 오너 경계는 유지).
   // (2026-07-27 순서 이동 후에도 이 제약은 유지된다: renewLease는 아래 요금제 게이트 return보다 앞이다.
   //  리스 오너는 localOwners[0] — 세션 모드에선 foreign-owner 게이트로 targets 전부가 세션 소유라
-  //  기존 owners[0]과 동일하고, 새 기기 첫 사이클(로컬 0개)만 다음 사이클로 8초 미뤄진다: 리스 미획득
-  //  기본값이 leader:true라 무해.)
+  //  기존 owners[0]과 동일하고, 새 기기 첫 사이클(로컬 0개)만 다음 사이클로 미뤄진다. 이게 무해한 이유는
+  //  "미획득 기본 leader:true"가 아니라(그 기본값은 획득한 리더십이 아니다 — 위 lease 설계 노트와 충돌)
+  //  **로컬 회사가 0개면 이 기기에서 돌릴 루틴·폴러 자체가 없어서**다(분리 검수 2026-07-27 지적 반영).)
   // 리셋은 renewLease보다 **앞**에 둔다 — 뒤에 두면 renewLease가 throw할 때 직전 사이클의 paywalled가
   // stale로 남아 UI가 잘못된 페이월을 표시한다(architect 지적 2026-07-23).
   status.paywalled = false; // 매 사이클 리셋 — 모드 전환(세션→서비스) 시 stale true 잔존 차단
@@ -837,9 +838,15 @@ async function cycle() {
   // **위치(2026-07-27, DB 응답 불능 사후)**: 이 게이트는 반드시 아래 원격 목록 조회(tombstone·discover)
   // **앞**에 있어야 한다. 이전엔 목록 조회 뒤에 있어 차단될 계정도 매 주기 storage.search(회당 수 초,
   // DB CPU 98.9%)를 먼저 태웠다. 또 하나 — 강제(enforce) 여부와 무관하게 **free 플랜이면 원격 목록을
-  // 건너뛴다**(freePlan): Free = 단일 기기 약속이라 발견·원격 tombstone이 제품상 무의미하고, 서버 RLS가
-  // 어차피 거부하는 호출이 비용만 태운다. 조회 실패는 가용성 우선 통과(fail-open) — 실데이터 접근은
-  // 서버 RLS가 최종 방어선이라 안전하다(이전엔 조회 실패가 사이클 전체를 죽였다).
+  // 건너뛴다**: Free = 단일 기기 약속이라 발견·원격 tombstone이 제품상 무의미하고, 서버 RLS가
+  // 어차피 거부하는 호출이 비용만 태운다. 판정은 `=== 'free'`뿐 — fetchPlan의 실패·미확인 경로는 전부
+  // null이라(entitlement.mjs) trial·미확인이 free로 오분류되지 않는다(fail-safe 방향, 분리 검수 확인).
+  // **예외(데이터 소유권 — 분리 검수 MEDIUM 반영)**: 로컬 회사 0개인 free 기기는 목록을 허용한다.
+  // RLS가 free에도 select/delete를 의도적으로 열어둔 것(마이그레이션 20260723001629 꼬리: 다운그레이드
+  // 계정도 기존 클라우드 데이터를 pull·삭제할 수 있어야 한다 — 데이터 소유권)과 정합하며, 재설치한
+  // free 사용자의 유일한 복구 경로다. 회사가 복원되는 즉시(targets>0) 다시 스킵돼 비용은 상한적.
+  // 조회 실패는 가용성 우선 통과(fail-open) — 최종 집행은 서버 RLS. (fetchPlan이 예외 대부분을 null로
+  // 삼키므로 이 catch는 심층 방어다.)
   let freePlan = false;
   if (!(loadSyncCreds() && serviceCredsAllowed())) {
     try {
@@ -847,16 +854,21 @@ async function cycle() {
       status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
       if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
       freePlan = ent.plan === 'free';
-    } catch (e) { console.warn('[argo] 요금제 조회 실패(가용성 우선 통과):', e.message); }
+    } catch (e) {
+      status.plan = null; // stale 잔존 차단 — 직전 사이클 plan이 설정 배지에 남지 않게(분리 검수 LOW)
+      console.warn('[argo] 요금제 조회 실패(가용성 우선 통과):', e.message);
+    }
   }
+  // free 목록 스킵의 실제 판정 — 복구 예외(로컬 0개) 포함. 아래 discoverDue **하나에만** AND된다.
+  const freeListSkip = freePlan && targets.size > 0;
   // 회사 tombstone 동기화 — 이번 사이클에 원격 목록 조회(발견·tombstone)를 할 차례인가.
   // 실패해도 시각을 갱신한다: 실패마다 재시도하면 장애 중 목록 호출이 오히려 CYCLE_MS 주기로 폭주한다.
   // ⚠ 불변식 — **discoverRemote와 원격 tombstone은 반드시 이 게이트 하나를 공유한다.** 둘을 갈라
   // 각자 주기를 주면 "발견은 도는데 원격 tombstone은 안 도는" 사이클이 생기고, 그 사이클에 다른
   // 기기가 보관한 회사가 로컬로 복원돼 **부활**한다(보관 전파가 tombs로 걸러지는 구조라서다).
   // 절감이 더 필요하면 주기를 늘려라 — 나누지 마라. (검수 지적 2026-07-26, 회귀 가드: 아래 테스트)
-  // freePlan은 두 소비자가 공유하는 discoverDue 하나에 AND된다 — 불변식(단일 게이트)이 그대로 지켜진다.
-  const discoverDue = !freePlan && isDiscoverDue(Date.now(), globalThis.__argoLastDiscover, DISCOVER_MS);
+  // freeListSkip은 두 소비자가 공유하는 discoverDue 하나에 AND된다 — 불변식(단일 게이트)이 그대로 지켜진다.
+  const discoverDue = !freeListSkip && isDiscoverDue(Date.now(), globalThis.__argoLastDiscover, DISCOVER_MS);
   if (discoverDue) globalThis.__argoLastDiscover = Date.now();
   const tombs = await syncTombstones(keyOwner, { remote: discoverDue }).catch((e) => { console.warn('[argo] tombstone 동기화 실패:', e.message); return new Set(); });
   // 로컬 스캔이 tombstone 처리보다 먼저가 됐으므로(게이트 이동), 이번 사이클에 보관(재적용 포함)된
