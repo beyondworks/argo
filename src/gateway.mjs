@@ -911,9 +911,23 @@ async function pushEvent(event) {
       await sendTgReply(t.token, t.chatId, event.wsId, pick(`**[작업 완료] ${event.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Task done] ${event.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang))
         .catch((e) => console.error('[argo] 텔레그램 작업 푸시 실패:', e.message));
     }
+    // 크루 쪽지 배달 — 다른 세션·다른 시각의 크루 간 소통이라 사장이 화면을 보고 있지 않은 게 기본값.
+    // 수신 크루의 답을 브리핑으로 민다(재검 N1에서 보류했던 분기 — 문안과 함께 복원).
+    if (event.type === 'crewmail') {
+      const agents = await listAgents(event.wsId).catch(() => []);
+      const nameOf = (s) => agents.find((a) => a.slug === s)?.name ?? s;
+      const cc = event.kind === 'cc';
+      await sendTgReply(t.token, t.chatId, event.wsId, pick(
+        `**[크루 쪽지] ${event.fromName ?? nameOf(event.from)} → ${nameOf(event.slug)}${cc ? ' (참조)' : ''}**\n\n${event.reply}`,
+        `**[Crew mail] ${event.fromName ?? nameOf(event.from)} → ${nameOf(event.slug)}${cc ? ' (CC)' : ''}**\n\n${event.reply}`,
+        lang,
+      )).catch((e) => console.error('[argo] 텔레그램 쪽지 푸시 실패:', e.message));
+    }
   }
   const s = all.slack;
-  if (s.enabled && s.token && s.channel) {
+  // 슬랙은 문안이 준비된 타입만 — 아래 삼항이 approval 외 전부를 루틴 문안으로 다뤄, job·crewmail 등
+  // 다른 타입이 오면 event.routine.title에서 매번 TypeError였다(재검 N1). 타입 게이트로 좁힌다.
+  if (s.enabled && s.token && s.channel && (event.type === 'approval' || event.type === 'routine')) {
     const text = event.type === 'approval'
       ? pick(
           `결재 요청 · ${who}: ${event.item.action}\n사유: ${event.item.reason}\n→ 이 채널에 "승인 ${event.item.id}" 또는 "거절 ${event.item.id}" 로 회신`,
