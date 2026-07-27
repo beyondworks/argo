@@ -208,7 +208,7 @@ ${roster || '(없음)'}
 export async function draftRoutineFromText(wsId, text, { agents = [], lang = 'ko' } = {}) {
   if (!String(text ?? '').trim()) throw new Error(lang === 'en' ? 'Describe the routine first' : '루틴 내용을 먼저 적어주세요');
   const roster = agents.map((a) => `- ${a.slug}: ${a.name} (${a.role ?? ''})`).join('\n');
-  const { text: out } = await runOneShot(wsId, DRAFT_PROMPT(String(text).slice(0, 1000), roster), { lang, timeoutMs: 90_000 });
+  const { text: out } = await runOneShot(wsId, DRAFT_PROMPT(String(text).slice(0, 1000), roster), { lang, timeoutMs: 3 * 60_000 }); // 90s→180s: 이 값이 이제 SDK 경로에도 걸린다(이전엔 CLI 전용, SDK는 무제한) — 느린 모델의 정상 초안이 잘리지 않게
   let parsed;
   try {
     parsed = extractJson(out);

@@ -209,9 +209,15 @@ test('중단 원인을 정직한 문구로 — "사용자가 중단"으로 읽�
   assert.match(src, /const e = ac\.signal\.aborted[\s\S]{0,200}sdk-timeout/, '중단이면 상한 초과로 치환 — 자가치유 로그·최종 안내가 모두 정직해진다');
 });
 
-test('기억 정리는 배치라 명시로 넉넉한 상한, 사용자 대기 경로는 기본값 보호 (검수 M-2)', async () => {
-  const cons = await readFile(new URL('../src/consolidate.mjs', import.meta.url), 'utf8');
-  const persona = await readFile(new URL('../src/persona.mjs', import.meta.url), 'utf8');
-  assert.match(cons, /timeoutMs: 10 \* 60_000/, '새벽 배치 — 사용자가 안 기다린다');
-  assert.doesNotMatch(persona, /timeoutMs/, '영입은 사용자가 화면에서 기다린다 — 기본(120s)을 늘리면 안 된다');
+test('상한은 호출부가 용도에 맞게 명시한다 — 통일된 knob 위에서 (검수 M-2·I-1)', async () => {
+  const [oneshot, cons, persona, routines] = await Promise.all(
+    ['../src/oneshot.mjs', '../src/consolidate.mjs', '../src/persona.mjs', '../src/routines.mjs']
+      .map((f) => readFile(new URL(f, import.meta.url), 'utf8')));
+  // 기본값 자체를 잠근다 — I-3: '호출부에 문자열이 있나'만 보면 기본값을 30분으로 바꿔도 안 잡힌다
+  assert.match(oneshot, /timeoutMs = 120_000/, '명시 안 한 호출의 기본 상한');
+  assert.match(cons, /runOneShot\([\s\S]{0,400}?timeoutMs: 10 \* 60_000/, '기억 정리 = 새벽 배치, 대기자 없음');
+  // I-1: SDK 경로엔 이번에 처음 상한이 생긴다(이전 무제한). 첫 영입은 무료 모델(큐 지연) + 단일
+  // 러너(자가치유 대체 없음) 조합이라 기본 120s면 온보딩이 통째로 실패할 수 있다.
+  assert.match(persona, /CARD_PROMPT\([\s\S]{0,120}?timeoutMs: 5 \* 60_000/, '첫 영입은 기본보다 넉넉히');
+  assert.match(routines, /runOneShot\([\s\S]{0,200}?timeoutMs: 3 \* 60_000/, '루틴 초안 — 90s는 SDK 경로엔 짧다');
 });

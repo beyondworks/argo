@@ -118,7 +118,10 @@ async function recommendRole(wsId, oneLiner, lang = 'ko') {
 export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {}) {
   const t0 = Date.now();
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({})); // 시스템 언어 — 카드 생성 언어
-  const { runner, text, usage, costUsd } = await runOneShot(wsId, CARD_PROMPT(oneLiner, name?.trim(), lang), { lang });
+  // 상한 명시 — 기본(120s)은 사용자 대기 경로엔 맞지만 **첫 영입**은 다르다: 신규 회사는 무료
+  // 모델(OPENROUTER_ONBOARD_MODEL)로 뽑히기 쉽고 무료 티어는 큐 지연이 크며, 러너가 하나뿐이라
+  // 자가치유가 받아줄 대체도 없다 — 여기서 잘리면 온보딩이 통째로 실패한다(검수 2026-07-27 I-1).
+  const { runner, text, usage, costUsd } = await runOneShot(wsId, CARD_PROMPT(oneLiner, name?.trim(), lang), { lang, timeoutMs: 5 * 60_000 });
   // billed 각인 — 구독 러너의 영입 턴 금액이 청구로 새지 않게(검수 2026-07-27 부수 발견: main에서 누수 중이었다)
   await appendUsage(wsId, { kind: 'hire', runner, usage, costUsd, ms: Date.now() - t0, billed: await isBilledRunner(wsId, runner).catch(() => undefined) });
   const md = text.trim().replace(/^```(?:markdown)?\r?\n?/, '').replace(/\r?\n?```$/, '').trim();
