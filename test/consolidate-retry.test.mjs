@@ -181,5 +181,7 @@ test('배선: 스케줄러가 선점(claim)·성공 마킹(CAS)을 거치고, �
   assert.ok(src.indexOf('rollupJournals(c.id)') < src.indexOf('markConsolidateDone(c.id, today)'), 'done 마킹은 rollup 성공 후');
   // 실행이 백오프보다 길 때 다음 폴이 겹쳐 claim하는 것을 막는 in-flight 가드(검수 HIGH-2)
   assert.match(src, /consolidating\.has\(c\.id\) \? null : await claimConsolidate/, '진행 중이면 선점 자체를 하지 않는다');
+  // add가 빠지면 Set이 영원히 비어 가드가 완전한 no-op이 된다 — has/finally만 보면 못 잡는다(2R M-2 변이 생존)
+  assert.match(src, /consolidating\.add\(c\.id\)/, '선점 직후 진행 중 표시 — 이 한 줄이 가드의 전부다');
   assert.match(src, /\.finally\(\(\) => consolidating\.delete\(c\.id\)\)/, '완료 시 반드시 해제');
 });
