@@ -633,7 +633,26 @@ export async function loadRunnerCred(wsId, runner) {
     그걸 그대로 "이번 달 사용액"으로 보여주면 구독 사용자가 청구서로 오해한다(실사용 신고 2026-07-26:
     "구독료 안에서 쓰는 건지 추가로 청구되는 건지 헷갈린다"). (export: 회귀 테스트용) */
 export async function isBilledRunner(wsId, runner) {
-  return (await loadRunnerCred(wsId, runner))?.type === 'apikey';
+  const cred = await loadRunnerCred(wsId, runner);
+  if (cred) return cred.type === 'apikey';
+  // 회사 자격이 없어도 **호스트 env 키 폴백은 실제 과금 경로**다(검수 2026-07-27 HIGH-1):
+  // sdkEnvFor가 glm/kimi를 GLM_API_KEY/KIMI_API_KEY로, claude를 보존된 ANTHROPIC_API_KEY로
+  // 실행한다. 여기서 false를 주면 그 구성의 금액이 전면 숨고 월 예산 게이트가 영구 통과된다.
+  if (runner === 'glm') return !!process.env.GLM_API_KEY;
+  if (runner === 'kimi') return !!process.env.KIMI_API_KEY;
+  // claude: 구독 토큰(env)이 있으면 SDK가 그걸 우선(#83 대칭) — API 키만 있을 때가 과금 폴백
+  if (runner === 'claude') return !!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  return false; // codex·gemini 호스트 로그인 = 구독, openrouter 등은 회사 자격 필수
+}
+
+/** { 러너id: 청구 여부 } — 금액 표면 단일 판정(rowBilled)의 두 번째 인자. billing.mjs와
+    runnerStatus가 공유한다(중복 구현 금지 — 검수 LOW-9). 자격 파일 손상은 조용히 false로
+    누르지 않고 throw로 드러낸다(jsonstore 설계 의도 — 검수 MEDIUM-4: 손상이 "금액 0 +
+    예산 무제한"으로 위장되면 안 된다). */
+export async function billedRunnerMap(wsId) {
+  const map = {};
+  await Promise.all(Object.keys(RUNNERS).map(async (id) => { map[id] = await isBilledRunner(wsId, id); }));
+  return map;
 }
 
 /** 러너 자격 저장 — 원자적. 다른 러너·필드는 보존. 레거시 claude 필드는 정리. */
@@ -1110,13 +1129,8 @@ export async function runnerLoginStatus(runner) {
 export async function runnerStatus(wsId) {
   const host = await detectRunners();
   const secrets = await loadSecrets(wsId);
-  // 금액은 현재 자격 기준 단일 판정(rowBilled) — billing.mjs와 같은 map을 여기서 직접 만든다
-  // (billing→runners 순환이라 역수입 불가 — 예외 배선, 트립와이어가 map 전달 여부를 잠근다).
-  const billedMap = {};
-  await Promise.all(Object.keys(RUNNERS).map(async (id) => {
-    billedMap[id] = await isBilledRunner(wsId, id).catch(() => false);
-  }));
-  const usage = await monthCostByRunner(wsId, billedMap).catch(() => ({})); // 표시용 — 실패해도 상태를 막지 않는다
+  // 금액은 단일 판정(rowBilled + billedRunnerMap) — billing.mjs와 같은 함수를 쓴다(중복 금지).
+  const usage = await monthCostByRunner(wsId, await billedRunnerMap(wsId)).catch(() => ({})); // 표시용 — 실패해도 상태를 막지 않는다
   const out = {};
   for (const [id, meta] of Object.entries(RUNNER_AUTH)) {
     const cred = secrets.runners?.[id];

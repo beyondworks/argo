@@ -66,6 +66,27 @@ test('혼합 회사: 러너별로 정확 — codex(키)만 청구, claude(구독
   assert.equal(sum.month.subTurns, 1);
 });
 
+test('HIGH-3: billed:true 각인 행은 달 중간 구독 전환에도 금액이 불변 — 실지출 증발·예산 리셋 차단', async () => {
+  const ws = 'switch-mid';
+  // v0.1.30+ 형태: 청구 턴에 billed:true 각인. 이후 oauth로 전환해도 이미 나간 돈은 사실이다.
+  await seed(ws, [{ costUsd: 49, billed: true }, { costUsd: 3 } /* 레거시 무표지 */]);
+  await saveRunnerCred(ws, 'claude', 'oauth', 'sk-ant-oat-test'); // 달 중간 구독 전환
+  const mc = await billing.monthCost(ws);
+  assert.equal(mc.costUsd, 49, '각인된 실지출 $49는 전환 후에도 표시·예산에 남아야 한다');
+  assert.equal(mc.subTurns, 1, '레거시 무표지 행만 현재 자격(구독) 판정을 받는다');
+});
+
+test('appendUsage: 청구 턴에 billed:true를 각인한다 (HIGH-3의 전제)', async () => {
+  const ws = 'stamp';
+  await mkdir(paths(ws).root, { recursive: true });
+  const { appendUsage } = await import('../src/usage.mjs');
+  await appendUsage(ws, { kind: 'chat', slug: 'a', usage: { input_tokens: 1, output_tokens: 1 }, costUsd: 0.1, billed: true });
+  await appendUsage(ws, { kind: 'chat', slug: 'a', usage: { input_tokens: 1, output_tokens: 1 }, costUsd: 0.1, billed: false });
+  const lines = (await readFile(paths(ws).usage, 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(lines[0].billed, true);
+  assert.equal(lines[1].billed, false);
+});
+
 test('API키 전용 회사: 기존 동작 유지 — 금액 그대로 표시', async () => {
   const ws = 'key-only';
   await seed(ws, [{ costUsd: 1.25 }, { costUsd: 0.75 }]);
@@ -77,8 +98,8 @@ test('API키 전용 회사: 기존 동작 유지 — 금액 그대로 표시', a
 });
 
 // ── 배선 트립와이어 — 부품이 아니라 "누가 집계를 부르는가"를 잠근다.
-test('배선: 프로덕션 소비자는 usage.mjs 금액 집계를 직접 import하지 않는다', async () => {
-  const MONEY = ['readUsageSummary', 'agentStats', 'monthCostByCrew', 'monthCost'];
+test('배선: 프로덕션 소비자는 usage.mjs 금액 집계를 직접 import하지 않는다 (우회 4종 포함)', async () => {
+  const MONEY = ['readUsageSummary', 'agentStats', 'monthCostByCrew', 'monthCost', 'monthCostByRunner'];
   const offenders = [];
   async function scan(dir) {
     for (const e of await readdir(dir, { withFileTypes: true })) {
@@ -87,15 +108,18 @@ test('배선: 프로덕션 소비자는 usage.mjs 금액 집계를 직접 import
       if (!/\.(mjs|js|jsx)$/.test(e.name)) continue;
       const rel = p.slice(process.cwd().length + 1);
       if (/src\/(usage|billing)\.mjs$/.test(rel)) continue;
+      const isRunners = /src\/runners\.mjs$/.test(rel); // 순환 예외 — 아래 별도 테스트가 map 전달을 잠근다
       const src = await readFile(p, 'utf8');
       for (const m of src.matchAll(/import\s*{([^}]+)}\s*from\s*['"][^'"]*\/usage\.mjs['"]/g)) {
         const names = m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]);
-        const bad = names.filter((n) => MONEY.includes(n));
+        const bad = names.filter((n) => MONEY.includes(n) && !(isRunners && n === 'monthCostByRunner'));
         if (bad.length) offenders.push(`${rel}: ${bad.join(',')}`);
       }
-      for (const m of src.matchAll(/import\(['"][^'"]*\/usage\.mjs['"]\)/g)) {
-        // 동적 import는 구조분해 이름을 못 좇는다 — usage.mjs 동적 import 자체를 금지(금액 함수 포함 모듈)
-        if (!/src\/runners\.mjs$/.test(rel)) offenders.push(`${rel}: dynamic import(usage.mjs)`);
+      // 우회 차단(검수 2R HIGH-2 변이 실측): 네임스페이스·re-export·export * ·동적 import
+      if (!isRunners) {
+        if (/import\s*\*\s*as\s+\w+\s+from\s*['"][^'"]*\/usage\.mjs['"]/.test(src)) offenders.push(`${rel}: namespace import(usage.mjs)`);
+        if (/export\s*(?:{[^}]*}|\*)\s*from\s*['"][^'"]*\/usage\.mjs['"]/.test(src)) offenders.push(`${rel}: re-export(usage.mjs)`);
+        if (/import\(['"][^'"]*\/usage\.mjs['"]\)/.test(src)) offenders.push(`${rel}: dynamic import(usage.mjs)`);
       }
     }
   }
@@ -104,7 +128,8 @@ test('배선: 프로덕션 소비자는 usage.mjs 금액 집계를 직접 import
   assert.deepEqual(offenders, [], `금액 집계는 billing.mjs로만: ${offenders.join(' / ')}`);
 });
 
-test('배선: runners.mjs(순환 예외)는 monthCostByRunner에 billedMap을 넘긴다', async () => {
+test('배선: runners.mjs(순환 예외)는 공용 billedRunnerMap으로 monthCostByRunner를 부른다', async () => {
   const src = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
-  assert.match(src, /monthCostByRunner\(wsId,\s*billedMap\)/, '맵 없이 부르면 구독 러너 행이 금액으로 샌다');
+  assert.match(src, /monthCostByRunner\(wsId,\s*await billedRunnerMap\(wsId\)\)/, '맵 없이 부르면 구독 러너 행이 금액으로 샌다');
+  assert.match(src, /export async function billedRunnerMap/, '맵 구현은 한 곳(중복 금지 — 검수 LOW-9)');
 });

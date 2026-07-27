@@ -18,9 +18,11 @@ export async function appendUsage(wsId, { kind, slug, from, runner, model, usage
     cacheRead: usage.cache_read_input_tokens ?? 0,
     cacheCreate: usage.cache_creation_input_tokens ?? 0,
     costUsd: costUsd ?? null,
-    // 청구 여부 — false면 구독(OAuth·호스트 로그인) 턴이라 금액 집계에서 뺀다.
-    // 필드가 없는 행의 청구 판정은 rowBilled(현재 자격 기준)가 한다 — 표지는 보조 신호다.
-    ...(billed === false ? { billed: false } : {}),
+    // 청구 여부 — 턴 시점의 사실을 **양방향 명시 각인**한다(검수 2026-07-27 HIGH-3):
+    // true=API 키 턴(실지출), false=구독 턴. 각인된 행은 이후 자격을 바꿔도 안 변한다 —
+    // 달 중간 구독 전환 시 이미 나간 금액이 증발하고 예산 상한이 리셋되는 역방향 오표시 차단.
+    // 필드 없는 레거시 행만 rowBilled의 현재-자격 휴리스틱이 판정한다(시간이 갈수록 적용 0 수렴).
+    ...(billed === false ? { billed: false } : billed === true ? { billed: true } : {}),
     ms: ms ?? null,
     ...(tools && Object.keys(tools).length ? { tools } : {}),
   };
@@ -49,7 +51,9 @@ export function rowRunner(r) {
     - map이 없으면(구 경로·테스트): 이전 동작 유지. 프로덕션 소비자는 billing.mjs를 통해서만
       집계를 쓰도록 트립와이어가 강제한다. */
 export const rowBilled = (r, billedMap) =>
-  r.billed === false ? false : !billedMap ? true : billedMap[rowRunner(r)] === true;
+  r.billed === false ? false
+  : r.billed === true ? true // 턴 시점 각인이 최우선 — 자격 전환에도 과거 실지출은 불변(HIGH-3)
+  : !billedMap ? true : billedMap[rowRunner(r)] === true;
 
 async function readRows(wsId) {
   try {
@@ -61,9 +65,11 @@ async function readRows(wsId) {
 /** 활동 피드 — 모든 턴(대화·위임·루틴·메신저·영입)을 최신순으로. */
 export async function readActivity(wsId, limit = 60) {
   const rows = await readRows(wsId);
+  // costUsd는 내보내지 않는다 — 소비자 0건 실측(검수 2026-07-27 LOW-7). 활동 피드에 금액이
+  // 필요해지면 billing.mjs 게이트를 태워야 한다(원값 노출은 단일 판정 밖의 표면을 만든다).
   return rows.slice(-limit).reverse().map((r) => ({
     ts: r.ts, kind: r.kind, slug: r.slug, from: r.from ?? null,
-    ms: r.ms ?? null, costUsd: r.costUsd ?? null, output: r.output ?? 0,
+    ms: r.ms ?? null, output: r.output ?? 0,
   }));
 }
 
