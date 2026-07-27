@@ -100,11 +100,21 @@ test('API키 전용 회사: 기존 동작 유지 — 금액 그대로 표시', a
 test('2R HIGH-1: 자격 파일 손상 시 화면을 죽이지 않고 금액만 억제한다 (throw가 새면 회사 전체가 404)', async () => {
   const ws = 'corrupt-secrets';
   await seed(ws, [{ costUsd: 5 }]);
-  const { writeFile: wf } = await import('node:fs/promises');
-  await wf(join(paths(ws).root, '.secrets.json'), '{손상된 JSON'); // readJson이 .corrupt 백업 후 throw하는 형태
-  const sum = await billing.readUsageSummary(ws); // throw하면 이 테스트가 red — 라우트 404 회귀 재현
-  assert.equal(sum.month.hasCost, false, '손상 시 금액은 억제(과대 표시보다 안전)');
-  assert.equal((await billing.monthCost(ws)).costUsd, 0, '예산 게이트도 같은 강등');
+  // env 격리(3R MEDIUM-A) — 손상 → 자가치유(빈 자격) 후엔 env 폴백이 판정을 좌우하므로
+  // 개발자 셸의 실키가 이 테스트를 red로 만든다. save/restore.
+  const saved = {};
+  for (const k of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'GLM_API_KEY', 'KIMI_API_KEY']) { saved[k] = process.env[k]; delete process.env[k]; }
+  try {
+    const { writeFile: wf } = await import('node:fs/promises');
+    const corrupt = () => wf(join(paths(ws).root, '.secrets.json'), '{손상된 JSON'); // readJson이 .corrupt 백업 후 throw하는 형태
+    await corrupt();
+    const sum = await billing.readUsageSummary(ws); // throw하면 이 테스트가 red — 라우트 404 회귀 재현
+    assert.equal(sum.month.hasCost, false, '손상 시 금액은 억제(과대 표시보다 안전)');
+    await corrupt(); // 첫 호출이 손상을 소비(.corrupt 백업·자가치유)하므로 게이트 단언 전 재손상(3R MEDIUM-A)
+    assert.equal((await billing.monthCost(ws)).costUsd, 0, '예산 게이트도 같은 강등');
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
 });
 
 // ── 배선 트립와이어 — 부품이 아니라 "누가 집계를 부르는가"를 잠근다.
