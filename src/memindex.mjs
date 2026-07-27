@@ -56,13 +56,21 @@ function open(wsId) {
   // 같은 프로세스 경합은 withLock이 원천 차단하고, 다른 프로세스와의 경합은 즉시 실패 → 정본
   // 폴백이 맞다 — 기다리는 것 자체가 이 캐시가 없애려는 지연보다 크다.
   const db = new sqliteMod.DatabaseSync(file);
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec(DDL);
-  const ver = db.prepare("SELECT v FROM meta WHERE k = 'schema_version'").get()?.v;
-  if (ver !== SCHEMA_VERSION) { // 마이그레이션하지 않는다 — 캐시라서 버리는 게 맞고, 그래야 캐시로 남는다
-    db.exec('DROP TABLE IF EXISTS docs');
+  try {
+    db.exec('PRAGMA journal_mode = WAL');
     db.exec(DDL);
-    db.prepare('INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?)').run('schema_version', SCHEMA_VERSION);
+    const ver = db.prepare("SELECT v FROM meta WHERE k = 'schema_version'").get()?.v;
+    if (ver !== SCHEMA_VERSION) { // 마이그레이션하지 않는다 — 캐시라서 버리는 게 맞고, 그래야 캐시로 남는다
+      db.exec('DROP TABLE IF EXISTS docs');
+      db.exec(DDL);
+      db.prepare('INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?)').run('schema_version', SCHEMA_VERSION);
+    }
+  } catch (e) {
+    // 손상 파일은 여기서 던진다('file is not a database'). 생성자가 이미 연 핸들을 닫지 않고 올리면
+    // 고아 핸들이 파일을 계속 쥐어, 호출부 finally의 unlink 복구가 Windows에서 영구 실패한다
+    // (2026-07-27 CI 첫 Windows 실행 실측 — 손상 캐시가 지워지지 않아 매 턴 같은 실패 반복).
+    try { db.close(); } catch { /* 이미 닫힘 */ }
+    throw e;
   }
   return { db, file };
 }
