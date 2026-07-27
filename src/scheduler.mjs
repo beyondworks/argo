@@ -2,6 +2,9 @@
 // (nodejs 런타임 라우트에서만 로드되므로 node: 임포트가 안전하다. P1에서 워커로 분리)
 import { listCompanies } from './hub.mjs';
 import { loadRoutines, runRoutine, isDue } from './routines.mjs';
+import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
+import { chat } from './chat.mjs';
+import { appendTurn } from './thread.mjs';
 import { consolidateMemory, rollupJournals } from './consolidate.mjs';
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader } from './sync.mjs';
@@ -122,6 +125,13 @@ export function ensureScheduler() {
           console.log(`[argo] 루틴 실행: ${c.id}/${r.title}`);
           runRoutine(c.id, r.id).catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message));
         }
+        // 크루 우편 배달 — 비동기 쪽지(send_to_crew)를 수신 크루의 새 턴으로. 회사당 틱 상한은
+        // crewmail이 강제. 턴 결과는 delegate와 같은 문법으로 수신 크루 스레드에 남긴다(웹에서 보임).
+        await deliverCrewMail(c.id, async (slug, msg, opts) => {
+          const prompt = mailPrompt(msg);
+          const t = await chat(c.id, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail' });
+          await appendTurn(c.id, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null }).catch(() => {});
+        }).catch((e) => console.error(`[argo] 크루 우편 배달 오류(${c.id}):`, e.message));
         if (hhmm >= CONSOLIDATE_AT) {
           const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
           // 진행 중이면 시도 횟수를 태우지 않고 그냥 넘긴다(선점 자체를 하지 않는다)

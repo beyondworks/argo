@@ -44,6 +44,15 @@ export function normalizeSchedule(schedule = {}) {
     if (!TIME_RE.test(t)) throw new Error('예약 시각은 HH:MM 형식');
     return { type: 'once', date, time: t, times: [t] };
   }
+  // interval = N분마다 반복(크루 Start-loop — 실사용 요청 2026-07-27 "루프 잡"). 하한 10분:
+  // [규모 질문] 루프 1개 = 매 발화가 LLM 턴 — 분 단위 루프 × 크루 수 × 회사 수가 곱으로 탄다.
+  // 상한 1440분(하루). 구버전 기기 하위호환: time 슬롯이 없으면 구 isDue는 NaN 슬롯을 continue로
+  // 건너뛰어 발화하지 않는다(깨지지 않고 조용히 대기 — 이 기기들은 업데이트 후 발화 시작).
+  if (schedule.type === 'interval') {
+    const every = Math.floor(Number(schedule.everyMinutes));
+    if (!Number.isInteger(every) || every < 10 || every > 1440) throw new Error('반복 간격은 10~1440분');
+    return { type: 'interval', everyMinutes: every };
+  }
   const type = schedule.type === 'weekly' ? 'weekly' : 'daily';
   const rawTimes = Array.isArray(schedule.times) && schedule.times.length ? schedule.times : [schedule.time];
   // 잘못된 항목은 통째로 거절 — 일부만 조용히 수용하면 사용자가 지정한 시각이 소리 없이 빠진다
@@ -139,6 +148,14 @@ const CATCHUP_MS = 4 * 60 * 60 * 1000;
 export function isDue(routine, now = new Date()) {
   if (!routine.enabled) return false;
   const s = routine.schedule ?? {};
+  // interval — 마지막 실행에서 everyMinutes 경과 시 due. lastRun 선점(claimRoutine)이 그대로
+  // 이중 실행을 막고, 슬립으로 놓친 틱은 다음 틱에 자연 캐치업된다(시각 슬롯 개념 없음).
+  if (s.type === 'interval') {
+    const every = Math.floor(Number(s.everyMinutes)) * 60_000;
+    if (!Number.isFinite(every) || every < 10 * 60_000) return false; // 오염 방어 — 하한 미달은 발화 금지
+    if (!routine.lastRun) return true;
+    return now - new Date(routine.lastRun) >= every;
+  }
   const times = Array.isArray(s.times) && s.times.length ? s.times : [s.time];
   const dows = Array.isArray(s.dows) && s.dows.length ? s.dows : [s.dow ?? 1];
   if (s.type === 'weekly' && !dows.includes(now.getDay())) return false;
