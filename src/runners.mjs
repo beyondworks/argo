@@ -533,7 +533,10 @@ async function codexCmd() {
     거부한 정규화 경로만 담는다. JSON.stringify per-item — Windows 역슬래시 이스케이프(신고 2026-07-25).
     (export: 회귀 테스트용) */
 export const codexWritableRoots = (caps) => {
-  const roots = [homedir(), ...(Array.isArray(caps?.fsRoots) ? caps.fsRoots.filter((r) => typeof r === 'string' && r.trim()) : [])];
+  // fsRootsActive = 이 기기 재검증 통과분(capabilities.loadCapabilities) — 저장 원본(fsRoots)을 직접
+  // 쓰면 다른 기기에서 통과한 하드존 값이 이 기기 샌드박스에 실린다(H2). 활성 뷰가 없으면 빈 목록(fail-closed).
+  const src = Array.isArray(caps?.fsRootsActive) ? caps.fsRootsActive : [];
+  const roots = [homedir(), ...src.filter((r) => typeof r === 'string' && r.trim())];
   return `[${[...new Set(roots)].map((r) => JSON.stringify(r)).join(', ')}]`;
 };
 

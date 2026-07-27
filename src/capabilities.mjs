@@ -35,8 +35,14 @@ const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // 데스크톱 WS_ROOT는 app_local_data_dir/workspaces라 ~/.argo 밖이고, 셀프호스트는 ARGO_HOME 하위).
 // WS_ROOT의 부모까지 — 타사 워크스페이스·계정 시크릿(.account-secrets-*)이 부모 계층에 산다.
 const HARD_ZONES = () => [appRoot, resolve(homedir(), '.argo'), resolve(WS_ROOT), dirname(resolve(WS_ROOT))];
-// 케이스폴딩 비교 — APFS(맥 기본)·NTFS는 대소문자 무시라 /APPLICATIONS가 /Applications를 연다
-// (분리 검수 H1 — seatbelt subpath도 대소문자 무시 실측). 리눅스만 민감 비교.
+// 하드존 canon 메모이즈(재검 (d)) — appRoot·~/.argo·WS_ROOT는 프로세스 수명 동안 불변. 루트마다
+// realpath×4를 반복하지 않는다(permission-gate rootsP 패턴).
+let hardZonesP = null;
+const canonHardZones = () => (hardZonesP ??= Promise.all(
+  HARD_ZONES().map(async (h) => (await realpath(h).catch(() => null)) ?? h)));
+// 케이스폴딩 비교 — **1차 방어는 realpath**(실존 경로의 케이스를 정본화한다 — 재검 N3에서 fold 제거
+// 변이가 통과한 이유). fold는 realpath가 케이스를 못 정본화하는 창(윈도우 드라이브문자·8.3 단축명,
+// 하드존 realpath 실패 폴백)의 보조 방어다. APFS·NTFS·seatbelt 모두 대소문자 무시(실측). 리눅스만 민감.
 const fold = (p) => (process.platform === 'linux' ? p : p.toLowerCase());
 const within = (child, parent) => fold(child) === fold(parent) || fold(child).startsWith(fold(parent) + sep);
 /** 경로 정본화 — 심링크 해석(permission-gate canon 패턴 재사용: /tmp→/private/tmp, 외장 SSD 바로가기).
@@ -55,20 +61,26 @@ export async function validateFsRoot(p) {
   if (/[\x00-\x1f\x7f]/.test(v) || !v.isWellFormed()) throw new Error('경로에 쓸 수 없는 문자가 있습니다');
   const r = await canonRoot(resolve(v));
   if (r === sep || /^[A-Za-z]:\\?$/.test(r)) throw new Error('드라이브 전체는 지정할 수 없습니다 — 하위 폴더를 지정해 주세요');
-  for (const hardRaw of HARD_ZONES()) {
-    const hard = await realpath(hardRaw).catch(() => hardRaw); // 하드존 자체도 실경로 기준(양쪽 canon — permission-gate 주석의 함정)
+  for (const hard of await canonHardZones()) {
     if (within(hard, r) || within(r, hard)) throw new Error('앱 설치 폴더·Argo 데이터 폴더(및 그 상위)는 지정할 수 없습니다');
   }
   return r;
 }
 /** 사용 시점 기기 재검증(분리 검수 H2) — capabilities.json은 기기 간 동기화되는데 하드존(앱 루트·
     WS_ROOT)은 기기마다 다르다. 저장 시점 검증만 믿으면 dev 기기에서 통과한 /Applications/…가
-    설치 기기의 앱 번들을 연다. 매 로드에서 이 기기 기준으로 거르고, 걸러진 항목은 로그로 드러낸다. */
+    설치 기기의 앱 번들을 연다. 매 로드에서 이 기기 기준으로 걸러 **활성 뷰(fsRootsActive)**를 만든다.
+    ⚠ 이 뷰는 소비(코덱스 직렬화) 전용 — 저장 원본(fsRoots)을 이 뷰로 덮으면 언마운트된 외장 SSD가
+    무관한 토글 저장 한 번에 영구 삭제된다(재검 N1 실측 — 무증상 보안 설정 유실). 걸러진 항목 로그는
+    같은 값이면 1회만(재검 N4 — 턴마다 스팸 방지). */
+const warnedRoots = new Set(); // `${wsId}:${root}` — 프로세스 수명 내 1회
 async function filterFsRootsForDevice(roots, wsId) {
   const out = [];
   for (const r of roots) {
     try { out.push(await validateFsRoot(r)); }
-    catch (e) { console.warn(`[argo] 허용 폴더 제외(${wsId}): ${r} — ${e.message}`); }
+    catch (e) {
+      const key = `${wsId}:${r}`;
+      if (!warnedRoots.has(key)) { warnedRoots.add(key); console.warn(`[argo] 허용 폴더 이 기기 비활성(${wsId}): ${r} — ${e.message}`); }
+    }
   }
   return out;
 }
@@ -80,15 +92,17 @@ export async function loadCapabilities(wsId) {
   // 3능력 켜기로 이행하고 끄던" 마이그레이션은 제거 — 지금은 UI/API로 켜고 끌 수 있어 고착 위험이 없고,
   // 남겨두면 사용자가 켠 설정을 매 로드마다 되돌린다.
   const raw = { ...EMPTY, ...(await readJson(paths(wsId).capabilities, EMPTY)) };
-  // fsRoots — 오염 흡수(문자열만) 후 **이 기기 기준 재검증**(H2: 동기화 값의 하드존은 기기마다 다르다)
-  const strs = Array.isArray(raw.fsRoots) ? raw.fsRoots.filter((x) => typeof x === 'string' && x.trim()) : [];
-  raw.fsRoots = strs.length ? await filterFsRootsForDevice(strs, wsId) : [];
+  // fsRoots = 저장 원본(오염 흡수만 — UI 표시·편집·재저장의 기준. 언마운트 SSD도 여기 남는다, 재검 N1)
+  // fsRootsActive = 이 기기에서 지금 유효한 활성 뷰(H2 기기 재검증 — 코덱스 직렬화가 소비)
+  raw.fsRoots = Array.isArray(raw.fsRoots) ? raw.fsRoots.filter((x) => typeof x === 'string' && x.trim()) : [];
+  raw.fsRootsActive = raw.fsRoots.length ? await filterFsRootsForDevice(raw.fsRoots, wsId) : [];
   return raw;
 }
 
 export async function updateCapabilities(wsId, patch) {
   return withLock(`capabilities:${wsId}`, async () => {
     const caps = { ...(await loadCapabilities(wsId)) };
+    delete caps.fsRootsActive; // 파생 뷰는 저장 금지 — 원본(fsRoots)만 영속화(재검 N1)
     for (const [key] of CAPABILITY_DEFS) {
       if (typeof patch[key] === 'boolean') caps[key] = patch[key];
     }
