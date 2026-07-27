@@ -632,8 +632,34 @@ export async function loadRunnerCred(wsId, runner) {
     구독 안에서 돌아가므로 청구되지 않는다. SDK는 두 경우 모두 total_cost_usd에 정가 상당액을 리포트하는데,
     그걸 그대로 "이번 달 사용액"으로 보여주면 구독 사용자가 청구서로 오해한다(실사용 신고 2026-07-26:
     "구독료 안에서 쓰는 건지 추가로 청구되는 건지 헷갈린다"). (export: 회귀 테스트용) */
+/** 러너 1개의 청구 판정(순수) — type = 회사 자격 타입(없으면 undefined).
+    자격이 없을 때의 env 폴백 판정은 **레거시 무표지 행의 소급 판정에만** 실질 영향이 있다
+    (신규 턴은 resolveRunner가 저장 자격만 가용으로 보므로 각인 시점엔 항상 자격이 있다 —
+    2R 검수 MEDIUM-3). env는 기기 간 동기화되지 않으므로 기기별로 레거시 행 판정이 갈릴 수
+    있다 — 알려진 한계로 수용(각인 도입으로 시간이 갈수록 적용 0 수렴). */
+const billedByType = (type, runner) => {
+  if (type) return type === 'apikey';
+  if (runner === 'glm') return !!process.env.GLM_API_KEY;   // sdkEnvFor의 호스트 env 폴백 = 실제 과금(1R HIGH-1)
+  if (runner === 'kimi') return !!process.env.KIMI_API_KEY;
+  // claude: 두 인증 env 공존 시의 실행 우선순위는 SDK 내부라 추측하지 않는다 — sdkEnvFor가
+  // 구독 토큰 존재 시 API 키를 소거해 **실행 자체를 구독으로 확정**한다(2R HIGH-2 결정론화).
+  if (runner === 'claude') return !!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  return false; // codex·gemini 호스트 로그인 = 구독, openrouter 등은 회사 자격 필수
+};
+
 export async function isBilledRunner(wsId, runner) {
-  return (await loadRunnerCred(wsId, runner))?.type === 'apikey';
+  return (await billedRunnerMap(wsId))[runner] ?? false;
+}
+
+/** { 러너id: 청구 여부 } — 금액 표면 단일 판정(rowBilled)의 두 번째 인자. billing.mjs와
+    runnerStatus가 공유한다(중복 구현 금지 — 검수 LOW-9). 자격 파일은 **1회만** 읽는다
+    (2R LOW-6: 러너별 병렬 5중 읽기는 손상 시 rename 경합을 만들었다). 손상은 여기서
+    결정적으로 1회 throw — 표시 표면의 강등은 billing.mjs(mapOrSuppress)가 담당한다. */
+export async function billedRunnerMap(wsId) {
+  const s = await loadSecrets(wsId);
+  const map = {};
+  for (const id of Object.keys(RUNNERS)) map[id] = billedByType(s.runners?.[id]?.type, id);
+  return map;
 }
 
 /** 러너 자격 저장 — 원자적. 다른 러너·필드는 보존. 레거시 claude 필드는 정리. */
@@ -845,7 +871,12 @@ export async function sdkEnvFor(wsId, runner) {
   if (cred) return { ...scrubServerSecrets(process.env, runner), ...cred.env };
   if (runner === 'glm') return glmEnv(); // 회사 자격 없으면 호스트 GLM_API_KEY 폴백(glmEnv 자체가 세척됨)
   if (runner === 'kimi') return kimiEnv(); // 동일 — 호스트 KIMI_API_KEY 폴백(env 주입 = 명시 옵트인)
-  return scrubServerSecrets(process.env, runner);
+  const env = scrubServerSecrets(process.env, runner);
+  // claude 호스트 폴백 결정론화(2R 검수 HIGH-2): 구독 토큰과 API 키 env가 공존하면 SDK가 뭘
+  // 쓰는지는 SDK 내부 소관이라 판정(billedByType)과 어긋날 수 있다 — 구독 토큰이 있으면 API
+  // 키를 소거해 실행을 구독으로 확정한다(한쪽 소거 패턴은 #83과 동일, 방향은 사용자 유리).
+  if (runner === 'claude' && env.CLAUDE_CODE_OAUTH_TOKEN) env.ANTHROPIC_API_KEY = '';
+  return env;
 }
 
 /** OAuth 연결 시작 — 벤더 CLI의 브라우저 로그인을 서버가 대신 실행한다(서버가 사용자 PC에 있는
@@ -1110,7 +1141,8 @@ export async function runnerLoginStatus(runner) {
 export async function runnerStatus(wsId) {
   const host = await detectRunners();
   const secrets = await loadSecrets(wsId);
-  const usage = await monthCostByRunner(wsId).catch(() => ({})); // 표시용 — 실패해도 상태를 막지 않는다
+  // 금액은 단일 판정(rowBilled + billedRunnerMap) — billing.mjs와 같은 함수를 쓴다(중복 금지).
+  const usage = await monthCostByRunner(wsId, await billedRunnerMap(wsId)).catch(() => ({})); // 표시용 — 실패해도 상태를 막지 않는다
   const out = {};
   for (const [id, meta] of Object.entries(RUNNER_AUTH)) {
     const cred = secrets.runners?.[id];

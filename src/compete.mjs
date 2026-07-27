@@ -9,7 +9,7 @@ import { paths, loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
 import { RUNNERS } from './runners.mjs';
 import { chat } from './chat.mjs';
-import { monthCost } from './usage.mjs';
+import { monthCost } from './billing.mjs'; // 금액 집계는 billing 게이트로만(현재 자격 기준 단일 판정)
 import { appendTurn } from './thread.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
