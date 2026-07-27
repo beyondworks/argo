@@ -20,7 +20,7 @@ import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { detectRunnerDenial, detectDeniedNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isOpenRouterCreditReply } from './runners.mjs';
+import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
@@ -996,6 +996,13 @@ ${lang === 'en'
   // 블록이어야 한다(사이에 끼우면 else가 이 if에 붙어 전 러너 성공 턴이 throw — 검수 CRITICAL 실증).
   // 판정은 엄격판(답변≈에러 원문일 때만) — 오탐이면 사실 아닌 안내 + 그 턴 일지가 무증상
   // 누락(creditTurn)되므로, 402를 인용·해설하는 정상 답변은 여기 걸리면 안 된다(3R F1).
+  // 429(요청 한도) — 402와 같은 표면·같은 임계. 미대응이면 429 원문이 일지→기억으로 정제된다.
+  if (runner === 'openrouter' && isOpenRouterLimitReply(reply)) {
+    creditTurn = true; // 일지 제외 — 오류 원문을 기억으로 정제하지 않는다(3R N3과 동일 논리)
+    reply += lang === 'en'
+      ? `\n\n---\n⚠ OpenRouter rate limit reached. Free models allow 20 requests/min and 50/day until you've purchased $10+ in credits (1,000/day after). Wait a moment and retry, or switch this crew to a paid model.`
+      : `\n\n---\n⚠ OpenRouter 요청 한도에 걸렸습니다. 무료 모델은 분당 20회, 누적 구매 $10 미만이면 하루 50회까지입니다($10 이상 구매 이력이 있으면 하루 1,000회). 잠시 후 다시 시도하거나, 이 크루의 모델을 유료 모델로 바꿔 주세요.`;
+  }
   if (runner === 'openrouter' && isOpenRouterCreditReply(reply)) {
     creditTurn = true;
     reply += lang === 'en'

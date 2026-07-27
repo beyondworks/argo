@@ -194,6 +194,15 @@ export const RUNNERS = {
     // 첫 항목이 러너 전환 시 기본 선택 — 저비용·도구 신뢰성 기준(gemini 카탈로그 관례와 동일).
     // 카탈로그 밖 id는 크루 카드에 넣어도 chat이 기본 모델로 강등한다 — 추가는 스모크 통과 후 여기로만.
     models: [
+      // ── 무료 모델(:free) 우선 — **첫 항목은 잔액 0 계정에서도 도는 모델이어야 한다**(gemini
+      // 카탈로그와 같은 원칙: models[0]이 러너 전환·모델 미지정의 기본값이라, 유료 모델을 앞에
+      // 두면 신규 키($0이 기본)의 영입·기억정리가 전부 402로 죽는다 — 검수 CRITICAL 2026-07-27).
+      // 스모크 3/3 통과 실측(유료와 같은 tool_use 왕복 게이트). 무료 티어는 요청 한도(20/분,
+      // 누적 구매 $10 미만이면 50/일)와 제공사 용량 편차가 있어 free 플래그로 UI에 배지 표시.
+      { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 3 Super 120B', free: true },
+      { id: 'inclusionai/ling-3.0-flash:free', label: 'Ling 3.0 Flash', free: true },
+      { id: 'poolside/laguna-s-2.1:free', label: 'Laguna S 2.1', free: true },
+      // ── 유료 — 잔액이 있는 사용자가 명시 선택(품질·속도 우위)
       { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
       { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
       { id: 'x-ai/grok-4.5', label: 'Grok 4.5' },
@@ -202,12 +211,6 @@ export const RUNNERS = {
       { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
       { id: 'moonshotai/kimi-k3', label: 'Kimi K3 (OpenRouter)' }, // 직접 연결(kimi 러너)이 더 저렴 — 단일 키 사용자용
       { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (OpenRouter)' },       // 동일 — 직접 연결(glm 러너) 우선 권장
-      // ── 무료 모델(:free) — 크레딧 0으로 체험 가능(유건 요청 2026-07-27: 충전 없이 진행).
-      // 스모크 3/3 통과 실측(같은 tool_use 왕복 게이트). 무료 티어는 제공사 용량·일일 요청
-      // 제한(잔액 <$10 계정 기준 50회/일)이 있어 상시 크루보다는 체험·경량 용도 — 라벨에 명시.
-      { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 3 Super (무료)' },
-      { id: 'inclusionai/ling-3.0-flash:free', label: 'Ling 3.0 Flash (무료)' },
-      { id: 'poolside/laguna-s-2.1:free', label: 'Laguna S 2.1 (무료)' },
     ],
   },
   glm: {
@@ -233,16 +236,21 @@ export const hostOptInAllowed = (runner) =>
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
 
 const OPENROUTER_402_RE = /^API Error:\s*402\b/i; // 느슨판·엄격판 공용 — 한쪽만 고치면 두 임계가 갈라진다(검수 LOW)
+// 429 = 요청 한도(무료 티어 20/분·50~1000/일, 공식 문서 2026-07-27). 402와 같은 표면으로
+// 도착하므로 같은 임계 구조를 대칭 적용한다 — 미대응이면 429 원문이 일지→기억으로 정제된다.
+const OPENROUTER_429_RE = /^API Error:\s*429\b/i;
+const firstOrLast = (s, re) => {
+  const lines = String(s ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  return !!lines.length && (re.test(lines[0]) || re.test(lines[lines.length - 1]));
+};
+const strictReply = (s, re) => firstOrLast(s, re)
+  && String(s ?? '').split('\n').map((l) => l.trim()).filter((l) => l && !re.test(l)).join('').length <= 60;
 
 /** OpenRouter 402(크레딧 소진) 판정 — CLI가 402를 "성공 텍스트"로 삼킨 결과물(실측). 첫 줄 또는
     마지막 비공백 줄이 402 에러로 시작할 때만 — 서두 문장 뒤에 에러가 붙는 변형(2R N4)은 잡되,
     산문 중간 인용("…'API Error: 402'가 나오면…")은 배제. **oneshot(실패 승격) 전용** —
     미탐이면 402 원문이 크루 카드·기억에 저장되므로 느슨한 쪽이 맞다. chat은 아래 strict를 쓴다(3R F1). */
-export const isOpenRouterCreditError = (s) => {
-  const lines = String(s ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return false;
-  return OPENROUTER_402_RE.test(lines[0]) || OPENROUTER_402_RE.test(lines[lines.length - 1]);
-};
+export const isOpenRouterCreditError = (s) => firstOrLast(s, OPENROUTER_402_RE);
 
 /** chat용 엄격 판정 — 답변이 사실상 402 원문일 때만(에러 줄을 뺀 잔여 텍스트 ≤ 60자).
     chat에서 오탐은 사실 아닌 충전 안내 + **그 턴 일지의 무증상 누락**(creditTurn, 3R F1 실측:
@@ -250,14 +258,16 @@ export const isOpenRouterCreditError = (s) => {
     실질 답변이 있는 턴은 통과시킨다. 실측 402는 에러 한 줄 그 자체(±짧은 CLI 서두)다.
     비율 기준이 아니라 **잔여량 절대 상한**인 이유(검수 권고): 비율은 402 문구 길이에 종속돼
     OpenRouter가 문구를 바꾸면 경계가 조용히 이동하고, 긴 서두 변형의 미탐(2R N3 재발)도 빨라진다. */
-export const isOpenRouterCreditReply = (s) => {
-  if (!isOpenRouterCreditError(s)) return false;
-  const nonErr = String(s ?? '').split('\n').map((l) => l.trim())
-    .filter((l) => l && !OPENROUTER_402_RE.test(l)).join('').length;
-  return nonErr <= 60;
-};
+export const isOpenRouterCreditReply = (s) => strictReply(s, OPENROUTER_402_RE);
 
-export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5'; // 스모크 8/8 중 저비용·도구 신뢰성 1순위(2026-07-27 실측)
+/** 429(요청 한도) — 402와 대칭. oneshot=느슨판(실패 승격), chat=엄격판(안내+일지 제외). */
+export const isOpenRouterLimitError = (s) => firstOrLast(s, OPENROUTER_429_RE);
+export const isOpenRouterLimitReply = (s) => strictReply(s, OPENROUTER_429_RE);
+
+// 기본 = 무료 선두 모델. 모델 미지정 호출(persona 영입·consolidate 기억정리·routines 초안)이
+// 전부 여기로 오므로, 유료를 기본으로 두면 잔액 0 신규 키는 첫 영입부터 402다(검수 CRITICAL).
+// 잔액 있는 사용자는 크루 카드 모델 선택기에서 유료 모델을 명시 선택한다(배지로 구분 표시).
+export const OPENROUTER_DEFAULT_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */

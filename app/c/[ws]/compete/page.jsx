@@ -294,7 +294,7 @@ export default function Compete({ params }) {
                         return {
                           value: pair, label: m.label,
                           disabled: pickedModels.includes(pair) && pickedModels[slot] !== pair,
-                          badge: m.gated ? t('runner.gatedBadge') : undefined,
+                          badge: m.gated ? t('runner.gatedBadge') : m.free ? t('runner.freeBadge') : undefined,
                         };
                       }),
                     })),

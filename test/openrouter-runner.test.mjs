@@ -20,8 +20,17 @@ test('등록: sdk-compat 계열 + BYOK apikey 단일 (CLI 래핑 금지)', () =>
 
 test('카탈로그: 스모크 전수 통과 8종 + 기본 모델 포함 + 첫 항목=기본(러너 전환 관례)', () => {
   const ids = (RUNNERS.openrouter.models ?? []).map((m) => m.id);
-  assert.equal(ids.length, 11, '2026-07-27 스모크 확정본(유료 8 + 무료 3) — 변경은 스모크 재실행 후에만');
+  assert.equal(ids.filter((i) => !i.endsWith(':free')).length, 8, '유료 8종 — 스모크 8/8 확정본');
   assert.equal(ids.filter((i) => i.endsWith(':free')).length, 3, '무료 3종 — 크레딧 0 체험 진입로(스모크 3/3)');
+  // 검수 CRITICAL(2026-07-27): 모델 미지정 호출(영입·기억정리·루틴 초안)이 전부 기본 모델로 오므로
+  // 유료가 기본이면 잔액 0 신규 키는 첫 영입부터 402 — 첫 항목은 반드시 무료(잔액 무관 실행 가능).
+  assert.ok(ids[0].endsWith(':free'), '첫 항목=기본값은 잔액 0에서도 도는 모델이어야 한다(gemini 카탈로그 선례)');
+  assert.ok(OPENROUTER_DEFAULT_MODEL.endsWith(':free'));
+  // 라벨에 한국어 하드코딩 금지 — 배지는 free 플래그 + i18n 사전(gated 관례, 다국어 상시 규칙)
+  for (const m of RUNNERS.openrouter.models) {
+    assert.doesNotMatch(m.label, /[가-힣]/, `라벨은 고유명사만: ${m.label}`);
+    if (m.id.endsWith(':free')) assert.equal(m.free, true, `무료 모델은 free 플래그 필요: ${m.id}`);
+  }
   assert.ok(ids.includes(OPENROUTER_DEFAULT_MODEL), '기본 모델은 반드시 검증된 목록 안에서');
   assert.equal(ids[0], OPENROUTER_DEFAULT_MODEL, '첫 항목이 러너 전환 시 기본 선택된다(gemini 관례)');
 });
@@ -110,6 +119,24 @@ test('배선: oneshot.mjs — 402는 성공이 아니라 실패로 승격(크루
   const runners = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
   const external = runners.split('export async function externalExec')[1]?.split('\n}')[0] ?? '';
   assert.doesNotMatch(external, /openrouter/, 'openrouter는 SDK 계열 — externalExec(CLI) 분기 금지');
+});
+
+test('429(요청 한도)는 402와 대칭 — 느슨판/엄격판 양쪽 (검수 F2)', async () => {
+  const { isOpenRouterLimitError, isOpenRouterLimitReply } = await import('../src/runners.mjs');
+  assert.equal(isOpenRouterLimitError('API Error: 429 Rate limit exceeded'), true);
+  assert.equal(isOpenRouterLimitReply('API Error: 429 Rate limit exceeded'), true);
+  assert.equal(isOpenRouterLimitError('API Error: 402 …'), false, '402와 429는 서로 오인하지 않는다');
+  assert.equal(isOpenRouterCreditError('API Error: 429 …'), false);
+  // 엄격판 — 실질 답변이 있는 인용 턴은 일지를 잃지 않는다(3R F1과 동일 임계)
+  assert.equal(isOpenRouterLimitReply('API Error: 429 Rate limit exceeded\n' + '해설'.repeat(40)), false);
+});
+
+test('배선: chat·oneshot이 429를 402와 대칭으로 태운다', async () => {
+  const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  const oneshot = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  assert.match(chat, /isOpenRouterLimitReply\(reply\)/, 'chat: 429 안내 + 일지 제외');
+  assert.match(oneshot, /isOpenRouterLimitError\(text\)/, 'oneshot: 429 실패 승격(크루 카드·기억 오염 방지)');
+  assert.match(oneshot, /openrouter-limit/, '429 전용 안내 분기');
 });
 
 test('배선: PICK_ORDER ↔ RUNNER_AUTH 동기화 (다음 러너 추가 때 또 깨질 자리 — 불변식 수색)', async () => {

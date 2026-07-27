@@ -3,7 +3,7 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
-import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, externalExec, isOpenRouterCreditError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, externalExec, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     제외하고 1회 재시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와 같은 원칙, 재귀 1회).
@@ -64,6 +64,10 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     if (runner === 'openrouter' && isOpenRouterCreditError(text)) {
       throw new Error(`openrouter-credit: ${text.slice(0, 140)}`);
     }
+    // 429(요청 한도)도 성공으로 두면 그 문구가 크루 카드·기억 노트에 저장된다 — 402와 대칭 승격.
+    if (runner === 'openrouter' && isOpenRouterLimitError(text)) {
+      throw new Error(`openrouter-limit: ${text.slice(0, 140)}`);
+    }
     return { runner, text: text.trim(), usage, costUsd: runner === 'openrouter' ? null : costUsd };
   } catch (e) {
     // 자가 치유 — 방금 죽은 러너를 제외하고 다른 가용 러너로 1회. __exclude 가드로 재귀 1회 제한.
@@ -76,6 +80,11 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     }
     // 402(크레딧 소진)는 연결 문제가 아니다 — "연결 상태 확인" 안내는 키 정상·연결됨 표시와 모순돼
     // 사용자를 오도한다(2R 검수 N2, oneshot 상단 주석의 2026-07-20 모순과 동일 계열). 충전처를 준다.
+    if (/openrouter-limit/.test(String(e.message))) {
+      throw Object.assign(new Error(lang === 'en'
+        ? 'OpenRouter rate limit reached (free models: 20/min, 50/day under $10 lifetime credits). Wait a moment and try again, or use a paid model.'
+        : 'OpenRouter 요청 한도에 걸렸습니다(무료 모델은 분당 20회, 누적 구매 $10 미만이면 하루 50회). 잠시 후 다시 시도하거나 유료 모델을 사용해 주세요.'), { cause: e });
+    }
     if (/openrouter-credit/.test(String(e.message))) {
       throw Object.assign(new Error(lang === 'en'
         ? 'OpenRouter credit balance is too low. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.'
