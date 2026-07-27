@@ -122,9 +122,9 @@ export function apiError(e, runner = null) {
   // agy(Antigravity CLI)의 무응답 타임아웃 — 미로그인이 가장 흔한 원인(비대화 -p 모드는 로그인 플로우를
   // 못 열고 응답 대기만 하다 이 문구로 죽는다 — agy 1.1.7 실측 2026-07-27). 장시간 작업 초과와 문구가
   // 같아 구분 불가하므로 두 원인을 모두 안내한다.
-  // **runner 게이트(분리 검수 M1)**: 이 문구는 stdout에 실린다 — 크루가 셸로 실행한 명령의 출력에
-  // 같은 문구가 섞이면 codex/gemini의 무관한 실패를 Antigravity 문구로 오분류하고 원인을 지운다
-  // (위 stdout 오염 원칙과 동일 클래스). antigravity 실행 경로에서만 발화한다.
+  // **runner 게이트(분리 검수 M1)**: 실측(재검 N1)상 agy는 이 문구를 stderr로 낸다. 그래도 크루가
+  // 셸로 실행한 명령의 출력(stdout)에 같은 문구가 섞이는 경로가 있어(위 stdout 오염 원칙과 동일
+  // 클래스) raw 전체를 보되 **antigravity 실행 경로에서만** 발화한다 — 상위집합 방어.
   // 문구의 "not logged in"은 AUTH_ERR_RE(chat.mjs)와의 계약 — 자가치유(다른 가용 러너 1회 폴백)를 살린다.
   if (runner === 'antigravity' && /timeout waiting for response/i.test(raw)) {
     return new Error('Antigravity가 제한 시간 안에 응답하지 않았습니다. 이 컴퓨터에서 agy 로그인이 안 되어 있으면 '
@@ -370,7 +370,7 @@ export async function detectRunners(force = false) {
     // 위 2026-07-19 주석과 같은 원칙("감지 단계에서 유효성까지는 판정하지 않는다"): 미로그인은 첫 턴의
     // apiError 매핑("timeout waiting for response" → 로그인 안내)이 잡는다. host 마커 invalid 판정
     // (runnerStatus)이 authed=false면 옵트인 직후부터 "재연결 필요"로 오표시되는 것을 막는 값이기도 하다.
-    antigravity: { installed: !!agyV || agyLocalBin, authed: !!agyV || agyLocalBin, authUnknown: true }, // authUnknown: UI는 '로그인됨' 단정 대신 '확인 불가'를 그린다(거짓 유효 표기 금지 — 분리 검수 H1c)
+    antigravity: { installed: !!agyV || agyLocalBin, authed: !!agyV || agyLocalBin, authUnknown: !!agyV || agyLocalBin }, // authUnknown(설치 시): UI는 '로그인됨' 단정 대신 '확인 불가'를 그린다(거짓 유효 표기 금지 — 분리 검수 H1c)
   };
   cacheAt = Date.now();
   return cache;
@@ -665,8 +665,10 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     // 제네릭 "exit 1"로 떨어진다 — 5초 마진으로 불충분함을 실스모크로 확정(2026-07-27, ARGO_DEBUG_AGY
     // 관찰: killed:true·stdout/stderr 공백). 기본 5m 방치도 금지 — 우리 상한과 어긋나 이중 대기.
     const cmd = await agyCmd();
-    // 마진 30초를 못 지키는 짧은 timeoutMs면 --print-timeout을 생략한다(우리 kill이 지배) — 플로어로
-    // 마진을 줄이면 위 주석이 실스모크로 부정한 그 경합이 되살아난다(분리 검수 M3).
+    // 마진 30초를 못 지키는 짧은 timeoutMs(<55s)면 --print-timeout을 생략한다 — 그 경우 우리 kill이
+    // 지배해 매핑 없는 제네릭 에러가 되지만, 플로어로 마진을 줄여 경합(문구 유실)을 되살리는 것보다
+    // 낫다(분리 검수 M3·N5). 현 호출자 최소값은 120s(oneshot)라 실발현 없음. 이 생략 분기에서만은
+    // agy 기본 5m가 남는데 kill(timeoutMs)이 항상 먼저라 이중 대기도 없다.
     const agySec = Math.ceil(timeoutMs / 1000) - 30;
     const { stdout } = await exec(cmd.file, [
       '-p', prompt,

@@ -42,7 +42,9 @@ OAuth `400 invalid_grant`). 즉 **Google 구독으로 Argo를 쓰는 유일한 �
    (claude 재서명 node 키체인 차단과 다른 구조)이나 실측 아님.
 3. `--sandbox`의 정확한 제한 범위 — "terminal restrictions"라는 도움말 문구뿐.
 4. Windows 경로 폴백 — `%LOCALAPPDATA%\agy\bin\agy.exe` 후보를 추가했으나 실기기 미검증.
-5. agy `--sandbox` 거부의 능력 카드 승격(검수 L2) — codex는 거부를 능력 카드로 승격(#113)하는데
+5. 성공 턴의 glog 실형식 — 스크럽 정규식은 표준 glog(시각 필드 포함)를 전제(재검 N2). 시각 필드
+   없는 로그면 답변에 새어들 수 있다(옛 통삭제보다는 가벼운 실패 방향).
+6. agy `--sandbox` 거부의 능력 카드 승격(검수 L2) — codex는 거부를 능력 카드로 승격(#113)하는데
    antigravity는 아직 안 한다. 같은 "권한 켰는데 차단" 신고가 재발하면 이 자리부터.
 
 ## 분리 검수 반영(2026-07-27, REJECT → 수정)

@@ -65,7 +65,8 @@ test('에러 매핑 — agy 무응답 타임아웃이 로그인 안내로 번역
   // agy 1.1.7 실측(2026-07-27): 미로그인 + -p(비대화)는 로그인 플로우를 못 열고
   // "Error: timeout waiting for response"(exit 1)로만 죽는다. 원문을 그대로 두면
   // 사용자는 자기 설정을 의심하며 시간을 태운다(P0-2와 같은 실패 모드).
-  const e = Object.assign(new Error('cmd failed'), { stdout: 'Error: timeout waiting for response', stderr: '', code: 1 });
+  // 픽스처는 실측 형상(재검 N1: agy는 이 문구를 stderr로 낸다 — STDOUT 0바이트 실측)
+  const e = Object.assign(new Error('cmd failed'), { stdout: '', stderr: 'Error: timeout waiting for response', code: 1 });
   const mapped = apiError(e, 'antigravity');
   assert.match(mapped.message, /agy/, '로그인 처방(agy 실행)이 없다');
   assert.match(mapped.message, /제한 시간|timed out/i, '장시간 작업 초과 가능성도 함께 안내해야 한다(문구가 동일해 구분 불가)');
