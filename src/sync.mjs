@@ -44,7 +44,12 @@ const CYCLE_MS = Number(process.env.ARGO_SYNC_CYCLE_MS) || 8_000;
 // 두 조회 모두 8초일 이유가 없다: 발견은 **새 기기가 자기 회사를 처음 찾는** 용도고, tombstone은
 // **보관 전파**라 분 단위 지연이 무해하다. 파일 push/pull만 CYCLE_MS로 두고 이 둘을 분리하면
 // 목록 호출이 87% 줄면서 체감 지연은 그대로다. (첫 사이클은 항상 실행 — 신규 기기 복원 보장.)
-const DISCOVER_MS = Number(process.env.ARGO_SYNC_DISCOVER_MS) || 60_000;
+//
+// 2026-07-27 후속(DB 응답 불능 사후): 60초로도 부족했다 — storage.search **회당** 비용이 객체 수에
+// 선형이라(실측: 객체 12,525→40,714개에서 177ms→5.27s/회) 빈도 절감이 상쇄됐다. 300초로 5배 더
+// 줄인다. [규모 질문] 오너당 list 2회/300s × 기기 수 — 100명·기기 150대면 분당 60회 × 회당 수 초
+// = 여전히 위험. **근본 해법은 list() 폐지(매니페스트 인덱스 1파일)**이며 이 상수는 지연 전술이다.
+const DISCOVER_MS = Number(process.env.ARGO_SYNC_DISCOVER_MS) || 300_000;
 // 크로스 프로세스 락 스테일 판정 — CYCLE_MS와 분리한다. 주기 단축(45→8s)이 이중 동기화 방어막을
 // 좁히면(느린 사이클의 살아있는 리더를 오탈취) 삭제 피드백 루프=대형 유실이 날 수 있다(리뷰 H1).
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
@@ -770,17 +775,6 @@ async function cycle() {
   // 계정 키 확보 — 크레덴셜 봉투(v2)의 열쇠. 실패해도 사이클은 계속(크레덴셜만 이번 사이클 제외).
   const keyOwner = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
   await ensureAccountKey(client(), keyOwner);
-  // 회사 tombstone 동기화 — 로컬 스캔보다 먼저: 원격 tombstone이 이 기기의 사본을 보관 처리하면
-  // 그 회사는 이번 사이클의 push/pull 대상에서 자연히 빠진다. 실패해도 사이클은 계속(빈 Set).
-  // 이번 사이클에 원격 목록 조회(발견·tombstone)를 할 차례인가.
-  // 실패해도 시각을 갱신한다: 실패마다 재시도하면 장애 중 목록 호출이 오히려 CYCLE_MS 주기로 폭주한다.
-  // ⚠ 불변식 — **discoverRemote와 원격 tombstone은 반드시 이 게이트 하나를 공유한다.** 둘을 갈라
-  // 각자 주기를 주면 "발견은 도는데 원격 tombstone은 안 도는" 사이클이 생기고, 그 사이클에 다른
-  // 기기가 보관한 회사가 로컬로 복원돼 **부활**한다(보관 전파가 tombs로 걸러지는 구조라서다).
-  // 절감이 더 필요하면 주기를 늘려라 — 나누지 마라. (검수 지적 2026-07-26, 회귀 가드: 아래 테스트)
-  const discoverDue = isDiscoverDue(Date.now(), globalThis.__argoLastDiscover, DISCOVER_MS);
-  if (discoverDue) globalThis.__argoLastDiscover = Date.now();
-  const tombs = await syncTombstones(keyOwner, { remote: discoverDue }).catch((e) => { console.warn('[argo] tombstone 동기화 실패:', e.message); return new Set(); });
   // 로컬 회사 수집 (ownerId 있는 것만 — 소유자가 있어야 클라우드에 자리가 있다)
   // 세션(JWT) 모드는 현재 계정 소유가 아닌 회사를 제외한다 — 다른 계정 소유의 로컬 사본(계정 전환·
   // 기기 공유 흔적)을 매 사이클 남의 폴더로 밀다 스토리지 격리(RLS)에 막혀 "row-level security"
@@ -805,22 +799,16 @@ async function cycle() {
       targets.set(meta.id, meta.ownerId);
     } catch { /* 회사 아님 */ }
   }
-  // 원격에만 있는 내 회사 발견 → 로컬 복제 대상에 추가 (새 기기가 자기 회사 복원). 남의 테넌트는 안 봄.
-  // restoreSet: 로컬에 회사(company.json)가 없어 원격에서 처음 발견된 것 — 신규 복원 가드의 신호.
   const localOwners = [...new Set(targets.values())];
-  const restoreSet = new Set();
-  for (const { owner, wsId } of discoverDue ? await discoverRemote(localOwners) : []) {
-    if (tombs.has(wsId)) continue; // 보관된 회사 — 클라우드 사본이 남아 있어도 복원하지 않는다
-    if (!targets.has(wsId)) { targets.set(wsId, owner); restoreSet.add(wsId); }
-  }
-  const owners = [...new Set(targets.values())];
-  // ARGO_SYNC_OWNER/페어링/세션 어디에도 오너가 없던 서비스 셀프호스트 — 로컬 회사에서 찾은 오너로 한 번 더 시도
-  if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
   // 리스 중재는 요금제 게이트보다 **먼저** 한다(architect 권고 2026-07-23). 리더 선출은 과금 대상이 아니라
   // 이중 실행 방지용 조정이고, 무료 계정도 단일 기기에서 루틴·메신저가 돌아야 한다(PRODUCT-SPEC: Free=로컬
   // 전부 무제한·단일 기기). 페이월 뒤에 두면 무료 계정이 중재를 아예 못 해 미획득 기본값 leader:true가
   // 두 기기에 남거나(이중 실행), 강등해 버리면 정상 무료 사용자의 루틴이 멈춘다 — 둘 다 제품 약속과 어긋난다.
   // 리스 키는 Storage RLS의 Pro 게이트에서 예외 처리돼 있다(마이그레이션 20260723001629, 오너 경계는 유지).
+  // (2026-07-27 순서 이동 후에도 이 제약은 유지된다: renewLease는 아래 요금제 게이트 return보다 앞이다.
+  //  리스 오너는 localOwners[0] — 세션 모드에선 foreign-owner 게이트로 targets 전부가 세션 소유라
+  //  기존 owners[0]과 동일하고, 새 기기 첫 사이클(로컬 0개)만 다음 사이클로 8초 미뤄진다: 리스 미획득
+  //  기본값이 leader:true라 무해.)
   // 리셋은 renewLease보다 **앞**에 둔다 — 뒤에 두면 renewLease가 throw할 때 직전 사이클의 paywalled가
   // stale로 남아 UI가 잘못된 페이월을 표시한다(architect 지적 2026-07-23).
   status.paywalled = false; // 매 사이클 리셋 — 모드 전환(세션→서비스) 시 stale true 잔존 차단
@@ -840,16 +828,51 @@ async function cycle() {
     ]);
     probe.ts = Date.now();
   }
-  if (owners[0]) await renewLease(owners[0], { runnerUsable: probe.ok }); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
+  if (localOwners[0]) await renewLease(localOwners[0], { runnerUsable: probe.ok }); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
   // 요금제 게이트(M-2d 스캐폴드) — 세션 모드에만. 서비스 모드(셀프호스트·워커)는 자기 인프라라 통과.
   // 강제는 ARGO_ENFORCE_PLAN=1일 때만(기본 off). 차단 = 조기 return — diff가 안 돌아 부작용 없음.
   // 판정은 ensureClient()의 실효 모드와 동일 조건(자격 존재 && serviceCredsAllowed) — 자격만 보면
   // 호스티드 오설정(자격 유출로 존재하지만 세션으로 강등)에서 세션 모드인데 게이트가 스킵된다(검수 2026-07-23).
+  //
+  // **위치(2026-07-27, DB 응답 불능 사후)**: 이 게이트는 반드시 아래 원격 목록 조회(tombstone·discover)
+  // **앞**에 있어야 한다. 이전엔 목록 조회 뒤에 있어 차단될 계정도 매 주기 storage.search(회당 수 초,
+  // DB CPU 98.9%)를 먼저 태웠다. 또 하나 — 강제(enforce) 여부와 무관하게 **free 플랜이면 원격 목록을
+  // 건너뛴다**(freePlan): Free = 단일 기기 약속이라 발견·원격 tombstone이 제품상 무의미하고, 서버 RLS가
+  // 어차피 거부하는 호출이 비용만 태운다. 조회 실패는 가용성 우선 통과(fail-open) — 실데이터 접근은
+  // 서버 RLS가 최종 방어선이라 안전하다(이전엔 조회 실패가 사이클 전체를 죽였다).
+  let freePlan = false;
   if (!(loadSyncCreds() && serviceCredsAllowed())) {
-    const ent = await syncEntitled(client(), keyOwner || owners[0] || null);
-    status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
-    if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
+    try {
+      const ent = await syncEntitled(client(), keyOwner || localOwners[0] || null);
+      status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
+      if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
+      freePlan = ent.plan === 'free';
+    } catch (e) { console.warn('[argo] 요금제 조회 실패(가용성 우선 통과):', e.message); }
   }
+  // 회사 tombstone 동기화 — 이번 사이클에 원격 목록 조회(발견·tombstone)를 할 차례인가.
+  // 실패해도 시각을 갱신한다: 실패마다 재시도하면 장애 중 목록 호출이 오히려 CYCLE_MS 주기로 폭주한다.
+  // ⚠ 불변식 — **discoverRemote와 원격 tombstone은 반드시 이 게이트 하나를 공유한다.** 둘을 갈라
+  // 각자 주기를 주면 "발견은 도는데 원격 tombstone은 안 도는" 사이클이 생기고, 그 사이클에 다른
+  // 기기가 보관한 회사가 로컬로 복원돼 **부활**한다(보관 전파가 tombs로 걸러지는 구조라서다).
+  // 절감이 더 필요하면 주기를 늘려라 — 나누지 마라. (검수 지적 2026-07-26, 회귀 가드: 아래 테스트)
+  // freePlan은 두 소비자가 공유하는 discoverDue 하나에 AND된다 — 불변식(단일 게이트)이 그대로 지켜진다.
+  const discoverDue = !freePlan && isDiscoverDue(Date.now(), globalThis.__argoLastDiscover, DISCOVER_MS);
+  if (discoverDue) globalThis.__argoLastDiscover = Date.now();
+  const tombs = await syncTombstones(keyOwner, { remote: discoverDue }).catch((e) => { console.warn('[argo] tombstone 동기화 실패:', e.message); return new Set(); });
+  // 로컬 스캔이 tombstone 처리보다 먼저가 됐으므로(게이트 이동), 이번 사이클에 보관(재적용 포함)된
+  // 회사를 push/pull 대상에서 명시적으로 뺀다 — 이전에는 "tombstone 먼저" 순서가 은닉하던 불변식이다.
+  // tombs에는 철회된 마커가 없다(syncTombstones 1.5가 철회 시 local.delete) — 살아있는 회사를 지우지 않는다.
+  for (const wsId of tombs) targets.delete(wsId);
+  // 원격에만 있는 내 회사 발견 → 로컬 복제 대상에 추가 (새 기기가 자기 회사 복원). 남의 테넌트는 안 봄.
+  // restoreSet: 로컬에 회사(company.json)가 없어 원격에서 처음 발견된 것 — 신규 복원 가드의 신호.
+  const restoreSet = new Set();
+  for (const { owner, wsId } of discoverDue ? await discoverRemote(localOwners) : []) {
+    if (tombs.has(wsId)) continue; // 보관된 회사 — 클라우드 사본이 남아 있어도 복원하지 않는다
+    if (!targets.has(wsId)) { targets.set(wsId, owner); restoreSet.add(wsId); }
+  }
+  const owners = [...new Set(targets.values())];
+  // ARGO_SYNC_OWNER/페어링/세션 어디에도 오너가 없던 서비스 셀프호스트 — 로컬 회사에서 찾은 오너로 한 번 더 시도
+  if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
   let companyFailed = 0;
   for (const [wsId, owner] of targets) {
     try {
