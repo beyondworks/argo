@@ -2,7 +2,8 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadCompany, updateCompany, archiveCompany, paths } from '../../../../src/workspace.mjs';
 import { listAgents, listDocs } from '../../../../src/hub.mjs';
-import { readUsageSummary, readDelegations, monthCostByCrew } from '../../../../src/usage.mjs';
+import { readDelegations } from '../../../../src/usage.mjs';
+import { readUsageSummary, monthCostByCrew } from '../../../../src/billing.mjs'; // 금액 집계는 billing 게이트로만
 import { ensureScheduler } from '../../../../src/scheduler.mjs';
 import { ensureGateway } from '../../../../src/gateway.mjs';
 import { guardCompany } from '../../../auth.mjs';

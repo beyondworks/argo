@@ -9,7 +9,8 @@ import { readAgentCard, parseScopeList, EFFORT_LEVELS } from './persona.mjs';
 import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루가 '나중에 하기'를 거는 유일한 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
-import { appendUsage, monthCost } from './usage.mjs';
+import { appendUsage } from './usage.mjs';
+import { monthCost } from './billing.mjs'; // 금액 집계는 billing 게이트로만(현재 자격 기준 단일 판정)
 import { loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
 import { addApproval } from './approvals.mjs';

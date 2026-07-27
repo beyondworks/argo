@@ -18,8 +18,8 @@ export async function appendUsage(wsId, { kind, slug, from, runner, model, usage
     cacheRead: usage.cache_read_input_tokens ?? 0,
     cacheCreate: usage.cache_creation_input_tokens ?? 0,
     costUsd: costUsd ?? null,
-    // 청구 여부 — false면 구독(OAuth·호스트 로그인) 턴이라 금액 집계에서 뺀다. 필드가 없는 옛 행은
-    // 청구로 본다(소급 변경 금지 — 과거 집계가 흔들린다).
+    // 청구 여부 — false면 구독(OAuth·호스트 로그인) 턴이라 금액 집계에서 뺀다.
+    // 필드가 없는 행의 청구 판정은 rowBilled(현재 자격 기준)가 한다 — 표지는 보조 신호다.
     ...(billed === false ? { billed: false } : {}),
     ms: ms ?? null,
     ...(tools && Object.keys(tools).length ? { tools } : {}),
@@ -28,6 +28,28 @@ export async function appendUsage(wsId, { kind, slug, from, runner, model, usage
     await appendFile(paths(wsId).usage, `${JSON.stringify(row)}\n`);
   } catch { /* 기록 실패가 턴을 막으면 안 된다 */ }
 }
+
+/** 행의 러너 도출(순수) — 명시 runner 필드가 정본, 없는 구행은 모델명에서 폴백.
+    (monthCostByRunner에 있던 규칙을 승격 — 청구 판정이 행 단위로 이 값을 쓴다.) */
+export function rowRunner(r) {
+  if (r.runner) return String(r.runner);
+  const m = String(r.model ?? '');
+  if (m.includes(':')) return m.split(':')[0];
+  if (/^glm/i.test(m)) return 'glm';
+  return 'claude';
+}
+
+/** 행 단위 청구 판정(순수) — **이 판정이 모든 금액 표면의 단일 진실이다** (2026-07-27 확정).
+    billedMap = { 러너id: 현재 자격이 apikey인가 } (billing.mjs가 만든다).
+    - billed === false 행(구독 턴 명시)은 항상 비청구.
+    - map이 있으면: 그 행의 러너가 **지금 API 키로 연결돼 있을 때만** 청구로 본다.
+      과거 행의 표지 유무에 기대지 않는다 — v0.1.29의 "옛 행은 청구로 본다"는 소급 보수가
+      구독 전용 회사에 잔존 금액을 계속 표시하는 신고를 낳았다(실사용 2026-07-26·27).
+      자격이 없거나 모르는 러너는 비청구(돈이 나갈 경로가 없다) — 오해 방향으로 죽지 않는다.
+    - map이 없으면(구 경로·테스트): 이전 동작 유지. 프로덕션 소비자는 billing.mjs를 통해서만
+      집계를 쓰도록 트립와이어가 강제한다. */
+export const rowBilled = (r, billedMap) =>
+  r.billed === false ? false : !billedMap ? true : billedMap[rowRunner(r)] === true;
 
 async function readRows(wsId) {
   try {
@@ -55,7 +77,7 @@ export async function readDelegations(wsId, limit = 30) {
     .map((r) => ({ ts: r.ts, from: r.from, to: r.slug, ms: r.ms ?? null }));
 }
 
-export async function readUsageSummary(wsId) {
+export async function readUsageSummary(wsId, billedMap) {
   const rows = await readRows(wsId);
 
   const today = new Date().toISOString().slice(0, 10);
@@ -63,6 +85,7 @@ export async function readUsageSummary(wsId) {
   // subTurns = 구독(OAuth) 연결로 돈 턴. SDK는 이런 턴에도 정가 상당액을 리포트하지만 **청구되지 않는다** —
   // 그대로 더해 보여주면 "구독료 안인지 추가 청구인지 헷갈린다"가 된다(실사용 신고 2026-07-26).
   // 금액에서 빼고 개수만 세어, 화면이 "얼마 나갔다"와 "구독으로 썼다"를 구분해 말할 수 있게 한다.
+  // 청구/구독 판정은 rowBilled(단일 진실 — 현재 자격 기준) 하나만 쓴다.
   const agg = () => ({ turns: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0, hasCost: false, subTurns: 0 });
   const sum = { today: agg(), month: agg(), total: agg() };
   for (const r of rows) {
@@ -74,9 +97,7 @@ export async function readUsageSummary(wsId) {
       s.turns += 1;
       s.input += r.input; s.output += r.output;
       s.cacheRead += r.cacheRead; s.cacheCreate += r.cacheCreate;
-      // billed === false(구독 턴)는 금액에서 제외. billed 없는 옛 행은 청구로 본다 — 소급해서 금액을
-      // 지우면 과거 집계가 흔들린다(이전 동작 유지).
-      if (r.billed === false) s.subTurns += 1;
+      if (!rowBilled(r, billedMap)) s.subTurns += 1;
       else if (typeof r.costUsd === 'number') { s.costUsd += r.costUsd; s.hasCost = true; }
     }
   }
@@ -91,7 +112,7 @@ export async function readUsageSummary(wsId) {
 }
 
 /** 크루 1명의 누적 통계 — 카드 패널 "상세 정보"의 원천. */
-export async function agentStats(wsId, slug) {
+export async function agentStats(wsId, slug, billedMap) {
   const rows = (await readRows(wsId)).filter((r) => r.slug === slug);
   const s = { turns: 0, input: 0, output: 0, cacheRead: 0, cacheCreate: 0, costUsd: 0, hasCost: false, ms: 0, msCount: 0 };
   const tools = {};
@@ -99,7 +120,7 @@ export async function agentStats(wsId, slug) {
     s.turns += 1;
     s.input += r.input ?? 0; s.output += r.output ?? 0;
     s.cacheRead += r.cacheRead ?? 0; s.cacheCreate += r.cacheCreate ?? 0;
-    if (typeof r.costUsd === 'number') { s.costUsd += r.costUsd; s.hasCost = true; }
+    if (rowBilled(r, billedMap) && typeof r.costUsd === 'number') { s.costUsd += r.costUsd; s.hasCost = true; }
     if (typeof r.ms === 'number') { s.ms += r.ms; s.msCount += 1; }
     for (const [k, v] of Object.entries(r.tools ?? {})) tools[k] = (tools[k] ?? 0) + v;
   }
@@ -116,49 +137,42 @@ export async function agentStats(wsId, slug) {
 }
 
 /** 이번 달 크루별 인건비 — 급여 대장(데크). 비용 큰 순. */
-export async function monthCostByCrew(wsId) {
+export async function monthCostByCrew(wsId, billedMap) {
   const month = new Date().toISOString().slice(0, 7);
   const by = {};
   for (const r of await readRows(wsId)) {
     if (!r.ts?.startsWith(month) || !r.slug) continue;
     const b = (by[r.slug] ??= { slug: r.slug, costUsd: 0, turns: 0, hasCost: false });
     b.turns += 1;
-    if (typeof r.costUsd === 'number') { b.costUsd += r.costUsd; b.hasCost = true; }
+    if (rowBilled(r, billedMap) && typeof r.costUsd === 'number') { b.costUsd += r.costUsd; b.hasCost = true; }
   }
   return Object.values(by).sort((a, b) => b.costUsd - a.costUsd);
 }
 
-/** 이번 달 러너별 사용량 — 설정 러너 카드 표시용. 러너는 기록된 모델명에서 도출한다
-    (외부 CLI는 'codex:모델'로 기록, GLM은 SDK 경유라 모델명이 glm-*, 그 외·미기록은 기본 러너 claude). */
-export async function monthCostByRunner(wsId) {
+/** 이번 달 러너별 사용량 — 설정 러너 카드 표시용. 러너 도출은 rowRunner(정본). */
+export async function monthCostByRunner(wsId, billedMap) {
   const month = new Date().toISOString().slice(0, 7);
   const by = {};
   for (const r of await readRows(wsId)) {
     if (!r.ts?.startsWith(month)) continue;
-    const m = String(r.model ?? '');
-    // 명시 runner 필드 우선(정본) — 없는 구행만 모델명에서 도출(폴백)
-    const runner = r.runner ? String(r.runner)
-      : m.includes(':') ? m.split(':')[0]
-      : /^glm/i.test(m) ? 'glm'
-      : 'claude';
+    const runner = rowRunner(r);
     const b = (by[runner] ??= { turns: 0, costUsd: 0, hasCost: false });
     b.turns += 1;
-    if (typeof r.costUsd === 'number') { b.costUsd += r.costUsd; b.hasCost = true; }
+    if (rowBilled(r, billedMap) && typeof r.costUsd === 'number') { b.costUsd += r.costUsd; b.hasCost = true; }
   }
   return by;
 }
 
 /** 이번 달 사용량 — { costUsd, subTurns }.
-    ⚠ costUsd는 **실제로 청구되는 턴만** 더한다. 구독(OAuth) 연결은 SDK가 정가 상당액을 리포트하지만
-    그 돈이 청구되지는 않는다 — 그대로 표시하면 "구독료 안인지 추가 청구인지 헷갈린다"가 된다
-    (실사용 신고 2026-07-26). billed === false인 행은 금액에서 빼고 턴 수만 센다.
-    billed가 없는 옛 행은 청구로 본다(이전 동작 유지 — 소급해서 금액을 지우면 과거 집계가 흔들린다). */
-export async function monthCost(wsId) {
+    ⚠ costUsd는 **실제로 청구되는 턴만** 더한다(판정 = rowBilled 단일 진실 — 현재 자격 기준).
+    구독(OAuth) 연결은 SDK가 정가 상당액을 리포트하지만 그 돈이 청구되지는 않는다 —
+    그대로 표시하면 "구독료 안인지 추가 청구인지 헷갈린다"가 된다(실사용 신고 2026-07-26·27). */
+export async function monthCost(wsId, billedMap) {
   const month = new Date().toISOString().slice(0, 7);
   let costUsd = 0, subTurns = 0;
   for (const r of await readRows(wsId)) {
     if (!r.ts?.startsWith(month)) continue;
-    if (r.billed === false) { subTurns += 1; continue; }
+    if (!rowBilled(r, billedMap)) { subTurns += 1; continue; }
     if (typeof r.costUsd === 'number') costUsd += r.costUsd;
   }
   return { costUsd, subTurns };

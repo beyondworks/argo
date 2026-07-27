@@ -10,7 +10,7 @@ export async function GET(_req, { params }) {
     const [{ readEvents }, { listInstalledSkills, loadMcp }, { agentStats }] = await Promise.all([
       import('../../../../../../src/events.mjs'),
       import('../../../../../../src/market.mjs'),
-      import('../../../../../../src/usage.mjs'),
+      import('../../../../../../src/billing.mjs'), // agentStats — 금액 집계는 billing 게이트로만
     ]);
     const events = await readEvents(ws, 300).catch(() => []);
     const recent = events

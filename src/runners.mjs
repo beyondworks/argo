@@ -1110,7 +1110,13 @@ export async function runnerLoginStatus(runner) {
 export async function runnerStatus(wsId) {
   const host = await detectRunners();
   const secrets = await loadSecrets(wsId);
-  const usage = await monthCostByRunner(wsId).catch(() => ({})); // 표시용 — 실패해도 상태를 막지 않는다
+  // 금액은 현재 자격 기준 단일 판정(rowBilled) — billing.mjs와 같은 map을 여기서 직접 만든다
+  // (billing→runners 순환이라 역수입 불가 — 예외 배선, 트립와이어가 map 전달 여부를 잠근다).
+  const billedMap = {};
+  await Promise.all(Object.keys(RUNNERS).map(async (id) => {
+    billedMap[id] = await isBilledRunner(wsId, id).catch(() => false);
+  }));
+  const usage = await monthCostByRunner(wsId, billedMap).catch(() => ({})); // 표시용 — 실패해도 상태를 막지 않는다
   const out = {};
   for (const [id, meta] of Object.entries(RUNNER_AUTH)) {
     const cred = secrets.runners?.[id];
