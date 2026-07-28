@@ -189,8 +189,15 @@ export async function runRoomTurn(wsId, text, attachments = []) {
   const speakers = allCall ? agents : (mentioned.length ? mentioned : [agents[0]]).slice(0, 3);
 
   const nameOf = (slug) => agents.find((x) => x.slug === slug)?.name ?? slug;
+  // @all × 이미지 첨부 = 크루 수만큼 이미지 토큰이 곱해진다(검수 LOW — 이미지는 턴마다 임베드).
+  // 앞 3명까지만 임베드하고 이후 발언자는 경로 노트로 받는다 — 파일은 vault/files에 있으니 필요한
+  // 크루는 Read로 열람 가능. 이름 멘션 경로는 speakers 자체가 3명 상한이라 이 캡에 걸리지 않는다.
+  const IMG_EMBED_MAX = 3;
   const replies = [];
-  for (const a of speakers) {
+  for (const [i, a] of speakers.entries()) {
+    const att = i >= IMG_EMBED_MAX && attachments.some((x) => x.isImage)
+      ? attachments.map((x) => (x.isImage ? { ...x, isImage: false } : x))
+      : attachments;
     // 매 발언 직전 최신 트랜스크립트 — 뒤 크루는 앞 크루의 답을 보고 겹치지 않게 보탠다
     const transcript = (await loadRoom(wsId)).messages.slice(-20)
       // 첨부 경로 규약은 chat.mjs 스레드 맥락과 동일 문자열 — 후속 턴에서 "아까 그 파일"이 경로로
@@ -209,7 +216,7 @@ ${transcript}
 - 확정 정보가 부족하면 되묻기만 하고 멈추지 말고, 합리적 가정을 명시한 뒤 그 방향으로 **실제 산출물/검토 결과까지 만들어** 답하라.
 - 단순 논의·의견이면 동료가 이미 말한 건 반복 말고 네 전문성으로 간결히 보태라(이 경우엔 5줄 이내).`;
     // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다
-    const r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments });
+    const r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att });
     const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now() }, sid);
     if (!live) break; // 회의가 마쳐졌다 — 남은 발언을 빈 방에 남기지 않는다
     replies.push({ slug: a.slug, name: a.name, reply: r.reply });
