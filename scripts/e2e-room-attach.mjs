@@ -4,7 +4,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const PORT = 3171;
 const ROOT = await mkdtemp(join(tmpdir(), 'argo-e2e-room-'));
@@ -19,6 +19,12 @@ function cleanup(code) {
 const env = { ...process.env, ARGO_ROOT: ROOT, PORT: String(PORT), NODE_ENV: 'production' };
 for (const k of Object.keys(env)) if (/SUPABASE|ARGO_TENANT|ARGO_ENFORCE|ARGO_SYNC/i.test(k)) delete env[k];
 
+// 선행 빌드 — 낡은 .next로 옛 코드가 도는 가짜 통과 방지(분리 검수). 반복 실행은 E2E_SKIP_BUILD=1.
+if (!process.env.E2E_SKIP_BUILD) {
+  console.log('[e2e] next build (E2E_SKIP_BUILD=1로 생략 가능)…');
+  const b = spawnSync('npx', ['next', 'build'], { stdio: 'inherit' });
+  if (b.status !== 0) fail('next build 실패 — 낡은 .next로는 E2E를 신뢰할 수 없다');
+}
 server = spawn('npx', ['next', 'start', '-p', String(PORT)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
 const api = async (path, opts = {}) => {
   const r = await fetch(`http://127.0.0.1:${PORT}${path}`, {

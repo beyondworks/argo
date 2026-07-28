@@ -10,7 +10,7 @@
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const PORT = 3161;
 const ROOT = await mkdtemp(join(tmpdir(), 'argo-e2e-mail-'));
@@ -29,7 +29,13 @@ for (const k of Object.keys(env)) {
 }
 
 console.log(`[e2e] 격리 루트 ${ROOT} · 포트 ${PORT}`);
-// 빌드 산출물(.next)은 워크트리에 이미 있다(직전 next build). next start로 프로덕션 모드 기동.
+// 선행 빌드 — "직전에 빌드했겠지"는 가정이라 낡은 .next면 옛 코드로 가짜 통과한다(분리 검수).
+// 반복 실행 시에만 E2E_SKIP_BUILD=1로 생략(직전 실행이 방금 빌드했음을 아는 경우).
+if (!process.env.E2E_SKIP_BUILD) {
+  console.log('[e2e] next build (E2E_SKIP_BUILD=1로 생략 가능)…');
+  const b = spawnSync('npx', ['next', 'build'], { stdio: 'inherit' });
+  if (b.status !== 0) fail('next build 실패 — 낡은 .next로는 E2E를 신뢰할 수 없다');
+}
 server = spawn('npx', ['next', 'start', '-p', String(PORT)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
 server.stdout.on('data', (d) => { if (process.env.E2E_VERBOSE) process.stdout.write(d); });
 server.stderr.on('data', (d) => { if (process.env.E2E_VERBOSE) process.stderr.write(d); });
