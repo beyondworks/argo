@@ -9,25 +9,17 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { applyLsEvent, unmatchedRow, pickProSubscription, lsGateOpts, shouldApplyLsEvent } from '../src/lsbilling.mjs';
 import { reconcileDue, reconcileEntitlement } from '../src/lsreconcile.mjs';
+import { APPLY_CASES, toMirrorArgs } from './helpers/ls-apply-cases.mjs';
 
 const UID = '11111111-2222-3333-4444-555555555555';
 
-// ── [M1] shouldApplyLsEvent — DB WHERE 조건의 JS 거울(경계값 표)
-test('적용 판정 거울: 같은 구독만 순서 역전을 보고, 다른 구독은 신원 가드만 — F1 코너 포함', () => {
-  const ev = (plan, sub, ts) => ({ plan, ls_subscription_id: sub, ls_updated_at: ts });
-  const st = (sub, ts) => ({ ls_subscription_id: sub, ls_updated_at: ts });
-  assert.equal(shouldApplyLsEvent(ev('pro', 'S1', '2026-07-01T00:00:00Z'), null), true);  // 신규 행
-  // 같은 구독: 과거는 스킵, 같음·최신·null은 진행
-  assert.equal(shouldApplyLsEvent(ev('pro', 'S1', '2026-07-01T00:00:00Z'), st('S1', '2026-07-05T00:00:00Z')), false);
-  assert.equal(shouldApplyLsEvent(ev('pro', 'S1', '2026-07-05T00:00:00Z'), st('S1', '2026-07-05T00:00:00Z')), true);
-  assert.equal(shouldApplyLsEvent(ev('pro', 'S1', null), st('S1', '2026-07-05T00:00:00Z')), true);
-  // F1 핵심: 다른 구독의 승격은 저장분이 더 최신이어도 통과 — 옛 구독(S1) expired가 최신으로
-  // 저장된 상태에서, 유실됐던 새 구독(S2)을 대사가 복구할 수 있어야 한다(영구 free 방지)
-  assert.equal(shouldApplyLsEvent(ev('pro', 'S2', '2026-07-01T00:00:00Z'), st('S1', '2026-07-05T00:00:00Z')), true);
-  // 다른 구독의 강등은 신원 가드(O1)가 차단
-  assert.equal(shouldApplyLsEvent(ev('free', 'S1', '2026-07-09T00:00:00Z'), st('S2', '2026-07-05T00:00:00Z')), false);
-  // 저장 구독 id 없음(그랜드파더링) — 강등도 진행
-  assert.equal(shouldApplyLsEvent(ev('free', 'S1', '2026-07-01T00:00:00Z'), st(null, '2026-07-05T00:00:00Z')), true);
+// ── [M1] shouldApplyLsEvent — DB WHERE 조건의 JS 거울. 경계표는 test/helpers/ls-apply-cases.mjs가
+// 단일 정본이며 pg 통합 테스트(billing-pg-integration)와 공유한다 — 표가 갈라지면 한쪽이 깨진다.
+test('적용 판정 거울: 공유 경계표 전 케이스에서 applied 여부가 DB 기대와 일치 — F1 코너 포함', () => {
+  for (const c of APPLY_CASES) {
+    const { mapped, stored } = toMirrorArgs(c);
+    assert.equal(shouldApplyLsEvent(mapped, stored), c.expect === 'applied', c.name);
+  }
 });
 
 // ── [M1] applyLsEvent — RPC 호출 계약
