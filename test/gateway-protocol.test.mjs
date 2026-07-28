@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseApprovalText, parseApprovalCallback, pairCodeMatches, clip, tidy, pollBackoffMs, pick,
+  classifySlackMessage,
 } from '../src/gateway/protocol.mjs';
 
 /* ── 텍스트 결재 회신 파서 — 슬랙·텔레그램 공용 앵커 ── */
@@ -88,4 +89,14 @@ test('pick: en만 영어, 그 외(ko·미지정·이상값)는 전부 한국어 
   assert.equal(pick('한', 'en', 'ko'), '한');
   assert.equal(pick('한', 'en', undefined), '한');
   assert.equal(pick('한', 'en', 'fr'), '한', '미지원 코드는 ko 폴백');
+});
+
+// 호출부 재배선을 실제로 태우는 테스트(분리 검수 L4) — 파서 단독이 아니라 classifySlackMessage가
+// parseApprovalText 위임 후 {kind, approve, id}로 올바르게 매핑하는지. 사장 판정과의 결합도 함께.
+test('classifySlackMessage: 사장의 승인/거절 텍스트가 approval로 매핑된다(위임 호출부)', () => {
+  const cfg = { ownerId: 'U1', botUserId: 'B1' };
+  assert.deepEqual(classifySlackMessage(cfg, { user: 'U1', text: '승인 ap-abc12' }), { kind: 'approval', approve: true, id: 'ap-abc12' });
+  assert.deepEqual(classifySlackMessage(cfg, { user: 'U1', text: '거절 ap-xyz99' }), { kind: 'approval', approve: false, id: 'ap-xyz99' });
+  assert.equal(classifySlackMessage(cfg, { user: 'U2', text: '승인 ap-abc12' }).kind, 'skip', '사장 외 결재 무시가 위임보다 선행');
+  assert.equal(classifySlackMessage(cfg, { user: 'U1', text: '승인해줘 그냥' }).kind, 'turn', '앵커 미일치는 일반 턴');
 });

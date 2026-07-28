@@ -57,7 +57,9 @@ export function classifySlackMessage(cfg, m) {
     return { kind: 'hint' };
   }
   if (String(m.user) !== String(cfg.ownerId)) return { kind: 'skip' }; // 사장만 — 채널 멤버 전원이 구동·결재하던 구멍 차단
-  const ap = text.match(/^(승인|거절)\s+(ap-[a-z0-9]+)/); // 결재 토큰(승인/거절)은 파서 앵커라 고정
-  if (ap) return { kind: 'approval', approve: ap[1] === '승인', id: ap[2] };
+  // 결재 판정은 parseApprovalText 단일 원천 — 인라인 사본이 남으면 한쪽만 고쳐져 승인/거절 오판이 된다
+  // (분리 검수 L1 2026-07-28: 이 파일 안에 같은 정규식 사본이 잔존하던 것을 단일화 완성).
+  const ap = parseApprovalText(text);
+  if (ap) return { kind: 'approval', approve: ap.approve, id: ap.id };
   return { kind: 'turn', text };
 }
