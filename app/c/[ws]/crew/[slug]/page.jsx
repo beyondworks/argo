@@ -166,6 +166,7 @@ export default function CrewChat({ params }) {
   useEffect(loadSessions, [loadSessions]);
   async function openSession(id) {
     resetAnnot(); // 세션을 오가며 빨간펜 상태가 다른 메시지에 유령으로 남지 않게
+    setWfOpen(false); setWfErr(''); // 작업 폴더 팝오버도 — 열람 갔다 오면 리마운트로 되살아나 포커스를 뺏는다
     if (!id) { setViewing(null); setArchMsgs(null); return; }
     try {
       const d = await api(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}&id=${encodeURIComponent(id)}`);
@@ -439,7 +440,9 @@ export default function CrewChat({ params }) {
       이번 지시에도 경로를 명시해 크루가 바로 그 폴더에서 일하게 한다. 쓰던 초안은 지우지 않고 앞에 붙인다. */
   function insertWorkFolder(path) {
     const line = t('chat.workFolder.prefix', { path });
-    setInput((cur) => (cur.includes(line) ? cur : (cur ? `${line}\n${cur}` : `${line}\n`)));
+    // 중복 방지는 줄 단위 정확 일치 — 부분 문자열(includes)이면 상위 폴더 등록이 하위 폴더 줄에 걸려 조용히 스킵된다
+    setInput((cur) => (cur.split('\n').includes(line) ? cur : (cur ? `${line}\n${cur}` : `${line}\n`)));
+    histIdx.current = -1; // 타이핑 경로와 동일 — 히스토리 탐색 모드가 남으면 ↑ 한 번에 프리픽스가 날아간다
     setWfOpen(false); setWfErr(''); setWfInput('');
     inputRef.current?.focus();
   }
@@ -448,8 +451,9 @@ export default function CrewChat({ params }) {
     if (wfBusy) return;
     setWfBusy(true); setWfErr('');
     try {
-      await api(`/api/companies/${ws}/workroots`, { add: path });
-      insertWorkFolder(path);
+      const d = await api(`/api/companies/${ws}/workroots`, { add: path });
+      // 서버 canonical(realpath — 후행 슬래시·심링크 정규화)을 삽입 — 프롬프트에 주입되는 루트와 표기 일치
+      insertWorkFolder(d.roots?.[d.roots.length - 1] ?? path);
     } catch (e) {
       const code = String(e.message || '');
       if (code === 'duplicate') { insertWorkFolder(path); return; } // 이미 등록된 폴더 = 목적 달성 — 진행
@@ -953,9 +957,12 @@ export default function CrewChat({ params }) {
             </button>
           </div>
         )}
-        {/* 작업 폴더 팝오버 — 웹 폴백 경로 입력 + 픽커 거부 사유 표시. 메인 폼과 중첩되면 invalid HTML이라 형제로 둔다 */}
-        {wfOpen && (
-          <div className="card card-float" style={{
+        {/* 작업 폴더 팝오버 — 웹 폴백 경로 입력 + 픽커 거부 사유 표시. 메인 폼과 중첩되면 invalid HTML이라 형제로 둔다.
+            '/' 커맨더와 같은 자리(bottom 100%)라 상호 배타 — 커맨더가 떠 있으면 양보한다 */}
+        {wfOpen && !slashToken && (
+          <div className="card card-float" role="dialog" aria-label={t('chat.workFolder.open')}
+            onKeyDown={(e) => { if (e.key === 'Escape') { setWfOpen(false); setWfErr(''); } }}
+            style={{
             position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 40,
             width: 'min(460px, 100%)', padding: 12, display: 'grid', gap: 8,
             boxShadow: '0 8px 28px rgba(0,0,0,.14)',
