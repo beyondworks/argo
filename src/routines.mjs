@@ -35,14 +35,27 @@ async function saveRoutines(wsId, routines) {
     (export: 단위 테스트용 — 순수 함수) */
 const TIME_RE = /^\d{2}:\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** 시간대 검증 — IANA 이름(Asia/Seoul 등)만. 못 알아보면 null(기기 로컬로 폴백).
+    Intl이 유일한 판별기다 — 목록을 손으로 들고 있으면 낡는다. */
+export function normalizeTz(tz) {
+  const name = String(tz ?? '').trim();
+  if (!name) return null;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: name }); return name; } catch { return null; }
+}
+
 export function normalizeSchedule(schedule = {}) {
+  // 시각 예약은 **만든 사람의 시간대**에 묶인다(유건 지시 2026-07-28: "한국 사용자는 한국 시간으로").
+  // 없으면 예약 시각을 실행하는 기기의 로컬로 읽는데, 그 기기가 다른 시간대(클라우드 워커=UTC,
+  // 해외 기기)면 09:00 브리핑이 엉뚱한 시각에 터진다. 그래서 tz를 스케줄에 박아 함께 옮긴다.
+  const tz = normalizeTz(schedule.tz);
+  const withTz = (s) => (tz ? { ...s, tz } : s); // 없으면 붙이지 않는다 — 구버전 기기가 읽어도 무해
   // once = 특정 날짜에 1회(예약 발송). 실행되면 자동으로 꺼진다(runRoutine) — 반복 예약과 구분.
   if (schedule.type === 'once') {
     const date = String(schedule.date ?? '').trim();
     if (!DATE_RE.test(date)) throw new Error('1회 예약은 날짜(YYYY-MM-DD)가 필요합니다');
     const t = String(schedule.time ?? (Array.isArray(schedule.times) ? schedule.times[0] : '')).trim();
     if (!TIME_RE.test(t)) throw new Error('예약 시각은 HH:MM 형식');
-    return { type: 'once', date, time: t, times: [t] };
+    return withTz({ type: 'once', date, time: t, times: [t] });
   }
   // interval = N분마다 반복(크루 Start-loop — 실사용 요청 2026-07-27 "루프 잡"). 하한 10분:
   // [규모 질문] 루프 1개 = 매 발화가 LLM 턴 — 분 단위 루프 × 크루 수 × 회사 수가 곱으로 탄다.
@@ -63,15 +76,21 @@ export function normalizeSchedule(schedule = {}) {
   const dows = [...new Set(rawDows.map(Number))].sort((a, b) => a - b);
   if (type === 'weekly' && !dows.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)) throw new Error('요일은 일(0)~토(6) 범위');
   // 단수 필드(time/dow)는 첫 값으로 함께 유지 — 이 파일을 읽는 구버전(다른 기기 동기화)이 깨지지 않는다
-  return { type, time: times[0], times, dow: dows[0], ...(type === 'weekly' ? { dows } : {}) };
+  return withTz({ type, time: times[0], times, dow: dows[0], ...(type === 'weekly' ? { dows } : {}) });
 }
+
+/** 이 기기의 시간대 — 로컬 우선 제품이라 서버는 사용자 컴퓨터에서 돈다. 즉 여기서 읽은 시간대가
+    곧 사용자의 시간대다(한국 사용자면 Asia/Seoul). 클라이언트가 tz를 보내면 그쪽이 우선. */
+const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
 export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true }) {
   if (!agentSlug || !title?.trim() || !prompt?.trim()) throw new Error('크루·제목·지시가 필요합니다');
   const routine = {
     id: `r${Date.now().toString(36)}`,
     agentSlug, title: title.trim(), prompt: prompt.trim(),
-    schedule: normalizeSchedule(schedule),
+    // 만들 때 시간대를 각인한다 — 이후 어느 기기(클라우드 워커 포함)가 돌려도 만든 사람의 시각으로
+    // 발화한다. 명시값이 있으면 그것을, 없으면 이 기기(=사용자 컴퓨터)의 시간대를 쓴다.
+    schedule: normalizeSchedule({ tz: hostTz(), ...schedule }),
     enabled,
     created: new Date().toISOString(),
     lastRun: null, lastOk: null, lastResult: '',
@@ -145,6 +164,29 @@ export async function runRoutine(wsId, id) {
 // 예전엔 정확히 그 분에만 due라, 그 분을 놓치면 그날은 조용히 스킵돼(아침 브리핑 유실) 스케줄러
 // 신뢰가 무너졌다. 지연 상한(4h)으로 23:59에 09:00을 늦게 쏘는 것은 막는다.
 const CATCHUP_MS = 4 * 60 * 60 * 1000;
+
+/** 주어진 시간대에서 본 now의 달력 조각. tz가 없으면 기기 로컬(구 동작 그대로).
+    Intl로 뽑는 이유: Date는 기기 로컬과 UTC만 알고, 임의 IANA 시간대는 못 만든다.
+    (export: 단위 테스트용 — 순수 함수) */
+export function zonedParts(now, tz) {
+  if (!tz) {
+    return {
+      year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate(),
+      hour: now.getHours(), minute: now.getMinutes(), dow: now.getDay(),
+    };
+  }
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour12: false, weekday: 'short',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(now).map((x) => [x.type, x.value]));
+  const DOW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    year: Number(p.year), month: Number(p.month), day: Number(p.day),
+    // hourCycle에 따라 자정이 24로 오는 구현이 있다 — 0으로 정규화하지 않으면 00:00 루틴이 영원히 안 뜬다
+    hour: Number(p.hour) % 24, minute: Number(p.minute), dow: DOW[p.weekday] ?? 0,
+  };
+}
+
 export function isDue(routine, now = new Date()) {
   if (!routine.enabled) return false;
   const s = routine.schedule ?? {};
@@ -158,19 +200,26 @@ export function isDue(routine, now = new Date()) {
   }
   const times = Array.isArray(s.times) && s.times.length ? s.times : [s.time];
   const dows = Array.isArray(s.dows) && s.dows.length ? s.dows : [s.dow ?? 1];
-  if (s.type === 'weekly' && !dows.includes(now.getDay())) return false;
+  // 달력 판정은 **루틴의 시간대**로 한다(schedule.tz). 없으면 기기 로컬 — 구 루틴 동작 불변.
+  const tz = normalizeTz(s.tz);
+  const zp = zonedParts(now, tz);
+  if (s.type === 'weekly' && !dows.includes(zp.dow)) return false;
   // 1회 예약 — 지정 날짜에만. 이미 실행됐으면(lastRun) 다시 발화하지 않는다(아래 슬롯 판정과 이중 방어).
   if (s.type === 'once') {
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const today = `${zp.year}-${String(zp.month).padStart(2, '0')}-${String(zp.day).padStart(2, '0')}`;
     if (s.date !== today) return false;
   }
+  const nowMin = zp.hour * 60 + zp.minute; // 그 시간대의 자정 이후 분
   // 슬롯별 판정 — 각 시각이 독립 슬롯. 앞 슬롯 실행(lastRun 갱신)이 뒤 슬롯을 막지 않는다
   // (lastRun < 뒤 슬롯 sched이므로). 스케줄러의 선점 마킹(lastRun=now)과도 그대로 호환된다.
   for (const tm of times) {
     const [h, m] = String(tm ?? '').split(':').map(Number);
     if (!Number.isInteger(h) || !Number.isInteger(m)) continue;
-    const sched = new Date(now); sched.setHours(h, m, 0, 0); // 오늘의 예약 시각(로컬)
-    if (now < sched) continue;              // 아직 예약 시각 전
+    // 예약 시각의 절대 순간 = now에서 "그 시간대 기준 경과 분"만큼 되돌린 지점. 시간대별 Date를
+    // 만들 수 없으니(JS 한계) 차이로 역산한다 — lastRun 비교가 절대 시각이라 이 형태여야 맞물린다.
+    const behindMin = nowMin - (h * 60 + m);
+    if (behindMin < 0) continue;             // 아직 예약 시각 전(그 시간대 기준)
+    const sched = new Date(now.getTime() - behindMin * 60_000 - now.getSeconds() * 1000 - now.getMilliseconds());
     if (now - sched > CATCHUP_MS) continue;  // 지연 상한 초과 — 낡은 실행 억제
     if (routine.lastRun) {
       if (new Date(routine.lastRun) >= sched) continue; // 이 슬롯 예약분 이미 실행됨

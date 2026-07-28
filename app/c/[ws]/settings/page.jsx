@@ -3,7 +3,7 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken } from '../../../ui';
+import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
@@ -399,8 +399,15 @@ function FolderField({ value, onChange, placeholder, pickTitle, disabled }) {
   const { t } = useLang();
   const [isApp, setIsApp] = useState(false);
   const [pickerDead, setPickerDead] = useState(false); // 실패 1회 → 입력 폴백 유지
-  // 다른 카드에서 이미 실패했으면 여기선 헛클릭 없이 곧장 입력창으로 연다(모듈 플래그 공유).
-  useEffect(() => { setIsApp(isTauriApp()); setPickerDead(isFolderDialogBroken()); }, []);
+  // 다른 카드의 실패·성공을 따라간다. 세 카드가 **동시에 떠 있어** 마운트 이펙트만으론 못 배우므로
+  // 이벤트도 구독한다(재검수 LOW-2 — 안 그러면 카드마다 한 번씩 헛클릭이 그대로 남는다).
+  useEffect(() => {
+    setIsApp(isTauriApp());
+    const sync = () => setPickerDead(isFolderDialogBroken());
+    sync();
+    window.addEventListener(FOLDER_DIALOG_EVENT, sync);
+    return () => window.removeEventListener(FOLDER_DIALOG_EVENT, sync);
+  }, []);
 
   async function pick() {
     try {

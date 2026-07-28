@@ -34,11 +34,17 @@ function loadDict() {
   return dict;
 }
 
-/** 소스에서 t('리터럴') 호출만 수집. 템플릿 리터럴(t(`a.${b}`))은 동적이라 제외 —
-    코드가 의도적으로 "없으면 폴백"(mapped === key) 관용구로 쓰는 자리가 그쪽이다. */
+/** 소스에서 **정적으로 확정되는** t() 키만 수집한다.
+    제외 대상은 접미가 런타임 값이라 정적으로 풀 수 없는 것들이다 — 템플릿(t(`a.${b}`))과
+    변수 전달(t(key)). "폴백이라서 뺀다"가 아니다(재검수 지적: 폴백 관용구는 변수 형태 쪽이고,
+    템플릿은 오히려 폴백 없이 그대로 렌더된다 — 그건 별도 후속 과제).
+    삼항은 **리터럴이므로 검사한다**: t(x ? 'a' : 'b')는 출고된 버그와 같은 모양인데
+    첫 판에선 그물 밖이었다(재검수 MEDIUM-1, 변이로 실증). 2번째 인자의 보간 값에 오탐이
+    나지 않도록 "t( 안의 모든 리터럴"을 긁지 않고 삼항 형태만 좁게 집는다. */
 function literalKeys(src) {
   const keys = [];
   for (const m of src.matchAll(/\bt\(\s*'([^']+)'/g)) keys.push(m[1]);
+  for (const m of src.matchAll(/\bt\([^'"`)]*\?\s*'([^']+)'\s*:\s*'([^']+)'/g)) keys.push(m[1], m[2]);
   return keys;
 }
 
@@ -46,7 +52,8 @@ test('t()에 넘기는 리터럴 키는 전부 사전에 있다', () => {
   const dict = loadDict();
   const missing = [];
   for (const file of walk(APP)) {
-    if (file.endsWith(`${'i18n'}.jsx`)) continue; // 사전 자신은 제외
+    // 사전 파일도 검사한다 — 자기 사전으로 자기 t() 호출을 보는 건 오히려 정확하다(재검수 LOW-4:
+    // 제외하면 i18n.jsx 안의 실제 t() 호출 1곳이 그물 밖으로 샌다).
     for (const k of literalKeys(readFileSync(file, 'utf8'))) {
       if (!dict.has(k)) missing.push(`${relative(ROOT, file)} → t('${k}')`);
     }

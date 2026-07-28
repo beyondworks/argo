@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 
@@ -436,8 +436,15 @@ export default function CrewChat({ params }) {
   const [wfErr, setWfErr] = useState('');
   const [isApp, setIsApp] = useState(false);
   const [wfPickerDead, setWfPickerDead] = useState(false); // 픽커 실패로 폼이 열렸는가(서버 거부와 구분)
-  // 감지식은 ui.jsx isTauriApp을 쓴다(#170 통일 방침 — 여기서 다시 복제하지 않는다)
-  useEffect(() => { setIsApp(isTauriApp()); setWfPickerDead(isFolderDialogBroken()); }, []);
+  // 감지식은 ui.jsx isTauriApp을 쓴다(#170 통일 방침 — 여기서 다시 복제하지 않는다).
+  // 픽커 성공/실패는 이벤트로 따라간다 — 성공했는데 "열 수 없다"가 남으면 거짓말이다(재검수 LOW-1·2).
+  useEffect(() => {
+    setIsApp(isTauriApp());
+    const sync = () => setWfPickerDead(isFolderDialogBroken());
+    sync();
+    window.addEventListener(FOLDER_DIALOG_EVENT, sync);
+    return () => window.removeEventListener(FOLDER_DIALOG_EVENT, sync);
+  }, []);
 
   /** 등록 성공 시 입력창 프리픽스 — 등록만으로도 다음 턴 시스템 프롬프트에 반영되지만(src/chat.mjs workRoots),
       이번 지시에도 경로를 명시해 크루가 바로 그 폴더에서 일하게 한다. 쓰던 초안은 지우지 않고 앞에 붙인다. */

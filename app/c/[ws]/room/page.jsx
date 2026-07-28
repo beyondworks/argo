@@ -290,11 +290,34 @@ export default function Room({ params }) {
                     {m.text}
                   </div>
                 </div>
+              ) : m.who === 'system' ? (
+                // 라우팅 안내(참조 전달·루프 등록·못 알아본 멘션) — 크루 발언이 아니라 방의 상태 표시.
+                // .chip을 쓰지 않는다: text-transform:uppercase가 걸려 있어 크루 slug가 대문자로 뒤집힌다
+                // (@verify → @VERIFY). 안내문 안의 이름은 사용자가 그대로 따라 칠 값이라 원문이어야 한다.
+                <div key={i} style={{ justifySelf: 'center', maxWidth: '80%' }}>
+                  <span style={{
+                    display: 'inline-block', fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.55, textAlign: 'center',
+                    padding: '4px 12px', borderRadius: 999, border: '1px solid var(--border)', background: 'transparent',
+                  }}>{m.text}</span>
+                </div>
               ) : (
                 <div key={i} style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
                   <Avatar name={nameOf(m.who)} size={26} />
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 650, marginBottom: 3 }}>{nameOf(m.who)}</div>
+                    <div style={{ fontSize: 11.5, fontWeight: 650, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      {nameOf(m.who)}
+                      {/* 위임으로 들어온 발언 — 누가 무엇을 맡겨 나온 답인지 방 안에서 드러낸다(다른 창으로 새지 않는다) */}
+                      {m.via && (
+                        // 이름이 들어가는 라벨이라 .chip(uppercase)을 피한다 — 위 시스템 줄과 같은 이유
+                        <span style={{
+                          fontSize: 10.5, fontWeight: 500, color: 'var(--fg-3)',
+                          padding: '1px 7px', borderRadius: 999, border: '1px solid var(--border)',
+                        }}>{t('room.viaDelegate', { from: nameOf(m.via.from) })}</span>
+                      )}
+                    </div>
+                    {m.via?.task && (
+                      <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4, lineHeight: 1.5 }}>{m.via.task}</div>
+                    )}
                     <div style={{ fontSize: 13.5 }}><Markdown text={m.text} /></div>
                   </div>
                 </div>
@@ -325,6 +348,8 @@ export default function Room({ params }) {
         ) : (
           <div style={{ display: 'grid', gap: 6 }}>
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
+            {/* 라우팅 문법 안내 — 모르면 없는 기능이다. 방을 떠나지 않고 지시하는 법을 입력창 옆에 붙여 둔다 */}
+            <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>{t('room.routingHint')}</p>
             {/* 멘션 드롭업의 위치 기준 — 입력바를 relative로 감싼다 */}
             <div style={{ position: 'relative' }}>
               {mentionOpen && (
