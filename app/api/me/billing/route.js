@@ -7,9 +7,12 @@ import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { currentUser } from '../../../auth.mjs';
+import { trialEnd } from '../../../../src/entitlement.mjs';
 
-const pick = (data) => Response.json({
-  billing: data ? { plan: data.plan, status: data.ls_status ?? null, hasSub: !!data.ls_subscription_id, endsAt: data.ends_at ?? null } : null,
+// 무행이어도 billing 객체를 반환한다 — 체험 배지(trialEndsAt)의 원천이라 null이면 대다수 체험자의
+// 배지가 사라진다. if (billing) 스타일 소비 금지(필드 단위로 읽을 것).
+const pick = (data, trialEndsAt = null) => Response.json({
+  billing: { plan: data?.plan ?? null, status: data?.ls_status ?? null, hasSub: !!data?.ls_subscription_id, endsAt: data?.ends_at ?? null, trialEndsAt },
 });
 
 export async function GET() {
@@ -29,7 +32,7 @@ export async function GET() {
       if (user) {
         const { data, error } = await sb.from('entitlements').select(cols).maybeSingle();
         if (error) throw new Error(error.message);
-        return pick(data);
+        return pick(data, trialEnd(user.created_at, data?.plan));
       }
     }
     // ② 기기 연동 세션 폴백 — 쿠키 세션이 없는 데스크톱. currentUser()가 기기 파일에서 검증한 id.
@@ -38,7 +41,13 @@ export async function GET() {
     const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
     const { data, error } = await sb.from('entitlements').select(cols).eq('user_id', user.id).maybeSingle();
     if (error) throw new Error(error.message);
-    return pick(data);
+    // 기기 세션엔 created_at이 없어 admin 조회 — 실패해도 배너만 빠질 뿐 화면은 유지
+    let created = null;
+    try {
+      const r = await fetch(`${url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, signal: AbortSignal.timeout(5000) });
+      if (r.ok) created = (await r.json())?.created_at ?? null;
+    } catch { /* 배너 생략 */ }
+    return pick(data, trialEnd(created, data?.plan));
   } catch (e) {
     console.error('[argo] me/billing 조회 실패:', e?.message ?? e);
     return Response.json({ billing: null }); // 조회 실패로 설정 화면을 깨지 않는다 — 배너만 사라진다

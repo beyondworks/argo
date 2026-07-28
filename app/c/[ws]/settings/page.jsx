@@ -3,11 +3,12 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard } from '../../../ui';
+import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, pickFolder } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 import { useAppUpdate } from '../../../use-app-update';
+import { trialBadgeState } from '../../../../src/entitlement.mjs';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
@@ -392,6 +393,8 @@ function ThemeCard() {
 function ExportCard({ ws }) {
   const { t } = useLang();
   const [dest, setDest] = useState('');
+  const [isApp, setIsApp] = useState(false);
+  useEffect(() => { setIsApp(isTauriApp()); }, []);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null); // { target, files }
   const [err, setErr] = useState('');
@@ -417,6 +420,10 @@ function ExportCard({ ws }) {
       <form onSubmit={doExport} style={{ display: 'flex', gap: 8 }}>
         <input value={dest} onChange={(e) => setDest(e.target.value)} placeholder={t('settings.export.placeholder')}
           {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
+        {isApp && (
+          // 데스크톱: 네이티브 픽커(ui.jsx 공통) — 웹은 실경로 미제공이라 텍스트 입력 유지(정직 폴백)
+          <button className="btn" type="button" onClick={async () => { const d = await pickFolder(t('settings.export.pickTitle')); if (d) setDest(d); }} disabled={busy}>{t('common.browse')}</button>
+        )}
         <button className="btn" type="submit" disabled={busy || !dest.trim()}>{busy ? <Spinner /> : t('settings.export.run')}</button>
       </form>
       {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
@@ -572,6 +579,8 @@ function WorkRootsCard({ ws }) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [isApp, setIsApp] = useState(false);
+  useEffect(() => { setIsApp(isTauriApp()); }, []);
 
   useEffect(() => {
     // 로드 실패를 빈 목록과 구분 — "없습니다"로 보이면 일시 장애가 데이터 소실처럼 읽힌다(분리 검수 LOW)
@@ -617,6 +626,9 @@ function WorkRootsCard({ ws }) {
               style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={t('settings.workroots.placeholder')}
                 {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
+              {isApp && (
+                <button className="btn" type="button" onClick={async () => { const d = await pickFolder(t('settings.workroots.pickTitle')); if (d) setInput(d); }} disabled={busy}>{t('common.browse')}</button>
+              )}
               <button className="btn" type="submit" disabled={busy || !input.trim()}>{busy ? <Spinner /> : t('settings.workroots.add')}</button>
             </form>
           )}
@@ -804,6 +816,10 @@ function SyncCard({ ws }) {
     const iv = setInterval(pull, 15000);
     return () => clearInterval(iv);
   }, [ws]);
+  // 체험 D-day — 동기화를 켠 적 없는 체험자(최대 코호트)도 보여야 해서 sync가 아닌 bill에서 계산.
+  // 판정은 trialBadgeState(entitlement.mjs) 단일 원천 — 만료 하한 누락으로 만료자에게 'D-0' 영구
+  // 표시되던 회귀(분리 검수 H1)가 그 함수의 테스트로 잠겨 있다.
+  const { active: trialActive, imminent: trialImminent, daysLeft: trialDaysLeft } = trialBadgeState(bill?.trialEndsAt, bill?.plan);
   const mine = sync?.companies?.[ws];
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -812,8 +828,10 @@ function SyncCard({ ws }) {
         <span style={{ flex: 1 }} />
         {sync?.plan === 'pro' ? (
           <span className="pill ok" style={{ flex: 'none' }}>{t('billing.plan.pro')}</span>
-        ) : sync?.plan === 'trial' ? (
-          <span className="pill ok" style={{ flex: 'none' }}>{t('billing.plan.trial')}</span>
+        ) : sync?.plan === 'trial' || (!sync?.plan && trialActive) ? (
+          <span className="pill ok" style={{ flex: 'none' }}>
+            {trialActive ? t('billing.trialDday', { n: trialDaysLeft }) : t('billing.plan.trial')}
+          </span>
         ) : sync?.plan === 'free' ? (
           <span className="pill" style={{ flex: 'none' }}>{t('billing.plan.free')}</span>
         ) : null}
@@ -845,6 +863,14 @@ function SyncCard({ ws }) {
             // 아직 막히진 않았지만(강제 게이트 off 등) free 플랜에 안내 차원으로 노출 — pro면 숨김
             <UpgradeButtons />
           ) : null}
+          {trialImminent && (
+            // 체험 종료 임박(3일 이내) — 카드 등록 없이 시작한 사용자에게 여기서 처음 결제를 권한다.
+            // 협박이 아니라 안심 화법. 본문은 --fg-2(대비 7.45:1 — --primary-strong 2.11:1은 AA 미달, 검수 MEDIUM).
+            <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
+              <span style={{ color: 'var(--fg-2)', fontSize: 12, fontWeight: 650 }}>{t('billing.trialEnding')}</span>
+              <UpgradeButtons />
+            </div>
+          )}
           {bill?.status === 'past_due' && bill?.hasSub && (
             // 연체 유예 중 — 차단이 아니라 안내다(LS 던닝이 재시도 중, 유예 소진 시 free 강등).
             // href는 클릭 시점 발급 라우트 — 저장된 포털 URL은 24시간 만료라 렌더 금지(재검수 HIGH).
@@ -858,7 +884,16 @@ function SyncCard({ ws }) {
           )}
         </div>
       ) : (
-        <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offHelp')}</p>
+        <div style={{ display: 'grid', gap: 8 }}>
+          <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offHelp')}</p>
+          {trialImminent && (
+            // 동기화를 안 켠 체험자에게도 임박 안내 — 이들이 가장 큰 코호트(검수 커버리지 질문 → 포함 결정)
+            <div style={{ display: 'grid', gap: 6 }}>
+              <span style={{ color: 'var(--fg-2)', fontSize: 12, fontWeight: 650 }}>{t('billing.trialEnding')}</span>
+              <UpgradeButtons />
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
