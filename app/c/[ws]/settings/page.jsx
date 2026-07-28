@@ -834,7 +834,8 @@ function SyncCard({ ws }) {
             // "고장"(lastError)과 "페이월"은 다른 상태 — 여기선 빨간 에러 줄 대신 안내+업그레이드를 보인다.
             <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
               <span style={{ color: 'var(--danger)', fontSize: 12 }}>
-                {['expired', 'unpaid'].includes(bill?.status) ? t('billing.cloudPaused') : t('billing.paywall')}
+                {/* FREE_STATUSES(lsbilling.mjs)와 동기 유지 — 직접 import하면 node:crypto가 클라 번들에 끌려온다 */}
+                {['expired', 'unpaid', 'paused'].includes(bill?.status) ? t('billing.cloudPaused') : t('billing.paywall')}
               </span>
               <UpgradeButtons />
             </div>
@@ -844,15 +845,16 @@ function SyncCard({ ws }) {
             // 아직 막히진 않았지만(강제 게이트 off 등) free 플랜에 안내 차원으로 노출 — pro면 숨김
             <UpgradeButtons />
           ) : null}
-          {bill?.status === 'past_due' && bill?.portal && (
+          {bill?.status === 'past_due' && bill?.hasSub && (
             // 연체 유예 중 — 차단이 아니라 안내다(LS 던닝이 재시도 중, 유예 소진 시 free 강등).
+            // href는 클릭 시점 발급 라우트 — 저장된 포털 URL은 24시간 만료라 렌더 금지(재검수 HIGH).
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
               <span style={{ color: 'var(--danger)', fontSize: 12 }}>{t('billing.pastDue')}</span>
-              <a className="btn sm" href={bill.portal} target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
+              <a className="btn sm" href="/api/me/billing/portal" target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
             </div>
           )}
-          {sync.plan === 'pro' && bill?.portal && bill?.status !== 'past_due' && (
-            <a style={{ fontSize: 12, color: 'var(--fg-3)', width: 'fit-content' }} href={bill.portal} target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
+          {sync.plan === 'pro' && bill?.hasSub && bill?.status !== 'past_due' && (
+            <a style={{ fontSize: 12, color: 'var(--fg-3)', width: 'fit-content' }} href="/api/me/billing/portal" target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
           )}
         </div>
       ) : (

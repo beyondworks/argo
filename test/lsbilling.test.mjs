@@ -56,6 +56,21 @@ test('매핑: user_id 누락·비UUID는 error(유령 결제 로그 대상), 관
   assert.equal(mapSubscriptionEvent('subscription_payment_failed', evt('active')), null); // 인보이스류 스킵
 });
 
+test('test_mode 게이트: 기본 거부(가짜 카드로 실 Pro 차단), opt-in 시에만 수용 — 재검수 M3', () => {
+  const e = evt('active', { test_mode: true });
+  assert.equal(mapSubscriptionEvent('subscription_updated', e).error, 'test-mode');
+  assert.equal(mapSubscriptionEvent('subscription_updated', e, { allowTest: true }).plan, 'pro');
+});
+
+test('variant 허용목록: 목록 설정 시 타 상품 구매는 전권을 받지 못한다 — 재검수 M2', () => {
+  const e = evt('active', { variant_id: 999 });
+  const opts = { allowedVariants: new Set(['111', '222']) };
+  assert.match(mapSubscriptionEvent('subscription_updated', e, opts).error, /other-product:999/);
+  assert.equal(mapSubscriptionEvent('subscription_updated', evt('active', { variant_id: 111 }), opts).plan, 'pro');
+  // 목록 미설정(null)이면 게이트 없음 — 단일 상품 스토어의 기본 동작 유지
+  assert.equal(mapSubscriptionEvent('subscription_updated', e, { allowedVariants: null }).plan, 'pro');
+});
+
 test('순서 역전: 과거 이벤트는 스킵, 최신·비교불가는 진행', () => {
   assert.equal(isStaleEvent('2026-07-28T00:00:00Z', '2026-07-28T01:00:00Z'), true);
   assert.equal(isStaleEvent('2026-07-28T02:00:00Z', '2026-07-28T01:00:00Z'), false);

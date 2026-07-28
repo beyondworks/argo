@@ -33,8 +33,10 @@ export function verifyLsSignature(rawBody, signatureHeader, secret) {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** subscription_* 이벤트를 entitlements 갱신안으로 환산. 처리 대상이 아니면 null(무시가 정답인 이벤트).
-    throw하지 않는다 — 웹훅은 이해 못 하는 이벤트에 200을 줘야 LS가 무한 재시도하지 않는다. */
-export function mapSubscriptionEvent(eventName, payload) {
+    throw하지 않는다 — 웹훅은 이해 못 하는 이벤트에 200을 줘야 LS가 무한 재시도하지 않는다.
+    opts.allowedVariants: Set<string>|null — 설정돼 있으면 그 variant만 Pro(저가 티어·애드온이 전권을
+    받는 것 차단, 재검수 M2). opts.allowTest: test_mode 결제 수용 여부(기본 거부 — 재검수 M3). */
+export function mapSubscriptionEvent(eventName, payload, opts = {}) {
   if (typeof eventName !== 'string' || !eventName.startsWith('subscription_')) return null;
   // 인보이스류(subscription_payment_*)는 attributes 스키마가 달라 스킵 — 상태 전이는
   // subscription_updated(past_due 포함)가 항상 따라온다(LS 문서 계약).
@@ -43,6 +45,10 @@ export function mapSubscriptionEvent(eventName, payload) {
   const userId = payload?.meta?.custom_data?.user_id;
   if (!attrs || typeof attrs.status !== 'string') return null;
   if (typeof userId !== 'string' || !UUID_RE.test(userId)) return { error: 'no-user' }; // 결제됐는데 귀속 불가 — 로그 대상
+  if (attrs.test_mode && !opts.allowTest) return { error: 'test-mode' }; // 가짜 카드 결제로 실 Pro 부여 차단
+  if (opts.allowedVariants?.size && !opts.allowedVariants.has(String(attrs.variant_id))) {
+    return { error: `other-product:${attrs.variant_id}` }; // Pro 상품이 아닌 구매 — 전권 부여 금지
+  }
   const status = attrs.status;
   const plan = PRO_STATUSES.has(status) ? 'pro' : FREE_STATUSES.has(status) ? 'free' : null;
   if (!plan) return { error: `unknown-status:${status}` }; // 새 상태가 생기면 조용히 오판하지 않고 드러낸다
@@ -54,6 +60,8 @@ export function mapSubscriptionEvent(eventName, payload) {
     ls_status: status,
     ls_updated_at: attrs.updated_at ?? null,
     ends_at: attrs.ends_at ?? null,
+    // ⚠ 스냅샷일 뿐이다 — LS 포털 URL은 발급 후 24시간 만료(서명 프리사인 링크, 재검수 HIGH).
+    // UI는 이 값을 렌더하지 말 것 — 클릭 시점 발급 라우트(/api/me/billing/portal)를 쓴다.
     portal_url: attrs?.urls?.customer_portal ?? null,
   };
 }
