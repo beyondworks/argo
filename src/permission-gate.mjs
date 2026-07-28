@@ -10,6 +10,7 @@ import { realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { addApproval, loadApprovals } from './approvals.mjs';
+import { fold, insideFold } from './pathcase.mjs';
 
 // 경로 인자를 갖는 읽기 도구 — 워크스페이스 경계를 적용한다(P1-5). TodoWrite는 경로가 없어 별도(항상 허용).
 const READ_FILE_TOOLS = new Set(['Read', 'Glob', 'Grep']);
@@ -71,6 +72,10 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
   const wsAbs = resolve(wsRoot);
   // sep 사용 필수 — Windows resolve()는 백슬래시라 '/' 하드코딩이면 경계 비교가 전부 불발돼
   // 보호가 통째로 무력화된다(검수 MED — workspace.mjs paths()의 v0.1.1 실측과 같은 계열).
+  // 허용 분기(자기 워크스페이스 안)는 정확 비교, 금지 구역·타사 판정(deny)은 케이스 폴딩 —
+  // 대상·부모 모두 미존재면 real이 렉시컬 폴백(입력 케이스 보존)이라, 폴딩 없인 ~/.ARGO/NS/DEEP 같은
+  // 케이스 변형으로 하드 차단 안에 새 하위 트리를 만들 수 있었다(분리 검수 격리 재현 2026-07-28).
+  // 폴딩은 deny에만 — 허용에 폴딩하면 허용이 넓어진다(원칙은 pathcase.mjs).
   const inside = (p, root) => p === root || p.startsWith(`${root}${sep}`);
   const canon = async (t) => { try { return await realpath(t); } catch { return null; } };
   // 비교 기준(루트들)도 canonical로 — macOS /var→/private/var 같은 루트 쪽 심링크 때문에
@@ -94,8 +99,10 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
       // 아래의 도트 경로는 정상 데이터라 통과(부모가 wsRoot 직속일 때만 검사).
       return dirname(real) === R.ws && basename(real).startsWith('.');
     }
-    for (const r of R.hard) if (inside(real, r)) return true;
-    if (inside(real, R.parent)) return true; // WS_ROOT 아래인데 자기 회사 밖 — 타사 데이터·계정 시크릿
+    for (const r of R.hard) if (insideFold(real, r)) return true;
+    // 부수 효과(의도): 자기 워크스페이스의 케이스 변형+미존재 경로는 허용 분기(정확 비교)에서 떨어져
+    // 여기 걸린다 — fail-safe 과차단. 메시지가 '타사'라 오해 소지 있으나 허용 확대보다 낫다(검수 LOW 수용).
+    if (insideFold(real, R.parent)) return true; // WS_ROOT 아래인데 자기 회사 밖 — 타사 데이터·계정 시크릿
     return false;
   };
 }
@@ -174,7 +181,7 @@ export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang =
     }
     if (toolName === 'Bash') {
       const cmd = String(input?.command ?? '');
-      if (cmd.includes(appRootLiteral) || cmd.includes(argoHome)) return denyHard(); // 리터럴 경로 1차 방어
+      if (fold(cmd).includes(fold(appRootLiteral)) || fold(cmd).includes(fold(argoHome))) return denyHard(); // 리터럴 경로 1차 방어(케이스 폴딩 — 어차피 우회 가능한 1차 방어지만 공짜 강화)
       if (caps.shell || caps.bypass) return allow;
       await suggestCapability(wsId, slug, 'shell', null, from);
       return deny('셸 능력이 꺼져 있다.');

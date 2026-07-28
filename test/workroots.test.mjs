@@ -12,9 +12,13 @@ import { fileURLToPath } from 'node:url';
 
 // 임시 ARGO_ROOT + 임시 HOME/USERPROFILE — 격리(win homedir()=USERPROFILE — CI 실측 2026-07-27)
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-wr-'));
-process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-wrhome-'));
+// HOME은 canonical(realpath)로 — 맥 tmpdir은 /var→/private/var 심링크라, 렉시컬 폴백 경로(/var/...)와
+// canonical 비교 기준(/private/var/...)의 접두가 어긋나 케이스 폴딩 테스트가 폴딩과 무관한 이유로
+// 통과/실패했다(분리 검수: 순서 의존 플레이크 + #141 canonDeep 병합 시 오작동). canonical이면 조건 독립.
+const { realpath: realpathFs } = await import('node:fs/promises');
+process.env.HOME = process.env.USERPROFILE = await realpathFs(await mkdtemp(join(tmpdir(), 'argo-wrhome-')));
 const { validateWorkRoot, updateWorkRoots, loadWorkRoots, loadActiveWorkRoots, MAX_WORK_ROOTS } = await import('../src/workroots.mjs');
-const { makePermissionGate, makeInWorkRoots } = await import('../src/permission-gate.mjs');
+const { makePermissionGate, makeInWorkRoots, makeIsForbidden } = await import('../src/permission-gate.mjs');
 const { codexSandboxArgs, writeCodexTurnConfig } = await import('../src/runners.mjs');
 const { readFile } = await import('node:fs/promises');
 
@@ -24,6 +28,28 @@ const wsRoot = join(WS_ROOT, 'wr-co');
 await mkdir(join(wsRoot, 'vault'), { recursive: true });
 const outside = await mkdtemp(join(tmpdir(), 'argo-wr-out-')); // 홈 밖(맥 tmp는 /var/… — 홈 아님) 실폴더
 await writeFile(join(outside, 'doc.md'), '# 외부 문서\n');
+
+test('케이스 변형 + 미존재 하위 경로가 하드 차단을 빠져나가지 못한다 (렉시컬 폴백 폴딩)', async (tc) => {
+  // 실제 우회 지점(분리 검수 격리 재현 2026-07-28): 대상·부모 모두 미존재면 permission-gate의
+  // real이 렉시컬 폴백(입력 케이스 보존)이 되어, 폴딩 없인 ~/.ARGO/NS/DEEP 케이스 변형이
+  // canonical 하드 루트와 문자열 불일치 → isForbidden=false → 보호 구역 안 새 하위 트리 생성 허용.
+  // 뮤테이션 검증: insideFold를 정확 비교로 되돌리면 이 테스트가 실패해야 한다(트립와이어).
+  // 전제: HOME이 canonical(위 realpath) — 아니면 ~/.argo 단언이 접두 아티팩트로 폴딩과 무관하게 뒤집힌다.
+  if (process.platform !== 'win32' && process.platform !== 'darwin') return tc.skip('대소문자 구분 FS');
+  const flip = (p) => p.split('').map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
+  const isForbidden = makeIsForbidden(wsRoot);
+  assert.equal(await isForbidden(join(flip(join(homedir(), '.argo')), 'NS', 'DEEP', 'x.json')), true);
+  assert.equal(await isForbidden(join(flip(APP_ROOT), 'NS', 'DEEP', 'x.mjs')), true);
+});
+
+test('validateWorkRoot: 케이스 변형 보호 구역 등록 거부 — 심층 방어 문서화', async (tc) => {
+  // 주의: 이 테스트는 폴딩의 트립와이어가 아니다 — fs/promises.realpath가 케이스를 정규화해
+  // 폴딩 없이도 protected가 걸린다(뮤테이션 생존 실측). realpath 정규화 성질 자체가 회귀하면
+  // 잡는 문서화 테스트로 남긴다. 폴딩의 실제 트립와이어는 위 렉시컬 폴백 테스트다.
+  if (process.platform !== 'win32' && process.platform !== 'darwin') return tc.skip('대소문자 구분 FS');
+  const flipped = APP_ROOT.split('').map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
+  await assert.rejects(() => validateWorkRoot(flipped), (e) => ['protected', 'not-found'].includes(e.code));
+});
 
 test('validateWorkRoot: 정상 외부 폴더는 canonical로 통과', async () => {
   const real = await validateWorkRoot(outside);

@@ -21,19 +21,25 @@
 //  - codex: writable_roots에 추가(프로세스 단위 샌드박스 — fs 능력의 기존 한계와 동일).
 //  - gemini/antigravity: 경로 샌드박스가 없어 프롬프트 안내(commonDirectives)로만 전달된다.
 import { stat, realpath } from 'node:fs/promises';
-import { isAbsolute, join, resolve, sep, dirname } from 'node:path';
+import { isAbsolute, join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { paths, WS_ROOT } from './workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
+import { fold, insideFold } from './pathcase.mjs';
 
 export const MAX_WORK_ROOTS = 8; // 폴더 수 상한 — 프롬프트·config 비대 방지(필요가 실증되면 올린다)
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..'); // permission-gate와 같은 계산
 
 const err = (code, msg) => Object.assign(new Error(msg), { code });
 const canon = async (t) => { try { return await realpath(t); } catch { return null; } };
-const inside = (p, r) => p === r || p.startsWith(`${r}${sep}`);
+// 케이스 폴딩(pathcase.mjs) — 여기서는 **심층 방어**다: fs/promises.realpath가 케이스를 정규화하므로
+// 존재하는 경로끼리의 비교는 폴딩 없이도 일치한다(분리 검수 실측 2026-07-28 — 이전 주석이 서술한
+// 'JS realpath 케이스 보존' 우회는 이 파일에선 성립하지 않는다). 폴딩이 실제로 막는 것은 canon()
+// 실패 시의 `?? resolve()` 폴백(예: ~/.argo 미존재) — 그 경로만 입력 케이스가 보존된다.
+// 같은 위협의 **실제 우회 지점**은 permission-gate의 렉시컬 폴백이었고 그쪽 deny 판정에 폴딩을
+// 적용해 닫았다(insideFold). 저장은 canonical 그대로, 비교에만 폴딩(원칙·한계는 pathcase.mjs 주석).
 
 /** 등록된 루트 목록. 손상은 fail-closed([])가 안전 방향(접근이 줄어들 뿐)이라 lenient —
     capabilities(throw)와 다른 근거: 여기서 throw하면 채팅 턴 전체가 죽는데, 얻는 보안이 없다. */
@@ -69,11 +75,11 @@ export async function validateWorkRoot(p, { appRoot = APP_ROOT, wsRoot = WS_ROOT
   const [appRootCanon, argoHomeCanon, wsRootCanon] = await Promise.all(
     [resolve(appRoot), join(homedir(), '.argo'), resolve(wsRoot)].map(async (r) => (await canon(r)) ?? resolve(r)),
   );
-  for (const r of [appRootCanon, argoHomeCanon, wsRootCanon]) if (inside(real, r)) throw err('protected', real);
+  for (const r of [appRootCanon, argoHomeCanon, wsRootCanon]) if (insideFold(real, r)) throw err('protected', real);
   // 조상 등록 차단(분리 검수 HIGH-1 2026-07-28): 앱 코드 루트를 '포함'하는 루트는 codex
   // writable_roots에 실리는 순간 앱 본체 쓰기가 열린다 — writable_roots="/"였던 2026-07-22
   // 크리티컬의 조상 변종. SDK는 게이트(isForbidden)가 막지만 codex는 프로세스 단위라 등록에서 막는다.
-  if (inside(appRootCanon, real)) throw err('protected', real);
+  if (insideFold(appRootCanon, real)) throw err('protected', real);
   // 주의: ~/.argo·WS_ROOT를 '포함'하는 루트(예: 홈 전체)는 의도적으로 허용한다 — fs 능력(홈 개방)의
   // 기존 한계와 동일 계열이고, SDK 게이트는 여전히 선행 차단한다. 이 한계는 UI가 러너별로 정직 표기.
   return real;
@@ -84,11 +90,11 @@ export async function updateWorkRoots(wsId, { add = null, remove = null } = {}) 
   return withLock(`workroots:${wsId}`, async () => {
     let roots = await loadWorkRoots(wsId);
     if (typeof remove === 'string' && remove.trim()) {
-      roots = roots.filter((r) => r !== remove.trim());
+      roots = roots.filter((r) => fold(r) !== fold(remove.trim())); // add와 대칭 — 케이스 변형 삭제 허용
     }
     if (typeof add === 'string' && add.trim()) {
       const real = await validateWorkRoot(add);
-      if (roots.includes(real)) throw err('duplicate', real);
+      if (roots.some((r) => fold(r) === fold(real))) throw err('duplicate', real); // 케이스 변형 중복 방지
       if (roots.length >= MAX_WORK_ROOTS) throw err('limit', String(MAX_WORK_ROOTS));
       roots = [...roots, real];
     }
