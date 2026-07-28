@@ -12,7 +12,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 // 데스크톱 셸 판별 — Tauri 런타임이면 자가 업데이트 경로가 존재한다.
-const inTauri = () => typeof window !== 'undefined'
+// export — 설정의 시스템 권한 카드 등이 재사용(판별 로직 복사본 증식 방지, 분리 검수 L2).
+export const inTauri = () => typeof window !== 'undefined'
   && ('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri'));
 
 export function useAppUpdate() {

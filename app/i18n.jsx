@@ -284,6 +284,18 @@ const DICT = {
   'settings.workroots.err.protected': ['Argo 앱·데이터 폴더는 보호 구역이라 지정할 수 없습니다', 'The Argo app and data folders are protected and can\'t be assigned'],
   'settings.workroots.err.duplicate': ['이미 지정된 폴더입니다', 'That folder is already assigned'],
   'settings.workroots.err.limit': ['지정 가능한 폴더 수를 초과했습니다', 'Folder limit reached'],
+  // ── 시스템 권한 (데스크톱 전용 — macOS TCC / Windows 제어된 폴더 액세스)
+  'settings.perms.title': ['시스템 권한', 'System Permissions'],
+  'settings.perms.mac.desc': ['크루가 데스크톱·문서·다운로드·외장 디스크의 파일에 처음 접근할 때 macOS가 허용 여부를 묻습니다 — 그때 "허용"을 누르면 됩니다. 실수로 거부했다면 시스템 설정 > 개인정보 보호 및 보안 > 파일 및 폴더에서 다시 켤 수 있습니다.', 'The first time your crew touches files on your Desktop, Documents, Downloads, or an external drive, macOS asks for permission — just click "Allow". If you denied it by mistake, re-enable it under System Settings > Privacy & Security > Files and Folders.'],
+  'settings.perms.mac.filesBtn': ['파일 및 폴더 설정 열기', 'Open Files & Folders settings'],
+  'settings.perms.mac.fdaBtn': ['전체 디스크 접근 설정 열기', 'Open Full Disk Access settings'],
+  'settings.perms.mac.fdaNote': ['전체 디스크 접근은 앱이 직접 요청할 수 없는 권한입니다. 폴더 권한을 허용했는데도 특정 폴더가 계속 막히면, 위 설정에서 Argo를 켜 주세요.', 'Full Disk Access can\'t be requested by an app directly. If some folders stay blocked even after allowing folder access, turn Argo on in the settings above.'],
+  'settings.perms.win.desc': ['Windows에서는 보통 별도 권한이 필요 없습니다. 단, Windows 보안의 "제어된 폴더 액세스"(랜섬웨어 방지)가 켜져 있으면 크루의 바탕 화면·문서 폴더 쓰기가 조용히 차단될 수 있습니다.', 'Windows usually needs no extra permission. However, if "Controlled folder access" (ransomware protection) is on in Windows Security, crew writes to Desktop or Documents can be silently blocked.'],
+  'settings.perms.win.securityBtn': ['Windows 보안 — 랜섬웨어 방지 열기', 'Open Windows Security — Ransomware protection'],
+  // 제어된 폴더 액세스는 실행 파일 단위 차단 — 실제로 파일을 쓰는 건 argo.exe가 아니라 사이드카
+  // node.exe다(분리 검수 H1). argo.exe만 허용하면 지시대로 해도 계속 막힌다.
+  'settings.perms.win.note': ['차단되는 경우, 랜섬웨어 방지 화면의 "제어된 폴더 액세스를 통해 앱 허용"에 Argo 설치 폴더의 node.exe(크루 실행기)와 argo.exe를 모두 추가해 주세요.', 'If blocked, add both node.exe (the crew runtime) and argo.exe from the Argo install folder under "Allow an app through Controlled folder access".'],
+  'settings.perms.openErr': ['설정 화면을 열지 못했습니다 — 시스템 설정에서 직접 이동해 주세요.', 'Couldn\'t open the settings screen — please navigate there manually.'],
   'settings.caps.title': ['로컬 능력', 'Local Capabilities'],
   'settings.caps.gate': ['결재 게이트', 'Approval gate'],
   'settings.caps.bypassOn': ['자동 승인', 'Auto-approve'],

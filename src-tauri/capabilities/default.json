@@ -25,6 +25,15 @@
         },
         {
           "url": "http://localhost:*"
+        },
+        {
+          "url": "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders"
+        },
+        {
+          "url": "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+        },
+        {
+          "url": "windowsdefender://ransomwareprotection"
         }
       ]
     },

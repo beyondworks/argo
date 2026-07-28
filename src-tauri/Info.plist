@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- macOS TCC 사용 목적 선언 — Tauri v2가 번들 Info.plist에 병합한다(config 옆 Info.plist = 자동 병합,
+     tauri-build codegen/context.rs 실측). 크루(사이드카 node — 앱의 자식 프로세스)가 외부 작업 폴더·
+     내보내기로 데스크톱/문서/다운로드/외장·네트워크 볼륨을 "열람"할 때 OS 프롬프트에 이 문구가 뜬다
+     (지정 경로 쓰기는 TCC 비게이트 — 드릴 실측 2026-07-28). 문구는 영·한 병기 한 문장씩(언어별
+     .lproj/InfoPlist.strings 로컬라이즈는 후속). NSAppleEventsUsageDescription은 "요청하지 않기로
+     선택"했다 — 크루가 osascript를 써도 프롬프트 없이 거부되는(errAEEventNotPermitted) 대가를 알고
+     내린 심사·신뢰 관점의 결정이다(분리 검수 L5). 자동화 기능 도입 시 그때 선언한다. -->
+<plist version="1.0">
+<dict>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Argo's AI crew works with files in the Desktop folder you assign. 지정한 데스크톱 폴더에서 크루(AI 직원)가 일하기 위해 필요합니다.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Argo's AI crew works with files in the Documents folder you assign. 지정한 문서 폴더에서 크루(AI 직원)가 일하기 위해 필요합니다.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Argo's AI crew works with files in the Downloads folder you assign. 지정한 다운로드 폴더에서 크루(AI 직원)가 일하기 위해 필요합니다.</string>
+  <key>NSRemovableVolumesUsageDescription</key>
+  <string>Argo's AI crew works with files on external drives you assign. 지정한 외장 디스크(SSD·USB)에서 크루(AI 직원)가 일하기 위해 필요합니다.</string>
+  <key>NSNetworkVolumesUsageDescription</key>
+  <string>Argo's AI crew works with files on network drives you assign. 지정한 네트워크 드라이브(NAS)에서 크루(AI 직원)가 일하기 위해 필요합니다.</string>
+</dict>
+</plist>
