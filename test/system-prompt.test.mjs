@@ -29,6 +29,25 @@ test('en 프롬프트 — 영어 골격 + 한국어 데이터 규약 유지', ()
   assert.ok(!p.includes('## 정확성'), '영어 모드에 한국어 골격 혼입');
 });
 
+test('systemPromptFor hasTools:false — CLI 러너에 없는 schedule_task 지시 제거(안내형 대체)', () => {
+  // 카드에는 "미지원"이라 표기하면서 크루 본인에게는 그 도구를 쓰라고 시키던 자기모순(검수 MEDIUM 2026-07-28)
+  for (const lang of ['ko', 'en']) {
+    const on = systemPromptFor(CARD, '/ws', '', { name: '페퍼' }, lang);
+    const off = systemPromptFor(CARD, '/ws', '', { name: '페퍼' }, lang, { hasTools: false });
+    assert.match(on, /schedule_task/, `${lang}: 기본(SDK 턴)은 도구 지시 유지`);
+    assert.doesNotMatch(off, /schedule_task/, `${lang}: 도구 없는 러너에 도구 지시 혼입`);
+    assert.ok(off.includes(lang === 'en' ? 'Routines screen' : '"루틴" 화면'), `${lang}: 안내형 대체 문구 누락`);
+  }
+});
+
+test('배선 — CLI 경로가 systemPromptFor에도 hasTools:false를 전달한다(소스 고정)', async () => {
+  // commonDirectives만 hasTools:false고 골격은 기본값이면 schedule_task 지시가 CLI 턴에 그대로 주입된다
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  assert.match(src, /systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false \}\)/,
+    'CLI 경로의 systemPromptFor 호출에 hasTools:false가 없다');
+});
+
 test('commonDirectives hasTools:true — SDK 도구 지시(결재·설치·즉시 사용)', () => {
   const d = commonDirectives({ caps: { fs: false, browser: true, shell: false, bypass: false }, connectedMcp: ['notion'], hasTools: true, lang: 'ko' });
   for (const s of ['request_approval 도구', 'update_profile / hire_crew', 'request_tool_install', 'notion', '바로 사용하라', 'request_capability']) {
