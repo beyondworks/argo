@@ -1,6 +1,6 @@
 // 루틴 스케줄러 — 첫 API 호출 시 1회 기동, 매분 전체 워크스페이스의 due 루틴을 실행.
 // (nodejs 런타임 라우트에서만 로드되므로 node: 임포트가 안전하다. P1에서 워커로 분리)
-import { listCompanies } from './hub.mjs';
+import { listCompanyIds } from './hub.mjs';
 import { loadRoutines, runRoutine, isDue } from './routines.mjs';
 import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
 import { chat } from './chat.mjs';
@@ -122,55 +122,63 @@ export function ensureScheduler() {
     if (!lease.isLeader()) return;
     const cloudLeader = isCloudLeader();
     try {
-      const companies = await listCompanies();
+      // 틱은 회사 id만 쓴다 — listCompanies()는 크루·기억 md 전체를 파싱해 60초 폴에 비싸고,
+      // 우편 배달이 비리더 기기에서도 돌게 되면서(위) 그 비용이 전 기기로 번진다(분리 검수 LOW-1).
+      const companyIds = await listCompanyIds();
       const now = new Date();
       const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      for (const c of companies) {
-        if (cloudLeader) {
-          for (const r of await loadRoutines(c.id)) {
-            if (!isDue(r, now)) continue;
-            // 실행 직전 lastRun을 원자적으로 선점 — 실패(이미 이 주기에 실행됨)면 스킵해 이중 실행을 막는다
-            if (!(await claimRoutine(c.id, r.id, now))) continue;
-            console.log(`[argo] 루틴 실행: ${c.id}/${r.title}`);
-            runRoutine(c.id, r.id).catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message));
+      for (const cid of companyIds) {
+        // 회사별 오류 격리 — loadRoutines는 손상 routines.json에 의도적으로 throw한다. 틱 단위
+        // catch뿐이면 회사 하나의 손상이 뒤 회사 전부의 루틴·우편·정리를 매분 굶긴다(검수 MEDIUM-1).
+        try {
+          if (cloudLeader) {
+            for (const r of await loadRoutines(cid)) {
+              if (!isDue(r, now)) continue;
+              // 실행 직전 lastRun을 원자적으로 선점 — 실패(이미 이 주기에 실행됨)면 스킵해 이중 실행을 막는다
+              if (!(await claimRoutine(cid, r.id, now))) continue;
+              console.log(`[argo] 루틴 실행: ${cid}/${r.title}`);
+              runRoutine(cid, r.id).catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message));
+            }
           }
-        }
-        // 크루 우편 배달 — 비동기 쪽지(send_to_crew)를 수신 크루의 새 턴으로. 회사당 틱 상한은
-        // crewmail이 강제. **await 금지**(분리 검수 HIGH-4): LLM 턴을 틱에서 기다리면 다른 회사의
-        // 루틴·기억 정리가 밀리고 틱이 겹쳐 이중 배달 조건이 된다 — 루틴과 같은 fire-and-forget +
-        // 회사별 in-flight 가드(consolidating 패턴).
-        if (!mailDelivering.has(c.id)) {
-          mailDelivering.add(c.id);
-          deliverCrewMail(c.id, async (slug, msg, opts) => {
-            const prompt = mailPrompt(msg);
-            const t = await chat(c.id, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail' });
-            // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
-            await appendTurn(c.id, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null })
-              .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${c.id}/${slug}):`, e.message));
-            // 배달 알림은 보류(재검 N1): gateway.pushEvent에 crewmail 분기가 없어 텔레그램 무동작 +
-            // 슬랙 경로는 event.routine 접근으로 매 배달 TypeError였다. 메신저 문안·분기와 함께 별도
-            // 트랙으로(수신 결과는 스레드·활동에 이미 남는다).
-          })
-            .catch((e) => console.error(`[argo] 크루 우편 배달 오류(${c.id}):`, e.message))
-            .finally(() => mailDelivering.delete(c.id));
-        }
-        if (cloudLeader && hhmm >= CONSOLIDATE_AT) {
-          const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-          // 진행 중이면 시도 횟수를 태우지 않고 그냥 넘긴다(선점 자체를 하지 않는다)
-          const claimed = consolidating.has(c.id) ? null : await claimConsolidate(c.id, now.getTime(), today);
-          if (claimed) {
-            consolidating.add(c.id);
-            const nth = `${claimed.attempts}/${CONSOLIDATE_MAX_ATTEMPTS}회차`;
-            console.log(`[argo] 기억 정리: ${c.id} (${nth})`);
-            // 재시도는 consolidate부터 다시 탄다 — 워터마크가 성공 후에만 전진하므로 이미 정제된
-            // 구간은 조기 반환(LLM 호출 0)이고, rollup은 주간 블록 중복 append를 자체 차단한다.
-            consolidateMemory(c.id)
-              .then(() => rollupJournals(c.id)) // 정제가 소화한 일지만 주간으로 접힌다
-              .then(() => markConsolidateDone(c.id, today))
-              .catch((e) => console.error(
-                `[argo] 기억 정리 실패 ${c.id} (${nth}, 다음 재시도 ${claimed.nextRetryAt ?? '없음 — 오늘은 종료'}):`, e.message))
-              .finally(() => consolidating.delete(c.id));
+          // 크루 우편 배달 — 비동기 쪽지(send_to_crew)를 수신 크루의 새 턴으로. 회사당 틱 상한은
+          // crewmail이 강제. **await 금지**(분리 검수 HIGH-4): LLM 턴을 틱에서 기다리면 다른 회사의
+          // 루틴·기억 정리가 밀리고 틱이 겹쳐 이중 배달 조건이 된다 — 루틴과 같은 fire-and-forget +
+          // 회사별 in-flight 가드(consolidating 패턴).
+          if (!mailDelivering.has(cid)) {
+            mailDelivering.add(cid);
+            deliverCrewMail(cid, async (slug, msg, opts) => {
+              const prompt = mailPrompt(msg);
+              const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail' });
+              // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
+              await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null })
+                .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));
+              // 배달 알림은 보류(재검 N1): gateway.pushEvent에 crewmail 분기가 없어 텔레그램 무동작 +
+              // 슬랙 경로는 event.routine 접근으로 매 배달 TypeError였다. 메신저 문안·분기와 함께 별도
+              // 트랙으로(수신 결과는 스레드·활동에 이미 남는다).
+            })
+              .catch((e) => console.error(`[argo] 크루 우편 배달 오류(${cid}):`, e.message))
+              .finally(() => mailDelivering.delete(cid));
           }
+          if (cloudLeader && hhmm >= CONSOLIDATE_AT) {
+            const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            // 진행 중이면 시도 횟수를 태우지 않고 그냥 넘긴다(선점 자체를 하지 않는다)
+            const claimed = consolidating.has(cid) ? null : await claimConsolidate(cid, now.getTime(), today);
+            if (claimed) {
+              consolidating.add(cid);
+              const nth = `${claimed.attempts}/${CONSOLIDATE_MAX_ATTEMPTS}회차`;
+              console.log(`[argo] 기억 정리: ${cid} (${nth})`);
+              // 재시도는 consolidate부터 다시 탄다 — 워터마크가 성공 후에만 전진하므로 이미 정제된
+              // 구간은 조기 반환(LLM 호출 0)이고, rollup은 주간 블록 중복 append를 자체 차단한다.
+              consolidateMemory(cid)
+                .then(() => rollupJournals(cid)) // 정제가 소화한 일지만 주간으로 접힌다
+                .then(() => markConsolidateDone(cid, today))
+                .catch((e) => console.error(
+                  `[argo] 기억 정리 실패 ${cid} (${nth}, 다음 재시도 ${claimed.nextRetryAt ?? '없음 — 오늘은 종료'}):`, e.message))
+                .finally(() => consolidating.delete(cid));
+            }
+          }
+        } catch (e) {
+          console.error(`[argo] 스케줄러 회사 처리 실패(${cid}):`, e.message);
         }
       }
     } catch (e) {
