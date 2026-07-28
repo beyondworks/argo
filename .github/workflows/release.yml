@@ -63,6 +63,19 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # 버전 정합 게이트(G007) — 4파일(package/tauri.conf/Cargo.toml/Cargo.lock) 반쪽 범프와
+      # 태그-파일 버전 불일치(모든 기기 영구 업데이트 루프의 원인)를 차단한다
+      # (무의존 스크립트 — npm ci·테스트·빌드 전에 두어 그 비용을 태우기 전에 실패한다. 검수 권고 7).
+      # 범프는 scripts/bump-version.mjs가 표준 경로.
+      - name: Version consistency gate
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            node scripts/bump-version.mjs --check "${GITHUB_REF_NAME}"
+          else
+            node scripts/bump-version.mjs --check
+          fi
+
       - run: npm ci
 
       # 릴리스 게이트 — 단위 테스트 실패 시 빌드 전에 차단 (2026-07-27 안정화 프로그램 Phase 0).
@@ -348,9 +361,20 @@ jobs:
           ]) {
             const f = pick(re);
             if (f && fs.existsSync(`${dir}/${f}.sig`)) platforms[key] = entry(f);
-            else console.warn(`[manifest] ${key} updater artifact missing — skipped`);
+            else console.warn(`[manifest] ${key} updater artifact missing`);
           }
-          if (Object.keys(platforms).length) {
+          // 전부-또는-없음(안정화 G007 — Phase0 검수 이월 MED): 부분 매니페스트를 쓰면 빠진 플랫폼의
+          // 기기들이 업데이트를 영영 못 보는 무증상 사고가 된다. 3타깃이 다 있을 때만 latest.json을 쓰고,
+          // 아니면 draft에 MANIFEST-INCOMPLETE.txt를 실어 사람이 게시 전에 반드시 보게 한다.
+          // ⚠ 안전은 draft 상태까지만이다 — 불완전 draft를 **게시해버리면** 그 릴리스가 latest가 되어
+          // latest.json 404 → 전 플랫폼 업데이트가 끊긴다(검수 권고 3). MANIFEST-INCOMPLETE.txt가 draft에
+          // 실리는 이유가 그것이다: 게시 전 마지막 사람 게이트.
+          // 잡은 성공 유지 — always()+draft(부분 산출물이라도 draft 생성)라는 기존 설계를 존중한다.
+          // EXPECTED는 위 build 매트릭스 3잡(rust_target)과 1:1 — 매트릭스를 바꾸면 여기도 같이(상호 참조.
+          // 라벨 하드코딩으로 스모크가 4릴리스 무음 스킵된 사고(위 주석)와 같은 계열이라 명시해 둔다).
+          const EXPECTED = ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64'];
+          const missing = EXPECTED.filter((k) => !platforms[k]);
+          if (missing.length === 0) {
             fs.writeFileSync(`${dir}/latest.json`, JSON.stringify({
               version: tag.replace(/^v/, ''),
               pub_date: new Date().toISOString(),
@@ -358,7 +382,9 @@ jobs:
             }, null, 2));
             console.log(fs.readFileSync(`${dir}/latest.json`, 'utf8'));
           } else {
-            console.warn('[manifest] no updater artifacts — latest.json skipped');
+            const note = `이 draft는 업데이터 매니페스트가 불완전해 latest.json을 싣지 않았다.\n누락: ${missing.join(', ')}\n게시 전 해당 플랫폼 빌드를 복구해 재실행할 것 — 이대로 게시하면 그 플랫폼 기기들이 업데이트를 못 받는다.\n`;
+            fs.writeFileSync(`${dir}/MANIFEST-INCOMPLETE.txt`, note);
+            console.log(`::warning::updater manifest incomplete — missing: ${missing.join(', ')} (latest.json 미생성, MANIFEST-INCOMPLETE.txt 첨부)`);
           }
           EOF
       # 배포 repo(beyondworks/argo-agent)에 발행 — 소스 레포와 배포 레포 분리(릴리스 자산만 저쪽에).
