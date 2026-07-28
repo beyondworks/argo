@@ -114,18 +114,27 @@ export function ensureScheduler() {
   const lease = daemonLease('scheduler'); // Next 멀티 워커에서도 실행 주체는 하나만
   console.log('[argo] 루틴 스케줄러 시작 (60s 폴)');
   setInterval(async () => {
-    if (!lease.isLeader() || !isCloudLeader()) return; // 루틴도 기기 간 단일 실행
+    // 프로세스 단위 단일 실행(daemonLease)은 틱 전체의 전제. 기기 간 단일 실행(isCloudLeader)은
+    // **루틴·기억 정리에만** 건다 — 크루 우편함(mail/)은 동기화 제외 기기 로컬 큐(sync.mjs EXCLUDE)라
+    // 비리더 기기에서 발신된 쪽지는 그 기기만 배달할 수 있다. 클라우드 리더 게이트를 우편에까지 걸면
+    // 비리더 발신분이 attempts 0인 채 영영 미배달(dead-letter로도 못 감)되는 무증상 소실이 된다
+    // (architect 검증 2026-07-28). 기기 간 이중 배달은 큐가 로컬이라 구조적으로 불가하고, 같은 기기
+    // 안의 중복은 daemonLease + .claimed rename 선점이 이미 막는다.
+    if (!lease.isLeader()) return;
+    const cloudLeader = isCloudLeader();
     try {
       const companies = await listCompanies();
       const now = new Date();
       const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       for (const c of companies) {
-        for (const r of await loadRoutines(c.id)) {
-          if (!isDue(r, now)) continue;
-          // 실행 직전 lastRun을 원자적으로 선점 — 실패(이미 이 주기에 실행됨)면 스킵해 이중 실행을 막는다
-          if (!(await claimRoutine(c.id, r.id, now))) continue;
-          console.log(`[argo] 루틴 실행: ${c.id}/${r.title}`);
-          runRoutine(c.id, r.id).catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message));
+        if (cloudLeader) {
+          for (const r of await loadRoutines(c.id)) {
+            if (!isDue(r, now)) continue;
+            // 실행 직전 lastRun을 원자적으로 선점 — 실패(이미 이 주기에 실행됨)면 스킵해 이중 실행을 막는다
+            if (!(await claimRoutine(c.id, r.id, now))) continue;
+            console.log(`[argo] 루틴 실행: ${c.id}/${r.title}`);
+            runRoutine(c.id, r.id).catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message));
+          }
         }
         // 크루 우편 배달 — 비동기 쪽지(send_to_crew)를 수신 크루의 새 턴으로. 회사당 틱 상한은
         // crewmail이 강제. **await 금지**(분리 검수 HIGH-4): LLM 턴을 틱에서 기다리면 다른 회사의
@@ -146,7 +155,7 @@ export function ensureScheduler() {
             .catch((e) => console.error(`[argo] 크루 우편 배달 오류(${c.id}):`, e.message))
             .finally(() => mailDelivering.delete(c.id));
         }
-        if (hhmm >= CONSOLIDATE_AT) {
+        if (cloudLeader && hhmm >= CONSOLIDATE_AT) {
           const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
           // 진행 중이면 시도 횟수를 태우지 않고 그냥 넘긴다(선점 자체를 하지 않는다)
           const claimed = consolidating.has(c.id) ? null : await claimConsolidate(c.id, now.getTime(), today);
