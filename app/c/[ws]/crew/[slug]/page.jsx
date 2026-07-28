@@ -999,15 +999,17 @@ export default function CrewChat({ params }) {
         )}
         {/* 여러 줄 입력 — textarea(Enter 전송·Shift+Enter 줄바꿈). 버튼은 하단 정렬(입력이 자라도 자리 고정) */}
         <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
-          {/* 첨부·폴더는 "무언가를 붙인다"는 한 갈래라 시각적으로 한 묶음 — 둘 사이를 입력창과의
-              간격(input-bar gap 10px)보다 좁게 둔다(유건 지시 2026-07-28, 균형). */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 'none' }}>
-            <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
+          {/* 첨부·폴더는 "무언가를 붙인다"는 한 갈래라 시각적으로 한 묶음(유건 지시 2026-07-28).
+              간격의 지배 변수는 gap이 아니라 **버튼 폭**이다 — .btn.btn-icon은 34px인데 아이콘은
+              14px라, gap을 0으로 해도 글리프 사이에 좌우 패딩 20px이 남는다. 그래서 이 두 개만
+              폭을 좁힌다(28px → 글리프 간격 14px). 클릭 영역은 아이콘보다 여전히 넉넉하다. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 0, flex: 'none' }}>
+            <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', width: 28, color: 'var(--fg-3)' }}
               onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
               <Icon name="clip" size={14} />
             </button>
             {/* 작업 폴더 열기 — 러너별 한계는 툴팁으로 정직 표기(Gemini 계열은 경로 제어 없음, runnerNote 재사용) */}
-            <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
+            <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', width: 28, color: 'var(--fg-3)' }}
               onClick={openWorkFolder} disabled={busy || wfBusy} aria-label={t('chat.workFolder.open')}
               title={`${t('chat.workFolder.open')} — ${t('settings.workroots.runnerNote')}`}>
               {wfBusy ? <Spinner size={14} /> : <Icon name="folder" size={14} />}
