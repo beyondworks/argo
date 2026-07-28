@@ -181,3 +181,12 @@ test('쉼표로 붙여 쓴 연속 멘션이 둘 다 잡힌다', () => {
   const d = parseRoomDirectives('@비스트,@울프 회의합시다', AGENTS);
   assert.deepEqual(slugs(d.to), ['beast', 'wolf']);
 });
+
+test('괄호·따옴표가 든 크루 이름도 풀린다 — 자동완성이 그 이름을 넣는다', () => {
+  // 회의실 멘션 드롭다운은 slug가 아니라 이름을 삽입한다(room/page.jsx completeMention).
+  // 자른 값만 조회하면 앱이 제안한 이름을 앱이 "명단에 없다"고 답한다(4R 검수 실측).
+  const CREW = [{ slug: 'obrien', name: "O'Brien" }, { slug: 'nova-be', name: '노바(백엔드)' }];
+  assert.deepEqual(slugs(parseRoomDirectives("@O'Brien 확인해줘", CREW).to), ['obrien']);
+  assert.deepEqual(slugs(parseRoomDirectives('@노바(백엔드) 확인', CREW).to), ['nova-be']);
+  assert.deepEqual(parseRoomDirectives('@노바(백엔드) 확인', CREW).unknown, []);
+});

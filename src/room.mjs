@@ -207,10 +207,14 @@ export function parseRoomDirectives(text, agents = []) {
   const unknown = [];
   /** 토큰을 크루로 풀어 into에 담는다. 반환: 'all' | 'ok' | 'unknown' | 'skip' */
   const take = (tok, into) => {
+    // **원문 먼저, 자른 것은 그다음.** 크루 이름은 사장이 자유 입력이라 괄호·따옴표가 들어갈 수
+    // 있고(노바(백엔드) · O'Brien), 회의실 멘션 드롭다운은 slug가 아니라 그 **이름을 넣는다**.
+    // 자른 값만 조회하면 앱이 제안한 이름을 앱이 "명단에 없다"고 답한다(4R 검수 실측).
+    const raw = String(tok).replace(/^@/, '');
     const c = clean(tok);
     if (/^(all|전체)$/i.test(c)) return 'all';
-    if (notAMention(c)) return 'skip';
-    const a = index.get(norm(c));
+    if (notAMention(raw)) return 'skip';
+    const a = index.get(norm(raw)) ?? index.get(norm(c));
     if (!a) { if (!unknown.includes(c)) unknown.push(c); return 'unknown'; }
     if (!into.some((x) => x.slug === a.slug)) into.push(a);
     return 'ok';
