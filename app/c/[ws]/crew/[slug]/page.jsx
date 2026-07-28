@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, openFolderDialog } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 
@@ -428,13 +428,16 @@ export default function CrewChat({ params }) {
   }
 
   // 작업 폴더 바로 열기 — 설정까지 가지 않고 컴포저에서 등록한다(유건 확정 2026-07-28). 데스크톱은
-  // 네이티브 픽커(설정 WorkRootsCard의 pickFolder 패턴 재사용), 웹은 실경로 미제공이라 경로 입력 폼으로 정직 폴백.
+  // 네이티브 픽커(ui.jsx openFolderDialog — 설정 FolderField와 같은 경로), 웹은 실경로 미제공이라
+  // 경로 입력 폼으로 정직 폴백.
   const [wfOpen, setWfOpen] = useState(false); // 인라인 경로 폼 — 웹 폴백 + 픽커 경로의 검증 실패 표시 겸용
   const [wfInput, setWfInput] = useState('');
   const [wfBusy, setWfBusy] = useState(false);
   const [wfErr, setWfErr] = useState('');
   const [isApp, setIsApp] = useState(false);
-  useEffect(() => { setIsApp(isTauriApp()); }, []); // 감지는 ui.jsx 단일 출처(#170 통일 — 식 복제 금지)
+  const [wfPickerDead, setWfPickerDead] = useState(false); // 픽커 실패로 폼이 열렸는가(서버 거부와 구분)
+  // 감지식은 ui.jsx isTauriApp을 쓴다(#170 통일 방침 — 여기서 다시 복제하지 않는다)
+  useEffect(() => { setIsApp(isTauriApp()); setWfPickerDead(isFolderDialogBroken()); }, []);
 
   /** 등록 성공 시 입력창 프리픽스 — 등록만으로도 다음 턴 시스템 프롬프트에 반영되지만(src/chat.mjs workRoots),
       이번 지시에도 경로를 명시해 크루가 바로 그 폴더에서 일하게 한다. 쓰던 초안은 지우지 않고 앞에 붙인다. */
@@ -472,7 +475,7 @@ export default function CrewChat({ params }) {
         const dir = await openFolderDialog(t('settings.workroots.pickTitle'));
         if (dir) await registerWorkFolder(dir);
         return; // 취소도 여기서 끝 — 취소했는데 입력 폼이 열리면 "안 고른 것"이 되레 일거리가 된다
-      } catch (e) { console.warn('[argo] 폴더 픽커 실패:', e?.message ?? e); } // 픽커 불가 → 입력 폼 폴백
+      } catch { setWfPickerDead(true); } // 픽커 불가 → 사유를 달고 입력 폼 폴백(warn은 openFolderDialog가 남긴다)
     }
     setWfErr('');
     setWfOpen((o) => !o);
@@ -972,7 +975,11 @@ export default function CrewChat({ params }) {
               <button type="button" onClick={() => { setWfOpen(false); setWfErr(''); }} aria-label={t('common.close')}
                 style={{ border: 0, background: 'transparent', color: 'var(--fg-3)', cursor: 'pointer', fontSize: 11, borderRadius: 5 }}>✕</button>
             </div>
+            {/* 웹은 왜 직접 쓰는지, 데스크톱은 왜 Finder가 안 떴는지 사유를 준다(분리 검수 H1).
+                단 이 폼은 **서버가 고른 폴더를 거부했을 때도** 열린다 — 그땐 픽커가 멀쩡하므로
+                "열 수 없다"고 하면 거짓말이다. 그래서 픽커 실패 여부를 따로 들고 판단한다. */}
             {!isApp && <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('chat.workFolder.webHint')}</p>}
+            {isApp && wfPickerDead && <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('common.pickerUnavailable')}</p>}
             <form onSubmit={(e) => { e.preventDefault(); const p = wfInput.trim(); if (p) registerWorkFolder(p); }}
               style={{ display: 'flex', gap: 8 }}>
               <input value={wfInput} onChange={(e) => setWfInput(e.target.value)} placeholder={t('settings.workroots.placeholder')}

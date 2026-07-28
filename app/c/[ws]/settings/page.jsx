@@ -3,7 +3,7 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, openFolderDialog } from '../../../ui';
+import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
@@ -398,23 +398,25 @@ function ThemeCard() {
 function FolderField({ value, onChange, placeholder, pickTitle, disabled }) {
   const { t } = useLang();
   const [isApp, setIsApp] = useState(false);
-  const [pickerDead, setPickerDead] = useState(false); // 실패 1회 → 이 세션 동안 입력 폴백 유지
-  useEffect(() => { setIsApp(isTauriApp()); }, []);
+  const [pickerDead, setPickerDead] = useState(false); // 실패 1회 → 입력 폴백 유지
+  // 다른 카드에서 이미 실패했으면 여기선 헛클릭 없이 곧장 입력창으로 연다(모듈 플래그 공유).
+  useEffect(() => { setIsApp(isTauriApp()); setPickerDead(isFolderDialogBroken()); }, []);
 
   async function pick() {
     try {
       const d = await openFolderDialog(pickTitle);
       if (d) onChange(d); // null = 사용자 취소 — 고른 값을 지우지 않는다
-    } catch (e) {
-      console.warn('[argo] 폴더 픽커 실패:', e?.message ?? e);
-      setPickerDead(true);
-    }
+    } catch { setPickerDead(true); } // 사유는 아래 폴백에서 화면에 표시(warn은 openFolderDialog가 남긴다)
   }
 
   if (!isApp || pickerDead) {
     return (
-      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
+      <div style={{ flex: 1, minWidth: 0, display: 'grid', gap: 4 }}>
+        <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+          {...imeGuard} style={{ ...fieldStyle, width: '100%', fontSize: 12 }} />
+        {/* 데스크톱인데 입력창이 보인다 = 픽커가 죽은 것 — 말없이 바꾸면 "버튼이 사라졌다"가 된다(분리 검수 H1) */}
+        {isApp && <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0, lineHeight: 1.5 }}>{t('common.pickerUnavailable')}</p>}
+      </div>
     );
   }
   return (
