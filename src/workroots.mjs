@@ -27,19 +27,20 @@ import { fileURLToPath } from 'node:url';
 import { paths, WS_ROOT } from './workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
+import { fold, insideFold } from './pathcase.mjs';
 
 export const MAX_WORK_ROOTS = 8; // 폴더 수 상한 — 프롬프트·config 비대 방지(필요가 실증되면 올린다)
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..'); // permission-gate와 같은 계산
 
 const err = (code, msg) => Object.assign(new Error(msg), { code });
 const canon = async (t) => { try { return await realpath(t); } catch { return null; } };
-// 케이스 폴딩 — macOS(APFS 기본)·Windows(NTFS)는 대소문자 무시 파일시스템이라 `C:\USERS\...` 같은
-// 케이스 변형 경로도 같은 실체를 가리킨다. Node의 JS realpath는 Windows에서 입력 케이스를 보존하므로
-// 문자열 비교만으로는 보호 구역 판정(inside)이 케이스 변형에 뚫린다(앱 루트를 케이스 바꿔 등록하면
-// writable_roots에 앱 본체가 실리는 2026-07-22 크리티컬 계열). 비교 시에만 폴딩하고 저장은 canonical 그대로.
-const FOLD = process.platform === 'win32' || process.platform === 'darwin';
-const fold = (p) => (FOLD ? String(p).toLowerCase() : p);
-const inside = (p, r) => fold(p) === fold(r) || fold(p).startsWith(`${fold(r)}${sep}`);
+// 케이스 폴딩(pathcase.mjs) — 여기서는 **심층 방어**다: fs/promises.realpath가 케이스를 정규화하므로
+// 존재하는 경로끼리의 비교는 폴딩 없이도 일치한다(분리 검수 실측 2026-07-28 — 이전 주석이 서술한
+// 'JS realpath 케이스 보존' 우회는 이 파일에선 성립하지 않는다). 폴딩이 실제로 막는 것은 canon()
+// 실패 시의 `?? resolve()` 폴백(예: ~/.argo 미존재) — 그 경로만 입력 케이스가 보존된다.
+// 같은 위협의 **실제 우회 지점**은 permission-gate의 렉시컬 폴백이었고 그쪽 deny 판정에 폴딩을
+// 적용해 닫았다(insideFold). 저장은 canonical 그대로, 비교에만 폴딩(원칙·한계는 pathcase.mjs 주석).
+const inside = (p, r) => insideFold(p, r);
 
 /** 등록된 루트 목록. 손상은 fail-closed([])가 안전 방향(접근이 줄어들 뿐)이라 lenient —
     capabilities(throw)와 다른 근거: 여기서 throw하면 채팅 턴 전체가 죽는데, 얻는 보안이 없다. */
@@ -90,7 +91,7 @@ export async function updateWorkRoots(wsId, { add = null, remove = null } = {}) 
   return withLock(`workroots:${wsId}`, async () => {
     let roots = await loadWorkRoots(wsId);
     if (typeof remove === 'string' && remove.trim()) {
-      roots = roots.filter((r) => r !== remove.trim());
+      roots = roots.filter((r) => fold(r) !== fold(remove.trim())); // add와 대칭 — 케이스 변형 삭제 허용
     }
     if (typeof add === 'string' && add.trim()) {
       const real = await validateWorkRoot(add);

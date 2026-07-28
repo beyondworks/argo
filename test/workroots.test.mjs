@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-wr-'));
 process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-wrhome-'));
 const { validateWorkRoot, updateWorkRoots, loadWorkRoots, loadActiveWorkRoots, MAX_WORK_ROOTS } = await import('../src/workroots.mjs');
-const { makePermissionGate, makeInWorkRoots } = await import('../src/permission-gate.mjs');
+const { makePermissionGate, makeInWorkRoots, makeIsForbidden } = await import('../src/permission-gate.mjs');
 const { codexSandboxArgs, writeCodexTurnConfig } = await import('../src/runners.mjs');
 const { readFile } = await import('node:fs/promises');
 
@@ -25,14 +25,25 @@ await mkdir(join(wsRoot, 'vault'), { recursive: true });
 const outside = await mkdtemp(join(tmpdir(), 'argo-wr-out-')); // 홈 밖(맥 tmp는 /var/… — 홈 아님) 실폴더
 await writeFile(join(outside, 'doc.md'), '# 외부 문서\n');
 
-test('validateWorkRoot: 케이스 변형으로 보호 구역을 등록할 수 없다 (win/mac 대소문자 무시 FS)', async (tc) => {
-  // 앱 코드 루트를 케이스만 바꿔 등록 시도 — inside() 비교가 폴딩되지 않으면 Windows에서
-  // 문자열 불일치로 'protected'를 통과해 writable_roots에 앱 본체가 실린다(2026-07-22 계열).
+test('케이스 변형 + 미존재 하위 경로가 하드 차단을 빠져나가지 못한다 (렉시컬 폴백 폴딩)', async (tc) => {
+  // 실제 우회 지점(분리 검수 격리 재현 2026-07-28): 대상·부모 모두 미존재면 permission-gate의
+  // real이 렉시컬 폴백(입력 케이스 보존)이 되어, 폴딩 없인 ~/.ARGO/NS/DEEP 케이스 변형이
+  // canonical 하드 루트와 문자열 불일치 → isForbidden=false → 보호 구역 안 새 하위 트리 생성 허용.
+  // 뮤테이션 검증: insideFold를 정확 비교로 되돌리면 이 테스트가 실패해야 한다(트립와이어).
+  if (process.platform !== 'win32' && process.platform !== 'darwin') return tc.skip('대소문자 구분 FS');
+  const flip = (p) => p.split('').map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
+  const isForbidden = makeIsForbidden(wsRoot);
+  assert.equal(await isForbidden(join(flip(join(homedir(), '.argo')), 'NS', 'DEEP', 'x.json')), true);
+  assert.equal(await isForbidden(join(flip(APP_ROOT), 'NS', 'DEEP', 'x.mjs')), true);
+});
+
+test('validateWorkRoot: 케이스 변형 보호 구역 등록 거부 — 심층 방어 문서화', async (tc) => {
+  // 주의: 이 테스트는 폴딩의 트립와이어가 아니다 — fs/promises.realpath가 케이스를 정규화해
+  // 폴딩 없이도 protected가 걸린다(뮤테이션 생존 실측). realpath 정규화 성질 자체가 회귀하면
+  // 잡는 문서화 테스트로 남긴다. 폴딩의 실제 트립와이어는 위 렉시컬 폴백 테스트다.
   if (process.platform !== 'win32' && process.platform !== 'darwin') return tc.skip('대소문자 구분 FS');
   const flipped = APP_ROOT.split('').map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
   await assert.rejects(() => validateWorkRoot(flipped), (e) => ['protected', 'not-found'].includes(e.code));
-  // not-found 허용 이유: 케이스 민감 마운트(맥 케이스센시티브 APFS)에선 flipped 경로가 아예 없다 —
-  // 그 경우도 등록 거부이므로 안전. 케이스 무시 FS에선 stat이 통과하고 'protected'가 잡아야 한다.
 });
 
 test('validateWorkRoot: 정상 외부 폴더는 canonical로 통과', async () => {
