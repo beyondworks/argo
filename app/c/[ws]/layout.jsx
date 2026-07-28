@@ -112,7 +112,7 @@ export default function CompanyShell({ children, params }) {
 
   // 상단 버전 뱃지 — 데스크톱 앱에서는 네이티브 설치 버전 + Tauri 업데이터가 단일 진실(설정 카드와 동일 소스).
   // 새 버전이 있으면 뱃지가 '업데이트'로 바뀌고, 클릭하면 바로 다운로드·설치·재시작한다.
-  const { current: appVersion, available: updateVersion, phase: updPhase, install: installUpdate } = useAppUpdate();
+  const { isApp: updIsApp, current: appVersion, available: updateVersion, phase: updPhase, install: installUpdate } = useAppUpdate();
 
   // 크루 안읽음 배지 — 서버 chatTs(chats/<slug>.json mtime) vs 로컬 확인 시각(localStorage argo-seen:{ws}).
   // null = 로드 전(오탐 방지). 처음 보는 크루는 현재 상태를 기준선으로 삼아 설치 직후 전 크루 배지가 켜지지 않게 한다.
@@ -403,8 +403,8 @@ export default function CompanyShell({ children, params }) {
           {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체) */}
           <div id="argo-topbar-slot" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }} />
           <div style={{ flex: 1 }} />
-          {appVersion && (updateVersion ? (
-            // 새 버전 발행됨 — 칩이 골드 '업데이트'로 바뀌고, 클릭하면 바로 다운로드·설치·재시작한다.
+          {appVersion && (updateVersion ? (updIsApp ? (
+            // 새 버전 발행됨(데스크톱) — 칩이 골드 '업데이트'로 바뀌고, 클릭하면 바로 다운로드·설치·재시작한다.
             <button type="button" onClick={installUpdate} disabled={updPhase === 'installing'}
               className="chip mono" title={t('topbar.updateTitle', { v: updateVersion })}
               style={{ flex: 'none', fontSize: 10.5, color: 'var(--primary-strong)', borderColor: 'var(--primary)', cursor: updPhase === 'installing' ? 'default' : 'pointer' }}>
@@ -412,6 +412,15 @@ export default function CompanyShell({ children, params }) {
               {updPhase === 'installing' ? t('settings.update.installing') : t('topbar.update')}
             </button>
           ) : (
+            // 웹 — 자가 설치가 없으므로 설치 버튼을 흉내내지 않는다(분리 검수 차단1: install()이 no-op인
+            // 죽은 버튼). 정직한 새 버전 표시 + 릴리스 페이지 링크.
+            <a className="chip mono" href="https://github.com/beyondworks/argo-agent/releases/latest" target="_blank" rel="noopener noreferrer"
+              title={t('topbar.updateWebTitle', { v: updateVersion })}
+              style={{ flex: 'none', fontSize: 10.5, color: 'var(--primary-strong)', borderColor: 'var(--primary)', textDecoration: 'none' }}>
+              <span className="dot" style={{ background: 'var(--primary)' }} aria-hidden="true" />
+              {t('topbar.updateWeb', { v: updateVersion })}
+            </a>
+          )) : (
             <span className="chip mono" title={t('topbar.version')} style={{ flex: 'none', fontSize: 10.5, color: 'var(--fg-3)' }}>
               v{appVersion}
             </span>
