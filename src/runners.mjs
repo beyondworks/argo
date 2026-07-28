@@ -44,11 +44,33 @@ export {
   setupTokenStatus, submitSetupCode, startClaudeSetupToken,
 } from './runners/exec.mjs';
 
+/** CLI 턴 실패의 정직 번역 — 시간 초과가 "러너 실행 실패 (exit ?)" 잡음(우리 kill)이나 last.txt
+    ENOENT(kill 후 출력 파일만 없는 변종)로 위장되던 것을 종결한다(QA P1-2, 실사용 4회 재현:
+    "리릭비디오가 항상 약 300초 후 ENOENT" = 기본 timeoutMs와 정확히 일치. 위장 재현 실측 2026-07-28:
+    timeoutMs=3000에서 3.8초 사망 + 배너 잡음 메시지, 시간 초과 언급 0). 판정은 경과 시간 기준 —
+    우리 kill 타이머(timeoutMs)가 발화할 만큼 지났으면 표면 오류가 무엇으로 위장했든 원인은 시간 초과다.
+    (export: 회귀 테스트용 — 순수 함수) */
+export function cliTurnFailure(e, runner, elapsedMs, timeoutMs) {
+  if (elapsedMs >= timeoutMs) {
+    const min = Math.round((timeoutMs / 60_000) * 10) / 10;
+    return Object.assign(new Error(
+      `시간 초과: 이 턴이 상한 ${min}분을 넘겨 중단됐습니다. 오래 걸리는 작업은 크루에게 "장시간 작업으로 걸어줘"라고 말하면(start_long_task) 대화를 막지 않고 끝까지 돌아 결과가 대화·메신저로 배달됩니다. `
+      + `Timed out after the ${min}-minute cap — ask the crew to run it as a long task (start_long_task) so it finishes outside the turn.`,
+    ), { timedOut: true });
+  }
+  if (e?.code === 'ENOENT' && runner === 'codex') {
+    // 시간 초과가 아닌데 출력 파일이 없다 — 정지(abort)·러너 내부 사망. 생 ENOENT 경로 노출 금지.
+    return new Error('러너가 응답을 남기지 않고 종료했습니다(중단 또는 러너 내부 오류). The runner exited without writing a response.');
+  }
+  return apiError(e, runner);
+}
+
 /** 외부 CLI 러너 1턴 — 워크스페이스를 cwd로, 프롬프트 하나로 실행하고 마지막 응답을 받는다.
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
     caps = 회사 로컬 능력({ fs, browser, shell }) — 사장이 켠 능력을 codex 샌드박스에 반영(codexSandboxArgs). */
 export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '', workRoots = [] }) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
+  const t0 = Date.now(); // 실패의 정직 번역용 — cliTurnFailure가 경과 시간으로 시간 초과를 판정한다
   if (runner === 'codex') {
     const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
     const out = join(dir, 'last.txt');
@@ -74,8 +96,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
         ...(model ? ['-m', model] : []),
         '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록
       ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME } })
-        .catch((e) => { throw apiError(e, 'codex'); });
-      return (await readFile(out, 'utf8')).trim();
+        .catch((e) => { throw cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs); });
+      // readFile까지 번역 — kill 후 last.txt가 없어 생 ENOENT가 사용자에게 노출되던 위장 경로(QA P1-2)
+      return (await readFile(out, 'utf8').catch((e) => { throw cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs); })).trim();
     } finally {
       await recoverCodexAuth(auth).catch(() => {}); // 복사 모드의 갱신 토큰 회수 — 임시 홈 삭제 전에
       await rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -92,7 +115,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
       ...(model ? ['-m', model] : []),
       '--approval-mode', 'auto_edit', // 편집류만 자동 승인 — 셸 등은 비대화 모드에서 실행되지 않는다
     ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'gemini'), ...(cred?.env ?? {}) } })
-      .catch((e) => { throw apiError(e, 'gemini'); });
+      .catch((e) => { throw cliTurnFailure(e, 'gemini', Date.now() - t0, timeoutMs); });
     return stdout
       .replace(/^(Loaded cached credentials\.|Data collection is .*|\[STARTUP\].*|\[dotenv.*)\s*$/gim, '')
       .trim();
@@ -121,7 +144,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
       ...(caps?.shell ? [] : ['--sandbox']), // fail-closed(분리 검수 H2) — caps 미전달(oneshot 등)이면 제한 켬. codex 상시 샌드박스와 같은 방향
       ...(agySec >= 25 ? ['--print-timeout', `${agySec}s`] : []),
     ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'antigravity'), ...(cred?.env ?? {}) } })
-      .catch((e) => { if (process.env.ARGO_DEBUG_AGY) console.error('[debug agy]', JSON.stringify({ code: e.code, killed: e.killed, signal: e.signal, so: String(e.stdout ?? '').slice(-60), se: String(e.stderr ?? '').slice(-120) })); throw apiError(e, 'antigravity'); });
+      .catch((e) => { if (process.env.ARGO_DEBUG_AGY) console.error('[debug agy]', JSON.stringify({ code: e.code, killed: e.killed, signal: e.signal, so: String(e.stdout ?? '').slice(-60), se: String(e.stderr ?? '').slice(-120) })); throw cliTurnFailure(e, 'antigravity', Date.now() - t0, timeoutMs); });
     return stdout.replace(/^[IWEF]\d{4} \d{2}:\d{2}:\d{2}\.\d+\s+.*$/gm, '').trim(); // glog 제거 — 시각 필드까지 요구(분리 검수 M2: 'E1234 …'로 시작하는 정상 응답 오삭제 방지)
   }
   throw new Error(`알 수 없는 외부 러너: ${runner}`);

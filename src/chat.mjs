@@ -735,6 +735,11 @@ ${lang === 'en'
         ? '(You are the crew of the persona above. Always reply in English, even if the captain wrote to you in Korean.)'
         : '(너는 위 페르소나의 크루로서 한국어로 답하라.)'}`;
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격(API키/OAuth) 우선, 없으면 호스트 로그인
+      // CLI 턴 상한 — 대화 턴 5분(행 방지, ARGO_CLI_TURN_TIMEOUT_MS로 조정 가능), 잡(장시간 작업 큐) 턴 6시간.
+      // 기본 300초가 잡 경로까지 죽여 "10분 넘는 일은 start_long_task로"라는 설계 약속(long-job-queue-design §실행:
+      // "워커 경로엔 5분 상한이 없다")이 CLI 러너에서 거짓이 되던 갭(QA P1-2와 같은 뿌리). SDK 러너는 원래 상한 없음.
+      const envCap = Number(process.env.ARGO_CLI_TURN_TIMEOUT_MS);
+      const cliTimeoutMs = source === 'job' ? 21_600_000 : (Number.isFinite(envCap) && envCap > 0 ? envCap : 300_000);
       // caps 전달 — 사장이 켠 능력(fs/browser)을 codex 샌드박스에 반영(SDK 게이트의 근사 — codexSandboxArgs 주석 참조)
       // 접근권 게이트 모델 강등 가드 — gated 모델(예: Gemini 3.x = Ultra·유료 전용)에 권한 없는 계정이면
       // 턴이 "Requested entity was not found"류로 죽는다. 같은 러너의 기본 모델로 1회 자동 재시도하고
@@ -742,13 +747,13 @@ ${lang === 'en'
       let usedModel = effModel;
       let reply;
       try {
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs });
       } catch (e) {
         const gated = !!(effModel && RUNNERS[runner]?.models.find((m) => m.id === effModel)?.gated);
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
