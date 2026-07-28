@@ -64,8 +64,8 @@ jobs:
           workspaces: src-tauri
 
       # 버전 정합 게이트(G007) — 4파일(package/tauri.conf/Cargo.toml/Cargo.lock) 반쪽 범프와
-      # 태그-파일 버전 불일치(모든 기기 영구 업데이트 루프의 원인)를 **가장 먼저** 차단한다
-      # (무의존 스크립트 — npm ci·rust 캐시 전에 두어 실패가 수초 안에 난다. 검수 권고 7).
+      # 태그-파일 버전 불일치(모든 기기 영구 업데이트 루프의 원인)를 차단한다
+      # (무의존 스크립트 — npm ci·테스트·빌드 전에 두어 그 비용을 태우기 전에 실패한다. 검수 권고 7).
       # 범프는 scripts/bump-version.mjs가 표준 경로.
       - name: Version consistency gate
         shell: bash
