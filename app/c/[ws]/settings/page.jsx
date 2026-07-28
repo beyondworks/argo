@@ -161,6 +161,7 @@ function Settings({ params }) {
       <ThemeCard />
       <TrashCard ws={ws} />
       <ExportCard ws={ws} />
+      <ImportCard ws={ws} />
       </Section>
 
       <div ref={aiRef} style={{ scrollMarginTop: 84 }}>
@@ -434,6 +435,149 @@ function ExportCard({ ws }) {
         </p>
       )}
       <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: '2px 0 0', lineHeight: 1.6 }}>{t('settings.export.note')}</p>
+    </div>
+  );
+}
+
+/** 옵시디언에서 가져오기 — 외부 볼트를 Argo 기억 구조로 증류 복사(분류 정본은 src/obsidian-import.mjs).
+    흐름: 폴더 선택 → 미리보기(드라이런) → 가져오기 → 진행률(실행 중에만 1초 폴링) → 결과+미분류 안내.
+    덮어쓰기가 원천 없어(충돌은 접미 번호) DangerModal 불요 — 미리보기가 실행 확인 역할을 한다. */
+function ImportCard({ ws }) {
+  const { t } = useLang();
+  const [src, setSrc] = useState('');
+  const [isApp, setIsApp] = useState(false);
+  useEffect(() => { setIsApp('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri')); }, []);
+  const [busy, setBusy] = useState(false);
+  const [plan, setPlan] = useState(null);     // 드라이런 결과 — 실행 전 "몇 건이 어디로"
+  const [result, setResult] = useState(null);
+  const [progress, setProgress] = useState(null);
+  const [err, setErr] = useState('');
+
+  // 데스크톱: 네이티브 폴더 픽커. 웹은 브라우저가 실경로를 주지 않아 텍스트 입력 유지(ExportCard와 동일 폴백).
+  async function pickFolder() {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const dir = await open({ directory: true, multiple: false, title: t('settings.import.pickTitle') });
+      if (typeof dir === 'string' && dir) { setSrc(dir); setPlan(null); setResult(null); setErr(''); }
+    } catch { /* 픽커 실패 — 텍스트 입력이 그대로 남아 있다 */ }
+  }
+
+  function fail(ex) {
+    const code = String(ex.message || '');
+    // import 전용 코드 우선, 경로 검증 코드(workroots 재사용)는 기존 문구를 공유
+    for (const k of [`settings.import.err.${code}`, `settings.workroots.err.${code}`]) {
+      const m = t(k);
+      if (m !== k) { setErr(m); return; }
+    }
+    setErr(t('settings.import.err'));
+  }
+
+  async function preview(e) {
+    e.preventDefault();
+    if (busy || !src.trim()) return;
+    setBusy(true); setErr(''); setPlan(null); setResult(null);
+    try { setPlan(await api(`/api/companies/${ws}/import/obsidian`, { src: src.trim(), dryRun: true })); }
+    catch (ex) { fail(ex); }
+    finally { setBusy(false); }
+  }
+
+  async function run() {
+    if (busy || !plan) return;
+    setBusy(true); setErr(''); setResult(null); setProgress(null);
+    const poll = setInterval(async () => {
+      try {
+        const s = await api(`/api/companies/${ws}/import/obsidian`);
+        if (s?.phase === 'copy') setProgress(s);
+      } catch { /* 진행 표시는 장식 — 실패해도 임포트는 계속 */ }
+    }, 1000);
+    try {
+      const r = await api(`/api/companies/${ws}/import/obsidian`, { src: src.trim() });
+      setResult(r); setPlan(null);
+    } catch (ex) { fail(ex); }
+    finally { clearInterval(poll); setBusy(false); setProgress(null); }
+  }
+
+  const planVars = (x) => ({ j: x.journal, n: x.notes, f: x.files, u: x.unsorted, s: x.skipped, a: x.already });
+  return (
+    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8, alignContent: 'start' }}>
+      <span className="card-title">{t('settings.import.title')}</span>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.import.desc')}</p>
+      <form onSubmit={preview} style={{ display: 'flex', gap: 8 }}>
+        <input value={src} onChange={(e) => { setSrc(e.target.value); setPlan(null); }} placeholder={t('settings.import.placeholder')}
+          {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
+        {isApp && (
+          <button className="btn" type="button" onClick={pickFolder} disabled={busy}>{t('settings.export.browse')}</button>
+        )}
+        <button className="btn" type="submit" disabled={busy || !src.trim()}>{busy && !plan ? <Spinner /> : t('settings.import.preview')}</button>
+      </form>
+      {plan && (
+        <div style={{ display: 'grid', gap: 6 }}>
+          <p style={{ fontSize: 12, color: 'var(--fg-1)', margin: 0 }}>{t('settings.import.plan', planVars(plan))}</p>
+          {plan.filesItems?.length > 0 && (
+            // 첨부로 "무엇이" 들어오는지 실행 전에 보여준다 — 개수만으로는 볼트 아닌 폴더를 고른
+            // 오조작(문서 폴더 통째 등)을 알아챌 지점이 없다(분리 검수 HIGH-1의 UI 축)
+            <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>
+              {t('settings.import.filesPreview', { n: plan.files })}{' '}
+              <span className="mono" style={{ fontSize: 10.5, overflowWrap: 'anywhere' }}>
+                {plan.filesItems.slice(0, 5).join(', ')}{plan.files > 5 ? ` … (+${plan.files - 5})` : ''}
+              </span>
+            </p>
+          )}
+          <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0 }}>{t('settings.import.planGo')}</p>
+          <div>
+            <button className="btn btn-primary" type="button" onClick={run} disabled={busy}>
+              {busy ? <Spinner /> : t('settings.import.run')}
+            </button>
+          </div>
+        </div>
+      )}
+      {progress && (
+        <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0 }}>{t('settings.import.progress', { done: progress.done ?? 0, total: progress.total ?? 0 })}</p>
+      )}
+      {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
+      {result && (
+        <div style={{ display: 'grid', gap: 4 }}>
+          <p style={{ fontSize: 12, color: 'var(--fg-1)', margin: 0 }}>{t('settings.import.done', planVars(result))}</p>
+          {result.unsorted > 0 && (
+            <div style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.6 }}>
+              {t('settings.import.unsorted', { n: result.unsorted })}
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                {result.unsortedItems.slice(0, 6).map((u) => (
+                  <li key={u.rel} className="mono" style={{ fontSize: 10.5, overflowWrap: 'anywhere' }}>
+                    {u.rel} — {t(`settings.import.reason.${u.reason}`)}
+                  </li>
+                ))}
+              </ul>
+              {result.unsorted > 6 && <span>{t('settings.import.unsortedMore', { n: result.unsorted - 6 })}</span>}
+            </div>
+          )}
+          {result.skipped > 0 && result.skippedItems?.length > 0 && (
+            // "무엇을 안 가져왔는지"가 오조작 감지의 핵심 — 숫자만 보여주면 이유는 리포트를 열어야
+            // 안다(재검수 관찰 반영). 미분류와 같은 규격으로 상위 6건 + 이유를 그 자리에서 노출.
+            <div style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.6 }}>
+              {t('settings.import.skippedList', { n: result.skipped })}
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                {result.skippedItems.slice(0, 6).map((s) => (
+                  <li key={s.rel} className="mono" style={{ fontSize: 10.5, overflowWrap: 'anywhere' }}>
+                    {s.rel} — {t(`settings.import.reason.${s.reason}`)}
+                  </li>
+                ))}
+              </ul>
+              {result.skipped > 6 && <span>{t('settings.import.unsortedMore', { n: result.skipped - 6 })}</span>}
+            </div>
+          )}
+          {result.reportRel && (
+            <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0 }}>
+              {t('settings.import.report')}:{' '}
+              <a href={`/api/companies/${ws}/files?rel=${encodeURIComponent(result.reportRel.replace(/^vault\//, ''))}`}
+                target="_blank" rel="noopener noreferrer" className="mono"
+                style={{ fontSize: 10.5, overflowWrap: 'anywhere', color: 'var(--fg-2)' }}>
+                {result.reportRel}
+              </a>
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
