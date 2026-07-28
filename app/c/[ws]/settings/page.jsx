@@ -3,11 +3,12 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard } from '../../../ui';
+import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, pickFolder } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 import { useAppUpdate } from '../../../use-app-update';
+import { trialBadgeState } from '../../../../src/entitlement.mjs';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
@@ -393,7 +394,7 @@ function ExportCard({ ws }) {
   const { t } = useLang();
   const [dest, setDest] = useState('');
   const [isApp, setIsApp] = useState(false);
-  useEffect(() => { setIsApp('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri')); }, []);
+  useEffect(() => { setIsApp(isTauriApp()); }, []);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null); // { target, files }
   const [err, setErr] = useState('');
@@ -412,16 +413,6 @@ function ExportCard({ ws }) {
     } finally { setBusy(false); }
   }
 
-  // 데스크톱: 네이티브 폴더 픽커(평문 경로 입력이 매우 불편하다는 신고 2026-07-28). 웹은 브라우저가
-  // 실경로를 주지 않아(File System Access API는 핸들만) 텍스트 입력 유지 — 정직 폴백.
-  async function pickFolder() {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const dir = await open({ directory: true, multiple: false, title: t('settings.export.pickTitle') });
-      if (typeof dir === 'string' && dir) setDest(dir);
-    } catch (e) { console.warn('[argo] 폴더 픽커 실패:', e?.message ?? e); } // 취소(null)와 달리 실패는 흔적을 남긴다
-  }
-
   return (
     <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8, alignContent: 'start' }}>
       <span className="card-title">{t('settings.export.title')}</span>
@@ -430,7 +421,8 @@ function ExportCard({ ws }) {
         <input value={dest} onChange={(e) => setDest(e.target.value)} placeholder={t('settings.export.placeholder')}
           {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
         {isApp && (
-          <button className="btn" type="button" onClick={pickFolder} disabled={busy}>{t('settings.export.browse')}</button>
+          // 데스크톱: 네이티브 픽커(ui.jsx 공통) — 웹은 실경로 미제공이라 텍스트 입력 유지(정직 폴백)
+          <button className="btn" type="button" onClick={async () => { const d = await pickFolder(t('settings.export.pickTitle')); if (d) setDest(d); }} disabled={busy}>{t('common.browse')}</button>
         )}
         <button className="btn" type="submit" disabled={busy || !dest.trim()}>{busy ? <Spinner /> : t('settings.export.run')}</button>
       </form>
@@ -588,22 +580,13 @@ function WorkRootsCard({ ws }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [isApp, setIsApp] = useState(false);
-  useEffect(() => { setIsApp('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri')); }, []);
+  useEffect(() => { setIsApp(isTauriApp()); }, []);
 
   useEffect(() => {
     // 로드 실패를 빈 목록과 구분 — "없습니다"로 보이면 일시 장애가 데이터 소실처럼 읽힌다(분리 검수 LOW)
     api(`/api/companies/${ws}/workroots`).then((d) => { setRoots(d.roots); setMax(d.max); })
       .catch(() => { setRoots([]); setErr(t('settings.workroots.err.load')); });
   }, [ws]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 내보내기 카드와 동일한 네이티브 폴더 픽커 — 외부 작업 폴더도 평문 경로 입력이 같은 불편(유건 2026-07-28)
-  async function pickFolder() {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const dir = await open({ directory: true, multiple: false, title: t('settings.workroots.pickTitle') });
-      if (typeof dir === 'string' && dir) setInput(dir);
-    } catch (e) { console.warn('[argo] 폴더 픽커 실패:', e?.message ?? e); }
-  }
 
   async function mutate(body) {
     if (busy) return;
@@ -644,7 +627,7 @@ function WorkRootsCard({ ws }) {
               <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={t('settings.workroots.placeholder')}
                 {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
               {isApp && (
-                <button className="btn" type="button" onClick={pickFolder} disabled={busy}>{t('settings.export.browse')}</button>
+                <button className="btn" type="button" onClick={async () => { const d = await pickFolder(t('settings.workroots.pickTitle')); if (d) setInput(d); }} disabled={busy}>{t('common.browse')}</button>
               )}
               <button className="btn" type="submit" disabled={busy || !input.trim()}>{busy ? <Spinner /> : t('settings.workroots.add')}</button>
             </form>
@@ -834,10 +817,9 @@ function SyncCard({ ws }) {
     return () => clearInterval(iv);
   }, [ws]);
   // 체험 D-day — 동기화를 켠 적 없는 체험자(최대 코호트)도 보여야 해서 sync가 아닌 bill에서 계산.
-  // NaN은 배지 자체를 기본 문구로(D-NaN 방지, 검수 LOW).
-  const trialDaysLeft = bill?.trialEndsAt ? Math.max(0, Math.ceil((Date.parse(bill.trialEndsAt) - Date.now()) / 86_400_000)) : NaN;
-  const trialActive = Number.isFinite(trialDaysLeft) && bill?.plan !== 'pro';
-  const trialImminent = trialActive && trialDaysLeft <= 3;
+  // 판정은 trialBadgeState(entitlement.mjs) 단일 원천 — 만료 하한 누락으로 만료자에게 'D-0' 영구
+  // 표시되던 회귀(분리 검수 H1)가 그 함수의 테스트로 잠겨 있다.
+  const { active: trialActive, imminent: trialImminent, daysLeft: trialDaysLeft } = trialBadgeState(bill?.trialEndsAt, bill?.plan);
   const mine = sync?.companies?.[ws];
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
