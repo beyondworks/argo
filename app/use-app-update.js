@@ -35,6 +35,11 @@ export function useAppUpdate() {
       try {
         const r = await fetch('/api/update-check').then((x) => x.json());
         if (r.current) setCurrent(r.current);
+        if (r.latest == null) {
+          // 확인 불가(오프라인·사내망) — '최신입니다'로 오보고하지 않는다(분리 검수 차단2: 정직성).
+          setAvailable(null); setChecked(false); setPhase('error');
+          return;
+        }
         setAvailable(r.hasUpdate ? r.latest : null);
         setChecked(true);
         setPhase('idle');
