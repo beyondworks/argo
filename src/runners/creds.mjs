@@ -79,7 +79,7 @@ async function loadSecrets(wsId) {
 
 /** 회사에 저장된 러너 자격 — { type, value } | null. */
 /** 자격 type 정규화 — 'apikey' | 'oauth' | 'host'. host = "이 컴퓨터 CLI 로그인 사용" 명시 옵트인 마커
-    (codex/gemini 전용 — 파일 기반 자격이라 앱이 읽을 수 있다. claude는 키체인이라 앱 접근이 불안정해 미제공).
+    (codex/gemini=파일 자격, antigravity=OS 키링이라 host 옵트인이 유일 경로, claude=키체인이라 non-standalone에서만 — RUNNER_AUTH.hostUsable·hostOptInAllowed 참조).
     자동 스캐빈징 금지(유건 지시 2026-07-19): 호스트 로그인은 감지돼도 사장이 이 마커로 옵트인해야만 쓴다. */
 const credType = (t) => (t === 'oauth' ? 'oauth' : t === 'host' ? 'host' : 'apikey');
 

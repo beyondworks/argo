@@ -328,6 +328,7 @@ const DICT = {
   'settings.runners.hostAuthed': ['로그인됨', 'Logged in'],
   'settings.runners.hostNotAuthed': ['로그인 안 됨', 'Not logged in'],
   'settings.runners.hostAuthUnknown': ['로그인 여부 확인 불가 — 터미널에서 로그인해 두세요', 'Sign-in state unknown — sign in from a terminal first'],
+  'settings.runners.cliToolsNote': ['크루가 스스로 거는 쪽지·루틴 예약·위임 도구: 미지원 (SDK 러너 전용)', 'Crew-initiated mail, routine scheduling & delegation tools: not supported (SDK runners only)'],
   'settings.runners.saveVerify': ['저장·확인', 'Save & test'],
   'settings.runners.remove': ['연결 해제', 'Disconnect'],
   'settings.runners.removeConfirmTitle': ['{runner} 연결을 해제할까요?', 'Disconnect {runner}?'],
