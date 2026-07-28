@@ -3,18 +3,80 @@
 // 화면을 여는 바로 그 고통의 순간) entitlements가 free/무행이면 LS API에 활성 구독이 있는지
 // 대조해 복구한다. 쓰기는 웹훅과 같은 원자 경로(apply_ls_event)라 뒤늦게 도착한 웹훅과
 // 경합해도 순서 가드가 지켜진다.
+//
+// 쿨다운(분리 검수 F7): 프로세스 메모리가 아니라 entitlements 두 컬럼으로 인스턴스 간 공유한다
+// (마이그레이션 20260728150000, not null default epoch). 오류와 부정 결과를 구분한다 —
+//  - ls_reconciled_at(시도, 10분): 시도 전 선점 기록. LS 장애 연타 방지 + 장애 후 10분 재시도.
+//  - ls_reconcile_empty_at(구독 없음 확정, 24시간): 부정 결과 캐싱. 무료 사용자를 10분마다
+//    영구 조회하던 호출량을 끊는다. 결제 의사 신호(clearReconcileEmpty — /intent 라우트)가
+//    이 게이트만 해제한다 — "설정 열기(empty 확정) → 곧장 업그레이드 클릭 → 결제 → 웹훅 유실"이
+//    기본 동선이라, 해제 없이는 복구가 24시간 잠긴다(2차 검수 HIGH). 시도 10분 게이트는 의사
+//    신호로도 안 풀린다 — intent 연타가 LS 호출 증폭이 되지 않게.
 import { applyLsEvent, pickProSubscription, unmatchedRow } from './lsbilling.mjs';
 
-const COOLDOWN_MS = 10 * 60_000; // 설정 화면 재방문마다 LS API를 때리지 않는다(과금·레이트리밋 예의)
-const lastTry = new Map(); // userId → 마지막 시도 ms (베스트에포트 — 프로세스 로컬)
+export const COOLDOWN_MS = 10 * 60_000; // 대사 시도 간격 — 설정 화면 재방문마다 LS API를 때리지 않는다
+export const EMPTY_COOLDOWN_MS = 24 * 60 * 60_000; // "활성 구독 없음" 확정 후 재확인 간격
+const EPOCH = new Date(0).toISOString(); // 컬럼 default와 같은 "항상 due" 값
 
-/** 쿨다운 게이트 — 통과 시 즉시 시도 시각을 선점 기록한다(실패해도 쿨다운 소모: LS 장애 때 연타 방지). */
-export function reconcileDue(userId, nowMs = Date.now(), cooldownMs = COOLDOWN_MS) {
-  const prev = lastTry.get(userId) ?? 0;
-  if (nowMs - prev < cooldownMs) return false;
-  if (lastTry.size > 10_000) lastTry.clear(); // 메모리 상한 — 쿨다운은 베스트에포트라 리셋 무해
-  lastTry.set(userId, nowMs);
+/** 행 기반 사전 판정(무쿼리) — 라우트가 이미 읽은 entitlements 행으로 대사 시도 가치를 계산한다.
+    통과해도 선점은 claimReconcile(원자)이 한다 — 이 함수는 쿨다운 중 헛 DB 쓰기를 없애는 필터.
+    무행(null)은 항상 due — 웹훅이 전부 유실된 결제자일 수 있다. */
+export function reconcileDueFromRow(row, nowMs = Date.now()) {
+  if (!row) return true;
+  const tried = Date.parse(row.ls_reconciled_at ?? '');
+  if (Number.isFinite(tried) && nowMs - tried < COOLDOWN_MS) return false;
+  const empty = Date.parse(row.ls_reconcile_empty_at ?? '');
+  if (Number.isFinite(empty) && nowMs - empty < EMPTY_COOLDOWN_MS) return false;
   return true;
+}
+
+/** 쿨다운 선점(인스턴스 간 원자) — 조건부 update 한 문장이 판정+기록을 겸한다: 행이 갱신되면
+    이 요청이 선점한 것. 컬럼이 not null(default epoch)이라 필터는 lte 2개 체이닝(무조건 AND)으로
+    끝난다 — or 그룹 결합 의미에 기대지 않는다(2차 검수 MEDIUM). 0행이면 (a) 쿨다운 중이거나
+    (b) 행이 없다 — (b)는 ignoreDuplicates insert로 선점(동시 생성은 PK 충돌로 한쪽만 통과,
+    plan은 default 'free'라 자격에 무영향 — is_pro()의 체험 OR도 그대로 산다).
+    실패(LS 장애)해도 쿨다운이 소모되게 **시도 전에** 기록한다.
+    반환: 선점 시 { emptySeen: 선점 시점의 ls_reconcile_empty_at } — markReconcileEmpty의
+    CAS 기준값(대사가 LS를 도는 사이 intent가 게이트를 해제하면 덮어쓰지 않기 위해). 미선점은 null. */
+export async function claimReconcile(sb, userId, nowMs = Date.now()) {
+  const now = new Date(nowMs).toISOString();
+  const { data, error } = await sb.from('entitlements')
+    .update({ ls_reconciled_at: now })
+    .eq('user_id', userId)
+    .lte('ls_reconciled_at', new Date(nowMs - COOLDOWN_MS).toISOString())
+    .lte('ls_reconcile_empty_at', new Date(nowMs - EMPTY_COOLDOWN_MS).toISOString())
+    .select('user_id, ls_reconcile_empty_at');
+  if (error) throw new Error(error.message);
+  if (data?.length) return { emptySeen: data[0].ls_reconcile_empty_at ?? EPOCH };
+  const { data: ins, error: insErr } = await sb.from('entitlements')
+    .upsert({ user_id: userId, ls_reconciled_at: now }, { onConflict: 'user_id', ignoreDuplicates: true })
+    .select('user_id');
+  if (insErr) throw new Error(insErr.message);
+  return ins?.length ? { emptySeen: EPOCH } : null; // 신규 행 — empty_at은 default epoch
+}
+
+/** 부정 결과 확정 기록 — "활성 구독 없음"이 확인됐을 때만 부른다(LS 오류는 throw로 빠져 여기
+    오지 않는다). casSeen(선점 시점의 empty_at)과 다르면 쓰지 않는다 — 대사가 LS를 도는 사이
+    사용자가 업그레이드를 눌러(intent) 게이트를 해제한 경우, 그 해제가 이겨야 결제 직후 복구가
+    24시간 잠기지 않는다(2차 검수 잔여 레이스). 실패·CAS 불일치는 무해 — 10분 뒤 재확인뿐. */
+export async function markReconcileEmpty(sb, userId, nowMs = Date.now(), casSeen = null) {
+  let q = sb.from('entitlements')
+    .update({ ls_reconcile_empty_at: new Date(nowMs).toISOString() })
+    .eq('user_id', userId);
+  if (casSeen != null) q = q.eq('ls_reconcile_empty_at', casSeen);
+  const { error } = await q;
+  if (error) console.error('[argo] billing 대사: 부정 결과 기록 실패(무해 — 10분 뒤 재확인):', error.message);
+}
+
+/** 결제 의사 신호 — 부정 확정 게이트만 해제(epoch로 되돌림). 업그레이드 클릭 시점에 불려,
+    "방금 empty 확정 → 결제 → 웹훅 유실"의 복구를 24시간에서 10분으로 되돌린다. 시도 게이트
+    (ls_reconciled_at)는 건드리지 않는다 — 연타해도 LS 호출은 10분에 1회로 유지. 행이 없으면
+    할 일 없음(무행은 어차피 항상 due). 실패는 무해(로그만) — 다음 자연 재시도가 있다. */
+export async function clearReconcileEmpty(sb, userId) {
+  const { error } = await sb.from('entitlements')
+    .update({ ls_reconcile_empty_at: EPOCH })
+    .eq('user_id', userId);
+  if (error) console.error('[argo] billing 결제 의사 신호 기록 실패(무해):', error.message);
 }
 
 /** LS 구독 목록 조회 — 체크아웃 때 우리가 지정한 이메일(checkout[email]=user.email)로 필터.
@@ -37,16 +99,22 @@ export async function fetchLsSubscriptions(email, apiKey, fetchImpl = fetch) {
     중복 귀속 가드(분리 검수 F2): 같은 LS 구독이 이미 **다른** user_id에 붙어 있으면 적용하지
     않는다 — 조인 키가 체크아웃 이메일이라, 공용 메일함 등으로 1구독이 N계정에 pro를 주는 것
     (게다가 강등 웹훅은 원 결제자만 향해 나머지는 영구 pro)을 막는다. 감지 건은 billing_unmatched에
-    duplicate-attribution으로 적재해 수동 판단 대상으로 남긴다. */
+    duplicate-attribution으로 적재해 수동 판단 대상으로 남긴다 — 이 계정은 결제자일 수 있어
+    장기 쿨다운은 걸지 않는다(운영자 정리 후 10분 내 재대사로 풀리게, 2차 검수 LOW). */
 export async function reconcileEntitlement({
   sb, userId, email, storedCustomerId = null, apiKey,
   allowedVariants = null, allowTest = false, fetchImpl = fetch, nowMs = Date.now(),
 }) {
   if (!apiKey || !userId || !email) return null;
-  if (!reconcileDue(userId, nowMs)) return null;
+  const claim = await claimReconcile(sb, userId, nowMs);
+  if (!claim) return null;
   const subs = await fetchLsSubscriptions(email, apiKey, fetchImpl);
   const picked = pickProSubscription(subs, { allowedVariants, allowTest, storedCustomerId });
-  if (!picked) return null;
+  if (!picked) {
+    // 부정 결과 캐싱(24시간) — CAS: LS를 도는 사이 intent가 게이트를 해제했으면 덮지 않는다
+    await markReconcileEmpty(sb, userId, nowMs, claim.emptySeen);
+    return null;
+  }
   const { data: dupes, error: dupErr } = await sb.from('entitlements')
     .select('user_id').eq('ls_subscription_id', picked.ls_subscription_id).neq('user_id', userId).limit(1);
   if (dupErr) throw new Error(dupErr.message);

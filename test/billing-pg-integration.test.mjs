@@ -45,6 +45,7 @@ before(() => {
   psql(['-f', mig('20260714150000_entitlements.sql')]);
   psql(['-f', mig('20260728100000_entitlements_ls.sql')]);
   psql(['-f', mig('20260728113000_billing_hardening.sql')]);
+  psql(['-f', mig('20260728150000_ls_reconcile_cooldown.sql')]);
   psql(['-c', `insert into auth.users (id) values ('${UID}') on conflict do nothing`]);
 });
 
@@ -72,6 +73,25 @@ test('권한: anon·authenticated는 실행 불가(자기 승격 차단), servic
   sql(`delete from public.entitlements where user_id = '${UID}'`);
   const out = psql(['-A', '-t', '-c', `set role service_role; ${callApply({ plan: 'pro', sub: 'S1', ts: null, status: 'active' })}`]).trim();
   assert.equal(out, 'applied');
+});
+
+test('대사 쿨다운(F7): default epoch=즉시 선점, 시도·부정확정 게이트가 WHERE에서 작동, intent 해제로 재선점', { skip }, () => {
+  // claimReconcile(src/lsreconcile.mjs)이 PostgREST lte 필터 2개로 생성하는 것과 같은 WHERE를
+  // 실제 스키마에 대고 실행 — "행 갱신 = 선점"의 SQL 의미를 잠근다(2차 검수 MEDIUM: or 그룹
+  // 결합 의미에 기대지 않는 설계의 실행 검증).
+  const claim = () => sql(`update public.entitlements set ls_reconciled_at = now()
+    where user_id = '${UID}' and ls_reconciled_at <= now() - interval '10 minutes'
+      and ls_reconcile_empty_at <= now() - interval '24 hours'
+    returning user_id`);
+  sql(`delete from public.entitlements where user_id = '${UID}'`);
+  sql(callApply({ plan: 'pro', sub: 'S1', ts: null, status: 'active' })); // 웹훅 경로 insert — 신규 컬럼 미지정
+  assert.equal(sql(`select ls_reconciled_at = 'epoch' and ls_reconcile_empty_at = 'epoch' from public.entitlements where user_id = '${UID}'`), 't'); // default = 항상 due
+  assert.equal(claim(), UID);      // 첫 선점 통과
+  assert.equal(claim(), '');       // 방금 선점 — 시도 10분 게이트가 차단
+  sql(`update public.entitlements set ls_reconciled_at = now() - interval '11 minutes', ls_reconcile_empty_at = now() - interval '1 hour' where user_id = '${UID}'`);
+  assert.equal(claim(), '');       // 시도 게이트는 지났지만 부정 확정 24시간 게이트가 차단
+  sql(`update public.entitlements set ls_reconcile_empty_at = 'epoch' where user_id = '${UID}'`); // 결제 의사 신호(intent)와 동일한 해제
+  assert.equal(claim(), UID);      // 해제 후 재선점 — 복구 지연이 24시간→10분으로 복원되는 근거
 });
 
 test('동시성: 두 트랜잭션이 행 잠금으로 직렬화 — 늦은 과거 이벤트는 커밋된 새 상태 기준으로 stale', { skip }, async () => {

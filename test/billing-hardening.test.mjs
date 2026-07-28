@@ -8,7 +8,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { applyLsEvent, unmatchedRow, pickProSubscription, lsGateOpts, shouldApplyLsEvent } from '../src/lsbilling.mjs';
-import { reconcileDue, reconcileEntitlement } from '../src/lsreconcile.mjs';
+import {
+  reconcileDueFromRow, claimReconcile, clearReconcileEmpty, markReconcileEmpty, reconcileEntitlement, COOLDOWN_MS, EMPTY_COOLDOWN_MS,
+} from '../src/lsreconcile.mjs';
 import { APPLY_CASES, toMirrorArgs } from './helpers/ls-apply-cases.mjs';
 
 const UID = '11111111-2222-3333-4444-555555555555';
@@ -61,6 +63,13 @@ test('마이그레이션 불변식: 조건 판정이 upsert 한 문장 안에 �
   assert.match(sql, /billing_unmatched_dedup/);
 });
 
+test('마이그레이션 불변식(F7): 쿨다운 컬럼 2종 — 시도·부정 확정 분리, not null default epoch(lte 선점의 전제)', async () => {
+  const sql = await readFile(fileURLToPath(new URL('../supabase/migrations/20260728150000_ls_reconcile_cooldown.sql', import.meta.url)), 'utf8');
+  // nullable로 되돌리면 claimReconcile의 lte 2개 필터가 null 행을 영원히 못 선점한다 — 회귀 차단
+  assert.match(sql, /add column if not exists ls_reconciled_at timestamptz not null default 'epoch'/);
+  assert.match(sql, /add column if not exists ls_reconcile_empty_at timestamptz not null default 'epoch'/);
+});
+
 // ── [M4] unmatchedRow — 수동 귀속에 필요한 최소 식별자만
 test('unmatchedRow: 구독id·customer·이메일·이벤트·사유를 싣고, raw payload 전체는 싣지 않는다', () => {
   const payload = {
@@ -108,12 +117,20 @@ test('선별: 복수 후보는 updated_at 최신 우선, 저장 customer_id 일�
   assert.equal(pickProSubscription([older, newer], { storedCustomerId: '99' }).ls_subscription_id, 'new'); // 불일치면 최신 폴백
 });
 
-// ── [O2] 쿨다운 — LS API 연타 방지(실패해도 쿨다운 소모)
-test('reconcileDue: 첫 호출 통과, 쿨다운 내 재호출 차단, 경과 후 재통과', () => {
-  const uid = 'cooldown-user-1';
-  assert.equal(reconcileDue(uid, 1_000_000, 600_000), true);
-  assert.equal(reconcileDue(uid, 1_000_000 + 1, 600_000), false);
-  assert.equal(reconcileDue(uid, 1_000_000 + 600_000, 600_000), true);
+// ── [O2·F7] 쿨다운 — DB 공유(인스턴스·재배포 무관). 시도 10분 게이트 + 부정 확정 24시간 게이트
+const NOW = Date.parse('2026-07-28T12:00:00Z');
+const iso = (ms) => new Date(ms).toISOString();
+
+test('reconcileDueFromRow: 무행·컬럼 null은 due, 시도 10분·부정 확정 24시간 게이트(경계 포함)', () => {
+  assert.equal(reconcileDueFromRow(null, NOW), true);  // 무행 — 웹훅 전량 유실 결제자일 수 있다
+  assert.equal(reconcileDueFromRow({}, NOW), true);    // 컬럼 null — 대사 이력 없음
+  // 시도 게이트(10분): 쿨다운 내 차단, 정확히 경과하면 통과
+  assert.equal(reconcileDueFromRow({ ls_reconciled_at: iso(NOW - COOLDOWN_MS + 1_000) }, NOW), false);
+  assert.equal(reconcileDueFromRow({ ls_reconciled_at: iso(NOW - COOLDOWN_MS) }, NOW), true);
+  // 부정 확정 게이트(24시간): 시도 게이트를 지나도 최근 "구독 없음" 확정이면 차단 —
+  // 무료 사용자를 10분마다 영구 조회하던 호출량(F7의 핵심)을 여기서 끊는다
+  assert.equal(reconcileDueFromRow({ ls_reconciled_at: iso(NOW - COOLDOWN_MS), ls_reconcile_empty_at: iso(NOW - EMPTY_COOLDOWN_MS + 1_000) }, NOW), false);
+  assert.equal(reconcileDueFromRow({ ls_reconciled_at: iso(NOW - COOLDOWN_MS), ls_reconcile_empty_at: iso(NOW - EMPTY_COOLDOWN_MS) }, NOW), true);
 });
 
 // ── [O2] reconcileEntitlement — 실행 흐름
@@ -121,76 +138,148 @@ const fakeFetch = (subs, status = 200) => async () => ({
   ok: status === 200, status, json: async () => ({ data: subs }),
 });
 
-// 대사용 가짜 supabase 클라이언트 — rpc + 중복 귀속 조회(from().select().eq().neq().limit()) + 적재
-const fakeSb = ({ dupes = [], rpcResult = 'applied' } = {}) => {
-  const calls = { rpc: [], upserts: [] };
+// 대사용 가짜 supabase 클라이언트 — rpc + 쿨다운 선점(update().eq().lte().lte().select()) +
+// 부정 확정 기록(update().eq() await) + 중복 귀속 조회(select().eq().neq().limit()) + 적재.
+// claim: 조건부 update 선점 결과, insertClaim: 무행 insert 선점 결과.
+const fakeSb = ({ claim = true, insertClaim = false, dupes = [], rpcResult = 'applied' } = {}) => {
+  const calls = { rpc: [], upserts: [], updates: [], ltes: [], eqs: [] };
   const sb = {
     rpc: async (fn, args) => { calls.rpc.push([fn, args]); return { data: rpcResult, error: null }; },
-    from: (table) => ({
-      select: () => ({ eq: () => ({ neq: () => ({ limit: async () => ({ data: dupes, error: null }) }) }) }),
-      upsert: async (row, opts) => { calls.upserts.push([table, row, opts]); return { error: null }; },
-    }),
+    from: (table) => {
+      const b = {
+        _update: null, _upsert: null,
+        update(vals) { calls.updates.push([table, vals]); this._update = vals; return this; },
+        eq(col, val) { calls.eqs.push([col, val]); return this; },
+        neq() { return this; },
+        lte(col, val) { calls.ltes.push([col, val]); return this; },
+        limit: async () => ({ data: dupes, error: null }),
+        upsert(row, opts) {
+          calls.upserts.push([table, row, opts]);
+          if (opts?.ignoreDuplicates && table === 'entitlements') { this._upsert = row; return this; }
+          return Promise.resolve({ error: null }); // billing_unmatched 적재 — await로 끝난다
+        },
+        select() {
+          if (this._update) return Promise.resolve({ data: claim ? [{ user_id: 'u' }] : [], error: null });
+          if (this._upsert) return Promise.resolve({ data: insertClaim ? [{ user_id: 'u' }] : [], error: null });
+          return this; // 중복 귀속 조회 경로
+        },
+        then(res, rej) { return Promise.resolve({ data: null, error: null }).then(res, rej); }, // update().eq() 직접 await(부정 확정 기록)
+      };
+      return b;
+    },
   };
   return { sb, calls };
 };
+
+test('선점(claim): 조건부 update가 행을 갱신하면 통과 — 게이트 2종이 lte 필터(무조건 AND)로 실린다', async () => {
+  const { sb, calls } = fakeSb({ claim: true });
+  assert.ok(await claimReconcile(sb, UID, NOW));
+  assert.equal(calls.updates.length, 1);
+  assert.deepEqual(Object.keys(calls.updates[0][1]), ['ls_reconciled_at']); // 선점은 시도 시각만 기록
+  assert.equal(calls.upserts.length, 0); // 행이 있으면 insert 경로 없음
+  // 쿨다운 판정이 DB 문장 안에 있다(원자) — or 그룹 결합 의미에 기대지 않고 lte 2개로 끝난다
+  // (컬럼이 not null default epoch이라 null 케이스가 없다 — 마이그레이션 불변식과 한 쌍)
+  assert.deepEqual(calls.ltes.map(([col]) => col), ['ls_reconciled_at', 'ls_reconcile_empty_at']);
+  assert.equal(calls.ltes[0][1], iso(NOW - COOLDOWN_MS));
+  assert.equal(calls.ltes[1][1], iso(NOW - EMPTY_COOLDOWN_MS));
+});
+
+test('결제 의사 신호(clearReconcileEmpty): 부정 확정 게이트만 epoch로 해제 — 시도 게이트는 안 건드린다', async () => {
+  const { sb, calls } = fakeSb();
+  await clearReconcileEmpty(sb, UID);
+  assert.equal(calls.updates.length, 1);
+  const vals = calls.updates[0][1];
+  assert.deepEqual(Object.keys(vals), ['ls_reconcile_empty_at']); // ls_reconciled_at 미포함 — intent 연타가 LS 호출 증폭이 되지 않는 근거
+  assert.equal(Date.parse(vals.ls_reconcile_empty_at), 0); // epoch = 항상 due(컬럼 default와 동일)
+});
+
+test('선점(claim): 무행이면 ignoreDuplicates insert로 선점 — 동시 생성은 한쪽만 통과', async () => {
+  const won = fakeSb({ claim: false, insertClaim: true });
+  assert.equal(Date.parse((await claimReconcile(won.sb, UID, NOW)).emptySeen), 0); // 신규 행 — empty_at default epoch
+  const [table, row, opts] = won.calls.upserts[0];
+  assert.equal(table, 'entitlements');
+  assert.deepEqual(Object.keys(row), ['user_id', 'ls_reconciled_at']); // plan 미지정 — default 'free', 자격 무영향
+  assert.deepEqual(opts, { onConflict: 'user_id', ignoreDuplicates: true });
+  const lost = fakeSb({ claim: false, insertClaim: false }); // 쿨다운 중이거나 타 인스턴스가 선점
+  assert.equal(await claimReconcile(lost.sb, UID, NOW), null);
+});
+
+// 부정 확정 기록(ls_reconcile_empty_at) update가 있었는지 — 24시간 장기 쿨다운의 근거
+const emptyMarks = (calls) => calls.updates.filter(([t, vals]) => t === 'entitlements' && 'ls_reconcile_empty_at' in vals);
 
 test('대사: 활성 구독 발견 → 원자 적용 경로(apply_ls_event)로 복구, userId는 세션 신원으로 강제', async () => {
   const { sb, calls } = fakeSb();
   const r = await reconcileEntitlement({
     sb, userId: UID, email: 'pay@example.com', apiKey: 'k',
-    fetchImpl: fakeFetch([sub('sub_9', 'active')]), nowMs: 10_000_000,
+    fetchImpl: fakeFetch([sub('sub_9', 'active')]), nowMs: NOW,
   });
   assert.equal(r.result, 'applied');
   assert.equal(calls.rpc[0][1].p_user_id, UID); // 귀속은 LS 응답이 아니라 요청 세션의 user.id
   assert.equal(calls.rpc[0][1].p_sub_id, 'sub_9');
   assert.equal(calls.rpc[0][1].p_plan, 'pro');
+  assert.equal(emptyMarks(calls).length, 0); // 복구 성공은 부정 확정이 아니다
 });
 
 test('대사 중복 귀속 가드(F2): 같은 구독이 타 계정에 이미 붙어 있으면 쓰지 않고 unmatched 적재', async () => {
   const { sb, calls } = fakeSb({ dupes: [{ user_id: 'someone-else' }] });
   const r = await reconcileEntitlement({
     sb, userId: `${UID}-dupe`, email: 'shared@example.com', apiKey: 'k',
-    fetchImpl: fakeFetch([sub('sub_shared', 'active')]), nowMs: 15_000_000,
+    fetchImpl: fakeFetch([sub('sub_shared', 'active')]), nowMs: NOW,
   });
   assert.equal(r, null);
-  assert.equal(calls.rpc.length, 0); // 쓰기 없음 — 1구독 N계정 pro 차단
-  assert.equal(calls.upserts.length, 1);
-  const [table, row] = calls.upserts[0];
-  assert.equal(table, 'billing_unmatched');
-  assert.equal(row.reason, 'duplicate-attribution');
-  assert.equal(row.ls_subscription_id, 'sub_shared');
+  assert.equal(calls.rpc.length, 0); // 구독 상태 쓰기 없음 — 1구독 N계정 pro 차단
+  const unmatched = calls.upserts.filter(([t]) => t === 'billing_unmatched');
+  assert.equal(unmatched.length, 1);
+  assert.equal(unmatched[0][1].reason, 'duplicate-attribution');
+  assert.equal(unmatched[0][1].ls_subscription_id, 'sub_shared');
+  // 이 계정은 결제자일 수 있다 — 24시간 잠그지 않는다(운영자 정리 후 10분 내 재대사로 풀리게)
+  assert.equal(emptyMarks(calls).length, 0);
 });
 
-test('대사: 활성 구독 없음 → 쓰기 없이 null(강등 방향 대사 금지)', async () => {
-  let wrote = false;
-  const sb = { rpc: async () => { wrote = true; return { data: 'applied', error: null }; } };
+test('대사: 활성 구독 없음 → 구독 상태 쓰기 없이 null + 부정 확정 기록(24시간 캐싱, CAS 조건부)', async () => {
+  const { sb, calls } = fakeSb();
   const r = await reconcileEntitlement({
     sb, userId: `${UID}-none`, email: 'a@b.c', apiKey: 'k',
-    fetchImpl: fakeFetch([sub('x', 'expired')]), nowMs: 20_000_000,
+    fetchImpl: fakeFetch([sub('x', 'expired')]), nowMs: NOW,
   });
   assert.equal(r, null);
-  assert.equal(wrote, false);
+  assert.equal(calls.rpc.length, 0); // 강등 방향 대사 금지 — plan을 건드리지 않는다
+  assert.equal(emptyMarks(calls).length, 1); // 무료 사용자 영구 10분 폴 차단의 핵심
+  // CAS — 선점 시점의 empty_at과 같을 때만 확정을 쓴다: LS를 도는 사이 intent가 게이트를
+  // 해제했으면 덮지 않는다(결제 직후 복구 24시간 잠금 방지 — 2차 검수 잔여 레이스)
+  assert.ok(calls.eqs.some(([col]) => col === 'ls_reconcile_empty_at'));
 });
 
-test('대사: apiKey·email 부재는 즉시 null(LS 호출 자체가 없다) — 로컬·미설정 환경 무해', async () => {
+test('markReconcileEmpty: casSeen 있으면 empty_at 동일 조건을 필터로 건다 — 없으면 무조건 기록', async () => {
+  const withCas = fakeSb();
+  await markReconcileEmpty(withCas.sb, UID, NOW, 'SEEN');
+  assert.ok(withCas.calls.eqs.some(([col, val]) => col === 'ls_reconcile_empty_at' && val === 'SEEN'));
+  const noCas = fakeSb();
+  await markReconcileEmpty(noCas.sb, UID, NOW);
+  assert.ok(!noCas.calls.eqs.some(([col]) => col === 'ls_reconcile_empty_at'));
+});
+
+test('대사: apiKey·email 부재는 즉시 null(LS 호출·DB 선점 자체가 없다) — 로컬·미설정 환경 무해', async () => {
   const boom = async () => { throw new Error('fetch가 불리면 안 된다'); };
   assert.equal(await reconcileEntitlement({ sb: {}, userId: 'u1', email: '', apiKey: 'k', fetchImpl: boom }), null);
   assert.equal(await reconcileEntitlement({ sb: {}, userId: 'u2', email: 'a@b.c', apiKey: '', fetchImpl: boom }), null);
 });
 
-test('대사: 쿨다운 내 재호출은 LS API를 다시 때리지 않는다', async () => {
+test('대사: DB 선점 실패(쿨다운 중·타 인스턴스 선점)면 LS API를 때리지 않는다', async () => {
   let fetches = 0;
   const f = async () => { fetches++; return { ok: true, status: 200, json: async () => ({ data: [] }) }; };
-  const args = { sb: {}, userId: 'cooldown-user-2', email: 'a@b.c', apiKey: 'k', fetchImpl: f };
-  await reconcileEntitlement({ ...args, nowMs: 30_000_000 });
-  await reconcileEntitlement({ ...args, nowMs: 30_000_001 });
-  assert.equal(fetches, 1);
+  const { sb } = fakeSb({ claim: false, insertClaim: false });
+  assert.equal(await reconcileEntitlement({ sb, userId: UID, email: 'a@b.c', apiKey: 'k', fetchImpl: f, nowMs: NOW }), null);
+  assert.equal(fetches, 0);
 });
 
-test('대사: LS API 비정상 응답은 throw — 호출자(me/billing)가 삼켜 응답을 깨지 않게 한다', async () => {
+test('대사: LS API 비정상 응답은 throw — 호출자(me/billing)가 백그라운드에서 삼킨다. 선점은 이미 소모(장애 연타 방지)', async () => {
+  const { sb, calls } = fakeSb();
   await assert.rejects(() => reconcileEntitlement({
-    sb: {}, userId: 'err-user-1', email: 'a@b.c', apiKey: 'k', fetchImpl: fakeFetch([], 500), nowMs: 40_000_000,
+    sb, userId: UID, email: 'a@b.c', apiKey: 'k', fetchImpl: fakeFetch([], 500), nowMs: NOW,
   }), /LS API 500/);
+  assert.equal(calls.updates.length, 1); // throw 전에 시도 시각이 기록됐다 — 10분간 재시도 차단
+  assert.equal(emptyMarks(calls).length, 0); // 오류는 부정 확정이 아니다 — 24시간 잠금 금지
 });
 
 // ── 게이트 옵션 공유 — 웹훅·대사가 같은 env 해석을 쓴다
