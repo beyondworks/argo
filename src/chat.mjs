@@ -738,6 +738,8 @@ ${lang === 'en'
       // CLI 턴 상한 — 대화 턴 5분(행 방지, ARGO_CLI_TURN_TIMEOUT_MS로 조정 가능), 잡(장시간 작업 큐) 턴 6시간.
       // 기본 300초가 잡 경로까지 죽여 "10분 넘는 일은 start_long_task로"라는 설계 약속(long-job-queue-design §실행:
       // "워커 경로엔 5분 상한이 없다")이 CLI 러너에서 거짓이 되던 갭(QA P1-2와 같은 뿌리). SDK 러너는 원래 상한 없음.
+      // ⚠ 노브 권장 상한 ≤300000(검수 L2): 300s 초과는 chat 라우트 maxDuration=300(HTTP가 먼저 죽어
+      // 정직 문구 무의미), 900s 초과는 crewmail CLAIM_STALE_MS 산출 근거("CLI 300s×3단")까지 깨진다.
       const envCap = Number(process.env.ARGO_CLI_TURN_TIMEOUT_MS);
       const cliTimeoutMs = source === 'job' ? 21_600_000 : (Number.isFinite(envCap) && envCap > 0 ? envCap : 300_000);
       // caps 전달 — 사장이 켠 능력(fs/browser)을 codex 샌드박스에 반영(SDK 게이트의 근사 — codexSandboxArgs 주석 참조)
