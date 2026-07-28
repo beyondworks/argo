@@ -375,6 +375,12 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>{header}</div>
       )}
       {open && <>
+      {/* 외부 CLI 러너(codex/gemini/antigravity) 정직 표기 — 크루 도구(쪽지·루틴·위임)가 표면에 없다
+          (chat.mjs hasTools:false). "AI 직원 회사" 핵심 약속이 러너에 따라 조용히 빠지므로 카드가 미리 알린다
+          (runtimeBlocked 배지·'권한 근사 적용' 계열). 판정은 서버 runnerStatus.cli — 클라 하드코딩 금지. */}
+      {st?.cli && (
+        <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.cliToolsNote')}</span>
+      )}
       {hostLinked ? (
         /* host 연결됨 — 상태 칩이 전부다. 연결 폼은 숨기고 해제만 노출(오폼 입력 유실 방지). */
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>

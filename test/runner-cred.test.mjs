@@ -68,6 +68,14 @@ test('runnerStatus: 저장된 무효 형식 oauth 토큰에 invalid 표시(재�
   assert.ok(!st.claude.company.invalid, 'apikey 타입은 oauth 형식 검사 비대상');
 });
 
+test('runnerStatus: cli 플래그 — 외부 CLI 러너만 true(카드 정직 표기의 서버 판정)', async () => {
+  // 크루 도구(쪽지·루틴·위임)는 SDK 러너 전용(chat.mjs hasTools:false) — UI가 이 플래그로만
+  // "미지원" 표기를 판정한다. 클라 하드코딩 표류('Claude Code' 명판 실사고 2026-07-20 계열) 방지.
+  const st = await runnerStatus('credco');
+  for (const id of ['codex', 'gemini', 'antigravity']) assert.equal(st[id].cli, true, `${id}=CLI 러너`);
+  for (const id of ['claude', 'glm', 'kimi', 'openrouter']) assert.equal(st[id].cli, false, `${id}=SDK 계열`);
+});
+
 test('extractSetupToken: PTY 출력(ANSI 혼입)에서 최종 토큰만 추출', async () => {
   const { extractSetupToken } = await import('../src/runners.mjs');
   const pty = '\x1b[2J\x1b[1;1HOpening browser to sign in…\n\x1b[32m✓\x1b[0m Token created:\n  sk-ant-oat01-AbC123_def-4567890XYZ\n';

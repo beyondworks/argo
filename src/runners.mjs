@@ -13,7 +13,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
-import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, pickRunner, oauthFormatError } from './runners/catalog.mjs';
+import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthFormatError } from './runners/catalog.mjs';
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, codexSandboxArgs } from './runners/codex.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { loadSecrets, credType, maskCred } from './runners/creds.mjs';
@@ -234,6 +234,7 @@ export async function runnerStatus(wsId) {
       connectable: !!meta.connect, // Connect 버튼(CLI 브라우저 로그인 대행) 지원 여부 — codex
       webConnect: !!meta.webConnect, // 웹 브리지(로그인 URL 표시 + 코드 입력) — claude
       hostUsable: hostOptInAllowed(id), // "이 컴퓨터 로그인 사용" 옵트인 — claude는 non-standalone에서만(키체인)
+      cli: isCliRunner(id), // 외부 CLI 래핑 — 크루 도구(쪽지·루틴·위임)가 없어(chat.mjs hasTools:false) 카드가 정직 표기한다
       // claude 원클릭(setup-token)은 데스크톱 번들 사이드카에서만 완주 — 상주/웹은 붙여넣기가 정식 경로
       setupOneClick: id === 'claude' && process.env.ARGO_STANDALONE === '1',
       keyUrl: meta.keyUrl,
