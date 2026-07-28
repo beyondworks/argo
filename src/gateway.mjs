@@ -1,7 +1,10 @@
 // 메신저 게이트웨이 — 텔레그램/슬랙이 회사의 정문이 된다.
 // 메신저에서 크루를 부르면 웹과 같은 chat 경로로 턴이 돌고(스레드·기억 공유),
 // 결재는 버튼/회신으로 처리되며, 루틴 결과가 브리핑으로 밀려온다.
-import { listCompanies, listAgents } from './hub.mjs';
+// 분해(2026-07-28): 네트워크·타이머 없이 테스트 가능한 로직은 src/gateway/ 하위 모듈로 —
+//   persist(offset·커서·하트비트) · queue(디스크 큐·장시간 작업 적재) · protocol(순수 판정·파서) · routing(크루 라우팅).
+// 이 파일은 폴러 오케스트레이션(타이머·fetch 루프)·핸들러·매니저만 남는다. 기존 임포터를 위한 facade 재수출 유지.
+import { listCompanies } from './hub.mjs';
 import { loadConnections, updateConnection, updateAgentBot } from './connections.mjs';
 import { chat } from './chat.mjs';
 import { loadThread, appendTurn, appendSharedNote } from './thread.mjs';
@@ -11,119 +14,23 @@ import { onNotify, emitNotify } from './notify.mjs'; // emitNotify = 장시간 �
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader } from './sync.mjs';
 import { appendEvent } from './events.mjs';
-import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
+import { writeJsonAtomic } from './jsonstore.mjs';
 import { mkdir, readFile, writeFile, readdir, stat, rename, copyFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { paths, loadCompany, getDeviceId } from './workspace.mjs';
+import { paths, loadCompany } from './workspace.mjs';
 import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath } from './tg-format.mjs';
+import { beatGateway, loadOffset, saveOffset, loadSlackCursor, saveSlackCursor } from './gateway/persist.mjs';
+import { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT } from './gateway/queue.mjs';
+import { clip, pollBackoffMs, pick, tidy, parseApprovalText, parseApprovalCallback, pairCodeMatches, classifySlackMessage } from './gateway/protocol.mjs';
+import { routeMessage, crewStatusReply, approvalWho } from './gateway/routing.mjs';
 
-/** 폴러 하트비트 — 연결 카드의 "가동 중 · N초 전 응답" 표시의 원천. root의 dotfile이라 vault 스캔 무관. */
-async function beatGateway(wsId, kind, ok, error = '') {
-  try {
-    await writeFile(join(paths(wsId).root, `.gateway-${kind}.json`), JSON.stringify({ ts: Date.now(), ok, error: String(error).slice(0, 200) }));
-  } catch { /* 하트비트는 베스트에포트 */ }
-}
+// facade — 기존 임포터(chat.mjs 동적 import·테스트)가 gateway.mjs에서 그대로 가져간다(무수정 계약).
+export { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT, JOBS_MAX_PENDING, enqueueLongJob } from './gateway/queue.mjs';
+export { classifySlackMessage } from './gateway/protocol.mjs';
+export { routeMessage } from './gateway/routing.mjs';
 
-// 폴러 offset 영속화 — 재시작·리더 교체 시 offset=0으로 되돌아가 마지막 배치를 재수신·재실행하는 것을 막는다.
-// offset은 lenient 로드(손상 시 0부터 재개 — 재수신은 아래 디스크 큐가 멱등 재적재로 방어).
-async function loadOffset(wsId, key) {
-  const o = await readJsonLenient(join(paths(wsId).root, `.gw-offset-${key}.json`), { offset: 0 });
-  return o?.offset ?? 0;
-}
-async function saveOffset(wsId, key, offset) {
-  try { await writeJsonAtomic(join(paths(wsId).root, `.gw-offset-${key}.json`), { offset }); }
-  catch { /* 베스트에포트 */ }
-}
-
-// 슬랙 커서 영속 — 텔레그램과 달리 서버측 수신 확정(offset)이 없어 이 파일이 유일한 재개 지점이다.
-// 재시작 시 다운타임에 온 지시·결재 회신을 이어받는다(이전엔 인메모리 '지금'부터라 통째 유실).
-// 비점(non-dot) 파일이라 동기화를 타고 기기 간 LWW로 수렴 — 리더가 바뀐 기기도 마지막 지점부터 잇는다
-// (전환 직전 ~8s 미동기 창은 재수신·중복 쪽으로 흡수 — at-least-once, 유실 없음).
-const slackCursorFile = (wsId) => join(paths(wsId).root, 'gw-cursor-slack.json');
-async function loadSlackCursor(wsId) { return (await readJsonLenient(slackCursorFile(wsId), null))?.ts ?? null; }
-async function saveSlackCursor(wsId, ts) {
-  try { await writeJsonAtomic(slackCursorFile(wsId), { ts }); }
-  catch { /* 베스트에포트 — 다음 배치가 다시 저장한다 */ }
-}
-
-/* ─── 지시 처리 큐 (at-least-once) ───
-   문제(감사 D5): 텔레그램 폴러가 offset을 처리 for-루프 '앞'에서 커밋하고, 실제 턴(runWithAtts/run)은
-   await 없는 fire-and-forget이라 offset 저장 후 크래시 시 그 지시가 재수신·재처리 안 되고 영구 유실(at-most-once).
-
-   처방(디스크 큐): 폴 루프는 update를 디스크 큐에 '적재한 직후'에만 offset을 전진시킨다(=Telegram에 수신 확정).
-   별도 워커가 큐를 드레인해 턴을 실행하고 '성공적으로 끝난 뒤에만' 파일을 삭제한다. 처리 도중 크래시면
-   파일이 남아 재기동 시 재처리된다. 파일명 = update_id라 재수신 시 재적재가 멱등(중복 큐 항목 없음).
-   트레이드오프: 응답 전송 후 unlink 전에 크래시하면 재기동 때 같은 지시를 한 번 더 처리(중복 응답 가능).
-   at-most-once(유실)보다 at-least-once(중복)를 택한다 — 지시 유실이 훨씬 치명적이다.
-   블로킹 회피: 폴 루프는 '빠른 디스크 적재'만 await하고 긴 턴은 워커가 뒤에서 돌리므로, 결재 버튼 콜백을
-   막지 않는다(권한 게이트 데드락 방지 — 기존 논블로킹 성질 보존).
-
-   소유권(백로그: 리더 전환 시 큐잉 지시 멈춤): 워커는 폴러가 아니라 매니저(ensureGateway)가 소유하고
-   클라우드 리더 여부와 무관하게 상시 돈다 — 리더를 양보한(또는 죽었다 살아난) 기기에 남은 잡도 그 기기가
-   끝까지 처리한다. 잡은 적재한 기기에만 있고(큐는 동기화 제외) dev 태그로 그 사실을 강제해,
-   과거 동기화로 흘러든 다른 기기의 잡 사본이 이중 실행되는 것을 막는다. */
-const GW_MAX_INFLIGHT = 2; // 동시 크루 턴 상한 — 큐가 쌓여도 비용 폭주를 막는다
-const LEGACY_JOB_MAX_AGE_MS = 24 * 3_600_000; // dev 태그 없는 구형식 잡의 실행 허용 연령 — 넘으면 좀비 실행 방지 위해 폐기
-export function queueDir(wsId, key) { return join(paths(wsId).root, `.gw-queue-${key}`); } // (export: 회귀 테스트용)
-export async function enqueueJob(wsId, key, id, job) { // (export: 회귀 테스트용)
-  const dev = await getDeviceId().catch(() => null); // 적재 기기 태그 — 이 기기의 워커만 이 잡을 실행한다
-  await writeJsonAtomic(join(queueDir(wsId, key), `${id}.json`), dev ? { ...job, dev } : job); // 원자적 — 부분 쓰기가 워커에 보이지 않는다
-}
-/** 큐 드레인 워커 — 1초 폴. handler(job)이 정상 반환하면 파일 삭제(처리 완료), 던지면 유지(다음 틱 재시도·재기동 복구). (export: 회귀 테스트용) */
-export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFLIGHT } = {}) {
-  let stopped = false;
-  let me = null; // 이 기기 id — 해석 전(null)에는 잡을 집지 않는다(남의 사본 오실행 방지). 실패 시 ''(판정 생략, 전부 실행)
-  getDeviceId().then((d) => { me = d; }).catch(() => { me = ''; });
-  const busy = new Set();
-  const iv = setInterval(async () => {
-    if (stopped || me === null) return;
-    let names = [];
-    try { names = await readdir(queueDir(wsId, key)); } catch { return; } // 큐 디렉터리 없음 — 할 일 없음
-    names = names.filter((n) => n.endsWith('.json') && !n.startsWith('.'))
-      .sort((a, b) => ((parseInt(a, 10) || 0) - (parseInt(b, 10) || 0)) || a.localeCompare(b)); // 도착 순서 근사(동값은 사전순 고정)
-    for (const n of names) {
-      if (busy.has(n)) continue;
-      if (busy.size >= maxInflight) break; // 상한 도달 — 남은 잡은 다음 틱(큐별로 다르다: 장시간 작업은 1)
-      busy.add(n);
-      (async () => {
-        const fp = join(queueDir(wsId, key), n);
-        try {
-          const job = await readJsonLenient(fp, null); // 손상 잡은 null → 처리 스킵 후 삭제(무한 재시도 방지)
-          if (job?.dev && me && job.dev !== me) {
-            // 다른 기기가 적재한 잡의 사본(과거 큐가 동기화되던 시절의 잔재) — 원 기기가 실행하므로 정리만
-            console.log(`[argo] 큐 정리(${wsId}/${key}/${n}): 다른 기기(${String(job.dev).slice(0, 8)})의 잡 사본 — 실행 없이 제거`);
-          } else if (job && !job.dev && Date.now() - (((await stat(fp).catch(() => null))?.mtimeMs) ?? 0) > LEGACY_JOB_MAX_AGE_MS) {
-            // dev 태그 없는 구형식 잡이 너무 오래됨 — 어느 기기 것인지 알 수 없어 좀비 실행 대신 폐기(로그로 관측)
-            console.log(`[argo] 큐 정리(${wsId}/${key}/${n}): ${Math.round(LEGACY_JOB_MAX_AGE_MS / 3_600_000)}시간 넘은 구형식 잡 — 실행 없이 제거`);
-          } else if (job) {
-            await handler(job); // handler는 턴 실패를 내부 처리(에러 회신)하고 정상 반환 → 아래서 삭제
-          }
-          await unlink(fp).catch(() => {}); // 처리 완료분만 제거. 처리 중 크래시면 파일이 남아 재기동 시 재처리
-        } catch (e) {
-          console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}):`, e.message); // 인프라 예외 — 파일 유지, 다음 틱 재시도
-        } finally {
-          busy.delete(n);
-        }
-      })();
-    }
-  }, 1000);
-  iv.unref?.();
-  return () => { stopped = true; clearInterval(iv); };
-}
-
-/* ─── 장시간 작업 큐(jobs) — 10분 초과 작업의 패리티 갭을 닫는다 ───
-   설계: docs/long-job-queue-design.md. 크루가 start_long_task로 적재하면 이 워커가 턴 밖에서
-   chat()을 끝까지 돌린다(워커 경로엔 HTTP 5분 상한이 없어 몇 시간도 가능). 완료되면 결과가 대화에
-   남고 메신저로 배달된다 — 사장은 기다리지 않고, 기기를 덮어도(재기동 후) 결과를 받는다.
-
-   재실행 규칙(게이트웨이 큐와 다른 점): 잡에는 발송·구매 같은 부작용이 들어갈 수 있어 크래시 후
-   무제한 재시도가 위험하다. 실행 직전에 tries를 올려 파일에 기록하고, 다시 집혔을 때 tries>=1이면
-   **자동 재실행하지 않고** "중단된 작업"으로 남겨 사장이 재시작을 결정한다
-   ("되돌릴 수 없는 것은 사람이 잠근다"와 같은 방향). */
-export const JOBS_QUEUE = 'jobs';
-export const JOBS_MAX_INFLIGHT = 1;  // 회사당 동시 1 — 장시간 작업이 메신저 응답을 굶기지 않게 큐 분리
-export const JOBS_MAX_PENDING = 10;  // 대기 상한 — 비용 폭주·큐 폭발 방지
-
+/* ─── 장시간 작업(jobs) 실행 핸들러 — 큐 설계·재실행 규칙(tries) 주석은 src/gateway/queue.mjs.
+   chat을 턴 밖에서 끝까지 돌리고 결과를 대화·메신저로 배달한다. ─── */
 function makeJobHandler(wsId) {
   return async (job) => {
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
@@ -161,31 +68,6 @@ function makeJobHandler(wsId) {
     }
   };
 }
-
-/** 크루 도구용 적재 — 대기 상한을 넘으면 거절(에러 메시지가 크루에게 그대로 간다). (export: 도구·테스트 공용) */
-export async function enqueueLongJob(wsId, { slug, title, prompt }) {
-  let pending = 0;
-  try { pending = (await readdir(queueDir(wsId, JOBS_QUEUE))).filter((n) => n.endsWith('.json')).length; } catch { /* 큐 없음 = 0 */ }
-  if (pending >= JOBS_MAX_PENDING) throw new Error(`대기 중인 장시간 작업이 이미 ${pending}건입니다 — 끝나기를 기다리거나 사장에게 정리를 요청하라`);
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  await enqueueJob(wsId, JOBS_QUEUE, id, { id, slug, title, prompt, createdAt: new Date().toISOString(), tries: 0 });
-  return { id, pending: pending + 1 };
-}
-
-const MAX_MSG = 3800; // 텔레그램 4096 제한 대비 여유
-const clip = (t) => (t.length > MAX_MSG ? `${t.slice(0, MAX_MSG)}\n…(전체 내용은 Argo 데크에서)` : t);
-
-// 폴 오류 백오프 — 특히 getUpdates Conflict(같은 봇 토큰을 다른 인스턴스/기기가 폴링)는
-// 자연 치유(멀티기기 리더 전환 순간 겹침)이지만, 5초 고정 재시도는 지속 중복(같은 봇을 두 회사에
-// 연결 등) 시 텔레그램 API를 영원히 때린다(실측 2026-07-24: Conflict 하트비트 반복). 연속 실패에
-// 지수 백오프(5s→최대 60s)를 걸어 배틀 부하를 없앤다. 성공하면 리셋. 정지는 하지 않는다 —
-// Conflict가 풀리면(다른 인스턴스 종료) 그대로 재개해야 하므로(자동 정지는 재개 배선이 필요해 위험).
-const POLL_BACKOFF_BASE_MS = 5000;
-const POLL_BACKOFF_MAX_MS = 60_000;
-const pollBackoffMs = (streak) => Math.min(POLL_BACKOFF_MAX_MS, POLL_BACKOFF_BASE_MS * 2 ** Math.max(0, streak - 1));
-
-// 회사 시스템 언어(ko|en) 기반 코드 방출 문자열 선택. 기존 회사(lang 없음/'ko')는 항상 ko 반환 → 기존 동작 그대로.
-const pick = (ko, en, lang) => (lang === 'en' ? en : ko);
 
 /** 크루 응답 발신 — 마크다운을 텔레그램 HTML로, 길면 분할, 본문 속 vault 파일은 사진/문서로 동봉. */
 async function sendTgReply(token, chatId, wsId, text) {
@@ -258,64 +140,16 @@ async function slackApi(token, method, body) {
   return j;
 }
 
-/** "@이름 지시" → to 크루, "@이름1 @이름2 지시" → 첫 번째가 to, 나머지는 cc(맥락 공유). 이름 미지정이면 기본 크루. (export는 테스트용) */
-export async function routeMessage(wsId, cfg, text) {
-  const agents = await listAgents(wsId);
-  const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
-  if (!agents.length) return { error: pick('아직 크루가 없습니다. Argo 데크에서 먼저 영입해 주세요.', 'No crew yet. Hire your first crew from the Argo deck.', lang) };
-  let body = text.trim();
-  // 그룹방에서 봇 멘션(@봇이름)으로 시작하면 벗겨낸다 — 그 뒤의 @크루 멘션이 라우팅 대상
-  if (cfg.botUsername) body = body.replace(new RegExp(`^@?${cfg.botUsername.replace(/^@/, '')}\\s+`, 'i'), '');
-  const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase(); // 한글 NFC/NFD 불일치 방어 — 파일 유래 이름과 입력 이름의 유니코드가 다를 수 있다
-  const find = (key) => agents.find((a) => norm(a.slug) === norm(key) || norm(a.name) === norm(key));
-  const mentions = [];
-  let m;
-  while ((m = body.match(/^@(\S+)\s+/))) {
-    const target = find(m[1]);
-    if (!target) break; // 크루가 아닌 @단어는 본문의 일부로 남긴다
-    if (!mentions.some((a) => a.slug === target.slug)) mentions.push(target);
-    body = body.slice(m[0].length);
-  }
-  if (!mentions.length && /^@\S+\s+\S/.test(body)) {
-    const bad = body.match(/^@(\S+)/)[1];
-    return { error: pick(
-      `"${bad}" 크루를 못 찾았습니다. 크루: ${agents.map((a) => a.name).join(', ')} — "크루"라고 보내면 현황을 보여드립니다.`,
-      `Couldn't find crew "${bad}". Crew: ${agents.map((a) => a.name).join(', ')} — send "crew" to see the roster.`,
-      lang,
-    ) };
-  }
-  const to = mentions[0] ?? (agents.find((a) => a.slug === cfg.defaultCrew) ?? agents[0]);
-  return { slug: to.slug, name: to.name, msg: body.trim(), cc: mentions.slice(1) };
-}
-
-/** "크루"/"/crew"/"현황" — 어떤 크루가 이 채팅에 연결되어 있는지 즉답(모델 호출 없음). */
-async function crewStatusReply(wsId, cfg) {
-  const agents = await listAgents(wsId);
-  const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
-  if (!agents.length) return pick('아직 크루가 없습니다. Argo 데크에서 먼저 영입해 주세요.', 'No crew yet. Hire your first crew from the Argo deck.', lang);
-  const def = agents.find((a) => a.slug === cfg.defaultCrew) ?? agents[0];
-  return [
-    pick(`**연결된 크루 ${agents.length}명**`, `**${agents.length} crew connected**`, lang),
-    ...agents.map((a) => `• ${a.name} (@${a.slug})${a.role ? ` — ${a.role}` : ''}${a.runner && a.runner !== 'claude' ? ` · ${a.runner}` : ''}${a.slug === def?.slug ? pick(' · 기본', ' · default', lang) : ''}`),
-    '',
-    pick(
-      '"@이름 지시"로 특정 크루를 부르고, "@이름1 @이름2 지시"처럼 여러 명을 적으면 첫 번째가 실행하고 나머지에게 맥락이 공유됩니다(cc).',
-      'Address a specific crew with "@name instruction". List several like "@name1 @name2 instruction" and the first one acts while the rest receive the shared context (cc).',
-      lang,
-    ),
-  ].join('\n');
-}
-
 /** 메신저발 지시 1턴 — 웹과 동일 경로(스레드 이어쓰기 + vault 기억 + 첨부 비전). ctx = 발화 위치(위임 미러용). */
 async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
-  // "승인 ap-xxx" / "거절 ap-xxx" 텍스트 결재 (슬랙·텔레그램 공용) — 결재 토큰(승인/거절)은 파서 앵커라 고정
-  const ap = text.match(/^(승인|거절)\s+(ap-[a-z0-9]+)/);
+  // "승인 ap-xxx" / "거절 ap-xxx" 텍스트 결재 (슬랙·텔레그램 공용) — 파서는 protocol.parseApprovalText(앵커 동일)
+  const ap = parseApprovalText(text);
   if (ap) {
-    const approve = ap[1] === '승인';
-    const item = await resolveWithFollowUp(wsId, ap[2], approve);
+    const approve = ap.approve;
+    const item = await resolveWithFollowUp(wsId, ap.id, approve);
     return pick(
-      `결재 ${ap[1]} 처리: ${tidy(item.action)}\n실행 결과는 담당 크루가 이어서 보고합니다.`,
+      `결재 ${ap.verb} 처리: ${tidy(item.action)}\n실행 결과는 담당 크루가 이어서 보고합니다.`,
       `Approval ${approve ? 'approved' : 'rejected'}: ${tidy(item.action)}\nThe assigned crew will follow up with the result.`,
       lang,
     );
@@ -381,14 +215,14 @@ function startTelegram(wsId, getCfg) {
 
           if (u.callback_query) { // 결재 인라인 버튼
             const cq = u.callback_query;
-            const m = String(cq.data ?? '').match(/^ap:(ap-[a-z0-9]+):([01])$/);
+            const m = parseApprovalCallback(cq.data); // "ap:<id>:<0|1>" — 형식 밖이면 null(무시). 파서는 protocol
             // 채팅 일치 + (페어링된 사장 본인일 때만). 그룹 페어링 시 아무 멤버나 결재를 확정하는 것을 막는다.
             const bySender = !cfg.ownerId || String(cq.from?.id) === String(cfg.ownerId);
             if (m && String(cq.message?.chat?.id) === String(cfg.chatId) && bySender) {
-              const approve = m[2] === '1';
+              const approve = m.approve;
               const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
               try {
-                const item = await resolveWithFollowUp(wsId, m[1], approve);
+                const item = await resolveWithFollowUp(wsId, m.id, approve);
                 await tg(cfg.token, 'answerCallbackQuery', { callback_query_id: cq.id, text: pick(approve ? '승인됨' : '거절됨', approve ? 'Approved' : 'Rejected', lang) });
                 // 원 메시지를 결과로 교체 — 버튼이 함께 사라져 이중 클릭·죽은 버튼이 없다(결재 UX)
                 await tg(cfg.token, 'editMessageText', {
@@ -408,8 +242,7 @@ function startTelegram(wsId, getCfg) {
           if (!msg || (!msg.text && !msg.photo && !msg.document && !msg.video && !msg.voice && !msg.audio)) continue;
           if (!cfg.chatId) { // 페어링 — 설정에 표시된 코드를 보낸 사람만 사장으로 고정(TOFU 차단)
             const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
-            const sent = String(msg.text ?? '').trim().toUpperCase();
-            if (!cfg.pairCode || sent !== cfg.pairCode) {
+            if (!pairCodeMatches(cfg.pairCode, msg.text)) { // 판정은 protocol.pairCodeMatches — trim·대문자 정규화 동일
               // 코드 불일치 — 아무나 먼저 말 걸어도 소유권을 못 가져간다. 안내만 보낸다.
               await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: pick('이 봇을 회사와 연결하려면, 설정 → 연결에 표시된 6자리 연결 코드를 여기에 보내주세요.', 'To connect this bot to your company, send the 6-digit connection code shown in Settings → Connections here.', lang) }).catch(() => {});
               continue;
@@ -480,13 +313,13 @@ function startTelegram(wsId, getCfg) {
 /* ─── 크루 직통 봇 — 크루 1명 = 봇 1개(연락처처럼). DM은 1:1(웹과 같은 스레드),
    그룹에 초대하면 @멘션·답장이 그 크루에게 전달된다(텔레그램 기본 프라이버시 모드가 멘션만 전달 → 폭주 없음). ─── */
 async function runAgentTurn(wsId, slug, text, attachments, ctx) {
-  const ap = text.match(/^(승인|거절)\s+(ap-[a-z0-9]+)/); // 결재 토큰(승인/거절)은 파서 앵커라 고정
+  const ap = parseApprovalText(text); // 파서는 protocol.parseApprovalText — 결재 토큰(승인/거절) 앵커 동일
   if (ap) {
-    const approve = ap[1] === '승인';
-    const item = await resolveWithFollowUp(wsId, ap[2], approve);
+    const approve = ap.approve;
+    const item = await resolveWithFollowUp(wsId, ap.id, approve);
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
     return pick(
-      `결재 ${ap[1]} 처리: ${item.action}\n실행 결과는 이어서 보고합니다.`,
+      `결재 ${ap.verb} 처리: ${item.action}\n실행 결과는 이어서 보고합니다.`,
       `Approval ${approve ? 'approved' : 'rejected'}: ${item.action}\nThe result will follow.`,
       lang,
     );
@@ -605,8 +438,7 @@ function startAgentTelegram(wsId, slug, getCfg) {
           if (!cfg.ownerId) {
             if (!isDm) continue; // 페어링 전 그룹 메시지는 무시 — 먼저 DM으로 페어링
             const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
-            const sent = String(msg.text ?? '').trim().toUpperCase();
-            if (!cfg.pairCode || sent !== cfg.pairCode) { // 설정에 표시된 코드를 보낸 사람만 소유자(TOFU 차단)
+            if (!pairCodeMatches(cfg.pairCode, msg.text)) { // 설정에 표시된 코드를 보낸 사람만 소유자(TOFU 차단) — 판정은 protocol
               await tg(cfg.token, 'sendMessage', { chat_id: msg.chat.id, text: pick('이 크루 봇을 연결하려면, 설정 → 연결의 크루 봇 항목에 표시된 6자리 연결 코드를 여기에 보내주세요.', 'To connect this crew bot, send the 6-digit connection code shown under the crew-bot entry in Settings → Connections here.', lang) }).catch(() => {});
               continue;
             }
@@ -727,22 +559,7 @@ function startInboxWatcher(wsId) {
    인가: 페어링 코드를 보낸 사람이 사장(ownerId)으로 고정되고 이후 사장만 크루 구동·결재한다
    (텔레그램과 동일 모델 — 페어링 전에는 어떤 지시도 실행하지 않고 안내만 한다). ─── */
 
-/** 슬랙 수신 메시지 분류(순수) — 폴 루프가 이 결과대로 행동한다. (export: 회귀 테스트용)
-    반환 kind: skip(봇/비텍스트/비사장) · pair(페어링 코드 일치 — 발신자가 사장으로 고정)
-    · hint(미페어링 안내) · approval(결재 회신 — 큐를 거치지 않고 즉시) · turn(크루 턴 — 큐 적재) */
-export function classifySlackMessage(cfg, m) {
-  if (!m?.text || m.bot_id || m.user === cfg.botUserId || m.subtype) return { kind: 'skip' };
-  const text = String(m.text).replace(/<@[A-Z0-9]+>\s*/g, '').trim();
-  if (!cfg.ownerId) { // 미페어링 — 코드를 보낸 사람만 사장으로 고정(TOFU 차단). 그 전엔 어떤 지시도 실행하지 않는다
-    if (cfg.pairCode && text.toUpperCase() === cfg.pairCode) return { kind: 'pair', user: String(m.user) };
-    return { kind: 'hint' };
-  }
-  if (String(m.user) !== String(cfg.ownerId)) return { kind: 'skip' }; // 사장만 — 채널 멤버 전원이 구동·결재하던 구멍 차단
-  const ap = text.match(/^(승인|거절)\s+(ap-[a-z0-9]+)/); // 결재 토큰(승인/거절)은 파서 앵커라 고정
-  if (ap) return { kind: 'approval', approve: ap[1] === '승인', id: ap[2] };
-  return { kind: 'turn', text };
-}
-
+// 수신 메시지 분류는 protocol.classifySlackMessage(순수) — 폴 루프가 그 결과대로 행동한다.
 function startSlack(wsId, getCfg) {
   let stopped = false;
   let lastBeat = 0;
@@ -839,24 +656,8 @@ function startSlack(wsId, getCfg) {
   return () => { stopped = true; };
 }
 
-/* ─── 알림 푸시 — 결재는 버튼과 함께, 루틴은 브리핑으로, 위임은 상대 크루 봇의 발화로 ─── */
-/** 크루가 만든 결재 문구(action·reason) 정돈 — 모델 출력의 줄머리 공백·과잉 개행이 텔레그램 말풍선을
-    울퉁불퉁하게 만들던 것(실사용 신고 2026-07-25 "말풍선 찌그러짐") 방지. 내용은 보존, 모양만 편다.
-    코드펜스(```) 안은 원문 보존(사후 검수 M/L-5) — 결재는 승인 판단 표면이라 들여쓰기가 곧 내용이다. */
-const tidy = (s) => String(s ?? '')
-  .split(/(```[\s\S]*?```)/)
-  .map((seg, i) => (i % 2 ? seg : seg.replace(/^[ \t]+/gm, '').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n')))
-  .join('')
-  .trim();
-
-/** 결재 주체 표기 — "크루명" 또는 "크루명 (위임자명 위임)". 누가 올린 결재인지 흐름을 보이게 한다. */
-async function approvalWho(wsId, item, lang) {
-  const agents = await listAgents(wsId).catch(() => []);
-  const nameOf = (s) => agents.find((a) => a.slug === s)?.name ?? s;
-  const base = nameOf(item.slug);
-  return item.from ? (lang === 'en' ? `${base} (delegated by ${nameOf(item.from)})` : `${base} (${nameOf(item.from)} 위임)`) : base;
-}
-
+/* ─── 알림 푸시 — 결재는 버튼과 함께, 루틴은 브리핑으로, 위임은 상대 크루 봇의 발화로 ───
+   결재 문구 정돈(tidy)은 protocol, 결재 주체 표기(approvalWho)는 routing에서 온다. */
 async function pushEvent(event) {
   const all = await loadConnections(event.wsId);
   const { lang = 'ko' } = await loadCompany(event.wsId).catch(() => ({}));
