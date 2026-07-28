@@ -24,6 +24,7 @@ const { readFile } = await import('node:fs/promises');
 
 const WS_ROOT = process.env.ARGO_ROOT;
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const flip = (p) => p.split('').map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join(''); // 케이스 플립 — 두 케이스 폴딩 테스트 공용
 const wsRoot = join(WS_ROOT, 'wr-co');
 await mkdir(join(wsRoot, 'vault'), { recursive: true });
 const outside = await mkdtemp(join(tmpdir(), 'argo-wr-out-')); // 홈 밖(맥 tmp는 /var/… — 홈 아님) 실폴더
@@ -36,7 +37,6 @@ test('케이스 변형 + 미존재 하위 경로가 하드 차단을 빠져나�
   // 뮤테이션 검증: insideFold를 정확 비교로 되돌리면 이 테스트가 실패해야 한다(트립와이어).
   // 전제: HOME이 canonical(위 realpath) — 아니면 ~/.argo 단언이 접두 아티팩트로 폴딩과 무관하게 뒤집힌다.
   if (process.platform !== 'win32' && process.platform !== 'darwin') return tc.skip('대소문자 구분 FS');
-  const flip = (p) => p.split('').map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
   const isForbidden = makeIsForbidden(wsRoot);
   assert.equal(await isForbidden(join(flip(join(homedir(), '.argo')), 'NS', 'DEEP', 'x.json')), true);
   assert.equal(await isForbidden(join(flip(APP_ROOT), 'NS', 'DEEP', 'x.mjs')), true);
@@ -47,7 +47,7 @@ test('validateWorkRoot: 케이스 변형 보호 구역 등록 거부 — 심층 
   // 폴딩 없이도 protected가 걸린다(뮤테이션 생존 실측). realpath 정규화 성질 자체가 회귀하면
   // 잡는 문서화 테스트로 남긴다. 폴딩의 실제 트립와이어는 위 렉시컬 폴백 테스트다.
   if (process.platform !== 'win32' && process.platform !== 'darwin') return tc.skip('대소문자 구분 FS');
-  const flipped = APP_ROOT.split('').map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
+  const flipped = flip(APP_ROOT);
   await assert.rejects(() => validateWorkRoot(flipped), (e) => ['protected', 'not-found'].includes(e.code));
 });
 
