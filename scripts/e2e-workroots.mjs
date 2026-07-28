@@ -2,7 +2,7 @@
 // 홈 밖 쓰기 성공"을 실측한다(P0-1 수용 기준). 대조군: 등록 **전**에는 같은 지시가 실패해야 한다
 // (홈 밖 차단 유지 — 경계 회귀 감지). 2026-07-28 실측 통과 로그는 .omc/progress.txt US-007 항목.
 // 사용: node scripts/e2e-workroots.mjs   (E2E_RUNNER 기본 codex — 호스트 로그인 필요, CI 비대상)
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -12,9 +12,8 @@ const ROOT = await mkdtemp(join(tmpdir(), 'argo-e2e-wr-'));
 // 홈 밖이면서 **tmp도 아닌** 경로 — codex 샌드박스는 시스템 tmp($TMPDIR·/var/folders)를 기본
 // 허용해서(1차 실행 실측: 등록 전 대조군이 tmp에 써짐) tmp로는 경계를 검증할 수 없다.
 // /Users/Shared = macOS 표준 공유 폴더(사용자 쓰기 가능, 홈 밖, tmp 아님).
-const { mkdir: mkdirP } = await import('node:fs/promises');
 const OUTSIDE = join('/Users/Shared', `argo-e2e-wr-${Date.now().toString(36)}`);
-await mkdirP(OUTSIDE, { recursive: true });
+await mkdir(OUTSIDE, { recursive: true });
 let server = null;
 const fail = (msg) => { console.error(`E2E FAIL: ${msg}`); cleanup(1); throw new Error('E2E-ABORT'); }; // throw — fail 후 흐름 계속(1차 실행 결함) 차단
 function cleanup(code) {
