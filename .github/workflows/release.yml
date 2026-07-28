@@ -69,6 +69,10 @@ jobs:
       # push/PR은 test.yml이 막지만, 태그 push·수동 실행은 그 게이트를 우회할 수 있어 여기서도 강제한다.
       - run: npm test
 
+      # 버전 정합 게이트(G007) — 4파일(package/tauri.conf/Cargo.toml/Cargo.lock) 중 하나라도 반쪽
+      # 범프면 빌드 전에 실패한다. 범프는 scripts/bump-version.mjs가 표준 경로.
+      - run: node scripts/bump-version.mjs --check
+
       # 신규 기기 스모크 — CI macOS 러너는 claude CLI 미설치·빈 키체인·헤드리스라 신규 맥과 등가 조건.
       # 원클릭(setup-token 대행)이 번들 CLI로 시작돼 인증 URL·코드 프롬프트까지 도달하는지 검증한다.
       # 개발 PC(전부 설치·로그인된 환경) 실측은 이 실패 조건을 재현하지 못한다(실사용 신고 2026-07-22).
@@ -348,9 +352,16 @@ jobs:
           ]) {
             const f = pick(re);
             if (f && fs.existsSync(`${dir}/${f}.sig`)) platforms[key] = entry(f);
-            else console.warn(`[manifest] ${key} updater artifact missing — skipped`);
+            else console.warn(`[manifest] ${key} updater artifact missing`);
           }
-          if (Object.keys(platforms).length) {
+          // 전부-또는-없음(안정화 G007 — Phase0 검수 이월 MED): 부분 매니페스트를 쓰면 빠진 플랫폼의
+          // 기기들이 업데이트를 영영 못 보는 무증상 사고가 된다. 3타깃이 다 있을 때만 latest.json을 쓰고,
+          // 아니면 draft에 MANIFEST-INCOMPLETE.txt를 실어 사람이 게시 전에 반드시 보게 한다
+          // (latest.json 부재 시 업데이터 엔드포인트는 이전 릴리스 매니페스트를 계속 서빙 — 안전 방향).
+          // 잡은 성공 유지 — always()+draft(부분 산출물이라도 draft 생성)라는 기존 설계를 존중한다.
+          const EXPECTED = ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64'];
+          const missing = EXPECTED.filter((k) => !platforms[k]);
+          if (missing.length === 0) {
             fs.writeFileSync(`${dir}/latest.json`, JSON.stringify({
               version: tag.replace(/^v/, ''),
               pub_date: new Date().toISOString(),
@@ -358,7 +369,9 @@ jobs:
             }, null, 2));
             console.log(fs.readFileSync(`${dir}/latest.json`, 'utf8'));
           } else {
-            console.warn('[manifest] no updater artifacts — latest.json skipped');
+            const note = `이 draft는 업데이터 매니페스트가 불완전해 latest.json을 싣지 않았다.\n누락: ${missing.join(', ')}\n게시 전 해당 플랫폼 빌드를 복구해 재실행할 것 — 이대로 게시하면 그 플랫폼 기기들이 업데이트를 못 받는다.\n`;
+            fs.writeFileSync(`${dir}/MANIFEST-INCOMPLETE.txt`, note);
+            console.log(`::warning::updater manifest incomplete — missing: ${missing.join(', ')} (latest.json 미생성, MANIFEST-INCOMPLETE.txt 첨부)`);
           }
           EOF
       # 배포 repo(beyondworks/argo-agent)에 발행 — 소스 레포와 배포 레포 분리(릴리스 자산만 저쪽에).
