@@ -5,14 +5,18 @@
 // 경합해도 순서 가드가 지켜진다.
 //
 // 쿨다운(분리 검수 F7): 프로세스 메모리가 아니라 entitlements 두 컬럼으로 인스턴스 간 공유한다
-// (마이그레이션 20260728150000). 오류와 부정 결과를 구분한다 —
+// (마이그레이션 20260728150000, not null default epoch). 오류와 부정 결과를 구분한다 —
 //  - ls_reconciled_at(시도, 10분): 시도 전 선점 기록. LS 장애 연타 방지 + 장애 후 10분 재시도.
 //  - ls_reconcile_empty_at(구독 없음 확정, 24시간): 부정 결과 캐싱. 무료 사용자를 10분마다
-//    영구 조회하던 호출량을 끊는다. 웹훅이 정상이면 24시간 지연은 강등·승격에 무영향(대사는 최후 방어).
+//    영구 조회하던 호출량을 끊는다. 결제 의사 신호(clearReconcileEmpty — /intent 라우트)가
+//    이 게이트만 해제한다 — "설정 열기(empty 확정) → 곧장 업그레이드 클릭 → 결제 → 웹훅 유실"이
+//    기본 동선이라, 해제 없이는 복구가 24시간 잠긴다(2차 검수 HIGH). 시도 10분 게이트는 의사
+//    신호로도 안 풀린다 — intent 연타가 LS 호출 증폭이 되지 않게.
 import { applyLsEvent, pickProSubscription, unmatchedRow } from './lsbilling.mjs';
 
 export const COOLDOWN_MS = 10 * 60_000; // 대사 시도 간격 — 설정 화면 재방문마다 LS API를 때리지 않는다
 export const EMPTY_COOLDOWN_MS = 24 * 60 * 60_000; // "활성 구독 없음" 확정 후 재확인 간격
+const EPOCH = new Date(0).toISOString(); // 컬럼 default와 같은 "항상 due" 값
 
 /** 행 기반 사전 판정(무쿼리) — 라우트가 이미 읽은 entitlements 행으로 대사 시도 가치를 계산한다.
     통과해도 선점은 claimReconcile(원자)이 한다 — 이 함수는 쿨다운 중 헛 DB 쓰기를 없애는 필터.
@@ -27,18 +31,18 @@ export function reconcileDueFromRow(row, nowMs = Date.now()) {
 }
 
 /** 쿨다운 선점(인스턴스 간 원자) — 조건부 update 한 문장이 판정+기록을 겸한다: 행이 갱신되면
-    이 요청이 선점한 것. 0행이면 (a) 쿨다운 중이거나 (b) 행이 없다 — (b)는 ignoreDuplicates
-    insert로 선점(동시 생성은 PK 충돌로 한쪽만 통과, plan은 default 'free'라 자격에 무영향).
+    이 요청이 선점한 것. 컬럼이 not null(default epoch)이라 필터는 lte 2개 체이닝(무조건 AND)으로
+    끝난다 — or 그룹 결합 의미에 기대지 않는다(2차 검수 MEDIUM). 0행이면 (a) 쿨다운 중이거나
+    (b) 행이 없다 — (b)는 ignoreDuplicates insert로 선점(동시 생성은 PK 충돌로 한쪽만 통과,
+    plan은 default 'free'라 자격에 무영향 — is_pro()의 체험 OR도 그대로 산다).
     실패(LS 장애)해도 쿨다운이 소모되게 **시도 전에** 기록한다. */
 export async function claimReconcile(sb, userId, nowMs = Date.now()) {
   const now = new Date(nowMs).toISOString();
-  const triedCut = new Date(nowMs - COOLDOWN_MS).toISOString();
-  const emptyCut = new Date(nowMs - EMPTY_COOLDOWN_MS).toISOString();
   const { data, error } = await sb.from('entitlements')
     .update({ ls_reconciled_at: now })
     .eq('user_id', userId)
-    .or(`ls_reconciled_at.is.null,ls_reconciled_at.lte.${triedCut}`)
-    .or(`ls_reconcile_empty_at.is.null,ls_reconcile_empty_at.lte.${emptyCut}`)
+    .lte('ls_reconciled_at', new Date(nowMs - COOLDOWN_MS).toISOString())
+    .lte('ls_reconcile_empty_at', new Date(nowMs - EMPTY_COOLDOWN_MS).toISOString())
     .select('user_id');
   if (error) throw new Error(error.message);
   if (data?.length) return true;
@@ -56,6 +60,17 @@ export async function markReconcileEmpty(sb, userId, nowMs = Date.now()) {
     .update({ ls_reconcile_empty_at: new Date(nowMs).toISOString() })
     .eq('user_id', userId);
   if (error) console.error('[argo] billing 대사: 부정 결과 기록 실패(무해 — 10분 뒤 재확인):', error.message);
+}
+
+/** 결제 의사 신호 — 부정 확정 게이트만 해제(epoch로 되돌림). 업그레이드 클릭 시점에 불려,
+    "방금 empty 확정 → 결제 → 웹훅 유실"의 복구를 24시간에서 10분으로 되돌린다. 시도 게이트
+    (ls_reconciled_at)는 건드리지 않는다 — 연타해도 LS 호출은 10분에 1회로 유지. 행이 없으면
+    할 일 없음(무행은 어차피 항상 due). 실패는 무해(로그만) — 다음 자연 재시도가 있다. */
+export async function clearReconcileEmpty(sb, userId) {
+  const { error } = await sb.from('entitlements')
+    .update({ ls_reconcile_empty_at: EPOCH })
+    .eq('user_id', userId);
+  if (error) console.error('[argo] billing 결제 의사 신호 기록 실패(무해):', error.message);
 }
 
 /** LS 구독 목록 조회 — 체크아웃 때 우리가 지정한 이메일(checkout[email]=user.email)로 필터.
@@ -78,7 +93,8 @@ export async function fetchLsSubscriptions(email, apiKey, fetchImpl = fetch) {
     중복 귀속 가드(분리 검수 F2): 같은 LS 구독이 이미 **다른** user_id에 붙어 있으면 적용하지
     않는다 — 조인 키가 체크아웃 이메일이라, 공용 메일함 등으로 1구독이 N계정에 pro를 주는 것
     (게다가 강등 웹훅은 원 결제자만 향해 나머지는 영구 pro)을 막는다. 감지 건은 billing_unmatched에
-    duplicate-attribution으로 적재해 수동 판단 대상으로 남긴다. */
+    duplicate-attribution으로 적재해 수동 판단 대상으로 남긴다 — 이 계정은 결제자일 수 있어
+    장기 쿨다운은 걸지 않는다(운영자 정리 후 10분 내 재대사로 풀리게, 2차 검수 LOW). */
 export async function reconcileEntitlement({
   sb, userId, email, storedCustomerId = null, apiKey,
   allowedVariants = null, allowTest = false, fetchImpl = fetch, nowMs = Date.now(),
@@ -100,9 +116,6 @@ export async function reconcileEntitlement({
     const { error: insErr } = await sb.from('billing_unmatched')
       .upsert(row, { onConflict: 'ls_subscription_id,reason', ignoreDuplicates: true });
     if (insErr) console.error('[argo] billing 대사 duplicate-attribution 적재 실패:', insErr.message);
-    // 자동 복구 불가 확정(수동 판단 대상) — 부정 결과와 동급으로 장기 쿨다운. 안 그러면 이
-    // 사용자는 10분마다 영구히 LS를 때린다(귀속은 어차피 운영자 판단 + 이후 웹훅이 처리).
-    await markReconcileEmpty(sb, userId, nowMs);
     return null;
   }
   const result = await applyLsEvent(sb, { ...picked, userId });

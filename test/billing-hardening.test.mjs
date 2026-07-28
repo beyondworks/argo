@@ -9,7 +9,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { applyLsEvent, unmatchedRow, pickProSubscription, lsGateOpts, shouldApplyLsEvent } from '../src/lsbilling.mjs';
 import {
-  reconcileDueFromRow, claimReconcile, reconcileEntitlement, COOLDOWN_MS, EMPTY_COOLDOWN_MS,
+  reconcileDueFromRow, claimReconcile, clearReconcileEmpty, reconcileEntitlement, COOLDOWN_MS, EMPTY_COOLDOWN_MS,
 } from '../src/lsreconcile.mjs';
 import { APPLY_CASES, toMirrorArgs } from './helpers/ls-apply-cases.mjs';
 
@@ -63,10 +63,11 @@ test('마이그레이션 불변식: 조건 판정이 upsert 한 문장 안에 �
   assert.match(sql, /billing_unmatched_dedup/);
 });
 
-test('마이그레이션 불변식(F7): 쿨다운 컬럼 2종 — 시도(10분)·부정 확정(24시간) 분리(오류≠부정 결과)', async () => {
+test('마이그레이션 불변식(F7): 쿨다운 컬럼 2종 — 시도·부정 확정 분리, not null default epoch(lte 선점의 전제)', async () => {
   const sql = await readFile(fileURLToPath(new URL('../supabase/migrations/20260728150000_ls_reconcile_cooldown.sql', import.meta.url)), 'utf8');
-  assert.match(sql, /add column if not exists ls_reconciled_at timestamptz/);
-  assert.match(sql, /add column if not exists ls_reconcile_empty_at timestamptz/);
+  // nullable로 되돌리면 claimReconcile의 lte 2개 필터가 null 행을 영원히 못 선점한다 — 회귀 차단
+  assert.match(sql, /add column if not exists ls_reconciled_at timestamptz not null default 'epoch'/);
+  assert.match(sql, /add column if not exists ls_reconcile_empty_at timestamptz not null default 'epoch'/);
 });
 
 // ── [M4] unmatchedRow — 수동 귀속에 필요한 최소 식별자만
@@ -137,11 +138,11 @@ const fakeFetch = (subs, status = 200) => async () => ({
   ok: status === 200, status, json: async () => ({ data: subs }),
 });
 
-// 대사용 가짜 supabase 클라이언트 — rpc + 쿨다운 선점(update().eq().or().or().select()) +
+// 대사용 가짜 supabase 클라이언트 — rpc + 쿨다운 선점(update().eq().lte().lte().select()) +
 // 부정 확정 기록(update().eq() await) + 중복 귀속 조회(select().eq().neq().limit()) + 적재.
 // claim: 조건부 update 선점 결과, insertClaim: 무행 insert 선점 결과.
 const fakeSb = ({ claim = true, insertClaim = false, dupes = [], rpcResult = 'applied' } = {}) => {
-  const calls = { rpc: [], upserts: [], updates: [], ors: [] };
+  const calls = { rpc: [], upserts: [], updates: [], ltes: [] };
   const sb = {
     rpc: async (fn, args) => { calls.rpc.push([fn, args]); return { data: rpcResult, error: null }; },
     from: (table) => {
@@ -150,7 +151,7 @@ const fakeSb = ({ claim = true, insertClaim = false, dupes = [], rpcResult = 'ap
         update(vals) { calls.updates.push([table, vals]); this._update = vals; return this; },
         eq() { return this; },
         neq() { return this; },
-        or(expr) { calls.ors.push(expr); return this; },
+        lte(col, val) { calls.ltes.push([col, val]); return this; },
         limit: async () => ({ data: dupes, error: null }),
         upsert(row, opts) {
           calls.upserts.push([table, row, opts]);
@@ -170,15 +171,26 @@ const fakeSb = ({ claim = true, insertClaim = false, dupes = [], rpcResult = 'ap
   return { sb, calls };
 };
 
-test('선점(claim): 조건부 update가 행을 갱신하면 통과 — 필터에 두 게이트 컬럼이 모두 실린다', async () => {
+test('선점(claim): 조건부 update가 행을 갱신하면 통과 — 게이트 2종이 lte 필터(무조건 AND)로 실린다', async () => {
   const { sb, calls } = fakeSb({ claim: true });
   assert.equal(await claimReconcile(sb, UID, NOW), true);
   assert.equal(calls.updates.length, 1);
   assert.deepEqual(Object.keys(calls.updates[0][1]), ['ls_reconciled_at']); // 선점은 시도 시각만 기록
   assert.equal(calls.upserts.length, 0); // 행이 있으면 insert 경로 없음
-  // 쿨다운 판정이 DB 문장 안에 있다(원자) — 두 컬럼 게이트가 모두 필터로 들어간다
-  assert.ok(calls.ors.some((e) => e.includes('ls_reconciled_at.is.null') && e.includes('ls_reconciled_at.lte.')));
-  assert.ok(calls.ors.some((e) => e.includes('ls_reconcile_empty_at.is.null') && e.includes('ls_reconcile_empty_at.lte.')));
+  // 쿨다운 판정이 DB 문장 안에 있다(원자) — or 그룹 결합 의미에 기대지 않고 lte 2개로 끝난다
+  // (컬럼이 not null default epoch이라 null 케이스가 없다 — 마이그레이션 불변식과 한 쌍)
+  assert.deepEqual(calls.ltes.map(([col]) => col), ['ls_reconciled_at', 'ls_reconcile_empty_at']);
+  assert.equal(calls.ltes[0][1], iso(NOW - COOLDOWN_MS));
+  assert.equal(calls.ltes[1][1], iso(NOW - EMPTY_COOLDOWN_MS));
+});
+
+test('결제 의사 신호(clearReconcileEmpty): 부정 확정 게이트만 epoch로 해제 — 시도 게이트는 안 건드린다', async () => {
+  const { sb, calls } = fakeSb();
+  await clearReconcileEmpty(sb, UID);
+  assert.equal(calls.updates.length, 1);
+  const vals = calls.updates[0][1];
+  assert.deepEqual(Object.keys(vals), ['ls_reconcile_empty_at']); // ls_reconciled_at 미포함 — intent 연타가 LS 호출 증폭이 되지 않는 근거
+  assert.equal(Date.parse(vals.ls_reconcile_empty_at), 0); // epoch = 항상 due(컬럼 default와 동일)
 });
 
 test('선점(claim): 무행이면 ignoreDuplicates insert로 선점 — 동시 생성은 한쪽만 통과', async () => {
@@ -208,7 +220,7 @@ test('대사: 활성 구독 발견 → 원자 적용 경로(apply_ls_event)로 �
   assert.equal(emptyMarks(calls).length, 0); // 복구 성공은 부정 확정이 아니다
 });
 
-test('대사 중복 귀속 가드(F2): 같은 구독이 타 계정에 이미 붙어 있으면 쓰지 않고 unmatched 적재 + 장기 쿨다운', async () => {
+test('대사 중복 귀속 가드(F2): 같은 구독이 타 계정에 이미 붙어 있으면 쓰지 않고 unmatched 적재', async () => {
   const { sb, calls } = fakeSb({ dupes: [{ user_id: 'someone-else' }] });
   const r = await reconcileEntitlement({
     sb, userId: `${UID}-dupe`, email: 'shared@example.com', apiKey: 'k',
@@ -220,8 +232,8 @@ test('대사 중복 귀속 가드(F2): 같은 구독이 타 계정에 이미 붙
   assert.equal(unmatched.length, 1);
   assert.equal(unmatched[0][1].reason, 'duplicate-attribution');
   assert.equal(unmatched[0][1].ls_subscription_id, 'sub_shared');
-  // 자동 복구 불가 확정 — 부정 결과와 동급으로 24시간 쿨다운(안 그러면 10분마다 영구 LS 조회)
-  assert.equal(emptyMarks(calls).length, 1);
+  // 이 계정은 결제자일 수 있다 — 24시간 잠그지 않는다(운영자 정리 후 10분 내 재대사로 풀리게)
+  assert.equal(emptyMarks(calls).length, 0);
 });
 
 test('대사: 활성 구독 없음 → 구독 상태 쓰기 없이 null + 부정 확정 기록(24시간 캐싱)', async () => {

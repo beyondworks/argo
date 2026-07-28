@@ -800,9 +800,15 @@ function SyncCard({ ws }) {
   useEffect(() => {
     const pull = () => api(`/api/companies/${ws}/connections`).then((d) => setSync(d.sync ?? null)).catch(() => {});
     pull();
-    api('/api/me/billing').then((d) => setBill(d.billing ?? null)).catch(() => {});
+    // reconciling=true — 서버가 방금 유실 대사(O2)를 백그라운드로 발사했다는 신호. billing은
+    // 폴링이 없어서(1회성 fetch) 잠시 뒤 1회 재조회해야 복구가 리로드 없이 보인다.
+    let retry = null;
+    api('/api/me/billing').then((d) => {
+      setBill(d.billing ?? null);
+      if (d.reconciling) retry = setTimeout(() => api('/api/me/billing').then((d2) => setBill(d2.billing ?? null)).catch(() => {}), 8000);
+    }).catch(() => {});
     const iv = setInterval(pull, 15000);
-    return () => clearInterval(iv);
+    return () => { clearInterval(iv); if (retry) clearTimeout(retry); };
   }, [ws]);
   const mine = sync?.companies?.[ws];
   return (
@@ -883,13 +889,16 @@ function UpgradeButtons() {
   if (!user) return null; // /api/me 미확보 — user_id/email 없이 링크를 만들지 않는다
 
   const withRef = (base) => `${base}${base.includes('?') ? '&' : '?'}checkout[custom][user_id]=${encodeURIComponent(user.id)}&checkout[email]=${encodeURIComponent(user.email)}`;
+  // 결제 의사 신호(fire-and-forget) — 방금 대사가 "구독 없음"을 확정했어도, 곧 결제할 사용자의
+  // 복구(웹훅 유실 시 O2 대사)가 24시간 잠기지 않게 부정 확정 게이트만 해제한다. 실패 무해.
+  const intent = () => api('/api/me/billing/intent', {}).catch(() => {});
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
       {LS_MONTHLY && (
-        <a className="btn btn-primary sm" href={withRef(LS_MONTHLY)} target="_blank" rel="noreferrer">{t('billing.upgradeMonthly')}</a>
+        <a className="btn btn-primary sm" href={withRef(LS_MONTHLY)} onClick={intent} target="_blank" rel="noreferrer">{t('billing.upgradeMonthly')}</a>
       )}
       {LS_YEARLY && (
-        <a className="btn sm" href={withRef(LS_YEARLY)} target="_blank" rel="noreferrer">{t('billing.upgradeYearly')}</a>
+        <a className="btn sm" href={withRef(LS_YEARLY)} onClick={intent} target="_blank" rel="noreferrer">{t('billing.upgradeYearly')}</a>
       )}
     </div>
   );

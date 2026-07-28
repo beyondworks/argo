@@ -37,7 +37,11 @@
 - `[argo] billing webhook [유실 위험] ...` — env 미설정·DB 실패·귀속 실패(**LS 재시도는 3회·약
   155초가 전부**라 이 로그가 뜨면 수동 조치 대상. LS 대시보드 → Webhooks에서 resend 가능).
 - `[argo] billing 대사: ...` — 웹훅을 놓친 결제를 /api/me/billing 접근 시 LS API 대조로
-  복구한 흔적(O2). `LEMONSQUEEZY_API_KEY` 필요, 사용자당 10분 쿨다운(프로세스 로컬).
+  복구한 흔적(O2). `LEMONSQUEEZY_API_KEY` 필요. 대사는 백그라운드로 돌고(응답 비블록) 쿨다운은
+  DB 공유(entitlements 컬럼 — 인스턴스·재배포 무관): 시도 10분, "활성 구독 없음" 확정 후 24시간.
+  업그레이드 버튼 클릭이 24시간 게이트를 해제한다(/api/me/billing/intent — 결제 직전 확정이
+  복구를 잠그는 것 방지). "10분 뒤 재시도" 안내는 여전히 유효하되, 무료 상태로 확인된 계정은
+  다음 자동 재확인이 최대 24시간 뒤다.
   `[수동 확인 필요]`·`duplicate-attribution`이 찍히면 자동 복구가 막힌 것 — 수동 조치 대상.
   **커버 범위 주의**: 이 대사는 클라우드 웹(쿠키 세션 또는 서비스 롤 있는 배포)의
   /api/me/billing에서만 돈다. 서비스 롤 키가 없는 데스크톱 로컬 서버에서는 실행되지 않으므로,
@@ -51,7 +55,11 @@
 웹훅 코드는 DB 함수 `apply_ls_event`를 호출한다. **코드가 마이그레이션보다 먼저 뜨면** RPC 404
 → 웹훅 5xx → LS 재시도 3회·155초 소진 → 유실(대사가 최후 방어지만 커버 범위 한계는 위 참조).
 
-1. 마이그레이션(`20260728113000_billing_hardening.sql`) 적용
+/api/me/billing 코드는 entitlements의 대사 쿨다운 컬럼(`ls_reconciled_at`·`ls_reconcile_empty_at`,
+`20260728150000`)도 select한다. **이 마이그레이션 없이 코드가 먼저 뜨면** select 에러 → 모든
+사용자에게 `billing: null` → 연체 배너·구독 관리 링크·해지 유예 표기가 전부 사라진다.
+
+1. 마이그레이션 적용 — `20260728113000_billing_hardening.sql` → `20260728150000_ls_reconcile_cooldown.sql`
 2. PostgREST 스키마 캐시 갱신 확인 — `notify pgrst, 'reload schema';` 또는 콘솔에서 확인
 3. 스모크: SQL 편집기에서 `select public.apply_ls_event('<테스트 uuid>','free','','','', null, null, null);`
    가 문자열을 돌려주는지 확인 (테스트 행은 삭제)

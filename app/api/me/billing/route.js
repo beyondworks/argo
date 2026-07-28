@@ -5,7 +5,9 @@
 // portal_url은 내리지 않는다 — 24시간 만료 스냅샷이라 렌더 금지(클릭 시점 발급: ./portal).
 // [O2] 유실 대사: plan이 free/무행인데 LS에 활성 구독이 있으면 복구한다(웹훅 유실 최후 방어).
 // 대사는 **백그라운드**(분리 검수 F7) — 응답은 현재 상태를 즉시 주고, LS 대조(최대 6초)로
-// 응답을 잡아두지 않는다. 복구되면 클라이언트의 다음 폴에서 반영된다.
+// 응답을 잡아두지 않는다. 응답의 reconciling=true가 "방금 대사를 발사했다" 신호 — 클라이언트
+// (설정 카드)가 잠시 뒤 1회 재조회해 복구를 리로드 없이 반영한다(웹 표면은 billing 폴링이 없다).
+import { after } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
@@ -13,25 +15,26 @@ import { currentUser } from '../../../auth.mjs';
 import { lsGateOpts } from '../../../../src/lsbilling.mjs';
 import { reconcileDueFromRow, reconcileEntitlement } from '../../../../src/lsreconcile.mjs';
 
-const pick = (data) => Response.json({
+const pick = (data, reconciling = false) => Response.json({
   billing: data ? { plan: data.plan, status: data.ls_status ?? null, hasSub: !!data.ls_subscription_id, endsAt: data.ends_at ?? null } : null,
+  reconciling,
 });
 
 const cols = 'plan, ls_status, ls_subscription_id, ls_customer_id, ends_at, ls_reconciled_at, ls_reconcile_empty_at';
 
 /** 유실 대사 백그라운드 발사 — pro가 아닌데 결제가 있을 수 있는 상황에서만. 쿨다운은 DB 공유
     (선점은 reconcileEntitlement 안의 원자 claim, 여기의 reconcileDueFromRow는 이미 읽은 행으로
-    쿨다운 중 헛 쿼리를 없애는 사전 필터). await하지 않는다 — 실패는 무해(다음 접근 때 재시도).
-    상주 Node 서버(Fly·:3001)라 응답 후에도 분리된 프로미스가 끝까지 돈다.
+    쿨다운 중 헛 쿼리를 없애는 사전 필터). after()로 응답 이후에 돌린다 — 실패는 무해(로그만,
+    다음 접근 때 재시도). 반환: 발사 여부(응답의 reconciling 신호).
     emailTrusted=false(기기 세션): 로컬 파일의 이메일은 사용자가 편집 가능해 LS 조인 키로 못 쓴다
     (분리 검수 F3 — 피해자 이메일로 바꿔 타인 구독을 획득) → auth.users에서 서버 검증 이메일로 대체. */
 function scheduleReconcileIfLost({ url, serviceKey, user, cur, emailTrusted }) {
   const apiKey = process.env.LEMONSQUEEZY_API_KEY;
-  if (!apiKey || !serviceKey || !user?.id) return;
-  if (user.id === 'local' || user.id === 'guest') return; // 로컬·게스트는 구독 표면 없음
-  if (cur?.plan === 'pro') return; // 이미 pro — 대사 불요(강등은 웹훅의 몫)
-  if (!reconcileDueFromRow(cur)) return; // 쿨다운 중 — 대부분의 폴은 여기서 무쿼리로 끝난다
-  void (async () => {
+  if (!apiKey || !serviceKey || !user?.id) return false;
+  if (user.id === 'local' || user.id === 'guest') return false; // 로컬·게스트는 구독 표면 없음
+  if (cur?.plan === 'pro') return false; // 이미 pro — 대사 불요(강등은 웹훅의 몫)
+  if (!reconcileDueFromRow(cur)) return false; // 쿨다운 중 — 대부분의 폴은 여기서 무쿼리로 끝난다
+  after(async () => {
     try {
       const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
       let email = emailTrusted ? user.email : '';
@@ -49,7 +52,8 @@ function scheduleReconcileIfLost({ url, serviceKey, user, cur, emailTrusted }) {
     } catch (e) {
       console.error('[argo] billing 대사 실패(무해 — 다음 접근 때 재시도):', e?.message ?? e);
     }
-  })();
+  });
+  return true;
 }
 
 export async function GET() {
@@ -69,8 +73,8 @@ export async function GET() {
         const { data, error } = await sb.from('entitlements').select(cols).maybeSingle();
         if (error) throw new Error(error.message);
         // 쿠키 경로 이메일은 검증된 JWT에서 온 값 — 신뢰 가능
-        scheduleReconcileIfLost({ url, serviceKey, user: { id: user.id, email: user.email ?? '' }, cur: data, emailTrusted: true });
-        return pick(data);
+        const fired = scheduleReconcileIfLost({ url, serviceKey, user: { id: user.id, email: user.email ?? '' }, cur: data, emailTrusted: true });
+        return pick(data, fired);
       }
     }
     // ② 기기 연동 세션 폴백 — 쿠키 세션이 없는 데스크톱. currentUser()가 기기 파일에서 검증한 id.
@@ -79,8 +83,8 @@ export async function GET() {
     const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
     const { data, error } = await sb.from('entitlements').select(cols).eq('user_id', user.id).maybeSingle();
     if (error) throw new Error(error.message);
-    scheduleReconcileIfLost({ url, serviceKey, user, cur: data, emailTrusted: false });
-    return pick(data);
+    const fired = scheduleReconcileIfLost({ url, serviceKey, user, cur: data, emailTrusted: false });
+    return pick(data, fired);
   } catch (e) {
     console.error('[argo] me/billing 조회 실패:', e?.message ?? e);
     return Response.json({ billing: null }); // 조회 실패로 설정 화면을 깨지 않는다 — 배너만 사라진다

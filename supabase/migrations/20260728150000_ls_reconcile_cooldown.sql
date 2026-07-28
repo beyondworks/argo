@@ -8,6 +8,12 @@
 --    LS 장애 때 연타를 막되, 장애가 걷히면 10분 뒤 재시도돼 유실 결제자가 오래 잠기지 않는다.
 --  - ls_reconcile_empty_at: 마지막 "활성 구독 없음" **확정** 시각(24시간 게이트) — 부정 결과 캐싱.
 --    활성 구독이 없는 무료 사용자를 10분마다 영구 조회하던 것(실제 호출량의 대부분)을 끊는다.
---    LS 오류 경로는 이 컬럼을 건드리지 않는다(확정이 아니므로).
-alter table public.entitlements add column if not exists ls_reconciled_at timestamptz;
-alter table public.entitlements add column if not exists ls_reconcile_empty_at timestamptz;
+--    LS 오류 경로는 이 컬럼을 건드리지 않는다(확정이 아니므로). 결제 의사 신호
+--    (/api/me/billing/intent)가 이 게이트만 해제한다 — 결제 직전 empty 확정이 복구를 24시간
+--    잠그는 것 방지(2차 검수 HIGH).
+--
+-- not null default 'epoch'(= 항상 due)로 둔다 — nullable이면 선점 update의 WHERE가
+-- "null OR 과거" OR 결합을 요구하는데, PostgREST or 그룹 2개의 AND 결합은 실행 검증이 안 된
+-- 전제였다(2차 검수 MEDIUM). 단순 lte 필터 2개 체이닝(무조건 AND)으로 원자 선점을 보장한다.
+alter table public.entitlements add column if not exists ls_reconciled_at timestamptz not null default 'epoch';
+alter table public.entitlements add column if not exists ls_reconcile_empty_at timestamptz not null default 'epoch';
