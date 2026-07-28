@@ -253,6 +253,8 @@ const DICT = {
   'settings.import.err.too-many': ['볼트에 파일이 너무 많습니다(2,000개 초과) — 하위 폴더를 나눠 가져와 주세요', 'Too many files in the vault (over 2,000) — try importing subfolders separately'],
   'settings.import.err.too-big': ['볼트가 너무 큽니다(2GB 초과) — 하위 폴더를 나눠 가져와 주세요', 'Vault is too large (over 2GB) — try importing subfolders separately'],
   'settings.import.err.copy-failed': ['복사 중 오류가 났습니다 — 이미 가져온 항목은 남아 있고, 다시 실행하면 이어서 가져옵니다', 'Copy failed midway — items already imported are kept, and running again resumes where it left off'],
+  'settings.import.err.contains-workspace': ['선택한 폴더 안에 Argo 회사 데이터(company.json)가 있습니다 — 옵시디언 볼트 폴더를 직접 선택해 주세요', 'The selected folder contains Argo company data (company.json) — please pick your Obsidian vault folder directly'],
+  'settings.import.skippedList': ['가져오지 않은 {n}건 (원본은 볼트에 그대로 있습니다):', '{n} items were not copied (originals stay in your vault):'],
   'settings.import.reason.template': ['템플릿(서식)', 'template'],
   'settings.import.reason.empty': ['빈 노트', 'empty note'],
   'settings.import.reason.unknown-type': ['Argo가 읽을 수 없는 형식', 'a format Argo cannot read'],

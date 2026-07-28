@@ -25,7 +25,8 @@
 | 2 | 템플릿 폴더(`templates/`, `_templates/`, `템플릿/` — 대소문자 무시) 안의 파일 | **미분류**(`template`) | 템플릿은 콘텐츠가 아니라 서식 — 크루 기억에 섞이면 오염 |
 | 3 | 데일리 노트: 파일명 `YYYY-MM-DD*.md` (옵시디언 Daily Notes 기본) | **journal/** `YYYY-MM-DD-<원본이름잔여>-imported.md` | Argo 일지 kind 판정(vaultdoc.docKind)이 `^\d{4}-\d{2}-\d{2}-` 요구 — 이 이름이어야 인덱스 "최근 일지" 구간에 잡힌다 |
 | 4 | 첨부 확장자(png·jpg·jpeg·gif·webp·svg·pdf·mp3·wav·m4a·mp4·mov·zip·pptx·docx·xlsx·csv·txt·json·html) | **files/imported/**<원본 상대경로 유지> | Argo files/ = 첨부 표준 위치. 폴더 구조 보존(맥락) |
-| 4.5 | Argo 제어파일 basename(`connections.json`·`mcp.json`·`company.json`·`capabilities.json`) | **복사 안 함**(skip: `sensitive`, 건별 리포트) | 들여오는 방향의 시크릿 계약(분리 검수 CRITICAL-1/HIGH-1) — vault는 동기화·크루 열람·내보내기 대상이라 자격 파일이 실리면 secretbox(rel 정확 일치)·export 제외(직속만)를 전부 우회한다 |
+| 4.4 | 소스 어딘가에 `company.json` 존재 | **임포트 전체 중단**(`contains-workspace`) | Argo 회사 폴더의 확정 마커 — 옛 백업·타 기기 사본·내보내기 결과물이 소스에 섞이면 대화·페르소나가 회사 기억으로 둔갑해 들어온다(재검수 MEDIUM-A). 조상 거부(아래)가 못 보는 "다른 경로의 Argo 데이터"를 이 신호로 닫는다 |
+| 4.5 | Argo 제어파일 basename(`connections.json`·`mcp.json`·`company.json`·`capabilities.json`) | **복사 안 함**(skip: `sensitive`, 건별 리포트) | 들여오는 방향의 시크릿 계약(분리 검수 CRITICAL-1/HIGH-1) — vault는 동기화·크루 열람·내보내기 대상이라 자격 파일이 실리면 secretbox(rel 정확 일치)·export 제외(직속만)를 전부 우회한다. 4.4의 심층 방어 |
 | 5 | 그 외 `.md` | **notes/** (평탄화 — 폴더 경로는 버리고 파일명만. 충돌 시 `폴더명-파일명`, 그래도 충돌이면 접미 번호) | Argo notes/는 평면(listDocs 비재귀)이 정본 구조 |
 | 6 | 빈 md(공백뿐) | **미분류**(`empty`) | 빈 노트가 주제 노트로 들어가면 인덱스 잡음 |
 | 7 | 나머지(`.canvas`, `.base`, `.excalidraw`, 미지의 바이너리 등) | **미분류**(`unknown-type`) | Argo가 렌더할 수 없는 형식 — 크루가 읽을 수 없다 |

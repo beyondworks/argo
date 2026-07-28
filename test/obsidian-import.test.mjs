@@ -196,6 +196,18 @@ test('importObsidianVault: dryRun은 아무것도 쓰지 않는다', async () =>
   assert.equal(existsSync(join(root, '.import.status.json')), false, '상태 파일도 안 쓴다');
 });
 
+test('importObsidianVault: 소스 안에 Argo 회사 데이터(company.json)가 있으면 통째로 중단(재검수 MEDIUM-A)', async () => {
+  const ws = 'imp-wsmk';
+  await makeCompany(ws);
+  const src = await mkdtemp(join(tmpdir(), 'obs-wsmk-'));
+  await writeFile(join(src, '정상노트.md'), '# 노트\n');
+  await mkdir(join(src, 'OldArgoBackup', 'workspaces', 'victimco', 'chats'), { recursive: true });
+  await writeFile(join(src, 'OldArgoBackup', 'workspaces', 'victimco', 'company.json'), '{"id":"victimco"}');
+  await writeFile(join(src, 'OldArgoBackup', 'workspaces', 'victimco', 'chats', 'room.json'), '{"messages":["대외비"]}');
+  await assert.rejects(() => importObsidianVault(ws, src), (e) => e.code === 'contains-workspace', '옛 백업·타 설치본 흡입 차단');
+  await assert.rejects(() => importObsidianVault(ws, src, { dryRun: true }), (e) => e.code === 'contains-workspace', '드라이런도 동일');
+});
+
 test('importObsidianVault: 보호 구역 소스(안·조상 모두)·회사 부재 거부', async () => {
   await makeCompany('imp-guard');
   await assert.rejects(() => importObsidianVault('imp-guard', process.env.ARGO_ROOT), (e) => e.code === 'protected', '자기 데이터 루트 재귀 임포트 차단');

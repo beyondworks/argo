@@ -551,6 +551,21 @@ function ImportCard({ ws }) {
               {result.unsorted > 6 && <span>{t('settings.import.unsortedMore', { n: result.unsorted - 6 })}</span>}
             </div>
           )}
+          {result.skipped > 0 && result.skippedItems?.length > 0 && (
+            // "무엇을 안 가져왔는지"가 오조작 감지의 핵심 — 숫자만 보여주면 이유는 리포트를 열어야
+            // 안다(재검수 관찰 반영). 미분류와 같은 규격으로 상위 6건 + 이유를 그 자리에서 노출.
+            <div style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.6 }}>
+              {t('settings.import.skippedList', { n: result.skipped })}
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                {result.skippedItems.slice(0, 6).map((s) => (
+                  <li key={s.rel} className="mono" style={{ fontSize: 10.5, overflowWrap: 'anywhere' }}>
+                    {s.rel} — {t(`settings.import.reason.${s.reason}`)}
+                  </li>
+                ))}
+              </ul>
+              {result.skipped > 6 && <span>{t('settings.import.unsortedMore', { n: result.skipped - 6 })}</span>}
+            </div>
+          )}
           {result.reportRel && (
             <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0 }}>
               {t('settings.import.report')}:{' '}

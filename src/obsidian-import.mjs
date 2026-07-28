@@ -158,13 +158,14 @@ function makeNamePool() {
       pool = new Set((await readdir(dir).catch(() => [])).map((n) => n.toLowerCase()));
       dirs.set(key, pool);
     }
-    // 후보(기본 → 폴더 접두)를 먼저 소진하고, 그래도 충돌이면 첫 후보에 접미 번호
+    // 후보(기본 → 폴더 접두)를 먼저 소진하고, 그래도 충돌이면 **마지막 후보**(맥락이 가장 많은
+    // 이름)에 접미 번호 — 첫 후보에 붙이면 재임포트 버전 사본이 index-2처럼 폴더 맥락을 잃는다(재검수 LOW)
     for (const base of candidates) {
       const name = `${base}${ext}`;
       if (!pool.has(name.toLowerCase())) { pool.add(name.toLowerCase()); return name; }
     }
     for (let n = 2; ; n += 1) {
-      const name = `${candidates[0]}-${n}${ext}`;
+      const name = `${candidates[candidates.length - 1]}-${n}${ext}`;
       if (!pool.has(name.toLowerCase())) { pool.add(name.toLowerCase()); return name; }
     }
   };
@@ -208,6 +209,12 @@ async function runImport(wsId, src, { dryRun }) {
   if (!dryRun) await writeStatus(wsId, { phase: 'scan' });
   const { entries, skipped, configSkipped } = await scanVault(src);
 
+  // 소스 안에 Argo 회사 데이터가 있으면 통째로 중단(재검수 MEDIUM-A) — 조상 거부는 "이 프로세스의"
+  // WS_ROOT·~/.argo만 보므로, 옛 백업·다른 기기 사본·내보내기 결과물이 소스에 섞여 있으면 대화·
+  // 페르소나가 회사 기억으로 둔갑해 들어온다. company.json은 회사 폴더의 확정 마커라 이 신호 하나로
+  // 그 표면 전체를 닫는다. (진짜 옵시디언 볼트에 우연히 있는 company.json이면 — 치우고 다시 실행)
+  const wsMarker = entries.find((e) => basename(e.rel) === 'company.json');
+  if (wsMarker) throw err('contains-workspace', wsMarker.rel);
   if (entries.length > MAX_COUNT) throw err('too-many', String(entries.length));
   const totalBytes = entries.reduce((a, e) => a + e.size, 0);
   if (totalBytes > MAX_TOTAL_BYTES) throw err('too-big', String(totalBytes));
