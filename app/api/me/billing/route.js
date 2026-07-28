@@ -21,16 +21,25 @@ const pick = (data, trialEndsAt = null) => Response.json({
 const cols = 'plan, ls_status, ls_subscription_id, ls_customer_id, ends_at';
 
 /** 유실 대사 폴백 — pro가 아닌데 결제가 있을 수 있는 상황에서만 LS API 대조(10분 쿨다운은 모듈이 관리).
-    복구되면 재조회한 행을, 아니면 null을 돌려준다. 실패는 무해(다음 접근 때 재시도) — 응답을 깨지 않는다. */
-async function reconcileIfLost({ url, serviceKey, user, cur }) {
+    복구되면 재조회한 행을, 아니면 null을 돌려준다. 실패는 무해(다음 접근 때 재시도) — 응답을 깨지 않는다.
+    emailTrusted=false(기기 세션): 로컬 파일의 이메일은 사용자가 편집 가능해 LS 조인 키로 못 쓴다
+    (분리 검수 F3 — 피해자 이메일로 바꿔 타인 구독을 획득) → auth.users에서 서버 검증 이메일로 대체. */
+async function reconcileIfLost({ url, serviceKey, user, cur, emailTrusted }) {
   const apiKey = process.env.LEMONSQUEEZY_API_KEY;
-  if (!apiKey || !serviceKey || !user?.id || !user.email) return null;
+  if (!apiKey || !serviceKey || !user?.id) return null;
   if (user.id === 'local' || user.id === 'guest') return null; // 로컬·게스트는 구독 표면 없음
   if (cur?.plan === 'pro') return null; // 이미 pro — 대사 불요(강등은 웹훅의 몫)
   try {
     const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
+    let email = emailTrusted ? user.email : '';
+    if (!emailTrusted) {
+      const { data, error } = await sb.auth.admin.getUserById(user.id);
+      if (error) throw new Error(error.message);
+      email = data?.user?.email ?? '';
+    }
+    if (!email) return null;
     const r = await reconcileEntitlement({
-      sb, userId: user.id, email: user.email,
+      sb, userId: user.id, email,
       storedCustomerId: cur?.ls_customer_id || null,
       apiKey, ...lsGateOpts(),
     });
@@ -59,7 +68,8 @@ export async function GET() {
       if (user) {
         const { data, error } = await sb.from('entitlements').select(cols).maybeSingle();
         if (error) throw new Error(error.message);
-        const recovered = await reconcileIfLost({ url, serviceKey, user: { id: user.id, email: user.email ?? '' }, cur: data });
+        // 쿠키 경로 이메일은 검증된 JWT에서 온 값 — 신뢰 가능
+        const recovered = await reconcileIfLost({ url, serviceKey, user: { id: user.id, email: user.email ?? '' }, cur: data, emailTrusted: true });
         return pick(recovered ?? data, trialEnd(user.created_at, (recovered ?? data)?.plan));
       }
     }
@@ -69,15 +79,16 @@ export async function GET() {
     const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
     const { data, error } = await sb.from('entitlements').select(cols).eq('user_id', user.id).maybeSingle();
     if (error) throw new Error(error.message);
-    // 기기 세션엔 created_at이 없어 admin 조회 — 실패해도 배너만 빠질 뿐 화면은 유지.
-    // admin 응답의 email은 **서버 검증본**이라 대사 조인 키로 안전하다 — 기기 세션 파일의 이메일은
-    // 사용자가 편집 가능해 신뢰하면 안 된다(#163 검수 F3). 조회 실패 시 이메일 없이 호출돼 대사가 스킵된다.
+    // 기기 세션 파일의 이메일은 사용자가 편집 가능해 신뢰 금지(#163 검수 F3) → admin으로 서버 검증본을
+    // 가져온다. 같은 호출로 created_at(체험 D-day 배지 원천, #164)까지 얻으므로 조회는 1회면 족하다 —
+    // 그래서 emailTrusted:true로 넘긴다(대사 모듈 안에서 중복 admin 조회를 하지 않게).
+    // 조회 실패 시: 이메일 없음 → 대사 스킵, created 없음 → 배지만 생략. 화면은 그대로 유지.
     let created = null; let verifiedEmail = null;
     try {
       const r = await fetch(`${url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, signal: AbortSignal.timeout(5000) });
       if (r.ok) { const j = await r.json(); created = j?.created_at ?? null; verifiedEmail = j?.email ?? null; }
     } catch { /* 배너·대사 생략 */ }
-    const recovered = await reconcileIfLost({ url, serviceKey, user: { id: user.id, email: verifiedEmail ?? '' }, cur: data });
+    const recovered = await reconcileIfLost({ url, serviceKey, user: { id: user.id, email: verifiedEmail ?? '' }, cur: data, emailTrusted: true });
     return pick(recovered ?? data, trialEnd(created, (recovered ?? data)?.plan));
   } catch (e) {
     console.error('[argo] me/billing 조회 실패:', e?.message ?? e);

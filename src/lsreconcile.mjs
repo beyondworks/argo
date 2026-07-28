@@ -3,7 +3,7 @@
 // 화면을 여는 바로 그 고통의 순간) entitlements가 free/무행이면 LS API에 활성 구독이 있는지
 // 대조해 복구한다. 쓰기는 웹훅과 같은 원자 경로(apply_ls_event)라 뒤늦게 도착한 웹훅과
 // 경합해도 순서 가드가 지켜진다.
-import { applyLsEvent, pickProSubscription } from './lsbilling.mjs';
+import { applyLsEvent, pickProSubscription, unmatchedRow } from './lsbilling.mjs';
 
 const COOLDOWN_MS = 10 * 60_000; // 설정 화면 재방문마다 LS API를 때리지 않는다(과금·레이트리밋 예의)
 const lastTry = new Map(); // userId → 마지막 시도 ms (베스트에포트 — 프로세스 로컬)
@@ -33,7 +33,11 @@ export async function fetchLsSubscriptions(email, apiKey, fetchImpl = fetch) {
 }
 
 /** 대사 1회 실행 — 활성 Pro 구독이 있으면 원자 적용. 반환: { result, picked } 또는 null(할 일 없음).
-    복구 전용(승격 방향만): entitlements를 free로 내리는 일은 하지 않는다 — 강등은 웹훅의 몫. */
+    복구 전용(승격 방향만): entitlements를 free로 내리는 일은 하지 않는다 — 강등은 웹훅의 몫.
+    중복 귀속 가드(분리 검수 F2): 같은 LS 구독이 이미 **다른** user_id에 붙어 있으면 적용하지
+    않는다 — 조인 키가 체크아웃 이메일이라, 공용 메일함 등으로 1구독이 N계정에 pro를 주는 것
+    (게다가 강등 웹훅은 원 결제자만 향해 나머지는 영구 pro)을 막는다. 감지 건은 billing_unmatched에
+    duplicate-attribution으로 적재해 수동 판단 대상으로 남긴다. */
 export async function reconcileEntitlement({
   sb, userId, email, storedCustomerId = null, apiKey,
   allowedVariants = null, allowTest = false, fetchImpl = fetch, nowMs = Date.now(),
@@ -43,7 +47,23 @@ export async function reconcileEntitlement({
   const subs = await fetchLsSubscriptions(email, apiKey, fetchImpl);
   const picked = pickProSubscription(subs, { allowedVariants, allowTest, storedCustomerId });
   if (!picked) return null;
+  const { data: dupes, error: dupErr } = await sb.from('entitlements')
+    .select('user_id').eq('ls_subscription_id', picked.ls_subscription_id).neq('user_id', userId).limit(1);
+  if (dupErr) throw new Error(dupErr.message);
+  if (dupes?.length) {
+    console.error(`[argo] billing 대사 중단: 구독 ${picked.ls_subscription_id}이 이미 다른 계정에 귀속 — duplicate-attribution 적재(수동 판단 대상)`);
+    const row = { ...unmatchedRow('reconcile', 'duplicate-attribution', {}), ls_subscription_id: picked.ls_subscription_id, ls_customer_id: picked.ls_customer_id, user_email: email };
+    const { error: insErr } = await sb.from('billing_unmatched')
+      .upsert(row, { onConflict: 'ls_subscription_id,reason', ignoreDuplicates: true });
+    if (insErr) console.error('[argo] billing 대사 duplicate-attribution 적재 실패:', insErr.message);
+    return null;
+  }
   const result = await applyLsEvent(sb, { ...picked, userId });
-  console.log(`[argo] billing 대사: 유실 복구 시도 user=${userId} sub=${picked.ls_subscription_id} → ${result}`);
+  if (result !== 'applied') {
+    // 대사가 막히면 자동 복구 경로가 더 없다 — 무음으로 두지 않고 수동 확인 대상으로 크게 남긴다.
+    console.error(`[argo] billing 대사 [수동 확인 필요] 적용 차단 user=${userId} sub=${picked.ls_subscription_id} → ${result}`);
+  } else {
+    console.log(`[argo] billing 대사: 유실 복구 user=${userId} sub=${picked.ls_subscription_id} → applied`);
+  }
   return { result, picked };
 }
