@@ -7,7 +7,7 @@ import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTa
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
-import { useAppUpdate, inTauri } from '../../../use-app-update';
+import { useAppUpdate } from '../../../use-app-update';
 import { trialBadgeState } from '../../../../src/entitlement.mjs';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
@@ -652,7 +652,7 @@ function SystemPermissionsCard() {
   const [os, setOs] = useState(null);
   const [err, setErr] = useState('');
   useEffect(() => {
-    if (!inTauri()) return;
+    if (!isTauriApp()) return; // 감지는 ui.jsx 단일 출처(use-app-update의 inTauri와 동일 식 — 중복 방지)
     if (/Mac/.test(navigator.platform)) setOs('mac');
     else if (/Win/.test(navigator.platform)) setOs('win');
   }, []);
