@@ -411,7 +411,7 @@ function ExportCard({ ws }) {
   }
 
   return (
-    <div className="card" style={{ padding: 18, display: 'grid', gap: 8, alignContent: 'start' }}>
+    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8, alignContent: 'start' }}>
       <span className="card-title">{t('settings.export.title')}</span>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.export.desc')}</p>
       <form onSubmit={doExport} style={{ display: 'flex', gap: 8 }}>
