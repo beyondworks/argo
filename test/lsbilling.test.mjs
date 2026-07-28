@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { verifyLsSignature, mapSubscriptionEvent, isStaleEvent, PRO_STATUSES, FREE_STATUSES } from '../src/lsbilling.mjs';
+import { verifyLsSignature, mapSubscriptionEvent, isStaleEvent, isOtherSubscriptionDowngrade, PRO_STATUSES, FREE_STATUSES } from '../src/lsbilling.mjs';
 
 const SECRET = 'test-signing-secret';
 const sign = (body, secret = SECRET) => createHmac('sha256', secret).update(body, 'utf8').digest('hex');
@@ -69,6 +69,14 @@ test('variant 허용목록: 목록 설정 시 타 상품 구매는 전권을 받
   assert.equal(mapSubscriptionEvent('subscription_updated', evt('active', { variant_id: 111 }), opts).plan, 'pro');
   // 목록 미설정(null)이면 게이트 없음 — 단일 상품 스토어의 기본 동작 유지
   assert.equal(mapSubscriptionEvent('subscription_updated', e, { allowedVariants: null }).plan, 'pro');
+});
+
+test('구독 신원 가드: 다른 구독의 강등만 차단 — 재구독자를 옛 구독 만료가 강등시키지 못한다', () => {
+  const stored = { ls_subscription_id: 'sub_B' };
+  assert.equal(isOtherSubscriptionDowngrade({ plan: 'free', ls_subscription_id: 'sub_A' }, stored), true);  // 다른 구독의 강등 → 차단
+  assert.equal(isOtherSubscriptionDowngrade({ plan: 'free', ls_subscription_id: 'sub_B' }, stored), false); // 같은 구독의 강등 → 진행
+  assert.equal(isOtherSubscriptionDowngrade({ plan: 'pro', ls_subscription_id: 'sub_A' }, stored), false);  // 승격은 신원 무관
+  assert.equal(isOtherSubscriptionDowngrade({ plan: 'free', ls_subscription_id: 'sub_A' }, { ls_subscription_id: null }), false); // 저장 id 없음(그랜드파더링) → 미발동
 });
 
 test('순서 역전: 과거 이벤트는 스킵, 최신·비교불가는 진행', () => {

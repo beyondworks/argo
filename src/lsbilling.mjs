@@ -66,6 +66,15 @@ export function mapSubscriptionEvent(eventName, payload, opts = {}) {
   };
 }
 
+/** 구독 신원 가드(O1) — 다른 구독의 강등 이벤트가 현재 구독을 덮으면 안 된다.
+    시나리오: 월간 해지(유예 pro) 후 연간 재구독 → 옛 월간의 expired가 나중에 도착해도
+    free로 덮으면 돈 낸 연간 구독자가 클라우드를 잃는다. 승격(pro)은 신원 무관 허용. */
+export function isOtherSubscriptionDowngrade(mapped, stored) {
+  return mapped?.plan === 'free'
+    && !!stored?.ls_subscription_id
+    && stored.ls_subscription_id !== mapped.ls_subscription_id;
+}
+
 /** 순서 역전 방어 — 새 이벤트가 저장분보다 과거면 스킵해야 하는가. */
 export function isStaleEvent(incomingUpdatedAt, storedUpdatedAt) {
   const inc = Date.parse(incomingUpdatedAt ?? '');

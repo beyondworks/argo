@@ -13,7 +13,9 @@ export async function GET() {
   const fail = (msg) => new Response(`${msg}\n(잠시 후 다시 시도해 주세요 / Please retry shortly)`, {
     status: 503, headers: { 'content-type': 'text/plain; charset=utf-8' },
   });
-  if (!user?.id || !url || !serviceKey) return fail('구독 정보를 확인할 수 없습니다 / Cannot verify subscription');
+  if (!user?.id || user.id === 'local' || user.id === 'guest' || !url || !serviceKey) {
+    return fail('구독 정보를 확인할 수 없습니다 / Cannot verify subscription'); // 로컬·게스트는 구독 표면 없음
+  }
   if (!apiKey) return fail('결제 연동이 아직 설정되지 않았습니다 / Billing is not configured yet');
   try {
     const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
@@ -29,7 +31,8 @@ export async function GET() {
     const j = await r.json();
     const portal = j?.data?.attributes?.urls?.customer_portal;
     if (!portal) throw new Error('portal url 없음');
-    return Response.redirect(portal, 302);
+    // 개인별 서명 링크 — 중간 캐시에 남지 않게 명시(재검수 LOW)
+    return new Response(null, { status: 302, headers: { Location: portal, 'Cache-Control': 'no-store, private' } });
   } catch (e) {
     console.error('[argo] billing portal 발급 실패:', e?.message ?? e);
     return fail('구독 관리 페이지를 열지 못했습니다 / Could not open the subscription portal');

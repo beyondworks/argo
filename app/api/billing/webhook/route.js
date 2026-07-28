@@ -6,7 +6,7 @@
 // ⚠ LS 재시도는 3회·약 155초(5s→25s→125s)가 전부다 — 그 안에 200을 못 주면 이벤트는 영구 유실되고
 // 재조정 경로가 없다(재검수 O2). 그래서 5xx 경로는 [유실 위험] 접두 로그로 크게 남긴다 — 후속 대사(reconcile) 예정.
 import { createClient } from '@supabase/supabase-js';
-import { verifyLsSignature, mapSubscriptionEvent, isStaleEvent } from '../../../../src/lsbilling.mjs';
+import { verifyLsSignature, mapSubscriptionEvent, isStaleEvent, isOtherSubscriptionDowngrade } from '../../../../src/lsbilling.mjs';
 
 export async function POST(req) {
   const secret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
@@ -18,7 +18,8 @@ export async function POST(req) {
     return Response.json({ error: 'unauthorized' }, { status: 401 }); // 프로빙에 미설정을 노출하지 않는다
   }
   if (Number(req.headers.get('content-length') || 0) > 1_000_000) {
-    return Response.json({ error: 'too large' }, { status: 413 }); // 공개 엔드포인트 — 본문 상한
+    // 헤더 신뢰 기반 best-effort — chunked 전송은 통과한다(플랫폼 body 제한이 최종 방어)
+    return Response.json({ error: 'too large' }, { status: 413 });
   }
   const raw = await req.text();
   if (!verifyLsSignature(raw, req.headers.get('x-signature'), secret)) {
@@ -35,8 +36,10 @@ export async function POST(req) {
   });
   if (!mapped) return Response.json({ ok: true, ignored: eventName }); // 미처리 이벤트 — 200(재시도 방지)
   if (mapped.error) {
-    // 결제는 됐는데 귀속 불가(custom user_id 누락 등) — 조용히 버리면 유령 결제가 된다. 로그로 드러낸다.
-    console.error('[argo] billing webhook 귀속 실패:', eventName, mapped.error, 'sub=', payload?.data?.id);
+    // 결제는 됐는데 귀속 불가(custom user_id 누락·상품 불일치 등) — 조용히 버리면 유령 결제가 된다.
+    // other-product는 특히 오설정(PRO_VARIANT_IDS에 월간·연간 중 하나 누락)일 가능성이 높아 [유실 위험]으로.
+    console.error('[argo] billing webhook [유실 위험] 귀속 실패:', eventName, mapped.error,
+      'sub=', payload?.data?.id, 'email=', payload?.data?.attributes?.user_email ?? '?');
     return Response.json({ ok: true, unmatched: mapped.error });
   }
 
@@ -50,10 +53,7 @@ export async function POST(req) {
   if (cur && isStaleEvent(mapped.ls_updated_at, cur.ls_updated_at)) {
     return Response.json({ ok: true, stale: true }); // 재시도 역전 — 최신 상태 유지
   }
-  // 구독 신원 가드(재검수 O1): 다른 구독의 강등 이벤트가 현재 구독을 덮지 않게 한다.
-  // 시나리오 — 월간 해지(유예 중) 후 연간 재구독: 옛 월간의 expired가 나중에 도착해도 free로 덮으면
-  // 돈 낸 연간 구독자가 클라우드를 잃는다. 승격(pro)은 신원 무관 허용 — 새 구독 즉시 반영.
-  if (mapped.plan === 'free' && cur?.ls_subscription_id && cur.ls_subscription_id !== mapped.ls_subscription_id) {
+  if (isOtherSubscriptionDowngrade(mapped, cur)) { // 구독 신원 가드(O1) — 로직·시나리오는 lsbilling.mjs
     return Response.json({ ok: true, otherSubscription: true });
   }
   const { error: upErr } = await sb.from('entitlements').upsert({
