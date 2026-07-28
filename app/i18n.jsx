@@ -214,6 +214,7 @@ const DICT = {
   'settings.archive.desc': ['목록에서 사라지지만 데이터(크루·기억·루틴)는 삭제되지 않고 보관됩니다.', 'Removed from the list, but data (crew, memory, routines) is preserved in archive.'],
   'settings.archive.btn': ['회사 보관', 'Archive'],
   'common.browse': ['찾아보기', 'Browse'],
+  'common.noFolderChosen': ['선택된 폴더 없음', 'No folder chosen'],
   'settings.export.pickTitle': ['내보낼 폴더 선택', 'Choose export folder'],
   'settings.export.title': ['데이터 내보내기', 'Export Data'],
   'settings.export.desc': ['이 회사의 대화·기억·크루 카드를 지정한 폴더로 복사합니다. 백업하거나 외장 디스크로 옮겨 보관할 때 쓰세요.', 'Copy this company\'s conversations, memory, and crew cards to a folder you choose — for backups or moving to an external drive.'],

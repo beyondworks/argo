@@ -3,7 +3,7 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, pickFolder } from '../../../ui';
+import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, openFolderDialog } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
@@ -390,13 +390,50 @@ function ThemeCard() {
   );
 }
 
+/** 폴더 지정 필드 — 데스크톱은 **버튼 하나로 Finder/탐색기**를 열고 고른 경로를 옆에 보여준다.
+    경로 입력창은 웹 전용이다(브라우저는 실경로를 주지 않는다). 유건 지시 2026-07-28:
+    "경로를 입력하는 창 자체가 필요 없이 버튼 누르면 finder 열려서 선택 가능해야 함".
+    픽커가 실패하면(구버전 바이너리에 dialog 플러그인 부재 등) 그때만 입력창을 드러낸다 —
+    감춘 채로 두면 사용자가 아무것도 못 하는 막다른 길이 된다(v0.1.32 실사고). */
+function FolderField({ value, onChange, placeholder, pickTitle, disabled }) {
+  const { t } = useLang();
+  const [isApp, setIsApp] = useState(false);
+  const [pickerDead, setPickerDead] = useState(false); // 실패 1회 → 이 세션 동안 입력 폴백 유지
+  useEffect(() => { setIsApp(isTauriApp()); }, []);
+
+  async function pick() {
+    try {
+      const d = await openFolderDialog(pickTitle);
+      if (d) onChange(d); // null = 사용자 취소 — 고른 값을 지우지 않는다
+    } catch (e) {
+      console.warn('[argo] 폴더 픽커 실패:', e?.message ?? e);
+      setPickerDead(true);
+    }
+  }
+
+  if (!isApp || pickerDead) {
+    return (
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
+    );
+  }
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+      <button className="btn" type="button" onClick={pick} disabled={disabled} style={{ flex: 'none' }}>
+        <Icon name="folder" size={13} /> {t('common.browse')}
+      </button>
+      <span className="mono" style={{ flex: 1, minWidth: 0, fontSize: 11.5, overflowWrap: 'anywhere', color: value ? 'var(--fg-1)' : 'var(--fg-3)' }}>
+        {value || t('common.noFolderChosen')}
+      </span>
+    </div>
+  );
+}
+
 /** 회사 데이터 내보내기 — 지정 폴더로 복사(백업·이사·보관. A갈래 신고 대응 2026-07-28).
     자격 파일(.secrets·connections·mcp)·심링크는 제외된다 — 정책 정본은 src/export.mjs. */
 function ExportCard({ ws }) {
   const { t } = useLang();
   const [dest, setDest] = useState('');
-  const [isApp, setIsApp] = useState(false);
-  useEffect(() => { setIsApp(isTauriApp()); }, []);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null); // { target, files }
   const [err, setErr] = useState('');
@@ -419,14 +456,10 @@ function ExportCard({ ws }) {
     <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8, alignContent: 'start' }}>
       <span className="card-title">{t('settings.export.title')}</span>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.export.desc')}</p>
-      <form onSubmit={doExport} style={{ display: 'flex', gap: 8 }}>
-        <input value={dest} onChange={(e) => setDest(e.target.value)} placeholder={t('settings.export.placeholder')}
-          {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
-        {isApp && (
-          // 데스크톱: 네이티브 픽커(ui.jsx 공통) — 웹은 실경로 미제공이라 텍스트 입력 유지(정직 폴백)
-          <button className="btn" type="button" onClick={async () => { const d = await pickFolder(t('settings.export.pickTitle')); if (d) setDest(d); }} disabled={busy}>{t('common.browse')}</button>
-        )}
-        <button className="btn" type="submit" disabled={busy || !dest.trim()}>{busy ? <Spinner /> : t('settings.export.run')}</button>
+      <form onSubmit={doExport} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <FolderField value={dest} onChange={setDest} placeholder={t('settings.export.placeholder')}
+          pickTitle={t('settings.export.pickTitle')} disabled={busy} />
+        <button className="btn" type="submit" disabled={busy || !dest.trim()} style={{ flex: 'none' }}>{busy ? <Spinner /> : t('settings.export.run')}</button>
       </form>
       {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
       {result && (
@@ -446,22 +479,14 @@ function ExportCard({ ws }) {
 function ImportCard({ ws }) {
   const { t } = useLang();
   const [src, setSrc] = useState('');
-  const [isApp, setIsApp] = useState(false);
-  useEffect(() => { setIsApp('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri')); }, []);
   const [busy, setBusy] = useState(false);
   const [plan, setPlan] = useState(null);     // 드라이런 결과 — 실행 전 "몇 건이 어디로"
   const [result, setResult] = useState(null);
   const [progress, setProgress] = useState(null);
   const [err, setErr] = useState('');
 
-  // 데스크톱: 네이티브 폴더 픽커. 웹은 브라우저가 실경로를 주지 않아 텍스트 입력 유지(ExportCard와 동일 폴백).
-  async function pickFolder() {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const dir = await open({ directory: true, multiple: false, title: t('settings.import.pickTitle') });
-      if (typeof dir === 'string' && dir) { setSrc(dir); setPlan(null); setResult(null); setErr(''); }
-    } catch { /* 픽커 실패 — 텍스트 입력이 그대로 남아 있다 */ }
-  }
+  // 폴더가 바뀌면 이전 미리보기·결과는 무효 — 다른 볼트의 계획을 그대로 실행하는 사고를 막는다.
+  function chooseSrc(v) { setSrc(v); setPlan(null); setResult(null); setErr(''); }
 
   function fail(ex) {
     const code = String(ex.message || '');
@@ -503,13 +528,10 @@ function ImportCard({ ws }) {
     <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8, alignContent: 'start' }}>
       <span className="card-title">{t('settings.import.title')}</span>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.import.desc')}</p>
-      <form onSubmit={preview} style={{ display: 'flex', gap: 8 }}>
-        <input value={src} onChange={(e) => { setSrc(e.target.value); setPlan(null); }} placeholder={t('settings.import.placeholder')}
-          {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
-        {isApp && (
-          <button className="btn" type="button" onClick={pickFolder} disabled={busy}>{t('settings.export.browse')}</button>
-        )}
-        <button className="btn" type="submit" disabled={busy || !src.trim()}>{busy && !plan ? <Spinner /> : t('settings.import.preview')}</button>
+      <form onSubmit={preview} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <FolderField value={src} onChange={chooseSrc} placeholder={t('settings.import.placeholder')}
+          pickTitle={t('settings.import.pickTitle')} disabled={busy} />
+        <button className="btn" type="submit" disabled={busy || !src.trim()} style={{ flex: 'none' }}>{busy && !plan ? <Spinner /> : t('settings.import.preview')}</button>
       </form>
       {plan && (
         <div style={{ display: 'grid', gap: 6 }}>
@@ -724,8 +746,6 @@ function WorkRootsCard({ ws }) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const [isApp, setIsApp] = useState(false);
-  useEffect(() => { setIsApp(isTauriApp()); }, []);
 
   useEffect(() => {
     // 로드 실패를 빈 목록과 구분 — "없습니다"로 보이면 일시 장애가 데이터 소실처럼 읽힌다(분리 검수 LOW)
@@ -768,13 +788,10 @@ function WorkRootsCard({ ws }) {
           ))}
           {roots.length < max && (
             <form onSubmit={(e) => { e.preventDefault(); if (input.trim()) mutate({ add: input.trim() }); }}
-              style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-              <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={t('settings.workroots.placeholder')}
-                {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
-              {isApp && (
-                <button className="btn" type="button" onClick={async () => { const d = await pickFolder(t('settings.workroots.pickTitle')); if (d) setInput(d); }} disabled={busy}>{t('common.browse')}</button>
-              )}
-              <button className="btn" type="submit" disabled={busy || !input.trim()}>{busy ? <Spinner /> : t('settings.workroots.add')}</button>
+              style={{ display: 'flex', gap: 8, marginTop: 4, alignItems: 'center' }}>
+              <FolderField value={input} onChange={setInput} placeholder={t('settings.workroots.placeholder')}
+                pickTitle={t('settings.workroots.pickTitle')} disabled={busy} />
+              <button className="btn" type="submit" disabled={busy || !input.trim()} style={{ flex: 'none' }}>{busy ? <Spinner /> : t('settings.workroots.add')}</button>
             </form>
           )}
           {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: '2px 0 0' }}>{err}</p>}
