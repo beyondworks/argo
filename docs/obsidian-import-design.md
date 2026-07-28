@@ -25,15 +25,19 @@
 | 2 | 템플릿 폴더(`templates/`, `_templates/`, `템플릿/` — 대소문자 무시) 안의 파일 | **미분류**(`template`) | 템플릿은 콘텐츠가 아니라 서식 — 크루 기억에 섞이면 오염 |
 | 3 | 데일리 노트: 파일명 `YYYY-MM-DD*.md` (옵시디언 Daily Notes 기본) | **journal/** `YYYY-MM-DD-<원본이름잔여>-imported.md` | Argo 일지 kind 판정(vaultdoc.docKind)이 `^\d{4}-\d{2}-\d{2}-` 요구 — 이 이름이어야 인덱스 "최근 일지" 구간에 잡힌다 |
 | 4 | 첨부 확장자(png·jpg·jpeg·gif·webp·svg·pdf·mp3·wav·m4a·mp4·mov·zip·pptx·docx·xlsx·csv·txt·json·html) | **files/imported/**<원본 상대경로 유지> | Argo files/ = 첨부 표준 위치. 폴더 구조 보존(맥락) |
+| 4.5 | Argo 제어파일 basename(`connections.json`·`mcp.json`·`company.json`·`capabilities.json`) | **복사 안 함**(skip: `sensitive`, 건별 리포트) | 들여오는 방향의 시크릿 계약(분리 검수 CRITICAL-1/HIGH-1) — vault는 동기화·크루 열람·내보내기 대상이라 자격 파일이 실리면 secretbox(rel 정확 일치)·export 제외(직속만)를 전부 우회한다 |
 | 5 | 그 외 `.md` | **notes/** (평탄화 — 폴더 경로는 버리고 파일명만. 충돌 시 `폴더명-파일명`, 그래도 충돌이면 접미 번호) | Argo notes/는 평면(listDocs 비재귀)이 정본 구조 |
 | 6 | 빈 md(공백뿐) | **미분류**(`empty`) | 빈 노트가 주제 노트로 들어가면 인덱스 잡음 |
 | 7 | 나머지(`.canvas`, `.base`, `.excalidraw`, 미지의 바이너리 등) | **미분류**(`unknown-type`) | Argo가 렌더할 수 없는 형식 — 크루가 읽을 수 없다 |
 | 8 | 단일 파일 200MB 초과 | **복사 안 함**(skip: `too-large`, 건별 리포트) | 원본은 소스 볼트에 그대로 있다 — 리포트로 안내가 정직한 처리 |
 | 9 | 심링크 | **건너뜀**(skip: `symlink`) | export.mjs와 같은 근거 — 볼트 밖을 가리키는 포인터가 워크스페이스로 실려 오는 것 차단 |
 
-- 총량 상한: 파일 20,000개 / 합계 2GB 초과 시 시작 전에 거부(`too-many`, `too-big`) —
-  워크스페이스는 클라우드 동기화 대상이라 무한정 실어 오면 안 된다(관문 0.5: 동기화 비용은
-  파일 수·크기에 선형. 상한이 실증 부족하면 이후 올린다).
+- 총량 상한: 파일 2,000개 / 합계 2GB 초과 시 시작 전에 거부(`too-many`, `too-big`).
+  수치 근거는 임포트 1회 비용이 아니라 **임포트 이후의 상시 비용**이다: listDocs(hub.mjs)가
+  무캐시로 notes·journal 전 파일을 매 화면 로드마다 전문 읽기 하므로, 벌크 임포트가 "notes/는
+  수십~수백 규모"라는 암묵 전제를 깬다(분리 검수 HIGH-2). **후속 백로그: listDocs의 memindex
+  캐시 전환 — 그때 상한을 올린다.** 플랜 단계는 본문을 보관하지 않는다(쓰기 시점 재읽기 —
+  2GB 상한 통과분이 힙에 얹히는 OOM 방지, 검수 MED-1).
 
 ## 위키링크 처리
 
@@ -66,13 +70,22 @@
 ## 안전·경계
 
 - 소스 경로 검증: `validateWorkRoot` 재사용(절대경로·존재·디렉토리·루트 전체 거부·보호 구역
-  거부·realpath 봉인). WS_ROOT 안 경로가 거부되므로 **자기 워크스페이스 재귀 임포트가 원천 차단**된다.
+  "안" 거부·realpath 봉인) + **임포트 전용 조상 거부**: WS_ROOT·~/.argo를 **포함하는** 소스도
+  거부한다. validateWorkRoot는 조상을 의도적으로 허용하는데(러너 책상 개방 계열), 임포트는 읽은
+  것을 회사 vault로 복사하므로 같은 예외가 "타 회사 자격·대화 평문 흡입"이 된다(분리 검수
+  CRITICAL-1 — 격리 재현으로 실증됨. workroots의 예외를 임포트가 상속하지 않는다).
 - API: `POST /api/companies/[ws]/import/obsidian` — `guardCompany` + `csrfDenied`
   (export와 동일 근거: 로컬 모드에서 악성 웹페이지 simple POST가 임의 디스크 폴더를 회사로
   끌어와 클라우드 동기화로 유출시키는 경로 차단).
-- 진행 표시: 임포트 중 `<ws>/.import-status.json`(직속 도트파일 — sync EXCLUDE·export 제외
-  자동 적용)에 `{ phase, done, total }`을 기록, `GET .../import/obsidian`이 반환, UI가 실행 중에만
-  1초 폴링(상시 타이머 아님 — 관문 0.5 해당 없음). 동시 실행은 mutex(withLock)로 직렬화.
+- 진행 표시: 임포트 중 `<ws>/.import.status.json`에 `{ phase, done, total }`을 기록,
+  `GET .../import/obsidian`이 반환, UI가 실행 중에만 1초 폴링(상시 타이머 아님 — 관문 0.5 해당
+  없음). 파일명은 `.status.json` 접미 필수 — sync EXCLUDE의 상태 파일 규칙이 접미 일치라
+  `-status.json`은 동기화를 탄다(검수 MED-2 실측). export 제외는 직속 도트 규칙으로 걸린다.
+  동시 실행은 mutex(withLock)로 직렬화.
+- 삭제 존중: manifest에 있는데 타깃이 없으면 = 사용자가 앱에서 지운 것 — 재실행이 되살리지
+  않는다(skip: `user-deleted`, 리포트 안내. 검수 MED-3 — "유령 대화 부활"과 같은 계급).
+- 알려진 한계(문서화 유보, 검수 MED-6): manifest 키가 소스 절대경로라 볼트 이동·타 기기 재임포트는
+  새 소스로 취급된다(중복 사본 — 유실 아님). 볼트 지문 키는 후속.
 - 파괴적 액션 아님: 덮어쓰기가 원천 없으므로 DangerModal 불요(규칙 확인함). 실행 전 **드라이런
   미리보기**(dryRun: 복사 없이 분류 계획 집계)를 같은 API로 제공 — "몇 건이 어디로 가는지" 보고
   사용자가 실행을 결정한다.

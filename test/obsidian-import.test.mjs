@@ -3,7 +3,7 @@
 // ⑤ 재실행은 변화분만(manifest). 설계 정본: docs/obsidian-import-design.md
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, utimes, symlink, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, utimes, symlink, stat, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +15,11 @@ const { classifyVaultEntry, sanitizeSegment, rewriteLinks, importObsidianVault, 
 test('classifyVaultEntry: 설계 표의 분류 규칙', () => {
   assert.deepEqual(classifyVaultEntry('.obsidian/app.json'), { dest: 'skip', reason: 'config' });
   assert.deepEqual(classifyVaultEntry('a/.trash/x.md'), { dest: 'skip', reason: 'config' });
+  // 들여오는 방향의 시크릿 계약(분리 검수 CRITICAL-1/HIGH-1) — Argo 제어파일 basename은 어디서든 미복사
+  assert.deepEqual(classifyVaultEntry('connections.json'), { dest: 'skip', reason: 'sensitive' });
+  assert.deepEqual(classifyVaultEntry('deep/otherco/mcp.json'), { dest: 'skip', reason: 'sensitive' });
+  assert.deepEqual(classifyVaultEntry('x/company.json'), { dest: 'skip', reason: 'sensitive' });
+  assert.deepEqual(classifyVaultEntry('x/capabilities.json'), { dest: 'skip', reason: 'sensitive' });
   assert.equal(classifyVaultEntry('templates/tpl.md').reason, 'template');
   assert.equal(classifyVaultEntry('서식/템플릿/틀.md').reason, 'template');
   assert.equal(classifyVaultEntry('2026-01-05.md').dest, 'journal');
@@ -45,6 +50,9 @@ test('rewriteLinks: 별칭·섹션은 타깃 유지에 흡수, 모르는 타깃�
   assert.ok(out.includes('![img.png](/api/companies/w1/files?rel=files%2Fimported%2Fimg.png)'), '이미지 임베드 → 인라인 렌더 URL');
   assert.ok(out.includes('[doc.pdf](/api/companies/w1/files?rel=files%2Fimported%2Fdoc.pdf)'), '비이미지 첨부 → 링크');
   assert.ok(out.includes('[[없는노트]]'), '미임포트 타깃은 원문 그대로');
+  // 괄호 파일명 — encodeURIComponent가 ()를 안 바꿔 md 링크 문법이 깨진다(검수 LOW-1)
+  const out2 = rewriteLinks('![[a)b.png]]', { noteMap: new Map(), attMap: new Map([['a)b.png', 'files/imported/a)b.png']]), wsId: 'w1' });
+  assert.ok(out2.includes('%29') && !/\([^)]*\)[^)]*\)/.test(out2), `괄호는 %28/%29로: ${out2}`);
 });
 
 async function makeSampleVault() {
@@ -61,6 +69,7 @@ async function makeSampleVault() {
   await writeFile(join(src, 'templates', 'tpl.md'), '{{date}}\n');
   await writeFile(join(src, 'empty.md'), '   \n');
   await writeFile(join(src, 'drawing.canvas'), '{"nodes":[]}');
+  await writeFile(join(src, 'connections.json'), '{"telegram":{"token":"FAKE-토큰"}}'); // 시크릿 미흡입 계약
   await symlink('/etc/hosts', join(src, 'bad.md'));
   // 옛 노트의 mtime — 임포트가 시간을 보존하는지 본다
   const old = new Date('2024-03-01T09:00:00Z');
@@ -86,7 +95,9 @@ test('importObsidianVault: 스캐폴드 재분류 + 링크 재작성 + 미분류
   assert.equal(r.notes, 1);
   assert.equal(r.files, 1);
   assert.equal(r.unsorted, 3, '템플릿·빈 노트·canvas');
-  assert.equal(r.skipped, 1, '심링크');
+  assert.equal(r.skipped, 2, '심링크 + Argo 제어파일(connections.json)');
+  assert.ok(r.skippedItems.some((s) => s.reason === 'sensitive'), '시크릿 미흡입이 리포트에 명시');
+  assert.deepEqual(r.filesItems, ['Projects/img.png'], '첨부로 무엇이 들어오는지 목록 제공(검수 HIGH-1 UI 축)');
   assert.equal(r.configSkipped, 1, '.obsidian');
 
   // 배치 — vaultdoc.docKind가 일지로 인식하는 이름(YYYY-MM-DD-)
@@ -114,9 +125,19 @@ test('importObsidianVault: 스캐폴드 재분류 + 링크 재작성 + 미분류
   const mt = (await stat(n1)).mtime.getTime();
   assert.equal(mt, new Date('2024-03-01T09:00:00Z').getTime(), '원본 mtime 복원');
 
-  // 리포트 존재 + 원본 무수정
+  // 리포트 존재 + 원본 무수정 + 시크릿 미흡입(워크스페이스 어디에도 토큰 문자열이 없다)
   assert.ok(r.reportRel && existsSync(join(root, r.reportRel)));
   assert.equal((await readdir(src)).length, before, '소스 볼트에 아무것도 안 생겼다');
+  async function grepAll(dir, needle) {
+    let hit = false;
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const f = join(dir, e.name);
+      if (e.isDirectory()) hit = hit || await grepAll(f, needle);
+      else if (e.isFile()) hit = hit || (await readFile(f, 'utf8').catch(() => '')).includes(needle);
+    }
+    return hit;
+  }
+  assert.equal(await grepAll(join(root, 'vault'), 'FAKE-토큰'), false, 'connections.json 내용이 vault 어디에도 없다');
 
   // 재실행 — 변화분 없음: 전부 already, 새 파일 0
   const notesBefore = (await readdir(join(root, 'vault', 'notes'))).length;
@@ -125,12 +146,42 @@ test('importObsidianVault: 스캐폴드 재분류 + 링크 재작성 + 미분류
   assert.equal(r2.journal + r2.notes + r2.files + r2.unsorted, 0);
   assert.equal((await readdir(join(root, 'vault', 'notes'))).length, notesBefore, '중복 사본 없음');
 
-  // 소스 수정 후 재실행 — 기존을 덮지 않고 새 사본(접미 번호)
+  // 소스 수정 후 재실행 — 기존을 덮지 않고 새 사본(충돌 1차: 폴더 접두 — 검수 MED-4)
   await writeFile(join(src, 'Projects', '프로젝트 계획.md'), '# 계획 v2\n');
   const r3 = await importObsidianVault(ws, src);
   assert.equal(r3.notes, 1);
-  assert.ok(existsSync(join(root, 'vault', 'notes', '프로젝트-계획-2.md')), '변경분은 -2로 분리 — 원본 노트 불덮기');
+  assert.ok(existsSync(join(root, 'vault', 'notes', 'Projects-프로젝트-계획.md')), '변경분은 폴더 접두로 분리 — 원본 노트 불덮기');
   assert.equal(await readFile(n1, 'utf8'), nText, '기존 노트 내용 그대로');
+});
+
+test('importObsidianVault: 사용자가 지운 임포트 노트는 재실행이 되살리지 않는다(검수 MED-3)', async () => {
+  const ws = 'imp-del';
+  const root = await makeCompany(ws);
+  const src = await mkdtemp(join(tmpdir(), 'obs-del-'));
+  await writeFile(join(src, '싫은노트.md'), '# 싫은 내용\n');
+  await importObsidianVault(ws, src);
+  const target = join(root, 'vault', 'notes', '싫은노트.md');
+  assert.ok(existsSync(target));
+  await rm(target); // 사용자가 앱에서 삭제한 상황
+  const r2 = await importObsidianVault(ws, src);
+  assert.equal(r2.notes, 0, '재복사 없음');
+  assert.equal(existsSync(target), false, '부활 없음');
+  assert.ok(r2.skippedItems.some((s) => s.reason === 'user-deleted'), '리포트에 이유 안내');
+});
+
+test('importObsidianVault: 같은 파일명 노트 여러 벌 — 폴더 접두로 맥락 보존(검수 MED-4)', async () => {
+  const ws = 'imp-idx';
+  const root = await makeCompany(ws);
+  const src = await mkdtemp(join(tmpdir(), 'obs-idx-'));
+  await mkdir(join(src, 'ProjectA'), { recursive: true });
+  await mkdir(join(src, 'ProjectB'), { recursive: true });
+  await writeFile(join(src, 'ProjectA', 'index.md'), '# A\n');
+  await writeFile(join(src, 'ProjectB', 'index.md'), '# B\n');
+  const r = await importObsidianVault(ws, src);
+  assert.equal(r.notes, 2);
+  const names = (await readdir(join(root, 'vault', 'notes'))).sort();
+  assert.ok(names.includes('index.md'), '첫 벌은 원래 이름');
+  assert.ok(names.includes('ProjectA-index.md') || names.includes('ProjectB-index.md'), `둘째 벌은 폴더 접두: ${names}`);
 });
 
 test('importObsidianVault: dryRun은 아무것도 쓰지 않는다', async () => {
@@ -142,12 +193,16 @@ test('importObsidianVault: dryRun은 아무것도 쓰지 않는다', async () =>
   assert.equal(r.journal, 2);
   assert.equal(existsSync(join(root, 'vault', 'journal')), false, '드라이런은 폴더도 안 만든다');
   assert.equal(existsSync(join(root, 'vault', '_imported')), false);
-  assert.equal(existsSync(join(root, '.import-status.json')), false, '상태 파일도 안 쓴다');
+  assert.equal(existsSync(join(root, '.import.status.json')), false, '상태 파일도 안 쓴다');
 });
 
-test('importObsidianVault: 보호 구역 소스·회사 부재 거부', async () => {
+test('importObsidianVault: 보호 구역 소스(안·조상 모두)·회사 부재 거부', async () => {
   await makeCompany('imp-guard');
   await assert.rejects(() => importObsidianVault('imp-guard', process.env.ARGO_ROOT), (e) => e.code === 'protected', '자기 데이터 루트 재귀 임포트 차단');
+  // 조상 거부(검수 CRITICAL-1) — WS_ROOT를 "포함하는" 폴더를 고르면 타 회사 자격·대화가 통째로
+  // 이 회사 vault로 평문 복사된다(격리 재현됨). validateWorkRoot의 조상 허용 예외를 상속하지 않는다.
+  const { dirname: dn } = await import('node:path');
+  await assert.rejects(() => importObsidianVault('imp-guard', dn(process.env.ARGO_ROOT)), (e) => e.code === 'protected', 'WS_ROOT 조상 임포트 차단');
   await assert.rejects(() => importObsidianVault('imp-guard', '/no/such/vault'), (e) => e.code === 'not-found');
   const src = await mkdtemp(join(tmpdir(), 'obs-nows-'));
   await assert.rejects(() => importObsidianVault('no-such-ws', src), (e) => e.code === 'no-company');

@@ -3,28 +3,38 @@
 //
 // 불변 원칙:
 //  - 원본 볼트는 읽기 전용 — 소스에 단 1바이트도 쓰지 않는다(임포트 = 복사).
-//  - 기존 회사 데이터를 덮지 않는다 — 대상 충돌은 접미 번호(-2, -3)로 분리(기억 유실 금지).
+//  - 기존 회사 데이터를 덮지 않는다 — 대상 충돌은 폴더 접두 → 접미 번호로 분리(기억 유실 금지).
 //  - 증류 불가는 버리지 않는다 — vault/_imported/unsorted/에 보존하고 건별 이유를 리포트에 싣는다.
 //  - 러너 없이 완결 — 규칙 기반만으로 끝난다(LLM 증류는 Phase 2).
 //  - 서버 한국어 하드코딩 금지(K7 계열) — 오류·이유는 코드로, UI가 i18n 매핑.
 //    리포트 md 파일만 회사 언어(company.json lang)를 따른다(크루 기억 노트와 같은 규약).
+//  - 들여오는 방향의 시크릿 계약(분리 검수 CRITICAL-1/HIGH-1 2026-07-28): 임포트는 읽은 것을
+//    회사 vault(동기화·크루 열람·내보내기 대상)로 싣는 행위다. export가 "자격을 내보내지 않는다"면
+//    임포트는 "자격을 들여오지 않는다"가 대칭 계약이다 — ① 소스가 Argo 데이터 루트(WS_ROOT·~/.argo)를
+//    포함하는 조상이면 거부(타 회사 통째 흡입 차단 — workroots의 조상 허용 예외를 상속하지 않는다),
+//    ② Argo 제어파일 basename(connections.json 등)은 어느 볼트에서든 복사하지 않는다.
 //
 // 규모(관문 0.5): 사용자 1회성 액션 — 상시 타이머 없음. 비용은 볼트 크기에 선형(복사 1회 +
-// 이후 동기화 1회 업로드). 상한(파일 2만·합계 2GB)으로 클라우드 동기화 폭주를 사전 차단한다.
-import { readdir, readFile, copyFile, mkdir, stat, utimes } from 'node:fs/promises';
+// 이후 동기화 1회 업로드). 상한: 파일 2,000·합계 2GB — 수치 근거는 임포트 자체가 아니라
+// **임포트 이후의 상시 비용**이다: listDocs(hub.mjs)가 무캐시로 notes·journal 전 파일을 매 화면
+// 로드마다 읽으므로, 노트 수가 곧 대시보드 로드 비용이 된다(분리 검수 HIGH-2). listDocs의
+// memindex 캐시 전환이 후속 백로그(설계 문서 참조)이고, 그때 상한을 올린다.
+import { readdir, readFile, copyFile, mkdir, stat, utimes, realpath } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
-import { paths, loadCompany } from './workspace.mjs';
+import { homedir } from 'node:os';
+import { paths, loadCompany, WS_ROOT } from './workspace.mjs';
 import { validateWorkRoot } from './workroots.mjs';
 import { updateIndex } from './memory.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
+import { insideFold, fold } from './pathcase.mjs';
 
 const err = (code, msg) => Object.assign(new Error(msg), { code });
 
 export const MAX_FILE_BYTES = 200 * 1024 * 1024;      // 단일 파일 상한 — 초과는 복사 없이 리포트(원본은 볼트에 그대로)
-export const MAX_COUNT = 20_000;                       // 총 파일 수 상한 — 워크스페이스는 동기화 대상이라 무한정 못 싣는다
-export const MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024; // 총 용량 상한 — 같은 근거
+export const MAX_COUNT = 2_000;                        // 총 파일 수 상한 — listDocs 상시 비용 근거(모듈 주석)
+export const MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024; // 총 용량 상한 — 동기화 1회 업로드 비용
 
 // Argo files/ 서빙(files/route.js MIME)과 옵시디언 통용 첨부의 교집합 위주 — 여기 없으면 미분류로
 // 정직하게 보낸다(조용히 버리지 않는다).
@@ -32,6 +42,9 @@ const ATTACH_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'pdf', '
 const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
 const DAILY_RE = /^(\d{4}-\d{2}-\d{2})(.*)\.md$/i;     // 옵시디언 Daily Notes 기본 형식(+ 뒤 수식어 허용)
 const TEMPLATE_SEG = /^_?templates?$|^템플릿$/i;
+// Argo 제어파일 — 어느 소스에서든 들여오지 않는다(회사 흡입·오조작 대비 심층 방어, 검수 HIGH-1).
+// 직속 도트파일(.secrets.json 등)은 도트 규칙이 이미 걸러 별도 등재 불요.
+const SENSITIVE_BASE = new Set(['connections.json', 'mcp.json', 'company.json', 'capabilities.json']);
 
 /** 경로 조각 정리 — 위키링크 문법 문자·경로 위험 문자 제거, 공백→'-'. 케이스·한글은 보존.
     (export: 회귀 테스트용) */
@@ -52,6 +65,7 @@ export function classifyVaultEntry(rel, size = 0) {
   const segs = rel.split('/');
   const base = segs[segs.length - 1];
   if (segs.some((s) => s.startsWith('.'))) return { dest: 'skip', reason: 'config' };
+  if (SENSITIVE_BASE.has(base)) return { dest: 'skip', reason: 'sensitive' }; // 복사 안 함 — 원본은 소스에 그대로
   if (segs.slice(0, -1).some((s) => TEMPLATE_SEG.test(s))) return { dest: 'unsorted', reason: 'template' };
   if (size > MAX_FILE_BYTES) return { dest: 'skip', reason: 'too-large' };
   const ext = base.includes('.') ? base.split('.').pop().toLowerCase() : '';
@@ -76,16 +90,19 @@ export function rewriteLinks(content, { noteMap, attMap, wsId }) {
     const attKeyFull = target.toLowerCase();
     const att = attMap.get(attKeyFull) ?? attMap.get(attKeyFull.split('/').pop());
     if (att) {
-      const url = `/api/companies/${wsId}/files?rel=${encodeURIComponent(att)}`;
-      const label = basename(target);
+      // 괄호는 md 링크 문법을 깬다 — encodeURIComponent가 ()를 안 바꾸므로 직접 인코딩(검수 LOW-1)
+      const url = `/api/companies/${wsId}/files?rel=${encodeURIComponent(att).replace(/\(/g, '%28').replace(/\)/g, '%29')}`;
+      const label = basename(target).replace(/[[\]()]/g, ' ').trim();
       return bang && IMG_EXT.has(att.split('.').pop().toLowerCase()) ? `![${label}](${url})` : `[${label}](${url})`;
     }
     return whole; // 미임포트·외부 타깃 — 임의 추측 재작성 금지
   });
 }
 
-/* ── 진행 상태 — 직속 도트파일(.import-status.json): sync EXCLUDE·export 제외가 자동 적용된다. */
-const statusFile = (wsId) => join(paths(wsId).root, '.import-status.json');
+/* ── 진행 상태 — 직속 도트파일 + '.status.json' 접미: sync EXCLUDE의 상태 파일 규칙
+   (sync.mjs: base.endsWith('.status.json'))과 export의 직속 도트 제외에 둘 다 걸린다.
+   (첫 이름 '.import-status.json'은 접미 불일치로 동기화를 탔다 — 분리 검수 MED-2 실측) */
+const statusFile = (wsId) => join(paths(wsId).root, '.import.status.json');
 
 export async function readImportStatus(wsId) {
   return readJsonLenient(statusFile(wsId), { phase: 'idle' });
@@ -97,7 +114,9 @@ async function writeStatus(wsId, status) {
 
 /* ── 재실행 대장(manifest) — 소스 파일 → 배치된 타깃. 같은 볼트를 다시 가져오면 변화분만 추가되고
    (미변경 = already-imported), 링크 맵은 기존 타깃을 재사용한다. 소스가 바뀐 파일은 덮지 않고
-   새 사본(접미 번호)으로 들어간다 — 기억 유실 금지. */
+   새 사본(접미 번호)으로 들어간다 — 기억 유실 금지.
+   알려진 한계(검수 MED-6, 문서화 유보): 키가 소스 절대경로라 볼트를 옮기거나 다른 기기에서
+   같은 볼트를 가져오면 새 소스로 취급된다(중복 사본 — 유실은 아님). 볼트 지문 키는 후속. */
 const manifestFile = (wsId) => join(paths(wsId).vault, '_imported', 'manifest.json');
 
 async function loadManifest(wsId) {
@@ -128,27 +147,59 @@ async function scanVault(srcDir) {
   return { entries, skipped, configSkipped };
 }
 
-/** 대상 파일명 확보 — 디렉터리 내 미사용 이름(기존 파일·이번 실행 배정 모두 회피). */
-function resolveName(dir, base, ext, used) {
-  for (let n = 1; ; n += 1) {
-    const name = n === 1 ? `${base}${ext}` : `${base}-${n}${ext}`;
-    const key = `${dir}/${name}`.toLowerCase();
-    if (!used.has(key) && !existsSync(join(dir, name))) { used.add(key); return name; }
-  }
+/** 디렉터리별 이름 예약기 — 기존 파일은 readdir 1회로 적재(existsSync 루프가 플랜 구간에서
+    이벤트 루프를 막던 것 교정 — 검수 LOW-2). 비교는 소문자(맥 APFS 케이스 무시 대비). */
+function makeNamePool() {
+  const dirs = new Map(); // dir(fold) → Set(name lower)
+  return async function reserve(dir, candidates, ext) {
+    const key = fold(dir);
+    let pool = dirs.get(key);
+    if (!pool) {
+      pool = new Set((await readdir(dir).catch(() => [])).map((n) => n.toLowerCase()));
+      dirs.set(key, pool);
+    }
+    // 후보(기본 → 폴더 접두)를 먼저 소진하고, 그래도 충돌이면 첫 후보에 접미 번호
+    for (const base of candidates) {
+      const name = `${base}${ext}`;
+      if (!pool.has(name.toLowerCase())) { pool.add(name.toLowerCase()); return name; }
+    }
+    for (let n = 2; ; n += 1) {
+      const name = `${candidates[0]}-${n}${ext}`;
+      if (!pool.has(name.toLowerCase())) { pool.add(name.toLowerCase()); return name; }
+    }
+  };
 }
 
 const REASON_LABEL = {
-  ko: { template: '템플릿(서식) 폴더', empty: '빈 노트', 'unknown-type': 'Argo가 읽을 수 없는 형식', 'too-large': '200MB 초과 — 복사하지 않음(원본은 볼트에 그대로)', symlink: '심링크(바로가기) — 복사하지 않음', 'ambiguous-link': '같은 이름의 노트가 여러 개 — 링크는 먼저 배치된 쪽으로 연결' },
-  en: { template: 'template folder', empty: 'empty note', 'unknown-type': 'format Argo cannot read', 'too-large': 'over 200MB — not copied (original stays in your vault)', symlink: 'symlink — not copied', 'ambiguous-link': 'duplicate note names — links point to the first one placed' },
+  ko: {
+    template: '템플릿(서식) 폴더', empty: '빈 노트', 'unknown-type': 'Argo가 읽을 수 없는 형식',
+    'too-large': '200MB 초과 — 복사하지 않음(원본은 볼트에 그대로)', symlink: '심링크(바로가기) — 복사하지 않음',
+    sensitive: 'Argo 제어파일과 같은 이름 — 복사하지 않음(원본은 볼트에 그대로)',
+    'user-deleted': '이전 임포트에서 가져왔다가 앱에서 삭제한 항목 — 되살리지 않음',
+    'ambiguous-link': '같은 이름의 노트가 여러 개 — 링크는 먼저 배치된 쪽으로 연결',
+  },
+  en: {
+    template: 'template folder', empty: 'empty note', 'unknown-type': 'format Argo cannot read',
+    'too-large': 'over 200MB — not copied (original stays in your vault)', symlink: 'symlink — not copied',
+    sensitive: 'same name as an Argo control file — not copied (original stays in your vault)',
+    'user-deleted': 'imported before and deleted in the app — not resurrected',
+    'ambiguous-link': 'duplicate note names — links point to the first one placed',
+  },
 };
 
 /** 옵시디언 볼트 임포트 본체. dryRun=true면 복사 없이 분류 계획만 반환한다. */
 export async function importObsidianVault(wsId, srcPath, { dryRun = false } = {}) {
   const p = paths(wsId);
   if (!existsSync(p.company)) throw err('no-company', wsId);
-  // 소스 검증 재사용 — 절대경로·존재·디렉토리·루트 전체 거부·보호 구역(WS_ROOT 포함) 거부·realpath 봉인.
-  // WS_ROOT 안이 거부되므로 자기 워크스페이스 재귀 임포트가 원천 차단된다.
+  // 소스 검증 재사용 — 절대경로·존재·디렉토리·루트 전체 거부·보호 구역 "안" 거부·realpath 봉인.
   const src = await validateWorkRoot(srcPath);
+  // 조상 거부(검수 CRITICAL-1): validateWorkRoot는 WS_ROOT·~/.argo를 "포함하는" 조상을 의도적으로
+  // 허용한다(러너 책상 개방의 기존 한계와 동일 계열). 임포트는 읽은 것을 회사 vault로 복사하므로
+  // 같은 예외가 "타 회사 자격·대화를 이 회사로 평문 흡입"이 된다 — 임포트 전용으로 막는다.
+  const canon = async (t) => { try { return await realpath(t); } catch { return t; } };
+  for (const zone of await Promise.all([WS_ROOT, join(homedir(), '.argo')].map(canon))) {
+    if (insideFold(zone, src) || fold(zone) === fold(src)) throw err('protected', src);
+  }
   return withLock(`obsidian-import:${wsId}`, () => runImport(wsId, src, { dryRun }));
 }
 
@@ -165,8 +216,10 @@ async function runImport(wsId, src, { dryRun }) {
   const srcBook = manifest.sources[src] ?? (manifest.sources[src] = {});
 
   // ── 플랜: 분류 → 대상 이름 배정 → 링크 맵. 쓰기는 아직 없다(드라이런은 여기까지의 집계만 반환).
-  const used = new Set();
-  const plan = [];               // { rel, size, mtime, dest, reason, target(절대), targetRel(워크스페이스 표시용), content? }
+  //    본문은 여기서 보관하지 않는다 — 빈 노트 판정만 하고 버리고, 쓰기 시점에 다시 읽는다
+  //    (2GB 상한 통과분이 힙에 통째로 얹히던 것 교정 — 검수 MED-1. I/O 2배 < 메모리 상수화).
+  const reserve = makeNamePool();
+  const plan = [];               // { rel, size, mtime, dest, isMd, target(절대), targetRel(워크스페이스 표시용) }
   const unsorted = [];
   const already = [];
   const warnings = [];
@@ -192,57 +245,71 @@ async function runImport(wsId, src, { dryRun }) {
 
   for (const e of entries) {
     const prev = srcBook[e.rel];
-    if (prev && prev.size === e.size && prev.mtimeMs === e.mtime.getTime() && existsSync(join(p.root, prev.target))) {
-      already.push({ rel: e.rel, reason: 'already-imported' });
-      // 재실행에서도 기존 타깃으로 링크가 이어지게 맵에 싣는다(vault 기준 rel로 변환)
-      if (prev.target.startsWith('vault/') && /\.md$/i.test(prev.target) && !prev.target.startsWith('vault/_imported/')) {
-        mapNote(e.rel, prev.target.slice('vault/'.length).replace(/\.md$/i, ''));
-      } else if (prev.target.startsWith('vault/files/')) {
-        mapAtt(e.rel, prev.target.slice('vault/'.length));
+    if (prev && prev.size === e.size && prev.mtimeMs === e.mtime.getTime()) {
+      if (existsSync(join(p.root, prev.target))) {
+        already.push({ rel: e.rel, reason: 'already-imported' });
+        // 재실행에서도 기존 타깃으로 링크가 이어지게 맵에 싣는다(vault 기준 rel로 변환)
+        if (prev.target.startsWith('vault/') && /\.md$/i.test(prev.target) && !prev.target.startsWith('vault/_imported/')) {
+          mapNote(e.rel, prev.target.slice('vault/'.length).replace(/\.md$/i, ''));
+        } else if (prev.target.startsWith('vault/files/')) {
+          mapAtt(e.rel, prev.target.slice('vault/'.length));
+        }
+      } else {
+        // 타깃 부재 = 사용자가 앱에서 지운 것 — 재복사하면 지운 기억이 부활한다(검수 MED-3,
+        // jsonstore '유령 대화 부활'과 같은 계급). 스킵하고 리포트로 안내. 정말 되살리려면
+        // 소스 파일을 손대(수정 시각 변경) 변경분으로 만들거나 manifest를 지우면 된다.
+        skipped.push({ rel: e.rel, reason: 'user-deleted' });
       }
       continue;
     }
     let { dest, reason } = classifyVaultEntry(e.rel, e.size);
-    let content = null;
     if (dest === 'journal' || dest === 'notes') {
-      content = await readFile(join(src, e.rel), 'utf8').catch(() => null);
+      const content = await readFile(join(src, e.rel), 'utf8').catch(() => null); // 판정 후 버린다(보관 금지)
       if (content === null) { dest = 'unsorted'; reason = 'unknown-type'; } // utf8로 못 읽는 .md — 미분류로 정직하게
       else if (!content.trim()) { dest = 'unsorted'; reason = 'empty'; }
     }
     const base = basename(e.rel);
+    const parentSeg = e.rel.includes('/') ? sanitizeSegment(e.rel.split('/').slice(-2, -1)[0]) : '';
     if (dest === 'journal') {
       const m = base.match(DAILY_RE);
       const rest = m[2] ? sanitizeSegment(m[2]) : '';
       // vaultdoc.docKind의 일지 판정(^\d{4}-\d{2}-\d{2}-)에 맞는 이름 — 인덱스 "최근 일지" 구간에 잡힌다
-      const name = resolveName(p.journal, `${m[1]}-${rest && rest !== 'untitled' ? `${rest}-` : ''}imported`, '.md', used);
-      plan.push({ ...e, dest, content, target: join(p.journal, name), targetRel: `vault/journal/${name}` });
+      const stem = `${m[1]}-${rest && rest !== 'untitled' ? `${rest}-` : ''}imported`;
+      const name = await reserve(p.journal, [stem], '.md');
+      plan.push({ ...e, dest, isMd: true, target: join(p.journal, name), targetRel: `vault/journal/${name}` });
       mapNote(e.rel, `journal/${name.replace(/\.md$/, '')}`);
     } else if (dest === 'notes') {
-      // notes/는 평면이 정본 구조(listDocs 비재귀) — 폴더 경로는 버리고 파일명만. 충돌은 접미 번호.
-      const name = resolveName(p.notes, sanitizeSegment(base.replace(/\.md$/i, '')), '.md', used);
-      plan.push({ ...e, dest, content, target: join(p.notes, name), targetRel: `vault/notes/${name}` });
+      // notes/는 평면이 정본 구조(listDocs 비재귀) — 폴더 경로는 버리고 파일명만.
+      // 충돌 시 폴더 접두(`폴더명-파일명`) → 그래도 충돌이면 접미 번호(설계 문서 규칙 — ProjectA/index.md
+      // 3벌이 index-2·index-3으로 뭉개져 어느 프로젝트 것인지 알 수 없게 되는 맥락 소실 방지, 검수 MED-4).
+      const stem = sanitizeSegment(base.replace(/\.md$/i, ''));
+      const candidates = parentSeg && parentSeg !== 'untitled' ? [stem, `${parentSeg}-${stem}`] : [stem];
+      const name = await reserve(p.notes, candidates, '.md');
+      plan.push({ ...e, dest, isMd: true, target: join(p.notes, name), targetRel: `vault/notes/${name}` });
       mapNote(e.rel, `notes/${name.replace(/\.md$/, '')}`);
     } else if (dest === 'files') {
       // 폴더 구조 보존(맥락) — 각 조각을 정리해 files/imported/ 아래로
       const segs = e.rel.split('/');
       const extIdx = segs[segs.length - 1].lastIndexOf('.');
-      const ext = extIdx > 0 ? segs[segs.length - 1].slice(extIdx) : '';
+      const ext = extIdx > 0 ? segs[segs.length - 1].slice(extIdx).toLowerCase() : '';
       const stem = extIdx > 0 ? segs[segs.length - 1].slice(0, extIdx) : segs[segs.length - 1];
       const dir = join(filesRoot, ...segs.slice(0, -1).map(sanitizeSegment));
-      const name = resolveName(dir, sanitizeSegment(stem), ext.toLowerCase(), used);
+      await mkdirIfRun(dir, dryRun); // 이름 풀이 readdir 기반이라 실행 시엔 폴더가 먼저 있어야 일관 — 드라이런은 안 만든다
+      const name = await reserve(dir, [sanitizeSegment(stem)], ext);
       const relDir = ['files', 'imported', ...segs.slice(0, -1).map(sanitizeSegment)].join('/');
-      plan.push({ ...e, dest, target: join(dir, name), targetRel: `vault/${relDir}/${name}` });
+      plan.push({ ...e, dest, isMd: false, target: join(dir, name), targetRel: `vault/${relDir}/${name}` });
       mapAtt(e.rel, `${relDir}/${name}`);
     } else if (dest === 'unsorted') {
       const segs = e.rel.split('/').map(sanitizeSegment);
       const dir = join(unsortedRoot, ...segs.slice(0, -1));
+      await mkdirIfRun(dir, dryRun);
       const last = segs[segs.length - 1];
       const dotIdx = last.lastIndexOf('.');
-      const name = resolveName(dir, dotIdx > 0 ? last.slice(0, dotIdx) : last, dotIdx > 0 ? last.slice(dotIdx) : '', used);
-      plan.push({ ...e, dest, reason, target: join(dir, name), targetRel: `vault/_imported/unsorted/${[...segs.slice(0, -1), name].join('/')}` });
+      const name = await reserve(dir, [dotIdx > 0 ? last.slice(0, dotIdx) : last], dotIdx > 0 ? last.slice(dotIdx) : '');
+      plan.push({ ...e, dest, reason, isMd: false, target: join(dir, name), targetRel: `vault/_imported/unsorted/${[...segs.slice(0, -1), name].join('/')}` });
       unsorted.push({ rel: e.rel, reason });
     } else {
-      skipped.push({ rel: e.rel, reason }); // too-large — 복사 없이 건별 안내(원본은 볼트에 그대로)
+      skipped.push({ rel: e.rel, reason }); // too-large·sensitive — 복사 없이 건별 안내(원본은 볼트에 그대로)
     }
   }
 
@@ -263,6 +330,9 @@ async function runImport(wsId, src, { dryRun }) {
     ...counts,
     unsortedItems: cap(unsorted, 200),
     skippedItems: cap(skipped, 200),
+    // 첨부로 "무엇이" 들어오는지 실행 전에 보여준다 — 개수만 보여주면 볼트 아닌 폴더를 고른
+    // 오조작(문서 폴더 통째 등)을 사용자가 알아챌 지점이 없다(검수 HIGH-1의 UI 축).
+    filesItems: cap(plan.filter((x) => x.dest === 'files').map((x) => x.rel), 200),
     warnings: cap(warnings, 50),
   };
   if (dryRun) return summary;
@@ -275,9 +345,10 @@ async function runImport(wsId, src, { dryRun }) {
   try {
     for (const item of plan) {
       await mkdir(dirname(item.target), { recursive: true });
-      if (item.content !== null && item.content !== undefined) {
-        // 원자 쓰기(jsonstore) — 강제 종료가 반쪽짜리 노트를 남기지 않는다(문자열은 그대로 기록됨)
-        await writeJsonAtomic(item.target, rewriteLinks(item.content, { noteMap, attMap, wsId }));
+      if (item.isMd) {
+        // 쓰기 시점 재읽기(플랜에 본문 보관 금지 — 검수 MED-1) + 원자 쓰기(반쪽 노트 방지)
+        const content = await readFile(join(src, item.rel), 'utf8');
+        await writeJsonAtomic(item.target, rewriteLinks(content, { noteMap, attMap, wsId }));
       } else {
         await copyFile(join(src, item.rel), item.target); // mode 복원 없음 — export.mjs와 같은 근거(exFAT 함정)
       }
@@ -295,7 +366,6 @@ async function runImport(wsId, src, { dryRun }) {
     await writeStatus(wsId, { phase: 'error', error: String(e.message || e), done, total: plan.length });
     throw err('copy-failed', String(e.message || e));
   }
-  await mkdir(join(p.vault, '_imported'), { recursive: true });
   await writeJsonAtomic(manifestFile(wsId), manifest);
 
   // 리포트 — 회사 언어. UI 요약(JSON)과 달리 전체 목록을 남긴다(캡 없음).
@@ -328,4 +398,9 @@ async function runImport(wsId, src, { dryRun }) {
   const result = { ...summary, reportRel };
   await writeStatus(wsId, { phase: 'done', ...counts });
   return result;
+}
+
+/** 실행 모드에서만 폴더 생성 — 드라이런은 어떤 쓰기도 하지 않는다는 계약 유지. */
+async function mkdirIfRun(dir, dryRun) {
+  if (!dryRun) await mkdir(dir, { recursive: true });
 }

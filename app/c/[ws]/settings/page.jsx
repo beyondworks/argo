@@ -513,6 +513,16 @@ function ImportCard({ ws }) {
       {plan && (
         <div style={{ display: 'grid', gap: 6 }}>
           <p style={{ fontSize: 12, color: 'var(--fg-1)', margin: 0 }}>{t('settings.import.plan', planVars(plan))}</p>
+          {plan.filesItems?.length > 0 && (
+            // 첨부로 "무엇이" 들어오는지 실행 전에 보여준다 — 개수만으로는 볼트 아닌 폴더를 고른
+            // 오조작(문서 폴더 통째 등)을 알아챌 지점이 없다(분리 검수 HIGH-1의 UI 축)
+            <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>
+              {t('settings.import.filesPreview', { n: plan.files })}{' '}
+              <span className="mono" style={{ fontSize: 10.5, overflowWrap: 'anywhere' }}>
+                {plan.filesItems.slice(0, 5).join(', ')}{plan.files > 5 ? ` … (+${plan.files - 5})` : ''}
+              </span>
+            </p>
+          )}
           <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0 }}>{t('settings.import.planGo')}</p>
           <div>
             <button className="btn btn-primary" type="button" onClick={run} disabled={busy}>
@@ -543,7 +553,12 @@ function ImportCard({ ws }) {
           )}
           {result.reportRel && (
             <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0 }}>
-              {t('settings.import.report')}: <span className="mono" style={{ fontSize: 10.5, overflowWrap: 'anywhere' }}>{result.reportRel}</span>
+              {t('settings.import.report')}:{' '}
+              <a href={`/api/companies/${ws}/files?rel=${encodeURIComponent(result.reportRel.replace(/^vault\//, ''))}`}
+                target="_blank" rel="noopener noreferrer" className="mono"
+                style={{ fontSize: 10.5, overflowWrap: 'anywhere', color: 'var(--fg-2)' }}>
+                {result.reportRel}
+              </a>
             </p>
           )}
         </div>
