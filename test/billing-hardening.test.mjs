@@ -9,7 +9,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { applyLsEvent, unmatchedRow, pickProSubscription, lsGateOpts, shouldApplyLsEvent } from '../src/lsbilling.mjs';
 import {
-  reconcileDueFromRow, claimReconcile, clearReconcileEmpty, reconcileEntitlement, COOLDOWN_MS, EMPTY_COOLDOWN_MS,
+  reconcileDueFromRow, claimReconcile, clearReconcileEmpty, markReconcileEmpty, reconcileEntitlement, COOLDOWN_MS, EMPTY_COOLDOWN_MS,
 } from '../src/lsreconcile.mjs';
 import { APPLY_CASES, toMirrorArgs } from './helpers/ls-apply-cases.mjs';
 
@@ -142,14 +142,14 @@ const fakeFetch = (subs, status = 200) => async () => ({
 // 부정 확정 기록(update().eq() await) + 중복 귀속 조회(select().eq().neq().limit()) + 적재.
 // claim: 조건부 update 선점 결과, insertClaim: 무행 insert 선점 결과.
 const fakeSb = ({ claim = true, insertClaim = false, dupes = [], rpcResult = 'applied' } = {}) => {
-  const calls = { rpc: [], upserts: [], updates: [], ltes: [] };
+  const calls = { rpc: [], upserts: [], updates: [], ltes: [], eqs: [] };
   const sb = {
     rpc: async (fn, args) => { calls.rpc.push([fn, args]); return { data: rpcResult, error: null }; },
     from: (table) => {
       const b = {
         _update: null, _upsert: null,
         update(vals) { calls.updates.push([table, vals]); this._update = vals; return this; },
-        eq() { return this; },
+        eq(col, val) { calls.eqs.push([col, val]); return this; },
         neq() { return this; },
         lte(col, val) { calls.ltes.push([col, val]); return this; },
         limit: async () => ({ data: dupes, error: null }),
@@ -173,7 +173,7 @@ const fakeSb = ({ claim = true, insertClaim = false, dupes = [], rpcResult = 'ap
 
 test('선점(claim): 조건부 update가 행을 갱신하면 통과 — 게이트 2종이 lte 필터(무조건 AND)로 실린다', async () => {
   const { sb, calls } = fakeSb({ claim: true });
-  assert.equal(await claimReconcile(sb, UID, NOW), true);
+  assert.ok(await claimReconcile(sb, UID, NOW));
   assert.equal(calls.updates.length, 1);
   assert.deepEqual(Object.keys(calls.updates[0][1]), ['ls_reconciled_at']); // 선점은 시도 시각만 기록
   assert.equal(calls.upserts.length, 0); // 행이 있으면 insert 경로 없음
@@ -195,13 +195,13 @@ test('결제 의사 신호(clearReconcileEmpty): 부정 확정 게이트만 epoc
 
 test('선점(claim): 무행이면 ignoreDuplicates insert로 선점 — 동시 생성은 한쪽만 통과', async () => {
   const won = fakeSb({ claim: false, insertClaim: true });
-  assert.equal(await claimReconcile(won.sb, UID, NOW), true);
+  assert.equal(Date.parse((await claimReconcile(won.sb, UID, NOW)).emptySeen), 0); // 신규 행 — empty_at default epoch
   const [table, row, opts] = won.calls.upserts[0];
   assert.equal(table, 'entitlements');
   assert.deepEqual(Object.keys(row), ['user_id', 'ls_reconciled_at']); // plan 미지정 — default 'free', 자격 무영향
   assert.deepEqual(opts, { onConflict: 'user_id', ignoreDuplicates: true });
   const lost = fakeSb({ claim: false, insertClaim: false }); // 쿨다운 중이거나 타 인스턴스가 선점
-  assert.equal(await claimReconcile(lost.sb, UID, NOW), false);
+  assert.equal(await claimReconcile(lost.sb, UID, NOW), null);
 });
 
 // 부정 확정 기록(ls_reconcile_empty_at) update가 있었는지 — 24시간 장기 쿨다운의 근거
@@ -236,7 +236,7 @@ test('대사 중복 귀속 가드(F2): 같은 구독이 타 계정에 이미 붙
   assert.equal(emptyMarks(calls).length, 0);
 });
 
-test('대사: 활성 구독 없음 → 구독 상태 쓰기 없이 null + 부정 확정 기록(24시간 캐싱)', async () => {
+test('대사: 활성 구독 없음 → 구독 상태 쓰기 없이 null + 부정 확정 기록(24시간 캐싱, CAS 조건부)', async () => {
   const { sb, calls } = fakeSb();
   const r = await reconcileEntitlement({
     sb, userId: `${UID}-none`, email: 'a@b.c', apiKey: 'k',
@@ -245,6 +245,18 @@ test('대사: 활성 구독 없음 → 구독 상태 쓰기 없이 null + 부정
   assert.equal(r, null);
   assert.equal(calls.rpc.length, 0); // 강등 방향 대사 금지 — plan을 건드리지 않는다
   assert.equal(emptyMarks(calls).length, 1); // 무료 사용자 영구 10분 폴 차단의 핵심
+  // CAS — 선점 시점의 empty_at과 같을 때만 확정을 쓴다: LS를 도는 사이 intent가 게이트를
+  // 해제했으면 덮지 않는다(결제 직후 복구 24시간 잠금 방지 — 2차 검수 잔여 레이스)
+  assert.ok(calls.eqs.some(([col]) => col === 'ls_reconcile_empty_at'));
+});
+
+test('markReconcileEmpty: casSeen 있으면 empty_at 동일 조건을 필터로 건다 — 없으면 무조건 기록', async () => {
+  const withCas = fakeSb();
+  await markReconcileEmpty(withCas.sb, UID, NOW, 'SEEN');
+  assert.ok(withCas.calls.eqs.some(([col, val]) => col === 'ls_reconcile_empty_at' && val === 'SEEN'));
+  const noCas = fakeSb();
+  await markReconcileEmpty(noCas.sb, UID, NOW);
+  assert.ok(!noCas.calls.eqs.some(([col]) => col === 'ls_reconcile_empty_at'));
 });
 
 test('대사: apiKey·email 부재는 즉시 null(LS 호출·DB 선점 자체가 없다) — 로컬·미설정 환경 무해', async () => {

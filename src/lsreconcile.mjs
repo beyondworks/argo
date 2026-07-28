@@ -35,7 +35,9 @@ export function reconcileDueFromRow(row, nowMs = Date.now()) {
     끝난다 — or 그룹 결합 의미에 기대지 않는다(2차 검수 MEDIUM). 0행이면 (a) 쿨다운 중이거나
     (b) 행이 없다 — (b)는 ignoreDuplicates insert로 선점(동시 생성은 PK 충돌로 한쪽만 통과,
     plan은 default 'free'라 자격에 무영향 — is_pro()의 체험 OR도 그대로 산다).
-    실패(LS 장애)해도 쿨다운이 소모되게 **시도 전에** 기록한다. */
+    실패(LS 장애)해도 쿨다운이 소모되게 **시도 전에** 기록한다.
+    반환: 선점 시 { emptySeen: 선점 시점의 ls_reconcile_empty_at } — markReconcileEmpty의
+    CAS 기준값(대사가 LS를 도는 사이 intent가 게이트를 해제하면 덮어쓰지 않기 위해). 미선점은 null. */
 export async function claimReconcile(sb, userId, nowMs = Date.now()) {
   const now = new Date(nowMs).toISOString();
   const { data, error } = await sb.from('entitlements')
@@ -43,22 +45,26 @@ export async function claimReconcile(sb, userId, nowMs = Date.now()) {
     .eq('user_id', userId)
     .lte('ls_reconciled_at', new Date(nowMs - COOLDOWN_MS).toISOString())
     .lte('ls_reconcile_empty_at', new Date(nowMs - EMPTY_COOLDOWN_MS).toISOString())
-    .select('user_id');
+    .select('user_id, ls_reconcile_empty_at');
   if (error) throw new Error(error.message);
-  if (data?.length) return true;
+  if (data?.length) return { emptySeen: data[0].ls_reconcile_empty_at ?? EPOCH };
   const { data: ins, error: insErr } = await sb.from('entitlements')
     .upsert({ user_id: userId, ls_reconciled_at: now }, { onConflict: 'user_id', ignoreDuplicates: true })
     .select('user_id');
   if (insErr) throw new Error(insErr.message);
-  return !!ins?.length;
+  return ins?.length ? { emptySeen: EPOCH } : null; // 신규 행 — empty_at은 default epoch
 }
 
 /** 부정 결과 확정 기록 — "활성 구독 없음"이 확인됐을 때만 부른다(LS 오류는 throw로 빠져 여기
-    오지 않는다). 실패는 무해 — 기록이 안 되면 10분 뒤 한 번 더 확인할 뿐이라 삼키고 로그만. */
-export async function markReconcileEmpty(sb, userId, nowMs = Date.now()) {
-  const { error } = await sb.from('entitlements')
+    오지 않는다). casSeen(선점 시점의 empty_at)과 다르면 쓰지 않는다 — 대사가 LS를 도는 사이
+    사용자가 업그레이드를 눌러(intent) 게이트를 해제한 경우, 그 해제가 이겨야 결제 직후 복구가
+    24시간 잠기지 않는다(2차 검수 잔여 레이스). 실패·CAS 불일치는 무해 — 10분 뒤 재확인뿐. */
+export async function markReconcileEmpty(sb, userId, nowMs = Date.now(), casSeen = null) {
+  let q = sb.from('entitlements')
     .update({ ls_reconcile_empty_at: new Date(nowMs).toISOString() })
     .eq('user_id', userId);
+  if (casSeen != null) q = q.eq('ls_reconcile_empty_at', casSeen);
+  const { error } = await q;
   if (error) console.error('[argo] billing 대사: 부정 결과 기록 실패(무해 — 10분 뒤 재확인):', error.message);
 }
 
@@ -100,11 +106,13 @@ export async function reconcileEntitlement({
   allowedVariants = null, allowTest = false, fetchImpl = fetch, nowMs = Date.now(),
 }) {
   if (!apiKey || !userId || !email) return null;
-  if (!(await claimReconcile(sb, userId, nowMs))) return null;
+  const claim = await claimReconcile(sb, userId, nowMs);
+  if (!claim) return null;
   const subs = await fetchLsSubscriptions(email, apiKey, fetchImpl);
   const picked = pickProSubscription(subs, { allowedVariants, allowTest, storedCustomerId });
   if (!picked) {
-    await markReconcileEmpty(sb, userId, nowMs); // 부정 결과 캐싱 — 24시간은 다시 묻지 않는다
+    // 부정 결과 캐싱(24시간) — CAS: LS를 도는 사이 intent가 게이트를 해제했으면 덮지 않는다
+    await markReconcileEmpty(sb, userId, nowMs, claim.emptySeen);
     return null;
   }
   const { data: dupes, error: dupErr } = await sb.from('entitlements')
