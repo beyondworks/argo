@@ -26,7 +26,8 @@ export async function getDeviceId() {
 
 // 워크스페이스 id는 회사 생성 규칙(route.js: base-base36)이 내는 문자셋만 허용.
 // paths()가 모든 파일 접근의 단일 관문이므로 여기서 막으면 전 API 라우트의 경로 탈출(../, %2f)이 차단된다.
-const WS_ID_RE = /^[a-z0-9][a-z0-9-]{0,127}$/;
+// (export: cloudexport.mjs — 원격 목록의 회사 세그먼트도 같은 규칙으로 검증한다. 정본은 여기 하나)
+export const WS_ID_RE = /^[a-z0-9][a-z0-9-]{0,127}$/;
 
 export function paths(wsId) {
   if (typeof wsId !== 'string' || !WS_ID_RE.test(wsId)) {

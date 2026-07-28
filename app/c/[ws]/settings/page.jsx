@@ -871,6 +871,11 @@ function SyncCard({ ws }) {
               <UpgradeButtons />
             </div>
           )}
+          {/* 클라우드 자료 내보내기 — 위 분기 사슬과 **직교**로 렌더한다(분리 검수 CRITICAL 2026-07-28).
+              사슬 안에 넣으면 ARGO_ENFORCE_PLAN off 구간의 free 사용자가 lastError 분기(RLS push 거부가
+              매 사이클 lastError를 채운다)에 걸려 버튼을 영영 못 본다. 데이터 반환 경로는 동기화 고장
+              여부와 무관해야 한다 — "데이터 인질 금지"의 요지. plan이 free로 확정됐거나 페이월이면 노출. */}
+          {(sync.paywalled || sync.plan === 'free') && <CloudExportRow />}
           {bill?.status === 'past_due' && bill?.hasSub && (
             // 연체 유예 중 — 차단이 아니라 안내다(LS 던닝이 재시도 중, 유예 소진 시 free 강등).
             // href는 클릭 시점 발급 라우트 — 저장된 포털 URL은 24시간 만료라 렌더 금지(재검수 HIGH).
@@ -902,6 +907,45 @@ function SyncCard({ ws }) {
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** 클라우드 자료 내보내기 — 체험 만료(free) 사용자가 버튼 한 번으로 클라우드에 동결된 자기 자료를
+    ~/Documents/Argo-cloud-export-YYYYMMDD/<회사명>/ 아래로 내려받는다("데이터 인질 금지" 원칙).
+    목적지·오너는 서버가 정한다(입력 없음) — 정본은 src/cloudexport.mjs. 자격 파일은 제외된다. */
+function CloudExportRow() {
+  const { t } = useLang();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null); // { target, files, failed }
+  const [err, setErr] = useState('');
+
+  async function run() {
+    if (busy) return; // 서버 in-flight 가드와 이중 방어 — 진행 중 재클릭 무시
+    setBusy(true); setErr(''); setResult(null);
+    try {
+      setResult(await api('/api/me/cloud-export', {}));
+    } catch (ex) {
+      const key = `settings.cloudExport.err.${String(ex.message || '')}`;
+      const mapped = t(key);
+      setErr(mapped === key ? t('settings.cloudExport.err') : mapped);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className="btn sm" onClick={run} disabled={busy}>{busy ? <Spinner /> : t('settings.cloudExport.run')}</button>
+        <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.cloudExport.hint')}</span>
+      </div>
+      {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
+      {result && (
+        <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>
+          {t('settings.cloudExport.done', { n: result.files })}
+          {result.failed > 0 ? ` ${t('settings.cloudExport.partial', { n: result.failed })}` : ''}
+          <span className="mono" style={{ fontSize: 10.5, display: 'block', overflowWrap: 'anywhere' }}>{result.target}</span>
+        </p>
       )}
     </div>
   );
