@@ -392,6 +392,17 @@ function ThemeCard() {
 function ExportCard({ ws }) {
   const { t } = useLang();
   const [dest, setDest] = useState('');
+  const [isApp, setIsApp] = useState(false);
+  useEffect(() => { setIsApp('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri')); }, []);
+  // 데스크톱: 네이티브 폴더 픽커(평문 경로 입력이 매우 불편하다는 신고 2026-07-28). 웹은 브라우저가
+  // 실경로를 주지 않아(File System Access API는 핸들만) 텍스트 입력 유지 — 정직 폴백.
+  async function pickFolder() {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const dir = await open({ directory: true, multiple: false, title: t('settings.export.pickTitle') });
+      if (typeof dir === 'string' && dir) setDest(dir);
+    } catch { /* 픽커 실패 — 텍스트 입력이 그대로 남아 있다 */ }
+  }
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null); // { target, files }
   const [err, setErr] = useState('');
@@ -417,6 +428,9 @@ function ExportCard({ ws }) {
       <form onSubmit={doExport} style={{ display: 'flex', gap: 8 }}>
         <input value={dest} onChange={(e) => setDest(e.target.value)} placeholder={t('settings.export.placeholder')}
           {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
+        {isApp && (
+          <button className="btn" type="button" onClick={pickFolder} disabled={busy}>{t('settings.export.browse')}</button>
+        )}
         <button className="btn" type="submit" disabled={busy || !dest.trim()}>{busy ? <Spinner /> : t('settings.export.run')}</button>
       </form>
       {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
@@ -813,7 +827,10 @@ function SyncCard({ ws }) {
         {sync?.plan === 'pro' ? (
           <span className="pill ok" style={{ flex: 'none' }}>{t('billing.plan.pro')}</span>
         ) : sync?.plan === 'trial' ? (
-          <span className="pill ok" style={{ flex: 'none' }}>{t('billing.plan.trial')}</span>
+          <span className="pill ok" style={{ flex: 'none' }}>
+            {(() => { const d = bill?.trialEndsAt ? Math.max(0, Math.ceil((Date.parse(bill.trialEndsAt) - Date.now()) / 86_400_000)) : null;
+              return d != null ? t('billing.trialDday', { n: d }) : t('billing.plan.trial'); })()}
+          </span>
         ) : sync?.plan === 'free' ? (
           <span className="pill" style={{ flex: 'none' }}>{t('billing.plan.free')}</span>
         ) : null}
@@ -845,6 +862,14 @@ function SyncCard({ ws }) {
             // 아직 막히진 않았지만(강제 게이트 off 등) free 플랜에 안내 차원으로 노출 — pro면 숨김
             <UpgradeButtons />
           ) : null}
+          {sync.plan === 'trial' && bill?.trialEndsAt && (Date.parse(bill.trialEndsAt) - Date.now()) < 3 * 86_400_000 && (
+            // 체험 종료 임박(3일 이내) — 카드 등록 없이 시작한 사용자에게 여기서 처음 결제를 권한다.
+            // 협박이 아니라 안심 화법: 데이터는 어떤 경우에도 사라지지 않는다(동결 원칙).
+            <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
+              <span style={{ color: 'var(--primary-strong)', fontSize: 12 }}>{t('billing.trialEnding')}</span>
+              <UpgradeButtons />
+            </div>
+          )}
           {bill?.status === 'past_due' && bill?.hasSub && (
             // 연체 유예 중 — 차단이 아니라 안내다(LS 던닝이 재시도 중, 유예 소진 시 free 강등).
             // href는 클릭 시점 발급 라우트 — 저장된 포털 URL은 24시간 만료라 렌더 금지(재검수 HIGH).

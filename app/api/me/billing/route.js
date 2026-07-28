@@ -7,10 +7,19 @@ import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { currentUser } from '../../../auth.mjs';
+import { TRIAL_DAYS } from '../../../../src/entitlement.mjs';
 
-const pick = (data) => Response.json({
-  billing: data ? { plan: data.plan, status: data.ls_status ?? null, hasSub: !!data.ls_subscription_id, endsAt: data.ends_at ?? null } : null,
+const pick = (data, trialEndsAt = null) => Response.json({
+  billing: { plan: data?.plan ?? null, status: data?.ls_status ?? null, hasSub: !!data?.ls_subscription_id, endsAt: data?.ends_at ?? null, trialEndsAt },
 });
+
+/** 가입 시각 → 체험 종료 시각(entitlement.mjs fetchPlan·서버 is_pro의 14일 창과 동일 계산).
+    pro면 의미 없어 null. 종료 임박 독려 배너의 원천. */
+const trialEnd = (createdAt, plan) => {
+  if (plan === 'pro') return null;
+  const c = Date.parse(createdAt ?? '');
+  return Number.isFinite(c) ? new Date(c + TRIAL_DAYS * 86_400_000).toISOString() : null;
+};
 
 export async function GET() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -29,7 +38,7 @@ export async function GET() {
       if (user) {
         const { data, error } = await sb.from('entitlements').select(cols).maybeSingle();
         if (error) throw new Error(error.message);
-        return pick(data);
+        return pick(data, trialEnd(user.created_at, data?.plan));
       }
     }
     // ② 기기 연동 세션 폴백 — 쿠키 세션이 없는 데스크톱. currentUser()가 기기 파일에서 검증한 id.
@@ -38,7 +47,13 @@ export async function GET() {
     const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
     const { data, error } = await sb.from('entitlements').select(cols).eq('user_id', user.id).maybeSingle();
     if (error) throw new Error(error.message);
-    return pick(data);
+    // 기기 세션엔 created_at이 없어 admin 조회 — 실패해도 배너만 빠질 뿐 화면은 유지
+    let created = null;
+    try {
+      const r = await fetch(`${url}/auth/v1/admin/users/${user.id}`, { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, signal: AbortSignal.timeout(5000) });
+      if (r.ok) created = (await r.json())?.created_at ?? null;
+    } catch { /* 배너 생략 */ }
+    return pick(data, trialEnd(created, data?.plan));
   } catch (e) {
     console.error('[argo] me/billing 조회 실패:', e?.message ?? e);
     return Response.json({ billing: null }); // 조회 실패로 설정 화면을 깨지 않는다 — 배너만 사라진다
