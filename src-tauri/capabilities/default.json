@@ -29,6 +29,6 @@
       ]
     },
     "core:window:allow-set-focus",
-    "dialog:default"
+    "dialog:allow-open"
   ]
 }

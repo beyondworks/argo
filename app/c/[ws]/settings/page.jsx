@@ -394,15 +394,6 @@ function ExportCard({ ws }) {
   const [dest, setDest] = useState('');
   const [isApp, setIsApp] = useState(false);
   useEffect(() => { setIsApp('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri')); }, []);
-  // 데스크톱: 네이티브 폴더 픽커(평문 경로 입력이 매우 불편하다는 신고 2026-07-28). 웹은 브라우저가
-  // 실경로를 주지 않아(File System Access API는 핸들만) 텍스트 입력 유지 — 정직 폴백.
-  async function pickFolder() {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const dir = await open({ directory: true, multiple: false, title: t('settings.export.pickTitle') });
-      if (typeof dir === 'string' && dir) setDest(dir);
-    } catch { /* 픽커 실패 — 텍스트 입력이 그대로 남아 있다 */ }
-  }
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null); // { target, files }
   const [err, setErr] = useState('');
@@ -419,6 +410,16 @@ function ExportCard({ ws }) {
       const mapped = t(key);
       setErr(mapped === key ? t('settings.export.err') : mapped);
     } finally { setBusy(false); }
+  }
+
+  // 데스크톱: 네이티브 폴더 픽커(평문 경로 입력이 매우 불편하다는 신고 2026-07-28). 웹은 브라우저가
+  // 실경로를 주지 않아(File System Access API는 핸들만) 텍스트 입력 유지 — 정직 폴백.
+  async function pickFolder() {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const dir = await open({ directory: true, multiple: false, title: t('settings.export.pickTitle') });
+      if (typeof dir === 'string' && dir) setDest(dir);
+    } catch (e) { console.warn('[argo] 폴더 픽커 실패:', e?.message ?? e); } // 취소(null)와 달리 실패는 흔적을 남긴다
   }
 
   return (
@@ -586,12 +587,23 @@ function WorkRootsCard({ ws }) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [isApp, setIsApp] = useState(false);
+  useEffect(() => { setIsApp('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri')); }, []);
 
   useEffect(() => {
     // 로드 실패를 빈 목록과 구분 — "없습니다"로 보이면 일시 장애가 데이터 소실처럼 읽힌다(분리 검수 LOW)
     api(`/api/companies/${ws}/workroots`).then((d) => { setRoots(d.roots); setMax(d.max); })
       .catch(() => { setRoots([]); setErr(t('settings.workroots.err.load')); });
   }, [ws]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 내보내기 카드와 동일한 네이티브 폴더 픽커 — 외부 작업 폴더도 평문 경로 입력이 같은 불편(유건 2026-07-28)
+  async function pickFolder() {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const dir = await open({ directory: true, multiple: false, title: t('settings.workroots.pickTitle') });
+      if (typeof dir === 'string' && dir) setInput(dir);
+    } catch (e) { console.warn('[argo] 폴더 픽커 실패:', e?.message ?? e); }
+  }
 
   async function mutate(body) {
     if (busy) return;
@@ -631,6 +643,9 @@ function WorkRootsCard({ ws }) {
               style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={t('settings.workroots.placeholder')}
                 {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
+              {isApp && (
+                <button className="btn" type="button" onClick={pickFolder} disabled={busy}>{t('settings.export.browse')}</button>
+              )}
               <button className="btn" type="submit" disabled={busy || !input.trim()}>{busy ? <Spinner /> : t('settings.workroots.add')}</button>
             </form>
           )}
@@ -818,6 +833,11 @@ function SyncCard({ ws }) {
     const iv = setInterval(pull, 15000);
     return () => clearInterval(iv);
   }, [ws]);
+  // 체험 D-day — 동기화를 켠 적 없는 체험자(최대 코호트)도 보여야 해서 sync가 아닌 bill에서 계산.
+  // NaN은 배지 자체를 기본 문구로(D-NaN 방지, 검수 LOW).
+  const trialDaysLeft = bill?.trialEndsAt ? Math.max(0, Math.ceil((Date.parse(bill.trialEndsAt) - Date.now()) / 86_400_000)) : NaN;
+  const trialActive = Number.isFinite(trialDaysLeft) && bill?.plan !== 'pro';
+  const trialImminent = trialActive && trialDaysLeft <= 3;
   const mine = sync?.companies?.[ws];
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -826,10 +846,9 @@ function SyncCard({ ws }) {
         <span style={{ flex: 1 }} />
         {sync?.plan === 'pro' ? (
           <span className="pill ok" style={{ flex: 'none' }}>{t('billing.plan.pro')}</span>
-        ) : sync?.plan === 'trial' ? (
+        ) : sync?.plan === 'trial' || (!sync?.plan && trialActive) ? (
           <span className="pill ok" style={{ flex: 'none' }}>
-            {(() => { const d = bill?.trialEndsAt ? Math.max(0, Math.ceil((Date.parse(bill.trialEndsAt) - Date.now()) / 86_400_000)) : null;
-              return d != null ? t('billing.trialDday', { n: d }) : t('billing.plan.trial'); })()}
+            {trialActive ? t('billing.trialDday', { n: trialDaysLeft }) : t('billing.plan.trial')}
           </span>
         ) : sync?.plan === 'free' ? (
           <span className="pill" style={{ flex: 'none' }}>{t('billing.plan.free')}</span>
@@ -862,11 +881,11 @@ function SyncCard({ ws }) {
             // 아직 막히진 않았지만(강제 게이트 off 등) free 플랜에 안내 차원으로 노출 — pro면 숨김
             <UpgradeButtons />
           ) : null}
-          {sync.plan === 'trial' && bill?.trialEndsAt && (Date.parse(bill.trialEndsAt) - Date.now()) < 3 * 86_400_000 && (
+          {trialImminent && (
             // 체험 종료 임박(3일 이내) — 카드 등록 없이 시작한 사용자에게 여기서 처음 결제를 권한다.
-            // 협박이 아니라 안심 화법: 데이터는 어떤 경우에도 사라지지 않는다(동결 원칙).
+            // 협박이 아니라 안심 화법. 본문은 --fg-2(대비 7.45:1 — --primary-strong 2.11:1은 AA 미달, 검수 MEDIUM).
             <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
-              <span style={{ color: 'var(--primary-strong)', fontSize: 12 }}>{t('billing.trialEnding')}</span>
+              <span style={{ color: 'var(--fg-2)', fontSize: 12, fontWeight: 650 }}>{t('billing.trialEnding')}</span>
               <UpgradeButtons />
             </div>
           )}
@@ -883,7 +902,16 @@ function SyncCard({ ws }) {
           )}
         </div>
       ) : (
-        <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offHelp')}</p>
+        <div style={{ display: 'grid', gap: 8 }}>
+          <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offHelp')}</p>
+          {trialImminent && (
+            // 동기화를 안 켠 체험자에게도 임박 안내 — 이들이 가장 큰 코호트(검수 커버리지 질문 → 포함 결정)
+            <div style={{ display: 'grid', gap: 6 }}>
+              <span style={{ color: 'var(--fg-2)', fontSize: 12, fontWeight: 650 }}>{t('billing.trialEnding')}</span>
+              <UpgradeButtons />
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

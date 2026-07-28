@@ -3,7 +3,15 @@
 // 강제(클라 UX)는 ARGO_ENFORCE_PLAN=1일 때만(기본 off, 런치에서 RLS 적용과 함께 켠다). plan 쓰기는 서버(서비스 롤) 전용 — 여긴 읽기만.
 // 강제 on에서도 게이트는 사이클 조기 return이라 비파괴(다음 사이클 재시도).
 
-export const TRIAL_DAYS = 14; // 가입 후 무료 체험(2026-07-24 유건 확정: 2주 Free → Pro $16/월). 서버 is_pro와 대칭 유지.
+export const TRIAL_DAYS = 14;
+
+/** 가입 시각 → 체험 종료 시각(fetchPlan·서버 is_pro의 14일 창과 동일 계산 — 대칭 유지가 계약).
+    pro면 null(의미 없음), 파싱 불가도 null. D-day 배지·임박 배너의 단일 원천. (export: 회귀 테스트용) */
+export const trialEnd = (createdAt, plan) => {
+  if (plan === 'pro') return null;
+  const c = Date.parse(createdAt ?? '');
+  return Number.isFinite(c) ? new Date(c + TRIAL_DAYS * 86_400_000).toISOString() : null;
+}; // 가입 후 무료 체험(2026-07-24 유건 확정: 2주 Free → Pro $16/월). 서버 is_pro와 대칭 유지.
 
 /** 계정 plan. 'pro' | 'trial'(가입 14일 이내 무료 체험 — 서버 is_pro와 대칭) | 'free' | null(조회 실패·오너 미상=미확인).
     조회 실패를 'free'가 아닌 null로 두어, 일시적 실패로 유료 사용자를 오차단하지 않는다(아래 syncEntitled). */
