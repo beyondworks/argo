@@ -57,6 +57,8 @@ const api = async (path, opts = {}) => {
 
 // 러너: 이 컴퓨터의 호스트 로그인 옵트인(로컬 무인증 모드 — 계정 스코프).
 // E2E_RUNNER로 선택(기본 codex — 2026-07-27 이 맥의 claude OAuth 만료 실측, codex auth.json 유효).
+// 2026-07-28 재확인: claude 여전히 미로그인(`claude -p` → "Not logged in") — E2E_RUNNER=claude
+// 발신 도구 실호출 완주는 claude /login 갱신 후 확인 항목으로 유지.
 {
   const runner = process.env.E2E_RUNNER || 'codex';
   const r = await api('/api/account/keys', { method: 'PUT', body: { runner, type: 'host' } });
