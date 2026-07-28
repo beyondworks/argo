@@ -37,3 +37,11 @@ test('facade 계약 — 베이스라인 62개 export가 전부 존재하고 unde
     assert.notEqual(typeof R[name], 'undefined', `export가 undefined: ${name}`);
   }
 });
+
+// openrouter 배선 테스트는 `split('export async function externalExec')[1]`이 앵커 부재 시
+// ''가 되어 doesNotMatch가 공허 통과한다(분리 검수 LOW-2). 앵커의 존재 자체를 여기서 잠근다 —
+// externalExec가 facade 밖으로 이동하면 이 단언이 즉시 잡는다.
+test('facade 앵커: externalExec 소스가 runners.mjs에 존재(트립와이어 공허 통과 방지)', async () => {
+  const src = await (await import('node:fs/promises')).readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
+  assert.ok(src.includes('export async function externalExec'), 'openrouter 배선 테스트의 스캔 앵커');
+});

@@ -7,26 +7,14 @@ import { openSync, writeSync, closeSync } from 'node:fs'; // setup-token 코드 
 import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { exec, execP, exists, maskKeyLike } from './shared.mjs';
+import { exec, execP, exists, maskKeyLike, mergePath } from './shared.mjs';
 import { RUNNER_AUTH } from './catalog.mjs';
 import { codexManagedBin } from './codex.mjs';
 import { geminiManagedEntry } from './gemini.mjs';
 import { saveRunnerCred, verifyRunnerCred } from './creds.mjs';
 
-/* ─── GUI 기동 PATH 보강 ───
-   데스크톱(tauri sidecar)은 GUI 최소 PATH(/usr/bin:/bin:…)로 뜬다 — homebrew/npm 전역으로 설치한
-   codex/gemini CLI를 감지(detectRunners)도 실행(externalExec)도 못 한다(실사용 신고 2026-07-19:
-   "codex 연결됨인데 안 됨" = hostInstalled 오탐 + spawn ENOENT의 뿌리). 터미널 기동(웹 dev/상주)은
-   이미 PATH에 있어 no-op. ① 표준 경로 정적 병합(동기) ② macOS는 로그인 셸 PATH 1회 캡처(비동기,
-   VS Code 방식). Windows는 GUI PATH = 사용자 PATH라 불필요(구분자 ';'라 병합도 건너뛴다). */
-const mergePath = (dirs) => {
-  const cur = (process.env.PATH ?? '').split(':').filter(Boolean);
-  const add = dirs.filter((d) => d.startsWith('/') && !cur.includes(d));
-  if (add.length) process.env.PATH = [...cur, ...add].join(':');
-};
-if (process.platform !== 'win32') {
-  mergePath(['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin'), join(homedir(), '.npm-global', 'bin')]);
-}
+// GUI 기동 PATH 보강(정적 병합)은 shared.mjs로 하강 — codex/gemini 모듈 직접 임포트 경로에서도
+// 병합이 보장되게(분리 검수 LOW-1). macOS 로그인 셸 캡처(ensureCliPath)만 여기 남는다.
 let cliPathP = null; // 프로세스당 1회 — 실패해도 정적 병합만으로 진행(설치 후엔 앱 재시작 안내가 관례)
 function ensureCliPath() {
   if (process.platform !== 'darwin') return Promise.resolve();

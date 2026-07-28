@@ -6,6 +6,25 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
+
+/* ─── GUI 기동 PATH 보강 ───
+   데스크톱(tauri sidecar)은 GUI 최소 PATH(/usr/bin:/bin:…)로 뜬다 — homebrew/npm 전역으로 설치한
+   codex/gemini CLI를 감지(detectRunners)도 실행(externalExec)도 못 한다(실사용 신고 2026-07-19:
+   "codex 연결됨인데 안 됨" = hostInstalled 오탐 + spawn ENOENT의 뿌리). 터미널 기동(웹 dev/상주)은
+   이미 PATH에 있어 no-op. ① 표준 경로 정적 병합(동기) ② macOS는 로그인 셸 PATH 1회 캡처(비동기,
+   VS Code 방식 — exec.mjs ensureCliPath). Windows는 GUI PATH = 사용자 PATH라 불필요(구분자 ';'라 병합도 건너뛴다).
+   최하층(shared)에 두는 이유(분리 검수 LOW-1 2026-07-28): PATH에 의존하는 codexCmd·geminiCmd가
+   각자 모듈로 갈라졌는데 정적 병합이 exec.mjs에만 있으면, 훗날 누가 하위 모듈을 직접 임포트할 때
+   GUI 최소 PATH에서 설치본 감지가 조용히 실패한다(v0.1.12 실사고 계열). */
+export const mergePath = (dirs) => {
+  const cur = (process.env.PATH ?? '').split(':').filter(Boolean);
+  const add = dirs.filter((d) => d.startsWith('/') && !cur.includes(d));
+  if (add.length) process.env.PATH = [...cur, ...add].join(':');
+};
+if (process.platform !== 'win32') {
+  mergePath(['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin'), join(homedir(), '.npm-global', 'bin')]);
+}
 
 const execP = promisify(execFile);
 const exists = (p) => access(p).then(() => true, () => false);

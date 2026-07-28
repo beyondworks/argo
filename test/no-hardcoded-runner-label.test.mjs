@@ -36,7 +36,7 @@ const BANNED = [
   [/(['"`])Claude Agent SDK\1/, "엔진 라벨 하드코딩 — 실제 연결 러너는 usableRunnerNames로", []],
   [/\?\?\s*(['"`])Claude Code\1/, "러너명 폴백 하드코딩 — 미지정은 '자동'으로 표시", []],
   [/\|\|\s*(['"`])claude\1/, "러너 id 기본값 하드코딩 — '' = 자동(서버 pickRunner)", []],
-  [/id:\s*(['"`])claude\1\s*,\s*name:\s*(['"`])Claude Code\2/, '가짜 카탈로그 폴백 — 로딩 중엔 빈 목록 + disabled', ['src/runners.mjs']],
+  [/id:\s*(['"`])claude\1\s*,\s*name:\s*(['"`])Claude Code\2/, '가짜 카탈로그 폴백 — 로딩 중엔 빈 목록 + disabled', ['src/runners/catalog.mjs']], // 정의의 원천 예외 — RUNNERS 이동(관심사 분리 2026-07-28)에 맞춰 갱신
 ];
 
 test('러너 표시 하드코딩 금지 — 원천은 RUNNERS 하나 (기억 아닌 기계가 검사)', () => {
