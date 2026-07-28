@@ -159,6 +159,7 @@ function Settings({ params }) {
       </div>
       <ThemeCard />
       <TrashCard ws={ws} />
+      <ExportCard ws={ws} />
       </Section>
 
       <div ref={aiRef} style={{ scrollMarginTop: 84 }}>
@@ -382,6 +383,50 @@ function ThemeCard() {
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 회사 데이터 내보내기 — 지정 폴더로 복사(백업·이사·보관. A갈래 신고 대응 2026-07-28).
+    자격 파일(.secrets·connections·mcp)·심링크는 제외된다 — 정책 정본은 src/export.mjs. */
+function ExportCard({ ws }) {
+  const { t } = useLang();
+  const [dest, setDest] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null); // { target, files }
+  const [err, setErr] = useState('');
+
+  async function doExport(e) {
+    e.preventDefault();
+    if (busy || !dest.trim()) return;
+    setBusy(true); setErr(''); setResult(null);
+    try {
+      const r = await api(`/api/companies/${ws}/export`, { dest: dest.trim() });
+      setResult(r);
+    } catch (ex) {
+      const key = `settings.workroots.err.${String(ex.message || '')}`; // 목적지 검증 코드 공유(workroots 재사용)
+      const mapped = t(key);
+      setErr(mapped === key ? t('settings.export.err') : mapped);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="card" style={{ padding: 18, display: 'grid', gap: 8, alignContent: 'start' }}>
+      <span className="card-title">{t('settings.export.title')}</span>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.export.desc')}</p>
+      <form onSubmit={doExport} style={{ display: 'flex', gap: 8 }}>
+        <input value={dest} onChange={(e) => setDest(e.target.value)} placeholder={t('settings.export.placeholder')}
+          {...imeGuard} style={{ ...fieldStyle, flex: 1, fontSize: 12 }} />
+        <button className="btn" type="submit" disabled={busy || !dest.trim()}>{busy ? <Spinner /> : t('settings.export.run')}</button>
+      </form>
+      {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
+      {result && (
+        <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>
+          {t('settings.export.done', { n: result.files })}
+          <span className="mono" style={{ fontSize: 10.5, display: 'block', overflowWrap: 'anywhere' }}>{result.target}</span>
+        </p>
+      )}
+      <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: '2px 0 0', lineHeight: 1.6 }}>{t('settings.export.note')}</p>
     </div>
   );
 }
