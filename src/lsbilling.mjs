@@ -82,3 +82,87 @@ export function isStaleEvent(incomingUpdatedAt, storedUpdatedAt) {
   if (!Number.isFinite(inc) || !Number.isFinite(cur)) return false; // 비교 불가면 최신으로 취급(진행)
   return inc < cur;
 }
+
+/** [M1] 적용 판정의 JS 거울 — 실집행 정본은 DB apply_ls_event(20260728113000)의 WHERE 조건이고,
+    이 함수는 그 논리를 테스트로 잠그는 실행 가능한 스펙이다. 변경 시 양쪽 동기 필수.
+    ① 순서 역전은 **같은 구독일 때만** 본다 — 다른 구독 간 updated_at 비교는 의미가 없고,
+      옛 구독의 늦은 이벤트가 새 구독의 복구(대사)를 영구히 막던 코너(분리 검수 F1)를 없앤다.
+    ② 다른 구독의 강등은 신원 가드(O1)가 막는다. 다른 구독의 승격은 항상 통과. */
+export function shouldApplyLsEvent(mapped, stored) {
+  if (!stored) return true; // 신규 행 — 가드 대상 없음
+  if (isOtherSubscriptionDowngrade(mapped, stored)) return false;
+  const sameSub = (stored.ls_subscription_id ?? '') === (mapped.ls_subscription_id ?? '');
+  if (sameSub && isStaleEvent(mapped.ls_updated_at, stored.ls_updated_at)) return false;
+  return true;
+}
+
+/** 웹훅·대사가 공유하는 게이트 옵션 — variant 허용목록(M2)·test_mode 수용(M3)을 env에서 한 곳으로. */
+export function lsGateOpts(env = process.env) {
+  const allowedVariants = new Set(String(env.LEMONSQUEEZY_PRO_VARIANT_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean));
+  return {
+    allowedVariants: allowedVariants.size ? allowedVariants : null,
+    allowTest: env.LEMONSQUEEZY_ALLOW_TEST === '1',
+  };
+}
+
+/** [M1] 환산 결과를 entitlements에 원자 적용 — DB 함수 apply_ls_event 한 문장으로 순서 역전·
+    구독 신원 가드를 행 잠금 안에서 판정+쓰기한다(select→JS비교→upsert의 동시 전달 race 제거).
+    반환: 'applied' | 'stale' | 'other_subscription'. DB 오류는 throw(호출자가 5xx로 LS 재시도 유도). */
+export async function applyLsEvent(sb, mapped) {
+  const { data, error } = await sb.rpc('apply_ls_event', {
+    p_user_id: mapped.userId,
+    p_plan: mapped.plan,
+    p_sub_id: mapped.ls_subscription_id,
+    p_customer_id: mapped.ls_customer_id,
+    p_status: mapped.ls_status,
+    p_updated_at: mapped.ls_updated_at,
+    p_ends_at: mapped.ends_at,
+    p_portal_url: mapped.portal_url,
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/** [M4] 귀속 실패 이벤트 → billing_unmatched 적재 행. 수동 귀속에 필요한 최소 식별자만
+    (구독 id·customer id·결제 이메일·이벤트명·사유) — raw payload 전체는 PII 과잉이라 싣지 않는다. */
+export function unmatchedRow(eventName, reason, payload) {
+  const attrs = payload?.data?.attributes ?? {};
+  return {
+    event_name: String(eventName ?? ''),
+    reason: String(reason ?? ''),
+    ls_subscription_id: String(payload?.data?.id ?? ''),
+    ls_customer_id: String(attrs.customer_id ?? ''),
+    user_email: String(attrs.user_email ?? ''),
+  };
+}
+
+/** [O2] 대사(reconcile) 후보 선별 — LS 구독 목록 API(data[])에서 Pro로 인정할 활성 구독을 고른다.
+    웹훅과 같은 게이트(test_mode·variant 허용목록)를 통과한 PRO_STATUSES만. 복수면 updated_at 최신
+    우선, 저장된 customer_id와 일치하는 게 있으면 그쪽 우선(이메일 동명 계정 오귀속 방어).
+    복구 전용이라 free 방향 후보는 없다 — 강등은 웹훅(순서 가드 포함)의 몫. */
+export function pickProSubscription(subs, opts = {}) {
+  const { allowedVariants = null, allowTest = false, storedCustomerId = null } = opts;
+  const ok = (Array.isArray(subs) ? subs : []).filter((s) => {
+    const a = s?.attributes;
+    if (!a || typeof a.status !== 'string' || !PRO_STATUSES.has(a.status)) return false;
+    if (a.test_mode && !allowTest) return false;
+    if (allowedVariants?.size && !allowedVariants.has(String(a.variant_id))) return false;
+    return true;
+  });
+  if (!ok.length) return null;
+  const ts = (s) => Date.parse(s.attributes.updated_at ?? '') || 0;
+  ok.sort((x, y) => ts(y) - ts(x));
+  const match = storedCustomerId
+    ? ok.find((s) => String(s.attributes.customer_id ?? '') === String(storedCustomerId)) : null;
+  const s = match ?? ok[0];
+  const a = s.attributes;
+  return {
+    plan: 'pro',
+    ls_subscription_id: String(s.id ?? ''),
+    ls_customer_id: String(a.customer_id ?? ''),
+    ls_status: a.status,
+    ls_updated_at: a.updated_at ?? null,
+    ends_at: a.ends_at ?? null,
+    portal_url: a?.urls?.customer_portal ?? null, // 스냅샷 — UI 렌더 금지 계약은 동일
+  };
+}

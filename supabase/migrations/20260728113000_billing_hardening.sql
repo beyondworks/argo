@@ -1,0 +1,97 @@
+-- 결제 견고화(PR #160 분리 검수 이월분 M1·M4 + 본 브랜치 분리 검수 F1·F8·F10·F12 반영)
+--
+-- [M1] apply_ls_event — 웹훅의 select→JS비교→upsert 3단계를 단일 문장
+-- (insert ... on conflict do update ... where)으로 내려 원자화한다. 동시 전달(예: updated와
+-- cancelled가 거의 동시에 발화)에서 두 요청이 같은 과거 스냅샷을 읽고 나중 쓰기가 과거 상태를
+-- 최종으로 남기던 race를 없앤다 — 조건 판정과 쓰기가 행 잠금 안에서 직렬화된다.
+-- WHERE 조건은 src/lsbilling.mjs의 shouldApplyLsEvent와 동치(변경 시 양쪽 동기 필수):
+--   ① 순서 역전: **같은 구독일 때만** 저장분이 더 최신이면 스킵(비교 불가 null은 진행).
+--      다른 구독 간 updated_at은 비교 의미가 없다 — 옛 구독의 늦은 이벤트가 새 구독의 복구를
+--      막던 코너(분리 검수 F1: 업그레이드 웹훅 유실 후 대사가 영구 stale) 해소.
+--   ② 구독 신원 가드(O1): 다른 구독의 강등(free)은 스킵(승격은 신원 무관 허용).
+--   한계(F9): 같은 구독의 updated_at 완전 동률은 "마지막 커밋 승" — LS가 마이크로초 해상도라
+--   실질 미발생, 동률에서 두 이벤트는 같은 스냅샷이므로 실해 없음.
+--
+-- ⚠ 시그니처 변경 시 반드시 아래 drop도 옛 시그니처로 갱신할 것 — create or replace는 인자가
+-- 다르면 **오버로드를 새로 만들고**, 옛 함수에는 default PUBLIC EXECUTE가 남는다(F12).
+drop function if exists public.apply_ls_event(uuid, text, text, text, text, timestamptz, timestamptz, text);
+create or replace function public.apply_ls_event(
+  p_user_id uuid,
+  p_plan text,
+  p_sub_id text,
+  p_customer_id text,
+  p_status text,
+  p_updated_at timestamptz,
+  p_ends_at timestamptz,
+  p_portal_url text
+) returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_applied uuid;
+  v_stored_sub text;
+begin
+  p_sub_id := coalesce(p_sub_id, ''); -- NULL 3값 논리로 WHERE가 무음 스킵되는 것 차단(F8 — 수동 호출 대비)
+  insert into public.entitlements as e
+    (user_id, plan, ls_subscription_id, ls_customer_id, ls_status, ls_updated_at, ends_at, portal_url, updated_at)
+  values
+    (p_user_id, p_plan, p_sub_id, p_customer_id, p_status, p_updated_at, p_ends_at, p_portal_url, now())
+  on conflict (user_id) do update set
+    plan = excluded.plan,
+    ls_subscription_id = excluded.ls_subscription_id,
+    ls_customer_id = excluded.ls_customer_id,
+    ls_status = excluded.ls_status,
+    ls_updated_at = excluded.ls_updated_at,
+    ends_at = excluded.ends_at,
+    portal_url = excluded.portal_url,
+    updated_at = now()
+  where
+    -- ① 순서 역전(같은 구독 한정)
+    (coalesce(e.ls_subscription_id, '') <> excluded.ls_subscription_id
+     or e.ls_updated_at is null or excluded.ls_updated_at is null
+     or e.ls_updated_at <= excluded.ls_updated_at)
+    -- ② 구독 신원 가드(O1)
+    and not (excluded.plan = 'free'
+             and coalesce(e.ls_subscription_id, '') <> ''
+             and e.ls_subscription_id <> excluded.ls_subscription_id)
+  returning e.user_id into v_applied;
+  if v_applied is not null then
+    return 'applied';
+  end if;
+  -- 차단 사유 분류(진단·응답용) — on conflict가 행 잠금을 잡은 뒤라 같은 트랜잭션의 일관 조회다.
+  -- 같은 구독이 차단됐다면 사유는 순서 역전뿐(stale), 다른 구독이면 신원 가드뿐(other_subscription).
+  select coalesce(ls_subscription_id, '') into v_stored_sub from public.entitlements where user_id = p_user_id;
+  if v_stored_sub = p_sub_id then
+    return 'stale';
+  end if;
+  return 'other_subscription';
+end;
+$$;
+
+-- 호출 주체는 서버(서비스 롤)뿐 — 사용자가 RPC로 자기 플랜을 승격하는 구멍을 막는다.
+revoke execute on function public.apply_ls_event(uuid, text, text, text, text, timestamptz, timestamptz, text)
+  from public, anon, authenticated;
+grant execute on function public.apply_ls_event(uuid, text, text, text, text, timestamptz, timestamptz, text)
+  to service_role;
+
+-- [M4] billing_unmatched — 웹훅 귀속 실패(no-user·test-mode·other-product·unknown-status)와
+-- 대사의 중복 귀속 감지(duplicate-attribution)를 console.error 한 줄로 흘리지 않고 적재한다.
+-- 결제는 됐는데 pro가 안 붙은 건을 수동 귀속할 근거. resolved_at = 수동 처리 완료 마킹(운영 큐 구분).
+-- RLS on + 정책 없음 = 서비스 롤만 읽고 쓴다(사용자에게 타인 이메일·구독 id를 노출하지 않는다).
+create table if not exists public.billing_unmatched (
+  id bigint generated always as identity primary key,
+  event_name text not null default '',
+  reason text not null default '',
+  ls_subscription_id text not null default '',
+  ls_customer_id text not null default '',
+  user_email text not null default '',
+  resolved_at timestamptz,
+  created_at timestamptz not null default now()
+);
+alter table public.billing_unmatched enable row level security;
+-- 같은 구독의 같은 사유는 1행 — subscription_updated가 구독 수명 내내 반복 발화해도 테이블이 불어나지 않는다.
+-- (구독 id가 빈 이벤트는 사유별 1행으로 뭉개진다 — 식별자 자체가 없어 어차피 개별 귀속 불가, 허용)
+create unique index if not exists billing_unmatched_dedup
+  on public.billing_unmatched (ls_subscription_id, reason);
