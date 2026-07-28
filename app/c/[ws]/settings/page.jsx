@@ -854,7 +854,15 @@ function SyncCard({ ws }) {
             </div>
           )}
           {sync.plan === 'pro' && bill?.hasSub && bill?.status !== 'past_due' && (
-            <a style={{ fontSize: 12, color: 'var(--fg-3)', width: 'fit-content' }} href="/api/me/billing/portal" target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {bill?.status === 'cancelled' && bill?.endsAt && (
+                // 해지 유예 중 — 언제까지 쓸 수 있는지 보이게(연간 구독은 해를 넘길 수 있어 연도 포함)
+                <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>
+                  {t('billing.cancelledUntil', { date: new Date(bill.endsAt).toLocaleDateString(lang === 'ko' ? 'ko-KR' : 'en-US') })}
+                </span>
+              )}
+              <a style={{ fontSize: 12, color: 'var(--fg-3)', width: 'fit-content' }} href="/api/me/billing/portal" target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
+            </div>
           )}
         </div>
       ) : (
