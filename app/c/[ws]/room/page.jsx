@@ -66,7 +66,7 @@ export default function Room({ params }) {
         body: JSON.stringify({ id: sess.id, reopen: true }),
       });
       if (!r.ok) { setError((await r.json().catch(() => ({}))).error || t('room.reopenFail')); return; }
-      setViewing(null); setArchMsgs(null); // 보관 열람 상태 해제 — 되살린 회의는 '현재 회의'다
+      setViewing(null); setArchMsgs(null); atBottomRef.current = true; setUnseen(false); // 보관 열람 상태 해제 — 되살린 회의는 '현재 회의'다(최신으로, 검수 D4)
       load(); loadSessions();
     } catch { setError(t('room.reopenFail')); } finally { setReopening(null); }
   }
@@ -76,12 +76,38 @@ export default function Room({ params }) {
     const iv = setInterval(() => { if (!busy) api(`/api/companies/${ws}/room`).then((d) => setMessages(d.messages ?? [])).catch(() => {}); }, 8000);
     return () => clearInterval(iv);
   }, [ws, busy]);
-  useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [messages, busy]);
+  // 하단 추종은 **하단 근처(80px)일 때만** — 위로 올려 읽는 중에 새 발언이 와도 화면을 끌어내리지
+  // 않는다(실사용 신고 2026-07-27 "윗 글을 읽을 수 없음"). 크루 채팅의 atBottom 판정(v0.1.21
+  // 계열)과 같은 원칙. 떨어져 있으면 '새 메시지' 점프 칩만 띄운다.
+  const scrollRef = useRef(null);
+  const atBottomRef = useRef(true);
+  const [unseen, setUnseen] = useState(false);
+  useEffect(() => {
+    const el = scrollRef.current; if (!el) return;
+    const onScroll = () => {
+      atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      if (atBottomRef.current) setUnseen(false);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+  // 칩은 **실제 증가**에만(검수 D1: 8초 폴이 매번 새 배열을 넣어 내용 동일에도 켜졌다 — 거짓 신호).
+  // 보관 열람 중엔 상태를 만들지 않는다(D2: viewing 중 쌓인 stale 칩). 하단이면 명시 해제(D3).
+  const lastLenRef = useRef(0);
+  useEffect(() => {
+    const n = messages?.length ?? 0;
+    const grew = n > lastLenRef.current;
+    lastLenRef.current = n;
+    if (viewing) return;
+    if (atBottomRef.current) { setUnseen(false); endRef.current?.scrollIntoView({ block: 'end' }); }
+    else if (grew) setUnseen(true);
+  }, [messages, busy, viewing]);
+  const jumpToLatest = () => { atBottomRef.current = true; setUnseen(false); endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); };
 
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
 
   async function openSession(id) {
-    if (!id) { setViewing(null); setArchMsgs(null); return; }
+    if (!id) { setViewing(null); setArchMsgs(null); atBottomRef.current = true; setUnseen(false); return; } // 복귀=최신으로(검수 D2·D4)
     try {
       const d = await api(`/api/companies/${ws}/room/sessions?id=${encodeURIComponent(id)}`);
       setViewing(id); setArchMsgs(d.messages ?? []);
@@ -117,6 +143,7 @@ export default function Room({ params }) {
     if (!text || busy || uploading) return;
     const attachments = att;
     setBusy(true); setError('');
+    atBottomRef.current = true; // 자기 발언은 항상 하단 추종(읽던 위치 보존은 수신에만 적용)
     setMessages((m) => [...(m ?? []), { who: 'user', text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) }]);
     setInput(''); setAtt([]);
     try {
@@ -144,6 +171,7 @@ export default function Room({ params }) {
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
       setMessages([]); setError('');
+      atBottomRef.current = true; setUnseen(false); // 빈 방 = 초기 상태(검수 D4 — 우연한 클램프 의존 제거)
       loadSessions(); // 방금 마친 회의가 좌측 레일에 적재된다
       window.dispatchEvent(new Event('argo:refresh')); // 항해일지에 회의록이 바로 잡힌다
     } catch (e2) { setError(String(e2.message)); }
@@ -236,7 +264,8 @@ export default function Room({ params }) {
           )}
         </div>
 
-        <div className="card" style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0 }}>
+        <div style={{ position: 'relative', minHeight: 0, display: 'grid' }}>
+        <div ref={scrollRef} className="card" style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0 }}>
           {shown === null ? <Skeleton h={200} /> : shown.length === 0 ? (
             <div className="empty">{t('room.empty')}</div>
           ) : (
@@ -275,6 +304,13 @@ export default function Room({ params }) {
               <div ref={endRef} />
             </div>
           )}
+        </div>
+        {unseen && !viewing && (
+          <button type="button" onClick={jumpToLatest} className="btn btn-primary sm"
+            style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', boxShadow: '0 6px 18px rgba(0,0,0,.18)', zIndex: 5 }}>
+            {t('room.newMsgs')}
+          </button>
+        )}
         </div>
 
         {viewing ? (
