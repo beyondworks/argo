@@ -546,12 +546,32 @@ export function FeedbackModal({ onClose }) {
 /** Tauri 데스크톱 감지 — 분산 복제 방지용 단일 출처(분리 검수 MEDIUM 2026-07-28). */
 export const isTauriApp = () => typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri'));
 
-/** 네이티브 폴더 픽커(데스크톱 전용) — 선택 경로 문자열 또는 null(취소·실패).
-    실패는 warn 흔적을 남긴다(취소와 구분 — 버튼이 죽은 것으로 오인 방지). */
-export async function pickFolder(title) {
+// 픽커가 한 번 실패하면 앱 전체가 기억한다 — 실패는 기기 단위 사실(구버전 바이너리에 dialog
+// 플러그인 부재 등)이라, 카드마다 한 번씩 헛클릭시킬 이유가 없다(분리 검수 LOW-3).
+// 성공하면 반드시 되돌린다: 안 내리면 "픽커가 방금 멀쩡히 열렸는데 열 수 없다고 말하는" 거짓말이
+// 남는다(재검수 LOW-1) — 이 플래그로 막으려던 바로 그 오류다.
+// 이벤트로도 알린다 — 이미 떠 있는 카드들은 마운트 이펙트를 다시 돌지 않아 플래그만으론 안 배운다(재검수 LOW-2).
+export const FOLDER_DIALOG_EVENT = 'argo:folder-dialog';
+let folderDialogBroken = false;
+export const isFolderDialogBroken = () => folderDialogBroken;
+function setFolderDialogBroken(v) {
+  if (folderDialogBroken === v) return;
+  folderDialogBroken = v;
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(FOLDER_DIALOG_EVENT));
+}
+
+/** 네이티브 폴더 대화상자 — 경로 문자열 또는 null(사용자 취소). **실패는 throw한다.**
+    취소와 실패를 부르는 쪽이 갈라야 하는 이유: 픽커가 죽은 채(구버전 바이너리엔 dialog
+    플러그인이 없다 — v0.1.32 실사고) 경로 입력 폴백까지 감춰버리면 막다른 길이 된다. */
+export async function openFolderDialog(title) {
   try {
     const { open } = await import('@tauri-apps/plugin-dialog');
     const dir = await open({ directory: true, multiple: false, title });
+    setFolderDialogBroken(false); // 열렸다 = 이 기기에서 픽커는 살아 있다(과거 실패 기록 무효화)
     return typeof dir === 'string' && dir ? dir : null;
-  } catch (e) { console.warn('[argo] 폴더 픽커 실패:', e?.message ?? e); return null; }
+  } catch (e) {
+    setFolderDialogBroken(true);
+    console.warn('[argo] 폴더 픽커 실패:', e?.message ?? e);
+    throw e; // 부르는 쪽이 폴백을 열고 **사유를 표시**해야 한다 — 삼키면 v0.1.32 사고 재현
+  }
 }

@@ -36,16 +36,20 @@ const mailDir = (wsId, slug) => join(mailRoot(wsId), String(slug));
 // 이 프로세스가 지금 배달 중인 claim 경로 — stale 회수가 자기 진행분을 건드리지 않게(HIGH-1)
 const inFlight = new Set();
 
-/** 메시지 적재 — 수신자(to)와 참조(cc, 상한 CC_MAX) 각각의 우편함에 사본을 쓴다. 반환: 메시지 id. */
-export async function sendCrewMail(wsId, { from, fromName, to, cc = [], message, hop = 0, chain = [] }) {
+/** 메시지 적재 — 수신자(to)와 참조(cc, 상한 CC_MAX) 각각의 우편함에 사본을 쓴다. 반환: 메시지 id.
+    kind: 주 수신자에게 붙일 종류. 기본 'to'(회신 기대). 회의실에서 사장이 "cc @이름"으로 참조만
+    돌릴 때는 'cc'를 넘긴다 — 수신자가 하나여도 의미는 참조다(회신 의무 없음).
+    fromRole: 'captain'이면 동료가 아니라 사장이 보낸 것으로 문구가 갈린다(room.mjs 경유). */
+export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, cc = [], message, hop = 0, chain = [], kind = 'to' }) {
   if (!to || !String(message ?? '').trim()) throw new Error('수신 크루와 내용이 필요합니다');
+  if (kind !== 'to' && kind !== 'cc') throw new Error('kind는 to 또는 cc입니다');
   const id = `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const base = {
-    id, from, fromName: fromName || from, message: String(message).trim(),
+    id, from, fromName: fromName || from, ...(fromRole ? { fromRole } : {}), message: String(message).trim(),
     hop, chain, ts: new Date().toISOString(), attempts: 0,
   };
   const seen = new Set([String(to)]);
-  const rcpts = [{ slug: String(to), kind: 'to' }];
+  const rcpts = [{ slug: String(to), kind }];
   for (const c of cc) {
     const s = String(c);
     if (seen.has(s) || s === from) continue; // 중복·자기 참조 제거
@@ -90,6 +94,12 @@ export function mailPrompt(msg, lang = 'ko', { hasTools = true } = {}) {
   const ccNote = msg.kind === 'cc'
     ? (lang === 'en' ? ' (CC — for your awareness; no reply expected)' : ' (참조 — 알아두라고 보낸 사본이다. 회신 의무는 없다)')
     : '';
+  // 사장이 회의실에서 참조로 돌린 것 — "동료의 쪽지"라고 하면 발신자를 잘못 알려준다(회의실 cc 경로).
+  if (msg.fromRole === 'captain') {
+    return lang === 'en'
+      ? `(From the captain — shared from the meeting room${ccNote}) ${msg.message}`
+      : `(사장이 회의실에서 공유${ccNote}) ${msg.message}`;
+  }
   return lang === 'en'
     ? `(Message from colleague ${msg.fromName}${ccNote}) ${msg.message}${canReply ? `\n(If a reply is needed, use send_to_crew to message ${msg.fromName} back.)` : ''}`
     : `(동료 ${msg.fromName}의 쪽지${ccNote}) ${msg.message}${canReply ? `\n(회신이 필요하면 send_to_crew 도구로 ${msg.fromName}에게 답장을 보내라.)` : ''}`;

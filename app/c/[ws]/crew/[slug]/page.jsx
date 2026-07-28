@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 
@@ -428,13 +428,23 @@ export default function CrewChat({ params }) {
   }
 
   // 작업 폴더 바로 열기 — 설정까지 가지 않고 컴포저에서 등록한다(유건 확정 2026-07-28). 데스크톱은
-  // 네이티브 픽커(설정 WorkRootsCard의 pickFolder 패턴 재사용), 웹은 실경로 미제공이라 경로 입력 폼으로 정직 폴백.
+  // 네이티브 픽커(ui.jsx openFolderDialog — 설정 FolderField와 같은 경로), 웹은 실경로 미제공이라
+  // 경로 입력 폼으로 정직 폴백.
   const [wfOpen, setWfOpen] = useState(false); // 인라인 경로 폼 — 웹 폴백 + 픽커 경로의 검증 실패 표시 겸용
   const [wfInput, setWfInput] = useState('');
   const [wfBusy, setWfBusy] = useState(false);
   const [wfErr, setWfErr] = useState('');
   const [isApp, setIsApp] = useState(false);
-  useEffect(() => { setIsApp('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri')); }, []);
+  const [wfPickerDead, setWfPickerDead] = useState(false); // 픽커 실패로 폼이 열렸는가(서버 거부와 구분)
+  // 감지식은 ui.jsx isTauriApp을 쓴다(#170 통일 방침 — 여기서 다시 복제하지 않는다).
+  // 픽커 성공/실패는 이벤트로 따라간다 — 성공했는데 "열 수 없다"가 남으면 거짓말이다(재검수 LOW-1·2).
+  useEffect(() => {
+    setIsApp(isTauriApp());
+    const sync = () => setWfPickerDead(isFolderDialogBroken());
+    sync();
+    window.addEventListener(FOLDER_DIALOG_EVENT, sync);
+    return () => window.removeEventListener(FOLDER_DIALOG_EVENT, sync);
+  }, []);
 
   /** 등록 성공 시 입력창 프리픽스 — 등록만으로도 다음 턴 시스템 프롬프트에 반영되지만(src/chat.mjs workRoots),
       이번 지시에도 경로를 명시해 크루가 바로 그 폴더에서 일하게 한다. 쓰던 초안은 지우지 않고 앞에 붙인다. */
@@ -468,11 +478,11 @@ export default function CrewChat({ params }) {
   async function openWorkFolder() {
     if (isApp) {
       try {
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const dir = await open({ directory: true, multiple: false, title: t('settings.workroots.pickTitle') });
-        if (typeof dir === 'string' && dir) await registerWorkFolder(dir);
-        return;
-      } catch (e) { console.warn('[argo] 폴더 픽커 실패:', e?.message ?? e); } // 픽커 불가 → 입력 폼 폴백
+        // 픽커 정본은 ui.jsx openFolderDialog(설정 FolderField와 동일 경로) — 취소는 null, 실패는 throw
+        const dir = await openFolderDialog(t('settings.workroots.pickTitle'));
+        if (dir) await registerWorkFolder(dir);
+        return; // 취소도 여기서 끝 — 취소했는데 입력 폼이 열리면 "안 고른 것"이 되레 일거리가 된다
+      } catch { setWfPickerDead(true); } // 픽커 불가 → 사유를 달고 입력 폼 폴백(warn은 openFolderDialog가 남긴다)
     }
     setWfErr('');
     setWfOpen((o) => !o);
@@ -972,7 +982,11 @@ export default function CrewChat({ params }) {
               <button type="button" onClick={() => { setWfOpen(false); setWfErr(''); }} aria-label={t('common.close')}
                 style={{ border: 0, background: 'transparent', color: 'var(--fg-3)', cursor: 'pointer', fontSize: 11, borderRadius: 5 }}>✕</button>
             </div>
+            {/* 웹은 왜 직접 쓰는지, 데스크톱은 왜 Finder가 안 떴는지 사유를 준다(분리 검수 H1).
+                단 이 폼은 **서버가 고른 폴더를 거부했을 때도** 열린다 — 그땐 픽커가 멀쩡하므로
+                "열 수 없다"고 하면 거짓말이다. 그래서 픽커 실패 여부를 따로 들고 판단한다. */}
             {!isApp && <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('chat.workFolder.webHint')}</p>}
+            {isApp && wfPickerDead && <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('common.pickerUnavailable')}</p>}
             <form onSubmit={(e) => { e.preventDefault(); const p = wfInput.trim(); if (p) registerWorkFolder(p); }}
               style={{ display: 'flex', gap: 8 }}>
               <input value={wfInput} onChange={(e) => setWfInput(e.target.value)} placeholder={t('settings.workroots.placeholder')}
@@ -985,16 +999,20 @@ export default function CrewChat({ params }) {
         )}
         {/* 여러 줄 입력 — textarea(Enter 전송·Shift+Enter 줄바꿈). 버튼은 하단 정렬(입력이 자라도 자리 고정) */}
         <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
-          <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
-            onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
-            <Icon name="clip" size={14} />
-          </button>
-          {/* 작업 폴더 열기 — 러너별 한계는 툴팁으로 정직 표기(Gemini 계열은 경로 제어 없음, runnerNote 재사용) */}
-          <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
-            onClick={openWorkFolder} disabled={busy || wfBusy} aria-label={t('chat.workFolder.open')}
-            title={`${t('chat.workFolder.open')} — ${t('settings.workroots.runnerNote')}`}>
-            {wfBusy ? <Spinner size={14} /> : <Icon name="folder" size={14} />}
-          </button>
+          {/* 첨부·폴더는 "무언가를 붙인다"는 한 갈래라 시각적으로 한 묶음 — 둘 사이를 입력창과의
+              간격(input-bar gap 10px)보다 좁게 둔다(유건 지시 2026-07-28, 균형). */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 'none' }}>
+            <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
+              onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
+              <Icon name="clip" size={14} />
+            </button>
+            {/* 작업 폴더 열기 — 러너별 한계는 툴팁으로 정직 표기(Gemini 계열은 경로 제어 없음, runnerNote 재사용) */}
+            <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
+              onClick={openWorkFolder} disabled={busy || wfBusy} aria-label={t('chat.workFolder.open')}
+              title={`${t('chat.workFolder.open')} — ${t('settings.workroots.runnerNote')}`}>
+              {wfBusy ? <Spinner size={14} /> : <Icon name="folder" size={14} />}
+            </button>
+          </div>
           <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
           <textarea suppressHydrationWarning
             ref={inputRef}

@@ -8,13 +8,18 @@ import { useLang } from '../../../i18n';
 function scheduleLabel(s, t, DOW) {
   // 복수 시각·요일은 '·'로 이어 기존 라벨 템플릿에 그대로 태운다 (예: 매주 월·수 09:00·18:00)
   const time = (s.times?.length ? s.times : [s.time]).join('·');
+  // 예약 시각은 루틴에 각인된 시간대로 뜬다. 지금 보는 사람의 시간대와 **다를 때만** 밝힌다 —
+  // 같을 땐 군더더기고, 다를 땐 "왜 그 시각에 오지?"의 답이다(다른 나라에서 만든 루틴·기기 이동).
+  let here = null;
+  try { here = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { /* 구형 런타임 — 표기 생략 */ }
+  const zone = s.tz && s.tz !== here ? ` (${s.tz})` : '';
   // 1회 예약(크루의 schedule_task로 생기는 형태) — daily로 표기하면 "매일 15:00"으로 거짓 표시된다
-  if (s.type === 'once') return t('routines.scheduleOnce', { date: s.date ?? '', time });
+  if (s.type === 'once') return t('routines.scheduleOnce', { date: s.date ?? '', time }) + zone;
   // interval(크루 Start-loop) — daily로 흘리면 "매일 "(시각 없음) 거짓 표시가 된다(once와 같은 함정, 검수 MEDIUM)
   if (s.type === 'interval') return t('routines.scheduleInterval', { min: s.everyMinutes ?? '?' });
-  if (s.type !== 'weekly') return t('routines.scheduleDaily', { time });
+  if (s.type !== 'weekly') return t('routines.scheduleDaily', { time }) + zone;
   const dow = (s.dows?.length ? s.dows : [s.dow ?? 1]).map((d) => DOW[d]).join('·');
-  return t('routines.scheduleWeekly', { dow, time });
+  return t('routines.scheduleWeekly', { dow, time }) + zone;
 }
 
 export default function Routines({ params }) {
@@ -105,7 +110,10 @@ export default function Routines({ params }) {
         agentSlug: form.agentSlug, title: form.title, prompt: form.prompt,
         schedule: form.type === 'interval'
           ? { type: 'interval', everyMinutes: Number(form.everyMinutes) } // 시각·요일 미전송 — 편집이 interval을 daily로 조용히 바꾸던 결함(검수 MEDIUM)의 교정
-          : { type: form.type, times: form.times, dows: form.dows.map(Number) },
+          // 예약 시각은 **보는 사람의 시간대**로 못박아 보낸다(유건 지시 2026-07-28: "한국 사용자는
+          // 한국 시간으로"). 안 보내면 서버가 자기 시간대로 해석하는데, 웹·클라우드 경로에선 그게
+          // 사용자 시간대가 아니다(UTC 서버면 09:00이 KST 18:00에 터진다).
+          : { type: form.type, times: form.times, dows: form.dows.map(Number), tz: Intl.DateTimeFormat().resolvedOptions().timeZone },
       };
       if (form.id) {
         const res = await fetch(`/api/companies/${ws}/routines`, {
