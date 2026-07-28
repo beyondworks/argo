@@ -387,9 +387,8 @@ function ThemeCard() {
   );
 }
 
-/** 보관함 — 삭제된 대화(회사 전체)를 모아 복구·영구삭제. 삭제=chats/.trash/로 이동(비파괴). */
 /** 회사 데이터 내보내기 — 지정 폴더로 복사(백업·이사·보관. A갈래 신고 대응 2026-07-28).
-    자격 파일(.secrets·connections·mcp)은 제외된다 — 정책 정본은 src/export.mjs. */
+    자격 파일(.secrets·connections·mcp)·심링크는 제외된다 — 정책 정본은 src/export.mjs. */
 function ExportCard({ ws }) {
   const { t } = useLang();
   const [dest, setDest] = useState('');
@@ -432,6 +431,7 @@ function ExportCard({ ws }) {
   );
 }
 
+/** 보관함 — 삭제된 대화(회사 전체)를 모아 복구·영구삭제. 삭제=chats/.trash/로 이동(비파괴). */
 function TrashCard({ ws }) {
   const { t } = useLang();
   const [items, setItems] = useState(null);

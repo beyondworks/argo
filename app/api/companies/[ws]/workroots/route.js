@@ -1,7 +1,7 @@
 // 외부 작업 폴더 API — 설정 UI 전용(크루는 파일이 도트파일이라 게이트가 직접 수정을 막는다).
 // 검증 실패는 코드로 반환하고 UI가 i18n 매핑한다 — 서버 한국어 하드코딩 금지(러너 감사 K7 계열 예방).
 import { loadWorkRoots, updateWorkRoots, MAX_WORK_ROOTS } from '../../../../../src/workroots.mjs';
-import { guardCompany } from '../../../../auth.mjs';
+import { guardCompany, csrfDenied } from '../../../../auth.mjs';
 
 export async function GET(_req, { params }) {
   const { ws } = await params;
@@ -13,6 +13,9 @@ export async function GET(_req, { params }) {
 export async function POST(req, { params }) {
   try {
     const { ws } = await params;
+    // CSRF 가드 — 크루 접근 범위를 넓히는 상태변경이라 악성 웹페이지의 simple POST를 막는다
+    // (export 라우트 검수 HIGH-1과 같은 계열 — 로컬 모드에선 guardCompany가 인증 장벽이 아니다).
+    const csrf = csrfDenied(req); if (csrf) return csrf;
     const denied = await guardCompany(ws); if (denied) return denied;
     const body = await req.json();
     const roots = await updateWorkRoots(ws, { add: body.add, remove: body.remove });

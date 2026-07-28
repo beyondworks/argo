@@ -62,5 +62,20 @@ test('exportCompany: 보호 구역·미존재 목적지는 거부(workroots 검�
   await assert.rejects(() => exportCompany('exp-co', process.env.ARGO_ROOT), (e) => e.code === 'protected', 'WS_ROOT 안으로 내보내기 금지');
   await assert.rejects(() => exportCompany('exp-co', '/no/such/dir'), (e) => e.code === 'not-found');
   const d2 = await mkdtemp(join(tmpdir(), 'argo-exp-d2-'));
-  await assert.rejects(() => exportCompany('no-such-ws', d2), (e) => e.code === 'not-found');
+  await assert.rejects(() => exportCompany('no-such-ws', d2), (e) => e.code === 'no-company', '회사 부재는 목적지 부재와 다른 코드');
+});
+
+test('exportCompany: 심링크는 복사도 집계도 안 된다 — 자격 포인터·거짓 안심 차단(검수 MED-1)', async () => {
+  const ws = 'exp-link';
+  const root = join(process.env.ARGO_ROOT, ws);
+  await mkdir(join(root, 'vault'), { recursive: true });
+  await writeFile(join(root, 'company.json'), JSON.stringify({ id: ws }));
+  await writeFile(join(root, '.secrets.json'), '{"k":"sk-링크실키"}');
+  const { symlink } = await import('node:fs/promises');
+  await symlink(join(root, '.secrets.json'), join(root, 'vault', '몰래백업.txt')); // 이름은 무해, 대상은 자격
+  const dest = await mkdtemp(join(tmpdir(), 'argo-exp-ldest-'));
+  const r = await exportCompany(ws, dest);
+  assert.equal(r.files, 1, 'company.json만 — 심링크는 개수에 안 잡힌다');
+  assert.equal(existsSync(join(r.target, 'vault', '몰래백업.txt')), false, '자격을 가리키는 심링크 미복사');
+  assert.equal(existsSync(`${r.target}.partial`), false, '.partial 잔재 없음(성공 시 rename)');
 });

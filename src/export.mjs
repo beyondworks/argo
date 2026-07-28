@@ -7,11 +7,18 @@
 //
 // 보안(불변): 자격·시크릿을 담는 파일은 복사하지 않는다 — 내보낸 폴더는 Argo 보호(게이트·동기화
 // EXCLUDE) 밖이라, 담는 순간 평문 유출 경로가 된다. 제외 목록은 exportExcluded가 정본이고
-// 테스트가 잠근다. 목적지 검증은 workroots.mjs의 validateWorkRoot를 재사용한다(절대경로·존재·
-// 디렉토리·앱 루트/~/.argo/WS_ROOT 거부·realpath 봉인 — 워크스페이스 "안으로" 내보내기도 막힌다).
-import { cp, readdir, stat, mkdir } from 'node:fs/promises';
+// (secretbox.mjs isSecretRel과 동일 3종 + 금고 도트파일), 테스트가 잠근다. 목적지 검증은
+// workroots.mjs의 validateWorkRoot를 재사용한다(절대경로·존재·디렉토리·보호 구역 거부·realpath 봉인).
+//
+// 복사기는 fs.cp가 아니라 수동 워커다(분리 검수 2026-07-28 반영):
+//  - 심링크는 복사하지 않는다 — 이름만 보는 제외 목록을 우회해 자격을 가리키는 "살아있는 포인터"가
+//    사본에 실리는 것(MED-1)과, 대상이 실체화되지 않았는데 개수에 잡히는 거짓 안심을 함께 차단.
+//  - copyFile은 fs.cp와 달리 원본 mode를 chmod로 복원하지 않는다 — exFAT/FAT 외장 드라이브에서
+//    chmod EPERM으로 중간 사망하는 함정 제거(검수 7 — 이 기능의 대상이 정확히 외장 드라이브다).
+//  - .partial에 복사 후 성공 시 rename — 부분 실패 잔재가 완전한 백업으로 오인되지 않는다(MED-2).
+import { copyFile, readdir, mkdir, rename, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { validateWorkRoot } from './workroots.mjs';
 
@@ -31,30 +38,37 @@ export const exportExcluded = (rel) => {
   return false;
 };
 
+/** 재귀 복사 — 심링크·비정규 파일 제외, 제외 목록 적용, 복사하며 집계. */
+async function copyTree(srcDir, dstDir, relBase, state) {
+  await mkdir(dstDir, { recursive: true });
+  for (const e of await readdir(srcDir, { withFileTypes: true })) {
+    const rel = relBase ? `${relBase}/${e.name}` : e.name;
+    if (exportExcluded(rel)) continue;
+    if (e.isSymbolicLink()) continue; // 심링크 미복사 — 자격 포인터·거짓 집계 차단(검수 MED-1)
+    const sp = join(srcDir, e.name);
+    const dp = join(dstDir, e.name);
+    if (e.isDirectory()) { await copyTree(sp, dp, rel, state); continue; }
+    if (!e.isFile()) continue; // 소켓·fifo 등 비정규 파일
+    await copyFile(sp, dp); // mode 복원 없음 — exFAT 외장에서 chmod EPERM 함정 제거(검수 7)
+    state.files += 1;
+  }
+}
+
 /** 회사 워크스페이스를 destDir 아래 argo-export-<ws>-<ts>/ 로 복사. 반환 { target, files }. */
 export async function exportCompany(wsId, destDir) {
   const src = paths(wsId).root; // paths()가 wsId 형식·경계를 검증한다
-  if (!existsSync(src)) throw err('not-found', wsId);
+  if (!existsSync(src)) throw err('no-company', wsId); // 목적지 부재(not-found)와 구분 — 안내가 갈린다(검수 6)
   const dest = await validateWorkRoot(destDir); // 목적지 검증 재사용 — 보호 구역·루트 전체 거부 포함
   const target = join(dest, `argo-export-${wsId}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`);
   if (existsSync(target)) throw err('exists', target); // 같은 초 재실행 — 사용자 재시도로 해소
-  const srcPrefix = `${src}${sep}`;
-  await cp(src, target, {
-    recursive: true,
-    filter: (p) => {
-      if (p === src) return true;
-      const rel = p.slice(srcPrefix.length).split(sep).join('/');
-      return !exportExcluded(rel);
-    },
-  });
-  // 파일 수 집계 — "몇 개 복사됐는지"가 사용자에게 완료의 실감이다(빈 결과의 무음 방지)
-  let files = 0;
-  async function count(dir) {
-    for (const e of await readdir(dir, { withFileTypes: true })) {
-      if (e.isDirectory()) await count(join(dir, e.name));
-      else files += 1;
-    }
+  const tmp = `${target}.partial`;
+  const state = { files: 0 };
+  try {
+    await copyTree(src, tmp, '', state);
+  } catch (e) {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {}); // 부분 잔재 정리 — 잘린 백업의 무음 생존 방지
+    throw err('copy-failed', String(e.message || e));
   }
-  await count(target);
-  return { target, files };
+  await rename(tmp, target); // 성공 시에만 정식 이름 — 원자 rename 관용구(jsonstore와 동일 계열, 검수 MED-2)
+  return { target, files: state.files };
 }
