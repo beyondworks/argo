@@ -12,7 +12,11 @@ import { fileURLToPath } from 'node:url';
 
 // 임시 ARGO_ROOT + 임시 HOME/USERPROFILE — 격리(win homedir()=USERPROFILE — CI 실측 2026-07-27)
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-wr-'));
-process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-wrhome-'));
+// HOME은 canonical(realpath)로 — 맥 tmpdir은 /var→/private/var 심링크라, 렉시컬 폴백 경로(/var/...)와
+// canonical 비교 기준(/private/var/...)의 접두가 어긋나 케이스 폴딩 테스트가 폴딩과 무관한 이유로
+// 통과/실패했다(분리 검수: 순서 의존 플레이크 + #141 canonDeep 병합 시 오작동). canonical이면 조건 독립.
+const { realpath: realpathFs } = await import('node:fs/promises');
+process.env.HOME = process.env.USERPROFILE = await realpathFs(await mkdtemp(join(tmpdir(), 'argo-wrhome-')));
 const { validateWorkRoot, updateWorkRoots, loadWorkRoots, loadActiveWorkRoots, MAX_WORK_ROOTS } = await import('../src/workroots.mjs');
 const { makePermissionGate, makeInWorkRoots, makeIsForbidden } = await import('../src/permission-gate.mjs');
 const { codexSandboxArgs, writeCodexTurnConfig } = await import('../src/runners.mjs');
@@ -30,6 +34,7 @@ test('케이스 변형 + 미존재 하위 경로가 하드 차단을 빠져나�
   // real이 렉시컬 폴백(입력 케이스 보존)이 되어, 폴딩 없인 ~/.ARGO/NS/DEEP 케이스 변형이
   // canonical 하드 루트와 문자열 불일치 → isForbidden=false → 보호 구역 안 새 하위 트리 생성 허용.
   // 뮤테이션 검증: insideFold를 정확 비교로 되돌리면 이 테스트가 실패해야 한다(트립와이어).
+  // 전제: HOME이 canonical(위 realpath) — 아니면 ~/.argo 단언이 접두 아티팩트로 폴딩과 무관하게 뒤집힌다.
   if (process.platform !== 'win32' && process.platform !== 'darwin') return tc.skip('대소문자 구분 FS');
   const flip = (p) => p.split('').map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
   const isForbidden = makeIsForbidden(wsRoot);

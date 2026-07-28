@@ -100,6 +100,8 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
       return dirname(real) === R.ws && basename(real).startsWith('.');
     }
     for (const r of R.hard) if (insideFold(real, r)) return true;
+    // 부수 효과(의도): 자기 워크스페이스의 케이스 변형+미존재 경로는 허용 분기(정확 비교)에서 떨어져
+    // 여기 걸린다 — fail-safe 과차단. 메시지가 '타사'라 오해 소지 있으나 허용 확대보다 낫다(검수 LOW 수용).
     if (insideFold(real, R.parent)) return true; // WS_ROOT 아래인데 자기 회사 밖 — 타사 데이터·계정 시크릿
     return false;
   };
