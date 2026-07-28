@@ -5,6 +5,8 @@ import { loadRoutines, runRoutine, isDue } from './routines.mjs';
 import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
 import { emitNotify } from './notify.mjs';
 import { chat } from './chat.mjs';
+import { readAgentCard } from './persona.mjs';
+import { resolveRunner, isCliRunner } from './runners.mjs';
 import { appendTurn } from './thread.mjs';
 import { consolidateMemory, rollupJournals } from './consolidate.mjs';
 import { daemonLease } from './lock.mjs';
@@ -143,7 +145,18 @@ export function ensureScheduler() {
         if (!mailDelivering.has(c.id)) {
           mailDelivering.add(c.id);
           deliverCrewMail(c.id, async (slug, msg, opts) => {
-            const prompt = mailPrompt(msg);
+            // 수신 크루의 유효 러너 판정 — CLI 러너(codex/gemini/antigravity) 턴에는 send_to_crew가
+            // 없어 회신 안내가 없는 도구 지시가 된다(분리 검수 MEDIUM 2026-07-28). chat.mjs의 해석
+            // (meta.runner → resolveRunner 폴백)과 같은 경로로 근사한다 — chat()이 턴 시점에 재해석
+            // 하므로 그 사이 러너 상태가 바뀌면 어긋날 수 있으나, 판정 실패·경합의 기본값은 안내
+            // 유지(hasTools:true)라 최악도 기존 동작과 같다.
+            let hasTools = true;
+            try {
+              const { meta } = await readAgentCard(c.id, slug);
+              const resolved = await resolveRunner(c.id, (meta.runner ?? '').toLowerCase() || null);
+              hasTools = !isCliRunner(resolved.runner);
+            } catch { /* 크루 카드·러너 상태 읽기 실패 — 기본값 유지, 실행은 chat()이 판단 */ }
+            const prompt = mailPrompt(msg, 'ko', { hasTools });
             const t = await chat(c.id, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail' });
             // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
             await appendTurn(c.id, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null })

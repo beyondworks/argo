@@ -81,9 +81,12 @@ async function pendingBySlug(wsId) {
 
 /** 배달 프롬프트 — 수신 크루 턴의 사용자 메시지. delegate 프리픽스와 같은 문법(스레드에 그대로 보임).
     회신 안내는 **회신이 실제로 가능한 턴에만**(kind=to && hop<2 — hop≥2 배달 턴은 도구가 없다,
-    분리 검수 HIGH-2: 존재하지 않는 도구를 지시하던 프롬프트). */
-export function mailPrompt(msg, lang = 'ko') {
-  const canReply = msg.kind === 'to' && (msg.hop ?? 0) < 2;
+    분리 검수 HIGH-2: 존재하지 않는 도구를 지시하던 프롬프트).
+    hasTools=false(수신 크루가 외부 CLI 러너 — send_to_crew가 표면에 없다)도 같은 이유로 회신 지시를
+    뺀다(분리 검수 MEDIUM 2026-07-28, HIGH-2와 동일 사고). 판정은 호출자(scheduler)가 수신 크루의
+    유효 러너로 내린다. */
+export function mailPrompt(msg, lang = 'ko', { hasTools = true } = {}) {
+  const canReply = msg.kind === 'to' && (msg.hop ?? 0) < 2 && hasTools;
   const ccNote = msg.kind === 'cc'
     ? (lang === 'en' ? ' (CC — for your awareness; no reply expected)' : ' (참조 — 알아두라고 보낸 사본이다. 회신 의무는 없다)')
     : '';

@@ -55,6 +55,15 @@ test('mailPrompt — to는 회신 안내, cc는 회신 의무 없음, hop≥2는
   assert.doesNotMatch(h2, /send_to_crew/, 'hop 2 배달 턴에 회신 지시가 남아 있다');
 });
 
+test('mailPrompt hasTools:false — CLI 러너 수신 턴에 send_to_crew 지시 금지(HIGH-2와 동일 사고)', () => {
+  // 수신 크루가 외부 CLI 러너(codex/gemini/antigravity)면 hop<2여도 도구가 없다(검수 MEDIUM 2026-07-28)
+  for (const lang of ['ko', 'en']) {
+    const t = mod.mailPrompt({ kind: 'to', fromName: '알파', message: 'x', hop: 0 }, lang, { hasTools: false });
+    assert.doesNotMatch(t, /send_to_crew/, `${lang}: 도구 없는 수신 턴에 회신 지시 혼입`);
+    assert.ok(t.includes('알파'), `${lang}: 본문 프레임은 유지`);
+  }
+});
+
 test('선점 경합 — 두 배달 주체가 동시에 돌아도 배달은 1회(rename 원자성, 검수 CRITICAL-1)', async () => {
   await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'race', message: '경합 검증' });
   let calls = 0;
@@ -163,6 +172,13 @@ test('배선 — 우편 배달은 클라우드 리더 게이트를 타지 않는
   // 기억 정리는 여전히 기기 간 단일 실행(cloudLeader)이어야 한다 — 게이트 전면 해제 금지
   assert.match(s, /cloudLeader && hhmm >= CONSOLIDATE_AT/,
     '기억 정리가 클라우드 리더 게이트를 잃었다 — 다기기 동시 정리');
+});
+
+test('배선 — 스케줄러가 수신 크루 러너를 판정해 mailPrompt에 hasTools를 전달한다', () => {
+  // 판정 없이 mailPrompt(msg)만 부르면 CLI 러너 수신 크루가 없는 send_to_crew 지시를 받는다(검수 MEDIUM 2026-07-28)
+  const s = read('src/scheduler.mjs');
+  assert.match(s, /isCliRunner\(resolved\.runner\)/, '수신 러너 CLI 판정이 없다');
+  assert.match(s, /mailPrompt\(msg, 'ko', \{ hasTools \}\)/, 'mailPrompt에 hasTools 미전달');
 });
 
 test('배선 — send_to_crew 도구가 delegate와 같은 게이트(colleagues)로 등록된다', () => {
