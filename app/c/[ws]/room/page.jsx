@@ -157,6 +157,9 @@ export default function Room({ params }) {
       }
     } catch (err) {
       setError(String(err.message));
+      // 전송 실패 시 첨부 복구(검수 LOW) — 업로드는 이미 끝난 파일들이라 다시 고르게 하지 않는다.
+      // 대기 중 사용자가 새로 첨부했으면(컴포저가 비어 있지 않으면) 그쪽을 존중해 덮지 않는다.
+      setAtt((cur) => (cur.length ? cur : attachments));
     } finally {
       setBusy(false);
     }
