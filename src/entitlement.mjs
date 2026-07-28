@@ -2,6 +2,7 @@
 // 이 모듈은 우아한 페이월 UX용 pre-flight일 뿐 — 수정된 클라이언트가 건너뛰어도 RLS가 무료 계정의 쓰기를 거부한다.
 // 강제(클라 UX)는 ARGO_ENFORCE_PLAN=1일 때만(기본 off, 런치에서 RLS 적용과 함께 켠다). plan 쓰기는 서버(서비스 롤) 전용 — 여긴 읽기만.
 // 강제 on에서도 게이트는 사이클 조기 return이라 비파괴(다음 사이클 재시도).
+// ⚠ 이 파일은 클라이언트 번들에도 포함된다(설정 SyncCard가 trialBadgeState를 import) — node:* import·부작용 금지.
 
 export const TRIAL_DAYS = 14; // 가입 후 무료 체험(2026-07-24 유건 확정: 2주 Free → Pro $16/월). 서버 is_pro와 대칭 유지.
 
