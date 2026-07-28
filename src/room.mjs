@@ -8,6 +8,7 @@ import { chat } from './chat.mjs';
 import { updateIndex } from './memory.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
+import { CC_MAX } from './crewmail.mjs';
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 // sync가 chats/room-main.json을 쓸 때 쓰는 락 키(thread:ws:room-main)와 동일하게 맞춘다 —
@@ -188,18 +189,26 @@ export function parseRoomDirectives(text, agents = []) {
   // 멘션 뒤에 붙는 문장부호는 이름의 일부가 아니다("@비스트," → "비스트")
   const clean = (tok) => String(tok).replace(/^@/, '').replace(/[.,!?:;)\]}]+$/, '');
 
+  // 멘션이 **아닌** @ — 크루 이름엔 점·슬래시·역슬래시가 없다. 이메일 도메인(gmail.com)과
+  // 스코프 패키지(types/node)를 여기서 버린다. unknown에도 넣지 않는다 — 사장이 오타 낸 게
+  // 아니라 애초에 멘션이 아니었으므로, 안내를 띄우면 그게 잡음이다(분리 검수 HIGH-1).
+  const notAMention = (c) => /[./\\]/.test(c);
+
   const unknown = [];
-  /** 토큰을 크루로 풀어 into에 담는다. 반환: 'all' | 'ok' | 'unknown' */
+  /** 토큰을 크루로 풀어 into에 담는다. 반환: 'all' | 'ok' | 'unknown' | 'skip' */
   const take = (tok, into) => {
     const c = clean(tok);
     if (/^(all|전체)$/i.test(c)) return 'all';
+    if (notAMention(c)) return 'skip';
     const a = index.get(norm(c));
     if (!a) { if (!unknown.includes(c)) unknown.push(c); return 'unknown'; }
     if (!into.some((x) => x.slug === a.slug)) into.push(a);
     return 'ok';
   };
 
-  let rest = String(text ?? '');
+  // 코드블록은 파싱 전에 걷어낸다 — 붙여넣은 코드의 @Override·@media가 멘션으로 읽히면,
+  // 안내가 끼어들거나(잡음) 유효 멘션이 없을 때 아무도 답하지 않는다(무응답 회귀).
+  let rest = String(text ?? '').replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ');
 
   // ① loop — **문두에서만** 잡는다. 문장 중간의 "반복"은 그냥 낱말이지 지시가 아니다.
   let loop = null;
@@ -215,27 +224,35 @@ export function parseRoomDirectives(text, agents = []) {
 
   // ② cc — 'cc @a @b' / '참조 @a, @b'. 먼저 걷어내야 아래 to 수집에 섞이지 않는다.
   const cc = [];
+  let ccAll = false; // 'cc @전체' — 호출부가 전 크루로 펼친다(상한은 거기서)
   rest = rest.replace(/(?:^|\s)(?:cc|참조)[:\s]+((?:@\S+[\s,]*)+)/gi, (_m, group) => {
-    for (const tok of group.match(/@\S+/g) ?? []) take(tok, cc);
+    for (const tok of group.match(/@\S+/g) ?? []) {
+      // 'all'을 버리면 "cc @전체 공유"가 통째로 사라지고, unknown도 안 서서 중단 게이트에도
+      // 안 걸려 **첫 크루 한 명이 답해버린다**(분리 검수 MEDIUM-1 — 무증상 오배정).
+      if (take(tok, cc) === 'all') ccAll = true;
+    }
     return ' ';
   });
 
   // ③ hop — '@A > @B > @C'. 체인은 하나만 인정한다(여러 갈래 릴레이는 방에서 읽히지 않는다).
+  // 첫 @도 경계에 고정 — 그러지 않으면 "a@b.com > @울프"가 체인으로 읽힌다.
   const relay = [];
-  rest = rest.replace(/@\S+(?:\s*(?:>|→|->)\s*@\S+)+/g, (m) => {
+  rest = rest.replace(/(^|[\s([{,])@[^\s@]+(?:\s*(?:>|→|->)\s*@[^\s@]+)+/g, (m, lead) => {
     if (relay.length) return ' '; // 두 번째 체인은 무시 — 아래 unknown이 아니라 의도적 단순화
-    for (const tok of m.match(/@\S+/g) ?? []) take(tok, relay);
-    return ' ';
+    for (const tok of m.match(/@[^\s@]+/g) ?? []) take(tok, relay);
+    return lead || ' ';
   });
 
-  // ④ 남은 멘션 = to
+  // ④ 남은 멘션 = to. @는 **경계에서만** 멘션이다 — 이메일(lean8kim@gmail.com)의 @는
+  // 앞이 문자라 여기 안 걸린다. 안 걸려야 unknown이 비고, 중단 게이트 대신 기존
+  // "멘션 없으면 첫 크루" 동작이 유지된다(분리 검수 HIGH-1의 무응답 회귀 차단).
   const to = [];
   let allCall = false;
-  for (const tok of rest.match(/@\S+/g) ?? []) {
-    if (take(tok, to) === 'all') allCall = true;
+  for (const m of rest.matchAll(/(?:^|[\s([{,])@([^\s@]+)/g)) {
+    if (take(m[1], to) === 'all') allCall = true;
   }
 
-  return { loop, cc, relay: relay.slice(0, HOP_MAX + 1), to, allCall, unknown };
+  return { loop, cc, ccAll, relay: relay.slice(0, HOP_MAX + 1), to, allCall, unknown };
 }
 
 export async function runRoomTurn(wsId, text, attachments = []) {
@@ -293,12 +310,18 @@ export async function runRoomTurn(wsId, text, attachments = []) {
     return { replies: [], room: await loadRoom(wsId) };
   }
 
-  // ── cc — 방에서 말하지 않는다. 회의 발언을 참조 사본으로 우편함에 넣어 다음 자기 턴에 읽게 한다
-  //    (쪽지 cc와 같은 의미: "알아두라고 보낸 사본, 회신 의무 없다"). 방에는 안내 한 줄만 남는다.
-  if (dir.cc.length) {
+  // ── cc — 방에서 말하지 않는다. 회의 발언을 참조 사본으로 우편함에 넣는다.
+  //    **비용 주의**: 참조받은 크루는 조용히 읽는 게 아니라 스케줄러가 배달하며 자기 턴을 새로
+  //    태운다(scheduler.mjs — 쪽지 1건 = LLM 턴 1회). "cc"라는 말이 싸 보여서 사장이 그 비용을
+  //    인지하기 어렵기 때문에 crewmail의 CC_MAX를 여기에도 건다(분리 검수 MEDIUM-2).
+  //    회의실 cc는 수신자마다 쪽지를 따로 만들어 crewmail 내부 상한 검사에 걸리지 않는다.
+  const ccTargets = dir.ccAll ? agents.filter((a) => !dir.to.some((x) => x.slug === a.slug)) : dir.cc;
+  if (ccTargets.length) {
     const bossName = en ? 'the captain' : '사장';
+    const capped = ccTargets.slice(0, CC_MAX);
+    const dropped = ccTargets.length - capped.length;
     const ok = [];
-    for (const a of dir.cc) {
+    for (const a of capped) {
       try {
         const { sendCrewMail } = await import('./crewmail.mjs');
         await sendCrewMail(wsId, {
@@ -310,9 +333,11 @@ export async function runRoomTurn(wsId, text, attachments = []) {
       } catch (e) { console.warn(`[argo] 회의실 참조 전달 실패(${a.slug}):`, e.message); }
     }
     if (ok.length) {
+      // 잘렸으면 반드시 말한다 — 참조가 조용히 빠지면 사장은 전달된 줄 안다
+      const cut = dropped > 0 ? (en ? ` (${dropped} more skipped — CC limit ${CC_MAX})` : ` (${dropped}명은 제외 — 참조는 ${CC_MAX}명까지)`) : '';
       await sys('cc', en
-        ? `CC → ${ok.map((a) => a.name).join(', ')} — they will read this on their next turn (no reply expected).`
-        : `참조 → ${ok.map((a) => a.name).join(', ')} — 다음 자기 턴에 읽습니다(발언은 하지 않습니다).`);
+        ? `CC → ${ok.map((a) => a.name).join(', ')} — they pick this up on their own next turn.${cut}`
+        : `참조 → ${ok.map((a) => a.name).join(', ')} — 각자 다음 턴에 읽습니다(방에서는 발언하지 않습니다).${cut}`);
     }
   }
 
@@ -321,8 +346,8 @@ export async function runRoomTurn(wsId, text, attachments = []) {
     ? dir.relay
     : dir.allCall ? agents : (dir.to.length ? dir.to : [agents[0]]).slice(0, 3);
   const isRelay = dir.relay.length > 0;
-  // cc만 있고 발언 대상이 없으면 여기서 끝 — 참조만 돌리려던 지시에 엉뚱한 크루가 답하지 않게.
-  if (!speakers.length || (dir.cc.length && !dir.to.length && !dir.relay.length && !dir.allCall)) {
+  // 참조만 지시했으면 여기서 끝 — 참조만 돌리려던 문장에 엉뚱한 크루가 답하지 않게.
+  if (!speakers.length || (ccTargets.length && !dir.to.length && !dir.relay.length && !dir.allCall)) {
     return { replies: [], room: await loadRoom(wsId) };
   }
 
@@ -331,6 +356,9 @@ export async function runRoomTurn(wsId, text, attachments = []) {
   // 앞 3명까지만 임베드하고 이후 발언자는 경로 노트로 받는다 — 파일은 vault/files에 있으니 필요한
   // 크루는 Read로 열람 가능. 이름 멘션 경로는 speakers 자체가 3명 상한이라 이 캡에 걸리지 않는다.
   const IMG_EMBED_MAX = 3;
+  // 이 턴만의 식별자 — sid는 회의 세션이라 턴마다 같다. 같은 방에서 턴이 겹치면(탭 2개·API 직접
+  // 호출) 키가 완전히 같아져 서로의 위임 이벤트를 주워 담는다(분리 검수 MEDIUM-3).
+  const turnId = `${sid}-${Math.random().toString(36).slice(2, 8)}`;
   const replies = [];
   for (const [i, a] of speakers.entries()) {
     const att = i >= IMG_EMBED_MAX && attachments.some((x) => x.isImage)
@@ -367,7 +395,7 @@ ${transcript}
     // 돌아오는" 것으로 보인다(유건 지시 2026-07-28의 핵심 불만). 텔레그램 그룹이 쓰던 위임 미러
     // (gateway.mjs delegate 이벤트)와 같은 방식을 인앱 회의실에도 건다.
     // mirrorCtx로 **이 턴의 위임만** 받는다 — 동시에 도는 다른 턴의 위임이 이 방에 섞이지 않게.
-    const mirrorCtx = { room: `${sid}:${a.slug}:${i}` };
+    const mirrorCtx = { room: `${turnId}:${a.slug}:${i}` };
     const mirrored = [];
     const { onNotify } = await import('./notify.mjs');
     const off = onNotify((ev) => {

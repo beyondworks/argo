@@ -113,3 +113,49 @@ test('같은 크루를 여러 번 불러도 한 번만 발언한다', () => {
   const d = parseRoomDirectives('@비스트 @beast @비스트 정리해줘', AGENTS);
   assert.deepEqual(slugs(d.to), ['beast']);
 });
+
+/* ── 분리 검수(2R) 회귀 케이스 — 멘션 탐지가 너무 넓어 평범한 지시가 무응답이 되던 것들 ── */
+
+test('이메일 주소의 @는 멘션이 아니다 — unknown도 만들지 않는다', () => {
+  // unknown이 서면 중단 게이트에 걸려 **아무도 답하지 않는다**(HIGH-1 회귀). 조용히 무시가 맞다.
+  const d = parseRoomDirectives('회의록 정리해서 lean8kim@gmail.com 으로 보내줘', AGENTS);
+  assert.deepEqual(d.to, []);
+  assert.deepEqual(d.unknown, []);
+});
+
+test('이메일과 진짜 멘션이 같이 있으면 멘션만 잡는다', () => {
+  const d = parseRoomDirectives('메일은 lean8kim@gmail.com 으로 보내줘 @비스트', AGENTS);
+  assert.deepEqual(slugs(d.to), ['beast']);
+  assert.deepEqual(d.unknown, []);
+});
+
+test('코드블록 안의 @는 멘션이 아니다', () => {
+  const d = parseRoomDirectives('@비스트 이 코드 봐줘 ```java\n@Override void x(){}\n```', AGENTS);
+  assert.deepEqual(slugs(d.to), ['beast']);
+  assert.deepEqual(d.unknown, []);
+});
+
+test('스코프 패키지명(@types/node)은 멘션이 아니다', () => {
+  const d = parseRoomDirectives('@슈리 @types/node 올려줘', AGENTS);
+  assert.deepEqual(slugs(d.to), ['shuri']);
+  assert.deepEqual(d.unknown, []);
+});
+
+test('이메일이 앞에 있어도 가짜 릴레이가 만들어지지 않는다', () => {
+  const d = parseRoomDirectives('a@b.com > @울프 처리해줘', AGENTS);
+  assert.deepEqual(d.relay, []);
+  assert.deepEqual(slugs(d.to), ['wolf']);
+});
+
+test('cc @전체는 ccAll로 살아남는다 — 조용히 사라지면 첫 크루가 답해버린다', () => {
+  const d = parseRoomDirectives('cc @전체 이 내용 공유', AGENTS);
+  assert.equal(d.ccAll, true);
+  assert.deepEqual(d.to, []);
+  assert.deepEqual(d.unknown, []);
+});
+
+test('지시 + cc @전체 조합에서도 to와 ccAll이 각자 산다', () => {
+  const d = parseRoomDirectives('@비스트 진행해줘 cc @전체', AGENTS);
+  assert.deepEqual(slugs(d.to), ['beast']);
+  assert.equal(d.ccAll, true);
+});
