@@ -18,16 +18,25 @@ const pick = (data) => Response.json({
 const cols = 'plan, ls_status, ls_subscription_id, ls_customer_id, ends_at';
 
 /** 유실 대사 폴백 — pro가 아닌데 결제가 있을 수 있는 상황에서만 LS API 대조(10분 쿨다운은 모듈이 관리).
-    복구되면 재조회한 행을, 아니면 null을 돌려준다. 실패는 무해(다음 접근 때 재시도) — 응답을 깨지 않는다. */
-async function reconcileIfLost({ url, serviceKey, user, cur }) {
+    복구되면 재조회한 행을, 아니면 null을 돌려준다. 실패는 무해(다음 접근 때 재시도) — 응답을 깨지 않는다.
+    emailTrusted=false(기기 세션): 로컬 파일의 이메일은 사용자가 편집 가능해 LS 조인 키로 못 쓴다
+    (분리 검수 F3 — 피해자 이메일로 바꿔 타인 구독을 획득) → auth.users에서 서버 검증 이메일로 대체. */
+async function reconcileIfLost({ url, serviceKey, user, cur, emailTrusted }) {
   const apiKey = process.env.LEMONSQUEEZY_API_KEY;
-  if (!apiKey || !serviceKey || !user?.id || !user.email) return null;
+  if (!apiKey || !serviceKey || !user?.id) return null;
   if (user.id === 'local' || user.id === 'guest') return null; // 로컬·게스트는 구독 표면 없음
   if (cur?.plan === 'pro') return null; // 이미 pro — 대사 불요(강등은 웹훅의 몫)
   try {
     const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
+    let email = emailTrusted ? user.email : '';
+    if (!emailTrusted) {
+      const { data, error } = await sb.auth.admin.getUserById(user.id);
+      if (error) throw new Error(error.message);
+      email = data?.user?.email ?? '';
+    }
+    if (!email) return null;
     const r = await reconcileEntitlement({
-      sb, userId: user.id, email: user.email,
+      sb, userId: user.id, email,
       storedCustomerId: cur?.ls_customer_id || null,
       apiKey, ...lsGateOpts(),
     });
@@ -56,7 +65,8 @@ export async function GET() {
       if (user) {
         const { data, error } = await sb.from('entitlements').select(cols).maybeSingle();
         if (error) throw new Error(error.message);
-        const recovered = await reconcileIfLost({ url, serviceKey, user: { id: user.id, email: user.email ?? '' }, cur: data });
+        // 쿠키 경로 이메일은 검증된 JWT에서 온 값 — 신뢰 가능
+        const recovered = await reconcileIfLost({ url, serviceKey, user: { id: user.id, email: user.email ?? '' }, cur: data, emailTrusted: true });
         return pick(recovered ?? data);
       }
     }
@@ -66,7 +76,7 @@ export async function GET() {
     const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
     const { data, error } = await sb.from('entitlements').select(cols).eq('user_id', user.id).maybeSingle();
     if (error) throw new Error(error.message);
-    const recovered = await reconcileIfLost({ url, serviceKey, user, cur: data });
+    const recovered = await reconcileIfLost({ url, serviceKey, user, cur: data, emailTrusted: false });
     return pick(recovered ?? data);
   } catch (e) {
     console.error('[argo] me/billing 조회 실패:', e?.message ?? e);

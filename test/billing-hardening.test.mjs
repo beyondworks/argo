@@ -7,10 +7,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { applyLsEvent, unmatchedRow, pickProSubscription, lsGateOpts } from '../src/lsbilling.mjs';
+import { applyLsEvent, unmatchedRow, pickProSubscription, lsGateOpts, shouldApplyLsEvent } from '../src/lsbilling.mjs';
 import { reconcileDue, reconcileEntitlement } from '../src/lsreconcile.mjs';
 
 const UID = '11111111-2222-3333-4444-555555555555';
+
+// ── [M1] shouldApplyLsEvent — DB WHERE 조건의 JS 거울(경계값 표)
+test('적용 판정 거울: 같은 구독만 순서 역전을 보고, 다른 구독은 신원 가드만 — F1 코너 포함', () => {
+  const ev = (plan, sub, ts) => ({ plan, ls_subscription_id: sub, ls_updated_at: ts });
+  const st = (sub, ts) => ({ ls_subscription_id: sub, ls_updated_at: ts });
+  assert.equal(shouldApplyLsEvent(ev('pro', 'S1', '2026-07-01T00:00:00Z'), null), true);  // 신규 행
+  // 같은 구독: 과거는 스킵, 같음·최신·null은 진행
+  assert.equal(shouldApplyLsEvent(ev('pro', 'S1', '2026-07-01T00:00:00Z'), st('S1', '2026-07-05T00:00:00Z')), false);
+  assert.equal(shouldApplyLsEvent(ev('pro', 'S1', '2026-07-05T00:00:00Z'), st('S1', '2026-07-05T00:00:00Z')), true);
+  assert.equal(shouldApplyLsEvent(ev('pro', 'S1', null), st('S1', '2026-07-05T00:00:00Z')), true);
+  // F1 핵심: 다른 구독의 승격은 저장분이 더 최신이어도 통과 — 옛 구독(S1) expired가 최신으로
+  // 저장된 상태에서, 유실됐던 새 구독(S2)을 대사가 복구할 수 있어야 한다(영구 free 방지)
+  assert.equal(shouldApplyLsEvent(ev('pro', 'S2', '2026-07-01T00:00:00Z'), st('S1', '2026-07-05T00:00:00Z')), true);
+  // 다른 구독의 강등은 신원 가드(O1)가 차단
+  assert.equal(shouldApplyLsEvent(ev('free', 'S1', '2026-07-09T00:00:00Z'), st('S2', '2026-07-05T00:00:00Z')), false);
+  // 저장 구독 id 없음(그랜드파더링) — 강등도 진행
+  assert.equal(shouldApplyLsEvent(ev('free', 'S1', '2026-07-01T00:00:00Z'), st(null, '2026-07-05T00:00:00Z')), true);
+});
 
 // ── [M1] applyLsEvent — RPC 호출 계약
 const mappedFix = {
@@ -39,8 +57,10 @@ test('마이그레이션 불변식: 조건 판정이 upsert 한 문장 안에 �
   const sql = await readFile(fileURLToPath(new URL('../supabase/migrations/20260728113000_billing_hardening.sql', import.meta.url)), 'utf8');
   // 단일 문장 조건부 upsert — select→비교→쓰기 3단계로 되돌아가는 회귀를 텍스트 수준에서 차단
   assert.match(sql, /on conflict \(user_id\) do update/);
-  assert.match(sql, /e\.ls_updated_at <= excluded\.ls_updated_at/);          // 순서 역전(isStaleEvent 거울)
+  assert.match(sql, /e\.ls_updated_at <= excluded\.ls_updated_at/);          // 순서 역전(shouldApplyLsEvent 거울)
+  assert.match(sql, /coalesce\(e\.ls_subscription_id, ''\) <> excluded\.ls_subscription_id/); // 순서 역전은 같은 구독 한정(F1)
   assert.match(sql, /excluded\.plan = 'free'/);                              // 신원 가드(O1 거울)
+  assert.match(sql, /drop function if exists public\.apply_ls_event/);       // 시그니처 변경 시 오버로드 잔존 차단(F12)
   // 사용자 자기승격 차단 — anon/authenticated에서 실행권 회수
   assert.match(sql, /revoke execute on function public\.apply_ls_event[\s\S]*?from public, anon, authenticated/);
   // 미귀속 테이블은 RLS on + 정책 없음(서비스 롤 전용) + dedup
@@ -109,17 +129,44 @@ const fakeFetch = (subs, status = 200) => async () => ({
   ok: status === 200, status, json: async () => ({ data: subs }),
 });
 
+// 대사용 가짜 supabase 클라이언트 — rpc + 중복 귀속 조회(from().select().eq().neq().limit()) + 적재
+const fakeSb = ({ dupes = [], rpcResult = 'applied' } = {}) => {
+  const calls = { rpc: [], upserts: [] };
+  const sb = {
+    rpc: async (fn, args) => { calls.rpc.push([fn, args]); return { data: rpcResult, error: null }; },
+    from: (table) => ({
+      select: () => ({ eq: () => ({ neq: () => ({ limit: async () => ({ data: dupes, error: null }) }) }) }),
+      upsert: async (row, opts) => { calls.upserts.push([table, row, opts]); return { error: null }; },
+    }),
+  };
+  return { sb, calls };
+};
+
 test('대사: 활성 구독 발견 → 원자 적용 경로(apply_ls_event)로 복구, userId는 세션 신원으로 강제', async () => {
-  const calls = [];
-  const sb = { rpc: async (fn, args) => { calls.push(args); return { data: 'applied', error: null }; } };
+  const { sb, calls } = fakeSb();
   const r = await reconcileEntitlement({
     sb, userId: UID, email: 'pay@example.com', apiKey: 'k',
     fetchImpl: fakeFetch([sub('sub_9', 'active')]), nowMs: 10_000_000,
   });
   assert.equal(r.result, 'applied');
-  assert.equal(calls[0].p_user_id, UID);       // 귀속은 LS 응답이 아니라 요청 세션의 user.id
-  assert.equal(calls[0].p_sub_id, 'sub_9');
-  assert.equal(calls[0].p_plan, 'pro');
+  assert.equal(calls.rpc[0][1].p_user_id, UID); // 귀속은 LS 응답이 아니라 요청 세션의 user.id
+  assert.equal(calls.rpc[0][1].p_sub_id, 'sub_9');
+  assert.equal(calls.rpc[0][1].p_plan, 'pro');
+});
+
+test('대사 중복 귀속 가드(F2): 같은 구독이 타 계정에 이미 붙어 있으면 쓰지 않고 unmatched 적재', async () => {
+  const { sb, calls } = fakeSb({ dupes: [{ user_id: 'someone-else' }] });
+  const r = await reconcileEntitlement({
+    sb, userId: `${UID}-dupe`, email: 'shared@example.com', apiKey: 'k',
+    fetchImpl: fakeFetch([sub('sub_shared', 'active')]), nowMs: 15_000_000,
+  });
+  assert.equal(r, null);
+  assert.equal(calls.rpc.length, 0); // 쓰기 없음 — 1구독 N계정 pro 차단
+  assert.equal(calls.upserts.length, 1);
+  const [table, row] = calls.upserts[0];
+  assert.equal(table, 'billing_unmatched');
+  assert.equal(row.reason, 'duplicate-attribution');
+  assert.equal(row.ls_subscription_id, 'sub_shared');
 });
 
 test('대사: 활성 구독 없음 → 쓰기 없이 null(강등 방향 대사 금지)', async () => {

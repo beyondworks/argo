@@ -68,22 +68,32 @@ export function mapSubscriptionEvent(eventName, payload, opts = {}) {
 
 /** 구독 신원 가드(O1) — 다른 구독의 강등 이벤트가 현재 구독을 덮으면 안 된다.
     시나리오: 월간 해지(유예 pro) 후 연간 재구독 → 옛 월간의 expired가 나중에 도착해도
-    free로 덮으면 돈 낸 연간 구독자가 클라우드를 잃는다. 승격(pro)은 신원 무관 허용.
-    ⚠ 실집행 정본은 DB의 apply_ls_event(20260728113000 마이그레이션) WHERE 조건 — 이 함수는
-    그 조건의 JS 거울(테스트로 계약을 잠그는 실행 가능한 스펙)이다. 변경 시 양쪽 동기 필수. */
+    free로 덮으면 돈 낸 연간 구독자가 클라우드를 잃는다. 승격(pro)은 신원 무관 허용. */
 export function isOtherSubscriptionDowngrade(mapped, stored) {
   return mapped?.plan === 'free'
     && !!stored?.ls_subscription_id
     && stored.ls_subscription_id !== mapped.ls_subscription_id;
 }
 
-/** 순서 역전 방어 — 새 이벤트가 저장분보다 과거면 스킵해야 하는가.
-    ⚠ isOtherSubscriptionDowngrade와 마찬가지로 apply_ls_event WHERE 조건의 JS 거울. */
+/** 순서 역전 방어 — 새 이벤트가 저장분보다 과거면 스킵해야 하는가. */
 export function isStaleEvent(incomingUpdatedAt, storedUpdatedAt) {
   const inc = Date.parse(incomingUpdatedAt ?? '');
   const cur = Date.parse(storedUpdatedAt ?? '');
   if (!Number.isFinite(inc) || !Number.isFinite(cur)) return false; // 비교 불가면 최신으로 취급(진행)
   return inc < cur;
+}
+
+/** [M1] 적용 판정의 JS 거울 — 실집행 정본은 DB apply_ls_event(20260728113000)의 WHERE 조건이고,
+    이 함수는 그 논리를 테스트로 잠그는 실행 가능한 스펙이다. 변경 시 양쪽 동기 필수.
+    ① 순서 역전은 **같은 구독일 때만** 본다 — 다른 구독 간 updated_at 비교는 의미가 없고,
+      옛 구독의 늦은 이벤트가 새 구독의 복구(대사)를 영구히 막던 코너(분리 검수 F1)를 없앤다.
+    ② 다른 구독의 강등은 신원 가드(O1)가 막는다. 다른 구독의 승격은 항상 통과. */
+export function shouldApplyLsEvent(mapped, stored) {
+  if (!stored) return true; // 신규 행 — 가드 대상 없음
+  if (isOtherSubscriptionDowngrade(mapped, stored)) return false;
+  const sameSub = (stored.ls_subscription_id ?? '') === (mapped.ls_subscription_id ?? '');
+  if (sameSub && isStaleEvent(mapped.ls_updated_at, stored.ls_updated_at)) return false;
+  return true;
 }
 
 /** 웹훅·대사가 공유하는 게이트 옵션 — variant 허용목록(M2)·test_mode 수용(M3)을 env에서 한 곳으로. */

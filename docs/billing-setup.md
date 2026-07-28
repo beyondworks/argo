@@ -36,12 +36,27 @@
 
 - `[argo] billing webhook [유실 위험] ...` — env 미설정·DB 실패·귀속 실패(**LS 재시도는 3회·약
   155초가 전부**라 이 로그가 뜨면 수동 조치 대상. LS 대시보드 → Webhooks에서 resend 가능).
-- `[argo] billing 대사: 유실 복구 시도 ...` — 웹훅을 놓친 결제를 /api/me/billing 접근 시
-  LS API 대조로 복구한 흔적(O2). `LEMONSQUEEZY_API_KEY` 필요, 사용자당 10분 쿨다운.
+- `[argo] billing 대사: ...` — 웹훅을 놓친 결제를 /api/me/billing 접근 시 LS API 대조로
+  복구한 흔적(O2). `LEMONSQUEEZY_API_KEY` 필요, 사용자당 10분 쿨다운(프로세스 로컬).
+  `[수동 확인 필요]`·`duplicate-attribution`이 찍히면 자동 복구가 막힌 것 — 수동 조치 대상.
+  **커버 범위 주의**: 이 대사는 클라우드 웹(쿠키 세션 또는 서비스 롤 있는 배포)의
+  /api/me/billing에서만 돈다. 서비스 롤 키가 없는 데스크톱 로컬 서버에서는 실행되지 않으므로,
+  데스크톱 전용 사용자는 웹 설정 화면을 한 번 열어야 복구된다 — "모든 유실의 자동 복구"가 아니다.
 - 귀속 실패 이벤트는 `billing_unmatched` 테이블(서비스 롤 전용)에 적재된다(M4) — 구독 id·
   customer id·결제 이메일·사유로 수동 귀속: Supabase 콘솔에서 조회 후 해당 user_id로
-  `apply_ls_event`를 직접 호출하거나 LS 웹훅 resend.
+  `apply_ls_event`를 직접 호출하거나 LS 웹훅 resend. 처리 후 `resolved_at`을 찍어 큐에서 뺀다.
+
+## 배포 순서 (M1 마이그레이션 — 어기면 그 창의 결제가 유실된다)
+
+웹훅 코드는 DB 함수 `apply_ls_event`를 호출한다. **코드가 마이그레이션보다 먼저 뜨면** RPC 404
+→ 웹훅 5xx → LS 재시도 3회·155초 소진 → 유실(대사가 최후 방어지만 커버 범위 한계는 위 참조).
+
+1. 마이그레이션(`20260728113000_billing_hardening.sql`) 적용
+2. PostgREST 스키마 캐시 갱신 확인 — `notify pgrst, 'reload schema';` 또는 콘솔에서 확인
+3. 스모크: SQL 편집기에서 `select public.apply_ls_event('<테스트 uuid>','free','','','', null, null, null);`
+   가 문자열을 돌려주는지 확인 (테스트 행은 삭제)
+4. 그 다음에 코드 배포. 배포 후 LS 대시보드 → Webhooks에서 실패 이벤트 resend 체크.
 
 이월분(칩 task_ee4d4270) 반영 현황: 동시 이벤트 원자 가드(M1 — DB 함수 `apply_ls_event`
-단일 문장 upsert), 유실 대사(O2 — /api/me/billing 폴백), 미귀속 적재(M4), ends_at UI 표기
-모두 반영 완료(2026-07-28).
+단일 문장 upsert, 순서 가드는 같은 구독 한정), 유실 대사(O2 — /api/me/billing 폴백 +
+중복 귀속 가드), 미귀속 적재(M4), ends_at UI 표기 모두 반영 완료(2026-07-28).
