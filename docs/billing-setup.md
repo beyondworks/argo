@@ -57,6 +57,25 @@
    가 문자열을 돌려주는지 확인 (테스트 행은 삭제)
 4. 그 다음에 코드 배포. 배포 후 LS 대시보드 → Webhooks에서 실패 이벤트 resend 체크.
 
+## apply_ls_event 실행 검증 드릴 (F6 — 마이그레이션을 고칠 때마다)
+
+`apply_ls_event`의 SQL 논리는 **실제 Postgres에서** 검증한다 — JS 거울·정규식 매칭만으로는
+WHERE 재배치 같은 논리 회귀를 못 잡는다.
+
+```bash
+npm run test:pg
+```
+
+- Docker 불필요: `scripts/billing-pg-drill.sh`가 Homebrew postgresql의 initdb로 임시
+  인스턴스(빈 포트 자동 배정)를 띄워 **실 마이그레이션 파일 3개를 그대로 적용**하고,
+  경계표 8케이스(test/helpers/ls-apply-cases.mjs — JS 거울 테스트와 같은 표) + 권한
+  (anon/authenticated 거부·service_role 허용) + 동시 트랜잭션 직렬화(행 잠금 후 WHERE
+  재평가로 stale)를 돌린 뒤 흔적 없이 정리한다. 요구: `brew install postgresql@14`.
+- supabase start를 쓰는 경우: `ARGO_PG_TEST_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+  node --test test/billing-pg-integration.test.mjs`
+- 일반 `npm test`에서는 `ARGO_PG_TEST_URL` 미설정으로 전부 skip — CI를 깨지 않는다.
+  (CI에 편입하려면 워크플로에서 위 드릴을 별도 잡으로 실행)
+
 이월분(칩 task_ee4d4270) 반영 현황: 동시 이벤트 원자 가드(M1 — DB 함수 `apply_ls_event`
 단일 문장 upsert, 순서 가드는 같은 구독 한정), 유실 대사(O2 — /api/me/billing 폴백 +
 중복 귀속 가드), 미귀속 적재(M4), ends_at UI 표기 모두 반영 완료(2026-07-28).
