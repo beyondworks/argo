@@ -50,7 +50,10 @@ export async function middleware(req) {
   // /api/device/* — 기기 로그인/링크 자체가 세션을 만드는 진입점이라 공개(라우트 내부에서 검증)
   // /api/ping — 데스크톱 셸·부트 페이지의 신원 마커(비밀 없음). 세션 이전(부팅 중) 호출이라 공개 필수 —
   //   게이트에 걸리면 auth-on 출하 빌드에서 401 → 부트가 영원히 대기(검수 CRITICAL 2026-07-20).
-  const isPublic = p === '/login' || p === '/legal' || p === '/api/ping' || p.startsWith('/auth') || p.startsWith('/api/auth/pair') || p.startsWith('/api/device/');
+  // /api/billing/webhook — 호출 주체가 레몬스퀴지 서버(세션 없음). 인증은 라우트 자체의
+  // HMAC 서명 검증(fail-closed)이 담당한다 — 미들웨어가 막으면 결제 이벤트가 영영 도달 못 한다
+  // (상주 스모크 실측 2026-07-28: 미들웨어 401 '로그인이 필요합니다'가 라우트보다 먼저 응답).
+  const isPublic = p === '/login' || p === '/legal' || p === '/api/ping' || p === '/api/billing/webhook' || p.startsWith('/auth') || p.startsWith('/api/auth/pair') || p.startsWith('/api/device/');
   // 기기 연동 모드 — 마커 쿠키는 UX 게이트(리다이렉트 회피)일 뿐, 권한은 라우트 currentUser(기기 파일)가 검증.
   // 루프백 한정: 원격에서 마커만 들고 오는 요청은 통과시키지 않는다. 워커(TENANT)는 이 분기 없음.
   if (!process.env.ARGO_TENANT_OWNER?.trim() && req.cookies.get('argo-device')?.value === '1') {
