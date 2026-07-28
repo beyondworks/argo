@@ -11,7 +11,7 @@
 | 파일 기반 큐 + 원자적 적재 | `gateway.mjs` `enqueueJob` / `queueDir` | 큐 키만 새로(`jobs`) |
 | 드레인 워커(1초 폴·동시 상한·재기동 복구) | `gateway.mjs` `startQueueWorker` | 그대로 |
 | 워커 등록/해제 관리 | 게이트웨이 매니저의 `drainers` | 항목 추가 |
-| 장시간 실행 가능한 턴 | `chat()` — 워커 경로엔 HTTP 5분 상한이 없다 | 그대로 |
+| 장시간 실행 가능한 턴 | `chat()` — 워커 경로엔 HTTP 5분 상한이 없다. CLI 러너 턴은 externalExec 자체 상한이 있어 잡(source:'job')은 6시간으로 배선(2026-07-28 G006 — 이전엔 300초라 이 행이 CLI 러너에서 거짓이었다) | 그대로 |
 | 결과를 대화에 남기기 | `appendTurn` | 그대로 |
 | 메신저 통지 | `emitNotify`(루틴이 쓰는 경로) | 그대로 |
 | 진행 상황 UI | `TasksDock` + `/api/companies/[ws]/tasks` | 대기·예약 항목 추가 |
