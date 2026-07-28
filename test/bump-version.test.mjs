@@ -43,3 +43,18 @@ test('bumpVersions: 형식 오류·동일 버전·반쪽 상태에서의 범프�
   await writeFile(join(root, 'package.json'), '{\n  "version": "0.1.30"\n}\n');
   await assert.rejects(() => bumpVersions('0.1.32', root), /불일치/, '반쪽 상태 위에 겹쳐 쓰지 않는다');
 });
+
+// CLI 진입점 스모크(검수 권고 6) — pathToFileURL 가드가 실제 발화하는지. 문자열 결합 가드는
+// Windows·공백 경로에서 무발화 exit 0이라 게이트가 있는 척만 했다(검수 필수 지적의 재발 방지).
+test('CLI: --check가 실제로 발화한다(무발화 exit 0 금지) + 태그 대조 불일치 시 실패', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url'); // URL.pathname은 win에서 /D:/… — 검수 지적과 같은 계열 함정
+  const script = fileURLToPath(new URL('../scripts/bump-version.mjs', import.meta.url));
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const ok = spawnSync(process.execPath, [script, '--check'], { cwd: root, encoding: 'utf8' });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /버전 일치/, '무발화(빈 출력) 금지 — 가드가 실행됐다는 증거');
+  const bad = spawnSync(process.execPath, [script, '--check', 'v9.9.9'], { cwd: root, encoding: 'utf8' });
+  assert.equal(bad.status, 1, '태그-파일 불일치는 실패');
+  assert.match(bad.stderr, /태그-파일 버전 불일치/);
+});

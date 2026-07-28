@@ -11,7 +11,10 @@
 // 같은 버전 문자열을 가진 다른 크레이트를 건드리면 안 된다(블록 앵커 정규식으로 한정).
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
+// 주의: Cargo.lock 앵커의 리터럴 \n은 레포 .gitattributes(`* text=auto eol=lf`)가 전 플랫폼 LF
+// 체크아웃을 보장하는 데 의존한다 — 그 줄이 지워지면 Windows에서 이 정규식만 조용히 깨진다.
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 
 /** 4파일의 현재 버전 읽기 — { file: version } (export: 테스트용, root 주입 가능) */
@@ -65,13 +68,19 @@ export async function bumpVersions(next, root = process.cwd()) {
   return { from: cur, to: next };
 }
 
-// CLI 진입 — import 시(테스트)는 실행하지 않는다
-if (import.meta.url === `file://${process.argv[1]}`) {
+// CLI 진입 — import 시(테스트)는 실행하지 않는다.
+// pathToFileURL 필수(분리 검수 필수 지적): 문자열 결합 `file://${argv[1]}`은 Windows 드라이브·
+// 공백 경로에서 import.meta.url과 어긋나 CLI가 **무발화 exit 0** — CI 게이트가 있는 척만 하게 된다.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const arg = process.argv[2];
   try {
     if (arg === '--check') {
       const v = await checkVersions();
-      console.log(`버전 일치: ${v} (4파일)`);
+      // 태그 대조 모드(검수 권고 1): --check v0.1.32 — 태그와 파일 버전이 어긋나면 모든 기기가
+      // 영구 업데이트 루프(설치해도 버전 그대로라 계속 제안)에 빠진다. 태그 경로에서 필수.
+      const expected = process.argv[3]?.replace(/^v/, '');
+      if (expected && expected !== v) throw new Error(`태그-파일 버전 불일치: 태그=${expected}, 파일=${v}`);
+      console.log(`버전 일치: ${v} (4파일${expected ? ` + 태그 대조` : ''})`);
     } else if (arg) {
       const { from, to } = await bumpVersions(arg);
       console.log(`범프 완료: ${from} → ${to} (4파일)`);

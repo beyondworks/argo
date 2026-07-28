@@ -63,15 +63,24 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # 버전 정합 게이트(G007) — 4파일(package/tauri.conf/Cargo.toml/Cargo.lock) 반쪽 범프와
+      # 태그-파일 버전 불일치(모든 기기 영구 업데이트 루프의 원인)를 **가장 먼저** 차단한다
+      # (무의존 스크립트 — npm ci·rust 캐시 전에 두어 실패가 수초 안에 난다. 검수 권고 7).
+      # 범프는 scripts/bump-version.mjs가 표준 경로.
+      - name: Version consistency gate
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            node scripts/bump-version.mjs --check "${GITHUB_REF_NAME}"
+          else
+            node scripts/bump-version.mjs --check
+          fi
+
       - run: npm ci
 
       # 릴리스 게이트 — 단위 테스트 실패 시 빌드 전에 차단 (2026-07-27 안정화 프로그램 Phase 0).
       # push/PR은 test.yml이 막지만, 태그 push·수동 실행은 그 게이트를 우회할 수 있어 여기서도 강제한다.
       - run: npm test
-
-      # 버전 정합 게이트(G007) — 4파일(package/tauri.conf/Cargo.toml/Cargo.lock) 중 하나라도 반쪽
-      # 범프면 빌드 전에 실패한다. 범프는 scripts/bump-version.mjs가 표준 경로.
-      - run: node scripts/bump-version.mjs --check
 
       # 신규 기기 스모크 — CI macOS 러너는 claude CLI 미설치·빈 키체인·헤드리스라 신규 맥과 등가 조건.
       # 원클릭(setup-token 대행)이 번들 CLI로 시작돼 인증 URL·코드 프롬프트까지 도달하는지 검증한다.
@@ -356,9 +365,13 @@ jobs:
           }
           // 전부-또는-없음(안정화 G007 — Phase0 검수 이월 MED): 부분 매니페스트를 쓰면 빠진 플랫폼의
           // 기기들이 업데이트를 영영 못 보는 무증상 사고가 된다. 3타깃이 다 있을 때만 latest.json을 쓰고,
-          // 아니면 draft에 MANIFEST-INCOMPLETE.txt를 실어 사람이 게시 전에 반드시 보게 한다
-          // (latest.json 부재 시 업데이터 엔드포인트는 이전 릴리스 매니페스트를 계속 서빙 — 안전 방향).
+          // 아니면 draft에 MANIFEST-INCOMPLETE.txt를 실어 사람이 게시 전에 반드시 보게 한다.
+          // ⚠ 안전은 draft 상태까지만이다 — 불완전 draft를 **게시해버리면** 그 릴리스가 latest가 되어
+          // latest.json 404 → 전 플랫폼 업데이트가 끊긴다(검수 권고 3). MANIFEST-INCOMPLETE.txt가 draft에
+          // 실리는 이유가 그것이다: 게시 전 마지막 사람 게이트.
           // 잡은 성공 유지 — always()+draft(부분 산출물이라도 draft 생성)라는 기존 설계를 존중한다.
+          // EXPECTED는 위 build 매트릭스 3잡(rust_target)과 1:1 — 매트릭스를 바꾸면 여기도 같이(상호 참조.
+          // 라벨 하드코딩으로 스모크가 4릴리스 무음 스킵된 사고(위 주석)와 같은 계열이라 명시해 둔다).
           const EXPECTED = ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64'];
           const missing = EXPECTED.filter((k) => !platforms[k]);
           if (missing.length === 0) {
