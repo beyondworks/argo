@@ -159,3 +159,25 @@ test('지시 + cc @전체 조합에서도 to와 ccAll이 각자 산다', () => {
   assert.deepEqual(slugs(d.to), ['beast']);
   assert.equal(d.ccAll, true);
 });
+
+/* ── 분리 검수(3R) — 경계 고정을 허용목록으로 짰다가 정상 멘션을 자르던 과교정 ──
+   실패 방식이 특히 나빴다: unknown이 안 서니 중단 게이트도 안 걸려 **첫 크루가 대신 답했다**.
+   무응답보다 나쁜 조용한 오배정이라, 배제(이메일 로컬파트)로 뒤집고 여기서 잠근다. */
+
+test('따옴표·꺾쇠·괄호로 감싼 멘션도 잡는다', () => {
+  for (const s of ['"@비스트"님 확인 부탁', "'@비스트' 확인", '<@비스트> 확인', '「@비스트」 확인']) {
+    assert.deepEqual(slugs(parseRoomDirectives(s, AGENTS).to), ['beast'], s);
+  }
+});
+
+test('콜론 뒤 멘션(담당:@이름)도 잡는다', () => {
+  const d = parseRoomDirectives('담당:@비스트 확인 부탁해', AGENTS);
+  assert.deepEqual(slugs(d.to), ['beast']);
+  assert.deepEqual(d.unknown, []);
+});
+
+test('쉼표로 붙여 쓴 연속 멘션이 둘 다 잡힌다', () => {
+  // 룩비하인드는 폭이 0이라 '@a,@b'에서 두 번째도 앞 문자를 다시 읽는다
+  const d = parseRoomDirectives('@비스트,@울프 회의합시다', AGENTS);
+  assert.deepEqual(slugs(d.to), ['beast', 'wolf']);
+});

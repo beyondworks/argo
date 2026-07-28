@@ -217,7 +217,7 @@ export function isDue(routine, now = new Date()) {
     if (!Number.isInteger(h) || !Number.isInteger(m)) continue;
     // 예약 시각의 절대 순간 = now에서 "그 시간대 기준 경과 분"만큼 되돌린 지점. 시간대별 Date를
     // 만들 수 없으니(JS 한계) 차이로 역산한다 — lastRun 비교가 절대 시각이라 이 형태여야 맞물린다.
-    // ponytail: 알려진 한계 — DST **가을 되돌림** 날에는 벽시계 1시간이 실시간 2시간이라, 두 번째
+    // 알려진 한계 — DST **가을 되돌림** 날에는 벽시계 1시간이 실시간 2시간이라, 두 번째
     // 01:xx에서 역산한 sched가 첫 실행의 lastRun보다 뒤로 나와 같은 슬롯이 한 번 더 발화한다
     // (분리 검수 실측: America/New_York 2026-11-01 01:10). 봄 건너뜀은 정상. 영향 = DST 시간대 ×
     // 연 1일 × 되풀이 시각대에서 LLM 턴 1회 중복(한국은 DST 없음). 근본 해법은 슬롯 정체성을

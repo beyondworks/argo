@@ -8,7 +8,7 @@ import { chat } from './chat.mjs';
 import { updateIndex } from './memory.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
-import { CC_MAX } from './crewmail.mjs';
+import { CC_MAX, sendCrewMail } from './crewmail.mjs';
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 // sync가 chats/room-main.json을 쓸 때 쓰는 락 키(thread:ws:room-main)와 동일하게 맞춘다 —
@@ -169,6 +169,12 @@ async function pushRoomMsg(wsId, msg, expectSid) {
 /** 연쇄 상한 — delegate·crewmail과 같은 값(2). 회의실 릴레이도 같은 규칙을 따른다. */
 export const HOP_MAX = 2;
 
+// 멘션의 @ 앞 경계 — **배제**로 정의한다. 걸러야 할 건 이메일 로컬파트뿐인데(lean8kim@gmail.com),
+// 허용 문자를 나열하면 따옴표·꺾쇠·콜론 뒤의 정상 멘션("@비스트"님 · <@비스트> · 담당:@비스트)이
+// 통째로 빠지고, 그 경우 unknown도 안 서서 **엉뚱한 크루가 답한다**(2R 검수에서 실측된 과교정).
+// 룩비하인드는 폭이 0이라 '@a,@b'처럼 붙어 있어도 다음 매치가 앞 문자를 다시 쓴다.
+const NOT_EMAIL = '(?<![A-Za-z0-9_.+\\-])';
+
 /** 회의실 라우팅 지시 파서 — 사장이 **방을 떠나지 않고** to·cc·hop·loop를 건다
     (유건 지시 2026-07-28: "회의실이 아니라 그룹채팅 개념. 이 공간을 벗어나지 않고 멘션을 통해서
     to/cc/hop/loop 기능으로 업무가 가능해야 한다").
@@ -186,8 +192,12 @@ export function parseRoomDirectives(text, agents = []) {
   const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase().trim(); // 한글 NFC/NFD 방어
   const index = new Map();
   for (const a of agents) { index.set(norm(a.slug), a); index.set(norm(a.name), a); }
-  // 멘션 뒤에 붙는 문장부호는 이름의 일부가 아니다("@비스트," → "비스트")
-  const clean = (tok) => String(tok).replace(/^@/, '').replace(/[.,!?:;)\]}]+$/, '');
+  // 멘션에 붙는 부호는 이름의 일부가 아니다. 닫는 따옴표·괄호에서 **자른다** — 후행 제거만으로는
+  // `"@비스트"님`처럼 부호 뒤에 조사가 붙은 형태(`비스트"님`)를 못 푼다. 크루 이름엔 이 부호가 없다.
+  const clean = (tok) => String(tok)
+    .replace(/^@/, '')
+    .split(/["'“”‘’<>()[\]{}「」『』]/)[0]
+    .replace(/[.,!?:;·]+$/, '');
 
   // 멘션이 **아닌** @ — 크루 이름엔 점·슬래시·역슬래시가 없다. 이메일 도메인(gmail.com)과
   // 스코프 패키지(types/node)를 여기서 버린다. unknown에도 넣지 않는다 — 사장이 오타 낸 게
@@ -235,20 +245,17 @@ export function parseRoomDirectives(text, agents = []) {
   });
 
   // ③ hop — '@A > @B > @C'. 체인은 하나만 인정한다(여러 갈래 릴레이는 방에서 읽히지 않는다).
-  // 첫 @도 경계에 고정 — 그러지 않으면 "a@b.com > @울프"가 체인으로 읽힌다.
   const relay = [];
-  rest = rest.replace(/(^|[\s([{,])@[^\s@]+(?:\s*(?:>|→|->)\s*@[^\s@]+)+/g, (m, lead) => {
+  rest = rest.replace(new RegExp(`${NOT_EMAIL}@[^\\s@]+(?:\\s*(?:>|→|->)\\s*@[^\\s@]+)+`, 'g'), (m) => {
     if (relay.length) return ' '; // 두 번째 체인은 무시 — 아래 unknown이 아니라 의도적 단순화
     for (const tok of m.match(/@[^\s@]+/g) ?? []) take(tok, relay);
-    return lead || ' ';
+    return ' ';
   });
 
-  // ④ 남은 멘션 = to. @는 **경계에서만** 멘션이다 — 이메일(lean8kim@gmail.com)의 @는
-  // 앞이 문자라 여기 안 걸린다. 안 걸려야 unknown이 비고, 중단 게이트 대신 기존
-  // "멘션 없으면 첫 크루" 동작이 유지된다(분리 검수 HIGH-1의 무응답 회귀 차단).
+  // ④ 남은 멘션 = to.
   const to = [];
   let allCall = false;
-  for (const m of rest.matchAll(/(?:^|[\s([{,])@([^\s@]+)/g)) {
+  for (const m of rest.matchAll(new RegExp(`${NOT_EMAIL}@([^\\s@]+)`, 'g'))) {
     if (take(m[1], to) === 'all') allCall = true;
   }
 
@@ -315,15 +322,15 @@ export async function runRoomTurn(wsId, text, attachments = []) {
   //    태운다(scheduler.mjs — 쪽지 1건 = LLM 턴 1회). "cc"라는 말이 싸 보여서 사장이 그 비용을
   //    인지하기 어렵기 때문에 crewmail의 CC_MAX를 여기에도 건다(분리 검수 MEDIUM-2).
   //    회의실 cc는 수신자마다 쪽지를 따로 만들어 crewmail 내부 상한 검사에 걸리지 않는다.
-  const ccTargets = dir.ccAll ? agents.filter((a) => !dir.to.some((x) => x.slug === a.slug)) : dir.cc;
+  const speaking = [...dir.to, ...dir.relay]; // 방에서 이미 말하는 크루는 참조 쪽지까지 또 태우지 않는다
+  const ccTargets = dir.ccAll ? agents.filter((a) => !speaking.some((x) => x.slug === a.slug)) : dir.cc;
   if (ccTargets.length) {
     const bossName = en ? 'the captain' : '사장';
     const capped = ccTargets.slice(0, CC_MAX);
-    const dropped = ccTargets.length - capped.length;
+    const dropped = ccTargets.slice(CC_MAX); // 누가 빠졌는지 이름으로 밝힌다 — 숫자만으론 확인할 길이 없다
     const ok = [];
     for (const a of capped) {
       try {
-        const { sendCrewMail } = await import('./crewmail.mjs');
         await sendCrewMail(wsId, {
           from: 'captain', fromName: bossName, fromRole: 'captain',
           to: a.slug, kind: 'cc',
@@ -334,7 +341,7 @@ export async function runRoomTurn(wsId, text, attachments = []) {
     }
     if (ok.length) {
       // 잘렸으면 반드시 말한다 — 참조가 조용히 빠지면 사장은 전달된 줄 안다
-      const cut = dropped > 0 ? (en ? ` (${dropped} more skipped — CC limit ${CC_MAX})` : ` (${dropped}명은 제외 — 참조는 ${CC_MAX}명까지)`) : '';
+      const cut = dropped.length ? (en ? ` (not CC'd: ${dropped.map((a) => a.name).join(', ')} — CC limit ${CC_MAX})` : ` (제외: ${dropped.map((a) => a.name).join(', ')} — 참조는 ${CC_MAX}명까지)`) : '';
       await sys('cc', en
         ? `CC → ${ok.map((a) => a.name).join(', ')} — they pick this up on their own next turn.${cut}`
         : `참조 → ${ok.map((a) => a.name).join(', ')} — 각자 다음 턴에 읽습니다(방에서는 발언하지 않습니다).${cut}`);
