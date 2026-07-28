@@ -7,7 +7,7 @@ import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTa
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
-import { useAppUpdate } from '../../../use-app-update';
+import { useAppUpdate, inTauri } from '../../../use-app-update';
 import { trialBadgeState } from '../../../../src/entitlement.mjs';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
@@ -177,6 +177,7 @@ function Settings({ params }) {
       <Section label={t('settings.capabilities')}>
         <CapabilitiesCard ws={ws} />
         <WorkRootsCard ws={ws} />
+        <SystemPermissionsCard />
       </Section>
 
       <Section label={t('settings.connections')}>
@@ -636,6 +637,67 @@ function WorkRootsCard({ ws }) {
           <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: '6px 0 0', lineHeight: 1.6 }}>{t('settings.workroots.runnerNote')}</p>
         </>
       )}
+    </div>
+  );
+}
+
+/** 시스템 권한 — 데스크톱(Tauri) 전용 안내 카드. 외부 작업 폴더로 크루가 데스크톱·문서·외장
+    디스크를 만질 때 OS가 막는 두 갈래를 다룬다: macOS는 TCC(폴더 접근은 첫 접근 시 OS가 묻고,
+    전체 디스크 접근은 앱이 직접 요청 불가 — 시스템 설정 딥링크만 가능), Windows는 '제어된 폴더
+    액세스'(랜섬웨어 방지)가 쓰기를 조용히 차단한다(실신고: 외장 SSD·문서 폴더). 권한 상태
+    실조회는 macOS API가 필요해 후속 — 1차는 안내·딥링크만(2026-07-28 스펙). */
+function SystemPermissionsCard() {
+  const { t } = useLang();
+  // 'mac' | 'win' | null(웹·리눅스 — 카드 자체를 렌더하지 않음). SSR 불일치 방지로 마운트 후 판별.
+  const [os, setOs] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    if (!inTauri()) return;
+    if (/Mac/.test(navigator.platform)) setOs('mac');
+    else if (/Win/.test(navigator.platform)) setOs('win');
+  }, []);
+  if (!os) return null;
+
+  // 설정 딥링크는 http(s)가 아니라 layout의 링크 브리지를 안 탄다 — opener를 직접 호출.
+  // openUrl은 async — 스코프 거부·OS 실패가 rejection으로 오므로 catch로 표면화(분리 검수 M2:
+  // 이미 막혀서 온 사용자에게 무반응이 최악). capabilities/default.json의 딥링크 허용 목록과 한 쌍.
+  const open = (url) => {
+    setErr('');
+    Promise.resolve(window.__TAURI__?.opener?.openUrl(url))
+      .catch(() => setErr(t('settings.perms.openErr')));
+  };
+
+  return (
+    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span className="card-title">{t('settings.perms.title')}</span>
+        <span className="chip">{os === 'mac' ? 'macOS' : 'Windows'}</span>
+      </div>
+      {os === 'mac' ? (
+        <>
+          <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.perms.mac.desc')}</p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" className="btn sm" onClick={() => open('x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders')}>
+              {t('settings.perms.mac.filesBtn')}
+            </button>
+            <button type="button" className="btn sm" onClick={() => open('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles')}>
+              {t('settings.perms.mac.fdaBtn')}
+            </button>
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: '2px 0 0', lineHeight: 1.6 }}>{t('settings.perms.mac.fdaNote')}</p>
+        </>
+      ) : (
+        <>
+          <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.perms.win.desc')}</p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" className="btn sm" onClick={() => open('windowsdefender://ransomwareprotection')}>
+              {t('settings.perms.win.securityBtn')}
+            </button>
+          </div>
+          <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: '2px 0 0', lineHeight: 1.6 }}>{t('settings.perms.win.note')}</p>
+        </>
+      )}
+      {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: '2px 0 0' }}>{err}</p>}
     </div>
   );
 }
