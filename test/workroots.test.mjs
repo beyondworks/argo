@@ -25,6 +25,16 @@ await mkdir(join(wsRoot, 'vault'), { recursive: true });
 const outside = await mkdtemp(join(tmpdir(), 'argo-wr-out-')); // 홈 밖(맥 tmp는 /var/… — 홈 아님) 실폴더
 await writeFile(join(outside, 'doc.md'), '# 외부 문서\n');
 
+test('validateWorkRoot: 케이스 변형으로 보호 구역을 등록할 수 없다 (win/mac 대소문자 무시 FS)', async (tc) => {
+  // 앱 코드 루트를 케이스만 바꿔 등록 시도 — inside() 비교가 폴딩되지 않으면 Windows에서
+  // 문자열 불일치로 'protected'를 통과해 writable_roots에 앱 본체가 실린다(2026-07-22 계열).
+  if (process.platform !== 'win32' && process.platform !== 'darwin') return tc.skip('대소문자 구분 FS');
+  const flipped = APP_ROOT.split('').map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
+  await assert.rejects(() => validateWorkRoot(flipped), (e) => ['protected', 'not-found'].includes(e.code));
+  // not-found 허용 이유: 케이스 민감 마운트(맥 케이스센시티브 APFS)에선 flipped 경로가 아예 없다 —
+  // 그 경우도 등록 거부이므로 안전. 케이스 무시 FS에선 stat이 통과하고 'protected'가 잡아야 한다.
+});
+
 test('validateWorkRoot: 정상 외부 폴더는 canonical로 통과', async () => {
   const real = await validateWorkRoot(outside);
   assert.equal(typeof real, 'string');

@@ -33,7 +33,13 @@ const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..'); // perm
 
 const err = (code, msg) => Object.assign(new Error(msg), { code });
 const canon = async (t) => { try { return await realpath(t); } catch { return null; } };
-const inside = (p, r) => p === r || p.startsWith(`${r}${sep}`);
+// 케이스 폴딩 — macOS(APFS 기본)·Windows(NTFS)는 대소문자 무시 파일시스템이라 `C:\USERS\...` 같은
+// 케이스 변형 경로도 같은 실체를 가리킨다. Node의 JS realpath는 Windows에서 입력 케이스를 보존하므로
+// 문자열 비교만으로는 보호 구역 판정(inside)이 케이스 변형에 뚫린다(앱 루트를 케이스 바꿔 등록하면
+// writable_roots에 앱 본체가 실리는 2026-07-22 크리티컬 계열). 비교 시에만 폴딩하고 저장은 canonical 그대로.
+const FOLD = process.platform === 'win32' || process.platform === 'darwin';
+const fold = (p) => (FOLD ? String(p).toLowerCase() : p);
+const inside = (p, r) => fold(p) === fold(r) || fold(p).startsWith(`${fold(r)}${sep}`);
 
 /** 등록된 루트 목록. 손상은 fail-closed([])가 안전 방향(접근이 줄어들 뿐)이라 lenient —
     capabilities(throw)와 다른 근거: 여기서 throw하면 채팅 턴 전체가 죽는데, 얻는 보안이 없다. */
@@ -88,7 +94,7 @@ export async function updateWorkRoots(wsId, { add = null, remove = null } = {}) 
     }
     if (typeof add === 'string' && add.trim()) {
       const real = await validateWorkRoot(add);
-      if (roots.includes(real)) throw err('duplicate', real);
+      if (roots.some((r) => fold(r) === fold(real))) throw err('duplicate', real); // 케이스 변형 중복 방지
       if (roots.length >= MAX_WORK_ROOTS) throw err('limit', String(MAX_WORK_ROOTS));
       roots = [...roots, real];
     }
