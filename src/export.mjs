@@ -62,6 +62,7 @@ export async function exportCompany(wsId, destDir) {
   const target = join(dest, `argo-export-${wsId}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`);
   if (existsSync(target)) throw err('exists', target); // 같은 초 재실행 — 사용자 재시도로 해소
   const tmp = `${target}.partial`;
+  await rm(tmp, { recursive: true, force: true }).catch(() => {}); // 강제 종료가 남긴 동명 잔재와의 병합 차단(검수 비차단 관찰)
   const state = { files: 0 };
   try {
     await copyTree(src, tmp, '', state);
