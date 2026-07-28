@@ -796,9 +796,11 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
 function SyncCard({ ws }) {
   const { t, lang } = useLang();
   const [sync, setSync] = useState(null);
+  const [bill, setBill] = useState(null); // LS 구독 상태(연체·포털) — 없으면 표면 자체가 없다
   useEffect(() => {
     const pull = () => api(`/api/companies/${ws}/connections`).then((d) => setSync(d.sync ?? null)).catch(() => {});
     pull();
+    api('/api/me/billing').then((d) => setBill(d.billing ?? null)).catch(() => {});
     const iv = setInterval(pull, 15000);
     return () => clearInterval(iv);
   }, [ws]);
@@ -831,7 +833,10 @@ function SyncCard({ ws }) {
           {sync.paywalled ? (
             // "고장"(lastError)과 "페이월"은 다른 상태 — 여기선 빨간 에러 줄 대신 안내+업그레이드를 보인다.
             <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
-              <span style={{ color: 'var(--danger)', fontSize: 12 }}>{t('billing.paywall')}</span>
+              <span style={{ color: 'var(--danger)', fontSize: 12 }}>
+                {/* FREE_STATUSES(lsbilling.mjs)와 동기 유지 — 직접 import하면 node:crypto가 클라 번들에 끌려온다 */}
+                {['expired', 'unpaid', 'paused'].includes(bill?.status) ? t('billing.cloudPaused') : t('billing.paywall')}
+              </span>
               <UpgradeButtons />
             </div>
           ) : sync.lastError ? (
@@ -840,6 +845,17 @@ function SyncCard({ ws }) {
             // 아직 막히진 않았지만(강제 게이트 off 등) free 플랜에 안내 차원으로 노출 — pro면 숨김
             <UpgradeButtons />
           ) : null}
+          {bill?.status === 'past_due' && bill?.hasSub && (
+            // 연체 유예 중 — 차단이 아니라 안내다(LS 던닝이 재시도 중, 유예 소진 시 free 강등).
+            // href는 클릭 시점 발급 라우트 — 저장된 포털 URL은 24시간 만료라 렌더 금지(재검수 HIGH).
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+              <span style={{ color: 'var(--danger)', fontSize: 12 }}>{t('billing.pastDue')}</span>
+              <a className="btn sm" href="/api/me/billing/portal" target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
+            </div>
+          )}
+          {sync.plan === 'pro' && bill?.hasSub && bill?.status !== 'past_due' && (
+            <a style={{ fontSize: 12, color: 'var(--fg-3)', width: 'fit-content' }} href="/api/me/billing/portal" target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
+          )}
         </div>
       ) : (
         <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offHelp')}</p>
