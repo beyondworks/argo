@@ -131,11 +131,11 @@ const read = (p) => readFileSync(join(root, p), 'utf8');
 
 test('배선 — 스케줄러가 deliverCrewMail을 부르고 스레드에 남긴다', () => {
   const s = read('src/scheduler.mjs');
-  assert.match(s, /deliverCrewMail\(c\.id/, '스케줄러 배달 배선이 없다 — 쪽지가 영영 배달되지 않는다');
-  assert.match(s, /appendTurn\(c\.id, slug/, '수신 턴이 스레드에 안 남는다 — 사장이 대화를 못 본다');
+  assert.match(s, /deliverCrewMail\(cid/, '스케줄러 배달 배선이 없다 — 쪽지가 영영 배달되지 않는다');
+  assert.match(s, /appendTurn\(cid, slug/, '수신 턴이 스레드에 안 남는다 — 사장이 대화를 못 본다');
   // 검수 변이 실험에서 이 가드 제거가 미감지였다 — 틱 겹침(LLM 턴 > 60s)이면 같은 회사에 배달
   // 루프가 이중 진입해 rename 경합·이중 배달 조건이 된다(HIGH-4). 트립와이어로 잠근다.
-  assert.match(s, /mailDelivering\.has\(c\.id\)/, '틱 겹침 이중 진입 가드(HIGH-4)가 사라졌다');
+  assert.match(s, /mailDelivering\.has\(cid\)/, '틱 겹침 이중 진입 가드(HIGH-4)가 사라졌다');
 });
 
 test('배선 — 배달 알림이 게이트웨이 문안까지 이어진다(재검 N1 보류 해소)', () => {
@@ -158,7 +158,7 @@ test('배선 — 우편 배달은 클라우드 리더 게이트를 타지 않는
   assert.match(s, /if \(!lease\.isLeader\(\)\) return;/,
     '프로세스 단위 리더 게이트(daemonLease)는 유지해야 한다 — 같은 기기 내 이중 배달 방어');
   const i = s.indexOf('if (!lease.isLeader()) return;');
-  const j = s.indexOf('deliverCrewMail(c.id');
+  const j = s.indexOf('deliverCrewMail(cid');
   assert.ok(i >= 0 && j > i, '틱 배선이 사라졌다 — 쪽지가 영영 배달되지 않는다');
   const seg = s.slice(i, j); // 조기 반환 ~ 배달 호출 사이엔 어떤 형태의 cloudLeader 차단도 없어야 한다
   assert.doesNotMatch(seg, /!cloudLeader/,
@@ -167,7 +167,7 @@ test('배선 — 우편 배달은 클라우드 리더 게이트를 타지 않는
     '조기 반환·조건이 isCloudLeader를 직접 문의한다 — 우편까지 게이트에 걸린다');
   assert.equal((seg.match(/if \(cloudLeader\)/g) ?? []).length, 1,
     '루틴 블록 게이트 1개만 허용 — 우편 블록 재감쌈·회사 루프 게이트 금지');
-  assert.match(seg, /\n\s*if \(!mailDelivering\.has\(c\.id\)\) \{/,
+  assert.match(seg, /\n\s*if \(!mailDelivering\.has\(cid\)\) \{/,
     '배달 진입 가드가 오염됐다(cloudLeader 혼입 등) — 가드는 in-flight 여부만 본다');
   // 기억 정리는 여전히 기기 간 단일 실행(cloudLeader)이어야 한다 — 게이트 전면 해제 금지
   assert.match(s, /cloudLeader && hhmm >= CONSOLIDATE_AT/,
