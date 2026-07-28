@@ -140,7 +140,8 @@ export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; }
 
 // 스토리지 키 — 한글·특수문자 세그먼트는 base64url로(스토리지가 %·비ASCII 키를 거부, 실측).
 // 매니페스트에 논리 경로를 담고 키는 항상 이 함수로 파생하므로 역디코딩은 불필요하다.
-const encSeg = (s) => (/^[A-Za-z0-9._-]+$/.test(s) ? s : `u8-${Buffer.from(s).toString('base64url')}`);
+// (export: 회귀 테스트용 — cloudexport.mjs의 역디코딩(decSeg)과 왕복 계약을 테스트가 잠근다)
+export const encSeg = (s) => (/^[A-Za-z0-9._-]+$/.test(s) ? s : `u8-${Buffer.from(s).toString('base64url')}`);
 const skey = (...segs) => segs.flatMap((s) => s.split('/')).map(encSeg).join('/');
 
 /* ─── 기기 식별 — 정의는 workspace.mjs(getDeviceId). 세션 소유 판정(thread/chat)과 공유한다. ─── */
