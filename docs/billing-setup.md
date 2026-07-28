@@ -36,5 +36,12 @@
 
 - `[argo] billing webhook [유실 위험] ...` — env 미설정·DB 실패·귀속 실패(**LS 재시도는 3회·약
   155초가 전부**라 이 로그가 뜨면 수동 조치 대상. LS 대시보드 → Webhooks에서 resend 가능).
-- 후속 예정(칩 task_ee4d4270): 동시 이벤트 원자 가드, 일일 대사(reconcile — 유실 자동 복구,
-  저장 구독 id가 옛 구독을 가리키는 코너 포함), 미귀속 결제 테이블 적재, ends_at UI 표기.
+- `[argo] billing 대사: 유실 복구 시도 ...` — 웹훅을 놓친 결제를 /api/me/billing 접근 시
+  LS API 대조로 복구한 흔적(O2). `LEMONSQUEEZY_API_KEY` 필요, 사용자당 10분 쿨다운.
+- 귀속 실패 이벤트는 `billing_unmatched` 테이블(서비스 롤 전용)에 적재된다(M4) — 구독 id·
+  customer id·결제 이메일·사유로 수동 귀속: Supabase 콘솔에서 조회 후 해당 user_id로
+  `apply_ls_event`를 직접 호출하거나 LS 웹훅 resend.
+
+이월분(칩 task_ee4d4270) 반영 현황: 동시 이벤트 원자 가드(M1 — DB 함수 `apply_ls_event`
+단일 문장 upsert), 유실 대사(O2 — /api/me/billing 폴백), 미귀속 적재(M4), ends_at UI 표기
+모두 반영 완료(2026-07-28).

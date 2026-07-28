@@ -363,6 +363,7 @@ const DICT = {
   'billing.managePortal': ['구독 관리', 'Manage subscription'],
   'billing.trialDday': ['무료 체험 D-{n}', 'Trial: {n}d left'],
   'billing.trialEnding': ['무료 체험이 곧 끝납니다. 클라우드 동기화·멀티기기를 계속 쓰려면 Pro로 업그레이드하세요 — 결제하지 않아도 로컬 사용은 그대로이고, 클라우드 데이터도 사라지지 않고 보존됩니다.', "Your free trial ends soon. Upgrade to Pro to keep cloud sync and multi-device — even if you don't, local use continues and your cloud data is safely preserved."],
+  'billing.cancelledUntil': ['해지 예약됨 — {date}까지 이용 가능', 'Cancellation scheduled — available until {date}'],
   'billing.cloudPaused': ['구독이 종료돼 클라우드 동기화가 잠자는 중입니다 — 로컬 사용은 그대로이고, 데이터는 안전하게 보존됩니다. 재구독하면 그 자리에서 이어집니다.', 'Your subscription ended, so cloud sync is asleep — local use is unaffected and your data is safely preserved. Resubscribe and it resumes right where it left off.'],
   'settings.conn.token': ['봇 토큰', 'Bot Token'],
   'settings.conn.tokenSaved': ['저장됨', 'saved'],
