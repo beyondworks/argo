@@ -8,7 +8,8 @@
 // 저장: <ws root>/mail/<수신 slug>/<msgId>-<kind>.json (kind: to|cc). **로컬 큐 — 동기화 제외**
 // (sync.mjs EXCLUDE, 분리 검수 CRITICAL-2): .claimed·attempts는 기기 로컬 처리 상태라 동기화를 타면
 // 두 기기가 같은 쪽지를 이중 배달한다(.gw-queue 선례와 동일 결함 계급). 세션 간 소통은 배달 결과가
-// 스레드(동기화 대상)로 남는 것으로 성립한다 — 큐 자체는 리더 기기 소유.
+// 스레드(동기화 대상)로 남는 것으로 성립한다 — 큐 자체는 발신 기기 소유이며, 배달도 그 기기의
+// 스케줄러가 한다(클라우드 리더 게이트 미적용 — 걸면 비리더 기기 발신분이 무증상 소실, 2026-07-28).
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';

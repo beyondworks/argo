@@ -126,6 +126,33 @@ test('배선 — 스케줄러가 deliverCrewMail을 부르고 스레드에 남�
   assert.match(s, /appendTurn\(c\.id, slug/, '수신 턴이 스레드에 안 남는다 — 사장이 대화를 못 본다');
 });
 
+test('배선 — 우편 배달은 클라우드 리더 게이트를 타지 않는다(기기 로컬 큐)', () => {
+  const s = readFileSync(join(root, 'src/scheduler.mjs'), 'utf8');
+  // mail/은 동기화 제외 기기 로컬 큐 — 발신(send_to_crew)엔 리더 게이트가 없어 아무 기기나 자기
+  // 큐에 쌓는다. 배달에 isCloudLeader가 걸리면 비리더 기기 발신분이 attempts 0인 채 영영 미배달
+  // (dead-letter로도 못 감)되는 무증상 소실이 된다(architect 검증 2026-07-28).
+  // 옛 리터럴 금지가 아니라 "조기 반환 ~ 배달 호출 사이에 cloudLeader 차단이 없다"는 **구간 불변식**으로
+  // 잠근다 — 문법만 바꾼 재게이트(if (!cloudLeader) return·continue, 가드 재감쌈, 피연산자 뒤집기)가
+  // 리터럴 단언 전부를 통과하는 것이 변이 8종 실측으로 확인됐다(분리 검수 MEDIUM-1).
+  assert.match(s, /if \(!lease\.isLeader\(\)\) return;/,
+    '프로세스 단위 리더 게이트(daemonLease)는 유지해야 한다 — 같은 기기 내 이중 배달 방어');
+  const i = s.indexOf('if (!lease.isLeader()) return;');
+  const j = s.indexOf('deliverCrewMail(c.id');
+  assert.ok(i >= 0 && j > i, '틱 배선이 사라졌다 — 쪽지가 영영 배달되지 않는다');
+  const seg = s.slice(i, j); // 조기 반환 ~ 배달 호출 사이엔 어떤 형태의 cloudLeader 차단도 없어야 한다
+  assert.doesNotMatch(seg, /!cloudLeader/,
+    '우편 앞에 cloudLeader 차단(return·continue)이 생겼다 — 비리더 기기 발신분 무증상 소실');
+  assert.doesNotMatch(seg, /isCloudLeader\(\)\s*\)/,
+    '조기 반환·조건이 isCloudLeader를 직접 문의한다 — 우편까지 게이트에 걸린다');
+  assert.equal((seg.match(/if \(cloudLeader\)/g) ?? []).length, 1,
+    '루틴 블록 게이트 1개만 허용 — 우편 블록 재감쌈·회사 루프 게이트 금지');
+  assert.match(seg, /\n\s*if \(!mailDelivering\.has\(c\.id\)\) \{/,
+    '배달 진입 가드가 오염됐다(cloudLeader 혼입 등) — 가드는 in-flight 여부만 본다');
+  // 기억 정리는 여전히 기기 간 단일 실행(cloudLeader)이어야 한다 — 게이트 전면 해제 금지
+  assert.match(s, /cloudLeader && hhmm >= CONSOLIDATE_AT/,
+    '기억 정리가 클라우드 리더 게이트를 잃었다 — 다기기 동시 정리');
+});
+
 test('배선 — send_to_crew 도구가 delegate와 같은 게이트(colleagues)로 등록된다', () => {
   const s = read('src/chat.mjs');
   assert.match(s, /\.\.\.\(colleagues\.length \? \[delegate, sendToCrew\] : \[\]\)/,
