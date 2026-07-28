@@ -164,7 +164,7 @@ function Settings({ params }) {
 
       <div ref={aiRef} style={{ scrollMarginTop: 84 }}>
         <Section label={t('settings.ai.section')}>
-          <AiConnectionCard ws={ws} />
+          <AiConnectionCard ws={ws} accordion />
         </Section>
       </div>
 
