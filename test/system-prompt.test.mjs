@@ -29,14 +29,20 @@ test('en 프롬프트 — 영어 골격 + 한국어 데이터 규약 유지', ()
   assert.ok(!p.includes('## 정확성'), '영어 모드에 한국어 골격 혼입');
 });
 
-test('systemPromptFor hasTools:false — CLI 러너에 없는 schedule_task 지시 제거(안내형 대체)', () => {
-  // 카드에는 "미지원"이라 표기하면서 크루 본인에게는 그 도구를 쓰라고 시키던 자기모순(검수 MEDIUM 2026-07-28)
+test('systemPromptFor hasTools:false — 없는 도구 대신 지시 블록 문법을 준다(러너 패리티)', () => {
+  // 2026-07-28 유건 지시로 정책이 바뀌었다: "어떤 러너를 쓰던 같은 환경이여야지."
+  // 이전엔 CLI 턴에 "루틴 화면에서 걸어 달라고 사장에게 안내하라"고 시켰는데, 그게 곧 능력 격차였고
+  // 실사용에서 "루틴이 실행 안 된다 / 예약했다고 말만 한다"로 돌아왔다.
+  // 이제 CLI 턴은 ```argo 블록으로 **실제로 예약·발송**한다(src/cli-directives.mjs가 턴 후 실행).
+  // 불변식 둘: ① SDK 전용 도구명은 여전히 CLI 턴에 넣지 않는다 ② 대신 블록 문법을 반드시 준다.
   for (const lang of ['ko', 'en']) {
     const on = systemPromptFor(CARD, '/ws', '', { name: '페퍼' }, lang);
     const off = systemPromptFor(CARD, '/ws', '', { name: '페퍼' }, lang, { hasTools: false });
     assert.match(on, /schedule_task/, `${lang}: 기본(SDK 턴)은 도구 지시 유지`);
     assert.doesNotMatch(off, /schedule_task/, `${lang}: 도구 없는 러너에 도구 지시 혼입`);
-    assert.ok(off.includes(lang === 'en' ? 'Routines screen' : '"루틴" 화면'), `${lang}: 안내형 대체 문구 누락`);
+    assert.match(off, /```argo/, `${lang}: 지시 블록 문법 누락 — 없으면 CLI 크루는 예약 수단이 없다`);
+    assert.match(off, /"action":"schedule"/, `${lang}: schedule 지시 예시 누락`);
+    assert.match(off, /"action":"mail"/, `${lang}: mail 지시 예시 누락`);
   }
 });
 
