@@ -8,6 +8,12 @@ export default {
   // Agent SDK가 claude CLI를 서브프로세스로 스폰한다 — 번들에 포함하지 않는다.
   serverExternalPackages: ['@anthropic-ai/claude-agent-sdk'],
   outputFileTracingRoot: import.meta.dirname, // 상위 폴더 lockfile 오인 방지
+  // 이미지 최적화기 비활성 — 앱은 next/image를 한 곳도 쓰지 않는다(첨부는 전부 <img src="/api/.../files">
+  // 원본 직결). 그런데도 /_next/image 엔드포인트는 살아 있어서, 앱을 거치지 않고 sharp(libvips)에
+  // 이미지를 먹일 수 있는 통로로 남는다. 지금은 Next 내부 fetch가 헤더를 안 실어(익명) 게이트 대상
+  // 경로가 막히지만, 그건 테스트로 잠기지 않은 암묵 불변식이다 — 엔드포인트째 끄는 쪽이 근본적이다.
+  // (분리 검수 2026-07-28 지적 #1. next/image를 쓰게 되는 날 이 줄을 지우면 된다.)
+  images: { unoptimized: true },
   // 데스크톱 패키징(C-4): ARGO_STANDALONE=1 빌드 시 자기완결 서버(.next/standalone)를 낸다.
   // env 게이트인 이유 — 평소 dev 서버·빌드 산출물 경로를 바꾸지 않기 위해.
   ...(process.env.ARGO_STANDALONE ? { output: 'standalone' } : {}),
