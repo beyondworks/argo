@@ -171,19 +171,22 @@ test('오염된 먼 미래 스탬프는 자가 회복한다 (영구 비활성화
 // ── 배선 트립와이어 — 스케줄러 콜백은 단위로 못 태운다(폴 루프·리스). 소스 스캔으로 잠근다.
 test('배선: 스케줄러가 선점(claim)·성공 마킹(CAS)을 거치고, 무조건 선점 write가 없다', async () => {
   const src = await readFile(new URL('../src/scheduler.mjs', import.meta.url), 'utf8');
-  assert.match(src, /claimConsolidate\(c\.id, now\.getTime\(\), today\)/, '선점은 판정+쓰기를 락 안에서 한 번에');
-  assert.match(src, /markConsolidateDone\(c\.id, today\)/, '성공 후에만 done 마킹');
+  // 틱은 id만 필요하다 — listCompanies는 전 크루·기억 md를 파싱해 60초 폴 × 전 기기에 비싸다(LOW-1)
+  assert.match(src, /listCompanyIds\(\)/, '틱 회사 열거는 경량 listCompanyIds로');
+  assert.doesNotMatch(src, /import \{[^}]*\blistCompanies\b[^}]*\}/, 'listCompanies 복귀 금지 — 틱마다 전 문서 파싱이 전 기기에서 돈다');
+  assert.match(src, /claimConsolidate\(cid, now\.getTime\(\), today\)/, '선점은 판정+쓰기를 락 안에서 한 번에');
+  assert.match(src, /markConsolidateDone\(cid, today\)/, '성공 후에만 done 마킹');
   assert.match(src, /if \(\(cur\.day \?\? ''\) !== today\) return;/, 'CAS — 남의 날짜 스탬프를 덮어쓰지 않는다(동기화 대상 파일)');
   // 철회한 설계의 재발 방지: 실패 catch에서 스탬프를 되돌리면 무한 재시도가 된다
   const catchBlock = src.split('기억 정리 실패')[1]?.slice(0, 300) ?? '';
   assert.doesNotMatch(catchBlock, /writeJsonAtomic\(RUN_STAMP/, '실패 경로에서 스탬프를 되돌리면 60초 폴마다 무한 재시도(5b4e94e에서 철회)');
   // 순서 — rollup **뒤**에 done. 앞에 오면 rollup 실패가 다시 '그날 영구 스킵'이 된다(검수 M12)
-  assert.ok(src.indexOf('rollupJournals(c.id)') < src.indexOf('markConsolidateDone(c.id, today)'), 'done 마킹은 rollup 성공 후');
+  assert.ok(src.indexOf('rollupJournals(cid)') < src.indexOf('markConsolidateDone(cid, today)'), 'done 마킹은 rollup 성공 후');
   // 실행이 백오프보다 길 때 다음 폴이 겹쳐 claim하는 것을 막는 in-flight 가드(검수 HIGH-2)
-  assert.match(src, /consolidating\.has\(c\.id\) \? null : await claimConsolidate/, '진행 중이면 선점 자체를 하지 않는다');
+  assert.match(src, /consolidating\.has\(cid\) \? null : await claimConsolidate/, '진행 중이면 선점 자체를 하지 않는다');
   // add가 빠지면 Set이 영원히 비어 가드가 완전한 no-op이 된다 — has/finally만 보면 못 잡는다(2R M-2 변이 생존)
-  assert.match(src, /consolidating\.add\(c\.id\)/, '선점 직후 진행 중 표시 — 이 한 줄이 가드의 전부다');
-  assert.match(src, /\.finally\(\(\) => consolidating\.delete\(c\.id\)\)/, '완료 시 반드시 해제');
+  assert.match(src, /consolidating\.add\(cid\)/, '선점 직후 진행 중 표시 — 이 한 줄이 가드의 전부다');
+  assert.match(src, /\.finally\(\(\) => consolidating\.delete\(cid\)\)/, '완료 시 반드시 해제');
 });
 
 // ── SDK hang 상한 — in-flight 가드가 성립하려면 실행이 **반드시 끝나야** 한다(검수 2R M-1).

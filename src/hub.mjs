@@ -45,6 +45,27 @@ export async function listCompanies() {
   return out.sort((a, b) => String(b.created).localeCompare(String(a.created)));
 }
 
+/** 회사 id 목록만 — 디렉터리 열거 + company.json 존재 확인으로 끝낸다(내용 파싱 없음).
+    listCompanies()는 회사마다 전 크루 md·전 vault md 본문을 읽어, id만 필요한 스케줄러
+    60초 폴에 태우기엔 비싸다(분리 검수 2026-07-28 LOW-1). id = 폴더명(workspace.mjs가
+    company.json의 id를 wsId로 강제하므로 동치). */
+export async function listCompanyIds() {
+  let entries = [];
+  try { entries = await readdir(WS_ROOT, { withFileTypes: true }); } catch { return []; }
+  const out = [];
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith('.')) continue;
+    try {
+      // wsId 규칙 검증 — listCompanies는 listAgents→paths 경유로 암묵 필터했다. 이게 빠지면
+      // Finder 복제본("co copy") 같은 규칙 위반 폴더가 하류 paths() throw로 틱 전체를 죽인다(검수 HIGH-1)
+      paths(e.name);
+      await stat(join(WS_ROOT, e.name, 'company.json')); // company.json 없는 폴더는 워크스페이스가 아님
+      out.push(e.name);
+    } catch { /* skip */ }
+  }
+  return out;
+}
+
 export async function listAgents(wsId) {
   const p = paths(wsId);
   let names = [];
