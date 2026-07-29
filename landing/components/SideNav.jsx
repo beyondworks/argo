@@ -5,7 +5,9 @@ import { useLang } from '@/lib/i18n';
 import { useLenis } from '@/components/SmoothScroll';
 import { CHAPTERS } from '@/lib/chapters';
 
-function StarMark() {
+// 목록 불릿 — 브랜드 마크가 아니다(로고는 Nav의 BrandMark 하나). 활성/비활성 색을
+// currentColor로 상속받아야 해서 정본의 골드 그라디언트를 쓰지 않는다.
+function StarBullet() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -103,7 +105,7 @@ export default function SideNav() {
               onClick={() => go(it)}
             >
               <span className="side-nav-star" aria-hidden>
-                <StarMark />
+                <StarBullet />
               </span>
               <span className="side-nav-label">{it.label}</span>
             </button>

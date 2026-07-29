@@ -6,21 +6,10 @@ import { useLang } from '@/lib/i18n';
 import { useLenis } from '@/components/SmoothScroll';
 import { useStarGate } from '@/components/StarModal';
 import { DL } from '@/lib/downloads';
+import BrandMark from '@/components/BrandMark';
 
 // 소스 레포(2026-07-23 공개) — 코드·README·LICENSE·스타가 쌓이는 정문. 릴리스 자산은 argo-agent(StarModal DL) 유지.
 const GITHUB_URL = 'https://github.com/beyondworks/argo';
-
-function StarMark({ size = 18 }) {
-  // 아르고 나침반 별 — 잉크 단색
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M12 1 L14.2 9.8 L23 12 L14.2 14.2 L12 23 L9.8 14.2 L1 12 L9.8 9.8 Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
 
 function GitHubMark() {
   return (
@@ -57,7 +46,7 @@ export default function Nav() {
 
   const brandInner = (
     <>
-      <StarMark />
+      <BrandMark />
       <span className="nav-wordmark">ARGO</span>
     </>
   );
