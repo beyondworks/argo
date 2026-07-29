@@ -8,6 +8,8 @@ artifacts/
 # macOS / 로컬 도구 상태
 .DS_Store
 .omc/
+.omx/
+.fablize/
 argo-service.cmd
 
 # 사이드카 스테이징(빌드 산출물)
