@@ -42,6 +42,10 @@ const inFlight = new Set();
     fromRole: 'captain'이면 동료가 아니라 사장이 보낸 것으로 문구가 갈린다(room.mjs 경유). */
 export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, cc = [], message, hop = 0, chain = [], kind = 'to' }) {
   if (!to || !String(message ?? '').trim()) throw new Error('수신 크루와 내용이 필요합니다');
+  // 자기 자신에게는 보낼 수 없다 — 배달 턴이 또 쪽지를 내면 hop 상한(왕복 방어)이 무의미해진다.
+  // cc는 이미 `s === from`으로 걸러내는데(아래) 주 수신자만 무방비였다. 호출부(cli-directives)에서도
+  // 막지만 근본 방어를 저장 관문에 둔다 — 새 호출부가 조용히 같은 구멍을 내지 않게(격리 재현 2026-07-30).
+  if (from && String(to) === String(from)) throw new Error('자기 자신에게는 쪽지를 보낼 수 없습니다');
   if (kind !== 'to' && kind !== 'cc') throw new Error('kind는 to 또는 cc입니다');
   const id = `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const base = {

@@ -58,13 +58,17 @@ export function toSchedule(d) {
 
 /** 지시 실행 — 사람이 읽을 결과 줄 배열을 돌려준다(답변 끝에 붙는다).
     실패도 줄로 남긴다: 조용한 실패는 크루의 거짓말이 된다. */
-export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [] } = {}) {
+export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [] } = {}) {
   const en = lang === 'en';
   const notes = [];
   const agents = await listAgents(wsId).catch(() => []);
   const fromName = agents.find((a) => a.slug === fromSlug)?.name ?? fromSlug;
   const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase().trim();
-  const find = (v) => agents.find((a) => norm(a.slug) === norm(v) || norm(a.name) === norm(v));
+  // 자기 자신은 수신자 후보에서 뺀다 — SDK 경로의 colleagues는 애초에 자신을 제외하는데(chat.mjs)
+  // 이 경로는 listAgents 전체를 뒤져 자기 앞으로 쪽지를 보낼 수 있었다(격리 재현 2026-07-30:
+  // from=alpha·to=alpha 배달 성공). 스케줄러가 그걸 배달하면 같은 크루가 또 지시 블록을 내는
+  // 자기 왕복이 되고, 아래 hop 상한도 자기 자신에겐 의미가 없어 무한 반복 + 비용 소모가 된다.
+  const find = (v) => agents.find((a) => a.slug !== fromSlug && (norm(a.slug) === norm(v) || norm(a.name) === norm(v)));
 
   for (const b of bad) {
     notes.push(en ? `⚠ Directive block ignored (${b})` : `⚠ 지시 블록을 읽지 못했습니다 (${b})`);
@@ -87,12 +91,19 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
           : (r.schedule.times ?? []).join('·');
         notes.push(en ? `✓ Routine registered — ${r.title} (${when})` : `✓ 루틴 등록됨 — ${r.title} (${when})`);
       } else if (action === 'mail') {
+        // SDK 경로는 hop>=2면 쪽지 도구 자체가 등록되지 않는다(chat.mjs colleagues). 러너 패리티 —
+        // 같은 지점에서 같은 상한을 건다. 조용히 무시하지 않고 사유 줄로 남긴다(이 파일의 계약).
+        if (hop >= 2) throw new Error(en ? 'note relay limit reached (2 hops)' : '쪽지 연쇄 상한(2단계)에 도달했다');
         const to = find(d.to);
         if (!to) throw new Error(en ? `no crew named "${d.to}"` : `"${d.to}"는 크루 명단에 없습니다`);
         const cc = (Array.isArray(d.cc) ? d.cc : []).map(find).filter(Boolean).map((a) => a.slug);
         const msg = String(d.message ?? '').trim();
         if (!msg) throw new Error(en ? 'message is required' : 'message가 필요합니다');
-        await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg });
+        // hop·chain 전파 필수 — SDK 도구(chat.mjs send_to_crew)는 hop+1을 실어 보내고 hop>=2에서
+        // colleagues가 빈 배열이 되어 왕복이 끝난다. 이 경로가 hop을 안 실으면 배달된 크루가 지시
+        // 블록 하나로 hop을 0으로 되돌려 그 상한을 통째로 무력화한다(격리 재현 2026-07-30: hop=2로
+        // 배달된 턴이 낸 블록의 메시지가 hop=0·chain=[]). 실효 바운드가 hop 단독이라 여기서 샌다.
+        await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg, hop: hop + 1, chain: [...chain, fromSlug] });
         notes.push(en ? `✓ Note sent to ${to.name}${cc.length ? ` (cc ${cc.length})` : ''}` : `✓ ${to.name}에게 쪽지 보냄${cc.length ? ` (참조 ${cc.length}명)` : ''}`);
       } else {
         notes.push(en ? `⚠ Unknown directive "${action}"` : `⚠ 알 수 없는 지시 "${action}"`);

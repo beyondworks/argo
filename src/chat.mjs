@@ -766,7 +766,7 @@ ${lang === 'en'
         const { parseDirectives, runDirectives } = await import('./cli-directives.mjs');
         const { clean, directives, bad } = parseDirectives(reply);
         if (directives.length || bad.length) {
-          const notes = await runDirectives(wsId, agentSlug, directives, { lang, bad });
+          const notes = await runDirectives(wsId, agentSlug, directives, { lang, bad, hop, chain });
           reply = [clean, notes.join('\n')].filter(Boolean).join('\n\n');
         }
       }
