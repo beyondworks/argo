@@ -77,8 +77,8 @@ export function systemPromptFor(cardMd, wsRoot, skills, meta = {}, lang = 'ko', 
         ? 'For anything later than a few minutes out, schedule it with the schedule_task tool instead of assuming the clock is still accurate.'
         : '몇 분 뒤보다 나중의 일은 시계가 그대로일 거라 가정하지 말고 schedule_task 도구로 예약하라.')
     : (lang === 'en'
-        ? 'For anything later than a few minutes out, don\'t assume the clock is still accurate — this runner\'s turns have no scheduling tool, so guide the captain to set it up in the Routines screen.'
-        : '몇 분 뒤보다 나중의 일은 시계가 그대로일 거라 가정하지 마라. 이 러너의 턴에는 예약 도구가 없다 — 예약이 필요하면 "루틴" 화면에서 걸어 달라고 사장에게 안내하라.');
+        ? 'For anything later than a few minutes out, don\'t assume the clock is still accurate — schedule it by ending your reply with a directive block:\n```argo\n{"action":"schedule","every":"30m","title":"...","prompt":"what to do each run"}\n```\nUse "time":"09:00" (with optional "days":[1,3]) instead of "every" for a fixed hour. Handing work to a colleague asynchronously uses the same mechanism: {"action":"mail","to":"crew-slug","message":"..."}. Argo runs the block after your turn and appends the real result — never claim you scheduled or sent something without emitting the block.'
+        : '몇 분 뒤보다 나중의 일은 시계가 그대로일 거라 가정하지 마라. 예약이 필요하면 답변 끝에 지시 블록을 붙여라:\n```argo\n{"action":"schedule","every":"30분","title":"...","prompt":"매 실행마다 할 일"}\n```\n정해진 시각이면 "every" 대신 "time":"09:00"(요일은 "days":[1,3]). 동료에게 비동기로 일을 넘길 때도 같은 방식이다: {"action":"mail","to":"동료슬러그","message":"..."}. Argo가 턴이 끝난 뒤 블록을 실행하고 실제 결과를 답변에 덧붙인다 — **블록 없이 "예약했다 / 전달했다"고 말하지 마라.**');
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }); // YYYY-MM-DD
   // 현재 시각 — 크루에겐 시계가 없다(셸 능력이 꺼져 있으면 date조차 못 친다). 시각을 안 주면
   // "지금 몇 시인지 확인할 도구가 없다"며 예약·마감 계산을 거절한다(실사용 신고 2026-07-26).
@@ -775,6 +775,17 @@ ${lang === 'en'
         }
       }
       if (!reply) throw new Error(`${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
+      // 러너 패리티 — CLI 턴엔 도구 통로가 없다. 답변 안의 ```argo 지시 블록을 여기서 실행해
+      // SDK 러너의 schedule_task·send_to_crew와 같은 결과를 낸다(src/cli-directives.mjs).
+      // 실행 결과는 사실로 덧붙고 블록은 화면에서 지운다 — "예약했다"고 말만 하던 자리를 없앤다.
+      {
+        const { parseDirectives, runDirectives } = await import('./cli-directives.mjs');
+        const { clean, directives, bad } = parseDirectives(reply);
+        if (directives.length || bad.length) {
+          const notes = await runDirectives(wsId, agentSlug, directives, { lang, bad });
+          reply = [clean, notes.join('\n')].filter(Boolean).join('\n\n');
+        }
+      }
       // 러너 독립성 — 외부 CLI의 샌드박스 거부를 SDK 러너와 같은 능력 안내로 승격한다.
       // SDK는 permission-gate가 도구 호출 전에 카드를 띄우지만 외부 CLI는 프로세스 안에서 거부돼
       // 크루가 생 에러를 옮기거나("zsh: operation not permitted") 자연어로 서술만 한다(실측 캡처 2건)
