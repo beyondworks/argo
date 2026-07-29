@@ -55,11 +55,15 @@ test('배선 — CLI 경로가 systemPromptFor에도 hasTools:false를 전달한
 });
 
 test('commonDirectives hasTools:true — SDK 도구 지시(결재·설치·즉시 사용)', () => {
-  const d = commonDirectives({ caps: { fs: false, browser: true, shell: false, bypass: false }, connectedMcp: ['notion'], hasTools: true, lang: 'ko' });
-  for (const s of ['request_approval 도구', 'update_profile / hire_crew', 'request_tool_install', 'notion', '바로 사용하라', 'request_capability']) {
+  const d = commonDirectives({ connectedMcp: ['notion'], hasTools: true, lang: 'ko' });
+  for (const s of ['request_approval 도구', 'update_profile / hire_crew', 'request_tool_install', 'notion', '바로 사용하라']) {
     assert.ok(d.includes(s), `누락: ${s}`);
   }
-  assert.ok(d.includes('허용(웹 조회·검색 도구)') && d.includes('꺼짐'), '능력 상태 미반영');
+  // 전권(2026-07-30) — 크루를 없는 메뉴로 보내던 안내가 재발하면 안 된다(실사용 신고 2026-07-29).
+  assert.ok(d.includes('로컬 능력 — 전권'), '전권 선언 누락');
+  assert.ok(!d.includes('request_capability'), '없어진 도구를 지시하면 안 된다');
+  assert.ok(!/설정 → 로컬 능력|설정에서 파일 권한을 켜/.test(d.replace('"설정에서 파일 권한을 켜세요"라고 안내하지 마라', '')),
+    '없는 메뉴로 사장을 보내는 안내가 있으면 안 된다');
 });
 
 test('commonDirectives hasTools:false — 외부 러너용 보고·안내형 동일 규율', () => {
@@ -71,8 +75,12 @@ test('commonDirectives hasTools:false — 외부 러너용 보고·안내형 동
 });
 
 test('commonDirectives en — hasTools 분기 영어판', () => {
-  const t1 = commonDirectives({ caps: { bypass: true }, connectedMcp: ['slack'], hasTools: true, lang: 'en' });
-  assert.ok(t1.includes('request_approval tool') && t1.includes('Auto-approve for preparation work: ON') && t1.includes('still require approval') && t1.includes('slack'));
-  const t0 = commonDirectives({ caps: {}, connectedMcp: [], hasTools: false, lang: 'en' });
+  const t1 = commonDirectives({ connectedMcp: ['slack'], hasTools: true, lang: 'en' });
+  assert.ok(t1.includes('request_approval tool') && t1.includes('still require approval') && t1.includes('slack'));
+  // 한국어판과 대칭(다국어 상시 규칙) — 전권 선언 + 없는 메뉴 안내 금지.
+  assert.ok(t1.includes('Local capabilities — full access'), '전권 선언 누락');
+  assert.ok(!t1.includes('request_capability'), '없어진 도구를 지시하면 안 된다');
+  assert.ok(!/Settings → Local capabilities|bottom of Settings/.test(t1), '없는 메뉴로 사장을 보내면 안 된다');
+  const t0 = commonDirectives({ connectedMcp: [], hasTools: false, lang: 'en' });
   assert.ok(t0.includes('no approval tool') && t0.includes('(none)'));
 });
