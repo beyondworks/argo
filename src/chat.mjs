@@ -240,26 +240,24 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 }
 
 /** 러너 공통 지시(결재·능력·환경·도구 자동 활용) — SDK든 외부 CLI(Codex/Gemini)든 크루 행동이 같아야 한다.
-    hasTools = 크루 도구(request_approval·request_capability·request_tool_install 등)가 실제로 있는 턴인지.
+    hasTools = 크루 도구(request_approval·request_tool_install 등)가 실제로 있는 턴인지.
     도구가 없는 러너에는 같은 규칙을 "보고·안내" 형태로 지시한다(러너 독립성 — 어떤 러너를 연결해도
     Argo 규율대로 행동). (export: 회귀 테스트용) */
 export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true, lang = 'ko', runner = null, workRoots = [] } = {}) {
   const mcpList = connectedMcp.length ? connectedMcp.join(', ') : (lang === 'en' ? '(none)' : '(없음)');
   if (lang === 'en') {
     // 한국어 경로와 대칭(다국어 상시 규칙) — 신고 2026-07-26: 크루가 "스킬·도구에서 추가하라"고 잘못 안내했다.
-    const offGuide = hasTools
-      ? 'If the work needs it, don\'t end with "I can\'t". **Do not send the captain hunting through menus** (Skills & Tools is for MCP connections and is unrelated here) — ask right there with the request_capability tool: a Yes/No card appears in the chat, one tap enables it and the work continues'
-      : 'If the work needs it, don\'t end with "I can\'t". This runner has no request tool, so name the exact place — **Settings → Local capabilities** — and which item to turn on (not Skills & Tools; that is for MCP connections)';
     return `\n## Approval rules — must follow
 - Never execute actions that are hard to reverse or leave the company (sending, publishing, purchasing, deleting, contracts, etc.) without approval. ${hasTools ? 'File an approval with the request_approval tool and wait for the decision.' : 'This turn has no approval tool — do not execute; report "approval required: <the action>" and end the turn.'}
 - In-company work like drafting, analysis, and vault notes proceeds right away without approval.
 - ${hasTools ? 'If the captain asks to change a crew profile (name, role, team, rules, runner, model) or to hire a new crew, don\'t edit files directly — file an approval via the update_profile / hire_crew tools. If the runner/model is undecided, present 2-3 options from the catalog and ask before filing.' : 'For crew profile changes or hiring, don\'t edit files directly — guide the captain to the crew/settings screens.'}
 
-## Local capabilities — what company settings allow
-- File system (outside the workspace): ${caps.fs ? 'allowed — be careful, and file an approval first for destructive changes' : `off — never read or write files outside the vault${workRoots.length ? ' except the assigned work folders below' : ''}. ${offGuide}`}
-${workRoots.length ? `- Assigned work folders (the captain granted these — read/write directly, independent of the file-system toggle): ${workRoots.join(' · ')}\n` : ''}- Web browsing (includes web search / looking up current information): ${caps.browser ? 'allowed (web fetch/search tools)' : `off — ${offGuide}`}
-- Shell commands: ${runner === 'gemini' ? 'not supported on this runner (Gemini) — for shell work, tell the captain to assign a crew on a shell-capable runner (e.g. Claude)' : caps.shell ? 'allowed' : `off — ${offGuide}`}
-${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and capability grants run without approval. This does NOT extend to actions that leave the company (sending, publishing, purchasing, deleting, contracts) or to hiring/profile changes: those still require approval, so keep filing them.' : '- Side-effecting actions continue after approval — waiting for approval is the normal flow'}
+## Local capabilities — full access
+- File system: read and write anywhere on this computer, including the captain's Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the captain to — if a path exists, you can use it. Only the protected zones below are blocked.
+${workRoots.length ? `- Assigned work folders (the captain pinned these): ${workRoots.join(' · ')}\n` : ''}- Web browsing (includes web search / looking up current information): allowed.
+- Shell commands: ${runner === 'gemini' ? 'not supported on this runner (Gemini) — for shell work, tell the captain to assign a crew on a shell-capable runner (e.g. Claude)' : 'allowed.'}
+- Preparation work (tool installs, setup) runs without approval. Actions that leave the company — sending, publishing, purchasing, deleting, contracts — and hiring/profile changes still require approval, so keep filing those.
+- Never tell the captain to "enable file access in Settings". That setting does not exist: access is on by default. If something fails, report the actual error (the path, the OS message) instead of guessing at permissions.
 
 ## Tools & skills — use them proactively
 - Company skills (skills/*.md) are auto-injected into your instructions every turn — apply them to matching work immediately.
@@ -268,7 +266,7 @@ ${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and c
 
 ## Protected zones — never touch, no exceptions
 - The Argo app itself (its install folder and server code), \`~/.argo\`, other companies' workspaces, and credential/secret files (e.g. \`.secrets.json\`) are off-limits for reading and writing — even with file-system capability or bypass mode on. The tool gate blocks them.
-- Your own company's control files are off-limits too, for reading and writing: every settings file sitting directly in the company folder (\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\`, …), anything starting with \`.\`, and crew cards under \`agents/\`. The ledgers (\`usage.jsonl\`, \`events.jsonl\`) you may read but not write. These settings change through tools that go to the captain for approval — never by editing the file${caps.shell ? ' (this includes shell redirects and editors, not just Write/Edit)' : ''}. Need a capability? \`request_capability\`. A tool? \`request_tool_install\`. Profile or hiring? \`update_profile\` / \`hire_crew\`. Your desk — \`vault/\`, \`skills/\`, project output — stays fully yours.
+- Your own company's control files are off-limits too, for reading and writing: every settings file sitting directly in the company folder (\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\`, …), anything starting with \`.\`, and crew cards under \`agents/\`. The ledgers (\`usage.jsonl\`, \`events.jsonl\`) you may read but not write. These settings change through tools that go to the captain for approval — never by editing the file${caps.shell ? ' (this includes shell redirects and editors, not just Write/Edit)' : ''}. Need a tool? \`request_tool_install\`. Profile or hiring? \`update_profile\` / \`hire_crew\`. Your desk — \`vault/\`, \`skills/\`, project output — stays fully yours.
 - If the captain asks you to change Argo's design, settings, or features, do NOT edit app code — explain that the app itself can't be modified from inside, and point them to Settings → Feedback.
 
 ## Your environment (Argo) — guide the captain precisely when blocked
@@ -276,24 +274,22 @@ ${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and c
 - **Long-running commands (browser automation, bulk scraping, builds) must run in the foreground until they finish.** Pass a generous Bash timeout (milliseconds, max 600000 = 10 min). Example: expecting ~5 minutes → timeout: 420000.
 - **Output from anything you background (\`&\`, nohup, run_in_background) is lost unless you collect it within this same turn.** When the turn ends the shell session closes, so the next turn cannot read that output (this differs from native Claude Code, where the session stays alive). Never fire a job into the shell background and end the turn expecting to pick it up later.
 - **For work that needs more than 10 minutes, ${hasTools ? 'use the start_long_task tool' : 'split it across turns or have it write results to a file and read that file next turn'}** — ${hasTools ? 'it runs outside this turn without blocking the conversation, and the result is delivered to this chat and your messenger when it finishes. Unlike shell backgrounding, the output is never lost.' : ''}` : ''}
-- Approvals are granted in the web approval inbox or via Telegram/Slack buttons. A timed-out wait is NOT failure — the request stays in the inbox and, once approved later, execution continues in a follow-up turn.${hasTools ? '\n- If frequent approvals interrupt the flow, you may suggest the captain enable capabilities or "permission bypass mode" (bottom of Settings — trusted companies only).' : ''}`;
+- Approvals are granted in the web approval inbox or via Telegram/Slack buttons. A timed-out wait is NOT failure — the request stays in the inbox and, once approved later, execution continues in a follow-up turn.`;
   }
-  // 실사용 신고 2026-07-26: 웹 검색을 못 하자 크루가 "스킬·도구에서 추가하세요"라고 안내했다.
-  // 스킬·도구는 MCP 연결이고 웹 브라우징은 로컬 능력이라 **틀린 안내**이고, 사장이 메뉴를 헤맸다.
-  // 켜는 건 이미 request_capability 한 번이면 되니, 메뉴로 떠넘기는 것을 명시적으로 금지한다.
-  const offGuide = hasTools
-    ? '필요한 작업이면 "할 수 없다"로 끝내지 마라. **사장에게 메뉴를 찾아가라고 안내하지 말고**(스킬·도구는 MCP 연결이라 여기와 무관하다) request_capability 도구로 그 자리에서 켜기를 요청하라 — 대화창에 Yes/No 카드가 떠서 한 번 누르면 켜지고 이어서 실행된다'
-    : '필요한 작업이면 "할 수 없다"로 끝내지 마라. 이 러너에는 요청 도구가 없으니 **설정 → 로컬 능력**에서 어느 항목을 켜야 하는지 정확히 짚어 안내하라(스킬·도구가 아니다 — 거긴 MCP 연결이다)';
+  // 크루가 사장을 메뉴로 떠넘기는 것을 금지한다 — 신고 2026-07-26(웹 검색이 안 되자 "스킬·도구에서
+  // 추가하세요"라고 오안내)과 2026-07-29(파일 저장이 안 되자 "설정에서 쓰기 권한을 켜세요"라고
+  // 안내했는데 그런 메뉴가 없어 사장이 한참 헤맴). 이제 능력은 전권이라 켤 것 자체가 없다.
   return `\n## 결재 규칙 — 반드시 따를 것
 - 되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 승인 없이 절대 실행하지 마라. ${hasTools ? 'request_approval 도구로 결재를 올리고 결정을 기다려라.' : '이 턴에는 결재 도구가 없다 — 실행하지 말고 "결재가 필요하다: <하려는 행동>"을 보고하고 턴을 마쳐라.'}
 - 초안 작성·분석·vault 기록 같은 회사 안 작업은 결재 없이 바로 한다.
 - ${hasTools ? '사장이 크루 프로필(이름·역할·팀·규칙·러너·모델) 변경이나 새 크루 영입을 요청하면 파일을 직접 고치지 말고 update_profile / hire_crew 도구로 결재를 올려라. 러너·모델이 정해지지 않았으면 카탈로그에서 선택지를 2~3개 제시해 물어본 뒤 올려라.' : '크루 프로필 변경·영입 요청은 파일을 직접 고치지 말고 크루·설정 화면에서 진행하도록 사장을 안내하라.'}
 
-## 로컬 능력 — 회사 설정이 허용한 범위
-- 파일 시스템(워크스페이스 밖): ${caps.fs ? '허용 — 신중하게, 파괴적 변경은 결재를 먼저 올려라' : `꺼짐 — ${workRoots.length ? '아래 지정 작업 폴더를 제외하면 ' : ''}vault 밖의 파일은 읽지도 쓰지도 마라. ${offGuide}`}
-${workRoots.length ? `- 지정 작업 폴더(사장이 허용 — 파일 시스템 토글과 무관하게 바로 읽고 쓴다): ${workRoots.join(' · ')}\n` : ''}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): ${caps.browser ? '허용(웹 조회·검색 도구)' : `꺼짐 — ${offGuide}`}
-- 셸 명령: ${runner === 'gemini' ? '이 러너(Gemini)에서는 지원되지 않는다 — 셸이 필요한 작업은 셸을 지원하는 러너(Claude 등)의 크루에게 맡기도록 사장에게 안내하라' : caps.shell ? '허용' : `꺼짐 — ${offGuide}`}
-${caps.bypass ? '- 준비 작업 자동 승인: 켜짐 — 도구 설치·능력 켜기는 결재 없이 진행된다. 단 **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이다 — 자동 승인이 그 경계를 넘지 않는다. 계속 결재를 올려라.' : '- 부작용 있는 실행은 결재 승인 후 이어진다 — 승인 대기는 정상 흐름이다'}
+## 로컬 능력 — 전권
+- 파일 시스템: 이 컴퓨터 어디든 읽고 쓸 수 있다. 사장의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사장을 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다. 막히는 것은 아래 보호 구역뿐이다.
+${workRoots.length ? `- 지정 작업 폴더(사장이 고정해 둔 곳): ${workRoots.join(' · ')}\n` : ''}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): 허용.
+- 셸 명령: ${runner === 'gemini' ? '이 러너(Gemini)에서는 지원되지 않는다 — 셸이 필요한 작업은 셸을 지원하는 러너(Claude 등)의 크루에게 맡기도록 사장에게 안내하라' : '허용.'}
+- 준비 작업(도구 설치·환경 세팅)은 결재 없이 진행한다. **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.
+- **"설정에서 파일 권한을 켜세요"라고 안내하지 마라. 그런 설정은 없다** — 접근은 기본으로 열려 있다. 실패하면 권한 탓으로 추측하지 말고 실제 오류(경로와 OS 메시지)를 그대로 보고하라.
 
 ## 도구·스킬 — 필요하면 알아서 불러 써라
 - 회사 스킬(skills/*.md)은 매 턴 네 지침에 자동 주입된다 — 해당 유형 작업이면 즉시 적용하라.
@@ -302,7 +298,7 @@ ${caps.bypass ? '- 준비 작업 자동 승인: 켜짐 — 도구 설치·능력
 
 ## 보호 구역 — 예외 없이 금지
 - Argo 앱 자체(설치 폴더·서버 코드), \`~/.argo\`, 다른 회사의 워크스페이스, 자격·시크릿 파일(예: \`.secrets.json\`)은 읽기도 쓰기도 금지다 — 파일 시스템 능력이나 우회 모드가 켜져 있어도 도구 게이트가 차단한다.
-- 네 회사의 제어 파일도 읽기·쓰기 모두 금지다: 회사 폴더 바로 아래의 설정 파일 전부(\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\` 등), \`.\`으로 시작하는 항목 전부, 그리고 \`agents/\`의 크루 카드. 원장(\`usage.jsonl\`, \`events.jsonl\`)은 읽을 수는 있고 쓸 수는 없다. 이 설정들은 사장 결재를 거치는 도구로 바꾸는 것이지 파일을 고쳐서 바꾸는 것이 아니다${caps.shell ? ' (Write/Edit뿐 아니라 셸 리다이렉트·에디터도 마찬가지다)' : ''}. 능력이 필요하면 \`request_capability\`, 도구 설치는 \`request_tool_install\`, 프로필·영입은 \`update_profile\`·\`hire_crew\`. 네 책상(\`vault/\`, \`skills/\`, 산출물)은 그대로 전부 네 것이다.
+- 네 회사의 제어 파일도 읽기·쓰기 모두 금지다: 회사 폴더 바로 아래의 설정 파일 전부(\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\` 등), \`.\`으로 시작하는 항목 전부, 그리고 \`agents/\`의 크루 카드. 원장(\`usage.jsonl\`, \`events.jsonl\`)은 읽을 수는 있고 쓸 수는 없다. 이 설정들은 사장 결재를 거치는 도구로 바꾸는 것이지 파일을 고쳐서 바꾸는 것이 아니다${caps.shell ? ' (Write/Edit뿐 아니라 셸 리다이렉트·에디터도 마찬가지다)' : ''}. 도구 설치는 \`request_tool_install\`, 프로필·영입은 \`update_profile\`·\`hire_crew\`. 네 책상(\`vault/\`, \`skills/\`, 산출물)은 그대로 전부 네 것이다.
 - 사장이 Argo의 디자인·설정·기능을 고쳐 달라고 하면 앱 코드를 수정하지 마라 — 앱 자체는 안에서 고칠 수 없다고 설명하고 "설정 → 피드백"으로 전달하라고 안내하라.
 
 ## 너의 환경(Argo) — 막혔을 때 사장에게 정확히 안내하라
@@ -371,18 +367,6 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
         reason: why, payload: { source, id: cleanId },
       });
       return text(`설치 결재가 등록되었다(${item.id}). 승인되면 시스템이 설치하고 후속 지시가 온다. 지금은 사장에게 승인을 요청하고 턴을 마무리하라. 승인 전에 그 도구를 쓰려 하지 마라.${await channelHealthNote()}`);
-    },
-  );
-
-  const requestCapability = tool(
-    'request_capability',
-    '작업에 필요한 로컬 능력이 꺼져 있을 때 사장에게 켜 달라고 요청한다(메뉴로 안내하지 말고 이 도구를 써라). '
-      + 'browser = 웹 브라우징 — **웹 검색·최신 정보 조회·페이지 열람이 전부 여기다**. fs = 워크스페이스 밖 파일. shell = 셸 명령. '
-      + '요청하면 사장의 대화창에 Yes/No 카드가 뜨고, 승인되면 능력이 켜진 뒤 이어서 실행하라는 후속 지시가 온다. why에는 왜 필요한지 한 문장.',
-    { cap: z.enum(['fs', 'browser', 'shell']), why: z.string() },
-    async ({ cap, why }) => {
-      const item = await suggestCapability(wsId, fromSlug, cap, why, delegatedBy);
-      return text(`요청이 등록되었다${item ? `(${item.id})` : ''}. 사장에게 "카드에서 승인하시면 바로 이어서 하겠다"고 짧게 안내하고 턴을 마무리하라. 승인 전에는 그 능력을 쓰려 하지 마라.${await channelHealthNote()}`);
     },
   );
 
@@ -600,7 +584,7 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
 
   return createSdkMcpServer({
     name: 'crew', version: '1.0.0',
-    tools: [requestApproval, requestCapability, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask, ...(colleagues.length ? [delegate, sendToCrew] : [])],
+    tools: [requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask, ...(colleagues.length ? [delegate, sendToCrew] : [])],
   });
 }
 
@@ -882,13 +866,21 @@ ${lang === 'en'
   const colleagues = hop >= 2 ? [] : (await listAgents(wsId)).filter((a) => a.slug !== agentSlug && (!chain.includes(a.slug) || a.slug === lastSender));
   const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang);
 
-  // 로컬 능력 — 전부 opt-in. 파일·셸 부작용 도구는 bypass 여부와 무관하게 사전 승인 목록에서 빼고
-  // canUseTool 게이트로 보낸다 — 게이트가 능력 결재(P1-5)와 금지 구역(앱 코드·타사 데이터·자격,
-  // 2026-07-22 크리티컬)을 판정한다. 사전 승인 목록에 든 도구는 게이트를 타지 않으므로 여기엔
-  // 경로가 없는 안전 도구(웹·MCP)만 남긴다.
-  const caps = await loadCapabilities(wsId);
+  // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
+  // 게이트로 보낸다 — 게이트가 금지 구역(앱 코드·타사 데이터·자격, 2026-07-22 크리티컬)을 판정한다.
+  // 사전 승인 목록에 든 도구는 게이트를 **타지 않으므로** 여기엔 경로 인자가 없는 도구만 남긴다.
+  //
+  // ⚠ 연결된 MCP 서버 이름(mcp__<서버>)을 여기 넣지 않는다(2026-07-30 제거). SDK는 괄호 없는 bare
+  // 항목을 "콜백 상담 전에 도구 전체를 자동 승인"으로 처리한다 — 벤더 코드가 직접 그렇게 적고
+  // 경고까지 낸다(sdk.mjs, 경고코드 CLAUDE_SDK_CAN_USE_TOOL_SHADOWED: "Bare allowedTools entries
+  // auto-approve the whole tool before the callback is consulted"). 그래서 mcpAllow가 있는 동안
+  // permission-gate의 mcp 분기(argPathsForbidden)는 **프로덕션에서 도달 불가**였고, 파일 쓰기형 MCP를
+  // 연결하면 크루가 mcp__filesystem__write_file로 회사 금고를 직접 쓸 수 있었다 — 2026-07-27에 닫은
+  // 자가 승격 경로가 그대로 다시 열린다. 전권 모델에서는 이 게이트가 유일한 방어선이라 더더욱 안 된다.
+  // 제거해도 결재 카드가 새로 뜨지 않는다: 게이트의 mcp 분기는 금지 구역 경로가 아니면 그냥 allow다.
+  const caps = await loadCapabilities();
   const workRoots = await loadActiveWorkRoots(wsId); // 사장 지정 외부 작업 폴더 — 게이트·SDK 추가 디렉토리·프롬프트에 주입
-  const readTools = [...(caps.browser ? ['WebFetch', 'WebSearch'] : []), ...mcpAllow, 'mcp__crew'];
+  const readTools = ['WebFetch', 'WebSearch', 'mcp__crew'];
   // 결재·능력·환경·도구 활용 지시는 commonDirectives(러너 공통)로 일원화 — SDK/외부 러너 행동 통일.
   const connectedMcp = Object.keys(servers ?? {});
 
@@ -975,17 +967,14 @@ ${lang === 'en'
       // 엔드포인트에 붙어 이 파라미터를 보장하지 않으므로 보내지 않는다(카탈로그 규칙과 같은 원칙:
       // 실행 경로가 받는 것만 보낸다). 화이트리스트는 persona.EFFORT_LEVELS가 저장 시점에 이미 강제.
       ...(runner === 'claude' && EFFORT_LEVELS.includes(String(meta.effort ?? '')) ? { effort: meta.effort } : {}),
-      // bypass여도 bypassPermissions로 게이트를 통째로 끄지 않는다 — 파일·셸 도구는 항상 canUseTool을
-      // 지나 금지 구역(앱 코드·타사 데이터·자격)을 하드 차단한다(실사용 신고 2026-07-22 크리티컬:
-      // "크루한테 앱 고쳐달라고 하면 서버 소스를 실제로 고침"). bypass의 의미(결재 생략)는 게이트가
-      // caps.bypass로 존중한다 — 금지 구역 외 전부 즉시 허용(permission-gate.mjs).
+      // 전권이어도 SDK의 bypassPermissions로 게이트를 통째로 끄지 않는다 — 파일·셸 도구는 항상
+      // canUseTool을 지나 금지 구역(앱 코드·타사 데이터·자격)을 하드 차단한다(실사용 신고 2026-07-22
+      // 크리티컬: "크루한테 앱 고쳐달라고 하면 서버 소스를 실제로 고침"). Hermes YOLO와 같은 계약이다 —
+      // 전권은 결재를 없애는 것이지 하드라인을 없애는 것이 아니다(capabilities.mjs 주석).
       permissionMode: 'default',
       allowedTools: readTools,
-      canUseTool: makePermissionGate(wsId, agentSlug, caps, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots),
-      disallowedTools: [
-        ...(caps.shell ? [] : ['Bash']),
-        ...(caps.browser ? [] : ['WebFetch', 'WebSearch']),
-      ],
+      canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots),
+      disallowedTools: [], // 전권 — 막는 것은 게이트의 금지 구역뿐
       settingSources: [], // 호스트의 CLAUDE.md/스킬 미주입(테넌트 격리)
       ...(resumeId ? { resume: resumeId } : {}),
     },

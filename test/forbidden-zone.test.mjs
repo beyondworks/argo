@@ -50,7 +50,7 @@ test('isForbidden: 워크스페이스 안 심링크로 금지 구역을 우회�
 
 test('permissionGate: bypass가 켜져 있어도 금지 구역 Write/Edit/Read는 deny', async () => {
   const caps = { fs: true, browser: true, shell: true, bypass: true };
-  const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   const w = await gate('Write', { file_path: join(APP_ROOT, 'app', 'ui.jsx'), content: 'x' });
   assert.equal(w.behavior, 'deny', 'bypass는 결재 생략이지 보호 구역 해제가 아니다');
   const r = await gate('Read', { file_path: join(wsRoot, '.secrets.json') });
@@ -86,7 +86,7 @@ test('permissionGate: 혼합 인자로 안쪽 금지 대상을 우회하지 못�
   const out = await mkdtemp(join(tmpdir(), 'argo-mixed-'));
   for (const caps of [{ fs: true, browser: false, shell: false, bypass: false },
     { fs: false, browser: false, shell: false, bypass: true }]) {
-    const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot);
+    const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
     const label = caps.fs ? 'fs ON' : 'bypass ON';
     const g = await gate('Glob', { path: out, pattern: join(wsRoot, 'connections.json') });
     assert.equal(g.behavior, 'deny', `${label}: 밖 path + 안쪽 자격 pattern`);
@@ -102,7 +102,7 @@ test('permissionGate: 혼합 인자로 안쪽 금지 대상을 우회하지 못�
 test('permissionGate: 재귀 검색이 금고를 훑지 못한다 — 읽기 차단은 Read 한 곳이 아니다', async () => {
   // rg는 준 경로 아래를 재귀한다. 워크스페이스 루트 검색은 경로 자체가 금지가 아니라 통과했고,
   // connections.json의 봇 토큰이 평문으로 나왔다(분리 검수 HIGH, 실행 재현).
-  const gate = makePermissionGate('my-co', 'crew-a', { fs: false, browser: false, shell: false, bypass: false }, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   assert.equal((await gate('Grep', { pattern: 'token', path: wsRoot })).behavior, 'deny', '루트 재귀 검색');
   assert.equal((await gate('Grep', { pattern: 'token' })).behavior, 'deny', 'path 생략 = cwd = 루트');
   assert.equal((await gate('Glob', { path: wsRoot, pattern: '**/*.json' })).behavior, 'deny', '루트 glob');
@@ -116,17 +116,17 @@ test('permissionGate: 넓은 작업 폴더를 등록해도 재귀 검색이 금�
   // 그 안의 워크스페이스 금고까지 닿는다. 검색 루트가 워크스페이스를 품으면 막아야 한다.
   const ancestor = dirname(dirname(wsRoot)); // WS_ROOT의 부모 — 워크스페이스를 품는 넓은 폴더
   const caps = { fs: false, browser: false, shell: false, bypass: false };
-  const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot, null, 'ko', [ancestor]);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot, null, 'ko', [ancestor]);
   assert.equal((await gate('Grep', { pattern: 'token', path: ancestor })).behavior, 'deny', '조상 폴더 재귀');
   // 작업 폴더 자체의 정상 사용(워크스페이스를 품지 않는 폴더)은 그대로 열려 있다
   const side = await mkdtemp(join(tmpdir(), 'argo-work-'));
-  const g2 = makePermissionGate('my-co', 'crew-a', caps, wsRoot, null, 'ko', [side]);
+  const g2 = makePermissionGate('my-co', 'crew-a', wsRoot, null, 'ko', [side]);
   assert.equal((await g2('Grep', { pattern: 'x', path: side })).behavior, 'allow', '지정 작업 폴더 검색');
   assert.equal((await g2('Write', { file_path: join(side, 'a.md'), content: 'x' })).behavior, 'allow', '작업 폴더 쓰기');
 });
 
 test('permissionGate: 외부 MCP·미분류 도구도 금고 경로는 막힌다', async () => {
-  const gate = makePermissionGate('my-co', 'crew-a', { fs: true, browser: true, shell: true, bypass: true }, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   const caps = join(wsRoot, 'capabilities.json');
   assert.equal((await gate('mcp__filesystem__write_file', { path: caps, contents: '{}' })).behavior, 'deny', '외부 MCP 파일 쓰기');
   assert.equal((await gate('MultiEdit', { file_path: caps, edits: [] })).behavior, 'deny', '미분류 쓰기 도구');
@@ -138,7 +138,7 @@ test('permissionGate: 외부 MCP·미분류 도구도 금고 경로는 막힌다
 });
 
 test('permissionGate: shell 능력이 켜져도 셸 리터럴로 금고를 만지지 못한다(1차 방어)', async () => {
-  const gate = makePermissionGate('my-co', 'crew-a', { fs: true, browser: true, shell: true, bypass: true }, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   for (const cmd of ['echo \'{"bypass":true}\' > capabilities.json', 'cat connections.json',
     'python3 -c "open(\'capabilities.json\',\'w\')"', 'vi agents/crew-a.md']) {
     assert.equal((await gate('Bash', { command: cmd })).behavior, 'deny', cmd);
@@ -211,7 +211,7 @@ test('isForbidden: 워크스페이스 안 심링크로 제어 파일을 우회�
 
 test('permissionGate: 능력 0인 크루가 제어 파일로 자가 승격하지 못한다(Write·Edit·Read 전부)', async () => {
   const caps = { fs: false, browser: false, shell: false, bypass: false };
-  const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   const w = await gate('Write', { file_path: join(wsRoot, 'capabilities.json'), content: '{"shell":true,"bypass":true}' });
   assert.equal(w.behavior, 'deny', '능력 토글 자가 승격 — 이 게이트의 존재 이유');
   const e = await gate('Edit', { file_path: join(wsRoot, 'mcp.json'), old_string: 'a', new_string: 'b' });
@@ -226,7 +226,7 @@ test('permissionGate: 능력 0인 크루가 제어 파일로 자가 승격하지
 
 test('permissionGate: bypass가 켜져 있어도 제어 파일은 열리지 않는다', async () => {
   const caps = { fs: true, browser: true, shell: true, bypass: true };
-  const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   const w = await gate('Write', { file_path: join(wsRoot, 'capabilities.json'), content: '{}' });
   assert.equal(w.behavior, 'deny', 'bypass = 결재 생략이지 회사 금고 해제가 아니다');
   const g = await gate('Glob', { path: wsRoot, pattern: join(wsRoot, 'approvals.json') });
@@ -235,7 +235,7 @@ test('permissionGate: bypass가 켜져 있어도 제어 파일은 열리지 않�
 
 test('permissionGate: fs 능력이 켜져도 금지 구역 밖 일반 외부 경로는 기존대로 허용(회귀 없음)', async () => {
   const caps = { fs: true, browser: false, shell: false, bypass: false };
-  const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   const outside = await mkdtemp(join(tmpdir(), 'argo-outside-'));
   const r = await gate('Write', { file_path: join(outside, 'report.md'), content: 'x' });
   assert.equal(r.behavior, 'allow', 'fs 능력의 목적(사용자 문서 접근)은 유지');

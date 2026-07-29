@@ -17,7 +17,7 @@ await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
 const ROOT = join(process.env.ARGO_ROOT, WS);
 
 test('게이트: 능력을 켰으면 결재 없이 즉시 실행(2단 모델 — 결재 폭탄 제거)', async () => {
-  const gate = makePermissionGate(WS, 'pepper', { fs: true, browser: true, shell: true }, ROOT);
+  const gate = makePermissionGate(WS, 'pepper', ROOT);
   const t0 = Date.now();
   assert.equal((await gate('Bash', { command: 'ls' })).behavior, 'allow', 'shell 켬 → Bash 즉시 허용');
   assert.equal((await gate('Read', { file_path: '/etc/hosts' })).behavior, 'allow', 'fs 켬 → 밖 읽기 즉시 허용');
@@ -29,7 +29,7 @@ test('게이트: 능력을 켰으면 결재 없이 즉시 실행(2단 모델 —
 });
 
 test('게이트: 능력이 꺼져 있으면 실행 대신 켜기 제안 카드 한 장(중복 없이)', async () => {
-  const gate = makePermissionGate(WS, 'pepper', { fs: false, browser: false, shell: false }, ROOT, 'luca');
+  const gate = makePermissionGate(WS, 'pepper', ROOT, 'luca');
   assert.equal((await gate('Bash', { command: 'ls' })).behavior, 'deny', 'shell 꺼짐 → 거절');
   assert.equal((await gate('Bash', { command: 'pwd' })).behavior, 'deny', '재시도도 거절');
   const caps = (await loadApprovals(WS)).filter((a) => a.status === 'pending' && a.kind === 'capability' && a.cap === 'shell');
@@ -38,7 +38,7 @@ test('게이트: 능력이 꺼져 있으면 실행 대신 켜기 제안 카드 �
 });
 
 test('게이트: 워크스페이스 안은 능력과 무관하게 허용(기존 경계 유지)', async () => {
-  const gate = makePermissionGate(WS, 'pepper', { fs: false, browser: false, shell: false }, ROOT);
+  const gate = makePermissionGate(WS, 'pepper', ROOT);
   await writeFile(join(ROOT, 'note.md'), 'x');
   assert.equal((await gate('Read', { file_path: join(ROOT, 'note.md') })).behavior, 'allow', '안쪽 읽기는 항상 허용');
   assert.equal((await gate('Write', { file_path: join(ROOT, 'out.md') })).behavior, 'allow', '안쪽 쓰기는 항상 허용');

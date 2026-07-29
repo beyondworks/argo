@@ -176,7 +176,6 @@ function Settings({ params }) {
       </Section>
 
       <Section label={t('settings.capabilities')}>
-        <CapabilitiesCard ws={ws} />
         <WorkRootsCard ws={ws} />
         <SystemPermissionsCard />
       </Section>
@@ -674,75 +673,6 @@ function TrashCard({ ws }) {
   );
 }
 
-/** 로컬 능력 토글 — 전부 opt-in. bypass 꺼짐이면 부작용 실행은 결재 게이트를 탄다. */
-const CAP_LABELS = {
-  fs: ['settings.caps.fs', 'settings.caps.fs.desc'],
-  browser: ['settings.caps.browser', 'settings.caps.browser.desc'],
-  shell: ['settings.caps.shell', 'settings.caps.shell.desc'],
-  bypass: ['settings.caps.bypass', 'settings.caps.bypass.desc'],
-};
-
-function CapabilitiesCard({ ws }) {
-  const { t } = useLang();
-  const [caps, setCaps] = useState(null);
-  const [defs, setDefs] = useState([]);
-  const [busy, setBusy] = useState('');
-
-  useEffect(() => {
-    api(`/api/companies/${ws}/capabilities`).then((d) => { setCaps(d.capabilities); setDefs(d.defs); }).catch(() => setCaps({}));
-  }, [ws]);
-
-  async function toggle(key) {
-    if (busy) return;
-    setBusy(key);
-    try {
-      const d = await api(`/api/companies/${ws}/capabilities`, { [key]: !caps[key] });
-      setCaps(d.capabilities);
-    } finally {
-      setBusy('');
-    }
-  }
-
-  return (
-    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 4 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <span className="card-title">{t('settings.caps.title')}</span>
-        <span className="chip">{caps?.bypass ? t('settings.caps.bypassOn') : t('settings.caps.gate')}</span>
-      </div>
-      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '0 0 10px', lineHeight: 1.6 }}>
-        {t('settings.caps.desc')}
-      </p>
-      {!caps ? <Skeleton h={120} /> : defs.map(([key]) => {
-        const [titleKey, descKey] = CAP_LABELS[key] ?? [];
-        return (
-        <div key={key} className="row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 8px', ...(key === 'bypass' ? { borderTop: '1px dashed var(--border-soft)', marginTop: 4, paddingTop: 12 } : {}) }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: key === 'bypass' ? 'var(--danger)' : 'var(--fg)' }}>{titleKey ? t(titleKey) : key}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--fg-2)', marginTop: 2 }}>{descKey ? t(descKey) : ''}</div>
-          </div>
-          <button
-            onClick={() => toggle(key)}
-            disabled={busy === key}
-            role="switch"
-            aria-checked={!!caps[key]}
-            style={{
-              width: 40, height: 22, borderRadius: 999, flex: 'none', position: 'relative',
-              border: '1px solid var(--border)', transition: 'background .15s',
-              background: caps[key] ? (key === 'bypass' ? 'var(--danger)' : 'var(--fg)') : 'var(--card-2)',
-              cursor: 'pointer',
-            }}
-          >
-            <span style={{
-              position: 'absolute', top: 2, left: caps[key] ? 20 : 2, width: 16, height: 16, borderRadius: 999,
-              background: caps[key] ? 'var(--bg)' : 'var(--fg-3)', transition: 'left .15s',
-            }} />
-          </button>
-        </div>
-        );
-      })}
-    </div>
-  );
-}
 
 
 /** 외부 작업 폴더 — 사장이 지정한 폴더를 크루의 확장 책상으로 연다(fs 능력과 독립 — "전부"가 아니라

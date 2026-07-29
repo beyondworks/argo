@@ -1,17 +1,15 @@
 // 결재 처리의 공통 동작 — 웹 결재함·대화창 카드·메신저 버튼이 같은 경로를 탄다.
 import { resolveApproval } from './approvals.mjs';
-import { updateCapabilities } from './capabilities.mjs';
 import { chat } from './chat.mjs';
 import { loadThread, appendTurn } from './thread.mjs';
 
 /** 상태 변경 + 후속 처리. kind:'tool'은 대기 중인 턴이 스스로 재개하므로 후속 턴이 없다.
-    kind:'capability'는 승인 시 능력을 켜고, kind:'profile'/'hire'는 승인 시 서버가 payload를
-    실행(카드 수정·영입)한 뒤 — 후속 턴이 결과를 사용자에게 보고한다. */
+    kind:'profile'/'hire'는 승인 시 서버가 payload를 실행(카드 수정·영입)한 뒤 — 후속 턴이 결과를
+    사용자에게 보고한다.
+    kind:'capability'는 없어졌다(2026-07-30) — 능력이 설치 시점부터 전권이라 켤 것이 없다
+    (capabilities.mjs). 옛 결재함에 남은 capability 항목은 여기서 특별 처리 없이 그냥 해소된다. */
 export async function resolveWithFollowUp(wsId, id, approve) {
   const item = await resolveApproval(wsId, id, approve);
-  if (item.kind === 'capability' && approve && item.cap) {
-    await updateCapabilities(wsId, { [item.cap]: true });
-  }
   if (item.kind !== 'tool') {
     followUp(wsId, item, approve).catch((e) => console.error('[argo] 결재 후속 턴 실패:', e.message));
   }

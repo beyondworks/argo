@@ -160,7 +160,19 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
     return {
       ws,
       parent: dirname(ws), // WS_ROOT — 형제 = 다른 회사, 직속 도트파일 = 계정 시크릿·기기 마커
-      hard: await Promise.all([resolve(appRoot), join(homedir(), '.argo')].map(async (r) => (await canon(r)) ?? r)),
+      // 벤더 자격 디렉터리가 하드라인에 함께 든다(2026-07-30). 전권이 기본이 된 뒤로 이 목록이
+      // **유일한** 방어선이라, "~/.argo(격리 홈)는 막는데 그 격리 홈이 빌려 쓰는 원본은 열려 있다"는
+      // 비대칭을 남길 수 없다. 실측(분리 검수 M1): fs 능력만으로 ~/.codex/auth.json·
+      // ~/.gemini/oauth_creds.json·~/.claude/.credentials.json이 전부 allow였다. 사장이 위임한 것은
+      // "문서 접근"인데 얻는 것은 "구독 계정 탈취"라 위임 범위가 어긋난다 — Hermes 하드라인과 같은 논리로,
+      // 전권은 파일을 맡긴다는 뜻이지 자격을 넘긴다는 뜻이 아니다.
+      hard: await Promise.all([
+        resolve(appRoot),
+        join(homedir(), '.argo'),
+        join(homedir(), '.codex'),   // Codex CLI 자격(auth.json)
+        join(homedir(), '.claude'),  // Claude Code 자격(.credentials.json)
+        join(homedir(), '.gemini'),  // gemini-cli 자격(oauth_creds.json)
+      ].map(async (r) => (await canon(r)) ?? r)),
     };
   })());
   return async function isForbidden(p, mode = 'read') {
@@ -184,7 +196,12 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
       if (rel.length !== 1) return false;
       return WS_CONTROL_FILES.has(head) || (mode === 'write' && WS_LEDGER_FILES.has(head));
     }
-    for (const r of R.hard) if (insideFold(real, r)) return true;
+    // 하드 구역은 **렉시컬(abs)과 canonical(real) 둘 다** fail-closed로 본다(2026-07-30).
+    // canonical만 보면 "보호 구역 안에 있으면서 밖을 가리키는 심링크"를 놓친다 — 실제로 조달이 만드는
+    // ~/.argo/codex-home/auth.json → ~/.codex/auth.json 심링크가 그랬다(격리 재현: isForbidden('~/.argo')
+    // =true인데 그 하위 심링크만 false). 반대로 렉시컬만 보면 밖에서 안을 가리키는 심링크를 놓친다.
+    // deny 판정은 둘 중 하나만 걸려도 막는 게 맞다 — 허용 분기(정확 비교)와 방향이 반대다.
+    for (const r of R.hard) if (insideFold(real, r) || insideFold(abs, r)) return true;
     // 부수 효과(의도): 자기 워크스페이스의 케이스 변형+미존재 경로는 허용 분기(정확 비교)에서 떨어져
     // 여기 걸린다 — fail-safe 과차단. 메시지가 '타사'라 오해 소지 있으나 허용 확대보다 낫다(검수 LOW 수용).
     if (insideFold(real, R.parent)) return true; // WS_ROOT 아래인데 자기 회사 밖 — 타사 데이터·계정 시크릿
@@ -219,7 +236,7 @@ export async function suggestCapability(wsId, slug, cap, why, from = null) {
     "사장 확인 생략"이지 "Argo 보호 구역 해제"가 아니다(실사용 신고 2026-07-22 크리티컬).
     from = 위임 원 크루 slug(제안 카드 표기용). lang = 거절 메시지 언어.
     workRoots = 사장이 지정한 외부 작업 폴더 — 워크스페이스와 동급 책상(등록 시 금지 구역 검증됨). */
-export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang = 'ko', workRoots = []) {
+export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko', workRoots = []) {
   const inWorkspace = makeInWorkspace(wsRoot);
   const inWorkRoots = makeInWorkRoots(workRoots);
   const isForbidden = makeIsForbidden(wsRoot);
@@ -252,10 +269,23 @@ export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang =
   /* 도구 인자에 든 경로가 금지 구역인가 — 분류표에 없는 도구(SDK 신규 도구, 외부 MCP)가 경로를 들고
      와도 금고를 만지지 못하게 하는 마지막 그물이다. 도구 이름 화이트리스트를 늘려 가는 대신 "어떤
      도구든 금지 구역 경로를 인자로 주면 막는다"는 불변식으로 둔다 — 새 도구가 조용히 통과하지 않는다.
-     실측(분리 검수 HIGH): `mcp__filesystem__write_file{path: <ws>/capabilities.json}`이 allow였다. */
-  const argPathsForbidden = async (obj) => {
-    for (const v of Object.values(obj ?? {})) {
-      if (typeof v !== 'string' || !v.includes(sep)) continue; // 경로처럼 생긴 것만
+     실측(분리 검수 HIGH): `mcp__filesystem__write_file{path: <ws>/capabilities.json}`이 allow였다.
+     인자 표면을 넓혔다(2026-07-30) — 예전엔 ① 얕은 Object.values만 보고 ② `sep`이 든 문자열만 검사해서
+     `{paths:[<abs>]}`(배열)·`{args:{path:<abs>}}`(중첩)·`{path:"capabilities.json"}`(상대경로)가 전부
+     통과했다(격리 실행 재현). 특히 상대경로가 위험하다 — MCP 서버는 cwd=회사 폴더로 스폰되므로
+     `capabilities.json` 한 단어가 실제로 금고를 가리키는데, 같은 입력을 Write는 deny하고 MCP는 allow해
+     두 경로의 판정이 갈렸다. */
+  const argPathsForbidden = async (obj, depth = 0) => {
+    if (depth > 4 || obj == null) return false; // 깊이 상한 — 적대적으로 중첩된 인자 트리 비용 차단
+    for (const v of Array.isArray(obj) ? obj : Object.values(obj)) {
+      if (v && typeof v === 'object') { // 배열·중첩 객체도 훑는다(아래 주석)
+        if (await argPathsForbidden(v, depth + 1)) return true;
+        continue;
+      }
+      if (typeof v !== 'string' || !v.trim()) continue;
+      // 길이·개행 컷 — 경로가 아닌 값(Write의 content 등)에 realpath 재귀를 태우지 않기 위한 비용
+      // 방어다. PATH_MAX(4096)를 넘거나 개행이 든 문자열은 도구 인자로서의 경로가 아니다.
+      if (v.length > 4096 || v.includes('\n')) continue;
       if (await isForbidden(v, 'write')) return true; // 인자는 쓰기일 수 있다 — 넓은 쪽으로 판정
     }
     return false;
@@ -272,8 +302,7 @@ export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang =
     }
 
     if (READ_FILE_TOOLS.has(toolName)) {
-      // 파일 읽기(Read/Glob/Grep) — 워크스페이스 안(또는 경로 미지정=cwd)은 허용, 밖은 fs 능력을 따른다.
-      // capabilities.mjs 계약: fs = "워크스페이스 밖 파일 읽기/쓰기/편집". 읽기도 이 경계를 지킨다(P1-5).
+      // 파일 읽기(Read/Glob/Grep) — 전권이라 안/밖 구분이 없다. 금지 구역만이 경계다.
       const targets = readToolTargets(toolName, input); // Read=file_path, Grep=path, Glob=path+pattern
       // 금지 구역 검사를 안/밖 불문 **먼저** 전부 돌린다. 예전엔 워크스페이스 안 대상을 continue로
       // 건너뛰고 "전부 안쪽일 때"만 따로 검사했는데, 인자 하나가 밖이면 그 블록을 못 타 안쪽 금지
@@ -287,33 +316,13 @@ export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang =
         const root = typeof input?.path === 'string' && input.path.trim() ? input.path : wsAbs;
         if (await coversControl(root)) return denyScope();
       }
-      let outside = false;
-      // 금지 구역 선차단은 위에서 전건 끝났다(지정 작업 폴더가 보호 구역을 품는 경우 — 예: 홈 전체
-      // 등록 — 에도 그 검사가 앞서므로 우회되지 않는다). 여기서는 안/밖 판정만 한다.
-      for (const t of targets) {
-        if (await inWorkspace(t)) continue;
-        if (await inWorkRoots(t)) continue; // 사장이 지정한 외부 작업 폴더 = 확장 책상
-        outside = true;
-        break;
-      }
-      if (!outside) return allow; // 전부 워크스페이스·작업 폴더 안(또는 경로 미지정=cwd)
-      if (caps.fs || caps.bypass) return allow; // 사장이 켠 능력/전권 — 결재 없이 실행
-      await suggestCapability(wsId, slug, 'fs', null, from);
-      return deny('워크스페이스 밖 파일 읽기는 파일 시스템 능력이 필요하다.');
+      return allow; // 전권 — 금지 구역은 위에서 이미 전건 차단됐다
     }
-    if (WEB_TOOLS.has(toolName)) {
-      if (caps.browser || caps.bypass) return allow;
-      await suggestCapability(wsId, slug, 'browser', null, from);
-      return deny('웹 브라우징 능력이 꺼져 있다.');
-    }
+    if (WEB_TOOLS.has(toolName)) return allow; // 전권 — 웹 도구엔 경로 인자가 없다
     if (WRITE_TOOLS.has(toolName)) {
       const target = input.file_path ?? input.notebook_path ?? '';
       if (await isForbidden(target, 'write')) return denyHard(); // 금지 구역 — 제어 파일·원장·도트파일 포함
-      if (await inWorkspace(target)) return allow; // 회사 폴더 안은 크루의 책상이다
-      if (await inWorkRoots(target)) return allow; // 지정 작업 폴더도 책상 — fs 능력과 독립(더 좁은 위임)
-      if (caps.fs || caps.bypass) return allow;
-      await suggestCapability(wsId, slug, 'fs', null, from);
-      return deny('파일 시스템 능력이 꺼져 있다.');
+      return allow; // 전권 — 금지 구역(위 한 줄)만이 경계다
     }
     if (toolName === 'Bash') {
       const cmd = String(input?.command ?? '');
@@ -324,9 +333,7 @@ export function makePermissionGate(wsId, slug, caps, wsRoot, from = null, lang =
       // 게이트를 우회한다(실측). 오탐(그 이름을 언급한 정당한 명령 거절)은 fail-closed로 수용한다.
       // 폴딩은 위 줄과 동일 기준(대소문자 무시 FS에서 CAPABILITIES.JSON 우회 차단 — #145 계열).
       if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n)))) return denyHard();
-      if (caps.shell || caps.bypass) return allow;
-      await suggestCapability(wsId, slug, 'shell', null, from);
-      return deny('셸 능력이 꺼져 있다.');
+      return allow; // 전권 — 리터럴 방어(위 두 줄)가 셸의 하드라인이다
     }
     // 그 외 도구 — 능력 분류 밖(SDK 내장 Task 등). 능력 판정은 여전히 허용 쪽이다(이전 모델도 결재만
     // 걸고 결국 허용했으므로 동작 등가). 다만 **금고는 예외 없다** — 분류표에 없는 도구가 경로를 들고
