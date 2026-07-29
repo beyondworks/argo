@@ -143,6 +143,14 @@ test('배선 — 배달 알림이 게이트웨이 문안까지 이어진다(재�
   assert.match(s, /emitNotify\(\{ type: 'crewmail'/, '배달 알림 발신이 없다 — 메신저로 쪽지 결과가 안 간다');
   const g = read('src/gateway.mjs');
   assert.match(g, /event\.type === 'crewmail'/, 'pushEvent에 crewmail 분기가 없다 — 알림이 무동작(재검 N1 원상복귀)');
+  // 분기가 **있어도** 그 안이 부르는 것이 임포트돼 있지 않으면 매 호출 ReferenceError로 죽고
+  // notify.mjs의 .catch가 삼켜 무음 실패가 된다 — 실제로 listAgents 임포트가 빠져 크루 쪽지 브리핑이
+  // 100% 안 갔다(전수 검사 2026-07-30). 위 정규식은 분기 존재만 봐서 이걸 못 잡았다.
+  // 근본 처방은 eslint no-undef이고(이 계열 전체를 잡는다), 그때까지 이 단언이 자리를 지킨다.
+  for (const id of ['listAgents']) {
+    assert.ok(new RegExp(`import \\{[^}]*\\b${id}\\b[^}]*\\} from`).test(g),
+      `gateway.mjs가 ${id}를 쓰는데 임포트가 없다 — 호출 시 ReferenceError(무음 실패)`);
+  }
   // 슬랙 경로는 문안 있는 타입만 — 게이트가 풀리면 job·crewmail에서 event.routine.title TypeError가 재발한다
   assert.match(g, /event\.type === 'approval' \|\| event\.type === 'routine'/, '슬랙 타입 게이트가 풀렸다');
 });

@@ -4,7 +4,11 @@
 // 분해(2026-07-28): 네트워크·타이머 없이 테스트 가능한 로직은 src/gateway/ 하위 모듈로 —
 //   persist(offset·커서·하트비트) · queue(디스크 큐·장시간 작업 적재) · protocol(순수 판정·파서) · routing(크루 라우팅).
 // 이 파일은 폴러 오케스트레이션(타이머·fetch 루프)·핸들러·매니저만 남는다. 기존 임포터를 위한 facade 재수출 유지.
-import { listCompanies } from './hub.mjs';
+// listAgents — crewmail 브리핑이 crew slug를 사람 이름으로 바꾸는 데 쓴다(nameOf, 아래 crewmail 분기).
+// 임포트가 빠져 있어 그 분기가 매번 ReferenceError로 죽었고 notify.mjs의 .catch가 삼켜 **무음 실패**였다
+// — 크루 쪽지 텔레그램 브리핑이 100% 안 갔다(전수 검사 2026-07-30 발견). 테스트가 못 잡은 이유는
+// crewmail.test.mjs가 핸들러를 실행하지 않고 소스 문자열만 정규식으로 대조했기 때문이다.
+import { listCompanies, listAgents } from './hub.mjs';
 import { loadConnections, updateConnection, updateAgentBot } from './connections.mjs';
 import { chat } from './chat.mjs';
 import { loadThread, appendTurn, appendSharedNote } from './thread.mjs';
