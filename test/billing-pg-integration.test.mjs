@@ -114,3 +114,28 @@ test('동시성: 두 트랜잭션이 행 잠금으로 직렬화 — 늦은 과�
   assert.ok(elapsed >= 500, `B가 행 잠금에 블록되지 않았다 (${elapsed}ms) — 직렬화 깨짐 의심`);
   assert.equal(sql(`select ls_status from public.entitlements where user_id = '${UID}'`), 'cancelled'); // 과거가 최종으로 남지 않음
 });
+
+test('경계표: is_pro() ends_at 집행(20260730050000) — 만료 pro=false·해지 예약=true·null=true·체험 OR 유지', { skip }, () => {
+  // 유료 접근을 회수하는 집행 권위 — JS 거울(fetchPlan/proRowActive)만으론 SQL 논리 회귀를 못 잡는다(F6).
+  psql(['-c', `create or replace function auth.uid() returns uuid language sql stable as $$ select '${UID}'::uuid $$`]);
+  try {
+    sql(`update auth.users set created_at = now() - interval '30 days' where id = '${UID}'`); // 체험 창 밖
+    const setRow = (endsAt) => {
+      sql(`delete from public.entitlements where user_id = '${UID}'`);
+      sql(`insert into public.entitlements (user_id, plan, ends_at) values ('${UID}', 'pro', ${endsAt})`);
+    };
+    setRow(`now() - interval '1 day'`);
+    assert.equal(sql('select public.is_pro()'), 'f', '만료 웹훅 유실 = 영구 무료 Pro 종결');
+    setRow(`now() + interval '1 day'`);
+    assert.equal(sql('select public.is_pro()'), 't', '해지 예약은 말일까지 접근 유지(LS 계약)');
+    setRow('null');
+    assert.equal(sql('select public.is_pro()'), 't', '활성·그랜드파더링(ends_at null) 불변');
+    sql(`update auth.users set created_at = now() where id = '${UID}'`);
+    setRow(`now() - interval '1 day'`);
+    assert.equal(sql('select public.is_pro()'), 't', '가입 14일 체험 OR — pro 만료여도 체험 창이면 통과');
+  } finally {
+    psql(['-c', `create or replace function auth.uid() returns uuid language sql stable as 'select null::uuid'`]); // 원복
+    sql(`update auth.users set created_at = now() where id = '${UID}'`);
+    sql(`delete from public.entitlements where user_id = '${UID}'`);
+  }
+});

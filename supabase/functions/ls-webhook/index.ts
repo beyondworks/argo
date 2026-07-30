@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
   const sig = req.headers.get('x-signature') ?? '';
   if (!safeEqual(await hmacHex(secret, raw), sig)) return new Response('invalid signature', { status: 401 });
 
-  let evt: { meta?: { event_name?: string; custom_data?: { user_id?: string } }; data?: { attributes?: { status?: string } } };
+  let evt: { meta?: { event_name?: string; custom_data?: { user_id?: string } }; data?: { attributes?: { status?: string; ends_at?: string | null } } };
   try { evt = JSON.parse(raw); } catch { return new Response('bad json', { status: 400 }); }
   const name = String(evt?.meta?.event_name ?? '');
   if (!LIFECYCLE.has(name)) return new Response('ignored', { status: 200 });
@@ -63,8 +63,13 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     { auth: { persistSession: false } },
   );
-  // FK(auth.users)가 쓰레기 user_id를 거른다 — 실패는 500으로 드러내 LS가 재시도하게 둔다
-  const { error } = await sb.from('entitlements').upsert({ user_id: userId, plan, updated_at: new Date().toISOString() });
+  // FK(auth.users)가 쓰레기 user_id를 거른다 — 실패는 500으로 드러내 LS가 재시도하게 둔다.
+  // ends_at 동반 필수(2026-07-30) — is_pro가 ends_at을 집행하게 되면서, plan만 쓰면 해지→재개 시
+  // 옛 해지일이 행에 남아 그 날짜에 결정론적으로 잠긴다(분리 검수 MEDIUM: PostgREST upsert는
+  // 페이로드에 있는 컬럼만 갱신). LS 계약: active류는 ends_at null, cancelled/expired만 시각.
+  // ⚠ 이 함수는 레거시 수신자 — 정본은 /api/billing/webhook(apply_ls_event 경유, docs/billing-setup.md).
+  const endsAt = evt?.data?.attributes?.ends_at ?? null;
+  const { error } = await sb.from('entitlements').upsert({ user_id: userId, plan, ends_at: endsAt, updated_at: new Date().toISOString() });
   if (error) return new Response('db error', { status: 500 });
   return new Response(JSON.stringify({ ok: true, plan }), { headers: { 'content-type': 'application/json' } });
 });

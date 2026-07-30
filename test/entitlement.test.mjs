@@ -3,7 +3,7 @@
 // 하고, 강제 on에서도 '확정 free'만 차단하고 pro·미확인은 낙관 통과해야 한다(유료 사용자 오차단 방지).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchPlan, syncEntitled } from '../src/entitlement.mjs';
+import { fetchPlan, syncEntitled, proRowActive } from '../src/entitlement.mjs';
 
 // mock supabase: from().select().eq().maybeSingle() → {data, error}
 const mkSb = (result) => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => result }) }) }) });
@@ -86,4 +86,13 @@ test('fetchPlan: pro 행 + ends_at null(활성·그랜드파더링) → pro (기
 });
 test('fetchPlan: pro 행 + ends_at 파싱 불능 → pro (낙관 방향 — 유료 오차단 방지)', async () => {
   assert.equal(await fetchPlan(mkSb({ data: { plan: 'pro', ends_at: 'garbage' }, error: null }), 'u'), 'pro');
+});
+test('proRowActive: 대사 게이트 회귀 가드 — ends_at 경과 pro는 "유효 아님"이라 대사가 돈다', () => {
+  // 분리 검수 HIGH: 게이트가 원시 plan==='pro'를 믿으면 재개 웹훅 유실 사용자(plan pro + ends_at 과거)의
+  // 유일한 복구(유실 대사)가 영구히 꺼진다. 공유 술어가 false를 줘야 me/billing 게이트가 열린다.
+  assert.equal(proRowActive({ plan: 'pro', ends_at: daysAgo(1) }), false, '만료 pro → 대사 재적격');
+  assert.equal(proRowActive({ plan: 'pro', ends_at: null }), true, '활성·그랜드파더링 → 대사 불요');
+  assert.equal(proRowActive({ plan: 'pro', ends_at: new Date(Date.now() + 86_400_000).toISOString() }), true, '해지 예약(말일 전)');
+  assert.equal(proRowActive({ plan: 'free' }), false);
+  assert.equal(proRowActive(null), false);
 });
