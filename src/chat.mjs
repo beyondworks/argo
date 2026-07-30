@@ -14,7 +14,7 @@ import { monthCost } from './billing.mjs'; // 금액 집계는 billing 게이트
 import { loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
 import { addApproval } from './approvals.mjs';
-import { appendEvent } from './events.mjs';
+import { appendEvent, readEvents } from './events.mjs'; // readEvents — mcp 실패 연속 중복 억제의 디스크 사실(마지막 기록) 조회
 import { loadCapabilities } from './capabilities.mjs'; // CAPABILITIES 직참조는 결재 분기 제거로 소멸(#191 검수)
 import { loadActiveWorkRoots } from './workroots.mjs';
 import { makePermissionGate } from './permission-gate.mjs';
@@ -36,6 +36,15 @@ export function mcpFailures(initMsg) {
   return (initMsg?.mcp_servers ?? []).filter((sv) => sv?.status && sv.status !== 'connected' && sv.name !== 'crew');
 }
 
+/** mcp 실패의 연속 중복 억제 판정(순수) — 같은 서버의 **마지막 mcp 기록**과 상태가 같으면 재기록하지
+    않는다(실패 서버 1개당 매 턴 1행 적재되던 관찰 정리). recent은 최신순(readEvents 계약) — find가
+    곧 그 서버의 마지막 기록. 상태가 바뀌면(예: failed→disabled) 다시 1행 남긴다.
+    (export: 회귀 테스트용 — 검수 M1과 같은 이유: 인라인 분기는 변이가 침묵으로 통과한다) */
+export function isNewMcpFailure(recent, sv) {
+  const prev = (recent ?? []).find((e) => e?.type === 'mcp' && e.server === sv.name);
+  return !prev || prev.status !== sv.status;
+}
+
 export async function loadSkills(wsId, cap = SKILL_INJECT_CAP, lang = 'ko', allow = null) {
   const dir = paths(wsId).skills;
   let names = [];
@@ -49,26 +58,26 @@ export async function loadSkills(wsId, cap = SKILL_INJECT_CAP, lang = 'ko', allo
     if (text !== null) texts.set(n, text);
   }
   names = names.filter((n) => texts.has(n));
-  const { full, ref } = planSkillInjection(names.map((n) => ({ id: n, size: texts.get(n).length })), cap);
+  // 3상태 계획(full/ref/omitted)을 **계획대로만** 주입 — ref 상한(검수 M4: 스킬 수백 개면 참조
+  // 라인만으로 프롬프트 비대, 실측 501개=46KB)이 chat만 아는 값이던 것을 계획으로 이관(검수 R2:
+  // 21번째부터 이름조차 미주입인데 마켓은 'ref' 배지를 달던 갭).
+  const { full, ref, omitted } = planSkillInjection(names.map((n) => ({ id: n, size: texts.get(n).length })), cap);
   let out = '';
   for (const n of full) {
     out += `\n### ${lang === 'en' ? 'Skill' : '스킬'}: ${n.replace(/\.md$/, '')}\n${texts.get(n).trim()}\n`;
   }
   // 예산 초과분은 **참조로라도 반드시 알린다** — 존재를 모르면 크루가 "그런 스킬 없다"고 답한다.
   // skills/는 크루 책상이라 게이트가 열려 있어 Read로 전문을 열 수 있다(그 계약을 여기서 준다).
-  // ref 자체 상한(검수 M4) — break 제거로 총량 상한이 사라져, 스킬 수백 개면 참조 라인만으로
-  // 프롬프트가 비대해진다(실측 501개=46KB). 초과분은 개수만 알린다.
-  const REF_CAP = 20;
-  for (const n of ref.slice(0, REF_CAP)) {
+  for (const n of ref) {
     const id = n.replace(/\.md$/, '');
     out += lang === 'en'
       ? `\n### Skill: ${id}\n(Body omitted — injection budget exceeded. Read skills/${n} for the full text and apply it when relevant.)\n`
       : `\n### 스킬: ${id}\n(본문 생략 — 주입 예산 초과. 해당 작업이면 skills/${n} 을 Read로 열어 전문을 적용하라.)\n`;
   }
-  if (ref.length > REF_CAP) {
+  if (omitted.length) {
     out += lang === 'en'
-      ? `\n(+${ref.length - REF_CAP} more skills installed — list files under skills/ if needed.)\n`
-      : `\n(그 외 설치 스킬 ${ref.length - REF_CAP}개 — 필요하면 skills/ 목록을 확인하라.)\n`;
+      ? `\n(+${omitted.length} more skills installed — list files under skills/ if needed.)\n`
+      : `\n(그 외 설치 스킬 ${omitted.length}개 — 필요하면 skills/ 목록을 확인하라.)\n`;
   }
   return out;
 }
@@ -1056,9 +1065,16 @@ ${lang === 'en'
       // MCP 접속 실측 — 설정값(connectedMcp)만 믿고 "연결된 도구: X"라 단언하던 것 정직화
       // (제보 2026-07-31). 판정은 순수 함수(mcpFailures) — 분기 자체를 단위 테스트가 잠근다
       // (검수 M1: 인라인 분기는 변이해도 게이트가 침묵했다).
-      for (const sv of mcpFailures(msg)) {
-        console.warn(`[argo] MCP 접속 실패(${wsId}): ${sv.name} — ${sv.status}`);
-        appendEvent(wsId, { type: 'mcp', server: sv.name, status: sv.status, ok: false, slug: agentSlug }).catch(() => {});
+      {
+        const fails = mcpFailures(msg);
+        // 원장 중복 억제 — 죽은 서버 1개가 매 턴 1행씩 쌓이던 것(관찰 정리 2026-07-31). 마지막
+        // 기록(디스크 사실)과 서버·상태가 같으면 스킵 — 상태 변화·신규 실패만 서사로 남는다.
+        const recent = fails.length ? await readEvents(wsId, 200).catch(() => []) : [];
+        for (const sv of fails) {
+          console.warn(`[argo] MCP 접속 실패(${wsId}): ${sv.name} — ${sv.status}`); // 서버 로그는 매 턴(운영 관측)
+          if (!isNewMcpFailure(recent, sv)) continue;
+          appendEvent(wsId, { type: 'mcp', server: sv.name, status: sv.status, ok: false, slug: agentSlug }).catch(() => {});
+        }
       }
       await setTurnStatus(wsId, agentSlug, 'memory');
     }

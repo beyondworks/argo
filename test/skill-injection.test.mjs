@@ -26,6 +26,60 @@ test('planSkillInjection: 초과는 skip — 큰 스킬이 앞에 있어도 뒤�
   const r2 = planSkillInjection([{ id: 'x.md', size: 3000 }, { id: 'y.md', size: 3000 }, { id: 'z.md', size: 3000 }]);
   assert.deepEqual(r2.full, ['x.md', 'y.md']);
   assert.deepEqual(r2.ref, ['z.md']);
+  assert.deepEqual(r2.omitted, []); // 상한 안이면 무명 상태는 없다
+});
+
+test('planSkillInjection: 21번째 ref는 무명(omitted) — 마켓이 ref 배지를 달면 거짓(검수 R2)', () => {
+  // 전부 예산(6000) 단독 초과 — full 0, 참조 상한(20)까지만 ref, 그 뒤는 이름조차 미주입.
+  const entries = Array.from({ length: 23 }, (_, i) => ({ id: `s-${String(i).padStart(2, '0')}.md`, size: 9000 }));
+  const r = planSkillInjection(entries);
+  assert.deepEqual(r.full, []);
+  assert.deepEqual(r.ref, entries.slice(0, 20).map((e) => e.id));   // 위치 단언 — 앞 20개 그대로
+  assert.deepEqual(r.omitted, entries.slice(20).map((e) => e.id));  // 21번째(s-20)부터 무명
+  // 변이 D 잠금: SKILL_REF_CAP→Infinity면 s-20이 ref로 새서 아래가 red가 된다.
+  assert.ok(!r.ref.includes('s-20.md'), '21번째가 ref(참조 주입됨)로 표기되면 안 된다');
+});
+
+test('loadSkills: 계획대로만 주입 — 21번째부터는 참조 라인 없이 개수 요약만(주입=표기 동일 규칙)', async () => {
+  const ws = 'ski-refcap';
+  await createCompany(ws, '상한검증', 'captain');
+  const dir = paths(ws).skills;
+  await mkdir(dir, { recursive: true });
+  for (let i = 0; i < 22; i++) {
+    await writeFile(join(dir, `s-${String(i).padStart(2, '0')}.md`), '# 제목\n' + 'x'.repeat(9000)); // 각각 예산 단독 초과
+  }
+  const out = await loadSkills(ws, 6000, 'ko');
+  assert.match(out, /### 스킬: s-19\n\(본문 생략/);       // 20번째까지는 참조 주입
+  assert.doesNotMatch(out, /s-20/);                        // 21번째부터는 이름조차 없다
+  assert.doesNotMatch(out, /s-21/);
+  assert.match(out, /그 외 설치 스킬 2개/);                // 무명분은 개수 요약 한 줄
+});
+
+test('listInstalledSkills: 손상 항목(디렉터리)이 마켓 목록을 죽이지 않는다 — #203 M3(턴 경로)의 마켓 대칭', async () => {
+  const ws = 'ski-market-tol';
+  await createCompany(ws, '마켓관용', 'captain');
+  const dir = paths(ws).skills;
+  await mkdir(join(dir, 'a-폴더.md'), { recursive: true }); // 디렉터리인데 .md — EISDIR 유발(이전엔 throw → GET 500)
+  await writeFile(join(dir, 'b-정상.md'), '# 정상목록\n지침');
+  const { listInstalledSkills } = await import('../src/market.mjs');
+  const out = await listInstalledSkills(ws);
+  assert.deepEqual(out.map((s) => s.id), ['b-정상']); // 손상 항목만 스킵, 나머지는 산다
+  assert.equal(out[0].title, '정상목록');
+});
+
+test('isNewMcpFailure(순수): 같은 서버·같은 상태 연속이면 억제 — 상태 변화·신규 서버는 기록', async () => {
+  const { isNewMcpFailure } = await import('../src/chat.mjs');
+  const recent = [ // readEvents 계약: 최신순 — 같은 서버는 첫 매치가 마지막 기록
+    { type: 'mcp', server: 'fetch', status: 'failed' },
+    { type: 'turn', ok: true },
+    { type: 'mcp', server: 'fetch', status: 'disabled' }, // 더 오래된 기록 — 판정에 쓰이면 안 된다
+    { type: 'mcp', server: 'sync', status: 'failed' },
+  ];
+  assert.equal(isNewMcpFailure(recent, { name: 'fetch', status: 'failed' }), false);  // 마지막과 동일 → 스킵
+  assert.equal(isNewMcpFailure(recent, { name: 'fetch', status: 'disabled' }), true); // 상태 바뀜 → 기록
+  assert.equal(isNewMcpFailure(recent, { name: 'sync', status: 'failed' }), false);
+  assert.equal(isNewMcpFailure(recent, { name: 'memory', status: 'failed' }), true);  // 신규 서버
+  assert.equal(isNewMcpFailure([], { name: 'fetch', status: 'failed' }), true);
 });
 
 test('loadSkills: 초과 스킬은 참조로 주입 — 존재+파일 열람 계약을 크루가 받는다', async () => {
@@ -63,17 +117,25 @@ test('saveAgentCard(PUT): 패널 stale 저장이 skills/mcp/effort를 되살리�
 test('배선: route 주입 태깅·마켓 배지·MCP 러너 배너·스코프 복구·init MCP 실측', async () => {
   const route = await readFile(new URL('../app/api/companies/[ws]/market/route.js', import.meta.url), 'utf8');
   assert.match(route, /planSkillInjection\(skills\.map/, 'GET이 주입과 같은 규칙으로 태깅');
-  assert.match(route, /injected: refSet\.has\(s\.id\) \? 'ref' : 'full'/, 'injected 필드');
+  assert.match(route, /injected: omittedSet\.has\(s\.id\) \? 'omitted' : refSet\.has\(s\.id\) \? 'ref' : 'full'/, 'injected 3상태 — omitted를 ref로 뭉개면 배지가 거짓(검수 R2)');
   const page = await readFile(new URL('../app/c/[ws]/market/page.jsx', import.meta.url), 'utf8');
   assert.match(page, /market\.skillRefBadge/, '스킬 ref 배지');
+  assert.match(page, /market\.skillOmittedBadge/, '스킬 omitted(무명) 배지 — 제3 상태 표기');
   assert.match(page, /market\.mcpRunnerNote/, 'MCP 러너 조건 배너(설치 시점 안내 — 유건 요구)');
   const crew = await readFile(new URL('../app/c/[ws]/crew/[slug]/page.jsx', import.meta.url), 'utf8');
   assert.match(crew, /chat\.card\.mcpCliWarn/, '크루 카드 CLI 러너 경고');
+  assert.match(crew, /sel\.runner \|\| autoRunnerId/, '자동 크루도 실제 받을 러너로 CLI 경고 판정(검수 L4)');
   assert.match(crew, /chat\.card\.scopeReset/, 'none 고착 복구 수단');
   assert.match(crew, /scopePartialHint/, '부분 선택 = 신규 미적용 경고');
+  const runnersRoute = await readFile(new URL('../app/api/runners/route.js', import.meta.url), 'utf8');
+  assert.match(runnersRoute, /pickRunner\(company, null\)/, '자동 러너 판정은 서버 pickRunner 단일 진실(폴백 순서 클라 복제 금지)');
+  assert.match(runnersRoute, /autoRunnerId/, '자동 크루의 실제 러너를 응답에 노출');
   const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
-  assert.match(chat, /for \(const sv of mcpFailures\(msg\)\)/, 'init에서 순수 판정 경유 소비(검수 M1)');
+  assert.match(chat, /const fails = mcpFailures\(msg\)/, 'init에서 순수 판정 경유 소비(검수 M1)');
+  assert.match(chat, /if \(!isNewMcpFailure\(recent, sv\)\) continue;/, '연속 중복 억제 경유 후에만 원장 기록(관찰 정리)');
   assert.match(chat, /type: 'mcp', server: sv\.name, status: sv\.status, ok: false/, '실패를 원장에(ok:false — 오류 집계 포함, 검수 M2)');
+  const activity = await readFile(new URL('../app/c/[ws]/activity/page.jsx', import.meta.url), 'utf8');
+  assert.match(activity, /href: `\/c\/\$\{ws\}\/market`, linkLabel: t\('nav\.market'\)/, 'mcp 행 라벨=목적지(/market) 이름 — 설정 라벨 불일치 정리');
   const market = await readFile(new URL('../src/market.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(market, /playwright/, '내장 스킬이 카탈로그에 없는 이름을 제안하면 안 된다(puppeteer가 정본)');
 });

@@ -187,15 +187,21 @@ export function mcpCatalogFor(lang = 'ko') {
     이름순 앞에 오면 뒤의 모든 스킬이 통째로 미주입됐고, 화면은 '설치됨'이라 사장은 알 길이
     없었다. 원격 스킬은 200KB까지 설치되는데 예산은 6000자라 즉시 성립하던 조합.) */
 export const SKILL_INJECT_CAP = 6000; // 주입·표기 공용 예산 — 한쪽만 바꾸면 배지가 거짓이 된다(검수 L2)
-export function planSkillInjection(entries, cap = SKILL_INJECT_CAP) {
+// ref 참조 라인 상한 — 초과분은 프롬프트에 **이름조차 안 들어간다**(omitted). 이 캡이 chat만 아는
+// 값이면 마켓은 21번째부터 'ref'(참조 주입됨) 배지를 달아 거짓이 된다(검수 R2) — 계획에 포함해
+// 주입과 표기가 같은 3상태(full/ref/omitted)를 본다. 상한 자체의 근거는 #203 M4(실측 501개=46KB 비대).
+export const SKILL_REF_CAP = 20;
+export function planSkillInjection(entries, cap = SKILL_INJECT_CAP, refCap = SKILL_REF_CAP) {
   let used = 0;
   const full = [];
   const ref = [];
+  const omitted = []; // 이름조차 미주입 — 크루는 존재를 모른다(개수 요약 한 줄만 받는다)
   for (const e of entries) {
     if (used + e.size <= cap) { full.push(e.id); used += e.size; }
-    else ref.push(e.id); // break가 아니라 skip — 작은 스킬은 뒤에 있어도 산다
+    else if (ref.length < refCap) ref.push(e.id); // break가 아니라 skip — 작은 스킬은 뒤에 있어도 산다
+    else omitted.push(e.id);
   }
-  return { full, ref };
+  return { full, ref, omitted };
 }
 
 export async function listInstalledSkills(wsId) {
@@ -204,7 +210,10 @@ export async function listInstalledSkills(wsId) {
   try { names = (await readdir(dir)).filter((f) => f.endsWith('.md')); } catch { return []; }
   const out = [];
   for (const n of names.sort()) {
-    const text = await readFile(join(dir, n), 'utf8');
+    // 항목별 관용 — #203이 턴 경로(loadSkills, 검수 M3)만 닫은 창의 마켓 대칭: 디렉터리(EISDIR)·
+    // 권한(EACCES) 항목 하나가 여기서 throw하면 마켓 GET 전체가 500(검수 라이브 확인). 건너뛴다.
+    const text = await readFile(join(dir, n), 'utf8').catch(() => null);
+    if (text === null) continue;
     out.push({
       id: n.replace(/\.md$/, ''),
       title: text.match(/^#\s*(.+)$/m)?.[1] ?? n,

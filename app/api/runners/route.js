@@ -1,4 +1,4 @@
-import { RUNNERS, detectRunners, runnerStatus } from '../../../src/runners.mjs';
+import { RUNNERS, detectRunners, runnerStatus, pickRunner } from '../../../src/runners.mjs';
 import { guardCompany } from '../../auth.mjs';
 
 // 러너 카탈로그 + 설치·연결 상태 — 크루 편집 모달·크루 카드·채팅 셀렉터가 먹는다.
@@ -24,5 +24,9 @@ export async function GET(req) {
       via: companyConnected ? c.company.type : null,
     };
   });
-  return Response.json({ runners });
+  // 자동(카드에 러너 미지정) 크루가 실제로 받을 러너 — 턴과 같은 판정(pickRunner, 폴백 순서 포함)을
+  // 서버가 내려준다. 클라가 폴백 순서를 복제하면 갈라진다(검수 L4: 자동 크루는 실행 러너가 CLI여도
+  // 카드 경고 조건 r.id===sel.runner가 영원히 거짓 — 경고가 안 떴다).
+  const auto = company ? pickRunner(company, null) : null;
+  return Response.json({ runners, autoRunnerId: auto?.available ? auto.runner : null });
 }
