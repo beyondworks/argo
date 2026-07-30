@@ -273,10 +273,36 @@ test('홈 직속 자격 파일 하드라인: ~/.claude.json·~/.mcp.json도 4경
     }
     assert.equal(await f(join(homedir(), base)), true, `isForbidden ${base}`);
   }
-  // 접두 일치로 번지지 않는다 — 하드라인은 이 두 파일 자신이지 `~/.claude*` 통글롭이 아니다.
+  // 무관 파일로 번지지 않는다 — 하드라인은 이 두 파일과 그 접미 변종(.backup 등, 아래 테스트)이지
+  // `~/.claude*` 통글롭이 아니다. `.claude-other.json`은 `.claude.json` 접두가 아니라서 판정 밖이다.
   // (Bash는 `.claude` 리터럴 부분문자열로 여전히 과차단 — 셸 1차 방어의 기존 fail-closed 성질이다.)
   assert.equal((await gate('Read', { file_path: join(homedir(), '.claude-other.json') })).behavior, 'allow',
     '이름이 비슷한 무관한 홈 파일은 그대로 허용(과차단 회귀 방지)');
+});
+
+test('홈 직속 자격 파일의 접미 변종도 하드라인: .claude.json.backup·.mcp.json.bak 전 도구 deny', async () => {
+  // #196 통합 검수 실측: 이 맥 홈에 ~/.claude.json.backup이 실재(본체와 거의 같은 크기 = 같은 MCP
+  // env 토큰)한데, insideFold(정확 일치/하위 접두)라 별개 형제 경로인 변종은 Read/Write/MCP allow —
+  // Bash만 `.claude` 부분문자열로 우연히 deny로, "같은 파일을 도구별로 다르게 판정"(#196 HIGH)이
+  // 이 파일에 잔존하던 사각. basename 접두 매칭(HARD_HOME_FILE_PREFIXES)으로 닫는다.
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  const f = makeIsForbidden(wsRoot);
+  for (const name of ['.claude.json.backup', '.mcp.json.bak']) {
+    // 절대경로·틸드 두 형태 모두 — 한쪽만 단언하면 "정합 달성"이 거짓 확신이 된다(#192 교훈)
+    for (const p of [join(homedir(), name), `~/${name}`]) {
+      assert.equal((await gate('Read', { file_path: p })).behavior, 'deny', `Read ${p}`);
+      assert.equal((await gate('Write', { file_path: p, content: 'x' })).behavior, 'deny', `Write ${p}`);
+      assert.equal((await gate('mcp__fs__read', { path: p })).behavior, 'deny', `MCP ${p}`);
+      assert.equal((await gate('Bash', { command: `cat ${p}` })).behavior, 'deny', `Bash ${p}`);
+    }
+    assert.equal(await f(join(homedir(), name)), true, `isForbidden ${name}`);
+  }
+  // 과차단 경계 둘: ① 접두가 아닌 무관 홈 파일은 그대로 allow ② 홈 "직속"만 — 하위 디렉터리의
+  // 유사명 파일까지 넓히지 않는다(백업 폴더 등 정당한 사용자 데이터).
+  assert.equal((await gate('Read', { file_path: join(homedir(), '.claude-other.json') })).behavior, 'allow',
+    '접두 불일치 홈 파일은 허용 유지(과차단 회귀 방지)');
+  assert.equal(await f(join(homedir(), 'argo-fz-subdir', '.claude.json.backup')), false,
+    '홈 직속이 아닌 하위 디렉터리 유사명은 판정 밖(과차단 금지)');
 });
 
 test('chats/ Bash: 토큰 시작 경계에서만 deny — URL·하위 데이터 경로는 오차단하지 않는다(재검수 MEDIUM)', async () => {
