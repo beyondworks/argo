@@ -679,7 +679,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 설치는 회사 공용이되 크루 단위로 좁힐 수 있다(유건 지시 2026-07-19 — 크루 카드에서 선택·편집).
   const skillScope = parseScopeList(meta.skills);
   const mcpScope = parseScopeList(meta.mcp);
-  const skills = await loadSkills(wsId, 6000, lang, skillScope);
+  const skills = await loadSkills(wsId, SKILL_INJECT_CAP, lang, skillScope);
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
