@@ -57,10 +57,13 @@ export async function GET(req, { params }) {
     mcpCatalog: mcpCatalogFor(lang),
     // 주입 상태 — loadSkills와 같은 규칙(planSkillInjection)으로 계산해 "설치됨인데 크루는
     // 모른다"(예산 초과 무표기)를 화면에서 미리 알린다(실사용 제보 2026-07-31).
+    // omitted = ref 상한(SKILL_REF_CAP)까지 넘쳐 이름조차 미주입 — 'ref'로 뭉개면 21번째부터
+    // "참조 주입됨" 배지가 거짓이 된다(검수 R2).
     installedSkills: (() => {
-      const { ref } = planSkillInjection(skills.map((s) => ({ id: s.id, size: s.size })));
+      const { ref, omitted } = planSkillInjection(skills.map((s) => ({ id: s.id, size: s.size })));
       const refSet = new Set(ref);
-      return skills.map((s) => ({ ...s, injected: refSet.has(s.id) ? 'ref' : 'full' }));
+      const omittedSet = new Set(omitted);
+      return skills.map((s) => ({ ...s, injected: omittedSet.has(s.id) ? 'omitted' : refSet.has(s.id) ? 'ref' : 'full' }));
     })(),
     // env(토큰 값)는 응답에서 제거 — 화면은 command/args만 쓴다(로그·프록시·캐시 유출 방지, 검수 MEDIUM).
     installedMcp: Object.fromEntries(Object.entries(mcp.servers ?? {}).map(([n, d]) => {

@@ -126,6 +126,7 @@ export default function CrewChat({ params }) {
   const [aliasModal, setAliasModal] = useState(false);
   // 러너·모델 — 카드 패널과 채팅 셀렉터가 공유하는 단일 상태. 회사 자격(설정 러너 연결)을 병합한 카탈로그.
   const [runners, setRunners] = useState(null);
+  const [autoRunnerId, setAutoRunnerId] = useState(null); // 자동 크루가 실제 받을 러너 — 서버 pickRunner 판정(폴백 순서 복제 금지)
   // 초기 runner는 빈 값 = '자동'. 'claude'를 박으면 카드 로드 실패 시 sel이 초기값에 남고, 이후 강도
   // 변경 한 번이 saveRunner로 runner:'claude'를 PATCH해 **자동 크루가 클로드 고정으로 둔갑**한다
   // (러너 중립성 감사 2026-07-30 — 아래 278행이 경고하던 바로 그 함정).
@@ -253,7 +254,7 @@ export default function CrewChat({ params }) {
   const [liveStage, setLiveStage] = useState(null);
 
   // 러너 카탈로그 — 회사 자격 병합(?ws=). 회사 키가 있으면 호스트 로그인 없이도 authed=true.
-  useEffect(() => { api(`/api/runners?ws=${ws}`).then((d) => setRunners(d.runners)).catch(() => setRunners([])); }, [ws]);
+  useEffect(() => { api(`/api/runners?ws=${ws}`).then((d) => { setRunners(d.runners); setAutoRunnerId(d.autoRunnerId ?? null); }).catch(() => setRunners([])); }, [ws]);
 
   // 러너·모델 저장 — 카드·채팅 공용. 프론트매터 meta에 PATCH(다음 턴부터 적용).
   const saveRunner = useCallback(async (next) => {
@@ -1074,6 +1075,7 @@ export default function CrewChat({ params }) {
           ws={ws}
           slug={slug}
           runners={runners}
+          autoRunnerId={autoRunnerId}
           sel={sel}
           onRunnerChange={saveRunner}
           onClose={() => setCardOpen(false)}
@@ -1398,7 +1400,7 @@ function ScopeGroup({ label, items, value, onToggle, t, onReset }) {
   );
 }
 
-function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose, onFired }) {
+function CardPanel({ ws, slug, agentName, runners, autoRunnerId, sel, onRunnerChange, onClose, onFired }) {
   const { t, fmtMoney } = useLang();
   useScrollLock();
   const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n ?? 0));
@@ -1573,8 +1575,10 @@ function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose,
               value={scope.skills} onToggle={(id, ids) => toggleScope('skills', ids, id)} t={t} onReset={() => saveScope('skills', '')} />
             <ScopeGroup label={t('chat.card.scopeMcp')} items={profile.mcp.map((n) => ({ id: n, title: n }))}
               value={scope.mcp} onToggle={(id, ids) => toggleScope('mcp', ids, id)} t={t} onReset={() => saveScope('mcp', '')} />
-            {/* 이 크루의 러너가 CLI면 MCP가 안 붙는다 — 설치·스코프 화면에서 미리 알린다(제보 2026-07-31) */}
-            {profile.mcp.length > 0 && (runners ?? []).some((r) => r.id === sel.runner && r.kind === 'cli') && ( /* kind — /api/runners 페이로드엔 cli 필드가 없다(검수 HIGH 라이브 재현) */
+            {/* 이 크루의 러너가 CLI면 MCP가 안 붙는다 — 설치·스코프 화면에서 미리 알린다(제보 2026-07-31).
+                자동(러너 미지정) 크루는 실제 받을 러너(autoRunnerId — 서버 pickRunner 판정)로 본다(검수 L4:
+                sel.runner만 보면 자동 크루는 실행 러너가 CLI여도 경고가 영원히 안 떴다). */}
+            {profile.mcp.length > 0 && (runners ?? []).some((r) => r.id === (sel.runner || autoRunnerId) && r.kind === 'cli') && ( /* kind — /api/runners 페이로드엔 cli 필드가 없다(검수 HIGH 라이브 재현) */
               <span className="microlabel" style={{ color: 'var(--warn, #b5893a)', lineHeight: 1.5 }}>{t('chat.card.mcpCliWarn')}</span>
             )}
           </div>

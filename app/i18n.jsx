@@ -1035,6 +1035,8 @@ const DICT = {
   'market.hostEnvChip': ['키 포함', 'Includes keys'],
   'market.skillRefBadge': ['본문 요약 주입(예산 초과)', 'Injected as reference (budget)'],
   'market.skillRefHint': ['스킬이 커서 전문 대신 참조가 주입됩니다 — 크루가 해당 작업에서 skills/ 파일을 직접 열어 적용합니다. 자주 쓰는 스킬이면 내용을 줄이면 전문이 주입됩니다.', 'This skill is large, so a reference is injected instead of the full text — crews open the skills/ file when relevant. Shorten it if you want the full text always injected.'],
+  'market.skillOmittedBadge': ['미주입(설치 과다)', 'Not injected (too many installed)'],
+  'market.skillOmittedHint': ['설치 스킬이 너무 많아 이 스킬은 크루 지침에 이름조차 들어가지 않습니다 — 안 쓰는 스킬을 제거하면 주입됩니다.', 'Too many skills are installed, so this one does not even appear by name in crew instructions — remove unused skills to get it injected.'],
   'chat.card.scopePartialHint': ['지정 목록 — 새로 설치되는 항목은 자동 적용되지 않습니다', 'pinned list — newly installed items are NOT auto-applied'],
   'chat.card.scopeStale': ['설치된 항목이 없는데 사용 범위가 남아 있습니다', 'nothing installed, but a scope is still set'],
   'chat.card.scopeReset': ['전체 사용으로 복구', 'Reset to use-all'],

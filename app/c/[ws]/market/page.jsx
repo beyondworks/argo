@@ -377,8 +377,15 @@ export default function Market({ params }) {
     setWorkshop({ name: '', md: '' });
   }
 
-  // 주입 상태(서버 계산 — loadSkills와 같은 규칙): 'ref' = 예산 초과로 본문 미주입(참조만).
+  // 주입 상태(서버 계산 — loadSkills와 같은 규칙): 'ref' = 예산 초과로 본문 미주입(참조만),
+  // 'omitted' = 참조 상한(SKILL_REF_CAP)까지 초과 — 크루 지침에 이름조차 안 들어간다(검수 R2:
+  // 이 상태를 'ref'로 뭉개면 "참조 주입됨" 배지가 거짓).
   const skillInjection = new Map((data?.installedSkills ?? []).map((s) => [s.id, s.injected ?? 'full']));
+  const injectionBadge = (state) => state === 'ref' ? (
+    <span className="pill" style={{ color: 'var(--warn, #b5893a)' }} title={t('market.skillRefHint')}>{t('market.skillRefBadge')}</span>
+  ) : state === 'omitted' ? (
+    <span className="pill" style={{ color: 'var(--danger)' }} title={t('market.skillOmittedHint')}>{t('market.skillOmittedBadge')}</span>
+  ) : null;
   const installedSkillIds = new Set((data?.installedSkills ?? []).map((s) => s.id));
   const installedMcp = data?.installedMcp ?? {};
   // 이 환경에서 로컬 spawn 커스텀·npm MCP를 쓸 수 있나(데스크톱=예, 서비스키 웹=아니오). 카탈로그·HTTP는 무관하게 항상 가능.
@@ -426,9 +433,7 @@ export default function Market({ params }) {
                   </div>
                   <span style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.55 }}>{s.desc}</span>
                   <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>skills/{s.id}.md</span>
-                  {on && skillInjection.get(s.id) === 'ref' && (
-                    <span className="pill" style={{ color: 'var(--warn, #b5893a)' }} title={t('market.skillRefHint')}>{t('market.skillRefBadge')}</span>
-                  )}
+                  {on && injectionBadge(skillInjection.get(s.id))}
                 </div>
               );
             })}
@@ -454,9 +459,7 @@ export default function Market({ params }) {
             {data.installedSkills.filter((s) => !data.skillCatalog.find((c) => c.id === s.id)).map((s) => (
               <div key={s.id} className="row" style={{ borderRadius: 10 }}>
                 <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600 }}>{s.title}</span>
-                {s.injected === 'ref' && (
-                  <span className="pill" style={{ color: 'var(--warn, #b5893a)' }} title={t('market.skillRefHint')}>{t('market.skillRefBadge')}</span>
-                )}
+                {injectionBadge(s.injected)}
                 <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>skills/{s.id}.md</span>
                 <button className="btn sm btn-icon" style={{ width: 26 }} onClick={() => remove('skill', s.id)}><Icon name="trash" size={12} /></button>
               </div>

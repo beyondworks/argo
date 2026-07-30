@@ -107,7 +107,8 @@ export default function Activity({ params }) {
     }
     if (e.type === 'mcp') {
       // MCP 접속 실패(chat init 실측 — 검수 M2: 이전엔 기본 행으로 떨어져 '? / mcp'만 보였다)
-      return { who: nameOf(e.slug), avatar: nameOf(e.slug), desc: t('activity.mcpFailed', { server: e.server ?? '?', status: e.status ?? '?' }), chip: 'MCP', href: `/c/${ws}/market`, linkLabel: t('activity.settings') };
+      // 라벨은 목적지(/market)의 사이드바 이름(nav.market) 그대로 — '설정' 라벨로 /market에 보내던 불일치 정리.
+      return { who: nameOf(e.slug), avatar: nameOf(e.slug), desc: t('activity.mcpFailed', { server: e.server ?? '?', status: e.status ?? '?' }), chip: 'MCP', href: `/c/${ws}/market`, linkLabel: t('nav.market') };
     }
     if (e.type === 'gateway') {
       return { who: e.kind === 'telegram' ? t('activity.telegram') : t('activity.slack'), avatar: t('activity.connected').slice(0, 1), desc: t('activity.gatewayPaired'), chip: t('activity.connected'), href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
