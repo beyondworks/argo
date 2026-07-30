@@ -69,7 +69,7 @@ export default function CrewChat({ params }) {
     for (const m of thread ?? []) {
       // via(쪽지·위임·루틴·장시간작업 배달)는 사장이 타이핑한 글이 아니다 — ↑/↓ 히스토리에 실리면
       // 신고("내가 쓴 게 아니거든")와 같은 혼동 표면이 된다(분리 검수 MEDIUM). 실패 턴은 사장 글이 맞으니 유지.
-      if (m.who !== 'user' || m.via || !String(m.text ?? '').trim()) continue;
+      if (m.who !== 'user' || m.via || m.shared || !String(m.text ?? '').trim()) continue; // shared = cc 기계 조립문(재검수 LOW)
       if (out[out.length - 1] !== m.text) out.push(m.text); // 연속 중복 제거
     }
     return out.slice(-50);
@@ -507,12 +507,14 @@ export default function CrewChat({ params }) {
       setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts }]);
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
-      // 실패 턴도 서버가 보존한다(route.js가 failed 코드로 appendTurn) — 로컬 사본엔 같은 코드를
-      // 붙여 서버 사본과 렌더가 일치하게 한다(라벨은 렌더 시점에 t()로 — 저장은 코드, 표시는 사전).
+      // 실패 턴도 서버가 보존한다(route.js가 failed·aborted로 appendTurn) — 로컬 사본에 같은 필드를
+      // 붙여 서버 사본과 렌더가 일치하게 한다(사유는 원문, 중단은 별도 aborted — 재검수 MEDIUM: 원문이
+      // 우연히 'aborted'여도 오판 없음. 라벨은 렌더 시점에 t()로).
       // 서버 저장이 실패했을 때(unsaved)만 폴링 병합이 이 사본을 캐리오버한다(복제 방지 — 검수 HIGH).
-      const failed = err?.data?.failed ?? (String(err.message) === '중단됨' ? 'aborted' : String(err.message));
+      const failed = err?.data?.failed ?? String(err.message);
+      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true } : {};
       const unsaved = err?.data?.saved === true ? {} : { unsaved: true };
-      setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed, ...unsaved } : m)));
+      setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed, ...aborted, ...unsaved } : m)));
     } finally {
       setBusy(false);
       setLiveStage(null); // 내 턴 종료 — 마지막 partial이 완성 답변과 겹쳐 보이지 않게 즉시 내린다
@@ -763,7 +765,7 @@ export default function CrewChat({ params }) {
               {m.failed && !viewing && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, fontSize: 12, color: 'var(--danger)', maxWidth: '100%' }}>
                   {/* failed는 코드/원문 — 표시 문구는 여기서 사전(t)으로. 서버 보존분·로컬 사본 공통 */}
-                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.failed === 'aborted' ? t('chat.aborted') : t('chat.turnFailed', { msg: m.failed })}</span>
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.aborted ? t('chat.aborted') : t('chat.turnFailed', { msg: m.failed })}</span>
                   <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy || uploading}
                     onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
                 </div>
