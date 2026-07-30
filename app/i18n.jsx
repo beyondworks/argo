@@ -898,6 +898,7 @@ const DICT = {
   'activity.card': ['카드', 'Card'],
   'activity.telegram': ['텔레그램', 'Telegram'],
   'activity.slack': ['슬랙', 'Slack'],
+  'activity.mcpFailed': ['MCP 접속 실패 — {server} ({status}). 스킬·도구에서 상태를 확인하세요', 'MCP connection failed — {server} ({status}). Check it in Skills·Tools'],
   'activity.gatewayPaired': ['메신저 페어링 완료', 'Messenger paired'],
   'activity.connected': ['연결', 'Connected'],
   'activity.settings': ['설정', 'Settings'],

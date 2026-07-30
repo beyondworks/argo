@@ -492,7 +492,7 @@ export default function Market({ params }) {
         </div>
         {/* 러너 조건 — 설치 시점에 정직하게(실사용 제보 2026-07-31: 크루가 턴에서 "이 러너에선
             못 쓴다"고 답해서야 알게 되던 것). 러너 무관 지원(코어 프록시)이 붙으면 이 배너를 제거한다. */}
-        <div className="microlabel" style={{ margin: '0 18px 10px', padding: '8px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border-soft)', color: 'var(--fg-2)', lineHeight: 1.55 }}>
+        <div className="microlabel" style={{ margin: '0 18px 10px', padding: '8px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border-soft)', color: 'var(--fg-2)', lineHeight: 1.55, textTransform: 'none', letterSpacing: 'normal' }}>
           {t('market.mcpRunnerNote')}
         </div>
         {data === null ? (

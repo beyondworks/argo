@@ -72,8 +72,35 @@ test('배선: route 주입 태깅·마켓 배지·MCP 러너 배너·스코프 �
   assert.match(crew, /chat\.card\.scopeReset/, 'none 고착 복구 수단');
   assert.match(crew, /scopePartialHint/, '부분 선택 = 신규 미적용 경고');
   const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
-  assert.match(chat, /msg\.mcp_servers \?\? \[\]/, 'init에서 MCP 접속 실측 소비');
-  assert.match(chat, /type: 'mcp', server: sv\.name, status: sv\.status/, '실패를 원장에');
+  assert.match(chat, /for \(const sv of mcpFailures\(msg\)\)/, 'init에서 순수 판정 경유 소비(검수 M1)');
+  assert.match(chat, /type: 'mcp', server: sv\.name, status: sv\.status, ok: false/, '실패를 원장에(ok:false — 오류 집계 포함, 검수 M2)');
   const market = await readFile(new URL('../src/market.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(market, /playwright/, '내장 스킬이 카탈로그에 없는 이름을 제안하면 안 된다(puppeteer가 정본)');
+});
+
+test('mcpFailures(순수): 실패만·crew 제외·상태 없는 항목 보류(검수 M1 — 분기를 단위로 잠금)', async () => {
+  const { mcpFailures } = await import('../src/chat.mjs');
+  const out = mcpFailures({ mcp_servers: [
+    { name: 'crew', status: 'failed' },        // 내장 — 제외
+    { name: 'memory', status: 'connected' },   // 정상 — 제외
+    { name: 'fetch', status: 'failed' },
+    { name: 'sync', status: 'disabled' },
+    { name: 'odd' },                            // 상태 없음 — 판단 보류
+  ] });
+  assert.deepEqual(out.map((s) => s.name), ['fetch', 'sync']);
+  assert.deepEqual(mcpFailures({}), []);
+  assert.deepEqual(mcpFailures(null), []);
+});
+
+test('loadSkills: 손상 항목(디렉터리·읽기 실패)이 턴을 죽이지 않는다(검수 M3)', async () => {
+  const { mkdir: mk } = await import('node:fs/promises');
+  const ws = 'ski-3';
+  const { createCompany: cc, paths: pp } = await import('../src/workspace.mjs');
+  await cc(ws, '관용검증', 'captain');
+  const dir = pp(ws).skills;
+  await mk(join(dir, 'a-폴더.md'), { recursive: true }); // 디렉터리인데 .md — EISDIR 유발
+  await writeFile(join(dir, 'b-정상.md'), '# 정상\n지침');
+  const out = await loadSkills(ws, 6000, 'ko');
+  assert.match(out, /### 스킬: b-정상/); // 손상 항목을 건너뛰고 정상분은 산다
+  assert.doesNotMatch(out, /a-폴더/);
 });

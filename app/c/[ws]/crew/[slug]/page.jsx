@@ -1574,7 +1574,7 @@ function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose,
             <ScopeGroup label={t('chat.card.scopeMcp')} items={profile.mcp.map((n) => ({ id: n, title: n }))}
               value={scope.mcp} onToggle={(id, ids) => toggleScope('mcp', ids, id)} t={t} onReset={() => saveScope('mcp', '')} />
             {/* 이 크루의 러너가 CLI면 MCP가 안 붙는다 — 설치·스코프 화면에서 미리 알린다(제보 2026-07-31) */}
-            {profile.mcp.length > 0 && (runners ?? []).some((r) => r.id === sel.runner && r.cli) && (
+            {profile.mcp.length > 0 && (runners ?? []).some((r) => r.id === sel.runner && r.kind === 'cli') && ( /* kind — /api/runners 페이로드엔 cli 필드가 없다(검수 HIGH 라이브 재현) */
               <span className="microlabel" style={{ color: 'var(--warn, #b5893a)', lineHeight: 1.5 }}>{t('chat.card.mcpCliWarn')}</span>
             )}
           </div>

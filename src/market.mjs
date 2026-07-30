@@ -186,7 +186,8 @@ export function mcpCatalogFor(lang = 'ko') {
     (실사용 제보 2026-07-31의 최유력 원인: 이전 구현은 예산 초과 시 break — 큰 스킬 하나가
     이름순 앞에 오면 뒤의 모든 스킬이 통째로 미주입됐고, 화면은 '설치됨'이라 사장은 알 길이
     없었다. 원격 스킬은 200KB까지 설치되는데 예산은 6000자라 즉시 성립하던 조합.) */
-export function planSkillInjection(entries, cap = 6000) {
+export const SKILL_INJECT_CAP = 6000; // 주입·표기 공용 예산 — 한쪽만 바꾸면 배지가 거짓이 된다(검수 L2)
+export function planSkillInjection(entries, cap = SKILL_INJECT_CAP) {
   let used = 0;
   const full = [];
   const ref = [];
