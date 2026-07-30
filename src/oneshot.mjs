@@ -3,7 +3,7 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
-import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, externalExec, isCliRunner, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, excludeWith, externalExec, isCliRunner, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -102,7 +102,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // "한 벤더가 죽으면 회사가 선다"는 러너 중립성 원칙 위반이다.)
     // want=null — 선호를 두지 않는다(이전 'claude'는 같은 파일 상단 주석과 모순된 표류였다).
     {
-      const tried = [...(Array.isArray(__exclude) ? __exclude : __exclude ? [__exclude] : []), runner];
+      const tried = excludeWith(__exclude, runner);
       const alt = await resolveRunner(wsId, null, { exclude: tried }).catch(() => null);
       if (alt?.available && !tried.includes(alt.runner)) {
         console.warn(`[argo] 원샷 ${runner} 실패(${String(e.message).slice(0, 80)}) — ${alt.runner}로 재시도(${wsId}, 제외 ${tried.join(',')})`);

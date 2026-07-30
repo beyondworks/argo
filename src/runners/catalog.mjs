@@ -191,6 +191,20 @@ export const RUNNER_AUTH = {
   antigravity: { methods: ['oauth'], apikeyPrefix: '', oauthPasteable: false, hostUsable: true, keyUrl: 'https://antigravity.google/docs/cli/install' },
 };
 
+/** exclude 정규화(내부) — 문자열 하나·목록·null을 전부 목록으로. exclude 계약(무엇이 유효한 제외
+    입력인가)이 이 한 줄에 산다 — 소비자마다 따로 강제 조정하면 갈라진다(이 레포 전례: 위 공유 판정의
+    소비자별 임계 분리 사고). 생산자(excludeWith)와 소비자(pickRunner)가 같은 정의를 본다. */
+const asList = (exclude) => (Array.isArray(exclude) ? exclude : exclude ? [exclude] : []);
+
+/** 자가치유 누적 제외 목록 — 방금 죽은 러너를 이전 제외 목록에 더한다(pickRunner exclude 계약의 생산자).
+    목록이 재시도마다 1개씩 늘어 러너 수(≤7)로 자연 종료되므로, 자가치유의 **종료성이 이 함수에 걸려
+    있다**: 받은 목록을 버리고 [runner]로 좁히면 프레임마다 앞의 실패를 잊어 무한 핑퐁이 된다.
+    단수 1회 제한이던 시절엔 claude 401 → codex 실패에서 끝나 멀쩡한 3번째 러너가 시도조차 못 받았다
+    (oneshot=#192, 트래픽이 더 많은 chat=#197). 두 경로가 이 함수를 공유한다. (export: 회귀 테스트용) */
+export function excludeWith(prev, runner) {
+  return [...asList(prev), runner];
+}
+
 /** 러너 선택(순수) — st = runnerStatus 결과. 반환 { runner, fellBack, available, credButNoCli? }.
     가용 = **사장이 명시적으로 연결한 자격(유효)뿐** — 호스트 로그인 흔적의 자동 사용(스캐빈징)은
     하지 않는다(유건 지시 2026-07-19: 감지는 안내로만, 연결은 사장이. 실사용: 스테일/키체인 접근 불가
@@ -207,7 +221,7 @@ export function pickRunner(st, want, exclude = null) {
   // exclude — 문자열 하나 또는 목록. 목록 수용은 자가치유가 **죽은 러너를 누적 제외**하며 남은
   // 러너를 차례로 시도하기 위해서다(1회 제한이던 시절: 4러너 연결 + 앞의 둘 고장 → 멀쩡한 나머지
   // 둘은 시도조차 못 받고 영입이 통째로 실패. 라이브 재현 2026-07-30).
-  const skip = new Set(Array.isArray(exclude) ? exclude : exclude ? [exclude] : []);
+  const skip = new Set(asList(exclude));
   const usable = (id) => !!st[id]?.company.connected && !st[id]?.company.invalid && !skip.has(id);
   if (want && usable(want)) return { runner: want, fellBack: false, available: true };
   const ids = Object.keys(RUNNER_AUTH);
