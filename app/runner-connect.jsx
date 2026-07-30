@@ -101,7 +101,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
     }, 2000);
     const ttl = setTimeout(() => clearInterval(iv), 10 * 60_000);
     return () => { liveFlag = false; clearInterval(iv); clearTimeout(ttl); };
-  }, [webUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [webUrl]);
 
   async function webSubmit() {
     setWebBusy(true); setWebMsg('');

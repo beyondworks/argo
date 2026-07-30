@@ -787,12 +787,18 @@ export function ensureGateway() {
     //    잡이 여기서 끝까지 처리된다.
     const aliveDrain = new Set();
     const cfgMap = (globalThis.__argoGwCfg ??= {});
+    // cfg 키 단일화(전수리뷰 2026-07-30 #4) — `${cid}:telegram`류 문자열 조립이 9지점에 흩어져 있고
+    // 크루 직통 봇은 큐 키(tg-<slug>)와 cfg 키(tg-agent:<slug>)의 표기까지 달라, 한 지점만 어긋나면
+    // 핸들러가 cfg를 못 찾아 잡이 **무로그 폐기**된다. 조립·파싱을 이 두 함수로만 한다.
+    const TG_AGENT_Q = 'tg-';
+    const tgAgentQkey = (slug) => `${TG_AGENT_Q}${slug}`;
+    const gwCfgKey = (cid, qkey) => qkey.startsWith(TG_AGENT_Q) ? `${cid}:tg-agent:${qkey.slice(TG_AGENT_Q.length)}` : `${cid}:${qkey}`;
     for (const [c, all] of loaded) {
       // cfg 맵은 폴러뿐 아니라 드레인 핸들러도 본다 — 리더 여부와 무관하게 항상 최신화
-      cfgMap[`${c.id}:telegram`] = all.telegram;
-      cfgMap[`${c.id}:slack`] = all.slack;
-      for (const [slug, bot] of Object.entries(all.telegram.agents ?? {})) cfgMap[`${c.id}:tg-agent:${slug}`] = bot;
-      const qkeys = new Set(['telegram', 'slack', ...Object.keys(all.telegram.agents ?? {}).map((s) => `tg-${s}`)]);
+      cfgMap[gwCfgKey(c.id, 'telegram')] = all.telegram;
+      cfgMap[gwCfgKey(c.id, 'slack')] = all.slack;
+      for (const [slug, bot] of Object.entries(all.telegram.agents ?? {})) cfgMap[gwCfgKey(c.id, tgAgentQkey(slug))] = bot;
+      const qkeys = new Set(['telegram', 'slack', ...Object.keys(all.telegram.agents ?? {}).map(tgAgentQkey)]);
       // 설정이 사라진 잔여 큐 디렉터리도 대상 — 핸들러가 cfg 부재 잡을 폐기해 스스로 청소된다
       try {
         for (const n of await readdir(paths(c.id).root)) if (n.startsWith('.gw-queue-')) qkeys.add(n.slice('.gw-queue-'.length));
@@ -801,10 +807,11 @@ export function ensureGateway() {
         const id = `${c.id}:${qkey}`;
         aliveDrain.add(id);
         if (drainers.has(id)) continue;
-        const handler = qkey === 'telegram' ? makeTgGatewayHandler(c.id, () => globalThis.__argoGwCfg?.[`${c.id}:telegram`])
-          : qkey === 'slack' ? makeSlackHandler(c.id, () => globalThis.__argoGwCfg?.[`${c.id}:slack`])
+        const getCfg = () => globalThis.__argoGwCfg?.[gwCfgKey(c.id, qkey)]; // 등록(cfgMap)과 같은 함수로 조회 — 키 드리프트 원천 차단
+        const handler = qkey === 'telegram' ? makeTgGatewayHandler(c.id, getCfg)
+          : qkey === 'slack' ? makeSlackHandler(c.id, getCfg)
             : qkey === JOBS_QUEUE ? makeJobHandler(c.id) // 장시간 작업 — 메신저 연결과 무관하게 항상 드레인
-              : qkey.startsWith('tg-') ? makeTgAgentHandler(c.id, qkey.slice(3), () => globalThis.__argoGwCfg?.[`${c.id}:tg-agent:${qkey.slice(3)}`])
+              : qkey.startsWith(TG_AGENT_Q) ? makeTgAgentHandler(c.id, qkey.slice(TG_AGENT_Q.length), getCfg)
                 : null;
         // 장시간 작업은 동시 1 — 한 회사의 긴 작업이 메신저 응답 슬롯을 다 먹지 않게 큐를 분리한다
         if (handler) drainers.set(id, startQueueWorker(c.id, qkey, handler, qkey === JOBS_QUEUE ? { maxInflight: JOBS_MAX_INFLIGHT } : {}));
@@ -830,7 +837,7 @@ export function ensureGateway() {
     for (const [c, all] of loaded) {
       for (const kind of ['telegram', 'slack']) {
         const cfg = all[kind];
-        const id = `${c.id}:${kind}`;
+        const id = gwCfgKey(c.id, kind); // 폴러 id = cfg 키(같은 값 — 조립도 같은 함수로)
         const key = `${cfg.enabled}:${cfg.token}:${cfg.channel ?? ''}`;
         const tgDupe = kind === 'telegram' && cfg.enabled && cfg.token && claimedTg.get(cfg.token)?.id !== id;
         if (tgDupe) { // 같은 토큰을 다른 회사 게이트웨이가 선점 — alive 미등록 → 아래 정리 루프가 폴러도 내린다
@@ -855,7 +862,7 @@ export function ensureGateway() {
       // 크루 직통 봇 — 토큰이 있으면 곧 연결(별도 토글 없음: 연결 해제 = 토큰 제거)
       for (const [slug, bot] of Object.entries(all.telegram.agents ?? {})) {
         if (!bot?.token) continue;
-        const id = `${c.id}:tg-agent:${slug}`;
+        const id = gwCfgKey(c.id, tgAgentQkey(slug)); // 드레인 cfg 키와 같은 조립 함수 — 표기 드리프트 차단
         const holder = claimedTg.get(bot.token);
         if (holder && holder.id !== id) { // 게이트웨이 또는 다른 크루가 선점 — 이 직통 봇은 쉰다
           beatGateway(c.id, `tg-${slug}`, false, `토큰 중복 — ${holder.label}에서 사용 중. 이 크루 전용 봇을 @BotFather로 새로 만들어 연결하세요`).catch(() => {});

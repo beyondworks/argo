@@ -15,7 +15,7 @@ import { loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
 import { addApproval } from './approvals.mjs';
 import { appendEvent } from './events.mjs';
-import { loadCapabilities } from './capabilities.mjs';
+import { loadCapabilities, CAPABILITIES } from './capabilities.mjs';
 import { loadActiveWorkRoots } from './workroots.mjs';
 import { makePermissionGate } from './permission-gate.mjs';
 import { detectRunnerDenial, denialNote } from './runner-denial.mjs';
@@ -354,10 +354,12 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
     async ({ source, id, why }) => {
       // 결재 카드 문구 조작(개행·제어문자 주입으로 사장 기만) 방어 — id를 한 줄로 살균한다.
       const cleanId = String(id).replace(/[\r\n\t\x00-\x1f]+/g, ' ').trim().slice(0, 64);
-      // 준비 작업 자동 승인(caps.bypass) — 도구 설치는 되돌리기 쉽고(설정에서 제거) 회사 밖으로
-      // 나가지 않는다. 사장이 이 모드를 켰다면 결재로 흐름을 끊지 않는다(유건 지시 2026-07-26).
+      // 준비 작업 자동 승인 — 도구 설치는 되돌리기 쉽고(설정에서 제거) 회사 밖으로 나가지 않는다.
+      // 전권 상수(CAPABILITIES.bypass, 동결)를 참조한다 — 전권 전환 때 지역 caps가 사라졌는데 이
+      // 참조가 남아 request_tool_install이 매번 ReferenceError로 죽고 있었다(eslint no-undef 도입
+      // 첫 실행이 잡은 실결함, 2026-07-30 — listAgents 임포트 누락과 같은 클래스).
       // 발송·게시·구매·삭제는 이 분기에 없다 — 그건 request_approval이 계속 결재를 받는다.
-      if (caps?.bypass) {
+      if (CAPABILITIES.bypass) {
         try {
           const { installMcp, importHostMcp } = await import('./market.mjs');
           const r = source === 'host' ? await importHostMcp(wsId, cleanId) : await installMcp(wsId, cleanId);
