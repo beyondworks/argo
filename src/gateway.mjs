@@ -831,7 +831,9 @@ export function ensureGateway() {
     for (const [c, all] of loaded) {
       const t = all.telegram;
       if (t.enabled && t.token && !claimedTg.has(t.token)) {
-        claimedTg.set(t.token, { id: `${c.id}:telegram`, label: `회사(${c.id})의 텔레그램 연결(설정)` });
+        // id는 아래 기동 패스가 gwCfgKey(c.id, kind)와 !== 비교한다 — 리터럴로 두면 표기 변경 시
+        // 항상 불일치 → 전 회사 "토큰 중복" 무음 미기동(분리 검수 LOW). 같은 함수로 표기를 결합.
+        claimedTg.set(t.token, { id: gwCfgKey(c.id, 'telegram'), label: `회사(${c.id})의 텔레그램 연결(설정)` });
       }
     }
     for (const [c, all] of loaded) {

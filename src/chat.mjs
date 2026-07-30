@@ -15,7 +15,7 @@ import { loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
 import { addApproval } from './approvals.mjs';
 import { appendEvent } from './events.mjs';
-import { loadCapabilities, CAPABILITIES } from './capabilities.mjs';
+import { loadCapabilities } from './capabilities.mjs'; // CAPABILITIES 직참조는 결재 분기 제거로 소멸(#191 검수)
 import { loadActiveWorkRoots } from './workroots.mjs';
 import { makePermissionGate } from './permission-gate.mjs';
 import { detectRunnerDenial, denialNote } from './runner-denial.mjs';
@@ -268,11 +268,11 @@ ${workRoots.length ? `- Assigned work folders (the captain pinned these): ${work
 ## Tools & skills — use them proactively
 - Company skills (skills/*.md) are auto-injected into your instructions every turn — apply them to matching work immediately.
 - External tools (MCP) connected to this company: ${mcpList}. ${hasTools ? 'When the work calls for one, use it right away — don\'t ask permission to use what\'s already connected.' : 'These run on Claude/GLM/Kimi (SDK) turns — if you can\'t use them on this runner, say so and offer an alternative.'}
-- If a needed tool is missing: ${hasTools ? 'an MCP already installed on this computer can be pulled in via request_tool_install (source=host, env included), otherwise request one from the catalog (source=catalog) — once approved it installs automatically and is available from the next turn.' : 'guide the captain precisely to connect it in the "Skills·Tools" screen.'}
+- If a needed tool is missing: ${hasTools ? 'an MCP already installed on this computer can be pulled in via request_tool_install (source=host, env included), otherwise install from the catalog (source=catalog) — it installs immediately without approval (logged to Activity) and is available from the next turn.' : 'guide the captain precisely to connect it in the "Skills·Tools" screen.'}
 
 ## Protected zones — never touch, no exceptions
 - The Argo app itself (its install folder and server code), \`~/.argo\`, other companies' workspaces, and credential/secret files (e.g. \`.secrets.json\`) are off-limits for reading and writing — even with file-system capability or bypass mode on. The tool gate blocks them.
-- Your own company's control files are off-limits too, for reading and writing: every settings file sitting directly in the company folder (\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\`, …), anything starting with \`.\`, and crew cards under \`agents/\`. The ledgers (\`usage.jsonl\`, \`events.jsonl\`) you may read but not write. These settings change through tools that go to the captain for approval — never by editing the file${caps.shell ? ' (this includes shell redirects and editors, not just Write/Edit)' : ''}. Need a tool? \`request_tool_install\`. Profile or hiring? \`update_profile\` / \`hire_crew\`. Your desk — \`vault/\`, \`skills/\`, project output — stays fully yours.
+- Your own company's control files are off-limits too, for reading and writing: every settings file sitting directly in the company folder (\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\`, …), anything starting with \`.\`, and crew cards under \`agents/\`. The ledgers (\`usage.jsonl\`, \`events.jsonl\`) you may read but not write. These settings change through dedicated tools — never by editing the file${caps.shell ? ' (this includes shell redirects and editors, not just Write/Edit)' : ''}. Need a tool? \`request_tool_install\`. Profile or hiring? \`update_profile\` / \`hire_crew\`. Your desk — \`vault/\`, \`skills/\`, project output — stays fully yours.
 - If the captain asks you to change Argo's design, settings, or features, do NOT edit app code — explain that the app itself can't be modified from inside, and point them to Settings → Feedback.
 
 ## Your environment (Argo) — guide the captain precisely when blocked
@@ -300,11 +300,11 @@ ${workRoots.length ? `- 지정 작업 폴더(사장이 고정해 둔 곳): ${wor
 ## 도구·스킬 — 필요하면 알아서 불러 써라
 - 회사 스킬(skills/*.md)은 매 턴 네 지침에 자동 주입된다 — 해당 유형 작업이면 즉시 적용하라.
 - 이 회사에 연결된 외부 도구(MCP): ${mcpList}. ${hasTools ? '작업에 필요하면 허락을 기다리지 말고 바로 사용하라 — 그러라고 연결해 둔 것이다.' : '이 도구들은 Claude·GLM·Kimi(SDK) 러너 턴에서 실행된다 — 지금 러너에서 쓸 수 없으면 그 사실을 밝히고 대안을 제시하라.'}
-- 필요한 도구가 회사에 없으면: ${hasTools ? '이 컴퓨터에 이미 설치된 MCP는 request_tool_install(source=host — env까지 그대로)로, 그 외에는 카탈로그(source=catalog)로 설치를 결재 요청하라 — 승인되면 자동 설치되어 다음 턴부터 쓸 수 있다.' : '사장에게 "스킬·도구" 화면에서 연결해 달라고 정확히 안내하라.'}
+- 필요한 도구가 회사에 없으면: ${hasTools ? '이 컴퓨터에 이미 설치된 MCP는 request_tool_install(source=host — env까지 그대로)로, 그 외에는 카탈로그(source=catalog)로 설치하라 — 결재 없이 즉시 설치되고(활동에 기록) 다음 턴부터 쓸 수 있다.' : '사장에게 "스킬·도구" 화면에서 연결해 달라고 정확히 안내하라.'}
 
 ## 보호 구역 — 예외 없이 금지
 - Argo 앱 자체(설치 폴더·서버 코드), \`~/.argo\`, 다른 회사의 워크스페이스, 자격·시크릿 파일(예: \`.secrets.json\`)은 읽기도 쓰기도 금지다 — 파일 시스템 능력이나 우회 모드가 켜져 있어도 도구 게이트가 차단한다.
-- 네 회사의 제어 파일도 읽기·쓰기 모두 금지다: 회사 폴더 바로 아래의 설정 파일 전부(\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\` 등), \`.\`으로 시작하는 항목 전부, 그리고 \`agents/\`의 크루 카드. 원장(\`usage.jsonl\`, \`events.jsonl\`)은 읽을 수는 있고 쓸 수는 없다. 이 설정들은 사장 결재를 거치는 도구로 바꾸는 것이지 파일을 고쳐서 바꾸는 것이 아니다${caps.shell ? ' (Write/Edit뿐 아니라 셸 리다이렉트·에디터도 마찬가지다)' : ''}. 도구 설치는 \`request_tool_install\`, 프로필·영입은 \`update_profile\`·\`hire_crew\`. 네 책상(\`vault/\`, \`skills/\`, 산출물)은 그대로 전부 네 것이다.
+- 네 회사의 제어 파일도 읽기·쓰기 모두 금지다: 회사 폴더 바로 아래의 설정 파일 전부(\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\` 등), \`.\`으로 시작하는 항목 전부, 그리고 \`agents/\`의 크루 카드. 원장(\`usage.jsonl\`, \`events.jsonl\`)은 읽을 수는 있고 쓸 수는 없다. 이 설정들은 전용 도구로 바꾸는 것이지 파일을 고쳐서 바꾸는 것이 아니다${caps.shell ? ' (Write/Edit뿐 아니라 셸 리다이렉트·에디터도 마찬가지다)' : ''}. 도구 설치는 \`request_tool_install\`, 프로필·영입은 \`update_profile\`·\`hire_crew\`. 네 책상(\`vault/\`, \`skills/\`, 산출물)은 그대로 전부 네 것이다.
 - 사장이 Argo의 디자인·설정·기능을 고쳐 달라고 하면 앱 코드를 수정하지 마라 — 앱 자체는 안에서 고칠 수 없다고 설명하고 "설정 → 피드백"으로 전달하라고 안내하라.
 
 ## 너의 환경(Argo) — 막혔을 때 사장에게 정확히 안내하라
@@ -349,32 +349,24 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
 
   const requestToolInstall = tool(
     'request_tool_install',
-    '작업에 필요한 외부 도구(MCP)가 이 회사에 없을 때 설치를 결재로 요청한다. source=catalog는 검증된 카탈로그의 id, source=host는 이 컴퓨터의 Claude Code에 이미 등록된 MCP 이름을 env까지 그대로 가져온다. why에는 어떤 작업에 왜 필요한지 한 문장.',
+    '작업에 필요한 외부 도구(MCP)가 이 회사에 없을 때 설치한다(준비 작업 자동 승인 — 결재 없이 즉시 설치되고 활동에 기록된다). source=catalog는 검증된 카탈로그의 id, source=host는 이 컴퓨터의 Claude Code에 이미 등록된 MCP 이름을 env까지 그대로 가져온다. why에는 어떤 작업에 왜 필요한지 한 문장.',
     { source: z.enum(['catalog', 'host']), id: z.string(), why: z.string() },
     async ({ source, id, why }) => {
       // 결재 카드 문구 조작(개행·제어문자 주입으로 사장 기만) 방어 — id를 한 줄로 살균한다.
       const cleanId = String(id).replace(/[\r\n\t\x00-\x1f]+/g, ' ').trim().slice(0, 64);
       // 준비 작업 자동 승인 — 도구 설치는 되돌리기 쉽고(설정에서 제거) 회사 밖으로 나가지 않는다.
-      // 전권 상수(CAPABILITIES.bypass, 동결)를 참조한다 — 전권 전환 때 지역 caps가 사라졌는데 이
-      // 참조가 남아 request_tool_install이 매번 ReferenceError로 죽고 있었다(eslint no-undef 도입
-      // 첫 실행이 잡은 실결함, 2026-07-30 — listAgents 임포트 누락과 같은 클래스).
-      // 발송·게시·구매·삭제는 이 분기에 없다 — 그건 request_approval이 계속 결재를 받는다.
-      if (CAPABILITIES.bypass) {
-        try {
-          const { installMcp, importHostMcp } = await import('./market.mjs');
-          const r = source === 'host' ? await importHostMcp(wsId, cleanId) : await installMcp(wsId, cleanId);
-          await appendEvent(wsId, { type: 'approval', slug: fromSlug, id: 'auto', action: `도구 설치(자동 승인): ${cleanId}`, status: 'approved' });
-          return text(`도구 "${r?.name ?? cleanId}"를 설치했다(준비 작업 자동 승인 모드). 다음 턴부터 쓸 수 있다 — 사장에게 설치 사실을 한 줄로 알리고 이어서 진행하라.`);
-        } catch (e) {
-          return text(`도구 설치 실패: ${String(e.message || e).slice(0, 200)}. 사장에게 알리고 다른 방법을 찾아라.`);
-        }
+      // 이력: 도입(#99)부터 `if (caps?.bypass)`의 caps가 정의된 적이 없어 매 호출 ReferenceError —
+      // 한 번도 실행되지 못한 채였고, eslint no-undef 도입 첫 실행이 잡았다(2026-07-30). 전권
+      // 모델(#187)에서 결재 분기는 상수적으로 죽어 제거했다 — 과거 버전이 쌓은 kind:'mcp' 대기
+      // 항목은 approval-actions가 계속 완결한다. 발송·게시·구매·삭제는 request_approval이 계속 결재.
+      try {
+        const { installMcp, importHostMcp } = await import('./market.mjs');
+        const r = source === 'host' ? await importHostMcp(wsId, cleanId) : await installMcp(wsId, cleanId);
+        await appendEvent(wsId, { type: 'approval', slug: fromSlug, id: 'auto', action: `도구 설치(자동 승인): ${cleanId}`, status: 'approved' });
+        return text(`도구 "${r?.name ?? cleanId}"를 설치했다(자동 승인 — 활동에 기록됨). 다음 턴부터 쓸 수 있다 — 사장에게 설치 사실을 한 줄로 알리고 이어서 진행하라.`);
+      } catch (e) {
+        return text(`도구 설치 실패: ${String(e.message || e).slice(0, 200)}. 사장에게 알리고 다른 방법을 찾아라.`);
       }
-      const item = await addApproval(wsId, {
-        slug: fromSlug, kind: 'mcp', ...(delegatedBy ? { from: delegatedBy } : {}),
-        action: `도구 설치: ${cleanId} (${source === 'host' ? '이 컴퓨터에서 가져오기' : '카탈로그'})`,
-        reason: why, payload: { source, id: cleanId },
-      });
-      return text(`설치 결재가 등록되었다(${item.id}). 승인되면 시스템이 설치하고 후속 지시가 온다. 지금은 사장에게 승인을 요청하고 턴을 마무리하라. 승인 전에 그 도구를 쓰려 하지 마라.${await channelHealthNote()}`);
     },
   );
 

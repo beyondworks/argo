@@ -30,6 +30,7 @@ async function applyPayload(wsId, item) {
   if (item.kind === 'mcp') {
     // 크루 주도 도구 설치 — 카탈로그(검증된 목록) 또는 호스트 가져오기(이 컴퓨터의 Claude Code
     // 등록분)만 허용. 임의 command 지정은 크루에게 열지 않는다(프롬프트 인젝션 방어).
+    // 신규 생성 경로는 전권 전환으로 소멸(chat.mjs가 즉시 설치) — 과거 버전이 쌓아둔 대기 항목 완결용 유지.
     const { installMcp, importHostMcp } = await import('./market.mjs');
     const src = p.source;
     const id = String(p.id ?? '');
