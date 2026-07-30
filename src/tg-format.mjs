@@ -101,7 +101,9 @@ export function splitForTelegram(text, max = 3900) {
 export function extractFileRefs(text) {
   // 수량자는 lazy(+?) — 클래스에 공백·`/`가 함께 열려 있어 탐욕이면 "files/a.pdf files/b.pdf"가
   // 한 덩어리로 흡수된다(신설 테스트가 잡음). 확장자 뒤 (?![\w.])는 부분 매칭 방지(a.pdfx).
-  const re = /(?:vault\/)?((?:files|projects|_imported)\/[\w\-.ㄱ-힝 ()/]+?\.(?:png|jpe?g|webp|gif|pdf|docx?|xlsx?|pptx?|csv|md|zip))(?![\w.])/gi;
+  // 좌측 경계 — https://x.com/files/a.pdf 같은 외부 URL 조각을 로컬 경로로 오인하면, 비침묵
+  // 정책이 '파일이 없습니다' 가짜 경보를 쏜다(검수 M-3 — main은 조용해서 무해했던 선재 오탐).
+  const re = /(?<![\w/.\-])(?:vault\/)?((?:files|projects|_imported)\/[\w\-.ㄱ-힝 ()/]+?\.(?:png|jpe?g|webp|gif|pdf|docx?|xlsx?|pptx?|csv|md|zip))(?![\w.])/gi;
   const seen = new Set();
   for (const m of String(text ?? '').matchAll(re)) {
     if (m[1].split('/').some((seg) => seg === '..' || seg === '')) continue;

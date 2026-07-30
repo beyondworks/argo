@@ -19,10 +19,14 @@ test('notify 왕복: approval_followup 이벤트가 핸들러에 그대로 도�
 
 test('배선: followUp이 성공·실패 양 경로에서 방송하고, 게이트웨이가 원 채널로 sendTgReply 한다', async () => {
   const aa = await readFile(new URL('../src/approval-actions.mjs', import.meta.url), 'utf8');
-  assert.equal(aa.split("emitNotify({ type: 'approval_followup'").length - 1, 2, '성공+실패 두 경로 방송');
+  // 위치 단언 — 개수 단언은 "실패 경로 삭제 + 성공 경로 중복"이라는 정반대 상태를 초록으로
+  // 통과시킨다(검수 M-2 변이 실증 — C3와 같은 함정 계열). 각 경로의 이웃 줄로 잠근다.
+  assert.match(aa, /emitNotify\(\{ type: 'approval_followup', wsId, item, reply: r\.reply \}\);\n    return r;/, '성공 경로 방송(반환 직전)');
+  assert.match(aa, /item\.tg\?\.chatId \? \{ source: 'messenger' \}/, '메신저발 후속 턴은 메신저 턴 — 파일 규약 수신(검수 M-1)');
+  assert.match(aa, /emitNotify\(\{ type: 'approval_followup', wsId, item, reply: note \}\); \/\/ 실패도 무소식보다 통보가 낫다\n    throw e;/, '실패 경로 방송(rethrow 직전)');
   const gw = await readFile(new URL('../src/gateway.mjs', import.meta.url), 'utf8');
   assert.match(gw, /event\.type === 'approval_followup'/, '게이트웨이 소비부');
   const block = gw.split("event.type === 'approval_followup'")[1]?.slice(0, 500) ?? '';
-  assert.match(block, /it\?\.tg\?\.chatId && all\.telegram\.token/, '결재 카드가 온 방으로만');
+  assert.match(block, /it\?\.tg\?\.chatId && all\.telegram\.enabled && all\.telegram\.token/, '결재 카드가 온 방으로만 + 채널 꺼짐 게이트(검수 LOW-4)');
   assert.match(block, /sendTgReply\(/, 'sendTgReply 경유 — 본문 속 파일 경로가 자동 첨부(S2)되는 경로');
 });

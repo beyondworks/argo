@@ -22,6 +22,10 @@ test('extractFileRefs: 탈출·빈 세그먼트 거부 + 상한 3개 + 중복 �
   assert.deepEqual(many, ['files/a.pdf', 'files/b.pdf', 'files/c.pdf']);
   assert.deepEqual(extractFileRefs('산출물 없는 평문'), []);
   assert.deepEqual(extractFileRefs('vault/notes/메모.md 언급'), []); // 첨부 구역 밖(기억) — 대상 아님
+  // 좌측 경계(검수 M-3) — 외부 URL 조각 오탐이 '파일 없음' 가짜 경보가 되던 것. 정상 문맥은 유지.
+  assert.deepEqual(extractFileRefs('참고: https://example.com/files/report.pdf 를 보세요'), []);
+  assert.deepEqual(extractFileRefs('경로(files/a.pdf)와 [링크](files/b.pdf)'), ['files/a.pdf', 'files/b.pdf']);
+  assert.deepEqual(extractFileRefs('vault/files/c.pdf'), ['files/c.pdf']); // vault/ 접두는 여전히 정규화
 });
 
 test('attachFailureNote: 실패 목록을 사용자 문장으로(빈 목록은 빈 문자열)', () => {
@@ -34,7 +38,7 @@ test('attachFailureNote: 실패 목록을 사용자 문장으로(빈 목록은 �
 test('배선: 게이트웨이 발신이 실패를 수집·통보하고, 메신저 턴 프롬프트가 규약을 가르친다', async () => {
   const gw = await readFile(new URL('../src/gateway.mjs', import.meta.url), 'utf8');
   assert.match(gw, /if \(!res\.ok && isImagePath\(rel\)\) res = await send\('document'\)/, '사진 거절 문서 폴백');
-  assert.match(gw, /attachFailureNote\(fails, lang\)/, '실패 비침묵 — 안내 발송');
+  assert.match(gw, /attachFailureNote\(fails, gLang\)/, '실패 비침묵 — 안내 발송(사유도 회사 언어 — 검수 LOW-1)');
   assert.match(gw, /50 \* 1024 \* 1024/, '봇 상한 사전 검사');
   const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   // SDK·CLI 두 프롬프트 조립 모두 주입 — 한쪽만 알면 러너별 편파(중립성 원칙).

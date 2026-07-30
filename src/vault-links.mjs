@@ -14,7 +14,7 @@ export function rewriteVaultHref(href, wsId) {
   if (!rel || rel.includes('\\') || rel.split('/').some((seg) => seg === '..' || seg === '')) return null; // 탈출·빈 세그먼트
   if (/^[a-z][a-z0-9+.-]*:/i.test(rel)) return null; // 스킴 있는 값은 여기 소관이 아니다(기존 차단 유지)
   const w = encodeURIComponent(wsId);
-  if (rel.endsWith('.md') && !rel.startsWith('journal/')) return `/c/${w}/vault?doc=${encodeURIComponent(rel)}`;
+  if (rel.endsWith('.md') && !rel.toLowerCase().startsWith('journal/')) return `/c/${w}/vault?doc=${encodeURIComponent(rel)}`;
   if (SERVE_PREFIXES.some((p) => rel.startsWith(p))) return `/api/companies/${w}/files?rel=${encodeURIComponent(rel)}`;
   return null;
 }

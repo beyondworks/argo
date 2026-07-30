@@ -87,13 +87,16 @@ async function sendTgReply(token, chatId, wsId, text) {
   // 파일 동봉 — 실패는 본문 전달을 막지 않되 **침묵하지 않는다**(제보 "보내줬다는데 안 온다"의
   // 절반이 여기서 조용히 죽은 것: catch{} 전량 삼킴 + res.ok 미검사). 봇 업로드 상한 50MB 사전 검사.
   const fails = [];
-  for (const rel of extractFileRefs(text)) {
+  const refs = extractFileRefs(text);
+  const { lang: gLang = 'ko' } = refs.length ? await loadCompany(wsId).catch(() => ({})) : {};
+  const rsn = (ko, en) => (gLang === 'en' ? en : ko); // 사유도 회사 언어로(다국어 상시 규칙 — 검수 LOW-1)
+  for (const rel of refs) {
     const name = rel.split('/').pop();
     try {
       const abs = join(paths(wsId).vault, rel);
       const st = await stat(abs).catch(() => null);
-      if (!st?.isFile()) { fails.push({ name, reason: '파일이 없습니다(경로 확인)' }); continue; }
-      if (st.size > 50 * 1024 * 1024) { fails.push({ name, reason: '50MB 초과(텔레그램 봇 상한)' }); continue; }
+      if (!st?.isFile()) { fails.push({ name, reason: rsn('파일이 없습니다(경로 확인)', 'file not found (check the path)') }); continue; }
+      if (st.size > 50 * 1024 * 1024) { fails.push({ name, reason: rsn('50MB 초과(텔레그램 봇 상한)', 'over 50MB (Telegram bot limit)') }); continue; }
       const buf = await readFile(abs);
       const send = (kind) => {
         const fd = new FormData();
@@ -108,15 +111,14 @@ async function sendTgReply(token, chatId, wsId, text) {
       if (!res.ok && isImagePath(rel)) res = await send('document');
       if (!res.ok) {
         const detail = await res.json().then((j) => j?.description ?? '').catch(() => '');
-        fails.push({ name, reason: `텔레그램 거절(${String(detail).slice(0, 80) || res.status})` });
+        fails.push({ name, reason: rsn(`텔레그램 거절(${String(detail).slice(0, 80) || res.status})`, `Telegram rejected (${String(detail).slice(0, 80) || res.status})`) });
       }
     } catch (e) {
       fails.push({ name, reason: String(e?.message ?? e).slice(0, 80) });
     }
   }
   if (fails.length) {
-    const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
-    await tg(token, 'sendMessage', { chat_id: chatId, text: attachFailureNote(fails, lang) }).catch(() => {});
+    await tg(token, 'sendMessage', { chat_id: chatId, text: attachFailureNote(fails, gLang) }).catch(() => {});
   }
 }
 
@@ -694,7 +696,7 @@ async function pushEvent(event) {
     // 결재 승인/거절 후속 턴의 크루 보고를 결재 카드가 있던 방으로 — sendTgReply라서 본문 속
     // 파일 경로(files/·projects/)가 자동 첨부된다(S2). 발송류 결재의 "승인=발송"이 이걸로 실효.
     const it = event.item;
-    if (it?.tg?.chatId && all.telegram.token) {
+    if (it?.tg?.chatId && all.telegram.enabled && all.telegram.token) { // enabled — 끈 채널로 재발송 금지(검수 LOW-4)
       await sendTgReply(all.telegram.token, it.tg.chatId, event.wsId, event.reply).catch((e) => console.error('[argo] 결재 후속 배달 실패:', e.message));
     }
     return;

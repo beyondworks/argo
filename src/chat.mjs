@@ -713,10 +713,11 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 되어 오귀속된다(검수 HIGH 실측). 경쟁 턴은 tool_use 관측만(격리 불변식 유지 — compete.mjs 헤더).
   const artBefore = source === 'compete' ? null : await snapshotArtifacts(p.vault).catch(() => new Map());
   // 턴 종료 시 diff — 상한+최신 우선(복원·임포트와 겹친 420칩 폭발 방어, 검수 HIGH).
+  let artAfter = new Map(); // SDK 합집합 cap도 같은 mtime 기준을 쓰기 위한 공유(검수 LOW-2)
   const artDiff = async () => {
     if (!artBefore) return [];
-    const after = await snapshotArtifacts(p.vault).catch(() => new Map());
-    return capLatest(after, diffArtifacts(artBefore, after).filter(servableArtifact));
+    artAfter = await snapshotArtifacts(p.vault).catch(() => new Map());
+    return capLatest(artAfter, diffArtifacts(artBefore, artAfter).filter(servableArtifact));
   };
 
   // 외부 CLI 러너(Codex/Gemini/Antigravity) — 로컬 OAuth 로그인(구독)을 빌려 1턴 실행. 세션은 스레드 맥락으로 잇는다.
@@ -1149,5 +1150,5 @@ ${lang === 'en'
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
   // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
   for (const r of await artDiff()) artifacts.add(r);
-  return { reply, sessionId: sid, handover, artifacts: [...artifacts].filter(servableArtifact).sort().slice(0, 12) };
+  return { reply, sessionId: sid, handover, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)) }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }
