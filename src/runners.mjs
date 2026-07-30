@@ -16,6 +16,7 @@ import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthFormatError } from './runners/catalog.mjs';
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, codexSandboxArgs } from './runners/codex.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
+import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 import { loadSecrets, credType, maskCred } from './runners/creds.mjs';
 import { ensureCliPath, apiError, detectRunners } from './runners/exec.mjs';
 
@@ -63,10 +64,10 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     // "장시간 작업으로 걸어라"는 자기모순이므로 쪼개기 안내로 갈라진다.
     const guide = kind === 'job'
       ? '작업을 더 작은 단위로 쪼개서 다시 걸어 주세요. '
-      : '이 러너의 대화 턴에는 장시간 작업 도구가 없으니, 작업을 쪼개거나 Claude 러너 크루에게 "장시간 작업으로 걸어줘"라고 맡기면 턴 밖에서 끝까지 돌아 결과가 배달됩니다. ';
+      : '이 러너의 대화 턴에는 장시간 작업 도구가 없으니, 작업을 쪼개거나 SDK 러너(Claude·GLM·Kimi·OpenRouter) 크루에게 "장시간 작업으로 걸어줘"라고 맡기면 턴 밖에서 끝까지 돌아 결과가 배달됩니다. ';
     const guideEn = kind === 'job'
       ? 'Split the work into smaller pieces and queue it again.'
-      : 'This runner\'s chat turns have no long-task tool — split the work, or ask a Claude-runner crew to run it as a long task.';
+      : 'This runner\'s chat turns have no long-task tool — split the work, or ask a crew on an SDK runner (Claude, GLM, Kimi, OpenRouter) to run it as a long task.';
     return Object.assign(new Error(
       `시간 초과: 이 ${kind === 'job' ? '장시간 작업' : '턴'}이 상한 ${cap}을 넘겨 중단됐습니다. ${guide}`
       + `Timed out after the ${capEn} cap — ${guideEn}`,
@@ -122,12 +123,18 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
   if (runner === 'gemini') {
     // 회사/host 자격이면 격리 HOME — 이번 턴 settings.json(인증 방식 + caps 도구 게이팅)을 매 턴 쓴다.
     // (자격 없는 경로는 명시 연결 원칙상 도달 안 하지만, 도달 시 호스트 HOME으로 폴백 — 도구 게이팅 없음)
-    if (cred?.home && cred?.authType) await writeGeminiTurnSettings(cred.home, cred.authType, caps);
+    if (cred?.home && cred?.authType) await writeGeminiTurnSettings(cred.home, cred.authType, caps, workRoots);
     const cmd = await geminiCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
+    // 파일 반경 — gemini-cli는 workspaceContext(cwd + include-directories) **밖의 읽기·쓰기를 벤더
+    // 도구가 거부**한다. 이걸 안 넘기면 크루 책상이 회사 폴더 하나로 쪼그라들어, 같은 지시가 codex
+    // 크루는 되고 gemini 크루는 "허용된 작업 디렉토리 외부"로 거절된다(라이브 재현 2026-07-30).
+    // codex writable_roots와 같은 계산(openRoots) — 러너 중립성은 문구가 아니라 인자로 지킨다.
+    const gRoots = openRoots(caps, workRoots);
     const { stdout } = await exec(cmd.file, [
       ...cmd.args,
       '-p', prompt,
       ...(model ? ['-m', model] : []),
+      ...(gRoots.length ? ['--include-directories', gRoots.join(',')] : []),
       '--approval-mode', 'auto_edit', // 편집류만 자동 승인 — 셸 등은 비대화 모드에서 실행되지 않는다
     ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'gemini'), ...(cred?.env ?? {}) } })
       .catch((e) => { throw cliTurnFailure(e, 'gemini', Date.now() - t0, timeoutMs, { stage: 'exec', kind }); });
@@ -155,6 +162,8 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     const { stdout } = await exec(cmd.file, [
       '-p', prompt,
       ...(model ? ['--model', model] : []),
+      // gemini와 같은 이유·같은 계산 — agy도 워크스페이스 밖을 막는다(플래그는 반복형 --add-dir).
+      ...openRoots(caps, workRoots).flatMap((r) => ['--add-dir', r]),
       '--mode', 'accept-edits',
       ...(caps?.shell ? [] : ['--sandbox']), // fail-closed(분리 검수 H2) — caps 미전달(oneshot 등)이면 제한 켬. codex 상시 샌드박스와 같은 방향
       ...(agySec >= 25 ? ['--print-timeout', `${agySec}s`] : []),

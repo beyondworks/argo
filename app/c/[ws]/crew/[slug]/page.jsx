@@ -126,7 +126,10 @@ export default function CrewChat({ params }) {
   const [aliasModal, setAliasModal] = useState(false);
   // 러너·모델 — 카드 패널과 채팅 셀렉터가 공유하는 단일 상태. 회사 자격(설정 러너 연결)을 병합한 카탈로그.
   const [runners, setRunners] = useState(null);
-  const [sel, setSel] = useState({ runner: 'claude', model: '', effort: '' });
+  // 초기 runner는 빈 값 = '자동'. 'claude'를 박으면 카드 로드 실패 시 sel이 초기값에 남고, 이후 강도
+  // 변경 한 번이 saveRunner로 runner:'claude'를 PATCH해 **자동 크루가 클로드 고정으로 둔갑**한다
+  // (러너 중립성 감사 2026-07-30 — 아래 278행이 경고하던 바로 그 함정).
+  const [sel, setSel] = useState({ runner: '', model: '', effort: '' });
   // 타이틀바 슬롯 — 크루 컨트롤(세션 상태·카드·새 대화)을 topbar에 포털로 꽂는다
   const [slotEl, setSlotEl] = useState(null);
   useEffect(() => { setSlotEl(document.getElementById('argo-topbar-slot')); }, []);

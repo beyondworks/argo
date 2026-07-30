@@ -43,7 +43,7 @@ export async function crewStatusReply(wsId, cfg) {
   const def = agents.find((a) => a.slug === cfg.defaultCrew) ?? agents[0];
   return [
     pick(`**연결된 크루 ${agents.length}명**`, `**${agents.length} crew connected**`, lang),
-    ...agents.map((a) => `• ${a.name} (@${a.slug})${a.role ? ` — ${a.role}` : ''}${a.runner && a.runner !== 'claude' ? ` · ${a.runner}` : ''}${a.slug === def?.slug ? pick(' · 기본', ' · default', lang) : ''}`),
+    ...agents.map((a) => `• ${a.name} (@${a.slug})${a.role ? ` — ${a.role}` : ''}${a.runner ? ` · ${a.runner}` : ''}${a.slug === def?.slug ? pick(' · 기본', ' · default', lang) : ''}`),
     '',
     pick(
       '"@이름 지시"로 특정 크루를 부르고, "@이름1 @이름2 지시"처럼 여러 명을 적으면 첫 번째가 실행하고 나머지에게 맥락이 공유됩니다(cc).',

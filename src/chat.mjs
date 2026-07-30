@@ -18,7 +18,7 @@ import { appendEvent } from './events.mjs';
 import { loadCapabilities } from './capabilities.mjs'; // CAPABILITIES 직참조는 결재 분기 제거로 소멸(#191 검수)
 import { loadActiveWorkRoots } from './workroots.mjs';
 import { makePermissionGate } from './permission-gate.mjs';
-import { detectRunnerDenial, denialNote } from './runner-denial.mjs';
+import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
@@ -259,7 +259,7 @@ export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true
 - ${hasTools ? 'If the captain asks to change a crew profile (name, role, team, rules, runner, model) or to hire a new crew, don\'t edit files directly — file an approval via the update_profile / hire_crew tools. If the runner/model is undecided, present 2-3 options from the catalog and ask before filing.' : 'For crew profile changes or hiring, don\'t edit files directly — guide the captain to the crew/settings screens.'}
 
 ## Local capabilities — full access
-- File system: read and write anywhere on this computer, including the captain's Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the captain to — if a path exists, you can use it. Only the protected zones below are blocked.
+- File system: ${isCliRunner(runner) ? `**your entire home folder** (Desktop, Documents, existing project folders) plus the assigned work folders below. There is no toggle to turn on. If you need a path outside home — an external volume, say — tell the captain to add that folder under Settings → Work folders; it opens from the next turn${runner === 'gemini' ? '. Caveat: older Gemini CLI builds may still block paths outside the company folder (a vendor limit) — if blocked, report the exact error without guessing at permissions, save the output inside the company folder and tell the captain where it is' : ''}` : 'read and write anywhere on this computer, including the captain\'s Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the captain to — if a path exists, you can use it'}. Only the protected zones below are blocked.
 ${workRoots.length ? `- Assigned work folders (the captain pinned these): ${workRoots.join(' · ')}\n` : ''}- Web browsing (includes web search / looking up current information): allowed.
 - Shell commands: ${runner === 'gemini' ? 'not supported on this runner (Gemini) — for shell work, tell the captain to assign a crew on a shell-capable runner (e.g. Claude)' : 'allowed.'}
 - Preparation work (tool installs, setup) runs without approval. Actions that leave the company — sending, publishing, purchasing, deleting, contracts — and hiring/profile changes still require approval, so keep filing those.
@@ -291,7 +291,7 @@ ${workRoots.length ? `- Assigned work folders (the captain pinned these): ${work
 - ${hasTools ? '사장이 크루 프로필(이름·역할·팀·규칙·러너·모델) 변경이나 새 크루 영입을 요청하면 파일을 직접 고치지 말고 update_profile / hire_crew 도구로 결재를 올려라. 러너·모델이 정해지지 않았으면 카탈로그에서 선택지를 2~3개 제시해 물어본 뒤 올려라.' : '크루 프로필 변경·영입 요청은 파일을 직접 고치지 말고 크루·설정 화면에서 진행하도록 사장을 안내하라.'}
 
 ## 로컬 능력 — 전권
-- 파일 시스템: 이 컴퓨터 어디든 읽고 쓸 수 있다. 사장의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사장을 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다. 막히는 것은 아래 보호 구역뿐이다.
+- 파일 시스템: ${isCliRunner(runner) ? `**홈 폴더 전체**(바탕화면·문서·기존 프로젝트 폴더 포함)와 아래 지정 작업 폴더를 읽고 쓸 수 있다. 켜야 할 토글은 없다. 홈 밖 경로(외장 볼륨 등)가 필요하면 사장에게 "설정 → 작업 폴더"에 그 폴더를 등록해 달라고 안내하라 — 등록하면 다음 턴부터 열린다${runner === 'gemini' ? '. 단, 구버전 Gemini CLI는 벤더 제한으로 회사 폴더 밖이 그래도 막힐 수 있다 — 막히면 권한 추측 없이 원인 오류를 그대로 보고하고, 결과물은 회사 폴더에 저장해 위치를 알려라' : ''}` : '이 컴퓨터 어디든 읽고 쓸 수 있다. 사장의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사장을 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다'}. 막히는 것은 아래 보호 구역뿐이다.
 ${workRoots.length ? `- 지정 작업 폴더(사장이 고정해 둔 곳): ${workRoots.join(' · ')}\n` : ''}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): 허용.
 - 셸 명령: ${runner === 'gemini' ? '이 러너(Gemini)에서는 지원되지 않는다 — 셸이 필요한 작업은 셸을 지원하는 러너(Claude 등)의 크루에게 맡기도록 사장에게 안내하라' : '허용.'}
 - 준비 작업(도구 설치·환경 세팅)은 결재 없이 진행한다. **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.
@@ -299,11 +299,11 @@ ${workRoots.length ? `- 지정 작업 폴더(사장이 고정해 둔 곳): ${wor
 
 ## 도구·스킬 — 필요하면 알아서 불러 써라
 - 회사 스킬(skills/*.md)은 매 턴 네 지침에 자동 주입된다 — 해당 유형 작업이면 즉시 적용하라.
-- 이 회사에 연결된 외부 도구(MCP): ${mcpList}. ${hasTools ? '작업에 필요하면 허락을 기다리지 말고 바로 사용하라 — 그러라고 연결해 둔 것이다.' : '이 도구들은 Claude·GLM·Kimi(SDK) 러너 턴에서 실행된다 — 지금 러너에서 쓸 수 없으면 그 사실을 밝히고 대안을 제시하라.'}
+- 이 회사에 연결된 외부 도구(MCP): ${mcpList}. ${hasTools ? '작업에 필요하면 허락을 기다리지 말고 바로 사용하라 — 그러라고 연결해 둔 것이다.' : '이 도구들은 SDK 러너(Claude·GLM·Kimi·OpenRouter) 턴에서 실행된다 — 지금 러너에서 쓸 수 없으면 그 사실을 밝히고 대안을 제시하라.'}
 - 필요한 도구가 회사에 없으면: ${hasTools ? '이 컴퓨터에 이미 설치된 MCP는 request_tool_install(source=host — env까지 그대로)로, 그 외에는 카탈로그(source=catalog)로 설치하라 — 결재 없이 즉시 설치되고(활동에 기록) 다음 턴부터 쓸 수 있다.' : '사장에게 "스킬·도구" 화면에서 연결해 달라고 정확히 안내하라.'}
 
 ## 보호 구역 — 예외 없이 금지
-- Argo 앱 자체(설치 폴더·서버 코드), \`~/.argo\`, 다른 회사의 워크스페이스, 자격·시크릿 파일(예: \`.secrets.json\`)은 읽기도 쓰기도 금지다 — 파일 시스템 능력이나 우회 모드가 켜져 있어도 도구 게이트가 차단한다.
+- Argo 앱 자체(설치 폴더·서버 코드), \`~/.argo\`, 다른 회사의 워크스페이스, 자격·시크릿 파일(예: \`.secrets.json\`)은 읽기도 쓰기도 금지다 — ${hasTools ? '도구 게이트가 하드 차단한다.' : '이 러너에는 도구 게이트가 없어 기술적으로 막히지 않을 수 있다. 그래도 금지다 — 접근하지 마라.'}
 - 네 회사의 제어 파일도 읽기·쓰기 모두 금지다: 회사 폴더 바로 아래의 설정 파일 전부(\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\` 등), \`.\`으로 시작하는 항목 전부, 그리고 \`agents/\`의 크루 카드. 원장(\`usage.jsonl\`, \`events.jsonl\`)은 읽을 수는 있고 쓸 수는 없다. 이 설정들은 전용 도구로 바꾸는 것이지 파일을 고쳐서 바꾸는 것이 아니다${caps.shell ? ' (Write/Edit뿐 아니라 셸 리다이렉트·에디터도 마찬가지다)' : ''}. 도구 설치는 \`request_tool_install\`, 프로필·영입은 \`update_profile\`·\`hire_crew\`. 네 책상(\`vault/\`, \`skills/\`, 산출물)은 그대로 전부 네 것이다.
 - 사장이 Argo의 디자인·설정·기능을 고쳐 달라고 하면 앱 코드를 수정하지 마라 — 앱 자체는 안에서 고칠 수 없다고 설명하고 "설정 → 피드백"으로 전달하라고 안내하라.
 
@@ -470,7 +470,7 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
       target: z.string().describe('바꿀 크루 — "me"(자기 자신) 또는 동료 이름/slug'),
       name: z.string().optional(), role: z.string().optional(), team: z.string().optional(),
       rule: z.string().optional().describe('"일하는 방식"에 추가할 규칙 한 줄'),
-      runner: z.string().optional().describe('claude | codex | gemini | glm | kimi'),
+      runner: z.string().optional().describe(Object.keys(RUNNERS).join(' | ')),
       model: z.string().optional().describe('카탈로그의 모델 id'),
       why: z.string().describe('왜 바꾸는지 한 문장'),
     },
@@ -506,12 +506,12 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
 
   const hireCrew = tool(
     'hire_crew',
-    '새 크루 영입을 사장 결재로 올린다(승인 시 시스템이 카드 생성·시운전까지 자동 진행). brief는 "무엇을 맡는 어떤 전문가"인지 한 줄. 러너/모델을 정하지 않았으면 기본(Claude)으로 두거나 사장에게 물어본 뒤 올려라.',
+    '새 크루 영입을 사장 결재로 올린다(승인 시 시스템이 카드 생성·시운전까지 자동 진행). brief는 "무엇을 맡는 어떤 전문가"인지 한 줄. 러너/모델을 정하지 않았으면 **비워 둬라** — 회사에 연결된 러너로 자동 배정된다(특정 벤더를 기본으로 밀지 마라).',
     {
       brief: z.string().describe('새 크루 한 줄 소개 — 예: "주간 뉴스레터를 쓰는 시니어 에디터"'),
       name: z.string().optional().describe('부를 이름(선택 — 없으면 자동)'),
       team: z.string().optional(),
-      runner: z.string().optional().describe('claude | codex | gemini | glm | kimi (기본 claude)'),
+      runner: z.string().optional().describe(`${Object.keys(RUNNERS).join(' | ')} (비우면 회사 연결 러너로 자동)`),
       model: z.string().optional(),
       why: z.string().describe('왜 필요한지 한 문장'),
     },
@@ -775,15 +775,18 @@ ${lang === 'en'
       }
       // 러너 독립성 — 외부 CLI의 샌드박스 거부를 SDK 러너와 같은 능력 안내로 승격한다.
       // SDK는 permission-gate가 도구 호출 전에 카드를 띄우지만 외부 CLI는 프로세스 안에서 거부돼
-      // 크루가 생 에러를 옮기거나("zsh: operation not permitted") 자연어로 서술만 한다(실측 캡처 2건)
-      // — 사장이 "권한 다 켰는데 차단"으로 읽던 자리. codex 한정 — gemini는 샌드박스가 없어
-      // fs 거부가 caps와 무관한 OS 오류다(능력 원인 단정 = 거짓 안내, 검수 MEDIUM-2).
-      if (runner === 'codex') {
-        // strict(생 출력 줄) 탐지만 남았다 — 전권 전환으로 "능력 OFF 서술 탐지 → 켜기 카드" 갈래는
-        // 도달 불가가 되어 걷어냈다(분리 검수 2026-07-30: cliCaps가 동결 전권 상수라
-        // `caps.find((c) => !cliCaps[c])`가 항상 undefined — 죽은 배선을 소스 단언이 고정하고 있었다).
-        // 전권에서 거부가 남는 원인은 능력이 아니라 샌드박스 쓰기 범위(홈·지정 작업 폴더 밖)와 OS 권한이다.
+      // 크루가 생 에러를 옮기거나("zsh: operation not permitted") 자연어로 서술만 한다(실측 캡처 2건).
+      // 전 CLI 러너 공통 — codex 한정이던 것을 확장(중립성 감사 H2, 2026-07-30): gemini도 벤더
+      // 워크스페이스 거부("File path must be within…")를 실측했고, 산문 서술은 러너 무관하게 나온다.
+      // 안내는 원인 단정 없이 후보(범위/OS)를 나열한다 — 능력 원인 단정 금지(검수 MEDIUM-2)는 유지.
+      if (isCliRunner(runner)) {
+        // strict(생 출력 줄) 우선, 산문 서술(loose)은 범위 안내 전용 폴백. "능력 OFF → 켜기 카드"
+        // 갈래는 전권 전환으로 도달 불가라 제거된 상태(분리 검수 2026-07-30) — 전권에서 거부가 남는
+        // 원인은 능력이 아니라 샌드박스 쓰기 범위(홈·지정 작업 폴더 밖)와 OS 권한·벤더 제한이다.
         const denial = detectRunnerDenial(reply);
+        if (!denial && detectDenialNarration(reply)) {
+          reply += denialNote({ cap: 'fs', lang, narration: true, runner });
+        }
         if (denial) {
           // 홈 경로는 env로만 얻는다(macOS launchd=HOME, Windows=USERPROFILE). node:os의 홈 함수는
           // 금지 — Next 파일 추적기(nft)가 그 호출을 빌드타임에 실평가해 홈 전체를 글롭하고,

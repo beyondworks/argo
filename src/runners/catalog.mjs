@@ -204,7 +204,11 @@ export function pickRunner(st, want, exclude = null) {
   // "OAuth 연결됨 + 크루 영입은 러너 없음" 모순(실사용 신고 2026-07-20)을 만들었다 — 이제 두 러너 모두
   // 자동 조달(provisionCodexCli/provisionGeminiCli — 턴 시점 자가 설치)이 있어 설치 게이트가 없다.
   // 조달 실패(오프라인 등)는 턴이 원인 문구로 실패한다 — 거짓 차단보다 정직한 실패가 낫다.
-  const usable = (id) => !!st[id]?.company.connected && !st[id]?.company.invalid && id !== exclude;
+  // exclude — 문자열 하나 또는 목록. 목록 수용은 자가치유가 **죽은 러너를 누적 제외**하며 남은
+  // 러너를 차례로 시도하기 위해서다(1회 제한이던 시절: 4러너 연결 + 앞의 둘 고장 → 멀쩡한 나머지
+  // 둘은 시도조차 못 받고 영입이 통째로 실패. 라이브 재현 2026-07-30).
+  const skip = new Set(Array.isArray(exclude) ? exclude : exclude ? [exclude] : []);
+  const usable = (id) => !!st[id]?.company.connected && !st[id]?.company.invalid && !skip.has(id);
   if (want && usable(want)) return { runner: want, fellBack: false, available: true };
   const ids = Object.keys(RUNNER_AUTH);
   const next = ids.find(usable);

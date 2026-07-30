@@ -19,7 +19,11 @@
 // 러너별 집행(정직 표기 — UI 문구와 일치 유지):
 //  - claude/glm/kimi(SDK): permission-gate가 지정 폴더를 책상으로 판정 + SDK additionalDirectories.
 //  - codex: writable_roots에 추가(프로세스 단위 샌드박스 — fs 능력의 기존 한계와 동일).
-//  - gemini/antigravity: 경로 샌드박스가 없어 프롬프트 안내(commonDirectives)로만 전달된다.
+//  - gemini: `--include-directories`에 추가. (2026-07-30 정정 — 이전 주석은 "경로 샌드박스가 없어
+//    안내로만 전달"이라 적었는데 **정반대였다**: gemini-cli는 workspaceContext 밖 읽기·쓰기를 벤더
+//    도구가 거부한다. 인자를 안 넘기면 지정 폴더는커녕 홈조차 막혀 크루가 "허용된 작업 디렉토리
+//    외부"라며 거절한다 — 라이브 재현 2026-07-30.)
+//  - antigravity: `--add-dir`에 추가(agy 플래그 — 같은 이유·같은 계산).
 import { stat, realpath } from 'node:fs/promises';
 import { isAbsolute, join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
@@ -30,6 +34,13 @@ import { withLock } from './mutex.mjs';
 import { fold, insideFold } from './pathcase.mjs';
 
 export const MAX_WORK_ROOTS = 8; // 폴더 수 상한 — 프롬프트·config 비대 방지(필요가 실증되면 올린다)
+
+/** 크루에게 열어줄 파일 반경(순수) — 홈(fs 능력) + 지정 작업 폴더. **세 외부 CLI가 공유**한다:
+    codex writable_roots · gemini --include-directories · antigravity --add-dir.
+    러너 중립성(유건 원칙 2026-07-30)의 코드 단일 진실 — 한 러너만 반경이 좁으면 같은 지시가 러너에
+    따라 되고 안 되고가 갈린다(실사고: gemini 크루가 홈 파일 쓰기를 거절, 라이브 재현 2026-07-30).
+    (export: 회귀 테스트용 — 순수 함수) */
+export const openRoots = (caps, workRoots = []) => [...(caps?.fs ? [homedir()] : []), ...workRoots];
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..'); // permission-gate와 같은 계산
 
 const err = (code, msg) => Object.assign(new Error(msg), { code });

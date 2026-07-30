@@ -5,6 +5,7 @@ import { copyFile, mkdir, mkdtemp, rename, rm, stat, symlink, writeFile } from '
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exec, exists } from './shared.mjs';
+import { openRoots } from '../workroots.mjs'; // 파일 반경 단일 진실 — gemini·antigravity와 같은 계산(러너 중립성)
 
 /** Argo 전용 CODEX_HOME — 사용자 전역 config(커스텀 에이전트·모델 핀)와 격리하고 auth만 빌린다.
     (전역 config의 spawn_agent 커스텀 스키마가 신형 모델의 예약 도구와 충돌하는 사례 확인) */
@@ -112,7 +113,7 @@ export const codexSandboxArgs = (caps, workRoots = []) => {
   // 검증돼 있다(validateWorkRoot).
   // 경로는 TOML 문자열로 직렬화한다 — Windows 홈(C:\Users\...)의 역슬래시가 이스케이프로 해석돼
   // 값이 깨지던 실사용 신고(2026-07-25). JSON.stringify가 TOML 기본 문자열 규칙과 호환(따옴표·역슬래시 이스케이프).
-  const roots = [...(caps?.fs ? [homedir()] : []), ...workRoots];
+  const roots = openRoots(caps, workRoots);
   return [
     ...(roots.length ? ['-c', `sandbox_workspace_write.writable_roots=[${roots.map((r) => JSON.stringify(r)).join(',')}]`] : []),
     ...(caps?.browser ? ['-c', 'sandbox_workspace_write.network_access=true'] : []),
@@ -172,7 +173,7 @@ export async function recoverCodexAuth(handle) {
 export async function writeCodexTurnConfig(home, caps, workRoots = []) {
   const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)·지정 작업 폴더에서 재생성됩니다.'];
   // fs=홈(앱 본체는 밖) + 사장이 지정한 외부 작업 폴더(fs와 독립 — codexSandboxArgs와 동일 규칙)
-  const roots = [...(caps?.fs ? [homedir()] : []), ...workRoots];
+  const roots = openRoots(caps, workRoots);
   if (roots.length || caps?.browser) {
     lines.push('[sandbox_workspace_write]');
     // JSON.stringify — Windows 역슬래시 이스케이프(위 codexSandboxArgs와 동일 규칙, 신고 2026-07-25)

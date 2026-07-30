@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { detectRunnerDenial, denialNote } from '../src/runner-denial.mjs';
+import { detectRunnerDenial, detectDenialNarration, denialNote } from '../src/runner-denial.mjs';
 
 test('실측: codex 샌드박스 생 에러를 fs 거부로 인식한다', () => {
   const real = 'zsh:1: operation not permitted: /Users/yoogeon/argo-captest-off.txt';
@@ -112,18 +112,45 @@ test('영어 모드 안내가 전부 영어다', () => {
 
 // ── 배선 트립와이어 — 부품이 아니라 배선의 판단을 잠근다. chat() 전체를 단위로 태울 수 없어
 // (러너·워크스페이스 필요) 소스 스캔으로 잠근다. 선례: test/no-hardcoded-runner-label.test.mjs
-test('배선: chat.mjs 거부 블록 = strict 탐지 → denialNote, codex 한정 + 죽은 배선 재유입 금지', async () => {
+test('배선: chat.mjs 거부 블록 = 전 CLI 러너, strict 우선 + 서술형은 범위 안내 전용', async () => {
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(src, /detectRunnerDenial\(reply\)/, 'strict 감지가 러너 답변에 걸려 있어야 한다');
   const block = src.split('detectRunnerDenial(reply)')[1]?.slice(0, 1800) ?? '';
   assert.match(block, /denialNote\(/, '안내문이 답변에 덧붙어야 한다');
-  assert.match(src, /runner === 'codex'[\s\S]{0,600}detectRunnerDenial/, 'codex 한정이어야 한다(gemini는 샌드박스 없음)');
-  // 죽은 배선 재유입 금지(분리 검수 2026-07-30) — 전권에서 능력 OFF 갈래는 도달 불가다.
-  // 이 단언들은 실제로 되돌려(임포트 복원) 빨간불을 확인했다.
-  assert.doesNotMatch(src, /detectDeniedNarration/, '서술형 탐지 배선은 걷어냈다 — 되살리려면 전권 모델과의 정합부터 설계할 것');
+  // 중립성 감사 H2(2026-07-30): codex 한정 → 전 CLI 러너. gemini 벤더 워크스페이스 거부를 실측했고
+  // 산문 서술은 러너 무관하게 나온다 — SDK만 구조화 안내를 받는 것은 안내 품질 편파다.
+  assert.match(src, /isCliRunner\(runner\)[\s\S]{0,900}detectRunnerDenial/, '전 CLI 러너에 걸려야 한다');
+  assert.match(src, /detectDenialNarration\(reply\)[\s\S]{0,200}narration: true/, '서술형 탐지는 범위 안내 전용(narration)으로 배선돼야 한다');
+  // 전권 모델 불변식 — 능력 켜기 카드 재유입 금지(서술형의 소비처는 안내문뿐이다).
   assert.doesNotMatch(src, /suggestCapability/, '능력 켜기 카드는 전권 전환으로 제거됐다');
   // Windows CI 트립와이어(v0.1.30 실측): chat.mjs에서 node:os 홈 함수를 부르면 Next 파일
   // 추적기(nft)가 빌드타임 실평가로 홈 전체를 글롭 → CI 러너 홈의 보호 항목에서 next build가
   // 죽는다. 홈은 env(HOME/USERPROFILE)로만 얻는다 — 이분법 5런(win-debug)으로 확정한 불변식.
   assert.doesNotMatch(src, /homedir/, 'chat.mjs에 homedir 금지 — nft 홈 글롭으로 Windows 빌드가 깨진다');
+});
+
+// 서술형(loose) — strict가 못 잡는 형태만 담당한다. 실측 원천: gemini 벤더 줄·크루 산문(2026-07-30).
+test('detectDenialNarration: 실측 서술형 4형 + gemini 벤더 줄을 잡는다', () => {
+  assert.equal(detectDenialNarration('Error executing tool write_file: File path must be within one of the workspace directories: /tmp/x'), true);
+  assert.equal(detectDenialNarration('지시하신 경로는 허용된 작업 디렉토리 외부이므로 파일을 생성할 수 없습니다.'), true);
+  assert.equal(detectDenialNarration('그 폴더에는 쓰기 권한이 없어 저장하지 못했습니다.'), true);
+  assert.equal(detectDenialNarration('샌드박스 밖이라 저장할 수 없었습니다.'), true);
+  assert.equal(detectDenialNarration("I could not write the file: permission denied by the sandbox."), true);
+  assert.equal(detectDenialNarration('The target is outside the allowed directories.'), true);
+});
+
+test('detectDenialNarration: 정상 보고·코드펜스 예시는 잡지 않는다', () => {
+  assert.equal(detectDenialNarration('보고서를 바탕화면에 저장했습니다. 내용은 다음과 같습니다.'), false);
+  assert.equal(detectDenialNarration('루틴을 등록했고 매일 9시에 실행됩니다.'), false);
+  assert.equal(detectDenialNarration('권한 구조를 설명하면: 게이트가 요청을 검사합니다.'), false);
+  assert.equal(detectDenialNarration('예시 에러입니다:\n```\nFile path must be within one of the workspace directories: /x\n```\n실제로는 성공했습니다.'), false);
+});
+
+test('denialNote(narration): 범위·OS 두 갈래 안내 + gemini 캐비앳', () => {
+  const ko = denialNote({ cap: 'fs', lang: 'ko', narration: true, runner: 'gemini' });
+  assert.match(ko, /작업 폴더/); assert.match(ko, /개인정보 보호 및 보안/); assert.match(ko, /구버전 Gemini CLI/);
+  const co = denialNote({ cap: 'fs', lang: 'ko', narration: true, runner: 'codex' });
+  assert.doesNotMatch(co, /Gemini/);
+  const en = denialNote({ cap: 'fs', lang: 'en', narration: true, runner: 'gemini' });
+  assert.match(en, /Work folders/); assert.match(en, /older Gemini CLI/);
 });

@@ -18,7 +18,9 @@ test('시간 초과(killed): 표면 오류 불문 정직 번역 + CLI 크루 인
   assert.ok(e.timedOut);
   assert.match(e.message, /시간 초과.*5분/);
   assert.match(e.message, /장시간 작업 도구가 없으니/, 'CLI 턴엔 그 도구가 없다는 사실 명시(검수 H1)');
-  assert.match(e.message, /Claude 러너 크루에게/, '실행 가능한 대안 안내');
+  // 러너 중립성(2026-07-30) — 대안으로 특정 벤더만 지목하지 않는다: 장시간 작업 도구는 SDK 러너
+  // 공통(Claude·GLM·Kimi·OpenRouter)이므로 안내도 그 집합을 가리켜야 한다.
+  assert.match(e.message, /SDK 러너\(Claude·GLM·Kimi·OpenRouter\) 크루에게/, '실행 가능한 대안 안내(러너 중립)');
   assert.match(e.message, /Timed out/, '영어 병기');
 });
 
