@@ -1014,7 +1014,9 @@ function SyncCard({ ws }) {
           <span>{sync.leader ? t('settings.sync.leader') : t('settings.sync.follower')}</span>
           <span>
             {t('settings.sync.last')}: {sync.lastTs ? new Date(sync.lastTs).toLocaleTimeString(lang === 'ko' ? 'ko-KR' : 'en-US') : '—'}
-            {mine ? ` · ↑${mine.pushed} ↓${mine.pulled}` : ''}
+            {/* 카운터는 **있을 때만** 찍는다 — 이번 사이클에 스킵된 회사(free-plan·foreign-owner)의
+                항목은 { ts, skipped }뿐이라 mine 존재만 보면 "↑undefined ↓undefined"가 그대로 노출된다. */}
+            {mine?.pushed != null ? ` · ↑${mine.pushed} ↓${mine.pulled}` : ''}
           </span>
           {sync.paywalled ? (
             // "고장"(lastError)과 "페이월"은 다른 상태 — 여기선 빨간 에러 줄 대신 안내+업그레이드를 보인다.
