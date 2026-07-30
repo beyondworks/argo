@@ -105,6 +105,10 @@ export default function Activity({ params }) {
       const op = { hire: t('activity.crewOp.hire'), fire: t('activity.crewOp.fire'), update: t('activity.crewOp.update'), team: t('activity.crewOp.team') }[e.op] ?? e.op;
       return { who: e.name || nameOf(e.slug), avatar: e.name || nameOf(e.slug), desc: op, chip: t('activity.crew'), href: e.slug ? `/c/${ws}/crew/${e.slug}` : null, linkLabel: t('activity.card') };
     }
+    if (e.type === 'mcp') {
+      // MCP 접속 실패(chat init 실측 — 검수 M2: 이전엔 기본 행으로 떨어져 '? / mcp'만 보였다)
+      return { who: nameOf(e.slug), avatar: nameOf(e.slug), desc: t('activity.mcpFailed', { server: e.server ?? '?', status: e.status ?? '?' }), chip: 'MCP', href: `/c/${ws}/market`, linkLabel: t('activity.settings') };
+    }
     if (e.type === 'gateway') {
       return { who: e.kind === 'telegram' ? t('activity.telegram') : t('activity.slack'), avatar: t('activity.connected').slice(0, 1), desc: t('activity.gatewayPaired'), chip: t('activity.connected'), href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
     }

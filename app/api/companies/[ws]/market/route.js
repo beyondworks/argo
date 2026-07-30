@@ -3,6 +3,7 @@ import {
   listInstalledSkills, installSkill, removeSkill, saveCustomSkill,
   loadMcp, installMcp, addCustomMcp, removeMcp,
   listHostMcp, importHostMcp, arbitraryMcpBlocked, safeMcpServersForRuntime,
+  planSkillInjection,
 } from '../../../../../src/market.mjs';
 import {
   searchRemoteSkills, installRemoteSkill,
@@ -54,7 +55,13 @@ export async function GET(req, { params }) {
   return Response.json({
     skillCatalog: skillCatalogFor(lang).map(({ md, ...rest }) => ({ ...rest, preview: md.slice(0, 200) })),
     mcpCatalog: mcpCatalogFor(lang),
-    installedSkills: skills,
+    // 주입 상태 — loadSkills와 같은 규칙(planSkillInjection)으로 계산해 "설치됨인데 크루는
+    // 모른다"(예산 초과 무표기)를 화면에서 미리 알린다(실사용 제보 2026-07-31).
+    installedSkills: (() => {
+      const { ref } = planSkillInjection(skills.map((s) => ({ id: s.id, size: s.size })));
+      const refSet = new Set(ref);
+      return skills.map((s) => ({ ...s, injected: refSet.has(s.id) ? 'ref' : 'full' }));
+    })(),
     // env(토큰 값)는 응답에서 제거 — 화면은 command/args만 쓴다(로그·프록시·캐시 유출 방지, 검수 MEDIUM).
     installedMcp: Object.fromEntries(Object.entries(mcp.servers ?? {}).map(([n, d]) => {
       const { env, headers, ...safe } = d ?? {};

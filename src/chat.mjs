@@ -23,22 +23,52 @@ import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './t
 import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
+import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
     allow = 크루별 사용 범위(parseScopeList 결과): null=전체(기본), []=없음, [이름]=지정만.
     설치는 회사 공용(모든 크루 기본 사용), 축소는 크루 카드 `skills:` 필드로(유건 지시 2026-07-19).
     (export: 회귀 테스트용) */
-export async function loadSkills(wsId, cap = 6000, lang = 'ko', allow = null) {
+/** SDK init 메시지에서 접속 실패 MCP 서버만(순수) — crew(내장)는 제외, 상태 없는 항목은 판단 보류.
+    (export: 회귀 테스트용 — 검수 M1: 인라인 분기는 변이가 침묵으로 통과했다) */
+export function mcpFailures(initMsg) {
+  return (initMsg?.mcp_servers ?? []).filter((sv) => sv?.status && sv.status !== 'connected' && sv.name !== 'crew');
+}
+
+export async function loadSkills(wsId, cap = SKILL_INJECT_CAP, lang = 'ko', allow = null) {
   const dir = paths(wsId).skills;
   let names = [];
   try { names = (await readdir(dir)).filter((f) => f.endsWith('.md')).sort(); } catch { return ''; }
   if (allow) names = names.filter((n) => allow.includes(n.replace(/\.md$/, '')));
-  let out = '';
+  const texts = new Map();
+  // 항목별 관용(검수 M3) — 이전 break 구현은 뒤쪽 손상 항목에 도달조차 안 했는데, 전량 선행
+  // 읽기로 바꾸면서 디렉터리(EISDIR)·권한(EACCES) 하나가 턴 전체를 죽이는 창이 열렸다. 건너뛴다.
   for (const n of names) {
-    const text = await readFile(join(dir, n), 'utf8');
-    if (out.length + text.length > cap) break;
-    out += `\n### ${lang === 'en' ? 'Skill' : '스킬'}: ${n.replace(/\.md$/, '')}\n${text.trim()}\n`;
+    const text = await readFile(join(dir, n), 'utf8').catch(() => null);
+    if (text !== null) texts.set(n, text);
+  }
+  names = names.filter((n) => texts.has(n));
+  const { full, ref } = planSkillInjection(names.map((n) => ({ id: n, size: texts.get(n).length })), cap);
+  let out = '';
+  for (const n of full) {
+    out += `\n### ${lang === 'en' ? 'Skill' : '스킬'}: ${n.replace(/\.md$/, '')}\n${texts.get(n).trim()}\n`;
+  }
+  // 예산 초과분은 **참조로라도 반드시 알린다** — 존재를 모르면 크루가 "그런 스킬 없다"고 답한다.
+  // skills/는 크루 책상이라 게이트가 열려 있어 Read로 전문을 열 수 있다(그 계약을 여기서 준다).
+  // ref 자체 상한(검수 M4) — break 제거로 총량 상한이 사라져, 스킬 수백 개면 참조 라인만으로
+  // 프롬프트가 비대해진다(실측 501개=46KB). 초과분은 개수만 알린다.
+  const REF_CAP = 20;
+  for (const n of ref.slice(0, REF_CAP)) {
+    const id = n.replace(/\.md$/, '');
+    out += lang === 'en'
+      ? `\n### Skill: ${id}\n(Body omitted — injection budget exceeded. Read skills/${n} for the full text and apply it when relevant.)\n`
+      : `\n### 스킬: ${id}\n(본문 생략 — 주입 예산 초과. 해당 작업이면 skills/${n} 을 Read로 열어 전문을 적용하라.)\n`;
+  }
+  if (ref.length > REF_CAP) {
+    out += lang === 'en'
+      ? `\n(+${ref.length - REF_CAP} more skills installed — list files under skills/ if needed.)\n`
+      : `\n(그 외 설치 스킬 ${ref.length - REF_CAP}개 — 필요하면 skills/ 목록을 확인하라.)\n`;
   }
   return out;
 }
@@ -656,7 +686,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 설치는 회사 공용이되 크루 단위로 좁힐 수 있다(유건 지시 2026-07-19 — 크루 카드에서 선택·편집).
   const skillScope = parseScopeList(meta.skills);
   const mcpScope = parseScopeList(meta.mcp);
-  const skills = await loadSkills(wsId, 6000, lang, skillScope);
+  const skills = await loadSkills(wsId, SKILL_INJECT_CAP, lang, skillScope);
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
@@ -1030,6 +1060,13 @@ ${lang === 'en'
   for await (const msg of q) {
     if (msg.type === 'system' && msg.subtype === 'init') {
       sid = msg.session_id;
+      // MCP 접속 실측 — 설정값(connectedMcp)만 믿고 "연결된 도구: X"라 단언하던 것 정직화
+      // (제보 2026-07-31). 판정은 순수 함수(mcpFailures) — 분기 자체를 단위 테스트가 잠근다
+      // (검수 M1: 인라인 분기는 변이해도 게이트가 침묵했다).
+      for (const sv of mcpFailures(msg)) {
+        console.warn(`[argo] MCP 접속 실패(${wsId}): ${sv.name} — ${sv.status}`);
+        appendEvent(wsId, { type: 'mcp', server: sv.name, status: sv.status, ok: false, slug: agentSlug }).catch(() => {});
+      }
       await setTurnStatus(wsId, agentSlug, 'memory');
     }
     if (msg.type === 'assistant') {

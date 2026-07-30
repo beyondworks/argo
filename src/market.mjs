@@ -21,7 +21,7 @@ export const SKILL_CATALOG = [
 2. WebFetch — 유력 소스 원문을 직접 연다. 요약 결과만 믿지 않는다
 3. 403·차단·로그인벽을 만나면 → 같은 URL 앞에 \`https://r.jina.ai/\`를 붙여 재시도 (리더 프록시)
 4. 그래도 막히면 → \`curl -sL -A "Mozilla/5.0 (iPhone)"\` 모바일 UA로 재시도
-5. 전부 막히면 → 어떤 경로를 시도했는지 명시하고, 사장에게 마켓의 브라우저 MCP(playwright) 설치를 제안한다
+5. 전부 막히면 → 어떤 경로를 시도했는지 명시하고, 사장에게 마켓의 브라우저 MCP(puppeteer) 설치를 제안한다
 
 ## 검증 규칙
 - 수치·날짜·고유명사는 서로 다른 소스 2개 이상에서 교차 확인한다. 불일치하면 둘 다 표기
@@ -82,7 +82,7 @@ When asked to research the web, never end with "I couldn't find it." Climb this 
 2. WebFetch — open the primary sources directly. Don't trust summaries alone
 3. On 403 / blocks / login walls → retry the same URL prefixed with \`https://r.jina.ai/\` (reader proxy)
 4. Still blocked → retry with \`curl -sL -A "Mozilla/5.0 (iPhone)"\` (mobile UA)
-5. If everything is blocked → state which routes you tried, then suggest installing the browser MCP (playwright) from the market
+5. If everything is blocked → state which routes you tried, then suggest installing the browser MCP (puppeteer) from the market
 
 ## Verification rules
 - Cross-check numbers, dates, and proper nouns against 2+ independent sources. If they disagree, show both
@@ -181,6 +181,23 @@ export function mcpCatalogFor(lang = 'ko') {
 }
 
 /* ─── 스킬 설치 상태 ─── */
+/** 스킬 주입 계획(순수) — full=본문 주입, ref=예산 초과로 참조만. 주입(loadSkills)과 마켓
+    표기(market GET)가 **같은 규칙**을 공유한다 — 갈라지면 "설치됨인데 크루는 모른다"가 재발.
+    (실사용 제보 2026-07-31의 최유력 원인: 이전 구현은 예산 초과 시 break — 큰 스킬 하나가
+    이름순 앞에 오면 뒤의 모든 스킬이 통째로 미주입됐고, 화면은 '설치됨'이라 사장은 알 길이
+    없었다. 원격 스킬은 200KB까지 설치되는데 예산은 6000자라 즉시 성립하던 조합.) */
+export const SKILL_INJECT_CAP = 6000; // 주입·표기 공용 예산 — 한쪽만 바꾸면 배지가 거짓이 된다(검수 L2)
+export function planSkillInjection(entries, cap = SKILL_INJECT_CAP) {
+  let used = 0;
+  const full = [];
+  const ref = [];
+  for (const e of entries) {
+    if (used + e.size <= cap) { full.push(e.id); used += e.size; }
+    else ref.push(e.id); // break가 아니라 skip — 작은 스킬은 뒤에 있어도 산다
+  }
+  return { full, ref };
+}
+
 export async function listInstalledSkills(wsId) {
   const dir = paths(wsId).skills;
   let names = [];
