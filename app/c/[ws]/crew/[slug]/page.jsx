@@ -1363,15 +1363,25 @@ const parseScopeStr = (v) => {
 };
 
 /** 능력 범위 그룹 — 칩 토글(켜짐=사용). 설치 목록이 비면 렌더하지 않는다. */
-function ScopeGroup({ label, items, value, onToggle, t }) {
-  if (!items.length) return null;
+function ScopeGroup({ label, items, value, onToggle, t, onReset }) {
   const cur = parseScopeStr(value);
+  // 설치 목록이 비어도 스코프가 남아 있으면(none·옛 csv) 복구 수단은 보여야 한다 — 이전엔 여기서
+  // 통째로 미렌더라 'none' 고착을 화면에서 풀 방법이 없었다(탐색 A3-3, 제보 2026-07-31).
+  if (!items.length) {
+    if (cur === null) return null;
+    return (
+      <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
+        <span className="microlabel">{label} — {t('chat.card.scopeStale')}</span>
+        <button type="button" className="chip" onClick={onReset}>{t('chat.card.scopeReset')}</button>
+      </div>
+    );
+  }
   const ids = items.map((i) => i.id);
   const on = new Set(cur ?? ids);
   return (
     <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
       <span className="microlabel">
-        {label} · {on.size}/{items.length}{cur === null ? ` — ${t('chat.card.scopeAll')}` : on.size === 0 ? ` — ${t('chat.card.scopeNone')}` : ''}
+        {label} · {on.size}/{items.length}{cur === null ? ` — ${t('chat.card.scopeAll')}` : on.size === 0 ? ` — ${t('chat.card.scopeNone')}` : ` — ${t('chat.card.scopePartialHint')}`}
       </span>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
         {items.map((it) => {
@@ -1560,9 +1570,13 @@ function CardPanel({ ws, slug, agentName, runners, sel, onRunnerChange, onClose,
             {/* 능력 범위 — 설치는 회사 공용(모든 크루 기본), 크루별로 좁힐 수 있다(유건 지시 2026-07-19).
                 칩 토글 = 즉시 저장(엔진 셀렉터와 동일 관례). 전부 켬=''(전체 — 새 설치 자동 포함), 전부 끔='none'. */}
             <ScopeGroup label={t('chat.card.scopeSkills')} items={profile.skills.map((s) => ({ id: s.id, title: s.title }))}
-              value={scope.skills} onToggle={(id, ids) => toggleScope('skills', ids, id)} t={t} />
+              value={scope.skills} onToggle={(id, ids) => toggleScope('skills', ids, id)} t={t} onReset={() => saveScope('skills', '')} />
             <ScopeGroup label={t('chat.card.scopeMcp')} items={profile.mcp.map((n) => ({ id: n, title: n }))}
-              value={scope.mcp} onToggle={(id, ids) => toggleScope('mcp', ids, id)} t={t} />
+              value={scope.mcp} onToggle={(id, ids) => toggleScope('mcp', ids, id)} t={t} onReset={() => saveScope('mcp', '')} />
+            {/* 이 크루의 러너가 CLI면 MCP가 안 붙는다 — 설치·스코프 화면에서 미리 알린다(제보 2026-07-31) */}
+            {profile.mcp.length > 0 && (runners ?? []).some((r) => r.id === sel.runner && r.cli) && (
+              <span className="microlabel" style={{ color: 'var(--warn, #b5893a)', lineHeight: 1.5 }}>{t('chat.card.mcpCliWarn')}</span>
+            )}
           </div>
           {/* 엔진 — 러너·모델을 카드에서 바로 선택. 채팅 셀렉터와 같은 상태(즉시 저장). */}
           <div style={{ display: 'grid', gap: 7 }}>

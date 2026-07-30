@@ -377,6 +377,8 @@ export default function Market({ params }) {
     setWorkshop({ name: '', md: '' });
   }
 
+  // 주입 상태(서버 계산 — loadSkills와 같은 규칙): 'ref' = 예산 초과로 본문 미주입(참조만).
+  const skillInjection = new Map((data?.installedSkills ?? []).map((s) => [s.id, s.injected ?? 'full']));
   const installedSkillIds = new Set((data?.installedSkills ?? []).map((s) => s.id));
   const installedMcp = data?.installedMcp ?? {};
   // 이 환경에서 로컬 spawn 커스텀·npm MCP를 쓸 수 있나(데스크톱=예, 서비스키 웹=아니오). 카탈로그·HTTP는 무관하게 항상 가능.
@@ -424,6 +426,9 @@ export default function Market({ params }) {
                   </div>
                   <span style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.55 }}>{s.desc}</span>
                   <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>skills/{s.id}.md</span>
+                  {on && skillInjection.get(s.id) === 'ref' && (
+                    <span className="pill" style={{ color: 'var(--warn, #b5893a)' }} title={t('market.skillRefHint')}>{t('market.skillRefBadge')}</span>
+                  )}
                 </div>
               );
             })}
@@ -449,6 +454,9 @@ export default function Market({ params }) {
             {data.installedSkills.filter((s) => !data.skillCatalog.find((c) => c.id === s.id)).map((s) => (
               <div key={s.id} className="row" style={{ borderRadius: 10 }}>
                 <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600 }}>{s.title}</span>
+                {s.injected === 'ref' && (
+                  <span className="pill" style={{ color: 'var(--warn, #b5893a)' }} title={t('market.skillRefHint')}>{t('market.skillRefBadge')}</span>
+                )}
                 <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>skills/{s.id}.md</span>
                 <button className="btn sm btn-icon" style={{ width: 26 }} onClick={() => remove('skill', s.id)}><Icon name="trash" size={12} /></button>
               </div>
@@ -481,6 +489,11 @@ export default function Market({ params }) {
           <span className="card-title"><Icon name="market" size={14} />{t('market.mcpSectionTitle')}</span>
           <span className="rule" />
           <span className="pill"><span className="dot" />{data ? t('market.connectedCount', { n: Object.keys(installedMcp).length }) : '—'}</span>
+        </div>
+        {/* 러너 조건 — 설치 시점에 정직하게(실사용 제보 2026-07-31: 크루가 턴에서 "이 러너에선
+            못 쓴다"고 답해서야 알게 되던 것). 러너 무관 지원(코어 프록시)이 붙으면 이 배너를 제거한다. */}
+        <div className="microlabel" style={{ margin: '0 18px 10px', padding: '8px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border-soft)', color: 'var(--fg-2)', lineHeight: 1.55 }}>
+          {t('market.mcpRunnerNote')}
         </div>
         {data === null ? (
           <div style={{ padding: '0 18px 18px' }}><Skeleton h={90} /></div>
