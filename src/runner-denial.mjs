@@ -63,6 +63,36 @@ function unfencedLines(text) {
 /** 경로 꼬리 정리 — 문장 끝 마침표·따옴표가 경로에 붙어 들어오는 것 방지(검수 LOW-3). */
 const cleanPath = (p) => String(p ?? '').replace(/[.,;:'"`)]+$/, '');
 
+// 서술형(산문) fs 거부 — 실측 캡처 ②의 형태("크루형 지시에선 생 에러가 아니라 자연어로 서술된다").
+// strict가 못 잡는 가장 흔한 표현을 되살리되, 소비처는 **범위 안내 전용**(켜기 카드 아님 — 전권 모델):
+// 오탐 비용이 "작업 폴더 등록 제안" 한 줄이라 낮다(분리 검수 H2 처방). 코드펜스 밖 줄만 본다.
+// 첫 줄은 gemini 벤더 도구의 생 에러 — workspace 밖 접근은 항상 이 문구다(라이브 재현 2026-07-30).
+const FS_NARRATION = [
+  /File path must be within one of the workspace directories/i,
+  /허용된 작업 (디렉토리|폴더|디렉터리) (외부|밖)/,
+  // 조건 어미 배제(검수 MEDIUM-2) — "권한이 없으면/없다면 이런 오류가 납니다"는 설명이지 거부가 아니다.
+  /(쓰기|저장|생성|수정)[^\n]{0,30}(권한이 없(?!으면|다면|을 경우|는 경우)|거부됐|거부되|막혀|차단돼|차단되)/,
+  /샌드박스 (밖|외부)[^\n]{0,20}(써|쓸 수 없|저장|만들)/,
+  /(cannot|can'?t|unable to|could not) (write|save|create)[^\n]{0,40}(permission|sandbox|read-only|denied|outside)/i,
+  // 거부 동사 선행 요구(검수 MEDIUM-2) — 위치 서술("the gate blocks writes outside …")만으로는 안 잡는다.
+  /(cannot|can'?t|could not|unable to|failed to|denied|blocked|refus\w+)[^\n]{0,60}outside (the )?(sandbox|workspace|allowed director|permitted director)/i,
+];
+
+// 보호 구역 담화 — 이 거절은 **설계상 의도**다(제어 파일·자격·앱 폴더). 여기에 "작업 폴더 등록" 안내를
+// 붙이면 등록이 100% 거부되는(validateWorkRoot protected) 실패 보장 안내가 되고, 사장을 자격 반경을
+// 넓히는 방향으로 유인한다(검수 MEDIUM-1). 신규 프롬프트가 크루에게 직접 시키는 발화이기도 하다.
+const PROTECTED_TALK = /보호 구역|protected zone|제어 파일|control file|\.secrets\.json|capabilities\.json|[~/]\.argo/i;
+
+/** 서술형 fs 거부 탐지(순수, loose) — boolean. strict(detectRunnerDenial)가 null일 때만 쓰라.
+    보호 구역 담화가 함께 있으면 false — 그 거절은 결함이 아니라 계약이다. */
+export function detectDenialNarration(text) {
+  const s = String(text ?? '');
+  if (!s) return false;
+  const lines = unfencedLines(s);
+  if (lines.some((line) => PROTECTED_TALK.test(line))) return false;
+  return lines.some((line) => FS_NARRATION.some((re) => re.test(line)));
+}
+
 /** 생 출력 거부 탐지(순수, strict) — { cap, path } 또는 null. 어느 능력 상태에서든 신뢰한다.
     fs를 먼저 본다: 네트워크 문구가 더 일반적이라 오탐 여지가 크다. */
 export function detectRunnerDenial(text) {
@@ -87,9 +117,23 @@ export function detectRunnerDenial(text) {
 /** 거부 안내문(순수) — 전권 모델: 거부의 원인은 능력 토글이 아니라 codex 샌드박스 쓰기 범위
     (홈·지정 작업 폴더 밖)나 OS 권한·네트워크다. 원인을 단정하지 않고 후보를 나열한다(검수 MEDIUM-3).
     (능력 OFF·켜기 카드 갈래는 전권 전환으로 도달 불가가 되어 제거 — 분리 검수 2026-07-30) */
-export function denialNote({ cap, path = '', lang = 'ko', outsideHome = false }) {
+export function denialNote({ cap, path = '', lang = 'ko', outsideHome = false, narration = false, runner = '' }) {
   const en = lang === 'en';
   const where = path ? (en ? ` (target: ${path})` : ` (대상: ${path})`) : '';
+
+  // 서술형 탐지(loose) — 경로·원인을 모른 채 "막혔다"만 아는 상태. 단정하지 않고 두 갈래(범위/OS)를
+  // 다 안내한다. gemini는 벤더 캐비앳 추가: 구버전 CLI(0.21.x, 개인 OAuth가 도는 마지막 라인)는
+  // 작업 폴더 확장(includeDirectories)을 무시함을 실측(2026-07-30) — 등록해도 안 열릴 수 있다.
+  if (narration && cap === 'fs') {
+    const gemCaveat = runner === 'gemini'
+      ? (en
+          ? ' Note: on older Gemini CLI builds the work-folder expansion is ignored by the vendor — if it stays blocked after registering, have the crew save into the company folder (or assign the task to a crew on another runner).'
+          : ' 참고: 구버전 Gemini CLI는 벤더 제한으로 작업 폴더 확장이 무시될 수 있습니다 — 등록해도 계속 막히면 결과물을 회사 폴더로 받거나 다른 러너 크루에게 맡겨 주세요.')
+      : '';
+    return en
+      ? `\n\n---\n⚠ This looks like a blocked file access (based on the crew's own report). If the target is outside your home folder or registered work folders, add it under **Settings → Work folders** and retry. If it's inside your home folder, check OS permissions (**System Settings → Privacy & Security → Files and Folders**, allow Argo, restart the app).${gemCaveat}`
+      : `\n\n---\n⚠ 파일 접근이 막힌 것으로 보입니다(크루 보고 기반). 대상이 홈 폴더·지정 작업 폴더 밖이면 **설정 → 작업 폴더**에 등록 후 다시 시도해 주세요. 홈 안인데도 막히면 OS 권한을 확인해 주세요(**시스템 설정 → 개인정보 보호 및 보안 → 파일 및 폴더**에서 Argo 허용 후 앱 재시작).${gemCaveat}`;
+  }
 
   if (cap === 'browser') {
     return en

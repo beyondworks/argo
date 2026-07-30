@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exec, exists, homeEnv, scrubServerSecrets, seedAuthFile } from './shared.mjs';
+import { openRoots } from '../workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 
 /* ─── Gemini CLI 자동 조달 — "구독 연결 = 바로 사용"의 본체 (실사용 신고 2026-07-20) ───
    Gemini 러너는 벤더 CLI로 실행되는데, 지금까지는 사용자가 직접 설치해야 했다 — OAuth로
@@ -114,18 +115,31 @@ async function geminiTurnHome(wsId, cred) {
 
 /** gemini 격리 HOME에 이번 턴 settings.json을 쓴다 — 인증 방식 고정 + caps 기반 도구 게이팅.
     매 턴 덮어쓴다(caps가 턴마다 다를 수 있음). 워크스페이스 GEMINI.md·전역 도구 상속을 이 파일이 차단한다. */
-async function writeGeminiTurnSettings(home, authType, caps) {
+async function writeGeminiTurnSettings(home, authType, caps, workRoots = []) {
   const exclude = [];
   if (!caps?.browser) exclude.push('google_web_search', 'web_fetch'); // 웹 능력 OFF면 검색·페치 차단(광고·실행 방지)
   // 셸은 caps 무관 항상 제외 — 비대화 --approval-mode auto_edit에서 셸은 어차피 승인 불가로 실행이 안 되는데,
   // 도구만 보이면 크루가 시도→실패를 반복한다(할루시네이션 유도). yolo 승격은 gemini에 샌드박스가 없어 금지.
   exclude.push('run_shell_command');
   exclude.push('save_memory'); // 기억은 vault가 단일 진실 — gemini 병행 기억(GEMINI.md) 차단
+  const roots = openRoots(caps, workRoots); // codex writable_roots와 같은 계산(러너 중립성 단일 진실)
   await writeFile(join(home, '.gemini', 'settings.json'),
     // folderTrust off — 신형 CLI(0.51 실측)가 headless에서 미신뢰 폴더를 exit 55로 거절한다.
     // 격리 홈 + 워크스페이스 한정 실행이라 폴더 신뢰 게이트는 우리 쪽 권한 모델(caps)이 대신한다.
     // 구버전(0.21 실측)은 이 키를 무해하게 무시한다.
-    JSON.stringify({ security: { auth: { selectedType: authType }, folderTrust: { enabled: false } }, tools: { exclude } }));
+    // context.includeDirectories — 크루의 파일 반경(홈 + 지정 작업 폴더). **이게 없으면 gemini 크루의
+    // 책상은 회사 폴더 하나**다: 벤더 도구(write-file·read-file)가 workspace 밖 경로를 거부해, codex
+    // 크루는 되는 지시가 gemini 크루만 "허용된 작업 디렉토리 외부"로 거절된다(라이브 재현 2026-07-30).
+    // 한계(정직 표기 — 검수 실증): 0.21.2는 settings·플래그 **두 채널 다 비대화(-p)에서 미적용**이다
+    // — 합쳐진 값이 pendingIncludeDirectories에 갇히고 소비처가 대화형 UI 훅 하나뿐(useIncludeDirsTrust).
+    // 상위 버전은 소스상 적용(addDirectories) 예상이나 개인 OAuth 차단(IneligibleTier)으로 라이브 미확인.
+    // 그래도 이 채널을 쓰는 이유: 플래그와 달리 배열이라 콤마 폴더가 안 깨지고, 적용되는 버전에서
+    // 반경이 열리며, 막히는 버전엔 프롬프트 캐비앗·거부 안내가 정직하게 받친다.
+    JSON.stringify({
+      security: { auth: { selectedType: authType }, folderTrust: { enabled: false } },
+      tools: { exclude },
+      ...(roots.length ? { context: { includeDirectories: roots } } : {}),
+    }));
 }
 
 /** gemini OAuth 자격을 실제 실행기(geminiCmd 해석 결과)로 초소형 1콜 검증 — "연결됨인데 첫 사용 실패" 차단.

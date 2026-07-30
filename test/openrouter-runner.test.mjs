@@ -148,8 +148,10 @@ test('배선: chat·oneshot이 429를 402와 대칭으로 태운다', async () =
   assert.match(limitBlock, /creditTurn = true/, '429 턴도 일지 제외 — 오류 원문이 기억으로 정제되면 안 된다');
   // L1: 두 분기는 상호배타(else if) — 앞 분기가 reply를 바꾼 뒤 뒤 분기가 그걸 판정하면 원인이 삼켜진다
   assert.match(chat, /\}\s*\n\s*(?:\/\/[^\n]*\n\s*)*else if \(runner === 'openrouter' && isOpenRouterCreditReply/);
-  // M1: 429는 자가치유 금지 — 일시적 한도인데 다른 벤더(실과금)로 조용히 갈아타면 안 된다
-  const healIdx = oneshot.indexOf('if (!__exclude)');
+  // M1: 429는 자가치유 금지 — 일시적 한도인데 다른 벤더(실과금)로 조용히 갈아타면 안 된다.
+  // 앵커는 자가치유의 러너 재해석 호출(누적 제외 도입으로 __exclude 가드 문자열이 사라짐, 2026-07-30).
+  const healIdx = oneshot.indexOf('resolveRunner(wsId, null, { exclude: tried })');
+  assert.ok(healIdx > 0, '자가치유 재해석 호출이 있어야 한다');
   assert.ok(oneshot.indexOf('openrouter-limit', oneshot.indexOf('catch (e)')) < healIdx, '429 분기가 자가치유보다 앞서야 한다');
 });
 

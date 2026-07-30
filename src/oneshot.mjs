@@ -95,12 +95,17 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         ? 'OpenRouter rate limit reached (free models: 20/min, and 50/day until $10+ in lifetime credits). Wait a moment and try again, or switch to a paid model.'
         : 'OpenRouter 요청 한도에 걸렸습니다(무료 모델은 분당 20회, 누적 구매 $10 미만이면 하루 50회). 잠시 후 다시 시도하거나 유료 모델로 바꿔 주세요.'), { cause: e });
     }
-    // 자가 치유 — 방금 죽은 러너를 제외하고 다른 가용 러너로 1회. __exclude 가드로 재귀 1회 제한.
-    if (!__exclude) {
-      const alt = await resolveRunner(wsId, 'claude', { exclude: runner }).catch(() => null);
-      if (alt?.available && alt.runner !== runner) {
-        console.warn(`[argo] 원샷 ${runner} 실패(${String(e.message).slice(0, 80)}) — ${alt.runner}로 재시도(${wsId})`);
-        return runOneShot(wsId, prompt, { ...opts, __exclude: runner });
+    // 자가 치유 — 죽은 러너를 **누적 제외**하고 남은 가용 러너를 차례로 시도한다. 재귀는 제외 목록이
+    // 매번 1개씩 늘어 러너 수(≤7)로 자연 종료된다. (이전: 1회 제한 — 4러너 연결 상태에서 앞의 둘이
+    // 고장나자 멀쩡한 나머지 둘은 시도도 못 받고 영입이 통째로 실패했다. 라이브 재현 2026-07-30.
+    // "한 벤더가 죽으면 회사가 선다"는 러너 중립성 원칙 위반이다.)
+    // want=null — 선호를 두지 않는다(이전 'claude'는 같은 파일 상단 주석과 모순된 표류였다).
+    {
+      const tried = [...(Array.isArray(__exclude) ? __exclude : __exclude ? [__exclude] : []), runner];
+      const alt = await resolveRunner(wsId, null, { exclude: tried }).catch(() => null);
+      if (alt?.available && !tried.includes(alt.runner)) {
+        console.warn(`[argo] 원샷 ${runner} 실패(${String(e.message).slice(0, 80)}) — ${alt.runner}로 재시도(${wsId}, 제외 ${tried.join(',')})`);
+        return runOneShot(wsId, prompt, { ...opts, __exclude: tried });
       }
     }
     // 402(크레딧 소진)는 연결 문제가 아니다 — "연결 상태 확인" 안내는 키 정상·연결됨 표시와 모순돼
