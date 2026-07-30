@@ -127,6 +127,17 @@ const WS_CONTROL_DIRS = new Set(['agents', 'chats']);
    크루의 책상이 아니라 실질 피해가 없다 — "버그 같다"고 되돌리지 말 것. */
 const normName = (n) => n.split(':')[0].replace(/[. ]+$/, '').toLowerCase();
 
+/* 홈 직속 자격 "파일" 접두 — 아래 HARD_HOME_PATHS에 본체로 들어가고(목록 정합 계약 유지), isForbidden이
+   추가로 basename 접두 매칭을 해 `.backup`·`.bak.1` 같은 접미 변종까지 같은 하드라인에 묶는다.
+   근거(#196 통합 검수 실측): 이 맥 홈에 ~/.claude.json.backup이 실재 — 본체와 거의 같은 크기 = 같은
+   MCP env(토큰)인데, insideFold가 정확 일치/root+sep 하위 접두뿐이라 별개 형제 경로인 변종은
+   Read/Write/MCP가 전부 allow였고 Bash만 `.claude` 부분문자열로 우연히 deny — "같은 파일을 도구별로
+   다르게 판정"(#196 HIGH)이 이 파일에 잔존하던 사각이다. 범위는 **홈 직속 + 이 두 이름 접두**로만
+   좁힌다: `.claude-other.json` 같은 무관 파일은 접두가 아니라 그대로 allow(과차단 금지 —
+   forbidden-zone 테스트 단언), 하위 디렉터리의 유사명 파일도 홈 직속이 아니라 판정 밖. Bash 정합은
+   자동이다 — 변종 경로 문자열은 본체 리터럴(~/.claude.json)을 부분문자열로 품어 기존 방어가 잡는다. */
+const HARD_HOME_FILE_PREFIXES = ['.claude.json', '.mcp.json'];
+
 /* 하드라인 홈 항목 — canonical 판정(roots().hard)과 Bash 리터럴 방어가 **같은 목록**을 쓴다.
    분리 검수 2026-07-30 HIGH: 벤더 자격을 hard에만 넣고 Bash 리터럴에서 빠뜨려, 같은 auth.json이
    Read/Write/MCP는 deny인데 `cat ~/.codex/auth.json`은 allow였다. 목록이 갈라지면 재발한다.
@@ -143,8 +154,8 @@ const HARD_HOME_PATHS = [
   // #187의 원칙 그대로: 전권은 파일을 맡긴다는 뜻이지 자격을 넘긴다는 뜻이 아니다.
   // ⚠ 서버측 경로(listHostMcp·importHostMcp)는 canUseTool을 지나지 않아 그대로 동작한다 —
   // 막는 것은 "크루의 도구"가 이 파일에 닿는 경로뿐이다(호스트 MCP 가져오기 기능은 회귀 없음).
-  '.claude.json',
-  '.mcp.json',
+  // 접미 변종(.backup 등)은 위 HARD_HOME_FILE_PREFIXES의 basename 접두 매칭이 추가로 커버한다.
+  ...HARD_HOME_FILE_PREFIXES,
 ];
 
 /* Bash 리터럴 방어 대상(파일명) — 셸 명령 문자열에 이 이름이 그대로 들어간 순진한 시도를 막는다.
@@ -195,9 +206,13 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
     // 무동작해 "안→밖 심링크"가 빠져나간다(분리 검수 LOW 실측: /tmp 경유 입력이 allow — 이번
     // forbidden-zone 심링크 테스트가 tmpdir에서 그대로 재현했다).
     const hardRaw = [resolve(appRoot), ...(homeDir() ? HARD_HOME_PATHS.map((d) => join(homeDir(), d)) : [])];
+    const homeRaw = homeDir() ? resolve(homeDir()) : '';
     return {
       ws,
       parent: dirname(ws), // WS_ROOT — 형제 = 다른 회사, 직속 도트파일 = 계정 시크릿·기기 마커
+      // 홈 자체(렉시컬·canonical 두 형태) — 홈 직속 자격 파일 변종(basename 접두) 판정의 기준점.
+      // hard 목록과 같은 이유로 두 형태를 다 둔다(정션/심링크 홈에서 한쪽 leg가 무동작하는 계열).
+      homes: homeRaw ? [...new Set([homeRaw, (await canon(homeRaw)) ?? homeRaw])] : [],
       // 벤더 자격 디렉터리가 하드라인에 함께 든다(2026-07-30). 전권이 기본이 된 뒤로 이 목록이
       // **유일한** 방어선이라, "~/.argo(격리 홈)는 막는데 그 격리 홈이 빌려 쓰는 원본은 열려 있다"는
       // 비대칭을 남길 수 없다. 실측(분리 검수 M1): fs 능력만으로 ~/.codex/auth.json·
@@ -245,6 +260,13 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
     // =true인데 그 하위 심링크만 false). 반대로 렉시컬만 보면 밖에서 안을 가리키는 심링크를 놓친다.
     // deny 판정은 둘 중 하나만 걸려도 막는 게 맞다 — 허용 분기(정확 비교)와 방향이 반대다.
     for (const r of R.hard) if (insideFold(real, r) || insideFold(abs, r)) return true;
+    // 홈 직속 자격 파일의 접미 변종(~/.claude.json.backup·~/.mcp.json.bak 등) — 위 hard 목록의
+    // insideFold는 정확 일치/하위 접두뿐이라 접미가 붙은 "형제 파일"이 빠진다. basename 접두로 묶되
+    // 홈 **직속**(dirname === 홈)만 본다 — 범위·근거는 HARD_HOME_FILE_PREFIXES 주석. real·abs
+    // 양다리(fail-closed)와 deny 쪽 케이스 폴딩은 위 hard 판정과 같은 원칙이다.
+    const homeVariant = (cand) => R.homes.some((h) => fold(dirname(cand)) === fold(h)) &&
+      HARD_HOME_FILE_PREFIXES.some((pre) => fold(basename(cand)).startsWith(fold(pre)));
+    if (homeVariant(real) || homeVariant(abs)) return true;
     // 부수 효과(의도): 자기 워크스페이스의 케이스 변형+미존재 경로는 허용 분기(정확 비교)에서 떨어져
     // 여기 걸린다 — fail-safe 과차단. 메시지가 '타사'라 오해 소지 있으나 허용 확대보다 낫다(검수 LOW 수용).
     if (insideFold(real, R.parent)) return true; // WS_ROOT 아래인데 자기 회사 밖 — 타사 데이터·계정 시크릿
