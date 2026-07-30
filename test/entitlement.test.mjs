@@ -3,7 +3,7 @@
 // 하고, 강제 on에서도 '확정 free'만 차단하고 pro·미확인은 낙관 통과해야 한다(유료 사용자 오차단 방지).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchPlan, syncEntitled } from '../src/entitlement.mjs';
+import { fetchPlan, syncEntitled, proRowActive } from '../src/entitlement.mjs';
 
 // mock supabase: from().select().eq().maybeSingle() → {data, error}
 const mkSb = (result) => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => result }) }) }) });
@@ -71,4 +71,28 @@ test('syncEntitled: 강제 on에서 trial은 통과', async () => {
 test('fetchPlan: auth 일시 실패(error 반환) → null (미확인 낙관 — 검수 MEDIUM 반영)', async () => {
   const sb = { ...mkSb({ data: null, error: null }), auth: { getUser: async () => ({ data: { user: null }, error: { message: 'network' } }) } };
   assert.equal(await fetchPlan(sb, 'u'), null);
+});
+
+/* ── ends_at 만료 집행(전수리뷰 2026-07-30 #5) — 서버 is_pro(20260730050000)와 대칭 ── */
+test('fetchPlan: pro 행 + ends_at 경과 → free (만료 웹훅 유실돼도 자격이 꺼진다)', async () => {
+  assert.equal(await fetchPlan(mkSb({ data: { plan: 'pro', ends_at: daysAgo(1) }, error: null }), 'u'), 'free');
+});
+test('fetchPlan: pro 행 + ends_at 미래(해지 예약) → pro (그때까지 접근 유지가 LS 계약)', async () => {
+  const future = new Date(Date.now() + 86_400_000).toISOString();
+  assert.equal(await fetchPlan(mkSb({ data: { plan: 'pro', ends_at: future }, error: null }), 'u'), 'pro');
+});
+test('fetchPlan: pro 행 + ends_at null(활성·그랜드파더링) → pro (기존 동작 불변)', async () => {
+  assert.equal(await fetchPlan(mkSb({ data: { plan: 'pro', ends_at: null }, error: null }), 'u'), 'pro');
+});
+test('fetchPlan: pro 행 + ends_at 파싱 불능 → pro (낙관 방향 — 유료 오차단 방지)', async () => {
+  assert.equal(await fetchPlan(mkSb({ data: { plan: 'pro', ends_at: 'garbage' }, error: null }), 'u'), 'pro');
+});
+test('proRowActive: 대사 게이트 회귀 가드 — ends_at 경과 pro는 "유효 아님"이라 대사가 돈다', () => {
+  // 분리 검수 HIGH: 게이트가 원시 plan==='pro'를 믿으면 재개 웹훅 유실 사용자(plan pro + ends_at 과거)의
+  // 유일한 복구(유실 대사)가 영구히 꺼진다. 공유 술어가 false를 줘야 me/billing 게이트가 열린다.
+  assert.equal(proRowActive({ plan: 'pro', ends_at: daysAgo(1) }), false, '만료 pro → 대사 재적격');
+  assert.equal(proRowActive({ plan: 'pro', ends_at: null }), true, '활성·그랜드파더링 → 대사 불요');
+  assert.equal(proRowActive({ plan: 'pro', ends_at: new Date(Date.now() + 86_400_000).toISOString() }), true, '해지 예약(말일 전)');
+  assert.equal(proRowActive({ plan: 'free' }), false);
+  assert.equal(proRowActive(null), false);
 });

@@ -38,14 +38,17 @@ before(() => {
       if not exists (select from pg_roles where rolname = 'service_role') then create role service_role nologin; end if;
     end $$;
     create schema if not exists auth;
-    create table if not exists auth.users (id uuid primary key);
+    -- created_at: is_pro(trial_14d·ends_at)의 language sql 본문이 CREATE 시점에 파싱된다 — 없으면 적용 자체가 실패
+    create table if not exists auth.users (id uuid primary key, created_at timestamptz not null default now());
     create or replace function auth.uid() returns uuid language sql stable as 'select null::uuid';
   `]);
   // 실 마이그레이션 파일을 그대로 적용 — 테스트용 사본 SQL이 아니라 배포될 그 파일이 검증 대상이다.
   psql(['-f', mig('20260714150000_entitlements.sql')]);
+  psql(['-f', mig('20260724000100_trial_14d.sql')]);
   psql(['-f', mig('20260728100000_entitlements_ls.sql')]);
   psql(['-f', mig('20260728113000_billing_hardening.sql')]);
   psql(['-f', mig('20260728150000_ls_reconcile_cooldown.sql')]);
+  psql(['-f', mig('20260730050000_is_pro_ends_at.sql')]);
   psql(['-c', `insert into auth.users (id) values ('${UID}') on conflict do nothing`]);
 });
 
@@ -113,4 +116,30 @@ test('동시성: 두 트랜잭션이 행 잠금으로 직렬화 — 늦은 과�
   assert.equal(rB, 'stale');
   assert.ok(elapsed >= 500, `B가 행 잠금에 블록되지 않았다 (${elapsed}ms) — 직렬화 깨짐 의심`);
   assert.equal(sql(`select ls_status from public.entitlements where user_id = '${UID}'`), 'cancelled'); // 과거가 최종으로 남지 않음
+});
+
+test('경계표: is_pro() ends_at 집행(20260730050000) — 만료 pro=false·해지 예약=true·null=true·체험 OR 유지', { skip }, () => {
+  // 유료 접근을 회수하는 집행 권위 — JS 거울(fetchPlan/proRowActive)만으론 SQL 논리 회귀를 못 잡는다(F6).
+  psql(['-c', `create or replace function auth.uid() returns uuid language sql stable as $$ select '${UID}'::uuid $$`]);
+  try {
+    sql(`update auth.users set created_at = now() - interval '30 days' where id = '${UID}'`); // 체험 창 밖
+    const setRow = (endsAt) => {
+      sql(`delete from public.entitlements where user_id = '${UID}'`);
+      sql(`insert into public.entitlements (user_id, plan, ends_at) values ('${UID}', 'pro', ${endsAt})`);
+    };
+    setRow(`now() - interval '1 day'`);
+    assert.equal(sql('select public.is_pro()'), 'f', '만료 웹훅 유실 = 영구 무료 Pro 종결');
+    setRow(`now() + interval '1 day'`);
+    assert.equal(sql('select public.is_pro()'), 't', '해지 예약은 말일까지 접근 유지(LS 계약)');
+    setRow('null');
+    assert.equal(sql('select public.is_pro()'), 't', '활성·그랜드파더링(ends_at null) 불변');
+    sql(`update auth.users set created_at = now() where id = '${UID}'`);
+    setRow(`now() - interval '1 day'`);
+    assert.equal(sql('select public.is_pro()'), 't', '가입 14일 체험 OR — pro 만료여도 체험 창이면 통과');
+  } finally {
+    // 복원은 비throw(psqlRaw) — finally에서 throw하면 원래 단언 실패를 대체해 가린다(재검수 HIGH-B 부수).
+    psqlRaw(['-c', `create or replace function auth.uid() returns uuid language sql stable as 'select null::uuid'`]);
+    psqlRaw(['-A', '-t', '-c', `update auth.users set created_at = now() where id = '${UID}'`]);
+    psqlRaw(['-A', '-t', '-c', `delete from public.entitlements where user_id = '${UID}'`]);
+  }
 });

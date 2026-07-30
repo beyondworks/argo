@@ -353,6 +353,12 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
 }
 
 const stateFile = (wsId) => join(paths(wsId).root, '.sync-state.json');
+
+/** free 스킵 판정의 원천 — state(base) 존재 = 복원 완결. 손상·부재는 미완(재pull, self-heal 방향).
+    (export: 회귀 테스트용 — cycle은 export가 안 돼 이 술어가 스킵 배선의 테스트 가능한 반쪽이다) */
+export async function syncStateExists(wsId) {
+  try { return !!(await readJsonLenient(stateFile(wsId), null)); } catch { return false; }
+}
 const loadState = (wsId) => readJsonLenient(stateFile(wsId), { files: {} });
 
 async function download(key) {
@@ -371,7 +377,7 @@ async function upload(key, buf) {
 /* ─── 회사 1개 동기화 — base(마지막 동기화 상태) 대비 3-way 병합.
    "누가 바꿨나"를 해시로 판별해, 한쪽만 바뀌면 그쪽을 반영하고, 양쪽이 바뀌면 파일 종류별로
    충돌을 해소한다(원장=행 병합, 텍스트=양쪽 보존, 스레드=락). blind LWW로 조용히 파기하지 않는다. */
-export async function syncCompany(wsId, owner, isRestore = false) {
+export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   const root = paths(wsId).root;
   const me = await getDeviceId();
   const manifestKey = skey(owner, wsId, '__manifest__.json');
@@ -629,9 +635,19 @@ export async function syncCompany(wsId, owner, isRestore = false) {
   const manifestBuf = Buffer.from(JSON.stringify({ ...remote, files: uploadFiles }));
   // cryptoOn() 동반 확인(보안 검수 2026-07-23) — 파일 경로의 가드(`isEncRel && !cryptoOn()` continue)와 동일 규약.
   // 키 미확보 사이클에 sealSecret이 throw해 동기화가 멈추던 비대칭 제거(데이터 위험은 없었으나 가용성 문제).
-  await upload(manifestKey, encVaultOn() && cryptoOn() ? sealSecret(manifestBuf) : manifestBuf);
+  let manifestDenied = false;
+  try {
+    await upload(manifestKey, encVaultOn() && cryptoOn() ? sealSecret(manifestBuf) : manifestBuf);
+  } catch (e) {
+    // free 복원의 완결 처리(재검수 HIGH-E) — pull은 전부 끝났는데 매니페스트 업로드만 RLS에 거부되면,
+    // 여기서 throw할 경우 state가 영영 안 써져 복원이 영구 restoring이 된다(지운 노트가 8초마다 부활,
+    // lastError가 RLS 원문으로 고정돼 업그레이드 버튼 은폐). pull 실패가 없을 때만 관용 — state를 쓰면
+    // 다음 사이클부터 회사 스킵(syncStateExists)이 걸려 파일 루프 자체가 안 돈다(#6 원천 차단).
+    if (!(opts.tolerateManifestDenied && failed === 0)) throw e;
+    manifestDenied = true;
+  }
   await writeJsonAtomic(stateFile(wsId), { files: remote.files, ts: Date.now() });
-  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed };
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, ...(manifestDenied ? { manifestDenied: true } : {}) };
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.
@@ -894,8 +910,24 @@ async function cycle() {
   if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
   let companyFailed = 0;
   for (const [wsId, owner] of targets) {
+    // 확정 free는 파일 왕복을 걸지 않는다(복원 예외) — 업로드는 RLS(is_pro)가 거부하는데 파일 삭제
+    // 전파는 소유권 정책(20260723 꼬리: free도 select/delete 허용)상 성공해, 클라우드 사본이 삭제만
+    // 반영하며 단조 감소한다(전수리뷰 2026-07-30 #6). 미확인(null)은 기존 결정대로 낙관 통과
+    // (검수 MEDIUM 2026-07-24 — 유료 오차단 방지).
+    // 복원 미완 판정은 **디스크에서 파생**(state 부재 = 미완, 재검수 HIGH-E·F) — 인메모리 pending은
+    // ① free 매니페스트 거부가 매 사이클 재무장시켜 영구 restoring(지운 노트 8초 부활 + lastError 고정)
+    // ② plan 왕복(free→pro→free)을 넘는 stale로 #6 재개 ③ 재시작에 증발(원결함 복귀)의 3중 결함이었다.
+    // state는 재시작에 견디고, pro 구간의 정상 동기화가 쓰는 순간 자동 해제되며, free 복원은
+    // syncCompany가 pull 완결 시 매니페스트 거부를 관용하고 state를 써서(tolerateManifestDenied)
+    // 다음 사이클부터 정상 스킵된다 — 스킵되면 파일 루프 자체가 안 돌아 삭제 전파가 원천 불가다.
+    const restoring = restoreSet.has(wsId) || (freePlan && !(await syncStateExists(wsId)));
+    if (freePlan && !restoring) {
+      // foreign-owner 분기와 같은 표기(검수 LOW) — 카운터가 옛 값인 채 "방금 동기화"로 보이지 않게
+      status.companies[wsId] = { ts: Date.now(), skipped: 'free-plan' };
+      continue;
+    }
     try {
-      const r = await syncCompany(wsId, owner, restoreSet.has(wsId));
+      const r = await syncCompany(wsId, owner, restoring, { tolerateManifestDenied: freePlan });
       status.companies[wsId] = { ts: Date.now(), ...r };
     } catch (e) {
       status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;

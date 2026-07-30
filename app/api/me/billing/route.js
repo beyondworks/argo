@@ -12,7 +12,7 @@ import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { currentUser } from '../../../auth.mjs';
-import { trialEnd } from '../../../../src/entitlement.mjs';
+import { trialEnd, proRowActive } from '../../../../src/entitlement.mjs';
 import { lsGateOpts } from '../../../../src/lsbilling.mjs';
 import { reconcileDueFromRow, reconcileEntitlement } from '../../../../src/lsreconcile.mjs';
 
@@ -36,7 +36,11 @@ function scheduleReconcileIfLost({ url, serviceKey, user, cur, emailTrusted }) {
   const apiKey = process.env.LEMONSQUEEZY_API_KEY;
   if (!apiKey || !serviceKey || !user?.id) return false;
   if (user.id === 'local' || user.id === 'guest') return false; // 로컬·게스트는 구독 표면 없음
-  if (cur?.plan === 'pro') return false; // 이미 pro — 대사 불요(강등은 웹훅의 몫)
+  // "유효한" pro만 대사 불요 — 원시 plan==='pro'를 믿으면 ends_at 경과(재개 웹훅 유실) 사용자의
+  // 유일한 복구가 여기서 영구히 꺼진다(분리 검수 2026-07-30 HIGH). 판정은 entitlement의 공유 술어로 —
+  // is_pro(DB)·fetchPlan(sync)·이 게이트가 갈리면 잠금/복구 비대칭이 생긴다. 대사가 돌면 LS 현재값
+  // (active면 ends_at null)이 apply_ls_event로 덮여 자격이 복구된다(lsbilling.mjs:165 확인).
+  if (proRowActive(cur)) return false; // 유효 pro — 대사 불요(강등은 웹훅·ends_at 경과의 몫)
   if (!reconcileDueFromRow(cur)) return false; // 쿨다운 중 — 대부분의 폴은 여기서 무쿼리로 끝난다
   after(async () => {
     try {

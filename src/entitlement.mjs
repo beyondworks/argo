@@ -27,14 +27,23 @@ export const trialBadgeState = (trialEndsAt, plan, now = Date.now()) => {
   };
 };
 
+/** entitlements 행이 **지금 유효한 pro**인가 — 서버 is_pro(20260730050000)의 클라 공유 술어.
+    ends_at 의미(LS 계약, lsbilling.mjs): 활성 = null, 해지 예약·만료 = 접근 종료 시각. 파싱 불능은
+    만료로 보지 않는다(낙관 — 유료 오차단 방지). ⚠ fetchPlan과 유실 대사 게이트(app/api/me/billing)가
+    **반드시 이 하나를** 쓴다 — 사본이 갈리면 깬 쪽이 잠금/복구 비대칭을 만든다(분리 검수 2026-07-30
+    HIGH: 게이트가 원시 plan==='pro'를 믿어, 재개 웹훅 유실 사용자의 유일한 복구인 대사가 영구히 꺼졌다). */
+export const proRowActive = (row) => row?.plan === 'pro' && !(row.ends_at && Date.parse(row.ends_at) <= Date.now());
+
 /** 계정 plan. 'pro' | 'trial'(가입 14일 이내 무료 체험 — 서버 is_pro와 대칭) | 'free' | null(조회 실패·오너 미상=미확인).
     조회 실패를 'free'가 아닌 null로 두어, 일시적 실패로 유료 사용자를 오차단하지 않는다(아래 syncEntitled). */
 export async function fetchPlan(sb, ownerId) {
   if (!ownerId) return null; // 오너 미상 — 미확인(낙관 진행)
   try {
-    const { data, error } = await sb.from('entitlements').select('plan').eq('user_id', ownerId).maybeSingle();
+    const { data, error } = await sb.from('entitlements').select('plan, ends_at').eq('user_id', ownerId).maybeSingle();
     if (error) throw new Error(error.message);
-    if (data?.plan === 'pro') return 'pro';
+    // 서버 is_pro와 대칭(마이그레이션 20260730050000) — pro라도 ends_at이 지났으면 무효. 해지·만료
+    // 웹훅 1건이 유실돼도 양쪽에서 저절로 꺼진다(전수리뷰 2026-07-30 #5). 판정은 공유 술어(위) 하나로.
+    if (proRowActive(data)) return 'pro';
     // 무행/free — 가입 14일 무료 체험 창인지 판정(서버 is_pro의 OR 조건과 대칭). 세션 본인일 때만 확인 가능.
     // 일시 실패(네트워크·GoTrue 오류)는 파일 불변식대로 null(미확인 낙관) — 체험 중 사용자를 오차단하지 않는다
     // (검수 MEDIUM 2026-07-24). auth 자체가 없는 클라(mock·서비스 모드)만 free 폴백 — 최종 집행은 서버 RLS.
