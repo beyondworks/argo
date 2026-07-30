@@ -594,11 +594,18 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
     Claude 에러?" — 실사용 신고). 실패 경로에선 이 프리픽스가 유일한 설명이다. (export: 회귀 테스트용) */
 /** 러너 인증성 실패 판별 — 감지(detectRunners)가 스테일 자격 흔적으로 러너를 가용 오판해 턴이
     인증 에러로 죽는 패턴(실사용 2026-07-19: 죽은 Claude 흔적 → "Not logged in · Please run /login").
-    이 에러면 그 러너를 제외하고 다른 가용 러너로 1회 재실행한다(아래 catch들). (export: 회귀 테스트용)
+    이 에러면 그 러너를 누적 제외하고 남은 가용 러너를 차례로 재실행한다(아래 catch들). (export: 회귀 테스트용)
     러너별 문구 차이 주의(실측 2026-07-20): gemini는 "API key not valid"/API_KEY_INVALID(401 아닌 400),
     glm은 "token expired or incorrect"(HTTP 200 바디의 code:401)로 인증 실패를 알린다 — 401·"invalid api key"
     문구만 보면 이 둘의 만료·무효 자격이 자가치유 없이 턴을 죽인다(저장 게이트의 자매 갭). 함께 포함한다. */
 export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|invalid authentication|authentication[_ ]error|api[_ ]?key[_ ]?(?:not valid|invalid)|token (?:is )?(?:expired|revoked|invalid|incorrect)|\b401\b/i;
+/** 자가치유 누적 제외 목록 — 방금 죽은 러너를 이전 제외 목록에 더한다(pickRunner의 exclude 목록 계약).
+    목록이 재시도마다 1개씩 늘어 러너 수(≤7)로 자연 종료된다. 단수 1회 제한이던 시절엔 claude 401 →
+    codex 실패에서 끝나 멀쩡한 3번째 러너가 시도조차 못 받았다(oneshot은 2026-07-30 #192에서 해소,
+    트래픽이 더 많은 이 채팅 경로가 남아 있었다 — 분리 검수 MEDIUM-4). (export: 회귀 테스트용) */
+export function excludeWith(prev, runner) {
+  return [...(Array.isArray(prev) ? prev : prev ? [prev] : []), runner];
+}
 /** 접근권 게이트 모델(gated:true) 실패 시그니처 — 모델이 없어서가 아니라 이 계정에 권한이 없어서 나는
     에러(Gemini 3.x는 Ultra·유료 전용 — 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
 export const GATED_MODEL_ERR_RE = /requested entity was not found|NOT_FOUND|PERMISSION_DENIED/i;
@@ -619,7 +626,7 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko') {
  *   이미지는 SDK content 블록으로 크루가 직접 보고, 그 외 파일은 경로를 알려 Read로 열게 한다.
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
-export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], mirrorCtx = null, runnerOverride = null, modelOverride = null, __freshRetry = false, __seedNotes = null, __excludeRunner = null } = {}) {
+export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], mirrorCtx = null, runnerOverride = null, modelOverride = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null } = {}) {
   const p = paths(wsId);
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지)
   const { budgetUsd, lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
@@ -655,10 +662,10 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
   // runnerOverride(경쟁 등) 우선 — 카드 러너 대신 이 턴만 지정 러너로. 미가용이면 기존 폴백 체인이 동일하게 처리.
   const wantRunner = ((runnerOverride || meta.runner || '')).toLowerCase() || null;
-  // __excludeRunner = 방금 인증 실패한 러너(아래 catch의 자가 치유 재시도) — 다시 뽑히지 않게 제외.
+  // __excludeRunners = 지금까지 인증 실패한 러너 **목록**(아래 catch의 자가 치유 재시도) — 다시 뽑히지 않게 제외.
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — available:true 폴백은 명시 연결 원칙 위반(검수 MEDIUM:
   // 최악의 상태에서 조용히 호스트 자격을 스캐빈징하게 된다). 아래 !available 분기가 재연결을 안내한다.
-  const resolved = await resolveRunner(wsId, wantRunner, { exclude: __excludeRunner }).catch(() => ({ runner: wantRunner ?? 'claude', fellBack: false, available: false, credButNoCli: [] }));
+  const resolved = await resolveRunner(wsId, wantRunner, { exclude: __excludeRunners }).catch(() => ({ runner: wantRunner ?? 'claude', fellBack: false, available: false, credButNoCli: [] }));
   if (!resolved.available) {
     // 자격은 있는데 벤더 CLI가 없는 러너(codex/gemini)는 원인을 정확히 알려준다 — "연결했는데 왜 안 돼"의 답.
     const noCli = (resolved.credButNoCli ?? []).map((id) => RUNNERS[id]?.name || id);
@@ -671,6 +678,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
           : 'AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 Claude·Codex·Gemini·Antigravity·GLM·Kimi·OpenRouter 중 하나를 연결한 뒤 다시 말을 걸어 주세요.'));
   }
   const runner = resolved.runner;
+  // 이번 턴까지 시도한 러너 목록 — 아래 두 실행 경로(CLI·SDK)의 인증 자가치유가 공유한다.
+  const tried = excludeWith(__excludeRunners, runner);
   // 폴백이면 크루에 지정된 model은 원래 러너의 것이라 무효 — 폴백 러너의 기본 모델로 실행한다.
   // 무선호(want=null)로 뽑힌 러너도 카드 model이 그 러너 소속일 때만 적용(다른 러너 모델 오적용 방지).
   const wantModel = modelOverride || meta.model;
@@ -846,15 +855,18 @@ ${lang === 'en'
       return { reply, sessionId: null, handover, artifacts: await artDiff() };
     } catch (e) {
       let aborted = abortReg.wasAborted();
-      // 인증 오탐 자가 치유 — 이 러너의 자격이 실은 죽어 있던 경우, 제외하고 다른 가용 러너로 1회
-      // 재실행(__excludeRunner 가드로 재귀 1회 제한). 외부 CLI엔 세션 개념이 없어 스레드 맥락은 유지된다.
-      if (!aborted && !__excludeRunner && AUTH_ERR_RE.test(String(e.message || e))) {
-        const alt = await resolveRunner(wsId, wantRunner, { exclude: runner }).catch(() => null);
-        if (alt?.available && alt.runner !== runner) {
-          console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug})`);
+      // 인증 오탐 자가 치유 — 이 러너의 자격이 실은 죽어 있던 경우, **죽은 러너를 누적 제외**하고 남은
+      // 가용 러너를 차례로 시도한다(재귀는 제외 목록이 매번 1개씩 늘어 러너 수로 자연 종료 — 아래
+      // !tried.includes 사전 확인이 종료를 보장한다). 발동 조건은 AUTH_ERR_RE 한정을 유지한다: 아무 실패로
+      // 벤더를 갈아타면 사용자 고지 없이 실과금 키로 넘어간다(oneshot과 다른 이 경로의 계약).
+      // 외부 CLI엔 세션 개념이 없어 스레드 맥락은 유지된다.
+      if (!aborted && AUTH_ERR_RE.test(String(e.message || e))) {
+        const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
+        if (alt?.available && !tried.includes(alt.runner)) {
+          console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
           // finally의 release는 identity 가드(turn-abort.mjs)라 재귀가 등록한 새 핸들을 지우지 않는다
           try {
-            return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunner: runner });
+            return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners: tried });
           } catch (e2) {
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
           }
@@ -1105,21 +1117,23 @@ ${lang === 'en'
     if (!aborted && resumeId && !__freshRetry && /no conversation found/i.test(String(e.message || e))) {
       console.warn(`[argo] 세션이 이 기기에 없음(${wsId}/${agentSlug}) — 새 세션으로 재시도`);
       try {
-        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner });
+        // 제외 목록은 받은 그대로 넘긴다(tried 아님) — 세션 부재는 러너 잘못이 아니라서 같은 러너로
+        // 다시 시도해야 한다. 여기서 현재 러너를 제외하면 세션 문제로 벤더가 갈리는 오작동이 된다.
+        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
       } catch (e2) {
         e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
       }
     }
-    // 인증 오탐 자가 치유 — SDK 러너의 자격이 실은 죽어 있던 경우(스테일 로그인 흔적 등), 그 러너를
-    // 제외하고 다른 가용 러너로 1회 재실행. 러너가 바뀌면 세션 resume이 무의미하므로 새 세션 +
-    // 최근 대화 접붙임(__freshRetry)으로 맥락을 잇는다. __excludeRunner 가드로 재귀 1회 제한.
+    // 인증 오탐 자가 치유 — SDK 러너의 자격이 실은 죽어 있던 경우(스테일 로그인 흔적 등), **죽은 러너를
+    // 누적 제외**하고 남은 가용 러너를 차례로 시도한다. 러너가 바뀌면 세션 resume이 무의미하므로 새 세션 +
+    // 최근 대화 접붙임(__freshRetry)으로 맥락을 잇는다. 발동은 AUTH_ERR_RE 한정 유지(CLI 갈래와 같은 계약).
     // retriedDown 제외 — fresh-retry 프레임이 이미 자기 자가 치유를 소진했으므로 여기서 또 돌리면 중복.
-    if (!aborted && !retriedDown && !__excludeRunner && AUTH_ERR_RE.test(String(e.message || e))) {
-      const alt = await resolveRunner(wsId, wantRunner, { exclude: runner }).catch(() => null);
-      if (alt?.available && alt.runner !== runner) {
-        console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug})`);
+    if (!aborted && !retriedDown && AUTH_ERR_RE.test(String(e.message || e))) {
+      const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
+      if (alt?.available && !tried.includes(alt.runner)) {
+        console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
-          return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunner: runner });
+          return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
         } catch (e2) {
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하
         }
