@@ -21,7 +21,7 @@ import { makePermissionGate } from './permission-gate.mjs';
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { excludeWith, externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -629,13 +629,6 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
     glm은 "token expired or incorrect"(HTTP 200 바디의 code:401)로 인증 실패를 알린다 — 401·"invalid api key"
     문구만 보면 이 둘의 만료·무효 자격이 자가치유 없이 턴을 죽인다(저장 게이트의 자매 갭). 함께 포함한다. */
 export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|invalid authentication|authentication[_ ]error|api[_ ]?key[_ ]?(?:not valid|invalid)|token (?:is )?(?:expired|revoked|invalid|incorrect)|\b401\b/i;
-/** 자가치유 누적 제외 목록 — 방금 죽은 러너를 이전 제외 목록에 더한다(pickRunner의 exclude 목록 계약).
-    목록이 재시도마다 1개씩 늘어 러너 수(≤7)로 자연 종료된다. 단수 1회 제한이던 시절엔 claude 401 →
-    codex 실패에서 끝나 멀쩡한 3번째 러너가 시도조차 못 받았다(oneshot은 2026-07-30 #192에서 해소,
-    트래픽이 더 많은 이 채팅 경로가 남아 있었다 — 분리 검수 MEDIUM-4). (export: 회귀 테스트용) */
-export function excludeWith(prev, runner) {
-  return [...(Array.isArray(prev) ? prev : prev ? [prev] : []), runner];
-}
 /** 접근권 게이트 모델(gated:true) 실패 시그니처 — 모델이 없어서가 아니라 이 계정에 권한이 없어서 나는
     에러(Gemini 3.x는 Ultra·유료 전용 — 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
 export const GATED_MODEL_ERR_RE = /requested entity was not found|NOT_FOUND|PERMISSION_DENIED/i;

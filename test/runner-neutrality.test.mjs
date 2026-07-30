@@ -6,8 +6,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { homedir } from 'node:os';
 import { openRoots } from '../src/workroots.mjs';
-import { pickRunner } from '../src/runners/catalog.mjs';
-import { excludeWith } from '../src/chat.mjs';
+// 생산자(excludeWith)와 소비자(pickRunner)가 같은 모듈에 산다 — exclude 계약의 주인이 catalog다.
+// (이전엔 excludeWith가 chat.mjs에 있어, 1줄 순수 함수를 쓰려고 에이전트 SDK 임포트 그래프를 통째로 끌었다)
+import { excludeWith, pickRunner } from '../src/runners/catalog.mjs';
 
 test('openRoots — 홈(fs 능력) + 지정 작업 폴더를 이 순서로 연다', () => {
   assert.deepEqual(openRoots({ fs: true }, ['/w1', '/w2']), [homedir(), '/w1', '/w2']);
@@ -89,6 +90,20 @@ test('excludeWith — 단수·목록·null 어느 이전값이든 누적 목록�
   assert.deepEqual(excludeWith([], 'claude'), ['claude']);
 });
 
+// 이 이관의 **유일한 이득**이 "생산자(excludeWith)와 소비자(pickRunner)가 같은 정규화를 본다"인데,
+// 갈라놔도 **동작은 같아서** 행동 테스트가 못 잡는다(분리 검수 LOW-1). 다음 사람이 조용히 되돌리면
+// 순이득이 0이 되므로 배선으로 잠근다. 단, 호출부를 문자 그대로 앵커링하면 안 된다 — 그러면 소비자
+// 방향만 잠기고(생산자 재인라인은 그대로 초록) 지역변수 추출·파라미터 개명·헬퍼 개명 같은 **정당한
+// 리팩터에 거짓 red**를 낸다(2R 실증 4종). 이 파일 위쪽 AUTH_ERR_RE 골격 비교와 같은 교훈이다.
+// 그래서 불변식을 직접 센다: **정규화 표현은 이 파일에 한 벌만 존재한다**. 역참조(\1)라 변수명이
+// 바뀌어도 따라오고, 어느 쪽이든 재인라인하면 2벌이 되어 잡힌다.
+test('배선: exclude 정규화 표현이 catalog에 한 벌만 — 생산자·소비자 어느 쪽 재분기도 차단', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/runners/catalog.mjs', import.meta.url), 'utf8');
+  const inline = [...src.matchAll(/Array\.isArray\((\w+)\) \? \1 : \1 \? \[\1\] : \[\]/g)];
+  assert.equal(inline.length, 1, 'exclude 정규화는 한 벌만(asList 정의) — 재인라인하면 2벌, 정규화가 깨지면 0벌');
+});
+
 test('채팅 자가치유 3러너 연쇄 — claude 401 → codex 401 → gemini가 시도를 받는다', () => {
   const on = { company: { connected: true, invalid: false } };
   const st = { claude: on, codex: on, gemini: on, antigravity: on };
@@ -165,4 +180,7 @@ test('배선: oneshot 자가치유도 진입에서 제외 목록을 존중한다
   assert.match(src, /resolveRunner\(wsId, null, \{ exclude: __exclude \}\)/, '진입 재해석이 제외 목록을 존중해야 한다');
   assert.match(src, /resolveRunner\(wsId, null, \{ exclude: tried \}\)/, '치유 재해석은 누적 목록으로');
   assert.match(src, /!tried\.includes\(alt\.runner\)/, '이미 시도한 러너 재선택 차단 = 재귀 종료 보장');
+  // 누적 출처 — chat 쪽에 있던 단언의 형제. 인라인 재구현이던 시절엔 이 자리가 무게이트였다(공유 함수로
+  // 바뀌며 chat과 같은 형태로 잠근다). [runner]로 좁히면 프레임마다 앞의 실패를 잊어 무한 핑퐁.
+  assert.match(src, /const tried = excludeWith\(__exclude, runner\)/, '누적 출처가 받은 목록이어야 한다');
 });
