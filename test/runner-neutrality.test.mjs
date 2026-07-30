@@ -118,6 +118,12 @@ test('배선: chat.mjs 두 실행 경로(CLI·SDK)의 자가치유가 누적 목
   // 누적의 출처 — **받은 목록 + 이번 러너**여야 한다. [runner]로 좁히면 아래 배선이 다 맞아도
   // 프레임마다 앞의 실패를 잊어 claude→codex→claude 무한 핑퐁이 된다(변이 M4 실증: 원래 버그보다 나쁘다).
   assert.match(src, /const tried = excludeWith\(__excludeRunners, runner\)/, '누적 출처가 받은 목록이어야 한다');
+  // 진입 재해석이 제외 목록을 존중하는 것이 **종료성의 근거**다 — 이 PR이 재귀 1회 가드를 지웠으므로
+  // 여기서 exclude가 유실되면 매 프레임이 같은 죽은 러너를 다시 뽑아 tried가 중복으로만 늘고
+  // (['claude','claude',…]) alt는 매번 새 러너라 사전 확인을 통과해 **무한 재귀 + 무한 벤더 턴**이 된다.
+  // 구독(OAuth) 턴은 monthCost를 갉지 않아 예산 상한도 못 막는다(분리 검수 MEDIUM-1 변이 실증:
+  // 이 줄의 exclude를 지우면 40프레임까지 claude 반복인데 전 테스트가 초록이었다).
+  assert.match(src, /resolveRunner\(wsId, wantRunner, \{ exclude: __excludeRunners \}\)/, '진입 재해석이 제외 목록을 존중해야 한다 = 종료성의 근거');
   assert.equal(count(/resolveRunner\(wsId, wantRunner, \{ exclude: tried \}\)/g), 2, '두 갈래가 누적 목록으로 러너를 재해석해야 한다');
   assert.equal(count(/__excludeRunners: tried/g), 2, '두 갈래가 누적 목록을 재귀로 넘겨야 한다');
   assert.equal(count(/!tried\.includes\(alt\.runner\)/g), 2, '이미 시도한 러너 재선택 차단 = 재귀 종료 보장');
@@ -127,7 +133,12 @@ test('배선: chat.mjs 두 실행 경로(CLI·SDK)의 자가치유가 누적 목
   assert.doesNotMatch(src, /!__excludeRunners &&/, '재귀 1회 제한 가드 재유입 금지 — 목록 누적이 종료를 맡는다');
   // AUTH_ERR_RE 한정 유지 — oneshot(어떤 실패든 갈아탐)과 달리 이 경로는 **인증 오류에만** 갈아탄다.
   // 이 한정이 빠지면 일시적 실패로 사용자 고지 없이 실과금 벤더로 넘어간다(범위 확대 금지).
-  assert.equal(count(/AUTH_ERR_RE\.test\(/g), 2, '두 갈래 모두 인증 오류 한정을 유지해야 한다');
+  // 조건**줄 전체**를 앵커링한다 — 호출 개수만 세면 `|| /rate limit/`를 덧붙여 한정을 깨도 개수는
+  // 2라서 초록이다(분리 검수 MEDIUM-2 변이 실증). 같은 줄의 !aborted·!retriedDown도 함께 잠긴다:
+  // 이 PR이 !__excludeRunner(독립적 두 번째 브레이크)를 지웠으므로 retriedDown은 이제 fresh-retry
+  // 프레임의 이중 치유(중복 실행·이중 과금)를 막는 **유일한** 브레이크다.
+  assert.match(src, /if \(!aborted && AUTH_ERR_RE\.test\(String\(e\.message \|\| e\)\)\) \{/, 'CLI 갈래 발동 조건 = 인증 오류 한정 + abort 가드');
+  assert.match(src, /if \(!aborted && !retriedDown && AUTH_ERR_RE\.test\(String\(e\.message \|\| e\)\)\) \{/, 'SDK 갈래 발동 조건 = 인증 오류 한정 + abort + retriedDown(이중 치유 유일 브레이크)');
   // 세션 부재 재시도(fresh-retry)는 러너 잘못이 아니다 — 받은 목록을 그대로 넘겨 같은 러너로 재시도한다.
   assert.match(src, /__freshRetry: true, __seedNotes: sharedNotes, __excludeRunners \}/, 'fresh-retry는 제외 목록을 누적하지 않는다');
 });
