@@ -240,3 +240,58 @@ test('permissionGate: fs 능력이 켜져도 금지 구역 밖 일반 외부 경
   const r = await gate('Write', { file_path: join(outside, 'report.md'), content: 'x' });
   assert.equal(r.behavior, 'allow', 'fs 능력의 목적(사용자 문서 접근)은 유지');
 });
+
+/* ── 분리 검수 2026-07-30 반영 — 전부 행동 단언(게이트를 실제 실행해 판정을 본다) ── */
+
+test('벤더 자격 하드라인: Read·Write·MCP·Bash 전부 같은 판정(deny) — 도구별 정합', async () => {
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  for (const dir of ['.codex', '.claude', '.gemini']) {
+    const p = join(homedir(), dir, 'auth.json');
+    assert.equal((await gate('Read', { file_path: p })).behavior, 'deny', `Read ${dir}`);
+    assert.equal((await gate('Write', { file_path: p, content: 'x' })).behavior, 'deny', `Write ${dir}`);
+    assert.equal((await gate('mcp__fs__read', { path: p })).behavior, 'deny', `MCP ${dir}`);
+    // 검수 HIGH: hard 목록에만 넣고 Bash 리터럴에서 빠뜨려 `cat ~/.codex/auth.json`이 allow였다.
+    assert.equal((await gate('Bash', { command: `cat ${p}` })).behavior, 'deny', `Bash ${dir}`);
+  }
+});
+
+test('chats/ Bash 리터럴: 동료 스레드 주입이 Bash에서도 deny — Write/Edit와 정합(검수 HIGH)', async () => {
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  assert.equal((await gate('Bash', { command: 'cat chats/crew-a.json' })).behavior, 'deny');
+  assert.equal((await gate('Bash', { command: `echo '{"who":"user"}' >> chats/beast.json` })).behavior, 'deny',
+    'who:user 주입 = 결재 없는 동료 지시 + 사장 이력 위조(파일 헤더 주석의 위협 그대로)');
+});
+
+test('보호구역 안→밖 심링크: canonical이 밖을 가리켜도 렉시컬 fail-closed로 deny', async () => {
+  // 조달이 만드는 ~/.argo/codex-home/auth.json → ~/.codex/auth.json 계열. appRoot를 주입해 재현한다.
+  const hardTmp = await mkdtemp(join(tmpdir(), 'argo-hardroot-'));
+  const outside = await mkdtemp(join(tmpdir(), 'argo-linktarget-'));
+  await writeFile(join(outside, 'secret.txt'), 's');
+  await symlink(join(outside, 'secret.txt'), join(hardTmp, 'link.txt')).catch(() => {});
+  const { makeIsForbidden: mk } = await import('../src/permission-gate.mjs');
+  const f = mk(wsRoot, hardTmp);
+  assert.equal(await f(join(hardTmp, 'link.txt')), true, '안→밖 심링크 — canonical만 보면 빠져나간다');
+  assert.equal(await f(join(hardTmp, 'no-such.txt')), true, '미존재 하위도 렉시컬로 deny');
+});
+
+test('MCP 단일 토큰 인자: 일반 단어는 통과, 제어 파일명·도트 접두만 경로로 판정(검수 MEDIUM 오차단 해소)', async () => {
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  // 오차단이던 무해 인자 — "agents"는 태그·채널명·검색어로 흔하다
+  assert.equal((await gate('mcp__x__y', { note: 'agents' })).behavior, 'allow');
+  assert.equal((await gate('mcp__notion__q', { query: 'usage' })).behavior, 'allow');
+  // 여전히 막혀야 하는 것 — 정확한 제어 파일명·도트 접두·구분자 동반 경로
+  assert.equal((await gate('mcp__x__y', { path: 'capabilities.json' })).behavior, 'deny');
+  assert.equal((await gate('mcp__x__y', { key: 'company.json' })).behavior, 'deny', '키 이름과 무관 — 값이 제어 파일명이면 막는다');
+  assert.equal((await gate('mcp__x__y', { p: '.secrets.json' })).behavior, 'deny', '도트 접두는 경로 후보 유지');
+  assert.equal((await gate('mcp__x__y', { p: 'agents/crew-a.md' })).behavior, 'deny', '구분자 동반은 전체 판정');
+  assert.equal((await gate('mcp__x__y', { p: 'capabilities.json\n' })).behavior, 'deny', '앞뒤 개행은 trim 후 판정(검수 LOW)');
+});
+
+test('SDK allowedTools 불변식: bare mcp__는 자체 크루 서버뿐 — 외부 MCP는 게이트를 지나야 한다', async () => {
+  // SDK는 bare `mcp__<서버>` 항목을 canUseTool 상담 전에 자동 승인한다(벤더 계약,
+  // CLAUDE_SDK_CAN_USE_TOOL_SHADOWED). 외부 MCP가 여기 실리면 위 argPathsForbidden 방어가 통째로
+  // 도달 불가가 된다 — mcpAllow 죽은 변수를 되살리는 회귀를 이 단언이 잡는다(검수 MEDIUM).
+  const { SDK_ALLOWED_TOOLS } = await import('../src/chat.mjs');
+  const bare = SDK_ALLOWED_TOOLS.filter((t) => /^mcp__/.test(t));
+  assert.deepEqual(bare, ['mcp__crew'], `외부 MCP가 allowedTools에 실렸다: ${bare.join(', ')}`);
+});

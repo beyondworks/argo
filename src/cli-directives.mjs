@@ -94,6 +94,11 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         // SDK 경로는 hop>=2면 쪽지 도구 자체가 등록되지 않는다(chat.mjs colleagues). 러너 패리티 —
         // 같은 지점에서 같은 상한을 건다. 조용히 무시하지 않고 사유 줄로 남긴다(이 파일의 계약).
         if (hop >= 2) throw new Error(en ? 'note relay limit reached (2 hops)' : '쪽지 연쇄 상한(2단계)에 도달했다');
+        // 자기수신은 "명단에 없다"가 아니라 진짜 사유로 — find가 자신을 제외하므로, 구분하지 않으면
+        // 실재하는 자기 이름에 거짓 사유가 붙는다(분리 검수 LOW: 이 파일의 "조용한 실패 = 거짓말" 계약 위반).
+        if (norm(d.to) === norm(fromSlug) || norm(d.to) === norm(fromName)) {
+          throw new Error(en ? "you can't send a note to yourself" : '자기 자신에게는 쪽지를 보낼 수 없다');
+        }
         const to = find(d.to);
         if (!to) throw new Error(en ? `no crew named "${d.to}"` : `"${d.to}"는 크루 명단에 없습니다`);
         const cc = (Array.isArray(d.cc) ? d.cc : []).map(find).filter(Boolean).map((a) => a.slug);

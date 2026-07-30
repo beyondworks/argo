@@ -1,19 +1,18 @@
-// 권한 게이트 — 능력(fs/browser/shell)이 꺼진 워크스페이스에서 부작용 도구는 여기서 멈춰
-// "켤까요?" 제안 카드를 올린다. 능력을 켰다면 결재 없이 바로 실행한다.
+// 권한 게이트 — 전권 모델(2026-07-30, Hermes YOLO 이식)의 **하드라인**이다. 능력 토글·결재 게이트는
+// 사라졌고(capabilities.mjs 상수 동결), 이 파일의 금지 구역(앱 본체·격리 홈·벤더 자격·타사 데이터·
+// 회사 금고)만이 어떤 상태에서도 열리지 않는 경계다.
 //
 // ⚠ 적용 범위: 이 게이트는 **SDK 러너(claude/glm/kimi/openrouter)의 도구 호출**에만 걸린다
 // (chat.mjs의 canUseTool). codex·gemini·antigravity 같은 외부 CLI 러너는 프로세스 단위 샌드박스라
 // 여기를 지나지 않는다 — 한계와 그 근거는 docs/runner-isolation-limits.md.
-//
-// 2026-07-18 모델 단순화(유건 지시): 이전엔 능력을 켜도 도구 실행마다 결재를 올리고 기다려
-// 결재 폭탄·raw 명령 노출·흐름 끊김이 났다(실사용: grep/ls 하나하나 결재 카드). 사장이 설정에서
-// 능력을 켠 것 = 그 범위의 신뢰 위임이다 — 켜짐은 즉시 실행, 꺼짐은 켜기 제안 카드 한 장.
-// (별도 bypass 토글은 이 모델에서 잉여가 되어 설정 UI에서 내렸다 — capabilities.mjs)
+// ⚠ 셸 한계(정직 표기): Bash는 명령 "문자열"이라 리터럴 방어뿐이다 — $HOME·변수·와일드카드로
+// 우회 가능하다. 셸에서 하드라인은 강제가 아니라 1차 방어 + 프롬프트 지시가 계약이고, 완전 강제는
+// Read/Write/MCP 인자 판정(isForbidden)의 몫이다. 그래도 리터럴 목록은 하드라인 목록과 **정합**해야
+// 한다 — 같은 파일을 Read는 deny하고 Bash는 allow하면 도구별 판정이 갈린다(분리 검수 2026-07-30 HIGH).
 import { resolve, dirname, join, basename, sep, isAbsolute } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
-import { addApproval, loadApprovals } from './approvals.mjs';
 import { fold, insideFold } from './pathcase.mjs';
 
 // 경로 인자를 갖는 읽기 도구 — 워크스페이스 경계를 적용한다(P1-5). TodoWrite는 경로가 없어 별도(항상 허용).
@@ -120,9 +119,23 @@ const WS_CONTROL_DIRS = new Set(['agents', 'chats']);
    크루의 책상이 아니라 실질 피해가 없다 — "버그 같다"고 되돌리지 말 것. */
 const normName = (n) => n.split(':')[0].replace(/[. ]+$/, '').toLowerCase();
 
+/* 하드라인 홈 디렉터리 — canonical 판정(roots().hard)과 Bash 리터럴 방어가 **같은 목록**을 쓴다.
+   분리 검수 2026-07-30 HIGH: 벤더 자격을 hard에만 넣고 Bash 리터럴에서 빠뜨려, 같은 auth.json이
+   Read/Write/MCP는 deny인데 `cat ~/.codex/auth.json`은 allow였다. 목록이 갈라지면 재발한다. */
+const HARD_HOME_DIRS = [
+  '.argo',   // 격리 홈·조달 도구·자격
+  '.codex',  // Codex CLI 자격(auth.json)
+  '.claude', // Claude Code 자격(.credentials.json)
+  '.gemini', // gemini-cli 자격(oauth_creds.json)
+];
+
 /* Bash 리터럴 방어 대상 — 셸 명령 문자열에 이 이름이 그대로 들어간 순진한 시도를 막는다.
-   agents/는 슬래시까지 붙여 `agents.md` 같은 무관한 이름의 오탐을 줄인다. */
-const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, `agents${sep}`, 'agents/'];
+   agents/·chats/는 슬래시까지 붙여 `agents.md` 같은 무관한 이름의 오탐을 줄인다.
+   (chats/ 누락은 분리 검수 2026-07-30 HIGH — Bash로 동료 스레드에 who:'user' 주입이 가능했다.) */
+const BASH_GUARDED = [
+  ...WS_CONTROL_FILES, ...WS_LEDGER_FILES,
+  ...[...WS_CONTROL_DIRS].flatMap((d) => [`${d}${sep}`, `${d}/`]),
+];
 
 /** p가 금지 구역인가 — 판정 전 자기 워크스페이스 안(inWorkspace)이 먼저 통과됐다는 전제의 2차 검사.
     canonical(실경로) 기준 — 심링크로 금지 구역을 우회하지 못한다.
@@ -157,6 +170,11 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
   let rootsP = null;
   const roots = () => (rootsP ??= (async () => {
     const ws = (await canon(wsAbs)) ?? wsAbs;
+    // 하드 루트는 **렉시컬(raw)·canonical 두 형태를 모두** 비교 목록에 둔다 — 루트 자체에 심링크
+    // 조상이 있으면(/var→/private/var, 정션 홈 Windows 설치) canonical만으론 렉시컬 leg(abs 비교)가
+    // 무동작해 "안→밖 심링크"가 빠져나간다(분리 검수 LOW 실측: /tmp 경유 입력이 allow — 이번
+    // forbidden-zone 심링크 테스트가 tmpdir에서 그대로 재현했다).
+    const hardRaw = [resolve(appRoot), ...HARD_HOME_DIRS.map((d) => join(homedir(), d))];
     return {
       ws,
       parent: dirname(ws), // WS_ROOT — 형제 = 다른 회사, 직속 도트파일 = 계정 시크릿·기기 마커
@@ -166,13 +184,10 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
       // ~/.gemini/oauth_creds.json·~/.claude/.credentials.json이 전부 allow였다. 사장이 위임한 것은
       // "문서 접근"인데 얻는 것은 "구독 계정 탈취"라 위임 범위가 어긋난다 — Hermes 하드라인과 같은 논리로,
       // 전권은 파일을 맡긴다는 뜻이지 자격을 넘긴다는 뜻이 아니다.
-      hard: await Promise.all([
-        resolve(appRoot),
-        join(homedir(), '.argo'),
-        join(homedir(), '.codex'),   // Codex CLI 자격(auth.json)
-        join(homedir(), '.claude'),  // Claude Code 자격(.credentials.json)
-        join(homedir(), '.gemini'),  // gemini-cli 자격(oauth_creds.json)
-      ].map(async (r) => (await canon(r)) ?? r)),
+      hard: [...new Set([
+        ...hardRaw, // Bash 리터럴 방어와 같은 목록(정합 계약)
+        ...(await Promise.all(hardRaw.map(async (r) => (await canon(r)) ?? r))),
+      ])],
     };
   })());
   return async function isForbidden(p, mode = 'read') {
@@ -212,40 +227,25 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
 const FORBIDDEN_MSG = {
   // 목록을 열거하지 않고 **규칙**으로 쓴다 — 차단 대상이 늘 때마다 이 문구가 코드와 어긋나고,
   // 크루는 막혔을 때 이 텍스트만 읽으므로 "그 목록엔 없던데"로 재시도하게 된다(분리 검수 MEDIUM).
-  ko: 'Argo 앱 자체(설치 폴더·서버 코드)와 다른 회사의 데이터, 그리고 이 회사의 설정·자격·결재·원장 파일과 크루 카드(agents/)는 보호 구역이다. 회사 폴더 바로 아래에 있는 설정 파일들과 `.`으로 시작하는 항목이 전부 여기 해당한다 — 읽기도 쓰기도 막히고, 원장(사용액·활동)만 읽기가 열려 있다. 이 설정들은 파일을 고쳐서가 아니라 도구로 바꾼다 — 능력이 필요하면 request_capability, 도구 설치는 request_tool_install, 프로필·영입은 update_profile/hire_crew로 사장 결재를 올려라. 네 책상(vault/·skills/·산출물)은 그대로 쓸 수 있다. 앱 개선 요청이면 사장에게 "설정 → 피드백"으로 전달하라고 안내하라.',
-  en: 'The Argo app itself (install folder, server code), other companies’ data, and this company’s settings, credential, approval and ledger files plus crew cards (agents/) are protected. That means every settings file sitting directly in the company folder and anything starting with `.` — blocked for both reading and writing, except the ledgers (usage, activity) which stay readable. These settings change through tools, not file edits: use request_capability for capabilities, request_tool_install for tools, and update_profile / hire_crew for crew changes, all of which go to the captain for approval. Your desk (vault/, skills/, project output) is unaffected. If the captain wants app improvements, point them to Settings → Feedback.',
+  // ⚠ 없어진 도구를 지시하지 않는다 — request_capability는 전권 전환으로 제거됐다(분리 검수 2026-07-30:
+  // denyHard마다 크루가 이 문구를 읽으므로, 죽은 도구 지시는 "그 도구가 없는데요" 혼란을 양산한다).
+  ko: 'Argo 앱 자체(설치 폴더·서버 코드)와 다른 회사의 데이터, 그리고 이 회사의 설정·자격·결재·원장 파일과 크루 카드(agents/)·대화 정본(chats/)은 보호 구역이다. 회사 폴더 바로 아래에 있는 설정 파일들과 `.`으로 시작하는 항목이 전부 여기 해당한다 — 읽기도 쓰기도 막히고, 원장(사용액·활동)만 읽기가 열려 있다. 이 설정들은 파일을 고쳐서가 아니라 도구로 바꾼다 — 도구 설치는 request_tool_install, 프로필·영입은 update_profile/hire_crew로 사장 결재를 올려라. 네 책상(vault/·skills/·산출물)은 그대로 쓸 수 있다. 앱 개선 요청이면 사장에게 "설정 → 피드백"으로 전달하라고 안내하라.',
+  en: 'The Argo app itself (install folder, server code), other companies’ data, and this company’s settings, credential, approval and ledger files plus crew cards (agents/) and chat threads (chats/) are protected. That means every settings file sitting directly in the company folder and anything starting with `.` — blocked for both reading and writing, except the ledgers (usage, activity) which stay readable. These settings change through tools, not file edits: use request_tool_install for tools, and update_profile / hire_crew for crew changes, all of which go to the captain for approval. Your desk (vault/, skills/, project output) is unaffected. If the captain wants app improvements, point them to Settings → Feedback.',
 };
 
-/** 능력 켜기 제안 결재 — 대화창 Yes/No 카드의 원천. 게이트 거절 시와 크루의 request_capability 도구가 함께 쓴다.
-    from = 위임 원 크루 slug(있으면) — 카드가 "누구의 위임으로 온 요청인지"를 보여준다. */
-const CAP_LABEL = { fs: '파일 시스템', browser: '웹 브라우징', shell: '셸·컴퓨터' };
-export async function suggestCapability(wsId, slug, cap, why, from = null) {
-  try {
-    const dup = (await loadApprovals(wsId)).find((a) => a.status === 'pending' && a.kind === 'capability' && a.cap === cap);
-    if (dup) return dup;
-    return await addApproval(wsId, {
-      slug, cap, kind: 'capability', ...(from ? { from } : {}),
-      action: `로컬 능력 켜기: ${CAP_LABEL[cap] ?? cap}`,
-      reason: why?.trim() || '크루가 이 능력이 필요한 작업을 받았습니다 — 승인하면 능력을 켜고 이어서 실행합니다',
-    });
-  } catch { return null; /* 제안 실패는 거절 응답을 막지 않는다 */ }
-}
-
-/** caps: {fs, browser, shell, bypass} — allowedTools에 없는 도구가 여기로 온다. 켜짐=허용, 꺼짐=켜기 제안 카드.
-    bypass = 결재·능력 체크 생략(전권 위임)이되 **금지 구역은 예외 없이 차단**한다 — bypass의 의미는
-    "사장 확인 생략"이지 "Argo 보호 구역 해제"가 아니다(실사용 신고 2026-07-22 크리티컬).
-    from = 위임 원 크루 slug(제안 카드 표기용). lang = 거절 메시지 언어.
-    workRoots = 사장이 지정한 외부 작업 폴더 — 워크스페이스와 동급 책상(등록 시 금지 구역 검증됨). */
+/** SDK 도구 호출의 유일한 게이트(전권 모델) — allowedTools에 없는 도구가 여기로 온다.
+    전권은 결재·능력 체크가 없다는 뜻이고, **금지 구역은 예외 없이 차단**한다(실사용 신고 2026-07-22
+    크리티컬 — "전권"의 의미는 파일을 맡긴다는 것이지 앱·자격·타사 데이터를 넘긴다는 것이 아니다).
+    lang = 거절 메시지 언어. workRoots = 사장이 지정한 외부 작업 폴더(등록 시 금지 구역 검증됨) —
+    Grep/Glob 재귀 판정(coversControl)이 참조한다. */
 export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko', workRoots = []) {
-  const inWorkspace = makeInWorkspace(wsRoot);
-  const inWorkRoots = makeInWorkRoots(workRoots);
   const isForbidden = makeIsForbidden(wsRoot);
-  const deny = (what) => ({ behavior: 'deny', message: `${what} 사장의 대화창에 "켤까요?" 카드를 띄웠으니, 승인하면 이어서 하겠다고 짧게 안내하라.` });
   const denyHard = () => ({ behavior: 'deny', message: FORBIDDEN_MSG[lang === 'en' ? 'en' : 'ko'] });
   // Bash 보완 방어 — 명령 문자열에 금지 구역 경로가 리터럴로 들어간 순진한 시도를 차단한다.
-  // (셸은 변수·상대경로로 우회 가능한 프로세스 단위 도구 — 완전 차단이 아니라 1차 방어 + 프롬프트 지시가 계약)
-  const appRootLiteral = APP_ROOT;
-  const argoHome = join(homedir(), '.argo');
+  // (셸은 변수·상대경로로 우회 가능한 프로세스 단위 도구 — 완전 차단이 아니라 1차 방어 + 프롬프트
+  //  지시가 계약. 파일 헤더의 "셸 한계" 참조.) 목록은 하드라인(HARD_HOME_DIRS)과 공유 — 갈라지면
+  // 같은 파일의 도구별 판정이 갈린다(분리 검수 2026-07-30 HIGH).
+  const bashHardLiterals = [APP_ROOT, ...HARD_HOME_DIRS.map((d) => join(homedir(), d))];
   const wsAbs = resolve(wsRoot);
 
   /* 검색 루트가 금고를 품는가 — Grep/Glob은 준 경로 **아래를 재귀**하므로, 경로 자체가 금지가 아니어도
@@ -284,9 +284,20 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       }
       if (typeof v !== 'string' || !v.trim()) continue;
       // 길이·개행 컷 — 경로가 아닌 값(Write의 content 등)에 realpath 재귀를 태우지 않기 위한 비용
-      // 방어다. PATH_MAX(4096)를 넘거나 개행이 든 문자열은 도구 인자로서의 경로가 아니다.
-      if (v.length > 4096 || v.includes('\n')) continue;
-      if (await isForbidden(v, 'write')) return true; // 인자는 쓰기일 수 있다 — 넓은 쪽으로 판정
+      // 방어다. PATH_MAX(4096)를 넘거나 (trim 후에도) 개행이 든 문자열은 도구 인자로서의 경로가
+      // 아니다. 앞뒤 개행만 붙은 경로(`"capabilities.json\n"`)는 trim해 검사한다(분리 검수 LOW).
+      if (v.length > 4096) continue;
+      const vv = v.trim();
+      if (vv.includes('\n')) continue;
+      // 구분자 없는 단일 토큰 — 경로가 아니라 일반 단어(태그·검색어·메모)일 확률이 높다. 정확히
+      // 제어·원장 파일명이거나 도트 접두일 때만 경로 후보로 본다(분리 검수 MEDIUM: {"note":"agents"}
+      // 같은 무해 인자가 보호구역 메시지로 오차단 → 크루가 사장에게 틀린 설명을 하게 된다).
+      // 파일 쓰기형 호출은 사실상 항상 구분자·확장자를 동반하고, 동반하면 아래 전체 판정을 그대로 탄다.
+      if (!vv.includes('/') && !vv.includes('\\')) {
+        const n = normName(vv);
+        if (!n.startsWith('.') && !WS_CONTROL_FILES.has(n) && !WS_LEDGER_FILES.has(n)) continue;
+      }
+      if (await isForbidden(vv, 'write')) return true; // 인자는 쓰기일 수 있다 — 넓은 쪽으로 판정
     }
     return false;
   };
@@ -326,7 +337,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
     }
     if (toolName === 'Bash') {
       const cmd = String(input?.command ?? '');
-      if (fold(cmd).includes(fold(appRootLiteral)) || fold(cmd).includes(fold(argoHome))) return denyHard(); // 리터럴 경로 1차 방어(케이스 폴딩 — 어차피 우회 가능한 1차 방어지만 공짜 강화)
+      if (bashHardLiterals.some((r) => fold(cmd).includes(fold(r)))) return denyHard(); // 리터럴 경로 1차 방어(케이스 폴딩) — 하드라인 목록과 공유(정합 계약)
       // 회사 금고도 같은 수준의 1차 방어를 받는다. 셸은 변수·상대경로로 우회 가능하지만, 그 논리라면
       // 위 줄도 없어야 한다 — 같은 자리에 같은 방어를 두는 것이 일관적이다(분리 검수 MEDIUM).
       // 이게 없으면 shell 능력이 켜진 SDK 크루가 `echo '{"bypass":true}' > capabilities.json` 한 줄로

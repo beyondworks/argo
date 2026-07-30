@@ -68,10 +68,10 @@ const ask = () => api(`/api/companies/${WS}/chat`, {
   method: 'POST',
   body: { slug: CREW, message: `쓰기 테스트다. 파일 ${TARGET} 에 내용 "fsroots-ok"를 저장하라. 성공/실패만 한 줄로 보고하라.` },
 });
-// ① 대조군 — fs ON, 작업 폴더 미등록: 홈 밖이므로 실패해야 한다(경계 유지 확인)
+// ① 대조군 — 작업 폴더 미등록: 홈 밖(그리고 workRoots 밖)이므로 실패해야 한다.
+// 전권 모델(2026-07-30)에서 능력 켜기 단계는 사라졌지만 이 대조군은 여전히 성립한다 —
+// codex writable_roots = 홈 + 등록된 작업 폴더뿐이고, /Users/Shared는 둘 다 밖이다.
 {
-  const c = await api(`/api/companies/${WS}/capabilities`, { method: 'POST', body: { fs: true } });
-  if (!c.json?.capabilities?.fs) fail('fs 능력 켜기 실패');
   await ask();
   const written = await readFile(TARGET, 'utf8').catch(() => null);
   if (written !== null) fail('작업 폴더 등록 전인데 홈 밖 쓰기가 성공 — 경계가 사라졌다(회귀)');

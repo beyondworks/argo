@@ -17,8 +17,8 @@ import { addApproval } from './approvals.mjs';
 import { appendEvent } from './events.mjs';
 import { loadCapabilities } from './capabilities.mjs';
 import { loadActiveWorkRoots } from './workroots.mjs';
-import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
-import { detectRunnerDenial, detectDeniedNarration, denialNote } from './runner-denial.mjs';
+import { makePermissionGate } from './permission-gate.mjs';
+import { detectRunnerDenial, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
@@ -41,6 +41,12 @@ export async function loadSkills(wsId, cap = 6000, lang = 'ko', allow = null) {
   }
   return out;
 }
+
+/* SDK allowedTools — 여기 든 것은 canUseTool 상담 없이 자동 허용된다. bare `mcp__<서버>`는 자체
+   크루 서버(mcp__crew — 서버측 코드)만 허용하고, 외부 MCP는 절대 넣지 않는다: SDK가 bare 항목을
+   콜백 상담 전에 자동 승인해(벤더 계약) 게이트의 MCP 분기가 통째로 도달 불가가 된다.
+   (export: 회귀 테스트용 — 분리 검수 2026-07-30 MEDIUM) */
+export const SDK_ALLOWED_TOOLS = ['WebFetch', 'WebSearch', 'mcp__crew'];
 
 /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
 function rosterPrompt(colleagues, lang = 'ko') {
@@ -776,25 +782,20 @@ ${lang === 'en'
       // — 사장이 "권한 다 켰는데 차단"으로 읽던 자리. codex 한정 — gemini는 샌드박스가 없어
       // fs 거부가 caps와 무관한 OS 오류다(능력 원인 단정 = 거짓 안내, 검수 MEDIUM-2).
       if (runner === 'codex') {
-        let denial = detectRunnerDenial(reply); // strict — 생 출력 줄. 어느 능력 상태든 신뢰
-        let narrated = false;
-        if (!denial) {
-          // 서술형("쓰기 권한이 없습니다") — 후보 중 **꺼져 있는 첫 능력**만 채택한다(3R:
-          // 켜진 능력 후보가 꺼진 후보를 삼키면 안내가 통째로 사라졌다). 오탐해도
-          // "꺼진 능력을 켤까요?"라는 사실 기반 제안에 머문다(능력 ON 오정보는 strict 전용).
-          const cap = detectDeniedNarration(reply)?.caps.find((c) => !cliCaps[c]);
-          if (cap) { denial = { cap, path: '' }; narrated = true; }
-        }
+        // strict(생 출력 줄) 탐지만 남았다 — 전권 전환으로 "능력 OFF 서술 탐지 → 켜기 카드" 갈래는
+        // 도달 불가가 되어 걷어냈다(분리 검수 2026-07-30: cliCaps가 동결 전권 상수라
+        // `caps.find((c) => !cliCaps[c])`가 항상 undefined — 죽은 배선을 소스 단언이 고정하고 있었다).
+        // 전권에서 거부가 남는 원인은 능력이 아니라 샌드박스 쓰기 범위(홈·지정 작업 폴더 밖)와 OS 권한이다.
+        const denial = detectRunnerDenial(reply);
         if (denial) {
-          const capOn = !!cliCaps[denial.cap];
           // 홈 경로는 env로만 얻는다(macOS launchd=HOME, Windows=USERPROFILE). node:os의 홈 함수는
           // 금지 — Next 파일 추적기(nft)가 그 호출을 빌드타임에 실평가해 홈 전체를 글롭하고,
           // Windows CI 러너 홈의 보호 항목(WindowsApps 별칭 EACCES·Application Data 정션 EPERM)에서
           // next build가 죽는다(v0.1.30 CI 실측 — 이분법 5런으로 확정). 둘 다 없으면 ''(홈 판정
-          // 불가 → outsideHome=false = 카드 유지, 아래 보수화 규칙과 동일 방향).
+          // 불가 → outsideHome=false — 범위 안내 대신 일반 후보 안내로 보수화).
           const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
-          // 홈 밖 판정 — 판정 불가면 false(카드 유지)로 보수화(검수 2R: 드라이브 유실이
-          // outsideHome 오판 → 카드 억제 + 오안내로 이어졌다). 윈도우는 구분자 통일 + 대소문자 무시.
+          // 홈 밖 판정 — 판정 불가면 false로 보수화(검수 2R: 드라이브 유실이 outsideHome 오판 →
+          // 오안내로 이어졌다). 윈도우는 구분자 통일 + 대소문자 무시.
           const norm = (s) => s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
           let outsideHome = false;
           if (denial.path) {
@@ -805,11 +806,7 @@ ${lang === 'en'
               outsideHome = !(denial.path === home || denial.path.startsWith(`${home}/`));
             }
           }
-          // 켜도 안 열리는 조합(fs OFF + 홈 밖)에는 카드를 올리지 않는다 — 승인해 줬는데 또 막히면
-          // "켰는데도 차단"이라는 신고 문구를 이 기능이 재생산한다(검수 HIGH-1).
-          const wantCard = !capOn && !(denial.cap === 'fs' && outsideHome);
-          const card = wantCard ? await suggestCapability(wsId, agentSlug, denial.cap, null, from) : null;
-          reply += denialNote({ ...denial, capOn, lang, outsideHome, cardShown: !!card, narrated });
+          reply += denialNote({ ...denial, lang, outsideHome });
         }
       }
       await appendUsage(wsId, {
@@ -855,7 +852,10 @@ ${lang === 'en'
   let servers = safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {});
   // 크루별 MCP 범위 — 지정된 크루는 그 서버만 스폰·허용(불필요한 프로세스·권한 축소)
   if (mcpScope) servers = Object.fromEntries(Object.entries(servers).filter(([n]) => mcpScope.includes(n)));
-  const mcpAllow = Object.keys(servers).map((n) => `mcp__${n}`);
+  // ⚠ 설치된 MCP 서버를 allowedTools에 bare `mcp__<서버>`로 넣지 않는다 — SDK는 괄호 없는 bare
+  // 항목을 canUseTool 상담 **전에** 자동 승인한다(벤더 sdk.mjs 원문·CLAUDE_SDK_CAN_USE_TOOL_SHADOWED).
+  // 외부 MCP는 게이트(argPathsForbidden)를 지나야 한다. 죽은 mcpAllow 변수는 되돌리기 쉬운 형태라
+  // 삭제했다(분리 검수 2026-07-30 MEDIUM — SDK_ALLOWED_TOOLS 불변식 테스트가 재유입을 잠근다).
 
   // 크루 도구 — 결재 요청은 모든 턴. 위임·쪽지는 hop 2단계까지(사장→A→B→C에서 끝). 실효 바운드는
   // hop 단독이다 — lastSender 회신 예외 도입 후 chain 제외는 도달 가능한 경로에서 무효(재검 (c) 확인).
@@ -880,7 +880,7 @@ ${lang === 'en'
   // 제거해도 결재 카드가 새로 뜨지 않는다: 게이트의 mcp 분기는 금지 구역 경로가 아니면 그냥 allow다.
   const caps = await loadCapabilities();
   const workRoots = await loadActiveWorkRoots(wsId); // 사장 지정 외부 작업 폴더 — 게이트·SDK 추가 디렉토리·프롬프트에 주입
-  const readTools = ['WebFetch', 'WebSearch', 'mcp__crew'];
+  const readTools = SDK_ALLOWED_TOOLS;
   // 결재·능력·환경·도구 활용 지시는 commonDirectives(러너 공통)로 일원화 — SDK/외부 러너 행동 통일.
   const connectedMcp = Object.keys(servers ?? {});
 
