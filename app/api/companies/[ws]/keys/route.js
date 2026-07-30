@@ -33,7 +33,9 @@ export async function PUT(req, { params }) {
       if (runner === 'gemini' && (await probeGeminiHostOAuth()).ok === false) {
         // 벤더 폐기의 정직 안내(QA P0-2) — 구글이 개인 Code Assist OAuth를 Antigravity로 이전했다.
         // 사용자가 자기 설정을 의심하며 시간을 태우지 않게 원인과 대안(Antigravity 러너 = agy 로그인 인식)을 함께.
-        throw new Error('이 컴퓨터의 Gemini 로그인(개인 OAuth)은 구글이 폐기하고 Antigravity로 이전해 사용할 수 없습니다 — Antigravity 러너로 연결하시거나(agy 로그인 인식), API 키로 연결해 주세요(Google AI Studio에서 무료 발급)');
+        // ko/en 병기(webauth.mjs ineligible detail과 같은 관례) — 이 문자열은 runner-connect가 그대로
+        // 렌더하므로 단일 언어면 영어 모드에 한글이 노출된다(분리 검수 LOW, 다국어 규칙).
+        throw new Error('이 컴퓨터의 Gemini 로그인(개인 OAuth)은 구글이 폐기하고 Antigravity로 이전해 사용할 수 없습니다 — Antigravity 러너로 연결하시거나(agy 로그인 인식), API 키로 연결해 주세요(Google AI Studio에서 무료 발급). This computer’s Gemini login (personal OAuth) was retired by Google in favor of Antigravity — connect the Antigravity runner (uses your agy login) or use an API key (free from Google AI Studio).');
       }
       await saveRunnerCred(ws, runner, 'host', 'host');
       return Response.json({ ok: true, runner, connected: true, type: 'host', masked: '' });

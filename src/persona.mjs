@@ -115,17 +115,20 @@ async function recommendRole(wsId, oneLiner, lang = 'ko') {
   return ((oneLiner || '').split(/[-—·,.\n]/)[0].trim().slice(0, 30)) || (lang === 'en' ? 'AI employee' : 'AI 직원');
 }
 
-/** 기존 크루 표시 이름 — 영입 프롬프트의 제외 목록 원천. (export: 회귀 테스트용) */
+/** 기존 크루 표시 이름(NFC 정규화) — 영입 프롬프트의 제외 목록 원천. (export: 회귀 테스트용) */
 export async function existingNames(wsId) {
-  try {
-    const dir = paths(wsId).agents;
-    const out = [];
-    for (const f of (await readdir(dir)).filter((n) => n.endsWith('.md'))) {
+  const dir = paths(wsId).agents;
+  let files = [];
+  try { files = (await readdir(dir)).filter((n) => n.endsWith('.md')); } catch { return []; } // agents/ 부재(첫 영입) — 제외 없음
+  const out = [];
+  for (const f of files) {
+    // 파일별 관용(분리 검수 LOW) — 한 카드가 깨졌다고 제외 목록 전체를 무음 소실하지 않는다
+    try {
       const nm = parseFrontmatter(await readFile(join(dir, f), 'utf8')).name;
-      if (nm) out.push(nm);
-    }
-    return out;
-  } catch { return []; } // agents/ 부재(첫 영입) — 제외 없음
+      if (nm) out.push(nm.normalize('NFC'));
+    } catch { /* 깨진 카드 — 건너뜀 */ }
+  }
+  return out;
 }
 
 /** 원샷 1턴으로 카드 생성 → agents/<slug>.md 저장. name·team 지정 가능.
@@ -156,13 +159,28 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   // 사후 가드 — 프롬프트 제외에도 자동 생성 이름이 로스터와 충돌하면 **이름만** 1회 재요청(카드
   // 전체 재생성보다 싸다). 재충돌은 수용: slug는 아래 -n으로 이미 유일하고, 2겹(제외+재요청)을 뚫는
   // 중복은 드물다. 이름 지정 영입(name)은 사장의 선택이라 손대지 않는다.
-  if (!name?.trim() && avoid.includes(nameFinal)) {
+  const nfc = (s) => String(s).normalize('NFC'); // 비교는 NFC 통일 — 임포트·수기 카드의 NFD 우회 방지(검수 INFO)
+  if (!name?.trim() && avoid.includes(nfc(nameFinal))) {
+    const t1 = Date.now();
     const alt = await runOneShot(wsId, lang === 'en'
       ? `Suggest ONE natural English first name for a new AI employee. It must NOT be any of: ${[...avoid, nameFinal].join(', ')}. Reply with the name only — no punctuation.`
       : `새 AI 직원의 한글 이름(2-3자, 사람 이름처럼)을 하나만 추천해줘. 다음 이름은 이미 있으니 반드시 제외: ${[...avoid, nameFinal].join(', ')}. 이름만 답해(문장·기호 없이).`,
-      { lang }).then((r) => r.text.trim().split(/\s+/)[0].replace(/["'`.,!?]/g, '').slice(0, 24)).catch(() => '');
+      { lang, timeoutMs: 60_000 })
+      .then(async (r) => {
+        // 재요청 턴도 원장에 남긴다 — usage.jsonl은 청구·월 예산 상한의 근거(분리 검수 MEDIUM:
+        // 같은 함수에서 한 턴만 기록하면 이 턴의 토큰·금액이 청구·상한 양쪽에서 증발한다).
+        await appendUsage(wsId, { kind: 'hire', runner: r.runner, usage: r.usage, costUsd: r.costUsd, ms: Date.now() - t1, billed: await isBilledRunner(wsId, r.runner).catch(() => undefined) }).catch(() => {});
+        // 정제 — recommendRole과 같은 걷어내기(선두 마크다운·번호·라벨 콜론). 약한 정제는 "-"·"이름:"
+        // 같은 쓰레기 값을 이름으로 굳혔다(분리 검수 MEDIUM 실측: "- 지훈"→"-"). 2자 미만은 실패.
+        const line = String(r.text ?? '').trim().split('\n')[0].replace(/^["'#*\-\s\d.:]+|["'\s]+$/g, '');
+        const tok = nfc(line.split(/\s+/)[0].replace(/["'`.,!?:]/g, '').slice(0, 24));
+        return tok.length >= 2 ? tok : '';
+      })
+      .catch(() => ''); // 재요청 실패는 기존 이름 유지 — 영입을 죽이지 않는다
     if (alt && !avoid.includes(alt)) {
-      md = md.replace(/^(#\s+).+?(\s+[—–-]\s+)/m, `$1${alt}$2`); // 본문 H1도 새 이름으로(카드 표기 일치)
+      // H1 동기화 — 옛 이름을 앵커로 역할 유무 양형("# 이름"·"# 이름 — 역할")을 함께 덮는다
+      // (updateAgentMeta와 같은 모양 — 검수 LOW). 함수 리플레이서 — LLM 값의 $ 캡처참조 해석 차단.
+      md = md.replace(new RegExp(`^(#\\s+)${escRe(nameFinal)}(?=\\s+[—–-]\\s+|\\s*$)`, 'm'), (_, p) => p + alt);
       nameFinal = alt;
     }
   }
