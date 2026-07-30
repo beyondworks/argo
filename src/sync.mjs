@@ -893,16 +893,31 @@ async function cycle() {
   // ARGO_SYNC_OWNER/페어링/세션 어디에도 오너가 없던 서비스 셀프호스트 — 로컬 회사에서 찾은 오너로 한 번 더 시도
   if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
   let companyFailed = 0;
+  // free 복원의 1회성 방지(분리 검수 MEDIUM) — 복원 사이클이 부분 실패하면(파일 일부 throw, free는
+  // 매니페스트 업로드가 RLS에 거부돼 .sync-state도 미기록) 다음 사이클엔 company.json이 생겨 targets에
+  // 실리고 restoreSet엔 없어, 아래 스킵이 "유일한 복구 경로"(free 재설치 복원)를 영구히 닫는다.
+  // 실패한 복원은 pending으로 기억해 **throw 없이 완료될 때까지** 스킵 예외를 유지한다. 재시도는
+  // pull 위주다(state 미기록이라 base가 비어 삭제 분기(base 필요)는 못 탄다). 업로드 거부가 지속되면
+  // 재시도가 계속 돌지만 목록 조회는 freeListSkip이 막고 있어 비용은 파일 diff뿐 — 수용.
+  const restorePending = (globalThis.__argoFreeRestorePending ??= new Set());
   for (const [wsId, owner] of targets) {
     // 확정 free는 파일 왕복을 걸지 않는다(신규 복원 pull은 예외) — 업로드는 RLS(is_pro)가 거부하는데
     // 파일 삭제 전파는 소유권 정책(20260723 꼬리: free도 select/delete 허용)상 성공해, 클라우드 사본이
     // 삭제만 반영하며 단조 감소한다(전수리뷰 2026-07-30 #6). 미확인(null)은 기존 결정대로 낙관 통과
-    // (검수 MEDIUM 2026-07-24 — 유료 오차단 방지). 복원되면 targets에 실려 다음 사이클부터 스킵된다.
-    if (freePlan && !restoreSet.has(wsId)) continue;
+    // (검수 MEDIUM 2026-07-24 — 유료 오차단 방지).
+    const restoring = restoreSet.has(wsId) || (freePlan && restorePending.has(wsId));
+    if (freePlan && !restoring) {
+      // foreign-owner 분기와 같은 표기(검수 LOW) — 카운터가 옛 값인 채 "방금 동기화"로 보이지 않게
+      status.companies[wsId] = { ts: Date.now(), skipped: 'free-plan' };
+      continue;
+    }
     try {
-      const r = await syncCompany(wsId, owner, restoreSet.has(wsId));
+      const r = await syncCompany(wsId, owner, restoring);
       status.companies[wsId] = { ts: Date.now(), ...r };
+      // 복원 완결 판정 — 파일 실패가 남았으면 다음 사이클 재시도, 전부 성공이면 pending 해제(동결 진입)
+      if (freePlan) { if ((r.failed ?? 0) > 0) restorePending.add(wsId); else restorePending.delete(wsId); }
     } catch (e) {
+      if (freePlan) restorePending.add(wsId); // 복원 미완 — 스킵 예외 유지(다음 사이클 재시도)
       status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;
       console.error(`[argo] 동기화 실패(${wsId}):`, e.message);
       companyFailed++;

@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
   const sig = req.headers.get('x-signature') ?? '';
   if (!safeEqual(await hmacHex(secret, raw), sig)) return new Response('invalid signature', { status: 401 });
 
-  let evt: { meta?: { event_name?: string; custom_data?: { user_id?: string } }; data?: { attributes?: { status?: string; ends_at?: string | null } } };
+  let evt: { meta?: { event_name?: string; custom_data?: { user_id?: string } }; data?: { id?: string; attributes?: { status?: string; ends_at?: string | null; customer_id?: number; updated_at?: string } } };
   try { evt = JSON.parse(raw); } catch { return new Response('bad json', { status: 400 }); }
   const name = String(evt?.meta?.event_name ?? '');
   if (!LIFECYCLE.has(name)) return new Response('ignored', { status: 200 });
@@ -67,9 +67,20 @@ Deno.serve(async (req) => {
   // ends_at 동반 필수(2026-07-30) — is_pro가 ends_at을 집행하게 되면서, plan만 쓰면 해지→재개 시
   // 옛 해지일이 행에 남아 그 날짜에 결정론적으로 잠긴다(분리 검수 MEDIUM: PostgREST upsert는
   // 페이로드에 있는 컬럼만 갱신). LS 계약: active류는 ends_at null, cancelled/expired만 시각.
+  // ls_* 동반(재검수 MEDIUM-D) — 이 경로만 쓰면 hasSub·status가 비어 해지 유예 안내·구독 관리 링크가
+  // 렌더되지 않는다(접근 회수 예고 없는 잠금). 정본 경로(apply_ls_event)와 같은 필드를 채운다.
   // ⚠ 이 함수는 레거시 수신자 — 정본은 /api/billing/webhook(apply_ls_event 경유, docs/billing-setup.md).
-  const endsAt = evt?.data?.attributes?.ends_at ?? null;
-  const { error } = await sb.from('entitlements').upsert({ user_id: userId, plan, ends_at: endsAt, updated_at: new Date().toISOString() });
+  //   LS 대시보드가 어느 URL을 가리키는지 확정 전까지 두 수신자를 같은 필드 계약으로 유지한다.
+  const a = evt?.data?.attributes ?? {};
+  const { error } = await sb.from('entitlements').upsert({
+    user_id: userId, plan,
+    ends_at: a.ends_at ?? null,
+    ls_subscription_id: evt?.data?.id ?? null,
+    ls_customer_id: a.customer_id != null ? String(a.customer_id) : null,
+    ls_status: status,
+    ls_updated_at: a.updated_at ?? new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
   if (error) return new Response('db error', { status: 500 });
   return new Response(JSON.stringify({ ok: true, plan }), { headers: { 'content-type': 'application/json' } });
 });
