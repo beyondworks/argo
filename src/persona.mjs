@@ -170,10 +170,12 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
         // 재요청 턴도 원장에 남긴다 — usage.jsonl은 청구·월 예산 상한의 근거(분리 검수 MEDIUM:
         // 같은 함수에서 한 턴만 기록하면 이 턴의 토큰·금액이 청구·상한 양쪽에서 증발한다).
         await appendUsage(wsId, { kind: 'hire', runner: r.runner, usage: r.usage, costUsd: r.costUsd, ms: Date.now() - t1, billed: await isBilledRunner(wsId, r.runner).catch(() => undefined) }).catch(() => {});
-        // 정제 — recommendRole과 같은 걷어내기(선두 마크다운·번호·라벨 콜론). 약한 정제는 "-"·"이름:"
-        // 같은 쓰레기 값을 이름으로 굳혔다(분리 검수 MEDIUM 실측: "- 지훈"→"-"). 2자 미만은 실패.
-        const line = String(r.text ?? '').trim().split('\n')[0].replace(/^["'#*\-\s\d.:]+|["'\s]+$/g, '');
-        const tok = nfc(line.split(/\s+/)[0].replace(/["'`.,!?:]/g, '').slice(0, 24));
+        // 정제 — recommendRole과 같은 걷어내기 + 라벨 콜론은 뒤를 취하고("이름: 지훈"→"지훈")
+        // 마크다운 강조는 후행까지 벗긴다("**지훈**" — 선두만 걷으면 "지훈**"로 남는 비대칭,
+        // 분리 검수 실측). 약한 정제는 "-"·"이름:"을 이름으로 굳혔다. 2자 미만은 실패 — 기존 이름 유지.
+        const line0 = String(r.text ?? '').trim().split('\n')[0];
+        const line = (line0.includes(':') ? line0.slice(line0.lastIndexOf(':') + 1) : line0).replace(/^["'#*\-\s\d.:~]+|["'\s*~]+$/g, '');
+        const tok = nfc(line.split(/\s+/)[0].replace(/["'`.,!?:*~]/g, '').slice(0, 24));
         return tok.length >= 2 ? tok : '';
       })
       .catch(() => ''); // 재요청 실패는 기존 이름 유지 — 영입을 죽이지 않는다
