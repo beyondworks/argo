@@ -683,6 +683,14 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
         ? `\n## Runner substitution — you MUST tell the captain\n- This crew's assigned runner (${rn(wantRunner)}) is not available on this device, so you are running on ${rn(runner)} instead. End your reply with one line telling the captain that ${rn(wantRunner)} isn't set up on this device, so you answered with ${rn(runner)}.`
         : `\n## 러너 대체 안내 — 반드시 사장에게 알려라\n- 이 크루의 지정 러너(${rn(wantRunner)})가 이 기기에 연결돼 있지 않아, 지금은 ${rn(runner)}(으)로 대신 실행 중이다. 답변 끝에 한 줄로 "지정 러너 ${rn(wantRunner)}가 이 기기에 없어 ${rn(runner)}로 대신 답했다"고 사장에게 알려라.`)
     : '';
+  // 메신저 턴 파일 규약 — extractFileRefs(게이트웨이 발신 첨부)의 존재를 크루가 알아야 쓴다
+  // (실사용 제보 2026-07-30: 규약이 프롬프트 어디에도 없어 "파일을 안 보내준다"가 됐다).
+  // 텔레그램만 자동 첨부(슬랙은 텍스트 전용)라 채널 조건을 정직하게 갈라 말한다. SDK·CLI 공통 주입.
+  const messengerNote = source === 'messenger'
+    ? (lang === 'en'
+        ? `\n## Messenger turn — sending files to the captain\n- To hand the captain a file, save it under vault/files/ or vault/projects/ and write its path verbatim in your reply (e.g. files/report.pptx, projects/20260730_x/deck.pptx). On Telegram it is attached automatically (up to 3 per reply); on other channels the captain downloads it from the web/app chat chips. Replying to the captain is NOT an external send — no approval needed.`
+        : `\n## 메신저 턴 — 사장에게 파일 보내기\n- 사장에게 파일을 건네려면 vault/files/ 또는 vault/projects/에 저장하고, 답변 본문에 경로를 그대로 적어라(예: files/보고서.pptx, projects/20260730_x/제안서.pptx). 텔레그램이면 자동 첨부되고(답변당 최대 3개), 다른 채널이면 사장이 웹·앱 채팅의 다운로드 칩으로 받는다. **사장에게 답하는 것은 외부 발송이 아니다 — 결재 불필요.**`)
+    : '';
   // 대체 실행이 '실패'하면 위 자가 고지가 나올 수 없다 — 에러 메시지 자체에 대체 사실을 붙인다
   // (턴 실패 표시·이벤트 기록·메신저 회신 전 표면 공통).
   const prefixFallbackError = (e) => {
@@ -732,7 +740,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false })}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, hasTools: false, lang, runner, workRoots: cliWorkRoots })}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false })}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, hasTools: false, lang, runner, workRoots: cliWorkRoots })}${messengerNote}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
@@ -963,6 +971,7 @@ ${lang === 'en'
       systemPrompt: systemPromptFor(md, p.root, skills, meta, lang)
         + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
         + commonDirectives({ caps, connectedMcp, hasTools: true, lang, workRoots })
+        + messengerNote
         + fallbackDirective,
       mcpServers: { ...(servers ?? {}), crew: crewServer },
       // CLI stderr 꼬리 보관 — 실패 시 errors[]가 비면 이걸 진단으로 쓴다(아래 결과 처리).

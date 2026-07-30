@@ -91,12 +91,30 @@ export function splitForTelegram(text, max = 3900) {
   return chunks;
 }
 
-/** 응답 본문에서 발송할 파일 경로 추출 — vault 상대 경로만, 최대 3개. */
+/** 응답 본문에서 발송할 파일 경로 추출 — vault 상대 경로만, 최대 3개.
+    (2026-07-30 확장 — 실사용 제보 "파일을 안 보내준다"의 1차 원인) 이전엔 `files/` 직속 평면
+    파일명만 매칭했는데, 프롬프트는 산출물을 `vault/projects/<날짜_프로젝트명>/`에 모으라고
+    시킨다 — **지시를 잘 따를수록 첨부가 안 되는 자기모순**이었다. projects/·_imported/ 하위
+    폴더까지 연다(칩 수집·서빙과 같은 구역 — artifacts.mjs SERVE_PREFIXES와 동일 목록).
+    `/`를 문자클래스에 열면서 `..`·빈 세그먼트는 명시 거부 — 이 rel은 files API가 아니라
+    게이트웨이가 직접 readFile 하므로 탈출이 곧 vault 밖 읽기다. */
 export function extractFileRefs(text) {
-  const re = /(?:vault\/)?(files\/[\w\-.ㄱ-힝 ()]+\.(?:png|jpe?g|webp|gif|pdf|docx?|xlsx?|pptx?|csv|md|zip))/gi;
+  // 수량자는 lazy(+?) — 클래스에 공백·`/`가 함께 열려 있어 탐욕이면 "files/a.pdf files/b.pdf"가
+  // 한 덩어리로 흡수된다(신설 테스트가 잡음). 확장자 뒤 (?![\w.])는 부분 매칭 방지(a.pdfx).
+  const re = /(?:vault\/)?((?:files|projects|_imported)\/[\w\-.ㄱ-힝 ()/]+?\.(?:png|jpe?g|webp|gif|pdf|docx?|xlsx?|pptx?|csv|md|zip))(?![\w.])/gi;
   const seen = new Set();
-  for (const m of String(text ?? '').matchAll(re)) seen.add(m[1]);
+  for (const m of String(text ?? '').matchAll(re)) {
+    if (m[1].split('/').some((seg) => seg === '..' || seg === '')) continue;
+    seen.add(m[1]);
+  }
   return [...seen].slice(0, 3);
+}
+
+/** 첨부 실패 안내(순수) — 침묵 실패 금지: 사용자는 "보내줬다는데 안 온다"를 이걸로 구분한다. */
+export function attachFailureNote(fails, lang = 'ko') {
+  if (!fails?.length) return '';
+  const rows = fails.map((f) => `• ${f.name}: ${f.reason}`).join('\n');
+  return lang === 'en' ? `⚠ Could not attach:\n${rows}` : `⚠ 파일 첨부 실패:\n${rows}`;
 }
 
 export const isImagePath = (p) => /\.(png|jpe?g|webp|gif)$/i.test(p);

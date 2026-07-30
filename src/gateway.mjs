@@ -22,7 +22,7 @@ import { writeJsonAtomic } from './jsonstore.mjs';
 import { mkdir, readFile, writeFile, readdir, stat, rename, copyFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
-import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath } from './tg-format.mjs';
+import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath, attachFailureNote } from './tg-format.mjs';
 import { beatGateway, loadOffset, saveOffset, loadSlackCursor, saveSlackCursor } from './gateway/persist.mjs';
 import { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT } from './gateway/queue.mjs';
 import { clip, pollBackoffMs, pick, tidy, parseApprovalText, parseApprovalCallback, pairCodeMatches, classifySlackMessage } from './gateway/protocol.mjs';
@@ -84,17 +84,39 @@ async function sendTgReply(token, chatId, wsId, text) {
       await tg(token, 'sendMessage', { chat_id: chatId, text: chunk.replace(/<[^>]+>/g, '') }).catch(() => {});
     }
   }
+  // 파일 동봉 — 실패는 본문 전달을 막지 않되 **침묵하지 않는다**(제보 "보내줬다는데 안 온다"의
+  // 절반이 여기서 조용히 죽은 것: catch{} 전량 삼킴 + res.ok 미검사). 봇 업로드 상한 50MB 사전 검사.
+  const fails = [];
   for (const rel of extractFileRefs(text)) {
+    const name = rel.split('/').pop();
     try {
-      const buf = await readFile(join(paths(wsId).vault, rel));
-      const name = rel.split('/').pop();
-      const fd = new FormData();
-      fd.append('chat_id', String(chatId));
-      fd.append(isImagePath(rel) ? 'photo' : 'document', new Blob([buf]), name);
-      await fetch(`https://api.telegram.org/bot${token}/${isImagePath(rel) ? 'sendPhoto' : 'sendDocument'}`, {
-        method: 'POST', body: fd, signal: AbortSignal.timeout(60_000),
-      });
-    } catch { /* 파일 동봉 실패는 본문 전달을 막지 않는다 */ }
+      const abs = join(paths(wsId).vault, rel);
+      const st = await stat(abs).catch(() => null);
+      if (!st?.isFile()) { fails.push({ name, reason: '파일이 없습니다(경로 확인)' }); continue; }
+      if (st.size > 50 * 1024 * 1024) { fails.push({ name, reason: '50MB 초과(텔레그램 봇 상한)' }); continue; }
+      const buf = await readFile(abs);
+      const send = (kind) => {
+        const fd = new FormData();
+        fd.append('chat_id', String(chatId));
+        fd.append(kind, new Blob([buf]), name);
+        return fetch(`https://api.telegram.org/bot${token}/${kind === 'photo' ? 'sendPhoto' : 'sendDocument'}`, {
+          method: 'POST', body: fd, signal: AbortSignal.timeout(60_000),
+        });
+      };
+      let res = await send(isImagePath(rel) ? 'photo' : 'document');
+      // 사진 거절(10MB 상한·규격 제약)은 문서로 1회 폴백 — 원본 그대로는 전달된다
+      if (!res.ok && isImagePath(rel)) res = await send('document');
+      if (!res.ok) {
+        const detail = await res.json().then((j) => j?.description ?? '').catch(() => '');
+        fails.push({ name, reason: `텔레그램 거절(${String(detail).slice(0, 80) || res.status})` });
+      }
+    } catch (e) {
+      fails.push({ name, reason: String(e?.message ?? e).slice(0, 80) });
+    }
+  }
+  if (fails.length) {
+    const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+    await tg(token, 'sendMessage', { chat_id: chatId, text: attachFailureNote(fails, lang) }).catch(() => {});
   }
 }
 
