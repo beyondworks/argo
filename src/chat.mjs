@@ -725,9 +725,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       const { messages } = await loadThread(wsId, agentSlug);
       // 실패 턴(m.failed — 답변 없는 지시문)은 재구성 맥락에서 뺀다: 러너 미로그인에서 재전송을 반복하면
       // 같은 지시 6개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
-      // 발화가 아니므로 화자를 '시스템'으로 정직 표기(배달 프리픽스가 실제 발신자를 이미 담는다).
+      // 발화가 아니므로 화자를 '자동 배달'로 정직 표기(room.mjs 어휘에서 '시스템'=크루가 답하지 않는 줄이라 반전 — 재검수 지적)(배달 프리픽스가 실제 발신자를 이미 담는다).
       const ctx = (messages ?? []).filter((m) => !m.shared && !m.failed).slice(-6) // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지
-        .map((m) => `${m.who === 'user' ? (m.via ? (lang === 'en' ? 'System' : '시스템') : (lang === 'en' ? 'Captain' : '사장')) : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? (lang === 'en' ? ` (attached, open with Read: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})`) : ''}`)
+        .map((m) => `${m.who === 'user' ? (m.via ? (lang === 'en' ? 'Auto-delivered' : '자동 배달') : (lang === 'en' ? 'Captain' : '사장')) : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? (lang === 'en' ? ` (attached, open with Read: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})`) : ''}`)
         .join('\n');
       const attNote = attachments.length
         ? (lang === 'en'
@@ -909,7 +909,7 @@ ${lang === 'en'
     if (foreign) resumeId = null;
     if ((foreign || __freshRetry) && (t.messages ?? []).length) {
       const ctx = t.messages.filter((m) => !m.shared && !m.failed).slice(-6) // 실패 턴·화자 규칙은 CLI 경로와 동일(위 주석)
-        .map((m) => `${m.who === 'user' ? (m.via ? (lang === 'en' ? 'System' : '시스템') : (lang === 'en' ? 'Captain' : '사장')) : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? (lang === 'en' ? ` (attached, open with Read: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})`) : ''}`)
+        .map((m) => `${m.who === 'user' ? (m.via ? (lang === 'en' ? 'Auto-delivered' : '자동 배달') : (lang === 'en' ? 'Captain' : '사장')) : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? (lang === 'en' ? ` (attached, open with Read: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})`) : ''}`)
         .join('\n');
       if (ctx) crossCtx = lang === 'en'
         ? `## Recent conversation (continued from another device — a new session opens here)\n${ctx}\n\n## Captain's new message\n`
