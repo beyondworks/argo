@@ -7,11 +7,12 @@
 // 러너 중립성 원칙(2026-07-30)의 산출물 판: 어떤 러너가 만들었든 같은 칩이 떠야 한다.
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+// 순수부(접두 목록·칩 판정)는 artifact-zones로 분리 — ui.jsx(클라 번들)가 쓴다. 재export로 임포터 무수정.
+export { SERVE_PREFIXES, servableArtifact } from './artifact-zones.mjs';
 
-// 비md 산출물의 칩 허용 접두 = files API(app/api/companies/[ws]/files) 허용 접두와 **동일 목록**.
-// 갈라지면 "칩은 뜨는데 누르면 400"이 재발한다(탐색 G8 — vault 직속 xlsx가 그랬다).
-export const SERVE_PREFIXES = ['projects/', 'files/', '_imported/'];
-const SCAN_ROOTS = ['projects', 'files', '_imported'];
+// notes도 스캔 — md 칩은 SDK(도구 관측)만 받고 CLI는 못 받던 러너별 편차 해소(검수 LOW-1).
+// 비md는 servableArtifact가 걸러 서빙 불일치는 생기지 않는다.
+const SCAN_ROOTS = ['projects', 'files', '_imported', 'notes'];
 
 /** vault 산출물 구역 스냅샷 — rel → "mtimeMs:size". 부재 폴더·경합 삭제는 조용히 건너뛴다.
     심링크 미추적(readdir dirent 판정 — isFile/isDirectory는 링크 자체를 따르지 않는다). */
@@ -42,10 +43,9 @@ export function diffArtifacts(before, after) {
   return out.sort();
 }
 
-/** 칩으로 내보낼 수 있는 rel인가 — md는 뷰어(vault?doc=)가 vault 전역을 열 수 있으니 journal/만
-    제외(일지는 전용 칩이 따로 있다). 비md는 files API 서빙 접두만 — 목록 밖이면 눌러도 400이다. */
-export function servableArtifact(rel) {
-  if (typeof rel !== 'string' || !rel || rel.startsWith('journal/')) return false;
-  if (rel.endsWith('.md')) return true;
-  return SERVE_PREFIXES.some((p) => rel.startsWith(p));
+/** 상한 + 최신 우선(순수) — 복원·임포트가 턴과 겹치면 diff가 수백 개로 폭발한다(검수 실측 420칩).
+    after 스냅샷의 mtime으로 내림차순 정렬 후 cap. 초과분은 기억 화면(listProjectDocs)이 담당. */
+export function capLatest(after, rels, cap = 12) {
+  const m = (r) => Number(String(after.get(r) ?? '0:0').split(':')[0]);
+  return [...rels].sort((a, b) => m(b) - m(a) || (a < b ? -1 : 1)).slice(0, cap);
 }

@@ -23,7 +23,7 @@ import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './t
 import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
-import { snapshotArtifacts, diffArtifacts, servableArtifact } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
+import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
     allow = 크루별 사용 범위(parseScopeList 결과): null=전체(기본), []=없음, [이름]=지정만.
@@ -146,7 +146,7 @@ ${skills ? `\n## Company skills — auto-injected every turn; apply them to matc
 - So if asked "is my context stored in the cloud safe / isolated?", answer: "Yes — it's isolated per account and stored safely." Do not invent extra assurances (specific certifications, audits) beyond this.
 
 ## Folder hygiene — don't clutter things up and then get lost in them
-- Collect project outputs and materials under vault/projects/${today.replaceAll('-', '')}_project-name/ (e.g. vault/projects/${today.replaceAll('-', '')}_newsletter-renewal/). **Files meant for the captain go here (or vault/files/), always** — that is what feeds the chat download chips, Telegram attachments and the memory screen. You can write elsewhere, but unless the captain named a specific folder, don't: files outside never reach them in the app.
+- Collect project outputs and materials under vault/projects/${today.replaceAll('-', '')}_project-name/ (e.g. vault/projects/${today.replaceAll('-', '')}_newsletter-renewal/). **Files meant for the captain go here (or vault/files/), always** — that is what feeds the chat download chips and Telegram attachments (projects/ also shows on the memory screen). You can write elsewhere, but unless the captain named a specific folder, don't: files outside never reach them in the app.
 - Folder and file names must be human-readable only: "date_task-name" or "topic-slug". No random alphanumeric IDs or UUIDs.
 - If one topic scatters across several files, merge them into a single topic note connected with [[links]].
 
@@ -220,7 +220,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 - "클라우드에 저장된 내 맥락이 안전하냐 / 격리돼 있냐"는 질문에는 "네, 계정별로 격리되어 있고 안전하게 보관됩니다"라고 답하라. 근거 없는 추가 보증(특정 인증·감사 취득 등)은 지어내지 마라.
 
 ## 폴더 정리 — 스스로 어질러 놓고 헤매지 마라
-- 프로젝트성 산출물·자료는 vault/projects/${today.replaceAll('-', '')}_프로젝트명/ 아래에 모아라 (예: vault/projects/${today.replaceAll('-', '')}_뉴스레터-리뉴얼/). **사장에게 전달할 파일은 반드시 여기(또는 vault/files/)에 둔다** — 여기 있어야 채팅의 다운로드 칩·텔레그램 첨부·기억 화면에 실린다. 파일 능력상 다른 곳에도 쓸 수는 있지만, 사장이 특정 폴더를 지정하지 않았다면 밖에 두지 마라(앱에서 못 받는다).
+- 프로젝트성 산출물·자료는 vault/projects/${today.replaceAll('-', '')}_프로젝트명/ 아래에 모아라 (예: vault/projects/${today.replaceAll('-', '')}_뉴스레터-리뉴얼/). **사장에게 전달할 파일은 반드시 여기(또는 vault/files/)에 둔다** — 여기 있어야 채팅의 다운로드 칩·텔레그램 첨부에 실린다(projects/는 기억 화면에도 뜬다). 파일 능력상 다른 곳에도 쓸 수는 있지만, 사장이 특정 폴더를 지정하지 않았다면 밖에 두지 마라(앱에서 못 받는다).
 - 폴더·파일 이름은 사람이 읽는 형식만: "날짜_작업명" 또는 "주제-슬러그". 랜덤 영숫자 ID·UUID 이름 금지.
 - 같은 주제가 여러 파일로 흩어지면 주제 노트 하나로 합치고 [[링크]]로 잇는다.
 
@@ -639,8 +639,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
         gist: userMsg.replace(/\s+/g, ' ').trim().slice(0, 60), ok: true, ms: 0, budgetBlocked: true,
         journalRel: relative(p.vault, handover.file),
       });
-      const artifacts = diffArtifacts(artBefore, await snapshotArtifacts(p.vault).catch(() => new Map())).filter(servableArtifact);
-      return { reply, sessionId: null, handover, artifacts };
+      // 모델을 부르지 않은 턴 — 산출물 diff 없음(여기서 artBefore를 참조하면 TDZ로 예산 턴 전체가
+      // 죽는다. 분리 검수 CRITICAL-1 실측: 변이 복원 오타겟이 심은 회귀).
+      return { reply, sessionId: null, handover };
     }
   }
   const { md, meta } = await readAgentCard(wsId, agentSlug);
@@ -708,7 +709,15 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
 
   // 산출물 스냅샷(턴 전) — 러너·도구 무관 수집의 기준점. SDK tool_use 관측은 Bash·MCP·CLI 러너가
   // 만든 파일을 원리적으로 못 봐(제보 2026-07-30: "만들었다는데 못 찾는다") 파일시스템 diff가 정본.
-  const artBefore = await snapshotArtifacts(p.vault).catch(() => new Map());
+  // compete는 diff 수집 제외 — 시안 N명이 같은 vault에 병렬로 쓰므로 diff가 전원 파일의 합집합이
+  // 되어 오귀속된다(검수 HIGH 실측). 경쟁 턴은 tool_use 관측만(격리 불변식 유지 — compete.mjs 헤더).
+  const artBefore = source === 'compete' ? null : await snapshotArtifacts(p.vault).catch(() => new Map());
+  // 턴 종료 시 diff — 상한+최신 우선(복원·임포트와 겹친 420칩 폭발 방어, 검수 HIGH).
+  const artDiff = async () => {
+    if (!artBefore) return [];
+    const after = await snapshotArtifacts(p.vault).catch(() => new Map());
+    return capLatest(after, diffArtifacts(artBefore, after).filter(servableArtifact));
+  };
 
   // 외부 CLI 러너(Codex/Gemini/Antigravity) — 로컬 OAuth 로그인(구독)을 빌려 1턴 실행. 세션은 스레드 맥락으로 잇는다.
   if (isCliRunner(runner)) {
@@ -831,8 +840,9 @@ ${lang === 'en'
       await clearTurnStatus(wsId, agentSlug);
       const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, journalRel: relative(p.vault, handover.file), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
-      // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파).
-      return { reply, sessionId: null, handover };
+      // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파.
+      // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
+      return { reply, sessionId: null, handover, artifacts: await artDiff() };
     } catch (e) {
       let aborted = abortReg.wasAborted();
       // 인증 오탐 자가 치유 — 이 러너의 자격이 실은 죽어 있던 경우, 제외하고 다른 가용 러너로 1회
@@ -1137,8 +1147,7 @@ ${lang === 'en'
     ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
   });
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
-  // servableArtifact 하나로 통일: journal/은 전용 칩과 중복이라 제외, 비md는 files API 서빙 접두만
-  // (칩은 뜨는데 누르면 400 나던 수집-서빙 불일치 봉인 — 탐색 G8).
-  for (const r of diffArtifacts(artBefore, await snapshotArtifacts(p.vault).catch(() => new Map()))) artifacts.add(r);
-  return { reply, sessionId: sid, handover, artifacts: [...artifacts].filter(servableArtifact).sort() };
+  // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
+  for (const r of await artDiff()) artifacts.add(r);
+  return { reply, sessionId: sid, handover, artifacts: [...artifacts].filter(servableArtifact).sort().slice(0, 12) };
 }
