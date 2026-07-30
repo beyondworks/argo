@@ -690,6 +690,15 @@ async function pushEvent(event) {
   const who = event.type === 'approval' ? await approvalWho(event.wsId, event.item, lang) : '';
   // 결재 처리 완료 — 어느 창구(웹·대화창·텔레그램·슬랙)에서 확정됐든 텔레그램 카드의 버튼을 걷어낸다.
   // 푸시 때 저장해 둔 tg:{chatId,messageId}가 있어야 어느 메시지를 편집할지 안다(웹 승인 시 버튼 잔존 갭 해소).
+  if (event.type === 'approval_followup') {
+    // 결재 승인/거절 후속 턴의 크루 보고를 결재 카드가 있던 방으로 — sendTgReply라서 본문 속
+    // 파일 경로(files/·projects/)가 자동 첨부된다(S2). 발송류 결재의 "승인=발송"이 이걸로 실효.
+    const it = event.item;
+    if (it?.tg?.chatId && all.telegram.token) {
+      await sendTgReply(all.telegram.token, it.tg.chatId, event.wsId, event.reply).catch((e) => console.error('[argo] 결재 후속 배달 실패:', e.message));
+    }
+    return;
+  }
   if (event.type === 'approval_resolved') {
     const it = event.item;
     if (it?.tg?.messageId && all.telegram.token) {
