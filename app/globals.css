@@ -1647,6 +1647,11 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
     var(--fg) 7px 8px, transparent 8px 11px);
 }
 
+/* ─── 기억 2패널(vault) — 뷰포트 고정, 각 패널 자체 스크롤 ───
+   170 = .topbar(56) + .content 상하 패딩(26+88). 96 같은 어림값이면 그만큼 페이지 스크롤이 남는다(검수 실측 74px). */
+.vault-split { display: flex; gap: 14px; height: calc(100vh - 170px); min-height: 420px; align-items: stretch; }
+.vault-split > .vault-tree { width: 300px; flex: none; }
+
 /* ─── 스크롤바 ─── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border-soft); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
@@ -1658,6 +1663,11 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
   .side { position: static; height: auto; }
   .content { padding: 16px 14px 70px; }
   .search-pill { width: auto; flex: 1; }
+  /* 기억 2패널 → 세로 스택. 좁은 폭에 300px 트리를 고정하면 본문이 38px로 붕괴한다(검수 실측).
+     트리는 자체 스크롤로 45vh까지만, 본문은 그래프가 살 최소 높이를 보장한다. */
+  .vault-split { flex-direction: column; height: auto; min-height: 0; }
+  .vault-split > .vault-tree { width: auto; max-height: 45vh; }
+  .vault-split > .vault-content { min-height: 420px; }
 }
 
 /* 동작 줄이기(OS 접근성 설정)에서만 적용된다 — 켜지 않은 사용자에겐 위 애니메이션이 그대로 간다.

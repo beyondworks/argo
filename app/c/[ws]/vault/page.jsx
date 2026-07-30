@@ -1,6 +1,9 @@
 'use client';
-// 기억 — 3D 지식 그래프(공유 엔진) + 기록 표 + 종이 뷰어. 탑바 검색으로 필터.
-import { Suspense, use, useEffect, useRef, useState } from 'react';
+// 기억 — 옵시디언식 2패널(2026-07-31 유건 지시: "아래로만 쌓여 보기 어렵다 → 워크트리 + 본문").
+// 좌: 파일 트리(그래프 · 노트 · 산출물(프로젝트 폴더) · 일지 · 대화 — 접이식 + 카운트, 자체 스크롤).
+// 우: 콘텐츠(기본=지식 그래프 전체 채움, 선택 시=종이 뷰어, 작성 시=노트 폼). 페이지 자체는
+// 뷰포트 높이에 고정되어 스크롤이 각 패널 안에서만 일어난다 — 세로 나열 레이아웃 불안정의 종결.
+import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo, tsFromRel } from '../../../ui';
 import { Constellation3D, GraphModal } from '../graphview';
@@ -31,6 +34,18 @@ function Vault({ params }) {
   const [noteBody, setNoteBody] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   const [noteMsg, setNoteMsg] = useState('');
+  // 그래프 실높이 — Constellation3D는 픽셀 고정 캔버스라 부모 실측값을 넘긴다(520 고정이면 큰 화면에서 하단이 비고 짧은 창에서 잘림 — 검수 실측).
+  const [graphH, setGraphH] = useState(0);
+  const graphRo = useRef(null);
+  const graphBoxRef = useCallback((el) => {
+    graphRo.current?.disconnect();
+    graphRo.current = null;
+    if (el) {
+      const ro = new ResizeObserver(() => setGraphH(el.clientHeight));
+      ro.observe(el);
+      graphRo.current = ro;
+    }
+  }, []);
 
   function loadDocs() {
     return api(`/api/companies/${ws}/vault`)
@@ -78,17 +93,12 @@ function Vault({ params }) {
 
   const [consolidating, setConsolidating] = useState(false);
   const [consolidateMsg, setConsolidateMsg] = useState('');
-  const [showArchive, setShowArchive] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [mutating, setMutating] = useState(false);
   const [actionMsg, setActionMsg] = useState(''); // 편집·삭제 실패 인라인 표시 — 네이티브 alert 금지(Tauri 무동작)
-  const viewerRef = useRef(null);
-  /** 그래프에서 기억 클릭 — 뷰어에 열고 화면을 그 자리로 끌어온다(클릭했는데 아무 변화 없어 보이는 것 방지). */
-  const openFromGraph = (rel) => {
-    setSelected(rel);
-    requestAnimationFrame(() => viewerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-  };
+  /** 그래프에서 기억 클릭 — 우측이 곧바로 뷰어로 바뀐다(2패널이라 스크롤 이동 불필요). */
+  const openFromGraph = (rel) => { setComposing(false); setSelected(rel); };
 
   useEffect(() => { setEditing(false); setActionMsg(''); }, [selected]); // 문서를 바꾸면 편집 모드·에러 해제
 
@@ -145,188 +155,183 @@ function Vault({ params }) {
 
   const openWiki = (name) => setSelected(name.endsWith('.md') ? name : `${name}.md`);
   const visible = (docs ?? []).filter((d) => !q || d.title.toLowerCase().includes(q) || d.excerpt.toLowerCase().includes(q));
-  // 주제 노트가 1급 시민 — 일지·이전 기록은 근거 추적용 보관함(접힘)으로 강등
   const notes = visible.filter((d) => d.dir === 'notes').sort((a, b) => b.mtime - a.mtime);
-  const archives = visible.filter((d) => d.dir !== 'notes');
-  // 산출물도 탑바 검색을 태운다 — 제목·프로젝트 폴더명 매칭
+  // 일지·대화를 한 덩어리 "보관함"으로 뭉개지 않는다 — 트리에서 각자 접이식 섹션(옵시디언식).
+  const journals = visible.filter((d) => d.dir === 'journal');
+  const convs = visible.filter((d) => d.dir !== 'notes' && d.dir !== 'journal');
+  // 산출물도 탑바 검색을 태운다 — 제목·프로젝트 폴더명 매칭. 프로젝트 폴더 단위로 묶는다.
   const visibleProjects = (projects ?? []).filter((d) => !q || d.title.toLowerCase().includes(q) || d.project.toLowerCase().includes(q));
+  const projectGroups = [];
+  {
+    const byName = new Map();
+    for (const d of visibleProjects) {
+      const key = d.project || t('vault.tree.noProject');
+      if (!byName.has(key)) { byName.set(key, []); projectGroups.push([key, byName.get(key)]); }
+      byName.get(key).push(d);
+    }
+  }
   const selectedDoc = (docs ?? []).find((d) => d.rel === selected);
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-        <span className="microlabel">{t('vault.header')}</span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-          {consolidateMsg && <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{consolidateMsg}</span>}
-          <span className="microlabel">{docs ? t('vault.records', { n: docs.length }) : ''}</span>
-          <button className="btn sm" onClick={consolidate} disabled={consolidating} title={t('vault.consolidateHint')}>
-            {consolidating ? <Spinner size={12} /> : <><Icon name="bolt" size={13} /> {t('vault.consolidate')}</>}
+    // 뷰포트 고정 2패널 — 페이지는 안 흐르고 각 패널이 자체 스크롤한다(옵시디언 구조).
+    // 높이·모바일 스택은 .vault-split(globals.css) — 인라인이면 미디어쿼리를 못 탄다.
+    <div className="vault-split">
+      {/* ── 좌: 워크트리 ── */}
+      <div className="card vault-tree" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="card-head" style={{ paddingBottom: 8, flex: 'none' }}>
+          <span className="card-title">{t('vault.header')}</span>
+          <span className="rule" />
+          <span className="chip">{docs ? docs.length + (projects?.length ?? 0) : '—'}</span>
+        </div>
+        <div style={{ display: 'flex', gap: 6, padding: '0 14px 10px', flex: 'none' }}>
+          <button className="btn sm" style={{ flex: 1 }} onClick={() => { setComposing(true); setSelected(null); }}>
+            <Icon name="plus" size={12} /> {t('vault.writeNote')}
           </button>
-          <button className="btn sm" onClick={() => setComposing((v) => !v)}>
-            <Icon name="plus" size={13} /> {t('vault.writeNote')}
+          <button className="btn sm" onClick={consolidate} disabled={consolidating} title={t('vault.consolidateHint')} aria-label={t('vault.consolidateHint')}>
+            {consolidating ? <Spinner size={12} /> : <Icon name="bolt" size={12} />}
           </button>
-        </span>
+        </div>
+        {consolidateMsg && <span style={{ padding: '0 16px 8px', fontSize: 11.5, color: 'var(--fg-2)', flex: 'none' }}>{consolidateMsg}</span>}
+        <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 10 }}>
+          {docs === null ? (
+            <div style={{ padding: '4px 14px' }}><Skeleton h={140} /></div>
+          ) : (
+            <>
+              {/* 그래프 — 트리의 첫 항목. 클릭 = 우측을 그래프로(선택 해제) */}
+              <button className={`row${!selected && !composing ? ' active' : ''}`} onClick={() => { setComposing(false); setSelected(null); }}>
+                <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}><Icon name="memory" size={14} /></span>
+                <span style={{ fontSize: 12.5, fontWeight: !selected && !composing ? 700 : 600 }}>{t('vault.graphTitle')}</span>
+              </button>
+              {docs.length === 0 && (projects?.length ?? 0) === 0 && (
+                <p style={{ padding: '8px 16px', color: 'var(--fg-2)', fontSize: 12.5 }}>{t('vault.empty')}</p>
+              )}
+              {q && visible.length === 0 && visibleProjects.length === 0 && (
+                <p style={{ padding: '8px 16px', color: 'var(--fg-2)', fontSize: 12.5 }}>{t('vault.noMemoryMatch')}</p>
+              )}
+              <TreeSection label={t('vault.tree.notes')} count={notes.length} defaultOpen>
+                {notes.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={openFromGraph} icon="bolt" lang={lang} pad={treePad(0)} />)}
+              </TreeSection>
+              <TreeSection label={t('vault.tree.projects')} count={visibleProjects.length} defaultOpen>
+                {projectGroups.map(([name, files]) => (
+                  <TreeSection key={name} label={name} count={files.length} defaultOpen depth={1} folder>
+                    {files.map((d) => d.binary ? (
+                      <a key={d.rel} className="row" download
+                        href={`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}`}
+                        style={{ textDecoration: 'none', color: 'inherit', paddingLeft: treePad(1) }}
+                        title={`${fmtSize(d.size)} · ${t('vault.download')}`}>
+                        <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}><Icon name="clip" size={13} /></span>
+                        <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
+                        <span className="microlabel" style={{ flex: 'none' }}>{t('vault.download')}</span>
+                      </a>
+                    ) : (
+                      <DocRow key={d.rel} d={{ ...d, links: d.links ?? [] }} active={selected === d.rel} onOpen={openFromGraph} icon="doc" lang={lang} pad={treePad(1)} />
+                    ))}
+                  </TreeSection>
+                ))}
+              </TreeSection>
+              <TreeSection label={t('vault.tree.journal')} count={journals.length}>
+                {journals.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={openFromGraph} icon="doc" lang={lang} pad={treePad(0)} />)}
+              </TreeSection>
+              <TreeSection label={t('vault.tree.conversations')} count={convs.length}>
+                {convs.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={openFromGraph} icon="doc" lang={lang} pad={treePad(0)} />)}
+              </TreeSection>
+            </>
+          )}
+        </div>
       </div>
 
-      {composing && (
-        <form onSubmit={saveNote} className="card fade-up" style={{ padding: 18, display: 'grid', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span className="card-title">{t('vault.knowledgeNote')}</span>
-            <span className="microlabel">{t('vault.autoLinkOnSave')}</span>
-          </div>
-          <input suppressHydrationWarning
-            className="input-bar"
-            style={{ display: 'block', height: 38, padding: '0 14px', borderRadius: 10, outline: 'none' }}
-            placeholder={t('vault.titlePlaceholder')}
-            value={noteTitle}
-            onChange={(e) => setNoteTitle(e.target.value)}
-            {...imeGuard}
-          />
-          <textarea
-            placeholder={t('vault.bodyPlaceholder')}
-            value={noteBody}
-            onChange={(e) => setNoteBody(e.target.value)}
-            style={{
-              width: '100%', minHeight: 130, resize: 'vertical',
-              background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12,
-              padding: '10px 14px', outline: 'none', fontSize: 13, lineHeight: 1.65,
-            }}
-          />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button className="btn btn-primary sm" disabled={savingNote || !noteTitle.trim() || !noteBody.trim()}>
-              {savingNote ? <Spinner size={12} /> : t('vault.saveToMemory')}
-            </button>
-            <button type="button" className="btn sm" onClick={() => setComposing(false)}>{t('vault.cancel')}</button>
-            {noteMsg && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{noteMsg}</span>}
-          </div>
-        </form>
-      )}
-
-      {docs === null ? (
-        <>
-          <Skeleton h={200} style={{ borderRadius: 16 }} />
-          <Skeleton h={320} style={{ borderRadius: 16 }} />
-        </>
-      ) : docs.length === 0 && (projects?.length ?? 0) === 0 ? (
-        <div className="empty">{t('vault.empty')}</div>
-      ) : (
-        <>
-          <div className="card" style={{ padding: '14px 18px 8px' }}>
+      {/* ── 우: 콘텐츠(그래프 / 작성 폼 / 종이 뷰어) ── */}
+      <div className="card vault-content" style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: composing || selected ? 24 : '14px 18px' }}>
+        {composing ? (
+          <form onSubmit={saveNote} style={{ display: 'grid', gap: 10, maxWidth: 860 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span className="card-title">{t('vault.graphTitle')}</span>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <span className="chip"><span className="dot" />{t('vault.conversation')}</span>
-                <span className="chip"><span style={{ width: 5, height: 5, borderRadius: 999, border: '1px solid currentColor' }} />{t('vault.note')}</span>
-                <button className="chip" onClick={() => setGraphOpen(true)} style={{ cursor: 'pointer' }}>{t('vault.viewLarge')}</button>
-              </div>
+              <span className="card-title">{t('vault.knowledgeNote')}</span>
+              <span className="microlabel">{t('vault.autoLinkOnSave')}</span>
             </div>
-            {meta ? (
-              <Constellation3D company={meta.company} delegations={meta.delegations} agents={meta.agents ?? []} docs={docs} height={240} onOpen={() => setGraphOpen(true)} onSelectDoc={openFromGraph} />
+            <input suppressHydrationWarning
+              className="input-bar"
+              style={{ display: 'block', height: 38, padding: '0 14px', borderRadius: 10, outline: 'none' }}
+              placeholder={t('vault.titlePlaceholder')}
+              value={noteTitle}
+              onChange={(e) => setNoteTitle(e.target.value)}
+              {...imeGuard}
+            />
+            <textarea
+              placeholder={t('vault.bodyPlaceholder')}
+              value={noteBody}
+              onChange={(e) => setNoteBody(e.target.value)}
+              style={{
+                width: '100%', minHeight: 220, resize: 'vertical',
+                background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12,
+                padding: '10px 14px', outline: 'none', fontSize: 13, lineHeight: 1.65,
+              }}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button className="btn btn-primary sm" disabled={savingNote || !noteTitle.trim() || !noteBody.trim()}>
+                {savingNote ? <Spinner size={12} /> : t('vault.saveToMemory')}
+              </button>
+              <button type="button" className="btn sm" onClick={() => setComposing(false)}>{t('vault.cancel')}</button>
+              {noteMsg && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{noteMsg}</span>}
+            </div>
+          </form>
+        ) : !selected ? (
+          docs === null ? (
+            <Skeleton h={320} style={{ margin: '8px 0' }} />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 'none' }}>
+                <span className="card-title">{t('vault.graphTitle')}</span>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <span className="chip"><span className="dot" />{t('vault.conversation')}</span>
+                  <span className="chip"><span style={{ width: 5, height: 5, borderRadius: 999, border: '1px solid currentColor' }} />{t('vault.note')}</span>
+                  <button className="chip" onClick={() => setGraphOpen(true)} style={{ cursor: 'pointer' }}>{t('vault.viewLarge')}</button>
+                </div>
+              </div>
+              {meta ? (
+                <div ref={graphBoxRef} style={{ flex: 1, minHeight: 260 }}>
+                  <Constellation3D company={meta.company} delegations={meta.delegations} agents={meta.agents ?? []} docs={docs ?? []} height={Math.max(240, graphH)} onOpen={() => setGraphOpen(true)} onSelectDoc={openFromGraph} />
+                </div>
+              ) : (
+                <Skeleton h={320} style={{ margin: '8px 0' }} />
+              )}
+            </div>
+          )
+        ) : loadingDoc ? (
+          <Spinner />
+        ) : (
+          <div style={{ maxWidth: 860 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', letterSpacing: '0.03em', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected}</span>
+              {selectedDoc?.dir === 'notes' && !editing && (
+                <span style={{ display: 'flex', gap: 6, flex: 'none' }}>
+                  <button className="btn sm" onClick={() => { setDraft(content); setEditing(true); }}>
+                    <Icon name="edit" size={12} /> {t('vault.edit')}
+                  </button>
+                  <button className="btn sm" onClick={() => setDeleteOpen(true)} disabled={mutating} style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}>
+                    <Icon name="trash" size={12} /> {t('vault.delete')}
+                  </button>
+                </span>
+              )}
+            </div>
+            {actionMsg && <p style={{ margin: '-6px 0 12px', fontSize: 12, color: 'var(--danger)' }}>{actionMsg}</p>}
+            {editing ? (
+              <div style={{ display: 'grid', gap: 10 }}>
+                <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
+                  style={{ width: '100%', minHeight: 380, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', outline: 'none', fontSize: 12.5, lineHeight: 1.7, fontFamily: 'var(--font-mono, monospace)' }} />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button className="btn btn-primary sm" onClick={saveEdit} disabled={mutating || !draft.trim()}>
+                    {mutating ? <Spinner size={12} /> : t('vault.save')}
+                  </button>
+                  <button className="btn sm" onClick={() => setEditing(false)} disabled={mutating}>{t('vault.cancel')}</button>
+                  <span className="metric-sub2">{t('vault.saveHint')}</span>
+                </div>
+              </div>
             ) : (
-              <Skeleton h={240} style={{ margin: '8px 0' }} />
+              <Markdown text={content} onWikiLink={openWiki} wsId={ws} />
             )}
           </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 14, alignItems: 'start' }}>
-            {/* 기록 패널 — 탑바(56px) 아래 고정, 목록은 자체 스크롤. 우측 뷰어만 페이지와 함께 흐른다 */}
-            <div className="card" style={{ position: 'sticky', top: 70, maxHeight: 'calc(100vh - 92px)', overflowY: 'auto' }}>
-              <div className="card-head" style={{ paddingBottom: 10 }}>
-                <span className="card-title">{t('vault.records2')}</span>
-                <span className="chip">{visible.length}</span>
-              </div>
-              {visible.length === 0 && (
-                <p style={{ padding: '0 18px 16px', color: 'var(--fg-2)', fontSize: 13 }}>{t('vault.noMemoryMatch')}</p>
-              )}
-              <div className="microlabel" style={{ padding: '8px 18px 4px' }}>
-                {t('vault.knownByCompany', { n: notes.length })}
-              </div>
-              {notes.length === 0 && (
-                <p style={{ padding: '4px 18px 12px', color: 'var(--fg-2)', fontSize: 12 }}>
-                  {t('vault.noOrganizedYet')}
-                </p>
-              )}
-              {notes.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={setSelected} icon="bolt" lang={lang} />)}
-              {/* 크루 산출물(projects/) — md는 종이 뷰어, 그 외는 즉시 다운로드.
-                  이전엔 어떤 목록에도 안 잡혀 Finder로 긴 경로를 찾아가야 했다(고객 신고 2026-07-20). */}
-              {visibleProjects.length > 0 && (
-                <>
-                  <div className="microlabel" style={{ padding: '10px 18px 4px', borderTop: '1px dashed var(--border-soft)' }}>
-                    {t('vault.projectsGroup', { n: visibleProjects.length })}
-                  </div>
-                  {visibleProjects.map((d) => d.binary ? (
-                    <a key={d.rel} className="row" download
-                      href={`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}`}
-                      style={{ textDecoration: 'none', color: 'inherit' }}>
-                      <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}><Icon name="clip" size={14} /></span>
-                      <span style={{ minWidth: 0, flex: 1 }}>
-                        <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
-                        <span className="mono" style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)', marginTop: 1 }}>
-                          {d.project && `${d.project} · `}{fmtSize(d.size)} · {timeAgo(d.mtime, lang)}
-                        </span>
-                      </span>
-                      <span className="microlabel" style={{ flex: 'none' }}>{t('vault.download')}</span>
-                    </a>
-                  ) : (
-                    <DocRow key={d.rel} d={{ ...d, links: d.links ?? [] }} active={selected === d.rel} onOpen={setSelected} icon="doc" lang={lang} />
-                  ))}
-                </>
-              )}
-              {archives.length > 0 && (
-                <>
-                  <button className="microlabel" onClick={() => setShowArchive((v) => !v)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '10px 18px 6px', borderTop: '1px dashed var(--border-soft)', cursor: 'pointer' }}>
-                    <span style={{ display: 'inline-block', transform: showArchive ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
-                    {t('vault.archiveToggle', { n: archives.length })}
-                  </button>
-                  {showArchive && archives.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={setSelected} icon="doc" lang={lang} />)}
-                </>
-              )}
-            </div>
-
-            <div ref={viewerRef} className="card" style={{ padding: 24, minHeight: 340, scrollMarginTop: 84 }}>
-              {!selected ? (
-                <div style={{ color: 'var(--fg-2)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Icon name="doc" size={14} /> {t('vault.selectHint')}
-                </div>
-              ) : loadingDoc ? (
-                <Spinner />
-              ) : (
-                <div style={{ maxWidth: 860 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', letterSpacing: '0.03em', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected}</span>
-                    {selectedDoc?.dir === 'notes' && !editing && (
-                      <span style={{ display: 'flex', gap: 6, flex: 'none' }}>
-                        <button className="btn sm" onClick={() => { setDraft(content); setEditing(true); }}>
-                          <Icon name="edit" size={12} /> {t('vault.edit')}
-                        </button>
-                        <button className="btn sm" onClick={() => setDeleteOpen(true)} disabled={mutating} style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}>
-                          <Icon name="trash" size={12} /> {t('vault.delete')}
-                        </button>
-                      </span>
-                    )}
-                  </div>
-                  {actionMsg && <p style={{ margin: '-6px 0 12px', fontSize: 12, color: 'var(--danger)' }}>{actionMsg}</p>}
-                  {editing ? (
-                    <div style={{ display: 'grid', gap: 10 }}>
-                      <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
-                        style={{ width: '100%', minHeight: 380, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', outline: 'none', fontSize: 12.5, lineHeight: 1.7, fontFamily: 'var(--font-mono, monospace)' }} />
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <button className="btn btn-primary sm" onClick={saveEdit} disabled={mutating || !draft.trim()}>
-                          {mutating ? <Spinner size={12} /> : t('vault.save')}
-                        </button>
-                        <button className="btn sm" onClick={() => setEditing(false)} disabled={mutating}>{t('vault.cancel')}</button>
-                        <span className="metric-sub2">{t('vault.saveHint')}</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <Markdown text={content} onWikiLink={openWiki} />
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
+        )}
+      </div>
 
       {deleteOpen && (
         <DangerModal
@@ -355,13 +360,35 @@ function Vault({ params }) {
   );
 }
 
-/** 기록 패널 행 — 주제 노트와 보관함이 같은 문법을 쓴다. */
+/** 접이식 트리 섹션 — 옵시디언 폴더 문법(▸ 라벨 · 카운트). depth로 들여쓰기, folder면 폴더 아이콘. */
+/** 트리 들여쓰기 — 헤더 = 14 + depth·16, 자식 행 = 그 헤더 + 캐럿(10) + gap(11).
+ *  두 식이 갈라지면 자식이 부모보다 왼쪽에 그려져 계층이 뒤집혀 보인다(검수 실측 4~5px 역전). */
+const headerPad = (depth) => 14 + depth * 16;
+const treePad = (depth) => headerPad(depth) + 21;
+
+function TreeSection({ label, count, defaultOpen = false, depth = 0, folder = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div>
+      <button className="row" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        style={{ paddingLeft: headerPad(depth) }}>
+        <span style={{ display: 'inline-block', width: 10, flex: 'none', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s', color: 'var(--fg-3)', fontSize: 10 }}>▸</span>
+        {folder && <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}><Icon name="folder" size={13} /></span>}
+        <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{label}</span>
+        <span className="mono" style={{ flex: 'none', fontSize: 10, color: 'var(--fg-3)' }}>{count}</span>
+      </button>
+      {open && children}
+    </div>
+  );
+}
+
 /** 파일 크기 표시 — 산출물 다운로드 행 전용(대략치면 충분). */
 const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round((b ?? 0) / 1024))}KB`);
 
-function DocRow({ d, active, onOpen, icon, lang }) {
+/** 트리 파일 행 — 주제 노트·일지·대화·산출물이 같은 문법을 쓴다. pad = 트리 들여쓰기. */
+function DocRow({ d, active, onOpen, icon, lang, pad = 14 }) {
   return (
-    <button onClick={() => onOpen(d.rel)} className={`row${active ? ' active' : ''}`}>
+    <button onClick={() => onOpen(d.rel)} className={`row${active ? ' active' : ''}`} style={{ paddingLeft: pad }}>
       <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}>
         <Icon name={icon} size={14} />
       </span>
@@ -370,7 +397,7 @@ function DocRow({ d, active, onOpen, icon, lang }) {
           {d.title}
         </span>
         <span className="mono" style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)', marginTop: 1 }}>
-          {timeAgo(tsFromRel(d.rel) ?? d.mtime, lang)}{d.links.length > 0 && ` · LINK ${d.links.length}`}
+          {timeAgo(tsFromRel(d.rel) ?? d.mtime, lang)}{(d.links?.length ?? 0) > 0 && ` · LINK ${d.links.length}`}
         </span>
       </span>
     </button>
