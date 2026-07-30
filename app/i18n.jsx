@@ -353,7 +353,7 @@ const DICT = {
   'settings.update.error': ['업데이트를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.', 'Could not check for updates. Please try again shortly.'],
   // ── 러너 연결 관리자 (4러너 × API키/OAuth)
   'settings.runners.title': ['러너 연결', 'Runner connections'],
-  'settings.runners.help': ['크루의 두뇌 엔진을 회사 계정에 연결합니다. 러너마다 API 키·OAuth(구독)로 연결하거나, Codex·Gemini는 "이 컴퓨터 로그인 사용"으로 이 컴퓨터의 CLI 로그인을 연결할 수 있습니다. 연결한 러너만 크루가 사용합니다.', 'Connect each crew brain engine to this company. Add an API key or OAuth (subscription) per runner — for Codex/Gemini you can also link this computer\u2019s CLI login. Crews only use runners you connect.'],
+  'settings.runners.help': ['크루의 두뇌 엔진을 회사 계정에 연결합니다. 러너마다 API 키·OAuth(구독)로 연결하거나, Codex·Gemini·Antigravity는 "이 컴퓨터 로그인 사용"으로 이 컴퓨터의 CLI 로그인을 연결할 수 있습니다(Antigravity는 자격이 OS 키링에 있어 이 방식이 유일합니다). 연결한 러너만 크루가 사용합니다.', 'Connect each crew brain engine to this company. Add an API key or OAuth (subscription) per runner — for Codex, Gemini and Antigravity you can also link this computer\u2019s CLI login (for Antigravity, whose credentials live in the OS keyring, this is the only path). Crews only use runners you connect.'],
   'settings.runners.method.apikey': ['API 키', 'API key'],
   'settings.runners.method.oauth': ['OAuth', 'OAuth'],
   'settings.runners.method.host': ['이 컴퓨터 로그인', 'This computer\u2019s login'],
