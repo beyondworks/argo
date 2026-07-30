@@ -1246,6 +1246,18 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
           opacity: entered ? 1 : 0,
           transition: 'transform 160ms cubic-bezier(0.23, 1, 0.32, 1), opacity 160ms cubic-bezier(0.23, 1, 0.32, 1)',
         }}>
+          {/* 자동 복귀 항목 — 모델을 한 번 지정하면 자동으로 되돌릴 수 없었다(신고 fc105be0: 카드
+              패널(RunnerPicker)엔 자동 옵션이 있는데 이 팝오버에만 없어 발견성이 깨졌다). */}
+          {/* {...sel} 스프레드 — runner/model만 바꾸고 effort는 보존(검수 LOW: 통째 교체는 카드
+              패널의 추론 강도 표시를 '기본'으로 되돌려 보였다. 저장은 PATCH가 보존해 표시만의 문제). */}
+          <button type="button" role="menuitemradio" aria-checked={!sel.runner}
+            onClick={() => { onChange({ ...sel, runner: '', model: '' }); setOpen(false); }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+              background: !sel.runner ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7,
+              cursor: 'pointer', padding: '6px 8px', fontSize: 12.5, color: 'var(--fg)' }}>
+            <span style={{ flex: 1 }}>{t('runner.autoOption')}</span>
+            {!sel.runner && <span aria-hidden style={{ fontSize: 11, color: 'var(--fg-2)' }}>✓</span>}
+          </button>
           {(runners ?? []).map((r) => (
             <div key={r.id} style={{ padding: '2px 0' }}>
               <div className="microlabel" style={{ padding: '4px 8px 2px', color: r.authed ? undefined : 'var(--fg-3)' }}>
@@ -1257,7 +1269,7 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
                 return (
                   <button key={`${r.id}:${m.id}`} type="button" role="menuitemradio" aria-checked={active}
                     disabled={!r.authed}
-                    onClick={() => { onChange({ runner: r.id, model: m.id }); setOpen(false); }}
+                    onClick={() => { onChange({ ...sel, runner: r.id, model: m.id }); setOpen(false); }}
                     style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
                       background: active ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7,
                       cursor: r.authed ? 'pointer' : 'not-allowed',

@@ -183,7 +183,7 @@ export async function submitRunnerWebAuth(wsId, runner, pasted) {
     if (probe.ok === false) {
       return {
         ok: false, reason: 'ineligible',
-        detail: '로그인은 성공했지만 저장하지 않았습니다 — 구글이 이 계정의 Gemini 개인 OAuth(무료 Code Assist)를 최신 CLI에서 지원하지 않습니다. API 키 방식으로 연결해 주세요(Google AI Studio에서 무료 발급). Login succeeded but was not saved — Google no longer supports personal OAuth on the current Gemini CLI. Connect with an API key instead.',
+        detail: '로그인은 성공했지만 저장하지 않았습니다 — 구글이 이 계정의 Gemini 개인 OAuth(무료 Code Assist)를 폐기하고 Antigravity로 이전했습니다. Antigravity 러너로 연결하시거나(이 컴퓨터의 agy 로그인 인식), API 키 방식으로 연결해 주세요(Google AI Studio에서 무료 발급). Login succeeded but was not saved — Google retired personal OAuth on the current Gemini CLI in favor of Antigravity. Connect the Antigravity runner (uses this computer’s agy login) or use an API key instead.',
       };
     }
     await saveRunnerCred(wsId, 'gemini', 'oauth', credsJson);
