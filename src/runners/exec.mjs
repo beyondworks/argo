@@ -62,7 +62,7 @@ export function apiError(e, runner = null) {
   // **runner 게이트(분리 검수 M1)**: 실측(재검 N1)상 agy는 이 문구를 stderr로 낸다. 그래도 크루가
   // 셸로 실행한 명령의 출력(stdout)에 같은 문구가 섞이는 경로가 있어(위 stdout 오염 원칙과 동일
   // 클래스) raw 전체를 보되 **antigravity 실행 경로에서만** 발화한다 — 상위집합 방어.
-  // 문구의 "not logged in"은 AUTH_ERR_RE(chat.mjs)와의 계약 — 자가치유(다른 가용 러너 1회 폴백)를 살린다.
+  // 문구의 "not logged in"은 AUTH_ERR_RE(chat.mjs)와의 계약 — 자가치유(남은 가용 러너 순차 폴백)를 살린다.
   if (runner === 'antigravity' && /timeout waiting for response/i.test(raw)) {
     return new Error('Antigravity가 제한 시간 안에 응답하지 않았습니다. 이 컴퓨터에서 agy 로그인이 안 되어 있으면 '
       + '터미널에서 agy를 실행해 Google 로그인 후 다시 시도해 주세요. 로그인이 되어 있다면 작업이 제한 시간을 초과한 것입니다. '
@@ -96,7 +96,7 @@ export async function detectRunners(force = false) {
     // 리눅스 — 파일 보관(macOS도 키체인 불가 환경은 이 파일 폴백이라 무시하면 역회귀).
     // ⚠ 스테일 잔재가 authed 오탐을 낼 수 있다(실사용 2026-07-19: 죽은 Claude 흔적이 유효한 Codex를
     // 밀어내고 "Not logged in"으로 턴 사망) — 그 케이스는 chat/runOneShot의 인증 오류 자가 치유
-    // (다른 가용 러너 1회 재시도)가 회수한다. 감지 단계에서 유효성까지는 판정하지 않는다.
+    // (남은 가용 러너를 차례로 재시도)가 회수한다. 감지 단계에서 유효성까지는 판정하지 않는다.
     exists(join(home, '.claude', '.credentials.json')),
     // macOS/Windows — OAuth 토큰은 키체인/OS 보관이라 .claude.json의 로그인 계정 기록(oauthAccount)으로
     // 판정한다. 파일 존재만으론 안 됨: 로그인 없이 CLI가 실행만 돼도(번들 SDK 포함) 생성된다 — 미로그인

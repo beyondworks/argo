@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { homedir } from 'node:os';
 import { openRoots } from '../src/workroots.mjs';
 import { pickRunner } from '../src/runners/catalog.mjs';
+import { excludeWith } from '../src/chat.mjs';
 
 test('openRoots — 홈(fs 능력) + 지정 작업 폴더를 이 순서로 연다', () => {
   assert.deepEqual(openRoots({ fs: true }, ['/w1', '/w2']), [homedir(), '/w1', '/w2']);
@@ -76,4 +77,57 @@ test('pickRunner — 선호(want)도 exclude 목록에 걸리면 건너뛴다', 
   const st = { claude: on, gemini: on };
   assert.equal(pickRunner(st, 'claude', ['claude']).runner, 'gemini');
   assert.equal(pickRunner(st, 'claude', []).runner, 'claude');
+});
+
+/* ── 채팅 경로(chat.mjs)의 인증 자가치유 — #192가 oneshot만 목록화해서, **트래픽이 더 많은** 채팅은
+   단수 제외 + 재귀 1회로 남아 있었다(분리 검수 MEDIUM-4). claude 401 → codex 실패 → 3번째 시도 없음. ── */
+
+test('excludeWith — 단수·목록·null 어느 이전값이든 누적 목록을 만든다(pickRunner exclude 계약)', () => {
+  assert.deepEqual(excludeWith(null, 'claude'), ['claude']);
+  assert.deepEqual(excludeWith('claude', 'codex'), ['claude', 'codex']); // 단수 하위호환(옛 프레임)
+  assert.deepEqual(excludeWith(['claude', 'codex'], 'gemini'), ['claude', 'codex', 'gemini']);
+  assert.deepEqual(excludeWith([], 'claude'), ['claude']);
+});
+
+test('채팅 자가치유 3러너 연쇄 — claude 401 → codex 401 → gemini가 시도를 받는다', () => {
+  const on = { company: { connected: true, invalid: false } };
+  const st = { claude: on, codex: on, gemini: on, antigravity: on };
+  // chat()이 매 프레임에서 하는 결정을 그대로 재생한다: pickRunner(want, 누적제외) → 실패 → excludeWith.
+  let tried = null; // 1차 프레임의 __excludeRunners
+  const chain = [];
+  for (let i = 0; i < 4; i++) {
+    const pick = pickRunner(st, null, tried);
+    if (!pick.available) break;
+    chain.push(pick.runner);
+    tried = excludeWith(tried, pick.runner); // 이 러너가 401 — 누적 제외하고 다음 프레임
+  }
+  // 핵심 회귀: 3·4번째 러너가 시도를 받아야 한다. 단수 제외 시절엔 chain이 ['claude','codex']에서 끝났다.
+  assert.deepEqual(chain, ['claude', 'codex', 'gemini', 'antigravity']);
+  // 전부 소진되면 자가치유가 멈춘다 — 재귀는 러너 수로 자연 종료(무한 루프 없음).
+  assert.equal(pickRunner(st, null, tried).available, false);
+  // 크루 지정 러너(want)가 있어도 같다 — 지정 러너가 죽으면 남은 러너를 다 시도한다.
+  assert.equal(pickRunner(st, 'claude', excludeWith('claude', 'codex')).runner, 'gemini');
+});
+
+// 배선 트립와이어 — 순수 함수가 맞아도 두 catch가 목록을 안 쓰면 3번째 시도는 없다(HIGH-1과 같은 계열:
+// 표제만 바뀌고 본체에 게이트가 없던 실패). 소스 스캔은 이 레포 선례(no-hardcoded-runner-label)를 따른다.
+test('배선: chat.mjs 두 실행 경로(CLI·SDK)의 자가치유가 누적 목록을 쓴다 — 단수 회귀 차단', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  const count = (re) => (src.match(re) ?? []).length;
+  // 누적의 출처 — **받은 목록 + 이번 러너**여야 한다. [runner]로 좁히면 아래 배선이 다 맞아도
+  // 프레임마다 앞의 실패를 잊어 claude→codex→claude 무한 핑퐁이 된다(변이 M4 실증: 원래 버그보다 나쁘다).
+  assert.match(src, /const tried = excludeWith\(__excludeRunners, runner\)/, '누적 출처가 받은 목록이어야 한다');
+  assert.equal(count(/resolveRunner\(wsId, wantRunner, \{ exclude: tried \}\)/g), 2, '두 갈래가 누적 목록으로 러너를 재해석해야 한다');
+  assert.equal(count(/__excludeRunners: tried/g), 2, '두 갈래가 누적 목록을 재귀로 넘겨야 한다');
+  assert.equal(count(/!tried\.includes\(alt\.runner\)/g), 2, '이미 시도한 러너 재선택 차단 = 재귀 종료 보장');
+  // 단수 회귀 차단 — 이 형태가 되살아나면 앞의 둘이 죽었을 때 멀쩡한 나머지가 시도조차 못 받는다.
+  assert.doesNotMatch(src, /exclude: runner \}/, '단수 제외 회귀');
+  assert.doesNotMatch(src, /__excludeRunners: runner\b/, '단수 제외 회귀(재귀 인자)');
+  assert.doesNotMatch(src, /!__excludeRunners &&/, '재귀 1회 제한 가드 재유입 금지 — 목록 누적이 종료를 맡는다');
+  // AUTH_ERR_RE 한정 유지 — oneshot(어떤 실패든 갈아탐)과 달리 이 경로는 **인증 오류에만** 갈아탄다.
+  // 이 한정이 빠지면 일시적 실패로 사용자 고지 없이 실과금 벤더로 넘어간다(범위 확대 금지).
+  assert.equal(count(/AUTH_ERR_RE\.test\(/g), 2, '두 갈래 모두 인증 오류 한정을 유지해야 한다');
+  // 세션 부재 재시도(fresh-retry)는 러너 잘못이 아니다 — 받은 목록을 그대로 넘겨 같은 러너로 재시도한다.
+  assert.match(src, /__freshRetry: true, __seedNotes: sharedNotes, __excludeRunners \}/, 'fresh-retry는 제외 목록을 누적하지 않는다');
 });
