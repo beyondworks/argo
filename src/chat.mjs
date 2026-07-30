@@ -84,8 +84,8 @@ export function systemPromptFor(cardMd, wsRoot, skills, meta = {}, lang = 'ko', 
         ? 'For anything later than a few minutes out, schedule it with the schedule_task tool instead of assuming the clock is still accurate.'
         : '몇 분 뒤보다 나중의 일은 시계가 그대로일 거라 가정하지 말고 schedule_task 도구로 예약하라.')
     : (lang === 'en'
-        ? 'For anything later than a few minutes out, don\'t assume the clock is still accurate — schedule it by ending your reply with a directive block:\n```argo\n{"action":"schedule","every":"30m","title":"...","prompt":"what to do each run"}\n```\nUse "time":"09:00" (with optional "days":[1,3]) instead of "every" for a fixed hour. Handing work to a colleague asynchronously uses the same mechanism: {"action":"mail","to":"crew-slug","message":"..."}. Argo runs the block after your turn and appends the real result — never claim you scheduled or sent something without emitting the block.'
-        : '몇 분 뒤보다 나중의 일은 시계가 그대로일 거라 가정하지 마라. 예약이 필요하면 답변 끝에 지시 블록을 붙여라:\n```argo\n{"action":"schedule","every":"30분","title":"...","prompt":"매 실행마다 할 일"}\n```\n정해진 시각이면 "every" 대신 "time":"09:00"(요일은 "days":[1,3]). 동료에게 비동기로 일을 넘길 때도 같은 방식이다: {"action":"mail","to":"동료슬러그","message":"..."}. Argo가 턴이 끝난 뒤 블록을 실행하고 실제 결과를 답변에 덧붙인다 — **블록 없이 "예약했다 / 전달했다"고 말하지 마라.**');
+        ? 'For anything later than a few minutes out, don\'t assume the clock is still accurate — schedule it by ending your reply with a directive block:\n```argo\n{"action":"schedule","every":"30m","title":"...","prompt":"what to do each run"}\n```\nUse "time":"09:00" (with optional "days":[1,3]) instead of "every" for a fixed hour. Handing work to a colleague asynchronously uses the same mechanism: {"action":"mail","to":"crew-slug","message":"..."}. Filing an approval works the same way: {"action":"approval","request":"what you want to do","reason":"why"}. Argo runs the block after your turn and appends the real result — never claim you scheduled or sent something without emitting the block.'
+        : '몇 분 뒤보다 나중의 일은 시계가 그대로일 거라 가정하지 마라. 예약이 필요하면 답변 끝에 지시 블록을 붙여라:\n```argo\n{"action":"schedule","every":"30분","title":"...","prompt":"매 실행마다 할 일"}\n```\n정해진 시각이면 "every" 대신 "time":"09:00"(요일은 "days":[1,3]). 동료에게 비동기로 일을 넘길 때도 같은 방식이다: {"action":"mail","to":"동료슬러그","message":"..."}. 결재를 올릴 때도 같다: {"action":"approval","request":"하려는 행동","reason":"왜"}. Argo가 턴이 끝난 뒤 블록을 실행하고 실제 결과를 답변에 덧붙인다 — **블록 없이 "예약했다 / 전달했다"고 말하지 마라.**');
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }); // YYYY-MM-DD
   // 현재 시각 — 크루에겐 시계가 없다(셸 능력이 꺼져 있으면 date조차 못 친다). 시각을 안 주면
   // "지금 몇 시인지 확인할 도구가 없다"며 예약·마감 계산을 거절한다(실사용 신고 2026-07-26).
@@ -255,7 +255,7 @@ export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true
   if (lang === 'en') {
     // 한국어 경로와 대칭(다국어 상시 규칙) — 신고 2026-07-26: 크루가 "스킬·도구에서 추가하라"고 잘못 안내했다.
     return `\n## Approval rules — must follow
-- Never execute actions that are hard to reverse or leave the company (sending, publishing, purchasing, deleting, contracts, etc.) without approval. ${hasTools ? 'File an approval with the request_approval tool and wait for the decision.' : 'This turn has no approval tool — do not execute; report "approval required: <the action>" and end the turn.'}
+- Never execute actions that are hard to reverse or leave the company (sending, publishing, purchasing, deleting, contracts, etc.) without approval. ${hasTools ? 'File an approval with the request_approval tool and wait for the decision.' : 'If approval is needed, do not execute — file it by ending your reply with a directive block: ```argo\n{"action":"approval","request":"<the action>","reason":"<why>"}\n``` It lands in the approval inbox, and once approved a follow-up instruction arrives. Never just SAY approval is required without the block (nothing reaches the inbox that way).'}
 - In-company work like drafting, analysis, and vault notes proceeds right away without approval.
 - ${hasTools ? 'If the captain asks to change a crew profile (name, role, team, rules, runner, model) or to hire a new crew, don\'t edit files directly — file an approval via the update_profile / hire_crew tools. If the runner/model is undecided, present 2-3 options from the catalog and ask before filing.' : 'For crew profile changes or hiring, don\'t edit files directly — guide the captain to the crew/settings screens.'}
 
@@ -287,7 +287,7 @@ ${workRoots.length ? `- Assigned work folders (the captain pinned these): ${work
   // 추가하세요"라고 오안내)과 2026-07-29(파일 저장이 안 되자 "설정에서 쓰기 권한을 켜세요"라고
   // 안내했는데 그런 메뉴가 없어 사장이 한참 헤맴). 이제 능력은 전권이라 켤 것 자체가 없다.
   return `\n## 결재 규칙 — 반드시 따를 것
-- 되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 승인 없이 절대 실행하지 마라. ${hasTools ? 'request_approval 도구로 결재를 올리고 결정을 기다려라.' : '이 턴에는 결재 도구가 없다 — 실행하지 말고 "결재가 필요하다: <하려는 행동>"을 보고하고 턴을 마쳐라.'}
+- 되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 승인 없이 절대 실행하지 마라. ${hasTools ? 'request_approval 도구로 결재를 올리고 결정을 기다려라.' : '결재가 필요하면 실행하지 말고, 답변 끝에 ```argo\n{"action":"approval","request":"<하려는 행동>","reason":"<왜>"}\n``` 지시 블록을 붙여 결재를 올려라 — 결재함에 등록되고, 승인되면 후속 지시가 온다. 블록 없이 "결재가 필요하다"고 말로만 하지 마라(결재함에 아무것도 안 올라간다).'}
 - 초안 작성·분석·vault 기록 같은 회사 안 작업은 결재 없이 바로 한다.
 - ${hasTools ? '사장이 크루 프로필(이름·역할·팀·규칙·러너·모델) 변경이나 새 크루 영입을 요청하면 파일을 직접 고치지 말고 update_profile / hire_crew 도구로 결재를 올려라. 러너·모델이 정해지지 않았으면 카탈로그에서 선택지를 2~3개 제시해 물어본 뒤 올려라.' : '크루 프로필 변경·영입 요청은 파일을 직접 고치지 말고 크루·설정 화면에서 진행하도록 사장을 안내하라.'}
 
