@@ -79,5 +79,12 @@ test('AUTH_ERR_RE: 인증성 실패만 매칭 — 자가 치유 오발동 방지
     'network timeout after 300s',
     'HTTP 4011 custom code', // 401 단어 경계 확인
     'context token limit exceeded', // 'token' 오탐 방지 — expired/invalid/incorrect가 뒤따르지 않음
+    // 429(요청 한도)는 자가치유 대상이 **아니다** — oneshot.mjs가 코드로 금지하는 계약과 같다:
+    // 일시적 한도인데 다른 벤더로 넘기면 사용자 고지 없이 실제 과금 키로 갈아탄다(기다리면 풀린다).
+    // chat 쪽은 그 규칙이 산문 주석뿐이라, "429로 턴이 죽는데 페일오버가 안 된다"는 신고를 받은
+    // 다음 사람이 이 정규식에 429를 넣는 자연스러운 수정을 아무것도 막지 못했다(3R 검수 실증: 넣어도
+    // 전 테스트 초록). 술어(무엇이 인증 실패인가)를 여기서 잠근다 — 발동 조건 골격은 다른 곳에서.
+    '턴 실패: error — API Error: 429 Rate limit exceeded', // OpenRouter 실측형
+    'rate_limit_error: number of requests has exceeded your per-minute rate limit',
   ]) assert.ok(!AUTH_ERR_RE.test(s), `매칭되면 안 됨: ${s}`);
 });
