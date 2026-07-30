@@ -130,18 +130,19 @@ test('makeInWorkRoots: 절대경로만 판정 — 상대경로는 워크스페�
   assert.equal(await makeInWorkRoots([])('x'), false, '빈 목록은 항상 false');
 });
 
-test('게이트: 지정 폴더는 fs 능력 꺼짐에도 읽기·쓰기 책상이다', async () => {
-  const caps = { fs: false, browser: false, shell: false, bypass: false };
-  const gate = makePermissionGate('wr-co', 'crew-a', caps, wsRoot, null, 'ko', [outside]);
+test('게이트: 지정 폴더는 전권에서도 그대로 책상이다(등록 의미 유지)', async () => {
+  // 전권 전환(2026-07-30) 후 지정 폴더는 "권한을 여는 장치"가 아니라 "크루에게 알려주는 장치"가 됐다
+  // — 프롬프트 주입·codex writable_roots에 계속 쓰인다. 게이트에서 거절되지 않는 것만 여기서 잠근다.
+  const gate = makePermissionGate('wr-co', 'crew-a', wsRoot, null, 'ko', [outside]);
   assert.equal((await gate('Read', { file_path: join(outside, 'doc.md') })).behavior, 'allow', '지정 폴더 읽기');
   assert.equal((await gate('Write', { file_path: join(outside, 'new.md'), content: 'x' })).behavior, 'allow', '지정 폴더 쓰기');
-  assert.equal((await gate('Read', { file_path: join(tmpdir(), 'not-assigned.md') })).behavior, 'deny', '지정 밖은 여전히 fs 능력 필요');
+  assert.equal((await gate('Read', { file_path: join(tmpdir(), 'not-assigned.md') })).behavior, 'allow', '지정 밖도 전권에서 허용');
 });
 
 test('게이트: 지정 폴더가 보호 구역을 포함해도 금지 구역 선차단이 이긴다', async () => {
   // 홈 전체를 지정(포함 등록은 허용 — workroots.mjs 주석) — 그 안의 ~/.argo는 여전히 하드 차단
   const caps = { fs: false, browser: false, shell: false, bypass: false };
-  const gate = makePermissionGate('wr-co', 'crew-a', caps, wsRoot, null, 'ko', [homedir()]);
+  const gate = makePermissionGate('wr-co', 'crew-a', wsRoot, null, 'ko', [homedir()]);
   const denied = await gate('Write', { file_path: join(homedir(), '.argo', 'codex-home-x', 'auth.json'), content: 'x' });
   assert.equal(denied.behavior, 'deny', '~/.argo는 지정 폴더 안이어도 금지');
   assert.equal((await gate('Read', { file_path: join(homedir(), 'normal.txt') })).behavior, 'allow', '보호 구역 밖 홈 파일은 책상');

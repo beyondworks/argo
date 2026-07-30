@@ -87,10 +87,10 @@ test('homeEnv: Windows는 USERPROFILE까지 준다 — HOME만 주면 CLI가 진
   assert.equal(win.HOMEPATH, '\\Users\\kim\\.argo\\gemini-home-ws');
 });
 
-/* ── 준비 작업 자동 승인(bypass) — 유건 지시 2026-07-26 ── */
-test('capabilities: bypass가 정식 토글로 노출되고 로드에서 꺼지지 않는다', async () => {
-  const { CAPABILITY_DEFS } = await import('../src/capabilities.mjs');
-  assert.ok(CAPABILITY_DEFS.some(([k]) => k === 'bypass'), 'UI 목록에 bypass가 있어야 켜고 끌 수 있다');
+/* ── 전권 기본값 — 유건 지시 2026-07-30(능력 토글 제거) ── */
+test('capabilities: 설치 시점부터 전권 — 크루가 능력 부족으로 막히지 않는다', async () => {
+  const { CAPABILITIES } = await import('../src/capabilities.mjs');
+  assert.ok(CAPABILITIES.fs && CAPABILITIES.shell && CAPABILITIES.browser && CAPABILITIES.bypass);
 });
 
 /* ── 추론 강도: codex도 지원(실측 2026-07-26 codex-cli 0.144.1) ── */

@@ -50,7 +50,7 @@ test('isForbidden: 워크스페이스 안 심링크로 금지 구역을 우회�
 
 test('permissionGate: bypass가 켜져 있어도 금지 구역 Write/Edit/Read는 deny', async () => {
   const caps = { fs: true, browser: true, shell: true, bypass: true };
-  const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   const w = await gate('Write', { file_path: join(APP_ROOT, 'app', 'ui.jsx'), content: 'x' });
   assert.equal(w.behavior, 'deny', 'bypass는 결재 생략이지 보호 구역 해제가 아니다');
   const r = await gate('Read', { file_path: join(wsRoot, '.secrets.json') });
@@ -86,7 +86,7 @@ test('permissionGate: 혼합 인자로 안쪽 금지 대상을 우회하지 못�
   const out = await mkdtemp(join(tmpdir(), 'argo-mixed-'));
   for (const caps of [{ fs: true, browser: false, shell: false, bypass: false },
     { fs: false, browser: false, shell: false, bypass: true }]) {
-    const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot);
+    const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
     const label = caps.fs ? 'fs ON' : 'bypass ON';
     const g = await gate('Glob', { path: out, pattern: join(wsRoot, 'connections.json') });
     assert.equal(g.behavior, 'deny', `${label}: 밖 path + 안쪽 자격 pattern`);
@@ -102,7 +102,7 @@ test('permissionGate: 혼합 인자로 안쪽 금지 대상을 우회하지 못�
 test('permissionGate: 재귀 검색이 금고를 훑지 못한다 — 읽기 차단은 Read 한 곳이 아니다', async () => {
   // rg는 준 경로 아래를 재귀한다. 워크스페이스 루트 검색은 경로 자체가 금지가 아니라 통과했고,
   // connections.json의 봇 토큰이 평문으로 나왔다(분리 검수 HIGH, 실행 재현).
-  const gate = makePermissionGate('my-co', 'crew-a', { fs: false, browser: false, shell: false, bypass: false }, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   assert.equal((await gate('Grep', { pattern: 'token', path: wsRoot })).behavior, 'deny', '루트 재귀 검색');
   assert.equal((await gate('Grep', { pattern: 'token' })).behavior, 'deny', 'path 생략 = cwd = 루트');
   assert.equal((await gate('Glob', { path: wsRoot, pattern: '**/*.json' })).behavior, 'deny', '루트 glob');
@@ -116,17 +116,17 @@ test('permissionGate: 넓은 작업 폴더를 등록해도 재귀 검색이 금�
   // 그 안의 워크스페이스 금고까지 닿는다. 검색 루트가 워크스페이스를 품으면 막아야 한다.
   const ancestor = dirname(dirname(wsRoot)); // WS_ROOT의 부모 — 워크스페이스를 품는 넓은 폴더
   const caps = { fs: false, browser: false, shell: false, bypass: false };
-  const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot, null, 'ko', [ancestor]);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot, null, 'ko', [ancestor]);
   assert.equal((await gate('Grep', { pattern: 'token', path: ancestor })).behavior, 'deny', '조상 폴더 재귀');
   // 작업 폴더 자체의 정상 사용(워크스페이스를 품지 않는 폴더)은 그대로 열려 있다
   const side = await mkdtemp(join(tmpdir(), 'argo-work-'));
-  const g2 = makePermissionGate('my-co', 'crew-a', caps, wsRoot, null, 'ko', [side]);
+  const g2 = makePermissionGate('my-co', 'crew-a', wsRoot, null, 'ko', [side]);
   assert.equal((await g2('Grep', { pattern: 'x', path: side })).behavior, 'allow', '지정 작업 폴더 검색');
   assert.equal((await g2('Write', { file_path: join(side, 'a.md'), content: 'x' })).behavior, 'allow', '작업 폴더 쓰기');
 });
 
 test('permissionGate: 외부 MCP·미분류 도구도 금고 경로는 막힌다', async () => {
-  const gate = makePermissionGate('my-co', 'crew-a', { fs: true, browser: true, shell: true, bypass: true }, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   const caps = join(wsRoot, 'capabilities.json');
   assert.equal((await gate('mcp__filesystem__write_file', { path: caps, contents: '{}' })).behavior, 'deny', '외부 MCP 파일 쓰기');
   assert.equal((await gate('MultiEdit', { file_path: caps, edits: [] })).behavior, 'deny', '미분류 쓰기 도구');
@@ -138,7 +138,7 @@ test('permissionGate: 외부 MCP·미분류 도구도 금고 경로는 막힌다
 });
 
 test('permissionGate: shell 능력이 켜져도 셸 리터럴로 금고를 만지지 못한다(1차 방어)', async () => {
-  const gate = makePermissionGate('my-co', 'crew-a', { fs: true, browser: true, shell: true, bypass: true }, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   for (const cmd of ['echo \'{"bypass":true}\' > capabilities.json', 'cat connections.json',
     'python3 -c "open(\'capabilities.json\',\'w\')"', 'vi agents/crew-a.md']) {
     assert.equal((await gate('Bash', { command: cmd })).behavior, 'deny', cmd);
@@ -211,7 +211,7 @@ test('isForbidden: 워크스페이스 안 심링크로 제어 파일을 우회�
 
 test('permissionGate: 능력 0인 크루가 제어 파일로 자가 승격하지 못한다(Write·Edit·Read 전부)', async () => {
   const caps = { fs: false, browser: false, shell: false, bypass: false };
-  const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   const w = await gate('Write', { file_path: join(wsRoot, 'capabilities.json'), content: '{"shell":true,"bypass":true}' });
   assert.equal(w.behavior, 'deny', '능력 토글 자가 승격 — 이 게이트의 존재 이유');
   const e = await gate('Edit', { file_path: join(wsRoot, 'mcp.json'), old_string: 'a', new_string: 'b' });
@@ -226,7 +226,7 @@ test('permissionGate: 능력 0인 크루가 제어 파일로 자가 승격하지
 
 test('permissionGate: bypass가 켜져 있어도 제어 파일은 열리지 않는다', async () => {
   const caps = { fs: true, browser: true, shell: true, bypass: true };
-  const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   const w = await gate('Write', { file_path: join(wsRoot, 'capabilities.json'), content: '{}' });
   assert.equal(w.behavior, 'deny', 'bypass = 결재 생략이지 회사 금고 해제가 아니다');
   const g = await gate('Glob', { path: wsRoot, pattern: join(wsRoot, 'approvals.json') });
@@ -235,8 +235,86 @@ test('permissionGate: bypass가 켜져 있어도 제어 파일은 열리지 않�
 
 test('permissionGate: fs 능력이 켜져도 금지 구역 밖 일반 외부 경로는 기존대로 허용(회귀 없음)', async () => {
   const caps = { fs: true, browser: false, shell: false, bypass: false };
-  const gate = makePermissionGate('my-co', 'crew-a', caps, wsRoot);
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   const outside = await mkdtemp(join(tmpdir(), 'argo-outside-'));
   const r = await gate('Write', { file_path: join(outside, 'report.md'), content: 'x' });
   assert.equal(r.behavior, 'allow', 'fs 능력의 목적(사용자 문서 접근)은 유지');
+});
+
+/* ── 분리 검수 2026-07-30 반영 — 전부 행동 단언(게이트를 실제 실행해 판정을 본다) ── */
+
+test('벤더 자격 하드라인: Read·Write·MCP·Bash 전부 같은 판정(deny) — 절대경로·틸드 양형태 정합', async () => {
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  for (const dir of ['.codex', '.claude', '.gemini']) {
+    // 절대경로와 틸드 두 형태 모두 — 절대경로만 단언하면 "정합 달성"이 거짓 확신이 된다(재검수 HIGH:
+    // ~ 미확장으로 `~/.codex/...`가 워크스페이스 상대경로로 오해석돼 4경로 전부 allow였다).
+    for (const p of [join(homedir(), dir, 'auth.json'), `~/${dir}/auth.json`]) {
+      assert.equal((await gate('Read', { file_path: p })).behavior, 'deny', `Read ${p}`);
+      assert.equal((await gate('Write', { file_path: p, content: 'x' })).behavior, 'deny', `Write ${p}`);
+      assert.equal((await gate('mcp__fs__read', { path: p })).behavior, 'deny', `MCP ${p}`);
+      assert.equal((await gate('Bash', { command: `cat ${p}` })).behavior, 'deny', `Bash ${p}`);
+    }
+  }
+});
+
+test('chats/ Bash: 토큰 시작 경계에서만 deny — URL·하위 데이터 경로는 오차단하지 않는다(재검수 MEDIUM)', async () => {
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  assert.equal((await gate('Bash', { command: 'cat chats/crew-a.json' })).behavior, 'deny');
+  assert.equal((await gate('Bash', { command: 'cat ./chats/crew-a.json' })).behavior, 'deny', './ 접두 우회');
+  assert.equal((await gate('Bash', { command: `echo '{"who":"user"}' >> chats/beast.json` })).behavior, 'deny',
+    'who:user 주입 = 결재 없는 동료 지시 + 사장 이력 위조(파일 헤더 주석의 위협 그대로)');
+  // 공백 없는 리다이렉트 — 위조 명령의 가장 자연스러운 형태(재검수 3R: 경계 클래스에 <>, 누락)
+  assert.equal((await gate('Bash', { command: `echo '{"who":"user"}' >chats/beast.json` })).behavior, 'deny', '>chats/ 리다이렉트');
+  assert.equal((await gate('Bash', { command: 'cat <chats/beast.json' })).behavior, 'deny', '<chats/ 입력 리다이렉트');
+  // 오차단이던 정상 명령 — 크루가 "API 호출이 보호 구역에 막혔다"는 거짓 설명을 하게 됐다
+  assert.equal((await gate('Bash', { command: 'curl -s https://api.example.com/v1/chats/123' })).behavior, 'allow', 'URL 경로');
+  assert.equal((await gate('Bash', { command: 'ls vault/chats/' })).behavior, 'allow', '책상 하위 데이터');
+  assert.equal((await gate('Bash', { command: 'npx playwright test tests/agents/spec.ts' })).behavior, 'allow', '하위 디렉토리 경로');
+});
+
+test('보호구역 안→밖 심링크: canonical이 밖을 가리켜도 렉시컬 fail-closed로 deny', async () => {
+  // 조달이 만드는 ~/.argo/codex-home/auth.json → ~/.codex/auth.json 계열. appRoot를 주입해 재현한다.
+  const hardTmp = await mkdtemp(join(tmpdir(), 'argo-hardroot-'));
+  const outside = await mkdtemp(join(tmpdir(), 'argo-linktarget-'));
+  await writeFile(join(outside, 'secret.txt'), 's');
+  await symlink(join(outside, 'secret.txt'), join(hardTmp, 'link.txt')).catch(() => {});
+  const { makeIsForbidden: mk } = await import('../src/permission-gate.mjs');
+  const f = mk(wsRoot, hardTmp);
+  assert.equal(await f(join(hardTmp, 'link.txt')), true, '안→밖 심링크 — canonical만 보면 빠져나간다');
+  assert.equal(await f(join(hardTmp, 'no-such.txt')), true, '미존재 하위도 렉시컬로 deny');
+});
+
+test('MCP 단일 토큰 인자: 키∪값 합집합 — 일반 단어만 통과, 금고 특정 값은 키와 무관하게 판정(재검수 3R)', async () => {
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  // 오차단이던 무해 인자 — "agents"는 태그·채널명·검색어로 흔하다(비경로 키 + 제어 "디렉터리" 단어)
+  assert.equal((await gate('mcp__x__y', { note: 'agents' })).behavior, 'allow');
+  assert.equal((await gate('mcp__notion__q', { query: 'usage' })).behavior, 'allow');
+  assert.equal((await gate('mcp__x__y', { note: 'capabilities.json 이 뭔가요?' })).behavior, 'allow', '문장은 정확 일치가 아니다');
+  // 값 기준(제어·원장 파일명·도트 접두)은 **키와 무관** — 키만 보면 {to:'mcp.json'}(mcp__fs__move의
+  // {from,to} 시그니처)로 MCP 정의 덮어쓰기 = 임의 command가 열린다(재검수 3R 실측 12케이스).
+  assert.equal((await gate('mcp__x__y', { to: 'mcp.json' })).behavior, 'deny', '비경로 키 + 제어 파일명');
+  assert.equal((await gate('mcp__x__y', { key: 'company.json' })).behavior, 'deny', '키 이름과 무관 — 값이 제어 파일명이면 막는다');
+  assert.equal((await gate('mcp__x__y', { p: '.secrets.json' })).behavior, 'deny', '도트 접두는 키와 무관');
+  // 경로형 키의 단일 토큰은 제어 디렉터리까지 판정({path:'agents'}로 agents "파일"을 만들면
+  // 스캐폴드 전 회사의 크루 카드 디렉터리 생성이 막힌다)
+  assert.equal((await gate('mcp__x__y', { path: 'capabilities.json' })).behavior, 'deny');
+  assert.equal((await gate('mcp__x__y', { path: 'agents' })).behavior, 'deny', '제어 디렉터리 — 경로형 키');
+  assert.equal((await gate('mcp__x__y', { target: 'chats' })).behavior, 'deny');
+  assert.equal((await gate('MultiEdit', { file_path: 'agents', edits: [] })).behavior, 'deny', '미분류 도구도 동일');
+  // 구분자·틸드 동반 값은 키와 무관하게 전체 판정
+  assert.equal((await gate('mcp__x__y', { p: 'agents/crew-a.md' })).behavior, 'deny', '구분자 동반은 전체 판정');
+  assert.equal((await gate('mcp__x__y', { paths: ['capabilities.json'] })).behavior, 'deny', '배열 원소는 배열 키를 상속');
+  assert.equal((await gate('mcp__x__y', { path: 'capabilities.json\n' })).behavior, 'deny', '앞뒤 개행은 trim 후 판정(검수 LOW)');
+});
+
+test('SDK allowedTools 불변식: bare mcp__는 자체 크루 서버뿐 + 동결(런타임 오염 차단)', async () => {
+  // SDK는 bare `mcp__<서버>` 항목을 canUseTool 상담 전에 자동 승인한다(벤더 계약,
+  // CLAUDE_SDK_CAN_USE_TOOL_SHADOWED). 외부 MCP가 여기 실리면 위 argPathsForbidden 방어가 통째로
+  // 도달 불가가 된다 — mcpAllow 죽은 변수를 되살리는 회귀를 이 단언이 잡는다(검수 MEDIUM).
+  const { SDK_ALLOWED_TOOLS } = await import('../src/chat.mjs');
+  const bare = SDK_ALLOWED_TOOLS.filter((t) => /^mcp__/.test(t));
+  assert.deepEqual(bare, ['mcp__crew'], `외부 MCP가 allowedTools에 실렸다: ${bare.join(', ')}`);
+  // 동결 — 모듈 공유 배열이라 push 한 번의 오염이 프로세스 수명 내내 전 회사·전 턴에 번진다(재검수)
+  assert.equal(Object.isFrozen(SDK_ALLOWED_TOOLS), true, 'CAPABILITIES와 같은 동결 계약');
+  assert.throws(() => { SDK_ALLOWED_TOOLS.push('mcp__evil'); }, /frozen|read only|not extensible|Cannot add/i);
 });

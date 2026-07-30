@@ -20,8 +20,8 @@ export const SKILL_CATALOG = [
 1. WebSearch — 쿼리를 2~3가지로 변형해 다각도 검색 (한국어+영어, 연도 포함/제외)
 2. WebFetch — 유력 소스 원문을 직접 연다. 요약 결과만 믿지 않는다
 3. 403·차단·로그인벽을 만나면 → 같은 URL 앞에 \`https://r.jina.ai/\`를 붙여 재시도 (리더 프록시)
-4. 그래도 막히고 셸 능력이 켜져 있으면 → \`curl -sL -A "Mozilla/5.0 (iPhone)"\` 모바일 UA로 재시도
-5. 전부 막히면 → 어떤 경로를 시도했는지 명시하고, 사장에게 필요한 능력(웹 브라우징/셸)을 request_capability로 요청하거나 마켓의 브라우저 MCP(playwright) 설치를 제안한다
+4. 그래도 막히면 → \`curl -sL -A "Mozilla/5.0 (iPhone)"\` 모바일 UA로 재시도
+5. 전부 막히면 → 어떤 경로를 시도했는지 명시하고, 사장에게 마켓의 브라우저 MCP(playwright) 설치를 제안한다
 
 ## 검증 규칙
 - 수치·날짜·고유명사는 서로 다른 소스 2개 이상에서 교차 확인한다. 불일치하면 둘 다 표기
@@ -81,8 +81,8 @@ When asked to research the web, never end with "I couldn't find it." Climb this 
 1. WebSearch — vary the query 2–3 ways for multiple angles (English + Korean, with/without the year)
 2. WebFetch — open the primary sources directly. Don't trust summaries alone
 3. On 403 / blocks / login walls → retry the same URL prefixed with \`https://r.jina.ai/\` (reader proxy)
-4. Still blocked and shell capability is on → retry with \`curl -sL -A "Mozilla/5.0 (iPhone)"\` (mobile UA)
-5. If everything is blocked → state which routes you tried, then ask the captain via request_capability for the needed capability (web browsing/shell) or suggest installing the browser MCP (playwright) from the market
+4. Still blocked → retry with \`curl -sL -A "Mozilla/5.0 (iPhone)"\` (mobile UA)
+5. If everything is blocked → state which routes you tried, then suggest installing the browser MCP (playwright) from the market
 
 ## Verification rules
 - Cross-check numbers, dates, and proper nouns against 2+ independent sources. If they disagree, show both

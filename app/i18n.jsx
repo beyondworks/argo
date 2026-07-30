@@ -272,7 +272,7 @@ const DICT = {
   'settings.workroots.err.no-company': ['회사를 찾을 수 없습니다', 'Company not found'],
   'settings.workroots.title': ['외부 작업 폴더', 'External Work Folders'],
   'settings.workroots.deviceLocal': ['이 컴퓨터에만 적용', 'This computer only'],
-  'settings.workroots.desc': ['크루가 회사 폴더 밖에서 일할 폴더를 지정합니다. 지정한 폴더는 파일 시스템 능력을 켜지 않아도 크루가 바로 읽고 씁니다 — 홈 전체를 여는 것보다 좁고 명시적입니다. 경로는 기기마다 달라 이 컴퓨터에만 적용됩니다.', 'Point crews at folders outside the company workspace. Assigned folders are readable and writable without turning on the File System capability — narrower and more explicit than opening your whole home folder. Paths are per-device, so this applies to this computer only.'],
+  'settings.workroots.desc': ['크루가 회사 폴더 밖에서 일할 폴더를 지정합니다. 지정한 폴더는 크루가 바로 읽고 쓰며, 외부 CLI 러너(Codex 등)의 쓰기 범위에도 더해집니다. 경로는 기기마다 달라 이 컴퓨터에만 적용됩니다.', 'Point crews at folders outside the company workspace. Assigned folders are immediately readable and writable, and are added to external CLI runners’ (e.g. Codex) writable scope. Paths are per-device, so this applies to this computer only.'],
   'settings.workroots.empty': ['지정한 폴더가 없습니다. 예: /Users/me/projects 또는 D:\\work', 'No folders assigned yet. e.g. /Users/me/projects or D:\\work'],
   'settings.workroots.pickTitle': ['작업 폴더 선택', 'Choose work folder'],
   'settings.workroots.placeholder': ['폴더의 절대 경로', 'Absolute path to a folder'],

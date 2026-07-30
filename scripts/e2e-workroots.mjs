@@ -60,15 +60,15 @@ const ask = () => api(`/api/companies/${WS}/chat`, {
   method: 'POST',
   body: { slug: CREW, message: `쓰기 테스트다. 파일 ${TARGET} 에 내용 "workroots-ok"를 저장하라. 성공/실패만 한 줄로 보고하라.` },
 });
-// ① 대조군 — fs ON, 허용 폴더 미등록: 홈 밖이므로 실패해야 한다(경계 유지 확인)
-{
-  const c = await api(`/api/companies/${WS}/capabilities`, { method: 'POST', body: { fs: true } });
-  if (!c.json?.capabilities?.fs) fail('fs 능력 켜기 실패');
+// ① 대조군 — 허용 폴더 미등록: 홈 밖(그리고 workRoots 밖)이므로 실패해야 한다.
+// **CLI 러너 전용 전제**(재검수): codex writable_roots = 홈 + 등록 폴더라 성립하지만, SDK 러너(claude
+// 등)는 전권 게이트가 홈 밖 쓰기를 allow해 대조군이 반대로 fail한다 — CLI가 아니면 스킵한다.
+if (['codex', 'gemini', 'antigravity'].includes(process.env.E2E_RUNNER || 'codex')) {
   await ask();
   const written = await readFile(TARGET, 'utf8').catch(() => null);
   if (written !== null) fail('허용 폴더 등록 전인데 홈 밖 쓰기가 성공 — 경계가 사라졌다(회귀)');
   console.log('[e2e] 대조군 통과 — 등록 전 홈 밖 쓰기 차단 유지');
-}
+} else console.log('[e2e] 대조군 스킵 — SDK 러너는 전권 게이트(홈 밖 allow)라 이 전제가 성립하지 않는다');
 // ② 허용 폴더 등록 후 — 같은 지시가 성공해야 한다
 {
   const c = await api(`/api/companies/${WS}/workroots`, { method: 'POST', body: { add: OUTSIDE } });
