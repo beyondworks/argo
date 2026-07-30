@@ -15,6 +15,7 @@
 //
 // v1 한계(문서화): 서비스 키 기반(자가 호스팅 전제 — 패키징 앱은 사용자 JWT+RLS로 전환 예정),
 // 충돌은 LWW(더 최근 mtime 승) — md 양쪽 보존은 후속.
+import { fetch as undiciFetch } from 'undici';
 import { mkdir, readFile, writeFile, readdir, stat, rm, utimes } from 'node:fs/promises';
 import { join, dirname, basename, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -91,7 +92,7 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
 const CLIENT_OPTS = {
   auth: { persistSession: false },
   // 타임아웃 필수 — 기본 fetch는 무한 대기라 요청 하나가 걸리면 동기화 전체가 영원히 멈춘다(실측)
-  global: { fetch: (url, opts) => fetch(url, { ...opts, signal: AbortSignal.timeout(30_000) }) },
+  global: { fetch: (url, opts) => undiciFetch(url, { ...opts, signal: AbortSignal.timeout(30_000) }) },
 };
 let sb = null, sbKey = '';
 

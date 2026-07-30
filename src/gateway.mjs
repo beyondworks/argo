@@ -4,6 +4,7 @@
 // 분해(2026-07-28): 네트워크·타이머 없이 테스트 가능한 로직은 src/gateway/ 하위 모듈로 —
 //   persist(offset·커서·하트비트) · queue(디스크 큐·장시간 작업 적재) · protocol(순수 판정·파서) · routing(크루 라우팅).
 // 이 파일은 폴러 오케스트레이션(타이머·fetch 루프)·핸들러·매니저만 남는다. 기존 임포터를 위한 facade 재수출 유지.
+import { fetch as undiciFetch } from 'undici';
 import { listCompanies } from './hub.mjs';
 import { loadConnections, updateConnection, updateAgentBot } from './connections.mjs';
 import { chat } from './chat.mjs';
@@ -87,7 +88,7 @@ async function sendTgReply(token, chatId, wsId, text) {
       const fd = new FormData();
       fd.append('chat_id', String(chatId));
       fd.append(isImagePath(rel) ? 'photo' : 'document', new Blob([buf]), name);
-      await fetch(`https://api.telegram.org/bot${token}/${isImagePath(rel) ? 'sendPhoto' : 'sendDocument'}`, {
+      await undiciFetch(`https://api.telegram.org/bot${token}/${isImagePath(rel) ? 'sendPhoto' : 'sendDocument'}`, {
         method: 'POST', body: fd, signal: AbortSignal.timeout(60_000),
       });
     } catch { /* 파일 동봉 실패는 본문 전달을 막지 않는다 */ }
@@ -106,7 +107,7 @@ async function tgDownload(token, wsId, msg) {
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
   if ((f.file_size ?? 0) > 19_500_000) throw new Error(pick('20MB를 넘는 파일은 텔레그램 봇이 내려받을 수 없습니다', 'Files larger than 20MB cannot be downloaded by the Telegram bot', lang));
   const info = await tg(token, 'getFile', { file_id: f.file_id });
-  const res = await fetch(`https://api.telegram.org/file/bot${token}/${info.file_path}`, { signal: AbortSignal.timeout(120_000) });
+  const res = await undiciFetch(`https://api.telegram.org/file/bot${token}/${info.file_path}`, { signal: AbortSignal.timeout(120_000) });
   if (!res.ok) throw new Error(pick(`파일 다운로드 실패(${res.status})`, `File download failed (${res.status})`, lang));
   const buf = Buffer.from(await res.arrayBuffer());
   const safe = name.replace(/[^\w.\-가-힣]/g, '_').slice(-80);
@@ -117,7 +118,7 @@ async function tgDownload(token, wsId, msg) {
 }
 
 async function tg(token, method, body, timeoutMs = 35_000) {
-  const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+  const res = await undiciFetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -129,7 +130,7 @@ async function tg(token, method, body, timeoutMs = 35_000) {
 }
 
 async function slackApi(token, method, body) {
-  const res = await fetch(`https://slack.com/api/${method}`, {
+  const res = await undiciFetch(`https://slack.com/api/${method}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json; charset=utf-8', authorization: `Bearer ${token}` },
     body: JSON.stringify(body ?? {}),
