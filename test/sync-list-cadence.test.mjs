@@ -83,12 +83,15 @@ test('DISCOVER_MS 기본값은 300초다(2026-07-27 완화)', () => {
 test('확정 free는 파일 왕복을 스킵한다(복원·복원미완 예외) — 삭제만 성공하는 단조 감소 방지(전수리뷰 2026-07-30 #6)', () => {
   // 업로드는 RLS(is_pro)가 거부하는데 파일 삭제 전파는 소유권 정책(20260723 꼬리)상 성공한다 —
   // free가 파일 루프를 돌면 클라우드 사본이 삭제만 반영하며 줄어든다. 신규 복원(restoreSet)과
-  // 복원 미완(restorePending — 부분 실패 시 1회성으로 닫히지 않게, 재검수 MEDIUM)은 예외로 허용.
+  // 복원 미완(state 부재 — **디스크 파생**, 재검수 HIGH-E·F: 인메모리 pending은 영구 restoring·
+  // plan 왕복 stale·재시작 증발 3중 결함)은 예외로 허용. 행동 반쪽은 test/sync-free-restore가 잠근다.
   // cycle은 export가 안 돼 이 파일의 다른 배선과 같은 이유로 소스 스캔이 게이트다.
-  assert.match(SRC, /const restoring = restoreSet\.has\(wsId\) \|\| \(freePlan && restorePending\.has\(wsId\)\);/,
-    '복원 미완(pending) 예외가 없다 — 부분 실패한 free 복원이 다음 사이클부터 영구 스킵된다');
+  assert.match(SRC, /const restoring = restoreSet\.has\(wsId\) \|\| \(freePlan && !\(await syncStateExists\(wsId\)\)\);/,
+    '복원 미완 예외가 디스크 파생(syncStateExists)이 아니다 — 재검수 HIGH-E·F 재발');
   assert.match(SRC, /if \(freePlan && !restoring\) \{/,
     'free 파일 왕복 스킵이 없다 — free 기기에서 업로드는 실패하고 삭제만 전파돼 클라우드 사본이 단조 감소한다');
+  assert.match(SRC, /syncCompany\(wsId, owner, restoring, \{ tolerateManifestDenied: freePlan \}\)/,
+    'free 복원의 매니페스트 거부 관용이 배선돼 있지 않다 — 없으면 복원이 완결(state 기록)에 도달하지 못한다(HIGH-E)');
 });
 
 test('자격이 바뀌면 목록 조회 시각을 리셋한다 — 재로그인 직후 회사가 안 보이는 구멍', () => {

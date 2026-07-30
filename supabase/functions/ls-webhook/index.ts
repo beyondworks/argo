@@ -78,7 +78,9 @@ Deno.serve(async (req) => {
     ls_subscription_id: evt?.data?.id ?? null,
     ls_customer_id: a.customer_id != null ? String(a.customer_id) : null,
     ls_status: status,
-    ls_updated_at: a.updated_at ?? new Date().toISOString(),
+    // null 폴백 — 정본(lsbilling.mjs)과 동일. now()를 넣으면 "알 수 없음"이 "확실히 최신"이 되어
+    // 이후 정본 경로의 진짜 이벤트가 stale로 드롭된다(재검수 MEDIUM-G — 강등 드롭 = 영구 무료 Pro 부류).
+    ls_updated_at: a.updated_at ?? null,
     updated_at: new Date().toISOString(),
   });
   if (error) return new Response('db error', { status: 500 });
