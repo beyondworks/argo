@@ -1,6 +1,6 @@
 // 한 줄 프롬프트 → 페르소나 카드(md frontmatter + 본문) 자동 생성 — 기둥 2.
 // 카드가 곧 시스템 프롬프트: 사용자가 파일을 열어 언제든 고칠 수 있다(투명성).
-import { readFile, mkdir, rename } from 'node:fs/promises';
+import { readFile, mkdir, rename, readdir } from 'node:fs/promises';
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,7 +13,10 @@ import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 C
 // 카드 = 시스템 프롬프트. lang='en'이면 이름·직함·본문을 영어로 생성하되, 세 섹션 헤더(## 전문성/일하는 방식/톤)는
 // 한국어 고정 토큰으로 유지한다 — 백엔드·프론트 여러 파서(persona.mjs:appendAgentRule, hub.mjs, crew page)가 이
 // 리터럴을 앵커로 쓰므로 헤더를 바꾸면 파서가 깨진다(회귀 0 위해 헤더 불변, 내용만 언어 전환).
-const CARD_PROMPT = (oneLiner, name, lang = 'ko') => lang === 'en' ? `Write an AI employee's persona card from this one-line request.
+// avoid = 기존 크루 표시 이름 목록(자동 생성일 때만) — 안 넘기면 같은 조건에서 같은 고빈도 이름이
+// 나와 전원 동명이 된다(신고 2026-07-26 "전부 서윤" — slug만 -n 회피, 표시 이름 무방비).
+// (export: 회귀 테스트용)
+export const CARD_PROMPT = (oneLiner, name, lang = 'ko', avoid = []) => lang === 'en' ? `Write an AI employee's persona card from this one-line request.
 
 Request: "${oneLiner}"
 ${name ? `The name must be "${name}".` : ''}
@@ -21,7 +24,7 @@ ${name ? `The name must be "${name}".` : ''}
 Output ONLY markdown in exactly this format (no explanation, no code fences). Keep the three section headers in Korean exactly as shown (전문성 / 일하는 방식 / 톤), but write ALL content in English:
 
 ---
-name: <${name ? `"${name}" as-is` : 'a natural English first name (1-2 words), like a real person'}>
+name: <${name ? `"${name}" as-is` : `a natural English first name (1-2 words), like a real person${avoid.length ? ` — NOT any of these existing names: ${avoid.join(', ')}` : ''}`}>
 slug: <lowercase english slug>
 role: <one-line job title in English>
 ---
@@ -43,7 +46,7 @@ ${name ? `이름은 반드시 "${name}"으로 한다.` : ''}
 정확히 아래 형식의 마크다운만 출력해(설명·코드펜스 금지):
 
 ---
-name: <${name ? `"${name}" 그대로` : '한글 이름 2-3자, 사람 이름처럼'}>
+name: <${name ? `"${name}" 그대로` : `한글 이름 2-3자, 사람 이름처럼${avoid.length ? ` — 다음 이름은 이미 있으니 제외: ${avoid.join(', ')}` : ''}`}>
 slug: <영문 소문자 슬러그>
 role: <직함 한 줄>
 ---
@@ -112,19 +115,33 @@ async function recommendRole(wsId, oneLiner, lang = 'ko') {
   return ((oneLiner || '').split(/[-—·,.\n]/)[0].trim().slice(0, 30)) || (lang === 'en' ? 'AI employee' : 'AI 직원');
 }
 
+/** 기존 크루 표시 이름 — 영입 프롬프트의 제외 목록 원천. (export: 회귀 테스트용) */
+export async function existingNames(wsId) {
+  try {
+    const dir = paths(wsId).agents;
+    const out = [];
+    for (const f of (await readdir(dir)).filter((n) => n.endsWith('.md'))) {
+      const nm = parseFrontmatter(await readFile(join(dir, f), 'utf8')).name;
+      if (nm) out.push(nm);
+    }
+    return out;
+  } catch { return []; } // agents/ 부재(첫 영입) — 제외 없음
+}
+
 /** 원샷 1턴으로 카드 생성 → agents/<slug>.md 저장. name·team 지정 가능.
     러너 독립(runOneShot) — 가용 러너(회사 자격 우선)로 실행하고, 죽은 러너는 자가 치유 재시도.
     (이전: Claude SDK 하드코딩 — Codex만 연결한 실사용자가 영입 자체 불가 + "Claude 키" 오안내, 2026-07-19) */
 export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {}) {
   const t0 = Date.now();
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({})); // 시스템 언어 — 카드 생성 언어
+  const avoid = name?.trim() ? [] : await existingNames(wsId); // 이름 지정 영입은 제외 불필요
   // 상한 명시 — 기본(120s)은 사용자 대기 경로엔 맞지만 **첫 영입**은 다르다: 신규 회사는 무료
   // 모델(OPENROUTER_ONBOARD_MODEL)로 뽑히기 쉽고 무료 티어는 큐 지연이 크며, 러너가 하나뿐이라
   // 자가치유가 받아줄 대체도 없다 — 여기서 잘리면 온보딩이 통째로 실패한다(검수 2026-07-27 I-1).
-  const { runner, text, usage, costUsd } = await runOneShot(wsId, CARD_PROMPT(oneLiner, name?.trim(), lang), { lang, timeoutMs: 5 * 60_000 });
+  const { runner, text, usage, costUsd } = await runOneShot(wsId, CARD_PROMPT(oneLiner, name?.trim(), lang, avoid), { lang, timeoutMs: 5 * 60_000 });
   // billed 각인 — 구독 러너의 영입 턴 금액이 청구로 새지 않게(검수 2026-07-27 부수 발견: main에서 누수 중이었다)
   await appendUsage(wsId, { kind: 'hire', runner, usage, costUsd, ms: Date.now() - t0, billed: await isBilledRunner(wsId, runner).catch(() => undefined) });
-  const md = text.trim().replace(/^```(?:markdown)?\r?\n?/, '').replace(/\r?\n?```$/, '').trim();
+  let md = text.trim().replace(/^```(?:markdown)?\r?\n?/, '').replace(/\r?\n?```$/, '').trim();
   // AI가 아예 응답을 못 준 경우만 진짜 실패. 형식이 어긋난 건 아래에서 복원한다(생성 실패로 두지 않는다).
   if (!md) {
     throw new Error(lang === 'en'
@@ -135,7 +152,20 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   // 관대한 필드 복원 — frontmatter(닫는 --- 없어도)·본문 H1("# 이름 — 역할")·입력에서 긁는다.
   const meta = parseFrontmatter(md);
   const h1 = (md.match(/^#\s+(.+)$/m)?.[1] || '').split(/\s+[—–-]\s+/);
-  const nameFinal = (name?.trim() || meta.name || looseField(md, 'name') || h1[0] || 'AI 직원').trim();
+  let nameFinal = (name?.trim() || meta.name || looseField(md, 'name') || h1[0] || 'AI 직원').trim();
+  // 사후 가드 — 프롬프트 제외에도 자동 생성 이름이 로스터와 충돌하면 **이름만** 1회 재요청(카드
+  // 전체 재생성보다 싸다). 재충돌은 수용: slug는 아래 -n으로 이미 유일하고, 2겹(제외+재요청)을 뚫는
+  // 중복은 드물다. 이름 지정 영입(name)은 사장의 선택이라 손대지 않는다.
+  if (!name?.trim() && avoid.includes(nameFinal)) {
+    const alt = await runOneShot(wsId, lang === 'en'
+      ? `Suggest ONE natural English first name for a new AI employee. It must NOT be any of: ${[...avoid, nameFinal].join(', ')}. Reply with the name only — no punctuation.`
+      : `새 AI 직원의 한글 이름(2-3자, 사람 이름처럼)을 하나만 추천해줘. 다음 이름은 이미 있으니 반드시 제외: ${[...avoid, nameFinal].join(', ')}. 이름만 답해(문장·기호 없이).`,
+      { lang }).then((r) => r.text.trim().split(/\s+/)[0].replace(/["'`.,!?]/g, '').slice(0, 24)).catch(() => '');
+    if (alt && !avoid.includes(alt)) {
+      md = md.replace(/^(#\s+).+?(\s+[—–-]\s+)/m, `$1${alt}$2`); // 본문 H1도 새 이름으로(카드 표기 일치)
+      nameFinal = alt;
+    }
+  }
   let roleFinal = (meta.role || looseField(md, 'role') || (h1[1] || '')).trim();
   // 역할을 못 뽑으면 AI가 직함을 추천해 채운다.
   if (!roleFinal) roleFinal = await recommendRole(wsId, oneLiner, lang);

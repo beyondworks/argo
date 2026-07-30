@@ -31,7 +31,9 @@ export async function PUT(req, { params }) {
       // gemini는 로그인이 살아 있어도 구글이 개인 OAuth를 신형 CLI에서 거절할 수 있다 — 실사용 프로브로
       // 확정 부적격이면 '연결됨'을 만들지 않는다(웹 브리지 관문과 대칭, 실사용 신고 2026-07-20)
       if (runner === 'gemini' && (await probeGeminiHostOAuth()).ok === false) {
-        throw new Error('이 컴퓨터의 Gemini 로그인(개인 OAuth)은 구글이 최신 CLI에서 지원을 중단해 사용할 수 없습니다 — API 키로 연결해 주세요(Google AI Studio에서 무료 발급)');
+        // 벤더 폐기의 정직 안내(QA P0-2) — 구글이 개인 Code Assist OAuth를 Antigravity로 이전했다.
+        // 사용자가 자기 설정을 의심하며 시간을 태우지 않게 원인과 대안(Antigravity 러너 = agy 로그인 인식)을 함께.
+        throw new Error('이 컴퓨터의 Gemini 로그인(개인 OAuth)은 구글이 폐기하고 Antigravity로 이전해 사용할 수 없습니다 — Antigravity 러너로 연결하시거나(agy 로그인 인식), API 키로 연결해 주세요(Google AI Studio에서 무료 발급)');
       }
       await saveRunnerCred(ws, runner, 'host', 'host');
       return Response.json({ ok: true, runner, connected: true, type: 'host', masked: '' });
