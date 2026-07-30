@@ -3,8 +3,13 @@
 
 import { copyFile, mkdir, mkdtemp, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { encodeCrewContext } from '../crew-actions.mjs';
 import { exec, exists } from './shared.mjs';
+
+const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const CODEX_CREW_MCP = join(APP_ROOT, 'src', 'codex-crew-mcp.mjs');
 
 /** Argo 전용 CODEX_HOME — 사용자 전역 config(커스텀 에이전트·모델 핀)와 격리하고 auth만 빌린다.
     (전역 config의 spawn_agent 커스텀 스키마가 신형 모델의 예약 도구와 충돌하는 사례 확인) */
@@ -169,7 +174,24 @@ export async function recoverCodexAuth(handle) {
   return true;
 }
 
-export async function writeCodexTurnConfig(home, caps, workRoots = []) {
+/** Argo 회사 크루와 무관한 호스트 Orca 조율 스킬은 턴 config에서 정확한 경로로만 끈다.
+    다른 개인 스킬은 유지하고, 파일이 없는 설치에서는 불필요한 override도 만들지 않는다. */
+export async function incompatibleHostSkillPaths(home = homedir()) {
+  const candidates = ['orchestration', 'orca-cli']
+    .map((name) => join(home, '.agents', 'skills', name, 'SKILL.md'));
+  const present = await Promise.all(candidates.map(async (path) => (await exists(path) ? path : null)));
+  return present.filter(Boolean);
+}
+
+const tomlString = (value) => JSON.stringify(String(value));
+const tomlStringArray = (values) => `[${values.map(tomlString).join(', ')}]`;
+
+export async function writeCodexTurnConfig(
+  home,
+  caps,
+  workRoots = [],
+  { crewContext = null, disabledSkillPaths = null } = {},
+) {
   const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)·지정 작업 폴더에서 재생성됩니다.'];
   // fs=홈(앱 본체는 밖) + 사장이 지정한 외부 작업 폴더(fs와 독립 — codexSandboxArgs와 동일 규칙)
   const roots = [...(caps?.fs ? [homedir()] : []), ...workRoots];
@@ -179,7 +201,46 @@ export async function writeCodexTurnConfig(home, caps, workRoots = []) {
     if (roots.length) lines.push(`writable_roots = [${roots.map((r) => JSON.stringify(r)).join(', ')}]`);
     if (caps?.browser) lines.push('network_access = true');
   }
+  const disabled = disabledSkillPaths ?? await incompatibleHostSkillPaths();
+  for (const path of disabled) {
+    lines.push('', '[[skills.config]]', `path = ${tomlString(path)}`, 'enabled = false');
+  }
+  if (crewContext) {
+    const encoded = encodeCrewContext(crewContext);
+    lines.push(
+      '',
+      '[mcp_servers.argo_crew]',
+      `command = ${tomlString(process.execPath)}`,
+      `args = ${tomlStringArray([CODEX_CREW_MCP])}`,
+      `cwd = ${tomlString(APP_ROOT)}`,
+      'required = true',
+      'enabled = true',
+      'enabled_tools = ["delegate", "send_to_crew"]',
+      'default_tools_approval_mode = "auto"',
+      'startup_timeout_sec = 15',
+      'tool_timeout_sec = 240',
+      'env_vars = ["ARGO_ROOT", "CREWBASE_ROOT", "ARGO_STANDALONE", "ARGO_TENANT_OWNER", "ARGO_ENFORCE_PLAN", "ARGO_CODEX_RUNTIME_ROOT"]',
+      '',
+      '[mcp_servers.argo_crew.env]',
+      `ARGO_CREW_CONTEXT = ${tomlString(encoded)}`,
+    );
+  }
   await writeFile(join(home, 'config.toml'), lines.join('\n') + '\n').catch(() => { /* 실패해도 -c 폴백이 있다 */ });
+}
+
+/** Codex 턴 임시 홈의 신뢰 경로.
+    codex-cli 0.145+는 CODEX_HOME/tmp/arg0에 codex-linux-sandbox 등의 실행 별칭을 만든다. 시스템
+    임시 폴더 아래 CODEX_HOME은 보안상 거부되므로(tmpdir()/argo-codex-*가 실제 장애 원인),
+    Argo가 이미 관리하는 사용자 홈의 0700 런타임 디렉터리를 사용한다. ARGO_CODEX_RUNTIME_ROOT는
+    HOME 자체가 임시 볼륨인 컨테이너에서 운영자가 영속·신뢰 경로를 명시할 때만 쓰는 탈출구다. */
+export function codexTurnRuntimeRoot(home = homedir(), override = process.env.ARGO_CODEX_RUNTIME_ROOT) {
+  return String(override ?? '').trim() || join(home, '.argo', 'runtime', 'codex-turns');
+}
+
+export async function createCodexTurnDir() {
+  const root = codexTurnRuntimeRoot();
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  return mkdtemp(join(root, 'turn-'));
 }
 
 export { codexHome, codexManagedBin, codexCmd }; // 러너 모듈 내부 공용(facade 미노출 — externalExec·detectRunners가 쓴다)

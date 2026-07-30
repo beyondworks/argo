@@ -23,6 +23,7 @@ import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './t
 import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
+import { makeCrewActions } from './crew-actions.mjs';
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
     allow = 크루별 사용 범위(parseScopeList 결과): null=전체(기본), []=없음, [이름]=지정만.
@@ -62,6 +63,30 @@ ${lines.join('\n')}
 - 위임하기로 했으면 "이 부분은 {동료 이름}에게 인계해 진행한다"고 답변에서 먼저 밝혀라 — 결재 요청이 그 동료 이름으로 올 수 있다는 것까지 사장이 알아야 흐름이 끊기지 않는다.
 - 위임 결과는 그대로 붙이지 말고 검토해 네 답에 통합하고, 어느 동료의 작업인지 밝혀라.
 - 남발 금지 — 네가 직접 할 수 있으면 직접 한다. 위임은 턴당 최대 2회, 연쇄(위임받은 일을 다시 위임)는 전체 2단계까지만 허용된다.`;
+}
+
+/** Codex CLI는 호스트 전역 Orca 스킬도 발견한다. Argo 크루와 Orca 작업공간을 혼동하지 않게
+    실행 경계와 이 턴에 실제로 붙인 Argo MCP 도구를 명시한다. */
+export function codexArgoCrewPrompt(colleagues, lang = 'ko') {
+  const roster = colleagues.length ? rosterPrompt(colleagues, lang) : '';
+  if (lang === 'en') {
+    return `${roster}
+
+## Argo runtime boundary — highest priority for crew coordination
+- You are running inside Argo. Argo colleagues are not Orca agents or Orca worktrees.
+- Never invoke \`orca\`, \`orca-ide\`, the global \`orchestration\` skill, or the \`orca-cli\` skill to contact or coordinate Argo crew.
+${colleagues.length
+    ? '- This turn exposes the Argo-internal `delegate` and `send_to_crew` MCP tools. Use only those tools for the authorized colleagues listed above. Do not emit an `argo` mail directive; directive blocks remain available only for scheduling.'
+    : '- No Argo colleague tool is available in this turn because the delegation-depth limit was reached. Finish directly or report the limitation; do not substitute an external orchestrator.'}`;
+  }
+  return `${roster}
+
+## Argo 실행 경계 — 크루 조율 시 최우선
+- 너는 Argo 회사 안에서 실행 중이다. Argo 동료는 Orca 에이전트나 Orca 워크트리가 아니다.
+- Argo 크루에게 연락하거나 조율할 때 \`orca\`, \`orca-ide\`, 전역 \`orchestration\` 스킬, \`orca-cli\` 스킬을 절대 실행하지 마라.
+${colleagues.length
+    ? '- 이번 턴에는 Argo 내부 `delegate`와 `send_to_crew` MCP 도구가 제공된다. 위 명단의 허용된 동료에게만 이 도구를 사용하라. `argo` mail 지시 블록은 만들지 말고, 지시 블록은 예약에만 사용하라.'
+    : '- 이번 턴은 위임 깊이 상한에 도달해 Argo 동료 도구가 없다. 직접 마무리하거나 제한을 보고하고, 외부 조율 도구로 대체하지 마라.'}`;
 }
 
 /** Argo 크루 시스템 프롬프트 v2 — 러너(Claude SDK·Codex·Gemini·GLM) 무관하게 같은 행동을 내는 공통 골격.
@@ -318,6 +343,10 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
   const text = async (t) => ({ content: [{ type: 'text', text: t }] });
   // 위임 체인의 직전 크루 — 이 크루가 올리는 결재에 "누구의 위임으로 온 요청인지"를 실어 흐름을 보이게 한다
   const delegatedBy = chain.length ? chain[chain.length - 1] : null;
+  const crewActions = makeCrewActions(
+    { wsId, fromSlug, fromName, colleagues, hop, chain, mirrorCtx, lang },
+    { runChat: chat },
+  );
 
   // 승인 채널 헬스 — 텔레그램이 설정됐는데 죽어 있으면 사장이 버튼을 못 받는다(실측 데드락).
   // 결재·설치·능력 요청 모두 인박스 경유라 세 도구가 동일하게 이 안내를 붙인다.
@@ -386,62 +415,21 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
     },
   );
 
-  let used = 0;
   const delegate = tool(
     'delegate',
     '동료 크루에게 하위 작업을 위임하고 결과를 받는다. to는 동료의 slug, task는 그 동료가 단독으로 수행할 수 있는 구체적 지시.',
     { to: z.string(), task: z.string() },
-    async ({ to, task }) => {
-      if (used >= 2) return text('위임 한도 초과 — 이번 턴은 남은 작업을 직접 마무리하라.');
-      const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase(); // 한글 NFC/NFD 불일치 방어
-      const key = norm(to.trim());
-      const target = colleagues.find((a) => norm(a.slug) === key || norm(a.name) === key);
-      if (!target) return text(`"${to}"는 동료 명단에 없다. 가능한 slug: ${colleagues.map((a) => a.slug).join(', ')}`);
-      used += 1;
-      try {
-        // 위임 프리픽스는 상대 크루 스레드에 사용자 메시지로 저장돼 UI에 그대로 보인다 — 회사 언어를 따른다
-        const delegated = lang === 'en' ? `(Delegated by colleague ${fromName}) ${task}` : `(동료 ${fromName}의 위임) ${task}`;
-        const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug] });
-        // 위임 트레이스 — 대상 크루의 대화에도 남긴다(세션은 건드리지 않음). 웹에서 양쪽 다 보인다.
-        const { appendTurn } = await import('./thread.mjs');
-        await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null })
-          .catch(() => {});
-        // 그룹 대화 미러 — 메신저 그룹에서 시작된 턴이면 상대 크루 봇이 같은 방에 결과를 발화한다(게이트웨이가 수신)
-        // mirrorCtx를 이벤트에 직접 실어 보낸다 — 전역 맵 조회(동시 턴 오배달 위험)를 없앤다
-        const { emitNotify } = await import('./notify.mjs');
-        emitNotify({ type: 'delegate', wsId, from: fromSlug, fromName, to: target.slug, toName: target.name, task, reply: r.reply, ctx: mirrorCtx });
-        return text(`[${target.name}의 작업 결과]\n${r.reply}`);
-      } catch (e) {
-        return text(`위임 실패(${target.name}): ${String(e.message || e)}`);
-      }
-    },
+    async (input) => text(await crewActions.delegate(input)),
   );
   // 비동기 쪽지 — delegate(동기, 결과 대기)와 달리 적재만 하고 턴을 마친다. 스케줄러가 60초 틱에
   // 수신 크루의 새 턴으로 배달한다(다른 세션·다른 시각에도 소통 — 실사용 요청 2026-07-27).
   // hop·chain을 메시지에 실어 비동기 경로에도 연쇄 상한(2)·순환 차단이 그대로 적용된다.
   // 노출 게이트는 delegate와 동일(colleagues — hop≥2면 빈 배열이라 자동 비노출).
-  let mailSent = 0; // 한 턴 쪽지 상한(팬아웃 방어 — delegate used와 동일 패턴)
   const sendToCrew = tool(
     'send_to_crew',
     '동료 크루에게 비동기 쪽지를 보낸다(결과를 기다리지 않음 — 지금 턴은 바로 끝난다). 상대는 잠시 뒤 자기 턴에서 읽고 처리하며, 필요하면 나에게 답장을 보낸다. to는 수신 동료 slug, cc는 참조로 사본을 받을 동료 slug 목록(선택), message는 상대가 단독으로 이해할 수 있는 내용. 즉시 결과가 필요한 하위 작업은 이 도구가 아니라 delegate를 써라.',
     { to: z.string(), cc: z.array(z.string()).optional(), message: z.string() },
-    async ({ to, cc, message }) => {
-      if (mailSent >= 2) return text('쪽지 한도 초과 — 이번 턴은 이미 보낸 쪽지로 충분하다. 남은 작업을 직접 마무리하라.');
-      const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase().trim();
-      const resolveOne = (v) => colleagues.find((a) => norm(a.slug) === norm(v) || norm(a.name) === norm(v));
-      const target = resolveOne(to);
-      if (!target) return text(`"${to}"는 동료 명단에 없다. 가능한 slug: ${colleagues.map((a) => a.slug).join(', ')}`);
-      const ccSlugs = (cc ?? []).map(resolveOne).filter(Boolean).map((a) => a.slug);
-      try {
-        const { sendCrewMail } = await import('./crewmail.mjs');
-        const id = await sendCrewMail(wsId, { from: fromSlug, fromName, to: target.slug, cc: ccSlugs, message, hop: hop + 1, chain: [...chain, fromSlug] });
-        mailSent += 1;
-        return text(`쪽지를 보냈다(${id} → ${target.name}${ccSlugs.length ? `, 참조 ${ccSlugs.length}명` : ''}). 상대는 잠시 뒤 자기 턴에서 읽는다 — 결과를 기다리지 말고 지금 할 일을 마무리하라.`);
-      } catch (e) {
-        // cc 상한 초과·공백 메시지 등 — 예외를 SDK로 던지지 않고 안내로 돌려 크루가 스스로 고치게(재검 N2)
-        return text(`쪽지 전송 실패: ${String(e.message || e)}`);
-      }
-    },
+    async (input) => text(await crewActions.sendToCrew(input)),
   );
   // 러너·모델 인자 검증 — 카탈로그 대조 + 회사/호스트 연결 확인. 문제면 사용자에게 물어볼 안내문을 돌려준다.
   const runnerCatalog = () => Object.entries(RUNNERS)
@@ -703,6 +691,13 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     if (!resolved.fellBack || !e || typeof e !== 'object') return;
     e.message = fallbackErrorPrefix(true, wantRunner, runner, lang) + String(e.message || '');
   };
+  // Argo 내부 동료 범위 — SDK crew 서버와 Codex stdio MCP가 동일한 명단·hop/chain 상한을 쓴다.
+  // 직전 발신자에게는 회신을 허용하되 hop 2에서 더 이상의 팬아웃은 차단한다.
+  const lastSender = chain.length ? chain[chain.length - 1] : null;
+  const colleagues = (runner === 'codex' || !isCliRunner(runner))
+    ? (hop >= 2 ? [] : (await listAgents(wsId))
+      .filter((a) => a.slug !== agentSlug && (!chain.includes(a.slug) || a.slug === lastSender)))
+    : [];
   // 참조(cc)로 공유된 맥락 — 이번 턴 프롬프트에 1회 주입(맥락 공유는 기본, 실행은 지시받은 크루만)
   // 재시도(__seedNotes)면 아우터 시도가 이미 소비한 공유 노트를 이어받는다 — 재시도에서 cc 맥락 소실 방지
   const sharedNotes = __seedNotes ?? (from ? [] : await takeSharedNotes(wsId, agentSlug).catch(() => []));
@@ -731,15 +726,27 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
             ? `\n\n(Files the captain attached — read them directly: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`
             : `\n\n(사장이 첨부한 파일 — 직접 읽어 참고하라: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`) : '';
       // 러너 공통 지시(결재·능력·환경·도구 활용) — SDK 경로와 같은 규율을 외부 러너에도 적용(러너 독립성).
-      // 외부 CLI에는 크루 도구가 없으므로 hasTools:false — 같은 규칙이 "보고·안내" 형태로 들어간다.
+      // 외부 CLI에는 결재·설정 도구가 없으므로 hasTools:false.
+      // Codex의 크루 전용 도구는 별도 stdio MCP와 codexCrewPrompt로 붙인다.
       const cliCaps = await loadCapabilities(wsId);
       const cliWorkRoots = await loadActiveWorkRoots(wsId); // 사장 지정 외부 작업 폴더 — codex 샌드박스·프롬프트 안내에 주입
       const cliMcp = Object.keys(safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {}))
         .filter((n) => !mcpScope || mcpScope.includes(n)); // 크루별 MCP 범위(안내문도 동일 기준)
+      const crewContext = runner === 'codex' && colleagues.length ? {
+        wsId,
+        fromSlug: agentSlug,
+        fromName: meta.name || agentSlug,
+        colleagues,
+        hop,
+        chain,
+        mirrorCtx,
+        lang,
+      } : null;
+      const codexCrewPrompt = runner === 'codex' ? codexArgoCrewPrompt(colleagues, lang) : '';
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false })}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, hasTools: false, lang, runner, workRoots: cliWorkRoots })}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false })}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, hasTools: false, lang, runner, workRoots: cliWorkRoots })}${codexCrewPrompt}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
@@ -761,13 +768,13 @@ ${lang === 'en'
       let usedModel = effModel;
       let reply;
       try {
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat' });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', crewContext });
       } catch (e) {
         const gated = !!(effModel && RUNNERS[runner]?.models.find((m) => m.id === effModel)?.gated);
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat' });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', crewContext });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
@@ -873,13 +880,7 @@ ${lang === 'en'
   if (mcpScope) servers = Object.fromEntries(Object.entries(servers).filter(([n]) => mcpScope.includes(n)));
   const mcpAllow = Object.keys(servers).map((n) => `mcp__${n}`);
 
-  // 크루 도구 — 결재 요청은 모든 턴. 위임·쪽지는 hop 2단계까지(사장→A→B→C에서 끝). 실효 바운드는
-  // hop 단독이다 — lastSender 회신 예외 도입 후 chain 제외는 도달 가능한 경로에서 무효(재검 (c) 확인).
-  // chain 순환 차단의 예외 — **직전 발신자에게는 회신 허용**(분리 검수 HIGH-2: 쪽지는 왕복이 목적인데
-  // chain 제외가 회신 경로를 끊고, 2명 회사에선 도구 자체가 미등록이었다). 왕복 폭주는 hop 상한이
-  // 가둔다: A(h0)→B(h1 배달 턴)→회신(h2 배달 턴)은 colleagues가 빈 배열이라 더 못 보낸다.
-  const lastSender = chain.length ? chain[chain.length - 1] : null;
-  const colleagues = hop >= 2 ? [] : (await listAgents(wsId)).filter((a) => a.slug !== agentSlug && (!chain.includes(a.slug) || a.slug === lastSender));
+  // SDK 러너도 위에서 계산한 동일한 동료 범위를 쓴다.
   const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang);
 
   // 로컬 능력 — 전부 opt-in. 파일·셸 부작용 도구는 bypass 여부와 무관하게 사전 승인 목록에서 빼고

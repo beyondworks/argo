@@ -35,6 +35,18 @@ export function apiError(e, runner = null) {
   // "failed to load skill …"로 오도된다. 진단에서 제거해 진짜 원인만 남긴다.
   const scrub = (s) => String(s ?? '').replace(/^.*ERROR codex_core.*failed to load skill.*$/gim, '').trim();
   const raw = `${scrub(e.stdout)}\n${scrub(e.stderr)}`;
+  // codex-cli 0.145+는 Linux 샌드박스·apply_patch용 argv[0] 별칭을 CODEX_HOME/tmp/arg0에 만든다.
+  // CODEX_HOME이 시스템 임시 폴더(/tmp 등) 아래면 보안상 별칭 생성을 거부하고, 뒤이어 bwrap이
+  // codex-linux-sandbox를 못 찾아 죽는다. 이건 CLI 설치/PATH 문제가 아니라 Argo 런타임 홈 배치
+  // 문제이므로 일반 ENOENT 안내와 분리한다(2026-07-30 실측).
+  if (runner === 'codex' && (
+    /Refusing to create helper binaries under temporary dir/i.test(raw)
+    || /codex-linux-sandbox:\s*No such file or directory/i.test(raw)
+  )) {
+    return new Error('Codex 샌드박스 초기화에 실패했습니다. 턴 전용 CODEX_HOME이 시스템 임시 폴더가 아닌 '
+      + '사용자 홈 아래에 있어야 합니다. Argo를 최신 상태로 반영한 뒤 재시작해 주세요. '
+      + 'Codex sandbox initialization failed — CODEX_HOME must be outside the system temporary directory; update and restart Argo.');
+  }
   // A0 원인 분류(2026-07-23): 스폰 실패(바이너리 미발견) = PATH 누락/미설치가 원인 — 사용자가 겪는
   // "환경에 따른 러너 연결 오류"의 최다 케이스인데 이전엔 제네릭 "exit ?"로 뭉개졌다. 원인+처방을 준다.
   // 신호는 e.code==='ENOENT'(execFile 스폰 미발견의 확정 신호) + 셸 "command not found"/리터럴 ENOENT로 한정한다 —

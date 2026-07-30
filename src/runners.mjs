@@ -8,13 +8,13 @@
 //    위치를 잠그기 때문: externalExec(+agyCmd)·billedByType/isBilledRunner/billedRunnerMap·
 //    runnerStatus·resolveRunner. export 표면 유실은 test/runners-facade.test.mjs가 차단한다.
 
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { mkdir, readFile, rm } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthFormatError } from './runners/catalog.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, codexSandboxArgs } from './runners/codex.mjs';
+import { codexHome, codexCmd, createCodexTurnDir, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, codexSandboxArgs } from './runners/codex.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { loadSecrets, credType, maskCred } from './runners/creds.mjs';
 import { ensureCliPath, apiError, detectRunners } from './runners/exec.mjs';
@@ -30,6 +30,7 @@ export {
 export {
   provisionCodexCli, codexSandboxArgs, CODEX_EFFORTS, codexEffortArgs,
   importCodexAuth, recoverCodexAuth, writeCodexTurnConfig,
+  incompatibleHostSkillPaths, codexTurnRuntimeRoot, createCodexTurnDir,
 } from './runners/codex.mjs';
 export { provisionGeminiCli, probeGeminiOAuth, probeGeminiHostOAuth } from './runners/gemini.mjs';
 export {
@@ -82,12 +83,28 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
 
 /** 외부 CLI 러너 1턴 — 워크스페이스를 cwd로, 프롬프트 하나로 실행하고 마지막 응답을 받는다.
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
-    caps = 회사 로컬 능력({ fs, browser, shell }) — 사장이 켠 능력을 codex 샌드박스에 반영(codexSandboxArgs). */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat' }) {
+    caps = 회사 로컬 능력({ fs, browser, shell }) — 사장이 켠 능력을 codex 샌드박스에 반영(codexSandboxArgs).
+    crewContext = Codex에만 붙이는 Argo 내부 stdio MCP의 회사·발신자·허용 동료 범위. */
+export async function externalExec({
+  runner,
+  model,
+  cwd,
+  prompt,
+  timeoutMs = 300_000,
+  cred = null,
+  signal = null,
+  caps = null,
+  effort = '',
+  workRoots = [],
+  kind = 'chat',
+  crewContext = null,
+}) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   const t0 = Date.now(); // 실패의 정직 번역용 — cliTurnFailure가 경과 시간으로 시간 초과를 판정한다
   if (runner === 'codex') {
-    const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
+    // /tmp 아래 CODEX_HOME 금지: codex-cli 0.145+가 보안상 helper alias 생성을 거부해
+    // bwrap: execvp codex-linux-sandbox: No such file or directory로 모든 도구 실행이 죽는다.
+    const dir = await createCodexTurnDir();
     const out = join(dir, 'last.txt');
     // 회사 자격(apikey·oauth 모두 격리 홈의 auth.json — 'clean'+env키 모드는 codex CLI가 env 키를
     // 안 읽어 폐기 2026-07-26)이 있으면 그 홈, 없으면 호스트 로그인 상속
@@ -99,7 +116,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     // 자격 반입(심링크 → 복사 폴백) + 턴 뒤 갱신 토큰 회수. 계약은 importCodexAuth/recoverCodexAuth의
     // 주석과 test/codex-auth-import.test.mjs가 잠근다(신규 설치 401의 근본 원인이었던 자리).
     const auth = await importCodexAuth(baseHome, CODEX_HOME);
-    await writeCodexTurnConfig(CODEX_HOME, caps, workRoots); // [sandbox_workspace_write] — `-c`가 안 먹는 codex 버전 방어(실사용 신고 2026-07-22)
+    await writeCodexTurnConfig(CODEX_HOME, caps, workRoots, { crewContext }); // 샌드박스 + Argo crew MCP + 호스트 Orca 스킬 격리
     const cmd = await codexCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     try {
       await exec(cmd.file, [

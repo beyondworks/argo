@@ -19,6 +19,17 @@ test('apiError: 셸 command not found도 CLI 미발견으로 분류', () => {
   assert.match(m, /CLI를 찾지 못했습니다|CLI not found/i);
 });
 
+test('apiError: codex-linux-sandbox 부재는 일반 PATH 문제가 아니라 런타임 홈 배치 오류로 안내', () => {
+  const m = apiError({
+    code: 1,
+    stderr: 'WARNING: Refusing to create helper binaries under temporary dir "/tmp"\n'
+      + 'bwrap: execvp codex-linux-sandbox: No such file or directory',
+  }, 'codex').message;
+  assert.match(m, /샌드박스 초기화|sandbox initialization/i);
+  assert.match(m, /CODEX_HOME/);
+  assert.doesNotMatch(m, /CLI를 찾지 못했습니다/, '설치된 CLI를 재설치하라는 오진을 내면 안 된다');
+});
+
 test('apiError: 인증 실패 텍스트 보존 → AUTH_ERR_RE 자가치유 유지', () => {
   const m = apiError({ code: 1, stderr: '{"message":"invalid api key"}' }).message;
   assert.match(m, AUTH_ERR_RE, '자가치유 재시도가 트리거되려면 인증 문구가 보존돼야 한다');
