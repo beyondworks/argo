@@ -318,7 +318,7 @@ export default function Room({ params }) {
                     {m.via?.task && (
                       <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4, lineHeight: 1.5 }}>{m.via.task}</div>
                     )}
-                    <div style={{ fontSize: 13.5 }}><Markdown text={m.text} /></div>
+                    <div style={{ fontSize: 13.5 }}><Markdown text={m.text} wsId={ws} /></div>
                   </div>
                 </div>
               ))}

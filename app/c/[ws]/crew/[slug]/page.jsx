@@ -786,7 +786,7 @@ export default function CrewChat({ params }) {
               <div className="msg-wrap">
                 <div className="card" style={{ minWidth: 0, padding: '13px 16px', ...(annotIdx === i ? { borderColor: 'var(--primary)', cursor: 'text' } : {}) }}
                   onMouseUp={annotIdx === i ? captureQuote : undefined}>
-                  <Markdown text={m.text} />
+                  <Markdown text={m.text} wsId={ws} />
                   {m.handover && (
                     <Link className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
                       <Icon name="memory" size={12} />
@@ -894,7 +894,7 @@ export default function CrewChat({ params }) {
             <div className="card" style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 9, flex: 1, minWidth: 0 }}>
               {/* 크루가 이미 말한 부분 — 완료를 기다리지 않고 흘러 들어온다(스트리밍 체감) */}
               {liveStage?.partial && (
-                <div style={{ color: 'var(--fg-2)', fontSize: 13 }}><Markdown text={liveStage.partial} /></div>
+                <div style={{ color: 'var(--fg-2)', fontSize: 13 }}><Markdown text={liveStage.partial} wsId={ws} /></div>
               )}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13, minWidth: 0 }}>
                 <ArgoSpinner size={15} />
