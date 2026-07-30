@@ -90,8 +90,14 @@ test('확정 free는 파일 왕복을 스킵한다(복원·복원미완 예외) 
     '복원 미완 예외가 디스크 파생(syncStateExists)이 아니다 — 재검수 HIGH-E·F 재발');
   assert.match(SRC, /if \(freePlan && !restoring\) \{/,
     'free 파일 왕복 스킵이 없다 — free 기기에서 업로드는 실패하고 삭제만 전파돼 클라우드 사본이 단조 감소한다');
-  assert.match(SRC, /syncCompany\(wsId, owner, restoring, \{ tolerateManifestDenied: freePlan \}\)/,
-    'free 복원의 매니페스트 거부 관용이 배선돼 있지 않다 — 없으면 복원이 완결(state 기록)에 도달하지 못한다(HIGH-E)');
+  assert.match(SRC, /syncCompany\(wsId, owner, restoring, \{ freePlan \}\)/,
+    'free 복원의 쓰기 거부 관용이 배선돼 있지 않다 — 없으면 복원이 완결(state 기록)에 도달하지 못한다(HIGH-E)');
+  // 관용은 매니페스트만이 아니라 **파일 단위 업로드 거부**까지 덮어야 한다(후속 MEDIUM-I): 로컬 전용
+  // 파일 하나가 failed>0을 만들면 매니페스트 관용(failed===0)이 막혀, 한 번도 성공 동기화한 적 없는
+  // free 회사가 영영 완결에 못 닿는다(8초마다 재시도 · .conflict 증식 · lastError 고정). 행동은
+  // test/sync-free-restore가 잠근다.
+  assert.match(SRC, /if \(e\?\.uploadFailed && opts\.freePlan\) denied\+\+; else failed\+\+;/,
+    '파일 단위 쓰기 실패가 실패와 분리 집계되지 않는다 — MEDIUM-I 재발(복원 미완 고착)');
 });
 
 test('자격이 바뀌면 목록 조회 시각을 리셋한다 — 재로그인 직후 회사가 안 보이는 구멍', () => {

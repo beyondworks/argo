@@ -371,12 +371,26 @@ async function upload(key, buf) {
   const { error } = await client().storage.from(BUCKET).upload(
     key, new Blob([buf]), { upsert: true, contentType: 'application/octet-stream' },
   );
-  if (error) throw new Error(error.message);
+  if (error) {
+    // **쓰기 시도에서 났다**는 사실만 태그한다(원인 문구는 보지 않는다). 두 가지를 동시에 만족하려는 표시다:
+    // ① 판정 근거를 서버 문구에 걸지 않는다 — free 거부는 "violates row-level security"로 오지만
+    //    storage-api 버전·경로에 따라 문구가 달라질 수 있어(라이브 미검증) 문구 매칭은 조용히 무효화된다.
+    //    "이 플랜은 애초에 못 쓴다"가 관용의 근거이므로 원인 구분은 free에서 실익이 없다(아래 catch 참조).
+    // ② 그러나 **pull(download) 실패는 절대 이 태그를 못 받는다** — 재판정을 catch에서 하면 못 받은 파일이
+    //    base에 들어가 이후 사이클이 '내가 지웠음'으로 오판해 원격 삭제를 전파한다(유실). 태그를 이
+    //    호출 지점에만 붙이는 것이 그 경계다.
+    const e = new Error(error.message);
+    e.uploadFailed = true;
+    throw e;
+  }
 }
 
 /* ─── 회사 1개 동기화 — base(마지막 동기화 상태) 대비 3-way 병합.
    "누가 바꿨나"를 해시로 판별해, 한쪽만 바뀌면 그쪽을 반영하고, 양쪽이 바뀌면 파일 종류별로
-   충돌을 해소한다(원장=행 병합, 텍스트=양쪽 보존, 스레드=락). blind LWW로 조용히 파기하지 않는다. */
+   충돌을 해소한다(원장=행 병합, 텍스트=양쪽 보존, 스레드=락). blind LWW로 조용히 파기하지 않는다.
+
+   opts.freePlan = 이 회사가 확정 free다 → 클라우드 쓰기 거부가 이 계정의 **정상 결과**이므로 실패와
+   분리 집계(denied)하고, 사이클을 완결(state 기록)까지 보낸다. 미지정(pro·미확인)은 종전대로 전부 failed. */
 export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   const root = paths(wsId).root;
   const me = await getDeviceId();
@@ -416,7 +430,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     console.warn(`[argo] 동기화(${wsId}): 원격에서 발견된 빈 회사 — 신규 복원으로 간주, base 리셋`);
     for (const k of Object.keys(state)) delete state[k];
   }
-  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0;
+  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0, denied = 0;
   const deletedRels = new Set(); // 이번 사이클에 내가 원격 삭제한 rel — 매니페스트 병합에서 재추가 금지
   // blob 실존 검사 — 매니페스트 항목 부재가 "삭제"인지 "동시 쓰기로 항목만 유실"인지 가르는 판별자.
   // 404만 "없음"이다. 타임아웃·5xx 등 확인 불가는 throw → per-file catch가 이번 사이클 보류(failed++).
@@ -594,18 +608,41 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
         local[rel] = { m: Date.now(), s: mBuf.length, h: hashBuf(mBuf) };
         remote.files[rel] = local[rel]; merged++;
       } else if (isText(rel)) { // 텍스트 — 원격을 정본으로 받고, 로컬본은 .conflict로 보존(양쪽 유실 없음)
+        // ⚠ 순서 불변식(2026-07-30): **로컬 정합을 먼저 끝내고, 사본 '발행'(업로드)을 맨 뒤에** 둔다.
+        // 업로드가 먼저면 그게 실패할 때 디스크는 로컬본인데 base(=remote.files[rel], 원격본)는 "원격본을
+        // 받았다"고 주장하는 거짓 base가 남는다. 그러면 다음 사이클이 '로컬만 변경'으로 읽어 로컬본을
+        // 원격에 밀어 **다른 기기의 편집이 어디에도 남지 않는다**(격리 재현: free 사이클 뒤 Pro 승격 1회에
+        // 원격본 소멸). 로컬본은 바로 위 writeLocal(cRel)로 이미 디스크에 있으니, 업로드를 뒤로 미뤄도
+        // 잃는 것이 없다 — 실패 시 사본은 base에 없는 로컬 전용 파일로 남아 다음 기회에 신규로 push된다.
         const cRel = rel.replace(/\.md$/, `.conflict-${me}-${Date.now()}.md`);
         await writeLocal(cRel, localBuf);
-        await upload(remoteKey(cRel), sealFor(cRel, localBuf));
         await writeLocal(rel, remoteBuf, r.m);
         local[rel] = r; local[cRel] = { m: Date.now(), s: localBuf.length, h: hashBuf(localBuf) };
-        remote.files[cRel] = local[cRel]; pulled++; conflicts++;
+        pulled++; conflicts++;
+        await upload(remoteKey(cRel), sealFor(cRel, localBuf));
+        remote.files[cRel] = local[cRel];
       } else { // 기타(json 등) — 최근 mtime 승(LWW), 단 카운트해 관측 가능하게
         if ((r.m ?? 0) >= (l.m ?? 0)) { await writeLocal(rel, remoteBuf, r.m); local[rel] = r; pulled++; }
         else { await upload(remoteKey(rel), sealFor(rel, localBuf)); remote.files[rel] = l; pushed++; }
         conflicts++;
       }
-    } catch { failed++; } // 파일 하나 실패는 다음 사이클이 재시도
+    } catch (e) {
+      // free의 **쓰기 실패는 실패가 아니라 이 플랜의 정상 결과**다(클라우드 쓰기 자체가 금지) — 분리 집계한다.
+      // 뭉뚱그리면(전부 failed) 한 번도 성공 동기화한 적 없는 free 회사(체험 만료 후 첫 동기화·state
+      // 유실·손상)가 영구 미완에 고착한다: 로컬 전용 파일 하나만 있어도 failed>0 → 아래 매니페스트
+      // 관용(failed===0) 불충족 → throw → state 영구 미기록 → 매 사이클(8s) 재시도. 그 대가로
+      // ① isText 분기가 .conflict-*.md를 로컬에 써서 8초마다 증식하고
+      // ② lastError가 RLS 원문으로 고정돼 설정 카드의 업그레이드 버튼이 가려졌다
+      // (#189 분리 검수 MEDIUM-I — main 선재 결함). 관용해 state를 쓰면 다음 사이클부터
+      // 회사 스킵(syncStateExists)이 걸려 파일 루프 자체가 안 돈다.
+      // 유실 없음: 못 민 파일은 remote.files에 안 들어가므로 base에도 없다 → Pro 승격 사이클에
+      // '신규'로 정상 push된다(#189 검수 D 논리).
+      // 관용 범위는 아래 매니페스트 분기와 **같은 규칙**이다(원인 무관·free 한정) — 원인으로 좁히면
+      // free의 간헐 5xx 하나가 다시 state 미기록 고착을 만들어 위 증식 결함이 그 창으로 되돌아온다.
+      // 실패 가시성은 게이트가 지킨다: opts.freePlan이 없으면(pro·미확인) 쓰기 실패도 전부 failed이고,
+      // pull(download) 실패는 uploadFailed 태그를 못 받으므로 어느 플랜에서도 관용되지 않는다.
+      if (e?.uploadFailed && opts.freePlan) denied++; else failed++; // 파일 하나 실패는 다음 사이클이 재시도
+    }
   }
 
   // 매니페스트 재읽기 병합 — 매니페스트는 whole-file 덮어쓰기(LWW)라, diff를 도는 동안 다른 기기가
@@ -643,11 +680,13 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     // 여기서 throw할 경우 state가 영영 안 써져 복원이 영구 restoring이 된다(지운 노트가 8초마다 부활,
     // lastError가 RLS 원문으로 고정돼 업그레이드 버튼 은폐). pull 실패가 없을 때만 관용 — state를 쓰면
     // 다음 사이클부터 회사 스킵(syncStateExists)이 걸려 파일 루프 자체가 안 돈다(#6 원천 차단).
-    if (!(opts.tolerateManifestDenied && failed === 0)) throw e;
+    // 원인을 가리지 않는다(위 파일 루프와 같은 규칙) — free는 어차피 클라우드에 못 쓰므로 관용의
+    // 부작용이 없고, free 한정이 안전 조건이다. pull 실패(failed>0)만이 관용을 막는 조건이다.
+    if (!(opts.freePlan && failed === 0)) throw e;
     manifestDenied = true;
   }
   await writeJsonAtomic(stateFile(wsId), { files: remote.files, ts: Date.now() });
-  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, ...(manifestDenied ? { manifestDenied: true } : {}) };
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, ...(manifestDenied ? { manifestDenied: true } : {}) };
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.
@@ -918,8 +957,12 @@ async function cycle() {
     // ① free 매니페스트 거부가 매 사이클 재무장시켜 영구 restoring(지운 노트 8초 부활 + lastError 고정)
     // ② plan 왕복(free→pro→free)을 넘는 stale로 #6 재개 ③ 재시작에 증발(원결함 복귀)의 3중 결함이었다.
     // state는 재시작에 견디고, pro 구간의 정상 동기화가 쓰는 순간 자동 해제되며, free 복원은
-    // syncCompany가 pull 완결 시 매니페스트 거부를 관용하고 state를 써서(tolerateManifestDenied)
+    // syncCompany가 pull 완결 시 쓰기 거부(파일·매니페스트)를 관용하고 state를 써서(opts.freePlan)
     // 다음 사이클부터 정상 스킵된다 — 스킵되면 파일 루프 자체가 안 돌아 삭제 전파가 원천 불가다.
+    // ⚠ "state 부재 = 복원 미완"이 성립하려면 **모든 free 인구가 state 기록에 도달**해야 한다.
+    // 한 번도 성공 동기화한 적 없는 회사(체험 만료 후 첫 동기화·state 유실)는 로컬 전용 파일 때문에
+    // 거부가 발생하는데, 그 거부를 실패로 세면 완결에 영영 못 닿아 이 술어가 항상 true로 굳는다
+    // (8초마다 재시도·.conflict 증식·lastError 고정). 그래서 거부/실패 분리가 이 술어의 전제다.
     const restoring = restoreSet.has(wsId) || (freePlan && !(await syncStateExists(wsId)));
     if (freePlan && !restoring) {
       // foreign-owner 분기와 같은 표기(검수 LOW) — 카운터가 옛 값인 채 "방금 동기화"로 보이지 않게
@@ -927,7 +970,7 @@ async function cycle() {
       continue;
     }
     try {
-      const r = await syncCompany(wsId, owner, restoring, { tolerateManifestDenied: freePlan });
+      const r = await syncCompany(wsId, owner, restoring, { freePlan });
       status.companies[wsId] = { ts: Date.now(), ...r };
     } catch (e) {
       status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;
