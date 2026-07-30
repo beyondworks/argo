@@ -34,6 +34,8 @@ export async function appendTurn(wsId, slug, { userMsg, reply, handover, session
     );
     // 실패·중단 턴은 크루 답변이 없다 — 지시문만 사유(failed)와 함께 보존한다. 성공 뒤에만 저장하면
     // 실패 턴의 지시문이 새로고침에 증발하고 비용만 남는다(전수리뷰 2026-07-30 #1).
+    // ⚠ "실패 표현"은 두 형태가 공존한다: 이 failed(user 단독 — 답변 자체가 없음)와
+    // approval-actions의 실패 사유를 담은 crew 메시지(부작용은 이미 적용돼 보고만 실패). 의도적 구분.
     if (!failed) t.messages.push(
       // artifacts = 이 턴에 크루가 만든/고친 vault 문서(rel) — 답변 칩으로 바로 연다
       { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}) },
@@ -100,7 +102,8 @@ export async function listArchivedSessions(wsId, slug) {
   for (const n of names) {
     try {
       const t = JSON.parse(await readFile(join(dir, n), 'utf8'));
-      const firstUser = (t.messages ?? []).find((m) => m.who === 'user' && !m.shared);
+      // via(배달 지시)는 대화 제목감이 아니다 — 쪽지로 시작된 대화의 제목이 배달 프리픽스가 된다(검수 LOW)
+      const firstUser = (t.messages ?? []).find((m) => m.who === 'user' && !m.shared && !m.via);
       out.push({
         id: n,
         ts: Number(n.match(/-(\d+)\.json$/)?.[1] ?? 0),
@@ -226,7 +229,7 @@ export async function listTrashedSessions(wsId) {
     try {
       const t = JSON.parse(await readFile(join(dir, n), 'utf8'));
       const m = n.match(/^([a-z0-9-]+)-(\d+)\.json$/);
-      const firstUser = (t.messages ?? []).find((x) => x.who === 'user' && !x.shared);
+      const firstUser = (t.messages ?? []).find((x) => x.who === 'user' && !x.shared && !x.via); // 레일 gist와 동일 규칙
       out.push({
         id: n, slug: m?.[1] ?? '', ts: Number(m?.[2] ?? 0),
         count: t.messages?.length ?? 0,

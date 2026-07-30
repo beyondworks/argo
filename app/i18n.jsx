@@ -755,6 +755,7 @@ const DICT = {
   'chat.via.delegate': ['동료 위임', 'Delegated'],
   'chat.via.routine': ['루틴 실행', 'Routine run'],
   'chat.via.job': ['장시간 작업', 'Long task'],
+  'chat.via.generic': ['자동 배달', 'Auto-delivered'], // 미지의 via 값 폴백 — 신 버전 기기의 스레드가 sync로 넘어온 경우
   'chat.via.hint': ['사장이 쓴 글이 아니라 자동 배달된 지시입니다', 'Delivered automatically — not written by you'],
   'chat.newChatConfirm': ['새 대화를 시작할까요? 지금 대화는 보관함에 적재되고(삭제 아님), 회사 기억(vault)도 그대로 남습니다.', 'Start a new chat? The current thread is archived (not deleted), and company memory stays intact.'],
   'chat.cardTitle': ['크루 카드', 'Crew Card'],
