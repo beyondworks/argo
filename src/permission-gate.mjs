@@ -129,13 +129,13 @@ const HARD_HOME_DIRS = [
   '.gemini', // gemini-cli 자격(oauth_creds.json)
 ];
 
-/* Bash 리터럴 방어 대상 — 셸 명령 문자열에 이 이름이 그대로 들어간 순진한 시도를 막는다.
-   agents/·chats/는 슬래시까지 붙여 `agents.md` 같은 무관한 이름의 오탐을 줄인다.
-   (chats/ 누락은 분리 검수 2026-07-30 HIGH — Bash로 동료 스레드에 who:'user' 주입이 가능했다.) */
-const BASH_GUARDED = [
-  ...WS_CONTROL_FILES, ...WS_LEDGER_FILES,
-  ...[...WS_CONTROL_DIRS].flatMap((d) => [`${d}${sep}`, `${d}/`]),
-];
+/* Bash 리터럴 방어 대상(파일명) — 셸 명령 문자열에 이 이름이 그대로 들어간 순진한 시도를 막는다.
+   제어·원장 "파일명"은 충분히 특이해 부분 문자열로 본다. 디렉터리(agents/·chats/)는 일반 토큰이라
+   부분 문자열이면 URL(`/v1/chats/123`)·하위 데이터(`vault/chats/`)까지 오차단해 크루가 "API 호출이
+   보호 구역에 막혔다"는 거짓 설명을 하게 된다(재검수 MEDIUM) — 토큰 시작 경계(행 머리·공백·따옴표·
+   셸 연산자 뒤, 선택적 ./)에서만 잡는 정규식으로 좁힌다. 실판정은 isForbidden의 몫, 여기는 1차 방어. */
+const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES];
+const BASH_DIR_RE = new RegExp(String.raw`(^|[\s'"\x60;|&(=])(\.[\\/])?(${[...WS_CONTROL_DIRS].join('|')})[\\/]`, 'i');
 
 /** p가 금지 구역인가 — 판정 전 자기 워크스페이스 안(inWorkspace)이 먼저 통과됐다는 전제의 2차 검사.
     canonical(실경로) 기준 — 심링크로 금지 구역을 우회하지 못한다.
@@ -192,7 +192,11 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
   })());
   return async function isForbidden(p, mode = 'read') {
     if (typeof p !== 'string' || !p.trim()) return false;
-    const abs = p.startsWith('/') ? resolve(p) : resolve(wsAbs, p);
+    // 선행 ~ 확장(재검수 HIGH) — 미확장이면 `~/.codex/...`가 워크스페이스 상대경로로 오해석돼
+    // (<ws>/~/.codex) 하드라인이 통째로 열린다. Bash는 셸이 확실히 확장하고(cat ~/.codex/auth.json
+    // 실유출 재현), MCP/Read도 소비 측 expanduser가 흔해 같은 형태를 같은 판정으로 묶는다.
+    const pt = p === '~' ? homedir() : (p.startsWith('~/') || p.startsWith('~\\')) ? join(homedir(), p.slice(2)) : p;
+    const abs = pt.startsWith('/') ? resolve(pt) : resolve(wsAbs, pt);
     // 대상 자신의 경로를 유지한 채 canonical화한다. 이전처럼 미존재 대상을 부모로 통째 대체하면
     // 대상이 워크스페이스 루트 자체로 판정되어 "직속 파일" 검사가 불발된다 — 존재하지 않는
     // .secrets.json 생성이 그렇게 통과했다(2026-07-27 실측: 기존 테스트는 파일을 미리 만들고
@@ -236,8 +240,9 @@ const FORBIDDEN_MSG = {
 /** SDK 도구 호출의 유일한 게이트(전권 모델) — allowedTools에 없는 도구가 여기로 온다.
     전권은 결재·능력 체크가 없다는 뜻이고, **금지 구역은 예외 없이 차단**한다(실사용 신고 2026-07-22
     크리티컬 — "전권"의 의미는 파일을 맡긴다는 것이지 앱·자격·타사 데이터를 넘긴다는 것이 아니다).
-    lang = 거절 메시지 언어. workRoots = 사장이 지정한 외부 작업 폴더(등록 시 금지 구역 검증됨) —
-    Grep/Glob 재귀 판정(coversControl)이 참조한다. */
+    lang = 거절 메시지 언어. workRoots = 사장이 지정한 외부 작업 폴더 — **이 게이트 판정에는 현재
+    미사용**(전권이라 안/밖 경계가 없고, 재귀 판정은 "워크스페이스를 품는가" 하나로 족하다). 소비처는
+    codex writable_roots·시스템 프롬프트 주입이며, 파라미터는 호출 계약 유지용(재검수 LOW 정직화). */
 export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko', workRoots = []) {
   const isForbidden = makeIsForbidden(wsRoot);
   const denyHard = () => ({ behavior: 'deny', message: FORBIDDEN_MSG[lang === 'en' ? 'en' : 'ko'] });
@@ -245,7 +250,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
   // (셸은 변수·상대경로로 우회 가능한 프로세스 단위 도구 — 완전 차단이 아니라 1차 방어 + 프롬프트
   //  지시가 계약. 파일 헤더의 "셸 한계" 참조.) 목록은 하드라인(HARD_HOME_DIRS)과 공유 — 갈라지면
   // 같은 파일의 도구별 판정이 갈린다(분리 검수 2026-07-30 HIGH).
-  const bashHardLiterals = [APP_ROOT, ...HARD_HOME_DIRS.map((d) => join(homedir(), d))];
+  const bashHardLiterals = [APP_ROOT, ...HARD_HOME_DIRS.flatMap((d) => [join(homedir(), d), `~/${d}`])]; // 틸드 형태 포함(재검수 HIGH — 셸이 확장하는 가장 자연스러운 표기)
   const wsAbs = resolve(wsRoot);
 
   /* 검색 루트가 금고를 품는가 — Grep/Glob은 준 경로 **아래를 재귀**하므로, 경로 자체가 금지가 아니어도
@@ -275,11 +280,17 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
      통과했다(격리 실행 재현). 특히 상대경로가 위험하다 — MCP 서버는 cwd=회사 폴더로 스폰되므로
      `capabilities.json` 한 단어가 실제로 금고를 가리키는데, 같은 입력을 Write는 deny하고 MCP는 allow해
      두 경로의 판정이 갈렸다. */
-  const argPathsForbidden = async (obj, depth = 0) => {
+  // 경로형 키 — 구분자 없는 단일 토큰을 경로 후보로 볼지 결정한다(아래). 값 기준(제어 파일명 목록)은
+  // "agents"가 일반 단어이자 제어 디렉터리라 어느 쪽으로 정해도 한쪽이 깨졌다(재검수: 오차단을 풀면
+  // {path:'agents'} deny가 사라지는 회귀). 키 기준이면 {note:'agents'} allow와 {path:'agents'} deny가
+  // 동시에 성립한다. 배열 원소는 배열을 담은 키를 상속한다({paths:[...]}).
+  const PATHY_KEY_RE = /path|file|dir|folder|target|dest|src|source|location/i; // 'name'·'url'은 제외 — 크루 이름·웹 주소 등 비경로 값이 흔하다(과차단 방향 회귀 방지)
+  const argPathsForbidden = async (obj, depth = 0, keyHint = '') => {
     if (depth > 4 || obj == null) return false; // 깊이 상한 — 적대적으로 중첩된 인자 트리 비용 차단
-    for (const v of Array.isArray(obj) ? obj : Object.values(obj)) {
+    const entries = Array.isArray(obj) ? obj.map((v) => [keyHint, v]) : Object.entries(obj);
+    for (const [k, v] of entries) {
       if (v && typeof v === 'object') { // 배열·중첩 객체도 훑는다(아래 주석)
-        if (await argPathsForbidden(v, depth + 1)) return true;
+        if (await argPathsForbidden(v, depth + 1, String(k))) return true;
         continue;
       }
       if (typeof v !== 'string' || !v.trim()) continue;
@@ -289,14 +300,9 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       if (v.length > 4096) continue;
       const vv = v.trim();
       if (vv.includes('\n')) continue;
-      // 구분자 없는 단일 토큰 — 경로가 아니라 일반 단어(태그·검색어·메모)일 확률이 높다. 정확히
-      // 제어·원장 파일명이거나 도트 접두일 때만 경로 후보로 본다(분리 검수 MEDIUM: {"note":"agents"}
-      // 같은 무해 인자가 보호구역 메시지로 오차단 → 크루가 사장에게 틀린 설명을 하게 된다).
-      // 파일 쓰기형 호출은 사실상 항상 구분자·확장자를 동반하고, 동반하면 아래 전체 판정을 그대로 탄다.
-      if (!vv.includes('/') && !vv.includes('\\')) {
-        const n = normName(vv);
-        if (!n.startsWith('.') && !WS_CONTROL_FILES.has(n) && !WS_LEDGER_FILES.has(n)) continue;
-      }
+      // 구분자 없는 단일 토큰 — 일반 단어(태그·검색어·메모)일 확률이 높아 **키가 경로형일 때만**
+      // 경로 후보로 본다. 구분자(또는 ~) 동반 값은 키와 무관하게 전체 판정을 탄다.
+      if (!vv.includes('/') && !vv.includes('\\') && !vv.startsWith('~') && !PATHY_KEY_RE.test(String(k))) continue;
       if (await isForbidden(vv, 'write')) return true; // 인자는 쓰기일 수 있다 — 넓은 쪽으로 판정
     }
     return false;
@@ -343,7 +349,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 이게 없으면 shell 능력이 켜진 SDK 크루가 `echo '{"bypass":true}' > capabilities.json` 한 줄로
       // 게이트를 우회한다(실측). 오탐(그 이름을 언급한 정당한 명령 거절)은 fail-closed로 수용한다.
       // 폴딩은 위 줄과 동일 기준(대소문자 무시 FS에서 CAPABILITIES.JSON 우회 차단 — #145 계열).
-      if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n)))) return denyHard();
+      if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n))) || BASH_DIR_RE.test(cmd)) return denyHard();
       return allow; // 전권 — 리터럴 방어(위 두 줄)가 셸의 하드라인이다
     }
     // 그 외 도구 — 능력 분류 밖(SDK 내장 Task 등). 능력 판정은 여전히 허용 쪽이다(이전 모델도 결재만

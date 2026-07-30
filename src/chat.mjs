@@ -46,7 +46,7 @@ export async function loadSkills(wsId, cap = 6000, lang = 'ko', allow = null) {
    크루 서버(mcp__crew — 서버측 코드)만 허용하고, 외부 MCP는 절대 넣지 않는다: SDK가 bare 항목을
    콜백 상담 전에 자동 승인해(벤더 계약) 게이트의 MCP 분기가 통째로 도달 불가가 된다.
    (export: 회귀 테스트용 — 분리 검수 2026-07-30 MEDIUM) */
-export const SDK_ALLOWED_TOOLS = ['WebFetch', 'WebSearch', 'mcp__crew'];
+export const SDK_ALLOWED_TOOLS = Object.freeze(['WebFetch', 'WebSearch', 'mcp__crew']); // 동결 — 모듈 공유 배열이라 런타임 push 오염이 전 회사·전 턴에 번진다(재검수, CAPABILITIES와 같은 계약)
 
 /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
 function rosterPrompt(colleagues, lang = 'ko') {
