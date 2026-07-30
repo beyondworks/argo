@@ -273,7 +273,9 @@ export async function api(path, opts) {
     // api()는 훅 밖(컴포넌트 외부)에서도 호출되므로 localStorage를 직접 읽는다.
     const lang = (typeof window !== 'undefined' && localStorage.getItem('argo-lang')) || 'ko';
     const fallback = lang === 'en' ? `Request failed (${res.status})` : `요청 실패 (${res.status})`;
-    throw new Error(data.error || fallback);
+    const err = new Error(data.error || fallback);
+    err.data = data; // 에러 바디의 부가 필드(예: chat의 failed·saved)를 호출부가 읽을 수 있게
+    throw err;
   }
   return data;
 }

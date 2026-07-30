@@ -31,7 +31,26 @@ export async function POST(req, { params }) {
       .filter((a) => typeof a?.rel === 'string' && a.rel.startsWith('files/') && !a.rel.includes('..'))
       .map((a) => ({ rel: a.rel, name: String(a.name ?? ''), mime: String(a.mime ?? ''), isImage: !!a.isImage }))
       .slice(0, 8);
-    const t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
+    let t;
+    try {
+      t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
+    } catch (e) {
+      // 실패·중단 턴도 스레드에 남긴다 — 성공 뒤에만 저장하면 지시문이 새로고침에 증발하고 비용만
+      // 남는다(전수리뷰 2026-07-30 #1). UI는 m.failed로 사유+재전송을 그린다(기존 낙관 사본 패턴).
+      // 중단 판정은 **별도 필드(aborted)** — 사유 문자열과 같은 필드에 'aborted' 센티널을 두면
+      // 상류 원문이 우연히 그 단어일 때(node:http ECONNRESET의 message='aborted' 실측) "지시대로
+      // 중단했습니다"로 원인을 오도한다(재검수 MEDIUM). 사유는 원문 그대로, 표시 문구는 UI가 t()로.
+      const failed = String(e?.message || e);
+      const aborted = !!e?.aborted;
+      // 저장 성공 여부(saved)를 응답에 싣는다 — 클라 낙관 사본은 saved=false일 때만 폴링 병합에서
+      // 캐리오버한다. 안 실으면 서버 보존분과 사본이 라운드마다 복제 누적된다(분리 검수 HIGH 시뮬레이션).
+      // 기록 실패는 무증상으로 삼키지 않는다(scheduler·routines와 같은 규칙 — 검수 LOW).
+      const saved = await appendTurn(ws, slug, { userMsg: message.trim(), failed, aborted, attachments })
+        .then(() => true)
+        .catch((err) => { console.error(`[argo] 실패 턴 기록 실패(${ws}/${slug}):`, err?.message ?? err); return false; });
+      if (saved) nudgeSync();
+      return Response.json({ error: failed, aborted, saved }, { status: 500 });
+    }
     // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
     await appendTurn(ws, slug, { userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts });

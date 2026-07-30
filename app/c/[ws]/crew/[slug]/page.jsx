@@ -67,7 +67,9 @@ export default function CrewChat({ params }) {
   const history = useMemo(() => {
     const out = [];
     for (const m of thread ?? []) {
-      if (m.who !== 'user' || !String(m.text ?? '').trim()) continue;
+      // via(쪽지·위임·루틴·장시간작업 배달)는 사장이 타이핑한 글이 아니다 — ↑/↓ 히스토리에 실리면
+      // 신고("내가 쓴 게 아니거든")와 같은 혼동 표면이 된다(분리 검수 MEDIUM). 실패 턴은 사장 글이 맞으니 유지.
+      if (m.who !== 'user' || m.via || m.shared || !String(m.text ?? '').trim()) continue; // shared = cc 기계 조립문(재검수 LOW)
       if (out[out.length - 1] !== m.text) out.push(m.text); // 연속 중복 제거
     }
     return out.slice(-50);
@@ -338,8 +340,10 @@ export default function CrewChat({ params }) {
           const msgs = r.messages ?? [];
           setThread((cur) => {
             if (cur === null || msgs.length <= cur.length) return cur;
-            // 다른 창구의 새 대화로 갈아끼울 때도 실패한 내 글은 잃지 않는다(서버엔 없는 사본이라 덮으면 소실)
-            const unsent = cur.filter((m) => m.failed);
+            // 실패 사본 캐리오버는 **서버 미보존분(unsaved)만** — 서버가 보존한 실패 턴(route.js
+            // failed)은 msgs에 이미 있어, 전부 캐리오버하면 폴링마다 복제가 누적된다(분리 검수 HIGH,
+            // 리듀서 시뮬레이션 확증). "서버엔 없는 사본" 전제는 실패 턴 보존으로 무효가 됐다.
+            const unsent = cur.filter((m) => m.failed && m.unsaved);
             return unsent.length ? [...msgs, ...unsent] : msgs;
           });
           if (r.sessionId) sessionRef.current = r.sessionId;
@@ -503,10 +507,14 @@ export default function CrewChat({ params }) {
       setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts }]);
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
-      // 실패 턴은 서버에 저장되지 않는다 — 글은 스레드에 남겨 두고 실패 표시만 붙인다(재전송 버튼이 그대로 재시도 경로)
-      const msg = String(err.message);
-      const label = msg === '중단됨' ? t('chat.aborted') : t('chat.turnFailed', { msg });
-      setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed: label } : m)));
+      // 실패 턴도 서버가 보존한다(route.js가 failed·aborted로 appendTurn) — 로컬 사본에 같은 필드를
+      // 붙여 서버 사본과 렌더가 일치하게 한다(사유는 원문, 중단은 별도 aborted — 재검수 MEDIUM: 원문이
+      // 우연히 'aborted'여도 오판 없음. 라벨은 렌더 시점에 t()로).
+      // 서버 저장이 실패했을 때(unsaved)만 폴링 병합이 이 사본을 캐리오버한다(복제 방지 — 검수 HIGH).
+      const failed = err?.data?.failed ?? String(err.message);
+      const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true } : {};
+      const unsaved = err?.data?.saved === true ? {} : { unsaved: true };
+      setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed, ...aborted, ...unsaved } : m)));
     } finally {
       setBusy(false);
       setLiveStage(null); // 내 턴 종료 — 마지막 partial이 완성 답변과 겹쳐 보이지 않게 즉시 내린다
@@ -729,7 +737,14 @@ export default function CrewChat({ params }) {
           </div>
         )}
         {((viewing ? archMsgs : thread) ?? []).map((m, i) =>
-          m.who === 'user' ? (
+          m.who === 'user' && m.via ? (
+            /* 배달 지시(쪽지·위임·루틴) — 사장 말풍선(우측)과 구분해 좌측 중립 카드로. who:'user'는
+               러너 프롬프트 관점의 역할일 뿐 사장이 쓴 글이 아니다(신고 2026-07-28 "내가 쓴 게 아니거든"). */
+            <div key={i} className="fade-up" style={{ alignSelf: 'flex-start', maxWidth: '85%', display: 'grid', gap: 4 }}>
+              <span className="microlabel" title={t('chat.via.hint')} style={{ color: 'var(--fg-3)' }}>{t(`chat.via.${['crewmail', 'delegate', 'routine', 'job'].includes(m.via) ? m.via : 'generic'}`)}</span>
+              <div className="card" style={{ padding: '10px 13px', fontSize: 12.5, color: 'var(--fg-2)', whiteSpace: 'pre-wrap' }}>{m.text}</div>
+            </div>
+          ) : m.who === 'user' ? (
             <div key={i} className="msg-wrap fade-up" style={{ alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '75%' }}
               ref={(el) => { if (!m.mid) return; if (el) msgRefs.current.set(m.mid, el); else msgRefs.current.delete(m.mid); }}>
               <div className="msg-user" style={{ alignSelf: 'auto', maxWidth: '100%', whiteSpace: 'pre-wrap', ...(m.failed ? { opacity: 0.72 } : {}) }}>
@@ -749,7 +764,8 @@ export default function CrewChat({ params }) {
               {/* 실패한 턴 — 글은 스레드에 그대로 두고 사유와 재시도만 붙인다(호버로 숨지 않게 항상 표시) */}
               {m.failed && !viewing && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, fontSize: 12, color: 'var(--danger)', maxWidth: '100%' }}>
-                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.failed}</span>
+                  {/* failed는 코드/원문 — 표시 문구는 여기서 사전(t)으로. 서버 보존분·로컬 사본 공통 */}
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.aborted ? t('chat.aborted') : t('chat.turnFailed', { msg: m.failed })}</span>
                   <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy || uploading}
                     onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
                 </div>
