@@ -3,6 +3,9 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 
 /** @type {import('next').NextConfig} */
 export default {
+  // 개발 서버는 프로덕션 빌드와 다른 캐시를 쓴다. 같은 저장소에서 dev/build가 겹쳐도
+  // Webpack 산출물을 서로 지워 API가 500으로 무너지는 일을 막는다.
+  distDir: process.env.ARGO_NEXT_DIST_DIR || '.next',
   // 상단바 버전 표시 — 빌드 시점 package.json 버전을 클라이언트에 노출(업데이트 버튼 기반).
   env: { NEXT_PUBLIC_APP_VERSION: pkg.version },
   // Agent SDK가 claude CLI를 서브프로세스로 스폰한다 — 번들에 포함하지 않는다.
@@ -19,7 +22,8 @@ export default {
   ...(process.env.ARGO_STANDALONE ? { output: 'standalone' } : {}),
   // 심층 방어 보안 헤더 — 마크다운 렌더러가 이미 XSS를 이스케이프하지만, 클릭재킹·MIME
   // 스니핑을 막고 CSP로 한 겹 더. Next 하이드레이션 인라인 스크립트/앱 인라인 스타일 때문에
-  // script/style은 'unsafe-inline'을 허용하되, frame-ancestors 'none'으로 프레임 삽입은 차단.
+  // script/style은 'unsafe-inline'을 허용한다. 내장 브라우저는 http(s) 페이지만 프레임으로 열고,
+  // Argo 자체는 같은 출처 프레임에만 들어갈 수 있게 해 로컬 페이지 미리보기와 클릭재킹 방어를 함께 지킨다.
   async headers() {
     // 폰트 — Pretendard는 자체 호스팅('self', public/fonts)이라 CSP에 외부 출처가 필요 없다.
     // IBM Plex Mono(터미널 테마 전용)만 Google Fonts CDN을 유지한다 — 실패 시 ui-monospace 폴백이 무해.
@@ -30,7 +34,8 @@ export default {
       "img-src 'self' data: blob: https:",
       "font-src 'self' data: https://fonts.gstatic.com",
       "connect-src 'self' https: wss:",
-      "frame-ancestors 'none'",
+      "frame-src http: https:",
+      "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'",
     ].join('; ');
@@ -38,7 +43,7 @@ export default {
       source: '/:path*',
       headers: [
         { key: 'Content-Security-Policy', value: csp },
-        { key: 'X-Frame-Options', value: 'DENY' },
+        { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
         { key: 'X-Content-Type-Options', value: 'nosniff' },
         { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
       ],

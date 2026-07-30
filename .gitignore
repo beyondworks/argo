@@ -2,6 +2,7 @@ node_modules/
 workspaces/
 .env*
 .next/
+.next-dev/
 workspaces/.*.lock
 artifacts/
 

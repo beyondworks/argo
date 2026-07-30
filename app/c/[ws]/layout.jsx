@@ -450,6 +450,9 @@ export default function CompanyShell({ children, params }) {
               <button onClick={() => setQ('')} style={{ color: 'var(--fg-3)', fontSize: 12, fontWeight: 700 }} aria-label={t('common.clear')}>✕</button>
             )}
           </label>
+          {/* 크루 페이지의 우측 사이드 패널 토글 슬롯 — 페이지가 포털로 버튼을 꽂는다.
+              display:contents라 비어 있을 때도 탑바 간격을 만들지 않는다. */}
+          <div id="argo-topbar-panel-slot" style={{ display: 'contents' }} />
         </header>
 
         <main className="content" style={{ width: '100%' }}>

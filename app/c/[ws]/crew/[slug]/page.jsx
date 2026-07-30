@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
+import WorkspacePanel from './workspace-panel';
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
 const fmtElapsed = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
@@ -35,6 +36,7 @@ const filesFromTransfer = (dt) => {
 /** 채팅 읽기 레인 폭 — 일반 LLM 챗처럼 메시지·컴포저를 중앙 좁은 레인에 담는다(가독성).
     .thread·컴포저·열람바 세 곳이 공유하는 단일 진실. 좁은 화면에선 100%로 안전 폴백. */
 const LANE = 'min(768px, 100%)';
+const PANEL_STORAGE_KEY = 'argo:crew-side-panel:v1';
 
 export default function CrewChat({ params }) {
   const { ws, slug } = use(params);
@@ -125,9 +127,13 @@ export default function CrewChat({ params }) {
   // 러너·모델 — 카드 패널과 채팅 셀렉터가 공유하는 단일 상태. 회사 자격(설정 러너 연결)을 병합한 카탈로그.
   const [runners, setRunners] = useState(null);
   const [sel, setSel] = useState({ runner: 'claude', model: '', effort: '' });
-  // 타이틀바 슬롯 — 크루 컨트롤(세션 상태·카드·새 대화)을 topbar에 포털로 꽂는다
+  // 타이틀바 슬롯 — 크루 컨트롤과 Codex식 우측 패널 토글을 topbar의 각 위치에 포털로 꽂는다.
   const [slotEl, setSlotEl] = useState(null);
-  useEffect(() => { setSlotEl(document.getElementById('argo-topbar-slot')); }, []);
+  const [panelSlotEl, setPanelSlotEl] = useState(null);
+  useEffect(() => {
+    setSlotEl(document.getElementById('argo-topbar-slot'));
+    setPanelSlotEl(document.getElementById('argo-topbar-panel-slot'));
+  }, []);
   // 세션 적재 레일 — 새 대화로 넘긴 이전 대화들이 좌측에 쌓이고, 클릭으로 읽기 전용 열람
   const [sessions, setSessions] = useState([]);
   const [viewing, setViewing] = useState(null); // 보관 세션 id (null = 현재 대화)
@@ -135,24 +141,34 @@ export default function CrewChat({ params }) {
   const [renameSess, setRenameSess] = useState(null); // 대화명 편집 모달 대상 세션
   const [threadTitle, setThreadTitle] = useState(null); // 현재(활성) 대화의 사용자 지정 이름
   const [trashSess, setTrashSess] = useState(null);   // 삭제(보관) 확인 모달 대상 세션
-  // 우측 드로어 — 백그라운드 작업 / 파일 탭. 채팅 폭은 유지하고 우측에서 덮으며 내려온다.
+  // Codex식 우측 사이드 패널 — 파일/터미널/브라우저 도구 작업영역.
+  // 넓은 화면은 본문 옆에 도킹하고 좁은 화면만 드로어처럼 겹친다(CSS 반응형 폴백).
   const [panelOpen, setPanelOpen] = useState(false);
-  const [panelTab, setPanelTab] = useState('tasks'); // 'tasks' | 'files'
-  const [panelTasks, setPanelTasks] = useState(null); // /tasks 응답을 이 크루 slug로 필터한 것
+  const [panelMounted, setPanelMounted] = useState(false);
+  const [panelHydrated, setPanelHydrated] = useState(false);
   useEffect(() => {
-    if (!panelOpen || panelTab !== 'tasks') return;
-    let alive = true;
-    const pull = () => api(`/api/companies/${ws}/tasks`).then((d) => {
-      if (!alive) return;
-      setPanelTasks({
-        running: (d.running ?? []).filter((r) => r.slug === slug),
-        recent: (d.recent ?? []).filter((r) => r.slug === slug),
-      });
-    }).catch(() => {});
-    pull();
-    const iv = setInterval(pull, 4000);
-    return () => { alive = false; clearInterval(iv); };
-  }, [panelOpen, panelTab, ws, slug]);
+    try {
+      const saved = JSON.parse(localStorage.getItem(PANEL_STORAGE_KEY) || '{}');
+      if (typeof saved.open === 'boolean') setPanelOpen(saved.open);
+    } catch { /* 손상·프라이빗 모드 — 기본값(닫힘) 유지 */ }
+    setPanelHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (!panelHydrated) return;
+    try { localStorage.setItem(PANEL_STORAGE_KEY, JSON.stringify({ open: panelOpen })); } catch { /* 저장 불가여도 현재 동작은 유지 */ }
+  }, [panelHydrated, panelOpen]);
+  // 한 번 연 도구 작업영역은 숨겨도 마운트를 유지한다. Markdown 초안·터미널·브라우저 상태가
+  // 패널 표시/숨기기나 도구 탭 전환만으로 초기화되면 "작업영역"이 아니라 일회성 팝업이 된다.
+  useEffect(() => { if (panelOpen) setPanelMounted(true); }, [panelOpen]);
+  useEffect(() => {
+    const onToggleShortcut = (e) => {
+      if (e.defaultPrevented || e.repeat || e.code !== 'KeyB' || !(e.ctrlKey || e.metaKey) || !e.altKey || e.shiftKey) return;
+      e.preventDefault();
+      setPanelOpen((open) => !open);
+    };
+    window.addEventListener('keydown', onToggleShortcut);
+    return () => window.removeEventListener('keydown', onToggleShortcut);
+  }, []);
   useEffect(() => {
     if (!panelOpen) return;
     const onKey = (e) => { if (e.key === 'Escape') setPanelOpen(false); };
@@ -628,7 +644,7 @@ export default function CrewChat({ params }) {
   return (
     // 세션레일(216, 좌측 원위치) + 채팅 컬럼(나머지 전체). 채팅은 .thread를 컬럼 전체폭으로 두고 안쪽 레인만 중앙정렬 →
     // 스크롤바는 컬럼 우측 끝에 고정되고 메시지는 중앙 레인에 담긴다(가장 LLM다운 형태).
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
+    <div className={`crew-workspace${panelOpen ? ' has-side-panel' : ''}`}>
       {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지. 회의실·컨테스트와 동일(입력창 하향·대화영역 확대, 스레드만 내부 스크롤). */}
       {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정 */}
       <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
@@ -708,11 +724,24 @@ export default function CrewChat({ params }) {
           ) : (
             <span className="pill" style={{ flex: 'none' }}><span className="dot" />{t('chat.newSession')}</span>
           )}
-          <button className="btn sm" style={{ flex: 'none' }} onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen}>{t('crew.panel.open')}</button>
           <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
           <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
         </>,
         slotEl,
+      )}
+      {panelSlotEl && createPortal(
+        <button
+          type="button"
+          className={`btn btn-icon side-panel-toggle${panelOpen ? ' active' : ''}`}
+          aria-label={t('crew.panel.toggle')}
+          aria-controls="crew-side-panel"
+          aria-pressed={panelOpen}
+          title={`${t('crew.panel.toggle')} · ${t('crew.panel.shortcut')}`}
+          onClick={() => setPanelOpen((open) => !open)}
+        >
+          <Icon name="panel" size={16} />
+        </button>,
+        panelSlotEl,
       )}
 
       <div className="thread" ref={threadRef} style={{ overflowY: 'auto', minHeight: 0 }}>
@@ -1060,61 +1089,6 @@ export default function CrewChat({ params }) {
         />
       )}
 
-      {panelOpen && (
-        <aside className="crew-drawer" role="dialog" aria-label={t('crew.panel.title')}>
-          <div className="crew-drawer-tabs">
-            <button type="button" className={`crew-tab${panelTab === 'tasks' ? ' active' : ''}`} onClick={() => setPanelTab('tasks')}>{t('crew.panel.tab.tasks')}</button>
-            <button type="button" className={`crew-tab${panelTab === 'files' ? ' active' : ''}`} onClick={() => setPanelTab('files')}>{t('crew.panel.tab.files')}</button>
-            <span style={{ flex: 1 }} />
-            <button type="button" className="btn sm" onClick={() => setPanelOpen(false)}>{t('crew.panel.close')}</button>
-          </div>
-          <div className="crew-drawer-body">
-            {panelTab === 'tasks' && (() => {
-              const run = panelTasks?.running ?? [];
-              const rec = panelTasks?.recent ?? [];
-              if (!run.length && !rec.length) return <div className="crew-drawer-empty">{t('crew.panel.tasks.empty')}</div>;
-              return (
-                <>
-                  {run.map((r) => (
-                    <div key={r.slug} className="task-row">
-                      <ArgoSpinner size={14} />
-                      <span className="t-main">
-                        <span className="t-title">{stageLabel(t, r.stage, r.detail)}</span>
-                        <span className="t-sub mono">{r.stage === 'runner' ? '' : (r.detail || '')}</span>
-                      </span>
-                    </div>
-                  ))}
-                  {rec.length > 0 && <div className="microlabel" style={{ padding: '10px 12px 4px' }}>{t('crew.panel.tasks.recent')}</div>}
-                  {rec.map((e, i) => (
-                    <Link key={e.ts ?? i} className="task-row" href={`/c/${ws}/activity`}>
-                      <span style={{ width: 6, height: 6, borderRadius: 999, flex: 'none', background: e.ok ? 'var(--ok)' : 'var(--danger)' }} aria-hidden="true" />
-                      <span className="t-main"><span className="t-title">{e.gist || t(`tasks.type.${e.type}`)}</span></span>
-                    </Link>
-                  ))}
-                </>
-              );
-            })()}
-            {panelTab === 'files' && (() => {
-              const files = ((viewing ? archMsgs : thread) ?? []).flatMap((m) => m.attachments ?? []);
-              if (!files.length) return <div className="crew-drawer-empty">{t('crew.panel.files.empty')}</div>;
-              return (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '6px 8px' }}>
-                  {files.map((a, i) => a.isImage ? (
-                    <a key={i} href={`/api/companies/${ws}/files?rel=${encodeURIComponent(a.rel)}`} target="_blank" rel="noopener noreferrer">
-                      <img className="att-thumb" src={`/api/companies/${ws}/files?rel=${encodeURIComponent(a.rel)}`} alt={a.name} />
-                    </a>
-                  ) : (
-                    <a key={i} className="att-chip" href={`/api/companies/${ws}/files?rel=${encodeURIComponent(a.rel)}`} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
-                      <Icon name="clip" size={11} /><span className="name">{a.name}</span>
-                    </a>
-                  ))}
-                </div>
-              );
-            })()}
-          </div>
-        </aside>
-      )}
-
       {renameSess && (
         <InputModal
           title={t('chat.sessions.renameTitle')}
@@ -1136,6 +1110,9 @@ export default function CrewChat({ params }) {
         />
       )}
     </div>
+    {(panelOpen || panelMounted) && (
+      <WorkspacePanel ws={ws} open={panelOpen} onClose={() => setPanelOpen(false)} />
+    )}
     </div>
   );
 }
