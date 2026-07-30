@@ -75,10 +75,10 @@ export async function PUT(req, { params }) {
 
 /** 주제 노트 삭제 — vault/.trash/로 이동(감사 가능), 인덱스에서 즉시 제거. */
 export async function DELETE(req, { params }) {
+  const rel = new URL(req.url).searchParams.get('rel');
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const rel = new URL(req.url).searchParams.get('rel');
     const file = noteFile(ws, rel ?? '');
     const trash = join(paths(ws).vault, '.trash');
     await mkdir(trash, { recursive: true });
@@ -87,6 +87,8 @@ export async function DELETE(req, { params }) {
     await appendEvent(ws, { type: 'memory', ok: true, notes: [basename(file, '.md')], op: 'delete' });
     return Response.json({ ok: true });
   } catch (e) {
+    // 이미 삭제·이동된 노트 — raw ENOENT는 서버 절대 경로를 UI에 노출한다(GET과 같은 가림 패턴)
+    if (e?.code === 'ENOENT') return Response.json({ error: `문서를 찾을 수 없습니다: ${rel}` }, { status: 404 });
     return Response.json({ error: String(e.message || e) }, { status: 400 });
   }
 }

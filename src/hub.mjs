@@ -39,7 +39,10 @@ export async function listCompanies() {
       const company = JSON.parse(await readFile(join(WS_ROOT, e.name, 'company.json'), 'utf8'));
       const agents = await listAgents(e.name);
       const docs = await listDocs(e.name);
-      out.push({ ...company, crew: agents.length, memories: docs.length });
+      // 기억 칩 = 기억 화면 트리 칩과 같은 셈법(docs+projects 합) — 두 화면 숫자 불일치 방지(PR #204 LOW).
+      // 산출물 목록 실패가 회사 카드까지 무너뜨리지 않게 격벽(vault route의 M-2와 동일).
+      const projects = await listProjectDocs(e.name).catch(() => []);
+      out.push({ ...company, crew: agents.length, memories: docs.length + projects.length });
     } catch { /* company.json 없는 폴더는 워크스페이스가 아님 */ }
   }
   return out.sort((a, b) => String(b.created).localeCompare(String(a.created)));

@@ -153,7 +153,17 @@ function Vault({ params }) {
     }
   }
 
-  const openWiki = (name) => setSelected(name.endsWith('.md') ? name : `${name}.md`);
+  /** 위키링크 해석 — [[이름]]은 vault 루트 기준 rel이 아니라 노트 이름인 경우가 대부분이라,
+   *  .md만 붙이면 루트에서 찾아 404가 난다(기존 결함). notes/ 접두 → 파일명 → 제목 순으로
+   *  실제 문서(docs에 title·rel이 다 있다)를 찾아 열고, 못 찾으면 notes/ 경로로 폴백(정직한 404). */
+  const openWiki = (name) => {
+    const bare = String(name).replace(/\.md$/, '');
+    const guess = bare.includes('/') ? `${bare}.md` : `notes/${bare}.md`;
+    const hit = (docs ?? []).find((d) => d.rel === guess)
+      || (docs ?? []).find((d) => d.rel.endsWith(`/${bare}.md`))
+      || (docs ?? []).find((d) => d.title === bare);
+    setSelected(hit ? hit.rel : guess);
+  };
   const visible = (docs ?? []).filter((d) => !q || d.title.toLowerCase().includes(q) || d.excerpt.toLowerCase().includes(q));
   const notes = visible.filter((d) => d.dir === 'notes').sort((a, b) => b.mtime - a.mtime);
   // 일지·대화를 한 덩어리 "보관함"으로 뭉개지 않는다 — 트리에서 각자 접이식 섹션(옵시디언식).
@@ -209,6 +219,10 @@ function Vault({ params }) {
                 <p style={{ padding: '8px 16px', color: 'var(--fg-2)', fontSize: 12.5 }}>{t('vault.noMemoryMatch')}</p>
               )}
               <TreeSection label={t('vault.tree.notes')} count={notes.length} defaultOpen>
+                {/* 빈 상태 안내 — 검색 중(q)엔 "일치 없음" 문구와 겹치므로 숨긴다 */}
+                {notes.length === 0 && !q && (
+                  <p style={{ padding: '4px 16px 8px', paddingLeft: treePad(0), color: 'var(--fg-2)', fontSize: 11.5 }}>{t('vault.notesEmpty')}</p>
+                )}
                 {notes.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={openFromGraph} icon="bolt" lang={lang} pad={treePad(0)} />)}
               </TreeSection>
               <TreeSection label={t('vault.tree.projects')} count={visibleProjects.length} defaultOpen>
@@ -217,14 +231,20 @@ function Vault({ params }) {
                     {files.map((d) => d.binary ? (
                       <a key={d.rel} className="row" download
                         href={`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}`}
-                        style={{ textDecoration: 'none', color: 'inherit', paddingLeft: treePad(1) }}
+                        style={{ textDecoration: 'none', color: 'inherit', paddingLeft: treePad(1, true) }}
                         title={`${fmtSize(d.size)} · ${t('vault.download')}`}>
                         <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}><Icon name="clip" size={13} /></span>
-                        <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
+                        <span style={{ minWidth: 0, flex: 1 }}>
+                          <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
+                          {/* 크기·수정시각을 본문 서브라벨로 — title 툴팁만으론 터치·데스크톱 앱에서 못 본다(PR #204 검수) */}
+                          <span className="mono" style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)', marginTop: 1 }}>
+                            {fmtSize(d.size)} · {timeAgo(d.mtime, lang)}
+                          </span>
+                        </span>
                         <span className="microlabel" style={{ flex: 'none' }}>{t('vault.download')}</span>
                       </a>
                     ) : (
-                      <DocRow key={d.rel} d={{ ...d, links: d.links ?? [] }} active={selected === d.rel} onOpen={openFromGraph} icon="doc" lang={lang} pad={treePad(1)} />
+                      <DocRow key={d.rel} d={{ ...d, links: d.links ?? [] }} active={selected === d.rel} onOpen={openFromGraph} icon="doc" lang={lang} pad={treePad(1, true)} />
                     ))}
                   </TreeSection>
                 ))}
@@ -362,9 +382,11 @@ function Vault({ params }) {
 
 /** 접이식 트리 섹션 — 옵시디언 폴더 문법(▸ 라벨 · 카운트). depth로 들여쓰기, folder면 폴더 아이콘. */
 /** 트리 들여쓰기 — 헤더 = 14 + depth·16, 자식 행 = 그 헤더 + 캐럿(10) + gap(11).
- *  두 식이 갈라지면 자식이 부모보다 왼쪽에 그려져 계층이 뒤집혀 보인다(검수 실측 4~5px 역전). */
+ *  두 식이 갈라지면 자식이 부모보다 왼쪽에 그려져 계층이 뒤집혀 보인다(검수 실측 4~5px 역전).
+ *  folder 헤더는 폴더 아이콘(13)+gap(11)이 라벨을 24px 더 밀므로, 그 자식도 +24 해야
+ *  라벨 기준 계층 단차가 산다(안 하면 자식 라벨 x = 부모 라벨 x — PR #204 검수 실측). */
 const headerPad = (depth) => 14 + depth * 16;
-const treePad = (depth) => headerPad(depth) + 21;
+const treePad = (depth, folder = false) => headerPad(depth) + 21 + (folder ? 24 : 0);
 
 function TreeSection({ label, count, defaultOpen = false, depth = 0, folder = false, children }) {
   const [open, setOpen] = useState(defaultOpen);
