@@ -3,7 +3,7 @@
 // 좌: 파일 트리(그래프 · 노트 · 산출물(프로젝트 폴더) · 일지 · 대화 — 접이식 + 카운트, 자체 스크롤).
 // 우: 콘텐츠(기본=지식 그래프 전체 채움, 선택 시=종이 뷰어, 작성 시=노트 폼). 페이지 자체는
 // 뷰포트 높이에 고정되어 스크롤이 각 패널 안에서만 일어난다 — 세로 나열 레이아웃 불안정의 종결.
-import { Suspense, use, useEffect, useState } from 'react';
+import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo, tsFromRel } from '../../../ui';
 import { Constellation3D, GraphModal } from '../graphview';
@@ -34,6 +34,18 @@ function Vault({ params }) {
   const [noteBody, setNoteBody] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   const [noteMsg, setNoteMsg] = useState('');
+  // 그래프 실높이 — Constellation3D는 픽셀 고정 캔버스라 부모 실측값을 넘긴다(520 고정이면 큰 화면에서 하단이 비고 짧은 창에서 잘림 — 검수 실측).
+  const [graphH, setGraphH] = useState(0);
+  const graphRo = useRef(null);
+  const graphBoxRef = useCallback((el) => {
+    graphRo.current?.disconnect();
+    graphRo.current = null;
+    if (el) {
+      const ro = new ResizeObserver(() => setGraphH(el.clientHeight));
+      ro.observe(el);
+      graphRo.current = ro;
+    }
+  }, []);
 
   function loadDocs() {
     return api(`/api/companies/${ws}/vault`)
@@ -162,9 +174,10 @@ function Vault({ params }) {
 
   return (
     // 뷰포트 고정 2패널 — 페이지는 안 흐르고 각 패널이 자체 스크롤한다(옵시디언 구조).
-    <div style={{ display: 'flex', gap: 14, height: 'calc(100vh - 96px)', minHeight: 420, alignItems: 'stretch' }}>
+    // 높이·모바일 스택은 .vault-split(globals.css) — 인라인이면 미디어쿼리를 못 탄다.
+    <div className="vault-split">
       {/* ── 좌: 워크트리 ── */}
-      <div className="card" style={{ width: 300, flex: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className="card vault-tree" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div className="card-head" style={{ paddingBottom: 8, flex: 'none' }}>
           <span className="card-title">{t('vault.header')}</span>
           <span className="rule" />
@@ -174,7 +187,7 @@ function Vault({ params }) {
           <button className="btn sm" style={{ flex: 1 }} onClick={() => { setComposing(true); setSelected(null); }}>
             <Icon name="plus" size={12} /> {t('vault.writeNote')}
           </button>
-          <button className="btn sm" onClick={consolidate} disabled={consolidating} title={t('vault.consolidateHint')}>
+          <button className="btn sm" onClick={consolidate} disabled={consolidating} title={t('vault.consolidateHint')} aria-label={t('vault.consolidateHint')}>
             {consolidating ? <Spinner size={12} /> : <Icon name="bolt" size={12} />}
           </button>
         </div>
@@ -196,7 +209,7 @@ function Vault({ params }) {
                 <p style={{ padding: '8px 16px', color: 'var(--fg-2)', fontSize: 12.5 }}>{t('vault.noMemoryMatch')}</p>
               )}
               <TreeSection label={t('vault.tree.notes')} count={notes.length} defaultOpen>
-                {notes.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={openFromGraph} icon="bolt" lang={lang} pad={30} />)}
+                {notes.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={openFromGraph} icon="bolt" lang={lang} pad={treePad(0)} />)}
               </TreeSection>
               <TreeSection label={t('vault.tree.projects')} count={visibleProjects.length} defaultOpen>
                 {projectGroups.map(([name, files]) => (
@@ -204,23 +217,23 @@ function Vault({ params }) {
                     {files.map((d) => d.binary ? (
                       <a key={d.rel} className="row" download
                         href={`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}`}
-                        style={{ textDecoration: 'none', color: 'inherit', paddingLeft: 46 }}
+                        style={{ textDecoration: 'none', color: 'inherit', paddingLeft: treePad(1) }}
                         title={`${fmtSize(d.size)} · ${t('vault.download')}`}>
                         <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}><Icon name="clip" size={13} /></span>
                         <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
                         <span className="microlabel" style={{ flex: 'none' }}>{t('vault.download')}</span>
                       </a>
                     ) : (
-                      <DocRow key={d.rel} d={{ ...d, links: d.links ?? [] }} active={selected === d.rel} onOpen={openFromGraph} icon="doc" lang={lang} pad={46} />
+                      <DocRow key={d.rel} d={{ ...d, links: d.links ?? [] }} active={selected === d.rel} onOpen={openFromGraph} icon="doc" lang={lang} pad={treePad(1)} />
                     ))}
                   </TreeSection>
                 ))}
               </TreeSection>
               <TreeSection label={t('vault.tree.journal')} count={journals.length}>
-                {journals.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={openFromGraph} icon="doc" lang={lang} pad={30} />)}
+                {journals.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={openFromGraph} icon="doc" lang={lang} pad={treePad(0)} />)}
               </TreeSection>
               <TreeSection label={t('vault.tree.conversations')} count={convs.length}>
-                {convs.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={openFromGraph} icon="doc" lang={lang} pad={30} />)}
+                {convs.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={openFromGraph} icon="doc" lang={lang} pad={treePad(0)} />)}
               </TreeSection>
             </>
           )}
@@ -228,7 +241,7 @@ function Vault({ params }) {
       </div>
 
       {/* ── 우: 콘텐츠(그래프 / 작성 폼 / 종이 뷰어) ── */}
-      <div className="card" style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: composing || selected ? 24 : '14px 18px' }}>
+      <div className="card vault-content" style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: composing || selected ? 24 : '14px 18px' }}>
         {composing ? (
           <form onSubmit={saveNote} style={{ display: 'grid', gap: 10, maxWidth: 860 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -275,8 +288,8 @@ function Vault({ params }) {
                 </div>
               </div>
               {meta ? (
-                <div style={{ flex: 1, minHeight: 260 }}>
-                  <Constellation3D company={meta.company} delegations={meta.delegations} agents={meta.agents ?? []} docs={docs ?? []} height={520} onOpen={() => setGraphOpen(true)} onSelectDoc={openFromGraph} />
+                <div ref={graphBoxRef} style={{ flex: 1, minHeight: 260 }}>
+                  <Constellation3D company={meta.company} delegations={meta.delegations} agents={meta.agents ?? []} docs={docs ?? []} height={Math.max(240, graphH)} onOpen={() => setGraphOpen(true)} onSelectDoc={openFromGraph} />
                 </div>
               ) : (
                 <Skeleton h={320} style={{ margin: '8px 0' }} />
@@ -348,12 +361,17 @@ function Vault({ params }) {
 }
 
 /** 접이식 트리 섹션 — 옵시디언 폴더 문법(▸ 라벨 · 카운트). depth로 들여쓰기, folder면 폴더 아이콘. */
+/** 트리 들여쓰기 — 헤더 = 14 + depth·16, 자식 행 = 그 헤더 + 캐럿(10) + gap(11).
+ *  두 식이 갈라지면 자식이 부모보다 왼쪽에 그려져 계층이 뒤집혀 보인다(검수 실측 4~5px 역전). */
+const headerPad = (depth) => 14 + depth * 16;
+const treePad = (depth) => headerPad(depth) + 21;
+
 function TreeSection({ label, count, defaultOpen = false, depth = 0, folder = false, children }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div>
       <button className="row" onClick={() => setOpen((v) => !v)} aria-expanded={open}
-        style={{ paddingLeft: 14 + depth * 16 }}>
+        style={{ paddingLeft: headerPad(depth) }}>
         <span style={{ display: 'inline-block', width: 10, flex: 'none', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s', color: 'var(--fg-3)', fontSize: 10 }}>▸</span>
         {folder && <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}><Icon name="folder" size={13} /></span>}
         <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{label}</span>
