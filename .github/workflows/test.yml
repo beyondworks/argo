@@ -48,5 +48,9 @@ jobs:
 
       - run: npm ci
 
+      # no-undef 게이트(전수리뷰 2026-07-30 #2) — 미정의 식별자(listAgents 임포트 누락·전권 전환 잔재
+      # caps 참조 같은 무음 실패 클래스)를 커밋 시점에 잡는다. 규칙은 no-undef 하나(eslint.config.mjs).
+      - run: npm run lint
+
       # Windows에서도 glob이 동작한다 — cmd는 글롭 확장을 안 하지만 node --test가 패턴을 직접 해석(Node 21+)
       - run: npm test

@@ -1,7 +1,9 @@
 // 자동화 루틴 — 크루에게 반복 지시를 예약(매일/매주)하거나 즉시 실행한다.
 // 실행 = 일반 채팅 턴과 동일 경로(chat) → 결과가 vault 기억으로 남고 자동 링크된다.
 import { paths } from './workspace.mjs';
-import { chat } from './chat.mjs';
+// chat은 **동적 임포트**(runRoutine 안) — chat.mjs가 이 파일을 정적으로 임포트하므로(예약 도구),
+// 여기서도 정적이면 유일한 정적-정적 순환이 된다. 지금은 함수 참조뿐이라 동작하지만, 어느 쪽이든
+// 톱레벨 부작용이 추가되는 순간 TDZ ReferenceError로 Next 라우트가 500이 된다(전수리뷰 2026-07-30 #3).
 import { emitNotify } from './notify.mjs';
 import { runOneShot } from './oneshot.mjs'; // 자연어 → 루틴 초안(러너 독립 — 어떤 러너든 연결만 되면 동작)
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
@@ -145,6 +147,7 @@ export async function runRoutine(wsId, id) {
   const r0 = await patchRoutine(wsId, id, { lastRun: new Date().toISOString() });
   if (!r0) throw new Error('루틴을 찾을 수 없습니다');
   try {
+    const { chat } = await import('./chat.mjs'); // 순환 차단 — 파일 상단 주석 참조
     const t = await chat(wsId, r0.agentSlug, `[루틴: ${r0.title}] ${r0.prompt}`, null, { source: 'routine' });
     // 대화 스레드에 남긴다 — 루틴만 이게 빠져 있어서, 실행 중엔 채팅창에 보이다가 끝나면 사라졌다
     // (신고 2026-07-28 "루틴 돌면서 채팅이 올라왔다가 실행되고 나니 유실"). 저장한 적이 없었던 것.

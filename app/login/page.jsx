@@ -32,7 +32,7 @@ export default function Login() {
     setIsLoopback(LOOPBACK_RE.test(window.location.hostname));
     const err = new URLSearchParams(window.location.search).get('error');
     if (err) setError(t('login.oauthFailed', { msg: err }));
-  }, [t]); // eslint-disable-line
+  }, [t]);
 
   if (!URL_ENV || !KEY_ENV) {
     return (

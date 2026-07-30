@@ -690,7 +690,7 @@ function WorkRootsCard({ ws }) {
     // 로드 실패를 빈 목록과 구분 — "없습니다"로 보이면 일시 장애가 데이터 소실처럼 읽힌다(분리 검수 LOW)
     api(`/api/companies/${ws}/workroots`).then((d) => { setRoots(d.roots); setMax(d.max); })
       .catch(() => { setRoots([]); setErr(t('settings.workroots.err.load')); });
-  }, [ws]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ws]);
 
   async function mutate(body) {
     if (busy) return;

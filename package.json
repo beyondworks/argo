@@ -11,7 +11,8 @@
     "stage:sidecar": "node scripts/stage-sidecar.mjs",
     "app:build": "node scripts/stage-sidecar.mjs && cd src-tauri && npx @tauri-apps/cli@^2 build",
     "test": "node --test test/*.test.mjs",
-    "test:pg": "bash scripts/billing-pg-drill.sh"
+    "test:pg": "bash scripts/billing-pg-drill.sh",
+    "lint": "eslint ."
   },
   "license": "UNLICENSED",
   "private": true,
@@ -37,5 +38,9 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "eslint": "^10.8.0",
+    "globals": "^17.8.0"
   }
 }

@@ -604,7 +604,7 @@ export default function CrewChat({ params }) {
   useEffect(() => {
     if (!slashToken || skillCmds !== null) return;
     api(`/api/companies/${ws}/market`).then((d) => setSkillCmds(d.installedSkills ?? [])).catch(() => setSkillCmds([]));
-  }, [slashToken, skillCmds, ws]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [slashToken, skillCmds, ws]);
   const matchTok = (tok) => tok.toLowerCase().startsWith(slashQ) || (!slashQ && true);
   const slashMatches = slashToken ? [
     ...SLASH_CMDS.filter((c) => c.aliases.some((al) => al.startsWith(slashQ)))
@@ -615,7 +615,7 @@ export default function CrewChat({ params }) {
       .map((s) => ({ kind: 'skill', key: `s:${s.id}`, cmd: s.id, desc: s.title, insert: t('chat.cmd.skillPrefix', { name: s.title }) })),
   ] : [];
   const [slashIdx, setSlashIdx] = useState(0);
-  useEffect(() => { setSlashIdx(0); }, [slashQ, slashToken?.[0]]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setSlashIdx(0); }, [slashQ, slashToken?.[0]]);
   function runSlash(cmd) {
     histIdx.current = -1;
     if (cmd.kind === 'builtin') { setInput(''); cmd.run(); }
