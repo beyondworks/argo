@@ -658,6 +658,11 @@ const DICT = {
   'deck.hireStage3': ['합류 준비 중', 'Preparing to join'],
 
   // ── 기억(Vault)
+  'vault.tree.notes': ['노트', 'Notes'],
+  'vault.tree.projects': ['산출물', 'Outputs'],
+  'vault.tree.journal': ['일지', 'Journal'],
+  'vault.tree.conversations': ['대화', 'Conversations'],
+  'vault.tree.noProject': ['(폴더 없음)', '(no folder)'],
   'vault.header': ['기억 · 회사가 쌓아온 항해일지', 'Vault · the company\'s voyage log'],
   'vault.records': ['{n} Records', '{n} Records'],
   'vault.consolidateHint': ['새 일지를 주제 노트로 정제합니다 (매일 새벽 자동)', 'Distills new journal entries into topic notes (runs automatically every dawn)'],
