@@ -22,7 +22,7 @@ import { writeJsonAtomic } from './jsonstore.mjs';
 import { mkdir, readFile, writeFile, readdir, stat, rename, copyFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
-import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath } from './tg-format.mjs';
+import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath, attachFailureNote } from './tg-format.mjs';
 import { beatGateway, loadOffset, saveOffset, loadSlackCursor, saveSlackCursor } from './gateway/persist.mjs';
 import { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT } from './gateway/queue.mjs';
 import { clip, pollBackoffMs, pick, tidy, parseApprovalText, parseApprovalCallback, pairCodeMatches, classifySlackMessage } from './gateway/protocol.mjs';
@@ -60,7 +60,7 @@ function makeJobHandler(wsId) {
       const t = await chat(wsId, slug, `[장시간 작업: ${title}] ${job.prompt}`, null, { source: 'job' });
       await appendTurn(wsId, slug, {
         userMsg: pick(`(장시간 작업) ${title}`, `(Long task) ${title}`, lang),
-        reply: t.reply, handover: t.handover, sessionId: t.sessionId, via: 'job',
+        reply: t.reply, handover: t.handover, sessionId: t.sessionId, via: 'job', artifacts: t.artifacts,
       }).catch(() => {});
       await appendEvent(wsId, { type: 'job', slug, title, status: 'done' }).catch(() => {});
       notify({ type: 'job', wsId, slug, title, ok: true, reply: t.reply });
@@ -84,17 +84,41 @@ async function sendTgReply(token, chatId, wsId, text) {
       await tg(token, 'sendMessage', { chat_id: chatId, text: chunk.replace(/<[^>]+>/g, '') }).catch(() => {});
     }
   }
-  for (const rel of extractFileRefs(text)) {
+  // 파일 동봉 — 실패는 본문 전달을 막지 않되 **침묵하지 않는다**(제보 "보내줬다는데 안 온다"의
+  // 절반이 여기서 조용히 죽은 것: catch{} 전량 삼킴 + res.ok 미검사). 봇 업로드 상한 50MB 사전 검사.
+  const fails = [];
+  const refs = extractFileRefs(text);
+  const { lang: gLang = 'ko' } = refs.length ? await loadCompany(wsId).catch(() => ({})) : {};
+  const rsn = (ko, en) => (gLang === 'en' ? en : ko); // 사유도 회사 언어로(다국어 상시 규칙 — 검수 LOW-1)
+  for (const rel of refs) {
+    const name = rel.split('/').pop();
     try {
-      const buf = await readFile(join(paths(wsId).vault, rel));
-      const name = rel.split('/').pop();
-      const fd = new FormData();
-      fd.append('chat_id', String(chatId));
-      fd.append(isImagePath(rel) ? 'photo' : 'document', new Blob([buf]), name);
-      await fetch(`https://api.telegram.org/bot${token}/${isImagePath(rel) ? 'sendPhoto' : 'sendDocument'}`, {
-        method: 'POST', body: fd, signal: AbortSignal.timeout(60_000),
-      });
-    } catch { /* 파일 동봉 실패는 본문 전달을 막지 않는다 */ }
+      const abs = join(paths(wsId).vault, rel);
+      const st = await stat(abs).catch(() => null);
+      if (!st?.isFile()) { fails.push({ name, reason: rsn('파일이 없습니다(경로 확인)', 'file not found (check the path)') }); continue; }
+      if (st.size > 50 * 1024 * 1024) { fails.push({ name, reason: rsn('50MB 초과(텔레그램 봇 상한)', 'over 50MB (Telegram bot limit)') }); continue; }
+      const buf = await readFile(abs);
+      const send = (kind) => {
+        const fd = new FormData();
+        fd.append('chat_id', String(chatId));
+        fd.append(kind, new Blob([buf]), name);
+        return fetch(`https://api.telegram.org/bot${token}/${kind === 'photo' ? 'sendPhoto' : 'sendDocument'}`, {
+          method: 'POST', body: fd, signal: AbortSignal.timeout(60_000),
+        });
+      };
+      let res = await send(isImagePath(rel) ? 'photo' : 'document');
+      // 사진 거절(10MB 상한·규격 제약)은 문서로 1회 폴백 — 원본 그대로는 전달된다
+      if (!res.ok && isImagePath(rel)) res = await send('document');
+      if (!res.ok) {
+        const detail = await res.json().then((j) => j?.description ?? '').catch(() => '');
+        fails.push({ name, reason: rsn(`텔레그램 거절(${String(detail).slice(0, 80) || res.status})`, `Telegram rejected (${String(detail).slice(0, 80) || res.status})`) });
+      }
+    } catch (e) {
+      fails.push({ name, reason: String(e?.message ?? e).slice(0, 80) });
+    }
+  }
+  if (fails.length) {
+    await tg(token, 'sendMessage', { chat_id: chatId, text: attachFailureNote(fails, gLang) }).catch(() => {});
   }
 }
 
@@ -164,7 +188,7 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
   const t = await loadThread(wsId, r.slug);
   // 그룹에서 온 턴이면 mirrorCtx로 전달 — 위임 미러가 이 턴의 방으로만 발화(전역 맵 오배달 제거)
   const turn = await chat(wsId, r.slug, r.msg, t.sessionId, { source: 'messenger', attachments, mirrorCtx: /group/.test(ctx?.chatType ?? '') ? ctx : null });
-  await appendTurn(wsId, r.slug, { userMsg: r.msg, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments });
+  await appendTurn(wsId, r.slug, { userMsg: r.msg, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts });
   // cc 크루에게 맥락 공유 — 실행은 to 크루만(폭주 방지), 나머지는 다음 턴에 이 맥락을 알고 시작한다
   let footer = '';
   if (r.cc?.length) {
@@ -330,7 +354,7 @@ async function runAgentTurn(wsId, slug, text, attachments, ctx) {
   }
   const t = await loadThread(wsId, slug);
   const turn = await chat(wsId, slug, text, t.sessionId, { source: 'messenger', attachments, mirrorCtx: /group/.test(ctx?.chatType ?? '') ? ctx : null });
-  await appendTurn(wsId, slug, { userMsg: text, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments });
+  await appendTurn(wsId, slug, { userMsg: text, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts });
   return turn.reply; // 봇 자체가 그 크루 — 이름 프리픽스 불필요
 }
 
@@ -668,6 +692,15 @@ async function pushEvent(event) {
   const who = event.type === 'approval' ? await approvalWho(event.wsId, event.item, lang) : '';
   // 결재 처리 완료 — 어느 창구(웹·대화창·텔레그램·슬랙)에서 확정됐든 텔레그램 카드의 버튼을 걷어낸다.
   // 푸시 때 저장해 둔 tg:{chatId,messageId}가 있어야 어느 메시지를 편집할지 안다(웹 승인 시 버튼 잔존 갭 해소).
+  if (event.type === 'approval_followup') {
+    // 결재 승인/거절 후속 턴의 크루 보고를 결재 카드가 있던 방으로 — sendTgReply라서 본문 속
+    // 파일 경로(files/·projects/)가 자동 첨부된다(S2). 발송류 결재의 "승인=발송"이 이걸로 실효.
+    const it = event.item;
+    if (it?.tg?.chatId && all.telegram.enabled && all.telegram.token) { // enabled — 끈 채널로 재발송 금지(검수 LOW-4)
+      await sendTgReply(all.telegram.token, it.tg.chatId, event.wsId, event.reply).catch((e) => console.error('[argo] 결재 후속 배달 실패:', e.message));
+    }
+    return;
+  }
   if (event.type === 'approval_resolved') {
     const it = event.item;
     if (it?.tg?.messageId && all.telegram.token) {

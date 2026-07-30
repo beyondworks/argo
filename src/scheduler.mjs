@@ -164,7 +164,7 @@ export function ensureScheduler() {
               const prompt = mailPrompt(msg, 'ko', { hasTools });
               const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail' });
               // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
-              await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail' })
+              await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail', artifacts: t.artifacts })
                 .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));
               // 배달 알림 — pushEvent의 crewmail 분기(텔레그램 문안)와 짝(재검 N1 보류 해소). 슬랙은
               // 타입 게이트로 좁혀져 이 이벤트에 반응하지 않는다(과거 event.routine TypeError 경로).

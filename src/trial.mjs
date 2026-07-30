@@ -18,6 +18,7 @@ export function runTrialTurn(wsId, slug) {
       await appendTurn(wsId, slug, {
         userMsg: '(영입 시운전) 첫 인사와 샘플 산출물을 보여주세요.',
         reply: r.reply, handover: r.handover, sessionId: r.sessionId,
+        artifacts: r.artifacts, // 시운전 프롬프트가 "샘플 산출물을 만들어라"다 — 첫인상 칩(검수 HIGH)
       });
     } catch (e) {
       const m = String(e.message || e);

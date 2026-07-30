@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { marked } from 'marked';
 import { useLang } from './i18n';
+import { rewriteVaultHref } from '../src/vault-links.mjs'; // 산출물 링크 재작성(순수 — 테스트는 src 쪽)
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -231,11 +232,17 @@ export function Clock() {
   return <span className="topbar-clock" suppressHydrationWarning>{now}</span>;
 }
 
-/** 에이전트 응답(마크다운) 렌더 — raw HTML 이스케이프 + 위험 스킴 href 차단. */
-export function Markdown({ text, onWikiLink }) {
+/** 에이전트 응답(마크다운) 렌더 — raw HTML 이스케이프 + 위험 스킴 href 차단.
+    wsId를 주면 vault 상대 링크(산출물)는 죽이지 않고 뷰어/다운로드 URL로 재작성한다 —
+    크루에게 "경로를 알려라"고 시켜 놓고 그 링크를 '#'로 죽이던 모순 해소(제보 2026-07-30).
+    화이트리스트 재작성(rewriteVaultHref)이라 XSS 방어 방향은 그대로다. */
+export function Markdown({ text, onWikiLink, wsId }) {
   const escaped = String(text ?? '').replace(/</g, '&lt;');
   let html = marked.parse(escaped);
-  html = html.replace(/href="(?!https?:|#|\/)[^"]*"/gi, 'href="#"');
+  html = html.replace(/href="((?!https?:|#|\/)[^"]*)"/gi, (_, h) => {
+    const url = rewriteVaultHref(h, wsId);
+    return url ? `href="${url.replace(/"/g, '&quot;')}"` : 'href="#"';
+  });
   // 이미지 src는 동일출처 파일 라우트("/...")만 허용 — 크루 답변 속 외부 http/data 이미지는
   // 추적 픽셀·데이터 유출 벡터라 태그째 제거한다. "//evil.com"(프로토콜 상대)도 차단.
   html = html.replace(/<img\b[^>]*>/gi, (tag) => /\ssrc="\/(?!\/)[^"]*"/i.test(tag) ? tag : '');

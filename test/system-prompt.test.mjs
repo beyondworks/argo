@@ -68,10 +68,13 @@ test('commonDirectives hasTools:true — SDK 도구 지시(결재·설치·즉�
 
 test('commonDirectives hasTools:false — 외부 러너용 보고·안내형 동일 규율', () => {
   const d = commonDirectives({ caps: {}, connectedMcp: [], hasTools: false, lang: 'ko' });
-  for (const s of ['결재 도구가 없다', '결재가 필요하다', '스킬·도구', '(없음)', '테넌트 격리']) {
+  // 결재는 지시 블록으로 **올린다** — 옛 계약("결재 도구가 없다"고 보고만)은 결재함이 비어
+  // 사용자가 밟을 절차가 생성되지 않는 데드엔드였다(실사용 스크린샷 2026-07-30, S3에서 교체).
+  for (const s of ['"action":"approval"', '결재함에 등록되고', '말로만 하지 마라', '스킬·도구', '(없음)', '테넌트 격리']) {
     assert.ok(d.includes(s), `누락: ${s}`);
   }
   assert.ok(!d.includes('request_approval 도구로'), '도구 없는 러너에 도구 지시 혼입');
+  assert.ok(!d.includes('결재 도구가 없다'), '옛 데드엔드 문구 재유입 금지(보고만 하고 정지)');
 });
 
 test('commonDirectives en — hasTools 분기 영어판', () => {
@@ -82,5 +85,6 @@ test('commonDirectives en — hasTools 분기 영어판', () => {
   assert.ok(!t1.includes('request_capability'), '없어진 도구를 지시하면 안 된다');
   assert.ok(!/Settings → Local capabilities|bottom of Settings/.test(t1), '없는 메뉴로 사장을 보내면 안 된다');
   const t0 = commonDirectives({ connectedMcp: [], hasTools: false, lang: 'en' });
-  assert.ok(t0.includes('no approval tool') && t0.includes('(none)'));
+  assert.ok(t0.includes('"action":"approval"') && t0.includes('approval inbox') && t0.includes('(none)'));
+  assert.ok(!t0.includes('no approval tool'), 'old dead-end phrasing must not return');
 });

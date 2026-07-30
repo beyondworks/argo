@@ -23,6 +23,7 @@ import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './t
 import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
+import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
     allow = 크루별 사용 범위(parseScopeList 결과): null=전체(기본), []=없음, [이름]=지정만.
@@ -83,8 +84,8 @@ export function systemPromptFor(cardMd, wsRoot, skills, meta = {}, lang = 'ko', 
         ? 'For anything later than a few minutes out, schedule it with the schedule_task tool instead of assuming the clock is still accurate.'
         : '몇 분 뒤보다 나중의 일은 시계가 그대로일 거라 가정하지 말고 schedule_task 도구로 예약하라.')
     : (lang === 'en'
-        ? 'For anything later than a few minutes out, don\'t assume the clock is still accurate — schedule it by ending your reply with a directive block:\n```argo\n{"action":"schedule","every":"30m","title":"...","prompt":"what to do each run"}\n```\nUse "time":"09:00" (with optional "days":[1,3]) instead of "every" for a fixed hour. Handing work to a colleague asynchronously uses the same mechanism: {"action":"mail","to":"crew-slug","message":"..."}. Argo runs the block after your turn and appends the real result — never claim you scheduled or sent something without emitting the block.'
-        : '몇 분 뒤보다 나중의 일은 시계가 그대로일 거라 가정하지 마라. 예약이 필요하면 답변 끝에 지시 블록을 붙여라:\n```argo\n{"action":"schedule","every":"30분","title":"...","prompt":"매 실행마다 할 일"}\n```\n정해진 시각이면 "every" 대신 "time":"09:00"(요일은 "days":[1,3]). 동료에게 비동기로 일을 넘길 때도 같은 방식이다: {"action":"mail","to":"동료슬러그","message":"..."}. Argo가 턴이 끝난 뒤 블록을 실행하고 실제 결과를 답변에 덧붙인다 — **블록 없이 "예약했다 / 전달했다"고 말하지 마라.**');
+        ? 'For anything later than a few minutes out, don\'t assume the clock is still accurate — schedule it by ending your reply with a directive block:\n```argo\n{"action":"schedule","every":"30m","title":"...","prompt":"what to do each run"}\n```\nUse "time":"09:00" (with optional "days":[1,3]) instead of "every" for a fixed hour. Handing work to a colleague asynchronously uses the same mechanism: {"action":"mail","to":"crew-slug","message":"..."}. Filing an approval works the same way: {"action":"approval","request":"what you want to do","reason":"why"}. Argo runs the block after your turn and appends the real result — never claim you scheduled or sent something without emitting the block.'
+        : '몇 분 뒤보다 나중의 일은 시계가 그대로일 거라 가정하지 마라. 예약이 필요하면 답변 끝에 지시 블록을 붙여라:\n```argo\n{"action":"schedule","every":"30분","title":"...","prompt":"매 실행마다 할 일"}\n```\n정해진 시각이면 "every" 대신 "time":"09:00"(요일은 "days":[1,3]). 동료에게 비동기로 일을 넘길 때도 같은 방식이다: {"action":"mail","to":"동료슬러그","message":"..."}. 결재를 올릴 때도 같다: {"action":"approval","request":"하려는 행동","reason":"왜"}. Argo가 턴이 끝난 뒤 블록을 실행하고 실제 결과를 답변에 덧붙인다 — **블록 없이 "예약했다 / 전달했다"고 말하지 마라.**');
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }); // YYYY-MM-DD
   // 현재 시각 — 크루에겐 시계가 없다(셸 능력이 꺼져 있으면 date조차 못 친다). 시각을 안 주면
   // "지금 몇 시인지 확인할 도구가 없다"며 예약·마감 계산을 거절한다(실사용 신고 2026-07-26).
@@ -145,7 +146,7 @@ ${skills ? `\n## Company skills — auto-injected every turn; apply them to matc
 - So if asked "is my context stored in the cloud safe / isolated?", answer: "Yes — it's isolated per account and stored safely." Do not invent extra assurances (specific certifications, audits) beyond this.
 
 ## Folder hygiene — don't clutter things up and then get lost in them
-- Collect project outputs and materials under vault/projects/${today.replaceAll('-', '')}_project-name/ (e.g. vault/projects/${today.replaceAll('-', '')}_newsletter-renewal/).
+- Collect project outputs and materials under vault/projects/${today.replaceAll('-', '')}_project-name/ (e.g. vault/projects/${today.replaceAll('-', '')}_newsletter-renewal/). **Files meant for the captain go here (or vault/files/), always** — that is what feeds the chat download chips and Telegram attachments (projects/ also shows on the memory screen). You can write elsewhere, but unless the captain named a specific folder, don't: files outside never reach them in the app.
 - Folder and file names must be human-readable only: "date_task-name" or "topic-slug". No random alphanumeric IDs or UUIDs.
 - If one topic scatters across several files, merge them into a single topic note connected with [[links]].
 
@@ -219,7 +220,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 - "클라우드에 저장된 내 맥락이 안전하냐 / 격리돼 있냐"는 질문에는 "네, 계정별로 격리되어 있고 안전하게 보관됩니다"라고 답하라. 근거 없는 추가 보증(특정 인증·감사 취득 등)은 지어내지 마라.
 
 ## 폴더 정리 — 스스로 어질러 놓고 헤매지 마라
-- 프로젝트성 산출물·자료는 vault/projects/${today.replaceAll('-', '')}_프로젝트명/ 아래에 모아라 (예: vault/projects/${today.replaceAll('-', '')}_뉴스레터-리뉴얼/).
+- 프로젝트성 산출물·자료는 vault/projects/${today.replaceAll('-', '')}_프로젝트명/ 아래에 모아라 (예: vault/projects/${today.replaceAll('-', '')}_뉴스레터-리뉴얼/). **사장에게 전달할 파일은 반드시 여기(또는 vault/files/)에 둔다** — 여기 있어야 채팅의 다운로드 칩·텔레그램 첨부에 실린다(projects/는 기억 화면에도 뜬다). 파일 능력상 다른 곳에도 쓸 수는 있지만, 사장이 특정 폴더를 지정하지 않았다면 밖에 두지 마라(앱에서 못 받는다).
 - 폴더·파일 이름은 사람이 읽는 형식만: "날짜_작업명" 또는 "주제-슬러그". 랜덤 영숫자 ID·UUID 이름 금지.
 - 같은 주제가 여러 파일로 흩어지면 주제 노트 하나로 합치고 [[링크]]로 잇는다.
 
@@ -254,7 +255,7 @@ export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true
   if (lang === 'en') {
     // 한국어 경로와 대칭(다국어 상시 규칙) — 신고 2026-07-26: 크루가 "스킬·도구에서 추가하라"고 잘못 안내했다.
     return `\n## Approval rules — must follow
-- Never execute actions that are hard to reverse or leave the company (sending, publishing, purchasing, deleting, contracts, etc.) without approval. ${hasTools ? 'File an approval with the request_approval tool and wait for the decision.' : 'This turn has no approval tool — do not execute; report "approval required: <the action>" and end the turn.'}
+- Never execute actions that are hard to reverse or leave the company (sending, publishing, purchasing, deleting, contracts, etc.) without approval. ${hasTools ? 'File an approval with the request_approval tool and wait for the decision.' : 'If approval is needed, do not execute — file it by ending your reply with a directive block: ```argo\n{"action":"approval","request":"<the action>","reason":"<why>"}\n``` It lands in the approval inbox, and once approved a follow-up instruction arrives. Never just SAY approval is required without the block (nothing reaches the inbox that way).'}
 - In-company work like drafting, analysis, and vault notes proceeds right away without approval.
 - ${hasTools ? 'If the captain asks to change a crew profile (name, role, team, rules, runner, model) or to hire a new crew, don\'t edit files directly — file an approval via the update_profile / hire_crew tools. If the runner/model is undecided, present 2-3 options from the catalog and ask before filing.' : 'For crew profile changes or hiring, don\'t edit files directly — guide the captain to the crew/settings screens.'}
 
@@ -286,7 +287,7 @@ ${workRoots.length ? `- Assigned work folders (the captain pinned these): ${work
   // 추가하세요"라고 오안내)과 2026-07-29(파일 저장이 안 되자 "설정에서 쓰기 권한을 켜세요"라고
   // 안내했는데 그런 메뉴가 없어 사장이 한참 헤맴). 이제 능력은 전권이라 켤 것 자체가 없다.
   return `\n## 결재 규칙 — 반드시 따를 것
-- 되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 승인 없이 절대 실행하지 마라. ${hasTools ? 'request_approval 도구로 결재를 올리고 결정을 기다려라.' : '이 턴에는 결재 도구가 없다 — 실행하지 말고 "결재가 필요하다: <하려는 행동>"을 보고하고 턴을 마쳐라.'}
+- 되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)은 승인 없이 절대 실행하지 마라. ${hasTools ? 'request_approval 도구로 결재를 올리고 결정을 기다려라.' : '결재가 필요하면 실행하지 말고, 답변 끝에 ```argo\n{"action":"approval","request":"<하려는 행동>","reason":"<왜>"}\n``` 지시 블록을 붙여 결재를 올려라 — 결재함에 등록되고, 승인되면 후속 지시가 온다. 블록 없이 "결재가 필요하다"고 말로만 하지 마라(결재함에 아무것도 안 올라간다).'}
 - 초안 작성·분석·vault 기록 같은 회사 안 작업은 결재 없이 바로 한다.
 - ${hasTools ? '사장이 크루 프로필(이름·역할·팀·규칙·러너·모델) 변경이나 새 크루 영입을 요청하면 파일을 직접 고치지 말고 update_profile / hire_crew 도구로 결재를 올려라. 러너·모델이 정해지지 않았으면 카탈로그에서 선택지를 2~3개 제시해 물어본 뒤 올려라.' : '크루 프로필 변경·영입 요청은 파일을 직접 고치지 말고 크루·설정 화면에서 진행하도록 사장을 안내하라.'}
 
@@ -388,7 +389,7 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
         const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug] });
         // 위임 트레이스 — 대상 크루의 대화에도 남긴다(세션은 건드리지 않음). 웹에서 양쪽 다 보인다.
         const { appendTurn } = await import('./thread.mjs');
-        await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null, via: 'delegate' })
+        await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null, via: 'delegate', artifacts: r.artifacts })
           .catch(() => {});
         // 그룹 대화 미러 — 메신저 그룹에서 시작된 턴이면 상대 크루 봇이 같은 방에 결과를 발화한다(게이트웨이가 수신)
         // mirrorCtx를 이벤트에 직접 실어 보낸다 — 전역 맵 조회(동시 턴 오배달 위험)를 없앤다
@@ -638,6 +639,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
         gist: userMsg.replace(/\s+/g, ' ').trim().slice(0, 60), ok: true, ms: 0, budgetBlocked: true,
         journalRel: relative(p.vault, handover.file),
       });
+      // 모델을 부르지 않은 턴 — 산출물 diff 없음(여기서 artBefore를 참조하면 TDZ로 예산 턴 전체가
+      // 죽는다. 분리 검수 CRITICAL-1 실측: 변이 복원 오타겟이 심은 회귀).
       return { reply, sessionId: null, handover };
     }
   }
@@ -681,6 +684,14 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
         ? `\n## Runner substitution — you MUST tell the captain\n- This crew's assigned runner (${rn(wantRunner)}) is not available on this device, so you are running on ${rn(runner)} instead. End your reply with one line telling the captain that ${rn(wantRunner)} isn't set up on this device, so you answered with ${rn(runner)}.`
         : `\n## 러너 대체 안내 — 반드시 사장에게 알려라\n- 이 크루의 지정 러너(${rn(wantRunner)})가 이 기기에 연결돼 있지 않아, 지금은 ${rn(runner)}(으)로 대신 실행 중이다. 답변 끝에 한 줄로 "지정 러너 ${rn(wantRunner)}가 이 기기에 없어 ${rn(runner)}로 대신 답했다"고 사장에게 알려라.`)
     : '';
+  // 메신저 턴 파일 규약 — extractFileRefs(게이트웨이 발신 첨부)의 존재를 크루가 알아야 쓴다
+  // (실사용 제보 2026-07-30: 규약이 프롬프트 어디에도 없어 "파일을 안 보내준다"가 됐다).
+  // 텔레그램만 자동 첨부(슬랙은 텍스트 전용)라 채널 조건을 정직하게 갈라 말한다. SDK·CLI 공통 주입.
+  const messengerNote = source === 'messenger'
+    ? (lang === 'en'
+        ? `\n## Messenger turn — sending files to the captain\n- To hand the captain a file, save it under vault/files/ or vault/projects/ and write its path verbatim in your reply (e.g. files/report.pptx, projects/20260730_x/deck.pptx). On Telegram it is attached automatically (up to 3 per reply); on other channels the captain downloads it from the web/app chat chips. Replying to the captain is NOT an external send — no approval needed.`
+        : `\n## 메신저 턴 — 사장에게 파일 보내기\n- 사장에게 파일을 건네려면 vault/files/ 또는 vault/projects/에 저장하고, 답변 본문에 경로를 그대로 적어라(예: files/보고서.pptx, projects/20260730_x/제안서.pptx). 텔레그램이면 자동 첨부되고(답변당 최대 3개), 다른 채널이면 사장이 웹·앱 채팅의 다운로드 칩으로 받는다. **사장에게 답하는 것은 외부 발송이 아니다 — 결재 불필요.**`)
+    : '';
   // 대체 실행이 '실패'하면 위 자가 고지가 나올 수 없다 — 에러 메시지 자체에 대체 사실을 붙인다
   // (턴 실패 표시·이벤트 기록·메신저 회신 전 표면 공통).
   const prefixFallbackError = (e) => {
@@ -695,6 +706,19 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
         ? `## Context shared via cc — what the captain instructed a colleague and the results (shared for your awareness)\n${sharedNotes.join('\n\n---\n\n')}\n\n## Captain's new instruction\n`
         : `## 참조로 공유된 맥락 — 사장이 동료에게 지시한 내용과 결과(너도 알아 두라고 공유됨)\n${sharedNotes.join('\n\n---\n\n')}\n\n## 사장의 새 지시\n`)
     : '';
+
+  // 산출물 스냅샷(턴 전) — 러너·도구 무관 수집의 기준점. SDK tool_use 관측은 Bash·MCP·CLI 러너가
+  // 만든 파일을 원리적으로 못 봐(제보 2026-07-30: "만들었다는데 못 찾는다") 파일시스템 diff가 정본.
+  // compete는 diff 수집 제외 — 시안 N명이 같은 vault에 병렬로 쓰므로 diff가 전원 파일의 합집합이
+  // 되어 오귀속된다(검수 HIGH 실측). 경쟁 턴은 tool_use 관측만(격리 불변식 유지 — compete.mjs 헤더).
+  const artBefore = source === 'compete' ? null : await snapshotArtifacts(p.vault).catch(() => new Map());
+  // 턴 종료 시 diff — 상한+최신 우선(복원·임포트와 겹친 420칩 폭발 방어, 검수 HIGH).
+  let artAfter = new Map(); // SDK 합집합 cap도 같은 mtime 기준을 쓰기 위한 공유(검수 LOW-2)
+  const artDiff = async () => {
+    if (!artBefore) return [];
+    artAfter = await snapshotArtifacts(p.vault).catch(() => new Map());
+    return capLatest(artAfter, diffArtifacts(artBefore, artAfter).filter(servableArtifact));
+  };
 
   // 외부 CLI 러너(Codex/Gemini/Antigravity) — 로컬 OAuth 로그인(구독)을 빌려 1턴 실행. 세션은 스레드 맥락으로 잇는다.
   if (isCliRunner(runner)) {
@@ -726,7 +750,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false })}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, hasTools: false, lang, runner, workRoots: cliWorkRoots })}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false })}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, hasTools: false, lang, runner, workRoots: cliWorkRoots })}${messengerNote}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
@@ -817,7 +841,9 @@ ${lang === 'en'
       await clearTurnStatus(wsId, agentSlug);
       const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, journalRel: relative(p.vault, handover.file), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
-      return { reply, sessionId: null, handover };
+      // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파.
+      // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
+      return { reply, sessionId: null, handover, artifacts: await artDiff() };
     } catch (e) {
       let aborted = abortReg.wasAborted();
       // 인증 오탐 자가 치유 — 이 러너의 자격이 실은 죽어 있던 경우, 제외하고 다른 가용 러너로 1회
@@ -956,6 +982,7 @@ ${lang === 'en'
       systemPrompt: systemPromptFor(md, p.root, skills, meta, lang)
         + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
         + commonDirectives({ caps, connectedMcp, hasTools: true, lang, workRoots })
+        + messengerNote
         + fallbackDirective,
       mcpServers: { ...(servers ?? {}), crew: crewServer },
       // CLI stderr 꼬리 보관 — 실패 시 errors[]가 비면 이걸 진단으로 쓴다(아래 결과 처리).
@@ -1120,6 +1147,8 @@ ${lang === 'en'
     ...evBase, ok: true, ms: Date.now() - t0, steps,
     ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
   });
-  // 일지(handover)는 전용 칩이 이미 있다 — 산출물 칩과 중복 방지
-  return { reply, sessionId: sid, handover, artifacts: [...artifacts].filter((r) => !r.startsWith('journal/')) };
+  // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
+  // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
+  for (const r of await artDiff()) artifacts.add(r);
+  return { reply, sessionId: sid, handover, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)) }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }

@@ -12,6 +12,7 @@
 // 지운다 — 사장이 JSON을 볼 이유가 없다.
 import { addRoutine, normalizeSchedule } from './routines.mjs';
 import { sendCrewMail } from './crewmail.mjs';
+import { addApproval } from './approvals.mjs'; // CLI 결재 경로 — SDK request_approval과 같은 원장
 import { listAgents } from './hub.mjs';
 
 /** 지시 블록 문법 — ```argo 펜스 안 JSON 1건. 여러 블록 허용.
@@ -113,6 +114,20 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         // 배달된 턴이 낸 블록의 메시지가 hop=0·chain=[]). 실효 바운드가 hop 단독이라 여기서 샌다.
         await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg, hop: hop + 1, chain: [...chain, fromSlug] });
         notes.push(en ? `✓ Note sent to ${to.name}${cc.length ? ` (cc ${cc.length})` : ''}` : `✓ ${to.name}에게 쪽지 보냄${cc.length ? ` (참조 ${cc.length}명)` : ''}`);
+      } else if (action === 'approval') {
+        // CLI 러너의 결재 경로(러너 중립성 — 실사용 스크린샷 2026-07-30: 결재 도구가 없는 크루가
+        // "결재가 필요하다"고 보고만 하고 정지 → 결재함이 비어 사용자가 밟을 절차 자체가 없었다).
+        // SDK의 request_approval과 같은 원장(addApproval kind:'action')에 등록한다 — 승인되면
+        // approval-actions가 후속 턴으로 "이제 실행하라"를 배달한다(경로 동일).
+        const request = String(d.request ?? d.action_text ?? '').trim();
+        if (!request) throw new Error(en ? 'request is required' : 'request(하려는 행동)가 필요합니다');
+        const item = await addApproval(wsId, {
+          slug: fromSlug, action: request.replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 200),
+          reason: String(d.reason ?? '').replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 300),
+        });
+        notes.push(en
+          ? `✓ Approval filed (${item.id}) — waiting for the captain. Do NOT perform the action until approved.`
+          : `✓ 결재 올림(${item.id}) — 사장 승인 대기. 승인 전에는 그 행동을 실행하지 마라.`);
       } else {
         notes.push(en ? `⚠ Unknown directive "${action}"` : `⚠ 알 수 없는 지시 "${action}"`);
       }

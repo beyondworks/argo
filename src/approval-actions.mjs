@@ -2,6 +2,7 @@
 import { resolveApproval } from './approvals.mjs';
 import { chat } from './chat.mjs';
 import { loadThread, appendTurn } from './thread.mjs';
+import { emitNotify } from './notify.mjs'; // 후속 턴 결과를 원 채널(메신저)로 — 카드 약속('이어서 보고합니다') 이행
 
 /** 상태 변경 + 후속 처리. kind:'tool'은 대기 중인 턴이 스스로 재개하므로 후속 턴이 없다.
     kind:'profile'/'hire'는 승인 시 서버가 payload를 실행(카드 수정·영입)한 뒤 — 후속 턴이 결과를
@@ -72,8 +73,14 @@ async function followUp(wsId, item, approve) {
   }
   const t = await loadThread(wsId, item.slug);
   try {
-    const r = await chat(wsId, item.slug, msg, t.sessionId);
-    await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId });
+    // 메신저발 결재의 후속 턴은 메신저 턴으로 — 파일 규약(messengerNote)을 받아야 '경로를 적으면
+    // 첨부된다'가 작동한다(검수 M-1: 이게 없으면 승인 후속이 규약을 못 받는 유일한 턴이었다).
+    const r = await chat(wsId, item.slug, msg, t.sessionId, item.tg?.chatId ? { source: 'messenger' } : {});
+    await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId, artifacts: r.artifacts });
+    // 결재가 메신저에서 왔으면(item.tg) 후속 보고도 그 방으로 — 이 방송이 없어서 카드가
+    // "이어서 보고합니다"라고 약속하고 영원히 무소식이었다(실사용 제보 2026-07-30). 파일 첨부는
+    // sendTgReply의 경로 규약이 그대로 작동하므로 "승인 = 실제 발송"이 여기서 성립한다.
+    emitNotify({ type: 'approval_followup', wsId, item, reply: r.reply });
     return r;
   } catch (e) {
     // 크루의 자연어 보고 턴이 실패해도(예산 초과·크루 삭제·모델 장애) 사용자는 결과를 알아야 한다.
@@ -82,6 +89,7 @@ async function followUp(wsId, item, approve) {
       ? `${msg}\n\n(자동 보고 실패 — 하지만 위 처리는 완료되었습니다: ${String(e.message || e).slice(0, 120)})`
       : `${msg}\n\n(후속 실행 실패: ${String(e.message || e).slice(0, 160)})`;
     await appendTurn(wsId, item.slug, { userMsg: msg, reply: note, handover: null, sessionId: t.sessionId }).catch(() => {});
+    emitNotify({ type: 'approval_followup', wsId, item, reply: note }); // 실패도 무소식보다 통보가 낫다
     throw e;
   }
 }

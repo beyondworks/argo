@@ -102,3 +102,35 @@ test('mail 지시가 수신 크루 우편함에 실제로 적재된다', async (
   assert.equal(msg.message, '이거 봐줘');
   assert.equal(msg.kind, 'to');
 });
+
+test('approval 지시가 실제 결재함에 등록된다 — "결재가 필요하다" 보고만 하고 정지하던 데드엔드 해소', async () => {
+  // 실사용 스크린샷(2026-07-30): CLI 크루가 결재를 올릴 수단이 없어 말로만 보고 → 결재함이 비어
+  // 사용자가 밟을 절차 자체가 생성되지 않았다. SDK request_approval과 같은 원장에 등록되는지 잠근다.
+  const ws = await newWs();
+  const notes = await runDirectives(ws, 'nobody', [
+    { action: 'approval', request: '완성된 공공기관 제안용 PPT를 텔레그램으로 발송', reason: '사장 지시 산출물 전달' },
+  ]);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /^✓ 결재 올림\(ap-/);
+  assert.match(notes[0], /승인 전에는 그 행동을 실행하지 마라/);
+  const { loadApprovals } = await import('../src/approvals.mjs');
+  const list = await loadApprovals(ws);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].kind, 'action'); // 승인 시 approval-actions가 "이제 실행하라" 후속 턴을 태우는 kind
+  assert.equal(list[0].status, 'pending');
+  assert.match(list[0].action, /PPT를 텔레그램으로 발송/);
+});
+
+test('approval 지시: request 누락은 실패로 보고(성공한 척 금지) + 개행 주입 살균', async () => {
+  const ws = await newWs();
+  const notes = await runDirectives(ws, 'nobody', [
+    { action: 'approval', reason: '이유만 있음' },
+    { action: 'approval', request: '줄바꿈\n주입\t시도', reason: 'r' },
+  ]);
+  assert.match(notes[0], /request/);
+  assert.doesNotMatch(notes[0], /^✓/);
+  const { loadApprovals } = await import('../src/approvals.mjs');
+  const list = await loadApprovals(ws);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].action.includes('\n'), false); // 결재 카드 문구 조작 방어(request_tool_install과 동일 계열)
+});

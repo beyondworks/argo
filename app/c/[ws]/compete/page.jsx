@@ -239,7 +239,7 @@ export default function Compete({ params }) {
                       <div style={{ fontSize: 13, minWidth: 0 }}>
                         {e.status === 'running' && <Skeleton h={80} />}
                         {e.status === 'error' && <p style={{ fontSize: 12, color: 'var(--danger)', margin: 0, whiteSpace: 'pre-wrap' }}>{e.error}</p>}
-                        {e.status === 'done' && <Markdown text={e.reply ?? ''} />}
+                        {e.status === 'done' && <Markdown text={e.reply ?? ''} wsId={ws} />}
                       </div>
                       {e.status === 'done' && !comp.winner && (
                         <button className="btn btn-primary sm" disabled={busy} onClick={() => adopt(ref)} style={{ justifySelf: 'start' }}>
