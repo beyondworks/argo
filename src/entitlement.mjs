@@ -32,9 +32,13 @@ export const trialBadgeState = (trialEndsAt, plan, now = Date.now()) => {
 export async function fetchPlan(sb, ownerId) {
   if (!ownerId) return null; // 오너 미상 — 미확인(낙관 진행)
   try {
-    const { data, error } = await sb.from('entitlements').select('plan').eq('user_id', ownerId).maybeSingle();
+    const { data, error } = await sb.from('entitlements').select('plan, ends_at').eq('user_id', ownerId).maybeSingle();
     if (error) throw new Error(error.message);
-    if (data?.plan === 'pro') return 'pro';
+    // 서버 is_pro와 대칭(마이그레이션 20260730050000) — pro라도 ends_at이 지났으면 무효. 해지·만료
+    // 웹훅 1건이 유실돼도 양쪽에서 저절로 꺼진다(전수리뷰 2026-07-30 #5). ends_at 의미(LS 계약,
+    // lsbilling.mjs): 활성 = null, 해지 예약·만료 = 접근 종료 시각. 파싱 불능은 만료로 보지 않는다(낙관 방향).
+    const ended = data?.ends_at && Date.parse(data.ends_at) <= Date.now();
+    if (data?.plan === 'pro' && !ended) return 'pro';
     // 무행/free — 가입 14일 무료 체험 창인지 판정(서버 is_pro의 OR 조건과 대칭). 세션 본인일 때만 확인 가능.
     // 일시 실패(네트워크·GoTrue 오류)는 파일 불변식대로 null(미확인 낙관) — 체험 중 사용자를 오차단하지 않는다
     // (검수 MEDIUM 2026-07-24). auth 자체가 없는 클라(mock·서비스 모드)만 free 폴백 — 최종 집행은 서버 RLS.

@@ -72,3 +72,18 @@ test('fetchPlan: auth 일시 실패(error 반환) → null (미확인 낙관 —
   const sb = { ...mkSb({ data: null, error: null }), auth: { getUser: async () => ({ data: { user: null }, error: { message: 'network' } }) } };
   assert.equal(await fetchPlan(sb, 'u'), null);
 });
+
+/* ── ends_at 만료 집행(전수리뷰 2026-07-30 #5) — 서버 is_pro(20260730050000)와 대칭 ── */
+test('fetchPlan: pro 행 + ends_at 경과 → free (만료 웹훅 유실돼도 자격이 꺼진다)', async () => {
+  assert.equal(await fetchPlan(mkSb({ data: { plan: 'pro', ends_at: daysAgo(1) }, error: null }), 'u'), 'free');
+});
+test('fetchPlan: pro 행 + ends_at 미래(해지 예약) → pro (그때까지 접근 유지가 LS 계약)', async () => {
+  const future = new Date(Date.now() + 86_400_000).toISOString();
+  assert.equal(await fetchPlan(mkSb({ data: { plan: 'pro', ends_at: future }, error: null }), 'u'), 'pro');
+});
+test('fetchPlan: pro 행 + ends_at null(활성·그랜드파더링) → pro (기존 동작 불변)', async () => {
+  assert.equal(await fetchPlan(mkSb({ data: { plan: 'pro', ends_at: null }, error: null }), 'u'), 'pro');
+});
+test('fetchPlan: pro 행 + ends_at 파싱 불능 → pro (낙관 방향 — 유료 오차단 방지)', async () => {
+  assert.equal(await fetchPlan(mkSb({ data: { plan: 'pro', ends_at: 'garbage' }, error: null }), 'u'), 'pro');
+});

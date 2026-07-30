@@ -894,6 +894,11 @@ async function cycle() {
   if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
   let companyFailed = 0;
   for (const [wsId, owner] of targets) {
+    // 확정 free는 파일 왕복을 걸지 않는다(신규 복원 pull은 예외) — 업로드는 RLS(is_pro)가 거부하는데
+    // 파일 삭제 전파는 소유권 정책(20260723 꼬리: free도 select/delete 허용)상 성공해, 클라우드 사본이
+    // 삭제만 반영하며 단조 감소한다(전수리뷰 2026-07-30 #6). 미확인(null)은 기존 결정대로 낙관 통과
+    // (검수 MEDIUM 2026-07-24 — 유료 오차단 방지). 복원되면 targets에 실려 다음 사이클부터 스킵된다.
+    if (freePlan && !restoreSet.has(wsId)) continue;
     try {
       const r = await syncCompany(wsId, owner, restoreSet.has(wsId));
       status.companies[wsId] = { ts: Date.now(), ...r };
