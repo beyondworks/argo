@@ -78,3 +78,16 @@ test('loadCapabilities: capabilities.json에 무엇을 써도 무시된다 — �
   assert.deepEqual(await loadCapabilities(ws2), CAPABILITIES, '손상·위조 값도 런타임에 영향이 없다');
   assert.ok(Object.isFrozen(CAPABILITIES), '상수는 동결 — 프로세스 안에서 변조 불가');
 });
+
+test('스캐폴드: 신규 회사에 capabilities.json을 만들지 않는다 — 읽지 않는 파일을 심으면 오해만 남는다', async () => {
+  // 전권 전환 후에도 provision이 {전부 false}를 계속 썼다(#191 분리 검수 INFO). 사장이 그 파일을
+  // 열면 "권한이 다 꺼져 있다"고 읽히는데 런타임은 전권이라, 파일과 실제가 정반대였다.
+  const { existsSync } = await import('node:fs');
+  const { ensureScaffold } = await import('../src/provision.mjs');
+  const { paths } = await import('../src/workspace.mjs');
+  const ws3 = 'apvco3';
+  await mkdir(join(process.env.ARGO_ROOT, ws3), { recursive: true });
+  await ensureScaffold(ws3);
+  assert.equal(existsSync(paths(ws3).capabilities), false, '읽지 않는 능력 파일을 생성하지 않는다');
+  assert.ok(existsSync(paths(ws3).index), '스캐폴드 자체는 정상 동작(회귀 없음)');
+});

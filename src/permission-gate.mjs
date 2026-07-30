@@ -72,7 +72,8 @@ export function makeInWorkRoots(workRoots) {
    실사용 신고(2026-07-22, 크리티컬): 데스크톱은 앱 서버 소스가 로컬에 함께 배포되는 구조라,
    fs 능력이 켜진 크루에게 "앱 디자인 고쳐줘"라고 하면 실행 중인 Argo 코드를 실제로 수정할 수 있었다.
    금지 구역: ① 실행 중인 Argo 코드 루트(dev=레포, 데스크톱=Resources/server) ② ~/.argo(격리 홈·조달
-   도구·자격) ③ WS_ROOT의 다른 회사 워크스페이스·계정 시크릿(교차 테넌트) ④ 자기 워크스페이스 직속
+   도구·자격)와 벤더 자격(~/.codex·~/.claude·~/.gemini, 그리고 홈 직속 ~/.claude.json·~/.mcp.json —
+   HARD_HOME_PATHS) ③ WS_ROOT의 다른 회사 워크스페이스·계정 시크릿(교차 테넌트) ④ 자기 워크스페이스 직속
    도트파일(.secrets.json 등 — 회사 자격) ⑤ 자기 워크스페이스 직속 제어 파일·크루 카드(아래 "회사
    금고"). 그 외 자기 워크스페이스 파일은 크루의 책상이라 항상 허용. */
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..'); // src/의 부모 = 실행 중인 Argo 코드 루트
@@ -126,14 +127,24 @@ const WS_CONTROL_DIRS = new Set(['agents', 'chats']);
    크루의 책상이 아니라 실질 피해가 없다 — "버그 같다"고 되돌리지 말 것. */
 const normName = (n) => n.split(':')[0].replace(/[. ]+$/, '').toLowerCase();
 
-/* 하드라인 홈 디렉터리 — canonical 판정(roots().hard)과 Bash 리터럴 방어가 **같은 목록**을 쓴다.
+/* 하드라인 홈 항목 — canonical 판정(roots().hard)과 Bash 리터럴 방어가 **같은 목록**을 쓴다.
    분리 검수 2026-07-30 HIGH: 벤더 자격을 hard에만 넣고 Bash 리터럴에서 빠뜨려, 같은 auth.json이
-   Read/Write/MCP는 deny인데 `cat ~/.codex/auth.json`은 allow였다. 목록이 갈라지면 재발한다. */
-const HARD_HOME_DIRS = [
+   Read/Write/MCP는 deny인데 `cat ~/.codex/auth.json`은 allow였다. 목록이 갈라지면 재발한다.
+   디렉터리와 **홈 직속 파일**이 섞인다(이름이 _DIRS가 아닌 이유) — 자격은 디렉터리 안에만 살지 않는다. */
+const HARD_HOME_PATHS = [
   '.argo',   // 격리 홈·조달 도구·자격
   '.codex',  // Codex CLI 자격(auth.json)
   '.claude', // Claude Code 자격(.credentials.json)
   '.gemini', // gemini-cli 자격(oauth_creds.json)
+  // 홈 직속 **파일** — 위가 디렉터리 접두 비교라 목록 밖이었다(#191 분리 검수 INFO 실측:
+  // `~/.claude.json`은 ALLOW인데 같은 성격의 `~/.claude/.credentials.json`은 DENY로 갈렸다).
+  // 이 파일들은 호스트 MCP 서버 정의를 **env(토큰)까지** 담는다 — market.mjs가 그 env를 그대로
+  // 회사 mcp.json에 복사하고 mcp.json은 시크릿 봉투 대상이라는 것이, 원본이 자격이라는 증거다.
+  // #187의 원칙 그대로: 전권은 파일을 맡긴다는 뜻이지 자격을 넘긴다는 뜻이 아니다.
+  // ⚠ 서버측 경로(listHostMcp·importHostMcp)는 canUseTool을 지나지 않아 그대로 동작한다 —
+  // 막는 것은 "크루의 도구"가 이 파일에 닿는 경로뿐이다(호스트 MCP 가져오기 기능은 회귀 없음).
+  '.claude.json',
+  '.mcp.json',
 ];
 
 /* Bash 리터럴 방어 대상(파일명) — 셸 명령 문자열에 이 이름이 그대로 들어간 순진한 시도를 막는다.
@@ -183,7 +194,7 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
     // 조상이 있으면(/var→/private/var, 정션 홈 Windows 설치) canonical만으론 렉시컬 leg(abs 비교)가
     // 무동작해 "안→밖 심링크"가 빠져나간다(분리 검수 LOW 실측: /tmp 경유 입력이 allow — 이번
     // forbidden-zone 심링크 테스트가 tmpdir에서 그대로 재현했다).
-    const hardRaw = [resolve(appRoot), ...(homeDir() ? HARD_HOME_DIRS.map((d) => join(homeDir(), d)) : [])];
+    const hardRaw = [resolve(appRoot), ...(homeDir() ? HARD_HOME_PATHS.map((d) => join(homeDir(), d)) : [])];
     return {
       ws,
       parent: dirname(ws), // WS_ROOT — 형제 = 다른 회사, 직속 도트파일 = 계정 시크릿·기기 마커
@@ -261,9 +272,9 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
   const denyHard = () => ({ behavior: 'deny', message: FORBIDDEN_MSG[lang === 'en' ? 'en' : 'ko'] });
   // Bash 보완 방어 — 명령 문자열에 금지 구역 경로가 리터럴로 들어간 순진한 시도를 차단한다.
   // (셸은 변수·상대경로로 우회 가능한 프로세스 단위 도구 — 완전 차단이 아니라 1차 방어 + 프롬프트
-  //  지시가 계약. 파일 헤더의 "셸 한계" 참조.) 목록은 하드라인(HARD_HOME_DIRS)과 공유 — 갈라지면
+  //  지시가 계약. 파일 헤더의 "셸 한계" 참조.) 목록은 하드라인(HARD_HOME_PATHS)과 공유 — 갈라지면
   // 같은 파일의 도구별 판정이 갈린다(분리 검수 2026-07-30 HIGH).
-  const bashHardLiterals = [APP_ROOT, ...HARD_HOME_DIRS.flatMap((d) => [...(homeDir() ? [join(homeDir(), d)] : []), `~/${d}`])]; // 틸드 형태 포함(재검수 HIGH — 셸이 확장하는 가장 자연스러운 표기)
+  const bashHardLiterals = [APP_ROOT, ...HARD_HOME_PATHS.flatMap((d) => [...(homeDir() ? [join(homeDir(), d)] : []), `~/${d}`])]; // 틸드 형태 포함(재검수 HIGH — 셸이 확장하는 가장 자연스러운 표기)
   const wsAbs = resolve(wsRoot);
 
   /* 검색 루트가 금고를 품는가 — Grep/Glob은 준 경로 **아래를 재귀**하므로, 경로 자체가 금지가 아니어도

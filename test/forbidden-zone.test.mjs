@@ -257,6 +257,28 @@ test('벤더 자격 하드라인: Read·Write·MCP·Bash 전부 같은 판정(de
   }
 });
 
+test('홈 직속 자격 파일 하드라인: ~/.claude.json·~/.mcp.json도 4경로 전부 deny(디렉터리 접두 비교의 사각)', async () => {
+  // 실측(#191 분리 검수 INFO): 하드라인이 디렉터리 접두 비교라 `~/.claude/.credentials.json`은 deny인데
+  // 홈 **직속** `~/.claude.json`은 ALLOW였다 — Read/Write/MCP allow, Bash만 deny(`.claude` 부분문자열
+  // 우연)로 도구별 판정이 갈렸다. 이 파일은 호스트 MCP 서버 정의를 env(토큰)까지 담는 자격이다.
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  const f = makeIsForbidden(wsRoot);
+  for (const base of ['.claude.json', '.mcp.json']) {
+    // 절대경로·틸드 두 형태 모두 — 한쪽만 단언하면 "정합 달성"이 거짓 확신이 된다(#192 교훈)
+    for (const p of [join(homedir(), base), `~/${base}`]) {
+      assert.equal((await gate('Read', { file_path: p })).behavior, 'deny', `Read ${p}`);
+      assert.equal((await gate('Write', { file_path: p, content: 'x' })).behavior, 'deny', `Write ${p}`);
+      assert.equal((await gate('mcp__fs__read', { path: p })).behavior, 'deny', `MCP ${p}`);
+      assert.equal((await gate('Bash', { command: `cat ${p}` })).behavior, 'deny', `Bash ${p}`);
+    }
+    assert.equal(await f(join(homedir(), base)), true, `isForbidden ${base}`);
+  }
+  // 접두 일치로 번지지 않는다 — 하드라인은 이 두 파일 자신이지 `~/.claude*` 통글롭이 아니다.
+  // (Bash는 `.claude` 리터럴 부분문자열로 여전히 과차단 — 셸 1차 방어의 기존 fail-closed 성질이다.)
+  assert.equal((await gate('Read', { file_path: join(homedir(), '.claude-other.json') })).behavior, 'allow',
+    '이름이 비슷한 무관한 홈 파일은 그대로 허용(과차단 회귀 방지)');
+});
+
 test('chats/ Bash: 토큰 시작 경계에서만 deny — URL·하위 데이터 경로는 오차단하지 않는다(재검수 MEDIUM)', async () => {
   const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
   assert.equal((await gate('Bash', { command: 'cat chats/crew-a.json' })).behavior, 'deny');

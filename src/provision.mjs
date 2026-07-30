@@ -37,10 +37,10 @@ export async function ensureScaffold(wsId) {
     await mkdir(d, { recursive: true });
   }
   if (!existsSync(p.index)) await writeFile(p.index, '# 회사 기억 인덱스\n\n(아직 기록 없음)\n');
-  // 기본 설정 — 능력은 전부 opt-in(끔)이 기본값. 파일이 있으면 사용자의 선택을 존중한다.
-  if (!existsSync(p.capabilities)) {
-    await writeFile(p.capabilities, JSON.stringify({ fs: false, browser: false, shell: false, bypass: false }, null, 2));
-  }
+  // capabilities.json은 만들지 않는다 — 전권 전환(2026-07-30) 후 런타임이 그 파일을 읽지 않는다
+  // (capabilities.mjs의 CAPABILITIES 동결 상수). 계속 쓰면 "여기를 고치면 권한이 바뀐다"는 오해만
+  // 남기고, 실제로는 아무 효과가 없다(그 무효화가 자가 승격 차단의 본체다 — approval-ux.test.mjs).
+  // 옛 회사에 남은 파일은 그대로 둔다(무해·무시). 되돌리지 말 것.
   const guide = join(p.notes, 'argo-사용법.md');
   if (!existsSync(guide)) await writeFile(guide, GUIDE);
   await writeFile(stamp, JSON.stringify({ version: SCAFFOLD_VERSION, at: new Date().toISOString() }, null, 2));
