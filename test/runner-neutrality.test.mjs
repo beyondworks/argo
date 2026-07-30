@@ -6,8 +6,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { homedir } from 'node:os';
 import { openRoots } from '../src/workroots.mjs';
-import { pickRunner } from '../src/runners/catalog.mjs';
-import { excludeWith } from '../src/chat.mjs';
+// 생산자(excludeWith)와 소비자(pickRunner)가 같은 모듈에 산다 — exclude 계약의 주인이 catalog다.
+// (이전엔 excludeWith가 chat.mjs에 있어, 1줄 순수 함수를 쓰려고 에이전트 SDK 임포트 그래프를 통째로 끌었다)
+import { excludeWith, pickRunner } from '../src/runners/catalog.mjs';
 
 test('openRoots — 홈(fs 능력) + 지정 작업 폴더를 이 순서로 연다', () => {
   assert.deepEqual(openRoots({ fs: true }, ['/w1', '/w2']), [homedir(), '/w1', '/w2']);
@@ -165,4 +166,7 @@ test('배선: oneshot 자가치유도 진입에서 제외 목록을 존중한다
   assert.match(src, /resolveRunner\(wsId, null, \{ exclude: __exclude \}\)/, '진입 재해석이 제외 목록을 존중해야 한다');
   assert.match(src, /resolveRunner\(wsId, null, \{ exclude: tried \}\)/, '치유 재해석은 누적 목록으로');
   assert.match(src, /!tried\.includes\(alt\.runner\)/, '이미 시도한 러너 재선택 차단 = 재귀 종료 보장');
+  // 누적 출처 — chat 쪽에 있던 단언의 형제. 인라인 재구현이던 시절엔 이 자리가 무게이트였다(공유 함수로
+  // 바뀌며 chat과 같은 형태로 잠근다). [runner]로 좁히면 프레임마다 앞의 실패를 잊어 무한 핑퐁.
+  assert.match(src, /const tried = excludeWith\(__exclude, runner\)/, '누적 출처가 받은 목록이어야 한다');
 });
