@@ -23,6 +23,7 @@ import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './t
 import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
+import { planSkillInjection } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
@@ -34,11 +35,20 @@ export async function loadSkills(wsId, cap = 6000, lang = 'ko', allow = null) {
   let names = [];
   try { names = (await readdir(dir)).filter((f) => f.endsWith('.md')).sort(); } catch { return ''; }
   if (allow) names = names.filter((n) => allow.includes(n.replace(/\.md$/, '')));
+  const texts = new Map();
+  for (const n of names) texts.set(n, await readFile(join(dir, n), 'utf8'));
+  const { full, ref } = planSkillInjection(names.map((n) => ({ id: n, size: texts.get(n).length })), cap);
   let out = '';
-  for (const n of names) {
-    const text = await readFile(join(dir, n), 'utf8');
-    if (out.length + text.length > cap) break;
-    out += `\n### ${lang === 'en' ? 'Skill' : '스킬'}: ${n.replace(/\.md$/, '')}\n${text.trim()}\n`;
+  for (const n of full) {
+    out += `\n### ${lang === 'en' ? 'Skill' : '스킬'}: ${n.replace(/\.md$/, '')}\n${texts.get(n).trim()}\n`;
+  }
+  // 예산 초과분은 **참조로라도 반드시 알린다** — 존재를 모르면 크루가 "그런 스킬 없다"고 답한다.
+  // skills/는 크루 책상이라 게이트가 열려 있어 Read로 전문을 열 수 있다(그 계약을 여기서 준다).
+  for (const n of ref) {
+    const id = n.replace(/\.md$/, '');
+    out += lang === 'en'
+      ? `\n### Skill: ${id}\n(Body omitted — injection budget exceeded. Read skills/${n} for the full text and apply it when relevant.)\n`
+      : `\n### 스킬: ${id}\n(본문 생략 — 주입 예산 초과. 해당 작업이면 skills/${n} 을 Read로 열어 전문을 적용하라.)\n`;
   }
   return out;
 }
@@ -1018,6 +1028,15 @@ ${lang === 'en'
   for await (const msg of q) {
     if (msg.type === 'system' && msg.subtype === 'init') {
       sid = msg.session_id;
+      // MCP 접속 실측 — 설정값(connectedMcp)만 믿고 "연결된 도구: X"라 단언하던 것 정직화
+      // (제보 2026-07-31: npx 실패·동기화로 온 서버 부재여도 화면·프롬프트는 연결됨 → 크루가
+      // "설치돼 있다는데 없다"). 실패는 원장(events)에 남겨 활동에서 원인 추적 가능하게.
+      for (const sv of msg.mcp_servers ?? []) {
+        if (sv?.status && sv.status !== 'connected' && sv.name !== 'crew') {
+          console.warn(`[argo] MCP 접속 실패(${wsId}): ${sv.name} — ${sv.status}`);
+          appendEvent(wsId, { type: 'mcp', server: sv.name, status: sv.status, slug: agentSlug }).catch(() => {});
+        }
+      }
       await setTurnStatus(wsId, agentSlug, 'memory');
     }
     if (msg.type === 'assistant') {

@@ -225,6 +225,11 @@ export async function saveAgentCard(wsId, slug, md) {
     const cur = parseFrontmatter(await readFile(file, 'utf8'));
     if (cur.runner && meta.runner === undefined) out = setFrontmatterKey(out, 'runner', cur.runner);
     if (cur.model && meta.model === undefined) out = setFrontmatterKey(out, 'model', cur.model);
+    // 스코프·강도도 같은 계약 — 패널이 stale인 채 본문 저장(PUT)하면 칩 토글로 바꾼 skills/mcp가
+    // 옛값으로 되살아나 "설치했는데 이 크루만 안 된다"를 만든다(탐색 A3-4, 제보 2026-07-31).
+    if (cur.skills && meta.skills === undefined) out = setFrontmatterKey(out, 'skills', cur.skills);
+    if (cur.mcp && meta.mcp === undefined) out = setFrontmatterKey(out, 'mcp', cur.mcp);
+    if (cur.effort && meta.effort === undefined) out = setFrontmatterKey(out, 'effort', cur.effort);
   } catch { /* 디스크 읽기 실패 시 들어온 md 그대로 저장 */ }
   await writeJsonAtomic(file, out);
   const saved = parseFrontmatter(out);
