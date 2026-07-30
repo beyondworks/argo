@@ -83,11 +83,17 @@ test('pickRunner — 선호(want)도 exclude 목록에 걸리면 건너뛴다', 
 /* ── 채팅 경로(chat.mjs)의 인증 자가치유 — #192가 oneshot만 목록화해서, **트래픽이 더 많은** 채팅은
    단수 제외 + 재귀 1회로 남아 있었다(분리 검수 MEDIUM-4). claude 401 → codex 실패 → 3번째 시도 없음. ── */
 
-test('excludeWith — 단수·목록·null 어느 이전값이든 누적 목록을 만든다(pickRunner exclude 계약)', () => {
+test('excludeWith — 단수·목록·null 어느 이전값이든 누적 목록을 만든다(pickRunner exclude 계약)', async () => {
   assert.deepEqual(excludeWith(null, 'claude'), ['claude']);
   assert.deepEqual(excludeWith('claude', 'codex'), ['claude', 'codex']); // 단수 하위호환(옛 프레임)
   assert.deepEqual(excludeWith(['claude', 'codex'], 'gemini'), ['claude', 'codex', 'gemini']);
   assert.deepEqual(excludeWith([], 'claude'), ['claude']);
+  // 생산자(excludeWith)와 소비자(pickRunner)가 **같은 정규화**를 봐야 한다. 이 통합의 유일한 이득이
+  // 그건데, 정규화를 다시 갈라놔도 동작은 같아서 전 스위트가 초록이다(분리 검수 LOW-1 실증) — 즉
+  // 다음 사람이 조용히 되돌리면 이 PR의 순이득이 0이 된다. 동작으로 못 잡으니 배선으로 잠근다.
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/runners/catalog.mjs', import.meta.url), 'utf8');
+  assert.match(src, /const skip = new Set\(asList\(exclude\)\)/, 'pickRunner도 asList를 써야 한다 — 재분기는 동작이 같아 행동 테스트로 안 잡힌다');
 });
 
 test('채팅 자가치유 3러너 연쇄 — claude 401 → codex 401 → gemini가 시도를 받는다', () => {
