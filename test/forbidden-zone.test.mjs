@@ -263,6 +263,9 @@ test('chats/ Bash: 토큰 시작 경계에서만 deny — URL·하위 데이터 
   assert.equal((await gate('Bash', { command: 'cat ./chats/crew-a.json' })).behavior, 'deny', './ 접두 우회');
   assert.equal((await gate('Bash', { command: `echo '{"who":"user"}' >> chats/beast.json` })).behavior, 'deny',
     'who:user 주입 = 결재 없는 동료 지시 + 사장 이력 위조(파일 헤더 주석의 위협 그대로)');
+  // 공백 없는 리다이렉트 — 위조 명령의 가장 자연스러운 형태(재검수 3R: 경계 클래스에 <>, 누락)
+  assert.equal((await gate('Bash', { command: `echo '{"who":"user"}' >chats/beast.json` })).behavior, 'deny', '>chats/ 리다이렉트');
+  assert.equal((await gate('Bash', { command: 'cat <chats/beast.json' })).behavior, 'deny', '<chats/ 입력 리다이렉트');
   // 오차단이던 정상 명령 — 크루가 "API 호출이 보호 구역에 막혔다"는 거짓 설명을 하게 됐다
   assert.equal((await gate('Bash', { command: 'curl -s https://api.example.com/v1/chats/123' })).behavior, 'allow', 'URL 경로');
   assert.equal((await gate('Bash', { command: 'ls vault/chats/' })).behavior, 'allow', '책상 하위 데이터');
@@ -281,18 +284,22 @@ test('보호구역 안→밖 심링크: canonical이 밖을 가리켜도 렉시�
   assert.equal(await f(join(hardTmp, 'no-such.txt')), true, '미존재 하위도 렉시컬로 deny');
 });
 
-test('MCP 단일 토큰 인자: 키 인식 — 비경로 키의 일반 단어는 통과, 경로형 키·구분자 동반은 판정(재검수)', async () => {
+test('MCP 단일 토큰 인자: 키∪값 합집합 — 일반 단어만 통과, 금고 특정 값은 키와 무관하게 판정(재검수 3R)', async () => {
   const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
-  // 오차단이던 무해 인자 — "agents"는 태그·채널명·검색어로 흔하다(비경로 키 note/query)
+  // 오차단이던 무해 인자 — "agents"는 태그·채널명·검색어로 흔하다(비경로 키 + 제어 "디렉터리" 단어)
   assert.equal((await gate('mcp__x__y', { note: 'agents' })).behavior, 'allow');
   assert.equal((await gate('mcp__notion__q', { query: 'usage' })).behavior, 'allow');
-  assert.equal((await gate('mcp__x__y', { note: 'capabilities.json 이 뭔가요?' })).behavior, 'allow', '언급은 파일 조작이 아니다');
-  // 경로형 키의 단일 토큰은 판정 — 값 기준 완화가 잃었던 제어 디렉터리 deny 복원(재검수: {path:"agents"}로
-  // agents "파일"을 만들면 스캐폴드 전 회사의 크루 카드 디렉터리 생성이 막힌다)
+  assert.equal((await gate('mcp__x__y', { note: 'capabilities.json 이 뭔가요?' })).behavior, 'allow', '문장은 정확 일치가 아니다');
+  // 값 기준(제어·원장 파일명·도트 접두)은 **키와 무관** — 키만 보면 {to:'mcp.json'}(mcp__fs__move의
+  // {from,to} 시그니처)로 MCP 정의 덮어쓰기 = 임의 command가 열린다(재검수 3R 실측 12케이스).
+  assert.equal((await gate('mcp__x__y', { to: 'mcp.json' })).behavior, 'deny', '비경로 키 + 제어 파일명');
+  assert.equal((await gate('mcp__x__y', { key: 'company.json' })).behavior, 'deny', '키 이름과 무관 — 값이 제어 파일명이면 막는다');
+  assert.equal((await gate('mcp__x__y', { p: '.secrets.json' })).behavior, 'deny', '도트 접두는 키와 무관');
+  // 경로형 키의 단일 토큰은 제어 디렉터리까지 판정({path:'agents'}로 agents "파일"을 만들면
+  // 스캐폴드 전 회사의 크루 카드 디렉터리 생성이 막힌다)
   assert.equal((await gate('mcp__x__y', { path: 'capabilities.json' })).behavior, 'deny');
-  assert.equal((await gate('mcp__x__y', { path: 'agents' })).behavior, 'deny', '제어 디렉터리 — 키 인식으로 복원');
+  assert.equal((await gate('mcp__x__y', { path: 'agents' })).behavior, 'deny', '제어 디렉터리 — 경로형 키');
   assert.equal((await gate('mcp__x__y', { target: 'chats' })).behavior, 'deny');
-  assert.equal((await gate('mcp__x__y', { file_path: '.secrets.json' })).behavior, 'deny', '도트 접두');
   assert.equal((await gate('MultiEdit', { file_path: 'agents', edits: [] })).behavior, 'deny', '미분류 도구도 동일');
   // 구분자·틸드 동반 값은 키와 무관하게 전체 판정
   assert.equal((await gate('mcp__x__y', { p: 'agents/crew-a.md' })).behavior, 'deny', '구분자 동반은 전체 판정');

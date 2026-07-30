@@ -135,7 +135,9 @@ const HARD_HOME_DIRS = [
    보호 구역에 막혔다"는 거짓 설명을 하게 된다(재검수 MEDIUM) — 토큰 시작 경계(행 머리·공백·따옴표·
    셸 연산자 뒤, 선택적 ./)에서만 잡는 정규식으로 좁힌다. 실판정은 isForbidden의 몫, 여기는 1차 방어. */
 const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES];
-const BASH_DIR_RE = new RegExp(String.raw`(^|[\s'"\x60;|&(=])(\.[\\/])?(${[...WS_CONTROL_DIRS].join('|')})[\\/]`, 'i');
+// 경계 클래스에 리다이렉트·쉼표(<>,) 포함 — `>chats/b.json`(공백 없는 리다이렉트)이 위조 명령의 가장
+// 자연스러운 형태다(재검수 3R). 잔여: `../`·`$PWD/` 간접 표기는 파일 헤더의 셸 한계 범위(실판정은 isForbidden).
+const BASH_DIR_RE = new RegExp(String.raw`(^|[\s'"\x60;|&(=<>,])(\.[\\/])?(${[...WS_CONTROL_DIRS].join('|')})[\\/]`, 'i');
 
 /** p가 금지 구역인가 — 판정 전 자기 워크스페이스 안(inWorkspace)이 먼저 통과됐다는 전제의 2차 검사.
     canonical(실경로) 기준 — 심링크로 금지 구역을 우회하지 못한다.
@@ -300,9 +302,17 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       if (v.length > 4096) continue;
       const vv = v.trim();
       if (vv.includes('\n')) continue;
-      // 구분자 없는 단일 토큰 — 일반 단어(태그·검색어·메모)일 확률이 높아 **키가 경로형일 때만**
-      // 경로 후보로 본다. 구분자(또는 ~) 동반 값은 키와 무관하게 전체 판정을 탄다.
-      if (!vv.includes('/') && !vv.includes('\\') && !vv.startsWith('~') && !PATHY_KEY_RE.test(String(k))) continue;
+      // 구분자 없는 단일 토큰 — (a) 키가 경로형이거나 (b) **값 자체가 금고를 특정**(제어·원장 파일명,
+      // 도트 접두)할 때만 경로 후보로 본다. 키만 보면 비경로 키({to:'mcp.json'} — mcp__fs__move의
+      // {from,to} 시그니처)로 제어 파일 쓰기가 열리고(재검수 3R: MCP 정의 덮어쓰기 = 임의 command),
+      // 값만 보면 제어 디렉터리 단어({note:'agents'})가 오차단된다. 합집합이 정답 — 제어 "디렉터리"
+      // (agents·chats)만 키 게이트에 남는다(그것이 오차단을 만든 유일한 값이었다).
+      // 구분자(또는 ~) 동반 값은 키와 무관하게 전체 판정을 탄다.
+      if (!vv.includes('/') && !vv.includes('\\') && !vv.startsWith('~')) {
+        const n = normName(vv);
+        const valueHit = n.startsWith('.') || WS_CONTROL_FILES.has(n) || WS_LEDGER_FILES.has(n);
+        if (!valueHit && !PATHY_KEY_RE.test(String(k))) continue;
+      }
       if (await isForbidden(vv, 'write')) return true; // 인자는 쓰기일 수 있다 — 넓은 쪽으로 판정
     }
     return false;
