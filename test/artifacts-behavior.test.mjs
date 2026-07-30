@@ -36,7 +36,10 @@ const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;
 const { chat } = await import('../src/chat.mjs');
 
-test('CLI 러너 턴이 만든 파일이 반환 artifacts에 실린다(검수 CRITICAL-2 — 제보 재현의 역)', async () => {
+// Windows 스킵 — 가짜 codex가 POSIX 셸 스크립트라 실행 불가(CI 실측: PATH 미인식 → 실조달
+// 14초 시도 후 실패). 검증 대상(chat.mjs 배선·diff 수집)은 플랫폼 무관 JS이고 macOS CI가 커버.
+test('CLI 러너 턴이 만든 파일이 반환 artifacts에 실린다(검수 CRITICAL-2 — 제보 재현의 역)',
+  { skip: process.platform === 'win32' ? 'POSIX 셸 하네스 — 배선 검증은 macOS CI가 담당' : false }, async () => {
   const WS = 'beh-cli';
   await mkws(WS, {});
   await writeFile(join(ROOT, WS, 'agents', 'crew-a.md'), '---\nname: 크루A\nrunner: codex\n---\n\n전문가.\n');
