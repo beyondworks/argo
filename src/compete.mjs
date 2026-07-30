@@ -109,7 +109,7 @@ export async function startCompetition(wsId, prompt, spec) {
         const r = await chat(wsId, e.slug, wrap(text), null, { source: 'compete', runnerOverride: e.runner, modelOverride: e.model });
         await update(wsId, comp.id, (c) => {
           const me = c.entrants.find((x) => (x.key ?? x.slug) === (e.key ?? e.slug));
-          if (me) { me.status = 'done'; me.reply = r.reply; me.ms = Date.now() - t0; me.sessionId = r.sessionId ?? null; }
+          if (me) { me.status = 'done'; me.reply = r.reply; me.ms = Date.now() - t0; me.sessionId = r.sessionId ?? null; me.artifacts = r.artifacts ?? []; }
         });
       } catch (err) {
         await update(wsId, comp.id, (c) => {
@@ -182,6 +182,7 @@ export async function adoptWinner(wsId, id, ref) {
   await appendTurn(wsId, w.slug, {
     userMsg: `(경쟁 시안 채택) ${comp.prompt}`,
     reply: w.reply, handover: null, sessionId: w.sessionId ?? null,
+    artifacts: w.artifacts, // 시안 턴이 만든 산출물 — 채택 시 스레드 칩으로(수집은 chat()의 diff)
   }).catch(() => {});
   return comp;
 }

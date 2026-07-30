@@ -23,6 +23,7 @@ import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './t
 import { registerTurn } from './turn-abort.mjs';
 import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
+import { snapshotArtifacts, diffArtifacts, servableArtifact } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
     allow = 크루별 사용 범위(parseScopeList 결과): null=전체(기본), []=없음, [이름]=지정만.
@@ -145,7 +146,7 @@ ${skills ? `\n## Company skills — auto-injected every turn; apply them to matc
 - So if asked "is my context stored in the cloud safe / isolated?", answer: "Yes — it's isolated per account and stored safely." Do not invent extra assurances (specific certifications, audits) beyond this.
 
 ## Folder hygiene — don't clutter things up and then get lost in them
-- Collect project outputs and materials under vault/projects/${today.replaceAll('-', '')}_project-name/ (e.g. vault/projects/${today.replaceAll('-', '')}_newsletter-renewal/).
+- Collect project outputs and materials under vault/projects/${today.replaceAll('-', '')}_project-name/ (e.g. vault/projects/${today.replaceAll('-', '')}_newsletter-renewal/). **Files meant for the captain go here (or vault/files/), always** — that is what feeds the chat download chips, Telegram attachments and the memory screen. You can write elsewhere, but unless the captain named a specific folder, don't: files outside never reach them in the app.
 - Folder and file names must be human-readable only: "date_task-name" or "topic-slug". No random alphanumeric IDs or UUIDs.
 - If one topic scatters across several files, merge them into a single topic note connected with [[links]].
 
@@ -219,7 +220,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 - "클라우드에 저장된 내 맥락이 안전하냐 / 격리돼 있냐"는 질문에는 "네, 계정별로 격리되어 있고 안전하게 보관됩니다"라고 답하라. 근거 없는 추가 보증(특정 인증·감사 취득 등)은 지어내지 마라.
 
 ## 폴더 정리 — 스스로 어질러 놓고 헤매지 마라
-- 프로젝트성 산출물·자료는 vault/projects/${today.replaceAll('-', '')}_프로젝트명/ 아래에 모아라 (예: vault/projects/${today.replaceAll('-', '')}_뉴스레터-리뉴얼/).
+- 프로젝트성 산출물·자료는 vault/projects/${today.replaceAll('-', '')}_프로젝트명/ 아래에 모아라 (예: vault/projects/${today.replaceAll('-', '')}_뉴스레터-리뉴얼/). **사장에게 전달할 파일은 반드시 여기(또는 vault/files/)에 둔다** — 여기 있어야 채팅의 다운로드 칩·텔레그램 첨부·기억 화면에 실린다. 파일 능력상 다른 곳에도 쓸 수는 있지만, 사장이 특정 폴더를 지정하지 않았다면 밖에 두지 마라(앱에서 못 받는다).
 - 폴더·파일 이름은 사람이 읽는 형식만: "날짜_작업명" 또는 "주제-슬러그". 랜덤 영숫자 ID·UUID 이름 금지.
 - 같은 주제가 여러 파일로 흩어지면 주제 노트 하나로 합치고 [[링크]]로 잇는다.
 
@@ -388,7 +389,7 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
         const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug] });
         // 위임 트레이스 — 대상 크루의 대화에도 남긴다(세션은 건드리지 않음). 웹에서 양쪽 다 보인다.
         const { appendTurn } = await import('./thread.mjs');
-        await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null, via: 'delegate' })
+        await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null, via: 'delegate', artifacts: r.artifacts })
           .catch(() => {});
         // 그룹 대화 미러 — 메신저 그룹에서 시작된 턴이면 상대 크루 봇이 같은 방에 결과를 발화한다(게이트웨이가 수신)
         // mirrorCtx를 이벤트에 직접 실어 보낸다 — 전역 맵 조회(동시 턴 오배달 위험)를 없앤다
@@ -638,7 +639,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
         gist: userMsg.replace(/\s+/g, ' ').trim().slice(0, 60), ok: true, ms: 0, budgetBlocked: true,
         journalRel: relative(p.vault, handover.file),
       });
-      return { reply, sessionId: null, handover };
+      const artifacts = diffArtifacts(artBefore, await snapshotArtifacts(p.vault).catch(() => new Map())).filter(servableArtifact);
+      return { reply, sessionId: null, handover, artifacts };
     }
   }
   const { md, meta } = await readAgentCard(wsId, agentSlug);
@@ -695,6 +697,10 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
         ? `## Context shared via cc — what the captain instructed a colleague and the results (shared for your awareness)\n${sharedNotes.join('\n\n---\n\n')}\n\n## Captain's new instruction\n`
         : `## 참조로 공유된 맥락 — 사장이 동료에게 지시한 내용과 결과(너도 알아 두라고 공유됨)\n${sharedNotes.join('\n\n---\n\n')}\n\n## 사장의 새 지시\n`)
     : '';
+
+  // 산출물 스냅샷(턴 전) — 러너·도구 무관 수집의 기준점. SDK tool_use 관측은 Bash·MCP·CLI 러너가
+  // 만든 파일을 원리적으로 못 봐(제보 2026-07-30: "만들었다는데 못 찾는다") 파일시스템 diff가 정본.
+  const artBefore = await snapshotArtifacts(p.vault).catch(() => new Map());
 
   // 외부 CLI 러너(Codex/Gemini/Antigravity) — 로컬 OAuth 로그인(구독)을 빌려 1턴 실행. 세션은 스레드 맥락으로 잇는다.
   if (isCliRunner(runner)) {
@@ -817,6 +823,7 @@ ${lang === 'en'
       await clearTurnStatus(wsId, agentSlug);
       const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, journalRel: relative(p.vault, handover.file), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
+      // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파).
       return { reply, sessionId: null, handover };
     } catch (e) {
       let aborted = abortReg.wasAborted();
@@ -1120,6 +1127,9 @@ ${lang === 'en'
     ...evBase, ok: true, ms: Date.now() - t0, steps,
     ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
   });
-  // 일지(handover)는 전용 칩이 이미 있다 — 산출물 칩과 중복 방지
-  return { reply, sessionId: sid, handover, artifacts: [...artifacts].filter((r) => !r.startsWith('journal/')) };
+  // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
+  // servableArtifact 하나로 통일: journal/은 전용 칩과 중복이라 제외, 비md는 files API 서빙 접두만
+  // (칩은 뜨는데 누르면 400 나던 수집-서빙 불일치 봉인 — 탐색 G8).
+  for (const r of diffArtifacts(artBefore, await snapshotArtifacts(p.vault).catch(() => new Map()))) artifacts.add(r);
+  return { reply, sessionId: sid, handover, artifacts: [...artifacts].filter(servableArtifact).sort() };
 }

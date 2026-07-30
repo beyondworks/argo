@@ -73,7 +73,7 @@ async function followUp(wsId, item, approve) {
   const t = await loadThread(wsId, item.slug);
   try {
     const r = await chat(wsId, item.slug, msg, t.sessionId);
-    await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId });
+    await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId, artifacts: r.artifacts });
     return r;
   } catch (e) {
     // 크루의 자연어 보고 턴이 실패해도(예산 초과·크루 삭제·모델 장애) 사용자는 결과를 알아야 한다.

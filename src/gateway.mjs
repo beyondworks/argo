@@ -60,7 +60,7 @@ function makeJobHandler(wsId) {
       const t = await chat(wsId, slug, `[장시간 작업: ${title}] ${job.prompt}`, null, { source: 'job' });
       await appendTurn(wsId, slug, {
         userMsg: pick(`(장시간 작업) ${title}`, `(Long task) ${title}`, lang),
-        reply: t.reply, handover: t.handover, sessionId: t.sessionId, via: 'job',
+        reply: t.reply, handover: t.handover, sessionId: t.sessionId, via: 'job', artifacts: t.artifacts,
       }).catch(() => {});
       await appendEvent(wsId, { type: 'job', slug, title, status: 'done' }).catch(() => {});
       notify({ type: 'job', wsId, slug, title, ok: true, reply: t.reply });
@@ -164,7 +164,7 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
   const t = await loadThread(wsId, r.slug);
   // 그룹에서 온 턴이면 mirrorCtx로 전달 — 위임 미러가 이 턴의 방으로만 발화(전역 맵 오배달 제거)
   const turn = await chat(wsId, r.slug, r.msg, t.sessionId, { source: 'messenger', attachments, mirrorCtx: /group/.test(ctx?.chatType ?? '') ? ctx : null });
-  await appendTurn(wsId, r.slug, { userMsg: r.msg, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments });
+  await appendTurn(wsId, r.slug, { userMsg: r.msg, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts });
   // cc 크루에게 맥락 공유 — 실행은 to 크루만(폭주 방지), 나머지는 다음 턴에 이 맥락을 알고 시작한다
   let footer = '';
   if (r.cc?.length) {
@@ -330,7 +330,7 @@ async function runAgentTurn(wsId, slug, text, attachments, ctx) {
   }
   const t = await loadThread(wsId, slug);
   const turn = await chat(wsId, slug, text, t.sessionId, { source: 'messenger', attachments, mirrorCtx: /group/.test(ctx?.chatType ?? '') ? ctx : null });
-  await appendTurn(wsId, slug, { userMsg: text, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments });
+  await appendTurn(wsId, slug, { userMsg: text, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts });
   return turn.reply; // 봇 자체가 그 크루 — 이름 프리픽스 불필요
 }
 
