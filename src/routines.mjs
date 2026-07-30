@@ -151,7 +151,7 @@ export async function runRoutine(wsId, id) {
     // 사장 직접 대화·위임·쪽지 배달은 전부 appendTurn을 한다 — 루틴만 비대칭이었다.
     // 기록 실패는 무증상으로 삼키지 않는다(비용은 나갔는데 화면에 없다 — scheduler의 쪽지 경로와 동일 규칙).
     const { appendTurn } = await import('./thread.mjs');
-    await appendTurn(wsId, r0.agentSlug, { userMsg: `[루틴: ${r0.title}] ${r0.prompt}`, reply: t.reply, handover: t.handover, sessionId: null })
+    await appendTurn(wsId, r0.agentSlug, { userMsg: `[루틴: ${r0.title}] ${r0.prompt}`, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine' })
       .catch((e) => console.error(`[argo] 루틴 스레드 기록 실패(${wsId}/${r0.agentSlug}):`, e.message));
     const summary = t.reply.replace(/\s+/g, ' ').slice(0, 160);
     // 1회 예약은 성공 후 스스로 꺼진다 — 다음 날 같은 시각에 되살아나지 않게(실패 시엔 켜둬 당일 재시도 허용)

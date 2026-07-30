@@ -56,7 +56,7 @@ function makeJobHandler(wsId) {
       const t = await chat(wsId, slug, `[장시간 작업: ${title}] ${job.prompt}`, null, { source: 'job' });
       await appendTurn(wsId, slug, {
         userMsg: pick(`(장시간 작업) ${title}`, `(Long task) ${title}`, lang),
-        reply: t.reply, handover: t.handover, sessionId: t.sessionId,
+        reply: t.reply, handover: t.handover, sessionId: t.sessionId, via: 'job',
       }).catch(() => {});
       await appendEvent(wsId, { type: 'job', slug, title, status: 'done' }).catch(() => {});
       notify({ type: 'job', wsId, slug, title, ok: true, reply: t.reply });

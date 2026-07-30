@@ -31,7 +31,17 @@ export async function POST(req, { params }) {
       .filter((a) => typeof a?.rel === 'string' && a.rel.startsWith('files/') && !a.rel.includes('..'))
       .map((a) => ({ rel: a.rel, name: String(a.name ?? ''), mime: String(a.mime ?? ''), isImage: !!a.isImage }))
       .slice(0, 8);
-    const t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
+    let t;
+    try {
+      t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
+    } catch (e) {
+      // 실패·중단 턴도 스레드에 남긴다 — 성공 뒤에만 저장하면 지시문이 새로고침에 증발하고 비용만
+      // 남는다(전수리뷰 2026-07-30 #1). UI는 m.failed로 사유+재전송을 그린다(기존 낙관 사본 패턴).
+      const failed = String(e.message || e);
+      await appendTurn(ws, slug, { userMsg: message.trim(), failed, attachments }).catch(() => {});
+      nudgeSync();
+      return Response.json({ error: failed }, { status: 500 });
+    }
     // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
     await appendTurn(ws, slug, { userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts });

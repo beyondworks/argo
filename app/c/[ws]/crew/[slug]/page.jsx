@@ -503,7 +503,8 @@ export default function CrewChat({ params }) {
       setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts }]);
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
-      // 실패 턴은 서버에 저장되지 않는다 — 글은 스레드에 남겨 두고 실패 표시만 붙인다(재전송 버튼이 그대로 재시도 경로)
+      // 실패 턴도 서버가 보존한다(route.js가 failed로 appendTurn) — 로컬 사본엔 표시만 붙이고,
+      // 새로고침하면 서버 사본이 그대로 이 자리를 대체한다(재전송 버튼이 재시도 경로)
       const msg = String(err.message);
       const label = msg === '중단됨' ? t('chat.aborted') : t('chat.turnFailed', { msg });
       setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed: label } : m)));
@@ -729,7 +730,14 @@ export default function CrewChat({ params }) {
           </div>
         )}
         {((viewing ? archMsgs : thread) ?? []).map((m, i) =>
-          m.who === 'user' ? (
+          m.who === 'user' && m.via ? (
+            /* 배달 지시(쪽지·위임·루틴) — 사장 말풍선(우측)과 구분해 좌측 중립 카드로. who:'user'는
+               러너 프롬프트 관점의 역할일 뿐 사장이 쓴 글이 아니다(신고 2026-07-28 "내가 쓴 게 아니거든"). */
+            <div key={i} className="fade-up" style={{ alignSelf: 'flex-start', maxWidth: '85%', display: 'grid', gap: 4 }}>
+              <span className="microlabel" title={t('chat.via.hint')} style={{ color: 'var(--fg-3)' }}>{t(`chat.via.${m.via}`)}</span>
+              <div className="card" style={{ padding: '10px 13px', fontSize: 12.5, color: 'var(--fg-2)', whiteSpace: 'pre-wrap' }}>{m.text}</div>
+            </div>
+          ) : m.who === 'user' ? (
             <div key={i} className="msg-wrap fade-up" style={{ alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '75%' }}
               ref={(el) => { if (!m.mid) return; if (el) msgRefs.current.set(m.mid, el); else msgRefs.current.delete(m.mid); }}>
               <div className="msg-user" style={{ alignSelf: 'auto', maxWidth: '100%', whiteSpace: 'pre-wrap', ...(m.failed ? { opacity: 0.72 } : {}) }}>

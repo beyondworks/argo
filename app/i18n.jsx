@@ -750,6 +750,12 @@ const DICT = {
   'chat.annotate.msgHead': ['부분 코멘트 — 아래 표시한 부분만 고쳐 주세요. 나머지는 그대로 유지하세요.', 'Inline comments — revise only the marked parts. Keep everything else as is.'],
   'chat.copied': ['복사됨', 'Copied'],
   'chat.resend': ['다시 보내기', 'Resend'],
+  // 배달 지시 출처표식 — 사장 말풍선과 구분(신고 2026-07-28 "내가 쓴 게 아니거든")
+  'chat.via.crewmail': ['동료 쪽지', 'Crew mail'],
+  'chat.via.delegate': ['동료 위임', 'Delegated'],
+  'chat.via.routine': ['루틴 실행', 'Routine run'],
+  'chat.via.job': ['장시간 작업', 'Long task'],
+  'chat.via.hint': ['사장이 쓴 글이 아니라 자동 배달된 지시입니다', 'Delivered automatically — not written by you'],
   'chat.newChatConfirm': ['새 대화를 시작할까요? 지금 대화는 보관함에 적재되고(삭제 아님), 회사 기억(vault)도 그대로 남습니다.', 'Start a new chat? The current thread is archived (not deleted), and company memory stays intact.'],
   'chat.cardTitle': ['크루 카드', 'Crew Card'],
   'chat.systemPromptEq': ['= System Prompt', '= System Prompt'],
