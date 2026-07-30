@@ -12,8 +12,15 @@
 import { resolve, dirname, join, basename, sep, isAbsolute } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { homedir } from 'node:os';
 import { fold, insideFold } from './pathcase.mjs';
+
+// 홈은 env로만(HOME/USERPROFILE) — node:os homedir()를 **동적 join**(map/flatMap·slice 인자)에 쓰면
+// Next 추적기(nft)가 빌드타임 부분평가로 홈 루트를 통글롭해 Windows 릴리스 빌드가 죽는다
+// (v0.1.35 릴리스 CI 실측: WindowsApps EACCES → Failed to compile. v0.1.30에서 chat.mjs로 확정한
+// 불변식의 재발 — v0.1.34까지의 `join(homedir(),'.argo')` 같은 **상수 join**은 그 폴더만 훑어 관용됐고,
+// #187의 동적 join이 트리거였다). env 부재는 비실재 환경(launchd·Windows·systemd 전부 설정) —
+// 그래도 비면 틸드 확장을 fail-closed(deny)로 보수화한다(아래 isForbidden).
+const homeDir = () => process.env.HOME ?? process.env.USERPROFILE ?? '';
 
 // 경로 인자를 갖는 읽기 도구 — 워크스페이스 경계를 적용한다(P1-5). TodoWrite는 경로가 없어 별도(항상 허용).
 const READ_FILE_TOOLS = new Set(['Read', 'Glob', 'Grep']);
@@ -176,7 +183,7 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
     // 조상이 있으면(/var→/private/var, 정션 홈 Windows 설치) canonical만으론 렉시컬 leg(abs 비교)가
     // 무동작해 "안→밖 심링크"가 빠져나간다(분리 검수 LOW 실측: /tmp 경유 입력이 allow — 이번
     // forbidden-zone 심링크 테스트가 tmpdir에서 그대로 재현했다).
-    const hardRaw = [resolve(appRoot), ...HARD_HOME_DIRS.map((d) => join(homedir(), d))];
+    const hardRaw = [resolve(appRoot), ...(homeDir() ? HARD_HOME_DIRS.map((d) => join(homeDir(), d)) : [])];
     return {
       ws,
       parent: dirname(ws), // WS_ROOT — 형제 = 다른 회사, 직속 도트파일 = 계정 시크릿·기기 마커
@@ -197,7 +204,11 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
     // 선행 ~ 확장(재검수 HIGH) — 미확장이면 `~/.codex/...`가 워크스페이스 상대경로로 오해석돼
     // (<ws>/~/.codex) 하드라인이 통째로 열린다. Bash는 셸이 확실히 확장하고(cat ~/.codex/auth.json
     // 실유출 재현), MCP/Read도 소비 측 expanduser가 흔해 같은 형태를 같은 판정으로 묶는다.
-    const pt = p === '~' ? homedir() : (p.startsWith('~/') || p.startsWith('~\\')) ? join(homedir(), p.slice(2)) : p;
+    // 틸드인데 홈을 모르면(env 부재) 확장 불가 = 판정 불가 → deny(fail-closed). 미확장 통과는
+    // `~/.codex/...`가 워크스페이스 상대경로로 오해석돼 하드라인이 통째로 열리는 방향이라 금지.
+    const tilde = p === '~' || p.startsWith('~/') || p.startsWith('~\\');
+    if (tilde && !homeDir()) return true;
+    const pt = p === '~' ? homeDir() : tilde ? join(homeDir(), p.slice(2)) : p;
     const abs = pt.startsWith('/') ? resolve(pt) : resolve(wsAbs, pt);
     // 대상 자신의 경로를 유지한 채 canonical화한다. 이전처럼 미존재 대상을 부모로 통째 대체하면
     // 대상이 워크스페이스 루트 자체로 판정되어 "직속 파일" 검사가 불발된다 — 존재하지 않는
@@ -252,7 +263,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
   // (셸은 변수·상대경로로 우회 가능한 프로세스 단위 도구 — 완전 차단이 아니라 1차 방어 + 프롬프트
   //  지시가 계약. 파일 헤더의 "셸 한계" 참조.) 목록은 하드라인(HARD_HOME_DIRS)과 공유 — 갈라지면
   // 같은 파일의 도구별 판정이 갈린다(분리 검수 2026-07-30 HIGH).
-  const bashHardLiterals = [APP_ROOT, ...HARD_HOME_DIRS.flatMap((d) => [join(homedir(), d), `~/${d}`])]; // 틸드 형태 포함(재검수 HIGH — 셸이 확장하는 가장 자연스러운 표기)
+  const bashHardLiterals = [APP_ROOT, ...HARD_HOME_DIRS.flatMap((d) => [...(homeDir() ? [join(homeDir(), d)] : []), `~/${d}`])]; // 틸드 형태 포함(재검수 HIGH — 셸이 확장하는 가장 자연스러운 표기)
   const wsAbs = resolve(wsRoot);
 
   /* 검색 루트가 금고를 품는가 — Grep/Glob은 준 경로 **아래를 재귀**하므로, 경로 자체가 금지가 아니어도

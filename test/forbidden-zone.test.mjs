@@ -318,3 +318,28 @@ test('SDK allowedTools 불변식: bare mcp__는 자체 크루 서버뿐 + 동결
   assert.equal(Object.isFrozen(SDK_ALLOWED_TOOLS), true, 'CAPABILITIES와 같은 동결 계약');
   assert.throws(() => { SDK_ALLOWED_TOOLS.push('mcp__evil'); }, /frozen|read only|not extensible|Cannot add/i);
 });
+
+// ── nft 홈 글롭 트립와이어(v0.1.35 릴리스 CI 실측) ─────────────────────────────────
+// permission-gate가 node:os를 임포트해 homedir()를 동적 join에 쓰면 Next 추적기가 홈 루트를
+// 통글롭해 Windows 릴리스 빌드가 죽는다(WindowsApps EACCES — v0.1.30 chat.mjs 불변식과 동일).
+// 홈은 env(HOME/USERPROFILE)로만. 이 단언은 임포트 자체를 금지한다(코멘트 언급은 무해).
+test('트립와이어: permission-gate는 node:os를 임포트하지 않는다(nft 홈 글롭 방지)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/permission-gate.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /from 'node:os'/, 'env 홈(homeDir)만 허용 — 되돌리면 Windows 릴리스 빌드가 깨진다');
+});
+
+test('env 홈 부재 시 틸드 경로는 fail-closed(deny) — 확장 불가 = 판정 불가', async () => {
+  const wsRoot = await mkdtemp(join(tmpdir(), 'argo-fz-home-'));
+  const H = process.env.HOME, U = process.env.USERPROFILE;
+  delete process.env.HOME; delete process.env.USERPROFILE;
+  try {
+    const f = makeIsForbidden(wsRoot);
+    assert.equal(await f('~/.codex/auth.json'), true, '홈 미상 틸드는 deny');
+    assert.equal(await f('~'), true);
+    assert.equal(await f(join(wsRoot, 'vault', 'note.md')), false, '일반 경로 판정은 유지');
+  } finally {
+    if (H !== undefined) process.env.HOME = H;
+    if (U !== undefined) process.env.USERPROFILE = U;
+  }
+});
