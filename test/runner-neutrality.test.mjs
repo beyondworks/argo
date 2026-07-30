@@ -133,12 +133,36 @@ test('배선: chat.mjs 두 실행 경로(CLI·SDK)의 자가치유가 누적 목
   assert.doesNotMatch(src, /!__excludeRunners &&/, '재귀 1회 제한 가드 재유입 금지 — 목록 누적이 종료를 맡는다');
   // AUTH_ERR_RE 한정 유지 — oneshot(어떤 실패든 갈아탐)과 달리 이 경로는 **인증 오류에만** 갈아탄다.
   // 이 한정이 빠지면 일시적 실패로 사용자 고지 없이 실과금 벤더로 넘어간다(범위 확대 금지).
-  // 조건**줄 전체**를 앵커링한다 — 호출 개수만 세면 `|| /rate limit/`를 덧붙여 한정을 깨도 개수는
-  // 2라서 초록이다(분리 검수 MEDIUM-2 변이 실증). 같은 줄의 !aborted·!retriedDown도 함께 잠긴다:
-  // 이 PR이 !__excludeRunner(독립적 두 번째 브레이크)를 지웠으므로 retriedDown은 이제 fresh-retry
-  // 프레임의 이중 치유(중복 실행·이중 과금)를 막는 **유일한** 브레이크다.
-  assert.match(src, /if \(!aborted && AUTH_ERR_RE\.test\(String\(e\.message \|\| e\)\)\) \{/, 'CLI 갈래 발동 조건 = 인증 오류 한정 + abort 가드');
-  assert.match(src, /if \(!aborted && !retriedDown && AUTH_ERR_RE\.test\(String\(e\.message \|\| e\)\)\) \{/, 'SDK 갈래 발동 조건 = 인증 오류 한정 + abort + retriedDown(이중 치유 유일 브레이크)');
+  // 발동 조건은 **골격**으로 비교한다. 개수만 세면(count(AUTH_ERR_RE.test)===2) `|| /rate limit/`를
+  // 덧붙여 한정을 깨도 초록이고(2R MEDIUM-2 실증), 줄을 문자 그대로 앵커링하면 String(e.message || e)를
+  // const로 빼는 **정당한 리팩터**에 거짓 red를 낸다(2R 실증). 인자 속 괄호를 걷어낸 골격은 변수명·인자
+  // 형태에 둔감하면서, OR 확대·가드 삭제·제3 사이트 추가는 전부 골격을 바꾼다.
+  // ⚠ 인자 속 `||`를 걷어내는 것이 핵심이다 — String(e.message || e)의 ||는 조건 OR가 아니다(이 단언의
+  // 1차 작성이 그걸 구분 못 해 출하본에서 거짓 red를 냈고, 변이 배터리 전체가 무효가 됐다).
+  const skeleton = (c) => { let s = c, prev; do { prev = s; s = s.replace(/\([^()]*\)/g, ''); } while (s !== prev); return s.trim(); };
+  const healConds = [...src.matchAll(/if \(([^\n]*AUTH_ERR_RE\.test\([^\n]*)\) \{/g)].map((m) => m[1]);
+  // retriedDown은 이 PR이 !__excludeRunner(독립적 두 번째 브레이크)를 지운 뒤로 fresh-retry 프레임의
+  // 이중 치유(중복 실행·이중 과금)를 막는 **유일한** 브레이크다. 골격 비교가 그 존재를 잠근다.
+  assert.deepEqual(healConds.map(skeleton).sort(), [
+    '!aborted && !retriedDown && AUTH_ERR_RE.test', // SDK 갈래
+    '!aborted && AUTH_ERR_RE.test',                 // CLI 갈래
+  ].sort(), '자가치유 발동 조건 골격 — OR 확대·abort/retriedDown 가드 삭제·제3 사이트를 함께 차단');
+  // 읽는 자리(위)와 **쓰는 자리**를 함께 잠근다 — 대입만 지워도 가드는 항상 참이 되는데 읽는 자리
+  // 단언은 그대로 통과한다(3R MEDIUM-3 실증: 초록). 그 경로: P(claude)가 fresh-retry F를 띄움 →
+  // F가 401로 codex까지 치유·실패 → P가 **다시** 치유해 codex를 두 번 실행한다(P의 tried엔 codex가
+  // 없어 사전 확인을 통과한다) = 중복 실행·이중 과금.
+  assert.match(src, /e = e2; retriedDown = true;/, 'fresh-retry 소진 표시 = 이중 치유 유일 브레이크의 쓰는 자리');
   // 세션 부재 재시도(fresh-retry)는 러너 잘못이 아니다 — 받은 목록을 그대로 넘겨 같은 러너로 재시도한다.
   assert.match(src, /__freshRetry: true, __seedNotes: sharedNotes, __excludeRunners \}/, 'fresh-retry는 제외 목록을 누적하지 않는다');
+});
+
+// 형제 경로 — #192가 oneshot의 재귀 1회 가드도 지웠으므로 종료성이 진입 exclude 한 줄에 걸려 있는데
+// 게이트가 없었다(3R MEDIUM-4 실증: 지워도 초록). chat에 방금 잠근 것과 **완전히 같은 불변식**이라
+// 같은 커밋에서 닫는다 — "같은 계열 갭은 한 라운드 더 돌아 닫는다"(레포 규칙).
+test('배선: oneshot 자가치유도 진입에서 제외 목록을 존중한다 = 종료성의 근거', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  assert.match(src, /resolveRunner\(wsId, null, \{ exclude: __exclude \}\)/, '진입 재해석이 제외 목록을 존중해야 한다');
+  assert.match(src, /resolveRunner\(wsId, null, \{ exclude: tried \}\)/, '치유 재해석은 누적 목록으로');
+  assert.match(src, /!tried\.includes\(alt\.runner\)/, '이미 시도한 러너 재선택 차단 = 재귀 종료 보장');
 });
