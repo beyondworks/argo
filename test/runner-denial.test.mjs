@@ -136,7 +136,19 @@ test('detectDenialNarration: 실측 서술형 4형 + gemini 벤더 줄을 잡는
   assert.equal(detectDenialNarration('그 폴더에는 쓰기 권한이 없어 저장하지 못했습니다.'), true);
   assert.equal(detectDenialNarration('샌드박스 밖이라 저장할 수 없었습니다.'), true);
   assert.equal(detectDenialNarration("I could not write the file: permission denied by the sandbox."), true);
-  assert.equal(detectDenialNarration('The target is outside the allowed directories.'), true);
+  assert.equal(detectDenialNarration('I could not create it: the target is outside the allowed directories.'), true);
+});
+
+test('detectDenialNarration: 보호 구역 거절·조건문 설명·위치 서술은 잡지 않는다(검수 M1·M2)', () => {
+  // 보호 구역 거절은 설계상 의도 — "작업 폴더 등록" 안내는 등록이 100% 거부되는 실패 보장 안내가 된다.
+  assert.equal(detectDenialNarration('그 파일은 회사 제어 파일이라 쓰기 권한이 없어 저장하지 못했습니다. capabilities.json은 전용 도구로 바꿉니다.'), false);
+  assert.equal(detectDenialNarration('Argo 앱 폴더는 보호 구역이라 수정이 차단돼 있습니다.'), false);
+  assert.equal(detectDenialNarration('.secrets.json은 자격 파일이라 읽기·쓰기 모두 거부됐습니다.'), false);
+  assert.equal(detectDenialNarration('That path is outside the workspace and inside a protected zone, so I did not touch it.'), false);
+  // 조건문 설명·위치 서술 — 거부 사건이 아니다.
+  assert.equal(detectDenialNarration('만약 그 폴더에 쓰기 권한이 없으면 이런 오류가 납니다: EACCES.'), false);
+  assert.equal(detectDenialNarration('쓰기 권한이 없다면 설정에서 작업 폴더를 등록하시면 됩니다.'), false);
+  assert.equal(detectDenialNarration('The gate blocks writes outside the workspace by design; your target is inside.'), false);
 });
 
 test('detectDenialNarration: 정상 보고·코드펜스 예시는 잡지 않는다', () => {

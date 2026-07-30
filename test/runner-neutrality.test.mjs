@@ -39,6 +39,38 @@ test('pickRunner — exclude 목록을 받아 남은 러너를 고른다(자가�
   assert.equal(pickRunner(st, null, null).available, true);
 });
 
+// HIGH-1(분리 검수 실증): 반경 인자 세 줄을 지워도 전 게이트가 초록이었다 — 표제 변경의 본체에
+// 게이트가 없던 것. 행동(파일에 실제로 실리는 값) + 배선(호출부) 양쪽을 잠근다.
+test('gemini settings.json이 openRoots를 context.includeDirectories로 싣는다(반경 게이트)', async () => {
+  const { writeGeminiTurnSettings } = await import('../src/runners/gemini.mjs');
+  const { mkdtemp, mkdir, readFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const home = await mkdtemp(join(tmpdir(), 'argo-gset-'));
+  await mkdir(join(home, '.gemini'), { recursive: true });
+  await writeGeminiTurnSettings(home, 'oauth-personal', { fs: true }, ['/w1']);
+  const j = JSON.parse(await readFile(join(home, '.gemini', 'settings.json'), 'utf8'));
+  assert.deepEqual(j.context?.includeDirectories, openRoots({ fs: true }, ['/w1']));
+  await writeGeminiTurnSettings(home, 'oauth-personal', null, []);
+  const j2 = JSON.parse(await readFile(join(home, '.gemini', 'settings.json'), 'utf8'));
+  assert.equal(j2.context, undefined); // caps=null(oneshot) → 반경 키 부재가 안전 기본
+});
+
+test('antigravity 반경 인자 = openRoots(반복형 --add-dir)', async () => {
+  const { agyDirArgs } = await import('../src/runners.mjs');
+  assert.deepEqual(agyDirArgs({ fs: true }, ['/w1']), ['--add-dir', homedir(), '--add-dir', '/w1']);
+  assert.deepEqual(agyDirArgs(null, []), []);
+});
+
+// 배선 트립와이어 — 순수 함수가 맞아도 호출부가 빠지면 반경은 안 실린다(HIGH-1의 나머지 절반).
+// 소스 스캔은 이 레포 선례(no-hardcoded-runner-label)대로 "배선 존재"만 잠근다.
+test('배선: externalExec가 gemini settings·agy 인자에 workRoots를 실제로 넘긴다', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
+  assert.match(src, /writeGeminiTurnSettings\(cred\.home, cred\.authType, caps, workRoots\)/, 'gemini 반경 배선');
+  assert.match(src, /\.\.\.agyDirArgs\(caps, workRoots\)/, 'antigravity 반경 배선');
+});
+
 test('pickRunner — 선호(want)도 exclude 목록에 걸리면 건너뛴다', () => {
   const on = { company: { connected: true, invalid: false } };
   const st = { claude: on, gemini: on };

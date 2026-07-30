@@ -6,9 +6,13 @@
 // codex 크루가 정확히 그랬다 — 루틴 예약을 안내만 하고 실제로 안 걸었다). 응답 텍스트 단언은
 // 이 클래스를 원리적으로 못 잡는다.
 //
-// 사용: node scripts/e2e-runner-parity.mjs   (호스트에 각 CLI 로그인 필요 — 미로그인은 SKIP으로 표기)
+// 사용: npm run build 선행 → node scripts/e2e-runner-parity.mjs
+//   (프로덕션 빌드가 없으면 next start가 못 떠 60초 대기 후 실패한다. 호스트에 각 CLI 로그인 필요 —
+//    미로그인·옵트인 실패는 SKIP/판정으로 표기. PARITY_RUNNERS=콤마목록, PARITY_TASK=outside.)
+// ⚠ PARITY_TASK=outside는 **사용자 실제 홈**에 프로브 파일(argo-parity-probe.txt)을 쓰고 지운다
+//   — 홈 밖 반경이 시험 대상이라 격리 루트로 대체 불가(검수 INFO 명기).
 // ⚠ 격리: 임시 ARGO_ROOT + 별도 포트 + Supabase env 제거(ARGO_ROOT만으론 클라우드가 안 갈린다).
-import { mkdtemp, rm, readFile, writeFile, unlink } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, unlink } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';

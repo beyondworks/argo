@@ -129,6 +129,8 @@ export default function CrewChat({ params }) {
   // 초기 runner는 빈 값 = '자동'. 'claude'를 박으면 카드 로드 실패 시 sel이 초기값에 남고, 이후 강도
   // 변경 한 번이 saveRunner로 runner:'claude'를 PATCH해 **자동 크루가 클로드 고정으로 둔갑**한다
   // (러너 중립성 감사 2026-07-30 — 아래 278행이 경고하던 바로 그 함정).
+  // 잔여(검수 LOW-3): 카드 fetch 실패 시 로드 완료 전 저장이 여전히 무방비다 — 이제 빈 값이라
+  // '명시 지정이 자동으로 풀리는' 방향(중립·복구 가능)이지만, 뿌리(로드 전 저장 가드)는 후속.
   const [sel, setSel] = useState({ runner: '', model: '', effort: '' });
   // 타이틀바 슬롯 — 크루 컨트롤(세션 상태·카드·새 대화)을 topbar에 포털로 꽂는다
   const [slotEl, setSlotEl] = useState(null);

@@ -130,9 +130,11 @@ async function writeGeminiTurnSettings(home, authType, caps, workRoots = []) {
     // context.includeDirectories — 크루의 파일 반경(홈 + 지정 작업 폴더). **이게 없으면 gemini 크루의
     // 책상은 회사 폴더 하나**다: 벤더 도구(write-file·read-file)가 workspace 밖 경로를 거부해, codex
     // 크루는 되는 지시가 gemini 크루만 "허용된 작업 디렉토리 외부"로 거절된다(라이브 재현 2026-07-30).
-    // 설정 파일로 넣는 이유: `--include-directories` CLI 플래그는 0.21.2의 `-p`(비대화) 실행에서
-    // 워크스페이스에 반영되지 않음을 실측했다(직접 넘겨도 workspace가 cwd 하나뿐). 벤더는 두 출처를
-    // 합치므로(config.js: settings.context.includeDirectories ∪ argv) 설정 쪽이 확실하다.
+    // 한계(정직 표기 — 검수 실증): 0.21.2는 settings·플래그 **두 채널 다 비대화(-p)에서 미적용**이다
+    // — 합쳐진 값이 pendingIncludeDirectories에 갇히고 소비처가 대화형 UI 훅 하나뿐(useIncludeDirsTrust).
+    // 상위 버전은 소스상 적용(addDirectories) 예상이나 개인 OAuth 차단(IneligibleTier)으로 라이브 미확인.
+    // 그래도 이 채널을 쓰는 이유: 플래그와 달리 배열이라 콤마 폴더가 안 깨지고, 적용되는 버전에서
+    // 반경이 열리며, 막히는 버전엔 프롬프트 캐비앗·거부 안내가 정직하게 받친다.
     JSON.stringify({
       security: { auth: { selectedType: authType }, folderTrust: { enabled: false } },
       tools: { exclude },

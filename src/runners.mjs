@@ -17,8 +17,13 @@ import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthF
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, codexSandboxArgs } from './runners/codex.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
+
 import { loadSecrets, credType, maskCred } from './runners/creds.mjs';
 import { ensureCliPath, apiError, detectRunners } from './runners/exec.mjs';
+/** antigravity 파일 반경 인자(순수) — openRoots를 반복형 --add-dir로. (export: 회귀 테스트용 —
+    검수 HIGH-1: 반경 인자 세 줄을 지워도 전 게이트가 초록이었다. 인라인 조립은 단위로 못 잠근다.) */
+export const agyDirArgs = (caps, workRoots = []) => openRoots(caps, workRoots).flatMap((r) => ['--add-dir', r]);
+
 
 // ── 분리 모듈 re-export — 기존 임포터·테스트가 쓰는 이름 전부(62개 표면의 나머지 57개) ──
 export { isServerSecretKey, scrubServerSecrets, maskKeyLike, homeEnv } from './runners/shared.mjs';
@@ -126,15 +131,15 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     if (cred?.home && cred?.authType) await writeGeminiTurnSettings(cred.home, cred.authType, caps, workRoots);
     const cmd = await geminiCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     // 파일 반경 — gemini-cli는 workspaceContext(cwd + include-directories) **밖의 읽기·쓰기를 벤더
-    // 도구가 거부**한다. 이걸 안 넘기면 크루 책상이 회사 폴더 하나로 쪼그라들어, 같은 지시가 codex
+    // 도구가 거부**한다. 반경을 안 넘기면 크루 책상이 회사 폴더 하나로 쪼그라들어, 같은 지시가 codex
     // 크루는 되고 gemini 크루는 "허용된 작업 디렉토리 외부"로 거절된다(라이브 재현 2026-07-30).
-    // codex writable_roots와 같은 계산(openRoots) — 러너 중립성은 문구가 아니라 인자로 지킨다.
-    const gRoots = openRoots(caps, workRoots);
+    // 전달 채널은 settings.json(writeGeminiTurnSettings의 context.includeDirectories) **하나만** 쓴다
+    // — `--include-directories` 플래그는 안 쓴다: ① 벤더가 콤마로 분해해 콤마 폴더가 깨진다(분리
+    // 검수 LOW-1) ② 0.21.2에선 두 채널 다 비대화(-p)에서 미적용이라 플래그가 이득도 없다(검수 실증).
     const { stdout } = await exec(cmd.file, [
       ...cmd.args,
       '-p', prompt,
       ...(model ? ['-m', model] : []),
-      ...(gRoots.length ? ['--include-directories', gRoots.join(',')] : []),
       '--approval-mode', 'auto_edit', // 편집류만 자동 승인 — 셸 등은 비대화 모드에서 실행되지 않는다
     ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'gemini'), ...(cred?.env ?? {}) } })
       .catch((e) => { throw cliTurnFailure(e, 'gemini', Date.now() - t0, timeoutMs, { stage: 'exec', kind }); });
@@ -162,8 +167,10 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     const { stdout } = await exec(cmd.file, [
       '-p', prompt,
       ...(model ? ['--model', model] : []),
-      // gemini와 같은 이유·같은 계산 — agy도 워크스페이스 밖을 막는다(플래그는 반복형 --add-dir).
-      ...openRoots(caps, workRoots).flatMap((r) => ['--add-dir', r]),
+      // gemini와 같은 이유·같은 계산(agyDirArgs=openRoots). agy의 워크스페이스 강제 여부는 **추정**
+      // — --add-dir 플래그 존재만 실측(--help), 밖 접근이 실제로 막히는지는 미확인(검수 MEDIUM-3:
+      // 본문과 같은 강도로 표기). 막는 버전이면 이 인자가 열고, 안 막는 버전이면 무해.
+      ...agyDirArgs(caps, workRoots),
       '--mode', 'accept-edits',
       ...(caps?.shell ? [] : ['--sandbox']), // fail-closed(분리 검수 H2) — caps 미전달(oneshot 등)이면 제한 켬. codex 상시 샌드박스와 같은 방향
       ...(agySec >= 25 ? ['--print-timeout', `${agySec}s`] : []),

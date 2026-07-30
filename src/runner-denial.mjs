@@ -70,17 +70,27 @@ const cleanPath = (p) => String(p ?? '').replace(/[.,;:'"`)]+$/, '');
 const FS_NARRATION = [
   /File path must be within one of the workspace directories/i,
   /허용된 작업 (디렉토리|폴더|디렉터리) (외부|밖)/,
-  /(쓰기|저장|생성|수정)[^\n]{0,30}(권한이 없|거부됐|거부되|막혀|차단돼|차단되)/,
+  // 조건 어미 배제(검수 MEDIUM-2) — "권한이 없으면/없다면 이런 오류가 납니다"는 설명이지 거부가 아니다.
+  /(쓰기|저장|생성|수정)[^\n]{0,30}(권한이 없(?!으면|다면|을 경우|는 경우)|거부됐|거부되|막혀|차단돼|차단되)/,
   /샌드박스 (밖|외부)[^\n]{0,20}(써|쓸 수 없|저장|만들)/,
   /(cannot|can'?t|unable to|could not) (write|save|create)[^\n]{0,40}(permission|sandbox|read-only|denied|outside)/i,
-  /outside (the )?(sandbox|workspace|allowed director|permitted director)/i,
+  // 거부 동사 선행 요구(검수 MEDIUM-2) — 위치 서술("the gate blocks writes outside …")만으로는 안 잡는다.
+  /(cannot|can'?t|could not|unable to|failed to|denied|blocked|refus\w+)[^\n]{0,60}outside (the )?(sandbox|workspace|allowed director|permitted director)/i,
 ];
 
-/** 서술형 fs 거부 탐지(순수, loose) — boolean. strict(detectRunnerDenial)가 null일 때만 쓰라. */
+// 보호 구역 담화 — 이 거절은 **설계상 의도**다(제어 파일·자격·앱 폴더). 여기에 "작업 폴더 등록" 안내를
+// 붙이면 등록이 100% 거부되는(validateWorkRoot protected) 실패 보장 안내가 되고, 사장을 자격 반경을
+// 넓히는 방향으로 유인한다(검수 MEDIUM-1). 신규 프롬프트가 크루에게 직접 시키는 발화이기도 하다.
+const PROTECTED_TALK = /보호 구역|protected zone|제어 파일|control file|\.secrets\.json|capabilities\.json|[~/]\.argo/i;
+
+/** 서술형 fs 거부 탐지(순수, loose) — boolean. strict(detectRunnerDenial)가 null일 때만 쓰라.
+    보호 구역 담화가 함께 있으면 false — 그 거절은 결함이 아니라 계약이다. */
 export function detectDenialNarration(text) {
   const s = String(text ?? '');
   if (!s) return false;
-  return unfencedLines(s).some((line) => FS_NARRATION.some((re) => re.test(line)));
+  const lines = unfencedLines(s);
+  if (lines.some((line) => PROTECTED_TALK.test(line))) return false;
+  return lines.some((line) => FS_NARRATION.some((re) => re.test(line)));
 }
 
 /** 생 출력 거부 탐지(순수, strict) — { cap, path } 또는 null. 어느 능력 상태에서든 신뢰한다.
