@@ -676,6 +676,7 @@ const DICT = {
   'vault.saveToMemory': ['기억에 저장', 'Save to memory'],
   'vault.cancel': ['취소', 'Cancel'],
   'vault.empty': ['아직 기록된 기억이 없습니다. 크루와 첫 대화를 나누면 여기에 쌓입니다.', 'No memories recorded yet. Chat with your crew to start building them here.'],
+  'vault.notesEmpty': ['아직 주제 노트가 없습니다 — 위 \'노트 작성\'으로 시작하세요.', 'No topic notes yet — start with \'Write a note\' above.'],
   'vault.graphTitle': ['기억 그래프', 'Memory Graph'],
   'vault.conversation': ['대화', 'Conversation'],
   'vault.note': ['노트', 'Note'],

@@ -232,6 +232,25 @@ export function Clock() {
   return <span className="topbar-clock" suppressHydrationWarning>{now}</span>;
 }
 
+/** [[위키링크]] → 실제 문서 rel 해석 — 기억 페이지·그래프 모달 두 뷰어가 공유하는 단일 정본
+ *  (두 창이 같은 링크에 다르게 반응하면 안 된다 — PR #208 검수 M-3).
+ *  [[이름]]은 vault 루트 rel이 아니라 대개 노트 이름이라 .md만 붙이면 404였다.
+ *  notes/ 접두 추정(경로 포함이면 그대로) → 파일명 → 제목 순으로 docs+산출물(md만 — 비md는
+ *  뷰어(readDoc)가 .md를 강제해 매칭해도 404, 노트 폴백 문구가 더 일관)을 매칭한다.
+ *  대소문자 무시하되 반환은 정본 d.rel — macOS ci-FS에선 내용은 열리는데 selected가
+ *  rel과 불일치해 편집·삭제 버튼이 사라진다(L-2). 동률은 rel 사전순 첫 항목(L-3, 안정 참조). */
+export function resolveWikiRel(name, docs, projects) {
+  const bare = String(name).replace(/\.md$/i, '');
+  const lower = bare.toLowerCase();
+  const guess = bare.includes('/') ? `${bare}.md` : `notes/${bare}.md`;
+  const pool = [...(docs ?? []), ...(projects ?? []).filter((p) => !p.binary)];
+  const pick = (match) => pool.filter(match).map((d) => d.rel).sort()[0];
+  const hit = pick((d) => d.rel.toLowerCase() === guess.toLowerCase())
+    ?? pick((d) => d.rel.toLowerCase().endsWith(`/${lower}.md`))
+    ?? pick((d) => String(d.title ?? '').toLowerCase() === lower);
+  return hit ?? guess;
+}
+
 /** 에이전트 응답(마크다운) 렌더 — raw HTML 이스케이프 + 위험 스킴 href 차단.
     wsId를 주면 vault 상대 링크(산출물)는 죽이지 않고 뷰어/다운로드 URL로 재작성한다 —
     크루에게 "경로를 알려라"고 시켜 놓고 그 링크를 '#'로 죽이던 모순 해소(제보 2026-07-30).

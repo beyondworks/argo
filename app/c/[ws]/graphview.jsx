@@ -3,7 +3,7 @@
 // 전부 실제 관계 엣지다. 3D 포스 시뮬레이션 + 원근 투영 + 잉크 할로, 모달은 드래그 회전·휠 줌.
 import { useEffect, useRef, useState } from 'react';
 import { useLang } from '../../i18n';
-import { Markdown, Spinner, api, timeAgo, tsFromRel, useScrollLock } from '../../ui';
+import { Markdown, Spinner, api, timeAgo, tsFromRel, useScrollLock, resolveWikiRel } from '../../ui';
 
 // 캔버스는 CSS 변수를 직접 못 읽으므로 테마 토큰(--ink-rgb/--paper-rgb)을 여기로 동기화한다.
 // rAF 루프가 매 프레임 이 값을 읽어 그리므로, 값만 갈아끼우면 다음 프레임부터 테마가 반영된다.
@@ -296,8 +296,9 @@ export function Constellation3D({ company, agents, docs, delegations, height = 2
   );
 }
 
-/* ─── 전체화면 3D 그래프 — 드래그 회전 · 휠 줌 · 기억 클릭 = 우측 패널에서 열람 ─── */
-export function GraphModal({ ws, company, agents, docs, delegations, onClose, onSelect }) {
+/* ─── 전체화면 3D 그래프 — 드래그 회전 · 휠 줌 · 기억 클릭 = 우측 패널에서 열람 ───
+   projects는 위키링크 해석(resolveWikiRel)에만 쓴다 — 그래프 노드에는 섞지 않는다(산출물 분리 원칙). */
+export function GraphModal({ ws, company, agents, docs, projects, delegations, onClose, onSelect }) {
   const { t, lang } = useLang();
   useScrollLock();
   const ref = useRef(null);
@@ -456,8 +457,9 @@ export function GraphModal({ ws, company, agents, docs, delegations, onClose, on
                 <button className="btn sm" style={{ flex: 'none' }} onClick={() => setPanelRel(null)} aria-label={t('graph.closeEsc')}>✕</button>
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px' }}>
+                {/* 위키링크 해석은 기억 페이지와 같은 정본(resolveWikiRel) — 두 창이 같은 링크에 같게 반응 */}
                 {panelLoading ? <Spinner /> : (
-                  <Markdown text={panelContent} onWikiLink={(name) => setPanelRel(name.endsWith('.md') ? name : `${name}.md`)} />
+                  <Markdown text={panelContent} onWikiLink={(name) => setPanelRel(resolveWikiRel(name, docs, projects))} />
                 )}
               </div>
             </div>
