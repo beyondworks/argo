@@ -336,6 +336,8 @@ const MSG = {
   auth_denied: { ko: (d) => `인가가 거부되었습니다(${d})`, en: (d) => `Authorization was denied (${d})` },
   no_code: { ko: () => '콜백에 인가 코드가 없습니다', en: () => 'The callback did not carry an authorization code' },
   exchange_failed: { ko: (d) => `토큰 교환에 실패했습니다: ${d}`, en: (d) => `Token exchange failed: ${d}` },
+  // 카탈로그에 없는 id로 연결을 시도(오래된 화면·잘못된 요청) — market.connectConnector가 던진다.
+  not_in_catalog: { ko: (s) => `카탈로그에 없는 커넥터입니다: ${s}`, en: (s) => `No such connector in the catalog: ${s}` },
 };
 /** 사람 문구 — 안정 코드(error)와 분리해서 언어만 고른다. */
 export const connectorMessage = (key, lang, ...a) => (MSG[key][lang === 'en' ? 'en' : 'ko'])(...a);
@@ -408,6 +410,38 @@ export async function listConnectorTools(wsId, serverId) {
     }
     return { ok: false, error: 'call_failed', tools: [] };
   }
+}
+
+/**
+ * 연결 해제 — 저장소에서 그 서버 레코드(토큰·refresh·클라이언트 자격·verifier)를 통째로 지우고 풀을 닫는다.
+ * 순서가 계약이다: **레코드 삭제가 먼저**라야 진행 중이던 호출이 저장소 게이트에서 즉시 not_connected로
+ * 막히고(callConnectorTool은 매 호출 저장소를 읽는다), 그 다음 dropPool이 이미 열린 소켓·메모리 상의
+ * access 토큰을 회수한다. 반대로 하면 닫은 직후 다른 호출이 살아있는 레코드로 풀을 다시 연다.
+ * 원격 서버측 토큰 폐기(revocation)는 하지 않는다 — RFC 7009 지원이 서버마다 갈려 "지운 척"이 되기 쉽다.
+ * 사용자에겐 이 기기에서 자격이 사라지는 것으로 정직하게 표기한다(재연결하면 다시 동의 화면).
+ */
+export async function disconnectConnector(wsId, serverId) {
+  const existed = await withLock(`connector:${wsId}`, async () => {
+    const s = await loadStore(wsId);
+    // hasOwn — `in`은 프로토타입 체인을 타서 'toString'·'__proto__' 같은 이름에 "지웠다"는 거짓 성공과
+    // 불필요한 0600 파일 재기록을 만든다(분리 검수 F1 실측, DELETE 쿼리로 도달 가능).
+    if (!Object.hasOwn(s.servers, serverId)) return false;
+    delete s.servers[serverId];
+    await writeJsonAtomic(storeFile(wsId), s);
+    return true;
+  });
+  dropPool(wsId, serverId);
+  // 한 번 더 쓸어낸다 — 순서(레코드 삭제 → 정리)는 경합 창을 **좁힐 뿐 없애지 못한다**: 호출이
+  // 삭제 직전에 저장소를 읽고 dropPool 직후에 풀을 조회하면 올바른 순서에서도 새 풀이 열린다
+  // (창은 fs 읽기 완료와 그 continuation 디큐 사이의 마이크로태스크 여러 홉이다 — CI가 실제로 밟았고,
+  //  검수가 지연 주입으로 6/6 재현했다).
+  // **이 재회수의 하중은 무보호 서버(위 authUrl:null 경로)다.** 인증이 필요한 서버라면 창에서 열린
+  // 풀은 삭제 이후라 토큰을 못 찾아 auth가 실패하고 entry.ready.catch가 스스로 닫는다(검수 실측:
+  // 경합 결과 reauth_required·closed 델타 2). 무보호 서버는 그 자멸이 없어 정상 연결된 풀이
+  // 유휴 소거(5분)까지 살아남는다 — 그 경로를 이 한 줄이 막는다. 비용은 마이크로태스크 1홉 + 멱등 no-op.
+  await Promise.resolve();
+  dropPool(wsId, serverId);
+  return { ok: true, removed: existed };
 }
 
 /** 회사의 커넥터 연결 상태 목록 — 시크릿 무노출(토큰·verifier 미포함). UI 폴링·상태 표시용. */
