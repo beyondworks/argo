@@ -273,9 +273,13 @@ test('해제 — 없는 연결을 해제해도 터지지 않고 removed:false로
   }
 });
 
-test('해제 순서 — 레코드 삭제가 풀 정리보다 먼저다(뒤집으면 죽은 자격을 문 풀이 되살아난다)', async () => {
-  // 순서를 뒤집으면 해제와 경합한 호출이 아직 살아 있는 레코드로 **새 풀을 연다**(검수 F3 실측:
-  // opened 델타 0 vs 1, 8회 결정적). 관측창은 US-1이 누수 잠금용으로 만든 poolStats다.
+test('해제 — 경합 호출이 있어도 끝나면 열린 풀이 남지 않는다(자격 회수 계약)', async () => {
+  // 검수 F3은 "레코드 삭제 → 풀 정리" 순서를 opened 델타(정상 0 / 뒤집으면 1)로 잠그자고 했고
+  // 로컬 8회에서 결정적이었다. **CI가 그걸 반증했다**(macos-15에서 정상 코드가 4≠3으로 red).
+  // 이유: 올바른 순서도 경합 창을 없애지 못한다 — 호출이 "삭제 전에 저장소를 읽고" + "dropPool 뒤에
+  // 풀을 조회하면" 정상 순서에서도 새 풀이 열린다. 순서는 창을 좁힐 뿐이라 확률 차이지 불변식이 아니고,
+  // 그걸 단언하면 기계 운에 좌우되는 플레이키 게이트가 된다. 그래서 **끝 상태**를 잠근다:
+  // 경합이 무엇을 하든 해제가 끝나면 그 서버의 풀은 닫혀 있어야 한다(코어가 창 뒤에 한 번 더 쓸어낸다).
   const { poolStats } = await import('../src/connectors.mjs');
   const s = await newServer();
   const catalog = [{ id: 'order-live', name: '순서 데모', url: s.mcpUrl, scopes: ['spike.read'], note: '' }];
@@ -284,21 +288,22 @@ test('해제 순서 — 레코드 삭제가 풀 정리보다 먼저다(뒤집으
   assert.equal((await done).ok, true);
   assert.equal((await callConnectorTool(WS, 'order-live', 'search_threads_demo', { query: 'q' })).ok, true);
 
-  const before = poolStats.opened;
+  const beforeOpened = poolStats.opened;
   const beforeClosed = poolStats.closed;
-  // 해제와 호출을 경합시킨다. 올바른 순서면 호출은 (a) 삭제 전에 저장소를 읽어 **이미 열린 풀**을
-  // 쓰거나 (b) 삭제 후 읽어 not_connected로 막힌다 — 어느 쪽이든 **새 풀은 열리지 않는다**.
-  // 순서를 뒤집으면 dropPool이 먼저 닫아버려, 아직 살아 있는 레코드를 읽은 호출이 새 풀을 연다(+1).
-  // 경합 호출의 성공·실패 자체는 타이밍 의존이라 단언하지 않는다(과대 단언 금지).
+  // 해제와 호출을 경합시킨다. 경합 호출의 성공·실패도, 새 풀이 열리는지도 타이밍 의존이라 단언하지
+  // 않는다(그게 CI를 깨뜨린 과대 단언이다). 잠그는 것은 **연 만큼 닫혔는가** 하나다.
   await Promise.all([
     disconnectConnector(WS, 'order-live'),
     callConnectorTool(WS, 'order-live', 'search_threads_demo', { query: 'race' }).catch(() => null),
   ]);
-  assert.equal(poolStats.opened, before, '해제 경합 중 새 연결이 열리면 안 된다(순서가 뒤집히면 +1)');
-  // 순서만 잠그면 dropPool 호출을 통째로 지워도 초록이다(검수 D1 실측) — 해제 후에도 warm 풀이
-  // 살아 있는 access 토큰과 원격 세션을 유휴 소거까지 붙든다. "이 기기에서 자격이 사라진다"는
-  // 사용자 약속과 어긋나므로 회수 자체도 함께 잠근다.
-  assert.equal(poolStats.closed, beforeClosed + 1, '해제는 열린 풀을 닫는다');
+  // dropPool 호출을 통째로 지우면(검수 D1) 해제 후에도 warm 풀이 살아 있는 access 토큰과 원격 세션을
+  // 유휴 소거까지 붙든다 — "이 기기에서 자격이 사라진다"는 사용자 약속과 어긋난다. 경합이 새 풀을
+  // 열었더라도 코어의 사후 정리가 그것까지 닫으므로, 이 등식은 경합 결과와 무관하게 성립한다.
+  assert.equal(
+    poolStats.closed - beforeClosed,
+    poolStats.opened - beforeOpened + 1,
+    '해제 시점의 warm 풀 + 경합이 연 풀까지 전부 닫힌다',
+  );
   // 해제가 끝난 뒤의 호출은 결정적으로 미연결이다.
   assert.equal((await callConnectorTool(WS, 'order-live', 'search_threads_demo', { query: 'after' })).error, 'not_connected');
 });

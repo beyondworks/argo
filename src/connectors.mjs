@@ -431,6 +431,13 @@ export async function disconnectConnector(wsId, serverId) {
     return true;
   });
   dropPool(wsId, serverId);
+  // 한 번 더 쓸어낸다 — 순서(레코드 삭제 → 정리)는 경합 창을 **좁힐 뿐 없애지 못한다**: 호출이
+  // 삭제 직전에 저장소를 읽고 dropPool 직후에 풀을 조회하면, 올바른 순서에서도 살아 있는 토큰을 문
+  // 클라이언트가 새로 열려 유휴 소거(5분)까지 남는다(CI가 이 창을 실제로 밟아 순서 단언을 깨뜨렸다).
+  // 마이크로태스크 하나 뒤에 회수하면 그 창에서 열린 것까지 닫혀, "해제하면 이 기기에서 자격이
+  // 사라진다"는 약속이 경합 결과와 무관하게 성립한다.
+  await Promise.resolve();
+  dropPool(wsId, serverId);
   return { ok: true, removed: existed };
 }
 
