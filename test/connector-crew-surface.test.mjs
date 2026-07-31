@@ -9,11 +9,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import http from 'node:http';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-conn-surface-')); // import보다 먼저
 const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
 const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
-const { startConnect, closeConnectorPools, connectorBriefing, CONNECTOR_SECRETS_BASE } = await import('../src/connectors.mjs');
+const { startConnect, closeConnectorPools, connectorBriefing, CONNECTOR_SECRETS_BASE, BRIEF_DEADLINE_MS } = await import('../src/connectors.mjs');
 const { makeCrewServer, connectorToolDescription, commonDirectives, CONNECTOR_DESC_CAP } = await import('../src/chat.mjs');
 const { createCompany, WS_ROOT } = await import('../src/workspace.mjs');
 const { readEvents } = await import('../src/events.mjs');
@@ -220,4 +221,52 @@ test('배선 — SDK 턴이 턴 요약을 크루 서버와 프롬프트 양쪽�
   assert.match(src, /const connectors = await connectorBriefing\(wsId\)/, 'SDK 턴이 커넥터 요약을 읽지 않는다');
   assert.match(src, /mirrorCtx, lang, connectors\)/, '크루 서버에 요약이 전달되지 않는다');
   assert.match(src, /commonDirectives\(\{ caps, connectedMcp, connectors,/, '시스템 프롬프트에 요약이 전달되지 않는다');
+});
+
+// ── ⑤ 브리핑 데드라인 — 죽은 커넥터가 턴 '시작'을 막지 못한다(분리 검수 MEDIUM) ──
+// node:test 기본 타임아웃은 **무제한**이라 시간 상한을 안 걸면 race를 지워도 60초 뒤 같은 끝 상태로
+// 통과한다(실측: 그 변이가 green이었다). 상한을 건다 — 데드라인 50ms 대 SDK 기본 60초라 여유가
+// 1200배다. 벽시계를 재는 게 아니라 "무한정 물리지 않는다"만 보는 것이라 기계 성능에 안 흔들린다.
+test('무응답 커넥터 — 브리핑이 데드라인에 걸려 빈 목록으로 낙하한다(턴이 인질이 되지 않는다)', { timeout: 10_000 }, async () => {
+  // 타이밍 비의존 하네스: 응답을 **영원히** 안 주는 서버를 세우면 race의 승자가 기계 성능과 무관하게
+  // 데드라인 쪽으로 확정된다(벽시계 임계값 0). race가 없으면 SDK 기본 요청 타임아웃(60초)에 물려
+  // node:test 타임아웃으로 red — 그게 이 단언의 게이트다.
+  const ws = 'co-surface-hang';
+  await createCompany(ws, '무응답사', 'captain');
+  const hang = http.createServer(() => {}); // 요청을 받고 아무 응답도 하지 않는다
+  await new Promise((r) => hang.listen(0, '127.0.0.1', r));
+  try {
+    await writeFile(join(WS_ROOT, ws, CONNECTOR_SECRETS_BASE), JSON.stringify({
+      servers: { dead: { url: `http://127.0.0.1:${hang.address().port}/mcp`, status: 'connected', tokens: { access_token: 'x', token_type: 'Bearer' } } },
+    }), { mode: 0o600 });
+    assert.deepEqual(
+      await connectorBriefing(ws, { deadlineMs: 50 }),
+      [{ id: 'dead', status: 'connected', tools: [], more: 0 }],
+      '데드라인이 없으면 여기서 60초 넘게 물린다',
+    );
+  } finally {
+    hang.close();
+    await closeConnectorPools();
+  }
+});
+
+test('데드라인 상수는 0이 아니다 — 발동 조건과 술어를 따로 잠근다', () => {
+  // 코드가 deadlineMs<=0을 "데드라인 없음" 우회로 쓰므로, 상수가 조용히 0이 되면 위 술어가 통째로
+  // 꺼진 채 테스트는 초록이다(주입 인자로만 도니까). 조건은 별도로 잠근다.
+  assert.ok(BRIEF_DEADLINE_MS > 0, '기본 데드라인이 0이면 프로덕션에서 race가 건너뛰어진다');
+});
+
+// ── ⑥ 절단 문구 — 목록이 잘렸을 때만 '이름 밖 호출'을 허용한다(순수 함수) ──
+test('절단 — 토큰 경계로 되감고, 잘렸을 때만 봉인을 푼다', () => {
+  const many = Array.from({ length: 60 }, (_, i) => `some_long_tool_name_${i}`);
+  const d = connectorToolDescription([{ id: 'big', status: 'connected', tools: many, more: 0 }], 'ko');
+  const tail = d.match(/([\w]+) …\(생략\)/);
+  assert.ok(tail && many.includes(tail[1]), `절단이 토큰 중간을 잘랐다: ${tail?.[1]}`);
+
+  // more>0(서버당 상한으로 잘림) → 목록 밖 이름도 시도하라고 알려야 한다. 아니면 13번째부터의
+  // 도구가 발견 수단 없이 봉인된다(분리 검수 실증).
+  assert.match(connectorToolDescription([{ id: 'g', status: 'connected', tools: ['a'], more: 3 }], 'ko'), /그냥 호출해라/);
+  assert.match(connectorToolDescription([{ id: 'g', status: 'connected', tools: ['a'], more: 3 }], 'en'), /call it by its documented name/);
+  // 역방향 — 안 잘렸으면 종전대로 목록에 있는 이름만(과확장 방지).
+  assert.match(connectorToolDescription([{ id: 'g', status: 'connected', tools: ['a'], more: 0 }], 'ko'), /이 목록에 있는 이름만/);
 });

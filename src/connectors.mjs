@@ -490,7 +490,7 @@ export async function connectorBriefing(wsId, { cap = BRIEF_TOOL_CAP, deadlineMs
    커넥터를 안 쓸 턴에까지 문다(분리 검수 US-3 MEDIUM — US-1에선 크루가 도구를 고를 때만 노출되던
    비용이 US-3에서 매 턴으로 바뀌었다). 브리핑은 "있으면 좋은" 안내지 턴의 전제가 아니므로 포기한다.
    조회 자체는 백그라운드에서 계속 진행돼 풀·tools 캐시를 채우므로 다음 턴이 그 이득을 받는다. */
-const BRIEF_DEADLINE_MS = 4_000;
+export const BRIEF_DEADLINE_MS = 4_000;
 function toolNamesWithin(wsId, serverId, deadlineMs) {
   const listed = listConnectorTools(wsId, serverId)
     .then((r) => (r.tools ?? []).map((t) => t.name))
