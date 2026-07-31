@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-forbid-'));
@@ -123,6 +123,70 @@ test('permissionGate: 넓은 작업 폴더를 등록해도 재귀 검색이 금�
   const g2 = makePermissionGate('my-co', 'crew-a', wsRoot, null, 'ko', [side]);
   assert.equal((await g2('Grep', { pattern: 'x', path: side })).behavior, 'allow', '지정 작업 폴더 검색');
   assert.equal((await g2('Write', { file_path: join(side, 'a.md'), content: 'x' })).behavior, 'allow', '작업 폴더 쓰기');
+});
+
+test('permissionGate: 하드 구역의 조상을 검색 루트로 줘도 재귀가 자격을 훑지 못한다', async () => {
+  // #207 분리 검수 HIGH: Grep{path:~/.claude}는 deny인데 Grep{path:~}·{path:/}는 allow였다 —
+  // 루트 "자체"만 isForbidden에 태우고 그 아래 재귀를 안 봐서, 묻는 방식에 따라 판정이 갈리고
+  // ~/.claude.json(MCP env 토큰)의 내용이 검색 결과로 유출됐다. coversControl(회사 금고)과 같은
+  // 조상 검사를 하드 구역에도 적용한다(isForbidden mode='sweep').
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  assert.equal((await gate('Grep', { pattern: 'sk-', path: homedir() })).behavior, 'deny', '홈 루트 재귀 = 자격 파일 조상');
+  assert.equal((await gate('Grep', { pattern: 'sk-', path: '~' })).behavior, 'deny', '~ 리터럴 — coversControl은 틸드 미확장이라 못 잡던 형태');
+  assert.equal((await gate('Grep', { pattern: 'sk-', path: '/' })).behavior, 'deny', "디스크 루트 — `${root}${sep}`='//' 합성으로 접두 비교가 불발되던 형태");
+  assert.equal((await gate('Glob', { path: homedir(), pattern: '**/*.json' })).behavior, 'deny', 'Glob path 축도 동일(패턴 축은 아래 별도 테스트)');
+  assert.equal((await gate('Grep', { pattern: 'x', path: dirname(APP_ROOT) })).behavior, 'deny', '앱 코드 루트의 조상');
+  // 과차단 금지 — 하드 구역을 품지 않는 좁은 루트와 단일 파일 읽기는 그대로 열려 있다.
+  // (재귀 루트만 조상 판정을 받는다 — Read까지 sweep을 태우면 홈의 정당한 문서 읽기가 죽는다.)
+  assert.equal((await gate('Grep', { pattern: 'x', path: join(homedir(), 'Documents') })).behavior, 'allow', '홈 하위 구체 폴더 검색은 유지');
+  assert.equal((await gate('Read', { file_path: join(homedir(), 'notes.txt') })).behavior, 'allow', '홈 직속 일반 파일 단일 읽기는 유지');
+});
+
+test('permissionGate: Glob 절대 패턴은 path를 무시하고 재루팅된다 — 열거 베이스도 루트와 같은 판정', async () => {
+  // 벤더 실독(claude-agent-sdk 0.3.206에 임베디드된 Claude Code 2.1.206): 절대 패턴이면 {baseDir, relativePattern}으로 갈라
+  // baseDir로 재루팅 + 기본 --hidden|--no-ignore. path가 안전해도 패턴만으로 하드존 도트파일 "이름"
+  // 열거가 실재한다(#207 후속 검수 MEDIUM-1 — 내용은 Read/Grep 하드라인이 막고 있어 이름 축).
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  const vault = join(wsRoot, 'vault');
+  assert.equal((await gate('Glob', { path: vault, pattern: join(homedir(), '**', '*.json') })).behavior, 'deny', '홈 재귀 패턴');
+  assert.equal((await gate('Glob', { path: vault, pattern: join(homedir(), '.claude*') })).behavior, 'deny', '하드존 형제 접두 와일드카드 — insideFold·homeVariant 다 못 잡던 형태');
+  assert.equal((await gate('Glob', { path: vault, pattern: '/**/*.json' })).behavior, 'deny', '디스크 루트 베이스');
+  assert.equal((await gate('Glob', { path: vault, pattern: join(WS_ROOT, '*', '**') })).behavior, 'deny', 'WS_ROOT 베이스 — 타사 이름 열거');
+  const out = await mkdtemp(join(tmpdir(), 'argo-gp-'));
+  assert.equal((await gate('Glob', { path: out, pattern: join(wsRoot, '**') })).behavior, 'deny', '밖 path + 워크스페이스 재귀 패턴 — denyScope의 패턴 우회 봉인');
+  // 과차단 금지 — 좁은 베이스·상대 패턴·매직 없는 점조회는 유지
+  assert.equal((await gate('Glob', { path: vault, pattern: join(homedir(), 'Documents', '**', '*.md') })).behavior, 'allow', '홈 하위 구체 베이스');
+  assert.equal((await gate('Glob', { path: vault, pattern: '**/*.md' })).behavior, 'allow', '상대 패턴은 path 루트가 지배(재루팅 없음)');
+  assert.equal((await gate('Glob', { path: vault, pattern: join(homedir(), 'Documents', 'a.md') })).behavior, 'allow', '매직 없어도 베이스가 좁으면 허용 — 과차단 아님');
+  // 매직 없는 절대 패턴도 베이스를 태운다. "출력 1건 점조회"는 틀린 모델이었다(후속 검수 HIGH-2):
+  // rg의 gitignore 의미상 구분자 없는 글롭은 임의 깊이 basename에 매치해 베이스 아래를 통째로 걷는다
+  // (가짜 홈 실측: cwd=홈 + `--glob auth.json` → `.codex/auth.json`). 홈 순회는 Read 한 파일과 다른 급이다.
+  assert.equal((await gate('Glob', { path: vault, pattern: join(homedir(), 'notes.txt') })).behavior, 'deny', '매직 없는 절대 패턴 = dirname 재루팅 → 홈 전체 순회');
+  assert.equal((await gate('Glob', { path: vault, pattern: join(homedir(), 'auth.json') })).behavior, 'deny', '무구분자 basename 글롭이 하드존 내부(.codex/auth.json)를 반환하던 형태');
+  // 백슬래시 이스케이프는 **POSIX 전용 벡터**다. POSIX에선 rg globset의 이스케이프라 `.cla\ude*`가
+  // `.claude.json`에 매치하는데(실측), 절단점을 '\\'로 잡으면 벤더 baseDir(홈)과 어긋나 하드존이
+  // 통째로 빠져나갔다(후속 검수 HIGH-1). Windows(sep='\\')에선 벤더 VTg도 백슬래시를 구분자로 보아
+  // **같은 지점에서 갈라지므로**(둘 다 `<home>/.cla`로 재루팅 — 실재하지 않는 디렉터리) 벡터가 성립하지
+  // 않는다. 판정이 플랫폼별로 다른 게 정상이고, 어느 쪽이든 계약("우리 베이스 = 벤더 baseDir")은
+  // 유지된다 — Windows의 백슬래시 경로 커버는 위 join() 기반 단언들이 맡는다(CI 실측으로 확인).
+  if (sep === '/') {
+    assert.equal((await gate('Glob', { path: vault, pattern: `${homedir()}/.cla\\ude*` })).behavior, 'deny', '이스케이프로 절단점을 옮기는 우회');
+    // 매직이 다음 구분자보다 앞에 오는 형태라야 베이스가 홈에 남는다(`.co\dex/*`처럼 매직 뒤에 오면
+    // 벤더도 존재하지 않는 `.co\dex`로 재루팅돼 무해 — 벤더 분할과 어긋난 단언은 두지 않는다).
+    assert.equal((await gate('Glob', { path: vault, pattern: `${homedir()}/.co\\dex*/**` })).behavior, 'deny', '이스케이프 + 하위 열거');
+  }
+  assert.equal((await gate('Glob', { path: vault, pattern: ` ${homedir()}/**` })).behavior, 'deny', '선행 공백 — 루트와 같은 trim 기준');
+});
+
+test('isForbidden: sweep 모드만 조상을 금지한다 — read 판정은 넓어지지 않는다', async () => {
+  // 방향이 둘인 불변식을 직접 고정: (a) sweep은 보호 구역의 조상이면 deny, (b) 같은 경로가
+  // read로는 여전히 allow(홈이 금지 구역이 되는 게 아니다 — 재귀 "루트"로서만 막힌다).
+  const f = makeIsForbidden(wsRoot);
+  for (const root of [homedir(), '/', dirname(APP_ROOT)]) {
+    assert.equal(await f(root, 'sweep'), true, `sweep: ${root}`);
+  }
+  assert.equal(await f(homedir()), false, 'read: 홈 경로 자체는 금지 구역이 아니다');
+  assert.equal(await f(join(homedir(), 'Documents'), 'sweep'), false, 'sweep: 보호 구역을 품지 않는 루트는 통과');
 });
 
 test('permissionGate: 외부 MCP·미분류 도구도 금고 경로는 막힌다', async () => {

@@ -35,6 +35,42 @@ export function readToolTargets(toolName, input = {}) {
   if (toolName === 'Grep') return s(input.path); // pattern은 정규식 — 경로 아님
   return s(input.file_path); // Read
 }
+/* Glob 패턴의 열거 베이스 — SDK Glob은 **절대 패턴이면 path 인자를 무시하고** 패턴을
+   {baseDir, relativePattern}으로 갈라 baseDir로 검색을 재루팅한다(벤더 실독: @anthropic-ai/claude-agent-sdk
+   0.3.206에 임베디드된 Claude Code 2.1.206 바이너리의 VTg·KEu — 패키지 버전과 바이너리 버전이 다르니
+   재검증은 `npm ls @anthropic-ai/claude-agent-sdk`가 아니라 그 패키지의 manifest.json version을 본다.
+   VTg = 첫 글롭 매직 `[*?[{]` 앞 리터럴을 마지막 구분자 경계로 절단). 기본
+   --hidden·--no-ignore로 걷으므로 path가 안전해도 패턴만으로 하드존 도트파일 **이름 열거**가 실재한다
+   (#207 후속 검수 MEDIUM-1 — `~/.claude*` 같은 형제 접두 와일드카드는 insideFold(정확/하위)에도
+   homeVariant(basename 접두)에도 안 걸려 통과했다. 내용은 Read/Grep 하드라인이 막고 있어 이름 축).
+   ⚠ 계약: **벤더 VTg와 동형을 유지한다.** 이 함수의 안전성은 전적으로 "우리가 계산한 베이스 = 실제
+   검색이 도는 루트"라는 일치에서 나온다 — 어긋나면 그 방향은 곧 fail-open이다(아래 두 실측이 그 증거).
+   동형 확인 시점 = 위 버전(2026-07-31). SDK가 분할 규칙을 바꾸면 테스트는 그대로 초록인 채 갭만
+   생긴다(무음 드리프트) — 바이너리를 파싱하는 트립와이어는 과하다고 보아 두지 않았으니, SDK를 올릴 때
+   VTg·KEu를 다시 읽어 이 함수와 대조하는 것이 재검증 절차다(분리 검수 INFO-2 수용).
+   구분자를 포함해 돌려주므로 '/'(o=0)와 'C:/' 드라이브 베이스가 특수분기 없이 성립. */
+const globEnumBase = (pattern) => {
+  if (typeof pattern !== 'string') return '';
+  const p = pattern.trim(); // 루트(input.path)와 같은 기준 — 같은 함수 안에서 비대칭이면 한쪽만 새는 형태가 된다
+  if (!p) return '';
+  const m = p.search(/[*?[{]/); // 매직 집합은 벤더 VTg와 동일 — extglob(!()·+())도 벤더가 매직으로 안 보므로 동형
+  /* 매직 없는 절대 패턴도 베이스를 태운다 — "출력 1건 점조회"는 틀린 모델이었다(후속 검수 HIGH-2,
+     자체 실측으로 재확인). ① 벤더 VTg의 no-magic 분기도 {baseDir: dirname, relativePattern: basename}을
+     돌려주고 KEu의 `if(S)`가 절대경로면 항상 참이라 **재루팅이 일어난다**. ② rg의 gitignore 의미상
+     구분자 없는 글롭은 **임의 깊이의 basename**에 매치한다 — 가짜 홈 실측: cwd=홈에서 `--glob auth.json`이
+     `.codex/auth.json`을, `--glob .credentials.json`이 `.claude/.credentials.json`을 반환했다. 즉 홈 전체
+     순회이고 하드존 내부 경로가 결과로 나온다. Read 한 파일과 같은 급이 아니므로 dirname sweep은
+     과차단이 아니라 정합이다. 상대 패턴은 벤더가 재루팅하지 않으므로(루트가 지배) 빈 값으로 둔다. */
+  if (m === -1) return isAbsolute(p) || p.startsWith('~') ? `${dirname(p)}${sep}` : '';
+  const cut = p.slice(0, m);
+  /* 구분자는 `/`와 sep만 본다(벤더 `Math.max(n.lastIndexOf('/'), n.lastIndexOf(sep))`와 동형).
+     '\\' 하드코딩은 POSIX에서 fail-open이었다(후속 검수 HIGH-1, 자체 실측): 백슬래시는 POSIX 구분자가
+     아니라 rg globset의 **이스케이프**라, `~/.cla\ude*`는 우리 절단점만 한 단계 깊어지고(base=`~/.cla\`)
+     벤더 baseDir은 `~`에 남는다 — 실측에서 `--glob '.cla\ude*'`가 `.claude.json`을, `'.co\dex/*'`가
+     `.codex/auth.json`을 그대로 반환했다. Windows는 sep='\\'라 이 변경으로 달라지지 않는다. */
+  const sepIdx = Math.max(cut.lastIndexOf('/'), cut.lastIndexOf(sep));
+  return sepIdx === -1 ? '' : cut.slice(0, sepIdx + 1);
+};
 const WEB_TOOLS = new Set(['WebFetch', 'WebSearch']); // 읽기지만 회사 밖으로 나간다 — browser 능력을 따른다
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
 
@@ -178,6 +214,8 @@ const BASH_DIR_RE = new RegExp(String.raw`(^|[\s'"\x60;|&(=<>,])(\.[\\/])?(${[..
 /** p가 금지 구역인가 — 판정 전 자기 워크스페이스 안(inWorkspace)이 먼저 통과됐다는 전제의 2차 검사.
     canonical(실경로) 기준 — 심링크로 금지 구역을 우회하지 못한다.
     mode='write'면 원장(usage/events.jsonl)까지 금지에 포함한다 — 읽기는 열려 있다(WS_LEDGER_FILES).
+    mode='sweep'(Grep/Glob 재귀 **루트** 판정)은 읽기 금지에 더해 보호 구역의 **조상**까지 금지한다 —
+    검색은 루트 아래를 재귀하므로 루트가 조상이기만 해도 하드 구역 내용이 결과로 흘러나온다(아래 주석).
     (export: 회귀 테스트용) */
 export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
   const wsAbs = resolve(wsRoot);
@@ -277,6 +315,30 @@ export function makeIsForbidden(wsRoot, appRoot = APP_ROOT) {
     // 부수 효과(의도): 자기 워크스페이스의 케이스 변형+미존재 경로는 허용 분기(정확 비교)에서 떨어져
     // 여기 걸린다 — fail-safe 과차단. 메시지가 '타사'라 오해 소지 있으나 허용 확대보다 낫다(검수 LOW 수용).
     if (insideFold(real, R.parent)) return true; // WS_ROOT 아래인데 자기 회사 밖 — 타사 데이터·계정 시크릿
+    /* 재귀 루트 판정(mode='sweep') — 여기까지의 검사는 전부 "경로 자신이 보호 구역 안인가"다. 검색 도구는
+       루트 **아래를 재귀**하므로 루트가 보호 구역의 **조상**이기만 해도 내용이 결과로 흘러나온다.
+       실측(#207 분리 검수 HIGH): Grep{path:~/.claude}는 deny인데 Grep{path:~}·{path:/}는 allow —
+       묻는 방식에 따라 판정이 갈리고, ~/.claude.json(MCP env 토큰)의 내용이 검색 결과로 유출됐다.
+       coversControl(회사 금고)의 "루트가 워크스페이스를 품는가"와 같은 패턴을 하드 구역·WS_ROOT(타사)에
+       적용한 것. 홈 전체·디스크 루트 검색이 막히는 과차단은 의도(fail-closed) — 거절 메시지가 좁힌
+       경로로 안내한다(denySweep). insideFold를 못 쓰는 이유: 루트가 '/'면 `${root}${sep}` 접두가 '//'라
+       비교가 통째로 불발된다(coversControl이 '/'를 놓친 것과 같은 합성) — 후행 구분자를 깎고 비교한다. */
+    if (mode === 'sweep') {
+      const covers = (a, r) => { const rr = fold(r).replace(/[\\/]+$/, ''); return fold(a) === rr || fold(a).startsWith(`${rr}${sep}`); };
+      // 앵커 = 하드 구역(raw·canonical 양형) + WS_ROOT(타사 전체를 품는 부모 — canonical·렉시컬 양형).
+      // 홈 자체는 앵커가 아니어도 된다 — 홈 직속 하드 항목(~/.argo·~/.claude.json 등)이 이미 앵커라
+      // 홈(또는 그 조상)을 루트로 주면 그 항목들이 covers에 걸린다.
+      // APP_ROOT도 앵커로 **유지**한다(후속 검수 MEDIUM-3, A안): 루트가 허용되면 rg가 앱 소스를 직접
+      // 걷어 내용이 결과로 나온다 — 게이트는 rg의 내부 순회를 파일별로 거르지 못하므로, 앵커에서 빼면
+      // "앱 코드 읽기 차단"이 조상 검색 한 번에 무력화된다. dev·상주 설치에서 레포의 조상 폴더
+      // (~/lean-projects 등) 검색이 막히는 과차단은 fail-closed로 수용 — 거절 문구가 좁힌 경로로 안내한다.
+      // 한계(정직 표기): ① 허용 루트 **아래**의 심링크가 하드존을 가리키면 여기서는 못 잡는다 — 트리를
+      // 걷지 않는 한 정규화 불가. rg는 기본 심링크 미추종·Glob 도구는 follow 미노출이라 실악용은 좁다.
+      // ② 셸 대응물이 없다 — `grep -r ~`는 헤더의 "셸 한계" 계약대로 리터럴 방어만 받는다. 즉
+      // ~/.claude.json "내용"의 판정이 도구(deny)와 셸(allow)에서 갈린다 — 목록 정합 계약(파일 리터럴
+      // 공유)의 위반은 아니지만 취지의 남은 갭이므로 여기 적어 둔다.
+      for (const a of [...R.hard, R.parent, dirname(wsAbs)]) if (covers(a, real) || covers(a, abs)) return true;
+    }
     return false;
   };
 }
@@ -323,6 +385,12 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
   const denyScope = () => ({ behavior: 'deny', message: lang === 'en'
     ? 'Searching the whole company folder is blocked because it would sweep in settings and credential files. Search a specific folder instead — `vault/` for documents and notes, `skills/` for company skills — and say which folder you searched.'
     : '회사 폴더 전체 검색은 설정·자격 파일까지 훑게 되어 막혀 있다. 구체적인 폴더를 지정해 다시 검색하라 — 문서·기록은 `vault/`, 회사 스킬은 `skills/`. 어느 폴더를 뒤졌는지 밝혀라.' });
+  // 재귀 검색이 보호 구역(하드 구역·타사)의 조상에서 들어올 때 — denyScope(회사 금고)와 다른 안내가 필요하다:
+  // 크루가 원한 것은 보통 문서 검색이지 회사 폴더가 아니라서, "검색을 좁혀라"가 정확한 대안이다.
+  // denyScope처럼 목록을 열거하지 않고 규칙 + 대안으로 쓴다(FORBIDDEN_MSG 주석의 원칙).
+  const denySweep = () => ({ behavior: 'deny', message: lang === 'en'
+    ? 'That search root is too broad — recursing under it would sweep through protected areas (the Argo app itself, credential and settings files in the home folder, other companies’ data), so it is blocked. Search the specific folder you actually need instead — company documents live in `vault/`, company skills in `skills/`, or name a concrete subfolder (e.g. a documents or project subfolder) — and say which folder you searched.'
+    : '검색 루트가 너무 넓다 — 그 아래를 재귀하면 보호 구역(Argo 앱 본체, 홈의 자격·설정 파일, 다른 회사 데이터)까지 훑게 되어 막혀 있다. 실제로 필요한 구체적 폴더를 지정해 다시 검색하라 — 회사 문서·기록은 `vault/`, 회사 스킬은 `skills/`, 그 밖에는 문서 폴더나 프로젝트 폴더의 하위 경로. 어느 폴더를 뒤졌는지 밝혀라.' });
 
   /* 도구 인자에 든 경로가 금지 구역인가 — 분류표에 없는 도구(SDK 신규 도구, 외부 MCP)가 경로를 들고
      와도 금고를 만지지 못하게 하는 마지막 그물이다. 도구 이름 화이트리스트를 늘려 가는 대신 "어떤
@@ -391,8 +459,28 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 재귀 도구는 검색 **루트**를 따로 본다. path 생략이면 cwd = 워크스페이스 루트다(그래서 아무
       // 인자 없는 Grep이 금고까지 훑었다). pattern은 루트가 아니라 필터라 위 루프가 맡는다.
       if (toolName === 'Grep' || toolName === 'Glob') {
-        const root = typeof input?.path === 'string' && input.path.trim() ? input.path : wsAbs;
+        const root = typeof input?.path === 'string' && input.path.trim() ? input.path.trim() : wsAbs;
+        // sweep(하드 구역 조상)을 coversControl보다 먼저 — 홈·디스크 루트처럼 두 판정에 다 걸리는 루트는
+        // "회사 폴더" 안내보다 자격·보호 구역 안내(denySweep)가 정확하다. 워크스페이스 루트 자체는
+        // sweep에 안 걸리므로(자기 회사 안은 조상이 아니다) path 생략 기본 경로는 기존 denyScope 그대로.
+        // '~' 리터럴·'/' 루트가 coversControl을 빠져나가던 갭(틸드 미확장·`${root}${sep}`='//' 합성)도
+        // sweep이 막는다 — isForbidden은 틸드를 확장하고 covers는 후행 구분자를 깎는다.
+        if (await isForbidden(root, 'sweep')) return denySweep();
         if (await coversControl(root)) return denyScope();
+        // Glob은 패턴의 열거 베이스도 루트와 **같은 판정**을 받는다(globEnumBase 주석 — 절대 패턴은
+        // path를 무시하고 베이스로 재루팅되므로, 루트만 검사하면 `pattern: <ws>/**`·`~/**`가 denyScope·
+        // sweep을 통째로 우회한다). Grep은 해당 없음 — pattern은 정규식, glob 인자는 루트 상대 필터(rg 계약).
+        // 상대 베이스는 실제 재루팅이 없지만(벤더는 절대 패턴만 가른다) 유효 루트 기준으로 해석해 같은
+        // 판정에 태운다 — 상위탈출(../) 모양을 능력 유무로 가려 주기보다 fail-closed가 이 파일의 방향이다.
+        if (toolName === 'Glob') {
+          const base = globEnumBase(input?.pattern);
+          if (base) {
+            const arg = isAbsolute(base) || base.startsWith('~') ? base
+              : resolve(isAbsolute(root) ? resolve(root) : resolve(wsAbs, root), base);
+            if (await isForbidden(arg, 'sweep')) return denySweep();
+            if (await coversControl(arg)) return denyScope();
+          }
+        }
       }
       return allow; // 전권 — 금지 구역은 위에서 이미 전건 차단됐다
     }
