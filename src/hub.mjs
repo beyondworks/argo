@@ -40,12 +40,35 @@ export async function listCompanies() {
       const agents = await listAgents(e.name);
       const docs = await listDocs(e.name);
       // 기억 칩 = 기억 화면 트리 칩과 같은 셈법(docs+projects 합) — 두 화면 숫자 불일치 방지(PR #204 LOW).
-      // 산출물 목록 실패가 회사 카드까지 무너뜨리지 않게 격벽(vault route의 M-2와 동일).
-      const projects = await listProjectDocs(e.name).catch(() => []);
-      out.push({ ...company, crew: agents.length, memories: docs.length + projects.length });
+      // 수는 경량 카운트로: listProjectDocs는 전 파일 stat + md 본문 readFile이라, listCompanies를
+      // 타는 gateway 10초 폴에 산출물 수천 개면 수백 ms가 실린다(분리 검수 2026-07-31 M-1 실측).
+      // 산출물 카운트 실패가 회사 카드까지 무너뜨리지 않게 격벽(vault route의 M-2와 동일).
+      const projectCount = await countProjectFiles(e.name).catch(() => 0);
+      out.push({ ...company, crew: agents.length, memories: docs.length + projectCount });
     } catch { /* company.json 없는 폴더는 워크스페이스가 아님 */ }
   }
   return out.sort((a, b) => String(b.created).localeCompare(String(a.created)));
+}
+
+/** 산출물 파일 수만 — 회사 카드 기억 칩 전용 경량 walk(readdir만, readFile·stat 없음).
+    포함/제외 규칙은 listProjectDocs와 동일해야 두 화면 숫자가 같다: 닷파일 제외 ·
+    심링크 제외 · 디렉터리 재귀 · 나머지 전부 카운트(md/비md 구분 없음).
+    (listProjectDocs의 stat 실패 제외는 여기 없다 — 삭제 경합 순간의 ±1은 카운트에 무해) */
+export async function countProjectFiles(wsId) {
+  const p = paths(wsId);
+  let n = 0;
+  async function walk(dir) {
+    let entries = [];
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) { await walk(join(dir, e.name)); continue; }
+      n += 1;
+    }
+  }
+  await walk(p.projects);
+  return n;
 }
 
 /** 회사 id 목록만 — 디렉터리 열거 + company.json 존재 확인으로 끝낸다(내용 파싱 없음).

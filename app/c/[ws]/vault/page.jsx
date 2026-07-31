@@ -5,7 +5,7 @@
 // 뷰포트 높이에 고정되어 스크롤이 각 패널 안에서만 일어난다 — 세로 나열 레이아웃 불안정의 종결.
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo, tsFromRel } from '../../../ui';
+import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo, tsFromRel, resolveWikiRel } from '../../../ui';
 import { Constellation3D, GraphModal } from '../graphview';
 import { useLang } from '../../../i18n';
 
@@ -153,17 +153,8 @@ function Vault({ params }) {
     }
   }
 
-  /** 위키링크 해석 — [[이름]]은 vault 루트 기준 rel이 아니라 노트 이름인 경우가 대부분이라,
-   *  .md만 붙이면 루트에서 찾아 404가 난다(기존 결함). notes/ 접두 → 파일명 → 제목 순으로
-   *  실제 문서(docs에 title·rel이 다 있다)를 찾아 열고, 못 찾으면 notes/ 경로로 폴백(정직한 404). */
-  const openWiki = (name) => {
-    const bare = String(name).replace(/\.md$/, '');
-    const guess = bare.includes('/') ? `${bare}.md` : `notes/${bare}.md`;
-    const hit = (docs ?? []).find((d) => d.rel === guess)
-      || (docs ?? []).find((d) => d.rel.endsWith(`/${bare}.md`))
-      || (docs ?? []).find((d) => d.title === bare);
-    setSelected(hit ? hit.rel : guess);
-  };
+  // 위키링크 해석 — 그래프 모달과 공유하는 resolveWikiRel(ui.jsx 정본) 하나로. 산출물(md) 링크까지 연다.
+  const openWiki = (name) => setSelected(resolveWikiRel(name, docs, projects));
   const visible = (docs ?? []).filter((d) => !q || d.title.toLowerCase().includes(q) || d.excerpt.toLowerCase().includes(q));
   const notes = visible.filter((d) => d.dir === 'notes').sort((a, b) => b.mtime - a.mtime);
   // 일지·대화를 한 덩어리 "보관함"으로 뭉개지 않는다 — 트리에서 각자 접이식 섹션(옵시디언식).
@@ -219,8 +210,8 @@ function Vault({ params }) {
                 <p style={{ padding: '8px 16px', color: 'var(--fg-2)', fontSize: 12.5 }}>{t('vault.noMemoryMatch')}</p>
               )}
               <TreeSection label={t('vault.tree.notes')} count={notes.length} defaultOpen>
-                {/* 빈 상태 안내 — 검색 중(q)엔 "일치 없음" 문구와 겹치므로 숨긴다 */}
-                {notes.length === 0 && !q && (
+                {/* 빈 상태 안내 — 검색 중(q)엔 "일치 없음"과, 완전 빈 회사에선 vault.empty와 겹치므로 숨긴다 */}
+                {notes.length === 0 && !q && (docs.length + (projects?.length ?? 0)) > 0 && (
                   <p style={{ padding: '4px 16px 8px', paddingLeft: treePad(0), color: 'var(--fg-2)', fontSize: 11.5 }}>{t('vault.notesEmpty')}</p>
                 )}
                 {notes.map((d) => <DocRow key={d.rel} d={d} active={selected === d.rel} onOpen={openFromGraph} icon="bolt" lang={lang} pad={treePad(0)} />)}
@@ -372,6 +363,7 @@ function Vault({ params }) {
           agents={meta.agents ?? []}
           delegations={meta.delegations}
           docs={docs}
+          projects={projects}
           onClose={() => setGraphOpen(false)}
           onSelect={(rel) => { setGraphOpen(false); openFromGraph(rel); }}
         />
