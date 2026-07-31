@@ -72,8 +72,8 @@ test('변환 — 표준 모드 serverDef에는 oauth가 실리지 않는다(SDK�
 
 test('변환 — 고정 모드는 client_id를 넘기고, secret은 소스가 아니라 환경변수에서 온다(검수 F4)', () => {
   // 이 레포는 public이라 카탈로그에 secret 값을 박으면 깃헙에 그대로 남는다 — 이름만 싣는다.
-  process.env.ARGO_TEST_CONNECTOR_SECRET = 'runtime-only-value';
-  const def = connectorServerDef({ ...OK_ITEM, id: 'demo-fix', oauth: { client_id: 'cid-1', client_secret_env: 'ARGO_TEST_CONNECTOR_SECRET' } });
+  process.env.ARGO_CONNECTOR_TEST_SECRET = 'runtime-only-value';
+  const def = connectorServerDef({ ...OK_ITEM, id: 'demo-fix', oauth: { client_id: 'cid-1', client_secret_env: 'ARGO_CONNECTOR_TEST_SECRET' } });
   assert.deepEqual(def, {
     id: 'demo-fix', url: 'https://mcp.example.com/mcp', scopes: ['a.read'],
     oauth: { client_id: 'cid-1', client_secret: 'runtime-only-value' },
@@ -84,27 +84,31 @@ test('변환 — 고정 모드는 client_id를 넘기고, secret은 소스가 �
   // 값 필드는 스키마에서 금지 — 소스에 박는 경로 자체를 없앤다.
   assert.deepEqual(connectorCatalogItemErrors({ ...OK_ITEM, oauth: { client_id: 'c', client_secret: 'SECRET' } }), ['oauth.client_secret']);
   assert.deepEqual(connectorCatalogItemErrors({ ...OK_ITEM, oauth: { client_id: 'c', client_secret_env: 'lower case name' } }), ['oauth.client_secret_env']);
+  // 반경 제한(검수 D2) — 이름 형태만 보면 무관한 env의 값이 원격 AS 토큰 엔드포인트로 전송된다.
+  for (const name of ['DATABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'AWS_SECRET_ACCESS_KEY']) {
+    assert.deepEqual(connectorCatalogItemErrors({ ...OK_ITEM, oauth: { client_id: 'c', client_secret_env: name } }), ['oauth.client_secret_env'], `${name}은 커넥터 이름공간 밖`);
+  }
 
   // 이름은 있는데 값이 없으면 조용히 퍼블릭으로 넘어가지 않는다(배포 설정 오류를 즉시 드러낸다).
-  delete process.env.ARGO_TEST_CONNECTOR_SECRET;
+  delete process.env.ARGO_CONNECTOR_TEST_SECRET;
   assert.throws(
-    () => connectorServerDef({ ...OK_ITEM, oauth: { client_id: 'cid-1', client_secret_env: 'ARGO_TEST_CONNECTOR_SECRET' } }),
-    /ARGO_TEST_CONNECTOR_SECRET/,
+    () => connectorServerDef({ ...OK_ITEM, oauth: { client_id: 'cid-1', client_secret_env: 'ARGO_CONNECTOR_TEST_SECRET' } }),
+    /ARGO_CONNECTOR_TEST_SECRET/,
   );
 });
 
 test('병합 행에는 카탈로그 원본이 새지 않는다 — oauth·client_secret 유출 트립와이어(검수 F2)', () => {
   // `...item`을 한 줄 넣으면 마켓 GET 응답 본문에 client_secret이 그대로 실린다(검수 실측).
   // 지금은 카탈로그가 비어 무해하지만 US-8이 실 secret을 실는 순간 활성화되는 경로다.
-  process.env.ARGO_TEST_CONNECTOR_SECRET = 'must-not-leak-xyz';
-  const item = { ...OK_ITEM, id: 'demo-leak', oauth: { client_id: 'cid-leak', client_secret_env: 'ARGO_TEST_CONNECTOR_SECRET' } };
+  process.env.ARGO_CONNECTOR_TEST_SECRET = 'must-not-leak-xyz';
+  const item = { ...OK_ITEM, id: 'demo-leak', oauth: { client_id: 'cid-leak', client_secret_env: 'ARGO_CONNECTOR_TEST_SECRET' } };
   const rows = mergeConnectorStatus([item], [{ id: 'demo-leak', status: 'connected', hasTokens: true }]);
   assert.equal(rows.length, 1);
   assert.equal('oauth' in rows[0], false, '병합 행에 oauth 블록이 있으면 안 된다');
   const body = JSON.stringify(rows);
   assert.equal(body.includes('must-not-leak-xyz'), false, 'secret 값 유출 금지');
   assert.equal(body.includes('cid-leak'), false, 'client_id도 화면에 필요 없다');
-  delete process.env.ARGO_TEST_CONNECTOR_SECRET;
+  delete process.env.ARGO_CONNECTOR_TEST_SECRET;
 });
 
 test('변환 — 잘못된 항목은 조용히 넘어가지 않고 던진다', () => {
@@ -281,6 +285,7 @@ test('해제 순서 — 레코드 삭제가 풀 정리보다 먼저다(뒤집으
   assert.equal((await callConnectorTool(WS, 'order-live', 'search_threads_demo', { query: 'q' })).ok, true);
 
   const before = poolStats.opened;
+  const beforeClosed = poolStats.closed;
   // 해제와 호출을 경합시킨다. 올바른 순서면 호출은 (a) 삭제 전에 저장소를 읽어 **이미 열린 풀**을
   // 쓰거나 (b) 삭제 후 읽어 not_connected로 막힌다 — 어느 쪽이든 **새 풀은 열리지 않는다**.
   // 순서를 뒤집으면 dropPool이 먼저 닫아버려, 아직 살아 있는 레코드를 읽은 호출이 새 풀을 연다(+1).
@@ -290,6 +295,10 @@ test('해제 순서 — 레코드 삭제가 풀 정리보다 먼저다(뒤집으
     callConnectorTool(WS, 'order-live', 'search_threads_demo', { query: 'race' }).catch(() => null),
   ]);
   assert.equal(poolStats.opened, before, '해제 경합 중 새 연결이 열리면 안 된다(순서가 뒤집히면 +1)');
+  // 순서만 잠그면 dropPool 호출을 통째로 지워도 초록이다(검수 D1 실측) — 해제 후에도 warm 풀이
+  // 살아 있는 access 토큰과 원격 세션을 유휴 소거까지 붙든다. "이 기기에서 자격이 사라진다"는
+  // 사용자 약속과 어긋나므로 회수 자체도 함께 잠근다.
+  assert.equal(poolStats.closed, beforeClosed + 1, '해제는 열린 풀을 닫는다');
   // 해제가 끝난 뒤의 호출은 결정적으로 미연결이다.
   assert.equal((await callConnectorTool(WS, 'order-live', 'search_threads_demo', { query: 'after' })).error, 'not_connected');
 });

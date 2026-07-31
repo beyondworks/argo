@@ -242,15 +242,20 @@ export function connectorCatalogItemErrors(item) {
     const o = item.oauth;
     if (!o || typeof o !== 'object' || typeof o.client_id !== 'string' || !o.client_id.trim()) e.push('oauth.client_id');
     // 이름만 허용 — 값이 들어오면(공백·특수문자 포함 문자열) 규칙에서 걸린다. 소스에 secret 박기 방지.
-    if (o?.client_secret_env !== undefined && !/^[A-Z][A-Z0-9_]{2,63}$/.test(o.client_secret_env)) e.push('oauth.client_secret_env');
+    // 접두사로 반경을 좁힌다 — 이름 형태만 보면 DATABASE_URL·AWS_SECRET_ACCESS_KEY 같은 무관한 env가
+    // 통과하고, 그 값이 원격 AS의 토큰 엔드포인트로 전송된다(분리 검수 D2 실측). F4가 "규율 대신
+    // 구조"로 간 취지를 잇는다 — 커넥터 전용 이름공간만 허용.
+    if (o?.client_secret_env !== undefined && !/^ARGO_CONNECTOR_[A-Z0-9_]{1,48}$/.test(o.client_secret_env)) e.push('oauth.client_secret_env');
     if (o?.client_secret !== undefined) e.push('oauth.client_secret'); // 값 필드는 아예 금지(이름 필드만)
   }
   return e;
 }
 
 /**
- * 카탈로그 항목 → `startConnect`가 받는 serverDef(순수 변환). 두 모드의 유일한 분기점이며,
- * 여기서 나온 값은 모드와 무관하게 같은 코어 경로로 들어간다.
+ * 카탈로그 항목 → `startConnect`가 받는 serverDef. 두 모드의 유일한 분기점이며, 여기서 나온 값은
+ * 모드와 무관하게 같은 코어 경로로 들어간다.
+ * **순수하지 않다**: 고정 모드의 client secret을 `process.env`에서 읽고, 이름만 있고 값이 없으면
+ * 던진다(F4 — 소스에는 이름만 산다). 검증 실패도 던진다.
  */
 export function connectorServerDef(item) {
   const bad = connectorCatalogItemErrors(item);
