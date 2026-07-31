@@ -133,7 +133,7 @@ const DONE_PAGE = '<!doctype html><meta charset="utf-8"><title>Argo</title>'
 export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOUT_MS } = {}) {
   const id = serverDef?.id;
   const url = serverDef?.url;
-  if (typeof id !== 'string' || !id.trim() || typeof url !== 'string' || !/^https?:\/\//.test(url)) {
+  if (typeof id !== 'string' || !id.trim() || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
     throw new Error('커넥터 정의가 잘못되었습니다 — id·url이 필요합니다');
   }
   // 평문 http는 loopback(로컬 테스트 서버)에만 허용 — OAuth 2.1은 그 외 TLS 필수다. 베어러 토큰이
@@ -149,29 +149,32 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
 
   // localhost 콜백 서버 — loopback 전용·포트 0 임의 배정·state 필수·1회용(설계서 §2-4). SDK 미제공 구간.
   const state = randomUUID();
-  // 콜백 경로에 난수 세그먼트 — 포트만 훑는 임의 웹페이지가 진행 중 인가를 끊지 못하게(검수 L3).
-  // state는 코드 탈취를 막고, 이 경로는 "존재를 모르면 닿지도 못하게" 한다.
-  const cbPath = `/callback/${randomUUID()}`;
+  // 경로는 **고정**이어야 한다. 한때 난수 세그먼트를 넣었지만(포트 훑는 페이지 차단 의도) 재인가가
+  // 통째로 깨졌다(분리 검수 2R 실측 400 `Unregistered redirect_uri`): redirect_uri는 DCR 등록·콘솔
+  // 사전 등록으로 **영속**되는데 RFC 8252는 포트만 완화하고 경로는 정확 일치를 요구한다. 즉 매 시도
+  // 경로가 바뀌면 두 번째 연결부터(그리고 사전 등록 client_id는 첫 연결부터) 실패한다.
+  const cbPath = '/callback';
   let settle;
   const arrived = new Promise((r) => { settle = r; });
   const cb = http.createServer((req, res) => {
     const u = new URL(req.url, `http://${LOOPBACK}`);
-    if (u.pathname !== cbPath) { res.writeHead(404).end(); return; } // favicon·포트 스캔은 시도 소비 아님
+    if (u.pathname !== cbPath) { res.writeHead(404).end(); return; } // favicon 등은 시도 소비 아님
     if (u.searchParams.get('state') !== state) {
-      // state 불일치 = 위조·혼선 콜백(CSRF 방어) — 요청 거부 + 시도 전체 종료(보수적 1회용).
+      // state 불일치 = 위조·혼선 콜백(CSRF 방어) — 거부하되 **시도는 죽이지 않는다**. 코드 배달은
+      // 정상 state로만 가능하고 타임아웃이 상한을 주므로 무시해도 보안은 동일한 반면, 종료시키면
+      // 로컬 포트를 훑는 아무 웹페이지나 진행 중 인가를 끊을 수 있다(그게 난수 경로로 막으려던 것).
       // 응답에 쿼리값을 되비추지 않는다(반사 XSS 차단 — 고정 문구만).
       res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('state mismatch');
-      settle({ error: 'state 불일치 — 연결을 다시 시작해 주세요' });
       return;
     }
     const authErr = u.searchParams.get('error');
     if (authErr) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(DONE_PAGE.replace('연결되었습니다', '연결이 거부되었습니다').replace('Connected', 'Authorization failed'));
-      settle({ error: `인가 거부: ${authErr.replace(/[^\w.-]/g, '_')}` });
+      settle({ errorCode: 'auth_denied', detail: authErr.replace(/[^\w.-]/g, '_') });
       return;
     }
     const code = u.searchParams.get('code');
-    if (!code) { res.writeHead(400).end('missing code'); settle({ error: '콜백에 인가 코드가 없습니다' }); return; }
+    if (!code) { res.writeHead(400).end('missing code'); settle({ errorCode: 'no_code' }); return; }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(DONE_PAGE);
     settle({ code });
   });
@@ -202,21 +205,22 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
     await probe.close().catch(() => {});
     if (!(e instanceof UnauthorizedError) || !authUrl) {
       cb.close();
-      const msg = String(e?.message ?? e);
-      await patchServer(wsId, id, { status: 'error', error: msg });
+      const detail = String(e?.message ?? e);
+      await patchServer(wsId, id, { status: 'error', errorCode: 'connect_failed', errorDetail: detail, error: connectorMessage('connect_failed', 'ko', detail) });
       throw e; // 즉시 실패(디스커버리 불가 등)는 호출부가 바로 보여준다 — 조용한 무동작 금지
     }
   }
 
   const done = (async () => {
-    const timer = setTimeout(() => settle({ error: `콜백 타임아웃(${Math.round(timeoutMs / 1000)}s) — 브라우저 인가가 완료되지 않았습니다` }), timeoutMs);
+    const timer = setTimeout(() => settle({ errorCode: 'auth_timeout', detail: Math.round(timeoutMs / 1000) }), timeoutMs);
     timer.unref?.();
     const out = await arrived;
     clearTimeout(timer);
     cb.close(); // 1회용 — 첫 결과(성공·거부·타임아웃)로 콜백 창구를 닫는다
-    if (out.error) {
-      await patchServer(wsId, id, { status: 'error', error: out.error });
-      return { ok: false, serverId: id, error: out.error };
+    if (out.errorCode) {
+      const text = connectorMessage(out.errorCode, 'ko', out.detail);
+      await patchServer(wsId, id, { status: 'error', errorCode: out.errorCode, errorDetail: out.detail ?? null, error: text });
+      return { ok: false, serverId: id, errorCode: out.errorCode, error: text };
     }
     try {
       // 토큰 교환(PKCE verifier 포함)은 SDK 몫 — finishAuth 1줄(스파이크 경계 지도). 성공 시 saveTokens가
@@ -225,9 +229,10 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
       await patchServer(wsId, id, { verifier: null }); // 1회용 verifier 정리
       return { ok: true, serverId: id };
     } catch (e) {
-      const msg = String(e?.message ?? e);
-      await patchServer(wsId, id, { status: 'error', error: msg });
-      return { ok: false, serverId: id, error: msg };
+      const detail = String(e?.message ?? e);
+      const text = connectorMessage('exchange_failed', 'ko', detail);
+      await patchServer(wsId, id, { status: 'error', errorCode: 'exchange_failed', errorDetail: detail, error: text });
+      return { ok: false, serverId: id, errorCode: 'exchange_failed', error: text };
     }
   })();
   // callbackAddress = 실제 바인드 주소 관측창(테스트가 loopback 불변식을 행동으로 단언한다 — 검수 M2).
@@ -324,6 +329,13 @@ const MSG = {
     ko: (s, d) => `커넥터 호출 실패(${s}): ${d}`,
     en: (s, d) => `Connector call failed (${s}): ${d}`,
   },
+  // 연결 시도 실패 — 저장 시 errorCode로 남겨 UI·크루 문구를 회사 언어로 다시 그린다(검수 2R L1:
+  // 코드 없이 한국어만 저장하면 영어 모드 문구에 한국어가 그대로 보간된다).
+  connect_failed: { ko: (d) => `서버에 연결할 수 없습니다: ${d}`, en: (d) => `Could not reach the server: ${d}` },
+  auth_timeout: { ko: (n) => `브라우저 인가가 ${n}초 안에 완료되지 않았습니다`, en: (n) => `Authorization was not completed within ${n}s` },
+  auth_denied: { ko: (d) => `인가가 거부되었습니다(${d})`, en: (d) => `Authorization was denied (${d})` },
+  no_code: { ko: () => '콜백에 인가 코드가 없습니다', en: () => 'The callback did not carry an authorization code' },
+  exchange_failed: { ko: (d) => `토큰 교환에 실패했습니다: ${d}`, en: (d) => `Token exchange failed: ${d}` },
 };
 /** 사람 문구 — 안정 코드(error)와 분리해서 언어만 고른다. */
 export const connectorMessage = (key, lang, ...a) => (MSG[key][lang === 'en' ? 'en' : 'ko'])(...a);
@@ -365,7 +377,9 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
     } else if (rec.status === 'reauth') {
       result = fail('reauth_required', connectorMessage('reauth_required', lang, serverId));
     } else if (rec.status !== 'connected') {
-      result = fail('not_connected', connectorMessage('not_connected_status', lang, serverId, `${rec.status}${rec.error ? ` (${rec.error})` : ''}`));
+      // 저장된 ko 문구를 그대로 끼워 넣으면 영어 모드에 한국어가 샌다 — 코드가 있으면 요청 언어로 다시 그린다.
+      const detail = rec.errorCode && MSG[rec.errorCode] ? connectorMessage(rec.errorCode, lang, rec.errorDetail ?? '') : rec.error;
+      result = fail('not_connected', connectorMessage('not_connected_status', lang, serverId, `${rec.status}${detail ? ` (${detail})` : ''}`));
     } else {
       result = await callViaPool(wsId, serverId, rec.url, tool, args, 1, lang);
     }

@@ -167,7 +167,8 @@ const HARD_HOME_PATHS = [
    여기 등재하지 않으면 같은 파일을 Read는 deny인데 `cat`은 allow가 된다. 이 파일 헤더가 스스로
    금지한 "도구별로 갈리는 판정"이 자격 파일에서 재발한 것이다(PR #213 분리 검수 M1 실측: 러너
    API 키 `.secrets.json`·구글 OAuth 토큰 `.connector-secrets.json` 둘 다 셸로 통과했다).
-   도트파일이라 이름이 충분히 특이해 부분 문자열 비교로 오차단 위험이 없다. */
+   부분 문자열 비교라 `cat my.secrets.json`이나 `echo "add .secrets.json to .gitignore"`처럼
+   무관한 명령도 걸린다 — 이 파일의 fail-closed 방침(아래 Bash 분기 주석)대로 수용한다. */
 const WS_SECRET_FILES = new Set(['.secrets.json', '.connector-secrets.json']);
 const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_SECRET_FILES];
 // 경계 클래스에 리다이렉트·쉼표(<>,) 포함 — `>chats/b.json`(공백 없는 리다이렉트)이 위조 명령의 가장

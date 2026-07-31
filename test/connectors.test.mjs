@@ -141,19 +141,33 @@ test('refresh까지 실패 — reauth로 강등되고 이후 호출은 빠르게
 });
 
 // ── ④ state 불일치 거부(CSRF 방어) ──
-test('state 불일치 콜백 — 400 거부·토큰 교환 0·시도 종료', async () => {
+test('state 불일치 콜백 — 400 거부·토큰 교환 0, 그러나 정상 인가는 살아남는다(DoS 차단)', async () => {
   const s = await newServer();
   const id = 'demo-csrf';
   const { authUrl, done } = await startConnect(WS, { id, url: s.mcpUrl, scopes: ['spike.read'] });
-  const res = await approve(authUrl, { tamperState: 'forged-state-value' });
-  assert.equal(res.status, 400, '위조 콜백은 HTTP 400');
+
+  // 위조 콜백(state 불일치) — 거부되지만 시도를 죽이지 못한다. 죽이면 로컬 포트를 훑는 아무
+  // 웹페이지나 진행 중 인가를 끊을 수 있다(검수 L3의 위협을 경로 난수화 대신 여기서 막는다 —
+  // 난수 경로는 등록된 redirect_uri와 어긋나 재인가를 통째로 깨뜨렸다: 2R 블로커).
+  const forged = await approve(authUrl, { tamperState: 'forged-state-value' });
+  assert.equal(forged.status, 400, '위조 콜백은 HTTP 400');
+  assert.equal(s.counters.codeGrants, 0, '위조로는 토큰 교환이 일어나지 않는다');
+  assert.equal((await conn(id)).status, 'connecting', '시도는 계속 살아 있다');
+
+  await approve(authUrl); // 사용자의 진짜 인가가 뒤이어 도착
+  assert.equal((await done).ok, true, '위조 시도 뒤에도 정상 연결이 성립한다');
+  assert.equal((await conn(id)).hasTokens, true);
+});
+
+test('타임아웃 문구는 회사 언어를 따른다 — 저장 ko 문구가 영어 셸에 보간되지 않는다(2R L1)', async () => {
+  const s = await newServer();
+  const id = 'demo-lang-status';
+  const { done } = await startConnect(WS, { id, url: s.mcpUrl, scopes: ['spike.read'] }, { timeoutMs: 150 });
   const out = await done;
-  assert.equal(out.ok, false);
-  assert.match(out.error, /state/);
-  assert.equal(s.counters.codeGrants, 0, '토큰 교환이 일어나지 않았다');
-  const c = await conn(id);
-  assert.equal(c.status, 'error');
-  assert.equal(c.hasTokens, false);
+  assert.equal(out.errorCode, 'auth_timeout', '실패는 안정 코드로 식별된다');
+  const en = await callConnectorTool(WS, id, 'search_threads_demo', { query: 'x' }, { lang: 'en' });
+  assert.doesNotMatch(en.content[0].text, /[가-힣]/, '영어 모드에 한국어가 새지 않는다');
+  assert.match(en.content[0].text, /within 0s|Authorization was not completed/);
 });
 
 // ── ⑤ 콜백 타임아웃(기본 120s — 테스트는 노브로 단축) ──
@@ -164,8 +178,49 @@ test('콜백 타임아웃 — 인가 미완이면 시도가 정직하게 만료�
   assert.ok(authUrl, '인가 URL은 나왔지만 아무도 브라우저를 완료하지 않는다');
   const out = await done;
   assert.equal(out.ok, false);
-  assert.match(out.error, /타임아웃/);
+  assert.equal(out.errorCode, 'auth_timeout');
   assert.equal((await conn(id)).status, 'error');
+  assert.equal((await conn(id)).errorCode, 'auth_timeout', '실패 사유는 코드로도 남는다(UI 재번역용)');
+});
+
+// ── 재인가·사전 등록 redirect_uri (분리 검수 2R 블로커의 회귀 잠금) ──
+test('사전 등록 redirect_uri — 콘솔에 미리 박아둔 고정 경로로 첫 연결이 성립한다', async () => {
+  // 구글류: client_id·redirect_uri를 콘솔에서 먼저 등록한다. RFC 8252는 loopback의 **포트만**
+  // 완화하고 경로는 정확 일치를 요구하므로, 시도마다 경로가 바뀌면 여기서 400이 난다.
+  // (그래서 난수 경로를 되돌렸다 — 이 테스트는 그 결정의 잠금이다.)
+  const s = await newServer();
+  const id = 'demo-preregistered';
+  s.registerClient({
+    client_id: 'argo-console-client', redirect_uris: ['http://127.0.0.1/callback'], // 포트 없이 등록(콘솔 관행)
+    token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'], scope: 'spike.read',
+  });
+  const { authUrl, done } = await startConnect(WS, { id, url: s.mcpUrl, scopes: ['spike.read'], oauth: { client_id: 'argo-console-client' } });
+  assert.equal(new URL(new URL(authUrl).searchParams.get('redirect_uri')).pathname, '/callback', '경로는 등록값과 같아야 한다');
+  await approve(authUrl);
+  assert.equal((await done).ok, true, '사전 등록 client는 첫 연결부터 성립해야 한다');
+});
+
+test('재연결 — 토큰이 죽은 뒤 다시 연결해도 등록된 redirect_uri가 그대로 통한다', async () => {
+  // 이 PR이 "설정에서 다시 연결해 주세요"라고 안내하는 바로 그 경로다. client 레코드(=DCR로 등록된
+  // redirect_uris)는 살아 있으므로, 시도마다 콜백 경로가 달라지면 여기서 400 Unregistered redirect_uri가
+  // 난다(분리 검수 2R 블로커 실측). 고정 경로 + 포트 완화라야 성립한다.
+  const s = await newServer({ accessTtlMs: 800 });
+  const id = 'demo-reconnect';
+  const first = await startConnect(WS, { id, url: s.mcpUrl, scopes: ['spike.read'] });
+  await approve(first.authUrl);
+  assert.equal((await first.done).ok, true);
+  const registered = new URL(first.authUrl).searchParams.get('redirect_uri');
+
+  s.revokeRefresh();
+  await new Promise((r) => setTimeout(r, 1_100)); // access 만료 + 갱신 수단 없음 = 재인가가 필요한 상태
+
+  const second = await startConnect(WS, { id, url: s.mcpUrl, scopes: ['spike.read'] });
+  assert.ok(second.authUrl, '재인가가 필요하므로 인가 URL이 다시 나온다');
+  const again = new URL(second.authUrl).searchParams.get('redirect_uri');
+  assert.equal(again.replace(/:\d+/, ''), registered.replace(/:\d+/, ''), '경로는 그대로, 포트만 달라진다');
+  await approve(second.authUrl);
+  assert.equal((await second.done).ok, true, '재연결이 400으로 막히면 안 된다');
 });
 
 // ── 미연결·도달 불가의 정직 실패 ──
@@ -214,17 +269,6 @@ test('콜백 서버는 loopback에만 열린다 — 바인드 주소가 관측�
   assert.equal((await done).ok, true);
 });
 
-test('콜백 경로는 난수 세그먼트 — 포트만 아는 페이지는 진행 중 인가를 끊지 못한다(L3)', async () => {
-  const s = await newServer();
-  const { authUrl, done } = await startConnect(WS, { id: 'demo-path', url: s.mcpUrl, scopes: ['spike.read'] });
-  const redirect = new URL(new URL(authUrl).searchParams.get('redirect_uri'));
-  assert.match(redirect.pathname, /^\/callback\/[0-9a-f-]{36}$/, '경로에 난수 세그먼트');
-
-  // 포트 스캔 대역 — 고정 경로 추측은 404이고, 시도는 살아 있어야 한다.
-  assert.equal((await fetch(`${redirect.origin}/callback`)).status, 404);
-  await approve(authUrl);
-  assert.equal((await done).ok, true, '스캔이 시도를 죽이지 않는다');
-});
 
 test('평문 http 원격은 거부 — loopback만 예외(L2, OAuth 2.1 TLS 계약)', async () => {
   await assert.rejects(

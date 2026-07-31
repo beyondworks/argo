@@ -97,8 +97,13 @@
   secretbox는 **동기화 봉투** 암호화이고, 동기화하지 않는 파일은 디스크에 평문 0600으로 둔다(러너 자격도
   동일). 크루 파일 도구·MCP 인자는 하드라인이 막고, **셸은 리터럴 1차 방어**(BASH_GUARDED 명시 등재),
   **CLI 러너는 게이트 밖**이다(`docs/runner-isolation-limits.md`) — 표면별 한계가 다르다. 평문 로그 금지.
-- 커넥터 서버 URL은 **loopback 외 https 강제**(OAuth 2.1). 인가 콜백은 **loopback 바인드 + 난수 경로 +
-  state + 1회용 + 120초**이며, 바인드 주소는 실측 검증해 loopback이 아니면 연결을 중단한다(fail-closed).
+- 커넥터 서버 URL은 **loopback 외 https 강제**(OAuth 2.1). 인가 콜백은 **loopback 바인드 + 고정 경로
+  `/callback` + state + 120초**이며, 바인드 주소는 실측 검증해 loopback이 아니면 연결을 중단한다(fail-closed).
+  경로를 시도마다 난수화하지 **않는다** — `redirect_uri`는 DCR 등록·콘솔 사전 등록으로 영속되는데
+  RFC 8252는 loopback의 **포트만** 완화하고 경로는 정확 일치를 요구해서, 난수 경로는 재연결과 사전 등록
+  client를 통째로 깨뜨린다(실측 400 `Unregistered redirect_uri`). 대신 **state 불일치 콜백은 거부하되
+  시도를 종료하지 않는다** — 종료시키면 로컬 포트를 훑는 아무 웹페이지나 진행 중 인가를 끊을 수 있고,
+  코드 배달은 정상 state로만 가능하므로 무시해도 보안 등급은 같다.
 - 커넥터 도구 호출은 **회사 밖으로 나가는 행동을 포함할 수 있다**(메일 발송 등) → 위험 도구는
   결재 대상: 1차 규칙 = 쓰기 계열 도구(send/create/delete/update 네이밍 + 카탈로그별 명시
   목록)는 `request_approval`/`approval` 블록 경유를 프롬프트로 강제하고, 읽기 계열은 자유.
