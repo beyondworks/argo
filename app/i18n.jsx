@@ -833,7 +833,9 @@ const DICT = {
   'chat.fireConfirm': ['해고', 'Fire'],
   'chat.attach': ['파일 첨부', 'Attach files'],
   'chat.workFolder.open': ['작업 폴더 열기', 'Open work folder'],
-  'chat.workFolder.prefix': ['작업 폴더: {path}', 'Work folder: {path}'],
+  // 고정 = '지금 일할 곳'(해제 전까지 매 턴 주입). 등록 목록은 '가도 되는 곳'이라 다른 개념이다.
+  'chat.workFolder.pinned': ['고정된 작업 폴더: {path}', 'Pinned work folder: {path}'],
+  'chat.workFolder.unpin': ['폴더 고정 해제', 'Unpin folder'],
   'chat.workFolder.webHint': ['브라우저는 보안상 폴더의 실제 경로를 주지 않아 절대 경로를 직접 입력합니다. 데스크톱 앱에서는 네이티브 폴더 픽커가 열립니다.', "Browsers don't expose real folder paths, so type an absolute path here. The desktop app opens a native folder picker."],
   'vault.download': ['다운로드', 'Download'],
   'chat.createdDocs': ['만든 문서', 'Created files'],

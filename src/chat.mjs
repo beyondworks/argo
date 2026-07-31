@@ -16,7 +16,8 @@ import { listAgents } from './hub.mjs';
 import { addApproval } from './approvals.mjs';
 import { appendEvent, readEvents } from './events.mjs'; // readEvents — mcp 실패 연속 중복 억제의 디스크 사실(마지막 기록) 조회
 import { loadCapabilities } from './capabilities.mjs'; // CAPABILITIES 직참조는 결재 분기 제거로 소멸(#191 검수)
-import { loadActiveWorkRoots } from './workroots.mjs';
+import { activeFolders } from './workroots.mjs';
+import { fold } from './pathcase.mjs'; // 폴더 비교는 판정(activePin)과 같은 잣대로 — 대소문자 변형 대응
 import { makePermissionGate } from './permission-gate.mjs';
 import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커넥터 = 러너 무관 단일 실행 경로(설계서 §2-2)
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
@@ -312,8 +313,29 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
     hasTools = 크루 도구(request_approval·request_tool_install 등)가 실제로 있는 턴인지.
     도구가 없는 러너에는 같은 규칙을 "보고·안내" 형태로 지시한다(러너 독립성 — 어떤 러너를 연결해도
     Argo 규율대로 행동). (export: 회귀 테스트용) */
-export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, lang = 'ko', runner = null, workRoots = [] } = {}) {
+// 폴더 경로는 불릿 한 줄에 들어간다 — 개행이 든 폴더명이 원문으로 실리면 가짜 지시줄이 만들어진다
+// (사장이 직접 등록해야 성립하는 자해 경로지만, 이 줄의 명령형이 세므로 주입 지점에서 접는다).
+const oneLine = (p) => String(p ?? '').replace(/[\r\n]+/g, ' ');
+
+export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '' } = {}) {
+  // 고정 폴더는 등록 목록에도 들어 있다(고정은 등록을 거쳐야 잡힌다) — 그대로 두면 같은 경로를
+  // 두 줄이 반복해 "지금 일할 곳"과 "그냥 써도 되는 곳"의 구분이 흐려진다. 그래서 여기서 뺀다.
+  const otherRoots = workRoots.filter((r) => fold(r) !== fold(pinnedFolder)); // 판정(activePin)과 같은 잣대
   const mcpList = connectedMcp.length ? connectedMcp.join(', ') : (lang === 'en' ? '(none)' : '(없음)');
+  // 폴더 두 줄 — "지금 일할 곳"(고정)과 "그 밖에 가도 되는 곳"(등록)은 다른 말이다. 합치면
+  // "가도 된다"로만 읽혀 크루가 회사 폴더에 저장하고 만다(신고 2026-07-31의 실제 증상).
+  const pinnedShown = oneLine(pinnedFolder);
+  const pinnedLine = pinnedShown
+    ? (lang === 'en'
+      ? `- **Work here now: ${pinnedShown}** — the captain pinned this folder. Unless they name another path, do your file work inside it (create, read, save there) and say which folder you used. It stays pinned until they unpin it.\n`
+      : `- **지금 일할 폴더: ${pinnedShown}** — 사장이 고정해 둔 곳이다. 다른 경로를 지정받지 않는 한 파일 작업(생성·조회·저장)은 이 폴더 안에서 하고, 어느 폴더에 뒀는지 밝혀라. 사장이 고정을 풀기 전까지 유지된다.\n`)
+    : '';
+  const rootsLine = otherRoots.length
+    ? (lang === 'en'
+      ? `- Other folders you may use: ${otherRoots.map(oneLine).join(' · ')}\n`
+      : `- 그 밖에 써도 되는 폴더: ${otherRoots.map(oneLine).join(' · ')}\n`)
+    : '';
+
   // 커넥터 절 — MCP 절의 "SDK 턴에서 실행된다"가 커넥터에는 해당하지 않는다(코어가 실행하므로 러너 무관,
   // 설계서 §2-2). 연결이 있을 때만 넣는다: 없는 능력을 광고하지 않는다. 호출 문법은 표면이 알려준다
   // (SDK=use_connector 도구 설명, CLI=지시 블록 문법) — 여기엔 러너 공통 사실만 적는다.
@@ -331,7 +353,7 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
 
 ## Local capabilities — full access
 - File system: ${isCliRunner(runner) ? `**your entire home folder** (Desktop, Documents, existing project folders) plus the assigned work folders below. There is no toggle to turn on. If you need a path outside home — an external volume, say — tell the captain to add that folder under Settings → Work folders; it opens from the next turn${runner === 'gemini' ? '. Caveat: older Gemini CLI builds may still block paths outside the company folder (a vendor limit) — if blocked, report the exact error without guessing at permissions, save the output inside the company folder and tell the captain where it is' : ''}` : 'read and write anywhere on this computer, including the captain\'s Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the captain to — if a path exists, you can use it'}. Only the protected zones below are blocked.
-${workRoots.length ? `- Assigned work folders (the captain pinned these): ${workRoots.join(' · ')}\n` : ''}- Web browsing (includes web search / looking up current information): allowed.
+${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up current information): allowed.
 - Shell commands: ${runner === 'gemini' ? 'not supported on this runner (Gemini) — for shell work, tell the captain to assign a crew on a shell-capable runner (e.g. Claude)' : 'allowed.'}
 - Preparation work (tool installs, setup) runs without approval. Actions that leave the company — sending, publishing, purchasing, deleting, contracts — and hiring/profile changes still require approval, so keep filing those.
 - Never tell the captain to "enable file access in Settings". That setting does not exist: access is on by default. If something fails, report the actual error (the path, the OS message) instead of guessing at permissions.
@@ -363,7 +385,7 @@ ${workRoots.length ? `- Assigned work folders (the captain pinned these): ${work
 
 ## 로컬 능력 — 전권
 - 파일 시스템: ${isCliRunner(runner) ? `**홈 폴더 전체**(바탕화면·문서·기존 프로젝트 폴더 포함)와 아래 지정 작업 폴더를 읽고 쓸 수 있다. 켜야 할 토글은 없다. 홈 밖 경로(외장 볼륨 등)가 필요하면 사장에게 "설정 → 작업 폴더"에 그 폴더를 등록해 달라고 안내하라 — 등록하면 다음 턴부터 열린다${runner === 'gemini' ? '. 단, 구버전 Gemini CLI는 벤더 제한으로 회사 폴더 밖이 그래도 막힐 수 있다 — 막히면 권한 추측 없이 원인 오류를 그대로 보고하고, 결과물은 회사 폴더에 저장해 위치를 알려라' : ''}` : '이 컴퓨터 어디든 읽고 쓸 수 있다. 사장의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사장을 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다'}. 막히는 것은 아래 보호 구역뿐이다.
-${workRoots.length ? `- 지정 작업 폴더(사장이 고정해 둔 곳): ${workRoots.join(' · ')}\n` : ''}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): 허용.
+${pinnedLine}${rootsLine}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): 허용.
 - 셸 명령: ${runner === 'gemini' ? '이 러너(Gemini)에서는 지원되지 않는다 — 셸이 필요한 작업은 셸을 지원하는 러너(Claude 등)의 크루에게 맡기도록 사장에게 안내하라' : '허용.'}
 - 준비 작업(도구 설치·환경 세팅)은 결재 없이 진행한다. **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.
 - **"설정에서 파일 권한을 켜세요"라고 안내하지 마라. 그런 설정은 없다** — 접근은 기본으로 열려 있다. 실패하면 권한 탓으로 추측하지 말고 실제 오류(경로와 OS 메시지)를 그대로 보고하라.
@@ -876,7 +898,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 러너 공통 지시(결재·능력·환경·도구 활용) — SDK 경로와 같은 규율을 외부 러너에도 적용(러너 독립성).
       // 외부 CLI에는 크루 도구가 없으므로 hasTools:false — 같은 규칙이 "보고·안내" 형태로 들어간다.
       const cliCaps = await loadCapabilities(wsId);
-      const cliWorkRoots = await loadActiveWorkRoots(wsId); // 사장 지정 외부 작업 폴더 — codex 샌드박스·프롬프트 안내에 주입
+      // 폴더 상태 — SDK 경로와 **같은 함수**를 지난다(러너 중립성). 한 번만 재므로 프롬프트와
+      // 샌드박스(codex writable_roots 등)가 같은 스냅샷을 본다.
+      const { roots: cliWorkRoots, pin: cliPin } = await activeFolders(wsId, agentSlug);
       const cliMcp = Object.keys(safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {}))
         .filter((n) => !mcpScope || mcpScope.includes(n)); // 크루별 MCP 범위(안내문도 동일 기준)
       // 커넥터 요약 — **SDK 턴과 같은 원천**(connectorBriefing: connected + reauth)을 쓴다. 여기서
@@ -888,7 +912,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots })}${messengerNote}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin })}${messengerNote}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
@@ -1061,7 +1085,8 @@ ${lang === 'en'
   // 자가 승격 경로가 그대로 다시 열린다. 전권 모델에서는 이 게이트가 유일한 방어선이라 더더욱 안 된다.
   // 제거해도 결재 카드가 새로 뜨지 않는다: 게이트의 mcp 분기는 금지 구역 경로가 아니면 그냥 allow다.
   const caps = await loadCapabilities();
-  const workRoots = await loadActiveWorkRoots(wsId); // 사장 지정 외부 작업 폴더 — 게이트·SDK 추가 디렉토리·프롬프트에 주입
+  // 폴더 상태 — CLI 경로와 **같은 함수**(activeFolders). 게이트·SDK 추가 디렉토리·프롬프트가 같은 값을 본다.
+  const { roots: workRoots, pin: pinnedFolder } = await activeFolders(wsId, agentSlug);
   const readTools = SDK_ALLOWED_TOOLS;
   // 결재·능력·환경·도구 활용 지시는 commonDirectives(러너 공통)로 일원화 — SDK/외부 러너 행동 통일.
   const connectedMcp = Object.keys(servers ?? {});
@@ -1137,7 +1162,7 @@ ${lang === 'en'
       ...(workRoots.length ? { additionalDirectories: workRoots } : {}),
       systemPrompt: systemPromptFor(md, p.root, skills, meta, lang)
         + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
-        + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots })
+        + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder })
         + messengerNote
         + fallbackDirective,
       mcpServers: { ...(servers ?? {}), crew: crewServer },

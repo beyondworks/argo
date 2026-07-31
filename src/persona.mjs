@@ -347,6 +347,10 @@ export async function removeAgentCard(wsId, slug) {
   // UI에 보이지 않는 해고 크루를 지목해 사용자가 풀 방법이 없어진다(검수 지적).
   const { updateAgentBot } = await import('./connections.mjs'); // 동적 — 모듈 간 순환 방지
   await updateAgentBot(wsId, slug, null).catch(() => {});
+  // 고정 작업 폴더도 같은 이유로 정리 — 안 걷으면 같은 이름으로 재영입했을 때 옛 고정이 조용히
+  // 부활한다(분리 검수 지적 2026-07-31). 봇 연결 정리와 같은 계열의 수명 문제다.
+  const { setPin } = await import('./workroots.mjs');
+  await setPin(wsId, slug, '').catch(() => {});
   await appendEvent(wsId, { type: 'crew', op: 'fire', slug });
 }
 

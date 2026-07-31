@@ -59,6 +59,56 @@ export async function loadWorkRoots(wsId) {
   return Array.isArray(data?.roots) ? data.roots.filter((r) => typeof r === 'string' && r.trim()) : [];
 }
 
+/** 크루별 **고정 작업 폴더**(pins) — "가도 되는 곳"(roots)과 달리 "지금 일할 곳"이다.
+    같은 파일에 두는 이유: 경로는 기기 고유값이라 **동기화에서 함께 빠져야** 한다(sync.mjs EXCLUDE).
+    크루 카드(agents/*.md)는 동기화되므로 거기 두면 다른 기기로 넘어가 없는 폴더를 가리킨다
+    — 첫 구현이 실제로 그랬다. 검증·잠금·도트파일 보호도 여기 얹으면 그대로 물려받는다. */
+export async function loadPins(wsId) {
+  const data = await readJsonLenient(paths(wsId).workroots, { pins: {} });
+  const pins = data?.pins;
+  return pins && typeof pins === 'object' && !Array.isArray(pins) ? pins : {};
+}
+
+/** 턴 주입용 고정 폴더 — 등록 목록에서 빠졌거나 지금 검증을 통과 못 하면 **없는 것으로 친다**.
+    (설정에서 폴더를 지우면 고정도 자동으로 풀린다. 없는 경로를 "지금 일할 곳"이라 우기지 않는다.)
+    roots를 받으면 그걸 쓴다 — activeFolders가 한 번만 재도록. */
+export async function activePin(wsId, slug, roots = null) {
+  const pinned = (await loadPins(wsId))[slug];
+  if (!pinned) return '';
+  const list = roots ?? (await loadActiveWorkRoots(wsId));
+  return list.some((r) => fold(r) === fold(pinned)) ? pinned : '';
+}
+
+/** 한 턴이 쓰는 폴더 상태 — **SDK·CLI 두 경로가 같은 함수를 지난다**(러너 중립성: 유건 지시).
+    한 곳에서 한 번만 재는 이유가 둘이다:
+     ① 두 번 재면 루트마다 stat+realpath를 두 벌 돈다(턴마다, 루트 수에 비례).
+     ② 두 스냅샷이 어긋날 수 있다 — 사이에 폴더가 등록+고정되면 프롬프트는 "여기서 일해라"인데
+        샌드박스 목록(codex writable_roots·SDK additionalDirectories)엔 그 폴더가 없다.
+        크루가 자기 샌드박스가 막는 곳에서 일하라는 지시를 받는다(분리 검수 2026-07-31). */
+export async function activeFolders(wsId, slug) {
+  const roots = await loadActiveWorkRoots(wsId);
+  return { roots, pin: await activePin(wsId, slug, roots) };
+}
+
+/** 고정/해제 — 빈 값이면 해제. 고정은 **등록된 폴더 중에서만** 고를 수 있다(roots가 상위 계약). */
+export async function setPin(wsId, slug, path) {
+  return withLock(`workroots:${wsId}`, async () => {
+    const data = await readJsonLenient(paths(wsId).workroots, { roots: [], pins: {} });
+    const roots = Array.isArray(data?.roots) ? data.roots : [];
+    const pins = { ...(data?.pins && typeof data.pins === 'object' && !Array.isArray(data.pins) ? data.pins : {}) };
+    const want = String(path ?? '').trim();
+    if (!want) delete pins[slug];
+    else {
+      const real = await validateWorkRoot(want); // 등록과 같은 검증 — 고정만 우회하는 구멍을 안 만든다
+      const hit = roots.find((r) => fold(r) === fold(real));
+      if (!hit) throw err('not-registered', real);
+      pins[slug] = hit; // 저장은 등록된 정본 문자열 — 화면이 목록과 대조할 수 있게
+    }
+    await writeJsonAtomic(paths(wsId).workroots, { ...data, roots, pins });
+    return pins[slug] ?? '';
+  });
+}
+
 /** 턴 주입용 — 이 기기에 지금 존재하고 **지금도 검증을 통과하는** 루트만(canonical 반환).
     존재 필터: 분리된 외장 디스크·과거 잔재 경로가 턴을 깨지 않게 조용히 제외(재연결 시 자동 복귀).
     재검증: 등록 후 폴더가 보호 구역 심링크로 교체돼도 주입 시점에 걸린다(TOCTOU —
@@ -99,9 +149,12 @@ export async function validateWorkRoot(p, { appRoot = APP_ROOT, wsRoot = WS_ROOT
 /** 추가/삭제 — 한 번에 하나씩(설정 UI 계약). 저장은 canonical 경로. */
 export async function updateWorkRoots(wsId, { add = null, remove = null } = {}) {
   return withLock(`workroots:${wsId}`, async () => {
-    let roots = await loadWorkRoots(wsId);
+    const data = await readJsonLenient(paths(wsId).workroots, { roots: [], pins: {} });
+    let roots = Array.isArray(data?.roots) ? data.roots.filter((r) => typeof r === 'string' && r.trim()) : [];
+    const pins = { ...(await loadPins(wsId)) }; // 삭제된 폴더의 고정은 같이 푼다(부활 방지)
     if (typeof remove === 'string' && remove.trim()) {
       roots = roots.filter((r) => fold(r) !== fold(remove.trim())); // add와 대칭 — 케이스 변형 삭제 허용
+      for (const [slug, p] of Object.entries(pins)) if (fold(p) === fold(remove.trim())) delete pins[slug];
     }
     if (typeof add === 'string' && add.trim()) {
       const real = await validateWorkRoot(add);
@@ -109,7 +162,7 @@ export async function updateWorkRoots(wsId, { add = null, remove = null } = {}) 
       if (roots.length >= MAX_WORK_ROOTS) throw err('limit', String(MAX_WORK_ROOTS));
       roots = [...roots, real];
     }
-    await writeJsonAtomic(paths(wsId).workroots, { roots });
+    await writeJsonAtomic(paths(wsId).workroots, { ...data, roots, pins }); // setPin과 대칭 — 미지 키 보존
     return roots;
   });
 }

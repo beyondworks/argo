@@ -174,6 +174,7 @@ export default function CrewChat({ params }) {
   const WAIT_STAGES = [t('chat.waitStage1'), t('chat.waitStage2'), t('chat.waitStage3')];
   const router = useRouter();
   const [agent, setAgent] = useState(null);
+  const [pinnedFolder, setPinnedFolder] = useState(''); // 고정 작업 폴더('' = 없음) — 정본은 서버 pins
   const [thread, setThread] = useState(null); // null = 로딩
   const [input, setInput] = useState('');
   // 입력 보존 — 새로고침·페이지 이탈에도 쓰던 내용이 남는다. input 상태를 그대로 따라가므로
@@ -417,6 +418,10 @@ export default function CrewChat({ params }) {
         setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '' });
       })
       .catch(() => { if (alive) setAgent({ name: slug, role: '' }); });
+    // 고정 폴더는 기기 로컬(.workroots.json pins)이라 회사 응답에 없다 — 화면 진입 시 1회만 읽는다
+    api(`/api/companies/${ws}/workroots`)
+      .then((d) => { if (alive) setPinnedFolder(d.pins?.[slug] ?? ''); })
+      .catch(() => {});
     api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
       // status도 첫 로드에 반영 — 온보딩 직행 시 시운전 진행 카드가 8초 폴을 기다리지 않고 바로 보인다
       .then((t) => { if (!alive) return; setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); })
@@ -588,27 +593,38 @@ export default function CrewChat({ params }) {
     return () => window.removeEventListener(FOLDER_DIALOG_EVENT, sync);
   }, []);
 
-  /** 등록 성공 시 입력창 프리픽스 — 등록만으로도 다음 턴 시스템 프롬프트에 반영되지만(src/chat.mjs workRoots),
-      이번 지시에도 경로를 명시해 크루가 바로 그 폴더에서 일하게 한다. 쓰던 초안은 지우지 않고 앞에 붙인다. */
-  function insertWorkFolder(path) {
-    const line = t('chat.workFolder.prefix', { path });
-    // 중복 방지는 줄 단위 정확 일치 — 부분 문자열(includes)이면 상위 폴더 등록이 하위 폴더 줄에 걸려 조용히 스킵된다
-    setInput((cur) => (cur.split('\n').includes(line) ? cur : (cur ? `${line}\n${cur}` : `${line}\n`)));
-    histIdx.current = -1; // 타이핑 경로와 동일 — 히스토리 탐색 모드가 남으면 ↑ 한 번에 프리픽스가 날아간다
-    setWfOpen(false); setWfErr(''); setWfInput('');
-    inputRef.current?.focus();
+  /** 폴더 고정/해제 — 빈 값이면 해제. 저장은 `.workroots.json`의 pins(기기 로컬·동기화 제외)이고,
+      해제 전까지 매 턴 프롬프트에 "지금 일할 폴더"로 들어간다(src/chat.mjs activePin). 예전엔 입력창에
+      문구를 붙일 뿐이라 한 번 보내면 풀렸다(실사용 신고 2026-07-31). 등록 목록(roots)이 '가도 되는 곳',
+      이 고정이 '지금 일할 곳'이다. 서버가 등록 목록과 대조해 정본 문자열로 저장한다. */
+  async function pinFolder(path) {
+    const prev = pinnedFolder;
+    setPinnedFolder(path); // 낙관 반영 — 칩이 즉시 뜬다/사라진다
+    try {
+      const d = await api(`/api/companies/${ws}/workroots`, { pin: { slug, path } });
+      setPinnedFolder(d.pinned ?? '');
+    } catch (e) {
+      setPinnedFolder(prev);
+      // 서버는 코드만 반환 — 등록 카드와 같은 i18n 계약. 실패는 스레드 상단 배너로(고정 팝오버는 닫힌 뒤다).
+      const key = `settings.workroots.err.${String(e.message || '')}`;
+      setError(t(key) === key ? t('settings.workroots.err.invalid') : t(key));
+    }
   }
 
   async function registerWorkFolder(path) {
     if (wfBusy) return;
     setWfBusy(true); setWfErr('');
     try {
-      const d = await api(`/api/companies/${ws}/workroots`, { add: path });
-      // 서버 canonical(realpath — 후행 슬래시·심링크 정규화)을 삽입 — 프롬프트에 주입되는 루트와 표기 일치
-      insertWorkFolder(d.roots?.[d.roots.length - 1] ?? path);
+      await api(`/api/companies/${ws}/workroots`, { add: path });
+      setWfOpen(false); setWfErr(''); setWfInput('');
+      await pinFolder(path); // 저장은 서버가 등록 정본(realpath)으로 맞춘다 — 표기가 프롬프트와 어긋나지 않게
+      inputRef.current?.focus();
     } catch (e) {
       const code = String(e.message || '');
-      if (code === 'duplicate') { insertWorkFolder(path); return; } // 이미 등록된 폴더 = 목적 달성 — 진행
+      if (code === 'duplicate') { // 이미 등록된 폴더 = 목적 달성 — 고정만 하고 진행
+        setWfOpen(false); setWfErr(''); setWfInput('');
+        await pinFolder(path); inputRef.current?.focus(); return;
+      }
       // 서버는 코드만 반환 — 여기서 i18n 매핑(설정 WorkRootsCard와 동일 계약). 미등록 코드는 일반 문구로.
       const key = `settings.workroots.err.${code}`;
       const mapped = t(key);
@@ -1139,6 +1155,20 @@ export default function CrewChat({ params }) {
           </div>
         )}
         {/* 여러 줄 입력 — textarea(Enter 전송·Shift+Enter 줄바꿈). 버튼은 하단 정렬(입력이 자라도 자리 고정) */}
+        {/* 고정된 작업 폴더 — 해제 전까지 매 턴 프롬프트에 "지금 일할 폴더"로 들어간다.
+            칩이 없으면 사장은 지금 어디서 일하는지 알 수 없고, 그게 이 기능 이전의 상태였다. */}
+        {pinnedFolder && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {/* 첨부 칩과 같은 물건(붙어 있는 것 + ✕로 뗀다) — .att-chip을 그대로 쓴다.
+                끝 두 조각만 보인다: 전체 경로는 폭을 다 먹고, CSS 말줄임(direction:rtl)은 앞의 '/'를
+                끝으로 밀어 "…보고서-2026-07/"처럼 없는 슬래시를 만든다(실측). 전체는 title로 준다. */}
+            <span className="att-chip" title={pinnedFolder}>
+              <Icon name="folder" size={11} />
+              <span className="name">…/{pinnedFolder.split(/[\\/]/).filter(Boolean).slice(-2).join('/')}</span>
+              <button type="button" onClick={() => pinFolder('')} aria-label={t('chat.workFolder.unpin')} title={t('chat.workFolder.unpin')}>✕</button>
+            </span>
+          </div>
+        )}
         <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
           {/* 폴더·클립 한 묶음(유건 지시 2026-07-28). 순서는 폴더 → 클립.
               간격의 지배 변수는 gap이 아니라 **버튼 폭**이다(.btn.btn-icon 34px에 아이콘 14px라
@@ -1147,9 +1177,12 @@ export default function CrewChat({ params }) {
               그려져 있어(실측 cy 11.69 vs 12.0) 박스를 맞춰도 폴더가 내려가 보인다. 그 차이만 상쇄. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 0, flex: 'none' }}>
             {/* 작업 폴더 열기 — 러너별 한계는 툴팁으로 정직 표기(Gemini 계열은 경로 제어 없음, runnerNote 재사용) */}
-            <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', width: 26, color: 'var(--fg-3)' }}
+            <button type="button" className="btn btn-icon sm"
+              style={{ border: 0, flex: 'none', width: 26, color: pinnedFolder ? 'var(--fg)' : 'var(--fg-3)' }}
               onClick={openWorkFolder} disabled={busy || wfBusy} aria-label={t('chat.workFolder.open')}
-              title={`${t('chat.workFolder.open')} — ${t('settings.workroots.runnerNote')}`}>
+              title={pinnedFolder
+                ? `${t('chat.workFolder.pinned', { path: pinnedFolder })} — ${t('settings.workroots.runnerNote')}`
+                : `${t('chat.workFolder.open')} — ${t('settings.workroots.runnerNote')}`}>
               {wfBusy ? <Spinner size={14} /> : <Icon name="folder" size={14} style={{ transform: 'translateY(-0.18px)' }} />}
             </button>
             <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', width: 26, color: 'var(--fg-3)' }}
