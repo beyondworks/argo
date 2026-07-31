@@ -172,10 +172,14 @@ const HARD_HOME_PATHS = [
      · .device-session.json    기기 Auth 세션(access+refresh) — `cat` 한 줄이 계정 탈취(최악)
      · .sync-credentials.json  Supabase 서비스 롤 키 — 같은 유출 계열
      · .account-secrets-local.json 계정 시크릿 — 같은 유출 계열
-     · .workroots.json         외부 작업 폴더 → additionalDirectories·writable_roots·--add-dir로
-                               직결. 셸로 덮으면 **다음 턴 반경이 실제로 넓어진다**(격리 라이브 재현:
-                               홈 밖 디렉터리가 fs 능력과 무관하게 순증). capabilities.json과 같은
-                               자가 승격 계열이라 같은 자리에서 막는다.
+     · .workroots.json         외부 작업 폴더. 셸로 덮으면 다음 턴에 홈 밖 디렉터리가 fs 능력과
+                               무관하게 순증한다(격리 라이브 재현). 정확히는 **교차 러너 상승**이다:
+                               SDK 러너 쪽 additionalDirectories는 탐색 힌트일 뿐 집행은 이 게이트가
+                               하지만(전권이라 금지 구역 밖은 원래 열림), codex writable_roots·
+                               gemini --include-directories·agy --add-dir는 **게이트 밖 프로세스
+                               샌드박스**라 그대로 넓어진다. 즉 게이트 안의 크루가 게이트 밖 크루의
+                               반경을 결재 없이 늘린다 — 설정 UI로만 바뀌어야 할 값이다.
+                               (검수 정정 2026-07-31: 이전 문구는 SDK까지 "자가 승격"이라 과장했다.)
      · .gw-queue- / .gw-offset / .gateway  게이트웨이 큐·커서 — 큐에 항목을 넣으면 드레이너가 그대로
                                처리한다(자기 지시 주입). gw-cursor-slack.json이 이미 금고인 것과 대칭.
      · .guest-mode.json        게스트(로컬 1인) 모드 마커 — 권한 상태를 파일로 바꾸는 경로
@@ -199,10 +203,21 @@ const WS_DOT_FILES = new Set([
   // 회사 루트 직속(<ws>/.x)
   '.secrets.json', '.connector-secrets.json', // 자격(#213)
   '.workroots.json', '.scaffold.json', '.sync-state.json', '.index.sqlite', '.import.status.json',
-  '.gw-queue-', '.gw-offset', '.gateway', // 게이트웨이 큐·커서(접두 — 채널 접미를 함께 덮는다)
+  '.gw-queue-', '.gw-offset', // 게이트웨이 큐·오프셋(접두 — 채널 접미를 함께 덮는다)
+  // 게이트웨이 상태·락은 **실제 파일 형태로만** 좁힌다(.gateway-{kind}.json / .gateway.lock).
+  // 무경계 `.gateway`는 이 파일이 chats/에서 이미 고친 오차단을 재도입한다 — 분리 검수 실측:
+  // `curl https://api.gateway.example.com`·`cat src/events.gateway.ts`가 전부 거절됐다.
+  '.gateway-', '.gateway.lock',
   // WS_ROOT 직속(<ws>/../.x) — 전 회사 공용 기기 상태·계정 자격
-  '.device-session.json', '.sync-credentials.json', '.account-secrets-local.json',
+  '.device-session.json', '.tmp-devsess-', // 세션 본체 + 원자적 쓰기 임시본(토큰 평문)
+  '.sync-credentials.json',
+  // `.account-secrets` 접두 하나로 3형태를 덮는다 — 로컬(`-local.json`)·사용자 스코프
+  // (`-{uid}.json`, runners/creds.mjs 템플릿 리터럴)·레거시(`.account-secrets.json`).
+  // 이름만 등재했다가 **로그인하면 파일명이 uid로 바뀌어** 러너 API 키·OAuth 토큰이 셸에
+  // 열리던 것이 분리 검수 HIGH였다(#213 → 이 커밋 → 여기, 같은 계급 세 번째).
+  '.account-secrets',
   '.device-id', '.guest-mode.json', '.sync-process.lock', '.tombstones',
+  '.scheduler.lock', // daemonLease('scheduler') — 미래 ts를 심으면 리더 선출이 영구 실패한다
 ]);
 const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];
 // 경계 클래스에 리다이렉트·쉼표(<>,) 포함 — `>chats/b.json`(공백 없는 리다이렉트)이 위조 명령의 가장
