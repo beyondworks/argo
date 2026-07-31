@@ -163,7 +163,14 @@ const HARD_HOME_PATHS = [
    부분 문자열이면 URL(`/v1/chats/123`)·하위 데이터(`vault/chats/`)까지 오차단해 크루가 "API 호출이
    보호 구역에 막혔다"는 거짓 설명을 하게 된다(재검수 MEDIUM) — 토큰 시작 경계(행 머리·공백·따옴표·
    셸 연산자 뒤, 선택적 ./)에서만 잡는 정규식으로 좁힌다. 실판정은 isForbidden의 몫, 여기는 1차 방어. */
-const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES];
+/* 회사 루트 직속 도트파일(자격) — 도트 규칙은 isForbidden(파일 도구·MCP 인자)에만 있어서, 이름을
+   여기 등재하지 않으면 같은 파일을 Read는 deny인데 `cat`은 allow가 된다. 이 파일 헤더가 스스로
+   금지한 "도구별로 갈리는 판정"이 자격 파일에서 재발한 것이다(PR #213 분리 검수 M1 실측: 러너
+   API 키 `.secrets.json`·구글 OAuth 토큰 `.connector-secrets.json` 둘 다 셸로 통과했다).
+   부분 문자열 비교라 `cat my.secrets.json`이나 `echo "add .secrets.json to .gitignore"`처럼
+   무관한 명령도 걸린다 — 이 파일의 fail-closed 방침(아래 Bash 분기 주석)대로 수용한다. */
+const WS_SECRET_FILES = new Set(['.secrets.json', '.connector-secrets.json']);
+const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_SECRET_FILES];
 // 경계 클래스에 리다이렉트·쉼표(<>,) 포함 — `>chats/b.json`(공백 없는 리다이렉트)이 위조 명령의 가장
 // 자연스러운 형태다(재검수 3R). 잔여: `../`·`$PWD/` 간접 표기는 파일 헤더의 셸 한계 범위(실판정은 isForbidden).
 const BASH_DIR_RE = new RegExp(String.raw`(^|[\s'"\x60;|&(=<>,])(\.[\\/])?(${[...WS_CONTROL_DIRS].join('|')})[\\/]`, 'i');
