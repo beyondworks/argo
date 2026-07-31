@@ -432,10 +432,13 @@ export async function disconnectConnector(wsId, serverId) {
   });
   dropPool(wsId, serverId);
   // 한 번 더 쓸어낸다 — 순서(레코드 삭제 → 정리)는 경합 창을 **좁힐 뿐 없애지 못한다**: 호출이
-  // 삭제 직전에 저장소를 읽고 dropPool 직후에 풀을 조회하면, 올바른 순서에서도 살아 있는 토큰을 문
-  // 클라이언트가 새로 열려 유휴 소거(5분)까지 남는다(CI가 이 창을 실제로 밟아 순서 단언을 깨뜨렸다).
-  // 마이크로태스크 하나 뒤에 회수하면 그 창에서 열린 것까지 닫혀, "해제하면 이 기기에서 자격이
-  // 사라진다"는 약속이 경합 결과와 무관하게 성립한다.
+  // 삭제 직전에 저장소를 읽고 dropPool 직후에 풀을 조회하면 올바른 순서에서도 새 풀이 열린다
+  // (창은 fs 읽기 완료와 그 continuation 디큐 사이의 마이크로태스크 여러 홉이다 — CI가 실제로 밟았고,
+  //  검수가 지연 주입으로 6/6 재현했다).
+  // **이 재회수의 하중은 무보호 서버(위 authUrl:null 경로)다.** 인증이 필요한 서버라면 창에서 열린
+  // 풀은 삭제 이후라 토큰을 못 찾아 auth가 실패하고 entry.ready.catch가 스스로 닫는다(검수 실측:
+  // 경합 결과 reauth_required·closed 델타 2). 무보호 서버는 그 자멸이 없어 정상 연결된 풀이
+  // 유휴 소거(5분)까지 살아남는다 — 그 경로를 이 한 줄이 막는다. 비용은 마이크로태스크 1홉 + 멱등 no-op.
   await Promise.resolve();
   dropPool(wsId, serverId);
   return { ok: true, removed: existed };
