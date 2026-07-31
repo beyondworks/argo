@@ -15,7 +15,9 @@ export async function GET(_req, { params }) {
     const events = await readEvents(ws, 300).catch(() => []);
     const recent = events
       .filter((e) => e.slug === slug && e.type === 'turn' && e.gist)
-      .slice(-8).reverse()
+      // readEvents는 이미 최신순 — 이전 slice(-8).reverse()는 "가장 오래된 8개"를 옛→새 순으로
+      // 집어 카드가 첫 업무들만 보여줬다(검수 PR #209 실측: 12턴 시드에서 업무1~5 표시).
+      .slice(0, 8)
       .map((e) => ({ gist: e.gist, ts: e.ts, ok: e.ok !== false, ms: e.ms ?? null }));
     const skills = await listInstalledSkills(ws).catch(() => []);
     const mcp = Object.keys((await loadMcp(ws).catch(() => ({ servers: {} }))).servers ?? {}); // 설치 MCP 이름 — 크루별 범위 편집 UI용

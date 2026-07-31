@@ -233,6 +233,16 @@ export function pickRunner(st, want, exclude = null) {
   return { runner: want ?? 'claude', fellBack: false, available: false, credButNoCli: [] };
 }
 
+/** 자동(카드에 러너 미지정) 크루가 실제로 받을 러너 id — 턴과 같은 판정(pickRunner, 폴백 순서 포함).
+    /api/runners가 이 값을 autoRunnerId로 내려주고 크루 카드가 CLI 경고 판정에 쓴다(검수 PR #209 L4:
+    클라가 폴백 순서를 복제하면 갈라진다). 라우트가 아니라 코어에 두는 이유: 라우트 파일은 auth 계층
+    (next/headers)에 묶여 Next 밖 단위 테스트가 열 수 없다 — 판정은 코어, 라우트는 배선만.
+    (export: 회귀 테스트용) */
+export function autoRunnerOf(company) {
+  const auto = company ? pickRunner(company, null) : null;
+  return auto?.available ? auto.runner : null;
+}
+
 /** claude OAuth 토큰 형식 안내(순수) — 형식이 다른 값(웹 브리지 교환 산출물·setup-token 중간 인증
     코드 오입력)이 저장을 통과한 뒤 모든 턴이 401로만 드러나던 것을 저장 시점에 잡는다
     (실측 2026-07-18: 92자 비접두사 값 저장 → 전 턴 "401 Invalid authentication credentials").

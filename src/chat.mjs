@@ -45,6 +45,18 @@ export function isNewMcpFailure(recent, sv) {
   return !prev || prev.status !== sv.status;
 }
 
+/** 복구 서사 대상(순수) — 직전 mcp 기록이 실패(ok:false)였는데 이번 init에서 connected로 돌아온
+    서버만. 이게 없으면 복구 후 재실패가 "상태 동일"로 억제돼 원장의 마지막 mcp 기록이 영원히 옛
+    실패로 남는다(검수 PR #209 LOW). prev.ok === false 조건이라 연속 connected는 1회만 기록된다.
+    (export: 회귀 테스트용 — 인라인 분기는 변이가 침묵으로 통과한다) */
+export function mcpRecoveries(initMsg, recent) {
+  const connected = (initMsg?.mcp_servers ?? []).filter((sv) => sv?.status === 'connected' && sv.name !== 'crew');
+  return connected.filter((sv) => {
+    const prev = (recent ?? []).find((e) => e?.type === 'mcp' && e.server === sv.name);
+    return !!prev && prev.ok === false;
+  });
+}
+
 export async function loadSkills(wsId, cap = SKILL_INJECT_CAP, lang = 'ko', allow = null) {
   const dir = paths(wsId).skills;
   let names = [];
@@ -1069,11 +1081,16 @@ ${lang === 'en'
         const fails = mcpFailures(msg);
         // 원장 중복 억제 — 죽은 서버 1개가 매 턴 1행씩 쌓이던 것(관찰 정리 2026-07-31). 마지막
         // 기록(디스크 사실)과 서버·상태가 같으면 스킵 — 상태 변화·신규 실패만 서사로 남는다.
-        const recent = fails.length ? await readEvents(wsId, 200).catch(() => []) : [];
+        const hasMcp = (msg?.mcp_servers ?? []).some((sv) => sv?.name !== 'crew');
+        const recent = hasMcp ? await readEvents(wsId, 200).catch(() => []) : [];
         for (const sv of fails) {
           console.warn(`[argo] MCP 접속 실패(${wsId}): ${sv.name} — ${sv.status}`); // 서버 로그는 매 턴(운영 관측)
           if (!isNewMcpFailure(recent, sv)) continue;
           appendEvent(wsId, { type: 'mcp', server: sv.name, status: sv.status, ok: false, slug: agentSlug }).catch(() => {});
+        }
+        // 복구 서사 — 판정은 순수 함수(mcpRecoveries), 여기는 기록만.
+        for (const sv of mcpRecoveries(msg, recent)) {
+          appendEvent(wsId, { type: 'mcp', server: sv.name, status: 'connected', ok: true, slug: agentSlug }).catch(() => {});
         }
       }
       await setTurnStatus(wsId, agentSlug, 'memory');
