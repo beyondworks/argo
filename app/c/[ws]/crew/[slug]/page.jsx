@@ -174,6 +174,10 @@ export default function CrewChat({ params }) {
     // Vault/파일 API의 rel은 vault 기준이지만 workspace API는 회사 루트 기준이다.
     // 이 접두 변환이 없으면 정상 문서도 `notes/foo.md`를 회사 루트에서 찾아 404가 난다.
     path = decodeURIComponent(path).replace(/^\/+/, '');
+    // 일부 크루가 응답에 절대 파일 경로를 기록한다. 전체 호스트 경로를 트리에 넣으면
+    // `vault/home/...`가 되어 not-found가 되므로, 회사 데이터 경계인 vault 뒤만 사용한다.
+    const vaultMarker = path.indexOf('/vault/');
+    if (vaultMarker >= 0) path = path.slice(vaultMarker + 1);
     if (!/^vault\//i.test(path)) path = `vault/${path}`;
     setPanelFileRequest({ root: 'company', path, nonce: Date.now() });
     setPanelMounted(true);

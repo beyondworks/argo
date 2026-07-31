@@ -122,6 +122,8 @@ test('채팅 문서 링크: 새 404 페이지 대신 파일 패널을 열고 트
   assert.match(crew, /url\.pathname === `\/api\/companies\/\$\{ws\}\/files`/);
   assert.match(crew, /path = `vault\/\$\{path\}`/,
     'Vault 기준 rel을 회사 루트 기준 경로로 변환하지 않는다');
+  assert.match(crew, /const vaultMarker = path\.indexOf\('\/vault\/'\)/,
+    '절대 workspace 파일 경로에서 vault 경계 뒤를 추출하지 않는다');
   assert.match(crew, /setPanelOpen\(true\)/);
   assert.match(crew, /fileRequest=\{panelFileRequest\}/);
   assert.match(panel, /setActive\('files'\)/);
