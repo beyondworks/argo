@@ -391,17 +391,27 @@ export function connectorToolDescription(connectors, lang = 'ko') {
   const body = connectors.map((c) => {
     const tools = c.tools.length
       ? `${c.tools.join(', ')}${c.more > 0 ? (en ? ` (+${c.more} more)` : ` 외 ${c.more}개`) : ''}`
-      : (en ? '(tool list unavailable right now)' : '(도구 목록을 지금 불러오지 못했다)');
+      : (c.status === 'reauth'
+        ? (en ? '(available after reconnect)' : '(재연결 후 사용 가능)')
+        : (en ? '(tool list unavailable right now)' : '(도구 목록을 지금 불러오지 못했다)'));
     return `${c.id}${c.status === 'reauth' ? (en ? ' [needs reconnect]' : ' [재연결 필요]') : ''}: ${tools}`;
   }).join(' | ');
-  const summary = body.length > CONNECTOR_DESC_CAP
-    ? `${body.slice(0, CONNECTOR_DESC_CAP)}${en ? ' …(truncated)' : ' …(생략)'}`
-    : body;
+  // 절단은 마지막 구분자 경계까지 되감는다 — 토큰 중간을 자르면 조각(`some_long_too`)이 도구
+  // 이름처럼 보여 크루가 그대로 호출한다(분리 검수 LOW).
+  let summary = body;
+  let more = false;
+  if (body.length > CONNECTOR_DESC_CAP) {
+    const cut = body.slice(0, CONNECTOR_DESC_CAP);
+    const back = Math.max(cut.lastIndexOf(', '), cut.lastIndexOf(' | '));
+    summary = `${(back > 0 ? cut.slice(0, back) : cut)}${en ? ' …(truncated)' : ' …(생략)'}`;
+    more = true;
+  }
+  if (connectors.some((c) => c.more > 0)) more = true; // 서버당 상한으로 잘린 것도 "목록이 전부가 아님"
   const reauth = connectors.some((c) => c.status === 'reauth');
   if (en) {
-    return `Call a tool on an external service connected to this company by login (Gmail, Drive, Notion, …). The Argo core runs the call, so it works the same on any runner. server = the connected service id, tool = a tool name on that service, args = that tool's arguments object. Connected right now — ${summary}. Use only names from that list; if you need something else, ask the captain to connect it in Settings. Reads and lookups are free, but anything that leaves the company (send, publish, create, update, delete) must go through request_approval first.${reauth ? ' Services marked [needs reconnect] will fail until the captain reconnects them in Settings — say so instead of retrying.' : ''}`;
+    return `Call a tool on an external service connected to this company by login (Gmail, Drive, Notion, …). The Argo core runs the call, so it works the same on any runner. server = the connected service id, tool = a tool name on that service, args = that tool's arguments object. Connected right now — ${summary}. ${more ? 'That list is trimmed — if a tool you need is not shown, call it by its documented name anyway; the service validates it. ' : 'Use only names from that list. '}If you need another service, ask the captain to connect it in Settings. Reads and lookups are free, but anything that leaves the company (send, publish, create, update, delete) must go through request_approval first.${reauth ? ' Services marked [needs reconnect] will fail until the captain reconnects them in Settings — say so instead of retrying.' : ''}`;
   }
-  return `로그인으로 이 회사에 연결된 외부 서비스(Gmail·Drive·Notion 등)의 도구를 호출한다. Argo 코어가 실행하므로 어떤 러너에서도 똑같이 동작한다. server=연결된 서비스 id, tool=그 서비스의 도구 이름, args=그 도구의 인자 객체. 지금 연결된 것 — ${summary}. 이 목록에 있는 이름만 써라. 다른 서비스가 필요하면 사장에게 설정에서 연결해 달라고 안내하라. 조회·읽기는 자유롭게 쓰고, 회사 밖으로 나가는 쓰기(발송·게시·생성·수정·삭제)는 request_approval로 결재를 먼저 올려라.${reauth ? ' [재연결 필요] 표시가 붙은 서비스는 호출해도 실패한다 — 재시도하지 말고 사장에게 설정에서 다시 연결해 달라고 알려라.' : ''}`;
+  return `로그인으로 이 회사에 연결된 외부 서비스(Gmail·Drive·Notion 등)의 도구를 호출한다. Argo 코어가 실행하므로 어떤 러너에서도 똑같이 동작한다. server=연결된 서비스 id, tool=그 서비스의 도구 이름, args=그 도구의 인자 객체. 지금 연결된 것 — ${summary}. ${more ? '이 목록은 잘린 것이다 — 필요한 도구가 안 보이면 그 서비스의 알려진 이름으로 그냥 호출해라(서버가 검증한다). ' : '이 목록에 있는 이름만 써라. '}다른 서비스가 필요하면 사장에게 설정에서 연결해 달라고 안내하라. 조회·읽기는 자유롭게 쓰고, 회사 밖으로 나가는 쓰기(발송·게시·생성·수정·삭제)는 request_approval로 결재를 먼저 올려라.${reauth ? ' [재연결 필요] 표시가 붙은 서비스는 호출해도 실패한다 — 재시도하지 말고 사장에게 설정에서 다시 연결해 달라고 알려라.' : ''}`;
 }
 
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단).

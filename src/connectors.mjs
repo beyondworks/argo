@@ -475,13 +475,29 @@ export const BRIEF_TOOL_CAP = 12;
  * 불러오지 못했다"고 정직 표기한다. 상태 자체는 listConnections(디스크 사실)만을 근거로 둔다 —
  * 조회 실패로 상태를 파생하지 않는다(reauth 강등은 listConnectorTools가 이미 저장소에 남긴다).
  */
-export async function connectorBriefing(wsId, { cap = BRIEF_TOOL_CAP } = {}) {
+export async function connectorBriefing(wsId, { cap = BRIEF_TOOL_CAP, deadlineMs = BRIEF_DEADLINE_MS } = {}) {
   const live = (await listConnections(wsId)).filter((c) => c.status === 'connected' || c.status === 'reauth');
   return Promise.all(live.map(async (c) => {
     // reauth는 조회해도 같은 실패라 왕복을 아낀다 — 상태 자체가 이미 정직한 신호다.
-    const names = c.status === 'connected'
-      ? ((await listConnectorTools(wsId, c.id).catch(() => ({ tools: [] }))).tools ?? []).map((t) => t.name)
-      : [];
+    const names = c.status === 'connected' ? await toolNamesWithin(wsId, c.id, deadlineMs) : [];
     return { id: c.id, status: c.status, tools: names.slice(0, cap), more: Math.max(0, names.length - cap) };
   }));
+}
+
+/* 도구 이름 조회 + **데드라인** — 실패도 지연도 빈 목록으로 떨어진다(fail-soft 동일 자세).
+   데드라인이 없으면 죽은 커넥터 하나가 턴 **시작**을 막는다: MCP SDK 기본 요청 타임아웃이 60초라
+   (shared/protocol.js DEFAULT_REQUEST_TIMEOUT_MSEC) initialize + tools/list로 최대 120초, 그것도
+   커넥터를 안 쓸 턴에까지 문다(분리 검수 US-3 MEDIUM — US-1에선 크루가 도구를 고를 때만 노출되던
+   비용이 US-3에서 매 턴으로 바뀌었다). 브리핑은 "있으면 좋은" 안내지 턴의 전제가 아니므로 포기한다.
+   조회 자체는 백그라운드에서 계속 진행돼 풀·tools 캐시를 채우므로 다음 턴이 그 이득을 받는다. */
+const BRIEF_DEADLINE_MS = 4_000;
+function toolNamesWithin(wsId, serverId, deadlineMs) {
+  const listed = listConnectorTools(wsId, serverId)
+    .then((r) => (r.tools ?? []).map((t) => t.name))
+    .catch(() => []);
+  if (!(deadlineMs > 0)) return listed;
+  return Promise.race([
+    listed,
+    new Promise((resolve) => { const t = setTimeout(() => resolve([]), deadlineMs); t.unref?.(); }),
+  ]);
 }

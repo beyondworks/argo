@@ -119,6 +119,12 @@ test('미연결 서버 호출 — 크루가 "연결되어 있지 않다"는 안�
   const r = await cli.callTool({ name: 'use_connector', arguments: { server: 'never-connected', tool: 'x', args: {} } });
   assert.equal(r.isError, true, '실패는 실패로 — 성공처럼 보이면 크루가 "했다"고 답한다');
   assert.match(textOf(r), /연결되어 있지 않습니다/);
+  // 텍스트만 보면 코어 문구를 **위조한 표면**도 통과한다(분리 검수 실증: 위조 변이가 12건 중 11건을
+  // 지나갔다). 코어를 실제로 지났는지는 원장 부작용이 증명한다 — 실패 경로도 finally에서 기록된다.
+  assert.ok(
+    (await readEvents(WS)).some((e) => e.type === 'connector' && e.server === 'never-connected' && e.ok === false),
+    '표면이 코어(callConnectorTool)를 실제로 지나야 한다 — 지어낸 문구 금지',
+  );
 });
 
 test('영어 회사 — 도구 설명·오류 문구에 한국어 누출 0', async () => {
@@ -129,6 +135,10 @@ test('영어 회사 — 도구 설명·오류 문구에 한국어 누출 0', asy
   const r = await cli.callTool({ name: 'use_connector', arguments: { server: 'never-connected', tool: 'x', args: {} } });
   assert.match(textOf(r), /is not connected/);
   assert.equal(HANGUL.test(textOf(r)), false, '영어 모드 오류 문구에 한국어');
+  assert.ok(
+    (await readEvents(WS)).some((e) => e.type === 'connector' && e.server === 'never-connected' && e.ok === false),
+    '영어 경로도 코어를 지난다(문구만 영어로 지어내는 표면 배제)',
+  );
 });
 
 test('재연결 필요 — 도구는 등재하되 표시하고, 호출은 정직한 재연결 안내를 준다', async () => {
@@ -150,6 +160,11 @@ test('재연결 필요 — 도구는 등재하되 표시하고, 호출은 정직
   const r = await cli.callTool({ name: 'use_connector', arguments: { server: id, tool: 'search_threads_demo', args: { query: 'q' } } });
   assert.equal(r.isError, true);
   assert.match(textOf(r), /다시 연결해 주세요/, '"다시 연결하라"는 행동 지침까지 준다');
+  assert.ok(
+    (await readEvents(WS_REAUTH)).some((e) => e.type === 'connector' && e.server === id && e.ok === false),
+    '재연결 안내도 코어가 낸 것이어야 한다',
+  );
+  assert.match(uc.description, /재연결 후 사용 가능/, 'reauth는 "지금 못 불러왔다"가 아니라 상태를 말한다');
 });
 
 test('도구 목록 조회 실패 — 서버는 남기되 "목록을 불러오지 못했다"고 정직 표기(빈 목록으로 위장 금지)', async () => {
