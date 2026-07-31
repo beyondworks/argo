@@ -1,9 +1,9 @@
 // /api/runners의 autoRunnerId 판정 계약 — 분리 검수(PR #209)가 실증한 갭: "값은 계산하되 응답에
 // null 고정"류 변이를 소스문자열 테스트가 침묵 통과했다. 라우트 GET 실호출은 auth 계층의
 // next/headers(런타임 전용) 정적 import 때문에 Next 밖에서 원리적으로 불가 — 판정을 순수 함수
-// (autoRunnerOf)로 추출해 실 회사 상태(runnerStatus)로 잠근다. 함수→응답 배선은 여기서 못 잠근다
-// (라우트가 autoRunnerOf를 안 쓰게 되돌리면 이 테스트는 침묵한다) — 그 마지막 구간은 분리 검수의
-// 라이브 확인 영역으로 남는다.
+// (autoRunnerOf)로 추출해 실 회사 상태(runnerStatus)로 잠근다. 함수→응답 배선은 이 파일이 아니라
+// skill-injection.test.mjs의 골격 단언(`autoRunnerId: autoRunnerOf(company)`)이 잡는다 — 검수
+// PR #211이 응답 null 고정 변이(I)로 그 단언의 RED를 실증했다. 실렌더까지는 분리 검수 라이브 영역.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';

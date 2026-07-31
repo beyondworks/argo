@@ -157,6 +157,11 @@ test('배선: route 주입 태깅·마켓 배지·MCP 러너 배너·스코프 �
   assert.match(chat, /const fails = mcpFailures\(msg\)/, 'init에서 순수 판정 경유 소비(검수 M1)');
   assert.match(chat, /if \(!isNewMcpFailure\(recent, sv\)\) continue;/, '연속 중복 억제 경유 후에만 원장 기록(관찰 정리)');
   assert.match(chat, /type: 'mcp', server: sv\.name, status: sv\.status, ok: false/, '실패를 원장에(ok:false — 오류 집계 포함, 검수 M2)');
+  // 검수 PR #211 N: 이 한 줄이 복구 서사 전체의 하중을 진다 — fails.length로 되돌리면 복구 감지가
+  // 통째로 죽는데(정상 턴에 원장을 안 읽음) 다른 게이트는 전부 침묵했다(변이 N green 실증).
+  assert.match(chat, /const hasMcp = \(msg\?\.mcp_servers \?\? \[\]\)\.some/, '원장 조회 게이트는 hasMcp — 복구 감지는 정상 턴에도 원장이 필요하다');
+  // 검수 PR #211 M: 실패 루프와 대칭 — 복구 기록이 순수 판정(mcpRecoveries)을 경유하는 배선.
+  assert.match(chat, /for \(const sv of mcpRecoveries\(msg, recent\)\)/, '복구 서사는 순수 판정 경유로만 기록');
   const activity = await readFile(new URL('../app/c/[ws]/activity/page.jsx', import.meta.url), 'utf8');
   assert.match(activity, /href: `\/c\/\$\{ws\}\/market`, linkLabel: t\('nav\.market'\)/, 'mcp 행 라벨=목적지(/market) 이름 — 설정 라벨 불일치 정리');
   const market = await readFile(new URL('../src/market.mjs', import.meta.url), 'utf8');
