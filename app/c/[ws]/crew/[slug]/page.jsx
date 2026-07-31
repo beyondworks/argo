@@ -169,7 +169,12 @@ export default function CrewChat({ params }) {
     if (url.pathname === `/c/${ws}/vault`) path = url.searchParams.get('doc') || '';
     else if (url.pathname === `/api/companies/${ws}/files`) path = url.searchParams.get('rel') || '';
     else if (/^(?:vault\/|\.?\/?vault\/)/i.test(String(href))) path = String(href).replace(/^\.?\/?/, '');
+    else if (!/^[a-z][a-z\d+.-]*:/i.test(String(href)) && /\.[a-z\d]{1,8}(?:[#?].*)?$/i.test(String(href))) path = String(href).replace(/^\.?\/?/, '');
     if (!path) return false;
+    // Vault/파일 API의 rel은 vault 기준이지만 workspace API는 회사 루트 기준이다.
+    // 이 접두 변환이 없으면 정상 문서도 `notes/foo.md`를 회사 루트에서 찾아 404가 난다.
+    path = decodeURIComponent(path).replace(/^\/+/, '');
+    if (!/^vault\//i.test(path)) path = `vault/${path}`;
     setPanelFileRequest({ root: 'company', path, nonce: Date.now() });
     setPanelMounted(true);
     setPanelOpen(true);
