@@ -108,7 +108,8 @@
   결재 대상: 1차 규칙 = 쓰기 계열 도구(send/create/delete/update 네이밍 + 카탈로그별 명시
   목록)는 `request_approval`/`approval` 블록 경유를 프롬프트로 강제하고, 읽기 계열은 자유.
   (도구 단위 하드 게이트는 2차 — 카탈로그에 `dangerous:[…]` 선언 추가.)
-- 콜백 서버는 loopback 전용·state 필수·1회용. 동적 클라이언트 등록 실패 서버는 카탈로그에
+- 콜백 서버는 loopback 전용·state 필수·고정 경로(위 단락의 예외 규칙 참조 — state 불일치는 거부하되
+  시도를 끝내지 않는다). 동적 클라이언트 등록 실패 서버는 카탈로그에
   사전 등록 client_id를 실을 수 있게(`oauth.client_id` 선택 필드 — Hermes config와 동형).
 
 ## 3. 러너 중립 검증 기준 (출하 게이트)
