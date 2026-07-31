@@ -434,6 +434,14 @@ const DICT = {
   'settings.conn.saveSettings': ['설정 저장', 'Save settings'],
   'settings.conn.enabling': ['가동 중 — 게이트웨이가 곧 연결됩니다', 'Enabled — gateway connecting shortly'],
   'settings.conn.stopped': ['중지됨', 'Stopped'],
+  // 채널별 알림 선택 — 연결을 끊지 않고 종류별로 끈다(경위는 src/channel-events.mjs).
+  'settings.conn.notify': ['이 채널로 보낼 알림', 'Send to this channel'],
+  'settings.conn.notifyHint': ['끄면 이 채널로만 안 갑니다 — 앱에는 그대로 남습니다.', 'Unchecking only stops this channel — everything stays in the app.'],
+  'settings.conn.ev.approval': ['결재 요청', 'Approval requests'],
+  'settings.conn.ev.routine': ['루틴 실행 결과', 'Routine results'],
+  'settings.conn.ev.job': ['장시간 작업 완료', 'Long task done'],
+  // 어휘는 chat.via.*와 맞춘다 — 채팅에서 '동료 쪽지'로 본 것을 설정에서 다른 이름으로 끄면 헷갈린다.
+  'settings.conn.ev.crewmail': ['동료 쪽지', 'Crew mail'],
   'settings.saved': ['저장됨', 'Saved'],
   'settings.save': ['저장', 'Save'],
   'settings.nameplate.runtime': ['가동 환경', 'Runtime'],

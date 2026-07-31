@@ -6,6 +6,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { paths, WS_ROOT } from './workspace.mjs';
 import { writeJsonAtomic, readJson, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
+import { normalizeMuted } from './channel-events.mjs';
 
 const lockKey = (wsId) => `connections:${wsId}`;
 
@@ -20,9 +21,10 @@ export function makePairCode() {
 
 const EMPTY = {
   // agents: { [slug]: { token, botUsername, ownerId, ownerChat } } — 크루별 직통 봇(연락처처럼 1크루 1봇)
-  telegram: { token: '', chatId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '', agents: {} },
+  // mutedEvents — 이 채널에서 **끈** 알림 종류(빈 배열 = 전부 보냄 = 기존 동작). 근거·경위는 channel-events.mjs.
+  telegram: { token: '', chatId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '', agents: {}, mutedEvents: [] },
   // slack ownerId = 페어링된 사장의 슬랙 user id — 채널 멤버 전원이 크루 구동·결재하던 구멍을 막는다(텔레그램과 동일 모델)
-  slack: { token: '', channel: '', botUserId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '' },
+  slack: { token: '', channel: '', botUserId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '', mutedEvents: [] },
 };
 
 /** 붙여넣은 토큰 정제 — 봇 토큰엔 공백이 없다. 앞뒤 trim만으론 BotFather 복사 시 섞인 중간 개행·공백·
@@ -171,6 +173,7 @@ export async function updateConnection(wsId, kind, patch) {
     const all = await loadConnections(wsId);
     const next = { ...all[kind], ...patch };
     if (patch.token === '') next.token = all[kind].token; // 빈 토큰 = 기존 유지(토글만 바꿀 때)
+    if (patch.mutedEvents !== undefined) next.mutedEvents = normalizeMuted(kind, patch.mutedEvents); // 목록 밖 값·중복 제거
     if (kind === 'telegram' && patch.token && patch.token !== all[kind].token) {
       const used = await findTelegramTokenUse(patch.token, { exceptWs: wsId, exceptGateway: true });
       if (used) throw new Error(tokenInUseMsg(used));

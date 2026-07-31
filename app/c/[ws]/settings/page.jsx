@@ -9,6 +9,7 @@ import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 import { useAppUpdate } from '../../../use-app-update';
 import { trialBadgeState } from '../../../../src/entitlement.mjs';
+import { CHANNEL_EVENTS } from '../../../../src/channel-events.mjs'; // 순수 상수 — connections.mjs는 fs를 끌어 클라 번들이 깨진다
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
@@ -869,6 +870,21 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
     }
   }
 
+  const muted = conn?.mutedEvents ?? [];
+  /** 알림 종류 토글 — 화면은 즉시 움직이고 저장은 마지막 클릭 기준 1회만 보낸다.
+      클릭마다 POST하면 왕복·fsync·동기화 업로드가 클릭 수만큼 쌓인다(정리 검수 실측). enabled를
+      안 보내므로 토큰 재검증(네트워크)도 없다. 응답으로 상태를 덮지 않는다 — 쓰는 주체가 둘이면
+      연속 클릭 때 이전 응답이 나중 선택을 되돌린다. */
+  const muteSave = useRef(null);
+  function toggleEvent(ev) {
+    const next = muted.includes(ev) ? muted.filter((x) => x !== ev) : [...muted, ev];
+    setConn((c) => ({ ...c, mutedEvents: next })); // 함수형 — 연속 클릭의 stale 스냅샷 덮어쓰기 방지
+    clearTimeout(muteSave.current);
+    muteSave.current = setTimeout(() => {
+      api(`/api/companies/${ws}/connections`, { kind, mutedEvents: next }).catch((e) => setMsg(String(e.message)));
+    }, 500);
+  }
+
   const on = conn?.enabled;
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -916,6 +932,27 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
               onClick={() => navigator.clipboard?.writeText(conn.pairCode).catch(() => {})}>{t('common.copy')}</button>
           </div>
           <span style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.5 }}>{t('settings.conn.pairCodeHelp')}</span>
+        </div>
+      )}
+      {/* 이 채널로 보낼 알림 — 연결을 끊지 않고 종류별로 끈다(끈 것은 앱에 그대로 남는다). */}
+      {conn?.hasToken && (
+        <div style={{ display: 'grid', gap: 6 }}>
+          <span className="microlabel">{t('settings.conn.notify')}</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {CHANNEL_EVENTS[kind].map((ev) => {
+              const onEv = !muted.includes(ev);
+              return (
+                <button key={ev} type="button" className="chip" onClick={() => toggleEvent(ev)} aria-pressed={onEv}
+                  style={{
+                    cursor: 'pointer', padding: '5px 12px', fontSize: 12, textTransform: 'none', letterSpacing: 0,
+                    ...(onEv ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : { opacity: 0.6 }),
+                  }}>
+                  {t(`settings.conn.ev.${ev}`)}
+                </button>
+              );
+            })}
+          </div>
+          <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.conn.notifyHint')}</span>
         </div>
       )}
       {kind === 'slack' && (
