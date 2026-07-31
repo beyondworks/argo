@@ -145,6 +145,7 @@ export default function CrewChat({ params }) {
   // 넓은 화면은 본문 옆에 도킹하고 좁은 화면만 드로어처럼 겹친다(CSS 반응형 폴백).
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelMounted, setPanelMounted] = useState(false);
+  const [panelFileRequest, setPanelFileRequest] = useState(null);
   const [panelHydrated, setPanelHydrated] = useState(false);
   useEffect(() => {
     try {
@@ -160,6 +161,20 @@ export default function CrewChat({ params }) {
   // 한 번 연 도구 작업영역은 숨겨도 마운트를 유지한다. Markdown 초안·터미널·브라우저 상태가
   // 패널 표시/숨기기나 도구 탭 전환만으로 초기화되면 "작업영역"이 아니라 일회성 팝업이 된다.
   useEffect(() => { if (panelOpen) setPanelMounted(true); }, [panelOpen]);
+  const openWorkspaceFile = useCallback((href) => {
+    if (typeof window === 'undefined') return false;
+    let url;
+    try { url = new URL(String(href || ''), window.location.origin); } catch { return false; }
+    let path = '';
+    if (url.pathname === `/c/${ws}/vault`) path = url.searchParams.get('doc') || '';
+    else if (url.pathname === `/api/companies/${ws}/files`) path = url.searchParams.get('rel') || '';
+    else if (/^(?:vault\/|\.?\/?vault\/)/i.test(String(href))) path = String(href).replace(/^\.?\/?/, '');
+    if (!path) return false;
+    setPanelFileRequest({ root: 'company', path, nonce: Date.now() });
+    setPanelMounted(true);
+    setPanelOpen(true);
+    return true;
+  }, [ws]);
   useEffect(() => {
     const onToggleShortcut = (e) => {
       if (e.defaultPrevented || e.repeat || e.code !== 'KeyB' || !(e.ctrlKey || e.metaKey) || !e.altKey || e.shiftKey) return;
@@ -794,9 +809,11 @@ export default function CrewChat({ params }) {
               <div className="msg-wrap">
                 <div className="card" style={{ minWidth: 0, padding: '13px 16px', ...(annotIdx === i ? { borderColor: 'var(--primary)', cursor: 'text' } : {}) }}
                   onMouseUp={annotIdx === i ? captureQuote : undefined}>
-                  <Markdown text={m.text} />
+                  <Markdown text={m.text} onFileLink={(href, event) => openWorkspaceFile(href, event)} />
                   {m.handover && (
-                    <Link className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
+                    <Link className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`} onClick={(event) => {
+                      if (openWorkspaceFile(event.currentTarget.href, event)) event.preventDefault();
+                    }}>
                       <Icon name="memory" size={12} />
                       {t('chat.recordedInMemory')}
                       {m.handover.linked?.length > 0 && <span>{t('chat.linkedMemories', { n: m.handover.linked.length })}</span>}
@@ -812,6 +829,9 @@ export default function CrewChat({ params }) {
                         return (
                           <a key={rel} className="memo-chip" download={md ? undefined : name}
                             href={md ? `/c/${ws}/vault?doc=${encodeURIComponent(rel)}` : `/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`}
+                            onClick={(event) => {
+                              if (openWorkspaceFile(event.currentTarget.href, event)) event.preventDefault();
+                            }}
                             title={`${t('chat.createdDocs')} — ${rel}`}>
                             <Icon name="doc" size={12} />{name}
                           </a>
@@ -1111,7 +1131,7 @@ export default function CrewChat({ params }) {
       )}
     </div>
     {(panelOpen || panelMounted) && (
-      <WorkspacePanel ws={ws} open={panelOpen} onClose={() => setPanelOpen(false)} />
+      <WorkspacePanel ws={ws} open={panelOpen} onClose={() => setPanelOpen(false)} fileRequest={panelFileRequest} />
     )}
     </div>
   );

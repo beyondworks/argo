@@ -114,6 +114,20 @@ test('파일 열기: 열린 탭을 유지하고 Markdown 편집·저장과 샌�
   assert.match(workspaceRoute, /action === 'open'/);
 });
 
+test('채팅 문서 링크: 새 404 페이지 대신 파일 패널을 열고 트리를 해당 경로까지 확장한다', () => {
+  assert.match(ui, /onFileLink/);
+  assert.match(ui, /data-argo-file-link/);
+  assert.match(crew, /openWorkspaceFile/);
+  assert.match(crew, /url\.pathname === `\/c\/\$\{ws\}\/vault`/);
+  assert.match(crew, /url\.pathname === `\/api\/companies\/\$\{ws\}\/files`/);
+  assert.match(crew, /setPanelOpen\(true\)/);
+  assert.match(crew, /fileRequest=\{panelFileRequest\}/);
+  assert.match(panel, /setActive\('files'\)/);
+  assert.match(panel, /const ancestors = \['', \.\.\.parts\.slice\(0, -1\)/);
+  assert.match(panel, /Promise\.all\(ancestors\.map\(\(dir\) => loadDir\(dir\)\)\)/);
+  assert.match(panel, /openFile\(path\)/);
+});
+
 test('사이드 패널 리사이즈: 바깥 패널과 내부 파일 트리에 포인터·키보드 분할선 제공', () => {
   assert.match(panel, /className="crew-tool-panel-resizer" role="separator" tabIndex=\{0\}/);
   assert.match(panel, /className="crew-file-splitter" role="separator" tabIndex=\{0\}/);

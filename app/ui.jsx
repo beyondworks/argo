@@ -240,10 +240,19 @@ export function Clock() {
 }
 
 /** 에이전트 응답(마크다운) 렌더 — raw HTML 이스케이프 + 위험 스킴 href 차단. */
-export function Markdown({ text, onWikiLink }) {
+export function Markdown({ text, onWikiLink, onFileLink }) {
   const escaped = String(text ?? '').replace(/</g, '&lt;');
   let html = marked.parse(escaped);
-  html = html.replace(/href="(?!https?:|#|\/)[^"]*"/gi, 'href="#"');
+  // 상대 문서 링크는 위험한 외부 스킴처럼 버리지 말고 파일 링크 메타데이터로 보존한다.
+  // onFileLink가 없는 기존 화면에서는 여전히 #으로 무해하게 비활성화된다.
+  html = html.replace(/href="([^"]*)"/gi, (tag, href) => {
+    if (/^(?:https?:|#|\/)/i.test(href)) return tag;
+    if (/^(?:vault\/|\.?\/?vault\/)/i.test(href) || /\.(?:md|txt|csv|json|html?|pdf|png|jpe?g|webp)(?:[#?].*)?$/i.test(href)) {
+      const attr = href.replace(/"/g, '&quot;');
+      return `href="#" data-argo-file-link="${attr}"`;
+    }
+    return 'href="#"';
+  });
   // 이미지 src는 동일출처 파일 라우트("/...")만 허용 — 크루 답변 속 외부 http/data 이미지는
   // 추적 픽셀·데이터 유출 벡터라 태그째 제거한다. "//evil.com"(프로토콜 상대)도 차단.
   html = html.replace(/<img\b[^>]*>/gi, (tag) => /\ssrc="\/(?!\/)[^"]*"/i.test(tag) ? tag : '');
@@ -259,6 +268,12 @@ export function Markdown({ text, onWikiLink }) {
       onClick={(e) => {
         const w = e.target.closest?.('[data-wiki]');
         if (w && onWikiLink) onWikiLink(w.dataset.wiki);
+        const link = e.target.closest?.('a');
+        const href = link?.dataset?.argoFileLink || link?.getAttribute?.('href');
+        if (link && href && onFileLink && onFileLink(href, e)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
       }}
       dangerouslySetInnerHTML={{ __html: html }}
     />

@@ -87,7 +87,7 @@ function useLeftEdgeResize(value, onChange, getBounds) {
   };
 }
 
-export default function WorkspacePanel({ ws, open = true, onClose }) {
+export default function WorkspacePanel({ ws, open = true, onClose, fileRequest = null }) {
   const { t } = useLang();
   const [tabs, setTabs] = useState(['files']);
   const [active, setActive] = useState('files');
@@ -124,6 +124,11 @@ export default function WorkspacePanel({ ws, open = true, onClose }) {
     [],
   );
   const panelResize = useLeftEdgeResize(panelWidth, setPanelWidth, getPanelBounds);
+  useEffect(() => {
+    if (!fileRequest?.path) return;
+    setTabs((current) => current.includes('files') ? current : ['files', ...current]);
+    setActive('files');
+  }, [fileRequest]);
   useEffect(() => {
     const fit = () => {
       const bounds = getPanelBounds();
@@ -210,7 +215,7 @@ export default function WorkspacePanel({ ws, open = true, onClose }) {
         {tabs.includes('files') && (
           <section id="crew-tool-view-files" role="tabpanel" aria-labelledby="crew-tool-tab-files"
             className="crew-tool-view" hidden={active !== 'files'}>
-            <FileTool ws={ws} onDirtyChange={setFilesDirty} />
+            <FileTool ws={ws} onDirtyChange={setFilesDirty} fileRequest={fileRequest} />
           </section>
         )}
         {tabs.includes('terminal') && (
@@ -247,7 +252,7 @@ function ToolLauncher({ onOpen }) {
   );
 }
 
-function FileTool({ ws, onDirtyChange }) {
+function FileTool({ ws, onDirtyChange, fileRequest }) {
   const { t } = useLang();
   const [roots, setRoots] = useState([]);
   const [rootId, setRootId] = useState('company');
@@ -539,6 +544,26 @@ function FileTool({ ws, onDirtyChange }) {
         .catch((e) => setError(e.message));
     }
   }, [rootId, ws]);
+
+  // 채팅의 문서 링크가 패널을 열 때 파일 트리도 해당 문서까지 자동으로 이동한다.
+  // 루트 목록과 조상 디렉터리가 준비된 뒤에만 파일을 열어 race를 피한다.
+  useEffect(() => {
+    if (!fileRequest?.path || !roots.some((root) => root.id === (fileRequest.root || 'company'))) return;
+    const requestedRoot = fileRequest.root || 'company';
+    if (rootId !== requestedRoot) { setRootId(requestedRoot); return; }
+    const path = String(fileRequest.path).replace(/^\/+|\/+$/g, '');
+    if (!path || path.split('/').some((part) => !part || part === '.' || part === '..' || part.includes('\\'))) return;
+    let alive = true;
+    const parts = path.split('/');
+    const ancestors = ['', ...parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'))];
+    setFilter('');
+    setSearch(null);
+    setExpanded(new Set(ancestors));
+    Promise.all(ancestors.map((dir) => loadDir(dir))).then(() => {
+      if (alive) openFile(path);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [fileRequest, loadDir, openFile, rootId, roots]);
 
   useEffect(() => {
     setOpenFiles([]);
