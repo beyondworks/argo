@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { channelSends } from '../src/channel-events.mjs'; // 슬랙 타입 게이트를 행동으로 단언(순수 모듈이라 정적 임포트 안전)
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 let WS; let mod; let paths;
@@ -151,8 +152,13 @@ test('배선 — 배달 알림이 게이트웨이 문안까지 이어진다(재�
     assert.ok(new RegExp(`import \\{[^}]*\\b${id}\\b[^}]*\\} from`).test(g),
       `gateway.mjs가 ${id}를 쓰는데 임포트가 없다 — 호출 시 ReferenceError(무음 실패)`);
   }
-  // 슬랙 경로는 문안 있는 타입만 — 게이트가 풀리면 job·crewmail에서 event.routine.title TypeError가 재발한다
-  assert.match(g, /event\.type === 'approval' \|\| event\.type === 'routine'/, '슬랙 타입 게이트가 풀렸다');
+  // 슬랙 경로는 문안 있는 타입만 — 게이트가 풀리면 job·crewmail에서 event.routine.title TypeError가 재발한다.
+  // 리터럴 삼항을 물던 앵커에서 **행동 단언**으로 바꿨다(판정이 channel-events로 옮겨감): 불변식은 같고,
+  // 정당한 리팩터에 거짓 red를 내지 않으면서 실제 게이트가 풀리면 잡는다.
+  assert.match(g, /sends\('slack', s\)/, '슬랙 전송이 채널 판정을 안 지난다');
+  assert.equal(channelSends('slack', { enabled: true }, 'crewmail'), false, '슬랙에 쪽지가 나가면 문안이 없어 TypeError');
+  assert.equal(channelSends('slack', { enabled: true }, 'job'), false, '슬랙에 작업완료도 문안이 없다');
+  assert.equal(channelSends('slack', { enabled: true }, 'routine'), true, '문안 있는 종류는 그대로 나간다');
 });
 
 test('배선 — 우편 배달은 클라우드 리더 게이트를 타지 않는다(기기 로컬 큐)', () => {

@@ -6,6 +6,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { paths, WS_ROOT } from './workspace.mjs';
 import { writeJsonAtomic, readJson, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
+import { normalizeMuted } from './channel-events.mjs';
 
 const lockKey = (wsId) => `connections:${wsId}`;
 
@@ -20,9 +21,10 @@ export function makePairCode() {
 
 const EMPTY = {
   // agents: { [slug]: { token, botUsername, ownerId, ownerChat } } — 크루별 직통 봇(연락처처럼 1크루 1봇)
-  telegram: { token: '', chatId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '', agents: {} },
+  // mutedEvents — 이 채널에서 **끈** 알림 종류(빈 배열 = 전부 보냄 = 기존 동작). 근거·경위는 channel-events.mjs.
+  telegram: { token: '', chatId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '', agents: {}, mutedEvents: [] },
   // slack ownerId = 페어링된 사장의 슬랙 user id — 채널 멤버 전원이 크루 구동·결재하던 구멍을 막는다(텔레그램과 동일 모델)
-  slack: { token: '', channel: '', botUserId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '' },
+  slack: { token: '', channel: '', botUserId: null, ownerId: null, pairCode: '', defaultCrew: '', enabled: false, botUsername: '', mutedEvents: [] },
 };
 
 /** 붙여넣은 토큰 정제 — 봇 토큰엔 공백이 없다. 앞뒤 trim만으론 BotFather 복사 시 섞인 중간 개행·공백·
@@ -162,6 +164,12 @@ const tokenInUseMsg = (used) => used.where === 'gateway'
   ? `이 봇 토큰은 이미 회사 텔레그램 연결(설정 화면)에서 사용 중입니다 (회사: ${used.wsId}). 텔레그램 봇 하나는 한 곳에만 연결할 수 있어요 — @BotFather로 전용 봇을 새로 만들거나, 기존 연결을 해제한 뒤 저장하세요.`
   : `이 봇 토큰은 이미 크루 직통 봇(${used.slug})에서 사용 중입니다 (회사: ${used.wsId}). 텔레그램 봇 하나는 한 곳에만 연결할 수 있어요 — @BotFather로 전용 봇을 새로 만들거나, 그 크루 카드에서 연결을 해제하세요.`;
 
+/** 설정 화면이 고칠 수 있는 필드 — API 라우트의 허용 목록이자 이 모듈의 저장 계약.
+    라우트에 인라인으로 두면 한 토큰이 빠져도 아무도 모른다: 화면은 낙관 반영으로 꺼진 것처럼 보이고
+    200이 돌아오고 디스크만 그대로다 → 신고와 같은 증상인데 CI는 초록이다(분리 검수 실측 2026-07-31).
+    저장 모듈에 두면 여기가 곧 테스트 지점이 된다. */
+export const CONNECTION_PATCH_FIELDS = Object.freeze(['token', 'enabled', 'defaultCrew', 'channel', 'mutedEvents']);
+
 export async function updateConnection(wsId, kind, patch) {
   if (!['telegram', 'slack'].includes(kind)) throw new Error('알 수 없는 연결 종류');
   // 저장 단일 관문에서 토큰 정제 — 검증(validateConnection)과 저장이 항상 같은 깨끗한 값을 쓰게 한다.
@@ -171,6 +179,7 @@ export async function updateConnection(wsId, kind, patch) {
     const all = await loadConnections(wsId);
     const next = { ...all[kind], ...patch };
     if (patch.token === '') next.token = all[kind].token; // 빈 토큰 = 기존 유지(토글만 바꿀 때)
+    if (patch.mutedEvents !== undefined) next.mutedEvents = normalizeMuted(kind, patch.mutedEvents); // 목록 밖 값·중복 제거
     if (kind === 'telegram' && patch.token && patch.token !== all[kind].token) {
       const used = await findTelegramTokenUse(patch.token, { exceptWs: wsId, exceptGateway: true });
       if (used) throw new Error(tokenInUseMsg(used));

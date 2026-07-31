@@ -27,6 +27,7 @@ import { beatGateway, loadOffset, saveOffset, loadSlackCursor, saveSlackCursor }
 import { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT } from './gateway/queue.mjs';
 import { clip, pollBackoffMs, pick, tidy, parseApprovalText, parseApprovalCallback, pairCodeMatches, classifySlackMessage } from './gateway/protocol.mjs';
 import { routeMessage, crewStatusReply, approvalWho } from './gateway/routing.mjs';
+import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스트도 같은 함수를 본다
 
 // facade — 기존 임포터(chat.mjs 동적 import·테스트)가 gateway.mjs에서 그대로 가져간다(무수정 계약).
 export { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT, JOBS_MAX_PENDING, enqueueLongJob } from './gateway/queue.mjs';
@@ -566,7 +567,8 @@ function startInboxWatcher(wsId) {
             } catch {
               await unlink(fp).catch(() => {}); // 다른 마운트 등 rename 실패 시 — 최소한 원본은 제거해 무한 재처리 차단
             }
-            if (cfg.enabled && cfg.token && cfg.chatId) { // 자리에 없어도 결과가 도착한다
+            // 자리에 없어도 결과가 도착한다 — 단 끌 수 있어야 한다(설정의 'inbox' 종류).
+            if (cfg.token && cfg.chatId && channelSends('telegram', cfg, 'inbox')) {
               await sendTgReply(cfg.token, cfg.chatId, wsId, pick(`[받은 서류함] ${safe}\n\n${reply}`, `[Inbox] ${safe}\n\n${reply}`, lang)).catch(() => {});
             }
           } catch (e) {
@@ -724,8 +726,11 @@ async function pushEvent(event) {
       .catch((e) => console.error('[argo] 위임 미러 실패:', e.message));
     return;
   }
+  // 채널별 알림 선택 — 판정 정본은 channel-events.mjs. **머리에서 한 번만** 검사한다: 분기마다
+  // 되풀이하면 새 종류 추가 시 조건을 빠뜨리기 쉽고, 그러면 못 끄는 것은 물론 꺼진 채널로도 나간다.
+  const sends = (kind, ch) => channelSends(kind, ch, event.type);
   const t = all.telegram;
-  if (t.enabled && t.token && t.chatId) {
+  if (t.token && t.chatId && sends('telegram', t)) {
     if (event.type === 'approval') {
       try {
         const res = await tg(t.token, 'sendMessage', {
@@ -765,7 +770,7 @@ async function pushEvent(event) {
   const s = all.slack;
   // 슬랙은 문안이 준비된 타입만 — 아래 삼항이 approval 외 전부를 루틴 문안으로 다뤄, job·crewmail 등
   // 다른 타입이 오면 event.routine.title에서 매번 TypeError였다(재검 N1). 타입 게이트로 좁힌다.
-  if (s.enabled && s.token && s.channel && (event.type === 'approval' || event.type === 'routine')) {
+  if (s.token && s.channel && sends('slack', s)) { // 보낼 수 있는 종류는 CHANNEL_EVENTS.slack이 정본
     const text = event.type === 'approval'
       ? pick(
           `결재 요청 · ${who}: ${event.item.action}\n사유: ${event.item.reason}\n→ 이 채널에 "승인 ${event.item.id}" 또는 "거절 ${event.item.id}" 로 회신`,
