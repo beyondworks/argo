@@ -82,6 +82,27 @@ test('isNewMcpFailure(순수): 같은 서버·같은 상태 연속이면 억제 
   assert.equal(isNewMcpFailure([], { name: 'fetch', status: 'failed' }), true);
 });
 
+test('mcpRecoveries(순수): 직전 기록이 실패였던 서버의 복구만 1회 — 연속 connected·무기록·crew는 제외', async () => {
+  const { mcpRecoveries } = await import('../src/chat.mjs');
+  const init = { mcp_servers: [
+    { name: 'fetch', status: 'connected' },  // 직전 실패 → 복구 기록 대상
+    { name: 'sync', status: 'connected' },   // 직전 기록이 이미 복구(ok:true) → 재기록 없음
+    { name: 'memory', status: 'connected' }, // 원장 무기록 → 기록 없음(첫 connected는 서사가 아님)
+    { name: 'crew', status: 'connected' },   // 내장 — 항상 제외
+    { name: 'broken', status: 'failed' },    // 실패는 이 함수의 대상 아님
+  ] };
+  const recent = [ // 최신순(readEvents 계약)
+    { type: 'mcp', server: 'fetch', status: 'failed', ok: false },
+    { type: 'mcp', server: 'sync', status: 'connected', ok: true },
+    { type: 'mcp', server: 'fetch', status: 'disabled', ok: false }, // 더 오래된 기록 — 무시
+  ];
+  assert.deepEqual(mcpRecoveries(init, recent).map((s) => s.name), ['fetch']);
+  assert.deepEqual(mcpRecoveries(init, []), []); // 원장이 비면 복구 서사도 없다
+  // 복구 기록 후 다음 턴: fetch의 마지막 기록이 ok:true → 재실패가 상태 변화로 잡히는 전제 성립
+  const afterRecovery = [{ type: 'mcp', server: 'fetch', status: 'connected', ok: true }, ...recent];
+  assert.deepEqual(mcpRecoveries(init, afterRecovery), []);
+});
+
 test('loadSkills: 초과 스킬은 참조로 주입 — 존재+파일 열람 계약을 크루가 받는다', async () => {
   const ws = 'ski-1';
   await createCompany(ws, '스킬검증', 'captain');
@@ -128,12 +149,19 @@ test('배선: route 주입 태깅·마켓 배지·MCP 러너 배너·스코프 �
   assert.match(crew, /chat\.card\.scopeReset/, 'none 고착 복구 수단');
   assert.match(crew, /scopePartialHint/, '부분 선택 = 신규 미적용 경고');
   const runnersRoute = await readFile(new URL('../app/api/runners/route.js', import.meta.url), 'utf8');
-  assert.match(runnersRoute, /pickRunner\(company, null\)/, '자동 러너 판정은 서버 pickRunner 단일 진실(폴백 순서 클라 복제 금지)');
+  // 판정 자체는 코어 autoRunnerOf(= pickRunner ∘ 회사상태)가 단위로 잠근다(test/runners-route.test.mjs) —
+  // 여기는 라우트가 그 코어 함수를 응답에 배선하는지만 본다(옛 인라인 pickRunner 앵커는 리팩터에 거짓 red).
+  assert.match(runnersRoute, /autoRunnerId: autoRunnerOf\(company\)/, '자동 러너 판정은 코어 단일 진실을 배선(폴백 순서 클라 복제 금지)');
   assert.match(runnersRoute, /autoRunnerId/, '자동 크루의 실제 러너를 응답에 노출');
   const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(chat, /const fails = mcpFailures\(msg\)/, 'init에서 순수 판정 경유 소비(검수 M1)');
   assert.match(chat, /if \(!isNewMcpFailure\(recent, sv\)\) continue;/, '연속 중복 억제 경유 후에만 원장 기록(관찰 정리)');
   assert.match(chat, /type: 'mcp', server: sv\.name, status: sv\.status, ok: false/, '실패를 원장에(ok:false — 오류 집계 포함, 검수 M2)');
+  // 검수 PR #211 N: 이 한 줄이 복구 서사 전체의 하중을 진다 — fails.length로 되돌리면 복구 감지가
+  // 통째로 죽는데(정상 턴에 원장을 안 읽음) 다른 게이트는 전부 침묵했다(변이 N green 실증).
+  assert.match(chat, /const hasMcp = \(msg\?\.mcp_servers \?\? \[\]\)\.some/, '원장 조회 게이트는 hasMcp — 복구 감지는 정상 턴에도 원장이 필요하다');
+  // 검수 PR #211 M: 실패 루프와 대칭 — 복구 기록이 순수 판정(mcpRecoveries)을 경유하는 배선.
+  assert.match(chat, /for \(const sv of mcpRecoveries\(msg, recent\)\)/, '복구 서사는 순수 판정 경유로만 기록');
   const activity = await readFile(new URL('../app/c/[ws]/activity/page.jsx', import.meta.url), 'utf8');
   assert.match(activity, /href: `\/c\/\$\{ws\}\/market`, linkLabel: t\('nav\.market'\)/, 'mcp 행 라벨=목적지(/market) 이름 — 설정 라벨 불일치 정리');
   const market = await readFile(new URL('../src/market.mjs', import.meta.url), 'utf8');

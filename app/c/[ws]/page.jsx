@@ -15,6 +15,7 @@ export default function Deck({ params }) {
   const router = useRouter();
   const [data, setData] = useState(null);
   const [docs, setDocs] = useState(null);
+  const [projects, setProjects] = useState([]); // 산출물 — 그래프 모달 위키링크 해석용(기억 페이지와 동일 축)
   const [prompt, setPrompt] = useState('');
   const [hireName, setHireName] = useState('');
   const [hireTeam, setHireTeam] = useState('');
@@ -44,7 +45,9 @@ export default function Deck({ params }) {
 
   function load() {
     api(`/api/companies/${ws}`).then(setData).catch((e) => setError(String(e.message)));
-    api(`/api/companies/${ws}/vault`).then((d) => setDocs(d.docs)).catch(() => setDocs([]));
+    // projects도 받는다 — 안 넘기면 같은 [[산출물 링크]]가 기억 페이지 모달에선 열리고 데크 모달에선
+    // 404가 된다(검수 PR #208 잔여: GraphModal 두 호출부 사이의 해석 불일치).
+    api(`/api/companies/${ws}/vault`).then((d) => { setDocs(d.docs); setProjects(d.projects ?? []); }).catch(() => setDocs([]));
   }
   useEffect(load, [ws]);
 
@@ -419,6 +422,7 @@ export default function Deck({ params }) {
           agents={data.agents}
           delegations={data.delegations}
           docs={docs}
+          projects={projects}
           onClose={() => setGraphOpen(false)}
           onSelect={(rel) => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`)}
         />
