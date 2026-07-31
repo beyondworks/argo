@@ -219,17 +219,31 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
 export function toolFollowUpMessage(results, { lang = 'ko', userMsg = '' } = {}) {
   const en = lang === 'en';
   const fence = '```argo';
-  const blocks = results.map((r) => `### ${r.server}/${r.tool}\n${r.text}`).join('\n\n');
+  // 절단·오류는 **크루에게도** 표시한다. 사용자 줄에만 붙이던 때는, 정작 이 결과로 답을 쓰는 크루가
+  // 부분 결과를 전체로 착각해 "메일은 이게 전부입니다"라고 단정할 수 있었다 — 조용한 절단의 본체는
+  // 여기다(사용자는 나중에 답을 읽을 뿐이고, 판단은 크루가 이 텍스트만 보고 내린다).
+  const blocks = results.map((r) => {
+    const flags = [
+      r.ok === false ? (en ? 'the tool reported an error' : '도구가 오류를 반환함') : '',
+      r.truncated ? (en ? 'TRUNCATED — this is the beginning of the result, not all of it' : '잘림 — 결과의 앞부분일 뿐 전부가 아니다') : '',
+    ].filter(Boolean);
+    return `### ${r.server}/${r.tool}${flags.length ? ` [${flags.join(' / ')}]` : ''}\n${r.text}`;
+  }).join('\n\n');
+  const caution = results.some((r) => r.truncated || r.ok === false)
+    ? (en
+      ? `\n\nSome results are truncated or failed (see the tags above) — do not present them as complete, and say what is missing.`
+      : `\n\n일부 결과는 잘렸거나 실패했다(위 표시 참고) — 그걸 전부인 것처럼 말하지 말고, 무엇이 빠졌는지 밝혀라.`)
+    : '';
   const ask = String(userMsg ?? '').replace(/\s+/g, ' ').trim().slice(0, 500);
   return en
     ? `(System) The connector calls you asked for have run. Their real results are below.\n\n${blocks}\n\n`
       + `${ask ? `The captain's instruction was: ${ask}\n\n` : ''}`
       + `Answer the captain using these results — never invent or guess what they contain. `
-      + `Do NOT emit another ${fence} tool block: the automatic follow-up is one turn per turn, and a second block will be refused.`
+      + `Do NOT emit another ${fence} tool block: the automatic follow-up is one turn per turn, and a second block will be refused.${caution}`
     : `(시스템) 네가 요청한 커넥터 호출이 실행됐다. 실제 결과는 아래와 같다.\n\n${blocks}\n\n`
       + `${ask ? `사장의 지시는 이것이었다: ${ask}\n\n` : ''}`
       + `이 결과를 근거로 사장에게 답하라 — 내용을 지어내거나 추측하지 마라. `
-      + `${fence} tool 블록을 다시 내지 마라: 자동 후속 턴은 턴당 1회뿐이라 두 번째 블록은 거부된다.`;
+      + `${fence} tool 블록을 다시 내지 마라: 자동 후속 턴은 턴당 1회뿐이라 두 번째 블록은 거부된다.${caution}`;
 }
 
 /**

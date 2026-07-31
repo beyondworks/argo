@@ -20,7 +20,7 @@ const {
   capBytes, connectorContentText, TOOL_RESULT_BUDGET_BYTES, TOOL_FOLLOWUP_MAX,
 } = await import('../src/cli-directives.mjs');
 const { startConnect, closeConnectorPools, CONNECTOR_SECRETS_BASE } = await import('../src/connectors.mjs');
-const { systemPromptFor } = await import('../src/chat.mjs');
+const { systemPromptFor, commonDirectives } = await import('../src/chat.mjs');
 const { createCompany, WS_ROOT } = await import('../src/workspace.mjs');
 const { readEvents } = await import('../src/events.mjs');
 const { startOauthTestServer } = await import('./helpers/oauth-test-server.mjs');
@@ -271,16 +271,40 @@ test('주입 메시지는 결과·원 지시·재호출 금지를 함께 싣는�
   assert.doesNotMatch(en, /[가-힣]/, '영어 모드에 한국어가 새지 않는다');
 });
 
+test('주입 메시지가 **크루에게도** 잘림·실패를 표시한다 — 부분 결과를 전체로 단정하는 것을 막는다', () => {
+  const ko = toolFollowUpMessage([
+    { server: 'gmail', tool: 'search_threads', ok: true, text: '앞부분만', truncated: true },
+    { server: 'gmail', tool: 'send_mail', ok: false, text: 'quota exceeded', truncated: false },
+    { server: 'drive', tool: 'list_files', ok: true, text: '전부 다', truncated: false },
+  ], { lang: 'ko' });
+  assert.match(ko, /### gmail\/search_threads \[잘림 — 결과의 앞부분일 뿐 전부가 아니다\]/);
+  assert.match(ko, /### gmail\/send_mail \[도구가 오류를 반환함\]/);
+  assert.match(ko, /### drive\/list_files\n전부 다/, '정상 결과에는 군더더기 표시가 붙지 않는다');
+  assert.match(ko, /전부인 것처럼 말하지 말고, 무엇이 빠졌는지 밝혀라/);
+
+  const en = toolFollowUpMessage([{ server: 'gmail', tool: 't', ok: false, text: 'x', truncated: true }], { lang: 'en' });
+  assert.match(en, /\[the tool reported an error \/ TRUNCATED/);
+  assert.match(en, /do not present them as complete/);
+  assert.doesNotMatch(en, /[가-힣]/, '영어 모드에 한국어가 새지 않는다');
+});
+
+test('정상 결과만이면 경고를 붙이지 않는다 — 없는 문제를 만들지 않는다', () => {
+  const ko = toolFollowUpMessage([{ server: 'gmail', tool: 't', ok: true, text: '다 받음', truncated: false }], { lang: 'ko' });
+  assert.doesNotMatch(ko, /잘림/);
+  assert.doesNotMatch(ko, /무엇이 빠졌는지/);
+});
+
 // ── ⑥ 프롬프트 안내 — 있는 것만 광고한다 ──
 
 const CARD = '---\nname: 노바\n---\n\n너는 노바다.';
 
 test('CLI 크루 프롬프트: 연결된 커넥터가 있을 때만 tool 블록 문법을 안내한다', () => {
+  const live = [{ id: 'gmail', status: 'connected' }, { id: 'drive', status: 'connected' }];
   for (const lang of ['ko', 'en']) {
     const none = systemPromptFor(CARD, '/ws', '', { name: '노바' }, lang, { hasTools: false });
     assert.equal(none.includes('"action":"tool"'), false, `${lang}: 연결 0이면 없는 능력을 광고하지 않는다`);
 
-    const some = systemPromptFor(CARD, '/ws', '', { name: '노바' }, lang, { hasTools: false, connectors: ['gmail', 'drive'] });
+    const some = systemPromptFor(CARD, '/ws', '', { name: '노바' }, lang, { hasTools: false, connectors: live });
     assert.match(some, /"action":"tool"/, `${lang}: 문법 안내`);
     assert.match(some, /gmail, drive/, `${lang}: 연결된 서비스 이름을 알려준다`);
     // schedule·mail·approval과 같은 자리에 병기된다 — 지시 블록은 하나의 문법이다.
@@ -291,6 +315,66 @@ test('CLI 크루 프롬프트: 연결된 커넥터가 있을 때만 tool 블록 
 });
 
 test('SDK 러너(hasTools) 프롬프트에는 CLI 블록 문법이 들어가지 않는다 — 표면이 다르다', () => {
-  const p = systemPromptFor(CARD, '/ws', '', { name: '노바' }, 'ko', { hasTools: true, connectors: ['gmail'] });
+  const p = systemPromptFor(CARD, '/ws', '', { name: '노바' }, 'ko', { hasTools: true, connectors: [{ id: 'gmail', status: 'connected' }] });
   assert.equal(p.includes('"action":"tool"'), false);
+});
+
+test('재인증 필요 커넥터를 CLI 크루도 안다 — SDK와 같은 표기 + 지금 못 부른다는 사실', () => {
+  // 전부 reauth인 회사에서 CLI만 커넥터의 존재조차 모르면, 사장은 재연결이 필요하다는 사실을
+  // 영영 듣지 못한다(SDK는 안내한다) — 안내 품질의 러너 편파.
+  const stale = [{ id: 'gmail', status: 'reauth' }];
+  const ko = systemPromptFor(CARD, '/ws', '', { name: '노바' }, 'ko', { hasTools: false, connectors: stale });
+  assert.match(ko, /gmail\(재연결 필요\)/, 'SDK와 같은 표기(connectorNames 공용)');
+  assert.match(ko, /설정에서 다시 연결하기 전까지 부를 수 없다/);
+  assert.match(ko, /조용히 실패하지 말고/);
+
+  const en = systemPromptFor(CARD, '/ws', '', { name: '노바' }, 'en', { hasTools: false, connectors: stale });
+  assert.match(en, /gmail \(needs reconnect\)/);
+  assert.match(en, /cannot be called until the captain reconnects/);
+
+  // 정상 연결만 있으면 재연결 문구는 나오지 않는다(불필요한 경고 금지)
+  const okOnly = systemPromptFor(CARD, '/ws', '', { name: '노바' }, 'ko', { hasTools: false, connectors: [{ id: 'gmail', status: 'connected' }] });
+  assert.doesNotMatch(okOnly, /재연결 필요/);
+});
+
+test('CLI 크루도 "회사 밖 쓰기 = 결재 먼저" 규칙을 받는다 — 러너 중립(설계서 §2-4 1차 게이트)', () => {
+  const live = [{ id: 'gmail', status: 'connected' }];
+  for (const hasTools of [true, false]) {
+    const d = commonDirectives({ connectedMcp: [], connectors: live, hasTools, lang: 'ko' });
+    assert.match(d, /로그인으로 연결된 외부 서비스\(커넥터\): gmail/, `hasTools=${hasTools}: 커넥터 절`);
+    assert.match(d, /회사 밖으로 나가는 쓰기.*결재를 먼저 올려라/, `hasTools=${hasTools}: 결재 선행 규칙`);
+    const en = commonDirectives({ connectedMcp: [], connectors: live, hasTools, lang: 'en' });
+    assert.match(en, /needs approval first/, `hasTools=${hasTools}(en): 결재 선행 규칙`);
+  }
+  // 연결 0이면 커넥터 절 자체가 없다
+  assert.doesNotMatch(commonDirectives({ connectedMcp: [], connectors: [], hasTools: false, lang: 'ko' }), /커넥터\)/);
+});
+
+// ── ⑦ 배선 잠금 — chat.mjs 호출부는 러너 없이 행동으로 못 잡는다(소스 앵커, system-prompt.test와 같은 기법) ──
+
+const chatSrc = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+
+test('배선 — chat의 재귀 호출 전부가 toolHop을 싣는다(하나라도 빠지면 상한이 리셋된다)', () => {
+  // `await chat(` 한정 — 함수 선언부(`{ … } = {}`)까지 물면 빈 옵션 `{}`가 잡혀 오타겟이 된다.
+  const calls = [...chatSrc.matchAll(/await chat\(wsId, agentSlug, userMsg, [^;]*?\{([^{}]*)\}\)/g)].map((m) => m[1]);
+  assert.ok(calls.length >= 3, `재귀 chat 호출 지점을 못 찾았다(${calls.length}) — 앵커가 낡았다`);
+  for (const opts of calls) {
+    assert.match(opts, /\btoolHop\b/, `재귀 chat 호출에 toolHop 누락: {${opts}}`);
+  }
+});
+
+test('배선 — CLI 프롬프트가 커넥터 요약을 systemPromptFor·commonDirectives **양쪽**에 넘긴다', () => {
+  // commonDirectives 쪽이 빠지면 결재 선행 규칙(connectorLine)이 CLI에만 통째로 사라진다.
+  const m = chatSrc.match(/systemPromptFor\(md, p\.root, skills, meta, lang, \{([^{}]*)\}\)\}\$\{commonDirectives\(\{([^{}]*)\}\)/);
+  assert.ok(m, 'CLI 프롬프트 조립 지점을 못 찾았다 — 앵커가 낡았다');
+  assert.match(m[1], /connectors:\s*cliConnectors/, 'systemPromptFor에 커넥터 요약 누락');
+  assert.match(m[2], /connectors:\s*cliConnectors/, 'commonDirectives에 커넥터 요약 누락 = 결재 선행 규칙이 CLI에서 소실');
+});
+
+test('배선 — CLI 커넥터 원천은 connectorBriefing(연결+재인증) 이다', () => {
+  // listConnections를 connected로 거르면 reauth가 사라져 SDK와 안내가 갈린다.
+  const m = chatSrc.match(/const cliConnectors = [^;]+;/);
+  assert.ok(m, 'cliConnectors 정의를 못 찾았다 — 앵커가 낡았다');
+  assert.match(m[0], /connectorBriefing\(wsId\)/, 'CLI 커넥터 원천이 SDK와 다르다');
+  assert.doesNotMatch(m[0], /status === 'connected'/, 'connected만 거르면 재인증 필요가 크루에게 사라진다');
 });

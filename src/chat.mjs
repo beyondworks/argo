@@ -140,10 +140,13 @@ export function systemPromptFor(cardMd, wsRoot, skills, meta = {}, lang = 'ko', 
         : '몇 분 뒤보다 나중의 일은 시계가 그대로일 거라 가정하지 마라. 예약이 필요하면 답변 끝에 지시 블록을 붙여라:\n```argo\n{"action":"schedule","every":"30분","title":"...","prompt":"매 실행마다 할 일"}\n```\n정해진 시각이면 "every" 대신 "time":"09:00"(요일은 "days":[1,3]). 동료에게 비동기로 일을 넘길 때도 같은 방식이다: {"action":"mail","to":"동료슬러그","message":"..."}. 결재를 올릴 때도 같다: {"action":"approval","request":"하려는 행동","reason":"왜"}. Argo가 턴이 끝난 뒤 블록을 실행하고 실제 결과를 답변에 덧붙인다 — **블록 없이 "예약했다 / 전달했다"고 말하지 마라.**');
   // 커넥터(연결된 외부 서비스) — 같은 지시 블록의 tool 액션. **연결이 0이면 안내하지 않는다**:
   // 없는 능력을 광고하면 크루가 안 되는 것을 된다고 답한다(설계서 §2-2 SDK 표면의 등재 규칙과 같은 원칙).
+  // 이름·상태 표기는 SDK 표면과 **같은 함수**(connectorNames)로 낸다 — 따로 쓰면 "[재연결 필요]"
+  // 표기가 한쪽에만 남는 편파가 다시 생긴다. reauth가 섞이면 지금 부를 수 없다는 사실까지 알린다.
+  const needsReconnect = connectors.some((c) => c?.status === 'reauth');
   const connectorGuide = (!hasTools && connectors.length)
     ? (lang === 'en'
-        ? ` Connected external services (${connectors.join(', ')}) are called the same way: {"action":"tool","server":"<service>","tool":"<tool name>","args":{…}}. Argo runs it after your turn, appends the real result, and then gives you one automatic follow-up turn to answer with it — so never invent or guess what a connector returned.`
-        : ` 연결된 외부 서비스(${connectors.join(', ')})도 같은 블록으로 부른다: {"action":"tool","server":"<서비스>","tool":"<도구 이름>","args":{…}}. Argo가 턴이 끝난 뒤 실행해 실제 결과를 덧붙이고, 그 결과로 답하라고 후속 턴을 1회 준다 — 커넥터가 무엇을 돌려줬는지 지어내거나 추측하지 마라.`)
+        ? ` Connected external services (${connectorNames(connectors, true)}) are called the same way: {"action":"tool","server":"<service>","tool":"<tool name>","args":{…}}. Argo runs it after your turn, appends the real result, and then gives you one automatic follow-up turn to answer with it — so never invent or guess what a connector returned.${needsReconnect ? ' A service marked "needs reconnect" cannot be called until the captain reconnects it in Settings — say so instead of silently failing.' : ''}`
+        : ` 연결된 외부 서비스(${connectorNames(connectors, false)})도 같은 블록으로 부른다: {"action":"tool","server":"<서비스>","tool":"<도구 이름>","args":{…}}. Argo가 턴이 끝난 뒤 실행해 실제 결과를 덧붙이고, 그 결과로 답하라고 후속 턴을 1회 준다 — 커넥터가 무엇을 돌려줬는지 지어내거나 추측하지 마라.${needsReconnect ? ' "(재연결 필요)"로 표시된 서비스는 사장이 설정에서 다시 연결하기 전까지 부를 수 없다 — 조용히 실패하지 말고 그 사실을 알려라.' : ''}`)
     : '';
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }); // YYYY-MM-DD
   // 현재 시각 — 크루에겐 시계가 없다(셸 능력이 꺼져 있으면 date조차 못 친다). 시각을 안 주면
@@ -876,16 +879,16 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       const cliWorkRoots = await loadActiveWorkRoots(wsId); // 사장 지정 외부 작업 폴더 — codex 샌드박스·프롬프트 안내에 주입
       const cliMcp = Object.keys(safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {}))
         .filter((n) => !mcpScope || mcpScope.includes(n)); // 크루별 MCP 범위(안내문도 동일 기준)
-      // 연결된 커넥터 — tool 블록 안내를 붙일지의 유일한 근거(연결 0이면 안내도 없다: 없는 능력 광고 금지).
+      // 커넥터 요약 — **SDK 턴과 같은 원천**(connectorBriefing: connected + reauth)을 쓴다. 여기서
+      // connected만 거르면 전부 reauth인 회사에서 CLI 크루만 커넥터의 존재조차 몰라 "못 한다"고 답하고,
+      // 사장은 재연결이 필요하다는 사실을 영영 듣지 못한다 — SDK는 "[재연결 필요]"로 안내하는데
+      // CLI만 침묵하는 것은 안내 품질의 러너 편파다(중립성 원칙). 상태 표기는 connectorNames가 한다.
       // 동적 import: connectors.mjs는 MCP 클라이언트 SDK를 끌고 오므로 CLI 턴에서만 로드한다.
-      const cliConnectors = await import('./connectors.mjs')
-        .then((m) => m.listConnections(wsId))
-        .then((cs) => cs.filter((c) => c.status === 'connected').map((c) => c.id))
-        .catch(() => []);
+      const cliConnectors = await import('./connectors.mjs').then((m) => m.connectorBriefing(wsId)).catch(() => []);
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, hasTools: false, lang, runner, workRoots: cliWorkRoots })}${messengerNote}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots })}${messengerNote}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
