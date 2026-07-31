@@ -163,14 +163,48 @@ const HARD_HOME_PATHS = [
    부분 문자열이면 URL(`/v1/chats/123`)·하위 데이터(`vault/chats/`)까지 오차단해 크루가 "API 호출이
    보호 구역에 막혔다"는 거짓 설명을 하게 된다(재검수 MEDIUM) — 토큰 시작 경계(행 머리·공백·따옴표·
    셸 연산자 뒤, 선택적 ./)에서만 잡는 정규식으로 좁힌다. 실판정은 isForbidden의 몫, 여기는 1차 방어. */
-/* 회사 루트 직속 도트파일(자격) — 도트 규칙은 isForbidden(파일 도구·MCP 인자)에만 있어서, 이름을
-   여기 등재하지 않으면 같은 파일을 Read는 deny인데 `cat`은 allow가 된다. 이 파일 헤더가 스스로
-   금지한 "도구별로 갈리는 판정"이 자격 파일에서 재발한 것이다(PR #213 분리 검수 M1 실측: 러너
-   API 키 `.secrets.json`·구글 OAuth 토큰 `.connector-secrets.json` 둘 다 셸로 통과했다).
-   부분 문자열 비교라 `cat my.secrets.json`이나 `echo "add .secrets.json to .gitignore"`처럼
-   무관한 명령도 걸린다 — 이 파일의 fail-closed 방침(아래 Bash 분기 주석)대로 수용한다. */
-const WS_SECRET_FILES = new Set(['.secrets.json', '.connector-secrets.json']);
-const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_SECRET_FILES];
+/* 직속 도트 항목 — 회사 루트(<ws>/.x)와 WS_ROOT 직속(<ws>/../.x) 둘 다. 도트 규칙은
+   isForbidden(파일 도구·MCP 인자)에만 **규칙**으로 있고("직속 도트는 전부 금지" + "WS_ROOT 아래
+   자기 회사 밖은 전부 금지"), Bash는 **이름 목록**이라 등재를 빠뜨리면 같은 파일이 Read는 deny인데
+   `cat`은 allow가 된다 — 이 파일 헤더가 스스로 금지한 "도구별로 갈리는 판정"이다.
+   PR #213이 자격 2건(.secrets.json·.connector-secrets.json)만 닫았고, 같은 계열 13건이 그대로
+   남아 있었다(2026-07-31 격리 전수 수색 — 아래 전부 파일 도구=deny, Bash=allow로 실측):
+     · .device-session.json    기기 Auth 세션(access+refresh) — `cat` 한 줄이 계정 탈취(최악)
+     · .sync-credentials.json  Supabase 서비스 롤 키 — 같은 유출 계열
+     · .account-secrets-local.json 계정 시크릿 — 같은 유출 계열
+     · .workroots.json         외부 작업 폴더 → additionalDirectories·writable_roots·--add-dir로
+                               직결. 셸로 덮으면 **다음 턴 반경이 실제로 넓어진다**(격리 라이브 재현:
+                               홈 밖 디렉터리가 fs 능력과 무관하게 순증). capabilities.json과 같은
+                               자가 승격 계열이라 같은 자리에서 막는다.
+     · .gw-queue- / .gw-offset / .gateway  게이트웨이 큐·커서 — 큐에 항목을 넣으면 드레이너가 그대로
+                               처리한다(자기 지시 주입). gw-cursor-slack.json이 이미 금고인 것과 대칭.
+     · .guest-mode.json        게스트(로컬 1인) 모드 마커 — 권한 상태를 파일로 바꾸는 경로
+     · .device-id              동기화 리스·세션 소유 판정의 기기 신원 — 위조는 소유 오판
+     · .sync-state.json        동기화 base(마지막 매니페스트) — 위조하면 삭제 전파가 오판된다
+                               (sync.mjs: base가 덮이면 "삭제 오판"). 데이터 유실 방향이다.
+     · .tombstones             보관 묘비 — 회사 보관/삭제 신호를 심을 수 있다
+     · .sync-process.lock      동기화 프로세스 락 — 위조로 이중 기동 유도
+     · .scaffold.json / .index.sqlite / .import.status.json  파생·캐시·상태라 특권 이득은 없지만,
+                               규칙(전 도트 금지)과 목록을 **일치**시켜 둔다 — 부분 집합으로 두면
+                               다음 사람이 "여긴 왜 빠졌지"로 재발시킨다. 목록이 갈라지면 재발한다는
+                               것이 #213의 교훈이다.
+   접두 항목(.gw-queue-·.gw-offset·.gateway·.tombstones)은 접미 변종·하위 경로를 부분 문자열로 함께
+   덮는다. 반대로 `.archive`·`.cache`처럼 **하위**에도 흔히 사는 이름은 넣지 않는다 — 부분 문자열로
+   넣으면 크루의 정상 작업(`vault/journal/.archive` 열람, `node_modules/.cache` 정리)을 오차단한다.
+   그 둘은 파일 도구·MCP에서는 여전히 deny이고, 셸에서만 남는 알려진 한계다(파일 헤더 "셸 한계").
+   부분 문자열 비교라 `cat my.secrets.json`처럼 무관한 명령도 걸린다 — fail-closed 방침대로 수용한다.
+   ⚠ 새 직속 도트 항목을 추가하면 여기도 함께 등재할 것 — forbidden-zone 테스트의 드리프트 단언이
+   src/를 훑어 미등재를 red로 잡는다(수색을 사람 기억에 맡기지 않는다). */
+const WS_DOT_FILES = new Set([
+  // 회사 루트 직속(<ws>/.x)
+  '.secrets.json', '.connector-secrets.json', // 자격(#213)
+  '.workroots.json', '.scaffold.json', '.sync-state.json', '.index.sqlite', '.import.status.json',
+  '.gw-queue-', '.gw-offset', '.gateway', // 게이트웨이 큐·커서(접두 — 채널 접미를 함께 덮는다)
+  // WS_ROOT 직속(<ws>/../.x) — 전 회사 공용 기기 상태·계정 자격
+  '.device-session.json', '.sync-credentials.json', '.account-secrets-local.json',
+  '.device-id', '.guest-mode.json', '.sync-process.lock', '.tombstones',
+]);
+const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];
 // 경계 클래스에 리다이렉트·쉼표(<>,) 포함 — `>chats/b.json`(공백 없는 리다이렉트)이 위조 명령의 가장
 // 자연스러운 형태다(재검수 3R). 잔여: `../`·`$PWD/` 간접 표기는 파일 헤더의 셸 한계 범위(실판정은 isForbidden).
 const BASH_DIR_RE = new RegExp(String.raw`(^|[\s'"\x60;|&(=<>,])(\.[\\/])?(${[...WS_CONTROL_DIRS].join('|')})[\\/]`, 'i');

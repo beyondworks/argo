@@ -391,3 +391,83 @@ test('env 홈 부재 시 틸드 경로는 fail-closed(deny) — 확장 불가 = 
     if (U !== undefined) process.env.USERPROFILE = U;
   }
 });
+
+// ── 직속 도트 항목의 셸 경로(PR #213 후속, 2026-07-31) ──────────────────────────
+// isForbidden은 **규칙**으로 직속 도트를 전부 막는데(회사 루트 직속 + WS_ROOT 아래 자기 회사 밖),
+// Bash는 **이름 목록**이라 등재를 빠뜨리면 같은 파일이 Read=deny인데 `cat`=allow가 된다.
+// #213이 자격 2건만 닫았고 13건이 남아 있었다(격리 전수 수색 실측 — 최악은 .device-session.json:
+// 기기 Auth 세션 access+refresh라 `cat` 한 줄이 계정 탈취였다).
+const DOT_ITEMS = [
+  ['ws', '.secrets.json'], ['ws', '.connector-secrets.json'], ['ws', '.workroots.json'],
+  ['ws', '.scaffold.json'], ['ws', '.sync-state.json'], ['ws', '.index.sqlite'],
+  ['ws', '.import.status.json'], ['ws', '.gw-queue-slack/job1.json'], ['ws', '.gw-offset-slack'],
+  ['root', '.device-session.json'], ['root', '.sync-credentials.json'],
+  ['root', '.account-secrets-local.json'], ['root', '.device-id'], ['root', '.guest-mode.json'],
+  ['root', '.sync-process.lock'], ['root', '.tombstones/my-co.json'],
+];
+
+test('Bash 리터럴: 직속 도트 항목은 파일 도구와 같은 판정 — 도구별로 갈리지 않는다', async () => {
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  for (const [loc, name] of DOT_ITEMS) {
+    const base = loc === 'ws' ? wsRoot : WS_ROOT;
+    const abs = join(base, name);
+    // 기준선 — 파일 도구는 원래 deny(규칙). 이게 allow면 단언 자체가 무의미해진다.
+    assert.equal((await gate('Write', { file_path: abs, content: 'x' })).behavior, 'deny', `Write ${name}`);
+    // 셸도 같은 판정이어야 한다: 상대 · 절대 · 케이스 변형(fold 계약)
+    const rel = loc === 'ws' ? name : `../${name}`;
+    assert.equal((await gate('Bash', { command: `echo x > ${rel}` })).behavior, 'deny', `Bash 상대 ${name}`);
+    assert.equal((await gate('Bash', { command: `cat ${abs}` })).behavior, 'deny', `Bash 절대 ${name}`);
+    assert.equal((await gate('Bash', { command: `cat ${rel.toUpperCase()}` })).behavior, 'deny', `Bash 케이스 변형 ${name}`);
+  }
+});
+
+// 과차단 회귀 고정 — 이름을 넓게 잡으면(예: 흔한 `.cache`·`.archive`를 부분 문자열로) 크루가 지정
+// 작업 폴더·자기 책상에서 돌리는 평범한 명령이 "보호 구역"으로 거절돼, 크루가 사장에게 거짓 설명을
+// 한다(재검수 MEDIUM 계열). 등재 이름은 전부 특이해야 한다는 계약을 이 단언이 잡는다.
+test('Bash 리터럴: 과차단 없음 — 크루의 평범한 명령은 그대로 통과', async () => {
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  const ORDINARY = [
+    'git status',
+    'npm test',
+    'ls -la vault/',
+    'cat vault/notes/memo.md',
+    'grep -rn TODO vault/',
+    'echo "완료" >> vault/journal/2026-07-31.md',
+    'curl -s https://api.example.com/v1/chats/123', // URL의 chats/ 오차단 금지(기존 계약)
+    'cat ~/proj/.gitignore && rm -rf node_modules/.cache', // 하위 도트파일은 크루의 정상 작업
+  ];
+  for (const command of ORDINARY) {
+    assert.equal((await gate('Bash', { command })).behavior, 'allow', `과차단: ${command}`);
+  }
+});
+
+// 드리프트 트립와이어 — 목록은 손으로 관리되므로 새 도트파일이 조용히 사각을 만든다. src/를 훑어
+// "루트에 join되는 도트 리터럴"을 뽑고 미등재를 red로 잡는다(수색을 사람 기억에 맡기지 않는다 —
+// 불변식 변경 전수 수색 규칙). 새 도트파일을 추가하면 WS_DOT_FILES에도 넣어야 이 단언이 산다.
+test('드리프트: 루트 직속 도트 리터럴은 전부 BASH_GUARDED 등재', async () => {
+  const { readFile, readdir } = await import('node:fs/promises');
+  const srcDir = new URL('../src/', import.meta.url);
+  const gateSrc = await readFile(new URL('permission-gate.mjs', srcDir), 'utf8');
+  const block = gateSrc.match(/const WS_DOT_FILES = new Set\(\[([\s\S]*?)\]\)/);
+  assert.ok(block, 'WS_DOT_FILES 블록을 못 찾았다 — 이름이 바뀌면 이 단언을 함께 고칠 것');
+  const guarded = [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  // 의도적 제외 — 이름이 너무 흔해 부분 문자열로 넣으면 크루의 정상 경로를 오차단한다
+  // (`vault/journal/.archive` 열람, `node_modules/.cache` 정리). 파일 도구·MCP는 여전히 deny —
+  // 남는 것은 셸 1차 방어의 알려진 한계다(파일 헤더 "셸 한계"와 같은 범위, 정직 표기).
+  const EXCLUDED = new Set(['.archive', '.cache']);
+  const missing = [];
+  for (const f of (await readdir(srcDir)).filter((n) => n.endsWith('.mjs') && n !== 'permission-gate.mjs')) {
+    const raw = await readFile(new URL(f, srcDir), 'utf8');
+    const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+    const names = [
+      ...[...code.matchAll(/join\(\s*(?:[\w.()]*\broot\b[\w.()]*|WS_ROOT)\s*,\s*'(\.[^']+)'/gi)].map((m) => m[1]),
+      // `const FILE = '.x'` 후 join(root, FILE) 하는 모듈(synccreds·devicesession·gueststate)
+      ...(/WS_ROOT/.test(code) ? [...code.matchAll(/const FILE = '(\.[^']+)'/g)].map((m) => m[1]) : []),
+    ];
+    for (const n of names) {
+      if (EXCLUDED.has(n) || guarded.some((g) => n.startsWith(g))) continue;
+      missing.push(`${n} (${f})`);
+    }
+  }
+  assert.deepEqual(missing, [], `루트 직속 도트 항목이 셸 방어에 미등재 — WS_DOT_FILES에 추가할 것:\n  ${missing.join('\n  ')}`);
+});
