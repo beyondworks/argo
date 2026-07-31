@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-forbid-'));
@@ -163,12 +163,18 @@ test('permissionGate: Glob 절대 패턴은 path를 무시하고 재루팅된다
   // (가짜 홈 실측: cwd=홈 + `--glob auth.json` → `.codex/auth.json`). 홈 순회는 Read 한 파일과 다른 급이다.
   assert.equal((await gate('Glob', { path: vault, pattern: join(homedir(), 'notes.txt') })).behavior, 'deny', '매직 없는 절대 패턴 = dirname 재루팅 → 홈 전체 순회');
   assert.equal((await gate('Glob', { path: vault, pattern: join(homedir(), 'auth.json') })).behavior, 'deny', '무구분자 basename 글롭이 하드존 내부(.codex/auth.json)를 반환하던 형태');
-  // 백슬래시는 POSIX 구분자가 아니라 rg globset의 이스케이프 — 절단점을 '\\'로 잡으면 벤더 baseDir(홈)과
-  // 어긋나 하드존이 통째로 빠져나갔다(후속 검수 HIGH-1, 실측 `--glob '.cla\ude*'` → `.claude.json`).
-  assert.equal((await gate('Glob', { path: vault, pattern: `${homedir()}/.cla\\ude*` })).behavior, 'deny', '이스케이프로 절단점을 옮기는 우회');
-  // 매직이 다음 구분자보다 앞에 오는 형태라야 베이스가 홈에 남는다(`.co\dex/*`처럼 매직 뒤에 오면
-  // 벤더도 존재하지 않는 `.co\dex`로 재루팅돼 무해 — 벤더 분할과 어긋난 단언은 두지 않는다).
-  assert.equal((await gate('Glob', { path: vault, pattern: `${homedir()}/.co\\dex*/**` })).behavior, 'deny', '이스케이프 + 하위 열거');
+  // 백슬래시 이스케이프는 **POSIX 전용 벡터**다. POSIX에선 rg globset의 이스케이프라 `.cla\ude*`가
+  // `.claude.json`에 매치하는데(실측), 절단점을 '\\'로 잡으면 벤더 baseDir(홈)과 어긋나 하드존이
+  // 통째로 빠져나갔다(후속 검수 HIGH-1). Windows(sep='\\')에선 벤더 VTg도 백슬래시를 구분자로 보아
+  // **같은 지점에서 갈라지므로**(둘 다 `<home>/.cla`로 재루팅 — 실재하지 않는 디렉터리) 벡터가 성립하지
+  // 않는다. 판정이 플랫폼별로 다른 게 정상이고, 어느 쪽이든 계약("우리 베이스 = 벤더 baseDir")은
+  // 유지된다 — Windows의 백슬래시 경로 커버는 위 join() 기반 단언들이 맡는다(CI 실측으로 확인).
+  if (sep === '/') {
+    assert.equal((await gate('Glob', { path: vault, pattern: `${homedir()}/.cla\\ude*` })).behavior, 'deny', '이스케이프로 절단점을 옮기는 우회');
+    // 매직이 다음 구분자보다 앞에 오는 형태라야 베이스가 홈에 남는다(`.co\dex/*`처럼 매직 뒤에 오면
+    // 벤더도 존재하지 않는 `.co\dex`로 재루팅돼 무해 — 벤더 분할과 어긋난 단언은 두지 않는다).
+    assert.equal((await gate('Glob', { path: vault, pattern: `${homedir()}/.co\\dex*/**` })).behavior, 'deny', '이스케이프 + 하위 열거');
+  }
   assert.equal((await gate('Glob', { path: vault, pattern: ` ${homedir()}/**` })).behavior, 'deny', '선행 공백 — 루트와 같은 trim 기준');
 });
 
