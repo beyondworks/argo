@@ -7,17 +7,15 @@ export async function GET(_req, { params }) {
     const { ws, slug } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
     const { md, meta } = await readAgentCard(ws, slug);
-    const [{ readEvents }, { listInstalledSkills, loadMcp }, { agentStats }] = await Promise.all([
+    const [{ readEvents, recentTurnsOf }, { listInstalledSkills, loadMcp }, { agentStats }] = await Promise.all([
       import('../../../../../../src/events.mjs'),
       import('../../../../../../src/market.mjs'),
       import('../../../../../../src/billing.mjs'), // agentStats — 금액 집계는 billing 게이트로만
     ]);
     const events = await readEvents(ws, 300).catch(() => []);
-    const recent = events
-      .filter((e) => e.slug === slug && e.type === 'turn' && e.gist)
-      // readEvents는 이미 최신순 — 이전 slice(-8).reverse()는 "가장 오래된 8개"를 옛→새 순으로
-      // 집어 카드가 첫 업무들만 보여줬다(검수 PR #209 실측: 12턴 시드에서 업무1~5 표시).
-      .slice(0, 8)
+    // 최신 8개 판정은 코어(recentTurnsOf) — 이전의 인라인 slice(-8).reverse()는 "가장 오래된
+    // 8개"를 집었다(검수 PR #209 실측: 12턴 시드에서 업무1~5 표시). 여긴 표시용 매핑만.
+    const recent = recentTurnsOf(events, slug, 8)
       .map((e) => ({ gist: e.gist, ts: e.ts, ok: e.ok !== false, ms: e.ms ?? null }));
     const skills = await listInstalledSkills(ws).catch(() => []);
     const mcp = Object.keys((await loadMcp(ws).catch(() => ({ servers: {} }))).servers ?? {}); // 설치 MCP 이름 — 크루별 범위 편집 UI용
