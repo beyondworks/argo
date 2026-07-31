@@ -1603,6 +1603,27 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 }
 .memo-chip:hover { background: var(--primary-soft); color: var(--fg); }
 
+/* ─── 채팅 인라인 산출물 미리보기 ───
+   접힘 기본·펼침은 자체 스크롤 상자 — 채팅 세로 흐름을 무너뜨리지 않는다. 색은 전부 토큰(양 테마 상속). */
+button.memo-chip.ap-toggle { background: transparent; cursor: pointer; padding: 3px 8px; }
+.artifact-preview {
+  margin-top: 8px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--card-2); overflow: hidden; min-width: 0;
+}
+.artifact-preview .ap-body { max-height: 380px; overflow: auto; }
+.artifact-preview img { display: block; max-width: 100%; max-height: 360px; margin: 0 auto; }
+.artifact-preview iframe { display: block; width: 100%; height: 380px; border: 0; background: var(--card); }
+.artifact-preview .ap-text {
+  margin: 0; padding: 12px 14px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: break-word;
+}
+.artifact-preview .ap-md { padding: 12px 14px; }
+.artifact-preview .ap-note {
+  display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  padding: 9px 12px; font-size: 12px; color: var(--fg-3); border-top: 1px solid var(--border);
+}
+.artifact-preview .ap-note:first-child { border-top: 0; }
+
 /* ─── 마크다운 ─── */
 /* 가로 격리 — 넓은 표·긴 무공백 문자열이 말풍선/레인을 밀어내 채팅 전체에 가로 스크롤을 만든다
    (실사용 신고 2026-07-21: "채팅창 가로 영역 늘어남"). 넘치는 건 자기 블록 안에서만 스크롤/줄바꿈. */

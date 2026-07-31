@@ -23,17 +23,17 @@ export default {
   async headers() {
     // 폰트 — Pretendard는 자체 호스팅('self', public/fonts)이라 CSP에 외부 출처가 필요 없다.
     // IBM Plex Mono(터미널 테마 전용)만 Google Fonts CDN을 유지한다 — 실패 시 ui-monospace 폴백이 무해.
-    const csp = [
+    const cspBase = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data: https://fonts.gstatic.com",
       "connect-src 'self' https: wss:",
-      "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
-    ].join('; ');
+    ];
+    const csp = [...cspBase, "frame-ancestors 'none'"].join('; ');
     return [{
       source: '/:path*',
       headers: [
@@ -41,6 +41,18 @@ export default {
         { key: 'X-Frame-Options', value: 'DENY' },
         { key: 'X-Content-Type-Options', value: 'nosniff' },
         { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+      ],
+    }, {
+      // 파일 서빙 라우트만 같은 출처 프레임 허용 — 채팅 인라인 산출물 미리보기의 PDF <iframe>이
+      // 전역 frame-ancestors 'none'/DENY에 막히던 것(실측: 크롬 빈 프레임 아이콘). 완화 범위는
+      // 이 라우트뿐이고 'self'라 외부 사이트 삽입은 여전히 차단. 여기서 나가는 응답은 파일
+      // 바이트(PDF·이미지·텍스트)뿐이며 html은 MIME 목록에 없어 octet-stream(nosniff)으로
+      // 문서 렌더 자체가 안 된다 — 프레임 허용이 스크립트 실행 표면을 만들지 않는다.
+      // Next headers는 같은 키를 뒤 항목이 덮는다(공식 문서) — 전역 뒤에 두는 이유.
+      source: '/api/companies/:ws/files',
+      headers: [
+        { key: 'Content-Security-Policy', value: [...cspBase, "frame-ancestors 'self'"].join('; ') },
+        { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
       ],
     }, {
       // 동봉 폰트 장기 캐시 — Next는 public/ 파일에 max-age=0을 주므로(검수 실측) 명시한다.
