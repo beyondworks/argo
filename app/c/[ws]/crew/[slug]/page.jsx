@@ -39,7 +39,10 @@ const LANE = 'min(768px, 100%)';
 /* ─── 산출물 인라인 미리보기 ───
    "채팅에서 바로 주는 산출물은 채팅창에서 바로 볼 수 있으면 좋겠다"(2026-07-31)의 1차 대응.
    칩 클릭(md=뷰어, 그 외=다운로드)은 그대로 두고, 옆 눈 버튼으로 메시지 안에서 펼쳐 본다.
-   서버는 무수정 — files API가 Content-Disposition 없이 정확한 MIME으로 주므로 img/iframe 인라인이 이미 된다. */
+   서버 협조 지점 2곳(지우면 pdf/svg 미리보기가 깨진다): ① next.config.mjs가 files 라우트에
+   한해 same-origin 프레임을 허용한다(전역 DENY 유지) — pdf <iframe>의 전제. ② svg는 files API가
+   octet-stream으로 주므로(의도 — MIME 확장은 스크립트 표면) 텍스트로 받아 blob <img>로 우회한다.
+   files/route.js 자체는 무수정: Content-Disposition 없이 정확한 MIME이라 img 인라인은 이미 된다. */
 const PREVIEW_IMG_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
 const PREVIEW_TEXT_EXTS = new Set(['txt', 'csv', 'json', 'log', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'sh', 'html', 'css', 'yml', 'yaml', 'toml', 'xml']);
 const PREVIEW_TEXT_CAP = 64 * 1024; // bytes — 큰 파일 보호: 이만큼만 받고 스트림을 끊은 뒤 잘림 표기
@@ -113,12 +116,14 @@ function ArtifactPreview({ ws, rel }) {
   if (kind === 'none' || st.status === 'unsupported') return <div className="artifact-preview fade-up">{note(t('chat.preview.unsupported'))}</div>;
   return (
     <div className="artifact-preview fade-up">
-      {kind === 'img' && <div className="ap-body"><img src={fileUrl} alt={name} /></div>}
-      {kind === 'svg' && <div className="ap-body"><img src={st.src} alt={name} /></div>}
+      {/* 로드 실패는 조용한 빈 상자가 아니라 텍스트 경로와 같은 계약(오류 안내+다운로드)으로 —
+          img는 onError가 신뢰되고, iframe은 브라우저가 404를 프레임 안에 그려 best-effort다. */}
+      {kind === 'img' && <div className="ap-body"><img src={fileUrl} alt={name} onError={() => setSt({ status: 'error' })} /></div>}
+      {kind === 'svg' && <div className="ap-body"><img src={st.src} alt={name} onError={() => setSt({ status: 'error' })} /></div>}
       {/* inline=1 = 캐시 분리(라우트는 무시하는 파라미터) — 같은 URL의 다운로드 응답이 옛
           X-Frame-Options: DENY와 함께 24h 캐시돼 있으면 iframe이 그 사본을 재생해 빈 프레임이
           된다(실측: 헤더 교체 후에도 캐시 재생으로 차단 지속 → 캐시버스트로 즉시 렌더). */}
-      {kind === 'pdf' && <iframe src={`${fileUrl}&inline=1`} title={name} />}
+      {kind === 'pdf' && <iframe src={`${fileUrl}&inline=1`} title={name} onError={() => setSt({ status: 'error' })} />}
       {kind === 'md' && <div className="ap-body ap-md"><Markdown text={st.text} wsId={ws} /></div>}
       {kind === 'text' && <div className="ap-body"><pre className="ap-text">{st.text}</pre></div>}
       {st.truncated && note(t('chat.preview.truncated'))}
@@ -130,13 +135,16 @@ function ArtifactPreview({ ws, rel }) {
 function ArtifactChips({ ws, rels }) {
   const { t } = useLang();
   const [open, setOpen] = useState(null); // 펼친 rel
+  // 세션 전환·스레드 갱신으로 rels가 바뀌어도 컴포넌트 인스턴스는 목록 key={i}로 재사용된다 —
+  // 목록 밖 open을 그대로 그리면 다른 대화의 산출물 패널이 남는다(검수 MEDIUM-1 재현). 렌더는 항상 클램프.
+  const shown = rels.includes(open) ? open : null;
   return (
     <>
       <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
         {rels.map((rel) => {
           const name = rel.split('/').pop();
           const md = rel.endsWith('.md');
-          const opened = open === rel;
+          const opened = shown === rel;
           return (
             <span key={rel} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <a className="memo-chip" download={md ? undefined : name}
@@ -155,7 +163,7 @@ function ArtifactChips({ ws, rels }) {
           );
         })}
       </span>
-      {open && <ArtifactPreview key={open} ws={ws} rel={open} />}
+      {shown && <ArtifactPreview key={shown} ws={ws} rel={shown} />}
     </>
   );
 }
