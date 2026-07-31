@@ -2,7 +2,7 @@
 // 회의실 — 사장 + 여러 크루가 한 방에서. "@이름"으로 부르면 그 크루들이 순서대로 발언한다.
 // 좌측 레일에 지난 회의가 적재되고(회의 마치기), 클릭으로 읽기 전용 열람 — 맥락 공유가 눈에 보이는 화면.
 import { use, useCallback, useEffect, useRef, useState } from 'react';
-import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuard } from '../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 export default function Room({ params }) {
@@ -400,14 +400,11 @@ export default function Room({ params }) {
                   onChange={(e) => setInput(e.target.value)}
                   onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
                   disabled={busy}
-                  {...imeGuard}
-                  onKeyDown={(e) => {
-                    // {...imeGuard} 뒤에 두어 onKeyDown을 이 핸들러가 갖는다 — IME 조합 Enter 차단 포함
+                  {...imeGuardWith((e) => {
                     if (e.key !== 'Enter') return;
-                    if (e.nativeEvent.isComposing) { e.preventDefault(); return; }
                     // 멘션 패널이 열려 있으면 Enter = 첫 후보 완성(전송 아님)
                     if (mentionOpen) { e.preventDefault(); completeMention(suggestAll ? 'all' : suggests[0].name); }
-                  }}
+                  })}
                 />
                 <button className="btn btn-primary btn-icon" disabled={busy || uploading || !input.trim()} aria-label={t('chat.send')}>
                   <Icon name="send" size={15} />

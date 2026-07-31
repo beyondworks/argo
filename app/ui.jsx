@@ -289,6 +289,18 @@ export const imeGuard = {
   onKeyDown: (e) => { if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault(); },
 };
 
+/** 자기 Enter 처리가 **따로 있는** 입력용 — `{...imeGuardWith(handler)}`.
+    스프레드와 명시 onKeyDown을 한 태그에 같이 쓰면 나중에 온 쪽이 앞의 것을 통째로 덮어쓴다.
+    실제로 그렇게 죽었다(신고 2026-07-31: 이름을 고치고 Enter를 눌러도 저장이 안 됐다 — 스프레드가
+    뒤에 있어 제출 핸들러가 사라졌다). 순서를 규율로 지키는 대신, 합쳐서 넘길 자리를 만들어
+    **트랩 자체를 없앤다**(같은 태그에 둘이 공존하면 test/jsx-prop-order가 red). */
+export const imeGuardWith = (onKeyDown) => ({
+  onKeyDown: (e) => {
+    if (e.key === 'Enter' && e.nativeEvent.isComposing) { e.preventDefault(); return; } // 조합 중 Enter는 확정만
+    onKeyDown(e);
+  },
+});
+
 export async function api(path, opts) {
   const res = await fetch(path, opts && {
     method: 'POST',
@@ -437,8 +449,8 @@ export function InputModal({ title, label, defaultValue = '', placeholder, confi
           <label style={{ display: 'grid', gap: 5 }}>
             {label && <span style={{ fontSize: 12 }}>{label}</span>}
             <input suppressHydrationWarning value={val} onChange={(e) => setVal(e.target.value)} placeholder={placeholder}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}
-              style={field} autoFocus {...imeGuard} />
+              style={field} autoFocus
+              {...imeGuardWith((e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } })} />
           </label>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button type="button" className="btn sm" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
