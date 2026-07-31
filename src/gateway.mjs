@@ -567,7 +567,8 @@ function startInboxWatcher(wsId) {
             } catch {
               await unlink(fp).catch(() => {}); // 다른 마운트 등 rename 실패 시 — 최소한 원본은 제거해 무한 재처리 차단
             }
-            if (cfg.enabled && cfg.token && cfg.chatId) { // 자리에 없어도 결과가 도착한다
+            // 자리에 없어도 결과가 도착한다 — 단 끌 수 있어야 한다(설정의 'inbox' 종류).
+            if (cfg.token && cfg.chatId && channelSends('telegram', cfg, 'inbox')) {
               await sendTgReply(cfg.token, cfg.chatId, wsId, pick(`[받은 서류함] ${safe}\n\n${reply}`, `[Inbox] ${safe}\n\n${reply}`, lang)).catch(() => {});
             }
           } catch (e) {

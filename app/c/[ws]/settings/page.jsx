@@ -861,7 +861,10 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
       const d = await api(`/api/companies/${ws}/connections`, {
         kind, token, enabled, defaultCrew: crew, ...(kind === 'slack' ? { channel } : {}),
       });
-      setConn(d.connections[kind]); setToken('');
+      // mutedEvents만은 화면 값을 지킨다 — 디바운스 저장이 아직 안 나갔으면 서버 응답엔 토글 이전 값이
+      // 들어 있어, 방금 끈 알림이 다시 켜진 것처럼 보인다(분리 검수 실측). 디스크는 뒤이은 POST가 맞춘다.
+      setConn((c) => ({ ...d.connections[kind], ...(c?.mutedEvents ? { mutedEvents: c.mutedEvents } : {}) }));
+      setToken('');
       setMsg(enabled ? t('settings.conn.enabling') : t('settings.conn.stopped'));
     } catch (e) {
       setMsg(String(e.message));
@@ -876,11 +879,20 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
       안 보내므로 토큰 재검증(네트워크)도 없다. 응답으로 상태를 덮지 않는다 — 쓰는 주체가 둘이면
       연속 클릭 때 이전 응답이 나중 선택을 되돌린다. */
   const muteSave = useRef(null);
+  const mutePending = useRef(null);
+  // 화면을 뜨면 대기 중인 저장을 흘려보낸다 — 500ms 안에 이동하면 끈 알림이 조용히 되살아난다.
+  useEffect(() => () => {
+    if (!muteSave.current) return;
+    clearTimeout(muteSave.current);
+    api(`/api/companies/${ws}/connections`, { kind, mutedEvents: mutePending.current }).catch(() => {});
+  }, [ws, kind]);
   function toggleEvent(ev) {
     const next = muted.includes(ev) ? muted.filter((x) => x !== ev) : [...muted, ev];
     setConn((c) => ({ ...c, mutedEvents: next })); // 함수형 — 연속 클릭의 stale 스냅샷 덮어쓰기 방지
     clearTimeout(muteSave.current);
+    mutePending.current = next;
     muteSave.current = setTimeout(() => {
+      muteSave.current = null;
       api(`/api/companies/${ws}/connections`, { kind, mutedEvents: next }).catch((e) => setMsg(String(e.message)));
     }, 500);
   }

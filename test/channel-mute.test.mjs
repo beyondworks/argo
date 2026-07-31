@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-mute-')); // import보다 먼저
 const { CHANNEL_EVENTS, normalizeMuted, channelSends } = await import('../src/channel-events.mjs');
-const { loadConnections, updateConnection } = await import('../src/connections.mjs');
+const { loadConnections, updateConnection, CONNECTION_PATCH_FIELDS } = await import('../src/connections.mjs');
 const { createCompany } = await import('../src/workspace.mjs');
 
 const WS = 'co-mute';
@@ -63,11 +63,31 @@ test('발송 판정 — 게이트웨이가 실제로 쓰는 그 함수를 검증
 
 test('채널별 종류 목록 — 화면과 저장이 같은 출처를 쓴다', () => {
   // 갈라지면 화면에 뜬 체크박스를 꺼도 저장에서 걸러져 "꺼지지 않는" 항목이 생긴다.
-  assert.deepEqual([...CHANNEL_EVENTS.telegram], ['approval', 'routine', 'job', 'crewmail']);
+  assert.deepEqual([...CHANNEL_EVENTS.telegram], ['approval', 'routine', 'job', 'crewmail', 'inbox']);
   assert.deepEqual([...CHANNEL_EVENTS.slack], ['approval', 'routine']);
   for (const kind of Object.keys(CHANNEL_EVENTS)) {
     for (const ev of CHANNEL_EVENTS[kind]) {
       assert.deepEqual(normalizeMuted(kind, [ev]), [ev], `${kind}/${ev}는 저장에서 살아남아야 한다`);
+    }
+  }
+});
+
+test('전송 계층 — 화면이 보낸 알림 선택이 서버 허용 필드에 실제로 들어 있다', () => {
+  // 분리 검수 실측: 라우트 허용 목록에서 'mutedEvents' 한 토큰을 지우자 서버가 그 필드를 조용히 버리는데
+  // **전 스위트가 초록**이었다. 화면은 꺼진 것처럼 보이고 200이 오고 디스크만 그대로 → 신고 그대로 재현.
+  // 라우트는 next/headers를 끌어 순수 Node로 못 부르니, 목록을 저장 모듈로 올려 여기서 잠근다.
+  assert.ok(CONNECTION_PATCH_FIELDS.includes('mutedEvents'), '알림 선택이 서버에서 버려진다');
+  const src = readFileSync(new URL('../app/api/companies/[ws]/connections/route.js', import.meta.url), 'utf8');
+  assert.match(src, /for \(const k of CONNECTION_PATCH_FIELDS\)/, '라우트가 정본 목록을 안 쓴다 — 인라인 목록은 조용히 낡는다');
+});
+
+test('알림 종류 라벨이 ko·en 둘 다 있다 — 종류가 늘어도 키 문자열이 출고되지 않게', () => {
+  // 이 라벨들은 t(`settings.conn.ev.${ev}`)로 조립돼 i18n 트립와이어(정적 키 스캔) 밖에 있다.
+  // 종류를 목록에만 추가하면 화면에 'settings.conn.ev.inbox'가 그대로 뜬다(2026-07-28 실사고 계열).
+  const dict = readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  for (const kind of Object.keys(CHANNEL_EVENTS)) {
+    for (const ev of CHANNEL_EVENTS[kind]) {
+      assert.match(dict, new RegExp(`'settings\\.conn\\.ev\\.${ev}': \\['[^']+', '[^']+'\\]`), `${ev} 라벨이 ko·en 둘 다 없다`);
     }
   }
 });
@@ -80,6 +100,10 @@ test('배선 — 게이트웨이가 두 채널 모두 판정을 지나고, 검�
   assert.match(g, /import \{ channelSends \}/, '판정 정본을 임포트하지 않는다 — 규칙 사본이 생겼다');
   assert.match(g, /if \(t\.token && t\.chatId && sends\('telegram', t\)\)/, '텔레그램 블록 머리에 채널 판정이 없다');
   assert.match(g, /if \(s\.token && s\.channel && sends\('slack', s\)\)/, '슬랙 블록 머리에 채널 판정이 없다');
-  // 분기마다 되풀이한 흔적(리터럴 종류를 넘기는 호출)이 없어야 한다 — 있으면 머리 판정이 무력해진 것.
-  assert.doesNotMatch(g, /sends\((?:t|s), '[a-z]+'\)/, '분기별 재판정이 다시 생겼다 — 머리에서 한 번만');
+  // 받은 서류함은 알림 버스(onNotify)가 아니라 감시자가 직접 보낸다 — 목록에 있는 이상 게이트도 지나야
+  // "전부 껐는데 파일 넣으니 알림이 온다"가 안 생긴다(분리 검수 지적 2026-07-31).
+  assert.match(g, /channelSends\('telegram', cfg, 'inbox'\)/, '받은 서류함 푸시가 판정을 안 지난다');
+  // (분기별 재판정을 막는 단언은 뒀다가 지웠다 — sends는 2인자(kind, ch)고 종류는 event.type을 캡처하므로
+  //  분기마다 다른 종류를 재판정하려면 시그니처부터 바꿔야 하고, 그러면 위 두 단언이 먼저 깨진다.
+  //  표현 불가능한 형태를 막는 정규식은 게이트처럼 보이지만 아무것도 안 문다 — 분리 검수 실측.)
 });

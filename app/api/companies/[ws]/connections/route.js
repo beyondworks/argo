@@ -1,4 +1,4 @@
-import { loadConnections, updateConnection, maskConnections, validateConnection, gatewayStatus } from '../../../../../src/connections.mjs';
+import { loadConnections, updateConnection, maskConnections, validateConnection, gatewayStatus, CONNECTION_PATCH_FIELDS } from '../../../../../src/connections.mjs';
 import { ensureGateway } from '../../../../../src/gateway.mjs';
 import { syncStatus } from '../../../../../src/sync.mjs';
 import { guardCompany } from '../../../../auth.mjs';
@@ -22,7 +22,7 @@ export async function POST(req, { params }) {
     const denied = await guardCompany(ws); if (denied) return denied;
     const { kind, ...patch } = await req.json();
     const allowed = {};
-    for (const k of ['token', 'enabled', 'defaultCrew', 'channel', 'mutedEvents']) {
+    for (const k of CONNECTION_PATCH_FIELDS) { // 정본은 connections.mjs — 인라인 목록은 조용히 낡는다
       if (patch[k] !== undefined) allowed[k] = patch[k];
     }
     if (allowed.enabled) {

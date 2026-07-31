@@ -11,9 +11,12 @@
 // 이 레포가 artifact-zones.mjs에서 이미 겪은 함정과 같은 계열). 화면과 저장 정규화가 **같은 목록**을
 // 봐야 "화면에서 껐는데 저장이 안 되는" 갈림이 안 생기므로, 공유 지점을 순수 모듈로 내린다.
 //
-// 텔레그램은 4종 전부, 슬랙은 문안이 준비된 2종만 보낸다(gateway.mjs의 타입 게이트와 짝).
+// 텔레그램은 5종 전부, 슬랙은 문안이 준비된 2종만 보낸다(gateway.mjs의 타입 게이트와 짝).
+// 'inbox'는 알림 버스(onNotify)를 타지 않고 inbox 감시자가 직접 보내지만 **여기 있어야 한다**:
+// 화면의 "이 채널로 보낼 알림"이 채널이 보내는 전부를 열거한다고 읽히기 때문이다. 빠뜨리면 사용자가
+// 전부 끄고도 파일을 넣는 순간 알림을 받는다 — 원래 신고와 같은 모양의 불만이 된다(분리 검수 2026-07-31).
 export const CHANNEL_EVENTS = Object.freeze({
-  telegram: Object.freeze(['approval', 'routine', 'job', 'crewmail']),
+  telegram: Object.freeze(['approval', 'routine', 'job', 'crewmail', 'inbox']),
   slack: Object.freeze(['approval', 'routine']),
 });
 

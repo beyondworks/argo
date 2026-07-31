@@ -442,6 +442,7 @@ const DICT = {
   'settings.conn.ev.job': ['장시간 작업 완료', 'Long task done'],
   // 어휘는 chat.via.*와 맞춘다 — 채팅에서 '동료 쪽지'로 본 것을 설정에서 다른 이름으로 끄면 헷갈린다.
   'settings.conn.ev.crewmail': ['동료 쪽지', 'Crew mail'],
+  'settings.conn.ev.inbox': ['받은 서류함 처리 결과', 'Inbox file results'],
   'settings.saved': ['저장됨', 'Saved'],
   'settings.save': ['저장', 'Save'],
   'settings.nameplate.runtime': ['가동 환경', 'Runtime'],
