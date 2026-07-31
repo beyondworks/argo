@@ -34,6 +34,7 @@ export async function startOauthTestServer({ accessTtlMs = 3_600_000 } = {}) {
   const access = new Map(); // token → { clientId, scopes, expiresAt(ms) }
   const refresh = new Map(); // token → { clientId, scopes }
   const counters = { dcr: 0, codeGrants: 0, refreshGrants: 0 };
+  const knobs = { failToolsList: false }; // 런타임 토글(테스트가 연결 후에 켠다)
 
   const provider = {
     clientsStore: {
@@ -113,6 +114,12 @@ export async function startOauthTestServer({ accessTtlMs = 3_600_000 } = {}) {
     resourceName: 'oauth-test-server',
   }));
   app.post('/mcp', requireBearerAuth({ verifier: provider }), async (req, res) => {
+    // tools/list만 골라 5xx로 떨어뜨리는 노브 — "connect는 성공했는데 tools/list가 실패"하는 경로
+    // (구글류: 401이 tools/call에서야 뜬다)의 자원 회수를 테스트가 관측하기 위한 것.
+    if (knobs.failToolsList && req.body?.method === 'tools/list') {
+      res.status(500).json({ jsonrpc: '2.0', id: req.body.id ?? null, error: { code: -32000, message: 'tools/list unavailable (test knob)' } });
+      return;
+    }
     const server = buildMcp();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { transport.close(); server.close(); });
@@ -127,6 +134,8 @@ export async function startOauthTestServer({ accessTtlMs = 3_600_000 } = {}) {
     counters,
     /** 사전 등록 클라이언트 주입 — DCR 미지원 서버(구글류) 대역. redirect_uris는 호출측이 안 뒤 넣는다. */
     registerClient(info) { clients.set(info.client_id, info); },
+    /** tools/list만 5xx로 — 연결 성공 후 목록 실패 경로(자원 회수 관측)용. */
+    setFailToolsList(v) { knobs.failToolsList = !!v; },
     /** 모든 refresh 토큰 폐기 — "refresh 실패 → 재연결 필요 강등" 시나리오용. */
     revokeRefresh() { refresh.clear(); },
     close() { return new Promise((r) => srv.close(r)); },

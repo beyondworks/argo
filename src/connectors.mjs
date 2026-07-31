@@ -20,7 +20,11 @@ import { appendEvent } from './events.mjs';
 
 /* ─── 토큰 보관 — 커넥터 전용 네임스페이스 (설계서 §2-1·§2-4) ───
    회사 루트 직속 도트파일 = 기존 4중 계약에 자동 편입된다(불변식 전수 수색 2026-07-31):
-   ① 권한 게이트: 직속 도트 항목은 하위까지 크루 도구 하드 차단(permission-gate.mjs — "회사 금고")
+   ① 권한 게이트: 직속 도트 항목은 크루의 **파일 도구**(Read/Write/Edit/Glob/Grep)와 MCP 인자에서
+      하드 차단(permission-gate.mjs — "회사 금고"). 셸은 리터럴 1차 방어일 뿐이고(BASH_GUARDED에
+      이 파일명을 명시 등재해야 걸린다 — 분리 검수 M1 실측: 등재 전엔 `cat`이 통과했다), CLI 러너
+      (codex·gemini·antigravity)는 애초에 이 게이트를 지나지 않는다(docs/runner-isolation-limits.md).
+      "하드 차단"을 무조건으로 읽지 말 것 — 표면별 한계가 다르다.
    ② 내보내기: 직속 도트 항목은 클라우드 export 제외(export.mjs)
    ③ 옵시디언 임포트: 도트 규칙이 걸러 반입 안 됨(obsidian-import.mjs)
    ④ 파일 모드: writeJsonAtomic이 0600(jsonstore.mjs P1-8)
@@ -78,7 +82,7 @@ function makeProvider(wsId, serverId, { redirectUrl = null, state = null, scopes
     async tokens() { return (await loadStore(wsId)).servers[serverId]?.tokens; },
     async saveTokens(t) {
       // refresh 자동 갱신(풀 호출 중)도 여기로 온다 — 갱신 성공은 곧 연결 정상(자가치유 시 정직 상태 복귀).
-      await patchServer(wsId, serverId, { tokens: t, status: 'connected', error: null });
+      await patchServer(wsId, serverId, { tokens: t, status: 'connected', error: null, errorCode: null });
     },
     async saveCodeVerifier(v) { await patchServer(wsId, serverId, { verifier: v }); },
     async codeVerifier() {
@@ -99,7 +103,7 @@ function makeProvider(wsId, serverId, { redirectUrl = null, state = null, scopes
       await patchServer(wsId, serverId, {
         tokens: null, verifier: null,
         ...(scope === 'all' || scope === 'client' ? { client: null } : {}),
-        status: 'reauth', error: '토큰이 무효화되었습니다 — 다시 연결해 주세요',
+        status: 'reauth', errorCode: 'reauth_required', error: connectorMessage('reauth_required', 'ko', serverId),
       });
     },
   };
@@ -107,6 +111,15 @@ function makeProvider(wsId, serverId, { redirectUrl = null, state = null, scopes
 
 /* ─── 연결 시작 — 인가 URL 생성 + localhost 콜백 수신 + 토큰 영속 (설계서 §2-1 startConnect) ─── */
 const CONNECT_TIMEOUT_MS = 120_000;
+const LOOPBACK = '127.0.0.1';
+/** 평문 http 허용 = loopback뿐(그 외는 TLS 필수 — OAuth 2.1). 호스트명 loopback 별칭도 인정. */
+export function isTlsOrLoopback(u) {
+  let h;
+  try { h = new URL(u); } catch { return false; }
+  if (h.protocol === 'https:') return true;
+  if (h.protocol !== 'http:') return false;
+  return h.hostname === LOOPBACK || h.hostname === 'localhost' || h.hostname === '::1' || h.hostname === '[::1]';
+}
 const DONE_PAGE = '<!doctype html><meta charset="utf-8"><title>Argo</title>'
   + '<body style="font-family:sans-serif;padding:2rem">연결되었습니다 — 이 창을 닫아 주세요. / Connected — you may close this tab.</body>';
 
@@ -123,9 +136,12 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
   if (typeof id !== 'string' || !id.trim() || typeof url !== 'string' || !/^https?:\/\//.test(url)) {
     throw new Error('커넥터 정의가 잘못되었습니다 — id·url이 필요합니다');
   }
+  // 평문 http는 loopback(로컬 테스트 서버)에만 허용 — OAuth 2.1은 그 외 TLS 필수다. 베어러 토큰이
+  // 평문으로 흐르는 원격 서버는 카탈로그에 실려도 여기서 막는다(검수 L2).
+  if (!isTlsOrLoopback(url)) throw new Error('원격 커넥터는 https만 허용됩니다(평문 http는 로컬 전용)');
   dropPool(wsId, id); // 재연결 시 옛 토큰을 문 풀 클라이언트가 살아남지 않게
   await patchServer(wsId, id, {
-    url, status: 'connecting', error: null, verifier: null,
+    url, status: 'connecting', error: null, errorCode: null, verifier: null,
     ...(serverDef.oauth?.client_id
       ? { client: { client_id: serverDef.oauth.client_id, ...(serverDef.oauth.client_secret ? { client_secret: serverDef.oauth.client_secret } : {}) } }
       : {}),
@@ -133,11 +149,14 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
 
   // localhost 콜백 서버 — loopback 전용·포트 0 임의 배정·state 필수·1회용(설계서 §2-4). SDK 미제공 구간.
   const state = randomUUID();
+  // 콜백 경로에 난수 세그먼트 — 포트만 훑는 임의 웹페이지가 진행 중 인가를 끊지 못하게(검수 L3).
+  // state는 코드 탈취를 막고, 이 경로는 "존재를 모르면 닿지도 못하게" 한다.
+  const cbPath = `/callback/${randomUUID()}`;
   let settle;
   const arrived = new Promise((r) => { settle = r; });
   const cb = http.createServer((req, res) => {
-    const u = new URL(req.url, 'http://127.0.0.1');
-    if (u.pathname !== '/callback') { res.writeHead(404).end(); return; } // favicon 등은 시도 소비 아님
+    const u = new URL(req.url, `http://${LOOPBACK}`);
+    if (u.pathname !== cbPath) { res.writeHead(404).end(); return; } // favicon·포트 스캔은 시도 소비 아님
     if (u.searchParams.get('state') !== state) {
       // state 불일치 = 위조·혼선 콜백(CSRF 방어) — 요청 거부 + 시도 전체 종료(보수적 1회용).
       // 응답에 쿼리값을 되비추지 않는다(반사 XSS 차단 — 고정 문구만).
@@ -156,8 +175,16 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(DONE_PAGE);
     settle({ code });
   });
-  await new Promise((resolve, reject) => { cb.on('error', reject); cb.listen(0, '127.0.0.1', resolve); });
-  const redirectUrl = `http://127.0.0.1:${cb.address().port}/callback`;
+  await new Promise((resolve, reject) => { cb.on('error', reject); cb.listen(0, LOOPBACK, resolve); });
+  // 바인드 실측 검증(fail-closed) — 이 콜백은 설계서 §2-4의 유일한 네트워크 표면이고, 바인드 주소
+  // 한 글자가 바뀌면 조용히 LAN에 열린다. 리터럴로 비교하는 게 핵심이다: 위 LOOPBACK 상수와
+  // 대조하면 상수를 바꾼 변이가 스스로를 통과시킨다(자기 참조 앵커).
+  const bound = cb.address();
+  if (bound?.address !== '127.0.0.1') {
+    cb.close();
+    throw new Error(`콜백 서버가 loopback이 아닌 주소에 열렸습니다(${bound?.address}) — 연결을 중단합니다`);
+  }
+  const redirectUrl = `http://${LOOPBACK}:${bound.port}${cbPath}`;
 
   let authUrl = null;
   const provider = makeProvider(wsId, id, { redirectUrl, state, scopes: serverDef.scopes, onRedirect: (u) => { authUrl = String(u); } });
@@ -169,8 +196,8 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
     await probe.connect(new StreamableHTTPClientTransport(new URL(url), { authProvider: provider }));
     await probe.close().catch(() => {});
     cb.close();
-    await patchServer(wsId, id, { status: 'connected', error: null });
-    return { authUrl: null, done: Promise.resolve({ ok: true, serverId: id }) }; // 무보호 서버 — 인가 불요
+    await patchServer(wsId, id, { status: 'connected', error: null, errorCode: null });
+    return { authUrl: null, callbackAddress: bound.address, done: Promise.resolve({ ok: true, serverId: id }) }; // 무보호 서버 — 인가 불요
   } catch (e) {
     await probe.close().catch(() => {});
     if (!(e instanceof UnauthorizedError) || !authUrl) {
@@ -203,7 +230,8 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
       return { ok: false, serverId: id, error: msg };
     }
   })();
-  return { authUrl, done };
+  // callbackAddress = 실제 바인드 주소 관측창(테스트가 loopback 불변식을 행동으로 단언한다 — 검수 M2).
+  return { authUrl, callbackAddress: bound.address, done };
 }
 
 /* ─── 연결 풀 + tools/list 캐시 (설계서 §2-1 callConnectorTool) ───
@@ -214,6 +242,9 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
 const POOL_IDLE_MS = 5 * 60_000;
 const POOL_SWEEP_MS = 60_000;
 const pools = new Map(); // `${wsId}:${serverId}` → { ready, client, tools, lastUsed, close }
+/** 풀 회수 계측 — "닫혔는가"를 테스트가 행동으로 단언하기 위한 관측창. 검수 M3는 누수를 계측으로
+    잡아냈는데(close 0회) 테스트에는 그 관측이 없어 초록이었다. 동작에는 영향 없는 카운터다. */
+export const poolStats = { opened: 0, closed: 0 };
 let sweeper = null;
 const poolKey = (wsId, serverId) => `${wsId}:${serverId}`;
 
@@ -245,15 +276,28 @@ function getPooled(wsId, serverId, url) {
     entry = { client: null, tools: [], lastUsed: Date.now(), close: () => {} };
     entry.ready = (async () => {
       const client = new Client({ name: 'argo-connector', version: '1.0.0' });
+      poolStats.opened += 1;
+      // close는 **생성 직후** 건다 — connect 성공 후 tools/list가 실패하는 경로(구글류: 401이
+      // tools/call에서야 뜬다)에서 할당을 뒤로 미루면 close가 no-op으로 남아 원격 세션(DELETE 미발송)과
+      // fd가 회수되지 않는다(검수 M3 계측: 그 경로 close 0회). SDK는 connect 자체 실패만 스스로 닫는다.
+      // 멱등 — ready.catch와 dropPool이 같은 엔트리를 닫으러 올 수 있다.
+      let closed = false;
+      entry.close = () => {
+        if (closed) return;
+        closed = true;
+        poolStats.closed += 1;
+        client.close().catch(() => {});
+      };
       // headless provider — 401은 SDK가 저장 refresh 토큰으로 자동 갱신·재시도(스파이크 실증),
       // 그마저 실패하면 REAUTH가 던져져 아래 호출부가 "재연결 필요"로 강등한다.
       await client.connect(new StreamableHTTPClientTransport(new URL(url), { authProvider: makeProvider(wsId, serverId, {}) }));
       const list = await client.listTools();
       entry.client = client;
       entry.tools = list.tools ?? [];
-      entry.close = () => client.close().catch(() => {});
     })();
-    entry.ready.catch(() => { if (pools.get(k) === entry) pools.delete(k); }); // 생성 실패가 풀을 오염시키지 않게
+    // 생성 실패가 풀을 오염시키지 않게 + **연결된 소켓 회수까지**. 이 핸들러가 호출부(dropPool)보다
+    // 먼저 돌아 엔트리를 지우므로, 여기서 close를 안 하면 dropPool은 빈손이 되고 누수가 남는다.
+    entry.ready.catch(() => { if (pools.get(k) === entry) pools.delete(k); entry.close(); });
     pools.set(k, entry);
     ensureSweeper();
   }
@@ -261,9 +305,32 @@ function getPooled(wsId, serverId, url) {
   return { entry, reused };
 }
 
+/* 크루·UI가 읽는 문구는 ko/en 둘 다(다국어 상시 규칙). 코드(error)는 안정 식별자로 고정하고
+   사람 문구만 언어별로 — 소비자(SDK 표면·CLI 표면·설정 카드)가 회사 언어를 넘긴다. */
+const MSG = {
+  not_connected: {
+    ko: (s) => `커넥터 '${s}'가 연결되어 있지 않습니다 — 설정에서 연결해 주세요`,
+    en: (s) => `Connector '${s}' is not connected — connect it in Settings`,
+  },
+  not_connected_status: {
+    ko: (s, d) => `커넥터 '${s}' 상태: ${d} — 설정에서 다시 연결해 주세요`,
+    en: (s, d) => `Connector '${s}' status: ${d} — reconnect it in Settings`,
+  },
+  reauth_required: {
+    ko: (s) => `커넥터 '${s}' 인증이 만료되었습니다 — 설정에서 다시 연결해 주세요`,
+    en: (s) => `Connector '${s}' authorization expired — reconnect it in Settings`,
+  },
+  call_failed: {
+    ko: (s, d) => `커넥터 호출 실패(${s}): ${d}`,
+    en: (s, d) => `Connector call failed (${s}): ${d}`,
+  },
+};
+/** 사람 문구 — 안정 코드(error)와 분리해서 언어만 고른다. */
+export const connectorMessage = (key, lang, ...a) => (MSG[key][lang === 'en' ? 'en' : 'ko'])(...a);
+/** 실패 결과 — error는 소비자가 분기하는 안정 코드, content는 크루가 읽는 회사 언어 문구. */
 const fail = (error, text) => ({ ok: false, isError: true, error, content: [{ type: 'text', text }] });
 
-async function callViaPool(wsId, serverId, url, tool, args, retryLeft) {
+async function callViaPool(wsId, serverId, url, tool, args, retryLeft, lang) {
   const { entry, reused } = getPooled(wsId, serverId, url);
   try {
     await entry.ready;
@@ -274,12 +341,13 @@ async function callViaPool(wsId, serverId, url, tool, args, retryLeft) {
     dropPool(wsId, serverId); // 죽은 연결이 풀에 남지 않게
     if (isReauthErr(e)) {
       // SDK 자동 refresh까지 실패한 최종 실패 — "재연결 필요"로 강등(조용한 무동작 금지, 설계서 §2-1).
-      await patchServer(wsId, serverId, { status: 'reauth', error: '토큰 갱신 실패 — 설정에서 다시 연결해 주세요' });
-      return fail('reauth_required', `커넥터 '${serverId}' 인증이 만료되었습니다 — 설정에서 다시 연결해 주세요`);
+      // 저장 error에는 코드를 같이 남긴다 — 설정 카드(US-6)가 언어에 맞게 다시 그릴 수 있게.
+      await patchServer(wsId, serverId, { status: 'reauth', errorCode: 'reauth_required', error: connectorMessage('reauth_required', 'ko', serverId) });
+      return fail('reauth_required', connectorMessage('reauth_required', lang, serverId));
     }
     // 유휴 서버가 끊은 stale 소켓을 재사용했을 수 있다 — 새 연결로 1회만 재시도(무한 재시도 금지).
-    if (retryLeft > 0 && reused) return callViaPool(wsId, serverId, url, tool, args, retryLeft - 1);
-    return fail('call_failed', `커넥터 호출 실패(${serverId}/${tool}): ${String(e?.message ?? e)}`);
+    if (retryLeft > 0 && reused) return callViaPool(wsId, serverId, url, tool, args, retryLeft - 1, lang);
+    return fail('call_failed', connectorMessage('call_failed', lang, `${serverId}/${tool}`, String(e?.message ?? e)));
   }
 }
 
@@ -287,19 +355,19 @@ async function callViaPool(wsId, serverId, url, tool, args, retryLeft) {
  * 커넥터 도구 호출 — 러너 무관 단일 경로. 결과 정규화 { ok, content, isError }(+실패 시 error 코드).
  * 401은 SDK 자동 refresh에 맡기고(스파이크 실증) 최종 실패만 'reauth' 강등. 호출마다 원장 기록.
  */
-export async function callConnectorTool(wsId, serverId, tool, args = {}) {
+export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang = 'ko' } = {}) {
   let ok = false;
   try {
     let result;
     const rec = (await loadStore(wsId).catch(() => ({ servers: {} }))).servers[serverId];
     if (!rec?.url || rec.status === 'connecting') {
-      result = fail('not_connected', `커넥터 '${serverId}'가 연결되어 있지 않습니다 — 설정에서 연결해 주세요`);
+      result = fail('not_connected', connectorMessage('not_connected', lang, serverId));
     } else if (rec.status === 'reauth') {
-      result = fail('reauth_required', `커넥터 '${serverId}' 재연결이 필요합니다 — 설정에서 다시 연결해 주세요`);
+      result = fail('reauth_required', connectorMessage('reauth_required', lang, serverId));
     } else if (rec.status !== 'connected') {
-      result = fail('not_connected', `커넥터 '${serverId}' 상태: ${rec.status}${rec.error ? ` (${rec.error})` : ''} — 설정에서 다시 연결해 주세요`);
+      result = fail('not_connected', connectorMessage('not_connected_status', lang, serverId, `${rec.status}${rec.error ? ` (${rec.error})` : ''}`));
     } else {
-      result = await callViaPool(wsId, serverId, rec.url, tool, args, 1);
+      result = await callViaPool(wsId, serverId, rec.url, tool, args, 1, lang);
     }
     ok = result.ok;
     return result;
@@ -321,7 +389,7 @@ export async function listConnectorTools(wsId, serverId) {
   } catch (e) {
     dropPool(wsId, serverId);
     if (isReauthErr(e)) {
-      await patchServer(wsId, serverId, { status: 'reauth', error: '토큰 갱신 실패 — 설정에서 다시 연결해 주세요' });
+      await patchServer(wsId, serverId, { status: 'reauth', errorCode: 'reauth_required', error: connectorMessage('reauth_required', 'ko', serverId) });
       return { ok: false, error: 'reauth_required', tools: [] };
     }
     return { ok: false, error: 'call_failed', tools: [] };
@@ -336,6 +404,8 @@ export async function listConnections(wsId) {
     url: r.url,
     status: r.status ?? 'error',
     hasTokens: !!r.tokens?.access_token,
+    // errorCode = 설정 카드(US-6)가 회사 언어로 다시 그릴 안정 코드. error는 상세(벤더 원문 포함 가능).
+    ...(r.errorCode ? { errorCode: r.errorCode } : {}),
     ...(r.error ? { error: r.error } : {}),
   }));
 }

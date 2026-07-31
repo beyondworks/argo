@@ -187,3 +187,77 @@ test('권한 게이트 — 크루 파일 도구는 커넥터 토큰 파일을 �
   const forbidden = makeIsForbidden(join(WS_ROOT, WS));
   assert.equal(await forbidden(storePath), true, '직속 도트파일 = 회사 금고(기존 규칙 자동 편입의 명시 잠금)');
 });
+
+test('권한 게이트(셸) — 자격 파일은 Bash 리터럴 방어에도 등재돼 있다(도구별 판정 갈림 금지)', async () => {
+  // 분리 검수 M1 실측: 도트 규칙은 isForbidden에만 있어 같은 파일이 Read=deny / `cat`=allow로 갈렸다.
+  // 파일 헤더가 스스로 금지한 패턴이라 셸 목록에도 자격 파일을 등재한다(1차 방어 — 완전 차단은 아님).
+  const { makePermissionGate } = await import('../src/permission-gate.mjs');
+  const gate = makePermissionGate(WS, 'captain', join(WS_ROOT, WS));
+  for (const cmd of [`cat ${CONNECTOR_SECRETS_BASE}`, 'cat .secrets.json', `grep token ./${CONNECTOR_SECRETS_BASE}`]) {
+    assert.equal((await gate('Bash', { command: cmd })).behavior, 'deny', `셸 리터럴 방어: ${cmd}`);
+  }
+  const ok = await gate('Bash', { command: 'ls vault' });
+  assert.equal(ok.behavior, 'allow', '평범한 셸 작업은 그대로 통과(과차단 없음)');
+});
+
+// ── 분리 검수(PR #213) 지적 반영분의 행동 잠금 ──
+test('콜백 서버는 loopback에만 열린다 — 바인드 주소가 관측되고, 아니면 연결이 중단된다(M2)', async () => {
+  const s = await newServer();
+  const { authUrl, callbackAddress, done } = await startConnect(WS, { id: 'demo-bind', url: s.mcpUrl, scopes: ['spike.read'] });
+  assert.equal(callbackAddress, '127.0.0.1', 'LAN에 열리면 이 단언이 먼저 깨진다(설계서 §2-4 유일 네트워크 표면)');
+  await approve(authUrl);
+  assert.equal((await done).ok, true);
+});
+
+test('콜백 경로는 난수 세그먼트 — 포트만 아는 페이지는 진행 중 인가를 끊지 못한다(L3)', async () => {
+  const s = await newServer();
+  const { authUrl, done } = await startConnect(WS, { id: 'demo-path', url: s.mcpUrl, scopes: ['spike.read'] });
+  const redirect = new URL(new URL(authUrl).searchParams.get('redirect_uri'));
+  assert.match(redirect.pathname, /^\/callback\/[0-9a-f-]{36}$/, '경로에 난수 세그먼트');
+
+  // 포트 스캔 대역 — 고정 경로 추측은 404이고, 시도는 살아 있어야 한다.
+  assert.equal((await fetch(`${redirect.origin}/callback`)).status, 404);
+  await approve(authUrl);
+  assert.equal((await done).ok, true, '스캔이 시도를 죽이지 않는다');
+});
+
+test('평문 http 원격은 거부 — loopback만 예외(L2, OAuth 2.1 TLS 계약)', async () => {
+  await assert.rejects(
+    startConnect(WS, { id: 'demo-plain', url: 'http://mcp.example.com/mcp' }),
+    /https/,
+    '평문 원격은 베어러 토큰이 그대로 흐른다',
+  );
+  const { isTlsOrLoopback } = await import('../src/connectors.mjs');
+  assert.deepEqual(
+    ['https://x.example/mcp', 'http://127.0.0.1:9/mcp', 'http://localhost:9/mcp', 'http://x.example/mcp', 'ftp://x/mcp'].map(isTlsOrLoopback),
+    [true, true, true, false, false],
+  );
+});
+
+test('연결 성공 후 tools/list 실패 — 열린 클라이언트가 회수된다(M3 누수)', async () => {
+  const { poolStats } = await import('../src/connectors.mjs');
+  const s = await newServer();
+  const id = 'demo-listfail';
+  const { authUrl, done } = await startConnect(WS, { id, url: s.mcpUrl, scopes: ['spike.read'] });
+  await approve(authUrl);
+  assert.equal((await done).ok, true);
+
+  s.setFailToolsList(true); // connect는 되고 tools/list만 실패하는 경로(구글류 401-at-call과 같은 형태)
+  const before = { ...poolStats };
+  const r = await callConnectorTool(WS, id, 'search_threads_demo', { query: 'x' });
+  assert.equal(r.ok, false, '실패는 정직하게');
+  assert.ok(poolStats.opened > before.opened, '클라이언트가 열렸다(전제)');
+  assert.equal(poolStats.closed - before.closed, poolStats.opened - before.opened, '연 만큼 닫혔다 — close 할당이 늦으면 0이 된다');
+
+  s.setFailToolsList(false);
+  assert.equal((await callConnectorTool(WS, id, 'search_threads_demo', { query: 'x' })).ok, true, '다음 호출은 새 연결로 회복');
+});
+
+test('크루가 읽는 실패 문구는 회사 언어를 따른다 — 코드는 고정, 문구만 ko/en(L1)', async () => {
+  const ko = await callConnectorTool(WS, 'never-connected', 'any_tool', {});
+  const en = await callConnectorTool(WS, 'never-connected', 'any_tool', {}, { lang: 'en' });
+  assert.equal(ko.error, en.error, '분기용 코드는 언어와 무관하게 안정');
+  assert.match(ko.content[0].text, /연결/);
+  assert.match(en.content[0].text, /not connected/i);
+  assert.doesNotMatch(en.content[0].text, /[가-힣]/, '영어 모드에 한국어가 새지 않는다');
+});
