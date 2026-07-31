@@ -457,3 +457,31 @@ export async function listConnections(wsId) {
     ...(r.error ? { error: r.error } : {}),
   }));
 }
+
+/** 크루 표면이 프롬프트에 실을 도구 이름 수 상한(서버당) — 설명은 매 턴 컨텍스트에 들어간다. */
+export const BRIEF_TOOL_CAP = 12;
+
+/**
+ * 크루 표면(SDK `use_connector` · CLI 지시 블록)이 **턴 시작에 1회** 읽는 연결 요약 — 러너 무관 공통 원료.
+ * 반환: `[{ id, status:'connected'|'reauth', tools:[이름], more }]` (연결 0이면 빈 배열).
+ *
+ * 포함 대상은 **실제로 성립한 연결뿐**이다(connected + reauth). 'connecting'·'error'는 뺀다 —
+ * 없는 능력을 광고하지 않는다(설계서 §2-2). 반대로 reauth를 빼지 **않는** 이유: 숨기면 크루가
+ * "그건 못 한다"고 조용히 답하고 끝나 사장은 "다시 연결하면 된다"는 사실을 영영 못 듣는다
+ * (조용한 무동작 금지). 호출하면 callConnectorTool이 정직한 재연결 안내를 돌려준다.
+ *
+ * 도구 이름은 서버당 cap개까지 자른다(프롬프트에 그대로 들어가므로 상한이 필요하다 — 나머지는 more).
+ * 조회 실패(서버 다운·일시 오류)는 턴을 죽이지 않고 tools:[]로 낙하하고, 표면이 "지금 목록을
+ * 불러오지 못했다"고 정직 표기한다. 상태 자체는 listConnections(디스크 사실)만을 근거로 둔다 —
+ * 조회 실패로 상태를 파생하지 않는다(reauth 강등은 listConnectorTools가 이미 저장소에 남긴다).
+ */
+export async function connectorBriefing(wsId, { cap = BRIEF_TOOL_CAP } = {}) {
+  const live = (await listConnections(wsId)).filter((c) => c.status === 'connected' || c.status === 'reauth');
+  return Promise.all(live.map(async (c) => {
+    // reauth는 조회해도 같은 실패라 왕복을 아낀다 — 상태 자체가 이미 정직한 신호다.
+    const names = c.status === 'connected'
+      ? ((await listConnectorTools(wsId, c.id).catch(() => ({ tools: [] }))).tools ?? []).map((t) => t.name)
+      : [];
+    return { id: c.id, status: c.status, tools: names.slice(0, cap), more: Math.max(0, names.length - cap) };
+  }));
+}

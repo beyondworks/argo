@@ -18,6 +18,7 @@ import { appendEvent, readEvents } from './events.mjs'; // readEvents — mcp �
 import { loadCapabilities } from './capabilities.mjs'; // CAPABILITIES 직참조는 결재 분기 제거로 소멸(#191 검수)
 import { loadActiveWorkRoots } from './workroots.mjs';
 import { makePermissionGate } from './permission-gate.mjs';
+import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커넥터 = 러너 무관 단일 실행 경로(설계서 §2-2)
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
@@ -301,8 +302,16 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
     hasTools = 크루 도구(request_approval·request_tool_install 등)가 실제로 있는 턴인지.
     도구가 없는 러너에는 같은 규칙을 "보고·안내" 형태로 지시한다(러너 독립성 — 어떤 러너를 연결해도
     Argo 규율대로 행동). (export: 회귀 테스트용) */
-export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true, lang = 'ko', runner = null, workRoots = [] } = {}) {
+export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, lang = 'ko', runner = null, workRoots = [] } = {}) {
   const mcpList = connectedMcp.length ? connectedMcp.join(', ') : (lang === 'en' ? '(none)' : '(없음)');
+  // 커넥터 절 — MCP 절의 "SDK 턴에서 실행된다"가 커넥터에는 해당하지 않는다(코어가 실행하므로 러너 무관,
+  // 설계서 §2-2). 연결이 있을 때만 넣는다: 없는 능력을 광고하지 않는다. 호출 문법은 표면이 알려준다
+  // (SDK=use_connector 도구 설명, CLI=지시 블록 문법) — 여기엔 러너 공통 사실만 적는다.
+  const connectorLine = connectors.length
+    ? (lang === 'en'
+      ? `\n- External services connected by login (connectors): ${connectorNames(connectors, true)}. The Argo core runs these calls, so they work the same on any runner — reads are free, but anything that leaves the company (send, publish, create, update, delete) needs approval first.`
+      : `\n- 로그인으로 연결된 외부 서비스(커넥터): ${connectorNames(connectors, false)}. Argo 코어가 실행하므로 러너와 무관하게 쓸 수 있다 — 조회·읽기는 자유롭게, 회사 밖으로 나가는 쓰기(발송·게시·생성·수정·삭제)는 결재를 먼저 올려라.`)
+    : '';
   if (lang === 'en') {
     // 한국어 경로와 대칭(다국어 상시 규칙) — 신고 2026-07-26: 크루가 "스킬·도구에서 추가하라"고 잘못 안내했다.
     return `\n## Approval rules — must follow
@@ -319,7 +328,7 @@ ${workRoots.length ? `- Assigned work folders (the captain pinned these): ${work
 
 ## Tools & skills — use them proactively
 - Company skills (skills/*.md) are auto-injected into your instructions every turn — apply them to matching work immediately.
-- External tools (MCP) connected to this company: ${mcpList}. ${hasTools ? 'When the work calls for one, use it right away — don\'t ask permission to use what\'s already connected.' : 'These run on Claude/GLM/Kimi (SDK) turns — if you can\'t use them on this runner, say so and offer an alternative.'}
+- External tools (MCP) connected to this company: ${mcpList}. ${hasTools ? 'When the work calls for one, use it right away — don\'t ask permission to use what\'s already connected.' : 'These run on Claude/GLM/Kimi (SDK) turns — if you can\'t use them on this runner, say so and offer an alternative.'}${connectorLine}
 - If a needed tool is missing: ${hasTools ? 'an MCP already installed on this computer can be pulled in via request_tool_install (source=host, env included), otherwise install from the catalog (source=catalog) — it installs immediately without approval (logged to Activity) and is available from the next turn.' : 'guide the captain precisely to connect it in the "Skills·Tools" screen.'}
 
 ## Protected zones — never touch, no exceptions
@@ -351,7 +360,7 @@ ${workRoots.length ? `- 지정 작업 폴더(사장이 고정해 둔 곳): ${wor
 
 ## 도구·스킬 — 필요하면 알아서 불러 써라
 - 회사 스킬(skills/*.md)은 매 턴 네 지침에 자동 주입된다 — 해당 유형 작업이면 즉시 적용하라.
-- 이 회사에 연결된 외부 도구(MCP): ${mcpList}. ${hasTools ? '작업에 필요하면 허락을 기다리지 말고 바로 사용하라 — 그러라고 연결해 둔 것이다.' : '이 도구들은 SDK 러너(Claude·GLM·Kimi·OpenRouter) 턴에서 실행된다 — 지금 러너에서 쓸 수 없으면 그 사실을 밝히고 대안을 제시하라.'}
+- 이 회사에 연결된 외부 도구(MCP): ${mcpList}. ${hasTools ? '작업에 필요하면 허락을 기다리지 말고 바로 사용하라 — 그러라고 연결해 둔 것이다.' : '이 도구들은 SDK 러너(Claude·GLM·Kimi·OpenRouter) 턴에서 실행된다 — 지금 러너에서 쓸 수 없으면 그 사실을 밝히고 대안을 제시하라.'}${connectorLine}
 - 필요한 도구가 회사에 없으면: ${hasTools ? '이 컴퓨터에 이미 설치된 MCP는 request_tool_install(source=host — env까지 그대로)로, 그 외에는 카탈로그(source=catalog)로 설치하라 — 결재 없이 즉시 설치되고(활동에 기록) 다음 턴부터 쓸 수 있다.' : '사장에게 "스킬·도구" 화면에서 연결해 달라고 정확히 안내하라.'}
 
 ## 보호 구역 — 예외 없이 금지
@@ -367,8 +376,38 @@ ${workRoots.length ? `- 지정 작업 폴더(사장이 고정해 둔 곳): ${wor
 - 결재는 웹 결재함 또는 텔레그램/슬랙 버튼으로 승인된다. 대기 시간이 지나도 **실패가 아니다** — 요청은 결재함에 남고, 사장이 나중에 승인하면 후속 턴에서 이어서 실행된다.`;
 }
 
-/** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단). */
-function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko') {
+/** 커넥터 이름 줄(순수) — 프롬프트·도구 설명 공용. 재연결 필요는 그 자리에서 정직 표기(조용한 무동작 금지). */
+const connectorNames = (connectors, en) => connectors
+  .map((c) => `${c.id}${c.status === 'reauth' ? (en ? ' (needs reconnect)' : '(재연결 필요)') : ''}`).join(', ');
+
+/** use_connector 도구 설명의 상한 — 이 문자열은 매 턴 컨텍스트에 실린다(설계서 §2-2 "상한 두고 절단"). */
+export const CONNECTOR_DESC_CAP = 1200;
+
+/** use_connector 설명(순수) — 연결된 서버·도구 요약을 주입한다. 상한 초과분은 절단 표시와 함께 자른다.
+    쓰기 계열의 결재 경유는 1차 규칙이 프롬프트다(설계서 §2-4 — 도구 단위 하드 게이트는 2차).
+    (export: 회귀 테스트용) */
+export function connectorToolDescription(connectors, lang = 'ko') {
+  const en = lang === 'en';
+  const body = connectors.map((c) => {
+    const tools = c.tools.length
+      ? `${c.tools.join(', ')}${c.more > 0 ? (en ? ` (+${c.more} more)` : ` 외 ${c.more}개`) : ''}`
+      : (en ? '(tool list unavailable right now)' : '(도구 목록을 지금 불러오지 못했다)');
+    return `${c.id}${c.status === 'reauth' ? (en ? ' [needs reconnect]' : ' [재연결 필요]') : ''}: ${tools}`;
+  }).join(' | ');
+  const summary = body.length > CONNECTOR_DESC_CAP
+    ? `${body.slice(0, CONNECTOR_DESC_CAP)}${en ? ' …(truncated)' : ' …(생략)'}`
+    : body;
+  const reauth = connectors.some((c) => c.status === 'reauth');
+  if (en) {
+    return `Call a tool on an external service connected to this company by login (Gmail, Drive, Notion, …). The Argo core runs the call, so it works the same on any runner. server = the connected service id, tool = a tool name on that service, args = that tool's arguments object. Connected right now — ${summary}. Use only names from that list; if you need something else, ask the captain to connect it in Settings. Reads and lookups are free, but anything that leaves the company (send, publish, create, update, delete) must go through request_approval first.${reauth ? ' Services marked [needs reconnect] will fail until the captain reconnects them in Settings — say so instead of retrying.' : ''}`;
+  }
+  return `로그인으로 이 회사에 연결된 외부 서비스(Gmail·Drive·Notion 등)의 도구를 호출한다. Argo 코어가 실행하므로 어떤 러너에서도 똑같이 동작한다. server=연결된 서비스 id, tool=그 서비스의 도구 이름, args=그 도구의 인자 객체. 지금 연결된 것 — ${summary}. 이 목록에 있는 이름만 써라. 다른 서비스가 필요하면 사장에게 설정에서 연결해 달라고 안내하라. 조회·읽기는 자유롭게 쓰고, 회사 밖으로 나가는 쓰기(발송·게시·생성·수정·삭제)는 request_approval로 결재를 먼저 올려라.${reauth ? ' [재연결 필요] 표시가 붙은 서비스는 호출해도 실패한다 — 재시도하지 말고 사장에게 설정에서 다시 연결해 달라고 알려라.' : ''}`;
+}
+
+/** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단).
+    connectors = 이 턴의 커넥터 요약(connectorBriefing). 비어 있으면 use_connector를 **등재하지 않는다**.
+    (export: 행동 테스트용 — 등재 조건·수렴 경로를 인메모리 MCP 클라이언트로 실제로 돌려 확인한다) */
+export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = []) {
   const text = async (t) => ({ content: [{ type: 'text', text: t }] });
   // 위임 체인의 직전 크루 — 이 크루가 올리는 결재에 "누구의 위임으로 온 요청인지"를 실어 흐름을 보이게 한다
   const delegatedBy = chain.length ? chain[chain.length - 1] : null;
@@ -634,9 +673,29 @@ function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [
     },
   );
 
+  // 커넥터 표면 — 실행은 코어의 callConnectorTool 단일 경로다(러너 무관, 설계서 §1·§2-2).
+  // 여기서 원격 MCP 클라이언트를 새로 만들지 않는다: SDK 턴 안에서 직결하면 토큰 갱신·OAuth 챌린지가
+  // 러너 프로세스에서 터져 코어가 개입할 수 없고, CLI 표면과 능력이 갈린다(중립성 위반).
+  const useConnector = tool(
+    'use_connector',
+    connectorToolDescription(connectors, lang),
+    { server: z.string(), tool: z.string(), args: z.record(z.string(), z.unknown()).optional() },
+    async ({ server, tool: toolName, args }) => {
+      // 결과·오류 문구는 코어가 이미 회사 언어로 정규화해 돌려준다(미연결·재연결 필요 포함).
+      // 여기서 다시 쓰지 않는다 — 표면마다 문구가 갈리면 안내 품질 패리티가 깨진다.
+      const r = await callConnectorTool(wsId, server, toolName, args ?? {}, { lang });
+      return { content: r.content ?? [], ...(r.isError ? { isError: true } : {}) };
+    },
+  );
+
   return createSdkMcpServer({
     name: 'crew', version: '1.0.0',
-    tools: [requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask, ...(colleagues.length ? [delegate, sendToCrew] : [])],
+    tools: [
+      requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask,
+      ...(colleagues.length ? [delegate, sendToCrew] : []),
+      // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
+      ...(connectors.length ? [useConnector] : []),
+    ],
   });
 }
 
@@ -946,7 +1005,10 @@ ${lang === 'en'
   // 가둔다: A(h0)→B(h1 배달 턴)→회신(h2 배달 턴)은 colleagues가 빈 배열이라 더 못 보낸다.
   const lastSender = chain.length ? chain[chain.length - 1] : null;
   const colleagues = hop >= 2 ? [] : (await listAgents(wsId)).filter((a) => a.slug !== agentSlug && (!chain.includes(a.slug) || a.slug === lastSender));
-  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang);
+  // 커넥터 요약 — 턴 시작 1회(설계서 §2-2). 연결 0이면 빈 배열이라 도구가 등재되지 않는다.
+  // 조회 실패가 턴을 죽이지 않게 낙하: 커넥터가 없는 것처럼 진행한다(기능 없음 > 턴 사망).
+  const connectors = await connectorBriefing(wsId).catch(() => []);
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors);
 
   // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
   // 게이트로 보낸다 — 게이트가 금지 구역(앱 코드·타사 데이터·자격, 2026-07-22 크리티컬)을 판정한다.
@@ -1037,7 +1099,7 @@ ${lang === 'en'
       ...(workRoots.length ? { additionalDirectories: workRoots } : {}),
       systemPrompt: systemPromptFor(md, p.root, skills, meta, lang)
         + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
-        + commonDirectives({ caps, connectedMcp, hasTools: true, lang, workRoots })
+        + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots })
         + messengerNote
         + fallbackDirective,
       mcpServers: { ...(servers ?? {}), crew: crewServer },
