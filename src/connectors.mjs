@@ -336,6 +336,8 @@ const MSG = {
   auth_denied: { ko: (d) => `인가가 거부되었습니다(${d})`, en: (d) => `Authorization was denied (${d})` },
   no_code: { ko: () => '콜백에 인가 코드가 없습니다', en: () => 'The callback did not carry an authorization code' },
   exchange_failed: { ko: (d) => `토큰 교환에 실패했습니다: ${d}`, en: (d) => `Token exchange failed: ${d}` },
+  // 카탈로그에 없는 id로 연결을 시도(오래된 화면·잘못된 요청) — market.connectConnector가 던진다.
+  not_in_catalog: { ko: (s) => `카탈로그에 없는 커넥터입니다: ${s}`, en: (s) => `No such connector in the catalog: ${s}` },
 };
 /** 사람 문구 — 안정 코드(error)와 분리해서 언어만 고른다. */
 export const connectorMessage = (key, lang, ...a) => (MSG[key][lang === 'en' ? 'en' : 'ko'])(...a);
@@ -408,6 +410,26 @@ export async function listConnectorTools(wsId, serverId) {
     }
     return { ok: false, error: 'call_failed', tools: [] };
   }
+}
+
+/**
+ * 연결 해제 — 저장소에서 그 서버 레코드(토큰·refresh·클라이언트 자격·verifier)를 통째로 지우고 풀을 닫는다.
+ * 순서가 계약이다: **레코드 삭제가 먼저**라야 진행 중이던 호출이 저장소 게이트에서 즉시 not_connected로
+ * 막히고(callConnectorTool은 매 호출 저장소를 읽는다), 그 다음 dropPool이 이미 열린 소켓·메모리 상의
+ * access 토큰을 회수한다. 반대로 하면 닫은 직후 다른 호출이 살아있는 레코드로 풀을 다시 연다.
+ * 원격 서버측 토큰 폐기(revocation)는 하지 않는다 — RFC 7009 지원이 서버마다 갈려 "지운 척"이 되기 쉽다.
+ * 사용자에겐 이 기기에서 자격이 사라지는 것으로 정직하게 표기한다(재연결하면 다시 동의 화면).
+ */
+export async function disconnectConnector(wsId, serverId) {
+  const existed = await withLock(`connector:${wsId}`, async () => {
+    const s = await loadStore(wsId);
+    if (!(serverId in s.servers)) return false;
+    delete s.servers[serverId];
+    await writeJsonAtomic(storeFile(wsId), s);
+    return true;
+  });
+  dropPool(wsId, serverId);
+  return { ok: true, removed: existed };
 }
 
 /** 회사의 커넥터 연결 상태 목록 — 시크릿 무노출(토큰·verifier 미포함). UI 폴링·상태 표시용. */

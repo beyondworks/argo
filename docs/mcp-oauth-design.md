@@ -85,8 +85,25 @@
 
 ### 2-3. 카탈로그·UI
 
-- `market.mjs` 카탈로그에 `kind:'connector'` 항목: `{ id, name, url, scopes?, note }`.
-  1차 등재는 **실턴 통과 검증분만**(기존 카탈로그 원칙). 구글 3종의 서버 선정은 §4 스파이크.
+- `market.mjs` 카탈로그에 `kind:'connector'` 항목(US-2 확정 스키마):
+  `{ id, name, url, scopes?, note, oauth?: { client_id, client_secret? }, dangerous?: [] }`.
+  스킬·MCP 카탈로그와 **같은 자리·같은 문법**(ko/en 미러 + `connectorCatalogFor(lang)`)이고, 연결/해제도
+  같은 마켓 라우트를 탄다(`POST {kind:'connector', id}` → `{authUrl}` / `DELETE ?kind=connector&id=`).
+- **디스커버리 2모드**(`connectorMode`) — 분기는 카탈로그 한 곳에만 있고 코어는 모드를 모른다:
+  ① **표준** = `oauth` 없음 → SDK가 PRM(RFC 9728) + DCR(RFC 7591) 자동. ② **고정** = `oauth.client_id`
+  기입 → SDK가 DCR을 건너뛴다(DCR 미지원 서버 — 구글 실측). 두 모드는 `connectorServerDef`(순수 변환)를
+  거쳐 **같은 `startConnect`로 수렴**한다. 행동 증거 = 테스트 AS의 DCR 카운터 1 vs 0(`test/connector-catalog.test.mjs`).
+  `scopes`는 **연결 1회에 동의받을 합집합**이다(도구별 scope 재동의 방지 — 스파이크 §② 특이점 2).
+  스파이크가 예비했던 `oauth.authorization_server`는 **넣지 않았다** — 코어가 소비하지 않는 죽은 필드이고
+  (AS는 SDK가 PRM에서 찾는다), PRM 미발행 서버를 등재할 때 코어 지원과 함께 추가한다.
+- 1차 등재는 **실턴 통과 검증분만**(기존 카탈로그 원칙) → **P1 등재 0**. 구글 3종은 GCP OAuth 클라이언트
+  생성이 선행되어야 실턴이 돌기 때문에 US-8에서 등재한다. "등재 0"도 테스트가 잠근다(누가 실으면 red —
+  그때 사람이 실턴 통과를 확인하고 항목 검증 테스트로 갈아끼운다).
+- 해제(`disconnectConnector`) = 저장소 레코드(토큰·refresh·클라이언트 자격) 삭제 **후** 풀 정리 순서다
+  (반대면 닫은 직후 다른 호출이 살아있는 레코드로 풀을 다시 연다). 원격 서버측 revocation은 지원이
+  서버마다 갈려 하지 않는다 — "이 기기에서 자격이 사라진다"로 정직 표기.
+- 카탈로그에서 내려간 뒤에도 토큰이 남은 연결은 **orphan 행**으로 계속 노출한다(`mergeConnectorStatus`) —
+  안 그리면 살아 있는 토큰을 화면에서 해제할 방법이 사라진다.
 - 설정 → 스킬·도구: 커넥터 카드(연결/해제 버튼, 연결 계정 표시, 재연결 필요 배지).
   i18n ko/en 필수(상시 규칙).
 

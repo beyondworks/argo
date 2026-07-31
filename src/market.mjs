@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { paths } from './workspace.mjs';
 import { loadDeviceSession } from './devicesession.mjs'; // 기기 세션 = "사용자 본인 기기" 신호(호스팅 오분류 방지)
+// 커넥터는 스킬·MCP와 같은 마켓 표면에 산다(설계서 §2-3) — 카탈로그·설치(=연결)·제거(=해제)가 한 자리.
+// 코어(연결 왕복·토큰·도구 호출)는 connectors.mjs가 전담하고, 여기는 "카탈로그 항목 → 코어 인자" 변환만 한다.
+import { startConnect, connectorMessage, isTlsOrLoopback } from './connectors.mjs';
 
 /* ─── 스킬 카탈로그 — 지시형 md, 설치 = skills/<id>.md 복사 ─── */
 export const SKILL_CATALOG = [
@@ -178,6 +181,122 @@ export function skillCatalogFor(lang = 'ko') {
 export function mcpCatalogFor(lang = 'ko') {
   if (lang !== 'en') return MCP_CATALOG;
   return MCP_CATALOG.map((m) => MCP_CATALOG_EN.find((e) => e.id === m.id) || m);
+}
+
+/* ─── 커넥터 카탈로그 — kind:'connector' (설계서 §2-3, 스파이크 §④ US-2) ───
+   항목 스키마:
+     { id, name, url, scopes?: [], note, oauth?: { client_id, client_secret? }, dangerous?: [] }
+   · url    = 원격 MCP 서버(스트리머블 HTTP). https 강제(loopback만 평문 예외 — OAuth 2.1, 코어와 같은 판정).
+   · scopes = **연결 1회에 동의받을 합집합**. 도구마다 요구 scope가 갈리는 서버(구글: 도구별 PRM)에서
+              중간 재동의를 막는 유일한 수단이다(스파이크 §② 특이점 2).
+   · oauth  = **디스커버리 2모드**의 분기점(connectorMode):
+              ① 표준 = 이 필드 없음 → SDK가 PRM(RFC 9728) 디스커버리 + DCR(RFC 7591)로 클라이언트를
+                 스스로 등록한다. 카탈로그가 할 일이 없다.
+              ② 고정 = client_id 기입 → SDK가 DCR을 건너뛴다(clientInformation 존재 시 registerClient
+                 미호출 — 스파이크 §② 소스 실독). **DCR 미지원 서버**용이며, 구글 실측이 그 경우다
+                 (accounts.google.com AS 메타데이터에 registration_endpoint 없음).
+              두 모드는 같은 startConnect 경로로 수렴한다 — 코어에는 모드 개념이 없다.
+              ※ 설계서·스파이크가 예비했던 `authorization_server`는 넣지 않는다: 코어(US-1)가 소비하지
+                 않는 죽은 필드다. SDK는 AS를 PRM의 authorization_servers에서 스스로 찾는다(실측).
+                 PRM을 발행하지 않는 서버를 등재하게 되는 시점에 **코어 지원과 함께** 추가한다.
+   · dangerous = 결재 게이트(US-5)가 쓸 쓰기 도구 명시 목록. 서버 annotations가 1순위이고 이건 보완재다.
+
+   **1차 등재 0** — 기존 카탈로그 원칙("실턴 통과 검증분만 등재")을 그대로 적용한 결과다. 구글 3종은
+   유건의 GCP OAuth 클라이언트 생성이 선행되어야 실턴이 돌기 때문에 US-8에서 등재한다(스파이크 ⑤-1·2).
+   검증 안 된 항목을 미리 실어두면 화면에 "연결" 버튼이 생기고 누르면 실패한다 — 조용한 무동작보다 나쁘다. */
+export const CONNECTOR_CATALOG = [];
+
+// 영어 미러 — 등재 시 **같은 id·같은 url·같은 scopes**로 짝을 맞춘다(name·note만 언어별).
+// 짝이 어긋나면 영어 회사가 다른 서버에 연결되므로, 그 규칙은 테스트가 잠근다(connector-catalog.test).
+export const CONNECTOR_CATALOG_EN = [];
+
+/** 회사 언어 → 언어별 커넥터 카탈로그. en에 없는 id는 ko 항목으로 폴백(skill/mcp와 동일 관례). */
+export function connectorCatalogFor(lang = 'ko') {
+  if (lang !== 'en') return CONNECTOR_CATALOG;
+  return CONNECTOR_CATALOG.map((c) => CONNECTOR_CATALOG_EN.find((e) => e.id === c.id) || c);
+}
+
+/** 디스커버리 모드 — 'fixed'(사전 등록 client_id: DCR 미지원 서버) | 'standard'(PRM/DCR 자동). */
+export const connectorMode = (item) => (item?.oauth?.client_id ? 'fixed' : 'standard');
+
+const CONNECTOR_ID_RE = /^[a-z0-9-]{1,32}$/;
+const strList = (v) => Array.isArray(v) && v.every((s) => typeof s === 'string' && s.trim());
+
+/** 카탈로그 항목 검증(순수) — 위반 필드명 배열을 돌려준다(빈 배열 = 유효).
+    등재 시점(테스트)에 걸러야 하는 것들이다: 잘못된 항목은 화면에 카드로 뜬 뒤 연결에서야 터진다. */
+export function connectorCatalogItemErrors(item) {
+  if (!item || typeof item !== 'object') return ['item'];
+  const e = [];
+  if (!CONNECTOR_ID_RE.test(item.id ?? '')) e.push('id'); // 영소문자·숫자·하이픈 1~32자(MCP 이름 규칙과 동일)
+  if (typeof item.name !== 'string' || !item.name.trim()) e.push('name');
+  if (typeof item.url !== 'string' || !isTlsOrLoopback(item.url)) e.push('url'); // 판정은 코어와 단일 출처
+  if (item.note !== undefined && typeof item.note !== 'string') e.push('note');
+  if (item.scopes !== undefined && !strList(item.scopes)) e.push('scopes');
+  if (item.dangerous !== undefined && !strList(item.dangerous)) e.push('dangerous');
+  if (item.oauth !== undefined) {
+    const o = item.oauth;
+    if (!o || typeof o !== 'object' || typeof o.client_id !== 'string' || !o.client_id.trim()) e.push('oauth.client_id');
+    if (o?.client_secret !== undefined && (typeof o.client_secret !== 'string' || !o.client_secret.trim())) e.push('oauth.client_secret');
+  }
+  return e;
+}
+
+/**
+ * 카탈로그 항목 → `startConnect`가 받는 serverDef(순수 변환). 두 모드의 유일한 분기점이며,
+ * 여기서 나온 값은 모드와 무관하게 같은 코어 경로로 들어간다.
+ */
+export function connectorServerDef(item) {
+  const bad = connectorCatalogItemErrors(item);
+  if (bad.length) throw new Error(`커넥터 카탈로그 항목이 잘못되었습니다: ${bad.join(', ')}`);
+  return {
+    id: item.id,
+    url: item.url,
+    ...(item.scopes?.length ? { scopes: [...item.scopes] } : {}),
+    ...(connectorMode(item) === 'fixed'
+      ? { oauth: { client_id: item.oauth.client_id, ...(item.oauth.client_secret ? { client_secret: item.oauth.client_secret } : {}) } }
+      : {}),
+  };
+}
+
+/** 카탈로그 × 회사 연결 상태 병합(순수) — 설정 카드(US-6)가 그대로 그리는 목록. 시크릿은 애초에
+    listConnections가 걸러 오므로 여기서 다시 새지 않는다.
+    카탈로그에서 내려간 뒤에도 토큰이 남아 있는 연결은 **orphan으로 노출**한다 — 안 그리면 살아 있는
+    토큰을 화면에서 해제할 방법이 사라진다(조용한 무동작 금지). */
+export function mergeConnectorStatus(catalog = [], connections = []) {
+  const byId = new Map(connections.map((c) => [c.id, c]));
+  const rows = catalog.map((item) => {
+    const c = byId.get(item.id);
+    byId.delete(item.id);
+    return {
+      id: item.id,
+      name: item.name,
+      note: item.note ?? '',
+      status: c?.status ?? 'disconnected', // 저장 기록 없음 = 한 번도 연결한 적 없음
+      hasTokens: !!c?.hasTokens,
+      ...(item.scopes?.length ? { scopes: [...item.scopes] } : {}),
+      ...(item.dangerous?.length ? { dangerous: [...item.dangerous] } : {}),
+      ...(c?.errorCode ? { errorCode: c.errorCode } : {}),
+      ...(c?.error ? { error: c.error } : {}),
+    };
+  });
+  for (const c of byId.values()) {
+    rows.push({ id: c.id, name: c.id, note: '', status: c.status, hasTokens: !!c.hasTokens, orphan: true, ...(c.errorCode ? { errorCode: c.errorCode } : {}) });
+  }
+  return rows;
+}
+
+/**
+ * 카탈로그 항목 연결 시작 — installSkill/installMcp와 같은 자리·같은 형태(회사 + 카탈로그 id).
+ * 반환 { ok, authUrl, done }: authUrl은 사용자 브라우저가 열 인가 URL(null = 인가 불요 서버),
+ * done은 백그라운드 완료 프라미스(라우트는 기다리지 않는다 — 브라우저 인가에 최대 120초).
+ * catalog 주입은 테스트·후속 등재 검증용 이음매다(기본값 = 회사 언어의 실카탈로그).
+ */
+export async function connectConnector(wsId, id, { lang = 'ko', catalog = connectorCatalogFor(lang), ...opts } = {}) {
+  const item = catalog.find((c) => c.id === id);
+  if (!item) throw new Error(connectorMessage('not_in_catalog', lang, String(id ?? '')));
+  const { authUrl, done } = await startConnect(wsId, connectorServerDef(item), opts);
+  done.catch(() => {}); // 완료는 저장소 상태로 관측한다(폴링) — 여기서 기다리면 응답이 인가 시간만큼 막힌다
+  return { ok: true, authUrl, done };
 }
 
 /* ─── 스킬 설치 상태 ─── */
