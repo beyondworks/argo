@@ -1164,7 +1164,7 @@ export default function CrewChat({ params }) {
                 끝으로 밀어 "…보고서-2026-07/"처럼 없는 슬래시를 만든다(실측). 전체는 title로 준다. */}
             <span className="att-chip" title={pinnedFolder}>
               <Icon name="folder" size={11} />
-              <span className="name">…/{pinnedFolder.split('/').filter(Boolean).slice(-2).join('/')}</span>
+              <span className="name">…/{pinnedFolder.split(/[\\/]/).filter(Boolean).slice(-2).join('/')}</span>
               <button type="button" onClick={() => pinFolder('')} aria-label={t('chat.workFolder.unpin')} title={t('chat.workFolder.unpin')}>✕</button>
             </span>
           </div>

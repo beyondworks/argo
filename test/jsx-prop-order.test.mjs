@@ -24,7 +24,7 @@ function walk(dir) {
   return out;
 }
 
-test('{...imeGuard}와 명시 onKeyDown은 한 태그에 같이 못 온다 — 한쪽이 죽는다', () => {
+test('imeGuard 계열 스프레드와 명시 onKeyDown은 한 태그에 같이 못 온다 — 한쪽이 죽는다', () => {
   const bad = [];
   for (const file of walk(join(ROOT, 'app'))) {
     // 주석을 지우고 본다 — 이 규칙을 **설명하는 주석**이 규칙 위반으로 잡히기 때문이다(두 번 겪었다:
@@ -33,14 +33,19 @@ test('{...imeGuard}와 명시 onKeyDown은 한 태그에 같이 못 온다 — �
     const src = readFileSync(file, 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
-    for (let i = src.indexOf('{...imeGuard}'); i >= 0; i = src.indexOf('{...imeGuard}', i + 1)) {
+    // imeGuard·imeGuardWith 둘 다 — 둘 다 키가 onKeyDown 하나뿐인 객체라 덮어쓰기가 똑같이 성립한다.
+    // 리터럴 '{...imeGuard}'만 찾던 첫 판은 새 헬퍼를 안 덮어, 없앴다는 트랩이 그대로 표현 가능했다.
+    for (const m of src.matchAll(/\{\.\.\.imeGuard/g)) {
+      const i = m.index;
       // 태그 구간 = 앞쪽 '<'부터 닫는 '/>'까지. 표현식 속 '<'(비교)에 걸려 구간이 짧아지면
       // 검출을 놓칠 뿐 없는 위반을 만들지는 않는다 — 안전한 쪽으로 틀린다.
       // 같은 태그 안이면 앞이든 뒤든 위반이다 — 뒤에 오는 쪽이 이기는 규칙에 기대지 않는다.
       const close = src.indexOf('/>', i);
       const tag = src.slice(src.lastIndexOf('<', i), close === -1 ? i : close);
-      if (tag.includes('onKeyDown')) bad.push(`${relative(ROOT, file)}:${src.slice(0, i).split('\n').length}`);
+      // 스프레드 자신의 인자에 든 onKeyDown은 제외 — imeGuardWith(handler)는 합쳐 넘기는 정상 형태다.
+      const outside = tag.slice(0, i - src.lastIndexOf('<', i)) + tag.slice(src.indexOf('})}', i) - src.lastIndexOf('<', i));
+      if (outside.includes('onKeyDown')) bad.push(`${relative(ROOT, file)}:${src.slice(0, i).split('\n').length}`);
     }
   }
-  assert.deepEqual(bad, [], `한 태그에 {...imeGuard}와 onKeyDown이 함께 있다(둘 중 하나는 죽는다). imeGuardWith로 합쳐라: ${bad.join(', ')}`);
+  assert.deepEqual(bad, [], `한 태그에 imeGuard 스프레드와 onKeyDown이 함께 있다(둘 중 하나는 죽는다). imeGuardWith로 합쳐라: ${bad.join(', ')}`);
 });
