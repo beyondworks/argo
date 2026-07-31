@@ -61,11 +61,16 @@ test('최초 연결 왕복 — DCR·PKCE·토큰 영속·도구 호출·원장�
   assert.deepEqual({ server: ev.server, tool: ev.tool, ok: ev.ok }, { server: ID1, tool: 'search_threads_demo', ok: true }, '호출마다 원장 기록(활동 화면 원천)');
 });
 
-test('토큰 저장소 — 0600 · 시크릿은 목록 API에 새지 않는다', async () => {
-  assert.equal((await stat(storePath)).mode & 0o777, 0o600, '커넥터 토큰 파일은 소유자 전용');
+test('토큰 저장소 — 시크릿은 목록 API에 새지 않는다', async () => {
   const at = (await rawStore()).servers[ID1].tokens.access_token;
   assert.ok(at?.length > 10, '토큰이 영속되어 있다');
   assert.equal(JSON.stringify(await listConnections(WS)).includes(at), false, 'listConnections에 토큰 무노출');
+});
+
+test('토큰 파일 모드 0600 — 소유자 전용', async (t) => {
+  // win32는 POSIX 모드가 없어 항상 666으로 보인다 — 이 방어는 POSIX 전용(sec-launch 테스트와 같은 처리).
+  if (process.platform === 'win32') return t.skip('win32: POSIX 모드 미지원 — 파일 ACL은 별개 계열');
+  assert.equal((await stat(storePath)).mode & 0o777, 0o600, '커넥터 토큰 파일은 소유자 전용');
 });
 
 test('tools/list 캐시 — annotations가 그대로 통과한다(결재 분류의 원료)', async () => {
