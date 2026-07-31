@@ -50,7 +50,9 @@ test('배선 — CLI 경로가 systemPromptFor에도 hasTools:false를 전달한
   // commonDirectives만 hasTools:false고 골격은 기본값이면 schedule_task 지시가 CLI 턴에 그대로 주입된다
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
-  assert.match(src, /systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false \}\)/,
+  // 옵션이 더 붙는 것(예: connectors)은 정당한 확장이라 앵커를 닫지 않는다 — 잠그는 불변식은
+  // "CLI 경로가 hasTools:false를 넘긴다" 하나다. 닫아 두면 무관한 옵션 추가에 거짓 red가 난다.
+  assert.match(src, /systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false[,}]/,
     'CLI 경로의 systemPromptFor 호출에 hasTools:false가 없다');
 });
 
