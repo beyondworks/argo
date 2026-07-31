@@ -136,14 +136,59 @@
 - 미연결 상태 문구·오류 안내가 러너별 동등한지(안내 품질 패리티).
 - 변이: 코어 함수 제거 시 양 표면 테스트가 전부 red.
 
-## 4. 남은 조사(스파이크 — 구현 1주차)
+## 4. 스파이크 결과 (2026-07-31 실측 — 조사 완료)
 
-1. **구글 3종 원격 MCP 서버 선정**: 후보 = 구글 공식(존재 여부 확인), 신뢰 가능한 호스팅
-   (운영 주체·데이터 정책 심사), 자체 호스팅(오픈소스 gmail MCP를 Argo 인프라에). 선정 기준 =
-   토큰이 어디를 경유하는가(제3자 서버 경유 최소화) + OAuth 스펙 준수 + 무료/과금.
-2. MCP JS SDK 1.30의 `client/auth` 실플로우 검증(디스커버리·동적 등록·refresh) — 테스트
-   OAuth 서버(SDK examples의 simpleStreamableHttp --oauth)로 로컬 왕복 실증.
-3. CLI 자동 후속 턴의 비용·루프 상한 실측.
+> 원 리포트는 세션 스크래치패드에 있었고 정리로 소실됐다. **결론은 여기가 정본이다.**
+> US-8(구글 실서버 등재)을 하는 사람은 이 절만 읽으면 된다 — 재조사 불필요.
+
+**4-1. 서버 선정 — 구글 공식 관리형 MCP 서버(추천안)**
+
+`gmailmcp.googleapis.com` · `drivemcp.googleapis.com` · `calendarmcp.googleapis.com`
+(Developer Preview 2026-05-01~). 무자격 프로브 실측:
+
+- `tools/list`는 **무인증 공개**(Gmail 13개 도구). 각 도구에 `readOnlyHint`/`destructiveHint`
+  **annotations 제공** → 결재 게이트(US-5)가 이름 휴리스틱 없이 기계 판별 가능.
+- `tools/call`에서 401 + RFC 9728 PRM 헤더(AS = `accounts.google.com`).
+- **DCR 미지원**(문서 명시 + AS 메타데이터에 `registration_endpoint` 부재 실측) →
+  §2-3의 **고정 모드**(`oauth.client_id` 사전 등록)가 필수다. 표준 모드로는 연결되지 않는다.
+- 토큰 경유 = 사용자↔구글 **직통**(제3자 0). Composio·Klavis류는 토큰을 제3자가 보관하고 벤더 API
+  키가 상주해 본선 제외(개발 중 임시로만).
+- **갭: 공식 Gmail 서버에 발송(send) 도구가 없다** — `create_draft`까지다. 결재 철학과는 오히려
+  맞지만 "메일 보내줘"가 초안까지임을 화면이 정직하게 알려야 한다.
+- 차선안: `workspace-mcp`(OAuth 2.1 + DCR 지원, 자체 호스팅) — 프리뷰 접근이 막히면 이쪽.
+
+**4-2. SDK 왕복 — 전자동 확인(US-1이 이 위에 섰다)**
+
+MCP JS SDK 1.30.0 `client/auth`로 디스커버리 → DCR → PKCE → localhost 콜백 → 토큰 교환 →
+만료 후 refresh 자동 갱신까지 **실행 관측**(로컬 자동승인 AS 상대, 실계정 0). 경계:
+
+| 누가 | 무엇을 |
+|---|---|
+| SDK 자동 | 401 감지·PRM/AS 디스커버리·DCR·PKCE·토큰 교환·refresh 갱신·오류 자가치유 |
+| Argo | 콜백 서버(포트 0·**고정 경로**·state·타임아웃)·저장 콜백 5종·`finishAuth` 1줄 |
+| 사용자 | 브라우저 동의 **한 번**뿐 |
+
+구글 특이점: 401이 `tools/call`에서 처음 나므로 **연결 버튼이 인가를 선행 트리거**해야 한다
+(US-1 `startConnect`의 probe connect가 그 역할).
+
+**4-3. CLI 후속 턴 — 벤더 세션 재개 3종 전부 부적합(실측)**
+
+- `codex exec resume`: 세션이 **매 턴 삭제되는 `CODEX_HOME`** 안에 있다(격리 프로브 확인).
+- `gemini -r latest`: 회사 공유 홈이라 **타 크루 세션을 오재개**한다.
+- `agy --continue`: 사용자 본인 대화 혼입 위험 + **stdin 없음**(argv뿐).
+
+→ **"결과 주입 재턴 1회"가 확정 방식**이다(US-4가 그대로 구현). 주입 상한 **24KB** — Windows argv
+32K가 3플랫폼 공통 바운드다. 비용: 커넥터 턴당 스폰 2회(agy 기동 ~6초 추가).
+
+**4-4. 리스크 — US-8 착수 전에 읽을 것**
+
+1. **Gmail 제한 scope는 앱 검증 + CASA 보안 심사**가 붙는다(리드타임 큼) →
+   **Calendar부터 등재**하고 Gmail은 뒤로 미룬다.
+2. **테스트 모드는 refresh 토큰이 7일 만료** — 개발 중 주간 재동의가 필요하다.
+3. 프리뷰 미등록 프로젝트·일반 `gmail.com` 계정에서의 실토큰 호출 가부는 **미확인**(첫 실턴 판정 항목).
+4. `client_secret`은 카탈로그에 **값을 쓰지 않는다** — `client_secret_env`(이름)만 싣고 값은 실행
+   환경에서 읽는다(레포가 public이며, 이름은 `ARGO_CONNECTOR_` 접두로 반경 제한). 데스크톱 배포는
+   Desktop 클라이언트 타입을 우선 실험한다.
 
 ## 5. 단계 나누기
 
