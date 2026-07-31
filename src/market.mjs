@@ -185,7 +185,7 @@ export function mcpCatalogFor(lang = 'ko') {
 
 /* ─── 커넥터 카탈로그 — kind:'connector' (설계서 §2-3, 스파이크 §④ US-2) ───
    항목 스키마:
-     { id, name, url, scopes?: [], note, oauth?: { client_id, client_secret? }, dangerous?: [] }
+     { id, name, url, scopes?: [], note, oauth?: { client_id, client_secret_env? }, dangerous?: [] }
    · url    = 원격 MCP 서버(스트리머블 HTTP). https 강제(loopback만 평문 예외 — OAuth 2.1, 코어와 같은 판정).
    · scopes = **연결 1회에 동의받을 합집합**. 도구마다 요구 scope가 갈리는 서버(구글: 도구별 PRM)에서
               중간 재동의를 막는 유일한 수단이다(스파이크 §② 특이점 2).
@@ -200,6 +200,11 @@ export function mcpCatalogFor(lang = 'ko') {
                  않는 죽은 필드다. SDK는 AS를 PRM의 authorization_servers에서 스스로 찾는다(실측).
                  PRM을 발행하지 않는 서버를 등재하게 되는 시점에 **코어 지원과 함께** 추가한다.
    · dangerous = 결재 게이트(US-5)가 쓸 쓰기 도구 명시 목록. 서버 annotations가 1순위이고 이건 보완재다.
+
+   ⚠ **client_secret 값은 이 파일에 절대 쓰지 않는다.** 이 레포는 public이라 소스에 박은 값은 번들
+      추출 이전에 깃헙에 그대로 남는다("데스크톱 secret은 기밀이 아니다"라는 통설보다 노출면이 넓다 —
+      분리 검수 F4). 대신 **환경변수 이름만**(`client_secret_env: 'GOOGLE_CONNECTOR_SECRET'`) 싣고
+      값은 실행 환경에서 읽는다. 이름 규칙은 대문자·숫자·밑줄이며 테스트가 잠근다.
 
    **1차 등재 0** — 기존 카탈로그 원칙("실턴 통과 검증분만 등재")을 그대로 적용한 결과다. 구글 3종은
    유건의 GCP OAuth 클라이언트 생성이 선행되어야 실턴이 돌기 때문에 US-8에서 등재한다(스파이크 ⑤-1·2).
@@ -236,7 +241,9 @@ export function connectorCatalogItemErrors(item) {
   if (item.oauth !== undefined) {
     const o = item.oauth;
     if (!o || typeof o !== 'object' || typeof o.client_id !== 'string' || !o.client_id.trim()) e.push('oauth.client_id');
-    if (o?.client_secret !== undefined && (typeof o.client_secret !== 'string' || !o.client_secret.trim())) e.push('oauth.client_secret');
+    // 이름만 허용 — 값이 들어오면(공백·특수문자 포함 문자열) 규칙에서 걸린다. 소스에 secret 박기 방지.
+    if (o?.client_secret_env !== undefined && !/^[A-Z][A-Z0-9_]{2,63}$/.test(o.client_secret_env)) e.push('oauth.client_secret_env');
+    if (o?.client_secret !== undefined) e.push('oauth.client_secret'); // 값 필드는 아예 금지(이름 필드만)
   }
   return e;
 }
@@ -253,9 +260,21 @@ export function connectorServerDef(item) {
     url: item.url,
     ...(item.scopes?.length ? { scopes: [...item.scopes] } : {}),
     ...(connectorMode(item) === 'fixed'
-      ? { oauth: { client_id: item.oauth.client_id, ...(item.oauth.client_secret ? { client_secret: item.oauth.client_secret } : {}) } }
+      ? { oauth: { client_id: item.oauth.client_id, ...resolveClientSecret(item.oauth) } }
       : {}),
   };
+}
+
+/** 카탈로그의 환경변수 **이름**을 실행 환경의 값으로 바꾼다 — 소스에는 이름만 산다(검수 F4).
+    이름이 없으면 퍼블릭 클라이언트(PKCE만)로 간다. 이름은 있는데 값이 없으면 **조용히 퍼블릭으로
+    넘어가지 않고** 배포 설정 오류로 실패시킨다 — 그 조합은 "secret이 필요한 서버인데 안 넣었다"는 뜻이고,
+    조용히 넘어가면 벤더가 주는 모호한 401로만 드러난다(조용한 무동작 금지). */
+function resolveClientSecret(oauth) {
+  const name = oauth.client_secret_env;
+  if (!name) return {};
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`커넥터 client secret 환경변수 ${name}가 설정되지 않았습니다`);
+  return { client_secret: value };
 }
 
 /** 카탈로그 × 회사 연결 상태 병합(순수) — 설정 카드(US-6)가 그대로 그리는 목록. 시크릿은 애초에

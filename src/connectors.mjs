@@ -423,7 +423,9 @@ export async function listConnectorTools(wsId, serverId) {
 export async function disconnectConnector(wsId, serverId) {
   const existed = await withLock(`connector:${wsId}`, async () => {
     const s = await loadStore(wsId);
-    if (!(serverId in s.servers)) return false;
+    // hasOwn — `in`은 프로토타입 체인을 타서 'toString'·'__proto__' 같은 이름에 "지웠다"는 거짓 성공과
+    // 불필요한 0600 파일 재기록을 만든다(분리 검수 F1 실측, DELETE 쿼리로 도달 가능).
+    if (!Object.hasOwn(s.servers, serverId)) return false;
     delete s.servers[serverId];
     await writeJsonAtomic(storeFile(wsId), s);
     return true;
