@@ -1184,9 +1184,12 @@
   --card: #ffffff;          /* 콘텐츠 위 표면은 순백 — surface2와의 대비로 카드가 뜬다 */
   --card-2: #f3f3f3;        /* surface4 — hover */
   --secondary: #ececec;     /* surface5 — active */
-  --fg: #1a1a1a;
-  --fg-2: #5c5c5c;
-  --fg-3: #8a8a8a;
+  /* 명도는 계산으로 잡았다(대비 실측 2026-08-01, 유건 신고 "텍스트가 너무 진해 눈이 아프다 ·
+     호버 시 서브 텍스트가 안 보인다"). 첫 판은 본문 16.7:1(순검정 수준)이고 보조는 활성 배경 위에서
+     2.5:1로 최소 기준(3.0) 미달이었다. 지금은 본문 11.1 · 보조 6.2 · 최약 4.5(활성 위 3.5). */
+  --fg: #393939;
+  --fg-2: #5e5e5e;
+  --fg-3: #737373;
   --border: rgba(0, 0, 0, 0.12);
   --border-soft: rgba(0, 0, 0, 0.06);
 
@@ -1216,6 +1219,9 @@
 /* 메뉴 상태는 오버레이로 — 강조색 대신 밝기만 바꾼다(검정 5.5% / 8.5%). */
 :root[data-theme='graphite'] .nav-item:hover { background: rgba(0, 0, 0, 0.055); color: var(--fg); }
 :root[data-theme='graphite'] .nav-item.active { background: rgba(0, 0, 0, 0.085); color: var(--fg); }
+/* 아이콘도 함께 — 기본 규칙은 `.nav-item.active svg { color: var(--primary-fg) }`로 **강조 배경 위**를
+   전제한다. 이 테마는 배경을 오버레이로 바꿔서 그 대비색이 오히려 배경에 묻힌다(라이트에선 흰 아이콘). */
+:root[data-theme='graphite'] .nav-item.active svg { color: var(--fg); }
 
 /* [graphite-dark] 같은 팔레트의 다크. 표면 단계는 동일한 규칙 — 사이드바가 콘텐츠보다 어둡다. */
 :root[data-theme='graphite-dark'] {
@@ -1224,9 +1230,11 @@
   --card: #252525;          /* surface3 — 콘텐츠 위 표면(스펙의 빈 단계를 여기서 채운다) */
   --card-2: #282828;        /* surface4 — hover */
   --secondary: #303030;     /* surface5 — active */
-  --fg: #ededed;
-  --fg-2: #a0a0a0;
-  --fg-3: #757575;
+  /* 라이트와 같은 계산. 첫 판은 본문 13.9:1(순백 수준)이라 눈이 부셨고, 보조는 활성 배경 위에서
+     2.6:1이었다. 지금은 본문 10.5 · 보조 6.6 · 최약 4.9(활성 위 3.6). */
+  --fg: #cfcfcf;
+  --fg-2: #a5a5a5;
+  --fg-3: #8c8c8c;
   --border: rgba(255, 255, 255, 0.14);
   --border-soft: rgba(255, 255, 255, 0.07);
 
@@ -1252,6 +1260,7 @@
 :root[data-theme='graphite-dark'] .side { background: #1d1d1d; }
 :root[data-theme='graphite-dark'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
 :root[data-theme='graphite-dark'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
+:root[data-theme='graphite-dark'] .nav-item.active svg { color: var(--fg); }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -1751,6 +1760,14 @@ button.memo-chip.ap-toggle { background: transparent; cursor: pointer; padding: 
 /* ─── 기억 2패널(vault) — 뷰포트 고정, 각 패널 자체 스크롤 ───
    170 = .topbar(56) + .content 상하 패딩(26+88). 96 같은 어림값이면 그만큼 페이지 스크롤이 남는다(검수 실측 74px). */
 .vault-split { display: flex; gap: 14px; height: calc(100vh - 170px); min-height: 420px; align-items: stretch; }
+/* 하단 여백 회수(실사용 신고 2026-08-01 "기억 페이지 하단에 여백이 너무 많다").
+   본문 컨테이너는 하단 패딩 88px을 갖는다 — 스크롤되는 페이지에는 마지막 줄이 화면 끝에 붙지 않게
+   해주는 여유지만, 이 페이지는 **뷰포트에 딱 맞추는 2패널**이라 그 패딩이 그대로 빈 칸이 된다
+   (실측: 패널 하단 812px, 뷰포트 900px — 88px이 남았다).
+   :has()를 쓰는 이유는 점진적 향상이다 — 미지원 브라우저에서는 두 규칙이 함께 적용되지 않아
+   현행 레이아웃 그대로다(패딩만 줄고 높이는 그대로면 스크롤이 생긴다). */
+main.content:has(> .vault-split) { padding-bottom: 14px; }
+main.content:has(> .vault-split) .vault-split { height: calc(100vh - 96px); }
 .vault-split > .vault-tree { width: 300px; flex: none; }
 
 /* ─── 스크롤바 ─── */
