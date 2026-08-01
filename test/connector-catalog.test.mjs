@@ -186,10 +186,22 @@ test('출하 카탈로그 — ko/en 미러는 id·url·scopes·oauth가 동일�
   assert.equal(connectorCatalogFor('ko').length, CONNECTOR_CATALOG.length);
 });
 
-test('1차 등재는 0 — 실턴 미검증 항목을 싣지 않는다(구글 실서버는 US-8)', () => {
-  // 이 단언이 깨지는 날 = 누군가 항목을 실었다는 뜻. 그때 "실턴 1회 통과분인가"를 사람이 확인하고
-  // 이 테스트를 항목 검증(위 두 테스트)으로 갈아끼운다. 카탈로그 원칙을 문서가 아니라 게이트로 둔다.
-  assert.deepEqual(CONNECTOR_CATALOG.map((c) => c.id), [], '검증 안 된 커넥터가 화면에 뜨면 "연결" 버튼이 거짓말이 된다');
+test('등재분 = 실측분 — 구글 캘린더(2026-08-01 무자격 프로브로 확인한 값)', () => {
+  // "1차 등재는 0" 단언을 갈아끼운 자리다(그 테스트가 스스로 지시한 교체 시점 = 첫 등재).
+  // 여기 적힌 값은 전부 실측이다 — 추측으로 고치면 연결이 조용히 깨진다.
+  const cal = CONNECTOR_CATALOG.find((c) => c.id === 'google-calendar');
+  assert.ok(cal, '구글 캘린더가 카탈로그에 없다');
+  // 경로 /mcp/v1 — 스파이크 기록에 호스트만 있어 루트·/mcp로 시도했다가 404를 맞았다. 경로가 계약이다.
+  assert.equal(cal.url, 'https://calendarmcp.googleapis.com/mcp/v1');
+  // PRM scopes_supported는 **택일**이고, 9개 도구 전부에 auth/calendar가 들어 있다 → 이 하나면 전부 열린다.
+  // 합집합 8개를 다 적으면 동의 화면만 길어지고 얻는 게 없다.
+  assert.deepEqual(cal.scopes, ['https://www.googleapis.com/auth/calendar']);
+  // 쓰기 4개(annotations readOnlyHint=false 실측). 서버 표시가 1순위이고 이 목록은 보완재다.
+  assert.deepEqual([...cal.dangerous].sort(), ['create_event', 'delete_event', 'respond_to_event', 'update_event']);
+  // DCR 미지원이라 고정 모드여야 한다 — 표준 모드로는 연결 자체가 안 된다.
+  assert.equal(connectorMode(cal), 'fixed');
+  assert.equal(cal.oauth.client_secret_env, 'ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET');
+  assert.equal(cal.oauth.client_secret, undefined, '소스에 secret 값이 실렸다 — 이 레포는 public이다');
 });
 
 // ── ⑤ 카탈로그 × 상태 병합(순수) ──

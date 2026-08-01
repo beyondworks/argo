@@ -206,14 +206,51 @@ export function mcpCatalogFor(lang = 'ko') {
       분리 검수 F4). 대신 **환경변수 이름만**(`client_secret_env: 'GOOGLE_CONNECTOR_SECRET'`) 싣고
       값은 실행 환경에서 읽는다. 이름 규칙은 대문자·숫자·밑줄이며 테스트가 잠근다.
 
-   **1차 등재 0** — 기존 카탈로그 원칙("실턴 통과 검증분만 등재")을 그대로 적용한 결과다. 구글 3종은
-   유건의 GCP OAuth 클라이언트 생성이 선행되어야 실턴이 돌기 때문에 US-8에서 등재한다(스파이크 ⑤-1·2).
-   검증 안 된 항목을 미리 실어두면 화면에 "연결" 버튼이 생기고 누르면 실패한다 — 조용한 무동작보다 나쁘다. */
-export const CONNECTOR_CATALOG = [];
+   **등재 순서 = 검증 순서다.** 실측(2026-08-01)으로 확인한 것만 싣는다:
+   · 경로는 `/mcp/v1` — 호스트만 적혀 있던 스파이크 기록의 빈틈이었다(루트·/mcp는 404).
+   · `tools/list`는 무인증 공개. Calendar 9 · Gmail 13 · Drive 8, **annotations 100%** 제공.
+   · PRM은 **도구별**(`/.well-known/oauth-protected-resource/<tool>`)이고 `scopes_supported`는 택일이다.
+     Calendar 9개 도구 전부에 `auth/calendar`가 들어 있어 **이 하나로 전 도구가 열린다** — scopes에
+     합집합을 다 적으면 동의 화면만 무섭게 길어지고 얻는 게 없다.
+   · Gmail·Drive는 뒤로 미룬다: 필요한 scope가 구글 '제한' 등급이라 프로덕션 게시에 CASA 보안 심사가
+     붙는다(Calendar의 '민감' 등급은 검증만). Gmail은 발송 도구 자체가 없다(초안까지).
+   검증 안 된 항목을 미리 실으면 화면에 "연결" 버튼이 생기고 누르면 실패한다 — 조용한 무동작보다 나쁘다. */
+export const CONNECTOR_CATALOG = [
+  {
+    id: 'google-calendar',
+    name: '구글 캘린더',
+    url: 'https://calendarmcp.googleapis.com/mcp/v1',
+    // 택일 목록 중 전 도구를 덮는 하나만 — 나머지 7개는 이것의 부분집합이다(실측).
+    scopes: ['https://www.googleapis.com/auth/calendar'],
+    note: '일정 조회·검색·시간 제안은 바로, 생성·수정·삭제·참석 응답은 결재 후 실행됩니다.',
+    // DCR 미지원(accounts.google.com AS 메타데이터에 registration_endpoint 없음) → 고정 모드 필수.
+    // 값이 아니라 **이름**만 싣는다(F4) — 이 레포는 public이다.
+    oauth: {
+      client_id: '871799254033-m6keci1lbsheho954b4ib2kvn5al6osn.apps.googleusercontent.com',
+      client_secret_env: 'ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET',
+    },
+    // 서버 annotations(readOnlyHint=false)가 1순위 판정이고 이건 그것이 비었을 때의 보완재다.
+    // 실측 기준 이 4개가 쓰기다 — 목록이 어긋나면 테스트가 문다.
+    dangerous: ['create_event', 'update_event', 'delete_event', 'respond_to_event'],
+  },
+];
 
 // 영어 미러 — 등재 시 **같은 id·같은 url·같은 scopes**로 짝을 맞춘다(name·note만 언어별).
 // 짝이 어긋나면 영어 회사가 다른 서버에 연결되므로, 그 규칙은 테스트가 잠근다(connector-catalog.test).
-export const CONNECTOR_CATALOG_EN = [];
+export const CONNECTOR_CATALOG_EN = [
+  {
+    id: 'google-calendar',
+    name: 'Google Calendar',
+    url: 'https://calendarmcp.googleapis.com/mcp/v1',
+    scopes: ['https://www.googleapis.com/auth/calendar'],
+    note: 'Reading, searching and time suggestions run right away; creating, updating, deleting and RSVPs run after your approval.',
+    oauth: {
+      client_id: '871799254033-m6keci1lbsheho954b4ib2kvn5al6osn.apps.googleusercontent.com',
+      client_secret_env: 'ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET',
+    },
+    dangerous: ['create_event', 'update_event', 'delete_event', 'respond_to_event'],
+  },
+];
 
 /** 회사 언어 → 언어별 커넥터 카탈로그. en에 없는 id는 ko 항목으로 폴백(skill/mcp와 동일 관례). */
 export function connectorCatalogFor(lang = 'ko') {
@@ -282,6 +319,16 @@ function resolveClientSecret(oauth) {
   return { client_secret: value };
 }
 
+/** 이 항목이 지금 이 빌드에서 **연결 가능한가** — 고정 모드가 요구하는 client secret이 실행 환경에
+    실제로 있는지 본다. 없으면 화면은 "연결" 대신 준비 중으로 그린다.
+    왜 필요한가: 없으면 버튼은 멀쩡히 보이고, 누르는 순간 개발자용 문구("환경변수 …가 설정되지
+    않았습니다")가 사용자 카드에 뜬다. 등재 원칙이 막으려던 바로 그 모양이다 — "검증 안 된 항목을
+    미리 실으면 연결 버튼이 거짓말이 된다"(분리 검수 실측 2026-08-01: 어떤 빌드에서도 반드시 실패). */
+export function connectorReady(item) {
+  const name = item?.oauth?.client_secret_env;
+  return !name || !!process.env[name]?.trim();
+}
+
 /** 카탈로그 × 회사 연결 상태 병합(순수) — 설정 카드(US-6)가 그대로 그리는 목록. 시크릿은 애초에
     listConnections가 걸러 오므로 여기서 다시 새지 않는다.
     카탈로그에서 내려간 뒤에도 토큰이 남아 있는 연결은 **orphan으로 노출**한다 — 안 그리면 살아 있는
@@ -299,6 +346,8 @@ export function mergeConnectorStatus(catalog = [], connections = []) {
       hasTokens: !!c?.hasTokens,
       ...(item.scopes?.length ? { scopes: [...item.scopes] } : {}),
       ...(item.dangerous?.length ? { dangerous: [...item.dangerous] } : {}),
+      // 배포 준비 여부 — 화면이 "연결" 버튼을 그릴지 정한다(누르고 나서 알게 하지 않는다).
+      ...(connectorReady(item) ? {} : { notReady: true }),
       ...(c?.errorCode ? { errorCode: c.errorCode } : {}),
       ...(c?.error ? { error: c.error } : {}),
     };

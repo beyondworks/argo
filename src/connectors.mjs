@@ -338,7 +338,29 @@ const MSG = {
   exchange_failed: { ko: (d) => `토큰 교환에 실패했습니다: ${d}`, en: (d) => `Token exchange failed: ${d}` },
   // 카탈로그에 없는 id로 연결을 시도(오래된 화면·잘못된 요청) — market.connectConnector가 던진다.
   not_in_catalog: { ko: (s) => `카탈로그에 없는 커넥터입니다: ${s}`, en: (s) => `No such connector in the catalog: ${s}` },
+  // 결재 대기 — 실패가 아니라 "아직"이다. 크루가 이 문구를 읽고 사장에게 기다리라고 말한다.
+  approval_pending: {
+    ko: (t) => `이 작업(${t})은 회사 밖으로 나가는 쓰기라 사장 결재가 필요합니다. 결재를 올렸습니다 — 승인되면 자동으로 실행되고 결과를 이어서 보고합니다.`,
+    en: (t) => `This action (${t}) writes outside the company, so it needs the captain's approval. The request is filed — once approved it runs automatically and I'll report back.`,
+  },
 };
+
+/** 이 도구가 결재 대상인가(순수) — **서버 annotations가 1순위**다.
+    `readOnlyHint === false`가 곧 "쓰기"라는 서버 자신의 선언이고, 구글 3종은 전 도구에 이걸 준다(실측
+    2026-08-01: 9/9·13/13·8/8). 이름 휴리스틱(create_·delete_로 시작하면 쓰기)은 서버가 말해 주는데도
+    우리가 짐작하는 것이라, 새 도구가 생길 때마다 조용히 틀린다.
+    카탈로그 `dangerous`는 **보완재**다: annotations를 안 주는 서버에서만 쓰이고, 주는 서버에서는
+    둘 중 하나만 쓰기라 해도 쓰기로 본다(안전한 방향으로 틀린다).
+    readOnlyHint가 true면 결재 없이 통과 — 조회까지 결재를 걸면 크루가 아무것도 못 하고 사장은
+    승인 버튼에 파묻힌다. (export: 회귀 테스트·설정 카드 표기 공용) */
+export function connectorToolNeedsApproval(toolName, tools = [], dangerous = []) {
+  const t = tools.find((x) => x?.name === toolName);
+  const hint = t?.annotations?.readOnlyHint;
+  if (hint === true) return false;                     // 서버가 "읽기 전용"이라고 말한 경우만 면제
+  if (hint === false) return true;                     // 서버가 "쓰기"라고 말했다
+  return dangerous.includes(toolName);                 // 서버가 말을 안 했다 — 보완 목록으로 판정
+}
+
 /** 사람 문구 — 안정 코드(error)와 분리해서 언어만 고른다. */
 export const connectorMessage = (key, lang, ...a) => (MSG[key][lang === 'en' ? 'en' : 'ko'])(...a);
 /** 실패 결과 — error는 소비자가 분기하는 안정 코드, content는 크루가 읽는 회사 언어 문구. */
@@ -365,11 +387,29 @@ async function callViaPool(wsId, serverId, url, tool, args, retryLeft, lang) {
   }
 }
 
+/** 이 호출이 지금 결재를 받아야 하는가 — 도구 목록(풀 캐시)과 카탈로그 보완 목록을 함께 본다.
+    **목록 조회 실패를 "모른다"로 취급하지 않는다.** 처음엔 그렇게 두고 결재로 기울였는데, access
+    토큰이 만료된 순간 목록 조회부터 401이 나서 **조회 도구까지 결재로 갔다**(테스트가 잡았다: 만료 후
+    자동 갱신 시나리오가 approval_pending으로 떨어짐). 만료는 SDK가 조용히 갱신하는 정상 상황인데
+    그때마다 사장에게 승인 버튼이 쌓이면 이 기능이 소음이 된다.
+    실패했을 땐 카탈로그의 `dangerous`가 근거다 — 실사용에서 **연결된 서버는 반드시 카탈로그에 있다**
+    (connectConnector가 카탈로그에서만 찾는다). 그 목록은 등재 시 실측으로 채운다. */
+async function needsApprovalNow(wsId, serverId, tool) {
+  const { connectorCatalogFor } = await import('./market.mjs'); // 동적 — market→connectors 순환 방지
+  const dangerous = connectorCatalogFor('ko').find((c) => c.id === serverId)?.dangerous ?? [];
+  const listed = await listConnectorTools(wsId, serverId).catch(() => ({ ok: false, tools: [] }));
+  // 조회 **성공**인데 그 이름이 목록에 없다 = 서버가 모르는 도구다. 결재로 보낸다 — 어차피 서버가
+  // 거절할 호출이라 비용이 없고, 반대로 통과시키면 `dangerous`(닫힌 목록) 밖의 새 쓰기 도구가
+  // 무결재로 나간다(분리 검수 실측: annotations 없는 쓰기 도구가 결재 0건으로 실행됐다).
+  if (listed.ok && !listed.tools?.some((t) => t?.name === tool)) return true;
+  return connectorToolNeedsApproval(tool, listed.tools ?? [], dangerous);
+}
+
 /**
  * 커넥터 도구 호출 — 러너 무관 단일 경로. 결과 정규화 { ok, content, isError }(+실패 시 error 코드).
  * 401은 SDK 자동 refresh에 맡기고(스파이크 실증) 최종 실패만 'reauth' 강등. 호출마다 원장 기록.
  */
-export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang = 'ko' } = {}) {
+export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang = 'ko', slug = null, approved = false } = {}) {
   let ok = false;
   try {
     let result;
@@ -382,6 +422,19 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
       // 저장된 ko 문구를 그대로 끼워 넣으면 영어 모드에 한국어가 샌다 — 코드가 있으면 요청 언어로 다시 그린다.
       const detail = rec.errorCode && MSG[rec.errorCode] ? connectorMessage(rec.errorCode, lang, rec.errorDetail ?? '') : rec.error;
       result = fail('not_connected', connectorMessage('not_connected_status', lang, serverId, `${rec.status}${detail ? ` (${detail})` : ''}`));
+    } else if (!approved && await needsApprovalNow(wsId, serverId, tool)) {
+      // 결재 게이트 — **러너 무관 단일 지점**이다. SDK 표면(use_connector)도 CLI 지시 블록도 이 함수로
+      // 수렴하므로(설계서 §1), 여기 한 번 걸면 어느 러너로도 우회가 없다. 러너별로 걸면 반드시 갈린다.
+      const { addApproval } = await import('./approvals.mjs'); // 동적 — approvals→chat→connectors 순환 방지
+      await addApproval(wsId, {
+        slug: slug ?? 'crew',
+        kind: 'connector',
+        action: `${serverId} · ${tool}`,
+        reason: '외부 서비스에 쓰기',
+        // 승인 시 그대로 실행할 재료. 결재함은 회사 금고(게이트 보호) 안이라 args를 담아도 크루가 못 읽는다.
+        payload: { serverId, tool, args, lang },
+      });
+      result = fail('approval_pending', connectorMessage('approval_pending', lang, tool));
     } else {
       result = await callViaPool(wsId, serverId, rec.url, tool, args, 1, lang);
     }

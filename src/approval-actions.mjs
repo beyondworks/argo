@@ -38,6 +38,26 @@ async function applyPayload(wsId, item) {
     const r = src === 'host' ? await importHostMcp(wsId, id) : await installMcp(wsId, id);
     return `설치 완료 — 도구 "${r?.name ?? id}"가 이 회사에 연결되었다. 다음 턴부터 사용할 수 있다.`;
   }
+  if (item.kind === 'connector') {
+    // 커넥터 쓰기 — **서버가 실행한다**. 크루에게 "이제 실행하라"고 돌려주면 같은 게이트를 다시 만나
+    // 결재가 무한히 쌓인다(게이트는 러너 무관 단일 지점이라 우회가 없다). approved 플래그로 한 번만 통과.
+    const { callConnectorTool } = await import('./connectors.mjs');
+    const { serverId, tool, args, lang } = p;
+    // 카드에 뜬 것과 실제로 실행되는 것이 같아야 한다. action 문자열과 payload는 등록 시점에만
+    // 맞춰지고 그 뒤 검증이 없었다 — CLI 러너(codex·gemini·antigravity)는 도구 게이트를 지나지 않아
+    // 결재 파일을 직접 고칠 수 있으므로, 사장이 `create_event`를 보고 승인했는데 `delete_event`가
+    // 실행될 수 있었다(분리 검수 지적 2026-08-01). 어긋나면 실행하지 않는다.
+    if (item.action !== `${serverId} · ${tool}`) {
+      return `실행 취소 — 결재 내용(${item.action})과 실행 대상(${serverId} · ${tool})이 다르다. 사장에게 다시 올려라.`;
+    }
+    const r = await callConnectorTool(wsId, serverId, tool, args ?? {}, { lang: lang ?? 'ko', approved: true });
+    if (!r.ok) {
+      const detail = r.content?.[0]?.text ?? r.error ?? '';
+      return `실행 실패 — ${detail}`.slice(0, 300);
+    }
+    const text = (r.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text).join('\n').slice(0, 600);
+    return `실행 완료 — ${serverId}/${tool}${text ? `\n${text}` : ''}`;
+  }
   if (item.kind === 'hire') {
     const { createAgentFromPrompt, updateAgentMeta } = await import('./persona.mjs');
     const agent = await createAgentFromPrompt(wsId, p.brief, { name: p.name, team: p.team });
@@ -53,7 +73,7 @@ async function applyPayload(wsId, item) {
 
 async function followUp(wsId, item, approve) {
   let msg;
-  if ((item.kind === 'profile' || item.kind === 'hire' || item.kind === 'mcp') && approve) {
+  if ((item.kind === 'profile' || item.kind === 'hire' || item.kind === 'mcp' || item.kind === 'connector') && approve) {
     // 서버가 payload를 먼저 적용하고, 결과를 크루가 사용자에게 보고한다(크루 재실행 금지 — 이중 적용 방지)
     let outcome;
     try {

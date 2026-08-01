@@ -181,7 +181,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
             ? `connector follow-up limit reached (${TOOL_FOLLOWUP_MAX} per turn) — answer with the results you already have`
             : `커넥터 후속 턴 상한(턴당 ${TOOL_FOLLOWUP_MAX}회)에 도달했다 — 이미 받은 결과로 답하라`);
         }
-        const r = await callConnectorTool(wsId, server, tool, args, { lang });
+        const r = await callConnectorTool(wsId, server, tool, args, { lang, slug: fromSlug });
         const text = connectorContentText(r.content);
         if (r.error) {
           // 미연결·재인증 필요·전송 실패 — 도구에 닿지 못했다. 정직한 줄만 남기고 후속 턴 재료로 삼지
