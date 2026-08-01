@@ -515,12 +515,13 @@ function ApprovalsCard({ ws, agents }) {
         {pending.map((a) => (
           <div key={a.id} className="row" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <Avatar name={nameOf(a.slug)} size={26} />
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <Link href={`/c/${ws}/crew/${a.slug}`} title={t('deck.approvalOpen')}
+              style={{ flex: 1, minWidth: 0, color: 'inherit', textDecoration: 'none' }}>
               <div style={{ fontSize: 12.5, fontWeight: 600 }}>{a.action}</div>
               <div style={{ fontSize: 11.5, color: 'var(--fg-2)', marginTop: 2 }}>
                 {nameOf(a.slug)}{a.from ? ` (${t('deck.approvalFrom', { name: nameOf(a.from) })})` : ''} · {a.reason}
               </div>
-            </div>
+            </Link>
             {busy === a.id ? <Spinner /> : (
               <div style={{ display: 'flex', gap: 6, flex: 'none' }}>
                 <button className="btn sm btn-primary" onClick={() => resolve(a.id, true)}>{t('deck.approve')}</button>
