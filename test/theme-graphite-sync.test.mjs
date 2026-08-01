@@ -47,6 +47,17 @@ test('시스템 자동의 라이트 값 == 밝게 고정', () => {
   assert.deepEqual(diff(auto, fixed), [], '자동의 라이트와 고정 라이트가 갈렸다');
 });
 
+test('자동(@media) 블록이 라이트 오버라이드보다 뒤에 온다 — 앞에 두면 사이드바만 밝게 남는다', () => {
+  // @media는 특이도를 올리지 않는다. 같은 특이도면 **나중 것이 이긴다**. 처음에 미디어쿼리를 앞에
+  // 뒀더니 토큰(배경·글자)은 다크로 바뀌는데 하드코딩 색인 .side만 라이트 값이 이겨서 남았다
+  // (실측: 배경 rgb(32,32,32) · 사이드바 rgb(240,240,240)). 순서가 곧 계약이다.
+  const lightSide = css.indexOf(":root[data-theme='graphite'] .side { background: #f0f0f0; }");
+  const darkSide = css.indexOf(":root[data-theme='graphite'] .side { background: #1d1d1d; }");
+  assert.ok(lightSide > 0 && darkSide > 0, '두 .side 규칙이 모두 있어야 한다');
+  assert.ok(darkSide > lightSide,
+    '자동(다크) .side 규칙이 라이트보다 앞에 있다 — 시스템 다크에서 사이드바만 밝게 남는다');
+});
+
 test('세 갈래가 등록·라벨·색점까지 갖췄다 — 하나라도 빠지면 화면에서 못 고르거나 빈 원이 뜬다', () => {
   // .jsx는 Node가 직접 못 읽는다(다른 트립와이어들과 같은 방식으로 텍스트를 본다).
   const theme = readFileSync(new URL('../app/theme.jsx', import.meta.url), 'utf8');

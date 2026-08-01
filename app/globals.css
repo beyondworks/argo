@@ -1215,7 +1215,17 @@
   --ink-rgb: 26, 26, 26; --paper-rgb: 255, 255, 255;
 }
 /* 사이드바가 콘텐츠보다 한 단계 어둡다(surface1) — 이 테마에서만. */
-/* 시스템이 다크면 'graphite'는 자동으로 어두워진다(유건 요청 2026-08-01) — 기본 테마(argo)가 쓰는
+:root[data-theme='graphite'] .side { background: #f0f0f0; }
+/* 메뉴 상태는 오버레이로 — 강조색 대신 밝기만 바꾼다(검정 5.5% / 8.5%). */
+:root[data-theme='graphite'] .nav-item:hover { background: rgba(0, 0, 0, 0.055); color: var(--fg); }
+:root[data-theme='graphite'] .nav-item.active { background: rgba(0, 0, 0, 0.085); color: var(--fg); }
+
+/* ⚠ 이 블록은 위의 라이트 오버라이드(.side·.nav-item)보다 **반드시 뒤에** 와야 한다.
+   @media는 특이도를 올리지 않으므로, 앞에 두면 뒤의 라이트 규칙이 이겨서 시스템 다크인데도
+   사이드바만 밝게 남는다(실측 2026-08-01: 배경·글자는 다크인데 사이드바 rgb(240,240,240)).
+   순서 의존은 test/theme-graphite-sync가 잠근다.
+
+   시스템이 다크면 'graphite'는 자동으로 어두워진다(유건 요청 2026-08-01) — 기본 테마(argo)가 쓰는
    방식 그대로다. 아래 값은 :root[data-theme='graphite-dark']와 **항상 동일해야** 하며, 갈리는 것을
    test/theme-graphite-sync.test.mjs가 막는다(손으로 옮겨 적는 순간 한쪽만 고쳐지기 때문). */
 @media (prefers-color-scheme: dark) {
@@ -1257,10 +1267,6 @@
   :root[data-theme='graphite'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
 }
 
-:root[data-theme='graphite'] .side { background: #f0f0f0; }
-/* 메뉴 상태는 오버레이로 — 강조색 대신 밝기만 바꾼다(검정 5.5% / 8.5%). */
-:root[data-theme='graphite'] .nav-item:hover { background: rgba(0, 0, 0, 0.055); color: var(--fg); }
-:root[data-theme='graphite'] .nav-item.active { background: rgba(0, 0, 0, 0.085); color: var(--fg); }
 /* 아이콘도 함께 — 기본 규칙은 `.nav-item.active svg { color: var(--primary-fg) }`로 **강조 배경 위**를
    전제한다. 이 테마는 배경을 오버레이로 바꿔서 그 대비색이 오히려 배경에 묻힌다(라이트에선 흰 아이콘). */
 /* 활성 항목 안에서는 '강조 배경 위 대비색' 토큰을 **본문 색 계열로 재정의**한다.
