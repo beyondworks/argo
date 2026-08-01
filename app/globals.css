@@ -1262,6 +1262,15 @@
 :root[data-theme='graphite-dark'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
 :root[data-theme='graphite-dark'] .nav-item.active svg { color: var(--fg); }
 
+/* 넓은 면적에 강조색을 까는 자리는 표면 단계로 바꾼다 — 이 테마의 강조색은 거의 흰색(다크)/검정
+   (라이트)이라 목록 선택 행이나 말풍선처럼 면적이 크면 화면이 그 판에 끌려간다(실측 화면 확인
+   2026-08-01: 다크에서 선택된 항목이 흰 판이 됐다). 버튼·칩처럼 **작고 눌러야 하는 것**은 그대로 둔다 —
+   거기서는 튀는 게 목적이다. active에 쓰는 surface5(--secondary)가 유건 스펙의 그 자리다. */
+:root[data-theme='graphite'] .row.active,
+:root[data-theme='graphite-dark'] .row.active { background: var(--secondary); color: var(--fg); }
+:root[data-theme='graphite'] .msg-user,
+:root[data-theme='graphite-dark'] .msg-user { background: var(--secondary); color: var(--fg); }
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html { color-scheme: light; }
