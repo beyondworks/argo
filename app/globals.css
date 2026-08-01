@@ -1210,7 +1210,9 @@
   --ring: rgba(0, 0, 0, 0.28);
   --selection: rgba(0, 0, 0, 0.1);
   --overlay: rgba(0, 0, 0, 0.36);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.06);
+  /* 그림자 없음(유건 지시 2026-08-02) — 이 테마는 표면 단계(surface1~5)로만 위계를 만든다.
+     띄우는 그림자와 밝기 단계를 함께 쓰면 같은 말을 두 번 하는 셈이라 화면이 탁해진다. */
+  --shadow-card: none;
   --accent: #1a1a1a; --accent-rgb: 26, 26, 26;   /* primary와 **같은 값** — 이 테마는 액션 색을 하나로 통일한다(유건 지시) */
   --ink-rgb: 26, 26, 26; --paper-rgb: 255, 255, 255;
 }
@@ -1258,7 +1260,7 @@
   --ring: rgba(255, 255, 255, 0.32);
   --selection: rgba(255, 255, 255, 0.16);
   --overlay: rgba(0, 0, 0, 0.6);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 12px 30px rgba(0, 0, 0, 0.42);
+  --shadow-card: none;   /* 라이트와 같은 규칙 — 표면 단계로만 위계를 만든다 */
   --accent: #ededed; --accent-rgb: 237, 237, 237;  /* primary와 **같은 값** — 액션 색 통일(유건 지시) */
   --ink-rgb: 237, 237, 237; --paper-rgb: 37, 37, 37;
   }
@@ -1314,7 +1316,9 @@
   --ring: rgba(0, 0, 0, 0.28);
   --selection: rgba(0, 0, 0, 0.1);
   --overlay: rgba(0, 0, 0, 0.36);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.06);
+  /* 그림자 없음(유건 지시 2026-08-02) — 이 테마는 표면 단계(surface1~5)로만 위계를 만든다.
+     띄우는 그림자와 밝기 단계를 함께 쓰면 같은 말을 두 번 하는 셈이라 화면이 탁해진다. */
+  --shadow-card: none;
   --accent: #1a1a1a; --accent-rgb: 26, 26, 26;   /* primary와 **같은 값** — 이 테마는 액션 색을 하나로 통일한다(유건 지시) */
   --ink-rgb: 26, 26, 26; --paper-rgb: 255, 255, 255;
 }
@@ -1355,7 +1359,7 @@
   --ring: rgba(255, 255, 255, 0.32);
   --selection: rgba(255, 255, 255, 0.16);
   --overlay: rgba(0, 0, 0, 0.6);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 12px 30px rgba(0, 0, 0, 0.42);
+  --shadow-card: none;   /* 라이트와 같은 규칙 — 표면 단계로만 위계를 만든다 */
   --accent: #ededed; --accent-rgb: 237, 237, 237;  /* primary와 **같은 값** — 액션 색 통일(유건 지시) */
   --ink-rgb: 237, 237, 237; --paper-rgb: 37, 37, 37;
 }
