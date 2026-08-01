@@ -151,5 +151,8 @@ test('문서 렌더러 분류는 Markdown과 HTML만 실행 없는 문법 뷰로
   assert.equal(workspaceFileRenderer('README.MD'), 'markdown');
   assert.equal(workspaceFileRenderer('report.html'), 'html');
   assert.equal(workspaceFileRenderer('legacy.HTM'), 'html');
+  for (const file of ['문서.doc', '문서.docx', '표.xls', '표.xlsx', '발표.ppt', '발표.pptx', '오픈문서.odt']) {
+    assert.equal(workspaceFileRenderer(file), 'office', `${file}가 Office 렌더러로 분류되지 않음`);
+  }
   assert.equal(workspaceFileRenderer('src/app.jsx'), 'source');
 });

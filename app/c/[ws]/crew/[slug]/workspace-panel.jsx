@@ -635,6 +635,9 @@ function FileTool({ ws, onDirtyChange, fileRequest }) {
   const rawUrl = activeFile
     ? query(ws, { action: 'raw', root: activeFile.rootId, path: activeFile.path })
     : '';
+  const renderUrl = activeFile
+    ? query(ws, { action: 'render', root: activeFile.rootId, path: activeFile.path })
+    : '';
   const breadcrumbParts = activeFile ? (() => {
     const location = activeFile.rootLocation.replaceAll('\\', '/').split('/').filter(Boolean);
     const rootTrail = location.length ? location.slice(-2) : [activeFile.rootLabel];
@@ -800,6 +803,9 @@ function FileTool({ ws, onDirtyChange, fileRequest }) {
               )}
               {activeDocument?.status === 'ready' && activeDocument.data?.kind === 'pdf' && (
                 <iframe src={rawUrl} title={activeDocument.data.name} />
+              )}
+              {activeDocument?.status === 'ready' && activeDocument.data?.kind === 'office' && (
+                <iframe src={renderUrl} title={activeDocument.data.name} />
               )}
               {activeDocument?.status === 'ready' && ['binary', 'large'].includes(activeDocument.data?.kind) && (
                 <div className="crew-tool-empty compact">

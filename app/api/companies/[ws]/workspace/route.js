@@ -3,6 +3,7 @@ import {
   listWorkspaceDirectory,
   listWorkspaceToolRoots,
   openWorkspaceToolFile,
+  renderWorkspaceToolOffice,
   readWorkspaceToolRaw,
   saveWorkspaceToolMarkdown,
   searchWorkspaceToolFiles,
@@ -32,6 +33,17 @@ export async function GET(req, { params }) {
     }
     if (action === 'list') return Response.json(await listWorkspaceDirectory(ws, root, path));
     if (action === 'open') return Response.json(await openWorkspaceToolFile(ws, root, path));
+    if (action === 'render') {
+      const file = await renderWorkspaceToolOffice(ws, root, path);
+      return new Response(file.body, {
+        headers: {
+          'content-type': 'application/pdf',
+          'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+          'cache-control': 'private, no-store',
+          'x-content-type-options': 'nosniff',
+        },
+      });
+    }
     if (action === 'search') {
       return Response.json(await searchWorkspaceToolFiles(ws, root, url.searchParams.get('q') || ''));
     }

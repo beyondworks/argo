@@ -2,7 +2,10 @@
 // 회사 워크스페이스와 사장이 설정에서 등록한 외부 작업 폴더만 열고, 경로 탈출·심링크 탈출과
 // 회사 루트 직속 도트파일(.secrets.json 등)은 UI에서도 에이전트 도구와 같은 경계로 차단한다.
 import { createHash } from 'node:crypto';
-import { readFile, readdir, realpath, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { tmpdir } from 'node:os';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { writeFileAtomic } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
@@ -24,6 +27,9 @@ const TEXT_EXTS = new Set([
 // SVG는 이미지 태그에서도 직접 열기/다운로드 경로가 같은 출처가 되므로 코드 텍스트로 다룬다.
 // 스크립트가 없는 래스터 형식만 이미지 문서로 연다.
 const IMAGE_EXTS = new Set(['.avif', '.gif', '.ico', '.jpeg', '.jpg', '.png', '.webp']);
+// LibreOffice가 PDF로 변환할 수 있는 문서 형식 — 원본 레이아웃을 보존해 패널에서 동일하게 표시한다.
+const OFFICE_EXTS = new Set(['.doc', '.docm', '.docx', '.dot', '.dotx', '.odp', '.ods', '.odt', '.ppt', '.pptm', '.pptx', '.xls', '.xlsb', '.xlsm', '.xlsx']);
+const execFileAsync = promisify(execFile);
 const MIME = {
   '.avif': 'image/avif',
   '.css': 'text/css; charset=utf-8',
@@ -58,6 +64,7 @@ export function workspaceFileRenderer(input = '') {
   const ext = extname(String(input)).toLowerCase();
   if (ext === '.md') return 'markdown';
   if (ext === '.html' || ext === '.htm') return 'html';
+  if (OFFICE_EXTS.has(ext)) return 'office';
   return 'source';
 }
 
@@ -161,14 +168,46 @@ const appearsBinary = (buf) => {
   return controls / length > 0.08;
 };
 
+/** Office 문서를 LibreOffice headless PDF로 변환한다. 사용자 파일은 임시 프로필·출력 폴더에서만 처리한다. */
+export async function renderWorkspaceToolOffice(wsId, rootId, input) {
+  const target = await resolveWorkspaceToolPath(wsId, rootId, input);
+  if (!target.info.isFile()) throw toolError('not-file');
+  if (!OFFICE_EXTS.has(extname(target.rel).toLowerCase())) throw toolError('office-only', 415);
+  if (target.info.size > MAX_TOOL_RAW_BYTES) throw toolError('too-large', 413);
+  const dir = await mkdtemp(join(tmpdir(), 'argo-office-render-'));
+  const profile = await mkdtemp(join(tmpdir(), 'argo-office-profile-'));
+  try {
+    await execFileAsync('libreoffice', [
+      '--headless', '--convert-to', 'pdf', '--outdir', dir,
+      `-env:UserInstallation=file://${profile}`,
+      target.abs,
+    ], { timeout: 45_000, maxBuffer: 2 * 1024 * 1024 });
+    const output = join(dir, `${basename(target.rel, extname(target.rel))}.pdf`);
+    const body = await readFile(output).catch(() => { throw toolError('render-failed', 422); });
+    return { body, name: `${basename(target.rel)}.pdf` };
+  } catch (error) {
+    if (error?.code === 'render-failed') throw error;
+    throw toolError('render-failed', 422);
+  } finally {
+    await Promise.all([
+      rm(dir, { recursive: true, force: true }),
+      rm(profile, { recursive: true, force: true }),
+    ]);
+  }
+}
+
 export async function openWorkspaceToolFile(wsId, rootId, input) {
   const target = await resolveWorkspaceToolPath(wsId, rootId, input);
   if (!target.info.isFile()) throw toolError('not-file');
   const renderer = workspaceFileRenderer(target.rel);
+  const ext = extname(target.rel).toLowerCase();
+  if (OFFICE_EXTS.has(ext)) {
+    if (target.info.size > MAX_TOOL_RAW_BYTES) return { kind: 'large', renderer: 'office', path: target.rel, name: basename(target.rel), size: target.info.size };
+    return { kind: 'office', renderer: 'office', path: target.rel, name: basename(target.rel), size: target.info.size };
+  }
   if (target.info.size > MAX_TOOL_FILE_BYTES) {
     return { kind: 'large', renderer, path: target.rel, name: basename(target.rel), size: target.info.size };
   }
-  const ext = extname(target.rel).toLowerCase();
   if (IMAGE_EXTS.has(ext)) {
     return { kind: 'image', renderer: 'image', path: target.rel, name: basename(target.rel), size: target.info.size };
   }

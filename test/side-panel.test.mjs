@@ -112,6 +112,9 @@ test('파일 열기: 열린 탭을 유지하고 Markdown 편집·저장과 샌�
   assert.match(css, /\.crew-file-markdown[\s\S]*\.crew-file-html/);
   assert.match(css, /\.crew-file-markdown-editor/);
   assert.match(workspaceRoute, /action === 'open'/);
+  assert.match(workspaceRoute, /action === 'render'/, 'Office 문서 PDF 렌더 라우트가 없다');
+  assert.match(panel, /activeDocument\.data\?\.kind === 'office'/, 'Office 문서 미리보기가 없다');
+  assert.match(panel, /action: 'render'/, 'Office 문서가 원본 다운로드가 아닌 렌더 URL을 사용해야 한다');
 });
 
 test('채팅 문서 링크: 새 404 페이지 대신 파일 패널을 열고 트리를 해당 경로까지 확장한다', () => {
