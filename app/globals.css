@@ -1215,6 +1215,48 @@
   --ink-rgb: 26, 26, 26; --paper-rgb: 255, 255, 255;
 }
 /* 사이드바가 콘텐츠보다 한 단계 어둡다(surface1) — 이 테마에서만. */
+/* 시스템이 다크면 'graphite'는 자동으로 어두워진다(유건 요청 2026-08-01) — 기본 테마(argo)가 쓰는
+   방식 그대로다. 아래 값은 :root[data-theme='graphite-dark']와 **항상 동일해야** 하며, 갈리는 것을
+   test/theme-graphite-sync.test.mjs가 막는다(손으로 옮겨 적는 순간 한쪽만 고쳐지기 때문). */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='graphite'] {
+  color-scheme: dark;
+  --bg: #202020;            /* surface2 — 콘텐츠 캔버스 */
+  --card: #252525;          /* surface3 — 콘텐츠 위 표면(스펙의 빈 단계를 여기서 채운다) */
+  --card-2: #282828;        /* surface4 — hover */
+  --secondary: #303030;     /* surface5 — active */
+  /* 라이트와 같은 계산. 첫 판은 본문 13.9:1(순백 수준)이라 눈이 부셨고, 보조는 활성 배경 위에서
+     2.6:1이었다. 지금은 본문 10.5 · 보조 6.6 · 최약 4.9(활성 위 3.6). */
+  --fg: #cfcfcf;
+  --fg-2: #a5a5a5;
+  --fg-3: #8c8c8c;
+  --border: rgba(255, 255, 255, 0.14);
+  --border-soft: rgba(255, 255, 255, 0.07);
+
+  --primary: #ededed;
+  --primary-strong: #ffffff;
+  --primary-fg: #1a1a1a;
+  --primary-fg-dim: rgba(26, 26, 26, 0.72);
+  --primary-fg-line: rgba(26, 26, 26, 0.45);
+  --primary-soft: rgba(255, 255, 255, 0.1);
+
+  --ok: #5aa97a; --ok-soft: rgba(90, 169, 122, 0.14);
+  --info: #6f9fd0; --info-soft: rgba(111, 159, 208, 0.14);
+  --warn: #d0a05a; --warn-soft: rgba(208, 160, 90, 0.15);
+  --danger: #e0655a; --danger-soft: rgba(224, 101, 90, 0.13);
+
+  --ring: rgba(255, 255, 255, 0.32);
+  --selection: rgba(255, 255, 255, 0.16);
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 12px 30px rgba(0, 0, 0, 0.42);
+  --accent: #ededed; --accent-rgb: 237, 237, 237;  /* primary와 **같은 값** — 액션 색 통일(유건 지시) */
+  --ink-rgb: 237, 237, 237; --paper-rgb: 37, 37, 37;
+  }
+  :root[data-theme='graphite'] .side { background: #1d1d1d; }
+  :root[data-theme='graphite'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+  :root[data-theme='graphite'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
+}
+
 :root[data-theme='graphite'] .side { background: #f0f0f0; }
 /* 메뉴 상태는 오버레이로 — 강조색 대신 밝기만 바꾼다(검정 5.5% / 8.5%). */
 :root[data-theme='graphite'] .nav-item:hover { background: rgba(0, 0, 0, 0.055); color: var(--fg); }
@@ -1233,6 +1275,51 @@
 }
 
 /* [graphite-dark] 같은 팔레트의 다크. 표면 단계는 동일한 규칙 — 사이드바가 콘텐츠보다 어둡다. */
+/* 밝게 고정 — 시스템이 다크여도 밝은 채로 둔다. 값은 'graphite'의 라이트와 동일(동기화 테스트가 잠근다). */
+:root[data-theme='graphite-light'] {
+  color-scheme: light;
+  --bg: #fafafa;            /* surface2 — 콘텐츠 캔버스 */
+  --card: #ffffff;          /* 콘텐츠 위 표면은 순백 — surface2와의 대비로 카드가 뜬다 */
+  --card-2: #f3f3f3;        /* surface4 — hover */
+  --secondary: #ececec;     /* surface5 — active */
+  /* 명도는 계산으로 잡았다(대비 실측 2026-08-01, 유건 신고 "텍스트가 너무 진해 눈이 아프다 ·
+     호버 시 서브 텍스트가 안 보인다"). 첫 판은 본문 16.7:1(순검정 수준)이고 보조는 활성 배경 위에서
+     2.5:1로 최소 기준(3.0) 미달이었다. 지금은 본문 11.1 · 보조 6.2 · 최약 4.5(활성 위 3.5). */
+  --fg: #393939;
+  --fg-2: #5e5e5e;
+  --fg-3: #737373;
+  --border: rgba(0, 0, 0, 0.12);
+  --border-soft: rgba(0, 0, 0, 0.06);
+
+  /* 액션은 색이 아니라 **명도**로 구분한다 — 무채색 팔레트에 유채색을 하나 얹으면 그 색만 튄다.
+     버튼이 반전되는 형태(밝은 판 위 검은 버튼)는 이 계열 팔레트의 표준 해법이다. */
+  --primary: #1a1a1a;
+  --primary-strong: #000000;
+  --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.78);
+  --primary-fg-line: rgba(255, 255, 255, 0.5);
+  --primary-soft: rgba(0, 0, 0, 0.06);
+
+  --ok: #2f7d4f; --ok-soft: rgba(47, 125, 79, 0.1);
+  --info: #3a6ea5; --info-soft: rgba(58, 110, 165, 0.1);
+  --warn: #a06a1f; --warn-soft: rgba(160, 106, 31, 0.11);
+  --danger: #b3392f; --danger-soft: rgba(179, 57, 47, 0.09);
+
+  --ring: rgba(0, 0, 0, 0.28);
+  --selection: rgba(0, 0, 0, 0.1);
+  --overlay: rgba(0, 0, 0, 0.36);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --accent: #1a1a1a; --accent-rgb: 26, 26, 26;   /* primary와 **같은 값** — 이 테마는 액션 색을 하나로 통일한다(유건 지시) */
+  --ink-rgb: 26, 26, 26; --paper-rgb: 255, 255, 255;
+}
+:root[data-theme='graphite-light'] .side { background: #f0f0f0; }
+:root[data-theme='graphite-light'] .nav-item:hover { background: rgba(0, 0, 0, 0.055); color: var(--fg); }
+:root[data-theme='graphite-light'] .nav-item.active { background: rgba(0, 0, 0, 0.085); color: var(--fg); }
+:root[data-theme='graphite-light'] .nav-item.active,
+:root[data-theme='graphite-light'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
+:root[data-theme='graphite-light'] .row.active { background: var(--secondary); color: var(--fg); }
+:root[data-theme='graphite-light'] .msg-user { background: var(--secondary); color: var(--fg); }
+
 :root[data-theme='graphite-dark'] {
   color-scheme: dark;
   --bg: #202020;            /* surface2 — 콘텐츠 캔버스 */

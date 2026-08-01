@@ -302,7 +302,8 @@ function CrewLanguageCard({ ws, sysLang }) {
 /** 테마 스와치 — 각 테마의 캔버스/카드/프라이머리 토큰을 그대로 보여주는 미니 프리뷰. */
 const THEME_SWATCHES = {
   // 등록을 빠뜨리면 칩의 색 점이 **빈 원**으로 나온다(실사용 지적 2026-08-01) — 새 테마를 넣을 때 함께.
-  graphite: ['#f0f0f0', '#ffffff', '#1a1a1a'],
+  graphite: ['#f0f0f0', '#202020', '#1a1a1a'],   // 자동 — 밝은 판·어두운 판을 함께 보여 시스템 따라감을 드러낸다
+  'graphite-light': ['#f0f0f0', '#ffffff', '#1a1a1a'],
   'graphite-dark': ['#202020', '#252525', '#ededed'],
   argo: ['#e3e5d6', '#e9ebdd', '#22241c'],
   calm: ['#eff1f4', '#f8f9fb', '#5a6b8c'],
