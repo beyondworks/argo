@@ -27,9 +27,7 @@ const WEB_OAUTH = {
     authorize: 'https://auth.openai.com/oauth/authorize',
     token: 'https://auth.openai.com/oauth/token',
     clientId: 'app_EMoamEEZ73f0CkXaXp7hrann', // Codex CLI 공개 클라이언트 id
-    // codex는 localhost 그대로 둔다 — OpenAI 인가 엔드포인트가 무자격 요청에 전부 403을 주어
-    // 127.0.0.1 수용 여부를 **판정할 수 없었다**(대조군도 403). 벤더 등록값을 추측으로 바꾸면
-    // 되던 로그인이 깨진다. 같은 증상이 codex에서도 보고되면 그때 실계정으로 확인하고 바꾼다.
+    // codex 바이너리 실측: `http://localhost:{port}/auth/callback`를 자기도 쓴다 — 벤더 값 그대로.
     redirect: 'http://localhost:1455/auth/callback', // CLI 등록 콜백 — 사용자는 리다이렉트된 주소를 붙여넣는다
     scopes: 'openid profile email offline_access',
   },
@@ -38,13 +36,11 @@ const WEB_OAUTH = {
     token: 'https://oauth2.googleapis.com/token',
     clientId: '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com', // gemini-cli 공개
     clientSecret: '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', // installed app 공개 상수 — 시크릿 아님(Google 문서)
-    // 루프백은 **IP 리터럴로** 적는다(구글 공식 권장). 리스너는 원래부터 127.0.0.1에만 바인딩하는데
-    // 주소를 'localhost'로 주면 브라우저가 그걸 ::1(IPv6)로 먼저 풀 수 있고, 그러면 IPv4에만 열린
-    // 리스너에 못 닿아 "사이트에 연결할 수 없음"이 뜬다(IPv4 폴백이 항상 되는 건 아니다 — 이 레포는
-    // happy-eyeballs 계열 파손을 이미 겪었다). 사용자 제보 2026-08-01: localhost:45289 접근 실패.
-    // 구글이 이 클라이언트에 127.0.0.1을 받는 것은 실측 확인(대조군 evil.example.com은
-    // redirect_uri_mismatch, 127.0.0.1은 오류 없음). 포트도 자유다(RFC 8252 — 포트만 완화).
-    redirect: 'http://127.0.0.1:45289/oauth2callback',
+    // 벤더(gemini-cli)가 등록한 주소 그대로 둔다. 구글은 이 클라이언트에 localhost·127.0.0.1을 둘 다
+    // 받지만(무자격 프로브 + gemini-cli 소스 주석 "loopback IP literal (i.e., 'localhost' or
+    // '127.0.0.1')"로 이중 확인), **바꿀 이유가 없다**: 주소 불일치는 아래 듀얼 바인드로 닫았고,
+    // 숫자 IP로 바꾸면 PAC/프록시가 localhost만 bypass하는 환경에서 되던 사용자가 깨질 수 있다.
+    redirect: 'http://localhost:45289/oauth2callback',
     scopes: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
     extra: { access_type: 'offline', prompt: 'consent' }, // refresh_token 확보
   },
@@ -65,7 +61,7 @@ function startWebAuthListener(runner, wsId, cfg) {
   try { webAuthListeners[runner]?.close(); } catch { /* 이전 리스너 정리 */ }
   const target = new URL(cfg.redirect);
   const page = (title, body) => `<!doctype html><meta charset="utf-8"><title>Argo</title><body style="font-family:system-ui;display:grid;place-items:center;height:90vh"><div style="text-align:center"><h2>${title}</h2><p style="color:#666">${body}</p></div>`;
-  const srv = createServer(async (req, res) => {
+  const handler = async (req, res) => {
     try {
       const u = new URL(req.url, cfg.redirect);
       if (u.pathname !== target.pathname || !u.searchParams.get('code')) { res.statusCode = 404; res.end(); return; }
@@ -74,13 +70,23 @@ function startWebAuthListener(runner, wsId, cfg) {
       res.end(r.ok
         ? page('연결되었습니다', '이 창을 닫고 Argo로 돌아가세요 — 화면에 곧 "연결됨"이 표시됩니다.')
         : page('연결에 실패했습니다', 'Argo로 돌아가 다시 시도하거나, 이 페이지 주소를 복사해 붙여넣어 주세요.'));
-      if (r.ok) { try { srv.close(); } catch { /* 이미 닫힘 */ } delete webAuthListeners[runner]; }
+      if (r.ok) webAuthListeners[runner]?.close?.();
     } catch { res.statusCode = 500; res.end(); }
-  });
+  };
+  const srv = createServer(handler);
   srv.on('error', () => { delete webAuthListeners[runner]; /* EADDRINUSE 등 — 붙여넣기 폴백 */ });
   srv.listen(Number(target.port), '127.0.0.1');
-  webAuthListeners[runner] = srv;
-  const ttl = setTimeout(() => { try { srv.close(); } catch { /* 이미 닫힘 */ } delete webAuthListeners[runner]; }, 10 * 60_000);
+  // IPv6 루프백에도 같은 핸들러를 연다 — 벤더 주소는 `localhost`인데 이름 해석 결과는 환경마다
+  // 갈린다(::1 우선이 흔하다). RFC 8252 §7.3이 "IPv4·IPv6 둘 다 바인드하고 되는 쪽을 쓰라"고
+  // 권고하는 이유다. 주소 문자열을 숫자 IP로 바꾸는 대신 **여는 쪽을 넓힌다**: 벤더 등록값을
+  // 건드리지 않고, codex(같은 비대칭)까지 함께 닫히며, localhost만 프록시 우회하는 환경도 안 깨진다.
+  // 실패는 무시한다 — IPv6 미가용 환경이 정상이고, IPv4 하나만 열려도 지금까지처럼 동작한다.
+  const srv6 = createServer(handler);
+  srv6.on('error', () => { /* IPv6 미가용·중복 바인드 — IPv4로 충분하다 */ });
+  try { srv6.listen(Number(target.port), '::1'); } catch { /* 위 error 핸들러가 받는다 */ }
+  const closeAll = () => { for (const x of [srv, srv6]) { try { x.close(); } catch { /* 이미 닫힘 */ } } delete webAuthListeners[runner]; };
+  webAuthListeners[runner] = { close: closeAll, address: () => srv.address(), v4: srv, v6: srv6 };
+  const ttl = setTimeout(closeAll, 10 * 60_000);
   ttl.unref?.();
 }
 
