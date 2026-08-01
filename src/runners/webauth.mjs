@@ -27,6 +27,9 @@ const WEB_OAUTH = {
     authorize: 'https://auth.openai.com/oauth/authorize',
     token: 'https://auth.openai.com/oauth/token',
     clientId: 'app_EMoamEEZ73f0CkXaXp7hrann', // Codex CLI 공개 클라이언트 id
+    // codex는 localhost 그대로 둔다 — OpenAI 인가 엔드포인트가 무자격 요청에 전부 403을 주어
+    // 127.0.0.1 수용 여부를 **판정할 수 없었다**(대조군도 403). 벤더 등록값을 추측으로 바꾸면
+    // 되던 로그인이 깨진다. 같은 증상이 codex에서도 보고되면 그때 실계정으로 확인하고 바꾼다.
     redirect: 'http://localhost:1455/auth/callback', // CLI 등록 콜백 — 사용자는 리다이렉트된 주소를 붙여넣는다
     scopes: 'openid profile email offline_access',
   },
@@ -35,7 +38,13 @@ const WEB_OAUTH = {
     token: 'https://oauth2.googleapis.com/token',
     clientId: '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com', // gemini-cli 공개
     clientSecret: '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', // installed app 공개 상수 — 시크릿 아님(Google 문서)
-    redirect: 'http://localhost:45289/oauth2callback',
+    // 루프백은 **IP 리터럴로** 적는다(구글 공식 권장). 리스너는 원래부터 127.0.0.1에만 바인딩하는데
+    // 주소를 'localhost'로 주면 브라우저가 그걸 ::1(IPv6)로 먼저 풀 수 있고, 그러면 IPv4에만 열린
+    // 리스너에 못 닿아 "사이트에 연결할 수 없음"이 뜬다(IPv4 폴백이 항상 되는 건 아니다 — 이 레포는
+    // happy-eyeballs 계열 파손을 이미 겪었다). 사용자 제보 2026-08-01: localhost:45289 접근 실패.
+    // 구글이 이 클라이언트에 127.0.0.1을 받는 것은 실측 확인(대조군 evil.example.com은
+    // redirect_uri_mismatch, 127.0.0.1은 오류 없음). 포트도 자유다(RFC 8252 — 포트만 완화).
+    redirect: 'http://127.0.0.1:45289/oauth2callback',
     scopes: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
     extra: { access_type: 'offline', prompt: 'consent' }, // refresh_token 확보
   },
