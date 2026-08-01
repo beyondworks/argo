@@ -1173,6 +1173,86 @@
   border-width: 1.5px;
 }
 
+/* [graphite] 중성 회색 — 유건 지정 팔레트(2026-08-01). 색을 빼고 **표면 단계**만으로 위계를 만든다.
+   사이드바(surface1)가 콘텐츠(surface2)보다 **한 단계 어둡다**: 이 테마의 시그니처라 .side를 따로 칠한다
+   (다른 테마는 사이드바가 페이지 배경을 그대로 쓴다). 사이드바 메뉴는 배경색이 아니라 **오버레이**로
+   상태를 표현한다 — 사이드바 자체 색이 바뀌어도 대비가 유지되고, 강조색에 의존하지 않아 조용하다.
+   액센트는 Argo 골드를 유지한다(브랜드 일관성 — 무채색 테마에서도 액션 자리는 같은 색이다). */
+:root[data-theme='graphite'] {
+  color-scheme: light;
+  --bg: #fafafa;            /* surface2 — 콘텐츠 캔버스 */
+  --card: #ffffff;          /* 콘텐츠 위 표면은 순백 — surface2와의 대비로 카드가 뜬다 */
+  --card-2: #f3f3f3;        /* surface4 — hover */
+  --secondary: #ececec;     /* surface5 — active */
+  --fg: #1a1a1a;
+  --fg-2: #5c5c5c;
+  --fg-3: #8a8a8a;
+  --border: rgba(0, 0, 0, 0.12);
+  --border-soft: rgba(0, 0, 0, 0.06);
+
+  /* 액션은 색이 아니라 **명도**로 구분한다 — 무채색 팔레트에 유채색을 하나 얹으면 그 색만 튄다.
+     버튼이 반전되는 형태(밝은 판 위 검은 버튼)는 이 계열 팔레트의 표준 해법이다. */
+  --primary: #1a1a1a;
+  --primary-strong: #000000;
+  --primary-fg: #ffffff;
+  --primary-fg-dim: rgba(255, 255, 255, 0.78);
+  --primary-fg-line: rgba(255, 255, 255, 0.5);
+  --primary-soft: rgba(0, 0, 0, 0.06);
+
+  --ok: #2f7d4f; --ok-soft: rgba(47, 125, 79, 0.1);
+  --info: #3a6ea5; --info-soft: rgba(58, 110, 165, 0.1);
+  --warn: #a06a1f; --warn-soft: rgba(160, 106, 31, 0.11);
+  --danger: #b3392f; --danger-soft: rgba(179, 57, 47, 0.09);
+
+  --ring: rgba(0, 0, 0, 0.28);
+  --selection: rgba(0, 0, 0, 0.1);
+  --overlay: rgba(0, 0, 0, 0.36);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --accent: #1a1a1a; --accent-rgb: 26, 26, 26;   /* primary와 **같은 값** — 이 테마는 액션 색을 하나로 통일한다(유건 지시) */
+  --ink-rgb: 26, 26, 26; --paper-rgb: 255, 255, 255;
+}
+/* 사이드바가 콘텐츠보다 한 단계 어둡다(surface1) — 이 테마에서만. */
+:root[data-theme='graphite'] .side { background: #f0f0f0; }
+/* 메뉴 상태는 오버레이로 — 강조색 대신 밝기만 바꾼다(검정 5.5% / 8.5%). */
+:root[data-theme='graphite'] .nav-item:hover { background: rgba(0, 0, 0, 0.055); color: var(--fg); }
+:root[data-theme='graphite'] .nav-item.active { background: rgba(0, 0, 0, 0.085); color: var(--fg); }
+
+/* [graphite-dark] 같은 팔레트의 다크. 표면 단계는 동일한 규칙 — 사이드바가 콘텐츠보다 어둡다. */
+:root[data-theme='graphite-dark'] {
+  color-scheme: dark;
+  --bg: #202020;            /* surface2 — 콘텐츠 캔버스 */
+  --card: #252525;          /* surface3 — 콘텐츠 위 표면(스펙의 빈 단계를 여기서 채운다) */
+  --card-2: #282828;        /* surface4 — hover */
+  --secondary: #303030;     /* surface5 — active */
+  --fg: #ededed;
+  --fg-2: #a0a0a0;
+  --fg-3: #757575;
+  --border: rgba(255, 255, 255, 0.14);
+  --border-soft: rgba(255, 255, 255, 0.07);
+
+  --primary: #ededed;
+  --primary-strong: #ffffff;
+  --primary-fg: #1a1a1a;
+  --primary-fg-dim: rgba(26, 26, 26, 0.72);
+  --primary-fg-line: rgba(26, 26, 26, 0.45);
+  --primary-soft: rgba(255, 255, 255, 0.1);
+
+  --ok: #5aa97a; --ok-soft: rgba(90, 169, 122, 0.14);
+  --info: #6f9fd0; --info-soft: rgba(111, 159, 208, 0.14);
+  --warn: #d0a05a; --warn-soft: rgba(208, 160, 90, 0.15);
+  --danger: #e0655a; --danger-soft: rgba(224, 101, 90, 0.13);
+
+  --ring: rgba(255, 255, 255, 0.32);
+  --selection: rgba(255, 255, 255, 0.16);
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 12px 30px rgba(0, 0, 0, 0.42);
+  --accent: #ededed; --accent-rgb: 237, 237, 237;  /* primary와 **같은 값** — 액션 색 통일(유건 지시) */
+  --ink-rgb: 237, 237, 237; --paper-rgb: 37, 37, 37;
+}
+:root[data-theme='graphite-dark'] .side { background: #1d1d1d; }
+:root[data-theme='graphite-dark'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+:root[data-theme='graphite-dark'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html { color-scheme: light; }

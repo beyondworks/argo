@@ -175,6 +175,8 @@ const DICT = {
   'settings.theme.calm': ['차분 — 눈이 편한 저대비 라이트', 'Calm — easy-on-the-eyes light'],
   'settings.theme.calm-dark': ['차분 다크 — 눈부심 없는 야간', 'Calm Dark — low-glare night'],
   'settings.theme.apple': ['Apple — 밝은 시스템 화이트', 'Apple — light system white'],
+  'settings.theme.graphite': ['그래파이트 — 무채색, 밝게', 'Graphite — neutral gray, light'],
+  'settings.theme.graphite-dark': ['그래파이트 — 무채색, 어둡게', 'Graphite — neutral gray, dark'],
   'settings.theme.apple-dark': ['Apple 다크 — 시스템 블랙', 'Apple Dark — system black'],
   'settings.theme.glass': ['리퀴드 글래스 — Tahoe 반투명', 'Liquid Glass — Tahoe translucency'],
   'settings.theme.glass-dark': ['리퀴드 글래스 다크 — 딥 블랙 유리', 'Liquid Glass Dark — deep black glass'],
