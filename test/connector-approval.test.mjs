@@ -46,7 +46,10 @@ test('서버가 말을 안 하면 카탈로그 보완 목록으로, 그것도 �
   const mute = [{ name: 'send_thing' }, { name: 'read_thing' }]; // annotations 없는 서버
   assert.equal(connectorToolNeedsApproval('send_thing', mute, ['send_thing']), true);
   assert.equal(connectorToolNeedsApproval('read_thing', mute, ['send_thing']), false, '보완 목록 밖이면 통과 — 목록을 준 서버는 그 목록을 믿는다');
-  assert.equal(connectorToolNeedsApproval('unknown_tool', [], []), false, '목록 자체가 비면 판정 불가 — 호출부(needsApprovalNow)가 결재로 기운다');
+  // 순수함수는 "근거 없음 = 통과"다. **결재로 기우는 판단은 호출부(needsApprovalNow)의 몫**이고,
+  // 거기서 "조회 성공했는데 목록에 없음"과 "조회 자체 실패"를 갈라 처리한다(아래 행동 테스트가 잰다).
+  // 첫 판의 이 자리 주석은 반대로 적혀 있었다 — 백스톱이 있다고 믿게 만드는 주석이었다(분리 검수).
+  assert.equal(connectorToolNeedsApproval('unknown_tool', [], []), false, '순수 판정은 근거가 없으면 통과 — 기우는 것은 호출부');
 });
 
 test('서버 표시가 카탈로그보다 세다 — 둘이 어긋나도 쓰기는 막힌다', () => {

@@ -18,7 +18,8 @@ import { z } from 'zod';
 
 /**
  * 테스트 서버 기동. 반환: { base, mcpUrl, close(), registerClient(info), revokeRefresh(),
- * counters: { dcr, codeGrants, refreshGrants } } — counters는 라이브 객체(테스트가 직접 읽는다).
+ * counters: { dcr, codeGrants, refreshGrants, toolCalls } } — counters는 라이브 객체(테스트가 직접 읽는다).
+ * toolCalls[name] = 그 도구가 **실제로 실행된 횟수**. 결재 게이트가 부작용을 정말 막았는지 재는 유일한 근거다.
  * accessTtlMs를 짧게 주면 만료→자동 refresh 시나리오를 실시간으로 돌릴 수 있다.
  */
 export async function startOauthTestServer({ accessTtlMs = 3_600_000 } = {}) {
@@ -33,7 +34,8 @@ export async function startOauthTestServer({ accessTtlMs = 3_600_000 } = {}) {
   const codes = new Map(); // code → { clientId, codeChallenge, redirectUri, scopes }
   const access = new Map(); // token → { clientId, scopes, expiresAt(ms) }
   const refresh = new Map(); // token → { clientId, scopes }
-  const counters = { dcr: 0, codeGrants: 0, refreshGrants: 0 };
+  const counters = { dcr: 0, codeGrants: 0, refreshGrants: 0, toolCalls: {} };
+  const ran = (name) => { counters.toolCalls[name] = (counters.toolCalls[name] ?? 0) + 1; };
   const knobs = { failToolsList: false }; // 런타임 토글(테스트가 연결 후에 켠다)
 
   const provider = {
@@ -91,16 +93,16 @@ export async function startOauthTestServer({ accessTtlMs = 3_600_000 } = {}) {
       description: '데모 검색(읽기) — annotations.readOnlyHint=true',
       inputSchema: { query: z.string() },
       annotations: { readOnlyHint: true },
-    }, async ({ query }) => ({ content: [{ type: 'text', text: `demo results for "${query}": [t1, t2]` }] }));
+    }, async ({ query }) => { ran('search_threads_demo'); return { content: [{ type: 'text', text: `demo results for "${query}": [t1, t2]` }] }; });
     s.registerTool('send_mail_demo', {
       description: '데모 발송(쓰기) — annotations.readOnlyHint=false',
       inputSchema: { to: z.string(), body: z.string() },
       annotations: { readOnlyHint: false },
-    }, async ({ to }) => ({ content: [{ type: 'text', text: `demo mail queued to ${to}` }] }));
+    }, async ({ to }) => { ran('send_mail_demo'); return { content: [{ type: 'text', text: `demo mail queued to ${to}` }] }; });
     s.registerTool('create_draft_demo', {
       description: '데모 초안 생성(쓰기, annotations 미제공)',
       inputSchema: { subject: z.string() },
-    }, async ({ subject }) => ({ content: [{ type: 'text', text: `demo draft "${subject}" created` }] }));
+    }, async ({ subject }) => { ran('create_draft_demo'); return { content: [{ type: 'text', text: `demo draft "${subject}" created` }] }; });
     return s;
   }
 

@@ -397,8 +397,12 @@ async function callViaPool(wsId, serverId, url, tool, args, retryLeft, lang) {
 async function needsApprovalNow(wsId, serverId, tool) {
   const { connectorCatalogFor } = await import('./market.mjs'); // 동적 — market→connectors 순환 방지
   const dangerous = connectorCatalogFor('ko').find((c) => c.id === serverId)?.dangerous ?? [];
-  const { tools } = await listConnectorTools(wsId, serverId).catch(() => ({ tools: [] }));
-  return connectorToolNeedsApproval(tool, tools ?? [], dangerous);
+  const listed = await listConnectorTools(wsId, serverId).catch(() => ({ ok: false, tools: [] }));
+  // 조회 **성공**인데 그 이름이 목록에 없다 = 서버가 모르는 도구다. 결재로 보낸다 — 어차피 서버가
+  // 거절할 호출이라 비용이 없고, 반대로 통과시키면 `dangerous`(닫힌 목록) 밖의 새 쓰기 도구가
+  // 무결재로 나간다(분리 검수 실측: annotations 없는 쓰기 도구가 결재 0건으로 실행됐다).
+  if (listed.ok && !listed.tools?.some((t) => t?.name === tool)) return true;
+  return connectorToolNeedsApproval(tool, listed.tools ?? [], dangerous);
 }
 
 /**

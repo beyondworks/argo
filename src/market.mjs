@@ -319,6 +319,16 @@ function resolveClientSecret(oauth) {
   return { client_secret: value };
 }
 
+/** 이 항목이 지금 이 빌드에서 **연결 가능한가** — 고정 모드가 요구하는 client secret이 실행 환경에
+    실제로 있는지 본다. 없으면 화면은 "연결" 대신 준비 중으로 그린다.
+    왜 필요한가: 없으면 버튼은 멀쩡히 보이고, 누르는 순간 개발자용 문구("환경변수 …가 설정되지
+    않았습니다")가 사용자 카드에 뜬다. 등재 원칙이 막으려던 바로 그 모양이다 — "검증 안 된 항목을
+    미리 실으면 연결 버튼이 거짓말이 된다"(분리 검수 실측 2026-08-01: 어떤 빌드에서도 반드시 실패). */
+export function connectorReady(item) {
+  const name = item?.oauth?.client_secret_env;
+  return !name || !!process.env[name]?.trim();
+}
+
 /** 카탈로그 × 회사 연결 상태 병합(순수) — 설정 카드(US-6)가 그대로 그리는 목록. 시크릿은 애초에
     listConnections가 걸러 오므로 여기서 다시 새지 않는다.
     카탈로그에서 내려간 뒤에도 토큰이 남아 있는 연결은 **orphan으로 노출**한다 — 안 그리면 살아 있는
@@ -336,6 +346,8 @@ export function mergeConnectorStatus(catalog = [], connections = []) {
       hasTokens: !!c?.hasTokens,
       ...(item.scopes?.length ? { scopes: [...item.scopes] } : {}),
       ...(item.dangerous?.length ? { dangerous: [...item.dangerous] } : {}),
+      // 배포 준비 여부 — 화면이 "연결" 버튼을 그릴지 정한다(누르고 나서 알게 하지 않는다).
+      ...(connectorReady(item) ? {} : { notReady: true }),
       ...(c?.errorCode ? { errorCode: c.errorCode } : {}),
       ...(c?.error ? { error: c.error } : {}),
     };

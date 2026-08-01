@@ -746,7 +746,11 @@ function ConnectorsCard({ ws }) {
             )}
             {r.error && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: '3px 0 0' }}>{r.error}</p>}
           </div>
-          {r.status === 'connected' ? (
+          {r.notReady ? (
+            /* 이 빌드에 연결 자격이 안 실렸다 — 버튼을 그리면 눌렀을 때 개발자용 오류가 뜬다.
+               못 하는 것은 화면에 정직하게 적는다(조용한 무동작·거짓 버튼 금지). */
+            <span className="chip" style={{ flex: 'none' }}>{t('settings.connectors.notReady')}</span>
+          ) : r.status === 'connected' ? (
             <button type="button" className="btn sm" disabled={busy === r.id} onClick={() => act(r.id, 'disconnect')}>
               {busy === r.id ? <Spinner size={12} /> : t('settings.connectors.disconnect')}
             </button>

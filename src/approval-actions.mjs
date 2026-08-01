@@ -43,6 +43,13 @@ async function applyPayload(wsId, item) {
     // 결재가 무한히 쌓인다(게이트는 러너 무관 단일 지점이라 우회가 없다). approved 플래그로 한 번만 통과.
     const { callConnectorTool } = await import('./connectors.mjs');
     const { serverId, tool, args, lang } = p;
+    // 카드에 뜬 것과 실제로 실행되는 것이 같아야 한다. action 문자열과 payload는 등록 시점에만
+    // 맞춰지고 그 뒤 검증이 없었다 — CLI 러너(codex·gemini·antigravity)는 도구 게이트를 지나지 않아
+    // 결재 파일을 직접 고칠 수 있으므로, 사장이 `create_event`를 보고 승인했는데 `delete_event`가
+    // 실행될 수 있었다(분리 검수 지적 2026-08-01). 어긋나면 실행하지 않는다.
+    if (item.action !== `${serverId} · ${tool}`) {
+      return `실행 취소 — 결재 내용(${item.action})과 실행 대상(${serverId} · ${tool})이 다르다. 사장에게 다시 올려라.`;
+    }
     const r = await callConnectorTool(wsId, serverId, tool, args ?? {}, { lang: lang ?? 'ko', approved: true });
     if (!r.ok) {
       const detail = r.content?.[0]?.text ?? r.error ?? '';

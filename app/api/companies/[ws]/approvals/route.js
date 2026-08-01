@@ -1,7 +1,7 @@
 import { loadApprovals } from '../../../../../src/approvals.mjs';
 import { resolveWithFollowUp } from '../../../../../src/approval-actions.mjs';
 import { listAgents } from '../../../../../src/hub.mjs';
-import { guardCompany } from '../../../../auth.mjs';
+import { guardCompany, csrfDenied } from '../../../../auth.mjs';
 
 export async function GET(_req, { params }) {
   const { ws } = await params;
@@ -20,6 +20,10 @@ export async function GET(_req, { params }) {
 export async function POST(req, { params }) {
   try {
     const { ws } = await params;
+    // CSRF — 승인은 이제 외부 서비스에 되돌릴 수 없는 쓰기를 실행시킨다(커넥터 결재, PR #222).
+    // 로컬 모드에선 guardCompany가 인증 장벽이 아니라, 악성 페이지의 simple POST가 사장 클릭 없이
+    // 결재를 승인시킬 수 있다(분리 검수 지적 2026-08-01 — 커넥터 라우트와 같은 패턴으로 막는다).
+    const csrf = csrfDenied(req); if (csrf) return csrf;
     const denied = await guardCompany(ws); if (denied) return denied;
     const { id, approve } = await req.json();
     if (!id) return Response.json({ error: 'id가 필요합니다' }, { status: 400 });

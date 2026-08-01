@@ -451,6 +451,7 @@ const DICT = {
   'settings.connectors.disconnect': ['연결 해제', 'Disconnect'],
   'settings.connectors.waiting': ['브라우저에서 로그인을 마치면 여기 상태가 바뀝니다.', 'Finish signing in on the browser tab — the status here will update.'],
   'settings.connectors.approvalNote': ['쓰기 작업 {n}개는 사장 결재 후에 실행됩니다.', '{n} write actions run only after your approval.'],
+  'settings.connectors.notReady': ['준비 중 — 다음 업데이트에서 열립니다', 'Coming soon — enabled in a future update'],
   'settings.connectors.err.load': ['연결 목록을 불러오지 못했습니다.', 'Could not load the connection list.'],
   'settings.connectors.status.connected': ['연결됨', 'Connected'],
   'settings.connectors.status.disconnected': ['연결 안 됨', 'Not connected'],
