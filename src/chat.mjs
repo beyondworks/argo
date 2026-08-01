@@ -725,7 +725,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     async ({ server, tool: toolName, args }) => {
       // 결과·오류 문구는 코어가 이미 회사 언어로 정규화해 돌려준다(미연결·재연결 필요 포함).
       // 여기서 다시 쓰지 않는다 — 표면마다 문구가 갈리면 안내 품질 패리티가 깨진다.
-      const r = await callConnectorTool(wsId, server, toolName, args ?? {}, { lang });
+      const r = await callConnectorTool(wsId, server, toolName, args ?? {}, { lang, slug: fromSlug });
       return { content: r.content ?? [], ...(r.isError ? { isError: true } : {}) };
     },
   );

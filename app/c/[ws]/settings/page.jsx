@@ -188,6 +188,7 @@ function Settings({ params }) {
       <ConnectionCard ws={ws} kind="slack" title={t('activity.slack')}
         help={t('settings.conn.slackHelp')}
         agents={data?.agents ?? []} />
+      <ConnectorsCard ws={ws} />
       <SyncCard ws={ws} />
       </Section>
 
@@ -679,6 +680,89 @@ function TrashCard({ ws }) {
 /** 외부 작업 폴더 — 사장이 지정한 폴더를 크루의 확장 책상으로 연다(fs 능력과 독립 — "전부"가 아니라
     "이 폴더만" 여는 더 좁은 위임). 기기 로컬(경로는 기기 고유값 — 동기화 안 됨). 실사용 신고 최다
     클러스터(홈 밖 경로 차단, 11건) 해소. 검증·보안 경계는 src/workroots.mjs가 정본. */
+/** 로그인만으로 붙는 외부 서비스(커넥터) — 카탈로그 × 이 회사 연결 상태.
+    "연결"은 브라우저 동의 창을 열고 **끝나기를 기다리지 않는다**(사용자가 구글에서 로그인하는 동안
+    응답이 막히면 화면이 죽은 것처럼 보인다). 완료는 목록을 다시 읽어 상태로 관측한다 — 코어와 같은 계약. */
+function ConnectorsCard({ ws }) {
+  const { t } = useLang();
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+  const [waiting, setWaiting] = useState('');
+
+  const load = useCallback(() => api(`/api/companies/${ws}/connectors`)
+    // 로드 실패를 "연결할 게 없음"과 구분한다 — 일시 장애가 카탈로그 소실처럼 읽히면 안 된다.
+    .then((d) => setRows(d.connectors ?? []))
+    .catch(() => { setRows([]); setErr(t('settings.connectors.err.load')); }), [ws, t]);
+  useEffect(() => { load(); }, [load]);
+
+  // 동의 창이 떠 있는 동안만 짧게 폴링 — 인가는 다른 창에서 끝나므로 이 화면은 알 길이 없다.
+  useEffect(() => {
+    if (!waiting) return undefined;
+    const iv = setInterval(load, 2500);
+    const stop = setTimeout(() => setWaiting(''), 180_000); // 코어 인가 타임아웃과 같은 지평
+    return () => { clearInterval(iv); clearTimeout(stop); };
+  }, [waiting, load]);
+  useEffect(() => {
+    if (waiting && rows?.find((r) => r.id === waiting)?.status === 'connected') setWaiting('');
+  }, [rows, waiting]);
+
+  async function act(id, action) {
+    if (busy) return;
+    setBusy(id); setErr('');
+    try {
+      const d = await api(`/api/companies/${ws}/connectors`, { id, action });
+      if (action === 'connect' && d.authUrl) {
+        window.open(d.authUrl, '_blank', 'noopener,noreferrer'); // 동의는 사용자 계정 행위 — 새 창에서
+        setWaiting(id);
+      }
+      await load();
+    } catch (e) {
+      setErr(String(e.message));
+    } finally { setBusy(''); }
+  }
+
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <strong style={{ fontSize: 14 }}>{t('settings.connectors.title')}</strong>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.connectors.help')}</p>
+      {rows === null && <Skeleton h={44} />}
+      {rows?.length === 0 && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.connectors.empty')}</p>}
+      {rows?.map((r) => (
+        <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '8px 0', borderTop: '1px solid var(--border-soft)' }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</span>
+              <span className="chip" style={{ fontSize: 10 }}>{t(`settings.connectors.status.${r.status}`)}</span>
+            </div>
+            <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: '3px 0 0', lineHeight: 1.6 }}>{r.note}</p>
+            {/* 연결 뒤에도 결재가 필요한 것을 미리 알린다 — 눌러 보고서야 알면 "왜 안 되지"가 된다. */}
+            {!!r.dangerous?.length && (
+              <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: '3px 0 0' }}>
+                {t('settings.connectors.approvalNote', { n: r.dangerous.length })}
+              </p>
+            )}
+            {r.error && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: '3px 0 0' }}>{r.error}</p>}
+          </div>
+          {r.status === 'connected' ? (
+            <button type="button" className="btn sm" disabled={busy === r.id} onClick={() => act(r.id, 'disconnect')}>
+              {busy === r.id ? <Spinner size={12} /> : t('settings.connectors.disconnect')}
+            </button>
+          ) : (
+            <button type="button" className="btn sm btn-primary" disabled={busy === r.id} onClick={() => act(r.id, 'connect')}>
+              {busy === r.id ? <Spinner size={12} /> : t(r.status === 'reauth' ? 'settings.connectors.reconnect' : 'settings.connectors.connect')}
+            </button>
+          )}
+        </div>
+      ))}
+      {waiting && <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0 }}>{t('settings.connectors.waiting')}</p>}
+      {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
+    </div>
+  );
+}
+
 function WorkRootsCard({ ws }) {
   const { t } = useLang();
   const [roots, setRoots] = useState(null);

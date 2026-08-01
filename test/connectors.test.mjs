@@ -110,7 +110,9 @@ test('access 만료 후 호출 — refresh 그랜트로 자동 갱신·재시도
   const before = (await rawStore()).servers[id].tokens.access_token;
 
   await new Promise((r) => setTimeout(r, 1_600)); // 만료 경과
-  const r2 = await callConnectorTool(WS, id, 'send_mail_demo', { to: 'demo@example.com', body: 'hi' });
+  // 조회 도구로 잰다 — send_mail_demo는 readOnlyHint=false라 이제 결재 게이트(US-5)에 걸린다.
+  // 여기서 잠그려는 것은 "만료가 사용자 실패로 새지 않는다"이지 결재 동작이 아니다.
+  const r2 = await callConnectorTool(WS, id, 'search_threads_demo', { query: 'b' });
   assert.equal(r2.ok, true, '만료가 사용자 실패로 새지 않는다(SDK 투명 갱신 — 스파이크 실증의 행동 잠금)');
   assert.ok(s.counters.refreshGrants >= 1, 'refresh 그랜트 사용됨');
   assert.notEqual((await rawStore()).servers[id].tokens.access_token, before, '갱신 토큰이 영속됨');

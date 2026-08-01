@@ -38,6 +38,19 @@ async function applyPayload(wsId, item) {
     const r = src === 'host' ? await importHostMcp(wsId, id) : await installMcp(wsId, id);
     return `설치 완료 — 도구 "${r?.name ?? id}"가 이 회사에 연결되었다. 다음 턴부터 사용할 수 있다.`;
   }
+  if (item.kind === 'connector') {
+    // 커넥터 쓰기 — **서버가 실행한다**. 크루에게 "이제 실행하라"고 돌려주면 같은 게이트를 다시 만나
+    // 결재가 무한히 쌓인다(게이트는 러너 무관 단일 지점이라 우회가 없다). approved 플래그로 한 번만 통과.
+    const { callConnectorTool } = await import('./connectors.mjs');
+    const { serverId, tool, args, lang } = p;
+    const r = await callConnectorTool(wsId, serverId, tool, args ?? {}, { lang: lang ?? 'ko', approved: true });
+    if (!r.ok) {
+      const detail = r.content?.[0]?.text ?? r.error ?? '';
+      return `실행 실패 — ${detail}`.slice(0, 300);
+    }
+    const text = (r.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text).join('\n').slice(0, 600);
+    return `실행 완료 — ${serverId}/${tool}${text ? `\n${text}` : ''}`;
+  }
   if (item.kind === 'hire') {
     const { createAgentFromPrompt, updateAgentMeta } = await import('./persona.mjs');
     const agent = await createAgentFromPrompt(wsId, p.brief, { name: p.name, team: p.team });
@@ -53,7 +66,7 @@ async function applyPayload(wsId, item) {
 
 async function followUp(wsId, item, approve) {
   let msg;
-  if ((item.kind === 'profile' || item.kind === 'hire' || item.kind === 'mcp') && approve) {
+  if ((item.kind === 'profile' || item.kind === 'hire' || item.kind === 'mcp' || item.kind === 'connector') && approve) {
     // 서버가 payload를 먼저 적용하고, 결과를 크루가 사용자에게 보고한다(크루 재실행 금지 — 이중 적용 방지)
     let outcome;
     try {
