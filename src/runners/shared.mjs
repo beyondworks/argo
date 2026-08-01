@@ -72,6 +72,44 @@ export function scrubServerSecrets(env = process.env, runner = null) {
   return out;
 }
 
+/** 러너 프로세스가 **크래시로 죽었는가**(순수) — 벤더 거절이나 우리 로직 오류와 구분한다.
+    실사용 신고 2026-08-02(Windows): "Claude Code process exited with code 3221225477".
+    3221225477 = 0xC0000005 = 접근 위반. 네트워크·자격·크레딧과 무관한 **프로세스 강제 종료**인데,
+    분류가 없어 "설정 → AI 연결을 확인하라"는 엉뚱한 안내로 나갔다. 사용자는 정상인 연결 화면을
+    아무리 봐도 답을 못 찾는다(402를 따로 갈라낸 것과 같은 이유로 이것도 갈라야 한다).
+
+    이 계열은 **재시도로 상당수 구제된다** — 크래시는 그 순간의 메모리·타이밍 상태에 좌우되고,
+    자격이 잘못된 게 아니라서 같은 러너로 다시 걸면 대개 붙는다. 그래서 인증 실패(다른 러너로 갈아탐)와
+    달리 **같은 러너 재시도**가 맞다. 벤더를 갈아타지 않으니 실과금 키로 넘어가는 문제도 없다.
+
+    Windows는 NTSTATUS를 부호 없는 10진수로 준다. Unix는 신호로 죽으면 128+signal(SIGSEGV=139,
+    SIGBUS=138, SIGABRT=134)이거나 SDK가 signal 이름을 그대로 싣는다. */
+const WIN_CRASH_CODES = new Set([
+  3221225477, // 0xC0000005 ACCESS_VIOLATION — 가장 흔하다(보안 프로그램 개입·네이티브 모듈 충돌)
+  3221225725, // 0xC00000FD STACK_OVERFLOW
+  3221226505, // 0xC0000409 STACK_BUFFER_OVERRUN
+  3221225781, // 0xC0000135 DLL_NOT_FOUND — 런타임 의존 누락
+  3221225786, // 0xC000013A CONTROL_C_EXIT
+  3221225794, // 0xC0000142 DLL_INIT_FAILED
+]);
+export function isProcessCrash(msg) {
+  const s = String(msg ?? '');
+  const m = /exited with code (\d+)/i.exec(s);
+  if (m && WIN_CRASH_CODES.has(Number(m[1]))) return true;
+  if (m && [134, 138, 139].includes(Number(m[1]))) return true; // Unix 128+signal
+  return /SIGSEGV|SIGBUS|SIGABRT|segmentation fault/i.test(s);
+}
+
+/** 크래시 실패의 사용자 안내(순수) — 이 계열에 "연결을 확인하라"고 하면 거짓 안내가 된다.
+    실사용 신고 2026-08-02: 크레딧도 남고 연결도 정상인 사용자가 그 안내를 받고
+    "러너 연결 정상인데 왜 계속 실패하죠?"라고 되물었다. 이미 우리가 재시도까지 해봤다는 사실과
+    연결·잔액 문제가 아니라는 사실을 그대로 말한다. */
+export function crashHint(lang = 'ko') {
+  return lang === 'en'
+    ? 'The AI program crashed on this computer — the OS terminated the process, Argo did not. This is not a connection or credit problem, and Argo already retried it. If it keeps happening, reinstalling the runner CLI usually fixes it; security software blocking the process is the other common cause.'
+    : 'AI 프로그램이 이 컴퓨터에서 비정상 종료됐습니다 — Argo가 아니라 운영체제가 프로세스를 강제 종료했습니다. 연결이나 크레딧 문제가 아니며, Argo가 이미 다시 시도해 봤습니다. 계속 반복되면 러너 CLI 재설치로 해결되는 경우가 많고, 보안 프로그램이 프로세스를 막는 것도 흔한 원인입니다.';
+}
+
 /** 키 형태 마스킹(방어심층) — 에러·로그에 실릴 문자열에서 벤더 키 패턴을 가린다.
     chat.mjs SDK 실패 경로와 아래 apiError(외부 CLI 실패 경로)가 공유 — 한쪽만 마스킹하면
     CLI stderr의 키 조각이 동기화되는 이벤트 로그(events.jsonl)에 영속된다(감사 2026-07-20). */

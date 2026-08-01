@@ -3,7 +3,7 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
-import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, excludeWith, externalExec, isCliRunner, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, excludeWith, externalExec, isCliRunner, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -14,7 +14,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   // 아래 AbortController가 같은 값을 쓴다. 러너에 따라 상한이 갈리면 같은 작업이 codex로 뽑히면
   // 잘리고 claude로 뽑히면 안 잘린다 — 이 파일의 존재 이유(러너 독립)와 정면 충돌한다.
   // 오래 걸리는 배치(기억 정리)는 호출자가 명시로 늘린다.
-  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, __exclude = null } = opts;
+  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, __exclude = null, __crashRetry = false } = opts;
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — 조용한 호스트 스캐빈징 금지(검수 MEDIUM, chat.mjs와 동일)
   // want=null(무선호) — 이 경로는 러너 독립이 명세라 claude 선호를 가장하지 않는다(선택 순서는 동일)
   const resolved = await resolveRunner(wsId, null, { exclude: __exclude })
@@ -96,11 +96,19 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         ? 'OpenRouter rate limit reached (free models: 20/min, and 50/day until $10+ in lifetime credits). Wait a moment and try again, or switch to a paid model.'
         : 'OpenRouter 요청 한도에 걸렸습니다(무료 모델은 분당 20회, 누적 구매 $10 미만이면 하루 50회). 잠시 후 다시 시도하거나 유료 모델로 바꿔 주세요.'), { cause: e });
     }
+    // 러너 프로세스가 크래시로 죽었으면 **같은 러너로 1회 먼저** 다시 건다. 크래시는 자격·크레딧이
+    // 아니라 그 순간 프로세스가 죽은 것이라 대개 다시 걸면 붙는다. 아래 러너 교체보다 앞에 둔다 —
+    // 첫 크래시에 바로 벤더를 갈아타면 사용자가 고른 엔진이 조용히 바뀌고 과금처도 달라진다.
+    if (!__crashRetry && isProcessCrash(e?.message)) {
+      console.warn(`[argo] 원샷 ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId})`);
+      return runOneShot(wsId, prompt, { ...opts, __crashRetry: true });
+    }
     // 자가 치유 — 죽은 러너를 **누적 제외**하고 남은 가용 러너를 차례로 시도한다. 재귀는 제외 목록이
     // 매번 1개씩 늘어 러너 수(≤7)로 자연 종료된다. (이전: 1회 제한 — 4러너 연결 상태에서 앞의 둘이
     // 고장나자 멀쩡한 나머지 둘은 시도도 못 받고 영입이 통째로 실패했다. 라이브 재현 2026-07-30.
     // "한 벤더가 죽으면 회사가 선다"는 러너 중립성 원칙 위반이다.)
     // want=null — 선호를 두지 않는다(이전 'claude'는 같은 파일 상단 주석과 모순된 표류였다).
+    // (__crashRetry는 ...opts로 이월된다 — 크래시 재시도는 이 체인 전체에서 1회다.)
     {
       const tried = excludeWith(__exclude, runner);
       const alt = await resolveRunner(wsId, null, { exclude: tried }).catch(() => null);
@@ -115,6 +123,14 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       throw Object.assign(new Error(lang === 'en'
         ? 'OpenRouter credit balance is too low. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.'
         : 'OpenRouter 크레딧 잔액이 부족합니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.'), { cause: e });
+    }
+    // 크래시는 "연결을 확인하라"가 **거짓 안내**다. 실사용 신고 2026-08-02: 크레딧도 남아 있고 연결도
+    // 정상인 사용자가 이 문구를 받고 "러너 연결 정상인데 왜 계속 실패하죠?"라고 되물었다. 우리가 이미
+    // 재시도·러너 교체까지 해봤다는 사실과, 이게 연결·잔액 문제가 아니라는 사실을 그대로 말한다.
+    if (isProcessCrash(e?.message)) {
+      throw Object.assign(new Error(lang === 'en'
+        ? `The AI program crashed on this computer (it was terminated by the OS, not by Argo). This is not a connection or credit problem — Argo already retried and tried other connected runners. If it keeps happening, reinstalling the runner CLI usually fixes it; security software blocking the process is the other common cause. (${String(e.message).slice(0, 120)})`
+        : `AI 프로그램이 이 컴퓨터에서 비정상 종료됐습니다(Argo가 아니라 운영체제가 프로세스를 강제 종료했습니다). 연결이나 크레딧 문제가 아닙니다 — Argo가 이미 다시 시도했고, 연결된 다른 러너로도 넘겨봤습니다. 계속 반복되면 러너 CLI 재설치로 해결되는 경우가 많고, 보안 프로그램이 프로세스를 막는 것도 흔한 원인입니다. (${String(e.message).slice(0, 120)})`), { cause: e });
     }
     throw Object.assign(new Error(lang === 'en'
       ? `AI call failed — check the runner connection in Settings → AI connections. (${String(e.message).slice(0, 120)})`

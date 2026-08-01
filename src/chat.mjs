@@ -23,7 +23,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { excludeWith, externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { crashHint, excludeWith, externalExec, isProcessCrash, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -771,7 +771,7 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko') {
  *   이미지는 SDK content 블록으로 크루가 직접 보고, 그 외 파일은 경로를 알려 Read로 열게 한다.
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
-export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null } = {}) {
+export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false } = {}) {
   const p = paths(wsId);
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지)
   const { budgetUsd, lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
@@ -1023,6 +1023,16 @@ ${lang === 'en'
       // !tried.includes 사전 확인이 종료를 보장한다). 발동 조건은 AUTH_ERR_RE 한정을 유지한다: 아무 실패로
       // 벤더를 갈아타면 사용자 고지 없이 실과금 키로 넘어간다(oneshot과 다른 이 경로의 계약).
       // 외부 CLI엔 세션 개념이 없어 스레드 맥락은 유지된다.
+      // 프로세스 크래시 — **같은 러너로 1회** 다시 건다. 자격이 잘못된 게 아니라 그 순간 프로세스가
+      // 죽은 것이라(Windows 0xC0000005 등) 대개 다시 걸면 붙는다. 벤더는 갈아타지 않는다 — 이 파일의
+      // 교체 정책은 인증 실패 한정이고(아무 실패로 갈아타면 사용자 고지 없이 실과금 키로 넘어간다),
+      // 크래시는 그 러너의 자격이 아니라 이 PC의 실행 환경 문제라 다른 벤더로 옮길 이유도 없다.
+      if (!aborted && !__crashRetry && isProcessCrash(e?.message || e)) {
+        console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
+        try {
+          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
+        } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
+      }
       if (!aborted && AUTH_ERR_RE.test(String(e.message || e))) {
         const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
         if (alt?.available && !tried.includes(alt.runner)) {
@@ -1037,6 +1047,8 @@ ${lang === 'en'
           }
         }
       }
+      // 크래시 원문("...exited with code 3221225477")만으론 사용자가 아무것도 할 수 없다 — 무엇이 일어났고 무엇이 아닌지를 앞에 붙인다
+      if (!aborted && isProcessCrash(e?.message || e)) e = Object.assign(new Error(`${crashHint(lang)} (${String(e.message || e).slice(0, 120)})`), { cause: e });
       if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
       await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400) });
@@ -1316,6 +1328,14 @@ ${lang === 'en'
     // 누적 제외**하고 남은 가용 러너를 차례로 시도한다. 러너가 바뀌면 세션 resume이 무의미하므로 새 세션 +
     // 최근 대화 접붙임(__freshRetry)으로 맥락을 잇는다. 발동은 AUTH_ERR_RE 한정 유지(CLI 갈래와 같은 계약).
     // retriedDown 제외 — fresh-retry 프레임이 이미 자기 자가 치유를 소진했으므로 여기서 또 돌리면 중복.
+    // 프로세스 크래시 — CLI 갈래와 같은 계약(같은 러너 1회, 벤더 교체 없음). 신고된 경로가 여기다:
+    // "Claude Code process exited with code 3221225477"(2026-08-02, Windows).
+    if (!aborted && !retriedDown && !__crashRetry && isProcessCrash(e?.message || e)) {
+      console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
+      try {
+        return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
+      } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
+    }
     if (!aborted && !retriedDown && AUTH_ERR_RE.test(String(e.message || e))) {
       const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
       if (alt?.available && !tried.includes(alt.runner)) {
@@ -1327,6 +1347,8 @@ ${lang === 'en'
         }
       }
     }
+    // 크래시 원문("...exited with code 3221225477")만으론 사용자가 아무것도 할 수 없다 — 무엇이 일어났고 무엇이 아닌지를 앞에 붙인다
+    if (!aborted && isProcessCrash(e?.message || e)) e = Object.assign(new Error(`${crashHint(lang)} (${String(e.message || e).slice(0, 120)})`), { cause: e });
     if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
     // 실패도 회사의 사건이다 — 활동 화면의 "오류" 필터가 이 기록을 먹는다
     await appendEvent(wsId, {
