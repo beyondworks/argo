@@ -270,6 +270,11 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
     Argo 규율대로 행동). (export: 회귀 테스트용) */
 export function commonDirectives({ caps = {}, connectedMcp = [], hasTools = true, lang = 'ko', runner = null, workRoots = [] } = {}) {
   const mcpList = connectedMcp.length ? connectedMcp.join(', ') : (lang === 'en' ? '(none)' : '(없음)');
+  const mcpGuide = hasTools
+    ? (lang === 'en' ? 'When the work calls for one, use it right away — don\'t ask permission to use what\'s already connected.' : '작업에 필요하면 허락을 기다리지 말고 바로 사용하라 — 그러라고 연결해 둔 것이다.')
+    : runner === 'codex'
+      ? (lang === 'en' ? 'These MCP servers are available directly in this Codex turn; use them when the work calls for one.' : '이 MCP 서버들은 현재 Codex 턴에 직접 연결되어 있다 — 작업에 필요하면 바로 사용하라.')
+      : (lang === 'en' ? 'These run on Claude/GLM/Kimi (SDK) turns — if you can\'t use them on this runner, say so and offer an alternative.' : '이 도구들은 Claude·GLM·Kimi(SDK) 러너 턴에서 실행된다 — 지금 러너에서 쓸 수 없으면 그 사실을 밝히고 대안을 제시하라.');
   if (lang === 'en') {
     // 한국어 경로와 대칭(다국어 상시 규칙) — 신고 2026-07-26: 크루가 "스킬·도구에서 추가하라"고 잘못 안내했다.
     const offGuide = hasTools
@@ -288,7 +293,7 @@ ${caps.bypass ? '- Auto-approve for preparation work: ON — tool installs and c
 
 ## Tools & skills — use them proactively
 - Company skills (skills/*.md) are auto-injected into your instructions every turn — apply them to matching work immediately.
-- External tools (MCP) connected to this company: ${mcpList}. ${hasTools ? 'When the work calls for one, use it right away — don\'t ask permission to use what\'s already connected.' : 'These run on Claude/GLM/Kimi (SDK) turns — if you can\'t use them on this runner, say so and offer an alternative.'}
+- External tools (MCP) connected to this company: ${mcpList}. ${mcpGuide}
 - If a needed tool is missing: ${hasTools ? 'an MCP already installed on this computer can be pulled in via request_tool_install (source=host, env included), otherwise request one from the catalog (source=catalog) — once approved it installs automatically and is available from the next turn.' : 'guide the captain precisely to connect it in the "Skills·Tools" screen.'}
 
 ## Protected zones — never touch, no exceptions
@@ -322,7 +327,7 @@ ${caps.bypass ? '- 준비 작업 자동 승인: 켜짐 — 도구 설치·능력
 
 ## 도구·스킬 — 필요하면 알아서 불러 써라
 - 회사 스킬(skills/*.md)은 매 턴 네 지침에 자동 주입된다 — 해당 유형 작업이면 즉시 적용하라.
-- 이 회사에 연결된 외부 도구(MCP): ${mcpList}. ${hasTools ? '작업에 필요하면 허락을 기다리지 말고 바로 사용하라 — 그러라고 연결해 둔 것이다.' : '이 도구들은 Claude·GLM·Kimi(SDK) 러너 턴에서 실행된다 — 지금 러너에서 쓸 수 없으면 그 사실을 밝히고 대안을 제시하라.'}
+- 이 회사에 연결된 외부 도구(MCP): ${mcpList}. ${mcpGuide}
 - 필요한 도구가 회사에 없으면: ${hasTools ? '이 컴퓨터에 이미 설치된 MCP는 request_tool_install(source=host — env까지 그대로)로, 그 외에는 카탈로그(source=catalog)로 설치를 결재 요청하라 — 승인되면 자동 설치되어 다음 턴부터 쓸 수 있다.' : '사장에게 "스킬·도구" 화면에서 연결해 달라고 정확히 안내하라.'}
 
 ## 보호 구역 — 예외 없이 금지
@@ -730,8 +735,10 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // Codex의 크루 전용 도구는 별도 stdio MCP와 codexCrewPrompt로 붙인다.
       const cliCaps = await loadCapabilities(wsId);
       const cliWorkRoots = await loadActiveWorkRoots(wsId); // 사장 지정 외부 작업 폴더 — codex 샌드박스·프롬프트 안내에 주입
-      const cliMcp = Object.keys(safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {}))
-        .filter((n) => !mcpScope || mcpScope.includes(n)); // 크루별 MCP 범위(안내문도 동일 기준)
+      const cliMcpServers = safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {});
+      const scopedCliMcpServers = Object.fromEntries(Object.entries(cliMcpServers)
+        .filter(([n]) => !mcpScope || mcpScope.includes(n))); // 크루별 MCP 범위(안내문도 동일 기준)
+      const cliMcp = Object.keys(scopedCliMcpServers);
       const crewContext = runner === 'codex' && colleagues.length ? {
         wsId,
         fromSlug: agentSlug,
@@ -768,13 +775,13 @@ ${lang === 'en'
       let usedModel = effModel;
       let reply;
       try {
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', crewContext });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', crewContext, mcpServers: runner === 'codex' ? scopedCliMcpServers : {} });
       } catch (e) {
         const gated = !!(effModel && RUNNERS[runner]?.models.find((m) => m.id === effModel)?.gated);
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', crewContext });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', crewContext, mcpServers: runner === 'codex' ? scopedCliMcpServers : {} });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`

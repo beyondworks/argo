@@ -98,6 +98,7 @@ export async function externalExec({
   workRoots = [],
   kind = 'chat',
   crewContext = null,
+  mcpServers = {},
 }) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   const t0 = Date.now(); // 실패의 정직 번역용 — cliTurnFailure가 경과 시간으로 시간 초과를 판정한다
@@ -116,7 +117,7 @@ export async function externalExec({
     // 자격 반입(심링크 → 복사 폴백) + 턴 뒤 갱신 토큰 회수. 계약은 importCodexAuth/recoverCodexAuth의
     // 주석과 test/codex-auth-import.test.mjs가 잠근다(신규 설치 401의 근본 원인이었던 자리).
     const auth = await importCodexAuth(baseHome, CODEX_HOME);
-    await writeCodexTurnConfig(CODEX_HOME, caps, workRoots, { crewContext }); // 샌드박스 + Argo crew MCP + 호스트 Orca 스킬 격리
+    await writeCodexTurnConfig(CODEX_HOME, caps, workRoots, { crewContext, mcpServers }); // 샌드박스 + 회사 MCP + Argo crew MCP
     const cmd = await codexCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     try {
       await exec(cmd.file, [

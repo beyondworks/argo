@@ -190,7 +190,7 @@ export async function writeCodexTurnConfig(
   home,
   caps,
   workRoots = [],
-  { crewContext = null, disabledSkillPaths = null } = {},
+  { crewContext = null, disabledSkillPaths = null, mcpServers = {} } = {},
 ) {
   const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)·지정 작업 폴더에서 재생성됩니다.'];
   // fs=홈(앱 본체는 밖) + 사장이 지정한 외부 작업 폴더(fs와 독립 — codexSandboxArgs와 동일 규칙)
@@ -204,6 +204,20 @@ export async function writeCodexTurnConfig(
   const disabled = disabledSkillPaths ?? await incompatibleHostSkillPaths();
   for (const path of disabled) {
     lines.push('', '[[skills.config]]', `path = ${tomlString(path)}`, 'enabled = false');
+  }
+  // 회사별 외부 MCP도 Codex CLI 턴에 전달한다. 값은 이미 safeMcpServersForRuntime와
+  // 크루 범위 필터를 통과한 정의만 들어오며, env/headers는 설정에 복사하지 않는다.
+  for (const [name, server] of Object.entries(mcpServers ?? {})) {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(name) || !server || typeof server !== 'object') continue;
+    const section = `[mcp_servers.${name}]`;
+    lines.push('', section);
+    if (server.command) {
+      lines.push(`command = ${tomlString(server.command)}`);
+      lines.push(`args = ${tomlStringArray(Array.isArray(server.args) ? server.args : [])}`);
+    } else if (server.url) {
+      lines.push(`url = ${tomlString(server.url)}`);
+    } else continue;
+    lines.push('enabled = true');
   }
   if (crewContext) {
     const encoded = encodeCrewContext(crewContext);

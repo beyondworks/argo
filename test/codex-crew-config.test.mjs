@@ -47,6 +47,20 @@ test('Codex 턴 config에 Argo crew MCP와 호스트 Orca 스킬 차단을 함�
   assert.equal(decodeCrewContext(encoded).colleagues[0].slug, 'sw-cto');
 });
 
+test('Codex 턴 config에 회사 외부 MCP 정의를 전달한다', async () => {
+  const home = join(root, 'turn-home-external');
+  await import('node:fs/promises').then(({ mkdir }) => mkdir(home, { recursive: true }));
+  await writeCodexTurnConfig(home, { fs: false, browser: false }, [], {
+    mcpServers: {
+      'chrome-devtools-mcp': { command: 'npx', args: ['-y', 'chrome-devtools-mcp', '--autoConnect'], env: { SECRET: 'must-not-copy' } },
+    },
+  });
+  const config = await readFile(join(home, 'config.toml'), 'utf8');
+  assert.match(config, /\[mcp_servers\.chrome-devtools-mcp\]/);
+  assert.match(config, /args = \["-y", "chrome-devtools-mcp", "--autoConnect"\]/);
+  assert.doesNotMatch(config, /SECRET|must-not-copy/);
+});
+
 test('Codex 프롬프트는 Argo 동료 조율에서 Orca 대체 실행을 명시적으로 금지한다', () => {
   const prompt = codexArgoCrewPrompt([{ slug: 'sw-cto', name: 'SW CTO' }], 'ko');
   assert.match(prompt, /Argo 내부 `delegate`와 `send_to_crew`/);
