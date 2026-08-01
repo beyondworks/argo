@@ -141,7 +141,13 @@ function makeRenderer(canvas, graph, sim, opts) {
     let y = p.y * cx - z * sx;
     z = p.y * sx + z * cx;
     const f = 460;
-    const k = f / (f + z + 260);
+    // 근평면 클립 — 카메라 뒤로 넘어간 점(f + z + 260 <= 0)은 k가 **음수**가 되고, 그 k가 노드 반지름에
+    // 그대로 곱해져 ctx.arc가 "radius is negative"로 **예외를 던진다**. 예외는 rAF 콜백을 뚫고 나가
+    // 루프 재등록을 막으므로 그래프가 첫 프레임에 죽어 영구히 빈 화면이 된다(실사용 신고 2026-08-02:
+    // 옵시디언 볼트 임포트 후 별자리·기억 그래프 소실 — 노드가 늘자 구름 반경이 카메라 거리를 넘었다).
+    // 규모가 아니라 **투영에 근평면이 없던 것**이 원인이라, 노드 수를 줄이는 대책은 재발을 못 막는다.
+    const den = f + z + 260;
+    const k = den > 1 ? f / den : 0;   // k === 0 = 화면 밖(뒤) — 그리는 쪽이 건너뛴다
     const base = (Math.min(W, H) / 320) * view.zoom;
     return { x: W / 2 + x * k * base * 1.5, y: H / 2 + y * k * base * 1.5, k, z };
   };
@@ -153,34 +159,70 @@ function makeRenderer(canvas, graph, sim, opts) {
     const P = sim.pts.map(project);
 
     // 엣지 — 깊이 페이드, 호버 시 연결 추적 하이라이트
+    // 깊이 구간별로 **한 경로에 모아 한 번만** 긋는다. 선마다 stroke()를 부르면 호출 수가 엣지 수에
+    // 정비례해(임포트 후 실측 6412개) 프레임이 통째로 잡아먹힌다 — 알파·굵기는 어차피 깊이의 함수라
+    // 구간으로 묶어도 눈에 띄는 차이가 없다. 호버 강조선만 따로 모은다.
+    const lanes = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
+    const hiLane = new Path2D();
     for (const [i, j] of graph.edges) {
       const a = P[i], b = P[j];
-      const k = (a.k + b.k) / 2;
+      if (a.k <= 0 || b.k <= 0) continue;   // 한쪽이 카메라 뒤면 선이 화면을 가로질러 튄다
       const hi = hover !== null && (i === hover || j === hover);
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.strokeStyle = `rgba(${INK}, ${hi ? 0.85 : 0.1 + 0.3 * k * k})`;
-      ctx.lineWidth = hi ? 1.6 : 0.8 + 0.5 * k;
-      ctx.stroke();
+      const lane = hi ? hiLane : lanes[Math.max(0, Math.min(3, Math.floor(((a.k + b.k) / 2) * 4)))];
+      lane.moveTo(a.x, a.y);
+      lane.lineTo(b.x, b.y);
+    }
+    lanes.forEach((lane, li) => {
+      const k = (li + 0.5) / 4;
+      ctx.strokeStyle = `rgba(${INK}, ${0.1 + 0.3 * k * k})`;
+      ctx.lineWidth = 0.8 + 0.5 * k;
+      ctx.stroke(lane);
+    });
+    if (hover !== null) {
+      ctx.strokeStyle = `rgba(${INK}, 0.85)`;
+      ctx.lineWidth = 1.6;
+      ctx.stroke(hiLane);
     }
 
-    // 노드 — 뒤에서 앞 순서로 (깊이 정렬), 할로 글로우 + 코어
+    // 노드 — 뒤에서 앞 순서로 (깊이 정렬), 할로 글로우 + 코어.
+    // 색은 노드마다 다른 게 아니라 **깊이의 함수**라, 깊이 구간(4단)으로 묶어 구간마다 한 번만 칠한다.
+    // 노드마다 fillStyle에 rgba 문자열을 넣으면 캔버스가 매번 색을 파싱한다 — 임포트 후 1818노드에서
+    // 프레임당 5천 번을 넘겼고, 그게 캔버스 호출 자체(약 8ms)보다 훨씬 큰 비용이었다(실측). 구간 안에서
+    // 앞뒤 순서가 섞이지만, 애초에 알파가 같은 점들이라 눈에 보이지 않는다.
     const order = P.map((q, i) => [q.z, i]).sort((a, b) => b[0] - a[0]);
+    const B = 4;
+    const halo = [], glow = [], coreNote = [], coreDot = [];
+    for (let b = 0; b < B; b++) { halo.push(new Path2D()); glow.push(new Path2D()); coreNote.push(new Path2D()); coreDot.push(new Path2D()); }
+    const singles = []; // 회사 노드·호버 노드·라벨 다는 노드는 개별 처리(수가 적다)
+    const ring = (path, q, rad) => { path.moveTo(q.x + rad, q.y); path.arc(q.x, q.y, rad, 0, Math.PI * 2); };
     for (const [, i] of order) {
       const n = graph.nodes[i];
       const q = P[i];
+      if (q.k <= 0) continue;               // 카메라 뒤 — 반지름이 음수가 되는 바로 그 점들
       const r = (R_BY_TYPE[n.type] + Math.min(n.deg, 6) * 0.35) * q.k * (opts.mini ? 0.8 : 1) * Math.min(view.zoom, 1.4);
       const hi = hover === i;
+      const labeled = (!opts.mini || hi) && (n.type === 'company' || n.type === 'team' || n.type === 'agent' || hi);
+      if (hi || n.type === 'company' || labeled) { singles.push([i, n, q, r, hi, labeled]); continue; }
+      const b = Math.max(0, Math.min(B - 1, Math.floor(q.k * B)));
+      ring(halo[b], q, r * 3);
+      ring(glow[b], q, r * 1.8);
+      ring(n.type === 'note' ? coreNote[b] : coreDot[b], q, r);
+    }
+    for (let b = 0; b < B; b++) {
+      const k = (b + 0.5) / B;
+      ctx.fillStyle = `rgba(${ACCENT}, ${0.06 * k})`; ctx.fill(halo[b]);
+      ctx.fillStyle = `rgba(${ACCENT}, ${0.12 * k})`; ctx.fill(glow[b]);
+      ctx.fillStyle = `rgba(${PAPER}, 0.95)`; ctx.fill(coreNote[b]);
+      ctx.strokeStyle = `rgba(${ACCENT}, ${0.3 + 0.7 * k})`; ctx.lineWidth = 1.4; ctx.stroke(coreNote[b]);
+      ctx.fillStyle = `rgba(${ACCENT}, ${0.3 + 0.7 * k})`; ctx.fill(coreDot[b]);
+    }
+    // 개별 노드 — 원본 그리기 그대로(수가 적어 묶을 이유가 없다)
+    for (const [, n, q, r, hi, labeled] of singles) {
       const alpha = 0.3 + 0.7 * q.k;
-
-      // 액센트 할로 (레퍼런스의 글로우를 테마 액센트 톤으로)
       ctx.beginPath(); ctx.arc(q.x, q.y, r * 3, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(${ACCENT}, ${(hi ? 0.16 : 0.06) * q.k})`; ctx.fill();
       ctx.beginPath(); ctx.arc(q.x, q.y, r * 1.8, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(${ACCENT}, ${(hi ? 0.28 : 0.12) * q.k})`; ctx.fill();
-
-      // 코어
       ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, Math.PI * 2);
       if (n.type === 'note') {
         ctx.fillStyle = `rgba(${PAPER}, 0.95)`; ctx.fill();
@@ -196,9 +238,7 @@ function makeRenderer(canvas, graph, sim, opts) {
         ctx.beginPath(); ctx.arc(q.x, q.y, r + 6, 0, Math.PI * 2);
         ctx.strokeStyle = `rgba(${ACCENT}, 0.6)`; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
       }
-
-      // 라벨 — 회사·크루는 항상, 기억은 호버 시 (미니는 호버된 노드만 — 픽킹 피드백)
-      if ((!opts.mini || hi) && (n.type === 'company' || n.type === 'team' || n.type === 'agent' || hi)) {
+      if (labeled) {
         const t = n.label.length > 24 ? `${n.label.slice(0, 24)}…` : n.label;
         ctx.font = `${hi || n.type === 'company' ? 600 : 400} ${n.type === 'company' ? 11.5 : 10.5}px "IBM Plex Mono", monospace`;
         ctx.textAlign = 'center';
@@ -235,6 +275,7 @@ export function Constellation3D({ company, agents, docs, delegations, height = 2
     const pick = (sx, sy) => {
       let best = null, bd = 14;
       P.forEach((q, i) => {
+        if (q.k <= 0) return;   // 화면에 없는 점(카메라 뒤)은 못 고른다 — k=0이면 좌표가 화면 중앙으로 모인다
         const d = Math.hypot(q.x - sx, q.y - sy);
         if (d < bd) { bd = d; best = i; }
       });
@@ -265,8 +306,12 @@ export function Constellation3D({ company, agents, docs, delegations, height = 2
     canvas.addEventListener('click', onClick);
 
     let raf;
+    let settle = 0;   // 워밍업(120) 이후 마무리 틱 수
     const frame = () => {
-      sim.tick();
+      // 배치가 잡히면 시뮬레이션을 멈춘다 — 포스 레이아웃은 수렴하는데 계속 돌리면 그 뒤로는
+      // 같은 그림을 다시 계산하느라 CPU만 쓴다(노드 수의 제곱에 비례). 회전은 계속되므로 화면은 살아 있다.
+      // createSim이 이미 120틱을 워밍업했으므로 여기서는 마무리 60틱이면 충분하다.
+      if (settle < 60) { sim.tick(); settle++; }
       speed += (targetSpeed - speed) * 0.05;
       r.view.rotY += speed;
       r.view.rotX += (targetTilt - r.view.rotX) * 0.05;
@@ -348,6 +393,7 @@ export function GraphModal({ ws, company, agents, docs, projects, delegations, o
     const pick = (sx, sy) => {
       let best = null, bd = 16;
       P.forEach((q, i) => {
+        if (q.k <= 0) return;   // 화면에 없는 점(카메라 뒤)은 못 고른다 — k=0이면 좌표가 화면 중앙으로 모인다
         const d = Math.hypot(q.x - sx, q.y - sy);
         if (d < bd) { bd = d; best = i; }
       });
@@ -395,8 +441,12 @@ export function GraphModal({ ws, company, agents, docs, projects, delegations, o
     canvas.addEventListener('wheel', wheel, { passive: false });
 
     let raf;
+    let settle = 0;   // 워밍업(120) 이후 마무리 틱 수
     const frame = (t) => {
-      sim.tick();
+      // 배치가 잡히면 시뮬레이션을 멈춘다 — 포스 레이아웃은 수렴하는데 계속 돌리면 그 뒤로는
+      // 같은 그림을 다시 계산하느라 CPU만 쓴다(노드 수의 제곱에 비례). 회전은 계속되므로 화면은 살아 있다.
+      // createSim이 이미 120틱을 워밍업했으므로 여기서는 마무리 60틱이면 충분하다.
+      if (settle < 60) { sim.tick(); settle++; }
       if (!dragging && t - idleAt > 2600) r.view.rotY += 0.0022; // 유휴 시 자동 회전
       P = r.draw(hover);
       raf = requestAnimationFrame(frame);
