@@ -1,7 +1,7 @@
 import { relative } from 'node:path';
 import { chat } from '../../../../../src/chat.mjs';
 import { paths } from '../../../../../src/workspace.mjs';
-import { loadThread, appendTurn, resetThread } from '../../../../../src/thread.mjs';
+import { loadThread, appendTurn, beginTurn, resetThread } from '../../../../../src/thread.mjs';
 import { getTurnStatus } from '../../../../../src/turn-status.mjs';
 import { nudgeSync } from '../../../../../src/sync.mjs';
 import { guardCompany } from '../../../../auth.mjs';
@@ -31,6 +31,11 @@ export async function POST(req, { params }) {
       .filter((a) => typeof a?.rel === 'string' && a.rel.startsWith('files/') && !a.rel.includes('..'))
       .map((a) => ({ rel: a.rel, name: String(a.name ?? ''), mime: String(a.mime ?? ''), isImage: !!a.isImage }))
       .slice(0, 8);
+    // 지시를 **먼저** 저장한다 — 답변을 기다리는 동안 새로고침하거나 페이지를 벗어나도 내가 쓴 글이
+    // 그대로 남아 있어야 한다(신고 2026-08-02). 저장 실패는 턴을 막지 않는다(대화가 우선).
+    const turnId = await beginTurn(ws, slug, { userMsg: message.trim(), attachments })
+      .catch((err) => { console.error(`[argo] 지시 선저장 실패(${ws}/${slug}):`, err?.message ?? err); return null; });
+    if (turnId) nudgeSync(); // 다른 기기에도 곧바로 보이게
     let t;
     try {
       t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
@@ -45,7 +50,7 @@ export async function POST(req, { params }) {
       // 저장 성공 여부(saved)를 응답에 싣는다 — 클라 낙관 사본은 saved=false일 때만 폴링 병합에서
       // 캐리오버한다. 안 실으면 서버 보존분과 사본이 라운드마다 복제 누적된다(분리 검수 HIGH 시뮬레이션).
       // 기록 실패는 무증상으로 삼키지 않는다(scheduler·routines와 같은 규칙 — 검수 LOW).
-      const saved = await appendTurn(ws, slug, { userMsg: message.trim(), failed, aborted, attachments })
+      const saved = await appendTurn(ws, slug, { turnId, userMsg: message.trim(), failed, aborted, attachments })
         .then(() => true)
         .catch((err) => { console.error(`[argo] 실패 턴 기록 실패(${ws}/${slug}):`, err?.message ?? err); return false; });
       if (saved) nudgeSync();
@@ -53,7 +58,7 @@ export async function POST(req, { params }) {
     }
     // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
-    await appendTurn(ws, slug, { userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts });
+    await appendTurn(ws, slug, { turnId, userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts });
     nudgeSync(); // 로컬 변경 즉시 다른 기기로 전파(준실시간 — 다음 대기 건너뜀)
     return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts });
   } catch (e) {

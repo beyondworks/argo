@@ -10,6 +10,8 @@ export const THEMES = [
   'tokyo-night', 'nord', 'everforest', 'dracula', 'monokai', 'rose-pine',
   // VS Code 임포트 (마켓플레이스 팔레트 정밀 이식)
   'codex-gh-light', 'codex-gh-dark', 'enjoyer', 'minimal-light', 'minimal-dark',
+  // 중성 회색(유건 지정 2026-08-01). 'graphite'는 **시스템 자동** — argo와 같은 방식으로 다크/라이트를 따라간다.
+  'graphite', 'graphite-light', 'graphite-dark',
 ]; // 첫 항목이 기본값
 const KEY = 'argo-theme';
 

@@ -26,7 +26,7 @@ export const agyDirArgs = (caps, workRoots = []) => openRoots(caps, workRoots).f
 
 
 // ── 분리 모듈 re-export — 기존 임포터·테스트가 쓰는 이름 전부(62개 표면의 나머지 57개) ──
-export { isServerSecretKey, scrubServerSecrets, maskKeyLike, homeEnv } from './runners/shared.mjs';
+export { isServerSecretKey, scrubServerSecrets, maskKeyLike, homeEnv, isProcessCrash, crashHint } from './runners/shared.mjs';
 export {
   RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner,
   GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL,

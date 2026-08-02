@@ -73,14 +73,23 @@ export function apiError(e, runner = null) {
   return new Error(maskKeyLike(m ? m[1] : `러너 실행 실패 (exit ${e.code ?? '?'}): ${String(e.stderr ?? e.message).replace(/\s+/g, ' ').slice(-160)}`));
 }
 
-/** 설치·인증 감지 — 각 CLI의 로그인 산출물(OAuth 크리덴셜 파일)을 본다. 60초 캐시.
+/** 설치·인증 감지 — 각 CLI의 로그인 산출물(OAuth 크리덴셜 파일)을 본다.
     force=true는 캐시 우회 — host 옵트인 클릭처럼 "지금 이 순간"의 로그인 검증이 목적인 경로용
     (감사 2026-07-20: 방금 `codex login`을 마친 사용자가 페이지 로드 때 예열된 authed:false 캐시에
-    최대 60초간 오거절되던 함정 — 신선도가 정확성보다 싼 캐시를 검증 경로에 쓰면 안 된다). */
+    최대 60초간 오거절되던 함정 — 신선도가 정확성보다 싼 캐시를 검증 경로에 쓰면 안 된다).
+
+    **캐시 수명이 체감 성능을 지배한다**(실사용 신고 2026-08-01 "앱이 한 박자 느리다", 실측):
+    이 함수는 CLI 4종을 **프로세스로 띄워** 버전을 묻는다 — 콜드 2.7초. 러너가 하나도 연결돼 있지
+    않으면 매번 4개를 전부 헛탐색해 그 값이 최악으로 나온다. 그런데 화면은 이걸 **페이지마다**
+    부르고(데크 2회·설정·회사목록은 회사 수만큼), `argo:refresh`가 뜰 때마다 또 부른다. 60초짜리
+    캐시로는 페이지를 옮겨 다니는 내내 2.7초 블로킹이 반복된다.
+    10분으로 늘린다. CLI 설치·로그인 상태는 분 단위로 바뀌지 않고, **바뀌는 그 순간에는 이미
+    force 경로가 있다**(host 옵트인·연결 버튼). 즉 신선도가 필요한 자리는 캐시를 안 본다. */
+const DETECT_CACHE_MS = 10 * 60_000;
 let cache = null;
 let cacheAt = 0;
 export async function detectRunners(force = false) {
-  if (!force && cache && Date.now() - cacheAt < 60_000) return cache;
+  if (!force && cache && Date.now() - cacheAt < DETECT_CACHE_MS) return cache;
   await ensureCliPath(); // GUI 기동 PATH 보강 — homebrew/npm 전역 CLI 오탐 방지
   const home = homedir();
   const [codexV, codexManaged, geminiV, geminiManaged, agyV, agyLocalBin, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([

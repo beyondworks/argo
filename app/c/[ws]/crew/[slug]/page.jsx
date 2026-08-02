@@ -169,7 +169,13 @@ function ArtifactChips({ ws, rels }) {
 }
 
 export default function CrewChat({ params }) {
-  const { ws, slug } = use(params);
+  const { ws, slug: slugParam } = use(params);
+  // 경로 조각은 **디코딩되지 않은 채** 온다(한글 이름 크루면 '%ED%81%B4…'). 예전엔 이 값을 그대로
+  // 목록과 대조해서(a.slug === slug) 영영 못 찾았고, 이름 자리에 퍼센트 문자열이 나왔다 — 해고 확인창이
+  // 그 문자열을 그대로 요구해 **버튼이 영원히 비활성**이었다(제보 2026-08-02 재현). URL 인코딩도
+  // 섞여 있었다: 원문 보간 7곳 + encodeURIComponent 7곳(후자는 이중 인코딩). 여기서 한 번 풀고,
+  // URL을 만들 때마다 한 번씩만 감싼다.
+  const slug = useMemo(() => { try { return decodeURIComponent(slugParam); } catch { return slugParam; } }, [slugParam]);
   const { t } = useLang();
   const WAIT_STAGES = [t('chat.waitStage1'), t('chat.waitStage2'), t('chat.waitStage3')];
   const router = useRouter();
@@ -393,7 +399,7 @@ export default function CrewChat({ params }) {
   const saveRunner = useCallback(async (next) => {
     setSel(next);
     try {
-      await fetch(`/api/companies/${ws}/agents/${slug}`, {
+      await fetch(`/api/companies/${ws}/agents/${encodeURIComponent(slug)}`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ runner: next.runner, model: next.model, ...(next.effort !== undefined ? { effort: next.effort } : {}) }),
       });
@@ -1573,7 +1579,7 @@ function CardPanel({ ws, slug, agentName, runners, autoRunnerId, sel, onRunnerCh
   async function saveScope(field, next) {
     setScope((s) => ({ ...s, [field]: next }));
     try {
-      const r = await fetch(`/api/companies/${ws}/agents/${slug}`, {
+      const r = await fetch(`/api/companies/${ws}/agents/${encodeURIComponent(slug)}`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ [field]: next }),
       });
       const d = await r.json();
@@ -1611,7 +1617,7 @@ function CardPanel({ ws, slug, agentName, runners, autoRunnerId, sel, onRunnerCh
   }, [ws, slug]);
 
   useEffect(() => {
-    api(`/api/companies/${ws}/agents/${slug}`)
+    api(`/api/companies/${ws}/agents/${encodeURIComponent(slug)}`)
       .then((d) => {
         setMd(d.md); setStats(d.stats ?? null);
         setProfile({ recent: d.recent ?? [], skills: d.skills ?? [], mcp: d.mcp ?? [] });
@@ -1628,7 +1634,7 @@ function CardPanel({ ws, slug, agentName, runners, autoRunnerId, sel, onRunnerCh
     if (tgBusy || !tgToken.trim()) return;
     setTgBusy(true); setTgMsg('');
     try {
-      const d = await api(`/api/companies/${ws}/agents/${slug}/telegram`, { token: tgToken });
+      const d = await api(`/api/companies/${ws}/agents/${encodeURIComponent(slug)}/telegram`, { token: tgToken });
       setTgBot(d.connections?.telegram?.agents?.[slug] ?? { hasToken: true });
       setTgToken(''); setTgMsg(t('chat.tg.pairHint'));
       window.dispatchEvent(new Event('argo:refresh'));
@@ -1638,7 +1644,7 @@ function CardPanel({ ws, slug, agentName, runners, autoRunnerId, sel, onRunnerCh
     if (tgBusy) return;
     setTgBusy(true); setTgMsg('');
     try {
-      await fetch(`/api/companies/${ws}/agents/${slug}/telegram`, { method: 'DELETE' });
+      await fetch(`/api/companies/${ws}/agents/${encodeURIComponent(slug)}/telegram`, { method: 'DELETE' });
       setTgBot({ hasToken: false }); setTgAlive(false);
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (e) { setTgMsg(String(e.message)); } finally { setTgBusy(false); }
@@ -1654,7 +1660,7 @@ function CardPanel({ ws, slug, agentName, runners, autoRunnerId, sel, onRunnerCh
     if (saving || next === null) return;
     setSaving(true); setMsg('');
     try {
-      await fetch(`/api/companies/${ws}/agents/${slug}`, {
+      await fetch(`/api/companies/${ws}/agents/${encodeURIComponent(slug)}`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ md: next }),
@@ -1692,8 +1698,18 @@ function CardPanel({ ws, slug, agentName, runners, autoRunnerId, sel, onRunnerCh
 
   async function fire() {
     setFiring(true);
-    await fetch(`/api/companies/${ws}/agents/${slug}`, { method: 'DELETE' });
-    onFired();
+    // 응답을 확인한다. 예전엔 결과를 안 보고 무조건 나갔다 — 해고가 실패해도 패널이 닫히고 데크로
+    // 이동해서, 사용자는 "됐다"고 믿었다가 사이드바에 그대로 있는 크루를 보고 다시 시도했다
+    // (실사용 신고 2026-08-02: 해고가 반복 실패). 실패는 실패로 보이게 한다.
+    try {
+      const r = await fetch(`/api/companies/${ws}/agents/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+      onFired();
+    } catch (e) {
+      setMsg(String(e.message)); setFireOpen(false);
+    } finally {
+      setFiring(false);
+    }
   }
 
   return (

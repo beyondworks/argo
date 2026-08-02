@@ -3,7 +3,7 @@
 import { readFile, mkdir, rename, readdir } from 'node:fs/promises';
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { appendUsage } from './usage.mjs';
 import { isBilledRunner } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
@@ -63,10 +63,24 @@ role: <직함 한 줄>
 (사용자와 대화할 때의 말투 한 줄)`;
 
 // 크루 카드 파일 경로 — slug는 URL 경로 파라미터로 들어오므로 조립 직전 검증(경로 탈출 차단).
+/** 새로 만드는 크루의 작명 규칙 — **생성 시점에만** 강제한다(아래 cardPath 주석 참고). */
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** 카드 파일 경로 — 막는 것은 **경로 이탈**이지 작명 취향이 아니다.
+    예전엔 SLUG_RE로 걸렀는데, 그건 한 가지 규칙에 두 가지 일을 시킨 것이었다: 경로 안전 + 작명 규칙.
+    문제는 카드 파일이 우리 영입 경로로만 생기지 않는다는 것 — 동기화·볼트 임포트·수동 복사·옛 버전으로
+    `클선생.md`, `Mr_Kim.md`, `pepper copy.md` 같은 파일이 agents/에 들어온다. 그러면 목록(readdir)은
+    보여주는데 카드 API는 전부 거부해서, **사이드바에 보이지만 열 수도 지울 수도 없는 크루**가 된다.
+    실사용 신고 2026-08-02: 해고하려다 "크루를 찾을 수 없습니다"만 반복. 실측 재현 — 열람 404 / 해고 400.
+
+    그래서 안전은 문자 규칙이 아니라 **봉쇄**로 본다: 경로를 실제로 계산해 agents/ **바로 아래**인지만
+    확인한다. `../`·중첩 경로·절대경로는 전부 여기서 걸린다(문자 목록보다 오히려 촘촘하다).
+    작명 규칙(SLUG_RE)은 새 크루를 만들 때만 쓴다 — 규칙은 들어오는 문을 지키고, 이미 있는 파일은 다룰 수 있어야 한다. */
 function cardPath(wsId, slug) {
-  if (typeof slug !== 'string' || !SLUG_RE.test(slug)) throw new Error('잘못된 크루 slug');
-  return join(paths(wsId).agents, `${slug}.md`);
+  if (typeof slug !== 'string' || !slug || slug.includes('\0')) throw Object.assign(new Error('잘못된 크루 slug'), { badRequest: true });
+  const dir = resolve(paths(wsId).agents);
+  const file = resolve(dir, `${slug}.md`);
+  if (dirname(file) !== dir) throw Object.assign(new Error('잘못된 크루 slug'), { badRequest: true });
+  return file;
 }
 
 function parseFrontmatter(md) {
@@ -202,6 +216,10 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   fm.push('---');
   const finalMd = `${fm.join('\n')}\n\n${stripFrontmatter(md)}\n`;
 
+  // 작명 규칙은 **여기(생성 문)**에서만 강제한다 — 우리가 만드는 크루는 항상 규칙을 지키게 하되,
+  // 밖에서 들어온 파일까지 규칙으로 막지는 않는다(cardPath 주석 참고). slugify가 언젠가 규칙을
+  // 벗어난 값을 내면 카드를 쓰기 전에 여기서 걸린다.
+  if (!SLUG_RE.test(slug)) throw new Error(`크루 slug를 만들지 못했습니다: ${slug}`);
   const file = cardPath(wsId, slug);
   await writeJsonAtomic(file, finalMd);
   await appendEvent(wsId, { type: 'crew', op: 'hire', slug, name: nameFinal });
@@ -360,7 +378,9 @@ export async function readAgentCard(wsId, slug) {
     md = await readFile(cardPath(wsId, slug), "utf8");
   } catch (e) {
     // 없는 크루 — 전체 파일 경로가 API 응답에 새지 않도록 깔끔한 메시지로(경로 노출 방지)
-    if (e.code === "ENOENT") throw new Error(`크루를 찾을 수 없습니다: ${slug}`);
+    // notFound 표시 — 라우트가 "없음(404)"과 "읽다 실패(500)"를 가려야 한다. 문구로 판정하면
+    // 번역·문구 수정에 조용히 깨진다.
+    if (e.code === "ENOENT") throw Object.assign(new Error(`크루를 찾을 수 없습니다: ${slug}`), { notFound: true });
     throw e;
   }
   return { md, meta: parseFrontmatter(md) };
