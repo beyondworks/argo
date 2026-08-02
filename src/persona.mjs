@@ -76,10 +76,10 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
     확인한다. `../`·중첩 경로·절대경로는 전부 여기서 걸린다(문자 목록보다 오히려 촘촘하다).
     작명 규칙(SLUG_RE)은 새 크루를 만들 때만 쓴다 — 규칙은 들어오는 문을 지키고, 이미 있는 파일은 다룰 수 있어야 한다. */
 function cardPath(wsId, slug) {
-  if (typeof slug !== 'string' || !slug || slug.includes('\0')) throw Object.assign(new Error('잘못된 크루 slug'), { badRequest: true });
+  if (typeof slug !== 'string' || !slug || slug.includes('\0')) throw Object.assign(new Error('잘못된 크루 slug'), { code: 'BAD_SLUG' });
   const dir = resolve(paths(wsId).agents);
   const file = resolve(dir, `${slug}.md`);
-  if (dirname(file) !== dir) throw Object.assign(new Error('잘못된 크루 slug'), { badRequest: true });
+  if (dirname(file) !== dir) throw Object.assign(new Error('잘못된 크루 slug'), { code: 'BAD_SLUG' });
   return file;
 }
 
@@ -378,9 +378,9 @@ export async function readAgentCard(wsId, slug) {
     md = await readFile(cardPath(wsId, slug), "utf8");
   } catch (e) {
     // 없는 크루 — 전체 파일 경로가 API 응답에 새지 않도록 깔끔한 메시지로(경로 노출 방지)
-    // notFound 표시 — 라우트가 "없음(404)"과 "읽다 실패(500)"를 가려야 한다. 문구로 판정하면
+    // NOT_FOUND 코드 표시 — 라우트가 "없음(404)"과 "읽다 실패(500)"를 가려야 한다. 문구로 판정하면
     // 번역·문구 수정에 조용히 깨진다.
-    if (e.code === "ENOENT") throw Object.assign(new Error(`크루를 찾을 수 없습니다: ${slug}`), { notFound: true });
+    if (e.code === "ENOENT") throw Object.assign(new Error(`크루를 찾을 수 없습니다: ${slug}`), { code: 'NOT_FOUND' });
     throw e;
   }
   return { md, meta: parseFrontmatter(md) };

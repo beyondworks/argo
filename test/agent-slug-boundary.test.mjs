@@ -51,15 +51,15 @@ test('밖에서 들어온 카드도 해고된다 — 보관함으로 이동(복�
 
 test('경로 이탈은 여전히 막는다 — 문자 규칙을 뺀 자리를 봉쇄가 지킨다', async () => {
   for (const bad of ['../company', '../../etc/passwd', 'a/b', 'sub/dir/x', '/etc/passwd', '', null, 123]) {
-    await assert.rejects(() => readAgentCard(WS, bad), (e) => e?.badRequest === true || e?.notFound === true,
+    await assert.rejects(() => readAgentCard(WS, bad), (e) => e?.code === 'BAD_SLUG' || e?.code === 'NOT_FOUND',
       `이탈·비정상 입력이 통과하면 안 된다: ${JSON.stringify(bad)}`);
   }
   // 이탈은 클라이언트 잘못이다 — 라우트가 400으로 내보낼 수 있게 표시가 붙어야 한다(500 아님).
-  await assert.rejects(() => readAgentCard(WS, '../company'), (e) => e.badRequest === true);
+  await assert.rejects(() => readAgentCard(WS, '../company'), (e) => e.code === 'BAD_SLUG');
 });
 
 test('없는 크루는 notFound 표시 — 라우트가 404와 500을 가릴 수 있어야 한다', async () => {
-  await assert.rejects(() => readAgentCard(WS, 'nobody-here'), (e) => e.notFound === true && !e.badRequest);
+  await assert.rejects(() => readAgentCard(WS, 'nobody-here'), (e) => e.code === 'NOT_FOUND');
 });
 
 test('작명 규칙은 생성 문에서 강제된다 — 우리가 만드는 크루는 규칙을 지킨다', async () => {

@@ -25,8 +25,8 @@ export async function GET(_req, { params }) {
     // 원인을 가려서 돌려준다. 예전엔 catch가 통째로 삼켜서, 카드는 멀쩡한데 이벤트·스킬 읽기가
     // 실패해도 화면엔 "크루를 찾을 수 없습니다"가 떴다 — 사용자도 우리도 진짜 원인을 못 봤다
     // (실사용 신고 2026-08-02의 진단이 늦어진 이유). 없음은 404, 그 외는 500 + 실제 사유.
-    if (e?.notFound) return Response.json({ error: '크루를 찾을 수 없습니다' }, { status: 404 });
-    if (e?.badRequest) return Response.json({ error: String(e.message) }, { status: 400 }); // 경로 이탈 등 — 서버 잘못이 아니다
+    if (e?.code === 'NOT_FOUND') return Response.json({ error: '크루를 찾을 수 없습니다' }, { status: 404 });
+    if (e?.code === 'BAD_SLUG') return Response.json({ error: String(e.message) }, { status: 400 }); // 경로 이탈 등 — 서버 잘못이 아니다
     return Response.json({ error: `크루 카드를 읽지 못했습니다: ${String(e?.message || e)}` }, { status: 500 });
   }
 }
