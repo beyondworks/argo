@@ -202,7 +202,7 @@ function makeRenderer(canvas, graph, sim, opts) {
       const r = (R_BY_TYPE[n.type] + Math.min(n.deg, 6) * 0.35) * q.k * (opts.mini ? 0.8 : 1) * Math.min(view.zoom, 1.4);
       const hi = hover === i;
       const labeled = (!opts.mini || hi) && (n.type === 'company' || n.type === 'team' || n.type === 'agent' || hi);
-      if (hi || n.type === 'company' || labeled) { singles.push([i, n, q, r, hi, labeled]); continue; }
+      if (n.type === 'company' || labeled) { singles.push([i, n, q, r, hi, labeled]); continue; }
       const b = Math.max(0, Math.min(B - 1, Math.floor(q.k * B)));
       ring(halo[b], q, r * 3);
       ring(glow[b], q, r * 1.8);
@@ -273,11 +273,11 @@ export function Constellation3D({ company, agents, docs, delegations, height = 2
     let hover = null;
     let P = []; // 마지막 프레임의 투영 좌표 — 픽킹은 항상 화면에 보이는 그대로
     const pick = (sx, sy) => {
-      let best = null, bd = 14;
+      let best = null, bd = 14 * 14;
       P.forEach((q, i) => {
         if (q.k <= 0) return;   // 화면에 없는 점(카메라 뒤)은 못 고른다 — k=0이면 좌표가 화면 중앙으로 모인다
-        const d = Math.hypot(q.x - sx, q.y - sy);
-        if (d < bd) { bd = d; best = i; }
+        const dx = q.x - sx, dy = q.y - sy, d2 = dx * dx + dy * dy;
+        if (d2 < bd) { bd = d2; best = i; }
       });
       return best;
     };
@@ -391,11 +391,11 @@ export function GraphModal({ ws, company, agents, docs, projects, delegations, o
     let P = [];
 
     const pick = (sx, sy) => {
-      let best = null, bd = 16;
+      let best = null, bd = 16 * 16;
       P.forEach((q, i) => {
         if (q.k <= 0) return;   // 화면에 없는 점(카메라 뒤)은 못 고른다 — k=0이면 좌표가 화면 중앙으로 모인다
-        const d = Math.hypot(q.x - sx, q.y - sy);
-        if (d < bd) { bd = d; best = i; }
+        const dx = q.x - sx, dy = q.y - sy, d2 = dx * dx + dy * dy;
+        if (d2 < bd) { bd = d2; best = i; }
       });
       return best;
     };
