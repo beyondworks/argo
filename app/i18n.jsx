@@ -93,6 +93,9 @@ const DICT = {
   'settings.runners.codeSubmit': ['코드 제출', 'Submit code'],
   'settings.runners.webUrlReady': ['링크가 준비됐습니다 — 열어서 승인하세요.', 'Link ready — open and approve.'],
   'settings.runners.webNoCli': ['이 서버에 Claude CLI가 없습니다.', 'Claude CLI missing on this server.'],
+  // 기기 코드(Grok) — 브라우저가 우리에게 돌아오지 않는다. 주소에 가서 코드를 넣으면 폴링이 잡는다.
+  'settings.runners.deviceReady': ['링크를 열고 아래 코드를 입력하세요 — 승인하면 자동으로 연결됩니다.', 'Open the link and enter the code below — it connects automatically once you approve.'],
+  'settings.runners.deviceHint': ['이 코드를 로그인 페이지에 입력하세요. 붙여넣을 것은 없습니다.', 'Enter this code on the sign-in page. Nothing to paste back.'],
   'settings.runners.webConnectHintUrl': ['클릭해 로그인 링크를 받으세요. 브라우저에서 승인하면 자동으로 연결됩니다 — 자동으로 안 되면 이동된 주소 전체를 복사해 아래에 붙여넣으세요.', 'Click to get the sign-in link. Approve in your browser and it connects automatically — if it does not, copy the full redirected address and paste it below.'],
   'settings.runners.codePhUrl': ['리다이렉트된 주소 전체 붙여넣기 (주소창에서 복사)', 'Paste the full redirected URL (copy from the address bar)'],
   'settings.runners.month': ['이번 달 {n}턴', '{n} turns this month'],
@@ -766,6 +769,13 @@ const DICT = {
   'chat.inputPlaceholder': ['{name}에게 지시하기', 'Instruct {name}'],
   'chat.crewFallback': ['크루', 'crew'],
   'chat.send': ['보내기', 'Send'],
+  // 대화 대기열 — 답변 중에 보낸 지시는 스레드가 아니라 대기열에 쌓였다가 턴이 끝나면 순서대로 나간다
+  'chat.queue.label': ['대기 중 {n}건', '{n} queued'],
+  'chat.queue.add': ['대기열에 넣기', 'Add to queue'],
+  'chat.queue.remove': ['대기열에서 빼기', 'Remove from queue'],
+  'chat.queue.placeholder': ['답변 중 — 지금 보내면 대기열에 쌓입니다', 'Replying — messages you send now go to the queue'],
+  'chat.queue.held': ['턴이 끝나지 못해 자동 전송을 멈췄습니다', 'Automatic sending paused — the last turn did not finish'],
+  'chat.queue.sendNow': ['지금 보내기', 'Send now'],
   'chat.stop': ['중단', 'Stop'],
   'chat.aborted': ['지시대로 중단했습니다 — 입력을 복원했어요.', 'Stopped as instructed — your input was restored.'],
   'chat.copy': ['복사', 'Copy'],

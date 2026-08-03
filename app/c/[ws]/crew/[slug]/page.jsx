@@ -192,6 +192,24 @@ export default function CrewChat({ params }) {
   useEffect(() => {
     try { if (input) localStorage.setItem(draftKey, input); else localStorage.removeItem(draftKey); } catch { /* 저장 불가 환경 — 무시 */ }
   }, [input, draftKey]);
+  // 대기열 — 크루가 답하는 동안 보낸 지시를 쌓아 뒀다가 턴이 끝나면 순서대로 보낸다.
+  // 입력창을 잠그던 것(disabled={busy})의 대체다: 생각난 걸 적어 두려면 턴이 끝나길 기다려야 했다.
+  // 전부 클라이언트 쪽 일이라 러너와 무관하다 — 어떤 엔진을 쓰든 똑같이 동작한다(러너 중립성).
+  // **기기 로컬이다**(동기화 대상 아님) — 다른 기기에서 내가 안 보낸 지시가 나가면 안 된다.
+  const queueKey = `argo-queue:${ws}:${slug}`;
+  const [queue, setQueue] = useState([]);
+  useEffect(() => {
+    // 복원분은 **잠근 채로** 올린다 — 새로고침·앱 재시작 직후 사장이 보지도 않은 지시가 저 혼자
+    // 발사되면 안 된다(대기열은 살아남되 발사는 사장이 "지금 보내기"로). 갓 넣은 대기열은
+    // send()가 잠그지 않으므로 평소처럼 턴이 끝나면 자동으로 나간다.
+    try { const q = JSON.parse(localStorage.getItem(queueKey) || '[]'); if (Array.isArray(q) && q.length) { setQueue(q); setQueueHeld(true); } } catch { /* 저장 불가·손상 — 대기열은 부가기능이라 조용히 빈 상태로 */ }
+  }, [queueKey]);
+  useEffect(() => {
+    try { if (queue.length) localStorage.setItem(queueKey, JSON.stringify(queue)); else localStorage.removeItem(queueKey); } catch { /* 저장 불가 환경 — 무시 */ }
+  }, [queue, queueKey]);
+  // 턴이 실패·중단으로 끝나면 대기열을 **잠근다** — 자동 발사 금지. 답이 어긋난 채 쌓인 지시가
+  // 줄줄이 나가는 것이 사장에겐 가장 나쁘다. 대기열은 화면에 남고, 사장이 직접 "지금 보내기"를 누른다.
+  const [queueHeld, setQueueHeld] = useState(false);
   // 프롬프트 히스토리 — 터미널처럼 ↑/↓로 이전 지시를 다시 불러온다(원천 = 스레드의 사장 메시지라 기기 간에도 이어진다).
   const histIdx = useRef(-1);   // -1 = 탐색 중 아님
   const histStash = useRef(''); // 탐색 시작 시점 입력 보관 — ↓로 끝까지 내려오면 복원
@@ -654,7 +672,7 @@ export default function CrewChat({ params }) {
 
   async function sendMessage(message, attachments = []) {
     if (!message || busy || uploading) return;
-    setError(''); setBusy(true); setStage(0);
+    setError(''); setBusy(true); setStage(0); setQueueHeld(false);
     // 낙관적 표시 — 서버는 턴이 끝난 뒤에야 저장하므로(route.js appendTurn) 도중엔 이 사본이 사장 글의 유일한 원본이다.
     // 그래서 실패해도 스레드에서 빼지 않는다. 빼면 글이 어디에도 남지 않고 입력창으로 되돌아가 "보낸 게 사라졌다"가 된다.
     const mid = `s${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -675,6 +693,7 @@ export default function CrewChat({ params }) {
       const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true } : {};
       const unsaved = err?.data?.saved === true ? {} : { unsaved: true };
       setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed, ...aborted, ...unsaved } : m)));
+      setQueueHeld(true); // 대기열 자동 전송 중지 — 남겨 두고 사장이 판단한다
     } finally {
       setBusy(false);
       setLiveStage(null); // 내 턴 종료 — 마지막 partial이 완성 답변과 겹쳐 보이지 않게 즉시 내린다
@@ -690,8 +709,21 @@ export default function CrewChat({ params }) {
     const attachments = att;
     histIdx.current = -1; // 히스토리로 불러온 지시를 전송했으면 탐색 위치 초기화
     setInput(''); setAtt([]);
+    // 답변 중이면 스레드가 아니라 대기열로 간다 — 첨부 칩과 같은 물건이라 ✕로 뗄 수 있다.
+    // (uploading은 대기열로 보내지 않는다: 업로드가 안 끝난 첨부가 실려 나간다)
+    if (busy) { setQueue((q) => [...q, { qid: `q${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text: message, attachments }]); return; }
     await sendMessage(message, attachments);
   }
+
+  // 대기열 배출 — 턴이 **성공으로** 끝난 뒤에만 다음 지시를 보낸다.
+  // 실패·중단이면 queueHeld가 true라 여기서 멈추고 대기열이 화면에 남는다(자동 발사 금지).
+  useEffect(() => {
+    if (busy || uploading || queueHeld || !queue.length) return;
+    const [next, ...rest] = queue;
+    setQueue(rest);
+    sendMessage(next.text, next.attachments ?? []);
+    // eslint 규칙은 no-undef 단일 게이트(#191)라 deps 경고는 없다 — 의도적으로 busy·queue만 본다
+  }, [busy, uploading, queueHeld, queue]);
 
   // 사장의 정지 버튼 — 진행 중 턴(내 턴·루틴·메신저발 모두)을 멈춘다
   const [aborting, setAborting] = useState(false);
@@ -1175,6 +1207,28 @@ export default function CrewChat({ params }) {
             </span>
           </div>
         )}
+        {/* 대기열 칩 — 답변 중에 보낸 지시. 첨부·작업폴더 칩과 같은 물건(.att-chip)이라 ✕로 뗀다.
+            잘못 넣은 지시가 말없이 발사되면 안 되므로 떼는 자리를 항상 같이 둔다. */}
+        {queue.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+            <span className="microlabel">{t('chat.queue.label', { n: queue.length })}</span>
+            {queue.map((q) => (
+              <span key={q.qid} className="att-chip" title={q.text}>
+                <span className="name">{q.text.length > 40 ? `${q.text.slice(0, 40)}…` : q.text}</span>
+                <button type="button" onClick={() => setQueue((cur) => cur.filter((x) => x.qid !== q.qid))}
+                  aria-label={t('chat.queue.remove')} title={t('chat.queue.remove')}>✕</button>
+              </span>
+            ))}
+            {/* 턴이 실패·중단으로 끝나 자동 전송이 멈춘 상태 — 이유를 적고 사장이 직접 보낸다.
+                이 버튼이 없으면 대기열이 영영 안 나가고 지우는 것 말고 길이 없다. */}
+            {queueHeld && !busy && (
+              <>
+                <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>{t('chat.queue.held')}</span>
+                <button type="button" className="btn sm" onClick={() => setQueueHeld(false)}>{t('chat.queue.sendNow')}</button>
+              </>
+            )}
+          </div>
+        )}
         <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
           {/* 폴더·클립 한 묶음(유건 지시 2026-07-28). 순서는 폴더 → 클립.
               간격의 지배 변수는 gap이 아니라 **버튼 폭**이다(.btn.btn-icon 34px에 아이콘 14px라
@@ -1197,18 +1251,19 @@ export default function CrewChat({ params }) {
             </button>
           </div>
           <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
+          {/* 답변 중에도 입력창을 잠그지 않는다 — 보내면 대기열로 간다(placeholder가 그 사실을 말한다).
+              잠가 두던 동안 사장은 생각난 것을 적어 둘 수도, 방향을 틀 수도 없었다. */}
           <textarea suppressHydrationWarning
             ref={inputRef}
             rows={1}
-            placeholder={t('chat.inputPlaceholder', { name: agent?.name ?? t('chat.crewFallback') })}
+            placeholder={busy ? t('chat.queue.placeholder') : t('chat.inputPlaceholder', { name: agent?.name ?? t('chat.crewFallback') })}
             value={input}
             onChange={(e) => { histIdx.current = -1; setInput(e.target.value); }}
             onKeyDown={onInputKeyDown}
             onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
-            disabled={busy}
             autoFocus
           />
-          <button className="btn btn-primary btn-icon" disabled={busy || uploading || !input.trim()} aria-label={t('chat.send')}>
+          <button className="btn btn-primary btn-icon" disabled={uploading || !input.trim()} aria-label={busy ? t('chat.queue.add') : t('chat.send')}>
             <Icon name="send" size={15} />
           </button>
         </form>
