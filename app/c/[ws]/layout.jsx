@@ -520,7 +520,7 @@ export default function CompanyShell({ children, params }) {
         </header>
 
         <main
-          className="content"
+          className={`content${!isCrewPage && panelOpen ? ' global-panel-open' : ''}`}
           style={{
             // 전역 패널은 fixed 오버레이지만 본문은 패널 폭만큼 실제로 줄여 겹치지 않게 한다.
             width: !isCrewPage && panelOpen ? `calc(100% - ${globalPanelWidth}px)` : '100%',

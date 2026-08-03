@@ -38,6 +38,8 @@ test('회사 전역 화면: 검색창 옆 토글과 고정 작업영역을 제�
   assert.match(shell, /onWidthChange=\{setGlobalPanelWidth\}/);
   assert.match(shell, /global-workspace-panel-width/);
   assert.match(shell, /width: !isCrewPage && panelOpen \? `calc\(100% - \$\{globalPanelWidth\}px\)`/);
+  assert.match(shell, /global-panel-open/);
+  assert.match(css, /\.content\.global-panel-open\s*\{[\s\S]*max-width: none;[\s\S]*margin-left: 0/);
   assert.match(panel, /onWidthChange\?\.\(value\)/);
   assert.match(shell, /argo:workspace-file/);
   assert.match(css, /\.global-workspace-panel\s*\{[\s\S]*position: fixed/);

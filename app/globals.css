@@ -1552,6 +1552,11 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
   margin-right: 0;
   padding-right: 0;
 }
+.content.global-panel-open {
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+}
 .side-panel-toggle { flex: none; }
 .side-panel-toggle.active {
   background: var(--card-2);
