@@ -3,7 +3,7 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
-import { GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, excludeWith, externalExec, isCliRunner, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -124,6 +124,11 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       throw Object.assign(new Error(lang === 'en'
         ? 'OpenRouter credit balance is too low. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.'
         : 'OpenRouter 크레딧 잔액이 부족합니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.'), { cause: e });
+    }
+    // xAI도 같은 계열 — 잔액·구독 문제지 연결 문제가 아니다. 위 러너 교체를 먼저 태운 뒤(다른
+    // 러너가 연결돼 있으면 영입·기억정리가 살아난다) 갈 곳이 없을 때 충전·구독처를 준다.
+    if (runner === 'grok' && isGrokCreditError(String(e.message))) {
+      throw Object.assign(new Error(grokCreditNotice(lang)), { cause: e });
     }
     // 크래시는 "연결을 확인하라"가 **거짓 안내**다. 실사용 신고 2026-08-02: 크레딧도 남아 있고 연결도
     // 정상인 사용자가 이 문구를 받고 "러너 연결 정상인데 왜 계속 실패하죠?"라고 되물었다. 우리가 이미

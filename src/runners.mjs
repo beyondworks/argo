@@ -44,6 +44,7 @@ export {
   loadClaudeKey, maskClaudeKey, claudeEnvFor,
 } from './runners/creds.mjs';
 export { startRunnerWebAuth, submitRunnerWebAuth, webAuthDone, startRunnerDeviceAuth, pollRunnerDeviceAuth, deviceAuthSupported } from './runners/webauth.mjs';
+export { isGrokCreditError, grokCreditNotice } from './runners/grok.mjs';
 export {
   apiError, detectRunners, startRunnerLogin, runnerLoginStatus,
   extractSetupAuthUrl, extractSetupToken, extractSetupTokenCandidates, bundledClaudeCli,

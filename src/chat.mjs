@@ -23,7 +23,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { crashHint, excludeWith, externalExec, isProcessCrash, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { crashHint, excludeWith, externalExec, isProcessCrash, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -1358,7 +1358,13 @@ ${lang === 'en'
     await clearTurnStatus(wsId, agentSlug);
     // cc 공유 노트 복원 — CLI 경로와 동일: 이 프레임이 직접 소비한 노트만 최종 실패 시 pending으로 되살린다
     if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
-    throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : e;
+    // xAI 크레딧 소진은 **인증 실패가 아니다** — SDK가 403을 "Failed to authenticate"로 번역해
+    // 내보내면 사용자는 방금 성공한 로그인을 의심하며 재연결을 반복한다(실사용 신고 2026-08-03).
+    // 이벤트 로그(error:)에는 원문이 그대로 남는다 — 진단은 원문으로, 사용자에겐 사실로.
+    const surfaced = (runner === 'grok' && isGrokCreditError(String(e?.message || e)))
+      ? Object.assign(new Error(grokCreditNotice(lang)), { credit: true, cause: e })
+      : e;
+    throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : surfaced;
   } finally {
     abortReg.release();
   }

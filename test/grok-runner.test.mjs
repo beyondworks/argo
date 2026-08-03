@@ -119,3 +119,33 @@ test('기기 코드는 러너 단위 전역 키를 쓰지 않는다(소스 트�
   const dev = src.slice(src.indexOf('const DEVICE_OAUTH'));
   assert.doesNotMatch(dev, /webAuthState\[runner\]/, '기기 코드 분기가 러너 단위 전역 키로 되돌아갔다');
 });
+
+/* ── 크레딧 소진을 인증 실패로 오안내하던 것 (실사용 신고 2026-08-03) ──────────────────
+   유건 계정으로 BYOA 연결에 성공한 직후 첫 턴이 "Failed to authenticate. API Error: 403"으로
+   죽었다. 실제 원인은 xAI 계정 잔액이었다(토큰은 통과). 사용자는 방금 성공한 로그인을 의심한다. */
+test('크레딧 소진은 인증 실패가 아니다 — 실측 본문으로 판정한다', async () => {
+  const { isGrokCreditError, grokCreditNotice } = await import('../src/runners/grok.mjs');
+  // 실측 원문(2026-08-03): 403/402 모두 같은 code
+  const real = 'Claude Code returned an error result: Failed to authenticate. API Error: 403 {"code":"personal-team-blocked:spending-limit","error":"You have run out of credits or need a Grok subscription."}';
+  assert.equal(isGrokCreditError(real), true);
+  // 진짜 인증 오류까지 크레딧으로 몰면 안 된다 — 상태코드가 아니라 본문으로 가르는 이유다
+  assert.equal(isGrokCreditError('API Error: 403 {"code":"forbidden","error":"invalid api key"}'), false);
+  assert.equal(isGrokCreditError('401 authentication_error'), false);
+  // 안내는 갈 곳(충전·구독)을 함께 준다 + "로그인은 정상"을 명시한다
+  for (const lang of ['ko', 'en']) {
+    const n = grokCreditNotice(lang);
+    assert.match(n, /console\.x\.ai/);
+    assert.match(n, /grok\.com\/supergrok/);
+  }
+  assert.match(grokCreditNotice('ko'), /로그인 자체는 정상/);
+  assert.match(grokCreditNotice('en'), /sign-in itself worked/);
+});
+
+test('배선 — chat·oneshot 두 갈래 모두에 걸린다(한쪽만 고치면 다른 경로가 옛 문구로 남는다)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  for (const f of ['../src/chat.mjs', '../src/oneshot.mjs']) {
+    const src = await readFile(new URL(f, import.meta.url), 'utf8');
+    assert.match(src, /isGrokCreditError/, `${f}에 배선 없음`);
+    assert.match(src, /grokCreditNotice/, `${f}에 안내 없음`);
+  }
+});
