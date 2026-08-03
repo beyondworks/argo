@@ -1,0 +1,28 @@
+name: 버그 신고 / Bug report
+description: 안 되는 것을 알려주세요 — 재현 방법이 있으면 가장 빠르게 고쳐집니다.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        이 저장소는 공개입니다. **이메일·API 키·토큰·회사 자료 같은 개인정보를 적지 마세요.**
+        앱 안의 피드백 폼(설정 → 피드백)으로 보내시면 개인정보 없이 여기로 자동 등록됩니다.
+  - type: textarea
+    id: what
+    attributes:
+      label: 무엇이 안 되나요
+      placeholder: 예) 크루를 해고하면 "크루를 찾을 수 없습니다"가 뜹니다
+    validations: { required: true }
+  - type: textarea
+    id: steps
+    attributes:
+      label: 어떻게 하면 그렇게 되나요 (재현 순서)
+      placeholder: |
+        1. 회사 → 크루 카드 열기
+        2. 해고 누르기
+        3. 오류 문구가 뜬다
+  - type: input
+    id: env
+    attributes:
+      label: 환경
+      placeholder: 예) macOS 15 / Argo v0.1.38 / Claude Code 러너

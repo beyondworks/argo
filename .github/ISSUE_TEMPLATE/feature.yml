@@ -1,0 +1,20 @@
+name: 기능 요청 / Feature request
+description: 있으면 좋겠는 것을 알려주세요 — 왜 필요한지가 가장 중요합니다.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        이 저장소는 공개입니다. **이메일·API 키·토큰·회사 자료 같은 개인정보를 적지 마세요.**
+  - type: textarea
+    id: need
+    attributes:
+      label: 무엇을 하려다 막혔나요
+      description: 원하는 기능보다 **막힌 상황**을 적어 주시면 더 나은 해법이 나옵니다.
+      placeholder: 예) 외장 SSD의 프로젝트 폴더에서 크루를 일 시키고 싶은데 홈 밖이라 막힙니다
+    validations: { required: true }
+  - type: textarea
+    id: today
+    attributes:
+      label: 지금은 어떻게 하고 계신가요
+      placeholder: 예) 폴더를 홈으로 복사해 두고 씁니다
