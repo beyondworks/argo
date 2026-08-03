@@ -10,6 +10,7 @@ import { exists, homeEnv, scrubServerSecrets, seedAuthFile } from './shared.mjs'
 import { RUNNER_AUTH } from './catalog.mjs';
 import { provisionCodexCli } from './codex.mjs';
 import { provisionGeminiCli, geminiTurnHome } from './gemini.mjs';
+import { grokAccessToken, grokNeedsRefresh, refreshGrokTokens } from './grok.mjs';
 
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
@@ -192,6 +193,22 @@ export async function runnerCredEnv(wsId, runner) {
       ...(process.env.OPENROUTER_MAX_OUTPUT_TOKENS ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.OPENROUTER_MAX_OUTPUT_TOKENS } : {}),
     } };
   }
+  if (runner === 'grok') {
+    // xAI Anthropic 호환 배관 — GLM·Kimi와 같은 형태(근거·실측은 grok.mjs 머리 주석).
+    // BYOK는 키 그대로, BYOA(기기 코드)는 저장된 JSON에서 access_token을 꺼내 같은 자리에 싣는다.
+    // **여기가 갱신 지점이다**: 턴 직전이라 만료를 가장 늦게, 가장 확실하게 판정한다.
+    let tok = v;
+    if (cred.type === 'oauth') {
+      tok = grokAccessToken(v);
+      if (grokNeedsRefresh(v)) {
+        const next = await refreshGrokOnce(wsId, v);
+        // 갱신 실패는 조용히 넘긴다 — 쓰던 토큰으로 시도하면 제공자가 401을 주고 UI가 재연결을 요구한다.
+        // 여기서 자격을 지우면 일시적 네트워크 장애가 연결 해제로 둔갑한다.
+        if (next) tok = grokAccessToken(next);
+      }
+    }
+    return { env: { ANTHROPIC_BASE_URL: process.env.GROK_BASE_URL || 'https://api.x.ai', ANTHROPIC_AUTH_TOKEN: tok, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+  }
   if (runner === 'codex') {
     // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를
     // 더는 인정하지 않는다. 이전의 env 주입(home:'clean')은 저장 검증(OpenAI 직접 호출)만 통과하고
@@ -214,6 +231,25 @@ export async function runnerCredEnv(wsId, runner) {
     return { env: { OPENAI_API_KEY: '' }, home: dir };
   }
   return null;
+}
+
+/* Grok 토큰 갱신은 **한 번에 하나만** 돈다(wsId 단위 in-flight 락).
+   병렬 턴(루틴 + 메신저 수신 + 위임 팬아웃은 이 제품에서 흔하다)이 동시에 만료 임박을 보면
+   같은 refresh_token으로 각자 교환을 시도한다. 제공자가 RT를 회전시키면 두 번째는 소비된 RT로
+   실패하고, 더 나쁜 순서에서는 뒤늦은 저장이 이미 무효화된 RT를 덮어써 **이후 모든 갱신이 영구
+   실패**한다("잘 되다가 어느 날부터 grok만 전부 401"). 레포 선례 = devicesession.mjs의 단일 소유자 회전.
+   (xAI의 RT 회전 여부는 미검증 — 회전하지 않더라도 이 락은 중복 호출만 줄일 뿐 해가 없다.) */
+const grokRefreshing = (globalThis.__argoGrokRefresh ??= new Map()); // wsId → Promise<string|null>
+function refreshGrokOnce(wsId, stored) {
+  const inflight = grokRefreshing.get(wsId);
+  if (inflight) return inflight;
+  const p = (async () => {
+    const next = await refreshGrokTokens(stored);
+    if (next) await saveRunnerCred(wsId, 'grok', 'oauth', next);
+    return next;
+  })().finally(() => { grokRefreshing.delete(wsId); });
+  grokRefreshing.set(wsId, p);
+  return p;
 }
 
 /** Claude/GLM(SDK) 러너용 완전 env — 회사 자격 우선, 없으면 기존 폴백(glm은 호스트 GLM_API_KEY, claude는 CLI/env). */
@@ -276,6 +312,13 @@ export async function verifyRunnerCred(runner, type, value) {
     if (runner === 'kimi') {
       const base = process.env.KIMI_OPENAI_BASE_URL || 'https://api.moonshot.ai/v1';
       const r = await fetch(`${base}/models`, { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
+      return { ok: !(r.status === 401 || r.status === 403) };
+    }
+    if (runner === 'grok') {
+      // GET /v1/models — 무자격은 401 `unauthenticated:no-credentials`(실측 2026-08-03). 키·계정 토큰 공통 경로.
+      const base = process.env.GROK_BASE_URL || 'https://api.x.ai';
+      const tok = type === 'oauth' ? grokAccessToken(v) : v;
+      const r = await fetch(`${base}/v1/models`, { headers: { authorization: `Bearer ${tok}` }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'openrouter') {

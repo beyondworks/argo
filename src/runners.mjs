@@ -29,7 +29,7 @@ export const agyDirArgs = (caps, workRoots = []) => openRoots(caps, workRoots).f
 export { isServerSecretKey, scrubServerSecrets, maskKeyLike, homeEnv, isProcessCrash, crashHint } from './runners/shared.mjs';
 export {
   RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner,
-  GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL,
+  GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL, GROK_DEFAULT_MODEL,
   isOpenRouterCreditError, isOpenRouterCreditReply, isOpenRouterLimitError, isOpenRouterLimitReply,
   pickRunner, autoRunnerOf, oauthFormatError, excludeWith,
 } from './runners/catalog.mjs';
@@ -43,7 +43,7 @@ export {
   maskCred, normalizePastedCred, runnerCredEnv, sdkEnvFor, kimiEnv, glmEnv, verifyRunnerCred,
   loadClaudeKey, maskClaudeKey, claudeEnvFor,
 } from './runners/creds.mjs';
-export { startRunnerWebAuth, submitRunnerWebAuth, webAuthDone } from './runners/webauth.mjs';
+export { startRunnerWebAuth, submitRunnerWebAuth, webAuthDone, startRunnerDeviceAuth, pollRunnerDeviceAuth, deviceAuthSupported } from './runners/webauth.mjs';
 export {
   apiError, detectRunners, startRunnerLogin, runnerLoginStatus,
   extractSetupAuthUrl, extractSetupToken, extractSetupTokenCandidates, bundledClaudeCli,
@@ -69,10 +69,10 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     // "장시간 작업으로 걸어라"는 자기모순이므로 쪼개기 안내로 갈라진다.
     const guide = kind === 'job'
       ? '작업을 더 작은 단위로 쪼개서 다시 걸어 주세요. '
-      : '이 러너의 대화 턴에는 장시간 작업 도구가 없으니, 작업을 쪼개거나 SDK 러너(Claude·GLM·Kimi·OpenRouter) 크루에게 "장시간 작업으로 걸어줘"라고 맡기면 턴 밖에서 끝까지 돌아 결과가 배달됩니다. ';
+      : '이 러너의 대화 턴에는 장시간 작업 도구가 없으니, 작업을 쪼개거나 SDK 러너(Claude·GLM·Kimi·OpenRouter·Grok) 크루에게 "장시간 작업으로 걸어줘"라고 맡기면 턴 밖에서 끝까지 돌아 결과가 배달됩니다. ';
     const guideEn = kind === 'job'
       ? 'Split the work into smaller pieces and queue it again.'
-      : 'This runner\'s chat turns have no long-task tool — split the work, or ask a crew on an SDK runner (Claude, GLM, Kimi, OpenRouter) to run it as a long task.';
+      : 'This runner\'s chat turns have no long-task tool — split the work, or ask a crew on an SDK runner (Claude, GLM, Kimi, OpenRouter, Grok) to run it as a long task.';
     return Object.assign(new Error(
       `시간 초과: 이 ${kind === 'job' ? '장시간 작업' : '턴'}이 상한 ${cap}을 넘겨 중단됐습니다. ${guide}`
       + `Timed out after the ${capEn} cap — ${guideEn}`,

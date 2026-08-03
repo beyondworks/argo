@@ -121,6 +121,7 @@ export async function detectRunners(force = false) {
     glm: { installed: true, authed: !!process.env.GLM_API_KEY },
     kimi: { installed: true, authed: !!process.env.KIMI_API_KEY }, // env 주입 = 운영자 명시 옵트인(glm 관례)
     openrouter: { installed: true, authed: false }, // 호스트 개념 없음 — 회사 자격(BYOK)만. env 폴백도 두지 않는다(설계 2026-07-27 YAGNI)
+    grok: { installed: true, authed: false }, // 동일 — 회사 자격(BYOK 키 또는 BYOA 기기 코드)만. 호스트 CLI 스캐빈징 없음(명시 연결 원칙)
     // antigravity: 자격이 OS 키링이라 로그인 여부를 파일로 판정할 수 없다 — authed=installed(낙관).
     // 위 2026-07-19 주석과 같은 원칙("감지 단계에서 유효성까지는 판정하지 않는다"): 미로그인은 첫 턴의
     // apiError 매핑("timeout waiting for response" → 로그인 안내)이 잡는다. host 마커 invalid 판정

@@ -5,6 +5,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { saveRunnerCred } from './creds.mjs';
 import { provisionGeminiCli, probeGeminiOAuth } from './gemini.mjs';
+import { pollGrokDeviceLogin, startGrokDeviceLogin } from './grok.mjs';
 
 /* ─── 러너 OAuth 웹 브리지(공통) — "버튼 클릭 = 로그인 페이지" ───
    각 CLI가 내부에서 쓰는 표준 PKCE 플로우를 서버가 직접 수행한다(CLI는 TTY/localhost 콜백
@@ -214,4 +215,48 @@ export async function submitRunnerWebAuth(wsId, runner, pasted) {
 export function webAuthDone(runner, wsId) {
   const st = webAuthState[runner];
   return !!(st?.saved && st.savedWs === wsId);
+}
+
+/* ─── 기기 코드(device code) 흐름 — 콜백 리스너 없는 계정 로그인 ───
+   콜백형(codex·gemini)과 **같은 상태통(webAuthState)·같은 완료 판정(webAuthDone)**을 쓴다.
+   그래야 UI(runner-connect.jsx)의 "버튼 → 링크 → 폴링" 경로를 그대로 재사용하고, 완료 판정이
+   두 벌로 갈라지지 않는다. 다른 점은 하나뿐이다: 브라우저가 우리에게 돌아오지 않으므로
+   **폴링 때마다 서버가 제공자에게 한 번 묻는다**(승인됐나?). 서버 내부 루프는 두지 않는다 —
+   사용자가 창을 닫아도 남는 폴링이 안 생긴다. */
+const DEVICE_OAUTH = { grok: { start: startGrokDeviceLogin, poll: pollGrokDeviceLogin } };
+
+export const deviceAuthSupported = (runner) => !!DEVICE_OAUTH[runner];
+
+/** 상태 키는 **러너+스코프**다. 콜백형은 리스너가 포트 하나를 잡아 러너 단위 전역이 불가피했지만
+    (그래서 "마지막 시작이 이긴다"는 알려진 한계가 있다), 기기 코드는 포트를 안 쓴다 — 전역으로 둘
+    이유가 없고, 두면 다중 사용자 인스턴스에서 남의 시작이 내 세션을 덮어 로그인이 영원히 pending에
+    묶인다(분리 검수 2026-08-03 M3: 토큰 유출은 아니고 가용성 문제). */
+const deviceKey = (runner, wsId) => `device:${runner}:${wsId}`;
+
+export async function startRunnerDeviceAuth(runner, wsId) {
+  const d = DEVICE_OAUTH[runner];
+  if (!d) return { ok: false, reason: 'unsupported' };
+  const r = await d.start();
+  if (!r.ok) return r;
+  // wsId를 상태에 함께 각인한다 — 폴링 GET이 다른 스코프로 와도 **시작한 스코프에** 저장한다.
+  webAuthState[deviceKey(runner, wsId)] = { deviceCode: r.deviceCode, ws: wsId, ts: Date.now() };
+  return { ok: true, url: r.url, userCode: r.userCode, interval: r.interval, expiresIn: r.expiresIn };
+}
+
+/** 한 번 묻고, 승인됐으면 저장까지. 대기 중이면 pending — UI 폴링이 그대로 다시 부른다. */
+export async function pollRunnerDeviceAuth(runner, wsId) {
+  const d = DEVICE_OAUTH[runner];
+  if (!d) return { ok: false, reason: 'unsupported' };
+  const st = webAuthState[deviceKey(runner, wsId)];
+  if (st?.saved) return { ok: true }; // 이미 끝난 세션 — 다시 묻지 않는다(코드 1회용). 키에 스코프가 박혀 있다
+  if (!st?.deviceCode) return { ok: false, reason: 'no-session' };
+  // 기기 코드 수명은 제공자가 준다(실측 1800초). 넘으면 다시 시작해야 한다 — 붙잡고 있으면 영원히 pending이다.
+  if (Date.now() - st.ts > 30 * 60_000) return { ok: false, reason: 'expired' };
+  let r;
+  try { r = await d.poll(st.deviceCode); } catch (e) { return { ok: false, reason: 'network', detail: String(e?.message || e).slice(0, 120) }; }
+  if (r.pending) return { ok: false, pending: true, ...(r.slowDown ? { slowDown: true } : {}) }; // 제공자가 늦추라면 늦춘다(RFC 8628 §3.5)
+  if (!r.ok) return { ok: false, reason: r.reason };
+  await saveRunnerCred(st.ws, runner, 'oauth', r.tokens);
+  webAuthState[deviceKey(runner, wsId)] = { saved: true, savedWs: st.ws, ts: Date.now() };
+  return { ok: true };
 }
