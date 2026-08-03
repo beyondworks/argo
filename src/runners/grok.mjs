@@ -113,3 +113,23 @@ export async function pollGrokDeviceLogin(deviceCode, fetchImpl = fetch) {
   if (err === 'authorization_pending' || err === 'slow_down') return { ok: false, pending: true, slowDown: err === 'slow_down' };
   return { ok: false, reason: err || `http-${res.status}` };
 }
+
+/**
+ * xAI "크레딧 없음 / 구독 필요" 판정 — **인증 실패가 아니다.** 토큰은 통과했고 계정 사정이다.
+ *
+ * 실측 2026-08-03(실계정 BYOA 토큰, 유건 기기): 세 엔드포인트가 같은 code를 준다.
+ *   GET  /v1/models            403 {"code":"personal-team-blocked:spending-limit", "error":"You have run out of credits or need a Grok subscription…"}
+ *   POST /v1/messages          403 (동일)
+ *   POST /v1/chat/completions  402 (동일)
+ *
+ * 이걸 안 가르면 SDK가 403을 "Failed to authenticate"로 번역해 화면에 띄운다 — 사용자는 방금
+ * 성공한 자기 로그인을 의심하며 재연결을 반복한다(실사용 신고 2026-08-03). 상태코드(402·403)가
+ * 아니라 **본문 code/문구**로 판정한다: 같은 사정을 두 코드로 주는 것이 실측이고, 403을 통째로
+ * 크레딧으로 몰면 진짜 권한 오류까지 오안내가 된다.
+ */
+export const isGrokCreditError = (text) => /personal-team-blocked|spending-limit|run out of credits|need a grok subscription/i.test(String(text ?? ''));
+
+/** 충전·구독처를 함께 준다 — "안 된다"만 말하면 사용자가 갈 곳이 없다(openrouter 402 선례와 동형). */
+export const grokCreditNotice = (lang) => (lang === 'en'
+  ? 'Your xAI account has no credits (or needs a Grok subscription) — the sign-in itself worked. Add credits at https://console.x.ai or subscribe at https://grok.com/supergrok, then try again. You can also switch this crew to another engine.'
+  : 'xAI 계정에 크레딧이 없거나 Grok 구독이 필요합니다 — 로그인 자체는 정상입니다. https://console.x.ai 에서 충전하거나 https://grok.com/supergrok 에서 구독한 뒤 다시 시도해 주세요. 이 크루의 엔진을 다른 러너로 바꿔도 됩니다.');
