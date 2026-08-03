@@ -519,7 +519,13 @@ export default function CompanyShell({ children, params }) {
           <div id="argo-topbar-panel-slot" style={{ display: 'contents' }} />
         </header>
 
-        <main className="content" style={{ width: '100%' }}>
+        <main
+          className="content"
+          style={{
+            // 전역 패널은 fixed 오버레이지만 본문은 패널 폭만큼 실제로 줄여 겹치지 않게 한다.
+            width: !isCrewPage && panelOpen ? `calc(100% - ${globalPanelWidth}px)` : '100%',
+          }}
+        >
           {data?.missing ? (
             <div className="empty" style={{ marginTop: 40 }}>
               {t('shell.notFound')} <Link href="/" style={{ color: 'var(--primary-strong)', fontWeight: 700 }}>{t('shell.backHome')}</Link>
