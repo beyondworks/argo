@@ -3,6 +3,7 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { publicUrl } from './app/http-origin.mjs';
+import { isAllowedLocalHost } from './app/allowed-local-host.mjs';
 
 const URL_ENV = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const KEY_ENV = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -10,12 +11,12 @@ const KEY_ENV = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const LOCAL_HOST_RE = /^(127\.0\.0\.1|localhost|\[::1\]|::1)(:\d+)?$/;
 
 export async function middleware(req) {
-  // 로컬 무인증 모드(Supabase env 없음)에서는 Host가 반드시 루프백이어야 한다 —
+  // 로컬 무인증 모드(Supabase env 없음)에서는 Host가 루프백 또는 관리자가 명시한 LAN 주소여야 한다 —
   // 원격 악성 사이트가 DNS 리바인딩으로 127.0.0.1을 자기 도메인에 붙여 로컬 API를 호출하는 것을 차단.
   // 클라우드(인증 on, 리버스 프록시 뒤)에는 적용하지 않는다.
   if (!URL_ENV || !KEY_ENV) {
     const host = req.headers.get('host') || '';
-    if (!LOCAL_HOST_RE.test(host)) {
+    if (!isAllowedLocalHost(host)) {
       return NextResponse.json({ error: 'invalid host' }, { status: 421 });
     }
     return NextResponse.next();
