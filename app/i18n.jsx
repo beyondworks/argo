@@ -774,7 +774,7 @@ const DICT = {
   'chat.queue.add': ['대기열에 넣기', 'Add to queue'],
   'chat.queue.remove': ['대기열에서 빼기', 'Remove from queue'],
   'chat.queue.placeholder': ['답변 중 — 지금 보내면 대기열에 쌓입니다', 'Replying — messages you send now go to the queue'],
-  'chat.queue.held': ['턴이 끝나지 못해 자동 전송을 멈췄습니다', 'Automatic sending paused — the last turn did not finish'],
+  'chat.queue.held': ['자동 전송이 멈춰 있습니다 — 확인 후 보내세요', 'Automatic sending is paused — review, then send'],
   'chat.queue.sendNow': ['지금 보내기', 'Send now'],
   'chat.stop': ['중단', 'Stop'],
   'chat.aborted': ['지시대로 중단했습니다 — 입력을 복원했어요.', 'Stopped as instructed — your input was restored.'],
