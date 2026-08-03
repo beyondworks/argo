@@ -1192,40 +1192,40 @@ export default function CrewChat({ params }) {
             <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>{t('settings.workroots.runnerNote')}</p>
           </div>
         )}
-        {/* 여러 줄 입력 — textarea(Enter 전송·Shift+Enter 줄바꿈). 버튼은 하단 정렬(입력이 자라도 자리 고정) */}
-        {/* 고정된 작업 폴더 — 해제 전까지 매 턴 프롬프트에 "지금 일할 폴더"로 들어간다.
-            칩이 없으면 사장은 지금 어디서 일하는지 알 수 없고, 그게 이 기능 이전의 상태였다. */}
-        {pinnedFolder && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {/* 첨부 칩과 같은 물건(붙어 있는 것 + ✕로 뗀다) — .att-chip을 그대로 쓴다.
+        {/* 컴포저 스택 — 입력창 위에 쌓이는 "이번 턴의 맥락": 고정 작업 폴더 + 대기 중인 지시.
+            전엔 칩이 줄줄이 옆으로 흐르고 안내 문구·버튼이 그 사이에 끼어 읽는 순서가 없었다.
+            한 줄에 하나씩, 왼쪽 아이콘 · 가운데 내용 · 오른쪽 조작으로 세로로 세운다. */}
+        {(pinnedFolder || queue.length > 0) && (
+          <div className="composer-stack" aria-label={t('chat.queue.label', { n: queue.length })}>
+            {/* 고정된 작업 폴더 — 해제 전까지 매 턴 프롬프트에 "지금 일할 폴더"로 들어간다.
                 끝 두 조각만 보인다: 전체 경로는 폭을 다 먹고, CSS 말줄임(direction:rtl)은 앞의 '/'를
-                끝으로 밀어 "…보고서-2026-07/"처럼 없는 슬래시를 만든다(실측). 전체는 title로 준다. */}
-            <span className="att-chip" title={pinnedFolder}>
-              <Icon name="folder" size={11} />
-              <span className="name">…/{pinnedFolder.split(/[\\/]/).filter(Boolean).slice(-2).join('/')}</span>
-              <button type="button" onClick={() => pinFolder('')} aria-label={t('chat.workFolder.unpin')} title={t('chat.workFolder.unpin')}>✕</button>
-            </span>
-          </div>
-        )}
-        {/* 대기열 칩 — 답변 중에 보낸 지시. 첨부·작업폴더 칩과 같은 물건(.att-chip)이라 ✕로 뗀다.
-            잘못 넣은 지시가 말없이 발사되면 안 되므로 떼는 자리를 항상 같이 둔다. */}
-        {queue.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-            <span className="microlabel">{t('chat.queue.label', { n: queue.length })}</span>
+                끝으로 밀어 "…보고서-2026-07/"처럼 없는 슬래시를 만든다(실측). 전체는 title로. */}
+            {pinnedFolder && (
+              <div className="row" title={pinnedFolder}>
+                <span className="lead"><Icon name="folder" size={13} /></span>
+                <span className="name">…/{pinnedFolder.split(/[\\/]/).filter(Boolean).slice(-2).join('/')}</span>
+                <button type="button" className="act" onClick={() => pinFolder('')}
+                  aria-label={t('chat.workFolder.unpin')} title={t('chat.workFolder.unpin')}>✕</button>
+              </div>
+            )}
+            {/* 대기 중인 지시 — 잘못 넣은 것이 말없이 발사되면 안 되므로 떼는 자리를 항상 같이 둔다 */}
             {queue.map((q) => (
-              <span key={q.qid} className="att-chip" title={q.text}>
-                <span className="name">{q.text.length > 40 ? `${q.text.slice(0, 40)}…` : q.text}</span>
-                <button type="button" onClick={() => setQueue((cur) => cur.filter((x) => x.qid !== q.qid))}
-                  aria-label={t('chat.queue.remove')} title={t('chat.queue.remove')}>✕</button>
-              </span>
+              <div key={q.qid} className="row" title={q.text}>
+                <span className="lead"><Icon name="arrow" size={13} /></span>
+                <span className="name">{q.text}</span>
+                <button type="button" className="act" onClick={() => setQueue((cur) => cur.filter((x) => x.qid !== q.qid))}
+                  aria-label={t('chat.queue.remove')} title={t('chat.queue.remove')}>
+                  <Icon name="trash" size={13} />
+                </button>
+              </div>
             ))}
-            {/* 턴이 실패·중단으로 끝나 자동 전송이 멈춘 상태 — 이유를 적고 사장이 직접 보낸다.
-                이 버튼이 없으면 대기열이 영영 안 나가고 지우는 것 말고 길이 없다. */}
-            {queueHeld && !busy && (
-              <>
-                <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>{t('chat.queue.held')}</span>
-                <button type="button" className="btn sm" onClick={() => setQueueHeld(false)}>{t('chat.queue.sendNow')}</button>
-              </>
+            {/* 자동 전송이 멈춘 상태(실패·중단 턴 또는 새로고침 복원) — 이유를 적고 사장이 직접 보낸다.
+                이 자리가 없으면 대기열은 영영 못 나가고 지우는 것 말고 길이 없다. */}
+            {queue.length > 0 && queueHeld && !busy && (
+              <div className="note">
+                <span className="name">{t('chat.queue.held')}</span>
+                <button type="button" className="btn sm" style={{ flex: 'none' }} onClick={() => setQueueHeld(false)}>{t('chat.queue.sendNow')}</button>
+              </div>
             )}
           </div>
         )}

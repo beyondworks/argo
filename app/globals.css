@@ -1716,6 +1716,39 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 .att-chip .name { overflow: hidden; text-overflow: ellipsis; }
 .att-chip button { color: var(--fg-3); font-size: 11px; font-weight: 700; flex: none; }
 .att-chip button:hover { color: var(--danger); }
+/* 컴포저 스택 — 입력창 바로 위에 쌓이는 "이번 턴의 맥락"(고정 작업 폴더 · 대기 중인 지시).
+   칩을 옆으로 흘리지 않고 한 줄에 하나씩 세운다: 왼쪽 아이콘 · 가운데 내용(한 줄 말줄임) ·
+   오른쪽 조작. 줄 수가 늘어도 레이아웃이 흔들리지 않고, 긴 지시도 폭을 다 먹지 않는다. */
+.composer-stack {
+  display: grid; gap: 1px;
+  padding: 5px;
+  border-radius: 16px;
+  border: 1px solid var(--border-soft);
+  background: var(--card);
+  max-height: 168px; overflow-y: auto;   /* 대기열이 길어져도 입력창을 밀어내지 않는다 */
+  margin-bottom: 6px;                    /* 입력바와 붙여 놓으면 두 둥근 판이 서로를 갉아먹는다 */
+}
+.composer-stack .row {
+  display: flex; align-items: center; gap: 9px;
+  min-height: 30px; padding: 3px 4px 3px 9px;
+  border-radius: 11px;
+  font-size: 12.5px; color: var(--fg-2);
+}
+.composer-stack .row:hover { background: var(--card-2); }
+.composer-stack .lead { flex: none; display: inline-flex; color: var(--fg-3); }
+.composer-stack .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-stack .act {
+  flex: none; display: grid; place-items: center;
+  width: 24px; height: 24px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--fg-3); font-size: 11px; font-weight: 700; cursor: pointer;
+}
+.composer-stack .act:hover { background: var(--card); color: var(--danger); }
+.composer-stack .row:hover .act:hover { background: var(--card); }
+.composer-stack .note {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 4px 4px 9px; font-size: 11.5px; color: var(--fg-3);
+}
+
 .att-thumb { max-width: 200px; max-height: 150px; border-radius: 10px; border: 1px solid var(--primary-fg-line); display: block; }
 
 /* 드롭 오버레이 — 파일을 끌고 오면 스레드 전체가 받는 그릇이 된다 */
