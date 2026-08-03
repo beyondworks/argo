@@ -6,9 +6,21 @@ import { usePathname, useRouter } from 'next/navigation';
 import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, api } from '../../ui';
 import { useLang, stageLabel } from '../../i18n';
 import { useAppUpdate } from '../../use-app-update';
+import WorkspacePanel from './crew/[slug]/workspace-panel';
 
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
+const PANEL_STORAGE_KEY = 'argo:crew-side-panel:v1';
+
+/** 크루 채팅 밖에서도 같은 Codex식 작업영역을 쓸 수 있게 회사 셸이 소유하는 패널. */
+function GlobalWorkspacePanel({ ws, open, onClose, fileRequest }) {
+  if (!open && !fileRequest) return null;
+  return (
+    <div className="global-workspace-panel">
+      <WorkspacePanel ws={ws} open={open} onClose={onClose} fileRequest={fileRequest} />
+    </div>
+  );
+}
 
 /** 백그라운드 작업 독 — 지금 도는 턴이 있으면 배지가 켜지고, 패널에서 진행·최근 작업을 본다. */
 function TasksDock({ ws }) {
@@ -108,6 +120,44 @@ export default function CompanyShell({ children, params }) {
   // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
   const [me, setMe] = useState(null);
   const [fbOpen, setFbOpen] = useState(false); // 베타 피드백 모달
+  const isCrewPage = pathname.includes('/crew/');
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelMounted, setPanelMounted] = useState(false);
+  const [panelFileRequest, setPanelFileRequest] = useState(null);
+  const [panelHydrated, setPanelHydrated] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PANEL_STORAGE_KEY) || '{}');
+      if (typeof saved.open === 'boolean') setPanelOpen(saved.open);
+    } catch { /* 손상·프라이빗 모드 — 닫힌 상태로 시작 */ }
+    setPanelHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (!panelHydrated) return;
+    try { localStorage.setItem(PANEL_STORAGE_KEY, JSON.stringify({ open: panelOpen })); } catch { /* 부가 상태 */ }
+  }, [panelHydrated, panelOpen]);
+  useEffect(() => { if (panelOpen) setPanelMounted(true); }, [panelOpen]);
+  useEffect(() => {
+    const onFile = (event) => {
+      const detail = event.detail;
+      if (!detail?.path) return;
+      setPanelFileRequest({ root: detail.root || 'company', path: detail.path, nonce: Date.now() });
+      setPanelMounted(true);
+      setPanelOpen(true);
+    };
+    window.addEventListener('argo:workspace-file', onFile);
+    return () => window.removeEventListener('argo:workspace-file', onFile);
+  }, []);
+  useEffect(() => {
+    const onToggleShortcut = (event) => {
+      if (isCrewPage || event.defaultPrevented || event.repeat || event.code !== 'KeyB'
+        || !(event.ctrlKey || event.metaKey) || !event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      setPanelOpen((open) => !open);
+    };
+    window.addEventListener('keydown', onToggleShortcut);
+    return () => window.removeEventListener('keydown', onToggleShortcut);
+  }, [isCrewPage]);
   useEffect(() => { api('/api/me').then(setMe).catch(() => {}); }, []);
 
   // 상단 버전 뱃지 — 데스크톱 앱에서는 네이티브 설치 버전 + Tauri 업데이터가 단일 진실(설정 카드와 동일 소스).
@@ -450,6 +500,19 @@ export default function CompanyShell({ children, params }) {
               <button onClick={() => setQ('')} style={{ color: 'var(--fg-3)', fontSize: 12, fontWeight: 700 }} aria-label={t('common.clear')}>✕</button>
             )}
           </label>
+          {!isCrewPage && (
+            <button
+              type="button"
+              className={`btn btn-icon side-panel-toggle${panelOpen ? ' active' : ''}`}
+              aria-label={t('crew.panel.toggle')}
+              aria-controls="crew-side-panel"
+              aria-pressed={panelOpen}
+              title={`${t('crew.panel.toggle')} · ${t('crew.panel.shortcut')}`}
+              onClick={() => setPanelOpen((open) => !open)}
+            >
+              <Icon name="panel" size={16} />
+            </button>
+          )}
           {/* 크루 페이지의 우측 사이드 패널 토글 슬롯 — 페이지가 포털로 버튼을 꽂는다.
               display:contents라 비어 있을 때도 탑바 간격을 만들지 않는다. */}
           <div id="argo-topbar-panel-slot" style={{ display: 'contents' }} />
@@ -464,6 +527,14 @@ export default function CompanyShell({ children, params }) {
         </main>
       </div>
       {fbOpen && <FeedbackModal onClose={() => setFbOpen(false)} />}
+      {!isCrewPage && (panelOpen || panelMounted) && (
+        <GlobalWorkspacePanel
+          ws={ws}
+          open={panelOpen}
+          onClose={() => setPanelOpen(false)}
+          fileRequest={panelFileRequest}
+        />
+      )}
     </div>
   );
 }

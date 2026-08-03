@@ -1559,6 +1559,25 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
   color: var(--fg);
 }
 
+/* 회사 전역 화면(회의실·기억·루틴·활동·스킬/도구)의 우측 작업영역.
+   크루 채팅은 .crew-workspace가 패널을 도킹하므로 이 래퍼를 사용하지 않는다. */
+.global-workspace-panel {
+  position: fixed;
+  z-index: 19;
+  top: 56px;
+  right: 0;
+  bottom: 0;
+  width: min(540px, calc(100vw - 16px));
+  min-width: 0;
+  animation: drawerIn 0.22s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.global-workspace-panel > .crew-tool-panel {
+  width: 100%;
+  height: 100%;
+  border-radius: 12px 0 0 0;
+  box-shadow: -12px 0 30px rgba(0, 0, 0, 0.16);
+}
+
 /* Codex식 우측 도구 작업영역. 기본은 본문 옆 도킹, 좁은 화면에서는 오버레이로 바뀐다. */
 .crew-tool-panel {
   position: relative;

@@ -29,6 +29,16 @@ test('사이드 패널 토글: 탑바 우측 슬롯 + 눌림/제어 대상 접�
   assert.match(panel, /role="tabpanel"/);
 });
 
+test('회사 전역 화면: 검색창 옆 토글과 고정 작업영역을 제공한다', () => {
+  assert.match(shell, /isCrewPage = pathname\.includes\('\/crew\/'\)/);
+  assert.match(shell, /!isCrewPage && \(\s*<button[\s\S]*side-panel-toggle/);
+  assert.match(shell, /aria-controls="crew-side-panel"/);
+  assert.match(shell, /<GlobalWorkspacePanel[\s\S]*fileRequest=\{panelFileRequest\}/);
+  assert.match(shell, /argo:workspace-file/);
+  assert.match(css, /\.global-workspace-panel\s*\{[\s\S]*position: fixed/);
+  assert.match(css, /\.global-workspace-panel > \.crew-tool-panel/);
+});
+
 test('사이드 패널 상태: Ctrl+Alt+B + 새로고침 후 열림/도구 탭 복원', () => {
   assert.match(crew, /PANEL_STORAGE_KEY = 'argo:crew-side-panel:v1'/);
   assert.match(crew, /localStorage\.getItem\(PANEL_STORAGE_KEY\)/);
