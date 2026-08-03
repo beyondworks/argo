@@ -8,6 +8,7 @@
 import {
   startRunnerLogin, runnerLoginStatus, RUNNER_AUTH,
   startRunnerWebAuth, submitRunnerWebAuth, webAuthDone,
+  startRunnerDeviceAuth, pollRunnerDeviceAuth,
   startClaudeSetupToken, setupTokenStatus, submitSetupCode,
 } from '../../../../../../src/runners.mjs';
 import { guardCompany } from '../../../../../auth.mjs';
@@ -22,6 +23,11 @@ export async function POST(req, { params }) {
     // 코드 왕복 — 신형 CLI(코드 표시형 플로우)에서 브라우저 승인 후 표시된 코드를 stdin으로 전달
     if (code) { const r = submitSetupCode(ws, code); return Response.json(r, { status: r.ok ? 200 : 400 }); }
     const r = await startClaudeSetupToken(ws);
+    return Response.json(r, { status: r.ok ? 200 : 400 });
+  }
+  // 기기 코드(Grok) — 콜백이 없으니 코드 제출도 없다. 시작만 하고 완료는 GET 폴링이 확인한다.
+  if (meta.deviceCode && !cli) {
+    const r = await startRunnerDeviceAuth(runner, ws);
     return Response.json(r, { status: r.ok ? 200 : 400 });
   }
   if (meta.webConnect && !cli) {
@@ -42,6 +48,11 @@ export async function GET(req, { params }) {
   if (!meta) return Response.json({ error: '알 수 없는 러너' }, { status: 400 });
   if (runner === 'claude' && u.searchParams.get('setup')) {
     return Response.json(setupTokenStatus(ws)); // { status: idle|running|saved|failed, error }
+  }
+  // 기기 코드 — 폴링 1회가 곧 제공자에게 "승인됐나" 묻는 것이다(서버 내부 루프 없음).
+  if (meta.deviceCode) {
+    const r = await pollRunnerDeviceAuth(runner, ws);
+    return Response.json({ supported: true, authed: r.ok, pending: !!r.pending, ...(r.reason ? { reason: r.reason } : {}) });
   }
   if (meta.webConnect) {
     // 웹 브리지 완료 = "이번 브리지 세션의 저장 완료"(webAuthDone). 자격 '존재'로 판정하면 기존 자격

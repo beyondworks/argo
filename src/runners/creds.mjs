@@ -10,6 +10,7 @@ import { exists, homeEnv, scrubServerSecrets, seedAuthFile } from './shared.mjs'
 import { RUNNER_AUTH } from './catalog.mjs';
 import { provisionCodexCli } from './codex.mjs';
 import { provisionGeminiCli, geminiTurnHome } from './gemini.mjs';
+import { grokAccessToken, grokNeedsRefresh, refreshGrokTokens } from './grok.mjs';
 
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
@@ -192,6 +193,22 @@ export async function runnerCredEnv(wsId, runner) {
       ...(process.env.OPENROUTER_MAX_OUTPUT_TOKENS ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.OPENROUTER_MAX_OUTPUT_TOKENS } : {}),
     } };
   }
+  if (runner === 'grok') {
+    // xAI Anthropic 호환 배관 — GLM·Kimi와 같은 형태(근거·실측은 grok.mjs 머리 주석).
+    // BYOK는 키 그대로, BYOA(기기 코드)는 저장된 JSON에서 access_token을 꺼내 같은 자리에 싣는다.
+    // **여기가 갱신 지점이다**: 턴 직전이라 만료를 가장 늦게, 가장 확실하게 판정한다.
+    let tok = v;
+    if (cred.type === 'oauth') {
+      tok = grokAccessToken(v);
+      if (grokNeedsRefresh(v)) {
+        const next = await refreshGrokTokens(v);
+        // 갱신 실패는 조용히 넘긴다 — 쓰던 토큰으로 시도하면 제공자가 401을 주고 UI가 재연결을 요구한다.
+        // 여기서 자격을 지우면 일시적 네트워크 장애가 연결 해제로 둔갑한다.
+        if (next) { await saveRunnerCred(wsId, 'grok', 'oauth', next); tok = grokAccessToken(next); }
+      }
+    }
+    return { env: { ANTHROPIC_BASE_URL: process.env.GROK_BASE_URL || 'https://api.x.ai', ANTHROPIC_AUTH_TOKEN: tok, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+  }
   if (runner === 'codex') {
     // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를
     // 더는 인정하지 않는다. 이전의 env 주입(home:'clean')은 저장 검증(OpenAI 직접 호출)만 통과하고
@@ -276,6 +293,13 @@ export async function verifyRunnerCred(runner, type, value) {
     if (runner === 'kimi') {
       const base = process.env.KIMI_OPENAI_BASE_URL || 'https://api.moonshot.ai/v1';
       const r = await fetch(`${base}/models`, { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
+      return { ok: !(r.status === 401 || r.status === 403) };
+    }
+    if (runner === 'grok') {
+      // GET /v1/models — 무자격은 401 `unauthenticated:no-credentials`(실측 2026-08-03). 키·계정 토큰 공통 경로.
+      const base = process.env.GROK_BASE_URL || 'https://api.x.ai';
+      const tok = type === 'oauth' ? grokAccessToken(v) : v;
+      const r = await fetch(`${base}/v1/models`, { headers: { authorization: `Bearer ${tok}` }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'openrouter') {

@@ -3,7 +3,7 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
-import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, excludeWith, externalExec, isCliRunner, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, excludeWith, externalExec, isCliRunner, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -63,6 +63,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
         ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: KIMI_DEFAULT_MODEL }
           : runner === 'openrouter' ? { model: RUNNERS.openrouter.models.some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL }
+          : runner === 'grok' ? { model: RUNNERS.grok.models.some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL }
           : (model ? { model } : {})),
       },
     })) {

@@ -23,7 +23,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { crashHint, excludeWith, externalExec, isProcessCrash, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { crashHint, excludeWith, externalExec, isProcessCrash, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -1182,7 +1182,7 @@ ${lang === 'en'
       stderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); },
       // 회사 자격 env(claude=키/OAuth 토큰, glm=z.ai 토큰) 주입 + 크루별 모델(카드 frontmatter). glm 기본 모델 보정.
       ...(sdkEnv ? { env: sdkEnv } : {}),
-      ...(runner === 'glm' ? { model: effModel || GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: effModel || KIMI_DEFAULT_MODEL } : runner === 'openrouter' ? { model: effModel || OPENROUTER_DEFAULT_MODEL } : (effModel ? { model: effModel } : {})),
+      ...(runner === 'glm' ? { model: effModel || GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: effModel || KIMI_DEFAULT_MODEL } : runner === 'openrouter' ? { model: effModel || OPENROUTER_DEFAULT_MODEL } : runner === 'grok' ? { model: effModel || GROK_DEFAULT_MODEL } : (effModel ? { model: effModel } : {})),
       // 크루별 추론 강도(요청 2026-07-25) — claude 러너에만. glm/kimi는 SDK 호환 경로로 타 벤더
       // 엔드포인트에 붙어 이 파라미터를 보장하지 않으므로 보내지 않는다(카탈로그 규칙과 같은 원칙:
       // 실행 경로가 받는 것만 보낸다). 화이트리스트는 persona.EFFORT_LEVELS가 저장 시점에 이미 강제.

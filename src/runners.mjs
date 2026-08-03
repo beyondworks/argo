@@ -29,7 +29,7 @@ export const agyDirArgs = (caps, workRoots = []) => openRoots(caps, workRoots).f
 export { isServerSecretKey, scrubServerSecrets, maskKeyLike, homeEnv, isProcessCrash, crashHint } from './runners/shared.mjs';
 export {
   RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner,
-  GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL,
+  GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL, GROK_DEFAULT_MODEL,
   isOpenRouterCreditError, isOpenRouterCreditReply, isOpenRouterLimitError, isOpenRouterLimitReply,
   pickRunner, autoRunnerOf, oauthFormatError, excludeWith,
 } from './runners/catalog.mjs';
@@ -43,7 +43,7 @@ export {
   maskCred, normalizePastedCred, runnerCredEnv, sdkEnvFor, kimiEnv, glmEnv, verifyRunnerCred,
   loadClaudeKey, maskClaudeKey, claudeEnvFor,
 } from './runners/creds.mjs';
-export { startRunnerWebAuth, submitRunnerWebAuth, webAuthDone } from './runners/webauth.mjs';
+export { startRunnerWebAuth, submitRunnerWebAuth, webAuthDone, startRunnerDeviceAuth, pollRunnerDeviceAuth, deviceAuthSupported } from './runners/webauth.mjs';
 export {
   apiError, detectRunners, startRunnerLogin, runnerLoginStatus,
   extractSetupAuthUrl, extractSetupToken, extractSetupTokenCandidates, bundledClaudeCli,

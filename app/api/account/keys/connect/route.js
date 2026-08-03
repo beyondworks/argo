@@ -5,6 +5,7 @@
 import {
   accountScope, startRunnerLogin, runnerLoginStatus, RUNNER_AUTH,
   startRunnerWebAuth, submitRunnerWebAuth, webAuthDone,
+  startRunnerDeviceAuth, pollRunnerDeviceAuth,
   startClaudeSetupToken, setupTokenStatus, submitSetupCode,
 } from '../../../../../src/runners.mjs';
 import { currentUser, tenantDenied } from '../../../../auth.mjs';
@@ -28,6 +29,11 @@ export async function POST(req) {
     const r = await startClaudeSetupToken(g.scope);
     return Response.json(r, { status: r.ok ? 200 : 400 });
   }
+  // 기기 코드(Grok) — 콜백이 없으니 코드 제출도 없다. 시작만 하고 완료는 GET 폴링이 확인한다.
+  if (meta.deviceCode && !cli) {
+    const r = await startRunnerDeviceAuth(runner, g.scope);
+    return Response.json(r, { status: r.ok ? 200 : 400 });
+  }
   if (meta.webConnect && !cli) {
     const r = code ? await submitRunnerWebAuth(g.scope, runner, code) : startRunnerWebAuth(runner, g.scope); // 자동 수신
     return Response.json(r, { status: r.ok ? 200 : 400 });
@@ -45,6 +51,11 @@ export async function GET(req) {
   if (!meta) return Response.json({ error: '알 수 없는 러너' }, { status: 400 });
   if (runner === 'claude' && u.searchParams.get('setup')) {
     return Response.json(setupTokenStatus(g.scope)); // { status: idle|running|saved|failed, error }
+  }
+  // 기기 코드 — 폴링 1회가 곧 제공자에게 "승인됐나" 묻는 것이다(서버 내부 루프 없음).
+  if (meta.deviceCode) {
+    const r = await pollRunnerDeviceAuth(runner, g.scope);
+    return Response.json({ supported: true, authed: r.ok, pending: !!r.pending, ...(r.reason ? { reason: r.reason } : {}) });
   }
   if (meta.webConnect) {
     // 웹 브리지 완료 = 계정 자격 존재

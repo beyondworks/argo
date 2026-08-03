@@ -96,6 +96,23 @@ export const RUNNERS = {
       { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (OpenRouter)' },       // 동일 — 직접 연결(glm 러너) 우선 권장
     ],
   },
+  grok: {
+    name: 'Grok', kind: 'sdk-compat',
+    // xAI는 Anthropic 호환 `/v1/messages`를 연다 — 무자격 프로브 실측(2026-08-03):
+    // 가짜 키 → 400 `Incorrect API key`(본문이 파싱돼 인증 단계까지 갔다) / 없는 경로 → 404(대조군).
+    // 그래서 GLM·Kimi와 같은 sdk-compat 배관을 그대로 쓴다(새 SDK·새 의존성 0).
+    //
+    // **카탈로그 규칙(실턴 스모크 통과분만 등재)을 아직 못 지킨 상태다 — 이 기기에 xAI 자격이 없다.**
+    // 두 id의 근거는 각각 다르고, 직접 연결 스모크는 미실시다:
+    //   grok-4.5  이 파일 openrouter 목록의 `x-ai/grok-4.5`가 2026-07-27 실키 tool_use 스모크를
+    //             통과했다 — 이름이 실재한다는 증거다(경유지가 다를 뿐).
+    //   grok-4.3  argo-next가 실제 설정값으로 쓰던 이름(그쪽도 402에서 멈춰 미검증).
+    // 발행 전에 실키 왕복으로 확정할 것.
+    models: [
+      { id: 'grok-4.5', label: 'Grok 4.5' },
+      { id: 'grok-4.3', label: 'Grok 4.3' },
+    ],
+  },
   glm: {
     name: 'GLM', kind: 'sdk-compat',
     models: [
@@ -161,6 +178,8 @@ export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5';
 // 연결 직후 첫 영입부터 402로 막힌다(검수 CRITICAL 2026-07-27). 카탈로그 선두와 일치.
 export const OPENROUTER_ONBOARD_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
+/** Grok 기본 모델 — 카탈로그 첫 항목과 같아야 한다(러너 전환·모델 미지정의 기본값). */
+export const GROK_DEFAULT_MODEL = 'grok-4.5';
 
 // 러너별 지원 인증 방식. apikey=붙여넣기(4러너 공통), oauth=붙여넣기 토큰(claude) 또는 호스트 로그인(codex/gemini).
 // glm은 Anthropic 호환 토큰(사실상 apikey)만.
@@ -183,6 +202,12 @@ export const RUNNER_AUTH = {
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
   kimi: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' }, // 접두사 무차단(GLM 관례) — 리전·미래 키 형식 변화에 저장이 막히지 않게, 판정은 verifyRunnerCred가
   openrouter: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://openrouter.ai/keys' }, // BYOK 단일(설계 2026-07-27) — OAuth·크레딧 대행 안 함
+  // Grok — BYOK(키)와 BYOA(계정 로그인) 둘 다. 계정 로그인은 **기기 코드**라 콜백 리스너가 없다:
+  // 상주(launchd 백그라운드)·헤드리스 VPS·포트 선점 환경에서 루프백 도달성 문제 자체가 안 생긴다
+  // (v0.1.38에서 겪은 그 문제 — #223). webConnect를 켜 기존 "버튼 → 링크 → 폴링" UI를 그대로 쓰고,
+  // deviceCode 플래그로 라우트가 기기 코드 분기를 탄다. 붙여넣을 코드가 없으니 oauthPasteable은 false.
+  // 접두사는 걸지 않는다(GLM·Kimi 관례) — 키 형식이 바뀌면 저장부터 막혀 사용자가 손 쓸 데가 없다. 판정은 verifyRunnerCred가.
+  grok: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, deviceCode: true, keyUrl: 'https://console.x.ai' },
   // antigravity: 자격이 OS 키링(파일 아님)이라 붙여넣기·API키·웹 브리지 전부 불가 — 호스트 로그인
   // 옵트인이 유일한 경로다(agy가 GEMINI_API_KEY를 무시함은 공식 문서 확인). keyUrl은 설치·로그인 안내.
   // **정의 순 = pickRunner 자동 선택 순 — 반드시 맨 끝**: 키링이라 로그인 여부를 파일로 판정할 수 없는

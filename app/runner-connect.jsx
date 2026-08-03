@@ -21,7 +21,7 @@ export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, PICK_ORDER } 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
     (c) 방식별 입력·저장·검증·제거 또는 CLI 로그인 안내. 응답엔 마스킹만 실린다(보안 규칙). */
-const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter' };
+const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
 const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter'];
 
 export function AiConnectionCard({ ws, accordion = false }) {
@@ -69,6 +69,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   // Claude 웹 브리지 — 버튼 → 로그인 URL 표시 → 승인 코드 제출 → 회사 자격 저장(전 기기 동기화)
   const [webUrl, setWebUrl] = useState('');
   const [webCode, setWebCode] = useState('');
+  // 기기 코드(Grok) — 붙여넣을 것이 없고 **보여줄 것**이 있다. 사용자가 그 주소에 이 코드를 넣으면
+  // 서버 폴링이 승인을 잡아 저장까지 끝낸다(콜백 리스너 없음 — 상주·헤드리스에서도 같게 돈다).
+  const [webUserCode, setWebUserCode] = useState('');
   const [webBusy, setWebBusy] = useState(false);
   const [webMsg, setWebMsg] = useState('');
   const [webOk, setWebOk] = useState(false);
@@ -80,7 +83,8 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error(d.reason === 'no-cli' ? t('settings.runners.webNoCli') : (d.detail || d.reason || 'failed'));
-      setWebUrl(d.url); setWebOk(true); setWebMsg(t('settings.runners.webUrlReady'));
+      setWebUrl(d.url); setWebUserCode(d.userCode ?? ''); setWebOk(true);
+      setWebMsg(t(d.userCode ? 'settings.runners.deviceReady' : 'settings.runners.webUrlReady'));
     } catch (e) { setWebMsg(String(e.message)); } finally { setWebBusy(false); }
   }
   // 웹 브리지 자동 수신 폴링 — 서버의 로컬 콜백 리스너가 승인 코드를 받아 저장을 끝내면
@@ -94,7 +98,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
         const d = await (await fetch(`${keysBase(ws)}/connect?runner=${encodeURIComponent(id)}`)).json();
         if (!liveFlag || !d.authed) return;
         setWebOk(true); setWebMsg(t('settings.runners.connected'));
-        setWebUrl(''); setWebCode('');
+        setWebUrl(''); setWebCode(''); setWebUserCode('');
         window.dispatchEvent(new Event('argo:refresh'));
         onChange();
       } catch { /* 다음 틱 재시도 */ }
@@ -112,7 +116,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error(d.detail || d.reason || 'failed');
       setWebOk(true); setWebMsg(t('settings.runners.connected'));
-      setWebUrl(''); setWebCode('');
+      setWebUrl(''); setWebCode(''); setWebUserCode('');
       window.dispatchEvent(new Event('argo:refresh'));
       onChange();
     } catch (e) { setWebOk(false); setWebMsg(String(e.message)); } finally { setWebBusy(false); }
@@ -450,6 +454,13 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
                   <a className="btn btn-primary sm" href={webUrl} target="_blank" rel="noreferrer" style={{ justifySelf: 'start' }}>
                     {t('settings.runners.openLogin')} ↗
                   </a>
+                  {webUserCode ? (
+                    /* 기기 코드 — 링크를 열면 이 코드를 넣으라고 나온다. 승인되면 폴링이 잡는다(붙여넣기 없음) */
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span className="chip mono" style={{ fontSize: 15, fontWeight: 700, letterSpacing: '0.08em', padding: '6px 12px' }}>{webUserCode}</span>
+                      <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.deviceHint')}</span>
+                    </div>
+                  ) : (
                   <div style={{ display: 'flex', gap: 6 }}>
                     <input suppressHydrationWarning value={webCode} onChange={(e) => setWebCode(e.target.value)}
                       placeholder={t(urlPaste ? 'settings.runners.codePhUrl' : 'settings.runners.codePh')} style={{ ...fieldStyle, flex: 1 }} />
@@ -457,6 +468,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
                       {webBusy ? <Spinner size={12} /> : t('settings.runners.codeSubmit')}
                     </button>
                   </div>
+                  )}
                 </>
               )}
               {webMsg && <span style={{ fontSize: 12, color: webOk ? 'var(--fg-2)' : 'var(--danger)' }}>{webMsg}</span>}
