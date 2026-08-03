@@ -7,6 +7,7 @@ import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, ap
 import { useLang, stageLabel } from '../../i18n';
 import { useAppUpdate } from '../../use-app-update';
 import WorkspacePanel from './crew/[slug]/workspace-panel';
+import { CompanyShellProvider } from './company-shell-context';
 
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
@@ -120,7 +121,6 @@ export default function CompanyShell({ children, params }) {
   // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
   const [me, setMe] = useState(null);
   const [fbOpen, setFbOpen] = useState(false); // 베타 피드백 모달
-  const isCrewPage = pathname.includes('/crew/');
   const [panelOpen, setPanelOpen] = useState(false);
   const [globalPanelWidth, setGlobalPanelWidth] = useState(540);
   const [panelMounted, setPanelMounted] = useState(false);
@@ -150,15 +150,20 @@ export default function CompanyShell({ children, params }) {
     return () => window.removeEventListener('argo:workspace-file', onFile);
   }, []);
   useEffect(() => {
+    const onOpen = () => { setPanelMounted(true); setPanelOpen(true); };
+    window.addEventListener('argo:workspace-panel-open', onOpen);
+    return () => window.removeEventListener('argo:workspace-panel-open', onOpen);
+  }, []);
+  useEffect(() => {
     const onToggleShortcut = (event) => {
-      if (isCrewPage || event.defaultPrevented || event.repeat || event.code !== 'KeyB'
+      if (event.defaultPrevented || event.repeat || event.code !== 'KeyB'
         || !(event.ctrlKey || event.metaKey) || !event.altKey || event.shiftKey) return;
       event.preventDefault();
       setPanelOpen((open) => !open);
     };
     window.addEventListener('keydown', onToggleShortcut);
     return () => window.removeEventListener('keydown', onToggleShortcut);
-  }, [isCrewPage]);
+  }, []);
   useEffect(() => { api('/api/me').then(setMe).catch(() => {}); }, []);
 
   // 상단 버전 뱃지 — 데스크톱 앱에서는 네이티브 설치 버전 + Tauri 업데이터가 단일 진실(설정 카드와 동일 소스).
@@ -287,6 +292,7 @@ export default function CompanyShell({ children, params }) {
   });
 
   return (
+    <CompanyShellProvider value={data}>
     <div className="shell">
       <aside className="side">
         <Link href="/" className="nav-item" style={{ gap: 8, marginBottom: 4 }}>
@@ -501,29 +507,24 @@ export default function CompanyShell({ children, params }) {
               <button onClick={() => setQ('')} style={{ color: 'var(--fg-3)', fontSize: 12, fontWeight: 700 }} aria-label={t('common.clear')}>✕</button>
             )}
           </label>
-          {!isCrewPage && (
-            <button
-              type="button"
-              className={`btn btn-icon side-panel-toggle${panelOpen ? ' active' : ''}`}
-              aria-label={t('crew.panel.toggle')}
-              aria-controls="crew-side-panel"
-              aria-pressed={panelOpen}
-              title={`${t('crew.panel.toggle')} · ${t('crew.panel.shortcut')}`}
-              onClick={() => setPanelOpen((open) => !open)}
-            >
-              <Icon name="panel" size={16} />
-            </button>
-          )}
-          {/* 크루 페이지의 우측 사이드 패널 토글 슬롯 — 페이지가 포털로 버튼을 꽂는다.
-              display:contents라 비어 있을 때도 탑바 간격을 만들지 않는다. */}
-          <div id="argo-topbar-panel-slot" style={{ display: 'contents' }} />
+          <button
+            type="button"
+            className={`btn btn-icon side-panel-toggle${panelOpen ? ' active' : ''}`}
+            aria-label={t('crew.panel.toggle')}
+            aria-controls="crew-side-panel"
+            aria-pressed={panelOpen}
+            title={`${t('crew.panel.toggle')} · ${t('crew.panel.shortcut')}`}
+            onClick={() => setPanelOpen((open) => !open)}
+          >
+            <Icon name="panel" size={16} />
+          </button>
         </header>
 
         <main
-          className={`content${!isCrewPage && panelOpen ? ' global-panel-open' : ''}`}
+          className={`content${panelOpen ? ' global-panel-open' : ''}`}
           style={{
             // 전역 패널은 fixed 오버레이지만 본문은 패널 폭만큼 실제로 줄여 겹치지 않게 한다.
-            width: !isCrewPage && panelOpen ? `calc(100% - ${globalPanelWidth}px)` : '100%',
+            width: panelOpen ? `calc(100% - ${globalPanelWidth}px)` : '100%',
           }}
         >
           {data?.missing ? (
@@ -534,7 +535,7 @@ export default function CompanyShell({ children, params }) {
         </main>
       </div>
       {fbOpen && <FeedbackModal onClose={() => setFbOpen(false)} />}
-      {!isCrewPage && (panelOpen || panelMounted) && (
+      {(panelOpen || panelMounted) && (
         <GlobalWorkspacePanel
           ws={ws}
           open={panelOpen}
@@ -545,5 +546,6 @@ export default function CompanyShell({ children, params }) {
         />
       )}
     </div>
+    </CompanyShellProvider>
   );
 }

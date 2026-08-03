@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
-import WorkspacePanel from './workspace-panel';
+import { useCompanyShell } from '../../company-shell-context';
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
 const fmtElapsed = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
@@ -36,15 +36,18 @@ const filesFromTransfer = (dt) => {
 /** 채팅 읽기 레인 폭 — 일반 LLM 챗처럼 메시지·컴포저를 중앙 좁은 레인에 담는다(가독성).
     .thread·컴포저·열람바 세 곳이 공유하는 단일 진실. 좁은 화면에선 100%로 안전 폴백. */
 const LANE = 'min(768px, 100%)';
-const PANEL_STORAGE_KEY = 'argo:crew-side-panel:v1';
+const CHAT_PAGE_SIZE = 50;
 
 export default function CrewChat({ params }) {
   const { ws, slug } = use(params);
   const { t } = useLang();
+  const shellData = useCompanyShell();
   const WAIT_STAGES = [t('chat.waitStage1'), t('chat.waitStage2'), t('chat.waitStage3')];
   const router = useRouter();
   const [agent, setAgent] = useState(null);
   const [thread, setThread] = useState(null); // null = 로딩
+  const [threadPage, setThreadPage] = useState({ start: 0, total: 0, hasMore: false, loading: false });
+  const threadTotalRef = useRef(0);
   const [input, setInput] = useState('');
   // 입력 보존 — 새로고침·페이지 이탈에도 쓰던 내용이 남는다. input 상태를 그대로 따라가므로
   // 전송(setInput(''))이면 자동 삭제되고, 턴 실패 복원(setInput(message))이면 자동 재저장된다.
@@ -127,12 +130,10 @@ export default function CrewChat({ params }) {
   // 러너·모델 — 카드 패널과 채팅 셀렉터가 공유하는 단일 상태. 회사 자격(설정 러너 연결)을 병합한 카탈로그.
   const [runners, setRunners] = useState(null);
   const [sel, setSel] = useState({ runner: 'claude', model: '', effort: '' });
-  // 타이틀바 슬롯 — 크루 컨트롤과 Codex식 우측 패널 토글을 topbar의 각 위치에 포털로 꽂는다.
+  // 타이틀바 슬롯 — 크루 컨트롤을 회사 셸의 topbar에 포털로 꽂는다.
   const [slotEl, setSlotEl] = useState(null);
-  const [panelSlotEl, setPanelSlotEl] = useState(null);
   useEffect(() => {
     setSlotEl(document.getElementById('argo-topbar-slot'));
-    setPanelSlotEl(document.getElementById('argo-topbar-panel-slot'));
   }, []);
   // 세션 적재 레일 — 새 대화로 넘긴 이전 대화들이 좌측에 쌓이고, 클릭으로 읽기 전용 열람
   const [sessions, setSessions] = useState([]);
@@ -141,26 +142,6 @@ export default function CrewChat({ params }) {
   const [renameSess, setRenameSess] = useState(null); // 대화명 편집 모달 대상 세션
   const [threadTitle, setThreadTitle] = useState(null); // 현재(활성) 대화의 사용자 지정 이름
   const [trashSess, setTrashSess] = useState(null);   // 삭제(보관) 확인 모달 대상 세션
-  // Codex식 우측 사이드 패널 — 파일/터미널/브라우저 도구 작업영역.
-  // 넓은 화면은 본문 옆에 도킹하고 좁은 화면만 드로어처럼 겹친다(CSS 반응형 폴백).
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [panelMounted, setPanelMounted] = useState(false);
-  const [panelFileRequest, setPanelFileRequest] = useState(null);
-  const [panelHydrated, setPanelHydrated] = useState(false);
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(PANEL_STORAGE_KEY) || '{}');
-      if (typeof saved.open === 'boolean') setPanelOpen(saved.open);
-    } catch { /* 손상·프라이빗 모드 — 기본값(닫힘) 유지 */ }
-    setPanelHydrated(true);
-  }, []);
-  useEffect(() => {
-    if (!panelHydrated) return;
-    try { localStorage.setItem(PANEL_STORAGE_KEY, JSON.stringify({ open: panelOpen })); } catch { /* 저장 불가여도 현재 동작은 유지 */ }
-  }, [panelHydrated, panelOpen]);
-  // 한 번 연 도구 작업영역은 숨겨도 마운트를 유지한다. Markdown 초안·터미널·브라우저 상태가
-  // 패널 표시/숨기기나 도구 탭 전환만으로 초기화되면 "작업영역"이 아니라 일회성 팝업이 된다.
-  useEffect(() => { if (panelOpen) setPanelMounted(true); }, [panelOpen]);
   const openWorkspaceFile = useCallback((href) => {
     if (typeof window === 'undefined') return false;
     let url;
@@ -179,26 +160,9 @@ export default function CrewChat({ params }) {
     const vaultMarker = path.indexOf('/vault/');
     if (vaultMarker >= 0) path = path.slice(vaultMarker + 1);
     if (!/^vault\//i.test(path)) path = `vault/${path}`;
-    setPanelFileRequest({ root: 'company', path, nonce: Date.now() });
-    setPanelMounted(true);
-    setPanelOpen(true);
+    window.dispatchEvent(new CustomEvent('argo:workspace-file', { detail: { root: 'company', path } }));
     return true;
   }, [ws]);
-  useEffect(() => {
-    const onToggleShortcut = (e) => {
-      if (e.defaultPrevented || e.repeat || e.code !== 'KeyB' || !(e.ctrlKey || e.metaKey) || !e.altKey || e.shiftKey) return;
-      e.preventDefault();
-      setPanelOpen((open) => !open);
-    };
-    window.addEventListener('keydown', onToggleShortcut);
-    return () => window.removeEventListener('keydown', onToggleShortcut);
-  }, []);
-  useEffect(() => {
-    if (!panelOpen) return;
-    const onKey = (e) => { if (e.key === 'Escape') setPanelOpen(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [panelOpen]);
   const loadSessions = useCallback(() => {
     api(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}`)
       .then((d) => setSessions(d.sessions ?? [])).catch(() => {});
@@ -218,7 +182,10 @@ export default function CrewChat({ params }) {
     if (!viewing || busy) return;
     try {
       const r = await api(`/api/companies/${ws}/chat/sessions`, { slug, id: viewing });
-      setThread(r.thread?.messages ?? []);
+      const resumed = r.thread?.messages ?? [];
+      setThread(resumed);
+      threadTotalRef.current = resumed.length;
+      setThreadPage({ start: 0, total: resumed.length, hasMore: false, loading: false });
       sessionRef.current = r.thread?.sessionId ?? null;
       setThreadTitle(r.thread?.title ?? null);
       setViewing(null); setArchMsgs(null); setError(''); resetAnnot();
@@ -301,28 +268,48 @@ export default function CrewChat({ params }) {
   }, [ws, slug]);
 
   useEffect(() => {
-    // alive 가드 — 크루를 오가면 이전 슬러그의 fetch가 취소되지 않고 늦게 도착해 현재 스레드를
-    // 통째로 덮어쓴다(setThread는 병합이 아니라 교체). 총괄팀장처럼 스레드가 크고 위임으로 턴이 긴
-    // 크루는 in-flight 창이 넓어 "다른 크루 다녀오니 대화가 사라짐"으로 나타났다(실사용 신고 2026-07-20).
+    if (!shellData) return;
+    const a = shellData.agents?.find((item) => item.slug === slug) ?? { name: slug, role: '' };
+    setAgent(a);
+    setAliases(shellData.company?.aliases ?? []);
+    // '' = 미지정(자동) — 'claude'를 박으면 자동 크루가 화면·저장 모두 클로드 고정으로 둔갑한다.
+    setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '' });
+  }, [shellData, slug]);
+
+  useEffect(() => {
+    // 최근 메시지부터 먼저 그린다. 회사 정보는 상위 레이아웃에서 공유하므로 여기서 다시 전수 조회하지 않는다.
     let alive = true;
-    setThread(null); setError(''); sessionRef.current = null;
-    pinMidRef.current = null; spacerHRef.current = 0; // 대화(크루) 전환 — 이전 대화의 핀·여백을 끌고 오지 않는다
-    api(`/api/companies/${ws}`)
-      .then((d) => {
+    setThread(null); setError(''); sessionRef.current = null; threadTotalRef.current = 0;
+    setThreadPage({ start: 0, total: 0, hasMore: false, loading: false });
+    pinMidRef.current = null; spacerHRef.current = 0;
+    api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&limit=${CHAT_PAGE_SIZE}`)
+      .then((data) => {
         if (!alive) return;
-        const a = d.agents.find((a) => a.slug === slug) ?? { name: slug, role: '' };
-        setAgent(a);
-        setAliases(d.company?.aliases ?? []); // '/' 커맨더 사용자 별칭 — 회사 단위 공유
-        // '' = 미지정(자동) — 'claude'를 박으면 자동 크루가 화면·저장 모두 클로드 고정으로 둔갑(K2 오표시 계열)
-        setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '' });
+        const messages = data.messages ?? [];
+        const total = data.totalMessages ?? messages.length;
+        threadTotalRef.current = total;
+        setThread(messages);
+        setThreadPage({ start: data.start ?? Math.max(0, total - messages.length), total, hasMore: !!data.hasMore, loading: false });
+        sessionRef.current = data.sessionId ?? null;
+        setLiveStage(data.status ?? null);
+        setThreadTitle(data.title ?? null);
       })
-      .catch(() => { if (alive) setAgent({ name: slug, role: '' }); });
-    api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
-      // status도 첫 로드에 반영 — 온보딩 직행 시 시운전 진행 카드가 8초 폴을 기다리지 않고 바로 보인다
-      .then((t) => { if (!alive) return; setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); })
       .catch(() => { if (alive) setThread([]); });
     return () => { alive = false; };
   }, [ws, slug]);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (threadPage.loading || !threadPage.hasMore || viewing) return;
+    setThreadPage((page) => ({ ...page, loading: true }));
+    try {
+      const data = await api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&limit=${CHAT_PAGE_SIZE}&before=${threadPage.start}`);
+      const older = data.messages ?? [];
+      setThread((current) => [...older, ...(current ?? [])]);
+      setThreadPage((page) => ({ ...page, start: data.start ?? 0, total: data.totalMessages ?? page.total, hasMore: !!data.hasMore, loading: false }));
+    } catch {
+      setThreadPage((page) => ({ ...page, loading: false }));
+    }
+  }, [threadPage.loading, threadPage.hasMore, threadPage.start, viewing, ws, slug]);
 
   // 콘텐츠 바닥 = scrollHeight − 작업 여백. 하단 판정·추종 모두 이 값을 쓴다 — scrollHeight를 그대로 쓰면
   // 여백(100vh)까지 "바닥"으로 취급해 자동 추종이 실제 대화를 화면 위로 밀어낸다(2026-07-21 "밀려 올라감"의 또 다른 축).
@@ -373,15 +360,13 @@ export default function CrewChat({ params }) {
   useEffect(() => {
     const t = setInterval(() => {
       if (busy) return; // 내가 보내는 중엔 낙관적 UI를 덮지 않는다
-      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
+      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&after=${threadTotalRef.current}`)
         .then((r) => {
           const msgs = r.messages ?? [];
-          setThread((cur) => {
-            if (cur === null || msgs.length <= cur.length) return cur;
-            // 다른 창구의 새 대화로 갈아끼울 때도 실패한 내 글은 잃지 않는다(서버엔 없는 사본이라 덮으면 소실)
-            const unsent = cur.filter((m) => m.failed);
-            return unsent.length ? [...msgs, ...unsent] : msgs;
-          });
+          if (msgs.length) setThread((cur) => [...(cur ?? []), ...msgs]);
+          const total = r.totalMessages ?? threadTotalRef.current + msgs.length;
+          threadTotalRef.current = total;
+          setThreadPage((page) => ({ ...page, total }));
           if (r.sessionId) sessionRef.current = r.sessionId;
           setLiveStage(r.status ?? null); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
           setThreadTitle(r.title ?? null); // 다른 기기에서 바꾼 현재 대화명도 준실시간 반영(검수 LOW)
@@ -439,7 +424,7 @@ export default function CrewChat({ params }) {
   useEffect(() => {
     if (!working) return;
     const t = setInterval(() => {
-      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
+      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&after=${threadTotalRef.current}`)
         .then((r) => setLiveStage(r.status ?? null))
         .catch(() => {});
     }, 2500);
@@ -540,6 +525,9 @@ export default function CrewChat({ params }) {
     try {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
+      const total = r.totalMessages ?? threadTotalRef.current + 2;
+      threadTotalRef.current = total;
+      setThreadPage((page) => ({ ...page, total }));
       setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts }]);
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
@@ -615,6 +603,7 @@ export default function CrewChat({ params }) {
     // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작(버튼이 안 열리던 원인) → 제거. 파괴적 액션만 DangerModal.
     await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
     setThread([]); sessionRef.current = null; setError(''); setThreadTitle(null);
+    threadTotalRef.current = 0; setThreadPage({ start: 0, total: 0, hasMore: false, loading: false });
     setViewing(null); setArchMsgs(null); resetAnnot(); pinMidRef.current = null; spacerHRef.current = 0;
     loadSessions(); // 방금 넘긴 대화가 좌측 레일에 적재된다
   }
@@ -625,7 +614,7 @@ export default function CrewChat({ params }) {
   const SLASH_CMDS = [
     { id: 'new', aliases: ['new', '새대화'], label: t('chat.newChat'), run: () => newChat() },
     { id: 'card', aliases: ['card', '카드'], label: t('chat.card'), run: () => setCardOpen(true) },
-    { id: 'panel', aliases: ['panel', '작업', 'files', '파일'], label: t('crew.panel.open'), run: () => setPanelOpen(true) },
+    { id: 'panel', aliases: ['panel', '작업', 'files', '파일'], label: t('crew.panel.open'), run: () => window.dispatchEvent(new Event('argo:workspace-panel-open')) },
     { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(`/c/${ws}/vault`) },
     { id: 'room', aliases: ['room', '회의', '회의실'], label: t('nav.room'), run: () => router.push(`/c/${ws}/room`) },
     { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(`/c/${ws}`) },
@@ -668,7 +657,7 @@ export default function CrewChat({ params }) {
   return (
     // 세션레일(216, 좌측 원위치) + 채팅 컬럼(나머지 전체). 채팅은 .thread를 컬럼 전체폭으로 두고 안쪽 레인만 중앙정렬 →
     // 스크롤바는 컬럼 우측 끝에 고정되고 메시지는 중앙 레인에 담긴다(가장 LLM다운 형태).
-    <div className={`crew-workspace${panelOpen ? ' has-side-panel' : ''}`}>
+    <div className="crew-workspace">
       {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지. 회의실·컨테스트와 동일(입력창 하향·대화영역 확대, 스레드만 내부 스크롤). */}
       {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정 */}
       <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
@@ -753,27 +742,20 @@ export default function CrewChat({ params }) {
         </>,
         slotEl,
       )}
-      {panelSlotEl && createPortal(
-        <button
-          type="button"
-          className={`btn btn-icon side-panel-toggle${panelOpen ? ' active' : ''}`}
-          aria-label={t('crew.panel.toggle')}
-          aria-controls="crew-side-panel"
-          aria-pressed={panelOpen}
-          title={`${t('crew.panel.toggle')} · ${t('crew.panel.shortcut')}`}
-          onClick={() => setPanelOpen((open) => !open)}
-        >
-          <Icon name="panel" size={16} />
-        </button>,
-        panelSlotEl,
-      )}
-
       <div className="thread" ref={threadRef} style={{ overflowY: 'auto', minHeight: 0 }}>
         {/* 안쪽 레인만 중앙정렬 — .thread(스크롤 컨테이너)는 컬럼 전체폭이라 스크롤바가 우측 끝에 고정된다.
             레인 래퍼가 flex 컬럼이어야 메시지 간 gap·유저버블 우측정렬(align-self)이 유지된다(.thread의 flex를 이 레인이 이어받음). */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%', maxWidth: LANE, margin: '0 auto' }}>
         {thread === null && (
           <><Skeleton h={46} w="60%" /><Skeleton h={90} /></>
+        )}
+        {!viewing && thread !== null && threadPage.hasMore && (
+          <button type="button" className="btn sm" onClick={loadOlderMessages} disabled={threadPage.loading}
+            style={{ alignSelf: 'center', flex: 'none' }}>
+            {threadPage.loading
+              ? t('chat.olderLoading')
+              : t('chat.older', { n: Math.min(CHAT_PAGE_SIZE, threadPage.start) })}
+          </button>
         )}
         {!viewing && thread?.length === 0 && !busy && (
           <div className="empty fade-up">
@@ -1139,9 +1121,6 @@ export default function CrewChat({ params }) {
         />
       )}
     </div>
-    {(panelOpen || panelMounted) && (
-      <WorkspacePanel ws={ws} open={panelOpen} onClose={() => setPanelOpen(false)} fileRequest={panelFileRequest} />
-    )}
     </div>
   );
 }

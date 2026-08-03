@@ -710,6 +710,8 @@ const DICT = {
   'chat.cmd.aliasText': ['넣을 지시 내용', 'Prompt to insert'],
   'chat.cmd.aliasTextPh': ['예: 오늘 진행 상황을 표로 정리해서 보고해줘', 'e.g. Summarize today’s progress as a table'],
   'chat.newChat': ['새 대화', 'New chat'],
+  'chat.older': ['이전 대화 {n}개 불러오기', 'Load {n} earlier messages'],
+  'chat.olderLoading': ['이전 대화 불러오는 중', 'Loading earlier messages'],
   'crew.panel.title': ['도구 패널', 'Tool panel'],
   'crew.panel.open': ['패널', 'Panel'],
   'crew.panel.toggle': ['사이드 패널 표시/숨기기', 'Toggle side panel'],

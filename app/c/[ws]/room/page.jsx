@@ -4,11 +4,13 @@
 import { use, useCallback, useEffect, useRef, useState } from 'react';
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuard } from '../../../ui';
 import { useLang } from '../../../i18n';
+import { useCompanyShell } from '../company-shell-context';
 
 export default function Room({ params }) {
   const { ws } = use(params);
   const { t } = useLang();
-  const [agents, setAgents] = useState([]);
+  const shellData = useCompanyShell();
+  const agents = shellData?.agents ?? [];
   const [messages, setMessages] = useState(null);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -52,7 +54,6 @@ export default function Room({ params }) {
     api(`/api/companies/${ws}/room`)
       .then((d) => { setMessages(d.messages ?? []); setError(''); })
       .catch((e) => setError(String(e?.message || '') || t('room.loadFail')));
-    api(`/api/companies/${ws}/agents`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
   }
   // 회의 다시 열기 — 보관 회의를 현재 방으로 되돌린다. 진행 중 회의가 있으면 서버가 409로 거절하므로
   // 덮어쓰기가 원천 차단된다(실사용 요청 2026-07-26 "보관한 회의를 다시 열어 이어갈 수 없나요").

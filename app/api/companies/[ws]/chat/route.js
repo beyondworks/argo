@@ -12,10 +12,35 @@ export const maxDuration = 300; // 에이전트 턴은 vault 탐색 포함 수 �
 export async function GET(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
-  const slug = new URL(req.url).searchParams.get('slug');
+  const search = new URL(req.url).searchParams;
+  const slug = search.get('slug');
   if (!slug) return Response.json({ error: 'slug가 필요합니다' }, { status: 400 });
   const [thread, status] = await Promise.all([loadThread(ws, slug), getTurnStatus(ws, slug)]);
-  return Response.json({ ...thread, status });
+  // 긴 대화는 최근 구간부터 보내고, 사용자가 위로 요청할 때만 이전 구간을 내려준다.
+  // limit/before/after가 없는 기존 호출자는 전체 스레드를 받는 하위호환 계약을 유지한다.
+  const windowed = search.has('limit') || search.has('before') || search.has('after');
+  if (!windowed) return Response.json({ ...thread, status });
+  const all = Array.isArray(thread.messages) ? thread.messages : [];
+  const totalMessages = all.length;
+  const limit = Math.max(1, Math.min(100, Number(search.get('limit')) || 50));
+  const afterRaw = search.get('after');
+  let start;
+  let end;
+  if (afterRaw !== null) {
+    start = Math.max(0, Math.min(totalMessages, Number(afterRaw) || 0));
+    end = totalMessages;
+  } else {
+    end = Math.max(0, Math.min(totalMessages, Number(search.get('before')) || totalMessages));
+    start = Math.max(0, end - limit);
+  }
+  return Response.json({
+    ...thread,
+    messages: all.slice(start, end),
+    totalMessages,
+    start,
+    hasMore: start > 0,
+    status,
+  });
 }
 
 export async function POST(req, { params }) {
@@ -34,9 +59,9 @@ export async function POST(req, { params }) {
     const t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
     // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
-    await appendTurn(ws, slug, { userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts });
+    const saved = await appendTurn(ws, slug, { userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts });
     nudgeSync(); // 로컬 변경 즉시 다른 기기로 전파(준실시간 — 다음 대기 건너뜀)
-    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts });
+    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts, totalMessages: saved.messages?.length ?? 0 });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });
   }

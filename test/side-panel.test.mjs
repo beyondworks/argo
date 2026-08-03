@@ -19,25 +19,26 @@ const nextConfig = read('next.config.mjs');
 const tauri = read('src-tauri/tauri.conf.json');
 const workspaceRoute = read('app/api/companies/[ws]/workspace/route.js');
 const terminalRoute = read('app/api/companies/[ws]/terminal/route.js');
+const chatRoute = read('app/api/companies/[ws]/chat/route.js');
+const shellContext = read('app/c/[ws]/company-shell-context.jsx');
 
-test('사이드 패널 토글: 탑바 우측 슬롯 + 눌림/제어 대상 접근성 계약', () => {
-  assert.match(shell, /id="argo-topbar-panel-slot"/, '앱셸 우측 토글 슬롯이 없다');
-  assert.match(crew, /aria-controls="crew-side-panel"/, '토글이 제어할 패널을 가리키지 않는다');
-  assert.match(crew, /aria-pressed=\{panelOpen\}/, '열림 상태가 눌림 상태로 노출되지 않는다');
-  assert.match(crew, /<WorkspacePanel ws=\{ws\}/, '토글이 도구 작업영역을 열지 않는다');
+test('사이드 패널 토글: 회사 셸 단일 인스턴스 + 눌림/제어 대상 접근성 계약', () => {
+  assert.match(shell, /aria-controls="crew-side-panel"/, '토글이 제어할 패널을 가리키지 않는다');
+  assert.match(shell, /aria-pressed=\{panelOpen\}/, '열림 상태가 눌림 상태로 노출되지 않는다');
+  assert.match(shell, /<GlobalWorkspacePanel/, '회사 셸이 도구 작업영역을 열지 않는다');
+  assert.doesNotMatch(crew, /<WorkspacePanel/, '채팅이 별도 패널 인스턴스를 다시 만든다');
   assert.match(panel, /id="crew-side-panel"/, '패널 id가 토글 계약과 어긋난다');
   assert.match(panel, /role="tablist"/);
   assert.match(panel, /role="tabpanel"/);
 });
 
 test('회사 전역 화면: 검색창 옆 토글과 고정 작업영역을 제공한다', () => {
-  assert.match(shell, /isCrewPage = pathname\.includes\('\/crew\/'\)/);
-  assert.match(shell, /!isCrewPage && \(\s*<button[\s\S]*side-panel-toggle/);
+  assert.match(shell, /className=\{`btn btn-icon side-panel-toggle/);
   assert.match(shell, /aria-controls="crew-side-panel"/);
   assert.match(shell, /<GlobalWorkspacePanel[\s\S]*fileRequest=\{panelFileRequest\}/);
   assert.match(shell, /onWidthChange=\{setGlobalPanelWidth\}/);
   assert.match(shell, /global-workspace-panel-width/);
-  assert.match(shell, /width: !isCrewPage && panelOpen \? `calc\(100% - \$\{globalPanelWidth\}px\)`/);
+  assert.match(shell, /width: panelOpen \? `calc\(100% - \$\{globalPanelWidth\}px\)`/);
   assert.match(shell, /global-panel-open/);
   assert.match(css, /\.content\.global-panel-open\s*\{[\s\S]*max-width: none;[\s\S]*margin-left: 0/);
   assert.match(panel, /onWidthChange\?\.\(value\)/);
@@ -53,17 +54,37 @@ test('회의실 파일 링크: Markdown 파일 링크를 전역 패널 이벤트
   assert.match(room, /<Markdown text=\{m\.text\} onFileLink=\{openWorkspaceFile\}/);
 });
 
+test('화면 전환 데이터: 회사 셸 데이터를 공유하고 회의실·채팅의 중복 회사 조회를 막는다', () => {
+  assert.match(shellContext, /createContext/);
+  assert.match(shell, /<CompanyShellProvider value=\{data\}>/);
+  assert.match(crew, /const shellData = useCompanyShell\(\)/);
+  assert.match(room, /const shellData = useCompanyShell\(\)/);
+  assert.doesNotMatch(crew, /api\(`\/api\/companies\/\$\{ws\}`\)/);
+  assert.doesNotMatch(room, /api\(`\/api\/companies\/\$\{ws\}\/agents`\)/);
+});
+
+test('긴 채팅: 최근 50개 우선 로드 + 이전 대화 단계 로딩 + 증분 폴링', () => {
+  assert.match(crew, /CHAT_PAGE_SIZE = 50/);
+  assert.match(crew, /limit=\$\{CHAT_PAGE_SIZE\}/);
+  assert.match(crew, /before=\$\{threadPage\.start\}/);
+  assert.match(crew, /after=\$\{threadTotalRef\.current\}/);
+  assert.match(crew, /chat\.older/);
+  assert.match(chatRoute, /totalMessages/);
+  assert.match(chatRoute, /all\.slice\(start, end\)/);
+  assert.match(chatRoute, /search\.has\('after'\)/);
+});
+
 test('사이드 패널 상태: Ctrl+Alt+B + 새로고침 후 열림/도구 탭 복원', () => {
-  assert.match(crew, /PANEL_STORAGE_KEY = 'argo:crew-side-panel:v1'/);
-  assert.match(crew, /localStorage\.getItem\(PANEL_STORAGE_KEY\)/);
-  assert.match(crew, /localStorage\.setItem\(PANEL_STORAGE_KEY/);
-  assert.match(crew, /e\.code !== 'KeyB'/, '키보드 배열에 안전한 code 기반 단축키가 아니다');
-  assert.match(crew, /\(e\.ctrlKey \|\| e\.metaKey\).*e\.altKey/, 'Ctrl 또는 Cmd + Alt 조합이 아니다');
+  assert.match(shell, /PANEL_STORAGE_KEY = 'argo:crew-side-panel:v1'/);
+  assert.match(shell, /localStorage\.getItem\(PANEL_STORAGE_KEY\)/);
+  assert.match(shell, /localStorage\.setItem\(PANEL_STORAGE_KEY/);
+  assert.match(shell, /event\.code !== 'KeyB'/, '키보드 배열에 안전한 code 기반 단축키가 아니다');
+  assert.match(shell, /\(event\.ctrlKey \|\| event\.metaKey\).*event\.altKey/, 'Ctrl 또는 Cmd + Alt 조합이 아니다');
   assert.match(panel, /TOOL_STORAGE_KEY = 'argo:crew-side-panel-tools:v1'/);
   assert.match(panel, /JSON\.stringify\(\{ tabs, active, panelWidth \}\)/, '열린 도구 탭과 패널 폭이 복원되지 않는다');
   assert.match(panel, /FILE_TREE_STORAGE_KEY/, '파일 트리 폭 저장 키가 없다');
-  assert.match(crew, /const \[panelMounted, setPanelMounted\] = useState\(false\)/);
-  assert.match(crew, /\(panelOpen \|\| panelMounted\).*?<WorkspacePanel ws=\{ws\} open=\{panelOpen\}/s,
+  assert.match(shell, /const \[panelMounted, setPanelMounted\] = useState\(false\)/);
+  assert.match(shell, /\(panelOpen \|\| panelMounted\).*?<GlobalWorkspacePanel/s,
     '패널을 숨길 때 Markdown 초안과 도구 상태를 보존하지 않는다');
   assert.match(panel, /hidden=\{!open\}/);
   assert.match(panel, /tabs\.includes\('files'\).*?hidden=\{active !== 'files'\}/s,
@@ -100,10 +121,9 @@ test('도구 API: 회사 가드·로컬 전용 셸·경로 관문을 통과한�
 });
 
 test('사이드 패널 레이아웃: 우측 트리·여백 제거 + 넓은 화면 도킹/좁은 화면 오버레이', () => {
-  assert.match(crew, /crew-workspace.*has-side-panel/s);
-  assert.match(css, /\.crew-workspace\.has-side-panel\s*\{[^}]*minmax\(0, 1fr\) auto/s);
-  assert.match(css, /\.content:has\(> \.crew-workspace\.has-side-panel\)\s*\{[^}]*max-width: none;[^}]*padding-right: 0;/s);
-  assert.match(css, /@media \(max-width: 1699px\)[\s\S]*\.crew-workspace > \.crew-tool-panel\s*\{[\s\S]*position: fixed/);
+  assert.match(shell, /global-panel-open/);
+  assert.match(css, /\.content\.global-panel-open\s*\{[^}]*max-width: none/s);
+  assert.match(css, /\.global-workspace-panel\s*\{[^}]*position: fixed/s);
   assert.match(css, /\.crew-files-tool[^}]*grid-template-columns: minmax\(0, 1fr\) 6px var\(--crew-file-tree-width, 220px\)/);
   assert.match(css, /\.crew-files-sidebar\s*\{[^}]*grid-column: 3/s, '파일 트리가 오른쪽 열이 아니다');
   assert.match(css, /\.crew-file-document\s*\{[^}]*grid-column: 1/s, '열린 파일 문서가 왼쪽 열이 아니다');
@@ -151,8 +171,8 @@ test('채팅 문서 링크: 새 404 페이지 대신 파일 패널을 열고 트
     'Vault 기준 rel을 회사 루트 기준 경로로 변환하지 않는다');
   assert.match(crew, /const vaultMarker = path\.indexOf\('\/vault\/'\)/,
     '절대 workspace 파일 경로에서 vault 경계 뒤를 추출하지 않는다');
-  assert.match(crew, /setPanelOpen\(true\)/);
-  assert.match(crew, /fileRequest=\{panelFileRequest\}/);
+  assert.match(crew, /argo:workspace-file/);
+  assert.match(shell, /fileRequest=\{panelFileRequest\}/);
   assert.match(panel, /setActive\('files'\)/);
   assert.match(panel, /const ancestors = \['', \.\.\.parts\.slice\(0, -1\)/);
   assert.match(panel, /Promise\.all\(ancestors\.map\(\(dir\) => loadDir\(dir\)\)\)/);
