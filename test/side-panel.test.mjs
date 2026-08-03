@@ -35,6 +35,9 @@ test('회사 전역 화면: 검색창 옆 토글과 고정 작업영역을 제�
   assert.match(shell, /!isCrewPage && \(\s*<button[\s\S]*side-panel-toggle/);
   assert.match(shell, /aria-controls="crew-side-panel"/);
   assert.match(shell, /<GlobalWorkspacePanel[\s\S]*fileRequest=\{panelFileRequest\}/);
+  assert.match(shell, /onWidthChange=\{setGlobalPanelWidth\}/);
+  assert.match(shell, /global-workspace-panel-width/);
+  assert.match(panel, /onWidthChange\?\.\(value\)/);
   assert.match(shell, /argo:workspace-file/);
   assert.match(css, /\.global-workspace-panel\s*\{[\s\S]*position: fixed/);
   assert.match(css, /\.global-workspace-panel > \.crew-tool-panel/);

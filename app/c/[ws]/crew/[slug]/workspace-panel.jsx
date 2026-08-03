@@ -87,7 +87,7 @@ function useLeftEdgeResize(value, onChange, getBounds) {
   };
 }
 
-export default function WorkspacePanel({ ws, open = true, onClose, fileRequest = null }) {
+export default function WorkspacePanel({ ws, open = true, onClose, fileRequest = null, onWidthChange }) {
   const { t } = useLang();
   const [tabs, setTabs] = useState(['files']);
   const [active, setActive] = useState('files');
@@ -96,6 +96,13 @@ export default function WorkspacePanel({ ws, open = true, onClose, fileRequest =
   const [panelBounds, setPanelBounds] = useState(() => panelWidthBounds(1920));
   const [hydrated, setHydrated] = useState(false);
   const [filesDirty, setFilesDirty] = useState(false);
+  const updatePanelWidth = useCallback((next) => {
+    setPanelWidth((current) => {
+      const value = typeof next === 'function' ? next(current) : next;
+      onWidthChange?.(value);
+      return value;
+    });
+  }, [onWidthChange]);
 
   useEffect(() => {
     try {
@@ -109,10 +116,10 @@ export default function WorkspacePanel({ ws, open = true, onClose, fileRequest =
       }
       const bounds = panelWidthBounds(window.innerWidth);
       setPanelBounds(bounds);
-      setPanelWidth(clampWidth(saved.panelWidth ?? PANEL_DEFAULT_WIDTH, bounds.min, bounds.max));
+      updatePanelWidth(clampWidth(saved.panelWidth ?? PANEL_DEFAULT_WIDTH, bounds.min, bounds.max));
     } catch { /* 손상된 로컬 상태는 파일 탭 기본값으로 복구 */ }
     setHydrated(true);
-  }, []);
+  }, [updatePanelWidth]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -123,7 +130,7 @@ export default function WorkspacePanel({ ws, open = true, onClose, fileRequest =
     () => panelWidthBounds(typeof window === 'undefined' ? 1920 : window.innerWidth),
     [],
   );
-  const panelResize = useLeftEdgeResize(panelWidth, setPanelWidth, getPanelBounds);
+  const panelResize = useLeftEdgeResize(panelWidth, updatePanelWidth, getPanelBounds);
   useEffect(() => {
     if (!fileRequest?.path) return;
     setTabs((current) => current.includes('files') ? current : ['files', ...current]);
@@ -133,18 +140,18 @@ export default function WorkspacePanel({ ws, open = true, onClose, fileRequest =
     const fit = () => {
       const bounds = getPanelBounds();
       setPanelBounds(bounds);
-      setPanelWidth((width) => clampWidth(width, bounds.min, bounds.max));
+      updatePanelWidth((width) => clampWidth(width, bounds.min, bounds.max));
     };
     window.addEventListener('resize', fit);
     return () => window.removeEventListener('resize', fit);
-  }, [getPanelBounds]);
+  }, [getPanelBounds, updatePanelWidth]);
 
   const resizePanelByKey = (event) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
     const bounds = getPanelBounds();
     const delta = event.key === 'ArrowLeft' ? 24 : -24;
-    setPanelWidth((width) => clampWidth(width + delta, bounds.min, bounds.max));
+    updatePanelWidth((width) => clampWidth(width + delta, bounds.min, bounds.max));
   };
 
   const openTool = (tool) => {

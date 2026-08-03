@@ -13,11 +13,11 @@ const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000
 const PANEL_STORAGE_KEY = 'argo:crew-side-panel:v1';
 
 /** 크루 채팅 밖에서도 같은 Codex식 작업영역을 쓸 수 있게 회사 셸이 소유하는 패널. */
-function GlobalWorkspacePanel({ ws, open, onClose, fileRequest }) {
+function GlobalWorkspacePanel({ ws, open, onClose, fileRequest, panelWidth, onWidthChange }) {
   if (!open && !fileRequest) return null;
   return (
-    <div className="global-workspace-panel">
-      <WorkspacePanel ws={ws} open={open} onClose={onClose} fileRequest={fileRequest} />
+    <div className="global-workspace-panel" style={{ '--global-workspace-panel-width': `${panelWidth}px` }}>
+      <WorkspacePanel ws={ws} open={open} onClose={onClose} fileRequest={fileRequest} onWidthChange={onWidthChange} />
     </div>
   );
 }
@@ -122,6 +122,7 @@ export default function CompanyShell({ children, params }) {
   const [fbOpen, setFbOpen] = useState(false); // 베타 피드백 모달
   const isCrewPage = pathname.includes('/crew/');
   const [panelOpen, setPanelOpen] = useState(false);
+  const [globalPanelWidth, setGlobalPanelWidth] = useState(540);
   const [panelMounted, setPanelMounted] = useState(false);
   const [panelFileRequest, setPanelFileRequest] = useState(null);
   const [panelHydrated, setPanelHydrated] = useState(false);
@@ -533,6 +534,8 @@ export default function CompanyShell({ children, params }) {
           open={panelOpen}
           onClose={() => setPanelOpen(false)}
           fileRequest={panelFileRequest}
+          panelWidth={globalPanelWidth}
+          onWidthChange={setGlobalPanelWidth}
         />
       )}
     </div>

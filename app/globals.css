@@ -1567,7 +1567,7 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
   top: 56px;
   right: 0;
   bottom: 0;
-  width: min(540px, calc(100vw - 16px));
+  width: min(var(--global-workspace-panel-width, 540px), calc(100vw - 16px));
   min-width: 0;
   animation: drawerIn 0.22s cubic-bezier(0.23, 1, 0.32, 1) both;
 }
