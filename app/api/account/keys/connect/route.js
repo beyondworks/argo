@@ -55,7 +55,7 @@ export async function GET(req) {
   // 기기 코드 — 폴링 1회가 곧 제공자에게 "승인됐나" 묻는 것이다(서버 내부 루프 없음).
   if (meta.deviceCode) {
     const r = await pollRunnerDeviceAuth(runner, g.scope);
-    return Response.json({ supported: true, authed: r.ok, pending: !!r.pending, ...(r.reason ? { reason: r.reason } : {}) });
+    return Response.json({ supported: true, authed: r.ok, pending: !!r.pending, slowDown: !!r.slowDown, ...(r.reason ? { reason: r.reason } : {}) });
   }
   if (meta.webConnect) {
     // 웹 브리지 완료 = 계정 자격 존재

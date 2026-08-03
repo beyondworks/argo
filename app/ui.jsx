@@ -533,6 +533,13 @@ export function FeedbackModal({ onClose }) {
   useScrollLock();
   const [text, setText] = useState('');
   const [state, setState] = useState(''); // '' | 'sending' | 'sent' | 'error'
+  // 이 배포가 제보를 공개 이슈로 옮기는가 — 켜져 있을 때만 고지한다(꺼진 배포에선 거짓말이 된다)
+  const [publicIssues, setPublicIssues] = useState(false);
+  useEffect(() => {
+    let live = true;
+    fetch('/api/feedback').then((r) => r.json()).then((d) => { if (live) setPublicIssues(!!d.publicIssues); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -566,6 +573,7 @@ export function FeedbackModal({ onClose }) {
           ) : (
             <>
               <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('feedback.desc')}</p>
+              {publicIssues && <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>{t('feedback.publicNote')}</p>}
               <textarea suppressHydrationWarning value={text} onChange={(e) => setText(e.target.value)} placeholder={t('feedback.placeholder')}
                 rows={5} autoFocus {...imeGuard}
                 style={{ padding: '10px 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }} />

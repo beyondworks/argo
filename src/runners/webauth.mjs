@@ -227,14 +227,19 @@ const DEVICE_OAUTH = { grok: { start: startGrokDeviceLogin, poll: pollGrokDevice
 
 export const deviceAuthSupported = (runner) => !!DEVICE_OAUTH[runner];
 
+/** 상태 키는 **러너+스코프**다. 콜백형은 리스너가 포트 하나를 잡아 러너 단위 전역이 불가피했지만
+    (그래서 "마지막 시작이 이긴다"는 알려진 한계가 있다), 기기 코드는 포트를 안 쓴다 — 전역으로 둘
+    이유가 없고, 두면 다중 사용자 인스턴스에서 남의 시작이 내 세션을 덮어 로그인이 영원히 pending에
+    묶인다(분리 검수 2026-08-03 M3: 토큰 유출은 아니고 가용성 문제). */
+const deviceKey = (runner, wsId) => `device:${runner}:${wsId}`;
+
 export async function startRunnerDeviceAuth(runner, wsId) {
   const d = DEVICE_OAUTH[runner];
   if (!d) return { ok: false, reason: 'unsupported' };
   const r = await d.start();
   if (!r.ok) return r;
   // wsId를 상태에 함께 각인한다 — 폴링 GET이 다른 스코프로 와도 **시작한 스코프에** 저장한다.
-  // (콜백형이 리스너 클로저로 wsId를 잡아두는 것과 같은 보장)
-  webAuthState[runner] = { deviceCode: r.deviceCode, savedWs: null, ws: wsId, ts: Date.now() };
+  webAuthState[deviceKey(runner, wsId)] = { deviceCode: r.deviceCode, ws: wsId, ts: Date.now() };
   return { ok: true, url: r.url, userCode: r.userCode, interval: r.interval, expiresIn: r.expiresIn };
 }
 
@@ -242,17 +247,16 @@ export async function startRunnerDeviceAuth(runner, wsId) {
 export async function pollRunnerDeviceAuth(runner, wsId) {
   const d = DEVICE_OAUTH[runner];
   if (!d) return { ok: false, reason: 'unsupported' };
-  const st = webAuthState[runner];
-  if (st?.saved) return { ok: st.savedWs === wsId }; // 이미 끝난 세션 — 다시 묻지 않는다(코드 1회용)
+  const st = webAuthState[deviceKey(runner, wsId)];
+  if (st?.saved) return { ok: true }; // 이미 끝난 세션 — 다시 묻지 않는다(코드 1회용). 키에 스코프가 박혀 있다
   if (!st?.deviceCode) return { ok: false, reason: 'no-session' };
   // 기기 코드 수명은 제공자가 준다(실측 1800초). 넘으면 다시 시작해야 한다 — 붙잡고 있으면 영원히 pending이다.
   if (Date.now() - st.ts > 30 * 60_000) return { ok: false, reason: 'expired' };
   let r;
   try { r = await d.poll(st.deviceCode); } catch (e) { return { ok: false, reason: 'network', detail: String(e?.message || e).slice(0, 120) }; }
-  if (r.pending) return { ok: false, pending: true };
+  if (r.pending) return { ok: false, pending: true, ...(r.slowDown ? { slowDown: true } : {}) }; // 제공자가 늦추라면 늦춘다(RFC 8628 §3.5)
   if (!r.ok) return { ok: false, reason: r.reason };
-  const target = st.ws ?? wsId;
-  await saveRunnerCred(target, runner, 'oauth', r.tokens);
-  webAuthState[runner] = { saved: true, savedWs: target, ts: Date.now() };
-  return { ok: target === wsId };
+  await saveRunnerCred(st.ws, runner, 'oauth', r.tokens);
+  webAuthState[deviceKey(runner, wsId)] = { saved: true, savedWs: st.ws, ts: Date.now() };
+  return { ok: true };
 }

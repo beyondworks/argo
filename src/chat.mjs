@@ -392,7 +392,7 @@ ${pinnedLine}${rootsLine}- 웹 브라우징(=웹 검색·최신 정보 조회 �
 
 ## 도구·스킬 — 필요하면 알아서 불러 써라
 - 회사 스킬(skills/*.md)은 매 턴 네 지침에 자동 주입된다 — 해당 유형 작업이면 즉시 적용하라.
-- 이 회사에 연결된 외부 도구(MCP): ${mcpList}. ${hasTools ? '작업에 필요하면 허락을 기다리지 말고 바로 사용하라 — 그러라고 연결해 둔 것이다.' : '이 도구들은 SDK 러너(Claude·GLM·Kimi·OpenRouter) 턴에서 실행된다 — 지금 러너에서 쓸 수 없으면 그 사실을 밝히고 대안을 제시하라.'}${connectorLine}
+- 이 회사에 연결된 외부 도구(MCP): ${mcpList}. ${hasTools ? '작업에 필요하면 허락을 기다리지 말고 바로 사용하라 — 그러라고 연결해 둔 것이다.' : '이 도구들은 SDK 러너(Claude·GLM·Kimi·OpenRouter·Grok) 턴에서 실행된다 — 지금 러너에서 쓸 수 없으면 그 사실을 밝히고 대안을 제시하라.'}${connectorLine}
 - 필요한 도구가 회사에 없으면: ${hasTools ? '이 컴퓨터에 이미 설치된 MCP는 request_tool_install(source=host — env까지 그대로)로, 그 외에는 카탈로그(source=catalog)로 설치하라 — 결재 없이 즉시 설치되고(활동에 기록) 다음 턴부터 쓸 수 있다.' : '사장에게 "스킬·도구" 화면에서 연결해 달라고 정확히 안내하라.'}
 
 ## 보호 구역 — 예외 없이 금지
@@ -819,8 +819,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
           ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — the ${noCli.join('/')} runner executes through the vendor CLI. Install it, or connect Claude (no install needed) in Settings → AI connections.`
           : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — ${noCli.join('/')} 러너는 벤더 CLI로 실행됩니다. CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
       : (lang === 'en'
-          ? 'No AI runner is connected. Connect one in Settings → AI connections (Claude, Codex, Gemini, Antigravity, GLM, Kimi, or OpenRouter), then try again.'
-          : 'AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 Claude·Codex·Gemini·Antigravity·GLM·Kimi·OpenRouter 중 하나를 연결한 뒤 다시 말을 걸어 주세요.'));
+          ? 'No AI runner is connected. Connect one in Settings → AI connections (Claude, Codex, Gemini, Antigravity, GLM, Kimi, OpenRouter, or Grok), then try again.'
+          : 'AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 Claude·Codex·Gemini·Antigravity·GLM·Kimi·OpenRouter·Grok 중 하나를 연결한 뒤 다시 말을 걸어 주세요.'));
   }
   const runner = resolved.runner;
   // 이번 턴까지 시도한 러너 목록 — 아래 두 실행 경로(CLI·SDK)의 인증 자가치유가 공유한다.

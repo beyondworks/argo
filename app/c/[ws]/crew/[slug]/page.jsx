@@ -672,7 +672,7 @@ export default function CrewChat({ params }) {
 
   async function sendMessage(message, attachments = []) {
     if (!message || busy || uploading) return;
-    setError(''); setBusy(true); setStage(0); setQueueHeld(false);
+    setError(''); setBusy(true); setStage(0);
     // 낙관적 표시 — 서버는 턴이 끝난 뒤에야 저장하므로(route.js appendTurn) 도중엔 이 사본이 사장 글의 유일한 원본이다.
     // 그래서 실패해도 스레드에서 빼지 않는다. 빼면 글이 어디에도 남지 않고 입력창으로 되돌아가 "보낸 게 사라졌다"가 된다.
     const mid = `s${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -706,6 +706,10 @@ export default function CrewChat({ params }) {
     if (slashMatches.length) { runSlash(slashMatches[Math.min(slashIdx, slashMatches.length - 1)]); return; }
     const message = input.trim();
     if (!message) return;
+    // 업로드가 끝나기 전에 보내면 그 시점의 att에는 올라가는 중인 파일이 없다 — 첨부 없이 나가고
+    // 완료분은 다음 메시지용 칩으로 남는다(사장은 함께 보냈다고 믿는다). 버튼은 disabled로 막혀
+    // 있었지만 Enter 경로가 그걸 우회했다(분리 검수 2026-08-03 M-3).
+    if (uploading) return;
     const attachments = att;
     histIdx.current = -1; // 히스토리로 불러온 지시를 전송했으면 탐색 위치 초기화
     setInput(''); setAtt([]);
@@ -722,6 +726,9 @@ export default function CrewChat({ params }) {
     const [next, ...rest] = queue;
     setQueue(rest);
     sendMessage(next.text, next.attachments ?? []);
+    // 잠금은 **여기서만** 풀린다(그리고 "지금 보내기"). 예전엔 sendMessage 진입부에서 풀어,
+    // 잠긴 대기열을 두고 사장이 무관한 지시를 하나 보내면 그 턴이 끝나는 순간 대기열 전체가
+    // 저 혼자 나갔다(분리 검수 2026-08-03 M-1). 잠금 안내는 busy 중엔 보이지도 않는다.
     // eslint 규칙은 no-undef 단일 게이트(#191)라 deps 경고는 없다 — 의도적으로 busy·queue만 본다
   }, [busy, uploading, queueHeld, queue]);
 
@@ -1196,7 +1203,7 @@ export default function CrewChat({ params }) {
             전엔 칩이 줄줄이 옆으로 흐르고 안내 문구·버튼이 그 사이에 끼어 읽는 순서가 없었다.
             한 줄에 하나씩, 왼쪽 아이콘 · 가운데 내용 · 오른쪽 조작으로 세로로 세운다. */}
         {(pinnedFolder || queue.length > 0) && (
-          <div className="composer-stack" aria-label={t('chat.queue.label', { n: queue.length })}>
+          <div className="composer-stack" aria-label={queue.length ? t('chat.queue.label', { n: queue.length }) : t('chat.workFolder.open')}>
             {/* 고정된 작업 폴더 — 해제 전까지 매 턴 프롬프트에 "지금 일할 폴더"로 들어간다.
                 끝 두 조각만 보인다: 전체 경로는 폭을 다 먹고, CSS 말줄임(direction:rtl)은 앞의 '/'를
                 끝으로 밀어 "…보고서-2026-07/"처럼 없는 슬래시를 만든다(실측). 전체는 title로. */}

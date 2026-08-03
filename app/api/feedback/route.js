@@ -8,7 +8,28 @@ import { cookies } from 'next/headers';
 import { randomBytes } from 'node:crypto';
 import { AUTH_ON, currentUser } from '../../auth.mjs';
 import { getFreshDeviceSession } from '../../../src/devicesession.mjs';
-import { createFeedbackIssue } from '../../../src/feedback-issue.mjs';
+import { createFeedbackIssue, feedbackIssueEnabled } from '../../../src/feedback-issue.mjs';
+
+/** 폼이 "공개 이슈에 올라간다"를 알려야 하는지 — 미러링이 꺼진 배포에서 그 고지는 거짓이다. */
+export async function GET() {
+  return Response.json({ publicIssues: feedbackIssueEnabled() });
+}
+
+/* 사용자별 발행 속도 제한 — 요청 1건 = 공개 이슈 1건이고 가입은 셀프서비스라, 없으면
+   레포가 스팸으로 덮이고 GitHub 2차 레이트리밋이 봇 계정을 제재해 미러링 자체가 죽는다
+   (분리 검수 2026-08-03 M2). 프로세스 메모리로 충분하다 — 재시작하면 풀리지만 이 방어의
+   목표는 자동 스팸 억제이지 감사 추적이 아니다. **저장은 절대 막지 않는다**(사본이 정본을
+   깨지 않는다는 이 경로의 원칙): 넘치면 이슈 발행만 건너뛴다. */
+const ISSUE_RATE = (globalThis.__argoFeedbackRate ??= new Map()); // userId → 발행 시각(ms)[]
+const ISSUE_WINDOW_MS = 60 * 60_000;
+const ISSUE_MAX = 5;
+function issueRateOk(userId) {
+  const now = Date.now();
+  const hits = (ISSUE_RATE.get(userId) ?? []).filter((t) => now - t < ISSUE_WINDOW_MS);
+  if (hits.length >= ISSUE_MAX) { ISSUE_RATE.set(userId, hits); return false; }
+  hits.push(now); ISSUE_RATE.set(userId, hits);
+  return true;
+}
 
 export async function POST(req) {
   if (!AUTH_ON) return Response.json({ error: '클라우드 모드(로그인)에서만 피드백을 보낼 수 있습니다' }, { status: 400 });
@@ -51,7 +72,9 @@ export async function POST(req) {
   }
   // 깃헙 이슈는 **사본**이다 — 실패해도 제보는 이미 저장됐으므로 성공으로 답한다.
   // 토큰이 없으면 skipped로 조용히 지나간다(기능 꺼짐이 기본값).
-  const mirrored = await createFeedbackIssue({ message: clean, ref, ua });
+  const mirrored = issueRateOk(user.id)
+    ? await createFeedbackIssue({ message: clean, ref, ua })
+    : { ok: false, skipped: true }; // 속도 제한 — 저장은 이미 끝났다
   if (!mirrored.ok && !mirrored.skipped) console.error('[argo] feedback 이슈 미러링 실패:', mirrored.status ?? mirrored.error ?? '');
   return Response.json({ ok: true });
 }

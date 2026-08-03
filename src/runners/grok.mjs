@@ -40,15 +40,19 @@ export function grokAccessToken(stored) {
   if (!stored) return '';
   try {
     const d = JSON.parse(stored);
-    return typeof d?.access_token === 'string' ? d.access_token : String(stored);
-  } catch { return String(stored); }
+    // JSON인데 access_token이 없으면 **빈 문자열**이다. 원문을 돌려주면 refresh_token이 든
+    // JSON 통째로 `ANTHROPIC_AUTH_TOKEN`에 실려 api.x.ai로 나간다(분리 검수 2026-08-03 L-1).
+    return typeof d?.access_token === 'string' ? d.access_token : '';
+  } catch { return String(stored); } // 구형(생 토큰) 관용 — JSON이 아니면 그 자체가 토큰이다
 }
 
-/** 만료까지 60초 미만이면 갱신 대상. 만료시각을 모르는 값(구형)은 손대지 않는다. */
+/** 만료까지 **5분** 미만이면 갱신 대상. 60초로 잡았더니 6분짜리 긴 턴이 시작 직후엔 유효했다가
+    도중에 만료됐다(분리 검수 2026-08-03 L-3). 만료시각을 모르는 값(구형)은 손대지 않는다. */
+export const GROK_REFRESH_MARGIN_MS = 5 * 60_000;
 export function grokNeedsRefresh(stored, now = Date.now()) {
   try {
     const d = JSON.parse(stored);
-    return !!(d?.refresh_token && Number(d?.expires_at) > 0 && Number(d.expires_at) - now < 60_000);
+    return !!(d?.refresh_token && Number(d?.expires_at) > 0 && Number(d.expires_at) - now < GROK_REFRESH_MARGIN_MS);
   } catch { return false; }
 }
 

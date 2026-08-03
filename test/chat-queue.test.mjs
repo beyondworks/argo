@@ -26,12 +26,24 @@ test('답변 중 전송은 대기열로 간다 — 이 분기가 없으면 지�
 });
 
 test('실패·중단 턴은 대기열을 잠근다(자동 발사 금지) + 푸는 자리가 있다', () => {
-  // 실패 경로에서 잠그고
-  assert.match(page, /setQueueHeld\(true\)/);
+  // 파일 어딘가에 setQueueHeld(true)가 있는지만 보면 **복원 이펙트의 것**으로 만족돼
+  // 실패 경로의 잠금을 지워도 초록이었다(분리 검수 2026-08-03 M-2, 변이로 실증).
+  // 그래서 sendMessage의 catch 블록 안에서 확인한다.
+  const send = page.slice(page.indexOf('async function sendMessage'), page.indexOf('async function send(e)'));
+  const katch = send.slice(send.indexOf('} catch (err) {'));
+  assert.match(katch, /setQueueHeld\(true\)/, '실패 턴이 대기열을 잠그지 않는다 — 쌓인 지시가 줄줄이 나간다');
+  // 잠금을 푸는 자리는 배출 이펙트와 버튼 둘뿐이어야 한다(sendMessage 진입부에서 풀면 무관한
+  // 지시 하나로 대기열 전체가 발사된다 — M-1)
+  assert.doesNotMatch(send.slice(0, send.indexOf('} catch (err) {')), /setQueueHeld\(false\)/);
   // 배출 조건이 그 잠금을 본다
   assert.match(page, /if \(busy \|\| uploading \|\| queueHeld \|\| !queue\.length\) return;/);
   // 사장이 직접 풀 수 있다 — 없으면 대기열이 영영 못 나가고 지우는 길밖에 없다
   assert.match(page, /chat\.queue\.sendNow/);
+});
+
+test('업로드가 끝나기 전에는 보내지 않는다 — 첨부가 조용히 떨어진다(Enter 경로 포함)', () => {
+  const send = page.slice(page.indexOf('async function send(e)'));
+  assert.match(send.slice(0, 900), /if \(uploading\) return;/);
 });
 
 test('새로고침 복원분은 잠긴 채 올라온다 — 보지도 않은 지시가 저 혼자 나가면 안 된다', () => {

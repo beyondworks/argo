@@ -103,3 +103,19 @@ test('폴링 성공 — 저장 형식(JSON 문자열)으로 돌려준다', async
   assert.equal(sent.url, 'https://auth.x.ai/oauth2/token');
   assert.match(sent.body, /grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code/);
 });
+
+test('기기 코드 상태는 스코프별로 격리된다 — 남의 시작이 내 세션을 덮으면 로그인이 영원히 안 끝난다', async () => {
+  // 분리 검수 2026-08-03 M3. 시작하지 않은 스코프의 폴링은 남의 세션을 보지 못하고 no-session이어야 한다.
+  const { pollRunnerDeviceAuth } = await import('../src/runners/webauth.mjs');
+  const r = await pollRunnerDeviceAuth('grok', 'ws-never-started');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'no-session');
+});
+
+test('기기 코드는 러너 단위 전역 키를 쓰지 않는다(소스 트립와이어)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/runners/webauth.mjs', import.meta.url), 'utf8');
+  assert.match(src, /const deviceKey = \(runner, wsId\)/);
+  const dev = src.slice(src.indexOf('const DEVICE_OAUTH'));
+  assert.doesNotMatch(dev, /webAuthState\[runner\]/, '기기 코드 분기가 러너 단위 전역 키로 되돌아갔다');
+});

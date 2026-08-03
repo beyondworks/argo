@@ -22,7 +22,10 @@ export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, PICK_ORDER } 
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
     (c) 방식별 입력·저장·검증·제거 또는 CLI 로그인 안내. 응답엔 마스킹만 실린다(보안 규칙). */
 const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
-const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter'];
+// 화면에 그릴 순서 — **이 목록에 없으면 카드가 아예 안 뜬다**(러너를 추가하고 여기를 빠뜨리면
+// 연결 수단이 UI에서 사라진다. 분리 검수 2026-08-03이 grok 누락으로 실제 적발).
+// test/runner-order-sync.test.mjs가 RUNNER_AUTH와의 동기화를 잠근다.
+const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter', 'grok'];
 
 export function AiConnectionCard({ ws, accordion = false }) {
   const { t } = useLang();
@@ -72,6 +75,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   // 기기 코드(Grok) — 붙여넣을 것이 없고 **보여줄 것**이 있다. 사용자가 그 주소에 이 코드를 넣으면
   // 서버 폴링이 승인을 잡아 저장까지 끝낸다(콜백 리스너 없음 — 상주·헤드리스에서도 같게 돈다).
   const [webUserCode, setWebUserCode] = useState('');
+  const [device, setDevice] = useState(null); // { interval, expiresIn } — 기기 코드 흐름의 폴링 규약
   const [webBusy, setWebBusy] = useState(false);
   const [webMsg, setWebMsg] = useState('');
   const [webOk, setWebOk] = useState(false);
@@ -84,6 +88,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error(d.reason === 'no-cli' ? t('settings.runners.webNoCli') : (d.detail || d.reason || 'failed'));
       setWebUrl(d.url); setWebUserCode(d.userCode ?? ''); setWebOk(true);
+      setDevice(d.userCode ? { interval: Number(d.interval) > 0 ? Number(d.interval) : 5, expiresIn: Number(d.expiresIn) > 0 ? Number(d.expiresIn) : 1800 } : null);
       setWebMsg(t(d.userCode ? 'settings.runners.deviceReady' : 'settings.runners.webUrlReady'));
     } catch (e) { setWebMsg(String(e.message)); } finally { setWebBusy(false); }
   }
@@ -93,19 +98,38 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   useEffect(() => {
     if (!webUrl) return;
     let liveFlag = true;
-    const iv = setInterval(async () => {
+    let timer = null;
+    // 기기 코드는 **폴링이 유일한 수확 경로**다(콜백형과 달리 서버 리스너가 없다). 그래서
+    //  · 주기는 제공자가 준 interval을 지키고(고정 2초로 두들기면 RFC 8628 §3.5 위반 —
+    //    제공자가 slow_down·코드 무효화로 응수하면 연결이 원인 불명으로 실패한다),
+    //  · slow_down을 받으면 5초 더 늦추며,
+    //  · 수명은 코드 만료(실측 30분)까지 — 10분에 끊으면 늦게 승인한 사용자의 토큰이 영영 안 온다,
+    //  · 실패 사유(expired·access_denied…)를 화면에 올린다. 예전엔 전부 버려 무한 스피너였다.
+    // (분리 검수 2026-08-03 M-4·M-5)
+    let waitMs = Math.max(2000, (device?.interval ?? 2) * 1000);
+    const deadline = Date.now() + (device?.expiresIn ?? 600) * 1000;
+    const tick = async () => {
+      if (!liveFlag) return;
+      if (Date.now() > deadline) { setWebOk(false); setWebMsg(t('settings.runners.deviceExpired')); return; }
       try {
         const d = await (await fetch(`${keysBase(ws)}/connect?runner=${encodeURIComponent(id)}`)).json();
-        if (!liveFlag || !d.authed) return;
-        setWebOk(true); setWebMsg(t('settings.runners.connected'));
-        setWebUrl(''); setWebCode(''); setWebUserCode('');
-        window.dispatchEvent(new Event('argo:refresh'));
-        onChange();
+        if (!liveFlag) return;
+        if (d.authed) {
+          setWebOk(true); setWebMsg(t('settings.runners.connected'));
+          setWebUrl(''); setWebCode(''); setWebUserCode(''); setDevice(null);
+          window.dispatchEvent(new Event('argo:refresh'));
+          onChange();
+          return;
+        }
+        if (d.slowDown) waitMs += 5000;
+        // pending이 아닌 사유 = 진짜 실패다. 계속 돌면 사용자는 영원히 기다린다.
+        if (d.reason && !d.pending) { setWebOk(false); setWebMsg(t('settings.runners.deviceFailed', { reason: d.reason })); return; }
       } catch { /* 다음 틱 재시도 */ }
-    }, 2000);
-    const ttl = setTimeout(() => clearInterval(iv), 10 * 60_000);
-    return () => { liveFlag = false; clearInterval(iv); clearTimeout(ttl); };
-  }, [webUrl]);
+      timer = setTimeout(tick, waitMs);
+    };
+    timer = setTimeout(tick, waitMs);
+    return () => { liveFlag = false; if (timer) clearTimeout(timer); };
+  }, [webUrl, device]);
 
   async function webSubmit() {
     setWebBusy(true); setWebMsg('');

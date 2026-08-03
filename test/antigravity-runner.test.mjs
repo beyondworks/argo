@@ -56,8 +56,12 @@ test('자동 선택 순서 — PICK_ORDER는 RUNNER_AUTH 정의 순과 일치한
 });
 
 test('연결 UI — RUNNER_ORDER·RUNNER_NAMES에 antigravity가 있다', () => {
+  // 목록 전체를 리터럴로 고정하던 단언이었다. 그건 **누락은 못 잡으면서 추가는 막는다** —
+  // grok을 넣자 이 테스트가 red가 됐고(분리 검수 2026-08-03 C-1), 그동안 grok이 빠져 있어도
+  // 초록이었다. 그래서 "이 러너가 들어 있나"만 본다. 전수 동기화는 runner-order-sync가 잠근다.
   const src = read('app/runner-connect.jsx');
-  assert.match(src, /RUNNER_ORDER = \['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter'\]/);
+  const order = src.match(/RUNNER_ORDER = \[([^\]]*)\]/)[1];
+  assert.match(order, /'antigravity'/);
   assert.match(src, /antigravity: 'Antigravity'/);
 });
 
