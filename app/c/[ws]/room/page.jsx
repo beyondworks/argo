@@ -106,6 +106,30 @@ export default function Room({ params }) {
 
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
 
+  // 회의 발언의 상대 파일 링크도 회사 셸이 소유한 우측 작업영역으로 연다.
+  // 채팅의 파일 링크와 같은 vault 기준을 사용하되, 회의 화면은 자체 패널을 렌더링하지 않으므로
+  // 전역 셸 이벤트로 전달한다.
+  const openWorkspaceFile = useCallback((href, event) => {
+    if (typeof window === 'undefined') return false;
+    let url;
+    try { url = new URL(String(href || ''), window.location.origin); } catch { return false; }
+    let path = '';
+    if (url.pathname === `/c/${ws}/vault`) path = url.searchParams.get('doc') || '';
+    else if (url.pathname === `/api/companies/${ws}/files`) path = url.searchParams.get('rel') || '';
+    else if (/^(?:vault\/|\.?\/?vault\/)/i.test(String(href))) path = String(href).replace(/^\.?\/?/, '');
+    else if (!/^[a-z][a-z\d+.-]*:/i.test(String(href)) && /\.[a-z\d]{1,8}(?:[#?].*)?$/i.test(String(href))) {
+      path = String(href).replace(/^\.?\/?/, '');
+    }
+    if (!path) return false;
+    try { path = decodeURIComponent(path).replace(/^\/+/, ''); } catch { return false; }
+    const vaultMarker = path.indexOf('/vault/');
+    if (vaultMarker >= 0) path = path.slice(vaultMarker + 1);
+    if (!/^vault\//i.test(path)) path = `vault/${path}`;
+    event?.preventDefault?.();
+    window.dispatchEvent(new CustomEvent('argo:workspace-file', { detail: { root: 'company', path } }));
+    return true;
+  }, [ws]);
+
   async function openSession(id) {
     if (!id) { setViewing(null); setArchMsgs(null); atBottomRef.current = true; setUnseen(false); return; } // 복귀=최신으로(검수 D2·D4)
     try {
@@ -318,7 +342,7 @@ export default function Room({ params }) {
                     {m.via?.task && (
                       <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4, lineHeight: 1.5 }}>{m.via.task}</div>
                     )}
-                    <div style={{ fontSize: 13.5 }}><Markdown text={m.text} /></div>
+                    <div style={{ fontSize: 13.5 }}><Markdown text={m.text} onFileLink={openWorkspaceFile} /></div>
                   </div>
                 </div>
               ))}

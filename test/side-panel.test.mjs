@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (rel) => readFileSync(join(ROOT, rel), 'utf8');
 const crew = read('app/c/[ws]/crew/[slug]/page.jsx');
+const room = read('app/c/[ws]/room/page.jsx');
 const panel = read('app/c/[ws]/crew/[slug]/workspace-panel.jsx');
 const shell = read('app/c/[ws]/layout.jsx');
 const css = read('app/globals.css');
@@ -37,6 +38,13 @@ test('회사 전역 화면: 검색창 옆 토글과 고정 작업영역을 제�
   assert.match(shell, /argo:workspace-file/);
   assert.match(css, /\.global-workspace-panel\s*\{[\s\S]*position: fixed/);
   assert.match(css, /\.global-workspace-panel > \.crew-tool-panel/);
+});
+
+test('회의실 파일 링크: Markdown 파일 링크를 전역 패널 이벤트로 전달한다', () => {
+  assert.match(room, /const openWorkspaceFile = useCallback/);
+  assert.match(room, /argo:workspace-file/);
+  assert.match(room, /const vaultMarker = path\.indexOf\('\/vault\/'\)/);
+  assert.match(room, /<Markdown text=\{m\.text\} onFileLink=\{openWorkspaceFile\}/);
 });
 
 test('사이드 패널 상태: Ctrl+Alt+B + 새로고침 후 열림/도구 탭 복원', () => {
