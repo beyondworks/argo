@@ -6,9 +6,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { join, sep } from 'node:path';
 
-const root = new URL('..', import.meta.url).pathname;
+// URL.pathname을 그대로 쓰면 윈도우에서 `/C:/...`가 되어 join이 `D:\D:\...`를 만든다(CI 실패 실측 2026-08-05).
+const root = fileURLToPath(new URL('..', import.meta.url));
 
 /** app/·src/ 아래 모든 소스에서 LEMONSQUEEZY_API_KEY 참조를 모은다(재귀 — 비재귀 스캔은 거짓 안심). */
 async function refs(dir) {
@@ -16,9 +18,9 @@ async function refs(dir) {
   for (const e of await readdir(join(root, dir), { withFileTypes: true, recursive: true })) {
     if (!e.isFile() || !/\.(mjs|js|jsx|ts)$/.test(e.name)) continue;
     const p = join(e.parentPath ?? e.path, e.name);
-    if (p.includes('node_modules') || p.includes('/.next/')) continue;
+    if (p.includes('node_modules') || p.includes(`${sep}.next${sep}`)) continue;
     // 주석의 언급이 아니라 **실제 읽기**만 센다 — 이 경계를 설명하는 주석까지 잡으면 게이트가 무뎌진다
-    if (/process\.env\.LEMONSQUEEZY_API_KEY/.test(await readFile(p, 'utf8'))) out.push(p.replace(root, ''));
+    if (/process\.env\.LEMONSQUEEZY_API_KEY/.test(await readFile(p, 'utf8'))) out.push(p.replace(root, '').replaceAll('\\', '/'));
   }
   return out;
 }
