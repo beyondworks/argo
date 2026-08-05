@@ -227,8 +227,12 @@ test('UI 소스 계약: CloudExportRow는 lastError 분기 사슬과 직교로 �
   // ENFORCE off 구간의 free 사용자는 RLS push 거부로 lastError 분기에 걸린다 — 사슬 안에 버튼을
   // 넣으면 대상 사용자가 버튼을 영영 못 본다. 직교 렌더 표현식이 소스에 있어야 한다.
   const src = await readFile(join(process.cwd(), 'app', 'c', '[ws]', 'settings', 'page.jsx'), 'utf8');
-  assert.ok(src.includes(`{(sync.paywalled || sync.plan === 'free') && <CloudExportRow />}`),
-    '직교 렌더 표현식 존재 — 분기 사슬(lastError) 안으로 옮기면 이 계약 위반');
+  // 표현식 전문을 리터럴로 박아뒀더니 plan 출처를 계정 기준으로 바꾸는 정당한 수정에 거짓 red가 났다
+  // (2026-08-05). 잠글 것은 **직교 렌더라는 불변식**이지 조건식의 철자가 아니다.
+  const line = src.split('\n').find((l) => l.includes('<CloudExportRow'));
+  assert.ok(line, '렌더 지점이 없다');
+  assert.match(line, /^\s*\{\(.*paywalled.*\|\|.*free.*\) && <CloudExportRow \/>\}$/,
+    '직교(&&) 렌더가 아니다 — 분기 사슬(lastError) 안으로 들어가면 대상 사용자가 버튼을 못 본다');
   assert.equal(src.split('<CloudExportRow').length - 1, 1, '렌더 지점은 정확히 한 곳(사슬 안 중복 금지)');
 });
 
