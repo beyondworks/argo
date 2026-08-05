@@ -6,7 +6,7 @@
 
 ## 레몬스퀴지 쪽 설정 (1회)
 
-1. 스토어 생성 → **Pro 구독 상품** 생성: 월간 $16 variant + 연간 $160 variant (가격 확정 2026-07-24).
+1. 스토어 생성 → **Pro 구독 상품** 생성: 월간 $12 variant + 연간 $120 variant (2026-08-05 인하 — LS 상품과 app/i18n.jsx billing.upgrade* 가 항상 같아야 한다).
 2. Settings → Webhooks → 엔드포인트 추가: `https://<서비스 도메인>/api/billing/webhook`,
    이벤트는 `subscription_*` 전부 체크. **signing secret**을 받아 env로.
 3. Settings → API → API 키 발급(포털 클릭 시점 발급용).
