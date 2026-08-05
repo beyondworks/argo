@@ -1173,6 +1173,14 @@ function SyncCard({ ws }) {
           ) : sync.plan === 'free' ? (
             // 아직 막히진 않았지만(강제 게이트 off 등) free 플랜에 안내 차원으로 노출 — pro면 숨김
             <UpgradeButtons />
+          ) : trialActive && !trialImminent ? (
+            // 체험 중(D-14~D-4) — 이 구간에 결제 수단이 아예 없었다(실사용 확인 2026-08-05: 신규 계정은
+            // plan='trial'이라 free·paywalled·임박 어디에도 안 걸려 버튼이 화면에서 사라졌다).
+            // 지금 내겠다는 사람이 낼 수 없는 상태였다. 임박 전이므로 재촉하지 않고 한 줄로만 알린다.
+            <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
+              <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('billing.trialUpgradeHint')}</span>
+              <UpgradeButtons />
+            </div>
           ) : null}
           {trialImminent && (
             // 체험 종료 임박(3일 이내) — 카드 등록 없이 시작한 사용자에게 여기서 처음 결제를 권한다.
@@ -1210,13 +1218,19 @@ function SyncCard({ ws }) {
       ) : (
         <div style={{ display: 'grid', gap: 8 }}>
           <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.55 }}>{t('settings.sync.offHelp')}</p>
-          {trialImminent && (
+          {trialImminent ? (
             // 동기화를 안 켠 체험자에게도 임박 안내 — 이들이 가장 큰 코호트(검수 커버리지 질문 → 포함 결정)
             <div style={{ display: 'grid', gap: 6 }}>
               <span style={{ color: 'var(--fg-2)', fontSize: 12, fontWeight: 650 }}>{t('billing.trialEnding')}</span>
               <UpgradeButtons />
             </div>
-          )}
+          ) : trialActive ? (
+            // 임박 전 체험 구간 — 위 sync.on 분기와 같은 이유로 결제 경로를 열어 둔다
+            <div style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('billing.trialUpgradeHint')}</span>
+              <UpgradeButtons />
+            </div>
+          ) : null}
         </div>
       )}
     </div>
