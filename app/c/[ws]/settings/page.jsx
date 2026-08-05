@@ -8,7 +8,7 @@ import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 import { useAppUpdate } from '../../../use-app-update';
-import { trialBadgeState } from '../../../../src/entitlement.mjs';
+import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
 import { CHANNEL_EVENTS } from '../../../../src/channel-events.mjs'; // 순수 상수 — connections.mjs는 fs를 끌어 클라 번들이 깨진다
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
@@ -1129,19 +1129,28 @@ function SyncCard({ ws }) {
   // 판정은 trialBadgeState(entitlement.mjs) 단일 원천 — 만료 하한 누락으로 만료자에게 'D-0' 영구
   // 표시되던 회귀(분리 검수 H1)가 그 함수의 테스트로 잠겨 있다.
   const { active: trialActive, imminent: trialImminent, daysLeft: trialDaysLeft } = trialBadgeState(bill?.trialEndsAt, bill?.plan);
+  // 표시·결제 분기는 **로그인 계정** 기준이다. sync.plan은 이 기기의 동기화 주체(기기 연동 계정)의
+  // 것이라, 한 컴퓨터를 여러 사람이 쓰면 남의 플랜이 보인다(실측 2026-08-05: 무료 계정으로 로그인해도
+  // 기기 주인이 Pro면 Pro 배지가 뜨고 업그레이드 버튼이 숨겨졌다 — 낼 방법이 사라진다).
+  // bill은 /api/me/billing = currentUser() 경유라 계정별이다. 판정은 서버 is_pro와 같은 공유 술어로.
+  // 로컬·게스트(bill=null)만 기기값으로 폴백한다 — 그 모드엔 계정이 없다.
+  const acctPlan = bill
+    ? (proRowActive({ plan: bill.plan, ends_at: bill.endsAt }) ? 'pro' : trialActive ? 'trial' : 'free')
+    : null;
+  const plan = acctPlan ?? sync?.plan ?? null;
   const mine = sync?.companies?.[ws];
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="card-title">{t('settings.sync.title')}</span>
         <span style={{ flex: 1 }} />
-        {sync?.plan === 'pro' ? (
+        {plan === 'pro' ? (
           <span className="pill ok" style={{ flex: 'none' }}>{t('billing.plan.pro')}</span>
-        ) : sync?.plan === 'trial' || (!sync?.plan && trialActive) ? (
+        ) : plan === 'trial' || (!plan && trialActive) ? (
           <span className="pill ok" style={{ flex: 'none' }}>
             {trialActive ? t('billing.trialDday', { n: trialDaysLeft }) : t('billing.plan.trial')}
           </span>
-        ) : sync?.plan === 'free' ? (
+        ) : plan === 'free' ? (
           <span className="pill" style={{ flex: 'none' }}>{t('billing.plan.free')}</span>
         ) : null}
         {sync === null ? <Skeleton h={18} w={70} /> : sync.on ? (
@@ -1170,7 +1179,7 @@ function SyncCard({ ws }) {
             </div>
           ) : sync.lastError ? (
             <span style={{ color: 'var(--danger)', fontSize: 12 }}>{sync.lastError}</span>
-          ) : sync.plan === 'free' ? (
+          ) : plan === 'free' ? (
             // 아직 막히진 않았지만(강제 게이트 off 등) free 플랜에 안내 차원으로 노출 — pro면 숨김
             <UpgradeButtons />
           ) : trialActive && !trialImminent ? (
@@ -1194,7 +1203,7 @@ function SyncCard({ ws }) {
               사슬 안에 넣으면 ARGO_ENFORCE_PLAN off 구간의 free 사용자가 lastError 분기(RLS push 거부가
               매 사이클 lastError를 채운다)에 걸려 버튼을 영영 못 본다. 데이터 반환 경로는 동기화 고장
               여부와 무관해야 한다 — "데이터 인질 금지"의 요지. plan이 free로 확정됐거나 페이월이면 노출. */}
-          {(sync.paywalled || sync.plan === 'free') && <CloudExportRow />}
+          {(sync.paywalled || plan === 'free') && <CloudExportRow />}
           {bill?.status === 'past_due' && bill?.hasSub && (
             // 연체 유예 중 — 차단이 아니라 안내다(LS 던닝이 재시도 중, 유예 소진 시 free 강등).
             // href는 클릭 시점 발급 라우트 — 저장된 포털 URL은 24시간 만료라 렌더 금지(재검수 HIGH).
@@ -1203,7 +1212,7 @@ function SyncCard({ ws }) {
               <a className="btn sm" href="/api/me/billing/portal" target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
             </div>
           )}
-          {sync.plan === 'pro' && bill?.hasSub && bill?.status !== 'past_due' && (
+          {plan === 'pro' && bill?.hasSub && bill?.status !== 'past_due' && (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               {bill?.status === 'cancelled' && bill?.endsAt && (
                 // 해지 유예 중 — 언제까지 쓸 수 있는지 보이게(연간 구독은 해를 넘길 수 있어 연도 포함)
