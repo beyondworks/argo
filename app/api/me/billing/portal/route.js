@@ -1,40 +1,72 @@
-// 구독 관리 포털 — 클릭 시점 발급(재검수 HIGH). LS 포털 URL은 발급 24시간 만료 프리사인 링크라
-// 웹훅 스냅샷을 렌더하면 정상 구독자 거의 전원이 죽은 링크를 받는다(다음 웹훅은 한 달 뒤 갱신 때).
-// 그래서 저장된 ls_subscription_id로 클릭 순간 LS API에서 신선한 URL을 받아 302로 보낸다.
+// 구독 관리 포털 — 발급은 Edge Function(ls-portal)이 한다. **이 서버는 LS API 키를 갖지 않는다.**
+//
+// 왜: 데스크톱 앱은 사용자 기기에서 이 Next 서버를 돌린다. 여기에 LEMONSQUEEZY_API_KEY를 실으면
+// 전 사용자에게 우리 결제 API 키가 배포된다(그 키로 남의 구독 조회·변경 가능).
+// 그래서 키는 함수에만 두고, 이 라우트는 **사용자 토큰으로 함수를 부른 뒤 302만** 보낸다.
+// 설계 정본: docs/billing-portal-design.md
+//
+// 왜 이 라우트가 남아 있나: `<a href>` 네비게이션은 Authorization 헤더를 못 싣는다. 함수를 직접
+// 링크하면 인증이 실리지 않아 401이 된다. 그래서 앱 서버가 대신 부른다.
+//
+// 포털 URL은 24시간 만료 프리사인 링크라 저장·렌더하지 않고 **클릭 시점에** 발급한다.
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
 import { currentUser } from '../../../../auth.mjs';
-import { createClient } from '@supabase/supabase-js';
+import { getFreshDeviceSession } from '../../../../../src/devicesession.mjs';
+
+/** <a href> 네비게이션 대상이라 실패는 짧은 안내 텍스트로(브라우저 탭에 그대로 보인다). */
+const fail = (msg, status = 503) => new Response(`${msg}\n(잠시 후 다시 시도해 주세요 / Please retry shortly)`, {
+  status, headers: { 'content-type': 'text/plain; charset=utf-8' },
+});
+
+/** 사용자 액세스 토큰 — 기기 연동 모드는 쿠키가 없다(feedback 라우트와 같은 우선순위).
+    기기 파일이 세션의 단일 소유자이므로 그쪽을 먼저 본다. */
+async function accessToken() {
+  if (!process.env.ARGO_TENANT_OWNER?.trim()) {
+    const sess = await getFreshDeviceSession(); // 만료 임박 시 자체 회전
+    if (sess?.access_token) return sess.access_token;
+  }
+  const store = await cookies();
+  const sb = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    { cookies: { getAll: () => store.getAll(), setAll: () => { /* 라우트에서는 세션 갱신 안 함 */ } } },
+  );
+  const { data } = await sb.auth.getSession();
+  return data?.session?.access_token ?? null;
+}
 
 export async function GET() {
   const user = await currentUser();
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const apiKey = process.env.LEMONSQUEEZY_API_KEY;
-  // <a href> 네비게이션 대상이라 실패는 짧은 안내 텍스트로(브라우저 탭에 그대로 보인다).
-  const fail = (msg) => new Response(`${msg}\n(잠시 후 다시 시도해 주세요 / Please retry shortly)`, {
-    status: 503, headers: { 'content-type': 'text/plain; charset=utf-8' },
-  });
-  if (!user?.id || user.id === 'local' || user.id === 'guest' || !url || !serviceKey) {
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!user?.id || user.id === 'local' || user.id === 'guest' || !base) {
     return fail('구독 정보를 확인할 수 없습니다 / Cannot verify subscription'); // 로컬·게스트는 구독 표면 없음
   }
-  if (!apiKey) return fail('결제 연동이 아직 설정되지 않았습니다 / Billing is not configured yet');
+  const token = await accessToken();
+  if (!token) return fail('로그인이 필요합니다 / Please sign in', 401);
+
+  let r, j;
   try {
-    const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
-    const { data, error } = await sb.from('entitlements')
-      .select('ls_subscription_id').eq('user_id', user.id).maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!data?.ls_subscription_id) return fail('연결된 구독이 없습니다 / No linked subscription');
-    const r = await fetch(`https://api.lemonsqueezy.com/v1/subscriptions/${encodeURIComponent(data.ls_subscription_id)}`, {
-      headers: { Accept: 'application/vnd.api+json', Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(8000),
+    r = await fetch(`${base}/functions/v1/ls-portal`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(9000),
     });
-    if (!r.ok) throw new Error(`LS API ${r.status}`);
-    const j = await r.json();
-    const portal = j?.data?.attributes?.urls?.customer_portal;
-    if (!portal) throw new Error('portal url 없음');
-    // 개인별 서명 링크 — 중간 캐시에 남지 않게 명시(재검수 LOW)
-    return new Response(null, { status: 302, headers: { Location: portal, 'Cache-Control': 'no-store, private' } });
+    j = await r.json().catch(() => null);
   } catch (e) {
-    console.error('[argo] billing portal 발급 실패:', e?.message ?? e);
+    console.error('[argo] billing portal 호출 실패:', e?.message ?? e);
     return fail('구독 관리 페이지를 열지 못했습니다 / Could not open the subscription portal');
   }
+
+  if (r.ok && j?.url) {
+    // 개인별 서명 링크 — 중간 캐시에 남지 않게 명시(재검수 LOW)
+    return new Response(null, { status: 302, headers: { Location: j.url, 'Cache-Control': 'no-store, private' } });
+  }
+
+  // 원인별 안내 — "안 됩니다"로 끝내지 않는다(막다른 길 금지). code는 함수가 내려주는 분류값.
+  if (j?.code === 'no-sub') return fail('연결된 구독이 없습니다 — 설정에서 업그레이드할 수 있습니다 / No linked subscription — you can upgrade in Settings', 404);
+  if (j?.code === 'no-api-key') return fail('결제 연동이 아직 설정되지 않았습니다 / Billing is not configured yet');
+  if (j?.code === 'no-token' || j?.code === 'bad-token') return fail('로그인이 만료됐습니다 — 다시 로그인해 주세요 / Session expired — please sign in again', 401);
+  console.error('[argo] billing portal 발급 실패:', r?.status, j?.code ?? j?.error ?? '');
+  return fail('구독 관리 페이지를 열지 못했습니다 / Could not open the subscription portal');
 }
