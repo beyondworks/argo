@@ -425,6 +425,8 @@ const DICT = {
   'billing.plan.trial': ['무료 체험 중', 'Free trial'],
   'billing.paywall': ['2주 무료 체험이 끝났습니다 — 멀티기기 동기화는 Pro 플랜입니다. 지금 회사는 안전하게 보존되고 있고, 업그레이드하면 즉시 이어집니다.', 'Your 2-week free trial has ended — multi-device sync is a Pro feature. Your company is safely preserved and resumes the moment you upgrade.'],
   // 가격은 LS 상품과 반드시 같아야 한다 — 표시가와 결제액이 다르면 신뢰가 깨진다(2026-08-05 $16→$12 인하 반영)
+  // 체험 중(임박 전) — 재촉하지 않으면서 결제 경로만 열어 둔다. "끝났습니다"류 문구 금지(거짓이 된다).
+  'billing.trialUpgradeHint': ['무료 체험 중입니다 — 미리 업그레이드하면 체험이 끝나도 끊기지 않습니다.', "You're on the free trial — upgrade now and nothing pauses when it ends."],
   'billing.upgradeMonthly': ['Pro 업그레이드 — $12/월', 'Upgrade to Pro — $12/mo'],
   'billing.upgradeYearly': ['연간 $120 (2개월 무료)', 'Yearly $120 (2 months free)'],
   'billing.comingSoon': ['결제 준비 중 — 곧 열립니다', 'Billing opens soon'],
