@@ -1113,6 +1113,111 @@ video {
   margin-top: 14px;
 }
 
+/* 결제 CTA — 카드 하단 정렬(2026-08-06). hot=레몬스퀴지 체크아웃, ghost=연간 보조 */
+.price-cta-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 18px;
+}
+.price-cta {
+  margin-top: auto;
+  display: block;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  padding: 11px 14px;
+  border: 1px solid var(--rule);
+  color: var(--fg-2);
+  transition: background 0.18s ease-out, color 0.18s ease-out, border-color 0.18s ease-out;
+}
+.price-cta-col .price-cta {
+  margin-top: 0;
+}
+.price-cta:hover {
+  background: var(--bg-2);
+  color: var(--fg);
+}
+.price-cta.hot {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #0b0e14;
+  font-weight: 700;
+}
+.price-cta.hot:hover {
+  filter: brightness(1.08);
+  background: var(--gold);
+  color: #0b0e14;
+}
+.price-cta.ghost {
+  border-color: var(--rule-soft);
+  color: var(--fg-3);
+}
+
+/* ── FAQ — 컨텍트 아래 Q&A(2026-08-06). 네이티브 details 아코디언 ── */
+.faq-section {
+  padding: clamp(60px, 11svh, 120px) var(--pad-x);
+  background: var(--bg);
+  border-top: 1px solid var(--rule);
+}
+.faq-head {
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 12px;
+}
+.faq-title {
+  font-size: clamp(30px, 4.4vw, 64px);
+  font-weight: 800;
+  letter-spacing: -0.026em;
+  line-height: 1.05;
+  text-transform: uppercase;
+  margin-top: 14px;
+}
+.faq-list {
+  margin-top: 26px;
+  border-top: 1px solid var(--rule);
+}
+.faq-item {
+  border-bottom: 1px solid var(--rule-soft);
+}
+.faq-item summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 18px 4px;
+  font-size: clamp(15px, 1.6vw, 18px);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  transition: color 0.18s ease-out;
+}
+.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+.faq-item summary::before {
+  content: '+';
+  font-family: var(--mono);
+  color: var(--fg-3);
+  flex: none;
+  width: 16px;
+}
+.faq-item[open] summary::before {
+  content: '−';
+  color: var(--gold);
+}
+.faq-item summary:hover {
+  color: var(--gold);
+}
+.faq-item p {
+  padding: 0 4px 20px 30px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--fg-2);
+  max-width: 860px;
+}
+
 /* ── footer ── */
 
 .footer {

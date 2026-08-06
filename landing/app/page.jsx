@@ -5,6 +5,8 @@ import Chapter from '@/components/Chapter';
 import InstallSection from '@/components/InstallSection';
 import DownloadSection from '@/components/DownloadSection';
 import ContactSection from '@/components/ContactSection';
+import PricingSection from '@/components/PricingSection';
+import FaqSection from '@/components/FaqSection';
 import Footer from '@/components/Footer';
 import Interlude from '@/components/Interlude';
 import SideNav from '@/components/SideNav';
@@ -40,7 +42,9 @@ export default function Page() {
         );
       })}
       <DownloadSection />
+      <PricingSection />
       <ContactSection />
+      <FaqSection />
       <Footer />
     </main>
   );
