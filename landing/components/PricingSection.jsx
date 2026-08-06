@@ -9,7 +9,7 @@ const LS_YEARLY = 'https://argo-agent.lemonsqueezy.com/checkout/buy/b2510d00-a53
 
 const PLANS = [
   { id: 'p1', features: ['f1', 'f2', 'f3'] },
-  { id: 'p2', features: ['f0', 'f1', 'f2', 'f3', 'f4'], hot: true }, // f0 = 멀티디바이스(유료 앵커) 최상단
+  { id: 'p2', features: ['f0', 'f1', 'f2'], hot: true }, // 유료 = 동기화·우선지원만, 나머지는 무료 동일(유건 확정 2026-08-07)
   { id: 'p3', features: ['f1', 'f2', 'f3'] },
 ];
 
