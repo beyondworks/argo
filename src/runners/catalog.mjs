@@ -8,7 +8,11 @@ export const RUNNERS = {
     models: [
       { id: 'claude-fable-5', label: 'Fable 5' },
       { id: 'claude-opus-5', label: 'Opus 5' }, // 실턴 통과 2026-07-25 (runOneShot 'ok' — 카탈로그 규칙: 실행 경로 검증 후에만 추가)
+      // [1m] = 1M 컨텍스트 변형(Claude Code CLI --model 접미 규약). 실턴 통과 2026-08-06
+      // (SDK 경로 wolff 크루 실챗 왕복 — 두 변형 모두 정상 응답, 4.8[1m]은 모델 자기보고까지 확인).
+      { id: 'claude-opus-5[1m]', label: 'Opus 5 (1M)' },
       { id: 'claude-opus-4-8', label: 'Opus 4.8' },
+      { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 (1M)' },
       // Opus 4.7·4.6 — 이전 세대 Opus(활성). id는 claude-api 모델 카탈로그 정본 표기 그대로(날짜 접미 금지).
       { id: 'claude-opus-4-7', label: 'Opus 4.7' },
       { id: 'claude-opus-4-6', label: 'Opus 4.6' },
