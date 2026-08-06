@@ -29,7 +29,9 @@ export default function SideNav() {
     { id: 'install', label: t('nav.install'), selector: '#install' },
     ...CHAPTERS.map((c) => ({ id: c.id, label: t(`${c.id}.short`), selector: `#${c.id}` })),
     { id: 'download', label: t('nav.cta'), selector: '#download' },
+    { id: 'pricing', label: t('pricing.kicker'), selector: '#pricing' }, // 결제 CTA(2026-08-07)
     { id: 'contact', label: t('nav.contact'), selector: '#contact' },
+    { id: 'faq', label: t('faq.title'), selector: '#faq' }, // Q&A(2026-08-07)
   ];
 
   useEffect(() => {

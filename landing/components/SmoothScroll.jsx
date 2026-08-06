@@ -103,17 +103,21 @@ export default function SmoothScroll({ children }) {
           .forEach((k) => pts.push(at(labels[k] + 0.4)));
       });
 
-      // 핀 아닌 전체 섹션 — 상단을 뷰포트에 맞춤
-      ['.install-section', '.interlude', '.download-section', '.contact-section'].forEach((sel) => {
+      // 핀 아닌 전체 섹션 — 상단을 뷰포트에 맞춤. 한 화면을 넘는 섹션(FAQ 아코디언 펼침 등)은
+      // 내부 중간 지점을 추가해 한 제스처씩 끝까지 내려갈 수 있게 한다(2026-08-07 — 펼친 아코디언
+      // 아래가 스냅에 갇혀 도달 불가하던 것). 지점 간격 0.85vh = 문맥이 겹치며 넘어가는 보폭.
+      ['.install-section', '.interlude', '.download-section', '.pricing-section', '.contact-section', '.faq-section'].forEach((sel) => {
         const el = document.querySelector(sel);
-        if (el) pts.push(el.getBoundingClientRect().top + window.scrollY);
+        if (!el) return;
+        const top = el.getBoundingClientRect().top + window.scrollY;
+        pts.push(top);
+        const vh = window.innerHeight;
+        for (let y = top + vh * 0.85; y < top + el.offsetHeight - vh * 0.5; y += vh * 0.85) pts.push(y);
       });
-      const inEl = document.querySelector('.install-section');
-      if (inEl) navTargets.install = inEl.getBoundingClientRect().top + window.scrollY;
-      const dlEl = document.querySelector('.download-section');
-      if (dlEl) navTargets.download = dlEl.getBoundingClientRect().top + window.scrollY;
-      const ctEl = document.querySelector('.contact-section');
-      if (ctEl) navTargets.contact = ctEl.getBoundingClientRect().top + window.scrollY;
+      ['install', 'download', 'pricing', 'contact', 'faq'].forEach((id) => {
+        const el = document.querySelector(`.${id}-section`);
+        if (el) navTargets[id] = el.getBoundingClientRect().top + window.scrollY;
+      });
 
       pts.push(maxScroll()); // 마지막(푸터)
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useLang } from '@/lib/i18n';
+import { ScrollTrigger } from '@/lib/gsap';
 
 // Q&A — 컨텍트 아래(유건 지시 2026-08-06). 출처: 인앱 피드백 76건의 빈번 클러스터
 // (read-only/작업폴더·러너 연결·데이터 위치·결제/체험·메신저) + 제품 문서. 셀프 커스터마이즈
@@ -17,7 +18,12 @@ export default function FaqSection() {
       <h2 className="faq-title">{t('faq.title')}</h2>
       <div className="faq-list">
         {ITEMS.map((q) => (
-          <details key={q} className="faq-item">
+          <details key={q} className="faq-item"
+            onToggle={() => {
+              // 아코디언 개폐 = 페이지 높이 변화 — 스냅 지점을 재계산해야 펼친 내용 아래로
+              // 계속 스크롤된다(SmoothScroll build가 refresh 이벤트에 걸려 있다).
+              requestAnimationFrame(() => ScrollTrigger.refresh());
+            }}>
             <summary>{t(`faq.${q}`)}</summary>
             <p>{t(`faq.a${q.slice(1)}`)}</p>
           </details>
