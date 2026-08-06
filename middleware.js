@@ -62,6 +62,9 @@ export async function middleware(req) {
   if (!process.env.ARGO_TENANT_OWNER?.trim() && req.cookies.get('argo-device')?.value === '1') {
     const host = req.headers.get('host') || '';
     // /login 미가로채기 — 위 지름길 블록과 같은 근거(계정 전환 경로 보존, 2026-08-06)
+    // ⚠ 여기서 res가 아니라 next()를 반환하므로 이 경로는 세션 쿠키 갱신분을 버린다 — 루프백은
+    // 세션 쿠키가 없어 무해하나, 기기 마커+세션 쿠키가 공존하는 구성이 생기면 그 세션은 액세스
+    // 토큰 만료와 함께 죽는다(분리 검수 2026-08-06 지적 — 그때는 res 반환으로 바꿀 것).
     if (LOCAL_HOST_RE.test(host) && req.nextUrl.pathname !== '/login') {
       return NextResponse.next();
     }

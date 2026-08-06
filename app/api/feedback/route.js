@@ -38,8 +38,22 @@ export async function POST(req) {
   const { message } = await req.json().catch(() => ({}));
   const clean = String(message ?? '').trim().slice(0, 4000);
   if (!clean) return Response.json({ error: '내용이 필요합니다' }, { status: 400 });
+  // 클라이언트 조달 — currentUser()와 같은 순서 계약(쿠키 세션 > 기기 세션, 2026-08-06).
+  // 기기 세션을 먼저 보면 insert JWT(auth.uid()=기기 주인)와 email 컬럼(쿠키 사용자)의 계정
+  // 귀속이 갈린다(분리 검수 MED — 비루프백 노출 구성에서 발현).
   let supabase = null;
-  if (!process.env.ARGO_TENANT_OWNER?.trim()) {
+  {
+    const store = await cookies();
+    if (store.getAll().some((c) => c.name.startsWith('sb-'))) {
+      const sb = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+        { cookies: { getAll: () => store.getAll(), setAll: () => { /* 라우트에서는 세션 갱신 안 함 */ } } },
+      );
+      if ((await sb.auth.getUser()).data?.user) supabase = sb; // 유효 세션일 때만 — 무효 쿠키는 기기 폴백
+    }
+  }
+  if (!supabase && !process.env.ARGO_TENANT_OWNER?.trim()) {
     const sess = await getFreshDeviceSession(); // 만료 임박 시 자체 회전(단일 소유자 락)
     if (sess) {
       supabase = createClient(sess.url, sess.anonKey, {
