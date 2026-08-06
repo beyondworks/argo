@@ -23,7 +23,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { crashHint, excludeWith, externalExec, isProcessCrash, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -755,9 +755,17 @@ export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|invalid au
     에러(Gemini 3.x는 Ultra·유료 전용 — 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
 export const GATED_MODEL_ERR_RE = /requested entity was not found|NOT_FOUND|PERMISSION_DENIED/i;
 
-export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko') {
+export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excluded = false } = {}) {
   if (!fellBack) return '';
   const rn = (id) => RUNNERS[id]?.name ?? id;
+  // excluded = 지정 러너가 "미연결"이 아니라 **이번 턴 인증 오류로 제외**된 경우 — 사유를 갈라 말한다.
+  // "연결돼 있지 않아"는 방금 연결한 사용자에게 거짓이 된다(Grok 실사용 제보 2026-08-06:
+  // 연결 직후 401 → 자가치유 폴백 → "클로드 러너로 뜬다" 혼란의 뿌리).
+  if (excluded) {
+    return lang === 'en'
+      ? `The assigned runner ${rn(wantId)} is connected but hit an authentication error this turn, so ${rn(ranId)} ran instead (reconnect ${rn(wantId)} if this keeps happening). `
+      : `지정 러너 ${rn(wantId)}가 연결돼 있지만 인증 오류가 나 ${rn(ranId)}(으)로 대체 실행됐습니다(반복되면 ${rn(wantId)}를 다시 연결해 주세요). `;
+  }
   return lang === 'en'
     ? `The assigned runner ${rn(wantId)} isn't connected on this device, so ${rn(ranId)} ran instead. `
     : `지정 러너 ${rn(wantId)}가 이 기기에 연결돼 있지 않아 ${rn(ranId)}(으)로 대체 실행됐습니다. `;
@@ -812,6 +820,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 최악의 상태에서 조용히 호스트 자격을 스캐빈징하게 된다). 아래 !available 분기가 재연결을 안내한다.
   const resolved = await resolveRunner(wsId, wantRunner, { exclude: __excludeRunners }).catch(() => ({ runner: wantRunner ?? 'claude', fellBack: false, available: false, credButNoCli: [] }));
   if (!resolved.available) {
+    // 자가치유가 인증 실패 러너를 제외한 끝이라면 — "하나도 연결돼 있지 않습니다"는 거짓이 된다.
+    // 연결은 있고 인증이 죽은 것(Grok 제보 2026-08-06 '러너 없음'). 사실대로 갈라 말한다.
+    if (__excludeRunners?.length) throw new Error(authExcludedNoRunnerMsg(__excludeRunners, lang));
     // 자격은 있는데 벤더 CLI가 없는 러너(codex/gemini)는 원인을 정확히 알려준다 — "연결했는데 왜 안 돼"의 답.
     const noCli = (resolved.credButNoCli ?? []).map((id) => RUNNERS[id]?.name || id);
     throw new Error(noCli.length
@@ -833,10 +844,17 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 러너 대체 고지 — 조용한 폴백은 사용자가 "왜 딴 모델 말투/비용?"을 겪게 한다(신뢰 훼손). 크루가
   // 스스로 한 줄 알리게 지시한다(UI 변경 없이 chat·회의실·경쟁·위임·메신저 전 경로에 자연 반영).
   const rn = (id) => RUNNERS[id]?.name ?? id;
+  // 지정 러너가 미연결이 아니라 **이번 턴 인증 오류로 제외**됐으면 사유를 갈라 말한다 — "이 기기에
+  // 없어"는 방금 연결한 사용자에게 거짓 고지가 된다(Grok 제보 2026-08-06, fallbackErrorPrefix와 동일 근거).
+  const wantExcluded = !!(wantRunner && __excludeRunners?.includes(wantRunner));
   const fallbackDirective = resolved.fellBack
-    ? (lang === 'en'
-        ? `\n## Runner substitution — you MUST tell the captain\n- This crew's assigned runner (${rn(wantRunner)}) is not available on this device, so you are running on ${rn(runner)} instead. End your reply with one line telling the captain that ${rn(wantRunner)} isn't set up on this device, so you answered with ${rn(runner)}.`
-        : `\n## 러너 대체 안내 — 반드시 사장에게 알려라\n- 이 크루의 지정 러너(${rn(wantRunner)})가 이 기기에 연결돼 있지 않아, 지금은 ${rn(runner)}(으)로 대신 실행 중이다. 답변 끝에 한 줄로 "지정 러너 ${rn(wantRunner)}가 이 기기에 없어 ${rn(runner)}로 대신 답했다"고 사장에게 알려라.`)
+    ? (wantExcluded
+      ? (lang === 'en'
+          ? `\n## Runner substitution — you MUST tell the captain\n- This crew's assigned runner (${rn(wantRunner)}) is connected but hit an authentication error this turn, so you are running on ${rn(runner)} instead. End your reply with one line telling the captain that ${rn(wantRunner)} hit an auth error this turn, so you answered with ${rn(runner)} — reconnecting ${rn(wantRunner)} may help if it repeats.`
+          : `\n## 러너 대체 안내 — 반드시 사장에게 알려라\n- 이 크루의 지정 러너(${rn(wantRunner)})가 연결돼 있지만 이번 턴에 인증 오류가 나 지금은 ${rn(runner)}(으)로 대신 실행 중이다. 답변 끝에 한 줄로 "지정 러너 ${rn(wantRunner)}에 인증 오류가 나 이번엔 ${rn(runner)}로 답했다 — 반복되면 재연결이 필요할 수 있다"고 사장에게 알려라.`)
+      : (lang === 'en'
+          ? `\n## Runner substitution — you MUST tell the captain\n- This crew's assigned runner (${rn(wantRunner)}) is not available on this device, so you are running on ${rn(runner)} instead. End your reply with one line telling the captain that ${rn(wantRunner)} isn't set up on this device, so you answered with ${rn(runner)}.`
+          : `\n## 러너 대체 안내 — 반드시 사장에게 알려라\n- 이 크루의 지정 러너(${rn(wantRunner)})가 이 기기에 연결돼 있지 않아, 지금은 ${rn(runner)}(으)로 대신 실행 중이다. 답변 끝에 한 줄로 "지정 러너 ${rn(wantRunner)}가 이 기기에 없어 ${rn(runner)}로 대신 답했다"고 사장에게 알려라.`))
     : '';
   // 메신저 턴 파일 규약 — extractFileRefs(게이트웨이 발신 첨부)의 존재를 크루가 알아야 쓴다
   // (실사용 제보 2026-07-30: 규약이 프롬프트 어디에도 없어 "파일을 안 보내준다"가 됐다).
@@ -850,7 +868,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // (턴 실패 표시·이벤트 기록·메신저 회신 전 표면 공통).
   const prefixFallbackError = (e) => {
     if (!resolved.fellBack || !e || typeof e !== 'object') return;
-    e.message = fallbackErrorPrefix(true, wantRunner, runner, lang) + String(e.message || '');
+    e.message = fallbackErrorPrefix(true, wantRunner, runner, lang, { excluded: wantExcluded }) + String(e.message || '');
   };
   // 참조(cc)로 공유된 맥락 — 이번 턴 프롬프트에 1회 주입(맥락 공유는 기본, 실행은 지시받은 크루만)
   // 재시도(__seedNotes)면 아우터 시도가 이미 소비한 공유 노트를 이어받는다 — 재시도에서 cc 맥락 소실 방지
