@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthFormatError } from './runners/catalog.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, codexSandboxArgs } from './runners/codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, codexSandboxArgs, codexSandboxModeArgs } from './runners/codex.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 
@@ -34,7 +34,7 @@ export {
   pickRunner, autoRunnerOf, oauthFormatError, excludeWith,
 } from './runners/catalog.mjs';
 export {
-  provisionCodexCli, codexSandboxArgs, CODEX_EFFORTS, codexEffortArgs,
+  provisionCodexCli, codexSandboxArgs, codexSandboxModeArgs, CODEX_EFFORTS, codexEffortArgs,
   importCodexAuth, recoverCodexAuth, writeCodexTurnConfig,
 } from './runners/codex.mjs';
 export { provisionGeminiCli, probeGeminiOAuth, probeGeminiHostOAuth } from './runners/gemini.mjs';
@@ -111,7 +111,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     try {
       await exec(cmd.file, [
         ...cmd.args,
-        'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check',
+        // 샌드박스 모드 — 맥·리눅스 workspace-write / 윈도우는 우회(윈도우 codex는 샌드박스 기전이
+        // 없어 read-only로 떨어져 쓰기 전멸 — 근거·되돌림 조건은 codexSandboxModeArgs 주석)
+        'exec', ...codexSandboxModeArgs(), '--skip-git-repo-check',
         ...codexEffortArgs(effort), // 크루별 추론 강도 — codex도 지원(실측 2026-07-26)
         ...codexSandboxArgs(caps, workRoots), // config.toml과 이중 — 신버전은 `-c`, 구버전은 config.toml이 받는다
         '--output-last-message', out,
