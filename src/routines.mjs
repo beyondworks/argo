@@ -274,16 +274,52 @@ export function validateRoutineDraft(parsed, { agents = [] } = {}) {
   return { draft: { title, prompt, schedule, agentSlug } };
 }
 
-const DRAFT_PROMPT = (text, roster) => `너는 루틴(반복 업무) 설정 도우미다. 사용자의 요청을 아래 JSON으로만 변환해 출력하라. JSON 외 텍스트·설명 금지.
-스키마: {"title": "짧은 제목", "prompt": "크루에게 줄 반복 지시문(요청의 목적을 보존)", "schedule": {"type": "daily"|"weekly", "times": ["HH:MM", ...], "dows": [0-6 정수 배열 — weekly일 때만, 0=일요일]}, "agentSlug": "아래 크루 목록의 slug — 사용자가 특정 크루를 지목했을 때만, 아니면 null"}
+/** 반복 지시문 설계 규격 — 한 줄 요청을 "그대로 복사"하지 않고 설계된 지시문으로 확장한다(유건 지시
+    2026-08-05: "입력한 프롬프트 그대로 사용되고 있음" — Claude Code 루틴 수준의 설계 표방).
+    DRAFT(자연어→초안)와 REFINE(직접 입력 확장)이 같은 규격을 공유한다 — 두 생성 경로의 품질이 갈리지 않게.
+    (export: 회귀 테스트용 — 규격 문구가 두 프롬프트에 실리는지 앵커) */
+export const PROMPT_DESIGN_SPEC = `prompt는 사용자의 한 줄 요청을 **설계된 반복 지시문**으로 확장한 것이어야 한다(원문 복사 금지). 사용자의 언어로, 아래 구조의 마크다운으로 작성한다:
+- **목적**: 이 루틴이 왜 도는지 한 줄(요청의 의도를 해석해 명시).
+- **할 일**: 실행 단계 2~5개 — 무엇을 확인/수집/작성하는지 구체적으로.
+- **산출물**: 결과의 형식(예: 불릿 요약 5줄, 표, 파일 저장 위치)과 분량.
+- **기준**: 잘된 결과의 조건 1~2개 + 자료가 없거나 실패했을 때 대신 할 일 한 줄.
+요청에 없는 사실(고유명사·수치·링크)을 지어내지 않는다 — 모호하면 단계 안에 "~를 먼저 파악"으로 담는다.`;
+
+const DRAFT_PROMPT = (text, roster) => `너는 루틴(반복 업무) 설계자다. 사용자의 요청을 아래 JSON으로만 변환해 출력하라. JSON 외 텍스트·설명 금지.
+스키마: {"title": "짧은 제목", "prompt": "설계된 반복 지시문(아래 설계 규격)", "schedule": {"type": "daily"|"weekly", "times": ["HH:MM", ...], "dows": [0-6 정수 배열 — weekly일 때만, 0=일요일]}, "agentSlug": "아래 크루 목록의 slug — 사용자가 특정 크루를 지목했을 때만, 아니면 null"}
 크루 목록:
 ${roster || '(없음)'}
+설계 규격:
+${PROMPT_DESIGN_SPEC}
 규칙:
 - 요일 언급이 있으면 weekly + dows. "평일"=[1,2,3,4,5], "주말"=[0,6]. 요일 언급이 없으면 daily.
 - 시각은 24시간 HH:MM. 복수 언급이면 전부 넣는다. 시각 언급이 없으면 ["09:00"].
-- 시각·주기와 무관한 내용은 전부 prompt에 담는다. 사용자의 언어를 유지한다.
+- 시각·주기와 무관한 내용은 전부 prompt의 설계에 반영한다. 사용자의 언어를 유지한다.
 - 이벤트 트리거 요청(예: "메일이 오면", "댓글 달리면", "~할 때마다")은 아직 미지원 — 그때만 {"unsupported": "trigger", "reason": "무엇이 트리거인지 한 줄"}을 출력한다.
 사용자 요청: <<<${text}>>>`;
+
+const REFINE_PROMPT = (text, agentLine) => `너는 루틴(반복 업무) 설계자다. 사용자가 직접 적은 반복 지시문을 아래 설계 규격으로 확장해, {"prompt": "확장된 지시문"} JSON으로만 출력하라. JSON 외 텍스트·설명 금지.
+${agentLine ? `실행할 크루: ${agentLine}\n` : ''}설계 규격:
+${PROMPT_DESIGN_SPEC}
+- 시각·요일 언급은 지시문에서 뺀다(스케줄은 별도 필드가 담당).
+사용자 지시문: <<<${text}>>>`;
+
+/** 직접 입력 지시문 → 설계 확장. 반환 { prompt }. 실패는 throw(원문 안내) — 저장을 막지 않는 프리필 전용이라
+    호출부(UI)는 실패 시 원문 유지가 폴백이다(외부 의존 기능의 폴백 경로 원칙). */
+export async function refineRoutinePrompt(wsId, text, { agent = null, lang = 'ko' } = {}) {
+  if (!String(text ?? '').trim()) throw new Error(lang === 'en' ? 'Write the instruction first' : '지시문을 먼저 적어주세요');
+  const agentLine = agent ? `${agent.name}${agent.role ? ` (${agent.role})` : ''}` : '';
+  const { text: out } = await runOneShot(wsId, REFINE_PROMPT(String(text).slice(0, 2000), agentLine), { lang, timeoutMs: 3 * 60_000 });
+  let parsed;
+  try {
+    parsed = extractJson(out);
+  } catch {
+    throw new Error(lang === 'en' ? 'Could not refine — try again' : '설계 확장에 실패했습니다 — 다시 시도해 주세요');
+  }
+  const prompt = String(parsed?.prompt ?? '').trim();
+  if (!prompt) throw new Error(lang === 'en' ? 'Could not refine — try again' : '설계 확장에 실패했습니다 — 다시 시도해 주세요');
+  return { prompt: prompt.slice(0, 8000) };
+}
 
 /** 자연어 한 줄 → 루틴 초안. 반환 { draft } 또는 { unsupported, reason }. 러너 미연결 등은 throw(원문 안내). */
 export async function draftRoutineFromText(wsId, text, { agents = [], lang = 'ko' } = {}) {
