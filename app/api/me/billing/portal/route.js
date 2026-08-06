@@ -19,21 +19,27 @@ const fail = (msg, status = 503) => new Response(`${msg}\n(잠시 후 다시 시
   status, headers: { 'content-type': 'text/plain; charset=utf-8' },
 });
 
-/** 사용자 액세스 토큰 — 기기 연동 모드는 쿠키가 없다(feedback 라우트와 같은 우선순위).
-    기기 파일이 세션의 단일 소유자이므로 그쪽을 먼저 본다. */
+/** 사용자 액세스 토큰 — currentUser()와 같은 순서 계약: **쿠키 세션 > 기기 세션**(2026-08-06).
+    기기 세션을 먼저 보면, 비루프백 노출 구성에서 쿠키로 로그인한 B에게 기기 주인 A의 토큰으로
+    포털(구독 조회·결제수단·해지) 서명 링크가 발급된다 — 분리 검수 HIGH(fail-open). 토큰의
+    소유자 id를 함께 돌려줘 라우트가 currentUser와 대조한다(불일치=fail-closed, cloudexport
+    requesterId 대조와 같은 집 관례 — 두 해석이 미래에 갈려도 남의 토큰이 나가지 않는다). */
 async function accessToken() {
+  const store = await cookies();
+  if (store.getAll().some((c) => c.name.startsWith('sb-'))) {
+    const sb = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      { cookies: { getAll: () => store.getAll(), setAll: () => { /* 라우트에서는 세션 갱신 안 함 */ } } },
+    );
+    const { data } = await sb.auth.getSession();
+    if (data?.session?.access_token) return { token: data.session.access_token, uid: data.session.user?.id ?? null };
+  }
   if (!process.env.ARGO_TENANT_OWNER?.trim()) {
     const sess = await getFreshDeviceSession(); // 만료 임박 시 자체 회전
-    if (sess?.access_token) return sess.access_token;
+    if (sess?.access_token) return { token: sess.access_token, uid: sess.user?.id ?? null };
   }
-  const store = await cookies();
-  const sb = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    { cookies: { getAll: () => store.getAll(), setAll: () => { /* 라우트에서는 세션 갱신 안 함 */ } } },
-  );
-  const { data } = await sb.auth.getSession();
-  return data?.session?.access_token ?? null;
+  return null;
 }
 
 export async function GET() {
@@ -42,8 +48,11 @@ export async function GET() {
   if (!user?.id || user.id === 'local' || user.id === 'guest' || !base) {
     return fail('구독 정보를 확인할 수 없습니다 / Cannot verify subscription'); // 로컬·게스트는 구독 표면 없음
   }
-  const token = await accessToken();
-  if (!token) return fail('로그인이 필요합니다 / Please sign in', 401);
+  const cred = await accessToken();
+  if (!cred?.token) return fail('로그인이 필요합니다 / Please sign in', 401);
+  // 신원=토큰 소유자 대조 — 인가(currentUser)와 토큰 조달이 다른 계정이면 발급 중단(fail-closed)
+  if (cred.uid && cred.uid !== user.id) return fail('로그인이 만료됐습니다 — 다시 로그인해 주세요 / Session expired — please sign in again', 401);
+  const token = cred.token;
 
   let r, j;
   try {

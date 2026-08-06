@@ -39,22 +39,35 @@ export function tenantDenied(user) {
   return null;
 }
 
-/** 현재 로그인 사용자. 인증 off = 로컬 1인 모드('local'). 인증 on + 미로그인 = null. */
+/** 현재 로그인 사용자. 인증 off = 로컬 1인 모드('local'). 인증 on + 미로그인 = null.
+    순서 계약(2026-08-06): **쿠키 세션 > 기기 세션 > 게스트.** 같은 순서를 쓰는 소비자:
+    me/billing·me/billing/portal(accessToken)·feedback — 갈리면 인가와 토큰 조달이 다른 계정이
+    된다(분리 검수 HIGH: 포털 링크 오발급). 이 순서가 실제로 갈리는 곳은 **비루프백 노출 구성**
+    (ARGO_HOST=0.0.0.0 등)이다 — 쿠키 로그인 사용자 B가 기기 주인 A로 해석되던 것을 닫는다.
+    루프백(데스크톱·상주)에서는 sb-* 세션 쿠키가 애초에 생성되지 않는다(auth/callback·confirm이
+    기기 연동 모드에서 setAll 무동작 — 기기 파일이 단일 소유자). 그래서 로컬의 "다른 계정으로
+    로그인" 증상 해소는 이 순서가 아니라 **로그인 시 기기 재바인딩**(callback의 saveDeviceSession
+    덮어쓰기)의 결과다 — 이전 주인은 이 기기에서 로그아웃되며, 재바인딩 확인 관문은 별도 과제.
+    데스크톱 앱 웹뷰는 sb-* 쿠키가 없어 기존처럼 기기 세션으로 떨어진다(회귀 0). */
 export async function currentUser() {
   if (!AUTH_ON) return { id: 'local', email: '' };
-  // 기기 연동 모드 — 이 기기가 계정에 귀속됨(로그인=연동). 워커(TENANT)는 쿠키 경로 유지.
+  const store = await cookies();
+  // sb-* 쿠키가 있을 때만 GoTrue 왕복 — 무쿠키 요청(데스크톱 다수)이 매번 ~160ms를 내지 않게
+  // (미들웨어 지름길과 같은 근거 2026-07-24). 만료·무효 쿠키면 user null → 기기 세션 폴백.
+  if (store.getAll().some((c) => c.name.startsWith('sb-'))) {
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      { cookies: { getAll: () => store.getAll(), setAll: () => { /* 라우트에서는 세션 갱신 안 함 — 미들웨어 담당 */ } } },
+    );
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) return { id: user.id, email: user.email ?? '' };
+  }
+  // 기기 연동 모드 — 쿠키 세션이 없을 때 이 기기가 귀속된 계정(로그인=연동). 워커(TENANT)는 쿠키 경로 전용.
   if (!TENANT) {
     const dev = loadDeviceSession();
     if (dev) return { id: dev.user.id, email: dev.user.email };
   }
-  const store = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    { cookies: { getAll: () => store.getAll(), setAll: () => { /* 라우트에서는 세션 갱신 안 함 — 미들웨어 담당 */ } } },
-  );
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user) return { id: user.id, email: user.email ?? '' };
   // 게스트(로컬 전용) 폴백 — 실로그인(기기 세션·쿠키 세션)이 전부 없을 때만. 로컬 모드와 같은 신원.
   // 파일이 권한의 근거(gueststate), 쿠키는 미들웨어 UX 게이트일 뿐 — 기기 세션 모델과 같은 계약.
   if (!TENANT) {

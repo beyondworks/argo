@@ -14,8 +14,9 @@ export async function POST(req) {
     const td = tenantDenied(user); if (td) return td;
     // 오너는 서버가 자격(기기 세션·서비스 자격)에서 해석한다 — 요청 본문을 신뢰하지 않는다.
     // requesterId 대조: 서비스 모드(RLS 우회)에서 ARGO_SYNC_OWNER 오설정이 남의 계정 자료를
-    // 덤프하지 않게 하는 심층 방어(분리 검수 MED). 세션 모드는 currentUser가 기기 세션을 우선
-    // 보므로(auth.mjs) 두 신원이 같아 무영향.
+    // 덤프하지 않게 하는 심층 방어(분리 검수 MED). 2026-08-06부터 currentUser는 쿠키 세션 우선 —
+    // 비루프백 노출 구성에서 쿠키 사용자 ≠ 기기 주인이면 owner-mismatch로 거부된다(fail-closed,
+    // 의도된 방향: 남의 기기 자료를 자기 계정으로 내보낼 수 없다).
     const r = await exportCloudToLocal({ requesterId: user.id });
     return Response.json(r);
   } catch (e) {
