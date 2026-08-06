@@ -31,7 +31,7 @@ export {
   RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner,
   GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL, GROK_DEFAULT_MODEL,
   isOpenRouterCreditError, isOpenRouterCreditReply, isOpenRouterLimitError, isOpenRouterLimitReply,
-  pickRunner, autoRunnerOf, oauthFormatError, excludeWith,
+  pickRunner, autoRunnerOf, oauthFormatError, excludeWith, authExcludedNoRunnerMsg,
 } from './runners/catalog.mjs';
 export {
   provisionCodexCli, codexSandboxArgs, CODEX_EFFORTS, codexEffortArgs,

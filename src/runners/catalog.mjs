@@ -276,6 +276,18 @@ export function autoRunnerOf(company) {
     코드 오입력)이 저장을 통과한 뒤 모든 턴이 401로만 드러나던 것을 저장 시점에 잡는다
     (실측 2026-07-18: 92자 비접두사 값 저장 → 전 턴 "401 Invalid authentication credentials").
     반환: null(정상) | 사용자 안내 문자열. (export: 회귀 테스트용) */
+/** 자가치유가 인증 실패 러너를 전부 제외해 실행할 곳이 없을 때의 정직한 문구.
+    기존 "하나도 연결돼 있지 않습니다"는 방금 연결한 사용자에게 거짓이 된다 — Grok 실사용 제보
+    (2026-08-06): 연결 직후 401(토큰 만료·갱신 실패 등)로 제외되자 '러너 없음'을 받았다.
+    chat·oneshot 두 갈래가 같은 문구를 쓴다(#855604d "실행 갈래가 둘이면 갈래마다 세라").
+    (export: 회귀 테스트용 — 순수 함수) */
+export function authExcludedNoRunnerMsg(excluded, lang = 'ko') {
+  const names = (excluded ?? []).map((id) => RUNNERS[id]?.name ?? id).join('/');
+  return lang === 'en'
+    ? `${names} is connected but hit an authentication error this turn, and no other runner is connected. Check ${names} in Settings → AI connections (reconnect if it keeps happening), or connect another runner.`
+    : `${names} 러너가 연결돼 있지만 인증 오류로 이번 턴에서 제외됐고, 연결된 다른 러너가 없습니다. 설정 → AI 연결에서 ${names} 상태를 확인하고(반복되면 다시 연결) 또는 다른 러너를 연결해 주세요.`;
+}
+
 export function oauthFormatError(runner, value, lang = 'ko') {
   const prefix = RUNNER_AUTH[runner]?.oauthPrefix;
   if (!prefix || String(value ?? '').trim().startsWith(prefix)) return null;

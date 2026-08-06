@@ -18,3 +18,34 @@ test('fallbackErrorPrefix: 미등록 러너 id는 id 그대로 표기(크래시 
   const s = fallbackErrorPrefix(true, 'unknown-x', 'claude', 'ko');
   assert.ok(s.includes('unknown-x'), '표시명 없으면 id 원문');
 });
+
+/* ── 인증 제외 폴백의 정직 사유 — Grok 실사용 제보(2026-08-06): 연결 직후 401 → 자가치유 폴백이
+   "이 기기에 연결돼 있지 않아"(거짓) / 러너 소진 시 "하나도 연결돼 있지 않습니다"(거짓)를 냈다.
+   두 증상("클로드 러너로 뜬다"·"러너 없음")의 뿌리 = 제외 사유를 미연결로 뭉갠 문구. ── */
+test('fallbackErrorPrefix(excluded): 사유가 "미연결"이 아니라 "인증 오류"로 나온다', () => {
+  const ko = fallbackErrorPrefix(true, 'grok', 'claude', 'ko', { excluded: true });
+  assert.ok(ko.includes('연결돼 있지만') && ko.includes('인증 오류'), '연결 사실 + 진짜 사유');
+  assert.ok(!ko.includes('연결돼 있지 않아'), '거짓 사유(미연결) 미노출');
+  const en = fallbackErrorPrefix(true, 'grok', 'claude', 'en', { excluded: true });
+  assert.ok(en.includes('authentication error') && !en.match(/[가-힣]/), '영어 모드 + 한국어 미노출');
+  // 기본값(excluded 미전달)은 기존 문구 그대로 — 진짜 미연결 폴백의 회귀 없음
+  assert.ok(fallbackErrorPrefix(true, 'grok', 'claude', 'ko').includes('연결돼 있지 않아'));
+});
+
+test('authExcludedNoRunnerMsg: 러너 소진 문구가 "연결돼 있음+인증 오류"를 사실대로 말한다', async () => {
+  const { authExcludedNoRunnerMsg } = await import('../src/runners.mjs');
+  const ko = authExcludedNoRunnerMsg(['grok'], 'ko');
+  assert.ok(ko.includes('Grok') && ko.includes('연결돼 있지만') && ko.includes('인증 오류'), '표시명+사실 사유');
+  assert.ok(!ko.includes('하나도 연결돼 있지 않습니다'), '거짓 총부정 미노출');
+  const en = authExcludedNoRunnerMsg(['grok', 'claude'], 'en');
+  assert.ok(en.includes('Grok/Claude Code') && !en.match(/[가-힣]/), '복수 러너 병기 + 영어 모드');
+});
+
+test('배선: chat·oneshot 러너 소진 분기가 제외 목록을 먼저 본다(공허 통과 방지 앵커)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  const oneshot = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  assert.ok(/__excludeRunners\?\.length\)\s*throw new Error\(authExcludedNoRunnerMsg/.test(chat), 'chat 배선');
+  assert.ok(/__exclude\?\.length\)\s*throw new Error\(authExcludedNoRunnerMsg/.test(oneshot), 'oneshot 배선');
+  assert.ok(/excluded:\s*wantExcluded/.test(chat), '에러 프리픽스에 제외 사유 전달');
+});
