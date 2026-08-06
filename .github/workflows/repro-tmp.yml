@@ -1,0 +1,15 @@
+# 임시 — crewmail rename 경합 윈도우 재현 (조사 후 삭제)
+name: repro-tmp
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  repro:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node repro-rename-race.mjs
