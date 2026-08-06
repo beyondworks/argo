@@ -28,8 +28,11 @@ export async function middleware(req) {
   if (!process.env.ARGO_TENANT_OWNER?.trim()
     && LOCAL_HOST_RE.test(req.headers.get('host') || '')
     && !req.cookies.getAll().some((c) => c.name.startsWith('sb-'))) {
-    if (req.cookies.get('argo-device')?.value === '1') {
-      if (req.nextUrl.pathname === '/login') return NextResponse.redirect(publicUrl(req, '/'));
+    // 기기 마커도 /login은 가로채지 않는다 — 홈으로 튕기면 "로그인 버튼이 안 눌린다"가 되고,
+    // 다른 계정의 쿠키 세션이 영원히 성립 못 해 모든 화면이 기기 주인 신원으로 고정된다
+    // (주인의 Pro 플랜이 남에게 보이던 실측 결함 2026-08-05~06). 실세션의 /login 홈 리다이렉트는
+    // 아래 `if (user && p === '/login')`이 그대로 담당한다.
+    if (req.cookies.get('argo-device')?.value === '1' && req.nextUrl.pathname !== '/login') {
       return NextResponse.next();
     }
     // 게스트는 /login을 지름길로 가로채지 않는다 — 나중 로그인(클레임 귀속) 경로 보존.
@@ -58,8 +61,8 @@ export async function middleware(req) {
   // 루프백 한정: 원격에서 마커만 들고 오는 요청은 통과시키지 않는다. 워커(TENANT)는 이 분기 없음.
   if (!process.env.ARGO_TENANT_OWNER?.trim() && req.cookies.get('argo-device')?.value === '1') {
     const host = req.headers.get('host') || '';
-    if (LOCAL_HOST_RE.test(host)) {
-      if (req.nextUrl.pathname === '/login') return NextResponse.redirect(publicUrl(req, '/'));
+    // /login 미가로채기 — 위 지름길 블록과 같은 근거(계정 전환 경로 보존, 2026-08-06)
+    if (LOCAL_HOST_RE.test(host) && req.nextUrl.pathname !== '/login') {
       return NextResponse.next();
     }
   }

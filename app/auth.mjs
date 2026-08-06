@@ -39,22 +39,31 @@ export function tenantDenied(user) {
   return null;
 }
 
-/** 현재 로그인 사용자. 인증 off = 로컬 1인 모드('local'). 인증 on + 미로그인 = null. */
+/** 현재 로그인 사용자. 인증 off = 로컬 1인 모드('local'). 인증 on + 미로그인 = null.
+    순서 계약(2026-08-06): **쿠키 세션 > 기기 세션 > 게스트.** 기기 세션을 먼저 보면 브라우저가
+    다른 계정으로 로그인해도 신원이 기기 주인으로 고정된다 — 주인의 플랜·회사가 남에게 보이던
+    실측 결함(#234가 billing 라우트만 쿠키 우선으로 고쳤고, 여기가 남은 뿌리였다). 쿠키 세션은
+    GoTrue가 검증한 실로그인이므로 항상 파일 기반 기기 세션보다 우선한다. 데스크톱 앱 웹뷰는
+    sb-* 쿠키가 없어 기존처럼 기기 세션으로 떨어진다(회귀 0). */
 export async function currentUser() {
   if (!AUTH_ON) return { id: 'local', email: '' };
-  // 기기 연동 모드 — 이 기기가 계정에 귀속됨(로그인=연동). 워커(TENANT)는 쿠키 경로 유지.
+  const store = await cookies();
+  // sb-* 쿠키가 있을 때만 GoTrue 왕복 — 무쿠키 요청(데스크톱 다수)이 매번 ~160ms를 내지 않게
+  // (미들웨어 지름길과 같은 근거 2026-07-24). 만료·무효 쿠키면 user null → 기기 세션 폴백.
+  if (store.getAll().some((c) => c.name.startsWith('sb-'))) {
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      { cookies: { getAll: () => store.getAll(), setAll: () => { /* 라우트에서는 세션 갱신 안 함 — 미들웨어 담당 */ } } },
+    );
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) return { id: user.id, email: user.email ?? '' };
+  }
+  // 기기 연동 모드 — 쿠키 세션이 없을 때 이 기기가 귀속된 계정(로그인=연동). 워커(TENANT)는 쿠키 경로 전용.
   if (!TENANT) {
     const dev = loadDeviceSession();
     if (dev) return { id: dev.user.id, email: dev.user.email };
   }
-  const store = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    { cookies: { getAll: () => store.getAll(), setAll: () => { /* 라우트에서는 세션 갱신 안 함 — 미들웨어 담당 */ } } },
-  );
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user) return { id: user.id, email: user.email ?? '' };
   // 게스트(로컬 전용) 폴백 — 실로그인(기기 세션·쿠키 세션)이 전부 없을 때만. 로컬 모드와 같은 신원.
   // 파일이 권한의 근거(gueststate), 쿠키는 미들웨어 UX 게이트일 뿐 — 기기 세션 모델과 같은 계약.
   if (!TENANT) {
