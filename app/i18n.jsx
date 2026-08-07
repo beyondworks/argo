@@ -1014,6 +1014,8 @@ const DICT = {
   'routines.title': ['이름', 'Title'],
   'routines.titlePlaceholder': ['루틴 이름', 'Routine name'],
   'routines.promptPlaceholder': ['크루에게 반복 지시할 내용', 'What to repeatedly instruct the crew'],
+  'routines.refineBtn': ['AI 설계 확장', 'AI refine'],
+  'routines.refineHint': ['한 줄 지시를 목적·단계·산출물·기준이 담긴 설계로 확장합니다 — 결과는 수정할 수 있어요', 'Expands a one-liner into a designed instruction (goal, steps, output, criteria) — you can edit the result'],
   'routines.createBtn': ['루틴 생성', 'Create routine'],
   'routines.editTitle': ['루틴 수정', 'Edit Routine'],
   'routines.saveBtn': ['변경 저장', 'Save changes'],

@@ -35,6 +35,7 @@ export default function Routines({ params }) {
   const [agents, setAgents] = useState([]);
   const [form, setForm] = useState(null); // {agentSlug,title,prompt,type,time,dow}
   const [saving, setSaving] = useState(false);
+  const [refining, setRefining] = useState(false); // AI 설계 확장 진행 중
   const [error, setError] = useState('');
   const [runTarget, setRunTarget] = useState(null); // 실행 팝업 대상 루틴
   const [delTarget, setDelTarget] = useState(null); // 삭제 확인 모달 대상 루틴
@@ -292,9 +293,24 @@ export default function Routines({ params }) {
             placeholder={t('routines.promptPlaceholder')}
             style={{ width: '100%', minHeight: 90, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '10px 14px', outline: 'none', fontSize: 13, lineHeight: 1.65 }}
           />
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <button className="btn btn-primary sm" disabled={saving || !form.title.trim() || !form.prompt.trim() || !form.agentSlug || form.times.length === 0 || (form.type === 'weekly' && form.dows.length === 0)}>
               {saving ? <Spinner size={12} /> : form.id ? t('routines.saveBtn') : t('routines.createBtn')}
+            </button>
+            {/* 설계 확장 — 한 줄 지시를 목적·단계·산출물·기준이 담긴 설계로(유건 지시 2026-08-05).
+                프리필일 뿐 저장은 사용자가 — 실패 시 원문 유지(외부 의존 기능의 폴백 원칙). */}
+            <button type="button" className="btn sm" disabled={refining || !form.prompt.trim()}
+              title={t('routines.refineHint')}
+              onClick={async () => {
+                setRefining(true); setError('');
+                try {
+                  const d = await api(`/api/companies/${ws}/routines/parse`, { text: form.prompt, mode: 'refine', agentSlug: form.agentSlug });
+                  if (d?.prompt) setForm((f) => ({ ...f, prompt: d.prompt }));
+                } catch (e) {
+                  setError(String(e.message || e)); // 원문은 그대로 남는다
+                } finally { setRefining(false); }
+              }}>
+              {refining ? <Spinner size={12} /> : t('routines.refineBtn')}
             </button>
             {error && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>}
           </div>
