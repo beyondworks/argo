@@ -601,21 +601,31 @@ export const isTauriApp = () => typeof window !== 'undefined' && ('__TAURI_INTER
     하이라이트해 보여준다(reveal = 완료 피드백). 브라우저는 기본 앵커(download 속성)가 담당 —
     핸들러가 아무것도 하지 않고 즉시 반환한다. 앵커 href에 함께 붙는 &download=1은 브라우저
     폴백용(서버가 Content-Disposition: attachment로 응답 — download 속성 유실 상황도 방어). */
+// IPC 상한 — 바이트가 JSON 배열로 직렬화되므로 큰 파일은 웹뷰를 얼린다. 넘으면 서버 강제
+// 다운로드(&download=1)로 넘긴다: 웹뷰가 못 받으면 못 받는 대로 브라우저 경로가 받는다
+// (검수 MEDIUM 2026-08-07 — "무동작"이 "앱 정지"로 바뀌는 실패를 만들지 않는다).
+const DOWNLOAD_IPC_CAP = 25 * 1024 * 1024;
+
 export function artifactDownload(url, name) {
   return async (e) => {
     if (!isTauriApp()) return; // 브라우저 — <a download> 기본 동작 유지
     e.preventDefault();
+    // 실패·초과 시 공통 폴백 — 서버가 attachment로 응답하는 URL로 항해한다. 조용한 무동작으로
+    // 끝내면 이 기능이 고치려던 증상(클릭해도 아무 일 없음)과 화면이 같아진다(검수 MEDIUM).
+    const fallback = () => { window.location.href = url.includes('?') ? `${url}&download=1` : `${url}?download=1`; };
     try {
       const r = await fetch(url);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const buf = new Uint8Array(await r.arrayBuffer());
+      const blob = await r.blob();
+      if (blob.size > DOWNLOAD_IPC_CAP) { fallback(); return; }
+      const buf = new Uint8Array(await blob.arrayBuffer());
       const { invoke } = await import('@tauri-apps/api/core');
       const path = await invoke('save_download', { name, data: Array.from(buf) });
       // 저장 위치 공개 — 실패해도 저장 자체는 됐으므로 조용히 무시(구버전 바이너리 등)
       await import('@tauri-apps/plugin-opener').then((m) => m.revealItemInDir(path)).catch(() => {});
     } catch (err) {
-      console.error('[argo] 산출물 저장 실패:', err?.message ?? err);
-      window.dispatchEvent(new CustomEvent('argo:download-failed', { detail: { name } }));
+      console.error('[argo] 산출물 저장 실패 — 서버 다운로드로 폴백:', err?.message ?? err);
+      fallback();
     }
   };
 }

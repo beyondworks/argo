@@ -14,7 +14,11 @@ const MIME = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  zip: 'application/zip', html: 'text/html; charset=utf-8',
+  zip: 'application/zip',
+  // ⚠ html은 **의도적으로 넣지 않는다**(발행 전 검수 HIGH-1, 2026-08-07). text/html로 서빙하면
+  // 산출물이 앱 오리진에서 실행되는 페이지가 된다 — CSP가 'unsafe-inline'이라 스크립트가 돌고,
+  // 첨부 칩·[[링크]]는 download=1 없이 여는 경로라 같은 오리진 XSS가 성립한다(텔레그램 수신
+  // 문서가 vault/files/에 .html로 저장되는 투입 경로 실재). octet-stream 폴백 = 다운로드로 끝난다.
 };
 
 export async function GET(req, { params }) {

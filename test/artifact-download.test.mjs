@@ -12,6 +12,9 @@ test('files 라우트: download=1이면 attachment(RFC 5987 filename*) + 오피�
   assert.ok(src.includes("searchParams.get('download') === '1'"), 'download 파라미터 분기');
   assert.ok(src.includes("filename*=UTF-8''"), '비ASCII(한글) 파일명 인코딩');
   assert.ok(src.includes('spreadsheetml.sheet'), 'xlsx MIME — 엑셀 산출물 제보의 직접 대상');
+  // html은 절대 등재 금지 — text/html로 서빙하면 산출물이 앱 오리진 실행 페이지가 된다(검수 HIGH-1
+  // 2026-08-07: 첨부 칩·[[링크]]는 download=1 없이 여는 경로 + CSP unsafe-inline + 텔레그램 .html 수신 경로).
+  assert.ok(!/\bhtml:\s*'text\/html/.test(src), 'html MIME 등재 금지 — 같은 오리진 XSS 회귀');
   // 미리보기 경로 보호 — attachment는 파라미터 있을 때만(무조건 붙이면 썸네일·iframe이 다운로드로 변함)
   assert.ok(!/headers = \{[^}]*content-disposition/.test(src), '기본 응답엔 disposition 없음');
 });
@@ -24,6 +27,9 @@ test('artifactDownload 헬퍼: 데스크톱만 가로채고 IPC save_download로
   assert.ok(fn.includes('preventDefault'), '앱에서 기본 앵커 차단');
   assert.ok(fn.includes("invoke('save_download'"), 'Rust 저장 커맨드 호출');
   assert.ok(fn.includes('revealItemInDir'), '저장 완료 피드백(파인더/탐색기 하이라이트)');
+  // 실패·초과가 조용한 무동작이면 고치려던 증상과 화면이 같다(검수 MEDIUM) — 폴백 항해가 있어야 한다
+  assert.ok(fn.includes('fallback()'), '실패 시 서버 다운로드 폴백');
+  assert.ok(fn.includes('DOWNLOAD_IPC_CAP'), '대용량 IPC 상한 — 웹뷰 정지 방지');
 });
 
 test('배선: 채팅 칩·프리뷰·기억 페이지·설정 리포트 4곳이 헬퍼를 지난다', async () => {
@@ -45,6 +51,8 @@ test('Rust: save_download 커맨드 등록 + basename 강제(경로 조작 차�
   assert.ok(rs.includes('generate_handler![save_download]'), 'invoke_handler 등록 — 빠지면 호출이 조용히 실패');
   assert.ok(rs.includes('.file_name()'), 'basename 강제');
   assert.ok(rs.includes('download_dir()'), 'OS 다운로드 폴더');
+  // 이름 후보 소진 시 원본 덮어쓰기 금지(검수 MEDIUM) — 조용한 데이터 유실
+  assert.ok(rs.includes('.ok_or_else('), '충돌 후보 소진은 에러로');
   const caps = await at('src-tauri/capabilities/default.json');
   assert.ok(caps.includes('opener:allow-reveal-item-in-dir'), 'reveal 권한 — 없으면 피드백이 조용히 죽는다');
 });
