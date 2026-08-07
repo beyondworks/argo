@@ -107,13 +107,12 @@ fn save_download(app: tauri::AppHandle, name: String, data: Vec<u8>) -> Result<S
             Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
             _ => (base.clone(), String::new()),
         };
-        for n in 1..1000 {
-            let cand = dir.join(format!("{stem} ({n}){ext}"));
-            if !cand.exists() {
-                target = cand;
-                break;
-            }
-        }
+        // 후보 소진 시 원본을 덮어쓰지 않는다 — 조용한 데이터 유실(검수 MEDIUM 2026-08-07).
+        // 실패로 돌리면 UI가 서버 다운로드로 폴백해 브라우저가 자기 규칙으로 이름을 정한다.
+        target = (1..1000)
+            .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+            .find(|c| !c.exists())
+            .ok_or_else(|| format!("같은 이름의 파일이 너무 많습니다: {base}"))?;
     }
     std::fs::write(&target, &data).map_err(|e| e.to_string())?;
     Ok(target.to_string_lossy().into_owned())

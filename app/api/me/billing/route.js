@@ -12,6 +12,7 @@ import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { currentUser } from '../../../auth.mjs';
+import { getFreshDeviceSession } from '../../../../src/devicesession.mjs'; // 설치본 결제 표면 — 서비스키 없이 RLS로
 import { trialEnd, proRowActive } from '../../../../src/entitlement.mjs';
 import { lsGateOpts } from '../../../../src/lsbilling.mjs';
 import { reconcileDueFromRow, reconcileEntitlement } from '../../../../src/lsreconcile.mjs';
@@ -87,17 +88,39 @@ export async function GET() {
     }
     // ② 기기 연동 세션 폴백 — 쿠키 세션이 없는 데스크톱. currentUser()가 기기 파일에서 검증한 id.
     const user = await currentUser();
-    if (!user?.id || user.id === 'local' || user.id === 'guest' || !serviceKey) return Response.json({ billing: null });
-    const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
-    const { data, error } = await sb.from('entitlements').select(cols).eq('user_id', user.id).maybeSingle();
+    if (!user?.id || user.id === 'local' || user.id === 'guest') return Response.json({ billing: null });
+    // 데스크톱 설치본에는 **서비스키가 없다**(release.yml: 앱 빌드에 넣지 않는다). 서비스키를 요구하면
+    // 설치본에서 billing이 항상 null이 되고, 화면은 기기 스코프 sync.plan으로 폴백해 체험 배지·업그레이드
+    // 버튼이 통째로 사라진다 — 가입 1~14일차(체험 중) 사용자에게 결제 수단이 없던 이유(발행 전 검수
+    // HIGH-2, 2026-08-07). 기기 세션의 액세스 토큰으로 **사용자 스코프** 클라이언트를 만들면
+    // entitlements_own_select RLS가 방어선이 되어 서비스키 없이 자기 행만 읽는다
+    // (me/billing/portal의 accessToken()과 같은 패턴). created_at도 그 토큰의 GoTrue /user에서 온다.
+    const sess = process.env.ARGO_TENANT_OWNER?.trim() ? null : await getFreshDeviceSession().catch(() => null);
+    const userClient = sess?.access_token
+      ? createClient(url, sess.anonKey ?? anon, {
+        auth: { persistSession: false },
+        global: { headers: { Authorization: `Bearer ${sess.access_token}` } },
+      })
+      : null;
+    if (!userClient && !serviceKey) return Response.json({ billing: null }); // 둘 다 없으면 조회 수단이 없다
+    const sb = userClient ?? createClient(url, serviceKey, { auth: { persistSession: false } });
+    // 사용자 스코프는 RLS(own select)가 스코프를 강제하므로 .eq 없이도 자기 행뿐 — 서비스 롤일 때만
+    // .eq가 유일 방어선이라 그 경로에만 붙인다(재검수 M5와 같은 근거).
+    const q = sb.from('entitlements').select(cols);
+    const { data, error } = await (userClient ? q.maybeSingle() : q.eq('user_id', user.id).maybeSingle());
     if (error) throw new Error(error.message);
-    // 체험 D-day 배지(#164)의 created_at은 기기 세션에 없어 admin 조회로 얻는다 — 실패해도 배지만 생략.
-    // 대사는 비블록(F7)이라 응답을 기다리지 않는다. 기기 세션 파일 이메일은 신뢰 금지(F3) →
+    // 체험 D-day 배지(#164)의 created_at은 기기 세션 파일에 없어 서버에서 얻는다 — 실패해도 배지만 생략.
+    // 사용자 스코프(설치본)는 GoTrue /user가 자기 created_at을 준다 — 서비스키 불요. 서비스 롤
+    // 경로(워커 등)만 admin 조회. 대사는 비블록(F7). 기기 세션 파일 이메일은 신뢰 금지(F3) →
     // emailTrusted:false로 넘겨 대사 모듈이 서버 검증본을 직접 조회하게 한다.
     let created = null;
     try {
-      const r = await fetch(`${url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, signal: AbortSignal.timeout(5000) });
-      if (r.ok) created = (await r.json())?.created_at ?? null;
+      if (userClient) {
+        created = (await userClient.auth.getUser())?.data?.user?.created_at ?? null;
+      } else {
+        const r = await fetch(`${url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, signal: AbortSignal.timeout(5000) });
+        if (r.ok) created = (await r.json())?.created_at ?? null;
+      }
     } catch { /* 배지 생략 */ }
     const fired = scheduleReconcileIfLost({ url, serviceKey, user, cur: data, emailTrusted: false });
     return pick(data, trialEnd(created, data?.plan), fired);
