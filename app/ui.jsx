@@ -595,6 +595,31 @@ export function FeedbackModal({ onClose }) {
 /** Tauri 데스크톱 감지 — 분산 복제 방지용 단일 출처(분리 검수 MEDIUM 2026-07-28). */
 export const isTauriApp = () => typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri'));
 
+/** 산출물 다운로드 onClick — 데스크톱 앱은 <a download>가 무동작(WKWebView/WebView2, 실사용 제보
+    2026-08-07: "채팅·산출물에서 클릭해도 다운로드 안 됨 — 크루에게 저장을 시켜야 했다")이라
+    가로채서 바이트를 IPC로 넘겨 다운로드 폴더에 저장하고, 저장된 파일을 파인더/탐색기에
+    하이라이트해 보여준다(reveal = 완료 피드백). 브라우저는 기본 앵커(download 속성)가 담당 —
+    핸들러가 아무것도 하지 않고 즉시 반환한다. 앵커 href에 함께 붙는 &download=1은 브라우저
+    폴백용(서버가 Content-Disposition: attachment로 응답 — download 속성 유실 상황도 방어). */
+export function artifactDownload(url, name) {
+  return async (e) => {
+    if (!isTauriApp()) return; // 브라우저 — <a download> 기본 동작 유지
+    e.preventDefault();
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const buf = new Uint8Array(await r.arrayBuffer());
+      const { invoke } = await import('@tauri-apps/api/core');
+      const path = await invoke('save_download', { name, data: Array.from(buf) });
+      // 저장 위치 공개 — 실패해도 저장 자체는 됐으므로 조용히 무시(구버전 바이너리 등)
+      await import('@tauri-apps/plugin-opener').then((m) => m.revealItemInDir(path)).catch(() => {});
+    } catch (err) {
+      console.error('[argo] 산출물 저장 실패:', err?.message ?? err);
+      window.dispatchEvent(new CustomEvent('argo:download-failed', { detail: { name } }));
+    }
+  };
+}
+
 // 픽커가 한 번 실패하면 앱 전체가 기억한다 — 실패는 기기 단위 사실(구버전 바이너리에 dialog
 // 플러그인 부재 등)이라, 카드마다 한 번씩 헛클릭시킬 이유가 없다(분리 검수 LOW-3).
 // 성공하면 반드시 되돌린다: 안 내리면 "픽커가 방금 멀쩡히 열렸는데 열 수 없다고 말하는" 거짓말이

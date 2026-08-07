@@ -5,7 +5,7 @@
 // 뷰포트 높이에 고정되어 스크롤이 각 패널 안에서만 일어난다 — 세로 나열 레이아웃 불안정의 종결.
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo, tsFromRel, resolveWikiRel } from '../../../ui';
+import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo, tsFromRel, resolveWikiRel, artifactDownload } from '../../../ui';
 import { Constellation3D, GraphModal } from '../graphview';
 import { useLang } from '../../../i18n';
 
@@ -221,7 +221,8 @@ function Vault({ params }) {
                   <TreeSection key={name} label={name} count={files.length} defaultOpen depth={1} folder>
                     {files.map((d) => d.binary ? (
                       <a key={d.rel} className="row" download
-                        href={`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}`}
+                        href={`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}&download=1`}
+                        onClick={artifactDownload(`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}`, d.rel.split('/').pop())}
                         style={{ textDecoration: 'none', color: 'inherit', paddingLeft: treePad(1, true) }}
                         title={`${fmtSize(d.size)} · ${t('vault.download')}`}>
                         <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}><Icon name="clip" size={13} /></span>

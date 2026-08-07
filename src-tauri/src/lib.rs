@@ -85,9 +85,44 @@ fn de_unc(p: String) -> String {
     p.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(p)
 }
 
+// 산출물 저장 — 웹뷰의 <a download>가 WKWebView(맥)/WebView2(윈)에서 무동작이라(실사용 제보
+// 2026-08-07: "채팅·산출물에서 클릭해도 다운로드 안 됨"), UI가 파일 바이트를 IPC로 넘기면
+// OS 다운로드 폴더에 저장하고 최종 경로를 돌려준다. UI는 그 경로를 opener revealItemInDir로
+// 파인더/탐색기에 하이라이트해 "받아졌다"를 보여준다.
+// 이름은 basename만 취해 경로 조작을 차단하고, 충돌은 " (n)" 접미로 회피(브라우저 관례).
+// ponytail: 바이트가 IPC JSON을 타므로 수십 MB급에서 느리다 — 그때는 raw IPC(Request body)로 전환.
+#[tauri::command]
+fn save_download(app: tauri::AppHandle, name: String, data: Vec<u8>) -> Result<String, String> {
+    let base = std::path::Path::new(&name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("download")
+        .to_string();
+    let dir = app.path().download_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut target = dir.join(&base);
+    if target.exists() {
+        let (stem, ext) = match base.rsplit_once('.') {
+            Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+            _ => (base.clone(), String::new()),
+        };
+        for n in 1..1000 {
+            let cand = dir.join(format!("{stem} ({n}){ext}"));
+            if !cand.exists() {
+                target = cand;
+                break;
+            }
+        }
+    }
+    std::fs::write(&target, &data).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![save_download])
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init()) // 앱에서 외부 브라우저 열기(로그인 핸드오프)
         .plugin(tauri_plugin_dialog::init()) // 폴더 픽커(내보내기 목적지 — 평문 경로 입력 대체)

@@ -3,7 +3,7 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
+import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, artifactDownload, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
@@ -606,7 +606,8 @@ function ImportCard({ ws }) {
           {result.reportRel && (
             <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0 }}>
               {t('settings.import.report')}:{' '}
-              <a href={`/api/companies/${ws}/files?rel=${encodeURIComponent(result.reportRel.replace(/^vault\//, ''))}`}
+              <a href={`/api/companies/${ws}/files?rel=${encodeURIComponent(result.reportRel.replace(/^vault\//, ''))}&download=1`}
+                onClick={artifactDownload(`/api/companies/${ws}/files?rel=${encodeURIComponent(result.reportRel.replace(/^vault\//, ''))}`, result.reportRel.split('/').pop())}
                 target="_blank" rel="noopener noreferrer" className="mono"
                 style={{ fontSize: 10.5, overflowWrap: 'anywhere', color: 'var(--fg-2)' }}>
                 {result.reportRel}

@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, artifactDownload, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 
@@ -108,7 +108,7 @@ function ArtifactPreview({ ws, rel }) {
   const note = (msg) => (
     <div className="ap-note">
       <span style={{ minWidth: 0 }}>{msg}</span>
-      <a className="btn sm" style={{ flex: 'none' }} href={fileUrl} download={name}>{t('vault.download')}</a>
+      <a className="btn sm" style={{ flex: 'none' }} href={`${fileUrl}&download=1`} download={name} onClick={artifactDownload(fileUrl, name)}>{t('vault.download')}</a>
     </div>
   );
   if (st.status === 'loading') return <div className="artifact-preview fade-up"><div className="ap-note" style={{ justifyContent: 'flex-start' }}><Spinner size={13} />{t('chat.preview')}…</div></div>;
@@ -148,7 +148,8 @@ function ArtifactChips({ ws, rels }) {
           return (
             <span key={rel} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <a className="memo-chip" download={md ? undefined : name}
-                href={md ? `/c/${ws}/vault?doc=${encodeURIComponent(rel)}` : `/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`}
+                href={md ? `/c/${ws}/vault?doc=${encodeURIComponent(rel)}` : `/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}&download=1`}
+                onClick={md ? undefined : artifactDownload(`/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`, name)}
                 title={`${t('chat.createdDocs')} — ${rel}`}>
                 <Icon name="doc" size={12} />{name}
               </a>

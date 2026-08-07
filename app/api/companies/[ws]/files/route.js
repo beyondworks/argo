@@ -10,6 +10,11 @@ const MIME = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif',
   pdf: 'application/pdf', txt: 'text/plain; charset=utf-8', md: 'text/plain; charset=utf-8',
   csv: 'text/csv; charset=utf-8', json: 'application/json',
+  // 오피스·아카이브 — 크루 산출물 다운로드 정상화(제보 2026-08-07: 엑셀 등 클릭 다운로드 불가 계열)
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  zip: 'application/zip', html: 'text/html; charset=utf-8',
 };
 
 export async function GET(req, { params }) {
@@ -33,9 +38,16 @@ export async function GET(req, { params }) {
     }
     const buf = await readFile(real);
     const ext = norm.split('.').pop().toLowerCase();
-    return new Response(buf, {
-      headers: { 'content-type': MIME[ext] ?? 'application/octet-stream', 'cache-control': 'private, max-age=86400' },
-    });
+    const headers = { 'content-type': MIME[ext] ?? 'application/octet-stream', 'cache-control': 'private, max-age=86400' };
+    // download=1 — 브라우저 강제 다운로드(제보 2026-08-07). a[download] 속성만으론 html 등
+    // 렌더 가능 타입이 탭에서 열리는 브라우저·확장 조합이 있어 서버가 attachment로 못박는다.
+    // filename*는 RFC 5987(비ASCII 파일명 — 한글 산출물명 다수). 미리보기(썸네일·iframe)는
+    // 이 파라미터를 안 보내므로 인라인 유지.
+    if (new URL(req.url).searchParams.get('download') === '1') {
+      const name = norm.split('/').pop();
+      headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(name)}`;
+    }
+    return new Response(buf, { headers });
   } catch {
     return new Response('파일 없음', { status: 404 });
   }
