@@ -1,6 +1,6 @@
 'use client';
 // 공용 클라이언트 조각들 — 화면 전체가 같이 쓴다.
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import { useLang } from './i18n';
 import { rewriteVaultHref } from '../src/vault-links.mjs'; // 산출물 링크 재작성(순수 — 테스트는 src 쪽)
@@ -256,22 +256,31 @@ export function resolveWikiRel(name, docs, projects) {
     wsId를 주면 vault 상대 링크(산출물)는 죽이지 않고 뷰어/다운로드 URL로 재작성한다 —
     크루에게 "경로를 알려라"고 시켜 놓고 그 링크를 '#'로 죽이던 모순 해소(제보 2026-07-30).
     화이트리스트 재작성(rewriteVaultHref)이라 XSS 방어 방향은 그대로다. */
-export function Markdown({ text, onWikiLink, wsId }) {
-  const escaped = String(text ?? '').replace(/</g, '&lt;');
-  let html = marked.parse(escaped);
-  html = html.replace(/href="((?!https?:|#|\/)[^"]*)"/gi, (_, h) => {
-    const url = rewriteVaultHref(h, wsId);
-    return url ? `href="${url.replace(/"/g, '&quot;')}"` : 'href="#"';
-  });
-  // 이미지 src는 동일출처 파일 라우트("/...")만 허용 — 크루 답변 속 외부 http/data 이미지는
-  // 추적 픽셀·데이터 유출 벡터라 태그째 제거한다. "//evil.com"(프로토콜 상대)도 차단.
-  html = html.replace(/<img\b[^>]*>/gi, (tag) => /\ssrc="\/(?!\/)[^"]*"/i.test(tag) ? tag : '');
-  // 크루가 주는 링크는 항상 새 창 — 대화 흐름을 벗어나지 않는다
-  html = html.replace(/<a /gi, '<a target="_blank" rel="noopener noreferrer" ');
-  html = html.replace(/\[\[(.+?)\]\]/g, (_, p) => {
-    const attr = p.replace(/"/g, '&quot;'); // marked 이스케이프에 의존하지 않고 속성 breakout 자체 차단
-    return `<span class="wikilink" data-wiki="${attr}">${p}</span>`;
-  });
+/** 마크다운 렌더 — **memo + useMemo 필수**(실사용 제보 2026-08-07 "채팅 타이핑이 느리다",
+    특히 대화가 긴 크루). 채팅 화면은 입력 상태와 메시지 목록이 같은 컴포넌트에 있어 **키 한 타마다
+    스레드 전체가 재렌더**된다. 여기서 파싱을 다시 하면 그 비용이 전부 타이핑 지연이 된다 —
+    실측(349메시지·크루 168건/117k자 스레드): 1회 전체 렌더 13~15ms(node warm), 웹뷰에선 React
+    재조정·DOM 교체가 얹혀 더 크다. text·wsId가 그대로면 파싱도 렌더도 건너뛴다.
+    ⚠ 이 memo를 풀거나 내부 계산을 useMemo 밖으로 꺼내면 그 지연이 그대로 돌아온다. */
+export const Markdown = memo(function Markdown({ text, onWikiLink, wsId }) {
+  const html = useMemo(() => {
+    const escaped = String(text ?? '').replace(/</g, '&lt;');
+    let out = marked.parse(escaped);
+    out = out.replace(/href="((?!https?:|#|\/)[^"]*)"/gi, (_, h) => {
+      const url = rewriteVaultHref(h, wsId);
+      return url ? `href="${url.replace(/"/g, '&quot;')}"` : 'href="#"';
+    });
+    // 이미지 src는 동일출처 파일 라우트("/...")만 허용 — 크루 답변 속 외부 http/data 이미지는
+    // 추적 픽셀·데이터 유출 벡터라 태그째 제거한다. "//evil.com"(프로토콜 상대)도 차단.
+    out = out.replace(/<img\b[^>]*>/gi, (tag) => /\ssrc="\/(?!\/)[^"]*"/i.test(tag) ? tag : '');
+    // 크루가 주는 링크는 항상 새 창 — 대화 흐름을 벗어나지 않는다
+    out = out.replace(/<a /gi, '<a target="_blank" rel="noopener noreferrer" ');
+    out = out.replace(/\[\[(.+?)\]\]/g, (_, p) => {
+      const attr = p.replace(/"/g, '&quot;'); // marked 이스케이프에 의존하지 않고 속성 breakout 자체 차단
+      return `<span class="wikilink" data-wiki="${attr}">${p}</span>`;
+    });
+    return out;
+  }, [text, wsId]);
   return (
     <div
       className="md"
@@ -282,7 +291,7 @@ export function Markdown({ text, onWikiLink, wsId }) {
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
-}
+});
 
 /** 한글 IME 조합 중 Enter가 폼 전송으로 새는 것을 막는다 — 입력에 {...imeGuard} 스프레드. */
 export const imeGuard = {
