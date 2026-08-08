@@ -94,7 +94,11 @@ test('mtime 폴백 노트는 "추정"으로 표기하고, frontmatter 노트는 
 
 test('일지 줄에는 갱신 표기가 붙지 않는다 (map 인덱스가 날짜 자리에 새는 회귀 가드)', async () => {
   const p = await seed('t-journal', []);
-  for (const n of ['2026-07-26-시원.md', '2026-07-25-시원.md', '2026-07-24-시원.md']) {
+  // 날짜는 **오늘 기준 상대값**이어야 한다 — 인덱스가 최근 14일만 싣는데(memory.mjs cutoff)
+  // 고정 날짜를 쓰면 그 날짜가 창 밖으로 밀리는 날 자정에 CI가 깨진다(2026-08-08 실제 발생:
+  // 07-24 하드코딩이 컷오프 밖으로 나가 3→2건. 제품 로직은 정상, 테스트가 시한폭탄이었다).
+  const day = (ago) => new Date(Date.now() - ago * 86400000).toISOString().slice(0, 10);
+  for (const n of [`${day(1)}-시원.md`, `${day(2)}-시원.md`, `${day(3)}-시원.md`]) {
     await writeFile(join(p.journal, n), `# ${n}\n\n기록.\n`);
   }
   await updateIndex('t-journal');
