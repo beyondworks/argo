@@ -32,10 +32,14 @@ const BLOCK_RE = /```argo[ \t]*\r?\n([\s\S]*?)```/g;
    오탐 방지: 파싱된 오브젝트에 `action` 키가 있을 때만 지시로 취급하고, 아니면 원문을 그대로 남긴다.
    산문에 이 형태가 우연히 나올 확률은 사실상 0이고, 나와도 텍스트가 보존되므로 손실이 없다. */
 const BARE_HEAD_RE = /^argo[ \t]*\r?\n[ \t]*(?=\{)/gm;
+/** 스캔 상한 — `}` 후보마다 JSON.parse를 시도하므로 이론상 O(n²)다. 지시 블록은 실무상 1KB 미만이고
+    커넥터 인자를 넉넉히 봐도 이 상한이면 충분하다(분리 검수 4라운드 LOW: 266KB 답변에서 2.6초 블로킹). */
+const BARE_SCAN_LIMIT = 8 * 1024;
 
 /** 펜스 없는 블록 하나를 읽는다 — 반환 { obj, end } 또는 null(파싱 실패). start는 `{` 위치. */
 function readBareObject(src, start) {
-  for (let i = src.indexOf('}', start); i !== -1; i = src.indexOf('}', i + 1)) {
+  const stop = Math.min(src.length, start + BARE_SCAN_LIMIT);
+  for (let i = src.indexOf('}', start); i !== -1 && i < stop; i = src.indexOf('}', i + 1)) {
     const body = src.slice(start, i + 1);
     try {
       const obj = JSON.parse(body);
@@ -43,6 +47,17 @@ function readBareObject(src, start) {
     } catch { /* 아직 닫히지 않았다 — 다음 `}` 후보로 */ }
   }
   return null;
+}
+
+/** 코드펜스 구간 [시작, 끝) 목록 — 펜스 **안**의 지시 형태는 지시가 아니라 예시다(설명·문서 작성).
+    이걸 실행하면 크루가 "이렇게 쓰면 됩니다"라고 보여준 예시가 실제 쪽지·예약이 된다
+    (분리 검수 4라운드 MEDIUM). BLOCK_RE가 이미 소비한 ```argo는 이 시점에 없으므로, 남은 펜스는
+    전부 일반 코드블록이다. */
+function fencedRanges(src) {
+  const out = [];
+  const re = /```[\s\S]*?```/g;
+  for (let m = re.exec(src); m; m = re.exec(src)) out.push([m.index, m.index + m[0].length]);
+  return out;
 }
 
 /** 커넥터 결과 주입 상한(바이트) — **한 턴 전체 예산**이다(블록이 여럿이면 앞에서부터 나눠 쓴다).
@@ -79,7 +94,10 @@ export function connectorContentText(content) {
 
 /** 답변에서 지시를 걷어낸다(순수 함수 — 단위 테스트용). 반환: { clean, directives, bad }
     파싱 실패 블록은 bad로 돌려 **조용히 삼키지 않는다** — 크루가 형식을 틀렸는데 아무 일도
-    안 일어나면 그게 곧 "예약했다고 말만 하는" 할루시네이션이 된다. */
+    안 일어나면 그게 곧 "예약했다고 말만 하는" 할루시네이션이 된다.
+    ⚠ 펜스 없는 변종(아래)은 bad를 쓰지 않는다: 펜스라는 명시 표지가 없어 "지시하려다 틀린 것"과
+    "그냥 산문"을 구분할 수 없다. 그래서 파싱 실패·action 부재는 **원문을 그대로 남기는 쪽**으로
+    처리한다(사장이 원시 JSON을 보면 형식 오류를 알 수 있다 — 조용한 소실보다 낫다). */
 export function parseDirectives(text) {
   const src = String(text ?? '');
   const directives = [];
@@ -97,8 +115,11 @@ export function parseDirectives(text) {
   // 수집한 지시는 **원문 순서로** 되돌려 붙인다. 지시는 순차 실행되므로 순서가 뒤집히면
   // "쪽지 보낸 뒤 예약"이 "예약한 뒤 쪽지"가 된다.
   const bareFound = [];
+  const fences = fencedRanges(clean);
+  const inFence = (i) => fences.some(([a, b]) => i >= a && i < b);
   const heads = [...clean.matchAll(BARE_HEAD_RE)].reverse();
   for (const h of heads) {
+    if (inFence(h.index)) continue; // 펜스 안 = 예시. 실행하지 않고 원문 그대로 둔다
     const braceAt = clean.indexOf('{', h.index);
     if (braceAt === -1) continue;
     const found = readBareObject(clean, braceAt);

@@ -324,6 +324,18 @@ test('격리 — 턴별 설정이 회사 금고 직속 도트라 크루가 스�
   assert.ok(dotGlobs.length >= 2, '직속 도트 항목이 파일·하위 both로 막혀 있지 않다(.kiro/agents 하위가 열린다)');
 });
 
+test('답변 추출 — 거부 턴의 접합부 표지를 놓치지 않는다(추적 줄이 답변에 섞이지 않게)', () => {
+  // 분리 검수 4라운드 HIGH 실증: 거부된 도구 호출 뒤 kiro-cli는 다음 메시지를 추적 줄 **끝에 개행 없이**
+  // 붙인다 — `Reading file: … (using tool: read)> 차단되었습니다…`. 줄머리 판정만 쓰면 이 경계를 놓쳐
+  // last가 앞쪽 '> '를 가리키고 중간 추적 줄이 답변에 전부 실린다(거부 턴 3/3 재현).
+  assert.equal(kiroScrub('Reading file: /x (using tool: read)> 차단되었습니다.\n추가 설명.'), '차단되었습니다.\n추가 설명.');
+  assert.equal(kiroScrub('I will create it.(using tool: write)> ISO_DONE'), 'ISO_DONE');
+  // 거부 근거가 메시지보다 **앞**에 오는 변형도 있다(실측) — 그때도 답변만 남아야 한다.
+  assert.equal(kiroScrub('Reading file: /x (using tool: read)Command fs_read is rejected because …:\n  - /x/**\n> 차단됨.'), '차단됨.');
+  // 산문의 괄호 뒤 인용을 표지로 오인하면 답변이 절단된다 — 접합부는 `(using tool: X)`로 한정한다.
+  assert.equal(kiroScrub('> 답변(참고)> 이건 인용이 아니다'), '답변(참고)> 이건 인용이 아니다');
+});
+
 test('답변 추출 폴백 — 도구 진단(거부 파일 diff)이 답변으로 새지 않는다', () => {
   // 분리 검수 3라운드 MEDIUM 실증: kiro-cli fs_write는 **deny 검사 전에** 기존 내용을 diff로 렌더한다.
   // 정상 턴은 마지막 '> ' 블록만 취해 버려지지만, 접두사 없는 예상 외 형식의 폴백이 stdout 전문을
@@ -365,6 +377,11 @@ test('러너 패리티 — 지시 블록이 펜스 없이도 파싱된다(kiro �
   // 여러 블록의 **원문 순서** — 지시는 순차 실행되므로 뒤집히면 결과가 달라진다
   const two = parseDirectives('a\nargo\n{"action":"mail","to":"x"}\nb\nargo\n{"action":"schedule","every":"30m"}\nc');
   assert.deepEqual(two.directives.map((d) => d.action), ['mail', 'schedule'], '지시 순서가 뒤집혔다');
+  // 일반 코드펜스 **안**의 지시 형태는 예시다 — 실행하면 크루가 "이렇게 쓰면 됩니다"라고 보여준
+  // 예시가 실제 쪽지·예약이 된다(분리 검수 4라운드 MEDIUM, 전 러너 영향).
+  const example = parseDirectives('예시입니다.\n```\nargo\n{"action":"mail","to":"bob"}\n```\n이렇게 쓰세요.');
+  assert.equal(example.directives.length, 0, '펜스 안 예시가 실행됐다');
+  assert.match(example.clean, /"action"/, '예시 원문이 소실됐다');
   // 오탐 무해화 — action이 없으면 지시로 보지 않고 **원문을 보존**한다(산문 손실 금지).
   const noise = parseDirectives('argo\n{\n  "foo": 1\n}');
   assert.equal(noise.directives.length, 0);
@@ -384,10 +401,12 @@ test('프롬프트 정직성 — 셸 없는 러너에 "셸 허용"이라 말하�
     // 셸 규율(백그라운드·타임아웃)도 주입하지 않는다 — 없는 도구의 사용법을 가르치는 자기모순
     assert.doesNotMatch(kiro, /nohup|run_in_background/, '셸 없는 러너에 백그라운드 규율이 주입됐다');
     // 지정 작업 폴더가 반경으로 적용되지 않는다는 단서(등록하면 열린다는 거짓 안내 방지)
-    assert.match(kiro, lang === 'ko' ? /반경으로 적용되지 않는다/ : /NOT applied as a radius/);
+    assert.match(kiro, lang === 'ko' ? /반경으로 적용되지 않/ : /NOT applied as a radius/);
+    // 자기모순 금지 — "등록하면 열린다"와 "등록해도 안 열린다"를 같은 문단에 함께 쓰지 않는다(4R LOW)
+    assert.doesNotMatch(kiro, lang === 'ko' ? /등록하면 다음 턴부터 열린다/ : /it opens from the next turn/);
   }
   // 회귀 방지 — 셸이 있는 러너는 그대로 "허용"이어야 한다
   const codex = commonDirectives({ caps, hasTools: false, lang: 'ko', runner: 'codex' });
   assert.match(codex, /셸 명령: 허용/);
-  assert.doesNotMatch(codex, /반경으로 적용되지 않는다/);
+  assert.doesNotMatch(codex, /반경으로 적용되지 않/);
 });
