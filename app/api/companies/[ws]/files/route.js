@@ -26,10 +26,19 @@ export async function GET(req, { params }) {
   const denied = await guardCompany(ws); if (denied) return denied;
   const rel = new URL(req.url).searchParams.get('rel') ?? '';
   // Windows normalize()는 백슬래시를 반환 — 슬래시로 통일해야 files/ 접두 검사가 통과한다
-  const norm = normalize(rel).split('\\').join('/');
-  // _imported/ = 옵시디언 임포트 리포트·미분류 보관 — 경로만 만들어 두고 서빙 허용 목록에서 빠지면
-  // 사용자가 Finder로 찾아가야 한다(2026-07-20 신고와 같은 결함 계급 — 분리 검수 MED-5).
-  if (!(norm.startsWith('files/') || norm.startsWith('projects/') || norm.startsWith('_imported/')) || norm.includes('..')) {
+  let norm = normalize(rel).split('\\').join('/').replace(/^\/+/, '');
+  if (norm.includes('..')) {
+    return new Response('잘못된 경로', { status: 400 });
+  }
+  const vault = paths(ws).vault;
+  // projects/ 또는 files/ 접두사가 누락된 경우 projects/ 접두사 붙여서 존재 여부 시도
+  if (!(norm.startsWith('files/') || norm.startsWith('projects/') || norm.startsWith('_imported/'))) {
+    try {
+      await realpath(join(vault, `projects/${norm}`));
+      norm = `projects/${norm}`;
+    } catch {}
+  }
+  if (!(norm.startsWith('files/') || norm.startsWith('projects/') || norm.startsWith('_imported/'))) {
     return new Response('잘못된 경로', { status: 400 });
   }
   try {
