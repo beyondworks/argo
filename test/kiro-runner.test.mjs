@@ -358,6 +358,19 @@ test('답변 추출 폴백 — 도구 진단(거부 파일 diff)이 답변으로
   assert.equal(kiroScrub('> 설명.\n+    1: 답변 안의 diff 예시\n계속'), '설명.\n계속');
   // 일반 목록·비교 연산 같은 흔한 산문은 손대지 않는다(공백 1칸은 규칙 밖).
   assert.equal(kiroScrub('> 할 일\n- 1: 첫째\n+ 1: 둘째'), '할 일\n- 1: 첫째\n+ 1: 둘째');
+  // 6라운드 CRITICAL — 거부 규칙 목록(`  - /path`)과 **정상 중첩 마크다운 불릿**이 형태가 같다.
+  // 단독 줄 규칙으로 두면 "폴더 아래 파일 보여줘" 같은 상용 답변의 중첩 목록이 조용히 사라진다
+  // (실측: 부모 한 줄만 남았다). 그래서 거부 머리 줄 직후 구간에서만 걷어낸다.
+  assert.equal(kiroScrub('> - /x/tree\n  - alpha.md\n  - sub\n    - sub/gamma.md'),
+    '- /x/tree\n  - alpha.md\n  - sub\n    - sub/gamma.md');
+  assert.equal(kiroScrub('> 차단됨.\nCommand fs_read is rejected because …:\n  - /secret/**\n  - /other/**\n계속.'),
+    '차단됨.\n계속.');
+  // 추적 규칙은 경로·형식을 함께 요구한다 — 영문 산문이 통삭제되던 것(6라운드 부수 지적)
+  assert.equal(kiroScrub('> Reading files is safe.'), 'Reading files is safe.');
+  assert.equal(kiroScrub('> Creating: a plan for Q3'), 'Creating: a plan for Q3');
+  assert.equal(kiroScrub('> - Completed in 3 days'), '- Completed in 3 days');
+  // 그래도 실제 추적(경로 포함)은 지운다
+  assert.equal(kiroScrub('> 만들었습니다.\nCreating: /x/y.md\n - Completed in 0.1s'), '만들었습니다.');
 });
 
 test('러너 패리티 — 지시 블록이 펜스 없이도 파싱된다(kiro 렌더러가 펜스를 지운다)', async () => {

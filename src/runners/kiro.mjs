@@ -64,11 +64,21 @@ export async function kiroCmd() {
      판별할 수단이 없다). 근본 해법은 `kiro-cli acp`(JSON-RPC 구조화 스트림)로 옮기는 것 —
      docs/kiro-runner-design.md의 후속 항목. */
 const ANSI_RE = /\u001B\[[0-9;?]*[A-Za-z]|\u001B\[K/g;
-/* 도구 추적 줄의 **머리** 패턴 — 이 줄에서 시작하는 텍스트는 답변이 아니라 CLI의 진행 표시다.
-   실측된 형태(2026-08-12, 분리 검수 4·5라운드): 단건(`Reading file: …`), 배치(`Batch fs_read`,
-   `↱ Operation 3: Reading file: …`), 쓰기(`I'll create the following file:`, `Creating:`, 번호 diff),
-   거부(`Command fs_read is rejected because …` + 들여쓴 규칙 목록), 완료(` - Completed in …`). */
-const TRACE_HEAD_RE = /^(?:\u21b1\s*)?(?:Operation \d+:\s*)?(?:Reading (?:file|directory|image)|Batch \w+|Creating:|Updating:|I['\u2019]ll (?:create|update) the following file:|Command \w+ is rejected|\s*[+-]\s{2,}\d+:|\s{2,}- \/\S*$| - Completed in)/;
+/* 도구 추적 줄 — 이 줄에서 시작하는 텍스트는 답변이 아니라 CLI의 진행 표시다.
+   실측된 형태(2026-08-12, 분리 검수 4·5라운드): 단건 `Reading file: <경로>`, 디렉터리
+   `Reading directory: <경로>`, 배치 `Batch fs_read` / `↱ Operation 3: …`, 쓰기
+   `I'll create the following file: <경로>` / `Creating: <경로>` / 번호 diff, 완료 ` - Completed in 0.1s`.
+   ⚠ 각 규칙은 **경로나 형식을 함께 요구**한다(분리 검수 6라운드): `Reading`만 보면 산문
+   "Reading files is safe."가, `Creating:`만 보면 "Creating: a plan"이, ` - Completed in`만 보면
+   " - Completed in 3 days"가 통째로 지워진다 — 추적 제거가 정상 답변을 파괴하는 방향이다. */
+const TRACE_HEAD_RE = /^(?:\u21b1\s*)?(?:Operation \d+:\s*)?(?:Reading (?:file|directory|image)s?:\s*\S|Batch \w+|(?:Creating|Updating):\s*\S*[/\\]|I['\u2019]ll (?:create|update) the following file:|\s*[+-]\s{2,}\d+:| - Completed in \d+(?:\.\d+)?s\b)/;
+/* 거부 블록 — `Command fs_read is rejected because …:` 다음 줄부터 **들여쓴 경로 목록**이 이어진다.
+   그 목록은 금지 파일의 전체 경로라 답변에 남으면 안 되는데, 형태가 정상 마크다운 중첩 불릿과 같다
+   (`  - /path`). 그래서 단독 줄 규칙으로 두면 "폴더 아래 파일 보여줘" 같은 상용 답변의 중첩 목록이
+   조용히 사라진다(분리 검수 6라운드 CRITICAL 실증 — 부모 한 줄만 남았다).
+   → **문맥 의존**으로 바꾼다: 거부 머리 줄 직후 연속 구간에서만 이 목록을 걷어낸다. */
+const REJECT_HEAD_RE = /^Command \w+ is rejected\b/;
+const DENY_RULE_RE = /^\s{2,}- \S+$/;
 
 /* 어시스턴트 메시지 시작 표지는 `> `인데, **줄머리에만 있는 게 아니다**(분리 검수 4·5라운드 실증):
    거부·배치 경로에서 kiro-cli가 다음 메시지를 추적 텍스트 **끝에 개행 없이** 붙인다.
@@ -102,7 +112,17 @@ export function kiroScrub(stdout) {
   // 추적 줄 제거를 **항상** 적용한다(분리 검수 5라운드 권고): 거부·배치 경로에서는 추적이 메시지
   // **뒤에도** 붙어(`Command fs_read is rejected …` + 규칙 목록) 표지 판정만으로는 답변에 남는다.
   // 그 잔재는 금지 파일의 전체 경로를 담고, 대화 정본(chats/)에 저장돼 다음 턴 맥락으로 재주입된다.
-  return picked.filter((l) => !isTraceLine(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  // 거부 규칙 목록만은 **문맥 의존**이다(6라운드 CRITICAL): 거부 머리 줄 직후 연속 구간에서만 걷어내
+  // 정상 답변의 중첩 마크다운 불릿을 지키다.
+  const kept = [];
+  let inReject = false;
+  for (const line of picked) {
+    if (REJECT_HEAD_RE.test(line)) { inReject = true; continue; }
+    if (inReject && (DENY_RULE_RE.test(line) || !line.trim())) continue;
+    inReject = false;
+    if (!isTraceLine(line)) kept.push(line);
+  }
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /* ─── 추론 강도 ───
