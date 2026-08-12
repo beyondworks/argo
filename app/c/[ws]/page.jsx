@@ -27,6 +27,7 @@ export default function Deck({ params }) {
   const [graphOpen, setGraphOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null); // 크루 신원 수정 모달
   const [renameTarget, setRenameTarget] = useState(null); // 팀 이름변경 입력 모달 대상(현재 팀명)
+  const [crewExpanded, setCrewExpanded] = useState(false); // ponytail: 크루 접기(G14)
   const hireRef = useRef(null); // 사이드바 '크루 추가'가 포커스+깜빡 대상으로 삼는 입력창
 
   // 팀 이름변경 — window.prompt(Tauri 무동작) 대신 인앱 InputModal. onConfirm(새 이름)
@@ -263,13 +264,18 @@ export default function Deck({ params }) {
               <p style={{ padding: '2px 20px 18px', color: 'var(--fg-2)', fontSize: 13 }}>
                 {q ? t('deck.noCrewMatch') : t('deck.noCrewYet')}
               </p>
-            ) : (
+            ) : (() => {
+              // ponytail: 6명 초과 시 접기(유건 제보 2026-08-08 "11명도 길다, 100명이면?")
+              const CREW_FOLD = 6;
+              const foldable = agents.length > CREW_FOLD;
+              const visible = crewExpanded || !foldable ? agents : agents.slice(0, CREW_FOLD);
+              return (<>
               <table className="table">
                 <thead>
                   <tr><th style={{ width: 170 }}>{t('deck.colName')}</th><th>{t('deck.colRole')}</th><th>{t('deck.colExpertise')}</th><th style={{ width: 100 }}>{t('deck.colStatus')}</th><th style={{ width: 90 }} /></tr>
                 </thead>
                 <tbody>
-                  {[...new Set(agents.map((a) => a.team || ''))].sort((a, b) => (a === '') - (b === '')).map((team) => (
+                  {[...new Set(visible.map((a) => a.team || ''))].sort((a, b) => (a === '') - (b === '')).map((team) => (
                     [
                       agents.some((a) => (a.team || '') !== '') && (
                         <tr key={`t-${team}`} style={{ cursor: 'default' }}>
@@ -322,7 +328,13 @@ export default function Deck({ params }) {
                   ))}
                 </tbody>
               </table>
-            )}
+              {foldable && (
+                <button className="btn sm" style={{ margin: '8px 18px 14px', fontSize: 12 }}
+                  onClick={() => setCrewExpanded((v) => !v)}>
+                  {crewExpanded ? t('deck.crewFold') : t('deck.crewExpand', { n: agents.length - CREW_FOLD })}
+                </button>
+              )}
+              </>); })()}
           </div>
 
           <div className="card" style={{ overflow: 'hidden' }}>

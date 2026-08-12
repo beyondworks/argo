@@ -315,11 +315,26 @@ export async function verifyRunnerCred(runner, type, value) {
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'grok') {
-      // GET /v1/models — 무자격은 401 `unauthenticated:no-credentials`(실측 2026-08-03). 키·계정 토큰 공통 경로.
+      // ponytail: /v1/messages 최소 호출로 **실대화 가능 여부**까지 확인(유건 제보 2026-08-08:
+      // /v1/models는 통과하지만 /v1/messages에서 403 — 표준 SuperGrok이 API 미허용).
+      // max_tokens:1 + 짧은 프롬프트로 비용 최소화(프로브 목적). 403 = 등급/크레딧 문제로 분류.
       const base = process.env.GROK_BASE_URL || 'https://api.x.ai';
       const tok = type === 'oauth' ? grokAccessToken(v) : v;
-      const r = await fetch(`${base}/v1/models`, { headers: { authorization: `Bearer ${tok}` }, signal: AbortSignal.timeout(10_000) });
-      return { ok: !(r.status === 401 || r.status === 403) };
+      const r = await fetch(`${base}/v1/messages`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'grok-4.5', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (r.status === 401) return { ok: false };
+      if (r.status === 403) {
+        // 403 = 등급 제한(Heavy-only) 또는 크레딧 소진. 사용자에게 사유를 갈라 안내할 수 있도록
+        // body에서 코드를 꺼내 본다 — 꺼내지 못해도 ok:false는 확정(연결 거부).
+        const body = await r.text().catch(() => '');
+        const isCredit = /insufficient.*(credit|balance|fund)|credit.*exhaust/i.test(body);
+        return { ok: false, reason: isCredit ? 'credit' : 'tier' };
+      }
+      return { ok: true }; // 200·4xx(모델 미존재 등) 어느 쪽이든 인증+등급은 통과한 것
     }
     if (runner === 'openrouter') {
       // GET /api/v1/key = 키 자체 조회(잔액·한도) — 무효 키는 401. 모델 목록(공개)과 달리 키 유효성을 직접 판정한다.

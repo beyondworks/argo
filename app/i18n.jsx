@@ -802,6 +802,11 @@ const DICT = {
   'chat.via.routine': ['루틴 실행', 'Routine run'],
   'chat.via.job': ['장시간 작업', 'Long task'],
   // 미지의 via 값 폴백 — 신 버전 기기의 스레드가 sync로 넘어온 경우(microlabel 대문자 키 노출 방지)
+  'deck.crewExpand': ['{n}명 더 보기', 'Show {n} more'],
+  'deck.crewFold': ['접기', 'Show less'],
+  'settings.defaultRunner': ['기본 러너 — 크루에 러너 미지정 시 우선 사용', 'Default runner — used first when crew has no runner set'],
+  'settings.defaultRunnerAuto': ['자동 (연결 순서)', 'Auto (connection order)'],
+  'chat.via.room': ['회의실 발언', 'Meeting room turn'],
   'chat.via.generic': ['자동 배달', 'Auto-delivered'],
   'chat.via.hint': ['사장이 쓴 글이 아니라 자동 배달된 지시입니다', 'Delivered automatically — not written by you'],
   'chat.newChatConfirm': ['새 대화를 시작할까요? 지금 대화는 보관함에 적재되고(삭제 아님), 회사 기억(vault)도 그대로 남습니다.', 'Start a new chat? The current thread is archived (not deleted), and company memory stays intact.'],

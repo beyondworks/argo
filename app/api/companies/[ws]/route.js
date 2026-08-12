@@ -67,7 +67,7 @@ export async function PUT(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { name, budgetUsd, lang, crewPinned, crewOrder, aliases } = await req.json();
+    const { name, budgetUsd, lang, crewPinned, crewOrder, aliases, defaultRunner } = await req.json();
     const patch = {};
     if (aliases !== undefined) {
       // '/' 커맨더 사용자 별칭 — [{cmd, text}]. cmd는 슬래시 뒤 토큰(한글 허용), text는 입력창에 넣을 지시.
@@ -102,6 +102,10 @@ export async function PUT(req, { params }) {
       const n = Number(budgetUsd);
       if (!Number.isFinite(n) || n < 0) return Response.json({ error: '예산은 0 이상의 숫자' }, { status: 400 });
       patch.budgetUsd = n;
+    }
+    // ponytail: 회사 기본 러너(K1, 유건 지시 2026-08-08). 빈 문자열 = 해제(기존 순서 폴백).
+    if (defaultRunner !== undefined) {
+      patch.defaultRunner = typeof defaultRunner === 'string' && defaultRunner.trim() ? defaultRunner.trim() : '';
     }
     const company = await updateCompany(ws, patch);
     return Response.json({ company });

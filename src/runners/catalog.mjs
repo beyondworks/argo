@@ -242,17 +242,13 @@ export function excludeWith(prev, runner) {
     무효(invalid) 자격은 가용이 아니다(게이트 anyRunnerUsable과 판정 일치).
     want = 크루 지정 러너(null이면 무선호 — 첫 연결 러너를 대체 고지 없이 쓴다).
     exclude = 방금 인증 실패한 러너(자가 치유 재시도 시 제외). (export: 회귀 테스트용) */
-export function pickRunner(st, want, exclude = null) {
-  // 가용 = 연결(유효) 자격이 전부다. 예전엔 codex/gemini가 벤더 CLI 설치를 추가로 요구해
-  // "OAuth 연결됨 + 크루 영입은 러너 없음" 모순(실사용 신고 2026-07-20)을 만들었다 — 이제 두 러너 모두
-  // 자동 조달(provisionCodexCli/provisionGeminiCli — 턴 시점 자가 설치)이 있어 설치 게이트가 없다.
-  // 조달 실패(오프라인 등)는 턴이 원인 문구로 실패한다 — 거짓 차단보다 정직한 실패가 낫다.
-  // exclude — 문자열 하나 또는 목록. 목록 수용은 자가치유가 **죽은 러너를 누적 제외**하며 남은
-  // 러너를 차례로 시도하기 위해서다(1회 제한이던 시절: 4러너 연결 + 앞의 둘 고장 → 멀쩡한 나머지
-  // 둘은 시도조차 못 받고 영입이 통째로 실패. 라이브 재현 2026-07-30).
+export function pickRunner(st, want, exclude = null, { defaultRunner = null } = {}) {
   const skip = new Set(asList(exclude));
   const usable = (id) => !!st[id]?.company.connected && !st[id]?.company.invalid && !skip.has(id);
   if (want && usable(want)) return { runner: want, fellBack: false, available: true };
+  // ponytail: 회사 기본 러너 — "자동일 때 이 러너부터"(K1 해소, 유건 제보 2026-08-08: Grok만
+  // 연결했는데 하드코딩 순서가 claude를 먼저 잡는다). 가용하면 우선, 아니면 기존 순서 폴백.
+  if (defaultRunner && usable(defaultRunner)) return { runner: defaultRunner, fellBack: !!want, available: true };
   const ids = Object.keys(RUNNER_AUTH);
   const next = ids.find(usable);
   if (next) return { runner: next, fellBack: !!want, available: true }; // 무선호(want=null)는 대체가 아니다

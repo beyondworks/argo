@@ -919,8 +919,17 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 폴더 상태 — SDK 경로와 **같은 함수**를 지난다(러너 중립성). 한 번만 재므로 프롬프트와
       // 샌드박스(codex writable_roots 등)가 같은 스냅샷을 본다.
       const { roots: cliWorkRoots, pin: cliPin } = await activeFolders(wsId, agentSlug);
-      const cliMcp = Object.keys(safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {}))
-        .filter((n) => !mcpScope || mcpScope.includes(n)); // 크루별 MCP 범위(안내문도 동일 기준)
+      // codex MCP 주입 — 러너 중립성(유건 지시 2026-08-08: "러너 상관 없이 모두 똑같아야").
+      // codex는 config.toml [mcp_servers.*]로 MCP를 받는다(실프로브 확인). gemini·antigravity는
+      // 벤더 비대화 경로가 MCP를 안 받아 현재 불가(정직 표기는 commonDirectives에서).
+      const allMcp = safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {});
+      // codex만 config.toml로 MCP를 실제로 받는다. gemini·antigravity는 벤더 비대화 경로가
+      // MCP를 안 받아 프롬프트에 "있다"고 알려주면 거짓이다(유건 지시 "러너 상관 없이 모두 똑같아야"
+      // 위반 — 같게 못 하면 차라리 없다고 해야지 있다고 거짓말하면 안 된다, 2026-08-08).
+      const cliMcpServers = runner === 'codex' ? allMcp : null;
+      const cliMcp = runner === 'codex'
+        ? Object.keys(allMcp).filter((n) => !mcpScope || mcpScope.includes(n))
+        : []; // gemini·antigravity — 프롬프트에 MCP 목록을 알려주지 않는다(실도구 없으므로)
       // 커넥터 요약 — **SDK 턴과 같은 원천**(connectorBriefing: connected + reauth)을 쓴다. 여기서
       // connected만 거르면 전부 reauth인 회사에서 CLI 크루만 커넥터의 존재조차 몰라 "못 한다"고 답하고,
       // 사장은 재연결이 필요하다는 사실을 영영 듣지 못한다 — SDK는 "[재연결 필요]"로 안내하는데
@@ -952,13 +961,13 @@ ${lang === 'en'
       let usedModel = effModel;
       let reply;
       try {
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat' });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
       } catch (e) {
         const gated = !!(effModel && RUNNERS[runner]?.models.find((m) => m.id === effModel)?.gated);
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat' });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
@@ -1379,9 +1388,16 @@ ${lang === 'en'
     // xAI 크레딧 소진은 **인증 실패가 아니다** — SDK가 403을 "Failed to authenticate"로 번역해
     // 내보내면 사용자는 방금 성공한 로그인을 의심하며 재연결을 반복한다(실사용 신고 2026-08-03).
     // 이벤트 로그(error:)에는 원문이 그대로 남는다 — 진단은 원문으로, 사용자에겐 사실로.
-    const surfaced = (runner === 'grok' && isGrokCreditError(String(e?.message || e)))
+    // ponytail: sdk-compat 러너(grok/glm/kimi/openrouter)의 에러에 "Claude Code"가 박혀 있으면
+    // 사용자는 왜 클로드 오류가 나오는지 혼란(제보 2026-08-08 "클로드는 사용 중이 아닌데").
+    // SDK 원문의 "Claude Code"를 실제 러너명으로 바꿔 사실대로 보여준다.
+    let surfaced = (runner === 'grok' && isGrokCreditError(String(e?.message || e)))
       ? Object.assign(new Error(grokCreditNotice(lang)), { credit: true, cause: e })
       : e;
+    // ponytail: sdk-compat 러너 에러에서 "Claude Code"를 실제 러너명으로(제보 2026-08-08)
+    if (surfaced?.message && runner !== 'claude' && /Claude Code/i.test(surfaced.message)) {
+      surfaced.message = surfaced.message.replace(/Claude Code/gi, RUNNERS[runner]?.name ?? runner);
+    }
     throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : surfaced;
   } finally {
     abortReg.release();

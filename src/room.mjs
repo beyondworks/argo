@@ -431,6 +431,11 @@ ${transcript}
     }
     const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now() }, sid);
     if (!live) break; // 회의가 마쳐졌다 — 남은 발언을 빈 방에 남기지 않는다
+    // ponytail: 회의실 턴을 크루 개인 스레드에 기록한다 — 마지막 남은 비대칭(루틴 #157 교훈).
+    // 안 하면 회의에서 시킨 일이 개인 채팅에 안 보이고 이어가기가 안 된다(유건 제보 2026-08-08).
+    const { appendTurn } = await import('./thread.mjs');
+    await appendTurn(wsId, a.slug, { userMsg: prompt, reply: r.reply, handover: r.handover, sessionId: null, via: 'room', artifacts: r.artifacts })
+      .catch((e) => console.error(`[argo] 회의실 스레드 기록 실패(${wsId}/${a.slug}):`, e.message));
     replies.push({ slug: a.slug, name: a.name, reply: r.reply });
   }
   return { replies, room: await loadRoom(wsId) };

@@ -168,6 +168,8 @@ function Settings({ params }) {
       <div ref={aiRef} style={{ scrollMarginTop: 84 }}>
         <Section label={t('settings.ai.section')}>
           <AiConnectionCard ws={ws} accordion />
+          {/* ponytail: 회사 기본 러너(K1, 유건 지시 2026-08-08). 크루에 러너 미지정 시 이 러너부터 시도. */}
+          <DefaultRunnerPicker ws={ws} />
         </Section>
       </div>
 
@@ -1418,6 +1420,36 @@ function DevicesCard({ ws }) {
           {error && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</p>}
         </>
       )}
+    </div>
+  );
+}
+
+// ponytail: 회사 기본 러너 셀렉터(K1). "크루에 러너 미지정일 때 이 러너부터 시도"
+function DefaultRunnerPicker({ ws }) {
+  const { t } = useLang();
+  const [runners, setRunners] = useState(null);
+  const [val, setVal] = useState('');
+  useEffect(() => {
+    api(`/api/runners?ws=${ws}`).then((d) => {
+      setRunners(d.runners ?? []);
+    }).catch(() => {});
+    api(`/api/companies/${ws}`).then((d) => setVal(d.company?.defaultRunner ?? '')).catch(() => {});
+  }, [ws]);
+  const save = async (v) => {
+    setVal(v);
+    await fetch(`/api/companies/${ws}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ defaultRunner: v }) }).catch(() => {});
+  };
+  if (!runners) return null;
+  const connected = runners.filter((r) => r.authed);
+  if (connected.length < 2) return null; // 1개 이하면 선택의 의미 없음
+  return (
+    <div className="card" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 12.5, color: 'var(--fg-2)', flex: 1, minWidth: 140 }}>{t('settings.defaultRunner')}</span>
+      <select value={val} onChange={(e) => save(e.target.value)}
+        style={{ ...fieldStyle, width: 'auto', minWidth: 140 }}>
+        <option value="">{t('settings.defaultRunnerAuto')}</option>
+        {connected.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+      </select>
     </div>
   );
 }

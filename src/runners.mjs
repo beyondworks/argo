@@ -90,7 +90,7 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
 /** 외부 CLI 러너 1턴 — 워크스페이스를 cwd로, 프롬프트 하나로 실행하고 마지막 응답을 받는다.
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
     caps = 회사 로컬 능력({ fs, browser, shell }) — 사장이 켠 능력을 codex 샌드박스에 반영(codexSandboxArgs). */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat' }) {
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null }) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   const t0 = Date.now(); // 실패의 정직 번역용 — cliTurnFailure가 경과 시간으로 시간 초과를 판정한다
   if (runner === 'codex') {
@@ -106,7 +106,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     // 자격 반입(심링크 → 복사 폴백) + 턴 뒤 갱신 토큰 회수. 계약은 importCodexAuth/recoverCodexAuth의
     // 주석과 test/codex-auth-import.test.mjs가 잠근다(신규 설치 401의 근본 원인이었던 자리).
     const auth = await importCodexAuth(baseHome, CODEX_HOME);
-    await writeCodexTurnConfig(CODEX_HOME, caps, workRoots); // [sandbox_workspace_write] — `-c`가 안 먹는 codex 버전 방어(실사용 신고 2026-07-22)
+    await writeCodexTurnConfig(CODEX_HOME, caps, workRoots, mcpServers); // [sandbox_workspace_write] + MCP — `-c`가 안 먹는 codex 버전 방어(실사용 신고 2026-07-22)
     const cmd = await codexCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     try {
       await exec(cmd.file, [
@@ -278,5 +278,11 @@ export async function runnerStatus(wsId) {
 /** 턴에 실제로 쓸 러너 결정 — 크루의 러너가 미가용이면 가용한 러너로 폴백(pickRunner).
     어떤 러너든 하나만 연결돼 있으면 모든 크루가 응답하게 하는 관문. */
 export async function resolveRunner(wsId, want, { exclude = null } = {}) {
-  return pickRunner(await runnerStatus(wsId), want, exclude);
+  // ponytail: 회사 기본 러너(K1, 유건 지시 2026-08-08). company.json 읽기 실패는 무해(기존 순서 폴백).
+  let defaultRunner = null;
+  try {
+    const { loadCompany } = await import('./workspace.mjs');
+    defaultRunner = (await loadCompany(wsId))?.defaultRunner ?? null;
+  } catch { /* 미설정 = null — 기존 RUNNER_AUTH 순서 */ }
+  return pickRunner(await runnerStatus(wsId), want, exclude, { defaultRunner });
 }
