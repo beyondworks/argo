@@ -139,16 +139,42 @@ test('추론 강도 — 아는 값만 넘긴다(미지값은 인자 오류로 �
   assert.deepEqual(kiroEffortArgs(undefined), []);
 });
 
-test('능력 게이트 fail-closed — caps 미전달이면 셸·브라우저가 꺼진다', () => {
-  // oneshot(영입·기억 정리)은 caps를 전달하지 않는다 — fail-open이면 그 경로만 셸 무제한이 된다
-  // (codex 상시 샌드박스·antigravity --sandbox와 같은 방향).
-  assert.deepEqual(kiroTools(null).tools, ['read', 'write', 'grep', 'glob']);
-  assert.ok(!kiroTools(null).tools.includes('shell'));
-  assert.ok(kiroTools({ shell: true }).tools.includes('shell'));
+test('도구 목록 — 경계가 증명된 도구만 준다(grep·glob·shell 배제)', () => {
+  // 분리 검수 2라운드 CRITICAL 실측: deniedPaths는 read·write에만 선다. 같은 턴·같은 설정에서
+  //   grep  → 금고 connections.json·형제 회사·WS_ROOT 도트의 매치 줄 내용을 그대로 반환
+  //   glob  → ~/.codex 7,766개·~/.claude 527개 파일 열거
+  //   shell → cat <금고>·cat ../<타사>·echo > usage.jsonl(원장 개조) 전부 성공
+  // 반면 read로 같은 파일을 열면 정상 DENY(대조군). 즉 설정으로 막을 수 없는 도구는 **주지 않는 것**이
+  // 유일한 fail-closed다. 셸 부재는 선례가 있다 — gemini도 비대화에서 셸이 실행되지 않는다.
+  for (const caps of [null, { fs: true }, { fs: true, shell: true }, { fs: true, shell: true, browser: true, bypass: true }]) {
+    const { tools } = kiroTools(caps);
+    for (const banned of ['grep', 'glob', 'shell']) {
+      assert.ok(!tools.includes(banned), `caps=${JSON.stringify(caps)}에서 ${banned}가 들어갔다 — 경계 우회 도구`);
+    }
+  }
+  assert.deepEqual(kiroTools(null).tools, ['read', 'write']);
+  // 브라우저는 사장이 켠 경우만. 읽을 수 있는 데이터가 이미 deniedPaths로 제한되므로 반출 범위도 그만큼.
   assert.ok(kiroTools({ browser: true }).tools.includes('web_fetch'));
+  assert.ok(!kiroTools({ fs: true }).tools.includes('web_fetch'), 'caps 미지정 브라우저가 열렸다 — fail-open');
   // 비대화에서는 포괄 신뢰가 없으면 도구 호출이 전부 거부된다(실측) — allowedTools는 tools와 같아야 한다.
-  const t = kiroTools({ shell: true, browser: true });
+  const t = kiroTools({ browser: true });
   assert.deepEqual(t.allowedTools, t.tools, 'allowedTools가 tools와 다르면 비대화 턴에서 도구가 거부된다');
+});
+
+test('경계 생성 fail-closed — HOME이 없으면 턴을 돌리지 않는다', async () => {
+  // 분리 검수 2라운드 MEDIUM 실측: env -u HOME -u USERPROFILE 에서 홈 자격 경계(~/.argo·~/.codex·
+  // ~/.claude·~/.gemini)가 **경고도 없이 0건**이 됐다. deniedPaths가 이 러너 집행의 전부라
+  // 조용한 소멸은 곧 경계 소멸이다. launchd·Tauri 최소 env가 정확히 이 조건이다.
+  const home = process.env.HOME;
+  const up = process.env.USERPROFILE;
+  delete process.env.HOME;
+  delete process.env.USERPROFILE;
+  try {
+    await assert.rejects(() => kiroDeniedPaths('/tmp/ws/acme'), /HOME/i, 'HOME 부재가 fail-open으로 통과했다');
+  } finally {
+    if (home !== undefined) process.env.HOME = home;
+    if (up !== undefined) process.env.USERPROFILE = up;
+  }
 });
 
 test('불변 경계 — 앱 루트·홈 자격·형제 회사·직속 도트·회사 금고가 deniedPaths에 실린다', async () => {
@@ -235,12 +261,14 @@ test('턴별 에이전트 설정 — 경계·격리가 실제로 파일에 실�
   const cwd = join(wsRoot, 'acme');
   await mkdir(cwd, { recursive: true });
   const name = 'argo-test01';
-  await writeKiroTurnAgent(cwd, { caps: { fs: true, shell: false }, name });
+  await writeKiroTurnAgent(cwd, { caps: { fs: true, shell: true, browser: false }, name });
   const file = join(cwd, '.kiro', 'agents', `${name}.json`);
   const cfg = JSON.parse(await readFile(file, 'utf8'));
 
   assert.equal(cfg.name, name);
-  assert.ok(!cfg.tools.includes('shell'), '셸 능력이 꺼졌는데 도구가 실렸다');
+  // caps.shell이 켜져 있어도 셸을 주지 않는다 — 경계가 서지 않는 도구는 배제(위 테스트의 계약)
+  assert.ok(!cfg.tools.includes('shell'), '셸이 실렸다 — deniedPaths가 셸에 적용되지 않아 경계가 무의미해진다');
+  assert.ok(!cfg.tools.includes('web_fetch'), '브라우저 능력이 꺼졌는데 web_fetch가 실렸다');
   assert.deepEqual(cfg.allowedTools, cfg.tools);
   assert.ok(cfg.toolsSettings.read.deniedPaths.length, 'read 경계가 비었다');
   assert.ok(cfg.toolsSettings.write.deniedPaths.length, 'write 경계가 비었다');

@@ -89,21 +89,31 @@ export const KIRO_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const kiroEffortArgs = (effort) => (KIRO_EFFORTS.includes(String(effort ?? '')) ? ['--effort', String(effort)] : []);
 
 /* ─── 능력(caps) → 도구 목록 ───
-   kiro-cli 도구명(v2 엔진): read·write·shell·grep·glob·code·knowledge·thinking·todo·use_aws·web_fetch 등.
-   Argo 능력 모델은 { fs, shell, browser } 셋이고, 크루는 **회사 폴더(cwd)에서 일하는 것이 기본**이라
-   read/write는 능력과 무관하게 준다(codex가 상시 `--sandbox workspace-write`로 cwd를 여는 것과 같은
-   자리 — 능력 OFF의 의미는 "cwd 밖으로 나가지 말라"이지 "아무것도 못 읽어라"가 아니다).
-   그래서 caps가 갈라내는 것은 셸(shell)과 브라우저(web_fetch)다. */
-const BASE_TOOLS = ['read', 'write', 'grep', 'glob'];
+   **경계가 증명된 도구만 준다**(fail-closed). deniedPaths는 `read`·`write`에만 서고, 다른 도구는
+   같은 파일을 그냥 연다 — 실측(2026-08-12, 분리 검수 2라운드 CRITICAL):
+     · `grep`  금고 `connections.json`·형제 회사·WS_ROOT 직속 도트의 **매치 줄 내용을 그대로 반환**.
+               같은 턴·같은 설정에서 `read`로 같은 파일을 열면 정상 DENY된다(대조군) — 즉 경계가
+               read/write 전용이다. grep·glob은 `toolsSettings` 키가 공식 스키마에 없어 막을 수도 없다.
+     · `glob`  `~/.codex` 7,766개·`~/.claude` 527개 파일 열거 성공(경로 유출).
+     · `shell` `cat <금고>`·`cat ../<타사>/notes.md`·`echo > usage.jsonl`(원장 개조) 전부 성공.
+               `deniedCommands`(정규식)는 강제되지만(실측), 명령 문자열 정규식은 `$(…)`·`sh -c`·
+               인터프리터 경유로 우회가 자유롭고 permission-gate처럼 **인자 경로를 판정하는 백스톱이
+               없다**. `denyByDefault`는 문서에 있으나 무시된다(실측: 화이트리스트 밖 명령이 실행됨).
+   그래서 이 러너의 도구는 read·write(+브라우저 능력 시 web_fetch)로 한정한다. 셸 부재는 이 레포에
+   선례가 있다 — gemini CLI 러너도 비대화(`--approval-mode auto_edit`)에서 셸이 실행되지 않고
+   (`externalExec` gemini 분기 주석) 그 상태로 운영된다.
+   caps.shell이 켜져 있어도 이 러너는 셸을 주지 않는다 — UI가 정직 표기한다. */
+const BASE_TOOLS = ['read', 'write'];
 
 /** caps → { tools, allowedTools }(순수). allowedTools는 tools와 같게 준다 —
     비대화(`--no-interactive`)에서는 **포괄 신뢰가 없으면 도구 호출이 전부 거부**된다(실측:
     toolsSettings.allowedPaths만 두면 반경 안쪽 쓰기까지 거부). 경로 강제는 deniedPaths가 한다.
-    fail-closed: caps 미전달(oneshot 등)이면 셸·브라우저를 끈다(antigravity `--sandbox`와 같은 방향).
+    fail-closed: caps 미전달(oneshot 등)이면 브라우저를 끈다.
     (export: 회귀 테스트용 — 순수 함수) */
 export function kiroTools(caps) {
   const tools = [...BASE_TOOLS];
-  if (caps?.shell) tools.push('shell');
+  // web_fetch는 사장이 브라우저 능력을 켠 경우만. 읽을 수 있는 데이터가 이미 deniedPaths로
+  // 제한되므로 반출 범위도 그만큼 제한된다(URL 차단 규칙 web_fetch.blocked는 미검증 — 쓰지 않는다).
   if (caps?.browser) tools.push('web_fetch');
   return { tools, allowedTools: [...tools] };
 }
@@ -161,13 +171,21 @@ export async function kiroDeniedPaths(cwd, appRoot = APP_ROOT) {
   const wsRoot = dirname(cwd);
   const mine = basename(cwd);
   const home = homeDir();
+  // fail-closed(분리 검수 2라운드 MEDIUM): 홈을 모르면 홈 자격 경계(~/.argo·~/.codex·~/.claude·
+  // ~/.gemini 등)를 만들 수 없다. 조용히 빠지면 그 경계가 **경고도 없이 사라진다**(실측:
+  // env -u HOME -u USERPROFILE 에서 홈 항목 0건). deniedPaths가 이 러너 집행의 전부이므로,
+  // 경계를 못 만들면 턴을 돌리지 않는다 — launchd·Tauri 최소 env가 정확히 이 조건이다.
+  if (!home) {
+    throw new Error('Kiro 러너를 실행할 수 없습니다: HOME(또는 USERPROFILE)이 없어 보안 경계를 만들 수 없습니다. '
+      + 'Cannot run the Kiro runner: HOME/USERPROFILE is unset, so the security boundary cannot be built.');
+  }
   // 형제는 **이름만** 뽑는다 — 경로는 아래에서 wsRoot의 두 형태에 각각 붙인다.
   const siblingNames = await readdir(wsRoot, { withFileTypes: true })
     .then((es) => es.filter((e) => e.isDirectory() && e.name !== mine).map((e) => e.name))
     .catch(() => []); // 읽을 수 없으면 형제 열거를 포기한다 — 나머지 방어는 그대로 선다
   const forms = async (p) => { const c = await canon(p); return c && c !== p ? [p, c] : [p]; };
   const [appForms, homeForms, wsForms, cwdForms] = await Promise.all([
-    forms(appRoot), home ? forms(home) : Promise.resolve([]), forms(wsRoot), forms(cwd),
+    forms(appRoot), forms(home), forms(wsRoot), forms(cwd),
   ]);
 
   const read = new Set();
@@ -206,12 +224,9 @@ export async function writeKiroTurnAgent(cwd, { caps = null, appRoot = APP_ROOT,
     toolsSettings: {
       read: { deniedPaths: denied.read },
       write: { deniedPaths: denied.write }, // 원장(usage/events)은 쓰기만 추가로 막힌다
-      // 셸은 능력이 켜졌을 때만 목록에 있다. 그때도 명령 경계(shell.allowedCommands·deniedCommands)는
-      // 미검증이라 쓰지 않았다 — 읽기·쓰기와 집행 강도가 다르다(설계 문서 한계 절).
-      // grep·glob은 toolsSettings 키가 공식 스키마에 없어 넣지 않는다(미지 키는 조용히 무시된다 —
-      // allowedPaths를 버린 것과 같은 이유: 죽은 설정이 "경계가 걸려 있다"는 오독을 만든다).
-      // 실측(2026-08-12)상 grep은 read 규칙을 그대로 받아 차단된다 — 벤더 내부 동작 의존이므로
-      // 설계 문서 한계 절에 명시했다.
+      // read·write 둘뿐인 이유는 위 BASE_TOOLS 주석에 있다: deniedPaths가 이 두 도구에만 서고,
+      // grep·glob·shell은 같은 파일을 그냥 연다(실측). 경계가 없는 도구를 주지 않는 것이
+      // 이 러너의 fail-closed다 — 설정으로 막을 수 없으니 도구 자체를 안 준다.
     },
     // 전역 설정 격리 — 사용자의 MCP 서버가 매 턴 로드되며 경고를 뱉고(실측) 크루에게 의도 밖
     // 도구를 준다. 빈 목록 + 레거시 json 미상속으로 닫는다.
