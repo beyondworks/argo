@@ -13,7 +13,7 @@ import { join } from 'node:path';
 // Windows에선 %USERPROFILE% — 둘 다 심어야 전 플랫폼 격리.
 process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-credhome-'));
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-credtest-'));
-const { oauthFormatError, RUNNER_AUTH, startRunnerWebAuth, runnerStatus, saveRunnerCred, runnerCredEnv } = await import('../src/runners.mjs');
+const { oauthFormatError, RUNNER_AUTH, startRunnerWebAuth, runnerStatus, saveRunnerCred, runnerCredEnv, sdkEnvFor } = await import('../src/runners.mjs');
 
 test('RUNNER_AUTH: claude OAuth 접두사 규격 고정', () => {
   assert.equal(RUNNER_AUTH.claude.oauthPrefix, 'sk-ant-oat01-', 'CLAUDE_CODE_OAUTH_TOKEN 접두사');
@@ -220,6 +220,26 @@ test('verifyRunnerCred: 정상 401 러너(kimi·codex·claude apikey)는 회귀 
 });
 
 /* ── OAuth 연결 시 API키 명시 소거 — 호스트 env 키가 OAuth를 누르지 않게(claude 대칭, 신고 2026-07-24) ── */
+test('sdkEnvFor: Claude host는 로컬 Claude Code settings.json의 endpoint·model·자격을 SDK에 전달', async () => {
+  const settingsDir = join(process.env.HOME, '.claude');
+  await mkdir(settingsDir, { recursive: true });
+  await writeFile(join(settingsDir, 'settings.json'), JSON.stringify({
+    env: {
+      ANTHROPIC_BASE_URL: 'http://llama.test:8080',
+      ANTHROPIC_MODEL: 'qwen3.6-27b-q4',
+      ANTHROPIC_AUTH_TOKEN: 'fixture-auth-token',
+      ANTHROPIC_API_KEY: 'fixture-api-key',
+      UNSAFE_INHERITED_VALUE: 'must-not-copy',
+    },
+  }));
+  const env = await sdkEnvFor('credenv-claude-host-settings', 'claude');
+  assert.equal(env.ANTHROPIC_BASE_URL, 'http://llama.test:8080');
+  assert.equal(env.ANTHROPIC_MODEL, 'qwen3.6-27b-q4');
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'fixture-auth-token');
+  assert.equal(env.ANTHROPIC_API_KEY, 'fixture-api-key');
+  assert.ok(!('UNSAFE_INHERITED_VALUE' in env), 'settings.json 임의 env 전체를 SDK에 복사하면 안 된다');
+});
+
 test('runnerCredEnv: codex OAuth는 OPENAI_API_KEY를 빈 값으로 소거(호스트 키 우선 차단)', async () => {
   const WS = 'credenv-codex';
   await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });

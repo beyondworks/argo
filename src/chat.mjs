@@ -21,7 +21,9 @@ import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
 import { detectRunnerDenial, detectDeniedNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, DEEPSEEK_LOCAL_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenAICompatRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { runOpenAICompatToolLoop, DEEPSEEK_LOCAL_DEFAULT_BASE } from './runners/deepseek-local.mjs';
+import { createOpenAICompatToolRegistry } from './openai-compat-tools.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { makeCrewActions } from './crew-actions.mjs';
 
@@ -44,20 +46,37 @@ export async function loadSkills(wsId, cap = 6000, lang = 'ko', allow = null) {
 }
 
 /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
+function crewEngineMeta(a, lang) {
+  const runnerId = String(a.runner ?? '').trim();
+  const modelId = String(a.model ?? '').trim();
+  const runner = runnerId ? (RUNNERS[runnerId]?.name ?? runnerId) : (lang === 'en' ? 'automatic selection' : '자동 선택');
+  const modelInfo = runnerId && modelId
+    ? RUNNERS[runnerId]?.models.find((m) => m.id === modelId)
+    : null;
+  const model = modelId
+    ? `${modelInfo?.label ?? modelId} (${modelId})`
+    : (lang === 'en' ? 'automatic model' : '자동 모델');
+  return lang === 'en'
+    ? ` — configured runner: ${runner}${runnerId ? ` (${runnerId})` : ''}; configured model: ${model}`
+    : ` — 설정 러너: ${runner}${runnerId ? ` (${runnerId})` : ''}; 설정 모델: ${model}`;
+}
+
 function rosterPrompt(colleagues, lang = 'ko') {
   if (lang === 'en') {
-    const lines = colleagues.map((a) => `- ${a.name} (slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}${a.team ? ` / ${a.team} team` : ''}`);
+    const lines = colleagues.map((a) => `- ${a.name} (slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}${a.team ? ` / ${a.team} team` : ''}${crewEngineMeta(a, lang)}`);
     return `
 ## Colleague crew — delegation rules
+The runner/model metadata below is read-only configuration context. It contains no credentials and must not be changed by editing files.
 ${lines.join('\n')}
 - Delegate subtasks outside your expertise, or that a colleague would clearly do better, via the delegate tool (to=slug, task=a concrete instruction).
 - When you decide to delegate, say so in your reply first — "I'm handing this part to {colleague}" — and note that approval requests may arrive under that colleague's name, so the captain can follow the flow.
 - Don't paste delegation results verbatim — review them, integrate them into your own answer, and credit which colleague did the work.
 - Don't overuse it — if you can do it yourself, do it yourself. At most 2 delegations per turn, and chains (re-delegating delegated work) are allowed only 2 levels deep in total.`;
   }
-  const lines = colleagues.map((a) => `- ${a.name} (slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}${a.team ? ` / ${a.team}팀` : ''}`);
+  const lines = colleagues.map((a) => `- ${a.name} (slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}${a.team ? ` / ${a.team}팀` : ''}${crewEngineMeta(a, lang)}`);
   return `
 ## 동료 크루 — 위임 규칙
+아래 러너·모델 정보는 읽기 전용 설정 메타데이터다. 자격증명은 포함하지 않으며, 파일을 직접 고쳐 변경하지 마라.
 ${lines.join('\n')}
 - 네 전문 밖이거나 동료가 명백히 더 잘할 하위 작업은 delegate 도구(to=슬러그, task=구체적 지시)로 위임하라.
 - 위임하기로 했으면 "이 부분은 {동료 이름}에게 인계해 진행한다"고 답변에서 먼저 밝혀라 — 결재 요청이 그 동료 이름으로 올 수 있다는 것까지 사장이 알아야 흐름이 끊기지 않는다.
@@ -879,6 +898,115 @@ ${lang === 'en'
       abortReg.release();
     }
   }
+
+  // ── OpenAI 호환 러너(Qwen/llama.cpp/vLLM 등) — 표준 function tool loop ──
+  // tools → assistant.tool_calls → Argo 권한 게이트/실행 → role=tool 재주입을 최종 텍스트까지 반복한다.
+  if (isOpenAICompatRunner(runner)) {
+    const t0 = Date.now();
+    const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
+    const evBase = {
+      type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'),
+      ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, msg: userMsg.slice(0, 2000), runner,
+    };
+    await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name);
+    const ac = new AbortController();
+    const abortReg = registerTurn(wsId, agentSlug, () => ac.abort());
+    let registry = null;
+    const artifacts = new Set();
+    const toolCounts = {};
+    const steps = [];
+    const step = (stage, detail = '') => { if (steps.length < 40) steps.push({ t: Date.now() - t0, stage, detail }); };
+    try {
+      const cred = await runnerCredEnv(wsId, runner);
+      const baseUrl = cred?.env?.DEEPSEEK_LOCAL_BASE_URL || DEEPSEEK_LOCAL_DEFAULT_BASE;
+      const apiKey = cred?.env?.DEEPSEEK_LOCAL_API_KEY || process.env.DEEPSEEK_LOCAL_API_KEY || '';
+      const caps = await loadCapabilities(wsId);
+      const workRoots = await loadActiveWorkRoots(wsId);
+      const turnDeadline = AbortSignal.any([ac.signal, AbortSignal.timeout(300_000)]);
+      let servers = safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {});
+      if (mcpScope) servers = Object.fromEntries(Object.entries(servers).filter(([n]) => mcpScope.includes(n)));
+      registry = await createOpenAICompatToolRegistry({
+        wsId, agentSlug, agentName: meta.name || agentSlug, root: p.root, vaultRoot: p.vault,
+        caps, workRoots, from, lang, colleagues, hop, chain, mirrorCtx, runChat: chat,
+        onArtifact: (rel) => artifacts.add(rel),
+      }, {
+        mcpServers: servers,
+        signal: turnDeadline,
+        onWarning: (message) => console.warn(`[argo] OpenAI 호환 MCP 연결 제외(${wsId}/${agentSlug}): ${message}`),
+      });
+      const toolNameGuide = lang === 'en'
+        ? '\n## Tool names in this runner\nUse read_file/list_files/search_files/write_file/edit_file/apply_patch/run_command/web_search/web_fetch. These are the OpenAI-compatible equivalents of Read/Glob/Grep/Write/Edit/apply_patch/Bash/WebSearch/WebFetch. run_command accepts timeout_seconds up to 600; use start_long_task for longer work. Never merely describe a tool call — call the tool.\n'
+        : '\n## 이 러너의 도구 이름\nRead/Glob/Grep/Write/Edit/apply_patch/Bash/WebSearch/WebFetch에 해당하는 실제 이름은 read_file/list_files/search_files/write_file/edit_file/apply_patch/run_command/web_search/web_fetch다. run_command의 timeout_seconds는 최대 600초이며 더 긴 작업은 start_long_task를 사용하라. 도구를 썼다고 말로만 서술하지 말고 실제 호출하라.\n';
+      const sysPrompt = systemPromptFor(md, p.root, skills, meta, lang, { hasTools: true })
+        + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
+        + commonDirectives({ caps, connectedMcp: Object.keys(servers), hasTools: true, lang, runner, workRoots })
+        + toolNameGuide
+        + fallbackDirective;
+      const { messages: threadMsgs } = await loadThread(wsId, agentSlug);
+      const ctx = (threadMsgs ?? []).filter((m) => !m.shared).slice(-6)
+        .map((m) => `${m.who === 'user' ? (lang === 'en' ? 'Captain' : '사장') : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? ` (${m.attachments.map((a) => `vault/${a.rel}`).join(', ')})` : ''}`)
+        .join('\n');
+      const attNote = attachments.length
+        ? (lang === 'en'
+            ? `\n\n(Files the captain attached — inspect them with read_file: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`
+            : `\n\n(사장이 첨부한 파일 — read_file로 확인하라: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`)
+        : '';
+      const userContent = `${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}`;
+      const fullUser = ctx ? `${ctx}\n\n${userContent}` : userContent;
+      const toolStatusInput = (name, args) => ({
+        ...(args.path ? { file_path: args.path } : {}),
+        ...(args.query ? { pattern: args.query, query: args.query } : {}),
+        ...(args.command ? { command: args.command } : {}),
+        ...(args.url ? { url: args.url } : {}),
+        ...(args.to ? { to: args.to } : {}),
+      });
+      const result = await runOpenAICompatToolLoop(baseUrl, {
+        systemPrompt: sysPrompt,
+        userMessage: fullUser,
+        model: effModel || DEEPSEEK_LOCAL_DEFAULT_MODEL,
+        apiKey,
+        timeoutMs: 300_000,
+        signal: turnDeadline,
+        tools: registry.definitions,
+        executeTool: registry.execute,
+        onToolCall: async ({ name, args }) => {
+          const canonical = registry.canonicalName(name);
+          toolCounts[canonical] = (toolCounts[canonical] ?? 0) + 1;
+          const statusInput = toolStatusInput(name, args);
+          const stage = stageForTool(canonical);
+          const detail = detailForTool(canonical, statusInput) || String(args.path || args.query || args.url || args.to || '').slice(0, 80);
+          step(stage, detail);
+          await setTurnStatus(wsId, agentSlug, stage, detail);
+        },
+      });
+      const reply = result.text;
+      await appendUsage(wsId, {
+        kind: source ?? (from ? 'delegate' : 'chat'), slug: agentSlug, from, runner,
+        model: result.model || effModel || DEEPSEEK_LOCAL_DEFAULT_MODEL,
+        usage: { input_tokens: result.usage.prompt_tokens ?? 0, output_tokens: result.usage.completion_tokens ?? 0 },
+        costUsd: null, ms: Date.now() - t0, tools: toolCounts, billed: false,
+      });
+      const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
+      const ev = {
+        ...evBase, runner, model: result.model || effModel || DEEPSEEK_LOCAL_DEFAULT_MODEL,
+        ok: true, reply: reply.replace(/\s+/g, ' ').slice(0, 200), ms: Date.now() - t0,
+      };
+      await appendEvent(wsId, { ...ev, steps, journalRel: relative(p.vault, handover.file) }).catch(() => {});
+      await clearTurnStatus(wsId, agentSlug);
+      return { reply, sessionId: null, handover, artifacts: [...artifacts].filter((r) => !r.startsWith('journal/')) };
+    } catch (e) {
+      const aborted = abortReg.wasAborted() || ac.signal.aborted || e?.aborted;
+      if (!aborted) prefixFallbackError(e);
+      const error = aborted ? '사장 지시로 중단' : maskKeyLike(String(e.message || e)).slice(0, 400);
+      await appendEvent(wsId, { ...evBase, ok: false, error, ms: Date.now() - t0, steps }).catch(() => {});
+      await clearTurnStatus(wsId, agentSlug);
+      if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
+      throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : e;
+    } finally {
+      await registry?.close().catch(() => {});
+      abortReg.release();
+    }
+  }
   // 설치된 MCP 도구 — 서버 단위 allow(mcp__<name>)로 해당 서버의 전체 도구 허용
   // 실행 게이트 — 호스팅 모드에선 미검증 command MCP를 spawn하지 않는다(검수 HIGH: mcp.json이
   // 봉투로 동기화돼 서비스 키를 든 워커로 흘러가면 임의 프로세스가 키 곁에서 실행되는 위험).
@@ -978,7 +1106,7 @@ ${lang === 'en'
       stderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); },
       // 회사 자격 env(claude=키/OAuth 토큰, glm=z.ai 토큰) 주입 + 크루별 모델(카드 frontmatter). glm 기본 모델 보정.
       ...(sdkEnv ? { env: sdkEnv } : {}),
-      ...(runner === 'glm' ? { model: effModel || GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: effModel || KIMI_DEFAULT_MODEL } : runner === 'openrouter' ? { model: effModel || OPENROUTER_DEFAULT_MODEL } : (effModel ? { model: effModel } : {})),
+      ...(runner === 'glm' ? { model: effModel || GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: effModel || KIMI_DEFAULT_MODEL } : runner === 'openrouter' ? { model: effModel || OPENROUTER_DEFAULT_MODEL } : ((sdkEnv?.ANTHROPIC_MODEL || effModel) ? { model: sdkEnv?.ANTHROPIC_MODEL || effModel } : {})),
       // 크루별 추론 강도(요청 2026-07-25) — claude 러너에만. glm/kimi는 SDK 호환 경로로 타 벤더
       // 엔드포인트에 붙어 이 파라미터를 보장하지 않으므로 보내지 않는다(카탈로그 규칙과 같은 원칙:
       // 실행 경로가 받는 것만 보낸다). 화이트리스트는 persona.EFFORT_LEVELS가 저장 시점에 이미 강제.

@@ -585,6 +585,13 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
   const [runners, setRunners] = useState(null);
   useEffect(() => { api(`/api/runners?ws=${ws}`).then((d) => setRunners(d.runners)).catch(() => setRunners([])); }, [ws]);
   const curRunner = runners?.find((r) => r.id === form.runner);
+  // 러너 미지정(자동)이어도 연결된 러너의 모델은 선택할 수 있어야 한다.
+  // 모델을 고르면 모델 소유 러너를 함께 지정해 서버의 runner/model 소속 검증을 만족시킨다.
+  const modelRunners = form.runner
+    ? (curRunner ? [curRunner] : [])
+    : (runners ?? []).filter((r) => r.authed && r.models?.length);
+  const modelDisabled = runners === null
+    || (form.runner ? !curRunner || !curRunner.authed : modelRunners.length === 0);
   const runnerLabel = (r) => r.name + (r.authed ? '' : r.installed ? ` — ${t('runner.needLogin')}` : ` — ${t('runner.notInstalled')}`);
 
   useEffect(() => {
@@ -656,13 +663,24 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
           </label>
           <label style={{ display: 'grid', gap: 4 }}>
             <span className="microlabel">{t('deck.fieldModelHint')}</span>
-            {/* 현재 러너가 미연결(레거시)이면 모델 선택도 잠금 — 설정에서 연결 후 활성화 */}
-            <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} style={field}
-              disabled={curRunner && !curRunner.authed}>
+            {/* 자동 러너는 연결된 모든 러너의 모델을 표시하고, 선택 시 해당 러너를 함께 고정한다. */}
+            <select value={form.model} onChange={(e) => {
+              const model = e.target.value;
+              const owner = !form.runner ? modelRunners.find((r) => r.models?.some((m) => m.id === model)) : null;
+              setForm({ ...form, runner: form.runner || owner?.id || '', model });
+            }} style={field} disabled={modelDisabled}>
               {!form.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
-              {(curRunner?.models ?? []).map((m) => (
-                <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
-              ))}
+              {form.runner
+                ? (curRunner?.models ?? []).map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
+                ))
+                : modelRunners.map((r) => (
+                  <optgroup key={r.id} label={r.name}>
+                    {r.models.map((m) => (
+                      <option key={`${r.id}:${m.id}`} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
+                    ))}
+                  </optgroup>
+                ))}
             </select>
           </label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

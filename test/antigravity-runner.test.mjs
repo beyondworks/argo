@@ -57,7 +57,7 @@ test('자동 선택 순서 — PICK_ORDER는 RUNNER_AUTH 정의 순과 일치한
 
 test('연결 UI — RUNNER_ORDER·RUNNER_NAMES에 antigravity가 있다', () => {
   const src = read('app/runner-connect.jsx');
-  assert.match(src, /RUNNER_ORDER = \['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter'\]/);
+  assert.match(src, /RUNNER_ORDER = \['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter', 'deepseeklocal'\]/);
   assert.match(src, /antigravity: 'Antigravity'/);
 });
 

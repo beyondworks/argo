@@ -1,7 +1,7 @@
 // 러너 자격(BYOK/BYOA) — 회사·계정 스코프 저장/로드·시드·env 조립(sdkEnvFor)·자격 검증.
 // (runners.mjs 관심사 분리 2026-07-28)
 
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from '../jsonstore.mjs';
@@ -10,6 +10,7 @@ import { exists, homeEnv, scrubServerSecrets, seedAuthFile } from './shared.mjs'
 import { RUNNER_AUTH } from './catalog.mjs';
 import { provisionCodexCli } from './codex.mjs';
 import { provisionGeminiCli, geminiTurnHome } from './gemini.mjs';
+import { DEEPSEEK_LOCAL_DEFAULT_BASE, parseDeepseekLocalCredential, verifyDeepseekLocal } from './deepseek-local.mjs';
 
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
@@ -27,6 +28,27 @@ export const glmEnv = () => ({
   ANTHROPIC_API_KEY: '',
   CLAUDE_CODE_OAUTH_TOKEN: '', // claude 분기와 대칭(감사 2026-07-20)
 });
+
+// Claude Code CLI가 ~/.claude/settings.json의 env로 로컬 Anthropic 호환 서버와 모델을 선택할 수 있다.
+// Argo 상주 서비스(systemd)는 터미널의 env와 CLI 설정을 자동 상속하지 않으므로, Claude host 옵트인
+// 실행에서만 인증·엔드포인트·모델 관련 allowlist를 읽어 SDK에 전달한다. 임의 env 전체를 복사하지 않는다.
+const CLAUDE_HOST_ENV_KEYS = [
+  'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_MODEL',
+];
+
+export async function claudeHostSettingsEnv() {
+  try {
+    const settings = JSON.parse(await readFile(join(homedir(), '.claude', 'settings.json'), 'utf8'));
+    const source = settings?.env;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return {};
+    return Object.fromEntries(CLAUDE_HOST_ENV_KEYS
+      .filter((key) => typeof source[key] === 'string')
+      .map((key) => [key, source[key]]));
+  } catch {
+    return {};
+  }
+}
 
 // ── 회사별 러너 자격(BYOK/BYOA) — 일반 사용자가 호스트 CLI 로그인 없이도 어떤 러너든 굴리게 한다.
 // 회사 루트 .secrets.json의 runners.{id} = { type:'apikey'|'oauth', value } 에 보관.
@@ -82,42 +104,65 @@ async function loadSecrets(wsId) {
     (codex/gemini=파일 자격, antigravity=OS 키링이라 host 옵트인이 유일 경로, claude=키체인이라 non-standalone에서만 — RUNNER_AUTH.hostUsable·hostOptInAllowed 참조).
     자동 스캐빈징 금지(유건 지시 2026-07-19): 호스트 로그인은 감지돼도 사장이 이 마커로 옵트인해야만 쓴다. */
 const credType = (t) => (t === 'oauth' ? 'oauth' : t === 'host' ? 'host' : 'apikey');
+const canonicalRunner = (runner) => {
+  const raw = String(runner ?? '').trim();
+  return Object.keys(RUNNER_AUTH).find((id) => id.toLowerCase() === raw.toLowerCase()) ?? raw;
+};
+
+function sameRunnerId(a, b) {
+  return String(a).toLowerCase() === String(b).toLowerCase();
+}
+
+function runnerCredentialEntry(s, runner) {
+  const id = canonicalRunner(runner);
+  const runners = s.runners ?? {};
+  // Canonical spelling wins after a user reconnects through the current UI.
+  const exact = runners[id];
+  if (exact) return { id, entry: exact };
+  const legacy = Object.entries(runners).find(([key, value]) => sameRunnerId(key, id) && value);
+  return { id, entry: legacy?.[1] ?? null };
+}
 
 export async function loadRunnerCred(wsId, runner) {
-  const c = (await loadSecrets(wsId)).runners?.[runner];
+  const { entry: c } = runnerCredentialEntry(await loadSecrets(wsId), runner);
   return c && typeof c.value === 'string' && c.value.trim() ? { type: credType(c.type), value: c.value.trim() } : null;
 }
 
 /** 러너 자격 저장 — 원자적. 다른 러너·필드는 보존. 레거시 claude 필드는 정리. */
 export async function saveRunnerCred(wsId, runner, type, value) {
-  if (!RUNNER_AUTH[runner]) throw new Error('알 수 없는 러너');
+  const id = canonicalRunner(runner);
+  if (!RUNNER_AUTH[id]) throw new Error('알 수 없는 러너');
   const s = await loadSecrets(wsId);
   const { claude, ...rest } = s; // 레거시 평문 필드 제거
-  rest.runners = { ...rest.runners, [runner]: { type: credType(type), value: String(value).trim() } };
+  const runners = Object.fromEntries(Object.entries(rest.runners ?? {}).filter(([key]) => !sameRunnerId(key, id)));
+  rest.runners = { ...runners, [id]: { type: credType(type), value: String(value).trim() } };
   await writeJsonAtomic(secretsFile(wsId), rest);
   // 격리 홈 리셋 — 재연결 시 이전 토큰 파일이 새 자격을 가리지 않게(runnerCredEnv가 재생성).
   // 계정 스코프엔 실행 홈이 없다(온보딩 저장용 — 실행은 회사 wsId로) — 스킵.
   if (!isAccountScope(wsId)) {
-    if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
-    if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+    if (id === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+    if (id === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
   }
   // 연결 즉시 실행기 워밍업 — 첫 턴이 다운로드를 기다리지 않게(백그라운드, 실패는 턴 시점 조달이 재시도).
   // 모든 연결 경로(회사 키·계정 키·웹 브리지)가 이 함수를 지나므로 여기가 단일 관문이다.
-  if (runner === 'gemini') provisionGeminiCli().catch(() => {});
-  if (runner === 'codex') provisionCodexCli().catch(() => {}); // ~100MB — 연결 시점에 미리 받아 첫 턴 대기 제거
+  if (id === 'gemini') provisionGeminiCli().catch(() => {});
+  if (id === 'codex') provisionCodexCli().catch(() => {}); // ~100MB — 연결 시점에 미리 받아 첫 턴 대기 제거
 }
 
 /** 러너 자격 제거 — 다른 러너는 유지. 격리 홈도 함께 지운다: 연결 해제 후에도 auth.json에 평문
     키가 0600으로 남아 있었다(검수 — env 주입 시절엔 apikey가 디스크에 자격 파일을 안 만들었으니
     auth.json 전환이 새로 연 표면). saveRunnerCred의 리셋과 대칭. */
 export async function clearRunnerCred(wsId, runner) {
+  const id = canonicalRunner(runner);
   const s = await loadSecrets(wsId);
   const { claude, ...rest } = s;
-  if (rest.runners) delete rest.runners[runner];
+  if (rest.runners) {
+    for (const key of Object.keys(rest.runners)) if (sameRunnerId(key, id)) delete rest.runners[key];
+  }
   await writeJsonAtomic(secretsFile(wsId), rest);
   if (!isAccountScope(wsId)) {
-    if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
-    if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+    if (id === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+    if (id === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -192,6 +237,10 @@ export async function runnerCredEnv(wsId, runner) {
       ...(process.env.OPENROUTER_MAX_OUTPUT_TOKENS ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.OPENROUTER_MAX_OUTPUT_TOKENS } : {}),
     } };
   }
+  if (runner === 'deepseeklocal') {
+    const { baseUrl = DEEPSEEK_LOCAL_DEFAULT_BASE, apiKey } = parseDeepseekLocalCredential(v);
+    return { env: { DEEPSEEK_LOCAL_BASE_URL: baseUrl, ...(apiKey ? { DEEPSEEK_LOCAL_API_KEY: apiKey } : {}) } };
+  }
   if (runner === 'codex') {
     // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를
     // 더는 인정하지 않는다. 이전의 env 주입(home:'clean')은 저장 검증(OpenAI 직접 호출)만 통과하고
@@ -216,7 +265,8 @@ export async function runnerCredEnv(wsId, runner) {
   return null;
 }
 
-/** Claude/GLM(SDK) 러너용 완전 env — 회사 자격 우선, 없으면 기존 폴백(glm은 호스트 GLM_API_KEY, claude는 CLI/env). */
+/** Claude/GLM(SDK) 러너용 완전 env — 회사 자격 우선, 없으면 기존 폴백(glm은 호스트 GLM_API_KEY,
+    claude는 Claude Code settings.json + 프로세스 env). */
 export async function sdkEnvFor(wsId, runner) {
   const cred = await runnerCredEnv(wsId, runner);
   // SDK가 띄우는 Bash/MCP 자식도 서버 시크릿(서비스 키)을 상속하지 않도록 항상 세척된 env를 준다(P1-6).
@@ -225,7 +275,11 @@ export async function sdkEnvFor(wsId, runner) {
   if (cred) return { ...scrubServerSecrets(process.env, runner), ...cred.env };
   if (runner === 'glm') return glmEnv(); // 회사 자격 없으면 호스트 GLM_API_KEY 폴백(glmEnv 자체가 세척됨)
   if (runner === 'kimi') return kimiEnv(); // 동일 — 호스트 KIMI_API_KEY 폴백(env 주입 = 명시 옵트인)
-  const env = scrubServerSecrets(process.env, runner);
+  let env = scrubServerSecrets(process.env, runner);
+  if (runner === 'claude') {
+    // 로컬 Claude Code CLI와 같은 settings.json을 사용 — 회사 자격이 있으면 위에서 이미 우선 반환됨.
+    env = { ...env, ...(await claudeHostSettingsEnv()) };
+  }
   // claude 호스트 폴백 결정론화(2R 검수 HIGH-2): 구독 토큰과 API 키 env가 공존하면 SDK가 뭘
   // 쓰는지는 SDK 내부 소관이라 판정(billedByType)과 어긋날 수 있다 — 구독 토큰이 있으면 API
   // 키를 소거해 실행을 구독으로 확정한다(한쪽 소거 패턴은 #83과 동일, 방향은 사용자 유리).
@@ -286,6 +340,10 @@ export async function verifyRunnerCred(runner, type, value) {
     if (runner === 'codex' && type === 'apikey') {
       const r = await fetch('https://api.openai.com/v1/models?limit=1', { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
+    }
+    if (runner === 'deepseeklocal') {
+      const { baseUrl = DEEPSEEK_LOCAL_DEFAULT_BASE, apiKey } = parseDeepseekLocalCredential(v);
+      return verifyDeepseekLocal(baseUrl, apiKey);
     }
     if (runner === 'gemini' && type === 'apikey') {
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(v)}&pageSize=1`, { signal: AbortSignal.timeout(10_000) });

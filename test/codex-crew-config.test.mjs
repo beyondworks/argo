@@ -62,9 +62,15 @@ test('Codex 턴 config에 회사 외부 MCP 정의를 전달한다', async () =>
 });
 
 test('Codex 프롬프트는 Argo 동료 조율에서 Orca 대체 실행을 명시적으로 금지한다', () => {
-  const prompt = codexArgoCrewPrompt([{ slug: 'sw-cto', name: 'SW CTO' }], 'ko');
+  const prompt = codexArgoCrewPrompt([{
+    slug: 'sw-cto', name: 'SW CTO', runner: 'codex', model: 'gpt-5.6-sol',
+  }], 'ko');
   assert.match(prompt, /Argo 내부 `delegate`와 `send_to_crew`/);
   assert.match(prompt, /`orca-ide`.*절대 실행하지 마라/);
+  assert.match(prompt, /설정 러너: Codex \(codex\)/);
+  assert.match(prompt, /설정 모델: GPT-5\.6 Sol \(gpt-5\.6-sol\)/);
+  assert.match(prompt, /읽기 전용 설정 메타데이터/);
+  assert.doesNotMatch(prompt, /token|secret|api.?key/i);
 
   const depthLimited = codexArgoCrewPrompt([], 'en');
   assert.match(depthLimited, /delegation-depth limit/);

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>DeepSeek Local Runner 추가</title>
+</head>
+<body>
+<h1>DeepSeek Local Runner 추가</h1>
+<h2>개요</h2>
+<p>Argo 프로젝트에 DeepSeek Local (OpenAI 호환 API) 러너를 추가하였습니다. SDK나 CLI를 사용하지 않고 직접 <code>fetch</code>를 이용하여 <code>/v1/chat/completions</code> 엔드포인트를 호출하는 구조입니다.</p>
+<h2>변경 내역 (Diff)</h2>
+<ul>
+<li><strong><code>src/runners/deepseek-local.mjs</code> 신규 생성</strong>: <code>fetch</code> 기반 API 호출, 연결 검증</li>
+<li><strong><code>src/runners/catalog.mjs</code> 수정</strong>: 카탈로그, 인증 정보, 상수 등록</li>
+<li><strong><code>src/runners/creds.mjs</code> 수정</strong>: 환경변수 맵핑, 연결 검증 호출부 등록</li>
+<li><strong><code>src/runners/exec.mjs</code> 수정</strong>: 러너 감지 캐시 등록</li>
+<li><strong><code>src/runners/shared.mjs</code> 수정</strong>: 변수 소유권 설정</li>
+</ul>
+</body>
+</html>

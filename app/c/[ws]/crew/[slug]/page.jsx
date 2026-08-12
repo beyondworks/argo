@@ -1253,6 +1253,13 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
 function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
   const { t } = useLang();
   const cur = runners?.find((r) => r.id === sel.runner);
+  // 러너 미지정(자동)이어도 연결된 러너의 모델은 선택할 수 있어야 한다.
+  // 모델을 고르면 모델 소유 러너를 함께 지정해 서버의 runner/model 소속 검증을 만족시킨다.
+  const modelRunners = sel.runner
+    ? (cur ? [cur] : [])
+    : (runners ?? []).filter((r) => r.authed && r.models?.length);
+  const modelDisabled = runners === null
+    || (sel.runner ? !cur || !cur.authed : modelRunners.length === 0);
   const runnerLabel = (r) => r.name + (r.authed ? '' : ` — ${t('runner.needConnect')}`);
   const box = {
     height: compact ? 28 : 30,
@@ -1277,13 +1284,25 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
           <option key={r.id} value={r.id} disabled={!r.authed}>{runnerLabel(r)}</option>
         ))}
       </select>
-      {/* 현재 러너가 미연결(레거시)이면 모델 선택도 잠금 — 설정에서 연결 후 활성화 */}
-      <select value={sel.model} disabled={busy || (cur && !cur.authed)} style={box}
-        onChange={(e) => onChange({ ...sel, runner: sel.runner, model: e.target.value })}>
+      {/* 자동 러너는 연결된 모든 러너의 모델을 표시하고, 선택 시 해당 러너를 함께 고정한다. */}
+      <select value={sel.model} disabled={busy || modelDisabled} style={box}
+        onChange={(e) => {
+          const model = e.target.value;
+          const owner = !sel.runner ? modelRunners.find((r) => r.models?.some((m) => m.id === model)) : null;
+          onChange({ ...sel, runner: sel.runner || owner?.id || '', model });
+        }}>
         {!sel.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
-        {(cur?.models ?? []).map((m) => (
-          <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
-        ))}
+        {sel.runner
+          ? (cur?.models ?? []).map((m) => (
+            <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
+          ))
+          : modelRunners.map((r) => (
+            <optgroup key={r.id} label={r.name}>
+              {r.models.map((m) => (
+                <option key={`${r.id}:${m.id}`} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
+              ))}
+            </optgroup>
+          ))}
       </select>
       {/* 추론 강도(요청 2026-07-25) — Claude(SDK effort)와 Codex(-c model_reasoning_effort, 실측
           2026-07-26)가 지원한다. Gemini CLI엔 해당 옵션이 없고 GLM·Kimi는 SDK 호환 경로로 타 벤더

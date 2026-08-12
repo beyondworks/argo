@@ -22,8 +22,8 @@ import { ensureCliPath, apiError, detectRunners } from './runners/exec.mjs';
 // ── 분리 모듈 re-export — 기존 임포터·테스트가 쓰는 이름 전부(62개 표면의 나머지 57개) ──
 export { isServerSecretKey, scrubServerSecrets, maskKeyLike, homeEnv } from './runners/shared.mjs';
 export {
-  RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner,
-  GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL,
+  RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isOpenAICompatRunner,
+  GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL, DEEPSEEK_LOCAL_DEFAULT_MODEL,
   isOpenRouterCreditError, isOpenRouterCreditReply, isOpenRouterLimitError, isOpenRouterLimitReply,
   pickRunner, oauthFormatError,
 } from './runners/catalog.mjs';
@@ -44,6 +44,7 @@ export {
   extractSetupAuthUrl, extractSetupToken, extractSetupTokenCandidates, bundledClaudeCli,
   setupTokenStatus, submitSetupCode, startClaudeSetupToken,
 } from './runners/exec.mjs';
+export { deepseekLocalCall, DEEPSEEK_LOCAL_DEFAULT_BASE } from './runners/deepseek-local.mjs';
 
 /** CLI 턴 실패의 정직 번역 — 시간 초과가 "러너 실행 실패 (exit ?)" 잡음(우리 kill)이나 last.txt
     ENOENT(kill 후 출력 파일만 없는 변종)로 위장되던 것을 종결한다(QA P1-2, 실사용 4회 재현:
@@ -217,6 +218,7 @@ const billedByType = (type, runner) => {
   // claude: 두 인증 env 공존 시의 실행 우선순위는 SDK 내부라 추측하지 않는다 — sdkEnvFor가
   // 구독 토큰 존재 시 API 키를 소거해 **실행 자체를 구독으로 확정**한다(2R HIGH-2 결정론화).
   if (runner === 'claude') return !!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  if (runner === 'deepseeklocal') return false; // 로컬 서버 — 과금 없음
   return false; // codex·gemini·antigravity 호스트 로그인 = 구독, openrouter 등은 회사 자격 필수
 };
 
@@ -263,6 +265,9 @@ export async function runnerStatus(wsId) {
         connected: true,
         type: credType(cred.type),
         masked: cred.type === 'host' ? '' : maskCred(cred.value),
+        // DeepSeek Local은 API key 방식만 지원한다. 과거 host 버튼 노출 버전의 잔재는
+        // 연결됨으로 보이면 실행 시 키 없이 401이 되므로 재연결 대상으로 표시한다.
+        ...(id === 'deepseeklocal' && cred.type === 'host' ? { invalid: true } : {}),
         // 저장 검증 도입 전(철회된 웹 브리지 등)에 들어온 무효 형식 토큰 — 카드가 "재연결 필요"를 보여준다
         ...(cred.type === 'oauth' && oauthFormatError(id, cred.value, 'ko') ? { invalid: true } : {}),
         // host 마커는 이 컴퓨터 CLI 로그인이 살아 있어야 유효 — 로그아웃·미설치면 "재연결 필요".

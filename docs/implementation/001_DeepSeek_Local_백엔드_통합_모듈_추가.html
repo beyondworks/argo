@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>DeepSeek Local 백엔드 통합 모듈 추가</title>
+</head>
+<body>
+    <h1>DeepSeek Local 백엔드 통합 모듈 추가</h1>
+    <h2>변경 내역 (Diff)</h2>
+    <p>Argo 프로젝트에 DeepSeek Local 러너를 추가하기 위해 백엔드 통합 모듈(<code>runners.mjs</code>, <code>chat.mjs</code>, <code>oneshot.mjs</code>)을 수정했습니다.</p>
+
+    <h3>1. <code>src/runners.mjs</code> 수정</h3>
+    <ul>
+        <li><code>catalog.mjs</code> re-export 블록에 <code>isOpenAICompatRunner</code>, <code>DEEPSEEK_LOCAL_DEFAULT_MODEL</code> 추가</li>
+        <li><code>deepseek-local.mjs</code>의 <code>deepseekLocalCall</code>, <code>DEEPSEEK_LOCAL_DEFAULT_BASE</code> re-export 추가</li>
+        <li><code>billedByType</code> 함수에 <code>deepseekLocal</code> 러너 추가하여 과금 없음(false) 처리</li>
+    </ul>
+
+    <h3>2. <code>src/chat.mjs</code> 수정</h3>
+    <ul>
+        <li><code>runners.mjs</code> import 목록에 <code>isOpenAICompatRunner</code>, <code>DEEPSEEK_LOCAL_DEFAULT_MODEL</code> 추가</li>
+        <li><code>deepseek-local.mjs</code> import 추가 (<code>deepseekLocalCall</code>, <code>DEEPSEEK_LOCAL_DEFAULT_BASE</code>)</li>
+        <li><code>colleagues</code> 변수 조건에서 OpenAI 호환 러너(<code>isOpenAICompatRunner</code>)일 경우 동료 목록을 가져오지 않도록 수정</li>
+        <li>CLI 러너 블록 종료 직후에 <code>isOpenAICompatRunner</code> 전용 실행 분기 추가 (도구·MCP 없이 텍스트 응답만 처리하는 구조)
+            <ul>
+                <li><code>loadCapabilities(wsId)</code> 호출 추가로 <code>caps</code> 변수 스코프 문제 방지</li>
+                <li><code>deepseekLocalCall</code> 함수를 통해 직접 엔드포인트 호출</li>
+            </ul>
+        </li>
+    </ul>
+
+    <h3>3. <code>src/oneshot.mjs</code> 수정</h3>
+    <ul>
+        <li><code>runners.mjs</code> 및 <code>deepseek-local.mjs</code> import 갱신</li>
+        <li>러너 미연결 에러 메시지(한국어 및 영어)에 <code>DeepSeek Local</code> 항목 추가</li>
+        <li>CLI 러너 블록 바로 뒤에 <code>isOpenAICompatRunner</code> 단발 호출 분기 추가</li>
+    </ul>
+
+    <h2>구문 검사</h2>
+    <p>수정 후 <code>node --check src/runners.mjs && node --check src/chat.mjs && node --check src/oneshot.mjs</code> 실행 완료. 에러 없음.</p>
+</body>
+</html>

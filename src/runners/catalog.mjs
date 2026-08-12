@@ -106,6 +106,13 @@ export const RUNNERS = {
       { id: 'glm-4.5-air', label: 'GLM-4.5 Air' },
     ],
   },
+  deepseeklocal: {
+    name: 'Qwen 3.6 27B', kind: 'openai-compat',
+    // 로컬 llamacpp 서버(100.103.65.62:8080)의 OpenAI 호환 API. 현재 서버 모델은 qwen3.6-27b-q4.
+    models: [
+      { id: 'qwen3.6-27b-q4', label: 'Qwen 3.6 27B (Q4)' },
+    ],
+  },
 };
 
 /** "이 컴퓨터 로그인 사용" 옵트인 허용 여부 — runnerStatus·저장(PUT) 라우트가 공유(단일 판정).
@@ -119,8 +126,10 @@ export const hostOptInAllowed = (runner) =>
 /** 외부 CLI 러너 판정 — 디스패치(chat/oneshot)의 단일 진실. 하드코딩 열거('codex'||'gemini')는
     러너 추가 때마다 배선 누락을 만든다(#119 전수 수색의 교훈) — kind가 카탈로그에 있으니 그걸 쓴다. */
 export const isCliRunner = (r) => RUNNERS[r]?.kind === 'cli';
+export const isOpenAICompatRunner = (r) => RUNNERS[r]?.kind === 'openai-compat';
 
 export const GLM_DEFAULT_MODEL = 'glm-5.2';
+export const DEEPSEEK_LOCAL_DEFAULT_MODEL = 'qwen3.6-27b-q4';
 
 const OPENROUTER_402_RE = /^API Error:\s*402\b/i; // 느슨판·엄격판 공용 — 한쪽만 고치면 두 임계가 갈라진다(검수 LOW)
 // 429 = 요청 한도(무료 티어 20/분·50~1000/일, 공식 문서 2026-07-27). 402와 같은 표면으로
@@ -183,6 +192,8 @@ export const RUNNER_AUTH = {
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
   kimi: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' }, // 접두사 무차단(GLM 관례) — 리전·미래 키 형식 변화에 저장이 막히지 않게, 판정은 verifyRunnerCred가
   openrouter: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://openrouter.ai/keys' }, // BYOK 단일(설계 2026-07-27) — OAuth·크레딧 대행 안 함
+  // 자격 값 = API 키 또는 URL|API 키. URL은 root와 /v1 모두 허용하며 실행 시 정규화한다.
+  deepseeklocal: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: '' },
   // antigravity: 자격이 OS 키링(파일 아님)이라 붙여넣기·API키·웹 브리지 전부 불가 — 호스트 로그인
   // 옵트인이 유일한 경로다(agy가 GEMINI_API_KEY를 무시함은 공식 문서 확인). keyUrl은 설치·로그인 안내.
   // **정의 순 = pickRunner 자동 선택 순 — 반드시 맨 끝**: 키링이라 로그인 여부를 파일로 판정할 수 없는

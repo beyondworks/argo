@@ -95,7 +95,7 @@ export async function detectRunners(force = false) {
   if (!force && cache && Date.now() - cacheAt < 60_000) return cache;
   await ensureCliPath(); // GUI 기동 PATH 보강 — homebrew/npm 전역 CLI 오탐 방지
   const home = homedir();
-  const [codexV, codexManaged, geminiV, geminiManaged, agyV, agyLocalBin, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
+  const [codexV, codexManaged, geminiV, geminiManaged, agyV, agyLocalBin, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin, claudeV, bundledClaude] = await Promise.all([
     exec('codex', ['--version']).then((r) => r.stdout.trim(), () => null),
     exists(codexManagedBin()),    // 관리본(자동 조달)도 설치로 취급 — PATH 없이도 돈다
     exec('gemini', ['--version']).then((r) => r.stdout.trim(), () => null),
@@ -115,10 +115,14 @@ export async function detectRunners(force = false) {
     // 기기가 설정에서 "연결중 · 이 컴퓨터 로그인"으로 오표시되고 턴은 Not logged in으로 죽던 원인.
     readFile(join(home, '.claude.json'), 'utf8')
       .then((s) => !!JSON.parse(s)?.oauthAccount?.accountUuid, () => false),
+    exec('claude', ['--version']).then((r) => r.stdout.trim(), () => null),
+    bundledClaudeCli(),
   ]);
   const claudeCred = claudeCredFile || claudeCfgLogin;
+  const claudeInstalled = !!claudeV || !!bundledClaude;
+  const claudeAuthed = !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_BASE_URL || claudeCred || claudeInstalled);
   cache = {
-    claude: { installed: true, authed: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || claudeCred) },
+    claude: { installed: claudeInstalled, authed: claudeAuthed },
     codex: { installed: !!codexV || codexManaged, authed: (!!codexV || codexManaged) && codexAuth }, // gemini와 대칭 — 관리본도 로그인 파일을 상속해 돈다
     gemini: { installed: !!geminiV || geminiManaged, authed: (!!geminiV || geminiManaged) && (geminiAuth || !!process.env.GEMINI_API_KEY) },
     glm: { installed: true, authed: !!process.env.GLM_API_KEY },
@@ -129,6 +133,7 @@ export async function detectRunners(force = false) {
     // apiError 매핑("timeout waiting for response" → 로그인 안내)이 잡는다. host 마커 invalid 판정
     // (runnerStatus)이 authed=false면 옵트인 직후부터 "재연결 필요"로 오표시되는 것을 막는 값이기도 하다.
     antigravity: { installed: !!agyV || agyLocalBin, authed: !!agyV || agyLocalBin, authUnknown: !!agyV || agyLocalBin }, // authUnknown(설치 시): UI는 '로그인됨' 단정 대신 '확인 불가'를 그린다(거짓 유효 표기 금지 — 분리 검수 H1c)
+    deepseeklocal: { installed: true, authed: true },
   };
   cacheAt = Date.now();
   return cache;

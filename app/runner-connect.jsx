@@ -21,8 +21,8 @@ export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, PICK_ORDER } 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
     (c) 방식별 입력·저장·검증·제거 또는 CLI 로그인 안내. 응답엔 마스킹만 실린다(보안 규칙). */
-const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter' };
-const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter'];
+const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', deepseeklocal: 'Qwen 3.6 27B' };
+const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter', 'deepseeklocal'];
 
 export function AiConnectionCard({ ws, accordion = false }) {
   const { t } = useLang();
@@ -57,6 +57,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   const company = st?.company ?? { connected: false };
   const [method, setMethod] = useState(company.connected ? company.type : 'apikey');
   const [value, setValue] = useState('');
+  const [deepseekBaseUrl, setDeepseekBaseUrl] = useState('http://100.103.65.62:8080/v1');
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const [ok, setOk] = useState(false);
@@ -242,13 +243,15 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   }
 
   async function save() {
-    if (busy || !value.trim() || method === 'host') return; // host 상태 방어 — 라우트가 value를 무시해 입력이 조용히 버려진다(검수 MEDIUM)
+    const isDeepseekLocal = id === 'deepseeklocal';
+    if (busy || !value.trim() || method === 'host' || (isDeepseekLocal && !deepseekBaseUrl.trim())) return; // host 상태 방어 — 라우트가 value를 무시해 입력이 조용히 버려진다(검수 MEDIUM)
     setBusy('verify'); setMsg(''); setOk(false);
     try {
       // verify는 서버가 항상 강제한다(무검증 '저장만' 함정 제거 — 2026-07-20). 플래그는 하위호환 전송.
+      const credentialValue = isDeepseekLocal ? `${deepseekBaseUrl.trim()}|${value.trim()}` : value.trim();
       const res = await fetch(`${keysBase(ws)}`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ runner: id, type: method, value: value.trim(), verify: true }),
+        body: JSON.stringify({ runner: id, type: method, value: credentialValue, verify: true }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error);
@@ -501,10 +504,25 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
               )}
             </div>
           )}
-          <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
-            placeholder={method === 'oauth' ? t('settings.runners.tokenPlaceholder') : t('settings.runners.keyPlaceholder')} style={fieldStyle} />
+          {id === 'deepseeklocal' ? (
+            <div style={{ display: 'grid', gap: 6 }}>
+              <label style={{ display: 'grid', gap: 4 }}>
+                <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.runners.deepseeklocalBaseLabel')}</span>
+                <input suppressHydrationWarning type="url" value={deepseekBaseUrl} onChange={(e) => setDeepseekBaseUrl(e.target.value)}
+                  placeholder={t('settings.runners.deepseeklocalPh')} style={fieldStyle} />
+              </label>
+              <label style={{ display: 'grid', gap: 4 }}>
+                <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.runners.deepseeklocalApiKeyLabel')}</span>
+                <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
+                  placeholder={t('settings.runners.keyPlaceholder')} style={fieldStyle} />
+              </label>
+            </div>
+          ) : (
+            <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
+              placeholder={method === 'oauth' ? t('settings.runners.tokenPlaceholder') : t('settings.runners.keyPlaceholder')} style={fieldStyle} />
+          )}
           <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>
-            {method === 'oauth' ? (
+            {id === 'deepseeklocal' ? t('settings.runners.deepseeklocalHelp') : method === 'oauth' ? (
               t('settings.runners.oauthGuide')
             ) : (
               <>

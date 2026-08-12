@@ -16,14 +16,14 @@ const FULL_ENV = {
   SUPABASE_SERVICE_ROLE_KEY: 'crown',
   ANTHROPIC_API_KEY: 'a-key', CLAUDE_CODE_OAUTH_TOKEN: 'a-oat', ANTHROPIC_AUTH_TOKEN: 'a-tok',
   OPENAI_API_KEY: 'o-key', GEMINI_API_KEY: 'g-key', GOOGLE_API_KEY: 'gg-key',
-  GLM_API_KEY: 'z-key', KIMI_API_KEY: 'k-key',
+  GLM_API_KEY: 'z-key', KIMI_API_KEY: 'k-key', DEEPSEEK_LOCAL_API_KEY: 'd-key', DEEPSEEK_LOCAL_BASE_URL: 'http://deepseek.local:8080',
 };
 
 test('scrubServerSecrets(env, runner): 실행 러너 소유 아닌 제공사 키 제거 — 크로스 러너 유출 차단', () => {
   const codex = scrubServerSecrets(FULL_ENV, 'codex');
   assert.equal(codex.OPENAI_API_KEY, 'o-key', '실행 러너(codex) 자신의 키는 보존');
   assert.equal(codex.PATH, '/usr/bin', '운영 변수 보존');
-  for (const k of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GLM_API_KEY', 'KIMI_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY']) {
+  for (const k of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GLM_API_KEY', 'KIMI_API_KEY', 'DEEPSEEK_LOCAL_API_KEY', 'DEEPSEEK_LOCAL_BASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']) {
     assert.ok(!(k in codex), `codex 턴에 ${k} 부재 — printenv로 타 제공사 자격 열람 불가`);
   }
   const glm = scrubServerSecrets(FULL_ENV, 'glm');
@@ -35,12 +35,15 @@ test('scrubServerSecrets(env, runner): 실행 러너 소유 아닌 제공사 키
   assert.equal(claude.ANTHROPIC_API_KEY, 'a-key');
   assert.equal(claude.CLAUDE_CODE_OAUTH_TOKEN, 'a-oat');
   assert.ok(!('GLM_API_KEY' in claude) && !('OPENAI_API_KEY' in claude) && !('GEMINI_API_KEY' in claude));
+  const deepseek = scrubServerSecrets(FULL_ENV, 'deepseeklocal');
+  assert.equal(deepseek.DEEPSEEK_LOCAL_API_KEY, 'd-key');
+  assert.equal(deepseek.DEEPSEEK_LOCAL_BASE_URL, 'http://deepseek.local:8080');
 });
 
 test('scrubServerSecrets(env): runner 미지정은 기존 동작 — 서버 시크릿만 제거(하위호환)', () => {
   const out = scrubServerSecrets(FULL_ENV);
   assert.ok(!('SUPABASE_SERVICE_ROLE_KEY' in out), '크라운주얼은 항상 제거');
-  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GLM_API_KEY', 'KIMI_API_KEY']) {
+  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GLM_API_KEY', 'KIMI_API_KEY', 'DEEPSEEK_LOCAL_API_KEY']) {
     assert.equal(out[k], FULL_ENV[k], `runner 미지정이면 제공사 키 보존(${k}) — 기존 소비처 무회귀`);
   }
 });
