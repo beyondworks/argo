@@ -64,34 +64,45 @@ export async function kiroCmd() {
      판별할 수단이 없다). 근본 해법은 `kiro-cli acp`(JSON-RPC 구조화 스트림)로 옮기는 것 —
      docs/kiro-runner-design.md의 후속 항목. */
 const ANSI_RE = /\u001B\[[0-9;?]*[A-Za-z]|\u001B\[K/g;
-/* 어시스턴트 메시지 시작 표지 — **줄머리만으로는 부족하다**(분리 검수 4라운드 HIGH 실증).
-   거부된 도구 호출 뒤에는 kiro-cli가 다음 메시지를 추적 줄 **끝에 개행 없이 붙인다**:
-     `Reading file: … (using tool: read)> 파일 접근이 차단되었습니다…`
-   줄머리 판정만 쓰면 이 경계를 놓쳐 last가 앞쪽 `> `를 가리키고, 중간 추적 줄이 답변에 전부 실린다
-   (거부 턴 3/3 재현). 그래서 표지를 ① 문서 시작 ② 개행 뒤 ③ `(using tool: X)` 접합부 셋으로 본다.
-   접합부를 넓게(예: 임의의 `)` 뒤) 잡지 않는 이유: 산문의 괄호 뒤 인용이 표지로 오인돼 답변이 절단된다. */
-const MARKER_RE = /(?:^|\n|\(using tool: [A-Za-z_]+\))> /g;
-/* 도구 추적 줄 — 접두사 폴백(아래)에서만 걷어낸다.
-   왜 필요한가(분리 검수 3라운드 MEDIUM 실증): kiro-cli의 `fs_write`는 **deny 검사 전에** 기존 파일
-   내용을 diff로 렌더한다 — 거부된 `~/.codex/auth.json` 류의 토큰 전문이 stdout에 찍힌 사례가 있다.
-   정상 턴에서는 마지막 `> ` 블록만 취해 자연히 버려지지만, 접두사가 없는 예상 외 형식에서는 폴백이
-   stdout 전문을 그대로 답변으로 돌려 대화 정본(chats/)에 저장되고 다음 턴 맥락으로 재주입될 수 있다.
-   그래서 폴백 경로에서는 도구 추적 계열 줄을 제거한다(답변 본문은 이 패턴을 쓰지 않는다). */
-const TOOL_TRACE_RE = /^(?:\s*[+-]\s{2,}\d+:.*|Reading file:.*|Creating:.*|Updating:.*|I['\u2019]ll create the following file:.*|I['\u2019]ll update the following file:.*| - Completed in .*|Command \w+ is rejected because.*|\s+- \/.*)$/gm;
+/* 도구 추적 줄의 **머리** 패턴 — 이 줄에서 시작하는 텍스트는 답변이 아니라 CLI의 진행 표시다.
+   실측된 형태(2026-08-12, 분리 검수 4·5라운드): 단건(`Reading file: …`), 배치(`Batch fs_read`,
+   `↱ Operation 3: Reading file: …`), 쓰기(`I'll create the following file:`, `Creating:`, 번호 diff),
+   거부(`Command fs_read is rejected because …` + 들여쓴 규칙 목록), 완료(` - Completed in …`). */
+const TRACE_HEAD_RE = /^(?:\u21b1\s*)?(?:Operation \d+:\s*)?(?:Reading (?:file|directory|image)|Batch \w+|Creating:|Updating:|I['\u2019]ll (?:create|update) the following file:|Command \w+ is rejected|\s*[+-]\s{2,}\d+:|\s{2,}- \/\S*$| - Completed in)/;
+
+/* 어시스턴트 메시지 시작 표지는 `> `인데, **줄머리에만 있는 게 아니다**(분리 검수 4·5라운드 실증):
+   거부·배치 경로에서 kiro-cli가 다음 메시지를 추적 텍스트 **끝에 개행 없이** 붙인다.
+     `Reading file: … (using tool: read)> 차단되었습니다…`
+     `Reading directory: … (using tool: read, max depth: 0, …)> …`   ← 인자형
+     `↱ Operation 3: Reading file: /x, all lines> …`                  ← (using tool:) 자체가 없다
+   접합부 문자열을 열거하는 방식은 4라운드에 한 번 실패했다(형태가 더 있었다). 그래서 열거를 늘리는
+   대신 **추적 줄을 먼저 분리**한다: 위 머리 패턴으로 식별된 줄에서만 첫 `> ` 앞을 잘라 개행을 넣는다.
+   식별된 줄 안에서만 자르므로 산문의 `> `(비교 연산·인용)를 표지로 오인하지 않는다. */
+const isTraceLine = (line) => TRACE_HEAD_RE.test(line) || line.includes('(using tool:');
+
+function splitTraceGlue(plain) {
+  return plain.split('\n').map((line) => {
+    if (!isTraceLine(line)) return line;
+    const i = line.indexOf('> ');
+    return i === -1 ? line : `${line.slice(0, i)}\n${line.slice(i)}`;
+  }).join('\n');
+}
 
 /** stdout → 최종 답변(순수). ANSI 제거 후 마지막 어시스턴트 블록만 남긴다.
     접두사가 아예 없으면(예상 외 형식·미래 렌더러 변경) **전문을 반환**한다 — 조용한 빈 답변보다
     잡음 섞인 답변이 낫다(gemini 스크럽이 통삭제로 정상 응답을 지웠던 계열의 반대 방향).
     (export: 회귀 테스트용 — 순수 함수) */
 export function kiroScrub(stdout) {
-  const plain = String(stdout ?? '').replace(ANSI_RE, '');
-  let start = -1;
-  MARKER_RE.lastIndex = 0;
-  for (let m = MARKER_RE.exec(plain); m; m = MARKER_RE.exec(plain)) start = m.index + m[0].length;
-  // 표지 부재(예상 외 형식·미래 렌더러 변경) — 전문을 반환하되 **도구 추적은 걷어낸다**.
-  // 통삭제로 정상 응답을 지우는 방향(gemini 스크럽 선례)은 피하고, 진단 유출만 막는다.
-  if (start < 0) return plain.replace(TOOL_TRACE_RE, '').replace(/\n{3,}/g, '\n\n').trim();
-  return plain.slice(start).trim();
+  const lines = splitTraceGlue(String(stdout ?? '').replace(ANSI_RE, '')).split('\n');
+  let last = -1;
+  for (let i = 0; i < lines.length; i += 1) if (lines[i].startsWith('> ')) last = i;
+  // 표지 부재(예상 외 형식·미래 렌더러 변경)면 전문을 쓴다 — 통삭제로 정상 응답을 지우는 방향
+  // (gemini 스크럽 선례)은 피한다. 어느 쪽이든 아래에서 추적 줄을 걷어낸다.
+  const picked = last < 0 ? lines : [lines[last].slice(2), ...lines.slice(last + 1)];
+  // 추적 줄 제거를 **항상** 적용한다(분리 검수 5라운드 권고): 거부·배치 경로에서는 추적이 메시지
+  // **뒤에도** 붙어(`Command fs_read is rejected …` + 규칙 목록) 표지 판정만으로는 답변에 남는다.
+  // 그 잔재는 금지 파일의 전체 경로를 담고, 대화 정본(chats/)에 저장돼 다음 턴 맥락으로 재주입된다.
+  return picked.filter((l) => !isTraceLine(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /* ─── 추론 강도 ───

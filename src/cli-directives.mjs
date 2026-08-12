@@ -52,11 +52,23 @@ function readBareObject(src, start) {
 /** 코드펜스 구간 [시작, 끝) 목록 — 펜스 **안**의 지시 형태는 지시가 아니라 예시다(설명·문서 작성).
     이걸 실행하면 크루가 "이렇게 쓰면 됩니다"라고 보여준 예시가 실제 쪽지·예약이 된다
     (분리 검수 4라운드 MEDIUM). BLOCK_RE가 이미 소비한 ```argo는 이 시점에 없으므로, 남은 펜스는
-    전부 일반 코드블록이다. */
+    전부 일반 코드블록이다.
+    줄 단위로 여닫는 이유(분리 검수 5라운드 MEDIUM): `/```[\s\S]*?```/`는 **미닫힘 펜스를 뒤 펜스와
+    짝지어** 그 사이의 진짜 지시를 통째로 삼켰다(재현됨). ~~~ 펜스도 함께 인식한다.
+    미닫힘 펜스는 구간을 만들지 않는다 — 파일 끝까지 보호 구간으로 늘리면, 답변 끝에 오는 실제
+    지시(관행상 마지막에 붙는다)가 앞쪽의 깨진 펜스 하나 때문에 무시된다. 덜 나쁜 쪽을 택했다. */
 function fencedRanges(src) {
   const out = [];
-  const re = /```[\s\S]*?```/g;
-  for (let m = re.exec(src); m; m = re.exec(src)) out.push([m.index, m.index + m[0].length]);
+  let open = null;
+  let pos = 0;
+  for (const line of src.split('\n')) {
+    const m = /^[ \t]*(`{3,}|~{3,})/.exec(line);
+    if (m) {
+      if (!open) open = { mark: m[1][0], start: pos };
+      else if (m[1][0] === open.mark) { out.push([open.start, pos + line.length]); open = null; }
+    }
+    pos += line.length + 1;
+  }
   return out;
 }
 
