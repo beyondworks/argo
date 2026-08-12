@@ -72,7 +72,7 @@ test('runnerStatus: cli 플래그 — 외부 CLI 러너만 true(카드 정직 �
   // 크루 도구(쪽지·루틴·위임)는 SDK 러너 전용(chat.mjs hasTools:false) — UI가 이 플래그로만
   // "미지원" 표기를 판정한다. 클라 하드코딩 표류('Claude Code' 명판 실사고 2026-07-20 계열) 방지.
   const st = await runnerStatus('credco');
-  for (const id of ['codex', 'gemini', 'antigravity']) assert.equal(st[id].cli, true, `${id}=CLI 러너`);
+  for (const id of ['codex', 'gemini', 'antigravity', 'kiro']) assert.equal(st[id].cli, true, `${id}=CLI 러너`);
   for (const id of ['claude', 'glm', 'kimi', 'openrouter']) assert.equal(st[id].cli, false, `${id}=SDK 계열`);
 });
 

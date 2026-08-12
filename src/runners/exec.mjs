@@ -69,6 +69,17 @@ export function apiError(e, runner = null) {
       + 'Antigravity timed out — likely agy is not logged in on this machine (run agy in a terminal and sign in with Google), '
       + 'or the task exceeded the time limit.');
   }
+  // kiro-cli 미로그인 — 비대화(`--no-interactive`)에서도 브라우저 로그인을 열려 시도하고, 아무도
+  // 승인하지 않아 `error: OAuth error: Auth portal timed out`(exit 1)으로 죽는다(격리 HOME 실측
+  // 2026-08-12: stdout엔 "Opening browser..." 스피너만, stderr에 이 문구). 상주 서비스·헤드리스에서는
+  // 브라우저 자체가 없어 같은 자리로 떨어진다. 원문을 그대로 두면 사용자는 자기 네트워크를 의심한다.
+  // **runner 게이트**: antigravity M1과 같은 이유 — 크루가 셸로 실행한 명령 출력(stdout)에 같은
+  // 문구가 섞이는 경로를 배제하고, kiro 실행 경로에서만 발화한다.
+  // 문구의 "not logged in"은 AUTH_ERR_RE(chat.mjs) 계약 — 자가치유(남은 가용 러너 순차 폴백)를 살린다.
+  if (runner === 'kiro' && /auth portal timed out|OAuth error/i.test(raw)) {
+    return new Error('Kiro 로그인이 이 컴퓨터에 없습니다(not logged in). 터미널에서 kiro-cli login 을 실행해 로그인한 뒤 다시 시도해 주세요. '
+      + 'Kiro is not logged in on this machine — run kiro-cli login in a terminal, then retry.');
+  }
   const m = raw.match(/"message"\s*:\s*"([^"]+)"/);
   return new Error(maskKeyLike(m ? m[1] : `러너 실행 실패 (exit ${e.code ?? '?'}): ${String(e.stderr ?? e.message).replace(/\s+/g, ' ').slice(-160)}`));
 }
@@ -92,13 +103,21 @@ export async function detectRunners(force = false) {
   if (!force && cache && Date.now() - cacheAt < DETECT_CACHE_MS) return cache;
   await ensureCliPath(); // GUI 기동 PATH 보강 — homebrew/npm 전역 CLI 오탐 방지
   const home = homedir();
-  const [codexV, codexManaged, geminiV, geminiManaged, agyV, agyLocalBin, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
+  const [codexV, codexManaged, geminiV, geminiManaged, agyV, agyLocalBin, kiroV, kiroLocalBin, kiroAuth, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
     exec('codex', ['--version']).then((r) => r.stdout.trim(), () => null),
     exists(codexManagedBin()),    // 관리본(자동 조달)도 설치로 취급 — PATH 없이도 돈다
     exec('gemini', ['--version']).then((r) => r.stdout.trim(), () => null),
     exists(geminiManagedEntry()),
     exec('agy', ['--version']).then((r) => r.stdout.trim(), () => null),
     exists(join(home, '.local', 'bin', 'agy')), // 공식 인스톨러 고정 경로 — GUI PATH 누락 대비
+    exec('kiro-cli', ['--version']).then((r) => r.stdout.trim(), () => null),
+    exists(join(home, '.local', 'bin', 'kiro-cli')), // agy와 같은 이유(공식 인스톨러 고정 경로)
+    // kiro 자격 — 파일이 아니라 CLI에 **직접 묻는다**(토큰이 로컬 데이터 저장소/OS 보관이라 파일
+    // 존재로는 판정 불가). 실측 2026-08-12: 로그인 "Logged in with IAM Identity Center"(exit 0),
+    // 미로그인 "Not logged in"(exit 1). `/Logged in/i`는 **"Not logged in"에도 매칭**되므로
+    // 줄머리 앵커(^)가 필수다 — 이 한 글자가 미로그인을 '연결됨'으로 뒤집는다.
+    // 비용 ~1.3초(실측)지만 이 Promise.all은 병렬이고 상위 캐시가 10분이라 체감 없음. 미설치면 즉시 reject.
+    exec('kiro-cli', ['whoami']).then((r) => /^Logged in/im.test(String(r.stdout ?? '')), () => false),
 
     exists(join(home, '.codex', 'auth.json')),
     exists(join(home, '.gemini', 'oauth_creds.json')),
@@ -127,6 +146,9 @@ export async function detectRunners(force = false) {
     // apiError 매핑("timeout waiting for response" → 로그인 안내)이 잡는다. host 마커 invalid 판정
     // (runnerStatus)이 authed=false면 옵트인 직후부터 "재연결 필요"로 오표시되는 것을 막는 값이기도 하다.
     antigravity: { installed: !!agyV || agyLocalBin, authed: !!agyV || agyLocalBin, authUnknown: !!agyV || agyLocalBin }, // authUnknown(설치 시): UI는 '로그인됨' 단정 대신 '확인 불가'를 그린다(거짓 유효 표기 금지 — 분리 검수 H1c)
+    // kiro: antigravity와 같은 host 옵트인 전용이지만 **authed가 실측값**이다(whoami) — authUnknown을
+    // 두지 않는 이유이자, RUNNER_AUTH에서 맨 끝일 필요가 없는 이유(낙관값 선점 문제가 없다).
+    kiro: { installed: !!kiroV || kiroLocalBin, authed: (!!kiroV || kiroLocalBin) && kiroAuth },
   };
   cacheAt = Date.now();
   return cache;

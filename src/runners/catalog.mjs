@@ -64,6 +64,28 @@ export const RUNNERS = {
       { id: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Antigravity)' },
     ],
   },
+  kiro: {
+    name: 'Kiro', kind: 'cli',
+    // BYOA 3호(2026-08-12) — AWS Kiro CLI(`kiro-cli`) 래핑. 자격은 IAM Identity Center / Builder ID
+    // 로그인이고 토큰은 로컬 데이터 저장소에 있다 — 붙여넣을 API 키 표면이 없어 host 옵트인 전용
+    // (antigravity와 같은 계열이나, 로그인 여부를 `whoami`로 **실제 확인**할 수 있어 낙관 authed가 아니다).
+    // 모델 목록 = `kiro-cli chat --list-models --format json` 실측(2.17.0)에서 고른 10종.
+    // 카탈로그 규칙(실턴 통과분만 등재) 준수 — 아래 전부 2026-08-12 원샷 왕복 10/10 통과 실측.
+    // 첫 항목이 러너 전환 기본값: `auto`는 kiro-cli 자신의 기본값이라 어떤 계정에서도 돈다
+    // (gemini·openrouter 카탈로그와 같은 원칙 — 앞자리에 권한·잔액 의존 모델을 두지 않는다).
+    models: [
+      { id: 'auto', label: 'Auto (Kiro)' },
+      { id: 'claude-opus-5', label: 'Claude Opus 5 (Kiro)' },
+      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5 (Kiro)' },
+      { id: 'claude-haiku-4.5', label: 'Claude Haiku 4.5 (Kiro)' },
+      { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (Kiro)' },
+      { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (Kiro)' },
+      { id: 'glm-5', label: 'GLM-5 (Kiro)' },
+      { id: 'deepseek-3.2', label: 'DeepSeek V3.2 (Kiro)' },
+      { id: 'minimax-m2.5', label: 'MiniMax M2.5 (Kiro)' },
+      { id: 'qwen3-coder-next', label: 'Qwen3 Coder Next (Kiro)' },
+    ],
+  },
   kimi: {
     name: 'Kimi', kind: 'sdk-compat',
     models: [
@@ -212,6 +234,15 @@ export const RUNNER_AUTH = {
   // deviceCode 플래그로 라우트가 기기 코드 분기를 탄다. 붙여넣을 코드가 없으니 oauthPasteable은 false.
   // 접두사는 걸지 않는다(GLM·Kimi 관례) — 키 형식이 바뀌면 저장부터 막혀 사용자가 손 쓸 데가 없다. 판정은 verifyRunnerCred가.
   grok: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, deviceCode: true, keyUrl: 'https://console.x.ai' },
+  // kiro: 자격이 CLI 로그인(IAM Identity Center / Builder ID)이고 토큰은 로컬 데이터 저장소에 있어
+  // 붙여넣기·API키·웹 브리지 전부 불가 — host 옵트인이 유일한 경로(antigravity와 같은 구조).
+  // antigravity와 다른 점: 로그인 여부를 `kiro-cli whoami`로 **실제 판정**할 수 있어(실측: 로그인
+  // "Logged in with IAM Identity Center"/exit 0, 미로그인 "Not logged in"/exit 1) authed가 낙관값이
+  // 아니다 — 그래서 antigravity처럼 맨 끝일 필요가 없고 authUnknown도 두지 않는다.
+  // connect(로그인 대행)는 아직 두지 않는다: `kiro-cli login`이 라이선스 종류(free/pro)·IdP URL을
+  // 되묻는 대화형일 수 있어(미검증) detached spawn이 조용히 멈출 위험이 있다 — 터미널 로그인 안내가
+  // 정직하다. 기기 코드(`login --use-device-flow`)는 존재하므로 후속에서 grok과 같은 배관으로 붙인다.
+  kiro: { methods: ['oauth'], apikeyPrefix: '', oauthPasteable: false, hostUsable: true, keyUrl: 'https://kiro.dev/downloads' },
   // antigravity: 자격이 OS 키링(파일 아님)이라 붙여넣기·API키·웹 브리지 전부 불가 — 호스트 로그인
   // 옵트인이 유일한 경로다(agy가 GEMINI_API_KEY를 무시함은 공식 문서 확인). keyUrl은 설치·로그인 안내.
   // **정의 순 = pickRunner 자동 선택 순 — 반드시 맨 끝**: 키링이라 로그인 여부를 파일로 판정할 수 없는
