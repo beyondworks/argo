@@ -899,7 +899,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort());
     try {
       const { messages } = await loadThread(wsId, agentSlug);
-      const ctx = (messages ?? []).filter((m) => !m.shared).slice(-6) // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지
+      const ctx = (messages ?? []).filter((m) => !m.shared && !m.pending).slice(-6) // 공유 노트는 sharedBlock으로 이미 주입, pending은 현재 턴이므로 제외 — 중복 방지
         .map((m) => `${m.who === 'user' ? (lang === 'en' ? 'Captain' : '사장') : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? (lang === 'en' ? ` (attached, open with Read: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})`) : ''}`)
         .join('\n');
       const attNote = attachments.length
@@ -1100,7 +1100,7 @@ ${lang === 'en'
         + toolNameGuide
         + fallbackDirective;
       const { messages: threadMsgs } = await loadThread(wsId, agentSlug);
-      const ctx = (threadMsgs ?? []).filter((m) => !m.shared).slice(-6)
+      const ctx = (threadMsgs ?? []).filter((m) => !m.shared && !m.pending).slice(-6)
         .map((m) => `${m.who === 'user' ? (lang === 'en' ? 'Captain' : '사장') : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? ` (${m.attachments.map((a) => `vault/${a.rel}`).join(', ')})` : ''}`)
         .join('\n');
       const attNote = attachments.length
@@ -1231,7 +1231,7 @@ ${lang === 'en'
     const foreign = !!t.sessionDevice && !!me && t.sessionDevice !== me;
     if (foreign) resumeId = null;
     if ((foreign || __freshRetry) && (t.messages ?? []).length) {
-      const ctx = t.messages.filter((m) => !m.shared).slice(-6)
+      const ctx = t.messages.filter((m) => !m.shared && !m.pending).slice(-6)
         .map((m) => `${m.who === 'user' ? (lang === 'en' ? 'Captain' : '사장') : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? (lang === 'en' ? ` (attached, open with Read: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})`) : ''}`)
         .join('\n');
       if (ctx) crossCtx = lang === 'en'

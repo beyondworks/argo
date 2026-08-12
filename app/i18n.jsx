@@ -809,6 +809,7 @@ const DICT = {
   'chat.annotate.msgHead': ['부분 코멘트 — 아래 표시한 부분만 고쳐 주세요. 나머지는 그대로 유지하세요.', 'Inline comments — revise only the marked parts. Keep everything else as is.'],
   'chat.copied': ['복사됨', 'Copied'],
   'chat.resend': ['다시 보내기', 'Resend'],
+  'chat.pending': ['답변 대기 중…', 'Waiting for reply…'],
   'chat.newChatConfirm': ['새 대화를 시작할까요? 지금 대화는 보관함에 적재되고(삭제 아님), 회사 기억(vault)도 그대로 남습니다.', 'Start a new chat? The current thread is archived (not deleted), and company memory stays intact.'],
   'chat.cardTitle': ['크루 카드', 'Crew Card'],
   'chat.systemPromptEq': ['= System Prompt', '= System Prompt'],

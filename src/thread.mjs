@@ -43,7 +43,53 @@ export async function appendTurn(wsId, slug, { userMsg, reply, handover, session
   });
 }
 
-/** 참조(cc) 공유 — 대상 크루 스레드에 노트를 남긴다. pending 표시는 "아직 그 크루가 못 본 맥락"이라는 뜻. */
+/** 웹 UI 전송 — 답변 전에 사용자 메시지를 먼저 디스크에 저장한다.
+    크루 전환으로 React 상태가 유실되어도 디스크 기록이 남아 돌아왔을 때 복원된다. */
+export async function appendUserMsg(wsId, slug, { userMsg, attachments, mid }) {
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug);
+    t.messages.push({
+      who: 'user', text: userMsg, ts: Date.now(), mid, pending: true,
+      ...(attachments?.length ? { attachments } : {}),
+    });
+    await writeJsonAtomic(file(wsId, slug), t);
+    return t;
+  });
+}
+
+/** 답변 완료 — pending 사용자 메시지를 확정하고 크루 답변을 추가한다. */
+export async function completePendingTurn(wsId, slug, { mid, reply, handover, sessionId, artifacts }) {
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug);
+    const userMsg = t.messages.find((m) => m.mid === mid);
+    if (userMsg) { delete userMsg.pending; delete userMsg.mid; }
+    t.messages.push({
+      who: 'crew', text: reply, handover, ts: Date.now(),
+      ...(artifacts?.length ? { artifacts } : {}),
+    });
+    if (sessionId) {
+      t.sessionId = sessionId;
+      t.sessionDevice = await getDeviceId().catch(() => t.sessionDevice ?? null);
+    }
+    await writeJsonAtomic(file(wsId, slug), t);
+    return t;
+  });
+}
+
+/** 답변 실패 — pending 메시지에 실패 사유를 기록한다. 돌아왔을 때 사용자가 재시도할 수 있다. */
+export async function failPendingTurn(wsId, slug, { mid, error }) {
+  return withLock(lockKey(wsId, slug), async () => {
+    const t = await loadThread(wsId, slug);
+    const userMsg = t.messages.find((m) => m.mid === mid);
+    if (userMsg) {
+      delete userMsg.pending;
+      userMsg.failed = String(error || '').slice(0, 400);
+    }
+    await writeJsonAtomic(file(wsId, slug), t);
+    return t;
+  });
+}
+
 export async function appendSharedNote(wsId, slug, text) {
   return withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug);

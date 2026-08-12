@@ -767,7 +767,7 @@ export default function CrewChat({ params }) {
           m.who === 'user' ? (
             <div key={i} className="msg-wrap fade-up" style={{ alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '75%' }}
               ref={(el) => { if (!m.mid) return; if (el) msgRefs.current.set(m.mid, el); else msgRefs.current.delete(m.mid); }}>
-              <div className="msg-user" style={{ alignSelf: 'auto', maxWidth: '100%', whiteSpace: 'pre-wrap', ...(m.failed ? { opacity: 0.72 } : {}) }}>
+              <div className="msg-user" style={{ alignSelf: 'auto', maxWidth: '100%', whiteSpace: 'pre-wrap', ...(m.failed ? { opacity: 0.72 } : {}), ...(m.pending ? { opacity: 0.7 } : {}) }}>
                 {m.attachments?.length > 0 && (
                   <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: m.text ? 8 : 0 }}>
                     {m.attachments.map((a, j) => a.isImage ? (
@@ -780,6 +780,12 @@ export default function CrewChat({ params }) {
                   </span>
                 )}
                 {m.text}
+                {m.pending && !viewing && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12, color: 'var(--fg-3)' }}>
+                    <ArgoSpinner size={12} />
+                    <span>{t('chat.pending')}</span>
+                  </div>
+                )}
               </div>
               {/* 실패한 턴 — 글은 스레드에 그대로 두고 사유와 재시도만 붙인다(호버로 숨지 않게 항상 표시) */}
               {m.failed && !viewing && (

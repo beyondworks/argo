@@ -1,7 +1,7 @@
 import { relative } from 'node:path';
 import { chat } from '../../../../../src/chat.mjs';
 import { paths } from '../../../../../src/workspace.mjs';
-import { loadThread, appendTurn, resetThread } from '../../../../../src/thread.mjs';
+import { loadThread, appendTurn, appendUserMsg, completePendingTurn, failPendingTurn, resetThread } from '../../../../../src/thread.mjs';
 import { getTurnStatus } from '../../../../../src/turn-status.mjs';
 import { nudgeSync } from '../../../../../src/sync.mjs';
 import { guardCompany } from '../../../../auth.mjs';
@@ -56,12 +56,23 @@ export async function POST(req, { params }) {
       .filter((a) => typeof a?.rel === 'string' && a.rel.startsWith('files/') && !a.rel.includes('..'))
       .map((a) => ({ rel: a.rel, name: String(a.name ?? ''), mime: String(a.mime ?? ''), isImage: !!a.isImage }))
       .slice(0, 8);
-    const t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
-    // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
-    const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
-    const saved = await appendTurn(ws, slug, { userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts });
-    nudgeSync(); // 로컬 변경 즉시 다른 기기로 전파(준실시간 — 다음 대기 건너뜀)
-    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts, totalMessages: saved.messages?.length ?? 0 });
+    // 1단계: 사용자 메시지를 답변 전에 즉시 디스크에 저장 — 크루 전환 시 유실 방지
+    const mid = `t${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    await appendUserMsg(ws, slug, { userMsg: message.trim(), attachments, mid });
+    try {
+      // 2단계: 답변 생성
+      const t = await chat(ws, slug, message.trim(), sessionId || null, { attachments });
+      // 3단계: 답변 저장 — pending 해제 + 크루 답변 추가
+      // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
+      const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
+      const saved = await completePendingTurn(ws, slug, { mid, reply: t.reply, handover, sessionId: t.sessionId, artifacts: t.artifacts });
+      nudgeSync(); // 로컬 변경 즉시 다른 기기로 전파(준실시간 — 다음 대기 건너뜀)
+      return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts, totalMessages: saved.messages?.length ?? 0 });
+    } catch (e) {
+      // 답변 실패 — pending 메시지에 실패 사유 기록(돌아왔을 때 재시도 가능)
+      await failPendingTurn(ws, slug, { mid, error: String(e.message || e) }).catch(() => {});
+      return Response.json({ error: String(e.message || e) }, { status: 500 });
+    }
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });
   }
