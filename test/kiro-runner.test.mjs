@@ -7,8 +7,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, writeFile, access } from 'node:fs/promises';
-import { tmpdir, homedir } from 'node:os';
+import { mkdtemp, mkdir, readFile, writeFile, access, symlink, realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -151,7 +151,7 @@ test('능력 게이트 fail-closed — caps 미전달이면 셸·브라우저가
   assert.deepEqual(t.allowedTools, t.tools, 'allowedTools가 tools와 다르면 비대화 턴에서 도구가 거부된다');
 });
 
-test('불변 경계 — 앱 루트·~/.argo·형제 회사·직속 도트가 deniedPaths에 실린다', async () => {
+test('불변 경계 — 앱 루트·홈 자격·형제 회사·직속 도트·회사 금고가 deniedPaths에 실린다', async () => {
   // CLI 러너는 프로세스 단위라 도구 게이트(permission-gate)를 지나지 않는다. kiro는 반경 화이트리스트를
   // 표현할 수 없어(실측) **불변 경계 deny**가 집행의 전부다 — 그래서 이 목록이 곧 보안 경계다.
   const wsRoot = await mkdtemp(join(tmpdir(), 'argo-kiro-ws-'));
@@ -160,22 +160,74 @@ test('불변 경계 — 앱 루트·~/.argo·형제 회사·직속 도트가 den
   await mkdir(mine, { recursive: true });
   await mkdir(other, { recursive: true });
   const appRoot = join(wsRoot, 'fake-app-root');
-  const denied = await kiroDeniedPaths(mine, appRoot);
+  const { read, write } = await kiroDeniedPaths(mine, appRoot);
 
-  assert.ok(denied.includes(`${appRoot}/**`), '실행 중인 Argo 코드 루트가 열려 있다');
-  assert.ok(denied.includes(`${join(homedir(), '.argo')}/**`), '기기 상태·러너 자격 폴더가 열려 있다');
-  assert.ok(denied.includes(`${other}/**`), '다른 회사 데이터가 열려 있다(교차 테넌트)');
-  assert.ok(denied.some((p) => p === join(mine, '.*')), '회사 금고 직속 도트(자가 승격 경로)가 열려 있다');
-  assert.ok(denied.some((p) => p === join(wsRoot, '.*')), 'WS_ROOT 직속 도트(계정 시크릿)가 열려 있다');
+  assert.ok(read.includes(`${appRoot}/**`), '실행 중인 Argo 코드 루트가 열려 있다');
+  assert.ok(read.includes(`${other}/**`), '다른 회사 데이터가 열려 있다(교차 테넌트)');
+  assert.ok(read.includes(join(mine, '.*')), '회사 금고 직속 도트(자가 승격 경로)가 열려 있다');
+  assert.ok(read.includes(join(wsRoot, '.*')), 'WS_ROOT 직속 도트(계정 시크릿)가 열려 있다');
   // 자기 회사 폴더 자체는 막지 않는다 — 크루의 책상이다(WS_ROOT를 통째로 deny하면 여기가 죽는다).
-  assert.ok(!denied.includes(`${mine}/**`), '자기 회사 폴더가 deny에 들어갔다 — 크루가 일할 곳이 없다');
+  assert.ok(!read.includes(`${mine}/**`), '자기 회사 폴더가 deny에 들어갔다 — 크루가 일할 곳이 없다');
+});
+
+test('불변 경계 — permission-gate의 하드 차단 목록과 정합한다(도구별 판정 갈림 방지)', async () => {
+  // 같은 파일을 SDK 러너는 deny하고 kiro는 allow하면 러너에 따라 자격 유출 여부가 갈린다.
+  // permission-gate.mjs의 상수를 소스에서 읽어 대조한다 — 한쪽만 늘어나면 이 테스트가 잡는다.
+  const gate = read('src/permission-gate.mjs');
+  const hardBlock = (gate.match(/const HARD_HOME_PATHS = \[([\s\S]*?)^\];/m) ?? [])[1] ?? '';
+  const fileBlock = (gate.match(/const HARD_HOME_FILE_PREFIXES = \[([^\]]*)\]/) ?? [])[1] ?? '';
+  const hardHome = [...`${hardBlock}${fileBlock}`.matchAll(/'(\.[^']+)'/g)].map((m) => m[1]);
+  const ctlFiles = (gate.match(/const WS_CONTROL_FILES = new Set\(\[([\s\S]*?)\]\)/) ?? [])[1] ?? '';
+  const ctlDirs = (gate.match(/const WS_CONTROL_DIRS = new Set\(\[([^\]]*)\]\)/) ?? [])[1] ?? '';
+  const ledgers = (gate.match(/const WS_LEDGER_FILES = new Set\(\[([\s\S]*?)\]\)/) ?? [])[1] ?? '';
+
+  const wsRoot = await mkdtemp(join(tmpdir(), 'argo-kiro-gate-'));
+  const cwd = join(wsRoot, 'acme');
+  await mkdir(cwd, { recursive: true });
+  const { read: rd, write: wr } = await kiroDeniedPaths(cwd, join(wsRoot, 'app'));
+
+  assert.ok(hardHome.length >= 4, `permission-gate 하드 홈 목록 파싱 실패(${hardHome.length}건)`);
+  for (const d of hardHome) {
+    assert.ok(rd.some((p) => p.endsWith(d)), `홈 자격 ${d}가 kiro deny에 없다 — 러너별 판정 갈림`);
+  }
+  for (const m of ctlFiles.matchAll(/'([^']+)'/g)) {
+    assert.ok(rd.some((p) => p.endsWith(m[1])), `회사 금고 ${m[1]}가 kiro deny에 없다`);
+  }
+  for (const m of ctlDirs.matchAll(/'([^']+)'/g)) {
+    assert.ok(rd.some((p) => p.endsWith(m[1])), `금고 디렉터리 ${m[1]}가 kiro deny에 없다`);
+  }
+  // 원장은 **쓰기만** 막는다 — permission-gate와 같은 근거(사용액 조회 기능을 죽이지 않는다).
+  for (const m of ledgers.matchAll(/'([^']+)'/g)) {
+    assert.ok(wr.some((p) => p.endsWith(m[1])), `원장 ${m[1]}가 write deny에 없다`);
+    assert.ok(!rd.some((p) => p.endsWith(m[1])), `원장 ${m[1]}가 read까지 막혔다 — 사용액 조회 기능 후퇴`);
+  }
+});
+
+test('불변 경계 — raw·canonical 두 형태를 모두 싣는다(심링크 ARGO_ROOT 우회 차단)', async () => {
+  // 분리 검수 CRITICAL 실증(2026-08-12): kiro-cli는 canonical 경로로 deny를 판정한다. raw만 실으면
+  // 심링크 경유 ARGO_ROOT(맥의 /tmp·/var, 외장 볼륨·동기화 폴더가 흔하다)에서 경계가 통째로 열렸다 —
+  // 형제 회사 파일과 WS_ROOT 직속 도트를 둘 다 읽는 것이 재현됐다. 공격이 아니라 **설정만으로** 열린다.
+  const real = await mkdtemp(join(tmpdir(), 'argo-kiro-real-'));
+  await mkdir(join(real, 'acme'), { recursive: true });
+  await mkdir(join(real, 'other-co'), { recursive: true });
+  const link = `${real}-link`;
+  await symlink(real, link);
+  const { read: rd } = await kiroDeniedPaths(join(link, 'acme'), join(real, 'app'));
+  // 맥 tmpdir(/var/folders)는 그 자체가 /private/var 심링크다 — 기대값도 realpath로 계산한다.
+  const canonReal = await realpath(real);
+
+  assert.ok(rd.some((p) => p.startsWith(link) && p.includes('other-co')), '심링크 형태 형제 deny 누락');
+  assert.ok(rd.some((p) => p.startsWith(canonReal) && !p.startsWith(link) && p.includes('other-co')),
+    'canonical 형태 형제 deny 누락 — 심링크 ARGO_ROOT에서 경계가 조용히 열린다');
+  assert.ok(rd.some((p) => p === join(link, '.*')) && rd.some((p) => p === join(canonReal, '.*')),
+    'WS_ROOT 직속 도트가 두 형태로 실리지 않았다');
 });
 
 test('불변 경계 — WS_ROOT를 못 읽어도 앱 루트·도트 방어는 남는다(fail-safe 방향)', async () => {
   const gone = join(tmpdir(), 'argo-kiro-nonexistent', 'acme');
-  const denied = await kiroDeniedPaths(gone, '/tmp/app');
-  assert.ok(denied.includes('/tmp/app/**'), '형제 열거 실패가 다른 방어까지 지웠다');
-  assert.ok(denied.some((p) => p === join(gone, '.*')));
+  const { read: rd } = await kiroDeniedPaths(gone, '/tmp/app');
+  assert.ok(rd.includes('/tmp/app/**'), '형제 열거 실패가 다른 방어까지 지웠다');
+  assert.ok(rd.includes(join(gone, '.*')));
 });
 
 test('턴별 에이전트 설정 — 경계·격리가 실제로 파일에 실리고 턴 뒤 지워진다', async () => {
@@ -192,6 +244,9 @@ test('턴별 에이전트 설정 — 경계·격리가 실제로 파일에 실�
   assert.deepEqual(cfg.allowedTools, cfg.tools);
   assert.ok(cfg.toolsSettings.read.deniedPaths.length, 'read 경계가 비었다');
   assert.ok(cfg.toolsSettings.write.deniedPaths.length, 'write 경계가 비었다');
+  // 원장은 쓰기만 추가로 막힌다 — write 목록이 read보다 커야 한다(permission-gate와 같은 근거).
+  assert.ok(cfg.toolsSettings.write.deniedPaths.length > cfg.toolsSettings.read.deniedPaths.length,
+    'write 경계가 read와 같다 — 원장 쓰기 차단이 빠졌다');
   // 전역 설정 격리 — 사용자 MCP 서버가 매 턴 로드되며 크루에게 의도 밖 도구를 준다(실측: 경고 발생).
   assert.deepEqual(cfg.mcpServers, {}, '전역 MCP 격리가 풀렸다');
   assert.equal(cfg.useLegacyMcpJson, false, '레거시 MCP json 상속이 열렸다');
@@ -236,7 +291,7 @@ test('격리 — 턴별 설정이 회사 금고 직속 도트라 크루가 스�
   const cwd = join(wsRoot, 'acme');
   await mkdir(cwd, { recursive: true });
   await writeFile(join(wsRoot, 'sentinel'), 'x');
-  const denied = await kiroDeniedPaths(cwd, join(wsRoot, 'app'));
+  const { read: denied } = await kiroDeniedPaths(cwd, join(wsRoot, 'app'));
   const dotGlobs = denied.filter((p) => p.startsWith(join(cwd, '.*')));
   assert.ok(dotGlobs.length >= 2, '직속 도트 항목이 파일·하위 both로 막혀 있지 않다(.kiro/agents 하위가 열린다)');
 });

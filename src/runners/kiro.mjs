@@ -16,11 +16,15 @@
 //  | 미로그인 턴  | 브라우저를 열려다 `error: OAuth error: Auth portal timed out`(exit 1) |
 //  | 설정 격리    | `<cwd>/.kiro/agents/<name>.json` + `--agent <name>`로 전역 설정 차단 |
 
-import { mkdir, writeFile, readdir, rm } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { mkdir, writeFile, readdir, rm, rmdir, realpath } from 'node:fs/promises';
 import { dirname, join, basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec, exists } from './shared.mjs';
+
+/** 홈은 env로만(HOME/USERPROFILE) — node:os homedir()를 **동적 join**(map/flatMap 인자)에 쓰면 Next
+    추적기가 빌드타임 부분평가로 홈 루트를 통글롭해 Windows 릴리스 빌드가 죽는다. 아래 하드 홈 목록이
+    바로 그 동적 join이므로 permission-gate.mjs와 같은 방식을 쓴다(그 파일 헤더 주석의 불변식). */
+const homeDir = () => process.env.HOME ?? process.env.USERPROFILE ?? '';
 
 /** 실행 중인 Argo 코드 루트 — src/runners/의 조부모. workroots.mjs·permission-gate.mjs의 APP_ROOT와
     같은 값(그 둘은 src/ 기준이라 '..' 한 번, 여기는 src/runners/라 두 번)이다. 인자로 주입할 수 있게
@@ -28,9 +32,9 @@ import { exec, exists } from './shared.mjs';
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /** 공식 인스톨러 고정 경로 — GUI 최소 PATH(데스크톱 사이드카)에서 PATH 감지가 실패할 때의 폴백.
-    상수 join만 쓴다: homedir()를 **동적 join**(map/flatMap 인자)에 넣으면 Next 추적기가 빌드타임
-    부분평가로 홈 루트를 통글롭해 Windows 릴리스 빌드가 죽는다(permission-gate.mjs 주석의 불변식). */
-const KIRO_LOCAL_BIN = () => join(homedir(), '.local', 'bin', 'kiro-cli');
+    상수 join이라 Next 추적기 문제(위 homeDir 주석)와 무관하지만, 홈 출처를 이 파일 안에서
+    하나로 유지하려고 같은 헬퍼를 쓴다. */
+const KIRO_LOCAL_BIN = () => join(homeDir(), '.local', 'bin', 'kiro-cli');
 
 /** kiro-cli 실행 파일 — PATH 설치본 우선, 공식 인스톨러 고정 경로 폴백.
     codex/gemini와 달리 **자동 조달은 하지 않는다**(antigravity와 같은 판단): 공식 인스톨러가
@@ -120,29 +124,69 @@ export function kiroTools(caps) {
      cwd = 회사 워크스페이스 루트,  dirname(cwd) = WS_ROOT(전 회사 데이터) */
 const GLOB_ALL = '/**';
 
-/** 불변 경계 deny 글롭(순수 계산 + WS_ROOT 1회 readdir).
+/* 하드 차단 목록은 permission-gate.mjs와 **같은 값**이다 — 같은 파일을 SDK 러너는 deny하고 kiro는
+   allow하면 러너별로 판정이 갈린다(그 파일 헤더의 "도구별 판정이 갈린다" 원칙과 같은 클래스).
+   한쪽을 고치면 다른 쪽도 고쳐야 한다 — test/kiro-runner.test.mjs가 두 목록의 정합을 잠근다. */
+const HARD_HOME_PATHS = ['.argo', '.codex', '.claude', '.gemini', '.claude.json', '.mcp.json'];
+/** 회사 금고 — 읽기·쓰기 모두 금지(자격·자가 승격의 본체). permission-gate WS_CONTROL_FILES와 동일. */
+const WS_CONTROL_FILES = ['capabilities.json', 'mcp.json', 'connections.json', 'company.json', 'routines.json', 'approvals.json', 'gw-cursor-slack.json'];
+/** 크루 카드·대화 정본 — 결재 없는 자기 범위 확대·가짜 사장 발화 주입의 경로. 동일. */
+const WS_CONTROL_DIRS = ['agents', 'chats'];
+/** 원장 — **쓰기만** 막고 읽기는 연다. permission-gate와 같은 근거(사장이 "이번 달 얼마 썼어?"라고
+    물었을 때 답할 수단을 없애는 것은 자가 승격 차단과 무관한 기능 후퇴다). */
+const WS_LEDGER_FILES = ['usage.jsonl', 'events.jsonl'];
+
+const canon = (p) => realpath(p).then((r) => r, () => null);
+
+/** 불변 경계 deny 글롭 — 반환 { read, write }(원장은 write만).
     ① APP_ROOT — 실행 중인 Argo 코드. writable_roots="/"가 앱 본체를 열었던 2026-07-22 크리티컬의 계열.
-    ② ~/.argo — 기기 상태·러너 자격 보관소.
+    ② 홈 직속 자격 — ~/.argo·~/.codex·~/.claude·~/.gemini·~/.claude.json·~/.mcp.json
+       (permission-gate HARD_HOME_PATHS와 같은 목록. "전권은 파일을 맡긴다는 뜻이지 자격을 넘긴다는
+       뜻이 아니다" — 그 파일 #187 원칙).
     ③ WS_ROOT의 **형제 회사** — 교차 테넌트 차단. WS_ROOT 통째로 deny하면 자기 회사(cwd)까지 막히므로
        형제만 열거한다(회사 수만큼 — readdir 1회). 열거 후 생성된 회사는 이 턴에 안 잡힌다(TOCTOU):
        회사 생성은 사장의 UI 행위라 턴 중 발생이 비현실적이고, 다음 턴엔 잡힌다 — 설계 문서에 명시.
-    ④ 직속 도트 항목 — `<cwd>/.*`(회사 금고: .workroots.json 등 자가 승격 경로) / `WS_ROOT/.*`(계정 시크릿).
-       ⑤ 이 러너가 쓰는 턴별 에이전트 설정(`<cwd>/.kiro`)도 ④에 포함된다 — 크루가 자기 권한 설정을
-       고쳐 다음 턴을 승격시키는 경로를 막는다.
+    ④ 직속 도트 항목 — `<cwd>/.*`(.workroots.json 등) / `WS_ROOT/.*`(계정 시크릿·기기 마커).
+       이 러너의 턴별 에이전트 설정(`<cwd>/.kiro`)도 여기 포함된다 — 크루가 자기 권한 설정을 고쳐
+       다음 턴을 승격시키는 경로를 막는다.
+    ⑤ 회사 금고 — 도트가 아닌 제어 파일·디렉터리(위 두 상수). ④의 도트 글롭으로는 안 잡힌다.
+
+    ⚠ **raw + canonical 두 형태를 모두 싣는다**(분리 검수 CRITICAL 2026-08-12 실증): kiro-cli는
+      canonical 경로로 deny를 판정하는데 우리가 raw만 실으면, 심링크 경유 ARGO_ROOT(맥의 /tmp·/var,
+      외장 볼륨·동기화 폴더 경유가 흔하다)에서 **경계 전체가 조용히 열린다** — 재현 시 형제 회사
+      파일과 WS_ROOT 직속 도트를 둘 다 읽었다. permission-gate가 하드 구역에 raw·canonical 두 형태를
+      담는 것과 같은 이유·같은 방식(그 파일 "정션·심링크 홈에서 한쪽 leg가 무동작하는 계열" 주석).
     (export: 회귀 테스트용) */
 export async function kiroDeniedPaths(cwd, appRoot = APP_ROOT) {
   const wsRoot = dirname(cwd);
   const mine = basename(cwd);
-  const siblings = await readdir(wsRoot, { withFileTypes: true })
-    .then((es) => es.filter((e) => e.isDirectory() && e.name !== mine).map((e) => join(wsRoot, e.name) + GLOB_ALL))
-    .catch(() => []); // 읽을 수 없으면 형제 열거를 포기한다 — 아래 도트·앱루트 방어는 그대로 선다
-  return [
-    appRoot + GLOB_ALL,
-    join(homedir(), '.argo') + GLOB_ALL,
-    ...siblings,
-    join(cwd, '.*'), join(cwd, '.*') + GLOB_ALL, // 직속 도트 항목(파일·디렉터리 하위 both) — .kiro 포함
-    join(wsRoot, '.*'), join(wsRoot, '.*') + GLOB_ALL,
-  ];
+  const home = homeDir();
+  // 형제는 **이름만** 뽑는다 — 경로는 아래에서 wsRoot의 두 형태에 각각 붙인다.
+  const siblingNames = await readdir(wsRoot, { withFileTypes: true })
+    .then((es) => es.filter((e) => e.isDirectory() && e.name !== mine).map((e) => e.name))
+    .catch(() => []); // 읽을 수 없으면 형제 열거를 포기한다 — 나머지 방어는 그대로 선다
+  const forms = async (p) => { const c = await canon(p); return c && c !== p ? [p, c] : [p]; };
+  const [appForms, homeForms, wsForms, cwdForms] = await Promise.all([
+    forms(appRoot), home ? forms(home) : Promise.resolve([]), forms(wsRoot), forms(cwd),
+  ]);
+
+  const read = new Set();
+  // 파일 자체 + 하위 전부 — HARD_HOME_PATHS·금고 목록에 파일과 디렉터리가 섞여 있다.
+  const deny = (set, p) => { set.add(p); set.add(p + GLOB_ALL); };
+  for (const a of appForms) deny(read, a);
+  for (const h of homeForms) for (const d of HARD_HOME_PATHS) deny(read, join(h, d));
+  for (const w of wsForms) {
+    for (const s of siblingNames) deny(read, join(w, s));
+    deny(read, join(w, '.*'));
+  }
+  for (const c of cwdForms) {
+    deny(read, join(c, '.*'));
+    for (const f of WS_CONTROL_FILES) deny(read, join(c, f));
+    for (const d of WS_CONTROL_DIRS) deny(read, join(c, d));
+  }
+  const write = new Set(read);
+  for (const c of cwdForms) for (const f of WS_LEDGER_FILES) deny(write, join(c, f));
+  return { read: [...read], write: [...write] };
 }
 
 /** 턴별 격리 에이전트 설정을 쓰고 에이전트 이름을 반환한다.
@@ -153,17 +197,21 @@ export async function kiroDeniedPaths(cwd, appRoot = APP_ROOT) {
     호출부는 반드시 finally에서 removeKiroTurnAgent로 지운다 — 회사 금고에 잔재를 남기지 않는다. */
 export async function writeKiroTurnAgent(cwd, { caps = null, appRoot = APP_ROOT, name } = {}) {
   const { tools, allowedTools } = kiroTools(caps);
-  const deniedPaths = await kiroDeniedPaths(cwd, appRoot);
+  const denied = await kiroDeniedPaths(cwd, appRoot);
   const cfg = {
     name,
     description: 'Argo turn-scoped runner agent (generated per turn — do not edit)',
     tools,
     allowedTools,
     toolsSettings: {
-      read: { deniedPaths },
-      write: { deniedPaths },
-      // 셸은 능력이 켜졌을 때만 목록에 있다. 그때도 금지 구역 명령을 막을 수단은 없어(경로 인자
-      // 판정이 없다) 읽기·쓰기와 집행 강도가 다르다 — UI 정직 표기 대상(설계 문서 한계 절).
+      read: { deniedPaths: denied.read },
+      write: { deniedPaths: denied.write }, // 원장(usage/events)은 쓰기만 추가로 막힌다
+      // 셸은 능력이 켜졌을 때만 목록에 있다. 그때도 명령 경계(shell.allowedCommands·deniedCommands)는
+      // 미검증이라 쓰지 않았다 — 읽기·쓰기와 집행 강도가 다르다(설계 문서 한계 절).
+      // grep·glob은 toolsSettings 키가 공식 스키마에 없어 넣지 않는다(미지 키는 조용히 무시된다 —
+      // allowedPaths를 버린 것과 같은 이유: 죽은 설정이 "경계가 걸려 있다"는 오독을 만든다).
+      // 실측(2026-08-12)상 grep은 read 규칙을 그대로 받아 차단된다 — 벤더 내부 동작 의존이므로
+      // 설계 문서 한계 절에 명시했다.
     },
     // 전역 설정 격리 — 사용자의 MCP 서버가 매 턴 로드되며 경고를 뱉고(실측) 크루에게 의도 밖
     // 도구를 준다. 빈 목록 + 레거시 json 미상속으로 닫는다.
@@ -176,9 +224,13 @@ export async function writeKiroTurnAgent(cwd, { caps = null, appRoot = APP_ROOT,
   return name;
 }
 
-/** 턴별 에이전트 설정 제거 — 실패는 무시(잔재 1개가 다음 턴을 막지 않는다). */
+/** 턴별 에이전트 설정 제거 — 실패는 무시(잔재 1개가 다음 턴을 막지 않는다).
+    빈 디렉터리까지 걷어낸다: rmdir은 비어 있지 않으면 실패하므로 동시 턴의 설정이나 사용자가 만든
+    `.kiro` 내용물을 지울 위험이 없다(분리 검수 LOW). */
 export async function removeKiroTurnAgent(cwd, name) {
   await rm(join(cwd, '.kiro', 'agents', `${name}.json`), { force: true }).catch(() => {});
+  await rmdir(join(cwd, '.kiro', 'agents')).catch(() => {});
+  await rmdir(join(cwd, '.kiro')).catch(() => {});
 }
 
 /* ─── 파일 반경(openRoots)을 이 러너가 쓰지 않는 이유 — 정직 표기 ───

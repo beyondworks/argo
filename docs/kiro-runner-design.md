@@ -46,13 +46,29 @@ Qwen3 Coder Next가 한 자격 아래 있다. 지금 Argo에서 같은 폭을 �
 
 결론: **화이트리스트 의미를 표현할 수 없다.** `openRoots`(홈+지정 폴더)를 인자로 실을 자리가 없다.
 
+그리고 강제되는 그 하나에도 함정이 있다 — **kiro-cli는 canonical 경로로 deny를 판정한다.** raw 경로만
+실으면 심링크 경유 ARGO_ROOT(맥의 `/tmp`·`/var`가 심링크이고, 외장 볼륨·동기화 폴더 경유도 흔하다)에서
+**경계 전체가 조용히 열린다**. 분리 검수가 라이브로 재현했다: 형제 회사 파일과 WS_ROOT 직속 도트를
+둘 다 읽었고, 심링크 없는 실경로에서는 같은 프롬프트가 전부 막혔다(대조군). 공격 행위가 필요 없고
+**설정만으로** 열리는 계열이라, raw·canonical 두 형태를 모두 싣는다(`permission-gate.mjs`가 하드 구역에
+두 형태를 담는 것과 같은 이유·같은 방식).
+
 ## 구현 결정
 
-- **집행 = 불변 경계 deny.** `openRoots`를 흉내내지 않고, "지정으로도 열리지 않는 금지 구역"
-  (`workroots.mjs` 보안 경계)만 `deniedPaths`로 옮긴다 — APP_ROOT · `~/.argo` ·
-  WS_ROOT의 **형제 회사**(교차 테넌트) · 직속 도트 항목(회사 금고 `.workroots.json`·계정 시크릿).
-  경계는 `cwd`에서 도출한다(`dirname(cwd)` = WS_ROOT — permission-gate와 같은 계산, 새 임포트 0).
-  WS_ROOT를 통째로 deny하면 자기 회사(크루 책상)까지 막히므로 형제만 열거한다(readdir 1회).
+- **집행 = 불변 경계 deny.** `openRoots`를 흉내내지 않고, "지정으로도 열리지 않는 금지 구역"만
+  `deniedPaths`로 옮긴다. 목록은 `permission-gate.mjs`와 **같은 값**이다 — 같은 파일을 SDK 러너는
+  deny하고 kiro는 allow하면 러너에 따라 자격 유출 여부가 갈린다(그 파일의 "도구별 판정이 갈린다"
+  원칙과 같은 클래스). `test/kiro-runner.test.mjs`가 두 목록의 정합을 소스 파싱으로 잠근다.
+  - APP_ROOT — 실행 중인 Argo 코드
+  - 홈 직속 자격 — `HARD_HOME_PATHS`(`~/.argo`·`~/.codex`·`~/.claude`·`~/.gemini`·`~/.claude.json`·`~/.mcp.json`)
+  - WS_ROOT의 **형제 회사**(교차 테넌트) + WS_ROOT 직속 도트(계정 시크릿·기기 마커)
+  - 회사 금고 — `WS_CONTROL_FILES`(capabilities·mcp·connections·company·routines·approvals·gw-cursor)
+    + `WS_CONTROL_DIRS`(agents·chats) + `<cwd>` 직속 도트(`.workroots.json`, 이 러너의 `.kiro` 포함)
+  - 원장(`usage.jsonl`·`events.jsonl`)은 **쓰기만** 막는다 — permission-gate와 같은 근거(사장이
+    "이번 달 얼마 썼어?"라고 물었을 때 답할 수단을 없애는 것은 자가 승격 차단과 무관한 기능 후퇴다)
+  - 경계는 `cwd`에서 도출한다(`dirname(cwd)` = WS_ROOT — permission-gate와 같은 계산, 새 임포트 0).
+    WS_ROOT를 통째로 deny하면 자기 회사(크루 책상)까지 막히므로 형제만 열거한다(readdir 1회).
+  - 모든 글롭 루트는 **raw + canonical 양형**(위 함정).
 - **`caps.fs` 반경 차이는 UI 정직 표기.** 지정 폴더가 반경으로 적용되지 않는다는 사실을
   `i18n settings.workroots.runnerNote`가 ko·en 양쪽에 명시하고, `test/kiro-runner.test.mjs`가
   그 표기를 잠근다. 러너별 집행 강도 차이를 화면이 정직하게 말하는 방식은 이 레포가 이미 채택했다
@@ -60,10 +76,12 @@ Qwen3 Coder Next가 한 자격 아래 있다. 지금 Argo에서 같은 폭을 �
 - **`allowedTools` = `tools`.** 비대화에서 포괄 신뢰가 없으면 도구가 전부 거부되므로 선택이 아니다.
   대신 능력(caps)이 `tools` 자체를 깎는다: 셸 OFF면 `shell`이 없고, 브라우저 OFF면 `web_fetch`가 없다.
   **fail-closed** — caps 미전달(oneshot 영입·기억정리)이면 둘 다 끈다.
+  ⚠ 단 채팅·잡 경로에서는 이 깎기가 사실상 발현하지 않는다: `chat.mjs`의 `loadCapabilities`가 전권
+  상수(`bypass:true`)를 주기 때문이다(2026-07-30 전권 전환). 즉 fail-closed의 실효 범위는 oneshot이다.
 - **턴별 에이전트 설정 + 고유 이름.** `<cwd>/.kiro/agents/argo-<uuid8>.json`을 매 턴 쓰고
-  `finally`에서 지운다. 고정 이름이면 같은 회사에서 두 크루가 동시에 답할 때 한쪽 `finally`가
-  다른 쪽의 실행 중 설정을 지운다. 이 경로 자체도 deny 목록에 들어가 크루가 자기 권한 설정을
-  고쳐 다음 턴을 승격시키는 길을 막는다.
+  `finally`에서 지운다(빈 디렉터리까지 `rmdir` — 비어 있지 않으면 실패하므로 동시 턴의 설정이나
+  사용자 `.kiro` 내용물을 지울 위험이 없다). 고정 이름이면 같은 회사에서 두 크루가 동시에 답할 때
+  한쪽 `finally`가 다른 쪽의 실행 중 설정을 지운다. 이 경로 자체도 deny 목록에 들어간다.
 - **감지는 `whoami`.** 파일 존재로는 판정할 수 없다(토큰이 데이터 저장소·OS 보관).
   ⚠ 정규식은 **줄머리 앵커가 필수**다: codex가 쓰는 `/Logged in/i`는 `"Not logged in"`에도
   매칭돼 미로그인을 '연결됨'으로 뒤집는다. `/^Logged in/im`을 쓴다(테스트가 이 함정을 잠근다).
@@ -77,14 +95,20 @@ Qwen3 Coder Next가 한 자격 아래 있다. 지금 Argo에서 같은 폭을 �
 
 ## 검증 (실측 — 라이브)
 
-- **게이트**: `npm run lint` 통과. `npm test` **904 tests / 899 pass / 0 fail / 5 skipped**
-  (기존 883에서 +21 — `test/kiro-runner.test.mjs`).
+- **게이트**: `npm run lint` 통과. `npm test` **906 tests / 901 pass / 0 fail / 5 skipped**
+  (기존 883에서 +23 — `test/kiro-runner.test.mjs`).
 - **E2E**(`node scripts/e2e-kiro.mjs`, 격리 `ARGO_ROOT` + 포트 3164 + Supabase env 제거):
   카탈로그(kind=cli·10모델·installed) → 상태(`hostAuthed=true` 실측·`cli=true`·`authUnknown` 없음)
   → host 옵트인 → 회사 생성 → **크루 영입 턴**(실 LLM) → **채팅 턴**(`kiro-ok`) →
-  **턴 잔재 0** → **경계 집행**까지 전부 통과.
-- **경계 집행은 실측이다**: 크루에게 WS_ROOT 직속 도트(계정 시크릿 모의 파일)를 읽으라고 지시했고
-  크루가 `BLOCKED`으로 답했으며 내용이 유출되지 않았다.
+  **턴 잔재 0** → **경계 집행** → **책상 정상**까지 전부 통과.
+- **경계 집행 판정 방법이 이 검증의 본체다.** 첫 구현은 "답변에 시크릿이 없으면 통과"였는데 그건
+  **집행으로 막힌 것과 모델이 스스로 거절한 것을 구분하지 못한다** — 분리 검수가 같은 형상에서
+  중립 프롬프트로 유출을 재현해 그 판정이 위양성임을 증명했다. 지금은 ① 프롬프트를 중립으로 두고
+  ② **도구 레벨 거부 문자열**(`rejected because it matches one or more rules on the denied list`)을
+  집행 근거로 요구하며 ③ 센티널 3종(형제 회사·WS_ROOT 직속 도트·회사 금고 `connections.json`)의
+  미유출을 함께 본다. 심링크 경유 WS_ROOT에서도 별도 재현으로 통과를 확인했다(canonical 양형 수정 후).
+- **과차단 대칭 검증**: 같은 설정으로 크루가 자기 회사 폴더(`vault/notes/`)에 읽기·쓰기를 정상
+  수행한다 — 경계가 크루의 일을 막지 않는다.
 - 모델 10종 원샷 왕복 10/10(위 표).
 
 ## 미검증 · 알려진 한계 (정직 표기 — 발행 전 확인 항목)
@@ -101,6 +125,10 @@ Qwen3 Coder Next가 한 자격 아래 있다. 지금 Argo에서 같은 폭을 �
    문서에 있으나 **미검증**이라 쓰지 않았다. 읽기·쓰기와 집행 강도가 갈리는 자리 —
    `deniedCommands`가 실제로 하드 차단이면 금지 구역 리터럴 방어(permission-gate `bashHardLiterals`)를
    그대로 옮길 수 있다. 후속 실측 항목.
+4. **grep·glob 경계는 벤더 내부 동작에 의존한다.** 두 도구의 `toolsSettings` 키는 공식 스키마에
+   없어 넣지 않았다(미지 키는 조용히 무시되므로 `allowedPaths`를 버린 것과 같은 이유 — 죽은 설정이
+   "경계가 걸려 있다"는 오독을 만든다). 실측상 grep은 `read` 규칙을 그대로 받아 차단되지만, 벤더가
+   내부 구현을 바꾸면 조용히 열린다. 계약으로 고정할 수단이 없다.
 4. **전역 기본 리소스 상속.** 커스텀 에이전트는 전역/워크스페이스 steering·skills·`AGENTS.md`를
    자동 상속한다(공식 문서). 끄는 스위치가 전역 설정(`chat.disableInheritingDefaultResources`)뿐이라
    에이전트 설정으로는 막을 수 없다. 즉 **사용자 개인 kiro 설정이 크루 턴 맥락에 섞일 수 있다**.
@@ -119,3 +147,33 @@ Qwen3 Coder Next가 한 자격 아래 있다. 지금 Argo에서 같은 폭을 �
    `host`라 Argo 청구 판정은 "구독 안"으로 잡히는데(`billedByType`) 이는 API 키 과금이 아니라는
    뜻이지 무료라는 뜻이 아니다. 크레딧 잔량 소진 시그니처는 미실측 — OpenRouter 402·Grok 크레딧
    처럼 별도 안내가 필요할 수 있다.
+
+## 분리 검수 반영 (2026-08-12, REJECT → 수정)
+
+구현과 다른 컨텍스트의 검수가 CRITICAL 2건을 **라이브 재현으로** 잡았다. 둘 다 "경계가 있다고
+믿었는데 실제로는 서지 않는" 계열이라 그대로 발행하면 교차 테넌트 유출이 됐다.
+
+- **CRITICAL-1 — deny 글롭이 raw 경로였다.** kiro-cli는 canonical로 판정한다. 심링크 경유
+  ARGO_ROOT에서 형제 회사 파일과 WS_ROOT 직속 도트를 둘 다 읽는 것이 재현됐고, 심링크 없는
+  실경로가 대조군으로 전부 막혔다(메커니즘 자체는 정상). → 모든 글롭 루트에 raw·canonical
+  양형을 싣고, `test/kiro-runner.test.mjs`가 심링크 트리로 이를 잠근다.
+- **CRITICAL-2 — E2E 경계 검증이 위양성이었다.** 답변 문자열만 봤고 프롬프트가 모델의 자발적
+  거절을 유도해서, 경계가 통째로 열려 있어도 초록이 떴다(검수자가 같은 형상에서 중립 프롬프트로
+  유출을 재현). → 판정을 도구 레벨 거부 문자열로 옮기고 프롬프트를 중립화. 설계 문서의
+  "경계 집행은 실측이다" 주장도 그 근거를 명시하도록 고쳤다.
+- **MEDIUM — 화면이 "자격 폴더 차단"이라 말하는데 `~/.argo`만 막고 있었다.** permission-gate가
+  능력·bypass와 무관하게 하드 차단하는 `HARD_HOME_PATHS`(`~/.codex`·`~/.claude`·`~/.gemini`·
+  `~/.claude.json`·`~/.mcp.json`)가 빠졌다. → 목록을 permission-gate와 동일하게 채우고, 소스 파싱
+  대조 테스트로 두 목록의 정합을 잠갔다. 검수 지적대로 문구도 실제 차단 대상을 나열하도록 고쳤다.
+- **MEDIUM — 회사 금고를 도트 항목과 동일시했다.** 실제 금고(`connections.json`·`capabilities.json`·
+  `agents/`·`chats/` 등)는 도트가 아니라 `<cwd>/.*` 글롭으로 안 잡혔다. → `WS_CONTROL_FILES`·
+  `WS_CONTROL_DIRS`를 deny에 추가(원장은 permission-gate와 같이 쓰기만).
+- **MEDIUM — i18n 영어 문구의 이중 이스케이프**로 화면에 `\u2019`가 그대로 노출됐다. 하필 보안 한계를
+  알리는 문장이었다. → 실제 문자로 수정.
+- **LOW 반영**: 빈 `.kiro/agents` 디렉터리까지 정리(`rmdir` — 비어 있지 않으면 실패하므로 동시 턴
+  안전) · caps→도구 깎기가 채팅 경로에서 발현하지 않는다는 사실을 구현 결정에 명시 · grep/glob의
+  벤더 의존을 한계 4번으로 승격.
+
+검수가 확인하지 못한 것도 그쪽 보고 그대로 남긴다: 모델 10종 재현(크레딧 소모로 미재현 — 검수자는
+`claude-haiku-4.5` 1종만 실턴 확인), `kiroScrub` 절단 결함 라이브 재현(코드 판독만), Windows 전반,
+상주·Tauri 자격 접근, 동시 턴 실행(코드 판독으로는 경합 없음).
