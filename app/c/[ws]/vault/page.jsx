@@ -20,7 +20,15 @@ export default function VaultPage({ params }) {
 function Vault({ params }) {
   const { ws } = use(params);
   const { t, lang } = useLang();
-  const initialDoc = useSearchParams().get('doc');
+  const rawInitialDoc = useSearchParams().get('doc');
+  const initialDoc = (() => {
+    if (!rawInitialDoc) return null;
+    let rel = String(rawInitialDoc).replace(/\\/g, '/');
+    const vaultIdx = rel.indexOf('/vault/');
+    if (vaultIdx >= 0) rel = rel.slice(vaultIdx + 7);
+    else rel = rel.replace(/^vault\//, '').replace(/^\.\//, '').replace(/^\/+/, '');
+    return rel;
+  })();
   const [docs, setDocs] = useState(null);
   const [projects, setProjects] = useState([]); // 크루 산출물(vault/projects/) — 기억과 별도 축
   const [selected, setSelected] = useState(initialDoc || null);

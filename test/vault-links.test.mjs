@@ -12,6 +12,8 @@ test('산출물 링크가 열리는 URL로 — md는 뷰어, 비md는 files API'
   assert.equal(rewriteVaultHref('notes/메모.md', 'w1'), `/c/w1/vault?doc=${encodeURIComponent('notes/메모.md')}`);
   assert.equal(rewriteVaultHref('./projects/a/b.pdf', 'w1'),
     `/api/companies/w1/files?rel=${encodeURIComponent('projects/a/b.pdf')}`);
+  assert.equal(rewriteVaultHref('/home/bhlee/argo/workspaces/w1/vault/projects/20260812_x/a.md', 'w1'),
+    `/c/w1/vault?doc=${encodeURIComponent('projects/20260812_x/a.md')}`); // 절대 경로 /vault/ 하위 정제
 });
 
 test('서빙 불가·위험 입력은 null(→ #) — 방어 방향 불변', () => {
