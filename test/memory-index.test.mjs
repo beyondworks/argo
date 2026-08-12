@@ -94,7 +94,9 @@ test('mtime 폴백 노트는 "추정"으로 표기하고, frontmatter 노트는 
 
 test('일지 줄에는 갱신 표기가 붙지 않는다 (map 인덱스가 날짜 자리에 새는 회귀 가드)', async () => {
   const p = await seed('t-journal', []);
-  for (const n of ['2026-07-26-시원.md', '2026-07-25-시원.md', '2026-07-24-시원.md']) {
+  const now = Date.now();
+  const names = [0, 1, 2].map((daysAgo) => `${localDay(now - daysAgo * 86400000)}-시원.md`);
+  for (const n of names) {
     await writeFile(join(p.journal, n), `# ${n}\n\n기록.\n`);
   }
   await updateIndex('t-journal');
