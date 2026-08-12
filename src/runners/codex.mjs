@@ -170,8 +170,8 @@ export async function recoverCodexAuth(handle) {
   return true;
 }
 
-export async function writeCodexTurnConfig(home, caps, workRoots = []) {
-  const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)·지정 작업 폴더에서 재생성됩니다.'];
+export async function writeCodexTurnConfig(home, caps, workRoots = [], mcpServers = null) {
+  const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)·지정 작업 폴더·MCP에서 재생성됩니다.'];
   // fs=홈(앱 본체는 밖) + 사장이 지정한 외부 작업 폴더(fs와 독립 — codexSandboxArgs와 동일 규칙)
   const roots = openRoots(caps, workRoots);
   if (roots.length || caps?.browser) {
@@ -179,6 +179,22 @@ export async function writeCodexTurnConfig(home, caps, workRoots = []) {
     // JSON.stringify — Windows 역슬래시 이스케이프(위 codexSandboxArgs와 동일 규칙, 신고 2026-07-25)
     if (roots.length) lines.push(`writable_roots = [${roots.map((r) => JSON.stringify(r)).join(', ')}]`);
     if (caps?.browser) lines.push('network_access = true');
+  }
+  // ponytail: 회사 MCP를 codex에 주입 — 러너 중립성(유건 지시 2026-07-30·08-08 "러너 상관 없이
+  // 모두 똑같아야"). 실프로브 확인: config.toml [mcp_servers.이름] 형태를 codex가 받는다(codex mcp add).
+  // env는 JSON.stringify로 TOML 문자열 이스케이프(역슬래시·따옴표 안전).
+  if (mcpServers && typeof mcpServers === 'object') {
+    for (const [name, def] of Object.entries(mcpServers)) {
+      if (!def || typeof def !== 'object') continue;
+      lines.push(`[mcp_servers.${name.replace(/[^a-zA-Z0-9_-]/g, '_')}]`);
+      if (def.command) lines.push(`command = ${JSON.stringify(def.command)}`);
+      if (Array.isArray(def.args) && def.args.length) lines.push(`args = [${def.args.map((a) => JSON.stringify(String(a))).join(', ')}]`);
+      if (def.env && typeof def.env === 'object') {
+        lines.push('[mcp_servers.' + name.replace(/[^a-zA-Z0-9_-]/g, '_') + '.env]');
+        for (const [k, v] of Object.entries(def.env)) lines.push(`${k} = ${JSON.stringify(String(v))}`);
+      }
+      if (def.url) lines.push(`url = ${JSON.stringify(def.url)}`);
+    }
   }
   await writeFile(join(home, 'config.toml'), lines.join('\n') + '\n').catch(() => { /* 실패해도 -c 폴백이 있다 */ });
 }

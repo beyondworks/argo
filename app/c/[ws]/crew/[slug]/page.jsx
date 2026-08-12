@@ -941,7 +941,7 @@ export default function CrewChat({ params }) {
             /* 배달 지시(쪽지·위임·루틴) — 사장 말풍선(우측)과 구분해 좌측 중립 카드로. who:'user'는
                러너 프롬프트 관점의 역할일 뿐 사장이 쓴 글이 아니다(신고 2026-07-28 "내가 쓴 게 아니거든"). */
             <div key={i} className="fade-up" style={{ alignSelf: 'flex-start', maxWidth: '85%', display: 'grid', gap: 4 }}>
-              <span className="microlabel" title={t('chat.via.hint')} style={{ color: 'var(--fg-3)' }}>{t(`chat.via.${['crewmail', 'delegate', 'routine', 'job'].includes(m.via) ? m.via : 'generic'}`)}</span>
+              <span className="microlabel" title={t('chat.via.hint')} style={{ color: 'var(--fg-3)' }}>{t(`chat.via.${['crewmail', 'delegate', 'routine', 'job', 'room'].includes(m.via) ? m.via : 'generic'}`)}</span>
               <div className="card" style={{ padding: '10px 13px', fontSize: 12.5, color: 'var(--fg-2)', whiteSpace: 'pre-wrap' }}>{m.text}</div>
             </div>
           ) : m.who === 'user' ? (
@@ -980,7 +980,14 @@ export default function CrewChat({ params }) {
               <Avatar name={agent?.name} sm />
               <div className="msg-wrap">
                 <div className="card" style={{ minWidth: 0, padding: '13px 16px', ...(annotIdx === i ? { borderColor: 'var(--primary)', cursor: 'text' } : {}) }}
-                  onMouseUp={annotIdx === i ? captureQuote : undefined}>
+                  onMouseUp={annotIdx === i ? captureQuote : undefined}
+                  onCopy={(e) => {
+                    // ponytail: 다크 모드에서 크루 답변 드래그 복사 → 붙여넣으면 흰 글씨라 안 보임
+                    // (제보 2026-08-07 ref a4f29a7d). 렌더된 HTML의 color:white가 실리기 때문.
+                    // 선택 텍스트만 plain으로 넘기면 서식이 안 따라간다.
+                    const sel = window.getSelection()?.toString();
+                    if (sel) { e.clipboardData.setData('text/plain', sel); e.preventDefault(); }
+                  }}>
                   <Markdown text={m.text} wsId={ws} />
                   {m.handover && (
                     <Link className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>

@@ -5,6 +5,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
+import { after } from 'next/server';
 import { randomBytes } from 'node:crypto';
 import { AUTH_ON, currentUser } from '../../auth.mjs';
 import { getFreshDeviceSession } from '../../../src/devicesession.mjs';
@@ -84,11 +85,15 @@ export async function POST(req) {
     console.error('[argo] feedback insert 실패:', error.code ?? '', error.message);
     return Response.json({ error: '저장에 실패했습니다. 잠시 후 다시 시도해 주세요' }, { status: 500 });
   }
-  // 깃헙 이슈는 **사본**이다 — 실패해도 제보는 이미 저장됐으므로 성공으로 답한다.
-  // 토큰이 없으면 skipped로 조용히 지나간다(기능 꺼짐이 기본값).
-  const mirrored = issueRateOk(user.id)
-    ? await createFeedbackIssue({ message: clean, ref, ua })
-    : { ok: false, skipped: true }; // 속도 제한 — 저장은 이미 끝났다
-  if (!mirrored.ok && !mirrored.skipped) console.error('[argo] feedback 이슈 미러링 실패:', mirrored.status ?? mirrored.error ?? '');
+  // 깃헙 이슈는 **사본**이다 — 실패해도 제보는 이미 저장됐으므로 성공으로 즉시 답한다.
+  // 이슈 생성(최대 8초)을 응답 전에 기다리면 사용자는 "전송 실패"를 본다(실사용 제보 2026-08-07
+  // ref a4f29a7d: DB엔 저장됐는데 클라이언트가 끊겨 "Could not send" 표시). after()로 응답 뒤에
+  // 돌린다 — billing 대사와 같은 패턴.
+  if (issueRateOk(user.id)) {
+    after(async () => {
+      const r = await createFeedbackIssue({ message: clean, ref, ua });
+      if (!r.ok && !r.skipped) console.error('[argo] feedback 이슈 미러링 실패:', r.status ?? r.error ?? '');
+    });
+  }
   return Response.json({ ok: true });
 }
