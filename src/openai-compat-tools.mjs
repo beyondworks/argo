@@ -1,6 +1,7 @@
 // Qwen/OpenAI 호환 러너의 네이티브 도구 레지스트리.
 // 기존 permission-gate를 단일 권한 정본으로 사용하고 OpenAI function schema로 노출한다.
 import { exec as childExec } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
@@ -168,6 +169,21 @@ export async function createOpenAICompatToolRegistry(context, { mcpServers = {},
   } = context;
   const gate = makePermissionGate(wsId, agentSlug, caps, root, chain.length ? chain[chain.length - 1] : from, lang, workRoots);
   const delegatedBy = chain.length ? chain[chain.length - 1] : null;
+  const readEvidence = new Map();
+  const addReadCoverage = (abs, { sha256, size, totalLines, start, end }) => {
+    const key = abs.normalize('NFC');
+    const previous = readEvidence.get(key);
+    const ranges = previous?.sha256 === sha256 ? [...previous.ranges, [start, end]] : [[start, end]];
+    ranges.sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    for (const range of ranges) {
+      const last = merged.at(-1);
+      if (last && range[0] <= last[1] + 1) last[1] = Math.max(last[1], range[1]);
+      else merged.push([...range]);
+    }
+    const complete = merged.length === 1 && merged[0][0] === 1 && merged[0][1] >= totalLines;
+    readEvidence.set(key, { path: abs, sha256, size, totalLines, ranges: merged, complete });
+  };
   const crew = makeCrewActions(
     { wsId, fromSlug: agentSlug, fromName: agentName || agentSlug, colleagues, hop, chain, mirrorCtx, lang },
     { runChat },
@@ -180,16 +196,24 @@ export async function createOpenAICompatToolRegistry(context, { mcpServers = {},
 
   const tools = [
     nativeTool('read_file', 'Read', '파일을 읽는다. path는 회사 폴더 기준 상대경로 또는 허용된 절대경로다. 큰 파일은 offset/limit으로 나눠 읽어라.', schema({
-      path: str('파일 경로'), offset: num('시작 줄(1부터, 기본 1)'), limit: num('읽을 줄 수(최대 1000)'),
+      path: str('파일 경로'), offset: num('시작 줄(1부터, 기본 1)'), limit: num('읽을 줄 수(최대 10000)'),
     }, ['path']), async (a) => ({ file_path: await resolvedPath(toAbs(root, a.path)) }), async (a, gateArgs) => {
       const abs = gateArgs.file_path;
       const { body } = await readTextFile(abs);
       const lines = body.toString('utf8').split(/\r?\n/);
       const offset = Math.max(1, Math.floor(Number(a.offset) || 1));
-      const limit = Math.max(1, Math.min(1000, Math.floor(Number(a.limit) || 400)));
+      const limit = Math.max(1, Math.min(10_000, Math.floor(Number(a.limit) || 400)));
+      if (offset > lines.length) throw new Error(`시작 줄이 파일 범위를 벗어났다(${offset}, 전체 ${lines.length}줄).`);
       const selected = lines.slice(offset - 1, offset - 1 + limit)
         .map((line, i) => `${offset + i}: ${line}`).join('\n');
-      return `${abs}\n${selected}\n\n[lines ${offset}-${Math.min(lines.length, offset + limit - 1)} of ${lines.length}]`;
+      const sha256 = createHash('sha256').update(body).digest('hex');
+      const end = Math.min(lines.length, offset + limit - 1);
+      const output = `${abs}\nsha256:${sha256}\n${selected}\n\n[lines ${offset}-${end} of ${lines.length}]`;
+      if (output.length > MAX_TOOL_OUTPUT) {
+        throw new Error(`읽기 결과가 도구 출력 상한을 넘었다(${output.length}자, 최대 ${MAX_TOOL_OUTPUT}). limit을 줄여 다시 읽어라.`);
+      }
+      addReadCoverage(abs, { sha256, size: body.length, totalLines: lines.length, start: offset, end });
+      return output;
     }),
 
     nativeTool('list_files', 'Glob', '폴더 안 파일을 열거한다. 회사 전체가 아니라 vault/, skills/ 또는 구체적 작업 폴더를 지정하라.', schema({
@@ -421,6 +445,16 @@ export async function createOpenAICompatToolRegistry(context, { mcpServers = {},
   return {
     definitions: tools.map((item) => item.definition),
     canonicalName: (name) => byName.get(name)?.canonicalName || name,
+    hasReadEvidence: async (path) => {
+      const key = resolve(String(path)).normalize('NFC');
+      const item = readEvidence.get(key);
+      if (!item?.complete) return false;
+      const body = await readFile(key).catch(() => null);
+      return !!body && body.length === item.size
+        && createHash('sha256').update(body).digest('hex') === item.sha256;
+    },
+    readEvidence: () => [...readEvidence.values()].filter((item) => item.complete)
+      .map(({ ranges: _ranges, complete: _complete, totalLines: _totalLines, ...item }) => ({ ...item })),
     async execute(name, args = {}, executionContext = {}) {
       const item = byName.get(name);
       if (!item) return `알 수 없는 도구: ${name}`;

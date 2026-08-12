@@ -1,7 +1,7 @@
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
-import { readdir, readFile } from 'node:fs/promises';
-import { join, relative, resolve, sep } from 'node:path';
+import { readdir, readFile, realpath } from 'node:fs/promises';
+import { join, relative, resolve, sep, win32 } from 'node:path';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
@@ -638,6 +638,163 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko') {
     : `지정 러너 ${rn(wantId)}가 이 기기에 연결돼 있지 않아 ${rn(ranId)}(으)로 대체 실행됐습니다. `;
 }
 
+/** 파일을 실제로 읽으라는 현재 지시에서 증거가 필요한 명시 경로만 추린다.
+    과거 대화(ctx)는 제외하고 userMsg만 보며, 모호한 파일명은 강제하지 않는다. */
+export function requiredReadPlan(userMsg, wsRoot) {
+  const text = String(userMsg ?? '').normalize('NFC');
+  if (!/(?:읽|열어|보|봐|확인|검증|검토|분석|요약|read|open|inspect|check|verify|review|analy[sz]e|summari[sz]e|writing|saving|creating|editing)/iu.test(text)) {
+    return { targets: [], initialTargets: [] };
+  }
+  // URL의 query/fragment에 파일명처럼 보이는 값이 있어도 로컬 파일 요구로 해석하지 않는다.
+  const scanText = text.replace(/https?:\/\/[^\s`"'<>]+/giu, (url) => ' '.repeat(url.length));
+  const candidates = [];
+  const quotedRanges = [];
+  const BARE_FILE_EXTENSIONS = new Set([
+    'md', 'txt', 'csv', 'json', 'yaml', 'yml', 'toml', 'ini', 'xml', 'html', 'css',
+    'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'py', 'sh', 'sql', 'svg',
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
+  ]);
+  const bareFileLike = (value) => {
+    const match = /^[^/\\]+\.([\p{L}\p{N}]{1,12})$/u.exec(value);
+    return !!match && BARE_FILE_EXTENSIONS.has(match[1].toLowerCase());
+  };
+  const windowsAbsolute = (value) => /^[A-Za-z]:[\\/]/u.test(value);
+  const pathLike = (value) => /^(?:\/|\.{1,2}\/|(?:[\p{L}\p{N}_.-]+\/)+)/iu.test(value)
+    || windowsAbsolute(value)
+    || bareFileLike(value);
+  for (const match of scanText.matchAll(/([`"'])([^`"'\n]+)\1/gu)) {
+    const value = match[2].trim();
+    quotedRanges.push([match.index, match.index + match[0].length]);
+    if (pathLike(value)) candidates.push({ value, index: match.index, end: match.index + match[0].length, quoted: true });
+  }
+  const pattern = /(?<![:/\\\p{L}\p{N}_.-])(?:[A-Za-z]:[\\/](?:[^\s`"'<>|()[\]{},;:])+|\/(?:[^\s`"'<>|()[\]{},;:])+|(?:\.{1,2}\/)?(?:[\p{L}\p{N}_.-]+\/)+(?:[^\s`"'<>|()[\]{},;:])+|[\p{L}\p{N}_.-]+\.[\p{L}\p{N}]{1,12})(?![/\\\p{L}\p{N}_-]|\.(?=[\p{L}\p{N}]))/giu;
+  for (const match of scanText.matchAll(pattern)) {
+    if (quotedRanges.some(([start, end]) => match.index >= start && match.index < end)) continue;
+    candidates.push({ value: match[0], index: match.index, end: match.index + match[0].length, quoted: false });
+  }
+  const sentenceRanges = [];
+  let sentenceStart = 0;
+  for (const match of scanText.matchAll(/(?:[!?;](?:\s+|$)|\.(?=\s|$)|\n+)/gu)) {
+    sentenceRanges.push([sentenceStart, match.index + match[0].length]);
+    sentenceStart = match.index + match[0].length;
+  }
+  sentenceRanges.push([sentenceStart, scanText.length]);
+  const operations = [];
+  const operationPattern = /(?:열어?\s*보[\p{L}]*|읽[\p{L}]*|열어?[\p{L}]*|보[\p{L}]*|봐[\p{L}]*|확인[\p{L}]*|검증[\p{L}]*|검토[\p{L}]*|분석[\p{L}]*|요약[\p{L}]*|저장[\p{L}]*|작성[\p{L}]*|생성[\p{L}]*|수정[\p{L}]*|쓰[\p{L}]*|써[\p{L}]*|\b(?:writing|saving|creating|editing)\b|\b(?:read|open|inspect|check|verify|review|analy[sz]e|summari[sz]e|write|save|create|edit)(?:s|d|ed|ing)?\b)/giu;
+  for (const match of scanText.matchAll(operationPattern)) {
+    if (candidates.some((candidate) => match.index >= candidate.index && match.index < candidate.end)) continue;
+    const value = match[0];
+    const before = scanText.slice(Math.max(0, match.index - 24), match.index);
+    const after = scanText.slice(match.index + value.length, match.index + value.length + 12);
+    const negated = /(?:do\s+not|don't|never|not|without|avoid|skip)\s*$/iu.test(before)
+      || /안\s*$/u.test(before)
+      || /(?:지|지는|하지|하지는|지마|지말|하지마|하지말)$/u.test(value)
+      || /^\s*(?:마|말(?:고|라|아)?|않|안)/u.test(after);
+    operations.push({
+      kind: negated ? 'negated' : (/^(?:저장|작성|생성|수정|쓰|써|write|writing|save|saving|create|creating|edit|editing)/iu.test(value) ? 'write' : 'read'),
+      index: match.index,
+      end: match.index + value.length,
+    });
+  }
+  const cleanCandidate = (candidate) => {
+    const cleaned = candidate.value.replace(/[.!?]+$/u, '');
+    return candidate.quoted ? cleaned : cleaned
+      .replace(/(?:을|를|에서|에게|의|와|과|은|는|이|가|으로|로|에|도|만|까지)$/u, '');
+  };
+  const nearbyOperations = (candidate, rangeStart, rangeEnd) => operations
+    .filter((op) => op.index >= rangeStart && op.index < rangeEnd)
+    .map((op) => ({
+      ...op,
+      afterPath: op.index >= candidate.end,
+      distance: op.end <= candidate.index ? candidate.index - op.end : op.index - candidate.end,
+    }))
+    .filter((op) => op.distance >= 0)
+    .sort((a, b) => a.distance - b.distance || Number(b.afterPath) - Number(a.afterPath) || (a.kind === 'write' ? -1 : 1));
+  const sentenceRangeFor = (candidate) => sentenceRanges.find(([start, end]) => candidate.index >= start && candidate.index < end)
+    ?? [0, scanText.length];
+  const out = [];
+  for (const candidate of candidates) {
+    const value = cleanCandidate(candidate);
+    if (!value || value.endsWith('/')) continue;
+    const [rangeStart, rangeEnd] = sentenceRangeFor(candidate);
+    const nearby = nearbyOperations(candidate, rangeStart, rangeEnd);
+    const beforePath = scanText.slice(Math.max(rangeStart, candidate.index - 48), candidate.index);
+    const after = scanText.slice(candidate.end, rangeEnd);
+    const pathNegated = /\b(?:not|neither|nor|without|except|skip|avoid)\s*$/iu.test(beforePath)
+      || /\b(?:other\s+than|exception\s+of|instead\s+of)\s*$/iu.test(beforePath)
+      || /\bunder\s+no\s+circumstances[\s\p{L}]{0,32}\b(?:read|open|inspect|check|verify)\s*$/iu.test(beforePath)
+      || /\b(?:do\s+not|don't|never|must\s+not|not\s+want|without|avoid|skip)\b[\s\p{L}]{0,48}\b(?:read|open|inspect|check|verify)(?:s|ed|ing)?\s*$/iu.test(beforePath)
+      || /^(?:\s*(?:은|는|을|를|도|만)?\s*)?(?:제외|빼|말고|외에|읽[\p{L}]*\s*안)/u.test(after);
+    const explicitReadback = /(?:그것|해당 파일|(?:then\s+)?(?:read|open|inspect)\s+(?:it|that))/iu.test(after);
+    const writtenEarlier = candidates.some((other) => {
+      if (other === candidate || other.index >= candidate.index || cleanCandidate(other) !== value) return false;
+      const [otherStart, otherEnd] = sentenceRangeFor(other);
+      return nearbyOperations(other, otherStart, otherEnd)[0]?.kind === 'write';
+    });
+    const qualifiedPath = /^(?:\/|\.{1,2}\/|(?:[\p{L}\p{N}_.-]+\/)+)/iu.test(value) || windowsAbsolute(value);
+    if (!qualifiedPath && !bareFileLike(value)) continue;
+    const productCheck = !qualifiedPath && nearby[0]?.kind === 'read'
+      && /^(?:check|verify)/iu.test(scanText.slice(nearby[0].index, nearby[0].end))
+      && (/^[A-Z][\p{L}\p{N}-]*\.(?:js|ts)$/u.test(value)
+        || /^(?:\s+\d|\s+(?:compatibility|version|release|status)\b)/iu.test(after));
+    if (productCheck) continue;
+    const sentence = scanText.slice(rangeStart, rangeEnd);
+    const ordinaryKnowledgeQuestion = !qualifiedPath && (
+      /\b(?:read|learn|know)(?:\s+[\p{L}-]+){0,3}\s+about\s*$/iu.test(beforePath)
+      || /\bwhat\s+[\p{L}\p{N}_.-]+\s+is\b/iu.test(scanText.slice(rangeStart, rangeEnd))
+      || /^\s*(?:how|why|when|where|who|can|could|should|would)\b[^?]*\?\s*$/iu.test(sentence)
+      || (/\.(?:js|ts)$/iu.test(value)
+        && /\b(?:about|documentation|docs|performance|compatibility|version|release|status|clients?)\b/iu.test(sentence))
+    );
+    if (ordinaryKnowledgeQuestion) continue;
+    // 같은 문장에서 경로에 가장 가까운 동사를 따른다. 목록의 앞 항목도 뒤의 읽기 동사와 연결되고,
+    // 저장 목적지는 앞쪽 읽기 동사보다 가까운 쓰기 동사에 연결돼 증거 대상에서 빠진다.
+    // 쓰고 나서 재읽는 출력물은 사전 증거 게이트로 순서를 뒤집지 않는다. 정상 도구 루프가 write→read를 수행한다.
+    const laterCandidates = candidates.filter((other) => other !== candidate
+      && other.index >= candidate.end && other.index < rangeEnd);
+    const laterCandidate = laterCandidates.length > 0;
+    const nextCandidateIndex = Math.min(...laterCandidates.map((other) => other.index));
+    const sentenceOperations = operations.filter((op) => op.index >= rangeStart && op.index < rangeEnd);
+    const readBeforeNextCandidate = laterCandidate && sentenceOperations.some((op) => op.kind === 'read'
+      && op.index >= candidate.end && op.index < nextCandidateIndex);
+    const destinationBeforeInputs = laterCandidate
+      && (/(?:은|는|에|로)$/u.test(candidate.value) || /^\s*(?:은|는|에|로)\s*/u.test(after))
+      && !readBeforeNextCandidate
+      && sentenceOperations.at(-1)?.kind === 'write';
+    if (destinationBeforeInputs) continue;
+    const readBeforeWrite = !laterCandidate && (
+      (explicitReadback && /\bbefore\s+(?:writing|saving|creating|editing)\s*$/iu.test(beforePath))
+      || /\b(?:write|save|create|edit)\b[\s\S]{0,48}\bafter(?:\s+you)?\s+(?:read|open|inspect)(?:ing|s|ed)?\b/iu.test(sentence)
+      || /^(?:\s*(?:은|는|을|를|도|만)?\s*)?(?:쓰기|저장|작성|생성|수정)[\p{L}\s]{0,16}전에[\s\S]{0,24}(?:읽|확인|검토)/u.test(after)
+    );
+    const deferred = !readBeforeWrite && (writtenEarlier || (explicitReadback && nearby[0]?.kind === 'write'));
+    if (pathNegated || (!deferred && !explicitReadback && !readBeforeWrite && nearby[0]?.kind !== 'read')) continue;
+    // bare 파일명과 Argo의 files/projects 논리 경로는 실제 회사 파일 저장소(vault) 기준이다.
+    const logicalPath = /^(?:files|projects)\//iu.test(value) ? `vault/${value}` : (qualifiedPath ? value : `vault/${value}`);
+    const target = windowsAbsolute(logicalPath) ? win32.normalize(logicalPath) : resolve(wsRoot, logicalPath);
+    out.push({ target: target.normalize('NFC'), deferred });
+  }
+  const targets = new Map();
+  for (const item of out) {
+    const previous = targets.get(item.target);
+    targets.set(item.target, { target: item.target, deferred: previous ? previous.deferred && item.deferred : item.deferred });
+  }
+  const items = [...targets.values()];
+  return {
+    targets: items.map((item) => item.target),
+    initialTargets: items.filter((item) => !item.deferred).map((item) => item.target),
+  };
+}
+
+export function requiredReadTargets(userMsg, wsRoot) {
+  return requiredReadPlan(userMsg, wsRoot).targets;
+}
+
+const OPENAI_COMPAT_UNSUPPORTED_READ_EXT = /\.(?:pdf|docx?|xlsx?|pptx?|od[tp]|ods|zip|png|jpe?g|gif|webp|bmp|tiff?|mp[34]|m4a|mov|avi|mkv|webm|3gp|wav|ogg|flac|aac)$/iu;
+export function unsupportedOpenAICompatReadPath(path) {
+  return OPENAI_COMPAT_UNSUPPORTED_READ_EXT.test(String(path ?? ''));
+}
+
 /**
  * 한 턴 대화. sessionId를 주면 이어서(resume), 없으면 새 세션.
  * opts.from이 있으면 위임받은 하위 턴 — 위임 도구를 붙이지 않는다(연쇄 위임 금지).
@@ -953,6 +1110,19 @@ ${lang === 'en'
         : '';
       const userContent = `${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}`;
       const fullUser = ctx ? `${ctx}\n\n${userContent}` : userContent;
+      const requestedReadPlan = requiredReadPlan(userMsg, p.root);
+      const attachmentReads = attachments.map((attachment) => resolve(p.root, 'vault', String(attachment.rel ?? '')));
+      const requestedReads = [...new Set([...requestedReadPlan.targets, ...attachmentReads])];
+      if (requestedReads.length > 64) throw new Error('한 턴에서 증거를 강제할 파일은 최대 64개다. 요청을 나눠서 실행하라.');
+      const unsupportedRead = requestedReads.find(unsupportedOpenAICompatReadPath);
+      if (unsupportedRead) {
+        throw new Error(`Qwen 로컬 러너의 read_file은 현재 텍스트 파일만 지원한다: ${relative(p.root, unsupportedRead) || unsupportedRead}`);
+      }
+      const requiredReads = await Promise.all(requestedReads.map(async (target) =>
+        (await realpath(target).catch(() => target)).normalize('NFC')));
+      const initialRequestedReads = [...new Set([...requestedReadPlan.initialTargets, ...attachmentReads])];
+      const initialReads = await Promise.all(initialRequestedReads.map(async (target) =>
+        (await realpath(target).catch(() => target)).normalize('NFC')));
       const toolStatusInput = (name, args) => ({
         ...(args.path ? { file_path: args.path } : {}),
         ...(args.query ? { pattern: args.query, query: args.query } : {}),
@@ -969,6 +1139,22 @@ ${lang === 'en'
         signal: turnDeadline,
         tools: registry.definitions,
         executeTool: registry.execute,
+        // 최대 2MB 파일을 10000줄 단위로 나눠 전체 커버할 수 있도록 증거 턴은 넉넉한 라운드를 둔다.
+        maxRounds: requiredReads.length ? 128 : 24,
+        maxToolCalls: requiredReads.length ? 128 : 64,
+        maxEvidenceRetries: requiredReads.length ? requiredReads.length + 2 : 12,
+        forceEvidence: initialReads.length ? async () => {
+          const checks = await Promise.all(initialReads.map(async (target) => [target, await registry.hasReadEvidence(target)]));
+          const missing = checks.filter(([, present]) => !present).map(([target]) => target);
+          return missing.length ? `Missing initial read_file evidence for: ${missing.join(', ')}` : null;
+        } : null,
+        validateFinal: requiredReads.length ? async () => {
+          const checks = await Promise.all(requiredReads.map(async (target) => [target, await registry.hasReadEvidence(target)]));
+          const missing = checks.filter(([, present]) => !present).map(([target]) => target);
+          return missing.length
+            ? `Missing successful read_file evidence for: ${missing.map((target) => relative(p.root, target) || target).join(', ')}`
+            : null;
+        } : null,
         onToolCall: async ({ name, args }) => {
           const canonical = registry.canonicalName(name);
           toolCounts[canonical] = (toolCounts[canonical] ?? 0) + 1;

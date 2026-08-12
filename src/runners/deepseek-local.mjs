@@ -44,7 +44,7 @@ async function request(url, init = {}, timeoutMs = 10_000) {
 /** OpenAI 호환 chat/completions 원시 호출. 도구가 있으면 표준 tools/tool_choice를 전달하고
     assistant message 전체(tool_calls 포함)를 반환한다. */
 export async function openAICompatCompletion(baseUrl, {
-  messages, model, apiKey = '', tools = [], timeoutMs = 300_000, signal = null,
+  messages, model, apiKey = '', tools = [], toolChoice = 'auto', timeoutMs = 300_000, signal = null,
 }) {
   const url = `${normalizeDeepseekLocalBase(baseUrl)}/v1/chat/completions`;
   const headers = authHeaders(apiKey);
@@ -61,7 +61,7 @@ export async function openAICompatCompletion(baseUrl, {
         model: model || DEEPSEEK_LOCAL_DEFAULT_MODEL,
         messages,
         stream: false,
-        ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+        ...(tools.length ? { tools, tool_choice: toolChoice } : {}),
       }),
       signal: controller.signal,
     });
@@ -114,7 +114,8 @@ function normalizeToolCalls(message, round) {
 export async function runOpenAICompatToolLoop(baseUrl, {
   systemPrompt, userMessage, model, apiKey = '', tools = [], executeTool,
   timeoutMs = 300_000, signal = null, maxRounds = 24, maxToolCalls = 64,
-  onToolCall = async () => {},
+  onToolCall = async () => {}, validateFinal = null, forceEvidence = validateFinal, maxEvidenceRetries = 12,
+  evidenceToolName = 'read_file',
 }) {
   const messages = [];
   if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
@@ -122,6 +123,9 @@ export async function runOpenAICompatToolLoop(baseUrl, {
   const usage = {};
   const calls = [];
   let actualModel = null;
+  // 명시적 파일 읽기 증거가 필요한 턴은 첫 호출부터 read_file 전용으로 시작한다.
+  let forceTool = typeof forceEvidence === 'function';
+  let evidenceRetries = 0;
   const deadline = new AbortController();
   const relayAbort = () => deadline.abort(signal?.reason);
   if (signal?.aborted) relayAbort();
@@ -131,7 +135,18 @@ export async function runOpenAICompatToolLoop(baseUrl, {
   try {
     for (let round = 1; round <= maxRounds; round += 1) {
       if (deadline.signal.aborted) throw deadline.signal.reason || Object.assign(new Error('중단됨'), { aborted: true });
-      const result = await openAICompatCompletion(baseUrl, { messages, model, apiKey, tools, timeoutMs, signal: deadline.signal });
+      const roundTools = forceTool
+        ? tools.filter((tool) => tool?.function?.name === evidenceToolName)
+        : tools;
+      if (forceTool && !roundTools.length) throw new Error(`필수 증거 도구를 찾지 못했다: ${evidenceToolName}`);
+      const allowedToolNames = new Set(roundTools.map((tool) => tool?.function?.name).filter(Boolean));
+      const forcedRound = forceTool;
+      const result = await openAICompatCompletion(baseUrl, {
+        messages, model, apiKey, tools: roundTools,
+        toolChoice: forceTool ? 'required' : 'auto',
+        timeoutMs, signal: deadline.signal,
+      });
+      forceTool = false;
       addUsage(usage, result.usage);
       actualModel = result.model || actualModel;
       const assistant = result.message;
@@ -139,10 +154,29 @@ export async function runOpenAICompatToolLoop(baseUrl, {
       if (!toolCalls.length) {
         const text = typeof assistant.content === 'string' ? assistant.content.trim() : '';
         if (!text) throw new Error('Qwen 3.6 27B가 빈 응답을 반환했다.');
+        const evidenceIssue = typeof validateFinal === 'function'
+          ? await validateFinal({ text, calls: [...calls], messages: [...messages] })
+          : null;
+        if (evidenceIssue) {
+          evidenceRetries += 1;
+          if (!tools.length || evidenceRetries > maxEvidenceRetries) {
+            throw new Error(`필수 도구 증거를 확보하지 못했다: ${String(evidenceIssue).slice(0, 1000)}`);
+          }
+          // 증거 없는 성공 서술은 사용자에게 반환하지 않는다. 모델에는 왜 거절됐는지 알려
+          // 누락된 실제 도구 호출을 다음 라운드에서 강제한다.
+          messages.push({ role: 'assistant', content: text });
+          messages.push({
+            role: 'user',
+            content: `[Argo tool evidence gate] Final response rejected. ${String(evidenceIssue).slice(0, 2000)} Call the required tools now. Do not repeat or invent results.`,
+          });
+          forceTool = true;
+          continue;
+        }
         return { text, usage, calls, model: actualModel, messages };
       }
       if (typeof executeTool !== 'function') throw new Error('도구 호출을 실행할 Argo 브리지가 없다.');
       if (calls.length + toolCalls.length > maxToolCalls) throw new Error(`도구 호출 상한(${maxToolCalls})을 넘었다.`);
+      let acceptedToolCall = false;
 
       messages.push({
         role: 'assistant',
@@ -160,6 +194,8 @@ export async function runOpenAICompatToolLoop(baseUrl, {
           const raw = call?.function?.arguments;
           args = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw && typeof raw === 'object' ? raw : {});
           if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('도구 인자는 JSON object여야 한다.');
+          if (!allowedToolNames.has(name)) throw new Error(`이 라운드에 허용되지 않은 도구다: ${name || 'unknown'}`);
+          acceptedToolCall = true;
           await onToolCall({ name, args, id, round });
           if (deadline.signal.aborted) throw deadline.signal.reason || Object.assign(new Error('중단됨'), { aborted: true });
           output = await executeTool(name, args, { signal: deadline.signal });
@@ -170,6 +206,13 @@ export async function runOpenAICompatToolLoop(baseUrl, {
         const record = { id, name, args, output: String(output ?? '').slice(0, 120_000) };
         calls.push(record);
         messages.push({ role: 'tool', tool_call_id: id, name, content: record.output });
+      }
+      // 강제 라운드는 아무 read_file이 아니라 요청 대상의 성공 증거가 채워졌을 때만 해제한다.
+      if (forcedRound) {
+        const remainingEvidence = typeof forceEvidence === 'function'
+          ? await forceEvidence({ text: '', calls: [...calls], messages: [...messages] })
+          : null;
+        forceTool = !acceptedToolCall || !!remainingEvidence;
       }
     }
     throw new Error(`도구 실행 라운드 상한(${maxRounds})에 도달했다.`);

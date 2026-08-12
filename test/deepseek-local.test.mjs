@@ -164,6 +164,132 @@ test('OpenAI 호환 도구 루프 — 잘못된 JSON 인자는 오류 tool 결�
   }
 });
 
+test('OpenAI 호환 도구 루프 — 증거 없는 최종 답변을 폐기하고 required 도구 호출로 재시도', async () => {
+  const realFetch = globalThis.fetch;
+  const requests = [];
+  const replies = [
+    { content: '두 파일을 모두 읽었다.' },
+    { content: null, tool_calls: [{ id: 'a', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/a.md"}' } }] },
+    { content: '이제 모두 확인했다.' },
+    { content: null, tool_calls: [{ id: 'b', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/b.md"}' } }] },
+    { content: '실제 두 파일을 확인했다.' },
+  ];
+  globalThis.fetch = async (_url, init = {}) => {
+    requests.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: replies.shift() }] }), { status: 200 });
+  };
+  try {
+    const result = await runOpenAICompatToolLoop('http://llama.local:8080', {
+      userMessage: 'a와 b를 읽어',
+      tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } }],
+      executeTool: async (_name, args) => `read:${args.path}`,
+      validateFinal: ({ calls }) => {
+        const read = new Set(calls.map((call) => call.args.path));
+        const missing = ['vault/a.md', 'vault/b.md'].filter((path) => !read.has(path));
+        return missing.length ? `missing ${missing.join(', ')}` : null;
+      },
+    });
+    assert.equal(result.text, '실제 두 파일을 확인했다.');
+    assert.deepEqual(result.calls.map((call) => call.args.path), ['vault/a.md', 'vault/b.md']);
+    assert.equal(requests[0].tool_choice, 'required');
+    assert.equal(requests[1].tool_choice, 'required');
+    assert.equal(requests[2].tool_choice, 'required');
+    assert.equal(requests[3].tool_choice, 'required');
+    assert.match(requests[1].messages.at(-1).content, /vault\/a\.md/);
+    assert.match(requests[3].messages.at(-1).content, /vault\/b\.md/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('OpenAI 호환 도구 루프 — 증거 재시도 상한 뒤 거짓 성공 대신 실패', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: '읽었다.' } }] }), { status: 200 });
+  try {
+    await assert.rejects(runOpenAICompatToolLoop('http://llama.local:8080', {
+      userMessage: '파일 읽어', maxEvidenceRetries: 1,
+      tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } }],
+      executeTool: async () => 'unused', validateFinal: () => 'vault/a.md 누락',
+    }), /필수 도구 증거를 확보하지 못했다/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('OpenAI 호환 도구 루프 — 증거 강제 라운드는 read_file 외 도구를 노출하거나 실행하지 않음', async () => {
+  const realFetch = globalThis.fetch;
+  const requests = [];
+  const replies = [
+    { content: '읽었다.' },
+    { content: null, tool_calls: [{ id: 'wrong-read', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/wrong.md"}' } }] },
+    { content: null, tool_calls: [{ id: 'bad-write', type: 'function', function: { name: 'write_file', arguments: '{"path":"vault/input.md","content":"overwrite"}' } }] },
+    { content: '완료했다.' },
+  ];
+  const executed = [];
+  globalThis.fetch = async (_url, init = {}) => {
+    requests.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: replies.shift() }] }), { status: 200 });
+  };
+  try {
+    await assert.rejects(runOpenAICompatToolLoop('http://llama.local:8080', {
+      userMessage: 'input.md를 읽어', maxEvidenceRetries: 1, maxRounds: 4,
+      tools: [
+        { type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } },
+        { type: 'function', function: { name: 'write_file', parameters: { type: 'object' } } },
+      ],
+      executeTool: async (name) => { executed.push(name); return '실행됨'; },
+      validateFinal: () => 'input.md 누락',
+    }), /필수 도구 증거를 확보하지 못했다/);
+    assert.deepEqual(requests[1].tools.map((tool) => tool.function.name), ['read_file']);
+    assert.deepEqual(requests[2].tools.map((tool) => tool.function.name), ['read_file']);
+    assert.equal(requests[2].tool_choice, 'required');
+    assert.deepEqual(executed, ['read_file']);
+    assert.deepEqual(requests[3].tools.map((tool) => tool.function.name), ['read_file']);
+    assert.equal(requests[3].tool_choice, 'required');
+    assert.match(requests[3].messages.at(-1).content, /허용되지 않은 도구/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('OpenAI 호환 도구 루프 — 기존 입력 증거 뒤 출력 쓰기와 재읽기를 순서대로 허용', async () => {
+  const realFetch = globalThis.fetch;
+  const requests = [];
+  const replies = [
+    { content: null, tool_calls: [{ id: 'read-in', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/in.md"}' } }] },
+    { content: null, tool_calls: [{ id: 'write-out', type: 'function', function: { name: 'write_file', arguments: '{"path":"vault/out.md","content":"result"}' } }] },
+    { content: null, tool_calls: [{ id: 'read-out', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/out.md"}' } }] },
+    { content: '입력과 저장 결과를 모두 확인했다.' },
+  ];
+  const read = new Set();
+  globalThis.fetch = async (_url, init = {}) => {
+    requests.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: replies.shift() }] }), { status: 200 });
+  };
+  try {
+    const result = await runOpenAICompatToolLoop('http://llama.local:8080', {
+      userMessage: 'read vault/in.md, write vault/out.md, then read vault/out.md',
+      tools: [
+        { type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } },
+        { type: 'function', function: { name: 'write_file', parameters: { type: 'object' } } },
+      ],
+      executeTool: async (name, args) => {
+        if (name === 'read_file') read.add(args.path);
+        return `${name}:${args.path}`;
+      },
+      forceEvidence: () => read.has('vault/in.md') ? null : 'input missing',
+      validateFinal: () => ['vault/in.md', 'vault/out.md'].every((path) => read.has(path)) ? null : 'read missing',
+    });
+    assert.equal(result.text, '입력과 저장 결과를 모두 확인했다.');
+    assert.deepEqual(result.calls.map((call) => call.name), ['read_file', 'write_file', 'read_file']);
+    assert.deepEqual(requests.map((request) => request.tool_choice), ['required', 'auto', 'auto', 'auto']);
+    assert.deepEqual(requests[0].tools.map((tool) => tool.function.name), ['read_file']);
+    assert.deepEqual(requests[1].tools.map((tool) => tool.function.name), ['read_file', 'write_file']);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test('OpenAI 호환 도구 루프 — 전체 턴 제한이 도구 실행 시간까지 중단 신호로 묶음', async () => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({

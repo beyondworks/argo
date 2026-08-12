@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 
 const argoRoot = await mkdtemp(join(tmpdir(), 'argo-openai-tools-'));
 process.env.ARGO_ROOT = argoRoot;
@@ -40,7 +41,11 @@ test('Qwen 네이티브 도구 목록 — Codex급 파일·검색·편집·셸·
 test('Qwen 파일 도구 — 읽기·목록·검색·쓰기·편집과 산출물 추적이 실제 파일에 적용', async () => {
   const f = await fixture();
   try {
-    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/source.md' }), /Alpha 100원/);
+    const read = await f.registry.execute('read_file', { path: 'vault/notes/source.md' });
+    assert.match(read, /Alpha 100원/);
+    assert.match(read, new RegExp(`sha256:${createHash('sha256').update('# 상품\nAlpha 100원\nBeta 200원\n').digest('hex')}`));
+    assert.equal(await f.registry.hasReadEvidence(join(f.vault, 'notes', 'source.md')), true);
+    assert.deepEqual(f.registry.readEvidence().map((item) => item.sha256), [createHash('sha256').update('# 상품\nAlpha 100원\nBeta 200원\n').digest('hex')]);
     assert.match(await f.registry.execute('list_files', { path: 'vault' }), /notes\/source\.md/);
     assert.match(await f.registry.execute('search_files', { path: 'vault', query: 'Beta' }), /source\.md:3/);
     assert.match(await f.registry.execute('write_file', { path: 'vault/projects/result.md', content: '# 결과\n초안\n' }), /저장함/);
@@ -50,6 +55,64 @@ test('Qwen 파일 도구 — 읽기·목록·검색·쓰기·편집과 산출물
     ] }), /패치 적용함/);
     assert.equal(await readFile(join(f.vault, 'projects', 'result.md'), 'utf8'), '# 최종 결과\n검증됨\n');
     assert.deepEqual(f.artifacts, ['projects/result.md', 'projects/result.md', 'projects/result.md']);
+  } finally { await f.registry.close(); }
+});
+
+test('Qwen 파일 증거 — 범위 밖 offset은 원문 미전달이므로 성공 증거가 아님', async () => {
+  const f = await fixture();
+  try {
+    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/source.md', offset: 999999 }), /파일 범위를 벗어났다/);
+    assert.equal(await f.registry.hasReadEvidence(join(f.vault, 'notes', 'source.md')), false);
+    assert.deepEqual(f.registry.readEvidence(), []);
+  } finally { await f.registry.close(); }
+});
+
+test('Qwen 파일 증거 — 부분 읽기는 부족하고 여러 구간이 전체를 덮으면 완성', async () => {
+  const f = await fixture();
+  const target = join(f.vault, 'notes', 'source.md');
+  try {
+    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/source.md', offset: 1, limit: 2 }), /lines 1-2 of 4/);
+    assert.equal(await f.registry.hasReadEvidence(target), false);
+    assert.deepEqual(f.registry.readEvidence(), []);
+    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/source.md', offset: 3, limit: 2 }), /lines 3-4 of 4/);
+    assert.equal(await f.registry.hasReadEvidence(target), true);
+    assert.equal(f.registry.readEvidence().length, 1);
+  } finally { await f.registry.close(); }
+});
+
+test('Qwen 파일 증거 — 도구 출력에서 잘릴 긴 행은 전체 읽기 증거가 아님', async () => {
+  const f = await fixture();
+  const target = join(f.vault, 'notes', 'long.txt');
+  await writeFile(target, 'x'.repeat(120_001));
+  try {
+    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/long.txt' }), /도구 출력 상한을 넘었다/);
+    assert.equal(await f.registry.hasReadEvidence(target), false);
+    assert.deepEqual(f.registry.readEvidence(), []);
+  } finally { await f.registry.close(); }
+});
+
+test('Qwen 파일 증거 — 65001행 파일도 10000행 단위 범위 읽기로 완독', async () => {
+  const f = await fixture();
+  const target = join(f.vault, 'notes', 'many-lines.txt');
+  await writeFile(target, `${'x\n'.repeat(65_000)}x`);
+  try {
+    for (let offset = 1; offset <= 65_001; offset += 10_000) {
+      assert.doesNotMatch(await f.registry.execute('read_file', {
+        path: 'vault/notes/many-lines.txt', offset, limit: 10_000,
+      }), /도구 출력 상한을 넘었다/);
+    }
+    assert.equal(await f.registry.hasReadEvidence(target), true);
+  } finally { await f.registry.close(); }
+});
+
+test('Qwen 파일 증거 — 읽은 뒤 파일 내용이 바뀌면 이전 증거를 무효화', async () => {
+  const f = await fixture();
+  const target = join(f.vault, 'notes', 'source.md');
+  try {
+    await f.registry.execute('read_file', { path: 'vault/notes/source.md', limit: 10_000 });
+    assert.equal(await f.registry.hasReadEvidence(target), true);
+    await writeFile(target, '# 변경됨\n');
+    assert.equal(await f.registry.hasReadEvidence(target), false);
   } finally { await f.registry.close(); }
 });
 
@@ -72,6 +135,8 @@ test('Qwen 파일 도구 — 허용 폴더 안 심볼릭 링크로 외부 파일
   await symlink(outsideDir, join(f.vault, 'escape-dir'));
   try {
     assert.match(await f.registry.execute('read_file', { path: 'vault/notes/escape.md' }), /도구 거부/);
+    assert.equal(await f.registry.hasReadEvidence(join(f.vault, 'notes', 'escape.md')), false);
+    assert.deepEqual(f.registry.readEvidence(), []);
     assert.match(await f.registry.execute('list_files', { path: 'vault/escape-dir' }), /도구 거부/);
     assert.match(await f.registry.execute('write_file', { path: 'vault/escape-dir/new.md', content: '탈출' }), /도구 거부/);
     await assert.rejects(readFile(join(outsideDir, 'new.md')));
