@@ -802,7 +802,7 @@ function WorkRootsCard({ ws }) {
   }
 
   return (
-    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8 }}>
+    <div id="workroots" className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8, scrollMarginTop: 76 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span className="card-title">{t('settings.workroots.title')}</span>
         <span className="chip">{t('settings.workroots.deviceLocal')}</span>
