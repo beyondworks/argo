@@ -21,6 +21,29 @@ import { callConnectorTool } from './connectors.mjs'; // 커넥터 단일 실행
     쪽지:   {"action":"mail","to":"슬러그","cc":["..."],"message":"..."}
     커넥터: {"action":"tool","server":"gmail","tool":"search_threads","args":{…}} */
 const BLOCK_RE = /```argo[ \t]*\r?\n([\s\S]*?)```/g;
+/* 펜스 없는 변종 — 일부 CLI 러너는 답변을 **렌더해서** 내보내며 그 과정에서 코드펜스가 사라진다
+   (kiro-cli 실측 2026-08-12: 백틱 0개, JSON은 한 줄로 렌더). 그러면 위 정규식이 영원히 매치되지 않아
+   지시가 **조용히 무동작**하고, 원시 JSON이 사장 화면에 그대로 남는다 — 이 파일이 없애려고 만들어진
+   바로 그 증상("크루가 예약했다고 말만 한다")이 러너만 바꿔 재발한다(러너 중립성 위반).
+
+   정규식이 아니라 스캔인 이유: 커넥터 지시는 `args`가 중첩 오브젝트라, 게으른 매치는 안쪽 `}`에서
+   멈추고 탐욕 매치는 뒤 문장까지 삼킨다. 첫 `{`부터 각 `}` 후보까지를 차례로 JSON.parse 해
+   **처음 성공한 지점**을 취하면 중첩 깊이와 무관하게 정확하다(블록은 작아 비용 무시).
+   오탐 방지: 파싱된 오브젝트에 `action` 키가 있을 때만 지시로 취급하고, 아니면 원문을 그대로 남긴다.
+   산문에 이 형태가 우연히 나올 확률은 사실상 0이고, 나와도 텍스트가 보존되므로 손실이 없다. */
+const BARE_HEAD_RE = /^argo[ \t]*\r?\n[ \t]*(?=\{)/gm;
+
+/** 펜스 없는 블록 하나를 읽는다 — 반환 { obj, end } 또는 null(파싱 실패). start는 `{` 위치. */
+function readBareObject(src, start) {
+  for (let i = src.indexOf('}', start); i !== -1; i = src.indexOf('}', i + 1)) {
+    const body = src.slice(start, i + 1);
+    try {
+      const obj = JSON.parse(body);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) return { obj, end: i + 1, body };
+    } catch { /* 아직 닫히지 않았다 — 다음 `}` 후보로 */ }
+  }
+  return null;
+}
 
 /** 커넥터 결과 주입 상한(바이트) — **한 턴 전체 예산**이다(블록이 여럿이면 앞에서부터 나눠 쓴다).
     근거: 후속 턴 프롬프트는 러너 CLI에 argv로 실린다. Windows CreateProcess의 32,767자가 3플랫폼
@@ -61,14 +84,29 @@ export function parseDirectives(text) {
   const src = String(text ?? '');
   const directives = [];
   const bad = [];
-  const clean = src.replace(BLOCK_RE, (_m, body) => {
+  const take = (body) => {
     try {
       const d = JSON.parse(body.trim());
       if (d && typeof d === 'object' && !Array.isArray(d)) directives.push(d);
       else bad.push('블록이 JSON 오브젝트가 아님');
     } catch (e) { bad.push(String(e.message || e).slice(0, 120)); }
     return '';
-  });
+  };
+  let clean = src.replace(BLOCK_RE, (_m, body) => take(body));
+  // 펜스 없는 변종 — 잘라내기는 **뒤에서 앞으로**(앞에서 자르면 인덱스가 밀린다) 하되,
+  // 수집한 지시는 **원문 순서로** 되돌려 붙인다. 지시는 순차 실행되므로 순서가 뒤집히면
+  // "쪽지 보낸 뒤 예약"이 "예약한 뒤 쪽지"가 된다.
+  const bareFound = [];
+  const heads = [...clean.matchAll(BARE_HEAD_RE)].reverse();
+  for (const h of heads) {
+    const braceAt = clean.indexOf('{', h.index);
+    if (braceAt === -1) continue;
+    const found = readBareObject(clean, braceAt);
+    if (!found || typeof found.obj.action !== 'string') continue; // action 없으면 지시로 보지 않는다(원문 보존)
+    bareFound.push(found.obj);
+    clean = clean.slice(0, h.index) + clean.slice(found.end);
+  }
+  directives.push(...bareFound.reverse());
   return { clean: clean.replace(/\n{3,}/g, '\n\n').trim(), directives, bad };
 }
 

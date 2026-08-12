@@ -323,3 +323,71 @@ test('격리 — 턴별 설정이 회사 금고 직속 도트라 크루가 스�
   const dotGlobs = denied.filter((p) => p.startsWith(join(cwd, '.*')));
   assert.ok(dotGlobs.length >= 2, '직속 도트 항목이 파일·하위 both로 막혀 있지 않다(.kiro/agents 하위가 열린다)');
 });
+
+test('답변 추출 폴백 — 도구 진단(거부 파일 diff)이 답변으로 새지 않는다', () => {
+  // 분리 검수 3라운드 MEDIUM 실증: kiro-cli fs_write는 **deny 검사 전에** 기존 내용을 diff로 렌더한다.
+  // 정상 턴은 마지막 '> ' 블록만 취해 버려지지만, 접두사 없는 예상 외 형식의 폴백이 stdout 전문을
+  // 답변으로 돌리면 그 진단이 대화 정본(chats/)에 저장되고 다음 턴 맥락으로 재주입된다.
+  const raw = [
+    'Reading file: /Users/u/.codex/auth.json, all lines (using tool: read)',
+    '+    1: {"accessToken":"eyJhbGciOi.SECRET_TOKEN.xyz"}',
+    ' - Completed in 0.0s',
+    'Command fs_read is rejected because it matches one or more rules on the denied list:',
+    '  - /Users/u/.codex',
+    '실제 답변 문장.',
+  ].join('\n');
+  const out = kiroScrub(raw);
+  assert.doesNotMatch(out, /SECRET_TOKEN/, '거부된 파일 내용이 답변으로 샜다');
+  assert.match(out, /실제 답변 문장/, '정상 답변까지 지웠다(통삭제 방향 금지)');
+  // 접두사가 있는 정상 턴은 이 스크럽을 타지 않는다 — 답변 본문이 훼손되면 안 된다.
+  assert.equal(kiroScrub('> +    1: 이건 답변 안의 diff 예시\n계속'), '+    1: 이건 답변 안의 diff 예시\n계속');
+});
+
+test('러너 패리티 — 지시 블록이 펜스 없이도 파싱된다(kiro 렌더러가 펜스를 지운다)', async () => {
+  // 분리 검수 3라운드 HIGH 실증: kiro-cli는 렌더 결과에서 코드펜스를 제거한다(백틱 0개). 그러면
+  // BLOCK_RE가 영원히 매치되지 않아 루틴 예약·쪽지·결재·커넥터가 **조용히 무동작**하고, 원시 JSON이
+  // 사장 화면에 남는다 — cli-directives.mjs가 없애려 만들어진 바로 그 증상의 러너별 재발이자
+  // "러너에 따라 크루가 할 수 있는 일이 갈리면 안 된다"(유건 지시)의 정면 위반이다.
+  const { parseDirectives } = await import('../src/cli-directives.mjs');
+  const fenced = parseDirectives('앞말\n```argo\n{"action":"mail","to":"bob","message":"hi"}\n```\n뒷말');
+  const bare = parseDirectives('앞말\nargo\n{\n  "action": "mail",\n  "to": "bob",\n  "message": "hi"\n}\n뒷말');
+  assert.equal(bare.directives.length, 1, '펜스 없는 지시가 파싱되지 않았다');
+  assert.deepEqual(bare.directives, fenced.directives, '두 형태의 파싱 결과가 갈렸다');
+  assert.equal(bare.clean, '앞말\n\n뒷말', '지시 블록이 화면에서 지워지지 않았다');
+  // 실제 kiro 렌더 형태 — JSON이 **한 줄**로 나온다(실측). 여러 줄만 받으면 이게 새어 나간다.
+  const oneLine = parseDirectives('쪽지를 보냅니다.\n\nargo\n{"action":"mail","to":"bob","message":"검토 부탁"}');
+  assert.equal(oneLine.directives.length, 1, '한 줄 JSON 지시가 파싱되지 않았다(실측 형태)');
+  assert.equal(oneLine.clean, '쪽지를 보냅니다.');
+  // 중첩 오브젝트(커넥터 args) — 정규식 게으른 매치가 안쪽 }에서 멈추던 자리
+  const nested = parseDirectives('ok\nargo\n{"action":"tool","server":"gmail","tool":"s","args":{"q":"x","n":{"deep":1}}}\n뒷말');
+  assert.equal(nested.directives.length, 1);
+  assert.deepEqual(nested.directives[0].args, { q: 'x', n: { deep: 1 } }, '중첩 args가 잘렸다');
+  // 여러 블록의 **원문 순서** — 지시는 순차 실행되므로 뒤집히면 결과가 달라진다
+  const two = parseDirectives('a\nargo\n{"action":"mail","to":"x"}\nb\nargo\n{"action":"schedule","every":"30m"}\nc');
+  assert.deepEqual(two.directives.map((d) => d.action), ['mail', 'schedule'], '지시 순서가 뒤집혔다');
+  // 오탐 무해화 — action이 없으면 지시로 보지 않고 **원문을 보존**한다(산문 손실 금지).
+  const noise = parseDirectives('argo\n{\n  "foo": 1\n}');
+  assert.equal(noise.directives.length, 0);
+  assert.match(noise.clean, /"foo"/, 'action 없는 블록이 소실됐다');
+});
+
+test('프롬프트 정직성 — 셸 없는 러너에 "셸 허용"이라 말하지 않는다', async () => {
+  // 분리 검수 3라운드 HIGH 실증: caps는 전권 상수(capabilities.mjs)라 caps.shell로는 판정할 수 없어
+  // kiro 턴도 "셸 명령: 허용."을 받았다. 크루가 없는 도구를 시도하다 실패하고 사장에게
+  // "터미널에서 직접 실행하세요"로 떠넘기는 것이 실제로 관측됐다. 크루가 이 문장의 1차 소비자다.
+  const { commonDirectives } = await import('../src/chat.mjs');
+  const caps = { fs: true, browser: true, shell: true, bypass: true };
+  for (const lang of ['ko', 'en']) {
+    const kiro = commonDirectives({ caps, hasTools: false, lang, runner: 'kiro' });
+    assert.match(kiro, lang === 'ko' ? /셸 명령: 이 러너\(Kiro\)에서는 지원되지 않는다/ : /Shell commands: not supported on this runner \(Kiro\)/);
+    assert.doesNotMatch(kiro, lang === 'ko' ? /셸 명령: 허용/ : /Shell commands: allowed/);
+    // 셸 규율(백그라운드·타임아웃)도 주입하지 않는다 — 없는 도구의 사용법을 가르치는 자기모순
+    assert.doesNotMatch(kiro, /nohup|run_in_background/, '셸 없는 러너에 백그라운드 규율이 주입됐다');
+    // 지정 작업 폴더가 반경으로 적용되지 않는다는 단서(등록하면 열린다는 거짓 안내 방지)
+    assert.match(kiro, lang === 'ko' ? /반경으로 적용되지 않는다/ : /NOT applied as a radius/);
+  }
+  // 회귀 방지 — 셸이 있는 러너는 그대로 "허용"이어야 한다
+  const codex = commonDirectives({ caps, hasTools: false, lang: 'ko', runner: 'codex' });
+  assert.match(codex, /셸 명령: 허용/);
+  assert.doesNotMatch(codex, /반경으로 적용되지 않는다/);
+});

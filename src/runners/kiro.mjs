@@ -65,6 +65,13 @@ export async function kiroCmd() {
      docs/kiro-runner-design.md의 후속 항목. */
 const ANSI_RE = /\u001B\[[0-9;?]*[A-Za-z]|\u001B\[K/g;
 const ASSISTANT_PREFIX = '> ';
+/* 도구 추적 줄 — 접두사 폴백(아래)에서만 걷어낸다.
+   왜 필요한가(분리 검수 3라운드 MEDIUM 실증): kiro-cli의 `fs_write`는 **deny 검사 전에** 기존 파일
+   내용을 diff로 렌더한다 — 거부된 `~/.codex/auth.json` 류의 토큰 전문이 stdout에 찍힌 사례가 있다.
+   정상 턴에서는 마지막 `> ` 블록만 취해 자연히 버려지지만, 접두사가 없는 예상 외 형식에서는 폴백이
+   stdout 전문을 그대로 답변으로 돌려 대화 정본(chats/)에 저장되고 다음 턴 맥락으로 재주입될 수 있다.
+   그래서 폴백 경로에서는 도구 추적 계열 줄을 제거한다(답변 본문은 이 패턴을 쓰지 않는다). */
+const TOOL_TRACE_RE = /^(?:\s*[+-]\s*\d+:.*|Reading file:.*|Creating:.*|Updating:.*|I['\u2019]ll create the following file:.*|I['\u2019]ll update the following file:.*| - Completed in .*|Command \w+ is rejected because.*|\s+- \/.*)$/gm;
 
 /** stdout → 최종 답변(순수). ANSI 제거 후 마지막 어시스턴트 블록만 남긴다.
     접두사가 아예 없으면(예상 외 형식·미래 렌더러 변경) **전문을 반환**한다 — 조용한 빈 답변보다
@@ -75,7 +82,9 @@ export function kiroScrub(stdout) {
   const lines = plain.split('\n');
   let last = -1;
   for (let i = 0; i < lines.length; i += 1) if (lines[i].startsWith(ASSISTANT_PREFIX)) last = i;
-  if (last < 0) return plain.trim();
+  // 접두사 부재(예상 외 형식·미래 렌더러 변경) — 전문을 반환하되 **도구 추적은 걷어낸다**.
+  // 통삭제로 정상 응답을 지우는 방향(gemini 스크럽 선례)은 피하고, 진단 유출만 막는다.
+  if (last < 0) return plain.replace(TOOL_TRACE_RE, '').replace(/\n{3,}/g, '\n\n').trim();
   const block = lines.slice(last);
   block[0] = block[0].slice(ASSISTANT_PREFIX.length);
   return block.join('\n').trim();
@@ -202,6 +211,12 @@ export async function kiroDeniedPaths(cwd, appRoot = APP_ROOT) {
     for (const f of WS_CONTROL_FILES) deny(read, join(c, f));
     for (const d of WS_CONTROL_DIRS) deny(read, join(c, d));
   }
+  /* ⚠ 조상 사슬(WS_ROOT → … → 루트) deny로 "위에서 훑어 내려오기"를 봉인하려 했으나 **불가능하다**
+     (실측 2026-08-12): kiro-cli의 deny 판정은 정확 경로가 아니라 **디렉터리 포함**이다 — `/var/folders/…`
+     한 줄을 넣으면 그 하위 파일 읽기가 전부 막힌다(`/`를 넣으면 전부 차단). 즉 WS_ROOT를 막으면
+     자기 회사 폴더(크루 책상)도 같이 죽는다. 그래서 `read` Directory 모드 재귀 열거로 금지 구역의
+     **경로가 열거되는 것**(내용은 보호됨)은 설정으로 막을 수 없다 — docs/kiro-runner-design.md
+     한계 절에 그 심각도로 명시했다. 근본 해법은 `kiro-cli acp`(도구 호출을 우리가 승인·거절). */
   const write = new Set(read);
   for (const c of cwdForms) for (const f of WS_LEDGER_FILES) deny(write, join(c, f));
   return { read: [...read], write: [...write] };

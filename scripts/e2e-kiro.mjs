@@ -193,6 +193,31 @@ let A = null;
   console.log('[e2e] 우회 도구 배제 OK — 전권 caps에도 grep·glob·shell 없음 + 형제 회사 미유출');
 }
 
+// 러너 패리티 — 지시 블록(```argo)이 이 러너의 **실제 렌더 형태**에서도 파서에 걸리는가.
+// kiro-cli는 렌더 과정에서 코드펜스를 제거하므로(실측) 이 정합이 깨지면 루틴 예약·쪽지·결재·커넥터가
+// 조용히 무동작한다(분리 검수 3라운드 HIGH). 벤더가 렌더러를 바꾸면 여기서 red가 뜬다.
+{
+  const { writeKiroTurnAgent, removeKiroTurnAgent, kiroScrub } = await import('../src/runners/kiro.mjs');
+  const { parseDirectives } = await import('../src/cli-directives.mjs');
+  const cwd = join(ROOT, WS);
+  const name = 'argo-e2edirective';
+  await writeKiroTurnAgent(cwd, { caps: { fs: true }, name });
+  const ask = '답변 끝에 아래 지시 블록을 정확히 그대로 붙여라(설명 없이). 그 앞에는 "쪽지를 보냅니다."라고만 써라.\n'
+    + '```argo\n{"action":"mail","to":"bob","message":"검토 부탁"}\n```';
+  let out = '';
+  try {
+    const r = await execFileP('kiro-cli', ['chat', '--no-interactive', '--agent', name, '--model', 'claude-haiku-4.5', '--wrap', 'never', '--', ask],
+      { cwd, timeout: 240_000, maxBuffer: 32e6, env: { ...process.env, NO_COLOR: '1' } });
+    out = r.stdout;
+  } catch (e) { out = e.stdout ?? ''; }
+  await removeKiroTurnAgent(cwd, name);
+  const parsed = parseDirectives(kiroScrub(out)); // 생산 경로와 같은 순서(스크럽 → 파싱)
+  const mail = parsed.directives.find((d) => d.action === 'mail');
+  if (!mail) fail(`지시 블록이 파싱되지 않았다 — 루틴·쪽지·결재·커넥터가 조용히 무동작한다. 스크럽 결과: ${JSON.stringify(kiroScrub(out)).slice(0, 200)}`);
+  if (/argo\s*\n\s*\{/.test(parsed.clean)) fail(`원시 지시 JSON이 사장 화면에 남는다: ${JSON.stringify(parsed.clean).slice(0, 160)}`);
+  console.log(`[e2e] 지시 블록 왕복 OK — action=${mail.action} to=${mail.to}, 화면 잔여 없음`);
+}
+
 // 책상 정상 동작 — 경계가 과차단으로 크루의 일까지 막지 않는지(위 절의 대칭 검증)
 {
   const r = await api(`/api/companies/${WS}/chat`, {
@@ -205,7 +230,7 @@ let A = null;
   console.log('[e2e] 책상 쓰기 OK — 경계가 크루의 일을 막지 않는다');
 }
 
-console.log('E2E OK: 감지 → 옵트인 → 영입 턴 → 채팅 턴 → 잔재 0 → 경계 집행(도구 레벨 거부) → 우회 도구 배제 → 책상 정상');
+console.log('E2E OK: 감지 → 옵트인 → 영입 → 채팅 → 잔재 0 → 경계 집행 → 우회 도구 배제 → 지시 블록 왕복 → 책상 정상');
 
 // 카탈로그 모델 스모크(옵션) — RUNNERS.kiro.models 전부를 kiro-cli로 직접 실턴.
 if (process.env.E2E_KIRO_SMOKE === '1') {

@@ -318,6 +318,14 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 const oneLine = (p) => String(p ?? '').replace(/[\r\n]+/g, ' ');
 
 export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '' } = {}) {
+  /* 셸이 **실제로 없는** CLI 러너 — 이 프롬프트는 매 턴 크루가 읽는 사실 선언이라, 여기서 거짓을
+     말하면 크루가 없는 도구를 시도하다 실패하고 사장에게 "터미널에서 직접 실행하세요"로 떠넘긴다
+     (분리 검수 3라운드 HIGH 실측). caps는 전권 상수(capabilities.mjs)라 caps.shell로는 판정할 수 없다.
+      · gemini  비대화(--approval-mode auto_edit)에서 셸이 실행되지 않는다
+      · kiro    deniedPaths가 셸에 적용되지 않아 경계가 무의미해지므로 셸을 아예 주지 않는다
+                (src/runners/kiro.mjs BASE_TOOLS 주석의 실측) */
+  const noShell = runner === 'gemini' || runner === 'kiro';
+  const shellReal = !!caps.shell && !noShell; // 셸 규율(백그라운드·타임아웃) 주입 조건
   // 고정 폴더는 등록 목록에도 들어 있다(고정은 등록을 거쳐야 잡힌다) — 그대로 두면 같은 경로를
   // 두 줄이 반복해 "지금 일할 곳"과 "그냥 써도 되는 곳"의 구분이 흐려진다. 그래서 여기서 뺀다.
   const otherRoots = workRoots.filter((r) => fold(r) !== fold(pinnedFolder)); // 판정(activePin)과 같은 잣대
@@ -352,9 +360,9 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
 - ${hasTools ? 'If the captain asks to change a crew profile (name, role, team, rules, runner, model) or to hire a new crew, don\'t edit files directly — file an approval via the update_profile / hire_crew tools. If the runner/model is undecided, present 2-3 options from the catalog and ask before filing.' : 'For crew profile changes or hiring, don\'t edit files directly — guide the captain to the crew/settings screens.'}
 
 ## Local capabilities — full access
-- File system: ${isCliRunner(runner) ? `**your entire home folder** (Desktop, Documents, existing project folders) plus the assigned work folders below. There is no toggle to turn on. If you need a path outside home — an external volume, say — tell the captain to add that folder under Settings → Work folders; it opens from the next turn${runner === 'gemini' ? '. Caveat: older Gemini CLI builds may still block paths outside the company folder (a vendor limit) — if blocked, report the exact error without guessing at permissions, save the output inside the company folder and tell the captain where it is' : ''}` : 'read and write anywhere on this computer, including the captain\'s Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the captain to — if a path exists, you can use it'}. Only the protected zones below are blocked.
+- File system: ${isCliRunner(runner) ? `**your entire home folder** (Desktop, Documents, existing project folders) plus the assigned work folders below. There is no toggle to turn on. If you need a path outside home — an external volume, say — tell the captain to add that folder under Settings → Work folders; it opens from the next turn${runner === 'gemini' ? '. Caveat: older Gemini CLI builds may still block paths outside the company folder (a vendor limit) — if blocked, report the exact error without guessing at permissions, save the output inside the company folder and tell the captain where it is' : ''}${runner === 'kiro' ? '. Caveat for this runner (Kiro): assigned work folders are NOT applied as a radius — paths outside the protected zones below are already reachable, so do not tell the captain that registering a folder will open it' : ''}` : 'read and write anywhere on this computer, including the captain\'s Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the captain to — if a path exists, you can use it'}. Only the protected zones below are blocked.
 ${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up current information): allowed.
-- Shell commands: ${runner === 'gemini' ? 'not supported on this runner (Gemini) — for shell work, tell the captain to assign a crew on a shell-capable runner (e.g. Claude)' : 'allowed.'}
+- Shell commands: ${noShell ? `not supported on this runner (${RUNNERS[runner]?.name ?? runner}) — for shell work, tell the captain to assign a crew on a shell-capable runner (e.g. Claude)` : 'allowed.'}
 - Preparation work (tool installs, setup) runs without approval. Actions that leave the company — sending, publishing, purchasing, deleting, contracts — and hiring/profile changes still require approval, so keep filing those.
 - Never tell the captain to "enable file access in Settings". That setting does not exist: access is on by default. If something fails, report the actual error (the path, the OS message) instead of guessing at permissions.
 
@@ -365,11 +373,11 @@ ${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up curren
 
 ## Protected zones — never touch, no exceptions
 - The Argo app itself (its install folder and server code), \`~/.argo\`, other companies' workspaces, and credential/secret files (e.g. \`.secrets.json\`) are off-limits for reading and writing — even with file-system capability or bypass mode on. The tool gate blocks them.
-- Your own company's control files are off-limits too, for reading and writing: every settings file sitting directly in the company folder (\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\`, …), anything starting with \`.\`, and crew cards under \`agents/\`. The ledgers (\`usage.jsonl\`, \`events.jsonl\`) you may read but not write. These settings change through dedicated tools — never by editing the file${caps.shell ? ' (this includes shell redirects and editors, not just Write/Edit)' : ''}. Need a tool? \`request_tool_install\`. Profile or hiring? \`update_profile\` / \`hire_crew\`. Your desk — \`vault/\`, \`skills/\`, project output — stays fully yours.
+- Your own company's control files are off-limits too, for reading and writing: every settings file sitting directly in the company folder (\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\`, …), anything starting with \`.\`, and crew cards under \`agents/\`. The ledgers (\`usage.jsonl\`, \`events.jsonl\`) you may read but not write. These settings change through dedicated tools — never by editing the file${shellReal ? ' (this includes shell redirects and editors, not just Write/Edit)' : ''}. Need a tool? \`request_tool_install\`. Profile or hiring? \`update_profile\` / \`hire_crew\`. Your desk — \`vault/\`, \`skills/\`, project output — stays fully yours.
 - If the captain asks you to change Argo's design, settings, or features, do NOT edit app code — explain that the app itself can't be modified from inside, and point them to Settings → Feedback.
 
 ## Your environment (Argo) — guide the captain precisely when blocked
-- You work inside an Argo company. External tools (MCP) are connected PER COMPANY — this runtime does NOT inherit the computer's Claude Code config (.claude.json, .mcp.json) by design (tenant isolation). Never hunt for those files.${caps.shell ? `
+- You work inside an Argo company. External tools (MCP) are connected PER COMPANY — this runtime does NOT inherit the computer's Claude Code config (.claude.json, .mcp.json) by design (tenant isolation). Never hunt for those files.${shellReal ? `
 - **Long-running commands (browser automation, bulk scraping, builds) must run in the foreground until they finish.** Pass a generous Bash timeout (milliseconds, max 600000 = 10 min). Example: expecting ~5 minutes → timeout: 420000.
 - **Output from anything you background (\`&\`, nohup, run_in_background) is lost unless you collect it within this same turn.** When the turn ends the shell session closes, so the next turn cannot read that output (this differs from native Claude Code, where the session stays alive). Never fire a job into the shell background and end the turn expecting to pick it up later.
 - **For work that needs more than 10 minutes, ${hasTools ? 'use the start_long_task tool' : 'split it across turns or have it write results to a file and read that file next turn'}** — ${hasTools ? 'it runs outside this turn without blocking the conversation, and the result is delivered to this chat and your messenger when it finishes. Unlike shell backgrounding, the output is never lost.' : ''}` : ''}
@@ -384,9 +392,9 @@ ${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up curren
 - ${hasTools ? '사장이 크루 프로필(이름·역할·팀·규칙·러너·모델) 변경이나 새 크루 영입을 요청하면 파일을 직접 고치지 말고 update_profile / hire_crew 도구로 결재를 올려라. 러너·모델이 정해지지 않았으면 카탈로그에서 선택지를 2~3개 제시해 물어본 뒤 올려라.' : '크루 프로필 변경·영입 요청은 파일을 직접 고치지 말고 크루·설정 화면에서 진행하도록 사장을 안내하라.'}
 
 ## 로컬 능력 — 전권
-- 파일 시스템: ${isCliRunner(runner) ? `**홈 폴더 전체**(바탕화면·문서·기존 프로젝트 폴더 포함)와 아래 지정 작업 폴더를 읽고 쓸 수 있다. 켜야 할 토글은 없다. 홈 밖 경로(외장 볼륨 등)가 필요하면 사장에게 "설정 → 작업 폴더"에 그 폴더를 등록해 달라고 안내하라 — 등록하면 다음 턴부터 열린다${runner === 'gemini' ? '. 단, 구버전 Gemini CLI는 벤더 제한으로 회사 폴더 밖이 그래도 막힐 수 있다 — 막히면 권한 추측 없이 원인 오류를 그대로 보고하고, 결과물은 회사 폴더에 저장해 위치를 알려라' : ''}` : '이 컴퓨터 어디든 읽고 쓸 수 있다. 사장의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사장을 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다'}. 막히는 것은 아래 보호 구역뿐이다.
+- 파일 시스템: ${isCliRunner(runner) ? `**홈 폴더 전체**(바탕화면·문서·기존 프로젝트 폴더 포함)와 아래 지정 작업 폴더를 읽고 쓸 수 있다. 켜야 할 토글은 없다. 홈 밖 경로(외장 볼륨 등)가 필요하면 사장에게 "설정 → 작업 폴더"에 그 폴더를 등록해 달라고 안내하라 — 등록하면 다음 턴부터 열린다${runner === 'kiro' ? '. 단, 이 러너(Kiro)는 지정 작업 폴더가 반경으로 적용되지 않는다 — 아래 보호 구역 밖은 이미 접근 가능하니 "등록하면 열린다"고 안내하지 마라' : ''}${runner === 'gemini' ? '. 단, 구버전 Gemini CLI는 벤더 제한으로 회사 폴더 밖이 그래도 막힐 수 있다 — 막히면 권한 추측 없이 원인 오류를 그대로 보고하고, 결과물은 회사 폴더에 저장해 위치를 알려라' : ''}` : '이 컴퓨터 어디든 읽고 쓸 수 있다. 사장의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사장을 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다'}. 막히는 것은 아래 보호 구역뿐이다.
 ${pinnedLine}${rootsLine}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): 허용.
-- 셸 명령: ${runner === 'gemini' ? '이 러너(Gemini)에서는 지원되지 않는다 — 셸이 필요한 작업은 셸을 지원하는 러너(Claude 등)의 크루에게 맡기도록 사장에게 안내하라' : '허용.'}
+- 셸 명령: ${noShell ? `이 러너(${RUNNERS[runner]?.name ?? runner})에서는 지원되지 않는다 — 셸이 필요한 작업은 셸을 지원하는 러너(Claude 등)의 크루에게 맡기도록 사장에게 안내하라` : '허용.'}
 - 준비 작업(도구 설치·환경 세팅)은 결재 없이 진행한다. **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.
 - **"설정에서 파일 권한을 켜세요"라고 안내하지 마라. 그런 설정은 없다** — 접근은 기본으로 열려 있다. 실패하면 권한 탓으로 추측하지 말고 실제 오류(경로와 OS 메시지)를 그대로 보고하라.
 
@@ -397,11 +405,11 @@ ${pinnedLine}${rootsLine}- 웹 브라우징(=웹 검색·최신 정보 조회 �
 
 ## 보호 구역 — 예외 없이 금지
 - Argo 앱 자체(설치 폴더·서버 코드), \`~/.argo\`, 다른 회사의 워크스페이스, 자격·시크릿 파일(예: \`.secrets.json\`)은 읽기도 쓰기도 금지다 — ${hasTools ? '도구 게이트가 하드 차단한다.' : '이 러너에는 도구 게이트가 없어 기술적으로 막히지 않을 수 있다. 그래도 금지다 — 접근하지 마라.'}
-- 네 회사의 제어 파일도 읽기·쓰기 모두 금지다: 회사 폴더 바로 아래의 설정 파일 전부(\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\` 등), \`.\`으로 시작하는 항목 전부, 그리고 \`agents/\`의 크루 카드. 원장(\`usage.jsonl\`, \`events.jsonl\`)은 읽을 수는 있고 쓸 수는 없다. 이 설정들은 전용 도구로 바꾸는 것이지 파일을 고쳐서 바꾸는 것이 아니다${caps.shell ? ' (Write/Edit뿐 아니라 셸 리다이렉트·에디터도 마찬가지다)' : ''}. 도구 설치는 \`request_tool_install\`, 프로필·영입은 \`update_profile\`·\`hire_crew\`. 네 책상(\`vault/\`, \`skills/\`, 산출물)은 그대로 전부 네 것이다.
+- 네 회사의 제어 파일도 읽기·쓰기 모두 금지다: 회사 폴더 바로 아래의 설정 파일 전부(\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\` 등), \`.\`으로 시작하는 항목 전부, 그리고 \`agents/\`의 크루 카드. 원장(\`usage.jsonl\`, \`events.jsonl\`)은 읽을 수는 있고 쓸 수는 없다. 이 설정들은 전용 도구로 바꾸는 것이지 파일을 고쳐서 바꾸는 것이 아니다${shellReal ? ' (Write/Edit뿐 아니라 셸 리다이렉트·에디터도 마찬가지다)' : ''}. 도구 설치는 \`request_tool_install\`, 프로필·영입은 \`update_profile\`·\`hire_crew\`. 네 책상(\`vault/\`, \`skills/\`, 산출물)은 그대로 전부 네 것이다.
 - 사장이 Argo의 디자인·설정·기능을 고쳐 달라고 하면 앱 코드를 수정하지 마라 — 앱 자체는 안에서 고칠 수 없다고 설명하고 "설정 → 피드백"으로 전달하라고 안내하라.
 
 ## 너의 환경(Argo) — 막혔을 때 사장에게 정확히 안내하라
-- 너는 Argo 회사 안에서 일한다. 외부 도구(MCP)는 **회사별로** 연결된다 — 이 런타임은 컴퓨터의 Claude Code 설정(.claude.json, .mcp.json)을 설계상 상속하지 않는다(테넌트 격리). 그 파일들을 찾아 헤매지 마라.${caps.shell ? `
+- 너는 Argo 회사 안에서 일한다. 외부 도구(MCP)는 **회사별로** 연결된다 — 이 런타임은 컴퓨터의 Claude Code 설정(.claude.json, .mcp.json)을 설계상 상속하지 않는다(테넌트 격리). 그 파일들을 찾아 헤매지 마라.${shellReal ? `
 - **오래 걸리는 명령(브라우저 자동화·대량 수집·빌드 등)은 전경에서 끝까지 기다려라.** Bash의 timeout을 넉넉히 지정하면 된다(밀리초, 최대 600000 = 10분). 예: 5분 예상이면 timeout: 420000.
 - **백그라운드(\`&\`·nohup·run_in_background)로 돌린 작업의 출력은 이 턴 안에서 회수하지 못하면 사라진다.** 턴이 끝나면 셸 세션이 닫혀 다음 턴에서 그 출력을 읽을 수 없다(네이티브 Claude Code와 다른 점 — 거기선 세션이 계속 살아 있다). 그러니 결과가 필요한 작업은 절대 셸 백그라운드로 던지고 턴을 끝내지 마라.
 - **10분으로 부족한 작업은 ${hasTools ? 'start_long_task 도구로 걸어라' : '작업을 쪼개 여러 턴으로 나누거나 결과를 파일로 쓰게 하고 다음 턴에 그 파일을 읽어라'}** — ${hasTools ? '대화를 막지 않고 턴 밖에서 끝까지 돌고, 완료되면 결과가 이 대화와 메신저로 배달된다. 셸 백그라운드와 달리 결과가 사라지지 않는다.' : ''}` : ''}
