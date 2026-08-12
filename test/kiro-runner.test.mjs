@@ -371,6 +371,12 @@ test('답변 추출 폴백 — 도구 진단(거부 파일 diff)이 답변으로
   assert.equal(kiroScrub('> - Completed in 3 days'), '- Completed in 3 days');
   // 그래도 실제 추적(경로 포함)은 지운다
   assert.equal(kiroScrub('> 만들었습니다.\nCreating: /x/y.md\n - Completed in 0.1s'), '만들었습니다.');
+  // 7라운드 HIGH — Batch 규칙만 도구명 요구가 빠져 "Batch processing finished." 같은 산문이 지워졌다
+  assert.equal(kiroScrub('> Batch processing finished.\nBatch size is 32.'), 'Batch processing finished.\nBatch size is 32.');
+  assert.equal(kiroScrub('Batch fs_read\n\u21b1 Operation 1: Reading file: /x, all lines> 결과.'), '결과.');
+  // 7라운드 LOW — 거부 머리 줄 뒤 빈 줄이 구간을 유지해 다음 정상 중첩 불릿까지 지웠다
+  assert.equal(kiroScrub('> 차단됨.\nCommand fs_read is rejected because …:\n  - /secret/**\n\n정리 결과:\n  - notes/a.md'),
+    '차단됨.\n\n정리 결과:\n  - notes/a.md');
 });
 
 test('러너 패리티 — 지시 블록이 펜스 없이도 파싱된다(kiro 렌더러가 펜스를 지운다)', async () => {

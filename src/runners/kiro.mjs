@@ -71,7 +71,7 @@ const ANSI_RE = /\u001B\[[0-9;?]*[A-Za-z]|\u001B\[K/g;
    ⚠ 각 규칙은 **경로나 형식을 함께 요구**한다(분리 검수 6라운드): `Reading`만 보면 산문
    "Reading files is safe."가, `Creating:`만 보면 "Creating: a plan"이, ` - Completed in`만 보면
    " - Completed in 3 days"가 통째로 지워진다 — 추적 제거가 정상 답변을 파괴하는 방향이다. */
-const TRACE_HEAD_RE = /^(?:\u21b1\s*)?(?:Operation \d+:\s*)?(?:Reading (?:file|directory|image)s?:\s*\S|Batch \w+|(?:Creating|Updating):\s*\S*[/\\]|I['\u2019]ll (?:create|update) the following file:|\s*[+-]\s{2,}\d+:| - Completed in \d+(?:\.\d+)?s\b)/;
+const TRACE_HEAD_RE = /^(?:\u21b1\s*)?(?:Operation \d+:\s*)?(?:Reading (?:file|directory|image)s?:\s*\S|Batch fs_\w+|(?:Creating|Updating):\s*\S*[/\\]|I['\u2019]ll (?:create|update) the following file:|\s*[+-]\s{2,}\d+:| - Completed in \d+(?:\.\d+)?s\b)/;
 /* 거부 블록 — `Command fs_read is rejected because …:` 다음 줄부터 **들여쓴 경로 목록**이 이어진다.
    그 목록은 금지 파일의 전체 경로라 답변에 남으면 안 되는데, 형태가 정상 마크다운 중첩 불릿과 같다
    (`  - /path`). 그래서 단독 줄 규칙으로 두면 "폴더 아래 파일 보여줘" 같은 상용 답변의 중첩 목록이
@@ -118,7 +118,7 @@ export function kiroScrub(stdout) {
   let inReject = false;
   for (const line of picked) {
     if (REJECT_HEAD_RE.test(line)) { inReject = true; continue; }
-    if (inReject && (DENY_RULE_RE.test(line) || !line.trim())) continue;
+    if (inReject && DENY_RULE_RE.test(line)) continue; // 빈 줄에서 구간을 닫는다(7R LOW: 거부 블록 뒤 정상 불릿 보호)
     inReject = false;
     if (!isTraceLine(line)) kept.push(line);
   }
