@@ -114,7 +114,7 @@ function normalizeToolCalls(message, round) {
 export async function runOpenAICompatToolLoop(baseUrl, {
   systemPrompt, userMessage, model, apiKey = '', tools = [], executeTool,
   timeoutMs = 300_000, signal = null, maxRounds = 24, maxToolCalls = 64,
-  onToolCall = async () => {}, validateFinal = null, forceEvidence = validateFinal, maxEvidenceRetries = 12,
+  onToolCall = async () => {}, onToolResult = async () => {}, validateFinal = null, forceEvidence = validateFinal, maxEvidenceRetries = 12,
   evidenceToolName = 'read_file',
 }) {
   const messages = [];
@@ -205,6 +205,7 @@ export async function runOpenAICompatToolLoop(baseUrl, {
         }
         const record = { id, name, args, output: String(output ?? '').slice(0, 120_000) };
         calls.push(record);
+        await onToolResult({ name, args, id, round, output: record.output, ok: !record.output.startsWith('도구 호출 오류(') });
         messages.push({ role: 'tool', tool_call_id: id, name, content: record.output });
       }
       // 강제 라운드는 아무 read_file이 아니라 요청 대상의 성공 증거가 채워졌을 때만 해제한다.

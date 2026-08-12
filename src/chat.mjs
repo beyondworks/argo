@@ -1164,6 +1164,10 @@ ${lang === 'en'
           step(stage, detail);
           await setTurnStatus(wsId, agentSlug, stage, detail);
         },
+        onToolResult: async ({ name, id, output, ok }) => {
+          const snippet = String(output ?? '').slice(0, 200).replace(/\s+/g, ' ');
+          step(ok ? 'tool_ok' : 'tool_err', `${name}(${id}): ${snippet}`);
+        },
       });
       const reply = result.text;
       await appendUsage(wsId, {

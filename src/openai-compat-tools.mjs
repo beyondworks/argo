@@ -208,7 +208,7 @@ export async function createOpenAICompatToolRegistry(context, { mcpServers = {},
         .map((line, i) => `${offset + i}: ${line}`).join('\n');
       const sha256 = createHash('sha256').update(body).digest('hex');
       const end = Math.min(lines.length, offset + limit - 1);
-      const output = `${abs}\nsha256:${sha256}\n${selected}\n\n[lines ${offset}-${end} of ${lines.length}]`;
+      const output = `${abs}\nsha256:${sha256}\nsize:${body.length}\n${selected}\n\n[lines ${offset}-${end} of ${lines.length}]`;
       if (output.length > MAX_TOOL_OUTPUT) {
         throw new Error(`읽기 결과가 도구 출력 상한을 넘었다(${output.length}자, 최대 ${MAX_TOOL_OUTPUT}). limit을 줄여 다시 읽어라.`);
       }
