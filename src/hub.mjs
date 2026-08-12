@@ -1,7 +1,7 @@
 // 웹 UI 전용 읽기 뷰 — 워크스페이스/크루/vault를 화면이 먹기 좋은 형태로 가공한다.
 // 쓰기는 전부 기존 코어(workspace/persona/chat/memory)를 그대로 쓴다.
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { join, relative, resolve, sep } from 'node:path';
+import { join, relative, resolve, sep, basename } from 'node:path';
 
 // Windows relative()는 백슬래시 — rel은 논리 경로('/' 고정)로 통일해야 notes/·journal/ 필터가 산다
 const relSlash = (from, to) => relative(from, to).split(sep).join('/');
@@ -191,18 +191,71 @@ export async function listProjectDocs(wsId) {
   return out.sort((a, b) => b.mtime - a.mtime);
 }
 
+/** vault 내에서 파일명(basename) 기준 재귀 탐색 폴백 */
+async function findFileInVault(dir, targetName) {
+  let entries = [];
+  try { entries = await readdir(dir, { withFileTypes: true }); } catch { return null; }
+  for (const e of entries) {
+    if (e.name.startsWith('.')) continue; // 닷파일/닷폴더 무시
+    const fullPath = join(dir, e.name);
+    if (e.isDirectory()) {
+      const hit = await findFileInVault(fullPath, targetName);
+      if (hit) return hit;
+    } else if (e.isFile()) {
+      if (e.name.toLowerCase() === targetName.toLowerCase() ||
+          e.name.toLowerCase() === `${targetName.toLowerCase()}.md`) {
+        return fullPath;
+      }
+    }
+  }
+  return null;
+}
+
 /** vault 문서 1건 읽기 — vault 밖 경로 차단. 롤업으로 보관된 일지는 .archive/에서 폴백(링크 불사). */
 export async function readDoc(wsId, rel) {
   const p = paths(wsId);
-  const file = resolve(p.vault, rel.endsWith('.md') ? rel : `${rel}.md`);
-  if (!file.startsWith(resolve(p.vault) + sep) && file !== resolve(p.index)) {
-    throw new Error('vault 밖 경로');
+  let cleanRel = String(rel || '').replace(/\\/g, '/');
+  const vaultIdx = cleanRel.indexOf('/vault/');
+  if (vaultIdx >= 0) {
+    cleanRel = cleanRel.slice(vaultIdx + 7);
+  } else {
+    cleanRel = cleanRel.replace(/^vault\//, '').replace(/^\.\//, '').replace(/^\/+/, '');
   }
-  try {
-    return await readFile(file, 'utf8');
-  } catch (e) {
-    const m = relSlash(p.vault, file).match(/^journal\/(.+\.md)$/);
-    if (m) return readFile(join(p.journal, '.archive', m[1]), 'utf8');
-    throw e;
+
+  const vaultRoot = resolve(p.vault);
+  const rawFile = resolve(p.vault, cleanRel);
+  const mdFile = resolve(p.vault, cleanRel.endsWith('.md') ? cleanRel : `${cleanRel}.md`);
+
+  // 1. 직접 정제 경로 시도
+  if (rawFile.startsWith(vaultRoot + sep) || rawFile === vaultRoot || rawFile === resolve(p.index)) {
+    try { return await readFile(rawFile, 'utf8'); } catch {}
+    try { return await readFile(mdFile, 'utf8'); } catch {}
   }
+
+  // 2. projects/ 또는 notes/ 접두사 붙여서 시도
+  if (!cleanRel.startsWith('projects/') && !cleanRel.startsWith('notes/') && !cleanRel.startsWith('files/')) {
+    try { return await readFile(resolve(p.vault, `projects/${cleanRel}`), 'utf8'); } catch {}
+    try { return await readFile(resolve(p.vault, `projects/${cleanRel}.md`), 'utf8'); } catch {}
+    try { return await readFile(resolve(p.vault, `notes/${cleanRel}`), 'utf8'); } catch {}
+    try { return await readFile(resolve(p.vault, `notes/${cleanRel}.md`), 'utf8'); } catch {}
+  }
+
+  // 3. 재귀 파일명 폴백 검색 (projects, notes, vault 전체)
+  const targetBase = basename(cleanRel);
+  const fallbackHit = (await findFileInVault(p.projects, targetBase)) ||
+                      (await findFileInVault(p.notes, targetBase)) ||
+                      (await findFileInVault(p.vault, targetBase));
+  if (fallbackHit && (fallbackHit.startsWith(vaultRoot + sep) || fallbackHit === vaultRoot)) {
+    try { return await readFile(fallbackHit, 'utf8'); } catch {}
+  }
+
+  // 4. 일지 보관함 (.archive) 시도
+  const m = relSlash(p.vault, mdFile).match(/^journal\/(.+\.md)$/);
+  if (m) {
+    try { return await readFile(join(p.journal, '.archive', m[1]), 'utf8'); } catch {}
+  }
+
+  const err = new Error(`문서를 찾을 수 없습니다: ${rel}`);
+  err.code = 'ENOENT';
+  throw err;
 }

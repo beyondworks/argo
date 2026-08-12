@@ -10,7 +10,21 @@ import { SERVE_PREFIXES } from './artifact-zones.mjs'; // 순수 모듈 — 클�
 export function rewriteVaultHref(href, wsId) {
   if (!wsId || typeof href !== 'string' || !href) return null;
   let rel = href.replace(/&amp;/g, '&').trim();
-  rel = rel.replace(/^\.\//, '').replace(/^vault\//, '');
+
+  // 절대 경로 또는 /vault/ 포함 경로 정제 — 예: /home/.../workspaces/wsId/vault/projects/foo.md -> projects/foo.md
+  const vaultIdx = rel.indexOf('/vault/');
+  if (vaultIdx >= 0) {
+    rel = rel.slice(vaultIdx + 7);
+  } else {
+    const wsIdx = rel.indexOf(`/workspaces/${wsId}/`);
+    if (wsIdx >= 0) {
+      let sub = rel.slice(wsIdx + `/workspaces/${wsId}/`.length);
+      sub = sub.replace(/^vault\//, '');
+      rel = sub;
+    }
+  }
+  rel = rel.replace(/^\/+/, '').replace(/^\.\//, '').replace(/^vault\//, '');
+
   if (!rel || rel.includes('\\') || rel.split('/').some((seg) => seg === '..' || seg === '')) return null; // 탈출·빈 세그먼트
   if (/^[a-z][a-z0-9+.-]*:/i.test(rel)) return null; // 스킴 있는 값은 여기 소관이 아니다(기존 차단 유지)
   const w = encodeURIComponent(wsId);

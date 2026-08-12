@@ -266,9 +266,11 @@ export const Markdown = memo(function Markdown({ text, onWikiLink, wsId }) {
   const html = useMemo(() => {
     const escaped = String(text ?? '').replace(/</g, '&lt;');
     let out = marked.parse(escaped);
-    out = out.replace(/href="((?!https?:|#|\/)[^"]*)"/gi, (_, h) => {
+    out = out.replace(/href="([^"]*)"/gi, (match, h) => {
+      if (!h || h === '#' || /^https?:/i.test(h)) return match;
       const url = rewriteVaultHref(h, wsId);
-      return url ? `href="${url.replace(/"/g, '&quot;')}"` : 'href="#"';
+      if (url) return `href="${url.replace(/"/g, '&quot;')}"`;
+      return h.startsWith('/') && !h.includes('/vault/') ? match : 'href="#"';
     });
     // 이미지 src는 동일출처 파일 라우트("/...")만 허용 — 크루 답변 속 외부 http/data 이미지는
     // 추적 픽셀·데이터 유출 벡터라 태그째 제거한다. "//evil.com"(프로토콜 상대)도 차단.
