@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Argo 업데이트 후 Qwen/OpenAI 호환 도구 러너와 Claude 로컬 연동을 재적용한다.
+# Argo 업데이트 후 Qwen/OpenAI 호환 도구 러너, 검증된 파일 읽기, Claude 로컬 연동을 재적용한다.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,11 +12,11 @@ elif [ "$#" -gt 0 ]; then
   exit 2
 fi
 
-echo "🚀 [Argo 로컬 패치] Qwen/OpenAI 호환 도구 러너와 Claude 로컬 연동을 확인합니다."
+echo "🚀 [Argo 로컬 패치] Qwen/OpenAI 호환 도구 러너·파일 읽기 증거·Claude 로컬 연동을 확인합니다."
 
 # 1. 패치 파일 존재 확인
 PATCH_FILE="$PROJECT_ROOT/patches/deepseek-and-claude-local.patch"
-EXPECTED_PATCH_SHA256="4de1b1efd77e05fa4b139dbe8fc80ea52d86644a90fe353f134b9e2253359dd0"
+EXPECTED_PATCH_SHA256="bad2cf594952f85afe029178c117b6f3207e49d65fad754f3800a74fb6c3922d"
 if [ ! -f "$PATCH_FILE" ]; then
   echo "❌ 에러: 패치 파일($PATCH_FILE)을 찾을 수 없습니다."
   exit 1

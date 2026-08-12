@@ -593,9 +593,19 @@ index 0000000..26f8627
 +- `npx next build`를 통한 Next.js 프로덕션 빌드 성공 확인
 +- 로그인 없이 로컬 환경변수 기반으로 구동되는 Claude Code CLI가 Argo 앱의 host 자격으로 정상 등록되어 턴 실행에 적용됨을 확인했습니다.
 diff --git a/src/chat.mjs b/src/chat.mjs
-index ac04b84..832ef74 100644
+index ac04b84..c5a2fd8 100644
 --- a/src/chat.mjs
 +++ b/src/chat.mjs
+@@ -1,7 +1,7 @@
+ // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
+ // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
+-import { readdir, readFile } from 'node:fs/promises';
+-import { join, relative, resolve, sep } from 'node:path';
++import { readdir, readFile, realpath } from 'node:fs/promises';
++import { join, relative, resolve, sep, win32 } from 'node:path';
+ import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+ import { z } from 'zod';
+ import { paths, getDeviceId } from './workspace.mjs';
 @@ -21,7 +21,9 @@ import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
  import { detectRunnerDenial, detectDeniedNarration, denialNote } from './runner-denial.mjs';
  import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
@@ -647,7 +657,171 @@ index ac04b84..832ef74 100644
  ${lines.join('\n')}
  - 네 전문 밖이거나 동료가 명백히 더 잘할 하위 작업은 delegate 도구(to=슬러그, task=구체적 지시)로 위임하라.
  - 위임하기로 했으면 "이 부분은 {동료 이름}에게 인계해 진행한다"고 답변에서 먼저 밝혀라 — 결재 요청이 그 동료 이름으로 올 수 있다는 것까지 사장이 알아야 흐름이 끊기지 않는다.
-@@ -879,6 +898,115 @@ ${lang === 'en'
+@@ -619,6 +638,163 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko') {
+     : `지정 러너 ${rn(wantId)}가 이 기기에 연결돼 있지 않아 ${rn(ranId)}(으)로 대체 실행됐습니다. `;
+ }
+ 
++/** 파일을 실제로 읽으라는 현재 지시에서 증거가 필요한 명시 경로만 추린다.
++    과거 대화(ctx)는 제외하고 userMsg만 보며, 모호한 파일명은 강제하지 않는다. */
++export function requiredReadPlan(userMsg, wsRoot) {
++  const text = String(userMsg ?? '').normalize('NFC');
++  if (!/(?:읽|열어|보|봐|확인|검증|검토|분석|요약|read|open|inspect|check|verify|review|analy[sz]e|summari[sz]e|writing|saving|creating|editing)/iu.test(text)) {
++    return { targets: [], initialTargets: [] };
++  }
++  // URL의 query/fragment에 파일명처럼 보이는 값이 있어도 로컬 파일 요구로 해석하지 않는다.
++  const scanText = text.replace(/https?:\/\/[^\s`"'<>]+/giu, (url) => ' '.repeat(url.length));
++  const candidates = [];
++  const quotedRanges = [];
++  const BARE_FILE_EXTENSIONS = new Set([
++    'md', 'txt', 'csv', 'json', 'yaml', 'yml', 'toml', 'ini', 'xml', 'html', 'css',
++    'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'py', 'sh', 'sql', 'svg',
++    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
++  ]);
++  const bareFileLike = (value) => {
++    const match = /^[^/\\]+\.([\p{L}\p{N}]{1,12})$/u.exec(value);
++    return !!match && BARE_FILE_EXTENSIONS.has(match[1].toLowerCase());
++  };
++  const windowsAbsolute = (value) => /^[A-Za-z]:[\\/]/u.test(value);
++  const pathLike = (value) => /^(?:\/|\.{1,2}\/|(?:[\p{L}\p{N}_.-]+\/)+)/iu.test(value)
++    || windowsAbsolute(value)
++    || bareFileLike(value);
++  for (const match of scanText.matchAll(/([`"'])([^`"'\n]+)\1/gu)) {
++    const value = match[2].trim();
++    quotedRanges.push([match.index, match.index + match[0].length]);
++    if (pathLike(value)) candidates.push({ value, index: match.index, end: match.index + match[0].length, quoted: true });
++  }
++  const pattern = /(?<![:/\\\p{L}\p{N}_.-])(?:[A-Za-z]:[\\/](?:[^\s`"'<>|()[\]{},;:])+|\/(?:[^\s`"'<>|()[\]{},;:])+|(?:\.{1,2}\/)?(?:[\p{L}\p{N}_.-]+\/)+(?:[^\s`"'<>|()[\]{},;:])+|[\p{L}\p{N}_.-]+\.[\p{L}\p{N}]{1,12})(?![/\\\p{L}\p{N}_-]|\.(?=[\p{L}\p{N}]))/giu;
++  for (const match of scanText.matchAll(pattern)) {
++    if (quotedRanges.some(([start, end]) => match.index >= start && match.index < end)) continue;
++    candidates.push({ value: match[0], index: match.index, end: match.index + match[0].length, quoted: false });
++  }
++  const sentenceRanges = [];
++  let sentenceStart = 0;
++  for (const match of scanText.matchAll(/(?:[!?;](?:\s+|$)|\.(?=\s|$)|\n+)/gu)) {
++    sentenceRanges.push([sentenceStart, match.index + match[0].length]);
++    sentenceStart = match.index + match[0].length;
++  }
++  sentenceRanges.push([sentenceStart, scanText.length]);
++  const operations = [];
++  const operationPattern = /(?:열어?\s*보[\p{L}]*|읽[\p{L}]*|열어?[\p{L}]*|보[\p{L}]*|봐[\p{L}]*|확인[\p{L}]*|검증[\p{L}]*|검토[\p{L}]*|분석[\p{L}]*|요약[\p{L}]*|저장[\p{L}]*|작성[\p{L}]*|생성[\p{L}]*|수정[\p{L}]*|쓰[\p{L}]*|써[\p{L}]*|\b(?:writing|saving|creating|editing)\b|\b(?:read|open|inspect|check|verify|review|analy[sz]e|summari[sz]e|write|save|create|edit)(?:s|d|ed|ing)?\b)/giu;
++  for (const match of scanText.matchAll(operationPattern)) {
++    if (candidates.some((candidate) => match.index >= candidate.index && match.index < candidate.end)) continue;
++    const value = match[0];
++    const before = scanText.slice(Math.max(0, match.index - 24), match.index);
++    const after = scanText.slice(match.index + value.length, match.index + value.length + 12);
++    const negated = /(?:do\s+not|don't|never|not|without|avoid|skip)\s*$/iu.test(before)
++      || /안\s*$/u.test(before)
++      || /(?:지|지는|하지|하지는|지마|지말|하지마|하지말)$/u.test(value)
++      || /^\s*(?:마|말(?:고|라|아)?|않|안)/u.test(after);
++    operations.push({
++      kind: negated ? 'negated' : (/^(?:저장|작성|생성|수정|쓰|써|write|writing|save|saving|create|creating|edit|editing)/iu.test(value) ? 'write' : 'read'),
++      index: match.index,
++      end: match.index + value.length,
++    });
++  }
++  const cleanCandidate = (candidate) => {
++    const cleaned = candidate.value.replace(/[.!?]+$/u, '');
++    return candidate.quoted ? cleaned : cleaned
++      .replace(/(?:을|를|에서|에게|의|와|과|은|는|이|가|으로|로|에|도|만|까지)$/u, '');
++  };
++  const nearbyOperations = (candidate, rangeStart, rangeEnd) => operations
++    .filter((op) => op.index >= rangeStart && op.index < rangeEnd)
++    .map((op) => ({
++      ...op,
++      afterPath: op.index >= candidate.end,
++      distance: op.end <= candidate.index ? candidate.index - op.end : op.index - candidate.end,
++    }))
++    .filter((op) => op.distance >= 0)
++    .sort((a, b) => a.distance - b.distance || Number(b.afterPath) - Number(a.afterPath) || (a.kind === 'write' ? -1 : 1));
++  const sentenceRangeFor = (candidate) => sentenceRanges.find(([start, end]) => candidate.index >= start && candidate.index < end)
++    ?? [0, scanText.length];
++  const out = [];
++  for (const candidate of candidates) {
++    const value = cleanCandidate(candidate);
++    if (!value || value.endsWith('/')) continue;
++    const [rangeStart, rangeEnd] = sentenceRangeFor(candidate);
++    const nearby = nearbyOperations(candidate, rangeStart, rangeEnd);
++    const beforePath = scanText.slice(Math.max(rangeStart, candidate.index - 48), candidate.index);
++    const after = scanText.slice(candidate.end, rangeEnd);
++    const pathNegated = /\b(?:not|neither|nor|without|except|skip|avoid)\s*$/iu.test(beforePath)
++      || /\b(?:other\s+than|exception\s+of|instead\s+of)\s*$/iu.test(beforePath)
++      || /\bunder\s+no\s+circumstances[\s\p{L}]{0,32}\b(?:read|open|inspect|check|verify)\s*$/iu.test(beforePath)
++      || /\b(?:do\s+not|don't|never|must\s+not|not\s+want|without|avoid|skip)\b[\s\p{L}]{0,48}\b(?:read|open|inspect|check|verify)(?:s|ed|ing)?\s*$/iu.test(beforePath)
++      || /^(?:\s*(?:은|는|을|를|도|만)?\s*)?(?:제외|빼|말고|외에|읽[\p{L}]*\s*안)/u.test(after);
++    const explicitReadback = /(?:그것|해당 파일|(?:then\s+)?(?:read|open|inspect)\s+(?:it|that))/iu.test(after);
++    const writtenEarlier = candidates.some((other) => {
++      if (other === candidate || other.index >= candidate.index || cleanCandidate(other) !== value) return false;
++      const [otherStart, otherEnd] = sentenceRangeFor(other);
++      return nearbyOperations(other, otherStart, otherEnd)[0]?.kind === 'write';
++    });
++    const qualifiedPath = /^(?:\/|\.{1,2}\/|(?:[\p{L}\p{N}_.-]+\/)+)/iu.test(value) || windowsAbsolute(value);
++    if (!qualifiedPath && !bareFileLike(value)) continue;
++    const productCheck = !qualifiedPath && nearby[0]?.kind === 'read'
++      && /^(?:check|verify)/iu.test(scanText.slice(nearby[0].index, nearby[0].end))
++      && (/^[A-Z][\p{L}\p{N}-]*\.(?:js|ts)$/u.test(value)
++        || /^(?:\s+\d|\s+(?:compatibility|version|release|status)\b)/iu.test(after));
++    if (productCheck) continue;
++    const sentence = scanText.slice(rangeStart, rangeEnd);
++    const ordinaryKnowledgeQuestion = !qualifiedPath && (
++      /\b(?:read|learn|know)(?:\s+[\p{L}-]+){0,3}\s+about\s*$/iu.test(beforePath)
++      || /\bwhat\s+[\p{L}\p{N}_.-]+\s+is\b/iu.test(scanText.slice(rangeStart, rangeEnd))
++      || /^\s*(?:how|why|when|where|who|can|could|should|would)\b[^?]*\?\s*$/iu.test(sentence)
++      || (/\.(?:js|ts)$/iu.test(value)
++        && /\b(?:about|documentation|docs|performance|compatibility|version|release|status|clients?)\b/iu.test(sentence))
++    );
++    if (ordinaryKnowledgeQuestion) continue;
++    // 같은 문장에서 경로에 가장 가까운 동사를 따른다. 목록의 앞 항목도 뒤의 읽기 동사와 연결되고,
++    // 저장 목적지는 앞쪽 읽기 동사보다 가까운 쓰기 동사에 연결돼 증거 대상에서 빠진다.
++    // 쓰고 나서 재읽는 출력물은 사전 증거 게이트로 순서를 뒤집지 않는다. 정상 도구 루프가 write→read를 수행한다.
++    const laterCandidates = candidates.filter((other) => other !== candidate
++      && other.index >= candidate.end && other.index < rangeEnd);
++    const laterCandidate = laterCandidates.length > 0;
++    const nextCandidateIndex = Math.min(...laterCandidates.map((other) => other.index));
++    const sentenceOperations = operations.filter((op) => op.index >= rangeStart && op.index < rangeEnd);
++    const readBeforeNextCandidate = laterCandidate && sentenceOperations.some((op) => op.kind === 'read'
++      && op.index >= candidate.end && op.index < nextCandidateIndex);
++    const destinationBeforeInputs = laterCandidate
++      && (/(?:은|는|에|로)$/u.test(candidate.value) || /^\s*(?:은|는|에|로)\s*/u.test(after))
++      && !readBeforeNextCandidate
++      && sentenceOperations.at(-1)?.kind === 'write';
++    if (destinationBeforeInputs) continue;
++    const readBeforeWrite = !laterCandidate && (
++      (explicitReadback && /\bbefore\s+(?:writing|saving|creating|editing)\s*$/iu.test(beforePath))
++      || /\b(?:write|save|create|edit)\b[\s\S]{0,48}\bafter(?:\s+you)?\s+(?:read|open|inspect)(?:ing|s|ed)?\b/iu.test(sentence)
++      || /^(?:\s*(?:은|는|을|를|도|만)?\s*)?(?:쓰기|저장|작성|생성|수정)[\p{L}\s]{0,16}전에[\s\S]{0,24}(?:읽|확인|검토)/u.test(after)
++    );
++    const deferred = !readBeforeWrite && (writtenEarlier || (explicitReadback && nearby[0]?.kind === 'write'));
++    if (pathNegated || (!deferred && !explicitReadback && !readBeforeWrite && nearby[0]?.kind !== 'read')) continue;
++    // bare 파일명과 Argo의 files/projects 논리 경로는 실제 회사 파일 저장소(vault) 기준이다.
++    const logicalPath = /^(?:files|projects)\//iu.test(value) ? `vault/${value}` : (qualifiedPath ? value : `vault/${value}`);
++    const target = windowsAbsolute(logicalPath) ? win32.normalize(logicalPath) : resolve(wsRoot, logicalPath);
++    out.push({ target: target.normalize('NFC'), deferred });
++  }
++  const targets = new Map();
++  for (const item of out) {
++    const previous = targets.get(item.target);
++    targets.set(item.target, { target: item.target, deferred: previous ? previous.deferred && item.deferred : item.deferred });
++  }
++  const items = [...targets.values()];
++  return {
++    targets: items.map((item) => item.target),
++    initialTargets: items.filter((item) => !item.deferred).map((item) => item.target),
++  };
++}
++
++export function requiredReadTargets(userMsg, wsRoot) {
++  return requiredReadPlan(userMsg, wsRoot).targets;
++}
++
++const OPENAI_COMPAT_UNSUPPORTED_READ_EXT = /\.(?:pdf|docx?|xlsx?|pptx?|od[tp]|ods|zip|png|jpe?g|gif|webp|bmp|tiff?|mp[34]|m4a|mov|avi|mkv|webm|3gp|wav|ogg|flac|aac)$/iu;
++export function unsupportedOpenAICompatReadPath(path) {
++  return OPENAI_COMPAT_UNSUPPORTED_READ_EXT.test(String(path ?? ''));
++}
++
+ /**
+  * 한 턴 대화. sessionId를 주면 이어서(resume), 없으면 새 세션.
+  * opts.from이 있으면 위임받은 하위 턴 — 위임 도구를 붙이지 않는다(연쇄 위임 금지).
+@@ -879,6 +1055,144 @@ ${lang === 'en'
        abortReg.release();
      }
    }
@@ -706,6 +880,19 @@ index ac04b84..832ef74 100644
 +        : '';
 +      const userContent = `${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}`;
 +      const fullUser = ctx ? `${ctx}\n\n${userContent}` : userContent;
++      const requestedReadPlan = requiredReadPlan(userMsg, p.root);
++      const attachmentReads = attachments.map((attachment) => resolve(p.root, 'vault', String(attachment.rel ?? '')));
++      const requestedReads = [...new Set([...requestedReadPlan.targets, ...attachmentReads])];
++      if (requestedReads.length > 64) throw new Error('한 턴에서 증거를 강제할 파일은 최대 64개다. 요청을 나눠서 실행하라.');
++      const unsupportedRead = requestedReads.find(unsupportedOpenAICompatReadPath);
++      if (unsupportedRead) {
++        throw new Error(`Qwen 로컬 러너의 read_file은 현재 텍스트 파일만 지원한다: ${relative(p.root, unsupportedRead) || unsupportedRead}`);
++      }
++      const requiredReads = await Promise.all(requestedReads.map(async (target) =>
++        (await realpath(target).catch(() => target)).normalize('NFC')));
++      const initialRequestedReads = [...new Set([...requestedReadPlan.initialTargets, ...attachmentReads])];
++      const initialReads = await Promise.all(initialRequestedReads.map(async (target) =>
++        (await realpath(target).catch(() => target)).normalize('NFC')));
 +      const toolStatusInput = (name, args) => ({
 +        ...(args.path ? { file_path: args.path } : {}),
 +        ...(args.query ? { pattern: args.query, query: args.query } : {}),
@@ -722,6 +909,22 @@ index ac04b84..832ef74 100644
 +        signal: turnDeadline,
 +        tools: registry.definitions,
 +        executeTool: registry.execute,
++        // 최대 2MB 파일을 10000줄 단위로 나눠 전체 커버할 수 있도록 증거 턴은 넉넉한 라운드를 둔다.
++        maxRounds: requiredReads.length ? 128 : 24,
++        maxToolCalls: requiredReads.length ? 128 : 64,
++        maxEvidenceRetries: requiredReads.length ? requiredReads.length + 2 : 12,
++        forceEvidence: initialReads.length ? async () => {
++          const checks = await Promise.all(initialReads.map(async (target) => [target, await registry.hasReadEvidence(target)]));
++          const missing = checks.filter(([, present]) => !present).map(([target]) => target);
++          return missing.length ? `Missing initial read_file evidence for: ${missing.join(', ')}` : null;
++        } : null,
++        validateFinal: requiredReads.length ? async () => {
++          const checks = await Promise.all(requiredReads.map(async (target) => [target, await registry.hasReadEvidence(target)]));
++          const missing = checks.filter(([, present]) => !present).map(([target]) => target);
++          return missing.length
++            ? `Missing successful read_file evidence for: ${missing.map((target) => relative(p.root, target) || target).join(', ')}`
++            : null;
++        } : null,
 +        onToolCall: async ({ name, args }) => {
 +          const canonical = registry.canonicalName(name);
 +          toolCounts[canonical] = (toolCounts[canonical] ?? 0) + 1;
@@ -763,7 +966,7 @@ index ac04b84..832ef74 100644
    // 설치된 MCP 도구 — 서버 단위 allow(mcp__<name>)로 해당 서버의 전체 도구 허용
    // 실행 게이트 — 호스팅 모드에선 미검증 command MCP를 spawn하지 않는다(검수 HIGH: mcp.json이
    // 봉투로 동기화돼 서비스 키를 든 워커로 흘러가면 임의 프로세스가 키 곁에서 실행되는 위험).
-@@ -978,7 +1106,7 @@ ${lang === 'en'
+@@ -978,7 +1292,7 @@ ${lang === 'en'
        stderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); },
        // 회사 자격 env(claude=키/OAuth 토큰, glm=z.ai 토큰) 주입 + 크루별 모델(카드 frontmatter). glm 기본 모델 보정.
        ...(sdkEnv ? { env: sdkEnv } : {}),
@@ -960,13 +1163,14 @@ index 0000000..ad0883f
 +}
 diff --git a/src/openai-compat-tools.mjs b/src/openai-compat-tools.mjs
 new file mode 100644
-index 0000000..2727d3a
+index 0000000..69b3f03
 --- /dev/null
 +++ b/src/openai-compat-tools.mjs
-@@ -0,0 +1,444 @@
+@@ -0,0 +1,478 @@
 +// Qwen/OpenAI 호환 러너의 네이티브 도구 레지스트리.
 +// 기존 permission-gate를 단일 권한 정본으로 사용하고 OpenAI function schema로 노출한다.
 +import { exec as childExec } from 'node:child_process';
++import { createHash } from 'node:crypto';
 +import { mkdir, readFile, readdir, realpath, stat } from 'node:fs/promises';
 +import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 +import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
@@ -1134,6 +1338,21 @@ index 0000000..2727d3a
 +  } = context;
 +  const gate = makePermissionGate(wsId, agentSlug, caps, root, chain.length ? chain[chain.length - 1] : from, lang, workRoots);
 +  const delegatedBy = chain.length ? chain[chain.length - 1] : null;
++  const readEvidence = new Map();
++  const addReadCoverage = (abs, { sha256, size, totalLines, start, end }) => {
++    const key = abs.normalize('NFC');
++    const previous = readEvidence.get(key);
++    const ranges = previous?.sha256 === sha256 ? [...previous.ranges, [start, end]] : [[start, end]];
++    ranges.sort((a, b) => a[0] - b[0]);
++    const merged = [];
++    for (const range of ranges) {
++      const last = merged.at(-1);
++      if (last && range[0] <= last[1] + 1) last[1] = Math.max(last[1], range[1]);
++      else merged.push([...range]);
++    }
++    const complete = merged.length === 1 && merged[0][0] === 1 && merged[0][1] >= totalLines;
++    readEvidence.set(key, { path: abs, sha256, size, totalLines, ranges: merged, complete });
++  };
 +  const crew = makeCrewActions(
 +    { wsId, fromSlug: agentSlug, fromName: agentName || agentSlug, colleagues, hop, chain, mirrorCtx, lang },
 +    { runChat },
@@ -1146,16 +1365,24 @@ index 0000000..2727d3a
 +
 +  const tools = [
 +    nativeTool('read_file', 'Read', '파일을 읽는다. path는 회사 폴더 기준 상대경로 또는 허용된 절대경로다. 큰 파일은 offset/limit으로 나눠 읽어라.', schema({
-+      path: str('파일 경로'), offset: num('시작 줄(1부터, 기본 1)'), limit: num('읽을 줄 수(최대 1000)'),
++      path: str('파일 경로'), offset: num('시작 줄(1부터, 기본 1)'), limit: num('읽을 줄 수(최대 10000)'),
 +    }, ['path']), async (a) => ({ file_path: await resolvedPath(toAbs(root, a.path)) }), async (a, gateArgs) => {
 +      const abs = gateArgs.file_path;
 +      const { body } = await readTextFile(abs);
 +      const lines = body.toString('utf8').split(/\r?\n/);
 +      const offset = Math.max(1, Math.floor(Number(a.offset) || 1));
-+      const limit = Math.max(1, Math.min(1000, Math.floor(Number(a.limit) || 400)));
++      const limit = Math.max(1, Math.min(10_000, Math.floor(Number(a.limit) || 400)));
++      if (offset > lines.length) throw new Error(`시작 줄이 파일 범위를 벗어났다(${offset}, 전체 ${lines.length}줄).`);
 +      const selected = lines.slice(offset - 1, offset - 1 + limit)
 +        .map((line, i) => `${offset + i}: ${line}`).join('\n');
-+      return `${abs}\n${selected}\n\n[lines ${offset}-${Math.min(lines.length, offset + limit - 1)} of ${lines.length}]`;
++      const sha256 = createHash('sha256').update(body).digest('hex');
++      const end = Math.min(lines.length, offset + limit - 1);
++      const output = `${abs}\nsha256:${sha256}\n${selected}\n\n[lines ${offset}-${end} of ${lines.length}]`;
++      if (output.length > MAX_TOOL_OUTPUT) {
++        throw new Error(`읽기 결과가 도구 출력 상한을 넘었다(${output.length}자, 최대 ${MAX_TOOL_OUTPUT}). limit을 줄여 다시 읽어라.`);
++      }
++      addReadCoverage(abs, { sha256, size: body.length, totalLines: lines.length, start: offset, end });
++      return output;
 +    }),
 +
 +    nativeTool('list_files', 'Glob', '폴더 안 파일을 열거한다. 회사 전체가 아니라 vault/, skills/ 또는 구체적 작업 폴더를 지정하라.', schema({
@@ -1387,6 +1614,16 @@ index 0000000..2727d3a
 +  return {
 +    definitions: tools.map((item) => item.definition),
 +    canonicalName: (name) => byName.get(name)?.canonicalName || name,
++    hasReadEvidence: async (path) => {
++      const key = resolve(String(path)).normalize('NFC');
++      const item = readEvidence.get(key);
++      if (!item?.complete) return false;
++      const body = await readFile(key).catch(() => null);
++      return !!body && body.length === item.size
++        && createHash('sha256').update(body).digest('hex') === item.sha256;
++    },
++    readEvidence: () => [...readEvidence.values()].filter((item) => item.complete)
++      .map(({ ranges: _ranges, complete: _complete, totalLines: _totalLines, ...item }) => ({ ...item })),
 +    async execute(name, args = {}, executionContext = {}) {
 +      const item = byName.get(name);
 +      if (!item) return `알 수 없는 도구: ${name}`;
@@ -1659,10 +1896,10 @@ index 72163fb..ace9c48 100644
        if (r.status === 401 || r.status === 403) return { ok: false };
 diff --git a/src/runners/deepseek-local.mjs b/src/runners/deepseek-local.mjs
 new file mode 100644
-index 0000000..6521ae0
+index 0000000..c7cb75a
 --- /dev/null
 +++ b/src/runners/deepseek-local.mjs
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,256 @@
 +// DeepSeek Local 러너 — OpenAI 호환 API(llamacpp/vLLM 등)를 직접 호출하는 실행 경로.
 +// Anthropic SDK(query())를 쓰지 않고 fetch로 /v1/chat/completions를 호출한다.
 +// (러너 추가 2026-08-06)
@@ -1709,7 +1946,7 @@ index 0000000..6521ae0
 +/** OpenAI 호환 chat/completions 원시 호출. 도구가 있으면 표준 tools/tool_choice를 전달하고
 +    assistant message 전체(tool_calls 포함)를 반환한다. */
 +export async function openAICompatCompletion(baseUrl, {
-+  messages, model, apiKey = '', tools = [], timeoutMs = 300_000, signal = null,
++  messages, model, apiKey = '', tools = [], toolChoice = 'auto', timeoutMs = 300_000, signal = null,
 +}) {
 +  const url = `${normalizeDeepseekLocalBase(baseUrl)}/v1/chat/completions`;
 +  const headers = authHeaders(apiKey);
@@ -1726,7 +1963,7 @@ index 0000000..6521ae0
 +        model: model || DEEPSEEK_LOCAL_DEFAULT_MODEL,
 +        messages,
 +        stream: false,
-+        ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
++        ...(tools.length ? { tools, tool_choice: toolChoice } : {}),
 +      }),
 +      signal: controller.signal,
 +    });
@@ -1779,7 +2016,8 @@ index 0000000..6521ae0
 +export async function runOpenAICompatToolLoop(baseUrl, {
 +  systemPrompt, userMessage, model, apiKey = '', tools = [], executeTool,
 +  timeoutMs = 300_000, signal = null, maxRounds = 24, maxToolCalls = 64,
-+  onToolCall = async () => {},
++  onToolCall = async () => {}, validateFinal = null, forceEvidence = validateFinal, maxEvidenceRetries = 12,
++  evidenceToolName = 'read_file',
 +}) {
 +  const messages = [];
 +  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
@@ -1787,6 +2025,9 @@ index 0000000..6521ae0
 +  const usage = {};
 +  const calls = [];
 +  let actualModel = null;
++  // 명시적 파일 읽기 증거가 필요한 턴은 첫 호출부터 read_file 전용으로 시작한다.
++  let forceTool = typeof forceEvidence === 'function';
++  let evidenceRetries = 0;
 +  const deadline = new AbortController();
 +  const relayAbort = () => deadline.abort(signal?.reason);
 +  if (signal?.aborted) relayAbort();
@@ -1796,7 +2037,18 @@ index 0000000..6521ae0
 +  try {
 +    for (let round = 1; round <= maxRounds; round += 1) {
 +      if (deadline.signal.aborted) throw deadline.signal.reason || Object.assign(new Error('중단됨'), { aborted: true });
-+      const result = await openAICompatCompletion(baseUrl, { messages, model, apiKey, tools, timeoutMs, signal: deadline.signal });
++      const roundTools = forceTool
++        ? tools.filter((tool) => tool?.function?.name === evidenceToolName)
++        : tools;
++      if (forceTool && !roundTools.length) throw new Error(`필수 증거 도구를 찾지 못했다: ${evidenceToolName}`);
++      const allowedToolNames = new Set(roundTools.map((tool) => tool?.function?.name).filter(Boolean));
++      const forcedRound = forceTool;
++      const result = await openAICompatCompletion(baseUrl, {
++        messages, model, apiKey, tools: roundTools,
++        toolChoice: forceTool ? 'required' : 'auto',
++        timeoutMs, signal: deadline.signal,
++      });
++      forceTool = false;
 +      addUsage(usage, result.usage);
 +      actualModel = result.model || actualModel;
 +      const assistant = result.message;
@@ -1804,10 +2056,29 @@ index 0000000..6521ae0
 +      if (!toolCalls.length) {
 +        const text = typeof assistant.content === 'string' ? assistant.content.trim() : '';
 +        if (!text) throw new Error('Qwen 3.6 27B가 빈 응답을 반환했다.');
++        const evidenceIssue = typeof validateFinal === 'function'
++          ? await validateFinal({ text, calls: [...calls], messages: [...messages] })
++          : null;
++        if (evidenceIssue) {
++          evidenceRetries += 1;
++          if (!tools.length || evidenceRetries > maxEvidenceRetries) {
++            throw new Error(`필수 도구 증거를 확보하지 못했다: ${String(evidenceIssue).slice(0, 1000)}`);
++          }
++          // 증거 없는 성공 서술은 사용자에게 반환하지 않는다. 모델에는 왜 거절됐는지 알려
++          // 누락된 실제 도구 호출을 다음 라운드에서 강제한다.
++          messages.push({ role: 'assistant', content: text });
++          messages.push({
++            role: 'user',
++            content: `[Argo tool evidence gate] Final response rejected. ${String(evidenceIssue).slice(0, 2000)} Call the required tools now. Do not repeat or invent results.`,
++          });
++          forceTool = true;
++          continue;
++        }
 +        return { text, usage, calls, model: actualModel, messages };
 +      }
 +      if (typeof executeTool !== 'function') throw new Error('도구 호출을 실행할 Argo 브리지가 없다.');
 +      if (calls.length + toolCalls.length > maxToolCalls) throw new Error(`도구 호출 상한(${maxToolCalls})을 넘었다.`);
++      let acceptedToolCall = false;
 +
 +      messages.push({
 +        role: 'assistant',
@@ -1825,6 +2096,8 @@ index 0000000..6521ae0
 +          const raw = call?.function?.arguments;
 +          args = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw && typeof raw === 'object' ? raw : {});
 +          if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('도구 인자는 JSON object여야 한다.');
++          if (!allowedToolNames.has(name)) throw new Error(`이 라운드에 허용되지 않은 도구다: ${name || 'unknown'}`);
++          acceptedToolCall = true;
 +          await onToolCall({ name, args, id, round });
 +          if (deadline.signal.aborted) throw deadline.signal.reason || Object.assign(new Error('중단됨'), { aborted: true });
 +          output = await executeTool(name, args, { signal: deadline.signal });
@@ -1835,6 +2108,13 @@ index 0000000..6521ae0
 +        const record = { id, name, args, output: String(output ?? '').slice(0, 120_000) };
 +        calls.push(record);
 +        messages.push({ role: 'tool', tool_call_id: id, name, content: record.output });
++      }
++      // 강제 라운드는 아무 read_file이 아니라 요청 대상의 성공 증거가 채워졌을 때만 해제한다.
++      if (forcedRound) {
++        const remainingEvidence = typeof forceEvidence === 'function'
++          ? await forceEvidence({ text: '', calls: [...calls], messages: [...messages] })
++          : null;
++        forceTool = !acceptedToolCall || !!remainingEvidence;
 +      }
 +    }
 +    throw new Error(`도구 실행 라운드 상한(${maxRounds})에 도달했다.`);
@@ -2199,10 +2479,10 @@ index 751c2cc..568a7b9 100644
    assert.match(depthLimited, /delegation-depth limit/);
 diff --git a/test/deepseek-local.test.mjs b/test/deepseek-local.test.mjs
 new file mode 100644
-index 0000000..7088c90
+index 0000000..fa05bff
 --- /dev/null
 +++ b/test/deepseek-local.test.mjs
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,339 @@
 +import { test } from 'node:test';
 +import assert from 'node:assert/strict';
 +import {
@@ -2369,6 +2649,132 @@ index 0000000..7088c90
 +  }
 +});
 +
++test('OpenAI 호환 도구 루프 — 증거 없는 최종 답변을 폐기하고 required 도구 호출로 재시도', async () => {
++  const realFetch = globalThis.fetch;
++  const requests = [];
++  const replies = [
++    { content: '두 파일을 모두 읽었다.' },
++    { content: null, tool_calls: [{ id: 'a', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/a.md"}' } }] },
++    { content: '이제 모두 확인했다.' },
++    { content: null, tool_calls: [{ id: 'b', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/b.md"}' } }] },
++    { content: '실제 두 파일을 확인했다.' },
++  ];
++  globalThis.fetch = async (_url, init = {}) => {
++    requests.push(JSON.parse(init.body));
++    return new Response(JSON.stringify({ choices: [{ message: replies.shift() }] }), { status: 200 });
++  };
++  try {
++    const result = await runOpenAICompatToolLoop('http://llama.local:8080', {
++      userMessage: 'a와 b를 읽어',
++      tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } }],
++      executeTool: async (_name, args) => `read:${args.path}`,
++      validateFinal: ({ calls }) => {
++        const read = new Set(calls.map((call) => call.args.path));
++        const missing = ['vault/a.md', 'vault/b.md'].filter((path) => !read.has(path));
++        return missing.length ? `missing ${missing.join(', ')}` : null;
++      },
++    });
++    assert.equal(result.text, '실제 두 파일을 확인했다.');
++    assert.deepEqual(result.calls.map((call) => call.args.path), ['vault/a.md', 'vault/b.md']);
++    assert.equal(requests[0].tool_choice, 'required');
++    assert.equal(requests[1].tool_choice, 'required');
++    assert.equal(requests[2].tool_choice, 'required');
++    assert.equal(requests[3].tool_choice, 'required');
++    assert.match(requests[1].messages.at(-1).content, /vault\/a\.md/);
++    assert.match(requests[3].messages.at(-1).content, /vault\/b\.md/);
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
++test('OpenAI 호환 도구 루프 — 증거 재시도 상한 뒤 거짓 성공 대신 실패', async () => {
++  const realFetch = globalThis.fetch;
++  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: '읽었다.' } }] }), { status: 200 });
++  try {
++    await assert.rejects(runOpenAICompatToolLoop('http://llama.local:8080', {
++      userMessage: '파일 읽어', maxEvidenceRetries: 1,
++      tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } }],
++      executeTool: async () => 'unused', validateFinal: () => 'vault/a.md 누락',
++    }), /필수 도구 증거를 확보하지 못했다/);
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
++test('OpenAI 호환 도구 루프 — 증거 강제 라운드는 read_file 외 도구를 노출하거나 실행하지 않음', async () => {
++  const realFetch = globalThis.fetch;
++  const requests = [];
++  const replies = [
++    { content: '읽었다.' },
++    { content: null, tool_calls: [{ id: 'wrong-read', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/wrong.md"}' } }] },
++    { content: null, tool_calls: [{ id: 'bad-write', type: 'function', function: { name: 'write_file', arguments: '{"path":"vault/input.md","content":"overwrite"}' } }] },
++    { content: '완료했다.' },
++  ];
++  const executed = [];
++  globalThis.fetch = async (_url, init = {}) => {
++    requests.push(JSON.parse(init.body));
++    return new Response(JSON.stringify({ choices: [{ message: replies.shift() }] }), { status: 200 });
++  };
++  try {
++    await assert.rejects(runOpenAICompatToolLoop('http://llama.local:8080', {
++      userMessage: 'input.md를 읽어', maxEvidenceRetries: 1, maxRounds: 4,
++      tools: [
++        { type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } },
++        { type: 'function', function: { name: 'write_file', parameters: { type: 'object' } } },
++      ],
++      executeTool: async (name) => { executed.push(name); return '실행됨'; },
++      validateFinal: () => 'input.md 누락',
++    }), /필수 도구 증거를 확보하지 못했다/);
++    assert.deepEqual(requests[1].tools.map((tool) => tool.function.name), ['read_file']);
++    assert.deepEqual(requests[2].tools.map((tool) => tool.function.name), ['read_file']);
++    assert.equal(requests[2].tool_choice, 'required');
++    assert.deepEqual(executed, ['read_file']);
++    assert.deepEqual(requests[3].tools.map((tool) => tool.function.name), ['read_file']);
++    assert.equal(requests[3].tool_choice, 'required');
++    assert.match(requests[3].messages.at(-1).content, /허용되지 않은 도구/);
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
++test('OpenAI 호환 도구 루프 — 기존 입력 증거 뒤 출력 쓰기와 재읽기를 순서대로 허용', async () => {
++  const realFetch = globalThis.fetch;
++  const requests = [];
++  const replies = [
++    { content: null, tool_calls: [{ id: 'read-in', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/in.md"}' } }] },
++    { content: null, tool_calls: [{ id: 'write-out', type: 'function', function: { name: 'write_file', arguments: '{"path":"vault/out.md","content":"result"}' } }] },
++    { content: null, tool_calls: [{ id: 'read-out', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/out.md"}' } }] },
++    { content: '입력과 저장 결과를 모두 확인했다.' },
++  ];
++  const read = new Set();
++  globalThis.fetch = async (_url, init = {}) => {
++    requests.push(JSON.parse(init.body));
++    return new Response(JSON.stringify({ choices: [{ message: replies.shift() }] }), { status: 200 });
++  };
++  try {
++    const result = await runOpenAICompatToolLoop('http://llama.local:8080', {
++      userMessage: 'read vault/in.md, write vault/out.md, then read vault/out.md',
++      tools: [
++        { type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } },
++        { type: 'function', function: { name: 'write_file', parameters: { type: 'object' } } },
++      ],
++      executeTool: async (name, args) => {
++        if (name === 'read_file') read.add(args.path);
++        return `${name}:${args.path}`;
++      },
++      forceEvidence: () => read.has('vault/in.md') ? null : 'input missing',
++      validateFinal: () => ['vault/in.md', 'vault/out.md'].every((path) => read.has(path)) ? null : 'read missing',
++    });
++    assert.equal(result.text, '입력과 저장 결과를 모두 확인했다.');
++    assert.deepEqual(result.calls.map((call) => call.name), ['read_file', 'write_file', 'read_file']);
++    assert.deepEqual(requests.map((request) => request.tool_choice), ['required', 'auto', 'auto', 'auto']);
++    assert.deepEqual(requests[0].tools.map((tool) => tool.function.name), ['read_file']);
++    assert.deepEqual(requests[1].tools.map((tool) => tool.function.name), ['read_file', 'write_file']);
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
 +test('OpenAI 호환 도구 루프 — 전체 턴 제한이 도구 실행 시간까지 중단 신호로 묶음', async () => {
 +  const realFetch = globalThis.fetch;
 +  globalThis.fetch = async () => new Response(JSON.stringify({
@@ -2456,10 +2862,10 @@ index 28deba2..db68e12 100644
  });
 diff --git a/test/openai-compat-chat.test.mjs b/test/openai-compat-chat.test.mjs
 new file mode 100644
-index 0000000..e9236c7
+index 0000000..7f91661
 --- /dev/null
 +++ b/test/openai-compat-chat.test.mjs
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,198 @@
 +import { test } from 'node:test';
 +import assert from 'node:assert/strict';
 +import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -2471,9 +2877,107 @@ index 0000000..e9236c7
 +const { createCompany, paths } = await import('../src/workspace.mjs');
 +const { saveAgentCard } = await import('../src/persona.mjs');
 +const { saveRunnerCred } = await import('../src/runners.mjs');
-+const { chat } = await import('../src/chat.mjs');
++const { chat, requiredReadPlan, requiredReadTargets, unsupportedOpenAICompatReadPath } = await import('../src/chat.mjs');
 +
 +test.after(async () => { await rm(argoRoot, { recursive: true, force: true }); });
++
++test('Qwen 파일 증거 경로 — 현재 지시의 명시 경로만 절대경로로 추출', () => {
++  assert.deepEqual(requiredReadTargets(
++    'vault/a.md와 skills/상품-선정.md를 실제로 읽고 /tmp/out/report.csv도 확인해. https://example.com/not-a-file.md와 input.md는 참고.',
++    '/company',
++  ), ['/company/vault/a.md', '/company/skills/상품-선정.md', '/tmp/out/report.csv']);
++  assert.deepEqual(requiredReadTargets(
++    'vault/input 파일을 읽고 vault/output.md로 저장한 뒤 /etc/hosts도 확인해',
++    '/company',
++  ), ['/company/vault/input', '/etc/hosts']);
++  assert.deepEqual(requiredReadTargets('read vault/in.md and write vault/out.md', '/company'), ['/company/vault/in.md']);
++  assert.deepEqual(requiredReadTargets('결과를 `vault/My Report.md` 파일에 저장하고 input.md를 읽어', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('write "vault/My Report.md", then read it', '/company'), ['/company/vault/My Report.md']);
++  assert.deepEqual(requiredReadTargets('write vault/out.md and then read vault/out.md', '/company'), ['/company/vault/out.md']);
++  assert.deepEqual(requiredReadTargets('write vault/out.md. Then read vault/out.md', '/company'), ['/company/vault/out.md']);
++  assert.deepEqual(requiredReadTargets('vault/out.md에 저장한 뒤 vault/out.md를 읽어', '/company'), ['/company/vault/out.md']);
++  assert.deepEqual(requiredReadTargets('vault/out.md에 저장해. 그런 다음 vault/out.md를 읽어', '/company'), ['/company/vault/out.md']);
++  assert.deepEqual(requiredReadPlan('read vault/in.md, write vault/out.md, then read vault/out.md', '/company'), {
++    targets: ['/company/vault/in.md', '/company/vault/out.md'], initialTargets: ['/company/vault/in.md'],
++  });
++  assert.deepEqual(requiredReadPlan('After writing vault/new.md, read it.', '/company'), {
++    targets: ['/company/vault/new.md'], initialTargets: [],
++  });
++  assert.deepEqual(requiredReadPlan('Before writing vault/out.md, read it.', '/company'), {
++    targets: ['/company/vault/out.md'], initialTargets: ['/company/vault/out.md'],
++  });
++  assert.deepEqual(requiredReadPlan('vault/out.md를 쓰기 전에 읽어.', '/company'), {
++    targets: ['/company/vault/out.md'], initialTargets: ['/company/vault/out.md'],
++  });
++  assert.deepEqual(requiredReadPlan('Read input.md before writing output.md.', '/company'), {
++    targets: ['/company/vault/input.md'], initialTargets: ['/company/vault/input.md'],
++  });
++  assert.deepEqual(requiredReadPlan('output.md를 쓰기 전에 input.md를 읽어.', '/company'), {
++    targets: ['/company/vault/input.md'], initialTargets: ['/company/vault/input.md'],
++  });
++  assert.deepEqual(requiredReadPlan('output.md는 input.md를 읽고 나서 써.', '/company'), {
++    targets: ['/company/vault/input.md'], initialTargets: ['/company/vault/input.md'],
++  });
++  assert.deepEqual(requiredReadPlan('input.md는 읽고 output.md를 써.', '/company'), {
++    targets: ['/company/vault/input.md'], initialTargets: ['/company/vault/input.md'],
++  });
++  assert.deepEqual(requiredReadTargets('`vault/My Report.md`를 읽어', '/company'), ['/company/vault/My Report.md']);
++  assert.deepEqual(requiredReadTargets('input.md와 output.md를 읽어', '/company'), ['/company/vault/input.md', '/company/vault/output.md']);
++  assert.deepEqual(requiredReadTargets('`첫 보고서.md`와 `두 번째 보고서.md`를 읽어', '/company'), ['/company/vault/첫 보고서.md', '/company/vault/두 번째 보고서.md']);
++  assert.deepEqual(requiredReadTargets('read vault/in.md; do not create anything yet, just explain how to save the result as "vault/My Report.md"', '/company'), ['/company/vault/in.md']);
++  assert.deepEqual(requiredReadTargets('https://example.com/?file=input.md를 확인해', '/company'), []);
++  assert.deepEqual(requiredReadTargets('URL https://example.com/#vault/a.md와 vault/local.md를 확인해', '/company'), ['/company/vault/local.md']);
++  assert.deepEqual(requiredReadTargets('Do not read secret.md; read input.md.', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('secret.md는 읽지 말고 input.md를 읽어', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('Read input.md, but not secret.md.', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('Read neither first.md nor secret.md.', '/company'), []);
++  assert.deepEqual(requiredReadTargets('Summarize without reading secret.md; read input.md.', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('secret.md는 안 읽고 input.md만 읽어', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('secret.md 말고 input.md를 읽어', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('secret.md는 읽으면 안 되고 input.md를 읽어', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('Skip secret.md and read input.md.', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('Avoid reading secret.md; read input.md.', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('Do not ever read secret.md; read input.md.', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('Read every file other than secret.md; read input.md.', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('Under no circumstances read secret.md; read input.md.', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('Read input.md instead of secret.md.', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('secret.md 외에 input.md를 읽어', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('I do not want you to read secret.md; read input.md.', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('secret.md를 절대 열어 보지 말고 input.md를 읽어', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('secret.md는 보지 말고 input.md를 읽어', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('secret.md는 검토하지 말고 input.md를 읽어', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('Read input.md. Then summarize it.', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('Check Python 3.12 compatibility.', '/company'), []);
++  assert.deepEqual(requiredReadTargets('버전 0.1.40과 2026.08.12 일정을 확인해', '/company'), []);
++  assert.deepEqual(requiredReadTargets('Check IP 192.168.1.1 and package.json.', '/company'), ['/company/vault/package.json']);
++  assert.deepEqual(requiredReadTargets('Check Node.js 24.16.0 compatibility.', '/company'), []);
++  assert.deepEqual(requiredReadTargets('Verify Next.js 16 and package.json.', '/company'), ['/company/vault/package.json']);
++  assert.deepEqual(requiredReadTargets('Check Node.js and Next.js compatibility.', '/company'), []);
++  assert.deepEqual(requiredReadTargets('Check example.com status.', '/company'), []);
++  assert.deepEqual(requiredReadTargets('Read app.js and package.json.', '/company'), ['/company/vault/app.js', '/company/vault/package.json']);
++  assert.deepEqual(requiredReadTargets('Read ./vault/a.md and notes/a.md.', '/company'), ['/company/vault/a.md', '/company/notes/a.md']);
++  assert.deepEqual(requiredReadTargets('Read "C:\\Users\\me\\report.md".', '/company'), ['C:\\Users\\me\\report.md']);
++  assert.deepEqual(requiredReadTargets('Review vault/a.md and analyze notes/a.md.', '/company'), ['/company/vault/a.md', '/company/notes/a.md']);
++  assert.deepEqual(requiredReadTargets('vault/a.md를 분석하고 notes/a.md를 요약해줘.', '/company'), ['/company/vault/a.md', '/company/notes/a.md']);
++  assert.deepEqual(requiredReadTargets('Read about Node.js.', '/company'), []);
++  assert.deepEqual(requiredReadTargets('Read more about Node.js.', '/company'), []);
++  assert.deepEqual(requiredReadTargets('Read about Next.js and Node.js.', '/company'), []);
++  assert.deepEqual(requiredReadTargets('Review Node.js documentation.', '/company'), []);
++  assert.deepEqual(requiredReadTargets('Analyze Node.js performance.', '/company'), []);
++  assert.deepEqual(requiredReadTargets('Tell me what package.json is and how to read it.', '/company'), []);
++  assert.deepEqual(requiredReadTargets('How do I read CSV files in app.js?', '/company'), []);
++  assert.deepEqual(requiredReadTargets('projects/result.md와 files/source.csv를 읽어', '/company'), ['/company/vault/projects/result.md', '/company/vault/files/source.csv']);
++  assert.deepEqual(requiredReadTargets('input.md를 봐', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('input.md를 검토해', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('`vault/회의`를 읽어', '/company'), ['/company/vault/회의']);
++  assert.deepEqual(requiredReadTargets('input.md를 읽고 output.md에 써줘', '/company'), ['/company/vault/input.md']);
++  assert.deepEqual(requiredReadTargets('vault/a.md 이름만 답해', '/company'), []);
++  assert.equal(unsupportedOpenAICompatReadPath('vault/report.docx'), true);
++  assert.equal(unsupportedOpenAICompatReadPath('vault/report.md'), false);
++  assert.equal(unsupportedOpenAICompatReadPath('vault/audio.m4a'), true);
++  assert.equal(unsupportedOpenAICompatReadPath('vault/video.webm'), true);
++  assert.deepEqual(requiredReadTargets('Read report.doc and report.ods.', '/company'), ['/company/vault/report.doc', '/company/vault/report.ods']);
++});
 +
 +test('Qwen chat 통합 — 실제 chat 경로가 파일 tool_calls를 실행하고 일지·사용량·산출물을 남긴다', async () => {
 +  const wsId = 'qwen-tool-chat';
@@ -2514,6 +3018,48 @@ index 0000000..e9236c7
 +    assert.match(usage, /"runner":"deepseeklocal"/);
 +    assert.match(usage, /"Read":1/);
 +    assert.match(usage, /"Write":1/);
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
++test('Qwen chat 파일 증거 게이트 — 도구 없는 성공 답변을 저장하지 않고 대상별 read_file을 강제', async () => {
++  const wsId = 'qwen-evidence-chat';
++  await createCompany(wsId, 'Evidence Co', 'Captain');
++  const p = paths(wsId);
++  const card = `---\nname: 지나\nslug: jina\nrole: 검증자\nrunner: deepseeklocal\nmodel: qwen3.6-27b-q4\n---\n\n# 지나\n`;
++  await saveRunnerCred(wsId, 'deepseeklocal', 'apikey', 'http://llama.fixture:8080|fixture-qwen-value');
++  await import('node:fs/promises').then(({ writeFile }) => Promise.all([
++    writeFile(join(p.agents, 'jina.md'), card),
++    writeFile(join(p.vault, 'a.md'), '# A\n'),
++    writeFile(join(p.vault, 'b.md'), '# B\n'),
++  ]));
++  await saveAgentCard(wsId, 'jina', card);
++
++  const realFetch = globalThis.fetch;
++  const requests = [];
++  const replies = [
++    { content: 'read_file로 두 파일을 읽었습니다.' },
++    { content: null, tool_calls: [{ id: 'a', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/a.md"}' } }] },
++    { content: '두 파일 모두 확인했습니다.' },
++    { content: null, tool_calls: [{ id: 'b', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/b.md"}' } }] },
++    { content: 'A와 B 원문을 실제로 확인했습니다.' },
++  ];
++  globalThis.fetch = async (_url, init = {}) => {
++    requests.push(JSON.parse(init.body));
++    return new Response(JSON.stringify({
++      model: 'qwen3.6-27b-q4', choices: [{ message: replies.shift() }],
++      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
++    }), { status: 200 });
++  };
++  try {
++    const result = await chat(wsId, 'jina', 'vault/a.md와 vault/b.md를 각각 실제로 읽고 첫 줄을 확인해줘');
++    assert.equal(result.reply, 'A와 B 원문을 실제로 확인했습니다.');
++    assert.deepEqual(requests.map((request) => request.tool_choice), ['required', 'required', 'required', 'required', 'auto']);
++    const usage = JSON.parse((await readFile(p.usage, 'utf8')).trim());
++    assert.deepEqual(usage.tools, { Read: 2 });
++    const events = (await readFile(join(p.root, 'events.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
++    assert.equal(events.at(-1).steps.filter((step) => step.stage === 'memory').length, 2);
 +  } finally {
 +    globalThis.fetch = realFetch;
 +  }
@@ -2579,15 +3125,16 @@ index 0000000..0d2bf21
 +});
 diff --git a/test/openai-compat-tools.test.mjs b/test/openai-compat-tools.test.mjs
 new file mode 100644
-index 0000000..6ec7832
+index 0000000..fd11111
 --- /dev/null
 +++ b/test/openai-compat-tools.test.mjs
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,197 @@
 +import { test } from 'node:test';
 +import assert from 'node:assert/strict';
 +import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 +import { join } from 'node:path';
 +import { tmpdir } from 'node:os';
++import { createHash } from 'node:crypto';
 +
 +const argoRoot = await mkdtemp(join(tmpdir(), 'argo-openai-tools-'));
 +process.env.ARGO_ROOT = argoRoot;
@@ -2625,7 +3172,11 @@ index 0000000..6ec7832
 +test('Qwen 파일 도구 — 읽기·목록·검색·쓰기·편집과 산출물 추적이 실제 파일에 적용', async () => {
 +  const f = await fixture();
 +  try {
-+    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/source.md' }), /Alpha 100원/);
++    const read = await f.registry.execute('read_file', { path: 'vault/notes/source.md' });
++    assert.match(read, /Alpha 100원/);
++    assert.match(read, new RegExp(`sha256:${createHash('sha256').update('# 상품\nAlpha 100원\nBeta 200원\n').digest('hex')}`));
++    assert.equal(await f.registry.hasReadEvidence(join(f.vault, 'notes', 'source.md')), true);
++    assert.deepEqual(f.registry.readEvidence().map((item) => item.sha256), [createHash('sha256').update('# 상품\nAlpha 100원\nBeta 200원\n').digest('hex')]);
 +    assert.match(await f.registry.execute('list_files', { path: 'vault' }), /notes\/source\.md/);
 +    assert.match(await f.registry.execute('search_files', { path: 'vault', query: 'Beta' }), /source\.md:3/);
 +    assert.match(await f.registry.execute('write_file', { path: 'vault/projects/result.md', content: '# 결과\n초안\n' }), /저장함/);
@@ -2635,6 +3186,64 @@ index 0000000..6ec7832
 +    ] }), /패치 적용함/);
 +    assert.equal(await readFile(join(f.vault, 'projects', 'result.md'), 'utf8'), '# 최종 결과\n검증됨\n');
 +    assert.deepEqual(f.artifacts, ['projects/result.md', 'projects/result.md', 'projects/result.md']);
++  } finally { await f.registry.close(); }
++});
++
++test('Qwen 파일 증거 — 범위 밖 offset은 원문 미전달이므로 성공 증거가 아님', async () => {
++  const f = await fixture();
++  try {
++    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/source.md', offset: 999999 }), /파일 범위를 벗어났다/);
++    assert.equal(await f.registry.hasReadEvidence(join(f.vault, 'notes', 'source.md')), false);
++    assert.deepEqual(f.registry.readEvidence(), []);
++  } finally { await f.registry.close(); }
++});
++
++test('Qwen 파일 증거 — 부분 읽기는 부족하고 여러 구간이 전체를 덮으면 완성', async () => {
++  const f = await fixture();
++  const target = join(f.vault, 'notes', 'source.md');
++  try {
++    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/source.md', offset: 1, limit: 2 }), /lines 1-2 of 4/);
++    assert.equal(await f.registry.hasReadEvidence(target), false);
++    assert.deepEqual(f.registry.readEvidence(), []);
++    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/source.md', offset: 3, limit: 2 }), /lines 3-4 of 4/);
++    assert.equal(await f.registry.hasReadEvidence(target), true);
++    assert.equal(f.registry.readEvidence().length, 1);
++  } finally { await f.registry.close(); }
++});
++
++test('Qwen 파일 증거 — 도구 출력에서 잘릴 긴 행은 전체 읽기 증거가 아님', async () => {
++  const f = await fixture();
++  const target = join(f.vault, 'notes', 'long.txt');
++  await writeFile(target, 'x'.repeat(120_001));
++  try {
++    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/long.txt' }), /도구 출력 상한을 넘었다/);
++    assert.equal(await f.registry.hasReadEvidence(target), false);
++    assert.deepEqual(f.registry.readEvidence(), []);
++  } finally { await f.registry.close(); }
++});
++
++test('Qwen 파일 증거 — 65001행 파일도 10000행 단위 범위 읽기로 완독', async () => {
++  const f = await fixture();
++  const target = join(f.vault, 'notes', 'many-lines.txt');
++  await writeFile(target, `${'x\n'.repeat(65_000)}x`);
++  try {
++    for (let offset = 1; offset <= 65_001; offset += 10_000) {
++      assert.doesNotMatch(await f.registry.execute('read_file', {
++        path: 'vault/notes/many-lines.txt', offset, limit: 10_000,
++      }), /도구 출력 상한을 넘었다/);
++    }
++    assert.equal(await f.registry.hasReadEvidence(target), true);
++  } finally { await f.registry.close(); }
++});
++
++test('Qwen 파일 증거 — 읽은 뒤 파일 내용이 바뀌면 이전 증거를 무효화', async () => {
++  const f = await fixture();
++  const target = join(f.vault, 'notes', 'source.md');
++  try {
++    await f.registry.execute('read_file', { path: 'vault/notes/source.md', limit: 10_000 });
++    assert.equal(await f.registry.hasReadEvidence(target), true);
++    await writeFile(target, '# 변경됨\n');
++    assert.equal(await f.registry.hasReadEvidence(target), false);
 +  } finally { await f.registry.close(); }
 +});
 +
@@ -2657,6 +3266,8 @@ index 0000000..6ec7832
 +  await symlink(outsideDir, join(f.vault, 'escape-dir'));
 +  try {
 +    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/escape.md' }), /도구 거부/);
++    assert.equal(await f.registry.hasReadEvidence(join(f.vault, 'notes', 'escape.md')), false);
++    assert.deepEqual(f.registry.readEvidence(), []);
 +    assert.match(await f.registry.execute('list_files', { path: 'vault/escape-dir' }), /도구 거부/);
 +    assert.match(await f.registry.execute('write_file', { path: 'vault/escape-dir/new.md', content: '탈출' }), /도구 거부/);
 +    await assert.rejects(readFile(join(outsideDir, 'new.md')));
