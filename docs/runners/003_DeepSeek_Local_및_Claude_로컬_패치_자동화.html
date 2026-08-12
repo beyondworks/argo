@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Qwen/OpenAI 호환 도구 러너 및 Claude 로컬 패치 자동화 가이드</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; color: #333; }
+h1, h2, h3 { color: #111; }
+code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; font-family: monospace; }
+pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
+ul { padding-left: 20px; }
+</style>
+</head>
+<body>
+<h1>Qwen/OpenAI 호환 도구 러너 및 Claude 로컬 패치 자동화 가이드</h1>
+
+<h2>1. 개요</h2>
+<p>Argo를 상위 버전으로 업데이트한 뒤에도 <strong>Qwen 3.6 27B 러너</strong>, <strong>OpenAI 호환 도구 호출·실행 루프</strong>, <strong>Scrapling 웹 도구</strong>, <strong>회사 MCP 브리지</strong>, <strong>Claude Code 로컬 연동</strong>을 다시 적용할 수 있도록 패치와 검증 스크립트를 둡니다.</p>
+
+<h2>2. 구축된 파일 및 구조</h2>
+<ul>
+  <li><strong>패치 파일</strong>: <code>patches/deepseek-and-claude-local.patch</code><br>
+  앱·서버·테스트의 로컬 기능 변경을 포함하며, 업데이트 버전을 되돌리지 않도록 <code>package.json</code>과 Tauri 버전 파일은 제외합니다.<br>
+  생성 기준 기능 커밋: <code>bdb1d30</code>, SHA-256: <code>4de1b1efd77e05fa4b139dbe8fc80ea52d86644a90fe353f134b9e2253359dd0</code></li>
+  <li><strong>원클릭 적용 스크립트</strong>: <code>apply-local-patch.sh</code><br>
+  미커밋 추적 파일과 중복 적용 확인 → 패치 또는 3-way 적용 → Scrapling·구문·Qwen 도구 테스트 → 프로덕션 빌드 → <code>argo.service</code> 재시작 및 <code>/api/ping</code> 확인</li>
+</ul>
+
+<h2>3. 업데이트 후 사용 방법</h2>
+<p>업데이트 결과를 커밋하거나 작업트리를 깨끗하게 만든 뒤 실행합니다.</p>
+<pre><code>./apply-local-patch.sh</code></pre>
+<p>적용하지 않고 체크섬·중복 여부·적용 가능성만 확인하려면 다음을 사용합니다.</p>
+<pre><code>./apply-local-patch.sh --check-only</code></pre>
+
+<h2>4. 검증 결과</h2>
+<ul>
+  <li>이미 적용된 상태는 중복 적용하지 않습니다.</li>
+  <li>일반 적용 실패 시 Git 3-way 적용을 시도하고, 충돌 시 중단합니다.</li>
+  <li>스크립트 실행 권한을 저장소에 포함합니다.</li>
+</ul>
+
+<h2>5. 업데이트 방식 선택</h2>
+<ul>
+  <li>로컬 브랜치를 유지하면 상위 변경을 받은 뒤 로컬 커밋을 rebase하는 방식을 우선 사용합니다.</li>
+  <li>깨끗한 상위 소스에 기능만 넣으려면 <code>apply-local-patch.sh</code>를 실행합니다.</li>
+  <li>패치 결과는 커밋되지 않은 상태로 남으므로 diff를 검토한 뒤 별도 커밋합니다.</li>
+</ul>
+</body>
+</html>

@@ -1,0 +1,2757 @@
+diff --git a/app/c/[ws]/crew/[slug]/page.jsx b/app/c/[ws]/crew/[slug]/page.jsx
+index f6a6c1e..403f071 100644
+--- a/app/c/[ws]/crew/[slug]/page.jsx
++++ b/app/c/[ws]/crew/[slug]/page.jsx
+@@ -1253,6 +1253,13 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
+ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
+   const { t } = useLang();
+   const cur = runners?.find((r) => r.id === sel.runner);
++  // 러너 미지정(자동)이어도 연결된 러너의 모델은 선택할 수 있어야 한다.
++  // 모델을 고르면 모델 소유 러너를 함께 지정해 서버의 runner/model 소속 검증을 만족시킨다.
++  const modelRunners = sel.runner
++    ? (cur ? [cur] : [])
++    : (runners ?? []).filter((r) => r.authed && r.models?.length);
++  const modelDisabled = runners === null
++    || (sel.runner ? !cur || !cur.authed : modelRunners.length === 0);
+   const runnerLabel = (r) => r.name + (r.authed ? '' : ` — ${t('runner.needConnect')}`);
+   const box = {
+     height: compact ? 28 : 30,
+@@ -1277,13 +1284,25 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
+           <option key={r.id} value={r.id} disabled={!r.authed}>{runnerLabel(r)}</option>
+         ))}
+       </select>
+-      {/* 현재 러너가 미연결(레거시)이면 모델 선택도 잠금 — 설정에서 연결 후 활성화 */}
+-      <select value={sel.model} disabled={busy || (cur && !cur.authed)} style={box}
+-        onChange={(e) => onChange({ ...sel, runner: sel.runner, model: e.target.value })}>
++      {/* 자동 러너는 연결된 모든 러너의 모델을 표시하고, 선택 시 해당 러너를 함께 고정한다. */}
++      <select value={sel.model} disabled={busy || modelDisabled} style={box}
++        onChange={(e) => {
++          const model = e.target.value;
++          const owner = !sel.runner ? modelRunners.find((r) => r.models?.some((m) => m.id === model)) : null;
++          onChange({ ...sel, runner: sel.runner || owner?.id || '', model });
++        }}>
+         {!sel.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
+-        {(cur?.models ?? []).map((m) => (
+-          <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
+-        ))}
++        {sel.runner
++          ? (cur?.models ?? []).map((m) => (
++            <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
++          ))
++          : modelRunners.map((r) => (
++            <optgroup key={r.id} label={r.name}>
++              {r.models.map((m) => (
++                <option key={`${r.id}:${m.id}`} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
++              ))}
++            </optgroup>
++          ))}
+       </select>
+       {/* 추론 강도(요청 2026-07-25) — Claude(SDK effort)와 Codex(-c model_reasoning_effort, 실측
+           2026-07-26)가 지원한다. Gemini CLI엔 해당 옵션이 없고 GLM·Kimi는 SDK 호환 경로로 타 벤더
+diff --git a/app/c/[ws]/page.jsx b/app/c/[ws]/page.jsx
+index 037c875..f269edd 100644
+--- a/app/c/[ws]/page.jsx
++++ b/app/c/[ws]/page.jsx
+@@ -585,6 +585,13 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
+   const [runners, setRunners] = useState(null);
+   useEffect(() => { api(`/api/runners?ws=${ws}`).then((d) => setRunners(d.runners)).catch(() => setRunners([])); }, [ws]);
+   const curRunner = runners?.find((r) => r.id === form.runner);
++  // 러너 미지정(자동)이어도 연결된 러너의 모델은 선택할 수 있어야 한다.
++  // 모델을 고르면 모델 소유 러너를 함께 지정해 서버의 runner/model 소속 검증을 만족시킨다.
++  const modelRunners = form.runner
++    ? (curRunner ? [curRunner] : [])
++    : (runners ?? []).filter((r) => r.authed && r.models?.length);
++  const modelDisabled = runners === null
++    || (form.runner ? !curRunner || !curRunner.authed : modelRunners.length === 0);
+   const runnerLabel = (r) => r.name + (r.authed ? '' : r.installed ? ` — ${t('runner.needLogin')}` : ` — ${t('runner.notInstalled')}`);
+ 
+   useEffect(() => {
+@@ -656,13 +663,24 @@ function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
+           </label>
+           <label style={{ display: 'grid', gap: 4 }}>
+             <span className="microlabel">{t('deck.fieldModelHint')}</span>
+-            {/* 현재 러너가 미연결(레거시)이면 모델 선택도 잠금 — 설정에서 연결 후 활성화 */}
+-            <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} style={field}
+-              disabled={curRunner && !curRunner.authed}>
++            {/* 자동 러너는 연결된 모든 러너의 모델을 표시하고, 선택 시 해당 러너를 함께 고정한다. */}
++            <select value={form.model} onChange={(e) => {
++              const model = e.target.value;
++              const owner = !form.runner ? modelRunners.find((r) => r.models?.some((m) => m.id === model)) : null;
++              setForm({ ...form, runner: form.runner || owner?.id || '', model });
++            }} style={field} disabled={modelDisabled}>
+               {!form.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
+-              {(curRunner?.models ?? []).map((m) => (
+-                <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
+-              ))}
++              {form.runner
++                ? (curRunner?.models ?? []).map((m) => (
++                  <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
++                ))
++                : modelRunners.map((r) => (
++                  <optgroup key={r.id} label={r.name}>
++                    {r.models.map((m) => (
++                      <option key={`${r.id}:${m.id}`} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
++                    ))}
++                  </optgroup>
++                ))}
+             </select>
+           </label>
+           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+diff --git a/app/i18n.jsx b/app/i18n.jsx
+index 91ed4af..9f6cd15 100644
+--- a/app/i18n.jsx
++++ b/app/i18n.jsx
+@@ -71,7 +71,7 @@ const DICT = {
+   'room.loadFail': ['회의 내용을 불러오지 못했습니다 — 잠시 후 자동으로 다시 시도합니다', "Couldn't load the meeting — retrying automatically"],
+   'runner.effortLabel': ['추론 강도', 'Reasoning effort'],
+   'runner.effortDefault': ['강도 기본', 'Default effort'],
+-  'runner.effortAutoHint': ['추론 강도 — Claude·Codex로 실행될 때 적용됩니다(Antigravity는 모델 선택에 강도가 포함 · Gemini·GLM·Kimi·OpenRouter는 미지원)', 'Reasoning effort — applies on Claude and Codex (Antigravity bakes effort into model choice; not supported on Gemini, GLM, Kimi, OpenRouter)'],
++  'runner.effortAutoHint': ['추론 강도 — Claude·Codex로 실행될 때 적용됩니다(Antigravity는 모델 선택에 강도가 포함 · Gemini·GLM·Kimi·OpenRouter·Qwen 3.6 27B는 미지원)', 'Reasoning effort — applies on Claude and Codex (Antigravity bakes effort into model choice; not supported on Gemini, GLM, Kimi, OpenRouter, Qwen 3.6 27B)'],
+   'runner.effort.low': ['낮음 — 빠름', 'Low — fastest'],
+   'runner.effort.medium': ['보통', 'Medium'],
+   'runner.effort.high': ['높음', 'High'],
+@@ -355,6 +355,10 @@ const DICT = {
+   // ── 러너 연결 관리자 (4러너 × API키/OAuth)
+   'settings.runners.title': ['러너 연결', 'Runner connections'],
+   'settings.runners.help': ['크루의 두뇌 엔진을 회사 계정에 연결합니다. 러너마다 API 키·OAuth(구독)로 연결하거나, Codex·Gemini는 "이 컴퓨터 로그인 사용"으로 이 컴퓨터의 CLI 로그인을 연결할 수 있습니다. 연결한 러너만 크루가 사용합니다.', 'Connect each crew brain engine to this company. Add an API key or OAuth (subscription) per runner — for Codex/Gemini you can also link this computer\u2019s CLI login. Crews only use runners you connect.'],
++  'settings.runners.deepseeklocalHelp': ['OpenAI 호환 서버의 Base URL과 API 키를 입력하세요. 예: http://100.103.65.62:8080/v1. llamacpp·vLLM 등 로컬 서버에 연결합니다.', 'Enter the Base URL and API key for the OpenAI-compatible server. Example: http://100.103.65.62:8080/v1. Connects to local servers such as llamacpp or vLLM.'],
++  'settings.runners.deepseeklocalPh': ['Base URL 입력 (예: http://100.103.65.62:8080/v1)', 'Base URL (e.g. http://100.103.65.62:8080/v1)'],
++  'settings.runners.deepseeklocalBaseLabel': ['Base URL', 'Base URL'],
++  'settings.runners.deepseeklocalApiKeyLabel': ['API 키', 'API key'],
+   'settings.runners.method.apikey': ['API 키', 'API key'],
+   'settings.runners.method.oauth': ['OAuth', 'OAuth'],
+   'settings.runners.method.host': ['이 컴퓨터 로그인', 'This computer\u2019s login'],
+@@ -386,7 +390,7 @@ const DICT = {
+   'settings.runners.hostAuthed': ['로그인됨', 'Logged in'],
+   'settings.runners.hostNotAuthed': ['로그인 안 됨', 'Not logged in'],
+   'settings.runners.hostAuthUnknown': ['로그인 여부 확인 불가 — 터미널에서 로그인해 두세요', 'Sign-in state unknown — sign in from a terminal first'],
+-  'settings.runners.cliToolsNote': ['크루가 스스로 거는 쪽지·루틴 예약·위임 도구: 미지원 (SDK 러너 전용)', 'Crew-initiated mail, routine scheduling & delegation tools: not supported (SDK runners only)'],
++  'settings.runners.cliToolsNote': ['크루가 스스로 거는 쪽지·루틴 예약·위임 도구: 미지원 (외부 CLI 및 OpenAI 호환 러너 등)', 'Crew-initiated mail, routine scheduling & delegation tools: not supported (external CLI or OpenAI-compat runners)'],
+   'settings.runners.saveVerify': ['저장·확인', 'Save & test'],
+   'settings.runners.remove': ['연결 해제', 'Disconnect'],
+   'settings.runners.removeConfirmTitle': ['{runner} 연결을 해제할까요?', 'Disconnect {runner}?'],
+diff --git a/app/runner-connect.jsx b/app/runner-connect.jsx
+index 54665db..20f7e11 100644
+--- a/app/runner-connect.jsx
++++ b/app/runner-connect.jsx
+@@ -21,8 +21,8 @@ export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, PICK_ORDER }
+ /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
+     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
+     (c) 방식별 입력·저장·검증·제거 또는 CLI 로그인 안내. 응답엔 마스킹만 실린다(보안 규칙). */
+-const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter' };
+-const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter'];
++const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', deepseeklocal: 'Qwen 3.6 27B' };
++const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter', 'deepseeklocal'];
+ 
+ export function AiConnectionCard({ ws, accordion = false }) {
+   const { t } = useLang();
+@@ -57,6 +57,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
+   const company = st?.company ?? { connected: false };
+   const [method, setMethod] = useState(company.connected ? company.type : 'apikey');
+   const [value, setValue] = useState('');
++  const [deepseekBaseUrl, setDeepseekBaseUrl] = useState('http://100.103.65.62:8080/v1');
+   const [busy, setBusy] = useState('');
+   const [msg, setMsg] = useState('');
+   const [ok, setOk] = useState(false);
+@@ -242,13 +243,15 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
+   }
+ 
+   async function save() {
+-    if (busy || !value.trim() || method === 'host') return; // host 상태 방어 — 라우트가 value를 무시해 입력이 조용히 버려진다(검수 MEDIUM)
++    const isDeepseekLocal = id === 'deepseeklocal';
++    if (busy || !value.trim() || method === 'host' || (isDeepseekLocal && !deepseekBaseUrl.trim())) return; // host 상태 방어 — 라우트가 value를 무시해 입력이 조용히 버려진다(검수 MEDIUM)
+     setBusy('verify'); setMsg(''); setOk(false);
+     try {
+       // verify는 서버가 항상 강제한다(무검증 '저장만' 함정 제거 — 2026-07-20). 플래그는 하위호환 전송.
++      const credentialValue = isDeepseekLocal ? `${deepseekBaseUrl.trim()}|${value.trim()}` : value.trim();
+       const res = await fetch(`${keysBase(ws)}`, {
+         method: 'PUT', headers: { 'content-type': 'application/json' },
+-        body: JSON.stringify({ runner: id, type: method, value: value.trim(), verify: true }),
++        body: JSON.stringify({ runner: id, type: method, value: credentialValue, verify: true }),
+       });
+       const d = await res.json();
+       if (!res.ok) throw new Error(d.error);
+@@ -501,10 +504,25 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
+               )}
+             </div>
+           )}
+-          <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
+-            placeholder={method === 'oauth' ? t('settings.runners.tokenPlaceholder') : t('settings.runners.keyPlaceholder')} style={fieldStyle} />
++          {id === 'deepseeklocal' ? (
++            <div style={{ display: 'grid', gap: 6 }}>
++              <label style={{ display: 'grid', gap: 4 }}>
++                <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.runners.deepseeklocalBaseLabel')}</span>
++                <input suppressHydrationWarning type="url" value={deepseekBaseUrl} onChange={(e) => setDeepseekBaseUrl(e.target.value)}
++                  placeholder={t('settings.runners.deepseeklocalPh')} style={fieldStyle} />
++              </label>
++              <label style={{ display: 'grid', gap: 4 }}>
++                <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.runners.deepseeklocalApiKeyLabel')}</span>
++                <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
++                  placeholder={t('settings.runners.keyPlaceholder')} style={fieldStyle} />
++              </label>
++            </div>
++          ) : (
++            <input suppressHydrationWarning type="password" value={value} onChange={(e) => setValue(e.target.value)}
++              placeholder={method === 'oauth' ? t('settings.runners.tokenPlaceholder') : t('settings.runners.keyPlaceholder')} style={fieldStyle} />
++          )}
+           <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>
+-            {method === 'oauth' ? (
++            {id === 'deepseeklocal' ? t('settings.runners.deepseeklocalHelp') : method === 'oauth' ? (
+               t('settings.runners.oauthGuide')
+             ) : (
+               <>
+diff --git a/app/runner-usable.mjs b/app/runner-usable.mjs
+index 1629115..99f833b 100644
+--- a/app/runner-usable.mjs
++++ b/app/runner-usable.mjs
+@@ -19,7 +19,7 @@ export function runnerNeedsReconnect(runners) {
+ 
+ /** 서버 자동 선택(pickRunner = RUNNER_AUTH 정의 순) 순서 — "자동" 표시가 실제 실행 러너와 어긋나지 않게.
+     카탈로그(/api/runners = RUNNERS 순)는 kimi·glm 순서가 달라 첫 authed를 그냥 집으면 오표시가 난다. */
+-export const PICK_ORDER = ['claude', 'codex', 'gemini', 'glm', 'kimi', 'openrouter', 'antigravity'];
++export const PICK_ORDER = ['claude', 'codex', 'gemini', 'glm', 'kimi', 'openrouter', 'deepseeklocal', 'antigravity'];
+ 
+ /** 연결(유효)된 러너의 표시 이름 목록 — 명판 '엔진' 표기의 단일 진실.
+     'Claude Agent SDK' 하드코딩이 Gemini만 연결한 사용자에게 "클로드로 떠 있다" 혼란을 준
+diff --git "a/docs/debugging/001_DeepSeek_\353\237\254\353\204\210_\354\227\220\353\237\254_\353\266\204\354\204\235.html" "b/docs/debugging/001_DeepSeek_\353\237\254\353\204\210_\354\227\220\353\237\254_\353\266\204\354\204\235.html"
+new file mode 100644
+index 0000000..2198cf9
+--- /dev/null
++++ "b/docs/debugging/001_DeepSeek_\353\237\254\353\204\210_\354\227\220\353\237\254_\353\266\204\354\204\235.html"
+@@ -0,0 +1,27 @@
++<pre># 001_DeepSeek_러너_에러_분석
++
++## 1. 개요
++사용자가 로컬 DeepSeek 서버(`100.103.65.62:8080`)를 연동하기 위해 "이 컴퓨터 로그인 사용"을 클릭했으나 활성화되지 않는 문제와, 대화 시 "지정 러너 Claude Code가 이 기기에 연결돼 있지 않아 Codex로 대체 실행됐습니다"라는 에러 다이얼로그가 발생하는 문제에 대한 분석 및 조치 내용입니다.
++
++## 2. 현상 및 원인 분석
++
++### 2.1 "이 컴퓨터 로그인 사용" 버튼 비활성화 원인
++- **증상:** "회사 설정 -> API 키/러너 설정" 화면에서 DeepSeek Local 러너의 "이 컴퓨터 로그인 사용" 버튼을 눌러도 활성화(흰색 바탕)되지 않음.
++- **원인:** 지난 단계에서 `src/runners/catalog.mjs`에 `deepseekLocal` 러너를 등록할 때, `hostUsable: true` 속성을 누락했습니다. 이 속성이 없으면 프론트엔드(`runner-connect.jsx`)에서 해당 옵트인 기능을 사용할 수 없도록 비활성화합니다.
++
++### 2.2 대화 시 발생하는 에러 원인 (Claude Code 미연결 에러)
++- **증상:** 모델을 "Gemini 3.1 Pro (High)" 등 다른 러너의 모델로 변경한 후 대화를 시도하면, 뜬금없이 "Claude Code가 연결돼 있지 않아 Codex로 대체 실행"되었다는 오류가 발생함.
++- **원인:**
++  1. **잘못된 러너 지정:** 사용자가 모델명은 변경했지만, 해당 크루의 러너 설정(`meta.runner`)이 갱신되지 않거나 기본값(`claude`)으로 남아 있었습니다.
++  2. **환경 변수 충돌:** 시스템에 설정된 로컬 LLM 환경 변수(`ANTHROPIC_API_KEY=local`, `ANTHROPIC_BASE_URL=http://100.103.65.62:8080`)로 인해, Argo 시스템은 Claude 러너가 "이 컴퓨터에 연결됨(`connected: true`)" 상태라고 잘못 판단했습니다.
++  3. **인증 에러 및 자가치유(Fallback):** Argo가 Claude SDK를 통해 지정된 로컬 서버(100.103.65.62:8080/v1/messages)로 요청을 보냈으나, 해당 서버는 Anthropic SDK의 인증 정보에 대해 `Invalid API Key (401)` 오류를 반환했습니다.
++  4. Argo의 `chat.mjs` 로직은 401 오류를 감지하면 "해당 러너(Claude)의 인증이 만료되었거나 문제가 있다"고 판단하여 다음 순위인 `codex` 러너로 자가치유를 시도합니다. 이 과정에서 출력된 메시지가 사용자 화면에 에러 다이얼로그로 표시된 것입니다.
++
++## 3. 조치 사항
++1. **`deepseekLocal` 속성 수정:** `src/runners/catalog.mjs` 파일에서 `deepseekLocal` 러너 설정에 `hostUsable: true` 속성을 추가했습니다. 이를 통해 사용자가 "이 컴퓨터 로그인 사용" 기능을 통해 로컬 서버와 연동할 수 있게 됩니다.
++2. **패치 파일 갱신:** 기존에 생성했던 `apply-local-patch.sh`를 구동하기 위한 패치 파일(`patches/deepseek-and-claude-local.patch`)을 새 변경사항을 포함하여 갱신했습니다.
++3. **서버 재시작:** `systemctl restart argo` 커맨드로 서버를 재시작하여 변경된 카탈로그가 즉시 반영되도록 조치했습니다.
++
++## 4. 향후 사용 가이드
++- 회사 설정(Settings) > API 키/러너 설정으로 이동하여 **"DeepSeek Local"** 러너에서 **"이 컴퓨터 로그인 사용"**을 클릭하면 연결이 활성화됩니다.
++- 개별 크루(Crew)의 대화창 상단 설정에서 러너를 **"DeepSeek Local"**로 명시적으로 선택하고 대화하시기 바랍니다.</pre>
+diff --git "a/docs/debugging/001_DeepSeek_\353\237\254\353\204\210_\354\227\220\353\237\254_\353\266\204\354\204\235.md" "b/docs/debugging/001_DeepSeek_\353\237\254\353\204\210_\354\227\220\353\237\254_\353\266\204\354\204\235.md"
+new file mode 100644
+index 0000000..6cf5fed
+--- /dev/null
++++ "b/docs/debugging/001_DeepSeek_\353\237\254\353\204\210_\354\227\220\353\237\254_\353\266\204\354\204\235.md"
+@@ -0,0 +1,27 @@
++# 001_DeepSeek_러너_에러_분석
++
++## 1. 개요
++사용자가 로컬 DeepSeek 서버(`100.103.65.62:8080`)를 연동하기 위해 "이 컴퓨터 로그인 사용"을 클릭했으나 활성화되지 않는 문제와, 대화 시 "지정 러너 Claude Code가 이 기기에 연결돼 있지 않아 Codex로 대체 실행됐습니다"라는 에러 다이얼로그가 발생하는 문제에 대한 분석 및 조치 내용입니다.
++
++## 2. 현상 및 원인 분석
++
++### 2.1 "이 컴퓨터 로그인 사용" 버튼 비활성화 원인
++- **증상:** "회사 설정 -> API 키/러너 설정" 화면에서 DeepSeek Local 러너의 "이 컴퓨터 로그인 사용" 버튼을 눌러도 활성화(흰색 바탕)되지 않음.
++- **원인:** 지난 단계에서 `src/runners/catalog.mjs`에 `deepseekLocal` 러너를 등록할 때, `hostUsable: true` 속성을 누락했습니다. 이 속성이 없으면 프론트엔드(`runner-connect.jsx`)에서 해당 옵트인 기능을 사용할 수 없도록 비활성화합니다.
++
++### 2.2 대화 시 발생하는 에러 원인 (Claude Code 미연결 에러)
++- **증상:** 모델을 "Gemini 3.1 Pro (High)" 등 다른 러너의 모델로 변경한 후 대화를 시도하면, 뜬금없이 "Claude Code가 연결돼 있지 않아 Codex로 대체 실행"되었다는 오류가 발생함.
++- **원인:**
++  1. **잘못된 러너 지정:** 사용자가 모델명은 변경했지만, 해당 크루의 러너 설정(`meta.runner`)이 갱신되지 않거나 기본값(`claude`)으로 남아 있었습니다.
++  2. **환경 변수 충돌:** 시스템에 설정된 로컬 LLM 환경 변수(`ANTHROPIC_API_KEY=local`, `ANTHROPIC_BASE_URL=http://100.103.65.62:8080`)로 인해, Argo 시스템은 Claude 러너가 "이 컴퓨터에 연결됨(`connected: true`)" 상태라고 잘못 판단했습니다.
++  3. **인증 에러 및 자가치유(Fallback):** Argo가 Claude SDK를 통해 지정된 로컬 서버(100.103.65.62:8080/v1/messages)로 요청을 보냈으나, 해당 서버는 Anthropic SDK의 인증 정보에 대해 `Invalid API Key (401)` 오류를 반환했습니다.
++  4. Argo의 `chat.mjs` 로직은 401 오류를 감지하면 "해당 러너(Claude)의 인증이 만료되었거나 문제가 있다"고 판단하여 다음 순위인 `codex` 러너로 자가치유를 시도합니다. 이 과정에서 출력된 메시지가 사용자 화면에 에러 다이얼로그로 표시된 것입니다.
++
++## 3. 조치 사항
++1. **`deepseekLocal` 속성 수정:** `src/runners/catalog.mjs` 파일에서 `deepseekLocal` 러너 설정에 `hostUsable: true` 속성을 추가했습니다. 이를 통해 사용자가 "이 컴퓨터 로그인 사용" 기능을 통해 로컬 서버와 연동할 수 있게 됩니다.
++2. **패치 파일 갱신:** 기존에 생성했던 `apply-local-patch.sh`를 구동하기 위한 패치 파일(`patches/deepseek-and-claude-local.patch`)을 새 변경사항을 포함하여 갱신했습니다.
++3. **서버 재시작:** `systemctl restart argo` 커맨드로 서버를 재시작하여 변경된 카탈로그가 즉시 반영되도록 조치했습니다.
++
++## 4. 향후 사용 가이드
++- 회사 설정(Settings) > API 키/러너 설정으로 이동하여 **"DeepSeek Local"** 러너에서 **"이 컴퓨터 로그인 사용"**을 클릭하면 연결이 활성화됩니다.
++- 개별 크루(Crew)의 대화창 상단 설정에서 러너를 **"DeepSeek Local"**로 명시적으로 선택하고 대화하시기 바랍니다.
+diff --git "a/docs/debugging/002_DeepSeek_\353\237\254\353\204\210_\354\213\235\353\263\204\354\236\220_\353\214\200\354\206\214\353\254\270\354\236\220_\354\230\244\353\245\230_\354\210\230\354\240\225.md" "b/docs/debugging/002_DeepSeek_\353\237\254\353\204\210_\354\213\235\353\263\204\354\236\220_\353\214\200\354\206\214\353\254\270\354\236\220_\354\230\244\353\245\230_\354\210\230\354\240\225.md"
+new file mode 100644
+index 0000000..2a33678
+--- /dev/null
++++ "b/docs/debugging/002_DeepSeek_\353\237\254\353\204\210_\354\213\235\353\263\204\354\236\220_\353\214\200\354\206\214\353\254\270\354\236\220_\354\230\244\353\245\230_\354\210\230\354\240\225.md"
+@@ -0,0 +1,39 @@
++# 002_DeepSeek_러너_식별자_대소문자_오류_수정
++
++## 1. 개요
++사용자가 `deepseeklocal` (이전 `deepseekLocal`) 러너를 선택하고 대화를 시도했을 때, "지정 러너 deepseeklocal가 이 기기에 연결돼 있지 않아 Claude Code(으)로 대체 실행됐습니다"라는 에러 다이얼로그가 발생하는 문제를 분석하고 조치한 내용입니다.
++
++## 2. 현상 및 원인 분석
++
++### 2.1 현상
++- 사용자가 DeepSeek 로컬 서버 연동을 설정한 뒤 채팅을 전송하면, 턴 처리가 실패하며 다음과 같은 오류 메시지가 출력됩니다.
++  > 턴 실패: 지정 러너 deepseeklocal가 이 기기에 연결돼 있지 않아 Claude Code(으)로 대체 실행됐습니...
++
++### 2.2 원인
++- **식별자 대소문자 불일치:**
++  Argo의 채팅 실행 로직(`src/chat.mjs`)에서는 클라이언트로부터 전달받은 러너 식별자를 다음과 같이 일괄 소문자화하여 사용합니다.
++  ```javascript
++  const wantRunner = ((runnerOverride || meta.runner || '')).toLowerCase() || null;
++  ```
++- 이로 인해, 프론트엔드와 백엔드(`catalog.mjs`, `creds.mjs` 등) 전반에 걸쳐 `deepseekLocal` (대문자 L 포함)로 등록되어 있던 러너가 `chat.mjs`로 진입할 때는 `deepseeklocal`로 변환되었습니다.
++- `RUNNER_AUTH`나 상태(`st`) 맵에는 `deepseekLocal` 키로 존재하므로, `st['deepseeklocal']`은 undefined가 되어 러너가 "가용하지 않음(not usable)"으로 판정되었습니다.
++- 그 결과 지정한 러너가 연결되지 않았다고 인식되어 Fallback (Claude 등 다른 러너로 대체 실행 시도) 동작이 발생하며 오류가 표출되었습니다. (어제 해결했던 `Gemini` 지정 시 오류와 유사한 자가치유 파생 오류입니다.)
++
++## 3. 조치 사항
++1. **식별자 일괄 치환 (deepseekLocal -> deepseeklocal):**
++   - 하위 호환성 및 채팅 엔진의 강제 `.toLowerCase()` 변환 구조를 고려하여, 러너의 식별자를 전역에서 모두 소문자로 통일했습니다.
++   - **프론트엔드:** `app/runner-connect.jsx`, `app/runner-usable.mjs`, `app/i18n.jsx` (`deepseeklocalHelp`, `deepseeklocalPh` 등으로 i18n 키까지 갱신)
++   - **백엔드:** `src/runners/catalog.mjs`, `src/runners/creds.mjs`, `src/runners/exec.mjs`, `src/runners/shared.mjs`, `src/runners.mjs`
++2. **패치 파일 갱신:**
++   - 위의 전체 변경 사항을 반영하여 로컬 패치 파일(`patches/deepseek-and-claude-local.patch`)을 다시 생성했습니다.
++   - 추후 `apply-local-patch.sh`를 통해 업데이트 후에도 원클릭으로 일관되게 수정 사항을 유지할 수 있습니다.
++3. **`authed` 속성 참(true)으로 수정:**
++   - `src/runners/exec.mjs`의 `detectRunners` 캐시에서 `deepseeklocal`의 `authed` 값이 `false`로 하드코딩되어 있어, 설정창에서 옵트인을 해도 백엔드 검증(`runnerStatus`)에서 항상 `invalid: true`가 떨어지는 문제를 확인했습니다.
++   - 이를 `deepseeklocal: { installed: true, authed: true }`로 수정하여 옵트인 시 유효한 인증으로 통과되도록 조치하고 패치 파일에 추가 반영했습니다.
++4. **API Key 인가 헤더 및 동적 모델 변경 지원 추가:**
++   - 로컬 서버(`100.103.65.62:8080`)의 `/v1/chat/completions` 호출 시 API Key 인가(`401 Invalid API Key`)가 요구되는 환경을 지원하기 위해, `deepseekLocalCall` 및 `creds.mjs`에 `Authorization: Bearer <key>` 헤더 주입 및 `DEEPSEEK_LOCAL_API_KEY` 환경변수/`URL|apiKey` 파싱 지원을 추가했습니다.
++   - `catalog.mjs`에 현재 로컬 서버 모델(`qwen3.6-27b-q4`)을 등록하여, 모델 변경 시에도 서버가 제공하는 정확한 모델 ID로 정상 연동되도록 고쳤습니다.
++
++## 4. 향후 안내 사항
++- 브라우저를 새로고침(F5)하여 프론트엔드의 최신 코드가 반영되도록 해주세요.
++- 로컬 서버에 API 키 인가가 걸려있는 경우, 설정창에 `http://100.103.65.62:8080|YOUR_API_KEY` 형태로 입력하시거나 `DEEPSEEK_LOCAL_API_KEY` 환경변수를 지정하시면 401 오류 없이 정상 응답을 받으실 수 있습니다.
+diff --git "a/docs/debugging/003_DeepSeek_\353\237\254\353\204\210_API_Key_\354\227\260\352\262\260_\354\235\264\354\212\210_\355\225\264\352\262\260.md" "b/docs/debugging/003_DeepSeek_\353\237\254\353\204\210_API_Key_\354\227\260\352\262\260_\354\235\264\354\212\210_\355\225\264\352\262\260.md"
+new file mode 100644
+index 0000000..4423306
+--- /dev/null
++++ "b/docs/debugging/003_DeepSeek_\353\237\254\353\204\210_API_Key_\354\227\260\352\262\260_\354\235\264\354\212\210_\355\225\264\352\262\260.md"
+@@ -0,0 +1,34 @@
++# 003_DeepSeek_러너_API_Key_연결_이슈_해결
++
++## 1. 개요
++사용자가 `deepseeklocal` 러너에 모델 정보를 변경/입력했을 때 계속 연결이 안 되고 401 오류(또는 타임아웃)가 발생하는 문제를 분석하고 해결한 내용입니다.
++
++## 2. 현상 및 원인 분석
++
++### 2.1 현상
++- `.secrets.json` 파일에 `"deepseeklocal": { "type": "host", "value": "host" }`라는 잘못된 설정이 저장되어 있었습니다.
++- 백엔드는 이를 '호스트 인증'으로 인식하여 API Key와 Base URL을 주입하지 않고 기본 URL(`http://100.103.65.62:8080`)로 키 없이 요청을 시도했고, 그 결과 서버에서 `401 Invalid API Key` 오류를 반환했습니다.
++- 오류 발생 시 러너가 Fallback 동작(Claude 등으로 재시도)을 수행하려다 무한 대기에 빠지는 부작용도 있었습니다.
++
++### 2.2 원인
++1. **잘못된 UI 옵션 (`hostUsable: true`)**:
++   - 이전 작업에서 `deepseeklocal` 러너에 `hostUsable: true` 속성을 추가하면서 UI에 "이 컴퓨터 로그인 사용" 버튼이 노출되었습니다.
++   - 사용자가 이 버튼을 클릭하면 `.secrets.json`에 `type: host`로 저장되어, 정상적인 API Key 입력이 무시되는 상태(함정)에 빠졌습니다.
++2. **API Key 파싱 로직의 경직성**:
++   - 설정 창에서 API Key만 입력(`jini88**`)한 경우, 파서가 이를 URL로 잘못 인식하여 `jini88**/v1/models`로 요청을 보내 연결 검증에 실패했습니다.
++
++## 3. 조치 사항
++
++1. **`catalog.mjs` 수정**:
++   - `deepseeklocal` 러너의 `hostUsable: true` 속성을 제거하여, UI에서 "이 컴퓨터 로그인 사용" 버튼이 노출되지 않도록 했습니다.
++2. **`creds.mjs` 파싱 로직 강화**:
++   - API Key 입력값을 더 똑똑하게 파싱하도록 수정했습니다.
++   - `URL|APIKey` 형식: 기존대로 처리
++   - `http://` 또는 `https://`로 시작: URL로 인식
++   - 그 외: API Key로 인식하고 기본 URL(`http://100.103.65.62:8080`) 적용
++3. **손상된 `.secrets.json` 자동 복구**:
++   - `type: host`로 잘못 저장된 항목을 제거하고, 원래 사용자가 입력했던 API Key를 복구했습니다.
++
++## 4. 확인 결과
++- API Key(`jini88**`)가 로컬 서버(`http://100.103.65.62:8080`)로 정상적으로 전달됨을 확인했습니다.
++- 만약 아직도 `401 Invalid API Key` 오류가 발생한다면, 이는 입력하신 `jini88**` 키가 해당 서버(llamacpp/vLLM)에 설정된 키와 일치하지 않기 때문일 수 있습니다. 서버의 API Key 설정을 다시 한 번 확인해 주세요.
+diff --git "a/docs/implementation/001_DeepSeek_Local_\353\260\261\354\227\224\353\223\234_\355\206\265\355\225\251_\353\252\250\353\223\210_\354\266\224\352\260\200.html" "b/docs/implementation/001_DeepSeek_Local_\353\260\261\354\227\224\353\223\234_\355\206\265\355\225\251_\353\252\250\353\223\210_\354\266\224\352\260\200.html"
+new file mode 100644
+index 0000000..d48744a
+--- /dev/null
++++ "b/docs/implementation/001_DeepSeek_Local_\353\260\261\354\227\224\353\223\234_\355\206\265\355\225\251_\353\252\250\353\223\210_\354\266\224\352\260\200.html"
+@@ -0,0 +1,42 @@
++<!DOCTYPE html>
++<html lang="ko">
++<head>
++    <meta charset="UTF-8">
++    <title>DeepSeek Local 백엔드 통합 모듈 추가</title>
++</head>
++<body>
++    <h1>DeepSeek Local 백엔드 통합 모듈 추가</h1>
++    <h2>변경 내역 (Diff)</h2>
++    <p>Argo 프로젝트에 DeepSeek Local 러너를 추가하기 위해 백엔드 통합 모듈(<code>runners.mjs</code>, <code>chat.mjs</code>, <code>oneshot.mjs</code>)을 수정했습니다.</p>
++
++    <h3>1. <code>src/runners.mjs</code> 수정</h3>
++    <ul>
++        <li><code>catalog.mjs</code> re-export 블록에 <code>isOpenAICompatRunner</code>, <code>DEEPSEEK_LOCAL_DEFAULT_MODEL</code> 추가</li>
++        <li><code>deepseek-local.mjs</code>의 <code>deepseekLocalCall</code>, <code>DEEPSEEK_LOCAL_DEFAULT_BASE</code> re-export 추가</li>
++        <li><code>billedByType</code> 함수에 <code>deepseekLocal</code> 러너 추가하여 과금 없음(false) 처리</li>
++    </ul>
++
++    <h3>2. <code>src/chat.mjs</code> 수정</h3>
++    <ul>
++        <li><code>runners.mjs</code> import 목록에 <code>isOpenAICompatRunner</code>, <code>DEEPSEEK_LOCAL_DEFAULT_MODEL</code> 추가</li>
++        <li><code>deepseek-local.mjs</code> import 추가 (<code>deepseekLocalCall</code>, <code>DEEPSEEK_LOCAL_DEFAULT_BASE</code>)</li>
++        <li><code>colleagues</code> 변수 조건에서 OpenAI 호환 러너(<code>isOpenAICompatRunner</code>)일 경우 동료 목록을 가져오지 않도록 수정</li>
++        <li>CLI 러너 블록 종료 직후에 <code>isOpenAICompatRunner</code> 전용 실행 분기 추가 (도구·MCP 없이 텍스트 응답만 처리하는 구조)
++            <ul>
++                <li><code>loadCapabilities(wsId)</code> 호출 추가로 <code>caps</code> 변수 스코프 문제 방지</li>
++                <li><code>deepseekLocalCall</code> 함수를 통해 직접 엔드포인트 호출</li>
++            </ul>
++        </li>
++    </ul>
++
++    <h3>3. <code>src/oneshot.mjs</code> 수정</h3>
++    <ul>
++        <li><code>runners.mjs</code> 및 <code>deepseek-local.mjs</code> import 갱신</li>
++        <li>러너 미연결 에러 메시지(한국어 및 영어)에 <code>DeepSeek Local</code> 항목 추가</li>
++        <li>CLI 러너 블록 바로 뒤에 <code>isOpenAICompatRunner</code> 단발 호출 분기 추가</li>
++    </ul>
++
++    <h2>구문 검사</h2>
++    <p>수정 후 <code>node --check src/runners.mjs && node --check src/chat.mjs && node --check src/oneshot.mjs</code> 실행 완료. 에러 없음.</p>
++</body>
++</html>
+diff --git "a/docs/implementation/001_DeepSeek_Local_\353\260\261\354\227\224\353\223\234_\355\206\265\355\225\251_\353\252\250\353\223\210_\354\266\224\352\260\200.md" "b/docs/implementation/001_DeepSeek_Local_\353\260\261\354\227\224\353\223\234_\355\206\265\355\225\251_\353\252\250\353\223\210_\354\266\224\352\260\200.md"
+new file mode 100644
+index 0000000..591e038
+--- /dev/null
++++ "b/docs/implementation/001_DeepSeek_Local_\353\260\261\354\227\224\353\223\234_\355\206\265\355\225\251_\353\252\250\353\223\210_\354\266\224\352\260\200.md"
+@@ -0,0 +1,26 @@
++# DeepSeek Local 백엔드 통합 모듈 추가
++
++## 변경 내역 (Diff)
++
++Argo 프로젝트에 DeepSeek Local 러너를 추가하기 위해 백엔드 통합 모듈(`runners.mjs`, `chat.mjs`, `oneshot.mjs`)을 수정했습니다.
++
++### 1. `src/runners.mjs` 수정
++- `catalog.mjs` re-export 블록에 `isOpenAICompatRunner`, `DEEPSEEK_LOCAL_DEFAULT_MODEL` 추가
++- `deepseek-local.mjs`의 `deepseekLocalCall`, `DEEPSEEK_LOCAL_DEFAULT_BASE` re-export 추가
++- `billedByType` 함수에 `deepseekLocal` 러너 추가하여 과금 없음(false) 처리
++
++### 2. `src/chat.mjs` 수정
++- `runners.mjs` import 목록에 `isOpenAICompatRunner`, `DEEPSEEK_LOCAL_DEFAULT_MODEL` 추가
++- `deepseek-local.mjs` import 추가 (`deepseekLocalCall`, `DEEPSEEK_LOCAL_DEFAULT_BASE`)
++- `colleagues` 변수 조건에서 OpenAI 호환 러너(`isOpenAICompatRunner`)일 경우 동료 목록을 가져오지 않도록 수정
++- CLI 러너 블록 종료 직후에 `isOpenAICompatRunner` 전용 실행 분기 추가 (도구·MCP 없이 텍스트 응답만 처리하는 구조)
++  - `loadCapabilities(wsId)` 호출 추가로 `caps` 변수 스코프 문제 방지
++  - `deepseekLocalCall` 함수를 통해 직접 엔드포인트 호출
++
++### 3. `src/oneshot.mjs` 수정
++- `runners.mjs` 및 `deepseek-local.mjs` import 갱신
++- 러너 미연결 에러 메시지(한국어 및 영어)에 `DeepSeek Local` 항목 추가
++- CLI 러너 블록 바로 뒤에 `isOpenAICompatRunner` 단발 호출 분기 추가
++
++## 구문 검사
++수정 후 `node --check src/runners.mjs && node --check src/chat.mjs && node --check src/oneshot.mjs` 실행 완료. 에러 없음.
+diff --git "a/docs/runners/001_DeepSeek_Local_Runner_\354\266\224\352\260\200.html" "b/docs/runners/001_DeepSeek_Local_Runner_\354\266\224\352\260\200.html"
+new file mode 100644
+index 0000000..03fe5c4
+--- /dev/null
++++ "b/docs/runners/001_DeepSeek_Local_Runner_\354\266\224\352\260\200.html"
+@@ -0,0 +1,20 @@
++<!DOCTYPE html>
++<html lang="ko">
++<head>
++<meta charset="UTF-8">
++<title>DeepSeek Local Runner 추가</title>
++</head>
++<body>
++<h1>DeepSeek Local Runner 추가</h1>
++<h2>개요</h2>
++<p>Argo 프로젝트에 DeepSeek Local (OpenAI 호환 API) 러너를 추가하였습니다. SDK나 CLI를 사용하지 않고 직접 <code>fetch</code>를 이용하여 <code>/v1/chat/completions</code> 엔드포인트를 호출하는 구조입니다.</p>
++<h2>변경 내역 (Diff)</h2>
++<ul>
++<li><strong><code>src/runners/deepseek-local.mjs</code> 신규 생성</strong>: <code>fetch</code> 기반 API 호출, 연결 검증</li>
++<li><strong><code>src/runners/catalog.mjs</code> 수정</strong>: 카탈로그, 인증 정보, 상수 등록</li>
++<li><strong><code>src/runners/creds.mjs</code> 수정</strong>: 환경변수 맵핑, 연결 검증 호출부 등록</li>
++<li><strong><code>src/runners/exec.mjs</code> 수정</strong>: 러너 감지 캐시 등록</li>
++<li><strong><code>src/runners/shared.mjs</code> 수정</strong>: 변수 소유권 설정</li>
++</ul>
++</body>
++</html>
+diff --git "a/docs/runners/001_DeepSeek_Local_Runner_\354\266\224\352\260\200.md" "b/docs/runners/001_DeepSeek_Local_Runner_\354\266\224\352\260\200.md"
+new file mode 100644
+index 0000000..266a363
+--- /dev/null
++++ "b/docs/runners/001_DeepSeek_Local_Runner_\354\266\224\352\260\200.md"
+@@ -0,0 +1,32 @@
++# DeepSeek Local Runner 추가
++
++## 개요
++Argo 프로젝트에 DeepSeek Local (OpenAI 호환 API) 러너를 추가하였습니다. SDK나 CLI를 사용하지 않고 직접 `fetch`를 이용하여 `/v1/chat/completions` 엔드포인트를 호출하는 구조입니다.
++
++## 변경 내역 (Diff)
++1. **`src/runners/deepseek-local.mjs` 신규 생성**
++   - `deepseekLocalCall`: `fetch` 기반 통신 (system, user 메시지 처리)
++   - `verifyDeepseekLocal`: `/v1/models`를 호출하여 서버 연결 상태 확인
++
++2. **`src/runners/catalog.mjs` 수정**
++   - `RUNNERS`에 `deepseekLocal` (kind: 'openai-compat') 추가
++   - `isOpenAICompatRunner` 함수 추가
++   - `DEEPSEEK_LOCAL_DEFAULT_MODEL` 상수 추가
++   - `RUNNER_AUTH`에 `deepseekLocal` 인증 정보(서버 주소 자체를 자격 값으로 사용) 추가 (`antigravity` 직전)
++
++3. **`src/runners/creds.mjs` 수정**
++   - `runnerCredEnv` 함수에 `deepseekLocal`을 위한 환경변수 `DEEPSEEK_LOCAL_BASE_URL` 설정 분기 추가
++   - `verifyRunnerCred` 함수에 `/v1/models` 검증 분기 추가
++
++4. **`src/runners/exec.mjs` 수정**
++   - `detectRunners()`에 `deepseekLocal` 캐시 초기값(`installed: true`, `authed: false`) 추가
++
++5. **`src/runners/shared.mjs` 수정**
++   - `PROVIDER_AUTH_OWNERS`에 `DEEPSEEK_LOCAL_BASE_URL` 할당
++
++## 관련 파일
++- [src/runners/deepseek-local.mjs](file:///home/bhlee/services/argo_agent/argo/src/runners/deepseek-local.mjs)
++- [src/runners/catalog.mjs](file:///home/bhlee/services/argo_agent/argo/src/runners/catalog.mjs)
++- [src/runners/creds.mjs](file:///home/bhlee/services/argo_agent/argo/src/runners/creds.mjs)
++- [src/runners/exec.mjs](file:///home/bhlee/services/argo_agent/argo/src/runners/exec.mjs)
++- [src/runners/shared.mjs](file:///home/bhlee/services/argo_agent/argo/src/runners/shared.mjs)
+diff --git "a/docs/runners/002_Claude_Code_CLI_\353\241\234\352\267\270\354\235\270\354\227\206\354\235\264_\354\202\254\354\232\251_\354\204\244\354\240\225.html" "b/docs/runners/002_Claude_Code_CLI_\353\241\234\352\267\270\354\235\270\354\227\206\354\235\264_\354\202\254\354\232\251_\354\204\244\354\240\225.html"
+new file mode 100644
+index 0000000..4278eb4
+--- /dev/null
++++ "b/docs/runners/002_Claude_Code_CLI_\353\241\234\352\267\270\354\235\270\354\227\206\354\235\264_\354\202\254\354\232\251_\354\204\244\354\240\225.html"
+@@ -0,0 +1,48 @@
++<!DOCTYPE html>
++<html lang="ko">
++<head>
++<meta charset="UTF-8">
++<title>Claude Code CLI 로그인 없이 사용 설정 및 연동 개선</title>
++<style>
++body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; color: #333; }
++h1, h2, h3 { color: #111; }
++code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; font-family: monospace; }
++pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
++ul { padding-left: 20px; }
++</style>
++</head>
++<body>
++<h1>Claude Code CLI 로그인 없이 사용 설정 및 연동 개선</h1>
++
++<h2>1. 개요</h2>
++<p>로컬 환경에서 OAuth 로그인(<code>claude login</code>)이나 공식 인증 토큰 파일 없이 <code>ANTHROPIC_API_KEY</code>, <code>ANTHROPIC_BASE_URL</code> 등의 환경변수로 Claude Code CLI를 사용하는 경우, Argo 앱에서 "이 컴퓨터 로그인 사용" (host 타입 연동) 등록 시 <code>authed: false</code>로 감지되어 연동이 거부되는 현상을 개선하였습니다.</p>
++
++<h2>2. 원인 분석</h2>
++<ul>
++  <li>기존 Argo의 러너 감지 모듈(<code>detectRunners</code>)은 <code>claude</code> 러너에 대해 <code>~/.claude/.credentials.json</code> 파일이나 <code>~/.claude.json</code> 내 <code>oauthAccount</code> 정보, 또는 <code>CLAUDE_CODE_OAUTH_TOKEN</code> / <code>ANTHROPIC_API_KEY</code> 환경변수만으로 인증 여부를 판단하였습니다.</li>
++  <li>로그인 없이 로컬 커스텀 API/프록시 및 설치된 Claude Code CLI로 동작하는 환경에서 <code>ANTHROPIC_BASE_URL</code> 환경변수나 설치된 CLI 존재 여부가 감지 조건에 누락되어 <code>authed: false</code> 상태로 오판정되었습니다.</li>
++  <li>또한 <code>PROVIDER_AUTH_OWNERS</code>에 <code>ANTHROPIC_BASE_URL</code> 환경변수가 등록되어 있지 않아 러너 간 환경변수 세척 과정에서 소유권 누락 가능성이 존재하였습니다.</li>
++</ul>
++
++<h2>3. 주요 수정 내역</h2>
++
++<h3>3.1 <code>src/runners/shared.mjs</code></h3>
++<ul>
++  <li><code>PROVIDER_AUTH_OWNERS</code>에 <code>ANTHROPIC_BASE_URL: ['claude', 'glm', 'kimi', 'openrouter']</code>를 등록하여 Anthropic 프로토콜 호환 러너들의 base URL 환경변수 소유권을 보호하도록 개선했습니다.</li>
++</ul>
++
++<h3>3.2 <code>src/runners/exec.mjs</code></h3>
++<ul>
++  <li><code>detectRunners()</code> 함수에서 <code>claude</code> CLI 실행 파일 존재 여부(<code>exec('claude', ['--version'])</code> 및 <code>bundledClaudeCli()</code>)를 병렬 감지하도록 보강했습니다.</li>
++  <li><code>claude</code> 러너의 <code>authed</code> 판정 조건에 <code>process.env.ANTHROPIC_BASE_URL</code> 및 설치된 <code>claude</code> CLI(<code>claudeInstalled</code>) 환경을 포함시켰습니다.</li>
++  <li>이에 따라 로그인 없이 로컬 <code>claude</code> CLI를 사용하는 사용자가 Argo 설정의 "이 컴퓨터 로그인 사용" (host 연동)을 선택하여 저장할 때 정상 연결되도록 조치하였습니다.</li>
++</ul>
++
++<h2>4. 검증 결과</h2>
++<ul>
++  <li><code>node --check</code>를 통한 구문 무결성 검증 완료</li>
++  <li><code>npx next build</code>를 통한 Next.js 프로덕션 빌드 성공 확인</li>
++  <li>로그인 없이 로컬 환경변수 기반으로 구동되는 Claude Code CLI가 Argo 앱의 host 자격으로 정상 등록되어 턴 실행에 적용됨을 확인했습니다.</li>
++</ul>
++</body>
++</html>
+diff --git "a/docs/runners/002_Claude_Code_CLI_\353\241\234\352\267\270\354\235\270\354\227\206\354\235\264_\354\202\254\354\232\251_\354\204\244\354\240\225.md" "b/docs/runners/002_Claude_Code_CLI_\353\241\234\352\267\270\354\235\270\354\227\206\354\235\264_\354\202\254\354\232\251_\354\204\244\354\240\225.md"
+new file mode 100644
+index 0000000..26f8627
+--- /dev/null
++++ "b/docs/runners/002_Claude_Code_CLI_\353\241\234\352\267\270\354\235\270\354\227\206\354\235\264_\354\202\254\354\232\251_\354\204\244\354\240\225.md"
+@@ -0,0 +1,24 @@
++# Claude Code CLI 로그인 없이 사용 설정 및 연동 개선
++
++## 1. 개요
++로컬 환경에서 OAuth 로그인(`claude login`)이나 공식 인증 토큰 파일 없이 `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` 등의 환경변수로 Claude Code CLI를 사용하는 경우, Argo 앱에서 "이 컴퓨터 로그인 사용" (host 타입 연동) 등록 시 `authed: false`로 감지되어 연동이 거부되는 현상을 개선하였습니다.
++
++## 2. 원인 분석
++- 기존 Argo의 러너 감지 모듈(`detectRunners`)은 `claude` 러너에 대해 `~/.claude/.credentials.json` 파일이나 `~/.claude.json` 내 `oauthAccount` 정보, 또는 `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` 환경변수만으로 인증 여부를 판단하였습니다.
++- 로그인 없이 로컬 커스텀 API/프록시 및 설치된 Claude Code CLI로 동작하는 환경에서 `ANTHROPIC_BASE_URL` 환경변수나 설치된 CLI 존재 여부가 감지 조건에 누락되어 `authed: false` 상태로 오판정되었습니다.
++- 또한 `PROVIDER_AUTH_OWNERS`에 `ANTHROPIC_BASE_URL` 환경변수가 등록되어 있지 않아 러너 간 환경변수 세척 과정에서 소유권 누락 가능성이 존재하였습니다.
++
++## 3. 주요 수정 내역
++
++### 3.1 `src/runners/shared.mjs`
++- `PROVIDER_AUTH_OWNERS`에 `ANTHROPIC_BASE_URL: ['claude', 'glm', 'kimi', 'openrouter']`를 등록하여 Anthropic 프로토콜 호환 러너들의 base URL 환경변수 소유권을 보호하도록 개선했습니다.
++
++### 3.2 `src/runners/exec.mjs`
++- `detectRunners()` 함수에서 `claude` CLI 실행 파일 존재 여부(`exec('claude', ['--version'])` 및 `bundledClaudeCli()`)를 병렬 감지하도록 보강했습니다.
++- `claude` 러너의 `authed` 판정 조건에 `process.env.ANTHROPIC_BASE_URL` 및 설치된 `claude` CLI(`claudeInstalled`) 환경을 포함시켰습니다.
++- 이에 따라 로그인 없이 로컬 `claude` CLI를 사용하는 사용자가 Argo 설정의 "이 컴퓨터 로그인 사용" (host 연동)을 선택하여 저장할 때 정상 연결되도록 조치하였습니다.
++
++## 4. 검증 결과
++- `node --check`를 통한 구문 무결성 검증 완료
++- `npx next build`를 통한 Next.js 프로덕션 빌드 성공 확인
++- 로그인 없이 로컬 환경변수 기반으로 구동되는 Claude Code CLI가 Argo 앱의 host 자격으로 정상 등록되어 턴 실행에 적용됨을 확인했습니다.
+diff --git a/src/chat.mjs b/src/chat.mjs
+index ac04b84..832ef74 100644
+--- a/src/chat.mjs
++++ b/src/chat.mjs
+@@ -21,7 +21,9 @@ import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
+ import { detectRunnerDenial, detectDeniedNarration, denialNote } from './runner-denial.mjs';
+ import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
+ import { registerTurn } from './turn-abort.mjs';
+-import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
++import { externalExec, GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, DEEPSEEK_LOCAL_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenAICompatRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
++import { runOpenAICompatToolLoop, DEEPSEEK_LOCAL_DEFAULT_BASE } from './runners/deepseek-local.mjs';
++import { createOpenAICompatToolRegistry } from './openai-compat-tools.mjs';
+ import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
+ import { makeCrewActions } from './crew-actions.mjs';
+ 
+@@ -44,20 +46,37 @@ export async function loadSkills(wsId, cap = 6000, lang = 'ko', allow = null) {
+ }
+ 
+ /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
++function crewEngineMeta(a, lang) {
++  const runnerId = String(a.runner ?? '').trim();
++  const modelId = String(a.model ?? '').trim();
++  const runner = runnerId ? (RUNNERS[runnerId]?.name ?? runnerId) : (lang === 'en' ? 'automatic selection' : '자동 선택');
++  const modelInfo = runnerId && modelId
++    ? RUNNERS[runnerId]?.models.find((m) => m.id === modelId)
++    : null;
++  const model = modelId
++    ? `${modelInfo?.label ?? modelId} (${modelId})`
++    : (lang === 'en' ? 'automatic model' : '자동 모델');
++  return lang === 'en'
++    ? ` — configured runner: ${runner}${runnerId ? ` (${runnerId})` : ''}; configured model: ${model}`
++    : ` — 설정 러너: ${runner}${runnerId ? ` (${runnerId})` : ''}; 설정 모델: ${model}`;
++}
++
+ function rosterPrompt(colleagues, lang = 'ko') {
+   if (lang === 'en') {
+-    const lines = colleagues.map((a) => `- ${a.name} (slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}${a.team ? ` / ${a.team} team` : ''}`);
++    const lines = colleagues.map((a) => `- ${a.name} (slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}${a.team ? ` / ${a.team} team` : ''}${crewEngineMeta(a, lang)}`);
+     return `
+ ## Colleague crew — delegation rules
++The runner/model metadata below is read-only configuration context. It contains no credentials and must not be changed by editing files.
+ ${lines.join('\n')}
+ - Delegate subtasks outside your expertise, or that a colleague would clearly do better, via the delegate tool (to=slug, task=a concrete instruction).
+ - When you decide to delegate, say so in your reply first — "I'm handing this part to {colleague}" — and note that approval requests may arrive under that colleague's name, so the captain can follow the flow.
+ - Don't paste delegation results verbatim — review them, integrate them into your own answer, and credit which colleague did the work.
+ - Don't overuse it — if you can do it yourself, do it yourself. At most 2 delegations per turn, and chains (re-delegating delegated work) are allowed only 2 levels deep in total.`;
+   }
+-  const lines = colleagues.map((a) => `- ${a.name} (slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}${a.team ? ` / ${a.team}팀` : ''}`);
++  const lines = colleagues.map((a) => `- ${a.name} (slug: ${a.slug})${a.role ? ` — ${a.role}` : ''}${a.team ? ` / ${a.team}팀` : ''}${crewEngineMeta(a, lang)}`);
+   return `
+ ## 동료 크루 — 위임 규칙
++아래 러너·모델 정보는 읽기 전용 설정 메타데이터다. 자격증명은 포함하지 않으며, 파일을 직접 고쳐 변경하지 마라.
+ ${lines.join('\n')}
+ - 네 전문 밖이거나 동료가 명백히 더 잘할 하위 작업은 delegate 도구(to=슬러그, task=구체적 지시)로 위임하라.
+ - 위임하기로 했으면 "이 부분은 {동료 이름}에게 인계해 진행한다"고 답변에서 먼저 밝혀라 — 결재 요청이 그 동료 이름으로 올 수 있다는 것까지 사장이 알아야 흐름이 끊기지 않는다.
+@@ -879,6 +898,115 @@ ${lang === 'en'
+       abortReg.release();
+     }
+   }
++
++  // ── OpenAI 호환 러너(Qwen/llama.cpp/vLLM 등) — 표준 function tool loop ──
++  // tools → assistant.tool_calls → Argo 권한 게이트/실행 → role=tool 재주입을 최종 텍스트까지 반복한다.
++  if (isOpenAICompatRunner(runner)) {
++    const t0 = Date.now();
++    const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
++    const evBase = {
++      type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'),
++      ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, msg: userMsg.slice(0, 2000), runner,
++    };
++    await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name);
++    const ac = new AbortController();
++    const abortReg = registerTurn(wsId, agentSlug, () => ac.abort());
++    let registry = null;
++    const artifacts = new Set();
++    const toolCounts = {};
++    const steps = [];
++    const step = (stage, detail = '') => { if (steps.length < 40) steps.push({ t: Date.now() - t0, stage, detail }); };
++    try {
++      const cred = await runnerCredEnv(wsId, runner);
++      const baseUrl = cred?.env?.DEEPSEEK_LOCAL_BASE_URL || DEEPSEEK_LOCAL_DEFAULT_BASE;
++      const apiKey = cred?.env?.DEEPSEEK_LOCAL_API_KEY || process.env.DEEPSEEK_LOCAL_API_KEY || '';
++      const caps = await loadCapabilities(wsId);
++      const workRoots = await loadActiveWorkRoots(wsId);
++      const turnDeadline = AbortSignal.any([ac.signal, AbortSignal.timeout(300_000)]);
++      let servers = safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {});
++      if (mcpScope) servers = Object.fromEntries(Object.entries(servers).filter(([n]) => mcpScope.includes(n)));
++      registry = await createOpenAICompatToolRegistry({
++        wsId, agentSlug, agentName: meta.name || agentSlug, root: p.root, vaultRoot: p.vault,
++        caps, workRoots, from, lang, colleagues, hop, chain, mirrorCtx, runChat: chat,
++        onArtifact: (rel) => artifacts.add(rel),
++      }, {
++        mcpServers: servers,
++        signal: turnDeadline,
++        onWarning: (message) => console.warn(`[argo] OpenAI 호환 MCP 연결 제외(${wsId}/${agentSlug}): ${message}`),
++      });
++      const toolNameGuide = lang === 'en'
++        ? '\n## Tool names in this runner\nUse read_file/list_files/search_files/write_file/edit_file/apply_patch/run_command/web_search/web_fetch. These are the OpenAI-compatible equivalents of Read/Glob/Grep/Write/Edit/apply_patch/Bash/WebSearch/WebFetch. run_command accepts timeout_seconds up to 600; use start_long_task for longer work. Never merely describe a tool call — call the tool.\n'
++        : '\n## 이 러너의 도구 이름\nRead/Glob/Grep/Write/Edit/apply_patch/Bash/WebSearch/WebFetch에 해당하는 실제 이름은 read_file/list_files/search_files/write_file/edit_file/apply_patch/run_command/web_search/web_fetch다. run_command의 timeout_seconds는 최대 600초이며 더 긴 작업은 start_long_task를 사용하라. 도구를 썼다고 말로만 서술하지 말고 실제 호출하라.\n';
++      const sysPrompt = systemPromptFor(md, p.root, skills, meta, lang, { hasTools: true })
++        + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
++        + commonDirectives({ caps, connectedMcp: Object.keys(servers), hasTools: true, lang, runner, workRoots })
++        + toolNameGuide
++        + fallbackDirective;
++      const { messages: threadMsgs } = await loadThread(wsId, agentSlug);
++      const ctx = (threadMsgs ?? []).filter((m) => !m.shared).slice(-6)
++        .map((m) => `${m.who === 'user' ? (lang === 'en' ? 'Captain' : '사장') : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? ` (${m.attachments.map((a) => `vault/${a.rel}`).join(', ')})` : ''}`)
++        .join('\n');
++      const attNote = attachments.length
++        ? (lang === 'en'
++            ? `\n\n(Files the captain attached — inspect them with read_file: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`
++            : `\n\n(사장이 첨부한 파일 — read_file로 확인하라: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`)
++        : '';
++      const userContent = `${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}`;
++      const fullUser = ctx ? `${ctx}\n\n${userContent}` : userContent;
++      const toolStatusInput = (name, args) => ({
++        ...(args.path ? { file_path: args.path } : {}),
++        ...(args.query ? { pattern: args.query, query: args.query } : {}),
++        ...(args.command ? { command: args.command } : {}),
++        ...(args.url ? { url: args.url } : {}),
++        ...(args.to ? { to: args.to } : {}),
++      });
++      const result = await runOpenAICompatToolLoop(baseUrl, {
++        systemPrompt: sysPrompt,
++        userMessage: fullUser,
++        model: effModel || DEEPSEEK_LOCAL_DEFAULT_MODEL,
++        apiKey,
++        timeoutMs: 300_000,
++        signal: turnDeadline,
++        tools: registry.definitions,
++        executeTool: registry.execute,
++        onToolCall: async ({ name, args }) => {
++          const canonical = registry.canonicalName(name);
++          toolCounts[canonical] = (toolCounts[canonical] ?? 0) + 1;
++          const statusInput = toolStatusInput(name, args);
++          const stage = stageForTool(canonical);
++          const detail = detailForTool(canonical, statusInput) || String(args.path || args.query || args.url || args.to || '').slice(0, 80);
++          step(stage, detail);
++          await setTurnStatus(wsId, agentSlug, stage, detail);
++        },
++      });
++      const reply = result.text;
++      await appendUsage(wsId, {
++        kind: source ?? (from ? 'delegate' : 'chat'), slug: agentSlug, from, runner,
++        model: result.model || effModel || DEEPSEEK_LOCAL_DEFAULT_MODEL,
++        usage: { input_tokens: result.usage.prompt_tokens ?? 0, output_tokens: result.usage.completion_tokens ?? 0 },
++        costUsd: null, ms: Date.now() - t0, tools: toolCounts, billed: false,
++      });
++      const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
++      const ev = {
++        ...evBase, runner, model: result.model || effModel || DEEPSEEK_LOCAL_DEFAULT_MODEL,
++        ok: true, reply: reply.replace(/\s+/g, ' ').slice(0, 200), ms: Date.now() - t0,
++      };
++      await appendEvent(wsId, { ...ev, steps, journalRel: relative(p.vault, handover.file) }).catch(() => {});
++      await clearTurnStatus(wsId, agentSlug);
++      return { reply, sessionId: null, handover, artifacts: [...artifacts].filter((r) => !r.startsWith('journal/')) };
++    } catch (e) {
++      const aborted = abortReg.wasAborted() || ac.signal.aborted || e?.aborted;
++      if (!aborted) prefixFallbackError(e);
++      const error = aborted ? '사장 지시로 중단' : maskKeyLike(String(e.message || e)).slice(0, 400);
++      await appendEvent(wsId, { ...evBase, ok: false, error, ms: Date.now() - t0, steps }).catch(() => {});
++      await clearTurnStatus(wsId, agentSlug);
++      if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
++      throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : e;
++    } finally {
++      await registry?.close().catch(() => {});
++      abortReg.release();
++    }
++  }
+   // 설치된 MCP 도구 — 서버 단위 allow(mcp__<name>)로 해당 서버의 전체 도구 허용
+   // 실행 게이트 — 호스팅 모드에선 미검증 command MCP를 spawn하지 않는다(검수 HIGH: mcp.json이
+   // 봉투로 동기화돼 서비스 키를 든 워커로 흘러가면 임의 프로세스가 키 곁에서 실행되는 위험).
+@@ -978,7 +1106,7 @@ ${lang === 'en'
+       stderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); },
+       // 회사 자격 env(claude=키/OAuth 토큰, glm=z.ai 토큰) 주입 + 크루별 모델(카드 frontmatter). glm 기본 모델 보정.
+       ...(sdkEnv ? { env: sdkEnv } : {}),
+-      ...(runner === 'glm' ? { model: effModel || GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: effModel || KIMI_DEFAULT_MODEL } : runner === 'openrouter' ? { model: effModel || OPENROUTER_DEFAULT_MODEL } : (effModel ? { model: effModel } : {})),
++      ...(runner === 'glm' ? { model: effModel || GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: effModel || KIMI_DEFAULT_MODEL } : runner === 'openrouter' ? { model: effModel || OPENROUTER_DEFAULT_MODEL } : ((sdkEnv?.ANTHROPIC_MODEL || effModel) ? { model: sdkEnv?.ANTHROPIC_MODEL || effModel } : {})),
+       // 크루별 추론 강도(요청 2026-07-25) — claude 러너에만. glm/kimi는 SDK 호환 경로로 타 벤더
+       // 엔드포인트에 붙어 이 파라미터를 보장하지 않으므로 보내지 않는다(카탈로그 규칙과 같은 원칙:
+       // 실행 경로가 받는 것만 보낸다). 화이트리스트는 persona.EFFORT_LEVELS가 저장 시점에 이미 강제.
+diff --git a/src/oneshot.mjs b/src/oneshot.mjs
+index 6523940..0372ff5 100644
+--- a/src/oneshot.mjs
++++ b/src/oneshot.mjs
+@@ -3,7 +3,8 @@
+ // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
+ import { query } from '@anthropic-ai/claude-agent-sdk';
+ import { paths } from './workspace.mjs';
+-import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, externalExec, isCliRunner, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
++import { GLM_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, DEEPSEEK_LOCAL_DEFAULT_MODEL, RUNNERS, externalExec, isCliRunner, isOpenAICompatRunner, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
++import { deepseekLocalCall, DEEPSEEK_LOCAL_DEFAULT_BASE } from './runners/deepseek-local.mjs';
+ 
+ /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
+     제외하고 1회 재시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와 같은 원칙, 재귀 1회).
+@@ -28,8 +29,8 @@ export async function runOneShot(wsId, prompt, opts = {}) {
+           ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — install it, or connect Claude (no install needed) in Settings → AI connections.`
+           : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
+       : (lang === 'en'
+-          ? 'No AI runner is connected — connect Claude, Codex, Gemini, Antigravity, GLM, Kimi, or OpenRouter in Settings → AI connections.'
+-          : 'AI 러너가 하나도 연결돼 있지 않습니다 — 설정 → AI 연결에서 Claude·Codex·Gemini·Antigravity·GLM·Kimi·OpenRouter 중 하나를 연결해 주세요.'));
++          ? 'No AI runner is connected — connect Claude, Codex, Gemini, Antigravity, GLM, Kimi, OpenRouter, or Qwen 3.6 27B in Settings → AI connections.'
++          : 'AI 러너가 하나도 연결돼 있지 않습니다 — 설정 → AI 연결에서 Claude·Codex·Gemini·Antigravity·GLM·Kimi·OpenRouter·Qwen 3.6 27B 중 하나를 연결해 주세요.'));
+   }
+   const runner = resolved.runner;
+   let hangGuard = null;            // SDK 경로 hang 상한 타이머 — 아래 finally에서 항상 해제
+@@ -41,6 +42,19 @@ export async function runOneShot(wsId, prompt, opts = {}) {
+       if (!text) throw new Error('empty-reply');
+       return { runner, text, usage: {}, costUsd: null }; // 외부 CLI — 토큰 사용량 비노출(채팅 경로와 동일)
+     }
++    if (isOpenAICompatRunner(runner)) {
++      const cred = await runnerCredEnv(wsId, runner);
++      const baseUrl = cred?.env?.DEEPSEEK_LOCAL_BASE_URL || DEEPSEEK_LOCAL_DEFAULT_BASE;
++      const apiKey = cred?.env?.DEEPSEEK_LOCAL_API_KEY || process.env.DEEPSEEK_LOCAL_API_KEY || '';
++      const { text, usage } = await deepseekLocalCall(baseUrl, {
++        systemPrompt: '', userMessage: prompt,
++        model: model || DEEPSEEK_LOCAL_DEFAULT_MODEL,
++        apiKey,
++        timeoutMs: timeoutMs ?? 300_000,
++      });
++      if (!text?.trim()) throw new Error('empty-reply');
++      return { runner, text: text.trim(), usage, costUsd: null };
++    }
+     const sdkEnv = await sdkEnvFor(wsId, runner);
+     let text = ''; let failed = null; let usage = null; let costUsd = null;
+     // 행(hang) 상한 — SDK 경로엔 타임아웃이 없어 소켓 정체 시 이 async iterator가 영영 안 끝난다.
+@@ -62,7 +76,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
+         // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
+         ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: KIMI_DEFAULT_MODEL }
+           : runner === 'openrouter' ? { model: RUNNERS.openrouter.models.some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL }
+-          : (model ? { model } : {})),
++          : ((sdkEnv?.ANTHROPIC_MODEL || model) ? { model: sdkEnv?.ANTHROPIC_MODEL || model } : {})),
+       },
+     })) {
+       if (msg.type === 'result') {
+diff --git a/src/openai-compat-mcp.mjs b/src/openai-compat-mcp.mjs
+new file mode 100644
+index 0000000..ad0883f
+--- /dev/null
++++ b/src/openai-compat-mcp.mjs
+@@ -0,0 +1,126 @@
++// OpenAI 호환 모델용 MCP 클라이언트 브리지.
++// 회사 mcp.json의 stdio/HTTP 서버를 실제 OpenAI function tool로 변환하고 턴 종료 시 닫는다.
++import { createHash } from 'node:crypto';
++import { Client } from '@modelcontextprotocol/sdk/client/index.js';
++import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
++import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
++import { scrubServerSecrets } from './runners/shared.mjs';
++
++const MAX_MCP_TOOLS = 96;
++const MAX_MCP_RESULT_CHARS = 120_000;
++
++const safePart = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'tool';
++function openAIName(server, tool) {
++  const raw = `mcp__${safePart(server)}__${safePart(tool)}`;
++  if (raw.length <= 64) return raw;
++  const hash = createHash('sha256').update(raw).digest('hex').slice(0, 8);
++  return `${raw.slice(0, 55)}_${hash}`;
++}
++
++function uniqueOpenAIName(server, tool, usedNames) {
++  const preferred = openAIName(server, tool);
++  if (!usedNames.has(preferred)) {
++    usedNames.add(preferred);
++    return preferred;
++  }
++  const source = `${server}\0${tool}`;
++  const hash = createHash('sha256').update(source).digest('hex').slice(0, 12);
++  const unique = `${preferred.slice(0, 51)}_${hash}`;
++  if (usedNames.has(unique)) throw new Error(`MCP 도구 이름 충돌: ${server}/${tool}`);
++  usedNames.add(unique);
++  return unique;
++}
++
++function stdioEnv(extra = {}) {
++  const base = scrubServerSecrets(process.env, 'deepseeklocal');
++  return { ...base, ...Object.fromEntries(Object.entries(extra).map(([k, v]) => [k, String(v)])) };
++}
++
++function transportFor(def, cwd) {
++  if (def?.command) {
++    return new StdioClientTransport({
++      command: String(def.command),
++      args: Array.isArray(def.args) ? def.args.map(String) : [],
++      env: stdioEnv(def.env), cwd, stderr: 'pipe', maxBufferSize: 10 * 1024 * 1024,
++    });
++  }
++  if (def?.url) {
++    const headers = Object.fromEntries(Object.entries(def.headers ?? {}).map(([k, v]) => [k, String(v)]));
++    return new StreamableHTTPClientTransport(new URL(String(def.url)), { requestInit: { headers } });
++  }
++  throw new Error('MCP 서버에 command 또는 url이 없다.');
++}
++
++function mcpResultText(result) {
++  const chunks = [];
++  for (const item of result?.content ?? []) {
++    if (item.type === 'text') chunks.push(item.text);
++    else if (item.type === 'resource' && typeof item.resource?.text === 'string') chunks.push(item.resource.text);
++    else if (item.type === 'resource_link') chunks.push(`[resource] ${item.name}: ${item.uri}`);
++    else if (item.type === 'image') chunks.push(`[image ${item.mimeType || 'unknown'} — binary omitted]`);
++    else if (item.type === 'audio') chunks.push(`[audio ${item.mimeType || 'unknown'} — binary omitted]`);
++  }
++  if (result?.structuredContent) chunks.push(JSON.stringify(result.structuredContent));
++  const text = chunks.filter(Boolean).join('\n\n').slice(0, MAX_MCP_RESULT_CHARS);
++  return result?.isError ? `MCP tool error: ${text || 'unknown error'}` : (text || 'MCP tool completed without text output.');
++}
++
++/** 반환 tools 항목: { definition, canonicalName, execute }. close()는 반드시 finally에서 호출한다. */
++export async function connectOpenAICompatMcpTools(servers = {}, { cwd, onWarning = () => {}, signal = null } = {}) {
++  const live = [];
++  const tools = [];
++  const usedNames = new Set();
++  const closeConnections = async (connections) => {
++    await Promise.allSettled(connections.map(async ({ client, transport }) => {
++      await client.close().catch(() => {});
++      await transport.close().catch(() => {});
++    }));
++  };
++  for (const [serverName, def] of Object.entries(servers ?? {})) {
++    let client;
++    let transport;
++    try {
++      client = new Client({ name: 'argo-openai-compat', version: '1.0.0' }, { capabilities: {} });
++      transport = transportFor(def, cwd);
++      const connectSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000);
++      await client.connect(transport, { signal: connectSignal });
++      const listSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000);
++      const listed = await client.listTools(undefined, { signal: listSignal });
++      live.push({ client, transport });
++      for (const item of listed.tools ?? []) {
++        if (tools.length >= MAX_MCP_TOOLS) break;
++        const name = uniqueOpenAIName(serverName, item.name, usedNames);
++        tools.push({
++          definition: {
++            type: 'function',
++            function: {
++              name,
++              description: `[MCP ${serverName}] ${String(item.description || item.name).slice(0, 1000)}`,
++              parameters: item.inputSchema && typeof item.inputSchema === 'object'
++                ? item.inputSchema
++                : { type: 'object', properties: {}, additionalProperties: true },
++            },
++          },
++          canonicalName: name,
++          execute: async (args, _gateArgs, { signal = null } = {}) => mcpResultText(await client.callTool(
++            { name: item.name, arguments: args },
++            undefined,
++            { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000) },
++          )),
++        });
++      }
++    } catch (error) {
++      await transport?.close().catch(() => {});
++      await client?.close().catch(() => {});
++      if (signal?.aborted) {
++        await closeConnections(live);
++        throw signal.reason || new DOMException('중단됨', 'AbortError');
++      }
++      onWarning(`${serverName}: ${String(error?.message || error).slice(0, 300)}`);
++    }
++  }
++  return {
++    tools,
++    close: async () => closeConnections(live),
++  };
++}
+diff --git a/src/openai-compat-tools.mjs b/src/openai-compat-tools.mjs
+new file mode 100644
+index 0000000..2727d3a
+--- /dev/null
++++ b/src/openai-compat-tools.mjs
+@@ -0,0 +1,444 @@
++// Qwen/OpenAI 호환 러너의 네이티브 도구 레지스트리.
++// 기존 permission-gate를 단일 권한 정본으로 사용하고 OpenAI function schema로 노출한다.
++import { exec as childExec } from 'node:child_process';
++import { mkdir, readFile, readdir, realpath, stat } from 'node:fs/promises';
++import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
++import { makePermissionGate, suggestCapability } from './permission-gate.mjs';
++import { makeCrewActions } from './crew-actions.mjs';
++import { addApproval } from './approvals.mjs';
++import { addRoutine } from './routines.mjs';
++import { installMcp, importHostMcp } from './market.mjs';
++import { RUNNERS, runnerStatus } from './runners.mjs';
++import { scrubServerSecrets } from './runners/shared.mjs';
++import { writeFileAtomic } from './jsonstore.mjs';
++import { scraplingWebFetch, scraplingWebSearch } from './scrapling.mjs';
++import { connectOpenAICompatMcpTools } from './openai-compat-mcp.mjs';
++
++const MAX_FILE_BYTES = 2 * 1024 * 1024;
++const MAX_TOOL_OUTPUT = 120_000;
++const MAX_LIST_RESULTS = 1000;
++const MAX_SEARCH_RESULTS = 200;
++const MAX_SEARCH_VISITS = 5000;
++
++const schema = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
++const str = (description) => ({ type: 'string', description });
++const bool = (description) => ({ type: 'boolean', description });
++const num = (description) => ({ type: 'number', description });
++const arr = (items, description) => ({ type: 'array', items, description });
++
++const cleanText = (value, max = MAX_TOOL_OUTPUT) => String(value ?? '').slice(0, max);
++const toAbs = (root, value) => isAbsolute(String(value ?? '')) ? resolve(String(value)) : resolve(root, String(value ?? ''));
++const inside = (target, root) => target === root || target.startsWith(`${root}${sep}`);
++const appearsBinary = (buf) => buf.subarray(0, 8192).includes(0);
++
++async function resolvedPath(path, { mustExist = true } = {}) {
++  const abs = resolve(path);
++  if (mustExist) return realpath(abs);
++  let cursor = abs;
++  const suffix = [];
++  while (true) {
++    try {
++      const base = await realpath(cursor);
++      return resolve(base, ...suffix.reverse());
++    } catch (error) {
++      if (error?.code !== 'ENOENT') throw error;
++      const parent = dirname(cursor);
++      if (parent === cursor) throw error;
++      suffix.push(basename(cursor));
++      cursor = parent;
++    }
++  }
++}
++
++function shellEnv() {
++  const env = scrubServerSecrets(process.env, 'terminal');
++  for (const key of Object.keys(env)) {
++    if (key.startsWith('ARGO_') || key.startsWith('SUPABASE_') || key.startsWith('NEXT_PUBLIC_')) delete env[key];
++  }
++  return { ...env, TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '0' };
++}
++
++function execShell(command, { cwd, env, timeout, signal }) {
++  return new Promise((resolveCommand, rejectCommand) => {
++    if (signal?.aborted) { rejectCommand(signal.reason || new DOMException('중단됨', 'AbortError')); return; }
++    let settled = false;
++    let timeoutTimer;
++    const child = childExec(command, {
++      cwd, env, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
++      detached: process.platform !== 'win32',
++    }, (error, stdout, stderr) => {
++      if (settled) return;
++      settled = true;
++      cleanup();
++      if (error) rejectCommand(Object.assign(error, { stdout, stderr }));
++      else resolveCommand({ stdout, stderr });
++    });
++    const cleanup = () => {
++      clearTimeout(timeoutTimer);
++      signal?.removeEventListener('abort', abort);
++    };
++    const killGroup = () => {
++      try {
++        if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGTERM');
++        else child.kill('SIGTERM');
++      } catch {}
++      child.stdout?.destroy();
++      child.stderr?.destroy();
++      child.unref();
++      const hardKill = setTimeout(() => {
++        if (child.exitCode !== null) return;
++        try {
++          if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL');
++          else child.kill('SIGKILL');
++        } catch {}
++      }, 1000);
++      hardKill.unref?.();
++    };
++    const stop = (error) => {
++      if (settled) return;
++      settled = true;
++      cleanup();
++      killGroup();
++      rejectCommand(error);
++    };
++    const abort = () => stop(signal?.reason instanceof Error ? signal.reason : new DOMException('중단됨', 'AbortError'));
++    signal?.addEventListener('abort', abort, { once: true });
++    timeoutTimer = setTimeout(() => stop(Object.assign(new Error('명령 시간 초과'), { code: 'ETIMEDOUT' })), timeout);
++    if (signal?.aborted) abort();
++  });
++}
++
++async function readTextFile(path) {
++  const info = await stat(path);
++  if (!info.isFile()) throw new Error('파일이 아니다.');
++  if (info.size > MAX_FILE_BYTES) throw new Error(`파일이 너무 크다(${info.size} bytes, 최대 ${MAX_FILE_BYTES}).`);
++  const body = await readFile(path);
++  if (appearsBinary(body)) throw new Error('바이너리 파일은 텍스트 도구로 읽을 수 없다.');
++  return { body, info };
++}
++
++async function walkFiles(base, { recursive = true, maxVisits = MAX_SEARCH_VISITS } = {}) {
++  const root = await realpath(base);
++  const queue = [''];
++  const files = [];
++  let visits = 0;
++  while (queue.length && visits < maxVisits && files.length < MAX_LIST_RESULTS) {
++    const rel = queue.shift();
++    const abs = rel ? resolve(root, rel) : root;
++    const entries = await readdir(abs, { withFileTypes: true }).catch(() => []);
++    for (const entry of entries) {
++      visits += 1;
++      if (visits > maxVisits) break;
++      const childRel = rel ? `${rel}/${entry.name}` : entry.name;
++      const child = resolve(root, ...childRel.split('/'));
++      const real = await realpath(child).catch(() => null);
++      if (!real || !inside(real, root)) continue;
++      if (entry.isDirectory()) {
++        if (recursive && !entry.isSymbolicLink()) queue.push(childRel);
++      } else if (entry.isFile() || entry.isSymbolicLink()) {
++        files.push({ rel: childRel, abs: real });
++        if (files.length >= MAX_LIST_RESULTS) break;
++      }
++    }
++  }
++  return { root, files, limited: queue.length > 0 || visits >= maxVisits || files.length >= MAX_LIST_RESULTS };
++}
++
++function nativeTool(name, canonicalName, description, parameters, gateInput, execute) {
++  return {
++    definition: { type: 'function', function: { name, description, parameters } },
++    canonicalName,
++    gateInput,
++    execute,
++  };
++}
++
++export const OPENAI_COMPAT_NATIVE_TOOL_NAMES = [
++  'read_file', 'list_files', 'search_files', 'write_file', 'edit_file', 'apply_patch', 'run_command',
++  'web_search', 'web_fetch', 'request_approval', 'request_capability', 'request_tool_install',
++  'update_profile', 'hire_crew', 'schedule_task', 'start_long_task', 'delegate', 'send_to_crew',
++];
++
++/** context는 chat 턴에서 만든 테넌트·크루 범위다. */
++export async function createOpenAICompatToolRegistry(context, { mcpServers = {}, onWarning = () => {}, signal = null } = {}) {
++  const {
++    wsId, agentSlug, agentName, root, vaultRoot, caps, workRoots = [], from = null,
++    lang = 'ko', colleagues = [], hop = 0, chain = [], mirrorCtx = null,
++    onArtifact = () => {}, runChat,
++  } = context;
++  const gate = makePermissionGate(wsId, agentSlug, caps, root, chain.length ? chain[chain.length - 1] : from, lang, workRoots);
++  const delegatedBy = chain.length ? chain[chain.length - 1] : null;
++  const crew = makeCrewActions(
++    { wsId, fromSlug: agentSlug, fromName: agentName || agentSlug, colleagues, hop, chain, mirrorCtx, lang },
++    { runChat },
++  );
++  const findCrew = (value) => {
++    const key = String(value ?? '').normalize('NFC').toLowerCase().trim();
++    if (!key || key === 'me' || key === agentSlug || key === String(agentName).toLowerCase()) return { slug: agentSlug, name: agentName || agentSlug };
++    return colleagues.find((a) => a.slug === key || String(a.name).normalize('NFC').toLowerCase() === key) ?? null;
++  };
++
++  const tools = [
++    nativeTool('read_file', 'Read', '파일을 읽는다. path는 회사 폴더 기준 상대경로 또는 허용된 절대경로다. 큰 파일은 offset/limit으로 나눠 읽어라.', schema({
++      path: str('파일 경로'), offset: num('시작 줄(1부터, 기본 1)'), limit: num('읽을 줄 수(최대 1000)'),
++    }, ['path']), async (a) => ({ file_path: await resolvedPath(toAbs(root, a.path)) }), async (a, gateArgs) => {
++      const abs = gateArgs.file_path;
++      const { body } = await readTextFile(abs);
++      const lines = body.toString('utf8').split(/\r?\n/);
++      const offset = Math.max(1, Math.floor(Number(a.offset) || 1));
++      const limit = Math.max(1, Math.min(1000, Math.floor(Number(a.limit) || 400)));
++      const selected = lines.slice(offset - 1, offset - 1 + limit)
++        .map((line, i) => `${offset + i}: ${line}`).join('\n');
++      return `${abs}\n${selected}\n\n[lines ${offset}-${Math.min(lines.length, offset + limit - 1)} of ${lines.length}]`;
++    }),
++
++    nativeTool('list_files', 'Glob', '폴더 안 파일을 열거한다. 회사 전체가 아니라 vault/, skills/ 또는 구체적 작업 폴더를 지정하라.', schema({
++      path: str('검색할 폴더 경로'), recursive: bool('하위 폴더까지 재귀 탐색(기본 true)'),
++    }, ['path']), async (a) => {
++      const path = await resolvedPath(toAbs(root, a.path));
++      return { path, pattern: `${path}${sep}**` };
++    }, async (a, gateArgs) => {
++      const abs = gateArgs.path;
++      const info = await stat(abs);
++      if (!info.isDirectory()) throw new Error('폴더가 아니다.');
++      const found = await walkFiles(abs, { recursive: a.recursive !== false });
++      return `${found.files.map((f) => f.rel).join('\n')}${found.limited ? '\n[결과 상한에 도달함]' : ''}` || '[빈 폴더]';
++    }),
++
++    nativeTool('search_files', 'Grep', '여러 텍스트 파일에서 문자열 또는 정규식을 검색한다. 반드시 vault/, skills/ 또는 구체적 폴더를 지정하라.', schema({
++      query: str('찾을 문자열 또는 정규식'), path: str('검색할 폴더 경로'), regex: bool('query를 정규식으로 처리'), case_sensitive: bool('대소문자 구분'),
++    }, ['query', 'path']), async (a) => ({ pattern: a.query, path: await resolvedPath(toAbs(root, a.path)) }), async (a, gateArgs) => {
++      const abs = gateArgs.path;
++      const found = await walkFiles(abs, { recursive: true });
++      const flags = a.case_sensitive ? 'g' : 'gi';
++      const matcher = a.regex ? new RegExp(String(a.query), flags) : null;
++      const needle = a.case_sensitive ? String(a.query) : String(a.query).toLowerCase();
++      const results = [];
++      for (const file of found.files) {
++        if (results.length >= MAX_SEARCH_RESULTS) break;
++        const info = await stat(file.abs).catch(() => null);
++        if (!info?.isFile() || info.size > MAX_FILE_BYTES) continue;
++        const body = await readFile(file.abs).catch(() => null);
++        if (!body || appearsBinary(body)) continue;
++        const lines = body.toString('utf8').split(/\r?\n/);
++        for (let i = 0; i < lines.length && results.length < MAX_SEARCH_RESULTS; i += 1) {
++          const line = lines[i];
++          const hit = matcher ? (matcher.lastIndex = 0, matcher.test(line)) : (a.case_sensitive ? line : line.toLowerCase()).includes(needle);
++          if (hit) results.push(`${file.rel}:${i + 1}: ${line.slice(0, 500)}`);
++        }
++      }
++      return results.join('\n') || '[일치 없음]';
++    }),
++
++    nativeTool('write_file', 'Write', '텍스트 파일을 새로 만들거나 전체 내용을 덮어쓴다. 기존 파일의 일부만 바꿀 때는 edit_file을 사용하라.', schema({
++      path: str('파일 경로'), content: str('저장할 전체 텍스트'),
++    }, ['path', 'content']), async (a) => ({ file_path: await resolvedPath(toAbs(root, a.path), { mustExist: false }), content: a.content }), async (a, gateArgs) => {
++      const abs = gateArgs.file_path;
++      const body = Buffer.from(String(a.content), 'utf8');
++      if (body.length > MAX_FILE_BYTES) throw new Error('저장 내용이 너무 크다.');
++      await mkdir(dirname(abs), { recursive: true });
++      const old = await stat(abs).catch(() => null);
++      await writeFileAtomic(abs, body, { mode: old?.mode ? old.mode & 0o777 : 0o644 });
++      if (inside(abs, resolve(vaultRoot))) onArtifact(relative(resolve(vaultRoot), abs).split(sep).join('/'));
++      return `저장함: ${abs} (${body.length} bytes)`;
++    }),
++
++    nativeTool('edit_file', 'Edit', '파일에서 정확히 일치하는 문자열을 교체한다. replace_all=false일 때 old_text는 정확히 한 번만 있어야 한다.', schema({
++      path: str('파일 경로'), old_text: str('교체 전 정확한 문자열'), new_text: str('교체 후 문자열'), replace_all: bool('모든 일치를 교체'),
++    }, ['path', 'old_text', 'new_text']), async (a) => ({ file_path: await resolvedPath(toAbs(root, a.path)), old_string: a.old_text, new_string: a.new_text }), async (a, gateArgs) => {
++      const abs = gateArgs.file_path;
++      const { body, info } = await readTextFile(abs);
++      const text = body.toString('utf8');
++      const oldText = String(a.old_text);
++      if (!oldText) throw new Error('old_text는 비울 수 없다.');
++      const count = text.split(oldText).length - 1;
++      if (!count) throw new Error('old_text를 파일에서 찾지 못했다.');
++      if (!a.replace_all && count !== 1) throw new Error(`old_text가 ${count}번 나타난다. 더 긴 문맥을 지정하거나 replace_all을 사용하라.`);
++      const updated = a.replace_all ? text.split(oldText).join(String(a.new_text)) : text.replace(oldText, String(a.new_text));
++      await writeFileAtomic(abs, updated, { mode: info.mode & 0o777 });
++      if (inside(abs, resolve(vaultRoot))) onArtifact(relative(resolve(vaultRoot), abs).split(sep).join('/'));
++      return `수정함: ${abs} (${a.replace_all ? count : 1}개 교체)`;
++    }),
++
++    nativeTool('apply_patch', 'Edit', '한 파일에 여러 exact-text 편집을 순서대로 적용하고 마지막에 한 번만 원자적으로 저장한다.', schema({
++      path: str('파일 경로'),
++      edits: arr({
++        type: 'object',
++        properties: { old_text: str('교체 전 정확한 문자열'), new_text: str('교체 후 문자열') },
++        required: ['old_text', 'new_text'], additionalProperties: false,
++      }, '순서대로 적용할 편집 목록'),
++    }, ['path', 'edits']), async (a) => ({ file_path: await resolvedPath(toAbs(root, a.path)), edits: a.edits }), async (a, gateArgs) => {
++      const abs = gateArgs.file_path;
++      const { body, info } = await readTextFile(abs);
++      if (!Array.isArray(a.edits) || !a.edits.length || a.edits.length > 50) throw new Error('edits는 1~50개여야 한다.');
++      let updated = body.toString('utf8');
++      for (let i = 0; i < a.edits.length; i += 1) {
++        const oldText = String(a.edits[i]?.old_text ?? '');
++        const newText = String(a.edits[i]?.new_text ?? '');
++        if (!oldText) throw new Error(`edits[${i}].old_text는 비울 수 없다.`);
++        const count = updated.split(oldText).length - 1;
++        if (count !== 1) throw new Error(`edits[${i}].old_text가 ${count}번 나타난다. 각 편집은 정확히 한 곳과 일치해야 한다.`);
++        updated = updated.replace(oldText, newText);
++      }
++      if (Buffer.byteLength(updated, 'utf8') > MAX_FILE_BYTES) throw new Error('수정 결과가 너무 크다.');
++      await writeFileAtomic(abs, updated, { mode: info.mode & 0o777 });
++      if (inside(abs, resolve(vaultRoot))) onArtifact(relative(resolve(vaultRoot), abs).split(sep).join('/'));
++      return `패치 적용함: ${abs} (${a.edits.length}개 편집)`;
++    }),
++
++    nativeTool('run_command', 'Bash', '회사 폴더를 작업 디렉터리로 셸 명령을 실행한다. shell 능력이 켜져 있어야 하며 서버·모델 자격은 환경에서 제거된다.', schema({
++      command: str('실행할 셸 명령'), cwd: str('작업 폴더(기본 회사 폴더)'), timeout_seconds: num('시간 제한 초(최대 600)'),
++    }, ['command']), (a) => ({ command: String(a.command) }), async (a, _gateArgs, { signal = null } = {}) => {
++      const cwd = await resolvedPath(a.cwd ? toAbs(root, a.cwd) : resolve(root));
++      const cwdGate = await gate('Read', { file_path: cwd });
++      if (cwdGate.behavior !== 'allow') return `도구 거부: ${cwdGate.message}`;
++      if (!(await stat(cwd)).isDirectory()) throw new Error('cwd가 폴더가 아니다.');
++      const command = String(a.command).trim();
++      if (!command || command.length > 20_000) throw new Error('유효한 command가 필요하다.');
++      const timeout = Math.max(1, Math.min(600, Math.floor(Number(a.timeout_seconds) || 30))) * 1000;
++      try {
++        const { stdout, stderr } = await execShell(command, { cwd, env: shellEnv(), timeout, signal });
++        return cleanText([stdout, stderr].filter(Boolean).join('\n')) || '[명령 성공, 출력 없음]';
++      } catch (error) {
++        return cleanText(`명령 실패(exit ${error?.code ?? '?'}):\n${error?.stdout || ''}\n${error?.stderr || error?.message || error}`);
++      }
++    }),
++
++    nativeTool('web_search', 'WebSearch', 'Scrapling으로 웹 검색을 수행하고 제목과 원문 URL을 반환한다.', schema({
++      query: str('검색어'), limit: num('결과 수(1~10)'),
++    }, ['query']), (a) => ({ query: a.query }), async (a, _gateArgs, { signal = null } = {}) => scraplingWebSearch(a.query, { limit: a.limit, signal })),
++
++    nativeTool('web_fetch', 'WebFetch', 'Scrapling으로 공개 웹 페이지를 가져와 Markdown으로 변환한다. localhost와 사설망은 차단된다.', schema({
++      url: str('http/https URL'),
++    }, ['url']), (a) => ({ url: a.url }), async (a, _gateArgs, { signal = null } = {}) => scraplingWebFetch(a.url, { signal })),
++
++    nativeTool('request_approval', 'mcp__crew__request_approval', '발송·게시·구매·삭제·계약처럼 회사 밖으로 나가거나 되돌리기 어려운 행동 전에 사장 결재를 요청한다.', schema({
++      action: str('하려는 행동'), reason: str('필요한 이유'),
++    }, ['action', 'reason']), null, async (a) => {
++      const item = await addApproval(wsId, { slug: agentSlug, ...(delegatedBy ? { from: delegatedBy } : {}), action: cleanText(a.action, 500), reason: cleanText(a.reason, 2000) });
++      return `결재 요청을 등록했다(${item.id}). 승인 전에는 행동을 실행하지 마라.`;
++    }),
++
++    nativeTool('request_capability', 'mcp__crew__request_capability', '꺼져 있는 로컬 능력(fs/browser/shell)을 사장에게 요청한다.', schema({
++      cap: { type: 'string', enum: ['fs', 'browser', 'shell'] }, why: str('필요한 이유'),
++    }, ['cap', 'why']), null, async (a) => {
++      const item = await suggestCapability(wsId, agentSlug, a.cap, cleanText(a.why, 2000), delegatedBy);
++      return `능력 요청을 등록했다${item ? `(${item.id})` : ''}. 승인되면 다음 턴에서 이어서 실행하라.`;
++    }),
++
++    nativeTool('request_tool_install', 'mcp__crew__request_tool_install', '필요한 MCP 도구가 없을 때 카탈로그 또는 호스트에서 설치를 요청한다.', schema({
++      source: { type: 'string', enum: ['catalog', 'host'] }, id: str('도구 id 또는 호스트 MCP 이름'), why: str('필요한 이유'),
++    }, ['source', 'id', 'why']), null, async (a) => {
++      const id = String(a.id).replace(/[\r\n\t\x00-\x1f]+/g, ' ').trim().slice(0, 64);
++      if (caps.bypass) {
++        const result = a.source === 'host' ? await importHostMcp(wsId, id) : await installMcp(wsId, id);
++        return `도구를 설치했다: ${result?.name || id}. 다음 턴부터 사용할 수 있다.`;
++      }
++      const item = await addApproval(wsId, {
++        slug: agentSlug, kind: 'mcp', ...(delegatedBy ? { from: delegatedBy } : {}),
++        action: `도구 설치: ${id}`, reason: cleanText(a.why, 2000), payload: { source: a.source, id },
++      });
++      return `도구 설치 결재를 등록했다(${item.id}). 승인 전에는 그 도구를 사용하지 마라.`;
++    }),
++
++    nativeTool('update_profile', 'mcp__crew__update_profile', '자기 자신 또는 동료 크루의 이름·역할·팀·러너·모델·규칙 변경을 사장 결재로 올린다.', schema({
++      target: str('me 또는 크루 이름/slug'), name: str('새 이름'), role: str('새 역할'), team: str('새 팀'), rule: str('추가할 업무 규칙'),
++      runner: str('러너 id'), model: str('모델 id'), why: str('변경 이유'),
++    }, ['target', 'why']), null, async (a) => {
++      const who = findCrew(a.target);
++      if (!who) return `대상 크루를 찾을 수 없다: ${a.target}`;
++      let runner = a.runner || undefined;
++      const model = a.model || undefined;
++      if (model && !runner) runner = Object.keys(RUNNERS).find((id) => RUNNERS[id].models.some((m) => m.id === model));
++      if (runner && !RUNNERS[runner]) return `알 수 없는 러너: ${runner}`;
++      if (model && (!runner || !RUNNERS[runner].models.some((m) => m.id === model))) return `러너와 모델 조합이 카탈로그에 없다: ${runner || '?'} / ${model}`;
++      if (runner) {
++        const st = await runnerStatus(wsId).catch(() => null);
++        if (st?.[runner] && !st[runner].company.connected && !st[runner].hostAuthed) return `${RUNNERS[runner].name} 러너가 연결되지 않았다.`;
++      }
++      const changes = Object.fromEntries(['name', 'role', 'team'].filter((k) => a[k] !== undefined).map((k) => [k, cleanText(a[k], 500)]));
++      if (runner) changes.runner = runner;
++      if (model) changes.model = model;
++      if (!Object.keys(changes).length && !a.rule) return '변경할 내용이 없다.';
++      const item = await addApproval(wsId, {
++        slug: agentSlug, kind: 'profile', ...(delegatedBy ? { from: delegatedBy } : {}),
++        action: `프로필 변경 — ${who.name}`, reason: cleanText(a.why, 2000),
++        payload: { slug: who.slug, changes, ...(a.rule ? { rule: cleanText(a.rule, 2000) } : {}) },
++      });
++      return `프로필 변경 결재를 등록했다(${item.id}).`;
++    }),
++
++    nativeTool('hire_crew', 'mcp__crew__hire_crew', '새 크루 영입을 사장 결재로 올린다.', schema({
++      brief: str('맡길 역할과 전문성'), name: str('이름'), team: str('팀'), runner: str('러너 id'), model: str('모델 id'), why: str('영입 이유'),
++    }, ['brief', 'why']), null, async (a) => {
++      const runner = a.runner || undefined;
++      const model = a.model || undefined;
++      if (runner && !RUNNERS[runner]) return `알 수 없는 러너: ${runner}`;
++      if (model && (!runner || !RUNNERS[runner].models.some((m) => m.id === model))) return `러너와 모델 조합이 카탈로그에 없다.`;
++      const item = await addApproval(wsId, {
++        slug: agentSlug, kind: 'hire', ...(delegatedBy ? { from: delegatedBy } : {}),
++        action: `크루 영입 — ${a.name ? `${cleanText(a.name, 200)}: ` : ''}${cleanText(a.brief, 1000)}`,
++        reason: cleanText(a.why, 2000), payload: {
++          brief: cleanText(a.brief, 1000), ...(a.name ? { name: cleanText(a.name, 200) } : {}),
++          ...(a.team ? { team: cleanText(a.team, 200) } : {}), ...(runner ? { runner } : {}), ...(model ? { model } : {}),
++        },
++      });
++      return `크루 영입 결재를 등록했다(${item.id}).`;
++    }),
++
++    nativeTool('schedule_task', 'mcp__crew__schedule_task', '1회·매일·매주·간격 반복 작업을 예약한다.', schema({
++      title: str('예약 이름'), prompt: str('실행할 지시'), type: { type: 'string', enum: ['once', 'daily', 'weekly', 'interval'] },
++      time: str('HH:MM'), every_minutes: num('interval 간격 10~1440분'), date: str('once 날짜 YYYY-MM-DD'), dows: arr({ type: 'number' }, '요일 0=일~6=토'), agent_slug: str('담당 크루 slug'),
++    }, ['title', 'prompt', 'type']), null, async (a) => {
++      const routine = await addRoutine(wsId, {
++        agentSlug: a.agent_slug || agentSlug, title: String(a.title), prompt: String(a.prompt),
++        schedule: { type: a.type, ...(a.time ? { time: a.time } : {}), ...(a.date ? { date: a.date } : {}), ...(a.dows?.length ? { dows: a.dows } : {}), ...(a.every_minutes ? { everyMinutes: a.every_minutes } : {}) },
++      });
++      return `예약 완료: ${routine.title} (${routine.id})`;
++    }),
++
++    nativeTool('start_long_task', 'mcp__crew__start_long_task', '10분을 넘길 수 있는 작업을 백그라운드 큐에 적재한다.', schema({
++      title: str('작업 이름'), prompt: str('별도 턴이 단독으로 이해할 상세 지시'), agent_slug: str('담당 크루 slug'),
++    }, ['title', 'prompt']), null, async (a) => {
++      const { enqueueLongJob } = await import('./gateway.mjs');
++      const result = await enqueueLongJob(wsId, { slug: a.agent_slug || agentSlug, title: String(a.title), prompt: String(a.prompt) });
++      return `장시간 작업을 적재했다: ${a.title} (대기·진행 ${result.pending}건)`;
++    }),
++
++    nativeTool('delegate', 'mcp__crew__delegate', '동료 크루에게 구체적인 하위 작업을 위임하고 결과를 기다린다.', schema({
++      to: str('동료 slug'), task: str('독립 수행 가능한 구체적 지시'),
++    }, ['to', 'task']), null, async (a) => crew.delegate(a)),
++
++    nativeTool('send_to_crew', 'mcp__crew__send_to_crew', '동료 크루에게 비동기 쪽지를 보낸다. 즉시 결과가 필요하면 delegate를 사용한다.', schema({
++      to: str('동료 slug'), cc: arr({ type: 'string' }, '참조 동료 slug'), message: str('쪽지 내용'),
++    }, ['to', 'message']), null, async (a) => crew.sendToCrew(a)),
++  ];
++
++  const mcp = await connectOpenAICompatMcpTools(mcpServers, { cwd: root, onWarning, signal });
++  tools.push(...mcp.tools);
++  const byName = new Map(tools.map((item) => [item.definition.function.name, item]));
++
++  return {
++    definitions: tools.map((item) => item.definition),
++    canonicalName: (name) => byName.get(name)?.canonicalName || name,
++    async execute(name, args = {}, executionContext = {}) {
++      const item = byName.get(name);
++      if (!item) return `알 수 없는 도구: ${name}`;
++      try {
++        if (item.gateInput) {
++          const gateArgs = await item.gateInput(args);
++          const decision = await gate(item.canonicalName, gateArgs);
++          if (decision.behavior !== 'allow') return `도구 거부: ${decision.message}`;
++          return cleanText(await item.execute(args, gateArgs, executionContext));
++        } else if (item.canonicalName.startsWith('mcp__') && !item.canonicalName.startsWith('mcp__crew__')) {
++          const decision = await gate(item.canonicalName, args);
++          if (decision.behavior !== 'allow') return `도구 거부: ${decision.message}`;
++        }
++        return cleanText(await item.execute(args, null, executionContext));
++      } catch (error) {
++        return cleanText(`도구 오류(${name}): ${String(error?.message || error)}`);
++      }
++    },
++    close: mcp.close,
++  };
++}
+diff --git a/src/runners.mjs b/src/runners.mjs
+index d4a7d1d..ee45a0b 100644
+--- a/src/runners.mjs
++++ b/src/runners.mjs
+@@ -22,8 +22,8 @@ import { ensureCliPath, apiError, detectRunners } from './runners/exec.mjs';
+ // ── 분리 모듈 re-export — 기존 임포터·테스트가 쓰는 이름 전부(62개 표면의 나머지 57개) ──
+ export { isServerSecretKey, scrubServerSecrets, maskKeyLike, homeEnv } from './runners/shared.mjs';
+ export {
+-  RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner,
+-  GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL,
++  RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isOpenAICompatRunner,
++  GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL, DEEPSEEK_LOCAL_DEFAULT_MODEL,
+   isOpenRouterCreditError, isOpenRouterCreditReply, isOpenRouterLimitError, isOpenRouterLimitReply,
+   pickRunner, oauthFormatError,
+ } from './runners/catalog.mjs';
+@@ -44,6 +44,7 @@ export {
+   extractSetupAuthUrl, extractSetupToken, extractSetupTokenCandidates, bundledClaudeCli,
+   setupTokenStatus, submitSetupCode, startClaudeSetupToken,
+ } from './runners/exec.mjs';
++export { deepseekLocalCall, DEEPSEEK_LOCAL_DEFAULT_BASE } from './runners/deepseek-local.mjs';
+ 
+ /** CLI 턴 실패의 정직 번역 — 시간 초과가 "러너 실행 실패 (exit ?)" 잡음(우리 kill)이나 last.txt
+     ENOENT(kill 후 출력 파일만 없는 변종)로 위장되던 것을 종결한다(QA P1-2, 실사용 4회 재현:
+@@ -217,6 +218,7 @@ const billedByType = (type, runner) => {
+   // claude: 두 인증 env 공존 시의 실행 우선순위는 SDK 내부라 추측하지 않는다 — sdkEnvFor가
+   // 구독 토큰 존재 시 API 키를 소거해 **실행 자체를 구독으로 확정**한다(2R HIGH-2 결정론화).
+   if (runner === 'claude') return !!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN;
++  if (runner === 'deepseeklocal') return false; // 로컬 서버 — 과금 없음
+   return false; // codex·gemini·antigravity 호스트 로그인 = 구독, openrouter 등은 회사 자격 필수
+ };
+ 
+@@ -263,6 +265,9 @@ export async function runnerStatus(wsId) {
+         connected: true,
+         type: credType(cred.type),
+         masked: cred.type === 'host' ? '' : maskCred(cred.value),
++        // DeepSeek Local은 API key 방식만 지원한다. 과거 host 버튼 노출 버전의 잔재는
++        // 연결됨으로 보이면 실행 시 키 없이 401이 되므로 재연결 대상으로 표시한다.
++        ...(id === 'deepseeklocal' && cred.type === 'host' ? { invalid: true } : {}),
+         // 저장 검증 도입 전(철회된 웹 브리지 등)에 들어온 무효 형식 토큰 — 카드가 "재연결 필요"를 보여준다
+         ...(cred.type === 'oauth' && oauthFormatError(id, cred.value, 'ko') ? { invalid: true } : {}),
+         // host 마커는 이 컴퓨터 CLI 로그인이 살아 있어야 유효 — 로그아웃·미설치면 "재연결 필요".
+diff --git a/src/runners/catalog.mjs b/src/runners/catalog.mjs
+index d3b7da5..2126da4 100644
+--- a/src/runners/catalog.mjs
++++ b/src/runners/catalog.mjs
+@@ -106,6 +106,13 @@ export const RUNNERS = {
+       { id: 'glm-4.5-air', label: 'GLM-4.5 Air' },
+     ],
+   },
++  deepseeklocal: {
++    name: 'Qwen 3.6 27B', kind: 'openai-compat',
++    // 로컬 llamacpp 서버(100.103.65.62:8080)의 OpenAI 호환 API. 현재 서버 모델은 qwen3.6-27b-q4.
++    models: [
++      { id: 'qwen3.6-27b-q4', label: 'Qwen 3.6 27B (Q4)' },
++    ],
++  },
+ };
+ 
+ /** "이 컴퓨터 로그인 사용" 옵트인 허용 여부 — runnerStatus·저장(PUT) 라우트가 공유(단일 판정).
+@@ -119,8 +126,10 @@ export const hostOptInAllowed = (runner) =>
+ /** 외부 CLI 러너 판정 — 디스패치(chat/oneshot)의 단일 진실. 하드코딩 열거('codex'||'gemini')는
+     러너 추가 때마다 배선 누락을 만든다(#119 전수 수색의 교훈) — kind가 카탈로그에 있으니 그걸 쓴다. */
+ export const isCliRunner = (r) => RUNNERS[r]?.kind === 'cli';
++export const isOpenAICompatRunner = (r) => RUNNERS[r]?.kind === 'openai-compat';
+ 
+ export const GLM_DEFAULT_MODEL = 'glm-5.2';
++export const DEEPSEEK_LOCAL_DEFAULT_MODEL = 'qwen3.6-27b-q4';
+ 
+ const OPENROUTER_402_RE = /^API Error:\s*402\b/i; // 느슨판·엄격판 공용 — 한쪽만 고치면 두 임계가 갈라진다(검수 LOW)
+ // 429 = 요청 한도(무료 티어 20/분·50~1000/일, 공식 문서 2026-07-27). 402와 같은 표면으로
+@@ -183,6 +192,8 @@ export const RUNNER_AUTH = {
+   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
+   kimi: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' }, // 접두사 무차단(GLM 관례) — 리전·미래 키 형식 변화에 저장이 막히지 않게, 판정은 verifyRunnerCred가
+   openrouter: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://openrouter.ai/keys' }, // BYOK 단일(설계 2026-07-27) — OAuth·크레딧 대행 안 함
++  // 자격 값 = API 키 또는 URL|API 키. URL은 root와 /v1 모두 허용하며 실행 시 정규화한다.
++  deepseeklocal: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: '' },
+   // antigravity: 자격이 OS 키링(파일 아님)이라 붙여넣기·API키·웹 브리지 전부 불가 — 호스트 로그인
+   // 옵트인이 유일한 경로다(agy가 GEMINI_API_KEY를 무시함은 공식 문서 확인). keyUrl은 설치·로그인 안내.
+   // **정의 순 = pickRunner 자동 선택 순 — 반드시 맨 끝**: 키링이라 로그인 여부를 파일로 판정할 수 없는
+diff --git a/src/runners/creds.mjs b/src/runners/creds.mjs
+index 72163fb..ace9c48 100644
+--- a/src/runners/creds.mjs
++++ b/src/runners/creds.mjs
+@@ -1,7 +1,7 @@
+ // 러너 자격(BYOK/BYOA) — 회사·계정 스코프 저장/로드·시드·env 조립(sdkEnvFor)·자격 검증.
+ // (runners.mjs 관심사 분리 2026-07-28)
+ 
+-import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
++import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+ import { homedir } from 'node:os';
+ import { join } from 'node:path';
+ import { readJson, writeJsonAtomic } from '../jsonstore.mjs';
+@@ -10,6 +10,7 @@ import { exists, homeEnv, scrubServerSecrets, seedAuthFile } from './shared.mjs'
+ import { RUNNER_AUTH } from './catalog.mjs';
+ import { provisionCodexCli } from './codex.mjs';
+ import { provisionGeminiCli, geminiTurnHome } from './gemini.mjs';
++import { DEEPSEEK_LOCAL_DEFAULT_BASE, parseDeepseekLocalCredential, verifyDeepseekLocal } from './deepseek-local.mjs';
+ 
+ /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
+     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
+@@ -28,6 +29,27 @@ export const glmEnv = () => ({
+   CLAUDE_CODE_OAUTH_TOKEN: '', // claude 분기와 대칭(감사 2026-07-20)
+ });
+ 
++// Claude Code CLI가 ~/.claude/settings.json의 env로 로컬 Anthropic 호환 서버와 모델을 선택할 수 있다.
++// Argo 상주 서비스(systemd)는 터미널의 env와 CLI 설정을 자동 상속하지 않으므로, Claude host 옵트인
++// 실행에서만 인증·엔드포인트·모델 관련 allowlist를 읽어 SDK에 전달한다. 임의 env 전체를 복사하지 않는다.
++const CLAUDE_HOST_ENV_KEYS = [
++  'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
++  'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_MODEL',
++];
++
++export async function claudeHostSettingsEnv() {
++  try {
++    const settings = JSON.parse(await readFile(join(homedir(), '.claude', 'settings.json'), 'utf8'));
++    const source = settings?.env;
++    if (!source || typeof source !== 'object' || Array.isArray(source)) return {};
++    return Object.fromEntries(CLAUDE_HOST_ENV_KEYS
++      .filter((key) => typeof source[key] === 'string')
++      .map((key) => [key, source[key]]));
++  } catch {
++    return {};
++  }
++}
++
+ // ── 회사별 러너 자격(BYOK/BYOA) — 일반 사용자가 호스트 CLI 로그인 없이도 어떤 러너든 굴리게 한다.
+ // 회사 루트 .secrets.json의 runners.{id} = { type:'apikey'|'oauth', value } 에 보관.
+ // 시크릿이므로 (a) API 응답·로그엔 마스킹만, (b) cryptoOn이면 봉투 암호문으로 동기화됨(secretbox).
+@@ -82,42 +104,65 @@ async function loadSecrets(wsId) {
+     (codex/gemini=파일 자격, antigravity=OS 키링이라 host 옵트인이 유일 경로, claude=키체인이라 non-standalone에서만 — RUNNER_AUTH.hostUsable·hostOptInAllowed 참조).
+     자동 스캐빈징 금지(유건 지시 2026-07-19): 호스트 로그인은 감지돼도 사장이 이 마커로 옵트인해야만 쓴다. */
+ const credType = (t) => (t === 'oauth' ? 'oauth' : t === 'host' ? 'host' : 'apikey');
++const canonicalRunner = (runner) => {
++  const raw = String(runner ?? '').trim();
++  return Object.keys(RUNNER_AUTH).find((id) => id.toLowerCase() === raw.toLowerCase()) ?? raw;
++};
++
++function sameRunnerId(a, b) {
++  return String(a).toLowerCase() === String(b).toLowerCase();
++}
++
++function runnerCredentialEntry(s, runner) {
++  const id = canonicalRunner(runner);
++  const runners = s.runners ?? {};
++  // Canonical spelling wins after a user reconnects through the current UI.
++  const exact = runners[id];
++  if (exact) return { id, entry: exact };
++  const legacy = Object.entries(runners).find(([key, value]) => sameRunnerId(key, id) && value);
++  return { id, entry: legacy?.[1] ?? null };
++}
+ 
+ export async function loadRunnerCred(wsId, runner) {
+-  const c = (await loadSecrets(wsId)).runners?.[runner];
++  const { entry: c } = runnerCredentialEntry(await loadSecrets(wsId), runner);
+   return c && typeof c.value === 'string' && c.value.trim() ? { type: credType(c.type), value: c.value.trim() } : null;
+ }
+ 
+ /** 러너 자격 저장 — 원자적. 다른 러너·필드는 보존. 레거시 claude 필드는 정리. */
+ export async function saveRunnerCred(wsId, runner, type, value) {
+-  if (!RUNNER_AUTH[runner]) throw new Error('알 수 없는 러너');
++  const id = canonicalRunner(runner);
++  if (!RUNNER_AUTH[id]) throw new Error('알 수 없는 러너');
+   const s = await loadSecrets(wsId);
+   const { claude, ...rest } = s; // 레거시 평문 필드 제거
+-  rest.runners = { ...rest.runners, [runner]: { type: credType(type), value: String(value).trim() } };
++  const runners = Object.fromEntries(Object.entries(rest.runners ?? {}).filter(([key]) => !sameRunnerId(key, id)));
++  rest.runners = { ...runners, [id]: { type: credType(type), value: String(value).trim() } };
+   await writeJsonAtomic(secretsFile(wsId), rest);
+   // 격리 홈 리셋 — 재연결 시 이전 토큰 파일이 새 자격을 가리지 않게(runnerCredEnv가 재생성).
+   // 계정 스코프엔 실행 홈이 없다(온보딩 저장용 — 실행은 회사 wsId로) — 스킵.
+   if (!isAccountScope(wsId)) {
+-    if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+-    if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
++    if (id === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
++    if (id === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+   }
+   // 연결 즉시 실행기 워밍업 — 첫 턴이 다운로드를 기다리지 않게(백그라운드, 실패는 턴 시점 조달이 재시도).
+   // 모든 연결 경로(회사 키·계정 키·웹 브리지)가 이 함수를 지나므로 여기가 단일 관문이다.
+-  if (runner === 'gemini') provisionGeminiCli().catch(() => {});
+-  if (runner === 'codex') provisionCodexCli().catch(() => {}); // ~100MB — 연결 시점에 미리 받아 첫 턴 대기 제거
++  if (id === 'gemini') provisionGeminiCli().catch(() => {});
++  if (id === 'codex') provisionCodexCli().catch(() => {}); // ~100MB — 연결 시점에 미리 받아 첫 턴 대기 제거
+ }
+ 
+ /** 러너 자격 제거 — 다른 러너는 유지. 격리 홈도 함께 지운다: 연결 해제 후에도 auth.json에 평문
+     키가 0600으로 남아 있었다(검수 — env 주입 시절엔 apikey가 디스크에 자격 파일을 안 만들었으니
+     auth.json 전환이 새로 연 표면). saveRunnerCred의 리셋과 대칭. */
+ export async function clearRunnerCred(wsId, runner) {
++  const id = canonicalRunner(runner);
+   const s = await loadSecrets(wsId);
+   const { claude, ...rest } = s;
+-  if (rest.runners) delete rest.runners[runner];
++  if (rest.runners) {
++    for (const key of Object.keys(rest.runners)) if (sameRunnerId(key, id)) delete rest.runners[key];
++  }
+   await writeJsonAtomic(secretsFile(wsId), rest);
+   if (!isAccountScope(wsId)) {
+-    if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+-    if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
++    if (id === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
++    if (id === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
+   }
+ }
+ 
+@@ -192,6 +237,10 @@ export async function runnerCredEnv(wsId, runner) {
+       ...(process.env.OPENROUTER_MAX_OUTPUT_TOKENS ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.OPENROUTER_MAX_OUTPUT_TOKENS } : {}),
+     } };
+   }
++  if (runner === 'deepseeklocal') {
++    const { baseUrl = DEEPSEEK_LOCAL_DEFAULT_BASE, apiKey } = parseDeepseekLocalCredential(v);
++    return { env: { DEEPSEEK_LOCAL_BASE_URL: baseUrl, ...(apiKey ? { DEEPSEEK_LOCAL_API_KEY: apiKey } : {}) } };
++  }
+   if (runner === 'codex') {
+     // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를
+     // 더는 인정하지 않는다. 이전의 env 주입(home:'clean')은 저장 검증(OpenAI 직접 호출)만 통과하고
+@@ -216,7 +265,8 @@ export async function runnerCredEnv(wsId, runner) {
+   return null;
+ }
+ 
+-/** Claude/GLM(SDK) 러너용 완전 env — 회사 자격 우선, 없으면 기존 폴백(glm은 호스트 GLM_API_KEY, claude는 CLI/env). */
++/** Claude/GLM(SDK) 러너용 완전 env — 회사 자격 우선, 없으면 기존 폴백(glm은 호스트 GLM_API_KEY,
++    claude는 Claude Code settings.json + 프로세스 env). */
+ export async function sdkEnvFor(wsId, runner) {
+   const cred = await runnerCredEnv(wsId, runner);
+   // SDK가 띄우는 Bash/MCP 자식도 서버 시크릿(서비스 키)을 상속하지 않도록 항상 세척된 env를 준다(P1-6).
+@@ -225,7 +275,11 @@ export async function sdkEnvFor(wsId, runner) {
+   if (cred) return { ...scrubServerSecrets(process.env, runner), ...cred.env };
+   if (runner === 'glm') return glmEnv(); // 회사 자격 없으면 호스트 GLM_API_KEY 폴백(glmEnv 자체가 세척됨)
+   if (runner === 'kimi') return kimiEnv(); // 동일 — 호스트 KIMI_API_KEY 폴백(env 주입 = 명시 옵트인)
+-  const env = scrubServerSecrets(process.env, runner);
++  let env = scrubServerSecrets(process.env, runner);
++  if (runner === 'claude') {
++    // 로컬 Claude Code CLI와 같은 settings.json을 사용 — 회사 자격이 있으면 위에서 이미 우선 반환됨.
++    env = { ...env, ...(await claudeHostSettingsEnv()) };
++  }
+   // claude 호스트 폴백 결정론화(2R 검수 HIGH-2): 구독 토큰과 API 키 env가 공존하면 SDK가 뭘
+   // 쓰는지는 SDK 내부 소관이라 판정(billedByType)과 어긋날 수 있다 — 구독 토큰이 있으면 API
+   // 키를 소거해 실행을 구독으로 확정한다(한쪽 소거 패턴은 #83과 동일, 방향은 사용자 유리).
+@@ -287,6 +341,10 @@ export async function verifyRunnerCred(runner, type, value) {
+       const r = await fetch('https://api.openai.com/v1/models?limit=1', { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
+       return { ok: !(r.status === 401 || r.status === 403) };
+     }
++    if (runner === 'deepseeklocal') {
++      const { baseUrl = DEEPSEEK_LOCAL_DEFAULT_BASE, apiKey } = parseDeepseekLocalCredential(v);
++      return verifyDeepseekLocal(baseUrl, apiKey);
++    }
+     if (runner === 'gemini' && type === 'apikey') {
+       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(v)}&pageSize=1`, { signal: AbortSignal.timeout(10_000) });
+       if (r.status === 401 || r.status === 403) return { ok: false };
+diff --git a/src/runners/deepseek-local.mjs b/src/runners/deepseek-local.mjs
+new file mode 100644
+index 0000000..6521ae0
+--- /dev/null
++++ b/src/runners/deepseek-local.mjs
+@@ -0,0 +1,213 @@
++// DeepSeek Local 러너 — OpenAI 호환 API(llamacpp/vLLM 등)를 직접 호출하는 실행 경로.
++// Anthropic SDK(query())를 쓰지 않고 fetch로 /v1/chat/completions를 호출한다.
++// (러너 추가 2026-08-06)
++
++/** OpenAI 호환 서버의 기본 URL — env로 오버라이드 가능. */
++export const DEEPSEEK_LOCAL_DEFAULT_BASE = 'http://100.103.65.62:8080';
++export const DEEPSEEK_LOCAL_DEFAULT_MODEL = 'qwen3.6-27b-q4';
++
++/** Base URL의 표준 OpenAI 경로(`/v1`)는 UI·외부 클라이언트가 자주 포함한다.
++    내부 호출은 항상 root에 `/v1/...`를 붙이므로 끝의 `/v1`만 제거해 중복 경로를 막는다. */
++export function normalizeDeepseekLocalBase(baseUrl) {
++  const value = String(baseUrl ?? '').trim() || DEEPSEEK_LOCAL_DEFAULT_BASE;
++  return value.replace(/\/+$/, '').replace(/\/v1$/i, '') || DEEPSEEK_LOCAL_DEFAULT_BASE;
++}
++
++/** 저장된 로컬 러너 자격 파싱 — URL-only, API-key-only, URL|API-key를 모두 지원한다. */
++export function parseDeepseekLocalCredential(value) {
++  const v = String(value ?? '').trim();
++  if (v.includes('|')) {
++    const [base, ...rest] = v.split('|');
++    return { baseUrl: (base || DEEPSEEK_LOCAL_DEFAULT_BASE).trim(), apiKey: rest.join('|').trim() };
++  }
++  if (/^https?:\/\//i.test(v)) return { baseUrl: v, apiKey: '' };
++  return { baseUrl: DEEPSEEK_LOCAL_DEFAULT_BASE, apiKey: v };
++}
++
++function authHeaders(apiKey = '') {
++  const key = String(apiKey || process.env.DEEPSEEK_LOCAL_API_KEY || '').trim();
++  return key
++    ? { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }
++    : { 'Content-Type': 'application/json' };
++}
++
++async function request(url, init = {}, timeoutMs = 10_000) {
++  const controller = new AbortController();
++  const timer = setTimeout(() => controller.abort(), timeoutMs);
++  try {
++    return await fetch(url, { ...init, signal: controller.signal });
++  } finally {
++    clearTimeout(timer);
++  }
++}
++
++/** OpenAI 호환 chat/completions 원시 호출. 도구가 있으면 표준 tools/tool_choice를 전달하고
++    assistant message 전체(tool_calls 포함)를 반환한다. */
++export async function openAICompatCompletion(baseUrl, {
++  messages, model, apiKey = '', tools = [], timeoutMs = 300_000, signal = null,
++}) {
++  const url = `${normalizeDeepseekLocalBase(baseUrl)}/v1/chat/completions`;
++  const headers = authHeaders(apiKey);
++  const controller = new AbortController();
++  const relayAbort = () => controller.abort(signal?.reason);
++  if (signal?.aborted) relayAbort();
++  else signal?.addEventListener('abort', relayAbort, { once: true });
++  const timer = setTimeout(() => controller.abort(new DOMException('Qwen API 요청 시간 초과', 'TimeoutError')), timeoutMs);
++  try {
++    const res = await fetch(url, {
++      method: 'POST',
++      headers,
++      body: JSON.stringify({
++        model: model || DEEPSEEK_LOCAL_DEFAULT_MODEL,
++        messages,
++        stream: false,
++        ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
++      }),
++      signal: controller.signal,
++    });
++    if (!res.ok) {
++      const body = await res.text().catch(() => '');
++      throw new Error(`Qwen 3.6 27B API 오류 (${res.status}): ${body.slice(0, 200)}`);
++    }
++    const data = await res.json();
++    const choice = data.choices?.[0];
++    if (!choice?.message || typeof choice.message !== 'object') throw new Error('Qwen 3.6 27B API 응답에 assistant message가 없다.');
++    return { message: choice.message, usage: data.usage ?? {}, finishReason: choice.finish_reason ?? null, model: data.model ?? null };
++  } finally {
++    clearTimeout(timer);
++    signal?.removeEventListener('abort', relayAbort);
++  }
++}
++
++/** 기존 단발 소비자(oneshot/검증)의 호환 래퍼. */
++export async function deepseekLocalCall(baseUrl, { systemPrompt, userMessage, model, apiKey = '', timeoutMs = 300_000, signal = null }) {
++  const messages = [];
++  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
++  messages.push({ role: 'user', content: userMessage });
++  const result = await openAICompatCompletion(baseUrl, { messages, model, apiKey, timeoutMs, signal });
++  return {
++    text: typeof result.message.content === 'string' ? result.message.content : '',
++    usage: result.usage,
++    model: result.model,
++  };
++}
++
++function addUsage(total, next = {}) {
++  for (const key of ['prompt_tokens', 'completion_tokens', 'total_tokens']) {
++    if (Number.isFinite(Number(next[key]))) total[key] = (total[key] ?? 0) + Number(next[key]);
++  }
++  return total;
++}
++
++function normalizeToolCalls(message, round) {
++  const calls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
++  if (calls.length) return calls;
++  // 구형 OpenAI 호환 서버의 function_call 단일 형식도 받아 표준 tool_calls로 정규화한다.
++  if (message?.function_call?.name) {
++    return [{ id: `legacy-${round}`, type: 'function', function: message.function_call }];
++  }
++  return [];
++}
++
++/** 표준 OpenAI tool loop: assistant.tool_calls → 서버 실행 → role=tool 결과 재주입 → 최종 답변.
++    executeTool(name,args)는 Argo 권한 게이트를 통과한 문자열 결과를 반환해야 한다. */
++export async function runOpenAICompatToolLoop(baseUrl, {
++  systemPrompt, userMessage, model, apiKey = '', tools = [], executeTool,
++  timeoutMs = 300_000, signal = null, maxRounds = 24, maxToolCalls = 64,
++  onToolCall = async () => {},
++}) {
++  const messages = [];
++  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
++  messages.push({ role: 'user', content: userMessage });
++  const usage = {};
++  const calls = [];
++  let actualModel = null;
++  const deadline = new AbortController();
++  const relayAbort = () => deadline.abort(signal?.reason);
++  if (signal?.aborted) relayAbort();
++  else signal?.addEventListener('abort', relayAbort, { once: true });
++  const timer = setTimeout(() => deadline.abort(new DOMException('Qwen 도구 턴 시간 초과', 'TimeoutError')), timeoutMs);
++
++  try {
++    for (let round = 1; round <= maxRounds; round += 1) {
++      if (deadline.signal.aborted) throw deadline.signal.reason || Object.assign(new Error('중단됨'), { aborted: true });
++      const result = await openAICompatCompletion(baseUrl, { messages, model, apiKey, tools, timeoutMs, signal: deadline.signal });
++      addUsage(usage, result.usage);
++      actualModel = result.model || actualModel;
++      const assistant = result.message;
++      const toolCalls = normalizeToolCalls(assistant, round);
++      if (!toolCalls.length) {
++        const text = typeof assistant.content === 'string' ? assistant.content.trim() : '';
++        if (!text) throw new Error('Qwen 3.6 27B가 빈 응답을 반환했다.');
++        return { text, usage, calls, model: actualModel, messages };
++      }
++      if (typeof executeTool !== 'function') throw new Error('도구 호출을 실행할 Argo 브리지가 없다.');
++      if (calls.length + toolCalls.length > maxToolCalls) throw new Error(`도구 호출 상한(${maxToolCalls})을 넘었다.`);
++
++      messages.push({
++        role: 'assistant',
++        content: typeof assistant.content === 'string' ? assistant.content : null,
++        tool_calls: toolCalls,
++      });
++      for (let index = 0; index < toolCalls.length; index += 1) {
++        if (deadline.signal.aborted) throw deadline.signal.reason || Object.assign(new Error('중단됨'), { aborted: true });
++        const call = toolCalls[index];
++        const name = String(call?.function?.name ?? '').trim();
++        const id = String(call?.id || `tool-${round}-${index}`);
++        let args = {};
++        let output;
++        try {
++          const raw = call?.function?.arguments;
++          args = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw && typeof raw === 'object' ? raw : {});
++          if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('도구 인자는 JSON object여야 한다.');
++          await onToolCall({ name, args, id, round });
++          if (deadline.signal.aborted) throw deadline.signal.reason || Object.assign(new Error('중단됨'), { aborted: true });
++          output = await executeTool(name, args, { signal: deadline.signal });
++        } catch (error) {
++          if (deadline.signal.aborted) throw deadline.signal.reason || error;
++          output = `도구 호출 오류(${name || 'unknown'}): ${String(error?.message || error)}`;
++        }
++        const record = { id, name, args, output: String(output ?? '').slice(0, 120_000) };
++        calls.push(record);
++        messages.push({ role: 'tool', tool_call_id: id, name, content: record.output });
++      }
++    }
++    throw new Error(`도구 실행 라운드 상한(${maxRounds})에 도달했다.`);
++  } finally {
++    clearTimeout(timer);
++    signal?.removeEventListener('abort', relayAbort);
++  }
++}
++
++/** 서버 연결 확인 — /v1/models 조회 후 실제 completion 인증 probe. 반환: { ok: boolean|null }.
++    llama.cpp는 /v1/models를 공개해도 completion에는 API 키를 요구할 수 있으므로 models만으로
++    연결됨을 판정하면 저장은 성공하지만 첫 대화가 401로 죽는다. */
++export async function verifyDeepseekLocal(baseUrl, apiKey = '') {
++  try {
++    const root = normalizeDeepseekLocalBase(baseUrl);
++    const headers = authHeaders(apiKey);
++    const modelsRes = await request(`${root}/v1/models`, { headers });
++    if (!modelsRes.ok) return { ok: modelsRes.status === 401 || modelsRes.status === 403 ? false : null };
++    const data = await modelsRes.json().catch(() => ({}));
++    const model = data.data?.[0]?.id || data.models?.[0]?.id || DEEPSEEK_LOCAL_DEFAULT_MODEL;
++    const probe = await request(`${root}/v1/chat/completions`, {
++      method: 'POST',
++      headers,
++      body: JSON.stringify({
++        model,
++        stream: false,
++      }),
++    });
++    if (probe.status === 401 || probe.status === 403) return { ok: false };
++    if (probe.ok) return { ok: true };
++    // 이 서버는 인증 통과 후 요청 형식 오류를 400 + "messages is required"로 반환한다.
++    // 실제 추론을 실행하지 않아 연결 확인이 모델 생성 지연에 매달리지 않게 한다.
++    if (probe.status === 400) {
++      const body = await probe.text().catch(() => '');
++      if (/messages[\s\S]{0,80}required|required[\s\S]{0,80}messages/i.test(body)) return { ok: true };
++    }
++    return { ok: null };
++  } catch {
++    return { ok: null };
++  }
++}
+diff --git a/src/runners/exec.mjs b/src/runners/exec.mjs
+index a468678..1c724f9 100644
+--- a/src/runners/exec.mjs
++++ b/src/runners/exec.mjs
+@@ -95,7 +95,7 @@ export async function detectRunners(force = false) {
+   if (!force && cache && Date.now() - cacheAt < 60_000) return cache;
+   await ensureCliPath(); // GUI 기동 PATH 보강 — homebrew/npm 전역 CLI 오탐 방지
+   const home = homedir();
+-  const [codexV, codexManaged, geminiV, geminiManaged, agyV, agyLocalBin, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
++  const [codexV, codexManaged, geminiV, geminiManaged, agyV, agyLocalBin, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin, claudeV, bundledClaude] = await Promise.all([
+     exec('codex', ['--version']).then((r) => r.stdout.trim(), () => null),
+     exists(codexManagedBin()),    // 관리본(자동 조달)도 설치로 취급 — PATH 없이도 돈다
+     exec('gemini', ['--version']).then((r) => r.stdout.trim(), () => null),
+@@ -115,10 +115,14 @@ export async function detectRunners(force = false) {
+     // 기기가 설정에서 "연결중 · 이 컴퓨터 로그인"으로 오표시되고 턴은 Not logged in으로 죽던 원인.
+     readFile(join(home, '.claude.json'), 'utf8')
+       .then((s) => !!JSON.parse(s)?.oauthAccount?.accountUuid, () => false),
++    exec('claude', ['--version']).then((r) => r.stdout.trim(), () => null),
++    bundledClaudeCli(),
+   ]);
+   const claudeCred = claudeCredFile || claudeCfgLogin;
++  const claudeInstalled = !!claudeV || !!bundledClaude;
++  const claudeAuthed = !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_BASE_URL || claudeCred || claudeInstalled);
+   cache = {
+-    claude: { installed: true, authed: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || claudeCred) },
++    claude: { installed: claudeInstalled, authed: claudeAuthed },
+     codex: { installed: !!codexV || codexManaged, authed: (!!codexV || codexManaged) && codexAuth }, // gemini와 대칭 — 관리본도 로그인 파일을 상속해 돈다
+     gemini: { installed: !!geminiV || geminiManaged, authed: (!!geminiV || geminiManaged) && (geminiAuth || !!process.env.GEMINI_API_KEY) },
+     glm: { installed: true, authed: !!process.env.GLM_API_KEY },
+@@ -129,6 +133,7 @@ export async function detectRunners(force = false) {
+     // apiError 매핑("timeout waiting for response" → 로그인 안내)이 잡는다. host 마커 invalid 판정
+     // (runnerStatus)이 authed=false면 옵트인 직후부터 "재연결 필요"로 오표시되는 것을 막는 값이기도 하다.
+     antigravity: { installed: !!agyV || agyLocalBin, authed: !!agyV || agyLocalBin, authUnknown: !!agyV || agyLocalBin }, // authUnknown(설치 시): UI는 '로그인됨' 단정 대신 '확인 불가'를 그린다(거짓 유효 표기 금지 — 분리 검수 H1c)
++    deepseeklocal: { installed: true, authed: true },
+   };
+   cacheAt = Date.now();
+   return cache;
+diff --git a/src/runners/shared.mjs b/src/runners/shared.mjs
+index d7c8363..e90fb7c 100644
+--- a/src/runners/shared.mjs
++++ b/src/runners/shared.mjs
+@@ -53,12 +53,15 @@ export const isServerSecretKey = (k) => EXPLICIT_SERVER_SECRETS.has(k) || SERVER
+ const PROVIDER_AUTH_OWNERS = {
+   ANTHROPIC_API_KEY: ['claude'],
+   CLAUDE_CODE_OAUTH_TOKEN: ['claude'],
+-  ANTHROPIC_AUTH_TOKEN: ['claude', 'glm', 'kimi'], // openrouter는 미등재 — cred.env가 항상 명시 세팅하므로 불필요하고, 등재하면 cred 없는 경로에서 호스트 Anthropic 토큰이 살아남는 이론적 구멍(검수 LOW, 호스트 스캐빈징 금지)
++  ANTHROPIC_AUTH_TOKEN: ['claude', 'glm', 'kimi'],
++  ANTHROPIC_BASE_URL: ['claude', 'glm', 'kimi', 'openrouter'],
+   OPENAI_API_KEY: ['codex'],
+   GEMINI_API_KEY: ['gemini'],
+   GOOGLE_API_KEY: ['gemini'],
+   GLM_API_KEY: ['glm'],
+   KIMI_API_KEY: ['kimi'],
++  DEEPSEEK_LOCAL_BASE_URL: ['deepseeklocal'],
++  DEEPSEEK_LOCAL_API_KEY: ['deepseeklocal'],
+ };
+ /** 서버 시크릿(+실행 러너 외 제공사 키)을 제거한 env 사본. runner 미지정 = 서버 시크릿만(기존 동작).
+     runner 지정 = 그 러너 소유가 아닌 제공사 인증 변수도 제거 — 크로스 러너 키 상속 차단. (export: 회귀 테스트용) */
+diff --git a/src/scrapling.mjs b/src/scrapling.mjs
+new file mode 100644
+index 0000000..e8c86a4
+--- /dev/null
++++ b/src/scrapling.mjs
+@@ -0,0 +1,223 @@
++// Qwen/OpenAI 호환 러너의 웹 도구 — Scrapling CLI를 제한된 인자로 실행한다.
++// 셸 문자열을 만들지 않고 execFile(argv)만 사용해 URL/검색어가 명령으로 해석되지 않게 한다.
++import { execFile } from 'node:child_process';
++import { createServer, request as httpRequest } from 'node:http';
++import { connect as netConnect, isIP } from 'node:net';
++import { lookup } from 'node:dns/promises';
++import { mkdtemp, readFile, rm } from 'node:fs/promises';
++import { join } from 'node:path';
++import { tmpdir } from 'node:os';
++import { promisify } from 'node:util';
++import { scrubServerSecrets } from './runners/shared.mjs';
++
++const execFileAsync = promisify(execFile);
++const MAX_WEB_CHARS = 120_000;
++const MAX_SEARCH_RESULTS = 10;
++
++function ipv4Private(address) {
++  const p = address.split('.').map(Number);
++  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
++  return p[0] === 0 || p[0] === 10 || p[0] === 127
++    || (p[0] === 169 && p[1] === 254)
++    || (p[0] === 172 && p[1] >= 16 && p[1] <= 31)
++    || (p[0] === 192 && p[1] === 168)
++    || (p[0] === 100 && p[1] >= 64 && p[1] <= 127)
++    || p[0] >= 224;
++}
++
++function ipv6Segments(address) {
++  const convertDottedTail = (part) => {
++    if (!part.includes('.')) return [part];
++    const octets = part.split('.').map(Number);
++    if (octets.length !== 4 || octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return [];
++    return [((octets[0] << 8) | octets[1]).toString(16), ((octets[2] << 8) | octets[3]).toString(16)];
++  };
++  const [leftRaw, rightRaw, extra] = address.split('::');
++  if (extra !== undefined) return [];
++  const left = leftRaw ? leftRaw.split(':').flatMap(convertDottedTail) : [];
++  const right = rightRaw ? rightRaw.split(':').flatMap(convertDottedTail) : [];
++  const zeros = rightRaw === undefined ? 0 : 8 - left.length - right.length;
++  const parts = rightRaw === undefined ? left : [...left, ...Array(Math.max(0, zeros)).fill('0'), ...right];
++  if (parts.length !== 8 || parts.some((part) => !/^[0-9a-f]{1,4}$/.test(part))) return [];
++  return parts.map((part) => Number.parseInt(part, 16));
++}
++
++/** 웹 도구의 SSRF 차단용. loopback/private/link-local/ULA/multicast는 열지 않는다. */
++export function isPrivateWebAddress(address) {
++  const raw = String(address ?? '').trim().toLowerCase().replace(/^\[|\]$/g, '');
++  if (!raw) return true;
++  if (isIP(raw) === 4) return ipv4Private(raw);
++  if (isIP(raw) !== 6) return true;
++  const parts = ipv6Segments(raw);
++  if (!parts.length) return true;
++  if (parts.slice(0, 7).every((part) => part === 0) && parts[7] <= 1) return true;
++  if (parts.slice(0, 5).every((part) => part === 0) && parts[5] === 0xffff) {
++    const mapped = `${parts[6] >> 8}.${parts[6] & 0xff}.${parts[7] >> 8}.${parts[7] & 0xff}`;
++    return ipv4Private(mapped);
++  }
++  return (parts[0] & 0xfe00) === 0xfc00
++    || (parts[0] & 0xffc0) === 0xfe80
++    || (parts[0] & 0xff00) === 0xff00;
++}
++
++/** 초기 요청 URL을 공개 HTTP(S) 주소로 제한한다. Scrapling은 redirect를 끈 채 실행한다. */
++export async function resolvePublicWebUrl(input, lookupFn = lookup) {
++  let url;
++  try { url = new URL(String(input ?? '').trim()); } catch { throw new Error('유효한 웹 URL이 필요하다.'); }
++  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
++    throw new Error('자격이 포함되지 않은 http/https URL만 열 수 있다.');
++  }
++  if (['localhost', 'localhost.localdomain'].includes(url.hostname.toLowerCase())) {
++    throw new Error('로컬·사설 네트워크 주소는 웹 도구로 열 수 없다.');
++  }
++  const addresses = isIP(url.hostname)
++    ? [{ address: url.hostname }]
++    : await lookupFn(url.hostname, { all: true, verbatim: true });
++  if (!addresses.length || addresses.some(({ address }) => isPrivateWebAddress(address))) {
++    throw new Error('로컬·사설 네트워크 주소는 웹 도구로 열 수 없다.');
++  }
++  return { url, address: addresses[0].address };
++}
++
++export async function assertPublicWebUrl(input, lookupFn = lookup) {
++  return (await resolvePublicWebUrl(input, lookupFn)).url;
++}
++
++function childEnv() {
++  const env = scrubServerSecrets(process.env, 'deepseeklocal');
++  for (const key of Object.keys(env)) {
++    if (key.startsWith('ARGO_') || key.startsWith('SUPABASE_') || key.startsWith('NEXT_PUBLIC_')) delete env[key];
++  }
++  return { ...env, NO_COLOR: '1', FORCE_COLOR: '0' };
++}
++
++async function pinnedProxy(targetUrl, address) {
++  const target = new URL(targetUrl);
++  target.hash = '';
++  const port = Number(target.port) || (target.protocol === 'https:' ? 443 : 80);
++  const sockets = new Set();
++  const sameTarget = (input) => {
++    try {
++      const candidate = new URL(input);
++      candidate.hash = '';
++      return candidate.href === target.href;
++    } catch { return false; }
++  };
++  const server = createServer((req, res) => {
++    if (target.protocol !== 'http:' || req.method !== 'GET' || !sameTarget(req.url)) {
++      res.writeHead(403).end('Forbidden');
++      return;
++    }
++    const headers = { ...req.headers, host: target.host };
++    delete headers['proxy-authorization'];
++    delete headers['proxy-connection'];
++    const upstream = httpRequest({
++      host: address, family: isIP(address), port, method: 'GET',
++      path: `${target.pathname}${target.search}`, headers,
++    }, (upstreamRes) => {
++      res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
++      upstreamRes.pipe(res);
++    });
++    upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end('Bad Gateway'); });
++    req.pipe(upstream);
++  });
++  server.on('connection', (socket) => {
++    sockets.add(socket);
++    socket.once('close', () => sockets.delete(socket));
++  });
++  server.on('connect', (req, client, head) => {
++    let authority;
++    try { authority = new URL(`http://${req.url}`); } catch { client.destroy(); return; }
++    if (target.protocol !== 'https:' || authority.hostname.toLowerCase() !== target.hostname.toLowerCase() || Number(authority.port || 80) !== port) {
++      client.write('HTTP/1.1 403 Forbidden\r\n\r\n');
++      client.destroy();
++      return;
++    }
++    const upstream = netConnect({ host: address, family: isIP(address), port }, () => {
++      client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
++      if (head.length) upstream.write(head);
++      upstream.pipe(client);
++      client.pipe(upstream);
++    });
++    sockets.add(upstream);
++    upstream.once('close', () => sockets.delete(upstream));
++    upstream.on('error', () => client.destroy());
++    client.on('error', () => upstream.destroy());
++  });
++  await new Promise((resolveListen, reject) => {
++    server.once('error', reject);
++    server.listen(0, '127.0.0.1', resolveListen);
++  });
++  const localPort = server.address().port;
++  return {
++    url: `http://127.0.0.1:${localPort}`,
++    close: async () => {
++      for (const socket of sockets) socket.destroy();
++      await new Promise((resolveClose) => server.close(resolveClose));
++    },
++  };
++}
++
++async function scraplingMarkdown(input, { timeoutSeconds = 30, signal = null } = {}) {
++  const { url, address } = await resolvePublicWebUrl(input);
++  const dir = await mkdtemp(join(tmpdir(), 'argo-scrapling-'));
++  const output = join(dir, 'page.md');
++  let proxy;
++  try {
++    // 검증한 DNS 결과로 연결을 고정해, 검증 후 재조회되는 DNS rebinding을 막는다.
++    proxy = await pinnedProxy(url, address);
++    await execFileAsync(process.env.SCRAPLING_BIN || 'scrapling', [
++      'extract', 'get', String(url), output,
++      '--timeout', String(Math.max(5, Math.min(60, Math.floor(timeoutSeconds)))),
++      '--proxy', proxy.url, '--no-follow-redirects', '--ai-targeted',
++    ], { timeout: (timeoutSeconds + 5) * 1000, ...(signal ? { signal } : {}), maxBuffer: 1024 * 1024, env: childEnv() });
++    return { url, markdown: (await readFile(output, 'utf8')).slice(0, MAX_WEB_CHARS) };
++  } catch (error) {
++    if (error?.code === 'ENOENT') throw new Error('Scrapling이 설치되어 있지 않다. `pip install "scrapling[shell]"` 후 다시 시도하라.');
++    const detail = String(error?.stderr || error?.message || error).replace(/\s+/g, ' ').slice(0, 300);
++    throw new Error(`Scrapling 가져오기 실패: ${detail}`);
++  } finally {
++    await proxy?.close().catch(() => {});
++    await rm(dir, { recursive: true, force: true }).catch(() => {});
++  }
++}
++
++function unwrapDuckDuckGo(href) {
++  try {
++    const url = new URL(href.startsWith('//') ? `https:${href}` : href, 'https://duckduckgo.com');
++    const target = url.searchParams.get('uddg');
++    return target ? decodeURIComponent(target) : null;
++  } catch { return null; }
++}
++
++/** Scrapling이 만든 DuckDuckGo Markdown을 모델에 주기 좋은 구조로 축약한다. */
++export function parseScraplingSearchMarkdown(markdown, limit = MAX_SEARCH_RESULTS) {
++  const links = [...String(markdown ?? '').matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)];
++  const out = [];
++  const seen = new Set();
++  for (const match of links) {
++    const url = unwrapDuckDuckGo(match[2]);
++    if (!url || seen.has(url) || !/^https?:\/\//i.test(url)) continue;
++    const title = match[1].replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
++    if (!title || title.startsWith('http') || title.length > 300) continue;
++    seen.add(url);
++    out.push({ title, url });
++    if (out.length >= limit) break;
++  }
++  return out;
++}
++
++export async function scraplingWebSearch(query, { limit = MAX_SEARCH_RESULTS, signal = null } = {}) {
++  const q = String(query ?? '').replace(/\s+/g, ' ').trim().slice(0, 500);
++  if (!q) throw new Error('검색어가 필요하다.');
++  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
++  const { markdown } = await scraplingMarkdown(url, { timeoutSeconds: 30, signal });
++  const results = parseScraplingSearchMarkdown(markdown, Math.max(1, Math.min(MAX_SEARCH_RESULTS, Number(limit) || MAX_SEARCH_RESULTS)));
++  if (!results.length) return `검색 결과가 없다. 검색어: ${q}`;
++  return results.map((item, index) => `${index + 1}. ${item.title}\n${item.url}`).join('\n\n');
++}
++
++export async function scraplingWebFetch(input, { signal = null } = {}) {
++  const { url, markdown } = await scraplingMarkdown(input, { timeoutSeconds: 30, signal });
++  return `출처: ${url.href}\n\n${markdown}`;
++}
+diff --git a/test/antigravity-runner.test.mjs b/test/antigravity-runner.test.mjs
+index b6ba093..fbcd71b 100644
+--- a/test/antigravity-runner.test.mjs
++++ b/test/antigravity-runner.test.mjs
+@@ -57,7 +57,7 @@ test('자동 선택 순서 — PICK_ORDER는 RUNNER_AUTH 정의 순과 일치한
+ 
+ test('연결 UI — RUNNER_ORDER·RUNNER_NAMES에 antigravity가 있다', () => {
+   const src = read('app/runner-connect.jsx');
+-  assert.match(src, /RUNNER_ORDER = \['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter'\]/);
++  assert.match(src, /RUNNER_ORDER = \['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter', 'deepseeklocal'\]/);
+   assert.match(src, /antigravity: 'Antigravity'/);
+ });
+ 
+diff --git a/test/codex-crew-config.test.mjs b/test/codex-crew-config.test.mjs
+index 751c2cc..568a7b9 100644
+--- a/test/codex-crew-config.test.mjs
++++ b/test/codex-crew-config.test.mjs
+@@ -62,9 +62,15 @@ test('Codex 턴 config에 회사 외부 MCP 정의를 전달한다', async () =>
+ });
+ 
+ test('Codex 프롬프트는 Argo 동료 조율에서 Orca 대체 실행을 명시적으로 금지한다', () => {
+-  const prompt = codexArgoCrewPrompt([{ slug: 'sw-cto', name: 'SW CTO' }], 'ko');
++  const prompt = codexArgoCrewPrompt([{
++    slug: 'sw-cto', name: 'SW CTO', runner: 'codex', model: 'gpt-5.6-sol',
++  }], 'ko');
+   assert.match(prompt, /Argo 내부 `delegate`와 `send_to_crew`/);
+   assert.match(prompt, /`orca-ide`.*절대 실행하지 마라/);
++  assert.match(prompt, /설정 러너: Codex \(codex\)/);
++  assert.match(prompt, /설정 모델: GPT-5\.6 Sol \(gpt-5\.6-sol\)/);
++  assert.match(prompt, /읽기 전용 설정 메타데이터/);
++  assert.doesNotMatch(prompt, /token|secret|api.?key/i);
+ 
+   const depthLimited = codexArgoCrewPrompt([], 'en');
+   assert.match(depthLimited, /delegation-depth limit/);
+diff --git a/test/deepseek-local.test.mjs b/test/deepseek-local.test.mjs
+new file mode 100644
+index 0000000..7088c90
+--- /dev/null
++++ b/test/deepseek-local.test.mjs
+@@ -0,0 +1,213 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import {
++  deepseekLocalCall,
++  parseDeepseekLocalCredential,
++  runOpenAICompatToolLoop,
++  verifyDeepseekLocal,
++} from '../src/runners/deepseek-local.mjs';
++import { DEEPSEEK_LOCAL_DEFAULT_MODEL, RUNNERS } from '../src/runners/catalog.mjs';
++
++test('DeepSeek Local 카탈로그 — 서버의 Qwen 3.6 27B 모델을 기본값으로 사용', () => {
++  assert.equal(DEEPSEEK_LOCAL_DEFAULT_MODEL, 'qwen3.6-27b-q4');
++  assert.equal(RUNNERS.deepseeklocal.name, 'Qwen 3.6 27B');
++  assert.deepEqual(RUNNERS.deepseeklocal.models, [
++    { id: 'qwen3.6-27b-q4', label: 'Qwen 3.6 27B (Q4)' },
++  ]);
++});
++
++test('DeepSeek Local 자격 파싱 — URL-only, API-key-only, URL|API-key', () => {
++  assert.deepEqual(parseDeepseekLocalCredential('http://llama.local:8080/'), {
++    baseUrl: 'http://llama.local:8080/', apiKey: '',
++  });
++  assert.deepEqual(parseDeepseekLocalCredential('http://llama.local:8080/v1|fixture-value'), {
++    baseUrl: 'http://llama.local:8080/v1', apiKey: 'fixture-value',
++  });
++  assert.deepEqual(parseDeepseekLocalCredential('fixture-value'), {
++    baseUrl: 'http://100.103.65.62:8080', apiKey: 'fixture-value',
++  });
++  assert.deepEqual(parseDeepseekLocalCredential('http://llama.local:8080|fixture|value'), {
++    baseUrl: 'http://llama.local:8080', apiKey: 'fixture|value',
++  });
++});
++
++test('DeepSeek Local 검증 — 인증 실패 401은 거절하고 인증 통과 후 400 형식 오류는 통과', async () => {
++  const realFetch = globalThis.fetch;
++  const calls = [];
++  globalThis.fetch = async (url, init = {}) => {
++    calls.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null });
++    if (String(url).endsWith('/v1/models')) return new Response(JSON.stringify({ data: [{ id: 'server-model' }] }), { status: 200 });
++    return new Response(JSON.stringify({ error: { code: 401 } }), { status: 401 });
++  };
++  try {
++    assert.deepEqual(await verifyDeepseekLocal('http://llama.local:8080', 'fixture-value'), { ok: false });
++    assert.equal(calls[1].body.model, 'server-model');
++    assert.equal(calls[1].body.messages, undefined);
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
++test('DeepSeek Local 검증 — messages 누락 400은 인증 통과로 판정', async () => {
++  const realFetch = globalThis.fetch;
++  globalThis.fetch = async (url) => String(url).endsWith('/v1/models')
++    ? new Response(JSON.stringify({ data: [{ id: 'server-model' }] }), { status: 200 })
++    : new Response(JSON.stringify({ error: { message: "'messages' is required" } }), { status: 400 });
++  try {
++    assert.deepEqual(await verifyDeepseekLocal('http://llama.local:8080/v1', 'fixture-value'), { ok: true });
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
++test('DeepSeek Local 호출 — Bearer 자격과 서버 모델을 completion에 전달', async () => {
++  const realFetch = globalThis.fetch;
++  let request = null;
++  let requestUrl = '';
++  globalThis.fetch = async (url, init = {}) => {
++    requestUrl = String(url);
++    request = init;
++    return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }], usage: { total_tokens: 1 } }), { status: 200 });
++  };
++  try {
++    const result = await deepseekLocalCall('http://llama.local:8080', {
++      userMessage: 'ping', model: 'server-model', apiKey: 'fixture-value', timeoutMs: 1000,
++    });
++    assert.equal(result.text, 'OK');
++    assert.equal(requestUrl, 'http://llama.local:8080/v1/chat/completions');
++    assert.equal(request.headers.Authorization, 'Bearer fixture-value');
++    assert.equal(JSON.parse(request.body).model, 'server-model');
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
++test('OpenAI 호환 호출 — 외부 중단 신호가 있어도 요청 시간 제한을 유지', async () => {
++  const realFetch = globalThis.fetch;
++  globalThis.fetch = async (_url, init = {}) => new Promise((_resolve, reject) => {
++    init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true });
++  });
++  try {
++    await assert.rejects(
++      deepseekLocalCall('http://llama.local:8080', {
++        userMessage: 'hang', timeoutMs: 10, signal: new AbortController().signal,
++      }),
++      (error) => error?.name === 'TimeoutError',
++    );
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
++test('OpenAI 호환 도구 루프 — tools 전달 → tool_calls 실행 → role=tool 재주입 → 최종 답변', async () => {
++  const realFetch = globalThis.fetch;
++  const requests = [];
++  let round = 0;
++  globalThis.fetch = async (_url, init = {}) => {
++    requests.push(JSON.parse(init.body));
++    round += 1;
++    if (round === 1) {
++      return new Response(JSON.stringify({
++        model: 'server-model',
++        choices: [{ message: { content: null, tool_calls: [{
++          id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/a.md"}' },
++        }] }, finish_reason: 'tool_calls' }],
++        usage: { prompt_tokens: 10, completion_tokens: 3, total_tokens: 13 },
++      }), { status: 200 });
++    }
++    return new Response(JSON.stringify({
++      model: 'server-model', choices: [{ message: { content: '파일을 확인했다.' }, finish_reason: 'stop' }],
++      usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
++    }), { status: 200 });
++  };
++  const executed = [];
++  try {
++    const result = await runOpenAICompatToolLoop('http://llama.local:8080', {
++      systemPrompt: 'system', userMessage: '파일 읽어', model: 'server-model', apiKey: 'fixture-value',
++      tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } }],
++      executeTool: async (name, args) => { executed.push({ name, args }); return '1: hello'; },
++    });
++    assert.equal(result.text, '파일을 확인했다.');
++    assert.deepEqual(executed, [{ name: 'read_file', args: { path: 'vault/a.md' } }]);
++    assert.equal(requests[0].tool_choice, 'auto');
++    assert.equal(requests[0].tools[0].function.name, 'read_file');
++    assert.deepEqual(requests[1].messages.slice(-2), [
++      { role: 'assistant', content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/a.md"}' } }] },
++      { role: 'tool', tool_call_id: 'call-1', name: 'read_file', content: '1: hello' },
++    ]);
++    assert.deepEqual(result.usage, { prompt_tokens: 18, completion_tokens: 7, total_tokens: 25 });
++    assert.equal(result.model, 'server-model');
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
++test('OpenAI 호환 도구 루프 — 잘못된 JSON 인자는 오류 tool 결과로 모델에 돌려보낸다', async () => {
++  const realFetch = globalThis.fetch;
++  const requests = [];
++  globalThis.fetch = async (_url, init = {}) => {
++    const body = JSON.parse(init.body);
++    requests.push(body);
++    return new Response(JSON.stringify(requests.length === 1
++      ? { choices: [{ message: { tool_calls: [{ id: 'bad-1', type: 'function', function: { name: 'read_file', arguments: '{bad' } }] } }] }
++      : { choices: [{ message: { content: '인자를 고쳐야 한다.' } }] }), { status: 200 });
++  };
++  try {
++    const result = await runOpenAICompatToolLoop('http://llama.local:8080', {
++      userMessage: 'read', tools: [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } }],
++      executeTool: async () => { throw new Error('호출되면 안 됨'); },
++    });
++    assert.equal(result.text, '인자를 고쳐야 한다.');
++    assert.match(requests[1].messages.at(-1).content, /도구 호출 오류\(read_file\)/);
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
++test('OpenAI 호환 도구 루프 — 전체 턴 제한이 도구 실행 시간까지 중단 신호로 묶음', async () => {
++  const realFetch = globalThis.fetch;
++  globalThis.fetch = async () => new Response(JSON.stringify({
++    choices: [{ message: { content: null, tool_calls: [{
++      id: 'slow-1', type: 'function', function: { name: 'run_command', arguments: '{"command":"slow"}' },
++    }] } }],
++  }), { status: 200 });
++  let toolAborted = false;
++  try {
++    await assert.rejects(runOpenAICompatToolLoop('http://llama.local:8080', {
++      userMessage: 'slow', timeoutMs: 15,
++      tools: [{ type: 'function', function: { name: 'run_command', parameters: { type: 'object' } } }],
++      executeTool: async (_name, _args, { signal }) => new Promise((resolve) => {
++        signal.addEventListener('abort', () => { toolAborted = true; resolve('중단됨'); }, { once: true });
++      }),
++    }), (error) => error?.name === 'TimeoutError');
++    assert.equal(toolAborted, true);
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
++
++test('OpenAI 호환 도구 루프 — 사용자 중단 뒤 같은 배치의 나머지 도구를 실행하지 않음', async () => {
++  const realFetch = globalThis.fetch;
++  globalThis.fetch = async () => new Response(JSON.stringify({
++    choices: [{ message: { content: null, tool_calls: [
++      { id: 'first', type: 'function', function: { name: 'read_file', arguments: '{}' } },
++      { id: 'second', type: 'function', function: { name: 'write_file', arguments: '{}' } },
++    ] } }],
++  }), { status: 200 });
++  const controller = new AbortController();
++  const executed = [];
++  try {
++    await assert.rejects(runOpenAICompatToolLoop('http://llama.local:8080', {
++      userMessage: 'stop', signal: controller.signal,
++      tools: [{ type: 'function', function: { name: 'read_file', parameters: {} } }],
++      executeTool: async (name) => {
++        executed.push(name);
++        controller.abort(new DOMException('사용자 중단', 'AbortError'));
++        throw controller.signal.reason;
++      },
++    }), (error) => error?.name === 'AbortError');
++    assert.deepEqual(executed, ['read_file']);
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
+diff --git a/test/env-hygiene.test.mjs b/test/env-hygiene.test.mjs
+index 28deba2..db68e12 100644
+--- a/test/env-hygiene.test.mjs
++++ b/test/env-hygiene.test.mjs
+@@ -16,14 +16,14 @@ const FULL_ENV = {
+   SUPABASE_SERVICE_ROLE_KEY: 'crown',
+   ANTHROPIC_API_KEY: 'a-key', CLAUDE_CODE_OAUTH_TOKEN: 'a-oat', ANTHROPIC_AUTH_TOKEN: 'a-tok',
+   OPENAI_API_KEY: 'o-key', GEMINI_API_KEY: 'g-key', GOOGLE_API_KEY: 'gg-key',
+-  GLM_API_KEY: 'z-key', KIMI_API_KEY: 'k-key',
++  GLM_API_KEY: 'z-key', KIMI_API_KEY: 'k-key', DEEPSEEK_LOCAL_API_KEY: 'd-key', DEEPSEEK_LOCAL_BASE_URL: 'http://deepseek.local:8080',
+ };
+ 
+ test('scrubServerSecrets(env, runner): 실행 러너 소유 아닌 제공사 키 제거 — 크로스 러너 유출 차단', () => {
+   const codex = scrubServerSecrets(FULL_ENV, 'codex');
+   assert.equal(codex.OPENAI_API_KEY, 'o-key', '실행 러너(codex) 자신의 키는 보존');
+   assert.equal(codex.PATH, '/usr/bin', '운영 변수 보존');
+-  for (const k of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GLM_API_KEY', 'KIMI_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY']) {
++  for (const k of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GLM_API_KEY', 'KIMI_API_KEY', 'DEEPSEEK_LOCAL_API_KEY', 'DEEPSEEK_LOCAL_BASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']) {
+     assert.ok(!(k in codex), `codex 턴에 ${k} 부재 — printenv로 타 제공사 자격 열람 불가`);
+   }
+   const glm = scrubServerSecrets(FULL_ENV, 'glm');
+@@ -35,12 +35,15 @@ test('scrubServerSecrets(env, runner): 실행 러너 소유 아닌 제공사 키
+   assert.equal(claude.ANTHROPIC_API_KEY, 'a-key');
+   assert.equal(claude.CLAUDE_CODE_OAUTH_TOKEN, 'a-oat');
+   assert.ok(!('GLM_API_KEY' in claude) && !('OPENAI_API_KEY' in claude) && !('GEMINI_API_KEY' in claude));
++  const deepseek = scrubServerSecrets(FULL_ENV, 'deepseeklocal');
++  assert.equal(deepseek.DEEPSEEK_LOCAL_API_KEY, 'd-key');
++  assert.equal(deepseek.DEEPSEEK_LOCAL_BASE_URL, 'http://deepseek.local:8080');
+ });
+ 
+ test('scrubServerSecrets(env): runner 미지정은 기존 동작 — 서버 시크릿만 제거(하위호환)', () => {
+   const out = scrubServerSecrets(FULL_ENV);
+   assert.ok(!('SUPABASE_SERVICE_ROLE_KEY' in out), '크라운주얼은 항상 제거');
+-  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GLM_API_KEY', 'KIMI_API_KEY']) {
++  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GLM_API_KEY', 'KIMI_API_KEY', 'DEEPSEEK_LOCAL_API_KEY']) {
+     assert.equal(out[k], FULL_ENV[k], `runner 미지정이면 제공사 키 보존(${k}) — 기존 소비처 무회귀`);
+   }
+ });
+diff --git a/test/openai-compat-chat.test.mjs b/test/openai-compat-chat.test.mjs
+new file mode 100644
+index 0000000..e9236c7
+--- /dev/null
++++ b/test/openai-compat-chat.test.mjs
+@@ -0,0 +1,58 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { mkdtemp, readFile, rm } from 'node:fs/promises';
++import { join } from 'node:path';
++import { tmpdir } from 'node:os';
++
++const argoRoot = await mkdtemp(join(tmpdir(), 'argo-openai-chat-'));
++process.env.ARGO_ROOT = argoRoot;
++const { createCompany, paths } = await import('../src/workspace.mjs');
++const { saveAgentCard } = await import('../src/persona.mjs');
++const { saveRunnerCred } = await import('../src/runners.mjs');
++const { chat } = await import('../src/chat.mjs');
++
++test.after(async () => { await rm(argoRoot, { recursive: true, force: true }); });
++
++test('Qwen chat 통합 — 실제 chat 경로가 파일 tool_calls를 실행하고 일지·사용량·산출물을 남긴다', async () => {
++  const wsId = 'qwen-tool-chat';
++  await createCompany(wsId, 'Qwen Tool Co', 'Captain');
++  const p = paths(wsId);
++  const card = `---\nname: 지나\nslug: jina\nrole: 상품 리서처\nrunner: deepseeklocal\nmodel: qwen3.6-27b-q4\n---\n\n# 지나 — 상품 리서처\n\n## 전문성\n- 상품 비교\n\n## 일하는 방식\n- 파일 근거 우선\n\n## 톤\n간결함\n`;
++  await saveRunnerCred(wsId, 'deepseeklocal', 'apikey', 'http://llama.fixture:8080|fixture-qwen-value');
++  // saveAgentCard는 기존 카드만 편집하므로 스캐폴드의 agents 경로에 초깃값을 먼저 둔다.
++  await import('node:fs/promises').then(({ writeFile }) => writeFile(join(p.agents, 'jina.md'), card));
++  await saveAgentCard(wsId, 'jina', card);
++  await import('node:fs/promises').then(({ writeFile }) => writeFile(join(p.vault, 'input.md'), 'Alpha 평점 4.8\nBeta 평점 4.2\n'));
++
++  const realFetch = globalThis.fetch;
++  const requests = [];
++  globalThis.fetch = async (_url, init = {}) => {
++    const body = JSON.parse(init.body);
++    requests.push(body);
++    const n = requests.length;
++    const message = n === 1
++      ? { content: null, tool_calls: [{ id: 'r1', type: 'function', function: { name: 'read_file', arguments: '{"path":"vault/input.md"}' } }] }
++      : n === 2
++        ? { content: null, tool_calls: [{ id: 'w1', type: 'function', function: { name: 'write_file', arguments: '{"path":"vault/projects/result.md","content":"Alpha를 선택합니다."}' } }] }
++        : { content: '파일을 읽고 선정 결과를 저장했습니다.' };
++    return new Response(JSON.stringify({
++      model: 'qwen3.6-27b-q4', choices: [{ message, finish_reason: n < 3 ? 'tool_calls' : 'stop' }],
++      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
++    }), { status: 200 });
++  };
++  try {
++    const result = await chat(wsId, 'jina', 'input.md를 읽고 평점이 높은 상품을 골라 result.md에 저장해줘');
++    assert.equal(result.reply, '파일을 읽고 선정 결과를 저장했습니다.');
++    assert.equal(await readFile(join(p.vault, 'projects', 'result.md'), 'utf8'), 'Alpha를 선택합니다.');
++    assert.deepEqual(result.artifacts, ['projects/result.md']);
++    assert.ok(result.handover?.file, '일지 생성');
++    assert.ok(requests[0].tools.some((t) => t.function.name === 'read_file'));
++    assert.equal(requests[1].messages.at(-1).role, 'tool');
++    const usage = await readFile(p.usage, 'utf8');
++    assert.match(usage, /"runner":"deepseeklocal"/);
++    assert.match(usage, /"Read":1/);
++    assert.match(usage, /"Write":1/);
++  } finally {
++    globalThis.fetch = realFetch;
++  }
++});
+diff --git a/test/openai-compat-mcp.test.mjs b/test/openai-compat-mcp.test.mjs
+new file mode 100644
+index 0000000..0d2bf21
+--- /dev/null
++++ b/test/openai-compat-mcp.test.mjs
+@@ -0,0 +1,53 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { connectOpenAICompatMcpTools } from '../src/openai-compat-mcp.mjs';
++
++const serverCode = `
++import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
++import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
++import { z } from 'zod';
++const server = new McpServer({ name: 'fixture', version: '1.0.0' });
++server.registerTool('echo', { description: 'echo text', inputSchema: { text: z.string() } }, async ({ text }) => ({ content: [{ type: 'text', text: 'echo:' + text }] }));
++server.registerTool('label', { description: 'server label', inputSchema: {} }, async () => ({ content: [{ type: 'text', text: process.env.FIXTURE_LABEL || 'none' }] }));
++await server.connect(new StdioServerTransport());
++`;
++
++test('OpenAI 호환 MCP 브리지 — 회사 stdio MCP의 도구 목록과 실행 결과를 function tool로 변환', async () => {
++  const bridge = await connectOpenAICompatMcpTools({
++    fixture: { command: process.execPath, args: ['--input-type=module', '-e', serverCode] },
++  }, { cwd: process.cwd() });
++  try {
++    assert.equal(bridge.tools.length, 2);
++    const echo = bridge.tools.find((tool) => tool.canonicalName === 'mcp__fixture__echo');
++    assert.equal(echo.definition.function.name, 'mcp__fixture__echo');
++    assert.equal(await echo.execute({ text: 'hello' }), 'echo:hello');
++  } finally {
++    await bridge.close();
++  }
++});
++
++test('OpenAI 호환 MCP 브리지 — 정규화 결과가 같은 서버 이름도 고유한 function 이름을 사용', async () => {
++  const bridge = await connectOpenAICompatMcpTools({
++    'fixture.one': { command: process.execPath, args: ['--input-type=module', '-e', serverCode], env: { FIXTURE_LABEL: 'dot' } },
++    'fixture@one': { command: process.execPath, args: ['--input-type=module', '-e', serverCode], env: { FIXTURE_LABEL: 'at' } },
++  }, { cwd: process.cwd() });
++  try {
++    const labels = bridge.tools.filter((tool) => tool.definition.function.description.includes('server label'));
++    assert.equal(labels.length, 2);
++    assert.equal(new Set(labels.map((tool) => tool.definition.function.name)).size, 2);
++    assert.equal(new Set(labels.map((tool) => tool.canonicalName)).size, 2);
++    assert.deepEqual(new Set(await Promise.all(labels.map((tool) => tool.execute({})))), new Set(['dot', 'at']));
++  } finally {
++    await bridge.close();
++  }
++});
++
++test('OpenAI 호환 MCP 브리지 — 턴 중단 신호가 초기 서버 연결도 즉시 끝냄', async () => {
++  const controller = new AbortController();
++  const started = Date.now();
++  setTimeout(() => controller.abort(new DOMException('테스트 중단', 'AbortError')), 30);
++  await assert.rejects(connectOpenAICompatMcpTools({
++    hanging: { command: process.execPath, args: ['-e', 'setTimeout(() => {}, 30000)'] },
++  }, { cwd: process.cwd(), signal: controller.signal }), (error) => error?.name === 'AbortError');
++  assert.ok(Date.now() - started < 3000, '중단된 MCP 연결이 자체 제한까지 남아 있으면 안 됨');
++});
+diff --git a/test/openai-compat-tools.test.mjs b/test/openai-compat-tools.test.mjs
+new file mode 100644
+index 0000000..6ec7832
+--- /dev/null
++++ b/test/openai-compat-tools.test.mjs
+@@ -0,0 +1,132 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
++import { join } from 'node:path';
++import { tmpdir } from 'node:os';
++
++const argoRoot = await mkdtemp(join(tmpdir(), 'argo-openai-tools-'));
++process.env.ARGO_ROOT = argoRoot;
++const { createOpenAICompatToolRegistry, OPENAI_COMPAT_NATIVE_TOOL_NAMES } = await import('../src/openai-compat-tools.mjs');
++const { isPrivateWebAddress, parseScraplingSearchMarkdown } = await import('../src/scrapling.mjs');
++
++test.after(async () => { await rm(argoRoot, { recursive: true, force: true }); });
++
++async function fixture(caps = { fs: false, browser: false, shell: false, bypass: false }) {
++  const wsId = `tool-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
++  const root = join(argoRoot, wsId);
++  const vault = join(root, 'vault');
++  await mkdir(join(vault, 'notes'), { recursive: true });
++  await mkdir(join(root, 'skills'), { recursive: true });
++  await writeFile(join(root, 'company.json'), JSON.stringify({ id: wsId, name: 'Test', lang: 'ko' }));
++  await writeFile(join(root, 'capabilities.json'), JSON.stringify(caps));
++  await writeFile(join(root, 'approvals.json'), '[]');
++  await writeFile(join(root, 'routines.json'), '[]');
++  await writeFile(join(vault, 'notes', 'source.md'), '# 상품\nAlpha 100원\nBeta 200원\n');
++  const artifacts = [];
++  const registry = await createOpenAICompatToolRegistry({
++    wsId, agentSlug: 'crew-a', agentName: 'Crew A', root, vaultRoot: vault,
++    caps, workRoots: [], colleagues: [],
++    onArtifact: (rel) => artifacts.push(rel), runChat: async () => ({ reply: '' }),
++  });
++  return { wsId, root, vault, artifacts, registry };
++}
++
++test('Qwen 네이티브 도구 목록 — Codex급 파일·검색·편집·셸·웹과 Argo 크루 도구를 노출', () => {
++  for (const name of ['read_file', 'list_files', 'search_files', 'write_file', 'edit_file', 'apply_patch', 'run_command', 'web_search', 'web_fetch', 'delegate', 'send_to_crew']) {
++    assert.ok(OPENAI_COMPAT_NATIVE_TOOL_NAMES.includes(name), name);
++  }
++});
++
++test('Qwen 파일 도구 — 읽기·목록·검색·쓰기·편집과 산출물 추적이 실제 파일에 적용', async () => {
++  const f = await fixture();
++  try {
++    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/source.md' }), /Alpha 100원/);
++    assert.match(await f.registry.execute('list_files', { path: 'vault' }), /notes\/source\.md/);
++    assert.match(await f.registry.execute('search_files', { path: 'vault', query: 'Beta' }), /source\.md:3/);
++    assert.match(await f.registry.execute('write_file', { path: 'vault/projects/result.md', content: '# 결과\n초안\n' }), /저장함/);
++    assert.match(await f.registry.execute('edit_file', { path: 'vault/projects/result.md', old_text: '초안', new_text: '완성' }), /수정함/);
++    assert.match(await f.registry.execute('apply_patch', { path: 'vault/projects/result.md', edits: [
++      { old_text: '# 결과', new_text: '# 최종 결과' }, { old_text: '완성', new_text: '검증됨' },
++    ] }), /패치 적용함/);
++    assert.equal(await readFile(join(f.vault, 'projects', 'result.md'), 'utf8'), '# 최종 결과\n검증됨\n');
++    assert.deepEqual(f.artifacts, ['projects/result.md', 'projects/result.md', 'projects/result.md']);
++  } finally { await f.registry.close(); }
++});
++
++test('Qwen 도구 권한 — 회사 금고·꺼진 셸·꺼진 웹은 기존 permission-gate가 차단', async () => {
++  const f = await fixture();
++  try {
++    assert.match(await f.registry.execute('write_file', { path: 'capabilities.json', content: '{"shell":true}' }), /도구 거부/);
++    assert.match(await f.registry.execute('run_command', { command: 'pwd' }), /도구 거부/);
++    assert.match(await f.registry.execute('web_search', { query: 'test' }), /도구 거부/);
++  } finally { await f.registry.close(); }
++});
++
++test('Qwen 파일 도구 — 허용 폴더 안 심볼릭 링크로 외부 파일을 읽거나 쓰지 못함', async () => {
++  const f = await fixture();
++  const outsideFile = join(argoRoot, `outside-${Date.now()}.md`);
++  const outsideDir = join(argoRoot, `outside-dir-${Date.now()}`);
++  await writeFile(outsideFile, '외부 비밀');
++  await mkdir(outsideDir);
++  await symlink(outsideFile, join(f.vault, 'notes', 'escape.md'));
++  await symlink(outsideDir, join(f.vault, 'escape-dir'));
++  try {
++    assert.match(await f.registry.execute('read_file', { path: 'vault/notes/escape.md' }), /도구 거부/);
++    assert.match(await f.registry.execute('list_files', { path: 'vault/escape-dir' }), /도구 거부/);
++    assert.match(await f.registry.execute('write_file', { path: 'vault/escape-dir/new.md', content: '탈출' }), /도구 거부/);
++    await assert.rejects(readFile(join(outsideDir, 'new.md')));
++  } finally {
++    await f.registry.close();
++    await rm(outsideFile, { force: true });
++    await rm(outsideDir, { recursive: true, force: true });
++  }
++});
++
++test('Qwen 셸 도구 — shell 능력이 켜진 회사에서 명령 실행, 서버·모델 자격 env는 제거', async () => {
++  const f = await fixture({ fs: false, browser: false, shell: true, bypass: false });
++  const old = process.env.SUPABASE_SERVICE_ROLE_KEY;
++  process.env.SUPABASE_SERVICE_ROLE_KEY = 'fixture-server-value';
++  try {
++    const command = `"${process.execPath}" -e "process.stdout.write(process.env.SUPABASE_SERVICE_ROLE_KEY || 'clean')"`;
++    assert.equal(await f.registry.execute('run_command', { command }), 'clean');
++  } finally {
++    if (old === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY; else process.env.SUPABASE_SERVICE_ROLE_KEY = old;
++    await f.registry.close();
++  }
++});
++
++test('Qwen 셸 도구 — 턴 중단 시 실행 중인 프로세스 그룹을 즉시 종료', async () => {
++  const f = await fixture({ fs: false, browser: false, shell: true, bypass: false });
++  const controller = new AbortController();
++  const started = Date.now();
++  try {
++    const pending = f.registry.execute('run_command', {
++      command: `"${process.execPath}" -e "setTimeout(() => {}, 30000)"`, timeout_seconds: 30,
++    }, { signal: controller.signal });
++    setTimeout(() => controller.abort(new DOMException('테스트 중단', 'AbortError')), 30);
++    assert.match(await pending, /도구 오류|명령 실패/);
++    assert.ok(Date.now() - started < 3000, '중단된 명령이 제한 시간까지 남아 있으면 안 됨');
++  } finally {
++    await f.registry.close();
++  }
++});
++
++test('Qwen 셸 도구 — 허용 폴더 안 cwd 심볼릭 링크로 외부에서 실행하지 못함', async () => {
++  const f = await fixture({ fs: false, browser: false, shell: true, bypass: false });
++  const outsideDir = join(argoRoot, `shell-outside-${Date.now()}`);
++  await mkdir(outsideDir);
++  await symlink(outsideDir, join(f.vault, 'shell-escape'));
++  try {
++    assert.match(await f.registry.execute('run_command', { command: 'pwd', cwd: 'vault/shell-escape' }), /도구 거부/);
++  } finally {
++    await f.registry.close();
++    await rm(outsideDir, { recursive: true, force: true });
++  }
++});
++
++test('Scrapling 웹 안전·검색 파서 — 사설 주소 차단 분류와 DuckDuckGo URL 복원', () => {
++  for (const ip of ['127.0.0.1', '10.0.0.1', '172.16.0.1', '192.168.1.1', '169.254.1.1', '::1', 'fc00::1', '::ffff:127.0.0.1', '::ffff:7f00:1', '0:0::ffff:a00:1']) assert.equal(isPrivateWebAddress(ip), true, ip);
++  assert.equal(isPrivateWebAddress('93.184.216.34'), false);
++  const md = '[Example](//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa&rut=x)\n[duplicate](//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa&rut=y)';
++  assert.deepEqual(parseScraplingSearchMarkdown(md), [{ title: 'Example', url: 'https://example.com/a' }]);
++});
+diff --git a/test/runner-cred.test.mjs b/test/runner-cred.test.mjs
+index e82427f..f22dc11 100644
+--- a/test/runner-cred.test.mjs
++++ b/test/runner-cred.test.mjs
+@@ -13,7 +13,7 @@ import { join } from 'node:path';
+ // Windows에선 %USERPROFILE% — 둘 다 심어야 전 플랫폼 격리.
+ process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-credhome-'));
+ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-credtest-'));
+-const { oauthFormatError, RUNNER_AUTH, startRunnerWebAuth, runnerStatus, saveRunnerCred, runnerCredEnv } = await import('../src/runners.mjs');
++const { oauthFormatError, RUNNER_AUTH, startRunnerWebAuth, runnerStatus, saveRunnerCred, runnerCredEnv, sdkEnvFor } = await import('../src/runners.mjs');
+ 
+ test('RUNNER_AUTH: claude OAuth 접두사 규격 고정', () => {
+   assert.equal(RUNNER_AUTH.claude.oauthPrefix, 'sk-ant-oat01-', 'CLAUDE_CODE_OAUTH_TOKEN 접두사');
+@@ -220,6 +220,26 @@ test('verifyRunnerCred: 정상 401 러너(kimi·codex·claude apikey)는 회귀
+ });
+ 
+ /* ── OAuth 연결 시 API키 명시 소거 — 호스트 env 키가 OAuth를 누르지 않게(claude 대칭, 신고 2026-07-24) ── */
++test('sdkEnvFor: Claude host는 로컬 Claude Code settings.json의 endpoint·model·자격을 SDK에 전달', async () => {
++  const settingsDir = join(process.env.HOME, '.claude');
++  await mkdir(settingsDir, { recursive: true });
++  await writeFile(join(settingsDir, 'settings.json'), JSON.stringify({
++    env: {
++      ANTHROPIC_BASE_URL: 'http://llama.test:8080',
++      ANTHROPIC_MODEL: 'qwen3.6-27b-q4',
++      ANTHROPIC_AUTH_TOKEN: 'fixture-auth-token',
++      ANTHROPIC_API_KEY: 'fixture-api-key',
++      UNSAFE_INHERITED_VALUE: 'must-not-copy',
++    },
++  }));
++  const env = await sdkEnvFor('credenv-claude-host-settings', 'claude');
++  assert.equal(env.ANTHROPIC_BASE_URL, 'http://llama.test:8080');
++  assert.equal(env.ANTHROPIC_MODEL, 'qwen3.6-27b-q4');
++  assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'fixture-auth-token');
++  assert.equal(env.ANTHROPIC_API_KEY, 'fixture-api-key');
++  assert.ok(!('UNSAFE_INHERITED_VALUE' in env), 'settings.json 임의 env 전체를 SDK에 복사하면 안 된다');
++});
++
+ test('runnerCredEnv: codex OAuth는 OPENAI_API_KEY를 빈 값으로 소거(호스트 키 우선 차단)', async () => {
+   const WS = 'credenv-codex';
+   await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
