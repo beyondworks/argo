@@ -9,7 +9,29 @@ import { join } from 'node:path';
 // 임시 ARGO_ROOT — WS_ROOT는 모듈 로드 시 고정되므로 import보다 먼저 심는다(실데이터 미접촉)
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-gatetest-'));
 const { anyRunnerUsable, runnerNeedsReconnect } = await import('../app/runner-usable.mjs');
-const { codexSandboxArgs } = await import('../src/runners.mjs');
+const { codexSandboxArgs, codexSandboxModeArgs } = await import('../src/runners.mjs');
+
+test('codexSandboxModeArgs: 윈도우=샌드박스 우회, 그 외=workspace-write (읽기전용 쓰기 전멸 신고 2026-08-03~05)', () => {
+  // 윈도우 codex는 OS 샌드박스 기전이 없어 workspace-write가 read-only로 떨어진다(openai/codex#6374).
+  // 전권 원칙(capabilities.mjs)에 따라 윈도우만 우회 — 맥·리눅스는 seatbelt/Landlock이 실제로 지켜
+  // "앱 본체 보호"가 여기 걸려 있으므로 절대 우회로 바꾸지 않는다(2026-07-22 writable_roots="/" 크리티컬 계열).
+  assert.deepEqual(codexSandboxModeArgs('win32'), ['--dangerously-bypass-approvals-and-sandbox'],
+    '윈도우 = 우회(샌드박스가 쓰기 전멸을 만들던 자리)');
+  assert.deepEqual(codexSandboxModeArgs('darwin'), ['--sandbox', 'workspace-write'], '맥 = 기존 유지');
+  assert.deepEqual(codexSandboxModeArgs('linux'), ['--sandbox', 'workspace-write'], '리눅스 = 기존 유지');
+  // 현재 플랫폼 기본값 = 위 둘 중 하나와 정확히 일치(주입 없는 실호출 경로 잠금)
+  assert.deepEqual(codexSandboxModeArgs(),
+    codexSandboxModeArgs(process.platform), '기본 인자 = process.platform');
+});
+
+test('codexSandboxModeArgs 배선: externalExec가 하드코딩 --sandbox가 아니라 이 함수를 지난다', async () => {
+  // 순수 함수만 잠그면 호출부가 '--sandbox workspace-write' 하드코딩으로 롤백돼도 초록이다 —
+  // facade의 externalExec 앵커 테스트와 같은 패턴으로 배선 자체를 잠근다.
+  const src = await (await import('node:fs/promises')).readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
+  const codexBlock = src.split("if (runner === 'codex')")[1]?.split("if (runner === 'gemini')")[0] ?? '';
+  assert.ok(codexBlock.includes('...codexSandboxModeArgs()'), 'codex exec 인자에 codexSandboxModeArgs 배선');
+  assert.ok(!codexBlock.includes("'--sandbox', 'workspace-write'"), 'codex 블록에 하드코딩 샌드박스 인자 잔존 금지');
+});
 
 test('anyRunnerUsable: codex/gemini 자격 연결이면 CLI 미감지여도 통과(실사고 재현)', () => {
   // 실사용 신고 상태 재현 — OAuth 웹 브리지로 자격 저장, hostInstalled=false(미설치 또는 GUI PATH 오탐)

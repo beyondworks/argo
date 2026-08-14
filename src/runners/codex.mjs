@@ -120,6 +120,25 @@ export const codexSandboxArgs = (caps, workRoots = []) => {
   ];
 };
 
+/** 샌드박스 모드 인자(순수) — 플랫폼별로 갈린다.
+    맥·리눅스: `--sandbox workspace-write` — seatbelt/Landlock이 실제로 작동해 "워크스페이스+
+    writable_roots만 쓰기"가 지켜진다(앱 본체 /Applications 보호가 여기 걸려 있다).
+    윈도우: codex는 OS 샌드박스 기전이 없어 workspace-write를 못 지키고 **통째로 read-only로
+    떨어진다** — 실사용 신고 4건 전부 윈도우(ref 57b7599e·cff06983·63dc3339·0145d811, 2026-08-03~05
+    "read-only sandbox로 파일 생성 차단") + 벤더 확인(openai/codex#6374: "Windows doesn't have an
+    off-the-shelf sandboxing mechanism", WSL 권장). 네이티브 윈도우 샌드박스는 실험 단계로 elevated
+    셋업(UAC·로컬 사용자 생성·방화벽 규칙)이 선행돼야 하는데 Argo가 띄우는 `codex exec`는 그 셋업
+    없이 돈다. 크루가 일을 아예 못 하는 상태(QA 최다 클러스터 14건)라, 전권 원칙(capabilities.mjs —
+    설치부터 전권, 유건 2026-07-30)에 따라 윈도우만 샌드박스를 우회한다. 맥의 "홈은 열되 앱 본체는
+    보호" 비대칭이 사라지는 건 아니다 — 윈도우 앱 본체(%LOCALAPPDATA%)는 홈 안이라 writable_roots=홈
+    시점부터 이미 샌드박스 밖 보호가 없었다. 2차 방어는 commonDirectives 금지 지시(기존과 동일).
+    ponytail: 벤더가 네이티브 윈도우 샌드박스를 정식화하면 win32 분기를 workspace-write로 되돌린다.
+    (export: 회귀 테스트용 — platform 주입으로 win32 분기를 어느 OS CI에서도 검증) */
+export const codexSandboxModeArgs = (platform = process.platform) =>
+  platform === 'win32'
+    ? ['--dangerously-bypass-approvals-and-sandbox']
+    : ['--sandbox', 'workspace-write'];
+
 /** 크루별 추론 강도 → codex CLI 인자(순수). codex도 강도를 지원한다 — `-c model_reasoning_effort=…`가
     인식되는 키임을 실측(2026-07-26, codex-cli 0.144.1: 미인식 키는 --strict-config에서 즉시 에러,
     이 키는 통과하고 low·high·xhigh 모두 실턴 성공). 'max'는 Claude 전용 명칭이라 xhigh로 사상한다.

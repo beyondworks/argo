@@ -13,7 +13,8 @@
 |---|---|---|---|
 | claude / glm / kimi / openrouter — shell OFF | SDK `query({canUseTool})` | **하드 차단** | 격리 재현·회귀 테스트 실측 |
 | 〃 — shell ON | 같은 게이트 + Bash 리터럴 스캔 | **1차 방어만** (아래 참고) | 실측 |
-| codex | `codex exec --sandbox workspace-write`, cwd=워크스페이스 | 막지 못함 | 코드(`runners.mjs`) — 라이브 미검증 |
+| codex (맥·리눅스) | `codex exec --sandbox workspace-write`, cwd=워크스페이스 | 막지 못함 | 코드(`runners.mjs`) — 라이브 미검증 |
+| codex (윈도우, 2026-08-06~) | `codex exec --dangerously-bypass-approvals-and-sandbox` | 막지 못함 + **OS 샌드박스 자체가 없음** | 윈도우 codex는 샌드박스 기전 부재로 workspace-write가 read-only로 떨어져 쓰기 전멸(신고 4건 전부 윈도우 + openai/codex#6374). 전권 원칙에 따라 우회 — 근거·되돌림 조건은 `src/runners/codex.mjs` `codexSandboxModeArgs` 주석 |
 | gemini | `--approval-mode auto_edit` | 막지 못함 | 코드 — 라이브 미검증 |
 | antigravity | `--mode accept-edits` (셸 OFF면 `--sandbox`) | 막지 못함 | 코드 — 라이브 미검증 |
 
