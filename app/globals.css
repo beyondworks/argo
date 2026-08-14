@@ -1509,6 +1509,10 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 
 /* 데크 2열 — 본 계기 + 우측 보조 계기 레일 */
 .deck-grid { display: grid; grid-template-columns: 1fr minmax(0, 316px); gap: 16px; align-items: start; overflow: hidden; }
+/* 레일 잘림 근본 원인(실측 2026-08-14): grid 아이템 기본 min-width:auto → 별자리 캔버스 고유폭이
+   레일을 316px 트랙 밖으로 밀어내고 overflow:hidden에 잘렸다. 트랙이 아니라 아이템을 잠가야 한다.
+   레일 자신도 grid라 그 아이템(카드)까지 한 단계 더 잠근다 — 캔버스 고유폭이 카드를 다시 밀었다(실측). */
+.deck-grid > *, .deck-grid > * > * { min-width: 0; }
 @media (max-width: 1100px) { .deck-grid { grid-template-columns: 1fr; } }
 
 /* ─── 카드 — 종이 + 잉크 헤어라인, 그림자 없음 ─── */
