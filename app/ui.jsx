@@ -542,6 +542,7 @@ export function FeedbackModal({ onClose }) {
   useScrollLock();
   const [text, setText] = useState('');
   const [state, setState] = useState(''); // '' | 'sending' | 'sent' | 'error'
+  const [errMsg, setErrMsg] = useState(''); // 서버가 갈라준 실패 사유 — 있으면 제네릭 대신 이걸 보여준다
   // 이 배포가 제보를 공개 이슈로 옮기는가 — 켜져 있을 때만 고지한다(꺼진 배포에선 거짓말이 된다)
   const [publicIssues, setPublicIssues] = useState(false);
   useEffect(() => {
@@ -563,10 +564,12 @@ export function FeedbackModal({ onClose }) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ message: v }),
       });
-      if (!r.ok) throw new Error();
+      // 서버가 원인을 갈라준 문구(세션 만료 등)는 그대로 보여준다 — 제네릭 "다시 시도"는
+      // 재시도로 안 풀리는 상태(재로그인 필요)를 영원히 숨긴다(실측 2026-08-14).
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || '');
       setState('sent');
       setTimeout(onClose, 1300);
-    } catch { setState('error'); }
+    } catch (e) { setErrMsg(e?.message || ''); setState('error'); }
   };
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
@@ -586,7 +589,7 @@ export function FeedbackModal({ onClose }) {
               <textarea suppressHydrationWarning value={text} onChange={(e) => setText(e.target.value)} placeholder={t('feedback.placeholder')}
                 rows={5} autoFocus {...imeGuard}
                 style={{ padding: '10px 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }} />
-              {state === 'error' && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{t('feedback.error')}</span>}
+              {state === 'error' && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{errMsg || t('feedback.error')}</span>}
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <button type="button" className="btn sm" onClick={onClose} disabled={state === 'sending'}>{t('common.cancel')}</button>
                 <button type="button" className="btn btn-primary sm" disabled={state === 'sending' || !text.trim()} onClick={send}>
