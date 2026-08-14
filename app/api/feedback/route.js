@@ -64,12 +64,10 @@ export async function POST(req) {
     }
   }
   if (!supabase) {
-    const store = await cookies();
-    supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-      { cookies: { getAll: () => store.getAll(), setAll: () => { /* 라우트에서는 세션 갱신 안 함 */ } } },
-    );
+    // 무인증(anon) insert는 RLS(42501)에 반드시 죽는다 — 예전 3차 폴백이 그 경로였고, 사용자는
+    // "잠시 후 다시 시도" 거짓 안내를 받았다(실측 2026-08-14: 기기 refresh 토큰 Already Used +
+    // 쿠키 무효 → anon insert → 42501). 재시도로는 영원히 안 되는 상태이므로 정직하게 재로그인 안내.
+    return Response.json({ error: '세션이 만료되었습니다. 설정에서 다시 로그인한 뒤 보내주세요. Session expired — sign in again, then retry.' }, { status: 401 });
   }
   // 참조번호는 **우리가 만든다** — insert().select()로 행 id를 되받으면 select RLS에 묶여
   // 정책 하나 바뀔 때 저장까지 실패로 보고된다(쓰기는 됐는데 사용자는 실패로 안다).
