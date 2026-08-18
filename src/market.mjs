@@ -1,6 +1,6 @@
 // 스킬·MCP 마켓 — 카탈로그 + 원클릭 설치/제거. 설치는 워크스페이스 파일에 남아
 // 스킬은 다음 턴 시스템 프롬프트에, MCP는 다음 턴 mcpServers에 자동 반영된다.
-import { mkdir, readFile, writeFile, readdir, rm, stat } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { paths } from './workspace.mjs';
@@ -446,7 +446,13 @@ export async function loadMcp(wsId) {
 }
 
 async function saveMcp(wsId, cfg) {
-  await writeFile(paths(wsId).mcp, JSON.stringify(cfg, null, 2));
+  // 0600 — mcp.json은 서버 정의(임의 command)와 env(토큰)를 담아 isSecretRel이 시크릿으로 분류하는
+  // 파일이다. 동기화로 내려오면 sync가 0600으로 쓰는데(sync.mjs) 로컬 저장만 mode를 안 줘 0644로
+  // 생겼다 — 같은 파일의 권한이 경로에 따라 갈렸다(실측 2026-08-19). 로컬 우선 제품에서 OS 사용자
+  // 경계가 마지막 경계라, 같은 기기의 다른 도구·계정이 읽을 수 있으면 그게 유출이다.
+  // 기존 파일은 mode 인자가 무시되므로 chmod로 함께 조인다.
+  await writeFile(paths(wsId).mcp, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+  await chmod(paths(wsId).mcp, 0o600).catch(() => {});
 }
 
 const NAME_RE = /^[a-z0-9-]{1,32}$/;
