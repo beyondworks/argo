@@ -781,7 +781,9 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
  */
 export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false } = {}) {
   const p = paths(wsId);
-  // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지)
+  // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지).
+  // 설정 화면의 입력은 제거됐다(유건 지시 2026-08-19) — 안내에서 "설정에서 한도를 올리라"는
+  // 문구를 뺐다. 사라진 화면을 가리키면 막다른 길이 된다. 값은 회사 파일·API로만 바뀐다.
   const { budgetUsd, lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
   if (budgetUsd > 0) {
     const spent = (await monthCost(wsId)).costUsd; // 청구 턴만 — 구독(OAuth) 턴은 돈이 안 나가 예산을 갉지 않는다
@@ -791,8 +793,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 금액은 넣지 않는다 — 내부는 USD인데 한국어 UI는 ₩ 표기라 채팅에 단위 혼동을 만든다(설정 화면이 정본).
       const { meta } = await readAgentCard(wsId, agentSlug).catch(() => ({ meta: {} }));
       const reply = lang === 'en'
-        ? "We've reached this company's monthly spending limit, so I can't start a new task right now. Raise the limit in Settings, or wait until next month — I'll pick it right back up."
-        : '이번 달 회사 지출 한도에 도달해서 지금은 새 작업을 시작할 수 없어요. 설정에서 한도를 올리거나 다음 달을 기다려 주시면 바로 이어서 하겠습니다.';
+        ? "We've reached this company's monthly spending limit, so I can't start a new task right now. I'll pick it right back up next month."
+        : '이번 달 회사 지출 한도에 도달해서 지금은 새 작업을 시작할 수 없어요. 다음 달이 되면 바로 이어서 하겠습니다.';
       const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
       await appendEvent(wsId, {
         type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...(from ? { from } : {}),
