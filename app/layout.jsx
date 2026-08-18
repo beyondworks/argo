@@ -9,7 +9,10 @@ const themeBoot = `try{var t=localStorage.getItem('argo-theme');if(t&&t!=='argo'
 // 데스크톱(Tauri) 웹뷰는 target=_blank·window.open을 조용히 무시한다 — 외부 오리진 링크 클릭을
 // 가로채 시스템 브라우저로 연다(러너 OAuth 로그인 페이지·키 발급·결제 링크 전부). 브라우저에선 개입 없음.
 // 같은 오리진(localhost 앱) 링크는 세션 쿠키가 외부 브라우저로 안 넘어가므로 건드리지 않는다.
-const desktopLinkBridge = `document.addEventListener('click',function(e){try{var o=window.__TAURI__&&window.__TAURI__.opener;if(!o||!o.openUrl)return;var t=e.target;var a=t&&t.closest?t.closest('a[href]'):null;if(!a)return;var u=new URL(a.href,location.href);if((u.protocol==='http:'||u.protocol==='https:')&&u.origin!==location.origin){e.preventDefault();o.openUrl(u.href)}}catch(err){}},true)`;
+// 예외 — 같은 오리진이지만 **외부로 302하는** 라우트(결제 포털)는 웹뷰가 CSP에 막혀 오류 페이지가 된다
+// (실사용 제보 2026-08-19: 설정에서 결제 눌렀더니 페이지 오류). 시스템 브라우저는 리다이렉트를
+// 따라가고, 포털 URL은 그 자체가 일회성 발급이라 쿠키 없이도 열린다.
+const desktopLinkBridge = `document.addEventListener('click',function(e){try{var o=window.__TAURI__&&window.__TAURI__.opener;if(!o||!o.openUrl)return;var t=e.target;var a=t&&t.closest?t.closest('a[href]'):null;if(!a)return;var u=new URL(a.href,location.href);var R=['/api/me/billing/portal'];var ext=u.origin!==location.origin||R.some(function(r){return u.pathname.indexOf(r)===0});if((u.protocol==='http:'||u.protocol==='https:')&&ext){e.preventDefault();o.openUrl(u.href)}}catch(err){}},true)`;
 
 // 글로벌 타깃 — 탭 제목·SEO는 영어 기본(서버 metadata라 t() 자동전환 불가). 앱 UI는 argo-lang로 한/영 전환된다.
 export const metadata = {
