@@ -9,7 +9,12 @@ import { createClient } from '@supabase/supabase-js';
 import { currentUser } from '../../../../auth.mjs';
 import { clearReconcileEmpty } from '../../../../../src/lsreconcile.mjs';
 
-export async function POST() {
+export async function POST(req) {
+  // 어느 요금제 링크를 눌렀는지 남긴다 — 실사고 2026-08-19: 고객이 결제 버튼에서 레몬스퀴지
+  // 422를 봤는데 우리 쪽엔 클릭 기록이 없어 어떤 URL이 실패했는지 끝까지 특정할 수 없었다.
+  // 이메일·user_id는 남기지 않는다(요금제 이름만) — 로그가 PII 저장소가 되면 안 된다.
+  const picked = await req.json().then((b) => (b?.plan === 'yearly' || b?.plan === 'monthly' ? b.plan : null)).catch(() => null);
+  if (picked) console.log(`[argo] 결제 링크 클릭: ${picked}`);
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

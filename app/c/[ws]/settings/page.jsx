@@ -1313,14 +1313,14 @@ function UpgradeButtons() {
   const withRef = (base) => `${base}${base.includes('?') ? '&' : '?'}checkout[custom][user_id]=${encodeURIComponent(user.id)}&checkout[email]=${encodeURIComponent(user.email)}`;
   // 결제 의사 신호(fire-and-forget) — 방금 대사가 "구독 없음"을 확정했어도, 곧 결제할 사용자의
   // 복구(웹훅 유실 시 O2 대사)가 24시간 잠기지 않게 부정 확정 게이트만 해제한다. 실패 무해.
-  const intent = () => api('/api/me/billing/intent', {}).catch(() => {});
+  const intent = (plan) => () => api('/api/me/billing/intent', { plan }).catch(() => {});
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
       {LS_MONTHLY && (
-        <a className="btn btn-primary sm" href={withRef(LS_MONTHLY)} onClick={intent} target="_blank" rel="noreferrer">{t('billing.upgradeMonthly')}</a>
+        <a className="btn btn-primary sm" href={withRef(LS_MONTHLY)} onClick={intent('monthly')} target="_blank" rel="noreferrer">{t('billing.upgradeMonthly')}</a>
       )}
       {LS_YEARLY && (
-        <a className="btn sm" href={withRef(LS_YEARLY)} onClick={intent} target="_blank" rel="noreferrer">{t('billing.upgradeYearly')}</a>
+        <a className="btn sm" href={withRef(LS_YEARLY)} onClick={intent('yearly')} target="_blank" rel="noreferrer">{t('billing.upgradeYearly')}</a>
       )}
     </div>
   );
