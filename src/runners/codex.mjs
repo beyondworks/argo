@@ -2,6 +2,7 @@
 // (runners.mjs 관심사 분리 2026-07-28)
 
 import { copyFile, mkdir, mkdtemp, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exec, exists } from './shared.mjs';
@@ -170,6 +171,24 @@ export async function recoverCodexAuth(handle) {
   return true;
 }
 
+/** 이 명령이 실제로 실행 가능한가 — codex config.toml에 못 도는 MCP를 실으면 턴 전체가 죽는다.
+    절대/상대 경로는 파일 존재로, 이름만 있으면 PATH를 훑는다(윈도우는 PATHEXT 확장자까지). */
+export function commandExists(cmd, env = process.env) {
+  if (!cmd || typeof cmd !== 'string') return false;
+  const c = cmd.trim();
+  if (!c) return false;
+  // '' 먼저 — 이름에 확장자가 이미 있거나(node.exe) 확장자 없는 실행 파일을 그대로 잡는다.
+  // 이게 빠져 있어 Windows CI에서 전 케이스가 실패했다(자가 발견 2026-08-19): 확장자를 덧붙이기만
+  // 하면 `node.exe` → `node.exe.EXE`를 찾게 되고, 게이트가 **모든 MCP를 조용히 제외**한다.
+  const exts = process.platform === 'win32'
+    ? ['', ...(env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)]
+    : [''];
+  const hit = (base) => exts.some((e) => { try { return statSync(base + e).isFile(); } catch { return false; } });
+  if (c.includes('/') || c.includes('\\')) return hit(c);
+  const dirs = (env.PATH || '').split(process.platform === 'win32' ? ';' : ':').filter(Boolean);
+  return dirs.some((d) => hit(join(d, c)));
+}
+
 export async function writeCodexTurnConfig(home, caps, workRoots = [], mcpServers = null) {
   const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)·지정 작업 폴더·MCP에서 재생성됩니다.'];
   // fs=홈(앱 본체는 밖) + 사장이 지정한 외부 작업 폴더(fs와 독립 — codexSandboxArgs와 동일 규칙)
@@ -180,21 +199,29 @@ export async function writeCodexTurnConfig(home, caps, workRoots = [], mcpServer
     if (roots.length) lines.push(`writable_roots = [${roots.map((r) => JSON.stringify(r)).join(', ')}]`);
     if (caps?.browser) lines.push('network_access = true');
   }
-  // ponytail: 회사 MCP를 codex에 주입 — 러너 중립성(유건 지시 2026-07-30·08-08 "러너 상관 없이
-  // 모두 똑같아야"). 실프로브 확인: config.toml [mcp_servers.이름] 형태를 codex가 받는다(codex mcp add).
-  // env는 JSON.stringify로 TOML 문자열 이스케이프(역슬래시·따옴표 안전).
+  // 회사 MCP를 codex에 주입 — 러너 중립성(유건 지시 2026-07-30·08-08 "러너 상관 없이 모두 똑같아야").
+  // config.toml [mcp_servers.이름] 형태를 codex가 받는다(codex mcp add 실프로브 확인).
+  //
+  // **실행 가능한 것만 쓴다**(자가 발견 2026-08-19): 전엔 codex에 MCP가 아예 없어 항상 돌았는데,
+  // 주입을 켜면 서버 하나의 command가 깨져 있어도 codex가 기동에 실패해 **턴 전체가 죽는다** —
+  // 없던 실패 모드를 내가 만든 것이다. 있는 명령만 싣고 나머지는 조용히 빼는 대신 로그로 남긴다
+  // (안내는 상위 프롬프트가 connectedMcp 목록으로 하므로 화면이 거짓이 되지는 않는다).
   if (mcpServers && typeof mcpServers === 'object') {
+    const skipped = [];
     for (const [name, def] of Object.entries(mcpServers)) {
       if (!def || typeof def !== 'object') continue;
-      lines.push(`[mcp_servers.${name.replace(/[^a-zA-Z0-9_-]/g, '_')}]`);
-      if (def.command) lines.push(`command = ${JSON.stringify(def.command)}`);
+      const key = name.replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (def.url && !def.command) { lines.push(`[mcp_servers.${key}]`, `url = ${JSON.stringify(def.url)}`); continue; }
+      if (typeof def.command !== 'string' || !def.command.trim() || !commandExists(def.command)) { skipped.push(name); continue; }
+      lines.push(`[mcp_servers.${key}]`);
+      lines.push(`command = ${JSON.stringify(def.command)}`);
       if (Array.isArray(def.args) && def.args.length) lines.push(`args = [${def.args.map((a) => JSON.stringify(String(a))).join(', ')}]`);
       if (def.env && typeof def.env === 'object') {
-        lines.push('[mcp_servers.' + name.replace(/[^a-zA-Z0-9_-]/g, '_') + '.env]');
+        lines.push(`[mcp_servers.${key}.env]`);
         for (const [k, v] of Object.entries(def.env)) lines.push(`${k} = ${JSON.stringify(String(v))}`);
       }
-      if (def.url) lines.push(`url = ${JSON.stringify(def.url)}`);
     }
+    if (skipped.length) console.warn(`[argo] codex MCP 제외(실행 파일 없음): ${skipped.join(', ')}`);
   }
   await writeFile(join(home, 'config.toml'), lines.join('\n') + '\n').catch(() => { /* 실패해도 -c 폴백이 있다 */ });
 }

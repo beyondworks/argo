@@ -618,6 +618,21 @@ export const isTauriApp = () => typeof window !== 'undefined' && ('__TAURI_INTER
 // (검수 MEDIUM 2026-08-07 — "무동작"이 "앱 정지"로 바뀌는 실패를 만들지 않는다).
 const DOWNLOAD_IPC_CAP = 25 * 1024 * 1024;
 
+/** 결제 포털 열기 — 세션을 가진 이 문맥이 URL을 받아, 외부 URL만 연다.
+    앱 웹뷰는 302를 못 따라가고(CSP), 링크를 시스템 브라우저로 넘기면 기기 마커 쿠키가 없어 401이
+    된다(둘 다 막다른 길 — 실측 2026-08-19). 실패는 앵커 기본 동작(라우트가 원인 문구로 응답)에 맡긴다. */
+export function openBillingPortal(e) {
+  e.preventDefault();
+  fetch('/api/me/billing/portal?json=1')
+    .then((r) => (r.ok ? r.json() : null))
+    .then(async (j) => {
+      if (!j?.url) { window.location.href = '/api/me/billing/portal'; return; } // 원인 문구를 보여준다
+      if (isTauriApp()) await import('@tauri-apps/plugin-opener').then((m) => m.openUrl(j.url));
+      else window.open(j.url, '_blank', 'noopener');
+    })
+    .catch(() => { window.location.href = '/api/me/billing/portal'; });
+}
+
 export function artifactDownload(url, name) {
   return async (e) => {
     if (!isTauriApp()) return; // 브라우저 — <a download> 기본 동작 유지
