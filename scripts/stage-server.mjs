@@ -46,8 +46,17 @@ cpSync(standalone, tree, { recursive: true });
 }
 
 // 4) 시크릿·개발자 데이터 제거 + 유출 가드(stage-sidecar 3.5와 동일 — 배포 차단이 최우선)
-for (const junk of ['workspaces', '.next/cache', '.device-id']) {
+// 내부 문서·규약은 제품이 아니다 — 실사고 2026-08-19: 고객 맥의 코딩 에이전트가 번들 안
+// docs/의 QA 백로그를 읽어 내부 지표(제보자·사용자 규모)를 그대로 보고했다. 게다가
+// security-encryption-roadmap(미암호화 목록)·runner-isolation-limits(격리 구멍)는 공격 지도다.
+// 런타임은 docs/를 읽지 않는다(확인) — LICENSE.md만 남긴다(법적 고지).
+const INTERNAL = ['docs', 'CLAUDE.md', 'AGENTS.md', 'PRODUCT-SPEC.md'];
+for (const junk of ['workspaces', '.next/cache', '.device-id', ...INTERNAL]) {
   rmSync(join(tree, junk), { recursive: true, force: true });
+}
+// 제거가 조용히 실패하면(경로 변경 등) 다음 릴리스가 내부 문서를 다시 싣는다 — 배포를 막는다.
+for (const f of INTERNAL) {
+  if (existsSync(join(tree, f))) { console.error(`[stage-server] 내부 문서 잔존 — 배포 차단: ${f}`); process.exit(1); }
 }
 const leaks = [];
 (function scan(dir) {

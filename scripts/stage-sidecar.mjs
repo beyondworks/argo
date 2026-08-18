@@ -52,8 +52,17 @@ cpSync(standalone, serverDest, { recursive: true });
 // 3.5) 시크릿·개발자 데이터·런타임 잔재 제거 (배포 아티팩트 유출 차단 — 가장 중요)
 //   standalone/사본에 workspaces(회사 데이터·봇 토큰·.secrets.json)나 캐시가 섞여 들어오면
 //   설치본 압축해제로 누구나 추출 가능. 여기서 물리적으로 지운다.
-for (const junk of ['workspaces', '.next/cache', '.device-id']) {
+// 내부 문서·규약은 제품이 아니다 — 실사고 2026-08-19: 고객 맥의 코딩 에이전트가 번들 안
+// docs/의 QA 백로그를 읽어 내부 지표(제보자·사용자 규모)를 그대로 보고했다. 게다가
+// security-encryption-roadmap(미암호화 목록)·runner-isolation-limits(격리 구멍)는 공격 지도다.
+// 런타임은 docs/를 읽지 않는다(확인) — LICENSE.md만 남긴다(법적 고지).
+const INTERNAL = ['docs', 'CLAUDE.md', 'AGENTS.md', 'PRODUCT-SPEC.md'];
+for (const junk of ['workspaces', '.next/cache', '.device-id', ...INTERNAL]) {
   rmSync(join(serverDest, junk), { recursive: true, force: true });
+}
+// 제거가 조용히 실패하면(경로 변경 등) 다음 릴리스가 내부 문서를 다시 싣는다 — 배포를 막는다.
+for (const f of INTERNAL) {
+  if (existsSync(join(serverDest, f))) { console.error(`[stage-sidecar] 내부 문서 잔존 — 배포 차단: ${f}`); process.exit(1); }
 }
 // 안전 가드 — 시크릿류 파일이 하나라도 남으면 스테이징 실패(배포 차단)
 const leaks = [];
