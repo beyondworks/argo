@@ -65,13 +65,18 @@ test('mailPrompt hasTools:false — CLI 러너 수신 턴에 send_to_crew 지시
   }
 });
 
-test('선점 경합 — 두 배달 주체가 동시에 돌아도 배달은 1회(rename 원자성, 검수 CRITICAL-1)', async () => {
-  await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'race', message: '경합 검증' });
-  let calls = 0;
-  const run = () => mod.deliverCrewMail(WS, async () => { calls += 1; await new Promise((r) => setTimeout(r, 40)); });
-  await Promise.all([run(), run()]);
-  assert.equal(calls, 1, '이중 배달 — 선점이 상호배제가 아니다');
-  assert.deepEqual(await mailFiles('race'), []);
+test('선점 경합 — 두 배달 주체가 동시에 돌아도 배달은 1회(mkdir 게이트, 검수 CRITICAL-1)', async () => {
+  // rename 단독 선점은 윈도우에서 상호배제가 아니다 — MoveFileEx 내부 "핸들 열기 → 핸들 rename"
+  // TOCTOU로 겹친 두 rename이 둘 다 성공한다(2026-08-06 windows-latest 실측: 회차당 ~97% 이중 배달,
+  // run 31085690668 간헐 실패의 뿌리). 단발이면 겹침이 안 난 회차가 통과해 플레이크가 되므로 반복한다.
+  for (let i = 0; i < 30; i++) {
+    await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'race', message: `경합 검증 ${i}` });
+    let calls = 0;
+    const run = () => mod.deliverCrewMail(WS, async () => { calls += 1; await new Promise((r) => setTimeout(r, 5)); });
+    await Promise.all([run(), run()]);
+    assert.equal(calls, 1, `i=${i} 이중 배달 — 선점이 상호배제가 아니다`);
+    assert.deepEqual(await mailFiles('race'), [], `i=${i} 선점 잔재(게이트·claimed)가 남았다`);
+  }
 });
 
 test('cc 상한 — CC_MAX 초과는 통째로 거절(팬아웃 총량 방어, 검수 MEDIUM)', async () => {

@@ -113,8 +113,9 @@ export function mailPrompt(msg, lang = 'ko', { hasTools = true } = {}) {
 
 /** 우편 배달 — 스케줄러 틱에서 호출. runTurn(slug, msg, { from, hop, chain })을 주입받는다
     (chat.mjs 직접 import는 순환이 되고, 주입이라야 단위 테스트가 배선까지 태울 수 있다).
-    선점은 **rename 단독** — 원자적이라 승자가 1명이다(분리 검수 CRITICAL-1: writeFile 선행 방식은
-    rename으로 집힌 원본을 되살려 이중 배달을 만들었다 — 21회 중 3회 실측). 반환: 이번 틱 처리 수. */
+    선점은 **mkdir 게이트 + rename** — 승자가 1명이다(분리 검수 CRITICAL-1: writeFile 선행 방식은
+    rename으로 집힌 원본을 되살려 이중 배달을 만들었다 — 21회 중 3회 실측. rename 단독도 윈도우에선
+    상호배제가 아니다 — 아래 선점 주석의 2026-08-06 실측). 반환: 이번 틱 처리 수. */
 export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, now = Date.now() } = {}) {
   const all = await pendingBySlug(wsId);
   let done = 0;
@@ -134,9 +135,21 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
       }
       continue;
     }
-    // 선점 — rename 원자성만 신뢰(승자 1명). 패자는 ENOENT로 continue.
+    // 선점 — rename 단독으로는 부족하다: 윈도우 MoveFileEx는 내부가 "소스 핸들 열기 → 핸들 rename"이라
+    // 두 주체의 호출이 겹치면 둘 다 rename 전에 핸들을 열어 **둘 다 성공**한다(2026-08-06 windows-latest
+    // 실측: 동시 rename 2000회 중 1999회 이중 성공 — POSIX는 커널이 이름 기준 원자 처리라 패자 ENOENT).
+    // mkdir은 양 플랫폼 모두 이름 기준 원자(패자 EEXIST)이므로 게이트로 승자를 1명으로 좁힌 뒤 rename한다
+    // — 게이트가 rename 호출의 동시 실행 자체를 막아 핸들 경합 창이 열리지 않는다.
+    const gate = `${item.full}.gate`;
+    const dropGate = () => rm(gate, { recursive: true, force: true }).catch(() => {});
+    try { await mkdir(gate); } catch {
+      // 크래시 잔재 게이트 — 방치되면 이 메시지가 영영 잠긴다. 오래된 것만 회수(claim은 다음 틱에).
+      try { if (now - (await stat(gate)).mtimeMs > CLAIM_STALE_MS) await dropGate(); } catch { /* 경합 소거 등 */ }
+      continue;
+    }
     const claimedPath = `${item.full}.claimed`;
-    try { await rename(item.full, claimedPath); } catch { continue; }
+    try { await rename(item.full, claimedPath); } catch { await dropGate(); continue; }
+    await dropGate();
     inFlight.add(claimedPath);
     done += 1;
     let msg = null;
