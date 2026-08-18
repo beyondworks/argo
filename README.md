@@ -10,7 +10,6 @@
 > voyage for the Golden Fleece.
 
 - **Website / download**: [argo.ceo](https://argo.ceo) · **Releases**: [beyondworks/argo-agent](https://github.com/beyondworks/argo-agent/releases/latest)
-- **Product spec**: [PRODUCT-SPEC.md](PRODUCT-SPEC.md) · **Current design**: [docs/local-first-design.md](docs/local-first-design.md)
 
 ## What makes it different
 
@@ -84,12 +83,7 @@ Treat the code like a password.
 
 | Doc | What it covers |
 |---|---|
-| [docs/local-first-design.md](docs/local-first-design.md) | **Current canonical design** — local-first + slim cloud sync |
 | [docs/selfhost.md](docs/selfhost.md) | Linux VPS / CLI install, security defaults, headless runner connect |
-| [docs/security-encryption-roadmap.md](docs/security-encryption-roadmap.md) | Memory envelope-encryption roadmap |
-| [docs/cloud-hybrid-design.md](docs/cloud-hybrid-design.md) | Superseded — kept for a future 24/7 cloud-worker scope |
-| [docs/deploy-fly.md](docs/deploy-fly.md) | Superseded — cloud worker is out of the current scope |
-| [PRODUCT-SPEC.md](PRODUCT-SPEC.md) | Product vision, pricing anchor, milestones |
 
 ## License
 
