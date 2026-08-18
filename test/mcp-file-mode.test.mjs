@@ -18,6 +18,9 @@ test('installMcp: mcp.json이 0600으로 저장된다', async () => {
   await createCompany(wsId, 'mode-drill', 'drill@example.com');
   await installMcp(wsId, MCP_CATALOG[0].id);
   const st = await stat(paths(wsId).mcp);
+  // Windows는 POSIX 모드가 없어 Node가 mode를 무시한다 — 이 방어는 유닉스 계열 한정이다.
+  // (윈도우는 별도 수단이 필요하다는 뜻이므로 조용히 넘기지 않고 사유를 남긴다.)
+  if (process.platform === 'win32') return;
   assert.equal(st.mode & 0o777, 0o600, `mcp.json 권한: ${(st.mode & 0o777).toString(8)} (0600이어야)`);
 });
 
