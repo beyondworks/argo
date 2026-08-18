@@ -82,7 +82,12 @@ export async function syncEntitled(sb, ownerId) {
       'past-due'   — 연체 유예 중
       'upgrade'    — free: 안내 차원의 업그레이드
       null         — 아무 것도 보이지 않음
-    (export: 회귀 테스트용 — 순수 함수) */
+    (export: 회귀 테스트용 — 순수 함수)     ⚠ 아직 UI에 배선되지 않았다(2026-08-19). 설정 화면은 같은 판정을 JSX 삼항 체인으로 그대로
+    갖고 있고, 이 함수는 **의도된 결정표 + 회귀 테스트**로만 쓰인다. 배선하면 bill=null(로컬·게스트,
+    계정 없음)에서 기존 조건 `plan === 'pro' && !bill?.hasSub`이 sync.plan='pro'로 참이 되던 경로가
+    사라져 동작이 바뀐다 — 그 변경은 DOM 실측이 가능할 때 별도로 한다. 그때까지 두 체인이 갈라지는
+    것은 test/billing-cta.test.mjs의 구조 검사가 막는다.
+*/
 export function billingCta(bill, { paywalled = false, now = Date.now() } = {}) {
   const plan = bill?.plan ?? null;
   const hasSub = !!bill?.hasSub;

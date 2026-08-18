@@ -78,7 +78,7 @@ export async function startCompetition(wsId, prompt, spec) {
   if (budgetUsd > 0) {
     const spent = (await monthCost(wsId)).costUsd; // 청구 턴만 — 구독(OAuth) 턴은 돈이 안 나가 예산을 갉지 않는다
     if (spent >= budgetUsd) {
-      throw new Error(`월 예산 초과: $${spent.toFixed(2)} / $${budgetUsd} — 설정에서 예산을 올리거나 다음 달을 기다려 주세요`);
+      throw new Error(`월 예산 초과: $${spent.toFixed(2)} / $${budgetUsd} — 다음 달이 되면 다시 시작됩니다`);
     }
   }
   const agents = await listAgents(wsId);
