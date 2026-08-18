@@ -67,3 +67,32 @@ export async function syncEntitled(sb, ownerId) {
   if (process.env.ARGO_ENFORCE_PLAN !== '1') return { ok: true, plan };
   return { ok: plan !== 'free', plan };
 }
+
+/** 결제 카드가 보여줄 CTA 한 종류(순수) — 설정 화면의 동기화 ON/OFF 두 체인이 같은 삼항문을
+    중복 복사하고 있어, 한쪽만 고치면 절반의 사용자는 계속 결제를 못 한다(실사고 2026-08-19:
+    구독 없는 Pro 44계정은 두 체인 모두에서 null로 떨어져 진입로가 아예 없었다).
+    결정은 여기 한 곳에서만 한다.
+
+    반환:
+      'paywalled'  — 막힌 상태: 즉시 업그레이드 권유
+      'trial-soon' — 체험 종료 임박(3일 이내)
+      'trial'      — 체험 중(임박 전)
+      'granted'    — 구독 없이 Pro가 부여된 상태(그랜드파더링 등) — 미리 결제 가능해야 한다
+      'manage'     — 유료 구독자: 구독 관리(포털)
+      'past-due'   — 연체 유예 중
+      'upgrade'    — free: 안내 차원의 업그레이드
+      null         — 아무 것도 보이지 않음
+    (export: 회귀 테스트용 — 순수 함수) */
+export function billingCta(bill, { paywalled = false, now = Date.now() } = {}) {
+  const plan = bill?.plan ?? null;
+  const hasSub = !!bill?.hasSub;
+  if (bill?.status === 'past_due' && hasSub) return 'past-due';
+  if (paywalled) return 'paywalled';
+  const { active, imminent } = trialBadgeState(bill?.trialEndsAt, plan, now);
+  if (imminent) return 'trial-soon';
+  if (active) return 'trial';
+  if (plan === 'pro' && hasSub) return 'manage';
+  if (plan === 'pro' && !hasSub) return 'granted'; // 부여 Pro — 결제 진입로를 열어 둔다
+  if (plan === 'free') return 'upgrade';
+  return null;
+}
