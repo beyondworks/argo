@@ -177,8 +177,11 @@ export function commandExists(cmd, env = process.env) {
   if (!cmd || typeof cmd !== 'string') return false;
   const c = cmd.trim();
   if (!c) return false;
+  // '' 먼저 — 이름에 확장자가 이미 있거나(node.exe) 확장자 없는 실행 파일을 그대로 잡는다.
+  // 이게 빠져 있어 Windows CI에서 전 케이스가 실패했다(자가 발견 2026-08-19): 확장자를 덧붙이기만
+  // 하면 `node.exe` → `node.exe.EXE`를 찾게 되고, 게이트가 **모든 MCP를 조용히 제외**한다.
   const exts = process.platform === 'win32'
-    ? (env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)
+    ? ['', ...(env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)]
     : [''];
   const hit = (base) => exts.some((e) => { try { return statSync(base + e).isFile(); } catch { return false; } });
   if (c.includes('/') || c.includes('\\')) return hit(c);
