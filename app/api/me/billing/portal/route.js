@@ -42,7 +42,7 @@ async function accessToken() {
   return null;
 }
 
-export async function GET() {
+export async function GET(req) {
   const user = await currentUser();
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!user?.id || user.id === 'local' || user.id === 'guest' || !base) {
@@ -69,6 +69,12 @@ export async function GET() {
 
   if (r.ok && j?.url) {
     // 개인별 서명 링크 — 중간 캐시에 남지 않게 명시(재검수 LOW)
+    // ?json=1 — 데스크톱 앱용. 웹뷰는 302를 따라가지 못하고(CSP default-src 'self'), 링크를 시스템
+    // 브라우저로 넘기면 그쪽엔 기기 마커 쿠키가 없어 401이 된다(실측 2026-08-19 — 둘 다 막다른 길).
+    // 세션을 가진 웹뷰가 URL만 받아 가고, 외부 열기는 그 URL로 한다.
+    if (new URL(req.url).searchParams.get('json') === '1') {
+      return Response.json({ url: j.url }, { headers: { 'Cache-Control': 'no-store, private' } });
+    }
     return new Response(null, { status: 302, headers: { Location: j.url, 'Cache-Control': 'no-store, private' } });
   }
 

@@ -3,7 +3,7 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, artifactDownload, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
+import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, artifactDownload, openBillingPortal, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
 import { useLang, KRW_RATE } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
@@ -1212,7 +1212,7 @@ function SyncCard({ ws }) {
             // href는 클릭 시점 발급 라우트 — 저장된 포털 URL은 24시간 만료라 렌더 금지(재검수 HIGH).
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
               <span style={{ color: 'var(--danger)', fontSize: 12 }}>{t('billing.pastDue')}</span>
-              <a className="btn sm" href="/api/me/billing/portal" target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
+              <a className="btn sm" href="/api/me/billing/portal" onClick={openBillingPortal} target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
             </div>
           )}
           {plan === 'pro' && bill?.hasSub && bill?.status !== 'past_due' && (
@@ -1223,7 +1223,7 @@ function SyncCard({ ws }) {
                   {t('billing.cancelledUntil', { date: new Date(bill.endsAt).toLocaleDateString(lang === 'ko' ? 'ko-KR' : 'en-US') })}
                 </span>
               )}
-              <a style={{ fontSize: 12, color: 'var(--fg-3)', width: 'fit-content' }} href="/api/me/billing/portal" target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
+              <a style={{ fontSize: 12, color: 'var(--fg-3)', width: 'fit-content' }} href="/api/me/billing/portal" onClick={openBillingPortal} target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
             </div>
           )}
         </div>

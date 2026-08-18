@@ -51,12 +51,24 @@ cpSync(standalone, tree, { recursive: true });
 // security-encryption-roadmap(미암호화 목록)·runner-isolation-limits(격리 구멍)는 공격 지도다.
 // 런타임은 docs/를 읽지 않는다(확인) — LICENSE.md만 남긴다(법적 고지).
 const INTERNAL = ['docs', 'CLAUDE.md', 'AGENTS.md', 'PRODUCT-SPEC.md'];
+// 셀프호스트 타르볼만의 예외 — docs/selfhost.md는 설치·보안 기본값 안내서라 **사용자향**이다.
+// docs를 통째로 지우면 이것까지 사라진다(자가 발견 2026-08-19: 내부 문서 제거의 부수 피해).
+const KEEP = [['docs', 'selfhost.md']];
 for (const junk of ['workspaces', '.next/cache', '.device-id', ...INTERNAL]) {
   rmSync(join(tree, junk), { recursive: true, force: true });
 }
+for (const seg of KEEP) {
+  const src = join(ROOT, ...seg);
+  if (existsSync(src)) { mkdirSync(join(tree, seg[0]), { recursive: true }); cpSync(src, join(tree, ...seg)); }
+}
 // 제거가 조용히 실패하면(경로 변경 등) 다음 릴리스가 내부 문서를 다시 싣는다 — 배포를 막는다.
-for (const f of INTERNAL) {
+for (const f of INTERNAL.filter((x) => x !== 'docs')) {
   if (existsSync(join(tree, f))) { console.error(`[stage-server] 내부 문서 잔존 — 배포 차단: ${f}`); process.exit(1); }
+}
+{
+  const left = existsSync(join(tree, 'docs')) ? readdirSync(join(tree, 'docs')) : [];
+  const extra = left.filter((n) => n !== 'selfhost.md');
+  if (extra.length) { console.error('[stage-server] 내부 문서 잔존 — 배포 차단: docs/' + extra.join(', docs/')); process.exit(1); }
 }
 const leaks = [];
 (function scan(dir) {
