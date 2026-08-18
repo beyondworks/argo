@@ -4,7 +4,7 @@ import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, artifactDownload, openBillingPortal, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
-import { useLang, KRW_RATE } from '../../../i18n';
+import { useLang } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 import { useAppUpdate } from '../../../use-app-update';
@@ -29,7 +29,6 @@ function Settings({ params }) {
   const router = useRouter();
   const [data, setData] = useState(null);
   const [name, setName] = useState('');
-  const [budget, setBudget] = useState(''); // 화면 표시값 — ko는 원화, en은 달러
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   // 딥링크 ?ai=1 — 데크/홈의 "연결하기"가 러너 연결 섹션으로 바로 데려온다(vault ?doc= 패턴)
@@ -44,8 +43,6 @@ function Settings({ params }) {
     api(`/api/companies/${ws}`).then((d) => {
       setData(d);
       setName(d.company?.name ?? '');
-      const usd = d.company?.budgetUsd;
-      setBudget(usd ? (lang === 'ko' ? String(Math.round(usd * KRW_RATE)) : String(usd)) : '');
     }).catch(() => setData({}));
   }, [ws, lang]);
 
@@ -54,10 +51,11 @@ function Settings({ params }) {
     if (saving || !name.trim()) return;
     setSaving(true); setMsg('');
     try {
-      const budgetUsd = budget === '' ? 0 : (lang === 'ko' ? Number(budget) / KRW_RATE : Number(budget));
+      // 월 지출 한도 입력 제거(유건 지시 2026-08-19) — 이름만 저장한다. 기존 budgetUsd 값은
+      // 서버에 그대로 남고(삭제 아님) 이 PUT이 건드리지 않는다.
       await fetch(`/api/companies/${ws}`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, budgetUsd }),
+        body: JSON.stringify({ name }),
       }).then(async (r) => { if (!r.ok) throw new Error((await r.json()).error); });
       window.dispatchEvent(new Event('argo:refresh'));
       setMsg(t('settings.saved'));
@@ -112,15 +110,6 @@ function Settings({ params }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             {...imeGuard}
-            style={{ height: 36, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13.5 }}
-          />
-        </label>
-        <label style={{ display: 'grid', gap: 5 }}>
-          <span className="microlabel">{lang === 'ko' ? t('settings.budget.ko') : t('settings.budget.en')}</span>
-          <input suppressHydrationWarning
-            type="number" min="0" step="1" placeholder={t('settings.budget.placeholder')}
-            value={budget}
-            onChange={(e) => setBudget(e.target.value)}
             style={{ height: 36, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13.5 }}
           />
         </label>
@@ -1193,6 +1182,18 @@ function SyncCard({ ws }) {
               <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('billing.trialUpgradeHint')}</span>
               <UpgradeButtons />
             </div>
+          ) : plan === 'pro' && !bill?.hasSub ? (
+            // 구독 없이 부여된 Pro(그랜드파더링 등) — 여기가 비어 있어 **결제 진입로가 아예 없었다**
+            // (실측 2026-08-19: 해당 44계정은 업그레이드 버튼도 포털도 못 본다 = 낼 의사가 있어도 못 낸다).
+            // 남은 기간은 ends_at이 있을 때만 보여주고(미설정이면 문구만), 결제는 항상 열어 둔다.
+            <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
+              <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>
+                {bill?.endsAt
+                  ? t('billing.grantedUntil', { date: new Date(bill.endsAt).toLocaleDateString(lang === 'ko' ? 'ko-KR' : 'en-US') })
+                  : t('billing.grantedPro')}
+              </span>
+              <UpgradeButtons />
+            </div>
           ) : null}
           {trialImminent && (
             // 체험 종료 임박(3일 이내) — 카드 등록 없이 시작한 사용자에게 여기서 처음 결제를 권한다.
@@ -1240,6 +1241,17 @@ function SyncCard({ ws }) {
             // 임박 전 체험 구간 — 위 sync.on 분기와 같은 이유로 결제 경로를 열어 둔다
             <div style={{ display: 'grid', gap: 6 }}>
               <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('billing.trialUpgradeHint')}</span>
+              <UpgradeButtons />
+            </div>
+          ) : plan === 'pro' && !bill?.hasSub ? (
+            // 동기화 OFF 갈래에도 같은 분기 — 카드에 체인이 둘이라 한쪽만 고치면 절반은 계속 못 낸다
+            // (규칙: 변경한 코드가 도는 문맥을 먼저 세고 각각 확인, CLAUDE.md 2026-08-19)
+            <div style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>
+                {bill?.endsAt
+                  ? t('billing.grantedUntil', { date: new Date(bill.endsAt).toLocaleDateString(lang === 'ko' ? 'ko-KR' : 'en-US') })
+                  : t('billing.grantedPro')}
+              </span>
               <UpgradeButtons />
             </div>
           ) : null}

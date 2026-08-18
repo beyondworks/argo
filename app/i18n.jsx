@@ -804,6 +804,8 @@ const DICT = {
   // 미지의 via 값 폴백 — 신 버전 기기의 스레드가 sync로 넘어온 경우(microlabel 대문자 키 노출 방지)
   'deck.crewExpand': ['{n}명 더 보기', 'Show {n} more'],
   'deck.crewFold': ['접기', 'Show less'],
+  'billing.grantedPro': ['현재 Pro가 무료로 제공되고 있습니다. 미리 구독해 두면 제공이 끝나도 끊김 없이 이어집니다.', 'Pro is currently granted to you at no charge. Subscribe now and it continues seamlessly when the grant ends.'],
+  'billing.grantedUntil': ['무료 제공 Pro — {date}까지. 미리 구독해 두면 끊김 없이 이어집니다.', 'Pro granted at no charge until {date}. Subscribe now to continue seamlessly.'],
   'settings.defaultRunner': ['기본 러너 — 크루에 러너 미지정 시 우선 사용', 'Default runner — used first when crew has no runner set'],
   'settings.defaultRunnerAuto': ['자동 (연결 순서)', 'Auto (connection order)'],
   'chat.via.room': ['회의실 발언', 'Meeting room turn'],
