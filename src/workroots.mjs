@@ -24,6 +24,15 @@
 //    도구가 거부한다. 인자를 안 넘기면 지정 폴더는커녕 홈조차 막혀 크루가 "허용된 작업 디렉토리
 //    외부"라며 거절한다 — 라이브 재현 2026-07-30.)
 //  - antigravity: `--add-dir`에 추가(agy 플래그 — 같은 이유·같은 계산).
+//  - kiro: **반경이 적용되지 않는다**(정직 표기 대상). kiro-cli는 기본이 무제한이고(cwd 밖 읽기·쓰기가
+//    그냥 된다), 좁히는 유일한 수단인 `toolsSettings.*.deniedPaths`로는 화이트리스트를 표현할 수 없다
+//    (실측 2026-08-12: allowedPaths는 비대화에서 자동 승인을 주지 못해 반경 안쪽까지 거부되고,
+//    denyByDefault는 shell 전용이라 write에서 무시되며, deny 글롭의 부정 패턴 `!`도 미지원).
+//    그래서 이 러너의 집행은 **불변 금지 구역 deny**뿐이다 — APP_ROOT·~/.argo·다른 회사·직속 도트
+//    (src/runners/kiro.mjs kiroDeniedPaths). 지정 폴더는 열거나 좁히는 효과가 없다.
+//    UI 문구(i18n settings.workroots.runnerNote)가 이 차이를 ko·en 양쪽에 명시하고,
+//    test/kiro-runner.test.mjs가 그 표기를 잠근다. 근본 해법은 `kiro-cli acp`(도구 호출을 우리가
+//    승인·거절 — SDK 러너와 같은 강도)로 옮기는 것: docs/kiro-runner-design.md 후속 항목.
 import { stat, realpath } from 'node:fs/promises';
 import { isAbsolute, join, resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';

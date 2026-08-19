@@ -35,7 +35,7 @@ export function runTrialTurn(wsId, slug) {
       // 서버측이라 UI 언어를 모른다 — ko/en 병기(다국어 규칙: 하드코딩 단일언어 금지)
       const reply = connected
         ? `첫 시운전이 실패했어요 — AI 연결은 되어 있으니 지시를 한 번 더 보내주시면 이어서 시작할게요.\n(원인: ${m.slice(0, 200)})\n\nThe trial run failed — your AI runner is connected, so just send an instruction and I'll pick it up.\n(Reason: ${m.slice(0, 200)})`
-        : 'AI 연결이 아직 안 되어 있어요. 설정 → AI 연결에서 Claude·Codex·Gemini·Antigravity·GLM·Kimi·OpenRouter·Grok 중 하나를 연결하면 바로 일을 시작할게요.\n\nAI isn\'t connected yet. Connect any runner (Claude, Codex, Gemini, Antigravity, GLM, Kimi, OpenRouter, or Grok) in Settings → AI connections and I\'ll get started.';
+        : 'AI 연결이 아직 안 되어 있어요. 설정 → AI 연결에서 Claude·Codex·Gemini·Antigravity·Kiro·GLM·Kimi·OpenRouter·Grok 중 하나를 연결하면 바로 일을 시작할게요.\n\nAI isn\'t connected yet. Connect any runner (Claude, Codex, Gemini, Antigravity, Kiro, GLM, Kimi, OpenRouter, or Grok) in Settings → AI connections and I\'ll get started.';
       await appendTurn(wsId, slug, {
         userMsg: '(영입 시운전) 첫 인사와 샘플 산출물을 보여주세요.',
         reply, handover: null, sessionId: null,

@@ -66,9 +66,9 @@ test('배선: chat.mjs — 잡 6시간·대화 5분 상한 + kind가 두 externa
   assert.equal((src.match(/kind: source === 'job' \? 'job' : 'chat'/g) ?? []).length, 2, 'kind 인지형 안내 배선');
 });
 
-test('배선: runners.mjs — 세 CLI 경로 전부 cliTurnFailure 경유 + codex는 exec/read 두 단계 구분', async () => {
+test('배선: runners.mjs — 네 CLI 경로 전부 cliTurnFailure 경유 + codex는 exec/read 두 단계 구분', async () => {
   const src = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
-  for (const r of ['codex', 'gemini', 'antigravity']) {
+  for (const r of ['codex', 'gemini', 'antigravity', 'kiro']) {
     assert.match(src, new RegExp(`cliTurnFailure\\(e, '${r}'`), `${r} 경로 번역`);
   }
   assert.match(src, /cliTurnFailure\(e, 'codex', .*\{ stage: 'exec', kind \}/, 'codex exec 단계');

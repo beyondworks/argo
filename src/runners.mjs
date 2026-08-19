@@ -10,12 +10,14 @@
 
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthFormatError } from './runners/catalog.mjs';
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, codexSandboxArgs } from './runners/codex.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
+import { kiroCmd, kiroEffortArgs, kiroScrub, writeKiroTurnAgent, removeKiroTurnAgent } from './runners/kiro.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 
 import { loadSecrets, credType, maskCred } from './runners/creds.mjs';
@@ -38,6 +40,7 @@ export {
   importCodexAuth, recoverCodexAuth, writeCodexTurnConfig,
 } from './runners/codex.mjs';
 export { provisionGeminiCli, probeGeminiOAuth, probeGeminiHostOAuth } from './runners/gemini.mjs';
+export { kiroCmd, kiroScrub, kiroTools, kiroEffortArgs, KIRO_EFFORTS, kiroDeniedPaths, writeKiroTurnAgent, removeKiroTurnAgent } from './runners/kiro.mjs';
 export {
   accountScope, loadRunnerCred, saveRunnerCred, clearRunnerCred, seedRunnerCreds,
   maskCred, normalizePastedCred, runnerCredEnv, sdkEnvFor, kimiEnv, glmEnv, verifyRunnerCred,
@@ -178,6 +181,34 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'antigravity'), ...(cred?.env ?? {}) } })
       .catch((e) => { if (process.env.ARGO_DEBUG_AGY) console.error('[debug agy]', JSON.stringify({ code: e.code, killed: e.killed, signal: e.signal, so: String(e.stdout ?? '').slice(-60), se: String(e.stderr ?? '').slice(-120) })); throw cliTurnFailure(e, 'antigravity', Date.now() - t0, timeoutMs, { stage: 'exec', kind }); });
     return stdout.replace(/^[IWEF]\d{4} \d{2}:\d{2}:\d{2}\.\d+\s+.*$/gm, '').trim(); // glog 제거 — 시각 필드까지 요구(분리 검수 M2: 'E1234 …'로 시작하는 정상 응답 오삭제 방지)
+  }
+  if (runner === 'kiro') {
+    // BYOA 3호 — kiro-cli 래핑. 자격은 CLI 로그인(IAM Identity Center / Builder ID)이라 env·격리 홈
+    // 반입이 없다(host 옵트인 전용, cred는 항상 null 경유 — antigravity와 같은 구조).
+    // 권한은 **턴별 에이전트 설정**으로 준다: 전역 설정(사용자 MCP 서버·에이전트)을 차단하면서
+    // 능력(caps)→도구 목록, 불변 보안 경계→deniedPaths를 한 파일에 싣는다(src/runners/kiro.mjs).
+    // 설정 이름에 턴 고유값을 넣는 이유: 같은 회사에서 두 크루가 동시에 답할 수 있어 고정 이름이면
+    // 한 턴의 finally 삭제가 다른 턴의 실행 중 설정을 지운다.
+    const cmd = await kiroCmd();
+    const name = `argo-${randomUUID().slice(0, 8)}`;
+    await writeKiroTurnAgent(cwd, { caps, name });
+    try {
+      const { stdout } = await exec(cmd.file, [
+        ...cmd.args,
+        'chat', '--no-interactive',
+        '--agent', name,
+        ...(model ? ['--model', model] : []),
+        ...kiroEffortArgs(effort), // 크루별 추론 강도 — kiro도 지원(--effort low..max, 실측 2026-08-12)
+        '--wrap', 'never', // 터미널 폭 기준 줄바꿈 삽입 금지 — 답변 원문을 그대로 받는다
+        '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록(codex와 같은 이유)
+      ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'kiro'), ...(cred?.env ?? {}), NO_COLOR: '1' } })
+        .catch((e) => { throw cliTurnFailure(e, 'kiro', Date.now() - t0, timeoutMs, { stage: 'exec', kind }); });
+      // 최종 답변만 남긴다 — kiro-cli에는 codex `--output-last-message` 같은 분리 플래그가 없어
+      // 렌더 출력에서 마지막 어시스턴트 블록을 취한다(kiroScrub 주석에 계약과 알려진 한계).
+      return kiroScrub(stdout);
+    } finally {
+      await removeKiroTurnAgent(cwd, name); // 회사 금고에 턴 잔재를 남기지 않는다
+    }
   }
   throw new Error(`알 수 없는 외부 러너: ${runner}`);
 }

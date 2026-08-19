@@ -21,6 +21,56 @@ import { callConnectorTool } from './connectors.mjs'; // 커넥터 단일 실행
     쪽지:   {"action":"mail","to":"슬러그","cc":["..."],"message":"..."}
     커넥터: {"action":"tool","server":"gmail","tool":"search_threads","args":{…}} */
 const BLOCK_RE = /```argo[ \t]*\r?\n([\s\S]*?)```/g;
+/* 펜스 없는 변종 — 일부 CLI 러너는 답변을 **렌더해서** 내보내며 그 과정에서 코드펜스가 사라진다
+   (kiro-cli 실측 2026-08-12: 백틱 0개, JSON은 한 줄로 렌더). 그러면 위 정규식이 영원히 매치되지 않아
+   지시가 **조용히 무동작**하고, 원시 JSON이 사장 화면에 그대로 남는다 — 이 파일이 없애려고 만들어진
+   바로 그 증상("크루가 예약했다고 말만 한다")이 러너만 바꿔 재발한다(러너 중립성 위반).
+
+   정규식이 아니라 스캔인 이유: 커넥터 지시는 `args`가 중첩 오브젝트라, 게으른 매치는 안쪽 `}`에서
+   멈추고 탐욕 매치는 뒤 문장까지 삼킨다. 첫 `{`부터 각 `}` 후보까지를 차례로 JSON.parse 해
+   **처음 성공한 지점**을 취하면 중첩 깊이와 무관하게 정확하다(블록은 작아 비용 무시).
+   오탐 방지: 파싱된 오브젝트에 `action` 키가 있을 때만 지시로 취급하고, 아니면 원문을 그대로 남긴다.
+   산문에 이 형태가 우연히 나올 확률은 사실상 0이고, 나와도 텍스트가 보존되므로 손실이 없다. */
+const BARE_HEAD_RE = /^argo[ \t]*\r?\n[ \t]*(?=\{)/gm;
+/** 스캔 상한 — `}` 후보마다 JSON.parse를 시도하므로 이론상 O(n²)다. 지시 블록은 실무상 1KB 미만이고
+    커넥터 인자를 넉넉히 봐도 이 상한이면 충분하다(분리 검수 4라운드 LOW: 266KB 답변에서 2.6초 블로킹). */
+const BARE_SCAN_LIMIT = 8 * 1024;
+
+/** 펜스 없는 블록 하나를 읽는다 — 반환 { obj, end } 또는 null(파싱 실패). start는 `{` 위치. */
+function readBareObject(src, start) {
+  const stop = Math.min(src.length, start + BARE_SCAN_LIMIT);
+  for (let i = src.indexOf('}', start); i !== -1 && i < stop; i = src.indexOf('}', i + 1)) {
+    const body = src.slice(start, i + 1);
+    try {
+      const obj = JSON.parse(body);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) return { obj, end: i + 1, body };
+    } catch { /* 아직 닫히지 않았다 — 다음 `}` 후보로 */ }
+  }
+  return null;
+}
+
+/** 코드펜스 구간 [시작, 끝) 목록 — 펜스 **안**의 지시 형태는 지시가 아니라 예시다(설명·문서 작성).
+    이걸 실행하면 크루가 "이렇게 쓰면 됩니다"라고 보여준 예시가 실제 쪽지·예약이 된다
+    (분리 검수 4라운드 MEDIUM). BLOCK_RE가 이미 소비한 ```argo는 이 시점에 없으므로, 남은 펜스는
+    전부 일반 코드블록이다.
+    줄 단위로 여닫는 이유(분리 검수 5라운드 MEDIUM): `/```[\s\S]*?```/`는 **미닫힘 펜스를 뒤 펜스와
+    짝지어** 그 사이의 진짜 지시를 통째로 삼켰다(재현됨). ~~~ 펜스도 함께 인식한다.
+    미닫힘 펜스는 구간을 만들지 않는다 — 파일 끝까지 보호 구간으로 늘리면, 답변 끝에 오는 실제
+    지시(관행상 마지막에 붙는다)가 앞쪽의 깨진 펜스 하나 때문에 무시된다. 덜 나쁜 쪽을 택했다. */
+function fencedRanges(src) {
+  const out = [];
+  let open = null;
+  let pos = 0;
+  for (const line of src.split('\n')) {
+    const m = /^[ \t]*(`{3,}|~{3,})/.exec(line);
+    if (m) {
+      if (!open) open = { mark: m[1][0], start: pos };
+      else if (m[1][0] === open.mark) { out.push([open.start, pos + line.length]); open = null; }
+    }
+    pos += line.length + 1;
+  }
+  return out;
+}
 
 /** 커넥터 결과 주입 상한(바이트) — **한 턴 전체 예산**이다(블록이 여럿이면 앞에서부터 나눠 쓴다).
     근거: 후속 턴 프롬프트는 러너 CLI에 argv로 실린다. Windows CreateProcess의 32,767자가 3플랫폼
@@ -56,19 +106,40 @@ export function connectorContentText(content) {
 
 /** 답변에서 지시를 걷어낸다(순수 함수 — 단위 테스트용). 반환: { clean, directives, bad }
     파싱 실패 블록은 bad로 돌려 **조용히 삼키지 않는다** — 크루가 형식을 틀렸는데 아무 일도
-    안 일어나면 그게 곧 "예약했다고 말만 하는" 할루시네이션이 된다. */
+    안 일어나면 그게 곧 "예약했다고 말만 하는" 할루시네이션이 된다.
+    ⚠ 펜스 없는 변종(아래)은 bad를 쓰지 않는다: 펜스라는 명시 표지가 없어 "지시하려다 틀린 것"과
+    "그냥 산문"을 구분할 수 없다. 그래서 파싱 실패·action 부재는 **원문을 그대로 남기는 쪽**으로
+    처리한다(사장이 원시 JSON을 보면 형식 오류를 알 수 있다 — 조용한 소실보다 낫다). */
 export function parseDirectives(text) {
   const src = String(text ?? '');
   const directives = [];
   const bad = [];
-  const clean = src.replace(BLOCK_RE, (_m, body) => {
+  const take = (body) => {
     try {
       const d = JSON.parse(body.trim());
       if (d && typeof d === 'object' && !Array.isArray(d)) directives.push(d);
       else bad.push('블록이 JSON 오브젝트가 아님');
     } catch (e) { bad.push(String(e.message || e).slice(0, 120)); }
     return '';
-  });
+  };
+  let clean = src.replace(BLOCK_RE, (_m, body) => take(body));
+  // 펜스 없는 변종 — 잘라내기는 **뒤에서 앞으로**(앞에서 자르면 인덱스가 밀린다) 하되,
+  // 수집한 지시는 **원문 순서로** 되돌려 붙인다. 지시는 순차 실행되므로 순서가 뒤집히면
+  // "쪽지 보낸 뒤 예약"이 "예약한 뒤 쪽지"가 된다.
+  const bareFound = [];
+  const fences = fencedRanges(clean);
+  const inFence = (i) => fences.some(([a, b]) => i >= a && i < b);
+  const heads = [...clean.matchAll(BARE_HEAD_RE)].reverse();
+  for (const h of heads) {
+    if (inFence(h.index)) continue; // 펜스 안 = 예시. 실행하지 않고 원문 그대로 둔다
+    const braceAt = clean.indexOf('{', h.index);
+    if (braceAt === -1) continue;
+    const found = readBareObject(clean, braceAt);
+    if (!found || typeof found.obj.action !== 'string') continue; // action 없으면 지시로 보지 않는다(원문 보존)
+    bareFound.push(found.obj);
+    clean = clean.slice(0, h.index) + clean.slice(found.end);
+  }
+  directives.push(...bareFound.reverse());
   return { clean: clean.replace(/\n{3,}/g, '\n\n').trim(), directives, bad };
 }
 
