@@ -1816,7 +1816,10 @@ function CardPanel({ ws, slug, agentName, runners, autoRunnerId, sel, onRunnerCh
             {/* 이 크루의 러너가 CLI면 MCP가 안 붙는다 — 설치·스코프 화면에서 미리 알린다(제보 2026-07-31).
                 자동(러너 미지정) 크루는 실제 받을 러너(autoRunnerId — 서버 pickRunner 판정)로 본다(검수 L4:
                 sel.runner만 보면 자동 크루는 실행 러너가 CLI여도 경고가 영원히 안 떴다). */}
-            {profile.mcp.length > 0 && (runners ?? []).some((r) => r.id === (sel.runner || autoRunnerId) && r.kind === 'cli') && ( /* kind — /api/runners 페이로드엔 cli 필드가 없다(검수 HIGH 라이브 재현) */
+            {/* 판정은 kind가 아니라 **MCP를 실제로 받는가**(r.mcp)로 — codex는 CLI지만 v0.1.41부터
+                config.toml로 실제 MCP를 받는다. kind==='cli'로 두면 바로 위 범위 지정 UI 밑에
+                "어차피 안 돈다"는 거짓이 함께 뜬다(분리 검수 2026-08-19 MED-C). */}
+            {profile.mcp.length > 0 && (runners ?? []).some((r) => r.id === (sel.runner || autoRunnerId) && r.kind === 'cli' && !r.mcp) && (
               <span className="microlabel" style={{ color: 'var(--warn, #b5893a)', lineHeight: 1.5 }}>{t('chat.card.mcpCliWarn')}</span>
             )}
           </div>

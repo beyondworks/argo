@@ -12,12 +12,12 @@ import { openRoots } from '../workroots.mjs'; // 파일 반경 단일 진실 —
     (전역 config의 spawn_agent 커스텀 스키마가 신형 모델의 예약 도구와 충돌하는 사례 확인) */
 async function codexHome() {
   const dir = join(homedir(), '.argo', 'codex-home');
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 }); // 턴 홈(mkdtemp·0700)과 같은 등급 — 여기엔 auth.json 심링크가 산다
   if (!(await exists(join(dir, 'auth.json')))) {
     await symlink(join(homedir(), '.codex', 'auth.json'), join(dir, 'auth.json')).catch(() => {});
   }
   if (!(await exists(join(dir, 'config.toml')))) {
-    await writeFile(join(dir, 'config.toml'), '# Argo 격리 codex 설정 — 계정 기본값 사용\n').catch(() => {});
+    await writeFile(join(dir, 'config.toml'), '# Argo 격리 codex 설정 — 계정 기본값 사용\n', { mode: 0o600 }).catch(() => {});
   }
   return dir;
 }
@@ -208,9 +208,14 @@ export async function writeCodexTurnConfig(home, caps, workRoots = [], mcpServer
   // (안내는 상위 프롬프트가 connectedMcp 목록으로 하므로 화면이 거짓이 되지는 않는다).
   if (mcpServers && typeof mcpServers === 'object') {
     const skipped = [];
+    const taken = new Set(); // 살균 후 키 충돌 방어 — 'my.tool'과 'my tool'이 함께 오면 [mcp_servers.my_tool]이
+    // 두 번 찍혀 TOML 파싱이 깨지고, 이 함수가 피하려던 "턴 전체 사망"이 그대로 재현된다(분리 검수 2026-08-19 LOW).
+    const collided = [];
     for (const [name, def] of Object.entries(mcpServers)) {
       if (!def || typeof def !== 'object') continue;
       const key = name.replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (taken.has(key)) { collided.push(name); continue; }
+      taken.add(key);
       if (def.url && !def.command) { lines.push(`[mcp_servers.${key}]`, `url = ${JSON.stringify(def.url)}`); continue; }
       if (typeof def.command !== 'string' || !def.command.trim() || !commandExists(def.command)) { skipped.push(name); continue; }
       lines.push(`[mcp_servers.${key}]`);
@@ -222,8 +227,12 @@ export async function writeCodexTurnConfig(home, caps, workRoots = [], mcpServer
       }
     }
     if (skipped.length) console.warn(`[argo] codex MCP 제외(실행 파일 없음): ${skipped.join(', ')}`);
+    if (collided.length) console.warn(`[argo] codex MCP 제외(이름 충돌 — 살균 후 같은 키): ${collided.join(', ')}`);
   }
-  await writeFile(join(home, 'config.toml'), lines.join('\n') + '\n').catch(() => { /* 실패해도 -c 폴백이 있다 */ });
+  // 0600 — 이 파일에는 MCP 서버의 env 토큰이 평문으로 실린다. mcp.json을 0600으로 쓰는 것과 같은 근거
+  // (PR #258)인데 codex 쪽만 빠져 있어 같은 비밀이 더 느슨한 모드로 복제됐다(분리 검수 2026-08-19 MED-2).
+  // ⚠ Windows는 POSIX 모드가 없어 이 방어가 적용되지 않는다(mcp.json과 같은 한계).
+  await writeFile(join(home, 'config.toml'), lines.join('\n') + '\n', { mode: 0o600 }).catch(() => { /* 실패해도 -c 폴백이 있다 */ });
 }
 
 export { codexHome, codexManagedBin, codexCmd }; // 러너 모듈 내부 공용(facade 미노출 — externalExec·detectRunners가 쓴다)

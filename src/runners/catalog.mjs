@@ -21,7 +21,11 @@ export const RUNNERS = {
     ],
   },
   codex: {
-    name: 'Codex', kind: 'cli',
+    // mcp: 이 러너가 **실제로 MCP 서버를 받는가**. kind로 갈음하면 안 된다 — codex는 CLI지만
+    // v0.1.41부터 config.toml(sandbox 설정과 같은 파일)로 MCP를 실제로 받는다. gemini·antigravity는
+    // 벤더 비대화 경로가 MCP를 안 받아 여전히 못 받는다. 화면 경고가 kind만 보면 codex 크루에게
+    // "어차피 안 돈다"는 거짓을 말하게 된다(분리 검수 2026-08-19 MED-C).
+    name: 'Codex', kind: 'cli', mcp: true,
     models: [
       // GPT-5.6 패밀리(2026-07-09) — Sol(플래그십)·Terra(중간)·Luna(경량). sol id는 로컬 codex 설정으로 실증
       { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
