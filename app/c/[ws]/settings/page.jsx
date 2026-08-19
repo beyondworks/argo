@@ -116,6 +116,10 @@ function Settings({ params }) {
             style={{ height: 36, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13.5 }}
           />
         </label>
+        {/* 회사 기본 러너(K1, 유건 지시 2026-08-08) — 크루에 러너 미지정 시 이 러너부터 시도.
+            연결된 러너가 2개 미만이면 스스로 렌더하지 않는다(선택의 의미가 없다).
+            즉시 저장이라 이 폼의 submit(회사 이름 저장)과 무관하다. */}
+        <DefaultRunnerPicker ws={ws} />
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto', paddingTop: 10 }}>
           <button className="btn btn-primary sm" disabled={saving || !name.trim()}>
             {saving ? <Spinner size={12} /> : t('settings.save')}
@@ -160,8 +164,6 @@ function Settings({ params }) {
       <div ref={aiRef} style={{ scrollMarginTop: 84 }}>
         <Section label={t('settings.ai.section')}>
           <AiConnectionCard ws={ws} accordion />
-          {/* ponytail: 회사 기본 러너(K1, 유건 지시 2026-08-08). 크루에 러너 미지정 시 이 러너부터 시도. */}
-          <DefaultRunnerPicker ws={ws} />
         </Section>
       </div>
 
@@ -1170,7 +1172,9 @@ function SyncCard({ ws }) {
   );
   const mine = sync?.companies?.[ws];
   return (
-    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    // 와이드 — 이 카드는 상태 줄·결제 표면·내보내기가 겹쳐 세로로 길어지는데 340px 트랙 하나에
+    // 갇혀 있었다(유건 지시 2026-08-19). 위험 구역 카드와 같은 방식으로 열 전체를 쓴다.
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, gridColumn: '1 / -1' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="card-title">{t('settings.sync.title')}</span>
         <span style={{ flex: 1 }} />
@@ -1498,14 +1502,15 @@ function DefaultRunnerPicker({ ws }) {
   if (!runners) return null;
   const connected = runners.filter((r) => r.authed);
   if (connected.length < 2) return null; // 1개 이하면 선택의 의미 없음
+  // 카드가 아니라 **필드**다 — 회사 정보 카드 안에 회사 이름과 같은 리듬(마이크로라벨 + 컨트롤)으로
+  // 들어간다(유건 지시 2026-08-19: 러너 한 줄짜리 카드가 따로 떠 있고 회사 정보 카드는 비어 있었다).
   return (
-    <div className="card" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      <span style={{ fontSize: 12.5, color: 'var(--fg-2)', flex: 1, minWidth: 140 }}>{t('settings.defaultRunner')}</span>
-      <select value={val} onChange={(e) => save(e.target.value)}
-        style={{ ...fieldStyle, width: 'auto', minWidth: 140 }}>
+    <label style={{ display: 'grid', gap: 5 }}>
+      <span className="microlabel">{t('settings.defaultRunner')}</span>
+      <select value={val} onChange={(e) => save(e.target.value)} style={{ ...fieldStyle, width: '100%' }}>
         <option value="">{t('settings.defaultRunnerAuto')}</option>
         {connected.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
       </select>
-    </div>
+    </label>
   );
 }
