@@ -37,8 +37,11 @@ test('페이월은 다른 무엇보다 먼저, 연체는 페이월보다 먼저'
 test('설정 결제 카드: 동기화 ON·OFF 두 체인 모두 부여 Pro를 처리한다', async () => {
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
-  const card = src.split('function SyncCard')[1] ?? '';
+  // 다음 최상위 function 선언까지로 **끊는다** — 안 끊으면 OFF 갈래 조각에 파일 뒷부분
+  // (UpgradeButtons 정의 자체)이 딸려 들어와 아래 버튼 단언이 항상 참이 된다(재검수 MED-D).
+  const card = (src.split('function SyncCard')[1] ?? '').split('\nfunction ')[0];
   assert.ok(card, 'SyncCard 컴포넌트를 찾지 못했다');
+  assert.doesNotMatch(card, /function UpgradeButtons/, 'SyncCard 범위가 안 끊겼다 — 아래 단언이 무의미해진다');
   // 외곽 조건(mine ? … : …)의 두 갈래로 쪼갠다 — offHelp가 OFF 갈래의 고유 표식이다
   const i = card.indexOf("settings.sync.offHelp");
   assert.ok(i > 0, 'OFF 갈래 표식(settings.sync.offHelp)을 찾지 못했다');

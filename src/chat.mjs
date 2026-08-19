@@ -5,7 +5,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
-import { readAgentCard, parseScopeList, EFFORT_LEVELS } from './persona.mjs';
+import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './persona.mjs';
 import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루가 '나중에 하기'를 거는 유일한 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
@@ -932,9 +932,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 분리 검수 2026-08-19: 안내 목록(cliMcp)만 거르고 실제 주입(cliMcpServers)은 안 걸러,
       // 카드에 `mcp:`로 범위를 좁혀도 codex 크루는 회사의 모든 서버를 config.toml로 받았다
       // (범위 제한 무력화 — v0.1.41 유입). 안내와 실제가 갈리면 안내가 거짓이 된다.
-      const scoped = mcpScope
-        ? Object.fromEntries(Object.entries(allMcp).filter(([n]) => mcpScope.includes(n)))
-        : allMcp;
+      const scoped = scopeServers(allMcp, mcpScope);
       const cliMcpServers = runner === 'codex' ? scoped : null;
       const cliMcp = runner === 'codex'
         ? Object.keys(scoped)
@@ -1102,7 +1100,7 @@ ${lang === 'en'
   // 봉투로 동기화돼 서비스 키를 든 워커로 흘러가면 임의 프로세스가 키 곁에서 실행되는 위험).
   let servers = safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {});
   // 크루별 MCP 범위 — 지정된 크루는 그 서버만 스폰·허용(불필요한 프로세스·권한 축소)
-  if (mcpScope) servers = Object.fromEntries(Object.entries(servers).filter(([n]) => mcpScope.includes(n)));
+  servers = scopeServers(servers, mcpScope); // 순수 헬퍼(persona.mjs) — codex 주입과 같은 하나를 쓴다
   // ⚠ 설치된 MCP 서버를 allowedTools에 bare `mcp__<서버>`로 넣지 않는다 — SDK는 괄호 없는 bare
   // 항목을 canUseTool 상담 **전에** 자동 승인한다(벤더 sdk.mjs 원문·CLAUDE_SDK_CAN_USE_TOOL_SHADOWED).
   // 외부 MCP는 게이트(argPathsForbidden)를 지나야 한다. 죽은 mcpAllow 변수는 되돌리기 쉬운 형태라
