@@ -13,7 +13,7 @@ import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { currentUser } from '../../../auth.mjs';
 import { getFreshDeviceSession } from '../../../../src/devicesession.mjs'; // 설치본 결제 표면 — 서비스키 없이 RLS로
-import { trialEnd, proRowActive } from '../../../../src/entitlement.mjs';
+import { trialEnd, reconcileUnneeded } from '../../../../src/entitlement.mjs';
 import { lsGateOpts } from '../../../../src/lsbilling.mjs';
 import { reconcileDueFromRow, reconcileEntitlement } from '../../../../src/lsreconcile.mjs';
 
@@ -37,11 +37,13 @@ function scheduleReconcileIfLost({ url, serviceKey, user, cur, emailTrusted }) {
   const apiKey = process.env.LEMONSQUEEZY_API_KEY;
   if (!apiKey || !serviceKey || !user?.id) return false;
   if (user.id === 'local' || user.id === 'guest') return false; // 로컬·게스트는 구독 표면 없음
-  // "유효한" pro만 대사 불요 — 원시 plan==='pro'를 믿으면 ends_at 경과(재개 웹훅 유실) 사용자의
-  // 유일한 복구가 여기서 영구히 꺼진다(분리 검수 2026-07-30 HIGH). 판정은 entitlement의 공유 술어로 —
-  // is_pro(DB)·fetchPlan(sync)·이 게이트가 갈리면 잠금/복구 비대칭이 생긴다. 대사가 돌면 LS 현재값
+  // 대사 불요 = **유효 pro + 구독 식별자 존재**. 원시 plan==='pro'를 믿으면 ends_at 경과(재개 웹훅
+  // 유실) 사용자의 유일한 복구가 영구히 꺼지고(분리 검수 2026-07-30 HIGH), 유효 pro만 보면 이번엔
+  // 부여 Pro(구독 없는 pro)의 복구가 영구히 꺼져 결제해도 hasSub가 안 붙는다(분리 검수 2026-08-19
+  // HIGH-1 — 그 상태로 결제 카드가 계속 떠 중복 청구를 유인). 판정은 entitlement의 공유 술어로 —
+  // is_pro(DB)·fetchPlan(sync)과 갈리면 잠금/복구 비대칭이 생긴다. 대사가 돌면 LS 현재값
   // (active면 ends_at null)이 apply_ls_event로 덮여 자격이 복구된다(lsbilling.mjs:165 확인).
-  if (proRowActive(cur)) return false; // 유효 pro — 대사 불요(강등은 웹훅·ends_at 경과의 몫)
+  if (reconcileUnneeded(cur)) return false; // 강등은 여전히 웹훅·ends_at 경과의 몫
   if (!reconcileDueFromRow(cur)) return false; // 쿨다운 중 — 대부분의 폴은 여기서 무쿼리로 끝난다
   after(async () => {
     try {

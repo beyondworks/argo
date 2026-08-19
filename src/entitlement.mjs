@@ -34,6 +34,18 @@ export const trialBadgeState = (trialEndsAt, plan, now = Date.now()) => {
     HIGH: 게이트가 원시 plan==='pro'를 믿어, 재개 웹훅 유실 사용자의 유일한 복구인 대사가 영구히 꺼졌다). */
 export const proRowActive = (row) => row?.plan === 'pro' && !(row.ends_at && Date.parse(row.ends_at) <= Date.now());
 
+/** 유실 대사(reconcile)가 **불요**인가 — proRowActive를 한 겹 좁힌다: 지금 유효한 pro **이면서
+    구독 식별자가 붙어 있을 때만** 참. 부여 Pro(그랜드파더링: plan=pro·ends_at=null·
+    ls_subscription_id=null)는 proRowActive가 늘 참이라 대사가 영구히 꺼져 있었고, 그 계정이
+    실제로 결제한 뒤 웹훅이 유실되면 hasSub=false가 굳어 **이미 낸 사람에게 결제 카드가 계속**
+    뜬다(분리 검수 2026-08-19 HIGH-1 — 중복 청구 유인).
+    ⚠ 좁히는 방향이라 2026-07-30 HIGH(원시 plan==='pro'를 믿어 만료 pro의 복구가 꺼지던 것)와
+    같은 편이다 — 대사가 도는 집합은 늘어나기만 한다. 자격 판정 자체는 여전히 proRowActive
+    하나만 쓴다(is_pro·fetchPlan과 갈리면 잠금/복구 비대칭). 대사는 승격 전용이라
+    (lsreconcile: "entitlements를 free로 내리는 일은 하지 않는다") 부여 Pro가 대사 결과로
+    강등되지 않고, LS 호출량은 쿨다운 2컬럼(10분·24시간)이 그대로 막는다. */
+export const reconcileUnneeded = (row) => proRowActive(row) && !!row?.ls_subscription_id;
+
 /** 계정 plan. 'pro' | 'trial'(가입 14일 이내 무료 체험 — 서버 is_pro와 대칭) | 'free' | null(조회 실패·오너 미상=미확인).
     조회 실패를 'free'가 아닌 null로 두어, 일시적 실패로 유료 사용자를 오차단하지 않는다(아래 syncEntitled). */
 export async function fetchPlan(sb, ownerId) {

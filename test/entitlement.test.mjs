@@ -3,7 +3,7 @@
 // 하고, 강제 on에서도 '확정 free'만 차단하고 pro·미확인은 낙관 통과해야 한다(유료 사용자 오차단 방지).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchPlan, syncEntitled, proRowActive } from '../src/entitlement.mjs';
+import { fetchPlan, syncEntitled, proRowActive, reconcileUnneeded } from '../src/entitlement.mjs';
 
 // mock supabase: from().select().eq().maybeSingle() → {data, error}
 const mkSb = (result) => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => result }) }) }) });
@@ -91,8 +91,24 @@ test('proRowActive: 대사 게이트 회귀 가드 — ends_at 경과 pro는 "�
   // 분리 검수 HIGH: 게이트가 원시 plan==='pro'를 믿으면 재개 웹훅 유실 사용자(plan pro + ends_at 과거)의
   // 유일한 복구(유실 대사)가 영구히 꺼진다. 공유 술어가 false를 줘야 me/billing 게이트가 열린다.
   assert.equal(proRowActive({ plan: 'pro', ends_at: daysAgo(1) }), false, '만료 pro → 대사 재적격');
-  assert.equal(proRowActive({ plan: 'pro', ends_at: null }), true, '활성·그랜드파더링 → 대사 불요');
+  assert.equal(proRowActive({ plan: 'pro', ends_at: null }), true, '활성 pro (대사 불요 판정은 reconcileUnneeded 소관)');
   assert.equal(proRowActive({ plan: 'pro', ends_at: new Date(Date.now() + 86_400_000).toISOString() }), true, '해지 예약(말일 전)');
   assert.equal(proRowActive({ plan: 'free' }), false);
   assert.equal(proRowActive(null), false);
+});
+
+test('reconcileUnneeded: 부여 Pro(구독 없는 pro)는 대사가 돌아야 한다 — 중복 청구 유인 차단', () => {
+  // 분리 검수 2026-08-19 HIGH-1: 게이트가 proRowActive만 보면 그랜드파더링 44계정(plan=pro·
+  // ends_at=null·구독 식별자 없음)은 대사가 영구히 꺼져, 결제 후 웹훅 1건만 유실돼도 hasSub가
+  // 영영 안 붙는다 → 설정 카드가 **이미 낸 사람에게** 결제 버튼을 계속 보여준다.
+  const granted = { plan: 'pro', ends_at: null, ls_subscription_id: null };
+  assert.equal(proRowActive(granted), true, '자격은 유효 pro가 맞다(강등 금지)');
+  assert.equal(reconcileUnneeded(granted), false, '그러나 대사는 돌아야 한다 — 잃어버린 결제 후보');
+
+  // 구독이 붙은 정상 pro는 여전히 LS를 안 때린다(호출량 회귀 방지).
+  assert.equal(reconcileUnneeded({ plan: 'pro', ends_at: null, ls_subscription_id: 'sub_1' }), true);
+  // 만료 pro는 구독 유무와 무관하게 대사 적격(2026-07-30 HIGH가 잠근 방향 — 좁히기가 이걸 깨면 안 된다).
+  assert.equal(reconcileUnneeded({ plan: 'pro', ends_at: daysAgo(1), ls_subscription_id: 'sub_1' }), false);
+  assert.equal(reconcileUnneeded({ plan: 'free', ls_subscription_id: 'sub_1' }), false);
+  assert.equal(reconcileUnneeded(null), false, '무행은 항상 대사 적격');
 });
