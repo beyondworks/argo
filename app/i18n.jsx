@@ -220,8 +220,6 @@ const DICT = {
   'settings.danger': ['위험 구역', 'Danger Zone'],
   'settings.companyInfo': ['회사 정보', 'Company Info'],
   'settings.companyName': ['회사 이름', 'Company Name'],
-  'settings.budget.ko': ['월 지출 한도 (₩) — 초과 시 턴 정지, 비우면 무제한', 'Monthly budget (KRW)'],
-  'settings.budget.en': ['월 지출 한도 (USD)', 'Monthly Budget (USD) — turns stop when exceeded, empty = unlimited'],
   'settings.spec': ['제원', 'Specifications'],
   'settings.archive.title': ['회사 보관', 'Archive Company'],
   'settings.archive.desc': ['목록에서 사라지지만 데이터(크루·기억·루틴)는 삭제되지 않고 보관됩니다.', 'Removed from the list, but data (crew, memory, routines) is preserved in archive.'],
@@ -502,7 +500,6 @@ const DICT = {
   'settings.conn.telegramPlaceholder': ['123456:ABC-…', '123456:ABC-…'],
   'settings.conn.slackPlaceholder': ['xoxb-…', 'xoxb-…'],
   'settings.conn.channelPlaceholder': ['C0…', 'C0…'],
-  'settings.budget.placeholder': ['예: 42000', 'e.g. 30'],
 
   // ── 홈
   'home.tagline': ['크루 · 폴더 기억 · 자동 연결', 'Crew · Folder Memory · Auto Link'],
@@ -676,7 +673,7 @@ const DICT = {
   'deck.in': ['입력 · 읽은 맥락', 'In · Context Read'],
   'deck.out': ['출력 · 생성', 'Out · Generated'],
   'deck.monthBudget': ['이번 달 예산', 'Monthly Budget'],
-  'deck.budgetStop': ['초과하면 새 턴이 정지됩니다 — 설정에서 조정', 'New turns stop when exceeded — adjust in settings'],
+  'deck.budgetStop': ['초과하면 새 턴이 정지됩니다', 'New turns stop when exceeded'],
   'deck.cacheHitRate': ['캐시 적중률', 'Cache Hit Rate'],
   'deck.cacheHint': ['높을수록 같은 맥락을 싸게 재사용 (캐시 읽기 ≈ 정가의 1/10)', 'Higher means cheaper reuse of the same context (cache reads ≈ 1/10 of list price)'],
   'deck.costPerTurn': ['턴당 비용', 'Cost per Turn'],

@@ -43,7 +43,9 @@ test('설정 결제 카드: 동기화 ON·OFF 두 체인 모두 부여 Pro를 �
   const i = card.indexOf("settings.sync.offHelp");
   assert.ok(i > 0, 'OFF 갈래 표식(settings.sync.offHelp)을 찾지 못했다');
   const on = card.slice(0, i), off = card.slice(i);
-  const granted = /plan === 'pro' && !bill\?\.hasSub/;
+  // `bill &&` 필수 — bill=null이면 plan이 기기 스코프 sync.plan으로 폴백해 실구독자에게도
+  // 결제 CTA가 뜬다(분리 검수 MED-1). 계정 정보가 없으면 결제 표면도 없어야 한다.
+  const granted = /bill && plan === 'pro' && !bill\.hasSub/;
   assert.ok(granted.test(on), '동기화 ON 갈래에 부여 Pro 분기가 없다');
   assert.ok(granted.test(off), '동기화 OFF 갈래에 부여 Pro 분기가 없다');
   for (const half of [on, off]) {

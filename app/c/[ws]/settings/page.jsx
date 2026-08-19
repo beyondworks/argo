@@ -44,7 +44,10 @@ function Settings({ params }) {
       setData(d);
       setName(d.company?.name ?? '');
     }).catch(() => setData({}));
-  }, [ws, lang]);
+    // 의존은 ws뿐 — lang을 넣으면 cmd+/ 언어 전환이 재조회를 일으켜 **입력 중이던 회사 이름을
+    // 서버값으로 되돌린다**(분리 검수 LOW). lang 의존은 원래 예산 원화 재포맷용이었는데 그 입력이
+    // 사라졌다(2026-08-19) — 남은 의존은 회귀만 만든다.
+  }, [ws]);
 
   async function saveName(e) {
     e.preventDefault();
@@ -1182,8 +1185,11 @@ function SyncCard({ ws }) {
               <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('billing.trialUpgradeHint')}</span>
               <UpgradeButtons />
             </div>
-          ) : plan === 'pro' && !bill?.hasSub ? (
+          ) : bill && plan === 'pro' && !bill.hasSub ? (
             // 구독 없이 부여된 Pro(그랜드파더링 등) — 여기가 비어 있어 **결제 진입로가 아예 없었다**
+            // `bill &&` 필수(분리 검수 MED-1): bill=null이면 plan이 기기 스코프 sync.plan으로 폴백해
+            // (위 `acctPlan ?? sync?.plan`), /api/me/billing이 null을 준 순간 **실구독자에게도**
+            // "미리 구독하세요"가 떠 중복 결제를 유인한다. 계정 정보가 없으면 결제 표면도 없다.
             // (실측 2026-08-19: 해당 44계정은 업그레이드 버튼도 포털도 못 본다 = 낼 의사가 있어도 못 낸다).
             // 남은 기간은 ends_at이 있을 때만 보여주고(미설정이면 문구만), 결제는 항상 열어 둔다.
             <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
@@ -1243,7 +1249,7 @@ function SyncCard({ ws }) {
               <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('billing.trialUpgradeHint')}</span>
               <UpgradeButtons />
             </div>
-          ) : plan === 'pro' && !bill?.hasSub ? (
+          ) : bill && plan === 'pro' && !bill.hasSub ? (
             // 동기화 OFF 갈래에도 같은 분기 — 카드에 체인이 둘이라 한쪽만 고치면 절반은 계속 못 낸다
             // (규칙: 변경한 코드가 도는 문맥을 먼저 세고 각각 확인, CLAUDE.md 2026-08-19)
             <div style={{ display: 'grid', gap: 6 }}>

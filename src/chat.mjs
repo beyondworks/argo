@@ -928,9 +928,16 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // codex만 config.toml로 MCP를 실제로 받는다. gemini·antigravity는 벤더 비대화 경로가
       // MCP를 안 받아 프롬프트에 "있다"고 알려주면 거짓이다(유건 지시 "러너 상관 없이 모두 똑같아야"
       // 위반 — 같게 못 하면 차라리 없다고 해야지 있다고 거짓말하면 안 된다, 2026-08-08).
-      const cliMcpServers = runner === 'codex' ? allMcp : null;
+      // 크루별 MCP 범위를 **주입에도** 건다 — SDK 경로(아래 servers 필터)와 같은 규칙이다.
+      // 분리 검수 2026-08-19: 안내 목록(cliMcp)만 거르고 실제 주입(cliMcpServers)은 안 걸러,
+      // 카드에 `mcp:`로 범위를 좁혀도 codex 크루는 회사의 모든 서버를 config.toml로 받았다
+      // (범위 제한 무력화 — v0.1.41 유입). 안내와 실제가 갈리면 안내가 거짓이 된다.
+      const scoped = mcpScope
+        ? Object.fromEntries(Object.entries(allMcp).filter(([n]) => mcpScope.includes(n)))
+        : allMcp;
+      const cliMcpServers = runner === 'codex' ? scoped : null;
       const cliMcp = runner === 'codex'
-        ? Object.keys(allMcp).filter((n) => !mcpScope || mcpScope.includes(n))
+        ? Object.keys(scoped)
         : []; // gemini·antigravity — 프롬프트에 MCP 목록을 알려주지 않는다(실도구 없으므로)
       // 커넥터 요약 — **SDK 턴과 같은 원천**(connectorBriefing: connected + reauth)을 쓴다. 여기서
       // connected만 거르면 전부 reauth인 회사에서 CLI 크루만 커넥터의 존재조차 몰라 "못 한다"고 답하고,
