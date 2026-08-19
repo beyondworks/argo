@@ -1126,6 +1126,25 @@ function SyncCard({ ws }) {
     const iv = setInterval(pull, 15000);
     return () => { clearInterval(iv); if (retry) clearTimeout(retry); };
   }, [ws, billTry]);
+  // 결제는 **다른 탭**에서 끝난다(체크아웃은 target=_blank). 돌아온 탭이 그대로면 이미 낸 사람에게
+  // 결제 버튼이 계속 보이고, 한 번 더 누르면 LS는 같은 이메일로 두 번째 구독을 만든다 — 대사의
+  // 중복 귀속 가드는 귀속만 막지 실제 청구는 못 막는다(분리 검수 2026-08-19 HIGH-2).
+  // billing은 폴링이 없고, 유일한 재조회 신호(reconciling 8초)는 대사가 발사된 경우에만 뜬다.
+  // 그래서 "탭으로 돌아옴"을 재조회 신호로 쓴다. focus·visibilitychange가 같이 튀므로 5초 안의
+  // 중복은 접는다 — 창을 오갈 때마다 LS 대사까지 딸려 가면 안 된다(대사엔 DB 쿨다운이 따로 있다).
+  const lastBack = useRef(0);
+  useEffect(() => {
+    const onBack = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastBack.current < 5000) return;
+      lastBack.current = now;
+      setBillTry((n) => n + 1);
+    };
+    document.addEventListener('visibilitychange', onBack);
+    window.addEventListener('focus', onBack);
+    return () => { document.removeEventListener('visibilitychange', onBack); window.removeEventListener('focus', onBack); };
+  }, []);
   // 체험 D-day — 동기화를 켠 적 없는 체험자(최대 코호트)도 보여야 해서 sync가 아닌 bill에서 계산.
   // 판정은 trialBadgeState(entitlement.mjs) 단일 원천 — 만료 하한 누락으로 만료자에게 'D-0' 영구
   // 표시되던 회귀(분리 검수 H1)가 그 함수의 테스트로 잠겨 있다.
