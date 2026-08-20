@@ -44,7 +44,10 @@ function Settings({ params }) {
       setData(d);
       setName(d.company?.name ?? '');
     }).catch(() => setData({}));
-  }, [ws, lang]);
+    // 의존은 ws뿐 — lang을 넣으면 cmd+/ 언어 전환이 재조회를 일으켜 **입력 중이던 회사 이름을
+    // 서버값으로 되돌린다**(분리 검수 LOW). lang 의존은 원래 예산 원화 재포맷용이었는데 그 입력이
+    // 사라졌다(2026-08-19) — 남은 의존은 회귀만 만든다.
+  }, [ws]);
 
   async function saveName(e) {
     e.preventDefault();
@@ -113,6 +116,10 @@ function Settings({ params }) {
             style={{ height: 36, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13.5 }}
           />
         </label>
+        {/* 회사 기본 러너(K1, 유건 지시 2026-08-08) — 크루에 러너 미지정 시 이 러너부터 시도.
+            연결된 러너가 2개 미만이면 스스로 렌더하지 않는다(선택의 의미가 없다).
+            즉시 저장이라 이 폼의 submit(회사 이름 저장)과 무관하다. */}
+        <DefaultRunnerPicker ws={ws} />
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto', paddingTop: 10 }}>
           <button className="btn btn-primary sm" disabled={saving || !name.trim()}>
             {saving ? <Spinner size={12} /> : t('settings.save')}
@@ -157,8 +164,6 @@ function Settings({ params }) {
       <div ref={aiRef} style={{ scrollMarginTop: 84 }}>
         <Section label={t('settings.ai.section')}>
           <AiConnectionCard ws={ws} accordion />
-          {/* ponytail: 회사 기본 러너(K1, 유건 지시 2026-08-08). 크루에 러너 미지정 시 이 러너부터 시도. */}
-          <DefaultRunnerPicker ws={ws} />
         </Section>
       </div>
 
@@ -1104,19 +1109,44 @@ function SyncCard({ ws }) {
   const { t, lang } = useLang();
   const [sync, setSync] = useState(null);
   const [bill, setBill] = useState(null); // LS 구독 상태(연체·포털) — 없으면 표면 자체가 없다
+  // billing 조회가 **실패**했는가(reason='unavailable'). null 하나로 뭉개면 일시 장애가 "계정 없음"으로
+  // 읽혀 기기 스코프 plan 폴백이 살아나고(남의 Pro 배지) 결제 표면이 조용히 사라진다 — 분리 검수
+  // 2026-08-19 MED-A. 'no-cloud'·'unauthenticated'는 실패가 아니라 **계정이 없는 정상 상태**라 폴백이 옳다.
+  const [billLost, setBillLost] = useState(false);
+  const [billTry, setBillTry] = useState(0); // 재시도 트리거 — 한 번 실패하면 페이지를 다시 열기 전엔 복구되지 않았다
   useEffect(() => {
     const pull = () => api(`/api/companies/${ws}/connections`).then((d) => setSync(d.sync ?? null)).catch(() => {});
     pull();
     // reconciling=true — 서버가 방금 유실 대사(O2)를 백그라운드로 발사했다는 신호. billing은
     // 폴링이 없어서(1회성 fetch) 잠시 뒤 1회 재조회해야 복구가 리로드 없이 보인다.
     let retry = null;
+    const takeBill = (d) => { setBill(d.billing ?? null); setBillLost(d.billing == null && d.reason === 'unavailable'); };
     api('/api/me/billing').then((d) => {
-      setBill(d.billing ?? null);
-      if (d.reconciling) retry = setTimeout(() => api('/api/me/billing').then((d2) => setBill(d2.billing ?? null)).catch(() => {}), 8000);
-    }).catch(() => {});
+      takeBill(d);
+      if (d.reconciling) retry = setTimeout(() => api('/api/me/billing').then(takeBill).catch(() => setBillLost(true)), 8000);
+    }).catch(() => setBillLost(true)); // 네트워크·비200도 "못 불러옴"이다 — 계정 없음으로 읽지 않는다
     const iv = setInterval(pull, 15000);
     return () => { clearInterval(iv); if (retry) clearTimeout(retry); };
-  }, [ws]);
+  }, [ws, billTry]);
+  // 결제는 **다른 탭**에서 끝난다(체크아웃은 target=_blank). 돌아온 탭이 그대로면 이미 낸 사람에게
+  // 결제 버튼이 계속 보이고, 한 번 더 누르면 LS는 같은 이메일로 두 번째 구독을 만든다 — 대사의
+  // 중복 귀속 가드는 귀속만 막지 실제 청구는 못 막는다(분리 검수 2026-08-19 HIGH-2).
+  // billing은 폴링이 없고, 유일한 재조회 신호(reconciling 8초)는 대사가 발사된 경우에만 뜬다.
+  // 그래서 "탭으로 돌아옴"을 재조회 신호로 쓴다. focus·visibilitychange가 같이 튀므로 5초 안의
+  // 중복은 접는다 — 창을 오갈 때마다 LS 대사까지 딸려 가면 안 된다(대사엔 DB 쿨다운이 따로 있다).
+  const lastBack = useRef(0);
+  useEffect(() => {
+    const onBack = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastBack.current < 5000) return;
+      lastBack.current = now;
+      setBillTry((n) => n + 1);
+    };
+    document.addEventListener('visibilitychange', onBack);
+    window.addEventListener('focus', onBack);
+    return () => { document.removeEventListener('visibilitychange', onBack); window.removeEventListener('focus', onBack); };
+  }, []);
   // 체험 D-day — 동기화를 켠 적 없는 체험자(최대 코호트)도 보여야 해서 sync가 아닌 bill에서 계산.
   // 판정은 trialBadgeState(entitlement.mjs) 단일 원천 — 만료 하한 누락으로 만료자에게 'D-0' 영구
   // 표시되던 회귀(분리 검수 H1)가 그 함수의 테스트로 잠겨 있다.
@@ -1129,10 +1159,22 @@ function SyncCard({ ws }) {
   const acctPlan = bill
     ? (proRowActive({ plan: bill.plan, ends_at: bill.endsAt }) ? 'pro' : trialActive ? 'trial' : 'free')
     : null;
-  const plan = acctPlan ?? sync?.plan ?? null;
+  // 폴백은 **계정이 없는 모드에서만**. 조회 실패(billLost)에 기기값을 끼워 넣으면 공용 PC에서 남의
+  // 플랜이 그대로 표시·판정에 쓰인다(2026-08-05 실사고와 같은 계열이 null 경로로 살아 있었다).
+  const plan = acctPlan ?? (billLost ? null : sync?.plan ?? null);
+  // 결제 정보를 못 불러온 상태에서 결제·업그레이드 문구를 띄우면 **이미 구독 중인 사람에게 결제를
+  // 유인**한다(분리 검수 MED-B). 못 불러왔다고 말하고 다시 시도할 길만 준다.
+  const billLostRow = (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('billing.unavailable')}</span>
+      <button type="button" className="btn sm" onClick={() => setBillTry((n) => n + 1)}>{t('billing.retry')}</button>
+    </div>
+  );
   const mine = sync?.companies?.[ws];
   return (
-    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    // 와이드 — 이 카드는 상태 줄·결제 표면·내보내기가 겹쳐 세로로 길어지는데 340px 트랙 하나에
+    // 갇혀 있었다(유건 지시 2026-08-19). 위험 구역 카드와 같은 방식으로 열 전체를 쓴다.
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, gridColumn: '1 / -1' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="card-title">{t('settings.sync.title')}</span>
         <span style={{ flex: 1 }} />
@@ -1167,7 +1209,10 @@ function SyncCard({ ws }) {
                 {/* FREE_STATUSES(lsbilling.mjs)와 동기 유지 — 직접 import하면 node:crypto가 클라 번들에 끌려온다 */}
                 {['expired', 'unpaid', 'paused'].includes(bill?.status) ? t('billing.cloudPaused') : t('billing.paywall')}
               </span>
-              <UpgradeButtons />
+              {/* sync.paywalled는 **기기 스코프** 신호다 — billing을 못 불러온 상태에서 이 버튼을 그리면
+                  실구독자에게 두 번째 결제를 권하게 된다(분리 검수 MED-B: `bill &&` 요구가 granted 분기에만
+                  걸려 있었다). 페이월 문구 자체는 동기화가 실제로 막혔다는 사실이라 그대로 둔다. */}
+              {billLost ? billLostRow : <UpgradeButtons />}
             </div>
           ) : sync.lastError ? (
             <span style={{ color: 'var(--danger)', fontSize: 12 }}>{sync.lastError}</span>
@@ -1182,8 +1227,11 @@ function SyncCard({ ws }) {
               <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('billing.trialUpgradeHint')}</span>
               <UpgradeButtons />
             </div>
-          ) : plan === 'pro' && !bill?.hasSub ? (
+          ) : bill && plan === 'pro' && !bill.hasSub ? (
             // 구독 없이 부여된 Pro(그랜드파더링 등) — 여기가 비어 있어 **결제 진입로가 아예 없었다**
+            // `bill &&` 필수(분리 검수 MED-1): bill=null이면 plan이 기기 스코프 sync.plan으로 폴백해
+            // (위 `acctPlan ?? sync?.plan`), /api/me/billing이 null을 준 순간 **실구독자에게도**
+            // "미리 구독하세요"가 떠 중복 결제를 유인한다. 계정 정보가 없으면 결제 표면도 없다.
             // (실측 2026-08-19: 해당 44계정은 업그레이드 버튼도 포털도 못 본다 = 낼 의사가 있어도 못 낸다).
             // 남은 기간은 ends_at이 있을 때만 보여주고(미설정이면 문구만), 결제는 항상 열어 둔다.
             <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
@@ -1194,7 +1242,7 @@ function SyncCard({ ws }) {
               </span>
               <UpgradeButtons />
             </div>
-          ) : null}
+          ) : billLost ? billLostRow : null}
           {trialImminent && (
             // 체험 종료 임박(3일 이내) — 카드 등록 없이 시작한 사용자에게 여기서 처음 결제를 권한다.
             // 협박이 아니라 안심 화법. 본문은 --fg-2(대비 7.45:1 — --primary-strong 2.11:1은 AA 미달, 검수 MEDIUM).
@@ -1243,7 +1291,7 @@ function SyncCard({ ws }) {
               <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('billing.trialUpgradeHint')}</span>
               <UpgradeButtons />
             </div>
-          ) : plan === 'pro' && !bill?.hasSub ? (
+          ) : bill && plan === 'pro' && !bill.hasSub ? (
             // 동기화 OFF 갈래에도 같은 분기 — 카드에 체인이 둘이라 한쪽만 고치면 절반은 계속 못 낸다
             // (규칙: 변경한 코드가 도는 문맥을 먼저 세고 각각 확인, CLAUDE.md 2026-08-19)
             <div style={{ display: 'grid', gap: 6 }}>
@@ -1254,7 +1302,7 @@ function SyncCard({ ws }) {
               </span>
               <UpgradeButtons />
             </div>
-          ) : null}
+          ) : billLost ? billLostRow : null}
         </div>
       )}
     </div>
@@ -1454,14 +1502,15 @@ function DefaultRunnerPicker({ ws }) {
   if (!runners) return null;
   const connected = runners.filter((r) => r.authed);
   if (connected.length < 2) return null; // 1개 이하면 선택의 의미 없음
+  // 카드가 아니라 **필드**다 — 회사 정보 카드 안에 회사 이름과 같은 리듬(마이크로라벨 + 컨트롤)으로
+  // 들어간다(유건 지시 2026-08-19: 러너 한 줄짜리 카드가 따로 떠 있고 회사 정보 카드는 비어 있었다).
   return (
-    <div className="card" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      <span style={{ fontSize: 12.5, color: 'var(--fg-2)', flex: 1, minWidth: 140 }}>{t('settings.defaultRunner')}</span>
-      <select value={val} onChange={(e) => save(e.target.value)}
-        style={{ ...fieldStyle, width: 'auto', minWidth: 140 }}>
+    <label style={{ display: 'grid', gap: 5 }}>
+      <span className="microlabel">{t('settings.defaultRunner')}</span>
+      <select value={val} onChange={(e) => save(e.target.value)} style={{ ...fieldStyle, width: '100%' }}>
         <option value="">{t('settings.defaultRunnerAuto')}</option>
         {connected.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
       </select>
-    </div>
+    </label>
   );
 }

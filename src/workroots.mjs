@@ -18,7 +18,8 @@
 //
 // 러너별 집행(정직 표기 — UI 문구와 일치 유지):
 //  - claude/glm/kimi(SDK): permission-gate가 지정 폴더를 책상으로 판정 + SDK additionalDirectories.
-//  - codex: writable_roots에 추가(프로세스 단위 샌드박스 — fs 능력의 기존 한계와 동일).
+//  - codex: 2026-08-21부터 집행 없음(danger-full-access — 샌드박스 제거, 유건 지시). 지정 폴더는
+//    프롬프트 안내(우선 작업 위치)로만 전달된다.
 //  - gemini: `--include-directories`에 추가. (2026-07-30 정정 — 이전 주석은 "경로 샌드박스가 없어
 //    안내로만 전달"이라 적었는데 **정반대였다**: gemini-cli는 workspaceContext 밖 읽기·쓰기를 벤더
 //    도구가 거부한다. 인자를 안 넘기면 지정 폴더는커녕 홈조차 막혀 크루가 "허용된 작업 디렉토리
@@ -137,9 +138,9 @@ export async function validateWorkRoot(p, { appRoot = APP_ROOT, wsRoot = WS_ROOT
     [resolve(appRoot), join(homedir(), '.argo'), resolve(wsRoot)].map(async (r) => (await canon(r)) ?? resolve(r)),
   );
   for (const r of [appRootCanon, argoHomeCanon, wsRootCanon]) if (insideFold(real, r)) throw err('protected', real);
-  // 조상 등록 차단(분리 검수 HIGH-1 2026-07-28): 앱 코드 루트를 '포함'하는 루트는 codex
-  // writable_roots에 실리는 순간 앱 본체 쓰기가 열린다 — writable_roots="/"였던 2026-07-22
-  // 크리티컬의 조상 변종. SDK는 게이트(isForbidden)가 막지만 codex는 프로세스 단위라 등록에서 막는다.
+  // 조상 등록 차단(분리 검수 HIGH-1 2026-07-28): 앱 코드 루트를 '포함'하는 루트가 러너 반경
+  // (gemini includeDirectories·agy --add-dir·SDK additionalDirectories)에 실리면 그 안의 앱 본체가
+  // 함께 열린다. 2026-08-21 codex 샌드박스 제거 후에도 이 가드는 유지 — 위 세 소비자가 남아 있다.
   if (insideFold(appRootCanon, real)) throw err('protected', real);
   // 주의: ~/.argo·WS_ROOT를 '포함'하는 루트(예: 홈 전체)는 의도적으로 허용한다 — fs 능력(홈 개방)의
   // 기존 한계와 동일 계열이고, SDK 게이트는 여전히 선행 차단한다. 이 한계는 UI가 러너별로 정직 표기.

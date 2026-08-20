@@ -17,7 +17,7 @@ export async function GET(req) {
     const c = company?.[id];
     const companyConnected = !!c?.company?.connected && !c?.company?.invalid; // 무효(재연결 필요)는 미연결 취급
     return {
-      id, name: r.name, kind: r.kind, models: r.models,
+      id, name: r.name, kind: r.kind, mcp: !!r.mcp, models: r.models,
       installed: status[id]?.installed ?? false,
       authed: companyConnected, // 명시 연결만 — 게이트·실행(pickRunner)과 동일 판정
       companyConnected,

@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthFormatError } from './runners/catalog.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, codexSandboxArgs } from './runners/codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs } from './runners/codex.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 
@@ -34,7 +34,7 @@ export {
   pickRunner, autoRunnerOf, oauthFormatError, excludeWith, authExcludedNoRunnerMsg,
 } from './runners/catalog.mjs';
 export {
-  provisionCodexCli, codexSandboxArgs, CODEX_EFFORTS, codexEffortArgs,
+  provisionCodexCli, CODEX_EFFORTS, codexEffortArgs,
   importCodexAuth, recoverCodexAuth, writeCodexTurnConfig,
 } from './runners/codex.mjs';
 export { provisionGeminiCli, probeGeminiOAuth, probeGeminiHostOAuth } from './runners/gemini.mjs';
@@ -89,7 +89,8 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
 
 /** 외부 CLI 러너 1턴 — 워크스페이스를 cwd로, 프롬프트 하나로 실행하고 마지막 응답을 받는다.
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
-    caps = 회사 로컬 능력({ fs, browser, shell }) — 사장이 켠 능력을 codex 샌드박스에 반영(codexSandboxArgs). */
+    caps = 회사 로컬 능력({ fs, browser, shell }) — gemini 도구 게이팅·agy 반경 인자에 반영
+    (codex는 2026-08-21부터 샌드박스 없음 — danger-full-access, 유건 지시 "샌드박스 없이"). */
 export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null }) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   const t0 = Date.now(); // 실패의 정직 번역용 — cliTurnFailure가 경과 시간으로 시간 초과를 판정한다
@@ -106,14 +107,17 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     // 자격 반입(심링크 → 복사 폴백) + 턴 뒤 갱신 토큰 회수. 계약은 importCodexAuth/recoverCodexAuth의
     // 주석과 test/codex-auth-import.test.mjs가 잠근다(신규 설치 401의 근본 원인이었던 자리).
     const auth = await importCodexAuth(baseHome, CODEX_HOME);
-    await writeCodexTurnConfig(CODEX_HOME, caps, workRoots, mcpServers); // [sandbox_workspace_write] + MCP — `-c`가 안 먹는 codex 버전 방어(실사용 신고 2026-07-22)
+    await writeCodexTurnConfig(CODEX_HOME, mcpServers); // MCP 주입만 — 샌드박스 섹션은 danger-full-access 전환으로 소멸
     const cmd = await codexCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     try {
       await exec(cmd.file, [
         ...cmd.args,
-        'exec', '--sandbox', 'workspace-write', '--skip-git-repo-check',
+        // danger-full-access — 유건 지시 2026-08-21 "샌드박스 없이". workspace-write + 홈 한정
+        // writable_roots가 "사용 권한이 없다" 차단의 뿌리였다(윈도우 쓰기 전멸 클러스터 포함).
+        // 프로세스 수준 방어가 사라짐을 알고 유지 — 남는 방어는 프롬프트 금지 지시(2차)뿐이고,
+        // 크루 자기 카드 수정으로 우회 가능하던 반쪽 격리였다(분리 검수 MED-3 판정: 경계 아님).
+        'exec', '--sandbox', 'danger-full-access', '--skip-git-repo-check',
         ...codexEffortArgs(effort), // 크루별 추론 강도 — codex도 지원(실측 2026-07-26)
-        ...codexSandboxArgs(caps, workRoots), // config.toml과 이중 — 신버전은 `-c`, 구버전은 config.toml이 받는다
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
         '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록
@@ -141,7 +145,10 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
       ...cmd.args,
       '-p', prompt,
       ...(model ? ['-m', model] : []),
-      '--approval-mode', 'auto_edit', // 편집류만 자동 승인 — 셸 등은 비대화 모드에서 실행되지 않는다
+      // yolo — 유건 지시 2026-08-21 "샌드박스 없이, 다른 러너도 동일하게". auto_edit(편집만 자동
+      // 승인)에선 셸이 비대화에서 실행 불가라 codex 크루는 되는 지시가 gemini 크루만 막혔다(러너
+      // 중립성 위반). 벤더 choices 실측: default|auto_edit|yolo — yolo가 전권과 같은 방향이다.
+      '--approval-mode', 'yolo',
     ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'gemini'), ...(cred?.env ?? {}) } })
       .catch((e) => { throw cliTurnFailure(e, 'gemini', Date.now() - t0, timeoutMs, { stage: 'exec', kind }); });
     return stdout
@@ -151,7 +158,10 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
   if (runner === 'antigravity') {
     // BYOA — agy CLI 래핑(권한 근사 적용, codex/gemini와 같은 정직 표기 계열).
     // 자격은 OS 키링이라 env·격리 홈 반입이 없다(host 옵트인 전용, cred는 항상 null 경유).
-    // --mode accept-edits = gemini --approval-mode auto_edit 등가(편집류만 자동 승인).
+    // --mode accept-edits — agy가 제공하는 최대 자율 모드다(--help 실측 2026-08-21: choices가
+    //   accept-edits, plan 뿐 — codex danger-full-access·gemini yolo 같은 전권 모드가 벤더에 없다).
+    //   "샌드박스 없이" 지시(2026-08-21)는 이 러너에선 --sandbox 미전달(전권 기본값에서 이미 그렇다)
+    //   까지가 우리가 할 수 있는 전부 — 벤더 한계는 정직 표기 원칙대로 여기 남긴다.
     // --sandbox = 셸 능력 OFF의 근사(agy "terminal restrictions") — SDK 게이트와 달리 사전 카드가
     //   없으므로 근사임을 시스템 프롬프트 안내(commonDirectives)가 보완한다.
     // --print-timeout은 우리 kill(timeoutMs)보다 **30초 짧게** — agy의 이 타이머는 기동(글로그 초기화

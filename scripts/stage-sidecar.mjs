@@ -5,7 +5,7 @@
 //   - src-tauri/resources/server/               : standalone 서버 트리(resources)
 // 사용: node scripts/stage-sidecar.mjs   (npm run build:standalone 이후, 또는 자체 빌드 포함)
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, rmSync, existsSync, copyFileSync, readdirSync } from 'node:fs';
+import { cpSync, mkdirSync, rmSync, existsSync, copyFileSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,6 +32,33 @@ const serverDest = join(TAURI, 'resources', 'server');
 rmSync(serverDest, { recursive: true, force: true });
 mkdirSync(dirname(serverDest), { recursive: true });
 cpSync(standalone, serverDest, { recursive: true });
+
+// 3.3) Dock 아이콘 방지 심 — 실측 2026-08-21(사용자 제보 "노드 아이콘이 같이 뜬다", 재현·A/B 확정):
+// macOS에서 process.title **세터가 그 자체로** 프로세스를 LaunchServices에 Foreground 앱으로
+// 등록한다(title 미설정 = 미등록, 설정 = ASN 등록 — 같은 번들 node로 분리 실측). Next의
+// start-server.js가 'next-server (vX)'를 설정해 Dock에 두 번째 아이콘이 떴다.
+// Next 정본을 옆으로 옮기고, 세터를 무력화한 뒤 로드하는 심을 server.js 자리에 둔다 —
+// Rust 쪽 스폰 인자("server.js")는 그대로라 앱 재빌드 외 변경이 없다.
+{
+  // 전제 검증(분리 검수 LOW-2): 심은 ESM(top-level await import)이라 Next server.js가 ESM이고
+  // 루트 package.json에 "type":"module"이 있어야 성립한다. 어긋나면 스테이징은 조용히 성공하고
+  // 앱만 부팅 실패하므로 여기서 막는다.
+  const srv = readFileSync(join(serverDest, 'server.js'), 'utf8');
+  const pkgType = JSON.parse(readFileSync(join(serverDest, 'package.json'), 'utf8')).type;
+  if (!/^\s*import /m.test(srv) || pkgType !== 'module') {
+    console.error(`[stage-sidecar] Dock 심 전제 붕괴 — server.js ESM=${/^\s*import /m.test(srv)}, package.json type=${pkgType}. 심 코드를 Next 형식에 맞게 갱신하라.`);
+    process.exit(1);
+  }
+}
+renameSync(join(serverDest, 'server.js'), join(serverDest, 'server-next.mjs'));
+writeFileSync(join(serverDest, 'server.js'), `// Dock 아이콘 방지 부트스트랩 — stage-sidecar가 생성(정본은 server-next.mjs).
+// macOS: process.title 세터가 LaunchServices에 Foreground 앱으로 등록해 Dock에 node 아이콘이
+// 뜬다(실측 2026-08-21). Next(start-server.js)의 'next-server (vX)' 설정을 세터 차단으로 막는다.
+// 잃는 것은 ps 표시 이름뿐이다.
+const t0 = process.title;
+Object.defineProperty(process, 'title', { configurable: true, get: () => t0, set: () => {} });
+await import('./server-next.mjs');
+`);
 
 // 3.4) Claude Agent SDK 네이티브 CLI 보장 — 플랫폼 패키지(claude-agent-sdk-<os>-<arch>)는 동적 로드라
 // standalone 추적에서 누락된다(실측: Windows에서 "Native CLI binary for win32-x64 not found"로 크루 턴 전멸).

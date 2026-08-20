@@ -37,3 +37,16 @@ test('체험 판정 경계 — D-3부터 임박, 만료 후에는 active가 아�
   assert.equal(trialBadgeState(at(-1), 'trial', now).active, false, '만료 후에도 체험으로 보이면 안 된다');
   assert.equal(trialBadgeState(at(10), 'pro', now).active, false, 'pro는 체험 배지 대상이 아니다');
 });
+
+test('결제 후 돌아온 탭이 갱신된다 — 안 그러면 이미 낸 사람에게 결제 버튼이 그대로 있다', () => {
+  // 체크아웃은 target=_blank로 다른 탭에서 끝난다. billing은 폴링이 없고 reconciling 8초 재조회는
+  // 대사가 발사된 경우에만 뜨므로, 부여 Pro처럼 대사가 안 도는 코호트는 돌아와도 화면이 그대로다
+  // → 재클릭 = 두 번째 구독(분리 검수 2026-08-19 HIGH-2). 이 트립와이어는 "탭 복귀가 재조회에
+  // 연결돼 있다"만 잠근다. 실제 동작 확인은 브라우저가 정본(2026-08-19 실측: 복귀 1회 재조회,
+  // 5초 내 중복은 접힘, 쿨다운 후 재발화).
+  assert.match(page, /addEventListener\('visibilitychange'/, '탭 복귀 신호를 안 듣는다');
+  assert.match(page, /addEventListener\('focus'/, '창 포커스 신호를 안 듣는다');
+  assert.match(page, /setBillTry/, '재조회 트리거가 없다 — 리스너만 있고 아무 일도 안 일어난다');
+  // 재조회가 실제로 billing을 다시 읽어야 한다(트리거가 effect 의존에 걸려 있는가)
+  assert.match(page, /\}, \[ws, billTry\]\);/, 'billing 조회 effect가 재조회 트리거를 의존하지 않는다');
+});

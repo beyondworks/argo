@@ -5,10 +5,11 @@ import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
-import { readAgentCard, parseScopeList, EFFORT_LEVELS } from './persona.mjs';
+import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './persona.mjs';
 import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루가 '나중에 하기'를 거는 유일한 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
+import { materializeMcpServers } from './runners/npx.mjs'; // node/npx를 실행형으로 — 시스템 npm 없는 기기 지원
 import { appendUsage } from './usage.mjs';
 import { monthCost } from './billing.mjs'; // 금액 집계는 billing 게이트로만(현재 자격 기준 단일 판정)
 import { loadCompany } from './workspace.mjs';
@@ -352,9 +353,9 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
 - ${hasTools ? 'If the captain asks to change a crew profile (name, role, team, rules, runner, model) or to hire a new crew, don\'t edit files directly — file an approval via the update_profile / hire_crew tools. If the runner/model is undecided, present 2-3 options from the catalog and ask before filing.' : 'For crew profile changes or hiring, don\'t edit files directly — guide the captain to the crew/settings screens.'}
 
 ## Local capabilities — full access
-- File system: ${isCliRunner(runner) ? `**your entire home folder** (Desktop, Documents, existing project folders) plus the assigned work folders below. There is no toggle to turn on. If you need a path outside home — an external volume, say — tell the captain to add that folder under Settings → Work folders; it opens from the next turn${runner === 'gemini' ? '. Caveat: older Gemini CLI builds may still block paths outside the company folder (a vendor limit) — if blocked, report the exact error without guessing at permissions, save the output inside the company folder and tell the captain where it is' : ''}` : 'read and write anywhere on this computer, including the captain\'s Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the captain to — if a path exists, you can use it'}. Only the protected zones below are blocked.
+- File system: ${isCliRunner(runner) && runner !== 'codex' ? `**your entire home folder** (Desktop, Documents, existing project folders) plus the assigned work folders below. There is no toggle to turn on. If you need a path outside home — an external volume, say — tell the captain to add that folder under Settings → Work folders; it opens from the next turn${runner === 'gemini' ? '. Caveat: older Gemini CLI builds may still block paths outside the company folder (a vendor limit) — if blocked, report the exact error without guessing at permissions, save the output inside the company folder and tell the captain where it is' : ''}` : 'read and write anywhere on this computer, including the captain\'s Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the captain to — if a path exists, you can use it'}. Only the protected zones below are blocked.
 ${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up current information): allowed.
-- Shell commands: ${runner === 'gemini' ? 'not supported on this runner (Gemini) — for shell work, tell the captain to assign a crew on a shell-capable runner (e.g. Claude)' : 'allowed.'}
+- Shell commands: allowed.
 - Preparation work (tool installs, setup) runs without approval. Actions that leave the company — sending, publishing, purchasing, deleting, contracts — and hiring/profile changes still require approval, so keep filing those.
 - Never tell the captain to "enable file access in Settings". That setting does not exist: access is on by default. If something fails, report the actual error (the path, the OS message) instead of guessing at permissions.
 
@@ -384,9 +385,9 @@ ${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up curren
 - ${hasTools ? '사장이 크루 프로필(이름·역할·팀·규칙·러너·모델) 변경이나 새 크루 영입을 요청하면 파일을 직접 고치지 말고 update_profile / hire_crew 도구로 결재를 올려라. 러너·모델이 정해지지 않았으면 카탈로그에서 선택지를 2~3개 제시해 물어본 뒤 올려라.' : '크루 프로필 변경·영입 요청은 파일을 직접 고치지 말고 크루·설정 화면에서 진행하도록 사장을 안내하라.'}
 
 ## 로컬 능력 — 전권
-- 파일 시스템: ${isCliRunner(runner) ? `**홈 폴더 전체**(바탕화면·문서·기존 프로젝트 폴더 포함)와 아래 지정 작업 폴더를 읽고 쓸 수 있다. 켜야 할 토글은 없다. 홈 밖 경로(외장 볼륨 등)가 필요하면 사장에게 "설정 → 작업 폴더"에 그 폴더를 등록해 달라고 안내하라 — 등록하면 다음 턴부터 열린다${runner === 'gemini' ? '. 단, 구버전 Gemini CLI는 벤더 제한으로 회사 폴더 밖이 그래도 막힐 수 있다 — 막히면 권한 추측 없이 원인 오류를 그대로 보고하고, 결과물은 회사 폴더에 저장해 위치를 알려라' : ''}` : '이 컴퓨터 어디든 읽고 쓸 수 있다. 사장의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사장을 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다'}. 막히는 것은 아래 보호 구역뿐이다.
+- 파일 시스템: ${isCliRunner(runner) && runner !== 'codex' ? `**홈 폴더 전체**(바탕화면·문서·기존 프로젝트 폴더 포함)와 아래 지정 작업 폴더를 읽고 쓸 수 있다. 켜야 할 토글은 없다. 홈 밖 경로(외장 볼륨 등)가 필요하면 사장에게 "설정 → 작업 폴더"에 그 폴더를 등록해 달라고 안내하라 — 등록하면 다음 턴부터 열린다${runner === 'gemini' ? '. 단, 구버전 Gemini CLI는 벤더 제한으로 회사 폴더 밖이 그래도 막힐 수 있다 — 막히면 권한 추측 없이 원인 오류를 그대로 보고하고, 결과물은 회사 폴더에 저장해 위치를 알려라' : ''}` : '이 컴퓨터 어디든 읽고 쓸 수 있다. 사장의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사장을 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다'}. 막히는 것은 아래 보호 구역뿐이다.
 ${pinnedLine}${rootsLine}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): 허용.
-- 셸 명령: ${runner === 'gemini' ? '이 러너(Gemini)에서는 지원되지 않는다 — 셸이 필요한 작업은 셸을 지원하는 러너(Claude 등)의 크루에게 맡기도록 사장에게 안내하라' : '허용.'}
+- 셸 명령: 허용.
 - 준비 작업(도구 설치·환경 세팅)은 결재 없이 진행한다. **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 크루 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.
 - **"설정에서 파일 권한을 켜세요"라고 안내하지 마라. 그런 설정은 없다** — 접근은 기본으로 열려 있다. 실패하면 권한 탓으로 추측하지 말고 실제 오류(경로와 OS 메시지)를 그대로 보고하라.
 
@@ -919,7 +920,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 외부 CLI에는 크루 도구가 없으므로 hasTools:false — 같은 규칙이 "보고·안내" 형태로 들어간다.
       const cliCaps = await loadCapabilities(wsId);
       // 폴더 상태 — SDK 경로와 **같은 함수**를 지난다(러너 중립성). 한 번만 재므로 프롬프트와
-      // 샌드박스(codex writable_roots 등)가 같은 스냅샷을 본다.
+      // 러너 반경(gemini includeDirectories·agy --add-dir)이 같은 스냅샷을 본다(codex는 2026-08-21부터 반경 없음).
       const { roots: cliWorkRoots, pin: cliPin } = await activeFolders(wsId, agentSlug);
       // codex MCP 주입 — 러너 중립성(유건 지시 2026-08-08: "러너 상관 없이 모두 똑같아야").
       // codex는 config.toml [mcp_servers.*]로 MCP를 받는다(실프로브 확인). gemini·antigravity는
@@ -928,9 +929,17 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // codex만 config.toml로 MCP를 실제로 받는다. gemini·antigravity는 벤더 비대화 경로가
       // MCP를 안 받아 프롬프트에 "있다"고 알려주면 거짓이다(유건 지시 "러너 상관 없이 모두 똑같아야"
       // 위반 — 같게 못 하면 차라리 없다고 해야지 있다고 거짓말하면 안 된다, 2026-08-08).
-      const cliMcpServers = runner === 'codex' ? allMcp : null;
+      // 크루별 MCP 범위를 **주입에도** 건다 — SDK 경로(아래 servers 필터)와 같은 규칙이다.
+      // 분리 검수 2026-08-19: 안내 목록(cliMcp)만 거르고 실제 주입(cliMcpServers)은 안 걸러,
+      // 카드에 `mcp:`로 범위를 좁혀도 codex 크루는 회사의 모든 서버를 config.toml로 받았다
+      // (범위 제한 무력화 — v0.1.41 유입). 안내와 실제가 갈리면 안내가 거짓이 된다.
+      // materialize는 **범위 필터 뒤** — node→우리 노드, npm 없는 기기의 npx→조달(npx.mjs).
+      // 순서가 반대면 크루 카드 `mcp:` 범위로 곧 버려질 서버 때문에도 네트워크 조달(최대 195s)이
+      // 턴 선두에 붙는다(분리 검수 2026-08-21 MED-3). SDK 경로와 같은 순서.
+      const scoped = await materializeMcpServers(scopeServers(allMcp, mcpScope));
+      const cliMcpServers = runner === 'codex' ? scoped : null;
       const cliMcp = runner === 'codex'
-        ? Object.keys(allMcp).filter((n) => !mcpScope || mcpScope.includes(n))
+        ? Object.keys(scoped)
         : []; // gemini·antigravity — 프롬프트에 MCP 목록을 알려주지 않는다(실도구 없으므로)
       // 커넥터 요약 — **SDK 턴과 같은 원천**(connectorBriefing: connected + reauth)을 쓴다. 여기서
       // connected만 거르면 전부 reauth인 회사에서 CLI 크루만 커넥터의 존재조차 몰라 "못 한다"고 답하고,
@@ -956,7 +965,7 @@ ${lang === 'en'
       // 정직 문구 무의미), 900s 초과는 crewmail CLAIM_STALE_MS 산출 근거("CLI 300s×3단")까지 깨진다.
       const envCap = Number(process.env.ARGO_CLI_TURN_TIMEOUT_MS);
       const cliTimeoutMs = source === 'job' ? 21_600_000 : (Number.isFinite(envCap) && envCap > 0 ? envCap : 300_000);
-      // caps 전달 — 사장이 켠 능력(fs/browser)을 codex 샌드박스에 반영(SDK 게이트의 근사 — codexSandboxArgs 주석 참조)
+      // caps 전달 — gemini 도구 게이팅·agy 반경 인자용(codex는 danger-full-access라 caps 무관, 2026-08-21)
       // 접근권 게이트 모델 강등 가드 — gated 모델(예: Gemini 3.x = Ultra·유료 전용)에 권한 없는 계정이면
       // 턴이 "Requested entity was not found"류로 죽는다. 같은 러너의 기본 모델로 1회 자동 재시도하고
       // 답변 머리에 강등 안내 한 줄을 남긴다 — 접근권 있는 계정은 게이트 모델 그대로, 없는 계정도 채팅 단절 없음.
@@ -1094,8 +1103,10 @@ ${lang === 'en'
   // 실행 게이트 — 호스팅 모드에선 미검증 command MCP를 spawn하지 않는다(검수 HIGH: mcp.json이
   // 봉투로 동기화돼 서비스 키를 든 워커로 흘러가면 임의 프로세스가 키 곁에서 실행되는 위험).
   let servers = safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {});
-  // 크루별 MCP 범위 — 지정된 크루는 그 서버만 스폰·허용(불필요한 프로세스·권한 축소)
-  if (mcpScope) servers = Object.fromEntries(Object.entries(servers).filter(([n]) => mcpScope.includes(n)));
+  // 크루별 MCP 범위 — 지정된 크루는 그 서버만 스폰·허용(불필요한 프로세스·권한 축소).
+  // materialize는 범위 필터 **뒤**(CLI 경로와 같은 순서 — 분리 검수 MED-3: 버려질 서버 때문에
+  // 네트워크 조달이 턴 선두에 붙지 않게): node→우리 노드, npm 없는 기기의 npx→조달본(npx.mjs).
+  servers = await materializeMcpServers(scopeServers(servers, mcpScope));
   // ⚠ 설치된 MCP 서버를 allowedTools에 bare `mcp__<서버>`로 넣지 않는다 — SDK는 괄호 없는 bare
   // 항목을 canUseTool 상담 **전에** 자동 승인한다(벤더 sdk.mjs 원문·CLAUDE_SDK_CAN_USE_TOOL_SHADOWED).
   // 외부 MCP는 게이트(argPathsForbidden)를 지나야 한다. 죽은 mcpAllow 변수는 되돌리기 쉬운 형태라

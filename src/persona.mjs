@@ -277,6 +277,17 @@ export function parseScopeList(v) {
   return s.split(',').map((x) => x.trim()).filter(Boolean);
 }
 
+/** 범위를 서버 맵에 적용(순수) — parseScopeList의 반환값 계약을 그대로 따른다:
+    null(미기재) = 전부, [](none) = 아무것도, 목록 = 지정한 것만.
+    SDK 턴과 codex 주입이 **이 하나를** 쓴다 — 사본이 갈리면 한쪽만 범위가 풀린다
+    (실사고 2026-08-19: 안내 목록만 거르고 실제 주입은 안 걸러 codex 크루가 전부 받았다).
+    ⚠ 이건 권한 경계가 아니라 최소권한 축소다 — codex는 크루가 자기 카드를 고쳐 범위를 넓힐 수
+    있다(SDK는 금고가 하드 차단). 봉쇄가 필요하면 별도 과제. (export: 두 호출부·회귀 테스트 공용) */
+export function scopeServers(servers, scope) {
+  if (!scope) return servers ?? {};
+  return Object.fromEntries(Object.entries(servers ?? {}).filter(([n]) => scope.includes(n)));
+}
+
 /** 크루별 추론 강도 — Claude Agent SDK의 effort 계약(sdk.d.ts: 'low'|'medium'|'high'|'xhigh'|'max').
     '' = 모델 기본. (export: UI 옵션·회귀 테스트 공용 — 값 목록이 두 곳에서 갈리지 않게) */
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];

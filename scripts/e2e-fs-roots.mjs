@@ -69,9 +69,10 @@ const ask = () => api(`/api/companies/${WS}/chat`, {
   body: { slug: CREW, message: `쓰기 테스트다. 파일 ${TARGET} 에 내용 "fsroots-ok"를 저장하라. 성공/실패만 한 줄로 보고하라.` },
 });
 // ① 대조군 — 작업 폴더 미등록: 홈 밖(그리고 workRoots 밖)이므로 실패해야 한다.
-// **CLI 러너 전용 전제**(재검수): codex writable_roots = 홈 + 등록 폴더라 성립하지만, SDK 러너(claude
-// 등)는 전권 게이트가 홈 밖 쓰기를 allow해 대조군이 반대로 fail한다 — CLI가 아니면 스킵한다.
-if (['codex', 'gemini', 'antigravity'].includes(process.env.E2E_RUNNER || 'codex')) {
+// **gemini·antigravity 전용 전제**(2026-08-21 갱신): codex는 danger-full-access(샌드박스 없음)라
+// 등록 전에도 홈 밖 쓰기가 성공한다 — 대조군을 돌리면 무조건 거짓 red(분리 검수 MED-1). SDK
+// 러너도 전권 게이트가 allow라 동일. 반경이 실재하는 gemini(includeDirectories)·agy(--add-dir)만.
+if (['gemini', 'antigravity'].includes(process.env.E2E_RUNNER || 'codex')) {
   await ask();
   const written = await readFile(TARGET, 'utf8').catch(() => null);
   if (written !== null) fail('작업 폴더 등록 전인데 홈 밖 쓰기가 성공 — 경계가 사라졌다(회귀)');

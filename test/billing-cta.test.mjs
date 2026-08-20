@@ -37,13 +37,18 @@ test('페이월은 다른 무엇보다 먼저, 연체는 페이월보다 먼저'
 test('설정 결제 카드: 동기화 ON·OFF 두 체인 모두 부여 Pro를 처리한다', async () => {
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
-  const card = src.split('function SyncCard')[1] ?? '';
+  // 다음 최상위 function 선언까지로 **끊는다** — 안 끊으면 OFF 갈래 조각에 파일 뒷부분
+  // (UpgradeButtons 정의 자체)이 딸려 들어와 아래 버튼 단언이 항상 참이 된다(재검수 MED-D).
+  const card = (src.split('function SyncCard')[1] ?? '').split('\nfunction ')[0];
   assert.ok(card, 'SyncCard 컴포넌트를 찾지 못했다');
+  assert.doesNotMatch(card, /function UpgradeButtons/, 'SyncCard 범위가 안 끊겼다 — 아래 단언이 무의미해진다');
   // 외곽 조건(mine ? … : …)의 두 갈래로 쪼갠다 — offHelp가 OFF 갈래의 고유 표식이다
   const i = card.indexOf("settings.sync.offHelp");
   assert.ok(i > 0, 'OFF 갈래 표식(settings.sync.offHelp)을 찾지 못했다');
   const on = card.slice(0, i), off = card.slice(i);
-  const granted = /plan === 'pro' && !bill\?\.hasSub/;
+  // `bill &&` 필수 — bill=null이면 plan이 기기 스코프 sync.plan으로 폴백해 실구독자에게도
+  // 결제 CTA가 뜬다(분리 검수 MED-1). 계정 정보가 없으면 결제 표면도 없어야 한다.
+  const granted = /bill && plan === 'pro' && !bill\.hasSub/;
   assert.ok(granted.test(on), '동기화 ON 갈래에 부여 Pro 분기가 없다');
   assert.ok(granted.test(off), '동기화 OFF 갈래에 부여 Pro 분기가 없다');
   for (const half of [on, off]) {

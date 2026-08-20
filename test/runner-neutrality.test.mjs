@@ -20,14 +20,9 @@ test('openRoots — 홈(fs 능력) + 지정 작업 폴더를 이 순서로 연�
 // 세 CLI 러너가 **같은 계산**을 쓴다는 계약. 이게 갈리면 같은 지시가 러너에 따라 되고 안 되고가
 // 갈린다(실사고 2026-07-30: gemini에 인자를 안 넘겨 크루 책상이 회사 폴더 하나로 쪼그라들었고,
 // "이 컴퓨터 어디든 쓸 수 있다"는 프롬프트가 거짓이 됐다).
-test('codex writable_roots가 openRoots와 같은 목록을 싣는다', async () => {
-  const { codexSandboxArgs } = await import('../src/runners/codex.mjs');
-  const args = codexSandboxArgs({ fs: true }, ['/w1']);
-  const roots = openRoots({ fs: true }, ['/w1']);
-  const line = args.find((a) => String(a).startsWith('sandbox_workspace_write.writable_roots'));
-  assert.ok(line, 'writable_roots 인자가 있어야 한다');
-  for (const r of roots) assert.ok(line.includes(JSON.stringify(r)), `${r}가 writable_roots에 있어야 한다`);
-});
+// codex writable_roots 대조 테스트는 삭제됐다 — codex는 danger-full-access(샌드박스 없음,
+// 유건 지시 2026-08-21)라 반경 개념이 없다. 반경을 강제하는 러너는 gemini(includeDirectories)·
+// agy(--add-dir)뿐이고 그 계산이 openRoots 하나임은 아래 두 테스트가 계속 잠근다.
 
 test('pickRunner — exclude 목록을 받아 남은 러너를 고른다(자가치유 누적 제외)', () => {
   const on = { company: { connected: true, invalid: false } };
@@ -183,4 +178,25 @@ test('배선: oneshot 자가치유도 진입에서 제외 목록을 존중한다
   // 누적 출처 — chat 쪽에 있던 단언의 형제. 인라인 재구현이던 시절엔 이 자리가 무게이트였다(공유 함수로
   // 바뀌며 chat과 같은 형태로 잠근다). [runner]로 좁히면 프레임마다 앞의 실패를 잊어 무한 핑퐁.
   assert.match(src, /const tried = excludeWith\(__exclude, runner\)/, '누적 출처가 받은 목록이어야 한다');
+});
+
+// 샌드박스 제거 게이트(2026-08-21) — codex는 test/codex-caps-config가 잠그지만 gemini 쪽은
+// 게이트가 없어 조용히 auto_edit·셸 제외로 되돌아가도 전 스위트가 초록이었다(분리 검수 MED-5).
+test('gemini: yolo 승인 모드 유지 + 셸 도구가 전권 caps에서 열린다', async () => {
+  const { readFile: rf, mkdtemp, mkdir } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const src = await rf(new URL('../src/runners.mjs', import.meta.url), 'utf8');
+  assert.match(src, /'--approval-mode', 'yolo'/, 'yolo가 사라졌다 — 셸이 비대화에서 다시 실행 불가가 된다');
+  assert.doesNotMatch(src, /'--approval-mode', 'auto_edit'/, 'auto_edit 복귀 — codex는 되는 지시가 gemini만 막힌다');
+  const { writeGeminiTurnSettings } = await import('../src/runners/gemini.mjs');
+  const home = await mkdtemp(join(tmpdir(), 'argo-gyolo-'));
+  await mkdir(join(home, '.gemini'), { recursive: true });
+  await writeGeminiTurnSettings(home, 'oauth-personal', { fs: true, browser: true, shell: true }, []);
+  const j = JSON.parse(await rf(join(home, '.gemini', 'settings.json'), 'utf8'));
+  assert.ok(!(j.tools?.exclude ?? []).includes('run_shell_command'), '전권인데 셸 도구가 감춰져 있다');
+  // fail-closed 대칭(MED-2): caps 미전달(내부 프로브)은 셸을 감춘다 — agy --sandbox와 같은 방향
+  await writeGeminiTurnSettings(home, 'oauth-personal', null, []);
+  const j2 = JSON.parse(await rf(join(home, '.gemini', 'settings.json'), 'utf8'));
+  assert.ok((j2.tools?.exclude ?? []).includes('run_shell_command'), 'caps 미전달은 닫혀야 한다(fail-closed)');
 });

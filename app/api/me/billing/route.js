@@ -13,12 +13,20 @@ import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { currentUser } from '../../../auth.mjs';
 import { getFreshDeviceSession } from '../../../../src/devicesession.mjs'; // 설치본 결제 표면 — 서비스키 없이 RLS로
-import { trialEnd, proRowActive } from '../../../../src/entitlement.mjs';
+import { trialEnd, reconcileUnneeded } from '../../../../src/entitlement.mjs';
 import { lsGateOpts } from '../../../../src/lsbilling.mjs';
 import { reconcileDueFromRow, reconcileEntitlement } from '../../../../src/lsreconcile.mjs';
 
 // 무행이어도 billing 객체를 반환한다 — 체험 배지(trialEndsAt)의 원천이라 null이면 대다수 체험자의
 // 배지가 사라진다(#164). if (billing) 스타일 소비 금지(필드 단위로 읽을 것).
+// billing=null일 때는 **reason으로 원인을 갈라 준다**(분리 검수 2026-08-19 MED-A/MED-1) — 예전엔
+// 네 가지 원인(클라우드 미구성·미로그인/게스트·조회 수단 없음·조회 예외)이 전부 같은 null이라
+// 화면이 구분할 수 없었고, 일시 장애가 "계정 없음"으로 읽혀 ① 기기 스코프 plan으로 폴백해 남의
+// Pro 배지가 뜨고 ② 앱의 유일한 체크아웃 표면이 조용히 사라졌다.
+//   'no-cloud'        — 클라우드 미구성(로컬 전용). 계정 개념 자체가 없다 → 기기값 폴백이 옳다.
+//   'unauthenticated' — 미로그인·게스트. 마찬가지로 계정이 없다.
+//   'unavailable'     — 조회 실패(예외·수단 없음). **계정은 있을 수 있다** → 기기값으로 메우지 말고
+//                       화면이 "못 불러왔다"고 말해야 한다(무음 소실 금지).
 // reconciling = 이번 요청이 대사를 띄웠는가(비블록 — 클라가 잠시 후 재조회할 신호, F7).
 const pick = (data, trialEndsAt = null, reconciling = false) => Response.json({
   billing: { plan: data?.plan ?? null, status: data?.ls_status ?? null, hasSub: !!data?.ls_subscription_id, endsAt: data?.ends_at ?? null, trialEndsAt },
@@ -37,11 +45,13 @@ function scheduleReconcileIfLost({ url, serviceKey, user, cur, emailTrusted }) {
   const apiKey = process.env.LEMONSQUEEZY_API_KEY;
   if (!apiKey || !serviceKey || !user?.id) return false;
   if (user.id === 'local' || user.id === 'guest') return false; // 로컬·게스트는 구독 표면 없음
-  // "유효한" pro만 대사 불요 — 원시 plan==='pro'를 믿으면 ends_at 경과(재개 웹훅 유실) 사용자의
-  // 유일한 복구가 여기서 영구히 꺼진다(분리 검수 2026-07-30 HIGH). 판정은 entitlement의 공유 술어로 —
-  // is_pro(DB)·fetchPlan(sync)·이 게이트가 갈리면 잠금/복구 비대칭이 생긴다. 대사가 돌면 LS 현재값
+  // 대사 불요 = **유효 pro + 구독 식별자 존재**. 원시 plan==='pro'를 믿으면 ends_at 경과(재개 웹훅
+  // 유실) 사용자의 유일한 복구가 영구히 꺼지고(분리 검수 2026-07-30 HIGH), 유효 pro만 보면 이번엔
+  // 부여 Pro(구독 없는 pro)의 복구가 영구히 꺼져 결제해도 hasSub가 안 붙는다(분리 검수 2026-08-19
+  // HIGH-1 — 그 상태로 결제 카드가 계속 떠 중복 청구를 유인). 판정은 entitlement의 공유 술어로 —
+  // is_pro(DB)·fetchPlan(sync)과 갈리면 잠금/복구 비대칭이 생긴다. 대사가 돌면 LS 현재값
   // (active면 ends_at null)이 apply_ls_event로 덮여 자격이 복구된다(lsbilling.mjs:165 확인).
-  if (proRowActive(cur)) return false; // 유효 pro — 대사 불요(강등은 웹훅·ends_at 경과의 몫)
+  if (reconcileUnneeded(cur)) return false; // 강등은 여전히 웹훅·ends_at 경과의 몫
   if (!reconcileDueFromRow(cur)) return false; // 쿨다운 중 — 대부분의 폴은 여기서 무쿼리로 끝난다
   after(async () => {
     try {
@@ -69,7 +79,7 @@ export async function GET() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url) return Response.json({ billing: null }); // 로컬 전용 — 결제 표면 없음
+  if (!url) return Response.json({ billing: null, reason: 'no-cloud' }); // 로컬 전용 — 결제 표면 없음
   try {
     if (anon) {
       // ① 쿠키 세션 경로 — RLS(own select)가 방어선
@@ -88,7 +98,7 @@ export async function GET() {
     }
     // ② 기기 연동 세션 폴백 — 쿠키 세션이 없는 데스크톱. currentUser()가 기기 파일에서 검증한 id.
     const user = await currentUser();
-    if (!user?.id || user.id === 'local' || user.id === 'guest') return Response.json({ billing: null });
+    if (!user?.id || user.id === 'local' || user.id === 'guest') return Response.json({ billing: null, reason: 'unauthenticated' });
     // 데스크톱 설치본에는 **서비스키가 없다**(release.yml: 앱 빌드에 넣지 않는다). 서비스키를 요구하면
     // 설치본에서 billing이 항상 null이 되고, 화면은 기기 스코프 sync.plan으로 폴백해 체험 배지·업그레이드
     // 버튼이 통째로 사라진다 — 가입 1~14일차(체험 중) 사용자에게 결제 수단이 없던 이유(발행 전 검수
@@ -102,7 +112,7 @@ export async function GET() {
         global: { headers: { Authorization: `Bearer ${sess.access_token}` } },
       })
       : null;
-    if (!userClient && !serviceKey) return Response.json({ billing: null }); // 둘 다 없으면 조회 수단이 없다
+    if (!userClient && !serviceKey) return Response.json({ billing: null, reason: 'unavailable' }); // 둘 다 없으면 조회 수단이 없다
     const sb = userClient ?? createClient(url, serviceKey, { auth: { persistSession: false } });
     // 사용자 스코프는 RLS(own select)가 스코프를 강제하므로 .eq 없이도 자기 행뿐 — 서비스 롤일 때만
     // .eq가 유일 방어선이라 그 경로에만 붙인다(재검수 M5와 같은 근거).
@@ -126,6 +136,6 @@ export async function GET() {
     return pick(data, trialEnd(created, data?.plan), fired);
   } catch (e) {
     console.error('[argo] me/billing 조회 실패:', e?.message ?? e);
-    return Response.json({ billing: null }); // 조회 실패로 설정 화면을 깨지 않는다 — 배너만 사라진다
+    return Response.json({ billing: null, reason: 'unavailable' }); // 조회 실패로 설정 화면을 깨지 않는다 — 배너만 사라진다
   }
 }
