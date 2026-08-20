@@ -5,7 +5,7 @@ import { access, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { join } from 'node:path';
+import { join, dirname, delimiter } from 'node:path';
 import { homedir } from 'node:os';
 
 /* ─── GUI 기동 PATH 보강 ───
@@ -24,6 +24,22 @@ export const mergePath = (dirs) => {
 };
 if (process.platform !== 'win32') {
   mergePath(['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin'), join(homedir(), '.npm-global', 'bin')]);
+}
+
+/* ─── 노드 단일화 (유건 지시 2026-08-20: "노드는 러너쪽이 아닌 아르고 노드로 통일") ───
+   러너·MCP가 'node'를 이름으로 스폰하는 자리가 셋이다 — ① Claude SDK(sdk.mjs)가 cli.js를
+   `executable:'node'`(이름, PATH 해석)로 스폰 ② MCP 서버 command:'node' ③ codex config.toml의
+   node 명령. 셋 다 **사용자 PATH의 아무 node**(버전 불명·부재 가능)를 잡았다 — 시스템 노드가
+   없으면 SDK 턴이 ENOENT로 죽고, 낡은 노드면 cli.js가 문법 오류로 죽는다.
+   지금 이 서버를 돌리는 노드(process.execPath = 데스크톱이면 앱 번들의 사이드카 노드)의 디렉토리를
+   PATH **맨 앞**에 꽂아, 'node' 이름 해석이 항상 아르고와 같은 노드로 떨어지게 한다.
+   맨 앞인 이유: 시스템 노드가 있어도 버전을 우리가 검증한 번들 노드로 고정(통일이 목적, 감지 보강이
+   아니다). npx는 별개 — 번들엔 npm이 없어 npx 계열 MCP는 여전히 시스템 설치가 필요하다(commandExists
+   게이트가 부재를 걸러낸다). 상주/dev(시스템 노드 기동)에선 이미 PATH에 있는 디렉토리라 사실상 no-op. */
+{
+  const nodeDir = dirname(process.execPath);
+  const cur = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
+  if (cur[0] !== nodeDir) process.env.PATH = [nodeDir, ...cur.filter((d) => d !== nodeDir)].join(delimiter);
 }
 
 const execP = promisify(execFile);
