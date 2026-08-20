@@ -9,6 +9,7 @@ import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './pe
 import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루가 '나중에 하기'를 거는 유일한 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
+import { materializeMcpServers } from './runners/npx.mjs'; // node/npx를 실행형으로 — 시스템 npm 없는 기기 지원
 import { appendUsage } from './usage.mjs';
 import { monthCost } from './billing.mjs'; // 금액 집계는 billing 게이트로만(현재 자격 기준 단일 판정)
 import { loadCompany } from './workspace.mjs';
@@ -924,7 +925,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // codex MCP 주입 — 러너 중립성(유건 지시 2026-08-08: "러너 상관 없이 모두 똑같아야").
       // codex는 config.toml [mcp_servers.*]로 MCP를 받는다(실프로브 확인). gemini·antigravity는
       // 벤더 비대화 경로가 MCP를 안 받아 현재 불가(정직 표기는 commonDirectives에서).
-      const allMcp = safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {});
+      // materialize — node→우리 노드, 시스템 npm 없는 기기의 npx→조달 npx(npx.mjs). SDK 경로와 같은 하나.
+      const allMcp = await materializeMcpServers(safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {}));
       // codex만 config.toml로 MCP를 실제로 받는다. gemini·antigravity는 벤더 비대화 경로가
       // MCP를 안 받아 프롬프트에 "있다"고 알려주면 거짓이다(유건 지시 "러너 상관 없이 모두 똑같아야"
       // 위반 — 같게 못 하면 차라리 없다고 해야지 있다고 거짓말하면 안 된다, 2026-08-08).
@@ -1098,7 +1100,8 @@ ${lang === 'en'
   // 설치된 MCP 도구 — 서버 단위 allow(mcp__<name>)로 해당 서버의 전체 도구 허용
   // 실행 게이트 — 호스팅 모드에선 미검증 command MCP를 spawn하지 않는다(검수 HIGH: mcp.json이
   // 봉투로 동기화돼 서비스 키를 든 워커로 흘러가면 임의 프로세스가 키 곁에서 실행되는 위험).
-  let servers = safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {});
+  // materialize — CLI 경로(위 allMcp)와 같은 하나(npx.mjs): node→우리 노드, npm 없는 기기의 npx→조달본
+  let servers = await materializeMcpServers(safeMcpServersForRuntime((await loadMcp(wsId)).servers ?? {}));
   // 크루별 MCP 범위 — 지정된 크루는 그 서버만 스폰·허용(불필요한 프로세스·권한 축소)
   servers = scopeServers(servers, mcpScope); // 순수 헬퍼(persona.mjs) — codex 주입과 같은 하나를 쓴다
   // ⚠ 설치된 MCP 서버를 allowedTools에 bare `mcp__<서버>`로 넣지 않는다 — SDK는 괄호 없는 bare
