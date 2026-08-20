@@ -45,9 +45,13 @@ if (process.platform !== 'win32') {
 const execP = promisify(execFile);
 const exists = (p) => access(p).then(() => true, () => false);
 
-/** execFile + stdin 즉시 닫기 — CLI가 stdin을 물고 대기하는 행을 차단한다(코덱스 300초 행의 원인). */
+/** execFile + stdin 즉시 닫기 — CLI가 stdin을 물고 대기하는 행을 차단한다(코덱스 300초 행의 원인).
+    windowsHide — Windows에서 사이드카는 CREATE_NO_WINDOW(콘솔 없음)로 떠서, 여기서 스폰하는
+    콘솔 자식(codex.exe·node.exe 등)이 **새 콘솔 창을 할당**해 작업표시줄에 노드/터미널 아이콘이
+    떴다(사용자 제보 2026-08-21 "앱 실행 직후부터" — 부팅 예열 detectRunners가 CLI 4종을 스폰한다).
+    자식도 CREATE_NO_WINDOW로 떠야 그 손자(codex가 스폰하는 MCP node)까지 창 없이 이어진다. */
 function exec(cmd, args, opts) {
-  const p = execP(cmd, args, opts);
+  const p = execP(cmd, args, { windowsHide: true, ...opts });
   p.child.stdin?.end();
   return p;
 }

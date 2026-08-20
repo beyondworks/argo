@@ -141,7 +141,8 @@ export async function startRunnerLogin(runner) {
   const host = await detectRunners();
   if (!host[runner]?.installed) return { ok: false, reason: 'not-installed' }; // gemini 등 미설치
   try {
-    const child = spawn(c.bin, c.loginArgs, { detached: true, stdio: 'ignore' });
+    // windowsHide — 로그인 CLI의 콘솔 창이 작업표시줄에 뜨지 않게(브라우저는 CLI가 따로 연다)
+    const child = spawn(c.bin, c.loginArgs, { detached: true, stdio: 'ignore', windowsHide: true });
     child.unref(); // 서버와 독립 실행 — 브라우저 로그인이 끝날 때까지 서버를 막지 않는다
     return { ok: true };
   } catch (e) {
