@@ -20,14 +20,9 @@ test('openRoots — 홈(fs 능력) + 지정 작업 폴더를 이 순서로 연�
 // 세 CLI 러너가 **같은 계산**을 쓴다는 계약. 이게 갈리면 같은 지시가 러너에 따라 되고 안 되고가
 // 갈린다(실사고 2026-07-30: gemini에 인자를 안 넘겨 크루 책상이 회사 폴더 하나로 쪼그라들었고,
 // "이 컴퓨터 어디든 쓸 수 있다"는 프롬프트가 거짓이 됐다).
-test('codex writable_roots가 openRoots와 같은 목록을 싣는다', async () => {
-  const { codexSandboxArgs } = await import('../src/runners/codex.mjs');
-  const args = codexSandboxArgs({ fs: true }, ['/w1']);
-  const roots = openRoots({ fs: true }, ['/w1']);
-  const line = args.find((a) => String(a).startsWith('sandbox_workspace_write.writable_roots'));
-  assert.ok(line, 'writable_roots 인자가 있어야 한다');
-  for (const r of roots) assert.ok(line.includes(JSON.stringify(r)), `${r}가 writable_roots에 있어야 한다`);
-});
+// codex writable_roots 대조 테스트는 삭제됐다 — codex는 danger-full-access(샌드박스 없음,
+// 유건 지시 2026-08-21)라 반경 개념이 없다. 반경을 강제하는 러너는 gemini(includeDirectories)·
+// agy(--add-dir)뿐이고 그 계산이 openRoots 하나임은 아래 두 테스트가 계속 잠근다.
 
 test('pickRunner — exclude 목록을 받아 남은 러너를 고른다(자가치유 누적 제외)', () => {
   const on = { company: { connected: true, invalid: false } };

@@ -1,5 +1,5 @@
 // 러너 게이트 회귀 테스트 — "codex·gemini 연결됨인데 회사 만들기 비활성" 실사용 신고(2026-07-19) 재발 방지.
-// 게이트 판정(anyRunnerUsable)과 codex 샌드박스 능력 매핑(codexSandboxArgs)을 고정한다.
+// 게이트 판정(anyRunnerUsable)을 고정한다. (codex 샌드박스 매핑 테스트는 danger-full-access 전환으로 삭제)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
@@ -9,7 +9,6 @@ import { join } from 'node:path';
 // 임시 ARGO_ROOT — WS_ROOT는 모듈 로드 시 고정되므로 import보다 먼저 심는다(실데이터 미접촉)
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-gatetest-'));
 const { anyRunnerUsable, runnerNeedsReconnect } = await import('../app/runner-usable.mjs');
-const { codexSandboxArgs } = await import('../src/runners.mjs');
 
 test('anyRunnerUsable: codex/gemini 자격 연결이면 CLI 미감지여도 통과(실사고 재현)', () => {
   // 실사용 신고 상태 재현 — OAuth 웹 브리지로 자격 저장, hostInstalled=false(미설치 또는 GUI PATH 오탐)
@@ -41,22 +40,9 @@ test('runnerNeedsReconnect: 무효 자격이 있으면 "끊김" 분기', () => {
   assert.equal(runnerNeedsReconnect({}), false);
 });
 
-test('codexSandboxArgs: 능력 → 샌드박스 매핑 고정(fs=홈 한정 쓰기, browser=네트워크)', async () => {
-  const { homedir } = await import('node:os');
-  // 제품과 같은 JSON.stringify 이스케이프 — Windows 홈(C:\Users\…)은 생 보간과 어긋난다(백슬래시)
-  const HOME_ROOT = `sandbox_workspace_write.writable_roots=[${JSON.stringify(homedir())}]`;
-  assert.deepEqual(codexSandboxArgs(null), [], '능력 미전달 = 기존 workspace-write 그대로(회귀 없음)');
-  assert.deepEqual(codexSandboxArgs({ fs: false, browser: false }), [], '전부 꺼짐 = 오버라이드 없음');
-  // fs ON = 홈 디렉토리 한정 — "/"(루트 전체)는 /Applications의 앱 본체까지 열었다(크리티컬 2026-07-22)
-  assert.deepEqual(codexSandboxArgs({ fs: true }), ['-c', HOME_ROOT],
-    'fs ON = 사용자 문서 접근은 유지하되 앱 본체(/Applications)는 샌드박스 밖');
-  assert.deepEqual(codexSandboxArgs({ browser: true }), ['-c', 'sandbox_workspace_write.network_access=true'],
-    'browser ON = 네트워크 허용');
-  assert.deepEqual(codexSandboxArgs({ fs: true, browser: true }), [
-    '-c', HOME_ROOT,
-    '-c', 'sandbox_workspace_write.network_access=true',
-  ], '둘 다 ON = 두 오버라이드 모두');
-});
+// codexSandboxArgs(능력→샌드박스 매핑) 테스트는 삭제됐다 — danger-full-access 전환(유건 지시
+// 2026-08-21 "샌드박스 없이")으로 함수 자체가 사라졌다. 회귀 가드는 test/codex-caps-config.test.mjs
+// ("workspace-write로 되돌아가지 않는다")가 잠근다.
 
 test('usableRunnerNames: 연결(유효)만, pickRunner 순서(glm→kimi), 이름은 서버 name 필드', async () => {
   const { usableRunnerNames } = await import('../app/runner-usable.mjs');

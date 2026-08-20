@@ -19,7 +19,6 @@ const { realpath: realpathFs } = await import('node:fs/promises');
 process.env.HOME = process.env.USERPROFILE = await realpathFs(await mkdtemp(join(tmpdir(), 'argo-wrhome-')));
 const { validateWorkRoot, updateWorkRoots, loadWorkRoots, loadActiveWorkRoots, MAX_WORK_ROOTS } = await import('../src/workroots.mjs');
 const { makePermissionGate, makeInWorkRoots, makeIsForbidden } = await import('../src/permission-gate.mjs');
-const { codexSandboxArgs, writeCodexTurnConfig } = await import('../src/runners.mjs');
 const { readFile } = await import('node:fs/promises');
 
 const WS_ROOT = process.env.ARGO_ROOT;
@@ -148,23 +147,7 @@ test('게이트: 지정 폴더가 보호 구역을 포함해도 금지 구역 �
   assert.equal((await gate('Read', { file_path: join(homedir(), 'normal.txt') })).behavior, 'allow', '보호 구역 밖 홈 파일은 책상');
 });
 
-test('codexSandboxArgs: fs 꺼짐 + 지정 폴더 = 지정 폴더만, fs 켜짐 = 홈 + 지정 폴더', () => {
-  assert.deepEqual(codexSandboxArgs({ fs: false }, []), [], '기존 동작 불변');
-  const onlyRoots = codexSandboxArgs({ fs: false }, [outside]).join(' ');
-  assert.ok(onlyRoots.includes(`writable_roots=[${JSON.stringify(outside)}]`), 'fs 꺼짐 — 홈은 안 열린다');
-  assert.ok(!onlyRoots.includes(JSON.stringify(homedir())), 'fs 꺼짐이면 홈 미포함');
-  const both = codexSandboxArgs({ fs: true }, [outside]).join(' ');
-  assert.ok(both.includes(JSON.stringify(homedir())) && both.includes(JSON.stringify(outside)), 'fs 켜짐 — 홈+지정');
-});
-
-test('writeCodexTurnConfig: 지정 폴더가 config.toml writable_roots에 실린다(fs 무관)', async () => {
-  const home = await mkdtemp(join(tmpdir(), 'argo-wr-ch-'));
-  await writeCodexTurnConfig(home, { fs: false, browser: false }, [outside]);
-  const c = await readFile(join(home, 'config.toml'), 'utf8');
-  assert.ok(c.includes('[sandbox_workspace_write]'));
-  assert.ok(c.includes(`writable_roots = [${JSON.stringify(outside)}]`));
-  // 지정 폴더 없음 + 능력 꺼짐 = 섹션 없음(기존 계약 유지)
-  const home2 = await mkdtemp(join(tmpdir(), 'argo-wr-ch2-'));
-  await writeCodexTurnConfig(home2, { fs: false, browser: false }, []);
-  assert.ok(!(await readFile(join(home2, 'config.toml'), 'utf8')).includes('[sandbox_workspace_write]'));
-});
+// codexSandboxArgs·writable_roots 테스트는 삭제됐다 — codex가 danger-full-access로 전환돼
+// (유건 지시 2026-08-21 "샌드박스 없이") 반경 매핑 자체가 사라졌다. workRoots는 이제 gemini
+// settings(includeDirectories)·agy --add-dir·SDK additionalDirectories·프롬프트 안내에만 쓰인다
+// — 그 배선은 test/runner-neutrality.test.mjs가 잠근다.

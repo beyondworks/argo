@@ -16,7 +16,7 @@ test('commandExists: PATH·절대경로·부재를 가른다', () => {
 
 test('깨진 MCP는 config.toml에서 빠지고, 멀쩡한 것만 실린다', async () => {
   const home = await mkdtemp(join(tmpdir(), 'argo-codexcfg-'));
-  await writeCodexTurnConfig(home, {}, [], {
+  await writeCodexTurnConfig(home, {
     good: { command: process.execPath, args: ['-e', 'null'] },
     broken: { command: 'argo-definitely-missing-xyz', args: [] },
     remote: { url: 'https://example.com/mcp' },
@@ -29,7 +29,7 @@ test('깨진 MCP는 config.toml에서 빠지고, 멀쩡한 것만 실린다', as
 
 test('env는 TOML 하위 테이블로, 이스케이프해서 쓴다', async () => {
   const home = await mkdtemp(join(tmpdir(), 'argo-codexcfg-env-'));
-  await writeCodexTurnConfig(home, {}, [], {
+  await writeCodexTurnConfig(home, {
     withenv: { command: process.execPath, env: { TOKEN: 'a"b\\c' } },
   });
   const toml = await readFile(join(home, 'config.toml'), 'utf8');
@@ -40,7 +40,7 @@ test('env는 TOML 하위 테이블로, 이스케이프해서 쓴다', async () =
 test('config.toml은 0600으로 쓰인다 — MCP env 토큰이 평문으로 실리는 파일이다', async () => {
   // mcp.json을 0600으로 쓰는 것과 같은 근거(PR #258)인데 codex 쪽만 빠져 있었다(분리 검수 MED-2).
   const home = await mkdtemp(join(tmpdir(), 'argo-codexperm-'));
-  await writeCodexTurnConfig(home, { fs: true }, [], {
+  await writeCodexTurnConfig(home, {
     tok: { command: process.execPath, args: ['-e', ''], env: { SOME_TOKEN: 'x' } },
   });
   const st = await stat(join(home, 'config.toml'));
@@ -50,7 +50,7 @@ test('config.toml은 0600으로 쓰인다 — MCP env 토큰이 평문으로 실
 
 test('살균 후 이름이 충돌하면 뒤엣것을 뺀다 — TOML 중복 테이블은 턴 전체를 죽인다', async () => {
   const home = await mkdtemp(join(tmpdir(), 'argo-codexdup-'));
-  await writeCodexTurnConfig(home, { fs: true }, [], {
+  await writeCodexTurnConfig(home, {
     'my.tool': { command: process.execPath, args: ['-e', ''] },
     'my tool': { command: process.execPath, args: ['-e', ''] },
   });

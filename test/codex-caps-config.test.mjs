@@ -1,40 +1,30 @@
-// codex 능력→샌드박스 config.toml 매핑 회귀 — 실사용 신고(2026-07-22, 김남) 고정:
-// caps를 다 켜도 codex 크루만 "로컬능력 권한 실패", 사용자가 config.toml 수동 수정해 해결.
-// 원인 = `-c sandbox_workspace_write.*` 오버라이드가 codex 버전 따라 거부/무시. config.toml은 안정 인터페이스.
+// codex 샌드박스 폐지 회귀 가드 — 유건 지시 2026-08-21 "샌드박스 없이".
+// 역사: 2026-07-22 "/" 전체 개방 크리티컬 → 홈 한정(writable_roots) → 그 홈 한정이 "사용 권한이
+// 없다" 차단(윈도우 쓰기 전멸 클러스터 포함)의 뿌리가 되어 danger-full-access로 전환.
+// 이 파일은 그 전환이 되돌아가지 않게 잠근다 — 샌드박스 오버라이드가 config.toml에 부활하면
+// full-access 플래그와 어긋나 "고쳤는데 또 막힌다"가 된다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile } from 'node:fs/promises';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-codexcfg-'));
-const { writeCodexTurnConfig, codexSandboxArgs } = await import('../src/runners.mjs');
+const { writeCodexTurnConfig } = await import('../src/runners.mjs');
 
-async function cfg(caps) {
+test('config.toml에 샌드박스 섹션이 없다 — danger-full-access와 한 몸', async () => {
   const home = await mkdtemp(join(tmpdir(), 'argo-ch-'));
-  await writeCodexTurnConfig(home, caps);
-  return readFile(join(home, 'config.toml'), 'utf8');
-}
-
-test('config.toml: fs 켜면 writable_roots=홈, browser 켜면 network_access (사용자 수동 수정의 자동화)', async () => {
-  const c = await cfg({ fs: true, browser: true, shell: true });
-  assert.ok(c.includes('[sandbox_workspace_write]'), '샌드박스 섹션 존재');
-  // 기대값도 제품과 같은 JSON.stringify 이스케이프로 — Windows 홈(C:\Users\…)은 생 보간과 어긋난다(백슬래시)
-  assert.ok(c.includes(`writable_roots = [${JSON.stringify(homedir())}]`), 'fs → 홈 한정 쓰기(앱 본체 /Applications는 밖 — #16)');
-  assert.ok(c.includes('network_access = true'), 'browser → 네트워크');
-});
-
-test('config.toml: 능력 꺼짐이면 샌드박스 섹션 없음(기본 workspace-write 그대로 — 회귀 없음)', async () => {
-  const c = await cfg({ fs: false, browser: false, shell: false });
-  assert.ok(!c.includes('[sandbox_workspace_write]'), '오버라이드 없음');
+  await writeCodexTurnConfig(home, null);
+  const c = await readFile(join(home, 'config.toml'), 'utf8');
+  assert.ok(!c.includes('[sandbox_workspace_write]'), '샌드박스 오버라이드 부활 — 권한 차단이 되돌아온다');
+  assert.ok(!c.includes('writable_roots'), 'writable_roots 부활');
   assert.ok(c.includes('# Argo'), '관리 코멘트는 남아 codex가 읽을 config.toml이 항상 존재');
 });
 
-test('config.toml + -c 이중 경로: 같은 능력에서 두 매핑이 일치(신버전 -c, 구버전 config.toml)', async () => {
-  const caps = { fs: true, browser: true };
-  const c = await cfg(caps);
-  const flags = codexSandboxArgs(caps).join(' ');
-  // -c와 config.toml이 같은 키·값을 가리킨다 — 어느 쪽이 먹든 동일 결과
-  assert.ok(flags.includes(`writable_roots=[${JSON.stringify(homedir())}]`) && c.includes(`writable_roots = [${JSON.stringify(homedir())}]`));
-  assert.ok(flags.includes('network_access=true') && c.includes('network_access = true'));
+test('codex 호출이 danger-full-access를 쓰고 workspace-write로 되돌아가지 않는다', async () => {
+  // 인자 조립이 인라인이라 값 테스트가 불가 — 호출부 표면을 잠근다(SDK_ALLOWED_TOOLS 불변식과 같은 방식).
+  const src = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
+  assert.match(src, /'--sandbox', 'danger-full-access'/, 'full-access 플래그가 사라졌다');
+  assert.doesNotMatch(src, /'--sandbox', 'workspace-write'/, 'workspace-write 복귀 — "사용 권한이 없다"가 되돌아온다');
+  assert.doesNotMatch(src, /codexSandboxArgs/, '삭제된 샌드박스 매핑의 부활');
 });

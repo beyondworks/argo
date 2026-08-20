@@ -16,7 +16,8 @@ const BASELINE = [
   'CODEX_EFFORTS', 'GLM_DEFAULT_MODEL', 'KIMI_DEFAULT_MODEL',
   'OPENROUTER_DEFAULT_MODEL', 'OPENROUTER_ONBOARD_MODEL', 'RUNNERS', 'RUNNER_AUTH',
   'accountScope', 'apiError', 'billedRunnerMap', 'bundledClaudeCli', 'claudeEnvFor',
-  'clearRunnerCred', 'codexEffortArgs', 'codexSandboxArgs', 'detectRunners',
+  // codexSandboxArgs는 베이스라인에서 제거 — danger-full-access 전환(2026-08-21)으로 함수 삭제
+  'clearRunnerCred', 'codexEffortArgs', 'detectRunners',
   'externalExec', 'extractSetupAuthUrl', 'extractSetupToken', 'extractSetupTokenCandidates',
   'glmEnv', 'homeEnv', 'hostOptInAllowed', 'importCodexAuth', 'isBilledRunner',
   'isCliRunner', 'isOpenRouterCreditError', 'isOpenRouterCreditReply',
@@ -30,8 +31,9 @@ const BASELINE = [
   'submitSetupCode', 'verifyRunnerCred', 'webAuthDone', 'writeCodexTurnConfig',
 ];
 
-test('facade 계약 — 베이스라인 62개 export가 전부 존재하고 undefined가 아니다', () => {
-  assert.equal(BASELINE.length, 62, '베이스라인 목록 자체가 62개여야 한다');
+test('facade 계약 — 베이스라인 61개 export가 전부 존재하고 undefined가 아니다', () => {
+  // 62 → 61: codexSandboxArgs 삭제(danger-full-access 전환, 2026-08-21)
+  assert.equal(BASELINE.length, 61, '베이스라인 목록 자체가 61개여야 한다');
   for (const name of BASELINE) {
     assert.ok(name in R, `export 유실: ${name} — src/runners/*.mjs 재배선(facade re-export)을 확인하라`);
     assert.notEqual(typeof R[name], 'undefined', `export가 undefined: ${name}`);

@@ -6,7 +6,6 @@ import { statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exec, exists } from './shared.mjs';
-import { openRoots } from '../workroots.mjs'; // 파일 반경 단일 진실 — gemini·antigravity와 같은 계산(러너 중립성)
 
 /** Argo 전용 CODEX_HOME — 사용자 전역 config(커스텀 에이전트·모델 핀)와 격리하고 auth만 빌린다.
     (전역 config의 spawn_agent 커스텀 스키마가 신형 모델의 예약 도구와 충돌하는 사례 확인) */
@@ -94,32 +93,12 @@ async function codexCmd() {
   }
 }
 
-/** 능력 → codex 샌드박스 매핑(순수) — SDK 러너의 권한 게이트(permission-gate)를 근사한다.
-    fs ON = 워크스페이스 밖 쓰기 허용(읽기는 workspace-write가 원래 전역), browser ON = 네트워크 허용.
-    ⚠ 등가는 아니다(검수 MEDIUM 2026-07-19): codex는 셸 실행이 도구와 분리되지 않아 shell 능력을
-    따로 막을 수 없고, fs/browser를 켜면 그 셸 명령 전체에 밖 쓰기/네트워크가 열린다 — SDK처럼
-    도구(Write/Edit·WebFetch) 단위가 아니라 프로세스 단위 허용이다. 사용자 본인 데스크톱에서
-    사장이 명시적으로 켠 토글 뒤라 수용하되, 이 비대칭을 아는 상태로 유지·변경할 것.
-    키·-c 오버라이드는 codex-cli 0.144.1 바이너리에서 실측 확인(sandbox_workspace_write.*) —
-    미래 codex가 키를 거부하면 fs/browser 켠 턴만 실패한다(기본은 빈 배열이라 무영향).
-    실사용 신고 대응(2026-07-19): 사장이 fs를 켜도 "읽기전용이라 불가"로 막히던 외부 자료 가져오기.
-    (export: 회귀 테스트용) */
-export const codexSandboxArgs = (caps, workRoots = []) => {
-  // fs 능력 — 이전엔 "/"(루트 전체)를 열어 실행 중인 Argo 앱 코드까지 쓰기 가능했다(실사용 신고
-  // 2026-07-22 크리티컬). 홈 디렉토리로 좁힌다 — 사용자 문서 접근(fs 능력의 목적)은 유지되고
-  // /Applications의 앱 본체는 샌드박스 밖이 된다. (홈 안의 Argo 데이터는 프로세스 단위 샌드박스의
-  // 한계로 완전 차단 불가 — commonDirectives 금지 지시가 2차 방어. SDK 러너는 게이트가 하드 차단.)
-  // workRoots — 사장이 지정한 외부 작업 폴더(workroots.mjs, 신고 11건 해소 2026-07-27). fs와
-  // 독립으로 열린다: "홈 전부"가 아니라 "이 폴더만"이 더 좁은 위임이다. 등록 시점에 금지 구역이
-  // 검증돼 있다(validateWorkRoot).
-  // 경로는 TOML 문자열로 직렬화한다 — Windows 홈(C:\Users\...)의 역슬래시가 이스케이프로 해석돼
-  // 값이 깨지던 실사용 신고(2026-07-25). JSON.stringify가 TOML 기본 문자열 규칙과 호환(따옴표·역슬래시 이스케이프).
-  const roots = openRoots(caps, workRoots);
-  return [
-    ...(roots.length ? ['-c', `sandbox_workspace_write.writable_roots=[${roots.map((r) => JSON.stringify(r)).join(',')}]`] : []),
-    ...(caps?.browser ? ['-c', 'sandbox_workspace_write.network_access=true'] : []),
-  ];
-};
+// codexSandboxArgs(능력→샌드박스 매핑)는 삭제됐다 — 유건 지시 2026-08-21 "샌드박스 없이":
+// codex를 `--sandbox danger-full-access`로 돌리므로 writable_roots/network_access 오버라이드가
+// 무의미해졌다. 역사: 2026-07-22 "/" 전체 개방 크리티컬 → 홈 한정으로 좁힘 → 그 홈 한정이
+// "사용 권한이 없다" 차단(윈도우 쓰기 전멸 클러스터 포함)의 뿌리가 되어 지시로 되돌림.
+// 프로세스 수준 방어가 사라졌음을 알고 유지한다 — 남는 방어는 프롬프트 금지 지시(2차)뿐이고,
+// SDK 러너는 무관(canUseTool 게이트가 하드 차단).
 
 /** 크루별 추론 강도 → codex CLI 인자(순수). codex도 강도를 지원한다 — `-c model_reasoning_effort=…`가
     인식되는 키임을 실측(2026-07-26, codex-cli 0.144.1: 미인식 키는 --strict-config에서 즉시 에러,
@@ -189,16 +168,10 @@ export function commandExists(cmd, env = process.env) {
   return dirs.some((d) => hit(join(d, c)));
 }
 
-export async function writeCodexTurnConfig(home, caps, workRoots = [], mcpServers = null) {
-  const lines = ['# Argo 관리 codex 설정 — 매 턴 능력(fs/browser)·지정 작업 폴더·MCP에서 재생성됩니다.'];
-  // fs=홈(앱 본체는 밖) + 사장이 지정한 외부 작업 폴더(fs와 독립 — codexSandboxArgs와 동일 규칙)
-  const roots = openRoots(caps, workRoots);
-  if (roots.length || caps?.browser) {
-    lines.push('[sandbox_workspace_write]');
-    // JSON.stringify — Windows 역슬래시 이스케이프(위 codexSandboxArgs와 동일 규칙, 신고 2026-07-25)
-    if (roots.length) lines.push(`writable_roots = [${roots.map((r) => JSON.stringify(r)).join(', ')}]`);
-    if (caps?.browser) lines.push('network_access = true');
-  }
+export async function writeCodexTurnConfig(home, mcpServers = null) {
+  const lines = ['# Argo 관리 codex 설정 — 매 턴 MCP 목록에서 재생성됩니다.'];
+  // [sandbox_workspace_write] 섹션은 더 쓰지 않는다 — danger-full-access 전환(위 codexSandboxArgs
+  // 삭제 주석)으로 샌드박스 오버라이드가 무의미해졌다. 이 파일의 남은 역할은 MCP 주입뿐.
   // 회사 MCP를 codex에 주입 — 러너 중립성(유건 지시 2026-07-30·08-08 "러너 상관 없이 모두 똑같아야").
   // config.toml [mcp_servers.이름] 형태를 codex가 받는다(codex mcp add 실프로브 확인).
   //
