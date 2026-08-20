@@ -3,6 +3,7 @@
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
+import { loadCapabilities } from './capabilities.mjs';
 import { GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
@@ -40,7 +41,11 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   try {
     if (isCliRunner(runner)) {
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격 우선, 없으면 호스트 로그인
-      const text = (await externalExec({ runner, cwd: paths(wsId).root, prompt, cred, timeoutMs })).trim();
+      // caps 명시 전달(분리 검수 2026-08-21 MED-2) — 안 넘기면 러너마다 기본값 방향이 갈려
+      // (gemini fail-closed 셸 제외 vs codex 전권) 같은 유틸 턴의 권한이 러너 따라 3갈래가 된다.
+      // 능력은 동결 상수(전권)라 값은 하나다 — 채팅 턴과 같은 문맥을 준다.
+      const caps = await loadCapabilities();
+      const text = (await externalExec({ runner, cwd: paths(wsId).root, prompt, cred, caps, timeoutMs })).trim();
       if (!text) throw new Error('empty-reply');
       return { runner, text, usage: {}, costUsd: null }; // 외부 CLI — 토큰 사용량 비노출(채팅 경로와 동일)
     }

@@ -5,7 +5,7 @@
 //   - src-tauri/resources/server/               : standalone 서버 트리(resources)
 // 사용: node scripts/stage-sidecar.mjs   (npm run build:standalone 이후, 또는 자체 빌드 포함)
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, rmSync, existsSync, copyFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, rmSync, existsSync, copyFileSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,6 +39,17 @@ cpSync(standalone, serverDest, { recursive: true });
 // start-server.js가 'next-server (vX)'를 설정해 Dock에 두 번째 아이콘이 떴다.
 // Next 정본을 옆으로 옮기고, 세터를 무력화한 뒤 로드하는 심을 server.js 자리에 둔다 —
 // Rust 쪽 스폰 인자("server.js")는 그대로라 앱 재빌드 외 변경이 없다.
+{
+  // 전제 검증(분리 검수 LOW-2): 심은 ESM(top-level await import)이라 Next server.js가 ESM이고
+  // 루트 package.json에 "type":"module"이 있어야 성립한다. 어긋나면 스테이징은 조용히 성공하고
+  // 앱만 부팅 실패하므로 여기서 막는다.
+  const srv = readFileSync(join(serverDest, 'server.js'), 'utf8');
+  const pkgType = JSON.parse(readFileSync(join(serverDest, 'package.json'), 'utf8')).type;
+  if (!/^\s*import /m.test(srv) || pkgType !== 'module') {
+    console.error(`[stage-sidecar] Dock 심 전제 붕괴 — server.js ESM=${/^\s*import /m.test(srv)}, package.json type=${pkgType}. 심 코드를 Next 형식에 맞게 갱신하라.`);
+    process.exit(1);
+  }
+}
 renameSync(join(serverDest, 'server.js'), join(serverDest, 'server-next.mjs'));
 writeFileSync(join(serverDest, 'server.js'), `// Dock 아이콘 방지 부트스트랩 — stage-sidecar가 생성(정본은 server-next.mjs).
 // macOS: process.title 세터가 LaunchServices에 Foreground 앱으로 등록해 Dock에 node 아이콘이

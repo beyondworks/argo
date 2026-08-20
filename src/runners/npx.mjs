@@ -12,6 +12,9 @@ import { join } from 'node:path';
 import { exec, exists } from './shared.mjs';
 import { commandExists } from './codex.mjs';
 
+// 위협모델 명시(분리 검수 2026-08-21 MED-4): 호스팅(서비스 키 워커) 문맥에서도 이 조달이 돈다 —
+// 단 대상은 safeMcpServersForRuntime을 **이미 통과한**(카탈로그 검증 command) 서버뿐이고, 내려받는
+// 것은 npm 공식 레지스트리의 npm 자체(sha512 대조)다. 임의 command 차단 게이트를 우회하지 않는다.
 const NPM_TOOL_DIR = join(homedir(), '.argo', 'tools', 'npm');
 export const managedNpxEntry = () => join(NPM_TOOL_DIR, 'package', 'bin', 'npx-cli.js');
 

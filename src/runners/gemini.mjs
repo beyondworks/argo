@@ -120,8 +120,11 @@ async function writeGeminiTurnSettings(home, authType, caps, workRoots = []) {
   if (!caps?.browser) exclude.push('google_web_search', 'web_fetch'); // 웹 능력 OFF면 검색·페치 차단(광고·실행 방지)
   // 셸 제외를 해제했다(유건 지시 2026-08-21 "샌드박스 없이, 다른 러너도 동일하게") — 호출이
   // --approval-mode yolo로 바뀌어 "비대화에서 어차피 실행 불가"라는 제외 근거가 사라졌다.
-  // shell 능력이 명시적으로 꺼진 경우만 도구를 감춘다(전권 기본값에선 항상 켜짐).
-  if (caps && caps.shell === false) exclude.push('run_shell_command');
+  // fail-closed 유지(분리 검수 MED-2: 이 조건이 `caps && caps.shell === false`였을 땐 caps 미전달이
+  // 셸 개방이라, 바로 아래 agy의 `caps?.shell ? [] : ['--sandbox']`와 정반대 방향이었다): caps가
+  // 없거나 shell이 꺼져 있으면 감춘다. 실채팅·oneshot은 전권 caps를 명시 전달하므로 셸이 열리고,
+  // caps를 안 넘기는 내부 프로브(probeGeminiOAuth)만 닫힌 채 남는다 — 의도.
+  if (!caps || caps.shell === false) exclude.push('run_shell_command');
   exclude.push('save_memory'); // 기억은 vault가 단일 진실 — gemini 병행 기억(GEMINI.md) 차단
   const roots = openRoots(caps, workRoots); // codex writable_roots와 같은 계산(러너 중립성 단일 진실)
   await writeFile(join(home, '.gemini', 'settings.json'),

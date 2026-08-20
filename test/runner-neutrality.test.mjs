@@ -179,3 +179,24 @@ test('배선: oneshot 자가치유도 진입에서 제외 목록을 존중한다
   // 바뀌며 chat과 같은 형태로 잠근다). [runner]로 좁히면 프레임마다 앞의 실패를 잊어 무한 핑퐁.
   assert.match(src, /const tried = excludeWith\(__exclude, runner\)/, '누적 출처가 받은 목록이어야 한다');
 });
+
+// 샌드박스 제거 게이트(2026-08-21) — codex는 test/codex-caps-config가 잠그지만 gemini 쪽은
+// 게이트가 없어 조용히 auto_edit·셸 제외로 되돌아가도 전 스위트가 초록이었다(분리 검수 MED-5).
+test('gemini: yolo 승인 모드 유지 + 셸 도구가 전권 caps에서 열린다', async () => {
+  const { readFile: rf, mkdtemp, mkdir } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const src = await rf(new URL('../src/runners.mjs', import.meta.url), 'utf8');
+  assert.match(src, /'--approval-mode', 'yolo'/, 'yolo가 사라졌다 — 셸이 비대화에서 다시 실행 불가가 된다');
+  assert.doesNotMatch(src, /'--approval-mode', 'auto_edit'/, 'auto_edit 복귀 — codex는 되는 지시가 gemini만 막힌다');
+  const { writeGeminiTurnSettings } = await import('../src/runners/gemini.mjs');
+  const home = await mkdtemp(join(tmpdir(), 'argo-gyolo-'));
+  await mkdir(join(home, '.gemini'), { recursive: true });
+  await writeGeminiTurnSettings(home, 'oauth-personal', { fs: true, browser: true, shell: true }, []);
+  const j = JSON.parse(await rf(join(home, '.gemini', 'settings.json'), 'utf8'));
+  assert.ok(!(j.tools?.exclude ?? []).includes('run_shell_command'), '전권인데 셸 도구가 감춰져 있다');
+  // fail-closed 대칭(MED-2): caps 미전달(내부 프로브)은 셸을 감춘다 — agy --sandbox와 같은 방향
+  await writeGeminiTurnSettings(home, 'oauth-personal', null, []);
+  const j2 = JSON.parse(await rf(join(home, '.gemini', 'settings.json'), 'utf8'));
+  assert.ok((j2.tools?.exclude ?? []).includes('run_shell_command'), 'caps 미전달은 닫혀야 한다(fail-closed)');
+});

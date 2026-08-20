@@ -35,7 +35,9 @@ if (process.platform !== 'win32') {
    PATH **맨 앞**에 꽂아, 'node' 이름 해석이 항상 아르고와 같은 노드로 떨어지게 한다.
    맨 앞인 이유: 시스템 노드가 있어도 버전을 우리가 검증한 번들 노드로 고정(통일이 목적, 감지 보강이
    아니다). npx는 별개 — 번들엔 npm이 없어 npx 계열 MCP는 여전히 시스템 설치가 필요하다(commandExists
-   게이트가 부재를 걸러낸다). 상주/dev(시스템 노드 기동)에선 이미 PATH에 있는 디렉토리라 사실상 no-op. */
+   게이트가 부재를 걸러낸다). 상주/dev(시스템 노드 기동)에선 no-op이 아니라 **재정렬**이다(분리
+   검수 LOW-1) — 그 노드의 디렉토리(homebrew·nvm bin 등)가 선두로 이동해 크루 셸의 다른 명령
+   해석 순서도 바뀔 수 있다. 통일이 목적이므로 수용하되, 알고 유지한다. */
 {
   const nodeDir = dirname(process.execPath);
   const cur = (process.env.PATH ?? '').split(delimiter).filter(Boolean);

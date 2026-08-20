@@ -111,11 +111,6 @@ export function codexEffortArgs(effort) {
   return CODEX_EFFORTS.includes(mapped) ? ['-c', `model_reasoning_effort=${mapped}`] : [];
 }
 
-/** 능력 매핑을 codex config.toml에 매 턴 써넣는다 — `-c` CLI 오버라이드의 버전-안정 대체(주 경로).
-    실사용 신고(2026-07-22, 김남): caps를 다 켜도 codex 크루만 "로컬능력 권한 실패", 사용자가 config.toml을
-    수동 수정해 해결. 원인 = `-c sandbox_workspace_write.*` 오버라이드 키 경로가 codex 버전마다 갈려
-    거부/무시됨. config.toml의 [sandbox_workspace_write] 섹션은 안정 인터페이스라 버전 불문 먹는다.
-    Argo 관리 config.toml(코멘트 전용)을 통째로 다시 써 파싱 불필요. writable_roots=홈(앱 본체 보호 유지). */
 /** 턴 전용 CODEX_HOME에 베이스의 auth.json을 반입한다 — 심링크 우선, 실패하면 **복사 폴백**.
     심링크는 Windows에서 권한(개발자 모드·관리자)이 없으면 EPERM으로 실패하는데, 예전엔 그 실패를
     조용히 삼켜 auth.json 없는 홈으로 실행 → codex가 401("Missing bearer or basic authentication

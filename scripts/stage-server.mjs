@@ -3,6 +3,9 @@
 // stage-sidecar.mjs와 같은 조립 절차(standalone + static/public + SDK 네이티브 + 시크릿 스캔)를
 // 따르되, Tauri 리소스 대신 dist-server/argo-server-<버전>-<플랫폼>.tar.gz 를 만든다.
 // ⚠ 절차를 바꾸면 stage-sidecar.mjs도 함께 — 두 스크립트는 같은 서버 트리 계약을 공유한다.
+//   의도된 비대칭 하나(2026-08-21): sidecar 쪽의 Dock 아이콘 방지 심(server.js 세터 무력화)은
+//   여기 적용하지 않는다 — 이 타르볼은 리눅스 systemd 경로(install.sh)라 Dock이 없고, 맥에서
+//   수동 `node server.js`로 띄우는 경우만 아이콘이 남는다(수용).
 // Supabase env 없이 빌드하면 로컬 모드(무인증 단일 사용자) 서버가 된다 — 셀프호스트 1차 기본.
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, rmSync, existsSync, readdirSync, readFileSync } from 'node:fs';
