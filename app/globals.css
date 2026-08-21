@@ -1936,6 +1936,19 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh - 56px); min-
 /* 계층 가이드라인 — 들여쓰기 대신 1px 세로선으로 깊이를 읽게 한다(옵시디언) */
 .vault-tree .tree-kids { margin-left: 17px; border-left: 1px solid var(--border-soft); padding-left: 2px; }
 .vault-tree .tree-sec { padding: 8px 14px 3px; }
+/* 창(pane) 탭 스트립 — 옵시디언 탭. 활성 탭만 본문색·하단 액센트, 나머지는 옅게. */
+.vault-tabs { display: flex; align-items: stretch; height: 36px; flex: none; border-bottom: 1px solid var(--border-soft); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.vault-tabs::-webkit-scrollbar { display: none; }
+.vault-tab { display: flex; align-items: center; gap: 6px; padding: 0 8px 0 12px; max-width: 200px; min-width: 0; font-size: 12px; color: var(--fg-3); cursor: pointer; border-right: 1px solid var(--border-soft); position: relative; transition: color .12s, background .12s; }
+.vault-tab:hover { color: var(--fg-2); background: var(--card-2); }
+.vault-tab.active { color: var(--fg); font-weight: 600; }
+.vault-tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--primary); }
+.vault-tab-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.vault-tab-x { flex: none; width: 18px; height: 18px; border-radius: 5px; font-size: 13px; line-height: 1; color: var(--fg-3); opacity: 0; transition: opacity .12s; }
+.vault-tab:hover .vault-tab-x, .vault-tab.active .vault-tab-x { opacity: 1; }
+.vault-tab-x:hover { background: var(--border-soft); color: var(--fg); }
+.vault-pane.focus .vault-tabs { background: transparent; }
+.vault-pane:not(.focus) .vault-tab.active::after { opacity: 0.45; }
 /* 패널 폭 조절 핸들 */
 .vault-split > .vault-handle { width: 5px; flex: none; cursor: col-resize; margin-left: -3px; position: relative; z-index: 2; }
 .vault-split > .vault-handle:hover, .vault-split > .vault-handle.on { background: var(--primary-soft); }

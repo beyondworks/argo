@@ -729,6 +729,8 @@ const DICT = {
   'vault.printHint': ['인쇄 대화상자에서 "PDF로 저장"을 선택하세요', 'Choose "Save as PDF" in the print dialog'],
   'vault.searchTree': ['기억 검색', 'Search memories'],
   'vault.localGraph': ['연결 그래프', 'Local graph'],
+  'vault.closeTab': ['탭 닫기', 'Close tab'],
+  'vault.openSide': ['옆 창에 열기 (⌘클릭)', 'Open to the side (⌘-click)'],
   'graph.toggleCrew': ['크루 연결', 'Crew links'],
   'graph.showOrphans': ['연결 없는 기억 {n}건', '{n} unlinked'],
   'graph.hideOrphans': ['연결 없는 기억 숨김', 'Hide unlinked'],
