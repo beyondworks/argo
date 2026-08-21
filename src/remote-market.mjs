@@ -117,9 +117,9 @@ export async function installRemoteMcp(wsId, { name, install }) {
   return { name: safe };
 }
 
-/* ─── 추천 TOP 20 ─── */
+/* ─── 추천 ─── */
 
-/** 스킬 TOP 20 — skillsmp 스타순(인기순). 다운로드 수는 미제공이라 ★로 정직 표기.
+/** 스킬 추천 — skillsmp 스타순(인기순). 다운로드 수는 미제공이라 ★로 정직 표기.
     같은 저장소가 상위를 도배하지 않게 저자당 최대 2개로 다양화한다. */
 export async function topRemoteSkills() {
   return cached('top:skills', async () => {

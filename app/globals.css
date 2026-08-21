@@ -1818,7 +1818,15 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 /* ─── 채팅 ─── */
 /* overflow-anchor 차단 — 크롬 scroll anchoring이 턴 종료(작업 카드 unmount) 같은 DOM 변화에
    scrollTop을 수백 px 보정해 화면이 튄다(실측 1068→540). 스크롤은 페이지 코드가 전담한다. */
-.thread { display: flex; flex-direction: column; gap: 20px; overflow-anchor: none; }
+.thread { display: flex; flex-direction: column; gap: 20px; overflow-anchor: none; overflow-x: hidden; }
+/* 카드 안의 무공백 긴 문자열(이메일·ID·URL)이 카드 폭을 뚫어 스레드에 가로 스크롤이 생기던 것(제보 2026-08-21) */
+.thread .card, .msg-user { overflow-wrap: anywhere; min-width: 0; }
+/* 외부 앱 봉투(최근 대화·페이지 컨텍스트) — 사장 말풍선 안에 접힌 첨부로. 원문 보존, 기본 접힘 */
+.msg-user details.env { margin-top: 8px; border-top: 1px solid var(--primary-fg-line); padding-top: 6px; font-size: 12px; }
+.msg-user details.env summary { cursor: pointer; opacity: 0.75; list-style: none; display: flex; gap: 6px; align-items: center; }
+.msg-user details.env summary::before { content: '▸'; font-size: 10px; }
+.msg-user details.env[open] summary::before { content: '▾'; }
+.msg-user details.env pre { margin: 6px 0 0; white-space: pre-wrap; font: inherit; opacity: 0.85; max-height: 260px; overflow: auto; }
 .msg-user {
   align-self: flex-end; max-width: 75%;
   background: var(--primary); color: var(--primary-fg);
