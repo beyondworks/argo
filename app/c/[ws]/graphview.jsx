@@ -86,6 +86,9 @@ function createSim({ nodes, edges }) {
       vx: 0, vy: 0, vz: 0,
     };
   });
+  // 반발 상수 — 노드 수에 비례 축소. 고정 5200이면 소수 노드(신규 회사)가 서로를 수백 단위로
+  // 밀어내 화면에 점 몇 개만 남는다(실측 8노드). 대형 그래프(120+)는 종전 값 그대로.
+  const REP = 5200 * Math.min(1, Math.max(0.15, nodes.length / 120));
   const tick = () => {
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i];
@@ -93,7 +96,7 @@ function createSim({ nodes, edges }) {
         const b = pts[j];
         let dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
         let d2 = dx * dx + dy * dy + dz * dz || 1;
-        const f = 5200 / d2;
+        const f = REP / d2;
         const d = Math.sqrt(d2);
         dx /= d; dy /= d; dz /= d;
         a.vx += dx * f; a.vy += dy * f; a.vz += dz * f;
@@ -120,6 +123,47 @@ function createSim({ nodes, edges }) {
   return { pts, tick };
 }
 
+/* ─── 구체(orb) 스프라이트 — 노드를 빛나는 구로(유건 지시 2026-08-21 "구체 형태의 파티클").
+   radial gradient를 노드마다 만들면 2천 노드에서 프레임이 죽는다(아래 색 파싱 실측과 같은 계열) —
+   테마 색으로 **한 번만** 오프스크린에 구를 그려두고 drawImage로 찍는다(스프라이트가 그라디언트보다
+   수십 배 싸다). 테마 전환 시 재생성(argo:theme → syncThemeRgb 뒤 draw가 새 스프라이트를 만든다). */
+const SPRITE_PX = 64; // 원 반지름 = 1/4 지점 — 바깥 3/4는 글로우가 잦아드는 영역
+let orbCache = { key: '', dot: null, note: null };
+function orbSprites() {
+  const key = `${ACCENT}|${PAPER}`;
+  if (orbCache.key === key) return orbCache;
+  const make = (hollow) => {
+    const c = document.createElement('canvas');
+    c.width = c.height = SPRITE_PX;
+    const g = c.getContext('2d');
+    const m = SPRITE_PX / 2;
+    // 바깥 글로우 — 구가 공간에서 빛나는 느낌의 뿌리
+    const glow = g.createRadialGradient(m, m, 0, m, m, m);
+    glow.addColorStop(0, `rgba(${ACCENT}, 0.55)`);
+    glow.addColorStop(0.35, `rgba(${ACCENT}, 0.18)`);
+    glow.addColorStop(1, `rgba(${ACCENT}, 0)`);
+    g.fillStyle = glow;
+    g.fillRect(0, 0, SPRITE_PX, SPRITE_PX);
+    // 코어 구 — 좌상단 하이라이트를 준 구면 셰이딩(빛 방향이 있어야 '구'로 읽힌다)
+    const r = SPRITE_PX / 4;
+    const core = g.createRadialGradient(m - r * 0.45, m - r * 0.45, r * 0.15, m, m, r);
+    if (hollow) { // 노트 — 종이 코어(대화와 시각 구분 유지)
+      core.addColorStop(0, `rgba(${PAPER}, 1)`);
+      core.addColorStop(0.75, `rgba(${PAPER}, 0.92)`);
+      core.addColorStop(1, `rgba(${ACCENT}, 0.9)`);
+    } else {
+      core.addColorStop(0, `rgba(${PAPER}, 0.9)`);
+      core.addColorStop(0.25, `rgba(${ACCENT}, 0.95)`);
+      core.addColorStop(1, `rgba(${ACCENT}, 0.55)`);
+    }
+    g.fillStyle = core;
+    g.beginPath(); g.arc(m, m, r, 0, Math.PI * 2); g.fill();
+    return c;
+  };
+  orbCache = { key, dot: make(false), note: make(true) };
+  return orbCache;
+}
+
 /* ─── 공용 렌더러 — 회전·투영·잉크 할로 ─── */
 function makeRenderer(canvas, graph, sim, opts) {
   const ctx = canvas.getContext('2d');
@@ -132,7 +176,10 @@ function makeRenderer(canvas, graph, sim, opts) {
   };
   fit();
 
-  const view = { rotY: 0.5, rotX: 0.28, zoom: opts.zoom ?? 1 };
+  // autoFit — 그래프 전체가 항상 화면에 담기게 줌을 프레임마다 수렴시킨다(실측: 8노드 회사에서
+  // 구름 반경이 고정이라 구체 2개만 보였다 — 고정 줌으론 소형·대형을 동시에 못 맞춘다).
+  // 사용자가 휠 줌을 잡는 순간 해제(모달) — 수동 조작과 싸우지 않는다.
+  const view = { rotY: 0.5, rotX: 0.28, zoom: opts.zoom ?? 1, autoFit: true };
   const project = (p) => {
     const cy = Math.cos(view.rotY), sy = Math.sin(view.rotY);
     let x = p.x * cy + p.z * sy;
@@ -154,9 +201,31 @@ function makeRenderer(canvas, graph, sim, opts) {
 
   const R_BY_TYPE = { company: 8, team: 6, agent: 5.5, doc: 4, note: 4 };
 
+  // 인접표 — 호버 시 이웃만 밝히고 나머지를 가라앉힌다(옵시디언 로컬 포커스, 유건 지시 2026-08-21).
+  const adj = graph.nodes.map(() => new Set());
+  for (const [i, j] of graph.edges) { adj[i].add(j); adj[j].add(i); }
+
   const draw = (hover) => {
     ctx.clearRect(0, 0, W, H);
     const P = sim.pts.map(project);
+    // autoFit — 이번 프레임 투영 결과의 바운딩 박스를 재서 다음 프레임 줌을 목표로 수렴(lerp).
+    // 피드백 루프지만 s→1로 수렴한다(박스가 목표 크기에 닿으면 목표 줌 = 현재 줌).
+    if (view.autoFit) {
+      let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9, n = 0;
+      for (const q of P) {
+        if (q.k <= 0) continue;
+        n++;
+        if (q.x < minX) minX = q.x; if (q.x > maxX) maxX = q.x;
+        if (q.y < minY) minY = q.y; if (q.y > maxY) maxY = q.y;
+      }
+      if (n > 1) {
+        const s = Math.min((W * 0.8) / Math.max(maxX - minX, 40), (H * 0.74) / Math.max(maxY - minY, 40));
+        const target = Math.max(0.35, Math.min(3.2, view.zoom * s));
+        view.zoom += (target - view.zoom) * 0.08;
+      }
+    }
+    const nb = hover !== null ? adj[hover] : null;
+    const focused = (i) => nb === null || i === hover || nb.has(i);
 
     // 엣지 — 깊이 페이드, 호버 시 연결 추적 하이라이트
     // 깊이 구간별로 **한 경로에 모아 한 번만** 긋는다. 선마다 stroke()를 부르면 호출 수가 엣지 수에
@@ -174,77 +243,59 @@ function makeRenderer(canvas, graph, sim, opts) {
     }
     lanes.forEach((lane, li) => {
       const k = (li + 0.5) / 4;
-      ctx.strokeStyle = `rgba(${INK}, ${0.1 + 0.3 * k * k})`;
+      // 호버 중엔 비인접 엣지를 가라앉혀 이웃 관계가 도드라지게(로컬 포커스)
+      ctx.strokeStyle = `rgba(${INK}, ${(0.1 + 0.3 * k * k) * (hover !== null ? 0.3 : 1)})`;
       ctx.lineWidth = 0.8 + 0.5 * k;
       ctx.stroke(lane);
     });
     if (hover !== null) {
-      ctx.strokeStyle = `rgba(${INK}, 0.85)`;
+      ctx.strokeStyle = `rgba(${ACCENT}, 0.85)`;
       ctx.lineWidth = 1.6;
       ctx.stroke(hiLane);
     }
 
-    // 노드 — 뒤에서 앞 순서로 (깊이 정렬), 할로 글로우 + 코어.
-    // 색은 노드마다 다른 게 아니라 **깊이의 함수**라, 깊이 구간(4단)으로 묶어 구간마다 한 번만 칠한다.
-    // 노드마다 fillStyle에 rgba 문자열을 넣으면 캔버스가 매번 색을 파싱한다 — 임포트 후 1818노드에서
-    // 프레임당 5천 번을 넘겼고, 그게 캔버스 호출 자체(약 8ms)보다 훨씬 큰 비용이었다(실측). 구간 안에서
-    // 앞뒤 순서가 섞이지만, 애초에 알파가 같은 점들이라 눈에 보이지 않는다.
+    // 노드 — 뒤에서 앞 순서(깊이 정렬), **구체 스프라이트** drawImage(유건 지시 2026-08-21).
+    // 스프라이트는 테마당 1회 생성(orbSprites) — 이전 세대의 실측 교훈 유지: 노드마다 fillStyle
+    // rgba 문자열을 파싱시키면 1818노드에서 프레임당 5천 회를 넘겨 캔버스 호출보다 비쌌다.
+    // drawImage + globalAlpha(float, 파싱 없음)는 그 비용 계열이 아예 없다.
+    const { dot, note } = orbSprites();
     const order = P.map((q, i) => [q.z, i]).sort((a, b) => b[0] - a[0]);
-    const B = 4;
-    const halo = [], glow = [], coreNote = [], coreDot = [];
-    for (let b = 0; b < B; b++) { halo.push(new Path2D()); glow.push(new Path2D()); coreNote.push(new Path2D()); coreDot.push(new Path2D()); }
-    const singles = []; // 회사 노드·호버 노드·라벨 다는 노드는 개별 처리(수가 적다)
-    const ring = (path, q, rad) => { path.moveTo(q.x + rad, q.y); path.arc(q.x, q.y, rad, 0, Math.PI * 2); };
+    const labels = []; // 라벨은 노드 위에 얹혀야 하므로 마지막에 그린다
     for (const [, i] of order) {
       const n = graph.nodes[i];
       const q = P[i];
       if (q.k <= 0) continue;               // 카메라 뒤 — 반지름이 음수가 되는 바로 그 점들
-      const r = (R_BY_TYPE[n.type] + Math.min(n.deg, 6) * 0.35) * q.k * (opts.mini ? 0.8 : 1) * Math.min(view.zoom, 1.4);
+      // 줌 캡 1.4 → 2.2 — autoFit이 소형 그래프를 확대해도 구가 점으로 남던 원인(캡이 확대를 삼켰다)
+      const r = (R_BY_TYPE[n.type] + Math.min(n.deg, 6) * 0.35) * q.k * (opts.mini ? 0.8 : 1) * Math.min(view.zoom, 2.2);
       const hi = hover === i;
-      const labeled = (!opts.mini || hi) && (n.type === 'company' || n.type === 'team' || n.type === 'agent' || hi);
-      if (n.type === 'company' || labeled) { singles.push([i, n, q, r, hi, labeled]); continue; }
-      const b = Math.max(0, Math.min(B - 1, Math.floor(q.k * B)));
-      ring(halo[b], q, r * 3);
-      ring(glow[b], q, r * 1.8);
-      ring(n.type === 'note' ? coreNote[b] : coreDot[b], q, r);
-    }
-    for (let b = 0; b < B; b++) {
-      const k = (b + 0.5) / B;
-      ctx.fillStyle = `rgba(${ACCENT}, ${0.06 * k})`; ctx.fill(halo[b]);
-      ctx.fillStyle = `rgba(${ACCENT}, ${0.12 * k})`; ctx.fill(glow[b]);
-      ctx.fillStyle = `rgba(${PAPER}, 0.95)`; ctx.fill(coreNote[b]);
-      ctx.strokeStyle = `rgba(${ACCENT}, ${0.3 + 0.7 * k})`; ctx.lineWidth = 1.4; ctx.stroke(coreNote[b]);
-      ctx.fillStyle = `rgba(${ACCENT}, ${0.3 + 0.7 * k})`; ctx.fill(coreDot[b]);
-    }
-    // 개별 노드 — 원본 그리기 그대로(수가 적어 묶을 이유가 없다)
-    for (const [, n, q, r, hi, labeled] of singles) {
-      const alpha = 0.3 + 0.7 * q.k;
-      ctx.beginPath(); ctx.arc(q.x, q.y, r * 3, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${ACCENT}, ${(hi ? 0.16 : 0.06) * q.k})`; ctx.fill();
-      ctx.beginPath(); ctx.arc(q.x, q.y, r * 1.8, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${ACCENT}, ${(hi ? 0.28 : 0.12) * q.k})`; ctx.fill();
-      ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, Math.PI * 2);
-      if (n.type === 'note') {
-        ctx.fillStyle = `rgba(${PAPER}, 0.95)`; ctx.fill();
-        ctx.strokeStyle = `rgba(${ACCENT}, ${alpha})`; ctx.lineWidth = 1.4; ctx.stroke();
-      } else if (n.type === 'company') {
-        ctx.fillStyle = `rgba(${ACCENT}, ${alpha})`; ctx.fill();
+      const fc = focused(i);
+      // 호버 이웃 라벨 — 이웃 문서 제목이 보여야 "연결을 따라 읽는" 인터랙션이 된다(상한 12 — 그 이상은 겹쳐서 못 읽는다)
+      const labeled = (!opts.mini || hi) && (n.type === 'company' || n.type === 'team' || n.type === 'agent' || hi)
+        || (nb !== null && nb.has(i) && nb.size <= 12);
+      const depth = 0.35 + 0.65 * q.k;
+      ctx.globalAlpha = depth * (fc ? 1 : 0.16);
+      // 스프라이트 원 반지름 = SPRITE_PX/4 → 화면 반지름 r에 맞추면 글로우가 r*3까지 퍼진다(종전 할로와 동일 반경)
+      const s = r * 4;
+      ctx.drawImage(n.type === 'note' ? note : dot, q.x - s / 2, q.y - s / 2, s, s);
+      if (n.type === 'company') { // 허브 — 구 위에 점선 링(정체성 유지)
+        ctx.globalAlpha = 0.5 * q.k;
         ctx.beginPath(); ctx.arc(q.x, q.y, r + 3.5, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${ACCENT}, ${0.5 * q.k})`; ctx.lineWidth = 1; ctx.setLineDash([2, 3]); ctx.stroke(); ctx.setLineDash([]);
-      } else {
-        ctx.fillStyle = `rgba(${ACCENT}, ${alpha})`; ctx.fill();
+        ctx.strokeStyle = `rgba(${ACCENT}, 1)`; ctx.lineWidth = 1; ctx.setLineDash([2, 3]); ctx.stroke(); ctx.setLineDash([]);
       }
       if (hi) {
+        ctx.globalAlpha = 1;
         ctx.beginPath(); ctx.arc(q.x, q.y, r + 6, 0, Math.PI * 2);
         ctx.strokeStyle = `rgba(${ACCENT}, 0.6)`; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
       }
-      if (labeled) {
-        const t = n.label.length > 24 ? `${n.label.slice(0, 24)}…` : n.label;
-        ctx.font = `${hi || n.type === 'company' ? 600 : 400} ${n.type === 'company' ? 11.5 : 10.5}px "IBM Plex Mono", monospace`;
-        ctx.textAlign = 'center';
-        ctx.fillStyle = `rgba(${INK}, ${hi ? 0.95 : 0.4 + 0.4 * q.k})`;
-        ctx.fillText(t, q.x, q.y + r + 15);
-      }
+      if (labeled) labels.push([n, q, r, hi]);
+    }
+    ctx.globalAlpha = 1;
+    for (const [n, q, r, hi] of labels) {
+      const t = n.label.length > 24 ? `${n.label.slice(0, 24)}…` : n.label;
+      ctx.font = `${hi || n.type === 'company' ? 600 : 400} ${n.type === 'company' ? 11.5 : 10.5}px "IBM Plex Mono", monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(${INK}, ${hi ? 0.95 : 0.4 + 0.4 * q.k})`;
+      ctx.fillText(t, q.x, q.y + r + 15);
     }
     return P;
   };
@@ -432,6 +483,7 @@ export function GraphModal({ ws, company, agents, docs, projects, delegations, o
     };
     const wheel = (e) => {
       e.preventDefault();
+      r.view.autoFit = false; // 수동 줌을 잡는 순간 autoFit 해제 — 자동 수렴과 싸우지 않는다
       r.view.zoom = Math.min(Math.max(r.view.zoom * Math.exp(-e.deltaY * 0.0012), 0.45), 3);
       idleAt = performance.now();
     };

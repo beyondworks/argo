@@ -37,7 +37,8 @@ test('배선: 채팅 칩·프리뷰·기억 페이지·설정 리포트 4곳이 
   const vault = await at('app/c/[ws]/vault/page.jsx');
   const settings = await at('app/c/[ws]/settings/page.jsx');
   assert.equal((crew.match(/artifactDownload\(/g) ?? []).length, 2, '채팅: 칩 + 프리뷰 노트');
-  assert.equal((vault.match(/artifactDownload\(/g) ?? []).length, 1, '기억(산출물) 파일 행');
+  // 2 = 산출물 파일 행 + 뷰어 MD 다운로드 버튼(2026-08-21 기억 페이지 개편)
+  assert.equal((vault.match(/artifactDownload\(/g) ?? []).length, 2, '기억: 산출물 행 + 뷰어 MD 버튼');
   assert.equal((settings.match(/artifactDownload\(/g) ?? []).length, 1, '임포트 리포트 링크');
   // 브라우저 폴백 — 같은 앵커의 href가 서버 강제 다운로드(&download=1)도 함께 탄다
   for (const [name, src, n] of [['crew', crew, 2], ['vault', vault, 1], ['settings', settings, 1]]) {

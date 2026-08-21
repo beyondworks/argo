@@ -172,17 +172,27 @@ function Vault({ params }) {
     }
   }
   const selectedDoc = (docs ?? []).find((d) => d.rel === selected);
+  // 백링크 — 이 문서를 [[링크]]로 가리키는 기억. 링크 표기는 세 갈래가 실재한다:
+  // 전체 stem("notes/브랜드-전략") · 파일명 stem("브랜드-전략") · 문서 제목("브랜드 전략") — 셋 다 대조
+  // (첫 판본이 전체 stem만 봐서 실파일 백링크 2건이 0건으로 나왔다, 격리 서버 실측).
+  const selStem = selected ? selected.replace(/\.md$/, '') : null;
+  const selBase = selStem ? selStem.split('/').pop() : null;
+  const backlinks = selStem
+    ? (docs ?? []).filter((d) => d.rel !== selected
+      && (d.links ?? []).some((l) => l === selStem || l === selBase || l === selectedDoc?.title))
+    : [];
+  const dlName = selected ? selected.split('/').pop() : 'memory.md';
 
   return (
     // 뷰포트 고정 2패널 — 페이지는 안 흐르고 각 패널이 자체 스크롤한다(옵시디언 구조).
     // 높이·모바일 스택은 .vault-split(globals.css) — 인라인이면 미디어쿼리를 못 탄다.
     <div className="vault-split">
-      {/* ── 좌: 워크트리 ── */}
-      <div className="card vault-tree" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div className="card-head" style={{ paddingBottom: 8, flex: 'none' }}>
+      {/* ── 좌: 워크트리 — 카드 껍데기 없는 풀블리드 패널(옵시디언식, 유건 지시 2026-08-21) ── */}
+      <div className="vault-tree" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 14px 8px', flex: 'none' }}>
           <span className="card-title">{t('vault.header')}</span>
-          <span className="rule" />
-          <span className="chip">{docs ? docs.length + (projects?.length ?? 0) : '—'}</span>
+          <span style={{ flex: 1 }} />
+          <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>{docs ? docs.length + (projects?.length ?? 0) : '—'}</span>
         </div>
         <div style={{ display: 'flex', gap: 6, padding: '0 14px 10px', flex: 'none' }}>
           <button className="btn sm" style={{ flex: 1 }} onClick={() => { setComposing(true); setSelected(null); }}>
@@ -252,8 +262,8 @@ function Vault({ params }) {
         </div>
       </div>
 
-      {/* ── 우: 콘텐츠(그래프 / 작성 폼 / 종이 뷰어) ── */}
-      <div className="card vault-content" style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: composing || selected ? 24 : '14px 18px' }}>
+      {/* ── 우: 콘텐츠(그래프 / 작성 폼 / 종이 뷰어) — 풀블리드 ── */}
+      <div className="vault-content" style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: composing || selected ? '28px 36px 48px' : '14px 18px' }}>
         {composing ? (
           <form onSubmit={saveNote} style={{ display: 'grid', gap: 10, maxWidth: 860 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -311,17 +321,30 @@ function Vault({ params }) {
         ) : loadingDoc ? (
           <Spinner />
         ) : (
-          <div style={{ maxWidth: 860 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          // 뷰어 — 중앙 정렬 종이 컬럼(옵시디언 리딩 뷰). 다운로드는 원문 md + 인쇄(PDF 저장).
+          <div className="vault-reader" style={{ maxWidth: 760, margin: '0 auto' }}>
+            <div className="vault-reader-bar" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
               <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', letterSpacing: '0.03em', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected}</span>
-              {selectedDoc?.dir === 'notes' && !editing && (
+              {!editing && (
                 <span style={{ display: 'flex', gap: 6, flex: 'none' }}>
-                  <button className="btn sm" onClick={() => { setDraft(content); setEditing(true); }}>
-                    <Icon name="edit" size={12} /> {t('vault.edit')}
-                  </button>
-                  <button className="btn sm" onClick={() => setDeleteOpen(true)} disabled={mutating} style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}>
-                    <Icon name="trash" size={12} /> {t('vault.delete')}
-                  </button>
+                  {/* 원문 md 다운로드 — 데스크톱 웹뷰의 a[download] 무동작은 artifactDownload가 처리(#241과 동일 경로) */}
+                  <a className="btn sm" download={dlName}
+                    href={`/api/companies/${ws}/vault?rel=${encodeURIComponent(selected)}&download=1`}
+                    onClick={artifactDownload(`/api/companies/${ws}/vault?rel=${encodeURIComponent(selected)}&download=1`, dlName)}
+                    style={{ textDecoration: 'none' }}>
+                    <Icon name="doc" size={12} /> MD
+                  </a>
+                  <button className="btn sm" onClick={() => window.print()} title={t('vault.printHint')}>PDF</button>
+                  {selectedDoc?.dir === 'notes' && (
+                    <>
+                      <button className="btn sm" onClick={() => { setDraft(content); setEditing(true); }}>
+                        <Icon name="edit" size={12} /> {t('vault.edit')}
+                      </button>
+                      <button className="btn sm" onClick={() => setDeleteOpen(true)} disabled={mutating} style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}>
+                        <Icon name="trash" size={12} /> {t('vault.delete')}
+                      </button>
+                    </>
+                  )}
                 </span>
               )}
             </div>
@@ -339,7 +362,20 @@ function Vault({ params }) {
                 </div>
               </div>
             ) : (
-              <Markdown text={content} onWikiLink={openWiki} wsId={ws} />
+              <>
+                <Markdown text={content} onWikiLink={openWiki} wsId={ws} />
+                {backlinks.length > 0 && (
+                  // 백링크 — 이 문서를 [[링크]]한 기억(옵시디언 리딩 뷰 하단과 동일한 문법)
+                  <div className="vault-reader-bar" style={{ marginTop: 28, paddingTop: 14, borderTop: '1px dashed var(--border-soft)' }}>
+                    <span className="microlabel" style={{ display: 'block', marginBottom: 8 }}>{t('vault.backlinks', { n: backlinks.length })}</span>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {backlinks.map((d) => (
+                        <button key={d.rel} className="wikilink" onClick={() => openFromGraph(d.rel)}>{d.title}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -400,20 +436,21 @@ function TreeSection({ label, count, defaultOpen = false, depth = 0, folder = fa
 /** 파일 크기 표시 — 산출물 다운로드 행 전용(대략치면 충분). */
 const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round((b ?? 0) / 1024))}KB`);
 
-/** 트리 파일 행 — 주제 노트·일지·대화·산출물이 같은 문법을 쓴다. pad = 트리 들여쓰기. */
+/** 트리 파일 행 — 옵시디언 밀도의 **한 줄** 행(유건 지시 2026-08-21 "더 깔끔하고 가벼운 워크트리").
+    서브라벨 줄을 없애고 시각은 우측에 옅게 — 두 줄 행은 문서 수백 개에서 트리를 무겁게 만들었다.
+    링크 수는 트리에서 빼고 뷰어 하단 백링크 섹션이 담당한다. pad = 트리 들여쓰기. */
 function DocRow({ d, active, onOpen, icon, lang, pad = 14 }) {
   return (
-    <button onClick={() => onOpen(d.rel)} className={`row${active ? ' active' : ''}`} style={{ paddingLeft: pad }}>
-      <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}>
-        <Icon name={icon} size={14} />
+    <button onClick={() => onOpen(d.rel)} className={`row${active ? ' active' : ''}`} style={{ paddingLeft: pad }}
+      title={d.title}>
+      <span style={{ display: 'inline-flex', color: 'var(--fg-3)', flex: 'none' }}>
+        <Icon name={icon} size={13} />
       </span>
-      <span style={{ minWidth: 0, flex: 1 }}>
-        <span style={{ display: 'block', fontSize: 12.5, fontWeight: active ? 700 : 600, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-          {d.title}
-        </span>
-        <span className="mono" style={{ display: 'block', fontSize: 10, color: 'var(--fg-3)', marginTop: 1 }}>
-          {timeAgo(tsFromRel(d.rel) ?? d.mtime, lang)}{(d.links?.length ?? 0) > 0 && ` · LINK ${d.links.length}`}
-        </span>
+      <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: active ? 700 : 500, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+        {d.title}
+      </span>
+      <span className="mono" style={{ flex: 'none', fontSize: 9.5, color: 'var(--fg-3)', opacity: 0.8 }}>
+        {timeAgo(tsFromRel(d.rel) ?? d.mtime, lang)}
       </span>
     </button>
   );

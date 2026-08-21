@@ -1914,18 +1914,26 @@ button.memo-chip.ap-toggle { background: transparent; cursor: pointer; padding: 
     var(--fg) 7px 8px, transparent 8px 11px);
 }
 
-/* ─── 기억 2패널(vault) — 뷰포트 고정, 각 패널 자체 스크롤 ───
-   170 = .topbar(56) + .content 상하 패딩(26+88). 96 같은 어림값이면 그만큼 페이지 스크롤이 남는다(검수 실측 74px). */
-.vault-split { display: flex; gap: 14px; height: calc(100vh - 170px); min-height: 420px; align-items: stretch; }
-/* 하단 여백 회수(실사용 신고 2026-08-01 "기억 페이지 하단에 여백이 너무 많다").
-   본문 컨테이너는 하단 패딩 88px을 갖는다 — 스크롤되는 페이지에는 마지막 줄이 화면 끝에 붙지 않게
-   해주는 여유지만, 이 페이지는 **뷰포트에 딱 맞추는 2패널**이라 그 패딩이 그대로 빈 칸이 된다
-   (실측: 패널 하단 812px, 뷰포트 900px — 88px이 남았다).
-   :has()를 쓰는 이유는 점진적 향상이다 — 미지원 브라우저에서는 두 규칙이 함께 적용되지 않아
-   현행 레이아웃 그대로다(패딩만 줄고 높이는 그대로면 스크롤이 생긴다). */
-main.content:has(> .vault-split) { padding-bottom: 14px; }
-main.content:has(> .vault-split) .vault-split { height: calc(100vh - 96px); }
-.vault-split > .vault-tree { width: 300px; flex: none; }
+/* ─── 기억 2패널(vault) — 옵시디언식 풀블리드(유건 지시 2026-08-21: "카드 형태 말고 화면 채우기식") ───
+   카드 껍데기(테두리·둥근 모서리·gap) 없이 화면 전체를 두 면으로 나눈다. 페이지 패딩·최대폭도
+   이 페이지에서만 회수한다(:has() = 점진적 향상 — 미지원이면 종전 여백 레이아웃으로 남는다). */
+.vault-split { display: flex; gap: 0; height: calc(100vh - 170px); min-height: 420px; align-items: stretch; }
+main.content:has(> .vault-split) { padding: 0; max-width: none; }
+main.content:has(> .vault-split) .vault-split { height: calc(100vh - 56px); min-height: 0; }
+.vault-split > .vault-tree {
+  width: 288px; flex: none;
+  border-right: 1px solid var(--border-soft);
+}
+.vault-split > .vault-content { background: var(--bg); }
+/* 트리 행 — 옵시디언 밀도(한 줄·좁은 행). 페이지 공용 .row(패딩 큰 카드행)보다 가볍게. */
+.vault-tree .row { padding-top: 4px; padding-bottom: 4px; gap: 8px; }
+/* 문서 인쇄(PDF 저장) — 뷰어 본문만 종이에 싣는다. 앱 크롬(사이드바·탑바·트리)은 전부 숨김. */
+@media print {
+  .side, .topbar, .vault-tree, .vault-reader-bar { display: none !important; }
+  .shell { display: block; }
+  main.content, .vault-split, .vault-split > .vault-content { padding: 0 !important; height: auto !important; overflow: visible !important; max-width: none; }
+  .vault-reader { max-width: none !important; }
+}
 
 /* ─── 스크롤바 ─── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -1938,10 +1946,11 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh - 96px); }
   .side { position: static; height: auto; }
   .content { padding: 16px 14px 70px; }
   .search-pill { width: auto; flex: 1; }
-  /* 기억 2패널 → 세로 스택. 좁은 폭에 300px 트리를 고정하면 본문이 38px로 붕괴한다(검수 실측).
+  /* 기억 2패널 → 세로 스택. 좁은 폭에 고정폭 트리를 두면 본문이 38px로 붕괴한다(검수 실측).
      트리는 자체 스크롤로 45vh까지만, 본문은 그래프가 살 최소 높이를 보장한다. */
   .vault-split { flex-direction: column; height: auto; min-height: 0; }
-  .vault-split > .vault-tree { width: auto; max-height: 45vh; }
+  main.content:has(> .vault-split) .vault-split { height: auto; }
+  .vault-split > .vault-tree { width: auto; max-height: 45vh; border-right: 0; border-bottom: 1px solid var(--border-soft); }
   .vault-split > .vault-content { min-height: 420px; }
 }
 
