@@ -727,6 +727,13 @@ const DICT = {
   'vault.deleteConfirm': ['노트 삭제', 'Delete note'],
   'vault.docUnavailable': ['(문서를 열 수 없습니다: {msg})', '(Could not open document: {msg})'],
   'vault.printHint': ['인쇄 대화상자에서 "PDF로 저장"을 선택하세요', 'Choose "Save as PDF" in the print dialog'],
+  'vault.searchTree': ['기억 검색', 'Search memories'],
+  'vault.localGraph': ['연결 그래프', 'Local graph'],
+  'graph.toggleCrew': ['크루 연결', 'Crew links'],
+  'graph.showOrphans': ['연결 없는 기억 {n}건', '{n} unlinked'],
+  'graph.hideOrphans': ['연결 없는 기억 숨김', 'Hide unlinked'],
+  'graph.backToAll': ['전체 그래프로', 'Back to all'],
+  'graph.hint2d': ['드래그 이동 · 휠 줌 · 노드 드래그 · 더블클릭 = 주변만 보기', 'Drag to pan · wheel to zoom · drag nodes · double-click = local view'],
   'vault.backlinks': ['이 문서를 참조하는 기억 {n}건', '{n} memories link here'],
 
   // ── 크루 채팅
