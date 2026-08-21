@@ -112,7 +112,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       W = canvas.clientWidth; H = canvas.clientHeight; canvas.width = W * dpr; canvas.height = H * dpr;
       // 별먼지 — 화면 좌표에 고정(줌·팬에 안 따라온다: 먼 배경). 결정적 난수라 리사이즈마다 같은 하늘.
       let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-      const n = compact ? 60 : Math.round((W * H) / 2600);
+      const n = compact ? 40 : Math.round((W * H) / 5000);
       dust = Array.from({ length: n }, () => ({ x: rnd() * W, y: rnd() * H, r: rnd() < 0.1 ? 1.1 : 0.6, a: 0.08 + rnd() * 0.25 }));
     };
     fit();
@@ -145,7 +145,8 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
     let frameNo = 0;
     const rootIdx = root ? graph.nodes.findIndex((n) => n.id === root) : -1;
 
-    const nodeRadius = (n) => (compact ? 2.2 : 2.6) + Math.log2(1 + n.deg) * (compact ? 1.4 : 1.9) + (n.type === 'agent' ? 2 : 0);
+    // 점은 작게 — 2,000건 실데이터에서 큰 점은 덩어리가 된다(유건 2026-08-21 "점들이 너무 크고 오밀조밀"). 허브만 로그로 조금 큼
+    const nodeRadius = (n) => (compact ? 1.4 : 1.8) + Math.log2(1 + n.deg) * (compact ? 0.8 : 1.1) + (n.type === 'agent' ? 1.5 : 0);
     const pick = (sx, sy) => {
       let best = null, bd = 12 * 12;
       for (let i = 0; i < sim.pts.length; i++) {
@@ -192,13 +193,14 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         const path = isHi ? hi : (na.type === 'agent' || nbn.type === 'agent') ? crewE : (hubs.has(a) && hubs.has(b)) ? spine : twig;
         path.moveTo(A.x, A.y); path.lineTo(B.x, B.y);
       }
-      const dimE = anyFocus ? 0.35 : 1;
+      const dense = Math.min(1, 900 / Math.max(graph.edges.length, 1)); // 선 밀도 보정 — 엣지가 많을수록 옅게
+      const dimE = (anyFocus ? 0.35 : 1) * Math.max(dense, 0.25);
       ctx.setLineDash(dashed ? [3, 5] : []); ctx.lineWidth = 0.7; ctx.strokeStyle = `rgba(${INK}, ${0.16 * dimE})`; ctx.stroke(twig);
       ctx.setLineDash(dashed ? [1, 5] : []); ctx.strokeStyle = `rgba(${INK}, ${0.3 * dimE})`; ctx.stroke(crewE);
       ctx.setLineDash([]); ctx.lineWidth = 1.1; ctx.strokeStyle = `rgba(${GOLD}, ${0.55 * dimE})`; ctx.stroke(spine);
       if (anyFocus) { ctx.lineWidth = 1.2; ctx.strokeStyle = `rgba(${GOLD}, 0.9)`; ctx.stroke(hi); }
       // 노드 — 일반 기억은 한 경로로, 허브·크루·포커스는 개별
-      const rs = Math.min(Math.max(view.s, 0.6), 2.4);
+      const rs = Math.min(Math.max(view.s, 0.7), 1.15); // 화면 고정 크기에 가깝게 — 줌인해도 점이 부풀지 않는다(옵시디언과 같은 규칙)
       const plain = new Path2D();
       const specials = [];
       const off = (q) => q.x < -24 || q.x > W + 24 || q.y < -24 || q.y > H + 24; // 뷰포트 컬링
@@ -223,11 +225,11 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         const isRoot = i === rootIdx;
         const big = isRoot || hubs.has(i);
         if (big || (anyFocus && f > 0.5)) { // 골드 별 — 헤일로 + 링 + 십자 빛살
-          const g = ctx.createRadialGradient(q.x, q.y, r * 0.5, q.x, q.y, r * 3.2);
-          g.addColorStop(0, `rgba(${GOLD}, ${0.22 * a})`); g.addColorStop(1, `rgba(${GOLD}, 0)`);
-          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(q.x, q.y, r * 3.2, 0, Math.PI * 2); ctx.fill();
-          ctx.lineWidth = 0.8; ctx.strokeStyle = `rgba(${GOLD}, ${0.45 * a})`; ctx.beginPath(); ctx.arc(q.x, q.y, r * 2.1, 0, Math.PI * 2); ctx.stroke();
-          const L = r * (isRoot ? 3 : 2.6);
+          const g = ctx.createRadialGradient(q.x, q.y, r * 0.5, q.x, q.y, r * 2.4);
+          g.addColorStop(0, `rgba(${GOLD}, ${0.18 * a})`); g.addColorStop(1, `rgba(${GOLD}, 0)`);
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(q.x, q.y, r * 2.4, 0, Math.PI * 2); ctx.fill();
+          ctx.lineWidth = 0.7; ctx.strokeStyle = `rgba(${GOLD}, ${0.4 * a})`; ctx.beginPath(); ctx.arc(q.x, q.y, r * 1.9, 0, Math.PI * 2); ctx.stroke();
+          const L = r * (isRoot ? 2.8 : 2.3);
           ctx.lineWidth = 1; ctx.strokeStyle = `rgba(${GOLD}, ${0.9 * a})`;
           ctx.beginPath(); ctx.moveTo(q.x - L, q.y); ctx.lineTo(q.x + L, q.y); ctx.moveTo(q.x, q.y - L); ctx.lineTo(q.x, q.y + L); ctx.stroke();
           ctx.fillStyle = `rgba(${GOLD}, ${0.95 * a})`;
@@ -238,11 +240,11 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       const drawn = new Set();
       const placed = []; // 라벨 충돌 회피 — 허브가 뭉친 실데이터(2,000건)에서 라벨끼리 겹쳐 못 읽던 것. 가까운 자리엔 안 쓴다
-      const crowded = (x, y) => placed.some((q) => Math.abs(q.y - y) < 16 && Math.abs(q.x - x) < 140);
+      const crowded = (x, y) => placed.some((q) => Math.abs(q.y - y) < 18 && Math.abs(q.x - x) < 170);
       for (let i = 0; i < graph.nodes.length; i++) {
         const n = graph.nodes[i];
         const isHover = i === hover, isNb = !compact && nbSet?.has(i);
-        const show = isHover || isNb || i === rootIdx || (!compact && !anyFocus && (hubs.has(i) || view.s > 1.7));
+        const show = isHover || isNb || i === rootIdx || (!compact && !anyFocus && (hubs.has(i) || view.s > 2.6));
         if (!show) continue;
         if (!isHover && i !== rootIdx) { if (drawn.has(n.label)) continue; drawn.add(n.label); }
         const q = P[i], r = nodeRadius(n) * rs;
