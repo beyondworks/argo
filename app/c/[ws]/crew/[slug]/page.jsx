@@ -1,5 +1,6 @@
 'use client';
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
+import { splitEnvelope } from './envelope.mjs';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
@@ -165,6 +166,24 @@ function ArtifactChips({ ws, rels }) {
         })}
       </span>
       {shown && <ArtifactPreview key={shown} ws={ws} rel={shown} />}
+    </>
+  );
+}
+
+/** 사장 말풍선 본문 — 외부 앱(인트라넷) 봉투면 지시만 본문으로, 최근 대화·페이지 컨텍스트는 접힌 첨부로 */
+function UserText({ text }) {
+  const { t } = useLang();
+  const env = splitEnvelope(text);
+  if (!env) return text;
+  return (
+    <>
+      {env.main}
+      {env.parts.map((p, i) => (
+        <details key={i} className="env">
+          <summary>{p.label ? t('chat.envelope.part', { label: p.label }) : t('chat.envelope.extra')}</summary>
+          <pre>{p.text}</pre>
+        </details>
+      ))}
     </>
   );
 }
@@ -959,7 +978,7 @@ export default function CrewChat({ params }) {
                     ))}
                   </span>
                 )}
-                {m.text}
+                <UserText text={m.text} />
               </div>
               {/* 실패한 턴 — 글은 스레드에 그대로 두고 사유와 재시도만 붙인다(호버로 숨지 않게 항상 표시) */}
               {m.failed && !viewing && (

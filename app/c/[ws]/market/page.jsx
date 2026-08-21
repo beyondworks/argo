@@ -8,7 +8,7 @@ import { useLang } from '../../../i18n';
 const fmtN = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 const safeId = (item) => String(item.name ?? '').toLowerCase().replace(/[^a-z0-9가-힣-]/g, '-').replace(/^-+|-+$/g, '');
 
-/** 추천 TOP 20 — 스킬(★순) / MCP(npm 주간 다운로드순). 행 클릭 = 상세. */
+/** 추천 — 스킬(★순) / MCP(npm 주간 다운로드순). 행 클릭 = 상세. */
 function TopList({ ws, kind, installedIds, onInstalled, onDetail, customMcpAllowed = true }) {
   const { t } = useLang();
   const [items, setItems] = useState(null);

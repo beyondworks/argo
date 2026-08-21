@@ -24,7 +24,7 @@ export async function GET(req, { params }) {
   const remote = u.searchParams.get('remote');
   const top = u.searchParams.get('top');
 
-  // 추천 TOP 20 — 스킬(skillsmp ★순) / MCP(npm 주간 다운로드순)
+  // 추천 — 스킬(skillsmp ★순) / MCP(npm 주간 다운로드순)
   if (top) {
     try {
       const { lang = 'ko' } = await loadCompany(ws).catch(() => ({})); // 회사 시스템 언어 — 없으면 ko 폴백

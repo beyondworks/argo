@@ -807,6 +807,8 @@ const DICT = {
   'chat.annotate.send': ['수정 지시 보내기 ({n})', 'Send revisions ({n})'],
   'chat.annotate.msgHead': ['부분 코멘트 — 아래 표시한 부분만 고쳐 주세요. 나머지는 그대로 유지하세요.', 'Inline comments — revise only the marked parts. Keep everything else as is.'],
   'chat.copied': ['복사됨', 'Copied'],
+  'chat.envelope.part': ['함께 보낸 {label}', 'Attached: {label}'],
+  'chat.envelope.extra': ['함께 보낸 내용', 'Attached context'],
   'chat.resend': ['다시 보내기', 'Resend'],
   // 배달 지시 출처표식 — 사장 말풍선과 구분(신고 2026-07-28 "내가 쓴 게 아니거든")
   'chat.via.crewmail': ['동료 쪽지', 'Crew mail'],
@@ -1065,7 +1067,7 @@ const DICT = {
   'routines.resultTitle': ['결과 · 기억에 기록됨', 'Result · Recorded in Memory'],
 
   // ── 마켓
-  'market.topLabel': ['추천 Top 20 · {source}', 'Top 20 Recommended · {source}'],
+  'market.topLabel': ['추천 · {source}', 'Recommended · {source}'],
   'market.sourceSkills': ['skillsmp 인기순 (★)', 'skillsmp popularity (★)'],
   'market.sourceMcp': ['npm 주간 다운로드순', 'npm weekly downloads'],
   'market.detailHint': ['클릭하면 쉬운 설명을 보여드립니다', 'Click to see a simple explanation'],
