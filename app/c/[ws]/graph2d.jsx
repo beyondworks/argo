@@ -246,13 +246,16 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         ctx.fillStyle = g; ctx.beginPath(); ctx.arc(q.x, q.y, r * 3.2, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = `rgba(${ACCENT}, ${0.95 * f})`; ctx.beginPath(); ctx.arc(q.x, q.y, r * 1.15, 0, Math.PI * 2); ctx.fill();
       }
-      // 라벨
+      // 라벨 — compact(뷰어 레일)는 중심·호버만(이웃 라벨까지 쓰면 300px에서 겹쳐 못 읽는다, 실데이터 실측).
+      // 같은 제목의 허브가 여럿이면(실데이터: "# 핵심"·"Vault Log"가 수 개) 프레임당 한 번만 쓴다.
       ctx.textAlign = 'center';
+      const drawn = new Set();
       for (let i = 0; i < graph.nodes.length; i++) {
         const n = graph.nodes[i];
-        const isHover = i === hover, isNb = nbSet?.has(i);
-        const show = isHover || isNb || i === rootIdx || (!anyFocus && (hubs.has(i) || view.s > 1.7)) || (anyFocus && false);
+        const isHover = i === hover, isNb = !compact && nbSet?.has(i);
+        const show = isHover || isNb || i === rootIdx || (!compact && !anyFocus && (hubs.has(i) || view.s > 1.7));
         if (!show) continue;
+        if (!isHover && i !== rootIdx) { if (drawn.has(n.label)) continue; drawn.add(n.label); }
         const q = P[i], r = nodeRadius(n) * rs;
         if (off(q)) continue;
         const txt = n.label.length > 28 ? `${n.label.slice(0, 28)}…` : n.label;
