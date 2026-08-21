@@ -29,6 +29,13 @@ function Vault({ params }) {
   const [projects, setProjects] = useState([]); // 크루 산출물(vault/projects/) — 기억과 별도 축
   const [q, setQ] = useState('');
   const [meta, setMeta] = useState(null); // 회사·크루 — 그래프 크루 연결 토글용
+  // 탐색기 툴바 상태(옵시디언): 정렬(수정시각 ↔ 이름)·모두 접기(세대 카운터)·검색 토글
+  const [sort, setSort] = useState('mtime');
+  const [treeGen, setTreeGen] = useState(0);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const sortDocs = (arr) => (sort === 'name'
+    ? [...arr].sort((a, b) => a.title.localeCompare(b.title, 'ko'))
+    : [...arr].sort((a, b) => (tsFromRel(b.rel) ?? b.mtime) - (tsFromRel(a.rel) ?? a.mtime)));
 
   // ── 창(pane)·탭 모델 — 옵시디언 워크스페이스. 창 = { id, tabs:[{id,kind,rel,root}], active }
   const [panes, setPanes] = useState(() => [{
@@ -156,69 +163,70 @@ function Vault({ params }) {
 
   return (
     <div className="vault-split">
-      {/* ── 좌: 워크트리 ── */}
+      {/* ── 좌: 탐색기 — 옵시디언/VS Code 표준 템플릿: 아이콘 툴바 → 루트 폴더(회사) → 폴더/파일 트리 ── */}
       <div className="vault-tree" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', width: treeW }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 12px 6px 14px', flex: 'none' }}>
-          <span style={{ fontSize: 13, fontWeight: 700 }}>{t('nav.memory')}</span>
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)' }}>{docs ? docs.length + (projects?.length ?? 0) : '—'}</span>
+        <div className="vault-toolbar">
+          <button className="tb" onClick={openCompose} title={t('vault.writeNote')} aria-label={t('vault.writeNote')}><Icon name="plus" size={14} /></button>
+          <button className="tb" onClick={() => setSort((s) => (s === 'mtime' ? 'name' : 'mtime'))} title={sort === 'mtime' ? t('vault.sortTime') : t('vault.sortName')} aria-label={t('vault.sortTime')}><Icon name="sort" size={14} /></button>
+          <button className="tb" onClick={() => setTreeGen((g) => g + 1)} title={t('vault.collapseAll')} aria-label={t('vault.collapseAll')}><Icon name="collapse" size={14} /></button>
+          <button className={`tb${searchOpen || q ? ' on' : ''}`} onClick={() => setSearchOpen((v) => !v)} title={t('vault.toggleSearch')} aria-label={t('vault.toggleSearch')}><Icon name="search" size={14} /></button>
           <span style={{ flex: 1 }} />
-          <button className="btn sm" onClick={openCompose} title={t('vault.writeNote')} aria-label={t('vault.writeNote')} style={{ padding: '0 8px' }}>
-            <Icon name="plus" size={12} />
-          </button>
-          <button className="btn sm" onClick={consolidate} disabled={consolidating} title={t('vault.consolidateHint')} aria-label={t('vault.consolidateHint')} style={{ padding: '0 8px' }}>
-            {consolidating ? <Spinner size={12} /> : <Icon name="bolt" size={12} />}
+          <button className={`tb${graphActive ? ' on' : ''}`} onClick={(e) => openGraph(null, { split: !!(e.metaKey || e.altKey) })} title={t('vault.graphTitle')} aria-label={t('vault.graphTitle')}><Icon name="memory" size={14} /></button>
+          <button className="tb" onClick={consolidate} disabled={consolidating} title={t('vault.consolidateHint')} aria-label={t('vault.consolidateHint')}>
+            {consolidating ? <Spinner size={12} /> : <Icon name="bolt" size={14} />}
           </button>
         </div>
-        <div style={{ padding: '0 12px 8px 14px', flex: 'none' }}>
-          <input suppressHydrationWarning value={q} onChange={(e) => setQ(e.target.value.toLowerCase())} placeholder={t('vault.searchTree')} {...imeGuard}
-            style={{ width: '100%', height: 28, padding: '0 10px', fontSize: 12, background: 'var(--card-2)', border: '1px solid var(--border-soft)', borderRadius: 7, outline: 'none' }} />
-        </div>
-        {consolidateMsg && <span style={{ padding: '0 16px 8px', fontSize: 11.5, color: 'var(--fg-2)', flex: 'none' }}>{consolidateMsg}</span>}
+        {(searchOpen || q) && (
+          <div style={{ padding: '0 10px 6px', flex: 'none' }}>
+            <input suppressHydrationWarning autoFocus value={q} onChange={(e) => setQ(e.target.value.toLowerCase())} placeholder={t('vault.searchTree')} {...imeGuard}
+              style={{ width: '100%', height: 26, padding: '0 9px', fontSize: 12, background: 'var(--card-2)', border: '1px solid var(--border-soft)', borderRadius: 6, outline: 'none' }} />
+          </div>
+        )}
+        {consolidateMsg && <span style={{ padding: '0 12px 6px', fontSize: 11.5, color: 'var(--fg-2)', flex: 'none' }}>{consolidateMsg}</span>}
         <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 10 }}>
           {docs === null ? (
             <div style={{ padding: '4px 14px' }}><Skeleton h={140} /></div>
           ) : (
             <>
-              <button className={`row${graphActive ? ' active' : ''}`} onClick={(e) => openGraph(null, { split: !!(e.metaKey || e.altKey) })}>
-                <span style={{ display: 'inline-flex', color: 'var(--fg-2)', flex: 'none' }}><Icon name="memory" size={14} /></span>
-                <span style={{ fontSize: 12.5, fontWeight: 600 }}>{t('vault.graphTitle')}</span>
-              </button>
-              {docs.length === 0 && (projects?.length ?? 0) === 0 && (
-                <p style={{ padding: '8px 16px', color: 'var(--fg-2)', fontSize: 12.5 }}>{t('vault.empty')}</p>
-              )}
               {q && visible.length === 0 && visibleProjects.length === 0 && (
-                <p style={{ padding: '8px 16px', color: 'var(--fg-2)', fontSize: 12.5 }}>{t('vault.noMemoryMatch')}</p>
+                <p style={{ padding: '8px 14px', color: 'var(--fg-2)', fontSize: 12.5 }}>{t('vault.noMemoryMatch')}</p>
               )}
-              <TreeSection label={t('vault.tree.notes')} count={notes.length} defaultOpen>
-                {notes.length === 0 && !q && (docs.length + (projects?.length ?? 0)) > 0 && (
-                  <p style={{ padding: '4px 16px 8px 24px', color: 'var(--fg-2)', fontSize: 11.5 }}>{t('vault.notesEmpty')}</p>
-                )}
-                {notes.map((d) => <DocRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />)}
-              </TreeSection>
-              <TreeSection label={t('vault.tree.projects')} count={visibleProjects.length} defaultOpen>
-                {projectGroups.map(([name, files]) => (
-                  <TreeSection key={name} label={name} count={files.length} defaultOpen depth={1} folder>
-                    {files.map((d) => d.binary ? (
-                      <a key={d.rel} className="row" download
-                        href={`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}&download=1`}
-                        onClick={artifactDownload(`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}`, d.rel.split('/').pop())}
-                        style={{ textDecoration: 'none', color: 'inherit' }}
-                        title={`${fmtSize(d.size)} · ${t('vault.download')}`}>
-                        <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: 450, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
-                        <span className="mono" style={{ flex: 'none', fontSize: 9.5, color: 'var(--fg-3)' }}>{fmtSize(d.size)} ↓</span>
-                      </a>
-                    ) : (
-                      <DocRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />
-                    ))}
-                  </TreeSection>
-                ))}
-              </TreeSection>
-              <TreeSection label={t('vault.tree.journal')} count={journals.length}>
-                {journals.map((d) => <DocRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />)}
-              </TreeSection>
-              <TreeSection label={t('vault.tree.conversations')} count={convs.length}>
-                {convs.map((d) => <DocRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />)}
-              </TreeSection>
+              {/* 루트 폴더 = 회사(볼트). 옵시디언의 볼트 루트와 같은 자리. */}
+              <Folder key={`root-${treeGen}`} label={meta?.company?.name ?? t('nav.memory')} open gen={treeGen} root>
+                <Folder label={t('vault.tree.notes')} open gen={treeGen}>
+                  {notes.length === 0 && !q && (docs.length + (projects?.length ?? 0)) > 0 && (
+                    <p style={{ padding: '2px 12px 6px', color: 'var(--fg-3)', fontSize: 11.5 }}>{t('vault.notesEmpty')}</p>
+                  )}
+                  {sortDocs(notes).map((d) => <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />)}
+                </Folder>
+                <Folder label={t('vault.tree.journal')} gen={treeGen}>
+                  {sortDocs(journals).map((d) => <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />)}
+                </Folder>
+                <Folder label={t('vault.tree.conversations')} gen={treeGen}>
+                  {sortDocs(convs).map((d) => <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />)}
+                </Folder>
+                <Folder label={t('vault.tree.projects')} open gen={treeGen}>
+                  {projectGroups.map(([name, files]) => (
+                    <Folder key={name} label={splitFolderLabel(name).title} title={name} gen={treeGen}>
+                      {files.map((d) => d.binary ? (
+                        <a key={d.rel} className="row" download
+                          href={`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}&download=1`}
+                          onClick={artifactDownload(`/api/companies/${ws}/files?rel=${encodeURIComponent(d.rel)}`, d.rel.split('/').pop())}
+                          style={{ textDecoration: 'none', color: 'inherit' }}
+                          title={`${fmtSize(d.size)} · ${t('vault.download')}`}>
+                          <span style={{ minWidth: 0, flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
+                          <span className="mono when" style={{ flex: 'none', fontSize: 9.5, color: 'var(--fg-3)' }}>{fmtSize(d.size)} ↓</span>
+                        </a>
+                      ) : (
+                        <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />
+                      ))}
+                    </Folder>
+                  ))}
+                </Folder>
+              </Folder>
+              {docs.length === 0 && (projects?.length ?? 0) === 0 && (
+                <p style={{ padding: '8px 14px', color: 'var(--fg-2)', fontSize: 12.5 }}>{t('vault.empty')}</p>
+              )}
             </>
           )}
         </div>
@@ -420,17 +428,15 @@ function splitFolderLabel(name) {
   return { title: m[4].replace(/_/g, ' '), date: `${m[2]}-${m[3]}` };
 }
 
-/** 접이식 섹션/폴더 — 옵시디언 레이아웃: 캐럿 + 라벨 + 카운트, 폴더 아이콘 없음, 자식은 가이드라인 안에. */
-function TreeSection({ label, count, defaultOpen = false, depth = 0, folder = false, children }) {
-  const [open, setOpen] = useState(defaultOpen);
-  const { title, date } = folder ? splitFolderLabel(label) : { title: label, date: null };
+/** 폴더 행 — 옵시디언/VS Code 탐색기: 캐럿 + 이름. 카운트·아이콘·칩 없음. gen이 바뀌면(모두 접기) 접힌다(루트 제외). */
+function Folder({ label, title, open: initialOpen = false, root = false, gen = 0, children }) {
+  const [open, setOpen] = useState(root || initialOpen);
+  useEffect(() => { if (gen > 0 && !root) setOpen(false); }, [gen, root]);
   return (
     <div>
-      <button className="row" onClick={() => setOpen((v) => !v)} aria-expanded={open} title={label}>
-        <span style={{ display: 'inline-block', width: 9, flex: 'none', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s', color: 'var(--fg-3)', fontSize: 9 }}>▸</span>
-        <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: 600, color: depth === 0 ? 'var(--fg-2)' : 'var(--fg)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</span>
-        {date && <span className="mono" style={{ flex: 'none', fontSize: 9.5, color: 'var(--fg-3)' }}>{date}</span>}
-        <span className="mono" style={{ flex: 'none', fontSize: 10, color: 'var(--fg-3)' }}>{count}</span>
+      <button className="row" onClick={() => setOpen((v) => !v)} aria-expanded={open} title={title ?? label}>
+        <span style={{ display: 'inline-block', width: 10, flex: 'none', textAlign: 'center', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .12s', color: 'var(--fg-3)', fontSize: 9 }}>▸</span>
+        <span style={{ minWidth: 0, flex: 1, fontWeight: root ? 600 : 500, color: 'var(--fg)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{label}</span>
       </button>
       {open && <div className="tree-kids">{children}</div>}
     </div>
@@ -439,11 +445,11 @@ function TreeSection({ label, count, defaultOpen = false, depth = 0, folder = fa
 
 const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round((b ?? 0) / 1024))}KB`);
 
-/** 파일 행 — 아이콘 없이 제목만(옵시디언). 시각은 호버·활성 시만. ⌘/Alt 클릭 = 옆 창에 열기. */
-function DocRow({ d, active, onOpen, lang }) {
+/** 파일 행 — 이름만(옵시디언). 시각은 호버·활성 시만. ⌘/Alt 클릭 = 옆 창에 열기. 캐럿 자리만큼 들여써 폴더 이름과 정렬. */
+function FileRow({ d, active, onOpen, lang }) {
   return (
-    <button onClick={(e) => onOpen(d.rel, e)} className={`row${active ? ' active' : ''}`} title={d.title}>
-      <span style={{ minWidth: 0, flex: 1, fontSize: 12.5, fontWeight: active ? 600 : 450, color: 'var(--fg)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
+    <button onClick={(e) => onOpen(d.rel, e)} className={`row${active ? ' active' : ''}`} title={d.title} style={{ paddingLeft: 21 }}>
+      <span style={{ minWidth: 0, flex: 1, fontWeight: 450, color: 'var(--fg)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
       <span className="mono when" style={{ flex: 'none', fontSize: 9.5, color: 'var(--fg-3)' }}>{timeAgo(tsFromRel(d.rel) ?? d.mtime, lang)}</span>
     </button>
   );
