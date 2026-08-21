@@ -10,10 +10,20 @@ import { useLang } from '../../i18n';
 import { buildGraph2D, stem } from './graph2d-core.mjs'; // 구성은 JSX 없는 코어(테스트가 직접 임포트)
 export { buildGraph2D };
 
-// 성도(星圖) 팔레트 — 테마와 무관한 Argo 고유 표면(유건 승인 2026-08-21 시안 "밤바다 성도").
-// 밤바다 네이비 위에 허브 기억 = 골드 별(십자 빛살), 일반 기억 = 은청색 별, 크루 = 다이아몬드.
-const NIGHT = '#0b1220', NIGHT_2 = '#13203a';
-const GOLD = '216, 184, 94', STAR = '143, 165, 200', PAPER = '233, 228, 210', LABEL_GOLD = '239, 227, 184';
+// 성도(星圖) 문법 — 허브 기억 = 골드 별(십자 빛살), 일반 기억 = 잉크색 별, 크루 = 다이아몬드(유건 승인 시안
+// 2026-08-21). 배경·잉크는 **테마를 따른다**(유건 2026-08-21 "배경을 밤처럼 하지 말고 테마별로") — 포인트 골드만
+// Argo 고유값으로 고정하되, 밝은 종이에선 한 단계 깊은 골드를 써 읽힌다.
+let INK = '37, 39, 30', PAPER = '233, 235, 221';
+let GOLD = '196, 160, 70', LABEL_GOLD = '150, 118, 40';
+function syncThemeRgb() {
+  const st = getComputedStyle(document.documentElement);
+  INK = st.getPropertyValue('--ink-rgb').trim() || INK;
+  PAPER = st.getPropertyValue('--paper-rgb').trim() || PAPER;
+  const [r, g, b] = PAPER.split(',').map(Number);
+  const light = (r * 299 + g * 587 + b * 114) / 1000 > 128;
+  GOLD = light ? '196, 160, 70' : '216, 184, 94';
+  LABEL_GOLD = light ? '150, 118, 40' : '239, 227, 184';
+}
 const SERIF = '"Iowan Old Style", "Noto Serif KR", Georgia, serif';
 
 /** 2D 포스 — d3-force(Barnes-Hut 반발, O(N log N)). 직접 짠 격자 해시 근사는 실데이터 2,000노드에서
@@ -63,6 +73,8 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas || !docs) return;
+    syncThemeRgb();
+    window.addEventListener('argo:theme', syncThemeRgb);
     const full = buildGraph2D({ docs, agents, showCrew, showOrphans });
     setHiddenOrphans(full.hiddenOrphans);
     // 로컬 그래프 — root에서 깊이 2까지만 남긴다(옵시디언 로컬 그래프)
@@ -89,7 +101,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
     if (graph.nodes.length === 0) {
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      return undefined;
+      return () => window.removeEventListener('argo:theme', syncThemeRgb);
     }
     const sim = createSim2D(graph);
     const ctx = canvas.getContext('2d');
@@ -153,11 +165,8 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       // 이징 — 줌·팬
       view.x += (target.x - view.x) * 0.12; view.y += (target.y - view.y) * 0.12; view.s += (target.s - view.s) * 0.12;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      // 밤바다 — 중심이 살짝 밝은 네이비
-      const sky = ctx.createRadialGradient(W * 0.62, H * 0.48, 0, W * 0.62, H * 0.48, Math.max(W, H) * 0.8);
-      sky.addColorStop(0, NIGHT_2); sky.addColorStop(1, NIGHT);
-      ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
-      for (const d of dust) { ctx.fillStyle = `rgba(${PAPER}, ${d.a})`; ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill(); }
+      ctx.clearRect(0, 0, W, H); // 배경은 컨테이너(테마 종이색)가 칠한다
+      for (const d of dust) { ctx.fillStyle = `rgba(${INK}, ${d.a * 0.5})`; ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill(); }
       const nb = hover !== null ? sim.adj[hover] : null;
       const nbSet = nb ? new Set(nb) : null;
       const anyFocus = hover !== null;
@@ -184,8 +193,8 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         path.moveTo(A.x, A.y); path.lineTo(B.x, B.y);
       }
       const dimE = anyFocus ? 0.35 : 1;
-      ctx.setLineDash(dashed ? [3, 5] : []); ctx.lineWidth = 0.7; ctx.strokeStyle = `rgba(${STAR}, ${0.32 * dimE})`; ctx.stroke(twig);
-      ctx.setLineDash(dashed ? [1, 5] : []); ctx.strokeStyle = `rgba(${PAPER}, ${0.25 * dimE})`; ctx.stroke(crewE);
+      ctx.setLineDash(dashed ? [3, 5] : []); ctx.lineWidth = 0.7; ctx.strokeStyle = `rgba(${INK}, ${0.16 * dimE})`; ctx.stroke(twig);
+      ctx.setLineDash(dashed ? [1, 5] : []); ctx.strokeStyle = `rgba(${INK}, ${0.3 * dimE})`; ctx.stroke(crewE);
       ctx.setLineDash([]); ctx.lineWidth = 1.1; ctx.strokeStyle = `rgba(${GOLD}, ${0.55 * dimE})`; ctx.stroke(spine);
       if (anyFocus) { ctx.lineWidth = 1.2; ctx.strokeStyle = `rgba(${GOLD}, 0.9)`; ctx.stroke(hi); }
       // 노드 — 일반 기억은 한 경로로, 허브·크루·포커스는 개별
@@ -202,13 +211,13 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         plain.moveTo(q.x + r, q.y); plain.arc(q.x, q.y, r, 0, Math.PI * 2);
       }
       const dim = anyFocus ? 0.22 : 1;
-      ctx.fillStyle = `rgba(${STAR}, ${0.85 * dim})`; ctx.fill(plain);
+      ctx.fillStyle = `rgba(${INK}, ${0.5 * dim})`; ctx.fill(plain);
       for (const [i, q, r, f] of specials) {
         const n = graph.nodes[i];
         const a = anyFocus ? Math.max(f, 0.22) : 1;
         if (n.type === 'agent') { // 크루 = 다이아몬드 표식(별과 모양으로 구분 — 색을 더 안 쓴다)
           ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(Math.PI / 4);
-          ctx.fillStyle = `rgba(${PAPER}, ${0.95 * a})`; ctx.fillRect(-r * 0.9, -r * 0.9, r * 1.8, r * 1.8); ctx.restore();
+          ctx.fillStyle = `rgba(${INK}, ${0.9 * a})`; ctx.fillRect(-r * 0.9, -r * 0.9, r * 1.8, r * 1.8); ctx.restore();
           continue;
         }
         const isRoot = i === rootIdx;
@@ -222,12 +231,14 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
           ctx.lineWidth = 1; ctx.strokeStyle = `rgba(${GOLD}, ${0.9 * a})`;
           ctx.beginPath(); ctx.moveTo(q.x - L, q.y); ctx.lineTo(q.x + L, q.y); ctx.moveTo(q.x, q.y - L); ctx.lineTo(q.x, q.y + L); ctx.stroke();
           ctx.fillStyle = `rgba(${GOLD}, ${0.95 * a})`;
-        } else ctx.fillStyle = `rgba(${STAR}, ${0.85 * a})`;
+        } else ctx.fillStyle = `rgba(${INK}, ${0.5 * a})`;
         ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, Math.PI * 2); ctx.fill();
       }
       // 라벨 — 성도의 별 이름처럼 세리프. compact는 중심·호버만, 같은 제목 허브는 프레임당 한 번.
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       const drawn = new Set();
+      const placed = []; // 라벨 충돌 회피 — 허브가 뭉친 실데이터(2,000건)에서 라벨끼리 겹쳐 못 읽던 것. 가까운 자리엔 안 쓴다
+      const crowded = (x, y) => placed.some((q) => Math.abs(q.y - y) < 16 && Math.abs(q.x - x) < 140);
       for (let i = 0; i < graph.nodes.length; i++) {
         const n = graph.nodes[i];
         const isHover = i === hover, isNb = !compact && nbSet?.has(i);
@@ -236,15 +247,17 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         if (!isHover && i !== rootIdx) { if (drawn.has(n.label)) continue; drawn.add(n.label); }
         const q = P[i], r = nodeRadius(n) * rs;
         if (off(q)) continue;
-        const txt = n.label.length > 28 ? `${n.label.slice(0, 28)}…` : n.label;
         const em = isHover || i === rootIdx;
+        if (!em && crowded(q.x + r * 2.6 + 6, q.y)) continue;
+        placed.push({ x: q.x + r * 2.6 + 6, y: q.y });
+        const txt = n.label.length > 28 ? `${n.label.slice(0, 28)}…` : n.label;
         ctx.font = `500 ${compact ? 10.5 : em ? 15 : 13}px ${SERIF}`;
         const a = em || isNb ? 0.95 : Math.min(0.8, 0.45 + (view.s - 1) * 0.4);
-        const col = n.type === 'agent' ? PAPER : (hubs.has(i) || em) ? LABEL_GOLD : STAR;
+        const col = (hubs.has(i) || em) && n.type !== 'agent' ? LABEL_GOLD : INK;
         ctx.fillStyle = `rgba(${col}, ${a * (anyFocus && !isHover && !isNb ? 0.3 : 1)})`;
         ctx.fillText(txt, q.x + r * 2.6 + 6, q.y + 1);
         if (!compact && !anyFocus && hubs.has(i) && !em) { // 허브엔 연결 수 한 줄
-          ctx.font = `10.5px ${SERIF}`; ctx.fillStyle = `rgba(${STAR}, 0.7)`;
+          ctx.font = `10.5px ${SERIF}`; ctx.fillStyle = `rgba(${INK}, 0.55)`;
           ctx.fillText(t('graph.linksN', { n: n.deg }), q.x + r * 2.6 + 6, q.y + 16);
         }
       }
@@ -338,11 +351,12 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('mouseleave', onLeave);
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('argo:theme', syncThemeRgb);
     };
   }, [docs, agents, showCrew, showOrphans, root, compact, focusRel, localRoot]);
 
   return (
-    <div className="argo-sky" style={{ position: 'relative', width: '100%', height, minHeight: 0, background: NIGHT, borderRadius: compact ? 12 : 0, overflow: 'hidden' }}>
+    <div style={{ position: 'relative', width: '100%', height, minHeight: 0 }}>
       <canvas ref={ref} style={{ width: '100%', height: '100%', display: 'block', cursor: 'grab' }} />
       {!compact && (
         <div style={{ position: 'absolute', top: 10, right: 12, display: 'flex', gap: 6, alignItems: 'center' }}>
