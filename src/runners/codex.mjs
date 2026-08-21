@@ -164,7 +164,17 @@ export function commandExists(cmd, env = process.env) {
 }
 
 export async function writeCodexTurnConfig(home, mcpServers = null) {
-  const lines = ['# Argo 관리 codex 설정 — 매 턴 MCP 목록에서 재생성됩니다.'];
+  const lines = [
+    '# Argo 관리 codex 설정 — 매 턴 MCP 목록에서 재생성됩니다.',
+    // code_mode_host — codex 0.147+에서 **stable·기본 true**(`codex features list` 실측 2026-08-21). 켜져 있으면
+    // codex가 형제 실행 파일 `codex-code-mode-host(.exe)`를 스폰하는데, Argo 관리본은 타르볼에서 codex 하나만
+    // 채택해 두므로(provisionCodexCli) 윈도우에서 "codex-code-mode-host.exe — 지정된 파일을 찾을 수 없습니다
+    // (os error 2)"로 턴이 죽는다(사용자 제보 2026-08-21). 끄면 도구 호출이 종전 경로(직접 호출)로 돈다.
+    // 호스트 바이너리를 같이 내려받는 선택지는 용량(+수십 MB)·버전 짝 맞춤 부담이라 택하지 않았다.
+    '[features]',
+    'code_mode_host = false',
+    '',
+  ];
   // [sandbox_workspace_write] 섹션은 더 쓰지 않는다 — danger-full-access 전환(위 codexSandboxArgs
   // 삭제 주석)으로 샌드박스 오버라이드가 무의미해졌다. 이 파일의 남은 역할은 MCP 주입뿐.
   // 회사 MCP를 codex에 주입 — 러너 중립성(유건 지시 2026-07-30·08-08 "러너 상관 없이 모두 똑같아야").
