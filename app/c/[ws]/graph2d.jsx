@@ -5,6 +5,7 @@
 // 인터랙션은 전부 이징으로 — 줌·팬·호버 점등·포커스 전환이 프레임마다 목표값으로 수렴한다
 // ("부드럽고 감각적" — 유건 기준). 노드 드래그는 시뮬을 잠깐 재가열해 이웃이 따라 움직인다.
 import { useEffect, useRef, useState } from 'react';
+import { forceSimulation, forceManyBody, forceLink, forceX, forceY } from 'd3-force';
 import { useLang } from '../../i18n';
 
 let INK = '37, 39, 30', PAPER = '233, 235, 221', ACCENT = '37, 39, 30';
@@ -68,66 +69,34 @@ export function buildGraph2D({ docs = [], agents = [], showCrew = false, showOrp
   return { nodes: nodes2, edges: edges2, hiddenOrphans: nodes.length - nodes2.length };
 }
 
-/** 2D 포스 — 반발(노드 수 비례 상수) + 스프링 + 중심 인력. 수렴하면 멈추고, 드래그 시 재가열. */
+/** 2D 포스 — d3-force(Barnes-Hut 반발, O(N log N)). 직접 짠 격자 해시 근사는 실데이터 2,000노드에서
+    워밍업이 5분을 넘겨 페이지를 얼렸다(벤치 실측 2026-08-21 — 격자 셀 한 곳에 노드가 몰리면 N²로 퇴화).
+    검증된 쿼드트리를 쓰고, 워밍업은 동기로 돌리지 않는다 — 프레임 루프가 시간 예산 안에서 틱을 나눠
+    돌려 첫 페인트가 즉시 뜨고 자리 잡는 과정이 화면에 살아 움직인다(감각적 진입). */
 function createSim2D({ nodes, edges }) {
-  const N = nodes.length;
   const pts = nodes.map((_, i) => {
-    const a = i * 2.39996, r = 18 * Math.sqrt(i + 1);
-    return { x: Math.cos(a) * r, y: Math.sin(a) * r, vx: 0, vy: 0, pinned: false };
+    const a = i * 2.39996, r = 14 * Math.sqrt(i + 1);
+    return { index: i, x: Math.cos(a) * r, y: Math.sin(a) * r, vx: 0, vy: 0 };
   });
-  const REP = 1400 * Math.min(1, Math.max(0.2, N / 200));
-  const LEN = 46;
+  const links = edges.map(([a, b]) => ({ source: a, target: b }));
   const adj = nodes.map(() => []);
   for (const [a, b] of edges) { adj[a].push(b); adj[b].push(a); }
-  // 격자 해시로 반발 근사 — 2천 노드 N²(4백만/틱)를 피한다. 셀 너비 = 반발이 무시되는 거리.
-  const CELL = 140;
-  const tick = () => {
-    const grid = new Map();
-    for (let i = 0; i < N; i++) {
-      const p = pts[i];
-      const k = `${Math.floor(p.x / CELL)},${Math.floor(p.y / CELL)}`;
-      (grid.get(k) ?? grid.set(k, []).get(k)).push(i);
-    }
-    for (let i = 0; i < N; i++) {
-      const a = pts[i];
-      const cx = Math.floor(a.x / CELL), cy = Math.floor(a.y / CELL);
-      for (let gx = cx - 1; gx <= cx + 1; gx++) for (let gy = cy - 1; gy <= cy + 1; gy++) {
-        const cell = grid.get(`${gx},${gy}`);
-        if (!cell) continue;
-        for (const j of cell) {
-          if (j <= i) continue;
-          const b = pts[j];
-          let dx = a.x - b.x, dy = a.y - b.y;
-          let d2 = dx * dx + dy * dy;
-          if (d2 > CELL * CELL) continue;
-          if (d2 < 1) { dx = (Math.random() - 0.5); dy = (Math.random() - 0.5); d2 = 1; }
-          const f = REP / d2;
-          const d = Math.sqrt(d2);
-          dx /= d; dy /= d;
-          a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
-        }
-      }
-      a.vx -= a.x * 0.0025; a.vy -= a.y * 0.0025;
-    }
-    for (const [i, j] of edges) {
-      const a = pts[i], b = pts[j];
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const d = Math.hypot(dx, dy) || 1;
-      const f = (d - LEN) * 0.02;
-      a.vx += (dx / d) * f; a.vy += (dy / d) * f;
-      b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
-    }
-    let energy = 0;
-    for (const p of pts) {
-      if (p.pinned) { p.vx = p.vy = 0; continue; }
-      p.vx *= 0.82; p.vy *= 0.82;
-      p.x += p.vx; p.y += p.vy;
-      energy += p.vx * p.vx + p.vy * p.vy;
-    }
-    return energy / Math.max(N, 1);
+  const sim = forceSimulation(pts)
+    .force('charge', forceManyBody().strength(-28).theta(0.9).distanceMax(420))
+    .force('link', forceLink(links).distance(42).strength(0.55))
+    .force('x', forceX(0).strength(0.018))
+    .force('y', forceY(0).strength(0.018))
+    .alphaDecay(0.028)
+    .velocityDecay(0.38)
+    .stop(); // 틱은 프레임 루프가 시간 예산으로 돌린다
+  // 시간 예산(ms) 안에서 가능한 만큼 틱 — 큰 그래프는 여러 프레임에 걸쳐 수렴, 작은 그래프는 한 프레임에 끝난다
+  const step = (budgetMs) => {
+    const end = performance.now() + budgetMs;
+    while (sim.alpha() > sim.alphaMin() && performance.now() < end) sim.tick();
+    return sim.alpha();
   };
-  for (let k = 0; k < 160; k++) tick();
-  return { pts, tick, adj };
+  const reheat = (a = 0.5) => sim.alpha(Math.max(sim.alpha(), a));
+  return { pts, adj, step, reheat, alive: () => sim.alpha() > sim.alphaMin() };
 }
 
 /**
@@ -209,7 +178,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
     // 호버 점등 — 0/1 스텝이 아니라 노드별 포커스 값이 프레임마다 수렴(부드러운 점등·소등)
     const focus = new Float32Array(graph.nodes.length).fill(1);
     let hover = null, drag = null, downAt = null, panning = null, moved = false;
-    let settle = 0, energy = 1;
+    let frameNo = 0;
     const rootIdx = root ? graph.nodes.findIndex((n) => n.id === root) : -1;
 
     const nodeRadius = (n) => (compact ? 2.2 : 2.6) + Math.log2(1 + n.deg) * (compact ? 1.4 : 1.9) + (n.type === 'agent' ? 2 : 0);
@@ -256,8 +225,10 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       const rs = Math.min(Math.max(view.s, 0.6), 2.4);
       const groups = { note: new Path2D(), doc: new Path2D(), agent: new Path2D() };
       const glows = [];
+      const off = (q) => q.x < -24 || q.x > W + 24 || q.y < -24 || q.y > H + 24; // 뷰포트 컬링 — 줌인 시 화면 밖 노드·라벨은 그리지 않는다
       for (let i = 0; i < graph.nodes.length; i++) {
         const n = graph.nodes[i], q = P[i];
+        if (off(q)) continue;
         const r = nodeRadius(n) * rs;
         const f = focus[i];
         if (f > 0.5 && anyFocus) { glows.push([q, r, f]); continue; }
@@ -283,6 +254,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         const show = isHover || isNb || i === rootIdx || (!anyFocus && (hubs.has(i) || view.s > 1.7)) || (anyFocus && false);
         if (!show) continue;
         const q = P[i], r = nodeRadius(n) * rs;
+        if (off(q)) continue;
         const txt = n.label.length > 28 ? `${n.label.slice(0, 28)}…` : n.label;
         ctx.font = `${isHover || i === rootIdx ? 600 : 400} ${compact ? 10 : 11}px "IBM Plex Mono", monospace`;
         const a = isHover || isNb || i === rootIdx ? 0.95 : Math.min(0.75, 0.35 + (view.s - 1) * 0.4);
@@ -293,8 +265,10 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
 
     let raf;
     const frame = () => {
-      if (energy > 0.002 || settle < 30) { energy = sim.tick(); settle++; }
-      if (autoFit && settle % 6 === 0) fitToGraph(true);
+      // 시뮬은 프레임당 6ms 예산 — 2천 노드도 첫 페인트가 즉시 뜨고 여러 프레임에 걸쳐 자리 잡는다
+      if (sim.alive()) sim.step(6);
+      frameNo++;
+      if (autoFit && (sim.alive() ? frameNo % 4 === 0 : frameNo % 30 === 0)) fitToGraph(true);
       draw();
       raf = requestAnimationFrame(frame);
     };
@@ -305,7 +279,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       const sx = e.clientX - b.left, sy = e.clientY - b.top;
       const i = pick(sx, sy);
       downAt = { sx, sy }; moved = false;
-      if (i !== null) { drag = i; sim.pts[i].pinned = true; canvas.style.cursor = 'grabbing'; }
+      if (i !== null) { drag = i; sim.pts[i].fx = sim.pts[i].x; sim.pts[i].fy = sim.pts[i].y; canvas.style.cursor = 'grabbing'; }
       else panning = { sx, sy, vx: view.x, vy: view.y };
     };
     const onMove = (e) => {
@@ -314,8 +288,8 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       if (downAt && Math.hypot(sx - downAt.sx, sy - downAt.sy) > 3) moved = true;
       if (drag !== null) {
         const w = toWorld(sx, sy);
-        sim.pts[drag].x = w.x; sim.pts[drag].y = w.y;
-        energy = 1; settle = 0; autoFit = false; // 재가열 — 이웃이 따라 움직인다
+        sim.pts[drag].fx = w.x; sim.pts[drag].fy = w.y; // d3 고정점 — 시뮬이 이 좌표를 존중한다
+        sim.reheat(0.35); autoFit = false; // 재가열 — 이웃이 따라 움직인다
         return;
       }
       if (panning) {
@@ -332,7 +306,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
     const onUp = (e) => {
       if (drag !== null) {
         const i = drag; drag = null;
-        sim.pts[i].pinned = false; // 놓으면 다시 흐른다(고정하고 싶으면 더블클릭으로 로컬 그래프)
+        sim.pts[i].fx = null; sim.pts[i].fy = null; // 놓으면 다시 흐른다(고정하고 싶으면 더블클릭으로 로컬 그래프)
         canvas.style.cursor = 'pointer';
         if (!moved && graph.nodes[i].rel) cb.current.onSelectDoc?.(graph.nodes[i].rel);
       } else if (panning) {
