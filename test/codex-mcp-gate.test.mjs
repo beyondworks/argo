@@ -58,3 +58,14 @@ test('살균 후 이름이 충돌하면 뒤엣것을 뺀다 — TOML 중복 테�
   const tables = toml.split('\n').filter((l) => l.trim() === '[mcp_servers.my_tool]');
   assert.equal(tables.length, 1, `[mcp_servers.my_tool]이 ${tables.length}번 — 중복 테이블이면 codex가 config 파싱에서 죽는다`);
 });
+
+test('config.toml은 code_mode_host를 끈다 — 관리본엔 codex-code-mode-host가 없어 윈도우 턴이 죽는다(제보 2026-08-21)', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'argo-codexcfg-'));
+  await writeCodexTurnConfig(home, null);
+  const toml = await readFile(join(home, 'config.toml'), 'utf8');
+  assert.match(toml, /\[features\]\ncode_mode_host = false/);
+  // MCP 테이블이 [features] 뒤에 와도 TOML 상 서로 다른 테이블이라 섞이지 않는다 — 순서를 잠근다
+  await writeCodexTurnConfig(home, { good: { command: process.execPath } });
+  const t2 = await readFile(join(home, 'config.toml'), 'utf8');
+  assert.ok(t2.indexOf('[features]') < t2.indexOf('[mcp_servers.good]'));
+});
