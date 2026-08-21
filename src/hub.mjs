@@ -119,32 +119,36 @@ export async function listAgents(wsId) {
 /** vault 문서 목록 — 최신순. 제목/링크/발췌까지 화면용으로 가공. */
 export async function listDocs(wsId) {
   const p = paths(wsId);
-  const docs = [];
   const dirName = new Map([[p.journal, 'journal'], [p.conversations, 'conversations'], [p.notes, 'notes']]);
+  // 파일 목록부터 모은 뒤 읽기는 묶음 병렬로 — 한 파일씩 await하면 2,000건에 0.6초(실측 Lean-AX),
+  // 데크 카드가 그만큼 비어 있다. 묶음 크기는 fd 한도 안에서 넉넉히(ponytail: 64, 필요하면 조정).
+  const files = [];
   for (const dir of [p.journal, p.conversations, p.notes]) {
     let names = [];
     try { names = await readdir(dir); } catch { continue; }
-    for (const n of names) {
-      if (!n.endsWith('.md')) continue;
-      const file = join(dir, n);
-      const [text, st] = await Promise.all([readFile(file, 'utf8'), stat(file)]);
-      const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, '');
-      docs.push({
-        rel: relSlash(p.vault, file),
-        dir: dirName.get(dir),
-        title: body.match(/^#\s*(.+)$/m)?.[1] ?? n.replace(/\.md$/, ''),
-        links: [...new Set([...text.matchAll(/\[\[(.+?)\]\]/g)].map((m) => m[1]))],
-        excerpt: body.replace(/^#.*$/gm, '').replace(/\[\[|\]\]/g, '').trim().slice(0, 140),
-        mtime: st.mtimeMs,
-        // 정렬·표시용 유효 시각 — 파일명에 풀 타임스탬프(대화)가 있으면 그것, 없으면(일지·노트) 수정시각.
-        // 예전엔 rel 문자열순 정렬이라 notes/>journal/>conversations/ 접두사 탓에 방금 한 대화가 안 떴다.
-        ts: (() => {
-          const m = relSlash(p.vault, file).match(/(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})/);
-          return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : st.mtimeMs;
-        })(),
-      });
-    }
+    for (const n of names) if (n.endsWith('.md')) files.push({ dir, n, file: join(dir, n) });
   }
+  const readOne = async ({ dir, n, file }) => {
+    const [text, st] = await Promise.all([readFile(file, 'utf8'), stat(file)]);
+    const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, '');
+    const rel = relSlash(p.vault, file);
+    return {
+      rel,
+      dir: dirName.get(dir),
+      title: body.match(/^#\s*(.+)$/m)?.[1] ?? n.replace(/\.md$/, ''),
+      links: [...new Set([...text.matchAll(/\[\[(.+?)\]\]/g)].map((m) => m[1]))],
+      excerpt: body.replace(/^#.*$/gm, '').replace(/\[\[|\]\]/g, '').trim().slice(0, 140),
+      mtime: st.mtimeMs,
+      // 정렬·표시용 유효 시각 — 파일명에 풀 타임스탬프(대화)가 있으면 그것, 없으면(일지·노트) 수정시각.
+      // 예전엔 rel 문자열순 정렬이라 notes/>journal/>conversations/ 접두사 탓에 방금 한 대화가 안 떴다.
+      ts: (() => {
+        const m = rel.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})/);
+        return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : st.mtimeMs;
+      })(),
+    };
+  };
+  const docs = [];
+  for (let i = 0; i < files.length; i += 64) docs.push(...await Promise.all(files.slice(i, i + 64).map(readOne)));
   return docs.sort((a, b) => b.ts - a.ts); // 최근 활동순 — 오늘 갱신된 일지가 최상단
 }
 
