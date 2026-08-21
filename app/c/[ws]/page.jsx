@@ -870,8 +870,9 @@ function Nameplate({ company, memoryCount, links, crew }) {
       <div style={{ display: 'grid', gap: 5 }}>
         {rows.map(([k, v]) => (
           <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, borderBottom: '1px dashed var(--border-soft)', paddingBottom: 5 }}>
-            <span className="microlabel">{k}</span>
-            <span className="mono" style={{ fontSize: 11, textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{v}</span>
+            <span className="microlabel" style={{ flex: 'none' }}>{k}</span>
+            {/* minWidth:0 — flex 자식은 기본 min-width:auto라 nowrap 값이 줄지 않고 카드를 뚫는다(제보 2026-08-21: 등록번호·선장 이메일) */}
+            <span className="mono" title={v} style={{ fontSize: 11, textAlign: 'right', minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{v}</span>
           </div>
         ))}
       </div>
