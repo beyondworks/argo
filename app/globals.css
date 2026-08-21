@@ -1925,8 +1925,20 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh - 56px); min-
   border-right: 1px solid var(--border-soft);
 }
 .vault-split > .vault-content { background: var(--bg); }
-/* 트리 행 — 옵시디언 밀도(한 줄·좁은 행). 페이지 공용 .row(패딩 큰 카드행)보다 가볍게. */
-.vault-tree .row { padding-top: 4px; padding-bottom: 4px; gap: 8px; }
+/* 트리 행 — 옵시디언 레이아웃 그대로(유건 지시 2026-08-21: 들여쓰기 축소·불필요 아이콘 제거·가시성).
+   공용 .row의 구분선·큰 패딩·골드 풀배경 활성을 전부 벗긴다 — 트리는 표가 아니라 목록이다. */
+.vault-tree .row { padding: 3px 10px 3px 8px; gap: 6px; border-top: 0; border-radius: 6px; margin: 0 6px; width: calc(100% - 12px); line-height: 1.35; }
+.vault-tree .row:hover { background: var(--card-2); }
+.vault-tree .row.active { background: var(--primary-soft); color: var(--fg); box-shadow: inset 2px 0 0 var(--primary); }
+.vault-tree .row.active * { color: var(--fg) !important; }
+.vault-tree .row .when { opacity: 0; transition: opacity .12s; }
+.vault-tree .row:hover .when, .vault-tree .row.active .when { opacity: 1; }
+/* 계층 가이드라인 — 들여쓰기 대신 1px 세로선으로 깊이를 읽게 한다(옵시디언) */
+.vault-tree .tree-kids { margin-left: 17px; border-left: 1px solid var(--border-soft); padding-left: 2px; }
+.vault-tree .tree-sec { padding: 8px 14px 3px; }
+/* 패널 폭 조절 핸들 */
+.vault-split > .vault-handle { width: 5px; flex: none; cursor: col-resize; margin-left: -3px; position: relative; z-index: 2; }
+.vault-split > .vault-handle:hover, .vault-split > .vault-handle.on { background: var(--primary-soft); }
 /* 문서 인쇄(PDF 저장) — 뷰어 본문만 종이에 싣는다. 앱 크롬(사이드바·탑바·트리)은 전부 숨김. */
 @media print {
   .side, .topbar, .vault-tree, .vault-reader-bar { display: none !important; }
