@@ -10,21 +10,31 @@ import { useLang } from '../../i18n';
 import { buildGraph2D, stem } from './graph2d-core.mjs'; // 구성은 JSX 없는 코어(테스트가 직접 임포트)
 export { buildGraph2D };
 
-// 성도(星圖) 문법 — 허브 기억 = 골드 별(십자 빛살), 일반 기억 = 잉크색 별, 크루 = 다이아몬드(유건 승인 시안
-// 2026-08-21). 배경·잉크는 **테마를 따른다**(유건 2026-08-21 "배경을 밤처럼 하지 말고 테마별로") — 포인트 골드만
-// Argo 고유값으로 고정하되, 밝은 종이에선 한 단계 깊은 골드를 써 읽힌다.
+// 성도(星圖) 문법 — 허브 기억 = 큰 별(십자 빛살), 일반 기억 = 작은 네 꼭지 별, 크루 = 다이아몬드(유건 승인 시안
+// 2026-08-21). 색·글꼴은 **테마를 따른다**: 배경·잉크 = --paper-rgb/--ink-rgb, 별 포인트 = --accent-rgb
+// (무채색 테마면 푸른 계열로 대체 — 유건 2026-08-21), 글꼴 = --font(앱 전체와 같은 글꼴, 별도 세리프 금지).
 let INK = '37, 39, 30', PAPER = '233, 235, 221';
-let GOLD = '196, 160, 70', LABEL_GOLD = '150, 118, 40';
+let ACCENT = '196, 160, 70', LABEL_ACCENT = '150, 118, 40';
+let FONT = 'Pretendard, -apple-system, sans-serif';
 function syncThemeRgb() {
   const st = getComputedStyle(document.documentElement);
   INK = st.getPropertyValue('--ink-rgb').trim() || INK;
   PAPER = st.getPropertyValue('--paper-rgb').trim() || PAPER;
-  const [r, g, b] = PAPER.split(',').map(Number);
-  const light = (r * 299 + g * 587 + b * 114) / 1000 > 128;
-  GOLD = light ? '196, 160, 70' : '216, 184, 94';
-  LABEL_GOLD = light ? '150, 118, 40' : '239, 227, 184';
+  FONT = st.getPropertyValue('--font').trim() || FONT;
+  const [pr, pg, pb] = PAPER.split(',').map(Number);
+  const light = (pr * 299 + pg * 587 + pb * 114) / 1000 > 128;
+  let acc = (st.getPropertyValue('--accent-rgb').trim() || '').split(',').map(Number);
+  if (acc.length !== 3 || acc.some(Number.isNaN) || Math.max(...acc) - Math.min(...acc) < 40) acc = light ? [62, 130, 247] : [120, 170, 255]; // 무채색 포인트면 푸른 계열
+  ACCENT = acc.join(', ');
+  // 라벨은 배경 대비로 한 단계 — 밝은 종이엔 짙게, 어두운 종이엔 밝게
+  LABEL_ACCENT = (light ? acc.map((v) => Math.round(v * 0.72)) : acc.map((v) => Math.round(v + (255 - v) * 0.35))).join(', ');
 }
-const SERIF = '"Iowan Old Style", "Noto Serif KR", Georgia, serif';
+/** 네 꼭지 별 경로 — 일반 기억도 "별"로 읽히게(원은 옵시디언 그대로라 정체성이 없다 — 유건 2026-08-21) */
+function star4(path, x, y, r) {
+  const k = r * 0.38;
+  path.moveTo(x, y - r); path.lineTo(x + k, y - k); path.lineTo(x + r, y); path.lineTo(x + k, y + k);
+  path.lineTo(x, y + r); path.lineTo(x - k, y + k); path.lineTo(x - r, y); path.lineTo(x - k, y - k); path.closePath();
+}
 
 /** 2D 포스 — d3-force(Barnes-Hut 반발, O(N log N)). 직접 짠 격자 해시 근사는 실데이터 2,000노드에서
     워밍업이 5분을 넘겨 페이지를 얼렸다(벤치 실측 2026-08-21 — 격자 셀 한 곳에 노드가 몰리면 N²로 퇴화).
@@ -179,9 +189,9 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       // 아스트롤라베 — 로컬 그래프(원점 있음)일 때만: 포커스 문서가 원점, 깊이가 동심원으로 읽힌다
       if (rootIdx >= 0 && !compact) {
         const c = P[rootIdx];
-        ctx.setLineDash([2, 6]); ctx.lineWidth = 1; ctx.strokeStyle = `rgba(${GOLD}, 0.12)`;
+        ctx.setLineDash([2, 6]); ctx.lineWidth = 1; ctx.strokeStyle = `rgba(${ACCENT}, 0.12)`;
         for (const rr of [90, 180, 290]) { ctx.beginPath(); ctx.arc(c.x, c.y, rr * view.s, 0, Math.PI * 2); ctx.stroke(); }
-        ctx.setLineDash([]); ctx.strokeStyle = `rgba(${GOLD}, 0.16)`;
+        ctx.setLineDash([]); ctx.strokeStyle = `rgba(${ACCENT}, 0.16)`;
         ctx.beginPath(); ctx.moveTo(c.x - 330 * view.s, c.y); ctx.lineTo(c.x + 330 * view.s, c.y); ctx.moveTo(c.x, c.y - 330 * view.s); ctx.lineTo(c.x, c.y + 330 * view.s); ctx.stroke();
       }
       // 엣지 3종 — 허브끼리 골드 실선(뼈대), 일반 은청 점선(별자리 선), 크루 연결 종이색 점선. 호버 이웃만 골드 강조.
@@ -197,8 +207,8 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       const dimE = (anyFocus ? 0.35 : 1) * Math.max(dense, 0.25);
       ctx.setLineDash(dashed ? [3, 5] : []); ctx.lineWidth = 0.7; ctx.strokeStyle = `rgba(${INK}, ${0.16 * dimE})`; ctx.stroke(twig);
       ctx.setLineDash(dashed ? [1, 5] : []); ctx.strokeStyle = `rgba(${INK}, ${0.3 * dimE})`; ctx.stroke(crewE);
-      ctx.setLineDash([]); ctx.lineWidth = 1.1; ctx.strokeStyle = `rgba(${GOLD}, ${0.55 * dimE})`; ctx.stroke(spine);
-      if (anyFocus) { ctx.lineWidth = 1.2; ctx.strokeStyle = `rgba(${GOLD}, 0.9)`; ctx.stroke(hi); }
+      ctx.setLineDash([]); ctx.lineWidth = 1.1; ctx.strokeStyle = `rgba(${ACCENT}, ${0.55 * dimE})`; ctx.stroke(spine);
+      if (anyFocus) { ctx.lineWidth = 1.2; ctx.strokeStyle = `rgba(${ACCENT}, 0.9)`; ctx.stroke(hi); }
       // 노드 — 일반 기억은 한 경로로, 허브·크루·포커스는 개별
       const rs = Math.min(Math.max(view.s, 0.7), 1.15); // 화면 고정 크기에 가깝게 — 줌인해도 점이 부풀지 않는다(옵시디언과 같은 규칙)
       const plain = new Path2D();
@@ -210,7 +220,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         const r = nodeRadius(n) * rs;
         const f = focus[i];
         if (n.type === 'agent' || hubs.has(i) || i === rootIdx || (anyFocus && f > 0.5)) { specials.push([i, q, r, f]); continue; }
-        plain.moveTo(q.x + r, q.y); plain.arc(q.x, q.y, r, 0, Math.PI * 2);
+        star4(plain, q.x, q.y, r * 1.35);
       }
       const dim = anyFocus ? 0.22 : 1;
       ctx.fillStyle = `rgba(${INK}, ${0.5 * dim})`; ctx.fill(plain);
@@ -226,15 +236,15 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         const big = isRoot || hubs.has(i);
         if (big || (anyFocus && f > 0.5)) { // 골드 별 — 헤일로 + 링 + 십자 빛살
           const g = ctx.createRadialGradient(q.x, q.y, r * 0.5, q.x, q.y, r * 2.4);
-          g.addColorStop(0, `rgba(${GOLD}, ${0.18 * a})`); g.addColorStop(1, `rgba(${GOLD}, 0)`);
+          g.addColorStop(0, `rgba(${ACCENT}, ${0.18 * a})`); g.addColorStop(1, `rgba(${ACCENT}, 0)`);
           ctx.fillStyle = g; ctx.beginPath(); ctx.arc(q.x, q.y, r * 2.4, 0, Math.PI * 2); ctx.fill();
-          ctx.lineWidth = 0.7; ctx.strokeStyle = `rgba(${GOLD}, ${0.4 * a})`; ctx.beginPath(); ctx.arc(q.x, q.y, r * 1.9, 0, Math.PI * 2); ctx.stroke();
+          ctx.lineWidth = 0.7; ctx.strokeStyle = `rgba(${ACCENT}, ${0.4 * a})`; ctx.beginPath(); ctx.arc(q.x, q.y, r * 1.9, 0, Math.PI * 2); ctx.stroke();
           const L = r * (isRoot ? 2.8 : 2.3);
-          ctx.lineWidth = 1; ctx.strokeStyle = `rgba(${GOLD}, ${0.9 * a})`;
+          ctx.lineWidth = 1; ctx.strokeStyle = `rgba(${ACCENT}, ${0.9 * a})`;
           ctx.beginPath(); ctx.moveTo(q.x - L, q.y); ctx.lineTo(q.x + L, q.y); ctx.moveTo(q.x, q.y - L); ctx.lineTo(q.x, q.y + L); ctx.stroke();
-          ctx.fillStyle = `rgba(${GOLD}, ${0.95 * a})`;
+          ctx.fillStyle = `rgba(${ACCENT}, ${0.95 * a})`;
         } else ctx.fillStyle = `rgba(${INK}, ${0.5 * a})`;
-        ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, Math.PI * 2); ctx.fill();
+        const sp = new Path2D(); star4(sp, q.x, q.y, r * (big ? 1.5 : 1.35)); ctx.fill(sp);
       }
       // 라벨 — 성도의 별 이름처럼 세리프. compact는 중심·호버만, 같은 제목 허브는 프레임당 한 번.
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
@@ -253,13 +263,13 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         if (!em && crowded(q.x + r * 2.6 + 6, q.y)) continue;
         placed.push({ x: q.x + r * 2.6 + 6, y: q.y });
         const txt = n.label.length > 28 ? `${n.label.slice(0, 28)}…` : n.label;
-        ctx.font = `500 ${compact ? 10.5 : em ? 15 : 13}px ${SERIF}`;
+        ctx.font = `${em ? 600 : 500} ${compact ? 10.5 : em ? 13 : 12}px ${FONT}`;
         const a = em || isNb ? 0.95 : Math.min(0.8, 0.45 + (view.s - 1) * 0.4);
-        const col = (hubs.has(i) || em) && n.type !== 'agent' ? LABEL_GOLD : INK;
+        const col = (hubs.has(i) || em) && n.type !== 'agent' ? LABEL_ACCENT : INK;
         ctx.fillStyle = `rgba(${col}, ${a * (anyFocus && !isHover && !isNb ? 0.3 : 1)})`;
         ctx.fillText(txt, q.x + r * 2.6 + 6, q.y + 1);
         if (!compact && !anyFocus && hubs.has(i) && !em) { // 허브엔 연결 수 한 줄
-          ctx.font = `10.5px ${SERIF}`; ctx.fillStyle = `rgba(${INK}, 0.55)`;
+          ctx.font = `10.5px ${FONT}`; ctx.fillStyle = `rgba(${INK}, 0.55)`;
           ctx.fillText(t('graph.linksN', { n: n.deg }), q.x + r * 2.6 + 6, q.y + 16);
         }
       }
