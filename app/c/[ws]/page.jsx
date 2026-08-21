@@ -867,7 +867,9 @@ function Nameplate({ company, memoryCount, links, crew }) {
         <span className="card-title">{company.name}</span>
         <span className="microlabel">{t('deck.snArgo')}</span>
       </div>
-      <div style={{ display: 'grid', gap: 5 }}>
+      {/* minmax(0,1fr) — 기본 auto 트랙은 min-content까지 자라, nowrap 값(등록번호·엔진 목록)이 행 전체를 카드 밖으로
+          밀어냈다(제보 2026-08-21 2회째: 값 span의 minWidth:0만으로는 트랙 자체의 성장을 못 막는다) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 5 }}>
         {rows.map(([k, v]) => (
           <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, borderBottom: '1px dashed var(--border-soft)', paddingBottom: 5 }}>
             <span className="microlabel" style={{ flex: 'none' }}>{k}</span>
