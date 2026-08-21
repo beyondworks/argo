@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, artifactDownload, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
+import { CrewEditModal } from '../../crew-edit';
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
 const fmtElapsed = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
@@ -1318,9 +1319,14 @@ export default function CrewChat({ params }) {
 
       {cardOpen && (
         <CardPanel
+          agent={agent}
           agentName={agent?.name}
           ws={ws}
           slug={slug}
+          onEdited={() => api(`/api/companies/${ws}`).then((d) => {
+            const a = d.agents.find((x) => x.slug === slug); if (!a) return;
+            setAgent(a); setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '' });
+          }).catch(() => {})}
           runners={runners}
           autoRunnerId={autoRunnerId}
           sel={sel}
@@ -1647,7 +1653,8 @@ function ScopeGroup({ label, items, value, onToggle, t, onReset }) {
   );
 }
 
-function CardPanel({ ws, slug, agentName, runners, autoRunnerId, sel, onRunnerChange, onClose, onFired }) {
+function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onRunnerChange, onClose, onFired, onEdited }) {
+  const [editOpen, setEditOpen] = useState(false); // 이름·역할·팀·러너·모델 — 데크 목록에서 옮겨온 편집
   const { t, fmtMoney } = useLang();
   useScrollLock();
   const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n ?? 0));
@@ -1999,10 +2006,15 @@ function CardPanel({ ws, slug, agentName, runners, autoRunnerId, sel, onRunnerCh
             </button>
             <span style={{ fontSize: 12, color: msg === t('chat.saved') ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>
             <span style={{ flex: 1 }} />
+            <button className="btn sm" onClick={() => setEditOpen(true)}>{t('chat.editInfo')}</button>
             <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => setFireOpen(true)}>{t('chat.fire')}</button>
           </div>
         </div>
       </div>
+      {editOpen && agent && (
+        <CrewEditModal ws={ws} agent={{ ...agent, slug }} onClose={() => setEditOpen(false)}
+          onSaved={() => { setEditOpen(false); onEdited?.(); window.dispatchEvent(new Event('argo:refresh')); }} />
+      )}
       {fireOpen && (
         <DangerModal
           title={t('chat.fireTitle')}

@@ -534,8 +534,10 @@ export default function Market({ params }) {
               })}
             </div>
 
+            {/* 스킬 목록과 같은 안쪽 여백(20px) — 휴지통 열이 두 목록에서 한 줄에 선다(제보 2026-08-21) */}
+            <div style={{ padding: '0 20px 16px' }}>
             {Object.entries(installedMcp).filter(([n]) => !data.mcpCatalog.find((c) => c.id === n)).map(([n, def]) => (
-              <div key={n} className="row" style={{ margin: '0 18px' }}>
+              <div key={n} className="row" style={{ borderRadius: 10 }}>
                 <span style={{ fontWeight: 650, fontSize: 12.5 }}>{n}</span>
                 <span className="mono" style={{ flex: 1, fontSize: 10.5, color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {def.command} {(def.args ?? []).join(' ')}
@@ -546,6 +548,7 @@ export default function Market({ params }) {
                 <button className="btn sm btn-icon" style={{ width: 26 }} onClick={() => remove('mcp', n)}><Icon name="trash" size={12} /></button>
               </div>
             ))}
+            </div>
 
             {!customMcpAllowed && (
               <div className="microlabel" style={{ margin: '0 18px 8px', padding: '8px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border-soft)', color: 'var(--fg-2)', lineHeight: 1.55 }}>

@@ -1,5 +1,5 @@
 'use client';
-// 데크 — 아르고호 계기판. 좌: 본 계기(메트릭·영입·크루·기억·차트), 우: 보조 계기 레일(별자리·항해일지·명판).
+// 데크 — 아르고호 계기판. 좌: 본 계기(메트릭·영입·기억·차트), 우: 보조 계기 레일(기억 그래프·명판·토큰).
 import { use, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -23,24 +23,9 @@ export default function Deck({ params }) {
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
-  const [editTarget, setEditTarget] = useState(null); // 크루 신원 수정 모달
-  const [renameTarget, setRenameTarget] = useState(null); // 팀 이름변경 입력 모달 대상(현재 팀명)
-  const [crewExpanded, setCrewExpanded] = useState(false); // ponytail: 크루 접기(G14)
   const hireRef = useRef(null); // 사이드바 '크루 추가'가 포커스+깜빡 대상으로 삼는 입력창
 
-  // 팀 이름변경 — window.prompt(Tauri 무동작) 대신 인앱 InputModal. onConfirm(새 이름)
-  async function doRenameTeam(to) {
-    const team = renameTarget;
-    setRenameTarget(null);
-    if (!to?.trim() || to.trim() === team) return;
-    const res = await fetch(`/api/companies/${ws}/agents`, {
-      method: 'PATCH', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ from: team, to: to.trim() }),
-    });
-    if (!res.ok) { setError((await res.json()).error); return; }
-    load();
-    window.dispatchEvent(new Event('argo:refresh'));
-  }
+
 
   function load() {
     api(`/api/companies/${ws}`).then(setData).catch((e) => setError(String(e.message)));
@@ -248,90 +233,10 @@ export default function Deck({ params }) {
           {hiring && <p style={{ fontSize: 12.5, color: 'var(--fg-2)', fontWeight: 600, padding: '0 4px' }}>{t('deck.hiringStage', { stage: HIRE_STAGES[stage] })}</p>}
           {error && <p style={{ fontSize: 13, color: 'var(--danger)', padding: '0 4px' }}>{error}</p>}
 
-          <div className="card" style={{ overflow: 'hidden' }}>
-            <div className="card-head">
-              <span className="card-title"><Icon name="user" size={14} />{t('deck.crewTitle')}</span>
-              <span className="rule" />
-              <span className="pill"><span className="dot" />{t('deck.onDuty', { n: agents.length })}</span>
-            </div>
-            {data === null ? (
-              <div style={{ padding: '0 18px 18px' }}><Skeleton h={90} /></div>
-            ) : agents.length === 0 ? (
-              <p style={{ padding: '2px 20px 18px', color: 'var(--fg-2)', fontSize: 13 }}>
-                {q ? t('deck.noCrewMatch') : t('deck.noCrewYet')}
-              </p>
-            ) : (() => {
-              // ponytail: 6명 초과 시 접기(유건 제보 2026-08-08 "11명도 길다, 100명이면?")
-              const CREW_FOLD = 6;
-              const foldable = agents.length > CREW_FOLD;
-              const visible = crewExpanded || !foldable ? agents : agents.slice(0, CREW_FOLD);
-              return (<>
-              <table className="table">
-                <thead>
-                  <tr><th style={{ width: 170 }}>{t('deck.colName')}</th><th>{t('deck.colRole')}</th><th>{t('deck.colExpertise')}</th><th style={{ width: 100 }}>{t('deck.colStatus')}</th><th style={{ width: 90 }} /></tr>
-                </thead>
-                <tbody>
-                  {[...new Set(visible.map((a) => a.team || ''))].sort((a, b) => (a === '') - (b === '')).map((team) => (
-                    [
-                      agents.some((a) => (a.team || '') !== '') && (
-                        <tr key={`t-${team}`} style={{ cursor: 'default' }}>
-                          <td colSpan={5} style={{ padding: '5px 20px', background: 'var(--card-2)' }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                              <span className="microlabel">{team || t('deck.unassigned')}</span>
-                              {team && (
-                                <button
-                                  className="microlabel"
-                                  style={{ cursor: 'pointer', color: 'var(--fg-3)', display: 'inline-flex', alignItems: 'center', gap: 3 }}
-                                  title={t('deck.renameTeam')}
-                                  onClick={() => setRenameTarget(team)}
-                                >
-                                  <Icon name="edit" size={11} />
-                                </button>
-                              )}
-                            </span>
-                          </td>
-                        </tr>
-                      ),
-                      ...agents.filter((a) => (a.team || '') === team).map((a) => (
-                        <tr key={a.slug} onClick={() => router.push(`/c/${ws}/crew/${a.slug}`)}>
-                          <td>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                              <Avatar name={a.name} sm />
-                              <span style={{ fontWeight: 650 }}>{a.name}</span>
-                            </span>
-                          </td>
-                          <td style={{ color: 'var(--fg-2)', fontSize: 12.5 }}>{a.role}</td>
-                          <td style={{ color: 'var(--fg-3)', fontSize: 12, maxWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                            {a.expertise.join(' · ')}
-                          </td>
-                          <td><span className="pill ok"><span className="dot" />{t('deck.waiting')}</span></td>
-                          <td>
-                            <span style={{ display: 'inline-flex', gap: 6 }}>
-                              <button
-                                className="btn sm btn-icon"
-                                style={{ width: 28 }}
-                                title={t('deck.editIdentity')}
-                                onClick={(e) => { e.stopPropagation(); setEditTarget(a); }}
-                              >
-                                <Icon name="edit" size={13} />
-                              </button>
-                              <span className="btn sm">{t('deck.chat')} <Icon name="arrow" size={12} /></span>
-                            </span>
-                          </td>
-                        </tr>
-                      )),
-                    ]
-                  ))}
-                </tbody>
-              </table>
-              {foldable && (
-                <button className="btn sm" style={{ margin: '8px 18px 14px', fontSize: 12 }}
-                  onClick={() => setCrewExpanded((v) => !v)}>
-                  {crewExpanded ? t('deck.crewFold') : t('deck.crewExpand', { n: agents.length - CREW_FOLD })}
-                </button>
-              )}
-              </>); })()}
-          </div>
+          {/* 크루 목록은 사이드바가 단일 진실(영입 즉시 거기 생긴다) — 데크엔 빈 상태 안내만 남긴다 */}
+          {data && agents.length === 0 && (
+            <p style={{ color: 'var(--fg-2)', fontSize: 13, padding: '0 4px' }}>{q ? t('deck.noCrewMatch') : t('deck.noCrewYet')}</p>
+          )}
 
           <div className="card" style={{ overflow: 'hidden' }}>
             <div className="card-head">
@@ -410,32 +315,11 @@ export default function Deck({ params }) {
                 : ''}
             </p>
           </div>
-          <VoyageLog docs={docs} agents={data?.agents ?? []} />
           <Nameplate company={data?.company} memoryCount={data?.memoryCount} links={stats?.links} crew={data?.agents?.length} />
           <TokenPanel usage={data?.usage} budgetUsd={data?.company?.budgetUsd} payroll={data?.payroll} agents={data?.agents ?? []} />
         </div>
       </div>
 
-      {editTarget && (
-        <CrewEditModal
-          ws={ws}
-          agent={editTarget}
-          teams={[...new Set((data?.agents ?? []).map((a) => a.team).filter(Boolean))]}
-          onClose={() => setEditTarget(null)}
-          onSaved={() => { setEditTarget(null); load(); window.dispatchEvent(new Event('argo:refresh')); }}
-        />
-      )}
-
-      {renameTarget != null && (
-        <InputModal
-          title={t('deck.renameTeam')}
-          label={t('deck.renameTeamPrompt', { team: renameTarget })}
-          defaultValue={renameTarget}
-          confirmLabel={t('common.save')}
-          onConfirm={doRenameTeam}
-          onClose={() => setRenameTarget(null)}
-        />
-      )}
     </div>
   );
 }
@@ -471,7 +355,6 @@ function AiKeyBanner({ ws }) {
   );
 }
 
-/** 항해일지 — 기록·연결 이벤트의 모노 타임라인. */
 /** 결재함 — 크루가 올린 대기 결재. 승인/거절 즉시 반영, 실행 결과는 해당 크루 대화에 쌓인다. */
 function ApprovalsCard({ ws, agents }) {
   const { t } = useLang();
@@ -533,153 +416,7 @@ function ApprovalsCard({ ws, agents }) {
   );
 }
 
-function VoyageLog({ docs, agents }) {
-  const { t } = useLang();
-  const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
-  const entries = (docs ?? []).slice(0, 30).map((d) => {
-    const slug = d.rel
-      .replace(/^(conversations|notes|journal)\//, '')
-      .replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-/, '')
-      .replace(/^\d{4}-\d{2}-\d{2}-/, '') // 일지: journal/YYYY-MM-DD-<slug>
-      .replace(/\.md$/, '');
-    const ts = tsFromRel(d.rel) ?? d.mtime;
-    const dt = new Date(ts);
-    const hhmm = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
-    const note = d.dir === 'notes';
-    return { rel: d.rel, hhmm, label: note ? d.title : t('deck.crewJournal', { name: nameOf(slug) }), links: d.links.length, note };
-  });
-  return (
-    <div className="card" style={{ overflow: 'hidden' }}>
-      <div className="card-head" style={{ paddingBottom: 8 }}>
-        <span className="card-title">{t('deck.voyageLog')}</span>
-        <span className="microlabel">{t('deck.log')}</span>
-      </div>
-      {docs === null ? (
-        <div style={{ padding: '0 18px 16px' }}><Skeleton h={80} /></div>
-      ) : entries.length === 0 ? (
-        <p style={{ padding: '0 18px 16px', color: 'var(--fg-3)', fontSize: 12.5 }}>{t('deck.noLogYet')}</p>
-      ) : (
-        <div /* 기록이 늘어도 카드가 자라지 않는다 — 하단 라인 고정, 안에서 스크롤 */
-          style={{ padding: '0 0 8px', maxHeight: 330, overflowY: 'auto' }}>
-          {entries.map((e) => (
-            <div key={e.rel} className="row" style={{ padding: '8px 18px', gap: 10 }}>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', flex: 'none' }}>{e.hhmm}</span>
-              <span style={{ fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                <strong>{e.label}</strong>{e.note ? t('deck.learned') : t('deck.recorded')}
-              </span>
-              {e.links > 0 && <span className="mono" style={{ fontSize: 10, color: 'var(--fg-2)', flex: 'none' }}>LINK {e.links}</span>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
-/** 크루 신원 수정 — 이름·역할·팀. 슬러그·기록은 유지된다. */
-function CrewEditModal({ ws, agent, teams, onClose, onSaved }) {
-  const { t } = useLang();
-  useScrollLock();
-  // runner '' = 미지정(자동) — 'claude' 기본값을 박으면 저장 시 자동 크루가 클로드 고정으로 둔갑한다(러너 오표시 계열)
-  const [form, setForm] = useState({ name: agent.name, role: agent.role, team: agent.team || '', model: agent.model || '', runner: agent.runner || '' });
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState('');
-  // 러너 카탈로그 + 로컬 인증 상태 — Claude Code 외에는 각 CLI의 OAuth 로그인(구독)을 빌린다
-  const [runners, setRunners] = useState(null);
-  useEffect(() => { api(`/api/runners?ws=${ws}`).then((d) => setRunners(d.runners)).catch(() => setRunners([])); }, [ws]);
-  const curRunner = runners?.find((r) => r.id === form.runner);
-  const runnerLabel = (r) => r.name + (r.authed ? '' : r.installed ? ` — ${t('runner.needLogin')}` : ` — ${t('runner.notInstalled')}`);
-
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  async function save(e) {
-    e.preventDefault();
-    if (saving || !form.name.trim()) return;
-    setSaving(true); setErr('');
-    try {
-      const res = await fetch(`/api/companies/${ws}/agents/${agent.slug}`, {
-        method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-      if (!res.ok) throw new Error((await res.json()).error);
-      onSaved();
-    } catch (e2) {
-      setErr(String(e2.message));
-      setSaving(false);
-    }
-  }
-
-  const field = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13 };
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <form onSubmit={save} className="card fade-up" style={{ width: 'min(440px, 100%)' }} onClick={(e) => e.stopPropagation()}>
-        <div className="card-head">
-          <span className="card-title">{t('deck.editCrewInfo')}</span>
-          <span className="microlabel">{agent.slug}</span>
-          <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('deck.closeEsc')}</button>
-        </div>
-        <div style={{ padding: '0 20px 18px', display: 'grid', gap: 10 }}>
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span className="microlabel">{t('deck.fieldName')}</span>
-            <input suppressHydrationWarning value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={field} {...imeGuard} autoFocus />
-          </label>
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span className="microlabel">{t('deck.fieldRole')}</span>
-            <input suppressHydrationWarning value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} style={field} {...imeGuard} />
-          </label>
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span className="microlabel">{t('deck.fieldTeamHint')}</span>
-            <input suppressHydrationWarning value={form.team} onChange={(e) => setForm({ ...form, team: e.target.value })} list="argo-teams-edit" style={field} {...imeGuard} />
-            <datalist id="argo-teams-edit">
-              {teams.map((tm) => <option key={tm} value={tm} />)}
-            </datalist>
-          </label>
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span className="microlabel">{t('deck.fieldRunnerHint')}</span>
-            <select value={form.runner} style={field} disabled={runners === null}
-              onChange={(e) => {
-                const next = runners?.find((r) => r.id === e.target.value);
-                // 러너를 바꾸면 그 러너의 첫 모델을 바로 선택 — "기본" 가짜 항목 없이 항상 실제 모델
-                setForm({ ...form, runner: e.target.value, model: next?.models?.[0]?.id ?? '' });
-              }}>
-              {/* 로딩 폴백으로 가짜 Claude 항목을 만들지 않는다 — select 자체가 disabled(runners === null) */}
-              <option value="">{t('runner.autoOption')}</option>
-              {(runners ?? []).map((r) => (
-                <option key={r.id} value={r.id} disabled={!r.authed}>{runnerLabel(r)}</option>
-              ))}
-            </select>
-            {curRunner && !curRunner.authed && (
-              <span style={{ fontSize: 11.5, color: 'var(--warn)' }}>{t('runner.authHint', { name: curRunner.name })}</span>
-            )}
-          </label>
-          <label style={{ display: 'grid', gap: 4 }}>
-            <span className="microlabel">{t('deck.fieldModelHint')}</span>
-            {/* 현재 러너가 미연결(레거시)이면 모델 선택도 잠금 — 설정에서 연결 후 활성화 */}
-            <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} style={field}
-              disabled={curRunner && !curRunner.authed}>
-              {!form.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
-              {(curRunner?.models ?? []).map((m) => (
-                <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
-              ))}
-            </select>
-          </label>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button className="btn btn-primary sm" disabled={saving || !form.name.trim()}>
-              {saving ? <Spinner size={12} /> : t('deck.save')}
-            </button>
-            <span className="metric-sub2">{t('deck.saveHint')}</span>
-            {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
-          </div>
-        </div>
-      </form>
-    </div>
-  );
-}
 
 const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : String(n));
 

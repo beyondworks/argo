@@ -1436,6 +1436,9 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
   display: flex; flex-direction: column; gap: 2px;
   position: sticky; top: 0; height: 100vh; overflow-y: auto;
 }
+.side-group-row { display: flex; align-items: center; }
+.side-group-row .tm-edit { flex: none; background: none; border: 0; color: var(--fg-3); cursor: pointer; padding: 0 10px 0 4px; opacity: 0; transition: opacity 0.15s; }
+.side-group-row:hover .tm-edit, .side-group-row .tm-edit:focus-visible { opacity: 1; }
 .side-group {
   font-family: var(--mono);
   font-size: 9.5px; font-weight: 500; color: var(--fg-3);
