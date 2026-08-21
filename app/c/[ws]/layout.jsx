@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, api } from '../../ui';
+import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, InputModal, api } from '../../ui';
 import { useLang, stageLabel } from '../../i18n';
 import { useAppUpdate } from '../../use-app-update';
 
@@ -141,6 +141,14 @@ export default function CompanyShell({ children, params }) {
   const refresh = useCallback(() => {
     api(`/api/companies/${ws}`).then(setData).catch(() => setData({ missing: true }));
   }, [ws]);
+  // 팀 이름 변경 — 데크 크루 목록(삭제)에서 옮겨왔다. 그룹 헤더 호버 ✎ → 인앱 InputModal(window.prompt는 Tauri 무동작)
+  const [renameTeam, setRenameTeam] = useState(null);
+  const doRenameTeam = useCallback(async (to) => {
+    const from = renameTeam; setRenameTeam(null);
+    if (!to?.trim() || to.trim() === from) return;
+    await fetch(`/api/companies/${ws}/agents`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from, to: to.trim() }) }).catch(() => {});
+    refresh();
+  }, [renameTeam, ws, refresh]);
 
   // 크루 고정/해제 — company.json.crewPinned 갱신 후 재조회. 비파괴·즉시(확인 불필요).
   const togglePin = useCallback(async (slug) => {
@@ -272,8 +280,9 @@ export default function CompanyShell({ children, params }) {
           const isCollapsed = !!collapsed[key];
           return (
           <div key={key}>
+            <div className="side-group-row">
             <button className="side-group" onClick={() => toggleTeam(key)}
-              style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', background: 'none', border: 0, padding: undefined }}
+              style={{ flex: 1, minWidth: 0, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', background: 'none', border: 0, padding: undefined }}
               aria-expanded={!isCollapsed}>
               <span aria-hidden="true" style={{ display: 'inline-block', fontSize: 8, transition: 'transform 0.16s cubic-bezier(0.23, 1, 0.32, 1)', transform: isCollapsed ? 'rotate(-90deg)' : 'none' }}>▾</span>
               <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -282,6 +291,10 @@ export default function CompanyShell({ children, params }) {
               </span>
               {isCollapsed && <span className="mono" style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--fg-3)' }}>{list.length}</span>}
             </button>
+            {team && team !== '__pinned__' && (
+              <button type="button" className="tm-edit" title={t('deck.renameTeam')} onClick={() => setRenameTeam(team)}><Icon name="edit" size={11} /></button>
+            )}
+            </div>
             {!isCollapsed && list.map((a) => {
               const href = `/c/${ws}/crew/${a.slug}`;
               const active = pathname === href;
@@ -446,6 +459,10 @@ export default function CompanyShell({ children, params }) {
           ) : children}
         </main>
       </div>
+      {renameTeam != null && (
+        <InputModal title={t('deck.renameTeam')} label={t('deck.renameTeamPrompt', { team: renameTeam })} defaultValue={renameTeam}
+          confirmLabel={t('common.save')} onConfirm={doRenameTeam} onClose={() => setRenameTeam(null)} />
+      )}
       {fbOpen && <FeedbackModal onClose={() => setFbOpen(false)} />}
     </div>
   );

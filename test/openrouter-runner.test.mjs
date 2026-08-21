@@ -156,7 +156,7 @@ test('배선: chat·oneshot이 429를 402와 대칭으로 태운다', async () =
 });
 
 test('배선: free 배지가 모델 선택 UI 4곳에 모두 걸려 있다 (배지 소실 = 한도 고지 소실)', async () => {
-  const files = ['../app/c/[ws]/page.jsx', '../app/c/[ws]/crew/[slug]/page.jsx', '../app/c/[ws]/compete/page.jsx'];
+  const files = ['../app/c/[ws]/crew-edit.jsx', '../app/c/[ws]/crew/[slug]/page.jsx', '../app/c/[ws]/compete/page.jsx']; // 데크 크루 편집 모달 → crew-edit.jsx(2026-08-21)
   const srcs = await Promise.all(files.map((f) => readFile(new URL(f, import.meta.url), 'utf8')));
   for (const [i, src] of srcs.entries()) {
     assert.match(src, /runner\.freeBadge/, `free 배지 미배선: ${files[i]}`);
