@@ -3,9 +3,12 @@
 import { createClient } from '@supabase/supabase-js';
 import { saveDeviceSession } from '../../../../src/devicesession.mjs';
 import { ensureSync } from '../../../../src/sync.mjs';
+import { guestModeOn } from '../../../../src/gueststate.mjs';
+import { claimLocalToAccount } from '../../../../src/accountclaim.mjs';
 import { AUTH_ON, isLoopbackHost } from '../../../auth.mjs';
 
 const marker = () => `argo-device=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 365}`;
+const dropGuest = () => 'argo-guest=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0';
 
 export async function POST(req) {
   try {
@@ -21,10 +24,18 @@ export async function POST(req) {
     const { data, error } = await sb.auth.verifyOtp({ email: email.trim(), token: token.trim(), type: 'email' });
     if (error || !data?.session) return Response.json({ error: error?.message || '코드가 올바르지 않습니다' }, { status: 401 });
     await saveDeviceSession({ url, anonKey, session: data.session });
+    // 게스트(로컬 전용)로 쓰다가 로그인 — 같은 사람의 이어짐이다. 회사·계정 자격을 이 계정으로 자동 귀속
+    // (유건 지시 2026-08-21: 새 계정으로 인식하지 말고 그대로 이어서). 루프백·비워커는 위에서 보장.
+    // 실패해도 로그인은 성공으로 둔다 — 홈의 수동 귀속 배너가 남은 것을 받는다(조용한 소실 금지).
+    let claimed = null;
+    if (guestModeOn()) claimed = await claimLocalToAccount(data.session.user.id).catch((e) => ({ error: String(e?.message ?? e) }));
     ensureSync(); // 자격이 방금 생겼다 — 재시작 없이 동기화 기동
+    const headers = new Headers();
+    headers.append('Set-Cookie', marker());
+    headers.append('Set-Cookie', dropGuest()); // 게스트 마커 쿠키 제거 — 이후 미들웨어는 실세션 경로만
     return Response.json(
-      { ok: true, user: { id: data.session.user.id, email: data.session.user.email ?? '' } },
-      { headers: { 'Set-Cookie': marker() } },
+      { ok: true, user: { id: data.session.user.id, email: data.session.user.email ?? '' }, claimed },
+      { headers },
     );
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });
