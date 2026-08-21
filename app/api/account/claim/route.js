@@ -3,9 +3,7 @@
 // 루프백 한정 — 호스티드 웹에서 허용하면 아무 계정이나 서버의 주인 없는 회사를 훔칠 수 있다.
 import { AUTH_ON, currentUser, isLoopbackHost, tenantDenied, csrfDenied } from '../../../auth.mjs';
 import { listCompanies } from '../../../../src/hub.mjs';
-import { updateCompany } from '../../../../src/workspace.mjs';
-import { clearGuestMode } from '../../../../src/gueststate.mjs';
-import { nudgeSync } from '../../../../src/sync.mjs';
+import { claimLocalToAccount } from '../../../../src/accountclaim.mjs';
 
 async function gate(req) {
   if (!AUTH_ON) return { deny: Response.json({ error: '로컬 모드에서는 계정 귀속이 필요 없습니다' }, { status: 400 }) };
@@ -36,18 +34,10 @@ export async function POST(req) {
     const csrf = csrfDenied(req); if (csrf) return csrf; // 악성 웹페이지의 강제 클레임 차단
     const { deny, user } = await gate(req);
     if (deny) return deny;
-    const orphans = (await listCompanies()).filter((c) => !c.ownerId);
-    // 부분 실패 대비 — 하나씩 귀속하며 성공 수를 센다. 도중 실패해도 이미 귀속된 회사는 유지되고,
-    // 마커 해제/nudge는 orphan을 전부 비운 뒤에만 한다(재시도 시 남은 orphan만 다시 필터링돼 관용적).
-    let claimed = 0;
-    for (const c of orphans) {
-      await updateCompany(c.id, { ownerId: user.id });
-      claimed++;
-    }
-    await clearGuestMode();
-    nudgeSync(); // 다음 사이클을 기다리지 않고 즉시 업로드 시작
+    // 귀속 + 로컬 계정 자격 이관 — 로그인 직후 자동 귀속(device/login·auth/callback)과 같은 하나(accountclaim.mjs)
+    const { claimed, creds } = await claimLocalToAccount(user.id);
     return Response.json(
-      { ok: true, claimed },
+      { ok: true, claimed, creds },
       // 게스트 마커 쿠키 제거 — 이후 미들웨어는 실세션 경로로만 판단
       { headers: { 'Set-Cookie': 'argo-guest=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0' } },
     );
