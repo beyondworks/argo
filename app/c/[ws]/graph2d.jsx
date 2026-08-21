@@ -7,6 +7,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { forceSimulation, forceManyBody, forceLink, forceX, forceY } from 'd3-force';
 import { useLang } from '../../i18n';
+import { buildGraph2D, stem } from './graph2d-core.mjs'; // 구성은 JSX 없는 코어(테스트가 직접 임포트)
+export { buildGraph2D };
 
 let INK = '37, 39, 30', PAPER = '233, 235, 221', ACCENT = '37, 39, 30';
 function syncThemeRgb() {
@@ -14,59 +16,6 @@ function syncThemeRgb() {
   INK = s.getPropertyValue('--ink-rgb').trim() || INK;
   PAPER = s.getPropertyValue('--paper-rgb').trim() || PAPER;
   ACCENT = s.getPropertyValue('--accent-rgb').trim() || ACCENT;
-}
-
-const stem = (rel) => rel.replace(/\.md$/, '');
-const authorOf = (rel) => rel
-  .replace(/^(conversations|notes|journal)\//, '')
-  .replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-/, '')
-  .replace(/^\d{4}-\d{2}-\d{2}-/, '')
-  .replace(/\.md$/, '');
-
-/** 그래프 구성(순수) — docs의 [[링크]]가 엣지. 링크 표기 3종(전체 stem·파일명 stem·제목) 전부 해석한다. */
-export function buildGraph2D({ docs = [], agents = [], showCrew = false, showOrphans = false }) {
-  const nodes = [];
-  const idx = new Map();
-  const add = (n) => { idx.set(n.id, nodes.length); nodes.push(n); };
-  const byBase = new Map(), byTitle = new Map();
-  for (const d of docs) {
-    const id = stem(d.rel);
-    add({ id, type: d.dir === 'notes' ? 'note' : 'doc', label: d.title, rel: d.rel });
-    byBase.set(id.split('/').pop(), id);
-    byTitle.set(d.title, id);
-  }
-  const resolve = (l) => (idx.has(l) ? l : byBase.get(l) ?? byTitle.get(l) ?? null);
-  const edges = [];
-  const seen = new Set();
-  for (const d of docs) {
-    const from = stem(d.rel);
-    for (const l of d.links ?? []) {
-      const to = resolve(l);
-      if (!to || to === from) continue;
-      const key = [from, to].sort().join('→');
-      if (seen.has(key)) continue;
-      seen.add(key);
-      edges.push([idx.get(from), idx.get(to)]);
-    }
-  }
-  if (showCrew) {
-    for (const a of agents) add({ id: `@ag:${a.slug}`, type: 'agent', label: a.name, slug: a.slug });
-    for (const d of docs) {
-      const j = idx.get(`@ag:${authorOf(d.rel)}`);
-      if (j !== undefined) edges.push([j, idx.get(stem(d.rel))]);
-    }
-  }
-  const deg = new Array(nodes.length).fill(0);
-  for (const [a, b] of edges) { deg[a]++; deg[b]++; }
-  nodes.forEach((n, i) => { n.deg = deg[i]; });
-  if (showOrphans) return { nodes, edges, hiddenOrphans: 0 };
-  // 고아 제거 — 인덱스 재매핑
-  const keep = nodes.map((n, i) => deg[i] > 0 || n.type === 'agent');
-  const remap = new Map();
-  const nodes2 = [];
-  nodes.forEach((n, i) => { if (keep[i]) { remap.set(i, nodes2.length); nodes2.push(n); } });
-  const edges2 = edges.filter(([a, b]) => keep[a] && keep[b]).map(([a, b]) => [remap.get(a), remap.get(b)]);
-  return { nodes: nodes2, edges: edges2, hiddenOrphans: nodes.length - nodes2.length };
 }
 
 /** 2D 포스 — d3-force(Barnes-Hut 반발, O(N log N)). 직접 짠 격자 해시 근사는 실데이터 2,000노드에서

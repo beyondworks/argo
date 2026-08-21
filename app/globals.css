@@ -1929,13 +1929,19 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh - 56px); min-
    공용 .row의 구분선·큰 패딩·골드 풀배경 활성을 전부 벗긴다 — 트리는 표가 아니라 목록이다. */
 /* 옵시디언/VS Code 탐색기 템플릿(유건 지시 2026-08-21 "똑같이"): 툴바(아이콘) → 루트 폴더 → 폴더/파일 트리.
    행 24px, 13px 글자, 폴더·파일 같은 굵기, 카운트 없음, 활성 = 배경만, 깊이는 가이드라인. */
-.vault-tree .row { padding: 2px 8px 2px 6px; gap: 5px; border-top: 0; border-radius: 5px; margin: 0 6px; width: calc(100% - 12px); line-height: 1.4; min-height: 24px; font-size: 13px; }
+/* 가시성(유건 피드백 2026-08-21 "간격 때문인지 가시성이 떨어진다"): 행 24→30px·글자 13→13.5px·
+   굵기 500·본문색 풀 대비·가이드라인을 --border로. 옵시디언 기본 탐색기 수치(행 ~30px, 13.5px). */
+.vault-tree .row { padding: 5px 8px 5px 6px; gap: 6px; border-top: 0; border-radius: 6px; margin: 1px 6px; width: calc(100% - 12px); line-height: 1.45; min-height: 30px; font-size: 13.5px; color: var(--fg); }
 .vault-tree .row:hover { background: var(--card-2); }
 .vault-tree .row.active { background: var(--border-soft); color: var(--fg); }
 .vault-tree .row.active * { color: var(--fg) !important; }
 .vault-tree .row .when { opacity: 0; transition: opacity .12s; }
 .vault-tree .row:hover .when, .vault-tree .row.active .when { opacity: 1; }
-.vault-tree .tree-kids { margin-left: 14px; border-left: 1px solid var(--border-soft); padding-left: 0; }
+.vault-tree .tree-kids { margin-left: 15px; border-left: 1px solid var(--border); padding-left: 0; }
+/* 뷰어 본문도 같은 이유로 한 단계 크게 — 13px 마크다운은 노트북 화면에서 작다 */
+.vault-reader .md { font-size: 14.5px; line-height: 1.78; }
+.vault-reader .md h1 { font-size: 20px; } .vault-reader .md h2 { font-size: 17px; } .vault-reader .md h3 { font-size: 15.5px; }
+.vault-tab { font-size: 13px; }
 .vault-toolbar { display: flex; align-items: center; gap: 2px; padding: 6px 8px 4px; flex: none; }
 .vault-toolbar .tb { width: 26px; height: 26px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--fg-3); transition: background .12s, color .12s; }
 .vault-toolbar .tb:hover, .vault-toolbar .tb.on { background: var(--card-2); color: var(--fg); }
