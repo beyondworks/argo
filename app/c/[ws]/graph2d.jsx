@@ -250,7 +250,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       const drawn = new Set();
       const placed = []; // 라벨 충돌 회피 — 허브가 뭉친 실데이터(2,000건)에서 라벨끼리 겹쳐 못 읽던 것. 가까운 자리엔 안 쓴다
-      const crowded = (x, y) => placed.some((q) => Math.abs(q.y - y) < 18 && Math.abs(q.x - x) < 170);
+      const crowded = (x, y, h) => placed.some((q) => Math.abs(q.y - y) < (h + q.h) / 2 && Math.abs(q.x - x) < 170);
       for (let i = 0; i < graph.nodes.length; i++) {
         const n = graph.nodes[i];
         const isHover = i === hover, isNb = !compact && nbSet?.has(i);
@@ -260,16 +260,18 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         const q = P[i], r = nodeRadius(n) * rs;
         if (off(q)) continue;
         const em = isHover || i === rootIdx;
-        if (!em && crowded(q.x + r * 2.6 + 6, q.y)) continue;
-        placed.push({ x: q.x + r * 2.6 + 6, y: q.y });
+        const twoLine = !compact && !anyFocus && hubs.has(i) && !em; // 허브는 '연결 N' 둘째 줄까지 차지한다
+        const lh = twoLine ? 34 : 18;
+        if (!em && crowded(q.x + r * 2.6 + 6, q.y + (twoLine ? 8 : 0), lh)) continue;
+        placed.push({ x: q.x + r * 2.6 + 6, y: q.y + (twoLine ? 8 : 0), h: lh });
         const txt = n.label.length > 28 ? `${n.label.slice(0, 28)}…` : n.label;
         ctx.font = `${em ? 600 : 500} ${compact ? 10.5 : em ? 13 : 12}px ${FONT}`;
         const a = em || isNb ? 0.95 : Math.min(0.8, 0.45 + (view.s - 1) * 0.4);
         const col = (hubs.has(i) || em) && n.type !== 'agent' ? LABEL_ACCENT : INK;
         ctx.fillStyle = `rgba(${col}, ${a * (anyFocus && !isHover && !isNb ? 0.3 : 1)})`;
         ctx.fillText(txt, q.x + r * 2.6 + 6, q.y + 1);
-        if (!compact && !anyFocus && hubs.has(i) && !em) { // 허브엔 연결 수 한 줄
-          ctx.font = `10.5px ${FONT}`; ctx.fillStyle = `rgba(${INK}, 0.55)`;
+        if (twoLine) { // 허브엔 연결 수 한 줄
+          ctx.font = `10.5px ${FONT}`; ctx.fillStyle = `rgba(${LABEL_ACCENT}, 0.8)`;
           ctx.fillText(t('graph.linksN', { n: n.deg }), q.x + r * 2.6 + 6, q.y + 16);
         }
       }
