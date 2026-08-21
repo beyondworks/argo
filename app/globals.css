@@ -1970,7 +1970,11 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh - 56px); min-
 .vault-pane.focus .vault-tabs { background: transparent; }
 .vault-pane:not(.focus) .vault-tab.active::after { opacity: 0.45; }
 /* 패널 폭 조절 핸들 */
-.vault-split > .vault-handle { width: 5px; flex: none; cursor: col-resize; margin-left: -3px; position: relative; z-index: 2; }
+.vault-split > /* 성도 위 칩·힌트 — 밤바다 위에서 읽히게(테마 토큰은 종이색이라 안 보인다) */
+.argo-sky .chip { background: rgba(11, 18, 32, .6); border-color: #2a3a5c; color: #b9c2d6; }
+.argo-sky .chip.on { border-color: #b9a66b; color: #e9d9a6; }
+.argo-sky .microlabel { color: #6f7890; }
+.vault-handle { width: 5px; flex: none; cursor: col-resize; margin-left: -3px; position: relative; z-index: 2; }
 .vault-split > .vault-handle:hover, .vault-split > .vault-handle.on { background: var(--primary-soft); }
 /* 문서 인쇄(PDF 저장) — 뷰어 본문만 종이에 싣는다. 앱 크롬(사이드바·탑바·트리)은 전부 숨김. */
 @media print {

@@ -739,6 +739,7 @@ const DICT = {
   'graph.showOrphans': ['연결 없는 기억 {n}건', '{n} unlinked'],
   'graph.hideOrphans': ['연결 없는 기억 숨김', 'Hide unlinked'],
   'graph.backToAll': ['전체 그래프로', 'Back to all'],
+  'graph.linksN': ['연결 {n}', '{n} links'],
   'graph.hint2d': ['드래그 이동 · 휠 줌 · 노드 드래그 · 더블클릭 = 주변만 보기', 'Drag to pan · wheel to zoom · drag nodes · double-click = local view'],
   'vault.backlinks': ['이 문서를 참조하는 기억 {n}건', '{n} memories link here'],
 
