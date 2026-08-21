@@ -726,6 +726,8 @@ const DICT = {
   'vault.deleteDesc': ['크루가 더 이상 이 지식을 참조하지 않습니다. 파일은 휴지통(.trash/)에 보관됩니다.', 'Crew will no longer reference this knowledge. The file is kept in the trash (.trash/).'],
   'vault.deleteConfirm': ['노트 삭제', 'Delete note'],
   'vault.docUnavailable': ['(문서를 열 수 없습니다: {msg})', '(Could not open document: {msg})'],
+  'vault.printHint': ['인쇄 대화상자에서 "PDF로 저장"을 선택하세요', 'Choose "Save as PDF" in the print dialog'],
+  'vault.backlinks': ['이 문서를 참조하는 기억 {n}건', '{n} memories link here'],
 
   // ── 크루 채팅
   'chat.waitStage1': ['기억을 살피는 중', 'Checking memory'],

@@ -41,12 +41,17 @@ test('② 그리는 쪽·고르는 쪽 모두 카메라 뒤 점을 건너뛴다'
     '픽킹은 미니·전체화면 두 곳 — 한 곳만 고치면 다른 화면에서 유령 노드가 집힌다');
 });
 
-test('③ 색은 노드마다가 아니라 깊이 구간별로 — 프레임 비용이 노드 수에 비례하지 않게', () => {
-  assert.match(src, /new Path2D\(\)/, '경로에 모아 한 번에 긋는다');
-  // 개별 그리기는 회사 노드·호버·라벨 노드(합쳐야 십수 개)에만 남아야 한다.
-  assert.match(src, /const singles = \[\]/, '개별 처리 대상은 명시적으로 분리');
-  assert.ok(!/for \(const \[, i\] of order\) \{[\s\S]{0,900}?ctx\.fillStyle = `rgba\(\$\{ACCENT\}, \$\{\(hi \? 0\.16/.test(src),
-    '깊이 정렬 루프 안에서 노드마다 fillStyle을 세팅하던 옛 구조로 돌아가면 안 된다');
+test('③ 노드 색 비용이 노드 수에 비례하지 않는다 — 스프라이트 1회 생성 + 파싱 없는 알파', () => {
+  assert.match(src, /new Path2D\(\)/, '엣지는 경로에 모아 한 번에 긋는다');
+  // 2026-08-21 구체 개편: 깊이 구간 Path2D 배칭 → 테마당 1회 생성하는 orb 스프라이트 + drawImage.
+  // 잠그는 불변식은 동일하다 — "깊이 정렬 루프 안에서 노드마다 색 문자열을 파싱시키지 않는다"
+  // (실측: 1818노드에서 프레임당 rgba 파싱 5천 회가 캔버스 호출 자체보다 비쌌다).
+  assert.match(src, /function orbSprites\(\)/, '스프라이트는 테마당 1회 생성(orbSprites)');
+  assert.match(src, /ctx\.drawImage\(/, '노드는 drawImage로 찍는다');
+  const loop = src.match(/for \(const \[, i\] of order\) \{[\s\S]{0,1600}?\n    \}/)?.[0] ?? '';
+  assert.ok(loop, '깊이 정렬 루프가 있어야 한다');
+  assert.ok(!/ctx\.fillStyle\s*=\s*`rgba/.test(loop),
+    '깊이 루프 안에서 노드마다 fillStyle rgba 문자열을 세팅하던 옛 구조로 돌아가면 안 된다');
 });
 
 test('시뮬레이션은 자리를 잡으면 멈춘다 — 수렴한 뒤로는 같은 그림을 다시 계산할 뿐이다', () => {

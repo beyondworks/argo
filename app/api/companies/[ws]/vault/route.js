@@ -19,9 +19,20 @@ export async function GET(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const rel = new URL(req.url).searchParams.get('rel');
+    const url = new URL(req.url);
+    const rel = url.searchParams.get('rel');
     if (rel) {
       try {
+        // download=1 — 원문 md를 첨부로(뷰어의 MD 다운로드 버튼). readDoc이 경로 탈출을 이미 막는다.
+        if (url.searchParams.get('download') === '1') {
+          const name = rel.split('/').pop() || 'memory.md';
+          return new Response(await readDoc(ws, rel), {
+            headers: {
+              'Content-Type': 'text/markdown; charset=utf-8',
+              'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+            },
+          });
+        }
         return Response.json({ rel, content: await readDoc(ws, rel) });
       } catch (e) {
         // 깨진 위키링크(삭제·이동된 문서) — raw ENOENT는 서버 절대 경로를 UI에 노출한다(SaaS 레이아웃 유출)
