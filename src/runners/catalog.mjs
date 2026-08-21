@@ -22,8 +22,8 @@ export const RUNNERS = {
   },
   codex: {
     // mcp: 이 러너가 **실제로 MCP 서버를 받는가**. kind로 갈음하면 안 된다 — codex는 CLI지만
-    // v0.1.41부터 config.toml(sandbox 설정과 같은 파일)로 MCP를 실제로 받는다. gemini·antigravity는
-    // 벤더 비대화 경로가 MCP를 안 받아 여전히 못 받는다. 화면 경고가 kind만 보면 codex 크루에게
+    // v0.1.41부터 config.toml(sandbox 설정과 같은 파일)로 MCP를 실제로 받는다. gemini는 settings.json으로
+    // 받는다(2026-08-21). antigravity는 설정이 호스트 HOME 전용이라 회사별 주입을 하지 않는다. 화면 경고가 kind만 보면 codex 크루에게
     // "어차피 안 돈다"는 거짓을 말하게 된다(분리 검수 2026-08-19 MED-C).
     name: 'Codex', kind: 'cli', mcp: true,
     models: [
@@ -35,7 +35,7 @@ export const RUNNERS = {
     ],
   },
   gemini: {
-    name: 'Gemini', kind: 'cli',
+    name: 'Gemini', kind: 'cli', mcp: true, // settings.json mcpServers 주입(0.21.2 mcp list 실프로브 2026-08-21)
     models: [
       // 실측(2026-07-19): OAuth(Code Assist) 경로 실턴 통과 = 2.5 Pro/Flash. 3.x id는 실존하나
       // (gemini-cli 공식 문서 get-started/gemini-3) Google AI Ultra 구독·유료 계정에만 개방 —

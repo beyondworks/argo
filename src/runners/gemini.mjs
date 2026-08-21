@@ -6,7 +6,8 @@ import { createHash } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exec, exists, homeEnv, scrubServerSecrets, seedAuthFile } from './shared.mjs';
-import { openRoots } from '../workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
+import { openRoots } from '../workroots.mjs';
+import { commandExists } from './codex.mjs'; // MCP command 실재 검사 — codex와 같은 규칙(러너 중립성) // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 
 /* ─── Gemini CLI 자동 조달 — "구독 연결 = 바로 사용"의 본체 (실사용 신고 2026-07-20) ───
    Gemini 러너는 벤더 CLI로 실행되는데, 지금까지는 사용자가 직접 설치해야 했다 — OAuth로
@@ -115,7 +116,23 @@ async function geminiTurnHome(wsId, cred) {
 
 /** gemini 격리 HOME에 이번 턴 settings.json을 쓴다 — 인증 방식 고정 + caps 기반 도구 게이팅.
     매 턴 덮어쓴다(caps가 턴마다 다를 수 있음). 워크스페이스 GEMINI.md·전역 도구 상속을 이 파일이 차단한다. */
-async function writeGeminiTurnSettings(home, authType, caps, workRoots = []) {
+/** 회사 MCP → gemini settings.json `mcpServers` — 실프로브(0.21.2 `gemini mcp list`, 2026-08-21): 격리 HOME의
+    settings.json에서 stdio({command,args,env})·http({httpUrl}) 둘 다 읽는다. 실행 파일 없는 command는
+    codex와 같은 규칙으로 뺀다(있는 것만 싣고 로그). 비대화(-p) 턴에서 도구가 실제 호출되는지는 이 맥의
+    gemini 계정 제약(GOOGLE_CLOUD_PROJECT 요구)으로 라이브 미확인 — 설정 해석까지가 실측이다. */
+export function geminiMcpServers(mcpServers) {
+  const out = {}; const skipped = [];
+  for (const [name, def] of Object.entries(mcpServers ?? {})) {
+    if (!def || typeof def !== 'object') continue;
+    if (def.url && !def.command) { out[name] = { httpUrl: def.url, ...(def.headers ? { headers: def.headers } : {}) }; continue; }
+    if (typeof def.command !== 'string' || !def.command.trim() || !commandExists(def.command)) { skipped.push(name); continue; }
+    out[name] = { command: def.command, ...(Array.isArray(def.args) && def.args.length ? { args: def.args.map(String) } : {}), ...(def.env && typeof def.env === 'object' ? { env: def.env } : {}) };
+  }
+  if (skipped.length) console.warn(`[argo] gemini MCP 제외(실행 파일 없음): ${skipped.join(', ')}`);
+  return out;
+}
+
+async function writeGeminiTurnSettings(home, authType, caps, workRoots = [], mcpServers = null) {
   const exclude = [];
   if (!caps?.browser) exclude.push('google_web_search', 'web_fetch'); // 웹 능력 OFF면 검색·페치 차단(광고·실행 방지)
   // 셸 제외를 해제했다(유건 지시 2026-08-21 "샌드박스 없이, 다른 러너도 동일하게") — 호출이
@@ -143,7 +160,8 @@ async function writeGeminiTurnSettings(home, authType, caps, workRoots = []) {
       security: { auth: { selectedType: authType }, folderTrust: { enabled: false } },
       tools: { exclude },
       ...(roots.length ? { context: { includeDirectories: roots } } : {}),
-    }));
+      ...(mcpServers ? { mcpServers: geminiMcpServers(mcpServers) } : {}),
+    }), { mode: 0o600 }); // MCP env 토큰이 평문으로 실린다 — codex config.toml과 같은 근거
 }
 
 /** gemini OAuth 자격을 실제 실행기(geminiCmd 해석 결과)로 초소형 1콜 검증 — "연결됨인데 첫 사용 실패" 차단.

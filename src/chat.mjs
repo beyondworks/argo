@@ -35,6 +35,8 @@ import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from '.
     (export: 회귀 테스트용) */
 /** SDK init 메시지에서 접속 실패 MCP 서버만(순수) — crew(내장)는 제외, 상태 없는 항목은 판단 보류.
     (export: 회귀 테스트용 — 검수 M1: 인라인 분기는 변이가 침묵으로 통과했다) */
+const MCP_CLI_RUNNERS = new Set(['codex', 'gemini']); // 카탈로그 mcp:true와 같은 집합 — 테스트가 대조한다
+
 export function mcpFailures(initMsg) {
   return (initMsg?.mcp_servers ?? []).filter((sv) => sv?.status && sv.status !== 'connected' && sv.name !== 'crew');
 }
@@ -937,10 +939,11 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 순서가 반대면 크루 카드 `mcp:` 범위로 곧 버려질 서버 때문에도 네트워크 조달(최대 195s)이
       // 턴 선두에 붙는다(분리 검수 2026-08-21 MED-3). SDK 경로와 같은 순서.
       const scoped = await materializeMcpServers(scopeServers(allMcp, mcpScope));
-      const cliMcpServers = runner === 'codex' ? scoped : null;
-      const cliMcp = runner === 'codex'
-        ? Object.keys(scoped)
-        : []; // gemini·antigravity — 프롬프트에 MCP 목록을 알려주지 않는다(실도구 없으므로)
+      // MCP를 실제로 받는 CLI = codex(config.toml)·gemini(settings.json, 2026-08-21). antigravity는 설정이
+      // 호스트 HOME 전용(~/.gemini/config/mcp_config.json, 격리 홈 없음)이라 회사별 주입이 사용자 본인
+      // 설정을 덮어쓴다 — 주입하지 않고 프롬프트에도 목록을 알리지 않는다(없는 도구 안내 금지).
+      const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? scoped : null;
+      const cliMcp = cliMcpServers ? Object.keys(scoped) : [];
       // 커넥터 요약 — **SDK 턴과 같은 원천**(connectorBriefing: connected + reauth)을 쓴다. 여기서
       // connected만 거르면 전부 reauth인 회사에서 CLI 크루만 커넥터의 존재조차 몰라 "못 한다"고 답하고,
       // 사장은 재연결이 필요하다는 사실을 영영 듣지 못한다 — SDK는 "[재연결 필요]"로 안내하는데
