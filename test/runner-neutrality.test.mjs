@@ -64,7 +64,7 @@ test('antigravity 반경 인자 = openRoots(반복형 --add-dir)', async () => {
 test('배선: externalExec가 gemini settings·agy 인자에 workRoots를 실제로 넘긴다', async () => {
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
-  assert.match(src, /writeGeminiTurnSettings\(cred\.home, cred\.authType, caps, workRoots\)/, 'gemini 반경 배선');
+  assert.match(src, /writeGeminiTurnSettings\(cred\.home, cred\.authType, caps, workRoots(, mcpServers)?\)/, 'gemini 반경 배선');
   assert.match(src, /\.\.\.agyDirArgs\(caps, workRoots\)/, 'antigravity 반경 배선');
 });
 

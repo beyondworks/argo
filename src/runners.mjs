@@ -133,7 +133,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
   if (runner === 'gemini') {
     // 회사/host 자격이면 격리 HOME — 이번 턴 settings.json(인증 방식 + caps 도구 게이팅)을 매 턴 쓴다.
     // (자격 없는 경로는 명시 연결 원칙상 도달 안 하지만, 도달 시 호스트 HOME으로 폴백 — 도구 게이팅 없음)
-    if (cred?.home && cred?.authType) await writeGeminiTurnSettings(cred.home, cred.authType, caps, workRoots);
+    if (cred?.home && cred?.authType) await writeGeminiTurnSettings(cred.home, cred.authType, caps, workRoots, mcpServers);
     const cmd = await geminiCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     // 파일 반경 — gemini-cli는 workspaceContext(cwd + include-directories) **밖의 읽기·쓰기를 벤더
     // 도구가 거부**한다. 반경을 안 넘기면 크루 책상이 회사 폴더 하나로 쪼그라들어, 같은 지시가 codex
