@@ -4,7 +4,7 @@ import { use, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, useScrollLock, InputModal, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
-import { Constellation3D, GraphModal } from './graphview';
+import { Graph2D } from './graph2d'; // 데크 별자리도 기억 페이지와 같은 2D 그래프(유건 지시 2026-08-21: 옛 3D 잔존 지적)
 import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames } from '../../runner-connect';
 import { useLang } from '../../i18n';
 
@@ -15,7 +15,6 @@ export default function Deck({ params }) {
   const router = useRouter();
   const [data, setData] = useState(null);
   const [docs, setDocs] = useState(null);
-  const [projects, setProjects] = useState([]); // 산출물 — 그래프 모달 위키링크 해석용(기억 페이지와 동일 축)
   const [prompt, setPrompt] = useState('');
   const [hireName, setHireName] = useState('');
   const [hireTeam, setHireTeam] = useState('');
@@ -24,7 +23,6 @@ export default function Deck({ params }) {
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
-  const [graphOpen, setGraphOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null); // 크루 신원 수정 모달
   const [renameTarget, setRenameTarget] = useState(null); // 팀 이름변경 입력 모달 대상(현재 팀명)
   const [crewExpanded, setCrewExpanded] = useState(false); // ponytail: 크루 접기(G14)
@@ -46,9 +44,7 @@ export default function Deck({ params }) {
 
   function load() {
     api(`/api/companies/${ws}`).then(setData).catch((e) => setError(String(e.message)));
-    // projects도 받는다 — 안 넘기면 같은 [[산출물 링크]]가 기억 페이지 모달에선 열리고 데크 모달에선
-    // 404가 된다(검수 PR #208 잔여: GraphModal 두 호출부 사이의 해석 불일치).
-    api(`/api/companies/${ws}/vault`).then((d) => { setDocs(d.docs); setProjects(d.projects ?? []); }).catch(() => setDocs([]));
+    api(`/api/companies/${ws}/vault`).then((d) => setDocs(d.docs)).catch(() => setDocs([]));
   }
   useEffect(load, [ws]);
 
@@ -398,12 +394,15 @@ export default function Deck({ params }) {
           <div className="card" style={{ padding: '15px 18px 8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span className="card-title">{t('deck.constellation')}</span>
-              <button className="chip" onClick={() => setGraphOpen(true)} style={{ cursor: 'pointer' }}>{t('deck.viewLarge')}</button>
+              {/* 크게 보기 = 기억 페이지의 그래프 탭(같은 렌더러·같은 인터랙션) — 별도 모달 유지 안 함 */}
+              <button className="chip" onClick={() => router.push(`/c/${ws}/vault`)} style={{ cursor: 'pointer' }}>{t('deck.viewLarge')}</button>
             </div>
             {docs === null || data === null ? (
               <Skeleton h={200} style={{ margin: '8px 0' }} />
             ) : (
-              <Constellation3D company={data.company} delegations={data.delegations} agents={data.agents} docs={docs} onOpen={() => setGraphOpen(true)} onSelectDoc={(rel) => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`)} />
+              <div style={{ height: 220, margin: '4px -6px 0' }}>
+                <Graph2D docs={docs} agents={data.agents} compact onSelectDoc={(rel) => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`)} />
+              </div>
             )}
             <p className="microlabel" style={{ textAlign: 'center', padding: '2px 0 6px' }}>
               {docs && data
@@ -424,19 +423,6 @@ export default function Deck({ params }) {
           teams={[...new Set((data?.agents ?? []).map((a) => a.team).filter(Boolean))]}
           onClose={() => setEditTarget(null)}
           onSaved={() => { setEditTarget(null); load(); window.dispatchEvent(new Event('argo:refresh')); }}
-        />
-      )}
-
-      {graphOpen && docs && data && (
-        <GraphModal
-          ws={ws}
-          company={data.company}
-          agents={data.agents}
-          delegations={data.delegations}
-          docs={docs}
-          projects={projects}
-          onClose={() => setGraphOpen(false)}
-          onSelect={(rel) => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`)}
         />
       )}
 

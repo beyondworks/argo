@@ -449,7 +449,7 @@ const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)}MB` : `${Math
 function FileRow({ d, active, onOpen, lang }) {
   return (
     <button onClick={(e) => onOpen(d.rel, e)} className={`row${active ? ' active' : ''}`} title={d.title} style={{ paddingLeft: 21 }}>
-      <span style={{ minWidth: 0, flex: 1, fontWeight: 450, color: 'var(--fg)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
+      <span style={{ minWidth: 0, flex: 1, fontWeight: 500, color: 'var(--fg)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
       <span className="mono when" style={{ flex: 'none', fontSize: 9.5, color: 'var(--fg-3)' }}>{timeAgo(tsFromRel(d.rel) ?? d.mtime, lang)}</span>
     </button>
   );
