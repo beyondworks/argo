@@ -3,6 +3,7 @@ import { writeFile, rename, mkdir } from 'node:fs/promises';
 import { listDocs, listProjectDocs, readDoc } from '../../../../../src/hub.mjs';
 import { saveNote, updateIndex } from '../../../../../src/memory.mjs';
 import { paths } from '../../../../../src/workspace.mjs';
+import { EXPORTS } from '../../../../../src/office-export.mjs';
 import { appendEvent } from '../../../../../src/events.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
@@ -24,6 +25,15 @@ export async function GET(req, { params }) {
     if (rel) {
       try {
         // download=1 — 원문 md를 첨부로(뷰어의 MD 다운로드 버튼). readDoc이 경로 탈출을 이미 막는다.
+        // format=docx|xlsx|csv — 기억을 오피스 형식으로(유건 지시 4-2). 외부 의존 없는 src/export.mjs
+        const fmt = url.searchParams.get('format');
+        if (fmt && EXPORTS[fmt]) {
+          const base = (rel.split('/').pop() || 'memory').replace(/\.md$/, '');
+          const body = EXPORTS[fmt].make(await readDoc(ws, rel));
+          return new Response(body, {
+            headers: { 'Content-Type': EXPORTS[fmt].mime, 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`${base}.${fmt}`)}` },
+          });
+        }
         if (url.searchParams.get('download') === '1') {
           const name = rel.split('/').pop() || 'memory.md';
           return new Response(await readDoc(ws, rel), {

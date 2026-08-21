@@ -379,6 +379,13 @@ function DocView({ ws, rel, docs, projects, t, onOpen, onGraph, onChanged, onDel
                 <Icon name="doc" size={12} /> MD
               </a>
               <button className="btn sm" onClick={() => window.print()} title={t('vault.printHint')}>PDF</button>
+              {/* 오피스 내보내기 — 표는 xlsx/csv의 시트·행으로, 본문은 docx의 제목·문단·표로(server: src/office-export.mjs) */}
+              {['docx', 'xlsx', 'csv'].map((f) => (
+                <a key={f} className="btn sm" download={`${dlName.replace(/\.md$/, '')}.${f}`} style={{ textDecoration: 'none' }}
+                  href={`/api/companies/${ws}/vault?rel=${encodeURIComponent(rel)}&format=${f}`}
+                  onClick={artifactDownload(`/api/companies/${ws}/vault?rel=${encodeURIComponent(rel)}&format=${f}`, `${dlName.replace(/\.md$/, '')}.${f}`)}
+                  title={t(`vault.export.${f}`)}>{f.toUpperCase()}</a>
+              ))}
               {doc?.dir === 'notes' && (
                 <>
                   <button className="btn sm" onClick={() => { setDraft(content); setEditing(true); }}><Icon name="edit" size={12} /> {t('vault.edit')}</button>
