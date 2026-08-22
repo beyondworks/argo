@@ -4,7 +4,9 @@
 /** 러너별 모델 카탈로그 — id '' = 그 러너의 기본 모델. 라벨은 고유명사라 언어 공통. */
 export const RUNNERS = {
   claude: {
-    name: 'Claude Code', kind: 'sdk',
+    // 표시명은 'Claude' — Agent SDK 브랜딩 지침(code.claude.com/docs/en/agent-sdk/overview)이 서드파티 제품에
+    // "Claude Code"·"Claude Code Agent" 사용을 금지한다(허용: "Claude Agent"·"Claude"). 실행 경로는 그대로 SDK다.
+    name: 'Claude', kind: 'sdk',
     models: [
       { id: 'claude-fable-5', label: 'Fable 5' },
       { id: 'claude-opus-5', label: 'Opus 5' }, // 실턴 통과 2026-07-25 (runOneShot 'ok' — 카탈로그 규칙: 실행 경로 검증 후에만 추가)
