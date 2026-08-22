@@ -1265,26 +1265,6 @@ export default function CrewChat({ params }) {
           </div>
         )}
         <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
-          {/* 폴더·클립 한 묶음(유건 지시 2026-07-28). 순서는 폴더 → 클립.
-              간격의 지배 변수는 gap이 아니라 **버튼 폭**이다(.btn.btn-icon 34px에 아이콘 14px라
-              gap 0이어도 글리프 사이 20px). 그래서 이 둘만 26px로 좁힌다 → 글리프 간격 12px.
-              폴더 아이콘은 translateY(-0.18px) — 클립 잉크가 viewBox 중심보다 0.31단위 위에
-              그려져 있어(실측 cy 11.69 vs 12.0) 박스를 맞춰도 폴더가 내려가 보인다. 그 차이만 상쇄. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 0, flex: 'none' }}>
-            {/* 작업 폴더 열기 — 러너별 한계는 툴팁으로 정직 표기(Gemini 계열은 경로 제어 없음, runnerNote 재사용) */}
-            <button type="button" className="btn btn-icon sm"
-              style={{ border: 0, flex: 'none', width: 26, color: pinnedFolder ? 'var(--fg)' : 'var(--fg-3)' }}
-              onClick={openWorkFolder} disabled={busy || wfBusy} aria-label={t('chat.workFolder.open')}
-              title={pinnedFolder
-                ? `${t('chat.workFolder.pinned', { path: pinnedFolder })} — ${t('settings.workroots.runnerNote')}`
-                : `${t('chat.workFolder.open')} — ${t('settings.workroots.runnerNote')}`}>
-              {wfBusy ? <Spinner size={14} /> : <Icon name="folder" size={14} style={{ transform: 'translateY(-0.18px)' }} />}
-            </button>
-            <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', width: 26, color: 'var(--fg-3)' }}
-              onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
-              <Icon name="clip" size={14} />
-            </button>
-          </div>
           <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
           {/* 답변 중에도 입력창을 잠그지 않는다 — 보내면 대기열로 간다(placeholder가 그 사실을 말한다).
               잠가 두던 동안 사장은 생각난 것을 적어 둘 수도, 방향을 틀 수도 없었다. */}
@@ -1304,7 +1284,28 @@ export default function CrewChat({ params }) {
         </form>
         </div>
         {/* 입력창 아래 슬림 줄 — 우측 텍스트형 모델 버튼(클릭 시 위로 팝오버). 레퍼런스: Claude Code 입력바 */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 6px', minHeight: 18 }}>
+        {/* 입력창 아래 슬림 줄 — 왼쪽 폴더·클립, 오른쪽 모델 버튼(유건 2026-08-23: 아이콘을 내려 모델명과 한 줄, 입력은 맨 왼쪽부터) */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px', minHeight: 18 }}>
+            {/* 폴더·클립 한 묶음(유건 지시 2026-07-28). 순서는 폴더 → 클립.
+                간격의 지배 변수는 gap이 아니라 **버튼 폭**이다(.btn.btn-icon 34px에 아이콘 14px라
+                gap 0이어도 글리프 사이 20px). 그래서 이 둘만 26px로 좁힌다 → 글리프 간격 12px.
+                폴더 아이콘은 translateY(-0.18px) — 클립 잉크가 viewBox 중심보다 0.31단위 위에
+                그려져 있어(실측 cy 11.69 vs 12.0) 박스를 맞춰도 폴더가 내려가 보인다. 그 차이만 상쇄. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 0, flex: 'none' }}>
+              {/* 작업 폴더 열기 — 러너별 한계는 툴팁으로 정직 표기(Gemini 계열은 경로 제어 없음, runnerNote 재사용) */}
+              <button type="button" className="btn btn-icon sm"
+                style={{ border: 0, flex: 'none', width: 26, color: pinnedFolder ? 'var(--fg)' : 'var(--fg-3)' }}
+                onClick={openWorkFolder} disabled={busy || wfBusy} aria-label={t('chat.workFolder.open')}
+                title={pinnedFolder
+                  ? `${t('chat.workFolder.pinned', { path: pinnedFolder })} — ${t('settings.workroots.runnerNote')}`
+                  : `${t('chat.workFolder.open')} — ${t('settings.workroots.runnerNote')}`}>
+                {wfBusy ? <Spinner size={14} /> : <Icon name="folder" size={14} style={{ transform: 'translateY(-0.18px)' }} />}
+              </button>
+              <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', width: 26, color: 'var(--fg-3)' }}
+                onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
+                <Icon name="clip" size={14} />
+              </button>
+            </div>
           <ModelMenu runners={runners} sel={sel} onChange={saveRunner} disabled={busy} />
         </div>
       </div>
