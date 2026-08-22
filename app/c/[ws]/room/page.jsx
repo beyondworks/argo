@@ -358,7 +358,6 @@ export default function Room({ params }) {
           <div style={{ display: 'grid', gap: 6 }}>
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
             {/* 라우팅 문법 안내 — 모르면 없는 기능이다. 방을 떠나지 않고 지시하는 법을 입력창 옆에 붙여 둔다 */}
-            <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>{t('room.routingHint')}</p>
             {/* 멘션 드롭업의 위치 기준 — 입력바를 relative로 감싼다 */}
             <div style={{ position: 'relative' }}>
               {mentionOpen && (
@@ -424,7 +423,6 @@ export default function Room({ params }) {
                 </button>
               </form>
             </div>
-            <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0 }}>{t('room.hint')}</p>
           </div>
         )}
       </div>
