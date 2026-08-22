@@ -275,7 +275,8 @@ export default function Compete({ params }) {
           <div style={{ display: 'grid', gap: 6 }}>
             {/* 라벨 열 공유 grid — 두 행의 박스 좌측 라인이 정렬된다(모델 선택 왼편 기준, 유건 지시 2026-07-21).
                 드롭다운은 전부 DropUp(위로 열림) — 하단 배치라 네이티브 select 팝업이 아래로 열려 잘렸다. */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '6px 10px', alignItems: 'center' }}>
+            {/* 크루·모델 선택을 한 줄로(유건 2026-08-23) — 좁으면 줄바꿈 */}
+            <div style={{ display: 'flex', gap: '6px 14px', alignItems: 'center', flexWrap: 'wrap' }}>
               <span className="microlabel">{t('compete.pick')}</span>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 {/* 크루 1명 — 등록된 모든 크루 중 선택 */}
