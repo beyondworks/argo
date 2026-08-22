@@ -43,7 +43,12 @@ export function apiError(e, runner = null) {
   // 텍스트 매칭은 stderr로 한정한다(검수 2026-07-23): raw에는 stdout이 섞여 있어, 크루가 셸 도구로 실행한
   // 명령의 "command not found" 출력이 stdout에 실리면 무관한 실패(인증 만료·rate limit)를 CLI 미발견으로
   // 오분류하고 원래 벤더 메시지를 지워 자가치유(AUTH_ERR_RE)까지 막는다. e.code가 확정 신호.
-  if (e.code === 'ENOENT' || /command not found|\bENOENT\b/i.test(String(e.stderr ?? ''))) {
+  // stderr 텍스트 휴리스틱은 **진행 기록이 없는 짧은 stderr**에서만(2026-08-22 제보 "업데이트 후 CLI를 찾을 수
+  // 없다" 지속 — 실측: codex exec는 크루 셸 명령의 출력까지 stderr에 쓴다. 0.1.43에서 샌드박스를 없애 셸이
+  // 전면 허용되자 'command not found'가 stderr에 흔히 섞였고, 턴이 한도·인증 등 다른 이유로 실패하면 그
+  // 원인이 'CLI 미발견'으로 덮였다). e.code가 확정 신호이고, 셸 래퍼가 한 줄로 죽는 경우만 텍스트로 보강한다.
+  const stderrTail = String(e.stderr ?? '');
+  if (e.code === 'ENOENT' || (stderrTail.length < 300 && /command not found|\bENOENT\b/i.test(stderrTail))) {
     return new Error('러너 CLI를 찾지 못했습니다 (설치 또는 PATH 문제). 설정 → AI 연결에서 다시 연결하거나 앱을 재시작해 주세요. '
       + 'Runner CLI not found (install or PATH issue) — reconnect in Settings → AI, or restart the app.');
   }

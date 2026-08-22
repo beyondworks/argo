@@ -118,3 +118,19 @@ test('러너 열거 안내 문자열에 Antigravity가 빠지지 않았다(전�
     }
   }
 });
+
+test('에러 매핑 — 진행 기록(stderr)에 섞인 "command not found"는 CLI 미발견이 아니다(제보 2026-08-22 "업데이트 후 CLI를 찾을 수 없음")', () => {
+  // codex exec는 크루 셸 명령의 출력까지 stderr에 쓴다(실측: stdout 0B·stderr 4KB). 샌드박스 제거(0.1.43)
+  // 뒤 셸이 전면 허용되자 이 문구가 흔해졌고, 턴이 한도 초과로 죽으면 원인이 'CLI 미발견'으로 덮였다.
+  const transcript = '2026-08-22T05:21:50Z codex_core exec: $ pandoc --version\n/bin/sh: pandoc: command not found\n'.repeat(6)
+    + '{"error":{"type":"usage_limit_reached","message":"You have hit your usage limit."}}';
+  const e = Object.assign(new Error('x'), { stdout: '', stderr: transcript, code: 1 });
+  const mapped = apiError(e, 'codex');
+  assert.doesNotMatch(mapped.message, /CLI를 찾지 못했습니다|Runner CLI not found/, '진행 기록의 셸 실패가 CLI 미발견으로 오분류됐다');
+  assert.match(mapped.message, /usage limit/i, '벤더 원인(한도)이 보존돼야 한다');
+});
+
+test('에러 매핑 — 진짜 스폰 실패(e.code ENOENT)와 짧은 셸 래퍼 실패는 여전히 CLI 미발견이다', () => {
+  assert.match(apiError(Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT', stdout: '', stderr: '' }), 'codex').message, /CLI를 찾지 못했습니다/);
+  assert.match(apiError(Object.assign(new Error('x'), { code: 127, stdout: '', stderr: '/bin/sh: gemini: command not found\n' }), 'gemini').message, /CLI를 찾지 못했습니다/);
+});
