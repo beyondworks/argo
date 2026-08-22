@@ -11,6 +11,15 @@ export default function Room({ params }) {
   const [agents, setAgents] = useState([]);
   const [messages, setMessages] = useState(null);
   const [input, setInput] = useState('');
+  // 여러 줄 입력 — 줄바꿈(Shift+Enter)하면 입력창이 따라 자란다(유건 2026-08-23). 크루 대화창과 같은 규칙: 최대 6줄 후 내부 스크롤
+  const composerRef = useRef(null);
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    if (!input) { el.style.height = ''; return; }
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+  }, [input]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const endRef = useRef(null);
@@ -394,16 +403,20 @@ export default function Room({ params }) {
                   <Icon name="clip" size={14} />
                 </button>
                 <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
-                <input suppressHydrationWarning
+                <textarea suppressHydrationWarning
+                  ref={composerRef}
+                  rows={1}
                   placeholder={t('room.placeholder')}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
                   disabled={busy}
                   {...imeGuardWith((e) => {
-                    if (e.key !== 'Enter') return;
+                    if (e.key !== 'Enter' || e.shiftKey) return; // Shift+Enter = 줄바꿈(textarea 기본)
+                    e.preventDefault();
                     // 멘션 패널이 열려 있으면 Enter = 첫 후보 완성(전송 아님)
-                    if (mentionOpen) { e.preventDefault(); completeMention(suggestAll ? 'all' : suggests[0].name); }
+                    if (mentionOpen) { completeMention(suggestAll ? 'all' : suggests[0].name); return; }
+                    e.currentTarget.form?.requestSubmit(); // Enter = 전송
                   })}
                 />
                 <button className="btn btn-primary btn-icon" disabled={busy || uploading || !input.trim()} aria-label={t('chat.send')}>

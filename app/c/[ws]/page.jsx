@@ -109,11 +109,8 @@ export default function Deck({ params }) {
       <AiKeyBanner ws={ws} />
 
       <div className="deck-grid">
-        {/* ── 본 계기 열 — "지금 판단할 것"(결재)이 지표보다 먼저다 ── */}
+        {/* ── 본 계기 열 — 지표 4장·크루 영입이 맨 위(유건 2026-08-23), 그 아래 아침 조회·결재함·최근 기억 ── */}
         <div style={{ display: 'grid', gap: 14, minWidth: 0 }}>
-          <MorningBrief ws={ws} agents={data?.agents ?? []} />
-          <ApprovalsCard ws={ws} agents={data?.agents ?? []} />
-
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
             {stats ? (
               <>
@@ -237,6 +234,9 @@ export default function Deck({ params }) {
           {data && agents.length === 0 && (
             <p style={{ color: 'var(--fg-2)', fontSize: 13, padding: '0 4px' }}>{q ? t('deck.noCrewMatch') : t('deck.noCrewYet')}</p>
           )}
+
+          <MorningBrief ws={ws} agents={data?.agents ?? []} />
+          <ApprovalsCard ws={ws} agents={data?.agents ?? []} />
 
           <div className="card" style={{ overflow: 'hidden' }}>
             <div className="card-head">
