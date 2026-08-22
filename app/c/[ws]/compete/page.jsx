@@ -4,7 +4,7 @@
 // 레이아웃은 회의실과 같은 문법 — 헤더 라인 → 전체 높이 카드 → 하단 고정 컴포저 → 힌트 (UI 일관성).
 import { use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, ConfirmModal, InputModal, DropUp, api, imeGuard } from '../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, ConfirmModal, InputModal, DropUp, api, imeGuardWith } from '../../../ui';
 import { useLang } from '../../../i18n';
 
 const MAX_PICK = 3;
@@ -38,6 +38,15 @@ export default function Compete({ params }) {
   }
   const [comp, setComp] = useState(null);      // 열람 중 경쟁 (null = 새 경쟁)
   const [prompt, setPrompt] = useState('');
+  // 여러 줄 입력 — 줄바꿈(Shift+Enter)하면 입력창이 따라 자란다(유건 2026-08-23). 크루 대화창과 같은 규칙: 최대 6줄 후 내부 스크롤
+  const composerRef = useRef(null);
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    if (!prompt) { el.style.height = ''; return; }
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+  }, [prompt]);
   const [pickedCrew, setPickedCrew] = useState(''); // 경쟁을 받을 크루 1명(slug)
   const [pickedModels, setPickedModels] = useState([]); // "runner:model" 페어 2~3개
   const [runners, setRunners] = useState(null); // 러너 카탈로그(연결 상태 포함) — 모델 선택지
@@ -314,12 +323,17 @@ export default function Compete({ params }) {
             </div>
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
             <form onSubmit={start} className="input-bar">
-              <input suppressHydrationWarning
+              <textarea suppressHydrationWarning
+                ref={composerRef}
+                rows={1}
                 placeholder={t('compete.placeholder')}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 disabled={busy}
-                {...imeGuard}
+                {...imeGuardWith((e) => {
+                  if (e.key !== 'Enter' || e.shiftKey) return; // Shift+Enter = 줄바꿈
+                  e.preventDefault(); e.currentTarget.form?.requestSubmit(); // Enter = 시작
+                })}
               />
               <button className="btn btn-primary btn-icon" disabled={busy || !prompt.trim() || !pickedCrew || pickedModels.length < 2} aria-label={t('compete.start')}>
                 {busy ? <ArgoSpinner size={14} /> : <Icon name="send" size={15} />}
