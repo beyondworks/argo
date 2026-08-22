@@ -370,6 +370,8 @@ const DICT = {
   'settings.runners.companyInvalid': ['재연결 필요 — 저장된 토큰이 유효한 형식이 아닙니다', 'Reconnect needed — the stored token isn’t in a valid format'],
   'settings.runners.setupConnect': ['브라우저로 바로 연결', 'Connect via browser'],
   'settings.runners.setupHint': ['클릭하면 브라우저가 열립니다 — 로그인을 승인하면 토큰이 자동 저장됩니다 (Claude 구독 필요)', 'Opens your browser — approve the sign-in and the token is saved automatically (Claude subscription required)'],
+  // 구독 연결의 과금 주체를 화면에서 밝힌다 — 앤트로픽 헬프센터 'Use the Claude Agent SDK with your Claude plan'(2026-06-16)
+  'settings.runners.subNote': ['구독으로 연결하면 사용량이 Claude 구독 한도에서 차감됩니다 (Pro·Max·Team·Enterprise 대상, 무료 플랜 제외). 한도와 무관하게 쓰려면 API 키로 연결하세요.', 'Connecting with a subscription draws usage from your Claude plan limits (Pro, Max, Team, Enterprise; not Free). Use an API key if you want usage billed separately.'],
   'settings.runners.setupWaiting': ['브라우저에서 로그인을 승인해 주세요 — 완료되면 자동으로 저장됩니다…', 'Approve the sign-in in your browser — it saves automatically when done…'],
   'settings.runners.setupHosted': ['이 서버 환경에서는 브라우저 대행 연결을 쓸 수 없습니다 — 아래에 OAuth 토큰을 붙여넣거나 API 키로 연결해 주세요. (데스크톱 앱에서는 원클릭이 됩니다)', 'Browser-assisted connect is unavailable in this server environment — paste an OAuth token below or use an API key. (One-click works in the desktop app)'],
   'settings.runners.setupRetry': ['브라우저 다시 열기', 'Reopen browser'],

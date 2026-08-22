@@ -551,6 +551,10 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
               </>
             )}
           </p>
+          {/* 구독 연결의 과금 주체 고지 — Claude만 해당(구독 한도 차감, 무료 플랜 제외) */}
+          {id === 'claude' && method === 'oauth' && (
+            <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>{t('settings.runners.subNote')}</p>
+          )}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {/* 단일 버튼 — '저장만'(무검증 저장)은 무효 자격을 '연결됨'으로 저장해 전 턴이 API 오류로만
                 드러나는 함정이었다(실사용 2026-07-20). 서버도 실검증을 강제하므로 우회 경로 자체가 없다. */}
