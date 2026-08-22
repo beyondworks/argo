@@ -397,7 +397,7 @@ export default function Room({ params }) {
                   {uploading && <span className="att-chip"><Spinner size={11} /> {t('chat.uploading')}</span>}
                 </div>
               )}
-              <form onSubmit={send} className="input-bar">
+              <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
                 <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
                   onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
                   <Icon name="clip" size={14} />

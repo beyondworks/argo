@@ -322,7 +322,7 @@ export default function Compete({ params }) {
               </div>
             </div>
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
-            <form onSubmit={start} className="input-bar">
+            <form onSubmit={start} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
               <textarea suppressHydrationWarning
                 ref={composerRef}
                 rows={1}
