@@ -669,26 +669,30 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   // 사장이 언제든 끄거나 고칠 수 있으므로(가시성) 결재 없이 실행한다 — hire_crew와 달리 되돌리기 쉽다.
   const scheduleTask = tool(
     'schedule_task',
-    '나중에 할 일을 예약한다(예약 발송·리마인드·정기 보고·반복 루프). once=지정 날짜에 1회, daily=매일, weekly=지정 요일, interval=N분마다 반복(루프 작업 — 모니터링·주기 점검). 시각은 한국 시간 HH:MM. 때가 되면 지정 크루가 prompt를 새 턴으로 실행한다. 예약 후에는 "언제 무엇을 하도록 걸어두었다"고 한 줄로 알려라.',
+    '나중에 할 일을 예약한다(예약 발송·리마인드·정기 보고·반복 루프). once=지정 날짜에 1회, daily=매일, weekly=지정 요일, interval=N분마다 반복(루프 작업 — 모니터링·주기 점검). 시각은 한국 시간 HH:MM. 때가 되면 지정 크루가 prompt를 새 턴으로 실행한다. interval 루프는 매 회차 마지막 줄 `LOOP: continue|done|blocked`로 스스로 끝내며 maxRuns(기본 20)·maxUsd 상한에서 자동 정지한다. 예약 후에는 "언제 무엇을 하도록 걸어두었다"고 한 줄로 알려라.',
     {
       title: z.string().describe('예약 이름 — 루틴 목록에 보인다'),
       prompt: z.string().describe('실행할 지시 — 지금이 아니라 그때 읽힌다는 전제로 자세히 쓴다. 루프면 매 회차가 이 지시를 새로 읽는다'),
       type: z.enum(['once', 'daily', 'weekly', 'interval']).describe('once=1회, daily=매일, weekly=매주, interval=N분마다'),
       time: z.string().optional().describe('실행 시각 HH:MM (한국 시간, 24시간제) — interval이 아니면 필수'),
       everyMinutes: z.number().optional().describe('interval일 때 필수 — 반복 간격(분, 10~1440)'),
+      maxRuns: z.number().optional().describe('interval 루프의 최대 회차(1~200, 기본 20) — 도달하면 자동 정지'),
+      maxUsd: z.number().optional().describe('interval 루프의 누적 비용 상한(USD, 선택) — 없으면 회사 월 예산만 적용'),
       date: z.string().optional().describe('once일 때 필수 — 실행 날짜 YYYY-MM-DD'),
       dows: z.array(z.number()).optional().describe('weekly일 때 요일 배열(0=일 … 6=토), 예: 평일은 [1,2,3,4,5]'),
       agentSlug: z.string().optional().describe('실행할 크루 slug(기본 = 나 자신)'),
     },
-    async ({ title, prompt, type, time, date, dows, everyMinutes, agentSlug }) => {
+    async ({ title, prompt, type, time, date, dows, everyMinutes, agentSlug, maxRuns, maxUsd }) => {
       try {
         const r = await addRoutine(wsId, {
           agentSlug: agentSlug || fromSlug, title, prompt,
           schedule: { type, ...(time ? { time } : {}), ...(date ? { date } : {}), ...(dows?.length ? { dows } : {}), ...(everyMinutes ? { everyMinutes } : {}) },
+          // interval = 자율 루프 — 회차·예산 상한을 기본으로 건다(무한 반복 방지). 다른 타입엔 addRoutine이 무시
+          ...(type === 'interval' ? { loop: { maxRuns: maxRuns ?? 20, ...(maxUsd != null ? { maxUsd } : {}) } } : {}),
         });
         const when = type === 'once' ? `${r.schedule.date} ${r.schedule.time}`
           : type === 'weekly' ? `매주 ${(r.schedule.dows ?? []).join(',')} ${r.schedule.time}`
-          : type === 'interval' ? `${r.schedule.everyMinutes}분마다`
+          : type === 'interval' ? `${r.schedule.everyMinutes}분마다, 최대 ${r.loop?.maxRuns ?? 20}회`
           : `매일 ${r.schedule.time}`;
         return text(`예약 완료 — "${title}" (${when}, 담당 ${agentSlug || fromSlug}). 루틴 화면에서 사장이 끄거나 고칠 수 있다. 사장에게 언제 무엇을 하도록 걸어뒀는지 한 줄로 알려라.`);
       } catch (e) {
@@ -1190,6 +1194,7 @@ ${lang === 'en'
   }
 
   let reply = '';
+  let costUsd = null; // 이 턴의 청구 금액 — 루프 루틴의 예산 합산용. 구독(OAuth)·openrouter·CLI 턴은 null(=0으로 합산)
   let creditTurn = false; // OpenRouter 402 턴 표식 — 일지 기록 제외용(2R N3: 오류 원문이 기억으로 정제되지 않게)
   let sid = resumeId; // 새 세션이면 null에서 시작 — 외래 sessionId를 내 것으로 재스탬프하지 않는다
   const toolCounts = {}; // 이 턴의 도구 사용 횟수 — 크루 프로필 "많이 쓴 도구"의 원천
@@ -1310,6 +1315,7 @@ ${lang === 'en'
           // 틀린 금액 표시·예산 차감은 이번에 죽인 신고 계열의 재발이다. 실비(P2)는 /generation API로.
           usage: msg.usage, costUsd: runner === 'openrouter' ? null : msg.total_cost_usd, ms: Date.now() - t0, tools: toolCounts, billed,
         });
+        if (billed && runner !== 'openrouter' && Number.isFinite(msg.total_cost_usd)) costUsd = msg.total_cost_usd;
       }
       if (msg.subtype === 'success') reply = msg.result;
       else {
@@ -1430,5 +1436,5 @@ ${lang === 'en'
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
   // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
   for (const r of await artDiff()) artifacts.add(r);
-  return { reply, sessionId: sid, handover, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)) }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
+  return { reply, sessionId: sid, handover, costUsd, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)) }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }

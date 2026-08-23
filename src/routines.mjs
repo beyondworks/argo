@@ -17,7 +17,8 @@ async function patchRoutine(wsId, id, patch) {
     const routines = await loadRoutines(wsId);
     const r = routines.find((x) => x.id === id);
     if (!r) return null; // 실행 중 삭제됐으면 조용히 포기(부활 금지)
-    Object.assign(r, patch, { id: r.id });
+    // 함수형 패치 — 현재 상태를 보고 결정해야 하는 변경(루프 수동 정지 사유 등)은 락 안에서 읽고 쓴다
+    Object.assign(r, typeof patch === 'function' ? patch(r) : patch, { id: r.id });
     await saveRoutines(wsId, routines);
     return { ...r };
   });
@@ -81,21 +82,96 @@ export function normalizeSchedule(schedule = {}) {
   return withTz({ type, time: times[0], times, dow: dows[0], ...(type === 'weekly' ? { dows } : {}) });
 }
 
+/* ─── 루프(interval 루틴의 자율 반복) ─────────────────────────────────────── */
+
+/** loop 필드 정규화 — interval 루틴에만 유효(호출부가 타입을 보고 붙인다). 설정값(maxRuns/maxUsd)은
+    클램프·기본값, 진행 카운터(runs/spentUsd/…)는 prev(디스크의 현재값)에서 이어받는다 — API 패치가
+    회차·지출을 되돌리지 못하게. (export: 단위 테스트용 — 순수 함수) */
+export const LOOP_MAX_RUNS_CAP = 200;
+export function normalizeLoop(loop = {}, prev = null) {
+  const src = loop && typeof loop === 'object' ? loop : {};
+  let maxRuns = Math.floor(Number(src.maxRuns ?? prev?.maxRuns ?? 20));
+  if (!Number.isFinite(maxRuns)) maxRuns = 20;
+  maxRuns = Math.min(LOOP_MAX_RUNS_CAP, Math.max(1, maxRuns));
+  const rawUsd = 'maxUsd' in src ? src.maxUsd : prev?.maxUsd ?? null;
+  const usdNum = Number(rawUsd);
+  const maxUsd = rawUsd == null || rawUsd === '' || !Number.isFinite(usdNum) || usdNum <= 0 ? null : Math.round(usdNum * 100) / 100;
+  return {
+    maxRuns, maxUsd,
+    runs: Math.max(0, Math.floor(Number(prev?.runs) || 0)),
+    spentUsd: Math.max(0, Number(prev?.spentUsd) || 0),
+    lastVerdict: ['continue', 'done', 'blocked'].includes(prev?.lastVerdict) ? prev.lastVerdict : null,
+    stoppedReason: ['done', 'blocked', 'maxRuns', 'maxUsd', 'manual'].includes(prev?.stoppedReason) ? prev.stoppedReason : null,
+    missingVerdicts: Math.max(0, Math.floor(Number(prev?.missingVerdicts) || 0)),
+  };
+}
+
+/** 회차 판정 마커 — 답변 **마지막 줄**. `LOOP: continue` / `LOOP: done <이유>` / `LOOP: blocked <필요한 결정>`.
+    (export: 테스트·프롬프트 문구 앵커) */
+export const LOOP_VERDICT_RE = /^\s*`?\s*LOOP\s*:\s*(continue|done|blocked)\b[\s.:\-—]*(.*?)\s*`?\s*[.。]?\s*$/i;
+const LOOP_MISSING_LIMIT = 3; // 마커 연속 누락 허용 — CLI 러너가 형식을 못 지켜도 조용히 죽지 않되, 영영 헛돌지도 않게
+
+/** 답변에서 판정 추출 — 마지막 비어있지 않은 줄만 본다. 마커가 없으면 { verdict:'continue', missing:true } —
+    형식을 안 지킨 러너를 곧바로 정지시키지 않는다(연속 누락 상한은 runRoutine이 센다).
+    (export: 단위 테스트용 — 순수 함수) */
+export function parseLoopVerdict(reply) {
+  const lines = String(reply ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const last = lines[lines.length - 1] ?? '';
+  const m = last.match(LOOP_VERDICT_RE);
+  if (!m) return { verdict: 'continue', reason: '', missing: true };
+  return { verdict: m[1].toLowerCase(), reason: (m[2] ?? '').trim().slice(0, 300), missing: false };
+}
+
+const isLoopRoutine = (r) => r?.schedule?.type === 'interval' && !!r.loop;
+
+/** 루프 프로토콜 문단 — 회차·상한·지난 결과를 주고 마지막 줄 마커를 요구한다(러너 무관 — 텍스트 규약). */
+function loopProtocol(r, lang) {
+  const n = (r.loop.runs ?? 0) + 1;
+  const last = String(r.lastResult ?? '').trim();
+  const budget = r.loop.maxUsd != null ? (lang === 'en' ? ` Loop budget: $${r.loop.spentUsd.toFixed(2)} of $${r.loop.maxUsd} used.` : ` 루프 예산: $${r.loop.maxUsd} 중 $${r.loop.spentUsd.toFixed(2)} 사용.`) : '';
+  if (lang === 'en') {
+    return `\n\n---\n[Loop protocol] This is run ${n} of at most ${r.loop.maxRuns} in a repeating loop.${budget}\nPrevious run summary: ${last || '(none — first run)'}\nDo the next step of the work. The VERY LAST line of your answer must be exactly one of:\n\`LOOP: continue\` — more to do next run\n\`LOOP: done <one-line reason>\` — the goal is reached, stop the loop\n\`LOOP: blocked <the decision you need from the boss>\` — you cannot proceed without a human decision`;
+  }
+  return `\n\n---\n[루프 프로토콜] 이것은 반복 루프의 ${n}회차 / 최대 ${r.loop.maxRuns}회다.${budget}\n지난 회차 결과 요약: ${last || '(없음 — 첫 회차)'}\n이번 회차 몫의 일을 진행하라. 답변의 **마지막 줄**은 반드시 다음 셋 중 하나로만 끝내라:\n\`LOOP: continue\` — 다음 회차에 할 일이 남음\n\`LOOP: done <한 줄 이유>\` — 목표 달성, 루프 종료\n\`LOOP: blocked <사장에게 필요한 결정>\` — 사람 결정 없이는 진행 불가`;
+}
+
+/** 정지 사유 문장 — 알림(emitNotify)에 그대로 실린다. */
+function loopStopMessage(reason, detail, lang, loop) {
+  const en = lang === 'en';
+  switch (reason) {
+    case 'done': return en ? `Loop finished — ${detail || 'goal reached'}` : `루프 완료 — ${detail || '목표 달성'}`;
+    case 'blocked': return en ? `Loop paused — needs your decision: ${detail || '(no detail)'}. Approve in the inbox to resume.` : `루프 멈춤 — 결정이 필요합니다: ${detail || '(상세 없음)'}. 결재함에서 승인하면 재개됩니다.`;
+    case 'maxRuns': return en ? `Loop stopped — reached the run limit (${loop.maxRuns}).` : `루프 정지 — 최대 반복(${loop.maxRuns}회)에 도달했습니다.`;
+    case 'maxUsd': return en ? `Loop stopped — reached the loop budget ($${loop.maxUsd}).` : `루프 정지 — 루프 예산($${loop.maxUsd})에 도달했습니다.`;
+    default: return en ? 'Loop stopped.' : '루프 정지.';
+  }
+}
+
+/** 결재 승인 후 재개 — approval-actions(kind:'loop')가 부른다. 거절이면 부르지 않는다(정지 유지). */
+export async function resumeLoop(wsId, id) {
+  return patchRoutine(wsId, id, (r) => (isLoopRoutine(r)
+    ? { enabled: true, loop: { ...r.loop, stoppedReason: null, missingVerdicts: 0 } }
+    : { enabled: true }));
+}
+
 /** 이 기기의 시간대 — 로컬 우선 제품이라 서버는 사용자 컴퓨터에서 돈다. 즉 여기서 읽은 시간대가
     곧 사용자의 시간대다(한국 사용자면 Asia/Seoul). 클라이언트가 tz를 보내면 그쪽이 우선. */
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
-export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true }) {
+export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null }) {
   if (!agentSlug || !title?.trim() || !prompt?.trim()) throw new Error('크루·제목·지시가 필요합니다');
+  const sched = normalizeSchedule({ tz: hostTz(), ...schedule });
   const routine = {
     id: `r${Date.now().toString(36)}`,
     agentSlug, title: title.trim(), prompt: prompt.trim(),
     // 만들 때 시간대를 각인한다 — 이후 어느 기기(클라우드 워커 포함)가 돌려도 만든 사람의 시각으로
     // 발화한다. 명시값이 있으면 그것을, 없으면 이 기기(=사용자 컴퓨터)의 시간대를 쓴다.
-    schedule: normalizeSchedule({ tz: hostTz(), ...schedule }),
+    schedule: sched,
     enabled,
     created: new Date().toISOString(),
     lastRun: null, lastOk: null, lastResult: '',
+    // 루프 — interval에만. 다른 타입에 loop가 오면 조용히 버린다(의미 없는 필드를 저장하지 않는다)
+    ...(sched.type === 'interval' && loop ? { loop: normalizeLoop(loop) } : {}),
   };
   return withLock(lockKey(wsId), async () => {
     const routines = await loadRoutines(wsId);
@@ -124,11 +200,31 @@ export function sanitizeRoutinePatch(patch = {}) {
   }
   if ('schedule' in patch) out.schedule = normalizeSchedule(patch.schedule);
   if ('enabled' in patch) out.enabled = !!patch.enabled;
+  // loop 설정(maxRuns/maxUsd)만 통과 — 카운터 병합·interval 여부 판정은 updateRoutine이 현재 루틴을 보고 한다
+  if ('loop' in patch) out.loop = patch.loop && typeof patch.loop === 'object' ? { maxRuns: patch.loop.maxRuns, maxUsd: patch.loop.maxUsd } : null;
   return out;
 }
 
 export async function updateRoutine(wsId, id, patch) {
-  const r = await patchRoutine(wsId, id, sanitizeRoutinePatch(patch));
+  const clean = sanitizeRoutinePatch(patch);
+  const r = await patchRoutine(wsId, id, (cur) => {
+    const out = { ...clean };
+    const nextSched = out.schedule ?? cur.schedule;
+    if (nextSched?.type !== 'interval') {
+      // interval이 아닌 루틴엔 loop가 없다 — 패치의 loop는 무시하고, 타입을 바꿨으면 기존 루프 상태도 비운다
+      if (cur.loop || 'loop' in out) out.loop = null; else delete out.loop;
+      return out;
+    }
+    if ('loop' in out) out.loop = out.loop ? normalizeLoop(out.loop, cur.loop) : null;
+    const base = out.loop ?? cur.loop;
+    if (base && 'enabled' in out) {
+      // 수동 정지 = stoppedReason 'manual'(이미 사유가 있으면 유지). 다시 켜면 사유·누락 카운터를 비운다(지금 재개)
+      out.loop = out.enabled
+        ? { ...base, stoppedReason: null, missingVerdicts: 0 }
+        : { ...base, stoppedReason: base.stoppedReason ?? 'manual' };
+    }
+    return out;
+  });
   if (!r) throw new Error('루틴을 찾을 수 없습니다');
   return r;
 }
@@ -143,24 +239,61 @@ export async function removeRoutine(wsId, id) {
 /** 루틴 실행 — 새 세션 1턴. 결과 요약을 루틴에 기록(전체는 vault 핸드오버에).
     chat()은 수 분 걸리므로 락 밖에서 돌리고, 결과 기록만 락 안에서 해당 루틴 필드에 반영한다
     — 실행 도중 사용자가 다른 루틴을 지우거나 이 루틴을 꺼도 낡은 전체 스냅샷으로 되돌리지 않는다. */
-export async function runRoutine(wsId, id) {
+export async function runRoutine(wsId, id, { chatFn = null } = {}) {
   const r0 = await patchRoutine(wsId, id, { lastRun: new Date().toISOString() });
   if (!r0) throw new Error('루틴을 찾을 수 없습니다');
   try {
-    const { chat } = await import('./chat.mjs'); // 순환 차단 — 파일 상단 주석 참조
-    const t = await chat(wsId, r0.agentSlug, `[루틴: ${r0.title}] ${r0.prompt}`, null, { source: 'routine' });
+    const chat = chatFn ?? (await import('./chat.mjs')).chat; // 순환 차단 — 파일 상단 주석 참조. chatFn=테스트 주입(실 러너 불필요)
+    const loop = isLoopRoutine(r0);
+    let lang = 'ko';
+    if (loop) {
+      const { loadCompany } = await import('./workspace.mjs');
+      lang = (await loadCompany(wsId).catch(() => ({}))).lang === 'en' ? 'en' : 'ko';
+    }
+    const userMsg = `[루틴: ${r0.title}] ${r0.prompt}${loop ? loopProtocol(r0, lang) : ''}`;
+    const t = await chat(wsId, r0.agentSlug, userMsg, null, { source: 'routine' });
     // 대화 스레드에 남긴다 — 루틴만 이게 빠져 있어서, 실행 중엔 채팅창에 보이다가 끝나면 사라졌다
     // (신고 2026-07-28 "루틴 돌면서 채팅이 올라왔다가 실행되고 나니 유실"). 저장한 적이 없었던 것.
     // 사장 직접 대화·위임·쪽지 배달은 전부 appendTurn을 한다 — 루틴만 비대칭이었다.
     // 기록 실패는 무증상으로 삼키지 않는다(비용은 나갔는데 화면에 없다 — scheduler의 쪽지 경로와 동일 규칙).
     const { appendTurn } = await import('./thread.mjs');
-    await appendTurn(wsId, r0.agentSlug, { userMsg: `[루틴: ${r0.title}] ${r0.prompt}`, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts })
+    await appendTurn(wsId, r0.agentSlug, { userMsg, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts })
       .catch((e) => console.error(`[argo] 루틴 스레드 기록 실패(${wsId}/${r0.agentSlug}):`, e.message));
     const summary = t.reply.replace(/\s+/g, ' ').slice(0, 160);
     // 1회 예약은 성공 후 스스로 꺼진다 — 다음 날 같은 시각에 되살아나지 않게(실패 시엔 켜둬 당일 재시도 허용)
-    const r = await patchRoutine(wsId, id, { lastOk: true, lastResult: summary, ...(r0.schedule?.type === 'once' ? { enabled: false } : {}) });
+    const patch = { lastOk: true, lastResult: summary, ...(r0.schedule?.type === 'once' ? { enabled: false } : {}) };
+    let stop = null; // { reason, detail }
+    if (loop) {
+      const v = parseLoopVerdict(t.reply);
+      const L = { ...normalizeLoop(r0.loop, r0.loop) };
+      L.runs += 1;
+      L.spentUsd = Math.round((L.spentUsd + (Number(t.costUsd) || 0)) * 10000) / 10000; // 구독(OAuth)·CLI 턴은 costUsd null → 0
+      L.lastVerdict = v.verdict;
+      L.missingVerdicts = v.missing ? L.missingVerdicts + 1 : 0;
+      // 정지 조건 — 먼저 걸린 하나만 사유로 남긴다(판정 > 누락 상한 > 회차 > 예산)
+      if (v.verdict === 'done') stop = { reason: 'done', detail: v.reason };
+      else if (v.verdict === 'blocked') stop = { reason: 'blocked', detail: v.reason };
+      else if (L.missingVerdicts >= LOOP_MISSING_LIMIT) stop = { reason: 'blocked', detail: lang === 'en' ? `No LOOP verdict in ${LOOP_MISSING_LIMIT} consecutive runs — check the crew's runner/output format` : `${LOOP_MISSING_LIMIT}회 연속 LOOP 판정 누락 — 크루의 러너·출력 형식을 확인해 주세요` };
+      else if (L.runs >= L.maxRuns) stop = { reason: 'maxRuns', detail: '' };
+      else if (L.maxUsd != null && L.spentUsd >= L.maxUsd) stop = { reason: 'maxUsd', detail: '' };
+      if (stop) { L.stoppedReason = stop.reason; patch.enabled = false; }
+      patch.loop = L;
+    }
+    const r = await patchRoutine(wsId, id, patch);
+    if (stop) {
+      if (stop.reason === 'blocked') {
+        // 막힘 = 사장 결재로 푼다. 승인 → approval-actions(kind:'loop')가 resumeLoop, 거절 → 정지 유지.
+        const { addApproval } = await import('./approvals.mjs');
+        await addApproval(wsId, {
+          slug: r0.agentSlug, kind: 'loop',
+          action: lang === 'en' ? `Resume loop — ${r0.title}`.slice(0, 300) : `루프 재개 — ${r0.title}`.slice(0, 300),
+          reason: stop.detail, payload: { routineId: id },
+        }).catch((e) => console.error(`[argo] 루프 결재 등록 실패(${wsId}/${id}):`, e.message));
+      }
+      emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: true, reply: loopStopMessage(stop.reason, stop.detail, lang, r?.loop ?? r0.loop) });
+    }
     emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: true, reply: t.reply }); // 메신저 브리핑 푸시
-    return { ok: true, reply: t.reply, handover: t.handover };
+    return { ok: true, reply: t.reply, handover: t.handover, ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
   } catch (e) {
     const msg = String(e.message || e).slice(0, 160);
     const r = await patchRoutine(wsId, id, { lastOk: false, lastResult: msg });
