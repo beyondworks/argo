@@ -1,6 +1,6 @@
 // 채팅 스레드 영속화 — 크루별 chats/<slug>.json 에 대화·세션을 남긴다.
 // 새로고침해도 대화가 이어지는 것이 제품의 기본 자세다.
-import { readFile, rm, readdir, mkdir } from 'node:fs/promises';
+import { readFile, rm, readdir, mkdir, stat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { paths, getDeviceId } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
@@ -9,6 +9,11 @@ import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 const file = (wsId, slug) => join(paths(wsId).chats, `${slug.replace(/[^a-z0-9-]/g, '')}.json`);
 // 같은 크루 스레드의 read-modify-write를 직렬화 — 웹·텔레그램 동시 턴의 lost-update 방지
 const lockKey = (wsId, slug) => `thread:${wsId}:${slug.replace(/[^a-z0-9-]/g, '')}`;
+
+/** 스레드 파일 mtime(ms) — 폴링 dedup용. 파일이 없으면 0. */
+export async function threadMtime(wsId, slug) {
+  try { return (await stat(file(wsId, slug))).mtimeMs; } catch { return 0; }
+}
 
 export async function loadThread(wsId, slug) {
   // 대화는 유실이 치명적 — 손상 시 조용히 빈 상태로 리셋하지 않고 throw로 드러낸다(readJson).

@@ -192,6 +192,10 @@ function UserText({ text }) {
 
 // embedded = 보조 패널(split-pane) 안에 임베드. 주 화면 라우팅(topbar 포털·/memory 같은 이동 명령·해고 후 데크 이동)은
 // 하지 않는다 — 주 화면 URL은 패널이 바꾸면 안 된다. 초안·대기열 localStorage 키는 그대로(같은 크루 = 같은 초안).
+// 스레드 렌더 창 — 최근 N건만 DOM에 올리고 위에 '이전 보기'로 늘린다. Markdown은 메시지별 memo지만
+// 래퍼·액션 버튼·레이아웃은 건수에 비례해 키 입력마다 다시 도는 비용이었다(652건: 키당 ~130ms → 창 60건).
+const THREAD_WINDOW = 60;
+const THREAD_STEP = 100;
 export default function CrewChat({ params, embedded = false, onClose }) {
   const { ws, slug: slugParam } = use(params);
   // 경로 조각은 **디코딩되지 않은 채** 온다(한글 이름 크루면 '%ED%81%B4…'). 예전엔 이 값을 그대로
@@ -206,6 +210,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const [agent, setAgent] = useState(null);
   const [pinnedFolder, setPinnedFolder] = useState(''); // 고정 작업 폴더('' = 없음) — 정본은 서버 pins
   const [thread, setThread] = useState(null); // null = 로딩
+  const mtimeRef = useRef(0); // 마지막으로 받은 스레드 파일 mtime — 폴링 dedup(서버가 같으면 본문 생략)
+  const [shown, setShown] = useState(THREAD_WINDOW); // 렌더하는 최근 메시지 수 — 긴 대화(650건)를 전부 그리면 키 입력마다 130ms가 걸렸다(실측 2026-08-23)
   const [input, setInput] = useState('');
   // 입력 보존 — 새로고침·페이지 이탈에도 쓰던 내용이 남는다. input 상태를 그대로 따라가므로
   // 전송(setInput(''))이면 자동 삭제되고, 턴 실패 복원(setInput(message))이면 자동 재저장된다.
@@ -455,9 +461,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // 통째로 덮어쓴다(setThread는 병합이 아니라 교체). 총괄팀장처럼 스레드가 크고 위임으로 턴이 긴
     // 크루는 in-flight 창이 넓어 "다른 크루 다녀오니 대화가 사라짐"으로 나타났다(실사용 신고 2026-07-20).
     let alive = true;
-    setThread(null); setError(''); sessionRef.current = null;
+    setThread(null); setError(''); sessionRef.current = null; setShown(THREAD_WINDOW);
     pinMidRef.current = null; spacerHRef.current = 0; // 대화(크루) 전환 — 이전 대화의 핀·여백을 끌고 오지 않는다
-    api(`/api/companies/${ws}`)
+    api(`/api/companies/${ws}?light=1`)
       .then((d) => {
         if (!alive) return;
         const a = d.agents.find((a) => a.slug === slug) ?? { name: slug, role: '' };
@@ -474,7 +480,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       .catch(() => {});
     api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
       // status도 첫 로드에 반영 — 온보딩 직행 시 시운전 진행 카드가 8초 폴을 기다리지 않고 바로 보인다
-      .then((t) => { if (!alive) return; setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); })
+      .then((t) => { if (!alive) return; mtimeRef.current = t.mtime ?? 0; setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); })
       .catch(() => { if (alive) setThread([]); });
     return () => { alive = false; };
   }, [ws, slug]);
@@ -528,8 +534,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   useEffect(() => {
     const t = setInterval(() => {
       if (busy) return; // 내가 보내는 중엔 낙관적 UI를 덮지 않는다
-      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
+      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${mtimeRef.current}`)
         .then((r) => {
+          // 변경 없음 — 서버가 본문을 생략했다(폴링 dedup). 진행 상태만 갱신.
+          if (r.unchanged) { setLiveStage(r.status ?? null); return; }
+          if (r.mtime) mtimeRef.current = r.mtime;
           const msgs = r.messages ?? [];
           setThread((cur) => {
             if (cur === null || msgs.length <= cur.length) return cur;
@@ -596,8 +605,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   useEffect(() => {
     if (!working) return;
     const t = setInterval(() => {
-      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
-        .then((r) => setLiveStage(r.status ?? null))
+      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${mtimeRef.current || 1}`)
+        .then((r) => { if (r.mtime) mtimeRef.current = r.mtime; setLiveStage(r.status ?? null); })
         .catch(() => {});
     }, 2500);
     return () => clearInterval(t);
@@ -982,7 +991,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             {t('chat.firstPrompt')}
           </div>
         )}
-        {((viewing ? archMsgs : thread) ?? []).map((m, i) =>
+        {(() => { const all = (viewing ? archMsgs : thread) ?? []; const hidden = Math.max(0, all.length - shown); return hidden > 0 && (
+          <button type="button" className="btn sm" style={{ alignSelf: 'center' }} onClick={() => setShown((n) => n + THREAD_STEP)}>
+            {t('chat.showEarlier', { n: Math.min(hidden, THREAD_STEP), total: hidden })}
+          </button>
+        ); })()}
+        {(() => { const all = (viewing ? archMsgs : thread) ?? []; const base = Math.max(0, all.length - shown); return all.slice(base).map((m, k) => { const i = base + k; return (
           m.who === 'user' && m.via ? (
             /* 배달 지시(쪽지·위임·루틴) — 사장 말풍선(우측)과 구분해 좌측 중립 카드로. who:'user'는
                러너 프롬프트 관점의 역할일 뿐 사장이 쓴 글이 아니다(신고 2026-07-28 "내가 쓴 게 아니거든"). */
@@ -1095,8 +1109,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                 )}
               </div>
             </div>
-          )
-        )}
+          )); }); })()}
         {!viewing && pendings.map((p) => (
           <div key={p.id} className="msg-crew fade-up">
             <Avatar name={agent?.name} sm />

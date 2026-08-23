@@ -26,7 +26,7 @@ export default function Mail({ params }) {
     .catch((e) => { setError(String(e?.message || '') || t('mail.loadFail')); }), [ws, t]);
 
   useEffect(() => {
-    api(`/api/companies/${ws}`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
+    api(`/api/companies/${ws}?light=1`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
   }, [ws]);
   useEffect(() => {
     load();

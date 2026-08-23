@@ -331,31 +331,42 @@ const THEME_SWATCHES = {
 };
 
 // 아르고 시그니처 = 라이트/다크/시스템 3-모드. 나머지 테마는 "다른 스킨"으로 분리(모드 토글과 중복 제거).
-const MODE_OPTS = [['argo', 'settings.mode.system'], ['argo-light', 'settings.mode.light'], ['argo-dark', 'settings.mode.dark']];
-const ARGO_CODES = ['argo', 'argo-light', 'argo-dark'];
+// 기본 패밀리 2종(그래파이트=기본, 아르고=시그니처) × 모드 3종(시스템/라이트/다크). 패밀리 코드: 시스템 자동은
+// 접미 없음, 고정은 -light/-dark. 다른 스킨(목록)은 패밀리 밖이라 모드 세그먼트가 적용되지 않는다.
+const FAMILIES = [['graphite', 'settings.family.graphite'], ['argo', 'settings.family.argo']];
+const MODE_SUFFIX = [['', 'settings.mode.system'], ['-light', 'settings.mode.light'], ['-dark', 'settings.mode.dark']];
+const FAMILY_CODES = FAMILIES.flatMap(([f]) => MODE_SUFFIX.map(([sfx]) => `${f}${sfx}`));
+const ARGO_CODES = FAMILY_CODES;
 function ThemeCard() {
   const { theme, setTheme } = useTheme();
   const { t } = useLang();
   const skins = THEMES.filter((c) => !ARGO_CODES.includes(c));
+  // 현재 패밀리·모드 — 패밀리 밖 스킨이면 둘 다 비선택(세그먼트가 거짓 표시를 하지 않게)
+  const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
+  const mode = family ? theme.slice(family.length) : null;
+  const segBtn = (on) => ({
+    cursor: 'pointer', border: 0, borderRadius: 999, padding: '6px 18px', fontSize: 12.5, fontWeight: 600,
+    background: on ? 'var(--primary)' : 'transparent', color: on ? 'var(--primary-fg)' : 'var(--fg-2)', transition: 'background 0.15s, color 0.15s',
+  });
   return (
     <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 18 }}>
       {/* 모드 — 시스템/라이트/다크 세그먼트 (아르고 시그니처 테마의 밝기) */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
         <span className="card-title">{t('settings.mode')}</span>
         <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.mode.desc')}</p>
-        <div role="group" aria-label={t('settings.mode')}
-          style={{ display: 'inline-flex', gap: 3, alignSelf: 'flex-start', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
-          {MODE_OPTS.map(([code, label]) => (
-            <button key={code} onClick={() => setTheme(code)} aria-pressed={theme === code}
-              style={{
-                cursor: 'pointer', border: 0, borderRadius: 999, padding: '6px 18px', fontSize: 12.5, fontWeight: 600,
-                background: theme === code ? 'var(--primary)' : 'transparent',
-                color: theme === code ? 'var(--primary-fg)' : 'var(--fg-2)',
-                transition: 'background 0.15s, color 0.15s',
-              }}>
-              {t(label)}
-            </button>
-          ))}
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <div role="group" aria-label={t('settings.family')}
+            style={{ display: 'inline-flex', gap: 3, alignSelf: 'flex-start', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
+            {FAMILIES.map(([f, label]) => (
+              <button key={f} onClick={() => setTheme(`${f}${mode ?? ''}`)} aria-pressed={family === f} style={segBtn(family === f)}>{t(label)}</button>
+            ))}
+          </div>
+          <div role="group" aria-label={t('settings.mode')}
+            style={{ display: 'inline-flex', gap: 3, alignSelf: 'flex-start', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
+            {MODE_SUFFIX.map(([sfx, label]) => (
+              <button key={sfx} onClick={() => setTheme(`${family ?? 'graphite'}${sfx}`)} aria-pressed={family != null && mode === sfx} style={segBtn(family != null && mode === sfx)}>{t(label)}</button>
+            ))}
+          </div>
         </div>
       </div>
       {/* 다른 스킨 — 아르고 대신 다른 색 테마 */}

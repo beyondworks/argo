@@ -4,7 +4,7 @@ import { ThemeProvider } from './theme';
 import BuildWatch from './build-watch';
 
 // 첫 페인트 전에 저장된 테마를 적용 — FOUC 방지 (ThemeProvider의 effect보다 먼저 실행)
-const themeBoot = `try{var t=localStorage.getItem('argo-theme');if(t&&t!=='argo')document.documentElement.dataset.theme=t}catch(e){}`;
+const themeBoot = `try{var t=localStorage.getItem('argo-theme')||'graphite';if(t!=='argo')document.documentElement.dataset.theme=t}catch(e){}`;
 
 // 데스크톱(Tauri) 웹뷰는 target=_blank·window.open을 조용히 무시한다 — 외부 오리진 링크 클릭을
 // 가로채 시스템 브라우저로 연다(러너 OAuth 로그인 페이지·키 발급·결제 링크 전부). 브라우저에선 개입 없음.

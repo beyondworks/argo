@@ -160,7 +160,7 @@ function Shell({ children, params }) {
   }, [data, seen, pathname, ws, seenKey]);
 
   const refresh = useCallback(() => {
-    api(`/api/companies/${ws}`).then(setData).catch(() => setData({ missing: true }));
+    api(`/api/companies/${ws}?light=1`).then(setData).catch(() => setData({ missing: true }));
   }, [ws]);
   // 팀 이름 변경 — 데크 크루 목록(삭제)에서 옮겨왔다. 그룹 헤더 호버 ✎ → 인앱 InputModal(window.prompt는 Tauri 무동작)
   const [renameTeam, setRenameTeam] = useState(null);
