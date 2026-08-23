@@ -9,6 +9,7 @@ import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, Co
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
+import { sideParam, withSide } from '../../split.mjs';
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
 const fmtElapsed = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
@@ -189,7 +190,9 @@ function UserText({ text }) {
   );
 }
 
-export default function CrewChat({ params }) {
+// embedded = 보조 패널(split-pane) 안에 임베드. 주 화면 라우팅(topbar 포털·/memory 같은 이동 명령·해고 후 데크 이동)은
+// 하지 않는다 — 주 화면 URL은 패널이 바꾸면 안 된다. 초안·대기열 localStorage 키는 그대로(같은 크루 = 같은 초안).
+export default function CrewChat({ params, embedded = false, onClose }) {
   const { ws, slug: slugParam } = use(params);
   // 경로 조각은 **디코딩되지 않은 채** 온다(한글 이름 크루면 '%ED%81%B4…'). 예전엔 이 값을 그대로
   // 목록과 대조해서(a.slug === slug) 영영 못 찾았고, 이름 자리에 퍼센트 문자열이 나왔다 — 해고 확인창이
@@ -313,7 +316,8 @@ export default function CrewChat({ params }) {
   const [sel, setSel] = useState({ runner: '', model: '', effort: '' });
   // 타이틀바 슬롯 — 크루 컨트롤(세션 상태·카드·새 대화)을 topbar에 포털로 꽂는다
   const [slotEl, setSlotEl] = useState(null);
-  useEffect(() => { setSlotEl(document.getElementById('argo-topbar-slot')); }, []);
+  useEffect(() => { if (!embedded) setSlotEl(document.getElementById('argo-topbar-slot')); }, [embedded]);
+  const [crewList, setCrewList] = useState([]); // '옆에 열기' 드롭다운용 — 회사 크루 목록
   // 세션 적재 레일 — 새 대화로 넘긴 이전 대화들이 좌측에 쌓이고, 클릭으로 읽기 전용 열람
   const [sessions, setSessions] = useState([]);
   const [viewing, setViewing] = useState(null); // 보관 세션 id (null = 현재 대화)
@@ -458,6 +462,7 @@ export default function CrewChat({ params }) {
         if (!alive) return;
         const a = d.agents.find((a) => a.slug === slug) ?? { name: slug, role: '' };
         setAgent(a);
+        setCrewList(d.agents ?? []);
         setAliases(d.company?.aliases ?? []); // '/' 커맨더 사용자 별칭 — 회사 단위 공유
         // '' = 미지정(자동) — 'claude'를 박으면 자동 크루가 화면·저장 모두 클로드 고정으로 둔갑(K2 오표시 계열)
         setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '' });
@@ -814,9 +819,12 @@ export default function CrewChat({ params }) {
     { id: 'new', aliases: ['new', '새대화'], label: t('chat.newChat'), run: () => newChat() },
     { id: 'card', aliases: ['card', '카드'], label: t('chat.card'), run: () => setCardOpen(true) },
     { id: 'panel', aliases: ['panel', '작업', 'files', '파일'], label: t('crew.panel.open'), run: () => setPanelOpen(true) },
-    { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(`/c/${ws}/vault`) },
-    { id: 'room', aliases: ['room', '회의', '회의실'], label: t('nav.room'), run: () => router.push(`/c/${ws}/room`) },
-    { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(`/c/${ws}`) },
+    // 주 화면 이동 명령은 패널(embedded)에서는 제공하지 않는다 — 패널이 주 화면 URL을 바꾸면 안 된다
+    ...(embedded ? [] : [
+      { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(`/c/${ws}/vault`) },
+      { id: 'room', aliases: ['room', '회의', '회의실'], label: t('nav.room'), run: () => router.push(`/c/${ws}/room`) },
+      { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(`/c/${ws}`) },
+    ]),
   ];
   const slashToken = !viewing ? input.match(/^\/(\S*)$/) : null;
   const slashQ = slashToken ? slashToken[1].toLowerCase() : '';
@@ -856,10 +864,13 @@ export default function CrewChat({ params }) {
   return (
     // 세션레일(216, 좌측 원위치) + 채팅 컬럼(나머지 전체). 채팅은 .thread를 컬럼 전체폭으로 두고 안쪽 레인만 중앙정렬 →
     // 스크롤바는 컬럼 우측 끝에 고정되고 메시지는 중앙 레인에 담긴다(가장 LLM다운 형태).
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
+    // embedded(보조 패널): 세션 레일 없이 채팅 컬럼만, 높이는 패널 본문을 가득(패널이 sticky·고정 높이).
+    <div style={embedded
+      ? { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', alignItems: 'start', height: '100%', minHeight: 0 }
+      : { display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
       {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지. 회의실·컨테스트와 동일(입력창 하향·대화영역 확대, 스레드만 내부 스크롤). */}
       {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정 */}
-      <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
+      {!embedded && <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('chat.sessions.title')}{sessions.length ? ` · ${sessions.length + 1}` : ''}
         </span>
@@ -919,9 +930,9 @@ export default function CrewChat({ params }) {
           );
         })}
         {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('chat.sessions.empty')}</span>}
-      </div>
+      </div>}
     <div
-      style={{ width: '100%', display: 'grid', gridTemplateRows: '1fr auto', height: '100%', minHeight: 0, position: 'relative' }}
+      style={{ width: '100%', display: 'grid', gridTemplateRows: embedded ? 'auto 1fr auto' : '1fr auto', height: '100%', minHeight: 0, position: 'relative' }}
       onDragOver={(e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); setDragOver(true); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
       onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
@@ -939,8 +950,23 @@ export default function CrewChat({ params }) {
           <button className="btn sm" style={{ flex: 'none' }} onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen}>{t('crew.panel.open')}</button>
           <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
           <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
+          <SideOpenMenu crews={crewList.filter((c) => c.slug !== slug)}
+            onPick={(s) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'crew', key: s })))} />
         </>,
         slotEl,
+      )}
+      {/* 패널(embedded) — topbar 포털 대신 채팅 상단에 같은 컨트롤을 인라인으로(세션 상태·카드·새 대화만) */}
+      {embedded && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, padding: '8px 0 6px' }}>
+          <span className="nav-sub" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent?.role}</span>
+          {sessionRef.current ? (
+            <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('chat.sessionOngoing')}</span>
+          ) : (
+            <span className="pill" style={{ flex: 'none' }}><span className="dot" />{t('chat.newSession')}</span>
+          )}
+          <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
+          <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
+        </div>
       )}
 
       <div className="thread" ref={threadRef} style={{ overflowY: 'auto', minHeight: 0 }}>
@@ -1333,7 +1359,7 @@ export default function CrewChat({ params }) {
           sel={sel}
           onRunnerChange={saveRunner}
           onClose={() => setCardOpen(false)}
-          onFired={() => { window.dispatchEvent(new Event('argo:refresh')); router.push(`/c/${ws}`); }}
+          onFired={() => { window.dispatchEvent(new Event('argo:refresh')); if (embedded) onClose?.(); else router.push(`/c/${ws}`); }}
         />
       )}
 
@@ -1465,6 +1491,40 @@ function AliasModal({ onSave, onClose }) {
 
 /** 채팅바 모델 메뉴 — 텍스트 버튼("Claude Code · Fable 5") 클릭 시 위로 뜨는 팝오버.
     러너를 그룹 헤더로, 그 아래 모델(기본 포함)을 항목으로. 선택 즉시 저장(다음 턴부터 적용). */
+/** '옆에 열기 ▾' — 다른 크루 DM을 보조 패널로. ModelMenu와 같은 드롭다운 룩(card-float). 주 화면 topbar 전용. */
+function SideOpenMenu({ crews, onPick }) {
+  const { t } = useLang();
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e) => { if (!boxRef.current?.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  return (
+    <div ref={boxRef} style={{ position: 'relative', flex: 'none' }}>
+      <button type="button" className="btn sm" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="menu" title={t('split.openCrew')}>
+        <Icon name="split" size={12} /> {t('split.open')} <span aria-hidden style={{ fontSize: 9 }}>▾</span>
+      </button>
+      {open && (
+        <div className="card card-float" role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 40, minWidth: 200, maxHeight: 320, overflowY: 'auto', padding: 6, boxShadow: '0 8px 28px rgba(0,0,0,.14)' }}>
+          {crews.length === 0 && <div style={{ padding: '6px 8px', fontSize: 12, color: 'var(--fg-3)' }}>{t('split.noCrew')}</div>}
+          {crews.map((c) => (
+            <button key={c.slug} type="button" role="menuitem" onClick={() => { setOpen(false); onPick(c.slug); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', background: 'none', border: 0, borderRadius: 7, cursor: 'pointer', padding: '6px 8px', fontSize: 12.5, color: 'var(--fg)' }}>
+              <Avatar name={c.name} sm />
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}<span className="nav-sub">{c.role}</span></span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ModelMenu({ runners, sel, onChange, disabled }) {
   const { t } = useLang();
   const [open, setOpen] = useState(false);

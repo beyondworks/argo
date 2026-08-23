@@ -5,10 +5,11 @@
 // 창은 최대 2개를 가로로 나란히(옆에 열기). 창 안에서는 한 번에 한 탭만 보인다(중첩 없음).
 // 페이지는 뷰포트 높이에 고정되고 스크롤은 각 패널 안에서만 일어난다.
 import { Suspense, use, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo, tsFromRel, resolveWikiRel, artifactDownload } from '../../../ui';
 import { Graph2D } from '../graph2d'; // 2D 옵시디언식 — 3D 별자리(graphview)는 데크 위젯 전용
 import { useLang } from '../../../i18n';
+import { sideParam, withSide } from '../split.mjs';
 
 const GRAPH_TAB = { id: 'graph', kind: 'graph', root: null };
 const MAX_TABS = 10;
@@ -25,6 +26,9 @@ function Vault({ params }) {
   const { ws } = use(params);
   const { t, lang } = useLang();
   const initialDoc = useSearchParams().get('doc');
+  const router = useRouter();
+  // 문서를 보조 패널(split-pane)로 — 주 화면(기억 페이지)은 그대로, ?side=doc:<rel>만 싣는다
+  const sideOpen = (rel) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'doc', key: rel })));
   const [docs, setDocs] = useState(null);
   const [projects, setProjects] = useState([]); // 크루 산출물(vault/projects/) — 기억과 별도 축
   const [q, setQ] = useState('');
@@ -197,13 +201,13 @@ function Vault({ params }) {
                   {notes.length === 0 && !q && (docs.length + (projects?.length ?? 0)) > 0 && (
                     <p style={{ padding: '2px 12px 6px', color: 'var(--fg-3)', fontSize: 11.5 }}>{t('vault.notesEmpty')}</p>
                   )}
-                  {sortDocs(notes).map((d) => <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />)}
+                  {sortDocs(notes).map((d) => <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} onSide={sideOpen} lang={lang} />)}
                 </Folder>
                 <Folder label={t('vault.tree.journal')} gen={treeGen}>
-                  {sortDocs(journals).map((d) => <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />)}
+                  {sortDocs(journals).map((d) => <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} onSide={sideOpen} lang={lang} />)}
                 </Folder>
                 <Folder label={t('vault.tree.conversations')} gen={treeGen}>
-                  {sortDocs(convs).map((d) => <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />)}
+                  {sortDocs(convs).map((d) => <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} onSide={sideOpen} lang={lang} />)}
                 </Folder>
                 <Folder label={t('vault.tree.projects')} open gen={treeGen}>
                   {projectGroups.map(([name, files]) => (
@@ -218,7 +222,7 @@ function Vault({ params }) {
                           <span className="mono when" style={{ flex: 'none', fontSize: 9.5, color: 'var(--fg-3)' }}>{fmtSize(d.size)} ↓</span>
                         </a>
                       ) : (
-                        <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} lang={lang} />
+                        <FileRow key={d.rel} d={d} active={activeRel === d.rel} onOpen={rowOpen} onSide={sideOpen} lang={lang} />
                       ))}
                     </Folder>
                   ))}
@@ -453,11 +457,18 @@ function Folder({ label, title, open: initialOpen = false, root = false, gen = 0
 const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round((b ?? 0) / 1024))}KB`);
 
 /** 파일 행 — 이름만(옵시디언). 시각은 호버·활성 시만. ⌘/Alt 클릭 = 옆 창에 열기. 캐럿 자리만큼 들여써 폴더 이름과 정렬. */
-function FileRow({ d, active, onOpen, lang }) {
+function FileRow({ d, active, onOpen, onSide, lang }) {
+  const { t } = useLang();
+  // '옆에 열기'는 <button> 안에 button을 넣을 수 없어 형제로 — 래퍼(.row-wrap)가 position 기준(사이드바 크루 행과 같은 패턴)
   return (
-    <button onClick={(e) => onOpen(d.rel, e)} className={`row${active ? ' active' : ''}`} title={d.title} style={{ paddingLeft: 21 }}>
-      <span style={{ minWidth: 0, flex: 1, fontWeight: 500, color: 'var(--fg)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
-      <span className="mono when" style={{ flex: 'none', fontSize: 9.5, color: 'var(--fg-3)' }}>{timeAgo(tsFromRel(d.rel) ?? d.mtime, lang)}</span>
-    </button>
+    <div className="row-wrap">
+      <button onClick={(e) => onOpen(d.rel, e)} className={`row${active ? ' active' : ''}`} title={d.title} style={{ paddingLeft: 21 }}>
+        <span style={{ minWidth: 0, flex: 1, fontWeight: 500, color: 'var(--fg)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
+        <span className="mono when" style={{ flex: 'none', fontSize: 9.5, color: 'var(--fg-3)' }}>{timeAgo(tsFromRel(d.rel) ?? d.mtime, lang)}</span>
+      </button>
+      <button type="button" className="row-side" title={t('split.open')} aria-label={t('split.open')} onClick={(e) => { e.stopPropagation(); onSide(d.rel); }}>
+        <Icon name="split" size={12} />
+      </button>
+    </div>
   );
 }
