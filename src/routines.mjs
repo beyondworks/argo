@@ -103,6 +103,7 @@ export function normalizeLoop(loop = {}, prev = null) {
     lastVerdict: ['continue', 'done', 'blocked'].includes(prev?.lastVerdict) ? prev.lastVerdict : null,
     stoppedReason: ['done', 'blocked', 'maxRuns', 'maxUsd', 'manual'].includes(prev?.stoppedReason) ? prev.stoppedReason : null,
     missingVerdicts: Math.max(0, Math.floor(Number(prev?.missingVerdicts) || 0)),
+    stoppedDetail: String(prev?.stoppedDetail ?? '').slice(0, 300), // 정지 상세(blocked의 필요한 결정·done의 이유) — 화면 표시용
   };
 }
 
@@ -150,7 +151,7 @@ function loopStopMessage(reason, detail, lang, loop) {
 /** 결재 승인 후 재개 — approval-actions(kind:'loop')가 부른다. 거절이면 부르지 않는다(정지 유지). */
 export async function resumeLoop(wsId, id) {
   return patchRoutine(wsId, id, (r) => (isLoopRoutine(r)
-    ? { enabled: true, loop: { ...r.loop, stoppedReason: null, missingVerdicts: 0 } }
+    ? { enabled: true, loop: { ...r.loop, stoppedReason: null, stoppedDetail: '', missingVerdicts: 0 } }
     : { enabled: true }));
 }
 
@@ -220,7 +221,7 @@ export async function updateRoutine(wsId, id, patch) {
     if (base && 'enabled' in out) {
       // 수동 정지 = stoppedReason 'manual'(이미 사유가 있으면 유지). 다시 켜면 사유·누락 카운터를 비운다(지금 재개)
       out.loop = out.enabled
-        ? { ...base, stoppedReason: null, missingVerdicts: 0 }
+        ? { ...base, stoppedReason: null, stoppedDetail: '', missingVerdicts: 0 }
         : { ...base, stoppedReason: base.stoppedReason ?? 'manual' };
     }
     return out;
@@ -276,7 +277,7 @@ export async function runRoutine(wsId, id, { chatFn = null } = {}) {
       else if (L.missingVerdicts >= LOOP_MISSING_LIMIT) stop = { reason: 'blocked', detail: lang === 'en' ? `No LOOP verdict in ${LOOP_MISSING_LIMIT} consecutive runs — check the crew's runner/output format` : `${LOOP_MISSING_LIMIT}회 연속 LOOP 판정 누락 — 크루의 러너·출력 형식을 확인해 주세요` };
       else if (L.runs >= L.maxRuns) stop = { reason: 'maxRuns', detail: '' };
       else if (L.maxUsd != null && L.spentUsd >= L.maxUsd) stop = { reason: 'maxUsd', detail: '' };
-      if (stop) { L.stoppedReason = stop.reason; patch.enabled = false; }
+      if (stop) { L.stoppedReason = stop.reason; L.stoppedDetail = String(stop.detail ?? '').slice(0, 300); patch.enabled = false; }
       patch.loop = L;
     }
     const r = await patchRoutine(wsId, id, patch);

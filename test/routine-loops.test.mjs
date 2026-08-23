@@ -31,7 +31,7 @@ const fakeChat = (replies) => {
 const mkLoop = (loop, every = 10) => addRoutine(WS, { agentSlug: 'alpha', title: '점검 루프', prompt: '서버 상태를 점검하라', schedule: { type: 'interval', everyMinutes: every }, loop });
 
 test('normalizeLoop: 기본값·클램프·카운터 보존', () => {
-  assert.deepEqual(normalizeLoop({}), { maxRuns: 20, maxUsd: null, runs: 0, spentUsd: 0, lastVerdict: null, stoppedReason: null, missingVerdicts: 0 });
+  assert.deepEqual(normalizeLoop({}), { maxRuns: 20, maxUsd: null, runs: 0, spentUsd: 0, lastVerdict: null, stoppedReason: null, missingVerdicts: 0, stoppedDetail: '' });
   assert.equal(normalizeLoop({ maxRuns: 999 }).maxRuns, 200);
   assert.equal(normalizeLoop({ maxRuns: 0 }).maxRuns, 1);
   assert.equal(normalizeLoop({ maxRuns: 'abc' }).maxRuns, 20);
@@ -98,7 +98,7 @@ test('runRoutine: blocked → 정지 + 결재함에 kind loop 1건 + 정지 알�
   await runRoutine(WS, r.id, { chatFn: fakeChat([{ reply: '진행 불가\nLOOP: blocked 예산 증액 결정 필요' }]) });
   await new Promise((res) => setTimeout(res, 20)); off();
   let cur = await byId(r.id);
-  assert.equal(cur.enabled, false); assert.equal(cur.loop.stoppedReason, 'blocked');
+  assert.equal(cur.enabled, false); assert.equal(cur.loop.stoppedReason, 'blocked'); assert.equal(cur.loop.stoppedDetail, '예산 증액 결정 필요');
   const aps = (await loadApprovals(WS)).filter((a) => a.kind === 'loop' && a.payload?.routineId === r.id);
   assert.equal(aps.length, 1);
   assert.equal(aps[0].reason, '예산 증액 결정 필요');

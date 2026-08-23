@@ -1117,6 +1117,19 @@ const DICT = {
   'routines.runNow': ['지금 즉시 실행', 'Run now'],
   'routines.running': ['실행 중 — 결과는 기억에도 남습니다', 'Running — the result is also saved to memory'],
   'routines.resultTitle': ['결과 · 기억에 기록됨', 'Result · Recorded in Memory'],
+  // 루프(interval 루틴의 자율 반복)
+  'routines.loop.maxRuns': ['최대 반복', 'Max runs'],
+  'routines.loop.maxUsd': ['루프 예산(USD)', 'Loop budget (USD)'],
+  'routines.loop.maxUsdHint': ['비우면 회사 월 예산만 적용', 'Leave empty to apply only the monthly budget'],
+  'routines.loop.progress': ['{runs}/{max}회 · {cost}', '{runs}/{max} runs · {cost}'],
+  'routines.loop.running': ['진행 중', 'Running'],
+  'routines.loop.done': ['완료', 'Done'],
+  'routines.loop.blocked': ['막힘', 'Blocked'],
+  'routines.loop.limit': ['한도', 'Limit'],
+  'routines.loop.manual': ['정지됨', 'Stopped'],
+  'routines.loop.blockedHint': ['결정 필요: {reason}', 'Needs a decision: {reason}'],
+  'routines.loop.approveInbox': ['결재함에서 승인', 'Approve in inbox'],
+  'routines.loop.resume': ['지금 재개', 'Resume now'],
 
   // ── 마켓
   'market.topLabel': ['추천 · {source}', 'Recommended · {source}'],
