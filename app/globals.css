@@ -1510,6 +1510,42 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 
 .content { padding: 26px 32px 88px; max-width: 1480px; margin: 0 auto; }
 
+/* ─── 좌우 2분할(보조 패널) — ?side= 가 있으면 본문 옆에 <aside class="split-pane">. 상태는 URL 하나. ─── */
+.content-row { display: flex; min-width: 0; align-items: stretch; }
+.content-row > .content { flex: 1; min-width: 0; }
+.split-pane {
+  flex: none; width: var(--split-w, 480px); min-width: 360px; max-width: 60vw;
+  position: sticky; top: 56px; height: calc(100vh - 56px); overflow: hidden;
+  border-left: 1px solid var(--border); background: var(--bg);
+  display: flex; flex-direction: column;
+}
+/* 드래그 손잡이 — 왼쪽 가장자리 6px. 드래그 중엔 텍스트 선택·iframe 캡처 방지용으로 .on */
+.split-pane > .split-handle { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; }
+.split-pane > .split-handle:hover, .split-pane > .split-handle.on { background: var(--primary-soft); }
+.split-head {
+  flex: none; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.split-head .split-title { font-size: 13px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.split-body > .split-doc { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 14px 18px 40px; }
+.split-body > .split-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 12px 10px; }
+.split-body > .split-chat > * { flex: 1; min-height: 0; }
+body.split-resizing { cursor: col-resize; user-select: none; }
+/* 크루 행 '옆에 열기' — 핀과 같은 규칙(행 hover 시 노출). 핀 왼쪽(right:28)에 앉는다 */
+.crew-row .crew-side { opacity: 0; transition: opacity 0.12s; }
+.crew-row:hover .crew-side, .crew-row .crew-side:focus-visible { opacity: 1; }
+.crew-row .crew-side:hover { background: var(--border-soft); }
+.crew-row .crew-side:disabled { cursor: default; opacity: 0; }
+/* 기억 탐색기 파일 행 '옆에 열기' */
+.vault-tree .row-wrap { position: relative; }
+.vault-tree .row-wrap .row-side { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); opacity: 0; transition: opacity .12s; display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: var(--fg-3); cursor: pointer; }
+.vault-tree .row-wrap:hover .row-side, .vault-tree .row-wrap .row-side:focus-visible { opacity: 1; }
+.vault-tree .row-wrap:hover .row .when { opacity: 0; }
+.vault-tree .row-wrap .row-side:hover { background: var(--border-soft); color: var(--fg); }
+/* 좁은 폭(900 미만)에서는 패널을 내리지 않는다 — 본문이 전체폭을 되찾는다 */
+@media (max-width: 899px) { .split-pane { display: none; } }
+
 /* 데크 2열 — 본 계기 + 우측 보조 계기 레일 */
 .deck-grid { display: grid; grid-template-columns: 1fr minmax(0, 316px); gap: 16px; align-items: start; overflow: hidden; }
 /* 레일 잘림 근본 원인(실측 2026-08-14): grid 아이템 기본 min-width:auto → 별자리 캔버스 고유폭이

@@ -1,11 +1,13 @@
 'use client';
 // 회사 앱셸 — 라벨 사이드바(회사/크루 그룹 + 사용자 footer) + 헤더(타이틀·검색).
-import { use, useCallback, useEffect, useState } from 'react';
+import { Suspense, use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, InputModal, api } from '../../ui';
 import { useLang, stageLabel } from '../../i18n';
 import { useAppUpdate } from '../../use-app-update';
+import { SplitPane } from './split-pane';
+import { parseSide, sideParam, withSide } from './split.mjs';
 
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
@@ -93,11 +95,30 @@ function TasksDock({ ws }) {
   );
 }
 
-export default function CompanyShell({ children, params }) {
+// useSearchParams는 Suspense 경계 안에서 — 정적 프리렌더 bailout(next build 경고)을 막는다(vault 페이지와 동일 패턴)
+export default function CompanyShell(props) {
+  return (
+    <Suspense>
+      <Shell {...props} />
+    </Suspense>
+  );
+}
+
+function Shell({ children, params }) {
   const { ws } = use(params);
   const { t } = useLang();
   const pathname = usePathname();
   const router = useRouter();
+  // 좌우 2분할 보조 패널 — 상태는 ?side= 하나. 레이아웃 안의 내부 링크는 전부 withSide를 통과해
+  // 주 화면을 옮겨도 패널이 유지된다. 닫기 = side 쿼리 제거.
+  const searchParams = useSearchParams();
+  const sideStr = searchParams.get('side') || '';
+  const side = parseSide(sideStr);
+  const curQuery = searchParams.toString();
+  const hereWith = (sp) => withSide(`${pathname}${curQuery ? `?${curQuery}` : ''}`, sp);
+  const openSide = (spec) => router.replace(hereWith(sideParam(spec)));
+  const closeSide = () => router.replace(hereWith(''));
+  const L = (href) => withSide(href, sideStr); // 내부 링크 — 패널 유지
   // 같은 페이지 재클릭 = 무동작 — 소프트 내비 전환(Link) 후에도 동일 URL 재이동으로 페이지 상태가 리셋되는 것을 막는다.
   // 단 modifier/중클릭(새 탭·새 창)은 브라우저 기본 동작 보존 — 좌클릭만 가로챈다(분리 검수 지적 2026-07-24).
   const navClick = (href) => (e) => {
@@ -253,28 +274,28 @@ export default function CompanyShell({ children, params }) {
         </Link>
 
         <div className="side-group">{t('nav.company')}</div>
-        <Link href={`/c/${ws}`} onClick={navClick(`/c/${ws}`)} className={`nav-item${pathname === `/c/${ws}` ? ' active' : ''}`}>
+        <Link href={L(`/c/${ws}`)} onClick={navClick(`/c/${ws}`)} className={`nav-item${pathname === `/c/${ws}` ? ' active' : ''}`}>
           <Icon name="deck" size={16} /> {t('nav.deck')}
         </Link>
-        <Link href={`/c/${ws}/room`} onClick={navClick(`/c/${ws}/room`)} className={`nav-item${pathname.endsWith('/room') ? ' active' : ''}`}>
+        <Link href={L(`/c/${ws}/room`)} onClick={navClick(`/c/${ws}/room`)} className={`nav-item${pathname.endsWith('/room') ? ' active' : ''}`}>
           <Icon name="user" size={16} /> {t('nav.room')}
         </Link>
-        <Link href={`/c/${ws}/compete`} onClick={navClick(`/c/${ws}/compete`)} className={`nav-item${pathname.endsWith('/compete') ? ' active' : ''}`}>
+        <Link href={L(`/c/${ws}/compete`)} onClick={navClick(`/c/${ws}/compete`)} className={`nav-item${pathname.endsWith('/compete') ? ' active' : ''}`}>
           <Icon name="bolt" size={16} /> {t('nav.compete')}
         </Link>
-        <Link href={`/c/${ws}/vault`} onClick={navClick(`/c/${ws}/vault`)} className={`nav-item${pathname.endsWith('/vault') ? ' active' : ''}`}>
+        <Link href={L(`/c/${ws}/vault`)} onClick={navClick(`/c/${ws}/vault`)} className={`nav-item${pathname.endsWith('/vault') ? ' active' : ''}`}>
           <Icon name="memory" size={16} /> {t('nav.memory')}
         </Link>
-        <Link href={`/c/${ws}/routines`} onClick={navClick(`/c/${ws}/routines`)} className={`nav-item${pathname.endsWith('/routines') ? ' active' : ''}`}>
+        <Link href={L(`/c/${ws}/routines`)} onClick={navClick(`/c/${ws}/routines`)} className={`nav-item${pathname.endsWith('/routines') ? ' active' : ''}`}>
           <Icon name="clock" size={16} /> {t('nav.routines')}
         </Link>
-        <Link href={`/c/${ws}/activity`} onClick={navClick(`/c/${ws}/activity`)} className={`nav-item${pathname.endsWith('/activity') ? ' active' : ''}`}>
+        <Link href={L(`/c/${ws}/activity`)} onClick={navClick(`/c/${ws}/activity`)} className={`nav-item${pathname.endsWith('/activity') ? ' active' : ''}`}>
           <Icon name="bolt" size={16} /> {t('nav.activity')}
         </Link>
-        <Link href={`/c/${ws}/mail`} onClick={navClick(`/c/${ws}/mail`)} className={`nav-item${pathname.endsWith('/mail') ? ' active' : ''}`}>
+        <Link href={L(`/c/${ws}/mail`)} onClick={navClick(`/c/${ws}/mail`)} className={`nav-item${pathname.endsWith('/mail') ? ' active' : ''}`}>
           <Icon name="mail" size={16} /> {t('nav.mail')}
         </Link>
-        <Link href={`/c/${ws}/market`} onClick={navClick(`/c/${ws}/market`)} className={`nav-item${pathname.endsWith('/market') ? ' active' : ''}`}>
+        <Link href={L(`/c/${ws}/market`)} onClick={navClick(`/c/${ws}/market`)} className={`nav-item${pathname.endsWith('/market') ? ' active' : ''}`}>
           <Icon name="market" size={16} /> {t('nav.market')}
         </Link>
 
@@ -324,7 +345,12 @@ export default function CompanyShell({ children, params }) {
                     setDragSlug(null); setDropSlug(null);
                   }}
                   style={{ position: 'relative', ...(dragSlug === a.slug ? { opacity: 0.45 } : {}), ...(dropSlug === a.slug && dragSlug ? { boxShadow: 'inset 0 2px 0 var(--primary)' } : {}) }}>
-                  <Link href={href} onClick={navClick(href)} draggable={false} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6, paddingRight: 30 }}>
+                  <Link href={L(href)} draggable={false}
+                    onClick={(e) => {
+                      // cmd/ctrl+클릭 = 옆에 열기(새 탭 대신 — 크루 행 한정). 지금 보는 크루는 제외.
+                      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.button === 0) { e.preventDefault(); if (!active) openSide({ type: 'crew', key: a.slug }); return; }
+                      navClick(href)(e);
+                    }} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6, paddingRight: 52 }}>
                     <span style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
                       <Avatar name={a.name} sm />
                       {a.slug in tgAgents && (
@@ -345,6 +371,13 @@ export default function CompanyShell({ children, params }) {
                   </Link>
                   {/* 고정 토글 — pinned면 상시 골드, 아니면 행 hover 시 노출(.crew-row:hover .crew-pin). preventDefault로 링크 이동 차단.
                       활성 행 배경이 골드(--primary)라 골드 핀이 묻힌다 — 활성이면 온-골드 전경색(--primary-fg)으로 대비 확보(세션 레일과 동일 규칙, 실사용 신고 2026-07-21). */}
+                  {/* 옆에 열기 — 보조 패널에 이 크루 DM. 지금 보는 크루는 비활성(주 화면과 같은 크루를 두 번 열 이유가 없다) */}
+                  <button type="button" className="crew-side" disabled={active}
+                    title={active ? t('split.current') : t('split.open')} aria-label={active ? t('split.current') : t('split.open')}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); openSide({ type: 'crew', key: a.slug }); }}
+                    style={{ position: 'absolute', right: 28, top: '50%', transform: 'translateY(-50%)', display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: active ? 'var(--primary-fg-dim)' : 'var(--fg-3)', cursor: 'pointer', borderRadius: 6 }}>
+                    <Icon name="split" size={12} />
+                  </button>
                   <button type="button" className={`crew-pin${pinned ? ' pinned' : ''}`}
                     title={pinned ? t('nav.unpin') : t('nav.pin')} aria-label={pinned ? t('nav.unpin') : t('nav.pin')}
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePin(a.slug); }}
@@ -358,7 +391,7 @@ export default function CompanyShell({ children, params }) {
           );
         })}
         <Link
-          href={`/c/${ws}`}
+          href={L(`/c/${ws}`)}
           className="nav-item"
           style={{ color: 'var(--fg-3)', fontSize: 12.5 }}
           onClick={(e) => {
@@ -368,7 +401,7 @@ export default function CompanyShell({ children, params }) {
             e.preventDefault();
             try { sessionStorage.setItem('argo:hire', '1'); } catch { /* 프라이빗 모드 */ }
             if (pathname === `/c/${ws}`) window.dispatchEvent(new Event('argo:hire'));
-            else router.push(`/c/${ws}`);
+            else router.push(L(`/c/${ws}`));
           }}
         >
           <Icon name="plus" size={15} /> {t('nav.hire')}
@@ -389,7 +422,7 @@ export default function CompanyShell({ children, params }) {
           </button>
         )}
         <Link
-          href={`/c/${ws}/settings`}
+          href={L(`/c/${ws}/settings`)}
           onClick={navClick(`/c/${ws}/settings`)}
           className={`nav-item${pathname.endsWith('/settings') ? ' active' : ''}`}
           style={me?.authOn ? undefined : { marginTop: 'auto' }}
@@ -455,6 +488,7 @@ export default function CompanyShell({ children, params }) {
           </label>
         </header>
 
+        <div className="content-row">
         <main className="content" style={{ width: '100%' }}>
           {data?.missing ? (
             <div className="empty" style={{ marginTop: 40 }}>
@@ -462,6 +496,11 @@ export default function CompanyShell({ children, params }) {
             </div>
           ) : children}
         </main>
+        {side && !data?.missing && (
+          <SplitPane ws={ws} side={side} sideStr={sideStr} onClose={closeSide}
+            title={side.type === 'crew' ? (agents.find((a) => a.slug === side.key)?.name ?? side.key) : side.key.split('/').pop().replace(/\.md$/, '')} />
+        )}
+        </div>
       </div>
       {renameTeam != null && (
         <InputModal title={t('deck.renameTeam')} label={t('deck.renameTeamPrompt', { team: renameTeam })} defaultValue={renameTeam}
