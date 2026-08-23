@@ -37,12 +37,15 @@ function docStats(docs) {
   };
 }
 
-export async function GET(_req, { params }) {
+export async function GET(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
+    // ?light=1 — 회사·크루만(사이드바 30초 폴·크루 대화창 진입용). 기억 2,000건 listDocs(0.2s)·집계는 데크만 쓴다.
+    const light = new URL(req.url).searchParams.get('light') === '1';
     const [company, agents, docs, usage, delegations, payroll] = await Promise.all([
-      loadCompany(ws), listAgents(ws), listDocs(ws), readUsageSummary(ws), readDelegations(ws), monthCostByCrew(ws),
+      loadCompany(ws), listAgents(ws),
+      light ? [] : listDocs(ws), light ? null : readUsageSummary(ws), light ? [] : readDelegations(ws), light ? null : monthCostByCrew(ws),
     ]);
     // 크루별 마지막 대화 시각 — chats/<slug>.json mtime(스레드 영속화의 단일 파일). 사이드바 안읽음 배지 판정용.
     // 대화 파일이 없으면(신규 크루) 필드 자체를 생략 — 클라이언트가 "기록 없음"으로 본다.
@@ -50,6 +53,7 @@ export async function GET(_req, { params }) {
     await Promise.all(agents.map(async (a) => {
       try { a.chatTs = (await stat(join(chatsDir, `${a.slug}.json`))).mtimeMs; } catch { /* 대화 없음 */ }
     }));
+    if (light) return Response.json({ company, agents, light: true });
     return Response.json({
       company, agents,
       memories: docs.slice(0, 6),

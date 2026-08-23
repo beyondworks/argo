@@ -1,7 +1,7 @@
 import { relative } from 'node:path';
 import { chat } from '../../../../../src/chat.mjs';
 import { paths } from '../../../../../src/workspace.mjs';
-import { loadThread, appendTurn, beginTurn, resetThread } from '../../../../../src/thread.mjs';
+import { threadMtime, loadThread, appendTurn, beginTurn, resetThread } from '../../../../../src/thread.mjs';
 import { getTurnStatus } from '../../../../../src/turn-status.mjs';
 import { nudgeSync } from '../../../../../src/sync.mjs';
 import { guardCompany } from '../../../../auth.mjs';
@@ -12,10 +12,18 @@ export const maxDuration = 300; // 에이전트 턴은 vault 탐색 포함 수 �
 export async function GET(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
-  const slug = new URL(req.url).searchParams.get('slug');
+  const url = new URL(req.url);
+  const slug = url.searchParams.get('slug');
   if (!slug) return Response.json({ error: 'slug가 필요합니다' }, { status: 400 });
+  // 폴링 dedup — 클라이언트가 마지막으로 받은 mtime을 보내면, 파일이 그대로일 때 본문(수백 KB)을 생략한다.
+  // 3초 폴마다 800KB JSON을 직렬화·전송·파싱하던 것이 대화창 버벅임의 한 축이었다(Lean-AX 652건 실측 2026-08-23).
+  const known = Number(url.searchParams.get('mtime') || 0);
+  const mtime = await threadMtime(ws, slug);
+  if (known && mtime && known === mtime) {
+    return Response.json({ unchanged: true, mtime, status: await getTurnStatus(ws, slug) });
+  }
   const [thread, status] = await Promise.all([loadThread(ws, slug), getTurnStatus(ws, slug)]);
-  return Response.json({ ...thread, status });
+  return Response.json({ ...thread, status, mtime });
 }
 
 export async function POST(req, { params }) {

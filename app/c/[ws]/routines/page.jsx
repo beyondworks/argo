@@ -72,7 +72,7 @@ export default function Routines({ params }) {
     api(`/api/companies/${ws}/routines`)
       .then((d) => { setRoutines(d.routines ?? []); setError(''); })
       .catch((e) => { setRoutines(null); setError(String(e?.message || '') || t('routines.loadFail')); });
-    api(`/api/companies/${ws}`).then((d) => setAgents(d.agents)).catch(() => {});
+    api(`/api/companies/${ws}?light=1`).then((d) => setAgents(d.agents)).catch(() => {});
   }
   useEffect(load, [ws]);
 

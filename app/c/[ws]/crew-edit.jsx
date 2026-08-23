@@ -20,7 +20,7 @@ export function CrewEditModal({ ws, agent, teams: teamsProp = null, onClose, onS
   const [teamsFetched, setTeamsFetched] = useState([]);
   useEffect(() => {
     if (teamsProp) return;
-    api(`/api/companies/${ws}`).then((d) => setTeamsFetched([...new Set((d.agents ?? []).map((x) => x.team).filter(Boolean))])).catch(() => {});
+    api(`/api/companies/${ws}?light=1`).then((d) => setTeamsFetched([...new Set((d.agents ?? []).map((x) => x.team).filter(Boolean))])).catch(() => {});
   }, [ws, teamsProp]);
   const teams = teamsProp ?? teamsFetched;
   const curRunner = runners?.find((r) => r.id === form.runner);

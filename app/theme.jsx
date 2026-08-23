@@ -12,12 +12,15 @@ export const THEMES = [
   'codex-gh-light', 'codex-gh-dark', 'enjoyer', 'minimal-light', 'minimal-dark',
   // 중성 회색(유건 지정 2026-08-01). 'graphite'는 **시스템 자동** — argo와 같은 방식으로 다크/라이트를 따라간다.
   'graphite', 'graphite-light', 'graphite-dark',
-]; // 첫 항목이 기본값
+];
+// 기본값 — 그래파이트(시스템 자동). 유건 지시 2026-08-23: 기본 테마를 그래파이트로, 아르고는 선택 가능하게 유지.
+// 'argo'만 data-theme 없이(:root 토큰) 렌더되므로 기본값이 바뀌어도 argo 분기는 그대로 둔다.
+export const DEFAULT_THEME = 'graphite';
 const KEY = 'argo-theme';
 
 function apply(theme) {
   const el = document.documentElement;
-  if (theme === THEMES[0]) delete el.dataset.theme;
+  if (theme === 'argo') delete el.dataset.theme;
   else el.dataset.theme = theme;
   // 캔버스(기억 그래프)처럼 토큰을 직접 읽는 소비자에게 알림
   window.dispatchEvent(new Event('argo:theme'));
@@ -26,11 +29,11 @@ function apply(theme) {
 const ThemeCtx = createContext(null);
 
 export function ThemeProvider({ children }) {
-  const [theme, setThemeState] = useState(THEMES[0]);
+  const [theme, setThemeState] = useState(DEFAULT_THEME);
 
   useEffect(() => {
     const saved = localStorage.getItem(KEY);
-    if (THEMES.includes(saved)) { setThemeState(saved); apply(saved); }
+    if (THEMES.includes(saved)) { setThemeState(saved); apply(saved); } else apply(DEFAULT_THEME);
   }, []);
 
   const setTheme = useCallback((next) => {
