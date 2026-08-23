@@ -10,7 +10,7 @@
 // 두 기기가 같은 쪽지를 이중 배달한다(.gw-queue 선례와 동일 결함 계급). 세션 간 소통은 배달 결과가
 // 스레드(동기화 대상)로 남는 것으로 성립한다 — 큐 자체는 발신 기기 소유이며, 배달도 그 기기의
 // 스케줄러가 한다(클라우드 리더 게이트 미적용 — 걸면 비리더 기기 발신분이 무증상 소실, 2026-07-28).
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { writeJsonAtomic } from './jsonstore.mjs';
@@ -30,6 +30,13 @@ export const MAIL_MAX_ATTEMPTS = 3;
 const CLAIM_STALE_MS = 45 * 60_000;
 /** 예약 디렉터리 — dot 접두라 크루 slug와 충돌하지 않는다(slug는 WS_ID류 영숫자, 분리 검수 LOW). */
 const DEAD_DIR = '.dead';
+/** 배달 기록(jsonl) — 쪽지함 화면의 "배달 기록" 섹션. mail/ 아래라 동기화 제외(sync.mjs EXCLUDE). */
+const LOG_FILE = '.log.jsonl';
+/** ponytail: 로그는 단순 유지 — 읽을 때 LOG_TRIM_AT 줄을 넘으면 최근 LOG_KEEP 줄로 잘라 다시 쓴다.
+    회전·락 없음: 잘라 쓰는 사이 append가 끼면 그 한 줄은 유실될 수 있다(기록 전용 — 배달에 영향 없음). */
+const LOG_TRIM_AT = 2000;
+const LOG_KEEP = 1000;
+const LOG_SHOW = 200;
 
 const mailRoot = (wsId) => join(paths(wsId).root, 'mail');
 const mailDir = (wsId, slug) => join(mailRoot(wsId), String(slug));
@@ -49,6 +56,9 @@ export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, 
   const eqSlug = (a, b) => String(a ?? '').normalize('NFC').toLowerCase().trim() === String(b ?? '').normalize('NFC').toLowerCase().trim();
   if (from && eqSlug(to, from)) throw new Error('자기 자신에게는 쪽지를 보낼 수 없습니다');
   if (kind !== 'to' && kind !== 'cc') throw new Error('kind는 to 또는 cc입니다');
+  // 수신 slug는 곧 디렉터리명 — 쪽지함 API(사장 발신)가 화면 입력을 그대로 넘기므로 저장 관문에서 검증한다
+  // (격리 재현 2026-08-23: to:'../x'가 <ws root>/x/에 파일을 만들었다).
+  assertSlug(to); for (const c of cc) assertSlug(c);
   const id = `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const base = {
     id, from, fromName: fromName || from, ...(fromRole ? { fromRole } : {}), message: String(message).trim(),
@@ -87,6 +97,111 @@ async function pendingBySlug(wsId) {
     }
   }
   return out;
+}
+
+/** 배달 기록 한 줄 append — 실패는 배달을 막지 않는다(기록은 부가, 배달이 본업). */
+async function appendLog(wsId, entry) {
+  try {
+    await mkdir(mailRoot(wsId), { recursive: true });
+    await appendFile(join(mailRoot(wsId), LOG_FILE), JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n');
+  } catch (e) {
+    console.warn(`[argo] 크루 우편 배달 기록 실패(${wsId}):`, e.message);
+  }
+}
+
+/** 배달 기록 읽기 — 최신순 LOG_SHOW건. 파일이 LOG_TRIM_AT 줄을 넘으면 최근 LOG_KEEP 줄로 잘라 다시 쓴다. */
+async function readLog(wsId) {
+  const file = join(mailRoot(wsId), LOG_FILE);
+  let lines = [];
+  try { lines = (await readFile(file, 'utf8')).split('\n').filter(Boolean); } catch { return []; }
+  if (lines.length > LOG_TRIM_AT) {
+    lines = lines.slice(-LOG_KEEP);
+    await writeFile(file, lines.join('\n') + '\n').catch(() => {});
+  }
+  const out = [];
+  for (const l of lines.slice(-LOG_SHOW).reverse()) {
+    try { out.push(JSON.parse(l)); } catch { /* 절단 줄 — 건너뜀 */ }
+  }
+  return out;
+}
+
+// 경로 조립 전 검증 — 화면 입력이 그대로 파일 경로가 되므로 slug·id·파일명은 허용 문법만 통과시킨다.
+const SLUG_RE = /^[^/\\.][^/\\]*$/;          // 구분자 금지, dot 접두 금지(.dead·.log 예약)
+const ID_RE = /^m[a-z0-9]+$/;                 // sendCrewMail이 만드는 id 형태
+const DEAD_RE = /^[^/\\.][^/\\]*-m[a-z0-9]+-(to|cc)\.json$/; // .dead/의 기록 파일명 `<slug>-<id>-<kind>.json`
+function assertSlug(slug) { if (!SLUG_RE.test(String(slug ?? '')) || String(slug).includes('..')) throw new Error('잘못된 크루 slug'); }
+function assertId(id) { if (!ID_RE.test(String(id ?? ''))) throw new Error('잘못된 쪽지 id'); }
+function assertDeadFile(file) { if (!DEAD_RE.test(String(file ?? '')) || String(file).includes('..')) throw new Error('잘못된 실패함 파일명'); }
+
+/** 쪽지함 목록 — 화면용. pending(대기·배달 중), dead(실패함), log(배달 기록 최신순). */
+export async function listMail(wsId) {
+  const pending = [];
+  for (const item of await pendingBySlug(wsId)) {
+    let body = {};
+    try { body = JSON.parse(await readFile(item.full, 'utf8')); } catch { /* 손상 — 파일명 정보만 */ }
+    const m = /^(m[a-z0-9]+)-(to|cc)\.json(\.claimed)?$/.exec(item.file);
+    pending.push({
+      id: body.id ?? m?.[1] ?? item.file, to: item.slug, from: body.from ?? null, fromName: body.fromName ?? body.from ?? null,
+      fromRole: body.fromRole ?? null, kind: body.kind ?? m?.[2] ?? null, message: body.message ?? '',
+      ts: body.ts ?? null, attempts: body.attempts ?? 0, claimed: !!item.claimed, claimedAt: body.claimedAt ?? null,
+      lastError: body.lastError ?? null, file: item.file,
+    });
+  }
+  const dead = [];
+  try {
+    for (const f of (await readdir(join(mailRoot(wsId), DEAD_DIR))).sort()) {
+      if (f.endsWith('.corrupt')) { dead.push({ file: f, corrupt: true }); continue; }
+      if (!f.endsWith('.json')) continue;
+      let body = {};
+      try { body = JSON.parse(await readFile(join(mailRoot(wsId), DEAD_DIR, f), 'utf8')); } catch { dead.push({ file: f, corrupt: true }); continue; }
+      const tail = `-${body.id}-${body.kind}.json`;
+      dead.push({
+        file: f, id: body.id ?? null, to: body.id && body.kind && f.endsWith(tail) ? f.slice(0, f.length - tail.length) : null,
+        from: body.from ?? null, fromName: body.fromName ?? body.from ?? null, fromRole: body.fromRole ?? null,
+        kind: body.kind ?? null, message: body.message ?? '', ts: body.ts ?? null, attempts: body.attempts ?? 0, lastError: body.lastError ?? null,
+      });
+    }
+  } catch { /* .dead 없음 */ }
+  return { pending, dead, log: await readLog(wsId) };
+}
+
+/** 대기 쪽지 취소 — .json만. .claimed(배달 진행 중)는 거부: 턴이 이미 도는 중이라 지워도 배달은 끝난다. */
+export async function cancelMail(wsId, slug, id) {
+  assertSlug(slug); assertId(id);
+  const dir = mailDir(wsId, slug);
+  let files = [];
+  try { files = await readdir(dir); } catch { throw new Error('쪽지를 찾을 수 없습니다'); }
+  const claimed = files.find((f) => f.startsWith(`${id}-`) && f.endsWith('.claimed'));
+  if (claimed) throw new Error('배달 중인 쪽지는 취소할 수 없습니다');
+  const target = files.find((f) => f.startsWith(`${id}-`) && f.endsWith('.json'));
+  if (!target) throw new Error('쪽지를 찾을 수 없습니다');
+  let body = {};
+  try { body = JSON.parse(await readFile(join(dir, target), 'utf8')); } catch { /* 기록은 파일명 기준 */ }
+  await rm(join(dir, target), { force: true });
+  await appendLog(wsId, { id, to: slug, from: body.from ?? null, fromName: body.fromName ?? null, kind: body.kind ?? null, ok: false, error: 'cancelled', attempts: body.attempts ?? 0 });
+  return { ok: true };
+}
+
+/** 실패함 → 원래 우편함 복귀. attempts 0·lastError 제거. .corrupt는 불가(재기록할 원문이 없다). */
+export async function requeueDead(wsId, file) {
+  assertDeadFile(file);
+  const src = join(mailRoot(wsId), DEAD_DIR, file);
+  const { lastError: _drop, claimedAt: _drop2, ...body } = JSON.parse(await readFile(src, 'utf8'));
+  if (!body.id || !body.kind) throw new Error('복귀할 수 없는 기록입니다');
+  const slug = file.slice(0, file.length - `-${body.id}-${body.kind}.json`.length);
+  assertSlug(slug);
+  await mkdir(mailDir(wsId, slug), { recursive: true });
+  await writeJsonAtomic(join(mailDir(wsId, slug), `${body.id}-${body.kind}.json`), { ...body, attempts: 0 });
+  await rm(src, { force: true });
+  return { ok: true, to: slug, id: body.id };
+}
+
+/** 실패함 기록 삭제(.corrupt 포함). */
+export async function deleteDead(wsId, file) {
+  if (!DEAD_RE.test(String(file ?? '')) && !/^[^/\\.][^/\\]*\.corrupt$/.test(String(file ?? ''))) throw new Error('잘못된 실패함 파일명');
+  if (String(file).includes('..')) throw new Error('잘못된 실패함 파일명');
+  await rm(join(mailRoot(wsId), DEAD_DIR, file), { force: true });
+  return { ok: true };
 }
 
 /** 배달 프롬프트 — 수신 크루 턴의 사용자 메시지. delegate 프리픽스와 같은 문법(스레드에 그대로 보임).
@@ -153,6 +268,7 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
     // 태우지 않게, 턴 실행 **전에** 상한을 본다(재검 LOW: "상한이 결국 잡는다"가 이 경로에선 거짓이었다).
     if ((msg.attempts ?? 0) >= MAIL_MAX_ATTEMPTS) {
       await moveToDead(wsId, item.slug, item.file, claimedPath, { ...msg, lastError: msg.lastError ?? 'attempts exhausted' });
+      await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: false, error: msg.lastError ?? 'attempts exhausted', attempts: msg.attempts ?? 0 });
       inFlight.delete(claimedPath);
       continue;
     }
@@ -161,11 +277,14 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
     try {
       await runTurn(item.slug, msg, { from: msg.from, hop: msg.hop ?? 0, chain: msg.chain ?? [] });
       await rm(claimedPath, { force: true }).catch(() => {});
+      await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: true, attempts: (msg.attempts ?? 0) + 1 });
     } catch (e) {
       const attempts = (msg.attempts ?? 0) + 1;
+      const error = String(e.message ?? e).slice(0, 200);
+      await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: false, error, attempts, exhausted: attempts >= MAIL_MAX_ATTEMPTS });
       if (attempts >= MAIL_MAX_ATTEMPTS) {
         console.error(`[argo] 크루 우편 배달 소진(${wsId}/${item.slug}/${msg.id}):`, e.message);
-        await moveToDead(wsId, item.slug, item.file, claimedPath, { ...msg, attempts, lastError: String(e.message ?? e).slice(0, 200) });
+        await moveToDead(wsId, item.slug, item.file, claimedPath, { ...msg, attempts, lastError: error });
       } else {
         console.warn(`[argo] 크루 우편 배달 실패(${attempts}/${MAIL_MAX_ATTEMPTS}) ${wsId}/${item.slug}/${msg.id}:`, e.message);
         // 재시도 — attempts 올려 .json으로 복귀(다음 틱). 갱신 실패 시에도 복귀는 시도한다

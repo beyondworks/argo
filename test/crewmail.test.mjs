@@ -215,3 +215,82 @@ test('interval 루틴 — normalizeSchedule·isDue', async () => {
   // 오염 방어 — 하한 미달 값이 파일에 직접 쓰였어도 발화하지 않는다
   assert.equal(isDue({ enabled: true, schedule: { type: 'interval', everyMinutes: 1 }, lastRun: null }, new Date()), false);
 });
+
+// ── 쪽지함 화면용 조작(listMail·cancelMail·requeueDead·deleteDead) + 배달 기록
+test('listMail — pending(대기·배달 중)·dead·log 구조', async () => {
+  const id = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'lm', cc: ['lm2'], message: '목록 검증' });
+  const { rename } = await import('node:fs/promises');
+  // lm2의 사본을 배달 중(.claimed)으로 위장 — 화면은 claimed:true로 구분해야 한다
+  await rename(join(paths(WS).root, 'mail', 'lm2', `${id}-cc.json`), join(paths(WS).root, 'mail', 'lm2', `${id}-cc.json.claimed`));
+  const r = await mod.listMail(WS);
+  assert.ok(Array.isArray(r.pending) && Array.isArray(r.dead) && Array.isArray(r.log));
+  const to = r.pending.find((m) => m.id === id && m.to === 'lm');
+  const cc = r.pending.find((m) => m.id === id && m.to === 'lm2');
+  assert.equal(to.kind, 'to'); assert.equal(to.claimed, false); assert.equal(to.fromName, '알파'); assert.equal(to.attempts, 0);
+  assert.equal(cc.kind, 'cc'); assert.equal(cc.claimed, true);
+  assert.ok(r.dead.some((d) => d.corrupt !== true && d.attempts === mod.MAIL_MAX_ATTEMPTS && d.to === 'b'), '앞 테스트의 소진 기록이 dead에 구조화돼야 한다');
+});
+
+test('cancelMail — 대기는 삭제·기록, 배달 중(.claimed)은 거부', async () => {
+  const r = await mod.listMail(WS);
+  const to = r.pending.find((m) => m.to === 'lm');
+  const cc = r.pending.find((m) => m.to === 'lm2');
+  await assert.rejects(() => mod.cancelMail(WS, 'lm2', cc.id), /배달 중/);
+  assert.deepEqual(await mailFiles('lm2'), [`${cc.id}-cc.json.claimed`], '거부됐으면 파일은 그대로');
+  await mod.cancelMail(WS, 'lm', to.id);
+  assert.deepEqual(await mailFiles('lm'), []);
+  const log = (await mod.listMail(WS)).log;
+  assert.ok(log.some((l) => l.id === to.id && l.ok === false && l.error === 'cancelled'), '취소가 배달 기록에 남아야 한다');
+});
+
+test('배달 기록 — 성공·실패가 각각 한 줄(최신순)', async () => {
+  const ok = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'log1', message: '성공' });
+  await mod.deliverCrewMail(WS, async () => {});
+  const bad = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'log2', message: '실패' });
+  await mod.deliverCrewMail(WS, async () => { throw new Error('runner down'); });
+  const { log } = await mod.listMail(WS);
+  const okRow = log.find((l) => l.id === ok);
+  const badRow = log.find((l) => l.id === bad);
+  assert.equal(okRow.ok, true); assert.equal(okRow.to, 'log1'); assert.equal(okRow.attempts, 1);
+  assert.equal(badRow.ok, false); assert.match(badRow.error, /runner down/); assert.equal(badRow.attempts, 1);
+  assert.ok(log.indexOf(badRow) < log.indexOf(okRow), '최신이 앞');
+  const raw = await readFile(join(paths(WS).root, 'mail', '.log.jsonl'), 'utf8');
+  assert.ok(raw.trim().split('\n').every((l) => JSON.parse(l).ts), 'jsonl 각 줄에 ts');
+});
+
+test('requeueDead — 실패함 기록이 attempts 0·lastError 없이 원래 우편함으로', async () => {
+  const { dead } = await mod.listMail(WS);
+  const rec = dead.find((d) => d.to === 'b' && !d.corrupt);
+  const r = await mod.requeueDead(WS, rec.file);
+  assert.equal(r.to, 'b');
+  assert.deepEqual(await mailFiles('b'), [`${rec.id}-to.json`]);
+  const body = JSON.parse(await readFile(join(paths(WS).root, 'mail', 'b', `${rec.id}-to.json`), 'utf8'));
+  assert.equal(body.attempts, 0); assert.equal(body.lastError, undefined); assert.equal(body.message, '실패 유도');
+  assert.ok(!(await readdir(join(paths(WS).root, 'mail', '.dead'))).includes(rec.file), '.dead에서 사라져야 한다');
+  await mod.cancelMail(WS, 'b', rec.id); // 정리
+});
+
+test('deleteDead — 기록 삭제, .corrupt도 삭제 가능', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const deadDir = join(paths(WS).root, 'mail', '.dead');
+  await writeFile(join(deadDir, 'zz-m1-to.json.corrupt'), '{broken');
+  const before = await mod.listMail(WS);
+  assert.ok(before.dead.some((d) => d.file === 'zz-m1-to.json.corrupt' && d.corrupt === true));
+  await assert.rejects(() => mod.requeueDead(WS, 'zz-m1-to.json.corrupt'), /파일명/);
+  await mod.deleteDead(WS, 'zz-m1-to.json.corrupt');
+  assert.ok(!(await readdir(deadDir)).includes('zz-m1-to.json.corrupt'));
+});
+
+test('경로 검증 — slug·id·파일명에 구분자·상위 경로·dot 접두는 거부', async () => {
+  await assert.rejects(() => mod.cancelMail(WS, '../b', 'm1abc'), /slug/);
+  await assert.rejects(() => mod.cancelMail(WS, '.dead', 'm1abc'), /slug/);
+  await assert.rejects(() => mod.cancelMail(WS, 'b', '../x'), /id/);
+  await assert.rejects(() => mod.cancelMail(WS, 'b', 'm1/x'), /id/);
+  await assert.rejects(() => mod.requeueDead(WS, '../company.json'), /파일명/);
+  await assert.rejects(() => mod.requeueDead(WS, 'b-m1-to.json/../x'), /파일명/);
+  await assert.rejects(() => mod.deleteDead(WS, '../company.json'), /파일명/);
+  await assert.rejects(() => mod.deleteDead(WS, '.log.jsonl'), /파일명/);
+  // 저장 관문 — 쪽지함 API가 화면 입력을 그대로 넘기므로 sendCrewMail 자체가 막아야 한다
+  await assert.rejects(() => mod.sendCrewMail(WS, { from: 'captain', to: '../x', message: 'x' }), /slug/);
+  await assert.rejects(() => mod.sendCrewMail(WS, { from: 'captain', to: 'b', cc: ['.dead'], message: 'x' }), /slug/);
+});
