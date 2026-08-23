@@ -249,9 +249,21 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
       }
       continue;
     }
-    // 선점 — rename 원자성만 신뢰(승자 1명). 패자는 ENOENT로 continue.
+    // 선점 — mkdir 뮤텍스 + rename. rename 단독은 **윈도우에서 승자가 둘**일 수 있다(MoveFileEx 내부
+    // 핸들 TOCTOU, CI 실측 2026-08-06·2026-08-23: 같은 원본에 두 rename이 모두 성공해 이중 배달).
+    // mkdir은 모든 OS에서 배타적이라 승자 선출에 쓰고, rename이 끝나면 바로 지운다 — 늦은 패자는
+    // mkdir 성공 뒤 rename에서 ENOENT로 빠진다. 크래시 잔재(.lockd)는 stale 회수가 치운다.
     const claimedPath = `${item.full}.claimed`;
-    try { await rename(item.full, claimedPath); } catch { continue; }
+    const lockDir = `${item.full}.lockd`;
+    try { await mkdir(lockDir); } catch {
+      // 잔재 락(프로세스 크래시) — 오래됐으면 치우고 다음 틱에 맡긴다
+      try { if (now - (await stat(lockDir)).mtimeMs > CLAIM_STALE_MS) await rm(lockDir, { recursive: true, force: true }); } catch { /* 이미 사라짐 */ }
+      continue;
+    }
+    let won = false;
+    try { await rename(item.full, claimedPath); won = true; } catch { /* 패자 */ }
+    await rm(lockDir, { recursive: true, force: true }).catch(() => {});
+    if (!won) continue;
     inFlight.add(claimedPath);
     done += 1;
     let msg = null;
