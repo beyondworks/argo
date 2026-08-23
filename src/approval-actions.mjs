@@ -11,6 +11,15 @@ import { emitNotify } from './notify.mjs'; // 후속 턴 결과를 원 채널(�
     (capabilities.mjs). 옛 결재함에 남은 capability 항목은 여기서 특별 처리 없이 그냥 해소된다. */
 export async function resolveWithFollowUp(wsId, id, approve) {
   const item = await resolveApproval(wsId, id, approve);
+  if (item.kind === 'loop') {
+    // 루프 막힘(LOOP: blocked) 결재 — 승인이면 루틴을 다시 켠다(다음 틱에 재개), 거절이면 정지 유지.
+    // 후속 턴을 돌리지 않는다: 재개된 루프의 다음 회차가 곧 후속이고, 여기서 턴을 더 쓰면 비용 이중.
+    if (approve && item.payload?.routineId) {
+      const { resumeLoop } = await import('./routines.mjs');
+      await resumeLoop(wsId, item.payload.routineId).catch((e) => console.error('[argo] 루프 재개 실패:', e.message));
+    }
+    return item;
+  }
   if (item.kind !== 'tool') {
     followUp(wsId, item, approve).catch((e) => console.error('[argo] 결재 후속 턴 실패:', e.message));
   }

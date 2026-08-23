@@ -2,6 +2,7 @@
 // 루틴 — 크루에게 반복 지시를 예약하고, 원클릭으로 즉시 실행한다.
 // 템플릿 원클릭 생성 → 폼 프리필. 실행 결과는 vault 기억으로 남는다.
 import { use, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, DropUp, api, imeGuard, timeAgo } from '../../../ui';
 import { useLang } from '../../../i18n';
 
@@ -24,7 +25,7 @@ function scheduleLabel(s, t, DOW) {
 
 export default function Routines({ params }) {
   const { ws } = use(params);
-  const { t, lang } = useLang();
+  const { t, lang, fmtMoney } = useLang();
   const DOW = [t('routines.dow.sun'), t('routines.dow.mon'), t('routines.dow.tue'), t('routines.dow.wed'), t('routines.dow.thu'), t('routines.dow.fri'), t('routines.dow.sat')];
   const TEMPLATES = [
     { title: t('routines.template1.title'), prompt: t('routines.template1.prompt'), schedule: { type: 'daily', time: '09:00' } },
@@ -85,6 +86,7 @@ export default function Routines({ params }) {
       times: tpl?.schedule?.times ?? [tpl?.schedule?.time ?? '09:00'],
       dows: tpl?.schedule?.dows ?? [tpl?.schedule?.dow ?? 1],
       everyMinutes: tpl?.schedule?.everyMinutes ?? 30,
+      maxRuns: 20, maxUsd: '',
     });
   }
 
@@ -99,6 +101,7 @@ export default function Routines({ params }) {
       times: r.schedule?.times ?? [r.schedule?.time ?? '09:00'],
       dows: r.schedule?.dows ?? [r.schedule?.dow ?? 1],
       everyMinutes: r.schedule?.everyMinutes ?? 30,
+      maxRuns: r.loop?.maxRuns ?? 20, maxUsd: r.loop?.maxUsd ?? '',
     });
   }
 
@@ -115,6 +118,8 @@ export default function Routines({ params }) {
           // 한국 시간으로"). 안 보내면 서버가 자기 시간대로 해석하는데, 웹·클라우드 경로에선 그게
           // 사용자 시간대가 아니다(UTC 서버면 09:00이 KST 18:00에 터진다).
           : { type: form.type, times: form.times, dows: form.dows.map(Number), tz: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        // 루프 상한 — interval에만 보낸다(서버는 다른 타입의 loop를 무시하지만, 보내지 않는 편이 의도가 분명하다)
+        ...(form.type === 'interval' ? { loop: { maxRuns: Number(form.maxRuns) || 20, maxUsd: form.maxUsd === '' ? null : Number(form.maxUsd) } } : {}),
       };
       if (form.id) {
         const res = await fetch(`/api/companies/${ws}/routines`, {
@@ -250,11 +255,24 @@ export default function Routines({ params }) {
               </div>
             )}
             {form.type === 'interval' && (
-              <label style={{ display: 'grid', gap: 4 }}>
-                <span className="microlabel">{t('routines.intervalEvery')}</span>
-                <input suppressHydrationWarning type="number" min={10} max={1440} step={5} value={form.everyMinutes}
-                  onChange={(e) => setForm({ ...form, everyMinutes: e.target.value })} style={{ ...selStyle, width: 110 }} />
-              </label>
+              <>
+                <label style={{ display: 'grid', gap: 4 }}>
+                  <span className="microlabel">{t('routines.intervalEvery')}</span>
+                  <input suppressHydrationWarning type="number" min={10} max={1440} step={5} value={form.everyMinutes}
+                    onChange={(e) => setForm({ ...form, everyMinutes: e.target.value })} style={{ ...selStyle, width: 110 }} />
+                </label>
+                {/* 루프 상한 — 회차(1~200)·루프 예산(USD, 비우면 월 예산만). 한국어 모드는 원화 병기(fmtMoney 규칙) */}
+                <label style={{ display: 'grid', gap: 4 }}>
+                  <span className="microlabel">{t('routines.loop.maxRuns')}</span>
+                  <input suppressHydrationWarning type="number" min={1} max={200} value={form.maxRuns}
+                    onChange={(e) => setForm({ ...form, maxRuns: e.target.value })} style={{ ...selStyle, width: 90 }} />
+                </label>
+                <label style={{ display: 'grid', gap: 4 }} title={t('routines.loop.maxUsdHint')}>
+                  <span className="microlabel">{t('routines.loop.maxUsd')}{lang === 'ko' && form.maxUsd !== '' && Number(form.maxUsd) > 0 ? ` · ${fmtMoney(Number(form.maxUsd))}` : ''}</span>
+                  <input suppressHydrationWarning type="number" min={0} step={0.5} value={form.maxUsd} placeholder="—"
+                    onChange={(e) => setForm({ ...form, maxUsd: e.target.value })} style={{ ...selStyle, width: 110 }} />
+                </label>
+              </>
             )}
             {form.type !== 'interval' && (
             <div style={{ display: 'grid', gap: 4 }}>
@@ -335,7 +353,7 @@ export default function Routines({ params }) {
         ) : (
           <table className="table">
             <thead>
-              <tr><th>{t('routines.colTitle')}</th><th style={{ width: 130 }}>{t('routines.colCrew')}</th><th style={{ width: 120 }}>{t('routines.colSchedule')}</th><th style={{ width: 170 }}>{t('routines.colLastRun')}</th><th style={{ width: 84 }}>{t('routines.colState')}</th><th style={{ width: 164 }} /></tr>
+              <tr><th>{t('routines.colTitle')}</th><th style={{ width: 130 }}>{t('routines.colCrew')}</th><th style={{ width: 190 }}>{t('routines.colSchedule')}</th><th style={{ width: 170 }}>{t('routines.colLastRun')}</th><th style={{ width: 84 }}>{t('routines.colState')}</th><th style={{ width: 164 }} /></tr>
             </thead>
             <tbody>
               {routines.map((r) => (
@@ -349,7 +367,10 @@ export default function Routines({ params }) {
                       <Avatar name={nameOf(r.agentSlug)} sm />{nameOf(r.agentSlug)}
                     </span>
                   </td>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{scheduleLabel(r.schedule, t, DOW)}</td>
+                  <td className="mono" style={{ fontSize: 11.5 }}>
+                    {scheduleLabel(r.schedule, t, DOW)}
+                    {r.schedule?.type === 'interval' && r.loop && <LoopStatus ws={ws} loop={r.loop} t={t} fmtMoney={fmtMoney} />}
+                  </td>
                   <td style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
                     {r.lastRun ? (
                       <span title={r.lastResult}>
@@ -358,8 +379,9 @@ export default function Routines({ params }) {
                     ) : <span style={{ color: 'var(--fg-3)' }}>—</span>}
                   </td>
                   <td>
-                    <button className={`pill${r.enabled ? ' ok' : ''}`} onClick={() => toggle(r)} style={{ cursor: 'pointer' }}>
-                      <span className="dot" />{r.enabled ? t('routines.on') : t('routines.off')}
+                    <button className={`pill${r.enabled ? ' ok' : ''}`} onClick={() => toggle(r)} style={{ cursor: 'pointer' }}
+                      title={!r.enabled && r.loop?.stoppedReason ? t('routines.loop.resume') : undefined}>
+                      <span className="dot" />{r.enabled ? t('routines.on') : (r.loop?.stoppedReason ? t('routines.loop.resume') : t('routines.off'))}
                     </button>
                   </td>
                   <td style={{ textAlign: 'right' }}>
@@ -378,6 +400,27 @@ export default function Routines({ params }) {
 
       {runTarget && (
         <RunPopup ws={ws} routine={runTarget} crewName={nameOf(runTarget.agentSlug)} onClose={() => { setRunTarget(null); load(); }} />
+      )}
+    </div>
+  );
+}
+
+/** 루프 진행 — `3/20회 · $0.42` + 상태 칩. 막힘이면 사유와 결재함 안내(결재 카드는 데크에 있다). */
+function LoopStatus({ ws, loop, t, fmtMoney }) {
+  const reason = loop.stoppedReason;
+  const key = reason === 'done' ? 'done' : reason === 'blocked' ? 'blocked' : (reason === 'maxRuns' || reason === 'maxUsd') ? 'limit' : reason === 'manual' ? 'manual' : 'running';
+  const color = key === 'running' ? 'var(--primary-strong)' : key === 'done' ? 'var(--ok, var(--fg-2))' : key === 'blocked' ? 'var(--danger)' : 'var(--fg-3)';
+  return (
+    <div style={{ display: 'grid', gap: 3, marginTop: 4, fontFamily: 'var(--font)' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>
+        {t('routines.loop.progress', { runs: loop.runs ?? 0, max: loop.maxRuns, cost: fmtMoney(loop.spentUsd ?? 0) })}
+        <span className="chip" style={{ color, borderColor: color, fontSize: 10, padding: '0 6px', height: 18 }}>{t(`routines.loop.${key}`)}</span>
+      </span>
+      {key === 'blocked' && (
+        <span style={{ fontSize: 11, color: 'var(--fg-2)', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <span>{t('routines.loop.blockedHint', { reason: loop.stoppedDetail ?? '' })}</span>
+          <Link href={`/c/${ws}`} style={{ color: 'var(--primary-strong)', textDecoration: 'underline' }}>{t('routines.loop.approveInbox')}</Link>
+        </span>
       )}
     </div>
   );

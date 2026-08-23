@@ -17,7 +17,7 @@ import { listAgents } from './hub.mjs';
 import { callConnectorTool } from './connectors.mjs'; // 커넥터 단일 실행 경로 — SDK 표면과 같은 함수
 
 /** 지시 블록 문법 — ```argo 펜스 안 JSON 1건. 여러 블록 허용.
-    스케줄: {"action":"schedule","every":"30m"|"time":"09:00","days":[1,3],"title":"...","prompt":"..."}
+    스케줄: {"action":"schedule","every":"30m"|"time":"09:00","days":[1,3],"title":"...","prompt":"...","maxRuns":20,"maxUsd":5}  (maxRuns/maxUsd는 every 루프에만·선택)
     쪽지:   {"action":"mail","to":"슬러그","cc":["..."],"message":"..."}
     커넥터: {"action":"tool","server":"gmail","tool":"search_threads","args":{…}} */
 const BLOCK_RE = /```argo[ \t]*\r?\n([\s\S]*?)```/g;
@@ -118,14 +118,17 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         const prompt = String(d.prompt ?? '').trim();
         if (!prompt) throw new Error(en ? 'prompt is required' : 'prompt가 필요합니다');
         const target = d.crew ? find(d.crew) : null;
+        const schedule = normalizeSchedule(toSchedule(d));
         const r = await addRoutine(wsId, {
           agentSlug: target?.slug ?? fromSlug,
           title: String(d.title ?? prompt).replace(/\s+/g, ' ').slice(0, 60),
           prompt,
-          schedule: normalizeSchedule(toSchedule(d)),
+          schedule,
+          // SDK의 schedule_task와 패리티 — interval은 자율 루프(기본 20회 상한, maxRuns/maxUsd 지시 필드 수용)
+          ...(schedule.type === 'interval' ? { loop: { maxRuns: d.maxRuns ?? 20, ...(d.maxUsd != null ? { maxUsd: d.maxUsd } : {}) } } : {}),
         });
         const when = r.schedule.type === 'interval'
-          ? (en ? `every ${r.schedule.everyMinutes} min` : `${r.schedule.everyMinutes}분마다`)
+          ? (en ? `every ${r.schedule.everyMinutes} min, up to ${r.loop?.maxRuns ?? 20} runs` : `${r.schedule.everyMinutes}분마다, 최대 ${r.loop?.maxRuns ?? 20}회`)
           : (r.schedule.times ?? []).join('·');
         notes.push(en ? `✓ Routine registered — ${r.title} (${when})` : `✓ 루틴 등록됨 — ${r.title} (${when})`);
       } else if (action === 'mail') {
