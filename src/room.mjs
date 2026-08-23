@@ -310,10 +310,11 @@ export async function runRoomTurn(wsId, text, attachments = []) {
         agentSlug: target.slug,
         title: (prompt.replace(/@\S+/g, '').trim() || (en ? 'Room loop' : '회의실 루프')).slice(0, 60),
         prompt, schedule: { type: 'interval', everyMinutes: dir.loop.everyMinutes },
+        loop: { maxRuns: 20 }, // 자율 루프 기본 상한 — 회차마다 LOOP 판정으로 스스로 끝내고, 20회에서 자동 정지
       });
       await sys('loop', en
-        ? `Loop registered — @${target.slug} every ${r.schedule.everyMinutes} min. Manage it in Routines.`
-        : `루프 등록 — @${target.slug}, ${r.schedule.everyMinutes}분마다. 관리는 '루틴' 화면에서.`);
+        ? `Loop registered — @${target.slug} every ${r.schedule.everyMinutes} min, up to ${r.loop?.maxRuns ?? 20} runs. Manage it in Routines.`
+        : `루프 등록 — @${target.slug}, ${r.schedule.everyMinutes}분마다, 최대 ${r.loop?.maxRuns ?? 20}회. 관리는 '루틴' 화면에서.`);
     } catch (e) {
       // 간격 하한(10분) 등 검증 실패 — 사유를 방에 그대로 돌려준다
       await sys('loop', en ? `Loop not registered: ${String(e.message || e)}` : `루프 등록 실패: ${String(e.message || e)}`);
