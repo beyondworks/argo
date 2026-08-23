@@ -220,6 +220,7 @@ export default function CompanyShell({ children, params }) {
     : pathname.endsWith('/routines') ? t('nav.routines')
     : pathname.endsWith('/market') ? t('nav.market')
     : pathname.endsWith('/activity') ? t('nav.activity')
+    : pathname.endsWith('/mail') ? t('nav.mail')
     : pathname.endsWith('/settings') ? t('nav.settings')
     : currentCrew ? currentCrew.name : t('nav.deck');
   // 사이드바 크루 — 고정(pin) 크루는 최상단 '고정' 그룹으로, 나머지는 팀별 그룹(팀 없는 크루는 마지막).
@@ -269,6 +270,9 @@ export default function CompanyShell({ children, params }) {
         </Link>
         <Link href={`/c/${ws}/activity`} onClick={navClick(`/c/${ws}/activity`)} className={`nav-item${pathname.endsWith('/activity') ? ' active' : ''}`}>
           <Icon name="bolt" size={16} /> {t('nav.activity')}
+        </Link>
+        <Link href={`/c/${ws}/mail`} onClick={navClick(`/c/${ws}/mail`)} className={`nav-item${pathname.endsWith('/mail') ? ' active' : ''}`}>
+          <Icon name="mail" size={16} /> {t('nav.mail')}
         </Link>
         <Link href={`/c/${ws}/market`} onClick={navClick(`/c/${ws}/market`)} className={`nav-item${pathname.endsWith('/market') ? ' active' : ''}`}>
           <Icon name="market" size={16} /> {t('nav.market')}
