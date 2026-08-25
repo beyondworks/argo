@@ -32,7 +32,7 @@ const codexManagedBin = () => join(CODEX_TOOL_DIR, CODEX_BIN);
 const codexHostManagedBin = () => join(CODEX_TOOL_DIR, CODEX_HOST_BIN);
 /** 조달 버전 핀 — `latest` 금지. code_mode_host 사고(2026-08-25): 미고정 latest가 벤더의 의미 변경
     (0.148+에서 host 없이는 도구 fail-closed)을 무통보로 전 사용자에게 실어 날랐다. 승격 절차:
-    새 버전은 러너 계약 프로브(scripts/runner-contract-probe.mjs, 야간 CI) 통과 확인 후 이 상수만 올린다.
+    새 버전은 러너 계약 프로브(scripts/runner-contract-probe.mjs — PR3에서 추가 예정, 그 전엔 수동 프로브) 통과 확인 후 이 상수만 올린다.
     (export: 회귀 테스트·계약 프로브용) */
 export const CODEX_PIN = 'rust-v0.149.1';
 export const codexAssetUrl = (asset) => `https://github.com/openai/codex/releases/download/${CODEX_PIN}/${asset}`;
@@ -81,34 +81,65 @@ async function adoptInto(dest, src) {
   });
 }
 
+// 크로스 프로세스 뮤텍스 — 상주(:3001)·사이드카·CLI가 동시에 조달하면 한쪽 rm이 다른 쪽 채택본을
+// 지운다(분리 검수 MEDIUM-1). 인프로세스 단일 비행(codexProvisioning)은 프로세스 경계를 못 넘으므로
+// mkdir 락(쪽지 선점과 같은 프리미티브 — rename 승자 가정이 윈도우에서 깨졌던 전례)으로 감싼다.
+const CODEX_LOCK_DIR = `${CODEX_TOOL_DIR}.lockd`;
+const LOCK_STALE_MS = 15 * 60_000; // 다운로드 최장(자산별 300s×2) + 여유
+async function withCodexLock(fn) {
+  const t0 = Date.now();
+  for (;;) {
+    try { await mkdir(CODEX_LOCK_DIR, { recursive: false }); break; } catch {
+      // 보유자 있음 — 오래된 잔재(크래시)면 회수, 아니면 대기. 최대 2분 후엔 관망 포기(기존 설치본으로 진행).
+      const st = await stat(CODEX_LOCK_DIR).catch(() => null);
+      if (st && Date.now() - st.mtimeMs > LOCK_STALE_MS) { await rm(CODEX_LOCK_DIR, { recursive: true, force: true }).catch(() => {}); continue; }
+      if (Date.now() - t0 > 120_000) throw new Error('codex 조달이 다른 프로세스에서 진행 중입니다 — 잠시 후 다시 시도해 주세요');
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  try { return await fn(); } finally { await rm(CODEX_LOCK_DIR, { recursive: true, force: true }).catch(() => {}); }
+}
+
 export async function provisionCodexCli({ force = false } = {}) {
   if (!force && await exists(codexManagedBin())) return codexManagedBin();
   if (codexProvisioning) return codexProvisioning;
-  codexProvisioning = (async () => {
-    // 파괴적 rm 전 재확인 — gemini와 동일한 TOCTOU 방어(릴리스 검수 M-1). codex는 ~100MB라 낭비가 더 크다
+  codexProvisioning = (async () => withCodexLock(async () => {
+    // 락 획득 후 재확인 — 다른 프로세스가 방금 조달을 끝냈을 수 있다(TOCTOU 방어, 릴리스 검수 M-1 계열).
     if (!force && await exists(codexManagedBin())) return codexManagedBin();
+    if (force && await exists(codexManagedBin())) {
+      const stamp = await readFile(join(CODEX_TOOL_DIR, '.pin'), 'utf8').then((v) => v.trim(), () => '');
+      if (stamp === CODEX_PIN) return codexManagedBin(); // 경합 상대가 이미 같은 핀으로 교체 완료
+    }
     const asset = codexAssetName();
     const hostAsset = codexHostAssetName();
     if (!asset || !hostAsset) throw new Error(`미지원 플랫폼: ${process.platform}/${process.arch}`);
     const tmp = await mkdtemp(join(tmpdir(), 'argo-codex-cli-'));
     try {
-      // codex와 형제 host를 **둘 다** 받고 검증이 끝난 뒤에만 기존 폴더를 교체한다 — 다운로드·검증
+      // codex와 형제 host를 **둘 다** 받고 검증이 끝난 뒤에만 기존 파일을 교체한다 — 다운로드·검증
       // 실패 시 기존 설치본이 그대로 남는다(롤백 안전). 순서를 뒤집으면 실패가 곧 "설치본 소실"이 된다.
       const src = await fetchCodexAsset(tmp, asset, CODEX_BIN);
       const hostSrc = await fetchCodexAsset(tmp, hostAsset, CODEX_HOST_BIN);
       const v = (await exec(src, ['--version'], { timeout: 30_000 })).stdout.trim();
       if (!v) throw new Error('내려받은 Codex CLI가 부팅하지 않습니다');
-      await rm(CODEX_TOOL_DIR, { recursive: true, force: true });
+      // host는 --version 계약이 미확인이라 크기 하한으로 손상만 거른다(정상 ~57MB, 절단 다운로드 방어)
+      const hs = await stat(hostSrc);
+      if (hs.size < 5_000_000) throw new Error(`내려받은 code-mode host가 손상됐습니다(${hs.size}B)`);
+      // 부분 삭제 안전 교체(분리 검수 MEDIUM-1 윈도우 시나리오): 디렉터리 통삭제 대신 파일 단위로,
+      // ① 스탬프 먼저 무효화(크래시 시 상태 = "구버전 + 무스탬프" → 스로틀 승격 재시도로 일관)
+      // ② codex 교체가 실패하면(EBUSY 등) 구 설치본을 그대로 두고 중단 — "host만 지워진" 사고 상태를 만들지 않는다.
       await mkdir(CODEX_TOOL_DIR, { recursive: true });
+      await rm(join(CODEX_TOOL_DIR, '.pin'), { force: true }).catch(() => {});
+      await rm(codexManagedBin(), { force: true });
       await adoptInto(codexManagedBin(), src);
+      await rm(codexHostManagedBin(), { force: true });
       await adoptInto(codexHostManagedBin(), hostSrc);
-      await writeFile(join(CODEX_TOOL_DIR, '.pin'), CODEX_PIN); // 승격 판정 스탬프 — codexCmd가 핀 불일치를 보고 재조달
+      // 스탬프는 마지막 — 실패해도 설치는 유효(무스탬프 = 다음 승격 시도가 스로틀 안에서 복구)
+      await writeFile(join(CODEX_TOOL_DIR, '.pin'), CODEX_PIN).catch((e) => console.warn('[argo] codex .pin 기록 실패(무해 — 승격 재시도로 복구):', e?.message ?? e));
       return codexManagedBin();
     } finally {
-      codexProvisioning = null;
       await rm(tmp, { recursive: true, force: true }).catch(() => {});
     }
-  })();
+  }))().finally(() => { codexProvisioning = null; });
   return codexProvisioning;
 }
 
@@ -122,6 +153,9 @@ async function ensureCodexHost() {
   hostEnsuring = (async () => {
     const hostAsset = codexHostAssetName();
     if (!hostAsset) return false;
+    // 실패 스로틀 공유(.attempt-at) — 오프라인에서 턴마다 host 다운로드를 다시 시도하지 않는다
+    const last = Number(await readFile(ATTEMPT_STAMP(), 'utf8').catch(() => '0')) || 0;
+    if (Date.now() - last < 60 * 60_000) return false;
     const tmp = await mkdtemp(join(tmpdir(), 'argo-codex-host-'));
     try {
       const hostSrc = await fetchCodexAsset(tmp, hostAsset, CODEX_HOST_BIN);
@@ -130,6 +164,7 @@ async function ensureCodexHost() {
       return true;
     } catch (e) {
       console.warn('[argo] codex code-mode host 보강 조달 실패(다음 사용 때 재시도):', e?.message ?? e);
+      await writeFile(ATTEMPT_STAMP(), String(Date.now())).catch(() => {}); // 실패 스로틀 각인
       return false;
     } finally {
       hostEnsuring = null;
@@ -139,12 +174,16 @@ async function ensureCodexHost() {
   return hostEnsuring;
 }
 
-/** 도구 잠김(L2 자가치유) 재조달 — 관리본을 핀 버전으로 강제 재설치. 1시간 스로틀(무한 재다운로드
-    금지 — 유계 재시도 원칙). 반환: 실제로 재조달했으면 true. */
-let lastReprovisionAt = 0;
+/** 도구 잠김(L2 자가치유)·핀 승격 공용 재조달 — 관리본을 핀 버전으로 강제 재설치. 스로틀은
+    **디스크 스탬프**(.attempt-at): 상주·사이드카·CLI가 프로세스마다 1시간을 따로 갖거나 재시작마다
+    리셋되지 않게(분리 검수 MEDIUM-2·HIGH — 조달 실패 상태에서 턴마다 ~125MB 재다운로드 방지).
+    반환: 실제로 재조달했으면 true, 스로틀에 걸렸으면 false. */
+const ATTEMPT_STAMP = () => join(CODEX_TOOL_DIR, '.attempt-at');
 export async function reprovisionCodexCli() {
-  if (Date.now() - lastReprovisionAt < 60 * 60_000) return false;
-  lastReprovisionAt = Date.now();
+  const last = Number(await readFile(ATTEMPT_STAMP(), 'utf8').catch(() => '0')) || 0;
+  if (Date.now() - last < 60 * 60_000) return false;
+  await mkdir(CODEX_TOOL_DIR, { recursive: true }).catch(() => {});
+  await writeFile(ATTEMPT_STAMP(), String(Date.now())).catch(() => {}); // 시도 자체를 기록 — 실패 루프 방지가 목적
   await provisionCodexCli({ force: true });
   return true;
 }
@@ -165,11 +204,11 @@ async function codexCmd() {
     // 재조달한다. 실패하면 기존 관리본으로 턴은 계속(오프라인 방어) + host 보강만 시도.
     const stamp = await readFile(join(CODEX_TOOL_DIR, '.pin'), 'utf8').then((v) => v.trim(), () => '');
     if (stamp !== CODEX_PIN) {
-      console.log(`[argo] codex 관리본 승격: ${stamp || '(무스탬프)'} → ${CODEX_PIN}`);
-      await provisionCodexCli({ force: true }).catch(async (e) => {
-        console.warn('[argo] codex 승격 실패 — 기존 관리본으로 계속:', e?.message ?? e);
-        await ensureCodexHost(); // 최소한 host 부재(도구 잠김·os error 2)만이라도 막는다
-      });
+      // 승격도 스로틀 재조달을 탄다(분리 검수 HIGH) — 실패 상태에서 턴마다 ~125MB를 다시 받지 않게.
+      // 스로틀에 걸리거나 실패하면 기존 관리본으로 턴은 계속(오프라인 방어) + host 부재만이라도 보강.
+      const done = await reprovisionCodexCli().then((v) => { if (v) console.log(`[argo] codex 관리본 승격: ${stamp || '(무스탬프)'} → ${CODEX_PIN}`); return v; })
+        .catch((e) => { console.warn('[argo] codex 승격 실패 — 기존 관리본으로 계속:', e?.message ?? e); return false; });
+      if (!done) await ensureCodexHost();
     }
     return { file: codexManagedBin(), args: [] };
   }
@@ -301,9 +340,12 @@ export async function writeCodexTurnConfig(home, mcpServers = null) {
   await writeFile(join(home, 'config.toml'), lines.join('\n') + '\n', { mode: 0o600 }).catch(() => { /* 실패해도 -c 폴백이 있다 */ });
 }
 
-/** 도구 잠김(실행기 자체 고장) 신호 — codex 0.148+ 실측 문구 3종(2026-08-25 이 맥 재현):
-    "Code Mode is unavailable because code-mode host is disabled/failed to spawn … Code mode will fail closed".
-    성공 턴의 stderr에도 실릴 수 있다(턴은 완주하되 도구만 잠김 — 제보의 형태). (export: 회귀 테스트용) */
-export const CODEX_LOCKUP_RE = /Code Mode is unavailable|code-mode host is disabled|failed to spawn code-mode host/i;
+/** 도구 잠김(실행기 자체 고장) 신호 — codex 0.148+의 벤더 경고 줄(2026-08-25 이 맥 재현):
+    "warning: Code Mode is unavailable because code-mode host is disabled / failed to spawn … fail closed".
+    성공 턴의 stderr에도 실린다(턴은 완주하되 도구만 잠김 — 제보의 형태).
+    **줄머리 `warning:` 앵커 필수**(분리 검수 CRITICAL 실증): codex exec는 대화 내용을 stderr에 옮겨
+    적으므로, 사용자가 "이 경고 왜 떠?"라고 문구를 인용만 해도 비앵커 패턴은 잠김으로 오분류해
+    재조달+러너 교체까지 태운다(#286 CLI 미발견 오분류와 같은 계열). (export: 회귀 테스트용) */
+export const CODEX_LOCKUP_RE = /^warning: Code Mode is unavailable\b.*(?:code-mode host is disabled|failed to spawn code-mode host|fail closed)/im;
 
 export { codexHome, codexManagedBin, codexHostManagedBin, codexCmd }; // 러너 모듈 내부 공용(facade 미노출 — externalExec·detectRunners가 쓴다)

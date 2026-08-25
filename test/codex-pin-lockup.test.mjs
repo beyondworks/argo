@@ -27,16 +27,18 @@ test('codex·host 자산 이름이 6트리플 전부 짝으로 존재(윈도우�
   assert.equal(codexAssetNameFor('sunos', 'x64'), null, '미지원 플랫폼은 null');
 });
 
-test('잠김 신호 — 0.149.1 실측 문구 3종은 잡고, 일반 오류·크루 출력은 안 잡는다', () => {
+test('잠김 신호 — 벤더 경고 줄(줄머리 warning:)만 잡고, 인용·제보 문구·일반 오류는 안 잡는다', () => {
   for (const line of [
     'warning: Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.',
-    'warning: Code Mode is unavailable because failed to spawn code-mode host /x/codex-code-mode-host: host executable was not found.',
-    'Workspace code-mode host is disabled', // 사용자 제보 원문 형태
+    'warning: Code Mode is unavailable because failed to spawn code-mode host /x/codex-code-mode-host: host executable was not found. Code mode will fail closed.',
+    'x\nwarning: Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed.\ny', // 여러 줄 stderr 중간(m 플래그)
   ]) assert.ok(CODEX_LOCKUP_RE.test(line), line);
   for (const line of [
+    "왜 'warning: Code Mode is unavailable because code-mode host is disabled' 라고 뜨나요?", // 사용자 인용 — codex가 stderr에 에코(분리 검수 오탐 실증)
+    'Workspace code-mode host is disabled', // 제보 채팅 문구 — stderr 벤더 줄이 아니다
     'ERROR: unexpected status 401 Unauthorized: Missing bearer or basic authentication in header',
     'command not found: foo',
-    '사용자가 code review 모드를 비활성화했습니다', // 크루 답변에 섞일 법한 일반 문장
+    '사용자가 code review 모드를 비활성화했습니다',
   ]) assert.ok(!CODEX_LOCKUP_RE.test(line), `오탐: ${line}`);
 });
 
