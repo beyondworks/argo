@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthFormatError } from './runners/catalog.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs } from './runners/codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli } from './runners/codex.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 
@@ -34,9 +34,27 @@ export {
   pickRunner, autoRunnerOf, oauthFormatError, excludeWith, authExcludedNoRunnerMsg,
 } from './runners/catalog.mjs';
 export {
-  provisionCodexCli, CODEX_EFFORTS, codexEffortArgs,
+  provisionCodexCli, CODEX_EFFORTS, codexEffortArgs, CODEX_PIN, CODEX_LOCKUP_RE,
   importCodexAuth, recoverCodexAuth, writeCodexTurnConfig,
 } from './runners/codex.mjs';
+
+/* ── 도구 잠김(L2 자가치유) — 실행기 자체 고장(모델·자격 무관)의 공통 처리. 2026-08-25 사고로 신설:
+   codex code-mode host가 잠기면 턴이 "성공"하되 셸·파일 도구만 전멸한다(제보의 형태). chat.mjs가
+   toolLockup 마커를 보고 ① 재조달+1회 재시도 → ② 그래도면 러너 교체(인증 실패와 같은 계열 취급)한다. */
+/** 잠김 판정 → 행동(순수). retried=재조달 재시도를 이미 했는가. (export: 회귀 테스트용) */
+export function lockupAction(err, { retried = false } = {}) {
+  if (!err?.toolLockup) return null;
+  return retried ? 'switch' : 'reprovision-retry';
+}
+/** 러너별 재조달 — codex만 대상(gemini는 PR2에서 합류 예정). 반환: 실제 재조달 여부. */
+export async function reprovisionRunner(runner) {
+  if (runner === 'codex') return reprovisionCodexCli();
+  return false;
+}
+const codexLockupError = () => Object.assign(new Error(
+  'codex 실행기의 도구(셸·파일)가 잠겨 턴이 일을 하지 못했습니다(code-mode host 문제). '
+  + 'Codex tools were locked (code-mode host issue) — the turn could not modify files.',
+), { toolLockup: true });
 export { provisionGeminiCli, probeGeminiOAuth, probeGeminiHostOAuth } from './runners/gemini.mjs';
 export {
   accountScope, loadRunnerCred, saveRunnerCred, clearRunnerCred, seedRunnerCreds,
@@ -108,9 +126,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
     // 주석과 test/codex-auth-import.test.mjs가 잠근다(신규 설치 401의 근본 원인이었던 자리).
     const auth = await importCodexAuth(baseHome, CODEX_HOME);
     await writeCodexTurnConfig(CODEX_HOME, mcpServers); // MCP 주입만 — 샌드박스 섹션은 danger-full-access 전환으로 소멸
-    const cmd = await codexCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
+    const cmd = await codexCmd(); // 관리본(핀) 우선 > 즉석 조달 > PATH 폴백(2026-08-25 반전) — 사용자 설치 없이도 돈다
     try {
-      await exec(cmd.file, [
+      const run = await exec(cmd.file, [
         ...cmd.args,
         // danger-full-access — 유건 지시 2026-08-21 "샌드박스 없이". workspace-write + 홈 한정
         // writable_roots가 "사용 권한이 없다" 차단의 뿌리였다(윈도우 쓰기 전멸 클러스터 포함).
@@ -122,7 +140,14 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
         ...(model ? ['-m', model] : []),
         '--', prompt, // 프롬프트가 '---'(카드 frontmatter)로 시작해도 플래그로 오해하지 않도록
       ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME } })
-        .catch((e) => { throw cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: 'exec', kind }); });
+        .catch((e) => {
+          const t = cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: 'exec', kind });
+          if (CODEX_LOCKUP_RE.test(String(e?.stderr ?? ''))) t.toolLockup = true; // 실패 턴에도 잠김 신호가 실리면 L2로
+          throw t;
+        });
+      // 도구 잠김은 "성공" 턴으로 위장한다 — 턴은 완주하고 모델이 "도구가 차단됐다"는 답만 남긴다
+      // (2026-08-25 제보의 형태). stderr의 벤더 경고를 보고 잠김 턴을 실패로 승격해 자가치유(chat.mjs)에 넘긴다.
+      if (CODEX_LOCKUP_RE.test(String(run?.stderr ?? ''))) throw codexLockupError();
       // readFile까지 번역 — kill 후 last.txt가 없어 생 ENOENT가 사용자에게 노출되던 위장 경로(QA P1-2)
       return (await readFile(out, 'utf8').catch((e) => { throw cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: 'read', kind }); })).trim();
     } finally {

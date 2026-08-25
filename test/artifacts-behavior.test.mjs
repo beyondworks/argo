@@ -31,6 +31,7 @@ exit 0
 `);
 await chmod(join(BIN, 'codex'), 0o755);
 process.env.PATH = `${BIN}:${process.env.PATH}`;
+process.env.ARGO_CODEX_PREFER_PATH = '1'; // 관리본(핀) 우선 반전(2026-08-25) 후에도 가짜 codex가 잡히게 — 하네스 전용 해치
 
 const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;

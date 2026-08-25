@@ -24,7 +24,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -786,7 +786,7 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
  *   이미지는 SDK content 블록으로 크루가 직접 보고, 그 외 파일은 경로를 알려 Read로 열게 한다.
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
-export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false } = {}) {
+export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false } = {}) {
   const p = paths(wsId);
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지).
   // 설정 화면의 입력은 제거됐다(유건 지시 2026-08-19) — 안내에서 "설정에서 한도를 올리라"는
@@ -1072,16 +1072,29 @@ ${lang === 'en'
       // 죽은 것이라(Windows 0xC0000005 등) 대개 다시 걸면 붙는다. 벤더는 갈아타지 않는다 — 이 파일의
       // 교체 정책은 인증 실패 한정이고(아무 실패로 갈아타면 사용자 고지 없이 실과금 키로 넘어간다),
       // 크래시는 그 러너의 자격이 아니라 이 PC의 실행 환경 문제라 다른 벤더로 옮길 이유도 없다.
+      // 재시도 플래그는 **서로의 재귀에도 전파**한다 — 한쪽만 실으면 crash→lockup→crash 핑퐁이
+      // 상한 없이 돈다(분리 검수 CRITICAL 실증 2026-08-25: 상한 40 프로브에서 42회 실행).
       if (!aborted && !__crashRetry && isProcessCrash(e?.message || e)) {
         console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
-      if (!aborted && AUTH_ERR_RE.test(String(e.message || e))) {
+      // 도구 잠김(L2 자가치유, 2026-08-25) — 실행기 자체 고장(예: codex code-mode host)은 자격도 모델도
+      // 멀쩡하다. ① 관리본을 핀 버전으로 재조달(1시간 스로틀)하고 같은 러너로 1회 재시도한다(관리
+      // config는 매 턴 재생성이라 함께 복구됨). ② 재시도도 잠기면 아래 교체 분기(lockupAction 'switch')가
+      // 인증 실패와 같은 계열로 다른 러너에 넘긴다 — 이 기기에서 그 실행기가 고장이라는 판정이므로.
+      if (!aborted && lockupAction(e, { retried: __lockupRetry }) === 'reprovision-retry') {
+        console.warn(`[argo] ${runner} 도구 잠김 감지 — 재조달 후 1회 재시도(${wsId}/${agentSlug})`);
+        await reprovisionRunner(runner).catch((re) => console.warn(`[argo] ${runner} 재조달 실패:`, re?.message ?? re));
+        try {
+          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
+        } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
+      }
+      if (!aborted && (AUTH_ERR_RE.test(String(e.message || e)) || lockupAction(e, { retried: __lockupRetry }) === 'switch')) {
         const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
         if (alt?.available && !tried.includes(alt.runner)) {
-          console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
+          console.warn(`[argo] ${runner} ${e?.toolLockup ? '도구 잠김(재조달 후에도)' : '인증 실패'} — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
           // finally의 release는 identity 가드(turn-abort.mjs)라 재귀가 등록한 새 핸들을 지우지 않는다
           try {
             // toolHop 전파 필수 — 빠뜨리면 인증 재시도 한 번이 커넥터 후속 턴 카운터를 0으로 되돌려
