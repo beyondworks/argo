@@ -149,14 +149,20 @@ test('배선: chat.mjs 두 실행 경로(CLI·SDK)의 자가치유가 누적 목
   // 형태에 둔감하면서, OR 확대·가드 삭제·제3 사이트 추가는 전부 골격을 바꾼다.
   // ⚠ 인자 속 `||`를 걷어내는 것이 핵심이다 — String(e.message || e)의 ||는 조건 OR가 아니다(이 단언의
   // 1차 작성이 그걸 구분 못 해 출하본에서 거짓 red를 냈고, 변이 배터리 전체가 무효가 됐다).
-  const skeleton = (c) => { let s = c, prev; do { prev = s; s = s.replace(/\([^()]*\)/g, ''); } while (s !== prev); return s.trim(); };
+  // 2026-08-25: 골격 비교(괄호 제거)는 승인된 OR 합류(도구 잠김 lockupAction)까지 지워 분별력을 잃는다
+  // → **승인 목록 비교**로 전환: 발동 조건의 정규화 원문이 아래 목록과 일치해야 한다. 조건을 바꾸려면
+  // 이 목록을 의도적으로 갱신해야 하며(변경 통제), 무단 OR 확대·가드 삭제·제3 사이트는 전부 red다.
+  // lockupAction은 toolLockup 마커 + 재조달 재시도 소진 후에만 'switch'라 "아무 실패로 갈아타기"는 여전히 차단된다.
+  const norm = (c) => c.replace(/\s+/g, ' ').trim();
   const healConds = [...src.matchAll(/if \(([^\n]*AUTH_ERR_RE\.test\([^\n]*)\) \{/g)].map((m) => m[1]);
-  // retriedDown은 이 PR이 !__excludeRunner(독립적 두 번째 브레이크)를 지운 뒤로 fresh-retry 프레임의
-  // 이중 치유(중복 실행·이중 과금)를 막는 **유일한** 브레이크다. 골격 비교가 그 존재를 잠근다.
-  assert.deepEqual(healConds.map(skeleton).sort(), [
-    '!aborted && !retriedDown && AUTH_ERR_RE.test', // SDK 갈래
-    '!aborted && AUTH_ERR_RE.test',                 // CLI 갈래
-  ].sort(), '자가치유 발동 조건 골격 — OR 확대·abort/retriedDown 가드 삭제·제3 사이트를 함께 차단');
+  assert.deepEqual(healConds.map(norm).sort(), [
+    "!aborted && !retriedDown && AUTH_ERR_RE.test(String(e.message || e))", // SDK 갈래
+    "!aborted && (AUTH_ERR_RE.test(String(e.message || e)) || lockupAction(e, { retried: __lockupRetry }) === 'switch')", // CLI 갈래(잠김 합류 승인분)
+  ].sort(), '자가치유 발동 조건 승인 목록 — 무단 OR 확대·가드 삭제·제3 사이트 차단');
+  // 도구 잠김(L2) 배선 불변식 — 재조달 분기 1곳·재시도 마커 1곳·재조달 호출 1곳(무한 재시도 금지 골격)
+  assert.equal((src.match(/lockupAction\(e, \{ retried: __lockupRetry \}\)/g) ?? []).length, 2, '잠김 판정은 분기+교체 두 자리');
+  assert.equal((src.match(/__lockupRetry: true/g) ?? []).length, 1, '재조달 재시도는 1회 한정');
+  assert.equal((src.match(/reprovisionRunner\(runner\)/g) ?? []).length, 1, '재조달 호출은 잠김 분기 한 자리');
   // 읽는 자리(위)와 **쓰는 자리**를 함께 잠근다 — 대입만 지워도 가드는 항상 참이 되는데 읽는 자리
   // 단언은 그대로 통과한다(3R MEDIUM-3 실증: 초록). 그 경로: P(claude)가 fresh-retry F를 띄움 →
   // F가 401로 codex까지 치유·실패 → P가 **다시** 치유해 codex를 두 번 실행한다(P의 tried엔 codex가

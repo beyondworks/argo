@@ -95,7 +95,9 @@ test('④ oneshot: 크래시 최종 안내는 "연결 확인"이 아니다 — �
 test('③ chat: CLI·SDK **두 갈래 모두** 크래시를 잡고, 각자 인증 재시도보다 먼저 본다', async () => {
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   const crashes = [...src.matchAll(/isProcessCrash\(e\?\.message \|\| e\)\) \{/g)].map((m) => m.index);
-  const auths = [...src.matchAll(/AUTH_ERR_RE\.test\(String\(e\.message \|\| e\)\)\) \{/g)].map((m) => m.index);
+  // 조건은 골격이 바뀔 수 있다(2026-08-25 도구 잠김 OR 합류 — 승인된 확장은 runner-neutrality의
+  // 발동 조건 목록이 잠근다). 여기서는 위치·개수만 본다: if 줄에 AUTH_ERR_RE가 있는 자가치유 갈래 2곳.
+  const auths = [...src.matchAll(/if \([^\n]*AUTH_ERR_RE\.test/g)].map((m) => m.index);
   assert.equal(auths.length, 2, '전제: 자가치유 갈래는 CLI·SDK 둘이다');
   assert.equal(crashes.length, 2, '크래시 재시도도 두 갈래 모두에 있어야 한다 — 한쪽만 고치면 신고된 경로가 그대로 남는다');
   for (const [i, a] of auths.entries()) {

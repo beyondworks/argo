@@ -59,13 +59,12 @@ test('살균 후 이름이 충돌하면 뒤엣것을 뺀다 — TOML 중복 테�
   assert.equal(tables.length, 1, `[mcp_servers.my_tool]이 ${tables.length}번 — 중복 테이블이면 codex가 config 파싱에서 죽는다`);
 });
 
-test('config.toml은 code_mode_host를 끈다 — 관리본엔 codex-code-mode-host가 없어 윈도우 턴이 죽는다(제보 2026-08-21)', async () => {
+test('config.toml에 벤더 기능 플래그를 강제로 쓰지 않는다 — code_mode_host=false 강제가 0.148+에서 도구 전면 잠김을 만들었다(2026-08-25 사고, 설계 원칙)', async () => {
   const home = await mkdtemp(join(tmpdir(), 'argo-codexcfg-'));
-  await writeCodexTurnConfig(home, null);
-  const toml = await readFile(join(home, 'config.toml'), 'utf8');
-  assert.match(toml, /\[features\]\ncode_mode_host = false/);
-  // MCP 테이블이 [features] 뒤에 와도 TOML 상 서로 다른 테이블이라 섞이지 않는다 — 순서를 잠근다
   await writeCodexTurnConfig(home, { good: { command: process.execPath } });
-  const t2 = await readFile(join(home, 'config.toml'), 'utf8');
-  assert.ok(t2.indexOf('[features]') < t2.indexOf('[mcp_servers.good]'));
+  const toml = await readFile(join(home, 'config.toml'), 'utf8');
+  assert.doesNotMatch(toml, /code_mode_host|\[features\]/, '벤더 기능 플래그가 관리 config에 되살아났다 — 다음 벤더 버전에서 의미가 바뀌는 시한폭탄(설계 원칙 위반)');
+  // 화이트리스트 앵커 — 이 파일의 역할은 주석 + MCP 주입까지다. 그 밖의 최상위 테이블이 생기면 원칙 위반.
+  const tables = toml.split('\n').filter((l) => /^\[(?!mcp_servers\.)/.test(l.trim()));
+  assert.deepEqual(tables, [], `관리 config에 mcp_servers 외 테이블: ${tables.join(', ')}`);
 });
