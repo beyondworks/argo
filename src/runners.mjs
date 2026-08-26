@@ -38,6 +38,15 @@ export {
   importCodexAuth, recoverCodexAuth, writeCodexTurnConfig,
 } from './runners/codex.mjs';
 
+/** SDK 배관의 상표 오표기 정정 — GLM·Kimi·OpenRouter·Grok도 같은 SDK를 타서 실패 문구가
+    "Claude Code returned an error result: …"로 나온다. 실제 거절 주체(러너)로 바꿔 단다
+    (러너 중립성 규칙: 러너 A의 오류를 러너 B 이름으로 표시 금지. 실사고 2026-08-26: Grok의
+    xAI 400이 Claude 오류로 보여 제보·진단이 통째로 엉뚱한 곳을 봤다). (export: 회귀 테스트용) */
+export function scrubSdkBrand(runner, msg) {
+  const name = RUNNERS[runner]?.name ?? runner ?? 'AI';
+  return String(msg ?? '').replace(/Claude Code returned an error result:?\s*/gi, `${name} 러너 오류: `);
+}
+
 /* ── 도구 잠김(L2 자가치유) — 실행기 자체 고장(모델·자격 무관)의 공통 처리. 2026-08-25 사고로 신설:
    codex code-mode host가 잠기면 턴이 "성공"하되 셸·파일 도구만 전멸한다(제보의 형태). chat.mjs가
    toolLockup 마커를 보고 ① 재조달+1회 재시도 → ② 그래도면 러너 교체(인증 실패와 같은 계열 취급)한다. */

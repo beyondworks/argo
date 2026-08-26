@@ -436,7 +436,9 @@ function Shell({ children, params }) {
               {data?.company?.name ?? ''}
             </span>
             <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {me?.authOn ? (me.user?.email || '') : (data?.company?.owner ?? '')}
+              {me?.sessionDead
+                ? <Link href="/login" style={{ color: 'var(--danger)', fontWeight: 700 }}>{t('me.sessionDead')}</Link>
+                : me?.authOn ? (me.user?.email || '') : (data?.company?.owner ?? '')}
             </span>
           </span>
           {me?.authOn && (

@@ -4,7 +4,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
-import { GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { scrubSdkBrand, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -15,7 +15,8 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   // 아래 AbortController가 같은 값을 쓴다. 러너에 따라 상한이 갈리면 같은 작업이 codex로 뽑히면
   // 잘리고 claude로 뽑히면 안 잘린다 — 이 파일의 존재 이유(러너 독립)와 정면 충돌한다.
   // 오래 걸리는 배치(기억 정리)는 호출자가 명시로 늘린다.
-  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, __exclude = null, __crashRetry = false } = opts;
+  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, __exclude = null, __crashRetry = false, __failures = [] } = opts;
+  opts.__failures = __failures; // 재귀(자가치유 체인)가 같은 배열에 누적 — 최종 실패 때 러너별 원인을 전부 보여준다
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — 조용한 호스트 스캐빈징 금지(검수 MEDIUM, chat.mjs와 동일)
   // want=null(무선호) — 이 경로는 러너 독립이 명세라 claude 선호를 가장하지 않는다(선택 순서는 동일)
   const resolved = await resolveRunner(wsId, null, { exclude: __exclude })
@@ -97,6 +98,15 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     const e = ac.signal.aborted
       ? Object.assign(new Error(`sdk-timeout: ${Math.round(timeoutMs / 1000)}초 안에 응답이 끝나지 않아 중단했습니다`), { cause: err })
       : err;
+    // 러너별 실패 대장 — 자가치유가 다음 러너로 넘어가면 이 원인은 화면에서 사라졌다(마지막 러너의
+    // 오류만 노출). 실사고 2026-08-26: Codex·Grok이 연달아 실패했는데 사용자·운영자 모두 마지막
+    // (Grok의 xAI 400, 그마저 Claude 상표로 오표기)만 보고 원인을 못 찾았다. 같은 러너의 재시도는
+    // 마지막 결과만 남긴다(대장은 러너당 1줄).
+    {
+      const rec = { runner, msg: scrubSdkBrand(runner, String(e?.message ?? e)).slice(0, 160) };
+      const i = __failures.findIndex((f) => f.runner === runner);
+      if (i >= 0) __failures[i] = rec; else __failures.push(rec);
+    }
     // 429(요청 한도)는 자가치유 대상이 아니다 — 일시적 한도인데 다른 벤더로 넘기면 사용자 고지 없이
     // 실제 과금 키로 갈아타게 된다(2R 검수 M1). 402(지속적 잔액 소진)와 달리 기다리면 풀린다.
     if (/openrouter-limit/.test(String(e.message))) {
@@ -145,10 +155,18 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         ? `The AI program crashed on this computer (it was terminated by the OS, not by Argo). This is not a connection or credit problem — Argo already retried and tried other connected runners. If it keeps happening, reinstalling the runner CLI usually fixes it; security software blocking the process is the other common cause. (${String(e.message).slice(0, 120)})`
         : `AI 프로그램이 이 컴퓨터에서 비정상 종료됐습니다(Argo가 아니라 운영체제가 프로세스를 강제 종료했습니다). 연결이나 크레딧 문제가 아닙니다 — Argo가 이미 다시 시도했고, 연결된 다른 러너로도 넘겨봤습니다. 계속 반복되면 러너 CLI 재설치로 해결되는 경우가 많고, 보안 프로그램이 프로세스를 막는 것도 흔한 원인입니다. (${String(e.message).slice(0, 120)})`), { cause: e });
     }
-    throw Object.assign(new Error(lang === 'en'
-      ? `AI call failed — check the runner connection in Settings → AI connections. (${String(e.message).slice(0, 120)})`
-      : `AI 호출이 실패했습니다 — 설정 → AI 연결에서 러너 연결 상태를 확인해 주세요. (${String(e.message).slice(0, 120)})`), { cause: e });
+    throw Object.assign(new Error(formatOneShotFailure(__failures, runner, e, lang)), { cause: e });
   } finally {
     if (hangGuard) clearTimeout(hangGuard); // 성공·실패·자가치유 어느 경로로 빠져나가도 타이머를 남기지 않는다
   }
+}
+
+/** 최종 실패 문구 — 시도한 러너 **전부**의 원인을 러너 이름으로 나열한다(마지막 하나만 보여주면
+    앞 러너의 원인이 증발한다 — 2026-08-26 실사고의 교훈). (export: 순수 — 회귀 테스트용) */
+export function formatOneShotFailure(failures, lastRunner, lastErr, lang = 'ko') {
+  const list = (failures?.length ? failures : [{ runner: lastRunner, msg: scrubSdkBrand(lastRunner, String(lastErr?.message ?? lastErr)).slice(0, 160) }])
+    .map((f) => `${RUNNERS[f.runner]?.name ?? f.runner}: ${f.msg}`);
+  return lang === 'en'
+    ? `AI call failed — every connected runner was tried. Per-runner cause: ${list.join(' ⁄ ')}`
+    : `AI 호출이 실패했습니다 — 연결된 러너를 모두 시도했어요. 러너별 원인: ${list.join(' ⁄ ')}`;
 }

@@ -177,6 +177,7 @@ const DICT = {
   'settings.family': ['기본 테마', 'Base theme'],
   'settings.family.graphite': ['그래파이트', 'Graphite'],
   'settings.family.argo': ['아르고', 'Argo'],
+  'me.sessionDead': ['세션 만료 — 다시 로그인 필요', 'Session expired — sign in again'],
   'settings.mode.system': ['시스템', 'System'],
   'settings.mode.light': ['라이트', 'Light'],
   'settings.mode.dark': ['다크', 'Dark'],

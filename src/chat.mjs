@@ -24,7 +24,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -1107,6 +1107,7 @@ ${lang === 'en'
       }
       // 크래시 원문("...exited with code 3221225477")만으론 사용자가 아무것도 할 수 없다 — 무엇이 일어났고 무엇이 아닌지를 앞에 붙인다
       if (!aborted && isProcessCrash(e?.message || e)) e = Object.assign(new Error(`${crashHint(lang)} (${String(e.message || e).slice(0, 120)})`), { cause: e });
+      if (!aborted && e?.message) e.message = scrubSdkBrand(runner, e.message); // 상표 정정 — SDK 배관 오류가 타 러너를 Claude로 위장(러너 중립)
       if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
       await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400) });
@@ -1411,6 +1412,7 @@ ${lang === 'en'
     }
     // 크래시 원문("...exited with code 3221225477")만으론 사용자가 아무것도 할 수 없다 — 무엇이 일어났고 무엇이 아닌지를 앞에 붙인다
     if (!aborted && isProcessCrash(e?.message || e)) e = Object.assign(new Error(`${crashHint(lang)} (${String(e.message || e).slice(0, 120)})`), { cause: e });
+    if (!aborted && e?.message) e.message = scrubSdkBrand(runner, e.message); // 상표 정정 — SDK 배관 오류가 타 러너를 Claude로 위장(러너 중립)
     if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
     // 실패도 회사의 사건이다 — 활동 화면의 "오류" 필터가 이 기록을 먹는다
     await appendEvent(wsId, {
