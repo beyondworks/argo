@@ -292,7 +292,9 @@ export async function verifyRunnerCred(runner, type, value) {
   const v = String(value).trim();
   try {
     if (runner === 'claude' && type === 'apikey') {
-      const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { 'x-api-key': v, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
+      // 턴과 같은 base(runnerCredEnv의 ARGO_CLAUDE_BASE_URL 고정과 대칭) — 검증=실행 동일 경로 원칙
+      const cbase = process.env.ARGO_CLAUDE_BASE_URL || 'https://api.anthropic.com';
+      const r = await fetch(`${cbase}/v1/models?limit=1`, { headers: { 'x-api-key': v, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'claude' && type === 'oauth') {
@@ -302,7 +304,8 @@ export async function verifyRunnerCred(runner, type, value) {
       // 실토큰 — oauth 베타 헤더 유무 모두 200). 이제 검증은 저장의 필수 관문이라(무검증 '저장만'
       // 제거) 오탐이 곧 저장 차단이지만, 원클릭(setup-token)도 같은 호출로 게이트해 왔고 양방향
       // 실측이 갖춰져 오탐 위험은 근거 있이 낮다.
-      const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20' }, signal: AbortSignal.timeout(10_000) });
+      const cbase2 = process.env.ARGO_CLAUDE_BASE_URL || 'https://api.anthropic.com';
+      const r = await fetch(`${cbase2}/v1/models?limit=1`, { headers: { authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20' }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'glm') {
@@ -347,7 +350,10 @@ export async function verifyRunnerCred(runner, type, value) {
         // 키는 유효로 본다(카탈로그 모델 오류 시 유효 키 오거절 방지, gemini 400 처리와 같은 원칙).
         const body = await r.text().catch(() => '');
         if (/model not found/i.test(body)) return { ok: true }; // 모델 문제 ≠ 키 무효
-        if (/incorrect api key|invalid[ _-]*api[ _-]*key|api[ _-]*key[ _-]*(?:invalid|not valid)|"code"\s*:\s*"(?:invalid-argument|unauthenticated)"|bad[ _-]*credentials/i.test(body)) return { ok: false };
+        // "invalid-argument"는 xAI의 제네릭 400 코드다 — Model not found도 같은 코드를 달고 온다(위
+        // 분기가 그 증거). 코드가 아니라 **인증 특정 문구**로만 무효 판정해야 유효 키의 비인증 400을
+        // 오거절하지 않는다(적대 검수 2026-08-26 권고 — 무효 키 바디는 "Incorrect API key"를 담는다).
+        if (/incorrect api key|invalid[ _-]*api[ _-]*key|api[ _-]*key[ _-]*(?:invalid|not valid)|"code"\s*:\s*"unauthenticated|bad[ _-]*credentials/i.test(body)) return { ok: false };
         return { ok: true }; // 그 밖의 400(요청 형식 등)은 인증과 무관 — 유효로 본다
       }
       return { ok: true }; // 200·기타 4xx는 인증+등급 통과
