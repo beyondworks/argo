@@ -2,7 +2,7 @@
 // Supabase Auth 세션(access+refresh)을 기기 파일(0600)에 보관하고, 만료 임박 시 스스로 회전한다.
 // 회전 충돌 방지 원칙: 이 파일이 세션의 단일 소유자 — 브라우저 쿠키/클라이언트와 refresh 토큰을
 // 공유하지 않는다(공유하면 Supabase 토큰 회전 재사용 감지로 세션 일가족이 폐기된다).
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
@@ -66,6 +66,17 @@ export async function clearDeviceSession({ root = WS_ROOT } = {}) {
 
 /** 유효한 access token 보장 — 만료 60초 전이면 회전 후 저장(락으로 직렬화). null = 세션 없음/회전 실패.
  * _mkClient: 테스트 주입용 — 기본값은 실제 Supabase 클라이언트 팩토리(createClient). 프로덕션 호출부는 지정하지 않는다. */
+const deadMarkerOf = (root) => `${fileOf(root)}.dead`;
+/** 기기 세션이 "만료 + 갱신 사망(리프레시 거절)" 상태인가 — 회전을 유발하지 않는 읽기 전용 판정.
+    /api/me 같은 UI 경로가 갱신을 직접 트리거하면 상주·사이드카 이중 회전으로 세션 가족이 폐기된다
+    (2026-08-14 사고 구조 — 분리 검수 M4). 마커는 실제 갱신 시도(피드백·동기화 등 기존 경로)가 남긴다. */
+export function deviceSessionDead({ root = WS_ROOT } = {}) {
+  const sess = loadDeviceSession({ root });
+  if (!sess) return false;
+  if ((sess.expires_at ?? 0) * 1000 - Date.now() > 60_000) return false;
+  return existsSync(deadMarkerOf(root));
+}
+
 export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = createClient } = {}) {
   return withLock(`devsess:${root}`, async () => {
     const sess = loadDeviceSession({ root });
@@ -75,6 +86,13 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
     const { data, error } = await sb.auth.refreshSession({ refresh_token: sess.refresh_token });
     if (error || !data?.session) {
       console.warn('[argo] 기기 세션 갱신 실패 — 재로그인 필요:', error?.message ?? 'no session');
+      // 사망 마커 — **리프레시 토큰이 서버에서 거절된 경우만**(Invalid Refresh Token 계열 = 가족 폐기,
+      // 재시도 무의미). 네트워크 실패·5xx는 마커를 남기지 않는다 — 오프라인을 "재로그인 필요"로
+      // 오진하면 사용자가 기기 재바인딩(다른 계정이면 이전 주인 로그아웃)까지 가는 과잉 처방이 된다
+      // (분리 검수 M3). /api/me가 이 마커만 읽어 회전 없이 판정한다(M4 — UI 마운트발 이중 회전 금지).
+      if (/refresh token/i.test(String(error?.message ?? ''))) {
+        await writeFile(deadMarkerOf(root), new Date().toISOString()).catch(() => {});
+      }
       return null;
     }
     const s = data.session;
@@ -86,6 +104,7 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
       user: { id: s.user?.id ?? sess.user.id, email: s.user?.email ?? sess.user.email },
     };
     await persist(next, root);
+    await rm(deadMarkerOf(root), { force: true }).catch(() => {}); // 회생 — 마커 해제
     return next;
   });
 }

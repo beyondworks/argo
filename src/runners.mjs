@@ -43,8 +43,14 @@ export {
     (러너 중립성 규칙: 러너 A의 오류를 러너 B 이름으로 표시 금지. 실사고 2026-08-26: Grok의
     xAI 400이 Claude 오류로 보여 제보·진단이 통째로 엉뚱한 곳을 봤다). (export: 회귀 테스트용) */
 export function scrubSdkBrand(runner, msg) {
+  const raw = String(msg ?? '');
   const name = RUNNERS[runner]?.name ?? runner ?? 'AI';
-  return String(msg ?? '').replace(/Claude Code returned an error result:?\s*/gi, `${name} 러너 오류: `);
+  const phraseRemoved = raw.replace(/Claude Code returned an error result:?\s*/gi, '');
+  // 잔여 "Claude Code" 일반 언급도 비클로드 러너면 러너명으로(2026-08-08 ponytail 스크럽 흡수 — 규칙 단일화)
+  let out = runner !== 'claude' ? phraseRemoved.replace(/Claude Code/gi, name) : phraseRemoved;
+  // 이름 접두는 상표 문구를 지운 경우에만 — 언어 중립 표기(이름: 원문), i18n은 상위 문구가 담당(검수 M1·L7)
+  if (phraseRemoved !== raw) out = `${name}: ${out}`;
+  return out === raw ? raw : out;
 }
 
 /* ── 도구 잠김(L2 자가치유) — 실행기 자체 고장(모델·자격 무관)의 공통 처리. 2026-08-25 사고로 신설:
