@@ -757,7 +757,12 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     러너별 문구 차이 주의(실측 2026-07-20): gemini는 "API key not valid"/API_KEY_INVALID(401 아닌 400),
     glm은 "token expired or incorrect"(HTTP 200 바디의 code:401)로 인증 실패를 알린다 — 401·"invalid api key"
     문구만 보면 이 둘의 만료·무효 자격이 자가치유 없이 턴을 죽인다(저장 게이트의 자매 갭). 함께 포함한다. */
-export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|invalid authentication|authentication[_ ]error|api[_ ]?key[_ ]?(?:not valid|invalid)|token (?:is )?(?:expired|revoked|invalid|incorrect)|\b401\b/i;
+// xAI(grok)는 잘못된 키에 400 "Incorrect API key provided" / "bad credentials"를 준다 — 기존
+// 정규식의 어느 갈래에도 안 걸려 채팅 자가치유(러너 교체)가 grok 인증 실패만 발동 못 했다(실사고
+// 2026-08-26: 다른 러너가 연결돼 있어도 채팅 턴이 죽고, 영입은 게이트가 달라 살아나는 비대칭).
+// **문구 기준으로만** 추가한다 — `\b400\b`처럼 상태코드 전체를 넣으면 모델 미존재·요청 오류까지
+// 러너 교체로 오분류돼 사용자 고지 없이 실과금 키로 넘어간다(검수 D2).
+export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|incorrect api key|bad credentials|invalid authentication|authentication[_ ]error|api[_ ]?key[_ ]?(?:not valid|invalid)|token (?:is )?(?:expired|revoked|invalid|incorrect)|\b401\b/i;
 /** 접근권 게이트 모델(gated:true) 실패 시그니처 — 모델이 없어서가 아니라 이 계정에 권한이 없어서 나는
     에러(Gemini 3.x는 Ultra·유료 전용 — 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
 export const GATED_MODEL_ERR_RE = /requested entity was not found|NOT_FOUND|PERMISSION_DENIED/i;

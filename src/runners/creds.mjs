@@ -168,9 +168,14 @@ export async function runnerCredEnv(wsId, runner) {
   if (cred.type === 'host') return null;
   const v = cred.value;
   if (runner === 'claude') {
+    // ANTHROPIC_BASE_URL 고정 — glm·kimi·openrouter·grok는 cred.env에서 base를 항상 명시하는데
+    // claude만 빠져 호스트 env의 ANTHROPIC_BASE_URL을 상속했다(검수 D5: 회사 API 키가 제3자
+    // 프록시로 나가는 표면 + verify는 api.anthropic.com 고정이라 "검증 초록·턴은 딴 곳"). 오버라이드가
+    // 필요하면 ARGO_CLAUDE_BASE_URL로만(호스트 잡음과 분리).
+    const base = process.env.ARGO_CLAUDE_BASE_URL || 'https://api.anthropic.com';
     return cred.type === 'oauth'
-      ? { env: { CLAUDE_CODE_OAUTH_TOKEN: v, ANTHROPIC_API_KEY: '' } }
-      : { env: { ANTHROPIC_API_KEY: v, CLAUDE_CODE_OAUTH_TOKEN: '' } };
+      ? { env: { ANTHROPIC_BASE_URL: base, CLAUDE_CODE_OAUTH_TOKEN: v, ANTHROPIC_API_KEY: '' } }
+      : { env: { ANTHROPIC_BASE_URL: base, ANTHROPIC_API_KEY: v, CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'glm') {
     // CLAUDE_CODE_OAUTH_TOKEN 명시 소거 — claude 분기와 대칭. Anthropic 구독 토큰이 제3자(z.ai) 향
@@ -287,7 +292,9 @@ export async function verifyRunnerCred(runner, type, value) {
   const v = String(value).trim();
   try {
     if (runner === 'claude' && type === 'apikey') {
-      const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { 'x-api-key': v, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
+      // 턴과 같은 base(runnerCredEnv의 ARGO_CLAUDE_BASE_URL 고정과 대칭) — 검증=실행 동일 경로 원칙
+      const cbase = process.env.ARGO_CLAUDE_BASE_URL || 'https://api.anthropic.com';
+      const r = await fetch(`${cbase}/v1/models?limit=1`, { headers: { 'x-api-key': v, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'claude' && type === 'oauth') {
@@ -297,7 +304,8 @@ export async function verifyRunnerCred(runner, type, value) {
       // 실토큰 — oauth 베타 헤더 유무 모두 200). 이제 검증은 저장의 필수 관문이라(무검증 '저장만'
       // 제거) 오탐이 곧 저장 차단이지만, 원클릭(setup-token)도 같은 호출로 게이트해 왔고 양방향
       // 실측이 갖춰져 오탐 위험은 근거 있이 낮다.
-      const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20' }, signal: AbortSignal.timeout(10_000) });
+      const cbase2 = process.env.ARGO_CLAUDE_BASE_URL || 'https://api.anthropic.com';
+      const r = await fetch(`${cbase2}/v1/models?limit=1`, { headers: { authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20' }, signal: AbortSignal.timeout(10_000) });
       return { ok: !(r.status === 401 || r.status === 403) };
     }
     if (runner === 'glm') {
@@ -334,7 +342,21 @@ export async function verifyRunnerCred(runner, type, value) {
         const isCredit = /insufficient.*(credit|balance|fund)|credit.*exhaust/i.test(body);
         return { ok: false, reason: isCredit ? 'credit' : 'tier' };
       }
-      return { ok: true }; // 200·4xx(모델 미존재 등) 어느 쪽이든 인증+등급은 통과한 것
+      if (r.status === 400) {
+        // **xAI는 잘못된 키에 400을 준다**(실측 2026-08-26: {"code":"invalid-argument","error":"Incorrect
+        // API key provided..."}). 401만 거부하면 "not even a key"까지 통과해 거짓 초록불이 된다
+        // (gemini 400 API_KEY_INVALID·glm 200바디와 **같은 계열의 세 번째 구멍** — 불변식 전수 수색
+        // 누락, invariant-change-sweep 위반). 단 "Model not found"는 키가 아니라 모델 문제 →
+        // 키는 유효로 본다(카탈로그 모델 오류 시 유효 키 오거절 방지, gemini 400 처리와 같은 원칙).
+        const body = await r.text().catch(() => '');
+        if (/model not found/i.test(body)) return { ok: true }; // 모델 문제 ≠ 키 무효
+        // "invalid-argument"는 xAI의 제네릭 400 코드다 — Model not found도 같은 코드를 달고 온다(위
+        // 분기가 그 증거). 코드가 아니라 **인증 특정 문구**로만 무효 판정해야 유효 키의 비인증 400을
+        // 오거절하지 않는다(적대 검수 2026-08-26 권고 — 무효 키 바디는 "Incorrect API key"를 담는다).
+        if (/incorrect api key|invalid[ _-]*api[ _-]*key|api[ _-]*key[ _-]*(?:invalid|not valid)|"code"\s*:\s*"unauthenticated|bad[ _-]*credentials/i.test(body)) return { ok: false };
+        return { ok: true }; // 그 밖의 400(요청 형식 등)은 인증과 무관 — 유효로 본다
+      }
+      return { ok: true }; // 200·기타 4xx는 인증+등급 통과
     }
     if (runner === 'openrouter') {
       // GET /api/v1/key = 키 자체 조회(잔액·한도) — 무효 키는 401. 모델 목록(공개)과 달리 키 유효성을 직접 판정한다.
