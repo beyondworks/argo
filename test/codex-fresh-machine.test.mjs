@@ -11,8 +11,10 @@ import { join } from 'node:path';
 test('신규 기기(~/.argo 전무) + 네트워크 차단: 120초 대기 없이 진짜 원인에 즉시 도달', async () => {
   const HOME = await mkdtemp(join(tmpdir(), 'codex-fresh-'));
   const realHome = process.env.HOME;
+  const realProfile = process.env.USERPROFILE; // 윈도우 os.homedir()는 HOME이 아니라 USERPROFILE을 읽는다(CI 실측)
   const realFetch = globalThis.fetch;
   process.env.HOME = HOME;
+  process.env.USERPROFILE = HOME;
   globalThis.fetch = async () => { throw new Error('network disabled (test)'); };
   try {
     assert.equal(existsSync(join(HOME, '.argo', 'tools')), false, '전제: ~/.argo/tools 없음(신규 기기)');
@@ -25,6 +27,8 @@ test('신규 기기(~/.argo 전무) + 네트워크 차단: 120초 대기 없이 
     assert.doesNotMatch(msg, /다른 프로세스에서 진행 중/, '거짓 "다른 프로세스" 문구가 나오면 안 된다');
     assert.match(msg, /network disabled|다운로드/, `진짜 원인(네트워크)이 표면화돼야: ${msg.slice(0, 80)}`);
   } finally {
-    process.env.HOME = realHome; globalThis.fetch = realFetch;
+    process.env.HOME = realHome;
+    if (realProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = realProfile;
+    globalThis.fetch = realFetch;
   }
 });
