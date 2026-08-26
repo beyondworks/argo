@@ -24,7 +24,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -1411,6 +1411,12 @@ ${lang === 'en'
     }
     // 크래시 원문("...exited with code 3221225477")만으론 사용자가 아무것도 할 수 없다 — 무엇이 일어났고 무엇이 아닌지를 앞에 붙인다
     if (!aborted && isProcessCrash(e?.message || e)) e = Object.assign(new Error(`${crashHint(lang)} (${String(e.message || e).slice(0, 120)})`), { cause: e });
+    // 상표 정정(러너 중립) — SDK 배관 문구가 타 러너를 Claude로 위장(실사고 2026-08-26: Grok의 xAI 400).
+    // e.message 뮤테이션 금지(검수 M5: getter-only 오류(DOMException)면 catch 안에서 TypeError → 스피너 고착).
+    if (!aborted) {
+      const rebranded = scrubSdkBrand(runner, String(e?.message ?? e));
+      if (rebranded !== String(e?.message ?? e)) e = Object.assign(new Error(rebranded), { cause: e, aborted: e?.aborted });
+    }
     if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
     // 실패도 회사의 사건이다 — 활동 화면의 "오류" 필터가 이 기록을 먹는다
     await appendEvent(wsId, {
@@ -1422,17 +1428,11 @@ ${lang === 'en'
     if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
     // xAI 크레딧 소진은 **인증 실패가 아니다** — SDK가 403을 "Failed to authenticate"로 번역해
     // 내보내면 사용자는 방금 성공한 로그인을 의심하며 재연결을 반복한다(실사용 신고 2026-08-03).
-    // 이벤트 로그(error:)에는 원문이 그대로 남는다 — 진단은 원문으로, 사용자에겐 사실로.
-    // ponytail: sdk-compat 러너(grok/glm/kimi/openrouter)의 에러에 "Claude Code"가 박혀 있으면
-    // 사용자는 왜 클로드 오류가 나오는지 혼란(제보 2026-08-08 "클로드는 사용 중이 아닌데").
-    // SDK 원문의 "Claude Code"를 실제 러너명으로 바꿔 사실대로 보여준다.
-    let surfaced = (runner === 'grok' && isGrokCreditError(String(e?.message || e)))
+    // 이벤트 로그(error:)에는 상표 정정본이 남는다(scrubSdkBrand — 벤더 상세는 보존, 위 rebrand 참조).
+    // "Claude Code" 러너명 치환(2026-08-08 ponytail)은 scrubSdkBrand로 흡수 — 규칙 이원화 금지(검수 L3).
+    const surfaced = (runner === 'grok' && isGrokCreditError(String(e?.message || e)))
       ? Object.assign(new Error(grokCreditNotice(lang)), { credit: true, cause: e })
       : e;
-    // ponytail: sdk-compat 러너 에러에서 "Claude Code"를 실제 러너명으로(제보 2026-08-08)
-    if (surfaced?.message && runner !== 'claude' && /Claude Code/i.test(surfaced.message)) {
-      surfaced.message = surfaced.message.replace(/Claude Code/gi, RUNNERS[runner]?.name ?? runner);
-    }
     throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : surfaced;
   } finally {
     abortReg.release();

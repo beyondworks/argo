@@ -4,7 +4,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
-import { GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { scrubSdkBrand, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -15,7 +15,9 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   // 아래 AbortController가 같은 값을 쓴다. 러너에 따라 상한이 갈리면 같은 작업이 codex로 뽑히면
   // 잘리고 claude로 뽑히면 안 잘린다 — 이 파일의 존재 이유(러너 독립)와 정면 충돌한다.
   // 오래 걸리는 배치(기억 정리)는 호출자가 명시로 늘린다.
-  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, __exclude = null, __crashRetry = false } = opts;
+  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, __exclude = null, __crashRetry = false, __failures = [] } = opts;
+  // __failures는 재귀에 **명시 전달**(아래 두 recursion) — opts를 직접 오염시키면 호출자가 재사용하는
+  // opts 객체에 이전 호출의 실패가 섞인다(분리 검수 L2).
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — 조용한 호스트 스캐빈징 금지(검수 MEDIUM, chat.mjs와 동일)
   // want=null(무선호) — 이 경로는 러너 독립이 명세라 claude 선호를 가장하지 않는다(선택 순서는 동일)
   const resolved = await resolveRunner(wsId, null, { exclude: __exclude })
@@ -97,19 +99,35 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     const e = ac.signal.aborted
       ? Object.assign(new Error(`sdk-timeout: ${Math.round(timeoutMs / 1000)}초 안에 응답이 끝나지 않아 중단했습니다`), { cause: err })
       : err;
+    // 전용 안내(크레딧·한도·크래시) 뒤에 붙일 "다른 러너 원인" — 전용 분기도 앞선 실패를 증발시키면 안 된다(검수 L1)
+    const otherCauses = () => {
+      const others = __failures.filter((f) => f.runner !== runner);
+      if (!others.length) return '';
+      const list = others.map((f) => `${RUNNERS[f.runner]?.name ?? f.runner}: ${f.msg}`).join(' ⁄ ');
+      return lang === 'en' ? ` (Other runners also failed — ${list})` : ` (다른 러너도 실패 — ${list})`;
+    };
+    // 러너별 실패 대장 — 자가치유가 다음 러너로 넘어가면 이 원인은 화면에서 사라졌다(마지막 러너의
+    // 오류만 노출). 실사고 2026-08-26: Codex·Grok이 연달아 실패했는데 사용자·운영자 모두 마지막
+    // (Grok의 xAI 400, 그마저 Claude 상표로 오표기)만 보고 원인을 못 찾았다. 같은 러너의 재시도는
+    // 마지막 결과만 남긴다(대장은 러너당 1줄).
+    {
+      const rec = { runner, msg: scrubSdkBrand(runner, String(e?.message ?? e)).slice(0, 160) };
+      const i = __failures.findIndex((f) => f.runner === runner);
+      if (i >= 0) __failures[i] = rec; else __failures.push(rec);
+    }
     // 429(요청 한도)는 자가치유 대상이 아니다 — 일시적 한도인데 다른 벤더로 넘기면 사용자 고지 없이
     // 실제 과금 키로 갈아타게 된다(2R 검수 M1). 402(지속적 잔액 소진)와 달리 기다리면 풀린다.
     if (/openrouter-limit/.test(String(e.message))) {
       throw Object.assign(new Error(lang === 'en'
         ? 'OpenRouter rate limit reached (free models: 20/min, and 50/day until $10+ in lifetime credits). Wait a moment and try again, or switch to a paid model.'
-        : 'OpenRouter 요청 한도에 걸렸습니다(무료 모델은 분당 20회, 누적 구매 $10 미만이면 하루 50회). 잠시 후 다시 시도하거나 유료 모델로 바꿔 주세요.'), { cause: e });
+        : 'OpenRouter 요청 한도에 걸렸습니다(무료 모델은 분당 20회, 누적 구매 $10 미만이면 하루 50회). 잠시 후 다시 시도하거나 유료 모델로 바꿔 주세요.' + otherCauses()), { cause: e });
     }
     // 러너 프로세스가 크래시로 죽었으면 **같은 러너로 1회 먼저** 다시 건다. 크래시는 자격·크레딧이
     // 아니라 그 순간 프로세스가 죽은 것이라 대개 다시 걸면 붙는다. 아래 러너 교체보다 앞에 둔다 —
     // 첫 크래시에 바로 벤더를 갈아타면 사용자가 고른 엔진이 조용히 바뀌고 과금처도 달라진다.
     if (!__crashRetry && isProcessCrash(e?.message)) {
       console.warn(`[argo] 원샷 ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId})`);
-      return runOneShot(wsId, prompt, { ...opts, __crashRetry: true });
+      return runOneShot(wsId, prompt, { ...opts, __crashRetry: true, __failures });
     }
     // 자가 치유 — 죽은 러너를 **누적 제외**하고 남은 가용 러너를 차례로 시도한다. 재귀는 제외 목록이
     // 매번 1개씩 늘어 러너 수(≤7)로 자연 종료된다. (이전: 1회 제한 — 4러너 연결 상태에서 앞의 둘이
@@ -122,7 +140,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       const alt = await resolveRunner(wsId, null, { exclude: tried }).catch(() => null);
       if (alt?.available && !tried.includes(alt.runner)) {
         console.warn(`[argo] 원샷 ${runner} 실패(${String(e.message).slice(0, 80)}) — ${alt.runner}로 재시도(${wsId}, 제외 ${tried.join(',')})`);
-        return runOneShot(wsId, prompt, { ...opts, __exclude: tried });
+        return runOneShot(wsId, prompt, { ...opts, __exclude: tried, __failures });
       }
     }
     // 402(크레딧 소진)는 연결 문제가 아니다 — "연결 상태 확인" 안내는 키 정상·연결됨 표시와 모순돼
@@ -130,12 +148,12 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     if (/openrouter-credit/.test(String(e.message))) {
       throw Object.assign(new Error(lang === 'en'
         ? 'OpenRouter credit balance is too low. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again.'
-        : 'OpenRouter 크레딧 잔액이 부족합니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.'), { cause: e });
+        : 'OpenRouter 크레딧 잔액이 부족합니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요.' + otherCauses()), { cause: e });
     }
     // xAI도 같은 계열 — 잔액·구독 문제지 연결 문제가 아니다. 위 러너 교체를 먼저 태운 뒤(다른
     // 러너가 연결돼 있으면 영입·기억정리가 살아난다) 갈 곳이 없을 때 충전·구독처를 준다.
     if (runner === 'grok' && isGrokCreditError(String(e.message))) {
-      throw Object.assign(new Error(grokCreditNotice(lang)), { cause: e });
+      throw Object.assign(new Error(grokCreditNotice(lang) + otherCauses()), { cause: e });
     }
     // 크래시는 "연결을 확인하라"가 **거짓 안내**다. 실사용 신고 2026-08-02: 크레딧도 남아 있고 연결도
     // 정상인 사용자가 이 문구를 받고 "러너 연결 정상인데 왜 계속 실패하죠?"라고 되물었다. 우리가 이미
@@ -143,12 +161,24 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     if (isProcessCrash(e?.message)) {
       throw Object.assign(new Error(lang === 'en'
         ? `The AI program crashed on this computer (it was terminated by the OS, not by Argo). This is not a connection or credit problem — Argo already retried and tried other connected runners. If it keeps happening, reinstalling the runner CLI usually fixes it; security software blocking the process is the other common cause. (${String(e.message).slice(0, 120)})`
-        : `AI 프로그램이 이 컴퓨터에서 비정상 종료됐습니다(Argo가 아니라 운영체제가 프로세스를 강제 종료했습니다). 연결이나 크레딧 문제가 아닙니다 — Argo가 이미 다시 시도했고, 연결된 다른 러너로도 넘겨봤습니다. 계속 반복되면 러너 CLI 재설치로 해결되는 경우가 많고, 보안 프로그램이 프로세스를 막는 것도 흔한 원인입니다. (${String(e.message).slice(0, 120)})`), { cause: e });
+        : `AI 프로그램이 이 컴퓨터에서 비정상 종료됐습니다(Argo가 아니라 운영체제가 프로세스를 강제 종료했습니다). 연결이나 크레딧 문제가 아닙니다 — Argo가 이미 다시 시도했고, 연결된 다른 러너로도 넘겨봤습니다. 계속 반복되면 러너 CLI 재설치로 해결되는 경우가 많고, 보안 프로그램이 프로세스를 막는 것도 흔한 원인입니다. (${String(e.message).slice(0, 120)})` + otherCauses()), { cause: e });
     }
-    throw Object.assign(new Error(lang === 'en'
-      ? `AI call failed — check the runner connection in Settings → AI connections. (${String(e.message).slice(0, 120)})`
-      : `AI 호출이 실패했습니다 — 설정 → AI 연결에서 러너 연결 상태를 확인해 주세요. (${String(e.message).slice(0, 120)})`), { cause: e });
+    throw Object.assign(new Error(formatOneShotFailure(__failures, runner, e, lang)), { cause: e });
   } finally {
     if (hangGuard) clearTimeout(hangGuard); // 성공·실패·자가치유 어느 경로로 빠져나가도 타이머를 남기지 않는다
   }
+}
+
+/** 최종 실패 문구 — 시도한 러너 **전부**의 원인을 러너 이름으로 나열한다(마지막 하나만 보여주면
+    앞 러너의 원인이 증발한다 — 2026-08-26 실사고의 교훈). (export: 순수 — 회귀 테스트용) */
+export function formatOneShotFailure(failures, lastRunner, lastErr, lang = 'ko') {
+  const label = (f) => {
+    const name = RUNNERS[f.runner]?.name ?? f.runner;
+    return f.msg.startsWith(`${name}: `) ? f.msg : `${name}: ${f.msg}`; // scrub이 이미 이름을 달았으면 중복 금지(검수 M2)
+  };
+  const list = (failures?.length ? failures : [{ runner: lastRunner, msg: scrubSdkBrand(lastRunner, String(lastErr?.message ?? lastErr)).slice(0, 160) }])
+    .map(label);
+  return lang === 'en'
+    ? `AI call failed — every connected runner was tried. Per-runner cause: ${list.join(' ⁄ ')}`
+    : `AI 호출이 실패했습니다 — 연결된 러너를 모두 시도했어요. 러너별 원인: ${list.join(' ⁄ ')}`;
 }
