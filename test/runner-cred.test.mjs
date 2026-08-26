@@ -205,6 +205,41 @@ test('verifyRunnerCred: GLM 무효 키(HTTP 200 + 바디 code:401)를 무효로 
   } finally { restore(); }
 });
 
+test('verifyRunnerCred: Grok 무효 키(HTTP 400 Incorrect API key)를 무효로 판정 — 400 구멍(세 번째)', async () => {
+  const { verifyRunnerCred } = await import('../src/runners.mjs');
+  // xAI는 잘못된 키에 400 {"code":"invalid-argument","error":"Incorrect API key provided..."}를 준다(실측 2026-08-26).
+  // 401만 거부하던 구멍으로 "not even a key"까지 통과했다 — gemini(400)·glm(200바디)와 같은 계열.
+  let restore = mockFetchOnce(async () => new Response(JSON.stringify({ code: 'invalid-argument', error: 'Incorrect API key provided. You can obtain an API key from https://console.x.ai.' }), { status: 400 }));
+  try {
+    assert.deepEqual(await verifyRunnerCred('grok', 'apikey', 'not even a key'), { ok: false }, '400 Incorrect API key = 무효(이전엔 ok:true 거짓 통과)');
+  } finally { restore(); }
+  // 모델 미존재(키는 유효)는 거절하면 안 된다 — xAI가 모델을 키보다 먼저 검사한다
+  restore = mockFetchOnce(async () => new Response(JSON.stringify({ code: 'invalid-argument', error: 'Model not found: grok-nope' }), { status: 400 }));
+  try {
+    assert.deepEqual(await verifyRunnerCred('grok', 'apikey', 'valid-key'), { ok: true }, 'Model not found(400)는 키 무효 아님 → 유효 키 오거절 방지');
+  } finally { restore(); }
+  // 빈 토큰 = 401 unauthenticated도 무효
+  restore = mockFetchOnce(async () => new Response(JSON.stringify({ code: 'unauthenticated:bad-credentials' }), { status: 401 }));
+  try {
+    assert.deepEqual(await verifyRunnerCred('grok', 'apikey', 'x'), { ok: false }, '401 bad credentials = 무효');
+  } finally { restore(); }
+  // 정상 200 응답은 유효
+  restore = mockFetchOnce(async () => new Response(JSON.stringify({ id: 'msg_1', type: 'message', content: [{ type: 'text', text: 'hi' }] }), { status: 200 }));
+  try {
+    assert.deepEqual(await verifyRunnerCred('grok', 'apikey', 'good'), { ok: true }, '200 = 유효 키(오거절 없음)');
+  } finally { restore(); }
+});
+
+test('AUTH_ERR_RE: grok의 xAI 400 문구가 채팅 자가치유(러너 교체)를 발동시킨다 — 러너 중립성', async () => {
+  const { AUTH_ERR_RE } = await import('../src/chat.mjs');
+  // 실사고 2026-08-26: 이 문구가 정규식에 안 걸려 grok만 채팅 자가치유 미발동(다른 러너 있어도 턴 사망)
+  assert.ok(AUTH_ERR_RE.test('Grok: API Error: 400 {"code":"invalid-argument","error":"Incorrect API key provided..."}'), 'Incorrect API key가 매치돼야 러너 교체 발동');
+  assert.ok(AUTH_ERR_RE.test('bad credentials'), 'bad credentials 매치');
+  // 상태코드 전체(\b400\b)를 넣지 않았음을 회귀로 잠근다 — 모델 미존재·요청오류까지 교체로 오분류 금지
+  assert.ok(!AUTH_ERR_RE.test('Model not found: grok-4.9'), '모델 미존재(400)는 인증 실패가 아니다 — 러너 교체 금지');
+  assert.ok(!AUTH_ERR_RE.test('invalid request content: system'), '요청 형식 오류도 인증 실패 아님');
+});
+
 test('verifyRunnerCred: 정상 401 러너(kimi·codex·claude apikey)는 회귀 없음', async () => {
   const { verifyRunnerCred } = await import('../src/runners.mjs');
   let restore = mockFetchOnce(async () => new Response('unauthorized', { status: 401 }));

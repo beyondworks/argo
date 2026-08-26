@@ -4,7 +4,7 @@
 import { readFile, copyFile, mkdir, mkdtemp, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { exec, exists } from './shared.mjs';
 
 /** Argo 전용 CODEX_HOME — 사용자 전역 config(커스텀 에이전트·모델 핀)와 격리하고 auth만 빌린다.
@@ -87,9 +87,17 @@ async function adoptInto(dest, src) {
 const CODEX_LOCK_DIR = `${CODEX_TOOL_DIR}.lockd`;
 const LOCK_STALE_MS = 15 * 60_000; // 다운로드 최장(자산별 300s×2) + 여유
 async function withCodexLock(fn) {
+  // **부모 먼저 만든다**(C1 회귀 수정 2026-08-26): CODEX_TOOL_DIR 생성은 락 안(fn)에 있으므로, 락
+  // 디렉터리의 부모(~/.argo/tools)가 없으면 mkdir(lock)이 ENOENT로 실패하고 아래 catch가 그걸 "보유자
+  // 있음"으로 오해해 120초 헛돈 뒤 거짓 문구로 죽는다 — gemini·npx를 먼저 안 써본 신규 기기에서 codex가
+  // 영구 불능이 됐다(실측: 신규 기기 120,122ms → 이 한 줄로 3ms). 자기 부모를 락 밖에서 확보한다.
+  await mkdir(dirname(CODEX_LOCK_DIR), { recursive: true }).catch(() => {});
   const t0 = Date.now();
   for (;;) {
-    try { await mkdir(CODEX_LOCK_DIR, { recursive: false }); break; } catch {
+    try { await mkdir(CODEX_LOCK_DIR, { recursive: false }); break; } catch (e) {
+      // **EEXIST만 "보유자 있음"**(C1): 그 밖의 실패(EACCES·EPERM — 윈도우 안티바이러스가 락 생성을
+      // 막는 경우 등)를 대기로 뭉개면 여기서도 120초 거짓말이 난다. 원인 그대로 즉시 드러낸다.
+      if (e?.code && e.code !== 'EEXIST') throw new Error(`codex 조달 락을 만들지 못했습니다(${e.code}): ${dirname(CODEX_LOCK_DIR)} 쓰기 권한을 확인해 주세요`);
       // 보유자 있음 — 오래된 잔재(크래시)면 회수, 아니면 대기. 최대 2분 후엔 관망 포기(기존 설치본으로 진행).
       const st = await stat(CODEX_LOCK_DIR).catch(() => null);
       if (st && Date.now() - st.mtimeMs > LOCK_STALE_MS) { await rm(CODEX_LOCK_DIR, { recursive: true, force: true }).catch(() => {}); continue; }
