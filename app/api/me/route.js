@@ -1,3 +1,4 @@
+import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { AUTH_ON, currentUser } from '../../auth.mjs';
 import { deviceSessionDead } from '../../../src/devicesession.mjs';
@@ -11,9 +12,22 @@ import { deviceSessionDead } from '../../../src/devicesession.mjs';
 export async function GET() {
   const user = await currentUser();
   let sessionDead = false;
-  if (AUTH_ON && user && user.id !== 'local') {
+  if (AUTH_ON && user && user.id !== 'local' && deviceSessionDead()) {
+    // 기기 세션이 사망 마커 상태여도 **유효한** 쿠키 세션이 있으면 클라우드 기능은 산다.
+    // 쿠키 "존재"만 보면 안 된다 — 무효 쿠키가 남은 브라우저에서 표시가 조용히 꺼진다
+    // (라이브 재현 2026-08-26: 마커 존재 + 무효 sb 쿠키 → sessionDead 미표시). 유효성 검증은
+    // 마커 상태에서만 도니 건강한 기기의 /api/me 비용은 0이다(feedback 라우트와 같은 판정).
     const store = await cookies();
-    if (!store.getAll().some((c) => c.name.startsWith('sb-'))) sessionDead = deviceSessionDead();
+    let cookieAlive = false;
+    if (store.getAll().some((c) => c.name.startsWith('sb-'))) {
+      const sb = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+        { cookies: { getAll: () => store.getAll(), setAll: () => { /* 라우트에서는 세션 갱신 안 함 */ } } },
+      );
+      cookieAlive = !!(await sb.auth.getUser()).data?.user;
+    }
+    sessionDead = !cookieAlive;
   }
   return Response.json({ authOn: AUTH_ON, user, ...(sessionDead ? { sessionDead: true } : {}) });
 }
