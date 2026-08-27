@@ -61,6 +61,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   const [method, setMethod] = useState(company.connected ? company.type : 'apikey');
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState('');
+  const busyWasHost = useRef(false); // 마지막 msg가 host 옵트인에서 났는지(렌더 자리 선택)
   const [msg, setMsg] = useState('');
   const [ok, setOk] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false); // 러너 연결 제거 확인(전 기기·전 크루 영향)
@@ -246,7 +247,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
 
   async function connect() {
     if (busy || polling) return;
-    setBusy('connect'); setMsg(''); setOk(false);
+    setBusy('connect'); setMsg(''); busyWasHost.current = false; setOk(false);
     try {
       const res = await fetch(`${keysBase(ws)}/connect`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -271,7 +272,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
 
   async function save() {
     if (busy || !value.trim() || method === 'host') return; // host 상태 방어 — 라우트가 value를 무시해 입력이 조용히 버려진다(검수 MEDIUM)
-    setBusy('verify'); setMsg(''); setOk(false);
+    setBusy('verify'); setMsg(''); busyWasHost.current = false; setOk(false);
     try {
       // verify는 서버가 항상 강제한다(무검증 '저장만' 함정 제거 — 2026-07-20). 플래그는 하위호환 전송.
       const res = await fetch(`${keysBase(ws)}`, {
@@ -292,7 +293,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
 
   async function remove() {
     if (busy) return;
-    setBusy('remove'); setMsg(''); setOk(false);
+    setBusy('remove'); setMsg(''); busyWasHost.current = false; setOk(false);
     try {
       await fetch(`${keysBase(ws)}?runner=${encodeURIComponent(id)}`, { method: 'DELETE' });
       window.dispatchEvent(new Event('argo:refresh'));
@@ -306,6 +307,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   // 사용하지 않는다(명시 연결 정본 — 유건 지시 2026-07-19). 서버가 로그인 상태 검증 후 마커 저장.
   async function useHost() {
     if (busy) return;
+    busyWasHost.current = true; // 이 msg는 옵트인 행에 그린다(다른 행과 이중 표시 방지)
     setBusy('host'); setMsg(''); setOk(false);
     try {
       const res = await fetch(`${keysBase(ws)}`, {
@@ -323,12 +325,24 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
       setBusy('');
     }
   }
-  // 옵트인 버튼 — 지원 러너(codex/gemini)면 감지와 무관하게 항상 노출. 사전 스캔은 복잡하고 오류
-  // 소지가 있어(유건 지시) 클릭 시점에 서버가 설치·로그인을 검증하고 아니면 정확한 안내를 돌려준다.
+  // 옵트인 — **성공할 수 있는 상태에서만 버튼을 보여준다**(유건 지시 2026-08-26: "실패 자체가 있으면
+  // 안 돼"). 서버가 이미 내려주는 감지 상태(hostInstalled/hostAuthed/hostAuthUnknown — 별도 스캔 0)로
+  // 미설치면 설치 링크를, 미로그인이면 터미널 로그인 안내를 처음부터 그린다. 이전엔 버튼을 항상 노출하고
+  // 클릭 시점에 서버가 거절해 "버튼이 줄었다 되돌아오는" 무언 실패가 났다(실사용 제보 v0.1.47).
+  // 서버 검증(PUT 라우트)은 방어선으로 유지 — UI는 게이트가 아니다.
+  const hostReady = !!st?.hostInstalled && (!!st?.hostAuthed || !!st?.hostAuthUnknown);
   const hostOptIn = !!st?.hostUsable && !company.connected && (
-    <button className="btn sm" disabled={!!busy} onClick={useHost}>
-      {busy === 'host' ? <Spinner size={12} /> : t('settings.runners.useHost')}
-    </button>
+    hostReady ? (
+      <button className="btn sm" disabled={!!busy} onClick={useHost}>
+        {busy === 'host' ? <Spinner size={12} /> : t('settings.runners.useHost')}
+      </button>
+    ) : (
+      <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>
+        {!st?.hostInstalled
+          ? <>{t('settings.runners.hostNeedInstall')}{st?.keyUrl && <> · <a href={st.keyUrl} target="_blank" rel="noreferrer">{t('settings.runners.hostInstallGuide')} ↗</a></>}</>
+          : t('settings.runners.hostNeedLogin', { runner: id })}
+      </span>
+    )
   );
 
   const chip = company.connected ? (
@@ -419,7 +433,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
       {hasOauth && (
         <div style={{ display: 'flex', gap: 6 }}>
           {methods.map((m) => (
-            <button key={m} className="chip" onClick={() => { setMethod(m); setMsg(''); }} aria-pressed={method === m}
+            <button key={m} className="chip" onClick={() => { setMethod(m); setMsg(''); busyWasHost.current = false; }} aria-pressed={method === m}
               style={{ cursor: 'pointer', padding: '4px 12px', fontSize: 12, ...(method === m ? { background: 'var(--fg)', color: 'var(--bg)', borderColor: 'var(--fg)' } : {}) }}>
               {t(`settings.runners.method.${m}`)}
             </button>
@@ -430,7 +444,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
       {hostOptIn && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {hostOptIn}
-          <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.useHostHint')}</span>
+          {hostReady && <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.useHostHint')}</span>}
+          {/* 실패 사유 자리 — 이전엔 이 행에 msg 렌더가 없어 서버 거절이 무언(스피너 깜빡)으로 끝났다 */}
+          {msg && busyWasHost.current && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
         </div>
       )}
       {oauthCli ? (
