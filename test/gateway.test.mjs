@@ -418,8 +418,11 @@ test("결재 최종 폴백: 담당 slug에 봇이 없으면(유령 'crew' 포함
   const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
   const WS = 'co-appr-orphan';
   await createCompany(WS, '결재사5', 'pepper');
-  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'pepper.md'), '---\nname: 페퍼\n---\n\n비서.\n'); // 기본 크루 판정(defaultCrew)의 원료
-  await updateConnection(WS, 'telegram', { token: 'gw-tok-orphan' }); // enabled 기본 false — 게이트웨이 못 보내는 상태
+  // 크루 2명 + 설정된 기본 크루 = 두 번째 — defaultCrew 정본(cfg.defaultCrew) 사용을 잠근다.
+  // 1명이면 agents[0] 사본과 구별이 안 돼 정본을 지워도 초록이었다(재검수 LOW-1).
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'alpha.md'), '---\nname: 알파\n---\n\n개발.\n');
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'pepper.md'), '---\nname: 페퍼\n---\n\n비서.\n');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-orphan', defaultCrew: 'pepper' }); // enabled 기본 false — 게이트웨이 못 보내는 상태
   await updateAgentBot(WS, 'pepper', { token: 'bot-tok-orphan' });
   await updateAgentBot(WS, 'pepper', { ownerId: 1, ownerChat: '300' }); // 토큰 변경이 페어링을 초기화하므로 별도 호출
   const item = await addApproval(WS, { slug: 'crew', action: 'gmail · send_mail', reason: '외부 서비스에 쓰기', kind: 'connector' }); // 선재 유령 slug를 그대로 재현
@@ -436,9 +439,17 @@ test("결재 최종 폴백: 담당 slug에 봇이 없으면(유령 'crew' 포함
 
 test('결재 최종 폴백도 음소거를 존중한다 — mutedEvents(approval)면 어느 봇으로도 나가지 않는다', async () => {
   const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
   const { addApproval } = await import('../src/approvals.mjs');
-  const WS = 'co-appr-orphan'; // 위 회사 재사용(봇 페어링 그대로) — 음소거만 더한다
-  await updateConnection(WS, 'telegram', { mutedEvents: ['approval'] });
+  // 자체 시드 — 앞 테스트의 부작용에 기대면 격리 실행(--test-name-pattern)에서 봇이 없어
+  // "발송 0회" 단언이 결함 없이도 자동 충족된다(재검수 MEDIUM-1 실측: 거짓 초록).
+  const WS = 'co-appr-mute';
+  await createCompany(WS, '결재사6', 'pepper');
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'pepper.md'), '---\nname: 페퍼\n---\n\n비서.\n');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-mute', mutedEvents: ['approval'] });
+  await updateAgentBot(WS, 'pepper', { token: 'bot-tok-mute' });
+  await updateAgentBot(WS, 'pepper', { ownerId: 1, ownerChat: '400' });
   const item = await addApproval(WS, { slug: 'crew', action: 'gmail · send_mail', reason: '외부 서비스에 쓰기', kind: 'connector' });
   const calls = await withMockTg(async () => {
     await _pushEventForTest({ type: 'approval', wsId: WS, item });
