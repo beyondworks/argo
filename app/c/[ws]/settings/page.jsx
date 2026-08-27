@@ -1070,6 +1070,14 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
           <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.conn.notifyHint')}</span>
         </div>
       )}
+      {/* 결재 비대칭 정직 표기 — 게이트웨이가 결재를 배달 못 하는 상태(꺼짐·토큰 없음·미페어링)인데
+          페어링된 직통 봇은 있을 때만 보인다. 직통 봇 폴러는 callback_query를 처리하지 않아 결재는
+          브리핑 폴백(PR #305)에서 의도적으로 제외됐다. 결재 알림을 스스로 꺼 둔 사용자에겐 소음이라
+          muted면 숨긴다. */}
+      {kind === 'telegram' && !(on && conn?.hasToken && conn?.chatId) && !muted.includes('approval')
+        && Object.values(conn?.agents ?? {}).some((a) => a?.hasToken && a?.paired) && (
+        <span style={{ fontSize: 11.5, color: 'var(--warn)', lineHeight: 1.5 }}>{t('settings.conn.approvalNeedsGateway')}</span>
+      )}
       {kind === 'slack' && (
         <label style={{ display: 'grid', gap: 5 }}>
           <span className="microlabel">{t('settings.conn.channel')}</span>
