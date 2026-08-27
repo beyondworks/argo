@@ -1070,13 +1070,14 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
           <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{t('settings.conn.notifyHint')}</span>
         </div>
       )}
-      {/* 결재 비대칭 정직 표기 — 게이트웨이가 결재를 배달 못 하는 상태(꺼짐·토큰 없음·미페어링)인데
-          페어링된 직통 봇은 있을 때만 보인다. 직통 봇 폴러는 callback_query를 처리하지 않아 결재는
-          브리핑 폴백(PR #305)에서 의도적으로 제외됐다. 결재 알림을 스스로 꺼 둔 사용자에겐 소음이라
-          muted면 숨긴다. */}
-      {kind === 'telegram' && !(on && conn?.hasToken && conn?.chatId) && !muted.includes('approval')
+      {/* 게이트웨이는 선택 사항 안내 — #307·#312 이후 결재 요청(버튼 콜백 포함)·브리핑이 페어링된
+          크루 직통 봇으로도 배달된다(gateway.mjs telegramBriefingDest('approval')·직통 봇 폴러의
+          handleApprovalCallback 공용 처리). 이전의 "직통 봇으로는 결재가 오지 않습니다" 경고(#306)는
+          #307 머지로 거짓이 됐는데 제거가 이월됐었다(실사용 혼란 2026-08-28: 게이트웨이가 필수로 읽혀
+          직통 봇 토큰을 옮겨야 하는지 물음). 직통 봇이 있고 게이트웨이가 미가동일 때만 보인다. */}
+      {kind === 'telegram' && !(on && conn?.hasToken && conn?.chatId)
         && Object.values(conn?.agents ?? {}).some((a) => a?.hasToken && a?.paired) && (
-        <span style={{ fontSize: 11.5, color: 'var(--warn)', lineHeight: 1.5 }}>{t('settings.conn.approvalNeedsGateway')}</span>
+        <span style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.5 }}>{t('settings.conn.gatewayOptional')}</span>
       )}
       {kind === 'slack' && (
         <label style={{ display: 'grid', gap: 5 }}>

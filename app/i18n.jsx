@@ -475,11 +475,11 @@ const DICT = {
   'settings.conn.ev.crewmail': ['동료 쪽지', 'Crew mail'],
   // 결재 비대칭 정직 표기 — 직통 봇은 결재를 나르지 않는다(폴러가 callback_query 미처리 → 인라인
   // 버튼이 죽은 버튼. PR #305가 브리핑 폴백에서 결재를 의도 제외). 화면이 먼저 말해야 신고가 안 된다
-  // (러너 중립성 계열 — 못 하는 건 정직 표기, 조용한 무동작 금지). 문구는 "브리핑은 온다"를 단정하지
-  // 않는다 — 브리핑 폴백(#305)의 머지·종류 확장과 무관하게 참인 주절만 말한다(분리 검수 M1·M2).
-  'settings.conn.approvalNeedsGateway': [
-    '결재 요청 알림은 회사 게이트웨이 연결이 필요합니다 — 크루 직통 봇으로는 결재 요청이 오지 않습니다.',
-    'Approval requests need the company gateway — crew direct bots cannot deliver approval requests.',
+  // 게이트웨이 선택 사항 안내 — 결재·브리핑은 직통 봇 폴백(#305·#307·#312)으로도 배달되므로
+  // 게이트웨이를 필수로 읽히게 하지 않는다(이전 경고 문구가 그렇게 읽혀 실사용 혼란 2026-08-28).
+  'settings.conn.gatewayOptional': [
+    '크루 직통 봇이 연결돼 있어 결재 요청·브리핑이 그 봇으로 배달됩니다. 회사 게이트웨이는 전용 봇을 따로 둘 때만 필요합니다(봇 토큰 하나는 한 곳에서만 사용 가능).',
+    'A crew direct bot is paired, so approval requests and briefings are delivered through it. The company gateway is only needed for a separate dedicated bot (one bot token can be used in one place only).',
   ],
   // 커넥터(로그인만으로 붙는 외부 서비스) — 설계서 US-6
   'settings.connectors.title': ['외부 서비스 연결', 'Connected services'],
