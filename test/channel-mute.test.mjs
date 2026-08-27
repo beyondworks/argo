@@ -101,8 +101,9 @@ test('배선 — 결재·슬랙은 블록 머리 판정, 브리핑 3종은 teleg
   assert.match(g, /if \(t\.token && t\.chatId && sends\('telegram', t\)\)/, '텔레그램 블록 머리에 채널 판정이 없다');
   assert.match(g, /if \(s\.token && s\.channel && sends\('slack', s\)\)/, '슬랙 블록 머리에 채널 판정이 없다');
   // 받은 서류함은 알림 버스(onNotify)가 아니라 감시자가 직접 보낸다 — 목록에 있는 이상 게이트도 지나야
-  // "전부 껐는데 파일 넣으니 알림이 온다"가 안 생긴다(분리 검수 지적 2026-07-31).
-  assert.match(g, /channelSends\('telegram', cfg, 'inbox'\)/, '받은 서류함 푸시가 판정을 안 지난다');
+  // "전부 껐는데 파일 넣으니 알림이 온다"가 안 생긴다(분리 검수 지적 2026-07-31). 이제 브리핑과 같은
+  // telegramBriefingDest 계약을 지난다(내부에서 channelSends 호출 — 직통 봇 폴백 포함, LOW-1).
+  assert.match(g, /telegramBriefingDest\(cfg, 'inbox'/, '받은 서류함 푸시가 목적지 판정을 안 지난다');
   // 브리핑 3종(routine·job·crewmail)은 목적지 판정이 telegramBriefingDest(정본·순수)로 단일화됐다 —
   // 내부에서 channelSends를 부르므로 음소거 계약은 유지되고, 게이트웨이가 못 보내면 담당 크루의
   // 직통 봇으로 폴백한다(실사용 2026-08-27: 게이트웨이 꺼짐 + 직통 봇만 페어링 → 루틴 무배달).

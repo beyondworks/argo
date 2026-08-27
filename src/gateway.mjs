@@ -26,7 +26,7 @@ import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath, attac
 import { beatGateway, loadOffset, saveOffset, loadSlackCursor, saveSlackCursor } from './gateway/persist.mjs';
 import { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT } from './gateway/queue.mjs';
 import { clip, pollBackoffMs, pick, tidy, parseApprovalText, parseApprovalCallback, pairCodeMatches, classifySlackMessage, telegramBriefingDest } from './gateway/protocol.mjs';
-import { routeMessage, crewStatusReply, approvalWho } from './gateway/routing.mjs';
+import { routeMessage, crewStatusReply, approvalWho, defaultCrew } from './gateway/routing.mjs';
 import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스트도 같은 함수를 본다
 
 // facade — 기존 임포터(chat.mjs 동적 import·테스트)가 gateway.mjs에서 그대로 가져간다(무수정 계약).
@@ -567,9 +567,14 @@ function startInboxWatcher(wsId) {
             } catch {
               await unlink(fp).catch(() => {}); // 다른 마운트 등 rename 실패 시 — 최소한 원본은 제거해 무한 재처리 차단
             }
-            // 자리에 없어도 결과가 도착한다 — 단 끌 수 있어야 한다(설정의 'inbox' 종류).
-            if (cfg.token && cfg.chatId && channelSends('telegram', cfg, 'inbox')) {
-              await sendTgReply(cfg.token, cfg.chatId, wsId, pick(`[받은 서류함] ${safe}\n\n${reply}`, `[Inbox] ${safe}\n\n${reply}`, lang)).catch(() => {});
+            // 자리에 없어도 결과가 도착한다 — 단 끌 수 있어야 한다(설정의 'inbox' 종류). 게이트웨이가
+            // 못 보내면(꺼짐·미페어링) **처리 크루의 직통 봇**으로 폴백 — 처리 크루 판정은 runTurn의
+            // routeMessage와 같은 defaultCrew 정본(사본 금지). 브리핑 3종과 같은 telegramBriefingDest
+            // 계약이라 음소거('inbox')도 폴백에서 그대로 존중된다(분리 검수 LOW-1 비대칭 해소).
+            const agents = await listAgents(wsId).catch(() => []);
+            const d = telegramBriefingDest(cfg, 'inbox', defaultCrew(agents, cfg)?.slug);
+            if (d) {
+              await sendTgReply(d.token, d.chatId, wsId, pick(`[받은 서류함] ${safe}\n\n${reply}`, `[Inbox] ${safe}\n\n${reply}`, lang)).catch(() => {});
             }
           } catch (e) {
             console.error(`[argo] inbox 처리 실패(${wsId}/${n}):`, e.message); // 원본을 inbox에 유지 → 다음 틱 재시도

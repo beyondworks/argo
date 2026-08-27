@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-gwroute-'));
-const { routeMessage, crewStatusReply, approvalWho } = await import('../src/gateway/routing.mjs');
+const { routeMessage, crewStatusReply, approvalWho, defaultCrew } = await import('../src/gateway/routing.mjs');
 
 // 크루 2명 픽스처 — 파일명 sort로 luca가 첫 번째(=defaultCrew 미지정 시 기본 크루)
 const WS = 'routeco';
@@ -86,4 +86,14 @@ test('approvalWho: 위임 결재는 "크루명 (위임자명 위임)" — 결재
   assert.equal(await approvalWho(WS, { slug: 'luca', from: 'pepper' }, 'ko'), '루카 (페퍼 위임)');
   assert.equal(await approvalWho(WS, { slug: 'luca', from: 'pepper' }, 'en'), '루카 (delegated by 페퍼)');
   assert.equal(await approvalWho(WS, { slug: 'ghost' }, 'ko'), 'ghost', '명단에 없으면 slug 그대로(빈칸 방지)');
+});
+
+/* ── 기본 크루 정본 — routeMessage·crewStatusReply·inbox 폴백(gateway.mjs)이 공유하는 단일 판정 ── */
+test('defaultCrew: 지정 크루 우선 → 첫 크루 폴백 → 명단 비면 null(사본 두 벌을 단일화한 계약)', () => {
+  const agents = [{ slug: 'luca' }, { slug: 'pepper' }];
+  assert.equal(defaultCrew(agents, { defaultCrew: 'pepper' }).slug, 'pepper');
+  assert.equal(defaultCrew(agents, { defaultCrew: '없는크루' }).slug, 'luca', '지정이 명단에 없으면 첫 크루');
+  assert.equal(defaultCrew(agents, {}).slug, 'luca');
+  assert.equal(defaultCrew([], { defaultCrew: 'pepper' }), null, '명단이 비면 null — 호출부 옵셔널 체이닝과 짝');
+  assert.equal(defaultCrew(agents, null).slug, 'luca', 'cfg null 안전');
 });

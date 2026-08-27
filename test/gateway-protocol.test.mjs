@@ -138,3 +138,12 @@ test('telegramBriefingDest: 보낼 곳 없음 → null — 미페어링 봇·없
   assert.equal(telegramBriefingDest(tg, 'approval', 'pepper'), null, 'approval은 게이트웨이 전용 분기가 담당');
   assert.equal(telegramBriefingDest(null, 'routine', 'pepper'), null, 'null 안전');
 });
+
+test('telegramBriefingDest: inbox — 게이트웨이 우선·직통 봇 폴백·음소거 존중(브리핑과 같은 계약, LOW-1)', () => {
+  const gw = { enabled: true, token: 'gw', chatId: '1', agents: { pepper: { token: 'bt', ownerChat: '2' } } };
+  assert.deepEqual(telegramBriefingDest(gw, 'inbox', 'pepper'), { token: 'gw', chatId: '1' }, '게이트웨이 가동 시 기존 경로 그대로');
+  const off = { enabled: false, agents: { pepper: { token: 'bt', ownerChat: '2' } } };
+  assert.deepEqual(telegramBriefingDest(off, 'inbox', 'pepper'), { token: 'bt', chatId: '2' }, '게이트웨이 꺼짐 → 처리 크루 봇 폴백');
+  assert.equal(telegramBriefingDest({ ...off, mutedEvents: ['inbox'] }, 'inbox', 'pepper'), null, '끈 종류는 폴백으로도 안 간다');
+  assert.equal(telegramBriefingDest(off, 'inbox', null), null, '처리 크루 미상(명단 없음)이면 보내지 않는다');
+});

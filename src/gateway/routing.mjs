@@ -5,6 +5,11 @@ import { listAgents } from '../hub.mjs';
 import { loadCompany } from '../workspace.mjs';
 import { pick } from './protocol.mjs';
 
+/** 기본 크루 판정 — 이름 미지정 지시·받은 서류함(inbox) 처리의 담당. 사본 금지: routeMessage·
+    crewStatusReply·inbox 폴백(gateway.mjs)이 전부 이 함수를 본다 — 인라인 사본이 두 벌 있던 것을
+    단일화(한쪽만 고쳐지는 규칙 드리프트 방지, 이 레포의 반복 실패 계열). */
+export const defaultCrew = (agents, cfg) => agents.find((a) => a.slug === cfg?.defaultCrew) ?? agents[0] ?? null;
+
 /** "@이름 지시" → to 크루, "@이름1 @이름2 지시" → 첫 번째가 to, 나머지는 cc(맥락 공유). 이름 미지정이면 기본 크루. (export는 테스트용) */
 export async function routeMessage(wsId, cfg, text) {
   const agents = await listAgents(wsId);
@@ -31,7 +36,7 @@ export async function routeMessage(wsId, cfg, text) {
       lang,
     ) };
   }
-  const to = mentions[0] ?? (agents.find((a) => a.slug === cfg.defaultCrew) ?? agents[0]);
+  const to = mentions[0] ?? defaultCrew(agents, cfg);
   return { slug: to.slug, name: to.name, msg: body.trim(), cc: mentions.slice(1) };
 }
 
@@ -40,7 +45,7 @@ export async function crewStatusReply(wsId, cfg) {
   const agents = await listAgents(wsId);
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
   if (!agents.length) return pick('아직 크루가 없습니다. Argo 데크에서 먼저 영입해 주세요.', 'No crew yet. Hire your first crew from the Argo deck.', lang);
-  const def = agents.find((a) => a.slug === cfg.defaultCrew) ?? agents[0];
+  const def = defaultCrew(agents, cfg);
   return [
     pick(`**연결된 크루 ${agents.length}명**`, `**${agents.length} crew connected**`, lang),
     ...agents.map((a) => `• ${a.name} (@${a.slug})${a.role ? ` — ${a.role}` : ''}${a.runner ? ` · ${a.runner}` : ''}${a.slug === def?.slug ? pick(' · 기본', ' · default', lang) : ''}`),
