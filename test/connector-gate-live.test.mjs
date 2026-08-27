@@ -90,10 +90,14 @@ test('승인 우회구는 서버 전용 — approved:true로 통과한 호출은
 
 test("slug 없이 걸린 결재도 실제 크루로 귀속된다 — 유령 'crew'는 직통 봇 폴백 판정을 무산시킨다(분리 검수 LOW-3)", async () => {
   // 표면(chat·cli-directives)은 항상 실제 slug를 넘긴다 — 이 테스트는 slug 없는 코어 직접 호출이
-  // 유령 'crew' 대신 기본 크루(defaultCrew 정본)로 등록되는지를 잠근다.
+  // 유령 'crew' 대신 기본 크루(defaultCrew 정본)로 등록되는지를 잠근다. 크루 2명 + 설정된 기본
+  // 크루 = 두 번째 — 1명이면 agents[0] 사본과 구별이 안 돼 정본을 지워도 초록이다(재검수 LOW-1).
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'alpha.md'), '---\nname: 알파\n---\n\n개발.\n');
   await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'captain.md'), '---\nname: 캡틴\n---\n\n선장.\n');
-  const r = await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'demo@example.com', body: 'x' });
+  const { updateConnection } = await import('../src/connections.mjs');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-gate', defaultCrew: 'captain' });
+  const r = await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'demo@example.com', body: 'ghost-probe' });
   assert.equal(r.error, 'approval_pending');
-  const it = (await loadApprovals(WS))[0];
-  assert.equal(it.slug, 'captain', "유령 'crew'로 등록됐다 — 카드 표기·텔레그램 직통 봇 폴백이 존재하지 않는 크루에 걸린다");
+  const it = (await loadApprovals(WS)).find((a) => a.payload?.args?.body === 'ghost-probe'); // 인덱스 의존 금지(재검수 LOW-5)
+  assert.equal(it?.slug, 'captain', "유령 'crew'로 등록됐다 — 카드 표기·텔레그램 직통 봇 폴백이 존재하지 않는 크루에 걸린다");
 });
