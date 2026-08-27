@@ -27,6 +27,11 @@ test('배선: followUp이 성공·실패 양 경로에서 방송하고, 게이�
   const gw = await readFile(new URL('../src/gateway.mjs', import.meta.url), 'utf8');
   assert.match(gw, /event\.type === 'approval_followup'/, '게이트웨이 소비부');
   const block = gw.split("event.type === 'approval_followup'")[1]?.slice(0, 500) ?? '';
-  assert.match(block, /it\?\.tg\?\.chatId && all\.telegram\.enabled && all\.telegram\.token/, '결재 카드가 온 방으로만 + 채널 꺼짐 게이트(검수 LOW-4)');
+  // 토큰 판정은 approvalCardToken 단일 원천 — 게이트웨이 카드는 enabled 게이트(검수 LOW-4) 유지,
+  // 직통 봇 폴백 카드(tg.botSlug)는 그 봇 토큰("토큰 = 연결")으로 같은 방에 배달한다.
+  assert.match(block, /approvalCardToken\(it, \{ needEnabled: true \}\)/, '후속 배달이 카드 귀속 토큰 판정을 안 지난다');
+  assert.match(block, /it\?\.tg\?\.chatId && tok/, '결재 카드가 온 방으로만');
+  assert.match(gw, /it\?\.tg\?\.botSlug\n?\s*\? all\.telegram\.agents\?\.\[it\.tg\.botSlug\]\?\.token/, '봇 귀속 카드는 그 봇 토큰으로(게이트웨이 토큰이면 그 카드를 못 찾는다)');
+  assert.match(gw, /needEnabled \|\| all\.telegram\.enabled/, '게이트웨이 카드 후속의 채널 꺼짐 게이트(검수 LOW-4)가 유실됐다');
   assert.match(block, /sendTgReply\(/, 'sendTgReply 경유 — 본문 속 파일 경로가 자동 첨부(S2)되는 경로');
 });
