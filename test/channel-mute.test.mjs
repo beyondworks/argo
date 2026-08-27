@@ -92,13 +92,15 @@ test('알림 종류 라벨이 ko·en 둘 다 있다 — 종류가 늘어도 키 
   }
 });
 
-test('배선 — 결재·슬랙은 블록 머리 판정, 브리핑 3종은 telegramBriefingDest 단일 판정을 지난다', () => {
+test('배선 — 슬랙은 블록 머리 판정, 텔레그램(결재 포함 전 종류)은 telegramBriefingDest 단일 판정을 지난다', () => {
   // 판정 함수가 옳아도 게이트웨이가 안 부르면 아무 소용이 없다(변이 실측: 호출을 지워도 전 스위트 초록).
-  // 그리고 **머리에서 한 번**이 중요하다 — 분기마다 되풀이하면 새 종류를 추가할 때 빠뜨리기 쉽고,
+  // 그리고 **한 판정 지점**이 중요하다 — 분기마다 되풀이하면 새 종류를 추가할 때 빠뜨리기 쉽고,
   // 그러면 못 끄는 것은 물론 꺼진 채널로도 나간다(원래 있던 enabled 보증이 그렇게 유실됐었다).
   const g = readFileSync(new URL('../src/gateway.mjs', import.meta.url), 'utf8');
   assert.match(g, /import \{ channelSends \}/, '판정 정본을 임포트하지 않는다 — 규칙 사본이 생겼다');
-  assert.match(g, /if \(t\.token && t\.chatId && sends\('telegram', t\)\)/, '텔레그램 블록 머리에 채널 판정이 없다');
+  // 결재도 브리핑과 같은 목적지 판정(게이트웨이 우선 + 직통 봇 폴백)을 지난다 — 폴백 카드의 버튼은
+  // 직통 봇 폴러의 handleApprovalCallback(공용)이 받는다. 음소거 존중은 gateway-protocol.test.mjs가 행동으로 잠근다.
+  assert.match(g, /telegramBriefingDest\(t, 'approval'/, '결재 푸시가 목적지 판정을 안 지난다');
   assert.match(g, /if \(s\.token && s\.channel && sends\('slack', s\)\)/, '슬랙 블록 머리에 채널 판정이 없다');
   // 받은 서류함은 알림 버스(onNotify)가 아니라 감시자가 직접 보낸다 — 목록에 있는 이상 게이트도 지나야
   // "전부 껐는데 파일 넣으니 알림이 온다"가 안 생긴다(분리 검수 지적 2026-07-31). 이제 브리핑과 같은

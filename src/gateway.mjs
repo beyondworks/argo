@@ -219,6 +219,36 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
   return body;
 }
 
+/** 결재 인라인 버튼 콜백 처리 — 회사 게이트웨이·크루 직통 봇 폴러 공용(단일 원천 — 한쪽은 규칙,
+    한쪽은 사본이면 사본이 반드시 낡는다). 허용 조건: 형식 일치 + 카드가 있는 페어링 채팅 +
+    페어링된 사장 본인(ownerId 없는 구 페어링은 통과 — 회사 게이트웨이 기존 관용 유지).
+    그룹 페어링 시 아무 멤버나 결재를 확정하는 것을 막는다. */
+async function handleApprovalCallback(wsId, token, cq, { chatId, ownerId }) {
+  const m = parseApprovalCallback(cq.data); // "ap:<id>:<0|1>" — 형식 밖이면 null(무시). 파서는 protocol
+  const bySender = !ownerId || String(cq.from?.id) === String(ownerId);
+  // chatId·cq.message.chat 존재를 명시 요구 — 양쪽이 다 없으면 String(undefined) 동등으로 게이트가
+  // 열리고(fail-open), 아래 cq.message.chat 접근이 던져 폴러 offset이 영구 오염된다(분리 검수 MEDIUM-1 실측:
+  // 미페어링 cfg + 메시지 없는 콜백에서 타인 승인 확정 + 같은 업데이트 무한 재수신).
+  if (!m || !chatId || !cq.message?.chat || String(cq.message.chat.id) !== String(chatId) || !bySender) return;
+  const approve = m.approve;
+  const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+  try {
+    const item = await resolveWithFollowUp(wsId, m.id, approve);
+    await tg(token, 'answerCallbackQuery', { callback_query_id: cq.id, text: pick(approve ? '승인됨' : '거절됨', approve ? 'Approved' : 'Rejected', lang) });
+    // 원 메시지를 결과로 교체 — 버튼이 함께 사라져 이중 클릭·죽은 버튼이 없다(결재 UX)
+    await tg(token, 'editMessageText', {
+      chat_id: cq.message.chat.id, message_id: cq.message.message_id,
+      text: pick(`${approve ? '✅ 결재 승인' : '❌ 결재 거절'} — ${tidy(item.action)}\n담당 크루가 이어서 보고합니다.`, `${approve ? '✅ Approved' : '❌ Rejected'} — ${tidy(item.action)}\nThe assigned crew will follow up.`, lang),
+    }).catch(() => {});
+  } catch (e) {
+    await tg(token, 'answerCallbackQuery', { callback_query_id: cq.id, text: String(e.message).slice(0, 60) }).catch(() => {});
+    // 이미 처리된 결재 등 — 죽은 버튼만 걷어낸다(재클릭 오류 반복 방지)
+    await tg(token, 'editMessageReplyMarkup', { chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+  }
+}
+// 테스트 전용 — 폴 루프에 묻힌 처리라 행동 테스트가 태울 이음매가 없다(브리핑 폴백과 같은 사유)
+export const _approvalCallbackForTest = handleApprovalCallback;
+
 /* ─── 텔레그램 — long-poll. 첫 발신자가 회사와 페어링되고 이후 그 채팅만 듣는다. ─── */
 function startTelegram(wsId, getCfg) {
   let stopped = false;
@@ -242,28 +272,8 @@ function startTelegram(wsId, getCfg) {
         for (const u of updates) {
           if (stopped) break;
 
-          if (u.callback_query) { // 결재 인라인 버튼
-            const cq = u.callback_query;
-            const m = parseApprovalCallback(cq.data); // "ap:<id>:<0|1>" — 형식 밖이면 null(무시). 파서는 protocol
-            // 채팅 일치 + (페어링된 사장 본인일 때만). 그룹 페어링 시 아무 멤버나 결재를 확정하는 것을 막는다.
-            const bySender = !cfg.ownerId || String(cq.from?.id) === String(cfg.ownerId);
-            if (m && String(cq.message?.chat?.id) === String(cfg.chatId) && bySender) {
-              const approve = m.approve;
-              const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
-              try {
-                const item = await resolveWithFollowUp(wsId, m.id, approve);
-                await tg(cfg.token, 'answerCallbackQuery', { callback_query_id: cq.id, text: pick(approve ? '승인됨' : '거절됨', approve ? 'Approved' : 'Rejected', lang) });
-                // 원 메시지를 결과로 교체 — 버튼이 함께 사라져 이중 클릭·죽은 버튼이 없다(결재 UX)
-                await tg(cfg.token, 'editMessageText', {
-                  chat_id: cfg.chatId, message_id: cq.message.message_id,
-                  text: pick(`${approve ? '✅ 결재 승인' : '❌ 결재 거절'} — ${tidy(item.action)}\n담당 크루가 이어서 보고합니다.`, `${approve ? '✅ Approved' : '❌ Rejected'} — ${tidy(item.action)}\nThe assigned crew will follow up.`, lang),
-                }).catch(() => {});
-              } catch (e) {
-                await tg(cfg.token, 'answerCallbackQuery', { callback_query_id: cq.id, text: String(e.message).slice(0, 60) }).catch(() => {});
-                // 이미 처리된 결재 등 — 죽은 버튼만 걷어낸다(재클릭 오류 반복 방지)
-                await tg(cfg.token, 'editMessageReplyMarkup', { chat_id: cfg.chatId, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
-              }
-            }
+          if (u.callback_query) { // 결재 인라인 버튼 — 처리는 크루 직통 봇 폴러와 공용(handleApprovalCallback)
+            await handleApprovalCallback(wsId, cfg.token, u.callback_query, { chatId: cfg.chatId, ownerId: cfg.ownerId });
             continue;
           }
 
@@ -461,6 +471,11 @@ function startAgentTelegram(wsId, slug, getCfg) {
         await beatGateway(wsId, KEY, true);
         for (const u of updates) {
           if (stopped) break;
+          if (u.callback_query) { // 결재 인라인 버튼 — 게이트웨이 부재 시 폴백 카드(pushEvent approval)가 이 봇으로 온다.
+            // 처리는 회사 게이트웨이와 공용(handleApprovalCallback). 카드는 페어링 DM(ownerChat)에만 실리므로 그 채팅으로 한정.
+            await handleApprovalCallback(wsId, cfg.token, u.callback_query, { chatId: cfg.ownerChat, ownerId: cfg.ownerId });
+            continue;
+          }
           const msg = u.message;
           if (!msg || (!msg.text && !msg.photo && !msg.document && !msg.video && !msg.voice && !msg.audio)) continue;
           const isDm = msg.chat.type === 'private';
@@ -505,7 +520,25 @@ function startAgentTelegram(wsId, slug, getCfg) {
             }
             continue;
           }
-          await enqueueJob(wsId, KEY, u.update_id, { text: strip(msg.text), atts: [], ctx }); // 큐 적재만 — 폴은 계속 돈다
+          const text = strip(msg.text);
+          // 텍스트 결재("승인 ap-xxx")는 큐를 거치지 않고 즉시 — 결재 대기(권한 게이트) 턴들이 워커
+          // 슬롯(동시 2)을 다 점유하면 큐에 실린 승인이 영영 안 돌아 교착이 된다(슬랙 approval 분기·
+          // 인라인 버튼과 같은 위상). 재수신(at-least-once)은 '이미 처리된 결재' 오류 회신으로 끝난다 —
+          // 이중 실행은 resolveApproval의 락이 막는다.
+          const ap = parseApprovalText(text); // 파서는 protocol — 형식 밖이면 일반 지시(큐 적재)
+          if (ap) {
+            const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+            try {
+              const item = await resolveWithFollowUp(wsId, ap.id, ap.approve);
+              await tg(cfg.token, 'sendMessage', { chat_id: ctx.chatId, text: pick(`결재 ${ap.verb} 처리: ${tidy(item.action)}\n실행 결과는 이어서 보고합니다.`, `Approval ${ap.approve ? 'approved' : 'rejected'}: ${tidy(item.action)}\nThe result will follow.`, lang) })
+                .catch((e) => console.error(`[argo] 결재 회신 발송 실패(${wsId}/${slug}):`, e.message)); // 확정은 됐다 — 회신 실패는 로그로(무음 금지, 분리 검수 LOW-2)
+            } catch (e) {
+              await tg(cfg.token, 'sendMessage', { chat_id: ctx.chatId, text: pick(`결재 처리 실패: ${String(e.message).slice(0, 150)}`, `Approval failed: ${String(e.message).slice(0, 150)}`, lang) })
+                .catch((e2) => console.error(`[argo] 결재 회신 발송 실패(${wsId}/${slug}):`, e2.message));
+            }
+            continue;
+          }
+          await enqueueJob(wsId, KEY, u.update_id, { text, atts: [], ctx }); // 큐 적재만 — 폴은 계속 돈다
         }
         // 배치를 다 적재한 뒤에만 offset 전진(at-least-once). 중단 중이면 전진하지 않는다.
         if (!stopped && updates.length) { offset = updates[updates.length - 1].update_id + 1; await saveOffset(wsId, KEY, offset); }
@@ -525,6 +558,10 @@ function startAgentTelegram(wsId, slug, getCfg) {
   })();
   return () => { stopped = true; };
 }
+
+// 테스트 전용 — 폴러 루프의 콜백 배선(위 handleApprovalCallback 호출)은 실행해야만 보인다:
+// 소스 문자열 단언은 분기가 도는지를 못 본다(listAgents 무음실패 실측 계열). fetch를 가로채 구동한다.
+export const _startAgentTelegramForTest = startAgentTelegram;
 
 /* ─── 받은 서류함(inbox) — 폴더에 파일을 넣는 것이 곧 지시. 기본 크루가 읽고 처리해 보고한다. ─── */
 const INBOX_MAX_INFLIGHT = 2; // 파일 여러 개를 한꺼번에 떨궈도 동시 크루 턴을 제한(비용 폭주 방지)
@@ -699,22 +736,34 @@ async function pushEvent(event) {
   const who = event.type === 'approval' ? await approvalWho(event.wsId, event.item, lang) : '';
   // 결재 처리 완료 — 어느 창구(웹·대화창·텔레그램·슬랙)에서 확정됐든 텔레그램 카드의 버튼을 걷어낸다.
   // 푸시 때 저장해 둔 tg:{chatId,messageId}가 있어야 어느 메시지를 편집할지 안다(웹 승인 시 버튼 잔존 갭 해소).
+  // 카드가 실린 봇의 토큰 — 직통 봇 폴백 카드(tg.botSlug, 푸시 때 setApprovalMeta로 귀속)면 그 봇
+  // ("토큰 = 연결" — enabled 개념 없음), 아니면 회사 게이트웨이. 게이트웨이 카드의 후속(followup)만
+  // enabled를 본다(끈 채널로 재발송 금지 — 검수 LOW-4).
+  const approvalCardToken = (it, { needEnabled = false } = {}) => (it?.tg?.botSlug
+    ? all.telegram.agents?.[it.tg.botSlug]?.token ?? null
+    : (!needEnabled || all.telegram.enabled) ? all.telegram.token || null : null);
   if (event.type === 'approval_followup') {
     // 결재 승인/거절 후속 턴의 크루 보고를 결재 카드가 있던 방으로 — sendTgReply라서 본문 속
     // 파일 경로(files/·projects/)가 자동 첨부된다(S2). 발송류 결재의 "승인=발송"이 이걸로 실효.
     const it = event.item;
-    if (it?.tg?.chatId && all.telegram.enabled && all.telegram.token) { // enabled — 끈 채널로 재발송 금지(검수 LOW-4)
-      await sendTgReply(all.telegram.token, it.tg.chatId, event.wsId, event.reply).catch((e) => console.error('[argo] 결재 후속 배달 실패:', e.message));
+    const tok = approvalCardToken(it, { needEnabled: true });
+    if (it?.tg?.chatId && tok) {
+      await sendTgReply(tok, it.tg.chatId, event.wsId, event.reply).catch((e) => console.error('[argo] 결재 후속 배달 실패:', e.message));
+    } else if (it?.tg?.chatId) {
+      // 카드는 "이어서 보고합니다"를 약속했다 — 봇 토큰 소실(크루 삭제 등)·채널 꺼짐으로 못 보내면
+      // 최소한 로그는 남긴다(무로그 증발 금지 — 분리 검수 LOW-1)
+      console.error(`[argo] 결재 후속 미배달(${event.wsId}/${it.id ?? '?'}): 카드가 실린 채널의 토큰 없음(봇 제거 또는 게이트웨이 꺼짐)`);
     }
     return;
   }
   if (event.type === 'approval_resolved') {
     const it = event.item;
-    if (it?.tg?.messageId && all.telegram.token) {
+    const tok = approvalCardToken(it);
+    if (it?.tg?.messageId && tok) {
       const label = it.status === 'expired'
         ? pick('⏳ 만료됨', '⏳ Expired', lang)
         : pick(it.status === 'approved' ? '✅ 결재 승인' : '❌ 결재 거절', it.status === 'approved' ? '✅ Approved' : '❌ Rejected', lang);
-      await tg(all.telegram.token, 'editMessageText', {
+      await tg(tok, 'editMessageText', {
         chat_id: it.tg.chatId, message_id: it.tg.messageId,
         text: pick(`${label} — ${it.action}\n담당 크루가 이어서 보고합니다.`, `${label} — ${it.action}\nThe assigned crew will follow up.`, lang),
       }).catch(() => { /* 이미 편집됐거나(텔레그램 버튼 직접 클릭 경로와 중복) 메시지 없음 — 무해 */ });
@@ -731,23 +780,27 @@ async function pushEvent(event) {
       .catch((e) => console.error('[argo] 위임 미러 실패:', e.message));
     return;
   }
-  // 채널별 알림 선택 — 판정 정본은 channel-events.mjs. **머리에서 한 번만** 검사한다: 분기마다
-  // 되풀이하면 새 종류 추가 시 조건을 빠뜨리기 쉽고, 그러면 못 끄는 것은 물론 꺼진 채널로도 나간다.
+  // 채널별 알림 선택 — 판정 정본은 channel-events.mjs. 텔레그램은 목적지 판정이
+  // telegramBriefingDest(내부에서 channelSends 호출)로 단일화됐고, 슬랙은 블록 머리에서 한 번 본다.
   const sends = (kind, ch) => channelSends(kind, ch, event.type);
   const t = all.telegram;
-  if (t.token && t.chatId && sends('telegram', t)) {
-    if (event.type === 'approval') {
+  // 결재 — 브리핑과 같은 목적지 판정: 게이트웨이 우선, 못 보내면 담당 크루(item.slug)의 직통 봇 폴백.
+  // 폴백 버튼은 직통 봇 폴러의 handleApprovalCallback이 받는다(PR #305의 죽은 버튼 사유 해소).
+  if (event.type === 'approval') {
+    const dest = telegramBriefingDest(t, 'approval', event.item.slug);
+    if (dest) {
       try {
-        const res = await tg(t.token, 'sendMessage', {
-          chat_id: t.chatId,
+        const res = await tg(dest.token, 'sendMessage', {
+          chat_id: dest.chatId,
           text: pick(`결재 요청 · ${who}\n${tidy(event.item.action)}\n\n사유: ${tidy(event.item.reason)}`, `Approval request · ${who}\n${tidy(event.item.action)}\n\nReason: ${tidy(event.item.reason)}`, lang),
           reply_markup: { inline_keyboard: [[
             { text: pick('✅ 승인', '✅ Approve', lang), callback_data: `ap:${event.item.id}:1` },
             { text: pick('❌ 거절', '❌ Reject', lang), callback_data: `ap:${event.item.id}:0` },
           ]] },
         });
-        // 메시지 참조를 결재에 저장 — 나중에 어느 창구에서 승인해도 이 카드의 버튼을 정리할 수 있다
-        if (res?.message_id) await setApprovalMeta(event.wsId, event.item.id, { tg: { chatId: String(t.chatId), messageId: res.message_id } }).catch(() => {});
+        // 메시지 참조를 결재에 저장 — 나중에 어느 창구에서 승인해도 이 카드의 버튼을 정리할 수 있다.
+        // botSlug = 카드가 실린 직통 봇 귀속 — resolved·followup이 같은 봇 토큰으로 이 카드를 다룬다.
+        if (res?.message_id) await setApprovalMeta(event.wsId, event.item.id, { tg: { chatId: String(dest.chatId), messageId: res.message_id, ...(dest.botSlug ? { botSlug: dest.botSlug } : {}) } }).catch(() => {});
       } catch (e) { console.error('[argo] 텔레그램 결재 푸시 실패:', e.message); }
     }
   }
