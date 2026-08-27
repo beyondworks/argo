@@ -787,7 +787,22 @@ async function pushEvent(event) {
   // 결재 — 브리핑과 같은 목적지 판정: 게이트웨이 우선, 못 보내면 담당 크루(item.slug)의 직통 봇 폴백.
   // 폴백 버튼은 직통 봇 폴러의 handleApprovalCallback이 받는다(PR #305의 죽은 버튼 사유 해소).
   if (event.type === 'approval') {
-    const dest = telegramBriefingDest(t, 'approval', event.item.slug);
+    let dest = telegramBriefingDest(t, 'approval', event.item.slug);
+    if (!dest && Object.keys(t?.agents ?? {}).length) {
+      // 최종 폴백 — 담당 크루의 봇이 없으면(선재 유령 slug 'crew' 포함 — 분리 검수 LOW-3, 봇 미페어링
+      // 크루도 동일) 기본 크루 봇으로. inbox 폴백과 같은 계열(defaultCrew 정본 — 사본 금지)이고,
+      // 음소거('approval')는 telegramBriefingDest 안의 channelSends가 여기서도 그대로 존중한다.
+      // agents 가드 — 직통 봇이 하나도 없으면 폴백이 성립할 수 없으니 listAgents 디스크 읽기를 생략
+      // (텔레그램 미설정 회사의 매 결재마다 낭비 — 재검수 LOW-3).
+      const agents = await listAgents(event.wsId).catch(() => []);
+      const def = defaultCrew(agents, t)?.slug;
+      if (def && def !== event.item.slug) dest = telegramBriefingDest(t, 'approval', def);
+      // 그래도 없으면 페어링된 아무 봇(slug 정렬 = 결정적)으로 — 기본 크루조차 봇이 없는 회사에서
+      // 결재가 웹 결재함에 고립되는 사각 해소(재검수 LOW-2). 결재는 크루가 답을 기다리는 차단성
+      // 이벤트라 브리핑(inbox 폴백은 defaultCrew까지만)보다 한 단계 더 넓힌다 — 어느 봇이 실어도
+      // 버튼은 그 봇 폴러의 handleApprovalCallback(id 기준)이 받고, 후속 편집은 botSlug 귀속으로 좇는다.
+      if (!dest) for (const s of Object.keys(t.agents).sort()) { dest = telegramBriefingDest(t, 'approval', s); if (dest) break; }
+    }
     if (dest) {
       try {
         const res = await tg(dest.token, 'sendMessage', {
