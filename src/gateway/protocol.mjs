@@ -2,6 +2,8 @@
 // gateway.mjs 분해: 옮긴 코드는 원문 그대로(행동 불변) — 주석 동반 이동. 신규는 기존 인라인 정규식을
 // 함수로 뽑은 파서 3개(parseApprovalText·parseApprovalCallback·pairCodeMatches)뿐 — 정규식·판정은 원문과 동일.
 
+import { channelSends } from '../channel-events.mjs'; // 발송 판정 정본 — 사본 금지(channel-mute 계약)
+
 const MAX_MSG = 3800; // 텔레그램 4096 제한 대비 여유
 export const clip = (t) => (t.length > MAX_MSG ? `${t.slice(0, MAX_MSG)}\n…(전체 내용은 Argo 데크에서)` : t);
 
@@ -44,6 +46,30 @@ export function parseApprovalCallback(data) {
     수신 텍스트 trim + 대문자 정규화 후 저장 코드와 전등호. */
 export function pairCodeMatches(pairCode, text) {
   return !!pairCode && String(text ?? '').trim().toUpperCase() === pairCode;
+}
+
+/** 브리핑(routine·job·crewmail·inbox)의 텔레그램 목적지 판정(순수) — 회사 게이트웨이가 우선이고,
+    게이트웨이가 못 보내면(꺼짐·미페어링·음소거 아님) **담당 크루의 직통 봇**으로 폴백한다.
+    경위(실사용 2026-08-27): 회사 게이트웨이 enabled=false + 크루 직통 봇 8개만 페어링된 회사에서
+    루틴이 51회 ok로 끝나고도 텔레그램에 0회 도착 — 브리핑 발송이 게이트웨이 단일 경로라
+    channelSends에서 전량 무음 탈락했고, 직통 봇으로 가는 경로 자체가 없었다.
+    규칙: ① 판정은 정본 channelSends만 쓴다(사본 금지 — channel-mute 계약). ② 직통 봇은
+    "토큰 = 연결"(별도 토글 없음 — gateway 매니저와 같은 의미)이라 enabled만 참으로 두되,
+    회사 채널의 음소거(mutedEvents)는 폴백에서도 그대로 존중한다. ③ 결재(approval)는 폴백하지
+    않는다 — 인라인 버튼 콜백을 직통 봇 폴러가 처리하지 않아 죽은 버튼이 된다.
+    inbox는 알림 버스(onNotify)가 아니라 inbox 감시자가 직접 부른다 — 담당 크루 개념이 없어
+    처리 크루(기본 크루)의 slug를 넘긴다(분리 검수 LOW-1: 루틴·작업·쪽지는 폴백으로 오는데
+    받은 서류함만 못 받는 비대칭 해소). pushEvent에는 inbox 이벤트가 오지 않으므로 이중 발송 없음.
+    반환: { token, chatId } 또는 null(보낼 곳 없음). */
+export const TG_BRIEFING_TYPES = Object.freeze(['routine', 'job', 'crewmail', 'inbox']);
+export function telegramBriefingDest(tg, type, slug) {
+  if (!TG_BRIEFING_TYPES.includes(type)) return null;
+  if (tg?.token && tg.chatId && channelSends('telegram', tg, type)) return { token: tg.token, chatId: tg.chatId };
+  const bot = tg?.agents?.[slug];
+  if (bot?.token && bot.ownerChat && channelSends('telegram', { enabled: true, mutedEvents: tg?.mutedEvents }, type)) {
+    return { token: bot.token, chatId: String(bot.ownerChat) };
+  }
+  return null;
 }
 
 /** 슬랙 수신 메시지 분류(순수) — 폴 루프가 이 결과대로 행동한다. (export: 회귀 테스트용)

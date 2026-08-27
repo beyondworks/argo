@@ -170,3 +170,63 @@ test('startTypingKeepalive: 주기 갱신 + 장시간 1회 안내 + stop 후 정
   await new Promise((r) => setTimeout(r, _typingForTest.refreshMs + 400));
   assert.equal(calls.length, after, 'stop 후에는 더 보내지 않는다');
 });
+
+/* ── 브리핑 직통 봇 폴백 — pushEvent 행동 게이트(실호출·fetch 가로채기) ──
+   실사용 2026-08-27: 회사 게이트웨이 enabled=false + 크루 직통 봇만 페어링된 회사에서 루틴이
+   51회 ok로 끝나고도 텔레그램 0회 도착 — 발송이 게이트웨이 단일 경로라 전량 무음 탈락.
+   소스 문자열 단언은 이 배선을 못 지킨다(변이 실측: 호출을 `null &&`로 죽여도 초록) —
+   여기서는 pushEvent를 실제로 태우고 텔레그램 API 호출 자체를 검증한다. */
+test('pushEvent: 게이트웨이 꺼짐 + 직통 봇 페어링 → 루틴 브리핑이 담당 크루 봇으로 1회 발송된다', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-brief';
+  await createCompany(WS, '브리핑사', 'pepper');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-brief' }); // enabled 기본 false — 신고 상태 그대로
+  await updateAgentBot(WS, 'pepper', { token: 'bot-tok-brief' });
+  await updateAgentBot(WS, 'pepper', { ownerId: 1, ownerChat: '200' }); // 페어링은 토큰과 별도 호출 — 토큰 변경이 페어링을 초기화하므로
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') });
+    return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await _pushEventForTest({ type: 'routine', wsId: WS, routine: { title: '아침 브리핑', agentSlug: 'pepper' }, ok: true, reply: '결과 본문' });
+  } finally {
+    globalThis.fetch = origFetch; // 다른 테스트의 실 fetch 계약 복원
+  }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1, '정확히 1회 — 게이트웨이·봇 이중 발송 금지');
+  assert.ok(sends[0].url.includes('/botbot-tok-brief/'), '담당 크루의 직통 봇 토큰으로 나간다');
+  assert.equal(String(sends[0].body.chat_id), '200', '봇 페어링 채팅으로');
+  assert.match(sends[0].body.text, /아침 브리핑/, '루틴 제목이 브리핑 머리에 실린다');
+});
+
+test('pushEvent: 게이트웨이 가동 중이면 게이트웨이로만 — 직통 봇 폴백이 겹쳐 쏘지 않는다', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-brief-gw'; // 자체 회사 — 앞 테스트와 상태 공유 금지(concurrency가 켜져도 안전, 분리 검수 LOW-3)
+  await createCompany(WS, '브리핑사2', 'pepper');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-brief2' });
+  await updateConnection(WS, 'telegram', { enabled: true });
+  await updateConnection(WS, 'telegram', { chatId: '999' }); // 페어링 완료 상태(폴러 없이 직접 기입)
+  await updateAgentBot(WS, 'pepper', { token: 'bot-tok-brief2' });
+  await updateAgentBot(WS, 'pepper', { ownerId: 1, ownerChat: '200' }); // 봇도 페어링 — 겹쳐 쏘면 여기로도 나가야 잡힌다
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') });
+    return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await _pushEventForTest({ type: 'routine', wsId: WS, routine: { title: '아침 브리핑', agentSlug: 'pepper' }, ok: true, reply: '결과 본문' });
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1, '이중 발송 금지');
+  assert.ok(sends[0].url.includes('/botgw-tok-brief2/'), '게이트웨이가 살아 있으면 게이트웨이 경로');
+  assert.equal(String(sends[0].body.chat_id), '999');
+});

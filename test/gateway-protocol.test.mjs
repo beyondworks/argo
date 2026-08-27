@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseApprovalText, parseApprovalCallback, pairCodeMatches, clip, tidy, pollBackoffMs, pick,
-  classifySlackMessage,
+  classifySlackMessage, telegramBriefingDest,
 } from '../src/gateway/protocol.mjs';
 
 /* ── 텍스트 결재 회신 파서 — 슬랙·텔레그램 공용 앵커 ── */
@@ -99,4 +99,51 @@ test('classifySlackMessage: 사장의 승인/거절 텍스트가 approval로 매
   assert.deepEqual(classifySlackMessage(cfg, { user: 'U1', text: '거절 ap-xyz99' }), { kind: 'approval', approve: false, id: 'ap-xyz99' });
   assert.equal(classifySlackMessage(cfg, { user: 'U2', text: '승인 ap-abc12' }).kind, 'skip', '사장 외 결재 무시가 위임보다 선행');
   assert.equal(classifySlackMessage(cfg, { user: 'U1', text: '승인해줘 그냥' }).kind, 'turn', '앵커 미일치는 일반 턴');
+});
+
+/* ── 브리핑 텔레그램 목적지 — 게이트웨이 우선 + 크루 직통 봇 폴백 ──
+   실사용 2026-08-27: 회사 게이트웨이 enabled=false + 크루 직통 봇만 페어링된 회사에서
+   루틴이 51회 ok로 끝나고도 텔레그램 0회 도착("텔레그램으로 보내줘" 루틴 전부 헛돎).
+   브리핑 발송이 게이트웨이 단일 경로라 직통 봇으로 가는 길 자체가 없었다 — 그 갭을 잠근다. */
+test('telegramBriefingDest: 게이트웨이 가동 중이면 게이트웨이로 — 폴백 없음(이중 발송 금지)', () => {
+  const tg = { enabled: true, token: 'gw-tok', chatId: '100', agents: { pepper: { token: 'bot-tok', ownerChat: '200' } } };
+  assert.deepEqual(telegramBriefingDest(tg, 'routine', 'pepper'), { token: 'gw-tok', chatId: '100' });
+});
+
+test('telegramBriefingDest: 게이트웨이 꺼짐 + 직통 봇 페어링 → 담당 크루 봇으로 폴백(신고 재현)', () => {
+  const tg = { enabled: false, token: 'gw-tok', chatId: '100', mutedEvents: [], agents: { pepper: { token: 'bot-tok', ownerChat: 200 } } };
+  assert.deepEqual(telegramBriefingDest(tg, 'routine', 'pepper'), { token: 'bot-tok', chatId: '200' }, 'chatId는 문자열 정규화');
+  assert.deepEqual(telegramBriefingDest(tg, 'job', 'pepper'), { token: 'bot-tok', chatId: '200' });
+  assert.deepEqual(telegramBriefingDest(tg, 'crewmail', 'pepper'), { token: 'bot-tok', chatId: '200' });
+});
+
+test('telegramBriefingDest: 게이트웨이 미연결(토큰·chatId 없음)에서도 직통 봇 폴백이 동작한다', () => {
+  const tg = { enabled: false, token: '', chatId: null, agents: { pepper: { token: 'bot-tok', ownerChat: '200' } } };
+  assert.deepEqual(telegramBriefingDest(tg, 'routine', 'pepper'), { token: 'bot-tok', chatId: '200' });
+});
+
+test('telegramBriefingDest: 음소거(mutedEvents)는 폴백에서도 존중 — 끈 종류는 어느 경로로도 안 간다', () => {
+  const tg = { enabled: false, mutedEvents: ['routine'], agents: { pepper: { token: 'bot-tok', ownerChat: '200' } } };
+  assert.equal(telegramBriefingDest(tg, 'routine', 'pepper'), null, '끈 종류는 직통 봇으로도 안 보낸다');
+  assert.deepEqual(telegramBriefingDest(tg, 'job', 'pepper'), { token: 'bot-tok', chatId: '200' }, '다른 종류는 그대로');
+});
+
+test('telegramBriefingDest: 보낼 곳 없음 → null — 미페어링 봇·없는 크루·결재는 폴백 대상이 아니다', () => {
+  const unpaired = { enabled: false, agents: { pepper: { token: 'bot-tok', ownerChat: null } } };
+  assert.equal(telegramBriefingDest(unpaired, 'routine', 'pepper'), null, '페어링 전 봇(ownerChat 없음)으로는 못 보낸다');
+  assert.equal(telegramBriefingDest({ enabled: false, agents: {} }, 'routine', 'pepper'), null, '담당 크루의 봇이 없다');
+  assert.equal(telegramBriefingDest({ enabled: false, agents: { pepper: { token: 'bot-tok', ownerChat: '200' } } }, 'routine', undefined), null, 'slug 없음(방어)');
+  // 결재는 브리핑이 아니다 — 인라인 버튼 콜백을 직통 봇 폴러가 처리하지 않아 죽은 버튼이 된다
+  const tg = { enabled: true, token: 'gw-tok', chatId: '100', agents: { pepper: { token: 'bot-tok', ownerChat: '200' } } };
+  assert.equal(telegramBriefingDest(tg, 'approval', 'pepper'), null, 'approval은 게이트웨이 전용 분기가 담당');
+  assert.equal(telegramBriefingDest(null, 'routine', 'pepper'), null, 'null 안전');
+});
+
+test('telegramBriefingDest: inbox — 게이트웨이 우선·직통 봇 폴백·음소거 존중(브리핑과 같은 계약, LOW-1)', () => {
+  const gw = { enabled: true, token: 'gw', chatId: '1', agents: { pepper: { token: 'bt', ownerChat: '2' } } };
+  assert.deepEqual(telegramBriefingDest(gw, 'inbox', 'pepper'), { token: 'gw', chatId: '1' }, '게이트웨이 가동 시 기존 경로 그대로');
+  const off = { enabled: false, agents: { pepper: { token: 'bt', ownerChat: '2' } } };
+  assert.deepEqual(telegramBriefingDest(off, 'inbox', 'pepper'), { token: 'bt', chatId: '2' }, '게이트웨이 꺼짐 → 처리 크루 봇 폴백');
+  assert.equal(telegramBriefingDest({ ...off, mutedEvents: ['inbox'] }, 'inbox', 'pepper'), null, '끈 종류는 폴백으로도 안 간다');
+  assert.equal(telegramBriefingDest(off, 'inbox', null), null, '처리 크루 미상(명단 없음)이면 보내지 않는다');
 });

@@ -25,8 +25,8 @@ import { paths, loadCompany } from './workspace.mjs';
 import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath, attachFailureNote } from './tg-format.mjs';
 import { beatGateway, loadOffset, saveOffset, loadSlackCursor, saveSlackCursor } from './gateway/persist.mjs';
 import { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT } from './gateway/queue.mjs';
-import { clip, pollBackoffMs, pick, tidy, parseApprovalText, parseApprovalCallback, pairCodeMatches, classifySlackMessage } from './gateway/protocol.mjs';
-import { routeMessage, crewStatusReply, approvalWho } from './gateway/routing.mjs';
+import { clip, pollBackoffMs, pick, tidy, parseApprovalText, parseApprovalCallback, pairCodeMatches, classifySlackMessage, telegramBriefingDest } from './gateway/protocol.mjs';
+import { routeMessage, crewStatusReply, approvalWho, defaultCrew } from './gateway/routing.mjs';
 import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스트도 같은 함수를 본다
 
 // facade — 기존 임포터(chat.mjs 동적 import·테스트)가 gateway.mjs에서 그대로 가져간다(무수정 계약).
@@ -567,9 +567,14 @@ function startInboxWatcher(wsId) {
             } catch {
               await unlink(fp).catch(() => {}); // 다른 마운트 등 rename 실패 시 — 최소한 원본은 제거해 무한 재처리 차단
             }
-            // 자리에 없어도 결과가 도착한다 — 단 끌 수 있어야 한다(설정의 'inbox' 종류).
-            if (cfg.token && cfg.chatId && channelSends('telegram', cfg, 'inbox')) {
-              await sendTgReply(cfg.token, cfg.chatId, wsId, pick(`[받은 서류함] ${safe}\n\n${reply}`, `[Inbox] ${safe}\n\n${reply}`, lang)).catch(() => {});
+            // 자리에 없어도 결과가 도착한다 — 단 끌 수 있어야 한다(설정의 'inbox' 종류). 게이트웨이가
+            // 못 보내면(꺼짐·미페어링) **처리 크루의 직통 봇**으로 폴백 — 처리 크루 판정은 runTurn의
+            // routeMessage와 같은 defaultCrew 정본(사본 금지). 브리핑 3종과 같은 telegramBriefingDest
+            // 계약이라 음소거('inbox')도 폴백에서 그대로 존중된다(분리 검수 LOW-1 비대칭 해소).
+            const agents = await listAgents(wsId).catch(() => []);
+            const d = telegramBriefingDest(cfg, 'inbox', defaultCrew(agents, cfg)?.slug);
+            if (d) {
+              await sendTgReply(d.token, d.chatId, wsId, pick(`[받은 서류함] ${safe}\n\n${reply}`, `[Inbox] ${safe}\n\n${reply}`, lang)).catch(() => {});
             }
           } catch (e) {
             console.error(`[argo] inbox 처리 실패(${wsId}/${n}):`, e.message); // 원본을 inbox에 유지 → 다음 틱 재시도
@@ -745,13 +750,20 @@ async function pushEvent(event) {
         if (res?.message_id) await setApprovalMeta(event.wsId, event.item.id, { tg: { chatId: String(t.chatId), messageId: res.message_id } }).catch(() => {});
       } catch (e) { console.error('[argo] 텔레그램 결재 푸시 실패:', e.message); }
     }
+  }
+  // 브리핑 3종(routine·job·crewmail)의 목적지는 telegramBriefingDest(정본·순수)가 정한다 —
+  // 회사 게이트웨이 우선, 못 보내면 담당 크루의 직통 봇 폴백. 실사용 2026-08-27: 게이트웨이
+  // enabled=false + 크루 직통 봇만 페어링된 회사에서 루틴 51회 ok인데 텔레그램 0회 도착
+  // ("텔레그램으로 보내줘" 루틴 3개가 전부 헛돎) — 직통 봇으로 가는 경로 자체가 없었다.
+  const dest = telegramBriefingDest(t, event.type, event.type === 'routine' ? event.routine?.agentSlug : event.slug);
+  if (dest) {
     if (event.type === 'routine') {
-      await sendTgReply(t.token, t.chatId, event.wsId, pick(`**[루틴] ${event.routine.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Routine] ${event.routine.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang))
+      await sendTgReply(dest.token, dest.chatId, event.wsId, pick(`**[루틴] ${event.routine.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Routine] ${event.routine.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang))
         .catch((e) => console.error('[argo] 텔레그램 루틴 푸시 실패:', e.message));
     }
     // 장시간 작업 완료 — 사장이 앱을 안 보고 있어도 결과가 도착한다(이 큐의 존재 이유)
     if (event.type === 'job') {
-      await sendTgReply(t.token, t.chatId, event.wsId, pick(`**[작업 완료] ${event.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Task done] ${event.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang))
+      await sendTgReply(dest.token, dest.chatId, event.wsId, pick(`**[작업 완료] ${event.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Task done] ${event.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang))
         .catch((e) => console.error('[argo] 텔레그램 작업 푸시 실패:', e.message));
     }
     // 크루 쪽지 배달 — 다른 세션·다른 시각의 크루 간 소통이라 사장이 화면을 보고 있지 않은 게 기본값.
@@ -760,7 +772,7 @@ async function pushEvent(event) {
       const agents = await listAgents(event.wsId).catch(() => []);
       const nameOf = (s) => agents.find((a) => a.slug === s)?.name ?? s;
       const cc = event.kind === 'cc';
-      await sendTgReply(t.token, t.chatId, event.wsId, pick(
+      await sendTgReply(dest.token, dest.chatId, event.wsId, pick(
         `**[크루 쪽지] ${event.fromName ?? nameOf(event.from)} → ${nameOf(event.slug)}${cc ? ' (참조)' : ''}**\n\n${event.reply}`,
         `**[Crew mail] ${event.fromName ?? nameOf(event.from)} → ${nameOf(event.slug)}${cc ? ' (CC)' : ''}**\n\n${event.reply}`,
         lang,
@@ -786,6 +798,11 @@ async function pushEvent(event) {
       .catch((e) => console.error('[argo] 슬랙 푸시 실패:', e.message));
   }
 }
+
+// 테스트 전용 — pushEvent는 onNotify로만 배선되는 내부 함수라 행동 테스트가 태울 이음매가 없었다.
+// 소스 문자열 단언은 배선의 존재만 보고 분기 실행을 못 본다(변이 실측: 호출을 `null &&`로 죽여도 초록)
+// — 실행 게이트는 이 훅으로 fetch를 가로채 실제 발송을 검증한다(gateway.test.mjs).
+export const _pushEventForTest = pushEvent;
 
 /* ─── 매니저 — 회사별 연결 설정을 지켜보며 폴러를 켜고 끈다 ─── */
 export function ensureGateway() {
