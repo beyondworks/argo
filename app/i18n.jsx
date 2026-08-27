@@ -473,6 +473,13 @@ const DICT = {
   'settings.conn.ev.job': ['장시간 작업 완료', 'Long task done'],
   // 어휘는 chat.via.*와 맞춘다 — 채팅에서 '동료 쪽지'로 본 것을 설정에서 다른 이름으로 끄면 헷갈린다.
   'settings.conn.ev.crewmail': ['동료 쪽지', 'Crew mail'],
+  // 결재 비대칭 정직 표기 — 직통 봇 폴백(브리핑 3종)은 결재를 나르지 않는다(폴러가 callback_query
+  // 미처리 → 인라인 버튼이 죽은 버튼. PR #305 분리 검수 LOW-2). "브리핑은 오는데 결재는 안 온다"를
+  // 화면이 먼저 말해야 신고가 안 된다(러너 중립성 계열 — 못 하는 건 정직 표기, 조용한 무동작 금지).
+  'settings.conn.approvalNeedsGateway': [
+    '결재 요청 알림은 회사 게이트웨이 연결이 필요합니다 — 크루 직통 봇으로는 브리핑(루틴·작업·쪽지)만 오고 결재 요청은 오지 않습니다.',
+    'Approval requests need the company gateway — crew direct bots deliver briefings (routines, tasks, crew mail) only, not approval requests.',
+  ],
   // 커넥터(로그인만으로 붙는 외부 서비스) — 설계서 US-6
   'settings.connectors.title': ['외부 서비스 연결', 'Connected services'],
   'settings.connectors.help': ['구글 계정으로 로그인하면 크루가 그 서비스를 씁니다. API 키를 만들거나 붙여넣을 필요가 없습니다.', 'Sign in with your Google account and your crew can use that service. No API keys to create or paste.'],
