@@ -797,6 +797,11 @@ async function pushEvent(event) {
       const agents = await listAgents(event.wsId).catch(() => []);
       const def = defaultCrew(agents, t)?.slug;
       if (def && def !== event.item.slug) dest = telegramBriefingDest(t, 'approval', def);
+      // 그래도 없으면 페어링된 아무 봇(slug 정렬 = 결정적)으로 — 기본 크루조차 봇이 없는 회사에서
+      // 결재가 웹 결재함에 고립되는 사각 해소(재검수 LOW-2). 결재는 크루가 답을 기다리는 차단성
+      // 이벤트라 브리핑(inbox 폴백은 defaultCrew까지만)보다 한 단계 더 넓힌다 — 어느 봇이 실어도
+      // 버튼은 그 봇 폴러의 handleApprovalCallback(id 기준)이 받고, 후속 편집은 botSlug 귀속으로 좇는다.
+      if (!dest) for (const s of Object.keys(t.agents).sort()) { dest = telegramBriefingDest(t, 'approval', s); if (dest) break; }
     }
     if (dest) {
       try {

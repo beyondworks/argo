@@ -437,6 +437,34 @@ test("결재 최종 폴백: 담당 slug에 봇이 없으면(유령 'crew' 포함
   assert.deepEqual(stored.tg, { chatId: '300', messageId: 77, botSlug: 'pepper' }, '카드는 기본 크루 봇에 귀속 — 버튼 콜백·해소 편집·후속 배달이 같은 봇으로 돈다');
 });
 
+test('결재 최종 폴백: 기본 크루조차 봇이 없으면 페어링된 봇 중 slug 정렬 첫 번째로 — 미페어링 봇은 건너뛴다(재검수 LOW-2)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
+  const WS = 'co-appr-anybot';
+  await createCompany(WS, '결재사7', 'pepper');
+  // 기본 크루(pepper)는 봇 미페어링 — defaultCrew 폴백까지 전부 비는 회사를 재현.
+  // beta는 토큰만 있고 페어링 전(ownerChat 없음) — 정렬상 앞이어도 건너뛰어야 한다.
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'pepper.md'), '---\nname: 페퍼\n---\n\n비서.\n');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-anybot', defaultCrew: 'pepper' }); // enabled 기본 false
+  await updateAgentBot(WS, 'beta', { token: 'bot-tok-beta' });
+  await updateAgentBot(WS, 'zeta', { token: 'bot-tok-zeta' });
+  await updateAgentBot(WS, 'zeta', { ownerId: 1, ownerChat: '600' });
+  await updateAgentBot(WS, 'delta', { token: 'bot-tok-delta' });
+  await updateAgentBot(WS, 'delta', { ownerId: 1, ownerChat: '500' });
+  const item = await addApproval(WS, { slug: 'crew', action: 'gmail · send_mail', reason: '외부 서비스에 쓰기', kind: 'connector' });
+  const calls = await withMockTg(async () => {
+    await _pushEventForTest({ type: 'approval', wsId: WS, item });
+  });
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1, '카드가 어느 봇으로도 안 나갔다 — 웹 결재함 고립(LOW-2 사각)');
+  assert.ok(sends[0].url.includes('/botbot-tok-delta/'), '페어링된 봇 중 slug 정렬 첫 번째(delta)로 — 미페어링 beta는 건너뛴다');
+  assert.equal(String(sends[0].body.chat_id), '500');
+  const stored = (await loadApprovals(WS)).find((a) => a.id === item.id);
+  assert.deepEqual(stored.tg, { chatId: '500', messageId: 77, botSlug: 'delta' }, '임의 봇 폴백도 botSlug 귀속 — 콜백·해소 편집·후속 배달이 같은 봇으로 돈다');
+});
+
 test('결재 최종 폴백도 음소거를 존중한다 — mutedEvents(approval)면 어느 봇으로도 나가지 않는다', async () => {
   const { _pushEventForTest } = await import('../src/gateway.mjs');
   const { updateAgentBot } = await import('../src/connections.mjs');
