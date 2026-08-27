@@ -407,3 +407,41 @@ test('결재 해소 편집: botSlug 귀속 카드는 그 봇 토큰으로 편집
   assert.ok(edit.url.includes('/botbot-tok-appr/'), '카드가 실린 직통 봇 토큰으로 — 게이트웨이 토큰이면 그 카드를 못 찾는다');
   assert.equal(String(edit.body.chat_id), '200');
 });
+
+/* ── 결재 최종 폴백 — 담당 slug의 봇이 없으면 기본 크루 봇으로(inbox 폴백과 같은 계열, 분리 검수 LOW-3) ──
+   선재 상태: 커넥터 결재가 slug 없이 유령 'crew'로 등록되면 폴백 판정이 존재하지 않는 크루의 봇을
+   찾다 null — 게이트웨이 꺼진 회사에서 직통 봇들이 페어링돼 있어도 카드가 웹 결재함에만 남았다. */
+test("결재 최종 폴백: 담당 slug에 봇이 없으면(유령 'crew' 포함) 기본 크루 봇으로 카드가 나간다", async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
+  const WS = 'co-appr-orphan';
+  await createCompany(WS, '결재사5', 'pepper');
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'pepper.md'), '---\nname: 페퍼\n---\n\n비서.\n'); // 기본 크루 판정(defaultCrew)의 원료
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-orphan' }); // enabled 기본 false — 게이트웨이 못 보내는 상태
+  await updateAgentBot(WS, 'pepper', { token: 'bot-tok-orphan' });
+  await updateAgentBot(WS, 'pepper', { ownerId: 1, ownerChat: '300' }); // 토큰 변경이 페어링을 초기화하므로 별도 호출
+  const item = await addApproval(WS, { slug: 'crew', action: 'gmail · send_mail', reason: '외부 서비스에 쓰기', kind: 'connector' }); // 선재 유령 slug를 그대로 재현
+  const calls = await withMockTg(async () => {
+    await _pushEventForTest({ type: 'approval', wsId: WS, item });
+  });
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1, '카드가 어느 봇으로도 안 나갔다 — 웹 결재함 고립(최종 폴백 부재)');
+  assert.ok(sends[0].url.includes('/botbot-tok-orphan/'), '기본 크루의 직통 봇 토큰으로 나간다');
+  assert.equal(String(sends[0].body.chat_id), '300', '기본 크루 봇의 페어링 채팅으로');
+  const stored = (await loadApprovals(WS)).find((a) => a.id === item.id);
+  assert.deepEqual(stored.tg, { chatId: '300', messageId: 77, botSlug: 'pepper' }, '카드는 기본 크루 봇에 귀속 — 버튼 콜백·해소 편집·후속 배달이 같은 봇으로 돈다');
+});
+
+test('결재 최종 폴백도 음소거를 존중한다 — mutedEvents(approval)면 어느 봇으로도 나가지 않는다', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { addApproval } = await import('../src/approvals.mjs');
+  const WS = 'co-appr-orphan'; // 위 회사 재사용(봇 페어링 그대로) — 음소거만 더한다
+  await updateConnection(WS, 'telegram', { mutedEvents: ['approval'] });
+  const item = await addApproval(WS, { slug: 'crew', action: 'gmail · send_mail', reason: '외부 서비스에 쓰기', kind: 'connector' });
+  const calls = await withMockTg(async () => {
+    await _pushEventForTest({ type: 'approval', wsId: WS, item });
+  });
+  assert.equal(calls.filter((c) => c.url.includes('/sendMessage')).length, 0, '음소거를 뚫고 폴백이 쐈다 — channelSends 계약 위반');
+});
