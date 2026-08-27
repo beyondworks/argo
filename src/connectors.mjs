@@ -426,8 +426,19 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
       // 결재 게이트 — **러너 무관 단일 지점**이다. SDK 표면(use_connector)도 CLI 지시 블록도 이 함수로
       // 수렴하므로(설계서 §1), 여기 한 번 걸면 어느 러너로도 우회가 없다. 러너별로 걸면 반드시 갈린다.
       const { addApproval } = await import('./approvals.mjs'); // 동적 — approvals→chat→connectors 순환 방지
+      // 담당 크루 귀속 — 표면(chat use_connector·cli-directives)은 항상 실제 slug를 넘긴다. 없이 불리면
+      // (코어 직접 호출) 유령 'crew'로 등록됐었고, 그 slug는 텔레그램 직통 봇 폴백 판정에서 존재하지
+      // 않는 크루의 봇을 찾다 null이 됐다(분리 검수 LOW-3) — 기본 크루(defaultCrew 정본·사본 금지)로 귀속한다.
+      let ownerSlug = slug;
+      if (!ownerSlug) {
+        const [{ listAgents }, { loadConnections }, { defaultCrew }] = await Promise.all([
+          import('./hub.mjs'), import('./connections.mjs'), import('./gateway/routing.mjs'),
+        ]);
+        const tgCfg = (await loadConnections(wsId).catch(() => null))?.telegram;
+        ownerSlug = defaultCrew(await listAgents(wsId).catch(() => []), tgCfg)?.slug ?? 'crew';
+      }
       await addApproval(wsId, {
-        slug: slug ?? 'crew',
+        slug: ownerSlug,
         kind: 'connector',
         action: `${serverId} · ${tool}`,
         reason: '외부 서비스에 쓰기',

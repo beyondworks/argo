@@ -787,7 +787,15 @@ async function pushEvent(event) {
   // 결재 — 브리핑과 같은 목적지 판정: 게이트웨이 우선, 못 보내면 담당 크루(item.slug)의 직통 봇 폴백.
   // 폴백 버튼은 직통 봇 폴러의 handleApprovalCallback이 받는다(PR #305의 죽은 버튼 사유 해소).
   if (event.type === 'approval') {
-    const dest = telegramBriefingDest(t, 'approval', event.item.slug);
+    let dest = telegramBriefingDest(t, 'approval', event.item.slug);
+    if (!dest) {
+      // 최종 폴백 — 담당 크루의 봇이 없으면(선재 유령 slug 'crew' 포함 — 분리 검수 LOW-3, 봇 미페어링
+      // 크루도 동일) 기본 크루 봇으로. inbox 폴백과 같은 계열(defaultCrew 정본 — 사본 금지)이고,
+      // 음소거('approval')는 telegramBriefingDest 안의 channelSends가 여기서도 그대로 존중한다.
+      const agents = await listAgents(event.wsId).catch(() => []);
+      const def = defaultCrew(agents, t)?.slug;
+      if (def && def !== event.item.slug) dest = telegramBriefingDest(t, 'approval', def);
+    }
     if (dest) {
       try {
         const res = await tg(dest.token, 'sendMessage', {
