@@ -1046,8 +1046,11 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
           <span style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.5 }}>{t('settings.conn.pairCodeHelp')}</span>
         </div>
       )}
-      {/* 이 채널로 보낼 알림 — 연결을 끊지 않고 종류별로 끈다(끈 것은 앱에 그대로 남는다). */}
-      {conn?.hasToken && (
+      {/* 이 채널로 보낼 알림 — 연결을 끊지 않고 종류별로 끈다(끈 것은 앱에 그대로 남는다).
+          텔레그램은 크루 직통 봇만 연결한 회사도 브리핑을 받으므로(브리핑 직통 봇 폴백, 분리 검수
+          MEDIUM-1 2026-08-27) 게이트웨이 토큰이 없어도 칩을 보여야 끌 수단이 있다 — "끌 수단이
+          연결 해제뿐"이던 2026-07-31 신고의 재발 방지. */}
+      {(conn?.hasToken || Object.keys(conn?.agents ?? {}).length > 0) && (
         <div style={{ display: 'grid', gap: 6 }}>
           <span className="microlabel">{t('settings.conn.notify')}</span>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
