@@ -226,7 +226,10 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
 async function handleApprovalCallback(wsId, token, cq, { chatId, ownerId }) {
   const m = parseApprovalCallback(cq.data); // "ap:<id>:<0|1>" — 형식 밖이면 null(무시). 파서는 protocol
   const bySender = !ownerId || String(cq.from?.id) === String(ownerId);
-  if (!m || String(cq.message?.chat?.id) !== String(chatId) || !bySender) return;
+  // chatId·cq.message.chat 존재를 명시 요구 — 양쪽이 다 없으면 String(undefined) 동등으로 게이트가
+  // 열리고(fail-open), 아래 cq.message.chat 접근이 던져 폴러 offset이 영구 오염된다(분리 검수 MEDIUM-1 실측:
+  // 미페어링 cfg + 메시지 없는 콜백에서 타인 승인 확정 + 같은 업데이트 무한 재수신).
+  if (!m || !chatId || !cq.message?.chat || String(cq.message.chat.id) !== String(chatId) || !bySender) return;
   const approve = m.approve;
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
   try {
@@ -527,9 +530,11 @@ function startAgentTelegram(wsId, slug, getCfg) {
             const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
             try {
               const item = await resolveWithFollowUp(wsId, ap.id, ap.approve);
-              await tg(cfg.token, 'sendMessage', { chat_id: ctx.chatId, text: pick(`결재 ${ap.verb} 처리: ${tidy(item.action)}\n실행 결과는 이어서 보고합니다.`, `Approval ${ap.approve ? 'approved' : 'rejected'}: ${tidy(item.action)}\nThe result will follow.`, lang) }).catch(() => {});
+              await tg(cfg.token, 'sendMessage', { chat_id: ctx.chatId, text: pick(`결재 ${ap.verb} 처리: ${tidy(item.action)}\n실행 결과는 이어서 보고합니다.`, `Approval ${ap.approve ? 'approved' : 'rejected'}: ${tidy(item.action)}\nThe result will follow.`, lang) })
+                .catch((e) => console.error(`[argo] 결재 회신 발송 실패(${wsId}/${slug}):`, e.message)); // 확정은 됐다 — 회신 실패는 로그로(무음 금지, 분리 검수 LOW-2)
             } catch (e) {
-              await tg(cfg.token, 'sendMessage', { chat_id: ctx.chatId, text: pick(`결재 처리 실패: ${String(e.message).slice(0, 150)}`, `Approval failed: ${String(e.message).slice(0, 150)}`, lang) }).catch(() => {});
+              await tg(cfg.token, 'sendMessage', { chat_id: ctx.chatId, text: pick(`결재 처리 실패: ${String(e.message).slice(0, 150)}`, `Approval failed: ${String(e.message).slice(0, 150)}`, lang) })
+                .catch((e2) => console.error(`[argo] 결재 회신 발송 실패(${wsId}/${slug}):`, e2.message));
             }
             continue;
           }
@@ -744,6 +749,10 @@ async function pushEvent(event) {
     const tok = approvalCardToken(it, { needEnabled: true });
     if (it?.tg?.chatId && tok) {
       await sendTgReply(tok, it.tg.chatId, event.wsId, event.reply).catch((e) => console.error('[argo] 결재 후속 배달 실패:', e.message));
+    } else if (it?.tg?.chatId) {
+      // 카드는 "이어서 보고합니다"를 약속했다 — 봇 토큰 소실(크루 삭제 등)·채널 꺼짐으로 못 보내면
+      // 최소한 로그는 남긴다(무로그 증발 금지 — 분리 검수 LOW-1)
+      console.error(`[argo] 결재 후속 미배달(${event.wsId}/${it.id ?? '?'}): 카드가 실린 채널의 토큰 없음(봇 제거 또는 게이트웨이 꺼짐)`);
     }
     return;
   }

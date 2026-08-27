@@ -280,6 +280,17 @@ test('결재 콜백(handleApprovalCallback): 페어링 사장의 버튼 클릭�
     await _approvalCallbackForTest(WS, 'bot-tok-appr', cq(999), { chatId: '200', ownerId: 1 });
   });
   assert.equal(denied.length, 0, '비사장 클릭은 무시(응답 호출 자체가 없다)');
+  // 다른 채팅에서 온 콜백 — ownerId 없는 구 페어링에선 채팅 게이트가 유일한 인가 수단이다(검수 MEDIUM-2)
+  const wrongChat = await withMockTg(async () => {
+    await _approvalCallbackForTest(WS, 'bot-tok-appr', { id: 'cb2', data: `ap:${item.id}:1`, from: { id: 1 }, message: { message_id: 78, chat: { id: 999 } } }, { chatId: '200', ownerId: 1 });
+  });
+  assert.equal(wrongChat.length, 0, '페어링 채팅 밖 콜백은 무시');
+  // fail-open 가드 — 미페어링 cfg(chatId 없음) + message 없는 콜백(인라인 모드)은 String(undefined)
+  // 동등으로 게이트가 열리고 예외가 폴러 offset을 오염시켰다(검수 MEDIUM-1 실측). 통과도 예외도 없어야 한다.
+  const noCfg = await withMockTg(async () => {
+    await _approvalCallbackForTest(WS, 'bot-tok-appr', { id: 'cb3', data: `ap:${item.id}:1`, from: { id: 999 } }, { chatId: undefined, ownerId: undefined });
+  });
+  assert.equal(noCfg.length, 0, '미페어링 봇의 콜백은 무시(fail-open 차단)');
   assert.equal((await loadApprovals(WS)).find((a) => a.id === item.id).status, 'pending');
   // 사장 클릭 — 확정 + 버튼 응답 + 카드를 결과로 교체
   const ok = await withMockTg(async () => {
@@ -326,6 +337,62 @@ test('직통 봇 폴러: callback_query가 결재 확정까지 이어진다 — 
   }
   assert.equal((await loadApprovals(WS)).find((a) => a.id === item.id).status, 'approved', '폴러가 받은 버튼 클릭으로 결재가 확정된다');
   assert.ok(calls.some((c) => c.url.includes('/botbot-tok-poll/answerCallbackQuery')), '버튼 응답도 그 봇으로 나간다');
+});
+
+test('직통 봇 폴러: 텍스트 결재("승인 ap-…")는 큐를 거치지 않고 즉시 확정된다(교착 방지, 검수 MEDIUM-3)', async () => {
+  const { _startAgentTelegramForTest } = await import('../src/gateway.mjs');
+  const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-appr-text';
+  await createCompany(WS, '결재사4', 'pepper');
+  const item = await addApproval(WS, { slug: 'pepper', action: '메일 발송', reason: '회신', kind: 'tool' });
+  const cfg = { token: 'bot-tok-text', ownerId: 1, ownerChat: '200', botUsername: '' };
+  const calls = [];
+  let served = false;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    calls.push({ url: u, body: JSON.parse(opts?.body ?? '{}') });
+    if (u.includes('/getUpdates')) {
+      if (served) return new Promise(() => {});
+      served = true;
+      return new Response(JSON.stringify({ ok: true, result: [{ update_id: 1, message: { message_id: 9, chat: { id: 200, type: 'private' }, from: { id: 1 }, text: `승인 ${item.id}` } }] }), { headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  };
+  const stop = _startAgentTelegramForTest(WS, 'pepper', () => cfg);
+  try {
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      if ((await loadApprovals(WS)).find((a) => a.id === item.id)?.status === 'approved') break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  } finally {
+    stop();
+    globalThis.fetch = origFetch;
+  }
+  assert.equal((await loadApprovals(WS)).find((a) => a.id === item.id).status, 'approved', '텍스트 결재가 폴러에서 확정된다');
+  // 큐 미경유가 이 분기의 존재 이유 — 결재 대기 턴들이 워커 슬롯(동시 2)을 점유해도 승인이 뚫린다.
+  // 큐 적재로 되돌리는 변이는 여기서 red(이 테스트는 워커를 안 돌리므로 상태가 pending에 머문다).
+  const queued = (await readdir(queueDir(WS, 'tg-pepper')).catch(() => [])).filter((n) => n.endsWith('.json'));
+  assert.equal(queued.length, 0, '큐에 잡이 적재되지 않는다');
+  assert.ok(calls.some((c) => c.url.includes('/botbot-tok-text/sendMessage')), '확정 회신이 그 봇으로 나간다');
+});
+
+test('결재 후속 배달: botSlug 카드는 그 봇 토큰으로, 게이트웨이 카드는 채널 꺼짐이면 발송 0회(검수 LOW-4·MEDIUM-4)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const WS = 'co-appr'; // 게이트웨이 enabled=false + pepper 봇 페어링 상태 재사용
+  const viaBot = await withMockTg(async () => {
+    await _pushEventForTest({ type: 'approval_followup', wsId: WS, item: { id: 'ap-f1', tg: { chatId: '200', botSlug: 'pepper' } }, reply: '후속 보고 본문' });
+  });
+  const sends = viaBot.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1, '봇 귀속 카드의 후속은 1회 배달');
+  assert.ok(sends[0].url.includes('/botbot-tok-appr/'), '카드가 실린 직통 봇 토큰으로 — 게이트웨이 토큰이 아니다');
+  assert.equal(String(sends[0].body.chat_id), '200');
+  const gwOff = await withMockTg(async () => {
+    await _pushEventForTest({ type: 'approval_followup', wsId: WS, item: { id: 'ap-f2', tg: { chatId: '999' } }, reply: '후속 보고 본문' });
+  });
+  assert.equal(gwOff.filter((c) => c.url.includes('/sendMessage')).length, 0, '게이트웨이 카드 후속은 채널이 꺼져 있으면 재발송하지 않는다(검수 LOW-4)');
 });
 
 test('결재 해소 편집: botSlug 귀속 카드는 그 봇 토큰으로 편집 — 회사 게이트웨이 토큰이 아니다', async () => {
