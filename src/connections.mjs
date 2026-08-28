@@ -209,7 +209,13 @@ export function maskConnections(all) {
   const mask = (t) => (t ? `${t.slice(0, 3)}***` : ''); // 접두사 최소 노출(보안 규칙) — 뒤 3자도 감춤
   const agents = {};
   for (const [slug, a] of Object.entries(all.telegram.agents ?? {})) {
-    agents[slug] = { botUsername: a.botUsername ?? '', paired: !!a.ownerId, hasToken: !!a.token, pairCode: a.ownerId ? '' : (a.pairCode || '') };
+    agents[slug] = {
+      botUsername: a.botUsername ?? '', paired: !!a.ownerId, hasToken: !!a.token, pairCode: a.ownerId ? '' : (a.pairCode || ''),
+      // 게이트웨이 사장 일치(분리 검수 C4 2026-08-28) — 폴백 배달(telegramBriefingDest H1)과 확정
+      // 인가(approvalConfirmerAllowed C1)가 이 기준이므로, 화면 안내("결재가 봇으로 배달됩니다")도
+      // 같은 기준을 봐야 거짓말이 안 된다. 게이트웨이 사장이 없으면 항상 참(봇 신뢰 — 서버 규칙과 동일).
+      gwOwnerMatch: all.telegram.ownerId == null || String(a.ownerId) === String(all.telegram.ownerId),
+    };
   }
   return {
     // pairCode는 미페어링일 때만 노출 — 페어링 후엔 화면에서 감춘다(더 이상 필요없고 재사용 방지)

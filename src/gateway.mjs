@@ -26,7 +26,7 @@ import { mdToTelegramHtml, splitForTelegram, extractFileRefs, isImagePath, attac
 import { beatGateway, loadOffset, saveOffset, loadSlackCursor, saveSlackCursor } from './gateway/persist.mjs';
 import { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT } from './gateway/queue.mjs';
 import { clip, pollBackoffMs, pick, tidy, parseApprovalText, parseApprovalCallback, pairCodeMatches, classifySlackMessage, telegramBriefingDest } from './gateway/protocol.mjs';
-import { routeMessage, crewStatusReply, approvalWho, defaultCrew } from './gateway/routing.mjs';
+import { routeMessage, crewStatusReply, approvalWho, defaultCrew, resolveTelegramDest } from './gateway/routing.mjs';
 import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스트도 같은 함수를 본다
 
 // facade — 기존 임포터(chat.mjs 동적 import·테스트)가 gateway.mjs에서 그대로 가져간다(무수정 계약).
@@ -219,10 +219,24 @@ async function runTurn(wsId, cfg, text, attachments = [], ctx = null) {
   return body;
 }
 
+/** 회사 결재의 확정 인가(C1, 분리 검수 2026-08-28) — 게이트웨이 사장이 있으면 확정자는 그와
+    일치해야 한다. 채널(봇) 소유자 검사만으로는 타인이 페어링한 크루 봇에서 회사 결재를 확정할 수
+    있었다(matrix4 실측: H1이 새 카드 배달은 막아도, 업그레이드 전 카드·크루 턴 문의·슬랙 카드로
+    결재 id에 도달 가능). 게이트웨이 사장이 없으면(봇 전용 회사) 채널 소유자 검사가 최종 —
+    강제하면 봇 전용 회사의 결재가 통째로 막힌다(무배달 사고와 같은 오차단 방향). 실패는 디스크
+    읽기 실패이므로 fail-closed(불허). */
+async function approvalConfirmerAllowed(wsId, fromId) {
+  try {
+    const gwOwner = (await loadConnections(wsId)).telegram?.ownerId;
+    return gwOwner == null || String(fromId) === String(gwOwner);
+  } catch { return false; }
+}
+const notOwnerMsg = (lang) => pick('이 결재는 회사 게이트웨이를 페어링한 사장만 확정할 수 있습니다.', 'Only the owner who paired the company gateway can decide this approval.', lang);
+
 /** 결재 인라인 버튼 콜백 처리 — 회사 게이트웨이·크루 직통 봇 폴러 공용(단일 원천 — 한쪽은 규칙,
     한쪽은 사본이면 사본이 반드시 낡는다). 허용 조건: 형식 일치 + 카드가 있는 페어링 채팅 +
-    페어링된 사장 본인(ownerId 없는 구 페어링은 통과 — 회사 게이트웨이 기존 관용 유지).
-    그룹 페어링 시 아무 멤버나 결재를 확정하는 것을 막는다. */
+    페어링된 사장 본인(ownerId 없는 구 페어링은 통과 — 회사 게이트웨이 기존 관용 유지) +
+    회사 사장 일치(approvalConfirmerAllowed — C1). 그룹 페어링 시 아무 멤버나 결재를 확정하는 것을 막는다. */
 async function handleApprovalCallback(wsId, token, cq, { chatId, ownerId }) {
   const m = parseApprovalCallback(cq.data); // "ap:<id>:<0|1>" — 형식 밖이면 null(무시). 파서는 protocol
   const bySender = !ownerId || String(cq.from?.id) === String(ownerId);
@@ -232,6 +246,11 @@ async function handleApprovalCallback(wsId, token, cq, { chatId, ownerId }) {
   if (!m || !chatId || !cq.message?.chat || String(cq.message.chat.id) !== String(chatId) || !bySender) return;
   const approve = m.approve;
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+  if (!(await approvalConfirmerAllowed(wsId, cq.from?.id))) {
+    // 정직 거절 — 무음 return이면 버튼 스피너만 돌아 "죽은 버튼" 계열 혼란이 된다. 카드는 유지(사장 몫).
+    await tg(token, 'answerCallbackQuery', { callback_query_id: cq.id, text: notOwnerMsg(lang).slice(0, 60) }).catch(() => {});
+    return;
+  }
   try {
     const item = await resolveWithFollowUp(wsId, m.id, approve);
     await tg(token, 'answerCallbackQuery', { callback_query_id: cq.id, text: pick(approve ? '승인됨' : '거절됨', approve ? 'Approved' : 'Rejected', lang) });
@@ -354,6 +373,11 @@ function startTelegram(wsId, getCfg) {
 async function runAgentTurn(wsId, slug, text, attachments, ctx) {
   const ap = parseApprovalText(text); // 파서는 protocol.parseApprovalText — 결재 토큰(승인/거절) 앵커 동일
   if (ap) {
+    const { lang: apLang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+    // 회사 사장 일치(C1) — 이 경로(큐 경유 caption 등)엔 발신자 id가 없지만, 발신자=봇 소유자는
+    // 폴러가 이미 강제했으므로 "봇 소유자 == 회사 사장" 검사가 동치다. 폴러 인라인·콜백과 같은 규칙.
+    const botOwner = (await loadConnections(wsId).catch(() => null))?.telegram?.agents?.[slug]?.ownerId;
+    if (!(await approvalConfirmerAllowed(wsId, botOwner))) return notOwnerMsg(apLang);
     const approve = ap.approve;
     const item = await resolveWithFollowUp(wsId, ap.id, approve);
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
@@ -528,6 +552,12 @@ function startAgentTelegram(wsId, slug, getCfg) {
           const ap = parseApprovalText(text); // 파서는 protocol — 형식 밖이면 일반 지시(큐 적재)
           if (ap) {
             const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+            // 회사 사장 일치(C1) — 발신자는 위에서 봇 소유자로 강제됐지만, 그 봇을 타인이 페어링한
+            // 회사에서는 봇 소유자 ≠ 회사 사장이다. 콜백 버튼과 같은 인가를 텍스트 결재에도 건다.
+            if (!(await approvalConfirmerAllowed(wsId, msg.from?.id))) {
+              await tg(cfg.token, 'sendMessage', { chat_id: ctx.chatId, text: notOwnerMsg(lang) }).catch(() => {});
+              continue;
+            }
             try {
               const item = await resolveWithFollowUp(wsId, ap.id, ap.approve);
               await tg(cfg.token, 'sendMessage', { chat_id: ctx.chatId, text: pick(`결재 ${ap.verb} 처리: ${tidy(item.action)}\n실행 결과는 이어서 보고합니다.`, `Approval ${ap.approve ? 'approved' : 'rejected'}: ${tidy(item.action)}\nThe result will follow.`, lang) })
@@ -609,7 +639,9 @@ function startInboxWatcher(wsId) {
             // routeMessage와 같은 defaultCrew 정본(사본 금지). 브리핑 3종과 같은 telegramBriefingDest
             // 계약이라 음소거('inbox')도 폴백에서 그대로 존중된다(분리 검수 LOW-1 비대칭 해소).
             const agents = await listAgents(wsId).catch(() => []);
-            const d = telegramBriefingDest(cfg, 'inbox', defaultCrew(agents, cfg)?.slug);
+            // 폴백 체인 정본(resolveTelegramDest)으로 통일 — primary가 이미 기본 크루라 동작은
+            // 기존(기본 크루 봇까지)과 같고, 판정 사본만 제거된다(H2 배치에서 결재·브리핑과 단일화).
+            const d = resolveTelegramDest(cfg, 'inbox', defaultCrew(agents, cfg)?.slug, agents, { widen: false });
             if (d) {
               await sendTgReply(d.token, d.chatId, wsId, pick(`[받은 서류함] ${safe}\n\n${reply}`, `[Inbox] ${safe}\n\n${reply}`, lang)).catch(() => {});
             }
@@ -748,7 +780,15 @@ async function pushEvent(event) {
     const it = event.item;
     const tok = approvalCardToken(it, { needEnabled: true });
     if (it?.tg?.chatId && tok) {
-      await sendTgReply(tok, it.tg.chatId, event.wsId, event.reply).catch((e) => console.error('[argo] 결재 후속 배달 실패:', e.message));
+      // 귀속 접두(H3) — 카드가 담당 아닌 봇으로 폴백돼 나갔으면(botSlug ≠ 담당 slug) 후속 보고도
+      // 그 봇 DM에 뜬다. 무표기면 "델타한테 시킨 적 없는데 델타가 완료 보고"로 읽힌다(분리 검수 실측).
+      let reply = event.reply;
+      if (it.tg.botSlug && it.slug && it.tg.botSlug !== it.slug) {
+        const agents = await listAgents(event.wsId).catch(() => []);
+        const name = agents.find((a) => a.slug === it.slug)?.name ?? it.slug;
+        reply = pick(`(${name}의 결재 후속 보고)\n${reply}`, `(Follow-up from ${name})\n${reply}`, lang);
+      }
+      await sendTgReply(tok, it.tg.chatId, event.wsId, reply).catch((e) => console.error('[argo] 결재 후속 배달 실패:', e.message));
     } else if (it?.tg?.chatId) {
       // 카드는 "이어서 보고합니다"를 약속했다 — 봇 토큰 소실(크루 삭제 등)·채널 꺼짐으로 못 보내면
       // 최소한 로그는 남긴다(무로그 증발 금지 — 분리 검수 LOW-1)
@@ -787,22 +827,11 @@ async function pushEvent(event) {
   // 결재 — 브리핑과 같은 목적지 판정: 게이트웨이 우선, 못 보내면 담당 크루(item.slug)의 직통 봇 폴백.
   // 폴백 버튼은 직통 봇 폴러의 handleApprovalCallback이 받는다(PR #305의 죽은 버튼 사유 해소).
   if (event.type === 'approval') {
-    let dest = telegramBriefingDest(t, 'approval', event.item.slug);
-    if (!dest && Object.keys(t?.agents ?? {}).length) {
-      // 최종 폴백 — 담당 크루의 봇이 없으면(선재 유령 slug 'crew' 포함 — 분리 검수 LOW-3, 봇 미페어링
-      // 크루도 동일) 기본 크루 봇으로. inbox 폴백과 같은 계열(defaultCrew 정본 — 사본 금지)이고,
-      // 음소거('approval')는 telegramBriefingDest 안의 channelSends가 여기서도 그대로 존중한다.
-      // agents 가드 — 직통 봇이 하나도 없으면 폴백이 성립할 수 없으니 listAgents 디스크 읽기를 생략
-      // (텔레그램 미설정 회사의 매 결재마다 낭비 — 재검수 LOW-3).
-      const agents = await listAgents(event.wsId).catch(() => []);
-      const def = defaultCrew(agents, t)?.slug;
-      if (def && def !== event.item.slug) dest = telegramBriefingDest(t, 'approval', def);
-      // 그래도 없으면 페어링된 아무 봇(slug 정렬 = 결정적)으로 — 기본 크루조차 봇이 없는 회사에서
-      // 결재가 웹 결재함에 고립되는 사각 해소(재검수 LOW-2). 결재는 크루가 답을 기다리는 차단성
-      // 이벤트라 브리핑(inbox 폴백은 defaultCrew까지만)보다 한 단계 더 넓힌다 — 어느 봇이 실어도
-      // 버튼은 그 봇 폴러의 handleApprovalCallback(id 기준)이 받고, 후속 편집은 botSlug 귀속으로 좇는다.
-      if (!dest) for (const s of Object.keys(t.agents).sort()) { dest = telegramBriefingDest(t, 'approval', s); if (dest) break; }
-    }
+    // 폴백 체인은 resolveTelegramDest 정본(routing.mjs) — 게이트웨이/담당 봇 → 기본 크루 봇 →
+    // 페어링된 아무 봇(widen). 브리핑과 사본을 공유하고, 봇 사장 검사(H1)·음소거는 그 안에서 적용된다.
+    // agents 가드 — 직통 봇이 하나도 없으면 폴백이 성립할 수 없으니 listAgents 디스크 읽기를 생략(재검수 LOW-3).
+    const agents = Object.keys(t?.agents ?? {}).length ? await listAgents(event.wsId).catch(() => []) : [];
+    const dest = resolveTelegramDest(t, 'approval', event.item.slug, agents, { widen: true });
     if (dest) {
       try {
         const res = await tg(dest.token, 'sendMessage', {
@@ -823,28 +852,53 @@ async function pushEvent(event) {
   // 회사 게이트웨이 우선, 못 보내면 담당 크루의 직통 봇 폴백. 실사용 2026-08-27: 게이트웨이
   // enabled=false + 크루 직통 봇만 페어링된 회사에서 루틴 51회 ok인데 텔레그램 0회 도착
   // ("텔레그램으로 보내줘" 루틴 3개가 전부 헛돎) — 직통 봇으로 가는 경로 자체가 없었다.
-  const dest = telegramBriefingDest(t, event.type, event.type === 'routine' ? event.routine?.agentSlug : event.slug);
-  if (dest) {
-    if (event.type === 'routine') {
-      await sendTgReply(dest.token, dest.chatId, event.wsId, pick(`**[루틴] ${event.routine.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Routine] ${event.routine.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang))
-        .catch((e) => console.error('[argo] 텔레그램 루틴 푸시 실패:', e.message));
+  if (['routine', 'job', 'crewmail'].includes(event.type)) {
+    const primarySlug = event.type === 'routine' ? event.routine?.agentSlug : event.slug;
+    // 결재와 같은 폴백 체인(resolveTelegramDest 정본) — 담당 크루 봇이 없으면 기본 크루 봇으로.
+    // 분리 검수 H2(2026-08-28): 결재만 3단 폴백이고 브리핑은 1단이라, 담당 크루에 봇이 없으면
+    // 루틴 결과가 그대로 무배달됐다(원 사고 "루틴 51회 ok·0회 도착"이 그 조건에서 재현). 브리핑은
+    // widen 없이 기본 크루까지만 — 결재처럼 아무 봇으로 흩지 않는다(사유는 routing.mjs 주석).
+    // agents는 두 소비자가 쓴다: ① 폴백 체인(봇이 있을 때만 필요) ② nameOf(쪽지 이름 변환 —
+    // 봇 유무와 무관). 봇 유무 가드를 둘 다에 걸면 봇 0개 회사(게이트웨이만 쓰는 가장 흔한 구성)의
+    // 쪽지 수신자가 slug로 표기된다(분리 검수 C2 실측 — matrix4 B, 대조군으로 확정). crewmail은 항상 로드.
+    const agents = (event.type === 'crewmail' || Object.keys(t?.agents ?? {}).length)
+      ? await listAgents(event.wsId).catch(() => []) : [];
+    const dest = resolveTelegramDest(t, event.type, primarySlug, agents, { widen: false });
+    // H1 차단 진단(N1) — 봇은 페어링돼 있는데 회사 사장 불일치로 전부 걸러져 무배달이 되면, 화면 증상은
+    // 원 무배달 사고와 같아 원인 추적이 안 된다. 이벤트당 1줄만 남긴다(발송 시도 시점 — 폴 주기 아님).
+    if (!dest && event.type !== 'crewmail' && t?.ownerId != null
+      && Object.values(t?.agents ?? {}).some((b) => b?.token && b.ownerChat && String(b.ownerId) !== String(t.ownerId))) {
+      console.warn(`[argo] 텔레그램 ${event.type} 미발송(${event.wsId}): 페어링된 크루 봇이 회사 게이트웨이 사장 소유가 아님 — 사장 계정으로 재페어링 필요`);
     }
-    // 장시간 작업 완료 — 사장이 앱을 안 보고 있어도 결과가 도착한다(이 큐의 존재 이유)
-    if (event.type === 'job') {
-      await sendTgReply(dest.token, dest.chatId, event.wsId, pick(`**[작업 완료] ${event.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Task done] ${event.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang))
-        .catch((e) => console.error('[argo] 텔레그램 작업 푸시 실패:', e.message));
-    }
-    // 크루 쪽지 배달 — 다른 세션·다른 시각의 크루 간 소통이라 사장이 화면을 보고 있지 않은 게 기본값.
-    // 수신 크루의 답을 브리핑으로 민다(재검 N1에서 보류했던 분기 — 문안과 함께 복원).
-    if (event.type === 'crewmail') {
-      const agents = await listAgents(event.wsId).catch(() => []);
+    if (dest) {
       const nameOf = (s) => agents.find((a) => a.slug === s)?.name ?? s;
-      const cc = event.kind === 'cc';
-      await sendTgReply(dest.token, dest.chatId, event.wsId, pick(
-        `**[크루 쪽지] ${event.fromName ?? nameOf(event.from)} → ${nameOf(event.slug)}${cc ? ' (참조)' : ''}**\n\n${event.reply}`,
-        `**[Crew mail] ${event.fromName ?? nameOf(event.from)} → ${nameOf(event.slug)}${cc ? ' (CC)' : ''}**\n\n${event.reply}`,
-        lang,
-      )).catch((e) => console.error('[argo] 텔레그램 쪽지 푸시 실패:', e.message));
+      // 귀속 접두(H3) — 담당이 아닌 봇 DM으로 폴백 배달될 때, 그 봇의 발화가 아니라 담당 크루의
+      // 결과임을 밝힌다(직통 봇 DM은 "봇 = 그 크루"가 기본 문법이라 무표기는 사칭처럼 읽힌다 —
+      // 실측 "델타한테 시킨 적 없는데 델타가 완료 보고"). 게이트웨이·담당 봇 자신에게는 붙이지 않는다.
+      const attributed = (body) => (dest.botSlug && primarySlug && dest.botSlug !== primarySlug
+        ? pick(`(${nameOf(primarySlug)}의 결과 — 담당 크루의 봇이 연결돼 있지 않아 이 봇으로 전달합니다)\n${body}`,
+          `(Result from ${nameOf(primarySlug)} — delivered via this bot because their own bot isn't connected)\n${body}`, lang)
+        : body);
+      if (event.type === 'routine') {
+        await sendTgReply(dest.token, dest.chatId, event.wsId, attributed(pick(`**[루틴] ${event.routine.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Routine] ${event.routine.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang)))
+          .catch((e) => console.error('[argo] 텔레그램 루틴 푸시 실패:', e.message));
+      }
+      // 장시간 작업 완료 — 사장이 앱을 안 보고 있어도 결과가 도착한다(이 큐의 존재 이유)
+      if (event.type === 'job') {
+        await sendTgReply(dest.token, dest.chatId, event.wsId, attributed(pick(`**[작업 완료] ${event.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Task done] ${event.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang)))
+          .catch((e) => console.error('[argo] 텔레그램 작업 푸시 실패:', e.message));
+      }
+      // 크루 쪽지 배달 — 다른 세션·다른 시각의 크루 간 소통이라 사장이 화면을 보고 있지 않은 게 기본값.
+      // 수신 크루의 답을 브리핑으로 민다(재검 N1에서 보류했던 분기 — 문안과 함께 복원).
+      // 쪽지 헤더는 발신→수신 표기가 이미 귀속이라 attributed를 겹치지 않는다(이중 접두 방지).
+      if (event.type === 'crewmail') {
+        const cc = event.kind === 'cc';
+        await sendTgReply(dest.token, dest.chatId, event.wsId, pick(
+          `**[크루 쪽지] ${event.fromName ?? nameOf(event.from)} → ${nameOf(event.slug)}${cc ? ' (참조)' : ''}**\n\n${event.reply}`,
+          `**[Crew mail] ${event.fromName ?? nameOf(event.from)} → ${nameOf(event.slug)}${cc ? ' (CC)' : ''}**\n\n${event.reply}`,
+          lang,
+        )).catch((e) => console.error('[argo] 텔레그램 쪽지 푸시 실패:', e.message));
+      }
     }
   }
   const s = all.slack;

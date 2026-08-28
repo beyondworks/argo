@@ -155,3 +155,19 @@ test('telegramBriefingDest: inbox — 게이트웨이 우선·직통 봇 폴백�
   assert.equal(telegramBriefingDest({ ...off, mutedEvents: ['inbox'] }, 'inbox', 'pepper'), null, '끈 종류는 폴백으로도 안 간다');
   assert.equal(telegramBriefingDest(off, 'inbox', null), null, '처리 크루 미상(명단 없음)이면 보내지 않는다');
 });
+
+/* ── H1(2026-08-28 분리 검수) — 폴백 봇은 게이트웨이 사장의 것이어야 한다 ──
+   실측 사고: 사장이 크루 봇 연결 코드를 타인에게 준 회사에서, 게이트웨이 미가동 시 결재가
+   그 타인의 DM으로 배달되고 그 타인이 승인 버튼으로 확정까지 했다(matrix3 재현). */
+test('telegramBriefingDest: 게이트웨이 사장과 다른 사람이 페어링한 봇으로는 폴백하지 않는다(H1)', () => {
+  const strangerBot = { token: 'bt', ownerChat: '4242', ownerId: 42 };
+  const tgOwned = { enabled: false, ownerId: 1, agents: { pepper: strangerBot } };
+  assert.equal(telegramBriefingDest(tgOwned, 'approval', 'pepper'), null, '남의 봇 — 결재를 싣지 않는다');
+  assert.equal(telegramBriefingDest(tgOwned, 'routine', 'pepper'), null, '브리핑도 동일');
+  const sameOwner = { enabled: false, ownerId: 1, agents: { pepper: { token: 'bt', ownerChat: '100', ownerId: 1 } } };
+  assert.deepEqual(telegramBriefingDest(sameOwner, 'approval', 'pepper'), { token: 'bt', chatId: '100', botSlug: 'pepper' }, '같은 사장 봇은 그대로');
+  // 게이트웨이 사장이 없으면(게이트웨이 미설정 — 봇만 쓰는 정상 케이스) 비교 기준이 없어 봇을 신뢰한다.
+  // 이걸 막으면 봇 전용 회사의 배달이 통째로 죽어 원 무배달 사고(루틴 51회 ok·0회 도착)가 재발한다.
+  const noGwOwner = { enabled: false, agents: { pepper: strangerBot } };
+  assert.deepEqual(telegramBriefingDest(noGwOwner, 'routine', 'pepper'), { token: 'bt', chatId: '4242', botSlug: 'pepper' }, '사장 미지정 게이트웨이는 봇 신뢰(무배달 재발 방지)');
+});

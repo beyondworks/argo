@@ -484,3 +484,132 @@ test('결재 최종 폴백도 음소거를 존중한다 — mutedEvents(approval
   });
   assert.equal(calls.filter((c) => c.url.includes('/sendMessage')).length, 0, '음소거를 뚫고 폴백이 쐈다 — channelSends 계약 위반');
 });
+
+/* ── H1·H2·H3(2026-08-28 v0.1.49 전수 검수 배치) — pushEvent 실행 게이트 ── */
+test('pushEvent: 담당 크루 봇이 없으면 루틴이 기본 크루 봇으로 폴백 배달되고, 담당 크루 귀속 접두가 붙는다(H2+H3)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-h2-fallback';
+  await createCompany(WS, '폴백사', 'luca');
+  // 크루 카드 — createCompany는 카드를 만들지 않는다(영입이 만든다). defaultCrew 폴백은 listAgents
+  // 기반이라 카드가 있어야 발동한다(단독 재현으로 확인: 카드 없으면 agents=[] → 폴백 불발).
+  await mkdir(join(process.env.ARGO_ROOT, WS, 'agents'), { recursive: true });
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'luca.md'), '---\nname: 루카\nrole: 항해사\n---\n');
+  await updateAgentBot(WS, 'luca', { token: 'bot-tok-h2' });
+  await updateAgentBot(WS, 'luca', { ownerId: 1, ownerChat: '910' });
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') });
+    return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    // 담당(pepper)에겐 봇이 없다 — 수정 전에는 무배달(원 사고 "루틴 51회 ok·0회 도착" 재현 조건)
+    await _pushEventForTest({ type: 'routine', wsId: WS, routine: { title: '아침 브리핑', agentSlug: 'pepper' }, ok: true, reply: '결과' });
+  } finally { globalThis.fetch = origFetch; }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1, '기본 크루 봇으로 정확히 1회(무배달·이중 발송 둘 다 금지)');
+  assert.ok(sends[0].url.includes('/botbot-tok-h2/'), '기본 크루(luca) 봇으로 폴백');
+  assert.equal(String(sends[0].body.chat_id), '910');
+  // M6 변이 실증(재검수): '담당 또는 배달 봇 아무 이름' 매칭은 오귀속(배달 봇 이름 접두) 그 자체를
+  // 초록으로 통과시켰다 — 불변식을 직접 세운다: 접두 줄에 담당(pepper)은 있고 배달 봇 크루(루카)는 없다.
+  const firstLine = String(sends[0].body.text).split('\n')[0];
+  assert.match(firstLine, /pepper/u, '귀속 접두 — 담당 크루가 표기된다(H3)');
+  assert.doesNotMatch(firstLine, /루카/u, '배달 봇 크루 이름으로 오귀속하면 안 된다(H3의 요점)');
+  assert.match(sends[0].body.text, /담당 크루의 봇이 연결돼 있지 않아|delivered via this bot/, '폴백 사유가 정직하게 표기된다');
+});
+
+test('pushEvent: 게이트웨이 사장과 다른 사람의 봇만 있으면 결재·루틴 모두 그 봇으로 나가지 않는다(H1)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot, updateConnection } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-h1-stranger';
+  await createCompany(WS, '오배달사', 'pepper');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-h1' }); // 게이트웨이 페어링(사장=1)·미가동(enabled 기본 false)
+  await updateConnection(WS, 'telegram', { chatId: '100', ownerId: 1 });
+  await updateAgentBot(WS, 'pepper', { token: 'bot-tok-h1' });
+  await updateAgentBot(WS, 'pepper', { ownerId: 42, ownerChat: '4242' }); // 타인이 페어링한 봇
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') });
+    return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await _pushEventForTest({ type: 'approval', wsId: WS, item: { id: 'ap-h1x', slug: 'pepper', action: '고객 DB 삭제', reason: '검수', status: 'pending' } });
+    await _pushEventForTest({ type: 'routine', wsId: WS, routine: { title: 'r', agentSlug: 'pepper' }, ok: true, reply: 'x' });
+  } finally { globalThis.fetch = origFetch; }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 0, '남의 봇 DM으로 결재·브리핑이 나가면 안 된다(오배달 차단)');
+});
+
+test('pushEvent: 담당·기본 크루 둘 다 봇이 없으면 브리핑은 다른 봇으로 흩지 않는다(M2 — widen 경계)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-m2-nowiden';
+  await createCompany(WS, '경계사', 'luca');
+  await mkdir(join(process.env.ARGO_ROOT, WS, 'agents'), { recursive: true });
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'luca.md'), '---\nname: 루카\n---\n'); // 기본 크루(봇 없음)
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'zeta.md'), '---\nname: 제타\n---\n');
+  await updateAgentBot(WS, 'zeta', { token: 'bot-tok-m2' });
+  await updateAgentBot(WS, 'zeta', { ownerId: 1, ownerChat: '930' }); // 담당(pepper)·기본(luca) 아닌 봇만 존재
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => { calls.push({ url: String(url) }); return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } }); };
+  try {
+    await _pushEventForTest({ type: 'routine', wsId: WS, routine: { title: 'r', agentSlug: 'pepper' }, ok: true, reply: 'x' });
+    // 대조군 — 같은 상태에서 결재는 widen으로 zeta 봇에 실린다(경계가 widen 플래그 하나임을 실행으로 잠금)
+    await _pushEventForTest({ type: 'approval', wsId: WS, item: { id: 'ap-m2x', slug: 'pepper', action: 'a', reason: 'r', status: 'pending' } });
+  } finally { globalThis.fetch = origFetch; }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1, '브리핑 0회 + 결재 1회 — 브리핑 호출부가 widen:true로 바뀌면 2회가 되어 red');
+  assert.ok(sends[0].url.includes('/botbot-tok-m2/'), '그 1회는 결재(widen) 카드다');
+});
+
+test('pushEvent: 폴백 봇으로 나간 결재의 후속 보고에 담당 크루 귀속 접두가 붙는다(M5 — H3 후속)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-m5-follow';
+  await createCompany(WS, '후속사', 'delta');
+  await mkdir(join(process.env.ARGO_ROOT, WS, 'agents'), { recursive: true });
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'delta.md'), '---\nname: 델타\n---\n');
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'pepper.md'), '---\nname: 페퍼\n---\n');
+  await updateAgentBot(WS, 'delta', { token: 'bot-tok-m5' });
+  await updateAgentBot(WS, 'delta', { ownerId: 1, ownerChat: '940' });
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => { calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') }); return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } }); };
+  try {
+    // 카드가 delta 봇으로 폴백돼 나갔던 결재(tg.botSlug=delta ≠ 담당 pepper)의 후속 보고
+    await _pushEventForTest({ type: 'approval_followup', wsId: WS, item: { id: 'ap-m5x', slug: 'pepper', tg: { chatId: '940', messageId: 7, botSlug: 'delta' } }, reply: '메일 발송 완료' });
+  } finally { globalThis.fetch = origFetch; }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1, '후속 보고 1회');
+  const first = String(sends[0].body.text).split('\n')[0];
+  assert.match(first, /페퍼/, '담당 크루 귀속 접두(H3 후속) — 제거 변이(M5)가 red가 되는 게이트');
+  assert.doesNotMatch(first, /델타/, '배달 봇 크루로 오귀속 금지(M6과 같은 불변식)');
+});
+
+test('pushEvent: 봇 0개 회사의 크루 쪽지도 이름으로 표기된다(C2 회귀 게이트)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateConnection } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-c2-names';
+  await createCompany(WS, '이름사', 'pepper');
+  await mkdir(join(process.env.ARGO_ROOT, WS, 'agents'), { recursive: true });
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'pepper.md'), '---\nname: 페퍼\n---\n');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-c2', enabled: true });
+  await updateConnection(WS, 'telegram', { chatId: '950' }); // 게이트웨이만, 크루 봇 0개 — 가장 흔한 구성
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => { calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') }); return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } }); };
+  try {
+    await _pushEventForTest({ type: 'crewmail', wsId: WS, slug: 'pepper', from: 'alpha', fromName: '알파', kind: 'to', reply: '보고' });
+  } finally { globalThis.fetch = origFetch; }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1);
+  assert.match(sends[0].body.text, /페퍼/, '수신 크루가 slug(pepper)가 아니라 이름(페퍼)으로 — agents 가드가 nameOf를 굶기면 red');
+});
