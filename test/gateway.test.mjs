@@ -678,3 +678,40 @@ test('maskConnections: gwOwnerMatch — 화면 안내 조건이 서버 배달·�
   assert.equal(m.telegram.agents.pepper.gwOwnerMatch, false, '타인 봇 — 안내("배달됩니다")를 띄우면 거짓이 되는 봇(V8 상수 변이가 red)');
   assert.equal(m.telegram.agents.luca.gwOwnerMatch, true, '사장 봇은 참');
 });
+
+test('직통 봇 폴러: 타인 봇 소유자의 텍스트 결재는 거절된다(C1 ② 호출부 게이트 — V11 변이 red)', async () => {
+  const { _startAgentTelegramForTest } = await import('../src/gateway.mjs');
+  const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
+  const { updateConnection } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-c1-textdeny';
+  await createCompany(WS, '텍스트인가사', 'pepper');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-td' });
+  await updateConnection(WS, 'telegram', { ownerId: 1 }); // 회사 사장 = 1
+  const item = await addApproval(WS, { slug: 'pepper', action: '고객 DB 삭제', reason: '검수' });
+  const cfg = { token: 'bot-tok-td', ownerId: 42, ownerChat: '4242', botUsername: '' }; // 타인이 페어링한 봇(발신자=봇 소유자=42)
+  const calls = [];
+  let served = false;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    calls.push({ url: u, body: JSON.parse(opts?.body ?? '{}') });
+    if (u.includes('/getUpdates')) {
+      if (served) return new Promise(() => {});
+      served = true;
+      return new Response(JSON.stringify({ ok: true, result: [{ update_id: 1, message: { message_id: 6, chat: { id: 4242, type: 'private' }, from: { id: 42 }, text: `승인 ${item.id}` } }] }), { headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  };
+  const stop = _startAgentTelegramForTest(WS, 'pepper', () => cfg);
+  try {
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      if (calls.some((c) => c.url.includes('/botbot-tok-td/sendMessage'))) break; // 거절 회신 도착까지
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  } finally { stop(); globalThis.fetch = origFetch; }
+  assert.equal((await loadApprovals(WS)).find((a) => a.id === item.id).status, 'pending', '타인 텍스트 결재는 확정되지 않는다(matrix4-A 원 재현의 게이트)');
+  const replyMsg = calls.find((c) => c.url.includes('/botbot-tok-td/sendMessage'));
+  assert.match(String(replyMsg?.body?.text ?? ''), /사장만 확정/, '무음이 아니라 정직 거절 회신');
+});
