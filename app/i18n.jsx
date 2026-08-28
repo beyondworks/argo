@@ -473,13 +473,14 @@ const DICT = {
   'settings.conn.ev.job': ['장시간 작업 완료', 'Long task done'],
   // 어휘는 chat.via.*와 맞춘다 — 채팅에서 '동료 쪽지'로 본 것을 설정에서 다른 이름으로 끄면 헷갈린다.
   'settings.conn.ev.crewmail': ['동료 쪽지', 'Crew mail'],
-  // 결재 비대칭 정직 표기 — 직통 봇은 결재를 나르지 않는다(폴러가 callback_query 미처리 → 인라인
-  // 버튼이 죽은 버튼. PR #305가 브리핑 폴백에서 결재를 의도 제외). 화면이 먼저 말해야 신고가 안 된다
-  // 게이트웨이 선택 사항 안내 — 결재·브리핑은 직통 봇 폴백(#305·#307·#312)으로도 배달되므로
+  // 게이트웨이 선택 사항 안내 — 결재·브리핑은 직통 봇 폴백(#305·#307·#312 + H2 통일)으로도 배달되므로
   // 게이트웨이를 필수로 읽히게 하지 않는다(이전 경고 문구가 그렇게 읽혀 실사용 혼란 2026-08-28).
+  // 문구는 실제 배달 규칙과 1:1이어야 한다(분리 검수 L2: "브리핑이 배달됩니다" 단정이 담당·기본 크루 봇
+  // 부재 조합에서 거짓이었다): 결재=어느 페어링 봇이든(widen), 브리핑=담당 크루 또는 기본 크루의 봇.
+  // "게이트웨이 중지와 무관하게 계속"은 U1 정직 표기 — 봇 배달을 끄는 수단은 알림 칩(mutedEvents)이다.
   'settings.conn.gatewayOptional': [
-    '크루 직통 봇이 연결돼 있어 결재 요청·브리핑이 그 봇으로 배달됩니다. 회사 게이트웨이는 전용 봇을 따로 둘 때만 필요합니다(봇 토큰 하나는 한 곳에서만 사용 가능).',
-    'A crew direct bot is paired, so approval requests and briefings are delivered through it. The company gateway is only needed for a separate dedicated bot (one bot token can be used in one place only).',
+    '크루 직통 봇이 연결돼 있어 결재 요청은 페어링된 봇으로, 브리핑(루틴·작업·쪽지·서류함)은 담당 크루 또는 기본 크루의 봇으로 배달됩니다. 이 배달은 게이트웨이 중지와 무관하게 계속됩니다 — 끄려면 위의 알림 종류 칩을 사용하세요. 회사 게이트웨이는 전용 봇을 따로 둘 때만 필요합니다.',
+    'A crew direct bot is paired: approval requests are delivered to a paired bot, and briefings (routines, tasks, crew mail, inbox) go to the assigned crew’s bot or the default crew’s bot. This continues even while the gateway is stopped — use the notification chips above to turn kinds off. The company gateway is only needed for a separate dedicated bot.',
   ],
   // 커넥터(로그인만으로 붙는 외부 서비스) — 설계서 US-6
   'settings.connectors.title': ['외부 서비스 연결', 'Connected services'],

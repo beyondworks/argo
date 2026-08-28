@@ -3,12 +3,35 @@
 // 이음매(gateway.mjs 분해). 옮긴 코드는 원문 그대로(행동 불변) — 주석 동반 이동.
 import { listAgents } from '../hub.mjs';
 import { loadCompany } from '../workspace.mjs';
-import { pick } from './protocol.mjs';
+import { pick, telegramBriefingDest } from './protocol.mjs';
 
 /** 기본 크루 판정 — 이름 미지정 지시·받은 서류함(inbox) 처리의 담당. 사본 금지: routeMessage·
     crewStatusReply·inbox 폴백(gateway.mjs)이 전부 이 함수를 본다 — 인라인 사본이 두 벌 있던 것을
     단일화(한쪽만 고쳐지는 규칙 드리프트 방지, 이 레포의 반복 실패 계열). */
 export const defaultCrew = (agents, cfg) => agents.find((a) => a.slug === cfg?.defaultCrew) ?? agents[0] ?? null;
+
+/** 텔레그램 목적지 폴백 체인(순수) — 결재·브리핑 공용 정본. 게이트웨이/담당 크루 봇 → 기본 크루
+    봇 → (widen=결재만) 페어링된 아무 봇(정렬=결정적). 각 단계 판정은 telegramBriefingDest가 하므로
+    음소거·봇 사장 검사(H1)가 그대로 적용된다.
+    경위(분리 검수 H2 2026-08-28): 결재만 3단 폴백이고 브리핑(routine/job/crewmail/inbox)은 담당 크루
+    봇 1단뿐이라, 담당 크루에 봇이 없으면 루틴 결과가 그대로 무배달됐다 — PR #305가 해소했다는 원
+    사고(루틴 51회 ok·0회 도착)가 "담당 크루에 봇 없음"에서 재현. 결재의 폴백 로직을 여기로 추출해
+    브리핑도 같은 체인을 타게 한다(사본 금지 — gateway.mjs에 인라인이던 것을 단일화).
+    widen: 결재는 크루가 답을 기다리는 차단성 이벤트라 아무 봇으로라도 배달(웹 결재함 고립 방지),
+    브리핑은 기본 크루까지만(엉뚱한 봇으로 루틴 결과가 흩어지지 않게).
+    반환: telegramBriefingDest 결과(게이트웨이면 botSlug 없음, 폴백이면 botSlug 있음) 또는 null.
+    (export: 회귀 테스트용 — 순수 함수, agents는 인자로 받아 디스크 미접촉) */
+export function resolveTelegramDest(t, type, primarySlug, agents = [], { widen = false } = {}) {
+  let dest = telegramBriefingDest(t, type, primarySlug);
+  if (!dest && Object.keys(t?.agents ?? {}).length) {
+    const def = defaultCrew(agents, t)?.slug;
+    if (def && def !== primarySlug) dest = telegramBriefingDest(t, type, def);
+    if (!dest && widen) {
+      for (const s of Object.keys(t.agents).sort()) { dest = telegramBriefingDest(t, type, s); if (dest) break; }
+    }
+  }
+  return dest;
+}
 
 /** "@이름 지시" → to 크루, "@이름1 @이름2 지시" → 첫 번째가 to, 나머지는 cc(맥락 공유). 이름 미지정이면 기본 크루. (export는 테스트용) */
 export async function routeMessage(wsId, cfg, text) {

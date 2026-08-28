@@ -98,19 +98,14 @@ test('배선 — 슬랙은 블록 머리 판정, 텔레그램(결재 포함 전 
   // 그러면 못 끄는 것은 물론 꺼진 채널로도 나간다(원래 있던 enabled 보증이 그렇게 유실됐었다).
   const g = readFileSync(new URL('../src/gateway.mjs', import.meta.url), 'utf8');
   assert.match(g, /import \{ channelSends \}/, '판정 정본을 임포트하지 않는다 — 규칙 사본이 생겼다');
-  // 결재도 브리핑과 같은 목적지 판정(게이트웨이 우선 + 직통 봇 폴백)을 지난다 — 폴백 카드의 버튼은
-  // 직통 봇 폴러의 handleApprovalCallback(공용)이 받는다. 음소거 존중은 gateway-protocol.test.mjs가 행동으로 잠근다.
-  assert.match(g, /telegramBriefingDest\(t, 'approval'/, '결재 푸시가 목적지 판정을 안 지난다');
+  // 결재·브리핑·inbox 전부 **폴백 체인 정본 resolveTelegramDest**(routing.mjs — 내부에서
+  // telegramBriefingDest→channelSends)를 지난다(2026-08-28 H2 통일: 결재만 3단 폴백이고 브리핑은
+  // 1단이라 담당 크루 봇 없는 회사의 루틴이 무배달이던 비대칭 해소). 음소거·봇 사장 검사(H1)는
+  // 그 체인 안에서 적용되고, 행동은 gateway-protocol/gateway-routing/gateway.test가 잠근다.
+  assert.match(g, /resolveTelegramDest\(t, 'approval'/, '결재 푸시가 폴백 체인 정본을 안 지난다');
   assert.match(g, /if \(s\.token && s\.channel && sends\('slack', s\)\)/, '슬랙 블록 머리에 채널 판정이 없다');
-  // 받은 서류함은 알림 버스(onNotify)가 아니라 감시자가 직접 보낸다 — 목록에 있는 이상 게이트도 지나야
-  // "전부 껐는데 파일 넣으니 알림이 온다"가 안 생긴다(분리 검수 지적 2026-07-31). 이제 브리핑과 같은
-  // telegramBriefingDest 계약을 지난다(내부에서 channelSends 호출 — 직통 봇 폴백 포함, LOW-1).
-  assert.match(g, /telegramBriefingDest\(cfg, 'inbox'/, '받은 서류함 푸시가 목적지 판정을 안 지난다');
-  // 브리핑 3종(routine·job·crewmail)은 목적지 판정이 telegramBriefingDest(정본·순수)로 단일화됐다 —
-  // 내부에서 channelSends를 부르므로 음소거 계약은 유지되고, 게이트웨이가 못 보내면 담당 크루의
-  // 직통 봇으로 폴백한다(실사용 2026-08-27: 게이트웨이 꺼짐 + 직통 봇만 페어링 → 루틴 무배달).
-  // 폴백의 음소거 존중은 gateway-protocol.test.mjs가 행동으로 잠근다.
-  assert.match(g, /telegramBriefingDest\(t, event\.type/, '브리핑 목적지 판정(직통 봇 폴백)이 배선되지 않았다');
+  assert.match(g, /resolveTelegramDest\(cfg, 'inbox'/, '받은 서류함 푸시가 폴백 체인 정본을 안 지난다');
+  assert.match(g, /resolveTelegramDest\(t, event\.type/, '브리핑 목적지 판정(폴백 체인)이 배선되지 않았다');
   // (분기별 재판정을 막는 단언은 뒀다가 지웠다 — sends는 2인자(kind, ch)고 종류는 event.type을 캡처하므로
   //  분기마다 다른 종류를 재판정하려면 시그니처부터 바꿔야 하고, 그러면 위 두 단언이 먼저 깨진다.
   //  표현 불가능한 형태를 막는 정규식은 게이트처럼 보이지만 아무것도 안 문다 — 분리 검수 실측.)

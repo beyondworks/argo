@@ -484,3 +484,234 @@ test('결재 최종 폴백도 음소거를 존중한다 — mutedEvents(approval
   });
   assert.equal(calls.filter((c) => c.url.includes('/sendMessage')).length, 0, '음소거를 뚫고 폴백이 쐈다 — channelSends 계약 위반');
 });
+
+/* ── H1·H2·H3(2026-08-28 v0.1.49 전수 검수 배치) — pushEvent 실행 게이트 ── */
+test('pushEvent: 담당 크루 봇이 없으면 루틴이 기본 크루 봇으로 폴백 배달되고, 담당 크루 귀속 접두가 붙는다(H2+H3)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-h2-fallback';
+  await createCompany(WS, '폴백사', 'luca');
+  // 크루 카드 — createCompany는 카드를 만들지 않는다(영입이 만든다). defaultCrew 폴백은 listAgents
+  // 기반이라 카드가 있어야 발동한다(단독 재현으로 확인: 카드 없으면 agents=[] → 폴백 불발).
+  await mkdir(join(process.env.ARGO_ROOT, WS, 'agents'), { recursive: true });
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'luca.md'), '---\nname: 루카\nrole: 항해사\n---\n');
+  await updateAgentBot(WS, 'luca', { token: 'bot-tok-h2' });
+  await updateAgentBot(WS, 'luca', { ownerId: 1, ownerChat: '910' });
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') });
+    return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    // 담당(pepper)에겐 봇이 없다 — 수정 전에는 무배달(원 사고 "루틴 51회 ok·0회 도착" 재현 조건)
+    await _pushEventForTest({ type: 'routine', wsId: WS, routine: { title: '아침 브리핑', agentSlug: 'pepper' }, ok: true, reply: '결과' });
+  } finally { globalThis.fetch = origFetch; }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1, '기본 크루 봇으로 정확히 1회(무배달·이중 발송 둘 다 금지)');
+  assert.ok(sends[0].url.includes('/botbot-tok-h2/'), '기본 크루(luca) 봇으로 폴백');
+  assert.equal(String(sends[0].body.chat_id), '910');
+  // M6 변이 실증(재검수): '담당 또는 배달 봇 아무 이름' 매칭은 오귀속(배달 봇 이름 접두) 그 자체를
+  // 초록으로 통과시켰다 — 불변식을 직접 세운다: 접두 줄에 담당(pepper)은 있고 배달 봇 크루(루카)는 없다.
+  const firstLine = String(sends[0].body.text).split('\n')[0];
+  assert.match(firstLine, /pepper/u, '귀속 접두 — 담당 크루가 표기된다(H3)');
+  assert.doesNotMatch(firstLine, /루카/u, '배달 봇 크루 이름으로 오귀속하면 안 된다(H3의 요점)');
+  assert.match(sends[0].body.text, /담당 크루의 봇이 연결돼 있지 않아|delivered via this bot/, '폴백 사유가 정직하게 표기된다');
+});
+
+test('pushEvent: 게이트웨이 사장과 다른 사람의 봇만 있으면 결재·루틴 모두 그 봇으로 나가지 않는다(H1)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot, updateConnection } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-h1-stranger';
+  await createCompany(WS, '오배달사', 'pepper');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-h1' }); // 게이트웨이 페어링(사장=1)·미가동(enabled 기본 false)
+  await updateConnection(WS, 'telegram', { chatId: '100', ownerId: 1 });
+  await updateAgentBot(WS, 'pepper', { token: 'bot-tok-h1' });
+  await updateAgentBot(WS, 'pepper', { ownerId: 42, ownerChat: '4242' }); // 타인이 페어링한 봇
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') });
+    return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await _pushEventForTest({ type: 'approval', wsId: WS, item: { id: 'ap-h1x', slug: 'pepper', action: '고객 DB 삭제', reason: '검수', status: 'pending' } });
+    await _pushEventForTest({ type: 'routine', wsId: WS, routine: { title: 'r', agentSlug: 'pepper' }, ok: true, reply: 'x' });
+  } finally { globalThis.fetch = origFetch; }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 0, '남의 봇 DM으로 결재·브리핑이 나가면 안 된다(오배달 차단)');
+});
+
+test('pushEvent: 담당·기본 크루 둘 다 봇이 없으면 브리핑은 다른 봇으로 흩지 않는다(M2 — widen 경계)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-m2-nowiden';
+  await createCompany(WS, '경계사', 'luca');
+  await mkdir(join(process.env.ARGO_ROOT, WS, 'agents'), { recursive: true });
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'luca.md'), '---\nname: 루카\n---\n'); // 기본 크루(봇 없음)
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'zeta.md'), '---\nname: 제타\n---\n');
+  await updateAgentBot(WS, 'zeta', { token: 'bot-tok-m2' });
+  await updateAgentBot(WS, 'zeta', { ownerId: 1, ownerChat: '930' }); // 담당(pepper)·기본(luca) 아닌 봇만 존재
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => { calls.push({ url: String(url) }); return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } }); };
+  try {
+    await _pushEventForTest({ type: 'routine', wsId: WS, routine: { title: 'r', agentSlug: 'pepper' }, ok: true, reply: 'x' });
+    // 대조군 — 같은 상태에서 결재는 widen으로 zeta 봇에 실린다(경계가 widen 플래그 하나임을 실행으로 잠금)
+    await _pushEventForTest({ type: 'approval', wsId: WS, item: { id: 'ap-m2x', slug: 'pepper', action: 'a', reason: 'r', status: 'pending' } });
+  } finally { globalThis.fetch = origFetch; }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1, '브리핑 0회 + 결재 1회 — 브리핑 호출부가 widen:true로 바뀌면 2회가 되어 red');
+  assert.ok(sends[0].url.includes('/botbot-tok-m2/'), '그 1회는 결재(widen) 카드다');
+});
+
+test('pushEvent: 폴백 봇으로 나간 결재의 후속 보고에 담당 크루 귀속 접두가 붙는다(M5 — H3 후속)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-m5-follow';
+  await createCompany(WS, '후속사', 'delta');
+  await mkdir(join(process.env.ARGO_ROOT, WS, 'agents'), { recursive: true });
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'delta.md'), '---\nname: 델타\n---\n');
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'pepper.md'), '---\nname: 페퍼\n---\n');
+  await updateAgentBot(WS, 'delta', { token: 'bot-tok-m5' });
+  await updateAgentBot(WS, 'delta', { ownerId: 1, ownerChat: '940' });
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => { calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') }); return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } }); };
+  try {
+    // 카드가 delta 봇으로 폴백돼 나갔던 결재(tg.botSlug=delta ≠ 담당 pepper)의 후속 보고
+    await _pushEventForTest({ type: 'approval_followup', wsId: WS, item: { id: 'ap-m5x', slug: 'pepper', tg: { chatId: '940', messageId: 7, botSlug: 'delta' } }, reply: '메일 발송 완료' });
+  } finally { globalThis.fetch = origFetch; }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1, '후속 보고 1회');
+  const first = String(sends[0].body.text).split('\n')[0];
+  assert.match(first, /페퍼/, '담당 크루 귀속 접두(H3 후속) — 제거 변이(M5)가 red가 되는 게이트');
+  assert.doesNotMatch(first, /델타/, '배달 봇 크루로 오귀속 금지(M6과 같은 불변식)');
+});
+
+test('pushEvent: 봇 0개 회사의 크루 쪽지도 이름으로 표기된다(C2 회귀 게이트)', async () => {
+  const { _pushEventForTest } = await import('../src/gateway.mjs');
+  const { updateConnection } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-c2-names';
+  await createCompany(WS, '이름사', 'pepper');
+  await mkdir(join(process.env.ARGO_ROOT, WS, 'agents'), { recursive: true });
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'agents', 'pepper.md'), '---\nname: 페퍼\n---\n');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-c2', enabled: true });
+  await updateConnection(WS, 'telegram', { chatId: '950' }); // 게이트웨이만, 크루 봇 0개 — 가장 흔한 구성
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => { calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') }); return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } }); };
+  try {
+    await _pushEventForTest({ type: 'crewmail', wsId: WS, slug: 'pepper', from: 'alpha', fromName: '알파', kind: 'to', reply: '보고' });
+  } finally { globalThis.fetch = origFetch; }
+  const sends = calls.filter((c) => c.url.includes('/sendMessage'));
+  assert.equal(sends.length, 1);
+  assert.match(sends[0].body.text, /페퍼/, '수신 크루가 slug(pepper)가 아니라 이름(페퍼)으로 — agents 가드가 nameOf를 굶기면 red');
+});
+
+/* ── C1 실행 게이트(최종 재검 블로커) — 확정 인가 무력화 변이(approvalConfirmerAllowed→true)가
+   전체 스위트 초록으로 생존했다(V1 실증: 그 상태에서 타인 콜백이 approved로 부활). 공용 함수를
+   콜백 경로로 실행해 잠근다 — 폴러 텍스트·caption 경로도 같은 함수를 지나므로 함께 게이트된다. ── */
+test('결재 확정 인가(C1): 타인 봇 소유자의 콜백은 거절(문구+pending 유지), 사장 본인은 승인(대조군)', async () => {
+  const { _approvalCallbackForTest } = await import('../src/gateway.mjs');
+  const { updateConnection, updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
+  const WS = 'co-c1-authz';
+  await createCompany(WS, '인가사', 'pepper');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-c1' });
+  await updateConnection(WS, 'telegram', { chatId: '100', ownerId: 1 }); // 회사 사장 = 1
+  await updateAgentBot(WS, 'pepper', { token: 'bot-tok-c1' });
+  await updateAgentBot(WS, 'pepper', { ownerId: 42, ownerChat: '4242' }); // 타인이 페어링한 봇
+  const item = await addApproval(WS, { slug: 'pepper', action: '고객 DB 전체 삭제', reason: '검수' });
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => { calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') }); return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } }); };
+  try {
+    // 타인(42) — 봇 채널 소유자 검사(bySender)는 통과하지만 회사 사장 일치(C1)에서 막혀야 한다
+    await _approvalCallbackForTest(WS, 'bot-tok-c1', { id: 'cb1', data: `ap:${item.id}:1`, from: { id: 42 }, message: { chat: { id: 4242 }, message_id: 9 } }, { chatId: '4242', ownerId: 42 });
+    let it = (await loadApprovals(WS)).find((x) => x.id === item.id);
+    assert.equal(it.status, 'pending', '타인 확정은 상태를 바꾸지 못한다 — V1 변이(인가 무력화)가 red가 되는 게이트');
+    const ack = calls.find((c) => c.url.includes('answerCallbackQuery'));
+    assert.match(String(ack?.body?.text ?? ''), /사장만 확정/, '무음 스피너가 아니라 정직 거절 문구');
+    // 대조군 — 회사 사장(1) 본인이 게이트웨이 카드에서 확정하면 승인된다(오차단 아님 + return false 상수 변이도 red)
+    await _approvalCallbackForTest(WS, 'gw-tok-c1', { id: 'cb2', data: `ap:${item.id}:1`, from: { id: 1 }, message: { chat: { id: 100 }, message_id: 10 } }, { chatId: '100', ownerId: 1 });
+    it = (await loadApprovals(WS)).find((x) => x.id === item.id);
+    assert.equal(it.status, 'approved', '사장 본인은 확정된다');
+  } finally { globalThis.fetch = origFetch; }
+});
+
+test('결재 확정 인가(C1): connections 손상 시 fail-closed — 열리는 방향이 아니다(L-a)', async () => {
+  const { _approvalCallbackForTest } = await import('../src/gateway.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
+  const WS = 'co-c1-corrupt';
+  await createCompany(WS, '손상사', 'pepper');
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'connections.json'), '{corrupt'); // readJson throw 유도
+  const item = await addApproval(WS, { slug: 'pepper', action: 'a', reason: 'r' });
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  try {
+    await _approvalCallbackForTest(WS, 'tok', { id: 'cb3', data: `ap:${item.id}:1`, from: { id: 1 }, message: { chat: { id: 5 }, message_id: 1 } }, { chatId: '5', ownerId: 1 });
+    const it = (await loadApprovals(WS)).find((x) => x.id === item.id);
+    assert.equal(it.status, 'pending', '판정 불가는 불허(fail-closed) — catch가 true를 돌려주는 변이(V7)가 red');
+  } finally { globalThis.fetch = origFetch; }
+});
+
+test('maskConnections: gwOwnerMatch — 화면 안내 조건이 서버 배달·인가 규칙과 같은 기준을 본다(L-b)', async () => {
+  const { updateConnection, updateAgentBot, maskConnections, loadConnections } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-lb-mask';
+  await createCompany(WS, '마스크사', 'pepper');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-lb' });
+  await updateConnection(WS, 'telegram', { ownerId: 1 });
+  await updateAgentBot(WS, 'pepper', { token: 'bot-tok-lb1' });
+  await updateAgentBot(WS, 'pepper', { ownerId: 42, ownerChat: '4242' }); // 타인 봇
+  await updateAgentBot(WS, 'luca', { token: 'bot-tok-lb2' });
+  await updateAgentBot(WS, 'luca', { ownerId: 1, ownerChat: '100' });     // 사장 봇
+  const m = maskConnections(await loadConnections(WS));
+  assert.equal(m.telegram.agents.pepper.gwOwnerMatch, false, '타인 봇 — 안내("배달됩니다")를 띄우면 거짓이 되는 봇(V8 상수 변이가 red)');
+  assert.equal(m.telegram.agents.luca.gwOwnerMatch, true, '사장 봇은 참');
+});
+
+test('직통 봇 폴러: 타인 봇 소유자의 텍스트 결재는 거절된다(C1 ② 호출부 게이트 — V11 변이 red)', async () => {
+  const { _startAgentTelegramForTest } = await import('../src/gateway.mjs');
+  const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
+  const { updateConnection } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-c1-textdeny';
+  await createCompany(WS, '텍스트인가사', 'pepper');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-td' });
+  await updateConnection(WS, 'telegram', { ownerId: 1 }); // 회사 사장 = 1
+  const item = await addApproval(WS, { slug: 'pepper', action: '고객 DB 삭제', reason: '검수' });
+  const cfg = { token: 'bot-tok-td', ownerId: 42, ownerChat: '4242', botUsername: '' }; // 타인이 페어링한 봇(발신자=봇 소유자=42)
+  const calls = [];
+  let served = false;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    calls.push({ url: u, body: JSON.parse(opts?.body ?? '{}') });
+    if (u.includes('/getUpdates')) {
+      if (served) return new Promise(() => {});
+      served = true;
+      return new Response(JSON.stringify({ ok: true, result: [{ update_id: 1, message: { message_id: 6, chat: { id: 4242, type: 'private' }, from: { id: 42 }, text: `승인 ${item.id}` } }] }), { headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  };
+  const stop = _startAgentTelegramForTest(WS, 'pepper', () => cfg);
+  try {
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      if (calls.some((c) => c.url.includes('/botbot-tok-td/sendMessage'))) break; // 거절 회신 도착까지
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  } finally { stop(); globalThis.fetch = origFetch; }
+  assert.equal((await loadApprovals(WS)).find((a) => a.id === item.id).status, 'pending', '타인 텍스트 결재는 확정되지 않는다(matrix4-A 원 재현의 게이트)');
+  const replyMsg = calls.find((c) => c.url.includes('/botbot-tok-td/sendMessage'));
+  assert.match(String(replyMsg?.body?.text ?? ''), /사장만 확정/, '무음이 아니라 정직 거절 회신');
+});

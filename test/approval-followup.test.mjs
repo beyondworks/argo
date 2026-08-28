@@ -26,7 +26,8 @@ test('배선: followUp이 성공·실패 양 경로에서 방송하고, 게이�
   assert.match(aa, /emitNotify\(\{ type: 'approval_followup', wsId, item, reply: note \}\); \/\/ 실패도 무소식보다 통보가 낫다\n    throw e;/, '실패 경로 방송(rethrow 직전)');
   const gw = await readFile(new URL('../src/gateway.mjs', import.meta.url), 'utf8');
   assert.match(gw, /event\.type === 'approval_followup'/, '게이트웨이 소비부');
-  const block = gw.split("event.type === 'approval_followup'")[1]?.slice(0, 500) ?? '';
+  // 창 1200자 — 폴백 귀속 접두(H3, 2026-08-28)가 블록 머리에 더해져 500자 창이 sendTgReply를 밀어냈다.
+  const block = gw.split("event.type === 'approval_followup'")[1]?.slice(0, 1200) ?? '';
   // 토큰 판정(봇 귀속 카드 → 그 봇 토큰, 게이트웨이 카드 → enabled 게이트 LOW-4)은 여기서 소스
   // 앵커로 잠그지 않는다 — 앵커는 헬퍼 이름·옵션명 리팩터에 거짓 red를 낸다(레포 규칙: 불변식을
   // 직접 세라). gateway.test.mjs '결재 후속 배달' 테스트가 _pushEventForTest 실행으로 행동을 잠근다.

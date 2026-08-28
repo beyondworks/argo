@@ -63,13 +63,23 @@ export function pairCodeMatches(pairCode, text) {
     inbox는 알림 버스(onNotify)가 아니라 inbox 감시자가 직접 부른다 — 담당 크루 개념이 없어
     처리 크루(기본 크루)의 slug를 넘긴다(분리 검수 LOW-1: 루틴·작업·쪽지는 폴백으로 오는데
     받은 서류함만 못 받는 비대칭 해소). pushEvent에는 inbox 이벤트가 오지 않으므로 이중 발송 없음.
+    ④ **폴백 봇은 게이트웨이 사장의 것이어야 한다**(분리 검수 H1 2026-08-28): 게이트웨이에 사장
+    (ownerId)이 있으면 그 사장이 페어링한 봇으로만 폴백한다 — 사장이 크루 봇 연결 코드를 타인에게
+    준 경우, 그 타인의 DM으로 결재·브리핑(고객 데이터 포함 가능)이 **배달**되던 표면 차단. 이
+    검사는 배달만 막는다 — 타인의 **확정**(버튼·텍스트 결재, 업그레이드 전 카드·크루 턴 문의로
+    id 도달 가능)은 gateway.mjs approvalConfirmerAllowed(C1)가 같은 기준으로 별도 차단한다(재검수
+    실증: 배달 차단만으로는 matrix4-A에서 타인 텍스트 결재가 승인 확정됐다). 게이트웨이에 사장이
+    없으면(게이트웨이 미설정·미페어링 — 봇만 쓰는 정상 케이스) 비교 기준이 없으므로 봇을
+    신뢰한다(그 검사를 강제하면 봇 전용 회사의 배달이 통째로 막혀 원 무배달 사고가 재발한다).
     반환: { token, chatId } · { token, chatId, botSlug }(직통 봇 폴백) · null(보낼 곳 없음). */
 export const TG_BRIEFING_TYPES = Object.freeze(['routine', 'job', 'crewmail', 'inbox', 'approval']);
 export function telegramBriefingDest(tg, type, slug) {
   if (!TG_BRIEFING_TYPES.includes(type)) return null;
   if (tg?.token && tg.chatId && channelSends('telegram', tg, type)) return { token: tg.token, chatId: tg.chatId };
   const bot = tg?.agents?.[slug];
-  if (bot?.token && bot.ownerChat && channelSends('telegram', { enabled: true, mutedEvents: tg?.mutedEvents }, type)) {
+  // 게이트웨이 사장이 있으면 봇 사장이 그와 같아야 폴백(H1). 없으면 봇 신뢰(봇 전용 회사).
+  const ownerOk = tg?.ownerId == null || String(bot?.ownerId) === String(tg.ownerId);
+  if (bot?.token && bot.ownerChat && ownerOk && channelSends('telegram', { enabled: true, mutedEvents: tg?.mutedEvents }, type)) {
     return { token: bot.token, chatId: String(bot.ownerChat), botSlug: slug };
   }
   return null;

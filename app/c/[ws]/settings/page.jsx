@@ -1076,7 +1076,9 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
           #307 머지로 거짓이 됐는데 제거가 이월됐었다(실사용 혼란 2026-08-28: 게이트웨이가 필수로 읽혀
           직통 봇 토큰을 옮겨야 하는지 물음). 직통 봇이 있고 게이트웨이가 미가동일 때만 보인다. */}
       {kind === 'telegram' && !(on && conn?.hasToken && conn?.chatId)
-        && Object.values(conn?.agents ?? {}).some((a) => a?.hasToken && a?.paired) && (
+        && Object.values(conn?.agents ?? {}).some((a) => a?.hasToken && a?.paired && a?.gwOwnerMatch !== false) && (
+        // gwOwnerMatch — 배달·확정이 회사 사장 봇 기준(H1·C1)이므로 안내 조건도 같은 기준(분리 검수 C4:
+        // 타인이 페어링한 봇만 있는 회사에서 "배달됩니다"가 거짓이던 조합 차단)
         <span style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.5 }}>{t('settings.conn.gatewayOptional')}</span>
       )}
       {kind === 'slack' && (
