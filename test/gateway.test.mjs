@@ -613,3 +613,68 @@ test('pushEvent: 봇 0개 회사의 크루 쪽지도 이름으로 표기된다(C
   assert.equal(sends.length, 1);
   assert.match(sends[0].body.text, /페퍼/, '수신 크루가 slug(pepper)가 아니라 이름(페퍼)으로 — agents 가드가 nameOf를 굶기면 red');
 });
+
+/* ── C1 실행 게이트(최종 재검 블로커) — 확정 인가 무력화 변이(approvalConfirmerAllowed→true)가
+   전체 스위트 초록으로 생존했다(V1 실증: 그 상태에서 타인 콜백이 approved로 부활). 공용 함수를
+   콜백 경로로 실행해 잠근다 — 폴러 텍스트·caption 경로도 같은 함수를 지나므로 함께 게이트된다. ── */
+test('결재 확정 인가(C1): 타인 봇 소유자의 콜백은 거절(문구+pending 유지), 사장 본인은 승인(대조군)', async () => {
+  const { _approvalCallbackForTest } = await import('../src/gateway.mjs');
+  const { updateConnection, updateAgentBot } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
+  const WS = 'co-c1-authz';
+  await createCompany(WS, '인가사', 'pepper');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-c1' });
+  await updateConnection(WS, 'telegram', { chatId: '100', ownerId: 1 }); // 회사 사장 = 1
+  await updateAgentBot(WS, 'pepper', { token: 'bot-tok-c1' });
+  await updateAgentBot(WS, 'pepper', { ownerId: 42, ownerChat: '4242' }); // 타인이 페어링한 봇
+  const item = await addApproval(WS, { slug: 'pepper', action: '고객 DB 전체 삭제', reason: '검수' });
+  const calls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => { calls.push({ url: String(url), body: JSON.parse(opts?.body ?? '{}') }); return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } }); };
+  try {
+    // 타인(42) — 봇 채널 소유자 검사(bySender)는 통과하지만 회사 사장 일치(C1)에서 막혀야 한다
+    await _approvalCallbackForTest(WS, 'bot-tok-c1', { id: 'cb1', data: `ap:${item.id}:1`, from: { id: 42 }, message: { chat: { id: 4242 }, message_id: 9 } }, { chatId: '4242', ownerId: 42 });
+    let it = (await loadApprovals(WS)).find((x) => x.id === item.id);
+    assert.equal(it.status, 'pending', '타인 확정은 상태를 바꾸지 못한다 — V1 변이(인가 무력화)가 red가 되는 게이트');
+    const ack = calls.find((c) => c.url.includes('answerCallbackQuery'));
+    assert.match(String(ack?.body?.text ?? ''), /사장만 확정/, '무음 스피너가 아니라 정직 거절 문구');
+    // 대조군 — 회사 사장(1) 본인이 게이트웨이 카드에서 확정하면 승인된다(오차단 아님 + return false 상수 변이도 red)
+    await _approvalCallbackForTest(WS, 'gw-tok-c1', { id: 'cb2', data: `ap:${item.id}:1`, from: { id: 1 }, message: { chat: { id: 100 }, message_id: 10 } }, { chatId: '100', ownerId: 1 });
+    it = (await loadApprovals(WS)).find((x) => x.id === item.id);
+    assert.equal(it.status, 'approved', '사장 본인은 확정된다');
+  } finally { globalThis.fetch = origFetch; }
+});
+
+test('결재 확정 인가(C1): connections 손상 시 fail-closed — 열리는 방향이 아니다(L-a)', async () => {
+  const { _approvalCallbackForTest } = await import('../src/gateway.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
+  const WS = 'co-c1-corrupt';
+  await createCompany(WS, '손상사', 'pepper');
+  await writeFile(join(process.env.ARGO_ROOT, WS, 'connections.json'), '{corrupt'); // readJson throw 유도
+  const item = await addApproval(WS, { slug: 'pepper', action: 'a', reason: 'r' });
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  try {
+    await _approvalCallbackForTest(WS, 'tok', { id: 'cb3', data: `ap:${item.id}:1`, from: { id: 1 }, message: { chat: { id: 5 }, message_id: 1 } }, { chatId: '5', ownerId: 1 });
+    const it = (await loadApprovals(WS)).find((x) => x.id === item.id);
+    assert.equal(it.status, 'pending', '판정 불가는 불허(fail-closed) — catch가 true를 돌려주는 변이(V7)가 red');
+  } finally { globalThis.fetch = origFetch; }
+});
+
+test('maskConnections: gwOwnerMatch — 화면 안내 조건이 서버 배달·인가 규칙과 같은 기준을 본다(L-b)', async () => {
+  const { updateConnection, updateAgentBot, maskConnections, loadConnections } = await import('../src/connections.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-lb-mask';
+  await createCompany(WS, '마스크사', 'pepper');
+  await updateConnection(WS, 'telegram', { token: 'gw-tok-lb' });
+  await updateConnection(WS, 'telegram', { ownerId: 1 });
+  await updateAgentBot(WS, 'pepper', { token: 'bot-tok-lb1' });
+  await updateAgentBot(WS, 'pepper', { ownerId: 42, ownerChat: '4242' }); // 타인 봇
+  await updateAgentBot(WS, 'luca', { token: 'bot-tok-lb2' });
+  await updateAgentBot(WS, 'luca', { ownerId: 1, ownerChat: '100' });     // 사장 봇
+  const m = maskConnections(await loadConnections(WS));
+  assert.equal(m.telegram.agents.pepper.gwOwnerMatch, false, '타인 봇 — 안내("배달됩니다")를 띄우면 거짓이 되는 봇(V8 상수 변이가 red)');
+  assert.equal(m.telegram.agents.luca.gwOwnerMatch, true, '사장 봇은 참');
+});

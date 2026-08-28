@@ -233,6 +233,15 @@ async function approvalConfirmerAllowed(wsId, fromId) {
 }
 const notOwnerMsg = (lang) => pick('이 결재는 회사 게이트웨이를 페어링한 사장만 확정할 수 있습니다.', 'Only the owner who paired the company gateway can decide this approval.', lang);
 
+/** H1 차단 진단(N1) — 봇은 페어링돼 있는데 회사 사장 불일치로 전부 걸러져 무발송이 되면, 화면 증상은
+    원 무배달 사고와 같아 원인 추적이 안 된다. 이벤트당 1줄(발송 시도 시점 — 폴 주기 아님).
+    결재·브리핑 공용(사본 금지 — 재검수 N1 범위 지적: approval이 빠져 있었다). */
+function warnStrandedBots(t, wsId, type) {
+  if (t?.ownerId == null) return;
+  if (!Object.values(t?.agents ?? {}).some((b) => b?.token && b.ownerChat && String(b.ownerId) !== String(t.ownerId))) return;
+  console.warn(`[argo] 텔레그램 ${type} 미발송(${wsId}): 페어링된 크루 봇이 회사 게이트웨이 사장 소유가 아님 — 사장 계정으로 재페어링 필요`);
+}
+
 /** 결재 인라인 버튼 콜백 처리 — 회사 게이트웨이·크루 직통 봇 폴러 공용(단일 원천 — 한쪽은 규칙,
     한쪽은 사본이면 사본이 반드시 낡는다). 허용 조건: 형식 일치 + 카드가 있는 페어링 채팅 +
     페어링된 사장 본인(ownerId 없는 구 페어링은 통과 — 회사 게이트웨이 기존 관용 유지) +
@@ -832,6 +841,7 @@ async function pushEvent(event) {
     // agents 가드 — 직통 봇이 하나도 없으면 폴백이 성립할 수 없으니 listAgents 디스크 읽기를 생략(재검수 LOW-3).
     const agents = Object.keys(t?.agents ?? {}).length ? await listAgents(event.wsId).catch(() => []) : [];
     const dest = resolveTelegramDest(t, 'approval', event.item.slug, agents, { widen: true });
+    if (!dest) warnStrandedBots(t, event.wsId, 'approval'); // N1 — "결재가 안 온다"가 가장 먼저 눈에 띄는 증상이라 결재에도 진단 줄
     if (dest) {
       try {
         const res = await tg(dest.token, 'sendMessage', {
@@ -864,12 +874,7 @@ async function pushEvent(event) {
     const agents = (event.type === 'crewmail' || Object.keys(t?.agents ?? {}).length)
       ? await listAgents(event.wsId).catch(() => []) : [];
     const dest = resolveTelegramDest(t, event.type, primarySlug, agents, { widen: false });
-    // H1 차단 진단(N1) — 봇은 페어링돼 있는데 회사 사장 불일치로 전부 걸러져 무배달이 되면, 화면 증상은
-    // 원 무배달 사고와 같아 원인 추적이 안 된다. 이벤트당 1줄만 남긴다(발송 시도 시점 — 폴 주기 아님).
-    if (!dest && event.type !== 'crewmail' && t?.ownerId != null
-      && Object.values(t?.agents ?? {}).some((b) => b?.token && b.ownerChat && String(b.ownerId) !== String(t.ownerId))) {
-      console.warn(`[argo] 텔레그램 ${event.type} 미발송(${event.wsId}): 페어링된 크루 봇이 회사 게이트웨이 사장 소유가 아님 — 사장 계정으로 재페어링 필요`);
-    }
+    if (!dest && event.type !== 'crewmail') warnStrandedBots(t, event.wsId, event.type); // crewmail은 발신·수신 표기가 있어 제외(기존 판단 유지)
     if (dest) {
       const nameOf = (s) => agents.find((a) => a.slug === s)?.name ?? s;
       // 귀속 접두(H3) — 담당이 아닌 봇 DM으로 폴백 배달될 때, 그 봇의 발화가 아니라 담당 크루의
