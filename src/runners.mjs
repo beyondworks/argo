@@ -15,6 +15,7 @@ import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthFormatError } from './runners/catalog.mjs';
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli } from './runners/codex.mjs';
+import { execCodexAppServer } from './runners/codex-appserver.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 
@@ -127,6 +128,19 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
 export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null }) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   const t0 = Date.now(); // 실패의 정직 번역용 — cliTurnFailure가 경과 시간으로 시간 초과를 판정한다
+  if (runner === 'codex' && process.env.ARGO_CODEX_ENGINE === 'appserver') {
+    // 엔진 하네스 전환 P1(옵트인 플래그) — codex를 app-server(read-only 샌드박스 + 전량 승인)로
+    // 돌리고 승인 요청마다 permission-gate 판정을 태운다(셸 1차 방어 — 한계는 codex-appserver.mjs
+    // 머리 주석). 기본값은 기존 exec 경로 그대로(회귀 0) — 검증 후 기본 승격.
+    // 실패 번역은 exec 경로와 **같은 cliTurnFailure**를 태운다(분리 검수 MEDIUM-4: 안내가 러너
+    // 경로별로 갈리지 않게). 한도(limitReached)·중단(aborted)은 이미 정직한 오류라 그대로 통과.
+    try {
+      return await execCodexAppServer({ model, cwd, prompt, timeoutMs, cred, signal, effort, workRoots, mcpServers });
+    } catch (e) {
+      if (e.limitReached || e.aborted) throw e;
+      throw cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: e.stage ?? 'exec', kind });
+    }
+  }
   if (runner === 'codex') {
     const dir = await mkdtemp(join(tmpdir(), 'argo-codex-'));
     const out = join(dir, 'last.txt');
