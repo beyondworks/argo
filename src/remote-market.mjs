@@ -211,6 +211,9 @@ import { runOneShot } from './oneshot.mjs';
 // 테스트 주입 seam — 실행 검증은 이 경유를 잠근다(직접 SDK 호출로 되돌아가면 fake가 안 불려 red).
 let _oneShot = runOneShot;
 export const _setOneShotForTest = (fn) => { _oneShot = fn ?? runOneShot; };
+// 원문 fetch 주입 seam — 데이터 펜스 테스트가 네트워크 없이 raw를 넣어 펜스 부착을 실증한다.
+let _fetchRaw = null; // null이면 실 fetchSkillRaw(아래 정의)
+export const _setFetchRawForTest = (fn) => { _fetchRaw = fn; };
 const explainCache = new Map();
 // v2(2026-08-29): v1(explain.json)은 SDK 직접 호출 시절 러너 오류 원문("Failed to authenticate...")이
 // 설명으로 캐시·영속되던 오염분을 담고 있어 파일째 세대 교체한다(실사용 제보 — GLM만 연결한 사용자).
@@ -258,7 +261,7 @@ export async function explainItem(wsId, item, lang = 'ko') {
   if (explainCache.has(key)) return explainCache.get(key);
 
   let raw = null;
-  if (item.kind === 'skill' && item.githubUrl) raw = await fetchSkillRaw(item.githubUrl);
+  if (item.kind === 'skill' && item.githubUrl) raw = await (_fetchRaw ?? fetchSkillRaw)(item.githubUrl);
 
   const prompt = lang === 'en'
     ? `You are a guide who explains hard developer tools to a non-technical business owner.
@@ -337,6 +340,9 @@ const warmedOnce = new Set();
 export function warmExplains(wsId, items, kind, lang = 'ko') {
   // 옛 시그니처(wsId 없이) 방어 — explainItem은 초입 가드가 있지만 여기 filter는 그 전에 터진다.
   // 잘못 호출돼도 워밍만 건너뛰고 조용히 넘어간다(unhandledRejection로 상주를 흔들지 않게, 검수 MEDIUM-3).
+  // 주의(재검수 LOW): 이 가드는 아래 IIFE의 .catch 백스톱과 **중복 방어**다 — 가드를 지워도 .catch가
+  // 같은 결과(TypeError 삼킴)를 내므로 행동 테스트로 이 한 줄만 독립 실증할 수 없다. TypeError를
+  // 아예 안 만들어 에러 로그 노이즈를 없애는 것이 이 가드의 값이고, 방어 자체는 .catch가 보장한다.
   if (typeof wsId !== 'string' || !wsId || !Array.isArray(items)) return;
   const wk = `${lang}:${kind}`; // 언어별로 각각 프리워밍 — ko/en 프리워밍이 서로를 막지 않게
   if (warmingKinds.has(wk)) return;
