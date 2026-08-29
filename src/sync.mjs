@@ -508,7 +508,8 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   };
   const changed = (a, b) => !a || !b || (a.h ?? `${a.m}:${a.s}`) !== (b.h ?? `${b.m}:${b.s}`);
 
-  // credSync off 회수 — 클라우드에 남은 자격 암호문을 마커로 덮고(시크릿 바이트 즉시 소멸) 매니페스트에서
+  // credSync off 회수 — 클라우드에 남은 자격 암호문의 **활성 사본**을 마커로 덮고(플랫폼 백업·스냅샷의
+  // 과거 사본 보존까지는 보장 못 함 — docs/privacy-sync.md에 같은 한계를 고지) 매니페스트에서
   // 내린다. **remove 금지**: blob 부재는 토글 미반영 기기(구버전 포함)의 `l && !r` 분기에서 "다른 기기가
   // 지움 → 로컬도 삭제"로 이어져 그 기기의 로컬 자격을 지운다. blob(마커)이 실존하면 그 기기들은
   // blobExists → heal(항목 복원)을 타 로컬을 보존한다(위 lost-update 방어와 같은 경로 — PIN2가 잠근다).
