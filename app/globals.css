@@ -2075,5 +2075,10 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh - 56px); min-
 html:root[data-os='win'] {
   --mono: 'IBM Plex Mono', ui-monospace, 'Pretendard Variable', Pretendard, monospace;
 }
-/* 계기판 라벨 자간 — 라틴 대문자용 0.13em이 한글에선 낱자 분리로 보인다(제보 스크린샷). */
-html[data-os='win'] .microlabel { letter-spacing: 0.06em; }
+/* 계기판 라벨 자간 — 라틴 대문자용 넓은 트래킹(0.1~0.13em)이 한글에선 낱자 분리로 보인다
+   (제보 스크린샷). 같은 var(--mono)+uppercase+넓은 자간 조합 전수(검수 실측 5클래스 계측):
+   microlabel 0.13em·표 머리(.table th) 0.13em·사이드바 그룹(.side-group) 0.1em을 함께 완화.
+   .chip·.memo-chip은 0.05em으로 처방값 이하라 제외. */
+html[data-os='win'] .microlabel,
+html[data-os='win'] .side-group,
+html[data-os='win'] .table th { letter-spacing: 0.06em; }
