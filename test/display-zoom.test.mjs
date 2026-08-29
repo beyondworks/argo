@@ -39,17 +39,19 @@ test('일반 화면(1800px 미만)은 배율 미설정 — 기존 레이아웃�
   }
 });
 
-test('큰 모니터 자동 배율 — 1800px 이상 1.1, 2400px 이상 1.25', () => {
-  assert.equal(runBoot({ innerWidth: 1800 }).zoom, 1.1);
-  assert.equal(runBoot({ innerWidth: 2399 }).zoom, 1.1);
-  assert.equal(runBoot({ innerWidth: 2400 }).zoom, 1.25);
-  assert.equal(runBoot({ innerWidth: 3840 }).zoom, 1.25);
+test('큰 모니터 자동 배율 — 1800↑ 1.2, 2400↑(QHD) 1.5, 3400↑(4K) 1.7', () => {
+  assert.equal(runBoot({ innerWidth: 1800 }).zoom, 1.2);
+  assert.equal(runBoot({ innerWidth: 2399 }).zoom, 1.2);
+  assert.equal(runBoot({ innerWidth: 2400 }).zoom, 1.5);
+  assert.equal(runBoot({ innerWidth: 3399 }).zoom, 1.5);
+  assert.equal(runBoot({ innerWidth: 3400 }).zoom, 1.7);
+  assert.equal(runBoot({ innerWidth: 3840 }).zoom, 1.7);
 });
 
 test('배율 적용 시 100vh 보정 변수(--z)도 같은 값으로 — zoom만 걸리면 전체 화면 레이아웃이 넘친다', () => {
   const r = runBoot({ innerWidth: 2500 });
-  assert.equal(r.zoom, 1.25);
-  assert.equal(r.z, '1.25');
+  assert.equal(r.zoom, 1.5);
+  assert.equal(r.z, '1.5');
   assert.equal(runBoot({ innerWidth: 1280 }).z, undefined, '배율 1 = 보정 변수도 미설정');
 });
 
@@ -61,7 +63,7 @@ test('저장값(cmd +/- 조절분)이 자동 판정보다 우선한다', () => {
 test('손상·범위 밖 저장값은 자동 판정으로 관용한다', () => {
   for (const bad of ['abc', '0', '0.3', '9', '-1']) {
     assert.equal(runBoot({ innerWidth: 1280, savedZoom: bad }).zoom, undefined, `저장값 ${bad}`);
-    assert.equal(runBoot({ innerWidth: 2500, savedZoom: bad }).zoom, 1.25, `저장값 ${bad} + 큰 화면`);
+    assert.equal(runBoot({ innerWidth: 2500, savedZoom: bad }).zoom, 1.5, `저장값 ${bad} + 큰 화면`);
   }
 });
 

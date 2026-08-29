@@ -14,9 +14,10 @@ const osBoot = `try{if(navigator.userAgent.indexOf('Windows')>-1)document.docume
 // 표시 배율 — 큰 모니터(QHD·4K 100% 배율)에서 요소가 작게 보인다는 제보(2026-08-29).
 // 페이지 전체를 zoom으로 비례 확대해 레이아웃·여백 관계는 그대로 유지한다(개별 크기 조정 아님 —
 // 유건 제약). 저장값(argo-zoom, cmd +·-·0로 조절 — i18n.jsx 전역 단축키)이 있으면 그것을,
-// 없으면 뷰포트 폭으로 자동 판정(1800px 미만 = 1.0 → 기존 화면 무변화). 배율 1은 스타일
+// 없으면 뷰포트 폭으로 자동 판정(1800px 미만 = 1.0 → 기존 화면 무변화, 이상은 실효 폭이
+// 노트북(~1600·1707·2259px) 수준이 되도록 1.2·1.5·1.7 — 4K 실캡처 비교로 유건 확정 2026-08-29).
 // 미설정과 동일해 종전 렌더와 완전히 같다. 자동 판정 함수는 cmd+0 리셋이 재사용한다.
-const zoomBoot = `try{var d=document.documentElement;window.__argoAutoZoom=function(){var w=window.innerWidth||0;return w>=2400?1.25:w>=1800?1.1:1};var z=parseFloat(localStorage.getItem('argo-zoom'));if(!(z>=0.7&&z<=2))z=window.__argoAutoZoom();if(z!==1){d.style.setProperty('--z',z);d.style.zoom=z}}catch(e){}`;
+const zoomBoot = `try{var d=document.documentElement;window.__argoAutoZoom=function(){var w=window.innerWidth||0;return w>=3400?1.7:w>=2400?1.5:w>=1800?1.2:1};var z=parseFloat(localStorage.getItem('argo-zoom'));if(!(z>=0.7&&z<=2))z=window.__argoAutoZoom();if(z!==1){d.style.setProperty('--z',z);d.style.zoom=z}}catch(e){}`;
 
 // 데스크톱(Tauri) 웹뷰는 target=_blank·window.open을 조용히 무시한다 — 외부 오리진 링크 클릭을
 // 가로채 시스템 브라우저로 연다(러너 OAuth 로그인 페이지·키 발급·결제 링크 전부). 브라우저에선 개입 없음.
