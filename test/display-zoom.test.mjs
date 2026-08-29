@@ -154,7 +154,8 @@ test('adjustZoom이 argo:zoom 이벤트로 알린다 — 설정 카드 현재값
 });
 
 test('배선 — 단축키·설정 버튼 둘 다 adjustZoom 하나를 탄다(로직 두 벌 금지)', () => {
-  assert.match(i18n, /adjustZoom\(e\.key === '0' \? null/, '키 핸들러가 adjustZoom을 호출해야 한다');
+  // 표현식 전체를 앵커 — 접두만 잠그면 부호 뒤집기(−가 확대)가 그물을 통과한다(분리 검수 MEDIUM 실증)
+  assert.match(i18n, /adjustZoom\(e\.key === '0' \? null : e\.key === '-' \? -0\.1 : 0\.1\)/, '키 핸들러의 키→delta 매핑(0=리셋·−=축소·나머지=확대)');
   assert.equal(i18n.split("setProperty('--z'").length - 1, 1, '--z 쓰기는 i18n.jsx 안에서 adjustZoom 한 벌이어야 한다');
   assert.match(settings, /import \{[^}]*adjustZoom[^}]*\} from '\.\.\/\.\.\/\.\.\/i18n'/, '설정 화면이 공용 함수를 임포트');
   assert.match(settings, /adjustZoom\(-0\.1\)/, '축소 버튼');
@@ -162,11 +163,14 @@ test('배선 — 단축키·설정 버튼 둘 다 adjustZoom 하나를 탄다(�
   assert.match(settings, /adjustZoom\(null\)/, '자동(리셋) 버튼');
   assert.ok(!settings.includes("setProperty('--z'"), '설정 화면이 배율을 직접 쓰면 안 된다(공용 함수 경유)');
   assert.match(settings, /addEventListener\('argo:zoom'/, '단축키 변경도 카드 표시가 따라와야 한다');
+  assert.match(settings, /removeEventListener\('argo:zoom'/, '언마운트 시 리스너 해제(등록 핀과 짝)');
 });
 
 test('사전 — 표시 배율 문구 ko/en 등록 + 설정 카드가 전부 사전 경유', () => {
   for (const key of ['settings.zoom', 'settings.zoom.desc', 'settings.zoom.out', 'settings.zoom.in', 'settings.zoom.auto', 'settings.zoom.shortcut']) {
-    assert.match(i18n, new RegExp(`'${key.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${key} ko/en 등록`);
+    const m = i18n.match(new RegExp(`'${key.replace(/\./g, '\\.')}': \\['([^']+)', '([^']+)'\\]`));
+    assert.ok(m, `${key} ko/en 등록`);
+    assert.notEqual(m[1], m[2], `${key}는 ko·en이 달라야 한다(en 미번역 방지 — 이 6키엔 고유명사 예외 없음)`);
     assert.ok(settings.includes(`t('${key}')`), `${key}를 설정 카드가 사용`);
   }
 });
