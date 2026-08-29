@@ -339,20 +339,86 @@ test('해제 후 재연결 — 같은 카탈로그 항목으로 다시 연결된
   assert.equal(s.counters.dcr, 2, '자격을 지웠으니 클라이언트 등록도 새로 한다(표준 모드)');
 });
 
-// ── ⑧ 라우트 배선 — next/headers 때문에 임포트가 안 되므로 소스로 잠근다(이 레포의 기존 관례) ──
-test('마켓 라우트 — 커넥터 연결·해제가 guardCompany 뒤에 배선돼 있다', async () => {
-  const src = await readFile(new URL('../app/api/companies/[ws]/market/route.js', import.meta.url), 'utf8');
-  for (const [handler, body] of Object.entries({
-    GET: src.split('export async function GET')[1].split('export async function')[0],
-    POST: src.split('export async function POST')[1].split('export async function')[0],
-    DELETE: src.split('export async function DELETE')[1],
-  })) {
-    assert.match(body, /guardCompany\(ws\)/, `${handler}에 회사 가드가 있어야 한다`);
+// ── ⑧ 마켓 라우트 — 커넥터 표면은 전용 라우트(connectors/route.js)로 이관 완료(L4) ──
+// 실호출로 잠근다. "next/headers 때문에 임포트 불가"라던 관례의 실체는 ESM 확장자 해석이라
+// 리졸브 훅(helpers/next-esm-resolve.mjs)으로 라우트가 그대로 돈다(실측 2026-08-29).
+// node --test는 파일별 자식 프로세스라 훅·env 변경이 다른 테스트 파일로 새지 않는다.
+const ROUTE_URL = new URL('../app/api/companies/[ws]/market/route.js', import.meta.url);
+const HOOK_URL = new URL('./helpers/next-esm-resolve.mjs', import.meta.url);
+let routeMod;
+async function marketRoute() {
+  if (!routeMod) {
+    // AUTH off = 로컬 1인 모드 — guardCompany가 통과해야 응답 본문(아래 계약)을 관측할 수 있다.
+    // AUTH_ON은 auth.mjs 로드 시점 상수라, 켠 상태의 관측은 아래 자식 프로세스 프로브가 맡는다.
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const { register } = await import('node:module');
+    register(HOOK_URL);
+    routeMod = await import(ROUTE_URL);
   }
-  assert.match(src, /kind === 'connector'/, 'POST 연결 분기');
-  // 해제가 else(=MCP)로 흘러가면 존재하지 않는 MCP를 지우고 ok를 돌려주는 조용한 무동작이 된다.
-  assert.match(src, /kind === 'connector'\) await disconnectConnector\(ws, id\)/, 'DELETE 해제 분기(명시)');
-  assert.match(src, /mergeConnectorStatus\(connectorCatalogFor\(lang\), connections\)/, 'GET 병합(회사 언어)');
+  return routeMod;
+}
+const routeReq = (qs = '', init) => new Request(`http://127.0.0.1/api/companies/${WS}/market${qs}`, init);
+const routeParams = { params: Promise.resolve({ ws: WS }) };
+
+test('마켓 라우트 GET — 커넥터 병합 없이, 화면이 실제로 읽는 필드는 그대로 내려간다', async () => {
+  const route = await marketRoute();
+  const res = await route.GET(routeReq(), routeParams);
+  assert.equal(res.status, 200);
+  const j = await res.json();
+  // 소비처 전수 수색(2026-08-29): 마켓 화면=아래 6필드, 크루 화면=installedSkills뿐.
+  // 설정의 커넥터 카드는 전용 라우트(/connectors?lang=)를 쓴다 — 마켓 병합(#214)은 소비 화면이
+  // 끝내 안 생긴 죽은 페이로드였다. 응답을 슬림화하되, 실소비 필드가 같이 빠지면 여기서 잡는다.
+  for (const k of ['skillCatalog', 'mcpCatalog', 'installedSkills', 'installedMcp', 'hostMcp', 'customMcpAllowed']) {
+    assert.ok(k in j, `화면이 읽는 필드 ${k}는 남아 있어야 한다`);
+  }
+  assert.ok(!('connectors' in j), '커넥터 목록은 전용 라우트만 내려준다 — 마켓 응답에 다시 실리면 이관이 깨진 것');
+});
+
+test('마켓 라우트 — 커넥터 연결은 400으로 거부되고, 해제 요청은 연결을 건드리지 않는다', async () => {
+  // 실연결을 하나 세워 두고 마켓 경유 요청이 그 연결에 무해함을 관측한다(전용 라우트가 유일 경로).
+  const s = await newServer();
+  const catalog = [{ id: 'route-live', name: '라우트 이관 데모', url: s.mcpUrl, scopes: ['spike.read'], note: '' }];
+  const first = await connectConnector(WS, 'route-live', { catalog });
+  await approve(first.authUrl);
+  assert.equal((await first.done).ok, true);
+
+  const route = await marketRoute();
+  // 예전 POST kind:'connector'는 authUrl을 돌려줬다 — 지금은 미지 kind로 명시 400(조용한 우회 경로 금지).
+  const p = await route.POST(routeReq('', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ kind: 'connector', id: 'route-live' }),
+  }), routeParams);
+  assert.equal(p.status, 400, '마켓 경유 연결 시작이 다시 열리면 전용 라우트(CSRF 가드 동반)와 이중 경로가 된다');
+  // 예전 DELETE kind=connector는 disconnectConnector를 실행했다 — 지금 마켓은 연결에 손대지 않는다.
+  await route.DELETE(routeReq('?kind=connector&id=route-live', { method: 'DELETE' }), routeParams);
+  assert.equal((await conn('route-live')).status, 'connected', '마켓 DELETE가 연결을 끊으면 해제 경로 이관이 깨진 것');
+});
+
+test('마켓 라우트 GET — 인증이 켜진 서버에서 무세션 문맥이면 회사 데이터가 나가지 않는다', async () => {
+  // guardCompany 배선의 행동 잠금(구 소스 단언 대체). AUTH_ON은 로드 시점 상수라 자식 프로세스에서
+  // 켜고 관측한다. 위 테스트들이 같은 회사·같은 호출로 200을 실증했으므로, 여기서 200이 아니라는
+  // 것은 "가드가 데이터 앞을 막고 있다"는 판별이 된다 — 가드를 지우는 변이면 200이 나와 red.
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const probe = `
+    import { register } from 'node:module';
+    register(process.env.PROBE_HOOK);
+    const route = await import(process.env.PROBE_ROUTE);
+    const out = await route.GET(new Request('http://127.0.0.1/x'), { params: Promise.resolve({ ws: process.env.PROBE_WS }) })
+      .then((r) => r.status).catch(() => 'threw');
+    console.log(JSON.stringify(out));
+  `;
+  const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', probe], {
+    env: {
+      ...process.env,
+      NEXT_PUBLIC_SUPABASE_URL: 'https://example.invalid', // AUTH_ON만 켠다 — 네트워크엔 안 나간다(쿠키 저장소가 먼저 끊는다)
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: 'test-anon',
+      PROBE_HOOK: HOOK_URL.href, PROBE_ROUTE: ROUTE_URL.href, PROBE_WS: WS,
+    },
+  });
+  const out = JSON.parse(stdout.trim());
+  assert.notEqual(out, 200, `무세션 문맥에서 회사 데이터가 나갔다(got ${out}) — guardCompany 배선이 풀린 것`);
 });
 
 test('커넥터 라우트 — 표시 언어는 화면 UI 언어(?lang) 1순위, 무효·부재 시 회사 언어 폴백', async () => {
