@@ -20,7 +20,8 @@ supabase/.temp/
 dist-server/
 
 # 내부 문서 — 공개 레포에 두지 않는다(실사고 2026-08-19: README가 보안 로드맵을 공개 링크로
-# 걸어 두어, 미암호화 항목·격리 한계가 우선순위째 노출됐다). 사용자향 selfhost.md만 예외.
+# 걸어 두어, 미암호화 항목·격리 한계가 우선순위째 노출됐다). 사용자향 문서만 예외로 나열.
 /docs/*
 !/docs/selfhost.md
+!/docs/privacy-sync.md
 /PRODUCT-SPEC.md

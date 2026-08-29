@@ -22,7 +22,7 @@ import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
-import { cryptoOn, isSecretRel, isEncRel, encVaultOn, sealSecret, openSecret, openSecretCompat } from './secretbox.mjs';
+import { cryptoOn, isSecretRel, isEncRel, encVaultOn, sealSecret, openSecret, openSecretCompat, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { ensureAccountKey } from './accountkey.mjs';
@@ -391,9 +391,15 @@ async function upload(key, buf) {
    충돌을 해소한다(원장=행 병합, 텍스트=양쪽 보존, 스레드=락). blind LWW로 조용히 파기하지 않는다.
 
    opts.freePlan = 이 회사가 확정 free다 → 클라우드 쓰기 거부가 이 계정의 **정상 결과**이므로 실패와
-   분리 집계(denied)하고, 사이클을 완결(state 기록)까지 보낸다. 미지정(pro·미확인)은 종전대로 전부 failed. */
+   분리 집계(denied)하고, 사이클을 완결(state 기록)까지 보낸다. 미지정(pro·미확인)은 종전대로 전부 failed.
+
+   opts.noSecrets = 이 회사가 자격 동기화를 껐다(company.json credSync:false — 부재/true는 현행 유지).
+   자격 3종(isSecretRel)은 push/pull/삭제 전파 전부에서 불가시가 되고("키 미확보" 사이클과 같은 안전
+   패턴), 클라우드에 이미 있는 자격 암호문은 마커(CRED_WITHDRAWN)로 **덮어써** 회수한다 — remove가
+   아닌 이유는 secretbox.mjs 마커 주석 참조(구버전·미반영 기기의 로컬 자격 오삭제 차단). */
 export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   const root = paths(wsId).root;
+  const noSecrets = !!opts.noSecrets;
   const me = await getDeviceId();
   const manifestKey = skey(owner, wsId, '__manifest__.json');
   // 매니페스트 읽기 — "없음(최초 푸시)"과 "읽기 실패(네트워크·타임아웃·5xx)"를 반드시 구분한다.
@@ -419,7 +425,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     if (dropped) console.warn(`[sync] 안전하지 않은 원격 매니페스트 키 ${dropped}개 무시(경로 탈출 차단) — ws=${wsId}`);
   }
   const failedDirs = new Set();
-  const local = await walk(root, root, {}, failedDirs);
+  const local = await walk(root, root, {}, failedDirs); // 자격 3종은 diff 루프의 불가시 가드가 단일 게이트(walk 중복 게이트 금지 — 등가 변이 실증)
   const state = (await loadState(wsId)).files ?? {};
   // 신규 복원 가드 — 이 회사가 원격에서만 발견됐고(isRestore: 로컬에 company.json조차 없음) 로컬이
   // 통째로 비었는데 base(.sync-state)만 남아 있으면, 삭제 의도가 아니라 복원이다(재설치·루트 리셋·과거
@@ -431,7 +437,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     console.warn(`[argo] 동기화(${wsId}): 원격에서 발견된 빈 회사 — 신규 복원으로 간주, base 리셋`);
     for (const k of Object.keys(state)) delete state[k];
   }
-  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0, denied = 0;
+  let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0, denied = 0, withdrawn = 0;
   const deletedRels = new Set(); // 이번 사이클에 내가 원격 삭제한 rel — 매니페스트 병합에서 재추가 금지
   // blob 실존 검사 — 매니페스트 항목 부재가 "삭제"인지 "동시 쓰기로 항목만 유실"인지 가르는 판별자.
   // 404만 "없음"이다. 타임아웃·5xx 등 확인 불가는 throw → per-file catch가 이번 사이클 보류(failed++).
@@ -458,6 +464,11 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   // 태생부터 봉투인 크레덴셜 2종만 엄격(깨진 평문 수용 금지), 그 외는 관용 개봉(기존 평문 그대로 통과 → 전환 무중단).
   const pullBuf = async (rel) => {
     const b = await download(remoteKey(rel));
+    // 회수 마커 — 다른 기기가 credSync를 껐다. throw → per-file catch가 failed로 보류하고, 이 기기도
+    // 곧 company.json 동기화로 토글을 받아 불가시가 된다(로컬 자격은 그동안 그대로).
+    // 안전성 자체는 마커 형식(무효 봉투 — openSecret이 어차피 throw)이 담보하므로 이 가드는 현재
+    // 등가 변이다(분리 검수 LOW-B). 남기는 실익은 진단성 하나 — "형식 아님"이 아니라 원인을 말한다.
+    if (isSecretRel(rel) && isCredWithdrawn(b)) throw new Error('자격 동기화 꺼짐(다른 기기에서 회수) — pull 보류');
     return (rel === 'connections.json' || rel === '.secrets.json') ? openSecret(b) : openSecretCompat(b);
   };
   /** 업로드 직전 봉투 — 모든 업로드 경로가 이걸 거쳐야 평문이 새지 않는다(병합 분기 포함). */
@@ -498,6 +509,22 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   };
   const changed = (a, b) => !a || !b || (a.h ?? `${a.m}:${a.s}`) !== (b.h ?? `${b.m}:${b.s}`);
 
+  // credSync off 회수 — 클라우드에 남은 자격 암호문의 **활성 사본**을 마커로 덮고(플랫폼 백업·스냅샷의
+  // 과거 사본 보존까지는 보장 못 함 — docs/privacy-sync.md에 같은 한계를 고지) 매니페스트에서
+  // 내린다. **remove 금지**: blob 부재는 토글 미반영 기기(구버전 포함)의 `l && !r` 분기에서 "다른 기기가
+  // 지움 → 로컬도 삭제"로 이어져 그 기기의 로컬 자격을 지운다. blob(마커)이 실존하면 그 기기들은
+  // blobExists → heal(항목 복원)을 타 로컬을 보존한다(위 lost-update 방어와 같은 경로 — PIN2가 잠근다).
+  // 마커 upsert 실패 시 항목을 남겨 다음 사이클 재시도 — 그동안 diff는 아래 불가시 가드가 스킵한다.
+  if (noSecrets) {
+    for (const rel of Object.keys(remote.files)) {
+      if (!isSecretRel(rel)) continue;
+      try {
+        await upload(remoteKey(rel), CRED_WITHDRAWN);
+        delete remote.files[rel]; deletedRels.add(rel); withdrawn++; // deletedRels: 재읽기 병합의 재추가 금지
+      } catch { /* 실패 — 항목 유지(다음 사이클 재시도) */ }
+    }
+  }
+
   const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)]);
 
   const archMoves = archivalCreateNames(local, state); // .archive→.trash 이동의 목적지 basename
@@ -514,6 +541,11 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   // side 'L'=로컬 삭제 예정, 'R'=원격 삭제 예정. walk 실패 subtree·로컬 손상·아카이브 '이동'(짝 있음)은 삭제가 아니다.
   const isRealDelete = (rel, l, r, base, side) => {
     if (isEncRel(rel) && !cryptoOn()) return false;
+    // credSync off — 자격은 diff 루프가 스킵하므로 삭제가 실행되지 않는다. 집계도 같은 규칙(단일 출처):
+    // 마커 upsert 실패로 항목이 남은 사이클에 브레이크가 "삭제 예정"으로 오집계해 보류되는 것 방지.
+    // (심층 방어 — 테스트 미커버(분리 검수 LOW-1): 브레이크 발화엔 base가 3 이하여야 해 실회사에서
+    //  사실상 도달 불가지만, 집계·전파 동일 규칙 불변식을 지키기 위해 유지한다.)
+    if (noSecrets && isSecretRel(rel)) return false;
     // 디스크 큐 잔재(.gw-queue-*/) — EXCLUDE 전환(픽스 전엔 잡 파일이 동기화됐다)의 원격 청소는
     // 회사 데이터 삭제가 아니다. 브레이크 '집계'에서만 제외해, 잔재가 많던 회사의 동기화가
     // 대량삭제 오탐으로 영구 보류되는 것을 막는다(전파 루프는 그대로 원격 잔재를 정리한다 —
@@ -543,6 +575,9 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
 
   for (const rel of allRels) {
     if (isEncRel(rel) && !cryptoOn()) continue; // 키 미확보 사이클 — 암호화 대상은 diff 자체에서 불가시(삭제 오인 차단)
+    // credSync off — 자격 3종은 push/pull/삭제 전파 전부 불가시. 회수(마커 upsert)는 위 단계가 전담하고,
+    // 여기서 real-delete로 흐르면 blob remove가 나가 미반영 기기의 로컬 자격 오삭제로 이어진다(가드 필수).
+    if (noSecrets && isSecretRel(rel)) continue;
     const l = local[rel], r = remote.files[rel], base = state[rel];
     if (!l && !r) continue; // state에만 남은 항목(EXCLUDE 전환·타기기 선정리) — 사이클 말미 state 갱신이 정리한다
     const localChg = changed(base, l);   // base 대비 로컬 변경(생성/수정/삭제)
@@ -687,7 +722,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     manifestDenied = true;
   }
   await writeJsonAtomic(stateFile(wsId), { files: remote.files, ts: Date.now() });
-  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, ...(manifestDenied ? { manifestDenied: true } : {}) };
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}) };
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.
@@ -784,10 +819,14 @@ async function syncTombstones(fixedOwner, { remote: doRemote = true } = {}) {
     try { t = JSON.parse((await download(skey(owner, '.tombstones', `${wsId}.json`))).toString()); }
     catch { continue; /* 읽기 실패 — 다음 사이클 재시도 */ }
     const at = Number(t?.at) || 0;
-    let companyMtime = 0, owner0 = null;
+    let companyMtime = 0, owner0 = null, credOff = false;
     try { companyMtime = (await stat(paths(wsId).company)).mtimeMs; } catch { /* 로컬에 회사 없음 */ }
     if (companyMtime) {
-      try { owner0 = JSON.parse(await readFile(paths(wsId).company, 'utf8'))?.ownerId ?? null; } catch { /* 손상 */ }
+      try {
+        const meta0 = JSON.parse(await readFile(paths(wsId).company, 'utf8'));
+        owner0 = meta0?.ownerId ?? null;
+        credOff = meta0?.credSync === false; // 아래 마지막 push도 옵트아웃을 지켜야 한다(분리 검수 HIGH-1)
+      } catch { /* 손상 */ }
       if (at && companyMtime >= at) {
         await client().storage.from(BUCKET).remove([skey(owner, '.tombstones', `${wsId}.json`)]).catch(() => {});
         console.log(`[argo] 동기화: 보관 이후 수정된 회사 — tombstone 철회 (${wsId})`);
@@ -797,7 +836,9 @@ async function syncTombstones(fixedOwner, { remote: doRemote = true } = {}) {
       // 타임스탬프 하위 4자라 재순환 충돌이 가능(멀티오너 셀프호스트에서 실질 위험, 검수 지적 H).
       if (owner0 !== owner) continue;
       // 미push 편집 고립 방지 — 보관 직전 마지막 push. 실패해도 사본은 .archive에 남아 복구 가능.
-      try { await syncCompany(wsId, owner, false); } catch { /* 오프라인 등 — 보관은 계속 */ }
+      // noSecrets 동반(분리 검수 HIGH-1): cycle 호출부에만 배선하면 이 경로가 회수 완료 상태의 자격을
+      // 신규 push로 되올리고, 직후 archiveCompany가 회사를 치워 재회수 기회가 영영 없다(영구 잔류).
+      try { await syncCompany(wsId, owner, false, { noSecrets: credOff }); } catch { /* 오프라인 등 — 보관은 계속 */ }
       try { await archiveCompany(wsId); console.log(`[argo] 동기화: 다른 기기의 회사 보관 전파 (${wsId})`); }
       catch (e) { console.warn(`[argo] 동기화: 보관 전파 실패(${wsId}): ${e.message}`); continue; }
     }
@@ -845,6 +886,7 @@ async function cycle() {
   // 것이 동기화의 몫이다. 서비스 모드(셀프호스트·워커)는 다중 오너가 정당하므로 게이트 없음.
   const sessionUid = (loadSyncCreds() && serviceCredsAllowed()) ? null : (loadDeviceSession()?.user?.id ?? null);
   const targets = new Map(); // wsId → owner
+  const noSecretsWs = new Set(); // credSync:false 회사 — 자격 3종 불가시 + 클라우드 사본 회수(syncCompany opts)
   let entries = [];
   try { entries = await readdir(WS_ROOT, { withFileTypes: true }); } catch { /* 루트 없음 */ }
   for (const e of entries) {
@@ -860,6 +902,9 @@ async function cycle() {
         continue;
       }
       targets.set(meta.id, meta.ownerId);
+      // 부재/true = 현행 유지(동기화 포함) — false만 옵트아웃. company.json 자체가 동기화 대상이라
+      // 이 토글은 기기 간에 자동 전파된다(원격 발견으로 복원된 회사는 company.json 도착 다음 사이클부터 적용).
+      if (meta.credSync === false) noSecretsWs.add(meta.id);
     } catch { /* 회사 아님 */ }
   }
   const localOwners = [...new Set(targets.values())];
@@ -971,7 +1016,7 @@ async function cycle() {
       continue;
     }
     try {
-      const r = await syncCompany(wsId, owner, restoring, { freePlan });
+      const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId) });
       status.companies[wsId] = { ts: Date.now(), ...r };
     } catch (e) {
       status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;

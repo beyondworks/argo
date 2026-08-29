@@ -6,6 +6,7 @@ import { readDelegations } from '../../../../src/usage.mjs';
 import { readUsageSummary, monthCostByCrew } from '../../../../src/billing.mjs'; // 금액 집계는 billing 게이트로만
 import { ensureScheduler } from '../../../../src/scheduler.mjs';
 import { ensureGateway } from '../../../../src/gateway.mjs';
+import { nudgeSync } from '../../../../src/sync.mjs';
 import { guardCompany } from '../../../auth.mjs';
 
 ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
@@ -71,8 +72,14 @@ export async function PUT(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { name, budgetUsd, lang, crewPinned, crewOrder, aliases, defaultRunner } = await req.json();
+    const { name, budgetUsd, lang, crewPinned, crewOrder, aliases, defaultRunner, credSync } = await req.json();
     const patch = {};
+    if (credSync !== undefined) {
+      // 자격 증명(러너 로그인·봇 토큰·MCP env) 클라우드 동기화 — false만 옵트아웃(부재/true = 현행 유지).
+      // false로 바꾸면 다음 사이클이 클라우드 사본을 마커로 회수한다(src/sync.mjs noSecrets).
+      if (typeof credSync !== 'boolean') return Response.json({ error: 'credSync는 boolean이어야 합니다' }, { status: 400 });
+      patch.credSync = credSync;
+    }
     if (aliases !== undefined) {
       // '/' 커맨더 사용자 별칭 — [{cmd, text}]. cmd는 슬래시 뒤 토큰(한글 허용), text는 입력창에 넣을 지시.
       if (!Array.isArray(aliases)) return Response.json({ error: '별칭 목록은 배열이어야 합니다' }, { status: 400 });
@@ -112,6 +119,7 @@ export async function PUT(req, { params }) {
       patch.defaultRunner = typeof defaultRunner === 'string' && defaultRunner.trim() ? defaultRunner.trim() : '';
     }
     const company = await updateCompany(ws, patch);
+    if (patch.credSync !== undefined) nudgeSync(); // 회수/재개를 다음 8초 대기 없이 즉시 반영
     return Response.json({ company });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });

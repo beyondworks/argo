@@ -90,7 +90,8 @@ test('확정 free는 파일 왕복을 스킵한다(복원·복원미완 예외) 
     '복원 미완 예외가 디스크 파생(syncStateExists)이 아니다 — 재검수 HIGH-E·F 재발');
   assert.match(SRC, /if \(freePlan && !restoring\) \{/,
     'free 파일 왕복 스킵이 없다 — free 기기에서 업로드는 실패하고 삭제만 전파돼 클라우드 사본이 단조 감소한다');
-  assert.match(SRC, /syncCompany\(wsId, owner, restoring, \{ freePlan \}\)/,
+  // freePlan이 opts로 전달되는 것이 불변식 — 다른 opts(noSecrets 등)가 함께 실려도 성립한다(인스턴스 앵커 금지)
+  assert.match(SRC, /syncCompany\(wsId, owner, restoring, \{ freePlan[,\s}]/,
     'free 복원의 쓰기 거부 관용이 배선돼 있지 않다 — 없으면 복원이 완결(state 기록)에 도달하지 못한다(HIGH-E)');
   // 관용은 매니페스트만이 아니라 **파일 단위 업로드 거부**까지 덮어야 한다(후속 MEDIUM-I): 로컬 전용
   // 파일 하나가 failed>0을 만들면 매니페스트 관용(failed===0)이 막혀, 한 번도 성공 동기화한 적 없는

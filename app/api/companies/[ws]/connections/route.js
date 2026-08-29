@@ -1,6 +1,7 @@
 import { loadConnections, updateConnection, maskConnections, validateConnection, gatewayStatus, CONNECTION_PATCH_FIELDS } from '../../../../../src/connections.mjs';
 import { ensureGateway } from '../../../../../src/gateway.mjs';
 import { syncStatus } from '../../../../../src/sync.mjs';
+import { loadCompany } from '../../../../../src/workspace.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
 ensureGateway();
@@ -9,8 +10,9 @@ ensureGateway();
 export async function GET(_req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
-  const [all, gateway] = await Promise.all([loadConnections(ws), gatewayStatus(ws)]);
-  return Response.json({ connections: maskConnections(all), gateway, sync: syncStatus() });
+  const [all, gateway, company] = await Promise.all([loadConnections(ws), gatewayStatus(ws), loadCompany(ws).catch(() => null)]);
+  // credSync: 부재/true = 동기화 포함(현행) — SyncCard의 자격 동기화 토글이 15초 폴로 이 값을 읽는다
+  return Response.json({ connections: maskConnections(all), gateway, sync: syncStatus(), credSync: company?.credSync !== false });
 }
 
 /** 연결 설정 — { kind: 'telegram'|'slack', token?, enabled?, defaultCrew?, channel?, mutedEvents? }. 빈 token은 기존 유지.
