@@ -205,10 +205,16 @@ export async function topRemoteMcp() {
   });
 }
 
-/* ─── 한글 easy 설명 — Haiku 1턴 생성, 메모리+디스크 캐시(재시작에도 유지) ─── */
+/* ─── 쉬운 설명("이게 뭐예요?") — 러너 독립 1턴 생성, 메모리+디스크 캐시(재시작에도 유지) ─── */
 import { WS_ROOT } from './workspace.mjs';
+import { runOneShot } from './oneshot.mjs';
+// 테스트 주입 seam — 실행 검증은 이 경유를 잠근다(직접 SDK 호출로 되돌아가면 fake가 안 불려 red).
+let _oneShot = runOneShot;
+export const _setOneShotForTest = (fn) => { _oneShot = fn ?? runOneShot; };
 const explainCache = new Map();
-const EXPLAIN_FILE = join(WS_ROOT, '.cache', 'explain.json');
+// v2(2026-08-29): v1(explain.json)은 SDK 직접 호출 시절 러너 오류 원문("Failed to authenticate...")이
+// 설명으로 캐시·영속되던 오염분을 담고 있어 파일째 세대 교체한다(실사용 제보 — GLM만 연결한 사용자).
+const EXPLAIN_FILE = join(WS_ROOT, '.cache', 'explain-v2.json');
 let diskLoaded = false;
 
 async function loadExplainDisk() {
@@ -241,7 +247,10 @@ async function fetchSkillRaw(githubUrl) {
   return null;
 }
 
-export async function explainItem(item, lang = 'ko') {
+export async function explainItem(wsId, item, lang = 'ko') {
+  // wsId 필수 — 이 회사의 연결 러너로 실행한다. 옛 시그니처(explainItem(item, lang))로 호출되면
+  // item이 wsId 자리에 들어와 조용한 오동작이 되므로 초입에서 명시적으로 끊는다.
+  if (typeof wsId !== 'string' || !wsId) throw new Error('explainItem: wsId가 필요합니다');
   const key = `${lang}:${item.kind}:${item.name ?? item.title}`;
   await loadExplainDisk();
   if (explainCache.has(key)) return explainCache.get(key);
@@ -249,7 +258,6 @@ export async function explainItem(item, lang = 'ko') {
   let raw = null;
   if (item.kind === 'skill' && item.githubUrl) raw = await fetchSkillRaw(item.githubUrl);
 
-  const { query } = await import('@anthropic-ai/claude-agent-sdk');
   const prompt = lang === 'en'
     ? `You are a guide who explains hard developer tools to a non-technical business owner.
 Read the item below and output exactly one JSON object (no code fences, no prose):
@@ -276,32 +284,37 @@ ${raw ? `Source (excerpt):\n${raw.slice(0, 2500)}` : ''}`
 설명: ${item.desc ?? ''}
 ${raw ? `원문(일부):\n${raw.slice(0, 2500)}` : ''}`;
 
-  let out = '';
-  try {
-    for await (const msg of query({
-      prompt,
-      options: { allowedTools: [], settingSources: [], maxTurns: 1, model: 'claude-haiku-4-5-20251001' }, // 설명 생성은 Haiku면 충분 — 속도 우선
-    })) {
-      if (msg.type === 'result' && msg.subtype === 'success') out = msg.result;
-    }
-  } catch { /* 러너 미가용 — 쉬운 설명은 장식이다. 실패해도 스킬/도구 설치 흐름을 막지 않는다(아래 파싱 폴백). */ }
-  const jsonText = out.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+  // 러너 독립 실행(실사용 제보 2026-08-29): 이전엔 SDK query 직접 호출 + 모델 하드코딩이라 러너
+  // 결정·env 주입을 전혀 안 탔다 — GLM만 연결한 사용자는 호스트의 만료된 Claude 로그인으로 가서
+  // "Failed to authenticate: OAuth session expired"가 그대로 설명 카드에 떴다(에러 원문이 캐시까지
+  // 됐다). oneshot.mjs 상단의 2026-07-19 영입 하드코딩 사고와 같은 계열의 세 번째 호출 지점이었다.
+  // runOneShot이 러너 결정·CLI 러너 실행·러너별 기본 모델·자가치유·정직 오류를 전부 대신한다.
+  // model은 claude 러너일 때만 적용된다(설명 생성은 Haiku면 충분 — 속도 우선. 타 러너는 각자 기본 모델).
+  // 실패는 삼키지 않고 던진다 — 라우트가 {error}로 내리고 카드가 정직한 원인(러너 미연결 등)을 보인다.
+  const { text } = await _oneShot(wsId, prompt, { lang, maxTurns: 1, model: 'claude-haiku-4-5-20251001' });
+  const jsonText = text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
   let easy;
+  let parsed = true;
   try {
     easy = JSON.parse(jsonText);
   } catch {
+    parsed = false;
     easy = { what: jsonText.slice(0, 200), when: [], examples: [], caution: '' };
   }
   const result = { easy, raw: raw ? raw.slice(0, 2000) : null };
-  explainCache.set(key, result);
-  saveExplainDisk(); // 비동기 — 응답을 막지 않는다
+  // 파싱 성공분만 캐시 — 폴백(비JSON 원문 잘림)을 영속하면 일시적 형식 이탈·오류 문구가
+  // 설명으로 굳는다(v1 캐시 오염의 재발 방지). 폴백은 이번 응답으로만 쓰고 다음 열람이 재시도한다.
+  if (parsed) {
+    explainCache.set(key, result);
+    saveExplainDisk(); // 비동기 — 응답을 막지 않는다
+  }
   return result;
 }
 
 /* ─── 프리워밍 — TOP 목록 로드 시 백그라운드로 설명을 미리 생성(동시 2, 평생 1회) ─── */
 const warmingKinds = new Set();
 
-export function warmExplains(items, kind, lang = 'ko') {
+export function warmExplains(wsId, items, kind, lang = 'ko') {
   const wk = `${lang}:${kind}`; // 언어별로 각각 프리워밍 — ko/en 프리워밍이 서로를 막지 않게
   if (warmingKinds.has(wk)) return;
   warmingKinds.add(wk);
@@ -309,7 +322,8 @@ export function warmExplains(items, kind, lang = 'ko') {
     await loadExplainDisk();
     const todo = items.filter((i) => !explainCache.has(`${lang}:${kind}:${i.name ?? i.title}`));
     for (let i = 0; i < todo.length; i += 2) {
-      await Promise.allSettled(todo.slice(i, i + 2).map((it) => explainItem({ ...it, kind }, lang)));
+      // 프리워밍 실패는 장식의 실패 — allSettled가 삼키고, 실제 열람 시 정직 오류로 다시 드러난다.
+      await Promise.allSettled(todo.slice(i, i + 2).map((it) => explainItem(wsId, { ...it, kind }, lang)));
     }
   })().finally(() => warmingKinds.delete(wk));
 }
