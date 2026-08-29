@@ -34,6 +34,29 @@ async function approve(authUrl, { tamperState } = {}) {
 
 const conn = async (id) => (await listConnections(WS)).find((c) => c.id === id);
 
+// ── 표시 언어 재렌더(검수 M1) — 저장된 오류 원문은 역사적으로 ko 하드코딩이라, lang을 받으면
+//    errorCode로 요청 언어의 문구를 다시 그린다(크루 표면 connectorsBrief와 같은 계약).
+test('listConnections(lang) — ko로 저장된 reauth 오류가 en 요청에 영어로 재렌더된다(카드 한국어 잔존 종식)', async () => {
+  const { mkdir: mk, writeFile: wf } = await import('node:fs/promises');
+  const { join: j } = await import('node:path');
+  const wsDir = j(process.env.ARGO_ROOT, 'lang-ws');
+  await mk(wsDir, { recursive: true });
+  await wf(j(wsDir, CONNECTOR_SECRETS_BASE), JSON.stringify({ servers: {
+    'google-calendar': { url: 'https://x/mcp', status: 'reauth', errorCode: 'reauth_required',
+      error: "커넥터 'google-calendar' 인증이 만료되었습니다 — 설정에서 다시 연결해 주세요" },
+    'raw-legacy': { url: 'https://y/mcp', status: 'error', error: '코드 없는 레거시 원문' }, // errorCode 없음 — 원문 유지
+  } }));
+  const en = await listConnections('lang-ws', { lang: 'en' });
+  const cal = en.find((c) => c.id === 'google-calendar');
+  assert.match(cal.error, /authorization expired/i, 'en 요청은 영어 문구');
+  assert.ok(!/만료/.test(cal.error), '한국어 원문이 남지 않는다');
+  assert.equal(en.find((c) => c.id === 'raw-legacy').error, '코드 없는 레거시 원문', 'errorCode 없으면 원문 유지(허위 번역 금지)');
+  const ko = await listConnections('lang-ws', { lang: 'ko' });
+  assert.match(ko.find((c) => c.id === 'google-calendar').error, /만료되었습니다/, 'ko 요청은 한국어');
+  const plain = await listConnections('lang-ws');
+  assert.match(plain.find((c) => c.id === 'google-calendar').error, /만료되었습니다/, 'lang 미지정 소비자는 종전 그대로(원문)');
+});
+
 // ── ① 최초 연결 왕복: 디스커버리 → DCR → PKCE → localhost 콜백 → 토큰 영속 → 도구 호출 ──
 const S1 = await newServer();
 const ID1 = 'demo-main';

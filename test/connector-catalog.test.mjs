@@ -181,6 +181,11 @@ test('출하 카탈로그 — ko/en 미러는 id·url·scopes·oauth가 동일�
     assert.deepEqual(en.scopes ?? [], ko.scopes ?? []);
     assert.deepEqual(en.oauth ?? null, ko.oauth ?? null);
   }
+  // 역방향(검수 L2): ko 전용 항목도 금지 — en 미러가 없으면 en 모드 카드에 한국어가 그대로 나간다
+  // (기존 단언은 EN→KO만 검사해 ko 전용 추가가 25/25 초록으로 통과함을 프로브로 실증).
+  for (const ko of CONNECTOR_CATALOG) {
+    assert.ok(CONNECTOR_CATALOG_EN.find((e) => e.id === ko.id), `ko 전용 항목 금지(en 모드 한국어 잔존): ${ko.id}`);
+  }
   // 언어 선택은 항상 같은 개수를 돌려준다(en 미등재분은 ko로 폴백 — skill/mcp와 동일 관례).
   assert.equal(connectorCatalogFor('en').length, CONNECTOR_CATALOG.length);
   assert.equal(connectorCatalogFor('ko').length, CONNECTOR_CATALOG.length);
@@ -348,4 +353,27 @@ test('마켓 라우트 — 커넥터 연결·해제가 guardCompany 뒤에 배�
   // 해제가 else(=MCP)로 흘러가면 존재하지 않는 MCP를 지우고 ok를 돌려주는 조용한 무동작이 된다.
   assert.match(src, /kind === 'connector'\) await disconnectConnector\(ws, id\)/, 'DELETE 해제 분기(명시)');
   assert.match(src, /mergeConnectorStatus\(connectorCatalogFor\(lang\), connections\)/, 'GET 병합(회사 언어)');
+});
+
+test('커넥터 라우트 — 표시 언어는 화면 UI 언어(?lang) 1순위, 무효·부재 시 회사 언어 폴백', async () => {
+  // 설정 화면 카드의 다른 문구는 전부 t()(UI 언어)라, name·note만 회사 언어로 내리면 카드 한 장에
+  // 두 언어가 섞인다(실측 2026-08-29: en 모드에 "구글 캘린더" 잔존). 라우트 실호출은 next/headers
+  // 때문에 불가 — 소스로 잠그고, 실렌더 검증은 격리 dev 서버 시각 확인이 담당한다.
+  const src = await readFile(new URL('../app/api/companies/[ws]/connectors/route.js', import.meta.url), 'utf8');
+  const get = src.split('export async function GET')[1].split('export async function')[0];
+  assert.match(get, /guardCompany\(ws\)/, 'GET에 회사 가드가 있어야 한다');
+  assert.match(get, /searchParams\.get\('lang'\)/, 'GET이 화면의 ?lang을 읽는다');
+  // ko|en 화이트리스트 밖 값은 버려야 한다 — 임의 문자열이 카탈로그 선택자로 흘러들지 않게.
+  // 화이트리스트 골격 단언(M3 재보정): GET 전체가 아니라 **쿼리 판정 구간**(searchParams~회사 폴백 사이)에
+  // ko·en 리터럴이 있어야 한다 — 전체 검사면 회사 폴백 줄의 리터럴 때문에 화이트리스트를 지워도 초록(거짓 green 실증).
+  const seg = get.slice(get.indexOf("searchParams.get('lang')"), get.indexOf('loadCompany'));
+  assert.ok(/'ko'/.test(seg) && /'en'/.test(seg), "?lang 화이트리스트(ko·en)가 쿼리 판정 구간에 있어야 한다");
+  assert.match(get, /mergeConnectorStatus\(connectorCatalogFor\(lang\)/, 'GET 병합이 그 언어를 쓴다');
+  // M2(재검수): 오류 문구 재렌더용 lang이 listConnections까지 배선돼야 한다 — 호출부를 되돌리면
+  // en 카드에 한국어 오류가 재발하는데 98개 테스트가 전부 초록이었다(호출부 단위 게이트 교훈).
+  assert.match(get, /listConnections\(ws,\s*\{[^}]*lang/, '오류 문구 재렌더용 lang이 listConnections까지 간다');
+  assert.match(get, /loadCompany\(ws\)/, '쿼리 부재 시 회사 언어 폴백이 남아 있어야 한다');
+  // 화면 쪽 배선 — 카드가 실제로 ?lang을 보내는가(라우트만 열려 있으면 미사용 사양이 된다).
+  const page = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
+  assert.match(page, /\/connectors\?lang=\$\{lang\}/, '설정 카드가 UI 언어를 쿼리로 보낸다');
 });
