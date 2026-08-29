@@ -876,7 +876,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // embedded(보조 패널): 세션 레일 없이 채팅 컬럼만, 높이는 패널 본문을 가득(패널이 sticky·고정 높이).
     <div style={embedded
       ? { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', alignItems: 'start', height: '100%', minHeight: 0 }
-      : { display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
+      : { display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
       {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지. 회의실·컨테스트와 동일(입력창 하향·대화영역 확대, 스레드만 내부 스크롤). */}
       {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정 */}
       {!embedded && <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>

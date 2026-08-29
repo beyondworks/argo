@@ -1294,16 +1294,34 @@ export function LanguageProvider({ children }) {
     try { localStorage.setItem('argo-lang', next); } catch { /* 사파리 프라이빗 등 */ }
   }, []);
 
-  // cmd+/ (윈도우는 ctrl+/) — 어디서든 언어 전환
+  // 전역 단축키(윈도우는 ctrl) — cmd+/ 언어 전환, cmd +·−·0 표시 배율(10%씩·리셋).
+  // 배율은 페이지 전체 zoom이라 레이아웃·여백 관계가 그대로 유지된다(2026-08-29 유건 제약).
+  // 초기 적용·자동 판정(__argoAutoZoom)은 layout.jsx의 zoomBoot가 첫 페인트 전에 한다.
   useEffect(() => {
     const h = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === '/') {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === '/') {
         e.preventDefault();
         setLangState((l) => {
           const next = l === 'ko' ? 'en' : 'ko';
           try { localStorage.setItem('argo-lang', next); } catch { /* 무시 */ }
           return next;
         });
+      } else if (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0') {
+        e.preventDefault();
+        const el = document.documentElement;
+        let next;
+        if (e.key === '0') {
+          next = typeof window.__argoAutoZoom === 'function' ? window.__argoAutoZoom() : 1;
+          try { localStorage.removeItem('argo-zoom'); } catch { /* 무시 */ }
+        } else {
+          const cur = parseFloat(el.style.zoom) || 1;
+          next = Math.min(2, Math.max(0.7, Math.round((cur + (e.key === '-' ? -0.1 : 0.1)) * 10) / 10));
+          try { localStorage.setItem('argo-zoom', String(next)); } catch { /* 무시 */ }
+        }
+        el.style.zoom = next === 1 ? '' : String(next);
+        // 전체 화면 높이(100vh) 레이아웃 보정용 — globals.css·채팅 그리드가 calc(100vh / var(--z, 1))로 읽는다
+        if (next === 1) el.style.removeProperty('--z'); else el.style.setProperty('--z', String(next));
       }
     };
     window.addEventListener('keydown', h);

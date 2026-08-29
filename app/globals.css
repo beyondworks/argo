@@ -1434,7 +1434,7 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
   border-right: 1px solid var(--border);
   padding: 16px 12px 12px;
   display: flex; flex-direction: column; gap: 2px;
-  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  position: sticky; top: 0; height: calc(100vh / var(--z, 1)); overflow-y: auto; /* --z = 표시 배율(zoom) 보정 — vh는 zoom과 안 곱해지므로 나눠서 화면에 맞춘다 */
 }
 .side-group-row { display: flex; align-items: center; }
 .side-group-row .tm-edit { flex: none; background: none; border: 0; color: var(--fg-3); cursor: pointer; padding: 0 10px 0 4px; opacity: 0; transition: opacity 0.15s; }
@@ -1515,7 +1515,7 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 .content-row > .content { flex: 1; min-width: 0; }
 .split-pane {
   flex: none; width: var(--split-w, 480px); min-width: 360px; max-width: 60vw;
-  position: sticky; top: 56px; height: calc(100vh - 56px); overflow: hidden;
+  position: sticky; top: 56px; height: calc(100vh / var(--z, 1) - 56px); overflow: hidden;
   border-left: 1px solid var(--border); background: var(--bg);
   display: flex; flex-direction: column;
 }
@@ -1806,7 +1806,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 /* 백그라운드 작업 패널 — 탑바 우측 버튼으로 여는 슬라이드 오버 */
 .tasks-panel {
   position: fixed; top: 64px; right: 14px; z-index: 90;
-  width: min(400px, calc(100vw - 28px)); max-height: calc(100vh - 84px);
+  width: min(400px, calc(100vw - 28px)); max-height: calc(100vh / var(--z, 1) - 84px);
   display: flex; flex-direction: column;
   animation: tasksIn 0.22s cubic-bezier(0.23, 1, 0.32, 1) both;
   isolation: isolate;
@@ -1964,9 +1964,9 @@ button.memo-chip.ap-toggle { background: transparent; cursor: pointer; padding: 
 /* ─── 기억 2패널(vault) — 옵시디언식 풀블리드(유건 지시 2026-08-21: "카드 형태 말고 화면 채우기식") ───
    카드 껍데기(테두리·둥근 모서리·gap) 없이 화면 전체를 두 면으로 나눈다. 페이지 패딩·최대폭도
    이 페이지에서만 회수한다(:has() = 점진적 향상 — 미지원이면 종전 여백 레이아웃으로 남는다). */
-.vault-split { display: flex; gap: 0; height: calc(100vh - 170px); min-height: 420px; align-items: stretch; }
+.vault-split { display: flex; gap: 0; height: calc(100vh / var(--z, 1) - 170px); min-height: 420px; align-items: stretch; }
 main.content:has(> .vault-split) { padding: 0; max-width: none; }
-main.content:has(> .vault-split) .vault-split { height: calc(100vh - 56px); min-height: 0; }
+main.content:has(> .vault-split) .vault-split { height: calc(100vh / var(--z, 1) - 56px); min-height: 0; }
 .vault-split > .vault-tree {
   width: 288px; flex: none;
   border-right: 1px solid var(--border-soft);

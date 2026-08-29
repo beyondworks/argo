@@ -203,7 +203,7 @@ export default function Room({ params }) {
   const shown = viewing ? archMsgs : messages;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
       {/* height offset 100 = topbar(56)+상단패딩(26)+하단여백(18). marginBottom -70 = 원래 오프셋 170과의 차 —
           .content 하단 패딩(88) 중 70을 상쇄해 body 스크롤을 막으면서 입력창을 아래로 내려 대화 영역을 넓힌다. 메시지 컬럼 minHeight:0과 한 세트(회의실·컨테스트·DM 동일). */}
       {/* 회의 레일 — 마친 회의가 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr) */}
