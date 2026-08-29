@@ -1,6 +1,6 @@
 {
   "name": "argo",
-  "version": "0.1.52",
+  "version": "0.1.53",
   "description": "Argo \u2014 \ud504\ub86c\ud504\ud2b8 \ud55c \uc904\ub85c \uc804\ubb38 AI \ud06c\ub8e8\ub97c \uc601\uc785\ud558\uace0, \ud68c\uc0ac\uac00 \ud3f4\ub354 \ub2e8\uc704 \uae30\uc5b5\uc73c\ub85c \ud56d\ud574\ud558\ub294 \uac1c\uc778\uc6a9 AI \ud68c\uc0ac SaaS",
   "scripts": {
     "dev": "next dev",
