@@ -15,7 +15,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   // 아래 AbortController가 같은 값을 쓴다. 러너에 따라 상한이 갈리면 같은 작업이 codex로 뽑히면
   // 잘리고 claude로 뽑히면 안 잘린다 — 이 파일의 존재 이유(러너 독립)와 정면 충돌한다.
   // 오래 걸리는 배치(기억 정리)는 호출자가 명시로 늘린다.
-  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, __exclude = null, __crashRetry = false, __failures = [] } = opts;
+  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, readOnly = false, __exclude = null, __crashRetry = false, __failures = [] } = opts;
   // __failures는 재귀에 **명시 전달**(아래 두 recursion) — opts를 직접 오염시키면 호출자가 재사용하는
   // opts 객체에 이전 호출의 실패가 섞인다(분리 검수 L2).
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — 조용한 호스트 스캐빈징 금지(검수 MEDIUM, chat.mjs와 동일)
@@ -46,8 +46,10 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       // caps 명시 전달(분리 검수 2026-08-21 MED-2) — 안 넘기면 러너마다 기본값 방향이 갈려
       // (gemini fail-closed 셸 제외 vs codex 전권) 같은 유틸 턴의 권한이 러너 따라 3갈래가 된다.
       // 능력은 동결 상수(전권)라 값은 하나다 — 채팅 턴과 같은 문맥을 준다.
-      const caps = await loadCapabilities();
-      const text = (await externalExec({ runner, cwd: paths(wsId).root, prompt, cred, caps, timeoutMs })).trim();
+      // readOnly면 caps를 넘겨도 externalExec가 무력화하지만, 계약을 명시적으로 — 순수 생성 턴은
+      // 도구가 필요 없다(신뢰 불가 원문 요약이 전권으로 돌지 않게, 검수 HIGH-1). 기본은 전권 유지.
+      const caps = readOnly ? { fs: false, browser: false, shell: false, bypass: false } : await loadCapabilities();
+      const text = (await externalExec({ runner, cwd: paths(wsId).root, prompt, cred, caps, timeoutMs, readOnly })).trim();
       if (!text) throw new Error('empty-reply');
       return { runner, text, usage: {}, costUsd: null }; // 외부 CLI — 토큰 사용량 비노출(채팅 경로와 동일)
     }

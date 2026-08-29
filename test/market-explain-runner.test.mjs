@@ -11,7 +11,7 @@ import { join } from 'node:path';
 const ROOT = await mkdtemp(join(tmpdir(), 'argo-explain-'));
 process.env.ARGO_ROOT = ROOT; // EXPLAIN_FILE(디스크 캐시)이 임시 루트를 가리키도록 선세팅 후 import
 
-const { explainItem, _setOneShotForTest } = await import('../src/remote-market.mjs');
+const { explainItem, warmExplains, _setOneShotForTest } = await import('../src/remote-market.mjs');
 
 const GOOD = JSON.stringify({ what: '쉬운 설명', when: ['이럴 때'], examples: ['이렇게'], caution: '' });
 
@@ -26,6 +26,8 @@ test('배선: explainItem은 runOneShot 경유로 회사 러너를 탄다(wsId·
     assert.ok(calls[0].prompt.includes('딥 리서치'), '항목 정보가 프롬프트에 실린다');
     assert.equal(calls[0].opts.model, 'claude-haiku-4-5-20251001', 'claude 러너 한정 속도 우선 모델(타 러너는 oneshot이 각자 기본 모델로)');
     assert.equal(calls[0].opts.lang, 'ko');
+    assert.equal(calls[0].opts.readOnly, true, '설명 생성은 무도구 — CLI 러너가 전권으로 돌지 않게(검수 HIGH-1)');
+    assert.equal(calls[0].opts.timeoutMs, 45_000, '모달 대기용 짧은 상한(검수 LOW-3)');
     const r2 = await explainItem('w1', { kind: 'skill', title: '딥 리서치', desc: '다단 폴백 웹 조사' }, 'ko');
     assert.equal(r2.easy.what, '쉬운 설명');
     assert.equal(calls.length, 1, '파싱 성공분은 캐시 — 재호출 없음');
@@ -61,6 +63,50 @@ test('비JSON 응답: 폴백으로 보여주되 캐시하지 않는다(형식 �
     await explainItem('w1', { kind: 'mcp', name: 'raw-mcp' }, 'ko');
     assert.equal(n, 2, '폴백은 미캐시 — 재열람이 재시도한다');
   } finally { _setOneShotForTest(null); }
+});
+
+test('오류 객체(JSON 모양)는 계약 미충족으로 캐시하지 않는다 — 이번 버그 문구의 재발 차단(MEDIUM-2)', async () => {
+  let n = 0;
+  // JSON.parse는 통과하지만 계약(easy.what:string)은 아닌 응답 — 원 버그의 인증 오류가 이 모양으로 올 수 있다.
+  _setOneShotForTest(async () => { n++; return { runner: 'glm', text: '{"error":"Failed to authenticate: OAuth session expired"}' }; });
+  try {
+    const r = await explainItem('w1', { kind: 'mcp', name: 'errobj' }, 'ko');
+    assert.ok(!r.easy.what, 'what이 falsy면 UI는 아무 설명도 안 붙인다(오류 문구 미표시)');
+    assert.ok(!r.easy.what || !String(r.easy.what).includes('OAuth'), '오류 문구가 설명으로 표시되지 않는다');
+    await explainItem('w1', { kind: 'mcp', name: 'errobj' }, 'ko');
+    assert.equal(n, 2, '계약 미충족은 미캐시 — 다음 열람이 재시도(오류 객체 영구 고정 차단)');
+  } finally { _setOneShotForTest(null); }
+});
+
+test('데이터 펜스: 제3자 원문은 "지시로 해석 말라" 경고와 함께 UNTRUSTED 블록으로 감싼다(HIGH-1 2차 방어)', async () => {
+  let cap = null;
+  _setOneShotForTest(async (wsId, prompt) => { cap = prompt; return { runner: 'claude', text: GOOD }; });
+  try {
+    // raw fetch를 타도록 skill+githubUrl. fetchSkillRaw는 네트워크라 여기선 desc만으로도 펜스 문구를 확인한다.
+    await explainItem('w1', { kind: 'skill', title: 't', desc: 'd' }, 'ko');
+    assert.ok(/신뢰할 수 없는 제3자|UNTRUSTED_SOURCE|따르지 마라/.test(cap) || !/원문\(일부\)/.test(cap),
+      '원문이 실릴 때는 펜스가 함께 실린다(원문이 없으면 펜스도 없다)');
+  } finally { _setOneShotForTest(null); }
+});
+
+test('warm 1회 상한: 실패 항목도 프로세스 수명 내 재워밍하지 않는다(폭주 차단 MEDIUM-1)', async () => {
+  let n = 0;
+  _setOneShotForTest(async () => { n++; throw new Error('러너 미연결'); });
+  try {
+    const items = [{ name: 'a' }, { name: 'b' }];
+    warmExplains('w1', items, 'mcp', 'ko');
+    await new Promise((r) => setTimeout(r, 60));
+    const first = n;
+    assert.ok(first >= 2, '첫 워밍은 항목 수만큼 시도한다');
+    warmExplains('w1', items, 'mcp', 'ko'); // 두 번째 호출 — 같은 프로세스
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(n, first, '재워밍 없음 — 실패 항목도 warmedOnce로 상한(폭주 방지)');
+  } finally { _setOneShotForTest(null); }
+});
+
+test('warmExplains 옛 시그니처/비배열은 조용히 무시(unhandledRejection 방지 MEDIUM-3)', () => {
+  assert.doesNotThrow(() => warmExplains(['items'], 'kind', 'ko')); // 옛 시그니처(wsId 자리에 배열)
+  assert.doesNotThrow(() => warmExplains('w1', null, 'mcp', 'ko'));  // items 비배열
 });
 
 test('옛 시그니처 차단: wsId 없이 부르면 조용한 오동작 대신 명시적으로 던진다', async () => {

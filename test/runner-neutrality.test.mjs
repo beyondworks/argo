@@ -64,8 +64,9 @@ test('antigravity 반경 인자 = openRoots(반복형 --add-dir)', async () => {
 test('배선: externalExec가 gemini settings·agy 인자에 workRoots를 실제로 넘긴다', async () => {
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
-  assert.match(src, /writeGeminiTurnSettings\(cred\.home, cred\.authType, caps, workRoots(, mcpServers)?\)/, 'gemini 반경 배선');
-  assert.match(src, /\.\.\.agyDirArgs\(caps, workRoots\)/, 'antigravity 반경 배선');
+  // caps → effCaps(readOnly면 무력화, 기본은 caps 그대로 — readOnly 도입 2026-08-29). 배선 존재만 잠근다.
+  assert.match(src, /writeGeminiTurnSettings\(cred\.home, cred\.authType, effCaps, workRoots(, mcpServers)?\)/, 'gemini 반경 배선');
+  assert.match(src, /\.\.\.agyDirArgs\(effCaps, workRoots\)/, 'antigravity 반경 배선');
 });
 
 test('pickRunner — 선호(want)도 exclude 목록에 걸리면 건너뛴다', () => {

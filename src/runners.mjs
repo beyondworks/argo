@@ -125,8 +125,14 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
     caps = 회사 로컬 능력({ fs, browser, shell }) — gemini 도구 게이팅·agy 반경 인자에 반영
     (codex는 2026-08-21부터 샌드박스 없음 — danger-full-access, 유건 지시 "샌드박스 없이"). */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null }) {
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false }) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
+  // readOnly — 순수 텍스트 생성 턴(예: 마켓 "이게 뭐예요?" 설명)은 도구가 필요 없다. SDK 경로는
+  // 이미 allowedTools:[]로 무도구지만 CLI 러너는 caps로 전권을 받아 왔다(danger-full-access/yolo).
+  // 신뢰할 수 없는 제3자 원문을 요약하는 턴이 전권으로 도는 것을 막는다(분리 검수 2026-08-29 HIGH-1):
+  // caps를 전부 false로 눌러 gemini(excludeTools)·agy(--sandbox)를 닫고, 아래 codex는 sandbox를
+  // read-only로 분기한다. 기본값 false라 크루 채팅·기존 oneshot 경로는 완전 무변경.
+  const effCaps = readOnly ? { fs: false, browser: false, shell: false, bypass: false } : caps;
   const t0 = Date.now(); // 실패의 정직 번역용 — cliTurnFailure가 경과 시간으로 시간 초과를 판정한다
   if (runner === 'codex' && process.env.ARGO_CODEX_ENGINE === 'appserver') {
     // 엔진 하네스 전환 P1(옵트인 플래그) — codex를 app-server(read-only 샌드박스 + 전량 승인)로
@@ -163,7 +169,8 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
         // writable_roots가 "사용 권한이 없다" 차단의 뿌리였다(윈도우 쓰기 전멸 클러스터 포함).
         // 프로세스 수준 방어가 사라짐을 알고 유지 — 남는 방어는 프롬프트 금지 지시(2차)뿐이고,
         // 크루 자기 카드 수정으로 우회 가능하던 반쪽 격리였다(분리 검수 MED-3 판정: 경계 아님).
-        'exec', '--sandbox', 'danger-full-access', '--skip-git-repo-check',
+        // readOnly면 read-only 샌드박스(순수 생성 — 파일·셸 불가). 기본은 전권(유건 지시 2026-08-21).
+        'exec', '--sandbox', readOnly ? 'read-only' : 'danger-full-access', '--skip-git-repo-check',
         ...codexEffortArgs(effort), // 크루별 추론 강도 — codex도 지원(실측 2026-07-26)
         '--output-last-message', out,
         ...(model ? ['-m', model] : []),
@@ -187,7 +194,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
   if (runner === 'gemini') {
     // 회사/host 자격이면 격리 HOME — 이번 턴 settings.json(인증 방식 + caps 도구 게이팅)을 매 턴 쓴다.
     // (자격 없는 경로는 명시 연결 원칙상 도달 안 하지만, 도달 시 호스트 HOME으로 폴백 — 도구 게이팅 없음)
-    if (cred?.home && cred?.authType) await writeGeminiTurnSettings(cred.home, cred.authType, caps, workRoots, mcpServers);
+    if (cred?.home && cred?.authType) await writeGeminiTurnSettings(cred.home, cred.authType, effCaps, workRoots, mcpServers);
     const cmd = await geminiCmd(); // PATH 설치본 > 관리본 > 즉석 조달 — 사용자 설치 없이도 돈다
     // 파일 반경 — gemini-cli는 workspaceContext(cwd + include-directories) **밖의 읽기·쓰기를 벤더
     // 도구가 거부**한다. 반경을 안 넘기면 크루 책상이 회사 폴더 하나로 쪼그라들어, 같은 지시가 codex
@@ -235,9 +242,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300
       // gemini와 같은 이유·같은 계산(agyDirArgs=openRoots). agy의 워크스페이스 강제 여부는 **추정**
       // — --add-dir 플래그 존재만 실측(--help), 밖 접근이 실제로 막히는지는 미확인(검수 MEDIUM-3:
       // 본문과 같은 강도로 표기). 막는 버전이면 이 인자가 열고, 안 막는 버전이면 무해.
-      ...agyDirArgs(caps, workRoots),
+      ...agyDirArgs(effCaps, workRoots),
       '--mode', 'accept-edits',
-      ...(caps?.shell ? [] : ['--sandbox']), // fail-closed(분리 검수 H2) — caps 미전달(oneshot 등)이면 제한 켬. codex 상시 샌드박스와 같은 방향
+      ...(effCaps?.shell ? [] : ['--sandbox']), // fail-closed(분리 검수 H2) — caps 미전달(oneshot 등)·readOnly면 제한 켬. codex 상시 샌드박스와 같은 방향
       ...(agySec >= 25 ? ['--print-timeout', `${agySec}s`] : []),
     ], { cwd, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'antigravity'), ...(cred?.env ?? {}) } })
       .catch((e) => { if (process.env.ARGO_DEBUG_AGY) console.error('[debug agy]', JSON.stringify({ code: e.code, killed: e.killed, signal: e.signal, so: String(e.stdout ?? '').slice(-60), se: String(e.stderr ?? '').slice(-120) })); throw cliTurnFailure(e, 'antigravity', Date.now() - t0, timeoutMs, { stage: 'exec', kind }); });
