@@ -15,7 +15,7 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-conncat-')); // impor
 const {
   CONNECTOR_CATALOG, CONNECTOR_CATALOG_EN, connectorCatalogFor,
   connectorMode, connectorCatalogItemErrors, connectorServerDef,
-  mergeConnectorStatus, connectConnector,
+  mergeConnectorStatus, connectConnector, skillCatalogFor,
 } = await import('../src/market.mjs');
 const { listConnections, disconnectConnector, callConnectorTool, closeConnectorPools, CONNECTOR_SECRETS_BASE } = await import('../src/connectors.mjs');
 const { createCompany, WS_ROOT } = await import('../src/workspace.mjs');
@@ -403,21 +403,29 @@ test('마켓 라우트 — 인증이 켜진 서버에서 무세션 문맥이면 
   // AUTH_ON은 auth.mjs 로드 시점 상수라 자식 프로세스에서 켜고 관측한다. 위 테스트들이 같은 회사에서
   // AUTH off일 때 GET 200·POST(실카탈로그 kind) 정상 처리를 실증했으므로, 여기서 성공이 아니라는 것은
   // "가드가 요청 앞을 막고 있다"는 판별이 된다 — 핸들러 어디든 가드를 지우는 변이면 성공이 나와 red.
+  // 전제 핀(검수 LOW-5): 프로브 POST 팔과 같은 본문이 AUTH off에선 실제로 200이어야 "무세션에서
+  // 200 아님"이 가드 판별이 된다. 카탈로그 설치가 훗날 깨지면 프로브 팔은 항상 400 = red 없이
+  // 검출력을 잃는데, 그 전제 붕괴를 이 핀이 먼저 잡는다.
+  const probeBody = JSON.stringify({ kind: 'skill', id: skillCatalogFor('ko')[0].id });
+  const pin = await (await marketRoute()).POST(routeReq('', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: probeBody,
+  }), routeParams);
+  assert.equal(pin.status, 200, 'AUTH off에서 프로브 본문 설치가 200이어야 아래 무세션 판별이 성립한다');
+
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const probe = `
     import { register } from 'node:module';
     register(process.env.PROBE_HOOK);
     const route = await import(process.env.PROBE_ROUTE);
-    const { skillCatalogFor } = await import(process.env.PROBE_MARKET);
     const P = { params: Promise.resolve({ ws: process.env.PROBE_WS }) };
     const call = (p) => p.then((r) => r.status).catch(() => 'threw');
     const out = {
       get: await call(route.GET(new Request('http://127.0.0.1/x'), P)),
-      // 실카탈로그 스킬 설치 요청 — 가드가 없으면 실제로 설치되어 200이 난다(무해 kind면 가드 유무가 안 갈린다).
+      // 위 전제 핀과 문자 그대로 같은 본문(env 전달) — 가드가 없으면 실제로 설치되어 200이 난다.
       post: await call(route.POST(new Request('http://127.0.0.1/x', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ kind: 'skill', id: skillCatalogFor('ko')[0].id }),
+        body: process.env.PROBE_BODY,
       }), P)),
       del: await call(route.DELETE(new Request('http://127.0.0.1/x?kind=mcp&id=zz-guard-probe', { method: 'DELETE' }), P)),
     };
@@ -428,8 +436,7 @@ test('마켓 라우트 — 인증이 켜진 서버에서 무세션 문맥이면 
       ...process.env,
       NEXT_PUBLIC_SUPABASE_URL: 'https://example.invalid', // AUTH_ON만 켠다 — 네트워크엔 안 나간다(쿠키 저장소가 먼저 끊는다)
       NEXT_PUBLIC_SUPABASE_ANON_KEY: 'test-anon',
-      PROBE_HOOK: HOOK_URL.href, PROBE_ROUTE: ROUTE_URL.href, PROBE_WS: WS,
-      PROBE_MARKET: new URL('../src/market.mjs', import.meta.url).href,
+      PROBE_HOOK: HOOK_URL.href, PROBE_ROUTE: ROUTE_URL.href, PROBE_WS: WS, PROBE_BODY: probeBody,
     },
   });
   const out = JSON.parse(stdout.trim());
