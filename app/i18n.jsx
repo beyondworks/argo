@@ -227,6 +227,12 @@ const DICT = {
   'settings.crewLanguage.desc': ['크루(AI 직원)가 답변·페르소나·기억을 작성할 때 쓰는 언어입니다. 화면 언어와 별개로 회사마다 설정됩니다.', 'The language your crew uses to reply, create personas, and write memory — set per company, separately from the screen language.'],
   'settings.language.desc': ['화면 표시 언어를 선택합니다. 어디서든 단축키로도 전환됩니다.', 'Choose the display language. You can also toggle it anywhere with the shortcut.'],
   'settings.language.shortcut': ['단축키', 'Shortcut'],
+  'settings.zoom': ['표시 배율', 'Display zoom'],
+  'settings.zoom.desc': ['화면 전체를 비례 확대·축소합니다. 큰 모니터에서는 처음에 자동으로 확대되며, 어디서든 단축키로도 조절됩니다.', 'Scales the whole screen proportionally. Starts auto-enlarged on big monitors; you can also adjust it anywhere with the shortcuts.'],
+  'settings.zoom.out': ['축소', 'Zoom out'],
+  'settings.zoom.in': ['확대', 'Zoom in'],
+  'settings.zoom.auto': ['자동', 'Auto'],
+  'settings.zoom.shortcut': ['단축키', 'Shortcuts'],
   'settings.head': ['설정 · 회사 설정', 'Settings · Company'],
   'settings.general': ['일반', 'General'],
   'settings.capabilities': ['로컬 능력 — 크루가 로컬에 손댈 수 있는 범위', 'Capabilities — what crew can touch locally'],
@@ -1287,6 +1293,27 @@ const mirrorLangCookie = (l) => {
   try { document.cookie = `argo-lang=${l}; path=/; max-age=31536000; SameSite=Lax`; } catch { /* 무시 */ }
 };
 
+/** 표시 배율 적용 + 저장 — 전역 단축키(cmd +·−·0)와 설정 화면 버튼이 공유하는 단일 로직.
+    delta: ±0.1 = 10% 단계(0.7~2.0 클램프), null = 리셋(자동 판정 복귀 + 저장 삭제).
+    적용 배율을 반환하고 argo:zoom 이벤트로 알린다(설정 카드의 현재값 표시가 따라온다). */
+export function adjustZoom(delta) {
+  const el = document.documentElement;
+  let next;
+  if (delta == null) {
+    next = typeof window.__argoAutoZoom === 'function' ? window.__argoAutoZoom() : 1;
+    try { localStorage.removeItem('argo-zoom'); } catch { /* 무시 */ }
+  } else {
+    const cur = parseFloat(el.style.zoom) || 1;
+    next = Math.min(2, Math.max(0.7, Math.round((cur + delta) * 10) / 10));
+    try { localStorage.setItem('argo-zoom', String(next)); } catch { /* 무시 */ }
+  }
+  // --z(100vh 보정) 먼저, zoom 나중 — 중간 실패 시 "확대만 되고 보정 없음"(넘침)이 아니라 안전하게 무배율
+  if (next === 1) el.style.removeProperty('--z'); else el.style.setProperty('--z', String(next));
+  el.style.zoom = next === 1 ? '' : String(next);
+  try { window.dispatchEvent(new Event('argo:zoom')); } catch { /* 무시 */ }
+  return next;
+}
+
 export function LanguageProvider({ children }) {
   const [lang, setLangState] = useState('ko');
 
@@ -1319,19 +1346,7 @@ export function LanguageProvider({ children }) {
         });
       } else if (!e.altKey && (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0')) { // altKey 제외 — 윈도우 AltGr(ctrl+alt) 문자 입력 오가로채기 방지
         e.preventDefault();
-        const el = document.documentElement;
-        let next;
-        if (e.key === '0') {
-          next = typeof window.__argoAutoZoom === 'function' ? window.__argoAutoZoom() : 1;
-          try { localStorage.removeItem('argo-zoom'); } catch { /* 무시 */ }
-        } else {
-          const cur = parseFloat(el.style.zoom) || 1;
-          next = Math.min(2, Math.max(0.7, Math.round((cur + (e.key === '-' ? -0.1 : 0.1)) * 10) / 10));
-          try { localStorage.setItem('argo-zoom', String(next)); } catch { /* 무시 */ }
-        }
-        // --z(100vh 보정) 먼저, zoom 나중 — 중간 실패 시 "확대만 되고 보정 없음"(넘침)이 아니라 안전하게 무배율
-        if (next === 1) el.style.removeProperty('--z'); else el.style.setProperty('--z', String(next));
-        el.style.zoom = next === 1 ? '' : String(next);
+        adjustZoom(e.key === '0' ? null : e.key === '-' ? -0.1 : 0.1);
       }
     };
     window.addEventListener('keydown', h);

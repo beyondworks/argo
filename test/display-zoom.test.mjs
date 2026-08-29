@@ -1,6 +1,7 @@
-// 표시 배율(zoomBoot) 행동 테스트 — 큰 모니터 자동 스케일 + cmd +/-/0 수동 배율의 부트 절반.
-// layout.jsx의 zoomBoot 문자열을 실제로 실행해(vm) 자동 판정·저장값·관용을 검증한다.
-// 키 핸들러(i18n.jsx)와 레이아웃 비례 유지는 실브라우저 검증(Aside — 분리 검수 절차).
+// 표시 배율 행동 테스트 — 부트 절반(layout.jsx zoomBoot)과 조절 절반(i18n.jsx adjustZoom).
+// 둘 다 소스에서 추출해 실제로 실행한다(vm). adjustZoom은 전역 단축키(cmd +·−·0)와
+// 설정 화면 버튼이 공유하는 단일 로직이라, 여기 행동이 곧 두 진입점의 행동이다.
+// 레이아웃 비례 유지·실클릭 왕복은 실브라우저 검증(Aside — 분리 검수 절차).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -73,4 +74,99 @@ test('cmd+0 리셋이 재사용할 자동 판정 함수를 전역에 남긴다',
 
 test('layout이 zoomBoot를 첫 페인트 전 스크립트로 배선한다', () => {
   assert.match(layout, /__html:\s*zoomBoot/, 'zoomBoot가 인라인 스크립트로 주입돼야 한다');
+});
+
+// ---- adjustZoom(i18n.jsx) — 단축키·설정 버튼 공용 조절 로직 ----
+
+const i18n = readFileSync(join(ROOT, 'app', 'i18n.jsx'), 'utf8');
+const settings = readFileSync(join(ROOT, 'app', 'c', '[ws]', 'settings', 'page.jsx'), 'utf8');
+
+function extractAdjust() {
+  const m = i18n.match(/export (function adjustZoom\(delta\) \{[\s\S]*?\n\})/);
+  assert.ok(m, 'i18n.jsx에 adjustZoom 공용 함수가 있어야 한다');
+  return m[1];
+}
+
+function runAdjust(delta, { styleZoom = '', auto, saved } = {}) {
+  const ops = []; const props = {}; const store = {}; const events = [];
+  if (saved != null) store['argo-zoom'] = String(saved);
+  let zoomVal = styleZoom;
+  const style = {
+    setProperty: (k, v) => { props[k] = String(v); ops.push(`set:${k}`); },
+    removeProperty: (k) => { delete props[k]; ops.push(`rm:${k}`); },
+  };
+  Object.defineProperty(style, 'zoom', { get: () => zoomVal, set: (v) => { zoomVal = v; ops.push('zoom'); } });
+  const ctx = {
+    document: { documentElement: { style } },
+    window: { dispatchEvent: (e) => events.push(e.type) },
+    localStorage: { setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } },
+    Event: class { constructor(type) { this.type = type; } },
+  };
+  if (auto !== undefined) ctx.window.__argoAutoZoom = () => auto;
+  const ret = vm.runInNewContext(`${extractAdjust()}; adjustZoom(${delta});`, ctx);
+  return { ret, zoom: zoomVal, z: props['--z'], store, ops, events };
+}
+
+test('adjustZoom 10% 단계 — zoom·--z·저장값 동시 갱신', () => {
+  const r = runAdjust(0.1);
+  assert.equal(r.ret, 1.1);
+  assert.equal(r.zoom, '1.1');
+  assert.equal(r.z, '1.1');
+  assert.equal(r.store['argo-zoom'], '1.1');
+});
+
+test('adjustZoom 부동소수 안전 — 1.1에서 한 단계 올리면 정확히 1.2', () => {
+  const r = runAdjust(0.1, { styleZoom: '1.1' });
+  assert.equal(r.ret, 1.2);
+  assert.equal(r.zoom, '1.2');
+});
+
+test('adjustZoom 클램프 — 단축키와 같은 0.7~2.0 경계', () => {
+  assert.equal(runAdjust(0.1, { styleZoom: '2' }).ret, 2);
+  assert.equal(runAdjust(-0.1, { styleZoom: '0.7' }).ret, 0.7);
+});
+
+test('adjustZoom(null) 리셋 — 자동 판정 복귀 + 저장 삭제', () => {
+  const r = runAdjust(null, { styleZoom: '1.6', auto: 1.25, saved: 1.6 });
+  assert.equal(r.ret, 1.25);
+  assert.equal(r.zoom, '1.25');
+  assert.equal(r.z, '1.25');
+  assert.equal(r.store['argo-zoom'], undefined, '리셋은 저장값을 지워 자동 판정으로 돌아간다');
+});
+
+test('배율 1 도달 — 스타일 완전 제거(미설정 렌더와 동일)', () => {
+  const r = runAdjust(-0.1, { styleZoom: '1.1' });
+  assert.equal(r.ret, 1);
+  assert.equal(r.zoom, '');
+  assert.equal(r.z, undefined);
+  const reset = runAdjust(null, { styleZoom: '1.3', saved: 1.3 });
+  assert.equal(reset.ret, 1, '자동 판정 함수 부재 시 리셋은 1로 관용');
+  assert.equal(reset.zoom, '');
+});
+
+test('--z 먼저, zoom 나중 — 중간 실패가 넘침(확대+무보정)이 되지 않는 순서', () => {
+  const { ops } = runAdjust(0.1);
+  assert.ok(ops.indexOf('set:--z') !== -1 && ops.indexOf('set:--z') < ops.indexOf('zoom'), `순서: ${ops.join(',')}`);
+});
+
+test('adjustZoom이 argo:zoom 이벤트로 알린다 — 설정 카드 현재값 동기화 채널', () => {
+  assert.deepEqual(runAdjust(0.1).events, ['argo:zoom']);
+});
+
+test('배선 — 단축키·설정 버튼 둘 다 adjustZoom 하나를 탄다(로직 두 벌 금지)', () => {
+  assert.match(i18n, /adjustZoom\(e\.key === '0' \? null/, '키 핸들러가 adjustZoom을 호출해야 한다');
+  assert.equal(i18n.split("setProperty('--z'").length - 1, 1, '--z 쓰기는 i18n.jsx 안에서 adjustZoom 한 벌이어야 한다');
+  assert.match(settings, /import \{[^}]*adjustZoom[^}]*\} from '\.\.\/\.\.\/\.\.\/i18n'/, '설정 화면이 공용 함수를 임포트');
+  assert.match(settings, /adjustZoom\(-0\.1\)/, '축소 버튼');
+  assert.match(settings, /adjustZoom\(0\.1\)/, '확대 버튼');
+  assert.match(settings, /adjustZoom\(null\)/, '자동(리셋) 버튼');
+  assert.ok(!settings.includes("setProperty('--z'"), '설정 화면이 배율을 직접 쓰면 안 된다(공용 함수 경유)');
+  assert.match(settings, /addEventListener\('argo:zoom'/, '단축키 변경도 카드 표시가 따라와야 한다');
+});
+
+test('사전 — 표시 배율 문구 ko/en 등록 + 설정 카드가 전부 사전 경유', () => {
+  for (const key of ['settings.zoom', 'settings.zoom.desc', 'settings.zoom.out', 'settings.zoom.in', 'settings.zoom.auto', 'settings.zoom.shortcut']) {
+    assert.match(i18n, new RegExp(`'${key.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${key} ko/en 등록`);
+    assert.ok(settings.includes(`t('${key}')`), `${key}를 설정 카드가 사용`);
+  }
 });
