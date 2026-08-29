@@ -1509,6 +1509,10 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 .search-pill input::placeholder { color: var(--fg-3); }
 
 .content { padding: 26px 32px 88px; max-width: 1480px; margin: 0 auto; }
+/* 대형 모니터(실제 뷰포트 ≥1800px — 미디어쿼리는 표시 배율과 무관하게 실제 폭 기준)에서는
+   콘텐츠 상한을 올려 좌우 여백 과다를 줄인다(4K 실캡처에서 유건 판정 2026-08-29:
+   배율 1.7로도 1480px 상한 탓에 기둥만 남음). 노트북(<1800px)은 상한 미도달이라 불변. */
+@media (min-width: 1800px) { .content { max-width: 1800px; } }
 
 /* ─── 좌우 2분할(보조 패널) — ?side= 가 있으면 본문 옆에 <aside class="split-pane">. 상태는 URL 하나. ─── */
 .content-row { display: flex; min-width: 0; align-items: stretch; }
