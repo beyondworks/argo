@@ -7,7 +7,7 @@ import { readUsageSummary, monthCostByCrew } from '../../../../src/billing.mjs';
 import { ensureScheduler } from '../../../../src/scheduler.mjs';
 import { ensureGateway } from '../../../../src/gateway.mjs';
 import { nudgeSync } from '../../../../src/sync.mjs';
-import { guardCompany } from '../../../auth.mjs';
+import { guardCompany, authError, requestLang } from '../../../auth.mjs';
 
 ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
 ensureGateway(); // 메신저 게이트웨이(텔레그램/슬랙) 상주
@@ -63,7 +63,8 @@ export async function GET(req, { params }) {
       usage, delegations, payroll,
     });
   } catch {
-    return Response.json({ error: '회사를 찾을 수 없습니다' }, { status: 404 });
+    // AUTH off(로컬 모드)에선 guardCompany가 회사 존재를 안 보므로 부재 404는 이 catch가 담당한다
+    return authError('company_not_found', await requestLang());
   }
 }
 

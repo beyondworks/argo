@@ -4,7 +4,7 @@
 // 인증: 기기 세션의 사용자 스코프 클라이언트(RLS own) — me/billing과 같은 패턴. 서비스키 불요.
 import { randomBytes } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import { currentUser } from '../../../auth.mjs';
+import { currentUser, authError, requestLang } from '../../../auth.mjs';
 import { getFreshDeviceSession } from '../../../../src/devicesession.mjs';
 import { getDeviceId } from '../../../../src/workspace.mjs';
 import {
@@ -65,7 +65,7 @@ export async function GET() {
 export async function POST(req) {
   try {
     const user = await currentUser();
-    if (!user?.id || user.id === 'local' || user.id === 'guest') return Response.json({ error: '로그인이 필요합니다' }, { status: 401 });
+    if (!user?.id || user.id === 'local' || user.id === 'guest') return authError('auth_required', await requestLang());
     const sb = await userSb();
     if (!sb) return Response.json({ error: '기기 연동 세션이 필요합니다 — Argo 앱에서 로그인해 주세요' }, { status: 401 });
     const deviceId = await getDeviceId();

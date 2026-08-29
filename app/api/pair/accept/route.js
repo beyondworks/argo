@@ -2,13 +2,13 @@
 import { parsePairCode } from '../../../../src/pairing.mjs';
 import { saveSyncCreds } from '../../../../src/synccreds.mjs';
 import { ensureSync } from '../../../../src/sync.mjs';
-import { currentUser, tenantDenied, AUTH_ON } from '../../../auth.mjs';
+import { currentUser, tenantDenied, AUTH_ON, authError, requestLang } from '../../../auth.mjs';
 
 export async function POST(req) {
   try {
     const user = await currentUser();
-    if (!user) return Response.json({ error: '로그인이 필요합니다' }, { status: 401 });
-    const td = tenantDenied(user); if (td) return td;
+    if (!user) return authError('auth_required', await requestLang());
+    const td = tenantDenied(user, await requestLang()); if (td) return td;
     const { code } = await req.json();
     const creds = parsePairCode(code); // 형식 불일치는 throw → 400
     // 방어심층(P0-1) — 호스팅(로그인) 모드에선 코드의 owner가 현재 사용자와 일치해야 한다.

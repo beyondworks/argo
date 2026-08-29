@@ -2,12 +2,12 @@ import { createCompany } from '../../../src/workspace.mjs';
 import { listCompanies } from '../../../src/hub.mjs';
 import { applyPreset, PRESETS, presetFor } from '../../../src/presets.mjs';
 import { seedRunnerCreds } from '../../../src/runners.mjs';
-import { AUTH_ON, currentUser, tenantDenied } from '../../auth.mjs';
+import { AUTH_ON, currentUser, tenantDenied, authError, requestLang } from '../../auth.mjs';
 
 export async function GET(req) {
   const user = await currentUser();
-  if (!user) return Response.json({ error: '로그인이 필요합니다' }, { status: 401 });
-  const td = tenantDenied(user); if (td) return td;
+  if (!user) return authError('auth_required', await requestLang());
+  const td = tenantDenied(user, await requestLang()); if (td) return td;
   const all = await listCompanies();
   // 인증 on = 내 회사만. 무주(레거시) 회사는 아무에게나 노출하지 않는다 — 최초 소유자 지정은
   // guardCompany의 ARGO_ADOPT_OWNER 게이트로만 처리한다. off = 로컬 전부.
@@ -29,8 +29,8 @@ export async function GET(req) {
 export async function POST(req) {
   try {
     const user = await currentUser();
-    if (!user) return Response.json({ error: '로그인이 필요합니다' }, { status: 401 });
-    const td = tenantDenied(user); if (td) return td;
+    if (!user) return authError('auth_required', await requestLang());
+    const td = tenantDenied(user, await requestLang()); if (td) return td;
     const { name, owner, preset, lang } = await req.json();
     if (!name?.trim()) return Response.json({ error: '회사 이름이 필요합니다' }, { status: 400 });
     const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');

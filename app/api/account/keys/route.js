@@ -7,14 +7,15 @@ import {
   maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH, hostOptInAllowed, normalizePastedCred,
   probeGeminiHostOAuth,
 } from '../../../../src/runners.mjs';
-import { currentUser, tenantDenied } from '../../../auth.mjs';
+import { currentUser, tenantDenied, authError, requestLang } from '../../../auth.mjs';
 
 /** 로그인 가드 — 회사 소유권 검사 없이 인증만(companies POST와 동일 패턴).
     통과 시 { scope }(그 사용자의 계정 스코프 — 사용자별 파일 격리), 위반 시 { denied: Response }. */
 async function guardAccount() {
   const user = await currentUser();
-  if (!user) return { denied: Response.json({ error: '로그인이 필요합니다' }, { status: 401 }) };
-  const td = tenantDenied(user); if (td) return { denied: td };
+  const lang = await requestLang();
+  if (!user) return { denied: authError('auth_required', lang) };
+  const td = tenantDenied(user, lang); if (td) return { denied: td };
   return { scope: accountScope(user.id) };
 }
 

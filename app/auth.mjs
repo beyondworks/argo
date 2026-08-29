@@ -7,36 +7,24 @@ import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { paths } from '../src/workspace.mjs';
 import { loadDeviceSession } from '../src/devicesession.mjs';
+import { AUTH_ON, TENANT, authError, tenantDenied } from './authmsg.mjs';
 
-export const AUTH_ON = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+// 요청 스코프가 필요 없는 판정·응답 조립(authError·CSRF·테넌트·표시 언어)은 authmsg.mjs로 내렸다 —
+// next/headers 없는 순수 계층이라 node --test로 행동을 잠근다. 라우트의 임포트 표면은 그대로 유지.
+export { AUTH_ON, authError, langFromCookieHeader, csrfDenied, tenantDenied } from './authmsg.mjs';
 
 // 기기 세션 쓰기 경로 공통 게이트 — 미들웨어(middleware.js)의 LOCAL_HOST_RE와 동일 정규식이나
 // 여긴 Node 런타임 라우트 전용(middleware.js는 edge 번들이라 fs 딸린 이 파일을 import하지 않는다 — 자체 정의 유지).
 // X-Forwarded-Host는 신뢰하지 않는다(host 헤더만 검사) — 원격이 이 헤더를 위조해 루프백을 가장할 수 있어서다.
 export const isLoopbackHost = (host) => /^(127\.0\.0\.1|localhost|\[::1\]|::1)(:\d+)?$/.test(host || '');
 
-// CSRF 가드 — 브라우저가 붙이는 Sec-Fetch-Site만 검사한다. 로컬 서버를 띄운 채 악성 웹페이지를 열면
-// simple POST(preflight 없음)로 로컬 상태변경 라우트를 때릴 수 있는데, Host 검사는 그걸 못 막는다(브라우저가
-// 실 타깃으로 Host를 채우므로 루프백 통과). 크로스사이트 요청엔 브라우저가 Sec-Fetch-Site: cross-site를 붙인다.
-// same-origin(우리 페이지의 fetch)·none(주소창/북마크)만 허용. 헤더 부재(비브라우저·curl)는 CSRF 대상이 아니라 통과.
-export function csrfDenied(req) {
-  const sfs = req.headers.get('sec-fetch-site');
-  if (sfs && sfs !== 'same-origin' && sfs !== 'none') {
-    return Response.json({ error: '교차 출처 요청은 허용되지 않습니다' }, { status: 403 });
-  }
-  return null;
-}
-
-// 테넌트 바인딩 — 클라우드 워커는 인스턴스 1대 = 계정 1개(microVM 격리 설계).
-// ARGO_TENANT_OWNER(Supabase user id)가 설정되면 그 계정 외 요청을 전부 거부한다.
-// 로컬/공용 모드(미설정)는 무영향. 인증 off면 의미 없으므로 함께 무시한다.
-const TENANT = process.env.ARGO_TENANT_OWNER?.trim() || null;
-export function tenantDenied(user) {
-  if (!TENANT || !AUTH_ON || !user) return null;
-  if (user.id !== TENANT) {
-    return Response.json({ error: '이 서버는 다른 계정 전용입니다' }, { status: 403 });
-  }
-  return null;
+/** 요청의 표시 언어(argo-lang 쿠키 — i18n Provider가 localStorage 값을 미러). 가드 오류 문구를
+    사용자 화면 언어로 내리기 위한 것. 쿠키 없음(구버전 클라이언트·curl·게이트웨이)·요청 스코프 밖은 ko. */
+export async function requestLang() {
+  try {
+    const store = await cookies();
+    return store.get('argo-lang')?.value === 'en' ? 'en' : 'ko';
+  } catch { return 'ko'; }
 }
 
 /** 현재 로그인 사용자. 인증 off = 로컬 1인 모드('local'). 인증 on + 미로그인 = null.
@@ -82,20 +70,19 @@ export async function currentUser() {
     ARGO_ADOPT_OWNER(이메일)와 현재 사용자 이메일이 일치할 때만 최초 소유자로 귀속한다 — 그 외엔 403. */
 export async function guardCompany(wsId) {
   const user = await currentUser();
-  if (!user) return Response.json({ error: '로그인이 필요합니다' }, { status: 401 });
+  const lang = await requestLang(); // 거부 문구는 사용자 화면 언어로 (test/auth-guard-lang.test.mjs)
+  if (!user) return authError('auth_required', lang);
   if (!AUTH_ON) return null;
-  const td = tenantDenied(user); if (td) return td; // 테넌트 바인딩 — 소유권 검사보다 먼저
+  const td = tenantDenied(user, lang); if (td) return td; // 테넌트 바인딩 — 소유권 검사보다 먼저
   let meta;
   try {
     meta = JSON.parse(await readFile(paths(wsId).company, 'utf8'));
   } catch {
-    return Response.json({ error: '회사를 찾을 수 없습니다' }, { status: 404 });
+    return authError('company_not_found', lang);
   }
   // 게스트(로컬 전용) — 주인 없는(로컬 생성) 회사만 접근. 계정 귀속 회사는 로그인해야 열린다.
   if (user.id === 'local') {
-    return meta.ownerId
-      ? Response.json({ error: '이 회사는 계정에 연결되어 있습니다 — 로그인해 주세요' }, { status: 403 })
-      : null;
+    return meta.ownerId ? authError('company_linked', lang) : null;
   }
   if (!meta.ownerId) {
     const adopt = process.env.ARGO_ADOPT_OWNER?.trim().toLowerCase();
@@ -103,10 +90,10 @@ export async function guardCompany(wsId) {
       await writeJsonAtomic(paths(wsId).company, { ...meta, ownerId: user.id });
       return null;
     }
-    return Response.json({ error: '이 회사에 접근할 권한이 없습니다' }, { status: 403 });
+    return authError('company_forbidden', lang);
   }
   if (meta.ownerId !== user.id) {
-    return Response.json({ error: '이 회사에 접근할 권한이 없습니다' }, { status: 403 });
+    return authError('company_forbidden', lang);
   }
   return null;
 }

@@ -1281,6 +1281,12 @@ const DICT = {
 
 const LangCtx = createContext(null);
 
+// 서버 공통 가드(auth.mjs requestLang)가 401·403 오류 문구를 표시 언어로 내리도록 쿠키로 미러한다.
+// localStorage는 요청에 실리지 않는다 — 쿠키가 서버로 가는 유일한 전달로다(값은 ko|en뿐, 민감정보 아님).
+const mirrorLangCookie = (l) => {
+  try { document.cookie = `argo-lang=${l}; path=/; max-age=31536000; SameSite=Lax`; } catch { /* 무시 */ }
+};
+
 export function LanguageProvider({ children }) {
   const [lang, setLangState] = useState('ko');
 
@@ -1288,6 +1294,10 @@ export function LanguageProvider({ children }) {
     const saved = localStorage.getItem('argo-lang');
     if (saved === 'en' || saved === 'ko') setLangState(saved);
   }, []);
+
+  // 언어가 정해질 때마다 쿠키 미러 — 마운트(과거 en 사용자 첫 로드)·setLang·cmd+/ 전환을 한 지점이
+  // 전부 덮는다(setState 업데이터 안 부수효과 회피, 분리 검수 LOW). test/auth-guard-lang.test.mjs가 배선 잠금.
+  useEffect(() => { mirrorLangCookie(lang); }, [lang]);
 
   const setLang = useCallback((next) => {
     setLangState(next);

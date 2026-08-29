@@ -3,6 +3,10 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { publicUrl } from './app/http-origin.mjs';
+// authmsg.mjs는 next/headers·fs 무의존 순수 모듈이라 edge 번들에서도 안전(auth.mjs와 달리 임포트 가능).
+// 401 문구·errorCode를 라우트 가드와 한 사전에서 그린다 — 여기가 라우트보다 먼저 응답하는 주 노출면
+// (실측 2026-07-28: 미들웨어 401이 라우트 선행).
+import { authError } from './app/authmsg.mjs';
 
 const URL_ENV = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const KEY_ENV = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -75,7 +79,7 @@ export async function middleware(req) {
     && req.cookies.get('argo-guest')?.value === '1'
     && LOCAL_HOST_RE.test(req.headers.get('host') || '');
   if (!user && !isPublic && !isGuest) {
-    if (p.startsWith('/api')) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
+    if (p.startsWith('/api')) return authError('auth_required', req.cookies.get('argo-lang')?.value === 'en' ? 'en' : 'ko');
     return NextResponse.redirect(publicUrl(req, '/login'));
   }
   if (user && p === '/login') return NextResponse.redirect(publicUrl(req, '/'));
