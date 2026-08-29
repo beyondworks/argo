@@ -508,18 +508,29 @@ export async function disconnectConnector(wsId, serverId) {
   return { ok: true, removed: existed };
 }
 
-/** 회사의 커넥터 연결 상태 목록 — 시크릿 무노출(토큰·verifier 미포함). UI 폴링·상태 표시용. */
-export async function listConnections(wsId) {
+/** 회사의 커넥터 연결 상태 목록 — 시크릿 무노출(토큰·verifier 미포함). UI 폴링·상태 표시용.
+    opts.lang: 표시 언어. 저장된 error 원문은 저장 시점 언어(역사적으로 ko 하드코딩 4곳)라 그대로 내리면
+    en 카드에 한국어가 섞인다(검수 M1 실측 — reauth 상태에서 재현). errorCode가 있으면 크루 표면(423행,
+    connectorsBrief)과 **같은 재렌더 계약**으로 요청 언어의 문구를 다시 그린다 — errorCode 주석의
+    "다시 그릴 안정 코드" 약속을 이 함수가 실제로 이행하는 것. lang 미지정 소비자는 종전 그대로(원문). */
+export async function listConnections(wsId, { lang = null } = {}) {
   const s = await loadStore(wsId).catch(() => ({ servers: {} }));
-  return Object.entries(s.servers).map(([id, r]) => ({
-    id,
-    url: r.url,
-    status: r.status ?? 'error',
-    hasTokens: !!r.tokens?.access_token,
-    // errorCode = 설정 카드(US-6)가 회사 언어로 다시 그릴 안정 코드. error는 상세(벤더 원문 포함 가능).
-    ...(r.errorCode ? { errorCode: r.errorCode } : {}),
-    ...(r.error ? { error: r.error } : {}),
-  }));
+  return Object.entries(s.servers).map(([id, r]) => {
+    const rendered = lang && r.errorCode && MSG[r.errorCode]
+      ? connectorMessage(r.errorCode, lang, r.errorDetail ?? id) // detail 없는 코드(reauth 등)는 서버 id가 인자
+      : r.error;
+    return {
+      id,
+      url: r.url,
+      status: r.status ?? 'error',
+      hasTokens: !!r.tokens?.access_token,
+      // errorCode = 표시면이 원하는 언어로 다시 그릴 안정 코드. errorDetail = 벤더 원문 등 상세(신규 노출
+      // 아님 — error 원문에 이미 보간돼 나가던 값의 구조화).
+      ...(r.errorCode ? { errorCode: r.errorCode } : {}),
+      ...(r.errorDetail ? { errorDetail: r.errorDetail } : {}),
+      ...(rendered ? { error: rendered } : {}),
+    };
+  });
 }
 
 /** 크루 표면이 프롬프트에 실을 도구 이름 수 상한(서버당) — 설명은 매 턴 컨텍스트에 들어간다. */

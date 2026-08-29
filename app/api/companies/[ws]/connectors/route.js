@@ -17,7 +17,9 @@ export async function GET(req, { params }) {
     const { loadCompany } = await import('../../../../../src/workspace.mjs');
     lang = (await loadCompany(ws).catch(() => null))?.lang === 'en' ? 'en' : 'ko';
   }
-  const rows = mergeConnectorStatus(connectorCatalogFor(lang), await listConnections(ws).catch(() => []));
+  // lang 동반 — 카탈로그(name·note)만 바꾸고 오류 문구를 원문(ko 하드코딩 저장분)으로 두면 같은 카드에
+  // 두 언어가 남는다(검수 M1: en 모드 reauth 카드에서 실측). listConnections가 errorCode로 재렌더한다.
+  const rows = mergeConnectorStatus(connectorCatalogFor(lang), await listConnections(ws, { lang }).catch(() => []));
   return Response.json({ connectors: rows });
 }
 
