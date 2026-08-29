@@ -22,7 +22,8 @@ import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
-import { cryptoOn, isSecretRel, isEncRel, encVaultOn, sealSecret, openSecret, openSecretCompat, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
+import { cryptoOn, isSecretRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
+import { dek, tryClaimDek } from './e2ee.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { ensureAccountKey } from './accountkey.mjs';
@@ -482,7 +483,9 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     return (rel === 'connections.json' || rel === '.secrets.json') ? openSecret(b) : openSecretCompat(b);
   };
   /** 업로드 직전 봉투 — 모든 업로드 경로가 이걸 거쳐야 평문이 새지 않는다(병합 분기 포함). */
-  const sealFor = (rel, buf) => (isEncRel(rel) ? sealSecret(buf) : buf);
+  // E2EE 활성(이 기기가 DEK 보유) = 동기 대상 **전량**을 v3로 봉인 — 별도 스위치가 없다:
+  // DEK 보유가 곧 스위치(디스크 사실에서 파생 원칙). 미보유 기기는 v2/평문 기존 동작 그대로(단계 0 불변).
+  const sealFor = (rel, buf) => (dek() ? sealSecretV3(buf) : isEncRel(rel) ? sealSecret(buf) : buf);
   const pushBuf = async (rel) => sealFor(rel, await readFile(relFull(rel)));
   // 로컬 쓰기 — 스레드 파일이면 진행 중 턴과 직렬화(레이스 방지). 원자쓰기(tmp→fsync→rename)로
   // 크래시 시 파일이 잘려 '손상→삭제 오전파'로 번지는 것을 차단(.tmp-는 EXCLUDE라 원격에 안 샌다).
@@ -628,7 +631,13 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
         continue;
       }
       // ── 양쪽 존재 ──
-      if (!localChg && !remoteChg) continue;      // 변경 없음
+      if (!localChg && !remoteChg) {
+        // E2EE 재봉인 — 켠 직후 1회, 무변경 파일도 원격 blob을 v3로 되덮는다(메타·base 불변이라
+        // 다른 기기의 diff 판정에 영향 없음 — blob 세대만 교체. 이게 없으면 옛 평문/v2 사본이
+        // 클라우드에 영구 잔존해 "본인만 연다"가 신규 파일에만 성립한다).
+        if (opts.reseal) { await upload(remoteKey(rel), await pushBuf(rel)); pushed++; }
+        continue;
+      }
       if (remoteChg && !localChg) { // 원격만 변경 → 받기
         await writeLocal(rel, await pullBuf(rel), r.m); local[rel] = r; pulled++; continue;
       }
@@ -720,7 +729,11 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   // 키 미확보 사이클에 sealSecret이 throw해 동기화가 멈추던 비대칭 제거(데이터 위험은 없었으나 가용성 문제).
   let manifestDenied = false;
   try {
-    await upload(manifestKey, encVaultOn() && cryptoOn() ? sealSecret(manifestBuf) : manifestBuf);
+    // E2EE 활성이면 매니페스트도 v3 — 이것이 곧 **열쇠 없는 기기의 안전 게이트**다: DEK 미보유 기기는
+    // 매니페스트 개봉이 보류 오류로 떨어져 회사 동기화가 통째로 멈춘다(파일 단위 오염·오삭제 원천 불가,
+    // 기존 "매니페스트 읽기 실패 — 삭제 보류" 경로 재사용). 구버전(전방 게이트 없는 ≤0.1.51)도 매니페스트
+    // JSON 파싱 실패로 같은 보류에 떨어진다 — 켜기 전 전 기기 업데이트 안내는 라우트·UI가 담당.
+    await upload(manifestKey, dek() ? sealSecretV3(manifestBuf) : encVaultOn() && cryptoOn() ? sealSecret(manifestBuf) : manifestBuf);
   } catch (e) {
     // free 복원의 완결 처리(재검수 HIGH-E) — pull은 전부 끝났는데 매니페스트 업로드만 RLS에 거부되면,
     // 여기서 throw할 경우 state가 영영 안 써져 복원이 영구 restoring이 된다(지운 노트가 8초마다 부활,
@@ -874,6 +887,32 @@ export const _tombstonesForTest = { syncTombstones, discoverRemote };
     (export: 회귀 테스트용 — cycle 전체는 실 env가 필요해 단위로 못 태운다) */
 export const isDiscoverDue = (now, last, intervalMs) => !last || now - last >= intervalMs;
 
+/* ─── E2EE 재봉인 마커 — WS_ROOT 레벨(회사 밖 = walk·동기화 비대상) { [wsId]: true } ───
+   enable 라우트가 markResealAll()로 표시하면, cycle이 회사별 1회 reseal 동기화(무변경 파일 포함
+   전량 v3 되덮기)를 돌리고 성공 시 지운다. 실패 시 마커가 남아 다음 사이클 재시도. */
+const RESEAL_FILE = () => join(WS_ROOT, '.e2ee-reseal.json');
+export async function markResealAll() {
+  const targets = {};
+  let entries = [];
+  try { entries = await readdir(WS_ROOT, { withFileTypes: true }); } catch { /* 루트 없음 */ }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith('.')) continue;
+    try {
+      const meta = JSON.parse(await readFile(join(WS_ROOT, e.name, 'company.json'), 'utf8'));
+      if (meta.ownerId) targets[meta.id] = true;
+    } catch { /* 회사 아님 */ }
+  }
+  await writeJsonAtomic(RESEAL_FILE(), targets);
+  return Object.keys(targets);
+}
+const loadReseal = () => readJsonLenient(RESEAL_FILE(), {});
+async function clearReseal(wsId) {
+  const cur = await loadReseal();
+  if (!cur[wsId]) return;
+  delete cur[wsId];
+  await writeJsonAtomic(RESEAL_FILE(), cur);
+}
+
 /* ─── 상주 루프 ─── */
 const status = (globalThis.__argoSyncStatus ??= { lastTs: null, lastError: '', paywalled: false, plan: null, companies: {} });
 export function syncStatus() {
@@ -890,7 +929,12 @@ async function cycle() {
   const keyOwner = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
   await ensureAccountKey(client(), keyOwner);
   // E2EE 단계 0 — 기기 공개키 등록부 구축(내부 1회 가드·실패 무해). 켜기 전까지 다른 동작 없음.
-  ensureDeviceKeyRegistered(client(), keyOwner, await getDeviceId()).catch(() => {});
+  const myDeviceId = await getDeviceId();
+  ensureDeviceKeyRegistered(client(), keyOwner, myDeviceId).catch(() => {});
+  // E2EE P1 — DEK 미보유면 자기 랩 회수 시도(승인·복구가 서버에 넣어준 랩, 60초 간격 own-RLS 1행).
+  // 성공 순간부터 sealFor가 v3로 전환되고, 이 기기의 "잠김"이 풀린다.
+  if (!dek()) await tryClaimDek(client(), myDeviceId).catch(() => {});
+  const resealSet = dek() ? await loadReseal() : {};
   // 로컬 회사 수집 (ownerId 있는 것만 — 소유자가 있어야 클라우드에 자리가 있다)
   // 세션(JWT) 모드는 현재 계정 소유가 아닌 회사를 제외한다 — 다른 계정 소유의 로컬 사본(계정 전환·
   // 기기 공유 흔적)을 매 사이클 남의 폴더로 밀다 스토리지 격리(RLS)에 막혀 "row-level security"
@@ -1028,7 +1072,9 @@ async function cycle() {
       continue;
     }
     try {
-      const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId) });
+      const reseal = !!resealSet[wsId];
+      const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId), reseal });
+      if (reseal) await clearReseal(wsId).catch(() => {}); // 성공 시 1회로 종료 — 실패는 마커 잔존이 재시도
       status.companies[wsId] = { ts: Date.now(), ...r };
     } catch (e) {
       status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;

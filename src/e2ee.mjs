@@ -6,7 +6,7 @@
 // (.device-session.json과 동일 원칙: 기기 로컬 상태). { pub, priv, dek? } 전부 base64.
 // dek는 이 계정의 데이터 키 — 켜는 기기가 생성하거나(P1), 기기 승인으로 수신하면 여기 저장된다.
 // 단계 0에서는 keypair 생성·등록까지만 실사용되고 dek는 비어 있다(동작 불변).
-import { createCipheriv, createDecipheriv, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, scryptSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { link, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -145,9 +145,12 @@ export async function ensureDeviceKeyRegistered(sb, ownerId, deviceId, { root = 
   registered.add(ownerId); // 실패해도 재시도 안 함 — 등록은 다음 프로세스 기동이 자연 재시도
   try {
     const state = await loadDeviceE2ee({ root });
+    // ignoreDuplicates — **pubkey는 최초 등록 후 불변**(E2EE-DESIGN.md §10.5): device_id는 자기신고
+    // 값이라 갱신을 허용하면 탈취 세션 하나로 기존 기기의 pubkey를 바꿔치기(하이재킹)할 수 있다.
+    // 키 파일을 잃은 기기의 재등록은 revoke(행 삭제) 후 신규 등록 경로로만.
     const { error } = await sb.from('device_keys').upsert(
       { user_id: ownerId, device_id: deviceId, pubkey: state.pub },
-      { onConflict: 'user_id,device_id' },
+      { onConflict: 'user_id,device_id', ignoreDuplicates: true },
     );
     if (error) throw new Error(error.message);
   } catch (e) {
@@ -155,3 +158,78 @@ export async function ensureDeviceKeyRegistered(sb, ownerId, deviceId, { root = 
   }
 }
 export function _resetRegisteredForTest() { registered.clear(); }
+
+/* ── P1: 대조 지문·복구 코드·자기 랩 회수 ── */
+
+/** 공개키 지문 — 기기 승인 화면의 대조 코드(SAS). 새 기기와 승인 기기 양쪽이 같은 값을 계산해
+    표시하므로, 서버가 공개키를 바꿔치면 두 화면의 숫자가 어긋나 사용자 대조가 실패한다.
+    (HKDF 각인이 막는 "랩 재해석"과는 별개의 방어선 — E2EE-DESIGN.md §10.5) */
+export const pubFingerprint = (pubB64) =>
+  createHash('sha256').update(Buffer.from(pubB64, 'base64')).digest('hex').slice(0, 6).toUpperCase();
+
+/** 복구 코드 — 160bit 랜덤을 Crockford base32(8자×4묶음)로. 생성 시 1회만 표시하고 저장하지 않는다. */
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+export function generateRecoveryCode() {
+  const bytes = randomBytes(20); // 160bit
+  let bits = 0, acc = 0, out = '';
+  for (const b of bytes) {
+    acc = (acc << 8) | b; bits += 8;
+    while (bits >= 5) { out += CROCKFORD[(acc >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  return out.slice(0, 32).match(/.{1,8}/g).join('-'); // XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX
+}
+
+/** 복구 코드 정규화 — 사용자 입력 관용(소문자·구분자·Crockford 동형문자 O→0, I/L→1). */
+export const normalizeRecoveryCode = (s) =>
+  String(s).toUpperCase().replace(/[-\s]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+
+/** 복구 KEK 유도 — scrypt(Node 내장, 의존성 무추가). 코드가 160bit 랜덤이라 사전 공격이 무의미하고
+    KDF는 방어 심층이다(E2EE-DESIGN.md §4). 파라미터는 recovery_wraps.kdf에 기록돼 미래 상향과 공존. */
+export const RECOVERY_KDF = { alg: 'scrypt', N: 131072, r: 8, p: 1 };
+export function deriveRecoveryKek(code, saltB64, kdf = RECOVERY_KDF) {
+  if (kdf.alg !== 'scrypt') throw new Error(`알 수 없는 복구 KDF: ${kdf.alg} — 앱 업데이트가 필요합니다`);
+  return scryptSync(normalizeRecoveryCode(code), Buffer.from(saltB64, 'base64'), 32, { N: kdf.N, r: kdf.r, p: kdf.p, maxmem: 256 * 1024 * 1024 });
+}
+
+/* 복구 랩 — 대칭 KEK로 DEK를 직접 봉인(기기 랩의 ECDH와 달리 수신 공개키가 없다). */
+const MAGICR = Buffer.from('argorecwrap.v1:');
+export function wrapDekWithKek(kek, dekBytes) {
+  const iv = randomBytes(IV_LEN);
+  const c = createCipheriv('aes-256-gcm', kek, iv);
+  const ct = Buffer.concat([c.update(dekBytes), c.final()]);
+  return Buffer.concat([MAGICR, iv, c.getAuthTag(), ct]);
+}
+export function openDekWithKek(kek, blob) {
+  if (!blob.subarray(0, MAGICR.length).equals(MAGICR)) throw new Error('복구 랩 형식 아님');
+  let off = MAGICR.length;
+  const iv = blob.subarray(off, off += IV_LEN);
+  const tag = blob.subarray(off, off += TAG_LEN);
+  const ct = blob.subarray(off);
+  const d = createDecipheriv('aes-256-gcm', kek, iv);
+  d.setAuthTag(tag);
+  try { return Buffer.concat([d.update(ct), d.final()]); }
+  catch { throw new Error('복구 코드가 맞지 않습니다'); } // GCM 태그 불일치 = 코드 오입력(정직 문구)
+}
+
+/** 자기 랩 회수(claim) — wrapped_deks에서 내 기기 행을 찾아 DEK를 개봉·보관한다.
+    승인(다른 기기가 내 공개키로 랩을 넣어줌) 후 이 기기가 잠김을 푸는 경로. cycle이 DEK 미보유일 때
+    60초 간격으로 시도한다(가벼운 own-RLS select 1행). 반환: true = DEK 확보. */
+let lastClaim = 0;
+export async function tryClaimDek(sb, deviceId, { root = WS_ROOT, force = false } = {}) {
+  if (dekBuf) return true;
+  if (!sb || !deviceId) return false;
+  if (!force && Date.now() - lastClaim < 60_000) return false;
+  lastClaim = Date.now();
+  try {
+    const { data, error } = await sb.from('wrapped_deks').select('wrap').eq('device_id', deviceId).maybeSingle();
+    if (error || !data?.wrap) return false;
+    const dekBytes = await openDekWrap(Buffer.from(data.wrap, 'base64'), { root });
+    await setDek(dekBytes, { root });
+    console.log('[argo] e2ee: 이 기기의 열쇠(DEK) 수신 — 잠김 해제');
+    return true;
+  } catch (e) {
+    console.warn('[argo] e2ee: 열쇠 회수 보류:', String(e.message).slice(0, 80));
+    return false;
+  }
+}
+export function _resetClaimForTest() { lastClaim = 0; }
