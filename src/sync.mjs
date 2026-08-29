@@ -542,6 +542,8 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     if (isEncRel(rel) && !cryptoOn()) return false;
     // credSync off — 자격은 diff 루프가 스킵하므로 삭제가 실행되지 않는다. 집계도 같은 규칙(단일 출처):
     // 마커 upsert 실패로 항목이 남은 사이클에 브레이크가 "삭제 예정"으로 오집계해 보류되는 것 방지.
+    // (심층 방어 — 테스트 미커버(분리 검수 LOW-1): 브레이크 발화엔 base가 3 이하여야 해 실회사에서
+    //  사실상 도달 불가지만, 집계·전파 동일 규칙 불변식을 지키기 위해 유지한다.)
     if (noSecrets && isSecretRel(rel)) return false;
     // 디스크 큐 잔재(.gw-queue-*/) — EXCLUDE 전환(픽스 전엔 잡 파일이 동기화됐다)의 원격 청소는
     // 회사 데이터 삭제가 아니다. 브레이크 '집계'에서만 제외해, 잔재가 많던 회사의 동기화가
@@ -816,10 +818,14 @@ async function syncTombstones(fixedOwner, { remote: doRemote = true } = {}) {
     try { t = JSON.parse((await download(skey(owner, '.tombstones', `${wsId}.json`))).toString()); }
     catch { continue; /* 읽기 실패 — 다음 사이클 재시도 */ }
     const at = Number(t?.at) || 0;
-    let companyMtime = 0, owner0 = null;
+    let companyMtime = 0, owner0 = null, credOff = false;
     try { companyMtime = (await stat(paths(wsId).company)).mtimeMs; } catch { /* 로컬에 회사 없음 */ }
     if (companyMtime) {
-      try { owner0 = JSON.parse(await readFile(paths(wsId).company, 'utf8'))?.ownerId ?? null; } catch { /* 손상 */ }
+      try {
+        const meta0 = JSON.parse(await readFile(paths(wsId).company, 'utf8'));
+        owner0 = meta0?.ownerId ?? null;
+        credOff = meta0?.credSync === false; // 아래 마지막 push도 옵트아웃을 지켜야 한다(분리 검수 HIGH-1)
+      } catch { /* 손상 */ }
       if (at && companyMtime >= at) {
         await client().storage.from(BUCKET).remove([skey(owner, '.tombstones', `${wsId}.json`)]).catch(() => {});
         console.log(`[argo] 동기화: 보관 이후 수정된 회사 — tombstone 철회 (${wsId})`);
@@ -829,7 +835,9 @@ async function syncTombstones(fixedOwner, { remote: doRemote = true } = {}) {
       // 타임스탬프 하위 4자라 재순환 충돌이 가능(멀티오너 셀프호스트에서 실질 위험, 검수 지적 H).
       if (owner0 !== owner) continue;
       // 미push 편집 고립 방지 — 보관 직전 마지막 push. 실패해도 사본은 .archive에 남아 복구 가능.
-      try { await syncCompany(wsId, owner, false); } catch { /* 오프라인 등 — 보관은 계속 */ }
+      // noSecrets 동반(분리 검수 HIGH-1): cycle 호출부에만 배선하면 이 경로가 회수 완료 상태의 자격을
+      // 신규 push로 되올리고, 직후 archiveCompany가 회사를 치워 재회수 기회가 영영 없다(영구 잔류).
+      try { await syncCompany(wsId, owner, false, { noSecrets: credOff }); } catch { /* 오프라인 등 — 보관은 계속 */ }
       try { await archiveCompany(wsId); console.log(`[argo] 동기화: 다른 기기의 회사 보관 전파 (${wsId})`); }
       catch (e) { console.warn(`[argo] 동기화: 보관 전파 실패(${wsId}): ${e.message}`); continue; }
     }

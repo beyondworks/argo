@@ -42,12 +42,16 @@ function key1() {
     mcp.json 포함: 호스트 MCP 가져오기가 env(토큰)를 담으므로 클라우드에는 항상 암호문으로. */
 export const isSecretRel = (rel) => rel === 'connections.json' || rel === '.secrets.json' || rel === 'mcp.json';
 
-/** credSync off 회수 마커 — 클라우드의 자격 암호문을 "삭제" 대신 이 무해한 내용으로 덮어쓴다(upsert).
+/** credSync off 회수 마커 — 클라우드의 자격 암호문을 "삭제" 대신 이 내용으로 덮어쓴다(upsert).
     blob을 지우면 아직 토글을 못 받은 기기(구버전 포함)가 "원격 부재 + base 무변경 = 삭제"로 오판해
     **자기 로컬 자격을 지운다**(sync.mjs `l && !r` 분기). blob이 살아 있으면 그 기기들은 자기치유(heal)
-    분기를 타 로컬을 보존한다. 유효한 JSON이라 구버전의 관용 개봉(mcp.json passthrough)이 받아도
-    빈 설정으로 무해하고, 엄격 개봉(.secrets/connections)은 형식 불일치로 보류된다(유실 없음). */
-export const CRED_WITHDRAWN = Buffer.from('{"argo":"credSync-off"}');
+    분기를 타 로컬을 보존한다 — blobExists는 내용이 아니라 실존만 본다.
+    값이 **무효 봉투**(MAGIC 접두 + 형식 불일치)인 이유(분리 검수 MEDIUM-1, 구버전 실코드 재현):
+    평문 JSON 마커는 구버전의 mcp.json 관용 개봉(passthrough)이 설정 파일로 받아 적고, 다음 사이클에
+    봉투로 재봉인해 클라우드 정본으로 만들었다(전파형 설정 파괴). MAGIC으로 시작하면 구버전
+    openSecretCompat이 openSecret으로 보내 throw → 아무것도 안 쓰고 보류한다(유실 없음).
+    새 코드는 개봉 전에 isCredWithdrawn 바이트 비교로 먼저 걸러내므로 이 값에 무영향이다. */
+export const CRED_WITHDRAWN = Buffer.from('argosecret.v2:credSync-off');
 export const isCredWithdrawn = (buf) => buf.length === CRED_WITHDRAWN.length && buf.equals(CRED_WITHDRAWN);
 
 /** M-ENC-1 롤아웃 스위치 — 켜면 동기되는 회사 폴더 전체(기억·대화·크루·스킬·원장)를 봉투 암호화한다.

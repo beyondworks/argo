@@ -1230,6 +1230,8 @@ function SyncCard({ ws }) {
             {/* 카운터는 **있을 때만** 찍는다 — 이번 사이클에 스킵된 회사(free-plan·foreign-owner)의
                 항목은 { ts, skipped }뿐이라 mine 존재만 보면 "↑undefined ↓undefined"가 그대로 노출된다. */}
             {mine?.pushed != null ? ` · ↑${mine.pushed} ↓${mine.pulled}` : ''}
+            {/* 자격 회수 실행 관측(분리 검수 HIGH-2) — "회수됩니다" 단정 대신 실제 실행된 사이클에 사실 표시 */}
+            {mine?.withdrawn ? ` · ${t('settings.sync.credWithdrawn', { n: mine.withdrawn })}` : ''}
           </span>
           {sync.paywalled ? (
             // "고장"(lastError)과 "페이월"은 다른 상태 — 여기선 빨간 에러 줄 대신 안내+업그레이드를 보인다.

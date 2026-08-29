@@ -4,6 +4,19 @@
 > 것입니다. 이 문서는 그 자격 증명이 언제 Argo 클라우드로 가는지, 어떻게 보호되고 그 보호의
 > 한계가 무엇인지, 그리고 끄는 방법을 사실대로 설명합니다. (최종 갱신 2026-08-29)
 
+**English summary** — If you never sign in, nothing leaves your computer. When cross-device sync
+is on, your company folder replicates to Argo cloud (Supabase Storage), **including three
+credential files**: `.secrets.json` (runner login tokens / API keys), `connections.json`
+(Telegram/Slack bot tokens), and `mcp.json` (MCP env vars). They are always stored encrypted
+(AES-256-GCM), but the per-account envelope key lives in the same Argo cloud, so the server
+operator and the service-role path (cloud workers) can technically open them — **we do not claim
+"we cannot see your credentials."** To opt out per company: Settings → Cross-device Sync →
+Credential sync → Exclude. While sync actually runs (Pro/trial), the next cycle withdraws the
+cloud copies (the active object is overwritten with a harmless marker; platform-level backups, if
+any, are not covered by this document — and on the free plan cloud writes are blocked, so
+withdrawal stays pending). Local logins stay; new devices and cloud workers must reconnect. You
+can also disable all sync with `ARGO_SYNC=0`, or simply never sign in.
+
 ## 언제 무엇이 올라가나
 
 **로그인(기기 연동)을 하지 않으면 아무것도 올라가지 않습니다.** 회사 폴더·기억·자격 증명 전부가
@@ -36,11 +49,15 @@
 ## 끄는 방법 (세 단계 선택지)
 
 1. **자격 증명만 제외** — 설정 → 기기 간 동기화 → "자격 증명 동기화 → 제외하기".
-   회사 데이터 동기화는 유지되고 자격 3종만 빠집니다. 이미 클라우드에 있던 자격 사본은 다음
-   동기화 사이클에 회수됩니다 — 스토리지의 **활성 사본**이 무해한 마커로 덮어써집니다. 플랫폼
-   차원의 백업·스냅샷이 존재한다면 그 보존 기간 동안의 과거 사본까지는 이 문서가 보장하지
-   않습니다. 각 기기의 로컬 로그인은 그대로 유지되며, **새 기기(및 클라우드 워커)에서는 러너·봇을
-   다시 연결해야 합니다.** 이 설정은 회사 단위이고 기기 간에 자동 전파됩니다.
+   회사 데이터 동기화는 유지되고 자격 3종만 빠집니다. 이미 클라우드에 있던 자격 사본은
+   **동기화가 실제로 도는 상태(Pro·체험)에서** 다음 사이클에 회수됩니다 — 스토리지의 **활성
+   사본**이 무해한 마커로 덮어써지며, 실행되면 설정 카드에 "자격 회수 N건"으로 표시됩니다.
+   무료 플랜은 클라우드 쓰기가 막혀 있어 회수가 보류됩니다(다시 Pro·체험이 되는 시점에
+   실행됩니다). 플랫폼 차원의 백업·스냅샷이 존재한다면 그 보존 기간 동안의 과거 사본까지는
+   이 문서가 보장하지 않습니다. 각 기기의 로컬 로그인은 그대로 유지되며, **새 기기(및 클라우드
+   워커)에서는 러너·봇을 다시 연결해야 합니다.** 이 설정은 회사 단위이고 기기 간에 자동
+   전파됩니다. 제외 기간에 기기마다 서로 다른 러너를 로그인해 두었다면, 다시 포함으로 켤 때
+   가장 최근에 저장된 쪽이 채택됩니다(기기별 로그인 상태가 다르면 한쪽 기준으로 수렴).
 2. **동기화 전체 끄기** — 환경변수 `ARGO_SYNC=0`. 이 기기는 아무것도 올리고 내리지 않습니다.
 3. **로그인하지 않기** — 처음부터 전부 로컬 전용입니다.
 

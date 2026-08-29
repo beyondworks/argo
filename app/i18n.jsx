@@ -442,7 +442,9 @@ const DICT = {
   'settings.sync.credTurnOn': ['포함하기', 'Include'],
   'settings.sync.credNote': ['동기화에는 자격 증명 파일(러너 로그인 토큰·API 키, 텔레그램·슬랙 봇 토큰, MCP 환경변수)이 포함됩니다. 항상 암호화되어 저장되지만, 암호화 열쇠는 Argo 클라우드에 함께 보관되므로 서버 운영자가 기술적으로 열 수 있습니다.', 'Sync includes credential files (runner login tokens and API keys, Telegram/Slack bot tokens, MCP env vars). They are always stored encrypted, but the encryption key is kept in Argo cloud alongside them, so the server operator can technically open them.'],
   'settings.sync.credDocs': ['자세히 보기', 'Learn more'],
-  'settings.sync.credOffHelp': ['이 회사의 자격 증명은 각 기기에만 저장됩니다. 클라우드에 있던 사본은 회수되며, 새 기기(및 클라우드 워커)에서는 러너·봇을 다시 연결해야 합니다.', 'Credentials for this company stay on each device only. Cloud copies are withdrawn; new devices (and cloud workers) must reconnect runners and bots.'],
+  // "회수됩니다" 단정 금지(분리 검수 HIGH-2) — free는 syncCompany 자체가 스킵되고 클라우드 쓰기도 RLS가 거부해 회수가 실행되지 않는다. 플랜 조건을 사실대로.
+  'settings.sync.credOffHelp': ['이 회사의 자격 증명은 각 기기에만 저장됩니다. 클라우드에 있던 사본은 동기화가 실제로 도는 상태(Pro·체험)에서 다음 사이클에 회수되며(아래 "자격 회수" 표시로 확인), 무료 플랜은 클라우드 쓰기가 막혀 있어 회수가 보류됩니다. 새 기기(및 클라우드 워커)에서는 러너·봇을 다시 연결해야 합니다.', 'Credentials for this company stay on each device only. Cloud copies are withdrawn on the next cycle while sync actually runs (Pro/trial — see the "withdrawn" counter below); on the free plan cloud writes are blocked, so withdrawal stays pending. New devices (and cloud workers) must reconnect runners and bots.'],
+  'settings.sync.credWithdrawn': ['자격 회수 {n}건', 'credentials withdrawn: {n}'],
   'settings.sync.credErr': ['설정 저장에 실패했습니다', 'Failed to save the setting'],
   'settings.sync.leader': ['이 기기가 실행 담당 — 폴러·루틴이 여기서 돕니다', 'This device runs the crew — pollers and routines execute here'],
   'settings.sync.follower': ['다른 기기가 실행 담당 — 이 기기는 최신 상태만 유지합니다', 'Another device runs the crew — this one stays in sync'],

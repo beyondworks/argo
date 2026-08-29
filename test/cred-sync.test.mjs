@@ -19,7 +19,7 @@ process.env.ARGO_ROOT = ROOT;
 process.env.ARGO_SYNC = '1';
 delete process.env.ARGO_SYNC_ALLOW_MASS_DELETE;
 
-const { syncCompany, _setSyncClientForTest } = await import('../src/sync.mjs');
+const { syncCompany, _setSyncClientForTest, _tombstonesForTest } = await import('../src/sync.mjs');
 const { ensureAccountKey, clearAccountKey } = await import('../src/accountkey.mjs');
 const { sealSecret } = await import('../src/secretbox.mjs');
 
@@ -47,7 +47,19 @@ function fakeStorage(initial = {}) {
       for (const k of keys) { store.delete(k); bucket._removed.push(k); }
       return { error: null };
     },
-    async list() { return { data: [] }; },
+    // Supabase storage list 모사(sync-integration과 동일) — T7의 tombstone 목록 조회가 쓴다.
+    async list(prefix) {
+      const p = prefix.endsWith('/') ? prefix : `${prefix}/`;
+      const names = new Map();
+      for (const k of store.keys()) {
+        if (!k.startsWith(p)) continue;
+        const rest = k.slice(p.length);
+        const seg = rest.split('/')[0];
+        const isFile = !rest.includes('/');
+        if (!names.has(seg) || isFile) names.set(seg, isFile);
+      }
+      return { data: [...names].map(([name, isFile]) => ({ name, id: isFile ? 'f' : null })) };
+    },
   };
   return { _store: store, _bucket: bucket, storage: { from: () => bucket }, createBucket: async () => ({}) };
 }
@@ -132,7 +144,7 @@ test('T1: noSecrets — 원격 자격 암호문이 마커로 덮이고(remove �
   for (const rel of ['.secrets.json', 'connections.json', 'mcp.json']) {
     assert.ok(!man.files[rel], `${rel} 매니페스트에서 내려감`);
     const blob = fake._store.get(`${OWNER}/${wsId}/${rel}`);
-    assert.ok(blob && blob.toString() === '{"argo":"credSync-off"}', `${rel} blob이 마커로 덮임(암호문 소멸·실존 유지)`);
+    assert.ok(blob && blob.toString() === 'argosecret.v2:credSync-off', `${rel} blob이 마커로 덮임(암호문 소멸·실존 유지)`);
     assert.ok(existsSync(join(wsRoot, ...rel.split('/'))), `${rel} 로컬 파일은 그대로(로그아웃 없음)`);
   }
   assert.ok(man.files['vault/keep.md'], '일반 파일 동기화는 계속된다');
@@ -143,7 +155,7 @@ test('T1: noSecrets — 원격 자격 암호문이 마커로 덮이고(remove �
 /* ── T2: 회수 이후의 정상 상태 — 다음 사이클은 회수 0·push 0(재업로드 없음) ── */
 test('T2: 회수 완료 상태의 다음 사이클 — 재회수·재업로드 없이 조용히 지나간다', async () => {
   const wsId = 'cs-steady';
-  const MARKER = Buffer.from('{"argo":"credSync-off"}');
+  const MARKER = Buffer.from('argosecret.v2:credSync-off');
   const { fake } = await setup(wsId, {
     localFiles: { '.secrets.json': SECRETS },  // 로컬 자격은 남아 있다(이 기기는 계속 로그인 상태)
     state: {},                                  // 회수 사이클이 base에서 내렸다
@@ -159,7 +171,7 @@ test('T2: 회수 완료 상태의 다음 사이클 — 재회수·재업로드 �
 /* ── T3: 토글 미반영 기기(구버전 코드 경로와 동일) — 마커 실존이 heal을 태워 로컬 자격 보존 ── */
 test('T3: 미반영 기기 — 매니페스트 부재 + 마커 blob 실존이면 rmLocal이 아니라 heal(로컬 자격 생존)', async () => {
   const wsId = 'cs-oldpath';
-  const MARKER = Buffer.from('{"argo":"credSync-off"}');
+  const MARKER = Buffer.from('argosecret.v2:credSync-off');
   // 미반영 기기 시점: 로컬 자격 + base 무변경, 원격은 회수 완료(매니페스트 부재·마커 실존).
   const { wsRoot, fake } = await setup(wsId, {
     localFiles: { '.secrets.json': SECRETS },
@@ -176,7 +188,7 @@ test('T3: 미반영 기기 — 매니페스트 부재 + 마커 blob 실존이면
 /* ── T4: 미반영 기기의 마커 pull 차단 — 로컬에 마커 내용을 쓰지 않는다 ── */
 test('T4: 미반영 기기 — 매니페스트에 항목이 있고 blob이 마커면 pull을 보류(로컬에 junk 미기록)', async () => {
   const wsId = 'cs-markerpull';
-  const MARKER = Buffer.from('{"argo":"credSync-off"}');
+  const MARKER = Buffer.from('argosecret.v2:credSync-off');
   // heal된 항목이 매니페스트에 남은 창(다른 미반영 기기가 복원) + blob은 마커. 이 기기 로컬엔 자격 없음(신규).
   const { wsRoot } = await setup(wsId, {
     localFiles: {},
@@ -193,7 +205,7 @@ test('T4: 미반영 기기 — 매니페스트에 항목이 있고 blob이 마�
 /* ── T5: 다시 켜기 — 로컬 자격이 신규로 push되어 마커를 실암호문으로 되덮는다 ── */
 test('T5: credSync 재활성 — 회수됐던 자격이 봉투로 재push된다(마커 → 암호문)', async () => {
   const wsId = 'cs-reenable';
-  const MARKER = Buffer.from('{"argo":"credSync-off"}');
+  const MARKER = Buffer.from('argosecret.v2:credSync-off');
   const { fake } = await setup(wsId, {
     localFiles: { '.secrets.json': SECRETS },
     state: {},                                 // 회수 사이클이 내려 base 없음
@@ -229,9 +241,38 @@ test('T6: 마커 업로드 실패 — real-delete로 넘어가지 않고 항목�
   _setSyncClientForTest({ ...fake, storage: { from: () => patched } });
   const r = await syncCompany(wsId, OWNER, false, { noSecrets: true });
   assert.equal(r.withdrawn ?? 0, 0, '회수 실패로 집계 0');
+  assert.equal(r.failed, 0, '회수 블록의 자체 try/catch — failed로 새지 않는다(분리 검수 LOW-2)');
+  assert.equal(r.denied ?? 0, 0, 'freePlan 관용 집계(denied)로도 새지 않는다');
   assert.equal(fake._bucket._removed.length, 0, 'remove 미발생(오삭제 경로 차단)');
   assert.ok(fake._store.get(`${OWNER}/${wsId}/.secrets.json`).equals(sealed), '원 암호문 그대로(다음 사이클 재시도)');
   assert.ok(manifest(fake, wsId).files['.secrets.json'], '항목 유지 — blob만 남는 부활 오판 상태를 안 만든다');
+});
+
+/* ── T7: 보관 전파 경로도 옵트아웃을 지킨다(분리 검수 HIGH-1 — 호출부 단위 게이트) ── */
+test('T7: 원격 tombstone 보관 전파의 마지막 push가 credSync:false 회사의 자격을 되올리지 않는다', async () => {
+  const wsId = 'cs-tomb';
+  const note = Buffer.from('# last-edit\n');
+  // 회수 완료 상태의 회사: 로컬엔 자격+미push 노트, base·원격 매니페스트엔 자격 없음, blob은 마커.
+  const { fake } = await setup(wsId, {
+    localFiles: {
+      'company.json': Buffer.from(JSON.stringify({ id: wsId, ownerId: OWNER, credSync: false })),
+      '.secrets.json': SECRETS,
+      'vault/last.md': note,
+    },
+    state: {},
+    remoteFiles: {},
+    remoteBlobs: { '.secrets.json': Buffer.from('argosecret.v2:credSync-off') },
+  });
+  // 다른 기기의 보관 신호 — 회사 수정 시각보다 나중이어야 전파 분기에 진입한다.
+  fake._store.set(`${OWNER}/.tombstones/${wsId}.json`, Buffer.from(JSON.stringify({ wsId, at: Date.now() + 60_000 })));
+  const tombs = await _tombstonesForTest.syncTombstones(OWNER);
+  assert.ok(tombs.has(wsId), '보관 전파됨');
+  assert.ok(!existsSync(join(ROOT, wsId)), '회사가 보관 처리됨 — 이후 cycle 대상이 아니므로 이 push가 마지막 기회였다');
+  const man = manifest(fake, wsId);
+  assert.ok(man.files['vault/last.md'], '미push 편집(일반 파일)은 마지막 push로 고립을 면한다');
+  assert.ok(!man.files['.secrets.json'], '자격은 매니페스트로 되올라가지 않는다(옵트아웃 우회 금지)');
+  const blob = fake._store.get(`${OWNER}/${wsId}/.secrets.json`);
+  assert.ok(blob && blob.toString() === 'argosecret.v2:credSync-off', '자격 blob은 마커 그대로(암호문 재업로드 없음)');
 });
 
 test.after(async () => { clearAccountKey(); await rm(ROOT, { recursive: true, force: true }); });
