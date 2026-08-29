@@ -4,7 +4,8 @@
 // 인증: 기기 세션의 사용자 스코프 클라이언트(RLS own) — me/billing과 같은 패턴. 서비스키 불요.
 import { randomBytes } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import { currentUser, authError, requestLang } from '../../../auth.mjs';
+import { currentUser, authError, langFromCookieHeader } from '../../../auth.mjs';
+import { apiError } from '../../../apimsg.mjs';
 import { getFreshDeviceSession } from '../../../../src/devicesession.mjs';
 import { getDeviceId } from '../../../../src/workspace.mjs';
 import {
@@ -63,25 +64,28 @@ export async function GET() {
 }
 
 export async function POST(req) {
+  // 표시 언어 — 오류 문구를 사용자 화면 언어(argo-lang 쿠키)로 그린다(#333 가드 계약의 기능 라우트
+  // 합류, test/api-error-lang.test.mjs). requestLang(next/headers)과 판독 의미 정렬된 순수 판독기.
+  const lang = langFromCookieHeader(req.headers.get('cookie'));
   try {
     const user = await currentUser();
-    if (!user?.id || user.id === 'local' || user.id === 'guest') return authError('auth_required', await requestLang());
+    if (!user?.id || user.id === 'local' || user.id === 'guest') return authError('auth_required', lang);
     const sb = await userSb();
-    if (!sb) return Response.json({ error: '기기 연동 세션이 필요합니다 — Argo 앱에서 로그인해 주세요' }, { status: 401 });
+    if (!sb) return apiError('e2ee_session_required', lang);
     const deviceId = await getDeviceId();
     const body = await req.json().catch(() => ({}));
     const action = String(body.action ?? '');
 
     if (action === 'enable') {
       // 켜기 = 이 기기가 DEK를 생성해 계정의 첫 열쇠 보유자가 된다. 이미 활성이면 claim/승인 경로로 안내.
-      if (dek()) return Response.json({ error: '이미 이 기기에서 켜져 있습니다' }, { status: 400 });
+      if (dek()) return apiError('e2ee_already_on_this', lang);
       // "이미 켜짐" 판정에서 **자기 기기 행은 제외**(분리 검수 MEDIUM): 이전 enable이 자기 랩 기록 후
       // 복구 랩에서 실패하면 자기 잔재를 "남이 켰다"로 오판해 영구 교착이 된다. 자기 랩만 남았으면
       // 그 랩을 열어(개인키 보유) 같은 DEK로 이어간다 — 재시도가 곧 자가 치유.
       const { data: mine } = await sb.from('wrapped_deks').select('wrap').eq('device_id', deviceId).maybeSingle();
       const { data: others } = await sb.from('wrapped_deks').select('device_id').neq('device_id', deviceId).limit(1);
       if ((others ?? []).length > 0) {
-        return Response.json({ error: '이미 다른 기기에서 켜져 있습니다 — 그 기기에서 이 기기를 승인해 주세요' }, { status: 409 });
+        return apiError('e2ee_already_on_other', lang);
       }
       // 플랜 게이트 — 동기화가 실제로 도는 상태(Pro·체험)에서만: 재봉인 push가 free RLS에 막혀
       // "켰는데 아무것도 암호화 안 됨"이 되는 것을 정직하게 사전 차단(#325 HIGH-2와 같은 원칙).
@@ -89,7 +93,7 @@ export async function POST(req) {
       const created = (await sb.auth.getUser()).data?.user?.created_at;
       const trial = created ? (Date.now() - new Date(created).getTime()) < TRIAL_DAYS * 86_400_000 : false;
       if (!(proRowActive(ent ?? {}) || trial)) {
-        return Response.json({ error: '종단간 암호화는 동기화가 도는 상태(Pro·체험)에서 켤 수 있습니다' }, { status: 403 });
+        return apiError('e2ee_plan_required', lang);
       }
       const myKeys = await loadDeviceE2ee();
       const dekBytes = mine?.wrap ? await openDekWrap(Buffer.from(mine.wrap, 'base64')) : randomBytes(32);
@@ -115,12 +119,12 @@ export async function POST(req) {
       // 대기 기기 승인 — 이 기기(DEK 보유)가 대상 기기 공개키로 DEK를 랩해 서버에 둔다.
       // 사용자는 두 화면의 지문(fingerprint)을 대조한 뒤 눌러야 한다(SAS — 서버의 공개키 바꿔치기 방어).
       const dk = dek();
-      if (!dk) return Response.json({ error: '이 기기에 열쇠가 없습니다 — 열쇠 보유 기기에서 승인해 주세요' }, { status: 400 });
+      if (!dk) return apiError('e2ee_no_key_here', lang);
       const target = String(body.deviceId ?? '');
-      if (!target || target === deviceId) return Response.json({ error: '승인할 기기를 지정해 주세요' }, { status: 400 });
+      if (!target || target === deviceId) return apiError('e2ee_approve_target_required', lang);
       const { data: row, error } = await sb.from('device_keys').select('pubkey').eq('device_id', target).maybeSingle();
       if (error) throw new Error(error.message);
-      if (!row?.pubkey) return Response.json({ error: '대상 기기의 공개키가 없습니다(앱 업데이트·로그인 확인)' }, { status: 404 });
+      if (!row?.pubkey) return apiError('e2ee_target_pubkey_missing', lang);
       const wrap = wrapDekFor(row.pubkey, dk).toString('base64');
       const { error: e1 } = await sb.from('wrapped_deks').upsert({ user_id: user.id, device_id: target, wrap, wrapped_by: deviceId }, { onConflict: 'user_id,device_id' });
       if (e1) throw new Error(e1.message);
@@ -139,19 +143,22 @@ export async function POST(req) {
       // 복구 코드로 DEK 복원 — 전 기기 분실 폴백. 코드는 160bit 랜덤이라 브루트포스는 계산상 무의미하고,
       // 이 스로틀은 인증된 사용자의 scrypt(N=2^17) 반복 호출이 서버 CPU를 갉는 것만 막는다(검수 LOW).
       if (Date.now() - (globalThis.__argoE2eeRecoverTs ?? 0) < 5_000) {
-        return Response.json({ error: '잠시 후 다시 시도해 주세요' }, { status: 429 });
+        return apiError('e2ee_retry_later', lang);
       }
       globalThis.__argoE2eeRecoverTs = Date.now();
-      if (dek()) return Response.json({ error: '이미 이 기기에 열쇠가 있습니다' }, { status: 400 });
+      if (dek()) return apiError('e2ee_already_has_key', lang);
       const { data: rec, error } = await sb.from('recovery_wraps').select('wrap,kdf').maybeSingle();
       if (error) throw new Error(error.message);
-      if (!rec?.wrap) return Response.json({ error: '복구 코드가 설정돼 있지 않습니다' }, { status: 404 });
+      if (!rec?.wrap) return apiError('e2ee_no_recovery', lang);
       let dekBytes;
       try {
         const kek = deriveRecoveryKek(String(body.code ?? ''), rec.kdf?.salt, rec.kdf ?? undefined);
         dekBytes = openDekWithKek(kek, Buffer.from(rec.wrap, 'base64'));
       } catch (e2) {
-        return Response.json({ error: String(e2.message || '복구 코드가 맞지 않습니다') }, { status: 400 });
+        // 코드 오입력(GCM 태그 불일치 — e2ee.mjs가 코드로 식별)만 표시 언어로 그린다. 형식·KDF 오류는
+        // 구조 문제 신호라 원문 유지 — "코드가 틀렸다"로 오도하면 사용자가 헛되이 재입력만 반복한다.
+        if (e2?.code === 'E2EE_BAD_CODE') return apiError('e2ee_bad_recovery_code', lang);
+        return Response.json({ error: String(e2.message || e2) }, { status: 400 });
       }
       await setDek(dekBytes);
       const myKeys = await loadDeviceE2ee();
@@ -165,8 +172,8 @@ export async function POST(req) {
       // 기기 제거 — 해당 기기의 랩·공개키 행 삭제(재등록 가능해짐). DEK 회전은 후속 트랙(E2EE-DESIGN §10.5) —
       // 제거된 기기가 이미 로컬에 DEK 사본을 가졌을 수 있음을 UI가 정직하게 고지한다.
       const target = String(body.deviceId ?? '');
-      if (!target) return Response.json({ error: '제거할 기기를 지정해 주세요' }, { status: 400 });
-      if (target === deviceId) return Response.json({ error: '이 기기 자신은 제거할 수 없습니다' }, { status: 400 });
+      if (!target) return apiError('e2ee_revoke_target_required', lang);
+      if (target === deviceId) return apiError('e2ee_revoke_self', lang);
       const { error: e1 } = await sb.from('wrapped_deks').delete().eq('device_id', target);
       if (e1) throw new Error(e1.message);
       const { error: e2 } = await sb.from('device_keys').delete().eq('device_id', target);
@@ -174,7 +181,7 @@ export async function POST(req) {
       return Response.json({ ok: true, rotated: false, ...(await snapshot(sb, deviceId)) });
     }
 
-    return Response.json({ error: '알 수 없는 action' }, { status: 400 });
+    return apiError('e2ee_unknown_action', lang);
   } catch (e) {
     return Response.json({ error: String(e.message || e).slice(0, 160) }, { status: 400 });
   }

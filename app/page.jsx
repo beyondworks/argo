@@ -34,9 +34,13 @@ export default function Home() {
   const runnerReady = !!acctRunners && anyRunnerUsable(acctRunners);
 
   useEffect(() => {
-    // lang 의존 — 프리셋 picker 라벨이 UI 언어를 따르고, cmd+/ 전환 시 즉시 갱신된다
-    api(`/api/companies?lang=${lang}`).then((d) => { setCompanies(d.companies); setPresets(d.presets ?? []); }).catch((e) => setError(String(e.message)));
-    api('/api/me').then((d) => { setMe(d); setAuthOn(!!d.authOn); }).catch(() => {});
+    // lang 의존 — 프리셋 picker 라벨이 UI 언어를 따르고, cmd+/ 전환 시 즉시 갱신된다.
+    // stale 가드 — 마운트 직후 ko→en(저장 언어 복원)으로 연쇄 발화할 때 앞선 ko 응답이 늦게
+    // 도착하면 en 화면에 한국어 프리셋이 눌러앉는다(응답 역전). 늦은 응답은 버린다.
+    let alive = true;
+    api(`/api/companies?lang=${lang}`).then((d) => { if (!alive) return; setCompanies(d.companies); setPresets(d.presets ?? []); }).catch((e) => { if (alive) setError(String(e.message)); });
+    api('/api/me').then((d) => { if (!alive) return; setMe(d); setAuthOn(!!d.authOn); }).catch(() => {});
+    return () => { alive = false; };
   }, [lang]);
 
   // 온보딩 러너 상태 — 카드가 연결/제거 시 쏘는 argo:refresh로 즉시 재판정(연결되면 3단계가 풀린다)
