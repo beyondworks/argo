@@ -96,6 +96,14 @@ const CLIENT_OPTS = {
 };
 let sb = null, sbKey = '';
 
+/** 호스티드 모드인가(= 세션 동기화, 목적지가 Argo 운영 클라우드) — 이 모드에서 자격 증명 3종은
+    **절대** 클라우드로 가지 않는다(유건 지시 2026-08-29: "열쇠를 볼 수 있는 건 사용자 본인뿐" —
+    선택권이 아니라 구조). 강제는 호출부가 아니라 syncCompany 내부에 건다 — 새 호출 경로가 생겨도
+    구조적으로 우회 불가(보관 전파 경로가 opts 배선을 빠뜨렸던 분리 검수 HIGH-1 계열의 원천 차단).
+    서비스 모드(셀프호스트·워커 = 사용자 자신의 인프라·자신의 열쇠)는 운영자가 곧 사용자라 원칙이
+    이미 성립하므로 회사별 credSync 토글이 그대로 선택권으로 남는다. (export: 회귀 테스트용) */
+export const hostedCredsOff = () => !(loadSyncCreds() && serviceCredsAllowed());
+
 /** 서비스롤(RLS 우회) 동기화가 정당한 컨텍스트인가 — 서비스롤 클라이언트 제거 완주(2026-07-23).
     허용: 자가호스트(공개키 미빌드 = AUTH off, 사용자가 곧 테넌트) 또는 워커(ARGO_TENANT_OWNER 바인딩, 오너 전용 인스턴스).
     금지: 호스티드 클라이언트(공개키 빌드 = AUTH_ON, 워커 아님) — 오설정으로 크라운주얼이 런타임에 새어들어도
@@ -393,13 +401,14 @@ async function upload(key, buf) {
    opts.freePlan = 이 회사가 확정 free다 → 클라우드 쓰기 거부가 이 계정의 **정상 결과**이므로 실패와
    분리 집계(denied)하고, 사이클을 완결(state 기록)까지 보낸다. 미지정(pro·미확인)은 종전대로 전부 failed.
 
-   opts.noSecrets = 이 회사가 자격 동기화를 껐다(company.json credSync:false — 부재/true는 현행 유지).
-   자격 3종(isSecretRel)은 push/pull/삭제 전파 전부에서 불가시가 되고("키 미확보" 사이클과 같은 안전
-   패턴), 클라우드에 이미 있는 자격 암호문은 마커(CRED_WITHDRAWN)로 **덮어써** 회수한다 — remove가
-   아닌 이유는 secretbox.mjs 마커 주석 참조(구버전·미반영 기기의 로컬 자격 오삭제 차단). */
+   opts.noSecrets = 이 회사가 자격 동기화를 껐다(company.json credSync:false — 서비스 모드의 선택권).
+   호스티드 모드는 opts와 무관하게 **항상** 강제된다(hostedCredsOff — 함수 내부 게이트라 호출 경로
+   무관). 자격 3종(isSecretRel)은 push/pull/삭제 전파 전부에서 불가시가 되고("키 미확보" 사이클과
+   같은 안전 패턴), 클라우드에 이미 있는 자격 암호문은 마커(CRED_WITHDRAWN)로 **덮어써** 회수한다 —
+   remove가 아닌 이유는 secretbox.mjs 마커 주석 참조(구버전·미반영 기기의 로컬 자격 오삭제 차단). */
 export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   const root = paths(wsId).root;
-  const noSecrets = !!opts.noSecrets;
+  const noSecrets = !!opts.noSecrets || hostedCredsOff();
   const me = await getDeviceId();
   const manifestKey = skey(owner, wsId, '__manifest__.json');
   // 매니페스트 읽기 — "없음(최초 푸시)"과 "읽기 실패(네트워크·타임아웃·5xx)"를 반드시 구분한다.

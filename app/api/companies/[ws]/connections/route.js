@@ -1,6 +1,6 @@
 import { loadConnections, updateConnection, maskConnections, validateConnection, gatewayStatus, CONNECTION_PATCH_FIELDS } from '../../../../../src/connections.mjs';
 import { ensureGateway } from '../../../../../src/gateway.mjs';
-import { syncStatus } from '../../../../../src/sync.mjs';
+import { syncStatus, hostedCredsOff } from '../../../../../src/sync.mjs';
 import { loadCompany } from '../../../../../src/workspace.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
@@ -11,8 +11,9 @@ export async function GET(_req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
   const [all, gateway, company] = await Promise.all([loadConnections(ws), gatewayStatus(ws), loadCompany(ws).catch(() => null)]);
-  // credSync: 부재/true = 동기화 포함(현행) — SyncCard의 자격 동기화 토글이 15초 폴로 이 값을 읽는다
-  return Response.json({ connections: maskConnections(all), gateway, sync: syncStatus(), credSync: company?.credSync !== false });
+  // credSync: 부재/true = 동기화 포함(서비스 모드 선택권) — SyncCard 토글이 15초 폴로 읽는다.
+  // credHosted: 호스티드(Argo 클라우드)면 자격은 항상 강제 제외 — UI가 토글 대신 "이 기기에만"을 보인다.
+  return Response.json({ connections: maskConnections(all), gateway, sync: syncStatus(), credSync: company?.credSync !== false, credHosted: hostedCredsOff() });
 }
 
 /** 연결 설정 — { kind: 'telegram'|'slack', token?, enabled?, defaultCrew?, channel?, mutedEvents? }. 빈 token은 기존 유지.
