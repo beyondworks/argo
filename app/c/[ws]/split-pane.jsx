@@ -7,13 +7,11 @@ import { Icon, Markdown, Skeleton, api } from '../../ui';
 import { useLang } from '../../i18n';
 import CrewChat from './crew/[slug]/page';
 import { withSide } from './split.mjs';
+// 표시 배율(zoom) — 커서 좌표는 뷰포트 px, 패널 폭은 CSS px라 배율로 나눠 맞춘다(배율 1 = 종전 동일)
+import { dispZoom, clampPaneW as clampW } from './zoom-math.mjs';
 
 const W_KEY = 'argo-split-w';
 const W_DEFAULT = 480;
-const W_MIN = 360;
-// 표시 배율(zoom) — 커서 좌표는 뷰포트 px, 패널 폭은 CSS px라 배율로 나눠 맞춘다(배율 1 = 종전 동일)
-const dispZoom = () => parseFloat(document.documentElement.style.zoom) || 1;
-const clampW = (w) => Math.max(W_MIN, Math.min(Math.round(window.innerWidth / dispZoom() * 0.6), Math.round(w)));
 
 function DocPane({ ws, rel, side }) {
   const { t } = useLang();
