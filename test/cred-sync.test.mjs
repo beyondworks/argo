@@ -18,6 +18,19 @@ const ROOT = await mkdtemp(join(tmpdir(), 'argo-cred-sync-'));
 process.env.ARGO_ROOT = ROOT;
 process.env.ARGO_SYNC = '1';
 delete process.env.ARGO_SYNC_ALLOW_MASS_DELETE;
+// 서비스 모드(셀프호스트 = 자기 인프라) 고정 — PIN/T1~T7은 credSync 토글이 살아 있는 이 모드의
+// 의미론이다. 호스티드 모드는 자격이 항상 강제 제외(hostedCredsOff)라 아래 H* 테스트가 따로 잠근다.
+// (URL+SERVICE_ROLE만 있고 ANON 없음 → authOn=false → serviceCredsAllowed=true → 서비스 모드)
+process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://selfhost.local';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'selfhost-service-key-not-real';
+delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+delete process.env.ARGO_TENANT_OWNER;
+// 호스티드 모드 재현 — env를 지우면 loadSyncCreds가 null이라 hostedCredsOff()=true.
+const asHosted = async (fn) => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  delete process.env.NEXT_PUBLIC_SUPABASE_URL; delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  try { await fn(); } finally { process.env.NEXT_PUBLIC_SUPABASE_URL = url; process.env.SUPABASE_SERVICE_ROLE_KEY = key; }
+};
 
 const { syncCompany, _setSyncClientForTest, _tombstonesForTest } = await import('../src/sync.mjs');
 const { ensureAccountKey, clearAccountKey } = await import('../src/accountkey.mjs');
@@ -85,8 +98,8 @@ const SECRETS = Buffer.from(JSON.stringify({ claude: { key: 'sk-test-not-real' }
 const CONNS = Buffer.from(JSON.stringify({ telegram: { token: 'tg-test-not-real' }, slack: {} }));
 const MCP = Buffer.from(JSON.stringify({ servers: { x: { command: 'node', env: { T: 'v' } } } }));
 
-/* ── PIN1: 기본 동작(credSync 미지정) — 자격 3종이 봉투로 push된다 ── */
-test('PIN1: 토글 미지정이면 자격 3종이 봉투 암호문으로 push된다(현행 동작 고정)', async () => {
+/* ── PIN1: 서비스 모드 기본 동작(credSync 미지정) — 자격 3종이 봉투로 push된다 ── */
+test('PIN1: 서비스 모드(셀프호스트)는 토글 미지정 시 자격 3종이 봉투 암호문으로 push된다', async () => {
   const wsId = 'pin-push';
   const note = Buffer.from('# note\n');
   const { fake } = await setup(wsId, {
@@ -273,6 +286,45 @@ test('T7: 원격 tombstone 보관 전파의 마지막 push가 credSync:false 회
   assert.ok(!man.files['.secrets.json'], '자격은 매니페스트로 되올라가지 않는다(옵트아웃 우회 금지)');
   const blob = fake._store.get(`${OWNER}/${wsId}/.secrets.json`);
   assert.ok(blob && blob.toString() === 'argosecret.v2:credSync-off', '자격 blob은 마커 그대로(암호문 재업로드 없음)');
+});
+
+/* ── H1: 호스티드 강제(유건 지시 2026-08-29) — 선택권이 아니라 구조: opts 없이도 자격은 절대 안 올라간다 ── */
+test('H1: 호스티드 모드는 opts·credSync와 무관하게 자격을 push하지 않고 기존 클라우드 사본을 회수한다', async () => {
+  const wsId = 'h-forced';
+  const note = Buffer.from('# data\n');
+  const sealed = sealSecret(SECRETS);
+  // credSync 필드가 아예 없는 평범한 회사 + 클라우드에 과거 버전이 올린 자격 암호문이 남아 있는 상태.
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { '.secrets.json': SECRETS, 'vault/data.md': note },
+    state: { '.secrets.json': meta(SECRETS) },
+    remoteFiles: { '.secrets.json': meta(SECRETS) },
+    remoteBlobs: { '.secrets.json': sealed },
+  });
+  await asHosted(async () => {
+    const r = await syncCompany(wsId, OWNER); // opts 없음 — 강제는 함수 내부 게이트
+    assert.equal(r.withdrawn, 1, '과거 사본이 자동 회수된다(마커 덮어쓰기)');
+    assert.equal(r.pushed, 1, '일반 파일(vault/data.md)만 push된다');
+    assert.equal(fake._bucket._removed.length, 0, 'remove 미발생(구버전 보호 불변식 유지)');
+  });
+  const man = manifest(fake, wsId);
+  assert.ok(!man.files['.secrets.json'], '자격은 매니페스트에 없다');
+  assert.ok(man.files['vault/data.md'], '회사 데이터 동기화는 그대로');
+  assert.equal(fake._store.get(`${OWNER}/${wsId}/.secrets.json`).toString(), 'argosecret.v2:credSync-off', '암호문이 마커로 소거(활성 사본)');
+  assert.ok(existsSync(join(wsRoot, '.secrets.json')), '로컬 자격은 유지(이 기기 로그인 보존)');
+});
+
+/* ── H2: 호스티드에서 credSync:true를 명시해도 우회 불가(강제가 토글보다 우선) ── */
+test('H2: 호스티드는 credSync:true(포함 의사)도 무시한다 — 토글은 서비스 모드 전용 선택권', async () => {
+  const wsId = 'h-noopt';
+  const { fake } = await setup(wsId, {
+    localFiles: { 'company.json': Buffer.from(JSON.stringify({ id: wsId, ownerId: OWNER, credSync: true })), '.secrets.json': SECRETS },
+  });
+  await asHosted(async () => {
+    const r = await syncCompany(wsId, OWNER, false, { noSecrets: false }); // 호출부가 false를 명시해도
+    assert.equal(r.failed, 0);
+  });
+  assert.ok(!manifest(fake, wsId).files['.secrets.json'], '자격 미push — 함수 내부 강제라 호출부·필드로 우회 불가');
+  assert.ok(!fake._store.has(`${OWNER}/${wsId}/.secrets.json`), '자격 blob 자체가 생기지 않는다');
 });
 
 test.after(async () => { clearAccountKey(); await rm(ROOT, { recursive: true, force: true }); });

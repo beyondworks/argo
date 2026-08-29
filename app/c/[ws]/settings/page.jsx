@@ -1140,10 +1140,12 @@ function SyncCard({ ws }) {
   const [billLost, setBillLost] = useState(false);
   const [billTry, setBillTry] = useState(0); // 재시도 트리거 — 한 번 실패하면 페이지를 다시 열기 전엔 복구되지 않았다
   const [cred, setCred] = useState(null); // 자격 증명 동기화 토글(company.json credSync) — null = 로딩
+  const [credHosted, setCredHosted] = useState(null); // 호스티드면 자격 항상 강제 제외 → 토글 대신 사실 표시
   useEffect(() => {
     const pull = () => api(`/api/companies/${ws}/connections`).then((d) => {
       setSync(d.sync ?? null);
       if (d.credSync !== undefined) setCred(d.credSync !== false); // 15초 폴 — 다른 기기의 토글 변경도 따라온다
+      if (d.credHosted !== undefined) setCredHosted(!!d.credHosted);
     }).catch(() => {});
     pull();
     // reconciling=true — 서버가 방금 유실 대사(O2)를 백그라운드로 발사했다는 신호. billing은
@@ -1306,7 +1308,7 @@ function SyncCard({ ws }) {
               <a style={{ fontSize: 12, color: 'var(--fg-3)', width: 'fit-content' }} href="/api/me/billing/portal" onClick={openBillingPortal} target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
             </div>
           )}
-          <CredSyncRow ws={ws} value={cred} onChange={setCred} />
+          <CredSyncRow ws={ws} value={cred} onChange={setCred} hosted={credHosted} />
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 8 }}>
@@ -1344,7 +1346,7 @@ function SyncCard({ ws }) {
 /** 자격 증명 동기화 토글 + 정직 고지 — 무엇이 올라가는지(러너 로그인·봇 토큰·MCP env)와 암호화 열쇠가
     어디에 보관되는지를 사실대로 밝힌다(고지 없는 수집 금지 — 2026-08-29 판정). 끄면 서버가 다음 사이클에
     클라우드 사본을 마커로 회수한다(src/sync.mjs noSecrets — 로컬 로그인은 유지, 새 기기만 재연결). */
-function CredSyncRow({ ws, value, onChange }) {
+function CredSyncRow({ ws, value, onChange, hosted }) {
   const { t } = useLang();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -1360,6 +1362,25 @@ function CredSyncRow({ ws, value, onChange }) {
       onChange(next);
     } catch (e) { setErr(String(e.message || e)); }
     finally { setBusy(false); }
+  }
+  // 호스티드(Argo 클라우드) — 자격은 구조적으로 클라우드에 올라가지 않는다(유건 지시 2026-08-29:
+  // 선택권이 아니라 기본). 토글 없이 사실만 보인다. 서비스 모드(셀프호스트=자기 인프라)만 토글 노출.
+  if (hosted) {
+    return (
+      <div style={{ display: 'grid', gap: 6, marginTop: 6, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12.5, fontWeight: 650, color: 'var(--fg)' }}>{t('settings.sync.credToggle')}</span>
+          <span style={{ flex: 1 }} />
+          <span className="pill ok" style={{ flex: 'none' }}>{t('settings.sync.credDeviceOnly')}</span>
+        </div>
+        <span style={{ fontSize: 12, color: 'var(--fg-3)', lineHeight: 1.6 }}>
+          {t('settings.sync.credHostedNote')}{' '}
+          <a href="https://github.com/beyondworks/argo/blob/main/docs/privacy-sync.md" target="_blank" rel="noreferrer" style={{ color: 'var(--fg-2)' }}>
+            {t('settings.sync.credDocs')}
+          </a>
+        </span>
+      </div>
+    );
   }
   return (
     <div style={{ display: 'grid', gap: 6, marginTop: 6, paddingTop: 10, borderTop: '1px solid var(--border)' }}>

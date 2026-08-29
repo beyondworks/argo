@@ -1,72 +1,68 @@
 # 클라우드 동기화와 자격 증명 — 무엇이 올라가고, 열쇠는 어디에 있나
 
 > Argo는 BYOK 제품입니다 — AI 러너(Claude·Codex·Gemini 등)의 API 키·로그인 토큰은 사용자의
-> 것입니다. 이 문서는 그 자격 증명이 언제 Argo 클라우드로 가는지, 어떻게 보호되고 그 보호의
-> 한계가 무엇인지, 그리고 끄는 방법을 사실대로 설명합니다. (최종 갱신 2026-08-29)
+> 것입니다. 이 문서는 그 자격 증명이 클라우드로 가는지, 회사 데이터는 어떻게 보호되고 그 한계가
+> 무엇인지 사실대로 설명합니다. (최종 갱신 2026-08-29)
 
-**English summary** — If you never sign in, nothing leaves your computer. When cross-device sync
-is on, your company folder replicates to Argo cloud (Supabase Storage), **including three
-credential files**: `.secrets.json` (runner login tokens / API keys), `connections.json`
-(Telegram/Slack bot tokens), and `mcp.json` (MCP env vars). They are always stored encrypted
-(AES-256-GCM), but the per-account envelope key lives in the same Argo cloud, so the server
-operator and the service-role path (cloud workers) can technically open them — **we do not claim
-"we cannot see your credentials."** To opt out per company: Settings → Cross-device Sync →
-Credential sync → Exclude. While sync actually runs (Pro/trial), the next cycle withdraws the
-cloud copies (the active object is overwritten with a harmless marker; platform-level backups, if
-any, are not covered by this document — and on the free plan cloud writes are blocked, so
-withdrawal stays pending). Local logins stay; new devices and cloud workers must reconnect. You
-can also disable all sync with `ARGO_SYNC=0`, or simply never sign in.
+**English summary** — If you never sign in, nothing leaves your computer. On the hosted Argo
+cloud, your **credentials never leave your device**: the three credential files — `.secrets.json`
+(runner login tokens / API keys), `connections.json` (Telegram/Slack bot tokens), `mcp.json`
+(MCP env vars) — are structurally excluded from sync, so no one but you (the operator included)
+can see them; new devices simply reconnect runners and bots. Your company **data** (memory,
+chats, crew) does still replicate to Argo cloud, encrypted (AES-256-GCM); its envelope key lives
+in the same cloud, so for that data the operator can technically decrypt — we do not claim
+otherwise. Self-hosting (your own server, your own Supabase) is the one case where credential
+sync is offered as a choice, because there "the operator" is you. Disable all sync with
+`ARGO_SYNC=0`, or simply never sign in.
 
-## 언제 무엇이 올라가나
+## 자격 증명 (러너 로그인 열쇠) — 호스티드에서는 클라우드로 가지 않습니다
 
-**로그인(기기 연동)을 하지 않으면 아무것도 올라가지 않습니다.** 회사 폴더·기억·자격 증명 전부가
-이 컴퓨터에만 있습니다.
+로그인해서 기기 간 동기화가 켜지면 회사 폴더가 Argo 클라우드(Supabase Storage)에 복제됩니다.
+그러나 **자격 증명 파일 3종은 이 복제에서 구조적으로 제외됩니다** — 코드가 호스티드 모드를
+감지하면 어떤 경로로도 자격을 올리지 않고, 이미 올라가 있던 과거 사본이 있으면 자동으로
+회수합니다(아래 "회수" 참조).
 
-로그인해서 기기 간 동기화가 켜지면, 회사 폴더가 Argo 클라우드(Supabase Storage)에 복제됩니다.
-여기에는 회사 데이터(기억·대화·크루 카드)와 함께 **자격 증명 파일 3종**이 포함됩니다:
+| 파일 | 내용 | 호스티드에서 |
+|---|---|---|
+| `.secrets.json` | 러너 로그인 토큰·API 키 (Claude·Codex·Gemini 등) | 이 기기에만 |
+| `connections.json` | 텔레그램·슬랙 봇 토큰 | 이 기기에만 |
+| `mcp.json` | MCP 서버 환경변수 (토큰 포함 가능) | 이 기기에만 |
 
-| 파일 | 내용 |
-|---|---|
-| `.secrets.json` | 러너 로그인 토큰·API 키 (Claude·Codex·Gemini 등) |
-| `connections.json` | 텔레그램·슬랙 봇 토큰 |
-| `mcp.json` | MCP 서버 설정의 환경변수 (토큰 포함 가능) |
+따라서 호스티드 Argo 클라우드에서는 **운영자를 포함해 사용자 본인 외에는 아무도 이 열쇠를 볼 수
+없습니다.** 대가는 새 컴퓨터마다 러너·봇을 다시 연결하는 것뿐입니다(로그인 토큰이 그 기기로는
+가지 않으므로).
 
-포함되지 않는 것: 구글 등 커넥터 OAuth 토큰(`.connector-secrets.json` — 기기 전용, 다른 기기는
-재연결), 기기 세션 파일, 동기화 상태 파일.
+## 회사 데이터 (기억·대화·크루) — 봉투 암호화로 올라가며, 열쇠는 클라우드에 있습니다
 
-## 어떻게 보호되고, 한계는 무엇인가
+회사 데이터는 여전히 클라우드에 복제됩니다. 노트 제목 등 맥락이 새지 않도록 봉투 암호화
+(AES-256-GCM)로 저장되지만, 그 봉투를 여는 계정별 열쇠(`account_keys`)는 같은 Argo 클라우드에
+있습니다. 데이터베이스 접근 규칙(RLS)상 다른 사용자는 열쇠를 읽을 수 없지만, 서버 운영자와
+서비스 롤 권한은 기술적으로 회사 데이터를 복호화할 수 있습니다 — **이 데이터에 한해서는 "운영자도
+절대 볼 수 없다"고 말하지 않습니다.** 회사 데이터까지 사용자만 여는 종단간 암호화(E2EE)는 별도
+설계 트랙으로 진행 중입니다.
 
-자격 3종은 스토리지에 **항상 봉투 암호화(AES-256-GCM)된 상태로만** 놓입니다. 전송 중 보호와
-"스토리지 버킷만 단독으로 유출되는" 사고에 대한 방어로는 유효합니다.
+정리하면: **러너 로그인 열쇠(자격 증명) = 클라우드로 안 감(본인만 보유). 회사 데이터 = 암호화되어
+가지만 열쇠는 서버(운영자 복호화 가능).** 사용자가 가장 민감하게 여기는 러너 자격은 첫 번째 범주에
+속합니다.
 
-**한계를 숨기지 않습니다**: 봉투를 여는 계정별 열쇠(`account_keys`)가 같은 Argo 클라우드에
-평문으로 보관됩니다. 데이터베이스 접근 규칙(RLS)상 다른 사용자는 열쇠를 읽을 수 없지만, 서버
-운영자와 서비스 롤 권한(클라우드 워커가 사용자의 크루를 대신 실행하는 경로)은 기술적으로 열쇠와
-암호문 양쪽에 닿을 수 있습니다. 따라서 **"운영자도 절대 볼 수 없다"는 주장은 현재 구조에서는
-성립하지 않으며, Argo는 그런 주장을 하지 않습니다.** 사용자만 여는 구조(패스프레이즈 유도 키)는
-클라우드 워커 실행 방식과 상충 지점이 있어 별도 트랙으로 검토 중입니다.
+## 회수 (이미 올라가 있던 자격 사본)
 
-## 끄는 방법 (세 단계 선택지)
+과거 버전에서 자격이 클라우드에 올라간 적이 있으면, 다음 동기화 사이클이 그 활성 사본을 무해한
+마커로 덮어써 회수합니다(삭제가 아니라 덮어쓰기 — 아직 업데이트를 못 받은 다른 기기가 "파일이
+사라졌다 = 삭제됐다"로 오해해 자기 로컬 자격을 지우는 것을 막기 위해서입니다). 실행된 사이클에는
+설정 카드에 "자격 회수 N건"이 잠깐 표시될 수 있습니다(짧아서 못 볼 수 있으며, 표시가 없어도
+회수는 진행됩니다). 플랫폼 차원의 백업·스냅샷이 존재한다면 그 보존 기간 동안의 과거 사본까지는
+이 문서가 보장하지 않습니다.
 
-1. **자격 증명만 제외** — 설정 → 기기 간 동기화 → "자격 증명 동기화 → 제외하기".
-   회사 데이터 동기화는 유지되고 자격 3종만 빠집니다. 이미 클라우드에 있던 자격 사본은
-   **동기화가 실제로 도는 상태(Pro·체험)에서** 다음 사이클에 회수됩니다 — 스토리지의 **활성
-   사본**이 무해한 마커로 덮어써지며, 실행된 사이클에는 설정 카드에 "자격 회수 N건"이 잠깐
-   표시될 수 있습니다(짧아서 못 볼 수 있습니다 — 표시가 없어도 회수는 진행됩니다).
-   무료 플랜은 클라우드 쓰기가 막혀 있어 회수가 보류됩니다(다시 Pro·체험이 되는 시점에
-   실행됩니다). 플랫폼 차원의 백업·스냅샷이 존재한다면 그 보존 기간 동안의 과거 사본까지는
-   이 문서가 보장하지 않습니다. 각 기기의 로컬 로그인은 그대로 유지되며, **새 기기(및 클라우드
-   워커)에서는 러너·봇을 다시 연결해야 합니다.** 이 설정은 회사 단위이고 기기 간에 자동
-   전파됩니다. 제외 기간에 기기마다 서로 다른 러너를 로그인해 두었다면, 다시 포함으로 켤 때
-   가장 최근에 저장된 쪽이 채택됩니다(기기별 로그인 상태가 다르면 한쪽 기준으로 수렴).
-2. **동기화 전체 끄기** — 환경변수 `ARGO_SYNC=0`. 이 기기는 아무것도 올리고 내리지 않습니다.
-3. **로그인하지 않기** — 처음부터 전부 로컬 전용입니다.
+## 셀프호스트 — 자격 동기화가 선택지인 유일한 경우
 
-주의: 자격 제외를 켠 상태에서 **구버전(v0.1.50 이하) 기기**가 같은 회사에 남아 있으면, 그
-기기에서 러너를 새로 로그인할 때 일시적으로 자격이 다시 올라갈 수 있습니다(최신 기기가 다음
-사이클에 재회수). 모든 기기를 최신으로 유지하세요.
+셀프호스트(서비스 키 모드)는 사용자의 서버·사용자의 Supabase가 곧 클라우드입니다. 열쇠도
+데이터도 사용자 인프라에 있으므로 "운영자"가 곧 사용자 본인이고, 위의 걱정이 적용되지 않습니다.
+그래서 셀프호스트에서는 자격 증명을 기기 간에 동기화할지 회사 단위로 **선택**할 수 있습니다
+(설정 → 기기 간 동기화 → 자격 증명 동기화). 끄면 호스티드와 동일하게 각 기기에만 저장되고
+클라우드 사본은 회수됩니다. [selfhost.md](selfhost.md) 참조.
 
-## 셀프호스트
+## 전부 끄기
 
-셀프호스트(서비스 키 모드)는 사용자의 인프라가 곧 클라우드입니다 — 열쇠도 데이터도 사용자 서버에
-있으므로 위 "운영자 접근" 항목이 Argo가 아니라 사용자 자신에게 적용됩니다. [selfhost.md](selfhost.md) 참조.
+- **동기화 전체 끄기** — 환경변수 `ARGO_SYNC=0`. 이 기기는 아무것도 올리고 내리지 않습니다.
+- **로그인하지 않기** — 처음부터 전부 로컬 전용입니다.

@@ -433,14 +433,18 @@ const DICT = {
   'settings.sync.title': ['기기 간 동기화', 'Cross-device Sync'],
   'settings.sync.on': ['가동 중', 'Active'],
   'settings.sync.off': ['꺼짐', 'Off'],
-  // offHelp 교정(2026-08-29): 종전 문구 "비밀값은 복제 제외"는 사실과 반대였다 — 자격 3종은 봉투 암호화로 복제된다.
-  'settings.sync.offHelp': ['클라우드 키가 설정되면 자동으로 켜집니다. 회사 폴더가 클라우드에 복제돼 어느 컴퓨터에서 열어도 같은 회사가 이어집니다. 자격 증명(러너 로그인·봇 토큰·MCP 키)도 암호화된 상태로 함께 복제되며, 동기화가 켜진 뒤 아래에서 제외할 수 있습니다.', 'Turns on automatically once cloud keys are configured. Your company folder replicates to the cloud so the same company continues on any computer. Credentials (runner logins, bot tokens, MCP keys) replicate too, encrypted — once sync is on you can exclude them below.'],
+  // offHelp 교정(2026-08-29 2차): 자격 3종은 Argo 클라우드로 올라가지 않는다(호스티드=구조적 강제, 셀프호스트=선택). 모드 무관 참.
+  'settings.sync.offHelp': ['클라우드 키가 설정되면 자동으로 켜집니다. 회사 폴더가 클라우드에 복제돼 어느 컴퓨터에서 열어도 같은 회사가 이어집니다. 단 자격 증명(러너 로그인·봇 토큰·MCP 키)은 Argo 클라우드로 올라가지 않고 각 기기에만 저장됩니다(셀프호스트는 설정에서 선택).', 'Turns on automatically once cloud keys are configured. Your company folder replicates to the cloud so the same company continues on any computer. Credentials (runner logins, bot tokens, MCP keys), however, never go to Argo cloud — they stay on each device (self-hosting is a choice in settings).'],
   'settings.sync.credToggle': ['자격 증명 동기화', 'Credential sync'],
   'settings.sync.credOn': ['포함됨', 'Included'],
   'settings.sync.credOff': ['제외됨', 'Excluded'],
   'settings.sync.credTurnOff': ['제외하기', 'Exclude'],
   'settings.sync.credTurnOn': ['포함하기', 'Include'],
-  'settings.sync.credNote': ['동기화에는 자격 증명 파일(러너 로그인 토큰·API 키, 텔레그램·슬랙 봇 토큰, MCP 환경변수)이 포함됩니다. 항상 암호화되어 저장되지만, 암호화 열쇠는 Argo 클라우드에 함께 보관되므로 서버 운영자가 기술적으로 열 수 있습니다.', 'Sync includes credential files (runner login tokens and API keys, Telegram/Slack bot tokens, MCP env vars). They are always stored encrypted, but the encryption key is kept in Argo cloud alongside them, so the server operator can technically open them.'],
+  // 호스티드(Argo 클라우드) — 자격은 구조적으로 안 올라간다. 토글 대신 이 사실을 배지·문구로 고정.
+  'settings.sync.credDeviceOnly': ['이 기기에만', 'This device only'],
+  'settings.sync.credHostedNote': ['자격 증명(러너 로그인 토큰·API 키, 텔레그램·슬랙 봇 토큰, MCP 환경변수)은 이 기기에만 저장되고 Argo 클라우드로 동기화되지 않습니다 — 운영자를 포함해 본인 외에는 누구도 볼 수 없습니다. 회사 데이터(기억·대화·크루)만 암호화되어 동기화됩니다. 새 기기(및 클라우드 워커)에서는 러너·봇을 다시 연결해야 합니다.', 'Credentials (runner login tokens and API keys, Telegram/Slack bot tokens, MCP env vars) stay on this device only and are never synced to Argo cloud — no one but you, operator included, can see them. Only company data (memory, chats, crew) is synced, encrypted. New devices (and cloud workers) must reconnect runners and bots.'],
+  // credNote — 셀프호스트(서비스 모드) 전용. 자기 인프라라 "본인이 곧 운영자"이므로 열람 가능이 문제 아님.
+  'settings.sync.credNote': ['셀프호스트에서는 자격 증명 파일(러너 로그인 토큰·API 키, 봇 토큰, MCP 환경변수)을 기기 간에 동기화할 수 있습니다. 목적지가 본인 소유의 인프라(자기 Supabase)이고 암호화 열쇠도 거기 있으므로, 열 수 있는 것은 본인입니다. 원치 않으면 아래에서 제외하세요.', 'On self-hosting you may sync credential files (runner login tokens and API keys, bot tokens, MCP env vars) across devices. The destination is your own infrastructure (your Supabase) and the encryption key lives there too, so the only one who can open them is you. Exclude below if you prefer not to.'],
   'settings.sync.credDocs': ['자세히 보기', 'Learn more'],
   // "회수됩니다" 단정 금지(분리 검수 HIGH-2) — free는 syncCompany 자체가 스킵되고 클라우드 쓰기도 RLS가 거부해 회수가 실행되지 않는다. 플랜 조건을 사실대로.
   // 카운터는 회수가 실행된 사이클에만 잠깐 보인다(분리 검수 LOW-C) — 문구가 관측을 약속하지 않는다.
