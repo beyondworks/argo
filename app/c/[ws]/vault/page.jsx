@@ -10,6 +10,7 @@ import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo,
 import { Graph2D } from '../graph2d'; // 2D 옵시디언식 — 3D 별자리(graphview)는 데크 위젯 전용
 import { useLang } from '../../../i18n';
 import { sideParam, withSide } from '../split.mjs';
+import { dispZoom } from '../zoom-math.mjs'; // 표시 배율 — 커서(뷰포트 px)→CSS px 환산(#334)
 
 const GRAPH_TAB = { id: 'graph', kind: 'graph', root: null };
 const MAX_TABS = 10;
@@ -108,8 +109,7 @@ function Vault({ params }) {
   useEffect(() => {
     if (!resizing) return;
     const move = (e) => {
-      const z = parseFloat(document.documentElement.style.zoom) || 1; // 표시 배율 — 커서(뷰포트 px)→CSS px
-      setTreeW(Math.min(560, Math.max(220, (e.clientX - (document.querySelector('.vault-tree')?.getBoundingClientRect().left ?? 0)) / z)));
+      setTreeW(Math.min(560, Math.max(220, (e.clientX - (document.querySelector('.vault-tree')?.getBoundingClientRect().left ?? 0)) / dispZoom())));
     };
     const up = () => { setResizing(false); };
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
