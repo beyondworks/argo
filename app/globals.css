@@ -2060,3 +2060,25 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh - 56px); min-
   .spin > path { display: none; }
   .spin > circle { stroke-opacity: 0.9; }
 }
+
+/* ─── Windows 전용 폰트 오버라이드 ─────────────────────────────────────
+   실사용 제보(2026-08-29): Windows에서 라벨·고정폭 계열 한글이 낱자로 벌어져 보임.
+   원인 — --mono 스택(전 테마 공통)에 한글 글리프 폰트가 없어 Windows에서 한글이
+   굴림계 고정폭으로 떨어지고, microlabel의 0.13em 자간과 겹쳐 낱자가 분리된다
+   (맥은 시스템 폴백이 Apple SD Gothic이라 티가 덜 났다). 본문 Pretendard는 유지한다
+   — 시스템 폰트(맑은 고딕) 전환안을 Windows 러너 실캡처로 비교한 결과 유건이
+   Pretendard 통일을 선택(2026-08-29). 처방 = mono 계열 한글 폴백을 Pretendard로
+   명시 + 라벨 자간 완화. data-os='win'은 layout.jsx의 osBoot가 첫 페인트 전에 박고,
+   맥·리눅스는 미부여라 이 블록에 진입하지 않는다(맥 렌더 불변 — 유건 지시).
+   특이도: html:root[…] = (0,2,1) — 모든 테마 블록 (0,2,0)을 위치 무관하게 이긴다.
+   (mono 재정의 21곳 전수가 같은 무폴백 구조라 전 테마 공통 오버라이드가 정확하다.) */
+html:root[data-os='win'] {
+  --mono: 'IBM Plex Mono', ui-monospace, 'Pretendard Variable', Pretendard, monospace;
+}
+/* 계기판 라벨 자간 — 라틴 대문자용 넓은 트래킹(0.1~0.13em)이 한글에선 낱자 분리로 보인다
+   (제보 스크린샷). 같은 var(--mono)+uppercase+넓은 자간 조합 전수(검수 실측 5클래스 계측):
+   microlabel 0.13em·표 머리(.table th) 0.13em·사이드바 그룹(.side-group) 0.1em을 함께 완화.
+   .chip·.memo-chip은 0.05em으로 처방값 이하라 제외. */
+html[data-os='win'] .microlabel,
+html[data-os='win'] .side-group,
+html[data-os='win'] .table th { letter-spacing: 0.06em; }

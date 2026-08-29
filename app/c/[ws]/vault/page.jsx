@@ -403,7 +403,7 @@ function DocView({ ws, rel, docs, projects, t, onOpen, onGraph, onChanged, onDel
         {editing ? (
           <div style={{ display: 'grid', gap: 10 }}>
             <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
-              style={{ width: '100%', minHeight: 380, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', outline: 'none', fontSize: 12.5, lineHeight: 1.7, fontFamily: 'var(--font-mono, monospace)' }} />
+              style={{ width: '100%', minHeight: 380, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', outline: 'none', fontSize: 12.5, lineHeight: 1.7, fontFamily: 'var(--mono, monospace)' }} />
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button className="btn btn-primary sm" onClick={saveEdit} disabled={mutating || !draft.trim()}>{mutating ? <Spinner size={12} /> : t('vault.save')}</button>
               <button className="btn sm" onClick={() => setEditing(false)} disabled={mutating}>{t('vault.cancel')}</button>
