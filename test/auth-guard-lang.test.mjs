@@ -99,16 +99,20 @@ test('tenantDenied — 테넌트 불일치만 403, 언어 인자를 반영한다
   assert.equal(enBody.errorCode, 'tenant_only');
 });
 
-test('배선 — app/ 전체의 authError 코드명이 사전에 실존 + guardCompany 네 갈래 코드가 실제로 쓰인다', async () => {
+test('배선 — app/·middleware의 authError 코드명이 사전에 실존 + guardCompany 네 갈래 코드가 실제로 쓰인다', async () => {
   const appDir = fileURLToPath(new URL('../app/', import.meta.url));
   const entries = await readdir(appDir, { recursive: true, withFileTypes: true });
+  const files = entries.filter((e) => e.isFile() && /\.(mjs|js|jsx)$/.test(e.name))
+    .map((e) => join(e.parentPath, e.name));
+  // 미들웨어는 app/ 밖(레포 루트) — 라우트보다 먼저 401을 응답하는 주 노출면이라 반드시 포함
+  // (실사고 이 작업 자체: app/만 훑어 middleware.js:78을 놓쳤다 — 격리 E2E가 잡음)
+  files.push(fileURLToPath(new URL('../middleware.js', import.meta.url)));
   const known = Object.keys(EXPECT);
   const used = new Set();
-  for (const e of entries) {
-    if (!e.isFile() || !/\.(mjs|js|jsx)$/.test(e.name)) continue;
-    const src = await readFile(join(e.parentPath, e.name), 'utf8');
+  for (const f of files) {
+    const src = await readFile(f, 'utf8');
     for (const m of src.matchAll(/authError\(\s*'([a-z_]+)'/g)) {
-      assert.ok(known.includes(m[1]), `${e.parentPath}/${e.name}: 미등록 코드 '${m[1]}' (오타 = deny 경로 500)`);
+      assert.ok(known.includes(m[1]), `${f}: 미등록 코드 '${m[1]}' (오타 = deny 경로 500)`);
       used.add(m[1]);
     }
   }
