@@ -464,9 +464,10 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   // 태생부터 봉투인 크레덴셜 2종만 엄격(깨진 평문 수용 금지), 그 외는 관용 개봉(기존 평문 그대로 통과 → 전환 무중단).
   const pullBuf = async (rel) => {
     const b = await download(remoteKey(rel));
-    // 회수 마커 — 다른 기기가 credSync를 껐다. 내용을 로컬에 쓰면 안 된다(특히 mcp.json은 관용 개봉이
-    // 마커를 설정 파일로 받아 적는다). throw → per-file catch가 failed로 보류하고, 이 기기도 곧
-    // company.json 동기화로 토글을 받아 불가시가 된다(로컬 자격은 그동안 그대로).
+    // 회수 마커 — 다른 기기가 credSync를 껐다. throw → per-file catch가 failed로 보류하고, 이 기기도
+    // 곧 company.json 동기화로 토글을 받아 불가시가 된다(로컬 자격은 그동안 그대로).
+    // 안전성 자체는 마커 형식(무효 봉투 — openSecret이 어차피 throw)이 담보하므로 이 가드는 현재
+    // 등가 변이다(분리 검수 LOW-B). 남기는 실익은 진단성 하나 — "형식 아님"이 아니라 원인을 말한다.
     if (isSecretRel(rel) && isCredWithdrawn(b)) throw new Error('자격 동기화 꺼짐(다른 기기에서 회수) — pull 보류');
     return (rel === 'connections.json' || rel === '.secrets.json') ? openSecret(b) : openSecretCompat(b);
   };
