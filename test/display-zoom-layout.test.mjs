@@ -101,7 +101,7 @@ test('역방향 스캔 — 소스의 모든 vh 토큰이 수집된 치수 선언
   // 정당한 새 용법이면 수집기를 넓혀 불변식 아래로 들여온다 — 예외 허용목록은 두지 않는다.
   for (const [file, src] of sources) {
     const ranges = decls.filter((d) => d.file === file);
-    for (const m of src.matchAll(/(\d*\.?\d+)vh\b/gi)) {
+    for (const m of src.matchAll(/(\d*\.?\d+)[dsl]?vh\b/gi)) { // dvh·svh·lvh 변종도 토큰으로 — 간접 우회 방지(재검수 LOW-A)
       const inside = ranges.some((r) => m.index >= r.start && m.index < r.end);
       assert.ok(inside, `${file}:${lineOf(src, m.index)} — 수집되지 않은 vh 토큰 '${m[0]}' (치수 선언 밖이거나 수집기가 모르는 표기)`);
     }
@@ -174,14 +174,14 @@ test('graph2d 구간 불변식 — 생좌표 읽기는 evPos(zoomedEvPos 위임)
   // 정의부를 제외한 나머지에 생좌표·rect 읽기가 없어야 한다 — 핸들러 하나만 #334 이전으로
   // 되돌리는 변이(분리 검수 실증: onDown 단독 롤백이 초록이었다)도 여기서 red가 된다.
   // 새 좌표 소비자는 evPos를 쓰거나, 환산이 필요 없는 값이면 이 단언을 근거와 함께 넓힌다.
-  assert.doesNotMatch(graph2d.replace(evposLine, ''), /getBoundingClientRect|clientX|clientY/,
-    '이벤트 좌표는 evPos 경유로만 — 생좌표는 배율에서 최대 ~150px 어긋난다(재검수 HIGH-2)');
+  assert.doesNotMatch(graph2d.replace(evposLine, ''), /getBoundingClientRect|clientX|clientY|pageX|pageY|offsetLeft|offsetTop/,
+    '이벤트 좌표는 evPos 경유로만 — 생좌표(동의어 포함)는 배율에서 최대 ~150px 어긋난다(재검수 HIGH-2)');
 });
 
 test('split-pane 배선 — 리사이즈 폭이 (innerWidth − clientX) ÷ dispZoom()으로 클램프에 들어간다', () => {
   // 임포트 핀은 두 이름 다 — dispZoom만 남기고 clampW를 로컬 재정의(배율 상한 소실)하는
   // 변이가 초록이었다(분리 검수 실증).
-  assert.match(splitPane, /import\s*\{[^}]*\bdispZoom\b[^}]*\bclampPaneW\b[^}]*\}\s*from\s*['"]\.\/zoom-math\.mjs['"]/);
+  assert.match(splitPane, /import\s*\{(?=[^}]*\bdispZoom\b)(?=[^}]*\bclampPaneW\b)[^}]*\}\s*from\s*['"]\.\/zoom-math\.mjs['"]/); // 이름 순서 무관(lookahead) — 재정렬 거짓 red 방지
   assert.match(splitPane, /clampW\(\s*\(window\.innerWidth - e\.clientX\)\s*\/\s*dispZoom\(\)\s*,?\s*\)/,
     '커서 좌표(뷰포트 px)→패널 폭(CSS px) 나눗셈 제거 변이는 여기서 잡는다');
 });
