@@ -2062,22 +2062,18 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh - 56px); min-
 }
 
 /* ─── Windows 전용 폰트 오버라이드 ─────────────────────────────────────
-   실사용 제보(2026-08-29): Windows에서 앱 전역 텍스트 가독성 붕괴.
-   두 겹의 원인 — ① 본문 Pretendard는 힌팅이 없어 Windows 표준 해상도(96dpi)에서
-   구조적으로 얇고 흐리게 렌더된다(공식 이슈 #156 계열 — 파일·서빙·CSP·엔진 로드는
-   전부 정상임을 실측으로 배제한 결론). ② --mono 스택엔 한글 글리프 폰트가 없어
-   한글이 굴림계 고정폭으로 떨어지고, microlabel의 0.13em 자간과 겹쳐 낱자가 분리돼 보인다.
-   처방 — Windows에서만 힌팅된 시스템 폰트(Segoe UI + 맑은 고딕)로 전환한다.
-   data-os='win'은 layout.jsx의 osBoot가 첫 페인트 전에 박는다. 맥·리눅스는 이
-   블록에 진입하지 않으므로 렌더 불변(유건 지시: 맥은 지금과 동일하게 유지).
-   특이도: html:root[…] = (0,2,1) — 모든 테마 블록 (0,2,0)을 위치 무관하게 이긴다. */
+   실사용 제보(2026-08-29): Windows에서 라벨·고정폭 계열 한글이 낱자로 벌어져 보임.
+   원인 — --mono 스택(전 테마 공통)에 한글 글리프 폰트가 없어 Windows에서 한글이
+   굴림계 고정폭으로 떨어지고, microlabel의 0.13em 자간과 겹쳐 낱자가 분리된다
+   (맥은 시스템 폴백이 Apple SD Gothic이라 티가 덜 났다). 본문 Pretendard는 유지한다
+   — 시스템 폰트(맑은 고딕) 전환안을 Windows 러너 실캡처로 비교한 결과 유건이
+   Pretendard 통일을 선택(2026-08-29). 처방 = mono 계열 한글 폴백을 Pretendard로
+   명시 + 라벨 자간 완화. data-os='win'은 layout.jsx의 osBoot가 첫 페인트 전에 박고,
+   맥·리눅스는 미부여라 이 블록에 진입하지 않는다(맥 렌더 불변 — 유건 지시).
+   특이도: html:root[…] = (0,2,1) — 모든 테마 블록 (0,2,0)을 위치 무관하게 이긴다.
+   (mono 재정의 21곳 전수가 같은 무폴백 구조라 전 테마 공통 오버라이드가 정확하다.) */
 html:root[data-os='win'] {
-  --font: 'Segoe UI', 'Malgun Gothic', sans-serif;
-  --mono: Consolas, 'Malgun Gothic', monospace;
+  --mono: 'IBM Plex Mono', ui-monospace, 'Pretendard Variable', Pretendard, monospace;
 }
-/* 개성 폰트 테마 2종은 본문 정체성을 유지하고 한글 폴백만 시스템으로(흐리는 Pretendard 대체).
-   Chalkboard SE는 맥 전용이라 Windows 스택에서 제외. (0,3,1)로 위 공통 블록을 되이긴다. */
-html:root[data-os='win'][data-theme='retro'] { --font: 'IBM Plex Mono', ui-monospace, 'Malgun Gothic', monospace; }
-html:root[data-os='win'][data-theme='sketch'] { --font: 'Comic Sans MS', 'Malgun Gothic', cursive; }
-/* 계기판 라벨 자간 — 라틴 대문자용 0.13em이 맑은 고딕 한글에선 낱자 분리로 보인다(제보 스크린샷). */
+/* 계기판 라벨 자간 — 라틴 대문자용 0.13em이 한글에선 낱자 분리로 보인다(제보 스크린샷). */
 html[data-os='win'] .microlabel { letter-spacing: 0.06em; }
