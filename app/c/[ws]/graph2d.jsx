@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { forceSimulation, forceManyBody, forceLink, forceX, forceY } from 'd3-force';
 import { useLang } from '../../i18n';
 import { buildGraph2D, stem } from './graph2d-core.mjs'; // 구성은 JSX 없는 코어(테스트가 직접 임포트)
+import { zoomedEvPos } from './zoom-math.mjs'; // 표시 배율 좌표 환산 — JSX 없는 코어(테스트가 직접 임포트)
 export { buildGraph2D };
 
 // 성도(星圖) 문법 — 허브 기억 = 큰 별(십자 빛살), 일반 기억 = 작은 네 꼭지 별, 크루 = 다이아몬드(유건 승인 시안
@@ -290,11 +291,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
 
     // 배율(표시 zoom) 보정 — rect는 배율이 곱해진 뷰포트 px, 캔버스 좌표계는 CSS px(clientWidth 기준).
     // 배율 1이면 k=1이라 종전과 완전 동일(검수 HIGH-2: 1.25에서 노드 클릭이 최대 ~150px 어긋났다).
-    const evPos = (e) => {
-      const b = canvas.getBoundingClientRect();
-      const k = b.width ? canvas.clientWidth / b.width : 1;
-      return [(e.clientX - b.left) * k, (e.clientY - b.top) * k];
-    };
+    const evPos = (e) => zoomedEvPos(canvas.getBoundingClientRect(), canvas.clientWidth, e.clientX, e.clientY);
     const onDown = (e) => {
       const [sx, sy] = evPos(e);
       const i = pick(sx, sy);
