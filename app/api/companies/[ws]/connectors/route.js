@@ -4,12 +4,19 @@
 import { connectorCatalogFor, connectConnector, mergeConnectorStatus } from '../../../../../src/market.mjs';
 import { guardCompany, csrfDenied } from '../../../../auth.mjs';
 
-export async function GET(_req, { params }) {
+export async function GET(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
   const { listConnections } = await import('../../../../../src/connectors.mjs');
-  const { loadCompany } = await import('../../../../../src/workspace.mjs');
-  const lang = (await loadCompany(ws).catch(() => null))?.lang === 'en' ? 'en' : 'ko';
+  // 표시 언어 — 화면이 보내는 UI 언어(?lang)가 1순위다. 카드의 나머지 문구는 전부 t()(UI 언어)를
+  // 따르므로 name·note만 회사 언어로 내리면 카드 한 장에 두 언어가 섞인다(실측 2026-08-29:
+  // en 모드에 "구글 캘린더" 잔존). 쿼리가 없거나 무효면 기존대로 회사 시스템 언어로 폴백.
+  const q = new URL(req.url).searchParams.get('lang');
+  let lang = q === 'en' || q === 'ko' ? q : null;
+  if (!lang) {
+    const { loadCompany } = await import('../../../../../src/workspace.mjs');
+    lang = (await loadCompany(ws).catch(() => null))?.lang === 'en' ? 'en' : 'ko';
+  }
   const rows = mergeConnectorStatus(connectorCatalogFor(lang), await listConnections(ws).catch(() => []));
   return Response.json({ connectors: rows });
 }

@@ -696,16 +696,18 @@ function TrashCard({ ws }) {
     "연결"은 브라우저 동의 창을 열고 **끝나기를 기다리지 않는다**(사용자가 구글에서 로그인하는 동안
     응답이 막히면 화면이 죽은 것처럼 보인다). 완료는 목록을 다시 읽어 상태로 관측한다 — 코어와 같은 계약. */
 function ConnectorsCard({ ws }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   const [waiting, setWaiting] = useState('');
 
-  const load = useCallback(() => api(`/api/companies/${ws}/connectors`)
+  // ?lang = UI 언어 — 카탈로그 문구(name·note)를 화면 언어로 받는다. 안 보내면 서버가 회사 언어로
+  // 골라 en 화면에 ko 문구가 섞인다. 언어 전환(cmd+/) 시 lang 의존성이 재조회까지 이어 준다.
+  const load = useCallback(() => api(`/api/companies/${ws}/connectors?lang=${lang}`)
     // 로드 실패를 "연결할 게 없음"과 구분한다 — 일시 장애가 카탈로그 소실처럼 읽히면 안 된다.
     .then((d) => setRows(d.connectors ?? []))
-    .catch(() => { setRows([]); setErr(t('settings.connectors.err.load')); }), [ws, t]);
+    .catch(() => { setRows([]); setErr(t('settings.connectors.err.load')); }), [ws, t, lang]);
   useEffect(() => { load(); }, [load]);
 
   // 동의 창이 떠 있는 동안만 짧게 폴링 — 인가는 다른 창에서 끝나므로 이 화면은 알 길이 없다.

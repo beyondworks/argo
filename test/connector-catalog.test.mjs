@@ -349,3 +349,20 @@ test('마켓 라우트 — 커넥터 연결·해제가 guardCompany 뒤에 배�
   assert.match(src, /kind === 'connector'\) await disconnectConnector\(ws, id\)/, 'DELETE 해제 분기(명시)');
   assert.match(src, /mergeConnectorStatus\(connectorCatalogFor\(lang\), connections\)/, 'GET 병합(회사 언어)');
 });
+
+test('커넥터 라우트 — 표시 언어는 화면 UI 언어(?lang) 1순위, 무효·부재 시 회사 언어 폴백', async () => {
+  // 설정 화면 카드의 다른 문구는 전부 t()(UI 언어)라, name·note만 회사 언어로 내리면 카드 한 장에
+  // 두 언어가 섞인다(실측 2026-08-29: en 모드에 "구글 캘린더" 잔존). 라우트 실호출은 next/headers
+  // 때문에 불가 — 소스로 잠그고, 실렌더 검증은 격리 dev 서버 시각 확인이 담당한다.
+  const src = await readFile(new URL('../app/api/companies/[ws]/connectors/route.js', import.meta.url), 'utf8');
+  const get = src.split('export async function GET')[1].split('export async function')[0];
+  assert.match(get, /guardCompany\(ws\)/, 'GET에 회사 가드가 있어야 한다');
+  assert.match(get, /searchParams\.get\('lang'\)/, 'GET이 화면의 ?lang을 읽는다');
+  // ko|en 화이트리스트 밖 값은 버려야 한다 — 임의 문자열이 카탈로그 선택자로 흘러들지 않게.
+  assert.match(get, /=== 'en' \|\| q === 'ko'/, '?lang은 ko|en만 유효');
+  assert.match(get, /mergeConnectorStatus\(connectorCatalogFor\(lang\)/, 'GET 병합이 그 언어를 쓴다');
+  assert.match(get, /loadCompany\(ws\)/, '쿼리 부재 시 회사 언어 폴백이 남아 있어야 한다');
+  // 화면 쪽 배선 — 카드가 실제로 ?lang을 보내는가(라우트만 열려 있으면 미사용 사양이 된다).
+  const page = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
+  assert.match(page, /\/connectors\?lang=\$\{lang\}/, '설정 카드가 UI 언어를 쿼리로 보낸다');
+});
