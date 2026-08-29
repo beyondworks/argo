@@ -20,13 +20,14 @@ const { authError, langFromCookieHeader, csrfDenied, tenantDenied, AUTH_ON } =
 
 // 기대표는 사전(MSG)과 독립적으로 여기 고정한다 — 사전을 되비추면 동어반복이라 게이트가 아니다.
 // ko 문구는 변경 전 auth.mjs가 실제로 내리던 프로덕션 문자열(인접 행동 핀 — 바이트 동일해야 회귀 0).
+// en도 리터럴로 고정한다(분리 검수 LOW: 성질 검사만으론 en 오염이 green).
 const EXPECT = {
-  auth_required: { status: 401, ko: '로그인이 필요합니다' },
-  cross_origin: { status: 403, ko: '교차 출처 요청은 허용되지 않습니다' },
-  tenant_only: { status: 403, ko: '이 서버는 다른 계정 전용입니다' },
-  company_not_found: { status: 404, ko: '회사를 찾을 수 없습니다' },
-  company_linked: { status: 403, ko: '이 회사는 계정에 연결되어 있습니다 — 로그인해 주세요' },
-  company_forbidden: { status: 403, ko: '이 회사에 접근할 권한이 없습니다' },
+  auth_required: { status: 401, ko: '로그인이 필요합니다', en: 'Sign in to continue' },
+  cross_origin: { status: 403, ko: '교차 출처 요청은 허용되지 않습니다', en: 'Cross-origin requests are not allowed' },
+  tenant_only: { status: 403, ko: '이 서버는 다른 계정 전용입니다', en: 'This server is dedicated to another account' },
+  company_not_found: { status: 404, ko: '회사를 찾을 수 없습니다', en: 'Company not found' },
+  company_linked: { status: 403, ko: '이 회사는 계정에 연결되어 있습니다 — 로그인해 주세요', en: 'This company is linked to an account — please sign in' },
+  company_forbidden: { status: 403, ko: '이 회사에 접근할 권한이 없습니다', en: 'You do not have access to this company' },
 };
 
 test('authError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태코드 + errorCode 동봉', async () => {
@@ -40,12 +41,11 @@ test('authError — ko 문구는 기존 프로덕션 문자열 그대로 + 상�
   }
 });
 
-test('authError — en은 한글 없는 별도 문구로 그린다, 미지원 언어값은 ko 폴백', async () => {
+test('authError — en 문구 리터럴 고정, 미지원 언어값은 ko 폴백', async () => {
   for (const [code, exp] of Object.entries(EXPECT)) {
     const body = await authError(code, 'en').json();
-    assert.ok(body.error.length > 0, `${code} en 문구 존재`);
-    assert.notEqual(body.error, exp.ko, `${code} en ≠ ko`);
-    assert.ok(!/[가-힣]/.test(body.error), `${code} en에 한글 없음: ${body.error}`);
+    assert.equal(body.error, exp.en, `${code} en 문구`);
+    assert.ok(!/[가-힣]/.test(body.error), `${code} en에 한글 없음`);
     assert.equal(body.errorCode, code);
   }
   assert.equal((await authError('auth_required', 'de').json()).error, EXPECT.auth_required.ko, '미지원 값 = ko');
@@ -66,6 +66,10 @@ test('langFromCookieHeader — argo-lang 쿠키만 정확히 읽는다', () => {
   assert.equal(langFromCookieHeader(null), 'ko', '무헤더 = ko');
   assert.equal(langFromCookieHeader('argo-lang=de'), 'ko', '미지원 값은 ko 폴백');
   assert.equal(langFromCookieHeader('xargo-lang=en'), 'ko', '이름 부분일치 오독 금지');
+  // 다른 두 판독기(next/headers·미들웨어 req.cookies)와 의미 정렬 — 중복은 마지막 채택, 값 무트림
+  assert.equal(langFromCookieHeader('argo-lang=ko; argo-lang=en'), 'en', '중복 쿠키 = 마지막 값');
+  assert.equal(langFromCookieHeader('argo-lang=en; argo-lang=ko'), 'ko', '중복 쿠키 = 마지막 값(역방향)');
+  assert.equal(langFromCookieHeader('argo-lang= en'), 'ko', '값 앞 공백 무트림(타 판독기와 동일)');
 });
 
 const fakeReq = (h = {}) => ({ headers: new Headers(h) });
@@ -115,9 +119,41 @@ test('배선 — app/·middleware의 authError 코드명이 사전에 실존 + g
       assert.ok(known.includes(m[1]), `${f}: 미등록 코드 '${m[1]}' (오타 = deny 경로 500)`);
       used.add(m[1]);
     }
+    // 언어 인자 없는 호출 금지 — 호출부 하나가 lang을 빠뜨리면 그 자리만 ko 고정(분리 검수 HIGH 변이 실증)
+    const oneArg = src.match(/authError\(\s*'[a-z_]+'\s*\)/);
+    assert.equal(oneArg, null, `${f}: 언어 인자 없는 authError 호출 ${oneArg?.[0] ?? ''}`);
   }
   // guardCompany의 네 갈래가 전부 배선돼 있어야 한다 — 하나라도 빠지면 그 갈래는 미번역 잔존
   for (const code of ['auth_required', 'company_not_found', 'company_linked', 'company_forbidden']) {
     assert.ok(used.has(code), `가드 배선에 ${code} 없음`);
+  }
+});
+
+// ── 언어 전달 경로 배선 잠금 — 분리 검수 HIGH: 사전만 잠그면 전달로(판독·미러) 변이가 전부 green.
+// 라우트·미들웨어·프로바이더는 next 런타임이라 노드에서 실호출 불가 → 소스 배선으로 잠근다(레포 관례).
+// 각 단언은 검수가 green을 실증한 변이 하나에 대응한다(requestLang 상수화·미들웨어 상수화·미러 삭제).
+test('배선 — 언어 전달로: requestLang·미들웨어의 argo-lang 실판독 + i18n 쿠키 미러', async () => {
+  const src = (rel) => readFile(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+  const auth = await src('../app/auth.mjs');
+  assert.match(auth, /store\.get\('argo-lang'\)/, "requestLang이 argo-lang 쿠키를 읽지 않는다(상수화 변이)");
+  const mw = await src('../middleware.js');
+  assert.match(mw, /req\.cookies\.get\('argo-lang'\)/, '미들웨어 401이 argo-lang 쿠키를 읽지 않는다(상수화 변이)');
+  const i18n = await src('../app/i18n.jsx');
+  assert.match(i18n, /useEffect\(\(\)\s*=>\s*\{\s*mirrorLangCookie\(lang\);?\s*\},\s*\[lang\]\)/,
+    'i18n Provider의 lang→쿠키 미러 이펙트가 없다(미러 삭제 변이 — 쿠키가 영영 안 생긴다)');
+});
+
+// 가드 계급 ko 문구가 사전 밖에서 재등장하면 red — 이번 작업에서 구현자가 middleware.js를 놓쳤던
+// 실수의 재발 방지(하드코딩 401/403이 다시 생기면 en 사용자에게 한국어가 샌다).
+test('배선 — 가드 ko 문구의 사전 밖 재등장 금지 (error: 리터럴)', async () => {
+  const appDir = fileURLToPath(new URL('../app/', import.meta.url));
+  const entries = await readdir(appDir, { recursive: true, withFileTypes: true });
+  const files = entries.filter((e) => e.isFile() && /\.(mjs|js|jsx)$/.test(e.name))
+    .map((e) => join(e.parentPath, e.name));
+  files.push(fileURLToPath(new URL('../middleware.js', import.meta.url)));
+  const banned = /error:\s*['"`](로그인이 필요합니다|교차 출처 요청은 허용되지 않습니다|이 서버는 다른 계정 전용입니다|회사를 찾을 수 없습니다|이 회사는 계정에 연결되어|이 회사에 접근할 권한이 없습니다)/;
+  for (const f of files) {
+    const m = (await readFile(f, 'utf8')).match(banned);
+    assert.equal(m, null, `${f}: 가드 문구 하드코딩 재등장 — authError로 합류할 것: ${m?.[0] ?? ''}`);
   }
 });

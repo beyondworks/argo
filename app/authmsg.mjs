@@ -28,10 +28,13 @@ export function authError(code, lang) {
 }
 
 /** Cookie 헤더에서 표시 언어. 클라이언트(i18n Provider)가 localStorage의 argo-lang을 쿠키로
-    미러한다 — localStorage는 요청에 실리지 않아 쿠키가 서버로 가는 유일한 전달로다(값은 ko|en뿐). */
+    미러한다 — localStorage는 요청에 실리지 않아 쿠키가 서버로 가는 유일한 전달로다(값은 ko|en뿐).
+    판독 의미는 다른 두 판독기(auth.mjs requestLang의 next/headers·미들웨어 req.cookies)와 정렬:
+    같은 이름 중복이면 마지막 값 채택, 값은 무트림 정확 일치(분리 검수 LOW — 판독기 간 갈림 봉합). */
 export function langFromCookieHeader(header) {
-  const m = /(?:^|;\s*)argo-lang=([^;]*)/.exec(header || '');
-  return m?.[1].trim() === 'en' ? 'en' : 'ko';
+  let last = null;
+  for (const m of (header || '').matchAll(/(?:^|;\s*)argo-lang=([^;]*)/g)) last = m[1];
+  return last === 'en' ? 'en' : 'ko';
 }
 
 // CSRF 가드 — 브라우저가 붙이는 Sec-Fetch-Site만 검사한다. 로컬 서버를 띄운 채 악성 웹페이지를 열면

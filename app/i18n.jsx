@@ -1293,13 +1293,15 @@ export function LanguageProvider({ children }) {
   useEffect(() => {
     const saved = localStorage.getItem('argo-lang');
     if (saved === 'en' || saved === 'ko') setLangState(saved);
-    mirrorLangCookie(saved === 'en' ? 'en' : 'ko'); // 과거에 en으로 바꿔둔 사용자도 첫 로드에 쿠키 확보
   }, []);
+
+  // 언어가 정해질 때마다 쿠키 미러 — 마운트(과거 en 사용자 첫 로드)·setLang·cmd+/ 전환을 한 지점이
+  // 전부 덮는다(setState 업데이터 안 부수효과 회피, 분리 검수 LOW). test/auth-guard-lang.test.mjs가 배선 잠금.
+  useEffect(() => { mirrorLangCookie(lang); }, [lang]);
 
   const setLang = useCallback((next) => {
     setLangState(next);
     try { localStorage.setItem('argo-lang', next); } catch { /* 사파리 프라이빗 등 */ }
-    mirrorLangCookie(next);
   }, []);
 
   // cmd+/ (윈도우는 ctrl+/) — 어디서든 언어 전환
@@ -1310,7 +1312,6 @@ export function LanguageProvider({ children }) {
         setLangState((l) => {
           const next = l === 'ko' ? 'en' : 'ko';
           try { localStorage.setItem('argo-lang', next); } catch { /* 무시 */ }
-          mirrorLangCookie(next);
           return next;
         });
       }
