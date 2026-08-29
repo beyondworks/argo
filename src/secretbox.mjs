@@ -4,9 +4,12 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
 import { loadSyncCreds } from './synccreds.mjs';
 import { accountKey } from './accountkey.mjs';
+import { dek } from './e2ee.mjs';
 
+const MAGIC3 = Buffer.from('argosecret.v3:'); // E2EE — 키가 사용자 기기에만(DEK). 서버는 절대 못 연다.
 const MAGIC2 = Buffer.from('argosecret.v2:');
 const MAGIC1 = Buffer.from('argosecret.v1:');
+const GENERATION = Buffer.from('argosecret.'); // 세대 공통 접두 — 미지 세대의 평문 통과를 막는 전방 호환 게이트
 const IV_LEN = 12;
 const TAG_LEN = 16;
 
@@ -23,6 +26,19 @@ function key2() {
     k2src = ak;
   }
   return k2;
+}
+
+// v3 키 — 계정 DEK(사용자 기기에만 존재)에서 파생. DEK 미보유 = 이 기기가 아직 승인 전이라는 뜻이고,
+// 그때의 개봉 시도는 명확한 오류로 보류된다(per-file catch가 잡아 다음 사이클 재시도 — 불가시 홀드).
+let k3 = null, k3src = null;
+function key3() {
+  const dk = dek();
+  if (!dk) throw new Error('E2EE 봉투(v3) — 이 기기에 아직 열쇠가 없습니다(기기 승인·복구 대기)');
+  if (!k3 || k3src !== dk) {
+    k3 = Buffer.from(hkdfSync('sha256', dk, 'argo-e2ee-v3', 'secretbox', 32));
+    k3src = dk;
+  }
+  return k3;
 }
 
 // v1 레거시 키 — 서비스 키 HKDF (열기 전용)
@@ -65,10 +81,12 @@ export const encVaultOn = () => process.env.ARGO_ENC_VAULT === '1';
 export const isEncRel = (rel) => isSecretRel(rel) || encVaultOn();
 
 /** 봉투/레거시 평문 겸용 개봉 — 봉투 도입 전에 클라우드에 올라간 평문(mcp.json 등)을 수용한다.
-    평문이면 그대로 반환하고, 다음 로컬 변경 push에서 봉투로 승격된다. */
+    평문이면 그대로 반환하고, 다음 로컬 변경 push에서 봉투로 승격된다.
+    ⚠ 전방 호환 게이트(E2EE 단계 0): 'argosecret.' 접두는 **세대 불문** 개봉기로 보낸다 — 정확 매칭만
+    걸면 미래 세대(v3, v4…)가 평문으로 통과해 로컬 파일이 암호문으로 오염·재봉인·전파된다
+    (credSync 마커 사고와 동일 계열을 세대 축에서 원천 차단). 모르는 세대는 개봉기가 throw로 보류한다. */
 export function openSecretCompat(buf) {
-  const enveloped = buf.subarray(0, MAGIC2.length).equals(MAGIC2) || buf.subarray(0, MAGIC1.length).equals(MAGIC1);
-  return enveloped ? openSecret(buf) : buf;
+  return buf.subarray(0, GENERATION.length).equals(GENERATION) ? openSecret(buf) : buf;
 }
 
 /** 평문 → v2 봉투(MAGIC ∥ iv ∥ tag ∥ ct). */
@@ -79,13 +97,28 @@ export function sealSecret(buf) {
   return Buffer.concat([MAGIC2, iv, c.getAuthTag(), ct]);
 }
 
-/** 봉투 → 평문 (v2/v1 디스패치). 위변조·형식 불일치는 throw — 조용히 깨진 평문을 쓰지 않는다. */
+/** v3(E2EE) 봉인 — 키는 사용자 기기의 DEK에서만 파생. 단계 1(옵트인)부터 쓰기 경로가 호출한다. */
+export function sealSecretV3(buf) {
+  const iv = randomBytes(IV_LEN);
+  const c = createCipheriv('aes-256-gcm', key3(), iv);
+  const ct = Buffer.concat([c.update(buf), c.final()]);
+  return Buffer.concat([MAGIC3, iv, c.getAuthTag(), ct]);
+}
+
+/** 봉투 → 평문 (v3/v2/v1 디스패치). 위변조·형식 불일치는 throw — 조용히 깨진 평문을 쓰지 않는다.
+    미지 세대('argosecret.' 접두인데 아는 MAGIC이 아님)도 throw — 구버전이 신세대 암호문을 다루게 될 때
+    평문 오인이 아니라 보류가 되도록(per-file catch가 잡아 다음 사이클 재시도, 앱 업데이트가 해소). */
 export function openSecret(buf) {
-  const k = buf.subarray(0, MAGIC2.length).equals(MAGIC2) ? key2()
+  const k = buf.subarray(0, MAGIC3.length).equals(MAGIC3) ? key3()
+    : buf.subarray(0, MAGIC2.length).equals(MAGIC2) ? key2()
     : buf.subarray(0, MAGIC1.length).equals(MAGIC1) ? key1()
     : null;
-  if (!k) throw new Error('시크릿 봉투 형식 아님');
-  const off = MAGIC2.length; // v1/v2 MAGIC 길이 동일
+  if (!k) {
+    throw new Error(buf.subarray(0, GENERATION.length).equals(GENERATION)
+      ? '미지 봉투 세대 — 이 파일을 읽으려면 앱 업데이트가 필요합니다(보류)'
+      : '시크릿 봉투 형식 아님');
+  }
+  const off = MAGIC2.length; // v1/v2/v3 MAGIC 길이 동일(14)
   const iv = buf.subarray(off, off + IV_LEN);
   const tag = buf.subarray(off + IV_LEN, off + IV_LEN + TAG_LEN);
   const ct = buf.subarray(off + IV_LEN + TAG_LEN);
