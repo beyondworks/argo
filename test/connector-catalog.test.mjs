@@ -364,9 +364,14 @@ test('커넥터 라우트 — 표시 언어는 화면 UI 언어(?lang) 1순위, 
   assert.match(get, /guardCompany\(ws\)/, 'GET에 회사 가드가 있어야 한다');
   assert.match(get, /searchParams\.get\('lang'\)/, 'GET이 화면의 ?lang을 읽는다');
   // ko|en 화이트리스트 밖 값은 버려야 한다 — 임의 문자열이 카탈로그 선택자로 흘러들지 않게.
-  // 화이트리스트는 골격만 잠근다(검수 L3: `['ko','en'].includes(q)` 등가 리팩터에 거짓 red가 났던 문자 앵커 완화)
-  assert.ok(/'en'/.test(get) && /'ko'/.test(get), "?lang 유효값('ko'·'en') 화이트리스트가 GET에 있어야 한다");
+  // 화이트리스트 골격 단언(M3 재보정): GET 전체가 아니라 **쿼리 판정 구간**(searchParams~회사 폴백 사이)에
+  // ko·en 리터럴이 있어야 한다 — 전체 검사면 회사 폴백 줄의 리터럴 때문에 화이트리스트를 지워도 초록(거짓 green 실증).
+  const seg = get.slice(get.indexOf("searchParams.get('lang')"), get.indexOf('loadCompany'));
+  assert.ok(/'ko'/.test(seg) && /'en'/.test(seg), "?lang 화이트리스트(ko·en)가 쿼리 판정 구간에 있어야 한다");
   assert.match(get, /mergeConnectorStatus\(connectorCatalogFor\(lang\)/, 'GET 병합이 그 언어를 쓴다');
+  // M2(재검수): 오류 문구 재렌더용 lang이 listConnections까지 배선돼야 한다 — 호출부를 되돌리면
+  // en 카드에 한국어 오류가 재발하는데 98개 테스트가 전부 초록이었다(호출부 단위 게이트 교훈).
+  assert.match(get, /listConnections\(ws,\s*\{[^}]*lang/, '오류 문구 재렌더용 lang이 listConnections까지 간다');
   assert.match(get, /loadCompany\(ws\)/, '쿼리 부재 시 회사 언어 폴백이 남아 있어야 한다');
   // 화면 쪽 배선 — 카드가 실제로 ?lang을 보내는가(라우트만 열려 있으면 미사용 사양이 된다).
   const page = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
