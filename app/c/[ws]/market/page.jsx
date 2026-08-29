@@ -139,7 +139,7 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose, customMcpAl
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <div className="card fade-up" style={{ width: 'min(600px, 100%)', maxHeight: '84vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
+      <div className="card fade-up" style={{ width: 'min(600px, 100%)', maxHeight: 'calc(84vh / var(--z, 1))', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
           <span className="card-title">{item.title ?? item.name}</span>
           <span className="rule" />

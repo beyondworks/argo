@@ -18,7 +18,10 @@ function extractBoot() {
 }
 
 function runBoot({ innerWidth, savedZoom }) {
-  const style = {};
+  // setProperty 구현 — 실제 CSSOM처럼 커스텀 프로퍼티(--z)를 받아야 부트 후반(zoom 설정)까지
+  // 관측된다(검수 지적: 평범한 객체면 TypeError를 부트의 catch가 삼켜 뒤가 전부 무게이트).
+  const props = {};
+  const style = { setProperty: (k, v) => { props[k] = String(v); }, removeProperty: (k) => { delete props[k]; } };
   const ctx = {
     window: { innerWidth },
     localStorage: { getItem: () => (savedZoom == null ? null : String(savedZoom)) },
@@ -27,7 +30,7 @@ function runBoot({ innerWidth, savedZoom }) {
   };
   ctx.window.localStorage = ctx.localStorage;
   vm.runInNewContext(extractBoot(), ctx);
-  return { zoom: style.zoom, auto: ctx.window.__argoAutoZoom };
+  return { zoom: style.zoom, z: props['--z'], auto: ctx.window.__argoAutoZoom };
 }
 
 test('일반 화면(1800px 미만)은 배율 미설정 — 기존 레이아웃과 완전 동일', () => {
@@ -41,6 +44,13 @@ test('큰 모니터 자동 배율 — 1800px 이상 1.1, 2400px 이상 1.25', ()
   assert.equal(runBoot({ innerWidth: 2399 }).zoom, 1.1);
   assert.equal(runBoot({ innerWidth: 2400 }).zoom, 1.25);
   assert.equal(runBoot({ innerWidth: 3840 }).zoom, 1.25);
+});
+
+test('배율 적용 시 100vh 보정 변수(--z)도 같은 값으로 — zoom만 걸리면 전체 화면 레이아웃이 넘친다', () => {
+  const r = runBoot({ innerWidth: 2500 });
+  assert.equal(r.zoom, 1.25);
+  assert.equal(r.z, '1.25');
+  assert.equal(runBoot({ innerWidth: 1280 }).z, undefined, '배율 1 = 보정 변수도 미설정');
 });
 
 test('저장값(cmd +/- 조절분)이 자동 판정보다 우선한다', () => {

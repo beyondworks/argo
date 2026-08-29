@@ -1307,7 +1307,7 @@ export function LanguageProvider({ children }) {
           try { localStorage.setItem('argo-lang', next); } catch { /* 무시 */ }
           return next;
         });
-      } else if (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0') {
+      } else if (!e.altKey && (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0')) { // altKey 제외 — 윈도우 AltGr(ctrl+alt) 문자 입력 오가로채기 방지
         e.preventDefault();
         const el = document.documentElement;
         let next;
@@ -1319,9 +1319,9 @@ export function LanguageProvider({ children }) {
           next = Math.min(2, Math.max(0.7, Math.round((cur + (e.key === '-' ? -0.1 : 0.1)) * 10) / 10));
           try { localStorage.setItem('argo-zoom', String(next)); } catch { /* 무시 */ }
         }
-        el.style.zoom = next === 1 ? '' : String(next);
-        // 전체 화면 높이(100vh) 레이아웃 보정용 — globals.css·채팅 그리드가 calc(100vh / var(--z, 1))로 읽는다
+        // --z(100vh 보정) 먼저, zoom 나중 — 중간 실패 시 "확대만 되고 보정 없음"(넘침)이 아니라 안전하게 무배율
         if (next === 1) el.style.removeProperty('--z'); else el.style.setProperty('--z', String(next));
+        el.style.zoom = next === 1 ? '' : String(next);
       }
     };
     window.addEventListener('keydown', h);

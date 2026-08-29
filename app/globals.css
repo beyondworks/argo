@@ -1393,7 +1393,7 @@ body {
   font-size: 13.5px;
   line-height: 1.6;
   letter-spacing: -0.005em;
-  min-height: 100vh;
+  min-height: calc(100vh / var(--z, 1)); /* --z = 표시 배율 보정 */
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   word-break: keep-all;
@@ -1428,7 +1428,7 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
    반드시 실제 스크롤 영역에만 선언한다 — 새 스크롤 영역을 만들면 여기(또는 인라인)에 함께 추가. */
 .side, .thread, .tasks-list, .crew-drawer-body, .input-bar textarea { overscroll-behavior: contain; }
 
-.shell { display: grid; grid-template-columns: 228px 1fr; min-height: 100vh; }
+.shell { display: grid; grid-template-columns: 228px 1fr; min-height: calc(100vh / var(--z, 1)); }
 
 .side {
   border-right: 1px solid var(--border);
@@ -2031,7 +2031,7 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh / var(--z, 1)
      트리는 자체 스크롤로 45vh까지만, 본문은 그래프가 살 최소 높이를 보장한다. */
   .vault-split { flex-direction: column; height: auto; min-height: 0; }
   main.content:has(> .vault-split) .vault-split { height: auto; }
-  .vault-split > .vault-tree { width: auto; max-height: 45vh; border-right: 0; border-bottom: 1px solid var(--border-soft); }
+  .vault-split > .vault-tree { width: auto; max-height: calc(45vh / var(--z, 1)); border-right: 0; border-bottom: 1px solid var(--border-soft); }
   .vault-split > .vault-content { min-height: 420px; }
 }
 

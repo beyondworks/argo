@@ -17,7 +17,7 @@ export default function LegalPage() {
     </section>
   );
   return (
-    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'start center', padding: '40px 24px' }}>
+    <div style={{ minHeight: 'calc(100vh / var(--z, 1))', display: 'grid', placeItems: 'start center', padding: '40px 24px' }}>
       <div className="card fade-up" style={{ width: 'min(720px, 100%)', padding: '34px 34px', display: 'grid', gap: 4 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
           <h1 style={{ fontSize: 22, fontWeight: 750, margin: 0 }}>{ko ? '약관 및 개인정보' : 'Terms & Privacy'}</h1>

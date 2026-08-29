@@ -1884,7 +1884,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <div className="card card-float fade-up" style={{ width: 'min(680px, 100%)', maxHeight: '86vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+      <div className="card card-float fade-up" style={{ width: 'min(680px, 100%)', maxHeight: 'calc(86vh / var(--z, 1))', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
           <span className="card-title">{t('chat.cardTitle')}</span>
           <span className="microlabel">{t('chat.systemPromptEq')}</span>

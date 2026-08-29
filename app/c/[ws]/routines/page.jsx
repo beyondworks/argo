@@ -455,7 +455,7 @@ function RunPopup({ ws, routine, crewName, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={running ? undefined : onClose}>
-      <div className="card fade-up" style={{ width: 'min(560px, 100%)', maxHeight: '80vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
+      <div className="card fade-up" style={{ width: 'min(560px, 100%)', maxHeight: 'calc(80vh / var(--z, 1))', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
           <span className="card-title"><Icon name="play" size={13} />{routine.title}</span>
           <button className="btn sm" onClick={onClose} disabled={running}>{t('routines.close')}</button>

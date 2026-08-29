@@ -107,7 +107,10 @@ function Vault({ params }) {
   }, []);
   useEffect(() => {
     if (!resizing) return;
-    const move = (e) => setTreeW(Math.min(560, Math.max(220, e.clientX - (document.querySelector('.vault-tree')?.getBoundingClientRect().left ?? 0))));
+    const move = (e) => {
+      const z = parseFloat(document.documentElement.style.zoom) || 1; // 표시 배율 — 커서(뷰포트 px)→CSS px
+      setTreeW(Math.min(560, Math.max(220, (e.clientX - (document.querySelector('.vault-tree')?.getBoundingClientRect().left ?? 0)) / z)));
+    };
     const up = () => { setResizing(false); };
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
     return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
