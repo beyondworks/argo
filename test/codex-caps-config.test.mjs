@@ -23,8 +23,9 @@ test('config.toml에 샌드박스 섹션이 없다 — danger-full-access와 한
 
 test('codex 호출이 danger-full-access를 쓰고 workspace-write로 되돌아가지 않는다', async () => {
   // 인자 조립이 인라인이라 값 테스트가 불가 — 호출부 표면을 잠근다(SDK_ALLOWED_TOOLS 불변식과 같은 방식).
+  // readOnly 도입(2026-08-29): 기본은 danger-full-access, readOnly 턴(설명 생성)만 read-only. 삼항으로 표기.
   const src = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
-  assert.match(src, /'--sandbox', 'danger-full-access'/, 'full-access 플래그가 사라졌다');
+  assert.match(src, /readOnly \? 'read-only' : 'danger-full-access'/, '기본 full-access가 사라졌거나 readOnly 분기가 없다');
   assert.doesNotMatch(src, /'--sandbox', 'workspace-write'/, 'workspace-write 복귀 — "사용 권한이 없다"가 되돌아온다');
   assert.doesNotMatch(src, /codexSandboxArgs/, '삭제된 샌드박스 매핑의 부활');
 });

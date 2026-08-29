@@ -101,8 +101,9 @@ test('샌드박스 fail-closed — caps 미전달이면 --sandbox가 켜진다(�
   // oneshot(영입·기억 정리)은 caps를 전달하지 않는다 — fail-open이면 그 경로만 터미널 무제한이 된다
   // (codex 상시 샌드박스·gemini 셸 상시 제외와 반대 방향). 배선을 소스로 잠근다.
   const src = read('src/runners.mjs');
-  assert.ok(src.includes("...(caps?.shell ? [] : ['--sandbox'])"),
-    'antigravity --sandbox가 fail-closed가 아니다 — caps 미전달 경로가 터미널 무제한이 된다');
+  // caps → effCaps(readOnly면 전부 false로 눌러 셸도 닫힘 — readOnly 도입 2026-08-29). fail-closed 방향은 동일.
+  assert.ok(src.includes("...(effCaps?.shell ? [] : ['--sandbox'])"),
+    'antigravity --sandbox가 fail-closed가 아니다 — caps 미전달·readOnly 경로가 터미널 무제한이 된다');
 });
 
 test('에러 매핑 — gemini 개인 OAuth 중단 안내가 Antigravity 대안을 담는다', () => {

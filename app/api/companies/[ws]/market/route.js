@@ -29,7 +29,7 @@ export async function GET(req, { params }) {
     try {
       const { lang = 'ko' } = await loadCompany(ws).catch(() => ({})); // 회사 시스템 언어 — 없으면 ko 폴백
       const results = top === 'skills' ? await topRemoteSkills() : await topRemoteMcp();
-      warmExplains(results, top === 'skills' ? 'skill' : 'mcp', lang); // 백그라운드 — 응답을 막지 않는다
+      warmExplains(ws, results, top === 'skills' ? 'skill' : 'mcp', lang); // 백그라운드 — 응답을 막지 않는다. ws = 이 회사 러너로 생성(러너 독립)
       return Response.json({ results });
     } catch (e) {
       return Response.json({ results: [], error: `추천 목록 로드 실패: ${String(e.message || e)}` });
@@ -112,7 +112,7 @@ export async function POST(req, { params }) {
     else if (body.kind === 'remote-mcp') await installRemoteMcp(ws, body.item ?? {}); // npm 분기 가드는 installRemoteMcp 내부(P0-2). http 원격은 로컬 실행 없어 허용
     else if (body.kind === 'explain') {
       const { lang = 'ko' } = await loadCompany(ws).catch(() => ({})); // 회사 시스템 언어 — 없으면 ko 폴백
-      return Response.json(await explainItem(body.item ?? {}, lang));
+      return Response.json(await explainItem(ws, body.item ?? {}, lang)); // ws 동반 — 이 회사의 연결 러너로 실행(실사용 제보 2026-08-29)
     }
     else return Response.json({ error: '알 수 없는 kind' }, { status: 400 });
     return Response.json({ ok: true });
