@@ -93,16 +93,20 @@ test('openDekWithKek — 코드 오입력은 E2EE_BAD_CODE 코드를 싣고, 옳
 test('배선 — e2ee 라우트: apiError 코드 실존·전 코드 사용·언어 인자 필수·쿠키 실판독·오입력 판별', async () => {
   const src = await readFile(new URL('../app/api/me/e2ee/route.js', import.meta.url), 'utf8');
   const used = new Set();
-  for (const m of src.matchAll(/apiError\(\s*'([a-z0-9_]+)'/g)) {
-    assert.ok(m[1] in API_MSG, `미등록 코드 '${m[1]}' (오타 = 해당 갈래 500)`);
-    used.add(m[1]);
+  // 호출부 전 형태 강제 — 인자 누락뿐 아니라 상수화(`, 'ko')`)도 그 갈래만 영구 한국어 고정이다
+  // (분리 검수 MEDIUM-1 변이 실증: 상수화가 한 인자 금지 스캔을 그대로 통과했다. 호출부 단위
+  // 게이트 교훈의 재적중 — 게이트는 함수가 아니라 호출부 형태로 잠근다).
+  const calls = [...src.matchAll(/apiError\([^)]*\)/g)];
+  assert.ok(calls.length > 0, 'apiError 호출이 하나도 없다 — 전환 자체가 풀린 것');
+  for (const m of calls) {
+    const shape = m[0].match(/^apiError\('([a-z0-9_]+)', lang\)$/);
+    assert.ok(shape, `호출 형태 위반(코드 리터럴 + lang 변수만 허용): ${m[0]}`);
+    assert.ok(shape[1] in API_MSG, `미등록 코드 '${shape[1]}' (오타 = 해당 갈래 500)`);
+    used.add(shape[1]);
   }
   for (const code of Object.keys(API_MSG)) {
     assert.ok(used.has(code), `사전의 ${code}가 라우트에 배선되지 않음 — 그 갈래는 미번역 잔존`);
   }
-  // 호출부 하나가 lang을 빠뜨리면 그 자리만 ko 고정(#333 분리 검수 HIGH 변이 실증과 같은 계열)
-  const oneArg = src.match(/apiError\(\s*'[a-z0-9_]+'\s*\)/);
-  assert.equal(oneArg, null, `언어 인자 없는 apiError 호출 ${oneArg?.[0] ?? ''}`);
   assert.match(src, /langFromCookieHeader\(req\.headers\.get\('cookie'\)\)/, 'argo-lang 쿠키를 읽지 않는다(상수화 변이)');
   assert.match(src, /e2\?\.code === 'E2EE_BAD_CODE'/, 'recover 오입력을 코드로 판별하지 않는다(문자열 매칭·원문 통과 변이)');
 });
