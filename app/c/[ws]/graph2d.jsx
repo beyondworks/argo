@@ -288,17 +288,22 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
     };
     raf = requestAnimationFrame(frame);
 
-    const onDown = (e) => {
+    // 배율(표시 zoom) 보정 — rect는 배율이 곱해진 뷰포트 px, 캔버스 좌표계는 CSS px(clientWidth 기준).
+    // 배율 1이면 k=1이라 종전과 완전 동일(검수 HIGH-2: 1.25에서 노드 클릭이 최대 ~150px 어긋났다).
+    const evPos = (e) => {
       const b = canvas.getBoundingClientRect();
-      const sx = e.clientX - b.left, sy = e.clientY - b.top;
+      const k = b.width ? canvas.clientWidth / b.width : 1;
+      return [(e.clientX - b.left) * k, (e.clientY - b.top) * k];
+    };
+    const onDown = (e) => {
+      const [sx, sy] = evPos(e);
       const i = pick(sx, sy);
       downAt = { sx, sy }; moved = false;
       if (i !== null) { drag = i; sim.pts[i].fx = sim.pts[i].x; sim.pts[i].fy = sim.pts[i].y; canvas.style.cursor = 'grabbing'; }
       else panning = { sx, sy, vx: view.x, vy: view.y };
     };
     const onMove = (e) => {
-      const b = canvas.getBoundingClientRect();
-      const sx = e.clientX - b.left, sy = e.clientY - b.top;
+      const [sx, sy] = evPos(e);
       if (downAt && Math.hypot(sx - downAt.sx, sy - downAt.sy) > 3) moved = true;
       if (drag !== null) {
         const w = toWorld(sx, sy);
@@ -329,15 +334,14 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       downAt = null;
     };
     const onDbl = (e) => {
-      const b = canvas.getBoundingClientRect();
-      const i = pick(e.clientX - b.left, e.clientY - b.top);
+      const [dx, dy] = evPos(e);
+      const i = pick(dx, dy);
       if (i !== null && !focusRel) setLocalRoot(graph.nodes[i].id);
     };
     const onWheel = (e) => {
       e.preventDefault();
       autoFit = false;
-      const b = canvas.getBoundingClientRect();
-      const sx = e.clientX - b.left, sy = e.clientY - b.top;
+      const [sx, sy] = evPos(e);
       const k = Math.exp(-e.deltaY * 0.0016);
       const ns = Math.min(Math.max(target.s * k, 0.15), 6);
       // 커서 아래 점이 제자리에 머물도록 보정

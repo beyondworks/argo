@@ -124,7 +124,7 @@ export default function Compete({ params }) {
   const winnerName = winnerEnt ? `${winnerEnt.name}${winnerEnt.modelLabel ? ` · ${winnerEnt.modelLabel}` : ''}` : null;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh - 100px)', marginBottom: -70 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
       {adoptTarget && (
         <ConfirmModal
           title={t('compete.adopt')}

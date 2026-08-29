@@ -11,7 +11,9 @@ import { withSide } from './split.mjs';
 const W_KEY = 'argo-split-w';
 const W_DEFAULT = 480;
 const W_MIN = 360;
-const clampW = (w) => Math.max(W_MIN, Math.min(Math.round(window.innerWidth * 0.6), Math.round(w)));
+// 표시 배율(zoom) — 커서 좌표는 뷰포트 px, 패널 폭은 CSS px라 배율로 나눠 맞춘다(배율 1 = 종전 동일)
+const dispZoom = () => parseFloat(document.documentElement.style.zoom) || 1;
+const clampW = (w) => Math.max(W_MIN, Math.min(Math.round(window.innerWidth / dispZoom() * 0.6), Math.round(w)));
 
 function DocPane({ ws, rel, side }) {
   const { t } = useLang();
@@ -52,7 +54,7 @@ export function SplitPane({ ws, side, sideStr, title, onClose }) {
   useEffect(() => {
     if (!resizing) return;
     // 패널은 뷰포트 우측 끝에 붙어 있다 — 폭 = 뷰포트 우측 가장자리 − 커서 x
-    const onMove = (e) => { wRef.current = clampW(window.innerWidth - e.clientX); setW(wRef.current); };
+    const onMove = (e) => { wRef.current = clampW((window.innerWidth - e.clientX) / dispZoom()); setW(wRef.current); };
     const onUp = () => {
       setResizing(false);
       try { localStorage.setItem(W_KEY, String(wRef.current)); } catch { /* 무시 */ }
