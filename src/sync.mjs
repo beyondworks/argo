@@ -26,6 +26,7 @@ import { cryptoOn, isSecretRel, isEncRel, encVaultOn, sealSecret, openSecret, op
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { ensureAccountKey } from './accountkey.mjs';
+import { ensureDeviceKeyRegistered } from './e2ee.mjs';
 import { syncEntitled } from './entitlement.mjs';
 import { resolveRunner } from './runners.mjs'; // 리더 양보 판단 — 이 기기에서 턴을 돌릴 러너가 있는가
 import { invalidatePath } from './memindex.mjs'; // 원격 mtime을 심는 수신 쓰기의 캐시 무효화
@@ -888,6 +889,8 @@ async function cycle() {
   // 계정 키 확보 — 크레덴셜 봉투(v2)의 열쇠. 실패해도 사이클은 계속(크레덴셜만 이번 사이클 제외).
   const keyOwner = process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner || loadDeviceSession()?.user?.id || null;
   await ensureAccountKey(client(), keyOwner);
+  // E2EE 단계 0 — 기기 공개키 등록부 구축(내부 1회 가드·실패 무해). 켜기 전까지 다른 동작 없음.
+  ensureDeviceKeyRegistered(client(), keyOwner, await getDeviceId()).catch(() => {});
   // 로컬 회사 수집 (ownerId 있는 것만 — 소유자가 있어야 클라우드에 자리가 있다)
   // 세션(JWT) 모드는 현재 계정 소유가 아닌 회사를 제외한다 — 다른 계정 소유의 로컬 사본(계정 전환·
   // 기기 공유 흔적)을 매 사이클 남의 폴더로 밀다 스토리지 격리(RLS)에 막혀 "row-level security"
