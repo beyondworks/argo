@@ -89,6 +89,10 @@ export function openSecretCompat(buf) {
   return buf.subarray(0, GENERATION.length).equals(GENERATION) ? openSecret(buf) : buf;
 }
 
+/** 이 버퍼가 봉투 세대('argosecret.' 접두)인가 — 열 수 있는지와 무관한 형식 판정.
+    sync의 매니페스트 세대 다운그레이드 게이트가 쓴다(열지 못한 세대를 만난 기기가 평문을 되쓰지 않게). */
+export const isEnvelopeGeneration = (buf) => buf.subarray(0, GENERATION.length).equals(GENERATION);
+
 /** 평문 → v2 봉투(MAGIC ∥ iv ∥ tag ∥ ct). */
 export function sealSecret(buf) {
   const iv = randomBytes(IV_LEN);

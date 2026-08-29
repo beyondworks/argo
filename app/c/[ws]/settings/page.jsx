@@ -186,6 +186,7 @@ function Settings({ params }) {
         agents={data?.agents ?? []} />
       <ConnectorsCard ws={ws} />
       <SyncCard ws={ws} />
+      <E2eeCard />
       </Section>
 
       <Section label={t('settings.danger')}>
@@ -1338,6 +1339,132 @@ function SyncCard({ ws }) {
             </div>
           ) : billLost ? billLostRow : null}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** E2EE(종단간 암호화) 카드 — 회사 데이터까지 "사용자 본인만 여는" 열쇠 구조(설계 정본 E2EE-DESIGN.md).
+    상태별 3분기: 꺼짐(켜기+구버전 경고) · 잠김(이 기기 열쇠 대기 — 지문 표시·열쇠 받기·복구 코드) ·
+    켜짐(기기 목록·지문 대조 승인·제거). 서버는 공개키·암호문만 나른다 — 복구 코드는 1회 표시 후 소멸. */
+function E2eeCard() {
+  const { t } = useLang();
+  const [st, setSt] = useState(null); // GET /api/me/e2ee
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+  const [recovery, setRecovery] = useState(''); // enable 직후 1회 표시
+  const [code, setCode] = useState(''); // 복구 입력
+  const [confirmOld, setConfirmOld] = useState(false);
+  const [confirm, setConfirm] = useState(null); // { kind: 'approve'|'revoke', deviceId, fp } — 지문 확인 모달
+  const pull = useCallback(() => { api('/api/me/e2ee').then(setSt).catch(() => setSt({ available: false })); }, []);
+  useEffect(() => { pull(); const iv = setInterval(pull, 15000); return () => clearInterval(iv); }, [pull]);
+  async function act(action, extra = {}, label = action) {
+    if (busy) return;
+    setBusy(label); setErr('');
+    try {
+      const d = await api('/api/me/e2ee', { action, ...extra });
+      if (d.recoveryCode) setRecovery(d.recoveryCode);
+      setSt((s) => ({ ...s, ...d, available: true }));
+    } catch (e) { setErr(String(e.message || e)); }
+    finally { setBusy(''); }
+  }
+  if (!st?.available) return null; // 로그인-연동 기기 전용 — 없는 환경엔 카드 자체를 안 보인다
+  const pending = (st.devices ?? []).filter((d) => !d.hasWrap && !d.isThis);
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span className="card-title">{t('settings.e2ee.title')}</span>
+        <span style={{ flex: 1 }} />
+        {st.enabled
+          ? (st.hasDek
+            ? <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('settings.e2ee.on')}</span>
+            : <span className="pill" style={{ flex: 'none' }}><span className="dot" style={{ background: 'var(--warn)' }} />{t('settings.e2ee.locked')}</span>)
+          : <span className="pill" style={{ flex: 'none' }}>{t('settings.e2ee.off')}</span>}
+      </div>
+
+      {recovery && (
+        // 복구 코드 1회 표시 — 서버 어디에도 평문이 없다. 닫으면 다시 볼 수 없음을 명시.
+        <div style={{ display: 'grid', gap: 6, padding: '10px 12px', borderRadius: 10, background: 'var(--card-2)', border: '1px solid var(--border)' }}>
+          <span className="microlabel">{t('settings.e2ee.recoveryLabel')}</span>
+          <span className="mono" style={{ fontSize: 15, letterSpacing: 1, fontWeight: 650, userSelect: 'all' }}>{recovery}</span>
+          <span style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.e2ee.recoveryOnce')}</span>
+          <button type="button" className="btn sm" style={{ width: 'fit-content' }} onClick={() => setRecovery('')}>{t('settings.e2ee.recoverySaved')}</button>
+        </div>
+      )}
+
+      {!st.enabled && (
+        <div style={{ display: 'grid', gap: 8 }}>
+          <span style={{ fontSize: 12.5, color: 'var(--fg-2)', lineHeight: 1.6 }}>{t('settings.e2ee.introOff')}</span>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.55 }}>
+            <input type="checkbox" checked={confirmOld} onChange={(e) => setConfirmOld(e.target.checked)} style={{ marginTop: 2 }} />
+            <span>{t('settings.e2ee.oldDeviceConfirm')}</span>
+          </label>
+          <button type="button" className="btn sm" disabled={!confirmOld || !!busy} style={{ width: 'fit-content' }} onClick={() => act('enable')}>
+            {busy === 'enable' ? <Spinner size={12} /> : t('settings.e2ee.turnOn')}
+          </button>
+        </div>
+      )}
+
+      {st.enabled && !st.hasDek && (
+        <div style={{ display: 'grid', gap: 8 }}>
+          <span style={{ fontSize: 12.5, color: 'var(--fg-2)', lineHeight: 1.6 }}>
+            {t('settings.e2ee.lockedHelp')} <span className="mono" style={{ fontWeight: 700 }}>{st.fingerprint}</span>
+          </span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button type="button" className="btn sm" disabled={!!busy} onClick={() => act('claim')}>
+              {busy === 'claim' ? <Spinner size={12} /> : t('settings.e2ee.claim')}
+            </button>
+            <input suppressHydrationWarning value={code} onChange={(e) => setCode(e.target.value)}
+              placeholder={t('settings.e2ee.recoveryPlaceholder')} style={{ ...fieldStyle, maxWidth: 340 }} />
+            <button type="button" className="btn sm" disabled={!code.trim() || !!busy} onClick={() => act('recover', { code: code.trim() }, 'recover')}>
+              {busy === 'recover' ? <Spinner size={12} /> : t('settings.e2ee.recover')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {st.enabled && st.hasDek && (
+        <div style={{ display: 'grid', gap: 6 }}>
+          {pending.length > 0 && (
+            <span style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.55 }}>{t('settings.e2ee.approveHint')}</span>
+          )}
+          {(st.devices ?? []).map((d) => (
+            <div key={d.deviceId} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, flexWrap: 'wrap' }}>
+              <span className="mono" style={{ fontWeight: 650 }}>{d.fingerprint}</span>
+              <span style={{ color: 'var(--fg-3)' }} className="mono">{d.deviceId.slice(0, 8)}</span>
+              {d.isThis && <span className="pill ok" style={{ flex: 'none' }}>{t('settings.e2ee.thisDevice')}</span>}
+              {d.keyMismatch && <span className="pill" style={{ flex: 'none', color: 'var(--danger)' }}>{t('settings.e2ee.keyMismatch')}</span>}
+              {!d.hasWrap && !d.isThis && (
+                <button type="button" className="btn sm" disabled={!!busy} onClick={() => setConfirm({ kind: 'approve', deviceId: d.deviceId, fp: d.fingerprint })}>
+                  {busy === `approve:${d.deviceId}` ? <Spinner size={12} /> : t('settings.e2ee.approve')}
+                </button>
+              )}
+              {!d.hasWrap && !d.isThis && <span style={{ fontSize: 11.5, color: 'var(--warn)' }}>{t('settings.e2ee.waiting')}</span>}
+              <span style={{ flex: 1 }} />
+              {!d.isThis && (
+                <button type="button" className="btn sm" disabled={!!busy} onClick={() => setConfirm({ kind: 'revoke', deviceId: d.deviceId, fp: d.fingerprint })}>
+                  {busy === `revoke:${d.deviceId}` ? <Spinner size={12} /> : t('settings.e2ee.revoke')}
+                </button>
+              )}
+            </div>
+          ))}
+          <span style={{ fontSize: 12, color: 'var(--fg-3)', lineHeight: 1.6 }}>{t('settings.e2ee.onHelp')}</span>
+        </div>
+      )}
+
+      {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
+
+      {confirm && (
+        // 승인 = 지문 대조 확인(SAS의 사람 단계 — 검수 권고), 제거 = 실제 효과의 정직 고지(HIGH-2)
+        <ConfirmModal
+          title={t(confirm.kind === 'approve' ? 'settings.e2ee.approveConfirmTitle' : 'settings.e2ee.revokeConfirmTitle')}
+          description={t(confirm.kind === 'approve' ? 'settings.e2ee.approveConfirmBody' : 'settings.e2ee.revokeConfirmBody', { fp: confirm.fp })}
+          confirmLabel={t(confirm.kind === 'approve' ? 'settings.e2ee.approve' : 'settings.e2ee.revoke')}
+          tone={confirm.kind === 'revoke' ? 'danger' : 'default'}
+          busy={!!busy}
+          onConfirm={async () => { const c = confirm; setConfirm(null); await act(c.kind, { deviceId: c.deviceId }, `${c.kind}:${c.deviceId}`); }}
+          onClose={() => setConfirm(null)}
+        />
       )}
     </div>
   );
