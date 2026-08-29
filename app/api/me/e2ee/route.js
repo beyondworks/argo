@@ -8,12 +8,12 @@ import { currentUser } from '../../../auth.mjs';
 import { getFreshDeviceSession } from '../../../../src/devicesession.mjs';
 import { getDeviceId } from '../../../../src/workspace.mjs';
 import {
-  loadDeviceE2ee, dek, setDek, wrapDekFor, pubFingerprint,
+  loadDeviceE2ee, dek, setDek, wrapDekFor, openDekWrap, pubFingerprint,
   generateRecoveryCode, deriveRecoveryKek, RECOVERY_KDF, wrapDekWithKek, openDekWithKek,
   tryClaimDek, _resetClaimForTest,
 } from '../../../../src/e2ee.mjs';
 import { markResealAll, nudgeSync } from '../../../../src/sync.mjs';
-import { proRowActive } from '../../../../src/entitlement.mjs';
+import { proRowActive, TRIAL_DAYS } from '../../../../src/entitlement.mjs';
 
 export const maxDuration = 60;
 
@@ -75,20 +75,24 @@ export async function POST(req) {
     if (action === 'enable') {
       // 켜기 = 이 기기가 DEK를 생성해 계정의 첫 열쇠 보유자가 된다. 이미 활성이면 claim/승인 경로로 안내.
       if (dek()) return Response.json({ error: '이미 이 기기에서 켜져 있습니다' }, { status: 400 });
-      const { data: existing } = await sb.from('wrapped_deks').select('device_id').limit(1);
-      if ((existing ?? []).length > 0) {
+      // "이미 켜짐" 판정에서 **자기 기기 행은 제외**(분리 검수 MEDIUM): 이전 enable이 자기 랩 기록 후
+      // 복구 랩에서 실패하면 자기 잔재를 "남이 켰다"로 오판해 영구 교착이 된다. 자기 랩만 남았으면
+      // 그 랩을 열어(개인키 보유) 같은 DEK로 이어간다 — 재시도가 곧 자가 치유.
+      const { data: mine } = await sb.from('wrapped_deks').select('wrap').eq('device_id', deviceId).maybeSingle();
+      const { data: others } = await sb.from('wrapped_deks').select('device_id').neq('device_id', deviceId).limit(1);
+      if ((others ?? []).length > 0) {
         return Response.json({ error: '이미 다른 기기에서 켜져 있습니다 — 그 기기에서 이 기기를 승인해 주세요' }, { status: 409 });
       }
       // 플랜 게이트 — 동기화가 실제로 도는 상태(Pro·체험)에서만: 재봉인 push가 free RLS에 막혀
       // "켰는데 아무것도 암호화 안 됨"이 되는 것을 정직하게 사전 차단(#325 HIGH-2와 같은 원칙).
       const { data: ent } = await sb.from('entitlements').select('plan,ends_at').maybeSingle();
       const created = (await sb.auth.getUser()).data?.user?.created_at;
-      const trial = created ? (Date.now() - new Date(created).getTime()) < 14 * 86400_000 : false;
+      const trial = created ? (Date.now() - new Date(created).getTime()) < TRIAL_DAYS * 86_400_000 : false;
       if (!(proRowActive(ent ?? {}) || trial)) {
         return Response.json({ error: '종단간 암호화는 동기화가 도는 상태(Pro·체험)에서 켤 수 있습니다' }, { status: 403 });
       }
       const myKeys = await loadDeviceE2ee();
-      const dekBytes = randomBytes(32);
+      const dekBytes = mine?.wrap ? await openDekWrap(Buffer.from(mine.wrap, 'base64')) : randomBytes(32);
       // 복구 코드 — 생성 시 1회만 반환하고 어디에도 저장하지 않는다(서버엔 랩+KDF 파라미터만).
       const code = generateRecoveryCode();
       const salt = randomBytes(16).toString('base64');
@@ -132,7 +136,12 @@ export async function POST(req) {
     }
 
     if (action === 'recover') {
-      // 복구 코드로 DEK 복원 — 전 기기 분실 폴백
+      // 복구 코드로 DEK 복원 — 전 기기 분실 폴백. 코드는 160bit 랜덤이라 브루트포스는 계산상 무의미하고,
+      // 이 스로틀은 인증된 사용자의 scrypt(N=2^17) 반복 호출이 서버 CPU를 갉는 것만 막는다(검수 LOW).
+      if (Date.now() - (globalThis.__argoE2eeRecoverTs ?? 0) < 5_000) {
+        return Response.json({ error: '잠시 후 다시 시도해 주세요' }, { status: 429 });
+      }
+      globalThis.__argoE2eeRecoverTs = Date.now();
       if (dek()) return Response.json({ error: '이미 이 기기에 열쇠가 있습니다' }, { status: 400 });
       const { data: rec, error } = await sb.from('recovery_wraps').select('wrap,kdf').maybeSingle();
       if (error) throw new Error(error.message);

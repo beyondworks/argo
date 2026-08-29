@@ -168,4 +168,57 @@ test('reseal: 켠 직후 옛 평문 blob이 v3로 되덮이고 메타·base는 �
   assert.deepEqual(fake._store.get(`${OWNER}/${wsId}/vault/old.md`), before, 'reseal 아닌 사이클은 재업로드 없음');
 });
 
+/* ── 세대 다운그레이드 게이트(분리 검수 HIGH-1 재현의 회귀 가드) ──
+   시나리오: 열쇠 없는 기기 B의 사이클이 초기 읽기에서는 아직 평문 매니페스트를 받고(다른 기기 A의
+   재봉인이 그 사이 완료), 재읽기에서 v3를 만난다. 종전 코드는 재읽기 실패를 삼키고 B의 평문
+   매니페스트를 되써서 게이트를 다운그레이드했다(검수 실증). 불변식: 열지 못한 봉투 세대를 만난
+   사이클은 평문을 쓰지 않고 보류하며, 원격 매니페스트는 v3로 남는다. */
+test('세대 게이트: 재읽기에서 열 수 없는 v3를 만나면 평문 되쓰기 대신 사이클 보류(원격 v3 유지)', async () => {
+  // 준비 — A(DEK 보유)가 v3 회사를 구성
+  clearDekCache();
+  await loadDeviceE2ee();
+  await setDek(Buffer.alloc(32, 8));
+  const wsId = 'p1-downgrade';
+  const wsRoot = join(ROOT, wsId);
+  const note = Buffer.from('# note\n');
+  await mkdir(join(wsRoot, 'vault'), { recursive: true });
+  await writeFile(join(wsRoot, 'vault', 'n.md'), note);
+  await writeFile(join(wsRoot, '.sync-state.json'), JSON.stringify({ files: {}, ts: 1000 }));
+  const fake = fakeStorage({ [`${OWNER}/${wsId}/__manifest__.json`]: Buffer.from('{"files":{}}') });
+  _setSyncClientForTest(fake);
+  await syncCompany(wsId, OWNER); // A의 사이클 — 원격 매니페스트가 v3가 됨
+  const v3Manifest = fake._store.get(`${OWNER}/${wsId}/__manifest__.json`);
+  assert.equal(v3Manifest.toString('utf8', 0, 14), 'argosecret.v3:', '전제: 원격 v3');
+
+  // B(열쇠 없음) 재현 — 키 파일에서 dek 제거
+  const cur = JSON.parse(await readFile(join(ROOT, '.device-e2ee.json'), 'utf8'));
+  delete cur.dek;
+  await writeFile(join(ROOT, '.device-e2ee.json'), JSON.stringify(cur), { mode: 0o600 });
+  clearDekCache();
+  await loadDeviceE2ee();
+  // B의 초기 읽기 1회만 "아직 평문"을 반환하는 스토리지 패치(검수 재현 방식)
+  const manifestKey = `${OWNER}/${wsId}/__manifest__.json`;
+  const bucket = fake.storage.from();
+  const orig = bucket.download.bind(bucket);
+  let manifestReads = 0;
+  const patched = {
+    ...bucket,
+    async download(k) {
+      if (k === manifestKey) {
+        manifestReads++;
+        if (manifestReads === 1) return { data: { arrayBuffer: async () => new Uint8Array(Buffer.from('{"files":{}}')).buffer }, error: null };
+      }
+      return orig(k);
+    },
+  };
+  _setSyncClientForTest({ ...fake, storage: { from: () => patched } });
+  await assert.rejects(
+    () => syncCompany(wsId, OWNER),
+    /세대 상승|보류/,
+    'B의 사이클은 평문을 쓰는 대신 보류된다',
+  );
+  const after = fake._store.get(manifestKey);
+  assert.equal(after.toString('utf8', 0, 14), 'argosecret.v3:', '원격 매니페스트가 v3로 유지된다(다운그레이드 없음)');
+});
+
 test.after(async () => { clearDekCache(); await rm(ROOT, { recursive: true, force: true }); });

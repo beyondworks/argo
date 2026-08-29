@@ -475,7 +475,13 @@ const DICT = {
   'settings.e2ee.approve': ['승인', 'Approve'],
   'settings.e2ee.waiting': ['승인 대기', 'awaiting approval'],
   'settings.e2ee.revoke': ['제거', 'Remove'],
-  'settings.e2ee.onHelp': ['기기를 제거하면 그 기기는 새 동기화를 열 수 없게 됩니다. 다만 제거 전에 이미 저장된 사본과 열쇠가 그 기기에 남아 있을 수 있습니다(열쇠 회전은 후속 업데이트 예정 — 사실 그대로 알립니다).', 'Removing a device stops it from opening new syncs. Note: copies and the key it already held may remain on that device (key rotation is planned — stating it as it is).'],
+  // 제거의 실제 효과를 사실대로(분리 검수 HIGH-2): 행 삭제는 "새 열쇠 배포 차단"일 뿐, 이미 열쇠를 받은
+  // 기기는 로컬 열쇠+세션이 살아있는 한 계속 연다. 진짜 차단 = 열쇠 회전(후속) / 지금 실효 조치 = 세션 로그아웃.
+  'settings.e2ee.onHelp': ['기기 제거는 "앞으로 열쇠를 다시 내주지 않는 것"입니다 — 이미 열쇠를 받은 기기는 그 기기에 남은 열쇠와 로그인 세션이 살아 있는 한 계속 열 수 있습니다(열쇠 회전은 후속 업데이트 예정). 분실·도난 기기를 지금 차단하려면 그 기기의 로그인 세션을 끊는 것(비밀번호 변경·기기 로그아웃)이 실효 조치입니다.', 'Removing a device means "no key will be issued to it again" — a device that already received the key can keep opening data as long as its local key and login session survive (key rotation is planned). To block a lost/stolen device now, the effective action is revoking its login session (change password / sign out devices).'],
+  'settings.e2ee.revokeConfirmTitle': ['기기 제거', 'Remove device'],
+  'settings.e2ee.revokeConfirmBody': ['이 기기({fp})에 더 이상 열쇠를 내주지 않습니다. 주의: 이미 열쇠를 받은 기기라면 제거 후에도 그 기기에 남은 열쇠로 계속 열 수 있습니다 — 분실·도난이라면 로그인 세션 차단(비밀번호 변경)을 함께 하세요.', 'No key will be issued to this device ({fp}) again. Note: if it already received the key, it can still open data with its local copy — for a lost/stolen device, also revoke its login session (change password).'],
+  'settings.e2ee.approveConfirmTitle': ['기기 승인', 'Approve device'],
+  'settings.e2ee.approveConfirmBody': ['새 기기 화면에 표시된 지문이 {fp} 와 정확히 같은지 확인하셨나요? 다르면 절대 승인하지 마세요 — 승인하면 그 기기가 이 계정의 모든 데이터를 열 수 있게 됩니다.', 'Did you verify the fingerprint shown on the new device exactly matches {fp}? Never approve if they differ — approval lets that device open all data in this account.'],
   'settings.sync.leader': ['이 기기가 실행 담당 — 폴러·루틴이 여기서 돕니다', 'This device runs the crew — pollers and routines execute here'],
   'settings.sync.follower': ['다른 기기가 실행 담당 — 이 기기는 최신 상태만 유지합니다', 'Another device runs the crew — this one stays in sync'],
   'settings.sync.last': ['마지막 동기화', 'Last sync'],

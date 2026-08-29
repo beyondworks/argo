@@ -22,7 +22,7 @@ import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
-import { cryptoOn, isSecretRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
+import { cryptoOn, isSecretRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
 import { dek, tryClaimDek } from './e2ee.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
@@ -708,11 +708,28 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   // "로컬에 없는데 base에 있음 = 내가 지움"으로 오판해 다음 사이클에 원격 삭제를 전파해 버린다.
   // base에 없으니 다음 사이클에 '원격 신규 → 받기'로 정상 pull된다.
   const uploadFiles = { ...remote.files };
-  try {
-    const { data } = await client().storage.from(BUCKET).download(manifestKey);
-    if (data) {
-      const fresh = JSON.parse(openSecretCompat(Buffer.from(await data.arrayBuffer())).toString()); // 재읽기도 관용 개봉
-      for (const [rel, meta] of Object.entries(fresh.files ?? {})) {
+  {
+    // 재읽기는 두 단계로 갈라 관용의 범위를 정확히 한다(분리 검수 HIGH-1):
+    // ① 네트워크 실패 = 기존 관용(병합 없이 진행). ② **받았는데 열 수 없는 봉투 세대** = 관용 금지 —
+    // 사이클 시작 후 다른 기기가 세대를 올린 것(E2EE 켬 등)이고, 이대로 아래에서 내(구세대) 매니페스트를
+    // 쓰면 게이트가 평문으로 되돌아간다(실증: 열쇠 없는 기기의 정상 사이클 하나가 v3 매니페스트를
+    // 평문으로 다운그레이드). 이번 사이클 전체를 보류해 세대를 지킨다 — 다음 사이클 초기 읽기가
+    // 같은 세대를 만나 정식 잠김(보류) 경로로 수렴한다.
+    let freshBuf = null;
+    try {
+      const { data } = await client().storage.from(BUCKET).download(manifestKey);
+      if (data) freshBuf = Buffer.from(await data.arrayBuffer());
+    } catch { /* 재읽기 네트워크 실패 — 병합 없이 진행(남는 경합은 blob 검사가 방어, 다음 사이클 self-heal) */ }
+    if (freshBuf) {
+      let fresh = null;
+      try { fresh = JSON.parse(openSecretCompat(freshBuf).toString()); }
+      catch (e) {
+        if (isEnvelopeGeneration(freshBuf)) {
+          throw new Error(`매니페스트 세대 상승 감지(다른 기기가 암호화를 켬) — 이번 사이클 보류: ${String(e.message).slice(0, 60)}`);
+        }
+        /* 평문 손상 등 — 기존 관용: 병합 없이 진행 */
+      }
+      for (const [rel, meta] of Object.entries(fresh?.files ?? {})) {
         if (!(rel in uploadFiles) && !deletedRels.has(rel) && safeRel(rel)) {
           // 다른 기기가 "삭제 진행 중"(blob은 지웠고 매니페스트 drop 전)인 항목을 되살리면 그 삭제가
           // 미전파되고 죽은 항목이 남는다(검수 MEDIUM) — blob이 실존할 때만 병합, 확인 불가면 생략
@@ -721,7 +738,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
         }
       }
     }
-  } catch { /* 재읽기 실패 — 병합 없이 진행(남는 경합은 blob 검사가 방어, 다음 사이클 self-heal) */ }
+  }
   // 매니페스트도 봉투 대상(E-b) — 경로(노트 제목)만으로 맥락이 새므로. 읽기 두 지점이 관용 개봉이라
   // 스위치 off 기기도 안전하게 읽는다. off면 평문 그대로(동작 불변).
   const manifestBuf = Buffer.from(JSON.stringify({ ...remote, files: uploadFiles }));
@@ -1074,7 +1091,10 @@ async function cycle() {
     try {
       const reseal = !!resealSet[wsId];
       const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId), reseal });
-      if (reseal) await clearReseal(wsId).catch(() => {}); // 성공 시 1회로 종료 — 실패는 마커 잔존이 재시도
+      // 재봉인 완결은 **파일 실패 0**일 때만 — throw만 안 하면 지우던 이전 배선은 개별 push 실패
+      // (r.failed>0) 파일을 영구 구세대로 남겼다(분리 검수 MEDIUM). 실패가 있으면 마커를 남겨
+      // 다음 사이클이 회사째 재시도한다(무변경 재푸시 비용 < 영구 평문 잔존).
+      if (reseal && (r.failed ?? 0) === 0) await clearReseal(wsId).catch(() => {});
       status.companies[wsId] = { ts: Date.now(), ...r };
     } catch (e) {
       status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;

@@ -1355,6 +1355,7 @@ function E2eeCard() {
   const [recovery, setRecovery] = useState(''); // enable 직후 1회 표시
   const [code, setCode] = useState(''); // 복구 입력
   const [confirmOld, setConfirmOld] = useState(false);
+  const [confirm, setConfirm] = useState(null); // { kind: 'approve'|'revoke', deviceId, fp } — 지문 확인 모달
   const pull = useCallback(() => { api('/api/me/e2ee').then(setSt).catch(() => setSt({ available: false })); }, []);
   useEffect(() => { pull(); const iv = setInterval(pull, 15000); return () => clearInterval(iv); }, [pull]);
   async function act(action, extra = {}, label = action) {
@@ -1434,14 +1435,14 @@ function E2eeCard() {
               {d.isThis && <span className="pill ok" style={{ flex: 'none' }}>{t('settings.e2ee.thisDevice')}</span>}
               {d.keyMismatch && <span className="pill" style={{ flex: 'none', color: 'var(--danger)' }}>{t('settings.e2ee.keyMismatch')}</span>}
               {!d.hasWrap && !d.isThis && (
-                <button type="button" className="btn sm" disabled={!!busy} onClick={() => act('approve', { deviceId: d.deviceId }, `approve:${d.deviceId}`)}>
+                <button type="button" className="btn sm" disabled={!!busy} onClick={() => setConfirm({ kind: 'approve', deviceId: d.deviceId, fp: d.fingerprint })}>
                   {busy === `approve:${d.deviceId}` ? <Spinner size={12} /> : t('settings.e2ee.approve')}
                 </button>
               )}
               {!d.hasWrap && !d.isThis && <span style={{ fontSize: 11.5, color: 'var(--warn)' }}>{t('settings.e2ee.waiting')}</span>}
               <span style={{ flex: 1 }} />
               {!d.isThis && (
-                <button type="button" className="btn sm" disabled={!!busy} onClick={() => act('revoke', { deviceId: d.deviceId }, `revoke:${d.deviceId}`)}>
+                <button type="button" className="btn sm" disabled={!!busy} onClick={() => setConfirm({ kind: 'revoke', deviceId: d.deviceId, fp: d.fingerprint })}>
                   {busy === `revoke:${d.deviceId}` ? <Spinner size={12} /> : t('settings.e2ee.revoke')}
                 </button>
               )}
@@ -1452,6 +1453,19 @@ function E2eeCard() {
       )}
 
       {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
+
+      {confirm && (
+        // 승인 = 지문 대조 확인(SAS의 사람 단계 — 검수 권고), 제거 = 실제 효과의 정직 고지(HIGH-2)
+        <ConfirmModal
+          title={t(confirm.kind === 'approve' ? 'settings.e2ee.approveConfirmTitle' : 'settings.e2ee.revokeConfirmTitle')}
+          description={t(confirm.kind === 'approve' ? 'settings.e2ee.approveConfirmBody' : 'settings.e2ee.revokeConfirmBody', { fp: confirm.fp })}
+          confirmLabel={t(confirm.kind === 'approve' ? 'settings.e2ee.approve' : 'settings.e2ee.revoke')}
+          tone={confirm.kind === 'revoke' ? 'danger' : 'default'}
+          busy={!!busy}
+          onConfirm={async () => { const c = confirm; setConfirm(null); await act(c.kind, { deviceId: c.deviceId }, `${c.kind}:${c.deviceId}`); }}
+          onClose={() => setConfirm(null)}
+        />
+      )}
     </div>
   );
 }
