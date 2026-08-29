@@ -119,6 +119,9 @@ export async function DELETE(req, { params }) {
   const id = u.searchParams.get('id');
   if (!kind || !id) return Response.json({ error: 'kind·id가 필요합니다' }, { status: 400 });
   if (kind === 'skill') await removeSkill(ws, id);
-  else await removeMcp(ws, id);
+  else if (kind === 'mcp') await removeMcp(ws, id);
+  // 미지 kind = 명시 400(POST와 대칭) — else(=MCP)로 흘리면 존재하지 않는 서버 이름에
+  // delete 무동작 후 ok를 돌려주는 조용한 거짓 성공이 된다(검수 LOW-4).
+  else return Response.json({ error: '알 수 없는 kind' }, { status: 400 });
   return Response.json({ ok: true });
 }

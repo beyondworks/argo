@@ -349,7 +349,8 @@ let routeMod;
 async function marketRoute() {
   if (!routeMod) {
     // AUTH off = 로컬 1인 모드 — guardCompany가 통과해야 응답 본문(아래 계약)을 관측할 수 있다.
-    // AUTH_ON은 auth.mjs 로드 시점 상수라, 켠 상태의 관측은 아래 자식 프로세스 프로브가 맡는다.
+    // AUTH_ON은 auth.mjs 로드 시점 상수 + 모듈 캐시라, 이 프로세스에선 이후 어떤 테스트도 켤 수 없다
+    // (env를 되살려도 무효). 켠 상태의 관측이 필요하면 아래 자식 프로세스 프로브 패턴을 쓸 것(검수 LOW-3).
     delete process.env.NEXT_PUBLIC_SUPABASE_URL;
     delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     const { register } = await import('node:module');
@@ -390,23 +391,36 @@ test('마켓 라우트 — 커넥터 연결은 400으로 거부되고, 해제 �
     body: JSON.stringify({ kind: 'connector', id: 'route-live' }),
   }), routeParams);
   assert.equal(p.status, 400, '마켓 경유 연결 시작이 다시 열리면 전용 라우트(CSRF 가드 동반)와 이중 경로가 된다');
-  // 예전 DELETE kind=connector는 disconnectConnector를 실행했다 — 지금 마켓은 연결에 손대지 않는다.
-  await route.DELETE(routeReq('?kind=connector&id=route-live', { method: 'DELETE' }), routeParams);
-  assert.equal((await conn('route-live')).status, 'connected', '마켓 DELETE가 연결을 끊으면 해제 경로 이관이 깨진 것');
+  // 예전 DELETE kind=connector는 disconnectConnector를 실행했다 — 지금 마켓은 연결에 손대지 않고
+  // 미지 kind로 명시 400을 준다(removeMcp 폴스루면 무동작에 ok를 돌려주는 거짓 성공 — 검수 LOW-4).
+  const d = await route.DELETE(routeReq('?kind=connector&id=route-live', { method: 'DELETE' }), routeParams);
+  assert.equal(d.status, 400, '미지 kind 해제 요청은 조용한 ok가 아니라 명시 400이어야 한다');
+  assert.equal((await conn('route-live'))?.status, 'connected', '마켓 DELETE가 연결을 끊으면 해제 경로 이관이 깨진 것');
 });
 
-test('마켓 라우트 GET — 인증이 켜진 서버에서 무세션 문맥이면 회사 데이터가 나가지 않는다', async () => {
-  // guardCompany 배선의 행동 잠금(구 소스 단언 대체). AUTH_ON은 로드 시점 상수라 자식 프로세스에서
-  // 켜고 관측한다. 위 테스트들이 같은 회사·같은 호출로 200을 실증했으므로, 여기서 200이 아니라는
-  // 것은 "가드가 데이터 앞을 막고 있다"는 판별이 된다 — 가드를 지우는 변이면 200이 나와 red.
+test('마켓 라우트 — 인증이 켜진 서버에서 무세션 문맥이면 GET·POST·DELETE 전부 통과하지 못한다', async () => {
+  // guardCompany 배선의 행동 잠금(구 소스 단언은 세 핸들러를 순회했다 — 같은 반경을 승계, 검수 MEDIUM-1).
+  // AUTH_ON은 auth.mjs 로드 시점 상수라 자식 프로세스에서 켜고 관측한다. 위 테스트들이 같은 회사에서
+  // AUTH off일 때 GET 200·POST(실카탈로그 kind) 정상 처리를 실증했으므로, 여기서 성공이 아니라는 것은
+  // "가드가 요청 앞을 막고 있다"는 판별이 된다 — 핸들러 어디든 가드를 지우는 변이면 성공이 나와 red.
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const probe = `
     import { register } from 'node:module';
     register(process.env.PROBE_HOOK);
     const route = await import(process.env.PROBE_ROUTE);
-    const out = await route.GET(new Request('http://127.0.0.1/x'), { params: Promise.resolve({ ws: process.env.PROBE_WS }) })
-      .then((r) => r.status).catch(() => 'threw');
+    const { skillCatalogFor } = await import(process.env.PROBE_MARKET);
+    const P = { params: Promise.resolve({ ws: process.env.PROBE_WS }) };
+    const call = (p) => p.then((r) => r.status).catch(() => 'threw');
+    const out = {
+      get: await call(route.GET(new Request('http://127.0.0.1/x'), P)),
+      // 실카탈로그 스킬 설치 요청 — 가드가 없으면 실제로 설치되어 200이 난다(무해 kind면 가드 유무가 안 갈린다).
+      post: await call(route.POST(new Request('http://127.0.0.1/x', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ kind: 'skill', id: skillCatalogFor('ko')[0].id }),
+      }), P)),
+      del: await call(route.DELETE(new Request('http://127.0.0.1/x?kind=mcp&id=zz-guard-probe', { method: 'DELETE' }), P)),
+    };
     console.log(JSON.stringify(out));
   `;
   const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', probe], {
@@ -415,10 +429,17 @@ test('마켓 라우트 GET — 인증이 켜진 서버에서 무세션 문맥이
       NEXT_PUBLIC_SUPABASE_URL: 'https://example.invalid', // AUTH_ON만 켠다 — 네트워크엔 안 나간다(쿠키 저장소가 먼저 끊는다)
       NEXT_PUBLIC_SUPABASE_ANON_KEY: 'test-anon',
       PROBE_HOOK: HOOK_URL.href, PROBE_ROUTE: ROUTE_URL.href, PROBE_WS: WS,
+      PROBE_MARKET: new URL('../src/market.mjs', import.meta.url).href,
     },
   });
   const out = JSON.parse(stdout.trim());
-  assert.notEqual(out, 200, `무세션 문맥에서 회사 데이터가 나갔다(got ${out}) — guardCompany 배선이 풀린 것`);
+  // 초록 신호는 허용집합으로 조인다(검수 LOW-2) — 지금 next는 요청 문맥 밖 cookies()가 던져서 'threw',
+  // 향후 빈 저장소를 돌려주게 바뀌면 무세션 → 401 경로다. 그 밖의 값은 전부 미지 상태로 red.
+  assert.ok(['threw', 401, 403].includes(out.get), `GET 무세션 관측값 ${out.get} — 가드(401/403/문맥 차단) 밖의 상태`);
+  // POST만 notEqual(200)인 이유: 핸들러 전체가 try/catch라 가드의 throw가 400으로 뭉개진다.
+  // 200(=실설치 성공)만이 "가드를 지나쳤다"는 신호라 그것만 배제한다.
+  assert.notEqual(out.post, 200, 'POST 무세션 문맥에서 설치가 실행됐다 — guardCompany 배선이 풀린 것');
+  assert.ok(['threw', 401, 403].includes(out.del), `DELETE 무세션 관측값 ${out.del} — 가드(401/403/문맥 차단) 밖의 상태`);
 });
 
 test('커넥터 라우트 — 표시 언어는 화면 UI 언어(?lang) 1순위, 무효·부재 시 회사 언어 폴백', async () => {
