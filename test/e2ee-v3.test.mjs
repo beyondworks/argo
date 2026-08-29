@@ -43,8 +43,12 @@ test('기기 키쌍: 최초 생성 후 재로드에 안정, 파일 0600, DEK는 
   assert.equal(a.pub, b.pub, '재로드에 키가 바뀌지 않는다(조용한 키 교체 금지)');
   assert.equal(Buffer.from(a.pub, 'base64').length, 32, 'X25519 raw 32B');
   assert.equal(dek(), null, '단계 0 — DEK 미보유가 기본');
-  const st = await stat(join(ROOT, '.device-e2ee.json'));
-  assert.equal(st.mode & 0o777, 0o600, '개인키 파일은 0600');
+  if (process.platform !== 'win32') {
+    // Windows는 POSIX 모드가 없어(ACL 기반) mode 비트가 0666으로 보인다 — 0600 보호는 POSIX 축 한정
+    // 속성이고, Windows에서 mode:0o600 지정은 무해한 no-op이다(실측: windows-latest CI 438).
+    const st = await stat(join(ROOT, '.device-e2ee.json'));
+    assert.equal(st.mode & 0o777, 0o600, '개인키 파일은 0600(POSIX)');
+  }
 });
 
 /* ── v3 왕복 + DEK 없는 보류 ── */
