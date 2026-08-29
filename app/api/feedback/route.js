@@ -7,7 +7,7 @@ import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { after } from 'next/server';
 import { randomBytes } from 'node:crypto';
-import { AUTH_ON, currentUser } from '../../auth.mjs';
+import { AUTH_ON, currentUser, authError, requestLang } from '../../auth.mjs';
 import { getFreshDeviceSession } from '../../../src/devicesession.mjs';
 import { createFeedbackIssue, feedbackIssueEnabled } from '../../../src/feedback-issue.mjs';
 
@@ -35,7 +35,7 @@ function issueRateOk(userId) {
 export async function POST(req) {
   if (!AUTH_ON) return Response.json({ error: '클라우드 모드(로그인)에서만 피드백을 보낼 수 있습니다' }, { status: 400 });
   const user = await currentUser();
-  if (!user) return Response.json({ error: '로그인이 필요합니다' }, { status: 401 });
+  if (!user) return authError('auth_required', await requestLang());
   const { message } = await req.json().catch(() => ({}));
   const clean = String(message ?? '').trim().slice(0, 4000);
   if (!clean) return Response.json({ error: '내용이 필요합니다' }, { status: 400 });

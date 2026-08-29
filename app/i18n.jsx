@@ -1281,17 +1281,25 @@ const DICT = {
 
 const LangCtx = createContext(null);
 
+// 서버 공통 가드(auth.mjs requestLang)가 401·403 오류 문구를 표시 언어로 내리도록 쿠키로 미러한다.
+// localStorage는 요청에 실리지 않는다 — 쿠키가 서버로 가는 유일한 전달로다(값은 ko|en뿐, 민감정보 아님).
+const mirrorLangCookie = (l) => {
+  try { document.cookie = `argo-lang=${l}; path=/; max-age=31536000; SameSite=Lax`; } catch { /* 무시 */ }
+};
+
 export function LanguageProvider({ children }) {
   const [lang, setLangState] = useState('ko');
 
   useEffect(() => {
     const saved = localStorage.getItem('argo-lang');
     if (saved === 'en' || saved === 'ko') setLangState(saved);
+    mirrorLangCookie(saved === 'en' ? 'en' : 'ko'); // 과거에 en으로 바꿔둔 사용자도 첫 로드에 쿠키 확보
   }, []);
 
   const setLang = useCallback((next) => {
     setLangState(next);
     try { localStorage.setItem('argo-lang', next); } catch { /* 사파리 프라이빗 등 */ }
+    mirrorLangCookie(next);
   }, []);
 
   // cmd+/ (윈도우는 ctrl+/) — 어디서든 언어 전환
@@ -1302,6 +1310,7 @@ export function LanguageProvider({ children }) {
         setLangState((l) => {
           const next = l === 'ko' ? 'en' : 'ko';
           try { localStorage.setItem('argo-lang', next); } catch { /* 무시 */ }
+          mirrorLangCookie(next);
           return next;
         });
       }
