@@ -4,7 +4,7 @@ import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, artifactDownload, openBillingPortal, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
-import { useLang } from '../../../i18n';
+import { useLang, adjustZoom } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 import { useAppUpdate } from '../../../use-app-update';
@@ -149,11 +149,12 @@ function Settings({ params }) {
         </div>
       </div>
 
-      {/* 화면 언어 + 크루 응답 언어 — 의미상 한 쌍이라 한 열에 세로로 묶는다
-          (묶지 않으면 일반 카드 4장이 3열 그리드에서 4번째만 다음 줄에 홀로 떨어짐) */}
+      {/* 화면 언어 + 크루 응답 언어 + 표시 배율 — 화면 표시 설정 한 묶음이라 한 열에 세로로 쌓는다
+          (풀어놓으면 일반 카드 4장이 3열 그리드에서 4번째만 다음 줄에 홀로 떨어짐 — 분리 검수 MEDIUM) */}
       <div style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
         <LanguageCard />
         <CrewLanguageCard ws={ws} sysLang={data?.company?.lang} />
+        <ZoomCard />
       </div>
       <ThemeCard />
       <TrashCard ws={ws} />
@@ -254,6 +255,41 @@ function LanguageCard() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto', paddingTop: 10 }}>
         <span className="microlabel">{t('settings.language.shortcut')}</span>
         <span className="kbd mono" style={{ fontSize: 11, border: '1px solid var(--border)', borderRadius: 6, padding: '2px 8px' }}>{kbd}</span>
+      </div>
+    </div>
+  );
+}
+
+/** 표시 배율 — 현재 배율 표시 + 조절 버튼(PR #334 후속: 단축키만으론 되돌릴 길을 화면에서 못 찾는다).
+    로직은 전역 단축키(cmd +·−·0)와 같은 adjustZoom 하나를 공유하고, 단축키로 바뀔 때도
+    argo:zoom 이벤트를 받아 현재값 표시가 따라온다. */
+function ZoomCard() {
+  const { t } = useLang();
+  const [zoom, setZoom] = useState(1);
+  useEffect(() => {
+    const read = () => setZoom(parseFloat(document.documentElement.style.zoom) || 1);
+    read(); // 마운트 시 zoomBoot(layout.jsx)가 적용해 둔 값 반영
+    window.addEventListener('argo:zoom', read);
+    return () => window.removeEventListener('argo:zoom', read);
+  }, []);
+  const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
+  const mod = isMac ? '⌘' : 'Ctrl';
+  const btn = { cursor: 'pointer', width: 34, padding: '6px 0', fontSize: 13, textAlign: 'center' };
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span className="card-title">{t('settings.zoom')}</span>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.zoom.desc')}</p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button className="chip" style={btn} aria-label={t('settings.zoom.out')} onClick={() => adjustZoom(-0.1)}>−</button>
+        <span className="mono" style={{ fontSize: 13, minWidth: 44, textAlign: 'center' }} aria-live="polite">{Math.round(zoom * 100)}%</span>
+        <button className="chip" style={btn} aria-label={t('settings.zoom.in')} onClick={() => adjustZoom(0.1)}>+</button>
+        <button className="chip" style={{ cursor: 'pointer', padding: '6px 14px', fontSize: 12.5 }} onClick={() => adjustZoom(null)}>{t('settings.zoom.auto')}</button>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto', paddingTop: 10 }}>
+        <span className="microlabel">{t('settings.zoom.shortcut')}</span>
+        {[`${mod} +`, `${mod} −`, `${mod} 0`].map((k) => (
+          <span key={k} className="kbd mono" style={{ fontSize: 11, border: '1px solid var(--border)', borderRadius: 6, padding: '2px 8px' }}>{k}</span>
+        ))}
       </div>
     </div>
   );
