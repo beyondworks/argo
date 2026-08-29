@@ -1139,8 +1139,12 @@ function SyncCard({ ws }) {
   // 2026-08-19 MED-A. 'no-cloud'·'unauthenticated'는 실패가 아니라 **계정이 없는 정상 상태**라 폴백이 옳다.
   const [billLost, setBillLost] = useState(false);
   const [billTry, setBillTry] = useState(0); // 재시도 트리거 — 한 번 실패하면 페이지를 다시 열기 전엔 복구되지 않았다
+  const [cred, setCred] = useState(null); // 자격 증명 동기화 토글(company.json credSync) — null = 로딩
   useEffect(() => {
-    const pull = () => api(`/api/companies/${ws}/connections`).then((d) => setSync(d.sync ?? null)).catch(() => {});
+    const pull = () => api(`/api/companies/${ws}/connections`).then((d) => {
+      setSync(d.sync ?? null);
+      if (d.credSync !== undefined) setCred(d.credSync !== false); // 15초 폴 — 다른 기기의 토글 변경도 따라온다
+    }).catch(() => {});
     pull();
     // reconciling=true — 서버가 방금 유실 대사(O2)를 백그라운드로 발사했다는 신호. billing은
     // 폴링이 없어서(1회성 fetch) 잠시 뒤 1회 재조회해야 복구가 리로드 없이 보인다.
@@ -1300,6 +1304,7 @@ function SyncCard({ ws }) {
               <a style={{ fontSize: 12, color: 'var(--fg-3)', width: 'fit-content' }} href="/api/me/billing/portal" onClick={openBillingPortal} target="_blank" rel="noreferrer">{t('billing.managePortal')}</a>
             </div>
           )}
+          <CredSyncRow ws={ws} value={cred} onChange={setCred} />
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 8 }}>
@@ -1330,6 +1335,54 @@ function SyncCard({ ws }) {
           ) : billLost ? billLostRow : null}
         </div>
       )}
+    </div>
+  );
+}
+
+/** 자격 증명 동기화 토글 + 정직 고지 — 무엇이 올라가는지(러너 로그인·봇 토큰·MCP env)와 암호화 열쇠가
+    어디에 보관되는지를 사실대로 밝힌다(고지 없는 수집 금지 — 2026-08-29 판정). 끄면 서버가 다음 사이클에
+    클라우드 사본을 마커로 회수한다(src/sync.mjs noSecrets — 로컬 로그인은 유지, 새 기기만 재연결). */
+function CredSyncRow({ ws, value, onChange }) {
+  const { t } = useLang();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  async function save(next) {
+    if (busy) return;
+    setBusy(true); setErr('');
+    try {
+      const r = await fetch(`/api/companies/${ws}`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ credSync: next }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || t('settings.sync.credErr'));
+      onChange(next);
+    } catch (e) { setErr(String(e.message || e)); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div style={{ display: 'grid', gap: 6, marginTop: 6, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12.5, fontWeight: 650, color: 'var(--fg)' }}>{t('settings.sync.credToggle')}</span>
+        <span style={{ flex: 1 }} />
+        {value === null ? <Skeleton h={18} w={90} /> : (
+          <>
+            <span className={value ? 'pill ok' : 'pill'} style={{ flex: 'none' }}>
+              {value ? t('settings.sync.credOn') : t('settings.sync.credOff')}
+            </span>
+            <button type="button" className="btn sm" disabled={busy} onClick={() => save(!value)}>
+              {busy ? <Spinner size={12} /> : value ? t('settings.sync.credTurnOff') : t('settings.sync.credTurnOn')}
+            </button>
+          </>
+        )}
+      </div>
+      <span style={{ fontSize: 12, color: 'var(--fg-3)', lineHeight: 1.6 }}>
+        {t('settings.sync.credNote')}{' '}
+        <a href="https://github.com/beyondworks/argo/blob/main/docs/privacy-sync.md" target="_blank" rel="noreferrer" style={{ color: 'var(--fg-2)' }}>
+          {t('settings.sync.credDocs')}
+        </a>
+      </span>
+      {value === false && <span style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.6 }}>{t('settings.sync.credOffHelp')}</span>}
+      {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
     </div>
   );
 }

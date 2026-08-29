@@ -42,6 +42,14 @@ function key1() {
     mcp.json 포함: 호스트 MCP 가져오기가 env(토큰)를 담으므로 클라우드에는 항상 암호문으로. */
 export const isSecretRel = (rel) => rel === 'connections.json' || rel === '.secrets.json' || rel === 'mcp.json';
 
+/** credSync off 회수 마커 — 클라우드의 자격 암호문을 "삭제" 대신 이 무해한 내용으로 덮어쓴다(upsert).
+    blob을 지우면 아직 토글을 못 받은 기기(구버전 포함)가 "원격 부재 + base 무변경 = 삭제"로 오판해
+    **자기 로컬 자격을 지운다**(sync.mjs `l && !r` 분기). blob이 살아 있으면 그 기기들은 자기치유(heal)
+    분기를 타 로컬을 보존한다. 유효한 JSON이라 구버전의 관용 개봉(mcp.json passthrough)이 받아도
+    빈 설정으로 무해하고, 엄격 개봉(.secrets/connections)은 형식 불일치로 보류된다(유실 없음). */
+export const CRED_WITHDRAWN = Buffer.from('{"argo":"credSync-off"}');
+export const isCredWithdrawn = (buf) => buf.length === CRED_WITHDRAWN.length && buf.equals(CRED_WITHDRAWN);
+
 /** M-ENC-1 롤아웃 스위치 — 켜면 동기되는 회사 폴더 전체(기억·대화·크루·스킬·원장)를 봉투 암호화한다.
     off(기본)면 기존과 동일(크레덴셜 3종만) = 동작 불변.
     ⚠ 2단계 롤아웃 강제: "봉투를 읽을 수 있는" 버전이 전 기기에 배포된 뒤에만 켠다.

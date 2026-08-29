@@ -84,6 +84,7 @@ Treat the code like a password.
 | Doc | What it covers |
 |---|---|
 | [docs/selfhost.md](docs/selfhost.md) | Linux VPS / CLI install, security defaults, headless runner connect |
+| [docs/privacy-sync.md](docs/privacy-sync.md) | What syncs to the cloud (credentials included), where the encryption key lives, and how to opt out |
 
 ## License
 
@@ -104,3 +105,4 @@ AI 회사입니다. 러너·기억·오케스트레이션은 전부 로컬에서
 - 터미널 한 줄 설치(맥·리눅스 셀프호스트): 위 [Install](#install) 명령 그대로
 - 러너 연결은 설정 → AI 연결에서 본인 계정으로(BYOK — Claude·Codex·Gemini·GLM·Kimi)
 - 셀프호스트 보안 기본값·헤드리스 연결: [docs/selfhost.md](docs/selfhost.md)
+- 클라우드 동기화 범위(자격 증명 포함)·암호화 열쇠 위치·끄는 방법: [docs/privacy-sync.md](docs/privacy-sync.md)
