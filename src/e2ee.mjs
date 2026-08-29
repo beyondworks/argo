@@ -8,8 +8,9 @@
 // 단계 0에서는 keypair 생성·등록까지만 실사용되고 dek는 비어 있다(동작 불변).
 import { createCipheriv, createDecipheriv, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { link, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { withLock } from './mutex.mjs';
 import { WS_ROOT } from './workspace.mjs';
 
 const FILE = '.device-e2ee.json';
@@ -27,45 +28,72 @@ const privateKeyToRaw = (keyObj) => keyObj.export({ format: 'der', type: 'pkcs8'
 let cache = null; // { root, state } — devicesession.mjs와 같은 root-키 캐시 패턴
 let dekBuf = null; // 동기 캐시 — secretbox가 동기 함수라 여기서 읽는다(accountKey 패턴)
 
-async function persist(state, root) {
+async function writeTmp(state, root) {
   await mkdir(root, { recursive: true });
-  // 생성 시점부터 0600 + rename 교체 — 개인키·DEK가 기본 모드로 노출되는 창을 없앤다(synccreds와 동일)
+  // 생성 시점부터 0600 — 개인키·DEK가 기본 모드로 노출되는 창을 없앤다(synccreds와 동일)
   const tmp = join(root, `.tmp-e2ee-${process.pid}-${Date.now().toString(36)}`);
   await writeFile(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
-  await rename(tmp, fileOf(root));
+  return tmp;
+}
+
+function readState(root) {
+  let raw = null;
+  try { raw = readFileSync(fileOf(root), 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  if (raw == null) return null;
+  const d = JSON.parse(raw); // 손상 = throw — 조용한 키 재생성은 기존 랩(wrapped_deks)을 전부 무효화한다
+  if (!d.pub || !d.priv) throw new Error('기기 E2EE 키 파일 손상 — pub/priv 누락');
+  return d;
 }
 
 /** 기기 E2EE 상태 로드 — 없으면 X25519 키쌍을 만들어 저장(최초 1회). 손상 시 재생성하지 않고 throw —
-    조용한 키 교체는 기존 랩(wrapped_deks)을 전부 못 열게 만든다(정직 실패가 안전 방향). */
+    조용한 키 교체는 기존 랩(wrapped_deks)을 전부 못 열게 만든다(정직 실패가 안전 방향).
+    경합 방어(분리 검수 HIGH — 2026-08-14 기기 세션 사고와 동일 계열, 상주:3001 + 앱 사이드카가 같은
+    WS_ROOT에서 동시 기동): 인프로세스는 withLock, 크로스 프로세스는 **create-exclusive 승자 결정** —
+    tmp에 쓴 뒤 link()로 목적지에 결합한다. link는 목적지가 이미 있으면 원자적으로 EEXIST라 승자가
+    정확히 하나이고, 패자는 자기 키를 버리고 디스크의 승자 키를 재독·채택한다(고아 키 금지).
+    mkdir 락 방식과 달리 크래시 잔재(stale lock) 회수 문제가 아예 없다. */
 export async function loadDeviceE2ee({ root = WS_ROOT } = {}) {
   if (cache && cache.root === root) return cache.state;
-  let state = null;
-  let raw = null;
-  try { raw = readFileSync(fileOf(root), 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  if (raw != null) {
-    const d = JSON.parse(raw); // 손상 = throw(위 주석 — 키 유실을 조용히 덮지 않는다)
-    if (!d.pub || !d.priv) throw new Error('기기 E2EE 키 파일 손상 — pub/priv 누락');
-    state = d;
-  } else {
-    const { publicKey, privateKey } = generateKeyPairSync('x25519');
-    state = { v: 1, pub: publicKeyToRaw(publicKey).toString('base64'), priv: privateKeyToRaw(privateKey).toString('base64') };
-    await persist(state, root);
-  }
-  cache = { root, state };
-  dekBuf = state.dek ? Buffer.from(state.dek, 'base64') : null;
-  return state;
+  return withLock(`e2ee:${root}`, async () => {
+    if (cache && cache.root === root) return cache.state; // 락 대기 중 다른 호출이 이미 로드했을 수 있다
+    let state = readState(root);
+    if (!state) {
+      const { publicKey, privateKey } = generateKeyPairSync('x25519');
+      const fresh = { v: 1, pub: publicKeyToRaw(publicKey).toString('base64'), priv: privateKeyToRaw(privateKey).toString('base64') };
+      const tmp = await writeTmp(fresh, root);
+      try {
+        await link(tmp, fileOf(root)); // 원자적 create-exclusive — 승자 하나만 성공
+        state = fresh;
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+        state = readState(root); // 패자 — 승자(다른 프로세스)의 키를 채택, 내 생성분은 폐기
+        if (!state) throw e; // 극단 레이스(승자 파일이 사라짐) — 조용한 재생성 대신 정직 실패
+      } finally {
+        await rm(tmp, { force: true }).catch(() => {});
+      }
+    }
+    cache = { root, state };
+    dekBuf = state.dek ? Buffer.from(state.dek, 'base64') : null;
+    return state;
+  });
 }
 
 /** 동기 DEK 접근 — secretbox 전용(accountKey와 동일 계약). 미보유면 null. */
 export const dek = () => dekBuf;
 
-/** DEK 수신·보관(P1: 켜기·기기 승인·복구 코드 경로가 호출). 디스크와 캐시를 함께 갱신. */
+/** DEK 수신·보관(P1: 켜기·기기 승인·복구 코드 경로가 호출). 디스크와 캐시를 함께 갱신.
+    락 + 디스크 재독 병합(2026-08-14 원칙) — 캐시 기반 덮어쓰기는 다른 프로세스가 막 쓴 dek를 지운다.
+    DEK는 계정당 하나라 동시 수신은 같은 값이지만, 재독이 그 가정 없이도 안전하게 만든다. */
 export async function setDek(buf, { root = WS_ROOT } = {}) {
-  const state = await loadDeviceE2ee({ root });
-  const next = { ...state, dek: Buffer.from(buf).toString('base64') };
-  await persist(next, root);
-  cache = { root, state: next };
-  dekBuf = Buffer.from(buf);
+  await loadDeviceE2ee({ root }); // 키쌍 보장(최초 생성 경합 방어 포함)
+  return withLock(`e2ee:${root}`, async () => {
+    const disk = readState(root); // 락 후 재독 — 캐시가 아니라 디스크가 병합 기준
+    const next = { ...disk, dek: Buffer.from(buf).toString('base64') };
+    const tmp = await writeTmp(next, root);
+    await rename(tmp, fileOf(root)); // 갱신은 원자 교체(존재하는 파일의 업데이트라 create-exclusive 아님)
+    cache = { root, state: next };
+    dekBuf = Buffer.from(buf);
+  });
 }
 
 export function clearDekCache() { cache = null; dekBuf = null; }

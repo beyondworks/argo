@@ -112,6 +112,36 @@ test('등록: device_keys upsert(공개키만), 프로세스당 1회, 실패해�
   await ensureDeviceKeyRegistered(bad, 'o-reg2', 'dev-1'); // throw하지 않아야 한다
 });
 
+/* ── 크로스 프로세스 최초 생성 경합(분리 검수 HIGH 재현의 회귀 가드) — 진짜 자식 프로세스 2개 ──
+   2026-08-14 기기 세션 사고와 동일 계열: 상주(:3001)와 앱 사이드카가 같은 WS_ROOT에서 동시 기동한다.
+   락 없던 구현은 10회 중 9회 서로 다른 키를 만들고 한쪽이 디스크와 다른 "고아 키"로 남았다(검수 실측).
+   불변식: 어느 프로세스가 이기든, **모든 프로세스의 반환 키 = 디스크의 키** 하나로 수렴한다. */
+test('경합: 두 독립 프로세스가 동시에 최초 생성해도 같은 키로 수렴한다(고아 키 금지)', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  const script = join(ROOT, 'race-child.mjs');
+  const { writeFile: wf } = await import('node:fs/promises');
+  await wf(script, `
+    process.env.ARGO_ROOT = process.argv[2];
+    const { loadDeviceE2ee } = await import(${JSON.stringify(new URL('../src/e2ee.mjs', import.meta.url).href)});
+    const s = await loadDeviceE2ee();
+    console.log(s.pub);
+  `);
+  for (let round = 0; round < 5; round++) {
+    const raceRoot = await mkdtemp(join(tmpdir(), 'argo-e2ee-race-'));
+    const [a, b] = await Promise.all([
+      run(process.execPath, [script, raceRoot]),
+      run(process.execPath, [script, raceRoot]),
+    ]);
+    const pubA = a.stdout.trim(), pubB = b.stdout.trim();
+    const disk = JSON.parse(await readFile(join(raceRoot, '.device-e2ee.json'), 'utf8')).pub;
+    assert.equal(pubA, disk, `round ${round}: 프로세스 A의 키가 디스크와 일치(고아 키 없음)`);
+    assert.equal(pubB, disk, `round ${round}: 프로세스 B의 키가 디스크와 일치(고아 키 없음)`);
+    await rm(raceRoot, { recursive: true, force: true });
+  }
+});
+
 /* ── sync 통합: v3 원격 파일 + DEK 미보유 기기 = 보류(불가시 홀드) — 오염·오삭제 없음 ── */
 test('sync 홀드: DEK 없는 기기가 v3 원격 파일을 만나면 failed 보류 — 로컬 미기록·원격 미삭제', async () => {
   const { syncCompany, _setSyncClientForTest } = await import('../src/sync.mjs');
