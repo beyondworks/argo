@@ -159,14 +159,22 @@ test('배선 — app/·middleware의 authError 호출부 전 형태 강제(코�
     }
     // 트립와이어·양성 검사는 주석 제거본 위에서 — 문서 주석 속 금지 예문(`// 금지: lang ||= 'ko'`)·
     // 같은 줄 URL 문자열의 // 절단이 만들던 false red를 없앤다(분리 검수 LOW-1·LOW-4).
-    // display-zoom-layout.test.mjs의 stripComments와 같은 구현 — 공백 뒤 //만 절단이라 문자열 속
-    // URL(https://…)은 앞이 ':'여서 생존한다. 수집기는 위에서 원문(src)을 쓴다 — 거기서의
-    // 과제거는 실호출 소실 = fail-open이라 스트립 금지(뷰 분리 의도적).
-    // 근사 잔여(현행 스캔 표면 0건): 공백에 감싸인 //를 담은 문자열은 그 줄 뒤쪽이 지워진다 —
-    // 음성 검사엔 은닉(fail-open), 양성 검사엔 red(fail-closed)로 갈리는 문서화된 한계.
+    // display-zoom-layout.test.mjs stripComments의 변형이며 두 가지가 다르다(재검수 적발):
+    // ① 순서가 하중 — 줄주석을 먼저 잘라야 줄주석 속 글롭(`src/*.mjs` — auth.mjs:2 실재)의 /*가
+    //   유령 블록을 열어 다음 */까지(auth.mjs 2~22행 실코드 12줄) 검사 사각을 만들지 않는다.
+    // ② 절단 조건 [^:] — 공백 없는 `;//` 주석도 잘라야 주석 속 텍스트가 양성 검사를 충족하는
+    //   ①번 구멍이 부활하지 않고, URL은 `://`의 ':'만으로 보호된다(접두 1글자는 보존).
+    // 수집기는 위에서 원문(src)을 쓴다 — 거기서의 과제거는 실호출 소실 = fail-open이라 스트립
+    // 금지(뷰 분리 의도적). 근사 잔여(현행 스캔 표면 0건 — 재검수 토크나이저 전량 대조): 문자열
+    // 속 //는 그 줄 뒤쪽을, 블록 주석 속 //가 */를 지우면 다음 */까지를 가린다 — 음성 검사엔
+    // 은닉(fail-open), 양성 검사엔 red(fail-closed)로 갈리는 문서화된 한계.
     const stripped = src
-      .replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '))
-      .replace(/(^|[^\S\n])\/\/[^\n]*/gm, (c) => c.replace(/[^\n]/g, ' '));
+      .replace(/(^|[^:])\/\/[^\n]*/gm, (c, p) => p + c.slice(p.length).replace(/[^\n]/g, ' '))
+      .replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
+    // lang이 tenantDenied(user, lang)로만 흐르는 파일도 재대입·양성 검사 대상(재검수 H4 —
+    // authError 트리거만으론 tenant_only 갈래 상수화가 사각). 현행 3곳과 같은 단순 호출 형태만
+    // 근사한다 — 형태가 어긋나면 대상 축소가 아니라 이 줄과 함께 손본다.
+    if (/\btenantDenied\s*\(\s*[\w$.]+\s*,\s*lang\s*\)/.test(stripped)) sawBareLang = true;
     // 바인딩 상수화는 같은 결함 한 칸 위 — const lang = 'ko'는 호출 형태 'lang'을 그대로 통과한다.
     // 주의: 전면 `lang = '리터럴'` 금지는 불가 — timeAgo(input, lang = 'ko')·본문 destructure
     // `{ lang = 'ko' }`(회사 시스템 언어 폴백)·<html lang="ko"> 등 정당한 기본값이 여럿이다.
