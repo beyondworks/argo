@@ -201,14 +201,17 @@ test('밴드 배선 — 주 화면에만 crew-phone-band(임베드 패널 밴드
    #348 분리 검수 확정 별건 1: 레일 216px 열이 남으면 본문 트랙이 98px로 붕괴하고(실측 360px),
    본문 내부 무템플릿 열은 자식 min-content(212px 실측)로 부풀어 문서 가로 넘침 100px을 만들었다. */
 
-test('본문 그리드 — 360px에서 열 승자 minmax(0, 1fr)(레일 스택), 901px에서 216px 2열', () => {
+test('본문 그리드 — 360px에서 열 승자 minmax(0, 1fr)(레일 스택), 901px에서 양보 클램프 2열', () => {
   assert.equal(effective('.chat-cols', 'grid-template-columns', 360), 'minmax(0, 1fr)',
     '360px에서 .chat-cols 열 승자가 단일 minmax(0, 1fr)가 아니다 — 레일이 216px 열로 남아 본문이 98px로 붕괴한다(실측)');
-  assert.equal(effective('.chat-cols', 'grid-template-columns', 901), '216px minmax(0, 1fr)',
-    '901px에서 .chat-cols 열 승자가 216px 2열이 아니다 — 데스크톱 레일 배치가 무너진다');
+  // 양보 클램프 min(216px, 100% - 244px): 배율 2의 좁은 유효 폭에서 고정 216px 레일이 본문 열을
+  // 60 CSS px까지 압살하던 것을 방지(#365 — 세 페이지 공통 편입). 244 = 본문 열 바닥 226(카드
+  // 최소 가독 180 + 패딩 36 + 테두리 2 + 스크롤바 8) + gap 18. 컨테이너 ≥460은 216 고정과 동일.
+  assert.equal(effective('.chat-cols', 'grid-template-columns', 901), 'min(216px, 100% - 244px) minmax(0, 1fr)',
+    '901px에서 .chat-cols 열 승자가 양보 클램프 2열이 아니다 — 고정 216px로 롤백되면 배율 2에서 본문이 60px로 압살된다');
 });
 
-test('레일 — 360px에서 position 승자 static + 자체 스크롤 상한(vh는 /var(--z) 보정), 901px에서 sticky', () => {
+test('레일 — 360px에서 position 승자 static + 자체 스크롤 상한(vh는 /var(--z) 보정), 901px에서 sticky·무폭', () => {
   const RAIL = '.chat-cols > .side-rail'; // 정확 일치 평가라 결합 셀렉터 그대로 조회
   assert.equal(effective(RAIL, 'position', 360), 'static',
     '360px에서 레일 position 승자가 static이 아니다 — sticky 레일이 스택 흐름을 깬다');
@@ -218,6 +221,11 @@ test('레일 — 360px에서 position 승자 static + 자체 스크롤 상한(vh
     '360px 레일 max-height 승자가 배율 보정(vh / var(--z)) 꼴이 아니다 — 세션이 많으면 레일이 본문을 밀어낸다(display-zoom 게이트와 한 세트)');
   assert.equal(effective(RAIL, 'overflow-y', 360), 'auto',
     '360px 레일 overflow-y 승자가 auto가 아니다 — 상한을 걸어도 내용이 밖으로 넘친다');
+  // 레일 폭은 트랙이 정한다(기본 stretch) — CSS width 선언이 있으면 트랙 양보(min(216px,…)) 시
+  // 아이템이 트랙을 넘어 본문 위로 얹힌다(#365 검수 MEDIUM-3 실증). 밴드 안(360px)의 width:auto는
+  // 문제없으나 데스크톱(901px)에 width가 있으면 양보가 무효화된다.
+  assert.equal(effective(RAIL, 'width', 901), undefined,
+    '901px 레일에 CSS width 선언이 있다 — 트랙 양보 클램프(min(216px, 100% - 244px))를 무효화해 배율 2에서 본문 압살이 부활한다');
 });
 
 test('밴드 줄바꿈 — 360px flex-wrap 승자 wrap (라벨 합이 가용폭과 정확히 일치, 여유 0)', () => {

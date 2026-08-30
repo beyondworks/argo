@@ -1863,15 +1863,22 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 }
 
 /* ─── 채팅 ─── */
-/* 크루 채팅·경쟁 시안 공용 본문 그리드 — 세션 레일(216px) + 본문 열. 인라인이 아니라 여기 두는 이유:
+/* 크루 채팅·회의실·경쟁 시안 공용 본문 그리드 — 세션 레일 + 본문 열. 인라인이 아니라 여기 두는 이유:
    폰 폭(≤560px)의 레일 스택 전환을 미디어 블록이 !important 없이 이기게 한다.
-   offset 100 = topbar56+상단26+하단여백18, margin-bottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지 */
+   offset 100 = topbar56+상단26+하단여백18, margin-bottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지.
+   레일 양보 클램프 min(216px, 100% - 244px): 배율 2의 좁은 유효 폭에서 고정 216px 레일이 본문 열을
+   60 CSS px까지 압살하던 것을 방지(실측 1280×배율 2 — #365). 244 = 본문 열 바닥 226(시안/스레드 카드
+   최소 가독 180 + 카드 패딩 36 + 카드 테두리 2 + 커스텀 스크롤바 8) + gap 18. 컨테이너 ≥460이면
+   min()이 216을 택해 종전과 픽셀 동일. 미디어쿼리 밴드(≤560)는 실뷰포트만 보고 배율 축은 못 보므로
+   intrinsic 클램프가 필수 — 밴드(1열 스택)에서는 이 선언이 덮어써져 무효이므로 공존에 무해. */
 .chat-cols {
-  display: grid; grid-template-columns: 216px minmax(0, 1fr);
+  display: grid; grid-template-columns: min(216px, 100% - 244px) minmax(0, 1fr);
   gap: 18px; align-items: start;
   height: calc(100vh / var(--z, 1) - 100px); margin-bottom: -70px;
 }
-.chat-cols > .side-rail { position: sticky; top: 72px; width: 216px; }
+/* 레일 폭은 트랙이 정한다(기본 stretch) — 고정 width는 트랙 양보 시 아이템이 트랙을 넘어 본문 위로
+   얹힌다(#365 검수 MEDIUM-3 실증). */
+.chat-cols > .side-rail { position: sticky; top: 72px; }
 /* 크루 컨트롤 인라인 밴드 — 기본은 없음(넓은 폭은 topbar 슬롯이 수용처), ≤900px 블록에서 등장 */
 .crew-phone-band { display: none; }
 /* overflow-anchor 차단 — 크롬 scroll anchoring이 턴 종료(작업 카드 unmount) 같은 DOM 변화에
