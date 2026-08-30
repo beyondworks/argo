@@ -49,9 +49,10 @@ const EXPECT = {
   e2ee_revoke_target_required: { status: 400, ko: '제거할 기기를 지정해 주세요', en: 'Specify a device to remove' },
   e2ee_revoke_self: { status: 400, ko: '이 기기 자신은 제거할 수 없습니다', en: 'This device cannot remove itself' },
   e2ee_unknown_action: { status: 400, ko: '알 수 없는 action', en: 'Unknown action' },
-  // 후속 이관(6 라우트) — ko는 변경 전 각 라우트가 실제로 내리던 프로덕션 문자열(detail 접미 앞부분)
-  market_top_failed: { status: 200, ko: '추천 목록 로드 실패', en: 'Failed to load recommendations' },
-  market_remote_failed: { status: 200, ko: '원격 마켓 연결 실패', en: 'Remote market connection failed' },
+  // 후속 이관(6 라우트) — ko는 변경 전 각 라우트가 실제로 내리던 프로덕션 문자열(detail 접미 앞부분).
+  // status: null = 문구 전용(market 200 소프트 오류 — 응답 모양은 라우트 소유, apiError는 fail-loud)
+  market_top_failed: { status: null, ko: '추천 목록 로드 실패', en: 'Failed to load recommendations' },
+  market_remote_failed: { status: null, ko: '원격 마켓 연결 실패', en: 'Remote market connection failed' },
   feedback_cloud_only: { status: 400, ko: '클라우드 모드(로그인)에서만 피드백을 보낼 수 있습니다', en: 'Feedback can be sent only in cloud mode (signed in)' },
   feedback_message_required: { status: 400, ko: '내용이 필요합니다', en: 'A message is required' },
   feedback_save_failed: { status: 500, ko: '저장에 실패했습니다. 잠시 후 다시 시도해 주세요', en: 'Failed to save. Please try again shortly' },
@@ -66,6 +67,11 @@ const EXPECT = {
 test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태코드 + errorCode 동봉', async () => {
   assert.deepEqual(Object.keys(API_MSG).sort(), Object.keys(EXPECT).sort(), '사전 코드 집합 = 기대표(누락·잉여 즉시 노출)');
   for (const [code, exp] of Object.entries(EXPECT)) {
+    if (exp.status === null) { // 문구 전용(market) — apiError 오호출은 results 없는 200 오류가 되므로 차단
+      assert.throws(() => apiError(code, 'ko'), undefined, `${code} 문구 전용 코드의 apiError 오호출 차단(분리 검수 LOW-1)`);
+      assert.equal(apiMsgText(code, 'ko'), exp.ko, `${code} ko 문구 회귀 0`);
+      continue;
+    }
     const res = apiError(code, 'ko');
     assert.equal(res.status, exp.status, `${code} 상태코드`);
     const body = await res.json();
@@ -76,6 +82,11 @@ test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태
 
 test('apiError — en 문구 리터럴 고정, 미지원 언어값·미지정은 ko 폴백', async () => {
   for (const [code, exp] of Object.entries(EXPECT)) {
+    if (exp.status === null) { // 문구 전용 — en 문구·무한글은 apiMsgText로 같은 강도 검사
+      assert.equal(apiMsgText(code, 'en'), exp.en, `${code} en 문구`);
+      assert.ok(!/[가-힣]/.test(apiMsgText(code, 'en')), `${code} en에 한글 없음`);
+      continue;
+    }
     const body = await apiError(code, 'en').json();
     assert.equal(body.error, exp.en, `${code} en 문구`);
     assert.ok(!/[가-힣]/.test(body.error), `${code} en에 한글 없음`);
@@ -264,6 +275,18 @@ test('실호출 — vault GET: 없는 문서 404 = 표시 언어 문구 + rel �
   assert.equal(enBody.errorCode, 'vault_doc_not_found');
   const ko = await GET(new Request('http://127.0.0.1/api/companies/w1/vault?rel=nope.md'), P({ ws: 'w1' }));
   assert.equal((await ko.json()).error, '문서를 찾을 수 없습니다: nope.md', '무단서 = 기존 ko 바이트(회귀 0)');
+});
+
+test('실호출 — vault DELETE: 선삭제 노트 404 = 표시 언어 문구 + rel 접미(분리 검수 MEDIUM-1 — GET의 lang 선언이 DELETE 상수화를 가리는 구멍 봉합)', async () => {
+  const { DELETE } = await routeImport('../app/api/companies/[ws]/vault/route.js');
+  const mk = (headers) => new Request('http://127.0.0.1/api/companies/w1/vault?rel=notes/gone.md', { method: 'DELETE', headers });
+  const en = await DELETE(mk({ cookie: 'argo-lang=en' }), P({ ws: 'w1' }));
+  assert.equal(en.status, 404);
+  const enBody = await en.json();
+  assert.equal(enBody.error, 'Document not found: notes/gone.md');
+  assert.equal(enBody.errorCode, 'vault_doc_not_found');
+  const ko = await DELETE(mk({}), P({ ws: 'w1' }));
+  assert.equal((await ko.json()).error, '문서를 찾을 수 없습니다: notes/gone.md', '무단서 = 기존 ko 바이트(회귀 0)');
 });
 
 test('실호출 — agents GET: 없는 크루 404(stale 링크) = 표시 언어 문구 + errorCode', async () => {

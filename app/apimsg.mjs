@@ -24,8 +24,10 @@ export const API_MSG = {
 
   // 마켓(market/route.js GET) — 200 + { results: [], error } 소프트 오류 계약(페이지는 목록을 유지한
   // 채 배너만 띄운다). Response는 라우트가 직접 만들고 문구만 apiMsgText로 그린다.
-  market_top_failed: { status: 200, ko: '추천 목록 로드 실패', en: 'Failed to load recommendations' },
-  market_remote_failed: { status: 200, ko: '원격 마켓 연결 실패', en: 'Remote market connection failed' },
+  // status: null = 문구 전용 — apiError로 그리면 results 없는 200 오류가 나가 페이지 스켈레톤이
+  // 영구 고정되므로(setItems(undefined)) apiError가 fail-loud로 차단한다(분리 검수 LOW-1).
+  market_top_failed: { status: null, ko: '추천 목록 로드 실패', en: 'Failed to load recommendations' },
+  market_remote_failed: { status: null, ko: '원격 마켓 연결 실패', en: 'Remote market connection failed' },
   // 피드백(feedback/route.js) — FeedbackModal이 error를 그대로 렌더
   feedback_cloud_only: { status: 400, ko: '클라우드 모드(로그인)에서만 피드백을 보낼 수 있습니다', en: 'Feedback can be sent only in cloud mode (signed in)' },
   feedback_message_required: { status: 400, ko: '내용이 필요합니다', en: 'A message is required' },
@@ -54,5 +56,8 @@ export function apiMsgText(code, lang, detail) {
 /** 기능 라우트 공통 오류 응답. lang은 ko|en(그 외 값·미지정은 ko). 미등록 코드는 throw —
     authError와 같은 fail-loud 계약(오타가 조용히 빈 문구로 새지 않는다). */
 export function apiError(code, lang, detail) {
-  return Response.json({ error: apiMsgText(code, lang, detail), errorCode: code }, { status: API_MSG[code].status });
+  const msg = apiMsgText(code, lang, detail); // 미등록 코드는 여기서 throw
+  const { status } = API_MSG[code];
+  if (status == null) throw new Error(`apiError: 문구 전용 코드 ${code} — 응답 모양은 라우트 소유, apiMsgText로 그릴 것`);
+  return Response.json({ error: msg, errorCode: code }, { status });
 }
