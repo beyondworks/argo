@@ -208,7 +208,13 @@ export function openDekWithKek(kek, blob) {
   const d = createDecipheriv('aes-256-gcm', kek, iv);
   d.setAuthTag(tag);
   try { return Buffer.concat([d.update(ct), d.final()]); }
-  catch { throw new Error('복구 코드가 맞지 않습니다'); } // GCM 태그 불일치 = 코드 오입력(정직 문구)
+  catch {
+    // GCM 태그 불일치 = 코드 오입력(정직 문구). code는 라우트가 표시 언어로 다시 그리기 위한
+    // 기계 식별자 — 문자열 매칭 대신 이 코드로 판별한다(test/api-error-lang.test.mjs).
+    const err = new Error('복구 코드가 맞지 않습니다');
+    err.code = 'E2EE_BAD_CODE';
+    throw err;
+  }
 }
 
 /** 자기 랩 회수(claim) — wrapped_deks에서 내 기기 행을 찾아 DEK를 개봉·보관한다.

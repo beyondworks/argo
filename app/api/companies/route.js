@@ -2,12 +2,17 @@ import { createCompany } from '../../../src/workspace.mjs';
 import { listCompanies } from '../../../src/hub.mjs';
 import { applyPreset, PRESETS, presetFor } from '../../../src/presets.mjs';
 import { seedRunnerCreds } from '../../../src/runners.mjs';
-import { AUTH_ON, currentUser, tenantDenied, authError, requestLang } from '../../auth.mjs';
+import { AUTH_ON, currentUser, tenantDenied, authError, requestLang, langFromCookieHeader } from '../../auth.mjs';
 
 export async function GET(req) {
+  // 표시 언어 — 화면 UI 언어(?lang)가 1순위(커넥터 라우트와 같은 계약), 부재·무효 시 argo-lang 쿠키
+  // 폴백(#333 합류). 쿠키까지 없는 요청(curl·구버전)은 오늘과 동일하게 ko. 순수 판독기라
+  // 라우트 실호출 테스트가 가능하다(test/api-error-lang.test.mjs — requestLang은 요청 스코프 밖 불가).
+  const q = new URL(req.url).searchParams.get('lang');
+  const lang = q === 'en' || q === 'ko' ? q : langFromCookieHeader(req.headers.get('cookie'));
   const user = await currentUser();
-  if (!user) return authError('auth_required', await requestLang());
-  const td = tenantDenied(user, await requestLang()); if (td) return td;
+  if (!user) return authError('auth_required', lang);
+  const td = tenantDenied(user, lang); if (td) return td;
   const all = await listCompanies();
   // 인증 on = 내 회사만. 무주(레거시) 회사는 아무에게나 노출하지 않는다 — 최초 소유자 지정은
   // guardCompany의 ARGO_ADOPT_OWNER 게이트로만 처리한다. off = 로컬 전부.
@@ -15,8 +20,7 @@ export async function GET(req) {
   const companies = AUTH_ON
     ? all.filter((c) => (user.id === 'local' ? !c.ownerId : c.ownerId === user.id))
     : all;
-  // 프리셋 picker 라벨 — 클라이언트 UI 언어(?lang=en)를 따른다. presetFor가 en 미비 키를 ko로 폴백.
-  const lang = new URL(req.url).searchParams.get('lang') === 'en' ? 'en' : 'ko';
+  // 프리셋 picker 라벨 — 위에서 정한 표시 언어를 따른다. presetFor가 en 미비 키를 ko로 폴백.
   return Response.json({
     companies,
     presets: Object.keys(PRESETS).map((key) => {
