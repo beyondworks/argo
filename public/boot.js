@@ -59,10 +59,12 @@ try {
     window.__TAURI__.event.listen('boot', function (e) {
       var p = e.payload || {};
       if (p.version) APP_VER = p.version; // 이후 프로브는 같은 버전의 Argo에만 이동
-      // 셸이 확정한 서버 포트 — 그 포트로 고정. 다른 후보(예: 다른 버전의 상주 3001)로 새지 않게
-      // 목록을 교체한다(스폰이 3011인데 3001 상주가 먼저 응답해 이동하던 레이스 차단).
+      // 셸이 확정한 서버 포트 — 맨 앞으로 올리되 **후보를 버리지 않는다**(윈도 실기기 2026-08-30:
+      // 3001 선점 시 단일 교체+무응답 프로브 조합이 부트 화면 영구 대기를 만들었다). 다른 버전의
+      // 상주로 새는 레이스는 아래 버전 게이트(APP_VER 일치)가 막는다 — 단일 고정과 중복 방어였다.
       if (p.port) {
-        TARGETS = ['http://localhost:' + p.port];
+        var fixed = 'http://localhost:' + p.port;
+        TARGETS = [fixed].concat(TARGETS.filter(function (t) { return t !== fixed; }));
       }
       if (p.phase && p.phase !== 'error') errEl.hidden = true; // 폴백 재스폰으로 살아나면 이전 에러 배너 제거(2R H5)
       if (p.phase === 'error') {
@@ -107,13 +109,18 @@ function probe(i) {
   var target = TARGETS[i];
   // 신원 확인 후에만 이동 — 기존 no-cors '/login' 프로브는 어떤 서버가 응답해도 성공 처리돼
   // 포트를 선점한 타 앱으로 이동했다(실사용 "Cannot GET /"). /api/ping은 CORS 개방이라 본문 판독 가능.
-  fetch(target + '/api/ping', { cache: 'no-store' })
+  // 프로브당 상한 1.5s — 연결만 받고 응답을 끄는 선점 프로세스에서 fetch가 무기한 매달리면
+  // 다음 후보(폴백 스폰 3011)로 영영 못 넘어간다(윈도 실기기 2026-08-30: 2분간 3011 시도 0건).
+  var ac = typeof AbortController === 'function' ? new AbortController() : null;
+  var timer = ac ? setTimeout(function () { ac.abort(); }, 1500) : null;
+  fetch(target + '/api/ping', ac ? { cache: 'no-store', signal: ac.signal } : { cache: 'no-store' })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
+      if (timer) clearTimeout(timer);
       // 신원 + (셸 버전을 아는 경우) 버전까지 일치해야 이동 — 다른 버전의 Argo는 건너뛴다
       if (d && d.argo === true && (!APP_VER || d.version === APP_VER)) { goto(target); } else { probe(i + 1); }
     })
-    .catch(function () { probe(i + 1); });
+    .catch(function () { if (timer) clearTimeout(timer); probe(i + 1); });
 }
 if (!DEMO) probe(0);
 
