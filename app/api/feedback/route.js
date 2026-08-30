@@ -7,7 +7,8 @@ import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { after } from 'next/server';
 import { randomBytes } from 'node:crypto';
-import { AUTH_ON, currentUser, authError, requestLang } from '../../auth.mjs';
+import { AUTH_ON, currentUser, authError, langFromCookieHeader } from '../../auth.mjs';
+import { apiError } from '../../apimsg.mjs';
 import { getFreshDeviceSession } from '../../../src/devicesession.mjs';
 import { createFeedbackIssue, feedbackIssueEnabled } from '../../../src/feedback-issue.mjs';
 
@@ -33,12 +34,15 @@ function issueRateOk(userId) {
 }
 
 export async function POST(req) {
-  if (!AUTH_ON) return Response.json({ error: '클라우드 모드(로그인)에서만 피드백을 보낼 수 있습니다' }, { status: 400 });
+  // 표시 언어 — 오류 문구를 사용자 화면 언어(argo-lang 쿠키)로 그린다(#333 가드 계약의 기능 라우트
+  // 합류, test/api-error-lang.test.mjs). requestLang(next/headers)과 판독 의미 정렬된 순수 판독기.
+  const lang = langFromCookieHeader(req.headers.get('cookie'));
+  if (!AUTH_ON) return apiError('feedback_cloud_only', lang);
   const user = await currentUser();
-  if (!user) return authError('auth_required', await requestLang());
+  if (!user) return authError('auth_required', lang);
   const { message } = await req.json().catch(() => ({}));
   const clean = String(message ?? '').trim().slice(0, 4000);
-  if (!clean) return Response.json({ error: '내용이 필요합니다' }, { status: 400 });
+  if (!clean) return apiError('feedback_message_required', lang);
   // 클라이언트 조달 — currentUser()와 같은 순서 계약(쿠키 세션 > 기기 세션, 2026-08-06).
   // 기기 세션을 먼저 보면 insert JWT(auth.uid()=기기 주인)와 email 컬럼(쿠키 사용자)의 계정
   // 귀속이 갈린다(분리 검수 MED — 비루프백 노출 구성에서 발현).
@@ -81,7 +85,7 @@ export async function POST(req) {
   });
   if (error) {
     console.error('[argo] feedback insert 실패:', error.code ?? '', error.message);
-    return Response.json({ error: '저장에 실패했습니다. 잠시 후 다시 시도해 주세요' }, { status: 500 });
+    return apiError('feedback_save_failed', lang);
   }
   // 깃헙 이슈는 **사본**이다 — 실패해도 제보는 이미 저장됐으므로 성공으로 즉시 답한다.
   // 이슈 생성(최대 8초)을 응답 전에 기다리면 사용자는 "전송 실패"를 본다(실사용 제보 2026-08-07

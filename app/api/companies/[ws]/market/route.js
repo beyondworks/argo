@@ -11,13 +11,17 @@ import {
   topRemoteSkills, topRemoteMcp, explainItem, warmExplains,
 } from '../../../../../src/remote-market.mjs';
 import { loadCompany } from '../../../../../src/workspace.mjs';
-import { guardCompany } from '../../../../auth.mjs';
+import { guardCompany, langFromCookieHeader } from '../../../../auth.mjs';
+import { apiMsgText } from '../../../../apimsg.mjs';
 
 export const maxDuration = 120; // explain = 모델 1턴
 
 export async function GET(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
+  // 표시 언어(오류 문구용) — argo-lang 쿠키. 아래 lang(회사 시스템 언어 — 카탈로그·설치 md 본문)과는
+  // 축이 다르다: 화면 오류 배너는 보고 있는 사용자의 UI 언어를 따른다(#333 계약의 기능 라우트 합류).
+  const uiLang = langFromCookieHeader(req.headers.get('cookie'));
   const u = new URL(req.url);
   const remote = u.searchParams.get('remote');
   const top = u.searchParams.get('top');
@@ -30,7 +34,9 @@ export async function GET(req, { params }) {
       warmExplains(ws, results, top === 'skills' ? 'skill' : 'mcp', lang); // 백그라운드 — 응답을 막지 않는다. ws = 이 회사 러너로 생성(러너 독립)
       return Response.json({ results });
     } catch (e) {
-      return Response.json({ results: [], error: `추천 목록 로드 실패: ${String(e.message || e)}` });
+      // 200 + { results: [], error } 소프트 오류 계약 유지 — 페이지는 목록 화면을 유지한 채 배너만 띄운다
+      const detail = String(e.message || e);
+      return Response.json({ results: [], error: apiMsgText('market_top_failed', uiLang, detail) });
     }
   }
 
@@ -41,7 +47,8 @@ export async function GET(req, { params }) {
       const results = remote === 'skills' ? await searchRemoteSkills(q) : await searchRemoteMcp(q);
       return Response.json({ results });
     } catch (e) {
-      return Response.json({ results: [], error: `원격 마켓 연결 실패: ${String(e.message || e)}` });
+      const detail = String(e.message || e);
+      return Response.json({ results: [], error: apiMsgText('market_remote_failed', uiLang, detail) });
     }
   }
 

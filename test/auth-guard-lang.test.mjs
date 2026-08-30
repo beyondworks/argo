@@ -122,6 +122,13 @@ test('배선 — app/·middleware의 authError 코드명이 사전에 실존 + g
     // 언어 인자 없는 호출 금지 — 호출부 하나가 lang을 빠뜨리면 그 자리만 ko 고정(분리 검수 HIGH 변이 실증)
     const oneArg = src.match(/authError\(\s*'[a-z_]+'\s*\)/);
     assert.equal(oneArg, null, `${f}: 언어 인자 없는 authError 호출 ${oneArg?.[0] ?? ''}`);
+    // 언어 인자 리터럴 금지 — `, 'ko')` 상수화도 그 자리만 영구 한국어 고정이다(후속 이관 분리 검수
+    // MEDIUM-2: requestLang→langFromCookieHeader 교체 호출부가 한 인자 스캔 밖에 있었다. apiError
+    // 호출부 형태 게이트와 같은 강도로 tenantDenied까지 함께 잠근다).
+    const litLang = src.match(/authError\(\s*'[a-z_]+'\s*,\s*['"`]/);
+    assert.equal(litLang, null, `${f}: 언어 인자가 리터럴인 authError 호출 ${litLang?.[0] ?? ''}`);
+    const litTenant = src.match(/tenantDenied\([^)]*,\s*['"`]/);
+    assert.equal(litTenant, null, `${f}: 언어 인자가 리터럴인 tenantDenied 호출 ${litTenant?.[0] ?? ''}`);
   }
   // guardCompany의 네 갈래가 전부 배선돼 있어야 한다 — 하나라도 빠지면 그 갈래는 미번역 잔존
   for (const code of ['auth_required', 'company_not_found', 'company_linked', 'company_forbidden']) {

@@ -9,6 +9,12 @@
 //     프로브 실측 관례) — 소스 배선으로 잠근다.
 //  ④ 이관 ko 문구의 사전 밖 재등장 금지 — app/ 전체 error: 리터럴 트립와이어(auth-guard-lang 관례).
 //  ⑤ companies GET 실호출 — 프리셋 표시 언어 = ?lang 1순위 · argo-lang 쿠키 폴백 · 무단서 ko.
+//  ⑥ detail 병기(후속 이관) — 동적 접미가 붙던 문구(마켓·크루 카드·vault rel)는 `문구: detail`
+//     바이트 계약. apiMsgText = 커스텀 응답 모양(market 200 소프트 오류) 자리의 문구 전용 출구.
+//  ⑦ 후속 6라우트 배선(소스) — 호출부 전 형태 강제(코드 리터럴 + lang 변수 + detail 식별자만) +
+//     사전 전 코드의 전역 배선(미배선 코드 = 미번역 잔존) — market·feedback·agents·vault·devices·pair.
+//  ⑧ 실호출(인증 off·임시 ARGO_ROOT) — vault·agents·feedback·devices 라우트의 오류 표시 언어 행동
+//     (en 쿠키 = 영어 + errorCode, 무단서 = 기존 ko 바이트).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -22,7 +28,7 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-apimsg-')); // 워크
 delete process.env.NEXT_PUBLIC_SUPABASE_URL;
 delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-const { API_MSG, apiError } = await import('../app/apimsg.mjs');
+const { API_MSG, apiError, apiMsgText } = await import('../app/apimsg.mjs');
 const { generateRecoveryCode, deriveRecoveryKek, wrapDekWithKek, openDekWithKek } = await import('../src/e2ee.mjs');
 
 // ── ① apiError 행동 ──────────────────────────────────────────────────────────
@@ -43,11 +49,29 @@ const EXPECT = {
   e2ee_revoke_target_required: { status: 400, ko: '제거할 기기를 지정해 주세요', en: 'Specify a device to remove' },
   e2ee_revoke_self: { status: 400, ko: '이 기기 자신은 제거할 수 없습니다', en: 'This device cannot remove itself' },
   e2ee_unknown_action: { status: 400, ko: '알 수 없는 action', en: 'Unknown action' },
+  // 후속 이관(6 라우트) — ko는 변경 전 각 라우트가 실제로 내리던 프로덕션 문자열(detail 접미 앞부분).
+  // status: null = 문구 전용(market 200 소프트 오류 — 응답 모양은 라우트 소유, apiError는 fail-loud)
+  market_top_failed: { status: null, ko: '추천 목록 로드 실패', en: 'Failed to load recommendations' },
+  market_remote_failed: { status: null, ko: '원격 마켓 연결 실패', en: 'Remote market connection failed' },
+  feedback_cloud_only: { status: 400, ko: '클라우드 모드(로그인)에서만 피드백을 보낼 수 있습니다', en: 'Feedback can be sent only in cloud mode (signed in)' },
+  feedback_message_required: { status: 400, ko: '내용이 필요합니다', en: 'A message is required' },
+  feedback_save_failed: { status: 500, ko: '저장에 실패했습니다. 잠시 후 다시 시도해 주세요', en: 'Failed to save. Please try again shortly' },
+  crew_not_found: { status: 404, ko: '크루를 찾을 수 없습니다', en: 'Crew not found' },
+  crew_card_read_failed: { status: 500, ko: '크루 카드를 읽지 못했습니다', en: 'Could not read the crew card' },
+  vault_doc_not_found: { status: 404, ko: '문서를 찾을 수 없습니다', en: 'Document not found' },
+  devices_no_sync_creds: { status: 400, ko: '이 기기에 동기화 자격이 없습니다 — 환경변수 설정 또는 페어링이 먼저 필요합니다', en: 'This device has no sync credentials — set the environment variables or pair it first' },
+  devices_no_owner: { status: 400, ko: '회사에 소유자(ownerId)가 없어 페어링할 수 없습니다', en: 'The company has no owner (ownerId), so it cannot be paired' },
+  pair_owner_mismatch: { status: 403, ko: '연결 코드의 소유자가 현재 로그인 사용자와 다릅니다', en: 'The pairing code owner does not match the signed-in user' },
 };
 
 test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태코드 + errorCode 동봉', async () => {
   assert.deepEqual(Object.keys(API_MSG).sort(), Object.keys(EXPECT).sort(), '사전 코드 집합 = 기대표(누락·잉여 즉시 노출)');
   for (const [code, exp] of Object.entries(EXPECT)) {
+    if (exp.status === null) { // 문구 전용(market) — apiError 오호출은 results 없는 200 오류가 되므로 차단
+      assert.throws(() => apiError(code, 'ko'), undefined, `${code} 문구 전용 코드의 apiError 오호출 차단(분리 검수 LOW-1)`);
+      assert.equal(apiMsgText(code, 'ko'), exp.ko, `${code} ko 문구 회귀 0`);
+      continue;
+    }
     const res = apiError(code, 'ko');
     assert.equal(res.status, exp.status, `${code} 상태코드`);
     const body = await res.json();
@@ -58,6 +82,11 @@ test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태
 
 test('apiError — en 문구 리터럴 고정, 미지원 언어값·미지정은 ko 폴백', async () => {
   for (const [code, exp] of Object.entries(EXPECT)) {
+    if (exp.status === null) { // 문구 전용 — en 문구·무한글은 apiMsgText로 같은 강도 검사
+      assert.equal(apiMsgText(code, 'en'), exp.en, `${code} en 문구`);
+      assert.ok(!/[가-힣]/.test(apiMsgText(code, 'en')), `${code} en에 한글 없음`);
+      continue;
+    }
     const body = await apiError(code, 'en').json();
     assert.equal(body.error, exp.en, `${code} en 문구`);
     assert.ok(!/[가-힣]/.test(body.error), `${code} en에 한글 없음`);
@@ -104,7 +133,8 @@ test('배선 — e2ee 라우트: apiError 코드 실존·전 코드 사용·언�
     assert.ok(shape[1] in API_MSG, `미등록 코드 '${shape[1]}' (오타 = 해당 갈래 500)`);
     used.add(shape[1]);
   }
-  for (const code of Object.keys(API_MSG)) {
+  // e2ee 계열 전 코드 — 다른 계열(market_ 등)은 각자의 라우트가 배선한다(⑦ 전역 배선 검사)
+  for (const code of Object.keys(API_MSG).filter((c) => c.startsWith('e2ee_'))) {
     assert.ok(used.has(code), `사전의 ${code}가 라우트에 배선되지 않음 — 그 갈래는 미번역 잔존`);
   }
   assert.match(src, /langFromCookieHeader\(req\.headers\.get\('cookie'\)\)/, 'argo-lang 쿠키를 읽지 않는다(상수화 변이)');
@@ -125,6 +155,11 @@ test('배선 — 이관 e2ee ko 문구가 error: 리터럴로 재등장하면 re
     '대상 기기의 공개키가 없습니다', '잠시 후 다시 시도해 주세요', '이미 이 기기에 열쇠가 있습니다',
     '복구 코드가 설정돼 있지 않습니다', '복구 코드가 맞지 않습니다', '제거할 기기를 지정해',
     '이 기기 자신은 제거할 수 없습니다', '알 수 없는 action',
+    // 후속 이관(6 라우트) — 괄호 포함 문구는 regex 안전 지점에서 절단('클라우드 모드'·'회사에 소유자').
+    // 프리픽스 앵커라 '수신 크루와 내용이…'·'카드 내용이…'·'제목과 내용이…'(타 라우트 별개 문구)는 안 걸린다.
+    '추천 목록 로드 실패', '원격 마켓 연결 실패', '클라우드 모드', '내용이 필요합니다',
+    '저장에 실패했습니다', '크루를 찾을 수 없습니다', '크루 카드를 읽지 못했습니다',
+    '문서를 찾을 수 없습니다', '이 기기에 동기화 자격이 없습니다', '회사에 소유자', '연결 코드의 소유자가',
   ].join('|')})`);
   for (const f of files) {
     const m = (await readFile(f, 'utf8')).match(banned);
@@ -153,4 +188,137 @@ test('companies GET — 프리셋 표시 언어: ?lang 1순위, 부재 시 argo-
   assert.ok(!hasKo(await getPresets('?lang=en')), '?lang=en = 영어(기존 행동 유지)');
   assert.ok(hasKo(await getPresets('?lang=ko', { cookie: 'argo-lang=en' })), '?lang=ko가 쿠키 en보다 우선(화면 UI 언어 1순위)');
   assert.ok(hasKo(await getPresets('?lang=de', { cookie: 'argo-lang=ko' })), '무효 ?lang은 버리고 쿠키(ko)로');
+});
+
+// ── ⑥ detail 병기(후속 이관) — 동적 접미 문구의 바이트 계약 + apiMsgText 행동 ──────
+test('apiMsgText/apiError — detail은 `문구: detail` 접미(기존 동적 문구 바이트), 없으면 문구만', async () => {
+  assert.equal(apiMsgText('vault_doc_not_found', 'ko', 'notes/a.md'), '문서를 찾을 수 없습니다: notes/a.md');
+  assert.equal(apiMsgText('vault_doc_not_found', 'en', 'notes/a.md'), 'Document not found: notes/a.md');
+  assert.equal(apiMsgText('market_top_failed', 'ko'), '추천 목록 로드 실패', 'detail 없으면 문구만');
+  assert.equal(apiMsgText('market_remote_failed', 'de', 'x'), '원격 마켓 연결 실패: x', '미지원 언어값 = ko');
+  assert.throws(() => apiMsgText('no_such_code', 'ko'), undefined, '미등록 코드 fail-loud(apiError와 동일 계약)');
+  const res = apiError('crew_card_read_failed', 'en', 'boom');
+  assert.equal(res.status, 500);
+  const body = await res.json();
+  assert.equal(body.error, 'Could not read the crew card: boom', 'apiError 3인자도 같은 접미 계약');
+  assert.equal(body.errorCode, 'crew_card_read_failed');
+});
+
+// ── ⑦ 후속 6라우트 배선(소스) — 호출부 전 형태 강제 + 사전 전 코드 전역 배선 ────────
+// 기대 호출을 리터럴로 핀한다 — lang 상수화(`'ko'`)·detail 누락·코드 오타 전부 리터럴 불일치로 red.
+// e2ee 라우트는 위 ③이 같은 강도로 잠근다(집합 검사만 여기 합류).
+const ROUTES = [
+  { file: '../app/api/companies/[ws]/market/route.js', langVar: 'uiLang', calls: [
+    // 200 + { results: [], error } 소프트 오류 계약 — Response는 라우트가 만들고 문구만 apiMsgText
+    { s: "apiMsgText('market_top_failed', uiLang, detail)", n: 1 },
+    { s: "apiMsgText('market_remote_failed', uiLang, detail)", n: 1 },
+  ] },
+  { file: '../app/api/feedback/route.js', calls: [
+    { s: "apiError('feedback_cloud_only', lang)", n: 1 },
+    { s: "apiError('feedback_message_required', lang)", n: 1 },
+    { s: "apiError('feedback_save_failed', lang)", n: 1 },
+  ] },
+  { file: '../app/api/companies/[ws]/agents/[slug]/route.js', calls: [
+    { s: "apiError('crew_not_found', lang)", n: 1 },
+    { s: "apiError('crew_card_read_failed', lang, detail)", n: 1 },
+  ] },
+  { file: '../app/api/companies/[ws]/vault/route.js', calls: [
+    { s: "apiError('vault_doc_not_found', lang, rel)", n: 2 }, // GET(깨진 위키링크)·DELETE(선삭제 노트)
+  ] },
+  { file: '../app/api/companies/[ws]/devices/route.js', calls: [
+    { s: "apiError('devices_no_sync_creds', lang)", n: 1 },
+    { s: "apiError('devices_no_owner', lang)", n: 1 },
+  ] },
+  { file: '../app/api/pair/accept/route.js', calls: [
+    { s: "apiError('pair_owner_mismatch', lang)", n: 1 },
+  ] },
+];
+
+test('배선 — 후속 6라우트: 기대 호출 리터럴·전 호출 형태 일치·쿠키 실판독·사전 전 코드 전역 배선', async () => {
+  const wired = new Set();
+  for (const r of ROUTES) {
+    const src = await readFile(new URL(r.file, import.meta.url), 'utf8');
+    const langVar = r.langVar ?? 'lang';
+    assert.match(src, new RegExp(`const ${langVar} = langFromCookieHeader\\(req\\.headers\\.get\\('cookie'\\)\\)`),
+      `${r.file}: argo-lang 쿠키를 읽지 않는다(상수화 변이)`);
+    const found = [...src.matchAll(/\bapi(?:Error|MsgText)\([^)]*\)/g)].map((m) => m[0]);
+    assert.ok(found.length > 0, `${r.file}: apiError/apiMsgText 호출이 없다 — 전환 자체가 풀린 것`);
+    const expected = new Map(r.calls.map((c) => [c.s, c.n]));
+    for (const call of found) {
+      assert.ok(expected.has(call), `${r.file}: 기대 밖 호출 형태(코드 리터럴+${langVar} 변수+식별자 detail만 허용): ${call}`);
+    }
+    for (const { s, n } of r.calls) {
+      const cnt = found.filter((c) => c === s).length;
+      assert.equal(cnt, n, `${r.file}: ${s} 호출 수 ${cnt} ≠ ${n}(갈래 누락·중복)`);
+      const code = s.match(/'([a-z0-9_]+)'/)[1];
+      assert.ok(code in API_MSG, `${r.file}: 미등록 코드 '${code}'`);
+      wired.add(code);
+    }
+  }
+  // 전역 배선 — 사전의 비-e2ee 코드는 위 6라우트가 전부 소유한다(미배선 코드 = 미번역 잔존·죽은 사전)
+  const all = Object.keys(API_MSG).filter((c) => !c.startsWith('e2ee_')).sort();
+  assert.deepEqual([...wired].sort(), all, '사전 비-e2ee 코드 집합 = 6라우트 배선 집합');
+});
+
+// ── ⑧ 실호출 — 인증 off·임시 ARGO_ROOT에서 이관 라우트의 오류 표시 언어 행동 ─────────
+// 리졸브 훅(⑤에서 등록)을 재사용한다. [ws] 괄호 경로는 pathToFileURL로 임포트.
+const { pathToFileURL } = await import('node:url');
+const routeImport = (rel) => import(pathToFileURL(fileURLToPath(new URL(rel, import.meta.url))).href);
+const P = (params) => ({ params: Promise.resolve(params) });
+
+test('실호출 — vault GET: 없는 문서 404 = 표시 언어 문구 + rel 접미 + errorCode', async () => {
+  const { GET } = await routeImport('../app/api/companies/[ws]/vault/route.js');
+  const en = await GET(new Request('http://127.0.0.1/api/companies/w1/vault?rel=nope.md', { headers: { cookie: 'argo-lang=en' } }), P({ ws: 'w1' }));
+  assert.equal(en.status, 404);
+  const enBody = await en.json();
+  assert.equal(enBody.error, 'Document not found: nope.md');
+  assert.equal(enBody.errorCode, 'vault_doc_not_found');
+  const ko = await GET(new Request('http://127.0.0.1/api/companies/w1/vault?rel=nope.md'), P({ ws: 'w1' }));
+  assert.equal((await ko.json()).error, '문서를 찾을 수 없습니다: nope.md', '무단서 = 기존 ko 바이트(회귀 0)');
+});
+
+test('실호출 — vault DELETE: 선삭제 노트 404 = 표시 언어 문구 + rel 접미(분리 검수 MEDIUM-1 — GET의 lang 선언이 DELETE 상수화를 가리는 구멍 봉합)', async () => {
+  const { DELETE } = await routeImport('../app/api/companies/[ws]/vault/route.js');
+  const mk = (headers) => new Request('http://127.0.0.1/api/companies/w1/vault?rel=notes/gone.md', { method: 'DELETE', headers });
+  const en = await DELETE(mk({ cookie: 'argo-lang=en' }), P({ ws: 'w1' }));
+  assert.equal(en.status, 404);
+  const enBody = await en.json();
+  assert.equal(enBody.error, 'Document not found: notes/gone.md');
+  assert.equal(enBody.errorCode, 'vault_doc_not_found');
+  const ko = await DELETE(mk({}), P({ ws: 'w1' }));
+  assert.equal((await ko.json()).error, '문서를 찾을 수 없습니다: notes/gone.md', '무단서 = 기존 ko 바이트(회귀 0)');
+});
+
+test('실호출 — agents GET: 없는 크루 404(stale 링크) = 표시 언어 문구 + errorCode', async () => {
+  const { GET } = await routeImport('../app/api/companies/[ws]/agents/[slug]/route.js');
+  const en = await GET(new Request('http://127.0.0.1/api/companies/w1/agents/ghost', { headers: { cookie: 'argo-lang=en' } }), P({ ws: 'w1', slug: 'ghost' }));
+  assert.equal(en.status, 404);
+  const enBody = await en.json();
+  assert.equal(enBody.error, 'Crew not found');
+  assert.equal(enBody.errorCode, 'crew_not_found');
+  const ko = await GET(new Request('http://127.0.0.1/api/companies/w1/agents/ghost'), P({ ws: 'w1', slug: 'ghost' }));
+  assert.equal((await ko.json()).error, '크루를 찾을 수 없습니다', '무단서 = 기존 ko 바이트(회귀 0)');
+});
+
+test('실호출 — feedback POST: 인증 off 게이트 400 = 표시 언어 문구 + errorCode', async () => {
+  const { POST } = await routeImport('../app/api/feedback/route.js');
+  const mk = (headers) => new Request('http://127.0.0.1/api/feedback', { method: 'POST', headers });
+  const en = await POST(mk({ cookie: 'argo-lang=en' }));
+  assert.equal(en.status, 400);
+  const enBody = await en.json();
+  assert.equal(enBody.error, 'Feedback can be sent only in cloud mode (signed in)');
+  assert.equal(enBody.errorCode, 'feedback_cloud_only');
+  assert.equal((await (await POST(mk({}))).json()).error, '클라우드 모드(로그인)에서만 피드백을 보낼 수 있습니다', '무단서 = 기존 ko 바이트');
+});
+
+test('실호출 — devices POST: 동기화 자격 없음 400 = 표시 언어 문구 + errorCode', async () => {
+  const { POST } = await routeImport('../app/api/companies/[ws]/devices/route.js');
+  const mk = (headers) => new Request('http://127.0.0.1/api/companies/w1/devices', { method: 'POST', headers });
+  const en = await POST(mk({ cookie: 'argo-lang=en' }), P({ ws: 'w1' }));
+  assert.equal(en.status, 400);
+  const enBody = await en.json();
+  assert.equal(enBody.error, 'This device has no sync credentials — set the environment variables or pair it first');
+  assert.equal(enBody.errorCode, 'devices_no_sync_creds');
+  assert.equal((await (await POST(mk({}), P({ ws: 'w1' }))).json()).error,
+    '이 기기에 동기화 자격이 없습니다 — 환경변수 설정 또는 페어링이 먼저 필요합니다', '무단서 = 기존 ko 바이트');
 });
