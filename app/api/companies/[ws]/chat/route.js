@@ -68,6 +68,17 @@ export async function POST(req, { params }) {
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
     await appendTurn(ws, slug, { turnId, userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts });
     nudgeSync(); // 로컬 변경 즉시 다른 기기로 전파(준실시간 — 다음 대기 건너뜀)
+    // 크루 길들이기(리서치 접목 F) — 이 라우트는 **사장 직접 대화의 단일 관문**이다(위임·루틴·쪽지
+    // 미경유라 "직접 턴" 판정이 구조로 보장된다). 교정 감지는 fire-and-forget: 응답을 막지 않고,
+    // 실패는 로그만(교정은 반복이 전제라 다음 기회에 잡힌다). 프리필터(corrections)가 교정 신호
+    // 어휘 없는 턴을 LLM 호출 없이 걸러 비용을 막는다.
+    import('../../../../../src/corrections.mjs')
+      .then(async ({ detectAndTrack }) => {
+        const { loadCompany } = await import('../../../../../src/workspace.mjs');
+        const lang = (await loadCompany(ws).catch(() => ({}))).lang === 'en' ? 'en' : 'ko';
+        return detectAndTrack(ws, { userMsg: message.trim(), lang });
+      })
+      .catch((e) => console.error(`[argo] 교정 감지 실패(${ws}/${slug}):`, e?.message ?? e));
     return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });
