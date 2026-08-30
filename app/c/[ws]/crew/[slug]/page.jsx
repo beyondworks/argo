@@ -946,7 +946,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       // 열 잠금 minmax(0,1fr) — 무템플릿 grid의 암묵 auto 열은 자식 min-content(컴포저 textarea 고유폭
       // 144px + 전송 버튼 등 = 212px 실측)만큼 부풀어, 폰 폭(360px, 본문 트랙 98px)에서 .thread·.empty·
       // .input-bar가 문서 가로 넘침 100px을 만들었다(#350 회의실과 같은 함정 — 한 층 아래).
-      // 행은 embedded·주 화면 공통 'auto 1fr auto' — 첫 행(컨트롤 밴드)은 display:none이면 0으로 접힌다.
+      // 행은 embedded·주 화면 공통 'auto 1fr auto' + 자식별 명시 gridRow — display:none 아이템은 행이
+      // 접히는 게 아니라 그리드 배치에서 아예 빠지므로, 자동배치에 맡기면 밴드가 숨는 주 화면(>900px)에서
+      // 스레드·컴포저가 1·2행으로 당겨져 컴포저가 1fr을 먹고 상단으로 떠오른다(분리 검수 실측: 빈 대화
+      // 입력바 top 264 vs 정상 798). 명시 배치는 아이템 존재 여부와 무관하게 행을 지킨다.
       style={{ width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', height: '100%', minHeight: 0, position: 'relative' }}
       onDragOver={(e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); setDragOver(true); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
@@ -975,7 +978,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           덮던 것(실측 561px에서도 306px 흘러넘침)의 수용처. '옆에 열기'는 제외 — 분할 패널 자체가 ≤899px에서
           display:none인 죽은 기능이라 좁은 폭에 노출하지 않는다(안 될 버튼 노출 금지). */}
       <div className={embedded ? undefined : 'crew-phone-band'}
-        style={{ alignItems: 'center', gap: 8, minWidth: 0, padding: '8px 0 6px', ...(embedded ? { display: 'flex' } : {}) }}>
+        style={{ gridRow: 1, alignItems: 'center', gap: 8, minWidth: 0, padding: '8px 0 6px', ...(embedded ? { display: 'flex' } : {}) }}>
         <span className="nav-sub" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent?.role}</span>
         {sessionRef.current ? (
           <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('chat.sessionOngoing')}</span>
@@ -987,7 +990,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
       </div>
 
-      <div className="thread" ref={threadRef} style={{ overflowY: 'auto', minHeight: 0 }}>
+      <div className="thread" ref={threadRef} style={{ gridRow: 2, overflowY: 'auto', minHeight: 0 }}>
         {/* 안쪽 레인만 중앙정렬 — .thread(스크롤 컨테이너)는 컬럼 전체폭이라 스크롤바가 우측 끝에 고정된다.
             레인 래퍼가 flex 컬럼이어야 메시지 간 gap·유저버블 우측정렬(align-self)이 유지된다(.thread의 flex를 이 레인이 이어받음). */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%', maxWidth: LANE, margin: '0 auto' }}>
@@ -1182,7 +1185,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       </div>
 
       {viewing ? (
-        <div className="card card-float" style={{ width: '100%', maxWidth: LANE, margin: '12px auto 0', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
+        <div className="card card-float" style={{ gridRow: 3, width: '100%', maxWidth: LANE, margin: '12px auto 0', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
           <Icon name="doc" size={13} /> {t('chat.sessions.readonly')}
           <span style={{ flex: 1 }} />
           <button className="btn btn-primary sm" disabled={busy} onClick={resumeViewing}>{t('chat.sessions.resume')}</button>
@@ -1190,7 +1193,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         </div>
       ) : (
       // 하단 고정 행(grid auto) — 스레드는 위 1fr 행에서 자체 스크롤되므로 컴포저는 겹침 없이 항상 하단. sticky·스크림 불필요(스크롤 시 입력창 뒤로 콘텐츠가 비치던 버그 제거).
-      <div style={{ width: '100%', maxWidth: LANE, margin: '0 auto', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ gridRow: 3, width: '100%', maxWidth: LANE, margin: '0 auto', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
         {(att.length > 0 || uploading) && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {att.map((a, i) => (

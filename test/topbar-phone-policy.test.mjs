@@ -65,10 +65,14 @@ function effective(cls, prop, W) {
   segs.push({ applies: true, body: css.slice(cursor) });
   let winner;
   const propRe = new RegExp(`(?:^|[;{\\s])${prop}\\s*:\\s*([^;}]+)`, 'g');
+  // 정확 일치(공백 정규화) — 부분문자열 매칭은 fail-open이었다(분리 검수 실증: '.chat-cols' 조회가
+  // '.chat-cols > .side-rail' 규칙에도 매칭되어, 폰 열 전환을 레일 셀렉터로 옮기는 변이가 초록).
+  // 결합 셀렉터는 조회 문자열도 결합 형태 그대로 넘긴다(예: '.chat-cols > .side-rail').
+  const selEq = (s) => s.replace(/\s+/g, ' ').trim() === cls;
   for (const seg of segs) {
     if (!seg.applies) continue;
     for (const r of rulesOf(seg.body)) {
-      if (!r.sel.split(',').some((s) => s.includes(cls))) continue;
+      if (!r.sel.split(',').some(selEq)) continue;
       for (const d of r.decls.matchAll(propRe)) winner = d[1].trim();
     }
   }
@@ -160,7 +164,8 @@ test('시계 배선 — Clock이 .topbar-clock을 출력하고 상단바에 실�
    #348 분리 검수 확정 별건 2·3: 슬롯 자식(세션 pill·버튼들)이 전부 flex:none이라 좁은 상단바에서
    검색·도크 위로 흘러넘친다(실측 360px: 검색 input 5지점 전부 "새 대화" 버튼 히트 / 561px에서도
    306px 초과). 경계는 셸 스택(≤900px) 재사용 — 붕괴 대역이 ~650px까지 이어져 560으로는 못 덮는다.
-   평가는 위와 같은 캐스케이드 승자 방식(대상 셀렉터 전부 단일 셀렉터라 동특이도 가정 성립). */
+   평가는 위와 같은 캐스케이드 승자 방식 — 동특이도 가정은 "경쟁하는 선언 쌍이 전부 동일 셀렉터끼리"
+   라서 성립한다(ID·자손 결합 셀렉터도 자기 자신과만 경쟁하므로 소스 순서 = 실제 캐스케이드). */
 
 const crew = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/crew/[slug]/page.jsx'), 'utf8'));
 const compete = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/compete/page.jsx'), 'utf8'));
@@ -200,14 +205,22 @@ test('본문 그리드 — 360px에서 열 승자 minmax(0, 1fr)(레일 스택),
 });
 
 test('레일 — 360px에서 position 승자 static + 자체 스크롤 상한(vh는 /var(--z) 보정), 901px에서 sticky', () => {
-  assert.equal(effective('.side-rail', 'position', 360), 'static',
+  const RAIL = '.chat-cols > .side-rail'; // 정확 일치 평가라 결합 셀렉터 그대로 조회
+  assert.equal(effective(RAIL, 'position', 360), 'static',
     '360px에서 레일 position 승자가 static이 아니다 — sticky 레일이 스택 흐름을 깬다');
-  assert.equal(effective('.side-rail', 'position', 901), 'sticky',
+  assert.equal(effective(RAIL, 'position', 901), 'sticky',
     '901px에서 레일 position 승자가 sticky가 아니다 — 데스크톱에서 레일이 스크롤을 따라오지 않는다');
-  assert.match(String(effective('.side-rail', 'max-height', 360)), /vh\s*\/\s*var\(--z/,
+  assert.match(String(effective(RAIL, 'max-height', 360)), /vh\s*\/\s*var\(--z/,
     '360px 레일 max-height 승자가 배율 보정(vh / var(--z)) 꼴이 아니다 — 세션이 많으면 레일이 본문을 밀어낸다(display-zoom 게이트와 한 세트)');
-  assert.equal(effective('.side-rail', 'overflow-y', 360), 'auto',
+  assert.equal(effective(RAIL, 'overflow-y', 360), 'auto',
     '360px 레일 overflow-y 승자가 auto가 아니다 — 상한을 걸어도 내용이 밖으로 넘친다');
+});
+
+test('밴드 줄바꿈 — 360px flex-wrap 승자 wrap (라벨 합이 가용폭과 정확히 일치, 여유 0)', () => {
+  // 분리 검수 모사 측정: 밴드 가용폭 332px(=360 − .content 좌우 14)에서 ko 라벨 합 332px·en 332px —
+  // 여유가 0이라 라벨이 한 글자만 길어져도 nowrap이면 넘친다. wrap이 실제 하중을 받는 안전판이다.
+  assert.equal(effective('.crew-phone-band', 'flex-wrap', 360), 'wrap',
+    '360px 밴드 flex-wrap 승자가 wrap이 아니다 — 긴 역할·영어 라벨에서 밴드가 가로로 넘친다');
 });
 
 test('본문 그리드 배선 — 크루(조건)·경쟁(고정)에 chat-cols, 레일 인라인엔 position 없음', () => {
@@ -226,4 +239,16 @@ test('본문 내부 열 잠금 — 크루·경쟁 채팅 컬럼의 무템플릿 
     '크루 채팅 컬럼 열 잠금이 없다 — 컴포저 min-content(실측 212px)가 암묵 열을 부풀려 360px에서 문서 가로 넘침 100px이 재발한다');
   assert.match(compete, /gridTemplateColumns: 'minmax\(0, 1fr\)', gridTemplateRows: 'auto 1fr auto', gap: 12/,
     '경쟁 본문 컬럼 열 잠금이 없다 — 같은 계열 넘침(실측 100px)이 재발한다');
+});
+
+test('크루 채팅 컬럼 배치 불변식 — 밴드1·스레드2·컴포저3 명시 gridRow(자동배치 금지)', () => {
+  // display:none 아이템은 행이 접히는 게 아니라 그리드 배치에서 빠진다 — 자동배치에 맡기면 밴드가
+  // 숨는 주 화면(>900px)에서 스레드·컴포저가 1·2행으로 당겨져 컴포저가 1fr을 먹고 상단으로 떠오른다
+  // (분리 검수 실측: 빈 대화 입력바 top 264 vs 정상 798). 행 템플릿 핀만으로는 이 결함이 초록이었다.
+  assert.match(crew, /className=\{embedded \? undefined : 'crew-phone-band'\}\s*\n\s*style=\{\{ gridRow: 1,/,
+    '밴드에 gridRow: 1이 없다 — 자동배치로 되돌아가면 데스크톱 컴포저 상단 부양이 재발한다');
+  assert.match(crew, /className="thread" ref=\{threadRef\} style=\{\{ gridRow: 2,/,
+    '스레드에 gridRow: 2가 없다');
+  assert.equal((crew.match(/style=\{\{ gridRow: 3,/g) ?? []).length, 2,
+    '컴포저 자리(읽기 전용 카드·컴포저 스택 — viewing 삼항 양쪽)에 gridRow: 3이 정확히 2곳이어야 한다 — 한쪽만 있으면 그 분기에서 부양이 재발한다');
 });
