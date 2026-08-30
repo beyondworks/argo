@@ -578,4 +578,34 @@ test('DropUp 적용 — 패널(listbox) ref·앵커쪽 시프트·min·max 동�
     '극단 협폭 바닥 — minWidth 단독 복원(고정 190) 변이는 여기서 red');
   assert.match(ui, /maxWidth: clamp\.maxW \|\| undefined/,
     '실측 전(0)엔 자연 폭 측정을 위해 상한 미적용, 실측 후 뷰포트 상한');
+
+/* ── 인접 핀: 회의실 좁은 유효 폭 가로 넘침(선재 결함 — #340 분리 검수에서 발견) ─────────
+   배율 2(실측 1424px 창 = 유효 712 CSS px)에서 회의실 본문 열이 259.5px로 부풀어 문서 가로
+   스크롤을 만들었다(실측 scrollWidth 1507 > 1408). 뿌리: 무템플릿 grid의 암묵 auto 열 트랙은
+   자식 min-content(컴포저 textarea 고유폭·메시지 행·nowrap 라벨)만큼 자라고, 아이템의
+   minWidth:0은 바깥 트랙만 지킬 뿐 자기 내부 트랙은 못 지킨다. 레일에는 이미 있던
+   'minmax(0,1fr)' 관용구가 본문 계열(본문 열·메시지 래퍼·메시지 그리드·컴포저 스택)에 빠져
+   있었다. 소스 수준 잠금 — 실동작 검증은 해당 PR의 라이브 측정(1424·1280 창 × 배율 2 ×
+   상태 4종: 빈 방·메시지·멘션 패널·보관 열람)이 담당. */
+test('room grid 열 잠금 sweep — 인라인 display:grid는 열 명시 또는 고정 폭이어야 한다', () => {
+  const src = sources.get('app/c/[ws]/room/page.jsx');
+  const grids = [...src.matchAll(/style=\{\{([^}]*display:\s*'grid'[^}]*)\}\}/g)];
+  assert.ok(grids.length >= 9, `grid 인라인 ${grids.length}곳(현재 9) — 수집 정규식이 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
+  for (const g of grids) {
+    assert.ok(/gridTemplateColumns:/.test(g[1]) || /\bwidth:\s*\d/.test(g[1]),
+      `room:${lineOf(src, g.index)} — 암묵 auto 열 grid: gridTemplateColumns(대개 'minmax(0, 1fr)') 또는 고정 width가 필요하다(자식 min-content로 트랙이 부풀어 배율 2에서 문서 가로 넘침)`);
+  }
+});
+
+test('room 멘션 패널·헤더 축소 규칙 핀 — 고정 폭·nowrap 복원 변이는 red', () => {
+  const src = sources.get('app/c/[ws]/room/page.jsx');
+  // 패널은 min·max 둘 다 100% 클램프 — max만 줄이면 min 280이 max를 이겨 넘침이 재발한다
+  // (CSS에서 min-width > max-width면 min-width 승. 실측: 패널 right 774 > 뷰포트 712 CSS px).
+  assert.match(src, /minWidth:\s*'min\(280px, 100%\)'/, '멘션 패널 minWidth 고정 280 복원 변이');
+  assert.match(src, /maxWidth:\s*'min\(420px, 100%\)'/, '멘션 패널 maxWidth 무클램프 복원 변이 — shrink-to-fit 선호 폭(후보 행 nowrap 역할 텍스트)이 그대로 뚫는다');
+  // 헤더의 '회의 마치기' 버튼은 유일한 비축소 요소(.btn 전역 nowrap) — wrap 줄내림 + 라벨 줄바꿈
+  // 허용이 없으면 1280px 창 × 배율 2에서 문서 가로 넘침(실측 scrollWidth 1399 > 1264).
+  // 앵커는 표현식 전체 — flexWrap: 'wrap'만으론 첨부 칩 행 2곳이 대신 만족시켜 초록(변이 실측)
+  assert.match(src, /display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10/, '회의실 헤더 행 wrap 제거 변이');
+  assert.match(src, /className="btn sm" style=\{\{ whiteSpace: 'normal' \}\}/, '회의 마치기 버튼 nowrap 복원 변이');
 });
