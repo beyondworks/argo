@@ -838,6 +838,8 @@ const DICT = {
   'chat.waitStage3': ['결과를 정리하는 중', 'Wrapping up the result'],
   'chat.sessionOngoing': ['세션 이어가는 중', 'Session ongoing'],
   'chat.newSession': ['새 세션', 'New session'],
+  'chat.longSession.notice': ['대화가 {n}건으로 길어졌어요 — 매 턴 지난 대화가 다시 들어가 비용이 커집니다. 내용은 기억에 남아 있으니 새 대화로 시작해도 이어집니다.', 'This chat is {n} messages long — every turn re-reads the whole history, so costs grow. Your context lives in memory, so a fresh chat continues seamlessly.'],
+  'chat.longSession.newChat': ['새 대화로 아끼기', 'Save with a fresh chat'],
   'chat.card': ['카드', 'Card'],
   'chat.commands': ['명령', 'Commands'],
   'chat.cmd.skills': ['스킬', 'Skill'],
