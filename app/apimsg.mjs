@@ -21,12 +21,38 @@ export const API_MSG = {
   e2ee_revoke_target_required: { status: 400, ko: '제거할 기기를 지정해 주세요', en: 'Specify a device to remove' },
   e2ee_revoke_self: { status: 400, ko: '이 기기 자신은 제거할 수 없습니다', en: 'This device cannot remove itself' },
   e2ee_unknown_action: { status: 400, ko: '알 수 없는 action', en: 'Unknown action' },
+
+  // 마켓(market/route.js GET) — 200 + { results: [], error } 소프트 오류 계약(페이지는 목록을 유지한
+  // 채 배너만 띄운다). Response는 라우트가 직접 만들고 문구만 apiMsgText로 그린다.
+  market_top_failed: { status: 200, ko: '추천 목록 로드 실패', en: 'Failed to load recommendations' },
+  market_remote_failed: { status: 200, ko: '원격 마켓 연결 실패', en: 'Remote market connection failed' },
+  // 피드백(feedback/route.js) — FeedbackModal이 error를 그대로 렌더
+  feedback_cloud_only: { status: 400, ko: '클라우드 모드(로그인)에서만 피드백을 보낼 수 있습니다', en: 'Feedback can be sent only in cloud mode (signed in)' },
+  feedback_message_required: { status: 400, ko: '내용이 필요합니다', en: 'A message is required' },
+  feedback_save_failed: { status: 500, ko: '저장에 실패했습니다. 잠시 후 다시 시도해 주세요', en: 'Failed to save. Please try again shortly' },
+  // 크루 카드(agents/[slug]/route.js GET) — stale 링크로 크루 페이지가 로드 오류를 렌더
+  crew_not_found: { status: 404, ko: '크루를 찾을 수 없습니다', en: 'Crew not found' },
+  crew_card_read_failed: { status: 500, ko: '크루 카드를 읽지 못했습니다', en: 'Could not read the crew card' },
+  // 기억 문서(vault/route.js GET·DELETE) — 깨진 위키링크·이미 삭제된 노트(detail = rel)
+  vault_doc_not_found: { status: 404, ko: '문서를 찾을 수 없습니다', en: 'Document not found' },
+  // 페어링 코드 발급(devices/route.js) — 셀프호스팅 연결 코드 카드가 error를 렌더
+  devices_no_sync_creds: { status: 400, ko: '이 기기에 동기화 자격이 없습니다 — 환경변수 설정 또는 페어링이 먼저 필요합니다', en: 'This device has no sync credentials — set the environment variables or pair it first' },
+  devices_no_owner: { status: 400, ko: '회사에 소유자(ownerId)가 없어 페어링할 수 없습니다', en: 'The company has no owner (ownerId), so it cannot be paired' },
+  // 페어링 수신(pair/accept/route.js) — 홈 페어링 폼이 error를 렌더
+  pair_owner_mismatch: { status: 403, ko: '연결 코드의 소유자가 현재 로그인 사용자와 다릅니다', en: 'The pairing code owner does not match the signed-in user' },
 };
+
+/** 표시 언어 문구만 필요한 자리(커스텀 응답 모양 유지 — 예: market의 200 + results 계약).
+    detail이 있으면 `문구: detail` — 기존 라우트들의 동적 접미 형태 그대로(바이트 동일). */
+export function apiMsgText(code, lang, detail) {
+  const m = API_MSG[code];
+  if (!m) throw new Error(`apiMsgText: 미등록 코드 ${code}`);
+  const msg = lang === 'en' ? m.en : m.ko;
+  return detail === undefined ? msg : `${msg}: ${detail}`;
+}
 
 /** 기능 라우트 공통 오류 응답. lang은 ko|en(그 외 값·미지정은 ko). 미등록 코드는 throw —
     authError와 같은 fail-loud 계약(오타가 조용히 빈 문구로 새지 않는다). */
-export function apiError(code, lang) {
-  const m = API_MSG[code];
-  if (!m) throw new Error(`apiError: 미등록 코드 ${code}`);
-  return Response.json({ error: lang === 'en' ? m.en : m.ko, errorCode: code }, { status: m.status });
+export function apiError(code, lang, detail) {
+  return Response.json({ error: apiMsgText(code, lang, detail), errorCode: code }, { status: API_MSG[code].status });
 }

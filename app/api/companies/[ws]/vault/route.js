@@ -5,7 +5,8 @@ import { saveNote, updateIndex } from '../../../../../src/memory.mjs';
 import { paths } from '../../../../../src/workspace.mjs';
 import { EXPORTS } from '../../../../../src/office-export.mjs';
 import { appendEvent } from '../../../../../src/events.mjs';
-import { guardCompany } from '../../../../auth.mjs';
+import { guardCompany, langFromCookieHeader } from '../../../../auth.mjs';
+import { apiError } from '../../../../apimsg.mjs';
 
 /** notes/ 안의 안전한 절대 경로만 통과 — 기억 통제(편집/삭제)는 주제 노트에만 허용된다. */
 function noteFile(ws, rel) {
@@ -17,6 +18,8 @@ function noteFile(ws, rel) {
 }
 
 export async function GET(req, { params }) {
+  // 표시 언어 — 오류 문구를 사용자 화면 언어(argo-lang 쿠키)로 그린다(#333 계약의 기능 라우트 합류)
+  const lang = langFromCookieHeader(req.headers.get('cookie'));
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
@@ -46,7 +49,7 @@ export async function GET(req, { params }) {
         return Response.json({ rel, content: await readDoc(ws, rel) });
       } catch (e) {
         // 깨진 위키링크(삭제·이동된 문서) — raw ENOENT는 서버 절대 경로를 UI에 노출한다(SaaS 레이아웃 유출)
-        if (e?.code === 'ENOENT') return Response.json({ error: `문서를 찾을 수 없습니다: ${rel}` }, { status: 404 });
+        if (e?.code === 'ENOENT') return apiError('vault_doc_not_found', lang, rel);
         throw e;
       }
     }
@@ -96,6 +99,8 @@ export async function PUT(req, { params }) {
 
 /** 주제 노트 삭제 — vault/.trash/로 이동(감사 가능), 인덱스에서 즉시 제거. */
 export async function DELETE(req, { params }) {
+  // 표시 언어 — GET과 같은 계약(오류 문구를 argo-lang 쿠키 언어로)
+  const lang = langFromCookieHeader(req.headers.get('cookie'));
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
@@ -108,7 +113,7 @@ export async function DELETE(req, { params }) {
     } catch (e) {
       // 이미 삭제·이동된 노트 — raw ENOENT는 서버 절대 경로를 UI에 노출한다(GET과 같은 가림).
       // rename만 좁게 감싼다: 이동 성공 후 후속(updateIndex 등) 실패가 "문서 없음 404"로 오보되지 않게.
-      if (e?.code === 'ENOENT') return Response.json({ error: `문서를 찾을 수 없습니다: ${rel}` }, { status: 404 });
+      if (e?.code === 'ENOENT') return apiError('vault_doc_not_found', lang, rel);
       throw e;
     }
     await updateIndex(ws);
