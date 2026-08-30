@@ -173,8 +173,8 @@ test('배선 — app/·middleware의 authError 호출부 전 형태 강제(코�
     // 한계(파일 단위 판정): 같은 파일의 다른 함수가 lang을 딴 데서 받는 구성은 함수 스코프까지
     // 못 가른다 — 소스 배선 검사의 공통 한계로 문서화(destructure 상수 유입도 동일).
     if (sawBareLang) {
-      assert.ok(/=\s*await requestLang\(\)/.test(src) || /function tenantDenied\(user, lang\)/.test(src),
-        `${f}: bare lang 호출인데 전달로 바인딩(= await requestLang() 또는 tenantDenied 매개변수) 부재`);
+      assert.ok(/=\s*await requestLang\(\)/.test(src) || /function tenantDenied\(user, lang\)/.test(src) || /langFromCookieHeader\(/.test(src),
+        `${f}: bare lang 호출인데 전달로 바인딩(= await requestLang() 또는 tenantDenied 매개변수 또는 langFromCookieHeader 호출) 부재`);
     }
   }
   // guardCompany의 네 갈래가 전부 배선돼 있어야 한다 — 하나라도 빠지면 그 갈래는 미번역 잔존
