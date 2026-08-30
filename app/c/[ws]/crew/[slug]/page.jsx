@@ -1164,6 +1164,15 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           </div>
         )}
         {error && <p style={{ fontSize: 13, color: 'var(--danger)' }}>{error}</p>}
+        {/* 비용 지킴이(리서치 접목 C) — 대화가 길수록 매 턴 지난 대화 전체가 다시 들어가 비용이
+            커진다(resumeSession 구조·긴 세션 = 비용 1위 요인). 문턱은 렌더 창(60건)과 정합.
+            새 대화는 기존 newChat 재사용 — 비파괴 적재 + vault 기억 승계라 흐름이 끊기지 않는다. */}
+        {!viewing && (thread?.length ?? 0) >= THREAD_WINDOW && !busy && (
+          <div className="fade-up" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--fg-2)', padding: '4px 0' }}>
+            <span>{t('chat.longSession.notice', { n: thread.length })}</span>
+            <button type="button" className="btn sm" style={{ flex: 'none' }} onClick={newChat}>{t('chat.longSession.newChat')}</button>
+          </div>
+        )}
         {/* 하단 여백 — 방금 보낸 글을 화면 상단까지 밀어올릴 스크롤 여유. 높이는 스크롤 효과(⓪)가
             "핀부터 한 화면"이 되도록 필요분만 잡는다(고정 100vh 금지 — 빈 공간이 남아 "무한 스크롤" 신고).
             style에 ref 사본을 쓰는 이유는 spacerHRef 선언부 주석 참조(remount 클램프 점프 방지). */}
