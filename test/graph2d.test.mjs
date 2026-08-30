@@ -58,6 +58,7 @@ test('빈 하늘 구간: 노드 0 분기가 조기 공백(clearRect+return)으�
   assert.ok(seg.includes('new ResizeObserver'), '리사이즈 시 다시 그린다');
   assert.ok(seg.includes("removeEventListener('argo:theme', drawSky)") && seg.includes("removeEventListener('argo:theme', syncThemeRgb)"), '정리 함수가 테마 리스너 둘을 모두 제거(누수 금지)');
   assert.ok(seg.includes("canvas.style.cursor = 'default'"), '잡을 노드가 없으니 grab 어포던스 제거');
+  assert.ok(seg.includes("canvas.title = ''"), '직전 그래프 호버 툴팁 청소(재검수 M12)');
   assert.ok(seg.includes('setEmptySky(false)') && seg.includes("canvas.style.cursor = 'grab'"), '노드가 생기면 안내를 끄고 커서를 복귀');
 });
 
