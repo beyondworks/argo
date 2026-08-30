@@ -31,4 +31,24 @@ test('여러 개 — 중복 제거·최대 3개 예시', () => {
 test('경계 — 인용부호·괄호·등호 뒤의 경로도 잡는다', () => {
   assert.equal(detectDevicePaths('script="/Users/me/run.sh" 실행')[0], '/Users/me/run.sh');
   assert.equal(detectDevicePaths('(C:\\tools\\run.bat)')[0], 'C:\\tools\\run.bat');
+  // 등호 **단독** 경계(검수 LOW-7: 인용부호가 겹치면 = 단언이 죽은 커버리지였다)
+  assert.equal(detectDevicePaths('path=/Users/me/run.sh 실행')[0], '/Users/me/run.sh');
+  // 줄 시작(개행 뒤) 불릿 경로 — 경계의 \s가 개행을 커버한다(잉여 m 플래그 제거의 근거)
+  assert.equal(detectDevicePaths('할 일:\nC:\\jobs\\daily.bat 실행')[0], 'C:\\jobs\\daily.bat');
+});
+
+test('검수 반영 — file:// 는 경로로 살리고, C:/ 표기 감지, 정규식 표기(\\d+)는 UNC 오탐 아님', () => {
+  assert.equal(detectDevicePaths('file:///Users/me/report.md 열어')[0], '/Users/me/report.md', 'file://는 가장 확실한 기기 종속 경로');
+  assert.equal(detectDevicePaths('read C:/Users/beyon/Desktop/todo.txt')[0], 'C:/Users/beyon/Desktop/todo.txt', '윈도 정방향 슬래시 표기');
+  assert.deepEqual(detectDevicePaths('숫자는 정규식 "\\d+" 로 뽑아줘'), [], '역슬래시 정규식 표기는 UNC가 아니다');
+  assert.deepEqual(detectDevicePaths('줄바꿈은 \\n 으로 표기'), []);
+  assert.equal(detectDevicePaths('\\\\nas\\share\\report.xlsx')[0], '\\\\nas\\share\\report.xlsx', '진짜 UNC(호스트\\공유)는 여전히 감지');
+});
+
+test('성능 방어 — 무공백 영숫자 블롭에서 이차식 폭주 없음(검수 MEDIUM-1 계열)', () => {
+  const blob = 'a3f9c2'.repeat(5000); // 30KB 무공백 런 — 구 전처리에서 타건당 1.4s였던 입력
+  const t0 = process.hrtime.bigint();
+  detectDevicePaths(blob);
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms < 200, `30KB 블롭 판정 ${ms.toFixed(1)}ms — 200ms를 넘으면 이차식 회귀(수정 실측 0.09ms, CI 편차 여유 포함 상한)`);
 });
