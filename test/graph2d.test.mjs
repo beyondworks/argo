@@ -4,6 +4,7 @@
 //  ③ 고아(링크 0) 기억은 기본 숨김, 토글로 포함
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { buildGraph2D } from '../app/c/[ws]/graph2d-core.mjs';
 
 const docs = [
@@ -41,4 +42,35 @@ test('토글: 고아 포함 · 크루 연결(작성자 엣지)', () => {
   assert.ok(agent >= 0, '크루 노드');
   const j = g.nodes.findIndex((n) => n.id === 'journal/2026-08-21-pepper');
   assert.ok(g.edges.some(([a, b]) => (a === agent && b === j) || (a === j && b === agent)), '작성자 → 일지 엣지');
+});
+
+// ── 빈 하늘 안내 — JSX는 렌더 하네스가 없어 소스 구간 불변식으로 잠근다(선례: display-zoom-layout §③).
+//    함수 단위 핀은 핸들러 우회에 초록이라(MEMORY 교훈) 구간 경계 + 표현식 전체를 앵커로 잡는다.
+const jsx = readFileSync(new URL('../app/c/[ws]/graph2d.jsx', import.meta.url), 'utf8');
+
+test('빈 하늘 구간: 노드 0 분기가 조기 공백(clearRect+return)으로 되돌아가지 못한다', () => {
+  const start = jsx.indexOf('if (graph.nodes.length === 0)');
+  const end = jsx.indexOf('const sim = createSim2D(graph)');
+  assert.ok(start > 0 && end > start, '노드 0 분기 ~ 본 경로 진입 구간이 존재');
+  const seg = jsx.slice(start, end);
+  assert.ok(seg.includes('setEmptySky(true)'), '빈 분기가 안내 오버레이 상태를 켠다');
+  assert.ok(seg.includes('paintDust('), '빈 분기가 별먼지를 그린다(완전 공백 금지)');
+  assert.ok(seg.includes('new ResizeObserver'), '리사이즈 시 다시 그린다');
+  assert.ok(seg.includes("removeEventListener('argo:theme', drawSky)") && seg.includes("removeEventListener('argo:theme', syncThemeRgb)"), '정리 함수가 테마 리스너 둘을 모두 제거(누수 금지)');
+  assert.ok(seg.includes("canvas.style.cursor = 'default'"), '잡을 노드가 없으니 grab 어포던스 제거');
+  assert.ok(seg.includes('setEmptySky(false)') && seg.includes("canvas.style.cursor = 'grab'"), '노드가 생기면 안내를 끄고 커서를 복귀');
+});
+
+test('빈 하늘 JSX: 오버레이 3문구는 t() 사전 경유, 고아 줄·조작 힌트는 조건 게이트', () => {
+  assert.ok(jsx.includes('{emptySky && ('), '오버레이는 emptySky 조건부 렌더');
+  for (const k of ['graph.emptySkyTitle', 'graph.emptySkyBody', 'graph.emptySkyOrphans']) {
+    assert.ok(jsx.includes(`t('${k}'`), `${k}를 t()로 참조(하드코딩 금지 — 다국어 절대 규칙)`);
+  }
+  assert.ok(jsx.includes('{hiddenOrphans > 0 && ('), '고아 수 줄은 표현식 전체(hiddenOrphans > 0)로 게이트');
+  assert.ok(jsx.includes('{!compact && !emptySky && ('), '조작 힌트는 빈 하늘에서 숨긴다');
+  assert.ok(!/className="microlabel"[^\n]*emptySky/.test(jsx.slice(jsx.indexOf('{emptySky && ('))), '오버레이 본문에 microlabel 금지 — 영어에서 9.5px 모노 대문자가 된다(검수 MEDIUM-2)');
+});
+
+test('emptySky는 이펙트 의존성이 아니다(자기 재실행 루프 금지)', () => {
+  assert.ok(jsx.includes('}, [docs, agents, showCrew, showOrphans, root, compact, focusRel, localRoot]);'), '의존성 배열은 원래 8개 그대로 — emptySky가 끼면 빈 분기 진입마다 이펙트가 재실행된다');
 });

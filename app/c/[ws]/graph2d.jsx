@@ -30,6 +30,16 @@ function syncThemeRgb() {
   // 라벨은 배경 대비로 한 단계 — 밝은 종이엔 짙게, 어두운 종이엔 밝게
   LABEL_ACCENT = (light ? acc.map((v) => Math.round(v * 0.72)) : acc.map((v) => Math.round(v + (255 - v) * 0.35))).join(', ');
 }
+/** 별먼지 — 결정적 난수(seed 고정)라 리사이즈·재마운트마다 같은 하늘. 본 그래프와 빈 하늘이 공유한다(한쪽만 고치면 조용히 어긋나는 자리). */
+function makeDust(W, H, compact) {
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const n = compact ? 40 : Math.round((W * H) / 5000);
+  return Array.from({ length: n }, () => ({ x: rnd() * W, y: rnd() * H, r: rnd() < 0.1 ? 1.1 : 0.6, a: 0.08 + rnd() * 0.25 }));
+}
+function paintDust(ctx, dust) {
+  for (const d of dust) { ctx.fillStyle = `rgba(${INK}, ${d.a * 0.5})`; ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill(); }
+}
+
 /** 네 꼭지 별 경로 — 일반 기억도 "별"로 읽히게(원은 옵시디언 그대로라 정체성이 없다 — 유건 2026-08-21) */
 function star4(path, x, y, r) {
   const k = r * 0.38;
@@ -116,6 +126,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       // — 캔버스 글자와 달리 i18n(t)·테마 색·줄바꿈이 공짜다.
       setEmptySky(true);
       canvas.style.cursor = 'default'; // 잡을 노드가 없다 — grab 커서는 거짓 어포던스
+      canvas.title = ''; // 직전 그래프에서 호버로 남은 노드 라벨 툴팁 청소
       const ctx = canvas.getContext('2d');
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const drawSky = () => {
@@ -123,14 +134,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         canvas.width = W * dpr; canvas.height = H * dpr;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, W, H);
-        // 본 그래프의 별먼지와 같은 결정적 난수 — 리사이즈마다, 그리고 노드가 생긴 뒤에도 같은 하늘
-        let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-        const n = compact ? 40 : Math.round((W * H) / 5000);
-        for (let i = 0; i < n; i++) {
-          const x = rnd() * W, y = rnd() * H, r = rnd() < 0.1 ? 1.1 : 0.6, a = 0.08 + rnd() * 0.25;
-          ctx.fillStyle = `rgba(${INK}, ${a * 0.5})`;
-          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-        }
+        paintDust(ctx, makeDust(W, H, compact)); // 본 그래프와 같은 하늘 — 노드가 생겨도 배경은 이어진다
       };
       drawSky();
       const ro = new ResizeObserver(drawSky);
@@ -151,10 +155,8 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
     let dust = [];
     const fit = () => {
       W = canvas.clientWidth; H = canvas.clientHeight; canvas.width = W * dpr; canvas.height = H * dpr;
-      // 별먼지 — 화면 좌표에 고정(줌·팬에 안 따라온다: 먼 배경). 결정적 난수라 리사이즈마다 같은 하늘.
-      let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-      const n = compact ? 40 : Math.round((W * H) / 5000);
-      dust = Array.from({ length: n }, () => ({ x: rnd() * W, y: rnd() * H, r: rnd() < 0.1 ? 1.1 : 0.6, a: 0.08 + rnd() * 0.25 }));
+      // 별먼지 — 화면 좌표에 고정(줌·팬에 안 따라온다: 먼 배경). 빈 하늘과 같은 makeDust라 상태가 바뀌어도 같은 하늘.
+      dust = makeDust(W, H, compact);
     };
     fit();
 
@@ -208,7 +210,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       view.x += (target.x - view.x) * 0.12; view.y += (target.y - view.y) * 0.12; view.s += (target.s - view.s) * 0.12;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, W, H); // 배경은 컨테이너(테마 종이색)가 칠한다
-      for (const d of dust) { ctx.fillStyle = `rgba(${INK}, ${d.a * 0.5})`; ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill(); }
+      paintDust(ctx, dust);
       const nb = hover !== null ? sim.adj[hover] : null;
       const nbSet = nb ? new Set(nb) : null;
       const anyFocus = hover !== null;
@@ -406,10 +408,11 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       {emptySky && (
         <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center', pointerEvents: 'none', padding: '0 18px' }}>
           <div>
+            {/* 본문은 일반 서체로 — microlabel은 라틴 대문자 계기판 라벨용이라 영어에서 히어로 카피가 9.5px 모노 대문자가 된다(검수 MEDIUM-2) */}
             <div style={{ fontSize: compact ? 12.5 : 15, fontWeight: 600, opacity: 0.78 }}>{t('graph.emptySkyTitle')}</div>
-            <div className="microlabel" style={{ marginTop: 6, opacity: 0.75, lineHeight: 1.55, whiteSpace: 'pre-line' }}>{t('graph.emptySkyBody')}</div>
+            <div style={{ marginTop: 6, fontSize: compact ? 11 : 12.5, opacity: 0.7, lineHeight: 1.6, whiteSpace: 'pre-line' }}>{t('graph.emptySkyBody')}</div>
             {hiddenOrphans > 0 && (
-              <div className="microlabel" style={{ marginTop: 5, opacity: 0.55 }}>{t('graph.emptySkyOrphans', { n: hiddenOrphans })}</div>
+              <div style={{ marginTop: 5, fontSize: compact ? 10.5 : 11.5, opacity: 0.55 }}>{t('graph.emptySkyOrphans', { n: hiddenOrphans })}</div>
             )}
           </div>
         </div>
