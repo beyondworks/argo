@@ -118,11 +118,13 @@ export default function Mail({ params }) {
                     const on = cc.includes(a.slug);
                     return (
                       /* 칩 자체 잠금 — .chip은 nowrap이라 초장문 이름의 min-content가 수축 불가.
-                         maxWidth 100%(행 폭은 잠긴 트랙이라 확정 길이) + 내부 span ellipsis로 칩 한 개가
-                         행보다 길어질 수 없게 한다(DropUp 트리거 라벨과 같은 문법). */
-                      <button key={a.slug} type="button" aria-pressed={on} onClick={() => toggleCc(a.slug)} className="chip"
+                         하중은 내부 span(minWidth 0 + ellipsis, DropUp 트리거 라벨과 같은 문법 — flex
+                         컨테이너인 버튼에는 text-overflow가 직접 안 걸린다)이고, 버튼 maxWidth 100%
+                         (행 폭은 잠긴 트랙이라 확정 길이)는 이중 방어다(분리 검수 실측 — 단독 롤백 무영향).
+                         nowrap은 .chip 상속에 맡기지 않고 span에 명시, title로 잘린 원문 확인 제공. */
+                      <button key={a.slug} type="button" aria-pressed={on} onClick={() => toggleCc(a.slug)} className="chip" title={a.name}
                         style={{ cursor: 'pointer', maxWidth: '100%', minWidth: 0, ...(on ? { color: 'var(--primary-strong)', borderColor: 'var(--primary)', fontWeight: 700 } : { color: 'var(--fg-3)' }) }}>
-                        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.name}</span>
+                        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
                       </button>
                     );
                   })}
