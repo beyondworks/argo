@@ -306,6 +306,21 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState(0);
   const [error, setError] = useState('');
+  // 크루 길들이기(F) — 같은 지적 2회째면 "회사 규칙으로 기억할까요?" 제안(사장 결정 대기 목록)
+  const [ruleSuggest, setRuleSuggest] = useState(null); // 첫 제안 1건만 표시(심플)
+  const loadSuggestions = useCallback(() => {
+    fetch(`/api/companies/${ws}/corrections`).then((r) => r.json())
+      .then((d) => setRuleSuggest(d.suggestions?.[0] ?? null)).catch(() => {});
+  }, [ws]);
+  useEffect(() => { loadSuggestions(); }, [loadSuggestions]);
+  async function decideRule(action) {
+    if (!ruleSuggest) return;
+    await fetch(`/api/companies/${ws}/corrections`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: ruleSuggest.id, action }),
+    }).catch(() => {});
+    loadSuggestions();
+  }
   const [cardOpen, setCardOpen] = useState(false);
   // '/' 커맨더 데이터 — 사용자 별칭(company.json.aliases) + 회사 스킬(마켓 installedSkills, 첫 사용 시 로드)
   const [aliases, setAliases] = useState([]);
@@ -717,6 +732,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     try {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
+      setTimeout(loadSuggestions, 4000); // 교정 감지는 응답 뒤 백그라운드로 돈다 — 잠시 후 제안을 당겨온다(검수 M2: 마운트 1회뿐이라 그 턴에 칩이 안 떴다)
       setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts }]);
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
@@ -1167,6 +1183,14 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         {/* 비용 지킴이(리서치 접목 C) — 대화가 길수록 매 턴 지난 대화 전체가 다시 들어가 비용이
             커진다(resumeSession 구조·긴 세션 = 비용 1위 요인). 문턱은 렌더 창(60건)과 정합.
             새 대화는 기존 newChat 재사용 — 비파괴 적재 + vault 기억 승계라 흐름이 끊기지 않는다. */}
+        {/* 크루 길들이기 제안 — 판단은 AI(반복 감지), 결정은 사장(기억/넘기기). 채택 = 전 크루 자동 반영 */}
+        {!viewing && ruleSuggest && !busy && (
+          <div className="fade-up" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--fg-2)', padding: '4px 0' }}>
+            <span>{t('chat.ruleSuggest.notice', { n: ruleSuggest.count })} <b style={{ color: 'var(--fg)' }}>“{ruleSuggest.rule}”</b></span>
+            <button type="button" className="btn sm btn-primary" style={{ flex: 'none' }} onClick={() => decideRule('adopt')}>{t('chat.ruleSuggest.adopt')}</button>
+            <button type="button" className="btn sm" style={{ flex: 'none' }} onClick={() => decideRule('dismiss')}>{t('chat.ruleSuggest.dismiss')}</button>
+          </div>
+        )}
         {!viewing && (thread?.length ?? 0) >= THREAD_WINDOW && !busy && (
           <div className="fade-up" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--fg-2)', padding: '4px 0' }}>
             <span>{t('chat.longSession.notice', { n: thread.length })}</span>
