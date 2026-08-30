@@ -125,12 +125,15 @@ export default function Compete({ params }) {
 
   return (
     /* 레일 열 양보 클램프 — 고정 216px는 배율 2의 좁은 유효 폭에서 본문 열을 60 CSS px까지
-       압살한다(실측 1280×배율 2 — FAILED 칩 +17px 카드 밖 돌출). min(216px, 100% − 234px) =
-       "본문 열 바닥 216(시안 최소폭 180 + 본문 카드 패딩 36) + gap 18을 지키는 만큼만 레일이
-       양보". 컨테이너 ≥ 450이면 216 고정과 동일(종전 무변경). 미디어쿼리 밴드(#356 ≤560)는
-       실뷰포트만 보고 배율 축(유효 폭)은 못 보므로 intrinsic이어야 한다 — 두 장치는 트리거가
-       직교라 공존. #356의 .chat-cols 편입이 머지되면 이 표현식을 그 템플릿으로 이관할 것. */
-    <div style={{ display: 'grid', gridTemplateColumns: 'min(216px, 100% - 234px) minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
+       압살한다(실측 1280×배율 2 — FAILED 칩 +17px 카드 밖 돌출). min(216px, 100% − 244px) =
+       "본문 열 바닥 226 + gap 18을 지키는 만큼만 레일이 양보". 226 = 시안 최소폭 180 + 카드
+       패딩 36 + 카드 테두리 2 + 커스텀 스크롤바 8(::-webkit-scrollbar에 width를 주면 레이아웃
+       폭을 점유 — 재검수 적발: 이 두 항을 빠뜨린 234는 시안에 170만 전달했다). 컨테이너 ≥
+       460이면 216 고정과 동일(종전 무변경). 배율 축(유효 폭)은 미디어쿼리가 못 보므로
+       intrinsic이어야 한다. #356(.chat-cols ≤560 밴드)과는 공존 불가 — 같은 속성을 인라인이
+       미디어 블록보다 이겨 레일 스택을 죽인다(겹침 구간: 배율 2 × 실뷰포트 ≤560). 편입 머지
+       시 이 표현식·핀을 .chat-cols 템플릿으로 반드시 이관하고 둘 다 남기기 금지. */
+    <div style={{ display: 'grid', gridTemplateColumns: 'min(216px, 100% - 244px) minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
       {adoptTarget && (
         <ConfirmModal
           title={t('compete.adopt')}
