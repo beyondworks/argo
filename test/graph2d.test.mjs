@@ -56,7 +56,7 @@ test('빈 하늘 구간: 노드 0 분기가 조기 공백(clearRect+return)으�
   assert.ok(seg.includes('setEmptySky(true)'), '빈 분기가 안내 오버레이 상태를 켠다');
   assert.ok(seg.includes('paintDust('), '빈 분기가 별먼지를 그린다(완전 공백 금지)');
   assert.ok(seg.includes('new ResizeObserver'), '리사이즈 시 다시 그린다');
-  assert.ok(seg.includes("removeEventListener('argo:theme', drawSky)") && seg.includes("removeEventListener('argo:theme', syncThemeRgb)"), '정리 함수가 테마 리스너 둘을 모두 제거(누수 금지)');
+  assert.ok(seg.includes("removeEventListener('argo:theme', drawSky)") && seg.includes("removeEventListener('argo:theme', onTheme)"), '정리 함수가 테마 리스너 둘을 모두 제거(누수 금지)');
   assert.ok(seg.includes("canvas.style.cursor = 'default'"), '잡을 노드가 없으니 grab 어포던스 제거');
   assert.ok(seg.includes("canvas.title = ''"), '직전 그래프 호버 툴팁 청소(재검수 M12)');
   assert.ok(seg.includes('setEmptySky(false)') && seg.includes("canvas.style.cursor = 'grab'"), '노드가 생기면 안내를 끄고 커서를 복귀');
@@ -70,6 +70,18 @@ test('빈 하늘 JSX: 오버레이 3문구는 t() 사전 경유, 고아 줄·조
   assert.ok(jsx.includes('{hiddenOrphans > 0 && ('), '고아 수 줄은 표현식 전체(hiddenOrphans > 0)로 게이트');
   assert.ok(jsx.includes('{!compact && !emptySky && ('), '조작 힌트는 빈 하늘에서 숨긴다');
   assert.ok(!/className="microlabel"[^\n]*emptySky/.test(jsx.slice(jsx.indexOf('{emptySky && ('))), '오버레이 본문에 microlabel 금지 — 영어에서 9.5px 모노 대문자가 된다(검수 MEDIUM-2)');
+});
+
+test('테마 리스너는 인스턴스별 래퍼로 등록·해제한다(2분할 동시 마운트 보호)', () => {
+  // 결함(PR #339 검수): 모듈 전역 syncThemeRgb를 그대로 addEventListener에 넘기면 동일 참조 중복
+  // 등록이 1개로 접혀, 2분할에서 한쪽 정리가 남은 인스턴스의 테마 갱신까지 끊었다. 특히 빈 하늘
+  // 상태(정적 1회 그리기)는 잘못된 색이 영구 잔류한다.
+  assert.ok(jsx.includes('const onTheme = () => syncThemeRgb()'), '이펙트 안에서 인스턴스별 래퍼를 만든다');
+  assert.ok(!jsx.includes("addEventListener('argo:theme', syncThemeRgb)"), '전역 참조 직접 등록 금지 — 회귀 패턴');
+  const reg = jsx.indexOf("addEventListener('argo:theme', onTheme)");
+  assert.ok(reg > 0 && reg < jsx.indexOf('if (graph.nodes.length === 0)'), '등록은 빈 하늘 분기 전 — 두 경로가 공유');
+  const main = jsx.slice(jsx.indexOf('const sim = createSim2D(graph)'));
+  assert.ok(main.includes("removeEventListener('argo:theme', onTheme)"), '본 그래프 정리 경로도 래퍼를 해제');
 });
 
 test('emptySky는 이펙트 의존성이 아니다(자기 재실행 루프 금지)', () => {
