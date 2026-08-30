@@ -8,7 +8,7 @@
 // catch-up(4h 상한)으로 자연 회수한다. 임시 ARGO_ROOT 격리, 실행은 runFn 주입(LLM 불요).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -58,4 +58,28 @@ test('실행이 실패로 끝나도 가드가 풀린다 — 다음 due에 다시
   await flush();
   await runDueRoutines(WS, at(10, 11), { runFn });
   assert.equal(calls, 2, '실패 후 가드가 남아 있으면 그 루틴은 영영 멎는다');
+});
+
+test('가드 자가 치유: 실행이 영영 안 끝나도 상한(4h) 뒤에는 다시 돈다 (검수 MEDIUM-2 핀)', async () => {
+  // SDK 러너 턴에는 타임아웃이 없다 — 안 끝나는 실행이 가드를 영구 점유하면 루틴이 '가동'
+  // 표시인 채 프로세스 재시작 전까지 발화 0이 된다(LOW-3이 없앤 좀비의 재림). 앞 테스트들의
+  // 루틴도 이 틱에 due일 수 있으므로 단언은 이 루틴의 호출 수로만 센다(파일 내 공유 WS).
+  const r = await addRoutine(WS, { agentSlug: 'alpha', title: '행 루틴', prompt: 'p', schedule: { type: 'interval', everyMinutes: 10 } });
+  const calls = [];
+  const never = new Promise(() => {}); // settle하지 않는 실행 — SDK 행 재현
+  const runFn = (_ws, id) => { calls.push(id); return never; };
+  const mine = () => calls.filter((id) => id === r.id).length;
+  await runDueRoutines(WS, at(11, 0), { runFn });
+  assert.equal(mine(), 1, '전제: 첫 발화');
+  await runDueRoutines(WS, at(11, 20), { runFn });
+  assert.equal(mine(), 1, '상한 전 — 실행 중이라 스킵');
+  await runDueRoutines(WS, at(15, 1), { runFn }); // 4h 1m 경과 — stale 무시(자가 치유)
+  assert.equal(mine(), 2, '상한을 넘긴 가드 항목이 루틴을 영구 정지시키면 안 된다');
+});
+
+test('배선: 틱이 cloudLeader 게이트 아래에서 runDueRoutines를 호출한다 (fail-open 차단 핀)', async () => {
+  // 행동 테스트는 runDueRoutines 자체만 잠근다 — 틱이 호출을 끊어도(void 처리) 전 스위트가
+  // 초록이었다(분리 검수 LOW-2 변이 실증). 틱 콜백은 단위로 태울 수 없어 배선은 소스 앵커로 잠근다.
+  const src = await readFile(new URL('../src/scheduler.mjs', import.meta.url), 'utf8');
+  assert.match(src, /if \(cloudLeader\) await runDueRoutines\(cid, now\);/);
 });

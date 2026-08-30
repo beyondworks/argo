@@ -109,26 +109,38 @@ async function claimRoutine(wsId, routineId, now) {
 // 안의 겹침은 여기서 막고, 기기 간은 리스(isCloudLeader)가 담당한다.
 const consolidating = new Set();
 const mailDelivering = new Set(); // 회사별 우편 배달 in-flight — 틱 겹침 시 이중 진입 차단(HIGH-4)
-const routineRunning = new Set(); // `${wsId}/${routineId}` — 같은 루틴의 실행 겹침 차단(검수 LOW-5)
+// `${wsId}/${routineId}` → 시작 시각(ms). 같은 루틴의 실행 겹침 차단(검수 LOW-5). Set이 아니라
+// Map인 이유: SDK 러너 턴에는 상한이 없어(수동 정지 핸들뿐, CLI만 cliTimeoutMs 자가 회복) 영영
+// 안 끝나는 실행이 가드를 영구 점유하면 그 루틴이 '가동' 표시인 채 다시는 발화하지 않는다(검수
+// MEDIUM-2 — LOW-3이 없앤 좀비의 재림). 상한을 넘긴 항목은 stale로 무시해 자가 치유한다 —
+// 그 시점의 겹침 위험은 가드 이전 동작과 같다(무방비가 아니라 원상 복귀).
+const ROUTINE_STALE_MS = 4 * 60 * 60 * 1000; // isDue의 CATCHUP_MS와 같은 값 — 이보다 오래 걸린 실행은 어차피 인접 슬롯이 유실된다
+const routineRunning = new Map();
 
 /** due 루틴 실행 — fire-and-forget(LLM 턴을 틱에서 기다리지 않는다). 같은 루틴이 아직 실행 중이면
     (완료 조건 재시도 포함 수 분) 이번 틱은 **선점 없이** 스킵한다 — claimRoutine의 lastRun 선점은
     슬롯 단위라 인접 시각(times:['09:00','09:05'])에서 09:00 실행이 끝나기 전 09:05 슬롯이 due가
     되면 겹쳐 돌 수 있었다(검수 LOW-5 결정적 확인). 스킵된 슬롯은 소비되지 않았으므로 실행이 끝난
-    다음 틱이 catch-up(4h 상한)으로 자연 회수한다. 가드는 루틴별 — 다른 루틴의 동시 실행은 막지
-    않는다. (export: 회귀 테스트용 — 틱 콜백은 단위로 태울 수 없다. runFn 주입=테스트 전용) */
+    다음 틱이 catch-up으로 자연 회수한다 — 단 catch-up 상한(4h) 안에서만: 그보다 오래 걸린 실행의
+    인접 슬롯은 유실된다(가드 이전엔 겹쳐서라도 돌았다 — 의도된 트레이드, 검수 LOW-4 명시).
+    가드는 루틴별 — 다른 루틴의 동시 실행은 막지 않는다.
+    (export: 회귀 테스트용 — 틱 콜백은 단위로 태울 수 없다. runFn 주입=테스트 전용) */
 export async function runDueRoutines(wsId, now, { runFn = runRoutine } = {}) {
   for (const r of await loadRoutines(wsId)) {
     if (!isDue(r, now)) continue;
     const key = `${wsId}/${r.id}`;
-    if (routineRunning.has(key)) continue;
+    const startedAt = routineRunning.get(key);
+    if (startedAt != null && now.getTime() - startedAt < ROUTINE_STALE_MS) continue;
     // 실행 직전 lastRun을 원자적으로 선점 — 실패(이미 이 주기에 실행됨)면 스킵해 이중 실행을 막는다
     if (!(await claimRoutine(wsId, r.id, now))) continue;
     console.log(`[argo] 루틴 실행: ${wsId}/${r.title}`);
-    routineRunning.add(key);
+    const stamp = now.getTime();
+    routineRunning.set(key, stamp);
     runFn(wsId, r.id)
       .catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message))
-      .finally(() => routineRunning.delete(key));
+      // CAS 삭제 — stale 무시 후 새 실행이 시작된 상태에서 옛 실행이 뒤늦게 끝나며 새 항목을 지우면
+      // 그 새 실행이 무방비가 된다. 자기 스탬프일 때만 지운다.
+      .finally(() => { if (routineRunning.get(key) === stamp) routineRunning.delete(key); });
   }
 }
 
