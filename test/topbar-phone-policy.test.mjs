@@ -70,10 +70,15 @@ function effective(cls, prop, W) {
   // 결합 셀렉터는 조회 문자열도 결합 형태 그대로 넘긴다(예: '.chat-cols > .side-rail').
   // 결합자(>·+·~) 주변 공백도 정규화 — CSS 동치인 무공백 표기('.chat-cols>.side-rail')가
   // 거짓 red를 내던 것(재검수 MR9). fail-closed 방향이었지만 정당한 표기 변경까지 막는다.
+  // 정규화는 양방향(규칙 셀렉터·조회 문자열 모두) — 규칙 쪽만 걸면 호출부 표기에는 거짓 red가
+  // 남는다(#362 검수 A1 프로브 실증). 한계 각주: 따옴표 값 안에 결합자 문자를 가진 속성 셀렉터
+  // ([title="a>b"])는 뭉개질 수 있으나 이 시트에 없고 naive 파서 전제상 범위 밖.
   // 계약(재검수 R2): 이 평가는 "대상 셀렉터를 정확히 같은 형태로만 겨냥한다"에 기댄다 — 같은 요소를
   // 다른 형태(자손·복합, 예: '.chat-cols .crew-phone-band')로 겨냥하는 규칙을 추가하면 실캐스케이드는
   // 특이도로 갈리는데 이 게이트는 조용히 눈이 먼다. 그런 규칙이 필요해지면 평가기를 먼저 넓혀라.
-  const selEq = (s) => s.replace(/\s*([>+~])\s*/g, ' $1 ').replace(/\s+/g, ' ').trim() === cls;
+  const norm = (s) => s.replace(/\s*([>+~])\s*/g, ' $1 ').replace(/\s+/g, ' ').trim();
+  const clsN = norm(cls);
+  const selEq = (s) => norm(s) === clsN;
   for (const seg of segs) {
     if (!seg.applies) continue;
     for (const r of rulesOf(seg.body)) {
