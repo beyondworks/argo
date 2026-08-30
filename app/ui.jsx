@@ -1,10 +1,14 @@
 'use client';
 // 공용 클라이언트 조각들 — 화면 전체가 같이 쓴다.
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import { useLang } from './i18n';
 import { rewriteVaultHref } from '../src/vault-links.mjs'; // 산출물 링크 재작성(순수 — 테스트는 src 쪽)
 import { dropUpClamp } from './c/[ws]/zoom-math.mjs'; // 표시 배율(#334) 좌표 환산 계열 — DropUp 패널 클램프
+
+// SSR에는 layout effect가 없다(서버 렌더 경고) — 클라이언트에서만 "그리기 전" 실행이 필요한
+// 팝오버 클램프용 별칭. 서버에서는 useEffect로 동작이 같다(열림은 클라이언트 상호작용에서만 발생).
+const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -496,20 +500,38 @@ export function DropUp({ value, placeholder = '—', groups, onChange, disabled,
   const [clamp, setClamp] = useState({ shift: 0, maxW: 0 });
   const boxRef = useRef(null);
   const panelRef = useRef(null);
-  useEffect(() => {
-    if (!open) { setEntered(false); setClamp({ shift: 0, maxW: 0 }); return; }
-    // 열림 직후(등장 전 opacity 0 프레임) 패널 자연 폭을 재고 뷰포트 좌우를 뚫은 만큼 안쪽으로 민다.
-    // offsetWidth는 등장 transform(scale 0.97)을 무시한 배치 폭이라 실측 그대로 쓴다.
-    if (boxRef.current && panelRef.current) {
+  const naturalW = useRef(0); // 패널 자연 폭(CSS px) — 상한 적용 전 1회 실측. CSS px는 배율 무관이라 재클램프에 재사용
+  // 그리기 전(useIsoLayoutEffect) 실측 — useEffect(그린 뒤)면 클램프 전 자연 폭 프레임이 문서 폭을
+  // 실제로 늘린다(분리 검수 F1 실측: 첫 프레임 sw 2202 → 다음 프레임 1502, 클래식 스크롤바에선 깜빡임).
+  useIsoLayoutEffect(() => {
+    if (!open) { setEntered(false); setClamp({ shift: 0, maxW: 0 }); naturalW.current = 0; return; }
+    // 패널 자연 폭을 재고 뷰포트 좌우를 뚫은 만큼 안쪽으로 민다. offsetWidth는 등장 transform
+    // (scale 0.97)을 무시한 배치 폭이고, 최초 렌더는 상한 미적용(clamp.maxW 0)이라 자연 폭 그대로다.
+    // 재측정(배율·창 크기 변경)은 저장해 둔 자연 폭을 쓴다 — 상한이 걸린 뒤의 offsetWidth를 다시
+    // 재면 자연 폭을 잃는다(닫힘 리셋이 다음 열림의 1회 실측을 보장하는 이유이기도 하다).
+    const measure = () => {
+      if (!boxRef.current || !panelRef.current) return;
+      if (!naturalW.current) naturalW.current = panelRef.current.offsetWidth;
       setClamp(dropUpClamp(boxRef.current.getBoundingClientRect(),
-        document.documentElement.clientWidth, panelRef.current.offsetWidth, align === 'right'));
-    }
+        document.documentElement.clientWidth, naturalW.current, align === 'right'));
+    };
+    measure();
     const raf = requestAnimationFrame(() => setEntered(true));
     const onDown = (e) => { if (!boxRef.current?.contains(e.target)) setOpen(false); };
     const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
-    return () => { cancelAnimationFrame(raf); window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey); };
+    // 열린 채 배율(cmd +/- → argo:zoom)·창 크기가 바뀌면 시프트·상한이 낡아 결함이 되돌아온다
+    // (분리 검수 F2 실측: 배율 1→2 전환 시 패널 right 2253 > cw 1264 재발) — 같은 실측으로 재클램프.
+    window.addEventListener('resize', measure);
+    window.addEventListener('argo:zoom', measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('argo:zoom', measure);
+    };
   }, [open, align]);
   const cur = groups.flatMap((g) => g.items).find((i) => i.value === value);
   return (
