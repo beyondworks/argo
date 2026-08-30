@@ -1,7 +1,7 @@
 'use client';
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { splitEnvelope } from './envelope.mjs';
-import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -10,6 +10,9 @@ import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
 import { sideParam, withSide } from '../../split.mjs';
+import { dropUpClamp } from '../../zoom-math.mjs';
+
+const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
 const fmtElapsed = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
@@ -869,6 +872,23 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   ] : [];
   const [slashIdx, setSlashIdx] = useState(0);
   useEffect(() => { setSlashIdx(0); }, [slashQ, slashToken?.[0]]);
+  const slashPanelRef = useRef(null);
+  const slashWrapRef = useRef(null);
+  const slashNatW = useRef(0);
+  const [slashClamp, setSlashClamp] = useState({ shift: 0, maxW: 0 });
+  useIsoLayoutEffect(() => {
+    if (!slashToken) { setSlashClamp({ shift: 0, maxW: 0 }); slashNatW.current = 0; return; }
+    const measure = () => {
+      if (!slashWrapRef.current || !slashPanelRef.current) return;
+      if (!slashNatW.current) slashNatW.current = slashPanelRef.current.offsetWidth;
+      setSlashClamp(dropUpClamp(slashWrapRef.current.getBoundingClientRect(),
+        document.documentElement.clientWidth, slashNatW.current));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('argo:zoom', measure);
+    return () => { window.removeEventListener('resize', measure); window.removeEventListener('argo:zoom', measure); };
+  }, [!!slashToken]);
   function runSlash(cmd) {
     histIdx.current = -1;
     if (cmd.kind === 'builtin') { setInput(''); cmd.run(); }
@@ -1229,11 +1249,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         )}
         {/* '/' 커맨더 드롭업 — 클로드코드 커맨더 문법(입력창 위 세로 목록, ↑↓ 이동·Enter 실행).
             위치 기준은 이 relative 래퍼(입력바). 별칭 행은 ✕로 삭제, 하단 고정 행으로 새 별칭 등록. */}
-        <div style={{ position: 'relative' }}>
+        <div ref={slashWrapRef} style={{ position: 'relative' }}>
         {slashToken && (
-          <div className="card card-float" role="listbox" style={{
-            position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 40,
-            minWidth: 320, maxWidth: 480, maxHeight: 320, overflowY: 'auto', padding: 6,
+          <div ref={slashPanelRef} className="card card-float" role="listbox" style={{
+            position: 'absolute', bottom: 'calc(100% + 8px)', left: slashClamp.shift, zIndex: 40,
+            minWidth: slashClamp.maxW ? Math.min(320, slashClamp.maxW) : 320,
+            maxWidth: slashClamp.maxW ? Math.min(slashClamp.maxW, 480) : undefined, maxHeight: 320, overflowY: 'auto', padding: 6,
             boxShadow: '0 8px 28px rgba(0,0,0,.14)',
           }}>
             <div className="microlabel" style={{ padding: '4px 8px 2px' }}>{t('chat.commands')}</div>
