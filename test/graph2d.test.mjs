@@ -22,6 +22,18 @@ test('기본: 링크 엣지만 · 고아 숨김 · 3표기 해석', () => {
   assert.ok(!g.nodes.some((n) => n.type === 'agent'), '크루 노드는 기본 없음');
 });
 
+test('링크 없는 기억만 있으면 노드 0 + hiddenOrphans 전수 — 빈 하늘 안내의 전제', () => {
+  // 신규 회사의 실제 첫 상태 — 이 조합(nodes 0, hiddenOrphans N)이 Graph2D의 빈 하늘 안내를 띄우고
+  // 안내의 "연결 없는 기억 N건" 수치가 hiddenOrphans에서 나온다.
+  const lone = [
+    { rel: 'notes/첫-기억.md', dir: 'notes', title: '첫 기억', links: [] },
+    { rel: 'journal/2026-08-30-pepper.md', dir: 'journal', title: '일지', links: [] },
+  ];
+  const g = buildGraph2D({ docs: lone, agents });
+  assert.equal(g.nodes.length, 0, '기본 보기(고아 숨김·크루 꺼짐)에서 노드가 하나도 없다');
+  assert.equal(g.hiddenOrphans, 2, '안내에 싣는 숨긴 기억 수 = 고아 전수');
+});
+
 test('토글: 고아 포함 · 크루 연결(작성자 엣지)', () => {
   const g = buildGraph2D({ docs, agents, showOrphans: true, showCrew: true });
   assert.ok(g.nodes.some((n) => n.id === 'journal/2026-08-21-pepper'), '고아 포함');

@@ -78,6 +78,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
   const [showCrew, setShowCrew] = useState(false);
   const [showOrphans, setShowOrphans] = useState(false);
   const [hiddenOrphans, setHiddenOrphans] = useState(0);
+  const [emptySky, setEmptySky] = useState(false); // 노드 0 — 빈 하늘 안내(신규 회사: 링크 없는 기억뿐이면 그래프가 통째로 공백이었다)
   const [localRoot, setLocalRoot] = useState(null); // 더블클릭 로컬 그래프(깊이 2) — ESC로 복귀
   const root = focusRel ? stem(focusRel) : localRoot;
 
@@ -110,10 +111,39 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       }
     }
     if (graph.nodes.length === 0) {
+      // 빈 하늘 — 종전엔 clearRect 후 조기 반환이라 신규 회사(링크 없는 기억뿐)의 첫 화면이 통째로
+      // 공백 = "고장"으로 읽혔다. 별먼지만 캔버스에 깔고, 안내 문구는 오버레이(DOM)가 맡는다
+      // — 캔버스 글자와 달리 i18n(t)·테마 색·줄바꿈이 공짜다.
+      setEmptySky(true);
+      canvas.style.cursor = 'default'; // 잡을 노드가 없다 — grab 커서는 거짓 어포던스
       const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      return () => window.removeEventListener('argo:theme', syncThemeRgb);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const drawSky = () => {
+        const W = canvas.clientWidth, H = canvas.clientHeight;
+        canvas.width = W * dpr; canvas.height = H * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+        // 본 그래프의 별먼지와 같은 결정적 난수 — 리사이즈마다, 그리고 노드가 생긴 뒤에도 같은 하늘
+        let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+        const n = compact ? 40 : Math.round((W * H) / 5000);
+        for (let i = 0; i < n; i++) {
+          const x = rnd() * W, y = rnd() * H, r = rnd() < 0.1 ? 1.1 : 0.6, a = 0.08 + rnd() * 0.25;
+          ctx.fillStyle = `rgba(${INK}, ${a * 0.5})`;
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+        }
+      };
+      drawSky();
+      const ro = new ResizeObserver(drawSky);
+      ro.observe(canvas);
+      window.addEventListener('argo:theme', drawSky); // 먼저 등록된 syncThemeRgb가 색을 갱신한 뒤 다시 그린다
+      return () => {
+        ro.disconnect();
+        window.removeEventListener('argo:theme', drawSky);
+        window.removeEventListener('argo:theme', syncThemeRgb);
+      };
     }
+    setEmptySky(false);
+    canvas.style.cursor = 'grab';
     const sim = createSim2D(graph);
     const ctx = canvas.getContext('2d');
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -373,6 +403,17 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
   return (
     <div style={{ position: 'relative', width: '100%', height, minHeight: 0 }}>
       <canvas ref={ref} style={{ width: '100%', height: '100%', display: 'block', cursor: 'grab' }} />
+      {emptySky && (
+        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center', pointerEvents: 'none', padding: '0 18px' }}>
+          <div>
+            <div style={{ fontSize: compact ? 12.5 : 15, fontWeight: 600, opacity: 0.78 }}>{t('graph.emptySkyTitle')}</div>
+            <div className="microlabel" style={{ marginTop: 6, opacity: 0.75, lineHeight: 1.55, whiteSpace: 'pre-line' }}>{t('graph.emptySkyBody')}</div>
+            {hiddenOrphans > 0 && (
+              <div className="microlabel" style={{ marginTop: 5, opacity: 0.55 }}>{t('graph.emptySkyOrphans', { n: hiddenOrphans })}</div>
+            )}
+          </div>
+        </div>
+      )}
       {!compact && (
         <div style={{ position: 'absolute', top: 10, right: 12, display: 'flex', gap: 6, alignItems: 'center' }}>
           {localRoot && !focusRel && (
@@ -384,7 +425,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
           </button>
         </div>
       )}
-      {!compact && (
+      {!compact && !emptySky && ( /* 빈 하늘엔 조작 힌트가 무의미 — 안내 문구만 남긴다 */
         <span className="microlabel" style={{ position: 'absolute', left: 14, bottom: 10, opacity: 0.7 }}>{t('graph.hint2d')}</span>
       )}
     </div>

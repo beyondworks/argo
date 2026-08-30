@@ -826,6 +826,10 @@ const DICT = {
   'graph.backToAll': ['전체 그래프로', 'Back to all'],
   'graph.linksN': ['연결 {n}', '{n} links'],
   'graph.hint2d': ['드래그 이동 · 휠 줌 · 노드 드래그 · 더블클릭 = 주변만 보기', 'Drag to pan · wheel to zoom · drag nodes · double-click = local view'],
+  // 빈 하늘 — 노드 0(신규 회사: 링크 없는 기억뿐)일 때 그래프가 통째로 공백이던 것의 안내
+  'graph.emptySkyTitle': ['아직 빈 하늘입니다', 'An empty sky, for now'],
+  'graph.emptySkyBody': ['기억을 [[링크]]로 서로 이으면\n이곳에 별자리가 그려집니다', 'Link memories together with [[links]]\nand constellations will appear here'],
+  'graph.emptySkyOrphans': ['연결 없는 기억 {n}건이 숨겨져 있습니다', '{n} unlinked memories hidden'],
   'vault.backlinks': ['이 문서를 참조하는 기억 {n}건', '{n} memories link here'],
 
   // ── 크루 채팅
