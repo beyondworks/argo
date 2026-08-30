@@ -68,6 +68,9 @@ function effective(cls, prop, W) {
   // 정확 일치(공백 정규화) — 부분문자열 매칭은 fail-open이었다(분리 검수 실증: '.chat-cols' 조회가
   // '.chat-cols > .side-rail' 규칙에도 매칭되어, 폰 열 전환을 레일 셀렉터로 옮기는 변이가 초록).
   // 결합 셀렉터는 조회 문자열도 결합 형태 그대로 넘긴다(예: '.chat-cols > .side-rail').
+  // 계약(재검수 R2): 이 평가는 "대상 셀렉터를 정확히 같은 형태로만 겨냥한다"에 기댄다 — 같은 요소를
+  // 다른 형태(자손·복합, 예: '.chat-cols .crew-phone-band')로 겨냥하는 규칙을 추가하면 실캐스케이드는
+  // 특이도로 갈리는데 이 게이트는 조용히 눈이 먼다. 그런 규칙이 필요해지면 평가기를 먼저 넓혀라.
   const selEq = (s) => s.replace(/\s+/g, ' ').trim() === cls;
   for (const seg of segs) {
     if (!seg.applies) continue;
@@ -249,6 +252,10 @@ test('크루 채팅 컬럼 배치 불변식 — 밴드1·스레드2·컴포저3 
     '밴드에 gridRow: 1이 없다 — 자동배치로 되돌아가면 데스크톱 컴포저 상단 부양이 재발한다');
   assert.match(crew, /className="thread" ref=\{threadRef\} style=\{\{ gridRow: 2,/,
     '스레드에 gridRow: 2가 없다');
-  assert.equal((crew.match(/style=\{\{ gridRow: 3,/g) ?? []).length, 2,
-    '컴포저 자리(읽기 전용 카드·컴포저 스택 — viewing 삼항 양쪽)에 gridRow: 3이 정확히 2곳이어야 한다 — 한쪽만 있으면 그 분기에서 부양이 재발한다');
+  // 자리별 표현식 앵커 — 개수 단언(=== 2)은 "이전형" 변이에 초록이었다(재검수 MR5 실증:
+  // 카드에서 떼어 스레드 레인으로 옮겨도 개수 2 유지 → 그 분기에서 부양 부활 가능).
+  assert.match(crew, /className="card card-float" style=\{\{ gridRow: 3, width: '100%', maxWidth: LANE, margin: '12px auto 0'/,
+    '읽기 전용 카드(viewing)에 gridRow: 3이 없다 — 아카이브 열람 분기에서 카드가 자동배치로 떠오른다');
+  assert.match(crew, /<div style=\{\{ gridRow: 3, width: '100%', maxWidth: LANE, margin: '0 auto', paddingTop: 12/,
+    '컴포저 스택에 gridRow: 3이 없다 — 주 분기에서 컴포저 상단 부양이 재발한다(재검수 실측: auto 복귀 시 rows 96px/704px/0px·top 82)');
 });
