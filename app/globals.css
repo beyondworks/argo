@@ -1499,6 +1499,11 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 
 .search-pill {
   display: flex; align-items: center; gap: 8px;
+  /* min-width: 0 — input의 고유 기본 폭(size 속성 ~140px)이 pill의 min-content로 올라와
+     좁은 유효 뷰포트(표시 배율 2, 1열 폭)에서 상단바가 문서 가로 스크롤을 만든다(실측:
+     pill이 188.75px에서 축소 정지 → scrollWidth 1497 > clientWidth 1424). 자동 최소 폭을
+     해제해야 내부 input(flex:1; min-width:0)이 따라 줄어든다. */
+  min-width: 0;
   height: 34px; padding: 0 12px; width: 220px;
   background: var(--card); border: 1px solid var(--border); border-radius: 999px;
   color: var(--fg-3);
