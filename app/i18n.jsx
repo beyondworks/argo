@@ -1170,6 +1170,7 @@ const DICT = {
   'routines.title': ['이름', 'Title'],
   'routines.titlePlaceholder': ['루틴 이름', 'Routine name'],
   'routines.promptPlaceholder': ['크루에게 반복 지시할 내용', 'What to repeatedly instruct the crew'],
+  'routines.pathWarn': ['"{path}" 은 특정 컴퓨터에만 있는 경로예요 — 루틴은 다른 기기에서 돌 수 있어 그날은 실행이 안 될 수 있습니다. 회사 폴더 안 상대경로를 권장합니다.', '"{path}" exists only on one computer — routines may run on another device, where this would silently fail. Prefer a path inside the company folder.'],
   'routines.refineBtn': ['AI 설계 확장', 'AI refine'],
   'routines.refineHint': ['한 줄 지시를 목적·단계·산출물·기준이 담긴 설계로 확장합니다 — 결과는 수정할 수 있어요', 'Expands a one-liner into a designed instruction (goal, steps, output, criteria) — you can edit the result'],
   'routines.createBtn': ['루틴 생성', 'Create routine'],
