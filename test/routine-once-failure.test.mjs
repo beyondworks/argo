@@ -45,6 +45,15 @@ test('once: 예약 시각 전(미래 예약)의 수동 시험 실패는 켜둔�
   assert.equal(saved.enabled, true, '시험 실행이 실패했다고 살아 있는 미래 예약을 꺼서 취소하면 안 된다');
 });
 
+test('once: 예약 시각을 가로지른 시험 실행의 실패도 켜둔다 — 판정 시계는 실행 시작 시각 (2R LOW-A 핀)', async () => {
+  // 시작(주입 08:59:30) < 슬롯(09:00) ≤ 실패(실 시계, 훨씬 뒤) — 실패 시각으로 재면 "경과"로
+  // 꺼지는데, lastRun=시작<슬롯이라 isDue는 아직 그 슬롯을 발화할 수 있다: 살아 있는 예약의 취소다.
+  const r = await addRoutine(WS, { agentSlug: 'alpha', title: '가로지름', prompt: '보내라', schedule: { type: 'once', date: '2026-06-15', time: '09:00' } });
+  await assert.rejects(() => runRoutine(WS, r.id, { chatFn: failChat, startAt: new Date(2026, 5, 15, 8, 59, 30) }));
+  const saved = await byId(r.id);
+  assert.equal(saved.enabled, true, '시작이 슬롯 전이면 슬롯 미소비 — 실패 시각이 슬롯 뒤라고 꺼서 예약을 취소하면 안 된다');
+});
+
 test('once: 성공은 시각과 무관하게 스스로 꺼진다 — 산출이 이미 나갔으니 이중 발송 방지 (기존 동작 핀)', async () => {
   const r = await mkOnce('예약 발송 2', '2099-01-02'); // 미래 예약을 미리 시험해 성공한 경우도 끈다
   const out = await runRoutine(WS, r.id, { chatFn: okChat });
@@ -69,4 +78,6 @@ test('onceSpent: 날짜·당일 시각 경계·비once (순수)', () => {
   assert.equal(onceSpent({ type: 'once', date: '2026-06-15', time: '09:00' }, now), true, '당일 — 시각 도달');
   assert.equal(onceSpent({ type: 'once', date: '2026-06-15', time: '09:01' }, now), false, '당일 — 시각 전');
   assert.equal(onceSpent({ type: 'daily', times: ['09:00'] }, now), false, 'once가 아니면 항상 false — daily를 끄는 통로가 되면 안 된다');
+  assert.equal(onceSpent({ type: 'once', date: '2026-06-15', time: '09:00', times: ['23:00'] }, now), false,
+    '오염 저장값(time≠times[0]) — isDue와 같은 원천(times 우선)으로 판정해야 발화 전 예약이 꺼지지 않는다 (2R LOW-B)');
 });
