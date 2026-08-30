@@ -199,19 +199,27 @@ export default function Compete({ params }) {
       )}
 
       {/* 본문 — 회의실과 동일 문법: 헤더 라인 / 전체 높이 카드 / 하단 컴포저 */}
-      <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className="microlabel">{t('compete.header')}</span>
+      {/* 열 잠금 minmax(0,1fr) — 무템플릿 grid의 암묵 auto 열은 자식 min-content(컴포저 textarea
+          고유폭·nowrap 상태 칩 등)만큼 부풀어, 표시 배율 2의 좁은 유효 폭에서 문서 가로 넘침을
+          만든다(실측 scrollWidth 1428 > 1408 — 회의실 동종). 아이템 minWidth:0은 바깥 트랙만
+          지키고 자기 내부 트랙은 못 지킨다. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
+        {/* 좁은 유효 폭 축소 규칙 — 라벨은 한 줄 ellipsis(단어별 세로 쌓임 방지), 상태 칩(nowrap)은
+            안 들어가면 wrap으로 아랫줄에(회의실 헤더와 동일 문법). */}
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+          <span className="microlabel" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('compete.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
           {comp?.status === 'running' && <span className="chip" style={{ flex: 'none' }}><ArgoSpinner size={11} /> {t('compete.running')}</span>}
           {comp?.winner && <span className="chip" style={{ borderColor: 'var(--warn)', color: 'var(--warn)', fontWeight: 700, flex: 'none' }}>{t('compete.adopted')}</span>}
         </div>
 
-        <div className="card" style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0 }}>
+        {/* overflowWrap anywhere — 긴 무공백 토큰(URL·코드 조각)이 좁은 유효 폭에서 카드 내부 가로
+            스크롤을 만들지 않게 한다(회의실 카드·크루 채팅 .thread .card와 동형 처방). */}
+        <div className="card" style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' }}>
           {!comp ? (
             <div className="empty">{t('compete.emptyMain')}</div>
           ) : (
-            <div style={{ display: 'grid', gap: 12, minWidth: 0 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, minWidth: 0 }}> {/* 열 잠금 — 본문 열과 같은 이유(과제문·시안 행 min-content 전파 차단) */}
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                 <Icon name="bolt" size={14} style={{ marginTop: 2, flex: 'none' }} />
                 <span style={{ fontSize: 13, lineHeight: 1.55, whiteSpace: 'pre-wrap', minWidth: 0 }}>{comp.prompt}</span>
@@ -229,7 +237,9 @@ export default function Compete({ params }) {
                   const isWinner = comp.winner === ref;
                   return (
                     <div key={ref} className="card" style={{
-                      padding: '14px 16px', display: 'grid', gap: 10, minWidth: 0,
+                      /* 열 잠금 — 카드 자신의 minWidth:0은 바깥(시안 나열) 트랙만 지킨다. 내부 암묵
+                         auto 열은 Markdown 시안 본문 min-content로 부풀어 카드 밖으로 샌다. */
+                      padding: '14px 16px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, minWidth: 0,
                       ...(isWinner ? { borderColor: 'var(--warn)', boxShadow: '0 0 0 1px var(--warn)' } : {}),
                       ...(comp.winner && !isWinner ? { opacity: 0.55 } : {}),
                     }}>
@@ -264,21 +274,27 @@ export default function Compete({ params }) {
         </div>
 
         {comp ? (
-          /* 열람 중 — 회의실 보관 열람과 동일한 하단 바 문법 */
-          <div className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
+          /* 열람 중 — 회의실 보관 열람과 동일한 하단 바 문법.
+             바 wrap + 버튼 줄바꿈·세로 자람 — 버튼(.btn 전역 nowrap)이 유일한 비축소 요소라
+             좁은 유효 폭(실측 en·1280 창 × 배율 2: 1335>1264)에서 문서 가로 넘침을 만들었다.
+             .btn.sm 고정 height 28은 라벨 2줄에서 글자가 알약 밖으로 새므로 height auto 세트(회의실 동형). */
+          <div className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
             <Icon name="bolt" size={13} /> {comp.winner ? t('compete.closedBar') : comp.status === 'running' ? t('compete.runningBar') : t('compete.doneBar')}
             <span style={{ flex: 1 }} />
-            <button className="btn btn-primary sm" onClick={() => openComp(null)}>{t('compete.new')}</button>
+            <button className="btn btn-primary sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} onClick={() => openComp(null)}>{t('compete.new')}</button>
           </div>
         ) : (
           /* 새 경쟁 컴포저 — 회의실 컴포저와 동일 문법: 칩 행 → input-bar → 힌트 */
-          <div style={{ display: 'grid', gap: 6 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}> {/* 열 잠금 — 본문 열과 같은 이유(한 층 아래 같은 함정: textarea 고유폭) */}
             {/* 라벨 열 공유 grid — 두 행의 박스 좌측 라인이 정렬된다(모델 선택 왼편 기준, 유건 지시 2026-07-21).
                 드롭다운은 전부 DropUp(위로 열림) — 하단 배치라 네이티브 select 팝업이 아래로 열려 잘렸다. */}
             {/* 크루·모델 선택을 한 줄로(유건 2026-08-23) — 좁으면 줄바꿈 */}
+            {/* 그룹 minWidth:0 — flex 아이템 자동 최소치(내용 min-content)가 좁은 유효 폭(배율 2,
+                1280 창 실측 열 106 CSS px)에서 DropUp 바닥(148)을 그대로 전파해 문서 가로 넘침을
+                만든다(실측 1283>1264 → 해제 후 1264=1264). DropUp 자체 클램프(ui.jsx)와 한 세트. */}
             <div style={{ display: 'flex', gap: '6px 14px', alignItems: 'center', flexWrap: 'wrap' }}>
               <span className="microlabel">{t('compete.pick')}</span>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
                 {/* 크루 1명 — 등록된 모든 크루 중 선택 */}
                 <DropUp value={pickedCrew} disabled={busy} width={220} placeholder="—"
                   groups={[{ items: agents.map((a) => ({ value: a.slug, label: `${a.name} — ${a.role}` })) }]}
@@ -288,7 +304,7 @@ export default function Compete({ params }) {
                 )}
               </div>
               <span className="microlabel">{t('compete.pickModels')}</span>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
                 {/* 슬롯 — 연결된 러너의 모델만, 러너별 그룹. 다른 슬롯이 고른 모델은 비활성(중복 방지). */}
                 {runners === null ? <Skeleton h={28} w={220} /> : (() => {
                   const connected = (runners ?? []).filter((r) => r.authed && r.models?.length);
