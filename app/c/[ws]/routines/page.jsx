@@ -87,6 +87,7 @@ export default function Routines({ params }) {
       dows: tpl?.schedule?.dows ?? [tpl?.schedule?.dow ?? 1],
       everyMinutes: tpl?.schedule?.everyMinutes ?? 30,
       maxRuns: 20, maxUsd: '',
+      verifyFiles: '', verifyContains: '', verifyRetries: 2,
     });
   }
 
@@ -102,6 +103,7 @@ export default function Routines({ params }) {
       dows: r.schedule?.dows ?? [r.schedule?.dow ?? 1],
       everyMinutes: r.schedule?.everyMinutes ?? 30,
       maxRuns: r.loop?.maxRuns ?? 20, maxUsd: r.loop?.maxUsd ?? '',
+      verifyFiles: (r.verify?.files ?? []).join(', '), verifyContains: r.verify?.contains ?? '', verifyRetries: r.verify?.retries ?? 2,
     });
   }
 
@@ -120,6 +122,12 @@ export default function Routines({ params }) {
           : { type: form.type, times: form.times, dows: form.dows.map(Number), tz: Intl.DateTimeFormat().resolvedOptions().timeZone },
         // 루프 상한 — interval에만 보낸다(서버는 다른 타입의 loop를 무시하지만, 보내지 않는 편이 의도가 분명하다)
         ...(form.type === 'interval' ? { loop: { maxRuns: Number(form.maxRuns) || 20, maxUsd: form.maxUsd === '' ? null : Number(form.maxUsd) } } : {}),
+        // 완료 조건 — interval(자율 루프)은 자체 판정(LOOP:)이 있어 제외. 빈 입력 = null(조건 없음/삭제).
+        ...(form.type !== 'interval' ? {
+          verify: form.verifyFiles.trim()
+            ? { files: form.verifyFiles.split(',').map((x) => x.trim()).filter(Boolean), contains: form.verifyContains.trim() || null, retries: Number(form.verifyRetries) || 2 }
+            : null,
+        } : {}),
       };
       if (form.id) {
         const res = await fetch(`/api/companies/${ws}/routines`, {
@@ -303,6 +311,25 @@ export default function Routines({ params }) {
                 </button>
               </div>
             </div>
+            )}
+            {form.type !== 'interval' && (
+              /* 완료 조건 — 산출물(회사 기억 안 파일)이 실제로 있어야 완료로 친다. 비우면 종전 동작. */
+              <div style={{ display: 'grid', gap: 4, gridColumn: '1 / -1' }}>
+                <span className="microlabel" title={t('routines.verify.hint')}>{t('routines.verify.label')}</span>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <input suppressHydrationWarning value={form.verifyFiles}
+                    onChange={(e) => setForm({ ...form, verifyFiles: e.target.value })}
+                    placeholder={t('routines.verify.filesPlaceholder')} style={{ ...selStyle, minWidth: 260, flex: 1 }} {...imeGuard} />
+                  <input suppressHydrationWarning value={form.verifyContains}
+                    onChange={(e) => setForm({ ...form, verifyContains: e.target.value })}
+                    placeholder={t('routines.verify.containsPlaceholder')} style={{ ...selStyle, width: 180 }} {...imeGuard} />
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', color: 'var(--fg-3)', fontSize: 12 }}>
+                    {t('routines.verify.retries')}
+                    <input suppressHydrationWarning type="number" min={1} max={3} value={form.verifyRetries}
+                      onChange={(e) => setForm({ ...form, verifyRetries: e.target.value })} style={{ ...selStyle, width: 64 }} />
+                  </label>
+                </div>
+              </div>
             )}
           </div>
           <textarea
