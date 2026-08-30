@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, DropUp, api, imeGuard, timeAgo } from '../../../ui';
 import { useLang } from '../../../i18n';
 import { detectDevicePaths } from '../../../../src/device-paths.mjs'; // 기기 종속 경로 안내 — 노드 의존 0 순수 모듈
+import { onceExpired } from '../../../../src/routine-time.mjs'; // '만료' 판정 — 노드 의존 0 순수 모듈(표시 전용, 상태 쓰기 없음)
 
 function scheduleLabel(s, t, DOW) {
   // 복수 시각·요일은 '·'로 이어 기존 라벨 템플릿에 그대로 태운다 (예: 매주 월·수 09:00·18:00)
@@ -376,7 +377,8 @@ export default function Routines({ params }) {
         <div className="card-head">
           <span className="card-title"><Icon name="clock" size={14} />{t('routines.registered')}</span>
           <span className="rule" />
-          <span className="pill"><span className="dot" />{t('routines.active', { n: routines?.filter((r) => r.enabled).length ?? 0 })}</span>
+          {/* 가동 수에서 만료를 뺀다 — 영영 안 도는 루틴을 세면 집계도 같은 거짓말을 한다 */}
+          <span className="pill"><span className="dot" />{t('routines.active', { n: routines?.filter((r) => r.enabled && !onceExpired(r)).length ?? 0 })}</span>
         </div>
         {routines === null ? (
           error
@@ -392,7 +394,11 @@ export default function Routines({ params }) {
               <tr><th>{t('routines.colTitle')}</th><th style={{ width: 130 }}>{t('routines.colCrew')}</th><th style={{ width: 190 }}>{t('routines.colSchedule')}</th><th style={{ width: 170 }}>{t('routines.colLastRun')}</th><th style={{ width: 84 }}>{t('routines.colState')}</th><th style={{ width: 164 }} /></tr>
             </thead>
             <tbody>
-              {routines.map((r) => (
+              {routines.map((r) => {
+                // 행당 1회 판정 — 셀 3곳 재호출 비용(tz 각인 once당 ~155µs×4)과 호출 간 시계가
+                // 경계를 걸쳐 라벨·클래스가 어긋나는 이론적 사각을 함께 제거(#364 검수 LOW).
+                const expired = onceExpired(r);
+                return (
                 <tr key={r.id} style={{ cursor: 'default' }}>
                   <td>
                     <span style={{ fontWeight: 650, display: 'block' }}>{r.title}</span>
@@ -426,9 +432,12 @@ export default function Routines({ params }) {
                     ) : <span style={{ color: 'var(--fg-3)' }}>—</span>}
                   </td>
                   <td>
-                    <button className={`pill${r.enabled ? ' ok' : ''}`} onClick={() => toggle(r)} style={{ cursor: 'pointer' }}
-                      title={!r.enabled && r.loop?.stoppedReason ? t('routines.loop.resume') : undefined}>
-                      <span className="dot" />{r.enabled ? t('routines.on') : (r.loop?.stoppedReason ? t('routines.loop.resume') : t('routines.off'))}
+                    {/* 만료 — 예약 시각이 catch-up 창(4h)까지 지나도록 발화하지 못한 once. '가동'으로
+                        두면 영영 안 도는 루틴이 도는 척한다(#354 검수 3R 잔존 집합). 표시 전용 파생
+                        판정이라 저장 상태는 건드리지 않는다 — 클릭(끄기)·편집(날짜 수정)·삭제는 그대로. */}
+                    <button className={`pill${r.enabled && !expired ? ' ok' : ''}`} onClick={() => toggle(r)} style={{ cursor: 'pointer' }}
+                      title={expired ? t('routines.expiredHint') : (!r.enabled && r.loop?.stoppedReason ? t('routines.loop.resume') : undefined)}>
+                      <span className="dot" />{r.enabled ? (expired ? t('routines.expired') : t('routines.on')) : (r.loop?.stoppedReason ? t('routines.loop.resume') : t('routines.off'))}
                     </button>
                   </td>
                   <td style={{ textAlign: 'right' }}>
@@ -439,7 +448,8 @@ export default function Routines({ params }) {
                     </span>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

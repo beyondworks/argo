@@ -8,6 +8,10 @@ import { emitNotify } from './notify.mjs';
 import { runOneShot } from './oneshot.mjs'; // 자연어 → 루틴 초안(러너 독립 — 어떤 러너든 연결만 되면 동작)
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
+// 시각 판정(순수)은 routine-time.mjs가 원천 — 목록 화면(클라이언트)이 '만료' 표시에 같은 판정을
+// 쓰기 위한 분리. 기존 소비자를 위해 그대로 재수출한다(임포트 경로 하위호환).
+import { normalizeTz, zonedParts, onceSpent, CATCHUP_MS } from './routine-time.mjs';
+export { normalizeTz, zonedParts, onceSpent, onceExpired } from './routine-time.mjs';
 
 const lockKey = (wsId) => `routines:${wsId}`;
 
@@ -38,13 +42,6 @@ async function saveRoutines(wsId, routines) {
     (export: 단위 테스트용 — 순수 함수) */
 const TIME_RE = /^\d{2}:\d{2}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-/** 시간대 검증 — IANA 이름(Asia/Seoul 등)만. 못 알아보면 null(기기 로컬로 폴백).
-    Intl이 유일한 판별기다 — 목록을 손으로 들고 있으면 낡는다. */
-export function normalizeTz(tz) {
-  const name = String(tz ?? '').trim();
-  if (!name) return null;
-  try { new Intl.DateTimeFormat('en-US', { timeZone: name }); return name; } catch { return null; }
-}
 
 export function normalizeSchedule(schedule = {}) {
   // 시각 예약은 **만든 사람의 시간대**에 묶인다(유건 지시 2026-07-28: "한국 사용자는 한국 시간으로").
@@ -426,49 +423,8 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null } = {
   }
 }
 
-/** 스케줄러용 — 이 분(minute)에 실행해야 하나. */
-// 예약 시각을 놓쳐도(슬립·재시작으로 폴러가 그 분을 건너뜀) 당일 안에서 1회 catch-up 한다.
-// 예전엔 정확히 그 분에만 due라, 그 분을 놓치면 그날은 조용히 스킵돼(아침 브리핑 유실) 스케줄러
-// 신뢰가 무너졌다. 지연 상한(4h)으로 23:59에 09:00을 늦게 쏘는 것은 막는다.
-const CATCHUP_MS = 4 * 60 * 60 * 1000;
-
-/** 주어진 시간대에서 본 now의 달력 조각. tz가 없으면 기기 로컬(구 동작 그대로).
-    Intl로 뽑는 이유: Date는 기기 로컬과 UTC만 알고, 임의 IANA 시간대는 못 만든다.
-    (export: 단위 테스트용 — 순수 함수) */
-export function zonedParts(now, tz) {
-  if (!tz) {
-    return {
-      year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate(),
-      hour: now.getHours(), minute: now.getMinutes(), dow: now.getDay(),
-    };
-  }
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, hour12: false, weekday: 'short',
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  }).formatToParts(now).map((x) => [x.type, x.value]));
-  const DOW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  return {
-    year: Number(p.year), month: Number(p.month), day: Number(p.day),
-    // hourCycle에 따라 자정이 24로 오는 구현이 있다 — 0으로 정규화하지 않으면 00:00 루틴이 영원히 안 뜬다
-    hour: Number(p.hour) % 24, minute: Number(p.minute), dow: DOW[p.weekday] ?? 0,
-  };
-}
-
-/** once 슬롯이 이미 지났나 — 실패 시 끄기의 게이트(순수). 예약 시각 **전**의 실패(목록 '실행'으로
-    미리 시험해 본 경우)에 꺼 버리면 살아 있는 미래 예약이 취소된다(검수 MEDIUM-1 실측). isDue와
-    같은 시간대 규칙(zonedParts + schedule.tz). once가 아니면 false. (export: 단위 테스트용) */
-export function onceSpent(schedule, now = new Date()) {
-  if (schedule?.type !== 'once') return false;
-  const zp = zonedParts(now, normalizeTz(schedule.tz));
-  const today = `${zp.year}-${String(zp.month).padStart(2, '0')}-${String(zp.day).padStart(2, '0')}`;
-  if (schedule.date !== today) return String(schedule.date ?? '') < today; // YYYY-MM-DD는 문자열 비교 = 날짜 비교
-  // 시각 원천은 isDue와 동일하게 times 우선 — 오염 저장값(time≠times[0])에서 두 판정이 갈려
-  // 발화 전 예약이 "경과"로 꺼지는 일이 없게 한다(2R LOW-B).
-  const [h, m] = String((Array.isArray(schedule.times) && schedule.times[0]) || schedule.time || '').split(':').map(Number);
-  if (!Number.isInteger(h) || !Number.isInteger(m)) return true; // 오염된 시각 — 미래라고 단정할 수 없으니 기존(끄기) 쪽으로
-  return zp.hour * 60 + zp.minute >= h * 60 + m;
-}
-
+/** 스케줄러용 — 이 분(minute)에 실행해야 하나. catch-up 정책·시간대 판정(CATCHUP_MS·zonedParts·
+    normalizeTz·onceSpent)은 routine-time.mjs가 원천이다. */
 export function isDue(routine, now = new Date()) {
   if (!routine.enabled) return false;
   const s = routine.schedule ?? {};
