@@ -77,6 +77,30 @@ test('가드 자가 치유: 실행이 영영 안 끝나도 상한(4h) 뒤에는 
   assert.equal(mine(), 2, '상한을 넘긴 가드 항목이 루틴을 영구 정지시키면 안 된다');
 });
 
+test('CAS 삭제: 뒤늦게 끝난 옛 실행이 새 실행의 가드를 지우지 못한다 (2R LOW-C 핀)', async () => {
+  // stale 무시로 새 실행이 시작된 뒤 옛(행) 실행이 settle하면, finally가 무조건 delete일 때
+  // 새 실행의 가드가 사라져 겹침이 재발한다 — 자기 스탬프일 때만 지우는 CAS가 그 창을 막는다.
+  const r = await addRoutine(WS, { agentSlug: 'alpha', title: 'CAS 루틴', prompt: 'p', schedule: { type: 'interval', everyMinutes: 10 } });
+  const calls = [];
+  let releaseOld;
+  const oldGate = new Promise((res) => { releaseOld = res; });
+  const never = new Promise(() => {});
+  const mine = () => calls.filter((id) => id === r.id).length;
+  const runFn = (_ws, id) => {
+    calls.push(id);
+    if (id !== r.id) return never;
+    return mine() === 1 ? oldGate : never; // 1번째 = 뒤늦게 끝날 옛 실행, 2번째 = 계속 도는 새 실행
+  };
+  await runDueRoutines(WS, at(16, 0), { runFn });
+  assert.equal(mine(), 1, '전제: 옛 실행 시작');
+  await runDueRoutines(WS, at(20, 30), { runFn }); // 4h 초과 — stale 무시, 새 실행 시작
+  assert.equal(mine(), 2, '전제: stale 승격으로 새 실행 시작');
+  releaseOld({});
+  await flush(); // 옛 실행이 뒤늦게 종료 — CAS라면 새 실행의 스탬프를 지우지 않는다
+  await runDueRoutines(WS, at(20, 41), { runFn }); // 새 실행은 아직 in-flight — 스킵돼야 한다
+  assert.equal(mine(), 2, '옛 실행의 종료가 새 실행의 가드를 지우면 겹침이 재발한다');
+});
+
 test('배선: 틱이 cloudLeader 게이트 아래에서 runDueRoutines를 호출한다 (fail-open 차단 핀)', async () => {
   // 행동 테스트는 runDueRoutines 자체만 잠근다 — 틱이 호출을 끊어도(void 처리) 전 스위트가
   // 초록이었다(분리 검수 LOW-2 변이 실증). 틱 콜백은 단위로 태울 수 없어 배선은 소스 앵커로 잠근다.
