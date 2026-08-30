@@ -295,12 +295,14 @@ export default function Room({ params }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
         {/* 좁은 유효 폭 축소 규칙 — 라벨은 한 줄 ellipsis(단어별 세로 쌓임 방지), 버튼은 안 들어가면
             wrap으로 아랫줄에, 그래도 좁으면 라벨 줄바꿈(.btn 전역 nowrap 해제) — 버튼이 유일한
-            비축소 요소라 좁은 창(실측 1280px 창 × 배율 2)에서 문서 가로 넘침을 만들었다. */}
+            비축소 요소라 좁은 창(실측 1280px 창 × 배율 2)에서 문서 가로 넘침을 만들었다.
+            버튼의 height auto+minHeight 28: .btn.sm 고정 height 28은 라벨이 2줄이 되는 좁은 폭
+            (en 실측 191px > 열 186px)에서 글자가 알약 밖으로 삐져나온다(검수 MEDIUM). */}
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
           <span className="microlabel" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('room.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
           {!viewing && (messages?.length ?? 0) > 0 && (
-            <button className="btn sm" style={{ whiteSpace: 'normal' }} disabled={busy} onClick={endMeeting}>{t('room.end')}</button>
+            <button className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy} onClick={endMeeting}>{t('room.end')}</button>
           )}
         </div>
 
