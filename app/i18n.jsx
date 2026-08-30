@@ -1190,6 +1190,8 @@ const DICT = {
   'routines.success': ['성공', 'Succeeded'],
   'routines.on': ['가동', 'On'],
   'routines.off': ['정지', 'Off'],
+  'routines.expired': ['만료', 'Expired'],
+  'routines.expiredHint': ['예약 시각이 지나도록 실행되지 못해 더는 자동 실행되지 않습니다. 날짜를 수정하거나 삭제해 주세요.', 'The scheduled time passed without a run, so it will not fire again. Edit the date or delete it.'],
   'routines.run': ['실행', 'Run'],
   'routines.deleteAria': ['삭제', 'Delete'],
   'routines.deleteTitle': ['루틴 삭제', 'Delete routine'],
