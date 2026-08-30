@@ -4,6 +4,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import { useLang } from './i18n';
 import { rewriteVaultHref } from '../src/vault-links.mjs'; // 산출물 링크 재작성(순수 — 테스트는 src 쪽)
+import { dropUpClamp } from './c/[ws]/zoom-math.mjs'; // 표시 배율(#334) 좌표 환산 계열 — DropUp 패널 클램프
 
 marked.setOptions({ breaks: true, gfm: true });
 
@@ -487,16 +488,29 @@ export function DropUp({ value, placeholder = '—', groups, onChange, disabled,
   // 위 공간이 패널(최대 300)보다 좁으면 아래로 연다 — 뷰포트 상단에서 항목이 잘려 선택 불가하던
   // 회귀(사후 검수 실측 2026-07-25: 시각 팝업 상단 95px 잘림 → 00~03시 클릭 불가) 방지.
   const [below, setBelow] = useState(false);
+  // 좌우 클램프(CSS px) — 패널 폭이 아래로는 minWidth(≥190), 위로는 무상한(라벨 nowrap max-content,
+  // #357 검수 실측 404 CSS px)이라 좁은 열·우측 끝 트리거에서 뷰포트를 뚫던 선재 결함(#357 검증
+  // 실측: en·1280 배율 2에서 right 1415 > clientWidth 1264) 방지. #350(회의실 멘션)의 min·max 100%
+  // 처방은 여기 부적합 — 기준 박스(래퍼)가 좁은 트리거 자체 + shrink-to-fit이라 일반 폭에서 패널이
+  // 트리거 폭으로 퇴행한다. 대신 setBelow(상하 뒤집기)와 동형의 열림 시점 실측 시프트.
+  const [clamp, setClamp] = useState({ shift: 0, maxW: 0 });
   const boxRef = useRef(null);
+  const panelRef = useRef(null);
   useEffect(() => {
-    if (!open) { setEntered(false); return; }
+    if (!open) { setEntered(false); setClamp({ shift: 0, maxW: 0 }); return; }
+    // 열림 직후(등장 전 opacity 0 프레임) 패널 자연 폭을 재고 뷰포트 좌우를 뚫은 만큼 안쪽으로 민다.
+    // offsetWidth는 등장 transform(scale 0.97)을 무시한 배치 폭이라 실측 그대로 쓴다.
+    if (boxRef.current && panelRef.current) {
+      setClamp(dropUpClamp(boxRef.current.getBoundingClientRect(),
+        document.documentElement.clientWidth, panelRef.current.offsetWidth, align === 'right'));
+    }
     const raf = requestAnimationFrame(() => setEntered(true));
     const onDown = (e) => { if (!boxRef.current?.contains(e.target)) setOpen(false); };
     const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
     window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
     return () => { cancelAnimationFrame(raf); window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey); };
-  }, [open]);
+  }, [open, align]);
   const cur = groups.flatMap((g) => g.items).find((i) => i.value === value);
   return (
     <div ref={boxRef} style={{ position: 'relative', display: 'inline-flex' }}>
@@ -509,9 +523,14 @@ export function DropUp({ value, placeholder = '—', groups, onChange, disabled,
         <span aria-hidden style={{ fontSize: 8, color: 'var(--fg-3)', flex: 'none' }}>▴</span>
       </button>
       {open && (
-        <div className="card card-float" role="listbox" style={{
-          position: 'absolute', [below ? 'top' : 'bottom']: 'calc(100% + 6px)', [align === 'right' ? 'right' : 'left']: 0, zIndex: 40,
-          minWidth: Math.max(width, 190), maxHeight: 300, overflowY: 'auto', padding: 6,
+        <div ref={panelRef} className="card card-float" role="listbox" style={{
+          position: 'absolute', [below ? 'top' : 'bottom']: 'calc(100% + 6px)',
+          [align === 'right' ? 'right' : 'left']: align === 'right' ? -clamp.shift : clamp.shift, zIndex: 40,
+          // min·max 동시 클램프(#350 교훈: min > max면 min이 이겨 클램프 무효) — 실측 전(maxW 0,
+          // 불투명 0 프레임)엔 자연 폭 그대로 재고, 실측 후 뷰포트 상한을 건다. 100vw 근사는
+          // 스크롤바 폭만큼 새서(실측 1280 vs clientWidth 1264) 상한도 계산부(clientWidth)가 낸다.
+          minWidth: clamp.maxW ? Math.min(Math.max(width, 190), clamp.maxW) : Math.max(width, 190),
+          maxWidth: clamp.maxW || undefined, maxHeight: 300, overflowY: 'auto', padding: 6,
           boxShadow: '0 8px 28px rgba(0,0,0,.14)', transformOrigin: `${below ? 'top' : 'bottom'} ${align}`,
           transform: entered ? 'none' : `scale(0.97) translateY(${below ? -4 : 4}px)`, opacity: entered ? 1 : 0,
           transition: 'transform 160ms cubic-bezier(0.23,1,0.32,1), opacity 160ms cubic-bezier(0.23,1,0.32,1)' }}>
