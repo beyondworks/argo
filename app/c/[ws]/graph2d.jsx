@@ -96,7 +96,10 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
     const canvas = ref.current;
     if (!canvas || !docs) return;
     syncThemeRgb();
-    window.addEventListener('argo:theme', syncThemeRgb);
+    // 인스턴스별 래퍼 — 모듈 전역 참조를 그대로 등록하면 동일 참조라 실제 등록이 1개로 접혀,
+    // 2분할 동시 마운트에서 한쪽 정리가 남은 인스턴스의 테마 갱신까지 끊는다(PR #339 검수 발견).
+    const onTheme = () => syncThemeRgb();
+    window.addEventListener('argo:theme', onTheme);
     const full = buildGraph2D({ docs, agents, showCrew, showOrphans });
     setHiddenOrphans(full.hiddenOrphans);
     // 로컬 그래프 — root에서 깊이 2까지만 남긴다(옵시디언 로컬 그래프)
@@ -139,11 +142,11 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       drawSky();
       const ro = new ResizeObserver(drawSky);
       ro.observe(canvas);
-      window.addEventListener('argo:theme', drawSky); // 먼저 등록된 syncThemeRgb가 색을 갱신한 뒤 다시 그린다
+      window.addEventListener('argo:theme', drawSky); // 먼저 등록된 onTheme이 색을 갱신한 뒤 다시 그린다
       return () => {
         ro.disconnect();
         window.removeEventListener('argo:theme', drawSky);
-        window.removeEventListener('argo:theme', syncThemeRgb);
+        window.removeEventListener('argo:theme', onTheme);
       };
     }
     setEmptySky(false);
@@ -398,7 +401,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('mouseleave', onLeave);
       window.removeEventListener('keydown', onKey);
-      window.removeEventListener('argo:theme', syncThemeRgb);
+      window.removeEventListener('argo:theme', onTheme);
     };
   }, [docs, agents, showCrew, showOrphans, root, compact, focusRel, localRoot]);
 
