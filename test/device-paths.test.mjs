@@ -40,13 +40,17 @@ test('경계 — 인용부호·괄호·등호 뒤의 경로도 잡는다', () =>
 test('검수 반영 — file:// 는 경로로 살리고, C:/ 표기 감지, 정규식 표기(\\d+)는 UNC 오탐 아님', () => {
   assert.equal(detectDevicePaths('file:///Users/me/report.md 열어')[0], '/Users/me/report.md', 'file://는 가장 확실한 기기 종속 경로');
   assert.equal(detectDevicePaths('read C:/Users/beyon/Desktop/todo.txt')[0], 'C:/Users/beyon/Desktop/todo.txt', '윈도 정방향 슬래시 표기');
-  assert.deepEqual(detectDevicePaths('숫자는 정규식 "\\d+" 로 뽑아줘'), [], '역슬래시 정규식 표기는 UNC가 아니다');
-  assert.deepEqual(detectDevicePaths('줄바꿈은 \\n 으로 표기'), []);
+  // 재검수 지적 2: 리터럴 역슬래시 1개는 옛 패턴에도 안 걸리던 죽은 단언 — 런타임 역슬래시 2개로 오탐을 실재현
+  assert.deepEqual(detectDevicePaths('숫자는 정규식 "\\\\d+" 로 뽑아줘'), [], '역슬래시 정규식 표기는 UNC가 아니다');
+  assert.deepEqual(detectDevicePaths('줄바꿈은 \\\\n 으로 표기'), []);
   assert.equal(detectDevicePaths('\\\\nas\\share\\report.xlsx')[0], '\\\\nas\\share\\report.xlsx', '진짜 UNC(호스트\\공유)는 여전히 감지');
+  // 재검수 지적 3·4: 드라이브형 file:// 감지 + 원격 URL 쿼리 속 file://는 URL째 제거(쪼개짐 오탐 금지)
+  assert.equal(detectDevicePaths('file:///C:/Users/beyon/todo.txt 열어')[0], 'C:/Users/beyon/todo.txt', '드라이브형 로컬 파일 URL도 기기 종속 경로');
+  assert.deepEqual(detectDevicePaths('https://x.com/r?u=file:///Users/leak/secret 열어'), [], '원격 URL 속 file://는 경로가 아니다 — 전처리 순서의 실효 케이스');
 });
 
 test('성능 방어 — 무공백 영숫자 블롭에서 이차식 폭주 없음(검수 MEDIUM-1 계열)', () => {
-  const blob = 'a3f9c2'.repeat(5000); // 30KB 무공백 런 — 구 전처리에서 타건당 1.4s였던 입력
+  const blob = 'a3f9-c2-'.repeat(3750); // 30KB, 단어 경계 다수 — \b가 상한 부재를 가리지 못하게(재검수 지적 1: 무경계 블롭은 상한 제거 변이에 초록이었다)
   const t0 = process.hrtime.bigint();
   detectDevicePaths(blob);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
