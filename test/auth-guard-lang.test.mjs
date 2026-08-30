@@ -127,6 +127,7 @@ test('배선 — app/·middleware의 authError 호출부 전 형태 강제(코�
   const used = new Set();
   for (const f of files) {
     const src = await readFile(f, 'utf8');
+    let sawBareLang = false; // 이 파일에 bare `lang` 인자 호출이 있으면 전달로 실존까지 요구
     // 수집기부터 fail-closed(#338 교훈) — `authError (` 공백 호출도 잡고, 괄호 균형으로 인자
     // 전체를 뜯는다([^)]* 절단은 중첩 괄호 인자의 형태 검사를 무력화한다). 문자열 안 괄호는
     // 세지 않는다 — 현행 인자에 그런 값이 없고, 생기면 여기서 red가 나 목록과 함께 손보게 된다.
@@ -154,10 +155,27 @@ test('배선 — app/·middleware의 authError 호출부 전 형태 강제(코�
       const langArg = inner.slice(cut + 1).trim();
       assert.ok(LANG_FORMS.has(langArg),
         `${f}: 언어 인자 형태 위반 — 리터럴 상수화는 그 갈래 영구 단일 언어. 허용 전달로: ${[...LANG_FORMS].join(' | ')} — 위반 호출: ${call}`);
+      if (langArg === 'lang') sawBareLang = true;
     }
-    // 바인딩 상수화는 같은 결함 한 칸 위 — const lang = 'ko'는 호출 형태 'lang'을 그대로 통과한다
+    // 바인딩 상수화는 같은 결함 한 칸 위 — const lang = 'ko'는 호출 형태 'lang'을 그대로 통과한다.
+    // 주의: 전면 `lang = '리터럴'` 금지는 불가 — timeAgo(input, lang = 'ko')·본문 destructure
+    // `{ lang = 'ko' }`(회사 시스템 언어 폴백)·<html lang="ko"> 등 정당한 기본값이 여럿이다.
     const bind = src.match(/\b(?:const|let|var)\s+lang\s*=\s*['"`]/);
     assert.equal(bind, null, `${f}: lang 바인딩이 문자열 상수 — 전달로(requestLang 등)에서 읽을 것`);
+    // 문장 시작 재대입(let lang = await requestLang(); lang = 'ko';)도 같은 클래스 — 분리 검수
+    // B1 실증. destructure 기본값(`, lang = 'ko' }`)은 전부 중간 위치라 행 시작 앵커로 비저촉.
+    const reassign = src.match(/^\s*lang\s*=\s*['"`]/m);
+    assert.equal(reassign, null, `${f}: lang 재대입이 문자열 상수 ${reassign?.[0]?.trim() ?? ''}`);
+    // 전달로 실존(양성 검사) — bare `lang` 호출 파일은 요청 판독 바인딩이 실제로 있어야 한다.
+    // 분리 검수 B2 실증: guardCompany(wsId, lang = 'ko')로 기본값을 심고 requestLang 바인딩을
+    // 지우면 위 음성 검사들이 전부 green이었다(guardCompany 소비자 20여 곳이 인자 1개라 네 갈래
+    // 전부 영구 한국어). 허용 유입원이 늘면 여기 대안을 추가한다(기본 거부 = fail-closed).
+    // 한계(파일 단위 판정): 같은 파일의 다른 함수가 lang을 딴 데서 받는 구성은 함수 스코프까지
+    // 못 가른다 — 소스 배선 검사의 공통 한계로 문서화(destructure 상수 유입도 동일).
+    if (sawBareLang) {
+      assert.ok(/=\s*await requestLang\(\)/.test(src) || /function tenantDenied\(user, lang\)/.test(src),
+        `${f}: bare lang 호출인데 전달로 바인딩(= await requestLang() 또는 tenantDenied 매개변수) 부재`);
+    }
   }
   // guardCompany의 네 갈래가 전부 배선돼 있어야 한다 — 하나라도 빠지면 그 갈래는 미번역 잔존
   for (const code of ['auth_required', 'company_not_found', 'company_linked', 'company_forbidden']) {
