@@ -35,6 +35,12 @@ export const API_MSG = {
   // 크루 카드(agents/[slug]/route.js GET) — stale 링크로 크루 페이지가 로드 오류를 렌더
   crew_not_found: { status: 404, ko: '크루를 찾을 수 없습니다', en: 'Crew not found' },
   crew_card_read_failed: { status: 500, ko: '크루 카드를 읽지 못했습니다', en: 'Could not read the crew card' },
+  // 크루 카드 쓰기(agents/[slug] PUT·PATCH·DELETE — 3차) — stale 패널(다른 탭·기기에서 해고된
+  // 크루)의 저장·범위 토글·해고 재시도, 원문 편집기의 빈 카드·name 삭제 저장이 setMsg/setErr로 렌더.
+  // status 400 유지 — 오늘 라우트 catch가 내리던 그대로(404 격상은 회귀 위험만 있는 별건).
+  crew_missing: { status: 400, ko: '존재하지 않는 크루입니다', en: 'This crew does not exist' },
+  crew_card_name_required: { status: 400, ko: 'frontmatter에 name이 필요합니다', en: 'The frontmatter needs a name field' },
+  crew_card_body_required: { status: 400, ko: '카드 내용이 필요합니다', en: 'Card content is required' },
   // 기억 문서(vault/route.js GET·DELETE) — 깨진 위키링크·이미 삭제된 노트(detail = rel)
   vault_doc_not_found: { status: 404, ko: '문서를 찾을 수 없습니다', en: 'Document not found' },
   // 페어링 코드 발급(devices/route.js) — 셀프호스팅 연결 코드 카드가 error를 렌더

@@ -15,10 +15,13 @@
 //     사전 전 코드의 전역 배선(미배선 코드 = 미번역 잔존) — market·feedback·agents·vault·devices·pair.
 //  ⑧ 실호출(인증 off·임시 ARGO_ROOT) — vault·agents·feedback·devices 라우트의 오류 표시 언어 행동
 //     (en 쿠키 = 영어 + errorCode, 무단서 = 기존 ko 바이트).
+//  ⑨ src/ 이관 코어 문구의 무코드 throw 재등장 금지 — ④는 app/의 error: 리터럴만 본다(2차 검수
+//     LOW-5 사각). 이관된 코어 문구(persona NOT_FOUND·CARD_NAME_REQUIRED, e2ee E2EE_BAD_CODE)는
+//     src/ 어디서든 기계 코드를 싣고 있어야 한다. src/ 전체 한글 문구 전수조사는 별건.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,6 +61,11 @@ const EXPECT = {
   feedback_save_failed: { status: 500, ko: '저장에 실패했습니다. 잠시 후 다시 시도해 주세요', en: 'Failed to save. Please try again shortly' },
   crew_not_found: { status: 404, ko: '크루를 찾을 수 없습니다', en: 'Crew not found' },
   crew_card_read_failed: { status: 500, ko: '크루 카드를 읽지 못했습니다', en: 'Could not read the crew card' },
+  // 3차 — 크루 카드 쓰기 경로(PUT·PATCH·DELETE). ko는 변경 전 라우트 catch가 String(e.message)로
+  // 통과시키던 코어 원문·인라인 리터럴 그대로. status 400 유지(오늘의 catch 그대로 — 404 격상은 별건).
+  crew_missing: { status: 400, ko: '존재하지 않는 크루입니다', en: 'This crew does not exist' },
+  crew_card_name_required: { status: 400, ko: 'frontmatter에 name이 필요합니다', en: 'The frontmatter needs a name field' },
+  crew_card_body_required: { status: 400, ko: '카드 내용이 필요합니다', en: 'Card content is required' },
   vault_doc_not_found: { status: 404, ko: '문서를 찾을 수 없습니다', en: 'Document not found' },
   devices_no_sync_creds: { status: 400, ko: '이 기기에 동기화 자격이 없습니다 — 환경변수 설정 또는 페어링이 먼저 필요합니다', en: 'This device has no sync credentials — set the environment variables or pair it first' },
   devices_no_owner: { status: 400, ko: '회사에 소유자(ownerId)가 없어 페어링할 수 없습니다', en: 'The company has no owner (ownerId), so it cannot be paired' },
@@ -118,6 +126,25 @@ test('openDekWithKek — 코드 오입력은 E2EE_BAD_CODE 코드를 싣고, 옳
   }
 });
 
+// ── ②-2 persona 쓰기 경로 기계 코드(행동 — 3차) ─────────────────────────────
+test('persona 쓰기 3함수 — 없는 크루 NOT_FOUND·name 없는 카드 CARD_NAME_REQUIRED 코드, ko 원문·성공 경로 유지', async () => {
+  const { saveAgentCard, updateAgentMeta, removeAgentCard } = await import('../src/persona.mjs');
+  const { paths } = await import('../src/workspace.mjs');
+  const p = paths('w1');
+  await mkdir(p.agents, { recursive: true });
+  const card = '---\nname: 철수\nrole: 백엔드\n---\n# 철수 — 백엔드\n';
+  await writeFile(join(p.agents, 'chulsoo.md'), card);
+  // 인접 핀 — 있는 크루의 정상 저장은 그대로(코드 부여가 성공 경로를 건드리지 않는다)
+  assert.equal((await saveAgentCard('w1', 'chulsoo', card)).name, '철수');
+  // 기계 코드 + ko 원문 바이트 — 코드를 안 읽는 소비자(approval-actions)는 오늘과 동일하게 받는다
+  const MISSING = { code: 'NOT_FOUND', message: '존재하지 않는 크루입니다' };
+  await assert.rejects(() => saveAgentCard('w1', 'ghost', card), MISSING);
+  await assert.rejects(() => updateAgentMeta('w1', 'ghost', { name: 'x' }), MISSING);
+  await assert.rejects(() => removeAgentCard('w1', 'ghost'), MISSING);
+  await assert.rejects(() => saveAgentCard('w1', 'chulsoo', '# 이름 없는 카드'),
+    { code: 'CARD_NAME_REQUIRED', message: 'frontmatter에 name이 필요합니다' });
+});
+
 // ── ③ e2ee 라우트 배선(소스 — 실호출 불가 자리의 보조 잠금) ──────────────────
 test('배선 — e2ee 라우트: apiError 코드 실존·전 코드 사용·언어 인자 필수·쿠키 실판독·오입력 판별', async () => {
   const src = await readFile(new URL('../app/api/me/e2ee/route.js', import.meta.url), 'utf8');
@@ -156,15 +183,42 @@ test('배선 — 이관 e2ee ko 문구가 error: 리터럴로 재등장하면 re
     '복구 코드가 설정돼 있지 않습니다', '복구 코드가 맞지 않습니다', '제거할 기기를 지정해',
     '이 기기 자신은 제거할 수 없습니다', '알 수 없는 action',
     // 후속 이관(6 라우트) — 괄호 포함 문구는 regex 안전 지점에서 절단('클라우드 모드'·'회사에 소유자').
-    // 프리픽스 앵커라 '수신 크루와 내용이…'·'카드 내용이…'·'제목과 내용이…'(타 라우트 별개 문구)는 안 걸린다.
+    // 프리픽스 앵커라 '수신 크루와 내용이…'·'제목과 내용이…'(유지 판정 별개 문구)는 안 걸린다.
     '추천 목록 로드 실패', '원격 마켓 연결 실패', '클라우드 모드', '내용이 필요합니다',
     '저장에 실패했습니다', '크루를 찾을 수 없습니다', '크루 카드를 읽지 못했습니다',
     '문서를 찾을 수 없습니다', '이 기기에 동기화 자격이 없습니다', '회사에 소유자', '연결 코드의 소유자가',
+    // 3차 — 크루 카드 쓰기 경로. '카드 내용이 필요합니다'는 이관으로 라우트 리터럴이 소멸했다.
+    '존재하지 않는 크루입니다', 'frontmatter에 name이', '카드 내용이 필요합니다',
   ].join('|')})`);
   for (const f of files) {
     const m = (await readFile(f, 'utf8')).match(banned);
     assert.equal(m, null, `${f}: e2ee 문구 하드코딩 재등장 — apiError로 합류할 것: ${m?.[0] ?? ''}`);
   }
+});
+
+// ── ⑨ src/ 이관 코어 문구 — 무코드 throw 재등장 금지(2차 검수 LOW-5 사각의 부분 봉합) ──
+// ④는 app/의 error: 리터럴만 본다. src/ 코어가 이관 문구를 코드 없이 throw하면 라우트 catch의
+// String(e.message) 통과로 이관이 조용히 풀린다(persona가 실제 그랬던 경로). 이관된 코어 문구는
+// src/ 어디서든 같은 줄 또는 다음 줄에 기계 코드가 실려 있어야 한다. src/ 전체 한글 전수는 별건.
+test('배선 — 이관 코어 ko 문구는 src/에서 기계 코드 없이 재등장 금지', async () => {
+  const srcDir = fileURLToPath(new URL('../src/', import.meta.url));
+  const entries = await readdir(srcDir, { recursive: true, withFileTypes: true });
+  const files = entries.filter((e) => e.isFile() && /\.(mjs|js)$/.test(e.name)).map((e) => join(e.parentPath, e.name));
+  const MIGRATED = ['존재하지 않는 크루입니다', 'frontmatter에 name이 필요합니다', '복구 코드가 맞지 않습니다'];
+  let seen = 0;
+  for (const f of files) {
+    const lines = (await readFile(f, 'utf8')).split('\n');
+    lines.forEach((line, i) => {
+      for (const s of MIGRATED) {
+        if (!line.includes(s)) continue;
+        seen += 1;
+        // e2ee 관례(err.code = 다음 줄)까지 허용 — 창 2줄 안에 code 표기가 있어야 한다
+        assert.match(lines.slice(i, i + 2).join('\n'), /\bcode\s*[:=]\s*'/,
+          `${f}:${i + 1}: 이관 문구 '${s}'가 기계 코드 없이 등장 — Object.assign(new Error(...), { code })로 실을 것`);
+      }
+    });
+  }
+  assert.ok(seen >= 6, `이관 코어 throw가 사라졌다(${seen}곳) — 문구를 바꿨다면 MIGRATED와 사전·라우트를 함께 옮길 것`);
 });
 
 // ── ⑤ companies GET 실호출 — 프리셋 표시 언어 (리졸브 훅 = connector-catalog ⑧ 관례) ──
@@ -221,6 +275,10 @@ const ROUTES = [
   { file: '../app/api/companies/[ws]/agents/[slug]/route.js', calls: [
     { s: "apiError('crew_not_found', lang)", n: 1 },
     { s: "apiError('crew_card_read_failed', lang, detail)", n: 1 },
+    // 3차 — 쓰기 경로: 코어 NOT_FOUND 판별(PUT·PATCH·DELETE) 3곳 + PUT 카드 검증 2곳
+    { s: "apiError('crew_missing', lang)", n: 3 },
+    { s: "apiError('crew_card_name_required', lang)", n: 1 },
+    { s: "apiError('crew_card_body_required', lang)", n: 1 },
   ] },
   { file: '../app/api/companies/[ws]/vault/route.js', calls: [
     { s: "apiError('vault_doc_not_found', lang, rel)", n: 2 }, // GET(깨진 위키링크)·DELETE(선삭제 노트)
@@ -321,4 +379,51 @@ test('실호출 — devices POST: 동기화 자격 없음 400 = 표시 언어 �
   assert.equal(enBody.errorCode, 'devices_no_sync_creds');
   assert.equal((await (await POST(mk({}), P({ ws: 'w1' }))).json()).error,
     '이 기기에 동기화 자격이 없습니다 — 환경변수 설정 또는 페어링이 먼저 필요합니다', '무단서 = 기존 ko 바이트');
+});
+
+// ── ⑧-2 실호출(3차) — 크루 카드 쓰기 경로. 핸들러별 lang 산출을 각각 실검증한다
+// (2차 검수 MEDIUM-1 교훈: 한 핸들러의 lang 선언이 다른 핸들러의 상수화·미이관을 가린다).
+test('실호출 — agents PUT: 빈 카드·name 없는 카드·해고된 크루 400 = 표시 언어 문구 + errorCode', async () => {
+  const { PUT } = await routeImport('../app/api/companies/[ws]/agents/[slug]/route.js');
+  const put = (body, headers) => PUT(new Request('http://127.0.0.1/api/companies/w1/agents/ghost', {
+    method: 'PUT', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body),
+  }), P({ ws: 'w1', slug: 'ghost' }));
+  const cases = [
+    // [body, en 문구, errorCode, ko 문구] — 판별 순서대로: 본문 검증 → name 검증 → 존재 검증
+    [{ md: '' }, 'Card content is required', 'crew_card_body_required', '카드 내용이 필요합니다'],
+    [{ md: '# 이름 없는 카드' }, 'The frontmatter needs a name field', 'crew_card_name_required', 'frontmatter에 name이 필요합니다'],
+    [{ md: '---\nname: 유령\n---\n# 유령\n' }, 'This crew does not exist', 'crew_missing', '존재하지 않는 크루입니다'],
+  ];
+  for (const [body, enMsg, code, koMsg] of cases) {
+    const en = await put(body, { cookie: 'argo-lang=en' });
+    assert.equal(en.status, 400);
+    const b = await en.json();
+    assert.equal(b.error, enMsg);
+    assert.equal(b.errorCode, code);
+    assert.equal((await (await put(body, {})).json()).error, koMsg, `무단서 = 기존 ko 바이트(회귀 0): ${code}`);
+  }
+});
+
+test('실호출 — agents PATCH: 해고된 크루 400 = 표시 언어 문구 + errorCode(stale 패널의 범위 토글·신원 수정)', async () => {
+  const { PATCH } = await routeImport('../app/api/companies/[ws]/agents/[slug]/route.js');
+  const patch = (headers) => PATCH(new Request('http://127.0.0.1/api/companies/w1/agents/ghost', {
+    method: 'PATCH', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ name: 'x' }),
+  }), P({ ws: 'w1', slug: 'ghost' }));
+  const en = await patch({ cookie: 'argo-lang=en' });
+  assert.equal(en.status, 400);
+  const b = await en.json();
+  assert.equal(b.error, 'This crew does not exist');
+  assert.equal(b.errorCode, 'crew_missing');
+  assert.equal((await (await patch({})).json()).error, '존재하지 않는 크루입니다', '무단서 = 기존 ko 바이트(회귀 0)');
+});
+
+test('실호출 — agents DELETE: 이미 해고된 크루 재시도 400 = 표시 언어 문구 + errorCode', async () => {
+  const { DELETE } = await routeImport('../app/api/companies/[ws]/agents/[slug]/route.js');
+  const del = (headers) => DELETE(new Request('http://127.0.0.1/api/companies/w1/agents/ghost', { method: 'DELETE', headers }), P({ ws: 'w1', slug: 'ghost' }));
+  const en = await del({ cookie: 'argo-lang=en' });
+  assert.equal(en.status, 400);
+  const b = await en.json();
+  assert.equal(b.error, 'This crew does not exist');
+  assert.equal(b.errorCode, 'crew_missing');
+  assert.equal((await (await del({})).json()).error, '존재하지 않는 크루입니다', '무단서 = 기존 ko 바이트(회귀 0)');
 });
