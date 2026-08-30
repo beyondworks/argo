@@ -10,6 +10,7 @@ import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — 어떤 러너든 연결만 되면 감지가 돈다
 import { monthCost } from './billing.mjs';    // 월 예산 게이트 — chat과 같은 판정(검수 H1)
+import { isBilledRunner } from './runners.mjs'; // billed 각인 — consolidate·persona와 같은 규약(턴 시점 각인)
 import { appendUsage } from './usage.mjs';    // 감지 원샷도 원장에 남긴다 — 몰래 나가는 비용 금지
 import { loadCompany } from './workspace.mjs';
 
@@ -17,13 +18,14 @@ const FILE = (wsId) => join(paths(wsId).root, 'corrections.json');
 const lockKey = (wsId) => `corrections:${wsId}`;
 export const RULES_SKILL = 'captain-rules.md'; // 채택 규칙이 쌓이는 회사 스킬(자동 주입 채널 — 파일명은 언어 중립, 검수 M6)
 export const SUGGEST_AT = 2;   // 같은 계열 교정 N회째에 제안(에스컬레이션 표: 두 번 틀리면 규칙)
+const oneLine = (t) => String(t ?? '').replace(/\s+/g, ' ').trim(); // 한 줄 불변식 — 감지 저장·채택 조립 양쪽에 건다(H2: 동기화로 들어온 옛 대장도 탈출 불가)
 const MAX_ITEMS = 100;         // 대장 상한 — 오래된 dismissed부터 밀려난다
 // 감지 원샷 계약 — readOnly 필수(신뢰 불가 원문을 다루는 턴의 전권 차단). 테스트가 이 상수를 핀한다.
 export const DETECT_ONESHOT_OPTS = Object.freeze({ readOnly: true, timeoutMs: 60_000 });
 
 /** 교정 신호 프리필터(순수) — 이 어휘가 없으면 LLM 판정을 부르지 않는다(매 턴 원샷 비용 방지).
     미탐은 손실이 작다: 교정은 반복이 전제라 다음 기회에 잡힌다. (export: 테스트 앵커) */
-export const CORRECTION_HINT_RE = /([가-힣]{1,6}지\s*(마(?![가-힣])|마요|마세요|말고|말아|말라)|말라고|틀렸|아니야|아니라|다시\s*(해|써|만들)|그렇게\s*하지|왜\s*[^?]{0,20}(했|한)|앞으로는|다음부터|항상\s|절대\s|don'?t|do not|stop\s|instead|wrong|not like|always\s|never\s|from now on)/i;
+export const CORRECTION_HINT_RE = /([가-힣]{1,6}지\s*(마(?![가-힣])|마요|마세요|말고|말아|말라)|말고\s|말라고|틀렸|아니야|아니라|다시\s*(해|써|만들)|그렇게\s*하지|왜\s*[^?]{0,20}(했|한)|앞으로는|다음부터|항상\s|절대\s|don'?t|do not|stop\s|instead|wrong|not like|always\s|never\s|from now on)/i;
 
 /** 감지 프롬프트 — 짧게(비용 최소). 기존 후보 목록을 주고 같은 계열이면 그 id를 고르게 한다. */
 const DETECT_PROMPT = (userMsg, candidates, lang) => {
@@ -71,7 +73,7 @@ export async function detectAndTrack(wsId, { userMsg, lang = 'ko', oneshotFn = n
   const run = oneshotFn ?? (async (p) => {
     const r = await runOneShot(wsId, p, { lang, ...DETECT_ONESHOT_OPTS });
     // 감지 비용도 원장에 — 기록이 없으면 대시보드·예산이 이 지출을 영원히 못 따라잡는다(검수 H1)
-    await appendUsage(wsId, { kind: 'correction', slug: '', runner: r.runner, model: r.runner, usage: r.usage ?? {}, costUsd: r.costUsd ?? null, ms: Date.now() - t0 })
+    await appendUsage(wsId, { kind: 'correction', slug: '', runner: r.runner, usage: r.usage ?? {}, costUsd: r.costUsd ?? null, ms: Date.now() - t0, billed: await isBilledRunner(wsId, r.runner).catch(() => undefined) })
       .catch(() => {});
     return r.text;
   });
@@ -84,7 +86,7 @@ export async function detectAndTrack(wsId, { userMsg, lang = 'ko', oneshotFn = n
   if (!parsed?.correction) return null;
   // 한 줄 불변식(검수 H2) — 개행·제어문자가 남으면 채택 시 마크다운 구조가 불릿을 탈출해
   // "칩에 보이는 것 ≠ 적립되는 것"이 된다(사장 승인이 유일한 방어라 이 등식이 성립해야 한다).
-  const rule = String(parsed.rule ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const rule = oneLine(parsed.rule).slice(0, 200);
   if (!rule) return null;
   return withLock(lockKey(wsId), async () => {
     const cur = await loadLedger(wsId);
@@ -127,17 +129,18 @@ export async function adoptCorrection(wsId, id, { lang = 'ko' } = {}) {
     const existing = await readFile(f, 'utf8').catch(() => null);
     // 같은 규칙 재적립 방지(검수 M3) — 채택된 계열이 새 후보로 다시 쌓여 재채택되면 불릿이
     // 중복돼 주입 예산(6000자)을 갉는다. 이미 있으면 상태만 adopted로 넘긴다.
-    if (existing !== null && existing.includes(`- ${item.rule} (`)) {
+    const ruleLine = oneLine(item.rule).slice(0, 200); // 대장에 개행이 든 항목(동기화·수기)도 조립 시점에 접는다
+    if (existing !== null && existing.includes(`- ${ruleLine} (`)) {
       item.status = 'adopted';
       await writeJsonAtomic(FILE(wsId), cur);
-      return { id, rule: item.rule, deduped: true };
+      return { id, rule: ruleLine, deduped: true };
     }
     const stamp = new Date().toISOString().slice(0, 10);
-    const line = `- ${item.rule} (${lang === 'en' ? `adopted ${stamp}` : `${stamp} 채택`})`;
+    const line = `- ${ruleLine} (${lang === 'en' ? `adopted ${stamp}` : `${stamp} 채택`})`;
     await writeFile(f, existing === null ? `${head}\n${line}\n` : `${existing.trimEnd()}\n${line}\n`, 'utf8');
     item.status = 'adopted';
     await writeJsonAtomic(FILE(wsId), cur);
-    return { id, rule: item.rule };
+    return { id, rule: ruleLine };
   });
 }
 
