@@ -119,6 +119,19 @@ test('runRoutine: 끝내 미충족 → 정직한 실패(lastOk=false, 시도 횟
   assert.equal(chatFn.calls.length, 2, '최초 1 + retries 1 — 그 이상 태우지 않는다');
 });
 
+test('runRoutine: 오염된 저장 조건은 LLM 비용을 쓰기 전에 루틴 제목과 함께 실패한다 (검수 LOW-2 핀)', async () => {
+  const r = await mkDaily({ files: ['정상.md'] });
+  // 저장 후 파일을 직접 오염 — API 정규화를 지나쳐 들어온 값(구버전 동기화·손상)을 재현
+  const { readFile: rf, writeFile: wf } = await import('node:fs/promises');
+  const routinesFile = join(process.env.ARGO_ROOT, WS, 'routines.json');
+  const all = JSON.parse(await rf(routinesFile, 'utf8'));
+  all.find((x) => x.id === r.id).verify = { files: ['../밖.md'], retries: 2 };
+  await wf(routinesFile, JSON.stringify(all), 'utf8');
+  const chatFn = fakeChat([{ reply: '호출되면 안 됨' }]);
+  await assert.rejects(() => runRoutine(WS, r.id, { chatFn }), /주간 보고.*완료 조건 설정 오류/);
+  assert.equal(chatFn.calls.length, 0, '설정 오류는 chat 전에 실패 — LLM 비용 0');
+});
+
 test('runRoutine: 조건 없는 루틴은 종전과 동일(추가 턴 0)', async () => {
   const r = await addRoutine(WS, { agentSlug: 'alpha', title: '무조건', prompt: '그냥 하라', schedule: { type: 'daily', times: ['09:00'] } });
   const chatFn = fakeChat([{ reply: '했음' }]);

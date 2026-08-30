@@ -177,7 +177,7 @@ export async function checkVerify(wsId, verify, { lang = 'ko' } = {}) {
     try { real = await realpath(abs); } catch { /* 부재 — 아래 파일 없음 사유로 */ }
     if (real !== null && real !== root && !real.startsWith(root + sep)) { failures.push(outside(rel)); continue; }
     try {
-      const buf = await readFile(abs, 'utf8');
+      const buf = await readFile(real ?? abs, 'utf8'); // 검사 통과한 실경로로 읽는다 — realpath와 readFile 사이 링크 교체(TOCTOU) 봉쇄
       if (verify.contains && !buf.includes(verify.contains)) {
         failures.push(lang === 'en' ? `${rel}: missing required text "${verify.contains}"` : `${rel}: 필수 문구 "${verify.contains}" 없음`);
       }
@@ -352,23 +352,21 @@ export async function runRoutine(wsId, id, { chatFn = null } = {}) {
     // 목록을 그대로 들려 재시도(retries회), 그래도 미충족이면 throw로 기존 실패 표면
     // (lastOk:false + 알림)에 정직하게 태운다.
     if (ver) {
-      {
-        let verifyTried = 0;
-        let res = await checkVerify(wsId, ver, { lang });
-        while (!res.ok && verifyTried < ver.retries) {
-          verifyTried += 1;
-          const retryMsg = verifyRetryPrompt(r0, res.failures, verifyTried + 1, lang);
-          t = await chat(wsId, r0.agentSlug, retryMsg, null, { source: 'routine' });
-          await appendTurn(wsId, r0.agentSlug, { userMsg: retryMsg, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts })
-            .catch((e) => console.error(`[argo] 루틴 재시도 스레드 기록 실패(${wsId}/${r0.agentSlug}):`, e.message));
-          res = await checkVerify(wsId, ver, { lang });
-        }
-        if (!res.ok) {
-          const tried = verifyTried + 1; // 최초 1회 + 재시도
-          throw new Error(lang === 'en'
-            ? `Completion check failed after ${tried} attempt(s): ${res.failures.join(' · ')}`
-            : `완료 조건 미충족(${tried}회 시도): ${res.failures.join(' · ')}`);
-        }
+      let verifyTried = 0;
+      let res = await checkVerify(wsId, ver, { lang });
+      while (!res.ok && verifyTried < ver.retries) {
+        verifyTried += 1;
+        const retryMsg = verifyRetryPrompt(r0, res.failures, verifyTried + 1, lang);
+        t = await chat(wsId, r0.agentSlug, retryMsg, null, { source: 'routine' });
+        await appendTurn(wsId, r0.agentSlug, { userMsg: retryMsg, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts })
+          .catch((e) => console.error(`[argo] 루틴 재시도 스레드 기록 실패(${wsId}/${r0.agentSlug}):`, e.message));
+        res = await checkVerify(wsId, ver, { lang });
+      }
+      if (!res.ok) {
+        const tried = verifyTried + 1; // 최초 1회 + 재시도
+        throw new Error(lang === 'en'
+          ? `Completion check failed after ${tried} attempt(s): ${res.failures.join(' · ')}`
+          : `완료 조건 미충족(${tried}회 시도): ${res.failures.join(' · ')}`);
       }
     }
     const summary = t.reply.replace(/\s+/g, ' ').slice(0, 160);
