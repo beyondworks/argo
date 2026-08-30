@@ -1,7 +1,7 @@
 {
   "name": "argo",
   "version": "0.1.53",
-  "description": "Argo \u2014 \ud504\ub86c\ud504\ud2b8 \ud55c \uc904\ub85c \uc804\ubb38 AI \ud06c\ub8e8\ub97c \uc601\uc785\ud558\uace0, \ud68c\uc0ac\uac00 \ud3f4\ub354 \ub2e8\uc704 \uae30\uc5b5\uc73c\ub85c \ud56d\ud574\ud558\ub294 \uac1c\uc778\uc6a9 AI \ud68c\uc0ac SaaS",
+  "description": "Argo — 프롬프트 한 줄로 전문 AI 크루를 영입하고, 회사가 폴더 단위 기억으로 항해하는 개인용 AI 회사 SaaS",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,7 +12,8 @@
     "app:build": "node scripts/stage-sidecar.mjs && cd src-tauri && npx @tauri-apps/cli@^2 build",
     "test": "node --test test/*.test.mjs",
     "test:pg": "bash scripts/billing-pg-drill.sh",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "license": "UNLICENSED",
   "private": true,
