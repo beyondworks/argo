@@ -232,9 +232,11 @@ const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** 카드 편집 저장 — 카드가 곧 시스템 프롬프트(투명성 원칙). frontmatter 최소 검증. */
 export async function saveAgentCard(wsId, slug, md) {
   const meta = parseFrontmatter(md);
-  if (!meta.name) throw new Error('frontmatter에 name이 필요합니다');
+  // 기계 코드 — 라우트가 문자열 매칭 없이 표시 언어로 다시 그린다(E2EE_BAD_CODE 관례).
+  // ko 원문은 유지: 코드를 안 읽는 소비자(approval-actions 등)는 오늘과 동일하게 받는다.
+  if (!meta.name) throw Object.assign(new Error('frontmatter에 name이 필요합니다'), { code: 'CARD_NAME_REQUIRED' });
   const file = cardPath(wsId, slug);
-  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+  if (!existsSync(file)) throw Object.assign(new Error('존재하지 않는 크루입니다'), { code: 'NOT_FOUND' });
   // 엔진(runner/model)은 PATCH 경로가 소유한다 — 본문/규칙 저장(PUT)이 통째로 덮어써 엔진 선택을
   // 조용히 원복시키던 문제(패널 stale) 방어: 들어온 md에 엔진 키가 없으면 디스크의 현재 값을 보존한다.
   // (사용자가 raw 편집기에서 직접 엔진 키를 넣었으면 그때만 incoming에 존재 → 그 값 존중)
@@ -294,7 +296,7 @@ export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner, effort, skills, mcp }) {
   const file = cardPath(wsId, slug);
-  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+  if (!existsSync(file)) throw Object.assign(new Error('존재하지 않는 크루입니다'), { code: 'NOT_FOUND' });
   let md = await readFile(file, 'utf8');
   const before = parseFrontmatter(md);
   if (name !== undefined && name.trim()) {
@@ -328,7 +330,7 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
 /** 카드 "## 일하는 방식"에 규칙 한 줄 추가 — CardPanel의 addRule과 동일 규약(서버측). */
 export async function appendAgentRule(wsId, slug, text) {
   const file = cardPath(wsId, slug);
-  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+  if (!existsSync(file)) throw Object.assign(new Error('존재하지 않는 크루입니다'), { code: 'NOT_FOUND' });
   const md = await readFile(file, 'utf8');
   const rule = String(text).trim();
   if (!rule) return parseFrontmatter(md);
@@ -368,7 +370,7 @@ export async function renameTeam(wsId, from, to) {
 export async function removeAgentCard(wsId, slug) {
   const file = cardPath(wsId, slug); // slug 검증 포함
   const dir = paths(wsId).agents;
-  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+  if (!existsSync(file)) throw Object.assign(new Error('존재하지 않는 크루입니다'), { code: 'NOT_FOUND' });
   const archive = join(dir, '.archive');
   await mkdir(archive, { recursive: true });
   await rename(file, join(archive, `${Date.now()}-${slug}.md`));

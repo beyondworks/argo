@@ -36,20 +36,28 @@ export async function GET(req, { params }) {
 }
 
 export async function PUT(req, { params }) {
+  // 표시 언어 — GET과 같은 계약. 원문 편집기는 빈 카드·name 삭제 저장을 막지 않는다(2078행 가드는
+  // md === null뿐) — 이 오류들이 카드 패널 setMsg로 그대로 렌더되는 실도달 표면이다.
+  const lang = langFromCookieHeader(req.headers.get('cookie'));
   try {
     const { ws, slug } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
     const { md } = await req.json();
-    if (!md?.trim()) return Response.json({ error: '카드 내용이 필요합니다' }, { status: 400 });
+    if (!md?.trim()) return apiError('crew_card_body_required', lang);
     const agent = await saveAgentCard(ws, slug, md);
     return Response.json({ agent });
   } catch (e) {
+    // 코어 throw는 기계 코드로 판별한다(문자열 매칭 금지 — E2EE_BAD_CODE 관례)
+    if (e?.code === 'NOT_FOUND') return apiError('crew_missing', lang); // stale 패널의 저장(해고 뒤)
+    if (e?.code === 'CARD_NAME_REQUIRED') return apiError('crew_card_name_required', lang);
     return Response.json({ error: String(e.message || e) }, { status: 400 });
   }
 }
 
 /** 신원·범위 수정 — 이름·역할·팀·모델·러너 + 능력 범위(skills/mcp — 빈 값=전체, 'none'=없음, csv=지정만). */
 export async function PATCH(req, { params }) {
+  // 표시 언어 — GET과 같은 계약(stale 패널의 범위 칩 토글·신원 수정 모달이 이 오류를 렌더)
+  const lang = langFromCookieHeader(req.headers.get('cookie'));
   try {
     const { ws, slug } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
@@ -57,18 +65,22 @@ export async function PATCH(req, { params }) {
     const meta = await updateAgentMeta(ws, slug, { name, role, team, model, runner, effort, skills, mcp });
     return Response.json({ meta });
   } catch (e) {
+    if (e?.code === 'NOT_FOUND') return apiError('crew_missing', lang);
     return Response.json({ error: String(e.message || e) }, { status: 400 });
   }
 }
 
 /** 해고 — .archive/로 이동(복구 가능). */
-export async function DELETE(_req, { params }) {
+export async function DELETE(req, { params }) {
+  // 표시 언어 — GET과 같은 계약(해고 실패는 패널에 보인다 — 2026-08-02 실사용 신고 표면)
+  const lang = langFromCookieHeader(req.headers.get('cookie'));
   try {
     const { ws, slug } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
     await removeAgentCard(ws, slug);
     return Response.json({ ok: true });
   } catch (e) {
+    if (e?.code === 'NOT_FOUND') return apiError('crew_missing', lang); // 이미 해고된 크루의 재시도(stale 패널)
     return Response.json({ error: String(e.message || e) }, { status: 400 });
   }
 }
