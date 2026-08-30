@@ -172,6 +172,7 @@ test('시계 배선 — Clock이 .topbar-clock을 출력하고 상단바에 실�
 
 const crew = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/crew/[slug]/page.jsx'), 'utf8'));
 const compete = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/compete/page.jsx'), 'utf8'));
+const room = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/room/page.jsx'), 'utf8'));
 
 test('슬롯·밴드 전환 — 360·900px에서 슬롯 none·밴드 flex 승자, 901px에서 역전', () => {
   for (const W of [360, 900]) {
@@ -226,12 +227,14 @@ test('밴드 줄바꿈 — 360px flex-wrap 승자 wrap (라벨 합이 가용폭�
     '360px 밴드 flex-wrap 승자가 wrap이 아니다 — 긴 역할·영어 라벨에서 밴드가 가로로 넘친다');
 });
 
-test('본문 그리드 배선 — 크루(조건)·경쟁(고정)에 chat-cols, 레일 인라인엔 position 없음', () => {
+test('본문 그리드 배선 — 크루(조건)·경쟁·회의실(고정)에 chat-cols, 레일 인라인엔 position 없음', () => {
   assert.match(crew, /className=\{embedded \? undefined : 'chat-cols'\}/,
     '크루 주 화면 그리드에 chat-cols가 없다 — 레일 스택·열 규칙이 죽은 규칙이 된다');
   assert.match(compete, /className="chat-cols"/,
     '경쟁 시안 그리드에 chat-cols가 없다 — 같은 넘침(실측 360px에서 100px)이 남는다');
-  for (const [name, src] of [['crew', crew], ['compete', compete]]) {
+  assert.match(room, /className="chat-cols"/,
+    '회의실 그리드에 chat-cols가 없다 — 같은 기하의 정본이 인라인로 갈라지고(드리프트 예약) 폰 레일 스택이 회의실만 빠진다');
+  for (const [name, src] of [['crew', crew], ['compete', compete], ['room', room]]) {
     assert.match(src, /className="side-rail" style=\{\{ display: 'grid', gridTemplateColumns: 'minmax\(0, 1fr\)', gap: 4 \}\}/,
       `${name} 레일 인라인이 무position 형태가 아니다 — 인라인 sticky·width가 돌아오면 폰 스택 규칙이 인라인에 진다`);
   }
