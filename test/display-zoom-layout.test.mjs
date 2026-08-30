@@ -46,11 +46,46 @@ function evalSize(expr, { z } = {}) {
 }
 
 // 주석 제거(줄 구조 보존 — 진단 줄번호 유지). vh 언급 주석이 수집·스캔에 잡히지 않게 한다.
-// 라인 주석은 행头·공백 뒤 //만 — 문자열 속 URL(https://…)은 앞이 ':'라 다치지 않는다.
+// 문자열 리터럴을 상태로 추적해 리터럴 속 //·/*는 주석으로 오인하지 않는다(#338 재검수 LOW-D:
+// 같은 줄 앞쪽 문자열 속 //가 뒤따르는 치수 선언째 지워 원인 안 보이는 하한 red를 만들었다).
+//  - 라인 주석은 행 머리·공백 뒤 //만(종전 규칙 유지 — https:// 처럼 앞이 비공백이면 코드).
+//  - '·"가 개행까지 안 닫히면 진짜 문자열이 아니다(정규식 속 따옴표·JSX 텍스트 아포스트로피가
+//    여는 유령 상태) → 여는 따옴표를 일반 문자로 재해석하고 되감는다. 실측: 이 규칙까지 넣어야
+//    ui.jsx의 replace(/"/g, …) 줄이 종전 출력과 일치한다.
+//  - 백틱은 여러 줄 통째 보존. 보간 속 주석은 안 지워지지만, 남는 방향(under-strip)의 vh는
+//    역방향 스캔이 파일:줄로 시끄럽게 잡는 fail-closed라 허용한다.
 function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/(^|[^\S\n])\/\/[^\n]*/gm, (m) => m.replace(/[^\n]/g, ' '));
+  const out = src.split('');
+  let i = 0;
+  let prev = '\n'; // 주석·문자열 밖 직전 문자 — 라인 주석의 "행 머리·공백 뒤" 판정용
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '/' && src[i + 1] === '*') {
+      const close = src.indexOf('*/', i + 2);
+      const end = close === -1 ? src.length : close + 2;
+      for (let k = i; k < end; k++) if (out[k] !== '\n') out[k] = ' ';
+      i = end; prev = ' ';
+    } else if (c === '/' && src[i + 1] === '/' && /\s/.test(prev)) {
+      let end = src.indexOf('\n', i);
+      if (end === -1) end = src.length;
+      for (let k = i; k < end; k++) out[k] = ' ';
+      i = end;
+    } else if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1, closed = false;
+      while (j < src.length) {
+        if (src[j] === '\\') { j += 2; continue; }
+        if (src[j] === c) { j++; closed = true; break; }
+        if (src[j] === '\n' && c !== '`') break;
+        j++;
+      }
+      prev = c;
+      i = closed ? j : i + 1; // 미종결이면 여는 따옴표 한 글자만 소비(일반 문자 취급)
+    } else {
+      prev = c;
+      i++;
+    }
+  }
+  return out.join('');
 }
 
 // 수집 — 소스에서 vh가 든 치수 선언(height·min/max-height)을 값 위치(range)와 함께 모은다.
@@ -88,7 +123,7 @@ const decls = [...sources.entries()].flatMap(([f, src]) => (f.endsWith('.css') ?
 test('수집 스위프가 비지 않는다 — 빈 목록 통과(무효 게이트) 방지', () => {
   // 하한 = 현재 개수 그대로(슬랙 0 — 분리 검수: 슬랙 2칸이 조용한 소실을 허용했다).
   // 정당하게 줄이는 리팩터라면 보정 경로가 실제로 준 것인지 확인하고 이 숫자를 함께 내린다.
-  assert.ok(decls.length >= 17, `치수 선언 ${decls.length}곳(현재 17) — 수집 정규식이 소스와 어긋났는지 확인`);
+  assert.ok(decls.length >= 17, `치수 선언 ${decls.length}곳(현재 17) — 수집 정규식이 소스와 어긋났는지 확인. 같은 줄 앞쪽 리터럴 속 '//'를 stripComments가 주석으로 오인해(문자열 보존 스캐너가 못 보는 형태) 선언째 지웠을 가능성도 본다`);
   const has = (f, n) => assert.ok(decls.filter((d) => d.file === f).length >= n, `${f}에 vh 치수 ${n}곳 이상이어야 한다`);
   has('app/globals.css', 8); // body·.shell·.side·기억분할·팝오버·vault 계열
   has('app/c/[ws]/crew/[slug]/page.jsx', 2); // 채팅 그리드 + 모달 86vh
