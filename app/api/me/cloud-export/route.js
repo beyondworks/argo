@@ -2,7 +2,7 @@
 // free(체험 만료) 사용자도 허용되는 것이 이 기능의 존재 이유다 — 플랜 게이트를 두지 않는다
 // (스토리지 read는 RLS가 소유자 경계만 본다). 오류는 코드로 반환하고 UI가 i18n 매핑한다(K7 계열 예방).
 import { exportCloudToLocal } from '../../../../src/cloudexport.mjs';
-import { currentUser, csrfDenied, tenantDenied } from '../../../auth.mjs';
+import { currentUser, csrfDenied, tenantDenied, requestLang } from '../../../auth.mjs';
 
 export async function POST(req) {
   try {
@@ -11,7 +11,7 @@ export async function POST(req) {
     const csrf = csrfDenied(req); if (csrf) return csrf;
     const user = await currentUser();
     if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 });
-    const td = tenantDenied(user); if (td) return td;
+    const td = tenantDenied(user, await requestLang()); if (td) return td;
     // 오너는 서버가 자격(기기 세션·서비스 자격)에서 해석한다 — 요청 본문을 신뢰하지 않는다.
     // requesterId 대조: 서비스 모드(RLS 우회)에서 ARGO_SYNC_OWNER 오설정이 남의 계정 자료를
     // 덤프하지 않게 하는 심층 방어(분리 검수 MED). 2026-08-06부터 currentUser는 쿠키 세션 우선 —
