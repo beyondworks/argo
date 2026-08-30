@@ -157,44 +157,54 @@ test('배선 — app/·middleware의 authError 호출부 전 형태 강제(코�
         `${f}: 언어 인자 형태 위반 — 리터럴 상수화는 그 갈래 영구 단일 언어. 허용 전달로: ${[...LANG_FORMS].join(' | ')} — 위반 호출: ${call}`);
       if (langArg === 'lang') sawBareLang = true;
     }
+    // 트립와이어·양성 검사는 주석 제거본 위에서 — 문서 주석 속 금지 예문(`// 금지: lang ||= 'ko'`)·
+    // 같은 줄 URL 문자열의 // 절단이 만들던 false red를 없앤다(분리 검수 LOW-1·LOW-4).
+    // display-zoom-layout.test.mjs의 stripComments와 같은 구현 — 공백 뒤 //만 절단이라 문자열 속
+    // URL(https://…)은 앞이 ':'여서 생존한다. 수집기는 위에서 원문(src)을 쓴다 — 거기서의
+    // 과제거는 실호출 소실 = fail-open이라 스트립 금지(뷰 분리 의도적).
+    // 근사 잔여(현행 스캔 표면 0건): 공백에 감싸인 //를 담은 문자열은 그 줄 뒤쪽이 지워진다 —
+    // 음성 검사엔 은닉(fail-open), 양성 검사엔 red(fail-closed)로 갈리는 문서화된 한계.
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '))
+      .replace(/(^|[^\S\n])\/\/[^\n]*/gm, (c) => c.replace(/[^\n]/g, ' '));
     // 바인딩 상수화는 같은 결함 한 칸 위 — const lang = 'ko'는 호출 형태 'lang'을 그대로 통과한다.
     // 주의: 전면 `lang = '리터럴'` 금지는 불가 — timeAgo(input, lang = 'ko')·본문 destructure
     // `{ lang = 'ko' }`(회사 시스템 언어 폴백)·<html lang="ko"> 등 정당한 기본값이 여럿이다.
-    const bind = src.match(/\b(?:const|let|var)\s+lang\s*=\s*['"`]/);
+    const bind = stripped.match(/\b(?:const|let|var)\s+lang\s*=\s*['"`]/);
     assert.equal(bind, null, `${f}: lang 바인딩이 문자열 상수 — 전달로(requestLang 등)에서 읽을 것`);
     // 문장 시작 재대입(let lang = await requestLang(); lang = 'ko';)도 같은 클래스 — 분리 검수
     // B1 실증. destructure 기본값(`, lang = 'ko' }`)은 전부 중간 위치라 행 시작 앵커로 비저촉.
-    const reassign = src.match(/^\s*lang\s*=\s*['"`]/m);
+    const reassign = stripped.match(/^\s*lang\s*=\s*['"`]/m);
     assert.equal(reassign, null, `${f}: lang 재대입이 문자열 상수 ${reassign?.[0]?.trim() ?? ''}`);
-    // 행 중간·논리 대입도 같은 클래스(#342 잔존 LOW ②) — `if (c) lang = 'ko'`(`)`·`;`·else 뒤)와
-    // `lang ||= 'ko'` 류. 이 세 접두·논리 연산자는 destructure 기본값·매개변수 기본값·JSX 속성
-    // 자리에 구문상 올 수 없어, 행 시작 앵커가 피해 간 keys/route.js 본문 destructure 오탐을
-    // 다시 열지 않는다(스캔 표면 전수 grep 0건 확인). 잔여: 한 줄 블록 `{ lang = 'ko'; }`·콤마
-    // 표현식은 `{`·`,` 접두가 destructure와 겹쳐 파서 없인 못 가른다 — 블록이 여러 줄로 풀리면
-    // 행 시작 앵커가 잡으므로, 압축 한 줄 표기만 남는 문서화된 한계다.
-    const reassignMid = src.match(
-      /[);]\s*lang\s*=\s*['"`]|\belse\s+lang\s*=\s*['"`]|\blang\s*(?:\|\||&&|\?\?)=\s*['"`]/);
-    assert.equal(reassignMid, null, `${f}: lang 재대입이 문자열 상수(행 중간·논리 대입) ${reassignMid?.[0]?.trim() ?? ''}`);
-    // 전달로 실존(양성 검사) — bare `lang` 호출 파일은 요청 판독 바인딩이 실제로 있어야 한다.
-    // 분리 검수 B2 실증: guardCompany(wsId, lang = 'ko')로 기본값을 심고 requestLang 바인딩을
-    // 지우면 위 음성 검사들이 전부 green이었다(guardCompany 소비자 20여 곳이 인자 1개라 네 갈래
-    // 전부 영구 한국어). 허용 유입원이 늘면 여기 대안을 추가한다(기본 거부 = fail-closed).
-    // #342 잔존 LOW ① 봉합: 주석 제거본 위에서, 바인딩 이름까지 `lang`으로 요구한다 — 옛 줄
-    // 주석 처리(`// const lang = await requestLang()`)나 별명 바인딩(`const langSrc = …`, 호출의
-    // lang과 무관)이 텍스트 실존을 충족하던 구멍(변이 실증). 스트리퍼는 근사(문자열 속 //·/*는
-    // 과제거 가능)지만 이 용도에선 과제거 = 양성 상실 = red라 fail-closed —
-    // no-hardcoded-runner-label.test.mjs의 stripComments와 같은 구현이다.
-    // tenantDenied 갈래(LOW ③): 재포맷 개행·첫 매개변수 개명·매개변수 추가는 관용(\s*·[\w$]+·
-    // [,)])하되, `lang\s*[,)]`가 기본값 유입(`lang = 'ko'`)은 계속 막는다(B2의 tenantDenied판 —
-    // 종전 정확 텍스트가 우연히 막던 하중을 명시 유지). lang 개명은 의도적으로 red(허용 목록 고정).
-    // 한계(파일 단위 판정): 같은 파일의 다른 함수가 lang을 딴 데서 받는 구성은 함수 스코프까지
-    // 못 가른다 — 소스 배선 검사의 공통 한계로 문서화(destructure 상수 유입도 동일).
     if (sawBareLang) {
-      const noComments = src.replace(/\/\*[\s\S]*?\*\//g, '')
-        .split('\n').map((l) => { const i = l.indexOf('//'); return i === -1 ? l : l.slice(0, i); }).join('\n');
-      assert.ok(/\blang\s*=\s*await requestLang\(\)/.test(noComments)
-        || /function tenantDenied\s*\(\s*[\w$]+\s*,\s*lang\s*[,)]/.test(noComments),
-        `${f}: bare lang 호출인데 전달로 바인딩(lang = await requestLang() 또는 tenantDenied의 기본값 없는 lang 매개변수) 부재`);
+      // 행 중간·논리 대입도 같은 클래스(#342 잔존 LOW ②) — `if (c) lang = 'ko'`(`)`·`;`·else 뒤)·
+      // `lang ||= 'ko'` 류. 이 접두·연산자는 destructure 기본값·매개변수 기본값·JSX 속성 자리에
+      // 구문상 올 수 없어 keys/route.js 본문 destructure 오탐을 다시 열지 않는다. bare lang 호출
+      // 파일로 한정하는 이유(분리 검수 MEDIUM): authError에 닿지 않는 파일의 lang 리팩터(ui.jsx
+      // 클라이언트 lang 등)까지 막을 근거가 없다 — 인라인 전달로 파일이 bare lang 호출로 바뀌면
+      // 그 순간 이 검사 대상이 된다. 잔여(정규식으로 못 닫음): 한 줄 블록 `{ lang = 'ko'; }`·괄호
+      // 감싼 대입 `(lang = 'ko')`·case/화살표 본문·콤마 표현식 — `{`·`,`·`(`·`:` 접두가 destructure·
+      // 기본값·개명 destructure(`{ display: lang = 'ko' }`)와 구문이 겹친다. 블록이 여러 줄로
+      // 풀리면 행 시작 앵커가 잡으므로 압축 한 줄 표기만 남는다(의도적 회피는 위협 모델 밖).
+      const reassignMid = stripped.match(
+        /[);]\s*lang\s*=\s*['"`]|\belse\s+lang\s*=\s*['"`]|\blang\s*(?:\|\||&&|\?\?)=\s*['"`]/);
+      assert.equal(reassignMid, null, `${f}: lang 재대입이 문자열 상수(행 중간·논리 대입) ${reassignMid?.[0]?.trim() ?? ''}`);
+      // 전달로 실존(양성 검사) — bare `lang` 호출 파일은 요청 판독 바인딩이 실제로 있어야 한다.
+      // 분리 검수 B2 실증: guardCompany(wsId, lang = 'ko')로 기본값을 심고 requestLang 바인딩을
+      // 지우면 음성 검사들이 전부 green이었다(guardCompany 소비자 20여 곳이 인자 1개라 네 갈래
+      // 전부 영구 한국어). #342 잔존 LOW ① 봉합: 주석 제거본 위에서 바인딩 이름까지 `lang`으로
+      // 요구한다 — 옛 줄 주석 처리(`// const lang = await requestLang()`)·별명 바인딩(`const
+      // langSrc = …`, 호출의 lang과 무관)이 텍스트 실존을 충족하던 구멍(변이 실증). 문자열 리터럴
+      // 속 같은 텍스트는 잔여 표면(코드 원문을 그대로 담은 문서 문자열이어야 해 현실성 낮음 —
+      // 파일 단위 소스 검사의 공통 한계 계열로 문서화).
+      // tenantDenied 갈래(LOW ③): 재포맷 개행·첫 매개변수 개명·매개변수 추가는 관용(\s*·[\w$]+·
+      // [,)])하되, `lang\s*[,)]`가 기본값 유입(`lang = 'ko'`)은 계속 막는다(B2의 tenantDenied판 —
+      // 종전 정확 텍스트가 우연히 막던 하중을 명시 유지). lang 개명은 의도적으로 red(허용 목록
+      // 고정). 한계(파일 단위 판정): 같은 파일의 다른 함수가 lang을 딴 데서 받는 구성은 함수
+      // 스코프까지 못 가른다 — 소스 배선 검사의 공통 한계로 문서화(destructure 상수 유입도 동일).
+      assert.ok(/\blang\s*=\s*await requestLang\(\)/.test(stripped)
+        || /function tenantDenied\s*\(\s*[\w$]+\s*,\s*lang\s*[,)]/.test(stripped),
+        `${f}: bare lang 호출인데 전달로 바인딩(lang = await requestLang() 또는 tenantDenied의 기본값 없는 lang 매개변수) 부재 — 정당한 새 유입원이면 이 검사에 대안을 추가할 것(기본 거부)`);
     }
   }
   // guardCompany의 네 갈래가 전부 배선돼 있어야 한다 — 하나라도 빠지면 그 갈래는 미번역 잔존
