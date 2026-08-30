@@ -214,7 +214,8 @@ export default function Compete({ params }) {
         </div>
 
         {/* overflowWrap anywhere — 긴 무공백 토큰(URL·코드 조각)이 좁은 유효 폭에서 카드 내부 가로
-            스크롤을 만들지 않게 한다(회의실 카드·크루 채팅 .thread .card와 동형 처방). */}
+            스크롤을 만들지 않게 한다(크루 채팅 .thread .card(globals)와 동형 처방 — 회의실은
+            PR #350이 같은 처방을 진행 중). */}
         <div className="card" style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' }}>
           {!comp ? (
             <div className="empty">{t('compete.emptyMain')}</div>

@@ -499,17 +499,20 @@ export function DropUp({ value, placeholder = '—', groups, onChange, disabled,
   }, [open]);
   const cur = groups.flatMap((g) => g.items).find((i) => i.value === value);
   return (
-    /* 래퍼 maxWidth 100% + minWidth 0, 트리거 maxWidth min(width,100%) — flex 아이템의 자동
-       최소치(내용 min-content)는 max-width로만 캡된다. 좁은 유효 폭(표시 배율 2)에서 라벨
-       min-content(실측 148 CSS px)가 행을 뚫고 문서 가로 넘침을 만들던 결함의 잠금(경쟁 시안
-       실측 1283>1264 → 1264=1264). 일반 폭에서는 min()이 기존 고정 width와 동일해 불변 —
-       소비자 9곳(경쟁 4·쪽지 1·루틴 4) 전부 컨테이너가 width보다 넓은 일반 플로우다. */
-    <div ref={boxRef} style={{ position: 'relative', display: 'inline-flex', maxWidth: '100%', minWidth: 0 }}>
+    /* 축소 규칙 — 래퍼·트리거에 minWidth 0: flex 아이템의 자동 최소치(내용 min-content, 라벨 실측
+       148 CSS px)가 좁은 유효 폭(표시 배율 2, 열 106 CSS px)에서 행을 뚫고 문서 가로 넘침을
+       만들었다(경쟁 시안 실측 1283>1264 → 1264=1264). 바닥을 없애면 컨테이너가 좁을 때만 flex
+       수축이 일하고 라벨은 자체 ellipsis로 줄어든다. 트리거 상한은 종전 그대로 확정 길이
+       maxWidth: width — min(width, 100%)처럼 %를 섞으면 shrink-to-fit 래퍼 상대라 intrinsic
+       기여를 못 잡아, width보다 긴 라벨에서 래퍼만 max-content로 자라는 보이지 않는 죽은 폭
+       (검수 실측 156.5px, 바깥클릭 닫기 오동작 동반)이 생긴다. 일반 폭 레이아웃은 종전과 동일
+       (minWidth:0은 선호 크기에 무영향) — 소비자 9곳(경쟁 4·쪽지 1·루틴 4). */
+    <div ref={boxRef} style={{ position: 'relative', display: 'inline-flex', minWidth: 0 }}>
       <button type="button" disabled={disabled} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open}
         onClick={() => { setBelow((boxRef.current?.getBoundingClientRect()?.top ?? Infinity) < 320); setOpen((v) => !v); }}
         style={{ height, padding: '0 9px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8,
           fontSize: 12, color: cur ? 'var(--fg)' : 'var(--fg-3)', cursor: disabled ? 'not-allowed' : 'pointer',
-          display: 'inline-flex', alignItems: 'center', gap: 7, maxWidth: `min(${width}px, 100%)`, opacity: disabled ? 0.55 : 1 }}>
+          display: 'inline-flex', alignItems: 'center', gap: 7, maxWidth: width, minWidth: 0, opacity: disabled ? 0.55 : 1 }}>
         <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cur?.label ?? placeholder}</span>
         <span aria-hidden style={{ fontSize: 8, color: 'var(--fg-3)', flex: 'none' }}>▴</span>
       </button>
