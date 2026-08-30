@@ -162,6 +162,22 @@ test('배율 1(변수 미설정)은 --z=1 명시와 동일 — var 폴백(, 1)�
   }
 });
 
+/* ── 인접 핀: 상단바 배율 반응형 (검수 별건 — 미디어쿼리 배율 사각) ─────────────
+   미디어쿼리(max-width:900px)는 실 뷰포트 기준이라 배율 2 × 1280(유효 640)에서 미발동, 시계·
+   버전·search-pill이 넘쳤다(검수 실측: pill right 1490 > cw 1424). JS 판정(clientWidth ÷ zoom
+   < 750)으로 배율 사각을 메워 시계·버전·스페이서 숨김 + pill flex:1 전환. */
+test('상단바 배율 반응형 배선 — narrowBar 판정이 시계·버전 숨김과 pill flex:1을 제어한다', () => {
+  const layout = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/layout.jsx'), 'utf8'));
+  assert.match(layout, /setNarrowBar\(document\.documentElement\.clientWidth\s*\/\s*z\s*<\s*750\)/,
+    'narrowBar 판정 — clientWidth ÷ zoom < 750(배율 인지 유효 폭)');
+  assert.match(layout, /window\.addEventListener\('argo:zoom',\s*check\)/,
+    'argo:zoom 리스너 — 배율 변경 시 재판정');
+  assert.match(layout, /\{!narrowBar && <Clock \/>\}/,
+    'narrowBar일 때 시계 숨김');
+  assert.match(layout, /className="search-pill" style=\{narrowBar \? \{ flex: 1, width: 'auto' \} : undefined\}/,
+    'narrowBar일 때 pill이 flex:1로 전환');
+});
+
 /* ── ② zoom-math 행동 (graph2d evPos · 리사이저 폭) ─────────────────── */
 
 test('zoomedEvPos — 배율 1.25에서 뷰포트 px 이벤트를 CSS px 좌표로 환산한다', () => {
