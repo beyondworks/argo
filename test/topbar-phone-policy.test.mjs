@@ -228,12 +228,15 @@ test('밴드 줄바꿈 — 360px flex-wrap 승자 wrap (라벨 합이 가용폭�
 });
 
 test('본문 그리드 배선 — 크루(조건)·경쟁·회의실(고정)에 chat-cols, 레일 인라인엔 position 없음', () => {
-  assert.match(crew, /className=\{embedded \? undefined : 'chat-cols'\}/,
-    '크루 주 화면 그리드에 chat-cols가 없다 — 레일 스택·열 규칙이 죽은 규칙이 된다');
-  assert.match(compete, /className="chat-cols"/,
-    '경쟁 시안 그리드에 chat-cols가 없다 — 같은 넘침(실측 360px에서 100px)이 남는다');
-  assert.match(room, /className="chat-cols"/,
-    '회의실 그리드에 chat-cols가 없다 — 같은 기하의 정본이 인라인로 갈라지고(드리프트 예약) 폰 레일 스택이 회의실만 빠진다');
+  // 여는 태그 전체 앵커 — "클래스 존재"만 보면 클래스+인라인 병기 변이에 초록(#361 검수 V1b 실증:
+  // 인라인은 스타일시트를 무조건 이기므로 ≤560 규칙이 죽고 정본 갈라짐이 부활). 크루는 embedded
+  // 조건 스타일이 필수라 무스타일 형태가 불가 — 대신 비임베드 갈래가 undefined(인라인 없음)임을 잠근다.
+  assert.match(crew, /className=\{embedded \? undefined : 'chat-cols'\} style=\{embedded\s*\n\s*\? \{[^\n]*\}\s*\n\s*: undefined\}>/,
+    '크루 주 화면 그리드가 "chat-cols + 비임베드 인라인 없음(undefined 갈래)" 형태가 아니다 — 인라인 기하가 돌아오면 폰 규칙이 인라인에 져서 죽는다');
+  assert.match(compete, /<div className="chat-cols">/,
+    '경쟁 시안 그리드가 무스타일 chat-cols 여는 태그가 아니다 — 인라인 병기는 ≤560 규칙을 죽인다(같은 넘침 실측 360px에서 100px)');
+  assert.match(room, /<div className="chat-cols">/,
+    '회의실 그리드가 무스타일 chat-cols 여는 태그가 아니다 — 인라인 병기는 정본 갈라짐(이 편입의 목적 자체)을 부활시킨다');
   for (const [name, src] of [['crew', crew], ['compete', compete], ['room', room]]) {
     assert.match(src, /className="side-rail" style=\{\{ display: 'grid', gridTemplateColumns: 'minmax\(0, 1fr\)', gap: 4 \}\}/,
       `${name} 레일 인라인이 무position 형태가 아니다 — 인라인 sticky·width가 돌아오면 폰 스택 규칙이 인라인에 진다`);
