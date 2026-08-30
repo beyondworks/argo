@@ -126,6 +126,22 @@ function Shell({ children, params }) {
   };
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
+  // 유효 폭 판정(배율 인지) — 미디어쿼리는 실 뷰포트 기준이라 배율 2에서 유효 640px인데도 900px
+  // 규칙이 미발동한다(검수 실측: 배율 2 × 1280에서 search-pill·시계·버전이 넘침). JS로 판정해
+  // 상단바 요소를 축소한다. 문턱 750 CSS px = 배율 2 × 1424(유효 704)에서 확실히 발동(실측:
+  // 유효 704에서 시계+버전+pill이 상단바를 뚫음 — 문턱 700은 간신히 빗나감). 배율 1에서는 뷰포트
+  // ≥ 960(앱 최소 폭)이라 미발동. 기존 @media(max-width:900px)는 배율 1의 실제 좁은 창에서 유효.
+  const [narrowBar, setNarrowBar] = useState(false);
+  useEffect(() => {
+    const check = () => {
+      const z = parseFloat(document.documentElement.style.zoom) || 1;
+      setNarrowBar(document.documentElement.clientWidth / z < 750);
+    };
+    check();
+    window.addEventListener('resize', check);
+    window.addEventListener('argo:zoom', check);
+    return () => { window.removeEventListener('resize', check); window.removeEventListener('argo:zoom', check); };
+  }, []);
   // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
   const [me, setMe] = useState(null);
   const [fbOpen, setFbOpen] = useState(false); // 베타 피드백 모달
@@ -454,8 +470,11 @@ function Shell({ children, params }) {
           <span className="topbar-title">{title}</span>
           {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체) */}
           <div id="argo-topbar-slot" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }} />
-          <div style={{ flex: 1 }} />
-          {appVersion && (updateVersion ? (updIsApp ? (
+          {!narrowBar && <div style={{ flex: 1 }} />}
+          {/* narrowBar(배율 인지 유효 폭 < 750)일 때 시계·버전·업데이트를 숨긴다.
+              업데이트 발견 폴백은 설정 페이지(UpdateCard)가 동일 훅으로 독립 표시.
+              후속 과제: 배율 ≥2에서도 업데이트 배지(텍스트 없는 골드 점)를 남기는 것 권장(검수 MEDIUM-1). */}
+          {!narrowBar && appVersion && (updateVersion ? (updIsApp ? (
             // 새 버전 발행됨(데스크톱) — 칩이 골드 '업데이트'로 바뀌고, 클릭하면 바로 다운로드·설치·재시작한다.
             <button type="button" onClick={installUpdate} disabled={updPhase === 'installing'}
               className="chip mono" title={t('topbar.updateTitle', { v: updateVersion })}
@@ -479,9 +498,9 @@ function Shell({ children, params }) {
           ))}
           {/* 상단 사용량 칩(금액/턴)은 제거됐다(유건 지시 2026-08-06) — 2026-07-25 피드백으로 넣었으나
               상시 노출 숫자가 청구 불안을 만든다는 판단. 사용량은 활동 페이지가 단일 표시처다. */}
-          <Clock />
+          {!narrowBar && <Clock />}
           <TasksDock ws={ws} />
-          <label className="search-pill">
+          <label className="search-pill" style={narrowBar ? { flex: 1, width: 'auto' } : undefined}>
             <Icon name="search" size={14} />
             <input suppressHydrationWarning placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} />
             {q && (
