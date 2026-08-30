@@ -318,8 +318,10 @@ export async function removeRoutine(wsId, id) {
 /** 루틴 실행 — 새 세션 1턴. 결과 요약을 루틴에 기록(전체는 vault 핸드오버에).
     chat()은 수 분 걸리므로 락 밖에서 돌리고, 결과 기록만 락 안에서 해당 루틴 필드에 반영한다
     — 실행 도중 사용자가 다른 루틴을 지우거나 이 루틴을 꺼도 낡은 전체 스냅샷으로 되돌리지 않는다. */
-export async function runRoutine(wsId, id, { chatFn = null } = {}) {
-  const r0 = await patchRoutine(wsId, id, { lastRun: new Date().toISOString() });
+export async function runRoutine(wsId, id, { chatFn = null, startAt = null } = {}) {
+  // startAt = 테스트 전용(시작 시각 주입) — "시작이 예약 시각을 가로지르는 실행"은 실제 분 경계를
+  // 기다리지 않고는 재현할 수 없다(catch의 once 끄기 판정 시계가 이 각인을 쓴다).
+  const r0 = await patchRoutine(wsId, id, { lastRun: (startAt ?? new Date()).toISOString() });
   if (!r0) throw new Error('루틴을 찾을 수 없습니다');
   try {
     const chat = chatFn ?? (await import('./chat.mjs')).chat; // 순환 차단 — 파일 상단 주석 참조. chatFn=테스트 주입(실 러너 불필요)
@@ -370,8 +372,11 @@ export async function runRoutine(wsId, id, { chatFn = null } = {}) {
       }
     }
     const summary = t.reply.replace(/\s+/g, ' ').slice(0, 160);
-    // 1회 예약은 성공 후 스스로 꺼진다 — 다음 날 같은 시각에 되살아나지 않게(실패 시엔 켜둬 당일 재시도 허용)
-    const patch = { lastOk: true, lastResult: summary, ...(r0.schedule?.type === 'once' ? { enabled: false } : {}) };
+    // 1회 예약은 **성공하면** 스스로 꺼진다 — 산출이 이미 나갔으니 예약 시각에 또 보내지 않는다
+    // (미래 예약을 미리 시험해 성공한 경우도 동일 — 이중 발송 방지). 실패는 catch가 다르게 다룬다.
+    // 당일 자동 재시도는 없다: 시작 시 lastRun을 각인하므로 isDue가 같은 슬롯을 다시 due로 만들지
+    // 않는다(검수 LOW-3 실측 — 옛 주석 "켜둬 당일 재시도 허용"은 거짓이었다).
+    const patch = { lastOk: true, lastResult: summary };
     let stop = null; // { reason, detail }
     if (loop) {
       const v = parseLoopVerdict(t.reply);
@@ -389,7 +394,9 @@ export async function runRoutine(wsId, id, { chatFn = null } = {}) {
       if (stop) { L.stoppedReason = stop.reason; L.stoppedDetail = String(stop.detail ?? '').slice(0, 300); patch.enabled = false; }
       patch.loop = L;
     }
-    const r = await patchRoutine(wsId, id, patch);
+    // 타입 판정은 디스크 현재값(cur) — 실행 중 편집으로 타입이 바뀐 루틴을 스냅샷 기준으로
+    // 잘못 끄지 않는다(검수 LOW-1: catch와 기준 통일). enabled:false 덮어쓰기라 루프 정지와 무충돌.
+    const r = await patchRoutine(wsId, id, (cur) => ({ ...patch, ...(cur.schedule?.type === 'once' ? { enabled: false } : {}) }));
     if (stop) {
       if (stop.reason === 'blocked') {
         // 막힘 = 사장 결재로 푼다. 승인 → approval-actions(kind:'loop')가 resumeLoop, 거절 → 정지 유지.
@@ -406,7 +413,14 @@ export async function runRoutine(wsId, id, { chatFn = null } = {}) {
     return { ok: true, reply: t.reply, handover: t.handover, ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
   } catch (e) {
     const msg = String(e.message || e).slice(0, 160);
-    const r = await patchRoutine(wsId, id, { lastOk: false, lastResult: msg });
+    // 1회 예약은 **예약 시각이 지난 실패**면 끈다 — 같은 슬롯은 lastRun 각인으로 재발화하지 않아,
+    // 켜둔 채 두면 목록에 영영 '가동'으로 남는 좀비가 된다(검수 LOW-3). 반면 예약 시각 **전**의
+    // 실패(목록 '실행'으로 미리 시험)는 켜둔다 — 끄면 살아 있는 미래 예약이 취소된다(검수
+    // MEDIUM-1). 판정 시계는 **실행 시작 시각**(r0.lastRun 각인과 동일) — 실패 시각으로 재면
+    // 슬롯을 가로지른 시험 실행(시작<슬롯≤실패)에서 소비되지 않은 슬롯(isDue가 아직 발화할
+    // 예약)이 꺼진다(2R LOW-A). 실패는 lastOk:false + 알림으로 드러나고, 재실행은 '실행'으로.
+    // 스케줄은 디스크 현재값(cur)으로 판정 — 실행 중 편집을 스냅샷 기준으로 잘못 끄지 않는다.
+    const r = await patchRoutine(wsId, id, (cur) => ({ lastOk: false, lastResult: msg, ...(onceSpent(cur.schedule, new Date(r0.lastRun)) ? { enabled: false } : {}) }));
     emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: false, reply: msg });
     throw e;
   }
@@ -438,6 +452,21 @@ export function zonedParts(now, tz) {
     // hourCycle에 따라 자정이 24로 오는 구현이 있다 — 0으로 정규화하지 않으면 00:00 루틴이 영원히 안 뜬다
     hour: Number(p.hour) % 24, minute: Number(p.minute), dow: DOW[p.weekday] ?? 0,
   };
+}
+
+/** once 슬롯이 이미 지났나 — 실패 시 끄기의 게이트(순수). 예약 시각 **전**의 실패(목록 '실행'으로
+    미리 시험해 본 경우)에 꺼 버리면 살아 있는 미래 예약이 취소된다(검수 MEDIUM-1 실측). isDue와
+    같은 시간대 규칙(zonedParts + schedule.tz). once가 아니면 false. (export: 단위 테스트용) */
+export function onceSpent(schedule, now = new Date()) {
+  if (schedule?.type !== 'once') return false;
+  const zp = zonedParts(now, normalizeTz(schedule.tz));
+  const today = `${zp.year}-${String(zp.month).padStart(2, '0')}-${String(zp.day).padStart(2, '0')}`;
+  if (schedule.date !== today) return String(schedule.date ?? '') < today; // YYYY-MM-DD는 문자열 비교 = 날짜 비교
+  // 시각 원천은 isDue와 동일하게 times 우선 — 오염 저장값(time≠times[0])에서 두 판정이 갈려
+  // 발화 전 예약이 "경과"로 꺼지는 일이 없게 한다(2R LOW-B).
+  const [h, m] = String((Array.isArray(schedule.times) && schedule.times[0]) || schedule.time || '').split(':').map(Number);
+  if (!Number.isInteger(h) || !Number.isInteger(m)) return true; // 오염된 시각 — 미래라고 단정할 수 없으니 기존(끄기) 쪽으로
+  return zp.hour * 60 + zp.minute >= h * 60 + m;
 }
 
 export function isDue(routine, now = new Date()) {

@@ -1208,6 +1208,8 @@ const DICT = {
   'routines.verify.filesPlaceholder': ['산출물 파일 경로 — 쉼표로 여러 개 (예: notes/주간 보고.md)', 'Deliverable file paths — comma-separated (e.g. notes/weekly-report.md)'],
   'routines.verify.containsPlaceholder': ['필수 포함 문구 (선택)', 'Required text (optional)'],
   'routines.verify.retries': ['재시도', 'Retries'],
+  // 배지 문구는 짧게 — 190px 일정 칸 안에 들어가야 한다(의미는 체크 아이콘 + hint 툴팁이 나른다)
+  'routines.verify.badge': ['파일 {n} · 재시도 {r}회', '{n} file(s) · {r} retries'],
   'routines.loop.progress': ['{runs}/{max}회 · {cost}', '{runs}/{max} runs · {cost}'],
   'routines.loop.running': ['진행 중', 'Running'],
   'routines.loop.done': ['완료', 'Done'],

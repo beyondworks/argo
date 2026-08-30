@@ -406,6 +406,17 @@ export default function Routines({ params }) {
                   <td className="mono" style={{ fontSize: 11.5 }}>
                     {scheduleLabel(r.schedule, t, DOW)}
                     {r.schedule?.type === 'interval' && r.loop && <LoopStatus ws={ws} loop={r.loop} t={t} fmtMoney={fmtMoney} />}
+                    {/* 완료 조건 표식 — 이 루틴은 산출물 검사를 통과해야 완료고, 1회 실행이 최대
+                        1+재시도 턴까지 커질 수 있다(검수 LOW-4: 설정만 있고 화면 흔적이 없었다).
+                        interval(루프)과는 상호 배타라 LoopStatus 자리와 겹치지 않는다. */}
+                    {r.verify?.files?.length > 0 && (
+                      <div style={{ marginTop: 4, fontFamily: 'var(--font)' }}>
+                        {/* textTransform none — .chip 기본 대문자가 영어 문구를 +50%대로 키워 190px 컬럼을 밀어냈다(검수 MEDIUM-3 실측) */}
+                        <span className="chip" title={t('routines.verify.hint')} style={{ fontSize: 10, height: 18, padding: '0 6px', gap: 4, textTransform: 'none' }}>
+                          <Icon name="check" size={10} /> {t('routines.verify.badge', { n: r.verify.files.length, r: r.verify.retries ?? 2 })}
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
                     {r.lastRun ? (
