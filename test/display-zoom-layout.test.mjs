@@ -161,6 +161,68 @@ test('clampPaneW — 상한이 뷰포트 폭의 60%를 배율로 나눈 CSS px, 
   assert.equal(clampPaneW(5000), 864, '상한 = round(1440 × 0.6)');
 });
 
+/* ── 인접 핀: 쪽지함(mail) 작성 폼 CC 행 가로 넘침(#350·#357 동종 선재 결함) ─────────
+   배율 2(1280 창 = cw 1264)·en에서 크루 이름이 초장문(합성 60자 실측)이면 CC 칩(.chip nowrap)의
+   min-content가 CC 그룹 → 작성 폼 → 페이지 열(전부 무템플릿 grid)을 사슬로 부풀려 문서
+   sw 1832 > cw 1264 (실측 — DropUp 패널 닫힘 상태·패널 기여 0. 일반 길이 이름에서는 초록이라
+   심각도는 초장문 이름 한정). microlabel 돌출은 원인이 아니라 부풀려진 트랙에 늘려진 결과
+   (.microlabel은 nowrap 아님 — 트랙이 잠기면 스스로 줄바꿈).
+   소스 수준 잠금 — 실동작 검증은 해당 PR의 라이브 측정(1280 × 배율 2 × en·ko, 60자/일반 이름
+   A/B)이 담당. 수집기는 중괄호 깊이 워커 + 역방향 스캔(fail-closed) — #357 재검수(M-6·M-7)가
+   세운 보강판과 같은 의미: 정규식 [^}]*는 값 속 스프레드의 }에서 끊기고, 탐지 홑따옴표 고정은
+   display:"grid"가 지나가며, 뒤 선언 덮어쓰기는 마지막 승이라 앞 잠금이 초록인 채 무효가 된다.
+   워커 이름은 대상 접두(mail)로 분리 — #357이 같은 파일 중간에 넣는 동명 워커와 합본 시
+   ESM 중복 선언이 되지 않게(병합 순서 자유 전제, 양쪽 머지 후 통합 후보). */
+function mailInlineStyles(src) {
+  // style={{ … }} 전체 구간을 중괄호 깊이로 수집 — 값 속 ${…}·스프레드 {}는 짝이 맞아 그대로 통과.
+  const out = [];
+  let i = 0;
+  while ((i = src.indexOf('style={{', i)) !== -1) {
+    let depth = 2;
+    let j = i + 8; // 'style={{'.length — 여는 중괄호 2개가 이미 열린 상태
+    while (j < src.length && depth > 0) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}') depth--;
+      j++;
+    }
+    out.push({ start: i, end: j, body: src.slice(i, j) });
+    i = j;
+  }
+  return out;
+}
+
+test('mail grid 열 잠금 sweep — 모든 인라인 display:grid는 minmax(0,…) 열 1회 선언 또는 고정 폭이어야 한다', () => {
+  const src = sources.get('app/c/[ws]/mail/page.jsx');
+  const styles = mailInlineStyles(src);
+  const grids = styles.filter((s) => /display:\s*['"`]grid['"`]/.test(s.body));
+  assert.ok(grids.length >= 4, `grid 인라인 ${grids.length}곳(현재 4) — 수집 워커가 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
+  for (const g of grids) {
+    // 존재 검사가 아니라 값 검사 — 'gridTemplateColumns: 1fr'은 minmax(auto,1fr)이라 min 트랙이
+    // auto로 되살아나 무템플릿과 완전 동일하게 부푼다(#350 검수 변이·브라우저 실측). 값 표기는
+    // 따옴표 3종 수용, 선언은 정확히 1회 — 뒤 선언·스프레드 덮어쓰기(마지막 승) 우회 차단.
+    const colDecls = (g.body.match(/gridTemplateColumns/g) ?? []).length;
+    const locked = colDecls === 1 && /gridTemplateColumns:\s*['"`][^'"`]*minmax\(0,/.test(g.body);
+    assert.ok(locked || (colDecls === 0 && /\bwidth:\s*\d/.test(g.body)),
+      `mail:${lineOf(src, g.start)} — 암묵/auto-min 열 grid: gridTemplateColumns는 정확히 1회 선언에 minmax(0,…)를 포함하거나(선언 ${colDecls}회), 열 선언 없이 고정 width여야 한다(자식 min-content로 트랙이 부풀어 배율 2에서 문서 가로 넘침)`);
+  }
+  // 역방향 스캔 — 소스의 모든 display:grid 토큰은 수집된 style={{…}} 구간 안에 있어야 한다.
+  // 워커가 못 보는 표기로 grid가 들어오면 여기서 red(수집 우회 = 무보호 grid, fail-closed).
+  for (const m of src.matchAll(/display:\s*['"`]grid['"`]/g)) {
+    const inside = styles.some((s) => m.index >= s.start && m.index < s.end);
+    assert.ok(inside, `mail:${lineOf(src, m.index)} — 수집되지 않은 display:grid (style={{…}} 인라인 밖이거나 워커가 모르는 표기)`);
+  }
+});
+
+test('mail CC 칩 잠금 핀 — 칩 maxWidth 100% + 내부 span ellipsis(초장문 이름 min-content 차단)', () => {
+  const src = sources.get('app/c/[ws]/mail/page.jsx');
+  // .chip은 nowrap이라 칩 자체가 수축 불가 — 칩 한 개가 행(잠긴 트랙 = 확정 폭)보다 길 수 없게
+  // 상한을 걸고, 텍스트는 DropUp 트리거 라벨과 같은 문법(내부 span ellipsis)으로 자른다.
+  assert.match(src, /className="chip"\s+style=\{\{ cursor: 'pointer', maxWidth: '100%', minWidth: 0,/,
+    'CC 칩 상한 복원 변이(maxWidth 제거)는 여기서 red');
+  assert.match(src, /<span style=\{\{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' \}\}>\{a\.name\}<\/span>/,
+    '칩 라벨 맨몸 복원 변이({a.name} 직접 노출)는 여기서 red — flex 컨테이너(버튼)에는 text-overflow가 안 걸린다');
+});
+
 /* ── ③ 호출부 잠금 ─────────────────────────────────────────────── */
 
 const graph2d = readFileSync(join(ROOT, 'app/c/[ws]/graph2d.jsx'), 'utf8');
