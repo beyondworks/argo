@@ -9,6 +9,12 @@ var DEMO = /[?&]demo\b/.test(location.search); // 시각 QA용 — 리다이렉�
 // 앱(쉘) 버전 — lib.rs boot 이벤트가 실어 준다. 있으면 "같은 버전의 Argo"에만 이동한다.
 // (버전 불문 이동은 v0.1.20 앱이 상주 v0.1.22 서버 화면을 띄우는 어긋남을 만들었다 — 2026-07-22 신고)
 var APP_VER = null;
+var FIXED_TARGET = null; // 셸이 확정한 자기 서버 — 프로브 상한을 후보(1.5s)보다 넉넉히(8s)
+// 프로브 사이클(후보 목록 소진 횟수). boot 이벤트는 비동기 등록(listen)이 셸의 동기 emit보다
+// 늦어 유실될 수 있다 — 그러면 FIXED_TARGET이 영영 없어서, 기동이 느린 자기 서버(ping 3s)가
+// 1.5s 상한에 영구 미부착(분리 검수 실측: 20s간 abort 8회). 사이클마다 상한을 늘려
+// 이벤트 도착 여부와 무관하게 느린-살아있는 서버를 굶기지 않는다(첫 사이클 신속 폴오버는 유지).
+var CYCLE = 1;
 
 var statusEl = document.getElementById('status');
 var fillEl = document.getElementById('fill');
@@ -59,10 +65,13 @@ try {
     window.__TAURI__.event.listen('boot', function (e) {
       var p = e.payload || {};
       if (p.version) APP_VER = p.version; // 이후 프로브는 같은 버전의 Argo에만 이동
-      // 셸이 확정한 서버 포트 — 그 포트로 고정. 다른 후보(예: 다른 버전의 상주 3001)로 새지 않게
-      // 목록을 교체한다(스폰이 3011인데 3001 상주가 먼저 응답해 이동하던 레이스 차단).
+      // 셸이 확정한 서버 포트 — 그 포트로 고정(단일 교체, 원 설계 유지). 분리 검수 절제 실험
+      // (2026-08-30): 영구 대기의 원인은 단일 교체가 아니라 **무타임아웃 프로브** 하나였고,
+      // 앞 배치는 중복 프로브(+1.5s)와 같은 버전 상주로 새는 경로만 만들었다. 확정 포트는
+      // 자기 서버라 기동 지연이 정상일 수 있어 프로브 상한을 넉넉히 준다(아래 FIXED 분기).
       if (p.port) {
-        TARGETS = ['http://localhost:' + p.port];
+        FIXED_TARGET = 'http://localhost:' + p.port;
+        TARGETS = [FIXED_TARGET];
       }
       if (p.phase && p.phase !== 'error') errEl.hidden = true; // 폴백 재스폰으로 살아나면 이전 에러 배너 제거(2R H5)
       if (p.phase === 'error') {
@@ -101,19 +110,28 @@ function probe(i) {
       errEl.hidden = false;
       errEl.textContent = 'The server has not responded for a minute. Quit and reopen Argo — if it persists, another app may be using ports 3001/3011/3021.';
     }
+    CYCLE += 1; // 소진 1회 = 사이클 종료 — 다음 바퀴는 후보 상한을 늘려 준다(위 CYCLE 주석)
     setTimeout(function () { probe(0); }, 1200);
     return;
   }
   var target = TARGETS[i];
   // 신원 확인 후에만 이동 — 기존 no-cors '/login' 프로브는 어떤 서버가 응답해도 성공 처리돼
   // 포트를 선점한 타 앱으로 이동했다(실사용 "Cannot GET /"). /api/ping은 CORS 개방이라 본문 판독 가능.
-  fetch(target + '/api/ping', { cache: 'no-store' })
+  // 프로브당 상한 — 연결만 받고 응답을 끄는 선점 프로세스에서 fetch가 무기한 매달리면
+  // 다음 후보(폴백 스폰 3011)로 영영 못 넘어간다(윈도 실기기 2026-08-30: 검수 재현에서 425s+
+  // 회복 없음 = 영구). 단 **자기 서버(확정 포트)는 기동 중 지속 지연이 정상**일 수 있어(느린
+  // 기기+AV+이벤트 루프 점유 — 검수 실측: 일괄 1.5s는 ping 3s 서버에 영구 미부착 회귀) 8s.
+  var limitMs = FIXED_TARGET && target === FIXED_TARGET ? 8000 : Math.min(1500 * CYCLE, 8000);
+  var ac = typeof AbortController === 'function' ? new AbortController() : null;
+  var timer = ac ? setTimeout(function () { ac.abort(); }, limitMs) : null;
+  fetch(target + '/api/ping', ac ? { cache: 'no-store', signal: ac.signal } : { cache: 'no-store' })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
+      if (timer) clearTimeout(timer);
       // 신원 + (셸 버전을 아는 경우) 버전까지 일치해야 이동 — 다른 버전의 Argo는 건너뛴다
       if (d && d.argo === true && (!APP_VER || d.version === APP_VER)) { goto(target); } else { probe(i + 1); }
     })
-    .catch(function () { probe(i + 1); });
+    .catch(function () { if (timer) clearTimeout(timer); probe(i + 1); });
 }
 if (!DEMO) probe(0);
 
