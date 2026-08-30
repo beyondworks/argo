@@ -147,7 +147,8 @@ test('persona 쓰기 3함수 — 없는 크루 NOT_FOUND·name 없는 카드 CAR
 
 // ── ③ e2ee 라우트 배선(소스 — 실호출 불가 자리의 보조 잠금) ──────────────────
 test('배선 — e2ee 라우트: apiError 코드 실존·전 코드 사용·언어 인자 필수·쿠키 실판독·오입력 판별', async () => {
-  const src = await readFile(new URL('../app/api/me/e2ee/route.js', import.meta.url), 'utf8');
+  // 주석 제거 후 수집 — ⑦과 같은 계약(주석 처리된 호출이 배선·개수로 오인되는 fail-open 봉합)
+  const src = stripComments(await readFile(new URL('../app/api/me/e2ee/route.js', import.meta.url), 'utf8'));
   const used = new Set();
   // 호출부 전 형태 강제 — 인자 누락뿐 아니라 상수화(`, 'ko')`)도 그 갈래만 영구 한국어 고정이다
   // (분리 검수 MEDIUM-1 변이 실증: 상수화가 한 인자 금지 스캔을 그대로 통과했다. 호출부 단위
@@ -200,6 +201,14 @@ test('배선 — 이관 e2ee ko 문구가 error: 리터럴로 재등장하면 re
 // ④는 app/의 error: 리터럴만 본다. src/ 코어가 이관 문구를 코드 없이 throw하면 라우트 catch의
 // String(e.message) 통과로 이관이 조용히 풀린다(persona가 실제 그랬던 경로). 이관된 코어 문구는
 // src/ 어디서든 같은 줄 또는 다음 줄에 기계 코드가 실려 있어야 한다. src/ 전체 한글 전수는 별건.
+
+/** 주석 제거(줄 구조 보존 — ⑦ 호출 수집·⑨ src 스캔 공용). 블록 주석은 개행만 남겨 줄 번호를
+    유지한다. 문자열 안 //의 오절단은 code: 표기를 지우는 방향(red)뿐이고, 블록 정규식이 코드를
+    삼키는 병리 형태는 ⑨의 seen 하한이 회수한다 — 트립와이어는 안전한 쪽으로만 틀린다. */
+const stripComments = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ''))
+  .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+
 test('배선 — 이관 코어 ko 문구는 src/에서 기계 코드 없이 재등장 금지', async () => {
   const srcDir = fileURLToPath(new URL('../src/', import.meta.url));
   const entries = await readdir(srcDir, { recursive: true, withFileTypes: true });
@@ -207,7 +216,9 @@ test('배선 — 이관 코어 ko 문구는 src/에서 기계 코드 없이 재�
   const MIGRATED = ['존재하지 않는 크루입니다', 'frontmatter에 name이 필요합니다', '복구 코드가 맞지 않습니다'];
   let seen = 0;
   for (const f of files) {
-    const lines = (await readFile(f, 'utf8')).split('\n');
+    // 주석 제거 후 스캔 — 주석 텍스트의 code: 표기가 실코드로 오인되는 fail-open 봉합(분리 검수
+    // LOW-1 실증: 무코드 throw 다음 줄의 설명 주석만으로 게이트가 초록이 됐다)
+    const lines = stripComments(await readFile(f, 'utf8')).split('\n');
     lines.forEach((line, i) => {
       for (const s of MIGRATED) {
         if (!line.includes(s)) continue;
@@ -218,7 +229,7 @@ test('배선 — 이관 코어 ko 문구는 src/에서 기계 코드 없이 재�
       }
     });
   }
-  assert.ok(seen >= 6, `이관 코어 throw가 사라졌다(${seen}곳) — 문구를 바꿨다면 MIGRATED와 사전·라우트를 함께 옮길 것`);
+  assert.ok(seen >= 6, `이관 코어 throw가 사라졌다(${seen}곳) — 문구를 바꿨다면 MIGRATED와 사전·라우트를, throw 지점을 합쳤다면 이 하한(6)을 함께 옮길 것`);
 });
 
 // ── ⑤ companies GET 실호출 — 프리셋 표시 언어 (리졸브 훅 = connector-catalog ⑧ 관례) ──
@@ -295,7 +306,9 @@ const ROUTES = [
 test('배선 — 후속 6라우트: 기대 호출 리터럴·전 호출 형태 일치·쿠키 실판독·사전 전 코드 전역 배선', async () => {
   const wired = new Set();
   for (const r of ROUTES) {
-    const src = await readFile(new URL(r.file, import.meta.url), 'utf8');
+    // 주석 제거 후 수집 — 주석 처리된 apiError(...)가 호출 수에 산입되는 fail-open 봉합(분리 검수
+    // LOW-2 실증: 판별 줄을 //로 대체해도 개수가 유지돼 ⑦이 초록이었다 — 행동 테스트 없는 갈래는 무방비)
+    const src = stripComments(await readFile(new URL(r.file, import.meta.url), 'utf8'));
     const langVar = r.langVar ?? 'lang';
     assert.match(src, new RegExp(`const ${langVar} = langFromCookieHeader\\(req\\.headers\\.get\\('cookie'\\)\\)`),
       `${r.file}: argo-lang 쿠키를 읽지 않는다(상수화 변이)`);
