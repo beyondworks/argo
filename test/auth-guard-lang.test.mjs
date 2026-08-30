@@ -103,7 +103,19 @@ test('tenantDenied — 테넌트 불일치만 403, 언어 인자를 반영한다
   assert.equal(enBody.errorCode, 'tenant_only');
 });
 
-test('배선 — app/·middleware의 authError 코드명이 사전에 실존 + guardCompany 네 갈래 코드가 실제로 쓰인다', async () => {
+// 허용하는 언어 인자(전달로) 형태 전수 — 전부 "요청에서 읽은 값"이다. 리터럴 'ko'/'en' 상수는 없다:
+// 인자 상수화(`authError('auth_required', 'ko')`)는 그 갈래만 영구 단일 언어 고정인데 종전의
+// "인자 1개 호출 금지" 스캔을 그대로 통과했다(#335 분리 검수 변이 실증) → apiError 배선(#335)과
+// 같은 호출부 전 형태 강제로 격상. authError는 호출 형태가 여럿이라 단일 정규식 대신 허용 목록 —
+// 새 전달로가 정당하게 늘면 여기 추가한다(기본 거부 = fail-closed).
+const LANG_FORMS = new Set([
+  'lang', // 지역 바인딩(const lang = await requestLang()) 또는 매개변수(guardCompany·tenantDenied)
+  'await requestLang()', // 라우트 인라인
+  "langFromCookieHeader(req.headers.get('cookie'))", // authmsg.mjs csrfDenied — Cookie 헤더 직판독
+  "req.cookies.get('argo-lang')?.value === 'en' ? 'en' : 'ko'", // middleware.js — edge 쿠키 실판독
+]);
+
+test('배선 — app/·middleware의 authError 호출부 전 형태 강제(코드 실존 + 언어 전달로 허용 목록) + guardCompany 네 갈래', async () => {
   const appDir = fileURLToPath(new URL('../app/', import.meta.url));
   const entries = await readdir(appDir, { recursive: true, withFileTypes: true });
   const files = entries.filter((e) => e.isFile() && /\.(mjs|js|jsx)$/.test(e.name))
@@ -115,13 +127,37 @@ test('배선 — app/·middleware의 authError 코드명이 사전에 실존 + g
   const used = new Set();
   for (const f of files) {
     const src = await readFile(f, 'utf8');
-    for (const m of src.matchAll(/authError\(\s*'([a-z_]+)'/g)) {
-      assert.ok(known.includes(m[1]), `${f}: 미등록 코드 '${m[1]}' (오타 = deny 경로 500)`);
-      used.add(m[1]);
+    // 수집기부터 fail-closed(#338 교훈) — `authError (` 공백 호출도 잡고, 괄호 균형으로 인자
+    // 전체를 뜯는다([^)]* 절단은 중첩 괄호 인자의 형태 검사를 무력화한다). 문자열 안 괄호는
+    // 세지 않는다 — 현행 인자에 그런 값이 없고, 생기면 여기서 red가 나 목록과 함께 손보게 된다.
+    for (const m of src.matchAll(/\bauthError\s*\(/g)) {
+      if (src.slice(0, m.index).endsWith('function ')) continue; // authmsg.mjs 정의부 자신
+      let depth = 0, end = -1;
+      for (let i = m.index + m[0].length - 1; i < src.length; i++) {
+        if (src[i] === '(') depth++;
+        else if (src[i] === ')' && --depth === 0) { end = i; break; }
+      }
+      assert.ok(end > 0, `${f}: authError 호출 괄호 미폐합`);
+      const call = src.slice(m.index, end + 1).replace(/\s+/g, ' ');
+      const inner = call.slice(call.indexOf('(') + 1, -1).trim();
+      let d = 0, cut = -1; // 첫 최상위 쉼표에서 코드/언어 인자 분리(인자 내부 괄호는 건너뜀)
+      for (let i = 0; i < inner.length; i++) {
+        if (inner[i] === '(') d++;
+        else if (inner[i] === ')') d--;
+        else if (inner[i] === ',' && d === 0) { cut = i; break; }
+      }
+      assert.ok(cut > 0, `${f}: 언어 인자 없는 authError 호출(그 자리만 ko 고정) ${call}`);
+      const codeArg = inner.slice(0, cut).trim().match(/^'([a-z_]+)'$/);
+      assert.ok(codeArg, `${f}: 코드 인자는 리터럴이어야 배선 검사가 성립 ${call}`);
+      assert.ok(known.includes(codeArg[1]), `${f}: 미등록 코드 '${codeArg[1]}' (오타 = deny 경로 500)`);
+      used.add(codeArg[1]);
+      const langArg = inner.slice(cut + 1).trim();
+      assert.ok(LANG_FORMS.has(langArg),
+        `${f}: 언어 인자 형태 위반 — 리터럴 상수화는 그 갈래 영구 단일 언어. 허용 전달로: ${[...LANG_FORMS].join(' | ')} — 위반 호출: ${call}`);
     }
-    // 언어 인자 없는 호출 금지 — 호출부 하나가 lang을 빠뜨리면 그 자리만 ko 고정(분리 검수 HIGH 변이 실증)
-    const oneArg = src.match(/authError\(\s*'[a-z_]+'\s*\)/);
-    assert.equal(oneArg, null, `${f}: 언어 인자 없는 authError 호출 ${oneArg?.[0] ?? ''}`);
+    // 바인딩 상수화는 같은 결함 한 칸 위 — const lang = 'ko'는 호출 형태 'lang'을 그대로 통과한다
+    const bind = src.match(/\b(?:const|let|var)\s+lang\s*=\s*['"`]/);
+    assert.equal(bind, null, `${f}: lang 바인딩이 문자열 상수 — 전달로(requestLang 등)에서 읽을 것`);
   }
   // guardCompany의 네 갈래가 전부 배선돼 있어야 한다 — 하나라도 빠지면 그 갈래는 미번역 잔존
   for (const code of ['auth_required', 'company_not_found', 'company_linked', 'company_forbidden']) {
