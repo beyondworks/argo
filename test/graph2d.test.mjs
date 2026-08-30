@@ -76,11 +76,16 @@ test('테마 리스너는 인스턴스별 래퍼로 등록·해제한다(2분할
   // 결함(PR #339 검수): 모듈 전역 syncThemeRgb를 그대로 addEventListener에 넘기면 동일 참조 중복
   // 등록이 1개로 접혀, 2분할에서 한쪽 정리가 남은 인스턴스의 테마 갱신까지 끊었다. 특히 빈 하늘
   // 상태(정적 1회 그리기)는 잘못된 색이 영구 잔류한다.
-  assert.ok(jsx.includes('const onTheme = () => syncThemeRgb()'), '이펙트 안에서 인스턴스별 래퍼를 만든다');
+  // 래퍼 선언은 이펙트 구간 안이어야 한다 — 모듈 스코프로 올리면 다시 공유 참조가 되어
+  // 같은 결함이 부활한다(분리 검수 MEDIUM: 위치 무앵커 단언은 승격 변이에 초록이었다).
+  const eff = jsx.slice(jsx.indexOf('useEffect(() => {'), jsx.indexOf('}, [docs, agents, showCrew, showOrphans, root, compact, focusRel, localRoot]);'));
+  assert.ok(eff.includes('const onTheme = () => syncThemeRgb()'), '인스턴스별 래퍼는 이펙트 구간 안에서 만든다(모듈 스코프 승격 금지)');
   assert.ok(!jsx.includes("addEventListener('argo:theme', syncThemeRgb)"), '전역 참조 직접 등록 금지 — 회귀 패턴');
-  const reg = jsx.indexOf("addEventListener('argo:theme', onTheme)");
-  assert.ok(reg > 0 && reg < jsx.indexOf('if (graph.nodes.length === 0)'), '등록은 빈 하늘 분기 전 — 두 경로가 공유');
-  const main = jsx.slice(jsx.indexOf('const sim = createSim2D(graph)'));
+  // theme.jsx가 window.dispatchEvent로 발행하므로 등록 대상도 window여야 한다(document 등록은 영영 못 받는다)
+  const reg = eff.indexOf("window.addEventListener('argo:theme', onTheme)");
+  assert.ok(reg > 0 && reg < eff.indexOf('if (graph.nodes.length === 0)'), '등록은 window 대상, 빈 하늘 분기 전 — 두 경로가 공유');
+  assert.ok(reg < eff.indexOf("window.addEventListener('argo:theme', drawSky)"), '빈 하늘 다시 그리기(drawSky)는 색 갱신(onTheme)보다 뒤에 등록 — 발화 순서가 색을 갱신한 뒤 그리게 한다');
+  const main = eff.slice(eff.indexOf('const sim = createSim2D(graph)'));
   assert.ok(main.includes("removeEventListener('argo:theme', onTheme)"), '본 그래프 정리 경로도 래퍼를 해제');
 });
 
