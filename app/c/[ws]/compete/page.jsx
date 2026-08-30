@@ -124,7 +124,13 @@ export default function Compete({ params }) {
   const winnerName = winnerEnt ? `${winnerEnt.name}${winnerEnt.modelLabel ? ` · ${winnerEnt.modelLabel}` : ''}` : null;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
+    /* 레일 열 양보 클램프 — 고정 216px는 배율 2의 좁은 유효 폭에서 본문 열을 60 CSS px까지
+       압살한다(실측 1280×배율 2 — FAILED 칩 +17px 카드 밖 돌출). min(216px, 100% − 234px) =
+       "본문 열 바닥 216(시안 최소폭 180 + 본문 카드 패딩 36) + gap 18을 지키는 만큼만 레일이
+       양보". 컨테이너 ≥ 450이면 216 고정과 동일(종전 무변경). 미디어쿼리 밴드(#356 ≤560)는
+       실뷰포트만 보고 배율 축(유효 폭)은 못 보므로 intrinsic이어야 한다 — 두 장치는 트리거가
+       직교라 공존. #356의 .chat-cols 편입이 머지되면 이 표현식을 그 템플릿으로 이관할 것. */
+    <div style={{ display: 'grid', gridTemplateColumns: 'min(216px, 100% - 234px) minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
       {adoptTarget && (
         <ConfirmModal
           title={t('compete.adopt')}
@@ -137,8 +143,10 @@ export default function Compete({ params }) {
         />
       )}
       {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지(입력창 하향·대화영역 확대). 본문 컬럼 minHeight:0과 한 세트(회의실·DM 동일). */}
-      {/* 경쟁 레일 — 지난 경쟁이 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr) */}
-      <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
+      {/* 경쟁 레일 — 지난 경쟁이 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr).
+          고정 width 금지 — 레일 열이 양보 클램프로 216 미만이 될 때 고정 216이면 아이템이
+          트랙을 넘어 본문 위로 얹힌다. 기본 stretch가 트랙 폭을 그대로 따른다. */}
+      <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('compete.sessions.title')}{list?.length ? ` · ${list.length}` : ''}
         </span>

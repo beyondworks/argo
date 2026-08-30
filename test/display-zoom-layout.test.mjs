@@ -213,6 +213,23 @@ test('compete 시안 나열·카드 협폭 가독 핀 — auto-fit 적층·헤�
     '채택 버튼 축소 세트 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
 });
 
+test('compete 레일 열 양보 클램프 핀 — 고정 216px 복원·레일 고정 width 변이는 red', () => {
+  // 페이지 2분할의 레일 고정 216px는 배율 2의 좁은 유효 폭에서 본문 열을 60 CSS px까지 압살한다
+  // (실측 1280×배율 2 — FAILED 칩 +17px 카드 밖 돌출). min(216px, 100% − 234px) = 본문 열 바닥
+  // 216(시안 최소폭 180 + 본문 카드 패딩 36) + gap 18을 지키는 만큼만 레일이 양보. 두 형태 모두
+  // 위 sweep 값검사(minmax(0,) 포함)로는 초록이라 이 핀이 유일 게이트. 미디어쿼리 밴드는 실뷰포트만
+  // 보므로(배율 축 직교 — #356) intrinsic이어야 한다. #356 .chat-cols 편입 시 이 핀도 함께 이관.
+  const src = sources.get('app/c/[ws]/compete/page.jsx');
+  assert.match(src,
+    /gridTemplateColumns: 'min\(216px, 100% - 234px\) minmax\(0, 1fr\)', gap: 18, alignItems: 'start', height: 'calc\(100vh \/ var\(--z, 1\) - 100px\)', marginBottom: -70 \}\}>/,
+    '레일 열 양보 클램프 변이(표현식 전체 앵커·}} 폐합 — 정당한 리팩터면 이 핀을 함께 갱신)');
+  // 레일 아이템은 고정 width 금지 — 트랙이 216 미만으로 양보할 때 고정 216이면 아이템이 트랙을
+  // 넘어 본문 위로 얹힌다. 기본 stretch가 트랙 폭을 따르게 둔다.
+  assert.match(src,
+    /className="side-rail" style=\{\{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax\(0, 1fr\)', gap: 4 \}\}>/,
+    '레일 고정 width 복원 변이(표현식 전체 앵커·}} 폐합 — width가 트랙 양보를 무효화한다)');
+});
+
 test('compete 헤더·카드 축소 규칙 핀 — wrap·ellipsis·overflowWrap 복원 변이는 red', () => {
   const src = sources.get('app/c/[ws]/compete/page.jsx');
   // 헤더 앵커는 compete.header 구간 자체 — 낱개 프로퍼티 앵커는 동형 형제(컴포저 픽커 행 등
