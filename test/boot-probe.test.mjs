@@ -96,6 +96,47 @@ test('정상 즉답: 신원·버전 일치 서버로 이동하고 상한 타이�
   assert.ok(timers.filter((t) => t.ms === 1500).every((t) => t.cleared), '정착 시 프로브 상한 타이머 해제');
 });
 
+test('이벤트 유실: 사이클마다 후보 상한이 점증한다 (1.5s→3s…8s 캡 — 느린 자기 서버 영구 미부착 방지 핀)', async () => {
+  const calls = [];
+  const { timers } = load({ fetchImpl: hangingFetch(calls) });
+  // 첫 사이클: 후보 4개를 상한 발화로 소진 — 전부 1500이어야 한다(신속 폴오버 유지)
+  for (let n = 0; n < 4; n++) {
+    await drain(); await drain();
+    const t = timers.find((x) => x.ms === 1500 && !x.cleared && !x.fired);
+    assert.ok(t, `첫 사이클 ${n + 1}번째 후보 상한 = 1.5s`);
+    t.fired = true; t.fn();
+  }
+  await drain(); await drain();
+  timers.find((t) => t.ms === 1200)?.fn(); // 소진 → 재시도 → 두 번째 사이클
+  await drain(); await drain();
+  assert.ok(timers.some((t) => t.ms === 3000), '두 번째 사이클 후보 상한 = 3s — 고정 1.5s는 boot 이벤트 유실 시 ping 3s 서버를 영구히 굶긴다(검수 실측 20s간 abort 8회)');
+});
+
+test('신원 게이트: argo 마커 없는 응답(타 앱)으로는 이동하지 않는다 (Cannot GET / 사고 핀)', async () => {
+  const { ctx, timers } = load({
+    fetchImpl: (url) => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(String(url).includes('3001') ? { hello: 'imposter' } : { argo: true, version: '0.0.0' }),
+    }),
+  });
+  for (let n = 0; n < 6 && !timers.find((t) => t.ms === 350); n++) await drain();
+  timers.find((t) => t.ms === 350)?.fn();
+  assert.equal(ctx.__navigated, 'http://localhost:3011', '선점 타 앱(3001)을 건너뛰고 진짜 Argo(3011)로');
+});
+
+test('버전 게이트: 셸 버전을 알면 다른 버전의 Argo는 건너뛴다 (v0.1.20 앱-v0.1.22 화면 어긋남 핀)', async () => {
+  const { ctx, listeners, timers } = load({
+    fetchImpl: (url) => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ argo: true, version: String(url).includes('3001') ? '0.0.1' : '9.9.9' }),
+    }),
+  });
+  listeners.boot({ payload: { version: '9.9.9' } }); // port 없이 버전만 — 목록은 그대로
+  for (let n = 0; n < 6 && !timers.find((t) => t.ms === 350); n++) await drain();
+  timers.find((t) => t.ms === 350)?.fn();
+  assert.equal(ctx.__navigated, 'http://localhost:3011', '버전 불일치 상주(3001)를 건너뛰고 같은 버전(3011)으로');
+});
+
 test('AbortController 부재 웹뷰: 예외 없이 구 동작으로 강등 (사문화 폴백 핀)', async () => {
   const calls = [];
   const { timers } = load({ fetchImpl: (u) => { calls.push(u); return new Promise(() => {}); }, hasAC: false });

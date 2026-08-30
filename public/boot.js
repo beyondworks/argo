@@ -10,6 +10,11 @@ var DEMO = /[?&]demo\b/.test(location.search); // 시각 QA용 — 리다이렉�
 // (버전 불문 이동은 v0.1.20 앱이 상주 v0.1.22 서버 화면을 띄우는 어긋남을 만들었다 — 2026-07-22 신고)
 var APP_VER = null;
 var FIXED_TARGET = null; // 셸이 확정한 자기 서버 — 프로브 상한을 후보(1.5s)보다 넉넉히(8s)
+// 프로브 사이클(후보 목록 소진 횟수). boot 이벤트는 비동기 등록(listen)이 셸의 동기 emit보다
+// 늦어 유실될 수 있다 — 그러면 FIXED_TARGET이 영영 없어서, 기동이 느린 자기 서버(ping 3s)가
+// 1.5s 상한에 영구 미부착(분리 검수 실측: 20s간 abort 8회). 사이클마다 상한을 늘려
+// 이벤트 도착 여부와 무관하게 느린-살아있는 서버를 굶기지 않는다(첫 사이클 신속 폴오버는 유지).
+var CYCLE = 1;
 
 var statusEl = document.getElementById('status');
 var fillEl = document.getElementById('fill');
@@ -105,6 +110,7 @@ function probe(i) {
       errEl.hidden = false;
       errEl.textContent = 'The server has not responded for a minute. Quit and reopen Argo — if it persists, another app may be using ports 3001/3011/3021.';
     }
+    CYCLE += 1; // 소진 1회 = 사이클 종료 — 다음 바퀴는 후보 상한을 늘려 준다(위 CYCLE 주석)
     setTimeout(function () { probe(0); }, 1200);
     return;
   }
@@ -115,7 +121,7 @@ function probe(i) {
   // 다음 후보(폴백 스폰 3011)로 영영 못 넘어간다(윈도 실기기 2026-08-30: 검수 재현에서 425s+
   // 회복 없음 = 영구). 단 **자기 서버(확정 포트)는 기동 중 지속 지연이 정상**일 수 있어(느린
   // 기기+AV+이벤트 루프 점유 — 검수 실측: 일괄 1.5s는 ping 3s 서버에 영구 미부착 회귀) 8s.
-  var limitMs = FIXED_TARGET && target === FIXED_TARGET ? 8000 : 1500;
+  var limitMs = FIXED_TARGET && target === FIXED_TARGET ? 8000 : Math.min(1500 * CYCLE, 8000);
   var ac = typeof AbortController === 'function' ? new AbortController() : null;
   var timer = ac ? setTimeout(function () { ac.abort(); }, limitMs) : null;
   fetch(target + '/api/ping', ac ? { cache: 'no-store', signal: ac.signal } : { cache: 'no-store' })
