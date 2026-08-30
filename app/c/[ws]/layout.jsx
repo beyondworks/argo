@@ -452,8 +452,9 @@ function Shell({ children, params }) {
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <header className="topbar">
           <span className="topbar-title">{title}</span>
-          {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체) */}
-          <div id="argo-topbar-slot" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }} />
+          {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체).
+              display 포함 전부 CSS(globals) — 인라인 display가 있으면 좁은 셸(≤900px)의 숨김 규칙이 죽는다 */}
+          <div id="argo-topbar-slot" />
           <div className="topbar-spacer" style={{ flex: 1 }} />
           {appVersion && (updateVersion ? (updIsApp ? (
             // 새 버전 발행됨(데스크톱) — 칩이 골드 '업데이트'로 바뀌고, 클릭하면 바로 다운로드·설치·재시작한다.

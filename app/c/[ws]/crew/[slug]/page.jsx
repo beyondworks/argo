@@ -874,12 +874,14 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // 세션레일(216, 좌측 원위치) + 채팅 컬럼(나머지 전체). 채팅은 .thread를 컬럼 전체폭으로 두고 안쪽 레인만 중앙정렬 →
     // 스크롤바는 컬럼 우측 끝에 고정되고 메시지는 중앙 레인에 담긴다(가장 LLM다운 형태).
     // embedded(보조 패널): 세션 레일 없이 채팅 컬럼만, 높이는 패널 본문을 가득(패널이 sticky·고정 높이).
-    <div style={embedded
+    <div className={embedded ? undefined : 'chat-cols'} style={embedded
       ? { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', alignItems: 'start', height: '100%', minHeight: 0 }
-      : { display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
-      {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지. 회의실·컨테스트와 동일(입력창 하향·대화영역 확대, 스레드만 내부 스크롤). */}
-      {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정 */}
-      {!embedded && <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
+      : undefined}>
+      {/* 주 화면 그리드 기하(레일 216px + 본문 열, 높이 calc, marginBottom -70)는 .chat-cols(globals) —
+          컨테스트와 공용이고, 폰 폭(≤560px)의 레일 스택 전환을 CSS가 인라인과 싸우지 않고 하기 위함. */}
+      {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정.
+          sticky·폭 216은 .chat-cols > .side-rail(globals) — 폰 폭에서 static·전폭 스택으로 뒤집힌다 */}
+      {!embedded && <div className="side-rail" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('chat.sessions.title')}{sessions.length ? ` · ${sessions.length + 1}` : ''}
         </span>
@@ -941,7 +943,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('chat.sessions.empty')}</span>}
       </div>}
     <div
-      style={{ width: '100%', display: 'grid', gridTemplateRows: embedded ? 'auto 1fr auto' : '1fr auto', height: '100%', minHeight: 0, position: 'relative' }}
+      // 열 잠금 minmax(0,1fr) — 무템플릿 grid의 암묵 auto 열은 자식 min-content(컴포저 textarea 고유폭
+      // 144px + 전송 버튼 등 = 212px 실측)만큼 부풀어, 폰 폭(360px, 본문 트랙 98px)에서 .thread·.empty·
+      // .input-bar가 문서 가로 넘침 100px을 만들었다(#350 회의실과 같은 함정 — 한 층 아래).
+      // 행은 embedded·주 화면 공통 'auto 1fr auto' — 첫 행(컨트롤 밴드)은 display:none이면 0으로 접힌다.
+      style={{ width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', height: '100%', minHeight: 0, position: 'relative' }}
       onDragOver={(e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); setDragOver(true); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
       onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
@@ -964,19 +970,22 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         </>,
         slotEl,
       )}
-      {/* 패널(embedded) — topbar 포털 대신 채팅 상단에 같은 컨트롤을 인라인으로(세션 상태·카드·새 대화만) */}
-      {embedded && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, padding: '8px 0 6px' }}>
-          <span className="nav-sub" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent?.role}</span>
-          {sessionRef.current ? (
-            <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('chat.sessionOngoing')}</span>
-          ) : (
-            <span className="pill" style={{ flex: 'none' }}><span className="dot" />{t('chat.newSession')}</span>
-          )}
-          <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
-          <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
-        </div>
-      )}
+      {/* 컨트롤 밴드 — embedded(보조 패널): 항상 인라인(패널엔 topbar가 없다). 주 화면: 좁은 셸(≤900px)에서만
+          CSS(.crew-phone-band)로 등장해 위 topbar 포털을 대체한다 — 슬롯의 축소 불가 컨트롤들이 검색·도크를
+          덮던 것(실측 561px에서도 306px 흘러넘침)의 수용처. '옆에 열기'는 제외 — 분할 패널 자체가 ≤899px에서
+          display:none인 죽은 기능이라 좁은 폭에 노출하지 않는다(안 될 버튼 노출 금지). */}
+      <div className={embedded ? undefined : 'crew-phone-band'}
+        style={{ alignItems: 'center', gap: 8, minWidth: 0, padding: '8px 0 6px', ...(embedded ? { display: 'flex' } : {}) }}>
+        <span className="nav-sub" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent?.role}</span>
+        {sessionRef.current ? (
+          <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('chat.sessionOngoing')}</span>
+        ) : (
+          <span className="pill" style={{ flex: 'none' }}><span className="dot" />{t('chat.newSession')}</span>
+        )}
+        {!embedded && <button className="btn sm" style={{ flex: 'none' }} onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen}>{t('crew.panel.open')}</button>}
+        <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
+        <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
+      </div>
 
       <div className="thread" ref={threadRef} style={{ overflowY: 'auto', minHeight: 0 }}>
         {/* 안쪽 레인만 중앙정렬 — .thread(스크롤 컨테이너)는 컬럼 전체폭이라 스크롤바가 우측 끝에 고정된다.

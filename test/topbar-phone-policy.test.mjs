@@ -155,3 +155,75 @@ test('시계 배선 — Clock이 .topbar-clock을 출력하고 상단바에 실�
   assert.match(ui, /className="topbar-clock"/);
   assert.match(layout, /<Clock \/>/);
 });
+
+/* ── 좁은 셸(≤900px) — 크루 컨트롤: topbar 슬롯 → 채팅 위 인라인 밴드 ──────────
+   #348 분리 검수 확정 별건 2·3: 슬롯 자식(세션 pill·버튼들)이 전부 flex:none이라 좁은 상단바에서
+   검색·도크 위로 흘러넘친다(실측 360px: 검색 input 5지점 전부 "새 대화" 버튼 히트 / 561px에서도
+   306px 초과). 경계는 셸 스택(≤900px) 재사용 — 붕괴 대역이 ~650px까지 이어져 560으로는 못 덮는다.
+   평가는 위와 같은 캐스케이드 승자 방식(대상 셀렉터 전부 단일 셀렉터라 동특이도 가정 성립). */
+
+const crew = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/crew/[slug]/page.jsx'), 'utf8'));
+const compete = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/compete/page.jsx'), 'utf8'));
+
+test('슬롯·밴드 전환 — 360·900px에서 슬롯 none·밴드 flex 승자, 901px에서 역전', () => {
+  for (const W of [360, 900]) {
+    assert.equal(effective('#argo-topbar-slot', 'display', W), 'none',
+      `${W}px에서 슬롯 display 승자가 none이 아니다 — 축소 불가 컨트롤이 검색·도크를 다시 덮는다(실측: input 5지점 "새 대화" 히트)`);
+    assert.equal(effective('.crew-phone-band', 'display', W), 'flex',
+      `${W}px에서 밴드 display 승자가 flex가 아니다 — 슬롯을 숨긴 채 밴드가 안 뜨면 세션 상태·카드·새 대화가 화면에서 사라진다`);
+  }
+  assert.equal(effective('#argo-topbar-slot', 'display', 901), 'flex',
+    '901px에서 슬롯 display 승자가 flex가 아니다 — 넓은 화면의 topbar 상주(스티키 밴드 대체) 결정이 무너진다');
+  assert.equal(effective('.crew-phone-band', 'display', 901), 'none',
+    '901px에서 밴드 display 승자가 none이 아니다 — 슬롯과 밴드가 이중 노출된다');
+});
+
+test('슬롯 배선 — layout의 슬롯 div에 인라인 display가 없어야 CSS 숨김이 산다', () => {
+  assert.match(layout, /<div id="argo-topbar-slot" \/>/,
+    '슬롯 div가 무스타일 형태가 아니다 — 인라인 display:flex가 돌아오면 ≤900px 숨김 규칙이 인라인에 져서 죽은 규칙이 된다');
+});
+
+test('밴드 배선 — 주 화면에만 crew-phone-band(임베드 패널 밴드는 상시 인라인)', () => {
+  assert.match(crew, /className=\{embedded \? undefined : 'crew-phone-band'\}/,
+    '크루 페이지 밴드에 crew-phone-band 조건 클래스가 없다 — ≤900px에서 컨트롤 수용처가 사라진다');
+});
+
+/* ── 폰 폭(≤560px) — 크루 채팅·경쟁 시안 본문: 레일 스택 ──────────────────
+   #348 분리 검수 확정 별건 1: 레일 216px 열이 남으면 본문 트랙이 98px로 붕괴하고(실측 360px),
+   본문 내부 무템플릿 열은 자식 min-content(212px 실측)로 부풀어 문서 가로 넘침 100px을 만들었다. */
+
+test('본문 그리드 — 360px에서 열 승자 minmax(0, 1fr)(레일 스택), 901px에서 216px 2열', () => {
+  assert.equal(effective('.chat-cols', 'grid-template-columns', 360), 'minmax(0, 1fr)',
+    '360px에서 .chat-cols 열 승자가 단일 minmax(0, 1fr)가 아니다 — 레일이 216px 열로 남아 본문이 98px로 붕괴한다(실측)');
+  assert.equal(effective('.chat-cols', 'grid-template-columns', 901), '216px minmax(0, 1fr)',
+    '901px에서 .chat-cols 열 승자가 216px 2열이 아니다 — 데스크톱 레일 배치가 무너진다');
+});
+
+test('레일 — 360px에서 position 승자 static + 자체 스크롤 상한(vh는 /var(--z) 보정), 901px에서 sticky', () => {
+  assert.equal(effective('.side-rail', 'position', 360), 'static',
+    '360px에서 레일 position 승자가 static이 아니다 — sticky 레일이 스택 흐름을 깬다');
+  assert.equal(effective('.side-rail', 'position', 901), 'sticky',
+    '901px에서 레일 position 승자가 sticky가 아니다 — 데스크톱에서 레일이 스크롤을 따라오지 않는다');
+  assert.match(String(effective('.side-rail', 'max-height', 360)), /vh\s*\/\s*var\(--z/,
+    '360px 레일 max-height 승자가 배율 보정(vh / var(--z)) 꼴이 아니다 — 세션이 많으면 레일이 본문을 밀어낸다(display-zoom 게이트와 한 세트)');
+  assert.equal(effective('.side-rail', 'overflow-y', 360), 'auto',
+    '360px 레일 overflow-y 승자가 auto가 아니다 — 상한을 걸어도 내용이 밖으로 넘친다');
+});
+
+test('본문 그리드 배선 — 크루(조건)·경쟁(고정)에 chat-cols, 레일 인라인엔 position 없음', () => {
+  assert.match(crew, /className=\{embedded \? undefined : 'chat-cols'\}/,
+    '크루 주 화면 그리드에 chat-cols가 없다 — 레일 스택·열 규칙이 죽은 규칙이 된다');
+  assert.match(compete, /className="chat-cols"/,
+    '경쟁 시안 그리드에 chat-cols가 없다 — 같은 넘침(실측 360px에서 100px)이 남는다');
+  for (const [name, src] of [['crew', crew], ['compete', compete]]) {
+    assert.match(src, /className="side-rail" style=\{\{ display: 'grid', gridTemplateColumns: 'minmax\(0, 1fr\)', gap: 4 \}\}/,
+      `${name} 레일 인라인이 무position 형태가 아니다 — 인라인 sticky·width가 돌아오면 폰 스택 규칙이 인라인에 진다`);
+  }
+});
+
+test('본문 내부 열 잠금 — 크루·경쟁 채팅 컬럼의 무템플릿 암묵 열 봉인(minmax + auto 1fr auto)', () => {
+  assert.match(crew, /gridTemplateColumns: 'minmax\(0, 1fr\)', gridTemplateRows: 'auto 1fr auto', height: '100%'/,
+    '크루 채팅 컬럼 열 잠금이 없다 — 컴포저 min-content(실측 212px)가 암묵 열을 부풀려 360px에서 문서 가로 넘침 100px이 재발한다');
+  assert.match(compete, /gridTemplateColumns: 'minmax\(0, 1fr\)', gridTemplateRows: 'auto 1fr auto', gap: 12/,
+    '경쟁 본문 컬럼 열 잠금이 없다 — 같은 계열 넘침(실측 100px)이 재발한다');
+});

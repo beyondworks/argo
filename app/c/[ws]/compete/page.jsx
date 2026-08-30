@@ -124,7 +124,8 @@ export default function Compete({ params }) {
   const winnerName = winnerEnt ? `${winnerEnt.name}${winnerEnt.modelLabel ? ` · ${winnerEnt.modelLabel}` : ''}` : null;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
+    // 그리드 기하(레일 216px + 본문 열)는 .chat-cols(globals) — 크루 채팅과 공용. 폰 폭(≤560px)은 레일 스택
+    <div className="chat-cols">
       {adoptTarget && (
         <ConfirmModal
           title={t('compete.adopt')}
@@ -137,8 +138,9 @@ export default function Compete({ params }) {
         />
       )}
       {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지(입력창 하향·대화영역 확대). 본문 컬럼 minHeight:0과 한 세트(회의실·DM 동일). */}
-      {/* 경쟁 레일 — 지난 경쟁이 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr) */}
-      <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
+      {/* 경쟁 레일 — 지난 경쟁이 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr).
+          sticky·폭 216은 .chat-cols > .side-rail(globals) — 폰 폭에서 static·전폭 스택으로 뒤집힌다 */}
+      <div className="side-rail" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('compete.sessions.title')}{list?.length ? ` · ${list.length}` : ''}
         </span>
@@ -198,8 +200,10 @@ export default function Compete({ params }) {
         />
       )}
 
-      {/* 본문 — 회의실과 동일 문법: 헤더 라인 / 전체 높이 카드 / 하단 컴포저 */}
-      <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
+      {/* 본문 — 회의실과 동일 문법: 헤더 라인 / 전체 높이 카드 / 하단 컴포저.
+          열 잠금 minmax(0,1fr) — 무템플릿 암묵 열이 자식 min-content로 부풀어 폰 폭(360px, 트랙 98px)에서
+          문서 가로 넘침 100px을 만들었다(#350 회의실·크루 DM과 같은 함정) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className="microlabel">{t('compete.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
@@ -211,7 +215,7 @@ export default function Compete({ params }) {
           {!comp ? (
             <div className="empty">{t('compete.emptyMain')}</div>
           ) : (
-            <div style={{ display: 'grid', gap: 12, minWidth: 0 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, minWidth: 0 }}> {/* 열 잠금 — 본문 열과 같은 이유(한 층 아래 같은 함정) */}
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                 <Icon name="bolt" size={14} style={{ marginTop: 2, flex: 'none' }} />
                 <span style={{ fontSize: 13, lineHeight: 1.55, whiteSpace: 'pre-wrap', minWidth: 0 }}>{comp.prompt}</span>
@@ -229,7 +233,7 @@ export default function Compete({ params }) {
                   const isWinner = comp.winner === ref;
                   return (
                     <div key={ref} className="card" style={{
-                      padding: '14px 16px', display: 'grid', gap: 10, minWidth: 0,
+                      padding: '14px 16px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, minWidth: 0,
                       ...(isWinner ? { borderColor: 'var(--warn)', boxShadow: '0 0 0 1px var(--warn)' } : {}),
                       ...(comp.winner && !isWinner ? { opacity: 0.55 } : {}),
                     }}>
@@ -271,8 +275,8 @@ export default function Compete({ params }) {
             <button className="btn btn-primary sm" onClick={() => openComp(null)}>{t('compete.new')}</button>
           </div>
         ) : (
-          /* 새 경쟁 컴포저 — 회의실 컴포저와 동일 문법: 칩 행 → input-bar → 힌트 */
-          <div style={{ display: 'grid', gap: 6 }}>
+          /* 새 경쟁 컴포저 — 회의실 컴포저와 동일 문법: 칩 행 → input-bar → 힌트. 열 잠금 — 본문 열과 같은 이유 */
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}>
             {/* 라벨 열 공유 grid — 두 행의 박스 좌측 라인이 정렬된다(모델 선택 왼편 기준, 유건 지시 2026-07-21).
                 드롭다운은 전부 DropUp(위로 열림) — 하단 배치라 네이티브 select 팝업이 아래로 열려 잘렸다. */}
             {/* 크루·모델 선택을 한 줄로(유건 2026-08-23) — 좁으면 줄바꿈 */}

@@ -90,10 +90,11 @@ test('수집 스위프가 비지 않는다 — 빈 목록 통과(무효 게이�
   // 정당하게 줄이는 리팩터라면 보정 경로가 실제로 준 것인지 확인하고 이 숫자를 함께 내린다.
   assert.ok(decls.length >= 17, `치수 선언 ${decls.length}곳(현재 17) — 수집 정규식이 소스와 어긋났는지 확인`);
   const has = (f, n) => assert.ok(decls.filter((d) => d.file === f).length >= n, `${f}에 vh 치수 ${n}곳 이상이어야 한다`);
-  has('app/globals.css', 8); // body·.shell·.side·기억분할·팝오버·vault 계열
-  has('app/c/[ws]/crew/[slug]/page.jsx', 2); // 채팅 그리드 + 모달 86vh
+  // 크루·경쟁의 채팅 그리드 높이(100vh 계열)는 폰 폭 레일 스택을 위해 .chat-cols(globals)로 이동 —
+  // JSX 쪽 하한을 그만큼 내리고 globals 하한을 올린다(총합 ≥17 유지, 소실 아님)
+  has('app/globals.css', 10); // body·.shell·.side·기억분할·팝오버·vault·.chat-cols(높이+레일 상한) 계열
+  has('app/c/[ws]/crew/[slug]/page.jsx', 1); // 모달 86vh
   has('app/c/[ws]/room/page.jsx', 1); // 회의실 채팅 그리드
-  has('app/c/[ws]/compete/page.jsx', 1); // 경쟁 채팅 그리드
 });
 
 test('역방향 스캔 — 소스의 모든 vh 토큰이 수집된 치수 선언 안에 있다(수집 우회 = red)', () => {
