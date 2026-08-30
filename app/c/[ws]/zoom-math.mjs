@@ -24,8 +24,10 @@ export const zoomedEvPos = (rect, clientWidth, clientX, clientY) => {
     반환 { shift, maxW }(둘 다 CSS px): maxW = 뷰포트 − 양쪽 여백 상한(패널이 뷰포트보다 넓은
     극단의 바닥 — 100vw 근사는 스크롤바 폭만큼 새서(실측 1280 vs cw 1264) clientWidth로 계산한다),
     shift = 유효 폭(min(panelW, maxW)) 기준으로 뚫린 만큼 안쪽으로 미는 앵커 오프셋. 넘침이 없으면
-    shift 0 — 일반 폭의 소비자 9곳(경쟁 4·쪽지 1·루틴 4)은 종전 위치 그대로다. 좌우 동시 넘침은
-    왼쪽 가장자리 우선. */
+    shift 0·상한 비구속 — 그 경우(일반 폭 × 통상 라벨) 소비자 9곳(경쟁 4·쪽지 1·루틴 4)의 위치·폭은
+    종전 그대로다(초장문 라벨은 일반 폭에서도 실제 넘침이라 정당하게 움직인다 — 분리 검수 F6).
+    왼쪽 여백 구제가 우선이며, maxW 상한 덕에 구제 후 오른쪽 여백은 자동 보장된다(양쪽 동시 발화
+    입력은 구조적으로 없다). */
 export const dropUpClamp = (rect, viewportW, panelW, alignRight = false) => {
   const z = dispZoom();
   const M = 8 * z; // 가장자리 여백 8 CSS px(뷰포트 px 환산)
