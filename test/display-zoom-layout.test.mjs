@@ -14,6 +14,8 @@
 //     분리 검수 실증), 리사이저 2곳(split-pane·vault)은 배선 핀.
 //  한계(정직 표기): ③은 소스 수준 잠금이라 **신규** 컴포넌트가 자체 좌표 처리를 무보정으로
 //  들여오는 것까지는 못 잡는다(신규 vh 치수는 ①의 역방향 스캔이 잡는다).
+//  이후 "인접 핀" 섹션들(페이지별 grid 열 잠금 sweep — 쪽지함 등)이 ①과 같은 수집+역방향 문법으로
+//  파일 중간에 추가된다. 인라인 스타일 워커가 페이지별로 늘면 통합한다(3벌째 복사 금지).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -194,6 +196,76 @@ test('clampPaneW — 상한이 뷰포트 폭의 60%를 배율로 나눈 CSS px, 
   assert.equal(clampPaneW(700.4), 700, '반올림 유지(종전 동일)');
   fake(1440, ''); // 배율 1 — #334 이전 산식과 완전 동일
   assert.equal(clampPaneW(5000), 864, '상한 = round(1440 × 0.6)');
+});
+
+/* ── 인접 핀: 쪽지함(mail) 작성 폼 CC 행 가로 넘침(#350·#357 동종 선재 결함) ─────────
+   배율 2(1280 창 = cw 1264)·en에서 크루 이름이 초장문(합성 60자 실측)이면 CC 칩(.chip nowrap)의
+   min-content가 CC 그룹 → 작성 폼 → 페이지 열(전부 무템플릿 grid)을 사슬로 부풀려 문서
+   sw 1832 > cw 1264 (실측 — DropUp 패널 닫힘 상태·패널 기여 0. 일반 길이 이름에서는 초록이라
+   심각도는 초장문 이름 한정). microlabel 돌출은 원인이 아니라 부풀려진 트랙에 늘려진 결과
+   (.microlabel은 nowrap 아님 — 트랙이 잠기면 스스로 줄바꿈).
+   소스 수준 잠금 — 실동작 검증은 해당 PR의 라이브 측정(1280 × 배율 2 × en·ko, 60자/일반 이름
+   A/B)이 담당. 수집기는 중괄호 깊이 워커 + 역방향 스캔(fail-closed) — #357 재검수(M-6·M-7)가
+   세운 보강판과 같은 의미: 정규식 [^}]*는 값 속 스프레드의 }에서 끊기고, 탐지 홑따옴표 고정은
+   display:"grid"가 지나가며, 뒤 선언 덮어쓰기는 마지막 승이라 앞 잠금이 초록인 채 무효가 된다.
+   워커 이름은 대상 접두(mail)로 분리 — #357이 같은 파일 중간에 넣는 동명 워커와 합본 시
+   ESM 중복 선언이 되지 않게(병합 순서 자유 전제, 양쪽 머지 후 통합 후보). */
+function mailInlineStyles(src) {
+  // style={{ … }} 전체 구간을 중괄호 깊이로 수집 — 값 속 ${…}·스프레드 {}는 짝이 맞아 그대로 통과.
+  const out = [];
+  let i = 0;
+  while ((i = src.indexOf('style={{', i)) !== -1) {
+    let depth = 2;
+    let j = i + 8; // 'style={{'.length — 여는 중괄호 2개가 이미 열린 상태
+    while (j < src.length && depth > 0) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}') depth--;
+      j++;
+    }
+    out.push({ start: i, end: j, body: src.slice(i, j) });
+    i = j;
+  }
+  return out;
+}
+
+test('mail grid 열 잠금 sweep — 모든 인라인 display:*grid*는 minmax(0,…) 열 1회 선언이어야 한다', () => {
+  const src = sources.get('app/c/[ws]/mail/page.jsx');
+  const styles = mailInlineStyles(src);
+  // 탐지는 리터럴 3종·삼항 표기·inline-grid까지(값 자리 어디든 grid 토큰) — 리터럴 홑따옴표 고정은
+  // display:"grid"·조건부 grid가 수집·역방향 양쪽을 지나가는 fail-open이었다(분리 검수 MEDIUM-2
+  // 실측: 무잠금 inline-grid도 sw 1482 동일 넘침).
+  const GRID_RE = /display:\s*[^,}]*grid/;
+  const grids = styles.filter((s) => GRID_RE.test(s.body));
+  assert.ok(grids.length >= 4, `grid 인라인 ${grids.length}곳(현재 4) — 수집 워커가 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
+  for (const g of grids) {
+    // 존재 검사가 아니라 값 검사 — 'gridTemplateColumns: 1fr'은 minmax(auto,1fr)이라 min 트랙이
+    // auto로 되살아나 무템플릿과 완전 동일하게 부푼다(#350 검수 변이·브라우저 실측). 값 표기는
+    // 따옴표 3종 수용, 선언은 정확히 1회 — 뒤 선언·스프레드 덮어쓰기(마지막 승) 우회 차단.
+    // 고정 width 탈출구는 두지 않는다 — 분리 검수 MEDIUM-1 실측 반증: 무잠금 grid는 고정 width를
+    // 줘도 트랙이 자식 min-content로 부푼다(width 300 실측 sw 1482 — 트랙은 컨테이너 폭에 안 잡힘).
+    const colDecls = (g.body.match(/gridTemplateColumns/g) ?? []).length;
+    assert.ok(colDecls === 1 && /gridTemplateColumns:\s*['"`][^'"`]*minmax\(0,/.test(g.body),
+      `mail:${lineOf(src, g.start)} — 암묵/auto-min 열 grid: gridTemplateColumns는 정확히 1회 선언에 minmax(0,…)를 포함해야 한다(선언 ${colDecls}회 — 자식 min-content로 트랙이 부풀어 배율 2에서 문서 가로 넘침, 고정 width도 못 막는다)`);
+  }
+  // 역방향 스캔 — 소스의 모든 grid성 display 토큰은 수집된 style={{…}} 구간 안에 있어야 한다.
+  // 워커가 못 보는 인라인 표기는 여기서 red. 한계(정직 표기): 상수 객체 간접(const s = {display:'grid'})
+  // 은 style={{ 구간 밖이라 이 스캔이 red를 내며 워커 확장을 강제한다 — 단 grid 토큰 자체가 없는
+  // 파생 표기(변수에 담긴 문자열 조립 등)까지는 못 본다.
+  for (const m of src.matchAll(/display:\s*[^,}]*grid/g)) {
+    const inside = styles.some((s) => m.index >= s.start && m.index < s.end);
+    assert.ok(inside, `mail:${lineOf(src, m.index)} — 수집되지 않은 display:…grid (style={{…}} 인라인 밖이거나 워커가 모르는 표기)`);
+  }
+});
+
+test('mail CC 칩 잠금 핀 — 내부 span ellipsis(하중) + 칩 maxWidth(이중 방어) + title 원문', () => {
+  const src = sources.get('app/c/[ws]/mail/page.jsx');
+  // 하중은 내부 span(minWidth 0 + ellipsis + nowrap 명시) — flex 컨테이너(버튼)에는 text-overflow가
+  // 직접 안 걸린다(분리 검수 실측: span 무력화 시 ellipsis 없는 하드 클립). 버튼 maxWidth 100%는
+  // 이중 방어(단독 롤백 무영향 실측), title은 잘린 원문 확인 통로(같은 파일 목록 표 관례).
+  assert.match(src, /className="chip" title=\{a\.name\}\s+style=\{\{ cursor: 'pointer', maxWidth: '100%', minWidth: 0,/,
+    'CC 칩 상한(이중 방어)·title 제거 변이는 여기서 red');
+  assert.match(src, /<span style=\{\{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' \}\}>\{a\.name\}<\/span>/,
+    '칩 라벨 맨몸 복원 변이({a.name} 직접 노출)는 여기서 red — 하중 지점(ellipsis + nowrap 명시)');
 });
 
 /* ── ③ 호출부 잠금 ─────────────────────────────────────────────── */

@@ -86,7 +86,11 @@ export default function Mail({ params }) {
   );
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    /* 전 계층 grid 열 잠금 minmax(0,1fr) — 무템플릿 grid의 암묵 auto 열은 자식 min-content만큼
+       부푼다(#350 회의실·#357 경쟁에서 확립된 계열). 실측(배율 2·1280·en): 초장문 크루 이름(60자)
+       칩의 nowrap min-content가 CC 그룹 → 작성 폼 → 페이지 열을 사슬로 부풀려 문서 sw 1832 > cw
+       1264. 일반 폭·일반 이름 레이아웃은 종전과 동일(1fr 채움 동작 불변). */
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}>
       {delTarget && (
         <ConfirmModal title={t('mail.deleteTitle')} description={t('mail.deleteConfirm')} confirmLabel={t('common.delete')} tone="danger"
           onConfirm={doDelete} onClose={() => setDelTarget(null)} />
@@ -94,28 +98,33 @@ export default function Mail({ params }) {
       <p style={{ margin: 0, fontSize: 12.5, color: 'var(--fg-2)', lineHeight: 1.6 }}>{t('mail.intro')}</p>
 
       {/* 보내기 */}
-      <form onSubmit={send} className="card" style={{ padding: 18, display: 'grid', gap: 10 }}>
+      <form onSubmit={send} className="card" style={{ padding: 18, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10 }}>
         <span className="card-title"><Icon name="mail" size={14} />{t('mail.compose')}</span>
         {agents.length === 0 ? (
           <p style={{ margin: 0, fontSize: 12.5, color: 'var(--fg-2)' }}>{t('mail.noCrew')}</p>
         ) : (
           <>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-              <div style={{ display: 'grid', gap: 4 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
                 <span className="microlabel">{t('mail.to')}</span>
                 <DropUp value={to} width={220} height={34} ariaLabel={t('mail.to')}
                   groups={[{ items: agents.map((a) => ({ value: a.slug, label: `${a.name} — ${a.role}` })) }]}
                   onChange={(v) => { setTo(v); setCc((cur) => cur.filter((s) => s !== v)); }} />
               </div>
-              <div style={{ display: 'grid', gap: 4, flex: 1, minWidth: 200 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, flex: 1, minWidth: 200 }}>
                 <span className="microlabel">{t('mail.cc')} <span style={{ color: 'var(--fg-3)', fontWeight: 400 }}>— {t('mail.ccHint', { n: CC_MAX })}</span></span>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }} role="group" aria-label={t('mail.cc')}>
                   {agents.filter((a) => a.slug !== to).map((a) => {
                     const on = cc.includes(a.slug);
                     return (
-                      <button key={a.slug} type="button" aria-pressed={on} onClick={() => toggleCc(a.slug)} className="chip"
-                        style={{ cursor: 'pointer', ...(on ? { color: 'var(--primary-strong)', borderColor: 'var(--primary)', fontWeight: 700 } : { color: 'var(--fg-3)' }) }}>
-                        {a.name}
+                      /* 칩 자체 잠금 — .chip은 nowrap이라 초장문 이름의 min-content가 수축 불가.
+                         하중은 내부 span(minWidth 0 + ellipsis, DropUp 트리거 라벨과 같은 문법 — flex
+                         컨테이너인 버튼에는 text-overflow가 직접 안 걸린다)이고, 버튼 maxWidth 100%
+                         (행 폭은 잠긴 트랙이라 확정 길이)는 이중 방어다(분리 검수 실측 — 단독 롤백 무영향).
+                         nowrap은 .chip 상속에 맡기지 않고 span에 명시, title로 잘린 원문 확인 제공. */
+                      <button key={a.slug} type="button" aria-pressed={on} onClick={() => toggleCc(a.slug)} className="chip" title={a.name}
+                        style={{ cursor: 'pointer', maxWidth: '100%', minWidth: 0, ...(on ? { color: 'var(--primary-strong)', borderColor: 'var(--primary)', fontWeight: 700 } : { color: 'var(--fg-3)' }) }}>
+                        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
                       </button>
                     );
                   })}
