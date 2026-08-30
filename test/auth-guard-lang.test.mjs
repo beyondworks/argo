@@ -157,3 +157,30 @@ test('배선 — 가드 ko 문구의 사전 밖 재등장 금지 (error: 리터�
     assert.equal(m, null, `${f}: 가드 문구 하드코딩 재등장 — authError로 합류할 것: ${m?.[0] ?? ''}`);
   }
 });
+
+// tenantDenied 호출부의 언어 전달 강제 — cloud-export가 tenantDenied(user)로 호출해 tenant_only
+// 403이 표시 언어 무관 영구 한국어였다(#346 분리 검수 적발 — #333부터 3개 PR 검수를 살아남은 갭:
+// 위의 authError 스캔은 tenantDenied 호출부를 보지 않는다). 허용 전달로 2형태는 전부 요청에서
+// 읽은 값이다 — 정당한 형태가 늘면 여기 추가한다(기본 거부 = fail-closed).
+// 스니펫 정규식 근사: 첫 인자가 괄호 낀 복잡식이면 오도성 red(fail-closed 방향)지만 현행 8곳
+// 전부 단순 식별자라 비저촉. 주석 속 호출 텍스트도 red 방향(현행 0건 grep 확인).
+test('배선 — tenantDenied 호출부는 언어 인자를 요청에서 읽은 값으로 전달한다', async () => {
+  const appDir = fileURLToPath(new URL('../app/', import.meta.url));
+  const entries = await readdir(appDir, { recursive: true, withFileTypes: true });
+  const files = entries.filter((e) => e.isFile() && /\.(mjs|js|jsx)$/.test(e.name))
+    .map((e) => join(e.parentPath, e.name));
+  files.push(fileURLToPath(new URL('../middleware.js', import.meta.url)));
+  const OK = /^tenantDenied\s*\(\s*[\w$.]+\s*,\s*(?:lang|await requestLang\(\))\s*\)/;
+  let calls = 0;
+  for (const f of files) {
+    const src = await readFile(f, 'utf8');
+    for (const m of src.matchAll(/\btenantDenied\s*\(/g)) {
+      if (src.slice(0, m.index).endsWith('function ')) continue; // authmsg.mjs 정의부 자신
+      calls++;
+      assert.match(src.slice(m.index, m.index + 120), OK,
+        `${f}: tenantDenied 언어 인자 위반 — 미전달·상수화는 tenant_only 403이 그 자리만 영구 단일 언어. 허용: lang | await requestLang()`);
+    }
+  }
+  // 빈 수집 = 무효 게이트(#338 교훈). 하한은 현행 호출 수 그대로 — 정당한 감소면 함께 내린다.
+  assert.ok(calls >= 8, `tenantDenied 호출 수집이 너무 적다(${calls}건 < 8) — 수집기 무효화 의심`);
+});
