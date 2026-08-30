@@ -9,6 +9,7 @@ var DEMO = /[?&]demo\b/.test(location.search); // 시각 QA용 — 리다이렉�
 // 앱(쉘) 버전 — lib.rs boot 이벤트가 실어 준다. 있으면 "같은 버전의 Argo"에만 이동한다.
 // (버전 불문 이동은 v0.1.20 앱이 상주 v0.1.22 서버 화면을 띄우는 어긋남을 만들었다 — 2026-07-22 신고)
 var APP_VER = null;
+var FIXED_TARGET = null; // 셸이 확정한 자기 서버 — 프로브 상한을 후보(1.5s)보다 넉넉히(8s)
 
 var statusEl = document.getElementById('status');
 var fillEl = document.getElementById('fill');
@@ -59,12 +60,13 @@ try {
     window.__TAURI__.event.listen('boot', function (e) {
       var p = e.payload || {};
       if (p.version) APP_VER = p.version; // 이후 프로브는 같은 버전의 Argo에만 이동
-      // 셸이 확정한 서버 포트 — 맨 앞으로 올리되 **후보를 버리지 않는다**(윈도 실기기 2026-08-30:
-      // 3001 선점 시 단일 교체+무응답 프로브 조합이 부트 화면 영구 대기를 만들었다). 다른 버전의
-      // 상주로 새는 레이스는 아래 버전 게이트(APP_VER 일치)가 막는다 — 단일 고정과 중복 방어였다.
+      // 셸이 확정한 서버 포트 — 그 포트로 고정(단일 교체, 원 설계 유지). 분리 검수 절제 실험
+      // (2026-08-30): 영구 대기의 원인은 단일 교체가 아니라 **무타임아웃 프로브** 하나였고,
+      // 앞 배치는 중복 프로브(+1.5s)와 같은 버전 상주로 새는 경로만 만들었다. 확정 포트는
+      // 자기 서버라 기동 지연이 정상일 수 있어 프로브 상한을 넉넉히 준다(아래 FIXED 분기).
       if (p.port) {
-        var fixed = 'http://localhost:' + p.port;
-        TARGETS = [fixed].concat(TARGETS.filter(function (t) { return t !== fixed; }));
+        FIXED_TARGET = 'http://localhost:' + p.port;
+        TARGETS = [FIXED_TARGET];
       }
       if (p.phase && p.phase !== 'error') errEl.hidden = true; // 폴백 재스폰으로 살아나면 이전 에러 배너 제거(2R H5)
       if (p.phase === 'error') {
@@ -109,10 +111,13 @@ function probe(i) {
   var target = TARGETS[i];
   // 신원 확인 후에만 이동 — 기존 no-cors '/login' 프로브는 어떤 서버가 응답해도 성공 처리돼
   // 포트를 선점한 타 앱으로 이동했다(실사용 "Cannot GET /"). /api/ping은 CORS 개방이라 본문 판독 가능.
-  // 프로브당 상한 1.5s — 연결만 받고 응답을 끄는 선점 프로세스에서 fetch가 무기한 매달리면
-  // 다음 후보(폴백 스폰 3011)로 영영 못 넘어간다(윈도 실기기 2026-08-30: 2분간 3011 시도 0건).
+  // 프로브당 상한 — 연결만 받고 응답을 끄는 선점 프로세스에서 fetch가 무기한 매달리면
+  // 다음 후보(폴백 스폰 3011)로 영영 못 넘어간다(윈도 실기기 2026-08-30: 검수 재현에서 425s+
+  // 회복 없음 = 영구). 단 **자기 서버(확정 포트)는 기동 중 지속 지연이 정상**일 수 있어(느린
+  // 기기+AV+이벤트 루프 점유 — 검수 실측: 일괄 1.5s는 ping 3s 서버에 영구 미부착 회귀) 8s.
+  var limitMs = FIXED_TARGET && target === FIXED_TARGET ? 8000 : 1500;
   var ac = typeof AbortController === 'function' ? new AbortController() : null;
-  var timer = ac ? setTimeout(function () { ac.abort(); }, 1500) : null;
+  var timer = ac ? setTimeout(function () { ac.abort(); }, limitMs) : null;
   fetch(target + '/api/ping', ac ? { cache: 'no-store', signal: ac.signal } : { cache: 'no-store' })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
