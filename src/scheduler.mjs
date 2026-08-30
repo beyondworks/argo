@@ -109,6 +109,28 @@ async function claimRoutine(wsId, routineId, now) {
 // 안의 겹침은 여기서 막고, 기기 간은 리스(isCloudLeader)가 담당한다.
 const consolidating = new Set();
 const mailDelivering = new Set(); // 회사별 우편 배달 in-flight — 틱 겹침 시 이중 진입 차단(HIGH-4)
+const routineRunning = new Set(); // `${wsId}/${routineId}` — 같은 루틴의 실행 겹침 차단(검수 LOW-5)
+
+/** due 루틴 실행 — fire-and-forget(LLM 턴을 틱에서 기다리지 않는다). 같은 루틴이 아직 실행 중이면
+    (완료 조건 재시도 포함 수 분) 이번 틱은 **선점 없이** 스킵한다 — claimRoutine의 lastRun 선점은
+    슬롯 단위라 인접 시각(times:['09:00','09:05'])에서 09:00 실행이 끝나기 전 09:05 슬롯이 due가
+    되면 겹쳐 돌 수 있었다(검수 LOW-5 결정적 확인). 스킵된 슬롯은 소비되지 않았으므로 실행이 끝난
+    다음 틱이 catch-up(4h 상한)으로 자연 회수한다. 가드는 루틴별 — 다른 루틴의 동시 실행은 막지
+    않는다. (export: 회귀 테스트용 — 틱 콜백은 단위로 태울 수 없다. runFn 주입=테스트 전용) */
+export async function runDueRoutines(wsId, now, { runFn = runRoutine } = {}) {
+  for (const r of await loadRoutines(wsId)) {
+    if (!isDue(r, now)) continue;
+    const key = `${wsId}/${r.id}`;
+    if (routineRunning.has(key)) continue;
+    // 실행 직전 lastRun을 원자적으로 선점 — 실패(이미 이 주기에 실행됨)면 스킵해 이중 실행을 막는다
+    if (!(await claimRoutine(wsId, r.id, now))) continue;
+    console.log(`[argo] 루틴 실행: ${wsId}/${r.title}`);
+    routineRunning.add(key);
+    runFn(wsId, r.id)
+      .catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message))
+      .finally(() => routineRunning.delete(key));
+  }
+}
 
 export function ensureScheduler() {
   if (globalThis.__argoScheduler) return;
@@ -134,15 +156,7 @@ export function ensureScheduler() {
         // 회사별 오류 격리 — loadRoutines는 손상 routines.json에 의도적으로 throw한다. 틱 단위
         // catch뿐이면 회사 하나의 손상이 뒤 회사 전부의 루틴·우편·정리를 매분 굶긴다(검수 MEDIUM-1).
         try {
-          if (cloudLeader) {
-            for (const r of await loadRoutines(cid)) {
-              if (!isDue(r, now)) continue;
-              // 실행 직전 lastRun을 원자적으로 선점 — 실패(이미 이 주기에 실행됨)면 스킵해 이중 실행을 막는다
-              if (!(await claimRoutine(cid, r.id, now))) continue;
-              console.log(`[argo] 루틴 실행: ${cid}/${r.title}`);
-              runRoutine(cid, r.id).catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message));
-            }
-          }
+          if (cloudLeader) await runDueRoutines(cid, now);
           // 크루 우편 배달 — 비동기 쪽지(send_to_crew)를 수신 크루의 새 턴으로. 회사당 틱 상한은
           // crewmail이 강제. **await 금지**(분리 검수 HIGH-4): LLM 턴을 틱에서 기다리면 다른 회사의
           // 루틴·기억 정리가 밀리고 틱이 겹쳐 이중 배달 조건이 된다 — 루틴과 같은 fire-and-forget +
