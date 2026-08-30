@@ -370,7 +370,9 @@ export async function runRoutine(wsId, id, { chatFn = null } = {}) {
       }
     }
     const summary = t.reply.replace(/\s+/g, ' ').slice(0, 160);
-    // 1회 예약은 성공 후 스스로 꺼진다 — 다음 날 같은 시각에 되살아나지 않게(실패 시엔 켜둬 당일 재시도 허용)
+    // 1회 예약은 실행 후 스스로 꺼진다 — 다음 날 같은 시각에 되살아나지 않게. 실패 시에도 catch가
+    // 동일하게 끈다(아래) — 당일 자동 재시도는 없다: 시작 시 lastRun을 각인하므로 isDue가 같은
+    // 슬롯을 다시 due로 만들지 않는다(검수 LOW-3 실측 — 옛 주석 "켜둬 당일 재시도 허용"은 거짓이었다).
     const patch = { lastOk: true, lastResult: summary, ...(r0.schedule?.type === 'once' ? { enabled: false } : {}) };
     let stop = null; // { reason, detail }
     if (loop) {
@@ -406,7 +408,11 @@ export async function runRoutine(wsId, id, { chatFn = null } = {}) {
     return { ok: true, reply: t.reply, handover: t.handover, ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
   } catch (e) {
     const msg = String(e.message || e).slice(0, 160);
-    const r = await patchRoutine(wsId, id, { lastOk: false, lastResult: msg });
+    // 1회 예약은 실패해도 끈다 — 같은 슬롯은 lastRun 각인으로 어차피 재발화하지 않아, 켜둔 채
+    // 두면 목록에 영영 '가동'으로 남는 좀비가 된다(검수 LOW-3). 실패는 lastOk:false + 알림으로
+    // 드러나고, 재실행은 사용자가 목록의 '실행'으로 한다. 타입은 디스크 현재값(cur)으로 판정 —
+    // 실행 중 편집으로 타입이 바뀐 루틴을 r0 스냅샷 기준으로 잘못 끄지 않는다.
+    const r = await patchRoutine(wsId, id, (cur) => ({ lastOk: false, lastResult: msg, ...(cur.schedule?.type === 'once' ? { enabled: false } : {}) }));
     emitNotify({ type: 'routine', wsId, routine: r ?? r0, ok: false, reply: msg });
     throw e;
   }
