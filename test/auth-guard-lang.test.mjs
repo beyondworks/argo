@@ -166,15 +166,35 @@ test('배선 — app/·middleware의 authError 호출부 전 형태 강제(코�
     // B1 실증. destructure 기본값(`, lang = 'ko' }`)은 전부 중간 위치라 행 시작 앵커로 비저촉.
     const reassign = src.match(/^\s*lang\s*=\s*['"`]/m);
     assert.equal(reassign, null, `${f}: lang 재대입이 문자열 상수 ${reassign?.[0]?.trim() ?? ''}`);
+    // 행 중간·논리 대입도 같은 클래스(#342 잔존 LOW ②) — `if (c) lang = 'ko'`(`)`·`;`·else 뒤)와
+    // `lang ||= 'ko'` 류. 이 세 접두·논리 연산자는 destructure 기본값·매개변수 기본값·JSX 속성
+    // 자리에 구문상 올 수 없어, 행 시작 앵커가 피해 간 keys/route.js 본문 destructure 오탐을
+    // 다시 열지 않는다(스캔 표면 전수 grep 0건 확인). 잔여: 한 줄 블록 `{ lang = 'ko'; }`·콤마
+    // 표현식은 `{`·`,` 접두가 destructure와 겹쳐 파서 없인 못 가른다 — 블록이 여러 줄로 풀리면
+    // 행 시작 앵커가 잡으므로, 압축 한 줄 표기만 남는 문서화된 한계다.
+    const reassignMid = src.match(
+      /[);]\s*lang\s*=\s*['"`]|\belse\s+lang\s*=\s*['"`]|\blang\s*(?:\|\||&&|\?\?)=\s*['"`]/);
+    assert.equal(reassignMid, null, `${f}: lang 재대입이 문자열 상수(행 중간·논리 대입) ${reassignMid?.[0]?.trim() ?? ''}`);
     // 전달로 실존(양성 검사) — bare `lang` 호출 파일은 요청 판독 바인딩이 실제로 있어야 한다.
     // 분리 검수 B2 실증: guardCompany(wsId, lang = 'ko')로 기본값을 심고 requestLang 바인딩을
     // 지우면 위 음성 검사들이 전부 green이었다(guardCompany 소비자 20여 곳이 인자 1개라 네 갈래
     // 전부 영구 한국어). 허용 유입원이 늘면 여기 대안을 추가한다(기본 거부 = fail-closed).
+    // #342 잔존 LOW ① 봉합: 주석 제거본 위에서, 바인딩 이름까지 `lang`으로 요구한다 — 옛 줄
+    // 주석 처리(`// const lang = await requestLang()`)나 별명 바인딩(`const langSrc = …`, 호출의
+    // lang과 무관)이 텍스트 실존을 충족하던 구멍(변이 실증). 스트리퍼는 근사(문자열 속 //·/*는
+    // 과제거 가능)지만 이 용도에선 과제거 = 양성 상실 = red라 fail-closed —
+    // no-hardcoded-runner-label.test.mjs의 stripComments와 같은 구현이다.
+    // tenantDenied 갈래(LOW ③): 재포맷 개행·첫 매개변수 개명·매개변수 추가는 관용(\s*·[\w$]+·
+    // [,)])하되, `lang\s*[,)]`가 기본값 유입(`lang = 'ko'`)은 계속 막는다(B2의 tenantDenied판 —
+    // 종전 정확 텍스트가 우연히 막던 하중을 명시 유지). lang 개명은 의도적으로 red(허용 목록 고정).
     // 한계(파일 단위 판정): 같은 파일의 다른 함수가 lang을 딴 데서 받는 구성은 함수 스코프까지
     // 못 가른다 — 소스 배선 검사의 공통 한계로 문서화(destructure 상수 유입도 동일).
     if (sawBareLang) {
-      assert.ok(/=\s*await requestLang\(\)/.test(src) || /function tenantDenied\(user, lang\)/.test(src),
-        `${f}: bare lang 호출인데 전달로 바인딩(= await requestLang() 또는 tenantDenied 매개변수) 부재`);
+      const noComments = src.replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n').map((l) => { const i = l.indexOf('//'); return i === -1 ? l : l.slice(0, i); }).join('\n');
+      assert.ok(/\blang\s*=\s*await requestLang\(\)/.test(noComments)
+        || /function tenantDenied\s*\(\s*[\w$]+\s*,\s*lang\s*[,)]/.test(noComments),
+        `${f}: bare lang 호출인데 전달로 바인딩(lang = await requestLang() 또는 tenantDenied의 기본값 없는 lang 매개변수) 부재`);
     }
   }
   // guardCompany의 네 갈래가 전부 배선돼 있어야 한다 — 하나라도 빠지면 그 갈래는 미번역 잔존
