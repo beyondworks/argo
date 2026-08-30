@@ -129,6 +129,7 @@ const WS_CONTROL_FILES = new Set([
   'connections.json',  // 러너 연결·자격(secretbox 시크릿)
   'company.json',      // 회사 정본 — ownerId(소유권)·lang
   'routines.json',     // 예약 실행 — 미래의 턴을 임의 지시로 채울 수 있다
+  'corrections.json',  // 교정 후보 대장 — 크루가 심으면 "사장이 반복 지적했다"는 거짓 출처의 규칙 제안이 뜬다(검수 M5)
   'approvals.json',    // 결재 정본 — 위조되면 승인 모델 자체가 무너진다
   'gw-cursor-slack.json', // 게이트웨이 커서 — 조작하면 메시지 재처리·건너뛰기(gateway.mjs)
 ]);

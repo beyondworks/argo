@@ -732,6 +732,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     try {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
+      setTimeout(loadSuggestions, 4000); // 교정 감지는 응답 뒤 백그라운드로 돈다 — 잠시 후 제안을 당겨온다(검수 M2: 마운트 1회뿐이라 그 턴에 칩이 안 떴다)
       setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts }]);
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
