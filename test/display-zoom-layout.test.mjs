@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dispZoom, clampPaneW, PANE_W_MIN, zoomedEvPos } from '../app/c/[ws]/zoom-math.mjs';
+import { dispZoom, clampPaneW, PANE_W_MIN, zoomedEvPos, dropUpClamp } from '../app/c/[ws]/zoom-math.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const V = 900; // 뷰포트 높이(px) — #334 실측 환경(사이드바 rect 1125 vs 뷰포트 900)과 동일
@@ -190,4 +190,59 @@ test('vault 트리 리사이저 배선 — 커서 x를 dispZoom()으로 나눠 C
   assert.match(vaultPage, /import\s*\{[^}]*\bdispZoom\b[^}]*\}\s*from\s*['"]\.\.\/zoom-math\.mjs['"]/);
   assert.match(vaultPage, /e\.clientX[^\n]*\/\s*dispZoom\(\)/,
     '트리 폭 드래그의 배율 나눗셈 제거 변이는 여기서 잡는다 — dispZoom 자체 무력화는 ②가 잡는다');
+});
+
+/* ── ④ DropUp 열림 패널 좌우 클램프 (#357 검증 실측 이관 — 선재 결함) ──────────
+   패널(트리거 래퍼 기준 absolute)은 폭이 아래로 minWidth(≥190), 위로 무상한(라벨 nowrap
+   max-content — #357 검수 실측 404 CSS px)이라 좁은 열·우측 끝 트리거에서 트리거 왼쪽 끝부터
+   뻗어 뷰포트를 뚫었다(실측 en·1280 창 배율 2: 패널 right 1415 > clientWidth 1264 → 문서 sw 1415).
+   시프트가 패널 **실측** offsetWidth 기준이라 max-content 성장분까지 회수되고, 폭 상한(maxW)도
+   같은 계산부가 clientWidth로 낸다(100vw 근사는 스크롤바 폭만큼 새는 것을 라이브 실측 1280 vs
+   cw 1264로 확인 — CSS 상한 대신 JS 상한).
+   계산부(dropUpClamp)는 ② 방식의 실호출로, ui.jsx의 배선·적용은 ③ 방식의 소스 핀으로 잠근다.
+   실동작(소비자 9곳의 열림 상태)은 해당 PR의 라이브 측정이 담당. */
+
+test('dropUpClamp — 배율 2·1280 창의 실측 우측 넘침(right 1415)을 안쪽 시프트로 회수한다', (t) => {
+  const fake = (zoom) => { globalThis.document = { documentElement: { style: { zoom } } }; };
+  t.after(() => { delete globalThis.document; });
+  fake('2');
+  // 트리거 left 1035(뷰포트 px) + 패널 190 CSS px × 2 = right 1415 > 1264 − 여백 16 → dx = −167 뷰포트 px.
+  // 반환은 CSS px(÷2) — 나눗셈 제거 변이(뷰포트 px 그대로 반환)는 여기서 red. maxW = (1264−32)/2.
+  assert.deepEqual(dropUpClamp({ left: 1035, right: 1247 }, 1264, 190), { shift: Math.round(-167 / 2), maxW: 616 });
+  // 같은 배율에서 넘침이 없으면 0 — 일반 폭의 소비자 9곳은 종전 위치 그대로여야 한다.
+  assert.equal(dropUpClamp({ left: 200, right: 412 }, 1264, 190).shift, 0);
+  // 라벨 max-content 성장(자연 폭 700 CSS)이 상한(616)으로 잘리고, 잘린 유효 폭 기준으로
+  // 왼쪽 여백(8 CSS = 16 뷰포트 px)까지 민다 — 라이브 실측 red(sw 1280>1264)를 잡은 케이스.
+  assert.deepEqual(dropUpClamp({ left: 988, right: 1200 }, 1264, 700), { shift: -486, maxW: 616 });
+});
+
+test('dropUpClamp — 배율 1(미설정) 항등·우측 앵커·좌우 동시 넘침(왼쪽 우선)', (t) => {
+  const fake = (zoom) => { globalThis.document = { documentElement: { style: { zoom } } }; };
+  t.after(() => { delete globalThis.document; });
+  fake('');
+  assert.equal(dropUpClamp({ left: 100, right: 320 }, 1264, 190).shift, 0, '배율 1 무넘침 = 0(종전 불변)');
+  assert.equal(dropUpClamp({ left: 1100, right: 1250 }, 1264, 190).shift, -34, '우측 넘침 1290 → 1256으로 회수');
+  assert.equal(dropUpClamp({ left: 10, right: 150 }, 1264, 190, true).shift, 48, '우측 앵커의 왼쪽 뚫림(−40)을 여백 8까지 밀어낸다');
+  // 뷰포트(180) < 패널(190): 상한 164로 잘리고 왼쪽 여백 8에 정렬 — 여백 제거 변이는 shift 0이 되어 red.
+  assert.deepEqual(dropUpClamp({ left: 0, right: 100 }, 180, 190), { shift: 8, maxW: 164 });
+});
+
+test('DropUp 배선 — 래퍼 rect·문서 clientWidth·패널 offsetWidth가 dropUpClamp로 들어간다', () => {
+  const ui = stripComments(readFileSync(join(ROOT, 'app/ui.jsx'), 'utf8'));
+  assert.match(ui, /import\s*\{[^}]*\bdropUpClamp\b[^}]*\}\s*from\s*['"]\.\/c\/\[ws\]\/zoom-math\.mjs['"]/);
+  assert.match(ui, /setClamp\(dropUpClamp\(boxRef\.current\.getBoundingClientRect\(\),\s*document\.documentElement\.clientWidth,\s*panelRef\.current\.offsetWidth,\s*align === 'right'\)\)/,
+    '열림 시점 실측 → 클램프 계산 배선 — 수학 자체는 위 실호출 테스트가 잠근다');
+});
+
+test('DropUp 적용 — 패널(listbox) ref·앵커쪽 시프트·min·max 동시 클램프가 걸려 있다', () => {
+  const ui = stripComments(readFileSync(join(ROOT, 'app/ui.jsx'), 'utf8'));
+  assert.match(ui, /<div ref=\{panelRef\} className="card card-float" role="listbox"/,
+    '실측 ref는 listbox 패널 그 자체여야 한다(등록 앵커 = 발행처 교훈 — 래퍼로 옮기면 실폭이 아니다)');
+  assert.match(ui, /\[align === 'right' \? 'right' : 'left'\]: align === 'right' \? -clamp\.shift : clamp\.shift/,
+    '시프트가 앵커 쪽 오프셋으로 적용 — 오프셋 0 고정 복원 변이는 여기서 red');
+  // min > max면 min이 이겨 클램프 무효(#350 회의실 교훈) — 실측 후엔 min도 maxW 아래로 동시 캡.
+  assert.match(ui, /minWidth: clamp\.maxW \? Math\.min\(Math\.max\(width, 190\), clamp\.maxW\) : Math\.max\(width, 190\)/,
+    '극단 협폭 바닥 — minWidth 단독 복원(고정 190) 변이는 여기서 red');
+  assert.match(ui, /maxWidth: clamp\.maxW \|\| undefined/,
+    '실측 전(0)엔 자연 폭 측정을 위해 상한 미적용, 실측 후 뷰포트 상한');
 });
