@@ -499,12 +499,17 @@ export function DropUp({ value, placeholder = '—', groups, onChange, disabled,
   }, [open]);
   const cur = groups.flatMap((g) => g.items).find((i) => i.value === value);
   return (
-    <div ref={boxRef} style={{ position: 'relative', display: 'inline-flex' }}>
+    /* 래퍼 maxWidth 100% + minWidth 0, 트리거 maxWidth min(width,100%) — flex 아이템의 자동
+       최소치(내용 min-content)는 max-width로만 캡된다. 좁은 유효 폭(표시 배율 2)에서 라벨
+       min-content(실측 148 CSS px)가 행을 뚫고 문서 가로 넘침을 만들던 결함의 잠금(경쟁 시안
+       실측 1283>1264 → 1264=1264). 일반 폭에서는 min()이 기존 고정 width와 동일해 불변 —
+       소비자 9곳(경쟁 4·쪽지 1·루틴 4) 전부 컨테이너가 width보다 넓은 일반 플로우다. */
+    <div ref={boxRef} style={{ position: 'relative', display: 'inline-flex', maxWidth: '100%', minWidth: 0 }}>
       <button type="button" disabled={disabled} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open}
         onClick={() => { setBelow((boxRef.current?.getBoundingClientRect()?.top ?? Infinity) < 320); setOpen((v) => !v); }}
         style={{ height, padding: '0 9px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8,
           fontSize: 12, color: cur ? 'var(--fg)' : 'var(--fg-3)', cursor: disabled ? 'not-allowed' : 'pointer',
-          display: 'inline-flex', alignItems: 'center', gap: 7, maxWidth: width, opacity: disabled ? 0.55 : 1 }}>
+          display: 'inline-flex', alignItems: 'center', gap: 7, maxWidth: `min(${width}px, 100%)`, opacity: disabled ? 0.55 : 1 }}>
         <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cur?.label ?? placeholder}</span>
         <span aria-hidden style={{ fontSize: 8, color: 'var(--fg-3)', flex: 'none' }}>▴</span>
       </button>

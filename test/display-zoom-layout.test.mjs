@@ -177,6 +177,61 @@ test('상단바 배율 반응형 배선 — narrowBar 판정이 시계·버전 �
   assert.match(layout, /className="search-pill" style=\{narrowBar \? \{ flex: 1, width: 'auto' \} : undefined\}/,
     'narrowBar일 때 pill이 flex:1로 전환');
 });
+/* ── 인접 핀: 경쟁 시안(compete) 좁은 유효 폭 가로 넘침(회의실 동종 선재 결함) ─────────
+   배율 2(실측 1424px 창 = 유효 712 CSS px)에서 compete 본문 열이 부풀어 문서 가로 스크롤을
+   만들었다(실측 scrollWidth 1428 > clientWidth 1408 — 회의실 검수에서 발견). 뿌리는 회의실과
+   동일: 무템플릿 grid의 암묵 auto 열 트랙은 자식 min-content(컴포저 textarea 고유폭·nowrap
+   상태 칩)만큼 자라고, 아이템의 minWidth:0은 바깥 트랙만 지킬 뿐 자기 내부 트랙은 못 지킨다.
+   소스 수준 잠금 — 실동작 검증은 해당 PR의 라이브 측정(1424·1280 창 × 배율 2 × 상태·언어별)이
+   담당. 수집기 한계(정직 표기): 이 정규식은 값에 중괄호가 든 인라인 스타일(템플릿 리터럴 열
+   선언·스프레드 다행 스타일)은 못 본다 — compete의 시안 나열 grid(repeat 템플릿 리터럴)와
+   시안 카드(스프레드)가 그 둘이고, 둘 다 minmax(0,…) 관용구를 이미 지닌다(수 고정이 감시). */
+test('compete grid 열 잠금 sweep — 인라인 display:grid는 minmax(0,…) 열 또는 고정 폭이어야 한다', () => {
+  const src = sources.get('app/c/[ws]/compete/page.jsx');
+  const grids = [...src.matchAll(/style=\{\{([^}]*display:\s*'grid'[^}]*)\}\}/g)];
+  assert.ok(grids.length >= 7, `grid 인라인 ${grids.length}곳(현재 7) — 수집 정규식이 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
+  for (const g of grids) {
+    // 존재 검사가 아니라 값 검사 — 'gridTemplateColumns: 1fr'은 minmax(auto,1fr)이라 min 트랙이
+    // auto로 되살아나 무템플릿과 완전 동일하게 부푼다(회의실 검수 변이·브라우저 실측).
+    const cols = g[1].match(/gridTemplateColumns:\s*'([^']*)'/);
+    assert.ok((cols && cols[1].includes('minmax(0,')) || /\bwidth:\s*\d/.test(g[1]),
+      `compete:${lineOf(src, g.index)} — 암묵/auto-min 열 grid: gridTemplateColumns에 minmax(0,…)를 포함하거나(고정 px와 혼용 가능) 고정 width가 필요하다(자식 min-content로 트랙이 부풀어 배율 2에서 문서 가로 넘침)`);
+  }
+});
+
+test('compete 헤더·카드 축소 규칙 핀 — wrap·ellipsis·overflowWrap 복원 변이는 red', () => {
+  const src = sources.get('app/c/[ws]/compete/page.jsx');
+  // 헤더 앵커는 compete.header 구간 자체 — 낱개 프로퍼티 앵커는 동형 형제(컴포저 픽커 행 등
+  // flexWrap 행 2곳)가 대신 만족시켜 결함 부활 변이에 초록이 된다(회의실 검수 변이 실측과 동족).
+  // 라벨은 한 줄 ellipsis(단어별 세로 쌓임 방지), 상태 칩(nowrap)은 wrap으로 아랫줄에.
+  assert.match(src,
+    /<div style=\{\{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 \}\}>\s*<span className="microlabel" style=\{\{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' \}\}>\{t\('compete\.header'\)\}/,
+    '경쟁 헤더 wrap 행 + microlabel ellipsis 구간 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
+  // 카드 overflowWrap anywhere — 긴 무공백 토큰(URL·코드 조각)의 카드 내부 가로 스크롤 보정.
+  // 넘침은 카드(overflowY:auto)가 가두지만 보정이 조용히 사라지는 것을 막는다. 앵커는 표현식 전체.
+  assert.match(src, /className="card" style=\{\{ padding: '16px 18px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' \}\}/,
+    '경쟁 본문 카드 overflowWrap anywhere 제거 변이');
+  // 하단 바(열람 중) — 버튼(.btn 전역 nowrap)이 유일한 비축소 요소라 바 wrap + 버튼 줄바꿈·세로
+  // 자람 세트가 없으면 en·1280 창 × 배율 2에서 문서 가로 넘침(실측 1335>1264 → 1264=1264).
+  assert.match(src, /className="card" style=\{\{ padding: '10px 14px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10/,
+    '경쟁 하단 바 wrap 제거 변이');
+  assert.match(src, /className="btn btn-primary sm" style=\{\{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' \}\} onClick=\{\(\) => openComp\(null\)\}/,
+    '새 경쟁 버튼 축소 세트 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
+});
+
+test('compete 픽커 그룹·DropUp 축소 규칙 핀 — flex 자동 최소치 바닥 복원 변이는 red', () => {
+  // 열 잠금만으로는 안 닫히는 잔여 결함(실측 1280 창 × 배율 2: 1283>1264): flex 아이템의 자동
+  // 최소치(내용 min-content)는 min-width:0 또는 max-width로만 캡되고, 바닥이 있는 모든 층
+  // (픽커 그룹 → DropUp 래퍼 → 트리거 버튼)에 각각 잠금이 필요하다(트랙 잠금 교훈의 flex판).
+  const compete = sources.get('app/c/[ws]/compete/page.jsx');
+  const groups = compete.match(/display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', minWidth: 0/g) ?? [];
+  assert.equal(groups.length, 2, '픽커 그룹(크루·모델) minWidth:0 — 하나라도 빠지면 그 그룹의 DropUp 바닥이 문서 넘침으로 되살아난다');
+  const ui = sources.get('app/ui.jsx');
+  assert.match(ui, /<div ref=\{boxRef\} style=\{\{ position: 'relative', display: 'inline-flex', maxWidth: '100%', minWidth: 0 \}\}>/,
+    'DropUp 래퍼 클램프 제거 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
+  assert.match(ui, /maxWidth: `min\(\$\{width\}px, 100%\)`/,
+    'DropUp 트리거 고정 maxWidth 복원 변이 — 100% 캡이 빠지면 라벨 min-content가 컨테이너를 뚫는다');
+});
 
 /* ── ② zoom-math 행동 (graph2d evPos · 리사이저 폭) ─────────────────── */
 
