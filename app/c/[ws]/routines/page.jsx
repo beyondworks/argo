@@ -402,7 +402,8 @@ export default function Routines({ params }) {
                         interval(루프)과는 상호 배타라 LoopStatus 자리와 겹치지 않는다. */}
                     {r.verify?.files?.length > 0 && (
                       <div style={{ marginTop: 4, fontFamily: 'var(--font)' }}>
-                        <span className="chip" title={t('routines.verify.hint')} style={{ fontSize: 10, height: 18, padding: '0 6px', gap: 4 }}>
+                        {/* textTransform none — .chip 기본 대문자가 영어 문구를 +50%대로 키워 190px 컬럼을 밀어냈다(검수 MEDIUM-3 실측) */}
+                        <span className="chip" title={t('routines.verify.hint')} style={{ fontSize: 10, height: 18, padding: '0 6px', gap: 4, textTransform: 'none' }}>
                           <Icon name="check" size={10} /> {t('routines.verify.badge', { n: r.verify.files.length, r: r.verify.retries ?? 2 })}
                         </span>
                       </div>
