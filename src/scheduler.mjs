@@ -2,6 +2,7 @@
 // (nodejs 런타임 라우트에서만 로드되므로 node: 임포트가 안전하다. P1에서 워커로 분리)
 import { listCompanyIds } from './hub.mjs';
 import { loadRoutines, runRoutine, isDue } from './routines.mjs';
+import { CATCHUP_MS } from './routine-time.mjs';
 import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
 import { emitNotify } from './notify.mjs';
 import { chat } from './chat.mjs';
@@ -114,7 +115,7 @@ const mailDelivering = new Set(); // 회사별 우편 배달 in-flight — 틱 �
 // 안 끝나는 실행이 가드를 영구 점유하면 그 루틴이 '가동' 표시인 채 다시는 발화하지 않는다(검수
 // MEDIUM-2 — LOW-3이 없앤 좀비의 재림). 상한을 넘긴 항목은 stale로 무시해 자가 치유한다 —
 // 그 시점의 겹침 위험은 가드 이전 동작과 같다(무방비가 아니라 원상 복귀).
-const ROUTINE_STALE_MS = 4 * 60 * 60 * 1000; // isDue의 CATCHUP_MS와 같은 값 — 이보다 오래 걸린 실행은 어차피 인접 슬롯이 유실된다
+const ROUTINE_STALE_MS = CATCHUP_MS; // isDue의 catch-up 상한과 동일 — 이보다 오래 걸린 실행은 어차피 인접 슬롯이 유실된다(#364 검수: 선언을 임포트로 사실화)
 const routineRunning = new Map();
 
 /** due 루틴 실행 — fire-and-forget(LLM 턴을 틱에서 기다리지 않는다). 같은 루틴이 아직 실행 중이면

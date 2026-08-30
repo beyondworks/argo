@@ -62,9 +62,16 @@ export function onceSpent(schedule, now = new Date()) {
 
     창 판정은 onceSpent를 now−CATCHUP_MS에 적용한다 — 슬롯 경과 직후(창 안)는 만료가 아니다:
     앱이 이제 막 켜졌다면 다음 틱이 catch-up으로 발화한다(그때 '만료'라 하면 거짓 표시고, 삭제를
-    유도하면 산 예약을 잃는다). DST 날은 실시간 4h와 벽시계 4h가 ±1h 어긋날 수 있으나 표시 경계
-    드리프트일 뿐이다. lastRun이 슬롯 이후면(발화·선점 기록) 만료가 아니라 '실행됨'이다 —
-    슬롯 이전 lastRun(미리 시험 실행)만으로는 슬롯이 소비되지 않았다(#354 MEDIUM-1과 같은 판정). */
+    유도하면 산 예약을 잃는다). lastRun이 슬롯 이후면(발화·선점 기록) 만료가 아니라 '실행됨'이다 —
+    슬롯 이전 lastRun(미리 시험 실행)만으로는 슬롯이 소비되지 않았다(#354 MEDIUM-1과 같은 판정).
+
+    알려진 한계(#364 검수 실측 — routine-once-expired 테스트의 DST 실행 문서 핀): DST **되돌림
+    날**의 반복 시각대에 걸린 once는, isDue의 문서화된 되돌림 결함(routines.mjs isDue 주석 —
+    벽시계 역산으로 창이 실질 연장)과 벽시계 기준인 이 판정이 어긋나, 되돌림 뒤 ~30분대 구간
+    (실측 NY 2026-11-01, 총 ~30분 두 갈래)에서 **아직 발화 가능한 루틴이 '만료'로 표시**되고
+    툴팁이 삭제를 권한다. 표시 전용이라 산 예약이 실제로 취소되진 않는다(자동 비활성을 기각한
+    선택의 사후 정당화). 발생 조건 = 연 1일 × DST 시간대 × 반복 시각대 슬롯 × once(한국 무관).
+    뿌리(isDue의 DST 역산)가 고쳐지면 함께 사라진다 — 그때 핀과 이 서술을 같이 갱신할 것. */
 export function onceExpired(routine, now = new Date()) {
   if (!routine?.enabled || routine.schedule?.type !== 'once') return false;
   if (!onceSpent(routine.schedule, new Date(now.getTime() - CATCHUP_MS))) return false; // catch-up 창 안 — 아직 발화할 수 있다

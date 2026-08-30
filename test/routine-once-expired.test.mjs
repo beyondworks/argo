@@ -65,3 +65,20 @@ test('재수출 배선: routines.mjs 경유 임포트가 같은 함수다 — �
 test('창 상수 정합: 만료 경계는 isDue의 catch-up 상한과 같은 값이다', () => {
   assert.equal(CATCHUP_MS, 4 * 60 * 60 * 1000, '값이 갈리면 만료 표시와 실제 발화 가능성이 어긋난다');
 });
+
+test('알려진 한계(DST 되돌림): 반복 시각대 슬롯은 한때 만료·발화가능이 겹친다 (실행 문서 — #364 검수 실측)', async () => {
+  // 뿌리는 이 판정이 아니라 isDue의 문서화된 되돌림 결함(벽시계 역산으로 창이 실질 연장)이다.
+  // 표시 전용이라 산 예약이 취소되진 않지만 그동안 툴팁이 삭제를 권한다 — 연 1일 × DST 시간대 ×
+  // 반복 시각대 × once 한정. 이 단언이 red가 되면(특히 expired가 false로) isDue의 DST 결함이
+  // 고쳐졌을 가능성이 크다 — routine-time.mjs의 한계 서술과 이 핀을 함께 갱신할 것.
+  process.env.ARGO_ROOT ??= await mkdtemp(join(tmpdir(), 'argo-expired-'));
+  const { isDue } = await import('../src/routines.mjs');
+  const r = { enabled: true, created: '2026-10-01T00:00:00.000Z', lastRun: null,
+    schedule: { type: 'once', date: '2026-11-01', time: '01:30', times: ['01:30'], tz: 'America/New_York' } };
+  const before = new Date('2026-11-01T09:00:00Z'); // NY 되돌림 뒤 04:00 EST — 아직 창 산술이 겹치기 전
+  assert.equal(isDue(r, before), true, '전제: 되돌림 결함으로 창이 연장돼 발화 가능');
+  assert.equal(onceExpired(r, before), false, '겹침 구간 밖에서는 만료가 아니다');
+  const inWindow = new Date('2026-11-01T09:30:00Z'); // NY 04:30 EST — 실측 위반 구간 내부
+  assert.equal(isDue(r, inWindow), true, '전제: 여전히 발화 가능(isDue 결함의 연장 창)');
+  assert.equal(onceExpired(r, inWindow), true, '알려진 한계: 발화 가능인데 만료로 표시되는 구간이 실재한다');
+});
