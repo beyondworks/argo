@@ -5,6 +5,7 @@ import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, DropUp, api, imeGuard, timeAgo } from '../../../ui';
 import { useLang } from '../../../i18n';
+import { detectDevicePaths } from '../../../../src/device-paths.mjs'; // 기기 종속 경로 안내 — 노드 의존 0 순수 모듈
 
 function scheduleLabel(s, t, DOW) {
   // 복수 시각·요일은 '·'로 이어 기존 라벨 템플릿에 그대로 태운다 (예: 매주 월·수 09:00·18:00)
@@ -338,6 +339,14 @@ export default function Routines({ params }) {
             placeholder={t('routines.promptPlaceholder')}
             style={{ width: '100%', minHeight: 90, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '10px 14px', outline: 'none', fontSize: 13, lineHeight: 1.65 }}
           />
+          {/* 기기 종속 경로 안내(비차단) — 루틴은 클라우드 리더 기기에서 돌고 리더는 옮겨 다닌다.
+              특정 컴퓨터의 절대경로가 지시에 박혀 있으면 다른 기기에서 조용히 실행 불가가 된다
+              (윈도 실기기 관찰 2026-08-30). 저장은 막지 않는다 — 정직 안내만. */}
+          {(() => { const dp = detectDevicePaths(form.prompt); return dp.length ? (
+            <p style={{ fontSize: 12, color: 'var(--warn)', margin: '2px 0 0' }}>
+              {t('routines.pathWarn', { path: dp[0] })}
+            </p>
+          ) : null; })()}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <button className="btn btn-primary sm" disabled={saving || !form.title.trim() || !form.prompt.trim() || !form.agentSlug || form.times.length === 0 || (form.type === 'weekly' && form.dows.length === 0)}>
               {saving ? <Spinner size={12} /> : form.id ? t('routines.saveBtn') : t('routines.createBtn')}
