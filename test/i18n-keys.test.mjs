@@ -61,17 +61,42 @@ test('t()에 넘기는 리터럴 키는 전부 사전에 있다', () => {
   assert.deepEqual(missing, [], `사전에 없는 키(화면에 원문 노출):\n${missing.join('\n')}`);
 });
 
+// 사전 항목 정규식 — 후행 주석(`], // …`)을 허용한다. 옛 형태(`\],?\s*$`)는 후행 주석 항목에서
+// lazy 매치가 다음 줄까지 삼켜, 그 항목이 값 오판 red가 나는 데 그치지 않고 **바로 다음 항목이
+// 검사 대상에서 통째로 빠졌다**(ko/en 누락을 조용히 놓치는 fail-open — 2026-08-30 PR #354 검수
+// 실측). 알려진 한계: 값 문자열 **안에** `], //`가 들어 있는 병적 항목은 조기 종결로 값 오판
+// red가 난다 — 누락(초록)이 아니라 적발(red) 방향이므로 fail-closed다.
+const DICT_ENTRY_RE = /^\s*'([^']+)':\s*\[([\s\S]*?)\],?\s*(?:\/\/.*)?$/gm;
+
+/** 사전 소스 → [키, 값 개수] 목록(순수) — 실사전 검사와 아래 픽스처 회귀 단언이 같은 코드를 쓴다.
+    값 개수는 따옴표 토큰 단위로 센다 — 문자열 안의 쉼표에 속지 않고, 어포스트로피를 담은 영문
+    값이 "..."로 쓰인 정상 형식도 받는다. */
+function scanDictEntries(src) {
+  const out = [];
+  for (const m of src.matchAll(DICT_ENTRY_RE)) {
+    const items = m[2].match(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g) ?? [];
+    out.push([m[1], items.length]);
+  }
+  return out;
+}
+
 test('사전의 모든 항목은 ko·en 두 값을 가진다', () => {
   const src = readFileSync(join(APP, 'i18n.jsx'), 'utf8');
-  const bad = [];
-  // 값 배열의 원소 수를 센다 — 문자열 안의 쉼표에 속지 않도록 따옴표 단위로 토큰을 센다.
-  // 따옴표는 두 종류 다 받는다: 영문 값이 어포스트로피를 담으면 "..."로 쓰는 게 정상 형식이다.
-  // 주의: 이 정규식은 사전 줄의 **후행 주석**(`], // …`)을 못 읽는다 — 그 항목이 값 오판으로
-  // red가 날 뿐 아니라, lazy 매치가 다음 줄까지 삼켜 **바로 다음 항목이 검사에서 통째로 빠진다**
-  // (fail-open — 2026-08-30 검수 실측). 사전 줄에 주석이 필요하면 줄 위에 달 것.
-  for (const m of src.matchAll(/^\s*'([^']+)':\s*\[([\s\S]*?)\],?\s*$/gm)) {
-    const items = m[2].match(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g) ?? [];
-    if (items.length !== 2) bad.push(`${m[1]} (값 ${items.length}개)`);
-  }
+  const bad = scanDictEntries(src).filter(([, n]) => n !== 2).map(([k, n]) => `${k} (값 ${n}개)`);
   assert.deepEqual(bad, [], `ko/en 쌍이 아닌 항목:\n${bad.join('\n')}`);
+});
+
+test('검사기: 후행 주석 항목도, 바로 다음 항목도 검사한다 (PR #354 fail-open 회귀 핀)', () => {
+  // 옛 정규식의 실측 결함 재현 픽스처 — 첫 항목의 후행 주석이 lazy 매치를 다음 줄로 끌고 가면
+  // 키 목록에서 'a.second'가 사라지고(검사 누락), 'a.first'는 값 4개로 오판됐다.
+  const fixture = [
+    "  'a.first': ['하나', 'one'], // 후행 주석",
+    "  'a.second': ['둘'],",
+    "  'a.third': ['셋', 'three'],",
+  ].join('\n');
+  const entries = scanDictEntries(fixture);
+  assert.deepEqual(entries.map(([k]) => k), ['a.first', 'a.second', 'a.third'],
+    '후행 주석이 다음 항목을 검사에서 빼놓으면 ko/en 누락을 조용히 놓친다');
+  assert.deepEqual(entries, [['a.first', 2], ['a.second', 1], ['a.third', 2]],
+    '후행 주석 항목은 값 2개로 옳게 세고, 다음 항목의 누락(값 1개)은 그대로 적발돼야 한다');
 });
