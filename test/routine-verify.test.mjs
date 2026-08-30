@@ -47,6 +47,40 @@ test('normalizeVerify: 절대경로·상위 탈출·과다 개수 거부', () =>
   assert.throws(() => normalizeVerify({ files: ['1.md', '2.md', '3.md', '4.md', '5.md', '6.md'] }));
 });
 
+test('checkVerify: 필수 문구는 모든 파일에 적용된다 (검수 M3 핀)', async () => {
+  await writeFile(join(VAULT, 'm3-a.md'), '문구 있음: NEEDLE', 'utf8');
+  await writeFile(join(VAULT, 'm3-b.md'), '문구 없음', 'utf8');
+  const r = await checkVerify(WS, { files: ['m3-a.md', 'm3-b.md'], contains: 'NEEDLE' });
+  assert.equal(r.ok, false, '두 번째 파일에 문구가 없으면 실패해야 한다 — 첫 파일 한정이면 touch만으로 충족되는 구멍');
+  assert.ok(r.failures.some((f) => f.includes('m3-b.md')));
+});
+
+test('checkVerify: vault 안 심볼릭 링크가 밖을 가리키면 따라가지 않는다 (검수 M2 핀)', async () => {
+  const { symlink } = await import('node:fs/promises');
+  const outside = join(tmpdir(), `argo-verify-outside-${Date.now()}.txt`);
+  await writeFile(outside, 'SECRET-NEEDLE', 'utf8');
+  await symlink(outside, join(VAULT, 'link-out.md'));
+  const r = await checkVerify(WS, { files: ['link-out.md'], contains: 'SECRET-NEEDLE' });
+  assert.equal(r.ok, false, '심링크로 게이트를 우회해 조건을 충족시키면 안 된다');
+  assert.ok(r.failures.some((f) => f.includes('검사 불가') || f.includes('not checked')));
+});
+
+test('runRoutine: 영어 회사는 재시도 지시·실패 사유가 영어로 나간다 (검수 M1 핀)', async () => {
+  const { writeFile: wf, readFile: rf } = await import('node:fs/promises');
+  const compFile = join(process.env.ARGO_ROOT, WS, 'company.json');
+  const comp = JSON.parse(await rf(compFile, 'utf8'));
+  await wf(compFile, JSON.stringify({ ...comp, lang: 'en' }), 'utf8');
+  try {
+    const r = await mkDaily({ files: ['en-only-missing.md'], retries: 1 });
+    const chatFn = fakeChat([{ reply: 'done' }, { reply: 'still just words' }]);
+    await assert.rejects(() => runRoutine(WS, r.id, { chatFn }), /Completion check failed after 2 attempt/);
+    assert.ok(/Completion check failed \(attempt 2\)/.test(chatFn.calls[1]), '재시도 지시가 영어여야 크루가 영어로 일한다');
+    assert.ok(!/완료 조건/.test(chatFn.calls[1]), '영어 회사에 한국어 지시가 섞이면 안 된다');
+  } finally {
+    await wf(compFile, JSON.stringify(comp), 'utf8');
+  }
+});
+
 test('checkVerify: 존재·문구·부재 사유, 오염된 저장값의 탈출 경로는 읽지 않는다', async () => {
   await writeFile(join(VAULT, '존재.md'), '# 제목\n## 결론\n내용', 'utf8');
   assert.equal((await checkVerify(WS, { files: ['존재.md'], contains: '## 결론' })).ok, true);

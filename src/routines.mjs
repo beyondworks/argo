@@ -157,23 +157,28 @@ export function normalizeVerify(verify) {
   return { files, contains, retries };
 }
 
-/** 완료 조건 판정 — vault 루트 기준으로 각 파일의 존재(+첫 파일의 문구 포함)를 검사.
-    반환 { ok, failures: [사람이 읽는 사유…] }. resolve 후 루트 프리픽스를 재검사한다
-    (normalize를 지나쳤거나 손상된 저장값이 와도 vault 밖은 절대 읽지 않는다). */
+/** 완료 조건 판정 — vault 루트 기준으로 각 파일의 존재(+모든 파일의 문구 포함)를 검사.
+    반환 { ok, failures: [사람이 읽는 사유…] }. 경로 게이트 2단: ① resolve(어휘) 프리픽스
+    — 오염 저장값 조기 차단, ② realpath(실경로) 프리픽스 — vault 안에 심어둔 심볼릭 링크가
+    밖을 가리키면 따라가지 않는다(검수 MEDIUM-2: 게이트 대상인 크루 본인이 ln -s로 조건을
+    우회할 수 있었다). Windows junction은 실측 못 했다 — realpath가 해석하는 한 같은 게이트를 탄다. */
 export async function checkVerify(wsId, verify, { lang = 'ko' } = {}) {
-  const { readFile } = await import('node:fs/promises');
+  const { readFile, realpath } = await import('node:fs/promises');
   const { resolve, sep } = await import('node:path');
-  const root = resolve(paths(wsId).vault);
+  const lexRoot = resolve(paths(wsId).vault);
+  // vault 자체가 심링크 경유일 수 있다(macOS /tmp→/private/tmp 등) — 실경로 기준으로 비교
+  const root = await realpath(lexRoot).catch(() => lexRoot);
+  const outside = (rel) => (lang === 'en' ? `${rel}: outside company memory — not checked` : `${rel}: 회사 기억 밖 경로 — 검사 불가`);
   const failures = [];
   for (const rel of verify.files) {
-    const abs = resolve(root, rel);
-    if (abs !== root && !abs.startsWith(root + sep)) {
-      failures.push(lang === 'en' ? `${rel}: outside company memory — not checked` : `${rel}: 회사 기억 밖 경로 — 검사 불가`);
-      continue;
-    }
+    const abs = resolve(lexRoot, rel);
+    if (abs !== lexRoot && !abs.startsWith(lexRoot + sep)) { failures.push(outside(rel)); continue; }
+    let real = null;
+    try { real = await realpath(abs); } catch { /* 부재 — 아래 파일 없음 사유로 */ }
+    if (real !== null && real !== root && !real.startsWith(root + sep)) { failures.push(outside(rel)); continue; }
     try {
       const buf = await readFile(abs, 'utf8');
-      if (verify.contains && rel === verify.files[0] && !buf.includes(verify.contains)) {
+      if (verify.contains && !buf.includes(verify.contains)) {
         failures.push(lang === 'en' ? `${rel}: missing required text "${verify.contains}"` : `${rel}: 필수 문구 "${verify.contains}" 없음`);
       }
     } catch {
@@ -320,9 +325,17 @@ export async function runRoutine(wsId, id, { chatFn = null } = {}) {
     const chat = chatFn ?? (await import('./chat.mjs')).chat; // 순환 차단 — 파일 상단 주석 참조. chatFn=테스트 주입(실 러너 불필요)
     const loop = isLoopRoutine(r0);
     let lang = 'ko';
-    if (loop) {
+    if (loop || r0.verify) { // verify도 lang을 쓴다 — 검수 MEDIUM-1: en 회사의 재시도 지시가 한국어로 나가던 것
       const { loadCompany } = await import('./workspace.mjs');
       lang = (await loadCompany(wsId).catch(() => ({}))).lang === 'en' ? 'en' : 'ko';
+    }
+    // 완료 조건 저장값 정규화는 chat **전** — 오염된 저장값이면 LLM 비용을 쓰기 전에 실패하고,
+    // 사유에 루틴 제목을 붙여 어느 설정 문제인지 드러낸다(검수 LOW-2).
+    let ver = null;
+    if (r0.verify && !loop) {
+      try { ver = normalizeVerify(r0.verify); } catch (e) {
+        throw new Error(lang === 'en' ? `[${r0.title}] completion check config invalid: ${e.message}` : `[${r0.title}] 완료 조건 설정 오류: ${e.message}`);
+      }
     }
     const userMsg = `[루틴: ${r0.title}] ${r0.prompt}${loop ? loopProtocol(r0, lang) : ''}`;
     let t = await chat(wsId, r0.agentSlug, userMsg, null, { source: 'routine' });
@@ -338,9 +351,8 @@ export async function runRoutine(wsId, id, { chatFn = null } = {}) {
     // 완료 조건(verify) — 산출물이 실제로 없으면 "다 됐어요"를 인정하지 않는다. 미충족이면 실패
     // 목록을 그대로 들려 재시도(retries회), 그래도 미충족이면 throw로 기존 실패 표면
     // (lastOk:false + 알림)에 정직하게 태운다.
-    if (r0.verify && !loop) {
-      const ver = normalizeVerify(r0.verify); // 디스크 저장값 재정규화 — 손상·구버전 값 관용
-      if (ver) {
+    if (ver) {
+      {
         let verifyTried = 0;
         let res = await checkVerify(wsId, ver, { lang });
         while (!res.ok && verifyTried < ver.retries) {

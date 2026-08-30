@@ -1167,10 +1167,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         {/* 비용 지킴이(리서치 접목 C) — 대화가 길수록 매 턴 지난 대화 전체가 다시 들어가 비용이
             커진다(resumeSession 구조·긴 세션 = 비용 1위 요인). 문턱은 렌더 창(60건)과 정합.
             새 대화는 기존 newChat 재사용 — 비파괴 적재 + vault 기억 승계라 흐름이 끊기지 않는다. */}
-        {!viewing && (thread?.length ?? 0) >= 60 && !busy && (
-          <div className="fade-up" style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--fg-2)', padding: '4px 0' }}>
+        {!viewing && (thread?.length ?? 0) >= THREAD_WINDOW && !busy && (
+          <div className="fade-up" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--fg-2)', padding: '4px 0' }}>
             <span>{t('chat.longSession.notice', { n: thread.length })}</span>
-            <button type="button" className="btn sm" onClick={newChat}>{t('chat.longSession.newChat')}</button>
+            <button type="button" className="btn sm" style={{ flex: 'none' }} onClick={newChat}>{t('chat.longSession.newChat')}</button>
           </div>
         )}
         {/* 하단 여백 — 방금 보낸 글을 화면 상단까지 밀어올릴 스크롤 여유. 높이는 스크롤 효과(⓪)가
