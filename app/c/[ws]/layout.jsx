@@ -470,7 +470,7 @@ function Shell({ children, params }) {
           <span className="topbar-title">{title}</span>
           {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체) */}
           <div id="argo-topbar-slot" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }} />
-          {!narrowBar && <div style={{ flex: 1 }} />}
+          {!narrowBar && <div className="topbar-spacer" style={{ flex: 1 }} />}
           {!narrowBar && appVersion && (updateVersion ? (updIsApp ? (
             <button type="button" onClick={installUpdate} disabled={updPhase === 'installing'}
               className="chip mono" title={t('topbar.updateTitle', { v: updateVersion })}
@@ -486,7 +486,7 @@ function Shell({ children, params }) {
               {t('topbar.updateWeb', { v: updateVersion })}
             </a>
           )) : (
-            <span className="chip mono" title={t('topbar.version')} style={{ flex: 'none', fontSize: 10.5, color: 'var(--fg-3)' }}>
+            <span className="chip mono topbar-ver" title={t('topbar.version')} style={{ flex: 'none', fontSize: 10.5, color: 'var(--fg-3)' }}>
               v{appVersion}
             </span>
           ))}

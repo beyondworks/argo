@@ -2044,6 +2044,20 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh / var(--z, 1)
   .vault-split > .vault-content { min-height: 420px; }
 }
 
+/* 폰 폭 상단바 축소 정책(#340 검수 칩 — 실 뷰포트 ≤~500px 과적재로 검색 input 0px 붕괴, 실측 360/390px).
+   우선순위: 검색 입력(플로어 보장) > 작업 도크·업데이트 칩(기능 — 유지) > 제목(말줄임으로 양보) >
+   버전 도장·시계(정보 가치 최저 — 숨김: 시간은 폰 OS 상태바에, 현재 버전은 설정 → 앱 업데이트 카드에
+   이미 있다). 스페이서를 접어 남는 폭 전부가 검색으로 간다. 경계 560px = 실측 붕괴 구간(≤500px) 위
+   여유 한 뼘 — 561px부터는 전 요소가 있어도 검색이 140px 이상을 확보한다. */
+@media (max-width: 560px) {
+  .topbar { padding: 0 14px; }
+  .topbar-clock, .topbar-ver, .topbar-spacer { display: none; }
+  /* 명시 min-width가 nowrap의 auto 플로어(문자열 전체 폭)를 대체해야 말줄임이 성립한다 */
+  .topbar-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 56px; }
+  /* 제목은 사용자 지정 크루 이름 — 길면 제목이 양보하고 검색은 입력 가능한 폭을 지킨다 */
+  .search-pill { min-width: 96px; }
+}
+
 /* 동작 줄이기(OS 접근성 설정)에서만 적용된다 — 켜지 않은 사용자에겐 위 애니메이션이 그대로 간다.
    지속시간만 0.01ms로 줄이면 **무한 반복이 살아남아** 초당 수만 번 돌고, 화면은 초당 60번만 그려지니
    매 프레임이 사이클의 엉뚱한 지점을 찍어 스트로브가 된다. 정지가 아니라 번쩍임이다 — 동작 줄이기를
