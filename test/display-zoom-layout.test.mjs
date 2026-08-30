@@ -157,22 +157,28 @@ function collectInlineStyles(src) {
 test('compete grid 열 잠금 sweep — 모든 인라인 display:grid는 minmax(0,…) 열 또는 고정 폭이어야 한다', () => {
   const src = sources.get('app/c/[ws]/compete/page.jsx');
   const styles = collectInlineStyles(src);
-  const grids = styles.filter((s) => /display:\s*'grid'/.test(s.body));
+  // 탐지는 따옴표 3종 — 값 표기만 3종 받고 탐지기를 홑따옴표로 두면 display:"grid"가 수집·역방향
+  // 스캔 양쪽을 지나가는 비대칭 사각이 생긴다(재검수 M-7 실증).
+  const GRID_RE = /display:\s*['"`]grid['"`]/g;
+  const grids = styles.filter((s) => { GRID_RE.lastIndex = 0; return GRID_RE.test(s.body); });
   assert.ok(grids.length >= 9, `grid 인라인 ${grids.length}곳(현재 9) — 수집 워커가 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
   for (const g of grids) {
     // 존재 검사가 아니라 값 검사 — 'gridTemplateColumns: 1fr'은 minmax(auto,1fr)이라 min 트랙이
     // auto로 되살아나 무템플릿과 완전 동일하게 부푼다(회의실 검수 변이·브라우저 실측). 값 표기는
     // 홑따옴표·백틱(repeat 템플릿 리터럴)·쌍따옴표 모두 수용(검수 L-2).
-    const locked = /gridTemplateColumns:\s*['"`][^'"`]*minmax\(0,/.test(g.body) || /\bwidth:\s*\d/.test(g.body);
-    assert.ok(locked,
-      `compete:${lineOf(src, g.start)} — 암묵/auto-min 열 grid: gridTemplateColumns에 minmax(0,…)를 포함하거나(고정 px와 혼용 가능) 고정 width가 필요하다(자식 min-content로 트랙이 부풀어 배율 2에서 문서 가로 넘침)`);
+    // 선언은 정확히 1회 — 뒤 선언·스프레드 덮어쓰기는 마지막 승이라 앞 잠금이 초록인 채 무효가
+    // 된다(재검수 M-6 실증: 끝에 ...{ gridTemplateColumns: '1fr' } 주입이 통과했었다).
+    const colDecls = (g.body.match(/gridTemplateColumns/g) ?? []).length;
+    const locked = colDecls === 1 && /gridTemplateColumns:\s*['"`][^'"`]*minmax\(0,/.test(g.body);
+    assert.ok(locked || (colDecls === 0 && /\bwidth:\s*\d/.test(g.body)),
+      `compete:${lineOf(src, g.start)} — 암묵/auto-min 열 grid: gridTemplateColumns는 정확히 1회 선언에 minmax(0,…)를 포함하거나(고정 px와 혼용 가능), 열 선언 없이 고정 소폭 width(아이콘 버튼류)여야 한다(자식 min-content로 트랙이 부풀어 배율 2에서 문서 가로 넘침 — 덮어쓰기 ${colDecls}회 선언도 여기서 red)`);
   }
-  // 역방향 스캔 — 소스의 모든 display:'grid' 토큰은 수집된 style={{…}} 구간 안에 있어야 한다.
+  // 역방향 스캔 — 소스의 모든 display:grid 토큰은 수집된 style={{…}} 구간 안에 있어야 한다.
   // 워커가 못 보는 표기로 grid가 들어오면 여기서 red(수집 우회 = 무보호 grid, 검수 M-4 봉합).
   // 정당한 새 표기면 예외 목록이 아니라 워커를 넓혀 값 검사 아래로 들여온다.
-  for (const m of src.matchAll(/display:\s*'grid'/g)) {
+  for (const m of src.matchAll(/display:\s*['"`]grid['"`]/g)) {
     const inside = styles.some((s) => m.index >= s.start && m.index < s.end);
-    assert.ok(inside, `compete:${lineOf(src, m.index)} — 수집되지 않은 display:'grid' (style={{…}} 인라인 밖이거나 워커가 모르는 표기)`);
+    assert.ok(inside, `compete:${lineOf(src, m.index)} — 수집되지 않은 display:grid (style={{…}} 인라인 밖이거나 워커가 모르는 표기)`);
   }
 });
 
