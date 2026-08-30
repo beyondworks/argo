@@ -191,3 +191,17 @@ test('vault 트리 리사이저 배선 — 커서 x를 dispZoom()으로 나눠 C
   assert.match(vaultPage, /e\.clientX[^\n]*\/\s*dispZoom\(\)/,
     '트리 폭 드래그의 배율 나눗셈 제거 변이는 여기서 잡는다 — dispZoom 자체 무력화는 ②가 잡는다');
 });
+
+/* ── 인접 핀: 상단바 search-pill 축소 불변식(PR #340) ─────────────────────
+   배율 2(유효 712px, 1열 폭)에서 pill의 자동 최소 폭(min-width:auto)이 input 고유
+   기본 폭(size 기본값 20 → ~140px)에 걸려 문서 가로 넘침을 만든다(실측 1497>1424).
+   min-width:0 선언이 리팩터에 조용히 지워지는 변이를 소스 수준에서 잠근다 —
+   실동작 검증은 PR #340의 라이브 측정(2페이지×3배율)이 담당. */
+test('search-pill 기본 규칙에 min-width: 0 — 좁은 유효폭 상단바 가로 넘침 핀', () => {
+  const css = sources.get('app/globals.css');
+  const blocks = [...css.matchAll(/(?:^|\n)\.search-pill\s*\{([^}]*)\}/g)];
+  assert.equal(blocks.length, 1,
+    '.search-pill 단독 기본 규칙은 정확히 1개여야 한다 — 규칙이 쪼개지면 이 핀의 수집 표면부터 넓힌다(fail-closed)');
+  assert.match(blocks[0][1], /min-width:\s*0\s*;/,
+    'min-width:0 제거 시 pill이 ~189px에서 축소 정지 → 배율 2에서 문서 가로 스크롤 재발(PR #340 실측)');
+});
