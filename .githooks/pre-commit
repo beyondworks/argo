@@ -1,0 +1,47 @@
+#!/bin/sh
+# 시크릿 커밋 차단 훅 — "잔소리를 장치가 대신한다"(docs/ai-coding-harness-research.md 장치 2).
+# 지금까지는 "커밋 전 git diff --cached를 grep"이 사람의 규율이었다(실사고 2026-04-09:
+# 핸드오버 문서에 평문 키 → GitGuardian 3건). 이 훅이 그 규율을 저장 관문으로 만든다.
+# 패턴은 "단어"가 아니라 "실제 값 모양"만 잡는다 — 오탐이 잦으면 훅은 우회 습관으로 죽는다.
+# 정말 의도된 커밋(더미 키 문서화 등)은 `git commit --no-verify`로 지나가되, 그 판단을 기록하라.
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+# 추가된 줄만 검사(맥락 줄·삭제 줄 제외) — 기존 파일에 이미 있던 내용으로 신규 커밋을 막지 않는다.
+# test/ 는 제외 — 더미 키(sk-ant-test-…, 마스킹 함수 입력)가 테스트의 본질 재료라 오탐이 상수화된다
+# (실측 2026-08-30: 추적본에서 걸린 6파일 전부 test/ 더미). 진짜 키의 백스톱은 GitHub secret scanning.
+added=$(git diff --cached --unified=0 -- . ':(exclude)test/' | grep '^+' | grep -v '^+++')
+# 로컬 기본 접속값(127.0.0.1·localhost)은 비밀이 아니다 — DB 문자열 패턴의 상수 오탐 제거
+added=$(printf '%s\n' "$added" | grep -Ev '://[^/@[:space:]]+:[^@[:space:]]+@(127\.0\.0\.1|localhost)([:/]|$)')
+
+fail=0
+check() { # $1=라벨, $2=정규식(ERE)
+  # -e 필수 — '-----BEGIN…' 같은 대시 시작 패턴이 옵션으로 오해되면 그 검사가 통째로 죽는다(실측)
+  hits=$(printf '%s\n' "$added" | grep -E -n -e "$2" | head -5)
+  if [ -n "$hits" ]; then
+    echo "✗ 시크릿 의심($1):"
+    printf '%s\n' "$hits" | sed 's/^/    /'
+    fail=1
+  fi
+}
+
+# 실키 시그니처(벤더별) — security.md "패턴 하나로 선언 금지" 원칙대로 각각
+check "Anthropic/OpenAI 키"   "sk-(ant-)?[A-Za-z0-9_-]{20,}"
+check "Resend 키"             "re_[A-Za-z0-9]{20,}"
+check "Google API 키"         "AIza[A-Za-z0-9_-]{30,}"
+check "GitHub 토큰"           "gh[pousr]_[A-Za-z0-9]{30,}"
+check "Slack 토큰"            "xox[baprs]-[A-Za-z0-9-]{10,}"
+check "JWT"                   "eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}"
+check "DB 접속 문자열(비밀번호 포함)" "(postgres(ql)?|mysql|mongodb(\+srv)?|redis)://[^/@[:space:]]+:[^@[:space:]]+@"
+check "개인키 블록"           "-----BEGIN [A-Z ]*PRIVATE KEY-----"
+# 값 할당 형태(이름+실값) — 이름 단독은 잡지 않는다(코드에 'token'은 흔하다)
+check "자격 변수에 긴 리터럴 할당" "(api[_-]?key|secret|password|access[_-]?token)[\"']?[[:space:]]*[:=][[:space:]]*[\"'][A-Za-z0-9+/_-]{24,}[\"']"
+
+if [ "$fail" = "1" ]; then
+  echo ""
+  echo "커밋이 차단되었습니다 — 위 항목이 진짜 시크릿이면 제거 후 커밋하고, 이미 푸시된 적 있다면 즉시 revoke부터."
+  echo "의도된 더미 값이면: git commit --no-verify (판단 근거를 커밋 메시지에 남기세요)"
+  exit 1
+fi
+exit 0
