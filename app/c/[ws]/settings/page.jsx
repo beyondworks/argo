@@ -274,7 +274,9 @@ function ZoomCard() {
   }, []);
   const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
   const mod = isMac ? '⌘' : 'Ctrl';
-  const btn = { cursor: 'pointer', width: 34, padding: '6px 0', fontSize: 13, textAlign: 'center' };
+  // .chip은 flex 컨테이너라 textAlign이 자식(글리프)을 못 가운데 놓는다 — 글리프가 왼쪽에 붙던
+  // 레이아웃 틀어짐(유건 제보 2026-08-31, 실측 leftGap 1px vs rightGap 24.5px)의 원인. justifyContent가 정답.
+  const btn = { cursor: 'pointer', width: 34, padding: '6px 0', fontSize: 13, justifyContent: 'center' };
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.zoom')}</span>

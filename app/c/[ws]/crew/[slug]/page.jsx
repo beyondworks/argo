@@ -1089,19 +1089,22 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                 {!viewing && annotIdx === i && (
                   <div className="card fade-up" style={{ padding: '12px 14px', display: 'grid', gap: 9, borderColor: 'var(--primary)', minWidth: 0 }}>
                     <span className="microlabel">{t('chat.annotate.title')}</span>
+                    {/* 각 행은 grid 자식 — 암묵 min-width:auto가 nowrap 인용·무공백 노트(URL 등)의
+                        min-content만큼 행을 밀어 패널 밖 ~1000px 돌출(유건 제보 2026-08-31 실측).
+                        행 minWidth:0으로 카드 폭에 잠그고, 노트는 overflowWrap으로 강제 줄바꿈. */}
                     {annotItems.map((a, j) => (
-                      <div key={j} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5 }}>
+                      <div key={j} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5, minWidth: 0 }}>
                         <span style={{ flex: 'none', fontWeight: 700, color: 'var(--primary-strong)' }}>{j + 1}</span>
                         <span style={{ minWidth: 0, flex: 1 }}>
                           <span style={{ display: 'block', color: 'var(--fg-2)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{a.quote}"</span>
-                          <span style={{ display: 'block' }}>→ {a.note}</span>
+                          <span style={{ display: 'block', overflowWrap: 'anywhere' }}>→ {a.note}</span>
                         </span>
                         <button type="button" className="btn sm" style={{ flex: 'none' }} aria-label={t('common.cancel')}
                           onClick={() => setAnnotItems((c) => c.filter((_, k) => k !== j))}>✕</button>
                       </div>
                     ))}
                     {pendQuote ? (
-                      <div style={{ display: 'grid', gap: 6 }}>
+                      <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>{/* 위 행과 같은 grid 자식 잠금 — nowrap 인용이 밀지 못하게 */}
                         <span style={{ fontSize: 12, color: 'var(--fg-2)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{pendQuote}"</span>
                         <div style={{ display: 'flex', gap: 6 }}>
                           <input suppressHydrationWarning autoFocus
