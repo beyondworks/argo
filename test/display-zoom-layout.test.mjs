@@ -125,12 +125,13 @@ const decls = [...sources.entries()].flatMap(([f, src]) => (f.endsWith('.css') ?
 test('수집 스위프가 비지 않는다 — 빈 목록 통과(무효 게이트) 방지', () => {
   // 하한 = 현재 개수 그대로(슬랙 0 — 분리 검수: 슬랙 2칸이 조용한 소실을 허용했다).
   // 정당하게 줄이는 리팩터라면 보정 경로가 실제로 준 것인지 확인하고 이 숫자를 함께 내린다.
-  assert.ok(decls.length >= 17, `치수 선언 ${decls.length}곳(현재 17) — 수집 정규식이 소스와 어긋났는지 확인. 같은 줄 앞쪽 리터럴 속 '//'를 stripComments가 주석으로 오인해(문자열 보존 스캐너가 못 보는 형태) 선언째 지웠을 가능성도 본다`);
+  assert.ok(decls.length >= 16, `치수 선언 ${decls.length}곳(현재 16) — 수집 정규식이 소스와 어긋났는지 확인`);
   const has = (f, n) => assert.ok(decls.filter((d) => d.file === f).length >= n, `${f}에 vh 치수 ${n}곳 이상이어야 한다`);
-  has('app/globals.css', 8); // body·.shell·.side·기억분할·팝오버·vault 계열
-  has('app/c/[ws]/crew/[slug]/page.jsx', 2); // 채팅 그리드 + 모달 86vh
-  has('app/c/[ws]/room/page.jsx', 1); // 회의실 채팅 그리드
-  has('app/c/[ws]/compete/page.jsx', 1); // 경쟁 채팅 그리드
+  // 크루·경쟁·회의실의 채팅 그리드 높이(100vh 계열)는 폰 폭 레일 스택을 위해 .chat-cols(globals)로 이동 —
+  // JSX 쪽 하한을 그만큼 내린다(크루 2→1·경쟁 1→0 삭제·회의실 1→0 삭제, globals는 셋이 한 선언을
+  // 공유하므로 10 그대로 — 총합 17→16은 정본 단일화로 인한 정당한 감소, 소실 아님)
+  has('app/globals.css', 10); // body·.shell·.side·기억분할·팝오버·vault·.chat-cols(높이+레일 상한) 계열
+  has('app/c/[ws]/crew/[slug]/page.jsx', 1); // 모달 86vh
 });
 
 test('역방향 스캔 — 소스의 모든 vh 토큰이 수집된 치수 선언 안에 있다(수집 우회 = red)', () => {
@@ -213,7 +214,8 @@ test('compete grid 열 잠금 sweep — 모든 인라인 display:grid는 minmax(
   // 스캔 양쪽을 지나가는 비대칭 사각이 생긴다(재검수 M-7 실증).
   const GRID_RE = /display:\s*['"`]grid['"`]/g;
   const grids = styles.filter((s) => { GRID_RE.lastIndex = 0; return GRID_RE.test(s.body); });
-  assert.ok(grids.length >= 9, `grid 인라인 ${grids.length}곳(현재 9) — 수집 워커가 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
+  // 하한 9→8 — 페이지 2분할 grid(레일+본문)가 .chat-cols(globals 정본)로 이관된 정당 감소(#366 재상륙), 소실 아님
+  assert.ok(grids.length >= 8, `grid 인라인 ${grids.length}곳(현재 8) — 수집 워커가 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
   for (const g of grids) {
     // 존재 검사가 아니라 값 검사 — 'gridTemplateColumns: 1fr'은 minmax(auto,1fr)이라 min 트랙이
     // auto로 되살아나 무템플릿과 완전 동일하게 부푼다(회의실 검수 변이·브라우저 실측). 값 표기는
@@ -265,31 +267,31 @@ test('compete 시안 나열·카드 협폭 가독 핀 — auto-fit 적층·헤�
     '채택 버튼 축소 세트 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
 });
 
-test('compete 레일 열 양보 클램프 핀 — 고정 216px 복원·레일 고정 width 변이는 red', () => {
-  // 페이지 2분할의 레일 고정 216px는 배율 2의 좁은 유효 폭에서 본문 열을 60 CSS px까지 압살한다
-  // (실측 1280×배율 2 — FAILED 칩 +17px 카드 밖 돌출). min(216px, 100% − 244px) = 본문 열 바닥
-  // 226(시안 최소폭 180 + 카드 패딩 36 + 카드 테두리 2 + 커스텀 스크롤바 8) + gap 18을 지키는
-  // 만큼만 레일이 양보(재검수 적발: 테두리·스크롤바를 빠뜨린 234는 시안에 170만 전달했다).
-  // 두 형태 모두 위 sweep 값검사(minmax(0,) 포함)로는 초록이라 이 핀이 유일 게이트. 배율 축은
-  // 미디어쿼리가 못 보므로 intrinsic. #356(.chat-cols)과는 공존 불가(인라인이 ≤560 밴드를 이겨
-  // 레일 스택을 죽인다) — 편입 머지 시 이 표현식·핀을 .chat-cols 템플릿으로 반드시 이관.
-  const src = sources.get('app/c/[ws]/compete/page.jsx');
-  assert.match(src,
-    /gridTemplateColumns: 'min\(216px, 100% - 244px\) minmax\(0, 1fr\)', gap: 18, alignItems: 'start', height: 'calc\(100vh \/ var\(--z, 1\) - 100px\)', marginBottom: -70 \}\}>/,
-    '레일 열 양보 클램프 변이(표현식 전체 앵커·}} 폐합 — 정당한 리팩터면 이 핀을 함께 갱신)');
-  // 레일 아이템은 고정 width 금지 — 트랙이 216 미만으로 양보할 때 고정 216이면 아이템이 트랙을
-  // 넘어 본문 위로 얹힌다. 기본 stretch가 트랙 폭을 따르게 둔다.
-  assert.match(src,
-    /className="side-rail" style=\{\{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax\(0, 1fr\)', gap: 4 \}\}>/,
-    '레일 고정 width 복원 변이(표현식 전체 앵커·}} 폐합 — width가 트랙 양보를 무효화한다)');
-  // 같은 결함의 CSS 경로 봉쇄 — 인라인만 잠그면 globals의 .side-rail { width: … }가 트랙 106에
-  // 아이템 216을 되살린다(재검수 실증: 주입 시 전 게이트 초록). #356이 .chat-cols > .side-rail
-  // { width: 216px }를 도입하므로 가설이 아니라 예정된 경로 — 그 착지에서 이 단언이 red가 나면
-  // 클램프·핀을 .chat-cols로 이관하고 레일 폭은 트랙(stretch)에 맡길 것.
-  assert.doesNotMatch(sources.get('app/globals.css'), /\.side-rail[^{}]*\{[^}]*\bwidth\s*:/,
-    '.side-rail CSS width 선언 — 레일 폭은 트랙이 정한다(양보 클램프 무효화 경로)');
+test('레일 열 양보 클램프 핀(.chat-cols 정본) — 고정 216px 복원·레일 고정 width 변이는 red', () => {
+  // #366 재상륙으로 예정대로 이관 완료: 클램프의 정본은 globals .chat-cols다(구 핀 주석 "편입 머지 시
+  // 이 표현식·핀을 .chat-cols 템플릿으로 반드시 이관"의 이행). min(216px, 100% - 244px) = 본문 열 바닥
+  // 226(시안 최소폭 180 + 카드 패딩 36 + 테두리 2 + 커스텀 스크롤바 8) + gap 18을 지키는 만큼만 레일이
+  // 양보(#365 산식 그대로). 배율 축은 미디어쿼리가 못 보므로 intrinsic 클램프가 유일 게이트.
+  const css = sources.get('app/globals.css');
+  assert.match(css,
+    /\.chat-cols \{\n  display: grid; grid-template-columns: min\(216px, 100% - 244px\) minmax\(0, 1fr\);/,
+    '.chat-cols 열 템플릿 변이(선언 머리 폐합 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
+  // 소비처 배선 — 크루·회의실·경쟁 세 페이지가 정본을 실제로 쓴다(클래스 병기 인라인이 이기면 무효 —
+  // 인라인 gridTemplateColumns 재선언은 아래 negative가 잡는다).
+  for (const f of ['app/c/[ws]/room/page.jsx', 'app/c/[ws]/compete/page.jsx']) {
+    assert.match(sources.get(f), /className="chat-cols"/, `${f} — .chat-cols 소비`);
+    assert.doesNotMatch(sources.get(f), /className="chat-cols"[^>]*gridTemplateColumns/, `${f} — 병기 인라인 열 재선언 금지(인라인이 정본을 이긴다)`);
+  }
+  // 크루는 조건식 소비 — 주 화면만 chat-cols, embedded(보조 패널)는 레일 없는 단일 열 인라인이 정당
+  assert.match(sources.get('app/c/[ws]/crew/[slug]/page.jsx'),
+    /className=\{embedded \? undefined : 'chat-cols'\}/, 'crew — 주 화면 .chat-cols 소비(embedded 제외)');
+  // 레일 고정 px width 금지 — 트랙이 216 미만으로 양보할 때 고정 216이면 아이템이 트랙을 넘어 본문
+  // 위로 얹힌다(#365 검수 MEDIUM-3 실증). width: auto(≤560 밴드 스택)는 무해라 px만 잠근다.
+  assert.doesNotMatch(css, /\.side-rail[^{}]*\{[^}]*\bwidth\s*:\s*\d/,
+    '.side-rail CSS 고정 width — 레일 폭은 트랙이 정한다(양보 클램프 무효화 경로)');
+  assert.doesNotMatch(sources.get('app/c/[ws]/compete/page.jsx'), /side-rail" style=\{\{[^}]*\bwidth: \d/,
+    'compete 레일 인라인 고정 width 금지');
 });
-
 test('compete 헤더·카드 축소 규칙 핀 — wrap·ellipsis·overflowWrap 복원 변이는 red', () => {
   const src = sources.get('app/c/[ws]/compete/page.jsx');
   // 헤더 앵커는 compete.header 구간 자체 — 낱개 프로퍼티 앵커는 동형 형제(컴포저 픽커 행 등

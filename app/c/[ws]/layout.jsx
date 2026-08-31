@@ -468,8 +468,10 @@ function Shell({ children, params }) {
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <header className="topbar">
           <span className="topbar-title">{title}</span>
-          {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체) */}
-          <div id="argo-topbar-slot" style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }} />
+          {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체).
+              display 포함 전부 CSS(globals #argo-topbar-slot) — 인라인 display가 있으면 좁은 셸(≤900px)의
+              숨김 규칙(슬롯→밴드 전환)이 죽는다. narrowBar(배율 인지 #368)는 시계·버전·스페이서 축을 계속 담당. */}
+          <div id="argo-topbar-slot" />
           {!narrowBar && <div className="topbar-spacer" style={{ flex: 1 }} />}
           {!narrowBar && appVersion && (updateVersion ? (updIsApp ? (
             <button type="button" onClick={installUpdate} disabled={updPhase === 'installing'}

@@ -65,10 +65,17 @@ function effective(cls, prop, W) {
   segs.push({ applies: true, body: css.slice(cursor) });
   let winner;
   const propRe = new RegExp(`(?:^|[;{\\s])${prop}\\s*:\\s*([^;}]+)`, 'g');
+  // 정확 일치(공백 정규화) — 부분문자열 매칭은 fail-open이었다(분리 검수 실증: '.chat-cols' 조회가
+  // '.chat-cols > .side-rail' 규칙에도 매칭되어, 폰 열 전환을 레일 셀렉터로 옮기는 변이가 초록).
+  // 결합 셀렉터는 조회 문자열도 결합 형태 그대로 넘긴다(예: '.chat-cols > .side-rail').
+  // 계약(재검수 R2): 이 평가는 "대상 셀렉터를 정확히 같은 형태로만 겨냥한다"에 기댄다 — 같은 요소를
+  // 다른 형태(자손·복합, 예: '.chat-cols .crew-phone-band')로 겨냥하는 규칙을 추가하면 실캐스케이드는
+  // 특이도로 갈리는데 이 게이트는 조용히 눈이 먼다. 그런 규칙이 필요해지면 평가기를 먼저 넓혀라.
+  const selEq = (s) => s.replace(/\s+/g, ' ').trim() === cls;
   for (const seg of segs) {
     if (!seg.applies) continue;
     for (const r of rulesOf(seg.body)) {
-      if (!r.sel.split(',').some((s) => s.includes(cls))) continue;
+      if (!r.sel.split(',').some(selEq)) continue;
       for (const d of r.decls.matchAll(propRe)) winner = d[1].trim();
     }
   }
@@ -154,4 +161,115 @@ test('버전 도장 배선 — 정보성 칩에만 topbar-ver, 기능성 업데�
 test('시계 배선 — Clock이 .topbar-clock을 출력하고 상단바에 실제로 얹혀 있다', () => {
   assert.match(ui, /className="topbar-clock"/);
   assert.match(layout, /<Clock \/>/);
+});
+
+/* ── 좁은 셸(≤900px) — 크루 컨트롤: topbar 슬롯 → 채팅 위 인라인 밴드 ──────────
+   #348 분리 검수 확정 별건 2·3: 슬롯 자식(세션 pill·버튼들)이 전부 flex:none이라 좁은 상단바에서
+   검색·도크 위로 흘러넘친다(실측 360px: 검색 input 5지점 전부 "새 대화" 버튼 히트 / 561px에서도
+   306px 초과). 경계는 셸 스택(≤900px) 재사용 — 붕괴 대역이 ~650px까지 이어져 560으로는 못 덮는다.
+   평가는 위와 같은 캐스케이드 승자 방식 — 동특이도 가정은 "경쟁하는 선언 쌍이 전부 동일 셀렉터끼리"
+   라서 성립한다(ID·자손 결합 셀렉터도 자기 자신과만 경쟁하므로 소스 순서 = 실제 캐스케이드). */
+
+const crew = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/crew/[slug]/page.jsx'), 'utf8'));
+const compete = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/compete/page.jsx'), 'utf8'));
+const room = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/room/page.jsx'), 'utf8'));
+
+test('슬롯·밴드 전환 — 360·900px에서 슬롯 none·밴드 flex 승자, 901px에서 역전', () => {
+  for (const W of [360, 900]) {
+    assert.equal(effective('#argo-topbar-slot', 'display', W), 'none',
+      `${W}px에서 슬롯 display 승자가 none이 아니다 — 축소 불가 컨트롤이 검색·도크를 다시 덮는다(실측: input 5지점 "새 대화" 히트)`);
+    assert.equal(effective('.crew-phone-band', 'display', W), 'flex',
+      `${W}px에서 밴드 display 승자가 flex가 아니다 — 슬롯을 숨긴 채 밴드가 안 뜨면 세션 상태·카드·새 대화가 화면에서 사라진다`);
+  }
+  assert.equal(effective('#argo-topbar-slot', 'display', 901), 'flex',
+    '901px에서 슬롯 display 승자가 flex가 아니다 — 넓은 화면의 topbar 상주(스티키 밴드 대체) 결정이 무너진다');
+  assert.equal(effective('.crew-phone-band', 'display', 901), 'none',
+    '901px에서 밴드 display 승자가 none이 아니다 — 슬롯과 밴드가 이중 노출된다');
+});
+
+test('슬롯 배선 — layout의 슬롯 div에 인라인 display가 없어야 CSS 숨김이 산다', () => {
+  assert.match(layout, /<div id="argo-topbar-slot" \/>/,
+    '슬롯 div가 무스타일 형태가 아니다 — 인라인 display:flex가 돌아오면 ≤900px 숨김 규칙이 인라인에 져서 죽은 규칙이 된다');
+});
+
+test('밴드 배선 — 주 화면에만 crew-phone-band(임베드 패널 밴드는 상시 인라인)', () => {
+  assert.match(crew, /className=\{embedded \? undefined : 'crew-phone-band'\}/,
+    '크루 페이지 밴드에 crew-phone-band 조건 클래스가 없다 — ≤900px에서 컨트롤 수용처가 사라진다');
+});
+
+/* ── 폰 폭(≤560px) — 크루 채팅·경쟁 시안 본문: 레일 스택 ──────────────────
+   #348 분리 검수 확정 별건 1: 레일 216px 열이 남으면 본문 트랙이 98px로 붕괴하고(실측 360px),
+   본문 내부 무템플릿 열은 자식 min-content(212px 실측)로 부풀어 문서 가로 넘침 100px을 만들었다. */
+
+test('본문 그리드 — 360px에서 열 승자 minmax(0, 1fr)(레일 스택), 901px에서 양보 클램프 2열', () => {
+  assert.equal(effective('.chat-cols', 'grid-template-columns', 360), 'minmax(0, 1fr)',
+    '360px에서 .chat-cols 열 승자가 단일 minmax(0, 1fr)가 아니다 — 레일이 216px 열로 남아 본문이 98px로 붕괴한다(실측)');
+  // 양보 클램프 min(216px, 100% - 244px): 배율 2의 좁은 유효 폭에서 고정 216px 레일이 본문 열을
+  // 60 CSS px까지 압살하던 것을 방지(#365 — 세 페이지 공통 편입). 244 = 본문 열 바닥 226(카드
+  // 최소 가독 180 + 패딩 36 + 테두리 2 + 스크롤바 8) + gap 18. 컨테이너 ≥460은 216 고정과 동일.
+  assert.equal(effective('.chat-cols', 'grid-template-columns', 901), 'min(216px, 100% - 244px) minmax(0, 1fr)',
+    '901px에서 .chat-cols 열 승자가 양보 클램프 2열이 아니다 — 고정 216px로 롤백되면 배율 2에서 본문이 60px로 압살된다');
+});
+
+test('레일 — 360px에서 position 승자 static + 자체 스크롤 상한(vh는 /var(--z) 보정), 901px에서 sticky·무폭', () => {
+  const RAIL = '.chat-cols > .side-rail'; // 정확 일치 평가라 결합 셀렉터 그대로 조회
+  assert.equal(effective(RAIL, 'position', 360), 'static',
+    '360px에서 레일 position 승자가 static이 아니다 — sticky 레일이 스택 흐름을 깬다');
+  assert.equal(effective(RAIL, 'position', 901), 'sticky',
+    '901px에서 레일 position 승자가 sticky가 아니다 — 데스크톱에서 레일이 스크롤을 따라오지 않는다');
+  assert.match(String(effective(RAIL, 'max-height', 360)), /vh\s*\/\s*var\(--z/,
+    '360px 레일 max-height 승자가 배율 보정(vh / var(--z)) 꼴이 아니다 — 세션이 많으면 레일이 본문을 밀어낸다(display-zoom 게이트와 한 세트)');
+  assert.equal(effective(RAIL, 'overflow-y', 360), 'auto',
+    '360px 레일 overflow-y 승자가 auto가 아니다 — 상한을 걸어도 내용이 밖으로 넘친다');
+  // 레일 폭은 트랙이 정한다(기본 stretch) — CSS width 선언이 있으면 트랙 양보(min(216px,…)) 시
+  // 아이템이 트랙을 넘어 본문 위로 얹힌다(#365 검수 MEDIUM-3 실증). 밴드 안(360px)의 width:auto는
+  // 문제없으나 데스크톱(901px)에 width가 있으면 양보가 무효화된다.
+  assert.equal(effective(RAIL, 'width', 901), undefined,
+    '901px 레일에 CSS width 선언이 있다 — 트랙 양보 클램프(min(216px, 100% - 244px))를 무효화해 배율 2에서 본문 압살이 부활한다');
+});
+
+test('밴드 줄바꿈 — 360px flex-wrap 승자 wrap (라벨 합이 가용폭과 정확히 일치, 여유 0)', () => {
+  // 분리 검수 모사 측정: 밴드 가용폭 332px(=360 − .content 좌우 14)에서 ko 라벨 합 332px·en 332px —
+  // 여유가 0이라 라벨이 한 글자만 길어져도 nowrap이면 넘친다. wrap이 실제 하중을 받는 안전판이다.
+  assert.equal(effective('.crew-phone-band', 'flex-wrap', 360), 'wrap',
+    '360px 밴드 flex-wrap 승자가 wrap이 아니다 — 긴 역할·영어 라벨에서 밴드가 가로로 넘친다');
+});
+
+test('본문 그리드 배선 — 크루(조건)·경쟁·회의실(고정)에 chat-cols, 레일 인라인엔 position 없음', () => {
+  // 여는 태그 전체 앵커 — "클래스 존재"만 보면 클래스+인라인 병기 변이에 초록(#361 검수 V1b 실증:
+  // 인라인은 스타일시트를 무조건 이기므로 ≤560 규칙이 죽고 정본 갈라짐이 부활). 크루는 embedded
+  // 조건 스타일이 필수라 무스타일 형태가 불가 — 대신 비임베드 갈래가 undefined(인라인 없음)임을 잠근다.
+  assert.match(crew, /className=\{embedded \? undefined : 'chat-cols'\} style=\{embedded\s*\n\s*\? \{[^\n]*\}\s*\n\s*: undefined\}>/,
+    '크루 주 화면 그리드가 "chat-cols + 비임베드 인라인 없음(undefined 갈래)" 형태가 아니다 — 인라인 기하가 돌아오면 폰 규칙이 인라인에 져서 죽는다');
+  assert.match(compete, /<div className="chat-cols">/,
+    '경쟁 시안 그리드가 무스타일 chat-cols 여는 태그가 아니다 — 인라인 병기는 ≤560 규칙을 죽인다(같은 넘침 실측 360px에서 100px)');
+  assert.match(room, /<div className="chat-cols">/,
+    '회의실 그리드가 무스타일 chat-cols 여는 태그가 아니다 — 인라인 병기는 정본 갈라짐(이 편입의 목적 자체)을 부활시킨다');
+  for (const [name, src] of [['crew', crew], ['compete', compete], ['room', room]]) {
+    assert.match(src, /className="side-rail" style=\{\{ display: 'grid', gridTemplateColumns: 'minmax\(0, 1fr\)', gap: 4 \}\}/,
+      `${name} 레일 인라인이 무position 형태가 아니다 — 인라인 sticky·width가 돌아오면 폰 스택 규칙이 인라인에 진다`);
+  }
+});
+
+test('본문 내부 열 잠금 — 크루·경쟁 채팅 컬럼의 무템플릿 암묵 열 봉인(minmax + auto 1fr auto)', () => {
+  assert.match(crew, /gridTemplateColumns: 'minmax\(0, 1fr\)', gridTemplateRows: 'auto 1fr auto', height: '100%'/,
+    '크루 채팅 컬럼 열 잠금이 없다 — 컴포저 min-content(실측 212px)가 암묵 열을 부풀려 360px에서 문서 가로 넘침 100px이 재발한다');
+  assert.match(compete, /gridTemplateColumns: 'minmax\(0, 1fr\)', gridTemplateRows: 'auto 1fr auto', gap: 12/,
+    '경쟁 본문 컬럼 열 잠금이 없다 — 같은 계열 넘침(실측 100px)이 재발한다');
+});
+
+test('크루 채팅 컬럼 배치 불변식 — 밴드1·스레드2·컴포저3 명시 gridRow(자동배치 금지)', () => {
+  // display:none 아이템은 행이 접히는 게 아니라 그리드 배치에서 빠진다 — 자동배치에 맡기면 밴드가
+  // 숨는 주 화면(>900px)에서 스레드·컴포저가 1·2행으로 당겨져 컴포저가 1fr을 먹고 상단으로 떠오른다
+  // (분리 검수 실측: 빈 대화 입력바 top 264 vs 정상 798). 행 템플릿 핀만으로는 이 결함이 초록이었다.
+  assert.match(crew, /className=\{embedded \? undefined : 'crew-phone-band'\}\s*\n\s*style=\{\{ gridRow: 1,/,
+    '밴드에 gridRow: 1이 없다 — 자동배치로 되돌아가면 데스크톱 컴포저 상단 부양이 재발한다');
+  assert.match(crew, /className="thread" ref=\{threadRef\} style=\{\{ gridRow: 2,/,
+    '스레드에 gridRow: 2가 없다');
+  // 자리별 표현식 앵커 — 개수 단언(=== 2)은 "이전형" 변이에 초록이었다(재검수 MR5 실증:
+  // 카드에서 떼어 스레드 레인으로 옮겨도 개수 2 유지 → 그 분기에서 부양 부활 가능).
+  assert.match(crew, /className="card card-float" style=\{\{ gridRow: 3, width: '100%', maxWidth: LANE, margin: '12px auto 0'/,
+    '읽기 전용 카드(viewing)에 gridRow: 3이 없다 — 아카이브 열람 분기에서 카드가 자동배치로 떠오른다');
+  assert.match(crew, /<div style=\{\{ gridRow: 3, width: '100%', maxWidth: LANE, margin: '0 auto', paddingTop: 12/,
+    '컴포저 스택에 gridRow: 3이 없다 — 주 분기에서 컴포저 상단 부양이 재발한다(재검수 실측: auto 복귀 시 rows 96px/704px/0px·top 82)');
 });

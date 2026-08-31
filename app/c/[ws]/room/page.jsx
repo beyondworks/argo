@@ -203,11 +203,13 @@ export default function Room({ params }) {
   const shown = viewing ? archMsgs : messages;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
-      {/* height offset 100 = topbar(56)+상단패딩(26)+하단여백(18). marginBottom -70 = 원래 오프셋 170과의 차 —
-          .content 하단 패딩(88) 중 70을 상쇄해 body 스크롤을 막으면서 입력창을 아래로 내려 대화 영역을 넓힌다. 메시지 컬럼 minHeight:0과 한 세트(회의실·컨테스트·DM 동일). */}
-      {/* 회의 레일 — 마친 회의가 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr) */}
-      <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
+    // 그리드 기하(레일 216px + 본문 열, 높이 calc, marginBottom -70)는 .chat-cols(globals) — 크루 DM·
+    // 컨테스트와 정본 공용(값이 동일한데 인라인로 남아 정본이 둘로 갈라져 있던 것을 편입).
+    // 폰 폭(≤560px)의 레일 스택 전환도 이 클래스로 함께 받는다.
+    <div className="chat-cols">
+      {/* 회의 레일 — 마친 회의가 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr).
+          sticky·폭 216은 .chat-cols > .side-rail(globals) — 폰 폭에서 static·전폭 스택으로 뒤집힌다 */}
+      <div className="side-rail" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('room.sessions.title')}{sessions.length ? ` · ${sessions.length}` : ''}
         </span>

@@ -1496,6 +1496,10 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
   font-family: var(--mono); font-size: 16.5px; font-weight: 500;
   font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
 }
+/* 페이지 컨트롤 슬롯(크루 채팅이 포털로 사용) — display까지 여기: 인라인 display가 있으면
+   좁은 셸(≤900px 블록)의 숨김이 인라인에 진다. 자식이 전부 flex:none이라 슬롯은 축소 불가 —
+   좁은 폭 수용은 숨김+인라인 밴드(.crew-phone-band) 전환으로 한다 */
+#argo-topbar-slot { display: flex; align-items: center; gap: 8px; min-width: 0; }
 
 .search-pill {
   display: flex; align-items: center; gap: 8px;
@@ -1864,6 +1868,24 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 }
 
 /* ─── 채팅 ─── */
+/* 크루 채팅·회의실·경쟁 시안 공용 본문 그리드 — 세션 레일 + 본문 열. 인라인이 아니라 여기 두는 이유:
+   폰 폭(≤560px)의 레일 스택 전환을 미디어 블록이 !important 없이 이기게 한다.
+   offset 100 = topbar56+상단26+하단여백18, margin-bottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지.
+   레일 양보 클램프 min(216px, 100% - 244px): 배율 2의 좁은 유효 폭에서 고정 216px 레일이 본문 열을
+   60 CSS px까지 압살하던 것을 방지(실측 1280×배율 2 — #365). 244 = 본문 열 바닥 226(시안/스레드 카드
+   최소 가독 180 + 카드 패딩 36 + 카드 테두리 2 + 커스텀 스크롤바 8) + gap 18. 컨테이너 ≥460이면
+   min()이 216을 택해 종전과 픽셀 동일. 미디어쿼리 밴드(≤560)는 실뷰포트만 보고 배율 축은 못 보므로
+   intrinsic 클램프가 필수 — 밴드(1열 스택)에서는 이 선언이 덮어써져 무효이므로 공존에 무해. */
+.chat-cols {
+  display: grid; grid-template-columns: min(216px, 100% - 244px) minmax(0, 1fr);
+  gap: 18px; align-items: start;
+  height: calc(100vh / var(--z, 1) - 100px); margin-bottom: -70px;
+}
+/* 레일 폭은 트랙이 정한다(기본 stretch) — 고정 width는 트랙 양보 시 아이템이 트랙을 넘어 본문 위로
+   얹힌다(#365 검수 MEDIUM-3 실증). */
+.chat-cols > .side-rail { position: sticky; top: 72px; }
+/* 크루 컨트롤 인라인 밴드 — 기본은 없음(넓은 폭은 topbar 슬롯이 수용처), ≤900px 블록에서 등장 */
+.crew-phone-band { display: none; }
 /* overflow-anchor 차단 — 크롬 scroll anchoring이 턴 종료(작업 카드 unmount) 같은 DOM 변화에
    scrollTop을 수백 px 보정해 화면이 튄다(실측 1068→540). 스크롤은 페이지 코드가 전담한다. */
 .thread { display: flex; flex-direction: column; gap: 20px; overflow-anchor: none; overflow-x: hidden; }
@@ -2036,6 +2058,12 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh / var(--z, 1)
   .side { position: static; height: auto; }
   .content { padding: 16px 14px 70px; }
   .search-pill { width: auto; flex: 1; }
+  /* 크루 컨트롤: topbar 슬롯 → 채팅 위 인라인 밴드. 슬롯 자식은 전부 flex:none이라 좁은 상단바에서
+     검색·도크 위로 흘러넘친다(실측 561px에서도 306px 초과 — 검색 input 5지점 "새 대화" 히트). 경계는
+     신설 대신 셸 스택 경계 재사용 — 붕괴 대역이 ~650px까지 이어져 560 폰 블록으로는 못 덮는다.
+     밴드에서 '옆에 열기'가 빠지는 건 의도 — 분할 패널이 ≤899px display:none(아래)이라 죽은 버튼이다. */
+  #argo-topbar-slot { display: none; }
+  .crew-phone-band { display: flex; flex-wrap: wrap; }
   /* 기억 2패널 → 세로 스택. 좁은 폭에 고정폭 트리를 두면 본문이 38px로 붕괴한다(검수 실측).
      트리는 자체 스크롤로 45vh까지만, 본문은 그래프가 살 최소 높이를 보장한다. */
   .vault-split { flex-direction: column; height: auto; min-height: 0; }
@@ -2056,6 +2084,11 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh / var(--z, 1)
   .topbar-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 56px; }
   /* 제목은 사용자 지정 크루 이름 — 길면 제목이 양보하고 검색은 입력 가능한 폭을 지킨다 */
   .search-pill { min-width: 96px; }
+  /* 크루 채팅·경쟁 시안 본문 — 레일이 216px 열로 남으면 본문 트랙이 98px로 붕괴한다(실측 360px).
+     위 레일·아래 본문 스택으로 전환하고, 레일은 자체 스크롤 상한으로 본문 높이를 지킨다(vault 트리와 동형).
+     26vh는 /var(--z)로 표시 배율 보정 — vh는 배율 무관 실뷰포트 기준이라 나눠야 레이아웃 픽셀과 맞는다 */
+  .chat-cols { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .chat-cols > .side-rail { position: static; width: auto; max-height: calc(26vh / var(--z, 1)); overflow-y: auto; }
 }
 
 /* 동작 줄이기(OS 접근성 설정)에서만 적용된다 — 켜지 않은 사용자에겐 위 애니메이션이 그대로 간다.
