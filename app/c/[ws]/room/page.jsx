@@ -289,21 +289,32 @@ export default function Room({ params }) {
         />
       )}
 
-      <div style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className="microlabel">{t('room.header')}</span>
+      {/* 열 잠금 minmax(0,1fr) — 무템플릿 grid의 암묵 auto 열은 자식 min-content(컴포저 textarea 고유폭
+          ~260px)만큼 부풀어, 표시 배율 2의 좁은 유효 폭(1열 ~178px)에서 문서 가로 넘침을 만든다(실측
+          scrollWidth 1507 > 1408). 아이템 minWidth:0은 바깥 트랙만 지키고 자기 내부 트랙은 못 지킨다. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
+        {/* 좁은 유효 폭 축소 규칙 — 라벨은 한 줄 ellipsis(단어별 세로 쌓임 방지), 버튼은 안 들어가면
+            wrap으로 아랫줄에, 그래도 좁으면 라벨 줄바꿈(.btn 전역 nowrap 해제) — 버튼이 유일한
+            비축소 요소라 좁은 창(실측 1280px 창 × 배율 2)에서 문서 가로 넘침을 만들었다.
+            버튼의 height auto+minHeight 28: .btn.sm 고정 height 28은 라벨이 2줄이 되는 좁은 폭
+            (en 실측 191px > 열 186px)에서 글자가 알약 밖으로 삐져나온다(검수 MEDIUM). */}
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+          <span className="microlabel" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('room.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
           {!viewing && (messages?.length ?? 0) > 0 && (
-            <button className="btn sm" disabled={busy} onClick={endMeeting}>{t('room.end')}</button>
+            <button className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy} onClick={endMeeting}>{t('room.end')}</button>
           )}
         </div>
 
-        <div style={{ position: 'relative', minHeight: 0, display: 'grid' }}>
-        <div ref={scrollRef} className="card" style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0 }}>
+        <div style={{ position: 'relative', minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)' }}>
+        {/* overflowWrap anywhere — 긴 무공백 토큰(URL·코드 조각)이 좁은 유효 폭에서 카드 내부 가로
+            스크롤을 만들지 않게 한다. 크루 채팅의 .thread .card·.msg-user(globals 1866)와 동형 처방.
+            .md는 자체 break-word가 우선하지만 아래 열 잠금으로 박스가 좁아지면 그걸로 충분히 꺾인다. */}
+        <div ref={scrollRef} className="card" style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' }}>
           {shown === null ? <Skeleton h={200} /> : shown.length === 0 ? (
             <div className="empty">{t('room.empty')}</div>
           ) : (
-            <div style={{ display: 'grid', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}> {/* 열 잠금 — 본문 열과 같은 이유(메시지 행 min-content 전파 차단) */}
               {shown.map((m, i) => m.who === 'user' ? (
                 <div key={i} style={{ justifySelf: 'end', maxWidth: '78%' }}>
                   <div className="bubble-user" style={{ background: 'var(--primary)', color: 'var(--primary-fg)', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
@@ -377,7 +388,7 @@ export default function Room({ params }) {
             <button className="btn btn-primary sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
           </div>
         ) : (
-          <div style={{ display: 'grid', gap: 6 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}> {/* 열 잠금 — 본문 열과 같은 이유(한 층 아래 같은 함정) */}
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
             {/* 라우팅 문법 안내 — 모르면 없는 기능이다. 방을 떠나지 않고 지시하는 법을 입력창 옆에 붙여 둔다 */}
             {/* 멘션 드롭업의 위치 기준 — 입력바를 relative로 감싼다 */}

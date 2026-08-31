@@ -1767,7 +1767,10 @@ body.split-resizing { cursor: col-resize; user-select: none; }
   font-size: 11.5px; font-weight: 550;
   padding: 3px 10px; border-radius: 999px;
   border: 1px solid var(--border); background: var(--card);
-  max-width: 220px; white-space: nowrap;
+  /* min(220px, 100%) — nowrap 칩의 고정 220px 상한은 좁은 유효 폭(표시 배율 2, 열 186px)에서
+     행 밖으로 넘친다(회의실 검수 실측 — 긴 파일명 칩이 문서 가로 스크롤 2 CSS px). 소비자 7곳
+     (회의실 3·크루 채팅 4) 전부 일반 플로우 컨텍스트라 100% 기준이 안전하다. */
+  max-width: min(220px, 100%); white-space: nowrap;
 }
 .att-chip .name { overflow: hidden; text-overflow: ellipsis; }
 .att-chip button { color: var(--fg-3); font-size: 11px; font-weight: 700; flex: none; }
