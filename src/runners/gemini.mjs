@@ -197,7 +197,76 @@ export async function probeGeminiOAuth(credsJson) {
 export async function probeGeminiHostOAuth() {
   const creds = await readFile(join(homedir(), '.gemini', 'oauth_creds.json'), 'utf8').catch(() => null);
   if (!creds) return { ok: null }; // 자격 부재 판정은 기존 detect가 담당
-  return probeGeminiOAuth(creds);
+  const base = await probeGeminiOAuth(creds);
+  if (base.ok === false) return base;
+  // 구독 사용 가능성(#373 검수 HIGH-1) — 개인 OAuth 폐기와 별개로 라이선스 차단 계정을 관문에서 잡는다.
+  // 호스트 파일이 만료면 판정 불가(ok:null 관용) — 기존과 동일.
+  const sub = await probeGeminiSubscription(creds);
+  if (sub.ok === false && sub.reason === 'gemini-license') return sub;
+  return base;
 }
 
 export { geminiManagedEntry, geminiCmd, geminiTurnHome, writeGeminiTurnSettings }; // 러너 모듈 내부 공용(facade 미노출)
+
+// ── cloudcode(Code Assist) 구독 프로브 — 연결 단계 사전 감지 (2026-08-31, 분리 검수 반영 개정) ──
+// 배경: gemini oauth는 저장 관문이 개인 OAuth 폐기(probeGeminiOAuth)만 봐서, Code Assist를 쓸 수
+// 없는 계정(워크스페이스 라이선스 없음 등)이 "연결됨"으로 저장되고 모든 턴이 벤더 403
+// ("You do not have a valid license")으로만 죽었다(유건 제보 "Gemini 400" 계열 — 이 기기 실측).
+// 판정은 loadCodeAssist **1콜·0토큰**: 검수(#373)가 라이브로 확인한 벤더 자기신호(ineligibleTiers)
+// 를 쓴다 — 생성 호출·GCP 프로젝트 열람이 불필요하고(부작용·오귀속 제거), 프로젝트 선택에
+// 의존하던 오거절 메커니즘(검수 #3)도 사라진다.
+const CODE_ASSIST = 'https://cloudcode-pa.googleapis.com';
+const CA_META = { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' };
+const CA_HEADERS = (tok) => ({
+  Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json',
+  'User-Agent': 'google-cloud-sdk vscode_cloudshelleditor/0.1', 'X-Goog-Api-Client': 'gl-node/22.17.0',
+  'Client-Metadata': JSON.stringify(CA_META),
+});
+
+/** oauth_creds.json blob에서 유효 access_token을 꺼낸다(순수) — 만료·형식 불명은 null.
+    갱신은 하지 않는다: 주 배선(웹 브리지 webauth.mjs)은 방금 교환한 신선 토큰이라 불필요하고,
+    붙여넣기·API 경로의 만료 blob은 기존 관용(ok:null 저장)과 동일하게 둔다. 갱신이 필요해지면
+    webauth.mjs의 gemini 클라이언트 상수(이미 추적됨)를 쓰면 된다 — gemini.mjs에 새 리터럴을
+    추가하면 GitHub 푸시 보호가 base64까지 복호해 차단한다(2026-08-31 실측). */
+export function geminiAccessToken(stored, now = Date.now()) {
+  try {
+    const d = JSON.parse(stored);
+    const exp = Number(d?.expiry_date);
+    if (d?.access_token && (!(exp > 0) || exp - now > 60_000)) return String(d.access_token);
+    return null;
+  } catch { return null; }
+}
+
+/** 구독(OAuth) 연결이 실제로 턴을 돌릴 수 있는가 — 연결 단계 판정(1콜·0토큰).
+    반환 { ok: false, reason: 'auth' } 토큰 무효(401) /
+        { ok: false, reason: 'gemini-license' } 이 계정의 구독 경로 성립 불가 확정 /
+        { ok: null } 그 외 전부(관용 — 유효 자격 오거절 방지가 최우선 제약, glm verify 선례).
+    'gemini-license' 확정 조건(둘 중 하나):
+    · loadCodeAssist 403 + "valid license" 문구(관리자 미배정 라이선스 — 실측 생성 403과 같은 문구)
+    · 200인데 관리형 프로젝트 없음 + free-tier가 UNSUPPORTED_CLIENT로 부적격 + free-tier 허용도
+      없음 — 관리형 발급 경로가 벤더 단에서 막힌 형태(이 기기 라이브 실측 바디 그대로).
+      free-tier가 allowedTiers에 있으면 미온보딩 개인 계정이므로 차단하지 않는다(오거절 방지). */
+export async function probeGeminiSubscription(stored, fetchImpl = fetch) {
+  try {
+    const tok = geminiAccessToken(stored);
+    if (!tok) return { ok: null };
+    const lr = await fetchImpl(`${CODE_ASSIST}/v1internal:loadCodeAssist`, {
+      method: 'POST', headers: CA_HEADERS(tok), body: JSON.stringify({ metadata: CA_META }),
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (lr.status === 401) return { ok: false, reason: 'auth' };
+    if (lr.status === 403) {
+      // 403은 인증 통과 후의 권한 오류다 — "재발급" 오안내 금지(검수 #2). 라이선스 문구일 때만 확정.
+      const body = await lr.text().catch(() => '');
+      return /valid license/i.test(body) ? { ok: false, reason: 'gemini-license' } : { ok: null };
+    }
+    if (!lr.ok) return { ok: null };
+    const lb = await lr.json().catch(() => ({}));
+    const project = typeof lb?.cloudaicompanionProject === 'string' ? lb.cloudaicompanionProject : lb?.cloudaicompanionProject?.id;
+    if (project) return { ok: null }; // 관리형 프로젝트 보유 — 차단 근거 없음(생성 검증은 하지 않는다)
+    const freeBlocked = (lb?.ineligibleTiers ?? []).some((t) => t?.tierId === 'free-tier' && t?.reasonCode === 'UNSUPPORTED_CLIENT');
+    const freeAllowed = (lb?.allowedTiers ?? []).some((t) => t?.id === 'free-tier');
+    if (freeBlocked && !freeAllowed) return { ok: false, reason: 'gemini-license' };
+    return { ok: null };
+  } catch { return { ok: null }; }
+}

@@ -72,7 +72,7 @@ const codexLockupError = () => Object.assign(new Error(
   'codex 실행기의 도구(셸·파일)가 잠겨 턴이 일을 하지 못했습니다(code-mode host 문제). '
   + 'Codex tools were locked (code-mode host issue) — the turn could not modify files.',
 ), { toolLockup: true });
-export { provisionGeminiCli, probeGeminiOAuth, probeGeminiHostOAuth } from './runners/gemini.mjs';
+export { provisionGeminiCli, probeGeminiOAuth, probeGeminiHostOAuth, probeGeminiSubscription } from './runners/gemini.mjs';
 export {
   accountScope, loadRunnerCred, saveRunnerCred, clearRunnerCred, seedRunnerCreds,
   maskCred, normalizePastedCred, runnerCredEnv, sdkEnvFor, kimiEnv, glmEnv, verifyRunnerCred,

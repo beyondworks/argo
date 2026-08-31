@@ -39,8 +39,15 @@ export async function PUT(req) {
       if (!host?.installed) throw new Error('이 컴퓨터에서 해당 CLI가 감지되지 않습니다 — 먼저 설치해 주세요');
       if (!host?.authed) throw new Error('이 컴퓨터의 CLI가 로그인돼 있지 않습니다 — 터미널에서 로그인 후 다시 시도해 주세요');
       // gemini 개인 OAuth 부적격(구글 신형 CLI 차단) 확정이면 '연결됨' 금지 — 회사 라우트와 대칭
-      if (runner === 'gemini' && (await probeGeminiHostOAuth()).ok === false) {
-        throw new Error('이 컴퓨터의 Gemini 로그인(개인 OAuth)은 구글이 최신 CLI에서 지원을 중단해 사용할 수 없습니다 — API 키로 연결해 주세요(Google AI Studio에서 무료 발급)');
+      if (runner === 'gemini') {
+        const hp = await probeGeminiHostOAuth();
+        if (hp.ok === false && hp.reason === 'gemini-license') {
+          // 라이선스 차단은 개인 OAuth 폐기와 다른 사유 — 같은 메시지를 쓰면 오안내(검수 #1 host 축)
+          throw new Error('이 컴퓨터의 구글 계정은 Gemini Code Assist를 쓸 수 없어(라이선스 없음·개인 무료 경로 부적격) 구독 방식 턴이 모두 실패합니다 — API 키로 연결해 주세요(Google AI Studio에서 무료 발급)');
+        }
+        if (hp.ok === false) {
+          throw new Error('이 컴퓨터의 Gemini 로그인(개인 OAuth)은 구글이 최신 CLI에서 지원을 중단해 사용할 수 없습니다 — API 키로 연결해 주세요(Google AI Studio에서 무료 발급)');
+        }
       }
       await saveRunnerCred(g.scope, runner, 'host', 'host');
       return Response.json({ ok: true, runner, connected: true, type: 'host', masked: '' });
@@ -62,6 +69,12 @@ export async function PUT(req) {
     {
       const r = await verifyRunnerCred(runner, type, v);
       if (r.ok === false) {
+        // 라이선스 차단은 자격 무효와 다르다 — 회사 라우트와 대칭(재발급 오안내 방지)
+        if (r.reason === 'gemini-license') {
+          throw new Error(lang === 'en'
+            ? 'This Google account has no Gemini Code Assist license, so Google blocks subscription-based turns (verified at connect time). Use a Gemini API key instead, or sign in with an account that has the license.'
+            : '이 구글 계정에는 Gemini Code Assist 라이선스가 없어 구독 방식 사용을 구글이 차단합니다(연결 시점 실검증). Gemini API 키 방식으로 연결하거나, 라이선스가 있는 계정으로 로그인해 주세요.');
+        }
         throw new Error(lang === 'en'
           ? 'This credential failed authentication — it may be expired, revoked, or mis-issued. Please issue a new one and paste it again.'
           : '이 자격이 인증에 실패했습니다 — 만료·철회됐거나 잘못 발급된 값입니다. 새로 발급해 다시 붙여넣어 주세요.');

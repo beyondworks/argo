@@ -30,12 +30,15 @@ export async function PUT(req, { params }) {
       if (!host?.authed) throw new Error('이 컴퓨터의 CLI가 로그인돼 있지 않습니다 — 터미널에서 로그인 후 다시 시도해 주세요');
       // gemini는 로그인이 살아 있어도 구글이 개인 OAuth를 신형 CLI에서 거절할 수 있다 — 실사용 프로브로
       // 확정 부적격이면 '연결됨'을 만들지 않는다(웹 브리지 관문과 대칭, 실사용 신고 2026-07-20)
-      if (runner === 'gemini' && (await probeGeminiHostOAuth()).ok === false) {
-        // 벤더 폐기의 정직 안내(QA P0-2) — 구글이 개인 Code Assist OAuth를 Antigravity로 이전했다.
-        // 사용자가 자기 설정을 의심하며 시간을 태우지 않게 원인과 대안(Antigravity 러너 = agy 로그인 인식)을 함께.
-        // ko/en 병기(webauth.mjs ineligible detail과 같은 관례) — 이 문자열은 runner-connect가 그대로
-        // 렌더하므로 단일 언어면 영어 모드에 한글이 노출된다(분리 검수 LOW, 다국어 규칙).
-        throw new Error('이 컴퓨터의 Gemini 로그인(개인 OAuth)은 구글이 폐기하고 Antigravity로 이전해 사용할 수 없습니다 — Antigravity 러너로 연결하시거나(agy 로그인 인식), API 키로 연결해 주세요(Google AI Studio에서 무료 발급). This computer’s Gemini login (personal OAuth) was retired by Google in favor of Antigravity — connect the Antigravity runner (uses your agy login) or use an API key (free from Google AI Studio).');
+      if (runner === 'gemini') {
+        const hp = await probeGeminiHostOAuth();
+        if (hp.ok === false && hp.reason === 'gemini-license') {
+          // 라이선스 차단은 개인 OAuth 폐기와 다른 사유 — 같은 메시지를 쓰면 오안내(검수 #1 host 축)
+          throw new Error('이 컴퓨터의 구글 계정은 Gemini Code Assist를 쓸 수 없어(라이선스 없음·개인 무료 경로 부적격) 구독 방식 턴이 모두 실패합니다 — API 키로 연결해 주세요(Google AI Studio에서 무료 발급)');
+        }
+        if (hp.ok === false) {
+          throw new Error('이 컴퓨터의 Gemini 로그인(개인 OAuth)은 구글이 최신 CLI에서 지원을 중단해 사용할 수 없습니다 — API 키로 연결해 주세요(Google AI Studio에서 무료 발급)');
+        }
       }
       await saveRunnerCred(ws, runner, 'host', 'host');
       return Response.json({ ok: true, runner, connected: true, type: 'host', masked: '' });
@@ -60,6 +63,13 @@ export async function PUT(req, { params }) {
     {
       const r = await verifyRunnerCred(runner, type, v);
       if (r.ok === false) {
+        // 라이선스 차단(gemini 구독 — 워크스페이스 등 Code Assist 미보유 계정)은 자격 무효와 다르다:
+        // "재발급하라"는 오안내(로그인 자체는 정상 — grokCreditNotice 선례). 대안 경로를 짚어 준다.
+        if (r.reason === 'gemini-license') {
+          throw new Error(lang === 'en'
+            ? 'This Google account has no Gemini Code Assist license, so Google blocks subscription-based turns (verified at connect time). Use a Gemini API key instead, or sign in with an account that has the license.'
+            : '이 구글 계정에는 Gemini Code Assist 라이선스가 없어 구독 방식 사용을 구글이 차단합니다(연결 시점 실검증). Gemini API 키 방식으로 연결하거나, 라이선스가 있는 계정으로 로그인해 주세요.');
+        }
         throw new Error(lang === 'en'
           ? 'This credential failed authentication — it may be expired, revoked, or mis-issued. Please issue a new one and paste it again.'
           : '이 자격이 인증에 실패했습니다 — 만료·철회됐거나 잘못 발급된 값입니다. 새로 발급해 다시 붙여넣어 주세요.');

@@ -9,7 +9,7 @@ import { WS_ROOT, paths } from '../workspace.mjs';
 import { exists, homeEnv, scrubServerSecrets, seedAuthFile } from './shared.mjs';
 import { RUNNER_AUTH } from './catalog.mjs';
 import { provisionCodexCli } from './codex.mjs';
-import { provisionGeminiCli, geminiTurnHome } from './gemini.mjs';
+import { provisionGeminiCli, geminiTurnHome, probeGeminiSubscription } from './gemini.mjs';
 import { grokAccessToken, grokExpired, grokNeedsRefresh, refreshGrokTokens } from './grok.mjs';
 
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
@@ -392,6 +392,11 @@ export async function verifyRunnerCred(runner, type, value) {
         return /API_KEY_INVALID|API key not valid/i.test(body) ? { ok: false } : { ok: null };
       }
       return { ok: r.ok ? true : null };
+    }
+    if (runner === 'gemini' && type === 'oauth') {
+      // 구독 사전 감지(2026-08-31) — 라이선스 없는 계정(워크스페이스 등)이 "연결됨"으로 저장되고
+      // 전 턴이 403으로만 죽던 갭. 판정 불가(ok:null)는 기존 관용대로 형식 저장 허용.
+      return probeGeminiSubscription(v);
     }
     return { ok: null }; // oauth 토큰·미지원 조합은 형식 검증만
   } catch {
