@@ -17,6 +17,7 @@ export const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--ca
 // 가용 판정(순수)은 runner-usable.mjs로 분리 — 데크 배너·홈 안내·온보딩 게이트·회귀 테스트가 공유.
 // 기존 소비처(import from './runner-connect') 호환을 위해 재수출한다.
 export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, PICK_ORDER } from './runner-usable.mjs';
+import { lastTurnByRunner } from './runner-usable.mjs';
 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
@@ -38,14 +39,8 @@ export function AiConnectionCard({ ws, accordion = false }) {
   const [lastTurns, setLastTurns] = useState({}); // { [runner]: { ok, aborted } }
   function load() {
     api(`${keysBase(ws)}`).then((d) => setRunners(d.runners ?? {})).catch(() => setRunners({}));
-    if (!ws) return;
-    api(`/api/companies/${ws}/activity`).then((d) => {
-      const by = {};
-      for (const e of d.events ?? []) { // readEvents는 최신순 — 러너별 첫 매치가 최신 턴
-        if (e?.type === 'turn' && e.runner && !(e.runner in by)) by[e.runner] = { ok: e.ok !== false, aborted: e.error === '사장 지시로 중단' };
-      }
-      setLastTurns(by);
-    }).catch(() => {});
+    if (!ws || ws === ACCOUNT_WS) return; // 온보딩(계정 스코프)엔 활동이 없다 — 매번 404 요청 방지(검수 L2)
+    api(`/api/companies/${ws}/activity`).then((d) => setLastTurns(lastTurnByRunner(d.events))).catch(() => {});
   }
   useEffect(load, [ws]);
 
@@ -313,9 +308,12 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
       if (r.ok === true) { setVerifyOk(true); setVerifyMsg(t('settings.runners.checkOk')); }
       else if (r.ok === false) {
         setVerifyOk(false);
+        // 크레딧·구독 사정은 인증 실패가 아니다 — "다시 연결" 오안내 금지(grokCreditNotice 원칙, 검수 L3)
         setVerifyMsg(r.reason === 'gemini-license'
           ? t('settings.runners.geminiLicenseBlocked')
-          : t('settings.runners.checkFailed'));
+          : (r.reason === 'credit' || r.reason === 'tier')
+            ? t('settings.runners.checkCreditTier')
+            : t('settings.runners.checkFailed'));
       } else { setVerifyOk(true); setVerifyMsg(t('settings.runners.checkInconclusive')); }
     } catch (e) { setVerifyOk(false); setVerifyMsg(String(e?.message || e)); }
     setBusy('');
@@ -446,7 +444,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
       {/* 마지막 턴 상태(P1-1) — "연결됨" 초록불이 실사용 실패를 가리지 않게, 최근 턴이 실패한
           러너에 경고를 단다. 중단(사장 지시)은 실패가 아니라 제외. 원천 = 활동 이벤트 runner·ok. */}
       {(company.connected || st?.host?.optedIn) && lastTurn && !lastTurn.ok && !lastTurn.aborted && (
-        <span className="chip danger" style={{ fontSize: 10.5 }}>{t('settings.runners.lastTurnFailed')}</span>
+        /* .chip 금지 — uppercase+nowrap+mono가 EN 문장을 486px로 부풀려 폰 폭 카드를 뚫는다
+           (검수 M3 실측: EN 486 vs KO 300, 컨테이너 338). 소형 텍스트 + 줄바꿈 허용. */
+        <span style={{ fontSize: 11.5, color: 'var(--danger)', whiteSpace: 'normal', minWidth: 0 }}>{t('settings.runners.lastTurnFailed')}</span>
       )}
     </>
   );

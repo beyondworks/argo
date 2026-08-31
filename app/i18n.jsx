@@ -902,6 +902,7 @@ const DICT = {
   'settings.runners.checkOk': ['연결이 확인됐습니다.', 'Connection verified.'],
   'settings.runners.checkInconclusive': ['원격 판정이 어려운 방식이라 형식 확인까지만 했습니다.', 'This method cannot be fully verified remotely — format checks passed.'],
   'settings.runners.checkFailed': ['자격이 유효하지 않습니다 — 만료·철회됐을 수 있습니다. 다시 연결해 주세요.', 'This credential is no longer valid — it may be expired or revoked. Please reconnect.'],
+  'settings.runners.checkCreditTier': ['로그인은 정상이지만 크레딧·구독 사정으로 사용이 막혀 있습니다 — 충전 또는 구독 상태를 확인해 주세요.', 'The sign-in itself is fine, but credits or subscription tier are blocking use — check your balance or plan.'],
   'settings.runners.geminiLicenseBlocked': ['이 구글 계정은 Gemini Code Assist를 쓸 수 없어 구독 방식이 차단됩니다 — API 키 방식으로 연결해 주세요.', 'This Google account cannot use Gemini Code Assist, so the subscription method is blocked — connect with an API key instead.'],
   'chat.annotate.title': ['부분 코멘트 — 고칠 부분만 짚어서', 'Inline comments — mark just what to fix'],
   'chat.annotate.hint': ['답변에서 고칠 부분을 드래그로 선택하세요. 코멘트를 여러 개 모아 한 번에 보낼 수 있습니다.', 'Select the text to fix in the reply. Collect several comments and send them together.'],

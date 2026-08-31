@@ -79,7 +79,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
     // approval-actions의 실패 사유를 담은 crew 메시지(부작용은 이미 적용돼 보고만 실패). 의도적 구분.
     if (!failed) t.messages.push(
       // artifacts = 이 턴에 크루가 만든/고친 vault 문서(rel) — 답변 칩으로 바로 연다
-      { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}) },
+      { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}) }, // 검수 L1 — turnId 없는 갈래(선저장 실패·턴 중 리셋)도 폴백 표식 보존
     );
     if (sessionId) {
       // SDK 세션 저장소는 기기 로컬이라 소유 기기를 함께 기록한다 — 다른 기기가 이 sessionId를

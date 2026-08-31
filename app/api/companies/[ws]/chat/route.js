@@ -79,7 +79,7 @@ export async function POST(req, { params }) {
         return detectAndTrack(ws, { userMsg: message.trim(), lang });
       })
       .catch((e) => console.error(`[argo] 교정 감지 실패(${ws}/${slug}):`, e?.message ?? e));
-    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts });
+    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts, ...(t.fellBack ? { fellBack: t.fellBack } : {}) }); // 폴백 안내를 그 턴에 즉시(검수 M1 — 폴링 병합이 같은 길이면 서버 사본을 안 받는다)
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });
   }

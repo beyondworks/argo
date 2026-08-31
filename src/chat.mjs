@@ -863,7 +863,10 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   const wantExcluded = !!(wantRunner && __excludeRunners?.includes(wantRunner));
   // 폴백 투명화(P2, 계획서) — 지금까지 fallbackDirective는 **크루 프롬프트에만** 들어가 사용자는
   // 자기 크루가 다른 러너로 답한 사실을 몰랐다. 반환에 fellBack을 실어 채팅 표면이 안내를 그린다.
-  const fellBackInfo = resolved.fellBack ? { fellBack: { from: wantRunner, to: runner, reason: 'unavailable' } } : {};
+  // 사유는 fallbackDirective와 같은 축(wantExcluded)으로 가른다 — 지정 러너가 인증 오류로 제외돼
+  // 재귀 프레임에서 fellBack:true가 되는 경우 안쪽이 'unavailable'을 먼저 붙이면 바깥 자가치유
+  // 래핑(첫 원인 우선)이 그걸 유지해 "쓸 수 없어"와 프롬프트 고지("인증 오류")가 모순됐다(검수 M2).
+  const fellBackInfo = resolved.fellBack ? { fellBack: { from: wantRunner, to: runner, reason: wantExcluded ? 'auth' : 'unavailable' } } : {};
   const fallbackDirective = resolved.fellBack
     ? (wantExcluded
       ? (lang === 'en'
@@ -1107,6 +1110,9 @@ ${lang === 'en'
           try {
             // toolHop 전파 필수 — 빠뜨리면 인증 재시도 한 번이 커넥터 후속 턴 카운터를 0으로 되돌려
             // 상한을 통째로 무력화한다(쪽지 hop이 같은 자리에서 새던 것과 같은 계열).
+            // 실패한 러너의 사건을 먼저 남긴다 — 치유 성공 시 조기 return이 실패 기록을 삼켜,
+            // P2가 "인증 오류"라 말하는 턴에 연결 카드(P1-1)의 그 러너는 멀쩡해 보였다(검수 관점3 미탐).
+            await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {});
             const healed = await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners: tried });
             return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
@@ -1118,7 +1124,7 @@ ${lang === 'en'
       if (!aborted && isProcessCrash(e?.message || e)) e = Object.assign(new Error(`${crashHint(lang)} (${String(e.message || e).slice(0, 120)})`), { cause: e });
       if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
-      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400) });
+      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
       await clearTurnStatus(wsId, agentSlug);
       // cc 공유 노트 복원 — 소비(takeSharedNotes)가 러너 실행 전이라, 복원 없이는 실패한 턴이 동료가
       // 공유한 맥락을 영구 소실시킨다. 이 프레임이 직접 소비한 경우만(__seedNotes 재시도 프레임 제외).
@@ -1437,6 +1443,7 @@ ${lang === 'en'
       if (alt?.available && !tried.includes(alt.runner)) {
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
+          await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {}); // 실패 러너 사건 선기록(CLI 갈래와 대칭 — P1-1 미탐 봉합)
           const healed = await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
           return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {
@@ -1457,6 +1464,7 @@ ${lang === 'en'
     await appendEvent(wsId, {
       ...evBase, ok: false, ms: Date.now() - t0, steps,
       error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), // 진단 상세(errors[]/stderr 꼬리)까지 실리도록 400
+      ...(aborted ? { aborted: true } : {}), // 중단 판정은 필드로(사유 문자열 동등 비교는 다국어화에 fail-open — 검수 관점3, thread aborted 필드 선례)
     });
     await clearTurnStatus(wsId, agentSlug);
     // cc 공유 노트 복원 — CLI 경로와 동일: 이 프레임이 직접 소비한 노트만 최종 실패 시 pending으로 되살린다

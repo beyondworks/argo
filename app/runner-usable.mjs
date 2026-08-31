@@ -30,3 +30,16 @@ export function usableRunnerNames(runners) {
     .sort(([a], [b]) => PICK_ORDER.indexOf(a) - PICK_ORDER.indexOf(b))
     .map(([id, r]) => r.name || id);
 }
+
+
+/** 활동 이벤트 → 러너별 최신 턴 상태(P1-1, 순수). events는 최신순(readEvents 계약).
+    중단 판정은 aborted **필드** 우선 + 레거시 문자열 폴백 — 문자열 동등 비교 단독은 이벤트 문구
+    다국어화에 fail-open이다(검수 관점3·5, thread aborted 필드 선례). */
+export function lastTurnByRunner(events) {
+  const by = {};
+  for (const e of events ?? []) {
+    if (e?.type !== 'turn' || !e.runner || (e.runner in by)) continue;
+    by[e.runner] = { ok: e.ok !== false, aborted: e.aborted === true || e.error === '사장 지시로 중단' };
+  }
+  return by;
+}
