@@ -4,7 +4,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
-import { scrubSdkBrand, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSdkErrorReply, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
+import { scrubSdkBrand, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -54,7 +54,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       return { runner, text, usage: {}, costUsd: null }; // 외부 CLI — 토큰 사용량 비노출(채팅 경로와 동일)
     }
     const sdkEnv = await sdkEnvFor(wsId, runner);
-    let text = ''; let isErr = false; let failed = null; let usage = null; let costUsd = null;
+    let text = ''; let isErr = false; let apiErrSt = 0; let failed = null; let usage = null; let costUsd = null;
     // 행(hang) 상한 — SDK 경로엔 타임아웃이 없어 소켓 정체 시 이 async iterator가 영영 안 끝난다.
     // 그러면 호출자(스케줄러)의 in-flight 표시가 안 풀려 그 회사 기억 정리가 **무증상 영구 정지**한다
     // (검수 2026-07-27 M-1). 외부 CLI 경로는 이미 timeoutMs로 상한이 있어 두 경로를 맞추는 것이기도 하다.
@@ -80,14 +80,14 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     })) {
       if (msg.type === 'result') {
         usage = msg.usage; costUsd = msg.total_cost_usd;
-        if (msg.subtype === 'success') { text = msg.result; isErr = !!msg.is_error; } else failed = msg.subtype;
+        if (msg.subtype === 'success') { text = msg.result; isErr = !!msg.is_error; apiErrSt = Number(msg.api_error_status) || 0; } else failed = msg.subtype;
       }
     }
     if (!text?.trim()) throw new Error(failed || 'empty-reply');
     // SDK 삼킴 승격(chat.mjs와 대칭 — #372 분리 검수 MEDIUM 실측: 죽은 grok 자격의 oneshot이
     // 'API Error: 400 …'을 성공 반환 → 크루 카드·직함·기억에 오류 원문이 영구 저장되는 오염).
     // openrouter 402/429 승격(아래)과 같은 원칙, 게이트는 is_error + 엄격판 이중.
-    if (isErr && isSdkErrorReply(text)) throw new Error(String(text).trim().slice(0, 600));
+    if (isSwallowedSdkError(isErr, apiErrSt, text)) throw new Error(String(text).trim().slice(0, 600));
     // 402를 성공으로 두면 그 문구가 크루 카드·기억 노트에 영구 저장된다(검수 HIGH-1) — 실패로
     // 승격해 자가치유(다른 가용 러너 1회)·정직한 오류 경로를 태운다.
     if (runner === 'openrouter' && isOpenRouterCreditError(text)) {

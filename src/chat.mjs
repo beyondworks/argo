@@ -24,7 +24,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, runnerAuthNotice } from './runners.mjs';
+import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -1215,6 +1215,7 @@ ${lang === 'en'
   let costUsd = null; // 이 턴의 청구 금액 — 루프 루틴의 예산 합산용. 구독(OAuth)·openrouter·CLI 턴은 null(=0으로 합산)
   let creditTurn = false; // OpenRouter 402 턴 표식 — 일지 기록 제외용(2R N3: 오류 원문이 기억으로 정제되지 않게)
   let resultIsError = false; // SDK result의 is_error — subtype 'success'여도 참일 수 있다(xAI 400 실측 2026-08-31)
+  let resultApiErrStatus = 0; // result.api_error_status — 문구 형식과 무관한 삼킴 신호(#372 검수 NIT, 실측 400)
   let sid = resumeId; // 새 세션이면 null에서 시작 — 외래 sessionId를 내 것으로 재스탬프하지 않는다
   const toolCounts = {}; // 이 턴의 도구 사용 횟수 — 크루 프로필 "많이 쓴 도구"의 원천
   const t0 = Date.now();
@@ -1342,7 +1343,7 @@ ${lang === 'en'
         });
         if (billed && runner !== 'openrouter' && Number.isFinite(msg.total_cost_usd)) costUsd = msg.total_cost_usd;
       }
-      if (msg.subtype === 'success') { reply = msg.result; resultIsError = !!msg.is_error; }
+      if (msg.subtype === 'success') { reply = msg.result; resultIsError = !!msg.is_error; resultApiErrStatus = Number(msg.api_error_status) || 0; }
       else {
         // CLI가 낸 실제 원인(errors[])을 버리지 않는다 — "error_during_execution" 한 줄로는 사용자도
         // 우리도 진단 불가(Windows 실기 사례: 자격 정상인데 원인 불명 실패가 이 코드 때문에 미궁).
@@ -1388,7 +1389,7 @@ ${lang === 'en'
   // 저장되고 AUTH_ERR_RE 자가치유·아래 catch의 번역이 전부 미발동한다(유건 제보의 실체).
   // is_error + 엄격판(답변이 오류 원문으로 시작) 이중 게이트만 throw — 오류를 인용·해설하는 정상
   // 답변은 걸리면 안 되고(3R F1 원칙), openrouter 402/429는 위 분기가 이미 안내를 붙여 소비했다.
-  else if (resultIsError && isSdkErrorReply(reply)) {
+  else if (isSwallowedSdkError(resultIsError, resultApiErrStatus, reply)) {
     throw new Error(String(reply).trim().slice(0, 600));
   }
   } catch (e) {
@@ -1398,7 +1399,7 @@ ${lang === 'en'
     // "process exited with code 1"로 죽는 순서**가 실측됐다(2026-08-31 가짜 grok 자격 재현).
     // 이대로면 catch가 진짜 원인(오류 원문) 대신 종료 코드만 본다 — 원문으로 치환해야 아래
     // AUTH_ERR_RE 자가치유와 표면 번역이 문다. 1 query = 1 result 전제라 중간 결과 오염은 없다.
-    if (!aborted && resultIsError && isSdkErrorReply(reply) && !isSdkErrorReply(String(e?.message || e))) {
+    if (!aborted && isSwallowedSdkError(resultIsError, resultApiErrStatus, reply) && !isSdkErrorReply(String(e?.message || e))) {
       e = Object.assign(new Error(String(reply).trim().slice(0, 600)), { cause: e });
     }
     // 이 기기에 없는 세션을 resume한 경우(sessionDevice 없는 레거시 스레드의 기기 전환·CLI 세션

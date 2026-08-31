@@ -186,6 +186,15 @@ export const isOpenRouterLimitReply = (s) => strictReply(s, OPENROUTER_429_RE);
     쓴다(오류를 인용·해설하는 정상 답변 보호, openrouter 3R F1과 같은 원칙). */
 export const isSdkErrorReply = (s) => /^API Error:\s*\d{3}\b/.test(String(s ?? '').trim());
 
+/** SDK 삼킴 **종합** 판정(순수) — result가 "성공"으로 포장된 벤더 오류인가. 두 신호의 합집합:
+    ① result.api_error_status ≥ 400 (실측 2026-08-31: 가짜 grok 자격 실배관에서 400이 실린다 —
+       SDK 소스도 is_error+subtype success의 result를 오류 텍스트로 해석) — 'API Error:' 문구
+       형식을 SDK가 보장하지 않으므로 형식이 다른 삼킴까지 이 신호가 잡는다(#372 검수 NIT).
+    ② 문구 엄격판(isSdkErrorReply) — status 필드가 없는 구버전 SDK 폴백.
+    is_error가 거짓이면 항상 거짓 — 오류를 인용하는 정상 답변 보호(이중 게이트 유지). */
+export const isSwallowedSdkError = (isError, apiErrorStatus, reply) =>
+  !!isError && (Number(apiErrorStatus) >= 400 || isSdkErrorReply(reply));
+
 /** 러너 인증 실패의 사용자 안내 — "API Error: 400" 원문만으론 사용자가 할 일을 모른다(유건 제보).
     문구 위치는 grokCreditNotice(grok.mjs)와 같은 서버측 이중언어 계약. 원문 대체가 아니라
     **원문 뒤에 붙이는 행동 안내**로도 쓰인다(정직 오류 원칙 — 벤더 상세 보존). */

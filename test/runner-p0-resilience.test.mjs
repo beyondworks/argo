@@ -11,7 +11,7 @@ import { join } from 'node:path';
 // 임시 ARGO_ROOT·HOME — 실데이터·실홈 미접촉(runner-cred.test.mjs와 같은 격리 계약)
 process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-p0home-'));
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-p0test-'));
-const { isSdkErrorReply, runnerAuthNotice, saveRunnerCred, runnerCredEnv } = await import('../src/runners.mjs');
+const { isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, saveRunnerCred, runnerCredEnv } = await import('../src/runners.mjs');
 const { grokExpired, GROK_REFRESH_MARGIN_MS } = await import('../src/runners/grok.mjs');
 
 // ── ① isSdkErrorReply — 엄격판 계약 ──────────────────────────────────────
@@ -28,6 +28,16 @@ test('isSdkErrorReply: 정상 답변·오류 인용 답변은 잡지 않는다',
   assert.equal(isSdkErrorReply('API Error: 원인 불명'), false, '상태코드 없는 유사 문구');
   assert.equal(isSdkErrorReply(''), false);
   assert.equal(isSdkErrorReply(null), false);
+});
+
+// ── ①-b isSwallowedSdkError — 종합 판정(status 신호 합류, #372 검수 NIT 실측 반영) ──
+test('isSwallowedSdkError: api_error_status ≥ 400이면 문구 형식이 달라도 잡는다 (실측: 가짜 grok 자격에서 400 실림)', () => {
+  assert.equal(isSwallowedSdkError(true, 400, 'API Error: 400 {...}'), true, '실측 조합');
+  assert.equal(isSwallowedSdkError(true, 400, '형식이 다른 벤더 오류 원문'), true, 'status 신호 단독으로 잡음 — 문구 폴백의 미탐 봉합');
+  assert.equal(isSwallowedSdkError(true, 0, 'API Error: 529 overloaded'), true, 'status 없는(구버전 SDK) 폴백 = 문구 엄격판');
+  assert.equal(isSwallowedSdkError(true, null, '정상 답변입니다.'), false, '둘 다 아니면 통과');
+  assert.equal(isSwallowedSdkError(false, 400, 'API Error: 400 …'), false, 'is_error 거짓이면 항상 통과 — 오류 인용 답변 보호');
+  assert.equal(isSwallowedSdkError(true, 399, '정상'), false, '400 미만 status는 신호 아님');
 });
 
 // ── ② grokExpired — 만료 실판정 ─────────────────────────────────────────
@@ -83,9 +93,9 @@ test('runnerAuthNotice: ko/en 두 언어 + 러너 이름 + 행동 지시', () =>
 //  PR 본문에 재현 로그 기재. 소스 핀은 처방 삭제·역행 변이를 문다.)
 const chatSrc = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
 test('chat.mjs 배선: result.is_error 포착 → 삼킴 게이트 throw', () => {
-  assert.match(chatSrc, /if \(msg\.subtype === 'success'\) \{ reply = msg\.result; resultIsError = !!msg\.is_error; \}/, 'is_error 포착');
-  assert.match(chatSrc, /else if \(resultIsError && isSdkErrorReply\(reply\)\) \{\s*\n\s*throw new Error\(String\(reply\)\.trim\(\)\.slice\(0, 600\)\);/, '루프 후 삼킴 게이트');
-  assert.match(chatSrc, /if \(!aborted && resultIsError && isSdkErrorReply\(reply\) && !isSdkErrorReply\(String\(e\?\.message \|\| e\)\)\) \{\s*\n\s*e = Object\.assign\(new Error\(String\(reply\)\.trim\(\)\.slice\(0, 600\)\), \{ cause: e \}\);/, 'catch 머리 삼킴 보정(이터레이션 후사망 순서)');
+  assert.match(chatSrc, /if \(msg\.subtype === 'success'\) \{ reply = msg\.result; resultIsError = !!msg\.is_error; resultApiErrStatus = Number\(msg\.api_error_status\) \|\| 0; \}/, 'is_error·api_error_status 포착');
+  assert.match(chatSrc, /else if \(isSwallowedSdkError\(resultIsError, resultApiErrStatus, reply\)\) \{\s*\n\s*throw new Error\(String\(reply\)\.trim\(\)\.slice\(0, 600\)\);/, '루프 후 삼킴 게이트(종합 판정)');
+  assert.match(chatSrc, /if \(!aborted && isSwallowedSdkError\(resultIsError, resultApiErrStatus, reply\) && !isSdkErrorReply\(String\(e\?\.message \|\| e\)\)\) \{\s*\n\s*e = Object\.assign\(new Error\(String\(reply\)\.trim\(\)\.slice\(0, 600\)\), \{ cause: e \}\);/, 'catch 머리 삼킴 보정(이터레이션 후사망 순서·종합 판정)');
 });
 test('chat.mjs 배선: 표면 번역 — authExpired 대체 + AUTH_ERR_RE 원문 보존 덧붙임', () => {
   assert.match(chatSrc, /e\?\.authExpired\s*\n?\s*\? Object\.assign\(new Error\(runnerAuthNotice\(lang, e\.authExpired\)\), \{ authError: true, cause: e \}\)/, 'authExpired = 안내로 대체');
@@ -119,8 +129,8 @@ test('chat.mjs 배선: 표면 번역 분기 순서 — authExpired가 AUTH_ERR_R
 
 test('oneshot.mjs 배선: SDK 삼킴 승격 대칭 (검수 MEDIUM — 크루 카드·기억 오염 경로)', async () => {
   const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
-  assert.match(src, /\{ text = msg\.result; isErr = !!msg\.is_error; \}/, 'is_error 포착');
-  assert.match(src, /if \(isErr && isSdkErrorReply\(text\)\) throw new Error\(String\(text\)\.trim\(\)\.slice\(0, 600\)\);/, '승격 게이트');
+  assert.match(src, /\{ text = msg\.result; isErr = !!msg\.is_error; apiErrSt = Number\(msg\.api_error_status\) \|\| 0; \}/, 'is_error·api_error_status 포착');
+  assert.match(src, /if \(isSwallowedSdkError\(isErr, apiErrSt, text\)\) throw new Error\(String\(text\)\.trim\(\)\.slice\(0, 600\)\);/, '승격 게이트(종합 판정)');
 });
 
 test('creds.mjs 배선: 만료 게이트의 경합 재독 재판정 (검수 LOW — 병렬 턴 오안내 방지)', async () => {
