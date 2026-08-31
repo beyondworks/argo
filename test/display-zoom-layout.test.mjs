@@ -221,9 +221,14 @@ test('compete grid 열 잠금 sweep — 모든 인라인 display:grid는 minmax(
     // 선언은 정확히 1회 — 뒤 선언·스프레드 덮어쓰기는 마지막 승이라 앞 잠금이 초록인 채 무효가
     // 된다(재검수 M-6 실증: 끝에 ...{ gridTemplateColumns: '1fr' } 주입이 통과했었다).
     const colDecls = (g.body.match(/gridTemplateColumns/g) ?? []).length;
-    const locked = colDecls === 1 && /gridTemplateColumns:\s*['"`][^'"`]*minmax\(0,/.test(g.body);
+    // 허용 2형: ①minmax(0,…) ②minmax(min(Npx, 100%),…) — ②는 min이 컨테이너를 못 넘는
+    // 클램프형(시안 나열 grid의 협폭 가독 최소폭, #358). 맨 px min(minmax(180px,…))은
+    // 컨테이너보다 넓어질 수 있어 계속 red — 100% 캡 완화 변이를 이 스위프가 잡는다.
+    const lockedCols = /gridTemplateColumns:\s*['"`][^'"`]*minmax\(0,/.test(g.body)
+      || /gridTemplateColumns:\s*['"`][^'"`]*minmax\(min\(\d+px, 100%\),/.test(g.body);
+    const locked = colDecls === 1 && lockedCols;
     assert.ok(locked || (colDecls === 0 && /\bwidth:\s*\d/.test(g.body)),
-      `compete:${lineOf(src, g.start)} — 암묵/auto-min 열 grid: gridTemplateColumns는 정확히 1회 선언에 minmax(0,…)를 포함하거나(고정 px와 혼용 가능), 열 선언 없이 고정 소폭 width(아이콘 버튼류)여야 한다(자식 min-content로 트랙이 부풀어 배율 2에서 문서 가로 넘침 — 덮어쓰기 ${colDecls}회 선언도 여기서 red)`);
+      `compete:${lineOf(src, g.start)} — 암묵/auto-min 열 grid: gridTemplateColumns는 정확히 1회 선언에 minmax(0,…) 또는 minmax(min(Npx, 100%),…)를 포함하거나(고정 px와 혼용 가능), 열 선언 없이 고정 소폭 width(아이콘 버튼류)여야 한다(자식 min-content로 트랙이 부풀어 배율 2에서 문서 가로 넘침 — 덮어쓰기 ${colDecls}회 선언도 여기서 red)`);
   }
   // 역방향 스캔 — 소스의 모든 display:grid 토큰은 수집된 style={{…}} 구간 안에 있어야 한다.
   // 워커가 못 보는 표기로 grid가 들어오면 여기서 red(수집 우회 = 무보호 grid, 검수 M-4 봉합).
@@ -232,6 +237,57 @@ test('compete grid 열 잠금 sweep — 모든 인라인 display:grid는 minmax(
     const inside = styles.some((s) => m.index >= s.start && m.index < s.end);
     assert.ok(inside, `compete:${lineOf(src, m.index)} — 수집되지 않은 display:grid (style={{…}} 인라인 밖이거나 워커가 모르는 표기)`);
   }
+});
+
+test('compete 시안 나열·카드 협폭 가독 핀 — auto-fit 적층·헤더 wrap·채택 버튼 세트 복원 변이는 red', () => {
+  // 고정 N열(repeat(entrants.length, minmax(0,1fr)))은 배율 2 협폭에서 시안 카드를 37 CSS px까지
+  // 눌러 채택 버튼·상태 칩이 이웃 카드 위로 겹친다(비교 불가 — 카드 overflow가 가둬 문서 넘침은
+  // 아니라 위 sweep 값검사(minmax(0,)로는 초록인 별개 결함 — 이 핀이 유일 게이트). auto-fit은
+  // 들어가는 만큼만 나란히 놓고 나머지를 아랫줄로 보낸다. 최소폭 180 = 종전 3열이 컨테이너
+  // 564 CSS px(뷰포트 ≈1126)에서 갖던 카드 폭 — 그 위는 종전과 동일(재검수: 240은 1152·1280의
+  // 멀쩡하던 3열을 2+1로 바꿨다). min(…,100%) 캡이 빠지면 180px 미만 컨테이너에서 트랙 min이
+  // 컨테이너를 뚫는다(DropUp 클램프와 동형 이유). 앵커는 }}까지 폐합 — 접두 앵커는 후행 스프레드
+  // 덮어쓰기 변이에 초록(분리 검수 M-1과 동족 — 이 파일의 다른 핀들과 같은 규율).
+  const src = sources.get('app/c/[ws]/compete/page.jsx');
+  assert.match(src,
+    /gridTemplateColumns: 'repeat\(auto-fit, minmax\(min\(180px, 100%\), 1fr\)\)', gap: 12, alignItems: 'start' \}\}>/,
+    '시안 나열 grid 템플릿 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
+  // 시안 카드 헤더 wrap — 아바타 24+gap 24+상태 칩(nowrap) 고정 합이 100% 클램프 1열 카드
+  // (실측 132 CSS px) 내용 폭을 넘으면 칩이 카드 밖으로 샌다(실측 +3px). 앵커는 Avatar 문맥 포함
+  // 표현식 전체 — 동형 형제 flex 행 오타겟 방지.
+  assert.match(src,
+    /display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 \}\}>\s*<Avatar name=\{e\.name\}/,
+    '시안 카드 헤더 wrap 제거 변이 — 협폭에서 상태 칩이 카드 밖으로 되살아난다');
+  // 채택 버튼 줄바꿈·세로 자람 — .btn 전역 nowrap이 유일한 비축소 요소라 극단 협폭(실측 en·1280
+  // 창 × 배율 2: 카드 58에 버튼 126)에서 카드 밖으로 샌다. 하단 바 새 경쟁 버튼과 동일 세트.
+  assert.match(src,
+    /style=\{\{ justifySelf: 'start', whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' \}\}>\s*\{t\('compete\.adopt'\)\}/,
+    '채택 버튼 축소 세트 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
+});
+
+test('compete 레일 열 양보 클램프 핀 — 고정 216px 복원·레일 고정 width 변이는 red', () => {
+  // 페이지 2분할의 레일 고정 216px는 배율 2의 좁은 유효 폭에서 본문 열을 60 CSS px까지 압살한다
+  // (실측 1280×배율 2 — FAILED 칩 +17px 카드 밖 돌출). min(216px, 100% − 244px) = 본문 열 바닥
+  // 226(시안 최소폭 180 + 카드 패딩 36 + 카드 테두리 2 + 커스텀 스크롤바 8) + gap 18을 지키는
+  // 만큼만 레일이 양보(재검수 적발: 테두리·스크롤바를 빠뜨린 234는 시안에 170만 전달했다).
+  // 두 형태 모두 위 sweep 값검사(minmax(0,) 포함)로는 초록이라 이 핀이 유일 게이트. 배율 축은
+  // 미디어쿼리가 못 보므로 intrinsic. #356(.chat-cols)과는 공존 불가(인라인이 ≤560 밴드를 이겨
+  // 레일 스택을 죽인다) — 편입 머지 시 이 표현식·핀을 .chat-cols 템플릿으로 반드시 이관.
+  const src = sources.get('app/c/[ws]/compete/page.jsx');
+  assert.match(src,
+    /gridTemplateColumns: 'min\(216px, 100% - 244px\) minmax\(0, 1fr\)', gap: 18, alignItems: 'start', height: 'calc\(100vh \/ var\(--z, 1\) - 100px\)', marginBottom: -70 \}\}>/,
+    '레일 열 양보 클램프 변이(표현식 전체 앵커·}} 폐합 — 정당한 리팩터면 이 핀을 함께 갱신)');
+  // 레일 아이템은 고정 width 금지 — 트랙이 216 미만으로 양보할 때 고정 216이면 아이템이 트랙을
+  // 넘어 본문 위로 얹힌다. 기본 stretch가 트랙 폭을 따르게 둔다.
+  assert.match(src,
+    /className="side-rail" style=\{\{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax\(0, 1fr\)', gap: 4 \}\}>/,
+    '레일 고정 width 복원 변이(표현식 전체 앵커·}} 폐합 — width가 트랙 양보를 무효화한다)');
+  // 같은 결함의 CSS 경로 봉쇄 — 인라인만 잠그면 globals의 .side-rail { width: … }가 트랙 106에
+  // 아이템 216을 되살린다(재검수 실증: 주입 시 전 게이트 초록). #356이 .chat-cols > .side-rail
+  // { width: 216px }를 도입하므로 가설이 아니라 예정된 경로 — 그 착지에서 이 단언이 red가 나면
+  // 클램프·핀을 .chat-cols로 이관하고 레일 폭은 트랙(stretch)에 맡길 것.
+  assert.doesNotMatch(sources.get('app/globals.css'), /\.side-rail[^{}]*\{[^}]*\bwidth\s*:/,
+    '.side-rail CSS width 선언 — 레일 폭은 트랙이 정한다(양보 클램프 무효화 경로)');
 });
 
 test('compete 헤더·카드 축소 규칙 핀 — wrap·ellipsis·overflowWrap 복원 변이는 red', () => {
