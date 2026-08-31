@@ -1,9 +1,12 @@
 'use client';
 // 회의실 — 사장 + 여러 크루가 한 방에서. "@이름"으로 부르면 그 크루들이 순서대로 발언한다.
 // 좌측 레일에 지난 회의가 적재되고(회의 마치기), 클릭으로 읽기 전용 열람 — 맥락 공유가 눈에 보이는 화면.
-import { use, useCallback, useEffect, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
 import { useLang } from '../../../i18n';
+import { dropUpClamp } from '../zoom-math.mjs';
+
+const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 export default function Room({ params }) {
   const { ws } = use(params);
@@ -199,6 +202,23 @@ export default function Room({ params }) {
   const suggestAll = !!mention && agents.length > 1 && (!mq || 'all'.startsWith(mq) || '전체'.startsWith(mention[1]));
   const completeMention = (name) => setInput(input.replace(/@\S*$/, `@${name} `));
   const mentionOpen = !!mention && (suggestAll || suggests.length > 0);
+  const mentionPanelRef = useRef(null);
+  const mentionWrapRef = useRef(null);
+  const mentionNatW = useRef(0);
+  const [mentionClamp, setMentionClamp] = useState({ shift: 0, maxW: 0 });
+  useIsoLayoutEffect(() => {
+    if (!mentionOpen) { setMentionClamp({ shift: 0, maxW: 0 }); mentionNatW.current = 0; return; }
+    const measure = () => {
+      if (!mentionWrapRef.current || !mentionPanelRef.current) return;
+      if (!mentionNatW.current) mentionNatW.current = mentionPanelRef.current.offsetWidth;
+      setMentionClamp(dropUpClamp(mentionWrapRef.current.getBoundingClientRect(),
+        document.documentElement.clientWidth, mentionNatW.current));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('argo:zoom', measure);
+    return () => { window.removeEventListener('resize', measure); window.removeEventListener('argo:zoom', measure); };
+  }, [mentionOpen]);
 
   const shown = viewing ? archMsgs : messages;
 
@@ -361,11 +381,12 @@ export default function Room({ params }) {
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
             {/* 라우팅 문법 안내 — 모르면 없는 기능이다. 방을 떠나지 않고 지시하는 법을 입력창 옆에 붙여 둔다 */}
             {/* 멘션 드롭업의 위치 기준 — 입력바를 relative로 감싼다 */}
-            <div style={{ position: 'relative' }}>
+            <div ref={mentionWrapRef} style={{ position: 'relative' }}>
               {mentionOpen && (
-                <div className="card card-float" role="listbox" style={{
-                  position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 40,
-                  minWidth: 280, maxWidth: 420, maxHeight: 300, overflowY: 'auto', padding: 6,
+                <div ref={mentionPanelRef} className="card card-float" role="listbox" style={{
+                  position: 'absolute', bottom: 'calc(100% + 6px)', left: mentionClamp.shift, zIndex: 40,
+                  minWidth: mentionClamp.maxW ? Math.min(280, mentionClamp.maxW) : 280,
+                  maxWidth: mentionClamp.maxW ? Math.min(mentionClamp.maxW, 420) : undefined, maxHeight: 300, overflowY: 'auto', padding: 6,
                   boxShadow: '0 8px 28px rgba(0,0,0,.14)',
                 }}>
                   <div className="microlabel" style={{ padding: '4px 8px 2px' }}>{t('room.mention')}</div>

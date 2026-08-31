@@ -482,6 +482,33 @@ test('search-pill 기본 규칙에 min-width: 0 — 좁은 유효폭 상단바 �
   assert.match(blocks[0][1], /min-width:\s*0\s*;/,
     'min-width:0 제거 시 pill이 ~189px에서 축소 정지 → 배율 2에서 문서 가로 스크롤 재발(PR #340 실측)');
 });
+
+/* ── 인접 핀: 손짠 listbox 패널 클램프 (#359 검수 별건 — 슬래시 커맨더·멘션) ──────
+   공용 DropUp이 아닌 손으로 짠 팝오버 2곳이 배율 2 × 1280에서 뷰포트를 뚫었다(검수 실측:
+   슬래시 [988,1628]·멘션 [988,1828] vs cw 1264). #359의 dropUpClamp를 재사용해 같은 패턴
+   (useIsoLayoutEffect 측정 → shift/maxW → ref 적용 + 재측정 리스너)으로 잠근다. */
+const crewPage = readFileSync(join(ROOT, 'app/c/[ws]/crew/[slug]/page.jsx'), 'utf8');
+const roomPage = readFileSync(join(ROOT, 'app/c/[ws]/room/page.jsx'), 'utf8');
+
+test('크루 슬래시 커맨더 — dropUpClamp 임포트·측정 구간·패널 적용이 배선돼 있다', () => {
+  assert.match(crewPage, /import\s*\{[^}]*\bdropUpClamp\b[^}]*\}\s*from\s*['"]\.\.\/\.\.\/zoom-math\.mjs['"]/);
+  assert.match(crewPage, /useIsoLayoutEffect\(\(\) => \{[\s\S]*?if \(!slashToken\)[\s\S]*?const measure = \(\) => \{[\s\S]*?setSlashClamp\(dropUpClamp\(/,
+    '열림 시점 측정 구간 — dropUpClamp 배선 제거 변이는 여기서 red');
+  // 첫 렌더(maxW 0)는 무제한(undefined)이어야 자연 폭을 측정할 수 있다 — 디자인 상한(480)이
+  // 폴백으로 걸리면 naturalW가 그 값으로 캐시돼 실제 자연 폭과 어긋난다(실측: shift −290이지만
+  // 패널 right 1507 > cw 1264). 측정 후에는 min(maxW, 디자인상한)으로 양쪽 상한을 적용한다.
+  assert.match(crewPage, /left: slashClamp\.shift,[\s\S]*?maxWidth: slashClamp\.maxW \? Math\.min\(slashClamp\.maxW, \d+\) : undefined/,
+    '패널 적용 — 첫 렌더 무제한(자연 폭 측정) + 이후 min(뷰포트, 디자인) 상한');
+});
+
+test('회의실 멘션 — dropUpClamp 임포트·측정 구간·패널 적용이 배선돼 있다', () => {
+  assert.match(roomPage, /import\s*\{[^}]*\bdropUpClamp\b[^}]*\}\s*from\s*['"]\.\.\/zoom-math\.mjs['"]/);
+  assert.match(roomPage, /useIsoLayoutEffect\(\(\) => \{[\s\S]*?if \(!mentionOpen\)[\s\S]*?const measure = \(\) => \{[\s\S]*?setMentionClamp\(dropUpClamp\(/,
+    '열림 시점 측정 구간 — dropUpClamp 배선 제거 변이는 여기서 red');
+  assert.match(roomPage, /left: mentionClamp\.shift,[\s\S]*?maxWidth: mentionClamp\.maxW \? Math\.min\(mentionClamp\.maxW, \d+\) : undefined/,
+    '패널 적용 — 첫 렌더 무제한(자연 폭 측정) + 이후 min(뷰포트, 디자인) 상한');
+});
+
 /* ── ④ DropUp 열림 패널 좌우 클램프 (#357 검증 실측 이관 — 선재 결함) ──────────
    패널(트리거 래퍼 기준 absolute)은 폭이 아래로 minWidth(≥190), 위로 무상한(라벨 nowrap
    max-content — #357 검수 실측 404 CSS px)이라 좁은 열·우측 끝 트리거에서 트리거 왼쪽 끝부터
