@@ -12,6 +12,9 @@ import { CrewEditModal } from '../../crew-edit';
 import { sideParam, withSide } from '../../split.mjs';
 import { dropUpClamp } from '../../zoom-math.mjs';
 
+// 러너 표시명(폴백 안내용) — runner-connect의 RUNNER_NAMES와 동일 값(서버 RUNNERS.name 준거)
+const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
+
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 /** 경과 시간 — 1:07 형태. 턴이 도는 동안 1초마다 갱신된다. */
@@ -1087,6 +1090,16 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             <div key={i} className="msg-crew fade-up">
               <Avatar name={agent?.name} sm />
               <div className="msg-wrap">
+                {/* 폴백 투명화(P2) — 크루가 다른 러너로 답한 사실을 그 자리에서 알린다. reason:
+                    auth = 인증 실패 자가치유(재연결 안내), unavailable = 지정 러너 미연결/소진. */}
+                {m.fellBack && (
+                  /* microlabel 금지 — text-transform: uppercase가 러너명을 GROK/CLAUDE로 왜곡한다
+                     (기억 그래프 microlabel 함정과 동일 계열, 이번 라이브 검증에서 재발 적발). */
+                  <p style={{ margin: '0 0 4px', fontSize: 11.5, color: 'var(--fg-2)' }}>
+                    {t(m.fellBack.reason === 'auth' ? 'chat.fellBack.auth' : 'chat.fellBack.unavailable',
+                      { from: RUNNER_LABELS[m.fellBack.from] ?? m.fellBack.from, to: RUNNER_LABELS[m.fellBack.to] ?? m.fellBack.to })}
+                  </p>
+                )}
                 <div className="card" style={{ minWidth: 0, padding: '13px 16px', ...(annotIdx === i ? { borderColor: 'var(--primary)', cursor: 'text' } : {}) }}
                   onMouseUp={annotIdx === i ? captureQuote : undefined}
                   onCopy={(e) => {

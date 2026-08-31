@@ -48,7 +48,7 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via } = {}) 
   return turnId;
 }
 
-export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, failed, aborted }) {
+export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, failed, aborted, fellBack }) {
   return withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();
@@ -62,7 +62,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       if (attachments?.length) m.attachments = attachments;
       if (failed) m.failed = failed;
       if (aborted) m.aborted = true;
-      if (!failed) t.messages.splice(at + 1, 0, { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}) });
+      if (!failed) t.messages.splice(at + 1, 0, { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
       if (sessionId) { t.sessionId = sessionId; t.sessionDevice = await getDeviceId().catch(() => t.sessionDevice ?? null); }
       await writeJsonAtomic(file(wsId, slug), t);
       return t;

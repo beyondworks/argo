@@ -815,7 +815,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       });
       // 모델을 부르지 않은 턴 — 산출물 diff 없음(여기서 artBefore를 참조하면 TDZ로 예산 턴 전체가
       // 죽는다. 분리 검수 CRITICAL-1 실측: 변이 복원 오타겟이 심은 회귀).
-      return { reply, sessionId: null, handover };
+      return { reply, sessionId: null, handover }; // 예산 차단 턴 — 러너 해석 전이라 fellBack 무관(TDZ 회귀 금지 구역)
     }
   }
   const { md, meta } = await readAgentCard(wsId, agentSlug);
@@ -861,6 +861,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 지정 러너가 미연결이 아니라 **이번 턴 인증 오류로 제외**됐으면 사유를 갈라 말한다 — "이 기기에
   // 없어"는 방금 연결한 사용자에게 거짓 고지가 된다(Grok 제보 2026-08-06, fallbackErrorPrefix와 동일 근거).
   const wantExcluded = !!(wantRunner && __excludeRunners?.includes(wantRunner));
+  // 폴백 투명화(P2, 계획서) — 지금까지 fallbackDirective는 **크루 프롬프트에만** 들어가 사용자는
+  // 자기 크루가 다른 러너로 답한 사실을 몰랐다. 반환에 fellBack을 실어 채팅 표면이 안내를 그린다.
+  const fellBackInfo = resolved.fellBack ? { fellBack: { from: wantRunner, to: runner, reason: 'unavailable' } } : {};
   const fallbackDirective = resolved.fellBack
     ? (wantExcluded
       ? (lang === 'en'
@@ -1065,7 +1068,7 @@ ${lang === 'en'
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, journalRel: relative(p.vault, handover.file), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
       // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파.
       // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
-      return { reply, sessionId: null, handover, artifacts: await artDiff() };
+      return { reply, sessionId: null, handover, artifacts: await artDiff(), ...fellBackInfo };
     } catch (e) {
       let aborted = abortReg.wasAborted();
       // 인증 오탐 자가 치유 — 이 러너의 자격이 실은 죽어 있던 경우, **죽은 러너를 누적 제외**하고 남은
@@ -1104,7 +1107,8 @@ ${lang === 'en'
           try {
             // toolHop 전파 필수 — 빠뜨리면 인증 재시도 한 번이 커넥터 후속 턴 카운터를 0으로 되돌려
             // 상한을 통째로 무력화한다(쪽지 hop이 같은 자리에서 새던 것과 같은 계열).
-            return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners: tried });
+            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners: tried });
+            return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
           }
@@ -1223,7 +1227,8 @@ ${lang === 'en'
   // msg = 원 지시 전문(재실행의 원천), steps = 단계 궤적(활동 드릴다운의 원천 — 실행 이력)
   const evBase = {
     type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'),
-    ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, msg: userMsg.slice(0, 2000),
+    // runner — 설정 연결 카드의 "마지막 턴 상태" 원천(P1-1). CLI 갈래 evBase에는 이미 있었다(비대칭 봉합).
+    ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner, msg: userMsg.slice(0, 2000),
   };
   const steps = [];
   const step = (stage, detail = '') => { if (steps.length < 40) steps.push({ t: Date.now() - t0, stage, detail }); };
@@ -1432,7 +1437,8 @@ ${lang === 'en'
       if (alt?.available && !tried.includes(alt.runner)) {
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
-          return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
+          const healed = await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
+          return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하
         }
@@ -1487,5 +1493,5 @@ ${lang === 'en'
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
   // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
   for (const r of await artDiff()) artifacts.add(r);
-  return { reply, sessionId: sid, handover, costUsd, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)) }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
+  return { reply, sessionId: sid, handover, costUsd, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }
