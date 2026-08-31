@@ -1089,8 +1089,13 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                 {!viewing && annotIdx === i && (
                   <div className="card fade-up" style={{ padding: '12px 14px', display: 'grid', gap: 9, borderColor: 'var(--primary)', minWidth: 0 }}>
                     <span className="microlabel">{t('chat.annotate.title')}</span>
+                    {/* 각 행은 grid 자식 — 암묵 min-width:auto가 **nowrap 인용 줄**의 min-content만큼
+                        행을 밀어 패널 밖 ~1000px 돌출(유건 제보 2026-08-31 실측, ✕ 삭제 버튼까지 화면 밖).
+                        행 minWidth:0으로 카드 폭에 잠근다. 무공백 노트(URL 등)의 줄바꿈은 globals.css의
+                        `.thread .card { overflow-wrap: anywhere }` 상속이 이미 보장한다(분리 검수 F3 실측
+                        — 인라인 중복 처방은 무동작이라 넣지 않는다). */}
                     {annotItems.map((a, j) => (
-                      <div key={j} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5 }}>
+                      <div key={j} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5, minWidth: 0 }}>
                         <span style={{ flex: 'none', fontWeight: 700, color: 'var(--primary-strong)' }}>{j + 1}</span>
                         <span style={{ minWidth: 0, flex: 1 }}>
                           <span style={{ display: 'block', color: 'var(--fg-2)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{a.quote}"</span>
@@ -1101,7 +1106,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                       </div>
                     ))}
                     {pendQuote ? (
-                      <div style={{ display: 'grid', gap: 6 }}>
+                      <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>{/* 위 행과 같은 grid 자식 잠금 — nowrap 인용이 밀지 못하게 */}
                         <span style={{ fontSize: 12, color: 'var(--fg-2)', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>"{pendQuote}"</span>
                         <div style={{ display: 'flex', gap: 6 }}>
                           <input suppressHydrationWarning autoFocus
