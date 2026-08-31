@@ -4,7 +4,7 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { saveRunnerCred } from './creds.mjs';
-import { provisionGeminiCli, probeGeminiOAuth } from './gemini.mjs';
+import { provisionGeminiCli, probeGeminiOAuth, probeGeminiSubscription } from './gemini.mjs';
 import { pollGrokDeviceLogin, startGrokDeviceLogin } from './grok.mjs';
 
 /* ─── 러너 OAuth 웹 브리지(공통) — "버튼 클릭 = 로그인 페이지" ───
@@ -200,6 +200,16 @@ export async function submitRunnerWebAuth(wsId, runner, pasted) {
       return {
         ok: false, reason: 'ineligible',
         detail: '로그인은 성공했지만 저장하지 않았습니다 — 구글이 이 계정의 Gemini 개인 OAuth(무료 Code Assist)를 폐기하고 Antigravity로 이전했습니다. Antigravity 러너로 연결하시거나(이 컴퓨터의 agy 로그인 인식), API 키 방식으로 연결해 주세요(Google AI Studio에서 무료 발급). Login succeeded but was not saved — Google retired personal OAuth on the current Gemini CLI in favor of Antigravity. Connect the Antigravity runner (uses this computer’s agy login) or use an API key instead.',
+      };
+    }
+    // 구독 사용 가능성 프로브(#373 검수 HIGH-1) — 여기가 gemini oauth의 **실제** 저장 경로다
+    // (붙여넣기 UI는 webConnect라 렌더되지 않음). 라이선스 확정 불능이면 저장하지 않는다 —
+    // 방금 교환한 신선 토큰이라 판정 정확도가 가장 높은 지점이기도 하다(0토큰·1콜).
+    const sub = await probeGeminiSubscription(credsJson);
+    if (sub.ok === false && sub.reason === 'gemini-license') {
+      return {
+        ok: false, reason: 'gemini-license',
+        detail: '로그인은 성공했지만 저장하지 않았습니다 — 이 구글 계정은 Gemini Code Assist를 쓸 수 없어(라이선스 없음·개인 무료 경로 부적격) 구독 방식 턴이 모두 실패합니다. API 키 방식으로 연결해 주세요(Google AI Studio에서 무료 발급). Login succeeded but was not saved — this Google account cannot use Gemini Code Assist (no license / individual tier unsupported), so subscription turns would all fail. Connect with an API key instead (free from Google AI Studio).',
       };
     }
     await saveRunnerCred(wsId, 'gemini', 'oauth', credsJson);
