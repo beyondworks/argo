@@ -1467,7 +1467,7 @@ ${lang === 'en'
       ? Object.assign(new Error(grokCreditNotice(lang)), { credit: true, cause: e })
       : e?.authExpired
         ? Object.assign(new Error(runnerAuthNotice(lang, e.authExpired)), { authError: true, cause: e })
-        : (AUTH_ERR_RE.test(eMsg) && !e?.credit)
+        : (AUTH_ERR_RE.test(eMsg) && !e?.credit && !e?.authError)
           ? Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${runnerAuthNotice(lang, runner)}`), { authError: true, cause: e })
           : e;
     throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : surfaced;

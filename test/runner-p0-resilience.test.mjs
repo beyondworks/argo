@@ -89,7 +89,7 @@ test('chat.mjs 배선: result.is_error 포착 → 삼킴 게이트 throw', () =>
 });
 test('chat.mjs 배선: 표면 번역 — authExpired 대체 + AUTH_ERR_RE 원문 보존 덧붙임', () => {
   assert.match(chatSrc, /e\?\.authExpired\s*\n?\s*\? Object\.assign\(new Error\(runnerAuthNotice\(lang, e\.authExpired\)\), \{ authError: true, cause: e \}\)/, 'authExpired = 안내로 대체');
-  assert.match(chatSrc, /AUTH_ERR_RE\.test\(eMsg\) && !e\?\.credit\)\s*\n?\s*\? Object\.assign\(new Error\(`\$\{eMsg\.slice\(0, 300\)\}\\n\\n\$\{runnerAuthNotice\(lang, runner\)\}`\)/, 'AUTH_ERR_RE = 원문+안내 덧붙임');
+  assert.match(chatSrc, /AUTH_ERR_RE\.test\(eMsg\) && !e\?\.credit && !e\?\.authError\)\s*\n?\s*\? Object\.assign\(new Error\(`\$\{eMsg\.slice\(0, 300\)\}\\n\\n\$\{runnerAuthNotice\(lang, runner\)\}`\)/, 'AUTH_ERR_RE = 원문+안내 덧붙임');
 });
 
 test('chat.mjs 배선: sdkEnvFor(자격 게이트)가 catch 관할 try 안에 있다', () => {
@@ -103,4 +103,29 @@ test('chat.mjs 배선: sdkEnvFor(자격 게이트)가 catch 관할 try 안에 �
   // catch·finally는 옵셔널 참조 — 등록 전 실패 시 ReferenceError/TypeError 재발 방지
   assert.match(chatSrc, /let aborted = !!abortReg\?\.wasAborted\(\);/);
   assert.match(chatSrc, /abortReg\?\.release\(\);/);
+});
+
+test('chat.mjs 배선: 표면 번역 분기 순서 — authExpired가 AUTH_ERR_RE보다 먼저 (검수 fail-open 봉합)', () => {
+  // 순서만 뒤집어도(문구 보존) 사용자에게 내부 영문 원문이 노출된다(검수 하네스 실측) —
+  // 낱개 문자열 핀은 순서를 못 지키므로 인덱스 비교로 잠근다.
+  const surfStart = chatSrc.indexOf('const surfaced =');
+  const surf = chatSrc.slice(surfStart, surfStart + 900);
+  const iExpired = surf.indexOf('e?.authExpired');
+  const iAuthRe = surf.indexOf('AUTH_ERR_RE.test(eMsg)');
+  assert.ok(iExpired > 0 && iAuthRe > 0 && iExpired < iAuthRe, 'authExpired 분기가 AUTH_ERR_RE 분기보다 앞');
+  // 재귀 자가치유의 안내 누적 방지 — 이미 authError면 재부착 금지(검수 LOW)
+  assert.match(surf, /&& !e\?\.credit && !e\?\.authError\)/, '누적 방지 항');
+});
+
+test('oneshot.mjs 배선: SDK 삼킴 승격 대칭 (검수 MEDIUM — 크루 카드·기억 오염 경로)', async () => {
+  const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  assert.match(src, /\{ text = msg\.result; isErr = !!msg\.is_error; \}/, 'is_error 포착');
+  assert.match(src, /if \(isErr && isSdkErrorReply\(text\)\) throw new Error\(String\(text\)\.trim\(\)\.slice\(0, 600\)\);/, '승격 게이트');
+});
+
+test('creds.mjs 배선: 만료 게이트의 경합 재독 재판정 (검수 LOW — 병렬 턴 오안내 방지)', async () => {
+  const src = await readFile(new URL('../src/runners/creds.mjs', import.meta.url), 'utf8');
+  const gate = src.slice(src.indexOf('if (grokExpired(cur))'), src.indexOf("tok = grokAccessToken(cur);"));
+  assert.match(gate, /loadSecrets\(wsId\)/, '던지기 전 디스크 재독');
+  assert.match(gate, /!grokExpired\(fresh\)/, '재독본 재판정');
 });

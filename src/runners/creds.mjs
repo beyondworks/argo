@@ -216,7 +216,14 @@ export async function runnerCredEnv(wsId, runner) {
       // 성공 답변으로 삼키기까지 한다. 턴 전에 명시적으로 끊고 표면(chat.mjs)이 authExpired로
       // 사용자 언어 안내를 그린다. 만료시각 없는 구형 값은 grokExpired가 false라 이 게이트를 안 탄다.
       if (grokExpired(cur)) {
-        throw Object.assign(new Error('grok token expired and refresh failed'), { authExpired: 'grok' });
+        // 병렬 턴 경합 방어(#372 검수 LOW) — 다른 턴이 방금 갱신·저장했다면 내 메모리 사본(cur)만
+        // 낡았을 수 있다(이 제품에서 병렬 턴은 흔하다 — 위 refreshGrokOnce 주석). 던지기 전에
+        // 디스크에서 1회 재독해 재판정 — 멀쩡한 자격에 "다시 연결" 오안내를 내지 않는다.
+        const fresh = (await loadSecrets(wsId).catch(() => null))?.runners?.grok?.value;
+        if (!(typeof fresh === 'string' && fresh !== cur && !grokExpired(fresh))) {
+          throw Object.assign(new Error('grok token expired and refresh failed'), { authExpired: 'grok' });
+        }
+        cur = fresh;
       }
       tok = grokAccessToken(cur);
     }
