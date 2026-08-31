@@ -24,7 +24,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply } from './runners.mjs';
+import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, runnerAuthNotice } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -1214,6 +1214,7 @@ ${lang === 'en'
   let reply = '';
   let costUsd = null; // 이 턴의 청구 금액 — 루프 루틴의 예산 합산용. 구독(OAuth)·openrouter·CLI 턴은 null(=0으로 합산)
   let creditTurn = false; // OpenRouter 402 턴 표식 — 일지 기록 제외용(2R N3: 오류 원문이 기억으로 정제되지 않게)
+  let resultIsError = false; // SDK result의 is_error — subtype 'success'여도 참일 수 있다(xAI 400 실측 2026-08-31)
   let sid = resumeId; // 새 세션이면 null에서 시작 — 외래 sessionId를 내 것으로 재스탬프하지 않는다
   const toolCounts = {}; // 이 턴의 도구 사용 횟수 — 크루 프로필 "많이 쓴 도구"의 원천
   const t0 = Date.now();
@@ -1226,6 +1227,19 @@ ${lang === 'en'
   const steps = [];
   const step = (stage, detail = '') => { if (steps.length < 40) steps.push({ t: Date.now() - t0, stage, detail }); };
   let stderrTail = ''; // CLI stderr 마지막 2KB — 실패 진단용(성공 시 미사용)
+  let actualModel = null; // SDK가 실제로 사용한 모델 — 선택한 모델이 진짜 적용됐는지의 증거(요청값이 아닌 실사용값)
+  // 이 턴에 만든/고친 vault 문서 — 답변에 링크 칩으로 붙는다("문서 만들었는데 어디 갔지"의 근본 대응,
+  // 고객 신고 2026-07-20). vault 밖 쓰기(코드 등)는 서빙 불가라 제외. 외부 CLI 러너 턴은 도구 호출을
+  // 관측할 수 없어 미수집(정직한 한계).
+  const artifacts = new Set();
+  // abortReg는 q(try 안에서 생성)에 의존하지만 catch·finally가 참조한다 — 늦은 대입 + 옵셔널 호출.
+  // 자격 게이트(sdkEnvFor)가 등록 전에 던지면 null 그대로다(등록 전 실패 = 중단 불가 턴이 맞다).
+  let abortReg = null;
+  let partial = ''; // 완료 전 크루가 이미 말한 텍스트 — 상태 파일로 흘려 스트리밍 체감
+  try {
+  // sdkEnvFor(자격 게이트 포함)·query 구성은 try **안**이어야 한다 — 게이트의 authExpired가
+  // try 밖에서 터지면 아래 catch의 자가치유(AUTH_ERR_RE)·사용자 언어 번역이 전부 미발동하고
+  // 원문('grok token expired…')이 그대로 표면화된다(격리 서버 실측 2026-08-31).
   // SDK 러너(claude/glm) env — 회사 자격(API키/OAuth) 우선, 없으면 기존 폴백(claude=CLI/env, glm=호스트 GLM_API_KEY).
   const sdkEnv = await sdkEnvFor(wsId, runner);
   // 이 턴이 청구되는가 — 구독(OAuth)·호스트 로그인 턴은 SDK가 정가를 리포트해도 돈이 안 나간다.
@@ -1266,14 +1280,7 @@ ${lang === 'en'
     },
   });
   // 사장 정지 버튼 — 진행 중 턴의 interrupt 핸들을 등록해 abort API가 잡을 수 있게
-  const abortReg = registerTurn(wsId, agentSlug, () => q.interrupt());
-  let partial = ''; // 완료 전 크루가 이미 말한 텍스트 — 상태 파일로 흘려 스트리밍 체감
-  let actualModel = null; // SDK가 실제로 사용한 모델 — 선택한 모델이 진짜 적용됐는지의 증거(요청값이 아닌 실사용값)
-  // 이 턴에 만든/고친 vault 문서 — 답변에 링크 칩으로 붙는다("문서 만들었는데 어디 갔지"의 근본 대응,
-  // 고객 신고 2026-07-20). vault 밖 쓰기(코드 등)는 서빙 불가라 제외. 외부 CLI 러너 턴은 도구 호출을
-  // 관측할 수 없어 미수집(정직한 한계).
-  const artifacts = new Set();
-  try {
+  abortReg = registerTurn(wsId, agentSlug, () => q.interrupt());
   for await (const msg of q) {
     if (msg.type === 'system' && msg.subtype === 'init') {
       sid = msg.session_id;
@@ -1335,7 +1342,7 @@ ${lang === 'en'
         });
         if (billed && runner !== 'openrouter' && Number.isFinite(msg.total_cost_usd)) costUsd = msg.total_cost_usd;
       }
-      if (msg.subtype === 'success') reply = msg.result;
+      if (msg.subtype === 'success') { reply = msg.result; resultIsError = !!msg.is_error; }
       else {
         // CLI가 낸 실제 원인(errors[])을 버리지 않는다 — "error_during_execution" 한 줄로는 사용자도
         // 우리도 진단 불가(Windows 실기 사례: 자격 정상인데 원인 불명 실패가 이 코드 때문에 미궁).
@@ -1375,9 +1382,25 @@ ${lang === 'en'
       ? `\n\n---\n⚠ Your OpenRouter credit balance is too low for this turn. OpenRouter is prepaid — top up at https://openrouter.ai/settings/credits and try again. (No credits at all? Pick one of the **free** models in this crew's engine selector — they run without any balance.)`
       : `\n\n---\n⚠ OpenRouter 크레딧 잔액이 부족해 이 턴을 처리하지 못했습니다. OpenRouter는 선불제입니다 — https://openrouter.ai/settings/credits 에서 충전 후 다시 시도해 주세요. (충전을 안 하셨다면 이 크루의 엔진 선택에서 **무료 모델**을 고르면 잔액 없이 바로 쓸 수 있습니다.)`;
   }
+  // SDK가 벤더 API 오류를 "성공 답변 텍스트"로 삼키는 일반형 — OpenRouter 402 선례(위)와 같은
+  // 기전이 grok에서 재발(실측 2026-08-31, 가짜 자격 + 실배관: xAI 400에서 subtype 'success' +
+  // is_error true + result 전체가 오류 원문). 이대로 두면 "API Error: 400 {...}"가 크루 답변으로
+  // 저장되고 AUTH_ERR_RE 자가치유·아래 catch의 번역이 전부 미발동한다(유건 제보의 실체).
+  // is_error + 엄격판(답변이 오류 원문으로 시작) 이중 게이트만 throw — 오류를 인용·해설하는 정상
+  // 답변은 걸리면 안 되고(3R F1 원칙), openrouter 402/429는 위 분기가 이미 안내를 붙여 소비했다.
+  else if (resultIsError && isSdkErrorReply(reply)) {
+    throw new Error(String(reply).trim().slice(0, 600));
+  }
   } catch (e) {
-    let aborted = abortReg.wasAborted();
+    let aborted = !!abortReg?.wasAborted();
     let retriedDown = false; // 재시도 실패 낙하 표시 — 낙하한 에러로 다음 자가 치유를 또 발동하지 않는다(중복 실행·이중 과금 방지, 검수 MEDIUM)
+    // SDK 삼킴 보정 — 오류 원문을 result(is_error)로 이미 받았는데 **직후 이터레이션이
+    // "process exited with code 1"로 죽는 순서**가 실측됐다(2026-08-31 가짜 grok 자격 재현).
+    // 이대로면 catch가 진짜 원인(오류 원문) 대신 종료 코드만 본다 — 원문으로 치환해야 아래
+    // AUTH_ERR_RE 자가치유와 표면 번역이 문다. 1 query = 1 result 전제라 중간 결과 오염은 없다.
+    if (!aborted && resultIsError && isSdkErrorReply(reply) && !isSdkErrorReply(String(e?.message || e))) {
+      e = Object.assign(new Error(String(reply).trim().slice(0, 600)), { cause: e });
+    }
     // 이 기기에 없는 세션을 resume한 경우(sessionDevice 없는 레거시 스레드의 기기 전환·CLI 세션
     // 소실) — 실패 이벤트 없이 새 세션으로 1회 재시도. 성공하면 appendTurn이 소유 기기를 갱신해
     // 다음부터는 사전 분기로 온다. __freshRetry 가드로 재귀 1회 제한.
@@ -1435,12 +1458,21 @@ ${lang === 'en'
     // 내보내면 사용자는 방금 성공한 로그인을 의심하며 재연결을 반복한다(실사용 신고 2026-08-03).
     // 이벤트 로그(error:)에는 상표 정정본이 남는다(scrubSdkBrand — 벤더 상세는 보존, 위 rebrand 참조).
     // "Claude Code" 러너명 치환(2026-08-08 ponytail)은 scrubSdkBrand로 흡수 — 규칙 이원화 금지(검수 L3).
-    const surfaced = (runner === 'grok' && isGrokCreditError(String(e?.message || e)))
+    // 인증류 실패 번역(P0, 유건 제보 2026-08-31) — 원문만으론 사용자가 할 일을 모른다.
+    // authExpired(자격 게이트가 턴 전에 끊은 경우)는 우리가 만든 오류라 안내로 **대체**하고,
+    // 벤더 원문 인증 실패(AUTH_ERR_RE — 자가치유가 실패/불가로 여기까지 낙하한 경우)는 원문을
+    // 보존한 채 행동 안내를 **덧붙인다**(정직 오류 원칙 — 벤더 상세를 지우지 않는다).
+    const eMsg = String(e?.message || e);
+    const surfaced = (runner === 'grok' && isGrokCreditError(eMsg))
       ? Object.assign(new Error(grokCreditNotice(lang)), { credit: true, cause: e })
-      : e;
+      : e?.authExpired
+        ? Object.assign(new Error(runnerAuthNotice(lang, e.authExpired)), { authError: true, cause: e })
+        : (AUTH_ERR_RE.test(eMsg) && !e?.credit)
+          ? Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${runnerAuthNotice(lang, runner)}`), { authError: true, cause: e })
+          : e;
     throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : surfaced;
   } finally {
-    abortReg.release();
+    abortReg?.release();
   }
   await clearTurnStatus(wsId, agentSlug);
 

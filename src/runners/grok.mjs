@@ -56,6 +56,18 @@ export function grokNeedsRefresh(stored, now = Date.now()) {
   } catch { return false; }
 }
 
+/** 만료 **실판정** — 갱신 여유(5분 창)와 달리 "지금 이 순간 죽은 토큰인가". 갱신까지 실패한
+    만료 토큰으로 턴을 보내면 xAI는 400을 주고(실측 2026-08-31: 401 아님 — "제공자가 401을 준다"던
+    옛 전제는 xAI에 거짓), 그 400은 SDK가 성공 답변으로 삼키기까지 한다. 그래서 이 판정이 참이면
+    호출부(runnerCredEnv)가 턴 전에 명시적으로 끊는다(P0 자격 게이트). 만료시각을 모르는 값
+    (구형·수동 입력)은 false — 판정 불가를 차단으로 승격하지 않는다. */
+export function grokExpired(stored, now = Date.now()) {
+  try {
+    const d = JSON.parse(stored);
+    return Number(d?.expires_at) > 0 && Number(d.expires_at) <= now;
+  } catch { return false; }
+}
+
 /** 갱신 — 실패하면 null을 돌려주고 호출부는 쓰던 토큰을 그대로 쓴다(조용한 연결 해제보다 401이 낫다). */
 export async function refreshGrokTokens(stored, fetchImpl = fetch) {
   let d; try { d = JSON.parse(stored); } catch { return null; }

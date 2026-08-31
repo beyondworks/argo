@@ -10,7 +10,7 @@ import { exists, homeEnv, scrubServerSecrets, seedAuthFile } from './shared.mjs'
 import { RUNNER_AUTH } from './catalog.mjs';
 import { provisionCodexCli } from './codex.mjs';
 import { provisionGeminiCli, geminiTurnHome } from './gemini.mjs';
-import { grokAccessToken, grokNeedsRefresh, refreshGrokTokens } from './grok.mjs';
+import { grokAccessToken, grokExpired, grokNeedsRefresh, refreshGrokTokens } from './grok.mjs';
 
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
@@ -204,13 +204,21 @@ export async function runnerCredEnv(wsId, runner) {
     // **여기가 갱신 지점이다**: 턴 직전이라 만료를 가장 늦게, 가장 확실하게 판정한다.
     let tok = v;
     if (cred.type === 'oauth') {
-      tok = grokAccessToken(v);
-      if (grokNeedsRefresh(v)) {
-        const next = await refreshGrokOnce(wsId, v);
-        // 갱신 실패는 조용히 넘긴다 — 쓰던 토큰으로 시도하면 제공자가 401을 주고 UI가 재연결을 요구한다.
-        // 여기서 자격을 지우면 일시적 네트워크 장애가 연결 해제로 둔갑한다.
-        if (next) tok = grokAccessToken(next);
+      let cur = v;
+      if (grokNeedsRefresh(cur)) {
+        const next = await refreshGrokOnce(wsId, cur);
+        if (next) cur = next;
       }
+      // 만료 자격 게이트(P0, 2026-08-31) — 갱신 실패여도 **아직 만료 전**(여유 5분 창)이면 쓰던
+      // 토큰으로 진행한다(일시적 네트워크 장애가 연결 해제로 둔갑하지 않게 — 기존 원칙 유지, 자격도
+      // 안 지운다). 단 **갱신 후에도 만료 상태**(갱신 실패·갱신 불가 포함)면 다르다: 보내봤자 xAI가
+      // 400을 주고(실측 2026-08-31 — "제공자가 401을 준다"던 옛 전제는 xAI에 거짓), 그 400은 SDK가
+      // 성공 답변으로 삼키기까지 한다. 턴 전에 명시적으로 끊고 표면(chat.mjs)이 authExpired로
+      // 사용자 언어 안내를 그린다. 만료시각 없는 구형 값은 grokExpired가 false라 이 게이트를 안 탄다.
+      if (grokExpired(cur)) {
+        throw Object.assign(new Error('grok token expired and refresh failed'), { authExpired: 'grok' });
+      }
+      tok = grokAccessToken(cur);
     }
     return { env: { ANTHROPIC_BASE_URL: process.env.GROK_BASE_URL || 'https://api.x.ai', ANTHROPIC_AUTH_TOKEN: tok, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
