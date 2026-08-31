@@ -66,7 +66,7 @@ export async function POST(req, { params }) {
     }
     // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
-    await appendTurn(ws, slug, { turnId, userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts });
+    await appendTurn(ws, slug, { turnId, userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts, fellBack: t.fellBack });
     nudgeSync(); // 로컬 변경 즉시 다른 기기로 전파(준실시간 — 다음 대기 건너뜀)
     // 크루 길들이기(리서치 접목 F) — 이 라우트는 **사장 직접 대화의 단일 관문**이다(위임·루틴·쪽지
     // 미경유라 "직접 턴" 판정이 구조로 보장된다). 교정 감지는 fire-and-forget: 응답을 막지 않고,
@@ -79,7 +79,7 @@ export async function POST(req, { params }) {
         return detectAndTrack(ws, { userMsg: message.trim(), lang });
       })
       .catch((e) => console.error(`[argo] 교정 감지 실패(${ws}/${slug}):`, e?.message ?? e));
-    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts });
+    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts, ...(t.fellBack ? { fellBack: t.fellBack } : {}) }); // 폴백 안내를 그 턴에 즉시(검수 M1 — 폴링 병합이 같은 길이면 서버 사본을 안 받는다)
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });
   }

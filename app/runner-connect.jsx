@@ -17,6 +17,7 @@ export const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--ca
 // 가용 판정(순수)은 runner-usable.mjs로 분리 — 데크 배너·홈 안내·온보딩 게이트·회귀 테스트가 공유.
 // 기존 소비처(import from './runner-connect') 호환을 위해 재수출한다.
 export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, PICK_ORDER } from './runner-usable.mjs';
+import { lastTurnByRunner } from './runner-usable.mjs';
 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
@@ -32,8 +33,14 @@ export function AiConnectionCard({ ws, accordion = false }) {
   const [runners, setRunners] = useState(null); // { [id]: status } | null(로딩)
   const [openId, setOpenId] = useState(null);   // accordion 모드 — 한 번에 한 러너만 펼친다
 
+  // 마지막 턴 상태(P1-1) — 활동 이벤트의 type:turn + runner에서 러너별 최신 1건.
+  // "연결됨" 초록불이 실사용 실패를 가리던 갭(계획서 P1): 카드가 실측 사실을 함께 보여준다.
+  // 계정 스코프(온보딩 — ws가 회사가 아님)나 이벤트 부재는 조용히 생략(관용).
+  const [lastTurns, setLastTurns] = useState({}); // { [runner]: { ok, aborted } }
   function load() {
     api(`${keysBase(ws)}`).then((d) => setRunners(d.runners ?? {})).catch(() => setRunners({}));
+    if (!ws || ws === ACCOUNT_WS) return; // 온보딩(계정 스코프)엔 활동이 없다 — 매번 404 요청 방지(검수 L2)
+    api(`/api/companies/${ws}/activity`).then((d) => setLastTurns(lastTurnByRunner(d.events))).catch(() => {});
   }
   useEffect(load, [ws]);
 
@@ -42,7 +49,7 @@ export function AiConnectionCard({ ws, accordion = false }) {
       <span className="card-title">{t('settings.runners.title')}</span>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 6px', lineHeight: 1.6 }}>{t('settings.runners.help')}</p>
       {!runners ? <Skeleton h={180} /> : RUNNER_ORDER.map((id, i) => (
-        <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={i === 0}
+        <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={i === 0} lastTurn={lastTurns[id]}
           {...(accordion ? { open: openId === id, onToggle: () => setOpenId(openId === id ? null : id) } : {})} />
       ))}
     </div>
@@ -51,7 +58,7 @@ export function AiConnectionCard({ ws, accordion = false }) {
 
 /** 러너 1행 — 상태 칩 + 방식 탭 + (API키/붙여넣기 토큰 입력) 또는 (CLI 로그인 안내).
     onToggle이 오면 아코디언 모드(온보딩) — 헤더만 보이고 클릭으로 본문을 펼친다. 설정은 기존 그대로. */
-function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }) {
+function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, lastTurn = null }) {
   const { t, fmtMoney } = useLang();
   const methods = st?.methods ?? ['apikey'];
   const hasOauth = methods.includes('oauth');
@@ -65,6 +72,8 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   const [msg, setMsg] = useState('');
   const [ok, setOk] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false); // 러너 연결 제거 확인(전 기기·전 크루 영향)
+  const [verifyMsg, setVerifyMsg] = useState(''); // 연결 확인(P1-2) 결과 — 공유 msg는 갈래별 출구가 달라 전용 상태로(그록 갈래 무출구 실측)
+  const [verifyOk, setVerifyOk] = useState(false);
   const [polling, setPolling] = useState(false);
   const pollRef = useRef(null);   // setInterval 핸들
   const pollN = useRef(0);        // 폴링 횟수 (최대 60 = 약 2분)
@@ -291,6 +300,25 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
     }
   }
 
+  // 연결 확인(P1-2) — 결과는 msg 자리 재사용. ok:null(원격 판정 불가 방식)은 정직하게 그렇게 말한다.
+  async function verifyNow() {
+    setBusy('verify'); setVerifyMsg(''); setVerifyOk(false);
+    try {
+      const r = await api(`/api/companies/${ws}/keys/verify`, { runner: id }); // api()는 두 번째 인자 자체가 JSON 바디(POST)다
+      if (r.ok === true) { setVerifyOk(true); setVerifyMsg(t('settings.runners.checkOk')); }
+      else if (r.ok === false) {
+        setVerifyOk(false);
+        // 크레딧·구독 사정은 인증 실패가 아니다 — "다시 연결" 오안내 금지(grokCreditNotice 원칙, 검수 L3)
+        setVerifyMsg(r.reason === 'gemini-license'
+          ? t('settings.runners.geminiLicenseBlocked')
+          : (r.reason === 'credit' || r.reason === 'tier')
+            ? t('settings.runners.checkCreditTier')
+            : t('settings.runners.checkFailed'));
+      } else { setVerifyOk(true); setVerifyMsg(t('settings.runners.checkInconclusive')); }
+    } catch (e) { setVerifyOk(false); setVerifyMsg(String(e?.message || e)); }
+    setBusy('');
+  }
+
   async function remove() {
     if (busy) return;
     setBusy('remove'); setMsg(''); busyWasHost.current = false; setOk(false);
@@ -370,6 +398,16 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
   const removeBtn = company.connected && (
     <div>
       {/* 파괴적(전 기기·전 크루 영향) — 확인 없이 즉시 실행하지 않는다(프로젝트 삭제류 액션 규칙). */}
+      {/* 연결 확인(P1-2) — verifyRunnerCred가 저장 시점 1회만 돌아, 이후 만료·철회·차단은 턴
+          실패로만 드러나던 갭. 저장된 자격을 온디맨드 재검증한다(주기 검진은 후속). */}
+      {company.connected && ws !== ACCOUNT_WS && (
+        <>
+          <button className="btn sm" disabled={!!busy} onClick={verifyNow}>
+            {busy === 'verify' ? <Spinner size={12} /> : t('settings.runners.checkNow')}
+          </button>
+          {verifyMsg && <span style={{ fontSize: 12, color: verifyOk ? 'var(--fg-2)' : 'var(--danger)' }}>{verifyMsg}</span>}
+        </>
+      )}
       <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} disabled={!!busy} onClick={() => setConfirmRemove(true)}>
         {busy === 'remove' ? <Spinner size={12} /> : t('settings.runners.remove')}
       </button>
@@ -402,6 +440,13 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null }
         <span className="chip mono" title={t('settings.runners.monthTitle')} style={{ fontSize: 10.5 }}>
           {t('settings.runners.month', { n: st.month.turns })}{st.month.hasCost ? ` · ${fmtMoney(st.month.costUsd)}` : ''}
         </span>
+      )}
+      {/* 마지막 턴 상태(P1-1) — "연결됨" 초록불이 실사용 실패를 가리지 않게, 최근 턴이 실패한
+          러너에 경고를 단다. 중단(사장 지시)은 실패가 아니라 제외. 원천 = 활동 이벤트 runner·ok. */}
+      {(company.connected || st?.host?.optedIn) && lastTurn && !lastTurn.ok && !lastTurn.aborted && (
+        /* .chip 금지 — uppercase+nowrap+mono가 EN 문장을 486px로 부풀려 폰 폭 카드를 뚫는다
+           (검수 M3 실측: EN 486 vs KO 300, 컨테이너 338). 소형 텍스트 + 줄바꿈 허용. */
+        <span style={{ fontSize: 11.5, color: 'var(--danger)', whiteSpace: 'normal', minWidth: 0 }}>{t('settings.runners.lastTurnFailed')}</span>
       )}
     </>
   );
