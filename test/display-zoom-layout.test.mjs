@@ -578,6 +578,7 @@ test('DropUp 적용 — 패널(listbox) ref·앵커쪽 시프트·min·max 동�
     '극단 협폭 바닥 — minWidth 단독 복원(고정 190) 변이는 여기서 red');
   assert.match(ui, /maxWidth: clamp\.maxW \|\| undefined/,
     '실측 전(0)엔 자연 폭 측정을 위해 상한 미적용, 실측 후 뷰포트 상한');
+});
 
 /* ── 인접 핀: 회의실 좁은 유효 폭 가로 넘침(선재 결함 — #340 분리 검수에서 발견) ─────────
    배율 2(실측 1424px 창 = 유효 712 CSS px)에서 회의실 본문 열이 259.5px로 부풀어 문서 가로
@@ -590,7 +591,8 @@ test('DropUp 적용 — 패널(listbox) ref·앵커쪽 시프트·min·max 동�
 test('room grid 열 잠금 sweep — 인라인 display:grid는 minmax(0,…) 열 또는 고정 폭이어야 한다', () => {
   const src = sources.get('app/c/[ws]/room/page.jsx');
   const grids = [...src.matchAll(/style=\{\{([^}]*display:\s*'grid'[^}]*)\}\}/g)];
-  assert.ok(grids.length >= 9, `grid 인라인 ${grids.length}곳(현재 9) — 수집 정규식이 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
+  // 하한 9→8 — 바깥 2분할(레일+본문)이 .chat-cols(globals 정본)로 이관된 정당 감소(#376), 소실 아님
+  assert.ok(grids.length >= 8, `grid 인라인 ${grids.length}곳(현재 8) — 수집 정규식이 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
   for (const g of grids) {
     // 존재 검사가 아니라 값 검사 — 'gridTemplateColumns: 1fr'은 minmax(auto,1fr)이라 min 트랙이
     // auto로 되살아나 무템플릿과 완전 동일하게 부푼다(검수 변이 실측: '1fr'·'auto' 둘 다
@@ -603,14 +605,15 @@ test('room grid 열 잠금 sweep — 인라인 display:grid는 minmax(0,…) 열
 
 test('room 멘션 패널·컴포저 축소 규칙 핀 — 고정 폭·기준 박스 복원 변이는 red', () => {
   const src = sources.get('app/c/[ws]/room/page.jsx');
-  // 패널은 min·max 둘 다 100% 클램프 — max만 줄이면 min 280이 max를 이겨 넘침이 재발한다
-  // (CSS에서 min-width > max-width면 min-width 승. 실측: 패널 right 774 > 뷰포트 712 CSS px).
-  assert.match(src, /minWidth:\s*'min\(280px, 100%\)'/, '멘션 패널 minWidth 고정 280 복원 변이');
-  assert.match(src, /maxWidth:\s*'min\(420px, 100%\)'/, '멘션 패널 maxWidth 무클램프 복원 변이 — shrink-to-fit 선호 폭(후보 행 nowrap 역할 텍스트)이 그대로 뚫는다');
+  // 멘션 패널 클램프의 정본은 #367 측정형(dropUpClamp 이식 — mentionClamp)이다. #350의
+  // min/max 100% 처방은 shrink-to-fit 기준 박스에서 퇴행이라 기각(검수 확정 — DropUp 선례).
+  // 여기서는 측정형 배선이 조용히 지워지는 변이만 문다(측정형 자체 핀은 #367 인접 핀이 담당).
+  assert.match(src, /minWidth: mentionClamp\.maxW \? Math\.min\(280, mentionClamp\.maxW\) : 280/, '멘션 패널 측정형 min 클램프 제거 변이');
+  assert.match(src, /maxWidth: mentionClamp\.maxW \? Math\.min\(mentionClamp\.maxW, 420\) : undefined/, '멘션 패널 측정형 max 클램프 제거 변이');
   // 100% 클램프의 기준 박스 — position:relative 래퍼가 사라지면 containing block이 위로 올라가
   // 클램프가 무력화된다(검수 변이 실측: relative 제거가 기존 핀 전부에 초록).
-  assert.match(src, /<div style=\{\{ position: 'relative' \}\}>\s*\{mentionOpen &&/,
-    '멘션 패널 기준 박스(relative 래퍼) 제거 변이');
+  assert.match(src, /<div ref=\{mentionWrapRef\} style=\{\{ position: 'relative' \}\}>\s*\{mentionOpen &&/,
+    '멘션 패널 기준 박스(relative 래퍼 — #367 측정 ref 부착형) 제거 변이');
   // 카드 overflowWrap anywhere — 긴 무공백 토큰의 카드 내부 가로 스크롤 보정(실측 511>168 → 168=168).
   // 넘침은 카드가 가두지만 보정이 조용히 사라지는 것을 막는다(검수 LOW). 앵커는 표현식 전체.
   assert.match(src, /className="card" style=\{\{ padding: '16px 18px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' \}\}/,
