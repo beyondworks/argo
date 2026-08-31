@@ -107,7 +107,8 @@ test('배선: chat.mjs — 402 안내는 success/else 쌍 밖 + costUsd 미기�
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   // CRITICAL 재발 방지(검수 실증): 402 블록이 success-if와 else 사이에 끼면 else가 402-if에 붙어
   // **전 러너 성공 턴이 throw**된다. success-if와 else의 인접(붙어 있음)을 문자 그대로 잠근다.
-  assert.match(src, /if \(msg\.subtype === 'success'\) reply = msg\.result;\n      else \{/, 'success/else 쌍은 인접 불변 — 사이에 코드 삽입 금지');
+  // 본문은 is_error 포착까지 확장(P0 2026-08-31 — SDK 삼킴 게이트의 원천)하되, 인접 불변은 그대로 잠근다.
+  assert.match(src, /if \(msg\.subtype === 'success'\) \{ reply = msg\.result; resultIsError = !!msg\.is_error; \}\n      else \{/, 'success/else 쌍은 인접 불변 — 사이에 코드 삽입 금지');
   // 3R F1: chat은 엄격판이어야 한다 — 느슨판을 배선하면 402 인용 답변의 일지가 무증상 누락된다
   assert.match(src, /runner === 'openrouter' && isOpenRouterCreditReply\(reply\)/, '402 안내 배선(엄격판)');
   assert.doesNotMatch(src, /isOpenRouterCreditError/, 'chat에 느슨판 유입 금지 — 임계 분리(3R F1)');

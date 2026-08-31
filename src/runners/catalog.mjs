@@ -178,6 +178,24 @@ export const isOpenRouterCreditReply = (s) => strictReply(s, OPENROUTER_402_RE);
 export const isOpenRouterLimitError = (s) => firstOrLast(s, OPENROUTER_429_RE);
 export const isOpenRouterLimitReply = (s) => strictReply(s, OPENROUTER_429_RE);
 
+/** SDK가 벤더 API 오류를 "성공 답변 텍스트"로 삼킨 결과물 판정 — OpenRouter 402 선례의 일반형.
+    실측(2026-08-31, 가짜 grok 자격 + 실배관): xAI 400에서 SDK result가 subtype 'success' +
+    is_error true + result 전체가 `API Error: 400 {"code":"invalid-argument",...}`. 이대로 두면
+    오류 원문이 크루 답변으로 채택돼 AUTH_ERR_RE 자가치유·번역이 전부 미발동한다(유건 제보의 실체).
+    엄격판: **trim한 답변이 오류 원문으로 시작**할 때만 — 호출부는 result.is_error와 이중 게이트로
+    쓴다(오류를 인용·해설하는 정상 답변 보호, openrouter 3R F1과 같은 원칙). */
+export const isSdkErrorReply = (s) => /^API Error:\s*\d{3}\b/.test(String(s ?? '').trim());
+
+/** 러너 인증 실패의 사용자 안내 — "API Error: 400" 원문만으론 사용자가 할 일을 모른다(유건 제보).
+    문구 위치는 grokCreditNotice(grok.mjs)와 같은 서버측 이중언어 계약. 원문 대체가 아니라
+    **원문 뒤에 붙이는 행동 안내**로도 쓰인다(정직 오류 원칙 — 벤더 상세 보존). */
+export const runnerAuthNotice = (lang, runner) => {
+  const name = RUNNERS[runner]?.name ?? runner;
+  return lang === 'en'
+    ? `${name} sign-in looks expired or invalid — reconnect it in Settings → AI connections, then try again. (If this keeps happening, remove and re-add the connection.)`
+    : `${name} 로그인이 만료됐거나 유효하지 않은 것으로 보입니다 — 설정 → AI 연결에서 ${name}을(를) 다시 연결한 뒤 시도해 주세요. (반복되면 연결을 지우고 새로 추가해 주세요.)`;
+};
+
 // 채팅 기본 — 품질 우선(유료). 잔액 0이면 402가 뜨지만 안내문이 무료 모델 선택을 짚어 준다.
 // ⚠ 이 상수를 무료로 바꾸면 **잔액이 충분한 사용자의 모든 크루 채팅**까지 무료 모델로 내려간다
 //   (크루 카드는 model을 기록하지 않아 매 턴 이 기본값을 탄다 — 2R 검수 H1 실증). 온보딩 문제는
