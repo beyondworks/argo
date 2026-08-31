@@ -124,7 +124,16 @@ export default function Compete({ params }) {
   const winnerName = winnerEnt ? `${winnerEnt.name}${winnerEnt.modelLabel ? ` · ${winnerEnt.modelLabel}` : ''}` : null;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
+    /* 레일 열 양보 클램프 — 고정 216px는 배율 2의 좁은 유효 폭에서 본문 열을 60 CSS px까지
+       압살한다(실측 1280×배율 2 — FAILED 칩 +17px 카드 밖 돌출). min(216px, 100% − 244px) =
+       "본문 열 바닥 226 + gap 18을 지키는 만큼만 레일이 양보". 226 = 시안 최소폭 180 + 카드
+       패딩 36 + 카드 테두리 2 + 커스텀 스크롤바 8(::-webkit-scrollbar에 width를 주면 레이아웃
+       폭을 점유 — 재검수 적발: 이 두 항을 빠뜨린 234는 시안에 170만 전달했다). 컨테이너 ≥
+       460이면 216 고정과 동일(종전 무변경). 배율 축(유효 폭)은 미디어쿼리가 못 보므로
+       intrinsic이어야 한다. #356(.chat-cols ≤560 밴드)과는 공존 불가 — 같은 속성을 인라인이
+       미디어 블록보다 이겨 레일 스택을 죽인다(겹침 구간: 배율 2 × 실뷰포트 ≤560). 편입 머지
+       시 이 표현식·핀을 .chat-cols 템플릿으로 반드시 이관하고 둘 다 남기기 금지. */
+    <div style={{ display: 'grid', gridTemplateColumns: 'min(216px, 100% - 244px) minmax(0, 1fr)', gap: 18, alignItems: 'start', height: 'calc(100vh / var(--z, 1) - 100px)', marginBottom: -70 }}>
       {adoptTarget && (
         <ConfirmModal
           title={t('compete.adopt')}
@@ -137,8 +146,10 @@ export default function Compete({ params }) {
         />
       )}
       {/* offset 100 = topbar56+상단26+하단여백18, marginBottom -70 = .content 하단 패딩(88) 상쇄로 body 스크롤 방지(입력창 하향·대화영역 확대). 본문 컬럼 minHeight:0과 한 세트(회의실·DM 동일). */}
-      {/* 경쟁 레일 — 지난 경쟁이 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr) */}
-      <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, width: 216 }}>
+      {/* 경쟁 레일 — 지난 경쟁이 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr).
+          고정 width 금지 — 레일 열이 양보 클램프로 216 미만이 될 때 고정 216이면 아이템이
+          트랙을 넘어 본문 위로 얹힌다. 기본 stretch가 트랙 폭을 그대로 따른다. */}
+      <div className="side-rail" style={{ position: 'sticky', top: 72, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('compete.sessions.title')}{list?.length ? ` · ${list.length}` : ''}
         </span>
@@ -231,8 +242,16 @@ export default function Compete({ params }) {
                   <Link href={`/c/${ws}/crew/${winnerEnt?.slug ?? comp.winner}`} style={{ color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.goCrew')} →</Link>
                 </p>
               )}
-              {/* 무템플릿 grid 함정 방지 — 컬럼형 grid에는 항상 minmax(0,1fr) */}
-              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${comp.entrants.length}, minmax(0, 1fr))`, gap: 12, alignItems: 'start' }}>
+              {/* 시안 나열 — 나란히 비교가 핵심 UX지만 고정 N열(트랙 min 0)은 좁은 유효 폭에서 시안
+                  카드를 37 CSS px까지 눌러 채택 버튼·상태 칩이 이웃 카드 위로 겹친다(배율 2 실측 —
+                  비교 자체가 불가). auto-fit + 최소폭 클램프 = 들어가는 만큼만 나란히, 안 들어가면
+                  아랫줄로(전 시안 동시 가시 유지 — 가로 스크롤 대안은 오버레이 스크롤바가 돌출을
+                  숨겨 뒷 시안의 발견성을 죽인다). min(…, 100%) 캡은 180px 미만 컨테이너에서 트랙
+                  min이 컨테이너를 뚫는 것을 막는다(DropUp 트리거 클램프 동형). 180 = 종전 3열이
+                  컨테이너 564 CSS px(배율 1 풀셸 뷰포트 ≈1126)에서 자연히 갖던 카드 폭 — 그 위
+                  (1152·1280 노트북 폭 포함)는 3열 나란히가 종전과 동일하고 그 아래에서만 적층으로
+                  갈린다(재검수 실측: 240이면 1152·1280의 멀쩡하던 3열까지 2+1로 바뀐다). */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))', gap: 12, alignItems: 'start' }}>
                 {comp.entrants.map((e) => {
                   const ref = e.key ?? e.slug; // 신형=key(모델 경쟁), 레거시=slug(크루 경쟁)
                   const isWinner = comp.winner === ref;
@@ -244,7 +263,10 @@ export default function Compete({ params }) {
                       ...(isWinner ? { borderColor: 'var(--warn)', boxShadow: '0 0 0 1px var(--warn)' } : {}),
                       ...(comp.winner && !isWinner ? { opacity: 0.55 } : {}),
                     }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {/* 카드 헤더 wrap — 아바타 24+gap 24+칩(nowrap) 고정 합이 협폭 카드(100% 클램프
+                          1열, 실측 132 CSS px) 내용 폭을 넘으면 칩이 카드 밖으로 샌다(실측 +3px).
+                          페이지 헤더와 동일 문법: 칩은 안 들어가면 아랫줄로. */}
+                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                         <Avatar name={e.name} size={24} />
                         <span style={{ minWidth: 0 }}>
                           <span style={{ display: 'block', fontSize: 12.5, fontWeight: 650 }}>{e.name}</span>
@@ -262,7 +284,10 @@ export default function Compete({ params }) {
                         {e.status === 'done' && <Markdown text={e.reply ?? ''} wsId={ws} />}
                       </div>
                       {e.status === 'done' && !comp.winner && (
-                        <button className="btn btn-primary sm" disabled={busy} onClick={() => adopt(ref)} style={{ justifySelf: 'start' }}>
+                        /* 버튼 줄바꿈·세로 자람 — .btn 전역 nowrap이 유일한 비축소 요소라 극단 협폭
+                           (실측 en·1280 창 × 배율 2: 카드 58에 버튼 126)에서 카드 밖으로 샌다.
+                           하단 바 새 경쟁 버튼과 동일 세트. */
+                        <button className="btn btn-primary sm" disabled={busy} onClick={() => adopt(ref)} style={{ justifySelf: 'start', whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }}>
                           {t('compete.adopt')}
                         </button>
                       )}
