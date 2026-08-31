@@ -111,7 +111,7 @@ export default function Mail({ params }) {
                   groups={[{ items: agents.map((a) => ({ value: a.slug, label: `${a.name} — ${a.role}` })) }]}
                   onChange={(v) => { setTo(v); setCc((cur) => cur.filter((s) => s !== v)); }} />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, flex: 1, minWidth: 200 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4, flex: 1, minWidth: 120 }}>
                 <span className="microlabel">{t('mail.cc')} <span style={{ color: 'var(--fg-3)', fontWeight: 400 }}>— {t('mail.ccHint', { n: CC_MAX })}</span></span>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }} role="group" aria-label={t('mail.cc')}>
                   {agents.filter((a) => a.slug !== to).map((a) => {
@@ -157,6 +157,12 @@ export default function Mail({ params }) {
         ) : pending.length === 0 ? (
           <p style={{ padding: '2px 20px 18px', color: 'var(--fg-2)', fontSize: 13, margin: 0 }}>{t('mail.emptyPending')}</p>
         ) : (
+          /* 배율 2의 좁은 유효 폭(유효 712 CSS)에서 표 고정 열(150+130+420+150+90=940px)이 카드를
+             넘는다. 카드 overflow:hidden이 가둬 문서 넘침은 아니지만, 취소 버튼이 잘려 조작 불가가
+             된다(검수 실측: elementFromPoint 히트 null). 표 래퍼에 overflow-x:auto를 두어 카드
+             안에서 가로 스크롤이 되게 하면 취소 버튼에 도달할 수 있다. 배율 1(표가 카드 안)에서는
+             스크롤바가 안 나타나 종전 불변. */
+          <div style={{ overflowX: 'auto' }}>
           <table className="table">
             <thead>
               <tr><th style={{ width: 150 }}>{t('mail.to')}</th><th style={{ width: 130 }}>{t('mail.from')}</th><th>{t('mail.message')}</th><th style={{ width: 150 }} /><th style={{ width: 90 }} /></tr>
@@ -178,6 +184,7 @@ export default function Mail({ params }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -192,6 +199,7 @@ export default function Mail({ params }) {
         ) : log.length === 0 ? (
           <p style={{ padding: '2px 20px 18px', color: 'var(--fg-2)', fontSize: 13, margin: 0 }}>{t('mail.emptyLog')}</p>
         ) : (
+          <div style={{ overflowX: 'auto' }}>
           <table className="table">
             <tbody>
               {log.map((l, i) => (
@@ -213,6 +221,7 @@ export default function Mail({ params }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -228,6 +237,7 @@ export default function Mail({ params }) {
         ) : dead.length === 0 ? (
           <p style={{ padding: '2px 20px 18px', color: 'var(--fg-2)', fontSize: 13, margin: 0 }}>{t('mail.emptyDead')}</p>
         ) : (
+          <div style={{ overflowX: 'auto' }}>
           <table className="table">
             <tbody>
               {dead.map((d) => (
@@ -252,6 +262,7 @@ export default function Mail({ params }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
