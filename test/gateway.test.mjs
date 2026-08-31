@@ -326,9 +326,13 @@ test('직통 봇 폴러: callback_query가 결재 확정까지 이어진다 — 
   };
   const stop = _startAgentTelegramForTest(WS, 'pepper', () => cfg);
   try {
+    // 대기 조건은 **단언과 같은 집합**이어야 한다 — status만 기다리면 회신 전송(answerCallbackQuery)이
+    // 아직 진행 중인 창에서 break해 윈도우 CI가 간헐 red였다(실측 2026-08-31·09-01 두 잡, 서로 다른
+    // 형제 케이스). 확정과 회신은 별개 비동기다 — 제품 결함이 아니라 테스트 대기 조건의 결함.
     const deadline = Date.now() + 8000; // 고정 sleep은 CI 부하에서 플레이크 — 조건 충족 시 즉시 통과
     while (Date.now() < deadline) {
-      if ((await loadApprovals(WS)).find((a) => a.id === item.id)?.status === 'approved') break;
+      const done = (await loadApprovals(WS)).find((a) => a.id === item.id)?.status === 'approved';
+      if (done && calls.some((c) => c.url.includes('/botbot-tok-poll/answerCallbackQuery'))) break;
       await new Promise((r) => setTimeout(r, 50));
     }
   } finally {
@@ -363,8 +367,9 @@ test('직통 봇 폴러: 텍스트 결재("승인 ap-…")는 큐를 거치지 �
   const stop = _startAgentTelegramForTest(WS, 'pepper', () => cfg);
   try {
     const deadline = Date.now() + 8000;
-    while (Date.now() < deadline) {
-      if ((await loadApprovals(WS)).find((a) => a.id === item.id)?.status === 'approved') break;
+    while (Date.now() < deadline) { // 위와 같은 이유 — 확정 + 회신 전송을 둘 다 기다린다(윈도우 CI 플레이크의 뿌리)
+      const done = (await loadApprovals(WS)).find((a) => a.id === item.id)?.status === 'approved';
+      if (done && calls.some((c) => c.url.includes('/botbot-tok-text/sendMessage'))) break;
       await new Promise((r) => setTimeout(r, 50));
     }
   } finally {
