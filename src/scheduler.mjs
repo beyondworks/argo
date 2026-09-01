@@ -10,6 +10,7 @@ import { readAgentCard } from './persona.mjs';
 import { resolveRunner, isCliRunner } from './runners.mjs';
 import { appendTurn } from './thread.mjs';
 import { consolidateMemory, rollupJournals } from './consolidate.mjs';
+import { runHealthChecks } from './runner-health.mjs';
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader } from './sync.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
@@ -110,6 +111,7 @@ async function claimRoutine(wsId, routineId, now) {
 // 안의 겹침은 여기서 막고, 기기 간은 리스(isCloudLeader)가 담당한다.
 const consolidating = new Set();
 const mailDelivering = new Set(); // 회사별 우편 배달 in-flight — 틱 겹침 시 이중 진입 차단(HIGH-4)
+const healthChecking = new Set(); // 러너 검진 in-flight(회사별) — 틱 겹침 시 중복 벤더 호출 방지
 // `${wsId}/${routineId}` → 시작 시각(ms). 같은 루틴의 실행 겹침 차단(검수 LOW-5). Set이 아니라
 // Map인 이유: SDK 러너 턴에는 상한이 없어(수동 정지 핸들뿐, CLI만 cliTimeoutMs 자가 회복) 영영
 // 안 끝나는 실행이 가드를 영구 점유하면 그 루틴이 '가동' 표시인 채 다시는 발화하지 않는다(검수
@@ -143,6 +145,19 @@ export async function runDueRoutines(wsId, now, { runFn = runRoutine } = {}) {
       // 그 새 실행이 무방비가 된다. 자기 스탬프일 때만 지운다.
       .finally(() => { if (routineRunning.get(key) === stamp) routineRunning.delete(key); });
   }
+}
+
+/** 회사 1건의 러너 검진 발사(fire-and-forget) — 틱에서 떼어낸 이유: 인라인이면 배선 테스트가
+    "소스에 문자열이 있다"까지만 볼 수 있어 죽은 코드(if(false))·가드 즉시 해제 변이를 놓친다
+    (#380 분리 검수 실증). 반환은 발사 여부(테스트용) — 실행 자체는 기다리지 않는다.
+    (export: 회귀 테스트용 — runFn 주입도 테스트 전용) */
+export function tickHealthCheck(cid, { runFn = runHealthChecks, inflight = healthChecking } = {}) {
+  if (inflight.has(cid)) return false; // 틱 겹침 중복 벤더 호출 방지(가드는 실행 완료까지 유지)
+  inflight.add(cid);
+  runFn(cid)
+    .catch((e) => console.error(`[argo] 러너 검진 오류(${cid}):`, e.message))
+    .finally(() => inflight.delete(cid));
+  return true;
 }
 
 export function ensureScheduler() {
@@ -200,6 +215,10 @@ export function ensureScheduler() {
               .catch((e) => console.error(`[argo] 크루 우편 배달 오류(${cid}):`, e.message))
               .finally(() => mailDelivering.delete(cid));
           }
+          // 러너 주기 건강 검진(P1-2 후속) — fire-and-forget. 자체 스로틀(30분·과금 러너 6시간)이
+          // 있어 매 틱 호출해도 실제 벤더 호출은 드물다. cloudLeader 게이트 안에 두는 이유: 기기마다
+          // 돌면 같은 자격에 대한 과금 검증이 기기 수만큼 곱해진다(#378 검수 지적의 확대판).
+          if (cloudLeader) tickHealthCheck(cid);
           if (cloudLeader && hhmm >= CONSOLIDATE_AT) {
             const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
             // 진행 중이면 시도 횟수를 태우지 않고 그냥 넘긴다(선점 자체를 하지 않는다)

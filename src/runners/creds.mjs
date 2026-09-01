@@ -99,6 +99,8 @@ export async function saveRunnerCred(wsId, runner, type, value) {
   // 격리 홈 리셋 — 재연결 시 이전 토큰 파일이 새 자격을 가리지 않게(runnerCredEnv가 재생성).
   // 계정 스코프엔 실행 홈이 없다(온보딩 저장용 — 실행은 회사 wsId로) — 스킵.
   if (!isAccountScope(wsId)) {
+    // 재연결 = 검진 상태 초기화(옛 백오프·실패 표시가 새 자격에 붙지 않게 — 검수 LOW). 동적 import: 순환 회피
+    await import('../runner-health.mjs').then((m) => m.clearHealthEntry(wsId, runner)).catch(() => {});
     if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
     if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
   }

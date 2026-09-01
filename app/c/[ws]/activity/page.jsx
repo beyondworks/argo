@@ -2,9 +2,13 @@
 // 활동 — "내가 없는 동안 무슨 일이, 무엇을 남겼나". 리서치 원칙: 검증 비용을 줄이는 화면.
 // 기본 뷰는 판단이 필요한 것(결재·오류)과 상태 변경(기억·크루·연결)만, 정상 턴은 '전체'로 접는다.
 import { use, useEffect, useMemo, useState } from 'react';
+import { healthFailMessageKey } from '../../../runner-usable.mjs';
 import Link from 'next/link';
 import { Avatar, Skeleton, Spinner, api, timeAgo } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
+
+// 러너 표시명 — 서버 RUNNERS.name 준거(runner-connect RUNNER_NAMES와 같은 값)
+const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
 
 const isError = (e) => e.ok === false;
 const inFilter = (e, f) => {
@@ -109,6 +113,14 @@ export default function Activity({ params }) {
       // MCP 접속 실패(chat init 실측 — 검수 M2: 이전엔 기본 행으로 떨어져 '? / mcp'만 보였다)
       // 라벨은 목적지(/market)의 사이드바 이름(nav.market) 그대로 — '설정' 라벨로 /market에 보내던 불일치 정리.
       return { who: nameOf(e.slug), avatar: nameOf(e.slug), desc: t('activity.mcpFailed', { server: e.server ?? '?', status: e.status ?? '?' }), chip: 'MCP', href: `/c/${ws}/market`, linkLabel: t('nav.market') };
+    }
+    if (e.type === 'runner-health') {
+      // 러너 주기 검진(P1-2 후속) — 갈래가 없으면 기본 행으로 떨어져 '? / RUNNER-HEALTH' 원문이
+      // 그대로 노출된다(mcp가 이미 한 번 겪은 결함 — 검수 HIGH-2 라이브 실측). 사유별 문구는
+      // 설정 카드와 같은 사전 키를 쓴다(두 표면 드리프트 방지).
+      const label = RUNNER_LABELS[e.runner] ?? e.runner ?? '?';
+      const desc = e.ok === false ? t(healthFailMessageKey(e.reason)) : t('activity.runnerHealthOk', { runner: label });
+      return { who: label, avatar: label, desc, chip: t('activity.runnerHealth'), href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
     }
     if (e.type === 'gateway') {
       return { who: e.kind === 'telegram' ? t('activity.telegram') : t('activity.slack'), avatar: t('activity.connected').slice(0, 1), desc: t('activity.gatewayPaired'), chip: t('activity.connected'), href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };

@@ -17,7 +17,7 @@ export const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--ca
 // 가용 판정(순수)은 runner-usable.mjs로 분리 — 데크 배너·홈 안내·온보딩 게이트·회귀 테스트가 공유.
 // 기존 소비처(import from './runner-connect') 호환을 위해 재수출한다.
 export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, PICK_ORDER } from './runner-usable.mjs';
-import { lastTurnByRunner } from './runner-usable.mjs';
+import { lastTurnByRunner, lastHealthFailByRunner, healthFailMessageKey } from './runner-usable.mjs';
 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
@@ -37,10 +37,14 @@ export function AiConnectionCard({ ws, accordion = false }) {
   // "연결됨" 초록불이 실사용 실패를 가리던 갭(계획서 P1): 카드가 실측 사실을 함께 보여준다.
   // 계정 스코프(온보딩 — ws가 회사가 아님)나 이벤트 부재는 조용히 생략(관용).
   const [lastTurns, setLastTurns] = useState({}); // { [runner]: { ok, aborted } }
+  const [healthFails, setHealthFails] = useState({}); // { [runner]: { ok:false, reason } } — 주기 검진(P1-2)
   function load() {
     api(`${keysBase(ws)}`).then((d) => setRunners(d.runners ?? {})).catch(() => setRunners({}));
     if (!ws || ws === ACCOUNT_WS) return; // 온보딩(계정 스코프)엔 활동이 없다 — 매번 404 요청 방지(검수 L2)
-    api(`/api/companies/${ws}/activity`).then((d) => setLastTurns(lastTurnByRunner(d.events))).catch(() => {});
+    api(`/api/companies/${ws}/activity`).then((d) => {
+      setLastTurns(lastTurnByRunner(d.events));
+      setHealthFails(lastHealthFailByRunner(d.events));
+    }).catch(() => {});
   }
   useEffect(load, [ws]);
 
@@ -49,7 +53,7 @@ export function AiConnectionCard({ ws, accordion = false }) {
       <span className="card-title">{t('settings.runners.title')}</span>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 6px', lineHeight: 1.6 }}>{t('settings.runners.help')}</p>
       {!runners ? <Skeleton h={180} /> : RUNNER_ORDER.map((id, i) => (
-        <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={i === 0} lastTurn={lastTurns[id]}
+        <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={i === 0} lastTurn={lastTurns[id]} healthFail={healthFails[id]}
           {...(accordion ? { open: openId === id, onToggle: () => setOpenId(openId === id ? null : id) } : {})} />
       ))}
     </div>
@@ -58,7 +62,7 @@ export function AiConnectionCard({ ws, accordion = false }) {
 
 /** 러너 1행 — 상태 칩 + 방식 탭 + (API키/붙여넣기 토큰 입력) 또는 (CLI 로그인 안내).
     onToggle이 오면 아코디언 모드(온보딩) — 헤더만 보이고 클릭으로 본문을 펼친다. 설정은 기존 그대로. */
-function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, lastTurn = null }) {
+function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, lastTurn = null, healthFail = null }) {
   const { t, fmtMoney } = useLang();
   const methods = st?.methods ?? ['apikey'];
   const hasOauth = methods.includes('oauth');
@@ -443,11 +447,16 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
       )}
       {/* 마지막 턴 상태(P1-1) — "연결됨" 초록불이 실사용 실패를 가리지 않게, 최근 턴이 실패한
           러너에 경고를 단다. 중단(사장 지시)은 실패가 아니라 제외. 원천 = 활동 이벤트 runner·ok. */}
-      {(company.connected || st?.host?.optedIn) && lastTurn && !lastTurn.ok && !lastTurn.aborted && (
-        /* .chip 금지 — uppercase+nowrap+mono가 EN 문장을 486px로 부풀려 폰 폭 카드를 뚫는다
-           (검수 M3 실측: EN 486 vs KO 300, 컨테이너 338). 소형 텍스트 + 줄바꿈 허용. */
-        <span style={{ fontSize: 11.5, color: 'var(--danger)', whiteSpace: 'normal', minWidth: 0 }}>{t('settings.runners.lastTurnFailed')}</span>
-      )}
+      {/* .chip 금지 — uppercase+nowrap+mono가 EN 문장을 486px로 부풀려 폰 폭 카드를 뚫는다
+          (검수 M3 실측: EN 486 vs KO 300, 컨테이너 338). 소형 텍스트 + 줄바꿈 허용.
+          검진 실패(주기 확인 — "지금 자격이 죽어 있다")가 턴 실패보다 강한 신호라 우선 표시한다. */}
+      {(company.connected || st?.host?.optedIn) && (healthFail?.ok === false
+        ? <span style={{ fontSize: 11.5, color: 'var(--danger)', whiteSpace: 'normal', minWidth: 0 }}>
+            {t(healthFailMessageKey(healthFail.reason))}
+          </span>
+        : (lastTurn && !lastTurn.ok && !lastTurn.aborted && (
+            <span style={{ fontSize: 11.5, color: 'var(--danger)', whiteSpace: 'normal', minWidth: 0 }}>{t('settings.runners.lastTurnFailed')}</span>
+          )))}
     </>
   );
   return (
