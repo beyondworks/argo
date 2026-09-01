@@ -121,7 +121,9 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
   const dir = join(p.chats, '.archive');
   await writeJsonAtomic(join(dir, `_room-${Date.now()}.json`), room);
   // sid 증가 — 진행 중이던 runRoomTurn의 잔여 발언이 빈 방에 유령으로 남지 않도록 무효화한다
-  await saveRoom(wsId, { messages: [], sid: (room.sid ?? 0) + 1 });
+  // resetAt — 크루 채팅의 '새 대화'와 같은 tombstone(검수 MEDIUM-2: 회의실도 isThread라 같은
+  // union 병합을 타는데 각인이 없어, '회의 마치기'가 동기화로 되살아났다 — 실측 재현).
+  await saveRoom(wsId, { messages: [], resetAt: Date.now(), sid: (room.sid ?? 0) + 1 });
   return { archived: true, journal: `journal/${journalName}` };
 }
 

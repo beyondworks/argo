@@ -179,7 +179,12 @@ export async function resetThread(wsId, slug) {
     // resetAt = 리셋 시각 각인(tombstone). 없으면 동기화의 union 병합이 원격의 옛 메시지를 그대로
     // 되살려 "새 대화"가 8초 만에 옛 대화로 돌아온다(실사용 제보 2026-09-01, 재현: 로컬 0건 +
     // 원격 851건 → 851건). mergeThread가 이 시각 이전 메시지를 union에서 제외해 비움을 보존한다.
-    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], resetAt: Date.now() });
+    // resetAt 하한 = 방금 비운 대화의 최대 ts + 1. 순수 Date.now()면 **기기 시계가 앞선 기기**에서
+    // 리셋했을 때 다른 기기가 그 뒤 실제로 쓴 메시지(더 작은 ts)까지 잘라 조용히 삭제한다 —
+    // 그 메시지는 .archive에도 없어 어디에도 남지 않는다(검수 MEDIUM-3 재현). 최대 ts 기준이면
+    // "이미 있던 것만" 정확히 자르고, 미래 시각으로 남의 메시지를 자르지 않는다.
+    const lastTs = Math.max(0, ...(t.messages ?? []).map((m) => Number(m?.ts) || 0));
+    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], resetAt: Math.max(Date.now(), lastTs + 1) });
   });
 }
 

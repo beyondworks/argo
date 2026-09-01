@@ -14,6 +14,44 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-live-'));
 const { mergeThread } = await import('../src/sync.mjs');
 const { resetThread, appendTurn, beginTurn, loadThread, resumeSession, listArchivedSessions } = await import('../src/thread.mjs');
 
+// CSS 캐스케이드 승자 평가 — "규칙 존재" 단언의 fail-open을 막는다(topbar-phone-policy와 같은 계약).
+// 기본 구간 + max-width:px ≥ W 블록을 소스 순서대로 걸어 대상 셀렉터의 마지막 선언을 돌려준다.
+// 주석 제거(줄 구조 보존) — 주석이 셀렉터에 섞이면 정확 일치가 깨진다(topbar-phone-policy와 동일 방식).
+const stripComments = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+  .replace(/(^|[^\S\n])\/\/[^\n]*/gm, (m) => m.replace(/[^\n]/g, ' '));
+const cssText = stripComments(await readFile(new URL('../app/globals.css', import.meta.url), 'utf8'));
+function mediaBlocks(src) {
+  const out = []; const re = /@media \(max-width:\s*(\d+)px\)\s*\{/g; let m;
+  while ((m = re.exec(src))) {
+    let i = m.index + m[0].length, depth = 1;
+    while (i < src.length && depth > 0) { if (src[i] === '{') depth += 1; else if (src[i] === '}') depth -= 1; i += 1; }
+    out.push({ px: Number(m[1]), body: src.slice(m.index + m[0].length, i - 1), start: m.index, end: i });
+  }
+  return out;
+}
+const CSS_BLOCKS = mediaBlocks(cssText);
+function effective(sel, prop, W) {
+  const segs = []; let cursor = 0;
+  for (const b of CSS_BLOCKS) {
+    if (b.start > cursor) segs.push({ applies: true, body: cssText.slice(cursor, b.start) });
+    segs.push({ applies: W <= b.px, body: b.body });
+    cursor = b.end;
+  }
+  segs.push({ applies: true, body: cssText.slice(cursor) });
+  const eq = (s) => s.replace(/\s+/g, ' ').trim() === sel; // 정확 일치 — 부분 매칭은 fail-open
+  let winner;
+  for (const seg of segs) {
+    if (!seg.applies) continue;
+    for (const r of seg.body.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!r[1].split(',').some(eq)) continue;
+      const pr = new RegExp(`(?:^|[;{\\s])${prop}\\s*:\\s*([^;}]+)`, 'g');
+      let d; while ((d = pr.exec(r[2]))) winner = d[1].trim();
+    }
+  }
+  return winner;
+}
+
 const buf = (o) => Buffer.from(JSON.stringify(o));
 const msgs = (n, base = 1000) => Array.from({ length: n }, (_, i) => ({ who: i % 2 ? 'crew' : 'user', text: `m${i}`, ts: base + i }));
 
@@ -97,33 +135,36 @@ test('saveDeviceSession(재로그인)은 사망 마커를 해제한다 — 마�
 });
 
 // ── ③ 입력창 스크롤 막대 ─────────────────────────────────────────────────
-test('입력 textarea: overflow-x를 hidden으로 명시 — overflow-y 단독 지정은 x를 auto로 승격시킨다', async () => {
-  const css = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
-  // 앵커는 flex 선언을 포함한 **본 규칙**으로 — '.side, .thread, … .input-bar textarea { overscroll… }'
-  // 같은 공유 규칙이 먼저 잡히면 오타겟이다(이 파일에 .input-bar textarea 규칙은 3개다).
-  const rule = css.match(/^\.input-bar textarea \{ flex: 1;[^}]*\}/m)?.[0];
-  assert.ok(rule, '.input-bar textarea 규칙');
-  assert.match(rule, /overflow-x:\s*hidden/, 'x 미지정이면 계산값이 auto가 되어 바닥에 가로 트랙이 그려진다(실측)');
-  assert.match(rule, /overflow-y:\s*auto/, '세로 스크롤은 유지(6줄 초과 시 내부 스크롤)');
+test('입력 textarea: overflow-x 최종 승자가 hidden — 뒤 규칙이 되돌리면 red(캐스케이드 평가)', () => {
+  // '규칙이 존재한다' 단언은 캐스케이드에 fail-open이다 — 파일 끝에 같은 셀렉터로 auto를 덧쓰면
+  // 수정이 무력화되는데 초록이었다(검수 FO-1 실증, MEMORY의 topbar-phone-policy 교훈 재발).
+  assert.equal(effective('.input-bar textarea', 'overflow-x', 1440), 'hidden',
+    'x 미지정·되돌림이면 계산값이 auto가 되어 바닥에 가로 트랙이 그려진다(실측)');
+  assert.equal(effective('.input-bar textarea', 'overflow-y', 1440), 'auto', '세로 스크롤은 유지');
 });
 
 // ── ④ 상단바 겹침 ────────────────────────────────────────────────────────
-test('상단바 슬롯: overflow hidden — 자식(flex:none)의 초과분이 버전·시계 위로 그려지지 않는다', async () => {
-  const css = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
-  const rule = css.match(/#argo-topbar-slot \{[^}]*\}/)?.[0];
-  assert.ok(rule, '#argo-topbar-slot 기본 규칙');
-  assert.match(rule, /overflow:\s*hidden/, 'visible이면 넘친 칩이 상단바 밖으로 그려져 겹친다(실측)');
-  assert.match(rule, /min-width:\s*0/, '슬롯 자신은 축소돼야 뒤 요소를 밀지 않는다');
+test('상단바 슬롯: overflow를 걸지 않는다 — 걸면 안의 드롭다운이 클리핑돼 죽는다(검수 HIGH-1)', () => {
+  // 1차 처방(overflow:hidden)이 '옆에 열기' 패널(position:absolute)을 통째로 잘라, 기본 1440폭에서도
+  // 버튼이 눌려도 아무것도 안 뜨는 회귀를 만들었다. 겹침 방어는 '겹칠 대상을 먼저 치우는' 쪽으로 옮겼다.
+  const w = effective('#argo-topbar-slot', 'overflow', 1440);
+  assert.ok(w === undefined || w === 'visible', `슬롯 overflow는 미지정/visible이어야 한다(현재: ${w})`);
+  assert.equal(effective('#argo-topbar-slot', 'min-width', 1440), '0', '슬롯 자신은 축소돼 뒤 요소를 밀지 않는다');
 });
 test('상단바 전환: 배율 인지 셸 판정이 미디어쿼리와 같은 임계(900)로 슬롯→밴드를 건다', async () => {
   const layout = await readFile(new URL('../app/c/[ws]/layout.jsx', import.meta.url), 'utf8');
   // 미디어쿼리는 실뷰포트만 보므로 배율로 좁아진 750~900 구간이 사각지대였다(제보 재현: 유효 792에서 겹침)
   assert.match(layout, /toggleAttribute\('data-narrow-shell', eff < 900\)/, '유효 폭 900 임계로 data 속성 토글');
   assert.match(layout, /const eff = document\.documentElement\.clientWidth \/ z;/, '유효 폭 = clientWidth ÷ zoom');
-  assert.match(layout, /setNarrowBar\(eff < 750\)/, '시계·버전 축(750)은 그대로 — 두 임계는 다른 목적');
-  const css = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
-  assert.match(css, /:root\[data-narrow-shell\] #argo-topbar-slot \{ display: none; \}/, '배율 인지 슬롯 숨김');
-  assert.match(css, /:root\[data-narrow-shell\] \.crew-phone-band \{ display: flex/, '배율 인지 밴드 노출 — 숨기기만 하면 컨트롤 접근이 끊긴다');
+  // 시계·버전 축은 1100 — 겹침 실측 폭(1059)보다 위로 올려 '겹칠 대상'을 먼저 치운다(검수 HIGH-1
+  // 처방: 슬롯에 overflow를 걸면 안의 드롭다운이 죽으므로, 이웃을 비우는 쪽으로 방어한다).
+  assert.match(layout, /setNarrowBar\(eff < 1100\)/, '시계·버전·스페이서 축(1100)');
+  assert.equal(effective(':root[data-narrow-shell] #argo-topbar-slot', 'display', 1440), 'none', '배율 인지 슬롯 숨김');
+  assert.equal(effective(':root[data-narrow-shell] .crew-phone-band', 'display', 1440), 'flex', '밴드 노출 — 숨기기만 하면 컨트롤 접근이 끊긴다');
   // 미디어쿼리 쪽 쌍둥이도 살아 있어야 한다(배율 1의 좁은 창 축)
-  assert.match(css, /@media \(max-width: 900px\)[\s\S]*?#argo-topbar-slot \{ display: none; \}/, '실뷰포트 축 유지');
+  assert.equal(effective('#argo-topbar-slot', 'display', 900), 'none', '실뷰포트 축 유지(≤900)');
+  // 배선(검수 FO-2·FO-3): 토글 직후 무력화·초기 판정 누락이 초록이던 구멍
+  const eff = layout.slice(layout.indexOf('const check = () =>'), layout.indexOf('window.addEventListener(\'resize\', check)'));
+  assert.doesNotMatch(eff, /removeAttribute\('data-narrow-shell'\)/, '판정 직후 되돌리는 코드 금지(cleanup은 이펙트 반환부에서만)');
+  assert.match(layout, /check\(\);\s*\n\s*window\.addEventListener\('resize', check\);/, '초기 1회 판정 필수 — 없으면 첫 로드에서 전환이 안 걸린다');
 });

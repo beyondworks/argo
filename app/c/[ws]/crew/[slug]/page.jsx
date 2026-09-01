@@ -807,6 +807,16 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     }).catch(() => {});
   }
 
+  // 분할 패널 가용 여부 — CSS가 .split-pane을 죽이는 축(실뷰포트 ≤899px)과 **같은 기준**으로 본다.
+  // 밴드의 '옆에 열기' 노출 조건(검수 MEDIUM-1). 유효 폭(배율 인지)과 섞으면 두 축이 다시 갈라진다.
+  const [splitAlive, setSplitAlive] = useState(true);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 900px)');
+    const on = () => setSplitAlive(mq.matches);
+    on(); mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+
   // 부분 코멘트(빨간펜) — 답변에서 고칠 부분을 드래그로 인용하고, 코멘트를 모아 묶음 수정 지시로 보낸다.
   // "전체 다시 써" 대신 "여기 이 문장만" — 상사가 보고서에 빨간펜 긋는 방식 그대로.
   const [annotIdx, setAnnotIdx] = useState(null);   // 코멘트 다는 중인 답변 index
@@ -1012,10 +1022,13 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         </>,
         slotEl,
       )}
-      {/* 컨트롤 밴드 — embedded(보조 패널): 항상 인라인(패널엔 topbar가 없다). 주 화면: 좁은 셸(≤900px)에서만
-          CSS(.crew-phone-band)로 등장해 위 topbar 포털을 대체한다 — 슬롯의 축소 불가 컨트롤들이 검색·도크를
-          덮던 것(실측 561px에서도 306px 흘러넘침)의 수용처. '옆에 열기'는 제외 — 분할 패널 자체가 ≤899px에서
-          display:none인 죽은 기능이라 좁은 폭에 노출하지 않는다(안 될 버튼 노출 금지). */}
+      {/* 컨트롤 밴드 — embedded(보조 패널): 항상 인라인(패널엔 topbar가 없다). 주 화면: 좁은 셸에서 CSS
+          (.crew-phone-band)로 등장해 위 topbar 포털을 대체한다 — 슬롯의 축소 불가 컨트롤들이 검색·도크를
+          덮던 것(실측 561px에서도 306px 흘러넘침)의 수용처.
+          '옆에 열기'는 **분할 패널이 실제로 살아 있을 때만** 넣는다(안 될 버튼 노출 금지 원칙). 판정 축이
+          둘로 갈렸던 것이 검수 MEDIUM-1: 패널 사망은 @media(max-width:899px) = **실뷰포트**인데, 밴드 전환은
+          data-narrow-shell = **유효 폭**이라, 배율 z>1의 실뷰포트 900~900z 구간에서 패널은 살아 있는데
+          진입로만 사라졌다. splitAlive(실뷰포트 기준)로 그 축을 맞춘다. */}
       <div className={embedded ? undefined : 'crew-phone-band'}
         style={{ gridRow: 1, alignItems: 'center', gap: 8, minWidth: 0, padding: '8px 0 6px', ...(embedded ? { display: 'flex' } : {}) }}>
         <span className="nav-sub" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent?.role}</span>
@@ -1027,6 +1040,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         {!embedded && <button className="btn sm" style={{ flex: 'none' }} onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen}>{t('crew.panel.open')}</button>}
         <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
         <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
+        {!embedded && splitAlive && (
+          <SideOpenMenu crews={crewList.filter((c) => c.slug !== slug)}
+            onPick={(s) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'crew', key: s })))} />
+        )}
       </div>
 
       <div className="thread" ref={threadRef} style={{ gridRow: 2, overflowY: 'auto', minHeight: 0 }}>

@@ -136,7 +136,10 @@ function Shell({ children, params }) {
     const check = () => {
       const z = parseFloat(document.documentElement.style.zoom) || 1;
       const eff = document.documentElement.clientWidth / z;
-      setNarrowBar(eff < 750);
+      // 1100 — 겹침이 실측된 유효 폭(1059)보다 위. 시계·버전·스페이서를 먼저 치워 슬롯이 넘쳐도
+      // 겹칠 대상을 없앤다(남는 이웃 검색 pill은 flex 축소라 겹치지 않는다). 종전 750은 겹침 구간을
+      // 못 덮었고, 슬롯에 overflow를 걸어 덮으려던 1차 처방은 드롭다운을 죽였다(검수 HIGH-1).
+      setNarrowBar(eff < 1100);
       // 셸 좁음(유효 폭 < 900) — @media(max-width:900px)의 **배율 인지 쌍둥이**다. 미디어쿼리는 실
       // 뷰포트만 보므로 배율로 좁아진 구간에서 슬롯→밴드 전환이 미발동했고, 슬롯 자식(flex:none)이
       // overflow:visible로 삐져나와 버전·시계 위에 겹쳐 그려졌다(실사용 제보 2026-09-01, 실측:
@@ -147,7 +150,10 @@ function Shell({ children, params }) {
     check();
     window.addEventListener('resize', check);
     window.addEventListener('argo:zoom', check);
-    return () => { window.removeEventListener('resize', check); window.removeEventListener('argo:zoom', check); };
+    return () => {
+      window.removeEventListener('resize', check); window.removeEventListener('argo:zoom', check);
+      document.documentElement.removeAttribute('data-narrow-shell'); // 회사 셸 밖으로 나가면 속성도 걷는다(검수 LOW-2)
+    };
   }, []);
   // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
   const [me, setMe] = useState(null);

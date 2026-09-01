@@ -1499,12 +1499,13 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 /* 페이지 컨트롤 슬롯(크루 채팅이 포털로 사용) — display까지 여기: 인라인 display가 있으면
    좁은 셸(≤900px 블록)의 숨김이 인라인에 진다. 자식이 전부 flex:none이라 슬롯은 축소 불가 —
    좁은 폭 수용은 숨김+인라인 밴드(.crew-phone-band) 전환으로 한다 */
-/* overflow: hidden 필수 — 슬롯 자식은 flex:none(칩·버튼)이라 슬롯이 min-width:0으로 줄어도 내용은
-   자연폭을 유지한다. visible이면 그 초과분이 상단바 밖으로 그려져 버전·시계 위에 **겹친다**(실사용
-   제보 2026-09-01, 실측: 유효 792에서 '카드'·'새 대화'가 버전 [907~1043] 위로). 폭 임계로는 콘텐츠
-   길이 변화를 다 덮지 못하므로(유효 1059에서도 '옆에 열기' 겹침 실측) 겹침은 여기서 구조적으로 막고,
-   좁은 구간의 접근성은 슬롯→밴드 전환(미디어쿼리 900 + data-narrow-shell)이 담당한다. */
-#argo-topbar-slot { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; }
+/* ⚠ overflow를 걸지 말 것 — 슬롯 안 '옆에 열기' 드롭다운 패널이 position:absolute라 슬롯을
+   기준으로 클리핑돼 **버튼이 눌려도 아무것도 안 뜬다**(분리 검수 HIGH-1 실측: 기본 1440폭에서도
+   메뉴 y 47.5~152.8이 슬롯 클립 y 13.5~41.5 밖 → elementFromPoint가 MAIN을 잡음).
+   겹침 방어는 '겹칠 대상을 먼저 치우는' 쪽으로 한다 — 유효 폭 1100 미만이면 시계·버전·스페이서를
+   숨기고(narrowBar), 900 미만이면 슬롯 자체를 밴드로 내린다(data-narrow-shell). 남는 이웃은
+   검색 pill뿐이고 그건 flex로 축소되므로 겹치지 않는다. */
+#argo-topbar-slot { display: flex; align-items: center; gap: 8px; min-width: 0; }
 
 .search-pill {
   display: flex; align-items: center; gap: 8px;

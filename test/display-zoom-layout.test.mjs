@@ -173,7 +173,9 @@ test('상단바 배율 반응형 배선 — narrowBar 판정이 시계·버전 �
   // 두 번 계산하면 한쪽만 고쳐지는 드리프트가 된다(#383 상단바 겹침 수정에서 통합).
   assert.match(layout, /const eff = document\.documentElement\.clientWidth \/ z;/,
     '유효 폭 산식 — clientWidth ÷ zoom');
-  assert.match(layout, /setNarrowBar\(eff < 750\)/, 'narrowBar 판정 — 유효 폭 750 미만(시계·버전 축)');
+  // 임계 1100 — 슬롯이 넘쳐도 겹칠 이웃(시계·버전·스페이서)을 먼저 치우는 방어(#383 검수 HIGH-1:
+  // 슬롯에 overflow를 걸어 덮으려던 처방이 안의 드롭다운을 죽였다). 종전 750은 겹침 구간을 못 덮었다.
+  assert.match(layout, /setNarrowBar\(eff < 1100\)/, 'narrowBar 판정 — 유효 폭 1100 미만(시계·버전 축)');
   assert.match(layout, /window\.addEventListener\('argo:zoom',\s*check\)/,
     'argo:zoom 리스너 — 배율 변경 시 재판정');
   assert.match(layout, /\{!narrowBar && <Clock \/>\}/,

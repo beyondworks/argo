@@ -107,7 +107,7 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
       user: { id: s.user?.id ?? sess.user.id, email: s.user?.email ?? sess.user.email },
     };
     await persist(next, root);
-    await rm(deadMarkerOf(root), { force: true }).catch(() => {}); // 회생 — 마커 해제
+    await rm(deadMarkerOf(root), { force: true }).catch(() => {}); // 회생 — 마커 해제(persist의 해제와 같은 계약: '새/살아난 세션을 디스크에 쓰면 옛 사망 판정은 무효'. 한쪽만 고치지 말 것 — 검수 LOW-1)
     return next;
   });
 }
