@@ -302,6 +302,50 @@ test('결재 콜백(handleApprovalCallback): 페어링 사장의 버튼 클릭�
   assert.equal(String(edit?.body.chat_id), '200', '원 카드를 결과로 교체(죽은 버튼 제거)');
 });
 
+/* ── 윈도우 CI 간헐 red의 뿌리 (2026-08-31 #373 잡 · 09-01 범프 잡, 형제 케이스 2건) ──────
+   handleApprovalCallback은 **승인 확정 → 회신** 순차 await다(gateway.mjs). 그래서 결재 status만
+   기다리는 대기 루프는 회신(answerCallbackQuery/sendMessage)이 아직 나가기 전에 break할 수 있고,
+   그 뒤 단언이 회신을 요구하면 red가 된다. 창은 마이크로태스크 폭이라 맥에서도 재현된다(격리 프로브
+   실측 5회 중 4회 "승인 관측 시점에 회신 없음") — 다만 확률적이라, 아래 두 테스트가 확률에 기대지
+   않고 잠근다: ①순서 계약(결정적 행동) ②대기 루프가 단언과 같은 집합을 기다리는지(소스 구간).
+   제품 코드는 정상이다 — 고칠 대상은 테스트의 대기 조건이었다. */
+test('결재 콜백 순서 계약: 회신 시점엔 승인이 이미 확정돼 있다(= status만 기다리면 회신 전에 깨어난다)', async () => {
+  const { _approvalCallbackForTest } = await import('../src/gateway.mjs');
+  const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const WS = 'co-appr-order';
+  await createCompany(WS, '결재사5', 'pepper');
+  const item = await addApproval(WS, { slug: 'pepper', action: '배포 실행', reason: '순서 계약', kind: 'tool' });
+  const seen = []; // 회신 fetch가 진입한 그 순간의 결재 상태 — 순차 await라 항상 'approved'다
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('answerCallbackQuery')) {
+      seen.push((await loadApprovals(WS)).find((a) => a.id === item.id)?.status ?? null);
+    }
+    return new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await _approvalCallbackForTest(WS, 'tok-order', { id: 'cb-o', data: `ap:${item.id}:1`, from: { id: 1 }, message: { message_id: 5, chat: { id: 200 } } }, { chatId: '200', ownerId: 1 });
+  } finally { globalThis.fetch = origFetch; }
+  assert.deepEqual(seen, ['approved'],
+    '회신은 승인 뒤에 나간다 — 이 순서가 뒤집히면(회신 먼저) 폴러 테스트들의 대기 조건 근거가 바뀐다');
+});
+
+test('폴러 테스트 대기 조건 = 단언 집합 — status만 기다리는 형태로 되돌리면 윈도우 간헐 red가 재발한다', async () => {
+  // 확률적 창을 확률로 잡을 수 없으므로 구간 불변식으로 잠근다(이 레포의 소스 핀 관례).
+  // 각 폴러 테스트의 while 루프가 자기 단언과 **같은 URL 매처**를 대기 조건에 갖는지 본다.
+  const src = await readFile(new URL('./gateway.test.mjs', import.meta.url), 'utf8');
+  for (const [name, matcher] of [['co-appr-poll', 'answerCallbackQuery'], ['co-appr-text', 'sendMessage']]) {
+    const start = src.indexOf(`const WS = '${name}'`);
+    assert.ok(start > 0, `${name} 블록`);
+    const block = src.slice(start, src.indexOf('assert.equal((await loadApprovals(WS))', start));
+    const loop = block.match(/while \(Date\.now\(\) < deadline\) \{[\s\S]*?\n {4}\}/)?.[0];
+    assert.ok(loop, `${name} 대기 루프`);
+    assert.match(loop, new RegExp(`calls\\.some\\(\\(c\\) => c\\.url\\.includes\\('/bot[^']*${matcher}'\\)\\)`),
+      `${name} — 대기 조건에 회신(${matcher}) 관측이 포함돼야 한다(status 단독 대기는 회신 전 break)`);
+  }
+});
+
 test('직통 봇 폴러: callback_query가 결재 확정까지 이어진다 — 죽은 버튼 해소(PR #305 분리 검수 LOW-2)', async () => {
   const { _startAgentTelegramForTest } = await import('../src/gateway.mjs');
   const { addApproval, loadApprovals } = await import('../src/approvals.mjs');
