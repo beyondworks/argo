@@ -1672,7 +1672,11 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .input-bar:focus-within { box-shadow: 0 0 0 2px var(--ring); }
 .input-bar input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; height: 32px; font-size: 13.5px; }
 /* 여러 줄 채팅 입력(textarea) — Enter 전송·Shift+Enter 줄바꿈. 자동 높이는 JS(scrollHeight), 최대 6줄 후 내부 스크롤 */
-.input-bar textarea { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 13.5px; font-family: inherit; line-height: 1.45; padding: 6.5px 0; resize: none; max-height: 132px; overflow-y: auto; }
+/* overflow-x: hidden 명시 필수 — overflow-y만 지정하면 CSS가 overflow-x를 visible로 두지 못하고
+   auto로 승격한다(실측: 계산값 overflowX=auto). 그러면 "스크롤 막대 항상 표시" 설정·WebKit(Tauri
+   웹뷰)에서 내용이 넘치지 않아도 가로 트랙이 그려져 입력창 바닥에 회색 막대가 남는다(실사용 제보
+   2026-09-01). textarea는 자동 줄바꿈이라 가로 스크롤이 필요 없다. */
+.input-bar textarea { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 13.5px; font-family: inherit; line-height: 1.45; padding: 6.5px 0; resize: none; max-height: 132px; overflow-x: hidden; overflow-y: auto; }
 .input-bar input::placeholder, .input-bar textarea::placeholder { color: var(--fg-3); }
 
 .kbd {

@@ -176,7 +176,10 @@ export async function resetThread(wsId, slug) {
     // 삭제가 아니라 **빈 스레드로 재기록** — 파일 부재는 "손상 격리됨"의 신호로 쓰이므로(loadThread의
     // salvage 게이트), 새 대화가 파일을 지우면 옛 손상본이 되살아난다(검수 CRITICAL-1 C 케이스 실측).
     // 회의실 endMeeting이 {messages:[], sid+1}을 쓰는 것과 같은 계약으로 통일한다.
-    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [] });
+    // resetAt = 리셋 시각 각인(tombstone). 없으면 동기화의 union 병합이 원격의 옛 메시지를 그대로
+    // 되살려 "새 대화"가 8초 만에 옛 대화로 돌아온다(실사용 제보 2026-09-01, 재현: 로컬 0건 +
+    // 원격 851건 → 851건). mergeThread가 이 시각 이전 메시지를 union에서 제외해 비움을 보존한다.
+    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], resetAt: Date.now() });
   });
 }
 
@@ -193,7 +196,12 @@ export async function resumeSession(wsId, slug, id) {
     if (cur.messages?.length) {
       await writeJsonAtomic(join(dir, `${safe}-${Date.now()}.json`), cur);
     }
-    // 보관본을 활성으로 되살리고, 원래 보관 파일은 제거(레일에 중복 노출 방지)
+    // 보관본을 활성으로 되살리고, 원래 보관 파일은 제거(레일에 중복 노출 방지).
+    // 되살림 각인 — resetAt을 지우기만 하면 **원격이 든 tombstone**이 이겨 복원분이 도로 잘린다
+    // (실측: 로컬 삭제만으론 max(0, 원격 T2)=T2가 적용). 리셋과 되살림을 같은 축의 사건으로 두고
+    // mergeThread가 최신값으로 승부하게 한다(resumedAt >= resetAt이면 비움 취소).
+    delete restored.resetAt;
+    restored.resumedAt = Date.now();
     await writeJsonAtomic(file(wsId, slug), restored);
     await rm(join(dir, id), { force: true });
     return restored;
