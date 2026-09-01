@@ -46,8 +46,14 @@ Deno.serve(async (req) => {
   const sig = req.headers.get('x-signature') ?? '';
   if (!safeEqual(await hmacHex(secret, raw), sig)) return new Response('invalid signature', { status: 401 });
 
-  let evt: { meta?: { event_name?: string; custom_data?: { user_id?: string } }; data?: { id?: string; attributes?: { status?: string; ends_at?: string | null; customer_id?: number; updated_at?: string } } };
+  let evt: { meta?: { event_name?: string; custom_data?: { user_id?: string } }; data?: { id?: string; attributes?: { status?: string; ends_at?: string | null; customer_id?: number; updated_at?: string; test_mode?: boolean } } };
   try { evt = JSON.parse(raw); } catch { return new Response('bad json', { status: 400 }); }
+  // test_mode 결제는 실 Pro를 부여하지 않는다 — 정본(src/lsbilling.mjs)과 같은 계약.
+  // 이 수신자에만 게이트가 없어 실사고가 났다(2026-09-01: 테스트 주문 9356084 → 실 계정 pro 부여,
+  // LS 정산액 0). LS_ALLOW_TEST=1을 명시한 스테이징에서만 수용한다. 200 = LS 무한 재시도 방지.
+  if (evt?.data?.attributes?.test_mode && Deno.env.get('LS_ALLOW_TEST') !== '1') {
+    return new Response('test mode ignored', { status: 200 });
+  }
   const name = String(evt?.meta?.event_name ?? '');
   if (!LIFECYCLE.has(name)) return new Response('ignored', { status: 200 });
   const userId = evt?.meta?.custom_data?.user_id;
