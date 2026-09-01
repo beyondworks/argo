@@ -1515,13 +1515,16 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 .search-pill {
   display: flex; align-items: center; gap: 8px;
   /* 명시 min-width — input의 고유 기본 폭(size 기본값 20 → ~140px)이 pill의 min-content로 올라와
-     좁은 유효 뷰포트(표시 배율 2, 1열 폭)에서 상단바가 문서 가로 스크롤을 만든다(실측:
-     pill이 188.75px에서 축소 정지 → scrollWidth 1497 > clientWidth 1424). 자동 최소 폭을
-     **대체**해야 내부 input(flex:1; min-width:0)이 따라 줄어든다.
-     기본은 0을 유지한다 — 데스크톱 플로어를 두면 이 넘침이 좁은 유효 뷰포트에서 되돌아온다(#348 핀).
-     플로어가 필요한 자리는 pill이 flex:1(basis 0)로 바뀌는 **접기 단계**뿐이라 거기에만 건다
-     (:root[data-narrow-bar] .search-pill — 분리 검수 2R HIGH-3). */
-  min-width: 0;
+     자동 최소 폭이 ~189px에서 축소를 정지시킨다(#340 실측: scrollWidth 1497 > clientWidth 1424).
+     명시값으로 **대체**해야 내부 input(flex:1; min-width:0)이 따라 줄어든다.
+     값이 0이 아니라 96px인 이유(분리 검수 3R HIGH-1): 플로어를 접기 단계 속성에만 걸면 순환이 된다 —
+     base 0이면 pill이 부족분을 전부 흡수해 **넘침이 발생하지 않고**, 넘침이 트리거인 접기(그리고
+     그 안의 플로어)가 켜지지 않아, 입력이 죽는 구간에서 정확히 방어가 침묵한다(실측: 유효 폭
+     990~950에서 입력 0px, 단계 전환은 940에서야 발동 — 앱 최소 창폭 960이 그 한복판).
+     96px에서 pill이 정지하면 그게 곧 fitBar가 읽는 정직한 넘침 신호가 되어 접기가 제때 켜진다.
+     #340이 잡았던 "좁은 유효 뷰포트 가로 넘침"은 이제 접기 기구가 흡수한다(3R 실측: 유효
+     1440→540 전 구간 barOver 0 · docOver 0, 입력 최솟값 49px). */
+  min-width: 96px;
   height: 34px; padding: 0 12px; width: 220px;
   background: var(--card); border: 1px solid var(--border); border-radius: 999px;
   color: var(--fg-3);
@@ -2103,8 +2106,8 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh / var(--z, 1)
   .topbar-clock, .topbar-ver, .topbar-spacer { display: none; }
   /* 명시 min-width가 nowrap의 auto 플로어(문자열 전체 폭)를 대체해야 말줄임이 성립한다 */
   .topbar-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 56px; }
-  /* 제목은 사용자 지정 크루 이름 — 길면 제목이 양보하고 검색은 입력 가능한 폭을 지킨다 */
-  .search-pill { min-width: 96px; }
+  /* 검색 플로어(96px)는 base .search-pill이 전 구간 보장한다(3R에서 승격 — 두 곳 관리 금지).
+     제목은 사용자 지정 크루 이름이라 길면 제목이 먼저 양보한다. */
   /* 크루 채팅·경쟁 시안 본문 — 레일이 216px 열로 남으면 본문 트랙이 98px로 붕괴한다(실측 360px).
      위 레일·아래 본문 스택으로 전환하고, 레일은 자체 스크롤 상한으로 본문 높이를 지킨다(vault 트리와 동형).
      26vh는 /var(--z)로 표시 배율 보정 — vh는 배율 무관 실뷰포트 기준이라 나눠야 레이아웃 픽셀과 맞는다 */
@@ -2169,10 +2172,9 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 :root[data-narrow-bar] .topbar-clock,
 :root[data-narrow-bar] .topbar-ver,
 :root[data-narrow-bar] .topbar-upd { display: none; }
-/* 접기 단계 플로어 — pill이 flex:1(basis 0)로 바뀌면 남는 폭이 없을 때 입력이 통째로 0px가 된다
-   (분리 검수 2R HIGH-3 A/B 실측: 유효폭 1000에서 종전 99px → 0px). 값은 폰 폭 블록과 같은 96px.
-   기본 규칙에 두지 않는 이유는 위 .search-pill 주석 참조(#348: 데스크톱 플로어 금지). */
-:root[data-narrow-bar] .search-pill { flex: 1; width: auto; min-width: 96px; }
+/* 플로어(96px)는 base .search-pill이 전 구간 보장한다(3R HIGH-1 — 여기 두면 순환이라 base로 승격).
+   접기 단계는 접은 폭을 검색으로 보내는 flex 전환만 담당한다. */
+:root[data-narrow-bar] .search-pill { flex: 1; width: auto; }
 
 /* 2단계 data-narrow-shell: 1단계로도 모자라면 슬롯을 인라인 밴드로 내린다.
    @media(max-width:900px)의 같은 전환을 **넘침 기준**으로도 거는 쌍둥이다 — 미디어쿼리가 실 뷰포트만

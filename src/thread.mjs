@@ -178,7 +178,7 @@ export async function resetThread(wsId, slug) {
     // salvage 게이트), 새 대화가 파일을 지우면 옛 손상본이 되살아난다(검수 CRITICAL-1 C 케이스 실측).
     // 회의실 endMeeting이 {messages:[], sid+1}을 쓰는 것과 같은 계약으로 통일한다.
     // resetAt = 비움 각인(tombstone) — 근거·산식은 src/reset-stamp.mjs에 있다(벽시계 미사용 이유 포함).
-    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], resetAt: resetStamp(t) });
+    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], ...resetStamp(t) });
   });
 }
 
@@ -200,6 +200,7 @@ export async function resumeSession(wsId, slug, id) {
     // (실측: 로컬 삭제만으론 max(0, 원격 T2)=T2가 적용). 리셋과 되살림을 같은 축의 사건으로 두고
     // mergeThread가 최신값으로 승부하게 한다(resumedAt >= resetAt이면 비움 취소).
     delete restored.resetAt;
+    delete restored.cutTs; // 보관본에 실려 온 옛 자르기 지점도 함께 — 남으면 원격 cutTs와 max로 겨뤄 복원분을 자른다
     restored.resumedAt = resumeStamp(cur); // 각인 보유자는 활성 스레드(cur) — 보관본은 리셋을 모른다
     await writeJsonAtomic(file(wsId, slug), restored);
     await rm(join(dir, id), { force: true });

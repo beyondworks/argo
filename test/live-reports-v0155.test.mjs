@@ -146,25 +146,32 @@ test('회의 다시 열기: 되살림 각인이 없으면 되살린 회의가 �
   }
 });
 
-test('비움 각인은 벽시계를 쓰지 않는다 — 시계가 앞선 기기가 남의 새 메시지를 지우면 안 된다(검수 2R MEDIUM-2)', async () => {
+test('각인은 순서와 자르는 지점을 분리한다 — 시계 앞선 기기가 남의 새 메시지를 지우면 안 된다(2R M-2·3R M-1)', async () => {
   const { resetStamp, resumeStamp } = await import('../src/reset-stamp.mjs');
-  // 기기 A: 시계가 1시간 앞섬. 로컬 대화의 마지막 ts는 실시각 기준이다.
   const realNow = Date.now();
   const prev = { messages: [{ who: 'user', text: '옛 지시', ts: realNow - 60_000 }] };
-  const stamp = resetStamp(prev);
-  assert.ok(stamp <= realNow, `각인이 미래로 가면 안 된다(각인 ${stamp} > 실시각 ${realNow})`);
-  assert.equal(stamp, realNow - 60_000 + 1, '앵커는 로컬이 실제로 본 것의 상한 + 1');
-  // 행동 — 정상 시계 기기 B가 리셋 뒤 쓴 메시지가 살아남는가
-  const merged = JSON.parse(mergeThread(buf({ messages: [], resetAt: stamp }),
+  // ── 자르는 지점(cutTs)은 실존 ts에만 앵커 — 벽시계 미오염
+  const st = resetStamp(prev);
+  assert.equal(st.cutTs, realNow - 60_000 + 1, 'cutTs = 로컬이 실제로 본 것의 상한 + 1');
+  const merged = JSON.parse(mergeThread(buf({ messages: [], ...st }),
     buf({ messages: [...prev.messages, { who: 'user', text: 'B의 새 지시', ts: realNow }] }), 'remote').toString());
-  assert.deepEqual(merged.messages.map((m) => m.text), ['B의 새 지시'],
-    '옛 대화는 잘리고 리셋 이후 새 메시지는 남아야 한다');
-  // 단조 — 되살림 뒤 다시 비우면 비움이 이겨야 한다(resetAt <= resumedAt이면 cutAt=0이 되어 무효)
-  const afterResume = { messages: prev.messages, resumedAt: resumeStamp({ resetAt: stamp }) };
-  const again = resetStamp(afterResume);
-  assert.ok(again > afterResume.resumedAt, '비움 각인은 직전 되살림보다 커야 한다');
-  const m2 = JSON.parse(mergeThread(buf({ messages: [], resetAt: again }), buf(afterResume), 'remote').toString());
-  assert.equal(m2.messages.length, 0, '되살림 → 다시 새 대화가 무효가 되면 안 된다');
+  assert.deepEqual(merged.messages.map((m) => m.text), ['B의 새 지시'], '옛 것만 잘리고 새 메시지는 생존');
+  // ── 3R MEDIUM-1 재현: 시계 +1h 기기의 되살림 → 비움 경유. 순서값(resetAt)은 벽시계를 물려받아
+  //    미래로 부풀지만, 자르기는 cutTs라 상대 기기의 새 메시지가 살아남아야 한다.
+  const HOUR = 3_600_000;
+  const resumed = { messages: prev.messages, resumedAt: resumeStamp({}, realNow + HOUR) }; // 시계 +1h 되살림
+  const st2 = resetStamp(resumed); // 그 기기에서 곧바로 새 대화
+  assert.ok(st2.resetAt > resumed.resumedAt, '순서 단조 — 비움이 직전 되살림을 이겨야 tombstone이 산다');
+  assert.equal(st2.cutTs, realNow - 60_000 + 1, 'cutTs는 되살림의 벽시계에 오염되지 않는다');
+  const m2 = JSON.parse(mergeThread(buf({ messages: [], ...st2 }),
+    buf({ messages: [...prev.messages, { who: 'user', text: 'B가 리셋 뒤 쓴 것', ts: realNow + 5_000 }] }), 'remote').toString());
+  assert.deepEqual(m2.messages.map((m) => m.text), ['B가 리셋 뒤 쓴 것'],
+    '수정 전: resetAt(+1h)으로 잘라 []가 됐다 — 그 메시지는 .archive에도 없다');
+  // ── 병합은 cutTs를 보존한다 — 잃으면 다음 사이클이 resetAt 폴백(부풀 수 있는 값)으로 자른다
+  assert.equal(m2.cutTs, st2.cutTs, 'cutTs 최신값 보존');
+  // ── 구버전 blob(cutTs 부재)은 resetAt 폴백 — 옛 동작 그대로(하위 호환)
+  const legacy = JSON.parse(mergeThread(buf({ messages: [], resetAt: 5000 }), buf({ messages: msgs(3) }), 'remote').toString());
+  assert.equal(legacy.messages.length, 0, '구버전 tombstone도 여전히 비움을 보존한다');
 });
 
 // ── ② 재로그인 세션 만료 표시 ────────────────────────────────────────────
@@ -206,17 +213,17 @@ test('상단바 슬롯: min-width도 overflow도 걸지 않는다 — 둘 다 �
     }
   }
 });
-test('검색 pill 플로어 — 접기 단계에 96px, 기본 규칙은 0 유지(#340·#348 계약 불파괴)', () => {
-  // 2R HIGH-3: 접기 단계에서 pill이 flex:1(basis 0)로 바뀌는데 남는 폭이 없으면 입력이 통째로
-  // 0px가 된다(A/B 실측: 유효폭 1000에서 99px → 0px). 플로어는 폰 폭 블록(≤560)에만 있어 이 축에 없었다.
-  // 플로어를 기본 규칙에 두면 안 된다 — 데스크톱 플로어는 #340(좁은 유효 뷰포트 가로 넘침)을 되돌리고
-  // #348이 그것을 핀으로 금지한다. 그래서 **필요한 단계에만** 건다.
-  for (const W of [1440, 900, 561]) {
-    assert.equal(effective(':root[data-narrow-bar] .search-pill', 'min-width', W), '96px', `W=${W}: 접기 단계 플로어`);
-    const base = effective('.search-pill', 'min-width', W);
-    assert.equal(base, '0', `W=${W}: 기본 규칙은 0이어야 한다(현재 ${base}) — 데스크톱 플로어 금지`);
+test('검색 pill 플로어(96px)는 base 규칙이 전 구간 보장한다 — 접기 속성에 묶으면 순환(3R HIGH-1)', () => {
+  // 3R HIGH-1: 플로어를 :root[data-narrow-bar]에만 걸면 순환이 된다 — base 0이면 pill이 부족분을
+  // 전부 흡수해 넘침(= 접기 트리거)이 발생하지 않고, 그래서 플로어도 켜지지 않아 입력이 죽는
+  // 구간(유효 990~950, 앱 최소 창폭 960 포함)에서 정확히 방어가 침묵한다. base 96px면 pill의
+  // "더는 못 줄인다"가 곧 fitBar의 정직한 넘침 신호가 된다(3R 실측: 1440→540 전 구간 넘침 0,
+  // 입력 최솟값 49px). #340의 넘침은 이제 접기 기구가 흡수하므로 base 플로어 금지 근거가 소멸했다.
+  // 참고: 이 평가기는 명시도를 모른다(소스 순서만 — 3R LOW-2). 지금은 후보 규칙이 base 하나뿐이라
+  // 성립하며, .search-pill min-width를 다른 셀렉터로 재선언하는 순간 이 핀의 전제부터 재검토할 것.
+  for (const W of [1440, 960, 900, 561, 560, 375]) {
+    assert.equal(effective('.search-pill', 'min-width', W), '96px', `W=${W}: 플로어가 전 구간 살아 있어야 한다`);
   }
-  assert.equal(effective('.search-pill', 'min-width', 375), '96px', '폰 대역 플로어는 종전대로 유지');
 });
 test('접기 1단계(data-narrow-bar): 정보 가치 낮은 축만 접고 남는 폭을 검색으로 보낸다', () => {
   for (const sel of [':root[data-narrow-bar] .topbar-spacer', ':root[data-narrow-bar] .topbar-clock',

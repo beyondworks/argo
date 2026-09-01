@@ -106,7 +106,7 @@ export default function CompanyShell(props) {
 
 function Shell({ children, params }) {
   const { ws } = use(params);
-  const { t } = useLang();
+  const { t, lang } = useLang(); // lang은 상단바 재판정 deps — fitBar 참조
   const pathname = usePathname();
   const router = useRouter();
   // 좌우 2분할 보조 패널 — 상태는 ?side= 하나. 레이아웃 안의 내부 링크는 전부 withSide를 통과해
@@ -292,7 +292,10 @@ function Shell({ children, params }) {
     : currentCrew ? currentCrew.name : t('nav.deck');
   // 슬롯 밖 항목(제목·업데이트 칩·버전)이 바뀌면 상자 크기가 안 변해 관찰기가 안 돈다 — 직접 재측정.
   // title 선언 뒤여야 한다(위에 두면 TDZ로 클라이언트 렌더가 통째로 죽는다 — 실측).
-  useEffect(() => { fitBar(); }, [fitBar, title, appVersion, updateVersion]);
+  // lang — 2단계에서 슬롯이 display:none이면 RO의 내용 감지가 죽어, 언어 전환(라벨 폭 축소)이
+  // 재판정을 못 불러 과접힘이 굳는다(분리 검수 3R MEDIUM-2 실측: en→ko 후 stage 2 고착, 강제
+  // 재판정 시 stage 1). 크루 이름 title은 번역 대상이 아니라 title deps로는 안 걸린다.
+  useEffect(() => { fitBar(); }, [fitBar, lang, title, appVersion, updateVersion]);
   // 사이드바 크루 — 고정(pin) 크루는 최상단 '고정' 그룹으로, 나머지는 팀별 그룹(팀 없는 크루는 마지막).
   // 고정은 company.json.crewPinned(slug 배열). 아코디언 접힘 상태는 localStorage 유지.
   const pinnedSet = new Set(data?.company?.crewPinned ?? []);

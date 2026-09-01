@@ -355,7 +355,13 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   // 되살림(이어가기)은 리셋을 취소하는 사건이다 — 더 최신이면 tombstone을 적용하지 않는다.
   // 로컬에서 resetAt을 지우는 것만으론 원격이 든 tombstone을 이기지 못한다(실측).
   const resumedAt = Math.max(Number(L.resumedAt) || 0, Number(R.resumedAt) || 0);
-  const cutAt = resumedAt >= resetAt ? 0 : resetAt;
+  // 자르는 지점은 순서값(resetAt)이 아니라 cutTs — resetAt은 단조 때문에 되살림의 벽시계를 물려받아
+  // 미래로 부풀 수 있고, 그걸로 자르면 시계 앞선 기기가 남의 새 메시지를 지운다(분리 검수 3R
+  // MEDIUM-1 재현: 되살림 +1h → 비움 → 상대 기기 신규 메시지 삭제). cutTs는 실존 메시지 ts에만
+  // 앵커되므로 max를 취해도 "어느 한쪽이 실제로 봤던 것"까지만 자른다. 구버전 blob(cutTs 부재)은
+  // resetAt 폴백 — 옛 동작 그대로라 하위 호환.
+  const cutTs = Math.max(Number(L.cutTs) || 0, Number(R.cutTs) || 0);
+  const cutAt = resumedAt >= resetAt ? 0 : (cutTs || resetAt);
   const seen = new Set();
   const msgs = [];
   for (const m of [...R.messages, ...L.messages]) {
@@ -371,6 +377,7 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   // 병합에서 옛 메시지가 다시 union에 들어와 부활이 재발한다).
   if (resetAt) merged.resetAt = resetAt; else delete merged.resetAt;
   if (resumedAt) merged.resumedAt = resumedAt; else delete merged.resumedAt; // 두 마커 모두 최신값 보존
+  if (cutTs) merged.cutTs = cutTs; else delete merged.cutTs; // 자르는 지점도 — 잃으면 다음 사이클이 resetAt 폴백(부풀 수 있는 값)으로 자른다
   merged.sessionId = primary.sessionId ?? other.sessionId ?? null; // 이어가기 세션은 최근 편집 쪽으로 수렴
   // sessionDevice는 sessionId를 제공한 쪽과 짝으로 — 어긋나면 남의 기기 세션을 내 것으로 오판한다
   merged.sessionDevice = (primary.sessionId != null ? primary.sessionDevice : other.sessionDevice) ?? null;

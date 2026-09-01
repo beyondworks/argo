@@ -473,19 +473,20 @@ test('vault 트리 리사이저 배선 — 커서 x를 dispZoom()으로 나눠 C
     '트리 폭 드래그의 배율 나눗셈 제거 변이는 여기서 잡는다 — dispZoom 자체 무력화는 ②가 잡는다');
 });
 
-/* ── 인접 핀: 상단바 search-pill 축소 불변식(PR #340) ─────────────────────
-   배율 2(유효 712px, 1열 폭)에서 pill의 자동 최소 폭(min-width:auto)이 input 고유
-   기본 폭(size 기본값 20 → ~140px)에 걸려 문서 가로 넘침을 만든다(실측 1497>1424).
-   min-width:0 선언이 리팩터에 조용히 지워지는 변이를 소스 수준에서 잠근다 —
-   실동작 검증은 PR #340의 라이브 측정(2페이지×3배율)이 담당. */
-test('search-pill 기본 규칙에 min-width: 0 — 좁은 유효폭 상단바 가로 넘침 핀', () => {
+/* ── 인접 핀: 상단바 search-pill 축소 불변식(PR #340 → #383 3R 재기준) ─────
+   #340: pill의 자동 최소 폭(min-width:auto)이 input 고유 기본 폭(size 기본값 20 → ~140px)에
+   걸려 ~189px에서 축소가 정지, 배율 2에서 문서 가로 넘침(실측 1497>1424). 명시 min-width가
+   그 자동 최소 폭을 대체해야 한다.
+   #383 3R: 값은 0이 아니라 96px — 0이면 pill이 부족분을 전부 흡수해 접기 트리거(넘침)가 침묵,
+   접기 문턱 바로 위 대역에서 입력이 0px로 죽는다(HIGH-1 순환). 96px 정지가 곧 fitBar의 넘침
+   신호가 되어 접기가 제때 켜지고, #340의 넘침은 접기 기구가 흡수한다(1440→540 전 구간 실측 0). */
+test('search-pill 기본 규칙에 명시 min-width: 96px — 자동 최소 폭 대체 + 접기 트리거 신호', () => {
   const css = sources.get('app/globals.css');
   const blocks = [...css.matchAll(/(?:^|\n)\.search-pill\s*\{([^}]*)\}/g)];
   assert.equal(blocks.length, 1,
     '.search-pill 단독 기본 규칙은 정확히 1개여야 한다 — 규칙이 쪼개지면 이 핀의 수집 표면부터 넓힌다(fail-closed)');
-  // 접기 단계 플로어(#383 2R HIGH-3)는 :root[data-narrow-bar] .search-pill에 따로 있다 — 기본 규칙은 0 유지.
-  assert.match(blocks[0][1], /min-width:\s*0\s*;/,
-    'min-width:0 제거 시 pill이 ~189px에서 축소 정지 → 배율 2에서 문서 가로 스크롤 재발(PR #340 실측)');
+  assert.match(blocks[0][1], /min-width:\s*96px\s*;/,
+    '선언 제거 → 자동 최소 폭 ~189px 부활(#340 재발) · 0으로 되돌림 → 접기 트리거 침묵으로 입력 0px(#383 3R HIGH-1 재발)');
 });
 
 /* ── 인접 핀: 손짠 listbox 패널 클램프 (#359 검수 별건 — 슬래시 커맨더·멘션) ──────

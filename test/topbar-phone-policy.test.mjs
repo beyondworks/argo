@@ -118,10 +118,17 @@ test('검색 pill 플로어 — 360px min-width 승자 80~200px (입력 폭 보�
     `pill 플로어 승자 ${v}px — 80 미만이면 input 사용 불가(#348 검수 실증: 뒤 규칙 min-width:0 주입 시 pill 96→26px 부활), 200 초과면 320~360px 기기에서 플로어 합이 뷰포트를 넘어 가로 스크롤이 재발한다`);
 });
 
-test('플로어는 폰 대역 밖으로 새지 않는다 — 경계 밖 min-width 승자는 80px 미만(무선언·0 허용)', () => {
-  const v = pxOf(effective('.search-pill', 'min-width', ABOVE_W()));
-  assert.ok(v == null || Number.isNaN(v) || v < 80,
-    `경계 밖(${ABOVE_W()}px)에서 pill min-width 승자 ${v}px — 데스크톱 플로어는 좁은 유효 뷰포트(표시 배율) 가로 넘침을 재발시킨다(#340의 min-width:0가 잡은 결함)`);
+test('플로어는 경계 밖에서도 같은 값(96px) — 과대 플로어만 금지(#383 3R 재기준)', () => {
+  // 종전 단언은 "경계 밖 <80px(무선언·0 허용)"이었다 — 근거는 #340(데스크톱 플로어가 좁은 유효
+  // 뷰포트 가로 넘침을 재발). #383 3R부터 그 넘침은 상단바 접기 기구(fitBar 측정형)가 흡수하고,
+  // 반대로 base 0은 접기 트리거를 침묵시켜 입력 0px 붕괴를 만들었다(HIGH-1 순환 — 실측: 유효
+  // 990~950 대역, 앱 최소 창폭 960 포함). 그래서 base 플로어를 허용하되 폰 대역과 같은 값으로
+  // 고정한다 — 두 대역의 값이 갈라지면 한쪽만 갱신되는 드리프트가 된다.
+  const above = pxOf(effective('.search-pill', 'min-width', ABOVE_W()));
+  const phone = pxOf(effective('.search-pill', 'min-width', PHONE_W));
+  assert.equal(above, phone, `경계 안팎 플로어 불일치(${phone} vs ${above}) — 같은 값이어야 드리프트가 없다`);
+  assert.ok(above >= 80 && above <= 200,
+    `경계 밖 플로어 ${above}px — 80 미만이면 입력 붕괴 재발, 200 초과면 과대 플로어로 좁은 기기 가로 스크롤`);
 });
 
 test('제목 말줄임 — 360px에서 nowrap·hidden·ellipsis·플로어(24~96px) 승자', () => {
