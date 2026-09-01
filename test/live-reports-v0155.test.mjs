@@ -174,6 +174,36 @@ test('각인은 순서와 자르는 지점을 분리한다 — 시계 앞선 기
   assert.equal(legacy.messages.length, 0, '구버전 tombstone도 여전히 비움을 보존한다');
 });
 
+test('빈 스레드 재비움에도 cutTs는 후퇴하지 않는다 — 후퇴하면 원 제보(851건 부활)가 재발(4R HIGH-1)', async () => {
+  const ws = 'live-empty-reset';
+  await mkdir(join(process.env.ARGO_ROOT, ws, 'chats'), { recursive: true });
+  const id = await beginTurn(ws, 'pepper', { userMsg: '지시' });
+  await appendTurn(ws, 'pepper', { turnId: id, userMsg: '지시', reply: '답' });
+  await resetThread(ws, 'pepper');
+  const first = await loadThread(ws, 'pepper');
+  assert.ok(Number(first.cutTs) > 1, '전제 — 1차 비움이 실 ts 기반 cutTs를 각인');
+  // 빈 스레드에서 한 번 더 비움 — 메인 버튼은 disabled지만 슬래시 /new와 DELETE API는 여기 도달한다.
+  // lastTsOf(빈)=0이라 cutTs가 1로 후퇴하면, 1은 truthy라 resetAt 폴백(cutTs || resetAt)도 안 걸려
+  // 자르기가 "ts<1" = 무효가 된다(4R 실측: 오프라인 복귀 기기의 851건이 그대로 부활).
+  await resetThread(ws, 'pepper');
+  const second = await loadThread(ws, 'pepper');
+  assert.equal(Number(second.cutTs), Number(first.cutTs), '자르는 지점은 후퇴 금지(lastTs가 안 늘었으면 유지)');
+  assert.ok(Number(second.resetAt) > Number(first.resetAt), '순서값은 단조 증가');
+  const revived = JSON.parse(mergeThread(buf(second), buf({ messages: msgs(851) }), 'remote').toString());
+  assert.equal(revived.messages.length, 0, '재비움 blob으로도 옛 메시지가 부활하면 안 된다');
+});
+
+test('mergeThread는 cutTs 최신값을 보존한다 — primary가 더 작아도(스프레드가 못 지키는 방향) 4R M-1', () => {
+  // {...other, ...primary} 스프레드는 primary의 cutTs를 싣는다 — primary가 더 작은 값을 들면
+  // 보존 줄(merged.cutTs = max) 없이는 자르기 지점이 후퇴한다(4R 하중 실증: 그 병합본으로
+  // ts=150 메시지를 든 기기가 복귀하면 이미 잘린 구간이 부활).
+  const m = JSON.parse(mergeThread(buf({ messages: [], resetAt: 300, cutTs: 200 }),
+    buf({ messages: [], resetAt: 300, cutTs: 100 }), 'remote').toString()); // primary=remote(작은 쪽)
+  assert.equal(m.cutTs, 200, 'cutTs는 스프레드 순서와 무관하게 max로 보존');
+  const back = JSON.parse(mergeThread(buf(m), buf({ messages: [{ who: 'user', text: 'x150', ts: 150 }] }), 'remote').toString());
+  assert.equal(back.messages.length, 0, '보존된 cutTs가 이미 잘린 구간의 부활을 막는다');
+});
+
 // ── ② 재로그인 세션 만료 표시 ────────────────────────────────────────────
 test('saveDeviceSession(재로그인)은 사망 마커를 해제한다 — 마커가 남으면 계속 "세션 만료"가 뜬다', async () => {
   const root = await mkdtemp(join(tmpdir(), 'argo-devsess-'));
@@ -224,6 +254,19 @@ test('검색 pill 플로어(96px)는 base 규칙이 전 구간 보장한다 — 
   for (const W of [1440, 960, 900, 561, 560, 375]) {
     assert.equal(effective('.search-pill', 'min-width', W), '96px', `W=${W}: 플로어가 전 구간 살아 있어야 한다`);
   }
+  // 부정 스위프(4R LOW-2 실증): 이 평가기는 명시도를 모른다 — :root[data-theme='x'] .search-pill 같은
+  // 명시도 높은 규칙이 min-width:0을 재선언하면 브라우저에선 그쪽이 이겨 그 테마에서만 입력 0px가
+  // 부활하는데, 위 단언은 초록이었다. pill 자신을 대상으로 하는 규칙 중 base 단독 규칙 외에는
+  // min-width 선언 자체를 금지한다(플로어의 진실 원천은 한 곳).
+  let baseDecl = 0;
+  for (const r of cssText.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const hitsPill = r[1].split(',').some((sel) => /(^|[\s>+~])\.search-pill$/.test(sel.trim()));
+    if (!hitsPill || !/min-width\s*:/.test(r[2])) continue;
+    const isBase = r[1].split(',').some((sel) => sel.trim() === '.search-pill');
+    assert.ok(isBase, `pill 대상 min-width는 base 규칙에서만: "${r[1].trim().slice(0, 60)}"`);
+    baseDecl += 1;
+  }
+  assert.equal(baseDecl, 1, 'base .search-pill의 min-width 선언은 정확히 1곳');
 });
 test('접기 1단계(data-narrow-bar): 정보 가치 낮은 축만 접고 남는 폭을 검색으로 보낸다', () => {
   for (const sel of [':root[data-narrow-bar] .topbar-spacer', ':root[data-narrow-bar] .topbar-clock',
@@ -261,6 +304,10 @@ test('배선: fitBar는 매번 가장 넓은 상태에서 재측정하고 2단�
   assert.match(layout, /getElementById\('argo-topbar-slot'\);\s*\n\s*if \(slot\) ro\.observe\(slot\)/, '슬롯 관찰 — 포털 내용이 늦게 온다');
   assert.match(layout, /window\.addEventListener\('argo:zoom', fitBar\)/, '표시 배율 변경 축');
   assert.match(layout, /fitBar\(\);\s*\n\s*\/\/ 슬롯은 크루 페이지가/, '초기 1회 판정 필수');
+  // 언어 재판정(3R MEDIUM-2 — 4R에서 deps 변이 초록 실증 후 핀): stage 2에선 슬롯이 display:none이라
+  // RO의 내용 감지가 죽는다. 언어 전환(라벨 폭 축소)이 재판정을 부르려면 재측정 effect deps에 lang.
+  assert.match(layout, /useEffect\(\(\) => \{ fitBar\(\); \}, \[fitBar, lang, title, appVersion, updateVersion\]\)/,
+    '재측정 deps에서 lang이 빠지면 en→ko 전환 후 과접힘이 굳는다(4R 실측: stage 2 고착, 강제 재판정 시 1)');
   // JSX — 접기는 CSS가 한다(React 조건부면 ①단계 되돌림이 동기적으로 성립하지 않는다)
   assert.match(layout, /<header className="topbar" ref=\{barRef\}>/, '측정 대상 참조');
   assert.match(layout, /className="chip mono topbar-upd"/, '업데이트 칩에 접기용 클래스');

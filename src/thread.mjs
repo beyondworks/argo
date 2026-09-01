@@ -200,7 +200,7 @@ export async function resumeSession(wsId, slug, id) {
     // (실측: 로컬 삭제만으론 max(0, 원격 T2)=T2가 적용). 리셋과 되살림을 같은 축의 사건으로 두고
     // mergeThread가 최신값으로 승부하게 한다(resumedAt >= resetAt이면 비움 취소).
     delete restored.resetAt;
-    delete restored.cutTs; // 보관본에 실려 온 옛 자르기 지점도 함께 — 남으면 원격 cutTs와 max로 겨뤄 복원분을 자른다
+    delete restored.cutTs; // 보관본의 옛 자르기 지점 정리 — 방어적: 되살림 직후엔 resumedAt >= resetAt 게이트가 먼저 걸려 현재 무행동(4R 차등 탐색 4000시드 차이 0), 옛 각인이 새 문맥에 실려 다니지 않게만 한다
     restored.resumedAt = resumeStamp(cur); // 각인 보유자는 활성 스레드(cur) — 보관본은 리셋을 모른다
     await writeJsonAtomic(file(wsId, slug), restored);
     await rm(join(dir, id), { force: true });

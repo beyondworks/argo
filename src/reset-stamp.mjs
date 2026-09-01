@@ -25,10 +25,15 @@
 const lastTsOf = (t) => Math.max(0, ...(t?.messages ?? []).map((m) => Number(m?.ts) || 0));
 const priorOf = (t) => Math.max(Number(t?.resetAt) || 0, Number(t?.resumedAt) || 0);
 
-/** 비움 각인 — 스프레드로 쓴다: { messages: [], ...resetStamp(prev) }. prev = 비우기 직전 스레드/방. */
+/** 비움 각인 — 스프레드로 쓴다: { messages: [], ...resetStamp(prev) }. prev = 비우기 직전 스레드/방.
+    cutTs에 직전 cutTs 하한이 필요한 이유(분리 검수 4R HIGH-1): **빈 스레드 재비움**(슬래시 /new와
+    DELETE API는 버튼과 달리 빈 스레드에서도 도달)에서 lastTsOf=0이라 cutTs가 1로 후퇴하는데,
+    1은 truthy라 sync.mjs의 resetAt 폴백(cutTs || resetAt)도 안 걸려 자르기가 "ts<1" = 무효가 되고
+    원 제보(원격 851건 부활)가 그대로 재발한다(실측). 자르기 지점은 순서를 겨루지 않으므로
+    엄격 증가는 불요 — 후퇴만 막는다(lastTs가 안 늘었으면 자를 것도 안 늘었다). */
 export const resetStamp = (prev) => ({
   resetAt: Math.max(lastTsOf(prev) + 1, priorOf(prev) + 1), // 순서 — 직전 되살림을 반드시 이긴다
-  cutTs: lastTsOf(prev) + 1,                                // 자르는 지점 — 벽시계·직전 마커 미오염
+  cutTs: Math.max(lastTsOf(prev) + 1, Number(prev?.cutTs) || 0), // 자르는 지점 — 벽시계 미오염 + 후퇴 금지
 });
 
 /** 되살림 각인 — 벽시계와 직전 마커 중 큰 쪽. prev = 되살리기 직전의 현재 스레드/방(= 각인 보유자). */

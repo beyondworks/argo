@@ -156,7 +156,7 @@ export async function reopenMeeting(wsId, id) {
     // 통째로 잘린다(분리 검수 2R HIGH-1 재현: 2건 → 0건). reopenMeeting은 곧바로 보관본을 지우므로
     // 그 회의는 회의록 md 말고 어디에도 남지 않는다. 크루의 resumeSession과 같은 대칭 계약.
     delete archived.resetAt;
-    delete archived.cutTs; // 보관본의 옛 자르기 지점 제거 — thread.mjs resumeSession과 같은 이유
+    delete archived.cutTs; // 보관본의 옛 자르기 지점 정리 — thread.mjs resumeSession과 같은 이유(방어적 — 게이트가 먼저 걸려 현재 무행동)
     await saveRoom(wsId, { ...archived, resumedAt: resumeStamp(cur), sid: (cur.sid ?? 0) + 1 });
     await rm(join(paths(wsId).chats, '.archive', id), { force: true }).catch(() => {}); // 실패해도 유실 아님(중복 표시)
     return { reopened: true, messages: archived.messages.length };
