@@ -147,6 +147,19 @@ export async function runDueRoutines(wsId, now, { runFn = runRoutine } = {}) {
   }
 }
 
+/** 회사 1건의 러너 검진 발사(fire-and-forget) — 틱에서 떼어낸 이유: 인라인이면 배선 테스트가
+    "소스에 문자열이 있다"까지만 볼 수 있어 죽은 코드(if(false))·가드 즉시 해제 변이를 놓친다
+    (#380 분리 검수 실증). 반환은 발사 여부(테스트용) — 실행 자체는 기다리지 않는다.
+    (export: 회귀 테스트용 — runFn 주입도 테스트 전용) */
+export function tickHealthCheck(cid, { runFn = runHealthChecks, inflight = healthChecking } = {}) {
+  if (inflight.has(cid)) return false; // 틱 겹침 중복 벤더 호출 방지(가드는 실행 완료까지 유지)
+  inflight.add(cid);
+  runFn(cid)
+    .catch((e) => console.error(`[argo] 러너 검진 오류(${cid}):`, e.message))
+    .finally(() => inflight.delete(cid));
+  return true;
+}
+
 export function ensureScheduler() {
   if (globalThis.__argoScheduler) return;
   globalThis.__argoScheduler = true;
@@ -205,12 +218,7 @@ export function ensureScheduler() {
           // 러너 주기 건강 검진(P1-2 후속) — fire-and-forget. 자체 스로틀(30분·과금 러너 6시간)이
           // 있어 매 틱 호출해도 실제 벤더 호출은 드물다. cloudLeader 게이트 안에 두는 이유: 기기마다
           // 돌면 같은 자격에 대한 과금 검증이 기기 수만큼 곱해진다(#378 검수 지적의 확대판).
-          if (cloudLeader && !healthChecking.has(cid)) {
-            healthChecking.add(cid);
-            runHealthChecks(cid)
-              .catch((e) => console.error(`[argo] 러너 검진 오류(${cid}):`, e.message))
-              .finally(() => healthChecking.delete(cid));
-          }
+          if (cloudLeader) tickHealthCheck(cid);
           if (cloudLeader && hhmm >= CONSOLIDATE_AT) {
             const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
             // 진행 중이면 시도 횟수를 태우지 않고 그냥 넘긴다(선점 자체를 하지 않는다)

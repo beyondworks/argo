@@ -55,3 +55,12 @@ export function lastHealthFailByRunner(events) {
   }
   return by;
 }
+
+/** 검진 실패 사유 → i18n 키(순수). 설정 카드와 활동 화면이 **같은 함수**를 쓴다 — 매핑이 두 곳에
+    복제되면 한쪽만 고쳐져 크레딧 소진에 "Gemini 라이선스" 문구가 뜬다(#380 검수: 매핑 뒤바꾸기
+    변이가 전 스위트 초록이었다 — 커버리지 0이던 자리). */
+export function healthFailMessageKey(reason) {
+  if (reason === 'gemini-license') return 'settings.runners.geminiLicenseBlocked';
+  if (reason === 'credit' || reason === 'tier') return 'settings.runners.checkCreditTier';
+  return 'settings.runners.healthFailed';
+}

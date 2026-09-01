@@ -83,6 +83,7 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
     base === '.device-session.json' || base === '.DS_Store' ||
     base === '.workroots.json' || // 외부 작업 폴더 — 기기 고유 경로라 타 기기로 넘기면 무의미하거나 의도 안 한 접근 허용이 된다
     base === '.connector-secrets.json' || // 커넥터 OAuth 토큰 — 기기·회사 스코프(다른 기기는 재연결, workroots와 같은 원칙 — mcp-oauth-design §2-1)
+    base === '.runner-health.json' || // 러너 검진 결과 — **그 기기의 자격에 대한 사실**이다(호스티드는 자격 미동기 — hostedCredsOff). 동기화하면 A의 실패가 B 카드에 그려지고, 리더가 바뀔 때마다 서로의 항목을 지워 재검진(과금)을 부른다(검수 MEDIUM-3)
     base.startsWith('.index.sqlite') || // 기억 인덱스 캐시(+ -wal·-shm). 기기별 산출물이고 정본에서 재구축된다
     base.endsWith('.status.json') || base.endsWith('.lock') ||
     base.startsWith('.tmp-') || base.endsWith('.corrupt') || rel.includes('.corrupt-') // 원자쓰기 임시·손상 백업

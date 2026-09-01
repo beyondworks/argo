@@ -17,7 +17,7 @@ export const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--ca
 // 가용 판정(순수)은 runner-usable.mjs로 분리 — 데크 배너·홈 안내·온보딩 게이트·회귀 테스트가 공유.
 // 기존 소비처(import from './runner-connect') 호환을 위해 재수출한다.
 export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, PICK_ORDER } from './runner-usable.mjs';
-import { lastTurnByRunner, lastHealthFailByRunner } from './runner-usable.mjs';
+import { lastTurnByRunner, lastHealthFailByRunner, healthFailMessageKey } from './runner-usable.mjs';
 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
@@ -452,9 +452,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
           검진 실패(주기 확인 — "지금 자격이 죽어 있다")가 턴 실패보다 강한 신호라 우선 표시한다. */}
       {(company.connected || st?.host?.optedIn) && (healthFail?.ok === false
         ? <span style={{ fontSize: 11.5, color: 'var(--danger)', whiteSpace: 'normal', minWidth: 0 }}>
-            {t(healthFail.reason === 'gemini-license' ? 'settings.runners.geminiLicenseBlocked'
-              : (healthFail.reason === 'credit' || healthFail.reason === 'tier') ? 'settings.runners.checkCreditTier'
-              : 'settings.runners.healthFailed')}
+            {t(healthFailMessageKey(healthFail.reason))}
           </span>
         : (lastTurn && !lastTurn.ok && !lastTurn.aborted && (
             <span style={{ fontSize: 11.5, color: 'var(--danger)', whiteSpace: 'normal', minWidth: 0 }}>{t('settings.runners.lastTurnFailed')}</span>
