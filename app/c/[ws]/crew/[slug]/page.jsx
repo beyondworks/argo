@@ -807,6 +807,19 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     }).catch(() => {});
   }
 
+  // 분할 패널 가용 여부 — CSS가 .split-pane을 죽이는 축(실뷰포트 ≤899px)과 **같은 기준**으로 본다.
+  // 밴드의 '옆에 열기' 노출 조건(검수 MEDIUM-1). 유효 폭(배율 인지)과 섞으면 두 축이 다시 갈라진다.
+  // 질의는 CSS 규칙의 **정확한 여집합**으로 쓴다 — min-width:900 으로 쓰면 소수점 뷰포트(899.4px:
+  // 윈도우 OS 배율 150%·페이지 줌에서 발생)에서 둘 다 거짓이 돼 "패널은 살아 있는데 진입로가 없는"
+  // 1px 사각이 생긴다(분리 검수 2R LOW-1). max-width:899 의 부정이면 경계가 원천적으로 못 갈라진다.
+  const [splitAlive, setSplitAlive] = useState(true);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 899px)');
+    const on = () => setSplitAlive(!mq.matches);
+    on(); mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+
   // 부분 코멘트(빨간펜) — 답변에서 고칠 부분을 드래그로 인용하고, 코멘트를 모아 묶음 수정 지시로 보낸다.
   // "전체 다시 써" 대신 "여기 이 문장만" — 상사가 보고서에 빨간펜 긋는 방식 그대로.
   const [annotIdx, setAnnotIdx] = useState(null);   // 코멘트 다는 중인 답변 index
@@ -1012,10 +1025,13 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         </>,
         slotEl,
       )}
-      {/* 컨트롤 밴드 — embedded(보조 패널): 항상 인라인(패널엔 topbar가 없다). 주 화면: 좁은 셸(≤900px)에서만
-          CSS(.crew-phone-band)로 등장해 위 topbar 포털을 대체한다 — 슬롯의 축소 불가 컨트롤들이 검색·도크를
-          덮던 것(실측 561px에서도 306px 흘러넘침)의 수용처. '옆에 열기'는 제외 — 분할 패널 자체가 ≤899px에서
-          display:none인 죽은 기능이라 좁은 폭에 노출하지 않는다(안 될 버튼 노출 금지). */}
+      {/* 컨트롤 밴드 — embedded(보조 패널): 항상 인라인(패널엔 topbar가 없다). 주 화면: 좁은 셸에서 CSS
+          (.crew-phone-band)로 등장해 위 topbar 포털을 대체한다 — 슬롯의 축소 불가 컨트롤들이 검색·도크를
+          덮던 것(실측 561px에서도 306px 흘러넘침)의 수용처.
+          '옆에 열기'는 **분할 패널이 실제로 살아 있을 때만** 넣는다(안 될 버튼 노출 금지 원칙). 판정 축이
+          둘로 갈렸던 것이 검수 MEDIUM-1: 패널 사망은 @media(max-width:899px) = **실뷰포트**인데, 밴드 전환은
+          data-narrow-shell = **상단바 넘침 측정**이라, 배율 z>1처럼 실뷰포트는 넓은데 상단바만 넘치는
+          상황에서 패널은 살아 있는데 진입로만 사라졌다. splitAlive(실뷰포트 기준)로 그 축을 맞춘다. */}
       <div className={embedded ? undefined : 'crew-phone-band'}
         style={{ gridRow: 1, alignItems: 'center', gap: 8, minWidth: 0, padding: '8px 0 6px', ...(embedded ? { display: 'flex' } : {}) }}>
         <span className="nav-sub" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent?.role}</span>
@@ -1027,6 +1043,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         {!embedded && <button className="btn sm" style={{ flex: 'none' }} onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen}>{t('crew.panel.open')}</button>}
         <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
         <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
+        {!embedded && splitAlive && (
+          <SideOpenMenu crews={crewList.filter((c) => c.slug !== slug)}
+            onPick={(s) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'crew', key: s })))} />
+        )}
       </div>
 
       <div className="thread" ref={threadRef} style={{ gridRow: 2, overflowY: 'auto', minHeight: 0 }}>
@@ -1593,13 +1613,33 @@ function SideOpenMenu({ crews, onPick }) {
   const { t } = useLang();
   const [open, setOpen] = useState(false);
   const boxRef = useRef(null);
-  useEffect(() => {
-    if (!open) return;
+  const panelRef = useRef(null);
+  const naturalW = useRef(0); // 패널 자연 폭(CSS px) — 상한 적용 전 1회 실측(상한 걸린 뒤 재측정하면 자연 폭을 잃는다)
+  // 좌우 클램프 — 이 메뉴는 상단바 슬롯(왼쪽)에만 있을 땐 오른쪽 여유가 넉넉해 안 뚫렸는데,
+  // 밴드(줄바꿈 flex)로 내려오면서 트리거가 오른쪽 끝에 설 수 있게 됐다(분리 검수 2R MEDIUM-1 처방의
+  // 부수 노출 — 실측: 배율 2 × 1424에서 패널 right 1441 > clientWidth 1424 → 문서 가로 스크롤 17px).
+  // 처방은 DropUp(#359)에서 굳힌 측정형 시프트를 그대로 쓴다. layout effect인 이유도 같다 —
+  // useEffect면 클램프 전 자연 폭 프레임이 실제로 문서 폭을 늘린다.
+  const [clamp, setClamp] = useState({ shift: 0, maxW: 0 });
+  useIsoLayoutEffect(() => {
+    if (!open) { setClamp({ shift: 0, maxW: 0 }); naturalW.current = 0; return; }
+    const measure = () => {
+      if (!boxRef.current || !panelRef.current) return;
+      if (!naturalW.current) naturalW.current = panelRef.current.offsetWidth;
+      setClamp(dropUpClamp(boxRef.current.getBoundingClientRect(), document.documentElement.clientWidth, naturalW.current));
+    };
+    measure();
     const away = (e) => { if (!boxRef.current?.contains(e.target)) setOpen(false); };
     const esc = (e) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', away);
     document.addEventListener('keydown', esc);
-    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc); };
+    // 열린 채 배율·창 크기가 바뀌면 시프트가 낡아 결함이 되돌아온다(#359 F2와 같은 이유)
+    window.addEventListener('resize', measure);
+    window.addEventListener('argo:zoom', measure);
+    return () => {
+      document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc);
+      window.removeEventListener('resize', measure); window.removeEventListener('argo:zoom', measure);
+    };
   }, [open]);
   return (
     <div ref={boxRef} style={{ position: 'relative', flex: 'none' }}>
@@ -1607,7 +1647,7 @@ function SideOpenMenu({ crews, onPick }) {
         <Icon name="split" size={12} /> {t('split.open')} <span aria-hidden style={{ fontSize: 9 }}>▾</span>
       </button>
       {open && (
-        <div className="card card-float" role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 40, minWidth: 200, maxHeight: 320, overflowY: 'auto', padding: 6, boxShadow: '0 8px 28px rgba(0,0,0,.14)' }}>
+        <div ref={panelRef} className="card card-float" role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', left: clamp.shift, zIndex: 40, minWidth: 200, maxWidth: clamp.maxW || undefined, maxHeight: 320, overflowY: 'auto', padding: 6, boxShadow: '0 8px 28px rgba(0,0,0,.14)' }}>
           {crews.length === 0 && <div style={{ padding: '6px 8px', fontSize: 12, color: 'var(--fg-3)' }}>{t('split.noCrew')}</div>}
           {crews.map((c) => (
             <button key={c.slug} type="button" role="menuitem" onClick={() => { setOpen(false); onPick(c.slug); }}

@@ -1,6 +1,6 @@
 'use client';
 // 회사 앱셸 — 라벨 사이드바(회사/크루 그룹 + 사용자 footer) + 헤더(타이틀·검색).
-import { Suspense, use, useCallback, useEffect, useState } from 'react';
+import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, InputModal, api } from '../../ui';
@@ -106,7 +106,7 @@ export default function CompanyShell(props) {
 
 function Shell({ children, params }) {
   const { ws } = use(params);
-  const { t } = useLang();
+  const { t, lang } = useLang(); // lang은 상단바 재판정 deps — fitBar 참조
   const pathname = usePathname();
   const router = useRouter();
   // 좌우 2분할 보조 패널 — 상태는 ?side= 하나. 레이아웃 안의 내부 링크는 전부 withSide를 통과해
@@ -126,22 +126,52 @@ function Shell({ children, params }) {
   };
   const [data, setData] = useState(null);
   const [q, setQ] = useState('');
-  // 유효 폭 판정(배율 인지) — 미디어쿼리는 실 뷰포트 기준이라 배율 2에서 유효 640px인데도 900px
-  // 규칙이 미발동한다(검수 실측: 배율 2 × 1280에서 search-pill·시계·버전이 넘침). JS로 판정해
-  // 상단바 요소를 축소한다. 문턱 750 CSS px = 배율 2 × 1424(유효 704)에서 확실히 발동(실측:
-  // 유효 704에서 시계+버전+pill이 상단바를 뚫음 — 문턱 700은 간신히 빗나감). 배율 1에서는 뷰포트
-  // ≥ 960(앱 최소 폭)이라 미발동. 기존 @media(max-width:900px)는 배율 1의 실제 좁은 창에서 유효.
-  const [narrowBar, setNarrowBar] = useState(false);
-  useEffect(() => {
-    const check = () => {
-      const z = parseFloat(document.documentElement.style.zoom) || 1;
-      setNarrowBar(document.documentElement.clientWidth / z < 750);
-    };
-    check();
-    window.addEventListener('resize', check);
-    window.addEventListener('argo:zoom', check);
-    return () => { window.removeEventListener('resize', check); window.removeEventListener('argo:zoom', check); };
+  // 상단바 적재 조절 — **측정형**이다(임계 폭 없음).
+  //
+  // 종전에는 유효 폭 임계 두 개(1100·900)로 접었는데, 임계는 라벨 길이·언어를 못 따라가는 마법수라
+  // 영어 UI·긴 크루 이름에서 겹침이 임계 위로 올라갔다(분리 검수 2R HIGH-2 실측: 영어 1150에서 15px,
+  // 긴 라벨 1200에서 43px). 겹침 자체는 슬롯의 자동 최소 폭을 살려 구조적으로 막았지만
+  // (globals.css: #argo-topbar-slot에 min-width:0 금지), 그러면 겹침이 **문서 가로 넘침**으로 바뀔 뿐이라
+  // (실측: 영어+긴 라벨 유효 952에서 263px) 수용 자체를 폭이 아니라 넘침으로 판정한다.
+  //
+  // 절차: ① 가장 넓은 상태로 되돌리고 ② 넘치면 정보 가치가 낮은 축(스페이서·버전·시계)을 접고
+  // ③ 그래도 넘치면 슬롯을 인라인 밴드로 내린다. 매번 ①에서 시작하므로 되돌아갈 수 없는 래칫이
+  // 생기지 않고, 히스테리시스 장치도 필요 없다. 판정 결과는 루트 속성으로 내려 CSS가 실행한다 —
+  // React 상태로 두면 접은 상태를 **동기적으로** 되돌릴 수 없어 ①이 성립하지 않는다.
+  //
+  // 배율 인지: scrollWidth/clientWidth는 배율이 적용된 레이아웃 픽셀이라 유효 폭 환산이 필요 없다.
+  // @media(max-width:900px)의 슬롯→밴드 전환은 실 뷰포트 축으로 그대로 둔다(둘은 상보).
+  const barRef = useRef(null);
+  const fitBar = useCallback(() => {
+    const root = document.documentElement;
+    const bar = barRef.current;
+    if (!bar) return;
+    root.removeAttribute('data-narrow-bar');
+    root.removeAttribute('data-narrow-shell');
+    const over = () => bar.scrollWidth > bar.clientWidth + 1; // +1 = 서브픽셀 반올림 여유
+    if (!over()) return;
+    root.setAttribute('data-narrow-bar', '');
+    if (over()) root.setAttribute('data-narrow-shell', '');
   }, []);
+  useEffect(() => {
+    fitBar();
+    // 슬롯은 크루 페이지가 포털로 채운다 — 마운트·언어 전환으로 내용 폭이 바뀌므로 크기를 관찰한다.
+    // 접는 순간 슬롯이 0이 되어 관찰기가 한 번 더 도는데, 그 회차도 ①에서 다시 시작해 같은 결론에
+    // 수렴하므로(최종 크기가 직전 보고값과 같아 재통지 없음) 진동하지 않는다.
+    const ro = new ResizeObserver(fitBar);
+    if (barRef.current) ro.observe(barRef.current);
+    const slot = document.getElementById('argo-topbar-slot');
+    if (slot) ro.observe(slot);
+    window.addEventListener('resize', fitBar);
+    window.addEventListener('argo:zoom', fitBar);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', fitBar); window.removeEventListener('argo:zoom', fitBar);
+      // 회사 셸 밖으로 나가면 속성도 걷는다(검수 1R LOW-2)
+      document.documentElement.removeAttribute('data-narrow-bar');
+      document.documentElement.removeAttribute('data-narrow-shell');
+    };
+  }, [fitBar]);
   // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
   const [me, setMe] = useState(null);
   const [fbOpen, setFbOpen] = useState(false); // 베타 피드백 모달
@@ -260,6 +290,12 @@ function Shell({ children, params }) {
     : pathname.endsWith('/mail') ? t('nav.mail')
     : pathname.endsWith('/settings') ? t('nav.settings')
     : currentCrew ? currentCrew.name : t('nav.deck');
+  // 슬롯 밖 항목(제목·업데이트 칩·버전)이 바뀌면 상자 크기가 안 변해 관찰기가 안 돈다 — 직접 재측정.
+  // title 선언 뒤여야 한다(위에 두면 TDZ로 클라이언트 렌더가 통째로 죽는다 — 실측).
+  // lang — 2단계에서 슬롯이 display:none이면 RO의 내용 감지가 죽어, 언어 전환(라벨 폭 축소)이
+  // 재판정을 못 불러 과접힘이 굳는다(분리 검수 3R MEDIUM-2 실측: en→ko 후 stage 2 고착, 강제
+  // 재판정 시 stage 1). 크루 이름 title은 번역 대상이 아니라 title deps로는 안 걸린다.
+  useEffect(() => { fitBar(); }, [fitBar, lang, title, appVersion, updateVersion]);
   // 사이드바 크루 — 고정(pin) 크루는 최상단 '고정' 그룹으로, 나머지는 팀별 그룹(팀 없는 크루는 마지막).
   // 고정은 company.json.crewPinned(slug 배열). 아코디언 접힘 상태는 localStorage 유지.
   const pinnedSet = new Set(data?.company?.crewPinned ?? []);
@@ -466,22 +502,22 @@ function Shell({ children, params }) {
       </aside>
 
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <header className="topbar">
+        <header className="topbar" ref={barRef}>
           <span className="topbar-title">{title}</span>
           {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체).
               display 포함 전부 CSS(globals #argo-topbar-slot) — 인라인 display가 있으면 좁은 셸(≤900px)의
-              숨김 규칙(슬롯→밴드 전환)이 죽는다. narrowBar(배율 인지 #368)는 시계·버전·스페이서 축을 계속 담당. */}
+              숨김 규칙(슬롯→밴드 전환)이 죽는다. 접기 판정은 fitBar(측정형)가 루트 속성으로 내린다. */}
           <div id="argo-topbar-slot" />
-          {!narrowBar && <div className="topbar-spacer" style={{ flex: 1 }} />}
-          {!narrowBar && appVersion && (updateVersion ? (updIsApp ? (
+          <div className="topbar-spacer" style={{ flex: 1 }} />
+          {appVersion && (updateVersion ? (updIsApp ? (
             <button type="button" onClick={installUpdate} disabled={updPhase === 'installing'}
-              className="chip mono" title={t('topbar.updateTitle', { v: updateVersion })}
+              className="chip mono topbar-upd" title={t('topbar.updateTitle', { v: updateVersion })}
               style={{ flex: 'none', fontSize: 10.5, color: 'var(--primary-strong)', borderColor: 'var(--primary)', cursor: updPhase === 'installing' ? 'default' : 'pointer' }}>
               {updPhase === 'installing' ? <ArgoSpinner size={10} /> : <span className="dot" style={{ background: 'var(--primary)' }} aria-hidden="true" />}
               {updPhase === 'installing' ? t('settings.update.installing') : t('topbar.update')}
             </button>
           ) : (
-            <a className="chip mono" href="https://github.com/beyondworks/argo-agent/releases/latest" target="_blank" rel="noopener noreferrer"
+            <a className="chip mono topbar-upd" href="https://github.com/beyondworks/argo-agent/releases/latest" target="_blank" rel="noopener noreferrer"
               title={t('topbar.updateWebTitle', { v: updateVersion })}
               style={{ flex: 'none', fontSize: 10.5, color: 'var(--primary-strong)', borderColor: 'var(--primary)', textDecoration: 'none' }}>
               <span className="dot" style={{ background: 'var(--primary)' }} aria-hidden="true" />
@@ -492,9 +528,9 @@ function Shell({ children, params }) {
               v{appVersion}
             </span>
           ))}
-          {!narrowBar && <Clock />}
+          <Clock />
           <TasksDock ws={ws} />
-          <label className="search-pill" style={narrowBar ? { flex: 1, width: 'auto' } : undefined}>
+          <label className="search-pill">
             <Icon name="search" size={14} />
             <input suppressHydrationWarning placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} />
             {q && (

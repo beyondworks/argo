@@ -1499,15 +1499,32 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 /* 페이지 컨트롤 슬롯(크루 채팅이 포털로 사용) — display까지 여기: 인라인 display가 있으면
    좁은 셸(≤900px 블록)의 숨김이 인라인에 진다. 자식이 전부 flex:none이라 슬롯은 축소 불가 —
    좁은 폭 수용은 숨김+인라인 밴드(.crew-phone-band) 전환으로 한다 */
-#argo-topbar-slot { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* ⚠ min-width: 0 을 다시 넣지 말 것 — **겹침의 뿌리였다**. flex 아이템의 자동 최소 폭(min-content)을
+   해제하면 슬롯 박스만 0까지 줄고 자식(flex:none)은 그대로 그려져, 뒤따르는 버전 도장·시계 위에
+   덮어 그린다(분리 검수 2R HIGH-2 실측: 영어 UI 유효폭 1100에서 62px, 긴 라벨 1200에서 43px 겹침).
+   자동 최소 폭을 살려 두면 슬롯이 자기 내용 아래로 줄지 못해 **겹침이 구조적으로 불가능**해지고,
+   폭 압력은 축소 가능한 이웃(스페이서 → 검색 pill → 제목)이 받는다.
+   ⚠ overflow도 걸지 말 것 — 슬롯 안 '옆에 열기' 드롭다운 패널이 position:absolute라 슬롯을
+   기준으로 클리핑돼 **버튼이 눌려도 아무것도 안 뜬다**(분리 검수 1R HIGH-1 실측: 기본 1440폭에서도
+   메뉴 y 47.5~152.8이 슬롯 클립 y 13.5~41.5 밖 → elementFromPoint가 MAIN을 잡음).
+   폭이 모자랄 때의 수용은 임계가 아니라 **넘침 측정**으로 한다(layout.jsx fitBar):
+   1단계 data-narrow-bar(시계·버전·스페이서 접기) → 2단계 data-narrow-shell(슬롯을 밴드로).
+   이 규칙에 min-width를 다시 넣으면 그 측정 신호(scrollWidth > clientWidth)까지 거짓이 된다. */
+#argo-topbar-slot { display: flex; align-items: center; gap: 8px; }
 
 .search-pill {
   display: flex; align-items: center; gap: 8px;
-  /* min-width: 0 — input의 고유 기본 폭(size 기본값 20 → ~140px)이 pill의 min-content로 올라와
-     좁은 유효 뷰포트(표시 배율 2, 1열 폭)에서 상단바가 문서 가로 스크롤을 만든다(실측:
-     pill이 188.75px에서 축소 정지 → scrollWidth 1497 > clientWidth 1424). 자동 최소 폭을
-     해제해야 내부 input(flex:1; min-width:0)이 따라 줄어든다. */
-  min-width: 0;
+  /* 명시 min-width — input의 고유 기본 폭(size 기본값 20 → ~140px)이 pill의 min-content로 올라와
+     자동 최소 폭이 ~189px에서 축소를 정지시킨다(#340 실측: scrollWidth 1497 > clientWidth 1424).
+     명시값으로 **대체**해야 내부 input(flex:1; min-width:0)이 따라 줄어든다.
+     값이 0이 아니라 96px인 이유(분리 검수 3R HIGH-1): 플로어를 접기 단계 속성에만 걸면 순환이 된다 —
+     base 0이면 pill이 부족분을 전부 흡수해 **넘침이 발생하지 않고**, 넘침이 트리거인 접기(그리고
+     그 안의 플로어)가 켜지지 않아, 입력이 죽는 구간에서 정확히 방어가 침묵한다(실측: 유효 폭
+     990~950에서 입력 0px, 단계 전환은 940에서야 발동 — 앱 최소 창폭 960이 그 한복판).
+     96px에서 pill이 정지하면 그게 곧 fitBar가 읽는 정직한 넘침 신호가 되어 접기가 제때 켜진다.
+     #340이 잡았던 "좁은 유효 뷰포트 가로 넘침"은 이제 접기 기구가 흡수한다(3R 실측: 유효
+     1440→540 전 구간 barOver 0 · docOver 0, 입력 최솟값 49px). */
+  min-width: 96px;
   height: 34px; padding: 0 12px; width: 220px;
   background: var(--card); border: 1px solid var(--border); border-radius: 999px;
   color: var(--fg-3);
@@ -1672,7 +1689,11 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .input-bar:focus-within { box-shadow: 0 0 0 2px var(--ring); }
 .input-bar input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; height: 32px; font-size: 13.5px; }
 /* 여러 줄 채팅 입력(textarea) — Enter 전송·Shift+Enter 줄바꿈. 자동 높이는 JS(scrollHeight), 최대 6줄 후 내부 스크롤 */
-.input-bar textarea { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 13.5px; font-family: inherit; line-height: 1.45; padding: 6.5px 0; resize: none; max-height: 132px; overflow-y: auto; }
+/* overflow-x: hidden 명시 필수 — overflow-y만 지정하면 CSS가 overflow-x를 visible로 두지 못하고
+   auto로 승격한다(실측: 계산값 overflowX=auto). 그러면 "스크롤 막대 항상 표시" 설정·WebKit(Tauri
+   웹뷰)에서 내용이 넘치지 않아도 가로 트랙이 그려져 입력창 바닥에 회색 막대가 남는다(실사용 제보
+   2026-09-01). textarea는 자동 줄바꿈이라 가로 스크롤이 필요 없다. */
+.input-bar textarea { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 13.5px; font-family: inherit; line-height: 1.45; padding: 6.5px 0; resize: none; max-height: 132px; overflow-x: hidden; overflow-y: auto; }
 .input-bar input::placeholder, .input-bar textarea::placeholder { color: var(--fg-3); }
 
 .kbd {
@@ -2085,8 +2106,8 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh / var(--z, 1)
   .topbar-clock, .topbar-ver, .topbar-spacer { display: none; }
   /* 명시 min-width가 nowrap의 auto 플로어(문자열 전체 폭)를 대체해야 말줄임이 성립한다 */
   .topbar-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 56px; }
-  /* 제목은 사용자 지정 크루 이름 — 길면 제목이 양보하고 검색은 입력 가능한 폭을 지킨다 */
-  .search-pill { min-width: 96px; }
+  /* 검색 플로어(96px)는 base .search-pill이 전 구간 보장한다(3R에서 승격 — 두 곳 관리 금지).
+     제목은 사용자 지정 크루 이름이라 길면 제목이 먼저 양보한다. */
   /* 크루 채팅·경쟁 시안 본문 — 레일이 216px 열로 남으면 본문 트랙이 98px로 붕괴한다(실측 360px).
      위 레일·아래 본문 스택으로 전환하고, 레일은 자체 스크롤 상한으로 본문 높이를 지킨다(vault 트리와 동형).
      26vh는 /var(--z)로 표시 배율 보정 — vh는 배율 무관 실뷰포트 기준이라 나눠야 레이아웃 픽셀과 맞는다 */
@@ -2141,3 +2162,23 @@ html:root[data-os='win'] {
 html[data-os='win'] .microlabel,
 html[data-os='win'] .side-group,
 html[data-os='win'] .table th { letter-spacing: 0.06em; }
+
+/* 상단바 적재 조절(측정형) — 판정은 layout.jsx의 fitBar가 한다. 미디어쿼리는 실 뷰포트만 보고,
+   임계 폭은 라벨 길이·언어를 못 따라가는 마법수라, "실제로 넘치는가"로 두 단계를 건다.
+   1단계 data-narrow-bar: 정보 가치가 가장 낮은 축을 접는다 — 우선순위 정책(위 폰 폭 블록 주석)의
+   역순이다. 시간은 OS 상태바에, 현재 버전은 설정 → 앱 업데이트 카드에 이미 있다.
+   접힌 폭 전부가 검색으로 가도록 pill을 flex:1로 돌린다(플로어 96px는 기본 규칙이 보장). */
+:root[data-narrow-bar] .topbar-spacer,
+:root[data-narrow-bar] .topbar-clock,
+:root[data-narrow-bar] .topbar-ver,
+:root[data-narrow-bar] .topbar-upd { display: none; }
+/* 플로어(96px)는 base .search-pill이 전 구간 보장한다(3R HIGH-1 — 여기 두면 순환이라 base로 승격).
+   접기 단계는 접은 폭을 검색으로 보내는 flex 전환만 담당한다. */
+:root[data-narrow-bar] .search-pill { flex: 1; width: auto; }
+
+/* 2단계 data-narrow-shell: 1단계로도 모자라면 슬롯을 인라인 밴드로 내린다.
+   @media(max-width:900px)의 같은 전환을 **넘침 기준**으로도 거는 쌍둥이다 — 미디어쿼리가 실 뷰포트만
+   보므로 배율로 좁아진 구간이 사각지대였고, 슬롯 자식이 버전·시계 위에 겹쳐 그려졌다(실사용 제보
+   2026-09-01). 규칙 내용은 위 900px 블록과 동일 — 한쪽만 고치면 두 축이 갈라지므로 함께 갱신할 것. */
+:root[data-narrow-shell] #argo-topbar-slot { display: none; }
+:root[data-narrow-shell] .crew-phone-band { display: flex; flex-wrap: wrap; }

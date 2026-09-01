@@ -167,16 +167,20 @@ test('배율 1(변수 미설정)은 --z=1 명시와 동일 — var 폴백(, 1)�
    미디어쿼리(max-width:900px)는 실 뷰포트 기준이라 배율 2 × 1280(유효 640)에서 미발동, 시계·
    버전·search-pill이 넘쳤다(검수 실측: pill right 1490 > cw 1424). JS 판정(clientWidth ÷ zoom
    < 750)으로 배율 사각을 메워 시계·버전·스페이서 숨김 + pill flex:1 전환. */
-test('상단바 배율 반응형 배선 — narrowBar 판정이 시계·버전 숨김과 pill flex:1을 제어한다', () => {
+test('상단바 배율 반응형 배선 — 적재 조절은 임계 폭이 아니라 넘침 측정으로 한다', () => {
   const layout = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/layout.jsx'), 'utf8'));
-  assert.match(layout, /setNarrowBar\(document\.documentElement\.clientWidth\s*\/\s*z\s*<\s*750\)/,
-    'narrowBar 판정 — clientWidth ÷ zoom < 750(배율 인지 유효 폭)');
-  assert.match(layout, /window\.addEventListener\('argo:zoom',\s*check\)/,
+  // 종전에는 유효 폭 임계(clientWidth ÷ zoom < 750/1100)로 접었는데, 임계는 라벨 길이·언어를 못
+  // 따라가는 마법수라 영어 UI·긴 크루 이름에서 겹침이 임계 위로 올라갔다(#383 분리 검수 2R HIGH-2
+  // 실측: 영어 1150에서 15px, 긴 라벨 1200에서 43px). scrollWidth/clientWidth는 배율이 적용된
+  // 레이아웃 픽셀이라 유효 폭 환산 자체가 필요 없다.
+  assert.match(layout, /bar\.scrollWidth > bar\.clientWidth/, '판정 = 상단바 실제 넘침');
+  assert.doesNotMatch(layout, /clientWidth \/ z\b/, '유효 폭 임계 판정 잔존 금지(두 축이 갈라진다)');
+  assert.match(layout, /window\.addEventListener\('argo:zoom', fitBar\)/,
     'argo:zoom 리스너 — 배율 변경 시 재판정');
-  assert.match(layout, /\{!narrowBar && <Clock \/>\}/,
-    'narrowBar일 때 시계 숨김');
-  assert.match(layout, /className="search-pill" style=\{narrowBar \? \{ flex: 1, width: 'auto' \} : undefined\}/,
-    'narrowBar일 때 pill이 flex:1로 전환');
+  // 접기는 CSS가 실행한다 — React 조건부면 "가장 넓은 상태로 되돌린 뒤 측정"이 동기적으로 성립하지 않는다
+  assert.doesNotMatch(layout, /narrowBar/, 'narrowBar 상태 잔존 금지');
+  assert.match(layout, /<Clock \/>/, '시계는 무조건 렌더 — 접기는 :root[data-narrow-bar]가');
+  assert.match(layout, /<label className="search-pill">/, 'pill 인라인 스타일 제거');
 });
 /* ── 인접 핀: 경쟁 시안(compete) 좁은 유효 폭 가로 넘침(회의실 동종 선재 결함) ─────────
    배율 2(실측 1424px 창 = 유효 712 CSS px)에서 compete 본문 열이 부풀어 문서 가로 스크롤을
@@ -469,18 +473,20 @@ test('vault 트리 리사이저 배선 — 커서 x를 dispZoom()으로 나눠 C
     '트리 폭 드래그의 배율 나눗셈 제거 변이는 여기서 잡는다 — dispZoom 자체 무력화는 ②가 잡는다');
 });
 
-/* ── 인접 핀: 상단바 search-pill 축소 불변식(PR #340) ─────────────────────
-   배율 2(유효 712px, 1열 폭)에서 pill의 자동 최소 폭(min-width:auto)이 input 고유
-   기본 폭(size 기본값 20 → ~140px)에 걸려 문서 가로 넘침을 만든다(실측 1497>1424).
-   min-width:0 선언이 리팩터에 조용히 지워지는 변이를 소스 수준에서 잠근다 —
-   실동작 검증은 PR #340의 라이브 측정(2페이지×3배율)이 담당. */
-test('search-pill 기본 규칙에 min-width: 0 — 좁은 유효폭 상단바 가로 넘침 핀', () => {
+/* ── 인접 핀: 상단바 search-pill 축소 불변식(PR #340 → #383 3R 재기준) ─────
+   #340: pill의 자동 최소 폭(min-width:auto)이 input 고유 기본 폭(size 기본값 20 → ~140px)에
+   걸려 ~189px에서 축소가 정지, 배율 2에서 문서 가로 넘침(실측 1497>1424). 명시 min-width가
+   그 자동 최소 폭을 대체해야 한다.
+   #383 3R: 값은 0이 아니라 96px — 0이면 pill이 부족분을 전부 흡수해 접기 트리거(넘침)가 침묵,
+   접기 문턱 바로 위 대역에서 입력이 0px로 죽는다(HIGH-1 순환). 96px 정지가 곧 fitBar의 넘침
+   신호가 되어 접기가 제때 켜지고, #340의 넘침은 접기 기구가 흡수한다(1440→540 전 구간 실측 0). */
+test('search-pill 기본 규칙에 명시 min-width: 96px — 자동 최소 폭 대체 + 접기 트리거 신호', () => {
   const css = sources.get('app/globals.css');
   const blocks = [...css.matchAll(/(?:^|\n)\.search-pill\s*\{([^}]*)\}/g)];
   assert.equal(blocks.length, 1,
     '.search-pill 단독 기본 규칙은 정확히 1개여야 한다 — 규칙이 쪼개지면 이 핀의 수집 표면부터 넓힌다(fail-closed)');
-  assert.match(blocks[0][1], /min-width:\s*0\s*;/,
-    'min-width:0 제거 시 pill이 ~189px에서 축소 정지 → 배율 2에서 문서 가로 스크롤 재발(PR #340 실측)');
+  assert.match(blocks[0][1], /min-width:\s*96px\s*;/,
+    '선언 제거 → 자동 최소 폭 ~189px 부활(#340 재발) · 0으로 되돌림 → 접기 트리거 침묵으로 입력 0px(#383 3R HIGH-1 재발)');
 });
 
 /* ── 인접 핀: 손짠 listbox 패널 클램프 (#359 검수 별건 — 슬래시 커맨더·멘션) ──────

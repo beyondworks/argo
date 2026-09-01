@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path';
 import { paths, getDeviceId } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
+import { resetStamp, resumeStamp } from './reset-stamp.mjs';
 
 const file = (wsId, slug) => join(paths(wsId).chats, `${slug.replace(/[^a-z0-9-]/g, '')}.json`);
 // 같은 크루 스레드의 read-modify-write를 직렬화 — 웹·텔레그램 동시 턴의 lost-update 방지
@@ -176,7 +177,8 @@ export async function resetThread(wsId, slug) {
     // 삭제가 아니라 **빈 스레드로 재기록** — 파일 부재는 "손상 격리됨"의 신호로 쓰이므로(loadThread의
     // salvage 게이트), 새 대화가 파일을 지우면 옛 손상본이 되살아난다(검수 CRITICAL-1 C 케이스 실측).
     // 회의실 endMeeting이 {messages:[], sid+1}을 쓰는 것과 같은 계약으로 통일한다.
-    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [] });
+    // resetAt = 비움 각인(tombstone) — 근거·산식은 src/reset-stamp.mjs에 있다(벽시계 미사용 이유 포함).
+    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], ...resetStamp(t) });
   });
 }
 
@@ -193,7 +195,13 @@ export async function resumeSession(wsId, slug, id) {
     if (cur.messages?.length) {
       await writeJsonAtomic(join(dir, `${safe}-${Date.now()}.json`), cur);
     }
-    // 보관본을 활성으로 되살리고, 원래 보관 파일은 제거(레일에 중복 노출 방지)
+    // 보관본을 활성으로 되살리고, 원래 보관 파일은 제거(레일에 중복 노출 방지).
+    // 되살림 각인 — resetAt을 지우기만 하면 **원격이 든 tombstone**이 이겨 복원분이 도로 잘린다
+    // (실측: 로컬 삭제만으론 max(0, 원격 T2)=T2가 적용). 리셋과 되살림을 같은 축의 사건으로 두고
+    // mergeThread가 최신값으로 승부하게 한다(resumedAt >= resetAt이면 비움 취소).
+    delete restored.resetAt;
+    delete restored.cutTs; // 보관본의 옛 자르기 지점 정리 — 방어적: 되살림 직후엔 resumedAt >= resetAt 게이트가 먼저 걸려 현재 무행동(4R 차등 탐색 4000시드 차이 0), 옛 각인이 새 문맥에 실려 다니지 않게만 한다
+    restored.resumedAt = resumeStamp(cur); // 각인 보유자는 활성 스레드(cur) — 보관본은 리셋을 모른다
     await writeJsonAtomic(file(wsId, slug), restored);
     await rm(join(dir, id), { force: true });
     return restored;

@@ -34,6 +34,9 @@ async function persist(sess, root) {
   const tmp = join(root, `.tmp-devsess-${process.pid}-${Date.now().toString(36)}`);
   await writeFile(tmp, JSON.stringify(sess, null, 2), { mode: 0o600 }); // 생성 시점부터 0600
   await rename(tmp, fileOf(root)); // 원자 교체 — 모드 보존
+  // 새 세션을 저장했으면 옛 사망 마커는 무효다 — 안 지우면 재로그인 후에도 UI가 계속 "세션 만료"를
+  // 띄운다(실사용 제보 2026-09-01). 마커 해제가 갱신 성공 경로에만 있던 갭 — 로그인도 회생 경로다.
+  await rm(deadMarkerOf(root), { force: true }).catch(() => {});
   cache = null;
   epoch++;
 }
@@ -104,7 +107,7 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
       user: { id: s.user?.id ?? sess.user.id, email: s.user?.email ?? sess.user.email },
     };
     await persist(next, root);
-    await rm(deadMarkerOf(root), { force: true }).catch(() => {}); // 회생 — 마커 해제
+    await rm(deadMarkerOf(root), { force: true }).catch(() => {}); // 회생 — 마커 해제(persist의 해제와 같은 계약: '새/살아난 세션을 디스크에 쓰면 옛 사망 판정은 무효'. 한쪽만 고치지 말 것 — 검수 LOW-1)
     return next;
   });
 }
