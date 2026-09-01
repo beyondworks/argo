@@ -898,6 +898,7 @@ const DICT = {
   'chat.fellBack.auth': ['{from} 인증 오류로 {to}이(가) 대신 답했습니다 — 반복되면 설정 → AI 연결에서 {from}을(를) 다시 연결해 주세요.', '{to} answered instead because {from} hit an authentication error — if this repeats, reconnect {from} in Settings → AI connections.'],
   'chat.fellBack.unavailable': ['지정 러너 {from}을(를) 쓸 수 없어 {to}이(가) 대신 답했습니다.', '{to} answered instead — the assigned runner {from} was unavailable.'],
   'settings.runners.lastTurnFailed': ['마지막 사용 시 오류가 났습니다 — 연결을 확인해 주세요.', 'The last turn with this runner failed — please check the connection.'],
+  'settings.runners.healthFailed': ['자격 확인에 실패했습니다 — 만료·철회됐을 수 있습니다. 다시 연결해 주세요.', 'A credential check failed — it may be expired or revoked. Please reconnect.'],
   'settings.runners.checkNow': ['연결 확인', 'Verify connection'],
   'settings.runners.checkOk': ['연결이 확인됐습니다.', 'Connection verified.'],
   'settings.runners.checkInconclusive': ['원격 판정이 어려운 방식이라 형식 확인까지만 했습니다.', 'This method cannot be fully verified remotely — format checks passed.'],
