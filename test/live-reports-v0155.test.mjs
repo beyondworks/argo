@@ -2,6 +2,7 @@
 //  ① 새 대화가 동기화로 되살아남 — union 병합이 "비움"을 표현 못 함(재현: 로컬 0건 + 원격 851건 → 851건)
 //  ② 재로그인해도 "세션 만료" 유지 — 사망 마커 해제가 갱신 성공 경로에만 있었다
 //  ③ 배율 확대 시 입력창 바닥 스크롤 막대 — overflow-y만 지정하면 overflow-x가 auto로 승격된다
+//  ④ 화면 줄이면 상단바 항목 겹침 — 미디어쿼리(실뷰포트 900)와 narrowBar(유효 750) 사이 사각지대
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, mkdir } from 'node:fs/promises';
@@ -104,4 +105,25 @@ test('입력 textarea: overflow-x를 hidden으로 명시 — overflow-y 단독 �
   assert.ok(rule, '.input-bar textarea 규칙');
   assert.match(rule, /overflow-x:\s*hidden/, 'x 미지정이면 계산값이 auto가 되어 바닥에 가로 트랙이 그려진다(실측)');
   assert.match(rule, /overflow-y:\s*auto/, '세로 스크롤은 유지(6줄 초과 시 내부 스크롤)');
+});
+
+// ── ④ 상단바 겹침 ────────────────────────────────────────────────────────
+test('상단바 슬롯: overflow hidden — 자식(flex:none)의 초과분이 버전·시계 위로 그려지지 않는다', async () => {
+  const css = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
+  const rule = css.match(/#argo-topbar-slot \{[^}]*\}/)?.[0];
+  assert.ok(rule, '#argo-topbar-slot 기본 규칙');
+  assert.match(rule, /overflow:\s*hidden/, 'visible이면 넘친 칩이 상단바 밖으로 그려져 겹친다(실측)');
+  assert.match(rule, /min-width:\s*0/, '슬롯 자신은 축소돼야 뒤 요소를 밀지 않는다');
+});
+test('상단바 전환: 배율 인지 셸 판정이 미디어쿼리와 같은 임계(900)로 슬롯→밴드를 건다', async () => {
+  const layout = await readFile(new URL('../app/c/[ws]/layout.jsx', import.meta.url), 'utf8');
+  // 미디어쿼리는 실뷰포트만 보므로 배율로 좁아진 750~900 구간이 사각지대였다(제보 재현: 유효 792에서 겹침)
+  assert.match(layout, /toggleAttribute\('data-narrow-shell', eff < 900\)/, '유효 폭 900 임계로 data 속성 토글');
+  assert.match(layout, /const eff = document\.documentElement\.clientWidth \/ z;/, '유효 폭 = clientWidth ÷ zoom');
+  assert.match(layout, /setNarrowBar\(eff < 750\)/, '시계·버전 축(750)은 그대로 — 두 임계는 다른 목적');
+  const css = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
+  assert.match(css, /:root\[data-narrow-shell\] #argo-topbar-slot \{ display: none; \}/, '배율 인지 슬롯 숨김');
+  assert.match(css, /:root\[data-narrow-shell\] \.crew-phone-band \{ display: flex/, '배율 인지 밴드 노출 — 숨기기만 하면 컨트롤 접근이 끊긴다');
+  // 미디어쿼리 쪽 쌍둥이도 살아 있어야 한다(배율 1의 좁은 창 축)
+  assert.match(css, /@media \(max-width: 900px\)[\s\S]*?#argo-topbar-slot \{ display: none; \}/, '실뷰포트 축 유지');
 });

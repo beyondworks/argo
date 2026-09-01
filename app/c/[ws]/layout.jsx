@@ -135,7 +135,14 @@ function Shell({ children, params }) {
   useEffect(() => {
     const check = () => {
       const z = parseFloat(document.documentElement.style.zoom) || 1;
-      setNarrowBar(document.documentElement.clientWidth / z < 750);
+      const eff = document.documentElement.clientWidth / z;
+      setNarrowBar(eff < 750);
+      // 셸 좁음(유효 폭 < 900) — @media(max-width:900px)의 **배율 인지 쌍둥이**다. 미디어쿼리는 실
+      // 뷰포트만 보므로 배율로 좁아진 구간에서 슬롯→밴드 전환이 미발동했고, 슬롯 자식(flex:none)이
+      // overflow:visible로 삐져나와 버전·시계 위에 겹쳐 그려졌다(실사용 제보 2026-09-01, 실측:
+      // 배율 2 × 1584 → 유효 792에서 '카드'·'새 대화'가 버전 [907~1043] 위로). 750~900 유효 폭이
+      // 두 방어(미디어쿼리 900 · narrowBar 750) 사이 사각지대였다. CSS가 이 속성으로 같은 전환을 건다.
+      document.documentElement.toggleAttribute('data-narrow-shell', eff < 900);
     };
     check();
     window.addEventListener('resize', check);

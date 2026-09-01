@@ -169,8 +169,11 @@ test('배율 1(변수 미설정)은 --z=1 명시와 동일 — var 폴백(, 1)�
    < 750)으로 배율 사각을 메워 시계·버전·스페이서 숨김 + pill flex:1 전환. */
 test('상단바 배율 반응형 배선 — narrowBar 판정이 시계·버전 숨김과 pill flex:1을 제어한다', () => {
   const layout = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/layout.jsx'), 'utf8'));
-  assert.match(layout, /setNarrowBar\(document\.documentElement\.clientWidth\s*\/\s*z\s*<\s*750\)/,
-    'narrowBar 판정 — clientWidth ÷ zoom < 750(배율 인지 유효 폭)');
+  // 유효 폭 계산을 eff로 뽑고 두 임계(750 시계·버전 / 900 슬롯→밴드)가 그것을 공유한다 — 같은 축을
+  // 두 번 계산하면 한쪽만 고쳐지는 드리프트가 된다(#383 상단바 겹침 수정에서 통합).
+  assert.match(layout, /const eff = document\.documentElement\.clientWidth \/ z;/,
+    '유효 폭 산식 — clientWidth ÷ zoom');
+  assert.match(layout, /setNarrowBar\(eff < 750\)/, 'narrowBar 판정 — 유효 폭 750 미만(시계·버전 축)');
   assert.match(layout, /window\.addEventListener\('argo:zoom',\s*check\)/,
     'argo:zoom 리스너 — 배율 변경 시 재판정');
   assert.match(layout, /\{!narrowBar && <Clock \/>\}/,
