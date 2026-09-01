@@ -123,6 +123,22 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: npm run app:build
 
+      # 결제 링크 게이트 — 체크아웃 URL은 빌드 시점 인라인이라 CI secrets가 낡으면 발행본이 조용히
+      # 옛 테스트 체크아웃을 연다(실사고 2026-09-01: 상주 .env.local만 라이브로 갱신되고 secrets가
+      # 남아 v0.1.56 번들이 테스트 변형 1956350/1956353을 실음 — 사용자 실카드가 "테스트 모드" 거절).
+      # 번들 산출물에서 직접 검사한다: 알려진 테스트 변형이 보이면 실패, 결제 링크가 아예 0이어도
+      # 실패(secrets 누락 = 결제 버튼 실종). 새 테스트 변형을 파면 이 목록에 추가할 것.
+      - name: Gate — no test-mode checkout links in bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          FOUND=$(grep -rhoE "lemonsqueezy\.com[^\"']*enabled=[0-9]+" .next/static 2>/dev/null | grep -oE "enabled=[0-9]+" | sort -u || true)
+          echo "번들 체크아웃 변형: ${FOUND:-<none>}"
+          if [ -z "$FOUND" ]; then echo "::error::결제 체크아웃 링크가 번들에 없다 — NEXT_PUBLIC_LS_CHECKOUT_* secrets 누락"; exit 1; fi
+          if echo "$FOUND" | grep -qE "enabled=(1956350|1956353)"; then
+            echo "::error::테스트 모드 체크아웃 변형이 번들에 실렸다 — CI secrets를 라이브 링크로 갱신할 것"; exit 1
+          fi
+
       # ── macOS 전용: 서명·공증·스테이플 (Windows는 if로 스킵, 기존 경로 그대로) ──────────────
       # 왜 필요한가: tauri v2가 codesign에 --timestamp를 안 붙여(secure timestamp 누락) 애플 공증이
       #   "not signed with a valid Developer ID / signature does not include a secure timestamp"로 거부한다.
