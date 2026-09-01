@@ -2,7 +2,7 @@
 //  ① 새 대화가 동기화로 되살아남 — union 병합이 "비움"을 표현 못 함(재현: 로컬 0건 + 원격 851건 → 851건)
 //  ② 재로그인해도 "세션 만료" 유지 — 사망 마커 해제가 갱신 성공 경로에만 있었다
 //  ③ 배율 확대 시 입력창 바닥 스크롤 막대 — overflow-y만 지정하면 overflow-x가 auto로 승격된다
-//  ④ 화면 줄이면 상단바 항목 겹침 — 미디어쿼리(실뷰포트 900)와 narrowBar(유효 750) 사이 사각지대
+//  ④ 화면 줄이면 상단바 항목 겹침 — 슬롯의 자동 최소 폭 해제가 뿌리(수용은 넘침 측정형 2단계로)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, mkdir } from 'node:fs/promises';
@@ -83,11 +83,14 @@ test('resetThread는 tombstone을 각인하고, 이어가기(resumeSession)는 �
   await mkdir(join(process.env.ARGO_ROOT, ws, 'chats'), { recursive: true });
   const id = await beginTurn(ws, 'pepper', { userMsg: '지시' });
   await appendTurn(ws, 'pepper', { turnId: id, userMsg: '지시', reply: '답' });
+  const beforeTs = Math.max(...(await loadThread(ws, 'pepper')).messages.map((m) => Number(m.ts) || 0));
   const before = Date.now();
   await resetThread(ws, 'pepper');
   const t = await loadThread(ws, 'pepper');
   assert.equal(t.messages.length, 0);
-  assert.ok(Number(t.resetAt) >= before, '리셋 시각 각인');
+  // 각인 = 방금 비운 대화의 마지막 ts + 1. 벽시계가 아니다(2R MEDIUM-2) — 미래 각인은 남의 메시지를 지운다.
+  assert.equal(Number(t.resetAt), beforeTs + 1, '리셋 각인은 로컬이 본 것의 상한 + 1');
+  assert.ok(Number(t.resetAt) <= before + 1, '각인이 벽시계를 넘어서면 안 된다');
   // 두 번째 사이클 — 리셋 이후 쌓인 대화를 다시 리셋하면, 그 보관본에는 앞선 tombstone(T1)이 실린다.
   const id2 = await beginTurn(ws, 'pepper', { userMsg: '지시2' });
   await appendTurn(ws, 'pepper', { turnId: id2, userMsg: '지시2', reply: '답2' });
@@ -120,6 +123,50 @@ test('mergeThread: 리셋과 되살림은 같은 축의 사건 — 최신값이 
   assert.equal(b.messages.length, 0, '리셋이 더 최신이면 비움이 이긴다');
 });
 
+test('회의 다시 열기: 되살림 각인이 없으면 되살린 회의가 다음 병합에서 통째로 잘린다(검수 2R HIGH-1)', async () => {
+  const ws = 'live-room';
+  await mkdir(join(process.env.ARGO_ROOT, ws, 'chats'), { recursive: true });
+  const { loadRoom, endMeeting, reopenMeeting, listArchivedMeetings } = await import('../src/room.mjs');
+  // saveRoom은 비공개다 — 테스트 편의로 export를 늘리지 않고 방 파일을 직접 쓴다(loadRoom이 읽는 계약).
+  await writeFile(join(process.env.ARGO_ROOT, ws, 'chats', 'room-main.json'),
+    JSON.stringify({ messages: [{ who: 'user', text: '안건', ts: 1000 }, { who: 'pepper', text: '답', ts: 1001 }] }));
+  const ended = await endMeeting(ws);
+  assert.equal(ended.archived, true);
+  const t1 = Number((await loadRoom(ws)).resetAt);
+  assert.ok(t1 > 0, '마치기가 tombstone을 각인한다(검수 1R MEDIUM-2)');
+  const [arch] = await listArchivedMeetings(ws);
+  await reopenMeeting(ws, arch.id);
+  const room = await loadRoom(ws);
+  assert.equal(room.messages.length, 2, '되살림 자체는 성공');
+  // 원격은 아직 마치기 시점의 tombstone(t1)을 들고 있다 — 되살림 각인이 없으면 max(0,t1)=t1이 적용돼
+  // 되살린 2건이 전부 잘린다. reopenMeeting은 곧바로 보관본을 지우므로 회의는 어디에도 안 남는다.
+  for (const prefer of ['local', 'remote']) {
+    const m = JSON.parse(mergeThread(buf(room), buf({ messages: [], resetAt: t1 }), prefer).toString());
+    assert.equal(m.messages.length, 2, `${prefer}: 되살린 회의가 병합에서 잘리면 이어 말하기가 무효가 된다`);
+  }
+});
+
+test('비움 각인은 벽시계를 쓰지 않는다 — 시계가 앞선 기기가 남의 새 메시지를 지우면 안 된다(검수 2R MEDIUM-2)', async () => {
+  const { resetStamp, resumeStamp } = await import('../src/reset-stamp.mjs');
+  // 기기 A: 시계가 1시간 앞섬. 로컬 대화의 마지막 ts는 실시각 기준이다.
+  const realNow = Date.now();
+  const prev = { messages: [{ who: 'user', text: '옛 지시', ts: realNow - 60_000 }] };
+  const stamp = resetStamp(prev);
+  assert.ok(stamp <= realNow, `각인이 미래로 가면 안 된다(각인 ${stamp} > 실시각 ${realNow})`);
+  assert.equal(stamp, realNow - 60_000 + 1, '앵커는 로컬이 실제로 본 것의 상한 + 1');
+  // 행동 — 정상 시계 기기 B가 리셋 뒤 쓴 메시지가 살아남는가
+  const merged = JSON.parse(mergeThread(buf({ messages: [], resetAt: stamp }),
+    buf({ messages: [...prev.messages, { who: 'user', text: 'B의 새 지시', ts: realNow }] }), 'remote').toString());
+  assert.deepEqual(merged.messages.map((m) => m.text), ['B의 새 지시'],
+    '옛 대화는 잘리고 리셋 이후 새 메시지는 남아야 한다');
+  // 단조 — 되살림 뒤 다시 비우면 비움이 이겨야 한다(resetAt <= resumedAt이면 cutAt=0이 되어 무효)
+  const afterResume = { messages: prev.messages, resumedAt: resumeStamp({ resetAt: stamp }) };
+  const again = resetStamp(afterResume);
+  assert.ok(again > afterResume.resumedAt, '비움 각인은 직전 되살림보다 커야 한다');
+  const m2 = JSON.parse(mergeThread(buf({ messages: [], resetAt: again }), buf(afterResume), 'remote').toString());
+  assert.equal(m2.messages.length, 0, '되살림 → 다시 새 대화가 무효가 되면 안 된다');
+});
+
 // ── ② 재로그인 세션 만료 표시 ────────────────────────────────────────────
 test('saveDeviceSession(재로그인)은 사망 마커를 해제한다 — 마커가 남으면 계속 "세션 만료"가 뜬다', async () => {
   const root = await mkdtemp(join(tmpdir(), 'argo-devsess-'));
@@ -144,27 +191,99 @@ test('입력 textarea: overflow-x 최종 승자가 hidden — 뒤 규칙이 되�
 });
 
 // ── ④ 상단바 겹침 ────────────────────────────────────────────────────────
-test('상단바 슬롯: overflow를 걸지 않는다 — 걸면 안의 드롭다운이 클리핑돼 죽는다(검수 HIGH-1)', () => {
-  // 1차 처방(overflow:hidden)이 '옆에 열기' 패널(position:absolute)을 통째로 잘라, 기본 1440폭에서도
-  // 버튼이 눌려도 아무것도 안 뜨는 회귀를 만들었다. 겹침 방어는 '겹칠 대상을 먼저 치우는' 쪽으로 옮겼다.
-  const w = effective('#argo-topbar-slot', 'overflow', 1440);
-  assert.ok(w === undefined || w === 'visible', `슬롯 overflow는 미지정/visible이어야 한다(현재: ${w})`);
-  assert.equal(effective('#argo-topbar-slot', 'min-width', 1440), '0', '슬롯 자신은 축소돼 뒤 요소를 밀지 않는다');
+// 겹침의 뿌리는 임계 폭이 아니라 **슬롯의 자동 최소 폭 해제**였다(분리 검수 2R HIGH-2 실측:
+// min-width:0이면 슬롯 박스만 0까지 줄고 자식(flex:none)이 버전·시계 위에 덮어 그려진다 —
+// 영어 UI 유효폭 1100에서 62px, 긴 라벨 1200에서 43px). 자동 최소 폭을 살려 두면 겹침이
+// 구조적으로 불가능해지고, 수용은 넘침 측정으로 단계 전환한다.
+test('상단바 슬롯: min-width도 overflow도 걸지 않는다 — 둘 다 결함의 직접 원인이었다', () => {
+  // min-width:0 → 겹침(2R HIGH-2) · overflow:hidden → 안의 드롭다운이 클리핑돼 죽음(1R HIGH-1).
+  // 두 속성 모두 "선언이 없어야" 통과 — 값 지정은 어느 쪽이든 결함을 되돌린다.
+  for (const [prop, why] of [['min-width', '자동 최소 폭을 해제하면 자식이 이웃 위에 덮어 그려진다'],
+                             ['overflow', '절대배치 드롭다운 패널이 슬롯에 잘려 버튼이 무동작이 된다']]) {
+    for (const W of [1440, 900, 560]) {
+      const v = effective('#argo-topbar-slot', prop, W);
+      assert.ok(v === undefined || v === 'visible', `W=${W}: 슬롯 ${prop} 미지정이어야 한다(현재 ${v}) — ${why}`);
+    }
+  }
 });
-test('상단바 전환: 배율 인지 셸 판정이 미디어쿼리와 같은 임계(900)로 슬롯→밴드를 건다', async () => {
+test('검색 pill 플로어 — 접기 단계에 96px, 기본 규칙은 0 유지(#340·#348 계약 불파괴)', () => {
+  // 2R HIGH-3: 접기 단계에서 pill이 flex:1(basis 0)로 바뀌는데 남는 폭이 없으면 입력이 통째로
+  // 0px가 된다(A/B 실측: 유효폭 1000에서 99px → 0px). 플로어는 폰 폭 블록(≤560)에만 있어 이 축에 없었다.
+  // 플로어를 기본 규칙에 두면 안 된다 — 데스크톱 플로어는 #340(좁은 유효 뷰포트 가로 넘침)을 되돌리고
+  // #348이 그것을 핀으로 금지한다. 그래서 **필요한 단계에만** 건다.
+  for (const W of [1440, 900, 561]) {
+    assert.equal(effective(':root[data-narrow-bar] .search-pill', 'min-width', W), '96px', `W=${W}: 접기 단계 플로어`);
+    const base = effective('.search-pill', 'min-width', W);
+    assert.equal(base, '0', `W=${W}: 기본 규칙은 0이어야 한다(현재 ${base}) — 데스크톱 플로어 금지`);
+  }
+  assert.equal(effective('.search-pill', 'min-width', 375), '96px', '폰 대역 플로어는 종전대로 유지');
+});
+test('접기 1단계(data-narrow-bar): 정보 가치 낮은 축만 접고 남는 폭을 검색으로 보낸다', () => {
+  for (const sel of [':root[data-narrow-bar] .topbar-spacer', ':root[data-narrow-bar] .topbar-clock',
+                     ':root[data-narrow-bar] .topbar-ver', ':root[data-narrow-bar] .topbar-upd']) {
+    assert.equal(effective(sel, 'display', 1440), 'none', `${sel} 접힘`);
+  }
+  assert.equal(effective(':root[data-narrow-bar] .search-pill', 'flex', 1440), '1', '접은 폭은 검색으로');
+  // 작업 도크는 접지 않는다 — 우선순위 정책상 기능(도크) > 정보(시계·버전)
+  assert.equal(effective(':root[data-narrow-bar] #argo-topbar-slot', 'display', 1440), undefined,
+    '1단계에서 슬롯을 접으면 2단계와 구분이 없어진다');
+});
+test('접기 2단계(data-narrow-shell): 슬롯을 인라인 밴드로 내린다 — 실뷰포트 축 쌍둥이도 유지', () => {
+  assert.equal(effective(':root[data-narrow-shell] #argo-topbar-slot', 'display', 1440), 'none');
+  assert.equal(effective(':root[data-narrow-shell] .crew-phone-band', 'display', 1440), 'flex',
+    '밴드 노출 — 숨기기만 하면 컨트롤 접근이 끊긴다');
+  assert.equal(effective('#argo-topbar-slot', 'display', 900), 'none', '미디어쿼리 쌍둥이 유지(배율 1의 좁은 창)');
+});
+test('배선: fitBar는 매번 가장 넓은 상태에서 재측정하고 2단계로만 올라간다(래칫 금지)', async () => {
   const layout = await readFile(new URL('../app/c/[ws]/layout.jsx', import.meta.url), 'utf8');
-  // 미디어쿼리는 실뷰포트만 보므로 배율로 좁아진 750~900 구간이 사각지대였다(제보 재현: 유효 792에서 겹침)
-  assert.match(layout, /toggleAttribute\('data-narrow-shell', eff < 900\)/, '유효 폭 900 임계로 data 속성 토글');
-  assert.match(layout, /const eff = document\.documentElement\.clientWidth \/ z;/, '유효 폭 = clientWidth ÷ zoom');
-  // 시계·버전 축은 1100 — 겹침 실측 폭(1059)보다 위로 올려 '겹칠 대상'을 먼저 치운다(검수 HIGH-1
-  // 처방: 슬롯에 overflow를 걸면 안의 드롭다운이 죽으므로, 이웃을 비우는 쪽으로 방어한다).
-  assert.match(layout, /setNarrowBar\(eff < 1100\)/, '시계·버전·스페이서 축(1100)');
-  assert.equal(effective(':root[data-narrow-shell] #argo-topbar-slot', 'display', 1440), 'none', '배율 인지 슬롯 숨김');
-  assert.equal(effective(':root[data-narrow-shell] .crew-phone-band', 'display', 1440), 'flex', '밴드 노출 — 숨기기만 하면 컨트롤 접근이 끊긴다');
-  // 미디어쿼리 쪽 쌍둥이도 살아 있어야 한다(배율 1의 좁은 창 축)
-  assert.equal(effective('#argo-topbar-slot', 'display', 900), 'none', '실뷰포트 축 유지(≤900)');
-  // 배선(검수 FO-2·FO-3): 토글 직후 무력화·초기 판정 누락이 초록이던 구멍
-  const eff = layout.slice(layout.indexOf('const check = () =>'), layout.indexOf('window.addEventListener(\'resize\', check)'));
-  assert.doesNotMatch(eff, /removeAttribute\('data-narrow-shell'\)/, '판정 직후 되돌리는 코드 금지(cleanup은 이펙트 반환부에서만)');
-  assert.match(layout, /check\(\);\s*\n\s*window\.addEventListener\('resize', check\);/, '초기 1회 판정 필수 — 없으면 첫 로드에서 전환이 안 걸린다');
+  const i0 = layout.indexOf('const fitBar = useCallback(');
+  assert.ok(i0 > 0, 'fitBar 존재');
+  const body = layout.slice(i0, layout.indexOf('}, []);', i0));
+  // 순서 불변식 — 낱개 문자열 핀은 순서를 못 지킨다(MEMORY: 삼항 순서 뒤집기 fail-open). 인덱스로 본다.
+  const iClrBar = body.indexOf("removeAttribute('data-narrow-bar')");
+  const iClrShell = body.indexOf("removeAttribute('data-narrow-shell')");
+  const iSetBar = body.indexOf("setAttribute('data-narrow-bar'");
+  const iSetShell = body.indexOf("setAttribute('data-narrow-shell'");
+  assert.ok(iClrBar >= 0 && iClrShell >= 0, '측정 전 두 단계 모두 되돌려야 한다');
+  assert.ok(iSetBar > iClrBar && iSetBar > iClrShell, '되돌림이 판정보다 먼저 — 아니면 접힌 상태를 재어 못 돌아온다');
+  assert.ok(iSetShell > iSetBar, '2단계는 1단계 뒤에만');
+  assert.match(body, /scrollWidth > bar\.clientWidth/, '판정 기준은 실제 넘침(임계 폭 금지 — 마법수는 언어·라벨을 못 따라간다)');
+  assert.doesNotMatch(body, /clientWidth \/ z|eff <|narrowBar/, '옛 임계 판정이 남아 있으면 두 축이 갈라진다');
+  // 등록 — 관찰기(슬롯 내용 변화)와 창/배율 이벤트 둘 다. 하나라도 빠지면 낡은 판정이 남는다.
+  assert.match(layout, /new ResizeObserver\(fitBar\)/, '슬롯·상단바 크기 관찰');
+  assert.match(layout, /getElementById\('argo-topbar-slot'\);\s*\n\s*if \(slot\) ro\.observe\(slot\)/, '슬롯 관찰 — 포털 내용이 늦게 온다');
+  assert.match(layout, /window\.addEventListener\('argo:zoom', fitBar\)/, '표시 배율 변경 축');
+  assert.match(layout, /fitBar\(\);\s*\n\s*\/\/ 슬롯은 크루 페이지가/, '초기 1회 판정 필수');
+  // JSX — 접기는 CSS가 한다(React 조건부면 ①단계 되돌림이 동기적으로 성립하지 않는다)
+  assert.match(layout, /<header className="topbar" ref=\{barRef\}>/, '측정 대상 참조');
+  assert.match(layout, /className="chip mono topbar-upd"/, '업데이트 칩에 접기용 클래스');
+  assert.doesNotMatch(layout, /\{!narrowBar &&/, 'narrowBar 조건부 렌더 잔존 금지');
+  assert.match(layout, /<label className="search-pill">/, 'pill 인라인 스타일 제거 — flex 전환은 CSS가');
+});
+test('밴드 진입로: 분할 패널이 살아 있는 축과 정확히 같은 조건으로 노출한다(검수 MEDIUM-1)', async () => {
+  const page = await readFile(new URL('../app/c/[ws]/crew/[slug]/page.jsx', import.meta.url), 'utf8');
+  // 질의는 CSS 규칙의 여집합 — min-width:900으로 쓰면 소수점 뷰포트(899.4)에서 둘 다 거짓이 된다(2R LOW-1)
+  assert.match(page, /matchMedia\('\(max-width: 899px\)'\)/, '.split-pane을 죽이는 규칙과 같은 질의');
+  assert.match(page, /setSplitAlive\(!mq\.matches\)/, '여집합 — 부정을 빠뜨리면 판정이 뒤집힌다');
+  assert.equal(effective('.split-pane', 'display', 899), 'none', '전제 — CSS가 899px에서 패널을 죽인다');
+  // 배선(2R MEDIUM-1: 이 블록을 통째로 지워도 스위트가 초록이었다) — 밴드 구간 안에 있어야 한다
+  const bi = page.indexOf("'crew-phone-band'");
+  const band = page.slice(bi, page.indexOf('<div className="thread"', bi));
+  assert.match(band, /\{!embedded && splitAlive && \(\s*\n\s*<SideOpenMenu/, '밴드 안에 splitAlive 조건부 진입로');
+  assert.match(page, /const \[splitAlive, setSplitAlive\] = useState\(true\)/, '초기값 true — false면 넓은 폭 첫 프레임에 진입로가 없다');
+});
+test('밴드 진입로 패널: 뷰포트 클램프 — 오른쪽 끝 트리거에서 문서 가로 넘침을 만들지 않는다', async () => {
+  const page = await readFile(new URL('../app/c/[ws]/crew/[slug]/page.jsx', import.meta.url), 'utf8');
+  const i0 = page.indexOf('function SideOpenMenu(');
+  const body = page.slice(i0, page.indexOf('\n}', i0));
+  // 슬롯(왼쪽)에만 있을 땐 안 뚫렸는데 밴드로 내려오며 트리거가 우측 끝에 설 수 있게 됐다
+  // (실측: 배율 2 × 1424에서 패널 right 1441 > clientWidth 1424 → 문서 가로 스크롤 17px).
+  assert.match(body, /dropUpClamp\(boxRef\.current\.getBoundingClientRect\(\),\s*document\.documentElement\.clientWidth/,
+    '클램프 입력은 clientWidth — 100vw는 스크롤바 폭만큼 샌다(#359 교훈)');
+  assert.match(body, /left: clamp\.shift/, '시프트가 실제로 위치에 적용돼야 한다');
+  assert.match(body, /maxWidth: clamp\.maxW \|\| undefined/, '상한 미적용 시 자연 폭 보존(1회 실측 전제)');
+  assert.match(body, /useIsoLayoutEffect/, 'layout effect — useEffect면 클램프 전 프레임이 문서 폭을 늘린다');
+  assert.match(body, /if \(!naturalW\.current\) naturalW\.current = panelRef\.current\.offsetWidth/,
+    '자연 폭은 1회만 — 상한 걸린 뒤 재측정하면 왕복 복원이 깨진다');
+  assert.match(body, /window\.addEventListener\('argo:zoom', measure\)/, '열린 채 배율이 바뀌면 시프트가 낡는다');
 });

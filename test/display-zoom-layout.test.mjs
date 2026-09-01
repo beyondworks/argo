@@ -167,21 +167,20 @@ test('배율 1(변수 미설정)은 --z=1 명시와 동일 — var 폴백(, 1)�
    미디어쿼리(max-width:900px)는 실 뷰포트 기준이라 배율 2 × 1280(유효 640)에서 미발동, 시계·
    버전·search-pill이 넘쳤다(검수 실측: pill right 1490 > cw 1424). JS 판정(clientWidth ÷ zoom
    < 750)으로 배율 사각을 메워 시계·버전·스페이서 숨김 + pill flex:1 전환. */
-test('상단바 배율 반응형 배선 — narrowBar 판정이 시계·버전 숨김과 pill flex:1을 제어한다', () => {
+test('상단바 배율 반응형 배선 — 적재 조절은 임계 폭이 아니라 넘침 측정으로 한다', () => {
   const layout = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/layout.jsx'), 'utf8'));
-  // 유효 폭 계산을 eff로 뽑고 두 임계(750 시계·버전 / 900 슬롯→밴드)가 그것을 공유한다 — 같은 축을
-  // 두 번 계산하면 한쪽만 고쳐지는 드리프트가 된다(#383 상단바 겹침 수정에서 통합).
-  assert.match(layout, /const eff = document\.documentElement\.clientWidth \/ z;/,
-    '유효 폭 산식 — clientWidth ÷ zoom');
-  // 임계 1100 — 슬롯이 넘쳐도 겹칠 이웃(시계·버전·스페이서)을 먼저 치우는 방어(#383 검수 HIGH-1:
-  // 슬롯에 overflow를 걸어 덮으려던 처방이 안의 드롭다운을 죽였다). 종전 750은 겹침 구간을 못 덮었다.
-  assert.match(layout, /setNarrowBar\(eff < 1100\)/, 'narrowBar 판정 — 유효 폭 1100 미만(시계·버전 축)');
-  assert.match(layout, /window\.addEventListener\('argo:zoom',\s*check\)/,
+  // 종전에는 유효 폭 임계(clientWidth ÷ zoom < 750/1100)로 접었는데, 임계는 라벨 길이·언어를 못
+  // 따라가는 마법수라 영어 UI·긴 크루 이름에서 겹침이 임계 위로 올라갔다(#383 분리 검수 2R HIGH-2
+  // 실측: 영어 1150에서 15px, 긴 라벨 1200에서 43px). scrollWidth/clientWidth는 배율이 적용된
+  // 레이아웃 픽셀이라 유효 폭 환산 자체가 필요 없다.
+  assert.match(layout, /bar\.scrollWidth > bar\.clientWidth/, '판정 = 상단바 실제 넘침');
+  assert.doesNotMatch(layout, /clientWidth \/ z\b/, '유효 폭 임계 판정 잔존 금지(두 축이 갈라진다)');
+  assert.match(layout, /window\.addEventListener\('argo:zoom', fitBar\)/,
     'argo:zoom 리스너 — 배율 변경 시 재판정');
-  assert.match(layout, /\{!narrowBar && <Clock \/>\}/,
-    'narrowBar일 때 시계 숨김');
-  assert.match(layout, /className="search-pill" style=\{narrowBar \? \{ flex: 1, width: 'auto' \} : undefined\}/,
-    'narrowBar일 때 pill이 flex:1로 전환');
+  // 접기는 CSS가 실행한다 — React 조건부면 "가장 넓은 상태로 되돌린 뒤 측정"이 동기적으로 성립하지 않는다
+  assert.doesNotMatch(layout, /narrowBar/, 'narrowBar 상태 잔존 금지');
+  assert.match(layout, /<Clock \/>/, '시계는 무조건 렌더 — 접기는 :root[data-narrow-bar]가');
+  assert.match(layout, /<label className="search-pill">/, 'pill 인라인 스타일 제거');
 });
 /* ── 인접 핀: 경쟁 시안(compete) 좁은 유효 폭 가로 넘침(회의실 동종 선재 결함) ─────────
    배율 2(실측 1424px 창 = 유효 712 CSS px)에서 compete 본문 열이 부풀어 문서 가로 스크롤을
@@ -484,6 +483,7 @@ test('search-pill 기본 규칙에 min-width: 0 — 좁은 유효폭 상단바 �
   const blocks = [...css.matchAll(/(?:^|\n)\.search-pill\s*\{([^}]*)\}/g)];
   assert.equal(blocks.length, 1,
     '.search-pill 단독 기본 규칙은 정확히 1개여야 한다 — 규칙이 쪼개지면 이 핀의 수집 표면부터 넓힌다(fail-closed)');
+  // 접기 단계 플로어(#383 2R HIGH-3)는 :root[data-narrow-bar] .search-pill에 따로 있다 — 기본 규칙은 0 유지.
   assert.match(blocks[0][1], /min-width:\s*0\s*;/,
     'min-width:0 제거 시 pill이 ~189px에서 축소 정지 → 배율 2에서 문서 가로 스크롤 재발(PR #340 실측)');
 });

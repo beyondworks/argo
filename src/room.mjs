@@ -9,6 +9,7 @@ import { updateIndex } from './memory.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 import { CC_MAX, sendCrewMail } from './crewmail.mjs';
+import { resetStamp, resumeStamp } from './reset-stamp.mjs';
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 // sync가 chats/room-main.json을 쓸 때 쓰는 락 키(thread:ws:room-main)와 동일하게 맞춘다 —
@@ -123,7 +124,8 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
   // sid 증가 — 진행 중이던 runRoomTurn의 잔여 발언이 빈 방에 유령으로 남지 않도록 무효화한다
   // resetAt — 크루 채팅의 '새 대화'와 같은 tombstone(검수 MEDIUM-2: 회의실도 isThread라 같은
   // union 병합을 타는데 각인이 없어, '회의 마치기'가 동기화로 되살아났다 — 실측 재현).
-  await saveRoom(wsId, { messages: [], resetAt: Date.now(), sid: (room.sid ?? 0) + 1 });
+  // 산식은 src/reset-stamp.mjs(벽시계 미사용 — 시계 앞선 기기가 남의 메시지를 자르는 것 방지).
+  await saveRoom(wsId, { messages: [], resetAt: resetStamp(room), sid: (room.sid ?? 0) + 1 });
   return { archived: true, journal: `journal/${journalName}` };
 }
 
@@ -150,7 +152,11 @@ export async function reopenMeeting(wsId, id) {
     }
     const archived = await readArchivedMeeting(wsId, id); // 없으면 여기서 throw — 방을 건드리기 전이다
     if (!archived?.messages?.length) throw new Error('비어 있는 보관 회의는 열 수 없습니다.');
-    await saveRoom(wsId, { ...archived, sid: (cur.sid ?? 0) + 1 });
+    // 되살림 각인 — 없으면 endMeeting이 남긴 **원격 tombstone**이 이겨 되살린 회의가 다음 병합에서
+    // 통째로 잘린다(분리 검수 2R HIGH-1 재현: 2건 → 0건). reopenMeeting은 곧바로 보관본을 지우므로
+    // 그 회의는 회의록 md 말고 어디에도 남지 않는다. 크루의 resumeSession과 같은 대칭 계약.
+    delete archived.resetAt;
+    await saveRoom(wsId, { ...archived, resumedAt: resumeStamp(cur), sid: (cur.sid ?? 0) + 1 });
     await rm(join(paths(wsId).chats, '.archive', id), { force: true }).catch(() => {}); // 실패해도 유실 아님(중복 표시)
     return { reopened: true, messages: archived.messages.length };
   });

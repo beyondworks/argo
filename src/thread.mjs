@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path';
 import { paths, getDeviceId } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
+import { resetStamp, resumeStamp } from './reset-stamp.mjs';
 
 const file = (wsId, slug) => join(paths(wsId).chats, `${slug.replace(/[^a-z0-9-]/g, '')}.json`);
 // 같은 크루 스레드의 read-modify-write를 직렬화 — 웹·텔레그램 동시 턴의 lost-update 방지
@@ -176,15 +177,8 @@ export async function resetThread(wsId, slug) {
     // 삭제가 아니라 **빈 스레드로 재기록** — 파일 부재는 "손상 격리됨"의 신호로 쓰이므로(loadThread의
     // salvage 게이트), 새 대화가 파일을 지우면 옛 손상본이 되살아난다(검수 CRITICAL-1 C 케이스 실측).
     // 회의실 endMeeting이 {messages:[], sid+1}을 쓰는 것과 같은 계약으로 통일한다.
-    // resetAt = 리셋 시각 각인(tombstone). 없으면 동기화의 union 병합이 원격의 옛 메시지를 그대로
-    // 되살려 "새 대화"가 8초 만에 옛 대화로 돌아온다(실사용 제보 2026-09-01, 재현: 로컬 0건 +
-    // 원격 851건 → 851건). mergeThread가 이 시각 이전 메시지를 union에서 제외해 비움을 보존한다.
-    // resetAt 하한 = 방금 비운 대화의 최대 ts + 1. 순수 Date.now()면 **기기 시계가 앞선 기기**에서
-    // 리셋했을 때 다른 기기가 그 뒤 실제로 쓴 메시지(더 작은 ts)까지 잘라 조용히 삭제한다 —
-    // 그 메시지는 .archive에도 없어 어디에도 남지 않는다(검수 MEDIUM-3 재현). 최대 ts 기준이면
-    // "이미 있던 것만" 정확히 자르고, 미래 시각으로 남의 메시지를 자르지 않는다.
-    const lastTs = Math.max(0, ...(t.messages ?? []).map((m) => Number(m?.ts) || 0));
-    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], resetAt: Math.max(Date.now(), lastTs + 1) });
+    // resetAt = 비움 각인(tombstone) — 근거·산식은 src/reset-stamp.mjs에 있다(벽시계 미사용 이유 포함).
+    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], resetAt: resetStamp(t) });
   });
 }
 
@@ -206,7 +200,7 @@ export async function resumeSession(wsId, slug, id) {
     // (실측: 로컬 삭제만으론 max(0, 원격 T2)=T2가 적용). 리셋과 되살림을 같은 축의 사건으로 두고
     // mergeThread가 최신값으로 승부하게 한다(resumedAt >= resetAt이면 비움 취소).
     delete restored.resetAt;
-    restored.resumedAt = Date.now();
+    restored.resumedAt = resumeStamp(cur); // 각인 보유자는 활성 스레드(cur) — 보관본은 리셋을 모른다
     await writeJsonAtomic(file(wsId, slug), restored);
     await rm(join(dir, id), { force: true });
     return restored;
