@@ -100,7 +100,7 @@ export default function Deck({ params }) {
     : 0;
 
   return (
-    <div style={{ display: 'grid', gap: 14 }}>
+    <div className="deck-page" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}>
       <div className="page-head" style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <span className="microlabel">{t('deck.crewControl', { name: data?.company?.name ?? '' })}</span>
         <span className="microlabel">{new Date().toLocaleDateString('sv-SE')}</span>
@@ -110,8 +110,8 @@ export default function Deck({ params }) {
 
       <div className="deck-grid">
         {/* ── 본 계기 열 — 지표 4장·크루 영입이 맨 위(유건 2026-08-23), 그 아래 아침 조회·결재함·최근 기억 ── */}
-        <div style={{ display: 'grid', gap: 14, minWidth: 0 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14, minWidth: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))', gap: 12 }}>
             {stats ? (
               <>
                 <div className="metric card invert fade-up">
@@ -150,7 +150,7 @@ export default function Deck({ params }) {
                     <span className="microlabel">{t('deck.composition')}</span>
                     <span className="chip">{t('deck.vault')}</span>
                   </div>
-                  <div style={{ display: 'grid', gap: 12, marginTop: 6 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, marginTop: 6 }}>
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 5 }}>
                         <span style={{ fontWeight: 600 }}>{t('deck.conversations')}</span>
@@ -295,7 +295,7 @@ export default function Deck({ params }) {
         </div>
 
         {/* ── 우측 보조 계기 레일 ── */}
-        <div style={{ display: 'grid', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}>
           <div className="card" style={{ padding: '15px 18px 8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span className="card-title">{t('deck.constellation')}</span>
@@ -392,7 +392,7 @@ function ApprovalsCard({ ws, agents }) {
         <span className="rule" />
         <span className="chip"><span className="dot" />{t('deck.pending', { n: pending.length })}</span>
       </div>
-      <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10, marginTop: 12 }}>
         {pending.map((a) => (
           <div key={a.id} className="row" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <Avatar name={nameOf(a.slug)} size={26} />
@@ -440,7 +440,7 @@ function MorningBrief({ ws, agents }) {
   if (!recent.length && !pending) return null; // 보고할 게 없으면 조용히 — 노이즈 금지
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug ?? '';
   return (
-    <div className="card fade-up" style={{ padding: '14px 18px', display: 'grid', gap: 8 }}>
+    <div className="card fade-up" style={{ padding: '14px 18px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
       <div className="card-head" style={{ padding: 0, border: 'none' }}>
         <span className="microlabel">{t('deck.brief.title')}</span>
         <span className="rule" />
@@ -490,7 +490,7 @@ function TokenPanel({ usage, budgetUsd, payroll, agents }) {
       </div>
 
       {/* 입력(맥락) / 출력(생성) — 입력≫출력이 정상 형태 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 10 }}>
         <div>
           <div className="microlabel">{t('deck.in')}</div>
           <div className="num" style={{ fontSize: 21 }}>{fmtTok(u.contextTotal)}</div>
@@ -517,7 +517,7 @@ function TokenPanel({ usage, budgetUsd, payroll, agents }) {
 
       {/* 급여 대장 — 이번 달 크루별 인건비. 비용을 회사 언어로 */}
       {payroll?.some((p) => p.hasCost) && (
-        <div style={{ marginTop: 12, display: 'grid', gap: 7 }}>
+        <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 7 }}>
           <span className="microlabel">{t('deck.payroll')}</span>
           {payroll.filter((p) => p.hasCost).slice(0, 5).map((p) => {
             const max = Math.max(...payroll.map((x) => x.costUsd), 0.0001);
@@ -546,7 +546,7 @@ function TokenPanel({ usage, budgetUsd, payroll, agents }) {
       </div>
 
       {/* 효율 ② + 형태 지표 */}
-      <div style={{ display: 'grid', gap: 5, marginTop: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 5, marginTop: 12 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, borderBottom: '1px dashed var(--border-soft)', paddingBottom: 5 }}>
           <span className="microlabel">{t('deck.costPerTurn')}</span>
           <span className="mono" style={{ fontSize: 11 }}>
