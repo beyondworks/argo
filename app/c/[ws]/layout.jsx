@@ -251,7 +251,8 @@ function Shell({ children, params }) {
       // 종료 감지 → light 재조회. argo:refresh발 호출은 refresh가 같은 이벤트로 이미 돌므로 생략(중복 2회 → 1회).
       if (fromEvent !== true && [...runningRef.current].some((s) => !now.has(s))) refresh();
       runningRef.current = now;
-      setTasks(d);
+      // light 응답(recent 없음)은 마지막으로 받은 recent를 유지 — 독을 열 때 '최근'이 비었다가 채워지는 팝 방지(검수 2R LOW-2)
+      setTasks((prev) => (dockOpen ? d : { ...d, recent: prev?.recent ?? [] }));
     }).catch(() => {});
     pull();
     const onRefresh = () => pull(true);

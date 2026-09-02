@@ -44,6 +44,9 @@ export function stageForTool(toolName) {
 // (핀 테스트 실측: 5ms 틱에서 'shell'→'runner'). 상태 쓰기는 전부 앱 서버 프로세스 안이라 파일 락은 불필요.
 // clear도 같은 사슬을 탄다 — 먼저 줄 선 틱은 끝나고 지워지며, 뒤에 줄 선 틱은 alive 게이트로 무동작.
 const chains = new Map(); // 파일 경로 → 대기열 꼬리
+export const __statusChains = chains; // 테스트 관측용 — 정착 뒤 비워지는지(누수 핀)
+/** 신선도 창 — 이 시간 안에 갱신이 없으면 죽은 상태로 본다(getTurnStatus·하트비트 stale 판정 공용). */
+const FRESH_MS = 120_000;
 function serialized(key, fn) {
   const run = (chains.get(key) ?? Promise.resolve()).then(fn, fn);
   const tail = run.catch(() => {});
@@ -93,7 +96,7 @@ export function keepTurnStatusFresh(wsId, slug, stage, detail = '', { heartbeatM
     if (!alive) return;
     const cur = await readJsonLenient(f, null);
     if (!alive) return;
-    const fresh = !!(cur?.ts && Date.now() - cur.ts < 120_000);
+    const fresh = !!(cur?.ts && Date.now() - cur.ts < FRESH_MS);
     await writeStatus(f, fresh ? cur.stage : stage, fresh ? (cur.detail ?? '') : detail);
   });
   const hb = setInterval(() => { tick = tick.then(beat).catch(() => {}); }, heartbeatMs);
@@ -109,7 +112,7 @@ export async function getTurnStatus(wsId, slug) {
   try {
     const s = await readJsonLenient(file(wsId, slug), null);
     if (!s || !s.ts) return null;
-    return Date.now() - s.ts < 120_000
+    return Date.now() - s.ts < FRESH_MS
       ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', startedAt: s.startedAt ?? s.ts }
       : null;
   } catch {

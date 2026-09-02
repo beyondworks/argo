@@ -921,11 +921,12 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     // 하트비트 — CLI 턴은 스트리밍 이벤트가 없어 위 한 줄이 유일한 상태 쓰기였다. 2분을 넘기면 사이드바 링·독 배지·
     // 진행 카드가 턴 도중 꺼지고 거짓 '답변 도착' 점까지 켜졌다(분리 검수 2026-09-02 MEDIUM-1). stop()은 모든
     // clearTurnStatus·재귀 재시도 앞에서 await(진행 중 틱의 부활 방지), finally에서 한 번 더(탈출 경로 누수 방지).
-    const hb = keepTurnStatusFresh(wsId, agentSlug, 'runner', RUNNERS[runner].name);
+    let hb = null; // try 첫 문장에서 시작 — 생성과 try 사이에 던지는 문장이 끼어도 인터벌이 영구 누수되지 않게(검수 2R LOW-5)
     // 중단 배선 — SDK 경로처럼 정지 버튼이 실제로 프로세스를 끊게 한다(외부 CLI는 signal로 자식 kill).
     const ac = new AbortController();
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort());
     try {
+      hb = keepTurnStatusFresh(wsId, agentSlug, 'runner', RUNNERS[runner].name);
       const { messages } = await loadThread(wsId, agentSlug);
       // 실패 턴(m.failed — 답변 없는 지시문)은 재구성 맥락에서 뺀다: 러너 미로그인에서 재전송을 반복하면
       // 같은 지시 6개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
@@ -1070,7 +1071,7 @@ ${lang === 'en'
         model: `${runner}${usedModel ? `:${usedModel}` : ''}`, usage: {}, costUsd: null, ms: Date.now() - t0,
         billed: await isBilledRunner(wsId, runner), // 이 경로는 costUsd가 null이라 금액엔 무영향 — 기록 일관성용
       });
-      await hb.stop();
+      await hb?.stop();
       await clearTurnStatus(wsId, agentSlug);
       const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, journalRel: relative(p.vault, handover.file), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
@@ -1093,7 +1094,7 @@ ${lang === 'en'
       if (!aborted && !__crashRetry && isProcessCrash(e?.message || e)) {
         console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
         try {
-          await hb.stop();
+          await hb?.stop();
           return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
@@ -1105,7 +1106,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 도구 잠김 감지 — 재조달 후 1회 재시도(${wsId}/${agentSlug})`);
         await reprovisionRunner(runner).catch((re) => console.warn(`[argo] ${runner} 재조달 실패:`, re?.message ?? re));
         try {
-          await hb.stop();
+          await hb?.stop();
           return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
@@ -1120,6 +1121,7 @@ ${lang === 'en'
             // 실패한 러너의 사건을 먼저 남긴다 — 치유 성공 시 조기 return이 실패 기록을 삼켜,
             // P2가 "인증 오류"라 말하는 턴에 연결 카드(P1-1)의 그 러너는 멀쩡해 보였다(검수 관점3 미탐).
             await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {});
+            await hb?.stop(); // 자가치유 재귀 — 바깥 틱이 안쪽 턴의 clear 뒤 상태를 되살리지 않게(검수 2R MEDIUM-1)
             const healed = await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners: tried });
             return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
@@ -1132,14 +1134,14 @@ ${lang === 'en'
       if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
       await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
-      await hb.stop();
+      await hb?.stop();
       await clearTurnStatus(wsId, agentSlug);
       // cc 공유 노트 복원 — 소비(takeSharedNotes)가 러너 실행 전이라, 복원 없이는 실패한 턴이 동료가
       // 공유한 맥락을 영구 소실시킨다. 이 프레임이 직접 소비한 경우만(__seedNotes 재시도 프레임 제외).
       if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
       throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : e;
     } finally {
-      await hb.stop(); // 멱등 — 위에서 이미 멈췄으면 무동작
+      await hb?.stop(); // 멱등 — 위에서 이미 멈췄으면 무동작
       abortReg.release();
     }
   }
@@ -1459,6 +1461,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
           await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {}); // 실패 러너 사건 선기록(CLI 갈래와 대칭 — P1-1 미탐 봉합)
+          await hb?.stop(); // 자가치유 재귀 — 위와 같은 이유
           const healed = await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
           return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {

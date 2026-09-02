@@ -31,7 +31,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-marks-'));
 for (const k of Object.keys(process.env)) if (/SUPABASE/i.test(k)) delete process.env[k]; // AUTH off — 라우트 실호출 게스트
-const { setTurnStatus, clearTurnStatus, keepTurnStatusFresh } = await import('../src/turn-status.mjs');
+const { setTurnStatus, clearTurnStatus, keepTurnStatusFresh, __statusChains } = await import('../src/turn-status.mjs');
 const { createCompany, paths } = await import('../src/workspace.mjs');
 const { appendEvent } = await import('../src/events.mjs');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -76,8 +76,8 @@ test('② running → busySet → 행 busy → 링 렌더 + 안읽음 !busy 가�
 
 test('③ 폴 효과 — 종료 감지 refresh(이벤트발 제외)·argo:refresh 연결·3.5/10초·alive 게이트·정리 짝', () => {
   const eff = layout.slice(idx(/const runningRef = useRef\(new Set\(\)\);/), idx(/const busySet = new Set/));
-  assert.match(eff, new RegExp(String.raw`const pull = \(fromEvent\) => ${TASKS_CALL.source}\.then\(\(d\) => \{\s*if \(!alive\) return;\s*const now = new Set\(\(d\.running \?\? \[\]\)\.map\(\(r\) => r\.slug\)\);\s*if \(fromEvent !== true && \[\.\.\.runningRef\.current\]\.some\(\(s\) => !now\.has\(s\)\)\) refresh\(\);\s*runningRef\.current = now;\s*setTasks\(d\);\s*\}\)\.catch\(\(\) => \{\}\);`),
-    'alive 게이트 → 이전 running에 있던 크루가 지금 없으면(이벤트발 아니면) refresh() → runningRef 갱신 → setTasks 순서');
+  assert.match(eff, new RegExp(String.raw`const pull = \(fromEvent\) => ${TASKS_CALL.source}\.then\(\(d\) => \{\s*if \(!alive\) return;\s*const now = new Set\(\(d\.running \?\? \[\]\)\.map\(\(r\) => r\.slug\)\);\s*if \(fromEvent !== true && \[\.\.\.runningRef\.current\]\.some\(\(s\) => !now\.has\(s\)\)\) refresh\(\);\s*runningRef\.current = now;\s*setTasks\(\(prev\) => \(dockOpen \? d : \{ \.\.\.d, recent: prev\?\.recent \?\? \[\] \}\)\);\s*\}\)\.catch\(\(\) => \{\}\);`),
+    'alive 게이트 → 이전 running에 있던 크루가 지금 없으면(이벤트발 아니면) refresh() → runningRef 갱신 → setTasks(light면 recent 유지 — 독 열림 팝 방지) 순서');
   assert.match(eff, /const onRefresh = \(\) => pull\(true\);\s*window\.addEventListener\('argo:refresh', onRefresh\);/, 'argo:refresh(크루 페이지 턴 종료 등)에 즉시 당긴다 — 이벤트발 표시');
   assert.match(eff, /const iv = setInterval\(\(\) => pull\(\), dockOpen \|\| anyRunning \? 3500 : 10000\);/, '도는 턴·독 열림이면 3.5초, 아니면 10초');
   assert.match(eff, /return \(\) => \{ alive = false; window\.removeEventListener\('argo:refresh', onRefresh\); clearInterval\(iv\); \};/, '정리 — alive 해제·리스너 해제·인터벌 해제 셋 다(검수 M-A/M-B 구멍)');
@@ -148,8 +148,8 @@ test('⑥ 데크 크루 카드는 셸의 tasks 컨텍스트로 작성 중 수를
   assert.doesNotMatch(deck.slice(idx(/export default function Deck\(/, deck), hookAt), /\breturn\b/, '훅은 어떤 return보다 앞(조건부 훅 금지 — 검수 N-3)');
   assert.equal((deck.match(/useTasks\(\)/g) ?? []).length, 1, '컨텍스트 소비는 한 곳');
   assert.equal((deck.match(/(?<![A-Za-z.-])tasks(?![A-Za-z-])/g) ?? []).length, 0, "데크엔 'tasks' 토큰이 없다 — 경로를 이어 붙인 자체 폴(검수 N-2b)까지 차단");
-  assert.match(deck, /<span className="chip" style=\{running > 0 \? \{ color: 'var\(--accent\)', borderColor: 'var\(--accent\)' \} : undefined\}><span className="dot" \/>\{running > 0 \? t\('deck\.working'\) : t\('deck\.standby'\)\}<\/span>/,
-    '칩: 작성 중(액센트 — 사이드바 링과 같은 색)/대기');
+  assert.match(deck, /<span className="chip" style=\{running > 0 \? \{ borderColor: 'var\(--accent\)' \} : undefined\}><span className="dot" \/>\{running > 0 \? t\('deck\.working'\) : t\('deck\.standby'\)\}<\/span>/,
+    '칩: 작성 중이면 테두리만 액센트 — 글자색은 유지(액센트 글자는 라이트 대비 2.04:1 — 검수 2R MEDIUM-2)');
   assert.match(deck, /\{running === 0 \? t\('deck\.allStandby'\) : \(data\.agents\.length > 0 && running >= data\.agents\.length\) \? t\('deck\.allWriting'\) : t\('deck\.someWriting', \{ n: running \}\)\}/,
     '부제: 전원 대기 / 전원 작성 중(agents 비어 있으면 금지 — 검수 LOW-6) / N명 작성 중');
 });
@@ -213,24 +213,29 @@ test('⑧ 해제 경합 — 진행 중 틱이 clear 뒤 상태를 되살리지 �
     if (existsSync(statusPath(ws, slug))) { revived += 1; await clearTurnStatus(ws, slug); }
   }
   assert.equal(revived, 0, `부활 ${revived}/40 — 화면이 2분간 거짓 '작성 중'이 된다(stop이 진행 중 틱을 안 기다리면 생긴다)`);
+  await sleep(10); // 정착 뒤 정리(tail.then)는 마이크로태스크 — 한 틱 양보
+  assert.equal(__statusChains.size, 0, '직렬화 사슬은 정착 뒤 비워진다 — 정리를 지우면 (회사×크루)만큼 정착 promise가 프로세스 수명 동안 남는다(검수 2R Q-8 구멍)');
 });
 
-test('⑧ chat.mjs — CLI·SDK 두 분기 모두 하트비트를 시작하고, 모든 clear·재귀 재시도 앞과 finally에서 멈춘다', () => {
+test('⑧ chat.mjs — CLI·SDK 두 분기 모두 하트비트를 시작하고, 모든 clear·재귀(await chat) 앞과 finally에서 멈춘다', () => {
   const sdkStart = idx(/await setTurnStatus\(wsId, agentSlug, 'boot'\);/, chat);
   const cli = chat.slice(idx(/if \(isCliRunner\(runner\)\) \{/, chat), sdkStart);
   const sdk = chat.slice(sdkStart);
-  assert.match(cli, /await setTurnStatus\(wsId, agentSlug, 'runner', RUNNERS\[runner\]\.name\);\s*const hb = keepTurnStatusFresh\(wsId, agentSlug, 'runner', RUNNERS\[runner\]\.name\);/, 'CLI: 시작 직후 하트비트');
+  // CLI: try 밖 let 선언 + try 첫 문장에서 시작(생성과 try 사이 throw로 인터벌이 영구 누수되지 않게 — 검수 2R LOW-5)
+  assert.match(cli, /await setTurnStatus\(wsId, agentSlug, 'runner', RUNNERS\[runner\]\.name\);[^\n]*\n\s*let hb = null;/, 'CLI: 상태 기록 직후 let 선언(try 밖)');
+  assert.match(cli, /try \{\s*hb = keepTurnStatusFresh\(wsId, agentSlug, 'runner', RUNNERS\[runner\]\.name\);/, 'CLI: try 첫 문장에서 하트비트 시작');
   assert.equal((cli.match(/clearTurnStatus\(wsId, agentSlug\)/g) ?? []).length, 2, 'CLI 분기 clear 2곳(전제 — 바뀌면 stop 짝도 갱신)');
-  assert.equal((cli.match(/await hb\.stop\(\);\s*await clearTurnStatus\(wsId, agentSlug\);/g) ?? []).length, 2, 'CLI: 모든 clear 직전에 stop');
-  assert.equal((cli.match(/return await chat\(/g) ?? []).length, 2, 'CLI 재귀 재시도 2곳(전제)');
-  assert.equal((cli.match(/await hb\.stop\(\);\s*return await chat\(/g) ?? []).length, 2, 'CLI: 재귀 재시도 직전 stop — 바깥 틱이 안쪽 턴의 clear 뒤 상태를 되살리지 않게');
-  assert.match(cli, /\} finally \{\s*await hb\.stop\(\);[^\n]*\n\s*abortReg\.release\(\);/, 'CLI finally: 탈출 경로 누수 방지(영구 거짓 링 방지)');
-  assert.match(chat.slice(0, sdkStart), /\n *let hb = null;/, 'SDK: try 밖 선언(catch/finally 가시성)');
-  assert.match(sdk, /^\s*hb = keepTurnStatusFresh\(wsId, agentSlug, 'boot'\);/m, 'SDK: boot 직후 하트비트');
-  assert.match(chat, /await setTurnStatus\(wsId, agentSlug, 'boot'\);[^\n]*\n\s*hb = keepTurnStatusFresh\(wsId, agentSlug, 'boot'\);/, 'SDK: boot 기록 바로 다음 줄');
+  assert.equal((cli.match(/await hb\?\.stop\(\);\s*await clearTurnStatus\(wsId, agentSlug\);/g) ?? []).length, 2, 'CLI: 모든 clear 직전에 stop');
+  // 재귀는 형태를 가리지 않고 센다 — `return await chat(`만 세다가 자가치유의 `const healed = await chat(`을 놓쳤다(검수 2R MEDIUM-1)
+  assert.equal((cli.match(/await chat\(/g) ?? []).length, 3, 'CLI 재귀(재시도 2 + 자가치유 1) 전제');
+  assert.equal((cli.match(/await hb\?\.stop\(\);[^\n]*\n\s*(?:return |const healed = )await chat\(/g) ?? []).length, 3, 'CLI: 모든 재귀 직전 stop — 바깥 틱이 안쪽 턴의 clear 뒤 상태를 되살리지 않게');
+  assert.match(cli, /\} finally \{\s*await hb\?\.stop\(\);[^\n]*\n\s*abortReg\.release\(\);/, 'CLI finally: 탈출 경로 누수 방지');
+  assert.match(chat.slice(0, sdkStart), /\n *let hb = null;[^\n]*\n[\s\S]*\n *let hb = null;/, 'let hb 선언은 두 분기 각각(try 밖)');
+  assert.match(chat, /await setTurnStatus\(wsId, agentSlug, 'boot'\);[^\n]*\n\s*hb = keepTurnStatusFresh\(wsId, agentSlug, 'boot'\);/, 'SDK: boot 기록 바로 다음 줄에서 시작');
   assert.equal((sdk.match(/clearTurnStatus\(wsId, agentSlug\)/g) ?? []).length, 2, 'SDK 분기 clear 2곳(전제)');
   assert.match(sdk, /await hb\?\.stop\(\);\s*await clearTurnStatus\(wsId, agentSlug\);/, 'SDK 실패 경로: clear 직전 stop');
-  assert.equal((sdk.match(/await hb\?\.stop\(\);\s*return await chat\(/g) ?? []).length, 2, 'SDK: 재귀 재시도 직전 stop');
+  assert.equal((sdk.match(/await chat\(/g) ?? []).length, 3, 'SDK 재귀(재시도 2 + 자가치유 1) 전제');
+  assert.equal((sdk.match(/await hb\?\.stop\(\);[^\n]*\n\s*(?:return |const healed = )await chat\(/g) ?? []).length, 3, 'SDK: 모든 재귀 직전 stop');
   assert.match(sdk, /\} finally \{\s*await hb\?\.stop\(\);[^\n]*\n\s*abortReg\?\.release\(\);\s*\}\s*await clearTurnStatus\(wsId, agentSlug\);/, 'SDK finally: stop 뒤에 성공 경로 clear');
   assert.equal((chat.match(/clearTurnStatus\(wsId, agentSlug\)/g) ?? []).length, 4, '새 clear 지점이 생기면 이 핀을 갱신하며 stop 짝을 붙인다');
 });
