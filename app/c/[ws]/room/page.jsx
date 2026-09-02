@@ -82,8 +82,6 @@ export default function Room({ params }) {
       .then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); setError(''); })
       .catch((e) => setError(String(e?.message || '') || t('room.loadFail')));
     api(`/api/companies/${ws}/agents`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
-    // '/' 커맨더 사용자 별칭 — 회사 단위 공유(company.json.aliases). 크루 채팅과 같은 light GET.
-    api(`/api/companies/${ws}?light=1`).then((d) => setAliases(d.company?.aliases ?? [])).catch(() => {});
   }
   // 회의 다시 열기 — 보관 회의를 현재 방으로 되돌린다. 진행 중 회의가 있으면 서버가 409로 거절하므로
   // 덮어쓰기가 원천 차단된다(실사용 요청 2026-07-26 "보관한 회의를 다시 열어 이어갈 수 없나요").
@@ -171,7 +169,7 @@ export default function Room({ params }) {
   async function send(e) {
     e.preventDefault();
     // 전송 버튼 경로에서도 '/' 커맨더 우선 — '/end' 같은 명령 토큰이 안건으로 방에 적립되지 않게(크루 채팅과 동일)
-    if (slashOpen) { runSlash(slashList[Math.min(slashIdx, slashList.length - 1)]); return; }
+    if (slashOpen) { runSlash(slashList[slashSel]); return; }
     const text = input.trim();
     if (!text || busy || uploading) return;
     const attachments = att;
@@ -217,35 +215,8 @@ export default function Room({ params }) {
     } catch (e2) { setError(String(e2.message)); }
   }
 
-  // @멘션 드롭업 — 입력 끝이 @word면 입력창 위로 후보 패널이 열린다(칩 가로 나열이 크루 수만큼
-  // 옆으로 흘러 지저분했다 — 유건 지시 2026-07-21: 드롭다운식 + 위로). @all이 항상 첫 후보.
-  const mention = input.match(/@(\S*)$/);
-  const mq = mention ? mention[1].toLowerCase() : '';
-  const suggests = mention
-    ? agents.filter((a) => !mq || a.name.toLowerCase().startsWith(mq) || a.slug.startsWith(mq)).slice(0, 12)
-    : [];
-  const suggestAll = !!mention && agents.length > 1 && (!mq || 'all'.startsWith(mq) || '전체'.startsWith(mention[1]));
-  const completeMention = (name) => setInput(input.replace(/@\S*$/, `@${name} `));
-  // 커맨더 토큰(`/…` 하나뿐인 입력) — 멘션 패널이 양보하는 기준. 두 패널은 같은 자리(bottom 100%)라 동시에 뜨지 않는다.
-  const slashTok = !viewing && SLASH_TOKEN_RE.test(input);
-  const mentionOpen = !!mention && !slashTok && (suggestAll || suggests.length > 0);
-  const mentionPanelRef = useRef(null);
+  // 컴포저 위 드롭업(멘션·'/' 커맨더)의 공통 기준 박스 — 입력바를 감싸는 relative 래퍼(측정형 클램프의 앵커).
   const mentionWrapRef = useRef(null);
-  const mentionNatW = useRef(0);
-  const [mentionClamp, setMentionClamp] = useState({ shift: 0, maxW: 0 });
-  useIsoLayoutEffect(() => {
-    if (!mentionOpen) { setMentionClamp({ shift: 0, maxW: 0 }); mentionNatW.current = 0; return; }
-    const measure = () => {
-      if (!mentionWrapRef.current || !mentionPanelRef.current) return;
-      if (!mentionNatW.current) mentionNatW.current = mentionPanelRef.current.offsetWidth;
-      setMentionClamp(dropUpClamp(mentionWrapRef.current.getBoundingClientRect(),
-        document.documentElement.clientWidth, mentionNatW.current));
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    window.addEventListener('argo:zoom', measure);
-    return () => { window.removeEventListener('resize', measure); window.removeEventListener('argo:zoom', measure); };
-  }, [mentionOpen]);
 
   // '/' 커맨더 — 크루 채팅(crew/[slug])의 커맨더를 회의실에도(유건 요청 2026-09-02, 회의실 개선 1/6).
   // 문법·후보 계산은 공유 매처(slash-match.mjs): 입력이 슬래시 토큰 하나일 때만 발동, ↑↓ 이동·Enter 실행.
@@ -253,22 +224,31 @@ export default function Room({ params }) {
   // 문장이라 서버는 손댈 것이 없다: 스킬 본문은 chat()이 출처 무관하게 매 턴 주입한다). 삽입 뒤 사장이 @이름·안건을
   // 덧붙여 보낸다. 별칭 등록·삭제는 크루 채팅 커맨더에서(회사 공용 목록이라 여기서도 그대로 보인다).
   const [aliases, setAliases] = useState([]);
-  const [skillCmds, setSkillCmds] = useState(null); // null = 아직 안 열어봄(첫 열림에 1회 로드)
+  const [skillCmds, setSkillCmds] = useState(null); // null = 아직 안 열어봄(첫 열림에 별칭·스킬을 1회 로드)
   const SLASH_CMDS = [
-    // 회의 마치기 — 헤더 버튼과 같은 노출 조건(빈 방·진행 중엔 후보에서 빠진다: 실행해도 안 되는 명령은 보이지 않게)
-    ...(!viewing && (messages?.length ?? 0) > 0 && !busy && !serverBusy ? [{ id: 'end', aliases: ['end', '마치기', '회의마치기'], label: t('room.end'), run: () => endMeeting() }] : []),
     { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(`/c/${ws}/vault`) },
     { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(`/c/${ws}`) },
+    // 회의 마치기 — 헤더 버튼과 같은 노출 조건(빈 방·진행 중엔 후보에서 빠진다: 실행해도 안 되는 명령은 보이지 않게).
+    // 맨 뒤에 두는 이유: `/` 직후 Enter의 기본 선택이 방을 비우는 명령이면 탐색 중 Enter 한 번에 회의가 마쳐진다
+    // (분리 검수 LOW-1 — 레일에서 되살릴 수는 있지만 처음 보는 제스처의 기본값으로는 부적합).
+    ...(!viewing && (messages?.length ?? 0) > 0 && !busy && !serverBusy ? [{ id: 'end', aliases: ['end', '마치기', '회의마치기'], label: t('room.end'), run: () => endMeeting() }] : []),
   ];
+  const slashTok = !viewing && SLASH_TOKEN_RE.test(input); // 토큰 존재(별칭·스킬 로드 트리거) — 후보 유무와 별개
   const slashList = viewing ? null : matchSlash(input, { builtins: SLASH_CMDS, aliases, skills: skillCmds ?? [], skillInsert: (s) => t('chat.cmd.skillPrefix', { name: s.title }) });
   const slashOpen = !!slashList?.length;
-  // 회사 스킬 — 커맨더를 처음 여는 순간 1회 로드(마켓 GET의 installedSkills 재사용). 실패해도 내장·별칭은 동작.
+  const [slashIdx, setSlashIdx] = useState(0);
+  useEffect(() => { setSlashIdx(0); }, [input]);
+  // 선택 항목은 한 곳에서만 계산 — 표시(aria-selected)와 실행(Enter·전송 버튼)이 항상 같은 항목을 가리킨다.
+  // 패널이 열린 채 후보가 줄 수 있다(8초 폴이 serverBusy를 켜면 /end가 빠진다): slashIdx가 범위를 벗어나면
+  // 표시는 비고 실행만 되는 어긋남이 생기므로(분리 검수 MEDIUM-1) 클램프한 값을 양쪽이 같이 쓴다.
+  const slashSel = slashOpen ? Math.min(slashIdx, slashList.length - 1) : 0;
+  // 회사 별칭·스킬 — 커맨더를 처음 여는 순간 1회 로드(크루 채팅과 같은 출처: company.aliases, 마켓 GET installedSkills).
+  // 방 진입마다 요청하지 않는다. 실패해도 내장 명령은 동작(스킬은 빈 목록으로 확정해 재시도 폭주를 막는다).
   useEffect(() => {
     if (!slashTok || skillCmds !== null) return;
     api(`/api/companies/${ws}/market`).then((d) => setSkillCmds(d.installedSkills ?? [])).catch(() => setSkillCmds([]));
+    api(`/api/companies/${ws}?light=1`).then((d) => setAliases(d.company?.aliases ?? [])).catch(() => {});
   }, [slashTok, skillCmds, ws]);
-  const [slashIdx, setSlashIdx] = useState(0);
-  useEffect(() => { setSlashIdx(0); }, [input]);
   function runSlash(cmd) {
     if (cmd.kind === 'builtin') { setInput(''); cmd.run(); }
     else setInput(cmd.insert); // 별칭·스킬 = 지시 텍스트 삽입(바로 전송하지 않는다 — 사장이 @이름·안건을 덧붙여 보냄)
@@ -291,6 +271,35 @@ export default function Room({ params }) {
     window.addEventListener('argo:zoom', measure);
     return () => { window.removeEventListener('resize', measure); window.removeEventListener('argo:zoom', measure); };
   }, [slashOpen]);
+
+  // @멘션 드롭업 — 입력 끝이 @word면 입력창 위로 후보 패널이 열린다(칩 가로 나열이 크루 수만큼
+  // 옆으로 흘러 지저분했다 — 유건 지시 2026-07-21: 드롭다운식 + 위로). @all이 항상 첫 후보.
+  const mention = input.match(/@(\S*)$/);
+  const mq = mention ? mention[1].toLowerCase() : '';
+  const suggests = mention
+    ? agents.filter((a) => !mq || a.name.toLowerCase().startsWith(mq) || a.slug.startsWith(mq)).slice(0, 12)
+    : [];
+  const suggestAll = !!mention && agents.length > 1 && (!mq || 'all'.startsWith(mq) || '전체'.startsWith(mention[1]));
+  const completeMention = (name) => setInput(input.replace(/@\S*$/, `@${name} `));
+  // 커맨더가 떠 있으면 멘션 패널은 양보한다(같은 자리 bottom 100%). 기준은 후보 유무(slashOpen) — `/@이름`처럼 커맨더
+  // 후보가 없는 입력은 종전대로 멘션 완성이 된다(분리 검수 LOW-2). slashOpen ⟹ 슬래시 토큰이라 둘이 동시에 뜨지 않는다.
+  const mentionOpen = !!mention && !slashOpen && (suggestAll || suggests.length > 0);
+  const mentionPanelRef = useRef(null);
+  const mentionNatW = useRef(0);
+  const [mentionClamp, setMentionClamp] = useState({ shift: 0, maxW: 0 });
+  useIsoLayoutEffect(() => {
+    if (!mentionOpen) { setMentionClamp({ shift: 0, maxW: 0 }); mentionNatW.current = 0; return; }
+    const measure = () => {
+      if (!mentionWrapRef.current || !mentionPanelRef.current) return;
+      if (!mentionNatW.current) mentionNatW.current = mentionPanelRef.current.offsetWidth;
+      setMentionClamp(dropUpClamp(mentionWrapRef.current.getBoundingClientRect(),
+        document.documentElement.clientWidth, mentionNatW.current));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('argo:zoom', measure);
+    return () => { window.removeEventListener('resize', measure); window.removeEventListener('argo:zoom', measure); };
+  }, [mentionOpen]);
 
   const shown = viewing ? archMsgs : messages;
 
@@ -501,10 +510,10 @@ export default function Room({ params }) {
                 }}>
                   <div className="microlabel" style={{ padding: '4px 8px 2px' }}>{t('chat.commands')}</div>
                   {slashList.map((c, i) => (
-                    <button key={c.key} type="button" role="option" aria-selected={i === slashIdx}
+                    <button key={c.key} type="button" role="option" aria-selected={i === slashSel}
                       onClick={() => runSlash(c)} onMouseEnter={() => setSlashIdx(i)}
                       style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
-                        background: i === slashIdx ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7,
+                        background: i === slashSel ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7,
                         cursor: 'pointer', padding: '6px 8px', fontSize: 12.5, color: 'var(--fg)' }}>
                       <span className="mono" style={{ flex: 'none', fontWeight: 650 }}>/{c.cmd}</span>
                       <span style={{ minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-3)', fontSize: 11.5 }}>{c.desc}</span>
@@ -547,13 +556,13 @@ export default function Room({ params }) {
                     // '/' 커맨더가 떠 있으면 ↑↓ = 항목 순환 이동(커서 이동 아님)
                     if (slashOpen && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
                       e.preventDefault();
-                      setSlashIdx((i) => (e.key === 'ArrowDown' ? (i + 1) % slashList.length : (i - 1 + slashList.length) % slashList.length));
+                      setSlashIdx(e.key === 'ArrowDown' ? (slashSel + 1) % slashList.length : (slashSel - 1 + slashList.length) % slashList.length);
                       return;
                     }
                     if (e.key !== 'Enter' || e.shiftKey) return; // Shift+Enter = 줄바꿈(textarea 기본)
                     e.preventDefault();
                     // 커맨더가 떠 있으면 Enter = 선택 항목 실행(명령은 방에 전송되지 않는다)
-                    if (slashOpen) { runSlash(slashList[Math.min(slashIdx, slashList.length - 1)]); return; }
+                    if (slashOpen) { runSlash(slashList[slashSel]); return; }
                     // 멘션 패널이 열려 있으면 Enter = 첫 후보 완성(전송 아님)
                     if (mentionOpen) { completeMention(suggestAll ? 'all' : suggests[0].name); return; }
                     e.currentTarget.form?.requestSubmit(); // Enter = 전송

@@ -63,12 +63,13 @@ test('회의실: 공유 매처·내장 명령·별칭/스킬 출처가 배선돼
   assert.match(src, /const slashTok = !viewing && SLASH_TOKEN_RE\.test\(input\);/, '토큰 판정(멘션 양보 기준)');
   assert.match(src, /const slashOpen = !!slashList\?\.length;/, '패널 열림 = 후보 1개 이상');
   // 내장 명령 — 회의 마치기(버튼과 같은 노출 조건), 기억·데크 이동(크루 커맨더와 같은 별칭)
-  assert.match(src, /const SLASH_CMDS = \[\s*\.\.\.\(!viewing && \(messages\?\.length \?\? 0\) > 0 && !busy && !serverBusy \? \[\{ id: 'end', aliases: \['end', '마치기', '회의마치기'\], label: t\('room\.end'\), run: \(\) => endMeeting\(\) \}\] : \[\]\),\s*\{ id: 'memory', aliases: \['memory', '기억', 'vault'\], label: t\('nav\.memory'\), run: \(\) => router\.push\(`\/c\/\$\{ws\}\/vault`\) \},\s*\{ id: 'deck', aliases: \['deck', '데크', 'home'\], label: t\('nav\.deck'\), run: \(\) => router\.push\(`\/c\/\$\{ws\}`\) \},\s*\];/,
-    '내장 명령 목록(회의 마치기는 버튼 노출 조건과 동일 — 빈 방·진행 중엔 후보에서 빠진다)');
+  assert.match(src, /const SLASH_CMDS = \[\s*\{ id: 'memory', aliases: \['memory', '기억', 'vault'\], label: t\('nav\.memory'\), run: \(\) => router\.push\(`\/c\/\$\{ws\}\/vault`\) \},\s*\{ id: 'deck', aliases: \['deck', '데크', 'home'\], label: t\('nav\.deck'\), run: \(\) => router\.push\(`\/c\/\$\{ws\}`\) \},\s*\.\.\.\(!viewing && \(messages\?\.length \?\? 0\) > 0 && !busy && !serverBusy \? \[\{ id: 'end', aliases: \['end', '마치기', '회의마치기'\], label: t\('room\.end'\), run: \(\) => endMeeting\(\) \}\] : \[\]\),\s*\];/,
+    '내장 명령 목록 — 회의 마치기는 버튼 노출 조건과 동일(빈 방·진행 중엔 후보에서 빠진다)하고 맨 뒤(`/` 직후 Enter의 기본 선택이 방을 비우는 명령이 아니게 — 검수 LOW-1)');
+  assert.match(src, /const slashSel = slashOpen \? Math\.min\(slashIdx, slashList\.length - 1\) : 0;/, '선택 항목 단일 계산 — 표시·실행이 같은 항목(후보가 줄어도 어긋나지 않게 — 검수 MEDIUM-1)');
   // 출처 — 별칭은 회사 정본(company.json.aliases), 스킬은 마켓 GET의 installedSkills(크루 커맨더와 같은 계약)
-  assert.match(src, /api\(`\/api\/companies\/\$\{ws\}\?light=1`\)\.then\(\(d\) => setAliases\(d\.company\?\.aliases \?\? \[\]\)\)\.catch\(\(\) => \{\}\);/, '별칭 출처');
-  assert.match(src, /useEffect\(\(\) => \{\s*if \(!slashTok \|\| skillCmds !== null\) return;\s*api\(`\/api\/companies\/\$\{ws\}\/market`\)\.then\(\(d\) => setSkillCmds\(d\.installedSkills \?\? \[\]\)\)\.catch\(\(\) => setSkillCmds\(\[\]\)\);\s*\}, \[slashTok, skillCmds, ws\]\);/,
-    '스킬 출처 — 커맨더를 처음 여는 순간 1회 로드, 실패는 빈 목록(내장·별칭은 계속 동작)');
+  assert.match(src, /useEffect\(\(\) => \{\s*if \(!slashTok \|\| skillCmds !== null\) return;\s*api\(`\/api\/companies\/\$\{ws\}\/market`\)\.then\(\(d\) => setSkillCmds\(d\.installedSkills \?\? \[\]\)\)\.catch\(\(\) => setSkillCmds\(\[\]\)\);\s*api\(`\/api\/companies\/\$\{ws\}\?light=1`\)\.then\(\(d\) => setAliases\(d\.company\?\.aliases \?\? \[\]\)\)\.catch\(\(\) => \{\}\);\s*\}, \[slashTok, skillCmds, ws\]\);/,
+    '별칭·스킬 출처 — 커맨더를 처음 여는 순간 한 이펙트에서 1회 로드(문장 위치까지 앵커: 죽은 분기로 감싸면 red — 검수 LOW-3). 스킬 실패는 빈 목록(내장은 계속 동작)');
+  assert.equal((src.match(/\?light=1/g) ?? []).length, 1, '별칭 GET은 커맨더 로드 1곳뿐 — 방 진입마다 요청하지 않는다(검수 LOW-6)');
 });
 
 test('회의실: 키 처리 순서 — ↑↓=항목 이동, Enter=선택 실행이 멘션 완성·전송보다 먼저, 전송 버튼 경로도 가로챈다', async () => {
@@ -77,21 +78,22 @@ test('회의실: 키 처리 순서 — ↑↓=항목 이동, Enter=선택 실행
   assert.ok(k0 > 0, 'imeGuardWith 핸들러');
   const keyFn = src.slice(k0, src.indexOf('})}', k0));
   // ↑↓ — 커맨더가 떠 있을 때만 가로챈다(아니면 textarea 기본 커서 이동)
-  assert.match(keyFn, /if \(slashOpen && \(e\.key === 'ArrowUp' \|\| e\.key === 'ArrowDown'\)\) \{\s*e\.preventDefault\(\);\s*setSlashIdx\(\(i\) => \(e\.key === 'ArrowDown' \? \(i \+ 1\) % slashList\.length : \(i - 1 \+ slashList\.length\) % slashList\.length\)\);\s*return;\s*\}/, '↑↓ 순환 이동');
+  assert.match(keyFn, /if \(slashOpen && \(e\.key === 'ArrowUp' \|\| e\.key === 'ArrowDown'\)\) \{\s*e\.preventDefault\(\);\s*setSlashIdx\(e\.key === 'ArrowDown' \? \(slashSel \+ 1\) % slashList\.length : \(slashSel - 1 \+ slashList\.length\) % slashList\.length\);\s*return;\s*\}/, '↑↓ 순환 이동(클램프된 선택 기준)');
   // 인접 행동 보존 — Shift+Enter 줄바꿈, IME는 imeGuardWith가 앞에서 막는다(기존)
   assert.match(keyFn, /if \(e\.key !== 'Enter' \|\| e\.shiftKey\) return;\s*e\.preventDefault\(\);/, 'Shift+Enter 줄바꿈 보존');
   const enter = keyFn.slice(keyFn.indexOf("if (e.key !== 'Enter'"));
-  const iSlash = enter.indexOf('if (slashOpen) { runSlash(slashList[Math.min(slashIdx, slashList.length - 1)]); return; }');
+  const iSlash = enter.indexOf('if (slashOpen) { runSlash(slashList[slashSel]); return; }');
   const iMention = enter.indexOf("if (mentionOpen) { completeMention(suggestAll ? 'all' : suggests[0].name); return; }");
   const iSubmit = enter.indexOf('e.currentTarget.form?.requestSubmit();');
   assert.ok(iSlash > 0 && iMention > iSlash && iSubmit > iMention, `Enter 우선순위: 커맨더(${iSlash}) → 멘션 완성(${iMention}) → 전송(${iSubmit})`);
   // 전송 버튼(onSubmit) 경로 — '/end' 같은 명령 토큰이 안건으로 나가지 않게, 비어있음·busy 검사보다 먼저
   const s0 = src.indexOf('async function send(e)');
   const sendFn = src.slice(s0, src.indexOf('async function endMeeting', s0));
-  assert.match(sendFn, /e\.preventDefault\(\);\s*if \(slashOpen\) \{ runSlash\(slashList\[Math\.min\(slashIdx, slashList\.length - 1\)\]\); return; \}\s*const text = input\.trim\(\);\s*if \(!text \|\| busy \|\| uploading\) return;/,
+  assert.match(sendFn, /e\.preventDefault\(\);\s*if \(slashOpen\) \{ runSlash\(slashList\[slashSel\]\); return; \}\s*const text = input\.trim\(\);\s*if \(!text \|\| busy \|\| uploading\) return;/,
     '전송 가로채기 → 기존 빈 값·busy·uploading 게이트 보존');
   // 멘션 패널은 슬래시 토큰에 양보 — 같은 자리(bottom 100%)라 동시에 뜨지 않는다
-  assert.match(src, /const mentionOpen = !!mention && !slashTok && \(suggestAll \|\| suggests\.length > 0\);/, '멘션 양보');
+  assert.match(src, /const mentionOpen = !!mention && !slashOpen && \(suggestAll \|\| suggests\.length > 0\);/, '멘션 양보 — 기준은 후보 유무(`/@이름`처럼 후보 없는 입력은 멘션 완성 유지, 검수 LOW-2)');
+  assert.match(src, /const slashTok = !viewing && SLASH_TOKEN_RE\.test\(input\);[\s\S]*?const slashList = [\s\S]*?const slashOpen = !!slashList\?\.length;[\s\S]*?const mentionOpen = /, '선언 순서: slashOpen이 mentionOpen보다 먼저(렌더 중 TDZ 없음)');
   // 실행 — 내장은 입력을 비우고 실행, 별칭·스킬은 지시 텍스트 삽입(바로 전송하지 않는다 — 사장이 @이름·안건을 덧붙인다)
   assert.match(src, /function runSlash\(cmd\) \{\s*if \(cmd\.kind === 'builtin'\) \{ setInput\(''\); cmd\.run\(\); \}\s*else setInput\(cmd\.insert\);\s*composerRef\.current\?\.focus\(\);\s*\}/, 'runSlash 의미');
   assert.match(src, /useEffect\(\(\) => \{ setSlashIdx\(0\); \}, \[input\]\);/, '입력이 바뀌면 선택 위치 초기화');
@@ -112,7 +114,7 @@ test('회의실: 커맨더 패널 — 멘션 패널 뒤 같은 기준 박스, �
   assert.match(panel, /<div ref=\{slashPanelRef\} className="card card-float" role="listbox" style=\{\{\s*position: 'absolute', bottom: 'calc\(100% \+ 6px\)', left: slashClamp\.shift, zIndex: 40,\s*minWidth: slashClamp\.maxW \? Math\.min\(320, slashClamp\.maxW\) : 320,\s*maxWidth: slashClamp\.maxW \? Math\.min\(slashClamp\.maxW, 480\) : undefined, maxHeight: 320, overflowY: 'auto', padding: 6,/,
     '패널 클램프 적용(첫 렌더 무제한 + 측정 후 양쪽 상한)');
   assert.match(panel, /\{t\('chat\.commands'\)\}/, '헤더 라벨(크루 커맨더와 같은 사전 키)');
-  assert.match(panel, /\{slashList\.map\(\(c, i\) => \(\s*<button key=\{c\.key\} type="button" role="option" aria-selected=\{i === slashIdx\}\s*onClick=\{\(\) => runSlash\(c\)\} onMouseEnter=\{\(\) => setSlashIdx\(i\)\}/, '항목 = 클릭 실행·호버 선택·aria-selected');
+  assert.match(panel, /\{slashList\.map\(\(c, i\) => \(\s*<button key=\{c\.key\} type="button" role="option" aria-selected=\{i === slashSel\}\s*onClick=\{\(\) => runSlash\(c\)\} onMouseEnter=\{\(\) => setSlashIdx\(i\)\}/, '항목 = 클릭 실행·호버 선택·aria-selected');
   assert.match(panel, /\{c\.kind === 'skill' \? t\('chat\.cmd\.skills'\) : t\('chat\.cmd\.aliases'\)\}/, '종류 배지(스킬/별칭)');
   assert.match(panel, /<span className="mono" style=\{\{ flex: 'none', fontWeight: 650 \}\}>\/\{c\.cmd\}<\/span>/, '명령 표시');
 });
@@ -135,6 +137,7 @@ test('chat(): 회사 스킬 주입(loadSkills)은 source 분기 앞에서 1회 �
   assert.ok(iLoad > 0, 'loadSkills 호출');
   assert.equal((body.match(/await loadSkills\(/g) ?? []).length, 1, 'chat() 안의 loadSkills 호출은 1곳');
   assert.doesNotMatch(body.slice(0, iLoad), /source === '|source !== '/, 'loadSkills 앞에 source 값 분기 없음(예산 차단 조기 반환만)');
+  assert.doesNotMatch(body.slice(0, iLoad), /if\s*\([^)]*\bsource\b/, 'loadSkills 앞에 source를 조건으로 삼는 if 없음(등가 비교 외 형태 — 검수 LOW-4)');
   // 두 러너 경로 모두 같은 skills를 시스템 프롬프트에 싣는다
   assert.match(body, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\)/, 'SDK 경로');
   assert.match(body, /systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false/, 'CLI 경로');
