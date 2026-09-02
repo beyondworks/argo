@@ -375,9 +375,10 @@ export default function Room({ params }) {
                 </div>
               ) : (
                 <div key={i} style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
-                  {/* 발언자 아바타·이름 = '옆에 열기' 진입로 — canOpenSide일 때만 버튼(.room-speaker), 아니면 종전 평문 */}
+                  {/* 발언자 아바타·이름 = '옆에 열기' 진입로 — canOpenSide일 때만 버튼(.room-speaker), 아니면 종전 평문.
+                      아바타는 이름 버튼과 같은 동작이라 탭 순서에서 뺀다(tabIndex −1) — 발언마다 정지점 둘은 키보드 중복(검수 F) */}
                   {canOpenSide(m.who) ? (
-                    <button type="button" className="room-speaker" onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })} aria-label={t('room.openSide', { name: nameOf(m.who) })}>
+                    <button type="button" className="room-speaker" tabIndex={-1} onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })} aria-label={t('room.openSide', { name: nameOf(m.who) })}>
                       <Avatar name={nameOf(m.who)} />
                     </button>
                   ) : <Avatar name={nameOf(m.who)} />}

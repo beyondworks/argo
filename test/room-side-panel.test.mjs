@@ -3,7 +3,7 @@
 // 실측(2026-09-02, 격리 :3117 · 인앱 브라우저 resize_window): 배율 2 × 1280(유효 640 CSS px)·1424(712)에서
 // ?side=crew:를 열면 패널 480이 그대로 들어와 본문 열 0px·문서 가로 넘침 280px(1544 > 1264). 뿌리는 CSS
 // @media(max-width:899px)가 **실뷰포트**만 보는 것 — 배율 축은 순수 판정 splitAliveAt(zoom-math)로 옮기고,
-// 소비자 셋(SplitPane 렌더·크루 채팅 진입로·회의실 진입로)이 한 훅(useSplitAlive)만 쓰게 잠근다.
+// 소비자(SplitPane 렌더·크루 슬롯/밴드·회의실·사이드바 크루 행·기억 문서 행 진입로)가 한 훅(useSplitAlive)만 쓰게 잠근다.
 // 배율 1 × 920(패널 480): 본문 212 → 그리드 148 → 레일 0·본문 열 130 압살 → 패널 양보 클램프(100% − 308).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,8 +55,12 @@ test('단일 축 스위프 — 사망 질의 리터럴은 zoom-math 상수 한 �
   const mm = files.filter((f) => strip(read(join('app', f))).includes('matchMedia(')).map((f) => f.split('\\').join('/'));
   assert.deepEqual(mm, ['c/[ws]/split-alive.jsx'], 'matchMedia 호출은 공용 훅 밖에 있으면 안 된다');
   const users = files.filter((f) => strip(read(join('app', f))).includes('useSplitAlive(')).map((f) => f.split('\\').join('/')).sort();
-  assert.deepEqual(users, ['c/[ws]/crew/[slug]/page.jsx', 'c/[ws]/layout.jsx', 'c/[ws]/room/page.jsx', 'c/[ws]/split-alive.jsx', 'c/[ws]/split-pane.jsx'],
-    '소비자 = SplitPane(렌더)·크루(진입로 2곳)·회의실(진입로)·레이아웃(크루 행 진입로 2곳) 정확히 넷 — 하나가 빠지면 그 표면만 축이 갈라진다');
+  assert.deepEqual(users, ['c/[ws]/crew/[slug]/page.jsx', 'c/[ws]/layout.jsx', 'c/[ws]/room/page.jsx', 'c/[ws]/split-alive.jsx', 'c/[ws]/split-pane.jsx', 'c/[ws]/vault/page.jsx'],
+    '소비자 = SplitPane(렌더)·크루(진입로 2곳)·회의실·레이아웃(크루 행 2곳)·기억(문서 행) 정확히 다섯 — 하나가 빠지면 그 표면만 축이 갈라진다');
+  // ?side=를 세우는 호출부 전수(sideParam 호출) = 훅 소비자 집합과 일치해야 한다 — 새 진입로가 게이트 없이 생기면 red
+  // 호출 형태를 가리지 않는다 — 레이아웃은 sideParam(spec)으로 부른다(리터럴 인자만 보면 그 파일이 스위프에서 빠진다)
+  const setters = files.filter((f) => !f.includes('split') && /\bsideParam\(/.test(strip(read(join('app', f))))).map((f) => f.split('\\').join('/')).sort();
+  assert.deepEqual(setters, users.filter((f) => !f.includes('split-')), 'sideParam 호출 파일 = useSplitAlive 소비자(훅·패널 파일 제외) — 게이트 없는 진입로 파일');
 });
 
 // ── 훅 배선 ──
@@ -87,6 +91,13 @@ test('크루 채팅 — 자체 판정 없이 공용 훅, 진입로(슬롯·밴�
   assert.equal(uses.length, 2, '진입로 2곳(슬롯·밴드) — 늘거나 줄면 계약 변경');
   for (const i of uses) assert.match(crew.slice(Math.max(0, i - 60), i), /splitAlive && \(\s*$/, `crew:${i} — 진입로 앞에 splitAlive 게이트`);
 });
+test('기억 페이지 — 문서 행 \'옆에 열기\'(row-side)도 같은 훅으로 게이트(분리 검수 #396 표면 C)', () => {
+  const vault = strip(read('app/c/[ws]/vault/page.jsx'));
+  assert.match(vault, /import \{ useSplitAlive \} from '\.\.\/split-alive';/);
+  assert.match(vault, /const splitAlive = useSplitAlive\(\);\s*\n\s*const sideOpen = splitAlive \? \(rel\) => router\.replace\(withSide\(`\$\{window\.location\.pathname\}\$\{window\.location\.search\}`, sideParam\(\{ type: 'doc', key: rel \}\)\)\) : null;/,
+    '죽은 축이면 진입로 함수 자체가 null');
+  assert.match(vault, /\{onSide && \(\s*\n\s*<button type="button" className="row-side"/, '행 버튼은 onSide가 있을 때만 렌더(안 될 버튼 노출 금지)');
+});
 test('레이아웃 — 사이드바 크루 행 진입로(hover 버튼·cmd+클릭)도 같은 훅으로 게이트', () => {
   const layout = strip(read('app/c/[ws]/layout.jsx'));
   assert.match(layout, /import \{ useSplitAlive \} from '\.\/split-alive';/);
@@ -110,7 +121,7 @@ test('회의실 — 발언자 아바타·이름이 canOpenSide(패널 삶 + 크�
   assert.match(room, /const canOpenSide = \(slug\) => splitAlive && agents\.some\(\(a\) => a\.slug === slug\);/);
   // 아바타 갈래(여는 태그 전체 앵커 — 낱개 프로퍼티 앵커는 형제 행이 대신 만족시킨다)
   assert.match(room,
-    /<div key=\{i\} style=\{\{ display: 'flex', gap: 10, maxWidth: '86%' \}\}>\s*\n\s*(?:\{\s*\}\s*\n\s*)?\{canOpenSide\(m\.who\) \? \(\s*\n\s*<button type="button" className="room-speaker" onClick=\{\(\) => openSide\(m\.who\)\} title=\{t\('room\.openSide', \{ name: nameOf\(m\.who\) \}\)\} aria-label=\{t\('room\.openSide', \{ name: nameOf\(m\.who\) \}\)\}>\s*\n\s*<Avatar name=\{nameOf\(m\.who\)\} \/>\s*\n\s*<\/button>\s*\n\s*\) : <Avatar name=\{nameOf\(m\.who\)\} \/>\}/,
+    /<div key=\{i\} style=\{\{ display: 'flex', gap: 10, maxWidth: '86%' \}\}>\s*\n\s*(?:\{\s*\}\s*\n\s*)?\{canOpenSide\(m\.who\) \? \(\s*\n\s*<button type="button" className="room-speaker" tabIndex=\{-1\} onClick=\{\(\) => openSide\(m\.who\)\} title=\{t\('room\.openSide', \{ name: nameOf\(m\.who\) \}\)\} aria-label=\{t\('room\.openSide', \{ name: nameOf\(m\.who\) \}\)\}>\s*\n\s*<Avatar name=\{nameOf\(m\.who\)\} \/>\s*\n\s*<\/button>\s*\n\s*\) : <Avatar name=\{nameOf\(m\.who\)\} \/>\}/,
     '아바타 진입로 — 게이트·핸들러·평문 폴백 세트');
   // 이름 갈래
   assert.match(room,

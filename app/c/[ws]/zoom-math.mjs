@@ -14,7 +14,7 @@ export const clampPaneW = (w) => Math.max(PANE_W_MIN, Math.min(Math.round(window
     min-width:900으로 쓰면 소수점 뷰포트(899.4 — 윈도우 OS 배율 150%·페이지 줌)에서 CSS·JS 둘 다 거짓이 되는
     1px 사각이 생긴다(#356 2R LOW-1) — max-width:899의 부정이어야 경계가 원천적으로 못 갈라진다. */
 export const SPLIT_DEAD_MQ = '(max-width: 899px)';
-/** 분할 패널 가용 판정(순수 — 소비자: SplitPane 렌더·크루 채팅 진입로·회의실 진입로·사이드바 크루 행 진입로가 useSplitAlive로 공유).
+/** 분할 패널 가용 판정(순수 — 소비자: SplitPane 렌더·크루 채팅·회의실·사이드바 크루 행·기억 문서 행 진입로가 useSplitAlive로 공유).
     mqDead = matchMedia(SPLIT_DEAD_MQ).matches, z = 표시 배율.
     ① 실뷰포트 축: mqDead면 죽음(CSS가 이미 숨긴다 — 죽은 패널로 보내는 진입로는 무언 실패).
     ② 표시 배율 축: 미디어쿼리는 실뷰포트만 보므로 배율 2 × 1280(유효 640 CSS px)에서 패널이 살아남아
