@@ -33,8 +33,10 @@ async function seed(ws) {
 }
 const statusPath = (ws, slug) => join(paths(ws).chats, `${slug}.status.json`);
 const backdate = async (ws, slug, ageMs) => {
+  // 원자 교체(tmp+rename) — 진행 중 하트비트의 읽기와 겹쳐도 빈 파일을 보이지 않는다(윈도우 CI 실사고)
   const f = statusPath(ws, slug); const s = JSON.parse(await readFile(f, 'utf8'));
-  await writeFile(f, JSON.stringify({ ...s, ts: Date.now() - ageMs }));
+  const tmp = `${f}.${process.pid}.tmp`; await writeFile(tmp, JSON.stringify({ ...s, ts: Date.now() - ageMs }));
+  await (await import('node:fs/promises')).rename(tmp, f);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -52,8 +54,8 @@ test('withRoomTurnStatus: 턴 동안 마커가 살아 있고, 끝나면(성공·
 test('withRoomTurnStatus: 하트비트가 마커를 주기 갱신하고 발언자를 보존한다 — 이벤트 없는 긴 단계에서도 표시 유지', async () => {
   const ws = 'rs-hb'; await seed(ws);
   let inside = null;
-  await withRoomTurnStatus(ws, async () => {
-    await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper'); // 발언자 갱신(루프가 하는 일)
+  await withRoomTurnStatus(ws, async (mark) => {
+    await mark('pepper'); // 발언자 갱신(루프가 하는 일) — 래퍼의 mark만이 하트비트와 값을 공유한다
     await backdate(ws, ROOM_TURN_SLUG, 100_000);               // 100초 전 — 아직 2분 창 안(하트비트가 읽을 수 있게)
     await sleep(180);                                          // 하트비트 40ms × 여러 회
     inside = await getTurnStatus(ws, ROOM_TURN_SLUG);
@@ -62,6 +64,25 @@ test('withRoomTurnStatus: 하트비트가 마커를 주기 갱신하고 발언�
   const raw = JSON.parse(await readFile(statusPath(ws, ROOM_TURN_SLUG), 'utf8').catch(() => 'null'));
   assert.equal(raw, null, '종료 후 마커 소멸');
   assert.equal(inside.detail, 'pepper', '하트비트가 발언자(detail)를 지우면 표시의 발언자 정보가 사라진다');
+});
+
+test('하트비트는 파일을 다시 읽지 않는다 — 인계 직후 틱이 옛 발언자를 되살리지 않는다(검수 LOW-1·윈도우 빈 읽기 실사고)', async () => {
+  const ws = 'rs-hb-mem'; await seed(ws);
+  let stale = 0;
+  await withRoomTurnStatus(ws, async (mark) => {
+    for (let i = 0; i < 60; i++) {
+      await mark('a|b'); await mark('b|');
+      await sleep(2);
+      if ((await getTurnStatus(ws, ROOM_TURN_SLUG))?.detail !== 'b|') stale += 1;
+    }
+  }, { heartbeatMs: 1 });
+  assert.equal(stale, 0, `인계 뒤 옛 발언자 부활 ${stale}/60 — 하트비트가 파일을 읽어 되쓰면 생긴다`);
+  const src = stripComments(await readFile(new URL('../src/room.mjs', import.meta.url), 'utf8'));
+  const wrap = src.slice(src.indexOf('export async function withRoomTurnStatus('), src.indexOf('export async function getRoomTurn'));
+  assert.doesNotMatch(wrap, /getTurnStatus\(/, '래퍼(하트비트)에 파일 읽기 금지');
+  assert.match(wrap, /const write = \(\) => setTurnStatus\(wsId, ROOM_TURN_SLUG, 'room', ROOM_MARK\.get\(wsId\) \?\? ''\);/, '실행 시점 메모리 값을 쓴다');
+  assert.match(wrap, /const mark = async \(detail\) => \{ ROOM_MARK\.set\(wsId, detail\); tick = tick\.then\(write\)/, 'mark도 같은 체인 — 따로 쓰면 오래된 스냅샷이 나중에 착지한다');
+  assert.match(wrap, /const beat = \(\) => \(alive \? write\(\) : undefined\);/, '하트비트 = 같은 write');
 });
 
 test('해제 경합: 진행 중 틱이 해제 뒤 마커를 되살리지 않는다(heartbeatMs 1 × 40회 — 검수 HIGH-1 비플레이키 핀)', async () => {
@@ -213,18 +234,19 @@ test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전
   // 불변식: runRoomTurn 본문은 withRoomTurnStatus 호출 하나이고, 실제 턴(runRoomTurnInner)은 그 안에서만 불린다.
   // (#392에서 saved 표식 래퍼가 안쪽에 들어와 한 줄 형태가 아니게 됐다 — 구간으로 잠근다)
   const rt = src.slice(src.indexOf('export async function runRoomTurn('), src.indexOf('async function runRoomTurnInner('));
-  assert.match(rt, /export async function runRoomTurn\(wsId, text, attachments = \[\]\) \{\s*\n\s*return withRoomTurnStatus\(wsId, async \(\) => \{/,
+  assert.match(rt, /export async function runRoomTurn\(wsId, text, attachments = \[\]\) \{\s*\n\s*return withRoomTurnStatus\(wsId, async \(mark\) => \{/,
     '래퍼를 우회하면 마커가 안 생겨 복원이 죽는다');
-  assert.match(rt, /return await runRoomTurnInner\(wsId, text, attachments, state\);/, '실제 턴은 래퍼 안에서만');
+  assert.match(rt, /return await runRoomTurnInner\(wsId, text, attachments, state, mark\);/, '실제 턴은 래퍼 안에서만, 발언자 갱신은 래퍼의 mark로');
   assert.equal((src.match(/(?<!function )runRoomTurnInner\(wsId, text, attachments/g) ?? []).length, 1, '래퍼 밖 직접 호출 금지(정의부 제외)');
   const i0 = src.indexOf('for (const [i, a] of speakers.entries())');
   const loop = src.slice(i0, src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
   assert.match(src, /const markerFor = \(j\) => \(speakers\[j\] \? `\$\{speakers\[j\]\.slug\}\|\$\{speakers\.slice\(j \+ 1\)\.map\(\(s\) => s\.slug\)\.join\(','\)\}` : ''\);/,
     "마커 인코딩 '발언자|다음1,다음2' — getRoomTurn의 해석과 짝");
-  assert.match(loop, /setTurnStatus\(wsId, ROOM_TURN_SLUG, 'room', markerFor\(i\)\)/, '발언자|다음 순서 갱신이 chat() 앞에 있어야 발언자 표시·발언 큐의 앵커가 된다');
+  assert.match(loop, /await mark\(markerFor\(i\)\)/, '발언자|다음 순서 갱신이 chat() 앞에 있어야 발언자 표시·발언 큐의 앵커가 된다');
+  assert.doesNotMatch(src.slice(src.indexOf('async function runRoomTurnInner(')), /setTurnStatus\(wsId, ROOM_TURN_SLUG/, '루프의 마커 직접 쓰기 금지 — 하트비트가 덮는다');
   // 발언 종료 즉시 다음 발언자로 — 없으면 답변 적재~다음 프롬프트 조립 사이에 "옛 발언자 · 시동 거는 중"이 샌다(격리 실측 shot-1)
   const afterChat = src.slice(src.indexOf('r = await chat(wsId, a.slug, prompt', i0), src.indexOf('} catch (e) {', i0));
-  assert.match(afterChat, /r = await chat\([^\n]*\);\s*\n\s*await setTurnStatus\(wsId, ROOM_TURN_SLUG, 'room', markerFor\(i \+ 1\)\);/, 'chat() 반환 직후 마커 인계(마지막이면 빈 값)');
+  assert.match(afterChat, /r = await chat\([^\n]*\);\s*\n\s*await mark\(markerFor\(i \+ 1\)\);/, 'chat() 반환 직후 마커 인계(마지막이면 빈 값)');
   // 발언 실패가 방에 남는가 — 오류는 POST 탭으로만 가므로 자리를 비운 사장에게 방은 그냥 조용하다(격리 실측: 401 뒤 흔적 0)
   const after = src.slice(src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
   const catchBlk = after.slice(after.indexOf('} catch (e) {'), after.indexOf('} finally {'));
