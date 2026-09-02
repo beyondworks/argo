@@ -13,7 +13,7 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-room-speakers-'));
 delete process.env.NEXT_PUBLIC_SUPABASE_URL; delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY; // AUTH off(apimsg 관례)
 register(new URL('./helpers/room-chat-stub.mjs', import.meta.url));
 const stub = await import('./helpers/room-chat-stub.mjs');
-const { runRoomTurn, loadRoom } = await import('../src/room.mjs');
+const { runRoomTurn, loadRoom, endMeeting, HOP_MAX } = await import('../src/room.mjs');
 const { paths } = await import('../src/workspace.mjs');
 const { listAgents } = await import('../src/hub.mjs');
 
@@ -70,6 +70,55 @@ test('이미지 임베드 캡 — 이름 멘션 4명째부터는 경로 노트(i
   const flags = stub.state.calls.map((c) => c.opts.attachments.map((a) => a.isImage));
   assert.deepEqual(flags, [[true], [true], [true], [false]], '앞 3명 임베드, 4명째는 경로만 — 상한 해제 전엔 도달 불가였던 갈래');
   assert.equal(stub.state.calls[3].opts.attachments[0].rel, 'files/x.png', '경로 노트는 남는다(Read로 열람)');
+});
+
+/* ── 분리 검수 반영(2026-09-02) — 안내 줄이 만든 새 약속·상시화의 뒷면 ── */
+
+test('회의록 참석자에 system이 섞이지 않는다 — 안내 줄이 2명 이상 회의마다 붙어 상시화됐다(검수 MEDIUM-1)', async () => {
+  await seed('rs-minutes');
+  await runRoomTurn('rs-minutes', '@비스트 @울프 @슈리 @에드나 출시 점검');
+  const r = await endMeeting('rs-minutes');
+  assert.equal(r.archived, true);
+  const md = await readFile(join(paths('rs-minutes').journal, r.journal.replace(/^journal\//, '')), 'utf8');
+  assert.match(md, /^참석: 사장, 비스트, 울프, 슈리, 에드나$/m, "참석자는 사람·크루만 — 'system'은 참석자가 아니다");
+  assert.match(md, /\*\*system\*\*: 4명 발언 — /, '본문에는 종전 규약대로 남는다(무엇이 지시됐는지의 기록)');
+});
+
+test('발언자 실패로 루프가 끊기면 차례가 오지 않은 크루를 밝힌다 — "N명 발언" 약속의 회수(검수 MEDIUM-2)', async () => {
+  const ok = stub.state.reply;
+  stub.state.reply = (slug) => { if (slug === 'shuri') throw new Error('runner boom'); return `${slug} 답변`; };
+  try {
+    await seed('rs-fail');
+    await assert.rejects(runRoomTurn('rs-fail', '@비스트 @울프 @슈리 @에드나 해줘'), /runner boom/, '호출 탭의 오류 계약은 그대로');
+    const msgs = (await loadRoom('rs-fail')).messages;
+    assert.deepEqual(msgs.map((m) => m.who), ['user', 'system', 'beast', 'wolf', 'system', 'system']);
+    assert.deepEqual(msgs.slice(-2).map((m) => m.kind), ['error', 'skipped'], '실패 안내 다음에 남은 발언자 안내');
+    assert.equal(msgs.at(-1).text, '차례가 오지 않은 크루: 에드나 — 다시 부르면 이어갑니다.', '뒷사람만(실패자·이미 말한 사람 제외)');
+    await seed('rs-fail-en', { lang: 'en' });
+    await assert.rejects(runRoomTurn('rs-fail-en', '@beast @shuri @edna go'));
+    assert.equal((await loadRoom('rs-fail-en')).messages.at(-1).text, 'Did not get to: 에드나 — mention them again to continue.');
+    await seed('rs-fail-last');
+    await assert.rejects(runRoomTurn('rs-fail-last', '@비스트 @슈리 해줘'));
+    assert.deepEqual((await loadRoom('rs-fail-last')).messages.map((m) => m.kind ?? m.who), ['user', 'speakers', 'beast', 'error'], '마지막 발언자 실패면 남은 사람 안내 없음');
+  } finally { stub.state.reply = ok; }
+});
+
+test('릴레이 4단은 연쇄 상한(3명)으로 잘리고 제외자를 밝힌다 + 릴레이에도 인원 안내가 붙는다(검수 LOW-1·LOW-2)', async () => {
+  await seed('rs-relay');
+  await runRoomTurn('rs-relay', '@비스트 > @울프 > @슈리 > @에드나 이어서 완성');
+  assert.deepEqual(stub.state.calls.map((c) => c.slug), ['beast', 'wolf', 'shuri'], `릴레이 상한 HOP_MAX+1=${HOP_MAX + 1}`);
+  const msgs = (await loadRoom('rs-relay')).messages;
+  assert.deepEqual(msgs.map((m) => m.kind ?? m.who), ['user', 'relay', 'speakers', 'beast', 'wolf', 'shuri']);
+  assert.equal(msgs[1].text, `이어받기는 ${HOP_MAX + 1}명까지 — 제외: 에드나`, '잘린 사람을 이름으로 — cc의 제외 안내와 같은 규칙');
+  assert.equal(msgs[2].text, '3명 발언 — 비스트, 울프, 슈리 순', '릴레이 경로에도 인원 안내(!isRelay 변이가 초록이던 구멍)');
+});
+
+test('cc가 함께 있으면 참조 안내가 먼저, 인원 안내가 그다음 — 발언 시작 전 순서 고정(검수 LOW-3)', async () => {
+  await seed('rs-cc');
+  await runRoomTurn('rs-cc', '@비스트 @울프 정리해줘 cc @슈리');
+  const msgs = (await loadRoom('rs-cc')).messages;
+  assert.deepEqual(msgs.map((m) => m.kind ?? m.who), ['user', 'cc', 'speakers', 'beast', 'wolf']);
+  assert.match(msgs[2].text, /^2명 발언 — 비스트, 울프 순$/, '참조받은 슈리는 발언 인원에 들지 않는다');
 });
 
 test('재등장 금지 — 발언자 결정에 상한 slice가 없고, 입력창 안내에 "최대 N명" 문구가 없다', async () => {

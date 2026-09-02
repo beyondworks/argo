@@ -110,7 +110,10 @@ async function endMeetingLocked(wsId) {
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const hm = now.toTimeString().slice(0, 5).replace(':', '');
   const topic = String(room.messages[0]?.text ?? '').replace(/@\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 30) || '안건 미기재';
-  const attendees = [...new Set(room.messages.filter((m) => m.who !== 'user').map((m) => nameOf(m.who)))];
+  // 참석자는 사람·크루만 — 시스템 안내 줄(who='system')은 참석자가 아니다. 종전에는 cc·루프·오타 멘션이 있을 때만
+  // 시스템 줄이 생겨 드물었지만, 발언 인원 안내 줄(2명 이상 회의마다)로 상시화되자 'system'이 참석자 맨 앞에
+  // 박혔다(분리 검수 MEDIUM-1 실측). 본문에는 종전대로 남긴다 — 무엇이 지시됐는지의 기록.
+  const attendees = [...new Set(room.messages.filter((m) => m.who !== 'user' && m.who !== 'system').map((m) => nameOf(m.who)))];
   const md = `# ${day} 회의록 — ${topic}
 
 참석: 사장${attendees.length ? `, ${attendees.join(', ')}` : ''}
@@ -274,7 +277,9 @@ export function parseRoomDirectives(text, agents = []) {
     if (take(m[1], to) === 'all') allCall = true;
   }
 
-  return { loop, cc, ccAll, relay: relay.slice(0, HOP_MAX + 1), to, allCall, unknown };
+  // relayDropped — 연쇄 상한에 걸려 잘린 뒷사람들. 호출부가 이름으로 밝힌다(cc의 '제외' 안내와 같은 규칙 —
+  // 조용히 자르면 "부른 크루 모두 발언" 안내와 모순된다, 분리 검수 LOW-1).
+  return { loop, cc, ccAll, relay: relay.slice(0, HOP_MAX + 1), relayDropped: relay.slice(HOP_MAX + 1), to, allCall, unknown };
 }
 
 /** 회의실 턴 진행 마커 — 크루 채팅의 상태 파일 계약(turn-status.mjs)을 슬러그 'room-main'으로 그대로 쓴다.
@@ -431,8 +436,17 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}) {
   if (!speakers.length || (ccTargets.length && !dir.to.length && !dir.relay.length && !dir.allCall)) {
     return { replies: [], room: await loadRoom(wsId) };
   }
+  // 릴레이가 연쇄 상한에 잘렸으면 누가 빠졌는지 밝힌다 — cc의 '제외' 안내와 같은 규칙(조용히 자르면 아래
+  // 인원 안내가 부른 사람보다 적은 이유를 사장이 알 길이 없다).
+  if (dir.relayDropped?.length) {
+    const names = dir.relayDropped.map((a) => a.name).join(', ');
+    await sys('relay', en
+      ? `Relay stops at ${HOP_MAX + 1} — not included: ${names}`
+      : `이어받기는 ${HOP_MAX + 1}명까지 — 제외: ${names}`);
+  }
   // 발언 인원·순서 안내 — 2명 이상일 때만(1명은 답 자체가 곧 표시). 상한을 없앤 대가는 턴 비용이라 "몇 명이
-  // 어떤 순서로 답하는지"를 보내는 즉시 방에서 본다. 시스템 줄은 크루 프롬프트 트랜스크립트에서 빠지는 기존 규약.
+  // 어떤 순서로 답하는지"를 발언 시작 전에 방에서 본다(참조·릴레이 절단 안내가 있으면 그 다음 줄). 시스템 줄은
+  // 크루 프롬프트 트랜스크립트에서 빠지는 기존 규약.
   if (speakers.length > 1) {
     await sys('speakers', en
       ? `${speakers.length} speak in turn — ${speakers.map((a) => a.name).join(', ')}`
@@ -501,6 +515,14 @@ ${transcript}
       // 뒤 방에 흔적 0). 시스템 줄(sys)은 크루 프롬프트 트랜스크립트에서 제외되는 기존 규약이라 대화를 오염하지 않는다.
       const msg = maskKeyLike(String(e?.message || e).replace(/\s+/g, ' ')).slice(0, 200); // 방 스레드는 동기화·회의록 적재 대상 — 키 모양은 가린다
       await sys('error', en ? `${a.name} could not respond: ${msg}` : `${a.name} 발언 실패: ${msg}`).catch(() => {});
+      // 인원 안내가 약속한 N명 중 아직 차례가 안 온 크루를 밝힌다 — 실패로 루프가 끊기면 뒷사람은 말없이 빠지는데,
+      // "N명 발언" 안내가 있는 지금은 그 침묵이 곧 거짓 약속이다(분리 검수 MEDIUM-2). 다시 부르면 이어간다.
+      const rest = speakers.slice(i + 1).map((x) => x.name);
+      if (rest.length) {
+        await sys('skipped', en
+          ? `Did not get to: ${rest.join(', ')} — mention them again to continue.`
+          : `차례가 오지 않은 크루: ${rest.join(', ')} — 다시 부르면 이어갑니다.`).catch(() => {});
+      }
       throw e; // 호출 탭의 오류 표시 계약은 그대로
     } finally {
       // emitNotify는 마이크로태스크로 핸들러를 돌린다 — 턴 종료 직후 한 틱 양보해야 마지막 위임을 놓치지 않는다

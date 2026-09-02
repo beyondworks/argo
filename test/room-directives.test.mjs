@@ -68,6 +68,9 @@ test('hop 체인은 연쇄 상한을 넘지 않는다', () => {
   const d = parseRoomDirectives('@슈리 > @에드나 > @비스트 > @울프 순서대로', AGENTS);
   assert.equal(d.relay.length, HOP_MAX + 1);
   assert.deepEqual(slugs(d.relay), ['shuri', 'edna', 'beast']);
+  // 잘린 뒷사람은 relayDropped로 드러난다 — 호출부가 이름으로 밝힌다(조용히 자르면 "부른 크루 모두 발언"과 모순)
+  assert.deepEqual(slugs(d.relayDropped), ['wolf']);
+  assert.deepEqual(parseRoomDirectives('@슈리 > @에드나 이어서', AGENTS).relayDropped, [], '상한 안이면 빈 배열');
 });
 
 test('loop는 문두에서만 지시로 읽는다', () => {
