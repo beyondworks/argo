@@ -66,7 +66,7 @@ const DICT = {
   'room.hint': ['멘션이 없으면 첫 번째 크루가 답합니다. @all을 붙이면 전 크루가 발언합니다. 회의 내용은 자동으로 회사 기억(일지)에 남습니다.', 'No mention → the first crew replies. @all calls everyone. Everything lands in company memory automatically.'],
   'room.end': ['회의 마치기 — 회의록 남기기', 'End meeting — file the minutes'],
   'room.new': ['새 회의 — 지금 회의는 진행 중으로', 'New meeting — keep this one open'],
-  'room.busyGate': ['크루가 발언 중입니다 — 끝난 뒤 다시 시도해 주세요.', 'A crew is speaking — try again when the turn ends.'],
+  'room.busyGate': ['발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.', 'A crew is still speaking — try again after it finishes.'],
   'room.sessions.title': ['회의 기록', 'Meetings'],
   'room.sessions.current': ['현재 회의', 'Current meeting'],
   'room.sessions.reopen': ['이 회의 다시 열기 — 지금 회의가 있으면 진행 중으로 보관', 'Reopen this meeting — the current one is kept in progress'],

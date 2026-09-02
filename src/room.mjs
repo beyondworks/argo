@@ -103,13 +103,15 @@ export async function setMeetingPinned(wsId, id, pinned) {
     UI 잠금까지). 판정은 getRoomTurn의 2분 신선 창 하나 — 크래시 잔재 마커는 길어야 2분 뒤 풀린다. */
 async function assertRoomIdle(wsId) {
   if (!await getRoomTurn(wsId)) return;
-  const e = new Error('크루가 발언 중입니다 — 끝난 뒤 다시 시도해 주세요.');
+  const e = new Error('발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.'); // 라우트는 apiError('room_busy')로 표시 언어 본문을 다시 그린다
   e.code = 'ROOM_BUSY';
   throw e;
 }
 
 /** 보관본 쓰기 — 마치기(open 없음)와 진행 중 보관(open:true)이 같은 파일 규약(.archive/_room-<ts>.json)을 쓴다.
     같은 ms의 연속 보관은 ts를 1씩 올려 피한다 — 이름이 겹치면 앞 회의를 덮어써 유실이다. 반환: 파일명.
+    알려진 한계: 회피는 **한 기기 안에서만** 성립한다 — 두 기기가 같은 ms에 보관하면 같은 이름이 클라우드에서
+    LWW로 겹친다(종전 endMeeting은 회피 자체가 없었으므로 순개선, 확률은 낮다 — 분리 검수 LOW-3).
     now — 시각 주입(export: 회귀 테스트용 — 충돌 회피를 결정적으로 재현). 제품 경로는 인자 없이 부른다. */
 const fileExists = (f) => access(f).then(() => true, () => false);
 export async function archiveRoomFile(wsId, room, { open = false, now = Date.now() } = {}) {
@@ -158,7 +160,8 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
 /** 새 회의 — 지금 회의를 **마치지 않고**(회의록 없음) '진행 중'으로 보관한 뒤 방을 비운다(유건 요청 2026-09-02:
     "기존 회의와 별개로 새 회의를 추가"). 마치기와의 차이는 회의록 한 줄뿐 — 보관본에 open:true 표식을 남겨
     레일이 '진행 중'으로 구분하고, 전환(reopenMeeting)으로 되돌린다. 비움 각인(resetStamp)·sid 증가는
-    endMeeting과 같은 계약이라 동기화 병합(mergeThread)에 새 의미가 없다. 빈 방이면 아무것도 안 한다. */
+    endMeeting과 같은 계약이라 **이 경로는** 동기화 병합(mergeThread)에 새 의미가 없다(전환 경로의 각인은
+    reopenMeeting 참조 — 거기는 새 규칙이 있다). 빈 방이면 아무것도 안 한다. */
 export async function parkMeeting(wsId) {
   return withLock(rkey(wsId), async () => {
     await assertRoomIdle(wsId);
@@ -182,9 +185,16 @@ export async function parkMeeting(wsId) {
        비파괴 방향으로 낸다.
     3. **sid를 올린다.** 빈 방에서 돌던 잔여 턴의 발언이 되살린 회의에 유령으로 끼어들지 않게
        (endMeeting과 같은 이유). 발언이 도는 중이면 게이트(assertRoomIdle)가 먼저 거절한다.
+    4. **자르는 지점(cutTs)을 현재 방에서 물려받는다.** 되살림 각인(resumedAt)만 남기면 mergeThread가 자르기를
+       통째로 끄는데, 상대 기기가 아직 든 전환 직전 방 사본(= 방금 보관한 회의)이 union으로 되살아나 새 회의에
+       섞인다(분리 검수 HIGH-1 재현: 2건 → 4건). mergeThread는 되살림이 최신일 때 되살린 쪽은 지키고 상대 쪽만
+       이 cutTs로 자른다(src/sync.mjs). 산식은 resetStamp와 같다(보관한 회의의 마지막 ts+1, 직전 값 후퇴 금지) —
+       빈 방에서 열 때도 직전 비움의 cutTs가 이어져, 마치기가 아직 원격에 안 간 창에서도 옛 회의가 안 돌아온다.
 
     알려진 한계: 마칠 때 남긴 일지(회의록)는 그대로 둔다. 다시 마치면 회의록이 하나 더 쌓인다 —
-    일지는 append-only 기록이라 "두 번 마쳤다"는 사실 자체가 맞고, 지우는 건 기억 유실이라 안 한다. */
+    일지는 append-only 기록이라 "두 번 마쳤다"는 사실 자체가 맞고, 지우는 건 기억 유실이라 안 한다.
+    두 기기가 8초 동기화 창 안에서 동시에 전환하면 나중 각인이 이겨 먼저 전환한 쪽의 회의가 방에서 밀리고
+    그 보관본은 이미 지워진 뒤라 회의록 없이 사라질 수 있다(크루 이어가기의 같은 창과 동급 — 미해결, 표기). */
 export async function reopenMeeting(wsId, id) {
   return withLock(rkey(wsId), async () => {
     await assertRoomIdle(wsId);
@@ -199,7 +209,8 @@ export async function reopenMeeting(wsId, id) {
     delete archived.resetAt;
     delete archived.cutTs; // 보관본의 옛 자르기 지점 정리 — thread.mjs resumeSession과 같은 이유(방어적 — 게이트가 먼저 걸려 현재 무행동)
     delete archived.open;  // 진행 중 표식은 보관본의 것 — 현재 방으로 오면 의미가 없다(다시 보관될 때 새로 판정)
-    await saveRoom(wsId, { ...archived, resumedAt: resumeStamp(cur), sid: (cur.sid ?? 0) + 1 });
+    // cutTs = 현재 방 기준(결정 4) — 보관본의 옛 값이 아니라 지금 보관한 회의를 자르는 지점
+    await saveRoom(wsId, { ...archived, resumedAt: resumeStamp(cur), cutTs: resetStamp(cur).cutTs, sid: (cur.sid ?? 0) + 1 });
     await rm(join(paths(wsId).chats, '.archive', id), { force: true }).catch(() => {}); // 실패해도 유실 아님(중복 표시)
     return { reopened: true, parked, messages: archived.messages.length };
   });

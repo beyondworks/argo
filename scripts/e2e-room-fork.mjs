@@ -128,12 +128,12 @@ const list = async () => (await api(`${R}/sessions`)).json?.sessions ?? [];
     ['전환', await api(`${R}/sessions`, { method: 'PATCH', body: { id: l[0].id, reopen: true } })],
     ['마치기', await api(R, { method: 'DELETE' })],
   ];
-  for (const [name, r] of rs) if (r.status !== 409 || r.json?.errorCode !== 'ROOM_BUSY') fail(`${name} 게이트 실패(${r.status}): ${r.text.slice(0, 150)}`);
+  for (const [name, r] of rs) if (r.status !== 409 || r.json?.errorCode !== 'room_busy') fail(`${name} 게이트 실패(${r.status}): ${r.text.slice(0, 150)}`);
   if ((await api(R)).json.messages.length !== 1 || (await list()).length !== l.length) fail('게이트 거절이 방·레일을 바꿨다');
   await writeFile(marker, JSON.stringify({ stage: 'room', detail: 'pepper', partial: '', startedAt: Date.now() - 10 * 60_000, ts: Date.now() - 5 * 60_000 }));
   const ok = await api(`${R}/sessions`, { method: 'POST' });
   if (ok.status !== 200 || ok.json?.parked !== true) fail(`낡은 마커인데 게이트가 안 풀렸다(${ok.status})`);
-  console.log('[e2e] ④ 발언 중 게이트: 새 회의·전환·마치기 409 ROOM_BUSY · 방·레일 불변 · 낡은 마커 통과');
+  console.log('[e2e] ④ 발언 중 게이트: 새 회의·전환·마치기 409 room_busy · 방·레일 불변 · 낡은 마커 통과');
 }
 console.log('E2E OK: 새 회의 → 진행 중 레일 → 전환(자동 보관) → 마치기(회의록) → 발언 중 게이트');
 cleanup(0);

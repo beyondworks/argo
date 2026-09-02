@@ -86,9 +86,9 @@ export default function Room({ params }) {
   // 회의 다시 열기 — 보관 회의를 현재 방으로 되돌린다. 진행 중 회의가 있으면 서버가 409로 거절하므로
   // 덮어쓰기가 원천 차단된다(실사용 요청 2026-07-26 "보관한 회의를 다시 열어 이어갈 수 없나요").
   const [reopening, setReopening] = useState(null); // 진행 중인 id — 중복 클릭 차단
-  // 라우트 오류 → 표시 언어. ROOM_BUSY(크루 발언 중 — 새 회의·전환·마치기 공통 서버 게이트)는 사전 문구로,
-  // 그 외는 서버 문구 그대로(apimsg의 {error, errorCode} 바디 계약과 동형 — 회의실 라우트는 아직 사전 밖).
-  const routeError = (d, fallback = '') => new Error(d?.errorCode === 'ROOM_BUSY' ? t('room.busyGate') : (d?.error || fallback));
+  // 라우트 오류 → 표시 언어. room_busy(크루 발언 중 — 새 회의·전환·마치기 공통 서버 게이트, apiError 바디의 errorCode)는
+  // 사전 문구로 다시 그리고(언어 전환 직후·쿠키 없는 요청에도 화면 언어를 따른다), 그 외는 서버 문구 그대로.
+  const routeError = (d, fallback = '') => new Error(d?.errorCode === 'room_busy' ? t('room.busyGate') : (d?.error || fallback));
   // 열기·전환 — 현재 회의가 있으면 서버가 '진행 중'으로 자동 보관하고 연다(종전 409 거절은 새 회의 분기로 폐지).
   async function doReopen(sess) {
     if (reopening || busy || serverBusy) return;
