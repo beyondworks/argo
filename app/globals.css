@@ -1584,15 +1584,14 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .room-speaker { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; border-radius: 999px; }
 .room-speaker.name:hover, .room-speaker.name:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
 .room-speaker:hover > .avatar, .room-speaker:focus-visible > .avatar { box-shadow: 0 0 0 2px var(--primary-soft); }
-/* 회의실 입력창 아래 줄의 텍스트형 액션(새 회의·마치기) — 크루 채팅 모델 버튼과 같은 룩(무테두리·11.5px·fg-3→fg) */
-.room-act { background: none; border: 0; cursor: pointer; padding: 2px 6px; font-size: 11.5px; font-family: inherit; color: var(--fg-3); transition: color 150ms ease-out; white-space: normal; text-align: right; }
-.room-act:hover:not(:disabled) { color: var(--fg); }
-.room-act:disabled { opacity: .5; cursor: default; }
 /* 좁은 폭(900 미만)에서는 패널을 내리지 않는다 — 본문이 전체폭을 되찾는다 */
 @media (max-width: 899px) { .split-pane { display: none; } }
 
 /* 데크 2열 — 본 계기 + 우측 보조 계기 레일 */
-.deck-grid { display: grid; grid-template-columns: 1fr minmax(0, 316px); gap: 16px; align-items: start; overflow: hidden; }
+/* padding 3px + margin -3px: overflow:hidden의 클립 상자를 아이템 가장자리보다 3px 바깥으로 — 영입 입력창(.input-bar)이
+   그리드 왼쪽 가장자리에 붙어 있어 포커스 링(box-shadow 2px)이 왼쪽만 잘려 테두리가 지워진 듯 보였다(유건 제보 2026-09-02,
+   실측 form.x 260 = .deck-grid.x 260). 바깥 폭·안쪽 폭은 그대로(컨테이너 쿼리 임계 불변). overflow-clip-margin은 WebKit 미지원. */
+.deck-grid { display: grid; grid-template-columns: 1fr minmax(0, 316px); gap: 16px; align-items: start; overflow: hidden; padding: 3px; margin: -3px; }
 /* 레일 잘림 근본 원인(실측 2026-08-14): grid 아이템 기본 min-width:auto → 별자리 캔버스 고유폭이
    레일을 316px 트랙 밖으로 밀어내고 overflow:hidden에 잘렸다. 트랙이 아니라 아이템을 잠가야 한다.
    레일 자신도 grid라 그 아이템(카드)까지 한 단계 더 잠근다 — 캔버스 고유폭이 카드를 다시 밀었다(실측). */

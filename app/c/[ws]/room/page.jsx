@@ -14,6 +14,9 @@ import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } fro
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
+// 크루 대화와 같은 읽기 레인(crew/[slug]/page.jsx LANE과 같은 값) — 대화 영역·입력창·아래 줄이 이 폭에 가운데 정렬(유건 지시 2026-09-02: 입력창이 너무 길다)
+const LANE = 'min(768px, 100%)';
+
 export default function Room({ params }) {
   const { ws } = use(params);
   const { t } = useLang();
@@ -208,6 +211,10 @@ export default function Room({ params }) {
     if (slashOpen) { runSlash(slashList[slashSel]); return; }
     const text = input.trim();
     if (!text || busy || uploading) return;
+    // 이름만 있는 발언("@카맥")은 보내지 않는다 — Enter 멘션 완성이 뒤에 공백 하나만 붙여 눈에 안 띄고, 한 번 더 누르면
+    // 빈 안건이 방에 올라가 크루가 발언을 시작하던 길(유건 제보 2026-09-02). 안건을 이어 적으라고 알린다.
+    // 첨부가 있으면 파일이 곧 안건이라 통과(분리 검수 MEDIUM-1 — 종전엔 보내지던 조합).
+    if (!att.length && !text.replace(/(^|\s)@\S+/g, '').trim()) { setError(t('room.mentionOnly')); return; }
     const attachments = att;
     setBusy(true); setError('');
     atBottomRef.current = true; // 자기 발언은 항상 하단 추종(읽던 위치 보존은 수신에만 적용)
@@ -438,7 +445,7 @@ export default function Room({ params }) {
           ~260px)만큼 부풀어, 표시 배율 2의 좁은 유효 폭(1열 ~178px)에서 문서 가로 넘침을 만든다(실측
           scrollWidth 1507 > 1408). 아이템 minWidth:0은 바깥 트랙만 지키고 자기 내부 트랙은 못 지킨다. */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
-        {/* 헤더 = 라벨 + 구분선만. 새 회의·마치기 버튼은 입력창 아래 줄(.room-act)로 옮겨졌다(2026-09-02 룩 통일) —
+        {/* 헤더 = 라벨 + 구분선만. 새 회의·마치기 버튼은 입력창 아래 줄 오른쪽(알약 .btn sm)으로 옮겨졌다(2026-09-02 룩 통일) —
             좁은 폭 넘침 처방(wrap·라벨 줄바꿈)도 그 줄이 이어받는다. 라벨은 한 줄 ellipsis(단어별 세로 쌓임 방지). */}
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
           <span className="microlabel" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('room.header')}</span>
@@ -453,7 +460,7 @@ export default function Room({ params }) {
           {shown === null ? <Skeleton h={200} /> : shown.length === 0 ? (
             <div className="empty">{t('room.empty')}</div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}> {/* 열 잠금 — 본문 열과 같은 이유(메시지 행 min-content 전파 차단) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14, width: '100%', maxWidth: LANE, margin: '0 auto' }}> {/* 열 잠금 — 본문 열과 같은 이유(메시지 행 min-content 전파 차단). 레인 = 크루 스레드와 동일 */}
               {shown.map((m, i) => m.who === 'user' ? (
                 <div key={i} style={{ justifySelf: 'end', maxWidth: '78%' }}>
                   <div className="bubble-user" style={{ background: 'var(--primary)', color: 'var(--primary-fg)', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
@@ -557,7 +564,7 @@ export default function Room({ params }) {
         </div>
 
         {viewing ? (
-          <div className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12.5, color: 'var(--fg-2)' }}>
+          <div className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12.5, color: 'var(--fg-2)', width: '100%', maxWidth: LANE, margin: '0 auto' }}>
             <Icon name="doc" size={13} /> {viewingOpen ? t('room.sessions.openReadonly') : t('room.sessions.readonly')}
             <span style={{ flex: 1 }} />
             {/* 열기·전환 — 레일의 play 아이콘과 같은 동작(doReopen). 크루 채팅 배너의 '이어가기' 자리와 동형 */}
@@ -565,7 +572,7 @@ export default function Room({ params }) {
             <button className="btn sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}> {/* 열 잠금 — 본문 열과 같은 이유(한 층 아래 같은 함정) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6, width: '100%', maxWidth: LANE, margin: '0 auto' }}> {/* 열 잠금 — 본문 열과 같은 이유(한 층 아래 같은 함정). 레인 = 크루 컴포저와 동일 */}
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
             {/* 라우팅 문법 안내 — 모르면 없는 기능이다. 방을 떠나지 않고 지시하는 법을 입력창 옆에 붙여 둔다 */}
             {/* 멘션 드롭업의 위치 기준 — 입력바를 relative로 감싼다 */}
@@ -686,12 +693,12 @@ export default function Room({ params }) {
                   <Icon name="clip" size={14} />
                 </button>
               </div>
-              {/* 새 회의·마치기 — 텍스트형(크루 채팅 모델 버튼과 같은 룩), 같은 잠금. 좁은 폭에서는 wrap으로 아랫줄에
-                  (텍스트 버튼은 .btn nowrap이 아니라 라벨도 꺾인다 — 헤더 시절 넘침 처방의 등가). 회의 없으면 숨김. */}
+              {/* 새 회의·마치기 — 회의 상태를 바꾸는 행동이라 알약(.btn sm)으로(유건 2026-09-02: 텍스트형은 링크처럼 읽힘). 같은 잠금.
+                  좁은 폭 처방은 헤더 시절 그대로: 행 wrap + 라벨 줄바꿈·세로 자람(.btn.sm 고정 height 28은 en 2줄 라벨이 알약 밖으로). 회의 없으면 숨김. */}
               {(messages?.length ?? 0) > 0 && (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 2, minWidth: 0 }}>
-                  <button type="button" className="room-act" disabled={busy || serverBusy} onClick={newMeeting}>{t('room.new')}</button>
-                  <button type="button" className="room-act" disabled={busy || serverBusy} onClick={endMeeting}>{t('room.end')}</button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
+                  <button type="button" className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={newMeeting}>{t('room.new')}</button>
+                  <button type="button" className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={endMeeting}>{t('room.end')}</button>
                 </div>
               )}
             </div>

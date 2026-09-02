@@ -224,10 +224,9 @@ export default function Compete({ params }) {
           {comp?.winner && <span className="chip" style={{ borderColor: 'var(--warn)', color: 'var(--warn)', fontWeight: 700, flex: 'none' }}>{t('compete.adopted')}</span>}
         </div>
 
-        {/* overflowWrap anywhere — 긴 무공백 토큰(URL·코드 조각)이 좁은 유효 폭에서 카드 내부 가로
-            스크롤을 만들지 않게 한다(크루 채팅 .thread .card(globals)와 동형 처방 — 회의실은
-            PR #350이 같은 처방을 진행 중). */}
-        <div className="card" style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' }}>
+        {/* 테두리 카드 없이 맨 스크롤 영역 — 회의실·크루 채팅과 같은 룩(유건 지시 2026-09-02). overflowWrap anywhere —
+            긴 무공백 토큰(URL·코드 조각)이 좁은 유효 폭에서 내부 가로 스크롤을 만들지 않게 한다(크루 .thread .card 동형). */}
+        <div style={{ padding: '4px 2px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' }}>
           {!comp ? (
             <div className="empty">{t('compete.emptyMain')}</div>
           ) : (
@@ -310,60 +309,8 @@ export default function Compete({ params }) {
             <button className="btn btn-primary sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} onClick={() => openComp(null)}>{t('compete.new')}</button>
           </div>
         ) : (
-          /* 새 경쟁 컴포저 — 회의실 컴포저와 동일 문법: 칩 행 → input-bar → 힌트 */
+          /* 새 경쟁 컴포저 — 회의실 컴포저와 동일 문법: input-bar → 아래 줄(픽커 · 힌트) */
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}> {/* 열 잠금 — 본문 열과 같은 이유(한 층 아래 같은 함정: textarea 고유폭) */}
-            {/* 라벨 열 공유 grid — 두 행의 박스 좌측 라인이 정렬된다(모델 선택 왼편 기준, 유건 지시 2026-07-21).
-                드롭다운은 전부 DropUp(위로 열림) — 하단 배치라 네이티브 select 팝업이 아래로 열려 잘렸다. */}
-            {/* 크루·모델 선택을 한 줄로(유건 2026-08-23) — 좁으면 줄바꿈 */}
-            {/* 그룹 minWidth:0 — flex 아이템 자동 최소치(내용 min-content)가 좁은 유효 폭(배율 2,
-                1280 창 실측 열 106 CSS px)에서 DropUp 바닥(148)을 그대로 전파해 문서 가로 넘침을
-                만든다(실측 1283>1264 → 해제 후 1264=1264). DropUp 자체 클램프(ui.jsx)와 한 세트. */}
-            <div style={{ display: 'flex', gap: '6px 14px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <span className="microlabel">{t('compete.pick')}</span>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
-                {/* 크루 1명 — 등록된 모든 크루 중 선택 */}
-                <DropUp value={pickedCrew} disabled={busy} width={220} placeholder="—"
-                  groups={[{ items: agents.map((a) => ({ value: a.slug, label: `${a.name} — ${a.role}` })) }]}
-                  onChange={setPickedCrew} />
-                {agents.length === 0 && (
-                  <Link href={`/c/${ws}`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('nav.hire')} →</Link>
-                )}
-              </div>
-              <span className="microlabel">{t('compete.pickModels')}</span>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
-                {/* 슬롯 — 연결된 러너의 모델만, 러너별 그룹. 다른 슬롯이 고른 모델은 비활성(중복 방지). */}
-                {runners === null ? <Skeleton h={28} w={220} /> : (() => {
-                  const connected = (runners ?? []).filter((r) => r.authed && r.models?.length);
-                  if (!connected.length) {
-                    return <Link href={`/c/${ws}/settings`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.connectFirst')} →</Link>;
-                  }
-                  const slotGroups = (slot, clearable) => [
-                    ...(clearable ? [{ items: [{ value: '', label: t('compete.modelSlotOptPh') }] }] : []),
-                    ...connected.map((r) => ({
-                      label: r.name,
-                      items: r.models.map((m) => {
-                        const pair = `${r.id}:${m.id}`;
-                        return {
-                          value: pair, label: m.label,
-                          disabled: pickedModels.includes(pair) && pickedModels[slot] !== pair,
-                          badge: m.gated ? t('runner.gatedBadge') : m.free ? t('runner.freeBadge') : undefined,
-                        };
-                      }),
-                    })),
-                  ];
-                  return (<>
-                    <DropUp value={pickedModels[0] ?? ''} disabled={busy} width={210} placeholder={t('compete.modelSlotPh')}
-                      groups={slotGroups(0, false)} onChange={(v) => setModelSlot(0, v)} />
-                    <span className="microlabel" aria-hidden>vs</span>
-                    <DropUp value={pickedModels[1] ?? ''} disabled={busy} width={210} placeholder={t('compete.modelSlotPh')}
-                      groups={slotGroups(1, false)} onChange={(v) => setModelSlot(1, v)} />
-                    {/* 3번째는 선택 — 앞 2개를 고른 뒤에만 열린다. 빈 값 선택 = 슬롯 비우기 */}
-                    <DropUp value={pickedModels[2] ?? ''} disabled={busy || pickedModels.length < 2} width={210}
-                      placeholder={t('compete.modelSlotOptPh')} groups={slotGroups(2, true)} onChange={(v) => setModelSlot(2, v)} />
-                  </>);
-                })()}
-              </div>
-            </div>
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
             <form onSubmit={start} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
               <textarea suppressHydrationWarning
@@ -382,9 +329,65 @@ export default function Compete({ params }) {
                 {busy ? <ArgoSpinner size={14} /> : <Icon name="send" size={15} />}
               </button>
             </form>
-            <p style={{ fontSize: 11, color: pickedModels.length >= 2 ? 'var(--warn)' : 'var(--fg-3)', margin: 0 }}>
-              {pickedModels.length >= 2 ? t('compete.costNote', { n: pickedModels.length }) : t('compete.hint')}
-            </p>
+            {/* 입력창 아래 슬림 줄 — 왼쪽 크루·모델 픽커(DropUp은 위로 열려 입력창을 덮는다), 오른쪽 힌트·비용 안내.
+                회의실·크루 채팅의 입력창 아래 줄과 같은 골격(유건 지시 2026-09-02). 폴더·클립은 경쟁에 없다. */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px 14px', flexWrap: 'wrap', padding: '0 6px', minWidth: 0 }}>
+              {/* 라벨 열 공유 grid — 두 행의 박스 좌측 라인이 정렬된다(모델 선택 왼편 기준, 유건 지시 2026-07-21).
+                  드롭다운은 전부 DropUp(위로 열림) — 하단 배치라 네이티브 select 팝업이 아래로 열려 잘렸다. */}
+              {/* 크루·모델 선택을 한 줄로(유건 2026-08-23) — 좁으면 줄바꿈 */}
+              {/* 그룹 minWidth:0 — flex 아이템 자동 최소치(내용 min-content)가 좁은 유효 폭(배율 2,
+                  1280 창 실측 열 106 CSS px)에서 DropUp 바닥(148)을 그대로 전파해 문서 가로 넘침을
+                  만든다(실측 1283>1264 → 해제 후 1264=1264). DropUp 자체 클램프(ui.jsx)와 한 세트. */}
+              <div style={{ display: 'flex', gap: '6px 14px', alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
+                <span className="microlabel">{t('compete.pick')}</span>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
+                  {/* 크루 1명 — 등록된 모든 크루 중 선택 */}
+                  <DropUp value={pickedCrew} disabled={busy} width={220} placeholder="—"
+                    groups={[{ items: agents.map((a) => ({ value: a.slug, label: `${a.name} — ${a.role}` })) }]}
+                    onChange={setPickedCrew} />
+                  {agents.length === 0 && (
+                    <Link href={`/c/${ws}`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('nav.hire')} →</Link>
+                  )}
+                </div>
+                <span className="microlabel">{t('compete.pickModels')}</span>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
+                  {/* 슬롯 — 연결된 러너의 모델만, 러너별 그룹. 다른 슬롯이 고른 모델은 비활성(중복 방지). */}
+                  {runners === null ? <Skeleton h={28} w={220} /> : (() => {
+                    const connected = (runners ?? []).filter((r) => r.authed && r.models?.length);
+                    if (!connected.length) {
+                      return <Link href={`/c/${ws}/settings`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.connectFirst')} →</Link>;
+                    }
+                    const slotGroups = (slot, clearable) => [
+                      ...(clearable ? [{ items: [{ value: '', label: t('compete.modelSlotOptPh') }] }] : []),
+                      ...connected.map((r) => ({
+                        label: r.name,
+                        items: r.models.map((m) => {
+                          const pair = `${r.id}:${m.id}`;
+                          return {
+                            value: pair, label: m.label,
+                            disabled: pickedModels.includes(pair) && pickedModels[slot] !== pair,
+                            badge: m.gated ? t('runner.gatedBadge') : m.free ? t('runner.freeBadge') : undefined,
+                          };
+                        }),
+                      })),
+                    ];
+                    return (<>
+                      <DropUp value={pickedModels[0] ?? ''} disabled={busy} width={210} placeholder={t('compete.modelSlotPh')}
+                        groups={slotGroups(0, false)} onChange={(v) => setModelSlot(0, v)} />
+                      <span className="microlabel" aria-hidden>vs</span>
+                      <DropUp value={pickedModels[1] ?? ''} disabled={busy} width={210} placeholder={t('compete.modelSlotPh')}
+                        groups={slotGroups(1, false)} onChange={(v) => setModelSlot(1, v)} />
+                      {/* 3번째는 선택 — 앞 2개를 고른 뒤에만 열린다. 빈 값 선택 = 슬롯 비우기 */}
+                      <DropUp value={pickedModels[2] ?? ''} disabled={busy || pickedModels.length < 2} width={210}
+                        placeholder={t('compete.modelSlotOptPh')} groups={slotGroups(2, true)} onChange={(v) => setModelSlot(2, v)} />
+                    </>);
+                  })()}
+                </div>
+              </div>
+              <p style={{ fontSize: 11, color: pickedModels.length >= 2 ? 'var(--warn)' : 'var(--fg-3)', margin: 0, minWidth: 0, flex: '1 1 200px', textAlign: 'right' }}>
+                {pickedModels.length >= 2 ? t('compete.costNote', { n: pickedModels.length }) : t('compete.hint')}
+              </p>
+            </div>
           </div>
         )}
       </div>

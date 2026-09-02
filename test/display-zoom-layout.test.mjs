@@ -274,8 +274,8 @@ test('compete 헤더·카드 축소 규칙 핀 — wrap·ellipsis·overflowWrap 
     '경쟁 헤더 wrap 행 + microlabel ellipsis 구간 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
   // 카드 overflowWrap anywhere — 긴 무공백 토큰(URL·코드 조각)의 카드 내부 가로 스크롤 보정.
   // 넘침은 카드(overflowY:auto)가 가두지만 보정이 조용히 사라지는 것을 막는다. 앵커는 표현식 전체.
-  assert.match(src, /className="card" style=\{\{ padding: '16px 18px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' \}\}/,
-    '경쟁 본문 카드 overflowWrap anywhere 제거 변이');
+  assert.match(src, /<div style=\{\{ padding: '4px 2px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' \}\}>/,
+    '경쟁 본문 스크롤 영역 overflowWrap anywhere 제거 변이(테두리 카드 없는 맨 영역 — 2026-09-02 룩 통일)');
   // 하단 바(열람 중) — 버튼(.btn 전역 nowrap)이 유일한 비축소 요소라 바 wrap + 버튼 줄바꿈·세로
   // 자람 세트가 없으면 en·1280 창 × 배율 2에서 문서 가로 넘침(실측 1335>1264 → 1264=1264).
   // 앵커는 }}까지 폐합 — 접두 앵커는 뒤에 스프레드(...{ flexWrap: 'nowrap' })를 덧붙여 wrap을
@@ -604,16 +604,12 @@ test('room 헤더 축소 규칙 핀 — wrap·ellipsis·버튼 세로 자람이 
   assert.match(src,
     /<div style=\{\{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 \}\}>\s*<span className="microlabel" style=\{\{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' \}\}>\{t\('room\.header'\)\}/,
     '회의실 헤더 wrap 행 + microlabel ellipsis 구간 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
-  // 새 회의·마치기는 입력창 아래 줄의 텍스트 버튼(.room-act, 2026-09-02 룩 통일)으로 옮겨졌다 — 헤더의 유일한
-  // 비축소 요소가 사라졌으므로 넘침 처방은 그 줄의 wrap 행 + .room-act white-space:normal이 이어받는다.
-  assert.match(src, /<div style=\{\{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 2, minWidth: 0 \}\}>\s*<button type="button" className="room-act" disabled=\{busy \|\| serverBusy\} onClick=\{newMeeting\}>/,
-    '새 회의·마치기 wrap 행 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
-  // CSS "규칙 존재" 단언은 캐스케이드 fail-open(#348 실측·이번 검수 LOW-1: 뒤에 nowrap 재선언이 초록) — 같은 셀렉터의
-  // 모든 블록을 모아 마지막 white-space 선언이 normal인지 본다(뒤 재선언·다른 블록 이동에 red).
-  const actBlocks = [...sources.get('app/globals.css').matchAll(/(?:^|\n)\.room-act\s*\{([^}]*)\}/g)].map((m) => m[1]);
-  assert.ok(actBlocks.length >= 1, '.room-act 기본 규칙이 있어야 한다');
-  const wsDecls = actBlocks.flatMap((b) => [...b.matchAll(/white-space:\s*([a-z-]+)/g)].map((m) => m[1]));
-  assert.equal(wsDecls.at(-1), 'normal', `.room-act 라벨 줄바꿈 허용 — 마지막 white-space 선언이 normal이어야 한다(현재 ${wsDecls.join(',') || '없음'}; en 라벨이 좁은 폭에서 행 밖으로 나가지 않게)`);
+  // 새 회의·마치기는 입력창 아래 줄 오른쪽의 알약 버튼(2026-09-02 룩 통일 2차) — 헤더 시절과 같은 넘침 처방:
+  // 행 wrap + 라벨 줄바꿈·세로 자람(.btn.sm 고정 height 28은 en 2줄 라벨이 알약 밖으로 — 검수 실측 clientH 26 < scrollH 31).
+  assert.match(src, /<div style=\{\{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 6, minWidth: 0 \}\}>\s*<button type="button" className="btn sm" style=\{\{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' \}\} disabled=\{busy \|\| serverBusy\} onClick=\{newMeeting\}>/,
+    '새 회의·마치기 wrap 행 + 버튼 축소 세트 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
+  assert.match(src, /className="btn sm" style=\{\{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' \}\} disabled=\{busy \|\| serverBusy\} onClick=\{endMeeting\}>/,
+    '회의 마치기 버튼 축소 세트 변이');
 });
 
 test('att-chip 폭 클램프 핀 — nowrap 칩의 고정 220px 상한 복원 변이는 red', () => {
@@ -704,6 +700,19 @@ const ORIGIN_KEY = String.raw`(?:transformOrigin|['"]transform-origin['"])`;
 // (view-box) 기준으로 풀려 translate 그룹 아래 자식(Dial 패턴)에서는 중심을 벗어난다(분리 검수 M-1 실측:
 // '50% 50%' → 배율 1에서도 (−22, +38) 편차). 0이 아닌 길이·숫자·보간(${…})·%·키워드 전부 red.
 const ZOOM_SAFE_ORIGIN = /^\s*0(?:px)?(?:\s+0(?:px)?)?\s*$/;
+
+test('deck grid 클립 여유 — overflow:hidden이면 padding ≥ 2px과 같은 크기의 음수 margin이 있어야 한다(가장자리 아이템의 포커스 링 잘림)', () => {
+  // 유건 제보 2026-09-02: 영입 입력창 포커스 시 왼쪽 테두리가 지워진 듯 보임 — 실측 form.x = .deck-grid.x라 2px 링이 왼쪽만
+  // overflow:hidden에 잘렸다. 값 불변식: 클립 상자를 링(2px)보다 넓히되 바깥 폭은 유지(padding = −margin).
+  const css = sources.get('app/globals.css');
+  const blocks = [...css.matchAll(/(?:^|\n)\.deck-grid\s*\{([^}]*)\}/g)].map((m) => m[1]);
+  const base = blocks.find((b) => /overflow:\s*hidden/.test(b));
+  if (!base) return; // 클립이 없으면 잘릴 것도 없다
+  const pad = Number((base.match(/(?:^|;)\s*padding:\s*(\d+)px/) ?? [])[1]);
+  const mar = Number((base.match(/(?:^|;)\s*margin:\s*(-?\d+)px/) ?? [])[1]);
+  assert.ok(pad >= 2, `.deck-grid overflow:hidden에 padding ${pad || '없음'} — 포커스 링 2px이 가장자리 아이템에서 잘린다`);
+  assert.equal(mar, -pad, `.deck-grid margin ${Number.isNaN(mar) ? '없음' : mar} ≠ −padding ${-pad} — 바깥 폭이 바뀌면 컨테이너 쿼리 임계·레일 정렬이 어긋난다`);
+});
 
 test('svg 내부 인라인 transformOrigin 스위프 — px·숫자·보간 원점은 red(WebKit이 배율만큼 한 번 더 곱한다)', () => {
   let seen = 0;
