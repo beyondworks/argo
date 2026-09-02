@@ -66,7 +66,7 @@ export const RUNNERS = {
     // BYOA 2호(2026-07-27) — 구글이 개인용 Gemini Code Assist OAuth를 폐기하고 Antigravity로 이전
     // (피드백 38e5281d가 규명). Gemini **구독** 사용자의 유일한 경로라 CLI(agy) 래핑으로 태운다.
     // 자격은 OS 키링(파일 아님) — 호스트 로그인 옵트인 전용, 붙여넣기·API키 없음(GEMINI_API_KEY 무시 실측).
-    // 모델 목록 = `agy models` 실측(agy 1.1.7, 2026-07-27 · 3.7 Flash 추가 2026-09-01). ⚠ 실계정 실턴은 미검증(이 맥에 agy 로그인
+    // 모델 목록 = `agy models` 실측(agy 1.1.7 2026-07-27 · agy 1.1.23 2026-09-01 — 3.7 Flash 추가, 11종 id·순서 일치 재확인). ⚠ 실계정 실턴은 미검증(이 맥에 agy 로그인
     // 없음 — 카탈로그 규칙의 예외로 두되, 베타 확인 후 이 표기를 지울 것). 첫 항목이 러너 전환 기본값.
     models: [
       // 3.7 Flash 3종 — `agy models` 실측 2026-09-01(목록 갱신 시 이 명령이 정본)
@@ -105,9 +105,15 @@ export const RUNNERS = {
       // 두면 신규 키($0이 기본)의 영입·기억정리가 전부 402로 죽는다 — 검수 CRITICAL 2026-07-27).
       // 스모크 3/3 통과 실측(유료와 같은 tool_use 왕복 게이트). 무료 티어는 요청 한도(20/분,
       // 누적 구매 $10 미만이면 50/일)와 제공사 용량 편차가 있어 free 플래그로 UI에 배지 표시.
+      // 무료 3종 재편(2026-09-02 발행 전 재스모크 — 무료 목록은 제공사 사정으로 죽거나 막힌다, 발행 전 재스모크가 관문):
+      //  · minimax-m3:free — 3/3 통과(1M 컨텍스트) → **첫 항목·온보딩 기본으로 승격**
+      //  · nemotron:free — 4회 중 1회만 통과("Upstream error from Nvidia: Service temporarily overloaded" 3회) →
+      //    살아 있으나 불안정, 온보딩 기본 부적합이라 2번째로 내림
+      //  · ling-3.0-flash:free — 404 "unavailable for free"(서빙 종료) → 제거
+      //  · laguna-s-2.1:free — 단독·레이트 창 후에도 제공사 429 3/3 → 제거, minimax-m2.7:free(통과)로 교체
+      { id: 'minimax/minimax-m3:free', label: 'MiniMax M3 (Free)', free: true },
       { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 3 Super 120B', free: true },
-      { id: 'inclusionai/ling-3.0-flash:free', label: 'Ling 3.0 Flash', free: true },
-      { id: 'poolside/laguna-s-2.1:free', label: 'Laguna S 2.1', free: true },
+      { id: 'minimax/minimax-m2.7:free', label: 'MiniMax M2.7 (Free)', free: true },
       // ── 유료 — 잔액이 있는 사용자가 명시 선택(품질·속도 우위)
       { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
       { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
@@ -239,7 +245,7 @@ export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5';
 // 온보딩·자동 실행 기본(runOneShot) — **잔액 0에서도 도는 무료 모델**. 영입·기억정리·루틴 초안은
 // 사용자가 모델을 고를 화면이 없는 자동 호출이라, 유료를 기본으로 두면 신규 키($0이 기본)가
 // 연결 직후 첫 영입부터 402로 막힌다(검수 CRITICAL 2026-07-27). 카탈로그 선두와 일치.
-export const OPENROUTER_ONBOARD_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
+export const OPENROUTER_ONBOARD_MODEL = 'minimax/minimax-m3:free';
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 /** Grok 기본 모델 — 카탈로그 첫 항목과 같아야 한다(러너 전환·모델 미지정의 기본값). */
 export const GROK_DEFAULT_MODEL = 'grok-4.6';

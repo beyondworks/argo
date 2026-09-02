@@ -12,15 +12,11 @@ if (!KEY) { console.error('OPENROUTER_API_KEY env가 필요합니다 (키를 채
 const BASE = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api';
 
 const CANDIDATES = process.argv.slice(2).length ? process.argv.slice(2) : [
-  // 후보 — 벤더 다양성 + 도구 지원 표방 모델. 통과분만 카탈로그로.
-  'anthropic/claude-haiku-4.5',
-  'openai/gpt-5.5',
-  'x-ai/grok-4.5',
-  'minimax/minimax-m3',
-  'deepseek/deepseek-v4-pro',
-  'qwen/qwen3.7-max',
-  'moonshotai/kimi-k3',
-  'z-ai/glm-5.2',
+  // 카탈로그와 동기화(2026-09-02) — 이 목록이 낡으면 인자 없는 실행이 신규 등재분을 검증하지 않는다(검수 MEDIUM-3).
+  // 카탈로그를 바꾸면 여기도 같이: RUNNERS.openrouter.models의 id 전부.
+  'minimax/minimax-m3:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'minimax/minimax-m2.7:free',
+  'anthropic/claude-haiku-4.5', 'openai/gpt-5.5', 'google/gemini-3.7-flash', 'x-ai/grok-4.6', 'x-ai/grok-4.5',
+  'minimax/minimax-m3', 'qwen/qwen3.7-max', 'deepseek/deepseek-v4-pro', 'moonshotai/kimi-k3', 'z-ai/glm-5.3', 'z-ai/glm-5.2',
 ];
 
 const TOOL = {
