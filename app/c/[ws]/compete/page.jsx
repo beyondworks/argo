@@ -356,7 +356,7 @@ export default function Compete({ params }) {
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
                   {/* 슬롯 — 연결된 러너의 모델만, 러너별 그룹. 다른 슬롯이 고른 모델은 비활성(중복 방지). */}
                   {runners === null ? <Skeleton h={28} w={220} /> : (() => {
-                    const connected = (runners ?? []).filter((r) => r.authed && r.models?.length);
+                    const connected = (runners ?? []).filter((r) => r.authed && !r.hidden && r.models?.length); // 숨김 러너(gemini)는 새 경쟁에 못 세운다
                     if (!connected.length) {
                       return <Link href={`/c/${ws}/settings`} style={{ fontSize: 12, color: 'var(--primary-strong)', fontWeight: 650 }}>{t('compete.connectFirst')} →</Link>;
                     }

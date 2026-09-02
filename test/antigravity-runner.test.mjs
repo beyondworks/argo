@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { RUNNERS, RUNNER_AUTH, isCliRunner, apiError } from '../src/runners.mjs';
+import { RUNNERS, RUNNER_AUTH, isCliRunner, apiError , isHiddenRunner} from '../src/runners.mjs';
 import { PICK_ORDER } from '../app/runner-usable.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -52,7 +52,8 @@ test('배선 — chat/oneshot이 하드코딩 열거 대신 isCliRunner를 쓴�
 
 test('자동 선택 순서 — PICK_ORDER는 RUNNER_AUTH 정의 순과 일치한다', () => {
   // pickRunner가 RUNNER_AUTH 정의 순이므로 어긋나면 "자동" 표시가 실제 실행 러너와 다르게 뜬다(주석 참조).
-  assert.deepEqual(PICK_ORDER, Object.keys(RUNNER_AUTH));
+  // 숨김 러너(gemini, 2026-09-03)는 자동 선택 대상이 아니라 PICK_ORDER에서도 뺀다 — 가시 러너끼리 정의 순 일치
+  assert.deepEqual(PICK_ORDER, Object.keys(RUNNER_AUTH).filter((id) => !isHiddenRunner(id)));
 });
 
 test('연결 UI — RUNNER_ORDER·RUNNER_NAMES에 antigravity가 있다', () => {

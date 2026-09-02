@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { appendUsage } from './usage.mjs';
-import { isBilledRunner } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
+import { isBilledRunner, visibleRunnerNamesLine } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
 import { appendEvent } from './events.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 Codex/Gemini/GLM만 연결해도 영입 가능
 import { isReservedSlug } from './slug.mjs'; // 회의실 내부 이름(room-*)과의 파일 충돌 차단 — 예약어 원천
@@ -175,7 +175,7 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   if (!md) {
     throw new Error(lang === 'en'
       ? 'AI connection is needed — connect any runner (Claude, Codex, Gemini, Antigravity, GLM, Kimi, OpenRouter, or Grok) in Settings → AI connections to hire.'
-      : 'AI 연결이 필요합니다 — 설정 → AI 연결에서 아무 러너나(Claude·Codex·Gemini·Antigravity·GLM·Kimi·OpenRouter·Grok) 연결하면 영입할 수 있어요.');
+      : `AI 연결이 필요합니다 — 설정 → AI 연결에서 아무 러너나(${visibleRunnerNamesLine()}) 연결하면 영입할 수 있어요.`);
   }
 
   // 관대한 필드 복원 — frontmatter(닫는 --- 없어도)·본문 H1("# 이름 — 역할")·입력에서 긁는다.

@@ -263,6 +263,8 @@ export const GROK_DEFAULT_MODEL = 'grok-4.6';
 /** 숨김 러너 — 새로 고르거나 자동으로 잡히지 않는다(기존 지정·자격은 유효). 목록을 만드는 모든 자리가 이 판정을 쓴다. */
 export const isHiddenRunner = (id) => !!RUNNERS[id]?.hidden;
 export const visibleRunnerIds = () => Object.keys(RUNNERS).filter((id) => !isHiddenRunner(id));
+/** 안내문용 가시 러너 이름 줄("Claude·Codex·…") — 하드코딩 4곳(chat/oneshot/persona/trial)이 숨김 러너를 권하던 것의 단일 원천 */
+export const visibleRunnerNamesLine = () => visibleRunnerIds().map((id) => RUNNERS[id].name).join('·');
 
 export const RUNNER_AUTH = {
   // claude 웹 브리지(webConnect)는 철회(2026-07-18) — 구세대 엔드포인트 교환이 러너가 거절하는

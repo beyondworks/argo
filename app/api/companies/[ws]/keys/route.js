@@ -1,7 +1,7 @@
 // 러너 연결(BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) × (API키·OAuth) 회사별 자격 관리.
 // 일반 사용자가 호스트 CLI 로그인 없이도 어떤 러너든 자기 계정으로 연결하게 하는 관문.
 // 응답에는 평문 대신 마스킹만 실린다(보안 규칙).
-import { runnerStatus, saveRunnerCred, clearRunnerCred, maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH, hostOptInAllowed, normalizePastedCred, probeGeminiHostOAuth } from '../../../../../src/runners.mjs';
+import { runnerStatus, saveRunnerCred, clearRunnerCred, maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH, hostOptInAllowed, normalizePastedCred, probeGeminiHostOAuth , isHiddenRunner} from '../../../../../src/runners.mjs';
 import { loadCompany } from '../../../../../src/workspace.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
@@ -21,6 +21,7 @@ export async function PUT(req, { params }) {
     const { runner, type = 'apikey', value, verify } = await req.json();
     const meta = RUNNER_AUTH[runner];
     if (!meta) throw new Error('알 수 없는 러너');
+    if (isHiddenRunner(runner)) throw new Error('더 이상 제공되지 않는 러너입니다'); // 숨김(gemini) — UI 경로는 없지만 직접 호출도 막는다(해제 DELETE는 허용)
     // host — "이 컴퓨터 로그인 사용" 명시 옵트인(codex/gemini). 서버가 실제 로그인 상태를 검증하고
     // 마커만 저장한다(자격 값 없음). 자동 스캐빈징 금지 원칙에서 이 버튼이 유일한 호스트 사용 관문.
     if (type === 'host') {

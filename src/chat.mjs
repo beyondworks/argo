@@ -24,7 +24,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds } from './runners.mjs';
+import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds , visibleRunnerNamesLine} from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -586,8 +586,9 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   async function checkRunnerModel(runner, model, effRunner = null) {
     if (!runner && !model) return null;
     if (runner && !RUNNERS[runner]) return `알 수 없는 러너 "${runner}". 가능한 값: ${visibleRunnerIds().join(', ')}`;
-    // 숨김 러너는 새로 지정할 수 없다(기존 지정 크루는 그대로 돈다) — 목록에 없는 값을 크루가 기억으로 골라 올리는 길 차단
-    if (runner && isHiddenRunner(runner)) return `${RUNNERS[runner].name} 러너는 더 이상 새로 지정할 수 없다. 가능한 값: ${visibleRunnerIds().join(', ')}`;
+    // 숨김 러너는 새로 지정할 수 없다(기존 지정 크루는 그대로 돈다) — 목록에 없는 값을 크루가 기억으로 골라 올리는 길 차단.
+    // 이미 그 러너인 크루가 같은 러너 안에서 모델만 바꾸는 것(effRunner 동일)은 허용(검수 LOW-3).
+    if (runner && isHiddenRunner(runner) && runner !== effRunner) return `${RUNNERS[runner].name} 러너는 더 이상 새로 지정할 수 없다. 가능한 값: ${visibleRunnerIds().join(', ')}`;
     if (model) {
       const target = runner || effRunner; // 지정 러너 우선, 없으면 크루의 현재 러너
       if (target && RUNNERS[target] && !RUNNERS[target].models.some((m) => m.id === model)) {
@@ -609,9 +610,9 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   const findCrew = (target) => {
     const norm = (s) => String(s ?? '').normalize('NFC').toLowerCase().trim();
     const key = norm(target);
-    if (!key || key === 'me' || key === norm(fromName) || key === norm(fromSlug)) return { slug: fromSlug, name: fromName };
+    if (!key || key === 'me' || key === norm(fromName) || key === norm(fromSlug)) return { slug: fromSlug, name: fromName, runner: null }; // 자기 자신 — 러너는 update_profile이 카드에서 읽는다
     const hit = colleagues.find((a) => norm(a.slug) === key || norm(a.name) === key);
-    return hit ? { slug: hit.slug, name: hit.name } : null;
+    return hit ? { slug: hit.slug, name: hit.name, runner: hit.runner ?? null } : null;
   };
 
   const catalogLine = Object.entries(RUNNERS).filter(([id]) => !isHiddenRunner(id)).map(([id, r]) => `${id}=${r.models.map((m) => m.id).join('/')}`).join(' · ');
@@ -637,7 +638,9 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         const owner = Object.keys(RUNNERS).find((id) => RUNNERS[id].models.some((m) => m.id === model));
         if (owner) runner = owner;
       }
-      const bad = await checkRunnerModel(runner, model);
+      // 대상 크루의 현재 러너 — 같은 러너 안의 모델 변경(숨김 러너 포함)을 허용하기 위한 기준(검수 LOW-3). 동료는 명단 값, 자신은 카드.
+      const effRunner = who.runner ?? (who.slug === fromSlug ? ((await readAgentCard(wsId, fromSlug).catch(() => ({ meta: {} }))).meta?.runner ?? null) : null);
+      const bad = await checkRunnerModel(runner, model, effRunner);
       if (bad) return text(bad);
       const changes = {
         ...(name !== undefined ? { name } : {}), ...(role !== undefined ? { role } : {}),
@@ -867,7 +870,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
           : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — ${noCli.join('/')} 러너는 벤더 CLI로 실행됩니다. CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
       : (lang === 'en'
           ? 'No AI runner is connected. Connect one in Settings → AI connections (Claude, Codex, Gemini, Antigravity, GLM, Kimi, OpenRouter, or Grok), then try again.'
-          : 'AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 Claude·Codex·Gemini·Antigravity·GLM·Kimi·OpenRouter·Grok 중 하나를 연결한 뒤 다시 말을 걸어 주세요.'));
+          : `AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 ${visibleRunnerNamesLine()} 중 하나를 연결한 뒤 다시 말을 걸어 주세요.`));
   }
   const runner = resolved.runner;
   // 이번 턴까지 시도한 러너 목록 — 아래 두 실행 경로(CLI·SDK)의 인증 자가치유가 공유한다.

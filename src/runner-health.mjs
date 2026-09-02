@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { appendEvent } from './events.mjs';
-import { RUNNER_AUTH, loadRunnerCred, verifyRunnerCred, isHiddenRunner } from './runners.mjs';
+import { RUNNER_AUTH, loadRunnerCred, verifyRunnerCred } from './runners.mjs';
 import { grokExpired } from './runners/grok.mjs';
 
 export const HEALTH_INTERVAL_MS = 30 * 60_000;            // 기본 30분(계획서 값)
@@ -76,7 +76,6 @@ export async function runHealthChecks(wsId, {
   let changed = false;
   const checked = [];
   for (const runner of Object.keys(RUNNER_AUTH)) {
-    if (isHiddenRunner(runner)) continue; // 숨김 러너는 검진하지 않는다(새로 고를 수 없는 러너에 프로브 비용을 쓰지 않는다)
     const entry = state[runner];
     if (!healthDue(entry, runner, nowMs, { intervalMs, billedIntervalMs, jitterMs: jitterMs ?? jitterFor(wsId, runner) })) continue;
     const cred = await loadCredFn(wsId, runner).catch(() => null);

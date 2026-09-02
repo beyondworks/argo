@@ -56,13 +56,19 @@ export function AiConnectionCard({ ws, accordion = false }) {
         <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={i === 0} lastTurn={lastTurns[id]} healthFail={healthFails[id]}
           {...(accordion ? { open: openId === id, onToggle: () => setOpenId(openId === id ? null : id) } : {})} />
       ))}
+      {/* 숨김 러너(gemini)는 카드가 없다 — 단, 저장된 연결이 남아 있으면 "제공 종료 · 해제만" 행으로 보인다(검수 MEDIUM-4:
+          벤더 자격을 앱에서 볼 수도 지울 수도 없던 상태 방지). 해제하면 이 행도 사라진다. */}
+      {runners && Object.keys(runners).filter((id) => runners[id]?.hidden && runners[id]?.company?.connected).map((id) => (
+        <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={false} lastTurn={lastTurns[id]} healthFail={healthFails[id]} retired
+          {...(accordion ? { open: openId === id, onToggle: () => setOpenId(openId === id ? null : id) } : {})} />
+      ))}
     </div>
   );
 }
 
 /** 러너 1행 — 상태 칩 + 방식 탭 + (API키/붙여넣기 토큰 입력) 또는 (CLI 로그인 안내).
     onToggle이 오면 아코디언 모드(온보딩) — 헤더만 보이고 클릭으로 본문을 펼친다. 설정은 기존 그대로. */
-function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, lastTurn = null, healthFail = null }) {
+function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, lastTurn = null, healthFail = null, retired = false }) {
   const { t, fmtMoney } = useLang();
   const methods = st?.methods ?? ['apikey'];
   const hasOauth = methods.includes('oauth');
@@ -477,8 +483,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
       {st?.cli && (
         <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.cliToolsNote')}</span>
       )}
-      {hostLinked ? (
-        /* host 연결됨 — 상태 칩이 전부다. 연결 폼은 숨기고 해제만 노출(오폼 입력 유실 방지). */
+      {retired && <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.retiredNote')}</span>}
+      {hostLinked || retired ? (
+        /* host 연결됨 또는 제공 종료(숨김) 러너의 보관 자격 — 상태 칩이 전부다. 연결 폼은 숨기고 해제만 노출. */
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
           {removeBtn}
