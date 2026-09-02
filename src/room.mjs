@@ -318,7 +318,18 @@ export async function withRoomTurnStatus(wsId, fn, { heartbeatMs = 30_000 } = {}
     턴이 최대 30분 거짓 '회의 중'을 만든다(분리 검수 HIGH-2: 3/10/25/29분 전 마커 전부 ACTIVE 실측). */
 export async function getRoomTurn(wsId) {
   const s = await getTurnStatus(wsId, ROOM_TURN_SLUG);
-  return s ? { active: true, slug: s.detail || null, startedAt: s.startedAt } : null;
+  if (!s) return null;
+  // detail = '발언자|다음1,다음2'. 발언 크루의 상태 파일(크루 채팅이 스트리밍하는 stage·detail·partial)은
+  // **표시 보강**일 뿐 — 진행 판정은 위 마커 하나다(단일 판정 유지). 방에서도 "지금 무엇을 하며 무엇을
+  // 쓰고 있는지"가 보이게(유건 2026-09-02 "보는 재미"). 발언이 끝나면 chat()이 상태 파일을 지워 partial이
+  // 비고, 완성 말풍선이 정본이 된다.
+  const [slug = '', rest = ''] = String(s.detail || '').split('|');
+  const live = slug ? await getTurnStatus(wsId, slug) : null;
+  return {
+    active: true, slug: slug || null, startedAt: s.startedAt,
+    queue: rest.split(',').filter(Boolean),
+    stage: live?.stage ?? null, detail: live?.detail ?? '', partial: live?.partial ?? '',
+  };
 }
 
 export async function runRoomTurn(wsId, text, attachments = []) {
@@ -439,6 +450,8 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}) {
   // 호출) 키가 완전히 같아져 서로의 위임 이벤트를 주워 담는다(분리 검수 MEDIUM-3).
   const turnId = `${sid}-${Math.random().toString(36).slice(2, 8)}`;
   const replies = [];
+  // 마커 detail = '발언자|다음1,다음2' (getRoomTurn이 해석). j가 범위 밖이면 빈 값 = 발언자 미정(마무리 중).
+  const markerFor = (j) => (speakers[j] ? `${speakers[j].slug}|${speakers.slice(j + 1).map((s) => s.slug).join(',')}` : '');
   for (const [i, a] of speakers.entries()) {
     const att = i >= IMG_EMBED_MAX && attachments.some((x) => x.isImage)
       ? attachments.map((x) => (x.isImage ? { ...x, isImage: false } : x))
@@ -482,9 +495,13 @@ ${transcript}
     });
     let r;
     try {
-      await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', a.slug); // 발언자 갱신 — 화면 복원의 신선도 앵커(getRoomTurn)
+      await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', markerFor(i)); // 발언자|다음 순서 — 화면 복원·발언 큐의 앵커
       // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다
       r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx });
+      // 발언이 끝나는 **즉시** 다음 발언자로 넘긴다 — chat()이 크루 상태 파일을 지운 뒤 답변 적재·스레드 기록·
+      // 다음 프롬프트 조립이 끝날 때까지 마커만 옛 발언자로 남으면, 화면에 완성 답변 아래 "페퍼 · 시동 거는 중"이
+      // 다시 뜬다(격리 실측 2026-09-02 shot-1). 마지막 발언자면 빈 값 → 종전 '회의 중' 줄로 마무리.
+      await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', markerFor(i + 1));
     } catch (e) {
       // 발언 실패를 **방에 남긴다** — 오류는 POST 호출 탭에만 돌아가므로, 안건을 올리고 다른 페이지로 간
       // 사장에게는 방이 그냥 조용해져 "멈췄다"로 보였다(실사용 제보 2026-09-02 계열 — 격리 실측: 401 실패 190초

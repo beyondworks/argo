@@ -59,6 +59,7 @@ const DICT = {
   'room.allCrew': ['모든 크루 호출 — 전원이 순서대로 발언합니다', 'Call every crew — all speak in turn'],
   'room.empty': ['"@이름 안건"으로 크루를 불러 회의를 시작하세요. 여러 명을 부르면 순서대로 발언하고, 서로의 발언을 보고 보탭니다.', 'Start with "@name topic". Mention several crews and they speak in turn, building on each other.'],
   'room.meeting': ['회의 중 — 크루들이 차례로 발언합니다', 'In session — crews are speaking in turn'],
+  'room.next': ['다음 발언: {names}', 'Up next: {names}'],
   'room.placeholder': ['@이름 을 붙여 안건을 던지세요 (여러 명 가능, 최대 3명 발언)', 'Mention @name(s) and drop a topic (up to 3 speak)'],
   'room.newMsgs': ['새 메시지 ↓', 'New messages ↓'],
   'room.hint': ['멘션이 없으면 첫 번째 크루가 답합니다. @all을 붙이면 전 크루가 발언합니다. 회의 내용은 자동으로 회사 기억(일지)에 남습니다.', 'No mention → the first crew replies. @all calls everyone. Everything lands in company memory automatically.'],

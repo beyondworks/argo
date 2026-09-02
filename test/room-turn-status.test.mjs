@@ -113,6 +113,57 @@ test('GET /api/companies/[ws]/room 은 turn을 동봉한다(실호출) — 없�
   await clearTurnStatus(ws, ROOM_TURN_SLUG);
 });
 
+test('getRoomTurn: 발언자|다음 순서 해석 + 발언 크루의 단계·부분 텍스트 보강(표시 전용 — 진행 판정은 마커 하나)', async () => {
+  const ws = 'rs-live'; await seed(ws);
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper|carmack,davinci');
+  let r = await getRoomTurn(ws);
+  assert.deepEqual({ slug: r.slug, queue: r.queue, stage: r.stage, detail: r.detail, partial: r.partial },
+    { slug: 'pepper', queue: ['carmack', 'davinci'], stage: null, detail: '', partial: '' }, '상태 파일 없으면 빈 값(크루 시동 전)');
+  await setTurnStatus(ws, 'pepper', 'tool', 'Grep', '지금까지 말한 텍스트');
+  r = await getRoomTurn(ws);
+  assert.deepEqual({ stage: r.stage, detail: r.detail, partial: r.partial }, { stage: 'tool', detail: 'Grep', partial: '지금까지 말한 텍스트' }, '발언 크루의 스트리밍 상태가 방에 실린다');
+  await clearTurnStatus(ws, 'pepper'); // 발언 완료 = chat()이 상태 파일을 지운다 → partial이 비고 완성 말풍선이 정본
+  r = await getRoomTurn(ws);
+  assert.deepEqual({ active: r.active, partial: r.partial }, { active: true, partial: '' }, '완료 후 partial 없음, 진행 판정은 마커만');
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper'); // 구분자 없는 구형 마커도 해석
+  r = await getRoomTurn(ws);
+  assert.deepEqual({ slug: r.slug, queue: r.queue }, { slug: 'pepper', queue: [] });
+  await backdate(ws, ROOM_TURN_SLUG, 5 * 60_000);
+  await setTurnStatus(ws, 'pepper', 'tool', 'Grep', 'x');
+  assert.equal(await getRoomTurn(ws), null, '낡은 마커는 발언 크루 상태가 신선해도 null — HIGH-2 단일 판정 유지');
+  await clearTurnStatus(ws, 'pepper'); await clearTurnStatus(ws, ROOM_TURN_SLUG);
+});
+
+test('GET /room 이 발언자·다음 순서·단계·부분 텍스트를 그대로 싣는다(실호출) — 실시간 발언 표시의 유일한 원천', async () => {
+  const ws = 'rs-route-live'; await seed(ws);
+  const route = await import('../app/api/companies/[ws]/room/route.js');
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper|carmack');
+  await setTurnStatus(ws, 'pepper', 'think', '', '부분');
+  const d = await (await route.GET(new Request(`http://127.0.0.1/api/companies/${ws}/room`), { params: Promise.resolve({ ws }) })).json();
+  assert.deepEqual({ slug: d.turn?.slug, queue: d.turn?.queue, stage: d.turn?.stage, partial: d.turn?.partial },
+    { slug: 'pepper', queue: ['carmack'], stage: 'think', partial: '부분' });
+  await clearTurnStatus(ws, 'pepper'); await clearTurnStatus(ws, ROOM_TURN_SLUG);
+});
+
+test('배선: 회의실 페이지가 발언 중인 크루의 단계·부분 텍스트·다음 순서를 그리고, 진행 중엔 2.5초 폴링한다(소스 구간 불변식)', async () => {
+  const page = stripComments(await readFile(new URL('../app/c/[ws]/room/page.jsx', import.meta.url), 'utf8'));
+  assert.match(page, /const \[turn, setTurn\] = useState\(null\)/);
+  assert.match(page, /import \{ useLang, stageLabel \} from '\.\.\/\.\.\/\.\.\/i18n'/, '단계 라벨은 크루 채팅과 같은 사전 매핑');
+  assert.match(page, /\}, live \? 2500 : 8000\);\s*\n\s*return \(\) => clearInterval\(iv\);\s*\n\s*\}, \[ws, busy, serverBusy\]\);/, '진행 중 2.5초·유휴 8초, 상태 전환에 재설정');
+  assert.match(page, /const live = busy \|\| serverBusy;/, '자기 턴·서버 턴 모두 진행');
+  const live = page.slice(page.indexOf('{!viewing && (busy || serverBusy) && ('), page.indexOf('<div ref={endRef} />'));
+  assert.match(live, /turn\?\.slug \? \(/, '발언자를 알면 말풍선 형태');
+  assert.match(live, /<Avatar name=\{nameOf\(turn\.slug\)\} size=\{26\} \/>/);
+  assert.match(live, /stageLabel\(t, turn\.stage \|\| 'boot', turn\.detail\)/, '단계 라벨(미정이면 시동 중)');
+  assert.match(live, /\{turn\.partial && \(\s*\n\s*<div[^\n]*><Markdown text=\{turn\.partial\} wsId=\{ws\} \/><\/div>/, '부분 텍스트는 마크다운');
+  assert.match(live, /t\('room\.next', \{ names: turn\.queue\.map\(nameOf\)\.join\(' → '\) \}\)/, '다음 순서 줄');
+  assert.match(live, /\) : \(\s*\n\s*<div[^\n]*>\s*\n\s*<ArgoSpinner size=\{16\} \/> \{t\('room\.meeting'\)\}/, '발언자 미정이면 종전 스피너 줄');
+  assert.match(page, /\} finally \{\s*\n\s*setBusy\(false\); setServerBusy\(false\); setTurn\(null\);/, '자기 턴 종료 시 즉시 내린다 — 마지막 partial이 완성 말풍선과 겹치지 않게');
+  assert.match(page, /\}, \[messages, busy, viewing, turn\?\.partial, turn\?\.stage\]\);/, '부분 텍스트가 자라는 동안 하단 추종');
+  const i18n = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  assert.match(i18n, /'room\.next': \['[^']*\{names\}[^']*', '[^']*\{names\}[^']*'\]/, 'ko/en 둘 다 {names} 치환');
+});
+
 test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전에 발언자를 갱신하며, 실패를 방에 남긴다(소스 구간 불변식)', async () => {
   const src = stripComments(await readFile(new URL('../src/room.mjs', import.meta.url), 'utf8'));
   // 불변식: runRoomTurn 본문은 withRoomTurnStatus 호출 하나이고, 실제 턴(runRoomTurnInner)은 그 안에서만 불린다.
@@ -124,7 +175,12 @@ test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전
   assert.equal((src.match(/(?<!function )runRoomTurnInner\(wsId, text, attachments/g) ?? []).length, 1, '래퍼 밖 직접 호출 금지(정의부 제외)');
   const i0 = src.indexOf('for (const [i, a] of speakers.entries())');
   const loop = src.slice(i0, src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
-  assert.match(loop, /setTurnStatus\(wsId, ROOM_TURN_SLUG, 'room', a\.slug\)/, '발언자 갱신이 chat() 앞에 있어야 발언자 표시의 앵커가 된다');
+  assert.match(src, /const markerFor = \(j\) => \(speakers\[j\] \? `\$\{speakers\[j\]\.slug\}\|\$\{speakers\.slice\(j \+ 1\)\.map\(\(s\) => s\.slug\)\.join\(','\)\}` : ''\);/,
+    "마커 인코딩 '발언자|다음1,다음2' — getRoomTurn의 해석과 짝");
+  assert.match(loop, /setTurnStatus\(wsId, ROOM_TURN_SLUG, 'room', markerFor\(i\)\)/, '발언자|다음 순서 갱신이 chat() 앞에 있어야 발언자 표시·발언 큐의 앵커가 된다');
+  // 발언 종료 즉시 다음 발언자로 — 없으면 답변 적재~다음 프롬프트 조립 사이에 "옛 발언자 · 시동 거는 중"이 샌다(격리 실측 shot-1)
+  const afterChat = src.slice(src.indexOf('r = await chat(wsId, a.slug, prompt', i0), src.indexOf('} catch (e) {', i0));
+  assert.match(afterChat, /r = await chat\([^\n]*\);\s*\n\s*await setTurnStatus\(wsId, ROOM_TURN_SLUG, 'room', markerFor\(i \+ 1\)\);/, 'chat() 반환 직후 마커 인계(마지막이면 빈 값)');
   // 발언 실패가 방에 남는가 — 오류는 POST 탭으로만 가므로 자리를 비운 사장에게 방은 그냥 조용하다(격리 실측: 401 뒤 흔적 0)
   const after = src.slice(src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
   const catchBlk = after.slice(after.indexOf('} catch (e) {'), after.indexOf('} finally {'));
@@ -139,8 +195,9 @@ test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전
 test('배선: 회의실 페이지가 turn.active를 serverBusy로 복원하고, 폴링·표시·마치기가 올바르게 묶여 있다', async () => {
   const page = stripComments(await readFile(new URL('../app/c/[ws]/room/page.jsx', import.meta.url), 'utf8'));
   assert.match(page, /const \[serverBusy, setServerBusy\] = useState\(false\)/, '서버 진행 상태는 별도 상태');
-  assert.match(page, /setMessages\(d\.messages \?\? \[\]\); setServerBusy\(!!d\.turn\?\.active\); setError\(''\);/, '마운트 로드에서 복원');
-  assert.match(page, /if \(!busy\) api\(`\/api\/companies\/\$\{ws\}\/room`\)\.then\(\(d\) => \{ setMessages\(d\.messages \?\? \[\]\); setServerBusy\(!!d\.turn\?\.active\); \}\)/, '폴링에서 복원(조건은 !busy — serverBusy로 폴링을 멈추면 영구 회의 중)');
+  assert.match(page, /setMessages\(d\.messages \?\? \[\]\); setServerBusy\(!!d\.turn\?\.active\); setTurn\(d\.turn \?\? null\); setError\(''\);/, '마운트 로드에서 복원');
+  assert.match(page, /setTurn\(d\.turn \?\? null\); setServerBusy\(!!d\.turn\?\.active\);\s*\n\s*const srv = d\.messages \?\? \[\];\s*\n\s*setMessages\(\(cur\) => \(!busy \|\| srv\.length >= \(cur\?\.length \?\? 0\)\) \? srv : cur\);/,
+    '폴링에서 복원 — serverBusy는 폴링 조건에 없다(멈추면 영구 회의 중); 자기 턴 중엔 서버 목록이 낙관 말풍선을 이미 담았을 때(길이 ≥ 로컬)만 받는다');
   assert.match(page, /\{!viewing && \(busy \|\| serverBusy\) && \(/, '표시는 둘 중 하나면 켜진다');
   assert.doesNotMatch(page, /if \(!busy && !serverBusy\)/, 'serverBusy가 폴링 조건에 들어가면 안 된다');
   // 마치기 — 서버 턴 중 마치면 도는 발언이 방·개인 스레드 어디에도 안 남는다(검수 MEDIUM-2)
