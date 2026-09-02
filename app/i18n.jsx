@@ -673,7 +673,7 @@ const DICT = {
   'deck.standby': ['대기', 'Standby'],
   'deck.allStandby': ['전원 대기 중', 'All on standby'],
   'deck.hireByPrompt': ['한 줄 프롬프트로 영입', 'Hire with one prompt'],
-  'deck.linkDensity': ['연결 밀도', 'Link Density'],
+  'deck.linkDensity': ['기억 연결', 'Memory Links'],
   'deck.linksPair': ['{n}쌍', '{n} pairs'],
   'deck.linked': ['연결된 기억', 'linked memories'],
   'deck.composition': ['구성', 'Composition'],
