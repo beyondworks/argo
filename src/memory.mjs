@@ -252,7 +252,7 @@ export async function updateIndex(wsId) {
     return `- [[${d.rel.replace(/\.md$/, '')}]] — ${d.title}${when}${d.links.length ? ` (관련: ${d.links.join(', ')})` : ''}`;
   };
   // 주제 노트는 갱신일 내림차순 — 파일명(주제 슬러그) 정렬은 시간 정보가 0이라 옛 절차와 최신 절차가
-  // 순서 없이 섞여 나온다. 일지는 파일명이 YYYY-MM-DD로 시작해 기존 파일명 정렬이 곧 최신순이라 그대로 둔다.
+  // 순서 없이 섞여 나온다. 일지는 파일명이 YYYY-MM-DD로 시작해 날짜 순서는 파일명이 맞고, 같은 날 안은 아래에서 mtime으로 푼다.
   // 동일자 타이브레이크는 mtime — 파일명으로 깨면 saveNote(create)의 접미 번호(-2,-3) 계열에서
   // 항상 v1이 최상단으로 올라와 고치려던 문제가 그대로 남는다(검수 MEDIUM).
   // 동기화 충돌 사본(sync.mjs가 `<슬러그>.conflict-<기기>-<ts>.md`로 보존하는 패배한 로컬본)은 주제 노트에서
@@ -270,7 +270,12 @@ export async function updateIndex(wsId) {
   const cutoff = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
   // 일별(YYYY-MM-DD-*)과 주간 롤업(YYYY-Wnn)을 분리 — 'W' > 숫자라 문자열 비교 컷오프를 주간 파일이
   // 항상 통과해 "최근 일지"에 영구 누적되고, 미정리 14일+ 일지는 실종되던 문제의 교정(분류는 vaultdoc.docKind).
-  const journals = docs.filter((d) => d.kind === 'journal' && basename(d.rel) >= cutoff);
+  // 같은 날 안의 순서는 파일명이 아니라 기록 시각(mtime)이다 — 회의록은 같은 분에 두 번 마치면 `-2` 접미가 붙는데
+  // (room.mjs endMeetingLocked), 파일명 역순은 base → -3 → -2로 최신순이 깨진다(주제 노트가 같은 이유로 mtime
+  // 타이브레이크를 쓴다 — 위 주석). 날짜(파일명 앞 10자)가 먼저, 그다음 mtime, 마지막 파일명.
+  const dayOf = (d) => basename(d.rel).slice(0, 10);
+  const journals = docs.filter((d) => d.kind === 'journal' && basename(d.rel) >= cutoff)
+    .sort((a, b) => dayOf(b).localeCompare(dayOf(a)) || (b.mtimeMs - a.mtimeMs) || b.rel.localeCompare(a.rel));
   const weeklies = docs.filter((d) => d.kind === 'weekly').slice(0, 8);
   const legacy = docs.filter((d) => d.kind === 'legacy').slice(0, 10);
   await writeJsonAtomic(p.index, `# 회사 기억 인덱스
