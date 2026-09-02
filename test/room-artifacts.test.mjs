@@ -173,13 +173,18 @@ test('릴레이(@B > @A) 실제 실행: 앞 크루의 산출물 경로가 뒤 �
 test('첨부와 산출물이 같은 발언에 있으면 노트가 첨부 → 산출물 순으로 나란히 붙는다(시드 방)', POSIX_ONLY, async () => {
   const WS = 'room-note-order';
   await mkws(WS); await seedCrew(WS);
+  await writeFile(join(ROOT, WS, 'agents', 'crew-b.md'), '---\nname: 크루B\nrunner: codex\n---\n\n전문가.\n'); // 이름 표기(nameOf)까지 고정 — slug 폴백에 기대지 않는다(검수 LOW-3)
+  // 본문은 400자 잘림 상한을 넘기게 — 노트가 잘림 **바깥**에 붙는다는 속성을 잠근다(검수 LOW-1: 짧은 시드면
+  // `String(m.text + note).slice(0, 400)` 변이도 초록). 8자 + 가×450 → 잘린 본문 = 8자 + 가×392.
+  const longText = '정리했습니다. ' + '가'.repeat(450);
   await writeFile(join(ROOT, WS, 'chats', 'room-main.json'), JSON.stringify({ messages: [
     { who: 'user', text: '@crew-b 정리해줘', ts: 1, attachments: [{ rel: 'files/a1_스케치.png', name: '스케치.png', isImage: true }] },
-    { who: 'crew-b', text: '정리했습니다', ts: 2, attachments: [{ rel: 'files/a1_스케치.png', name: '스케치.png' }], artifacts: [REL, 'files/표.csv'] },
+    { who: 'crew-b', text: longText, ts: 2, attachments: [{ rel: 'files/a1_스케치.png', name: '스케치.png' }], artifacts: [REL, 'files/표.csv'] },
   ], sid: 1 }));
   await runRoomTurn(WS, '@crew-a 이어서 검토해줘');
   const [p] = await promptsOf(WS);
-  assert.match(p, /crew-b: 정리했습니다 \(첨부, Read로 열람: vault\/files\/a1_스케치\.png\) \(산출물, Read로 열람: vault\/projects\/20260902_회의\/요약\.md, vault\/files\/표\.csv\)\n/,
-    '첨부 노트 뒤에 산출물 노트, 복수 경로는 쉼표 나열, 줄 끝');
+  assert.match(p, /크루B: 정리했습니다\. 가{392} \(첨부, Read로 열람: vault\/files\/a1_스케치\.png\) \(산출물, Read로 열람: vault\/projects\/20260902_회의\/요약\.md, vault\/files\/표\.csv\)\n/,
+    '본문은 400자에서 잘리고 그 뒤에 첨부 노트 → 산출물 노트가 잘리지 않고 붙는다, 복수 경로는 쉼표 나열, 줄 끝');
+  assert.doesNotMatch(p, /가{393}/, '본문 잘림(400) 유지 — 노트를 넣으며 잘림을 풀지 않았다');
   assert.match(p, /사장: @crew-b 정리해줘 \(첨부, Read로 열람: vault\/files\/a1_스케치\.png\)\n/, '사장 줄의 첨부 노트는 그대로(회귀 없음)');
 });
