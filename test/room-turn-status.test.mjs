@@ -115,8 +115,13 @@ test('GET /api/companies/[ws]/room 은 turn을 동봉한다(실호출) — 없�
 
 test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전에 발언자를 갱신하며, 실패를 방에 남긴다(소스 구간 불변식)', async () => {
   const src = stripComments(await readFile(new URL('../src/room.mjs', import.meta.url), 'utf8'));
-  assert.match(src, /export async function runRoomTurn\(wsId, text, attachments = \[\]\) \{\s*\n\s*return withRoomTurnStatus\(wsId, \(\) => runRoomTurnInner\(wsId, text, attachments\)\);/,
+  // 불변식: runRoomTurn 본문은 withRoomTurnStatus 호출 하나이고, 실제 턴(runRoomTurnInner)은 그 안에서만 불린다.
+  // (#392에서 saved 표식 래퍼가 안쪽에 들어와 한 줄 형태가 아니게 됐다 — 구간으로 잠근다)
+  const rt = src.slice(src.indexOf('export async function runRoomTurn('), src.indexOf('async function runRoomTurnInner('));
+  assert.match(rt, /export async function runRoomTurn\(wsId, text, attachments = \[\]\) \{\s*\n\s*return withRoomTurnStatus\(wsId, async \(\) => \{/,
     '래퍼를 우회하면 마커가 안 생겨 복원이 죽는다');
+  assert.match(rt, /return await runRoomTurnInner\(wsId, text, attachments, state\);/, '실제 턴은 래퍼 안에서만');
+  assert.equal((src.match(/(?<!function )runRoomTurnInner\(wsId, text, attachments/g) ?? []).length, 1, '래퍼 밖 직접 호출 금지(정의부 제외)');
   const i0 = src.indexOf('for (const [i, a] of speakers.entries())');
   const loop = src.slice(i0, src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
   assert.match(loop, /setTurnStatus\(wsId, ROOM_TURN_SLUG, 'room', a\.slug\)/, '발언자 갱신이 chat() 앞에 있어야 발언자 표시의 앵커가 된다');
