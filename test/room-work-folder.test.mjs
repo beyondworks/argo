@@ -182,6 +182,8 @@ test('팝오버 세로 클램프 — dropUpMaxH(순수) + 측정형 배선(배�
   assert.match(mod, /maxHeight: maxH \|\| undefined, overflowY: 'auto'/, '상한 + 내부 스크롤(둘 중 하나만 있으면 잘리거나 넘친다)');
   assert.match(mod, /window\.addEventListener\('argo:zoom', measure\);/, '배율 변경 재측정(1회 측정은 배율에 낡는다)');
   assert.match(mod, /window\.addEventListener\('resize', measure\);/, '리사이즈 재측정');
+  // 가로 — 무템플릿 grid 암묵 auto 열이 폼 min-content로 부풀어 문단이 카드 밖으로 잘렸다(배율 2 실측 scrollW 240 > clientW 216)
+  assert.match(mod, /display: 'grid', gap: 8,\s*\n(?:\s*\/\/[^\n]*\n)*\s*gridTemplateColumns: 'minmax\(0, 1fr\)',/, '팝오버 열 잠금 minmax(0,1fr)');
 });
 
 test('⑤ 화면: 회의실·크루 채팅이 같은 공용 모듈(work-folder.jsx)을 쓰고, 회의실 키는 서버와 같은 @room이다', async () => {

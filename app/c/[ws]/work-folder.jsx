@@ -112,6 +112,9 @@ export function WorkFolderPopover({ wf, note = '' }) {
       style={{
         position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 40,
         width: 'min(460px, 100%)', padding: 12, display: 'grid', gap: 8,
+        // 열 잠금 — 무템플릿 grid의 암묵 auto 열은 자식 min-content(경로 입력 폼: input 고유 폭 + 버튼)만큼 부풀어
+        // 좁은 유효 폭(실측 배율 2: 열 216 > 내용 폭 202)에서 문단 오른쪽 끝이 카드 밖으로 잘린다(#350 계열).
+        gridTemplateColumns: 'minmax(0, 1fr)',
         maxHeight: maxH || undefined, overflowY: 'auto', // 상한에 걸리면 안에서 스크롤 — 위쪽 문단·닫기 버튼이 화면 밖으로 나가지 않는다
         boxShadow: '0 8px 28px rgba(0,0,0,.14)',
       }}>
