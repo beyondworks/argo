@@ -53,3 +53,11 @@ export function buildGraph2D({ docs = [], agents = [], showCrew = false, showOrp
   return { nodes: nodes2, edges: edges2, hiddenOrphans: nodes.length - nodes2.length };
 }
 
+/** 데크 지표 — 고유 연결 쌍 수(links)와 링크가 1개 이상인 기억 수(linked).
+    그래프와 같은 해석(표기 3종·양방향 중복 제거·자기 링크 제외)이라 기억 그래프의 "고아 N개 숨김"과 합이 맞는다.
+    예전 데크의 자체 셈(전체 stem만 해석)은 그래프와 숫자가 갈라졌다. */
+export function linkStats(docs) {
+  const { nodes, edges } = buildGraph2D({ docs });
+  return { links: edges.length, linked: nodes.length }; // 고아 제거 후 nodes = 연결된 기억
+}
+
