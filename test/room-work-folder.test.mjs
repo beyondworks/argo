@@ -223,7 +223,7 @@ test('⑤ 화면: 회의실·크루 채팅이 같은 공용 모듈(work-folder.j
   assert.match(room, /import \{ useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton \} from '\.\.\/work-folder';/, '회의실 import');
   assert.match(room, /useWorkFolder\(\{ ws, slug: '@room'/, "회의실 고정 키 '@room'");
   assert.match(room, /\{wf\.open && <WorkFolderPopover wf=\{wf\}/, '팝오버는 멘션 상태와 무관하게 열린다');
-  assert.match(room, /const mentionOpen = !!mention && \(suggestAll \|\| suggests\.length > 0\) && !wf\.open;/, '멘션 드롭업이 양보(입력 파생 상태라 버튼 클릭으로 안 닫힌다 — 검수 MEDIUM-4)');
+  assert.match(room, /const mentionOpen = !!mention && !slashOpen && \(suggestAll \|\| suggests\.length > 0\) && !wf\.open;/, '멘션 드롭업이 양보(입력 파생 상태라 버튼 클릭으로 안 닫힌다 — 검수 MEDIUM-4; !slashOpen은 커맨더 #398 양보)');
   assert.match(room, /\{wf\.pinned && \(\s*<div className="composer-stack"[^\n]*>\s*<WorkFolderRow wf=\{wf\} \/>/, '고정 칩 — 컴포저 스택');
   assert.match(room, /<WorkFolderButton wf=\{wf\} disabled=\{busy\}/, '폴더 버튼');
   assert.match(room, /async function openSession\(id\) \{\s*wf\.close\(\);/, '열람 전환 시 팝오버 닫기(크루와 동일)');
