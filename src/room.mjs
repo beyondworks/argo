@@ -286,31 +286,43 @@ export const ROOM_TURN_SLUG = 'room-main';
 // 다음 하트비트(≤30초)까지 표시가 꺼진다(분리 검수 MEDIUM-1, 1/100 축소 모형 실측). 프로세스 내 참조
 // 카운트로 마지막 턴만 지운다. 크로스 프로세스 동시 턴은 남지만 ≤30초 자가 치유.
 const ROOM_TURNS = new Map(); // wsId → 진행 중 턴 수
+// wsId → 마지막 마커 detail('발언자|다음…'). 하트비트는 파일을 **다시 읽지 않고** 이 값을 쓴다 — 읽고 나서 쓰는
+// 구조는 그 사이에 끼어든 인계·다른 쓰기를 되돌리고(#393 검수 LOW-1: 1ms 주기 2% 부활), 윈도우에서는 비원자
+// 쓰기와 겹친 읽기가 빈 값을 돌려줘 발언자를 지웠다(CI windows-latest 실사고 2026-09-02). 발언자 갱신은 반드시
+// 래퍼가 넘겨주는 mark()로 — 파일 직접 쓰기는 다음 하트비트가 덮는다.
+const ROOM_MARK = new Map();
 /** heartbeatMs — 턴이 도는 동안 마커 ts를 주기 갱신한다. 크루 상태 파일은 스트리밍·도구 이벤트마다 갱신되지만
     'memory'처럼 이벤트가 없는 단계가 2분을 넘기면 마커가 낡아 **턴이 살아 있는데 표시가 꺼진다**
     (격리 실측 2026-09-02: memory 단계 99초 무갱신). 하트비트는 프로세스가 살아 있음 자체의 신호라 단계와
     무관하고, 프로세스가 죽으면 멈춰 2분 뒤 만료된다(고아 방어). unref — 프로세스 종료를 잡지 않는다. */
 export async function withRoomTurnStatus(wsId, fn, { heartbeatMs = 30_000 } = {}) {
   ROOM_TURNS.set(wsId, (ROOM_TURNS.get(wsId) ?? 0) + 1);
-  await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', '');
+  if (!ROOM_MARK.has(wsId)) ROOM_MARK.set(wsId, ''); // 겹친 두 번째 턴은 현재 발언자를 지우지 않는다
   // 틱은 직렬화 + alive 게이트 — 해제(finally) 직후 **진행 중이던 틱**이 마커를 되살리면 화면이 2분간
   // 거짓 '회의 중'이 된다. 하중은 `await tick`(진행 중 틱을 기다린 뒤 지움)에 있다 — 분리 검수 HIGH-1이
   // 지연 주입으로 확정 red를 실증했고, 테스트는 heartbeatMs:1 × 40회 반복으로 잠근다.
   let alive = true; let tick = Promise.resolve();
-  const beat = async () => {
-    if (!alive) return;
-    const cur = await getTurnStatus(wsId, ROOM_TURN_SLUG); // 하트비트가 도는 한 2분 창 안 — 발언자(detail) 보존용
-    if (!alive) return;
-    await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', cur?.detail ?? '');
-  };
-  const hb = setInterval(() => { tick = tick.then(beat).catch(() => {}); }, heartbeatMs);
+  // 마커 쓰기는 **한 체인(tick)으로 직렬화**하고 실행 시점의 메모리 값을 쓴다 — mark()와 하트비트가 따로 쓰면
+  // 오래된 스냅샷을 든 쓰기가 나중에 착지해 최신 발언자를 되돌린다(1ms 주기 실측 5회 중 4회 red).
+  const write = () => setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', ROOM_MARK.get(wsId) ?? '');
+  const mark = async (detail) => { ROOM_MARK.set(wsId, detail); tick = tick.then(write).catch(() => {}); await tick; };
+  const beat = () => (alive ? write() : undefined); // 메모리 값 — 파일 읽기 없음
+  await mark(ROOM_MARK.get(wsId));
+  // 하트비트는 체인에 **최대 1개만** 대기 — 쓰기(fs 왕복)보다 짧은 주기에서 무한히 쌓이면 mark()가 자기 차례를
+  // 영원히 기다린다(1ms 주기 테스트에서 6분 정지 실측). 운영 30초 주기엔 무관하지만 구조로 막는다.
+  let queued = false;
+  const hb = setInterval(() => {
+    if (queued) return;
+    queued = true;
+    tick = tick.then(() => { queued = false; return beat(); }).catch(() => { queued = false; });
+  }, heartbeatMs);
   hb.unref?.();
-  try { return await fn(); }
+  try { return await fn(mark); }
   finally {
     alive = false; clearInterval(hb); await tick; // 진행 중 틱 완료 후에만 해제
     const left = (ROOM_TURNS.get(wsId) ?? 1) - 1;
     if (left > 0) ROOM_TURNS.set(wsId, left);
-    else { ROOM_TURNS.delete(wsId); await clearTurnStatus(wsId, ROOM_TURN_SLUG); } // 마지막 턴만 — 성공·실패·중단 모두
+    else { ROOM_TURNS.delete(wsId); ROOM_MARK.delete(wsId); await clearTurnStatus(wsId, ROOM_TURN_SLUG); } // 마지막 턴만 — 성공·실패·중단 모두
   }
 }
 /** 회의실 턴 진행 여부(화면 복원용) = 마커가 2분 안에 갱신됐는가, 단일 판정. 하트비트(30초)가 긴 발언을
@@ -318,21 +330,35 @@ export async function withRoomTurnStatus(wsId, fn, { heartbeatMs = 30_000 } = {}
     턴이 최대 30분 거짓 '회의 중'을 만든다(분리 검수 HIGH-2: 3/10/25/29분 전 마커 전부 ACTIVE 실측). */
 export async function getRoomTurn(wsId) {
   const s = await getTurnStatus(wsId, ROOM_TURN_SLUG);
-  return s ? { active: true, slug: s.detail || null, startedAt: s.startedAt } : null;
+  if (!s) return null;
+  // detail = '발언자|다음1,다음2'. 발언 크루의 상태 파일(크루 채팅이 스트리밍하는 stage·detail·partial)은
+  // **표시 보강**일 뿐 — 진행 판정은 위 마커 하나다(단일 판정 유지). 방에서도 "지금 무엇을 하며 무엇을
+  // 쓰고 있는지"가 보이게(유건 2026-09-02 "보는 재미"). 발언이 끝나면 chat()이 상태 파일을 지워 partial이
+  // 비고, 완성 말풍선이 정본이 된다.
+  const [slug = '', rest = ''] = String(s.detail || '').split('|');
+  // 출처 게이트 — 같은 크루의 다른 턴(개인 채팅·루틴·경쟁)이 같은 상태 파일을 쓰면 남의 문장이 발언으로 뜬다
+  // (#393 검수 MEDIUM-2 프로브). source==='room'일 때만 채택, 미상(구형 파일)은 비채택(fail-closed).
+  const cur = slug ? await getTurnStatus(wsId, slug) : null;
+  const live = cur?.source === 'room' ? cur : null;
+  return {
+    active: true, slug: slug || null, startedAt: s.startedAt,
+    queue: rest.split(',').filter(Boolean),
+    stage: live?.stage ?? null, detail: live?.detail ?? '', partial: live?.partial ?? '',
+  };
 }
 
 export async function runRoomTurn(wsId, text, attachments = []) {
-  return withRoomTurnStatus(wsId, async () => {
+  return withRoomTurnStatus(wsId, async (mark) => {
     // saved — 사장 발언이 방에 저장된 **뒤** 난 오류에 표식을 단다. 라우트가 오류 바디에 싣고, 화면은 이
     // 값으로 "입력창에 되돌릴지"를 가른다: 저장됐으면 되돌리지 않는다(되돌리면 방과 입력창에 같은 안건이
     // 나란히 남아 Enter 한 번에 두 번 적립·과금 — 분리 검수 #392 HIGH-1 실측), 저장 전 실패(크루 0명 등)면
     // 되돌린다(안 그러면 폴링이 낙관 말풍선까지 지워 글이 완전히 사라진다). chat 라우트의 {error, saved} 계약과 동형.
     const state = { saved: false };
-    try { return await runRoomTurnInner(wsId, text, attachments, state); }
+    try { return await runRoomTurnInner(wsId, text, attachments, state, mark); }
     catch (e) { if (state.saved && e && typeof e === 'object') e.saved = true; throw e; }
   });
 }
-async function runRoomTurnInner(wsId, text, attachments, state = {}) {
+async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = async () => {}) {
   const agents = await listAgents(wsId);
   if (!agents.length) throw new Error('아직 크루가 없습니다. 데크에서 먼저 영입해 주세요.');
   // 사장 발언 추가 + 현재 세션 sid 확보(이후 발언은 이 sid가 유지될 때만 기록)
@@ -439,6 +465,8 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}) {
   // 호출) 키가 완전히 같아져 서로의 위임 이벤트를 주워 담는다(분리 검수 MEDIUM-3).
   const turnId = `${sid}-${Math.random().toString(36).slice(2, 8)}`;
   const replies = [];
+  // 마커 detail = '발언자|다음1,다음2' (getRoomTurn이 해석). j가 범위 밖이면 빈 값 = 발언자 미정(마무리 중).
+  const markerFor = (j) => (speakers[j] ? `${speakers[j].slug}|${speakers.slice(j + 1).map((s) => s.slug).join(',')}` : '');
   for (const [i, a] of speakers.entries()) {
     const att = i >= IMG_EMBED_MAX && attachments.some((x) => x.isImage)
       ? attachments.map((x) => (x.isImage ? { ...x, isImage: false } : x))
@@ -482,9 +510,13 @@ ${transcript}
     });
     let r;
     try {
-      await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', a.slug); // 발언자 갱신 — 화면 복원의 신선도 앵커(getRoomTurn)
+      await mark(markerFor(i)); // 발언자|다음 순서 — 화면 복원·발언 큐의 앵커(래퍼의 mark — 하트비트와 같은 값을 공유)
       // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다
       r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx });
+      // 발언이 끝나는 **즉시** 다음 발언자로 넘긴다 — chat()이 크루 상태 파일을 지운 뒤 답변 적재·스레드 기록·
+      // 다음 프롬프트 조립이 끝날 때까지 마커만 옛 발언자로 남으면, 화면에 완성 답변 아래 "페퍼 · 시동 거는 중"이
+      // 다시 뜬다(격리 실측 2026-09-02 shot-1). 마지막 발언자면 빈 값 → 종전 '회의 중' 줄로 마무리.
+      await mark(markerFor(i + 1));
     } catch (e) {
       // 발언 실패를 **방에 남긴다** — 오류는 POST 호출 탭에만 돌아가므로, 안건을 올리고 다른 페이지로 간
       // 사장에게는 방이 그냥 조용해져 "멈췄다"로 보였다(실사용 제보 2026-09-02 계열 — 격리 실측: 401 실패 190초

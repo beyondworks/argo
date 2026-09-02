@@ -1,5 +1,5 @@
 import { loadRoom, runRoomTurn, endMeeting, getRoomTurn } from '../../../../../src/room.mjs';
-import { guardCompany } from '../../../../auth.mjs';
+import { guardCompany, requestLang } from '../../../../auth.mjs';
 
 export const maxDuration = 300; // 여러 크루가 순차 발언 — 오래 걸릴 수 있다
 
@@ -16,6 +16,12 @@ export async function DELETE(_req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
+    // 진행 중 턴이 있으면 거절(409) — 마치기가 도는 발언을 가로지르면 남은 발언이 방·개인 스레드 어디에도 남지 않는다.
+    // 화면 잠금(disabled)만으로는 얇다: 다른 탭·직접 호출·잠금이 풀리는 창(#393 검수 MEDIUM-1)이 있다. 서버가 최종 게이트.
+    if ((await getRoomTurn(ws))?.active) {
+      const en = (await requestLang()) === 'en';
+      return Response.json({ error: en ? 'A crew is still speaking — end the meeting after it finishes.' : '발언이 진행 중입니다 — 끝난 뒤 회의를 마쳐 주세요.' }, { status: 409 });
+    }
     return Response.json(await endMeeting(ws));
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });

@@ -3,7 +3,7 @@
 // 좌측 레일에 지난 회의가 적재되고(회의 마치기), 클릭으로 읽기 전용 열람 — 맥락 공유가 눈에 보이는 화면.
 import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
-import { useLang } from '../../../i18n';
+import { useLang, stageLabel } from '../../../i18n';
 import { dropUpClamp } from '../zoom-math.mjs';
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
@@ -38,6 +38,9 @@ export default function Room({ params }) {
   // 서버에서 도는 턴(다른 탭·페이지 이동 후 복귀). busy와 분리하는 이유: 복원 상태에서는 폴링이 계속
   // 돌아야 답변이 들어오고 표시가 꺼진다 — busy 하나로 합치면 폴링(!busy)이 멈춰 영구 '회의 중'.
   const [serverBusy, setServerBusy] = useState(false);
+  // 서버 턴의 발언자·단계·부분 텍스트·다음 순서(GET turn). 발언이 끝나야 말풍선이 통째로 뜨던 방을,
+  // 크루 채팅처럼 쓰는 중인 문장이 자라며 보이게(유건 2026-09-02 "보는 재미"). 진행 판정(serverBusy)과 분리.
+  const [turn, setTurn] = useState(null);
   const [error, setError] = useState('');
   const endRef = useRef(null);
   // 회의 적재 레일 — 마친 회의들이 좌측에 쌓인다
@@ -76,7 +79,7 @@ export default function Room({ params }) {
     // 신고(2026-07-25 "크루들의 대화 내용이 사라지는 경우가 많습니다, 특히 회의실에서")의 원인.
     // 디스크의 회의록은 멀쩡한데 화면만 비는 케이스라, 실패는 에러로 드러내고 기존 표시를 유지한다.
     api(`/api/companies/${ws}/room`)
-      .then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); setError(''); })
+      .then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); setTurn(d.turn ?? null); setError(''); })
       .catch((e) => setError(String(e?.message || '') || t('room.loadFail')));
     api(`/api/companies/${ws}/agents`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
   }
@@ -99,9 +102,20 @@ export default function Room({ params }) {
   useEffect(load, [ws]);
   useEffect(loadSessions, [loadSessions]);
   useEffect(() => {
-    const iv = setInterval(() => { if (!busy) api(`/api/companies/${ws}/room`).then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); }).catch(() => {}); }, 8000);
+    // 진행 중엔 2.5초(크루 채팅의 busy 주기) — 부분 텍스트가 자라는 걸 보는 화면이라 8초면 끊겨 보인다.
+    // 자기 턴(busy) 중에도 읽는다: 발언을 지켜보는 사람이 곧 안건을 올린 사람이다. 메시지 목록은 서버가 내
+    // 안건을 이미 저장했을 때(길이 ≥ 로컬)만 받는다 — 저장 전 스냅샷이 낙관 말풍선을 지우지 않게. 그래야 앞 크루의
+    // 완성 답변이 뒤 크루 발언 중에 보인다(격리 실측: 종전 !busy 동결은 턴이 다 끝나야 페퍼 답변이 떴다).
+    const live = busy || serverBusy;
+    const iv = setInterval(() => {
+      api(`/api/companies/${ws}/room`).then((d) => {
+        setTurn(d.turn ?? null); setServerBusy(!!d.turn?.active);
+        const srv = d.messages ?? [];
+        setMessages((cur) => (!busy || srv.length >= (cur?.length ?? 0)) ? srv : cur);
+      }).catch(() => {});
+    }, live ? 2500 : 8000);
     return () => clearInterval(iv);
-  }, [ws, busy]);
+  }, [ws, busy, serverBusy]);
   // 하단 추종은 **하단 근처(80px)일 때만** — 위로 올려 읽는 중에 새 발언이 와도 화면을 끌어내리지
   // 않는다(실사용 신고 2026-07-27 "윗 글을 읽을 수 없음"). 크루 채팅의 atBottom 판정(v0.1.21
   // 계열)과 같은 원칙. 떨어져 있으면 '새 메시지' 점프 칩만 띄운다.
@@ -127,7 +141,7 @@ export default function Room({ params }) {
     if (viewing) return;
     if (atBottomRef.current) { setUnseen(false); endRef.current?.scrollIntoView({ block: 'end' }); }
     else if (grew) setUnseen(true);
-  }, [messages, busy, viewing]);
+  }, [messages, busy, viewing, turn?.partial, turn?.stage]); // 부분 텍스트가 자라는 동안에도 하단 추종(크루 채팅과 같은 규칙)
   const jumpToLatest = () => { atBottomRef.current = true; setUnseen(false); endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); };
 
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
@@ -191,7 +205,9 @@ export default function Room({ params }) {
       // 같은 안건이 방·입력창에 나란히 남아 Enter 한 번에 두 번 적립된다(분리 검수 #392 HIGH-1 실측).
       if (!err?.data?.saved) setInput((cur) => cur || text);
     } finally {
-      setBusy(false);
+      // 자기 턴 종료 — turn만 즉시 내린다(마지막 partial이 완성 말풍선과 겹치지 않게). serverBusy는 다음 폴이 정본으로
+      // 수렴시킨다: 여기서 끄면 다른 탭의 턴이 도는 중에 '회의 마치기' 잠금이 최대 8초 풀린다(#393 검수 MEDIUM-1 — main 대비 회귀).
+      setBusy(false); setTurn(null);
     }
   }
 
@@ -383,9 +399,34 @@ export default function Room({ params }) {
                 </div>
               ))}
               {!viewing && (busy || serverBusy) && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: 'var(--fg-2)', fontSize: 12.5 }}>
-                  <ArgoSpinner size={16} /> {t('room.meeting')}
-                </div>
+                turn?.slug ? (
+                  // 발언 중인 크루 — 아바타·이름·단계(도구·파일)·쓰는 중인 문장·다음 발언 순서. 크루 말풍선과 같은 골격.
+                  <div style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
+                    <Avatar name={nameOf(turn.slug)} size={26} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 650, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        {nameOf(turn.slug)}
+                        <span style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--fg-3)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          <ArgoSpinner size={11} />
+                          {/* 단계 미상(상태 파일 없음·만료 — CLI 러너는 턴당 1회만 쓰고, 2분 넘는 도구도 만료)이면 '시동 거는 중'을
+                              지어내지 않는다(#393 검수 HIGH-1: CLI 발언은 2분 뒤 결정적으로 거짓 표시) — 발언자만 정직하게. */}
+                          {turn.stage ? t('chat.stageEllipsis', { stage: stageLabel(t, turn.stage, turn.detail) }) : t('room.speaking')}
+                          {turn.stage !== 'runner' && turn.detail ? ` · ${String(turn.detail).slice(0, 60)}` : ''}
+                        </span>
+                      </div>
+                      {turn.partial && (
+                        <div style={{ fontSize: 13.5, color: 'var(--fg-2)' }}><Markdown text={turn.partial} wsId={ws} /></div>
+                      )}
+                      {turn.queue?.length > 0 && (
+                        <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 4 }}>{t('room.next', { names: turn.queue.map(nameOf).join(' → ') })}</div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: 'var(--fg-2)', fontSize: 12.5 }}>
+                    <ArgoSpinner size={16} /> {t('room.meeting')}
+                  </div>
+                )
               )}
               <div ref={endRef} />
             </div>

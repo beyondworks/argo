@@ -792,6 +792,8 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
 export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false } = {}) {
+  // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)
+  const turnSource = source ?? (from ? 'delegate' : 'chat');
   const p = paths(wsId);
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지).
   // 설정 화면의 입력은 제거됐다(유건 지시 2026-08-19) — 안내에서 "설정에서 한도를 올리라"는
@@ -917,7 +919,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     const t0 = Date.now();
     const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
     const evBase = { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };
-    await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name); // 코드+러너명(detail) — 클라가 번역
+    await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name, undefined, turnSource); // 코드+러너명(detail) — 클라가 번역
     // 중단 배선 — SDK 경로처럼 정지 버튼이 실제로 프로세스를 끊게 한다(외부 CLI는 signal로 자식 kill).
     const ac = new AbortController();
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort());
@@ -1257,7 +1259,7 @@ ${lang === 'en'
   // 이 턴이 청구되는가 — 구독(OAuth)·호스트 로그인 턴은 SDK가 정가를 리포트해도 돈이 안 나간다.
   // 사용액 표시가 청구서로 오해되던 신고(2026-07-26)의 교정. 턴당 1회만 읽는다(파일 I/O).
   const billed = await isBilledRunner(wsId, runner);
-  await setTurnStatus(wsId, agentSlug, 'boot'); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
+  await setTurnStatus(wsId, agentSlug, 'boot', '', undefined, turnSource); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
   const q = query({
     prompt: promptInput,
     options: {
@@ -1315,7 +1317,7 @@ ${lang === 'en'
           appendEvent(wsId, { type: 'mcp', server: sv.name, status: 'connected', ok: true, slug: agentSlug }).catch(() => {});
         }
       }
-      await setTurnStatus(wsId, agentSlug, 'memory');
+      await setTurnStatus(wsId, agentSlug, 'memory', '', undefined, turnSource);
     }
     if (msg.type === 'assistant') {
       if (msg.message?.model) actualModel = msg.message.model; // SDK가 이 응답을 낸 실제 모델
@@ -1335,7 +1337,7 @@ ${lang === 'en'
       const stage = tu ? stageForTool(tu.name) : 'think'; // 코드 — 클라가 번역(가장 흔한 상태라 누락 시 영어 회사에 한국어 노출)
       const detail = tu ? detailForTool(tu.name, tu.input) : '';
       for (const b of tus) step(stageForTool(b.name), detailForTool(b.name, b.input)); // 도구 하나 = 단계 하나
-      await setTurnStatus(wsId, agentSlug, stage, detail, partial);
+      await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource);
     }
     if (msg.type === 'result') {
       sid = msg.session_id ?? sid;
