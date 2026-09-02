@@ -278,10 +278,10 @@ test('⑦ 페이지 배선: 새 회의 버튼·가드, 레일 진행 중 칩, �
   assert.match(nm, /fetch\(`\/api\/companies\/\$\{ws\}\/room\/sessions`, \{ method: 'POST' \}\)/, '새 회의 = POST /room/sessions');
   assert.match(nm, /if \(!r\.ok\) throw routeError\(d\);/, '오류는 표시 언어 매핑을 거친다');
   assert.doesNotMatch(nm, /argo:refresh/, '회의록이 없으니 항해일지 갱신도 없다');
-  // 헤더 — 새 회의 버튼이 마치기 옆에, 같은 잠금
-  const hdr = page.slice(page.indexOf("t('room.header')"), page.indexOf("<div style={{ position: 'relative', minHeight: 0"));
-  assert.match(hdr, /disabled=\{busy \|\| serverBusy\} onClick=\{newMeeting\}>\{t\('room\.new'\)\}/, '새 회의 버튼 + 잠금');
-  assert.match(hdr, /disabled=\{busy \|\| serverBusy\} onClick=\{endMeeting\}>\{t\('room\.end'\)\}/, '마치기 버튼은 종전 그대로');
+  // 입력창 아래 줄(2026-09-02 룩 통일로 헤더에서 이동) — 새 회의 버튼이 마치기 옆에, 같은 잠금
+  const bar = page.slice(page.lastIndexOf('<WorkFolderButton wf={wf}'));
+  assert.match(bar, /disabled=\{busy \|\| serverBusy\} onClick=\{newMeeting\}>\{t\('room\.new'\)\}/, '새 회의 버튼 + 잠금');
+  assert.match(bar, /disabled=\{busy \|\| serverBusy\} onClick=\{endMeeting\}>\{t\('room\.end'\)\}/, '마치기 버튼은 종전 그대로');
   // 레일 — 진행 중 칩 + play 버튼 라벨 분기·잠금
   assert.match(page, /\{s\.open && <span[^\n]*>\{t\('room\.sessions\.open'\)\}<\/span>\}/, '진행 중 칩');
   assert.match(page, /title=\{s\.open \? t\('room\.sessions\.switch'\) : t\('room\.sessions\.reopen'\)\}/, 'play 버튼 라벨 분기');

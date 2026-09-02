@@ -590,8 +590,8 @@ test('room 멘션 패널·컴포저 축소 규칙 핀 — 고정 폭·기준 박
     '멘션 패널 기준 박스(relative 래퍼 — #367 측정 ref 부착형) 제거 변이');
   // 카드 overflowWrap anywhere — 긴 무공백 토큰의 카드 내부 가로 스크롤 보정(실측 511>168 → 168=168).
   // 넘침은 카드가 가두지만 보정이 조용히 사라지는 것을 막는다(검수 LOW). 앵커는 표현식 전체.
-  assert.match(src, /className="card" style=\{\{ padding: '16px 18px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' \}\}/,
-    '회의실 카드 overflowWrap anywhere 제거 변이');
+  assert.match(src, /<div ref=\{scrollRef\} style=\{\{ padding: '4px 2px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' \}\}>/,
+    '회의실 대화 영역 overflowWrap anywhere 제거 변이(테두리 카드 없는 맨 스크롤 영역 — 크루 .thread 룩)');
 });
 
 test('room 헤더 축소 규칙 핀 — wrap·ellipsis·버튼 세로 자람이 헤더 구간에 붙어 있어야 한다', () => {
@@ -604,10 +604,11 @@ test('room 헤더 축소 규칙 핀 — wrap·ellipsis·버튼 세로 자람이 
   assert.match(src,
     /<div style=\{\{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 \}\}>\s*<span className="microlabel" style=\{\{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' \}\}>\{t\('room\.header'\)\}/,
     '회의실 헤더 wrap 행 + microlabel ellipsis 구간 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
-  // 버튼은 라벨 2줄에서 세로로 자라야 한다 — .btn.sm 고정 height 28로 되돌리면 en 라벨
-  // ('End meeting — file the minutes')이 알약 밖으로 삐져나온다(검수 실측 clientH 26 < scrollH 31).
-  assert.match(src, /className="btn sm" style=\{\{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' \}\}/,
-    '회의 마치기 버튼 축소 세트 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
+  // 새 회의·마치기는 입력창 아래 줄의 텍스트 버튼(.room-act, 2026-09-02 룩 통일)으로 옮겨졌다 — 헤더의 유일한
+  // 비축소 요소가 사라졌으므로 넘침 처방은 그 줄의 wrap 행 + .room-act white-space:normal이 이어받는다.
+  assert.match(src, /<div style=\{\{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 2, minWidth: 0 \}\}>\s*<button type="button" className="room-act" disabled=\{busy \|\| serverBusy\} onClick=\{newMeeting\}>/,
+    '새 회의·마치기 wrap 행 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
+  assert.match(sources.get('app/globals.css'), /\.room-act \{[^}]*white-space: normal;/, '.room-act 라벨 줄바꿈 허용(en 라벨이 좁은 폭에서 행 밖으로 나가지 않게)');
 });
 
 test('att-chip 폭 클램프 핀 — nowrap 칩의 고정 220px 상한 복원 변이는 red', () => {
