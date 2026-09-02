@@ -9,6 +9,9 @@ import { useLang } from '../../../i18n';
 
 const MAX_PICK = 3;
 
+// 크루 대화·회의실과 같은 읽기 레인 — 본문(시안 비교)·입력창·아래 줄이 이 폭에 가운데 정렬(유건 지시 2026-09-02: 창 크기·입력창 통일)
+const LANE = 'min(768px, 100%)';
+
 export default function Compete({ params }) {
   const { ws } = use(params);
   const { t } = useLang();
@@ -228,9 +231,9 @@ export default function Compete({ params }) {
             긴 무공백 토큰(URL·코드 조각)이 좁은 유효 폭에서 내부 가로 스크롤을 만들지 않게 한다(크루 .thread .card 동형). */}
         <div style={{ padding: '4px 2px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' }}>
           {!comp ? (
-            <div className="empty">{t('compete.emptyMain')}</div>
+            <div className="empty" style={{ width: '100%', maxWidth: LANE, margin: '0 auto' }}>{t('compete.emptyMain')}</div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, minWidth: 0 }}> {/* 열 잠금 — 본문 열과 같은 이유(과제문·시안 행 min-content 전파 차단) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, minWidth: 0, width: '100%', maxWidth: LANE, margin: '0 auto' }}> {/* 열 잠금 — 본문 열과 같은 이유(과제문·시안 행 min-content 전파 차단). 레인 = 회의실·크루와 동일 */}
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                 <Icon name="bolt" size={14} style={{ marginTop: 2, flex: 'none' }} />
                 <span style={{ fontSize: 13, lineHeight: 1.55, whiteSpace: 'pre-wrap', minWidth: 0 }}>{comp.prompt}</span>
@@ -303,14 +306,14 @@ export default function Compete({ params }) {
              바 wrap + 버튼 줄바꿈·세로 자람 — 버튼(.btn 전역 nowrap)이 유일한 비축소 요소라
              좁은 유효 폭(실측 en·1280 창 × 배율 2: 1335>1264)에서 문서 가로 넘침을 만들었다.
              .btn.sm 고정 height 28은 라벨 2줄에서 글자가 알약 밖으로 새므로 height auto 세트(회의실 동형). */
-          <div className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
+          <div className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, fontSize: 12.5, color: 'var(--fg-2)', width: '100%', maxWidth: LANE, margin: '0 auto' }}>
             <Icon name="bolt" size={13} /> {comp.winner ? t('compete.closedBar') : comp.status === 'running' ? t('compete.runningBar') : t('compete.doneBar')}
             <span style={{ flex: 1 }} />
             <button className="btn btn-primary sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} onClick={() => openComp(null)}>{t('compete.new')}</button>
           </div>
         ) : (
           /* 새 경쟁 컴포저 — 회의실 컴포저와 동일 문법: input-bar → 아래 줄(픽커 · 힌트) */
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}> {/* 열 잠금 — 본문 열과 같은 이유(한 층 아래 같은 함정: textarea 고유폭) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6, width: '100%', maxWidth: LANE, margin: '0 auto' }}> {/* 열 잠금 — 본문 열과 같은 이유(한 층 아래 같은 함정: textarea 고유폭). 레인 = 회의실 컴포저와 동일 */}
             {error && <p style={{ fontSize: 12.5, color: 'var(--danger)', margin: 0 }}>{error}</p>}
             <form onSubmit={start} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
               <textarea suppressHydrationWarning
@@ -329,7 +332,7 @@ export default function Compete({ params }) {
                 {busy ? <ArgoSpinner size={14} /> : <Icon name="send" size={15} />}
               </button>
             </form>
-            {/* 입력창 아래 슬림 줄 — 왼쪽 크루·모델 픽커(DropUp은 위로 열려 입력창을 덮는다), 오른쪽 힌트·비용 안내.
+            {/* 입력창 아래 슬림 줄 — 왼쪽 크루·모델 픽커(DropUp은 위로 열려 입력창을 덮는다), 오른쪽 비용 안내(모델 2개 이상).
                 회의실·크루 채팅의 입력창 아래 줄과 같은 골격(유건 지시 2026-09-02). 폴더·클립은 경쟁에 없다. */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px 14px', flexWrap: 'wrap', padding: '0 6px', minWidth: 0 }}>
               {/* 라벨 열 공유 grid — 두 행의 박스 좌측 라인이 정렬된다(모델 선택 왼편 기준, 유건 지시 2026-07-21).
@@ -384,9 +387,12 @@ export default function Compete({ params }) {
                   })()}
                 </div>
               </div>
-              <p style={{ fontSize: 11, color: pickedModels.length >= 2 ? 'var(--warn)' : 'var(--fg-3)', margin: 0, minWidth: 0, flex: '1 1 200px', textAlign: 'right' }}>
-                {pickedModels.length >= 2 ? t('compete.costNote', { n: pickedModels.length }) : t('compete.hint')}
-              </p>
+              {/* 안내 문장은 없앴다(유건 2026-09-02) — 비용 안내만 모델 2개 이상일 때 */}
+              {pickedModels.length >= 2 && (
+                <p style={{ fontSize: 11, color: 'var(--warn)', margin: 0, minWidth: 0, flex: '1 1 200px', textAlign: 'right' }}>
+                  {t('compete.costNote', { n: pickedModels.length })}
+                </p>
+              )}
             </div>
           </div>
         )}

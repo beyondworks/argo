@@ -280,7 +280,7 @@ test('compete 헤더·카드 축소 규칙 핀 — wrap·ellipsis·overflowWrap 
   // 자람 세트가 없으면 en·1280 창 × 배율 2에서 문서 가로 넘침(실측 1335>1264 → 1264=1264).
   // 앵커는 }}까지 폐합 — 접두 앵커는 뒤에 스프레드(...{ flexWrap: 'nowrap' })를 덧붙여 wrap을
   // 죽이는 변이에 초록이었다(분리 검수 M-1 실증).
-  assert.match(src, /className="card" style=\{\{ padding: '10px 14px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, fontSize: 12\.5, color: 'var\(--fg-2\)' \}\}/,
+  assert.match(src, /className="card" style=\{\{ padding: '10px 14px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, fontSize: 12\.5, color: 'var\(--fg-2\)', width: '100%', maxWidth: LANE, margin: '0 auto' \}\}/,
     '경쟁 하단 바 wrap 제거·후행 덮어쓰기 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
   assert.match(src, /className="btn btn-primary sm" style=\{\{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' \}\} onClick=\{\(\) => openComp\(null\)\}/,
     '새 경쟁 버튼 축소 세트 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
