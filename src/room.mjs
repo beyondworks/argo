@@ -115,7 +115,7 @@ async function endMeetingLocked(wsId) {
 
 참석: 사장${attendees.length ? `, ${attendees.join(', ')}` : ''}
 
-${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: ${String(m.text).trim()}${m.attachments?.length ? `\n> 첨부: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')}` : ''}`).join('\n\n')}
+${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: ${String(m.text).trim()}${m.attachments?.length ? `\n> 첨부: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')}` : ''}${m.artifacts?.length ? `\n> 산출물: ${m.artifacts.map((a) => 'vault/' + a).join(', ')}` : ''}`).join('\n\n')}
 `;
   // 같은 분 안에 두 번 마치면(다시 열기→마치기, 짧은 회의 연속) HHMM 이름이 같아 앞 회의록이 **덮였다**(격리 실측
   // 2026-09-02: DELETE 2회가 같은 journal/…-1953.md를 반환, 파일엔 뒤 회의만). 회의록은 vault/journal 일지 = 회사 기억이라
@@ -554,17 +554,20 @@ ${transcript}
       const live = await pushRoomMsg(wsId, {
         who: ev.to, text: ev.reply, ts: Date.now(),
         via: { from: ev.from, fromName: ev.fromName, task: String(ev.task ?? '').slice(0, 200) },
+        ...(ev.artifacts?.length ? { artifacts: ev.artifacts } : {}), // 위임받은 크루가 만든 파일도 방에서 바로 — chat.mjs delegate 이벤트가 싣는다
       }, sid);
       if (!live) return { replies, room: await loadRoom(wsId) }; // 회의가 마쳐졌다
     }
-    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now() }, sid);
+    // artifacts를 **방 메시지에도** 싣는다 — 지금까지 개인 스레드(appendTurn)에만 기록돼 회의실에선 크루가 만든 파일을
+    // 볼 수도 갈 수도 없었다(유건 요청 2026-09-02). 없으면 필드 자체를 안 쓴다(thread.mjs appendTurn과 같은 규약 — 스레드 비대화 방지).
+    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now(), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }, sid);
     if (!live) break; // 회의가 마쳐졌다 — 남은 발언을 빈 방에 남기지 않는다
     // ponytail: 회의실 턴을 크루 개인 스레드에 기록한다 — 마지막 남은 비대칭(루틴 #157 교훈).
     // 안 하면 회의에서 시킨 일이 개인 채팅에 안 보이고 이어가기가 안 된다(유건 제보 2026-08-08).
     const { appendTurn } = await import('./thread.mjs');
     await appendTurn(wsId, a.slug, { userMsg: prompt, reply: r.reply, handover: r.handover, sessionId: null, via: 'room', artifacts: r.artifacts })
       .catch((e) => console.error(`[argo] 회의실 스레드 기록 실패(${wsId}/${a.slug}):`, e.message));
-    replies.push({ slug: a.slug, name: a.name, reply: r.reply });
+    replies.push({ slug: a.slug, name: a.name, reply: r.reply, ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }); // 화면의 폴백 경로(room 스냅샷 부재)도 칩을 잃지 않게
   }
   return { replies, room: await loadRoom(wsId) };
 }
