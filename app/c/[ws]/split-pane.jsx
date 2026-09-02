@@ -3,7 +3,7 @@
 // 크루: CrewChat을 embedded로 그대로 임베드(초안·대기열 키 공유). 문서: vault API로 읽어 Markdown.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Icon, Markdown, Skeleton, api } from '../../ui';
+import { Markdown, Skeleton, api } from '../../ui';
 import { useLang } from '../../i18n';
 import CrewChat from './crew/[slug]/page';
 import { withSide } from './split.mjs';
@@ -41,7 +41,7 @@ function DocPane({ ws, rel, side }) {
 }
 
 /** side = { type:'crew'|'doc', key } (layout이 parseSide한 값), sideStr = 원문(링크 유지용). */
-export function SplitPane({ ws, side, sideStr, title, onClose }) {
+export function SplitPane({ ws, side, sideStr, title, subtitle, onClose }) {
   const { t } = useLang();
   const [w, setW] = useState(W_DEFAULT);
   const [resizing, setResizing] = useState(false);
@@ -69,20 +69,17 @@ export function SplitPane({ ws, side, sideStr, title, onClose }) {
 
   // use(params)는 캐시된 프라미스를 기대한다 — 렌더마다 새 프라미스를 주면 매번 서스펜드한다
   const crewParams = useMemo(() => Promise.resolve({ ws, slug: side.key }), [ws, side.key]);
-  const fullHref = side.type === 'crew'
-    ? `/c/${ws}/crew/${encodeURIComponent(side.key)}`
-    : `/c/${ws}/vault?doc=${encodeURIComponent(side.key)}`;
-
   return (
     <aside className="split-pane" style={{ '--split-w': `${w}px` }} aria-label={title}>
       <div className={`split-handle${resizing ? ' on' : ''}`} onMouseDown={(e) => { e.preventDefault(); setResizing(true); }} aria-hidden="true" />
+      {/* 헤더 = 크루명 + 역할(주 화면 헤더와 같은 배치) + 닫기. '전체 화면으로(→)' 버튼은 뺐다 — 닫기와 기능이
+          겹쳐 보인다는 실사용 지적(유건 2026-09-02). 패널의 뱃지(세션·카드·새 대화)도 임베드에서는 그리지 않는다. */}
       <div className="split-head">
         <span className="split-title" title={title}>{title}</span>
+        {subtitle && (
+          <span className="nav-sub" title={subtitle} style={{ maxWidth: 180, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</span>
+        )}
         <span style={{ flex: 1 }} />
-        {/* 전체 화면으로 — 주 화면을 이 대상으로 바꾸고 패널은 닫는다 */}
-        <Link href={fullHref} className="btn sm" title={t('split.openFull')} aria-label={t('split.openFull')} style={{ textDecoration: 'none', padding: '0 8px' }}>
-          <Icon name="arrow" size={12} />
-        </Link>
         <button type="button" className="btn sm" onClick={onClose} title={t('split.close')} aria-label={t('split.close')} style={{ padding: '0 8px' }}>✕</button>
       </div>
       <div className="split-body">
