@@ -32,16 +32,23 @@ test('artifactDownload 헬퍼: 데스크톱만 가로채고 IPC save_download로
   assert.ok(fn.includes('DOWNLOAD_IPC_CAP'), '대용량 IPC 상한 — 웹뷰 정지 방지');
 });
 
-test('배선: 채팅 칩·프리뷰·기억 페이지·설정 리포트 4곳이 헬퍼를 지난다', async () => {
+test('배선: 채팅 칩·프리뷰(공용 모듈)·기억 페이지·설정 리포트 4곳이 헬퍼를 지난다', async () => {
+  // 칩·프리뷰는 크루 채팅과 회의실이 공유하는 app/c/[ws]/artifact-chips.jsx로 이관(2026-09-02) — 헬퍼 호출은 그 한 곳에만 산다
+  const chips = await at('app/c/[ws]/artifact-chips.jsx');
   const crew = await at('app/c/[ws]/crew/[slug]/page.jsx');
+  const room = await at('app/c/[ws]/room/page.jsx');
   const vault = await at('app/c/[ws]/vault/page.jsx');
   const settings = await at('app/c/[ws]/settings/page.jsx');
-  assert.equal((crew.match(/artifactDownload\(/g) ?? []).length, 2, '채팅: 칩 + 프리뷰 노트');
+  assert.equal((chips.match(/artifactDownload\(/g) ?? []).length, 2, '공용 칩: 칩 + 프리뷰 노트');
+  for (const [name, src] of [['crew', crew], ['room', room]]) {
+    assert.match(src, /import \{ ArtifactChips \} from '(\.\.\/)+artifact-chips';/, `${name}: 공용 칩을 임포트해야 헬퍼를 지난다(사본 금지)`);
+    assert.equal((src.match(/artifactDownload\(/g) ?? []).length, 0, `${name}: 페이지 안 직접 호출 0 — 있으면 공용 모듈과 열람 계약이 갈린다`);
+  }
   // 3 = 산출물 파일 행 + 뷰어 MD 버튼 + 오피스 내보내기(docx·xlsx·csv는 한 map이라 호출부 1곳, 2026-08-21)
   assert.equal((vault.match(/artifactDownload\(/g) ?? []).length, 3, '기억: 산출물 행 + 뷰어 MD + 오피스 내보내기');
   assert.equal((settings.match(/artifactDownload\(/g) ?? []).length, 1, '임포트 리포트 링크');
   // 브라우저 폴백 — 같은 앵커의 href가 서버 강제 다운로드(&download=1)도 함께 탄다
-  for (const [name, src, n] of [['crew', crew, 2], ['vault', vault, 1], ['settings', settings, 1]]) {
+  for (const [name, src, n] of [['chips', chips, 2], ['vault', vault, 1], ['settings', settings, 1]]) {
     assert.ok((src.match(/&download=1/g) ?? []).length >= n, `${name}: href 브라우저 폴백`);
   }
 });

@@ -567,8 +567,10 @@ test('드리프트: 루트 직속 도트 리터럴은 전부 BASH_GUARDED 등재
     const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
     const names = [
       ...[...code.matchAll(new RegExp(String.raw`join\(\s*(?:[\w.()]*\broot\b[\w.()]*|WS_ROOT)\s*,\s*${Q}${LIT}`, 'gi'))].map((m) => m[1]),
-      // `const FILE = '.x'` 후 join(root, FILE) 하는 모듈(synccreds·devicesession·gueststate)
-      ...(/WS_ROOT/.test(code) ? [...code.matchAll(new RegExp(String.raw`const FILE = ${Q}${LIT}`, 'g'))].map((m) => m[1]) : []),
+      // `const FILE = '.x'` 후 join(root, FILE) 하는 모듈(synccreds·devicesession·gueststate). 식별자를 FILE로
+      // 고정했더니 devicesession의 `const LOG = '.device-session.log'`를 못 봤다(분리 검수 MEDIUM-3, 2026-09-02) —
+      // 대문자 상수 전부로 넓힌다(규칙 vs 목록이면 목록이 뒤처진다, PR #215 계열).
+      ...(/WS_ROOT/.test(code) ? [...code.matchAll(new RegExp(String.raw`const [A-Z_]+ = ${Q}${LIT}`, 'g'))].map((m) => m[1]) : []),
       // daemonLease('x') → WS_ROOT/.x.lock (lock.mjs가 이름을 변수로 조립해 위 스캔이 못 본다)
       ...[...code.matchAll(/daemonLease\(\s*'([\w-]+)'/g)].map((m) => `.${m[1]}.lock`),
     ];

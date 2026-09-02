@@ -416,6 +416,20 @@ const connectorNames = (connectors, en) => connectors
   .map((c) => `${c.id}${c.status === 'reauth' ? (en ? ' (needs reconnect)' : '(재연결 필요)') : ''}`).join(', ');
 
 /** use_connector 도구 설명의 상한 — 이 문자열은 매 턴 컨텍스트에 실린다(설계서 §2-2 "상한 두고 절단"). */
+/** 스레드 맥락 한 줄 — 외부 CLI 경로(세션을 스레드 맥락으로 잇는다)와 SDK 기기 교차 경로가 **같은 함수**를 쓴다
+    (러너 중립성 — 두 곳에 같은 식이 복제돼 있던 것을 한 벌로). 화자: 사장 / 자동 배달(via 턴) / 크루 이름.
+    본문은 500자에서 잘리지만 첨부·산출물 노트는 그 **바깥**에 붙는다 — 잘려도 경로는 산다.
+    산출물 노트(2026-09-02, 회의실 트랜스크립트 room.mjs와 같은 형식·vault/ 접두): 크루가 앞 턴에 만든 파일을
+    "아까 그 파일"로 이어가려면 답변 텍스트가 아니라 경로로 받아야 한다(분리 검수 LOW-2). export는 테스트용. */
+export function threadCtxLine(m, lang, name) {
+  const en = lang === 'en';
+  const who = m.who === 'user' ? (m.via ? (en ? 'Auto-delivered' : '자동 배달') : (en ? 'Captain' : '사장')) : name;
+  const list = (xs, rel) => xs.map((x) => 'vault/' + rel(x)).join(', ');
+  const att = m.attachments?.length ? (en ? ` (attached, open with Read: ${list(m.attachments, (a) => a.rel)})` : ` (첨부, Read로 열람: ${list(m.attachments, (a) => a.rel)})`) : '';
+  const art = m.artifacts?.length ? (en ? ` (artifacts, open with Read: ${list(m.artifacts, (a) => a)})` : ` (산출물, Read로 열람: ${list(m.artifacts, (a) => a)})`) : '';
+  return `${who}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${att}${art}`;
+}
+
 export const CONNECTOR_DESC_CAP = 1200;
 
 /** use_connector 설명(순수) — 연결된 서버·도구 요약을 주입한다. 상한 초과분은 절단 표시와 함께 자른다.
@@ -531,7 +545,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         // 그룹 대화 미러 — 메신저 그룹에서 시작된 턴이면 상대 크루 봇이 같은 방에 결과를 발화한다(게이트웨이가 수신)
         // mirrorCtx를 이벤트에 직접 실어 보낸다 — 전역 맵 조회(동시 턴 오배달 위험)를 없앤다
         const { emitNotify } = await import('./notify.mjs');
-        emitNotify({ type: 'delegate', wsId, from: fromSlug, fromName, to: target.slug, toName: target.name, task, reply: r.reply, ctx: mirrorCtx });
+        emitNotify({ type: 'delegate', wsId, from: fromSlug, fromName, to: target.slug, toName: target.name, task, reply: r.reply, artifacts: r.artifacts, ctx: mirrorCtx }); // artifacts — 회의실 미러가 방 메시지에 싣는다(room.mjs)
         return text(`[${target.name}의 작업 결과]\n${r.reply}`);
       } catch (e) {
         return text(`위임 실패(${target.name}): ${String(e.message || e)}`);
@@ -796,6 +810,8 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
 export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, workFolder = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false } = {}) {
+  // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)
+  const turnSource = source ?? (from ? 'delegate' : 'chat');
   const p = paths(wsId);
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지).
   // 설정 화면의 입력은 제거됐다(유건 지시 2026-08-19) — 안내에서 "설정에서 한도를 올리라"는
@@ -921,7 +937,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     const t0 = Date.now();
     const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
     const evBase = { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };
-    await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name); // 코드+러너명(detail) — 클라가 번역
+    await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name, undefined, turnSource); // 코드+러너명(detail) — 클라가 번역
     // 중단 배선 — SDK 경로처럼 정지 버튼이 실제로 프로세스를 끊게 한다(외부 CLI는 signal로 자식 kill).
     const ac = new AbortController();
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort());
@@ -931,7 +947,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 같은 지시 6개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
       // 발화가 아니므로 화자를 '자동 배달'로 정직 표기(room.mjs 어휘에서 '시스템'=크루가 답하지 않는 줄이라 반전 — 재검수 지적)(배달 프리픽스가 실제 발신자를 이미 담는다).
       const ctx = (messages ?? []).filter((m) => !m.shared && !m.failed && !m.awaiting).slice(-6) // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지
-        .map((m) => `${m.who === 'user' ? (m.via ? (lang === 'en' ? 'Auto-delivered' : '자동 배달') : (lang === 'en' ? 'Captain' : '사장')) : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? (lang === 'en' ? ` (attached, open with Read: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})`) : ''}`)
+        .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
         .join('\n');
       const attNote = attachments.length
         ? (lang === 'en'
@@ -1196,7 +1212,7 @@ ${lang === 'en'
     if (foreign) resumeId = null;
     if ((foreign || __freshRetry) && (t.messages ?? []).length) {
       const ctx = t.messages.filter((m) => !m.shared && !m.failed && !m.awaiting).slice(-6) // 실패 턴·화자 규칙은 CLI 경로와 동일(위 주석)
-        .map((m) => `${m.who === 'user' ? (m.via ? (lang === 'en' ? 'Auto-delivered' : '자동 배달') : (lang === 'en' ? 'Captain' : '사장')) : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? (lang === 'en' ? ` (attached, open with Read: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})`) : ''}`)
+        .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
         .join('\n');
       if (ctx) crossCtx = lang === 'en'
         ? `## Recent conversation (continued from another device — a new session opens here)\n${ctx}\n\n## Captain's new message\n`
@@ -1261,7 +1277,7 @@ ${lang === 'en'
   // 이 턴이 청구되는가 — 구독(OAuth)·호스트 로그인 턴은 SDK가 정가를 리포트해도 돈이 안 나간다.
   // 사용액 표시가 청구서로 오해되던 신고(2026-07-26)의 교정. 턴당 1회만 읽는다(파일 I/O).
   const billed = await isBilledRunner(wsId, runner);
-  await setTurnStatus(wsId, agentSlug, 'boot'); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
+  await setTurnStatus(wsId, agentSlug, 'boot', '', undefined, turnSource); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
   const q = query({
     prompt: promptInput,
     options: {
@@ -1319,7 +1335,7 @@ ${lang === 'en'
           appendEvent(wsId, { type: 'mcp', server: sv.name, status: 'connected', ok: true, slug: agentSlug }).catch(() => {});
         }
       }
-      await setTurnStatus(wsId, agentSlug, 'memory');
+      await setTurnStatus(wsId, agentSlug, 'memory', '', undefined, turnSource);
     }
     if (msg.type === 'assistant') {
       if (msg.message?.model) actualModel = msg.message.model; // SDK가 이 응답을 낸 실제 모델
@@ -1339,7 +1355,7 @@ ${lang === 'en'
       const stage = tu ? stageForTool(tu.name) : 'think'; // 코드 — 클라가 번역(가장 흔한 상태라 누락 시 영어 회사에 한국어 노출)
       const detail = tu ? detailForTool(tu.name, tu.input) : '';
       for (const b of tus) step(stageForTool(b.name), detailForTool(b.name, b.input)); // 도구 하나 = 단계 하나
-      await setTurnStatus(wsId, agentSlug, stage, detail, partial);
+      await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource);
     }
     if (msg.type === 'result') {
       sid = msg.session_id ?? sid;

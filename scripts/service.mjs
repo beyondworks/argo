@@ -82,7 +82,7 @@ function darwinInstall() {
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
   <key>StandardOutPath</key><string>${out}</string>
-  <key>StandardErrPath</key><string>${err}</string>
+  <key>StandardErrorPath</key><string>${err}</string>
   <key>EnvironmentVariables</key><dict>
 ${Object.entries(env).map(([k, v]) => `    <key>${k}</key><string>${v}</string>`).join('\n')}
   </dict>
