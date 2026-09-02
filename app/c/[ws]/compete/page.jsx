@@ -338,7 +338,7 @@ export default function Compete({ params }) {
               {/* 그룹 minWidth:0 — flex 아이템 자동 최소치(내용 min-content)가 좁은 유효 폭(배율 2,
                   1280 창 실측 열 106 CSS px)에서 DropUp 바닥(148)을 그대로 전파해 문서 가로 넘침을
                   만든다(실측 1283>1264 → 해제 후 1264=1264). DropUp 자체 클램프(ui.jsx)와 한 세트. */}
-                <div style={{ display: 'flex', gap: '6px 14px', alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
+              <div style={{ display: 'flex', gap: '6px 14px', alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
                 <span className="microlabel">{t('compete.pick')}</span>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}>
                   {/* 크루 1명 — 등록된 모든 크루 중 선택 */}

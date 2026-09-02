@@ -9,8 +9,8 @@ const load = (p) => readFile(new URL(p, import.meta.url), 'utf8');
 test('회의실 send — 이름만 있는 발언은 전송 전에 막고 안내한다(setBusy·낙관 적립보다 앞)', async () => {
   const page = await load('../app/c/[ws]/room/page.jsx');
   const fn = page.slice(page.indexOf('async function send(e) {'), page.indexOf('setBusy(true); setError(\'\');', page.indexOf('async function send(e) {')));
-  assert.match(fn, /if \(!text\.replace\(\/\(\^\|\\s\)@\\S\+\/g, ''\)\.trim\(\)\) \{ setError\(t\('room\.mentionOnly'\)\); return; \}/,
-    '멘션만 남는 발언 가드 — setBusy 이전 구간에 있어야 한다(뒤면 낙관 적립·요청이 이미 나간다)');
+  assert.match(fn, /if \(!att\.length && !text\.replace\(\/\(\^\|\\s\)@\\S\+\/g, ''\)\.trim\(\)\) \{ setError\(t\('room\.mentionOnly'\)\); return; \}/,
+    '멘션만 남는 발언 가드 — setBusy 이전 구간에 있어야 하고(뒤면 낙관 적립·요청이 이미 나간다), 첨부가 있으면 통과(파일이 곧 안건 — 검수 MEDIUM-1)');
   // 가드 정규식의 행동 — 소스에서 그대로 뽑아 실행(테스트 사본과 어긋나지 않게)
   const re = /(^|\s)@\S+/g;
   const only = (s) => !s.replace(re, '').trim();
@@ -27,4 +27,13 @@ test('i18n — room.mentionOnly ko/en 등록', async () => {
   const m = src.match(/^\s*'room\.mentionOnly':\s*\['([^']*)',\s*'([^']*)'\]/m);
   assert.ok(m, 'room.mentionOnly 사전 등록');
   assert.ok(/[가-힣]/.test(m[1]) && !/[가-힣]/.test(m[2]), 'ko에 한글·en에 한글 없음');
+});
+
+test('회의실 LANE = 크루 대화 LANE — 두 파일의 상수 값이 같아야 한다(입력창·대화 영역 폭 통일)', async () => {
+  const room = await load('../app/c/[ws]/room/page.jsx');
+  const crew = await load('../app/c/[ws]/crew/[slug]/page.jsx');
+  const pick = (src) => src.match(/^const LANE = ('[^']+');$/m)?.[1];
+  assert.ok(pick(room) && pick(crew), 'LANE 상수가 두 파일 모두에 있어야 한다');
+  assert.equal(pick(room), pick(crew));
+  assert.match(room, /maxWidth: LANE, margin: '0 auto'/, '회의실 레인 소비(대화 영역·컴포저 열)');
 });

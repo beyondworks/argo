@@ -213,7 +213,8 @@ export default function Room({ params }) {
     if (!text || busy || uploading) return;
     // 이름만 있는 발언("@카맥")은 보내지 않는다 — Enter 멘션 완성이 뒤에 공백 하나만 붙여 눈에 안 띄고, 한 번 더 누르면
     // 빈 안건이 방에 올라가 크루가 발언을 시작하던 길(유건 제보 2026-09-02). 안건을 이어 적으라고 알린다.
-    if (!text.replace(/(^|\s)@\S+/g, '').trim()) { setError(t('room.mentionOnly')); return; }
+    // 첨부가 있으면 파일이 곧 안건이라 통과(분리 검수 MEDIUM-1 — 종전엔 보내지던 조합).
+    if (!att.length && !text.replace(/(^|\s)@\S+/g, '').trim()) { setError(t('room.mentionOnly')); return; }
     const attachments = att;
     setBusy(true); setError('');
     atBottomRef.current = true; // 자기 발언은 항상 하단 추종(읽던 위치 보존은 수신에만 적용)
