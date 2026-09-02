@@ -25,17 +25,19 @@ const seedCrew = async (ws) => {
   await writeFile(join(ROOT, ws, '.secrets.json'), JSON.stringify({ runners: { codex: { type: 'apikey', value: 'sk-fake-not-a-real-key' } } }));
 };
 
-// 가짜 codex — ①파일 1개 산출(워크스페이스 루트에 .fake-nofile 표지가 있으면 산출 없음) ②--output-last-message에 답변.
+// 가짜 codex — ①파일 1개 산출(워크스페이스 루트에 .fake-nofile 표지가 있으면 산출 없음) ②--output-last-message에 답변
+// ③받은 프롬프트(runners.mjs가 `--` 뒤 마지막 인자로 넘긴다)를 .fake-prompts에 누적 — 뒤 크루의 트랜스크립트 검사용.
 // test/artifacts-behavior.test.mjs 하네스와 같은 형태 — 벤더 CLI 없이 CLI 분기를 실제로 돈다.
 const BIN = join(ROOT, 'bin');
 await mkdir(BIN, { recursive: true });
 await writeFile(join(BIN, 'codex'), `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "codex-cli 0.0.0-fake"; exit 0; fi
-OUT=""; prev=""
+OUT=""; prev=""; last=""
 for a in "$@"; do
   if [ "$prev" = "--output-last-message" ]; then OUT="$a"; fi
-  prev="$a"
+  prev="$a"; last="$a"
 done
+printf '%s\n=====\n' "$last" >> "$PWD/.fake-prompts"
 if [ -f "$PWD/.fake-nofile" ]; then
   [ -n "$OUT" ] && printf '의견만 드립니다.' > "$OUT"
   exit 0
@@ -150,4 +152,34 @@ test('위임 미러 배선 — chat.mjs delegate 이벤트가 artifacts를 싣�
   const j = room.indexOf('if (!live) return', i);
   assert.ok(j > i);
   assert.match(room.slice(i, j), /\.\.\.\(ev\.artifacts\?\.length \? \{ artifacts: ev\.artifacts \} : \{\}\)/, '미러 메시지에 artifacts(빈 배열은 싣지 않는 규약 포함)');
+});
+
+// ── 트랜스크립트 산출물 노트(검수 LOW-2 이월) — 뒤 크루가 앞 크루의 파일 경로를 답변 텍스트가 아니라 노트로 받는다.
+const promptsOf = async (ws) => (await readFile(join(ROOT, ws, '.fake-prompts'), 'utf8')).split('\n=====\n').filter(Boolean);
+
+test('릴레이(@B > @A) 실제 실행: 앞 크루의 산출물 경로가 뒤 크루 프롬프트 트랜스크립트에 노트로 실린다', POSIX_ONLY, async () => {
+  const WS = 'room-relay-note';
+  await mkws(WS); await seedCrew(WS);
+  await writeFile(join(ROOT, WS, 'agents', 'crew-b.md'), '---\nname: 크루B\nrunner: codex\n---\n\n전문가.\n');
+  const r = await runRoomTurn(WS, '@crew-b > @crew-a 회의 요약 문서를 만들고 이어서 검토해줘');
+  assert.deepEqual(r.replies.map((x) => x.slug), ['crew-b', 'crew-a'], '릴레이 순서');
+  const prompts = await promptsOf(WS);
+  assert.equal(prompts.length, 2, '가짜 codex가 크루B → 크루A 순으로 두 번 호출됐다');
+  assert.doesNotMatch(prompts[0], /\(산출물, Read로 열람/, '첫 발언자 시점엔 방에 산출물이 없다');
+  assert.match(prompts[1], /크루B: 요약을 vault\/projects\/20260902_회의\/요약\.md 로 남겼습니다\. \(산출물, Read로 열람: vault\/projects\/20260902_회의\/요약\.md\)/,
+    '앞 크루 발언 줄 끝에 산출물 노트 — vault/ 접두(첨부 노트·회의록 줄과 같은 규약)');
+});
+
+test('첨부와 산출물이 같은 발언에 있으면 노트가 첨부 → 산출물 순으로 나란히 붙는다(시드 방)', POSIX_ONLY, async () => {
+  const WS = 'room-note-order';
+  await mkws(WS); await seedCrew(WS);
+  await writeFile(join(ROOT, WS, 'chats', 'room-main.json'), JSON.stringify({ messages: [
+    { who: 'user', text: '@crew-b 정리해줘', ts: 1, attachments: [{ rel: 'files/a1_스케치.png', name: '스케치.png', isImage: true }] },
+    { who: 'crew-b', text: '정리했습니다', ts: 2, attachments: [{ rel: 'files/a1_스케치.png', name: '스케치.png' }], artifacts: [REL, 'files/표.csv'] },
+  ], sid: 1 }));
+  await runRoomTurn(WS, '@crew-a 이어서 검토해줘');
+  const [p] = await promptsOf(WS);
+  assert.match(p, /crew-b: 정리했습니다 \(첨부, Read로 열람: vault\/files\/a1_스케치\.png\) \(산출물, Read로 열람: vault\/projects\/20260902_회의\/요약\.md, vault\/files\/표\.csv\)\n/,
+    '첨부 노트 뒤에 산출물 노트, 복수 경로는 쉼표 나열, 줄 끝');
+  assert.match(p, /사장: @crew-b 정리해줘 \(첨부, Read로 열람: vault\/files\/a1_스케치\.png\)\n/, '사장 줄의 첨부 노트는 그대로(회귀 없음)');
 });
