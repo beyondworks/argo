@@ -205,7 +205,9 @@ export default function Room({ params }) {
       // 같은 안건이 방·입력창에 나란히 남아 Enter 한 번에 두 번 적립된다(분리 검수 #392 HIGH-1 실측).
       if (!err?.data?.saved) setInput((cur) => cur || text);
     } finally {
-      setBusy(false); setServerBusy(false); setTurn(null); // 자기 턴 종료 — 마지막 partial이 완성 말풍선과 겹쳐 보이지 않게 즉시 내린다(다른 탭의 턴이면 다음 폴이 되살린다)
+      // 자기 턴 종료 — turn만 즉시 내린다(마지막 partial이 완성 말풍선과 겹치지 않게). serverBusy는 다음 폴이 정본으로
+      // 수렴시킨다: 여기서 끄면 다른 탭의 턴이 도는 중에 '회의 마치기' 잠금이 최대 8초 풀린다(#393 검수 MEDIUM-1 — main 대비 회귀).
+      setBusy(false); setTurn(null);
     }
   }
 
@@ -406,7 +408,9 @@ export default function Room({ params }) {
                         {nameOf(turn.slug)}
                         <span style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--fg-3)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                           <ArgoSpinner size={11} />
-                          {t('chat.stageEllipsis', { stage: stageLabel(t, turn.stage || 'boot', turn.detail) })}
+                          {/* 단계 미상(상태 파일 없음·만료 — CLI 러너는 턴당 1회만 쓰고, 2분 넘는 도구도 만료)이면 '시동 거는 중'을
+                              지어내지 않는다(#393 검수 HIGH-1: CLI 발언은 2분 뒤 결정적으로 거짓 표시) — 발언자만 정직하게. */}
+                          {turn.stage ? t('chat.stageEllipsis', { stage: stageLabel(t, turn.stage, turn.detail) }) : t('room.speaking')}
                           {turn.stage !== 'runner' && turn.detail ? ` · ${String(turn.detail).slice(0, 60)}` : ''}
                         </span>
                       </div>

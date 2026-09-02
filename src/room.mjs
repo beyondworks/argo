@@ -324,7 +324,10 @@ export async function getRoomTurn(wsId) {
   // 쓰고 있는지"가 보이게(유건 2026-09-02 "보는 재미"). 발언이 끝나면 chat()이 상태 파일을 지워 partial이
   // 비고, 완성 말풍선이 정본이 된다.
   const [slug = '', rest = ''] = String(s.detail || '').split('|');
-  const live = slug ? await getTurnStatus(wsId, slug) : null;
+  // 출처 게이트 — 같은 크루의 다른 턴(개인 채팅·루틴·경쟁)이 같은 상태 파일을 쓰면 남의 문장이 발언으로 뜬다
+  // (#393 검수 MEDIUM-2 프로브). source==='room'일 때만 채택, 미상(구형 파일)은 비채택(fail-closed).
+  const cur = slug ? await getTurnStatus(wsId, slug) : null;
+  const live = cur?.source === 'room' ? cur : null;
   return {
     active: true, slug: slug || null, startedAt: s.startedAt,
     queue: rest.split(',').filter(Boolean),

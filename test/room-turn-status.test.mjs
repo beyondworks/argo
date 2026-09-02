@@ -119,7 +119,7 @@ test('getRoomTurn: 발언자|다음 순서 해석 + 발언 크루의 단계·부
   let r = await getRoomTurn(ws);
   assert.deepEqual({ slug: r.slug, queue: r.queue, stage: r.stage, detail: r.detail, partial: r.partial },
     { slug: 'pepper', queue: ['carmack', 'davinci'], stage: null, detail: '', partial: '' }, '상태 파일 없으면 빈 값(크루 시동 전)');
-  await setTurnStatus(ws, 'pepper', 'tool', 'Grep', '지금까지 말한 텍스트');
+  await setTurnStatus(ws, 'pepper', 'tool', 'Grep', '지금까지 말한 텍스트', 'room');
   r = await getRoomTurn(ws);
   assert.deepEqual({ stage: r.stage, detail: r.detail, partial: r.partial }, { stage: 'tool', detail: 'Grep', partial: '지금까지 말한 텍스트' }, '발언 크루의 스트리밍 상태가 방에 실린다');
   await clearTurnStatus(ws, 'pepper'); // 발언 완료 = chat()이 상태 파일을 지운다 → partial이 비고 완성 말풍선이 정본
@@ -134,11 +134,36 @@ test('getRoomTurn: 발언자|다음 순서 해석 + 발언 크루의 단계·부
   await clearTurnStatus(ws, 'pepper'); await clearTurnStatus(ws, ROOM_TURN_SLUG);
 });
 
+test('출처 게이트: 발언 크루 상태는 source===room일 때만 채택 — 개인 채팅·루틴·미상 출처는 비채택(검수 MEDIUM-2)', async () => {
+  const ws = 'rs-source'; await seed(ws);
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper|');
+  await setTurnStatus(ws, 'pepper', 'think', '', '회의실 발언입니다', 'room');
+  assert.equal((await getRoomTurn(ws)).partial, '회의실 발언입니다', '자기 발언은 채택');
+  await setTurnStatus(ws, 'pepper', 'shell', 'npm test', '개인 채팅에서 쓰는 다른 문장', 'chat'); // 같은 파일을 다른 턴이 덮음
+  let r = await getRoomTurn(ws);
+  assert.deepEqual({ active: r.active, stage: r.stage, detail: r.detail, partial: r.partial }, { active: true, stage: null, detail: '', partial: '' }, '남의 턴 상태는 방에 뜨지 않는다(진행 판정은 그대로)');
+  await setTurnStatus(ws, 'pepper', 'think', '', '출처 없는 구형 파일'); // source 미전달 = 이전 값 유지('chat')
+  assert.equal((await getRoomTurn(ws)).partial, '', '이전 출처(chat) 유지 → 비채택');
+  await clearTurnStatus(ws, 'pepper');
+  await setTurnStatus(ws, 'pepper', 'think', '', '출처 미상'); // 새 파일에 출처 없음 = ''
+  assert.equal((await getTurnStatus(ws, 'pepper')).source, '', '출처 미상은 빈 값으로 저장');
+  assert.equal((await getRoomTurn(ws)).partial, '', '출처 미상은 비채택(fail-closed)');
+  await clearTurnStatus(ws, 'pepper'); await clearTurnStatus(ws, ROOM_TURN_SLUG);
+});
+
+test('배선: chat()이 상태 파일 갱신 전부에 턴 출처(turnSource)를 싣는다 — 하나라도 빠지면 회의실 표시가 그 단계에서 사라진다', async () => {
+  const src = stripComments(await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8'));
+  assert.match(src, /const turnSource = source \?\? \(from \? 'delegate' : 'chat'\);/, '출처 파생 — room 턴은 source=room 그대로');
+  const calls = src.match(/setTurnStatus\(wsId, agentSlug,[^\n]*\)/g) ?? [];
+  assert.ok(calls.length >= 4, `상태 갱신 호출 ${calls.length}곳(기대 ≥4: runner·boot·memory·단계)`);
+  for (const c of calls) assert.match(c, /turnSource\)/, `출처 누락 호출: ${c}`);
+});
+
 test('GET /room 이 발언자·다음 순서·단계·부분 텍스트를 그대로 싣는다(실호출) — 실시간 발언 표시의 유일한 원천', async () => {
   const ws = 'rs-route-live'; await seed(ws);
   const route = await import('../app/api/companies/[ws]/room/route.js');
   await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper|carmack');
-  await setTurnStatus(ws, 'pepper', 'think', '', '부분');
+  await setTurnStatus(ws, 'pepper', 'think', '', '부분', 'room');
   const d = await (await route.GET(new Request(`http://127.0.0.1/api/companies/${ws}/room`), { params: Promise.resolve({ ws }) })).json();
   assert.deepEqual({ slug: d.turn?.slug, queue: d.turn?.queue, stage: d.turn?.stage, partial: d.turn?.partial },
     { slug: 'pepper', queue: ['carmack'], stage: 'think', partial: '부분' });
@@ -154,14 +179,33 @@ test('배선: 회의실 페이지가 발언 중인 크루의 단계·부분 텍�
   const live = page.slice(page.indexOf('{!viewing && (busy || serverBusy) && ('), page.indexOf('<div ref={endRef} />'));
   assert.match(live, /turn\?\.slug \? \(/, '발언자를 알면 말풍선 형태');
   assert.match(live, /<Avatar name=\{nameOf\(turn\.slug\)\} size=\{26\} \/>/);
-  assert.match(live, /stageLabel\(t, turn\.stage \|\| 'boot', turn\.detail\)/, '단계 라벨(미정이면 시동 중)');
+  assert.match(live, /\{turn\.stage \? t\('chat\.stageEllipsis', \{ stage: stageLabel\(t, turn\.stage, turn\.detail\) \}\) : t\('room\.speaking'\)\}/,
+    "단계 미상이면 '발언 중' — 'boot'를 지어내면 CLI 러너 발언이 2분 뒤 거짓 '시동 거는 중'(검수 HIGH-1)");
+  assert.doesNotMatch(live, /turn\.stage \|\| 'boot'/, "'boot' 폴백 금지");
+  assert.match(live, /\{turn\.stage !== 'runner' && turn\.detail \? ` · \$\{String\(turn\.detail\)\.slice\(0, 60\)\}` : ''\}/, 'runner 단계는 detail(러너명)이 라벨에 이미 있어 중복 억제(검수 LOW-4)');
   assert.match(live, /\{turn\.partial && \(\s*\n\s*<div[^\n]*><Markdown text=\{turn\.partial\} wsId=\{ws\} \/><\/div>/, '부분 텍스트는 마크다운');
   assert.match(live, /t\('room\.next', \{ names: turn\.queue\.map\(nameOf\)\.join\(' → '\) \}\)/, '다음 순서 줄');
   assert.match(live, /\) : \(\s*\n\s*<div[^\n]*>\s*\n\s*<ArgoSpinner size=\{16\} \/> \{t\('room\.meeting'\)\}/, '발언자 미정이면 종전 스피너 줄');
-  assert.match(page, /\} finally \{\s*\n\s*setBusy\(false\); setServerBusy\(false\); setTurn\(null\);/, '자기 턴 종료 시 즉시 내린다 — 마지막 partial이 완성 말풍선과 겹치지 않게');
+  const fin = page.slice(page.indexOf('} finally {', page.indexOf('async function send(')), page.indexOf('async function endMeeting('));
+  assert.match(fin, /setBusy\(false\); setTurn\(null\);/, '자기 턴 종료 시 turn만 즉시 내린다 — 마지막 partial이 완성 말풍선과 겹치지 않게');
+  assert.doesNotMatch(fin, /setServerBusy\(false\)/, 'serverBusy를 여기서 끄면 다른 탭 턴 중 마치기 잠금이 최대 8초 풀린다(검수 MEDIUM-1)');
   assert.match(page, /\}, \[messages, busy, viewing, turn\?\.partial, turn\?\.stage\]\);/, '부분 텍스트가 자라는 동안 하단 추종');
   const i18n = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
   assert.match(i18n, /'room\.next': \['[^']*\{names\}[^']*', '[^']*\{names\}[^']*'\]/, 'ko/en 둘 다 {names} 치환');
+});
+
+test('DELETE /room(회의 마치기)은 턴 진행 중이면 409로 거절한다(실호출) — 서버 최종 게이트(검수 MEDIUM-1)', async () => {
+  const ws = 'rs-delete'; await seed(ws);
+  const route = await import('../app/api/companies/[ws]/room/route.js');
+  const del = () => route.DELETE(new Request(`http://127.0.0.1/api/companies/${ws}/room`, { method: 'DELETE' }), { params: Promise.resolve({ ws }) });
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper|');
+  const busy = await del();
+  assert.equal(busy.status, 409, '진행 중 마치기 거절');
+  assert.match((await busy.json()).error, /진행 중|still speaking/, '안내 문구');
+  assert.equal((await getRoomTurn(ws))?.active, true, '거절은 마커를 건드리지 않는다');
+  await clearTurnStatus(ws, ROOM_TURN_SLUG);
+  const ok = await del();
+  assert.equal(ok.status, 200, '유휴면 종전대로 마친다');
 });
 
 test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전에 발언자를 갱신하며, 실패를 방에 남긴다(소스 구간 불변식)', async () => {
