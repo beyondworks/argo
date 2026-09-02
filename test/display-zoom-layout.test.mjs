@@ -666,6 +666,7 @@ test('deck 2열 접힘 — 컨테이너 쿼리(배율 반영 CSS px)가 미디�
   const side = Number(css.match(/\.shell\s*\{[^}]*grid-template-columns:\s*(\d+)px/)[1]);
   const pad = Number(css.match(/\.content\s*\{\s*padding:\s*\d+px\s+(\d+)px/)[1]);
   assert.ok(Number(cq[1]) < Number(mq[1]) - side - 2 * pad, `컨테이너 임계 ${cq[1]}는 미디어 임계의 본문 폭 ${Number(mq[1]) - side - 2 * pad}보다 낮아야 배율 1·1.5 종전 레이아웃이 보존된다`);
+});
 
 /* ── 인접 핀: 데크 계기판(Dial) 바늘 — svg 내부 요소의 px transform-origin 금지 ─────────
    유건 제보(2026-09-02 스크린샷): 표시 배율에서 바늘의 회전 중심이 중앙 점을 벗어난다. 재현
