@@ -4,6 +4,7 @@
 import { readFile, readdir, stat, rename, mkdir, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
+import { GUIDE_NOTE } from './provision.mjs'; // 스캐폴드 안내 노트 파일명(단일 진실)
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — 어떤 러너든 연결만 되면 기억 정리가 돈다
 import { saveNote, updateIndex, splitLinkSections, appendSourceLinks } from './memory.mjs';
 import { appendUsage } from './usage.mjs';
@@ -100,7 +101,7 @@ export async function consolidateMemory(wsId) {
   try {
     const entries = [];
     // 스캐폴드 가이드(argo-사용법)는 지식 노트가 아니라 안내문 — 정제 컨텍스트에 주면 LLM이 재정제해 유사 사본을 만든다(실측)
-    for (const n of (await readdir(p.notes)).filter((f) => f.endsWith('.md') && f !== 'argo-사용법.md')) {
+    for (const n of (await readdir(p.notes)).filter((f) => f.endsWith('.md') && f !== GUIDE_NOTE)) {
       const file = join(p.notes, n);
       entries.push({ file, mtime: (await stat(file)).mtimeMs });
     }

@@ -7,7 +7,9 @@ import { paths } from './workspace.mjs';
 
 export const SCAFFOLD_VERSION = 2; // v2: inbox(받은 서류함 — 파일을 넣으면 크루가 처리)
 
-// 크루가 스스로 폴더 규율을 지키게 하는 안내 노트 — 시스템 프롬프트(폴더 정리 규칙)와 같은 내용의 사람용 버전
+// 크루가 스스로 폴더 규율을 지키게 하는 안내 노트 — 시스템 프롬프트(폴더 정리 규칙)와 같은 내용의 사람용 버전.
+// 파일명은 단일 진실 — 정리 데몬(consolidate)의 제외와 listDocs의 guide 표식이 이 이름을 본다. 옛 회사에도 같은 이름으로 있다.
+export const GUIDE_NOTE = 'argo-사용법.md';
 const GUIDE = `---
 title: Argo 폴더 사용법
 ---
@@ -41,7 +43,7 @@ export async function ensureScaffold(wsId) {
   // (capabilities.mjs의 CAPABILITIES 동결 상수). 계속 쓰면 "여기를 고치면 권한이 바뀐다"는 오해만
   // 남기고, 실제로는 아무 효과가 없다(그 무효화가 자가 승격 차단의 본체다 — approval-ux.test.mjs).
   // 옛 회사에 남은 파일은 그대로 둔다(무해·무시). 되돌리지 말 것.
-  const guide = join(p.notes, 'argo-사용법.md');
+  const guide = join(p.notes, GUIDE_NOTE);
   if (!existsSync(guide)) await writeFile(guide, GUIDE);
   await writeFile(stamp, JSON.stringify({ version: SCAFFOLD_VERSION, at: new Date().toISOString() }, null, 2));
   return true;
