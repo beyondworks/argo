@@ -1561,7 +1561,7 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 .split-body > .split-doc { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 14px 18px 40px; }
 /* 하단 18px = 주 화면 컴포저 줄의 바닥(뷰포트 바닥에서 18px: .chat-cols top 82 + height calc(100vh − 100px))과
    같은 높이 — 옆에 열기 패널의 입력창·폴더/클립 줄이 주 화면 줄과 한 선에 놓인다(실측: 10px일 때 8px 아래, 유건 2026-09-02). */
-.split-body > .split-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 12px 18px; }
+.split-body > .split-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px 12px 18px; }
 .split-body > .split-chat > * { flex: 1; min-height: 0; }
 body.split-resizing { cursor: col-resize; user-select: none; }
 /* 크루 행 '옆에 열기' — 핀과 같은 규칙(행 hover 시 노출). 핀 왼쪽(right:28)에 앉는다 */

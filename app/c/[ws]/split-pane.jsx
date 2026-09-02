@@ -77,7 +77,7 @@ export function SplitPane({ ws, side, sideStr, title, subtitle, onClose }) {
       <div className="split-head">
         <span className="split-title" title={title}>{title}</span>
         {subtitle && (
-          <span className="nav-sub" title={subtitle} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</span>
+          <span className="nav-sub" title={subtitle} style={{ maxWidth: 180, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</span>
         )}
         <span style={{ flex: 1 }} />
         <button type="button" className="btn sm" onClick={onClose} title={t('split.close')} aria-label={t('split.close')} style={{ padding: '0 8px' }}>✕</button>

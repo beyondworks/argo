@@ -15,8 +15,8 @@ test('패널 헤더: ✕만 남고 →(전체 화면) 링크는 없다, 크루�
   const src = stripComments(await read('../app/c/[ws]/split-pane.jsx'));
   const head = src.slice(src.indexOf('<div className="split-head">'), src.indexOf('<div className="split-body">'));
   assert.doesNotMatch(head, /split\.openFull|name="arrow"|<Link/, '→ 버튼(전체 화면 링크)이 헤더에 남아 있다 — 닫기와 중복');
-  assert.match(head, /<span className="split-title" title=\{title\}>\{title\}<\/span>\s*\n\s*\{subtitle && \(\s*\n\s*<span className="nav-sub" title=\{subtitle\}[^\n]*>\{subtitle\}<\/span>/,
-    '역할 텍스트가 크루명 바로 우측(nav-sub·말줄임)에 있어야 한다');
+  assert.match(head, /<span className="split-title" title=\{title\}>\{title\}<\/span>\s*\n\s*\{subtitle && \(\s*\n\s*<span className="nav-sub" title=\{subtitle\} style=\{\{ maxWidth: 180, minWidth: 0,[^\n]*>\{subtitle\}<\/span>/,
+    '역할 텍스트가 크루명 바로 우측(nav-sub·말줄임)에 있고 폭 상한 180 — 없으면 flex가 자연폭 비례로 줄여 좁은 패널(360)에서 크루명이 1자만 남는다(검수 MEDIUM-1 실측)');
   assert.match(head, /onClick=\{onClose\}[^\n]*>✕<\/button>/, '닫기 버튼');
   assert.match(src, /export function SplitPane\(\{ ws, side, sideStr, title, subtitle, onClose \}\)/, 'subtitle prop');
   const layout = stripComments(await read('../app/c/[ws]/layout.jsx'));
@@ -38,6 +38,6 @@ test('패널 컴포저 바닥: .split-chat 하단 패딩 18px(주 화면 줄과 
   const css = await read('../app/globals.css');
   const rules = [...css.matchAll(/\.split-body\s*>\s*\.split-chat\s*\{([^}]*)\}/g)].map((m) => m[1]);
   assert.equal(rules.length, 1, '.split-body > .split-chat 규칙은 하나여야 한다(뒤 규칙이 패딩을 덮으면 정렬이 깨진다)');
-  assert.match(rules[0], /padding:\s*0 12px 18px;/, '하단 18px — 10px이면 패널 줄이 주 화면보다 8px 아래(실측)');
+  assert.match(rules[0], /padding:\s*10px 12px 18px;/, '하단 18px(10px이면 패널 줄이 주 화면보다 8px 아래 — 실측)·상단 10px(밴드가 빠진 자리의 완충)');
   assert.doesNotMatch(css.replace(rules[0], ''), /\.split-chat[^{]*\{[^}]*padding/, '다른 .split-chat 규칙의 padding 금지');
 });
