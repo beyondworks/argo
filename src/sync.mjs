@@ -16,6 +16,7 @@
 // v1 한계(문서화): 서비스 키 기반(자가 호스팅 전제 — 패키징 앱은 사용자 JWT+RLS로 전환 예정),
 // 충돌은 LWW(더 최근 mtime 승) — md 양쪽 보존은 후속.
 import { mkdir, readFile, writeFile, readdir, stat, rm, utimes } from 'node:fs/promises';
+import { isReservedSlug } from './slug.mjs';
 import { join, dirname, basename, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
@@ -75,6 +76,9 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // 타면 지운 파일이 원격에서 되살아나 같은 쪽지를 이중 배달한다(.gw-queue와 동일 결함 계급,
   // 분리 검수 CRITICAL-2 2026-07-27). 세션 간 소통은 배달 결과가 스레드(동기화 대상)로 남아 성립한다.
   if (rel.split('/')[0] === 'mail') return true;
+  // 예약 slug 크루 카드(agents/room-*.md) — 옛 버전 기기가 만든 'Room Main' 크루는 이 기기에서 회의록·회의 마커를
+  // 덮는 파일 이름이 된다(slug.mjs). 반입 문에서 거절 = 동기화 우주 밖(push·pull 양방향 불가시). .archive/는 대상 아님.
+  if (/^agents\/([^/]+)\.md$/.test(rel) && isReservedSlug(rel.slice('agents/'.length, -'.md'.length))) return true;
   const base = rel.split('/').pop();
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||

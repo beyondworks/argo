@@ -35,6 +35,7 @@ export async function POST(req, { params }) {
     import('../../../../../src/trial.mjs').then((m) => m.runTrialTurn(ws, agent.slug)).catch(() => {});
     return Response.json({ agent });
   } catch (e) {
+    if (e?.code === 'SLUG_RESERVED') return Response.json({ error: String(e.message), errorCode: 'crew_slug_reserved' }, { status: 400 }); // 예약 slug(room-*) — 사용자 입력 문제, 서버 잘못이 아니다
     return Response.json({ error: String(e.message || e) }, { status: 500 });
   }
 }

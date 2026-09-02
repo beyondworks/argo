@@ -301,7 +301,7 @@ export function parseRoomDirectives(text, agents = []) {
     없으면 회의실 화면의 '회의 중' 표시가 **자기 탭의 POST 대기**뿐이라, 안건을 올리고 다른 페이지에 갔다
     돌아오면 서버에서 턴이 돌고 있어도 화면은 멈춘 것처럼 보였다(유건 실사용 제보 2026-09-02).
     부수 효과: 상주 재배포 IDLE 게이트(chats/*.status.json)에 회의실 턴도 잡힌다. */
-export const ROOM_TURN_SLUG = 'room-main';
+export const ROOM_TURN_SLUG = 'room-main'; // 크루 slug 예약어(slug.mjs RESERVED_SLUG_RE) 안 — 영입·반입 문이 같은 이름의 크루를 거절한다
 // 같은 방의 동시 턴(탭 2개·API 직접 호출)은 마커 하나를 공유한다 — 먼저 끝난 턴이 지우면 뒤 턴이 도는 동안
 // 다음 하트비트(≤30초)까지 표시가 꺼진다(분리 검수 MEDIUM-1, 1/100 축소 모형 실측). 프로세스 내 참조
 // 카운트로 마지막 턴만 지운다. 크로스 프로세스 동시 턴은 남지만 ≤30초 자가 치유.

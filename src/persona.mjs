@@ -9,6 +9,7 @@ import { appendUsage } from './usage.mjs';
 import { isBilledRunner } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
 import { appendEvent } from './events.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 Codex/Gemini/GLM만 연결해도 영입 가능
+import { isReservedSlug } from './slug.mjs'; // 회의실 내부 이름(room-*)과의 파일 충돌 차단 — 예약어 원천
 
 // 카드 = 시스템 프롬프트. lang='en'이면 이름·직함·본문을 영어로 생성하되, 세 섹션 헤더(## 전문성/일하는 방식/톤)는
 // 한국어 고정 토큰으로 유지한다 — 백엔드·프론트 여러 파서(persona.mjs:appendAgentRule, hub.mjs, crew page)가 이
@@ -220,6 +221,13 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   // 밖에서 들어온 파일까지 규칙으로 막지는 않는다(cardPath 주석 참고). slugify가 언젠가 규칙을
   // 벗어난 값을 내면 카드를 쓰기 전에 여기서 걸린다.
   if (!SLUG_RE.test(slug)) throw new Error(`크루 slug를 만들지 못했습니다: ${slug}`);
+  // 예약어(slug.mjs) — 'room-main'은 회의록 chats/room-main.json·회의 턴 마커와 같은 파일 이름이 된다. -n 회피는
+  // 접두를 남기므로 base로 판정한다. 회사 언어로 안내(이 함수의 다른 오류와 같은 계약) + code로 라우트가 400 매핑.
+  if (isReservedSlug(base)) {
+    throw Object.assign(new Error(lang === 'en'
+      ? `The crew name "${nameFinal}" (${base}) collides with the meeting room's internal name (room-) — please hire with a different name.`
+      : `크루 이름 "${nameFinal}"(${base})은 회의실 내부 이름(room-)과 겹칩니다 — 다른 이름으로 영입해 주세요.`), { code: 'SLUG_RESERVED' });
+  }
   const file = cardPath(wsId, slug);
   await writeJsonAtomic(file, finalMd);
   await appendEvent(wsId, { type: 'crew', op: 'hire', slug, name: nameFinal });
