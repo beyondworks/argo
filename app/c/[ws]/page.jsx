@@ -7,10 +7,13 @@ import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, useScrollLock, InputM
 import { Graph2D } from './graph2d'; // 데크 별자리도 기억 페이지와 같은 2D 그래프(유건 지시 2026-08-21: 옛 3D 잔존 지적)
 import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames } from '../../runner-connect';
 import { useLang } from '../../i18n';
+import { useTasks } from './tasks-context';
 
 export default function Deck({ params }) {
   const { ws } = use(params);
   const { t, lang } = useLang();
+  // 작성 중 크루 수 — 셸이 폴링하는 /tasks running(사이드바 링·작업 독 배지와 같은 목록). 데크는 따로 폴링하지 않는다.
+  const running = (useTasks()?.running ?? []).length;
   const HIRE_STAGES = [t('deck.hireStage1'), t('deck.hireStage2'), t('deck.hireStage3')];
   const router = useRouter();
   const [data, setData] = useState(null);
@@ -132,10 +135,10 @@ export default function Deck({ params }) {
                 <div className="metric card fade-up" style={{ animationDelay: '0.04s' }}>
                   <div className="metric-top">
                     <span className="microlabel">{t('deck.crew')}</span>
-                    <span className="chip"><span className="dot" />{t('deck.standby')}</span>
+                    <span className="chip"><span className="dot" />{running > 0 ? t('deck.working') : t('deck.standby')}</span>
                   </div>
                   <Num value={data.agents.length} unit={t('common.people')} />
-                  <div className="metric-sub">{t('deck.allStandby')}</div>
+                  <div className="metric-sub">{running === 0 ? t('deck.allStandby') : running >= data.agents.length ? t('deck.allWriting') : t('deck.someWriting', { n: running })}</div>
                   <div className="metric-sub2">{t('deck.hireByPrompt')}</div>
                 </div>
                 <div className="metric card fade-up" style={{ animationDelay: '0.08s', alignItems: 'center' }}>

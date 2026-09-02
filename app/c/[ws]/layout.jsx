@@ -8,6 +8,7 @@ import { useLang, stageLabel } from '../../i18n';
 import { useAppUpdate } from '../../use-app-update';
 import { SplitPane } from './split-pane';
 import { parseSide, sideParam, withSide } from './split.mjs';
+import { TasksContext } from './tasks-context';
 
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
@@ -334,6 +335,7 @@ function Shell({ children, params }) {
   });
 
   return (
+    <TasksContext.Provider value={tasks}>
     <div className="shell">
       <aside className="side">
         <Link href="/" className="nav-item" style={{ gap: 8, marginBottom: 4 }}>
@@ -581,5 +583,6 @@ function Shell({ children, params }) {
       )}
       {fbOpen && <FeedbackModal onClose={() => setFbOpen(false)} />}
     </div>
+    </TasksContext.Provider>
   );
 }

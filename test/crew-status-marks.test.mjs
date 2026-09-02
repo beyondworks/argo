@@ -107,3 +107,28 @@ test('⑤ 텔레그램 점 툴팁은 alive로 갈린다 — 경고색 점에 "�
   assert.match(layout, /<span role="img" title=\{tgAgents\[a\.slug\] \? t\('nav\.tgConnected'\) : t\('nav\.tgIdle'\)\} aria-label=\{tgAgents\[a\.slug\] \? t\('nav\.tgConnected'\) : t\('nav\.tgIdle'\)\}/);
   assert.match(layout, /background: tgAgents\[a\.slug\] \? 'var\(--ok\)' : 'var\(--warn\)'/, '색 분기와 같은 조건(alive)');
 });
+
+// ⑥ 데크 크루 카드 정합 — 카드가 "전원 대기 중"을 항상 띄우는 동안 사이드바는 링이 켜지던 불일치(2026-09-02 실측).
+// 셸이 쥔 tasks를 컨텍스트(app/c/[ws]/tasks-context.js)로 내려 데크가 같은 running 목록을 읽는다. 데크에 /tasks
+// 자체 폴이 생기면 셋(링·배지·카드)이 다른 시점의 진실을 본다 — 호출부 0건을 잠근다.
+const deck = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/page.jsx'), 'utf8'));
+const ctx = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/tasks-context.js'), 'utf8'));
+test('⑥ 데크 크루 카드는 셸의 tasks 컨텍스트로 작성 중 수를 그린다 — 자체 /tasks 폴 없음', () => {
+  assert.match(ctx, /export const TasksContext = createContext\(null\);/);
+  assert.match(ctx, /export const useTasks = \(\) => useContext\(TasksContext\);/);
+  // 셸: Provider가 셸 전체(자식 페이지 + 분할 패널)를 감싸고 값은 같은 tasks 상태
+  const prov = idx(/<TasksContext\.Provider value=\{tasks\}>/);
+  const shellDiv = idx(/<div className="shell">/);
+  const children = idx(/\) : children\}/);
+  const provEnd = idx(/<\/TasksContext\.Provider>/);
+  assert.ok(prov < shellDiv && shellDiv < children && children < provEnd, 'Provider가 셸(자식 포함)을 감싼다');
+  // 데크: 훅으로 running 수를 읽고(조기 return 위), 카드 칩·부제가 그 수로 갈린다
+  assert.match(deck, /const running = \(useTasks\(\)\?\.running \?\? \[\]\)\.length;/, 'running 수는 컨텍스트의 running 길이');
+  assert.ok(deck.indexOf('const running = (useTasks()') < deck.indexOf('function load()'), '훅은 컴포넌트 최상단(조건·조기 return 앞)');
+  assert.match(deck, /\{running > 0 \? t\('deck\.working'\) : t\('deck\.standby'\)\}/, '칩: 작성 중/대기');
+  assert.match(deck, /\{running === 0 \? t\('deck\.allStandby'\) : running >= data\.agents\.length \? t\('deck\.allWriting'\) : t\('deck\.someWriting', \{ n: running \}\)\}/,
+    '부제: 전원 대기 / 전원 작성 중 / N명 작성 중 · 나머지 대기');
+  // 경로 끝 형태만 센다(따옴표·백틱·쿼리) — './tasks-context' 임포트의 '/tasks-'는 폴이 아니다(1차 red 실측)
+  assert.equal((deck.match(/\/tasks(?=['"`?])/g) ?? []).length, 0, '데크에 /tasks 자체 폴 금지(셸 컨텍스트만)');
+  assert.equal((deck.match(/useTasks\(\)/g) ?? []).length, 1, '컨텍스트 소비는 한 곳');
+});
