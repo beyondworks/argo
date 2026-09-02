@@ -56,13 +56,14 @@ export async function clearTurnStatus(wsId, slug) {
   try { await rm(file(wsId, slug), { force: true }); } catch { /* 없으면 그만 */ }
 }
 
-/** 2분 넘게 갱신이 없으면 죽은 상태로 보고 무시한다. 반환: { stage, detail, partial, startedAt } | null */
-export async function getTurnStatus(wsId, slug) {
+/** 2분 넘게 갱신이 없으면 죽은 상태로 보고 무시한다. 반환: { stage, detail, partial, startedAt, ts } | null
+    maxAgeMs — 만료 창 재정의(회의실 마커처럼 발언자 상태로 신선도를 이어 판정하는 소비자용). 기본 2분 불변. */
+export async function getTurnStatus(wsId, slug, { maxAgeMs = 120_000 } = {}) {
   try {
     const s = await readJsonLenient(file(wsId, slug), null);
     if (!s || !s.ts) return null;
-    return Date.now() - s.ts < 120_000
-      ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', startedAt: s.startedAt ?? s.ts }
+    return Date.now() - s.ts < maxAgeMs
+      ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', startedAt: s.startedAt ?? s.ts, ts: s.ts }
       : null;
   } catch {
     return null;

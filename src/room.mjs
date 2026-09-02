@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
 import { chat } from './chat.mjs';
+import { setTurnStatus, clearTurnStatus, getTurnStatus } from './turn-status.mjs';
 import { updateIndex } from './memory.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
@@ -275,7 +276,51 @@ export function parseRoomDirectives(text, agents = []) {
   return { loop, cc, ccAll, relay: relay.slice(0, HOP_MAX + 1), to, allCall, unknown };
 }
 
+/** 회의실 턴 진행 마커 — 크루 채팅의 상태 파일 계약(turn-status.mjs)을 슬러그 'room-main'으로 그대로 쓴다.
+    없으면 회의실 화면의 '회의 중' 표시가 **자기 탭의 POST 대기**뿐이라, 안건을 올리고 다른 페이지에 갔다
+    돌아오면 서버에서 턴이 돌고 있어도 화면은 멈춘 것처럼 보였다(유건 실사용 제보 2026-09-02).
+    부수 효과: 상주 재배포 IDLE 게이트(chats/*.status.json)에 회의실 턴도 잡힌다. */
+export const ROOM_TURN_SLUG = 'room-main';
+/** heartbeatMs — 턴이 도는 동안 마커 ts를 주기 갱신한다. 크루 상태 파일은 스트리밍·도구 이벤트마다 갱신되지만
+    'memory'처럼 이벤트가 없는 단계가 2분을 넘기면 마커·발언자 둘 다 낡아 **턴이 살아 있는데 표시가 꺼진다**
+    (격리 실측 2026-09-02: memory 단계 99초 무갱신). 하트비트는 프로세스가 살아 있음 자체의 신호라 단계와
+    무관하고, 프로세스가 죽으면 멈춰 2분 뒤 만료된다(고아 방어 유지). unref — 프로세스 종료를 잡지 않는다. */
+export async function withRoomTurnStatus(wsId, fn, { heartbeatMs = 30_000 } = {}) {
+  await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', '');
+  // 틱은 직렬화 + alive 게이트 — 해제(finally) 직후 **진행 중이던 틱**이 마커를 되살리면 화면이 2분간
+  // 거짓 '회의 중'이 된다(변이 배터리 복원 후 red 1로 실측된 경합). finally가 alive를 내리고 진행 중
+  // 틱을 기다린 뒤에만 지운다.
+  let alive = true; let tick = Promise.resolve();
+  const beat = async () => {
+    if (!alive) return;
+    const cur = await getTurnStatus(wsId, ROOM_TURN_SLUG, { maxAgeMs: 30 * 60_000 });
+    if (!alive) return;
+    await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', cur?.detail ?? ''); // 발언자(detail) 보존
+  };
+  const hb = setInterval(() => { tick = tick.then(beat).catch(() => {}); }, heartbeatMs);
+  hb.unref?.();
+  try { return await fn(); }
+  finally {
+    alive = false; clearInterval(hb); await tick; // 진행 중 틱 완료 후에만 해제
+    await clearTurnStatus(wsId, ROOM_TURN_SLUG); // 성공·실패·중단 모두 — 남으면 고아 표시
+  }
+}
+/** 회의실 턴 진행 여부(화면 복원용). 마커가 2분 안에 갱신됐으면 진행 중. 발언이 2분을 넘기면 마커는
+    낡지만 **발언 중인 크루의 상태 파일**(스트리밍·도구 이벤트마다 갱신)이 신선하므로 그것으로 이어 판정한다.
+    둘 다 낡았으면(프로세스 사망 등) null — 고아 마커가 화면을 영구히 '회의 중'으로 묶지 않는다. */
+export async function getRoomTurn(wsId) {
+  const s = await getTurnStatus(wsId, ROOM_TURN_SLUG, { maxAgeMs: 30 * 60_000 });
+  if (!s) return null;
+  const speaker = s.detail || null;
+  if (Date.now() - s.ts < 120_000) return { active: true, slug: speaker, startedAt: s.startedAt };
+  if (speaker && await getTurnStatus(wsId, speaker)) return { active: true, slug: speaker, startedAt: s.startedAt };
+  return null;
+}
+
 export async function runRoomTurn(wsId, text, attachments = []) {
+  return withRoomTurnStatus(wsId, () => runRoomTurnInner(wsId, text, attachments));
+}
+async function runRoomTurnInner(wsId, text, attachments) {
   const agents = await listAgents(wsId);
   if (!agents.length) throw new Error('아직 크루가 없습니다. 데크에서 먼저 영입해 주세요.');
   // 사장 발언 추가 + 현재 세션 sid 확보(이후 발언은 이 sid가 유지될 때만 기록)
@@ -424,6 +469,7 @@ ${transcript}
     });
     let r;
     try {
+      await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', a.slug); // 발언자 갱신 — 화면 복원의 신선도 앵커(getRoomTurn)
       // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다
       r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx });
     } finally {

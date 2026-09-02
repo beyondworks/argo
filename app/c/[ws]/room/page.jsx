@@ -23,7 +23,10 @@ export default function Room({ params }) {
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
   }, [input]);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false); // 자기 탭의 POST 대기
+  // 서버에서 도는 턴(다른 탭·페이지 이동 후 복귀). busy와 분리하는 이유: 복원 상태에서는 폴링이 계속
+  // 돌아야 답변이 들어오고 표시가 꺼진다 — busy 하나로 합치면 폴링(!busy)이 멈춰 영구 '회의 중'.
+  const [serverBusy, setServerBusy] = useState(false);
   const [error, setError] = useState('');
   const endRef = useRef(null);
   // 회의 적재 레일 — 마친 회의들이 좌측에 쌓인다
@@ -62,7 +65,7 @@ export default function Room({ params }) {
     // 신고(2026-07-25 "크루들의 대화 내용이 사라지는 경우가 많습니다, 특히 회의실에서")의 원인.
     // 디스크의 회의록은 멀쩡한데 화면만 비는 케이스라, 실패는 에러로 드러내고 기존 표시를 유지한다.
     api(`/api/companies/${ws}/room`)
-      .then((d) => { setMessages(d.messages ?? []); setError(''); })
+      .then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); setError(''); })
       .catch((e) => setError(String(e?.message || '') || t('room.loadFail')));
     api(`/api/companies/${ws}/agents`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
   }
@@ -85,7 +88,7 @@ export default function Room({ params }) {
   useEffect(load, [ws]);
   useEffect(loadSessions, [loadSessions]);
   useEffect(() => {
-    const iv = setInterval(() => { if (!busy) api(`/api/companies/${ws}/room`).then((d) => setMessages(d.messages ?? [])).catch(() => {}); }, 8000);
+    const iv = setInterval(() => { if (!busy) api(`/api/companies/${ws}/room`).then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); }).catch(() => {}); }, 8000);
     return () => clearInterval(iv);
   }, [ws, busy]);
   // 하단 추종은 **하단 근처(80px)일 때만** — 위로 올려 읽는 중에 새 발언이 와도 화면을 끌어내리지
@@ -364,7 +367,7 @@ export default function Room({ params }) {
                   </div>
                 </div>
               ))}
-              {!viewing && busy && (
+              {!viewing && (busy || serverBusy) && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: 'var(--fg-2)', fontSize: 12.5 }}>
                   <ArgoSpinner size={16} /> {t('room.meeting')}
                 </div>

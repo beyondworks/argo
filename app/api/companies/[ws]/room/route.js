@@ -1,4 +1,4 @@
-import { loadRoom, runRoomTurn, endMeeting } from '../../../../../src/room.mjs';
+import { loadRoom, runRoomTurn, endMeeting, getRoomTurn } from '../../../../../src/room.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
 export const maxDuration = 300; // 여러 크루가 순차 발언 — 오래 걸릴 수 있다
@@ -6,7 +6,9 @@ export const maxDuration = 300; // 여러 크루가 순차 발언 — 오래 걸
 export async function GET(_req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
-  return Response.json(await loadRoom(ws));
+  // turn — 진행 중 마커(화면이 페이지 복귀 때 '회의 중' 표시를 복원). 없으면 null.
+  const [room, turn] = await Promise.all([loadRoom(ws), getRoomTurn(ws)]);
+  return Response.json({ ...room, turn });
 }
 
 /** 회의 마치기 — 회의록을 vault 일지로 적재하고 방을 비운다(대화는 chats/.archive/에 보관). */
