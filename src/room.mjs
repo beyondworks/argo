@@ -117,9 +117,18 @@ async function endMeetingLocked(wsId) {
 
 ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: ${String(m.text).trim()}${m.attachments?.length ? `\n> 첨부: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')}` : ''}`).join('\n\n')}
 `;
-  const journalName = `${day}-회의록-${hm}.md`;
+  // 같은 분 안에 두 번 마치면(다시 열기→마치기, 짧은 회의 연속) HHMM 이름이 같아 앞 회의록이 **덮였다**(격리 실측
+  // 2026-09-02: DELETE 2회가 같은 journal/…-1953.md를 반환, 파일엔 뒤 회의만). 회의록은 vault/journal 일지 = 회사 기억이라
+  // 유실이 곧 기억 유실. 주제 노트(saveNote create)·옵시디언 임포트(reserve)와 같은 접미 규칙(-2, -3)으로 빈 이름을 잡되,
+  // 판정은 exists 검사가 아니라 배타 생성(wx — 이름 기준 원자 연산)으로 한다: 동기화 풀이 같은 이름을 같은 순간에
+  // 내려받아도 덮지 않는다. 초 단위 시각으로 바꾸지 않는 이유: 같은 초 재발 가능 + 일지 파일명 규약(HHMM)과 어긋난다.
   await mkdir(p.journal, { recursive: true });
-  await writeFile(join(p.journal, journalName), md);
+  const stem = `${day}-회의록-${hm}`;
+  let journalName = `${stem}.md`;
+  for (let n = 2; ; n += 1) {
+    try { await writeFile(join(p.journal, journalName), md, { flag: 'wx' }); break; }
+    catch (e) { if (e?.code !== 'EEXIST') throw e; journalName = `${stem}-${n}.md`; }
+  }
   await updateIndex(wsId).catch(() => {});
   const dir = join(p.chats, '.archive');
   await writeJsonAtomic(join(dir, `_room-${Date.now()}.json`), room);
@@ -142,8 +151,9 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
     3. **sid를 올린다.** 빈 방에서 돌던 잔여 턴의 발언이 되살린 회의에 유령으로 끼어들지 않게
        (endMeeting과 같은 이유).
 
-    알려진 한계: 마칠 때 남긴 일지(회의록)는 그대로 둔다. 다시 마치면 회의록이 하나 더 쌓인다 —
-    일지는 append-only 기록이라 "두 번 마쳤다"는 사실 자체가 맞고, 지우는 건 기억 유실이라 안 한다. */
+    알려진 한계: 마칠 때 남긴 일지(회의록)는 그대로 둔다. 다시 마치면 회의록이 하나 더 쌓인다(같은 분이면
+    -2 접미 — endMeetingLocked) — 일지는 append-only 기록이라 "두 번 마쳤다"는 사실 자체가 맞고, 지우는 건
+    기억 유실이라 안 한다. */
 export async function reopenMeeting(wsId, id) {
   return withLock(rkey(wsId), async () => {
     const cur = await loadRoom(wsId);
