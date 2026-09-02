@@ -416,6 +416,20 @@ const connectorNames = (connectors, en) => connectors
   .map((c) => `${c.id}${c.status === 'reauth' ? (en ? ' (needs reconnect)' : '(재연결 필요)') : ''}`).join(', ');
 
 /** use_connector 도구 설명의 상한 — 이 문자열은 매 턴 컨텍스트에 실린다(설계서 §2-2 "상한 두고 절단"). */
+/** 스레드 맥락 한 줄 — 외부 CLI 경로(세션을 스레드 맥락으로 잇는다)와 SDK 기기 교차 경로가 **같은 함수**를 쓴다
+    (러너 중립성 — 두 곳에 같은 식이 복제돼 있던 것을 한 벌로). 화자: 사장 / 자동 배달(via 턴) / 크루 이름.
+    본문은 500자에서 잘리지만 첨부·산출물 노트는 그 **바깥**에 붙는다 — 잘려도 경로는 산다.
+    산출물 노트(2026-09-02, 회의실 트랜스크립트 room.mjs와 같은 형식·vault/ 접두): 크루가 앞 턴에 만든 파일을
+    "아까 그 파일"로 이어가려면 답변 텍스트가 아니라 경로로 받아야 한다(분리 검수 LOW-2). export는 테스트용. */
+export function threadCtxLine(m, lang, name) {
+  const en = lang === 'en';
+  const who = m.who === 'user' ? (m.via ? (en ? 'Auto-delivered' : '자동 배달') : (en ? 'Captain' : '사장')) : name;
+  const list = (xs, rel) => xs.map((x) => 'vault/' + rel(x)).join(', ');
+  const att = m.attachments?.length ? (en ? ` (attached, open with Read: ${list(m.attachments, (a) => a.rel)})` : ` (첨부, Read로 열람: ${list(m.attachments, (a) => a.rel)})`) : '';
+  const art = m.artifacts?.length ? (en ? ` (artifacts, open with Read: ${list(m.artifacts, (a) => a)})` : ` (산출물, Read로 열람: ${list(m.artifacts, (a) => a)})`) : '';
+  return `${who}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${att}${art}`;
+}
+
 export const CONNECTOR_DESC_CAP = 1200;
 
 /** use_connector 설명(순수) — 연결된 서버·도구 요약을 주입한다. 상한 초과분은 절단 표시와 함께 자른다.
@@ -929,7 +943,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 같은 지시 6개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
       // 발화가 아니므로 화자를 '자동 배달'로 정직 표기(room.mjs 어휘에서 '시스템'=크루가 답하지 않는 줄이라 반전 — 재검수 지적)(배달 프리픽스가 실제 발신자를 이미 담는다).
       const ctx = (messages ?? []).filter((m) => !m.shared && !m.failed && !m.awaiting).slice(-6) // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지
-        .map((m) => `${m.who === 'user' ? (m.via ? (lang === 'en' ? 'Auto-delivered' : '자동 배달') : (lang === 'en' ? 'Captain' : '사장')) : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? (lang === 'en' ? ` (attached, open with Read: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})`) : ''}`)
+        .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
         .join('\n');
       const attNote = attachments.length
         ? (lang === 'en'
@@ -1194,7 +1208,7 @@ ${lang === 'en'
     if (foreign) resumeId = null;
     if ((foreign || __freshRetry) && (t.messages ?? []).length) {
       const ctx = t.messages.filter((m) => !m.shared && !m.failed && !m.awaiting).slice(-6) // 실패 턴·화자 규칙은 CLI 경로와 동일(위 주석)
-        .map((m) => `${m.who === 'user' ? (m.via ? (lang === 'en' ? 'Auto-delivered' : '자동 배달') : (lang === 'en' ? 'Captain' : '사장')) : (meta.name || agentSlug)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${m.attachments?.length ? (lang === 'en' ? ` (attached, open with Read: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})`) : ''}`)
+        .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
         .join('\n');
       if (ctx) crossCtx = lang === 'en'
         ? `## Recent conversation (continued from another device — a new session opens here)\n${ctx}\n\n## Captain's new message\n`
