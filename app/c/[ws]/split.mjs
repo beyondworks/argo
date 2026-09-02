@@ -27,8 +27,15 @@ export function sideParam(side) {
     같다(유효 spec에서만 두 계산이 문자 그대로 일치). 생 router.push(href)는 side를 떨어뜨려 보조 패널이 닫힌다
     (분리 검수 2026-09-02 LOW-5). */
 export function keepSide(href, search) {
+  return keepSideExcept(href, search, null);
+}
+
+/** keepSide와 같되 현재 side가 spec(예: 방금 해고한 크루 `{ type:'crew', key:slug }`)이면 떨군다 — 사라진 대상을
+    가리키는 패널을 다음 화면까지 끌고 가지 않게. spec이 null이면 keepSide와 동일. */
+export function keepSideExcept(href, search, spec) {
   const cur = new URLSearchParams(String(search ?? '')).get('side');
-  return withSide(href, parseSide(cur) ? cur : '');
+  const drop = !parseSide(cur) || (spec && cur === sideParam(spec));
+  return withSide(href, drop ? '' : cur);
 }
 
 /** href에 side 쿼리를 싣는다(기존 쿼리·해시 보존). sideStr이 비면 side 쿼리를 제거한다. */
