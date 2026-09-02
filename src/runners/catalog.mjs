@@ -8,6 +8,10 @@ export const RUNNERS = {
     // "Claude Code"·"Claude Code Agent" 사용을 금지한다(허용: "Claude Agent"·"Claude"). 실행 경로는 그대로 SDK다.
     name: 'Claude', kind: 'sdk',
     models: [
+      // Fable 5.1(2026-09-01) — 1M 컨텍스트가 기본이자 최대라 [1m] 변형 없음. **Agent SDK ≥0.3.251 필수**
+      // (번들 CLI 2.1.251+ — 그 아래는 "does not support this model" 400으로 턴이 죽는다. 실측: CLI 2.1.141
+      // 거부 / SDK 0.3.258 실턴 통과 2026-09-01). package.json의 SDK 하한이 곧 이 항목의 전제다.
+      { id: 'claude-fable-5-1', label: 'Fable 5.1' },
       { id: 'claude-fable-5', label: 'Fable 5' },
       { id: 'claude-opus-5', label: 'Opus 5' }, // 실턴 통과 2026-07-25 (runOneShot 'ok' — 카탈로그 규칙: 실행 경로 검증 후에만 추가)
       // [1m] = 1M 컨텍스트 변형(Claude Code CLI --model 접미 규약). 실턴 통과 2026-08-06
@@ -51,6 +55,10 @@ export const RUNNERS = {
       { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
       { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', gated: true },
       { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', gated: true },
+      // 3.6·3.7 Flash — ai.google.dev 모델 문서(2026-09-01 확인) stable. 같은 3.x 계정 게이트라 gated
+      // (이 기기 계정은 라이선스 차단이라 실턴 미검증 — 게이트 모델의 런타임 강등 가드가 안전망).
+      { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', gated: true },
+      { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', gated: true },
     ],
   },
   antigravity: {
@@ -58,9 +66,13 @@ export const RUNNERS = {
     // BYOA 2호(2026-07-27) — 구글이 개인용 Gemini Code Assist OAuth를 폐기하고 Antigravity로 이전
     // (피드백 38e5281d가 규명). Gemini **구독** 사용자의 유일한 경로라 CLI(agy) 래핑으로 태운다.
     // 자격은 OS 키링(파일 아님) — 호스트 로그인 옵트인 전용, 붙여넣기·API키 없음(GEMINI_API_KEY 무시 실측).
-    // 모델 목록 = `agy models` 실측(agy 1.1.7, 2026-07-27). ⚠ 실계정 실턴은 미검증(이 맥에 agy 로그인
+    // 모델 목록 = `agy models` 실측(agy 1.1.7, 2026-07-27 · 3.7 Flash 추가 2026-09-01). ⚠ 실계정 실턴은 미검증(이 맥에 agy 로그인
     // 없음 — 카탈로그 규칙의 예외로 두되, 베타 확인 후 이 표기를 지울 것). 첫 항목이 러너 전환 기본값.
     models: [
+      // 3.7 Flash 3종 — `agy models` 실측 2026-09-01(목록 갱신 시 이 명령이 정본)
+      { id: 'gemini-3.7-flash-medium', label: 'Gemini 3.7 Flash' },
+      { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash High' },
+      { id: 'gemini-3.7-flash-low', label: 'Gemini 3.7 Flash Low' },
       { id: 'gemini-3.6-flash-medium', label: 'Gemini 3.6 Flash' },
       { id: 'gemini-3.6-flash-high', label: 'Gemini 3.6 Flash High' },
       { id: 'gemini-3.6-flash-low', label: 'Gemini 3.6 Flash Low' },
@@ -99,12 +111,17 @@ export const RUNNERS = {
       // ── 유료 — 잔액이 있는 사용자가 명시 선택(품질·속도 우위)
       { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
       { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
+      // 2026-09-01 스모크 3/3 통과 추가분(grok-4.6·glm-5.3·gemini-3.7-flash). anthropic/claude-fable-5.1은
+      // 같은 스모크에서 402(계정 잔액 — 모델 결함 아님)라 규칙대로 미등재: 잔액 충전 후 스모크 통과 시 추가.
+      { id: 'google/gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
+      { id: 'x-ai/grok-4.6', label: 'Grok 4.6' },
       { id: 'x-ai/grok-4.5', label: 'Grok 4.5' },
       { id: 'minimax/minimax-m3', label: 'MiniMax M3' },
       { id: 'qwen/qwen3.7-max', label: 'Qwen3.7 Max' },
       { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
       { id: 'moonshotai/kimi-k3', label: 'Kimi K3 (OpenRouter)' }, // 직접 연결(kimi 러너)이 더 저렴 — 단일 키 사용자용
-      { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (OpenRouter)' },       // 동일 — 직접 연결(glm 러너) 우선 권장
+      { id: 'z-ai/glm-5.3', label: 'GLM-5.3 (OpenRouter)' },       // 동일 — 직접 연결(glm 러너) 우선 권장
+      { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (OpenRouter)' },
     ],
   },
   grok: {
@@ -120,6 +137,10 @@ export const RUNNERS = {
     //             400 "Incorrect API key"로 인증 단계까지 감 = 모델은 실재). 실턴(응답 품질·도구 왕복)은 여전히 미검증.
     // 발행 전에 실키 왕복으로 확정할 것.
     models: [
+      // grok-4.6 — docs.x.ai(2026-09-01) 권장 모델(500k). 존재 실측 확정(같은 차등 프로브: fake key +
+      //   grok-4.6 → "Incorrect API key" / grok-4.7·grok-5 → "Model not found") + OpenRouter x-ai/grok-4.6
+      //   tool_use 왕복 통과. 직접 연결 실키 왕복은 이 기기 저장 자격 만료로 미실시 — 4.5와 같은 상태.
+      { id: 'grok-4.6', label: 'Grok 4.6' },
       { id: 'grok-4.5', label: 'Grok 4.5' },
       { id: 'grok-4.3', label: 'Grok 4.3' },
     ],
@@ -127,7 +148,11 @@ export const RUNNERS = {
   glm: {
     name: 'GLM', kind: 'sdk-compat',
     models: [
-      // docs.z.ai(2026-06-13 출시) — 5.2가 플래그십(1M 컨텍스트)
+      // docs.z.ai(2026-09-01 확인) — 5.3이 최신 표준·5.3-flash가 경량. OpenRouter 경유 z-ai/glm-5.3
+      // tool_use 왕복 통과로 동일 모델 실증(직접 연결 자격은 이 기기에 없음).
+      { id: 'glm-5.3', label: 'GLM-5.3' },
+      { id: 'glm-5.3-flash', label: 'GLM-5.3 Flash' },
+      // 5.2(2026-06-13 출시) — 이전 플래그십(1M 컨텍스트)
       { id: 'glm-5.2', label: 'GLM-5.2' },
       { id: 'glm-5.1', label: 'GLM-5.1' },
       { id: 'glm-4.6', label: 'GLM-4.6' },
@@ -148,7 +173,7 @@ export const hostOptInAllowed = (runner) =>
     러너 추가 때마다 배선 누락을 만든다(#119 전수 수색의 교훈) — kind가 카탈로그에 있으니 그걸 쓴다. */
 export const isCliRunner = (r) => RUNNERS[r]?.kind === 'cli';
 
-export const GLM_DEFAULT_MODEL = 'glm-5.2';
+export const GLM_DEFAULT_MODEL = 'glm-5.3';
 
 const OPENROUTER_402_RE = /^API Error:\s*402\b/i; // 느슨판·엄격판 공용 — 한쪽만 고치면 두 임계가 갈라진다(검수 LOW)
 // 429 = 요청 한도(무료 티어 20/분·50~1000/일, 공식 문서 2026-07-27). 402와 같은 표면으로
@@ -217,7 +242,7 @@ export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5';
 export const OPENROUTER_ONBOARD_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 /** Grok 기본 모델 — 카탈로그 첫 항목과 같아야 한다(러너 전환·모델 미지정의 기본값). */
-export const GROK_DEFAULT_MODEL = 'grok-4.5';
+export const GROK_DEFAULT_MODEL = 'grok-4.6';
 
 // 러너별 지원 인증 방식. apikey=붙여넣기(4러너 공통), oauth=붙여넣기 토큰(claude) 또는 호스트 로그인(codex/gemini).
 // glm은 Anthropic 호환 토큰(사실상 apikey)만.
