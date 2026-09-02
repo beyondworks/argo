@@ -38,6 +38,15 @@ export default function Compete({ params }) {
   }
   const [comp, setComp] = useState(null);      // 열람 중 경쟁 (null = 새 경쟁)
   const [prompt, setPrompt] = useState('');
+  // 입력 보존 — 회의실·크루 채팅과 같은 argo-draft 패턴(유건 요청 2026-09-02). start()는 성공 시에만
+  // setPrompt('')라 실패·중단이면 초안이 그대로 남는다. 키 이름공간 '@compete'(크루 슬러그와 불충돌).
+  const draftKey = `argo-draft:${ws}:@compete`;
+  useEffect(() => {
+    try { const d = localStorage.getItem(draftKey); if (d) setPrompt((cur) => cur || d); } catch { /* 사파리 프라이빗 등 — 보존은 부가기능이라 실패해도 무시 */ }
+  }, [draftKey]);
+  useEffect(() => {
+    try { if (prompt) localStorage.setItem(draftKey, prompt); else localStorage.removeItem(draftKey); } catch { /* 저장 불가 환경 — 무시 */ }
+  }, [prompt, draftKey]);
   // 여러 줄 입력 — 줄바꿈(Shift+Enter)하면 입력창이 따라 자란다(유건 2026-08-23). 크루 대화창과 같은 규칙: 최대 6줄 후 내부 스크롤
   const composerRef = useRef(null);
   useEffect(() => {
