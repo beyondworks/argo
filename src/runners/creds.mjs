@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from '../jsonstore.mjs';
 import { WS_ROOT, paths } from '../workspace.mjs';
 import { exists, homeEnv, scrubServerSecrets, seedAuthFile } from './shared.mjs';
-import { RUNNER_AUTH } from './catalog.mjs';
+import { RUNNER_AUTH, GROK_DEFAULT_MODEL } from './catalog.mjs';
 import { provisionCodexCli } from './codex.mjs';
 import { provisionGeminiCli, geminiTurnHome, probeGeminiSubscription } from './gemini.mjs';
 import { grokAccessToken, grokExpired, grokNeedsRefresh, refreshGrokTokens } from './grok.mjs';
@@ -348,7 +348,10 @@ export async function verifyRunnerCred(runner, type, value) {
       const r = await fetch(`${base}/v1/messages`, {
         method: 'POST',
         headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: 'grok-4.5', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+        // 프로브 모델 = 실행 기본 모델(GROK_DEFAULT_MODEL). 리터럴로 두면 기본값 승격 때 갈라져 "연결 초록불인데
+        // 모든 턴이 죽는" 상태가 된다(분리 검수 #388 MEDIUM-2 — 이 프로브의 도입 목적은 등급 게이트 확인이라
+        // 검증 모델 ≠ 실행 모델이면 목적 자체가 무효).
+        body: JSON.stringify({ model: GROK_DEFAULT_MODEL, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
         signal: AbortSignal.timeout(15_000),
       });
       if (r.status === 401) return { ok: false };

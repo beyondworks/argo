@@ -4,6 +4,7 @@
 // ④ 402(선불 크레딧 소진)는 성공으로 삼키지 않는다 ⑤ 금액은 미기록(SDK 단가 오액 — 설계 §4).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,7 +25,10 @@ test('카탈로그: 스모크 전수 통과 11종 + 기본 모델 포함 + 첫 �
   // 이 수를 올리려면 scripts/openrouter-smoke.mjs 실키 통과가 선행돼야 한다(같은 날 anthropic/claude-fable-5.1은
   // 402 잔액으로 미등재 — 통과 전엔 세지 않는다).
   assert.equal(ids.filter((i) => !i.endsWith(':free')).length, 11, '유료 11종 — 스모크 확정본(8/8 + 3/3)');
-  assert.equal(ids.filter((i) => i.endsWith(':free')).length, 3, '무료 3종 — 크레딧 0 체험 진입로(스모크 3/3)');
+  assert.equal(ids.filter((i) => i.endsWith(':free')).length, 3, '무료 3종 — 크레딧 0 체험 진입로(2026-09-02 재스모크: ling 404·laguna 429 3/3 제거, minimax-m3(온보딩 기본)·m2.7 편입)');
+  // 스모크 스크립트의 기본 후보 목록이 카탈로그와 어긋나면 "인자 없이 돌린 스모크 통과"가 거짓 안심이 된다(검수 MEDIUM-3)
+  const smoke = readFileSync(new URL('../scripts/openrouter-smoke.mjs', import.meta.url), 'utf8');
+  for (const id of ids) assert.ok(smoke.includes(`'${id}'`), `스모크 CANDIDATES에 카탈로그 id 누락: ${id}`);
   // 검수 CRITICAL(2026-07-27): 모델 미지정 호출(영입·기억정리·루틴 초안)이 전부 기본 모델로 오므로
   // 유료가 기본이면 잔액 0 신규 키는 첫 영입부터 402 — 첫 항목은 반드시 무료(잔액 무관 실행 가능).
   // 라벨에 한국어 하드코딩 금지 — 배지는 free 플래그 + i18n 사전(gated 관례, 다국어 상시 규칙)
