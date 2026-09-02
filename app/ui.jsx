@@ -209,13 +209,19 @@ export function Dial({ value, size = 120, label }) {
             stroke={t.on ? 'var(--accent)' : 'var(--border-soft)'} strokeWidth={t.on ? 1.5 : 1}
             style={{ transition: 'stroke 0.2s', transitionDelay: `${t.delay}ms` }} />
         ))}
-        {/* 바늘 — 0시 방향으로 그려두고 그룹 회전으로 스윕 */}
-        <g style={{
-          transform: `rotate(${start + (v / 100) * sweep}deg)`,
-          transformOrigin: `${cx}px ${cy}px`,
-          transition: 'transform 1s cubic-bezier(0.34, 1.3, 0.4, 1)',
-        }}>
-          <line x1={cx} y1={cy} x2={cx + r - 14} y2={cy} stroke="var(--accent)" strokeWidth="1.7" strokeLinecap="round" />
+        {/* 바늘 — 3시 방향으로 그려두고 그룹 회전으로 스윕. 회전 원점은 로컬 (0,0)이고 중심 이동은
+            SVG 속성 translate(사용자 좌표계)로 한다: 표시 배율(zoom, #334)에서 WebKit(Tauri 웹뷰)은
+            svg 내부 요소의 px transform-origin을 배율만큼 한 번 더 곱해 회전 중심이 어긋난다
+            (실측 2026-09-02: 배율 2에서 꼬리가 중심에서 (−22.4, +80.2)px — 원점 (60,60)→(120,120) 계산과 일치).
+            0은 몇 배를 곱해도 0이라 엔진 무관. CSS transition은 그대로 유지된다. */}
+        <g transform={`translate(${cx} ${cy})`}>
+          <g style={{
+            transform: `rotate(${start + (v / 100) * sweep}deg)`,
+            transformOrigin: '0 0',
+            transition: 'transform 1s cubic-bezier(0.34, 1.3, 0.4, 1)',
+          }}>
+            <line x1={0} y1={0} x2={r - 14} y2={0} stroke="var(--accent)" strokeWidth="1.7" strokeLinecap="round" />
+          </g>
         </g>
         <circle cx={cx} cy={cy} r="3" fill="var(--accent)" />
       </svg>

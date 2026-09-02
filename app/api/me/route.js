@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { AUTH_ON, currentUser } from '../../auth.mjs';
-import { deviceSessionDead } from '../../../src/devicesession.mjs';
+import { deviceSessionDead, deviceSessionDeadInfo } from '../../../src/devicesession.mjs';
 
 /** 현재 사용자 — 사이드바 사용자 표시·로그아웃 노출 판단의 원천.
     sessionDead: 기기 세션이 "만료 + 갱신 사망(리프레시 거절 마커)"인 상태. 숨기면 피드백·동기화가
@@ -29,5 +29,7 @@ export async function GET() {
     }
     sessionDead = !cookieAlive;
   }
-  return Response.json({ authOn: AUTH_ON, user, ...(sessionDead ? { sessionDead: true } : {}) });
+  // sessionDeadInfo = 거절 사유(마커 JSON 그대로 — reason은 devicesession.mjs가 토큰 모양을 가린 값, 나머지는 시각·횟수·분류).
+  // 사이드바 툴팁이 "왜"를 보여준다(2026-09-02 재발 제보). 조건식 없이 통과시킨다 — 줄 전체를 테스트가 핀한다.
+  return Response.json({ authOn: AUTH_ON, user, ...(sessionDead ? { sessionDead: true, sessionDeadInfo: deviceSessionDeadInfo() } : {}) });
 }

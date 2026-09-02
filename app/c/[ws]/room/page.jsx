@@ -2,15 +2,21 @@
 // 회의실 — 사장 + 여러 크루가 한 방에서. "@이름"으로 부르면 그 크루들이 순서대로 발언한다.
 // 좌측 레일에 지난 회의가 적재되고(회의 마치기), 클릭으로 읽기 전용 열람 — 맥락 공유가 눈에 보이는 화면.
 import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
 import { dropUpClamp } from '../zoom-math.mjs';
+import { ArtifactChips } from '../artifact-chips';
+import { matchSlash, SLASH_TOKEN_RE } from '../slash-match.mjs';
+import { keepSide } from '../split.mjs';
+import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../work-folder';
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 export default function Room({ params }) {
   const { ws } = use(params);
   const { t } = useLang();
+  const router = useRouter();
   const [agents, setAgents] = useState([]);
   const [messages, setMessages] = useState(null);
   const [input, setInput] = useState('');
@@ -42,6 +48,10 @@ export default function Room({ params }) {
   // 크루 채팅처럼 쓰는 중인 문장이 자라며 보이게(유건 2026-09-02 "보는 재미"). 진행 판정(serverBusy)과 분리.
   const [turn, setTurn] = useState(null);
   const [error, setError] = useState('');
+  // 회의 작업 폴더 — 크루 채팅과 같은 컴포넌트·계약(work-folder.jsx, 유건 지시 2026-09-02). 키 '@room'(서버
+  // ROOM_FOLDER_SLUG — 크루 슬러그와 불충돌)로 고정하면 발언 크루 전원이 매 턴 "지금 일할 폴더"로 받는다
+  // (src/room.mjs → chat workFolder). 기기 로컬(.workroots.json pins)이고 사장이 풀기 전까지 유지된다.
+  const wf = useWorkFolder({ ws, slug: '@room', onError: (m) => setError(m), onPinned: () => composerRef.current?.focus() });
   const endRef = useRef(null);
   // 회의 적재 레일 — 마친 회의들이 좌측에 쌓인다
   const [sessions, setSessions] = useState([]);
@@ -151,6 +161,7 @@ export default function Room({ params }) {
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
 
   async function openSession(id) {
+    wf.close(); // 작업 폴더 팝오버 — 열람 갔다 오면 리마운트로 되살아나(autoFocus) 포커스를 뺏는다(크루 채팅과 동일)
     if (!id) { setViewing(null); setArchMsgs(null); atBottomRef.current = true; setUnseen(false); return; } // 복귀=최신으로(검수 D2·D4)
     try {
       const d = await api(`/api/companies/${ws}/room/sessions?id=${encodeURIComponent(id)}`);
@@ -183,6 +194,8 @@ export default function Room({ params }) {
 
   async function send(e) {
     e.preventDefault();
+    // 전송 버튼 경로에서도 '/' 커맨더 우선 — '/end' 같은 명령 토큰이 안건으로 방에 적립되지 않게(크루 채팅과 동일)
+    if (slashOpen) { runSlash(slashList[slashSel]); return; }
     const text = input.trim();
     if (!text || busy || uploading) return;
     const attachments = att;
@@ -197,7 +210,8 @@ export default function Room({ params }) {
       const snap = Array.isArray(d.room?.messages) ? d.room.messages : null;
       if (snap?.length) setMessages(snap);
       else if (d.replies?.length) {
-        setMessages((m) => [...(m ?? []), ...d.replies.map((r) => ({ who: r.slug, text: r.reply, ts: Date.now() }))]);
+        // artifacts도 옮긴다 — 서버가 replies에 실어도 여기서 버리면 폴백 경로의 말풍선만 칩이 빈다(분리 검수 MEDIUM-1)
+        setMessages((m) => [...(m ?? []), ...d.replies.map((r) => ({ who: r.slug, text: r.reply, ts: Date.now(), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }))]);
       }
     } catch (err) {
       setError(String(err.message));
@@ -245,6 +259,64 @@ export default function Room({ params }) {
     } catch (e2) { setError(String(e2.message)); }
   }
 
+  // 컴포저 위 드롭업(멘션·'/' 커맨더)의 공통 기준 박스 — 입력바를 감싸는 relative 래퍼(측정형 클램프의 앵커).
+  const mentionWrapRef = useRef(null);
+
+  // '/' 커맨더 — 크루 채팅(crew/[slug])의 커맨더를 회의실에도(유건 요청 2026-09-02, 회의실 개선 1/6).
+  // 문법·후보 계산은 공유 매처(slash-match.mjs): 입력이 슬래시 토큰 하나일 때만 발동, ↑↓ 이동·Enter 실행.
+  // 후보 = 내장 명령 + 회사 별칭(/별칭 → 저장된 지시 삽입) + 회사 스킬(/스킬 → 사용 지시 삽입 — 크루 채팅과 같은
+  // 문장이라 서버는 손댈 것이 없다: 스킬 본문은 chat()이 출처 무관하게 매 턴 주입한다). 삽입 뒤 사장이 @이름·안건을
+  // 덧붙여 보낸다. 별칭 등록·삭제는 크루 채팅 커맨더에서(회사 공용 목록이라 여기서도 그대로 보인다).
+  const [aliases, setAliases] = useState([]);
+  const [skillCmds, setSkillCmds] = useState(null); // null = 아직 안 열어봄(첫 열림에 별칭·스킬을 1회 로드)
+  const SLASH_CMDS = [
+    // 이동은 keepSide로 — 생 router.push는 ?side=를 떨어뜨려 옆에 열어 둔 보조 패널이 닫힌다(레이아웃 내부 링크 규약과 동일)
+    { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(keepSide(`/c/${ws}/vault`, window.location.search)) },
+    { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(keepSide(`/c/${ws}`, window.location.search)) },
+    // 회의 마치기 — 헤더 버튼과 같은 노출 조건(빈 방·진행 중엔 후보에서 빠진다: 실행해도 안 되는 명령은 보이지 않게).
+    // 맨 뒤에 두는 이유: `/` 직후 Enter의 기본 선택이 방을 비우는 명령이면 탐색 중 Enter 한 번에 회의가 마쳐진다
+    // (분리 검수 LOW-1 — 레일에서 되살릴 수는 있지만 처음 보는 제스처의 기본값으로는 부적합).
+    ...(!viewing && (messages?.length ?? 0) > 0 && !busy && !serverBusy ? [{ id: 'end', aliases: ['end', '마치기', '회의마치기'], label: t('room.end'), run: () => endMeeting() }] : []),
+  ];
+  const slashTok = !viewing && SLASH_TOKEN_RE.test(input); // 토큰 존재(별칭·스킬 로드 트리거) — 후보 유무와 별개
+  const slashList = viewing ? null : matchSlash(input, { builtins: SLASH_CMDS, aliases, skills: skillCmds ?? [], skillInsert: (s) => t('chat.cmd.skillPrefix', { name: s.title }) });
+  const slashOpen = !!slashList?.length;
+  const [slashIdx, setSlashIdx] = useState(0);
+  useEffect(() => { setSlashIdx(0); }, [input]);
+  // 선택 항목은 한 곳에서만 계산 — 표시(aria-selected)와 실행(Enter·전송 버튼)이 항상 같은 항목을 가리킨다.
+  // 패널이 열린 채 후보가 줄 수 있다(8초 폴이 serverBusy를 켜면 /end가 빠진다): slashIdx가 범위를 벗어나면
+  // 표시는 비고 실행만 되는 어긋남이 생기므로(분리 검수 MEDIUM-1) 클램프한 값을 양쪽이 같이 쓴다.
+  const slashSel = slashOpen ? Math.min(slashIdx, slashList.length - 1) : 0;
+  // 회사 별칭·스킬 — 커맨더를 처음 여는 순간 1회 로드(크루 채팅과 같은 출처: company.aliases, 마켓 GET installedSkills).
+  // 방 진입마다 요청하지 않는다. 실패해도 내장 명령은 동작(스킬은 빈 목록으로 확정해 재시도 폭주를 막는다).
+  useEffect(() => {
+    if (!slashTok || skillCmds !== null) return;
+    api(`/api/companies/${ws}/market`).then((d) => setSkillCmds(d.installedSkills ?? [])).catch(() => setSkillCmds([]));
+    api(`/api/companies/${ws}?light=1`).then((d) => setAliases(d.company?.aliases ?? [])).catch(() => {});
+  }, [slashTok, skillCmds, ws]);
+  function runSlash(cmd) {
+    if (cmd.kind === 'builtin') { setInput(''); cmd.run(); }
+    else setInput(cmd.insert); // 별칭·스킬 = 지시 텍스트 삽입(바로 전송하지 않는다 — 사장이 @이름·안건을 덧붙여 보냄)
+    composerRef.current?.focus();
+  }
+  // 좌우 클램프 — 멘션 패널과 같은 기준 박스(mentionWrapRef)·같은 측정형 처방(dropUpClamp, #367)
+  const slashPanelRef = useRef(null);
+  const slashNatW = useRef(0);
+  const [slashClamp, setSlashClamp] = useState({ shift: 0, maxW: 0 });
+  useIsoLayoutEffect(() => {
+    if (!slashOpen) { setSlashClamp({ shift: 0, maxW: 0 }); slashNatW.current = 0; return; }
+    const measure = () => {
+      if (!mentionWrapRef.current || !slashPanelRef.current) return;
+      if (!slashNatW.current) slashNatW.current = slashPanelRef.current.offsetWidth;
+      setSlashClamp(dropUpClamp(mentionWrapRef.current.getBoundingClientRect(),
+        document.documentElement.clientWidth, slashNatW.current));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('argo:zoom', measure);
+    return () => { window.removeEventListener('resize', measure); window.removeEventListener('argo:zoom', measure); };
+  }, [slashOpen]);
+
   // @멘션 드롭업 — 입력 끝이 @word면 입력창 위로 후보 패널이 열린다(칩 가로 나열이 크루 수만큼
   // 옆으로 흘러 지저분했다 — 유건 지시 2026-07-21: 드롭다운식 + 위로). @all이 항상 첫 후보.
   const mention = input.match(/@(\S*)$/);
@@ -254,9 +326,12 @@ export default function Room({ params }) {
     : [];
   const suggestAll = !!mention && agents.length > 1 && (!mq || 'all'.startsWith(mq) || '전체'.startsWith(mention[1]));
   const completeMention = (name) => setInput(input.replace(/@\S*$/, `@${name} `));
-  const mentionOpen = !!mention && (suggestAll || suggests.length > 0);
+  // 커맨더가 떠 있으면 멘션 패널은 양보한다(같은 자리 bottom 100%). 기준은 후보 유무(slashOpen) — `/@이름`처럼 커맨더
+  // 후보가 없는 입력은 종전대로 멘션 완성이 된다(분리 검수 LOW-2). slashOpen ⟹ 슬래시 토큰이라 둘이 동시에 뜨지 않는다.
+  // 작업 폴더 팝오버가 열려 있어도 닫는다(같은 자리) — 멘션은 입력 파생 상태라 버튼 클릭으로는 안 닫혀, '@' 입력 중 폴더
+  // 버튼이 무동작이었고 멘션을 완성하는 순간 팝오버가 불쑥 열려 포커스를 뺏었다(분리 검수 MEDIUM-4). Enter 완성 분기도 이 값을 본다.
+  const mentionOpen = !!mention && !slashOpen && (suggestAll || suggests.length > 0) && !wf.open;
   const mentionPanelRef = useRef(null);
-  const mentionWrapRef = useRef(null);
   const mentionNatW = useRef(0);
   const [mentionClamp, setMentionClamp] = useState({ shift: 0, maxW: 0 });
   useIsoLayoutEffect(() => {
@@ -425,6 +500,9 @@ export default function Room({ params }) {
                       <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4, lineHeight: 1.5 }}>{m.via.task}</div>
                     )}
                     <div style={{ fontSize: 13.5 }}><Markdown text={m.text} wsId={ws} /></div>
+                    {/* 산출물 칩 — 크루 채팅과 같은 컴포넌트(바로 보기=눈 토글, 바로 가기=칩 클릭). 방 메시지의 artifacts는
+                        room.mjs가 chat() 결과에서 실어 저장한다(개인 스레드에만 기록되던 비대칭 해소). 보관 회의 열람도 같은 경로. */}
+                    {m.artifacts?.length > 0 && <ArtifactChips ws={ws} rels={m.artifacts} />}
                   </div>
                 </div>
               ))}
@@ -509,6 +587,37 @@ export default function Room({ params }) {
                   ))}
                 </div>
               )}
+              {/* '/' 커맨더 드롭업 — 크루 채팅 커맨더와 같은 룩(입력창 위 세로 목록, ↑↓ 이동·Enter 실행). 멘션 패널과
+                  같은 기준 박스라 순서만 뒤(래퍼 첫 자식은 멘션 — 기존 클램프 핀). 별칭 관리 행은 없다(크루 채팅에서). */}
+              {slashOpen && (
+                <div ref={slashPanelRef} className="card card-float" role="listbox" style={{
+                  position: 'absolute', bottom: 'calc(100% + 6px)', left: slashClamp.shift, zIndex: 40,
+                  minWidth: slashClamp.maxW ? Math.min(320, slashClamp.maxW) : 320,
+                  maxWidth: slashClamp.maxW ? Math.min(slashClamp.maxW, 480) : undefined, maxHeight: 320, overflowY: 'auto', padding: 6,
+                  boxShadow: '0 8px 28px rgba(0,0,0,.14)',
+                }}>
+                  <div className="microlabel" style={{ padding: '4px 8px 2px' }}>{t('chat.commands')}</div>
+                  {slashList.map((c, i) => (
+                    <button key={c.key} type="button" role="option" aria-selected={i === slashSel}
+                      onClick={() => runSlash(c)} onMouseEnter={() => setSlashIdx(i)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                        background: i === slashSel ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7,
+                        cursor: 'pointer', padding: '6px 8px', fontSize: 12.5, color: 'var(--fg)' }}>
+                      <span className="mono" style={{ flex: 'none', fontWeight: 650 }}>/{c.cmd}</span>
+                      <span style={{ minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-3)', fontSize: 11.5 }}>{c.desc}</span>
+                      {c.kind !== 'builtin' && (
+                        <span className="microlabel" style={{ flex: 'none', fontSize: 9 }}>
+                          {c.kind === 'skill' ? t('chat.cmd.skills') : t('chat.cmd.aliases')}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {/* 작업 폴더 팝오버(work-folder.jsx 공용) — 멘션 드롭업과 같은 자리(bottom 100%, absolute라 DOM 순서 무관).
+                  상호 배타의 우선순위는 팝오버(mentionOpen이 !wf.open을 본다). 멘션 패널 뒤에 두는 이유: 기준 박스 핀
+                  (display-zoom-layout)이 래퍼 첫 자식을 멘션 패널로 잡는다 */}
+              {wf.open && <WorkFolderPopover wf={wf} note={t('room.workFolder.hint')} />}
               {(att.length > 0 || uploading) && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
                   {att.map((a, i) => (
@@ -521,7 +630,15 @@ export default function Room({ params }) {
                   {uploading && <span className="att-chip"><Spinner size={11} /> {t('chat.uploading')}</span>}
                 </div>
               )}
+              {/* 고정된 회의 작업 폴더 — 해제 전까지 발언 크루 전원의 프롬프트에 "지금 일할 폴더"로 들어간다(크루 채팅과 같은 컴포저 스택) */}
+              {wf.pinned && (
+                <div className="composer-stack" aria-label={t('chat.workFolder.open')}>
+                  <WorkFolderRow wf={wf} />
+                </div>
+              )}
               <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
+                {/* 작업 폴더(work-folder.jsx 공용) — 순서는 폴더 → 클립(유건 지시 2026-07-28, 크루 채팅과 동일) */}
+                <WorkFolderButton wf={wf} disabled={busy} hint={t('room.workFolder.hint')} iconStyle={{ transform: 'translateY(-0.18px)' }} />
                 <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
                   onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
                   <Icon name="clip" size={14} />
@@ -536,8 +653,16 @@ export default function Room({ params }) {
                   onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
                   disabled={busy}
                   {...imeGuardWith((e) => {
+                    // '/' 커맨더가 떠 있으면 ↑↓ = 항목 순환 이동(커서 이동 아님)
+                    if (slashOpen && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+                      e.preventDefault();
+                      setSlashIdx(e.key === 'ArrowDown' ? (slashSel + 1) % slashList.length : (slashSel - 1 + slashList.length) % slashList.length);
+                      return;
+                    }
                     if (e.key !== 'Enter' || e.shiftKey) return; // Shift+Enter = 줄바꿈(textarea 기본)
                     e.preventDefault();
+                    // 커맨더가 떠 있으면 Enter = 선택 항목 실행(명령은 방에 전송되지 않는다)
+                    if (slashOpen) { runSlash(slashList[slashSel]); return; }
                     // 멘션 패널이 열려 있으면 Enter = 첫 후보 완성(전송 아님)
                     if (mentionOpen) { completeMention(suggestAll ? 'all' : suggests[0].name); return; }
                     e.currentTarget.form?.requestSubmit(); // Enter = 전송

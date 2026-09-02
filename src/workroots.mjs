@@ -85,10 +85,14 @@ export async function activePin(wsId, slug, roots = null) {
      ① 두 번 재면 루트마다 stat+realpath를 두 벌 돈다(턴마다, 루트 수에 비례).
      ② 두 스냅샷이 어긋날 수 있다 — 사이에 폴더가 등록+고정되면 프롬프트는 "여기서 일해라"인데
         샌드박스 목록(codex writable_roots·SDK additionalDirectories)엔 그 폴더가 없다.
-        크루가 자기 샌드박스가 막는 곳에서 일하라는 지시를 받는다(분리 검수 2026-07-31). */
-export async function activeFolders(wsId, slug) {
+        크루가 자기 샌드박스가 막는 곳에서 일하라는 지시를 받는다(분리 검수 2026-07-31).
+    folder — 이 턴에 한해 크루 개인 고정을 **덮는** 폴더(회의실: 발언 크루 전원이 같은 곳을 본다, src/room.mjs).
+    개인 고정과 같은 계약을 지난다 — 등록·존재 검증을 통과한 루트일 때만 덮고, 아니면 개인 고정으로 돌아간다
+    (없는 경로를 "지금 일할 곳"이라 우기지 않는다). 반환은 등록 정본 문자열(프롬프트 표기 = 설정 목록 표기). */
+export async function activeFolders(wsId, slug, { folder = '' } = {}) {
   const roots = await loadActiveWorkRoots(wsId);
-  return { roots, pin: await activePin(wsId, slug, roots) };
+  const shared = folder ? roots.find((r) => fold(r) === fold(folder)) : null;
+  return { roots, pin: shared ?? await activePin(wsId, slug, roots) };
 }
 
 /** 고정/해제 — 빈 값이면 해제. 고정은 **등록된 폴더 중에서만** 고를 수 있다(roots가 상위 계약). */

@@ -248,6 +248,7 @@ const WS_DOT_FILES = new Set([
   '.gateway-', '.gateway.lock',
   // WS_ROOT 직속(<ws>/../.x) — 전 회사 공용 기기 상태·계정 자격
   '.device-session.json', '.tmp-devsess-', // 세션 본체 + 원자적 쓰기 임시본(토큰 평문)
+  '.device-session.log', // 회전·거절 진단 JSONL(+`.1` 회전본 — 접두) — 사유는 마스킹돼 있으나 도구별 판정 불일치 금지(검수 MEDIUM-3)
   '.device-e2ee.json', '.tmp-e2ee-', // E2EE 기기 개인키·DEK + 원자적 쓰기 임시본 — cat 한 줄이 "본인만 여는 열쇠" 유출(세션 파일과 동급 최악)
   '.e2ee-reseal.json', // E2EE 재봉인 마커(wsId 목록뿐 — 시크릿 아님) — 루트 직속 제어 파일 일관 방어(크루 조작 시 재봉인 누락·유발)
   '.sync-credentials.json',
