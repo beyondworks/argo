@@ -3,7 +3,7 @@
 // SLUG_RE를 통과해 그 크루의 스레드가 회의록을, 상태 파일이 회의 마커를 덮었다. 처방 = 예약어 원천(slug.mjs) 하나를
 // 영입 문(persona.createAgentFromPrompt — UI 영입·결재 영입이 모두 이 함수로 모인다)과 반입 문(sync.EXCLUDE)이 본다.
 // 잠그는 것: ① 예약어 판정 + 회의실 상수·프리셋 slug가 그 집합과 정합 ② 영입 실호출(가짜 codex)이 거절하고 카드를 남기지
-// 않는다(이름 경로·frontmatter slug 경로·회사 언어 ko/en) ③ 영입 라우트 실호출이 400+errorCode ④ 반입 문 제외(인접 대조군 포함).
+// 않는다(이름 경로·frontmatter slug 경로·회사 언어 ko/en) ③ 영입 라우트 실호출이 400+errorCode ④ 반입 문 판정(인접 대조군 포함 — 실행 검증은 sync-integration RS1).
 import { mkdtemp, mkdir, writeFile, chmod, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,7 +41,7 @@ const { isReservedSlug, RESERVED_SLUG_RE } = await import('../src/slug.mjs');
 const { createAgentFromPrompt } = await import('../src/persona.mjs');
 const { ROOM_TURN_SLUG } = await import('../src/room.mjs');
 const { PRESETS, PRESETS_EN } = await import('../src/presets.mjs');
-const { EXCLUDE } = await import('../src/sync.mjs');
+const { EXCLUDE, isReservedCardRel } = await import('../src/sync.mjs');
 const { paths } = await import('../src/workspace.mjs');
 
 const mkws = async (ws, lang) => {
@@ -117,11 +117,11 @@ test('영입 라우트 실호출 — 예약 slug는 400 + errorCode crew_slug_re
   assert.deepEqual(await cards(WS), []);
 });
 
-test('반입 문 — agents/room-*.md는 동기화 제외, 회의록·보관함·일반 카드는 대조군으로 대상 유지', () => {
-  assert.equal(EXCLUDE('agents/room-main.md'), true);
-  assert.equal(EXCLUDE('agents/room-main-2.md'), true, '-n 회피본도 접두가 남는다');
-  assert.equal(EXCLUDE('agents/pepper.md'), false, '대조군 — 일반 크루 카드는 동기화 대상');
-  assert.equal(EXCLUDE('agents/.archive/1725000000000-room-main.md'), false, '대조군 — 보관함(해고본)은 살아 있는 slug가 아니다');
-  assert.equal(EXCLUDE('chats/room-main.json'), false, '인접 행동 핀 — 회의록 자체는 동기화 대상(예약어가 회의록을 끊으면 회귀)');
-  assert.equal(EXCLUDE('chats/room-main.status.json'), true, '인접 행동 핀 — 마커는 종전대로 *.status.json 규칙으로 제외');
+test('반입 문 판정 — agents/room-*.md만 불가시, 회의록·보관함·일반 카드는 대조군으로 대상 유지(실행은 sync-integration RS1)', () => {
+  assert.equal(isReservedCardRel('agents/room-main.md'), true);
+  assert.equal(isReservedCardRel('agents/room-main-2.md'), true, '-n 회피본도 접두가 남는다');
+  assert.equal(isReservedCardRel('agents/pepper.md'), false, '대조군 — 일반 크루 카드는 동기화 대상');
+  assert.equal(isReservedCardRel('agents/.archive/1725000000000-room-main.md'), false, '대조군 — 보관함(해고본)은 살아 있는 slug가 아니다');
+  assert.equal(isReservedCardRel('chats/room-main.json'), false, '인접 행동 핀 — 회의록 자체는 동기화 대상(예약어가 회의록을 끊으면 회귀)');
+  assert.equal(EXCLUDE('agents/room-main.md'), false, '불가시는 EXCLUDE가 아니다 — EXCLUDE 전환은 원격 잔재를 삭제해 옛 기기 카드를 지운다(주석 참고)');
 });

@@ -63,6 +63,13 @@ export const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다�
 // 호스티드 클라이언트에선 serviceCredsAllowed()가 서비스 모드를 금지해 세션이 쓰인다(ensureClient 참조).
 export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && process.env.ARGO_SYNC !== '0';
 
+/** 예약 slug 크루 카드(agents/room-*.md, slug.mjs) — 옛 버전 기기가 만든 'Room Main' 크루는 이 기기에서 회의록
+    chats/room-main.json·회의 턴 마커를 덮는 파일 이름이 된다. 반입 문의 거절은 **diff 불가시**(자격 회수 noSecrets와
+    같은 계약: push·pull·삭제 전파·브레이크 집계 전부 스킵)다. EXCLUDE로 하면 안 된다 — EXCLUDE는 로컬 walk에만
+    걸려 원격 전용 항목을 한 번 받아온 뒤(base 없음=신규) 다음 사이클에 '로컬 삭제'로 읽어 원격을 지우고, 그 기기의
+    카드까지 지운다(.gw-queue 잔재 청소 경로 — 회사 데이터엔 파괴적). .archive/(해고본)는 살아 있는 slug가 아니라 대상 아님. */
+export const isReservedCardRel = (rel) => /^agents\/[^/]+\.md$/.test(rel) && isReservedSlug(rel.slice('agents/'.length, -'.md'.length));
+
 export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // ⚠ 순서 불변식(2026-07-23 검수 CRITICAL): **구조적 제외를 반드시 먼저** 평가한다.
   // 암호화 대상 판정을 앞에 두면 ARGO_ENC_VAULT=1일 때 isEncRel이 모든 rel에 true라 조기 반환하면서
@@ -76,9 +83,6 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // 타면 지운 파일이 원격에서 되살아나 같은 쪽지를 이중 배달한다(.gw-queue와 동일 결함 계급,
   // 분리 검수 CRITICAL-2 2026-07-27). 세션 간 소통은 배달 결과가 스레드(동기화 대상)로 남아 성립한다.
   if (rel.split('/')[0] === 'mail') return true;
-  // 예약 slug 크루 카드(agents/room-*.md) — 옛 버전 기기가 만든 'Room Main' 크루는 이 기기에서 회의록·회의 마커를
-  // 덮는 파일 이름이 된다(slug.mjs). 반입 문에서 거절 = 동기화 우주 밖(push·pull 양방향 불가시). .archive/는 대상 아님.
-  if (/^agents\/([^/]+)\.md$/.test(rel) && isReservedSlug(rel.slice('agents/'.length, -'.md'.length))) return true;
   const base = rel.split('/').pop();
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
@@ -563,7 +567,8 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     }
   }
 
-  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)]);
+  // 예약 slug 카드는 집합에서 빼 불가시 — 아래 브레이크 집계·전파 루프가 같은 집합을 돌므로 한 곳이면 된다(isReservedCardRel 주석).
+  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isReservedCardRel(rel)));
 
   const archMoves = archivalCreateNames(local, state); // .archive→.trash 이동의 목적지 basename
   // 로컬 손상(readJson이 .corrupt-로 치워둠)으로 '부재'가 된 삭제 후보 — 삭제가 아니라 self-heal 대상.

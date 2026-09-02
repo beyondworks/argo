@@ -544,6 +544,32 @@ test('통합 GW1: 큐 잔재 대량(base 8개↑)도 mass-delete 브레이크를
   assert.ok(existsSync(join(wsRoot, '.gw-queue-telegram', '100.json')), '로컬 큐 파일은 동기화가 건드리지 않는다(정리는 드레이너 몫)');
 });
 
+/* ── [RS] 예약 slug 크루 카드(agents/room-*.md)는 diff 불가시 — 받지도·밀지도·지우지도 않는다(#393 LOW-6 반입 문) ── */
+test('통합 RS1: 원격 전용 room-main 카드는 로컬에 안 내려오고 원격도 그대로, 로컬 잔존 카드는 안 밀린다 — 일반 카드는 종전대로', async () => {
+  const wsId = 'reserved';
+  const card = (n) => Buffer.from(`---\nname: ${n}\nrole: r\n---\n\n# ${n}\n`);
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'agents/room-x.md': card('옛 기기 잔존') },          // 이 기기의 옛 버전이 만든 예약 카드 — 밀지 않는다
+    remoteFiles: { 'agents/room-main.md': meta(card('Room Main')), 'agents/pepper.md': meta(card('Pepper')) },
+    remoteBlobs: { 'agents/room-main.md': card('Room Main'), 'agents/pepper.md': card('Pepper') },
+  });
+  const r = await syncCompany(wsId, OWNER);
+  assert.equal(r.failed, 0);
+  assert.ok(existsSync(join(wsRoot, 'agents', 'pepper.md')), '대조군 — 일반 카드는 종전대로 내려온다');
+  assert.ok(!existsSync(join(wsRoot, 'agents', 'room-main.md')), '예약 카드는 받지 않는다(받으면 회의록·회의 마커를 덮는 크루가 생긴다)');
+  assert.ok(fake._store.has(`${OWNER}/${wsId}/agents/room-main.md`), '원격 blob은 그대로 — 옛 기기의 크루를 지우지 않는다(EXCLUDE 전환식 청소 금지)');
+  assert.equal(r.deletedR, 0);
+  assert.ok(!fake._store.has(`${OWNER}/${wsId}/agents/room-x.md`), '로컬 잔존 예약 카드는 밀지 않는다');
+  const manifest = JSON.parse(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`).toString());
+  assert.ok(manifest.files['agents/room-main.md'], '매니페스트 항목도 유지');
+  assert.ok(!manifest.files['agents/room-x.md']);
+  // 두 번째 사이클(base에 원격 예약 항목이 남은 상태) — 여기서 '로컬 삭제'로 읽혀 원격이 지워지는 게 EXCLUDE 방식의 결함이었다
+  const r2 = await syncCompany(wsId, OWNER);
+  assert.equal(r2.deletedR, 0, '2사이클에도 원격 삭제 0');
+  assert.ok(fake._store.has(`${OWNER}/${wsId}/agents/room-main.md`));
+  assert.ok(!existsSync(join(wsRoot, 'agents', 'room-main.md')));
+});
+
 /* ─── 목록 조회 비용 계약 (프로덕션 실측 2026-07-26: Supabase CPU 80% 경보) ───
    Storage list()는 서버에서 storage.search()로 실행되고, 그 하나가 DB CPU의 98.3%를 먹고 있었다
    (107만 회 · 평균 177ms). 기기마다 8초 사이클에 목록 2회(발견 + tombstone)를 부르니 부하가
