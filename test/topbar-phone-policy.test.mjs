@@ -199,9 +199,9 @@ test('슬롯 배선 — layout의 슬롯 div에 인라인 display가 없어야 C
     '슬롯 div가 무스타일 형태가 아니다 — 인라인 display:flex가 돌아오면 ≤900px 숨김 규칙이 인라인에 져서 죽은 규칙이 된다');
 });
 
-test('밴드 배선 — 주 화면에만 crew-phone-band(임베드 패널 밴드는 상시 인라인)', () => {
-  assert.match(crew, /className=\{embedded \? undefined : 'crew-phone-band'\}/,
-    '크루 페이지 밴드에 crew-phone-band 조건 클래스가 없다 — ≤900px에서 컨트롤 수용처가 사라진다');
+test('밴드 배선 — 주 화면에만 crew-phone-band(임베드 패널은 밴드를 그리지 않는다 — 역할은 패널 헤더로)', () => {
+  assert.match(crew, /\{!embedded && \(\s*\n\s*<div className="crew-phone-band"/,
+    '크루 페이지 밴드가 주 화면 전용 crew-phone-band가 아니다 — ≤900px에서 컨트롤 수용처가 사라지거나 임베드 패널에 뱃지가 되살아난다');
 });
 
 /* ── 폰 폭(≤560px) — 크루 채팅·경쟁 시안 본문: 레일 스택 ──────────────────
@@ -269,7 +269,7 @@ test('크루 채팅 컬럼 배치 불변식 — 밴드1·스레드2·컴포저3 
   // display:none 아이템은 행이 접히는 게 아니라 그리드 배치에서 빠진다 — 자동배치에 맡기면 밴드가
   // 숨는 주 화면(>900px)에서 스레드·컴포저가 1·2행으로 당겨져 컴포저가 1fr을 먹고 상단으로 떠오른다
   // (분리 검수 실측: 빈 대화 입력바 top 264 vs 정상 798). 행 템플릿 핀만으로는 이 결함이 초록이었다.
-  assert.match(crew, /className=\{embedded \? undefined : 'crew-phone-band'\}\s*\n\s*style=\{\{ gridRow: 1,/,
+  assert.match(crew, /<div className="crew-phone-band"\s*\n\s*style=\{\{ gridRow: 1,/,
     '밴드에 gridRow: 1이 없다 — 자동배치로 되돌아가면 데스크톱 컴포저 상단 부양이 재발한다');
   assert.match(crew, /className="thread" ref=\{threadRef\} style=\{\{ gridRow: 2,/,
     '스레드에 gridRow: 2가 없다');

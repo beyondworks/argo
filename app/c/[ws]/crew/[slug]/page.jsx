@@ -1027,8 +1027,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           둘로 갈렸던 것이 검수 MEDIUM-1: 패널 사망은 @media(max-width:899px) = **실뷰포트**인데, 밴드 전환은
           data-narrow-shell = **상단바 넘침 측정**이라, 배율 z>1처럼 실뷰포트는 넓은데 상단바만 넘치는
           상황에서 패널은 살아 있는데 진입로만 사라졌다. splitAlive(실뷰포트 기준)로 그 축을 맞춘다. */}
-      <div className={embedded ? undefined : 'crew-phone-band'}
-        style={{ gridRow: 1, alignItems: 'center', gap: 8, minWidth: 0, padding: '8px 0 6px', ...(embedded ? { display: 'flex' } : {}) }}>
+      {/* 임베드(옆에 열기)에서는 이 밴드를 그리지 않는다 — 역할은 패널 헤더(split-head)가 크루명 옆에 보이고,
+          세션·카드·새 대화 뱃지는 패널에서 불필요(유건 2026-09-02). 주 화면 밴드(≤900px 수용처)는 그대로. */}
+      {!embedded && (
+      <div className="crew-phone-band"
+        style={{ gridRow: 1, alignItems: 'center', gap: 8, minWidth: 0, padding: '8px 0 6px' }}>
         <span className="nav-sub" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent?.role}</span>
         {sessionRef.current ? (
           <span className="pill ok" style={{ flex: 'none' }}><span className="dot" />{t('chat.sessionOngoing')}</span>
@@ -1043,6 +1046,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             onPick={(s) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'crew', key: s })))} />
         )}
       </div>
+      )}
 
       <div className="thread" ref={threadRef} style={{ gridRow: 2, overflowY: 'auto', minHeight: 0 }}>
         {/* 안쪽 레인만 중앙정렬 — .thread(스크롤 컨테이너)는 컬럼 전체폭이라 스크롤바가 우측 끝에 고정된다.

@@ -549,7 +549,8 @@ function Shell({ children, params }) {
         </main>
         {side && !data?.missing && (
           <SplitPane ws={ws} side={side} sideStr={sideStr} onClose={closeSide}
-            title={side.type === 'crew' ? (agents.find((a) => a.slug === side.key)?.name ?? side.key) : side.key.split('/').pop().replace(/\.md$/, '')} />
+            title={side.type === 'crew' ? (agents.find((a) => a.slug === side.key)?.name ?? side.key) : side.key.split('/').pop().replace(/\.md$/, '')}
+            subtitle={side.type === 'crew' ? (agents.find((a) => a.slug === side.key)?.role || '') : ''} />
         )}
         </div>
       </div>
