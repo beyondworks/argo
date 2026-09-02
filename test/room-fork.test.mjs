@@ -23,7 +23,7 @@ delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 register(new URL('./helpers/next-esm-resolve.mjs', import.meta.url));
 
 const { paths } = await import('../src/workspace.mjs');
-const { parkMeeting, reopenMeeting, endMeeting, loadRoom, listArchivedMeetings, ROOM_TURN_SLUG } = await import('../src/room.mjs');
+const { parkMeeting, reopenMeeting, endMeeting, loadRoom, listArchivedMeetings, archiveRoomFile, ROOM_TURN_SLUG } = await import('../src/room.mjs');
 const { setTurnStatus, clearTurnStatus } = await import('../src/turn-status.mjs');
 const { mergeThread } = await import('../src/sync.mjs');
 
@@ -68,6 +68,19 @@ test('① 빈 방의 새 회의는 무행동 — 보관본을 만들지 않고 �
   assert.deepEqual(await archiveNames(p), [], '빈 방을 보관하면 빈 유령 회의가 레일에 남는다');
   const room = await loadRoom(ws);
   assert.deepEqual({ sid: room.sid, resetAt: room.resetAt, cutTs: room.cutTs }, { sid: 2, resetAt: 50, cutTs: 50 });
+});
+
+test('① 보관본 이름 충돌 회피: 같은 ms 이름이 이미 있으면 ts를 올려 쓴다 — 덮어쓰면 앞 회의가 유실된다(now 주입으로 결정적 재현)', async () => {
+  const ws = 'fk-collide'; const p = await seed(ws);
+  const now = 1753500000000;
+  const a = await archiveRoomFile(ws, { messages: OLD, marker: 'A' }, { open: true, now });
+  const b = await archiveRoomFile(ws, { messages: MSGS, marker: 'B' }, { open: true, now });
+  const c = await archiveRoomFile(ws, { messages: MSGS, marker: 'C' }, { now }); // 마치기 모양(open 없음)도 같은 규약
+  assert.deepEqual([a, b, c], ['_room-1753500000000.json', '_room-1753500000001.json', '_room-1753500000002.json'], '이름이 겹치면 1씩 올린다');
+  assert.equal((await readArchive(p, a)).marker, 'A', '앞 보관본 내용 보존 — 덮어쓰기면 회의 유실');
+  assert.equal((await readArchive(p, b)).marker, 'B');
+  assert.equal((await readArchive(p, c)).open, undefined, '마치기 모양은 open 없음');
+  assert.equal((await readArchive(p, b)).open, true);
 });
 
 test('② 전환: 현재 회의를 진행 중으로 보관하고 대상 회의를 복원한다 — 보관본 제거·되살림 각인·sid·회의록 없음', async () => {

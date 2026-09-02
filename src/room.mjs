@@ -109,11 +109,12 @@ async function assertRoomIdle(wsId) {
 }
 
 /** 보관본 쓰기 — 마치기(open 없음)와 진행 중 보관(open:true)이 같은 파일 규약(.archive/_room-<ts>.json)을 쓴다.
-    같은 ms의 연속 보관은 ts를 1씩 올려 피한다 — 이름이 겹치면 앞 회의를 덮어써 유실이다. 반환: 파일명. */
+    같은 ms의 연속 보관은 ts를 1씩 올려 피한다 — 이름이 겹치면 앞 회의를 덮어써 유실이다. 반환: 파일명.
+    now — 시각 주입(export: 회귀 테스트용 — 충돌 회피를 결정적으로 재현). 제품 경로는 인자 없이 부른다. */
 const fileExists = (f) => access(f).then(() => true, () => false);
-async function archiveRoomFile(wsId, room, { open = false } = {}) {
+export async function archiveRoomFile(wsId, room, { open = false, now = Date.now() } = {}) {
   const dir = join(paths(wsId).chats, '.archive');
-  let ts = Date.now();
+  let ts = now;
   while (await fileExists(join(dir, `_room-${ts}.json`))) ts += 1;
   await writeJsonAtomic(join(dir, `_room-${ts}.json`), open ? { ...room, open: true } : room);
   return `_room-${ts}.json`;
