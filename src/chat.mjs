@@ -543,7 +543,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         // 그룹 대화 미러 — 메신저 그룹에서 시작된 턴이면 상대 크루 봇이 같은 방에 결과를 발화한다(게이트웨이가 수신)
         // mirrorCtx를 이벤트에 직접 실어 보낸다 — 전역 맵 조회(동시 턴 오배달 위험)를 없앤다
         const { emitNotify } = await import('./notify.mjs');
-        emitNotify({ type: 'delegate', wsId, from: fromSlug, fromName, to: target.slug, toName: target.name, task, reply: r.reply, ctx: mirrorCtx });
+        emitNotify({ type: 'delegate', wsId, from: fromSlug, fromName, to: target.slug, toName: target.name, task, reply: r.reply, artifacts: r.artifacts, ctx: mirrorCtx }); // artifacts — 회의실 미러가 방 메시지에 싣는다(room.mjs)
         return text(`[${target.name}의 작업 결과]\n${r.reply}`);
       } catch (e) {
         return text(`위임 실패(${target.name}): ${String(e.message || e)}`);

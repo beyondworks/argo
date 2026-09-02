@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
 import { dropUpClamp } from '../zoom-math.mjs';
+import { ArtifactChips } from '../artifact-chips';
 import { matchSlash, SLASH_TOKEN_RE } from '../slash-match.mjs';
 import { keepSide } from '../split.mjs';
 
@@ -199,7 +200,8 @@ export default function Room({ params }) {
       const snap = Array.isArray(d.room?.messages) ? d.room.messages : null;
       if (snap?.length) setMessages(snap);
       else if (d.replies?.length) {
-        setMessages((m) => [...(m ?? []), ...d.replies.map((r) => ({ who: r.slug, text: r.reply, ts: Date.now() }))]);
+        // artifacts도 옮긴다 — 서버가 replies에 실어도 여기서 버리면 폴백 경로의 말풍선만 칩이 빈다(분리 검수 MEDIUM-1)
+        setMessages((m) => [...(m ?? []), ...d.replies.map((r) => ({ who: r.slug, text: r.reply, ts: Date.now(), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }))]);
       }
     } catch (err) {
       setError(String(err.message));
@@ -460,6 +462,9 @@ export default function Room({ params }) {
                       <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4, lineHeight: 1.5 }}>{m.via.task}</div>
                     )}
                     <div style={{ fontSize: 13.5 }}><Markdown text={m.text} wsId={ws} /></div>
+                    {/* 산출물 칩 — 크루 채팅과 같은 컴포넌트(바로 보기=눈 토글, 바로 가기=칩 클릭). 방 메시지의 artifacts는
+                        room.mjs가 chat() 결과에서 실어 저장한다(개인 스레드에만 기록되던 비대칭 해소). 보관 회의 열람도 같은 경로. */}
+                    {m.artifacts?.length > 0 && <ArtifactChips ws={ws} rels={m.artifacts} />}
                   </div>
                 </div>
               ))}
