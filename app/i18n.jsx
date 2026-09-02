@@ -193,6 +193,12 @@ const DICT = {
   'settings.trash.purgeConfirm': ['이 대화를 영구히 삭제할까요? 복구할 수 없습니다.', 'Permanently delete this conversation? This cannot be undone.'],
   'me.sessionDead': ['세션 만료 · 재로그인', 'Session expired'],
   'me.sessionDead.title': ['로그인 세션이 만료되어 피드백·동기화가 멈춰 있습니다. 눌러서 다시 로그인해 주세요.', 'Your session expired — feedback and sync are paused. Click to sign in again.'],
+  // 거절 사유 분류 — 값 집합은 src/devicesession.mjs rejectionKind와 1:1(테스트가 잠근다)
+  'me.sessionDead.kind.reused': ['갱신 토큰이 이미 사용됨 — 다른 프로세스가 먼저 갱신한 이중 회전 의심', 'Refresh token already used — another process likely rotated it first'],
+  'me.sessionDead.kind.revoked': ['서버에서 세션이 폐기됨 — 다른 곳 로그아웃 또는 관리자 회수', 'Session revoked on the server — signed out elsewhere or revoked by admin'],
+  'me.sessionDead.kind.expired': ['세션 정책으로 만료됨 — 타임박스·비활동·새 로그인', 'Session expired by policy — timebox, inactivity, or newer login'],
+  'me.sessionDead.kind.rejected': ['갱신이 거절됨', 'Refresh rejected'],
+  'me.sessionDead.raw': ['서버 원문', 'server said'],
   'settings.theme.argo': ['아르고 — 다크·골드 (시스템 자동)', 'Argo — Dark · Gold (auto)'],
   'settings.theme.argo-light': ['아르고 라이트 — 웜 아이보리·골드', 'Argo Light — ivory · gold'],
   'settings.theme.argo-dark': ['아르고 다크 — 차콜·골드', 'Argo Dark — charcoal · gold'],
