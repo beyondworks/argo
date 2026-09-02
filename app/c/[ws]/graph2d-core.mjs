@@ -53,11 +53,20 @@ export function buildGraph2D({ docs = [], agents = [], showCrew = false, showOrp
   return { nodes: nodes2, edges: edges2, hiddenOrphans: nodes.length - nodes2.length };
 }
 
-/** 데크 지표 — 고유 연결 쌍 수(links)와 링크가 1개 이상인 기억 수(linked).
-    그래프와 같은 해석(표기 3종·양방향 중복 제거·자기 링크 제외)이라 기억 그래프의 "고아 N개 숨김"과 합이 맞는다.
-    예전 데크의 자체 셈(전체 stem만 해석)은 그래프와 숫자가 갈라졌다. */
+/** 데크 지표 — 고유 연결 쌍 수(links), 링크가 1개 이상인 기억 수(linked), 고립 기억 수(isolated), 문서별 차수(deg: rel → 수).
+    그래프와 같은 해석(표기 3종·양방향 중복 제거·자기 링크 제외)이라 기억 그래프의 "고아 N개 숨김"과 합이 맞는다
+    (linked + isolated + 안내 노트 = 전체). 예전 데크의 자체 셈(전체 stem만 해석)은 그래프와 숫자가 갈라졌다.
+    스캐폴드 안내 노트(doc.guide)는 기억이 아니라 안내문 — 링크가 없으면 isolated에서 뺀다(안 빼면 100%가 (n−1)/n에 막힌다). */
 export function linkStats(docs) {
-  const { nodes, edges } = buildGraph2D({ docs });
-  return { links: edges.length, linked: nodes.length }; // 고아 제거 후 nodes = 연결된 기억
+  const { nodes, edges } = buildGraph2D({ docs, showOrphans: true });
+  const guides = new Set(docs.filter((d) => d.guide).map((d) => stem(d.rel)));
+  const deg = new Map();
+  let linked = 0, isolated = 0;
+  for (const n of nodes) {
+    deg.set(n.rel, n.deg);
+    if (n.deg > 0) linked += 1;
+    else if (!guides.has(n.id)) isolated += 1;
+  }
+  return { links: edges.length, linked, isolated, deg };
 }
 
