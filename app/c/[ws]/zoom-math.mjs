@@ -9,6 +9,21 @@ export const dispZoom = () => parseFloat(document.documentElement.style.zoom) ||
 export const PANE_W_MIN = 360;
 export const clampPaneW = (w) => Math.max(PANE_W_MIN, Math.min(Math.round(window.innerWidth / dispZoom() * 0.6), Math.round(w)));
 
+/** 분할 패널이 죽는 실뷰포트 축 — globals.css `@media (max-width: 899px) { .split-pane { display: none } }`와
+    **같은 질의**. 소비자(훅)는 이 상수만 쓴다 — 질의를 각자 적으면 축이 갈라진다(#356 검수 MEDIUM-1의 뿌리).
+    min-width:900으로 쓰면 소수점 뷰포트(899.4 — 윈도우 OS 배율 150%·페이지 줌)에서 CSS·JS 둘 다 거짓이 되는
+    1px 사각이 생긴다(#356 2R LOW-1) — max-width:899의 부정이어야 경계가 원천적으로 못 갈라진다. */
+export const SPLIT_DEAD_MQ = '(max-width: 899px)';
+/** 분할 패널 가용 판정(순수 — 소비자: SplitPane 렌더·크루 채팅·회의실·사이드바 크루 행·기억 문서 행 진입로가 useSplitAlive로 공유).
+    mqDead = matchMedia(SPLIT_DEAD_MQ).matches, z = 표시 배율.
+    ① 실뷰포트 축: mqDead면 죽음(CSS가 이미 숨긴다 — 죽은 패널로 보내는 진입로는 무언 실패).
+    ② 표시 배율 축: 미디어쿼리는 실뷰포트만 보므로 배율 2 × 1280(유효 640 CSS px)에서 패널이 살아남아
+       사이드바 228 + 본문 바닥 308 + 패널 바닥 360 = 896 > 640 → 본문 열 0px·문서 가로 넘침 280px
+       (실측 2026-09-02 회의실, 1424도 동일 — 크루 채팅도 같은 레이아웃). 유효 폭(innerWidth ÷ z)에 같은 경계
+       (>899 = 삶)를 적용한다. 배율 1이면 ①과 동치이므로 ①만 본다 — innerWidth(정수 반올림)와 미디어쿼리
+       (소수점)의 어긋남으로 1px 사각을 되살리지 않기 위해서다. */
+export const splitAliveAt = (mqDead, innerWidth, z) => !mqDead && (z === 1 || innerWidth / z > 899);
+
 /** 이벤트 좌표(뷰포트 px) → 요소 좌표계(CSS px). rect는 배율이 곱해진 크기, clientWidth는 CSS px라
     비율 k로 환산한다(배율 1 = k 1 = 종전 동일). rect.width 0(미레이아웃)은 k 1로 관용. */
 export const zoomedEvPos = (rect, clientWidth, clientX, clientY) => {

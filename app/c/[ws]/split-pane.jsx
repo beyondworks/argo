@@ -9,6 +9,7 @@ import CrewChat from './crew/[slug]/page';
 import { withSide } from './split.mjs';
 // 표시 배율(zoom) — 커서 좌표는 뷰포트 px, 패널 폭은 CSS px라 배율로 나눠 맞춘다(배율 1 = 종전 동일)
 import { dispZoom, clampPaneW as clampW } from './zoom-math.mjs';
+import { useSplitAlive } from './split-alive';
 
 const W_KEY = 'argo-split-w';
 const W_DEFAULT = 480;
@@ -43,6 +44,9 @@ function DocPane({ ws, rel, side }) {
 /** side = { type:'crew'|'doc', key } (layout이 parseSide한 값), sideStr = 원문(링크 유지용). */
 export function SplitPane({ ws, side, sideStr, title, subtitle, onClose }) {
   const { t } = useLang();
+  // 가용 축(실뷰포트 + 표시 배율)이 죽으면 그리지 않는다 — CSS @media(≤899px)는 실뷰포트만 죽이므로 배율 축은
+  // 여기서 막는다(배율 2 × 1280: 유효 640에 패널 480이 들어와 본문 0·문서 넘침 — 실측). 훅은 진입로와 공용.
+  const alive = useSplitAlive();
   const [w, setW] = useState(W_DEFAULT);
   const [resizing, setResizing] = useState(false);
   const wRef = useRef(W_DEFAULT);
@@ -69,6 +73,7 @@ export function SplitPane({ ws, side, sideStr, title, subtitle, onClose }) {
 
   // use(params)는 캐시된 프라미스를 기대한다 — 렌더마다 새 프라미스를 주면 매번 서스펜드한다
   const crewParams = useMemo(() => Promise.resolve({ ws, slug: side.key }), [ws, side.key]);
+  if (!alive) return null; // 훅 호출 뒤에 — 조기 반환이 훅 순서를 바꾸면 안 된다
   return (
     <aside className="split-pane" style={{ '--split-w': `${w}px` }} aria-label={title}>
       <div className={`split-handle${resizing ? ' on' : ''}`} onMouseDown={(e) => { e.preventDefault(); setResizing(true); }} aria-hidden="true" />
