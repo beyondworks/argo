@@ -128,12 +128,14 @@ async function endMeetingLocked(wsId) {
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const hm = now.toTimeString().slice(0, 5).replace(':', '');
   const topic = String(room.messages[0]?.text ?? '').replace(/@\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 30) || '안건 미기재';
-  const attendees = [...new Set(room.messages.filter((m) => m.who !== 'user').map((m) => nameOf(m.who)))];
-  // 작업 폴더 — 사장이 고정해 둔 값 그대로(의도의 기록). 못 찾은 턴은 방의 시스템 줄이 그 사실을 함께 남긴다.
-  const folder = oneLine((await loadPins(wsId))[ROOM_FOLDER_SLUG]);
+  // 시스템 줄(참조·루프·폴더 안내)은 참석자가 아니다 — 'system'이 참석자로 찍히던 기존 결함(분리 검수 LOW-1).
+  const attendees = [...new Set(room.messages.filter((m) => m.who !== 'user' && m.who !== 'system').map((m) => nameOf(m.who)))];
+  // 작업 폴더 — 이 회의의 턴이 **실제로 쓴** 폴더(사장 발언의 workFolder 각인). 마치기 시점의 고정 값이 아니다:
+  // 폴더 없이 다 하고 직전에 고정했거나 못 찾은 폴더면 적지 않는다(분리 검수 MEDIUM-2). 도중에 바꿨으면 전부.
+  const used = [...new Set(room.messages.filter((m) => m.who === 'user' && m.workFolder).map((m) => oneLine(m.workFolder)))];
   const md = `# ${day} 회의록 — ${topic}
 
-참석: 사장${attendees.length ? `, ${attendees.join(', ')}` : ''}${folder ? `\n작업 폴더: ${folder}` : ''}
+참석: 사장${attendees.length ? `, ${attendees.join(', ')}` : ''}${used.length ? `\n작업 폴더: ${used.join(', ')}` : ''}
 
 ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: ${String(m.text).trim()}${m.attachments?.length ? `\n> 첨부: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')}` : ''}`).join('\n\n')}
 `;
@@ -355,11 +357,15 @@ export async function runRoomTurn(wsId, text, attachments = []) {
 async function runRoomTurnInner(wsId, text, attachments, state = {}) {
   const agents = await listAgents(wsId);
   if (!agents.length) throw new Error('아직 크루가 없습니다. 데크에서 먼저 영입해 주세요.');
+  // 회의 작업 폴더 — 턴 시작에 **한 번** 재서(roomFolder) 발언자 전원이 같은 값을 받는다. 사장 발언에 그 값을
+  // 각인해(workFolder) 회의록이 "이 회의가 실제로 쓴 폴더"를 적게 한다 — 마치기 시점의 고정 값은 그 회의가 쓴
+  // 폴더가 아닐 수 있다(폴더 없이 다 하고 직전에 고정·사라진 폴더 — 분리 검수 MEDIUM-2 실측).
+  const { pin: folder, stale: staleFolder } = await roomFolder(wsId);
   // 사장 발언 추가 + 현재 세션 sid 확보(이후 발언은 이 sid가 유지될 때만 기록)
   const sid = await withLock(rkey(wsId), async () => {
     const room = await loadRoom(wsId);
     const s = room.sid ?? 0;
-    room.messages.push({ who: 'user', text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) });
+    room.messages.push({ who: 'user', text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...(folder ? { workFolder: folder } : {}) });
     await saveRoom(wsId, room);
     return s;
   });
@@ -458,16 +464,16 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}) {
   // 이 턴만의 식별자 — sid는 회의 세션이라 턴마다 같다. 같은 방에서 턴이 겹치면(탭 2개·API 직접
   // 호출) 키가 완전히 같아져 서로의 위임 이벤트를 주워 담는다(분리 검수 MEDIUM-3).
   const turnId = `${sid}-${Math.random().toString(36).slice(2, 8)}`;
-  // 회의 작업 폴더 — 발언자 전원이 같은 값을 받는다(chat 옵션 workFolder → activeFolders가 개인 고정을 덮는다).
-  // 못 찾으면 알린다 — 시스템 줄은 크루 프롬프트에서 제외되는 기존 규약이라 대화를 오염하지 않는다.
-  const { pin: folder, stale: staleFolder } = await roomFolder(wsId);
+  // 회의 작업 폴더를 못 찾으면 알린다(스냅샷은 턴 시작에 1회) — 시스템 줄은 크루 프롬프트에서 제외되는 기존 규약이라
+  // 대화를 오염하지 않는다.
   if (staleFolder) {
     await sys('folder', en
       ? `Work folder not found on this device: ${staleFolder} — proceeding without it (each crew's own default). Unpin it or reconnect the folder.`
       : `작업 폴더를 이 기기에서 찾을 수 없습니다: ${staleFolder} — 폴더 없이 진행합니다(각자 기본 위치). 고정을 풀거나 폴더를 다시 연결해 주세요.`);
   }
   // 트랜스크립트 아래 한 줄 — 뒤 순서·릴레이 크루도 같은 폴더를 본다. 강제는 commonDirectives의 "지금 일할 폴더"가 한다.
-  const folderLine = folder ? `\n작업 폴더: ${folder} — 사장이 이 회의에 지정한 폴더다. 파일 작업은 여기서 하고, 동료 크루도 같은 폴더를 본다.` : '';
+  // oneLine — 개행 든 폴더명이 "사장:" 가짜 줄을 만든다(commonDirectives와 같은 접기, 분리 검수 MEDIUM-1 실측).
+  const folderLine = folder ? `\n작업 폴더: ${oneLine(folder)} — 사장이 이 회의에 지정한 폴더다. 파일 작업은 여기서 하고, 동료 크루도 같은 폴더를 본다(위임받은 동료 포함).` : '';
   const replies = [];
   for (const [i, a] of speakers.entries()) {
     const att = i >= IMG_EMBED_MAX && attachments.some((x) => x.isImage)

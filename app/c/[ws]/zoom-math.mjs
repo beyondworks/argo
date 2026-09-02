@@ -31,8 +31,9 @@ export const zoomedEvPos = (rect, clientWidth, clientX, clientY) => {
 /** DropUp 열림 패널의 **세로** 상한(CSS px) — 패널은 기준 박스(트리거 래퍼) 위로 열리므로 쓸 수 있는 높이는
     래퍼 상단까지다. 내용이 그보다 크면 뷰포트 위로 잘려 위쪽 문단·닫기 버튼에 닿을 수 없다(실측 2026-09-02:
     회의실 작업 폴더 팝오버, 1440×900 창 × 배율 2에서 top −121px). rect(래퍼)는 뷰포트 px, 반환은 CSS px —
-    래퍼 상단 ÷ 배율에서 패널 간격(gap)과 화면 위 여백(margin)을 뺀다. 하한 minH — 극단(래퍼가 화면 맨 위)에서도
-    입력 한 줄은 보이게. 배율 1·통상 창에서는 상한이 자연 높이보다 커서 비구속(종전 동일). */
+    래퍼 상단 ÷ 배율에서 패널 간격(gap)과 화면 위 여백(margin)을 뺀다. 하한 minH — 가용 높이가 그보다 작으면(래퍼가
+    화면 맨 위 근처) 패널이 0 높이로 접히는 대신 위로 넘친다(상단이 잘린다 — 0 높이보다 낫다는 선택, 분리 검수 LOW-5).
+    배율 1·통상 창에서는 상한이 자연 높이보다 커서 비구속(종전 동일). */
 export const dropUpMaxH = (rect, { z = dispZoom(), gap = 8, margin = 8, minH = 120 } = {}) =>
   Math.max(minH, Math.floor(rect.top / z) - gap - margin);
 

@@ -225,7 +225,10 @@ export default function Room({ params }) {
     : [];
   const suggestAll = !!mention && agents.length > 1 && (!mq || 'all'.startsWith(mq) || '전체'.startsWith(mention[1]));
   const completeMention = (name) => setInput(input.replace(/@\S*$/, `@${name} `));
-  const mentionOpen = !!mention && (suggestAll || suggests.length > 0);
+  // 작업 폴더 팝오버가 열려 있으면 멘션 드롭업은 닫는다(같은 자리) — 멘션은 입력 파생 상태라 버튼 클릭으로는 안 닫혀,
+  // '@' 입력 중 폴더 버튼이 무동작이었고 멘션을 완성하는 순간 팝오버가 불쑥 열려 포커스를 뺏었다(분리 검수 MEDIUM-4).
+  // Enter 완성 분기도 이 값을 보므로 숨은 패널이 몰래 완성하는 일도 없다.
+  const mentionOpen = !!mention && (suggestAll || suggests.length > 0) && !wf.open;
   const mentionPanelRef = useRef(null);
   const mentionWrapRef = useRef(null);
   const mentionNatW = useRef(0);
@@ -442,9 +445,10 @@ export default function Room({ params }) {
                   ))}
                 </div>
               )}
-              {/* 작업 폴더 팝오버(work-folder.jsx 공용) — 멘션 드롭업과 같은 자리(bottom 100%, absolute라 DOM 순서 무관)라
-                  상호 배타. 멘션 패널 뒤에 두는 이유: 기준 박스 핀(display-zoom-layout)이 래퍼 첫 자식을 멘션 패널로 잡는다 */}
-              {wf.open && !mentionOpen && <WorkFolderPopover wf={wf} note={t('room.workFolder.hint')} />}
+              {/* 작업 폴더 팝오버(work-folder.jsx 공용) — 멘션 드롭업과 같은 자리(bottom 100%, absolute라 DOM 순서 무관).
+                  상호 배타의 우선순위는 팝오버(mentionOpen이 !wf.open을 본다). 멘션 패널 뒤에 두는 이유: 기준 박스 핀
+                  (display-zoom-layout)이 래퍼 첫 자식을 멘션 패널로 잡는다 */}
+              {wf.open && <WorkFolderPopover wf={wf} note={t('room.workFolder.hint')} />}
               {(att.length > 0 || uploading) && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
                   {att.map((a, i) => (
@@ -465,7 +469,7 @@ export default function Room({ params }) {
               )}
               <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
                 {/* 작업 폴더(work-folder.jsx 공용) — 순서는 폴더 → 클립(유건 지시 2026-07-28, 크루 채팅과 동일) */}
-                <WorkFolderButton wf={wf} disabled={busy} hint={t('room.workFolder.hint')} />
+                <WorkFolderButton wf={wf} disabled={busy} hint={t('room.workFolder.hint')} iconStyle={{ transform: 'translateY(-0.18px)' }} />
                 <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
                   onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
                   <Icon name="clip" size={14} />

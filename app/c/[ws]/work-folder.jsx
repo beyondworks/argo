@@ -155,7 +155,8 @@ export function WorkFolderRow({ wf }) {
   );
 }
 
-/** 폴더 버튼 — 러너별 한계는 툴팁으로 정직 표기(runnerNote 재사용, hint로 대체 가능). 배치·폭은 부르는 쪽(style)이 정한다. */
+/** 폴더 버튼 — 러너별 한계는 툴팁으로 정직 표기(runnerNote). hint는 화면별 안내를 **앞에 병기**한다(대체가 아니다 —
+    데스크톱은 네이티브 픽커라 팝오버의 runnerNote를 볼 자리가 툴팁뿐, 분리 검수 LOW-6). 배치·폭은 부르는 쪽(style)이 정한다. */
 export function WorkFolderButton({ wf, disabled = false, style, iconStyle, hint = '' }) {
   const { t } = useLang();
   const label = wf.pinned ? t('chat.workFolder.pinned', { path: wf.pinned }) : t('chat.workFolder.open');
@@ -163,7 +164,7 @@ export function WorkFolderButton({ wf, disabled = false, style, iconStyle, hint 
     <button type="button" className="btn btn-icon sm"
       style={{ border: 0, flex: 'none', color: wf.pinned ? 'var(--fg)' : 'var(--fg-3)', ...style }}
       onClick={wf.openPicker} disabled={disabled || wf.busy} aria-label={t('chat.workFolder.open')}
-      title={`${label} — ${hint || t('settings.workroots.runnerNote')}`}>
+      title={`${label} — ${[hint, t('settings.workroots.runnerNote')].filter(Boolean).join(' ')}`}>
       {wf.busy ? <Spinner size={14} /> : <Icon name="folder" size={14} style={iconStyle} />}
     </button>
   );
