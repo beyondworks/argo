@@ -9,8 +9,9 @@ import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, Co
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
-import { sideParam, withSide } from '../../split.mjs';
+import { keepSide, sideParam, withSide } from '../../split.mjs';
 import { dropUpClamp } from '../../zoom-math.mjs';
+import { matchSlash } from '../../slash-match.mjs';
 
 // 러너 표시명(폴백 안내용) — runner-connect의 RUNNER_NAMES와 동일 값(서버 RUNNERS.name 준거)
 const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
@@ -864,11 +865,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     { id: 'new', aliases: ['new', '새대화'], label: t('chat.newChat'), run: () => newChat() },
     { id: 'card', aliases: ['card', '카드'], label: t('chat.card'), run: () => setCardOpen(true) },
     { id: 'panel', aliases: ['panel', '작업', 'files', '파일'], label: t('crew.panel.open'), run: () => setPanelOpen(true) },
-    // 주 화면 이동 명령은 패널(embedded)에서는 제공하지 않는다 — 패널이 주 화면 URL을 바꾸면 안 된다
+    // 주 화면 이동 명령은 패널(embedded)에서는 제공하지 않는다 — 패널이 주 화면 URL을 바꾸면 안 된다.
+    // 이동은 keepSide로 — 생 router.push는 ?side=를 떨어뜨려 옆에 열어 둔 보조 패널이 닫힌다(레이아웃 내부 링크 규약과 동일)
     ...(embedded ? [] : [
-      { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(`/c/${ws}/vault`) },
-      { id: 'room', aliases: ['room', '회의', '회의실'], label: t('nav.room'), run: () => router.push(`/c/${ws}/room`) },
-      { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(`/c/${ws}`) },
+      { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(keepSide(`/c/${ws}/vault`, window.location.search)) },
+      { id: 'room', aliases: ['room', '회의', '회의실'], label: t('nav.room'), run: () => router.push(keepSide(`/c/${ws}/room`, window.location.search)) },
+      { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(keepSide(`/c/${ws}`, window.location.search)) },
     ]),
   ];
   const slashToken = !viewing ? input.match(/^\/(\S*)$/) : null;
@@ -878,15 +880,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     if (!slashToken || skillCmds !== null) return;
     api(`/api/companies/${ws}/market`).then((d) => setSkillCmds(d.installedSkills ?? [])).catch(() => setSkillCmds([]));
   }, [slashToken, skillCmds, ws]);
-  const matchTok = (tok) => tok.toLowerCase().startsWith(slashQ) || (!slashQ && true);
-  const slashMatches = slashToken ? [
-    ...SLASH_CMDS.filter((c) => c.aliases.some((al) => al.startsWith(slashQ)))
-      .map((c) => ({ kind: 'builtin', key: `b:${c.id}`, cmd: c.aliases[0], desc: c.label, run: c.run })),
-    ...aliases.filter((a) => matchTok(a.cmd))
-      .map((a) => ({ kind: 'alias', key: `a:${a.cmd}`, cmd: a.cmd, desc: a.text, insert: a.text })),
-    ...(skillCmds ?? []).filter((s) => matchTok(s.id) || matchTok(s.title))
-      .map((s) => ({ kind: 'skill', key: `s:${s.id}`, cmd: s.id, desc: s.title, insert: t('chat.cmd.skillPrefix', { name: s.title }) })),
-  ] : [];
+  // 후보 계산은 회의실 커맨더와 공유하는 순수 매처(slash-match.mjs) — 문법·순서·접두 매칭의 정본은 한 곳
+  const slashMatches = slashToken ? matchSlash(input, { builtins: SLASH_CMDS, aliases, skills: skillCmds ?? [], skillInsert: (s) => t('chat.cmd.skillPrefix', { name: s.title }) }) : [];
   const [slashIdx, setSlashIdx] = useState(0);
   useEffect(() => { setSlashIdx(0); }, [slashQ, slashToken?.[0]]);
   const slashPanelRef = useRef(null);
