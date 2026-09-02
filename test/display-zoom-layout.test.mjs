@@ -660,8 +660,10 @@ test('att-chip 폭 클램프 핀 — nowrap 칩의 고정 220px 상한 복원 �
 test('deck grid 열 잠금 sweep — 모든 인라인 display:grid는 minmax(0,…) 열 또는 클램프형 auto-fit이어야 한다', () => {
   const src = sources.get('app/c/[ws]/page.jsx');
   const styles = collectInlineStyles(src);
-  const GRID_RE = /display:\s*['"`]grid['"`]/g;
-  const grids = styles.filter((s) => { GRID_RE.lastIndex = 0; return GRID_RE.test(s.body); });
+  // 탐지는 쪽지함 sweep 정본(:410)과 같은 느슨한 형태 — 리터럴 'grid' 고정은 inline-grid·삼항 조건부
+  // grid가 수집·역방향 양쪽을 지나가는 fail-open(분리 검수 M-1 실측: 무잠금 inline-grid·x ? 'grid' : 'flex' 추가가 전건 초록).
+  const GRID_RE = /display:\s*[^,}]*grid/;
+  const grids = styles.filter((s) => GRID_RE.test(s.body));
   assert.ok(grids.length >= 11, `grid 인라인 ${grids.length}곳(현재 11) — 수집 워커가 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
   for (const g of grids) {
     const colDecls = (g.body.match(/gridTemplateColumns/g) ?? []).length;
@@ -670,7 +672,7 @@ test('deck grid 열 잠금 sweep — 모든 인라인 display:grid는 minmax(0,�
     assert.ok(colDecls === 1 && lockedCols,
       `deck:${lineOf(src, g.start)} — 암묵/auto-min 열 grid: gridTemplateColumns는 정확히 1회 선언에 minmax(0,…) 또는 minmax(min(Npx, 100%),…)를 포함해야 한다(자식 min-content로 트랙이 부풀어 배율 2에서 이웃 열 위로 겹침 — 덮어쓰기 ${colDecls}회 선언도 여기서 red)`);
   }
-  for (const m of src.matchAll(/display:\s*['"`]grid['"`]/g)) {
+  for (const m of src.matchAll(/display:\s*[^,}]*grid/g)) {
     assert.ok(styles.some((s) => m.index >= s.start && m.index < s.end), `deck:${lineOf(src, m.index)} — 수집되지 않은 display:grid (style={{…}} 인라인 밖이거나 워커가 모르는 표기)`);
   }
 });
@@ -679,10 +681,10 @@ test('deck 2열 접힘 — 컨테이너 쿼리(배율 반영 CSS px)가 미디�
   const css = sources.get('app/globals.css');
   const page = sources.get('app/c/[ws]/page.jsx');
   assert.match(page, /<div className="deck-page"/, '데크 래퍼에 컨테이너 클래스 deck-page가 있어야 한다');
-  assert.match(css, /\.deck-page\s*\{[^}]*container-type:\s*inline-size/, '.deck-page가 inline-size 컨테이너여야 컨테이너 쿼리가 성립한다');
+  assert.match(css, /\.deck-page\s*\{[^}]*container:\s*deck\s*\/\s*inline-size/, '.deck-page가 이름 있는(deck) inline-size 컨테이너여야 한다 — 무명이면 다른 컨테이너가 생길 때 .deck-grid가 엉뚱한 조상에 붙는다(검수 L-2)');
   // rem 고정 — px면 WebKit이 auto 폭 컨테이너를 배율 곱한 폭으로 비교해 배율 2에서 안 접힌다(실측, globals 주석).
   // 값은 16px 루트 기준 px로 환산해 아래 산식과 대조한다(rem 상수는 정규식이 잡는 유일한 단위 — px 복원은 여기서 red).
-  const cqRem = css.match(/@container\s*\(max-width:\s*(\d+(?:\.\d+)?)rem\)\s*\{\s*\.deck-grid\s*\{\s*grid-template-columns:\s*1fr;?\s*\}\s*\}/);
+  const cqRem = css.match(/@container\s+deck\s*\(max-width:\s*(\d+(?:\.\d+)?)rem\)\s*\{\s*\.deck-grid\s*\{\s*grid-template-columns:\s*1fr;?\s*\}\s*\}/);
   const cq = cqRem && [cqRem[0], String(Number(cqRem[1]) * 16)];
   const mq = css.match(/@media\s*\(max-width:\s*(\d+)px\)\s*\{\s*\.deck-grid\s*\{\s*grid-template-columns:\s*1fr;?\s*\}\s*\}/);
   assert.ok(cq && mq, `.deck-grid 접힘 규칙 — 컨테이너 쿼리(rem 임계) ${!!cq}, 미디어쿼리 ${!!mq} 둘 다 있어야 한다(미디어쿼리 제거는 배율 1 종전 동작 변경, px 임계는 WebKit 배율 2 미매칭)`);

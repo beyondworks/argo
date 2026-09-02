@@ -1593,9 +1593,12 @@ body.split-resizing { cursor: col-resize; user-select: none; }
    두고(1.5×1440 = 본문 668 → 2열 유지), 2열이 물리적으로 못 들어가는 폭(배율 2×1440 = 본문 428)만 접기 위해서다.
    px가 아니라 rem인 이유(실측 2026-09-02): WebKit은 폭이 auto인 컨테이너를 배율이 곱해진 폭(400→800)으로
    px 임계와 비교해 512px가 배율 2에서 매칭되지 않는다(800 이상만 매칭). rem은 쿼리 길이도 배율만큼 곱혀
-   (w×z ≤ 512×z) ⟺ (w ≤ 512)로 등가가 되고, 크롬은 rem=px라 동일하다. 두 엔진 × 배율 1·1.5·2 실측 일치. */
-.deck-page { container-type: inline-size; }
-@container (max-width: 32rem) { .deck-grid { grid-template-columns: 1fr; } }
+   (w×z ≤ 512×z) ⟺ (w ≤ 512)로 등가가 되고, 크롬은 rem=px라 동일하다. 두 엔진 × 배율 1·1.5·2 실측 일치.
+   WebKit이 이 동작을 고쳐도 rem은 여전히 옳다(정상 엔진에서도 400 ≤ 512) — px만 엔진 의존이다.
+   한계: 앱은 루트 font-size를 두지 않아 브라우저 기본 글꼴을 키운 사용자는 임계도 그만큼 커져 더 이른 폭에서
+   접힌다(검수 실측: 루트 24px면 배율 1.5×1400도 접힘). 글자가 커진 만큼 접히는 방향이라 의도와 어긋나지 않는다. */
+.deck-page { container: deck / inline-size; }
+@container deck (max-width: 32rem) { .deck-grid { grid-template-columns: 1fr; } }
 
 /* ─── 카드 — 종이 + 잉크 헤어라인, 그림자 없음 ─── */
 .card {
