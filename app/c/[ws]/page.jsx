@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, useScrollLock, InputModal, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
 import { Graph2D } from './graph2d'; // 데크 별자리도 기억 페이지와 같은 2D 그래프(유건 지시 2026-08-21: 옛 3D 잔존 지적)
+import { keepSide } from './split.mjs'; // 주 화면 이동은 현재 ?side=(옆에 열기 패널)를 유지 — 생 router.push는 패널을 닫는다
 import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames } from '../../runner-connect';
 import { useLang } from '../../i18n';
 
@@ -257,7 +258,7 @@ export default function Deck({ params }) {
                 </thead>
                 <tbody>
                   {memories.map((m) => (
-                    <tr key={m.rel} onClick={() => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(m.rel)}`)}>
+                    <tr key={m.rel} onClick={() => router.push(keepSide(`/c/${ws}/vault?doc=${encodeURIComponent(m.rel)}`, window.location.search))}>
                       <td style={{ fontWeight: 600, maxWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{m.title}</td>
                       <td><span className="pill"><span className="dot" />{m.dir === 'notes' ? t('deck.typeNote') : t('deck.typeConversation')}</span></td>
                       <td className="mono" style={{ fontSize: 12 }}>{m.deg > 0 ? m.deg : '—'}</td>{/* 해석 후 차수 — 다이얼·그래프와 같은 셈법(깨진·자기 링크는 0) */}
@@ -300,13 +301,13 @@ export default function Deck({ params }) {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span className="card-title">{t('deck.constellation')}</span>
               {/* 크게 보기 = 기억 페이지의 그래프 탭(같은 렌더러·같은 인터랙션) — 별도 모달 유지 안 함 */}
-              <button className="chip" onClick={() => router.push(`/c/${ws}/vault`)} style={{ cursor: 'pointer' }}>{t('deck.viewLarge')}</button>
+              <button className="chip" onClick={() => router.push(keepSide(`/c/${ws}/vault`, window.location.search))} style={{ cursor: 'pointer' }}>{t('deck.viewLarge')}</button>
             </div>
             {docs === null || data === null ? (
               <Skeleton h={200} style={{ margin: '8px 0' }} />
             ) : (
               <div style={{ height: 220, margin: '4px -6px 0' }}>
-                <Graph2D docs={docs} agents={data.agents} compact onSelectDoc={(rel) => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`)} />
+                <Graph2D docs={docs} agents={data.agents} compact onSelectDoc={(rel) => router.push(keepSide(`/c/${ws}/vault?doc=${encodeURIComponent(rel)}`, window.location.search))} />
               </div>
             )}
             <p className="microlabel" style={{ textAlign: 'center', padding: '2px 0 6px' }}>
@@ -348,7 +349,7 @@ function AiKeyBanner({ ws }) {
     <div className="card fade-up" style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--accent)' }}>
       <span style={{ color: 'var(--accent)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
       <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t(state === 'invalid' ? 'deck.runner.reconnect' : 'deck.runner.banner')}</span>
-      <button className="btn btn-primary sm" style={{ flex: 'none' }} onClick={() => router.push(`/c/${ws}/settings?ai=1`)}>
+      <button className="btn btn-primary sm" style={{ flex: 'none' }} onClick={() => router.push(keepSide(`/c/${ws}/settings?ai=1`, window.location.search))}>
         {t('deck.aiKey.cta')}
       </button>
     </div>

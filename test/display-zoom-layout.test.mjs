@@ -22,6 +22,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dispZoom, clampPaneW, PANE_W_MIN, zoomedEvPos, dropUpClamp } from '../app/c/[ws]/zoom-math.mjs';
+import { stripComments } from './helpers/strip-comments.mjs'; // 정본 — 문자열 상태 추적 하드닝판
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const V = 900; // 뷰포트 높이(px) — #334 실측 환경(사이드바 rect 1125 vs 뷰포트 900)과 동일
@@ -56,39 +57,6 @@ function evalSize(expr, { z } = {}) {
 //    ui.jsx의 replace(/"/g, …) 줄이 종전 출력과 일치한다.
 //  - 백틱은 여러 줄 통째 보존. 보간 속 주석은 안 지워지지만, 남는 방향(under-strip)의 vh는
 //    역방향 스캔이 파일:줄로 시끄럽게 잡는 fail-closed라 허용한다.
-function stripComments(src) {
-  const out = src.split('');
-  let i = 0;
-  let prev = '\n'; // 주석·문자열 밖 직전 문자 — 라인 주석의 "행 머리·공백 뒤" 판정용
-  while (i < src.length) {
-    const c = src[i];
-    if (c === '/' && src[i + 1] === '*') {
-      const close = src.indexOf('*/', i + 2);
-      const end = close === -1 ? src.length : close + 2;
-      for (let k = i; k < end; k++) if (out[k] !== '\n') out[k] = ' ';
-      i = end; prev = ' ';
-    } else if (c === '/' && src[i + 1] === '/' && /\s/.test(prev)) {
-      let end = src.indexOf('\n', i);
-      if (end === -1) end = src.length;
-      for (let k = i; k < end; k++) out[k] = ' ';
-      i = end;
-    } else if (c === "'" || c === '"' || c === '`') {
-      let j = i + 1, closed = false;
-      while (j < src.length) {
-        if (src[j] === '\\') { j += 2; continue; }
-        if (src[j] === c) { j++; closed = true; break; }
-        if (src[j] === '\n' && c !== '`') break;
-        j++;
-      }
-      prev = c;
-      i = closed ? j : i + 1; // 미종결이면 여는 따옴표 한 글자만 소비(일반 문자 취급)
-    } else {
-      prev = c;
-      i++;
-    }
-  }
-  return out.join('');
-}
 
 // 수집 — 소스에서 vh가 든 치수 선언(height·min/max-height)을 값 위치(range)와 함께 모은다.
 // 셀렉터/컴포넌트 무관: 불변식은 "화면을 채우는 치수는 배율만큼 나눠야 한다"로 균일하게 성립한다.

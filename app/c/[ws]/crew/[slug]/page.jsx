@@ -11,8 +11,8 @@ import { useLang, stageLabel } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
 import { ArtifactChips } from '../../artifact-chips';
 import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../../work-folder';
-import { keepSide, sideParam, withSide } from '../../split.mjs';
 import { useSplitAlive } from '../../split-alive';
+import { keepSide, keepSideExcept, sideParam, withSide } from '../../split.mjs';
 import { dropUpClamp } from '../../zoom-math.mjs';
 import { matchSlash } from '../../slash-match.mjs';
 
@@ -1227,7 +1227,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           sel={sel}
           onRunnerChange={saveRunner}
           onClose={() => setCardOpen(false)}
-          onFired={() => { window.dispatchEvent(new Event('argo:refresh')); if (embedded) onClose?.(); else router.push(`/c/${ws}`); }}
+          // 해고 후 데크 복귀 — 옆에 열기 패널(?side=)은 유지하되, 열린 패널이 방금 해고한 이 크루면 떨군다(사라진 크루를
+          // 가리키는 패널을 끌고 가지 않게). 다른 크루·문서 패널은 그대로(분리 검수 2026-09-02 별건 — 조건부 처방).
+          onFired={() => { window.dispatchEvent(new Event('argo:refresh')); if (embedded) onClose?.(); else router.push(keepSideExcept(`/c/${ws}`, window.location.search, { type: 'crew', key: slug })); }}
         />
       )}
 
