@@ -121,12 +121,19 @@ test('화면 배선 — 회의실 크루 말풍선이 공용 ArtifactChips를 �
   assert.ok(i > 0, '크루 본문 앵커(vault-links 테스트와 같은 앵커)');
   const j = room.indexOf('{!viewing && (busy || serverBusy)', i);
   assert.ok(j > i, '진행 표시 앵커');
-  assert.match(room.slice(i, j), /\{m\.artifacts\?\.length > 0 && <ArtifactChips ws=\{ws\} rels=\{m\.artifacts\} \/>\}/,
-    '크루 말풍선 안에 산출물 칩 — 없으면 방 메시지에 실은 artifacts가 화면에 안 나온다');
+  // 본문 </div> 바로 다음(공백·빈 JSX 주석 자리만 허용) — `{null && <>…</>}`·`{viewing && …}` 감싸기 변이가 부분 매칭으로
+  // 초록이던 구멍(분리 검수 LOW-1 프로브)을 인접성으로 닫는다. stripComments는 주석 문자를 공백으로 바꿔 `{   }`가 남는다.
+  assert.match(room.slice(i, j), /<\/div>\n(?:\s|\{\s*\})*\{m\.artifacts\?\.length > 0 && <ArtifactChips ws=\{ws\} rels=\{m\.artifacts\} \/>\}/,
+    '크루 말풍선 본문 바로 아래에 산출물 칩(조건은 m.artifacts만) — 없으면 방 메시지에 실은 artifacts가 화면에 안 나온다');
+  // POST 응답 폴백(스냅샷 부재) 소비자 — 서버가 replies에 실어도 여기서 버리면 죽은 계약(분리 검수 MEDIUM-1)
+  const s0 = room.indexOf('async function send(e)'); const s1 = room.indexOf('async function endMeeting', s0);
+  assert.ok(s0 > 0 && s1 > s0, 'send 구간');
+  assert.match(room.slice(s0, s1), /d\.replies\.map\(\(r\) => \(\{ who: r\.slug, text: r\.reply, ts: Date\.now\(\), \.\.\.\(r\.artifacts\?\.length \? \{ artifacts: r\.artifacts \} : \{\}\) \}\)\)/,
+    '폴백 map이 replies의 artifacts를 옮긴다');
   const crew = await read('app/c/[ws]/crew/[slug]/page.jsx');
   assert.match(crew, /^import \{ ArtifactChips \} from '\.\.\/\.\.\/artifact-chips';$/m, '크루 페이지 임포트');
   assert.doesNotMatch(crew, /function ArtifactChips\(|function ArtifactPreview\(/, '크루 페이지에 사본이 남으면 두 화면의 열람 계약이 갈린다');
-  assert.match(crew, /<ArtifactChips ws=\{ws\} rels=\{m\.artifacts\} \/>/, '크루 채팅의 칩 렌더 유지(이관으로 소실 금지)');
+  assert.match(crew, /\{m\.artifacts\?\.length > 0 && <ArtifactChips ws=\{ws\} rels=\{m\.artifacts\} \/>\}/, '크루 채팅의 칩 렌더 유지(이관으로 소실 금지) — 조건까지 폐합(`{false && …}` 변이 초록 방지)');
   const shared = await read('app/c/[ws]/artifact-chips.jsx');
   assert.match(shared, /^export function ArtifactChips\(\{ ws, rels \}\)/m, '공용 모듈이 export');
 });
@@ -135,7 +142,8 @@ test('위임 미러 배선 — chat.mjs delegate 이벤트가 artifacts를 싣�
   const chat = await read('src/chat.mjs');
   const em = chat.match(/emitNotify\(\{ type: 'delegate',[^\n]*?\}\);/g) ?? [];
   assert.equal(em.length, 1, 'delegate 이벤트 발행 지점은 1곳');
-  assert.match(em[0], /\breply: r\.reply, artifacts: r\.artifacts\b/, '이벤트에 artifacts — 없으면 위임받은 크루가 만든 파일이 방에서 칩 없이 온다');
+  // 뒤 토큰(ctx)까지 폐합 — `r.artifacts?.slice(0, 0)`·`r.artifacts && undefined` 같은 값 비우기 변이가 초록이던 구멍(검수 LOW-1)
+  assert.match(em[0], /\breply: r\.reply, artifacts: r\.artifacts, ctx: mirrorCtx \}\);/, '이벤트에 artifacts 원값 — 없으면 위임받은 크루가 만든 파일이 방에서 칩 없이 온다');
   const room = await read('src/room.mjs');
   const i = room.indexOf('for (const ev of mirrored)');
   assert.ok(i > 0, '미러 루프 앵커');

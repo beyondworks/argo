@@ -180,7 +180,8 @@ export default function Room({ params }) {
       const snap = Array.isArray(d.room?.messages) ? d.room.messages : null;
       if (snap?.length) setMessages(snap);
       else if (d.replies?.length) {
-        setMessages((m) => [...(m ?? []), ...d.replies.map((r) => ({ who: r.slug, text: r.reply, ts: Date.now() }))]);
+        // artifacts도 옮긴다 — 서버가 replies에 실어도 여기서 버리면 폴백 경로의 말풍선만 칩이 빈다(분리 검수 MEDIUM-1)
+        setMessages((m) => [...(m ?? []), ...d.replies.map((r) => ({ who: r.slug, text: r.reply, ts: Date.now(), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }))]);
       }
     } catch (err) {
       setError(String(err.message));
