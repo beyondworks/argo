@@ -206,3 +206,17 @@ test('상주 plist 생성기의 stderr 키는 StandardErrorPath — 오타(Stand
   assert.ok(svc.includes('<key>StandardErrorPath</key>'), 'stderr 키');
   assert.ok(!/StandardErrPath/.test(svc), '오타 키 재등장 금지');
 });
+
+test('console.warn(stderr)에도 토큰 모양은 가린다 — plist stderr 키를 고치는 순간 0644 err.log로 흘러간다(검수 LOW-1)', async () => {
+  const root = await mkRoot(-10);
+  const token = 'B'.repeat(22);
+  const seen = [];
+  const orig = console.warn;
+  console.warn = (...a) => seen.push(a.join(' '));
+  try {
+    await getFreshDeviceSession({ root, _mkClient: clientWith(async () => reject(`Invalid Refresh Token: Already Used ${token}`)) });
+  } finally { console.warn = orig; }
+  const line = seen.find((l) => l.includes('기기 세션 갱신 실패'));
+  assert.ok(line, '경고 줄이 남는다');
+  assert.ok(!line.includes(token) && line.includes('***'), `콘솔 원문에 토큰 없음: ${line}`);
+});
