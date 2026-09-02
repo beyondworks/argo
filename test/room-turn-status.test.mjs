@@ -94,6 +94,11 @@ test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전
   const i0 = src.indexOf('for (const [i, a] of speakers.entries())');
   const loop = src.slice(i0, src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
   assert.match(loop, /setTurnStatus\(wsId, ROOM_TURN_SLUG, 'room', a\.slug\)/, '발언자 갱신이 chat() 앞에 있어야 긴 발언의 신선도 앵커가 된다');
+  // 발언 실패가 방에 남는가 — 오류는 POST 탭으로만 가므로 자리를 비운 사장에게 방은 그냥 조용하다(격리 실측: 401 뒤 흔적 0)
+  const after = src.slice(src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
+  const catchBlk = after.slice(after.indexOf('} catch (e) {'), after.indexOf('} finally {'));
+  assert.match(catchBlk, /await sys\('error', en \? `\$\{a\.name\} could not respond: \$\{msg\}` : `\$\{a\.name\} 발언 실패: \$\{msg\}`\)/, '실패 시스템 줄(ko/en)');
+  assert.match(catchBlk, /throw e; \/\/ 호출 탭의 오류 표시 계약은 그대로/, '되던 오류 전파를 삼키면 안 된다');
 });
 
 test('배선: 회의실 페이지가 turn.active를 serverBusy로 복원하고, 폴링·표시가 busy와 분리돼 있다', async () => {

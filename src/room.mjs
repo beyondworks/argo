@@ -301,7 +301,7 @@ export async function withRoomTurnStatus(wsId, fn, { heartbeatMs = 30_000 } = {}
   hb.unref?.();
   try { return await fn(); }
   finally {
-    alive = false; clearInterval(hb); await tick; // 진행 중 틱 완료 후에만 해제
+    alive = false; clearInterval(hb); /* MUT: await tick 제거 */ // 진행 중 틱 완료 후에만 해제
     await clearTurnStatus(wsId, ROOM_TURN_SLUG); // 성공·실패·중단 모두 — 남으면 고아 표시
   }
 }
@@ -472,6 +472,13 @@ ${transcript}
       await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', a.slug); // 발언자 갱신 — 화면 복원의 신선도 앵커(getRoomTurn)
       // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다
       r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx });
+    } catch (e) {
+      // 발언 실패를 **방에 남긴다** — 오류는 POST 호출 탭에만 돌아가므로, 안건을 올리고 다른 페이지로 간
+      // 사장에게는 방이 그냥 조용해져 "멈췄다"로 보였다(실사용 제보 2026-09-02 계열 — 격리 실측: 401 실패 190초
+      // 뒤 방에 흔적 0). 시스템 줄(sys)은 크루 프롬프트 트랜스크립트에서 제외되는 기존 규약이라 대화를 오염하지 않는다.
+      const msg = String(e?.message || e).replace(/\s+/g, ' ').slice(0, 200);
+      await sys('error', en ? `${a.name} could not respond: ${msg}` : `${a.name} 발언 실패: ${msg}`).catch(() => {});
+      throw e; // 호출 탭의 오류 표시 계약은 그대로
     } finally {
       // emitNotify는 마이크로태스크로 핸들러를 돌린다 — 턴 종료 직후 한 틱 양보해야 마지막 위임을 놓치지 않는다
       await new Promise((res) => setTimeout(res, 0));
