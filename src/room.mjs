@@ -165,7 +165,7 @@ export async function reopenMeeting(wsId, id) {
   });
 }
 
-/** 사장 발언 1건 → 멘션된 크루가 순서대로 응답(폭주 방지: 최대 3명). 멘션 없으면 첫 크루. */
+/** 사장 발언 1건 → 멘션된 크루가 순서대로 응답(상한 없음 — 부른 만큼 턴 비용, 인원·순서는 방의 안내 줄로 표기). 멘션 없으면 첫 크루. */
 // 락 안에서 방을 읽어 sid가 맞을 때만 메시지 추가. sid 불일치(회의 마침)면 false — 발언을 버린다.
 async function pushRoomMsg(wsId, msg, expectSid) {
   return withLock(rkey(wsId), async () => {
@@ -420,20 +420,30 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}) {
     }
   }
 
-  // ── 발언자 결정. relay(hop)면 그 순서 그대로, @전체면 전원, 아니면 기존 규칙(멘션 없으면 첫 크루).
+  // ── 발언자 결정. relay(hop)면 그 순서 그대로, @전체면 전원, 아니면 멘션한 크루 전원(멘션 없으면 첫 크루).
+  // 이름 멘션 3명 상한(.slice(0, 3))은 해제했다(유건 지시 2026-09-02 — 회의실 개선 2/6). 부른 만큼 턴 비용이
+  // 곱해지는 것은 그대로라, 아래 'speakers' 안내 줄이 인원·순서를 방에 정직하게 남긴다. 릴레이 상한(HOP_MAX)은 별개.
   const speakers = dir.relay.length
     ? dir.relay
-    : dir.allCall ? agents : (dir.to.length ? dir.to : [agents[0]]).slice(0, 3);
+    : dir.allCall ? agents : (dir.to.length ? dir.to : [agents[0]]);
   const isRelay = dir.relay.length > 0;
   // 참조만 지시했으면 여기서 끝 — 참조만 돌리려던 문장에 엉뚱한 크루가 답하지 않게.
   if (!speakers.length || (ccTargets.length && !dir.to.length && !dir.relay.length && !dir.allCall)) {
     return { replies: [], room: await loadRoom(wsId) };
   }
+  // 발언 인원·순서 안내 — 2명 이상일 때만(1명은 답 자체가 곧 표시). 상한을 없앤 대가는 턴 비용이라 "몇 명이
+  // 어떤 순서로 답하는지"를 보내는 즉시 방에서 본다. 시스템 줄은 크루 프롬프트 트랜스크립트에서 빠지는 기존 규약.
+  if (speakers.length > 1) {
+    await sys('speakers', en
+      ? `${speakers.length} speak in turn — ${speakers.map((a) => a.name).join(', ')}`
+      : `${speakers.length}명 발언 — ${speakers.map((a) => a.name).join(', ')} 순`);
+  }
 
   const nameOf = (slug) => agents.find((x) => x.slug === slug)?.name ?? slug;
-  // @all × 이미지 첨부 = 크루 수만큼 이미지 토큰이 곱해진다(검수 LOW — 이미지는 턴마다 임베드).
+  // 발언자 수 × 이미지 첨부 = 크루 수만큼 이미지 토큰이 곱해진다(검수 LOW — 이미지는 턴마다 임베드).
   // 앞 3명까지만 임베드하고 이후 발언자는 경로 노트로 받는다 — 파일은 vault/files에 있으니 필요한
-  // 크루는 Read로 열람 가능. 이름 멘션 경로는 speakers 자체가 3명 상한이라 이 캡에 걸리지 않는다.
+  // 크루는 Read로 열람 가능. 이름 멘션 상한 해제(2026-09-02) 뒤로는 @전체뿐 아니라 이름 멘션 4명째부터도
+  // 이 캡이 실제로 걸린다(test/room-speakers.test.mjs가 잠근다).
   const IMG_EMBED_MAX = 3;
   // 이 턴만의 식별자 — sid는 회의 세션이라 턴마다 같다. 같은 방에서 턴이 겹치면(탭 2개·API 직접
   // 호출) 키가 완전히 같아져 서로의 위임 이벤트를 주워 담는다(분리 검수 MEDIUM-3).
