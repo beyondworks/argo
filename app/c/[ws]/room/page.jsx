@@ -5,6 +5,7 @@ import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from '
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
 import { useLang } from '../../../i18n';
 import { dropUpClamp } from '../zoom-math.mjs';
+import { ArtifactChips } from '../artifact-chips';
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
@@ -379,6 +380,9 @@ export default function Room({ params }) {
                       <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4, lineHeight: 1.5 }}>{m.via.task}</div>
                     )}
                     <div style={{ fontSize: 13.5 }}><Markdown text={m.text} wsId={ws} /></div>
+                    {/* 산출물 칩 — 크루 채팅과 같은 컴포넌트(바로 보기=눈 토글, 바로 가기=칩 클릭). 방 메시지의 artifacts는
+                        room.mjs가 chat() 결과에서 실어 저장한다(개인 스레드에만 기록되던 비대칭 해소). 보관 회의 열람도 같은 경로. */}
+                    {m.artifacts?.length > 0 && <ArtifactChips ws={ws} rels={m.artifacts} />}
                   </div>
                 </div>
               ))}
