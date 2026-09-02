@@ -12,6 +12,7 @@ import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 import { CC_MAX, sendCrewMail } from './crewmail.mjs';
 import { resetStamp, resumeStamp } from './reset-stamp.mjs';
+import { loadPins, activePin } from './workroots.mjs';
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 // sync가 chats/room-main.json을 쓸 때 쓰는 락 키(thread:ws:room-main)와 동일하게 맞춘다 —
@@ -19,6 +20,23 @@ const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 const rkey = (wsId) => `thread:${wsId}:room-main`;
 // 회의 아카이브 접두사 — 크루 slug는 [a-z0-9-]라 '_'를 못 쓰므로, 크루 세션 아카이브와 절대 겹치지 않는다
 const MEETING_RE = /^_room-\d+\.json$/;
+
+/** 회의 작업 폴더 — 크루 고정 폴더(.workroots.json pins)와 **같은 저장소·검증·API**를 쓴다(유건 지시 2026-09-02:
+    회의실도 크루 채팅과 같은 컴포넌트·계약). 키 '@room'은 크루 슬러그([a-z0-9-])와 절대 겹치지 않는다(입력 초안
+    키 '@room'과 같은 이름공간 규약). 회의 단위 저장(room-main.json 필드)을 택하지 않은 이유: 방 파일은 기기 간
+    동기화되는데 경로는 기기 고유값이라, 맥에서 고른 폴더가 윈도우에서 "지금 일할 곳"으로 뜬다 — pins는 그 이유로
+    이미 동기화에서 빠져 있다(sync.mjs EXCLUDE). 고정은 크루 핀처럼 사장이 풀기 전까지 유지된다(회의 마치기로
+    풀리지 않는다 — 회의마다 다시 고르게 하는 것이 2026-07-31 신고의 재연). 회의록에는 그 폴더를 남긴다. */
+export const ROOM_FOLDER_SLUG = '@room';
+const oneLine = (p) => String(p ?? '').replace(/[\r\n]+/g, ' '); // 개행 든 경로가 가짜 지시줄이 되지 않게(chat.mjs와 동일)
+/** 이 턴의 회의 폴더 — **한 번만 재서** 발언자 전원이 같은 스냅샷을 본다(도중에 풀어도 이 턴은 일관).
+    stale = 고정은 있는데 지금 검증을 못 넘는 경로(외장 디스크 분리·삭제·등록 해제 직후) — 조용히 빼면 사장은 크루가
+    그 폴더에서 일한 줄 안다. 호출부가 방에 알린다. */
+export async function roomFolder(wsId) {
+  const raw = oneLine((await loadPins(wsId))[ROOM_FOLDER_SLUG]);
+  const pin = raw ? await activePin(wsId, ROOM_FOLDER_SLUG) : '';
+  return { pin, stale: raw && !pin ? raw : '' };
+}
 
 export async function loadRoom(wsId) {
   // 회의 대화는 유실이 치명적 — 손상을 조용히 빈 방으로 리셋하지 않고 throw로 드러낸다(readJson).
@@ -111,9 +129,11 @@ async function endMeetingLocked(wsId) {
   const hm = now.toTimeString().slice(0, 5).replace(':', '');
   const topic = String(room.messages[0]?.text ?? '').replace(/@\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 30) || '안건 미기재';
   const attendees = [...new Set(room.messages.filter((m) => m.who !== 'user').map((m) => nameOf(m.who)))];
+  // 작업 폴더 — 사장이 고정해 둔 값 그대로(의도의 기록). 못 찾은 턴은 방의 시스템 줄이 그 사실을 함께 남긴다.
+  const folder = oneLine((await loadPins(wsId))[ROOM_FOLDER_SLUG]);
   const md = `# ${day} 회의록 — ${topic}
 
-참석: 사장${attendees.length ? `, ${attendees.join(', ')}` : ''}
+참석: 사장${attendees.length ? `, ${attendees.join(', ')}` : ''}${folder ? `\n작업 폴더: ${folder}` : ''}
 
 ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: ${String(m.text).trim()}${m.attachments?.length ? `\n> 첨부: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')}` : ''}`).join('\n\n')}
 `;
@@ -438,6 +458,16 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}) {
   // 이 턴만의 식별자 — sid는 회의 세션이라 턴마다 같다. 같은 방에서 턴이 겹치면(탭 2개·API 직접
   // 호출) 키가 완전히 같아져 서로의 위임 이벤트를 주워 담는다(분리 검수 MEDIUM-3).
   const turnId = `${sid}-${Math.random().toString(36).slice(2, 8)}`;
+  // 회의 작업 폴더 — 발언자 전원이 같은 값을 받는다(chat 옵션 workFolder → activeFolders가 개인 고정을 덮는다).
+  // 못 찾으면 알린다 — 시스템 줄은 크루 프롬프트에서 제외되는 기존 규약이라 대화를 오염하지 않는다.
+  const { pin: folder, stale: staleFolder } = await roomFolder(wsId);
+  if (staleFolder) {
+    await sys('folder', en
+      ? `Work folder not found on this device: ${staleFolder} — proceeding without it (each crew's own default). Unpin it or reconnect the folder.`
+      : `작업 폴더를 이 기기에서 찾을 수 없습니다: ${staleFolder} — 폴더 없이 진행합니다(각자 기본 위치). 고정을 풀거나 폴더를 다시 연결해 주세요.`);
+  }
+  // 트랜스크립트 아래 한 줄 — 뒤 순서·릴레이 크루도 같은 폴더를 본다. 강제는 commonDirectives의 "지금 일할 폴더"가 한다.
+  const folderLine = folder ? `\n작업 폴더: ${folder} — 사장이 이 회의에 지정한 폴더다. 파일 작업은 여기서 하고, 동료 크루도 같은 폴더를 본다.` : '';
   const replies = [];
   for (const [i, a] of speakers.entries()) {
     const att = i >= IMG_EMBED_MAX && attachments.some((x) => x.isImage)
@@ -453,7 +483,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}) {
     const prompt = `지금 회의실에 있다 — 사장과 동료 크루가 함께 보는 방이다.
 
 ## 회의 대화 (최근)
-${transcript}
+${transcript}${folderLine}
 
 ## 지시
 사장의 마지막 발언에 "${a.name}"로서 답하라.
@@ -484,7 +514,7 @@ ${transcript}
     try {
       await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', a.slug); // 발언자 갱신 — 화면 복원의 신선도 앵커(getRoomTurn)
       // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다
-      r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx });
+      r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx, workFolder: folder });
     } catch (e) {
       // 발언 실패를 **방에 남긴다** — 오류는 POST 호출 탭에만 돌아가므로, 안건을 올리고 다른 페이지로 간
       // 사장에게는 방이 그냥 조용해져 "멈췄다"로 보였다(실사용 제보 2026-09-02 계열 — 격리 실측: 401 실패 190초

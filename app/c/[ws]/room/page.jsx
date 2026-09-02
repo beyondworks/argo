@@ -5,6 +5,7 @@ import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from '
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
 import { useLang } from '../../../i18n';
 import { dropUpClamp } from '../zoom-math.mjs';
+import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../work-folder';
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
@@ -39,6 +40,10 @@ export default function Room({ params }) {
   // 돌아야 답변이 들어오고 표시가 꺼진다 — busy 하나로 합치면 폴링(!busy)이 멈춰 영구 '회의 중'.
   const [serverBusy, setServerBusy] = useState(false);
   const [error, setError] = useState('');
+  // 회의 작업 폴더 — 크루 채팅과 같은 컴포넌트·계약(work-folder.jsx, 유건 지시 2026-09-02). 키 '@room'(서버
+  // ROOM_FOLDER_SLUG — 크루 슬러그와 불충돌)로 고정하면 발언 크루 전원이 매 턴 "지금 일할 폴더"로 받는다
+  // (src/room.mjs → chat workFolder). 기기 로컬(.workroots.json pins)이고 사장이 풀기 전까지 유지된다.
+  const wf = useWorkFolder({ ws, slug: '@room', onError: (m) => setError(m), onPinned: () => composerRef.current?.focus() });
   const endRef = useRef(null);
   // 회의 적재 레일 — 마친 회의들이 좌측에 쌓인다
   const [sessions, setSessions] = useState([]);
@@ -133,6 +138,7 @@ export default function Room({ params }) {
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
 
   async function openSession(id) {
+    wf.close(); // 작업 폴더 팝오버 — 열람 갔다 오면 리마운트로 되살아나(autoFocus) 포커스를 뺏는다(크루 채팅과 동일)
     if (!id) { setViewing(null); setArchMsgs(null); atBottomRef.current = true; setUnseen(false); return; } // 복귀=최신으로(검수 D2·D4)
     try {
       const d = await api(`/api/companies/${ws}/room/sessions?id=${encodeURIComponent(id)}`);
@@ -411,6 +417,8 @@ export default function Room({ params }) {
             {/* 라우팅 문법 안내 — 모르면 없는 기능이다. 방을 떠나지 않고 지시하는 법을 입력창 옆에 붙여 둔다 */}
             {/* 멘션 드롭업의 위치 기준 — 입력바를 relative로 감싼다 */}
             <div ref={mentionWrapRef} style={{ position: 'relative' }}>
+              {/* 작업 폴더 팝오버(work-folder.jsx 공용) — 멘션 드롭업과 같은 자리(bottom 100%)라 상호 배타 */}
+              {wf.open && !mentionOpen && <WorkFolderPopover wf={wf} note={t('room.workFolder.hint')} />}
               {mentionOpen && (
                 <div ref={mentionPanelRef} className="card card-float" role="listbox" style={{
                   position: 'absolute', bottom: 'calc(100% + 6px)', left: mentionClamp.shift, zIndex: 40,
@@ -448,7 +456,15 @@ export default function Room({ params }) {
                   {uploading && <span className="att-chip"><Spinner size={11} /> {t('chat.uploading')}</span>}
                 </div>
               )}
+              {/* 고정된 회의 작업 폴더 — 해제 전까지 발언 크루 전원의 프롬프트에 "지금 일할 폴더"로 들어간다(크루 채팅과 같은 컴포저 스택) */}
+              {wf.pinned && (
+                <div className="composer-stack" aria-label={t('chat.workFolder.open')}>
+                  <WorkFolderRow wf={wf} />
+                </div>
+              )}
               <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
+                {/* 작업 폴더(work-folder.jsx 공용) — 순서는 폴더 → 클립(유건 지시 2026-07-28, 크루 채팅과 동일) */}
+                <WorkFolderButton wf={wf} disabled={busy} hint={t('room.workFolder.hint')} />
                 <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
                   onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
                   <Icon name="clip" size={14} />

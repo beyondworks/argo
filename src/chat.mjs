@@ -789,9 +789,11 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
  * opts.source: 'routine'|'messenger' — 활동 타임라인에 턴의 출처를 남긴다.
  * opts.attachments: [{ rel, name, mime, isImage }] — vault/files/ 아래 저장된 첨부.
  *   이미지는 SDK content 블록으로 크루가 직접 보고, 그 외 파일은 경로를 알려 Read로 열게 한다.
+ * opts.workFolder: 회의실이 지정한 작업 폴더 — 이 턴에 한해 크루 개인 고정을 덮는다(workroots activeFolders의 folder).
+ *   재시도 재귀 호출에도 그대로 넘긴다 — 빠지면 재시도 턴만 개인 고정으로 돌아가 발언자마다 폴더가 갈린다.
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
-export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false } = {}) {
+export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, workFolder = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false } = {}) {
   const p = paths(wsId);
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지).
   // 설정 화면의 입력은 제거됐다(유건 지시 2026-08-19) — 안내에서 "설정에서 한도를 올리라"는
@@ -938,7 +940,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       const cliCaps = await loadCapabilities(wsId);
       // 폴더 상태 — SDK 경로와 **같은 함수**를 지난다(러너 중립성). 한 번만 재므로 프롬프트와
       // 러너 반경(gemini includeDirectories·agy --add-dir)이 같은 스냅샷을 본다(codex는 2026-08-21부터 반경 없음).
-      const { roots: cliWorkRoots, pin: cliPin } = await activeFolders(wsId, agentSlug);
+      const { roots: cliWorkRoots, pin: cliPin } = await activeFolders(wsId, agentSlug, { folder: workFolder });
       // codex MCP 주입 — 러너 중립성(유건 지시 2026-08-08: "러너 상관 없이 모두 똑같아야").
       // codex는 config.toml [mcp_servers.*]로 MCP를 받는다(실프로브 확인). gemini·antigravity는
       // 벤더 비대화 경로가 MCP를 안 받아 현재 불가(정직 표기는 commonDirectives에서).
@@ -1088,7 +1090,7 @@ ${lang === 'en'
       if (!aborted && !__crashRetry && isProcessCrash(e?.message || e)) {
         console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       // 도구 잠김(L2 자가치유, 2026-08-25) — 실행기 자체 고장(예: codex code-mode host)은 자격도 모델도
@@ -1099,7 +1101,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 도구 잠김 감지 — 재조달 후 1회 재시도(${wsId}/${agentSlug})`);
         await reprovisionRunner(runner).catch((re) => console.warn(`[argo] ${runner} 재조달 실패:`, re?.message ?? re));
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       if (!aborted && (AUTH_ERR_RE.test(String(e.message || e)) || lockupAction(e, { retried: __lockupRetry }) === 'switch')) {
@@ -1113,7 +1115,7 @@ ${lang === 'en'
             // 실패한 러너의 사건을 먼저 남긴다 — 치유 성공 시 조기 return이 실패 기록을 삼켜,
             // P2가 "인증 오류"라 말하는 턴에 연결 카드(P1-1)의 그 러너는 멀쩡해 보였다(검수 관점3 미탐).
             await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {});
-            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners: tried });
+            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners: tried });
             return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
@@ -1173,7 +1175,7 @@ ${lang === 'en'
   // 제거해도 결재 카드가 새로 뜨지 않는다: 게이트의 mcp 분기는 금지 구역 경로가 아니면 그냥 allow다.
   const caps = await loadCapabilities();
   // 폴더 상태 — CLI 경로와 **같은 함수**(activeFolders). 게이트·SDK 추가 디렉토리·프롬프트가 같은 값을 본다.
-  const { roots: workRoots, pin: pinnedFolder } = await activeFolders(wsId, agentSlug);
+  const { roots: workRoots, pin: pinnedFolder } = await activeFolders(wsId, agentSlug, { folder: workFolder });
   const readTools = SDK_ALLOWED_TOOLS;
   // 결재·능력·환경·도구 활용 지시는 commonDirectives(러너 공통)로 일원화 — SDK/외부 러너 행동 통일.
   const connectedMcp = Object.keys(servers ?? {});
@@ -1421,7 +1423,7 @@ ${lang === 'en'
       try {
         // 제외 목록은 받은 그대로 넘긴다(tried 아님) — 세션 부재는 러너 잘못이 아니라서 같은 러너로
         // 다시 시도해야 한다. 여기서 현재 러너를 제외하면 세션 문제로 벤더가 갈리는 오작동이 된다.
-        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
+        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
       } catch (e2) {
         e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
       }
@@ -1435,7 +1437,7 @@ ${lang === 'en'
     if (!aborted && !retriedDown && !__crashRetry && isProcessCrash(e?.message || e)) {
       console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
       try {
-        return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
+        return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
       } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
     }
     if (!aborted && !retriedDown && AUTH_ERR_RE.test(String(e.message || e))) {
@@ -1444,7 +1446,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
           await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {}); // 실패 러너 사건 선기록(CLI 갈래와 대칭 — P1-1 미탐 봉합)
-          const healed = await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
+          const healed = await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
           return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하

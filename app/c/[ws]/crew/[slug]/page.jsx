@@ -5,10 +5,11 @@ import { use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, artifactDownload, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, artifactDownload } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
+import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../../work-folder';
 import { sideParam, withSide } from '../../split.mjs';
 import { dropUpClamp } from '../../zoom-math.mjs';
 
@@ -214,7 +215,6 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const WAIT_STAGES = [t('chat.waitStage1'), t('chat.waitStage2'), t('chat.waitStage3')];
   const router = useRouter();
   const [agent, setAgent] = useState(null);
-  const [pinnedFolder, setPinnedFolder] = useState(''); // 고정 작업 폴더('' = 없음) — 정본은 서버 pins
   const [thread, setThread] = useState(null); // null = 로딩
   const mtimeRef = useRef(0); // 마지막으로 받은 스레드 파일 mtime — 폴링 dedup(서버가 같으면 본문 생략)
   const [shown, setShown] = useState(THREAD_WINDOW); // 렌더하는 최근 메시지 수 — 긴 대화(650건)를 전부 그리면 키 입력마다 130ms가 걸렸다(실측 2026-08-23)
@@ -384,7 +384,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   useEffect(loadSessions, [loadSessions]);
   async function openSession(id) {
     resetAnnot(); // 세션을 오가며 빨간펜 상태가 다른 메시지에 유령으로 남지 않게
-    setWfOpen(false); setWfErr(''); // 작업 폴더 팝오버도 — 열람 갔다 오면 리마운트로 되살아나 포커스를 뺏는다
+    wf.close(); // 작업 폴더 팝오버도 — 열람 갔다 오면 리마운트로 되살아나 포커스를 뺏는다
     if (!id) { setViewing(null); setArchMsgs(null); return; }
     try {
       const d = await api(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}&id=${encodeURIComponent(id)}`);
@@ -496,10 +496,6 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '' });
       })
       .catch(() => { if (alive) setAgent({ name: slug, role: '' }); });
-    // 고정 폴더는 기기 로컬(.workroots.json pins)이라 회사 응답에 없다 — 화면 진입 시 1회만 읽는다
-    api(`/api/companies/${ws}/workroots`)
-      .then((d) => { if (alive) setPinnedFolder(d.pins?.[slug] ?? ''); })
-      .catch(() => {});
     api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
       // status도 첫 로드에 반영 — 온보딩 직행 시 시운전 진행 카드가 8초 폴을 기다리지 않고 바로 보인다
       .then((t) => { if (!alive) return; mtimeRef.current = t.mtime ?? 0; setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); })
@@ -655,77 +651,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     }
   }
 
-  // 작업 폴더 바로 열기 — 설정까지 가지 않고 컴포저에서 등록한다(유건 확정 2026-07-28). 데스크톱은
-  // 네이티브 픽커(ui.jsx openFolderDialog — 설정 FolderField와 같은 경로), 웹은 실경로 미제공이라
-  // 경로 입력 폼으로 정직 폴백.
-  const [wfOpen, setWfOpen] = useState(false); // 인라인 경로 폼 — 웹 폴백 + 픽커 경로의 검증 실패 표시 겸용
-  const [wfInput, setWfInput] = useState('');
-  const [wfBusy, setWfBusy] = useState(false);
-  const [wfErr, setWfErr] = useState('');
-  const [isApp, setIsApp] = useState(false);
-  const [wfPickerDead, setWfPickerDead] = useState(false); // 픽커 실패로 폼이 열렸는가(서버 거부와 구분)
-  // 감지식은 ui.jsx isTauriApp을 쓴다(#170 통일 방침 — 여기서 다시 복제하지 않는다).
-  // 픽커 성공/실패는 이벤트로 따라간다 — 성공했는데 "열 수 없다"가 남으면 거짓말이다(재검수 LOW-1·2).
-  useEffect(() => {
-    setIsApp(isTauriApp());
-    const sync = () => setWfPickerDead(isFolderDialogBroken());
-    sync();
-    window.addEventListener(FOLDER_DIALOG_EVENT, sync);
-    return () => window.removeEventListener(FOLDER_DIALOG_EVENT, sync);
-  }, []);
-
-  /** 폴더 고정/해제 — 빈 값이면 해제. 저장은 `.workroots.json`의 pins(기기 로컬·동기화 제외)이고,
-      해제 전까지 매 턴 프롬프트에 "지금 일할 폴더"로 들어간다(src/chat.mjs activePin). 예전엔 입력창에
-      문구를 붙일 뿐이라 한 번 보내면 풀렸다(실사용 신고 2026-07-31). 등록 목록(roots)이 '가도 되는 곳',
-      이 고정이 '지금 일할 곳'이다. 서버가 등록 목록과 대조해 정본 문자열로 저장한다. */
-  async function pinFolder(path) {
-    const prev = pinnedFolder;
-    setPinnedFolder(path); // 낙관 반영 — 칩이 즉시 뜬다/사라진다
-    try {
-      const d = await api(`/api/companies/${ws}/workroots`, { pin: { slug, path } });
-      setPinnedFolder(d.pinned ?? '');
-    } catch (e) {
-      setPinnedFolder(prev);
-      // 서버는 코드만 반환 — 등록 카드와 같은 i18n 계약. 실패는 스레드 상단 배너로(고정 팝오버는 닫힌 뒤다).
-      const key = `settings.workroots.err.${String(e.message || '')}`;
-      setError(t(key) === key ? t('settings.workroots.err.invalid') : t(key));
-    }
-  }
-
-  async function registerWorkFolder(path) {
-    if (wfBusy) return;
-    setWfBusy(true); setWfErr('');
-    try {
-      await api(`/api/companies/${ws}/workroots`, { add: path });
-      setWfOpen(false); setWfErr(''); setWfInput('');
-      await pinFolder(path); // 저장은 서버가 등록 정본(realpath)으로 맞춘다 — 표기가 프롬프트와 어긋나지 않게
-      inputRef.current?.focus();
-    } catch (e) {
-      const code = String(e.message || '');
-      if (code === 'duplicate') { // 이미 등록된 폴더 = 목적 달성 — 고정만 하고 진행
-        setWfOpen(false); setWfErr(''); setWfInput('');
-        await pinFolder(path); inputRef.current?.focus(); return;
-      }
-      // 서버는 코드만 반환 — 여기서 i18n 매핑(설정 WorkRootsCard와 동일 계약). 미등록 코드는 일반 문구로.
-      const key = `settings.workroots.err.${code}`;
-      const mapped = t(key);
-      setWfErr(mapped === key ? t('settings.workroots.err.invalid') : mapped);
-      setWfInput(path); setWfOpen(true); // 픽커로 고른 경로가 거부돼도 폼을 열어 그 자리에서 고치게 한다
-    } finally { setWfBusy(false); }
-  }
-
-  async function openWorkFolder() {
-    if (isApp) {
-      try {
-        // 픽커 정본은 ui.jsx openFolderDialog(설정 FolderField와 동일 경로) — 취소는 null, 실패는 throw
-        const dir = await openFolderDialog(t('settings.workroots.pickTitle'));
-        if (dir) await registerWorkFolder(dir);
-        return; // 취소도 여기서 끝 — 취소했는데 입력 폼이 열리면 "안 고른 것"이 되레 일거리가 된다
-      } catch { setWfPickerDead(true); } // 픽커 불가 → 사유를 달고 입력 폼 폴백(warn은 openFolderDialog가 남긴다)
-    }
-    setWfErr('');
-    setWfOpen((o) => !o);
-  }
+  // 작업 폴더 바로 열기 — 설정까지 가지 않고 컴포저에서 등록한다(유건 확정 2026-07-28). 훅·팝오버·칩·버튼의 정본은
+  // work-folder.jsx이고 회의실과 공용이다(유건 지시 2026-09-02: 같은 컴포넌트·계약). 데스크톱은 네이티브 픽커,
+  // 웹은 경로 입력 폼으로 정직 폴백 — 상세는 그 파일 주석. 고정 실패 문구는 스레드 상단 배너(setError)로.
+  const wf = useWorkFolder({ ws, slug, onError: (m) => setError(m), onPinned: () => inputRef.current?.focus() });
 
   async function sendMessage(message, attachments = []) {
     if (!message || busy || uploading) return;
@@ -1341,52 +1270,16 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             </button>
           </div>
         )}
-        {/* 작업 폴더 팝오버 — 웹 폴백 경로 입력 + 픽커 거부 사유 표시. 메인 폼과 중첩되면 invalid HTML이라 형제로 둔다.
+        {/* 작업 폴더 팝오버(work-folder.jsx 공용) — 메인 폼과 중첩되면 invalid HTML이라 형제로 둔다.
             '/' 커맨더와 같은 자리(bottom 100%)라 상호 배타 — 커맨더가 떠 있으면 양보한다 */}
-        {wfOpen && !slashToken && (
-          <div className="card card-float" role="dialog" aria-label={t('chat.workFolder.open')}
-            onKeyDown={(e) => { if (e.key === 'Escape') { setWfOpen(false); setWfErr(''); } }}
-            style={{
-            position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 40,
-            width: 'min(460px, 100%)', padding: 12, display: 'grid', gap: 8,
-            boxShadow: '0 8px 28px rgba(0,0,0,.14)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span className="microlabel">{t('chat.workFolder.open')}</span>
-              <button type="button" onClick={() => { setWfOpen(false); setWfErr(''); }} aria-label={t('common.close')}
-                style={{ border: 0, background: 'transparent', color: 'var(--fg-3)', cursor: 'pointer', fontSize: 11, borderRadius: 5 }}>✕</button>
-            </div>
-            {/* 웹은 왜 직접 쓰는지, 데스크톱은 왜 Finder가 안 떴는지 사유를 준다(분리 검수 H1).
-                단 이 폼은 **서버가 고른 폴더를 거부했을 때도** 열린다 — 그땐 픽커가 멀쩡하므로
-                "열 수 없다"고 하면 거짓말이다. 그래서 픽커 실패 여부를 따로 들고 판단한다. */}
-            {!isApp && <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('chat.workFolder.webHint')}</p>}
-            {isApp && wfPickerDead && <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('common.pickerUnavailable')}</p>}
-            <form onSubmit={(e) => { e.preventDefault(); const p = wfInput.trim(); if (p) registerWorkFolder(p); }}
-              style={{ display: 'flex', gap: 8 }}>
-              <input value={wfInput} onChange={(e) => setWfInput(e.target.value)} placeholder={t('settings.workroots.placeholder')}
-                {...imeGuard} autoFocus style={{ flex: 1, minWidth: 0, fontSize: 12, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'var(--card)' }} />
-              <button className="btn" type="submit" disabled={wfBusy || !wfInput.trim()}>{wfBusy ? <Spinner /> : t('settings.workroots.add')}</button>
-            </form>
-            {wfErr && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{wfErr}</p>}
-            <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>{t('settings.workroots.runnerNote')}</p>
-          </div>
-        )}
+        {wf.open && !slashToken && <WorkFolderPopover wf={wf} />}
         {/* 컴포저 스택 — 입력창 위에 쌓이는 "이번 턴의 맥락": 고정 작업 폴더 + 대기 중인 지시.
             전엔 칩이 줄줄이 옆으로 흐르고 안내 문구·버튼이 그 사이에 끼어 읽는 순서가 없었다.
             한 줄에 하나씩, 왼쪽 아이콘 · 가운데 내용 · 오른쪽 조작으로 세로로 세운다. */}
-        {(pinnedFolder || queue.length > 0) && (
+        {(wf.pinned || queue.length > 0) && (
           <div className="composer-stack" aria-label={queue.length ? t('chat.queue.label', { n: queue.length }) : t('chat.workFolder.open')}>
-            {/* 고정된 작업 폴더 — 해제 전까지 매 턴 프롬프트에 "지금 일할 폴더"로 들어간다.
-                끝 두 조각만 보인다: 전체 경로는 폭을 다 먹고, CSS 말줄임(direction:rtl)은 앞의 '/'를
-                끝으로 밀어 "…보고서-2026-07/"처럼 없는 슬래시를 만든다(실측). 전체는 title로. */}
-            {pinnedFolder && (
-              <div className="row" title={pinnedFolder}>
-                <span className="lead"><Icon name="folder" size={13} /></span>
-                <span className="name">…/{pinnedFolder.split(/[\\/]/).filter(Boolean).slice(-2).join('/')}</span>
-                <button type="button" className="act" onClick={() => pinFolder('')}
-                  aria-label={t('chat.workFolder.unpin')} title={t('chat.workFolder.unpin')}>✕</button>
-              </div>
-            )}
+            {/* 고정된 작업 폴더 — 해제 전까지 매 턴 프롬프트에 "지금 일할 폴더"로 들어간다(줄 표시는 work-folder.jsx 공용) */}
+            {wf.pinned && <WorkFolderRow wf={wf} />}
             {/* 대기 중인 지시 — 잘못 넣은 것이 말없이 발사되면 안 되므로 떼는 자리를 항상 같이 둔다 */}
             {queue.map((q) => (
               <div key={q.qid} className="row" title={q.text}>
@@ -1436,15 +1329,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                 폴더 아이콘은 translateY(-0.18px) — 클립 잉크가 viewBox 중심보다 0.31단위 위에
                 그려져 있어(실측 cy 11.69 vs 12.0) 박스를 맞춰도 폴더가 내려가 보인다. 그 차이만 상쇄. */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 0, flex: 'none' }}>
-              {/* 작업 폴더 열기 — 러너별 한계는 툴팁으로 정직 표기(Gemini 계열은 경로 제어 없음, runnerNote 재사용) */}
-              <button type="button" className="btn btn-icon sm"
-                style={{ border: 0, flex: 'none', width: 26, color: pinnedFolder ? 'var(--fg)' : 'var(--fg-3)' }}
-                onClick={openWorkFolder} disabled={busy || wfBusy} aria-label={t('chat.workFolder.open')}
-                title={pinnedFolder
-                  ? `${t('chat.workFolder.pinned', { path: pinnedFolder })} — ${t('settings.workroots.runnerNote')}`
-                  : `${t('chat.workFolder.open')} — ${t('settings.workroots.runnerNote')}`}>
-                {wfBusy ? <Spinner size={14} /> : <Icon name="folder" size={14} style={{ transform: 'translateY(-0.18px)' }} />}
-              </button>
+              {/* 작업 폴더 열기(work-folder.jsx 공용) — 러너별 한계는 툴팁으로 정직 표기(runnerNote 재사용) */}
+              <WorkFolderButton wf={wf} disabled={busy} style={{ width: 26 }} iconStyle={{ transform: 'translateY(-0.18px)' }} />
               <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', width: 26, color: 'var(--fg-3)' }}
                 onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
                 <Icon name="clip" size={14} />
