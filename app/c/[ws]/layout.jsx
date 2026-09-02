@@ -489,7 +489,7 @@ function Shell({ children, params }) {
             </span>
             <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {me?.sessionDead
-                ? <Link href="/login" title={t('me.sessionDead.title')} style={{ color: 'var(--danger)', fontWeight: 700 }}>{t('me.sessionDead')}</Link>
+                ? <Link href="/login" title={me.sessionDeadInfo ? `${t('me.sessionDead.title')}\n${t(`me.sessionDead.kind.${me.sessionDeadInfo.kind}`)} (${me.sessionDeadInfo.reason})` : t('me.sessionDead.title')} style={{ color: 'var(--danger)', fontWeight: 700 }}>{t('me.sessionDead')}</Link>
                 : me?.authOn ? (me.user?.email || '') : (data?.company?.owner ?? '')}
             </span>
           </span>
