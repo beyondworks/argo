@@ -25,8 +25,8 @@ import { lastTurnByRunner, lastHealthFailByRunner, healthFailMessageKey } from '
 const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
 // 화면에 그릴 순서 — **이 목록에 없으면 카드가 아예 안 뜬다**(러너를 추가하고 여기를 빠뜨리면
 // 연결 수단이 UI에서 사라진다. 분리 검수 2026-08-03이 grok 누락으로 실제 적발).
-// test/runner-order-sync.test.mjs가 RUNNER_AUTH와의 동기화를 잠근다.
-const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter', 'grok'];
+// test/runner-order-sync.test.mjs가 RUNNER_AUTH(숨김 제외)와의 동기화를 잠근다. gemini는 숨김(카탈로그 hidden — 유건 결정 2026-09-03).
+const RUNNER_ORDER = ['claude', 'codex', 'antigravity', 'glm', 'kimi', 'openrouter', 'grok'];
 
 export function AiConnectionCard({ ws, accordion = false }) {
   const { t } = useLang();

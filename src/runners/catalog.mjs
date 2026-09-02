@@ -42,6 +42,10 @@ export const RUNNERS = {
     ],
   },
   gemini: {
+    // hidden — 화면·목록·자동 선택에서 제외(유건 결정 2026-09-03: Antigravity가 같은 구글 모델을 더 안정적으로 실행하고,
+    // Gemini CLI는 워크스페이스 계정에서 GOOGLE_CLOUD_PROJECT를 요구해 스모크 실패). 실행 경로는 남긴다 — 이미 gemini로
+    // 지정된 크루·저장된 자격은 그대로 돈다(isHiddenRunner 소비처: /api/runners 목록·설정 카드 순서·pickRunner 자동·검진·크루 도구 안내).
+    hidden: true,
     name: 'Gemini', kind: 'cli', mcp: true, // settings.json mcpServers 주입(0.21.2 mcp list 실프로브 2026-08-21)
     models: [
       // 실측(2026-07-19): OAuth(Code Assist) 경로 실턴 통과 = 2.5 Pro/Flash. 3.x id는 실존하나
@@ -256,6 +260,10 @@ export const GROK_DEFAULT_MODEL = 'grok-4.6';
 //   bin/loginArgs=로그인 실행, statusArgs=읽기전용 상태확인, ok=로그인됨 판정 정규식.
 //   codex만 spawn 가능한 login이 있다. claude는 이 CLI에 login 서브커맨드가 없어(구독은 키체인)
 //   oauthPasteable 토큰 붙여넣기로, gemini는 CLI 설치 후 로그인 안내로 대체한다.
+/** 숨김 러너 — 새로 고르거나 자동으로 잡히지 않는다(기존 지정·자격은 유효). 목록을 만드는 모든 자리가 이 판정을 쓴다. */
+export const isHiddenRunner = (id) => !!RUNNERS[id]?.hidden;
+export const visibleRunnerIds = () => Object.keys(RUNNERS).filter((id) => !isHiddenRunner(id));
+
 export const RUNNER_AUTH = {
   // claude 웹 브리지(webConnect)는 철회(2026-07-18) — 구세대 엔드포인트 교환이 러너가 거절하는
   // 비 oat01 토큰을 저장해 "연결됨인데 전 턴 401"을 만들었다(실측). CLAUDE_CODE_OAUTH_TOKEN은
@@ -310,12 +318,14 @@ export function excludeWith(prev, runner) {
 export function pickRunner(st, want, exclude = null, { defaultRunner = null } = {}) {
   const skip = new Set(asList(exclude));
   const usable = (id) => !!st[id]?.company.connected && !st[id]?.company.invalid && !skip.has(id);
+  // 명시 지정(want)은 숨김 러너도 존중한다 — 이미 gemini로 굳힌 크루는 계속 돈다. 자동 선택(기본 러너·순서 폴백)만 숨김 제외.
+  const autoUsable = (id) => usable(id) && !isHiddenRunner(id);
   if (want && usable(want)) return { runner: want, fellBack: false, available: true };
   // ponytail: 회사 기본 러너 — "자동일 때 이 러너부터"(K1 해소, 유건 제보 2026-08-08: Grok만
   // 연결했는데 하드코딩 순서가 claude를 먼저 잡는다). 가용하면 우선, 아니면 기존 순서 폴백.
-  if (defaultRunner && usable(defaultRunner)) return { runner: defaultRunner, fellBack: !!want, available: true };
+  if (defaultRunner && autoUsable(defaultRunner)) return { runner: defaultRunner, fellBack: !!want, available: true };
   const ids = Object.keys(RUNNER_AUTH);
-  const next = ids.find(usable);
+  const next = ids.find(autoUsable);
   if (next) return { runner: next, fellBack: !!want, available: true }; // 무선호(want=null)는 대체가 아니다
   // 아무 러너도 없음 — 호출부가 안내 에러를 만든다(원래 러너 반환은 에러 문구용).
   // credButNoCli — 자동 조달 도입으로 "자격은 있는데 CLI가 없어 차단"이 사라져 항상 빈 배열이다.

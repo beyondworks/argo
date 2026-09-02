@@ -24,7 +24,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice } from './runners.mjs';
+import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -580,12 +580,14 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
   // 러너·모델 인자 검증 — 카탈로그 대조 + 회사/호스트 연결 확인. 문제면 사용자에게 물어볼 안내문을 돌려준다.
-  const runnerCatalog = () => Object.entries(RUNNERS)
+  const runnerCatalog = () => Object.entries(RUNNERS).filter(([id]) => !isHiddenRunner(id))
     .map(([id, r]) => `${id}(${r.name}): ${r.models.map((m) => m.id).join(', ')}`).join(' | ');
   // effRunner — 이 변경 후 크루가 실제로 쓸 러너(runner 미지정이면 현재 크루의 러너). 모델은 이 러너 기준으로 검증한다.
   async function checkRunnerModel(runner, model, effRunner = null) {
     if (!runner && !model) return null;
-    if (runner && !RUNNERS[runner]) return `알 수 없는 러너 "${runner}". 가능한 값: ${Object.keys(RUNNERS).join(', ')}`;
+    if (runner && !RUNNERS[runner]) return `알 수 없는 러너 "${runner}". 가능한 값: ${visibleRunnerIds().join(', ')}`;
+    // 숨김 러너는 새로 지정할 수 없다(기존 지정 크루는 그대로 돈다) — 목록에 없는 값을 크루가 기억으로 골라 올리는 길 차단
+    if (runner && isHiddenRunner(runner)) return `${RUNNERS[runner].name} 러너는 더 이상 새로 지정할 수 없다. 가능한 값: ${visibleRunnerIds().join(', ')}`;
     if (model) {
       const target = runner || effRunner; // 지정 러너 우선, 없으면 크루의 현재 러너
       if (target && RUNNERS[target] && !RUNNERS[target].models.some((m) => m.id === model)) {
@@ -612,7 +614,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     return hit ? { slug: hit.slug, name: hit.name } : null;
   };
 
-  const catalogLine = Object.entries(RUNNERS).map(([id, r]) => `${id}=${r.models.map((m) => m.id).join('/')}`).join(' · ');
+  const catalogLine = Object.entries(RUNNERS).filter(([id]) => !isHiddenRunner(id)).map(([id, r]) => `${id}=${r.models.map((m) => m.id).join('/')}`).join(' · ');
   // 접근권 게이트 모델 고지 — 크루가 무권한 계정에 게이트 모델을 권하기 전에 알고 안내하게 한다(강등 가드가 최종 안전망).
   const gatedIds = Object.values(RUNNERS).flatMap((r) => r.models.filter((m) => m.gated).map((m) => m.id));
   const updateProfile = tool(
@@ -622,7 +624,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       target: z.string().describe('바꿀 크루 — "me"(자기 자신) 또는 동료 이름/slug'),
       name: z.string().optional(), role: z.string().optional(), team: z.string().optional(),
       rule: z.string().optional().describe('"일하는 방식"에 추가할 규칙 한 줄'),
-      runner: z.string().optional().describe(Object.keys(RUNNERS).join(' | ')),
+      runner: z.string().optional().describe(visibleRunnerIds().join(' | ')),
       model: z.string().optional().describe('카탈로그의 모델 id'),
       why: z.string().describe('왜 바꾸는지 한 문장'),
     },
@@ -663,7 +665,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       brief: z.string().describe('새 크루 한 줄 소개 — 예: "주간 뉴스레터를 쓰는 시니어 에디터"'),
       name: z.string().optional().describe('부를 이름(선택 — 없으면 자동)'),
       team: z.string().optional(),
-      runner: z.string().optional().describe(`${Object.keys(RUNNERS).join(' | ')} (비우면 회사 연결 러너로 자동)`),
+      runner: z.string().optional().describe(`${visibleRunnerIds().join(' | ')} (비우면 회사 연결 러너로 자동)`),
       model: z.string().optional(),
       why: z.string().describe('왜 필요한지 한 문장'),
     },
