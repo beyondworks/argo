@@ -22,6 +22,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dispZoom, clampPaneW, PANE_W_MIN, zoomedEvPos, dropUpClamp } from '../app/c/[ws]/zoom-math.mjs';
+import { stripComments } from './helpers/strip-comments.mjs'; // 정본 — 문자열 상태 추적 하드닝판
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const V = 900; // 뷰포트 높이(px) — #334 실측 환경(사이드바 rect 1125 vs 뷰포트 900)과 동일
@@ -56,39 +57,6 @@ function evalSize(expr, { z } = {}) {
 //    ui.jsx의 replace(/"/g, …) 줄이 종전 출력과 일치한다.
 //  - 백틱은 여러 줄 통째 보존. 보간 속 주석은 안 지워지지만, 남는 방향(under-strip)의 vh는
 //    역방향 스캔이 파일:줄로 시끄럽게 잡는 fail-closed라 허용한다.
-function stripComments(src) {
-  const out = src.split('');
-  let i = 0;
-  let prev = '\n'; // 주석·문자열 밖 직전 문자 — 라인 주석의 "행 머리·공백 뒤" 판정용
-  while (i < src.length) {
-    const c = src[i];
-    if (c === '/' && src[i + 1] === '*') {
-      const close = src.indexOf('*/', i + 2);
-      const end = close === -1 ? src.length : close + 2;
-      for (let k = i; k < end; k++) if (out[k] !== '\n') out[k] = ' ';
-      i = end; prev = ' ';
-    } else if (c === '/' && src[i + 1] === '/' && /\s/.test(prev)) {
-      let end = src.indexOf('\n', i);
-      if (end === -1) end = src.length;
-      for (let k = i; k < end; k++) out[k] = ' ';
-      i = end;
-    } else if (c === "'" || c === '"' || c === '`') {
-      let j = i + 1, closed = false;
-      while (j < src.length) {
-        if (src[j] === '\\') { j += 2; continue; }
-        if (src[j] === c) { j++; closed = true; break; }
-        if (src[j] === '\n' && c !== '`') break;
-        j++;
-      }
-      prev = c;
-      i = closed ? j : i + 1; // 미종결이면 여는 따옴표 한 글자만 소비(일반 문자 취급)
-    } else {
-      prev = c;
-      i++;
-    }
-  }
-  return out.join('');
-}
 
 // 수집 — 소스에서 vh가 든 치수 선언(height·min/max-height)을 값 위치(range)와 함께 모은다.
 // 셀렉터/컴포넌트 무관: 불변식은 "화면을 채우는 치수는 배율만큼 나눠야 한다"로 균일하게 성립한다.
@@ -698,4 +666,69 @@ test('deck 2열 접힘 — 컨테이너 쿼리(배율 반영 CSS px)가 미디�
   const side = Number(css.match(/\.shell\s*\{[^}]*grid-template-columns:\s*(\d+)px/)[1]);
   const pad = Number(css.match(/\.content\s*\{\s*padding:\s*\d+px\s+(\d+)px/)[1]);
   assert.ok(Number(cq[1]) < Number(mq[1]) - side - 2 * pad, `컨테이너 임계 ${cq[1]}는 미디어 임계의 본문 폭 ${Number(mq[1]) - side - 2 * pad}보다 낮아야 배율 1·1.5 종전 레이아웃이 보존된다`);
+
+/* ── 인접 핀: 데크 계기판(Dial) 바늘 — svg 내부 요소의 px transform-origin 금지 ─────────
+   유건 제보(2026-09-02 스크린샷): 표시 배율에서 바늘의 회전 중심이 중앙 점을 벗어난다. 재현
+   (독립 페이지, 시스템 WKWebView = Tauri 웹뷰 엔진): 배율 1.5에서 꼬리가 중심에서 (−11.2, +40.1),
+   배율 2에서 (−22.4, +80.2) CSS px — 원점 (60,60)이 배율만큼 한 번 더 곱해져 (120,120)이 됐다는
+   계산과 소수점까지 일치. 크롬은 0(엔진 차이라 Aside만으론 못 본다). 처방: 중심 이동은 SVG 속성
+   translate(사용자 좌표계 — 배율 무관), 회전 원점은 로컬 0 0(몇 배를 곱해도 0). CSS transition 유지.
+   왜 ①의 스위프가 못 잡았나: ①은 vh 치수(높이) 선언만 수집한다 — transform-origin은 치수도 vh도
+   아니라 수집 대상 밖. 규칙 확장: svg 구간 안의 인라인 transformOrigin은 길이(px·숫자)를 쓰면 red.
+   한계(정직 표기): 인라인 style={{…}}만 본다 — CSS 클래스는 어느 요소에 붙는지 정적으로 모른다
+   (globals.css의 transform-origin은 현재 keyword(center) 1곳뿐). <svg> 리터럴 밖에서 svg 조각(<g>·<line>)만
+   반환하는 컴포넌트도 구간 밖이라 못 본다(분리 검수 M-2b — 현 소스에 없음, 생기면 그 컴포넌트를 svg 구간에
+   편입하는 수집 확장이 필요). */
+function collectSvgRanges(src) {
+  // 깊이 카운트 — 중첩 <svg>에서 첫 </svg>로 끊으면 바깥 svg의 나머지 구간이 미수집(분리 검수 M-2c).
+  const out = [];
+  const tok = /<svg\b|<\/svg>/g;
+  let depth = 0, start = -1, m;
+  while ((m = tok.exec(src))) {
+    if (m[0] === '<svg') { if (depth === 0) start = m.index; depth += 1; }
+    else if (depth > 0) { depth -= 1; if (depth === 0) { out.push({ start, end: m.index + 6 }); start = -1; } }
+  }
+  if (depth > 0) out.push({ start, end: src.length });
+  return out;
+}
+// 인라인 원점 키 — camelCase와 하이픈 문자열 키 둘 다(React는 'transform-origin' 키도 실제 적용한다 — 분리 검수 M-2a).
+const ORIGIN_KEY = String.raw`(?:transformOrigin|['"]transform-origin['"])`;
+// svg 안 허용 원점 = 0 계열(0·0px — 몇 배를 곱해도 0)만. %·키워드(center…)는 배율에는 불변이지만 참조 박스
+// (view-box) 기준으로 풀려 translate 그룹 아래 자식(Dial 패턴)에서는 중심을 벗어난다(분리 검수 M-1 실측:
+// '50% 50%' → 배율 1에서도 (−22, +38) 편차). 0이 아닌 길이·숫자·보간(${…})·%·키워드 전부 red.
+const ZOOM_SAFE_ORIGIN = /^\s*0(?:px)?(?:\s+0(?:px)?)?\s*$/;
+
+test('svg 내부 인라인 transformOrigin 스위프 — px·숫자·보간 원점은 red(WebKit이 배율만큼 한 번 더 곱한다)', () => {
+  let seen = 0;
+  for (const [file, src] of sources) {
+    if (!file.endsWith('.jsx')) continue;
+    const svgs = collectSvgRanges(src);
+    for (const m of src.matchAll(new RegExp(ORIGIN_KEY + String.raw`\s*:\s*(['"\x60])([^'"\x60]*)\1`, 'g'))) {
+      const inSvg = svgs.some((r) => m.index >= r.start && m.index < r.end);
+      if (!inSvg) continue;
+      seen += 1;
+      assert.ok(ZOOM_SAFE_ORIGIN.test(m[2]), `${file}:${lineOf(src, m.index)} — svg 안 transform-origin '${m[2]}': 0이 아닌 길이는 WebKit이 표시 배율만큼 한 번 더 곱해 회전 중심이 어긋나고, %·키워드는 view-box 기준이라 translate 그룹 아래에서 어긋난다(허용은 0·0 0뿐, 위치는 SVG 속성 translate로)`);
+    }
+    // 역방향 스캔 — svg 구간 안의 모든 transformOrigin 토큰은 위 정규식(따옴표 값)으로 수집돼야 한다.
+    // 변수·식으로 원점을 넣으면 값 검사가 불가하니 여기서 red(수집 우회 = 무보호).
+    for (const m of src.matchAll(new RegExp(ORIGIN_KEY, 'g'))) {
+      if (!svgs.some((r) => m.index >= r.start && m.index < r.end)) continue;
+      assert.ok(new RegExp('^' + ORIGIN_KEY + String.raw`\s*:\s*(['"\x60])[^'"\x60]*\1`).test(src.slice(m.index, m.index + 200)), `${file}:${lineOf(src, m.index)} — svg 안 transform-origin이 따옴표 값이 아니라 값 검사가 불가(수집 우회)`);
+    }
+  }
+  assert.ok(seen >= 1, `svg 안 transformOrigin ${seen}곳(현재 1 — Dial 바늘) — 수집기가 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
+});
+
+test('Dial 바늘 핀 — translate(사용자 좌표계) 그룹 안에서 로컬 원점 0 0 기준 회전, 바늘은 (0,0)에서 시작', () => {
+  const src = sources.get('app/ui.jsx');
+  const s = src.indexOf('export function Dial(');
+  const e = src.indexOf('\nexport function', s + 1);
+  const body = src.slice(s, e);
+  const iT = body.indexOf('<g transform={`translate(${cx} ${cy})`}>');
+  const iO = body.indexOf("transformOrigin: '0 0'");
+  const iL = body.search(/<line x1=\{0\} y1=\{0\} x2=\{r - 14\} y2=\{0\}/);
+  const iEnd = body.indexOf('</g>');
+  assert.ok(iT !== -1 && iO !== -1 && iL !== -1, `Dial 바늘 구조 소실 — translate 그룹 ${iT}, 원점 0 0 ${iO}, 바늘 (0,0) 시작 ${iL}`);
+  assert.ok(iT < iO && iO < iL && iL < iEnd, 'Dial 바늘 순서 — translate 그룹 › 회전 그룹(원점 0 0) › 바늘 line 이 중첩돼 있어야 한다');
+  assert.ok(/transition:\s*'transform 1s/.test(body.slice(iT, iEnd)), 'Dial 바늘 스윕 전환(transform 1s)이 회전 그룹에 남아 있어야 한다(키 순서 무관 — 분리 검수 L-2)');
 });

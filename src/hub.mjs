@@ -6,6 +6,7 @@ import { join, relative, resolve, sep } from 'node:path';
 // Windows relative()는 백슬래시 — rel은 논리 경로('/' 고정)로 통일해야 notes/·journal/ 필터가 산다
 const relSlash = (from, to) => relative(from, to).split(sep).join('/');
 import { WS_ROOT, paths } from './workspace.mjs';
+import { GUIDE_NOTE } from './provision.mjs'; // 스캐폴드 안내 노트 파일명(단일 진실)
 
 function parseFrontmatter(md) {
   const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -137,6 +138,8 @@ export async function listDocs(wsId) {
       dir: dirName.get(dir),
       title: body.match(/^#\s*(.+)$/m)?.[1] ?? n.replace(/\.md$/, ''),
       links: [...new Set([...text.matchAll(/\[\[(.+?)\]\]/g)].map((m) => m[1]))],
+      // 스캐폴드 안내 노트 — 기억이 아니라 안내문. 연결 지표의 고립 분모에서 빼는 근거(없으면 필드 부재)
+      ...(dir === p.notes && n === GUIDE_NOTE ? { guide: true } : {}),
       excerpt: body.replace(/^#.*$/gm, '').replace(/\[\[|\]\]/g, '').trim().slice(0, 140),
       mtime: st.mtimeMs,
       // 정렬·표시용 유효 시각 — 파일명에 풀 타임스탬프(대화)가 있으면 그것, 없으면(일지·노트) 수정시각.

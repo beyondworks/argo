@@ -8,6 +8,7 @@ import { useLang, stageLabel } from '../../i18n';
 import { useAppUpdate } from '../../use-app-update';
 import { SplitPane } from './split-pane';
 import { parseSide, sideParam, withSide } from './split.mjs';
+import { useSplitAlive } from './split-alive';
 
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
@@ -118,6 +119,9 @@ function Shell({ children, params }) {
   const hereWith = (sp) => withSide(`${pathname}${curQuery ? `?${curQuery}` : ''}`, sp);
   const openSide = (spec) => router.replace(hereWith(sideParam(spec)));
   const closeSide = () => router.replace(hereWith(''));
+  // 패널 가용 축(실뷰포트 + 표시 배율, split-alive) — 사이드바 진입로(크루 행 '옆에 열기'·cmd+클릭)를 SplitPane과
+  // 같은 축으로 게이트한다. SplitPane이 죽은 축에서 null을 그리므로, 게이트 없이 side를 세우면 무언 실패가 된다.
+  const splitAlive = useSplitAlive();
   const L = (href) => withSide(href, sideStr); // 내부 링크 — 패널 유지
   // 같은 페이지 재클릭 = 무동작 — 소프트 내비 전환(Link) 후에도 동일 URL 재이동으로 페이지 상태가 리셋되는 것을 막는다.
   // 단 modifier/중클릭(새 탭·새 창)은 브라우저 기본 동작 보존 — 좌클릭만 가로챈다(분리 검수 지적 2026-07-24).
@@ -400,7 +404,7 @@ function Shell({ children, params }) {
                   <Link href={L(href)} draggable={false}
                     onClick={(e) => {
                       // cmd/ctrl+클릭 = 옆에 열기(새 탭 대신 — 크루 행 한정). 지금 보는 크루는 제외.
-                      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.button === 0) { e.preventDefault(); if (!active) openSide({ type: 'crew', key: a.slug }); return; }
+                      if (splitAlive && (e.metaKey || e.ctrlKey) && !e.shiftKey && e.button === 0) { e.preventDefault(); if (!active) openSide({ type: 'crew', key: a.slug }); return; }
                       navClick(href)(e);
                     }} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6, paddingRight: 52 }}>
                     <span style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
@@ -424,7 +428,7 @@ function Shell({ children, params }) {
                   {/* 고정 토글 — pinned면 상시 골드, 아니면 행 hover 시 노출(.crew-row:hover .crew-pin). preventDefault로 링크 이동 차단.
                       활성 행 배경이 골드(--primary)라 골드 핀이 묻힌다 — 활성이면 온-골드 전경색(--primary-fg)으로 대비 확보(세션 레일과 동일 규칙, 실사용 신고 2026-07-21). */}
                   {/* 옆에 열기 — 보조 패널에 이 크루 DM. 지금 보는 크루는 비활성(주 화면과 같은 크루를 두 번 열 이유가 없다) */}
-                  <button type="button" className="crew-side" disabled={active}
+                  <button type="button" className="crew-side" disabled={active || !splitAlive}
                     title={active ? t('split.current') : t('split.open')} aria-label={active ? t('split.current') : t('split.open')}
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); openSide({ type: 'crew', key: a.slug }); }}
                     style={{ position: 'absolute', right: 28, top: '50%', transform: 'translateY(-50%)', display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: active ? 'var(--primary-fg-dim)' : 'var(--fg-3)', cursor: 'pointer', borderRadius: 6 }}>
@@ -489,7 +493,7 @@ function Shell({ children, params }) {
             </span>
             <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {me?.sessionDead
-                ? <Link href="/login" title={t('me.sessionDead.title')} style={{ color: 'var(--danger)', fontWeight: 700 }}>{t('me.sessionDead')}</Link>
+                ? <Link href="/login" title={me.sessionDeadInfo ? `${t('me.sessionDead.title')}\n${t(`me.sessionDead.kind.${me.sessionDeadInfo.kind}`)} (${t('me.sessionDead.raw')}: ${me.sessionDeadInfo.reason})` : t('me.sessionDead.title')} style={{ color: 'var(--danger)', fontWeight: 700 }}>{t('me.sessionDead')}</Link>
                 : me?.authOn ? (me.user?.email || '') : (data?.company?.owner ?? '')}
             </span>
           </span>

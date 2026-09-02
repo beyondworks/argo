@@ -5,12 +5,16 @@ import { use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isTauriApp, artifactDownload, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
-import { sideParam, withSide } from '../../split.mjs';
+import { ArtifactChips } from '../../artifact-chips';
+import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../../work-folder';
+import { useSplitAlive } from '../../split-alive';
+import { keepSide, keepSideExcept, sideParam, withSide } from '../../split.mjs';
 import { dropUpClamp } from '../../zoom-math.mjs';
+import { matchSlash } from '../../slash-match.mjs';
 
 // 러너 표시명(폴백 안내용) — runner-connect의 RUNNER_NAMES와 동일 값(서버 RUNNERS.name 준거)
 const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
@@ -44,139 +48,6 @@ const filesFromTransfer = (dt) => {
 /** 채팅 읽기 레인 폭 — 일반 LLM 챗처럼 메시지·컴포저를 중앙 좁은 레인에 담는다(가독성).
     .thread·컴포저·열람바 세 곳이 공유하는 단일 진실. 좁은 화면에선 100%로 안전 폴백. */
 const LANE = 'min(768px, 100%)';
-
-/* ─── 산출물 인라인 미리보기 ───
-   "채팅에서 바로 주는 산출물은 채팅창에서 바로 볼 수 있으면 좋겠다"(2026-07-31)의 1차 대응.
-   칩 클릭(md=뷰어, 그 외=다운로드)은 그대로 두고, 옆 눈 버튼으로 메시지 안에서 펼쳐 본다.
-   서버 협조 지점 2곳(지우면 pdf/svg 미리보기가 깨진다): ① next.config.mjs가 files 라우트에
-   한해 same-origin 프레임을 허용한다(전역 DENY 유지) — pdf <iframe>의 전제. ② svg는 files API가
-   octet-stream으로 주므로(의도 — MIME 확장은 스크립트 표면) 텍스트로 받아 blob <img>로 우회한다.
-   files/route.js 자체는 무수정: Content-Disposition 없이 정확한 MIME이라 img 인라인은 이미 된다. */
-const PREVIEW_IMG_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
-const PREVIEW_TEXT_EXTS = new Set(['txt', 'csv', 'json', 'log', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'sh', 'html', 'css', 'yml', 'yaml', 'toml', 'xml']);
-const PREVIEW_TEXT_CAP = 64 * 1024; // bytes — 큰 파일 보호: 이만큼만 받고 스트림을 끊은 뒤 잘림 표기
-
-function previewKind(rel) {
-  if (rel.endsWith('.md')) return 'md'; // md는 vault 전역(뷰어와 동일 원천) — files API 접두 밖일 수 있어 vault API로 읽는다
-  const ext = rel.split('.').pop().toLowerCase();
-  if (PREVIEW_IMG_EXTS.has(ext)) return 'img';
-  if (ext === 'svg') return 'svg'; // files API가 octet-stream으로 주므로 <img src=URL>은 안 그려진다 — 텍스트로 받아 blob(image/svg+xml)로
-  if (ext === 'pdf') return 'pdf';
-  if (PREVIEW_TEXT_EXTS.has(ext)) return 'text';
-  return 'none';
-}
-
-/** 미리보기 본문 — 형식별 렌더. 접힘이 기본이라 이 컴포넌트는 펼친 rel에만 마운트된다(불필요 fetch 없음). */
-function ArtifactPreview({ ws, rel }) {
-  const { t } = useLang();
-  const kind = previewKind(rel);
-  const name = rel.split('/').pop();
-  const fileUrl = `/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`;
-  const needsFetch = kind === 'md' || kind === 'text' || kind === 'svg';
-  const [st, setSt] = useState({ status: needsFetch ? 'loading' : 'ready' });
-  useEffect(() => {
-    if (!needsFetch) return;
-    let alive = true;
-    let blobUrl = null;
-    (async () => {
-      try {
-        if (kind === 'md') {
-          const d = await api(`/api/companies/${ws}/vault?rel=${encodeURIComponent(rel)}`);
-          const content = String(d.content ?? '');
-          if (alive) setSt({ status: 'ready', text: content.slice(0, PREVIEW_TEXT_CAP), truncated: content.length > PREVIEW_TEXT_CAP });
-          return;
-        }
-        const res = await fetch(fileUrl);
-        if (!res.ok) throw new Error(String(res.status));
-        // 상한 스트림 컷 — cap 초과분은 받지 않고 끊는다(대용량이 탭을 굳히지 않게)
-        const reader = res.body.getReader();
-        const chunks = []; let size = 0; let truncated = false;
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value); size += value.length;
-          if (size > PREVIEW_TEXT_CAP) { truncated = true; reader.cancel().catch(() => {}); break; }
-        }
-        const buf = new Uint8Array(size);
-        let off = 0; for (const c of chunks) { buf.set(c, off); off += c.length; }
-        if (kind === 'svg') {
-          if (truncated) { if (alive) setSt({ status: 'unsupported' }); return; } // 잘린 svg는 이미지가 못 된다 — 정직하게 다운로드 안내
-          blobUrl = URL.createObjectURL(new Blob([buf], { type: 'image/svg+xml' }));
-          if (!alive) { URL.revokeObjectURL(blobUrl); return; }
-          setSt({ status: 'ready', src: blobUrl });
-        } else if (alive) {
-          setSt({ status: 'ready', text: new TextDecoder().decode(buf), truncated });
-        }
-      } catch {
-        if (alive) setSt({ status: 'error' });
-      }
-    })();
-    return () => { alive = false; if (blobUrl) URL.revokeObjectURL(blobUrl); };
-    // fileUrl은 ws·rel의 파생값 — 의존성은 원천(ws·rel)으로 충분
-  }, [ws, rel, kind, needsFetch]);
-  const note = (msg) => (
-    <div className="ap-note">
-      <span style={{ minWidth: 0 }}>{msg}</span>
-      <a className="btn sm" style={{ flex: 'none' }} href={`${fileUrl}&download=1`} download={name} onClick={artifactDownload(fileUrl, name)}>{t('vault.download')}</a>
-    </div>
-  );
-  if (st.status === 'loading') return <div className="artifact-preview fade-up"><div className="ap-note" style={{ justifyContent: 'flex-start' }}><Spinner size={13} />{t('chat.preview')}…</div></div>;
-  if (st.status === 'error') return <div className="artifact-preview fade-up">{note(t('chat.preview.error'))}</div>;
-  if (kind === 'none' || st.status === 'unsupported') return <div className="artifact-preview fade-up">{note(t('chat.preview.unsupported'))}</div>;
-  return (
-    <div className="artifact-preview fade-up">
-      {/* 로드 실패는 조용한 빈 상자가 아니라 텍스트 경로와 같은 계약(오류 안내+다운로드)으로 —
-          img는 onError가 신뢰되고, iframe은 브라우저가 404를 프레임 안에 그려 best-effort다. */}
-      {kind === 'img' && <div className="ap-body"><img src={fileUrl} alt={name} onError={() => setSt({ status: 'error' })} /></div>}
-      {kind === 'svg' && <div className="ap-body"><img src={st.src} alt={name} onError={() => setSt({ status: 'error' })} /></div>}
-      {/* inline=1 = 캐시 분리(라우트는 무시하는 파라미터) — 같은 URL의 다운로드 응답이 옛
-          X-Frame-Options: DENY와 함께 24h 캐시돼 있으면 iframe이 그 사본을 재생해 빈 프레임이
-          된다(실측: 헤더 교체 후에도 캐시 재생으로 차단 지속 → 캐시버스트로 즉시 렌더). */}
-      {kind === 'pdf' && <iframe src={`${fileUrl}&inline=1`} title={name} onError={() => setSt({ status: 'error' })} />}
-      {kind === 'md' && <div className="ap-body ap-md"><Markdown text={st.text} wsId={ws} /></div>}
-      {kind === 'text' && <div className="ap-body"><pre className="ap-text">{st.text}</pre></div>}
-      {st.truncated && note(t('chat.preview.truncated'))}
-    </div>
-  );
-}
-
-/** 산출물 칩 줄 — 기존 칩(클릭=뷰어/다운로드)에 눈 토글을 붙인다. 메시지당 하나만 펼침(채팅 흐름 보호). */
-function ArtifactChips({ ws, rels }) {
-  const { t } = useLang();
-  const [open, setOpen] = useState(null); // 펼친 rel
-  // 세션 전환·스레드 갱신으로 rels가 바뀌어도 컴포넌트 인스턴스는 목록 key={i}로 재사용된다 —
-  // 목록 밖 open을 그대로 그리면 다른 대화의 산출물 패널이 남는다(검수 MEDIUM-1 재현). 렌더는 항상 클램프.
-  const shown = rels.includes(open) ? open : null;
-  return (
-    <>
-      <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-        {rels.map((rel) => {
-          const name = rel.split('/').pop();
-          const md = rel.endsWith('.md');
-          const opened = shown === rel;
-          return (
-            <span key={rel} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <a className="memo-chip" download={md ? undefined : name}
-                href={md ? `/c/${ws}/vault?doc=${encodeURIComponent(rel)}` : `/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}&download=1`}
-                onClick={md ? undefined : artifactDownload(`/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`, name)}
-                title={`${t('chat.createdDocs')} — ${rel}`}>
-                <Icon name="doc" size={12} />{name}
-              </a>
-              <button type="button" className="memo-chip ap-toggle" aria-expanded={opened}
-                title={opened ? t('chat.preview.close') : t('chat.preview')}
-                aria-label={`${opened ? t('chat.preview.close') : t('chat.preview')} — ${name}`}
-                style={opened ? { color: 'var(--primary-strong)', borderColor: 'var(--primary)' } : undefined}
-                onClick={() => setOpen(opened ? null : rel)}>
-                <Icon name="eye" size={12} />
-              </button>
-            </span>
-          );
-        })}
-      </span>
-      {shown && <ArtifactPreview key={shown} ws={ws} rel={shown} />}
-    </>
-  );
-}
 
 /** 사장 말풍선 본문 — 외부 앱(인트라넷) 봉투면 지시만 본문으로, 최근 대화·페이지 컨텍스트는 접힌 첨부로 */
 function UserText({ text }) {
@@ -214,7 +85,6 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const WAIT_STAGES = [t('chat.waitStage1'), t('chat.waitStage2'), t('chat.waitStage3')];
   const router = useRouter();
   const [agent, setAgent] = useState(null);
-  const [pinnedFolder, setPinnedFolder] = useState(''); // 고정 작업 폴더('' = 없음) — 정본은 서버 pins
   const [thread, setThread] = useState(null); // null = 로딩
   const mtimeRef = useRef(0); // 마지막으로 받은 스레드 파일 mtime — 폴링 dedup(서버가 같으면 본문 생략)
   const [shown, setShown] = useState(THREAD_WINDOW); // 렌더하는 최근 메시지 수 — 긴 대화(650건)를 전부 그리면 키 입력마다 130ms가 걸렸다(실측 2026-08-23)
@@ -384,7 +254,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   useEffect(loadSessions, [loadSessions]);
   async function openSession(id) {
     resetAnnot(); // 세션을 오가며 빨간펜 상태가 다른 메시지에 유령으로 남지 않게
-    setWfOpen(false); setWfErr(''); // 작업 폴더 팝오버도 — 열람 갔다 오면 리마운트로 되살아나 포커스를 뺏는다
+    wf.close(); // 작업 폴더 팝오버도 — 열람 갔다 오면 리마운트로 되살아나 포커스를 뺏는다
     if (!id) { setViewing(null); setArchMsgs(null); return; }
     try {
       const d = await api(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}&id=${encodeURIComponent(id)}`);
@@ -496,10 +366,6 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         setSel({ runner: a.runner || '', model: a.model || '', effort: a.effort || '' });
       })
       .catch(() => { if (alive) setAgent({ name: slug, role: '' }); });
-    // 고정 폴더는 기기 로컬(.workroots.json pins)이라 회사 응답에 없다 — 화면 진입 시 1회만 읽는다
-    api(`/api/companies/${ws}/workroots`)
-      .then((d) => { if (alive) setPinnedFolder(d.pins?.[slug] ?? ''); })
-      .catch(() => {});
     api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`)
       // status도 첫 로드에 반영 — 온보딩 직행 시 시운전 진행 카드가 8초 폴을 기다리지 않고 바로 보인다
       .then((t) => { if (!alive) return; mtimeRef.current = t.mtime ?? 0; setThread(t.messages ?? []); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); })
@@ -655,77 +521,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     }
   }
 
-  // 작업 폴더 바로 열기 — 설정까지 가지 않고 컴포저에서 등록한다(유건 확정 2026-07-28). 데스크톱은
-  // 네이티브 픽커(ui.jsx openFolderDialog — 설정 FolderField와 같은 경로), 웹은 실경로 미제공이라
-  // 경로 입력 폼으로 정직 폴백.
-  const [wfOpen, setWfOpen] = useState(false); // 인라인 경로 폼 — 웹 폴백 + 픽커 경로의 검증 실패 표시 겸용
-  const [wfInput, setWfInput] = useState('');
-  const [wfBusy, setWfBusy] = useState(false);
-  const [wfErr, setWfErr] = useState('');
-  const [isApp, setIsApp] = useState(false);
-  const [wfPickerDead, setWfPickerDead] = useState(false); // 픽커 실패로 폼이 열렸는가(서버 거부와 구분)
-  // 감지식은 ui.jsx isTauriApp을 쓴다(#170 통일 방침 — 여기서 다시 복제하지 않는다).
-  // 픽커 성공/실패는 이벤트로 따라간다 — 성공했는데 "열 수 없다"가 남으면 거짓말이다(재검수 LOW-1·2).
-  useEffect(() => {
-    setIsApp(isTauriApp());
-    const sync = () => setWfPickerDead(isFolderDialogBroken());
-    sync();
-    window.addEventListener(FOLDER_DIALOG_EVENT, sync);
-    return () => window.removeEventListener(FOLDER_DIALOG_EVENT, sync);
-  }, []);
-
-  /** 폴더 고정/해제 — 빈 값이면 해제. 저장은 `.workroots.json`의 pins(기기 로컬·동기화 제외)이고,
-      해제 전까지 매 턴 프롬프트에 "지금 일할 폴더"로 들어간다(src/chat.mjs activePin). 예전엔 입력창에
-      문구를 붙일 뿐이라 한 번 보내면 풀렸다(실사용 신고 2026-07-31). 등록 목록(roots)이 '가도 되는 곳',
-      이 고정이 '지금 일할 곳'이다. 서버가 등록 목록과 대조해 정본 문자열로 저장한다. */
-  async function pinFolder(path) {
-    const prev = pinnedFolder;
-    setPinnedFolder(path); // 낙관 반영 — 칩이 즉시 뜬다/사라진다
-    try {
-      const d = await api(`/api/companies/${ws}/workroots`, { pin: { slug, path } });
-      setPinnedFolder(d.pinned ?? '');
-    } catch (e) {
-      setPinnedFolder(prev);
-      // 서버는 코드만 반환 — 등록 카드와 같은 i18n 계약. 실패는 스레드 상단 배너로(고정 팝오버는 닫힌 뒤다).
-      const key = `settings.workroots.err.${String(e.message || '')}`;
-      setError(t(key) === key ? t('settings.workroots.err.invalid') : t(key));
-    }
-  }
-
-  async function registerWorkFolder(path) {
-    if (wfBusy) return;
-    setWfBusy(true); setWfErr('');
-    try {
-      await api(`/api/companies/${ws}/workroots`, { add: path });
-      setWfOpen(false); setWfErr(''); setWfInput('');
-      await pinFolder(path); // 저장은 서버가 등록 정본(realpath)으로 맞춘다 — 표기가 프롬프트와 어긋나지 않게
-      inputRef.current?.focus();
-    } catch (e) {
-      const code = String(e.message || '');
-      if (code === 'duplicate') { // 이미 등록된 폴더 = 목적 달성 — 고정만 하고 진행
-        setWfOpen(false); setWfErr(''); setWfInput('');
-        await pinFolder(path); inputRef.current?.focus(); return;
-      }
-      // 서버는 코드만 반환 — 여기서 i18n 매핑(설정 WorkRootsCard와 동일 계약). 미등록 코드는 일반 문구로.
-      const key = `settings.workroots.err.${code}`;
-      const mapped = t(key);
-      setWfErr(mapped === key ? t('settings.workroots.err.invalid') : mapped);
-      setWfInput(path); setWfOpen(true); // 픽커로 고른 경로가 거부돼도 폼을 열어 그 자리에서 고치게 한다
-    } finally { setWfBusy(false); }
-  }
-
-  async function openWorkFolder() {
-    if (isApp) {
-      try {
-        // 픽커 정본은 ui.jsx openFolderDialog(설정 FolderField와 동일 경로) — 취소는 null, 실패는 throw
-        const dir = await openFolderDialog(t('settings.workroots.pickTitle'));
-        if (dir) await registerWorkFolder(dir);
-        return; // 취소도 여기서 끝 — 취소했는데 입력 폼이 열리면 "안 고른 것"이 되레 일거리가 된다
-      } catch { setWfPickerDead(true); } // 픽커 불가 → 사유를 달고 입력 폼 폴백(warn은 openFolderDialog가 남긴다)
-    }
-    setWfErr('');
-    setWfOpen((o) => !o);
-  }
+  // 작업 폴더 바로 열기 — 설정까지 가지 않고 컴포저에서 등록한다(유건 확정 2026-07-28). 훅·팝오버·칩·버튼의 정본은
+  // work-folder.jsx이고 회의실과 공용이다(유건 지시 2026-09-02: 같은 컴포넌트·계약). 데스크톱은 네이티브 픽커,
+  // 웹은 경로 입력 폼으로 정직 폴백 — 상세는 그 파일 주석. 고정 실패 문구는 스레드 상단 배너(setError)로.
+  const wf = useWorkFolder({ ws, slug, onError: (m) => setError(m), onPinned: () => inputRef.current?.focus() });
 
   async function sendMessage(message, attachments = []) {
     if (!message || busy || uploading) return;
@@ -808,18 +607,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     }).catch(() => {});
   }
 
-  // 분할 패널 가용 여부 — CSS가 .split-pane을 죽이는 축(실뷰포트 ≤899px)과 **같은 기준**으로 본다.
-  // 밴드의 '옆에 열기' 노출 조건(검수 MEDIUM-1). 유효 폭(배율 인지)과 섞으면 두 축이 다시 갈라진다.
-  // 질의는 CSS 규칙의 **정확한 여집합**으로 쓴다 — min-width:900 으로 쓰면 소수점 뷰포트(899.4px:
-  // 윈도우 OS 배율 150%·페이지 줌에서 발생)에서 둘 다 거짓이 돼 "패널은 살아 있는데 진입로가 없는"
-  // 1px 사각이 생긴다(분리 검수 2R LOW-1). max-width:899 의 부정이면 경계가 원천적으로 못 갈라진다.
-  const [splitAlive, setSplitAlive] = useState(true);
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 899px)');
-    const on = () => setSplitAlive(!mq.matches);
-    on(); mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, []);
+  // 분할 패널 가용 여부 — 밴드의 '옆에 열기' 노출 조건(검수 MEDIUM-1). 판정은 SplitPane 렌더·회의실 진입로와
+  // 공용 훅(split-alive) 하나 — 실뷰포트 축(CSS @media와 같은 질의의 여집합, 2R LOW-1) + 표시 배율 축.
+  // 여기서 따로 판정하면 패널과 진입로의 축이 다시 갈라진다.
+  const splitAlive = useSplitAlive();
 
   // 부분 코멘트(빨간펜) — 답변에서 고칠 부분을 드래그로 인용하고, 코멘트를 모아 묶음 수정 지시로 보낸다.
   // "전체 다시 써" 대신 "여기 이 문장만" — 상사가 보고서에 빨간펜 긋는 방식 그대로.
@@ -864,11 +655,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     { id: 'new', aliases: ['new', '새대화'], label: t('chat.newChat'), run: () => newChat() },
     { id: 'card', aliases: ['card', '카드'], label: t('chat.card'), run: () => setCardOpen(true) },
     { id: 'panel', aliases: ['panel', '작업', 'files', '파일'], label: t('crew.panel.open'), run: () => setPanelOpen(true) },
-    // 주 화면 이동 명령은 패널(embedded)에서는 제공하지 않는다 — 패널이 주 화면 URL을 바꾸면 안 된다
+    // 주 화면 이동 명령은 패널(embedded)에서는 제공하지 않는다 — 패널이 주 화면 URL을 바꾸면 안 된다.
+    // 이동은 keepSide로 — 생 router.push는 ?side=를 떨어뜨려 옆에 열어 둔 보조 패널이 닫힌다(레이아웃 내부 링크 규약과 동일)
     ...(embedded ? [] : [
-      { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(`/c/${ws}/vault`) },
-      { id: 'room', aliases: ['room', '회의', '회의실'], label: t('nav.room'), run: () => router.push(`/c/${ws}/room`) },
-      { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(`/c/${ws}`) },
+      { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(keepSide(`/c/${ws}/vault`, window.location.search)) },
+      { id: 'room', aliases: ['room', '회의', '회의실'], label: t('nav.room'), run: () => router.push(keepSide(`/c/${ws}/room`, window.location.search)) },
+      { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(keepSide(`/c/${ws}`, window.location.search)) },
     ]),
   ];
   const slashToken = !viewing ? input.match(/^\/(\S*)$/) : null;
@@ -878,15 +670,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     if (!slashToken || skillCmds !== null) return;
     api(`/api/companies/${ws}/market`).then((d) => setSkillCmds(d.installedSkills ?? [])).catch(() => setSkillCmds([]));
   }, [slashToken, skillCmds, ws]);
-  const matchTok = (tok) => tok.toLowerCase().startsWith(slashQ) || (!slashQ && true);
-  const slashMatches = slashToken ? [
-    ...SLASH_CMDS.filter((c) => c.aliases.some((al) => al.startsWith(slashQ)))
-      .map((c) => ({ kind: 'builtin', key: `b:${c.id}`, cmd: c.aliases[0], desc: c.label, run: c.run })),
-    ...aliases.filter((a) => matchTok(a.cmd))
-      .map((a) => ({ kind: 'alias', key: `a:${a.cmd}`, cmd: a.cmd, desc: a.text, insert: a.text })),
-    ...(skillCmds ?? []).filter((s) => matchTok(s.id) || matchTok(s.title))
-      .map((s) => ({ kind: 'skill', key: `s:${s.id}`, cmd: s.id, desc: s.title, insert: t('chat.cmd.skillPrefix', { name: s.title }) })),
-  ] : [];
+  // 후보 계산은 회의실 커맨더와 공유하는 순수 매처(slash-match.mjs) — 문법·순서·접두 매칭의 정본은 한 곳
+  const slashMatches = slashToken ? matchSlash(input, { builtins: SLASH_CMDS, aliases, skills: skillCmds ?? [], skillInsert: (s) => t('chat.cmd.skillPrefix', { name: s.title }) }) : [];
   const [slashIdx, setSlashIdx] = useState(0);
   useEffect(() => { setSlashIdx(0); }, [slashQ, slashToken?.[0]]);
   const slashPanelRef = useRef(null);
@@ -1021,8 +806,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           <button className="btn sm" style={{ flex: 'none' }} onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen}>{t('crew.panel.open')}</button>
           <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
           <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
-          <SideOpenMenu crews={crewList.filter((c) => c.slug !== slug)}
-            onPick={(s) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'crew', key: s })))} />
+          {/* 슬롯의 '옆에 열기'도 밴드와 같은 게이트 — 패널 사망 축에 표시 배율이 더해져(useSplitAlive) 넓은 셸에서도
+              패널이 죽을 수 있다(배율 2 × 1280). 죽은 패널로 보내는 진입로는 무언 실패. */}
+          {splitAlive && (
+            <SideOpenMenu crews={crewList.filter((c) => c.slug !== slug)}
+              onPick={(s) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'crew', key: s })))} />
+          )}
         </>,
         slotEl,
       )}
@@ -1345,52 +1134,16 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             </button>
           </div>
         )}
-        {/* 작업 폴더 팝오버 — 웹 폴백 경로 입력 + 픽커 거부 사유 표시. 메인 폼과 중첩되면 invalid HTML이라 형제로 둔다.
+        {/* 작업 폴더 팝오버(work-folder.jsx 공용) — 메인 폼과 중첩되면 invalid HTML이라 형제로 둔다.
             '/' 커맨더와 같은 자리(bottom 100%)라 상호 배타 — 커맨더가 떠 있으면 양보한다 */}
-        {wfOpen && !slashToken && (
-          <div className="card card-float" role="dialog" aria-label={t('chat.workFolder.open')}
-            onKeyDown={(e) => { if (e.key === 'Escape') { setWfOpen(false); setWfErr(''); } }}
-            style={{
-            position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 40,
-            width: 'min(460px, 100%)', padding: 12, display: 'grid', gap: 8,
-            boxShadow: '0 8px 28px rgba(0,0,0,.14)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span className="microlabel">{t('chat.workFolder.open')}</span>
-              <button type="button" onClick={() => { setWfOpen(false); setWfErr(''); }} aria-label={t('common.close')}
-                style={{ border: 0, background: 'transparent', color: 'var(--fg-3)', cursor: 'pointer', fontSize: 11, borderRadius: 5 }}>✕</button>
-            </div>
-            {/* 웹은 왜 직접 쓰는지, 데스크톱은 왜 Finder가 안 떴는지 사유를 준다(분리 검수 H1).
-                단 이 폼은 **서버가 고른 폴더를 거부했을 때도** 열린다 — 그땐 픽커가 멀쩡하므로
-                "열 수 없다"고 하면 거짓말이다. 그래서 픽커 실패 여부를 따로 들고 판단한다. */}
-            {!isApp && <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('chat.workFolder.webHint')}</p>}
-            {isApp && wfPickerDead && <p style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('common.pickerUnavailable')}</p>}
-            <form onSubmit={(e) => { e.preventDefault(); const p = wfInput.trim(); if (p) registerWorkFolder(p); }}
-              style={{ display: 'flex', gap: 8 }}>
-              <input value={wfInput} onChange={(e) => setWfInput(e.target.value)} placeholder={t('settings.workroots.placeholder')}
-                {...imeGuard} autoFocus style={{ flex: 1, minWidth: 0, fontSize: 12, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'var(--card)' }} />
-              <button className="btn" type="submit" disabled={wfBusy || !wfInput.trim()}>{wfBusy ? <Spinner /> : t('settings.workroots.add')}</button>
-            </form>
-            {wfErr && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{wfErr}</p>}
-            <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>{t('settings.workroots.runnerNote')}</p>
-          </div>
-        )}
+        {wf.open && !slashToken && <WorkFolderPopover wf={wf} />}
         {/* 컴포저 스택 — 입력창 위에 쌓이는 "이번 턴의 맥락": 고정 작업 폴더 + 대기 중인 지시.
             전엔 칩이 줄줄이 옆으로 흐르고 안내 문구·버튼이 그 사이에 끼어 읽는 순서가 없었다.
             한 줄에 하나씩, 왼쪽 아이콘 · 가운데 내용 · 오른쪽 조작으로 세로로 세운다. */}
-        {(pinnedFolder || queue.length > 0) && (
+        {(wf.pinned || queue.length > 0) && (
           <div className="composer-stack" aria-label={queue.length ? t('chat.queue.label', { n: queue.length }) : t('chat.workFolder.open')}>
-            {/* 고정된 작업 폴더 — 해제 전까지 매 턴 프롬프트에 "지금 일할 폴더"로 들어간다.
-                끝 두 조각만 보인다: 전체 경로는 폭을 다 먹고, CSS 말줄임(direction:rtl)은 앞의 '/'를
-                끝으로 밀어 "…보고서-2026-07/"처럼 없는 슬래시를 만든다(실측). 전체는 title로. */}
-            {pinnedFolder && (
-              <div className="row" title={pinnedFolder}>
-                <span className="lead"><Icon name="folder" size={13} /></span>
-                <span className="name">…/{pinnedFolder.split(/[\\/]/).filter(Boolean).slice(-2).join('/')}</span>
-                <button type="button" className="act" onClick={() => pinFolder('')}
-                  aria-label={t('chat.workFolder.unpin')} title={t('chat.workFolder.unpin')}>✕</button>
-              </div>
-            )}
+            {/* 고정된 작업 폴더 — 해제 전까지 매 턴 프롬프트에 "지금 일할 폴더"로 들어간다(줄 표시는 work-folder.jsx 공용) */}
+            {wf.pinned && <WorkFolderRow wf={wf} />}
             {/* 대기 중인 지시 — 잘못 넣은 것이 말없이 발사되면 안 되므로 떼는 자리를 항상 같이 둔다 */}
             {queue.map((q) => (
               <div key={q.qid} className="row" title={q.text}>
@@ -1440,15 +1193,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                 폴더 아이콘은 translateY(-0.18px) — 클립 잉크가 viewBox 중심보다 0.31단위 위에
                 그려져 있어(실측 cy 11.69 vs 12.0) 박스를 맞춰도 폴더가 내려가 보인다. 그 차이만 상쇄. */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 0, flex: 'none' }}>
-              {/* 작업 폴더 열기 — 러너별 한계는 툴팁으로 정직 표기(Gemini 계열은 경로 제어 없음, runnerNote 재사용) */}
-              <button type="button" className="btn btn-icon sm"
-                style={{ border: 0, flex: 'none', width: 26, color: pinnedFolder ? 'var(--fg)' : 'var(--fg-3)' }}
-                onClick={openWorkFolder} disabled={busy || wfBusy} aria-label={t('chat.workFolder.open')}
-                title={pinnedFolder
-                  ? `${t('chat.workFolder.pinned', { path: pinnedFolder })} — ${t('settings.workroots.runnerNote')}`
-                  : `${t('chat.workFolder.open')} — ${t('settings.workroots.runnerNote')}`}>
-                {wfBusy ? <Spinner size={14} /> : <Icon name="folder" size={14} style={{ transform: 'translateY(-0.18px)' }} />}
-              </button>
+              {/* 작업 폴더 열기(work-folder.jsx 공용) — 러너별 한계는 툴팁으로 정직 표기(runnerNote 재사용) */}
+              <WorkFolderButton wf={wf} disabled={busy} style={{ width: 26 }} iconStyle={{ transform: 'translateY(-0.18px)' }} />
               <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', width: 26, color: 'var(--fg-3)' }}
                 onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
                 <Icon name="clip" size={14} />
@@ -1481,7 +1227,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           sel={sel}
           onRunnerChange={saveRunner}
           onClose={() => setCardOpen(false)}
-          onFired={() => { window.dispatchEvent(new Event('argo:refresh')); if (embedded) onClose?.(); else router.push(`/c/${ws}`); }}
+          // 해고 후 데크 복귀 — 옆에 열기 패널(?side=)은 유지하되, 열린 패널이 방금 해고한 이 크루면 떨군다(사라진 크루를
+          // 가리키는 패널을 끌고 가지 않게). 다른 크루·문서 패널은 그대로(분리 검수 2026-09-02 별건 — 조건부 처방).
+          onFired={() => { window.dispatchEvent(new Event('argo:refresh')); if (embedded) onClose?.(); else router.push(keepSideExcept(`/c/${ws}`, window.location.search, { type: 'crew', key: slug })); }}
         />
       )}
 

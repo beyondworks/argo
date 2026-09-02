@@ -9,6 +9,21 @@ export const dispZoom = () => parseFloat(document.documentElement.style.zoom) ||
 export const PANE_W_MIN = 360;
 export const clampPaneW = (w) => Math.max(PANE_W_MIN, Math.min(Math.round(window.innerWidth / dispZoom() * 0.6), Math.round(w)));
 
+/** 분할 패널이 죽는 실뷰포트 축 — globals.css `@media (max-width: 899px) { .split-pane { display: none } }`와
+    **같은 질의**. 소비자(훅)는 이 상수만 쓴다 — 질의를 각자 적으면 축이 갈라진다(#356 검수 MEDIUM-1의 뿌리).
+    min-width:900으로 쓰면 소수점 뷰포트(899.4 — 윈도우 OS 배율 150%·페이지 줌)에서 CSS·JS 둘 다 거짓이 되는
+    1px 사각이 생긴다(#356 2R LOW-1) — max-width:899의 부정이어야 경계가 원천적으로 못 갈라진다. */
+export const SPLIT_DEAD_MQ = '(max-width: 899px)';
+/** 분할 패널 가용 판정(순수 — 소비자: SplitPane 렌더·크루 채팅·회의실·사이드바 크루 행·기억 문서 행 진입로가 useSplitAlive로 공유).
+    mqDead = matchMedia(SPLIT_DEAD_MQ).matches, z = 표시 배율.
+    ① 실뷰포트 축: mqDead면 죽음(CSS가 이미 숨긴다 — 죽은 패널로 보내는 진입로는 무언 실패).
+    ② 표시 배율 축: 미디어쿼리는 실뷰포트만 보므로 배율 2 × 1280(유효 640 CSS px)에서 패널이 살아남아
+       사이드바 228 + 본문 바닥 308 + 패널 바닥 360 = 896 > 640 → 본문 열 0px·문서 가로 넘침 280px
+       (실측 2026-09-02 회의실, 1424도 동일 — 크루 채팅도 같은 레이아웃). 유효 폭(innerWidth ÷ z)에 같은 경계
+       (>899 = 삶)를 적용한다. 배율 1이면 ①과 동치이므로 ①만 본다 — innerWidth(정수 반올림)와 미디어쿼리
+       (소수점)의 어긋남으로 1px 사각을 되살리지 않기 위해서다. */
+export const splitAliveAt = (mqDead, innerWidth, z) => !mqDead && (z === 1 || innerWidth / z > 899);
+
 /** 이벤트 좌표(뷰포트 px) → 요소 좌표계(CSS px). rect는 배율이 곱해진 크기, clientWidth는 CSS px라
     비율 k로 환산한다(배율 1 = k 1 = 종전 동일). rect.width 0(미레이아웃)은 k 1로 관용. */
 export const zoomedEvPos = (rect, clientWidth, clientX, clientY) => {
@@ -28,6 +43,15 @@ export const zoomedEvPos = (rect, clientWidth, clientX, clientY) => {
     종전 그대로다(초장문 라벨은 일반 폭에서도 실제 넘침이라 정당하게 움직인다 — 분리 검수 F6).
     왼쪽 여백 구제가 우선이며, maxW 상한 덕에 구제 후 오른쪽 여백은 자동 보장된다(양쪽 동시 발화
     입력은 구조적으로 없다). */
+/** DropUp 열림 패널의 **세로** 상한(CSS px) — 패널은 기준 박스(트리거 래퍼) 위로 열리므로 쓸 수 있는 높이는
+    래퍼 상단까지다. 내용이 그보다 크면 뷰포트 위로 잘려 위쪽 문단·닫기 버튼에 닿을 수 없다(실측 2026-09-02:
+    회의실 작업 폴더 팝오버, 1440×900 창 × 배율 2에서 top −121px). rect(래퍼)는 뷰포트 px, 반환은 CSS px —
+    래퍼 상단 ÷ 배율에서 패널 간격(gap)과 화면 위 여백(margin)을 뺀다. 하한 minH — 가용 높이가 그보다 작으면(래퍼가
+    화면 맨 위 근처) 패널이 0 높이로 접히는 대신 위로 넘친다(상단이 잘린다 — 0 높이보다 낫다는 선택, 분리 검수 LOW-5).
+    배율 1·통상 창에서는 상한이 자연 높이보다 커서 비구속(종전 동일). */
+export const dropUpMaxH = (rect, { z = dispZoom(), gap = 8, margin = 8, minH = 120 } = {}) =>
+  Math.max(minH, Math.floor(rect.top / z) - gap - margin);
+
 export const dropUpClamp = (rect, viewportW, panelW, alignRight = false) => {
   const z = dispZoom();
   const M = 8 * z; // 가장자리 여백 8 CSS px(뷰포트 px 환산)

@@ -219,7 +219,7 @@ test('배선 — SDK 턴이 턴 요약을 크루 서버와 프롬프트 양쪽�
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(src, /const connectors = await connectorBriefing\(wsId\)/, 'SDK 턴이 커넥터 요약을 읽지 않는다');
-  assert.match(src, /mirrorCtx, lang, connectors\)/, '크루 서버에 요약이 전달되지 않는다');
+  assert.match(src, /mirrorCtx, lang, connectors, workFolder\)/, '크루 서버에 요약이 전달되지 않는다'); // workFolder = 회의 폴더(위임 턴 전달, room-work-folder 테스트가 잠금)
   assert.match(src, /commonDirectives\(\{ caps, connectedMcp, connectors,/, '시스템 프롬프트에 요약이 전달되지 않는다');
 });
 
