@@ -4,7 +4,8 @@
 // 그게 유출이다(고객 기기의 코딩 에이전트가 Argo 파일을 읽은 사고와 같은 계열).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, stat, readFile, mkdir } from 'node:fs/promises';
+import { stat, readFile, mkdir } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

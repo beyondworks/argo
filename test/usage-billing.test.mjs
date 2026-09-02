@@ -4,7 +4,8 @@
 // SDK는 구독 턴에도 total_cost_usd에 정가 상당액을 리포트한다 — 그걸 그대로 더하면 청구서로 읽힌다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

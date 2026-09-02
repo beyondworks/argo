@@ -3,7 +3,8 @@
 // 그래서 이 파일의 중심 테스트는 캐시 경로와 정본 전수 읽기 경로의 **바이트 동일성**이다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, utimes, rm, stat, chmod } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, utimes, rm, stat, chmod } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

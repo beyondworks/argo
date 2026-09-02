@@ -13,7 +13,8 @@
 //  ③ **러너 중립성**(유건 지시): SDK든 CLI든 같은 출처에서 같은 문구를 받는다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, rm, realpath, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';

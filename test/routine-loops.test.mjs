@@ -2,7 +2,8 @@
 // chat()은 runRoutine의 chatFn 주입으로 대체 — 실 러너 없이 프로토콜 배선만 검증(라이브는 별도).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

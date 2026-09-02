@@ -3,7 +3,7 @@
 // 유효 토큰의 검증 엔드포인트 200 통과는 키체인 토큰으로 라이브 실측 확인됨(2026-07-20).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

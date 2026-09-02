@@ -3,7 +3,8 @@
 // 2026-07-30부터 능력 토글 자체가 없다(capabilities.mjs) — 거절·제안 카드 경로가 사라졌다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

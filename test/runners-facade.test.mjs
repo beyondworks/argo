@@ -3,7 +3,7 @@
 // export를 의도적으로 제거·개명하려면 이 목록을 함께 고쳐야 한다(그게 이 게이트의 목적).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

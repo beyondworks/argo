@@ -5,7 +5,8 @@
 // ③ 회의록(journal md)에 산출물 줄(행동) ④ 동기화 union 병합이 필드를 보존(행동) ⑤ 화면·위임 미러 배선(소스 구간 핀 —
 // JSX는 구간 불변식으로만 잠긴다·위임은 SDK 도구 경로라 가짜 러너로 못 돈다. 핀은 행동 테스트보다 약하다고 명시).
 // ⚠ workspace.mjs의 WS_ROOT는 모듈 로드 시점에 고정 — env를 어떤 임포트보다 먼저 잡는다(실데이터 미접촉).
-import { mkdtemp, mkdir, writeFile, chmod, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, chmod, readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

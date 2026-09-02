@@ -40,7 +40,8 @@ test('pickRunner — exclude 목록을 받아 남은 러너를 고른다(자가�
 // 게이트가 없던 것. 행동(파일에 실제로 실리는 값) + 배선(호출부) 양쪽을 잠근다.
 test('gemini settings.json이 openRoots를 context.includeDirectories로 싣는다(반경 게이트)', async () => {
   const { writeGeminiTurnSettings } = await import('../src/runners/gemini.mjs');
-  const { mkdtemp, mkdir, readFile } = await import('node:fs/promises');
+  const { mkdir, readFile } = await import('node:fs/promises');
+  const { mkdtemp } = await import('./helpers/tmp.mjs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const home = await mkdtemp(join(tmpdir(), 'argo-gset-'));
@@ -190,7 +191,8 @@ test('배선: oneshot 자가치유도 진입에서 제외 목록을 존중한다
 // 샌드박스 제거 게이트(2026-08-21) — codex는 test/codex-caps-config가 잠그지만 gemini 쪽은
 // 게이트가 없어 조용히 auto_edit·셸 제외로 되돌아가도 전 스위트가 초록이었다(분리 검수 MED-5).
 test('gemini: yolo 승인 모드 유지 + 셸 도구가 전권 caps에서 열린다', async () => {
-  const { readFile: rf, mkdtemp, mkdir } = await import('node:fs/promises');
+  const { readFile: rf, mkdir } = await import('node:fs/promises');
+  const { mkdtemp } = await import('./helpers/tmp.mjs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const src = await rf(new URL('../src/runners.mjs', import.meta.url), 'utf8');

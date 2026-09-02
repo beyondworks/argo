@@ -7,7 +7,8 @@
 // 상대는 US-1이 승격해 둔 test/helpers/oauth-test-server.mjs(자동승인 AS+RS)라 브라우저·실계정 0으로 돈다.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

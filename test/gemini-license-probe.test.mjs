@@ -3,7 +3,8 @@
 // 유효 자격 오거절 방지가 최우선 제약(glm verify 선례) — 확정 거절은 두 형태뿐, 나머지 전부 관용.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

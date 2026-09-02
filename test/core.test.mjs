@@ -2,7 +2,8 @@
 // 실행: npm test (node --test). 외부 의존 없이 순수·파일 단위만 검증(Supabase·SDK 미호출).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, readdir, rm, stat } from 'node:fs/promises';
+import { readFile, writeFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hkdfSync, createCipheriv, randomBytes } from 'node:crypto';

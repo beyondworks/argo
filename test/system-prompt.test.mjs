@@ -1,7 +1,7 @@
 // 시스템 프롬프트 v2 구조 회귀 — 러너 독립성(hasTools 분기)·핵심 절·vault 데이터 규약이 깨지지 않게 잠근다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

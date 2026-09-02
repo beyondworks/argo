@@ -3,7 +3,7 @@
 // 불가로 "Not logged in · Please run /login" 전 기능 사망 ② 크루 영입 Claude 하드코딩.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

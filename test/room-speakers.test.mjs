@@ -4,7 +4,8 @@
 // 러너는 chat 스텁(helpers/room-chat-stub.mjs — 리졸브 훅)으로 격리: 파일 배치·크루 목록·방 저장·턴 마커는 실물.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { register } from 'node:module';

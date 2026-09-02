@@ -4,7 +4,8 @@
 //    순수 함수가 맞아도 호출부가 빠지면 칩은 안 뜬다. 선례: runner-neutrality 배선 단언).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, symlink } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, symlink } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, SERVE_PREFIXES } from '../src/artifacts.mjs';

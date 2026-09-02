@@ -5,7 +5,8 @@
 // sync.mjs를 동적 import해야 WS_ROOT(모듈 로드 시 고정)가 이 임시 루트를 가리킨다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

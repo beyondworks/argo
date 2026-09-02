@@ -3,7 +3,8 @@
 // "파일로 열어 적용" 계약을 주는지 ③ 카드 PUT이 스코프를 되살리지 않는지 ④ 배선(route 태깅·UI 배지).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

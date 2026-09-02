@@ -14,7 +14,7 @@
 //  ⑤ 대기 중인 줄은 프롬프트 맥락에서 뺀다 — 지금 보내는 그 글이라, 안 빼면 같은 말이 두 번 들어간다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';

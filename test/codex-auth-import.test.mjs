@@ -4,7 +4,8 @@
 // in header". CI 스모크는 실자격이 필요해 이 경로를 못 태우므로(스모크는 claude 원클릭 전용) 여기서 잠근다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, lstat, utimes } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, lstat, utimes } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

@@ -3,7 +3,7 @@
 // 복사된다(이미 있는 러너는 덮지 않음) ③ 게스트 마커가 해제된다 ④ 로컬/게스트 id로는 호출 불가.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

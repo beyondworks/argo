@@ -2,7 +2,8 @@
 // Cargo.lock은 앱 크레이트(name="app") 블록만 갈고, 같은 버전 문자열의 타 크레이트는 불변이어야 한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readVersions, checkVersions, bumpVersions } from '../scripts/bump-version.mjs';

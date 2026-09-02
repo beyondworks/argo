@@ -3,7 +3,8 @@
 // 동결 ④ detectRunners 60초 캐시가 host 옵트인 클릭 오거절.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, stubRunnerToolDirs } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,6 +13,8 @@ import { join } from 'node:path';
 // (HOME만 심으면 win 러너의 실 프로필에 쓰고 테스트는 다른 경로를 읽어 ENOENT — CI 실측 2026-07-27).
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-truthtest-'));
 process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-truthhome-'));
+// 러너 관리본 스텁 — saveRunnerCred 워밍업 조달(~360MB 다운로드) 차단(runner-cred와 동일 근거).
+await stubRunnerToolDirs();
 const {
   startRunnerWebAuth, submitRunnerWebAuth, webAuthDone,
   saveRunnerCred, runnerCredEnv, detectRunners,

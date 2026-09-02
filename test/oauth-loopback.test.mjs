@@ -15,7 +15,7 @@
 // 여기서 잠그는 것은 문자열이 아니라 **도달성**이다: 리스너가 실제로 뜨고, 알려준 주소로 닿는다.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';

@@ -41,7 +41,8 @@ test('회의실: 초안 보존 3갈래 + 전송 성공 비움·실패 복원', a
 });
 
 test('서버: 안건이 저장된 뒤의 실패는 saved=true, 저장 전 실패는 saved 없음 — 라우트가 바디에 싣는다(실호출)', async () => {
-  const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises');
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { mkdtemp } = await import('./helpers/tmp.mjs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const { register } = await import('node:module');

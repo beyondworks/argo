@@ -2,7 +2,7 @@
 // 게이트 판정(anyRunnerUsable)을 고정한다. (codex 샌드박스 매핑 테스트는 danger-full-access 전환으로 삭제)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

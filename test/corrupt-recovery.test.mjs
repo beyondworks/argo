@@ -8,7 +8,8 @@
 //     pull)이 성립하지 않고 잘린 본이 클라우드로 push돼 로컬 손상이 전 기기 유실로 확대된다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, readdir } from 'node:fs/promises';
+import { writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { salvageJsonArray, salvageFromCorrupt, readJson, writeJsonAtomic } from '../src/jsonstore.mjs';

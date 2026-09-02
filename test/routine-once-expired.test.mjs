@@ -11,7 +11,7 @@
 // 로컬 — tz 갈래는 routine-timezone.test.mjs의 onceSpent/zonedParts 커버를 공유).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { onceExpired, onceSpent, CATCHUP_MS } from '../src/routine-time.mjs';

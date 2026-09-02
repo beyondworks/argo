@@ -3,7 +3,7 @@
 // (#855604d "실행 갈래가 둘이면 갈래마다 세라").
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

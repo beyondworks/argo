@@ -2,7 +2,8 @@
 // routeMessage는 기존 테스트에 케이스가 없다(export만 있었음). 임시 ARGO_ROOT — 실데이터 미접촉.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

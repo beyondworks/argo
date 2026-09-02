@@ -9,7 +9,8 @@
 // 여기서 잠그는 것은 배선이 아니라 **결과**다: 쓰기는 실행되지 않고 결재가 쌓인다.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

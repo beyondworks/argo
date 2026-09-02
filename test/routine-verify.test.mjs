@@ -2,7 +2,8 @@
 // 정규화·경로 게이트·재시도 배선·정직 실패를 임시 ARGO_ROOT에서 잠근다. chat은 chatFn 주입.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -57,7 +58,8 @@ test('checkVerify: 필수 문구는 모든 파일에 적용된다 (검수 M3 핀
 
 test('checkVerify: vault 안 심볼릭 링크가 밖을 가리키면 따라가지 않는다 (검수 M2 핀)', async () => {
   const { symlink } = await import('node:fs/promises');
-  const outside = join(tmpdir(), `argo-verify-outside-${Date.now()}.txt`);
+  // vault 밖 표적 — 직접 tmpdir에 쓰면 잔여물이 남는다: 헬퍼 추적 mkdtemp 안에 만들어 exit 때 함께 청소
+  const outside = join(await mkdtemp(join(tmpdir(), 'argo-verify-outside-')), 'secret.txt');
   await writeFile(outside, 'SECRET-NEEDLE', 'utf8');
   await symlink(outside, join(VAULT, 'link-out.md'));
   const r = await checkVerify(WS, { files: ['link-out.md'], contains: 'SECRET-NEEDLE' });

@@ -2,7 +2,8 @@
 // 실행: npm test (node --test). 외부 의존 없이 순수·파일 단위만 검증.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, symlink, stat, rm } from 'node:fs/promises';
+import { writeFile, symlink, stat, rm } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

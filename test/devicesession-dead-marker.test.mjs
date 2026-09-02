@@ -6,7 +6,8 @@
 //     거절 시 디스크를 캐시 무시로 재독해 토큰이 바뀌었으면 그 세션으로 1회만 재시도(다른 프로세스 회전 자가 치유)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

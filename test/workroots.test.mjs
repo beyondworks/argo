@@ -5,7 +5,8 @@
 //  ③ codex 매핑 — writable_roots에 지정 폴더가 실리되 fs 꺼짐이면 홈은 안 실린다
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises';
+import { mkdir, writeFile, symlink, rm } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir, homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

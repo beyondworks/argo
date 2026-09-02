@@ -3,7 +3,7 @@
 // 문맥 행렬 교훈: "기기 상태(신규/기존)" 축이 기존 테스트에 없어(개발 기기엔 ~/.argo/tools 존재) 못 잡았다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

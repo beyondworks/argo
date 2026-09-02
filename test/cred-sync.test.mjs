@@ -8,7 +8,8 @@
 // 격리: ARGO_ROOT를 먼저 세팅한 뒤 동적 import(파일별 별도 프로세스 — sync-integration과 동일 하네스).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

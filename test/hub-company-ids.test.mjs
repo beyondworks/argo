@@ -4,7 +4,8 @@
 // 하류 paths() throw가 리더 기기 틱을 매분 통째로 죽인다(분리 검수 2026-07-28 HIGH-1·MEDIUM-2).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
