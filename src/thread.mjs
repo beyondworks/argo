@@ -6,10 +6,11 @@ import { paths, getDeviceId } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 import { resetStamp, resumeStamp } from './reset-stamp.mjs';
+import { sanitizeFileSlug } from './slug.mjs'; // 파일 이름 세척의 단일 원천 — 회의록 충돌 판정(sync 반입 문)과 같은 규칙
 
-const file = (wsId, slug) => join(paths(wsId).chats, `${slug.replace(/[^a-z0-9-]/g, '')}.json`);
+const file = (wsId, slug) => join(paths(wsId).chats, `${sanitizeFileSlug(slug)}.json`);
 // 같은 크루 스레드의 read-modify-write를 직렬화 — 웹·텔레그램 동시 턴의 lost-update 방지
-const lockKey = (wsId, slug) => `thread:${wsId}:${slug.replace(/[^a-z0-9-]/g, '')}`;
+const lockKey = (wsId, slug) => `thread:${wsId}:${sanitizeFileSlug(slug)}`;
 
 /** 스레드 파일 mtime(ms) — 폴링 dedup용. 파일이 없으면 0. */
 export async function threadMtime(wsId, slug) {

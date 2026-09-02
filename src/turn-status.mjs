@@ -1,11 +1,12 @@
 // 턴 진행 단계 — "작성중" 한 마디로 뭉개지 않는다(Hermes 교훈: 지연과 먹통을 구분 못 하면 신뢰 붕괴).
 // chat이 단계를 파일로 남기고, 크루 화면이 폴링해 보여준다.
 import { rm } from 'node:fs/promises';
+import { sanitizeFileSlug } from './slug.mjs';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 
-const file = (wsId, slug) => join(paths(wsId).chats, `${slug.replace(/[^a-z0-9-]/g, '')}.status.json`);
+const file = (wsId, slug) => join(paths(wsId).chats, `${sanitizeFileSlug(slug)}.status.json`); // 세척 단일 원천(slug.mjs) — thread.mjs와 같은 규칙
 
 // 안정적인 stage 코드만 기록한다 — 사람이 읽는 라벨은 클라이언트가 i18n으로 번역한다(영어 회사에 한국어
 // 진행 라벨이 노출되던 다국어 규칙 위반 수정). detail(파일명·명령 등 고유값)은 번역 대상이 아니라 그대로.

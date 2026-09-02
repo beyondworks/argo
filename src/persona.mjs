@@ -9,6 +9,7 @@ import { appendUsage } from './usage.mjs';
 import { isBilledRunner } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
 import { appendEvent } from './events.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 Codex/Gemini/GLM만 연결해도 영입 가능
+import { isReservedSlug } from './slug.mjs'; // 회의실 내부 이름(room-*)과의 파일 충돌 차단 — 예약어 원천
 
 // 카드 = 시스템 프롬프트. lang='en'이면 이름·직함·본문을 영어로 생성하되, 세 섹션 헤더(## 전문성/일하는 방식/톤)는
 // 한국어 고정 토큰으로 유지한다 — 백엔드·프론트 여러 파서(persona.mjs:appendAgentRule, hub.mjs, crew page)가 이
@@ -61,6 +62,13 @@ role: <직함 한 줄>
 
 ## 톤
 (사용자와 대화할 때의 말투 한 줄)`;
+
+// 이름 → slug. 영입 문(createAgentFromPrompt)의 지정값·이름·frontmatter slug가 모두 이 한 함수로 파일 이름이 된다.
+const slugify = (s) => (s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+// 예약어(slug.mjs) 거절 — 회사 언어로 안내(이 함수의 다른 오류와 같은 계약) + code로 라우트가 400 매핑.
+const reservedSlugError = (name, slug, lang) => Object.assign(new Error(lang === 'en'
+  ? `The crew name "${name}" (${slug}) collides with the meeting room's internal name (room-) — please hire with a different name.`
+  : `크루 이름 "${name}"(${slug})은 회의실 내부 이름(room-)과 겹칩니다 — 다른 이름으로 영입해 주세요.`), { code: 'SLUG_RESERVED' });
 
 // 크루 카드 파일 경로 — slug는 URL 경로 파라미터로 들어오므로 조립 직전 검증(경로 탈출 차단).
 /** 새로 만드는 크루의 작명 규칙 — **생성 시점에만** 강제한다(아래 cardPath 주석 참고). */
@@ -152,6 +160,10 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   const t0 = Date.now();
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({})); // 시스템 언어 — 카드 생성 언어
   const avoid = name?.trim() ? [] : await existingNames(wsId); // 이름 지정 영입은 제외 불필요
+  // 이름 지정 영입은 **이름의 슬러그**를 미리 안다 — 예약어면 모델 턴(비용·최대 5분 대기·usage 적립) 전에 거절(분리 검수 LOW-1).
+  // 최종 slug는 모델 frontmatter의 slug:가 이길 수 있으므로 이것은 이름 기준의 보수적 조기 거절이다(검수 2R LOW-B) —
+  // 최종 판정은 아래 사후 게이트(base)가 자동 이름·frontmatter slug 경로까지 같은 규칙으로 맡는다.
+  if (name?.trim() && isReservedSlug(slugify(name.trim()))) throw reservedSlugError(name.trim(), slugify(name.trim()), lang);
   // 상한 명시 — 기본(120s)은 사용자 대기 경로엔 맞지만 **첫 영입**은 다르다: 신규 회사는 무료
   // 모델(OPENROUTER_ONBOARD_MODEL)로 뽑히기 쉽고 무료 티어는 큐 지연이 크며, 러너가 하나뿐이라
   // 자가치유가 받아줄 대체도 없다 — 여기서 잘리면 온보딩이 통째로 실패한다(검수 2026-07-27 I-1).
@@ -205,7 +217,6 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   if (!roleFinal) roleFinal = await recommendRole(wsId, oneLiner, lang);
 
   // slug — 지정값→이름 슬러그화→crew. 동명 크루 중복 영입 시 기존 카드를 덮어쓰지 않는다(-n).
-  const slugify = (s) => (s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
   const base = slugify(meta.slug || looseField(md, 'slug') || nameFinal) || 'crew';
   let slug = base;
   for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)); n++) slug = `${base}-${n}`;
@@ -220,6 +231,9 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   // 밖에서 들어온 파일까지 규칙으로 막지는 않는다(cardPath 주석 참고). slugify가 언젠가 규칙을
   // 벗어난 값을 내면 카드를 쓰기 전에 여기서 걸린다.
   if (!SLUG_RE.test(slug)) throw new Error(`크루 slug를 만들지 못했습니다: ${slug}`);
+  // 예약어(slug.mjs) — 'room-main'은 회의록 chats/room-main.json·회의 턴 마커와 같은 파일 이름이 된다. -n 회피는
+  // 접두를 남기므로 base로 판정한다(이름 지정 선판정과 같은 규칙 — frontmatter slug·자동 이름 경로가 여기서 걸린다).
+  if (isReservedSlug(base)) throw reservedSlugError(nameFinal, base, lang);
   const file = cardPath(wsId, slug);
   await writeJsonAtomic(file, finalMd);
   await appendEvent(wsId, { type: 'crew', op: 'hire', slug, name: nameFinal });
