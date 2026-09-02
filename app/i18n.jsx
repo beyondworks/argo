@@ -675,7 +675,7 @@ const DICT = {
   'deck.hireByPrompt': ['한 줄 프롬프트로 영입', 'Hire with one prompt'],
   'deck.linkDensity': ['연결 밀도', 'Link Density'],
   'deck.linksPair': ['{n}쌍', '{n} pairs'],
-  'deck.linked': ['연결됨', 'linked'],
+  'deck.linked': ['연결된 기억', 'linked memories'],
   'deck.composition': ['구성', 'Composition'],
   'deck.vault': ['기억', 'Vault'],
   'deck.conversations': ['대화 기록', 'Conversations'],
