@@ -16,7 +16,7 @@ export const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--ca
 
 // 가용 판정(순수)은 runner-usable.mjs로 분리 — 데크 배너·홈 안내·온보딩 게이트·회귀 테스트가 공유.
 // 기존 소비처(import from './runner-connect') 호환을 위해 재수출한다.
-export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, PICK_ORDER } from './runner-usable.mjs';
+export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenConnected, PICK_ORDER } from './runner-usable.mjs';
 import { lastTurnByRunner, lastHealthFailByRunner, healthFailMessageKey } from './runner-usable.mjs';
 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
@@ -25,8 +25,8 @@ import { lastTurnByRunner, lastHealthFailByRunner, healthFailMessageKey } from '
 const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
 // 화면에 그릴 순서 — **이 목록에 없으면 카드가 아예 안 뜬다**(러너를 추가하고 여기를 빠뜨리면
 // 연결 수단이 UI에서 사라진다. 분리 검수 2026-08-03이 grok 누락으로 실제 적발).
-// test/runner-order-sync.test.mjs가 RUNNER_AUTH와의 동기화를 잠근다.
-const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter', 'grok'];
+// test/runner-order-sync.test.mjs가 RUNNER_AUTH(숨김 제외)와의 동기화를 잠근다. gemini는 숨김(카탈로그 hidden — 유건 결정 2026-09-03).
+const RUNNER_ORDER = ['claude', 'codex', 'antigravity', 'glm', 'kimi', 'openrouter', 'grok'];
 
 export function AiConnectionCard({ ws, accordion = false }) {
   const { t } = useLang();
@@ -56,13 +56,19 @@ export function AiConnectionCard({ ws, accordion = false }) {
         <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={i === 0} lastTurn={lastTurns[id]} healthFail={healthFails[id]}
           {...(accordion ? { open: openId === id, onToggle: () => setOpenId(openId === id ? null : id) } : {})} />
       ))}
+      {/* 숨김 러너(gemini)는 카드가 없다 — 단, 저장된 연결이 남아 있으면 "제공 종료 · 해제만" 행으로 보인다(검수 MEDIUM-4:
+          벤더 자격을 앱에서 볼 수도 지울 수도 없던 상태 방지). 해제하면 이 행도 사라진다. */}
+      {runners && Object.keys(runners).filter((id) => runners[id]?.hidden && runners[id]?.company?.connected).map((id) => (
+        <RunnerRow key={id} ws={ws} id={id} st={runners[id]} onChange={load} first={false} lastTurn={lastTurns[id]} healthFail={healthFails[id]} retired
+          {...(accordion ? { open: openId === id, onToggle: () => setOpenId(openId === id ? null : id) } : {})} />
+      ))}
     </div>
   );
 }
 
 /** 러너 1행 — 상태 칩 + 방식 탭 + (API키/붙여넣기 토큰 입력) 또는 (CLI 로그인 안내).
     onToggle이 오면 아코디언 모드(온보딩) — 헤더만 보이고 클릭으로 본문을 펼친다. 설정은 기존 그대로. */
-function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, lastTurn = null, healthFail = null }) {
+function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, lastTurn = null, healthFail = null, retired = false }) {
   const { t, fmtMoney } = useLang();
   const methods = st?.methods ?? ['apikey'];
   const hasOauth = methods.includes('oauth');
@@ -450,7 +456,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
       {/* .chip 금지 — uppercase+nowrap+mono가 EN 문장을 486px로 부풀려 폰 폭 카드를 뚫는다
           (검수 M3 실측: EN 486 vs KO 300, 컨테이너 338). 소형 텍스트 + 줄바꿈 허용.
           검진 실패(주기 확인 — "지금 자격이 죽어 있다")가 턴 실패보다 강한 신호라 우선 표시한다. */}
-      {(company.connected || st?.host?.optedIn) && (healthFail?.ok === false
+      {!retired && (company.connected || st?.host?.optedIn) && (healthFail?.ok === false
         ? <span style={{ fontSize: 11.5, color: 'var(--danger)', whiteSpace: 'normal', minWidth: 0 }}>
             {t(healthFailMessageKey(healthFail.reason))}
           </span>
@@ -477,8 +483,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
       {st?.cli && (
         <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.cliToolsNote')}</span>
       )}
-      {hostLinked ? (
-        /* host 연결됨 — 상태 칩이 전부다. 연결 폼은 숨기고 해제만 노출(오폼 입력 유실 방지). */
+      {retired && <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.runners.retiredNote')}</span>}
+      {hostLinked || retired ? (
+        /* host 연결됨 또는 제공 종료(숨김) 러너의 보관 자격 — 상태 칩이 전부다. 연결 폼은 숨기고 해제만 노출. */
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {msg && <span style={{ fontSize: 12, color: ok ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>}
           {removeBtn}

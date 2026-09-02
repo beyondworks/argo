@@ -106,21 +106,16 @@ test('webauth finishWebAuth: 차단 계정은 저장하지 않고 API 키 안내
     assert.ok(!JSON.parse(secrets)?.runners?.gemini, '자격이 저장되지 않았다');
   } finally { globalThis.fetch = realFetch; }
 });
-test('회사 keys PUT(oauth 붙여넣기·API 경로): license = API 키 안내 400, 일반 무효 = 재발급 문구(행동)', async () => {
+test('회사 keys PUT: gemini는 숨김 러너라 신규 저장이 거절된다(2026-09-03) — 라이선스 프로브 분기는 위 verifyRunnerCred 행동 테스트가 덮는다', async () => {
   const ws = 'rt-lic';
   await mkdir(join(process.env.ARGO_ROOT, ws), { recursive: true });
   await writeFile(join(process.env.ARGO_ROOT, ws, 'company.json'), JSON.stringify({ id: ws, name: 't', lang: 'ko' }));
   const route = await import('../app/api/companies/[ws]/keys/route.js');
-  const put = (value) => route.PUT(new Request('http://x/api', { method: 'PUT', body: JSON.stringify({ runner: 'gemini', type: 'oauth', value, lang: 'ko' }), headers: { 'content-type': 'application/json' } }), { params: Promise.resolve({ ws }) });
   const realFetch = globalThis.fetch;
   try {
-    globalThis.fetch = async (url) => { if (String(url).includes('loadCodeAssist')) return new Response(JSON.stringify(BLOCKED_BODY), { status: 200 }); throw new Error('unstubbed'); };
-    const r1 = await put(blob());
-    assert.equal(r1.status, 400);
-    assert.match((await r1.json()).error, /Code Assist 라이선스가 없어[\s\S]*API 키 방식/, 'license = API 키 전환 안내');
-    globalThis.fetch = async (url) => { if (String(url).includes('loadCodeAssist')) return new Response('', { status: 401 }); throw new Error('unstubbed'); };
-    const r2 = await put(blob());
-    assert.equal(r2.status, 400);
-    assert.match((await r2.json()).error, /새로 발급해 다시 붙여넣어/, '일반 무효 = 재발급 문구');
+    globalThis.fetch = async () => { throw new Error('unstubbed — 숨김 거절은 프로브 전에 나야 한다'); };
+    const r = await route.PUT(new Request('http://x/api', { method: 'PUT', body: JSON.stringify({ runner: 'gemini', type: 'oauth', value: blob(), lang: 'ko' }), headers: { 'content-type': 'application/json' } }), { params: Promise.resolve({ ws }) });
+    assert.equal(r.status, 400);
+    assert.match((await r.json()).error, /더 이상 제공되지 않는 러너/, '숨김 러너 신규 저장 거절 — 프로브(fetch) 호출 없이');
   } finally { globalThis.fetch = realFetch; }
 });

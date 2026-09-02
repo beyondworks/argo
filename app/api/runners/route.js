@@ -1,4 +1,4 @@
-import { RUNNERS, detectRunners, runnerStatus, autoRunnerOf } from '../../../src/runners.mjs';
+import { RUNNERS, detectRunners, runnerStatus, autoRunnerOf, isHiddenRunner } from '../../../src/runners.mjs';
 import { guardCompany } from '../../auth.mjs';
 
 // 러너 카탈로그 + 설치·연결 상태 — 크루 편집 모달·크루 카드·채팅 셀렉터가 먹는다.
@@ -13,11 +13,14 @@ export async function GET(req) {
     company = await runnerStatus(ws).catch(() => null);
   }
   const status = await detectRunners();
+  // 숨김 러너(gemini)도 목록에 **남긴다** — hidden 표지만 싣는다. 목록에서 빼면 이미 gemini로 지정된 크루의 셀렉터가
+  // 현재 값을 못 찾아 "자동"으로 오표시됐다(분리 검수 HIGH-2 실측). 선택지에서 빼는 것은 소비자(크루 카드·편집 모달·
+  // 경쟁 슬롯)가 hidden으로 한다 — 현재 값일 때만 예외로 보여 정직 표기.
   const runners = Object.entries(RUNNERS).map(([id, r]) => {
     const c = company?.[id];
     const companyConnected = !!c?.company?.connected && !c?.company?.invalid; // 무효(재연결 필요)는 미연결 취급
     return {
-      id, name: r.name, kind: r.kind, mcp: !!r.mcp, models: r.models,
+      id, name: r.name, kind: r.kind, mcp: !!r.mcp, models: r.models, hidden: isHiddenRunner(id),
       installed: status[id]?.installed ?? false,
       authed: companyConnected, // 명시 연결만 — 게이트·실행(pickRunner)과 동일 판정
       companyConnected,

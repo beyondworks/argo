@@ -1768,8 +1768,9 @@ function DefaultRunnerPicker({ ws }) {
     await fetch(`/api/companies/${ws}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ defaultRunner: v }) }).catch(() => {});
   };
   if (!runners) return null;
-  const connected = runners.filter((r) => r.authed);
-  if (connected.length < 2) return null; // 1개 이하면 선택의 의미 없음
+  // 숨김 러너(gemini)는 선택지에서 뺀다 — 현재 기본값이 그것이면 남겨 정직 표기(검수 LOW-4: 낡은 값을 보지도 고치지도 못하던 상태)
+  const connected = runners.filter((r) => r.authed && (!r.hidden || r.id === val));
+  if (connected.length < 2 && !(connected.length === 1 && connected[0].hidden)) return null; // 1개 이하면 선택의 의미 없음(숨김이 기본값이면 되돌릴 수 있게 보인다)
   // 카드가 아니라 **필드**다 — 회사 정보 카드 안에 회사 이름과 같은 리듬(마이크로라벨 + 컨트롤)으로
   // 들어간다(유건 지시 2026-08-19: 러너 한 줄짜리 카드가 따로 떠 있고 회사 정보 카드는 비어 있었다).
   return (
@@ -1777,7 +1778,7 @@ function DefaultRunnerPicker({ ws }) {
       <span className="microlabel">{t('settings.defaultRunner')}</span>
       <select value={val} onChange={(e) => save(e.target.value)} style={{ ...fieldStyle, width: '100%' }}>
         <option value="">{t('settings.defaultRunnerAuto')}</option>
-        {connected.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+        {connected.map((r) => <option key={r.id} value={r.id}>{r.name}{r.hidden ? ` — ${t('runner.retiredShort')}` : ''}</option>)}
       </select>
     </label>
   );

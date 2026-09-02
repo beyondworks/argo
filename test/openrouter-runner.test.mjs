@@ -177,5 +177,6 @@ test('배선: free 배지가 모델 선택 UI 4곳에 모두 걸려 있다 (배�
 
 test('배선: PICK_ORDER ↔ RUNNER_AUTH 동기화 (다음 러너 추가 때 또 깨질 자리 — 불변식 수색)', async () => {
   const { PICK_ORDER } = await import('../app/runner-usable.mjs');
-  assert.deepEqual([...PICK_ORDER].sort(), Object.keys(RUNNER_AUTH).sort(), 'PICK_ORDER에 빠진 러너는 명판·가용 판정에서 유령이 된다');
+  const { isHiddenRunner } = await import('../src/runners/catalog.mjs');
+  assert.deepEqual([...PICK_ORDER].sort(), Object.keys(RUNNER_AUTH).filter((id) => !isHiddenRunner(id)).sort(), 'PICK_ORDER에 빠진 러너는 명판·가용 판정에서 유령이 된다(숨김 러너는 의도적 제외)');
 });

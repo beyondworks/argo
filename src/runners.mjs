@@ -13,7 +13,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
-import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthFormatError } from './runners/catalog.mjs';
+import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthFormatError, isHiddenRunner } from './runners/catalog.mjs';
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli } from './runners/codex.mjs';
 import { execCodexAppServer } from './runners/codex-appserver.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
@@ -29,7 +29,7 @@ export const agyDirArgs = (caps, workRoots = []) => openRoots(caps, workRoots).f
 // ── 분리 모듈 re-export — 기존 임포터·테스트가 쓰는 이름 전부(62개 표면의 나머지 57개) ──
 export { isServerSecretKey, scrubServerSecrets, maskKeyLike, homeEnv, isProcessCrash, crashHint } from './runners/shared.mjs';
 export {
-  RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner,
+  RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus,
   GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL, GROK_DEFAULT_MODEL,
   isOpenRouterCreditError, isOpenRouterCreditReply, isOpenRouterLimitError, isOpenRouterLimitReply,
   isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice,
@@ -330,6 +330,7 @@ export async function runnerStatus(wsId) {
       hostInstalled: host[id]?.installed ?? false,
       hostAuthed: host[id]?.authed ?? false, // 호스트 CLI 로그인/env (OAuth 폴백 경로)
       hostAuthUnknown: host[id]?.authUnknown ?? false, // 키링 자격(antigravity) — 로그인 판정 불가, UI는 단정 금지
+      hidden: isHiddenRunner(id), // 숨김 러너(gemini) — 명판·목록은 빼고, 판정(pickRunner 명시 지정)은 그대로 쓴다
       company: cred?.value ? {
         connected: true,
         type: credType(cred.type),

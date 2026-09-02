@@ -1469,10 +1469,10 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
             <span style={{ flex: 1 }}>{t('runner.autoOption')}</span>
             {!sel.runner && <span aria-hidden style={{ fontSize: 11, color: 'var(--fg-2)' }}>✓</span>}
           </button>
-          {(runners ?? []).map((r) => (
+          {(runners ?? []).filter((r) => !r.hidden || r.id === sel.runner).map((r) => (
             <div key={r.id} style={{ padding: '2px 0' }}>
               <div className="microlabel" style={{ padding: '4px 8px 2px', color: r.authed ? undefined : 'var(--fg-3)' }}>
-                {r.name}{r.authed ? '' : ` — ${t('runner.needConnect')}`}
+                {r.name}{r.hidden ? ` — ${t('runner.retired')}` : r.authed ? '' : ` — ${t('runner.needConnect')}`}
               </div>
               {(r.models ?? []).map((m) => {
                 const active = sel.runner === r.id && (sel.model || '') === m.id;
@@ -1507,7 +1507,9 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
 function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
   const { t } = useLang();
   const cur = runners?.find((r) => r.id === sel.runner);
-  const runnerLabel = (r) => r.name + (r.authed ? '' : ` — ${t('runner.needConnect')}`);
+  const runnerLabel = (r) => r.name + (r.hidden ? ` — ${t('runner.retired')}` : r.authed ? '' : ` — ${t('runner.needConnect')}`);
+  // 숨김 러너(gemini)는 선택지에서 뺀다(유건 2026-09-03: 선택 불가로 보일 바엔 숨긴다). 현재 값일 때만 남겨 정직 표기.
+  const pickable = (runners ?? []).filter((r) => !r.hidden || r.id === sel.runner);
   const box = {
     height: compact ? 28 : 30,
     padding: compact ? '0 7px' : '0 9px',
@@ -1527,7 +1529,7 @@ function RunnerPicker({ runners, sel, onChange, disabled, compact }) {
         }}>
         {/* 로딩 폴백으로 가짜 Claude 항목을 만들지 않는다 — '' = 자동(첫 연결 러너) */}
         <option value="">{t('runner.autoOption')}</option>
-        {(runners ?? []).map((r) => (
+        {pickable.map((r) => (
           <option key={r.id} value={r.id} disabled={!r.authed}>{runnerLabel(r)}</option>
         ))}
       </select>

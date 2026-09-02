@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, useScrollLock, InputModal, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
 import { Graph2D } from './graph2d'; // 데크 별자리도 기억 페이지와 같은 2D 그래프(유건 지시 2026-08-21: 옛 3D 잔존 지적)
 import { keepSide } from './split.mjs'; // 주 화면 이동은 현재 ?side=(옆에 열기 패널)를 유지 — 생 router.push는 패널을 닫는다
-import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames } from '../../runner-connect';
+import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenConnected } from '../../runner-connect';
 import { useLang } from '../../i18n';
 
 export default function Deck({ params }) {
@@ -337,7 +337,8 @@ function AiKeyBanner({ ws }) {
     const check = () => api(`/api/companies/${ws}/keys`).then((k) => {
       if (!alive) return;
       if (anyRunnerUsable(k.runners)) setState(null);
-      else setState(runnerNeedsReconnect(k.runners) ? 'invalid' : 'missing');
+      // 연결된 것이 숨김 러너(gemini)뿐 — "하나도 연결 안 됨"은 사실과 달라(재검수 MEDIUM-5) 제공 종료 안내로 갈라 보인다
+      else setState(onlyHiddenConnected(k.runners) ? 'retired' : runnerNeedsReconnect(k.runners) ? 'invalid' : 'missing');
     }).catch(() => { /* 상태 확인 실패 — 오경보 대신 침묵 */ });
     check();
     window.addEventListener('argo:refresh', check);
@@ -348,7 +349,7 @@ function AiKeyBanner({ ws }) {
   return (
     <div className="card fade-up" style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--accent)' }}>
       <span style={{ color: 'var(--accent)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
-      <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t(state === 'invalid' ? 'deck.runner.reconnect' : 'deck.runner.banner')}</span>
+      <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t(state === 'retired' ? 'deck.runner.retired' : state === 'invalid' ? 'deck.runner.reconnect' : 'deck.runner.banner')}</span>
       <button className="btn btn-primary sm" style={{ flex: 'none' }} onClick={() => router.push(keepSide(`/c/${ws}/settings?ai=1`, window.location.search))}>
         {t('deck.aiKey.cta')}
       </button>

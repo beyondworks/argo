@@ -29,7 +29,8 @@ test('pickRunner — exclude 목록을 받아 남은 러너를 고른다(자가�
   const st = { claude: on, codex: on, gemini: on, antigravity: on };
   // 라이브 재현 시나리오(2026-07-30): claude OAuth 만료 → codex 402. 이전엔 재시도가 1회뿐이라
   // 멀쩡한 gemini·antigravity가 시도조차 못 받고 영입이 통째로 실패했다.
-  assert.equal(pickRunner(st, null, ['claude', 'codex']).runner, 'gemini');
+  // gemini는 숨김(카탈로그 hidden, 2026-09-03) — 자동 폴백은 건너뛰고 antigravity가 시도를 받는다. 명시 지정은 별도 테스트(runner-hidden)
+  assert.equal(pickRunner(st, null, ['claude', 'codex']).runner, 'antigravity');
   assert.equal(pickRunner(st, null, ['claude', 'codex', 'gemini']).runner, 'antigravity');
   assert.equal(pickRunner(st, null, ['claude', 'codex', 'gemini', 'antigravity']).available, false);
   assert.equal(pickRunner(st, null, 'claude').runner, 'codex'); // 문자열 단수도 하위호환
@@ -72,8 +73,8 @@ test('배선: externalExec가 gemini settings·agy 인자에 workRoots를 실제
 
 test('pickRunner — 선호(want)도 exclude 목록에 걸리면 건너뛴다', () => {
   const on = { company: { connected: true, invalid: false } };
-  const st = { claude: on, gemini: on };
-  assert.equal(pickRunner(st, 'claude', ['claude']).runner, 'gemini');
+  const st = { claude: on, antigravity: on };
+  assert.equal(pickRunner(st, 'claude', ['claude']).runner, 'antigravity');
   assert.equal(pickRunner(st, 'claude', []).runner, 'claude');
 });
 
@@ -114,11 +115,11 @@ test('채팅 자가치유 3러너 연쇄 — claude 401 → codex 401 → gemini
     tried = excludeWith(tried, pick.runner); // 이 러너가 401 — 누적 제외하고 다음 프레임
   }
   // 핵심 회귀: 3·4번째 러너가 시도를 받아야 한다. 단수 제외 시절엔 chain이 ['claude','codex']에서 끝났다.
-  assert.deepEqual(chain, ['claude', 'codex', 'gemini', 'antigravity']);
+  assert.deepEqual(chain, ['claude', 'codex', 'antigravity']); // gemini 숨김 — 자동 사슬에서 제외
   // 전부 소진되면 자가치유가 멈춘다 — 재귀는 러너 수로 자연 종료(무한 루프 없음).
   assert.equal(pickRunner(st, null, tried).available, false);
   // 크루 지정 러너(want)가 있어도 같다 — 지정 러너가 죽으면 남은 러너를 다 시도한다.
-  assert.equal(pickRunner(st, 'claude', excludeWith('claude', 'codex')).runner, 'gemini');
+  assert.equal(pickRunner(st, 'claude', excludeWith('claude', 'codex')).runner, 'antigravity');
 });
 
 // 배선 트립와이어 — 순수 함수가 맞아도 두 catch가 목록을 안 쓰면 3번째 시도는 없다(HIGH-1과 같은 계열:

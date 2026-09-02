@@ -5,15 +5,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { RUNNER_AUTH } from '../src/runners/catalog.mjs';
+import { RUNNER_AUTH, isHiddenRunner } from '../src/runners/catalog.mjs';
 
 const src = await readFile(new URL('../app/runner-connect.jsx', import.meta.url), 'utf8');
 const order = JSON.parse(
   (src.match(/const RUNNER_ORDER = (\[[^\]]*\]);/) ?? [])[1].replace(/'/g, '"'),
 );
 
-test('RUNNER_ORDER ↔ RUNNER_AUTH — 목록에 없는 러너는 화면에서 유령이 된다', () => {
-  assert.deepEqual([...order].sort(), Object.keys(RUNNER_AUTH).sort());
+test('RUNNER_ORDER ↔ RUNNER_AUTH(숨김 제외) — 목록에 없는 러너는 화면에서 유령이 되고, 숨김 러너는 화면에 떠선 안 된다', () => {
+  assert.deepEqual([...order].sort(), Object.keys(RUNNER_AUTH).filter((id) => !isHiddenRunner(id)).sort());
 });
 
 test('이름표도 함께 — 이름이 없으면 카드 제목이 빈칸으로 뜬다', () => {

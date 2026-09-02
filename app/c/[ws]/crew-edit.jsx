@@ -24,7 +24,9 @@ export function CrewEditModal({ ws, agent, teams: teamsProp = null, onClose, onS
   }, [ws, teamsProp]);
   const teams = teamsProp ?? teamsFetched;
   const curRunner = runners?.find((r) => r.id === form.runner);
-  const runnerLabel = (r) => r.name + (r.authed ? '' : r.installed ? ` — ${t('runner.needLogin')}` : ` — ${t('runner.notInstalled')}`);
+  const runnerLabel = (r) => r.name + (r.hidden ? ` — ${t('runner.retired')}` : r.authed ? '' : r.installed ? ` — ${t('runner.needLogin')}` : ` — ${t('runner.notInstalled')}`);
+  // 숨김 러너(gemini)는 선택지에서 뺀다 — 현재 값일 때만 남겨 정직 표기(분리 검수 HIGH-2: 빠지면 브라우저가 첫 옵션 '자동'을 골라 오표시)
+  const pickable = (runners ?? []).filter((r) => !r.hidden || r.id === form.runner);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -85,7 +87,7 @@ export function CrewEditModal({ ws, agent, teams: teamsProp = null, onClose, onS
               }}>
               {/* 로딩 폴백으로 가짜 Claude 항목을 만들지 않는다 — select 자체가 disabled(runners === null) */}
               <option value="">{t('runner.autoOption')}</option>
-              {(runners ?? []).map((r) => (
+              {pickable.map((r) => (
                 <option key={r.id} value={r.id} disabled={!r.authed}>{runnerLabel(r)}</option>
               ))}
             </select>
