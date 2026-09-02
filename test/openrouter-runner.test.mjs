@@ -18,9 +18,12 @@ test('등록: sdk-compat 계열 + BYOK apikey 단일 (CLI 래핑 금지)', () =>
   assert.ok(RUNNER_AUTH.openrouter?.keyUrl?.includes('openrouter.ai'));
 });
 
-test('카탈로그: 스모크 전수 통과 8종 + 기본 모델 포함 + 첫 항목=기본(러너 전환 관례)', () => {
+test('카탈로그: 스모크 전수 통과 11종 + 기본 모델 포함 + 첫 항목=기본(러너 전환 관례)', () => {
   const ids = (RUNNERS.openrouter.models ?? []).map((m) => m.id);
-  assert.equal(ids.filter((i) => !i.endsWith(':free')).length, 8, '유료 8종 — 스모크 8/8 확정본');
+  // 유료 = 2026-07-27 스모크 8/8 + 2026-09-01 스모크 3/3(x-ai/grok-4.6·z-ai/glm-5.3·google/gemini-3.7-flash).
+  // 이 수를 올리려면 scripts/openrouter-smoke.mjs 실키 통과가 선행돼야 한다(같은 날 anthropic/claude-fable-5.1은
+  // 402 잔액으로 미등재 — 통과 전엔 세지 않는다).
+  assert.equal(ids.filter((i) => !i.endsWith(':free')).length, 11, '유료 11종 — 스모크 확정본(8/8 + 3/3)');
   assert.equal(ids.filter((i) => i.endsWith(':free')).length, 3, '무료 3종 — 크레딧 0 체험 진입로(스모크 3/3)');
   // 검수 CRITICAL(2026-07-27): 모델 미지정 호출(영입·기억정리·루틴 초안)이 전부 기본 모델로 오므로
   // 유료가 기본이면 잔액 0 신규 키는 첫 영입부터 402 — 첫 항목은 반드시 무료(잔액 무관 실행 가능).
