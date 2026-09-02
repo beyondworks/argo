@@ -371,14 +371,27 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   // 앵커되므로 max를 취해도 "어느 한쪽이 실제로 봤던 것"까지만 자른다. 구버전 blob(cutTs 부재)은
   // resetAt 폴백 — 옛 동작 그대로라 하위 호환.
   const cutTs = Math.max(Number(L.cutTs) || 0, Number(R.cutTs) || 0);
-  const cutAt = resumedAt >= resetAt ? 0 : (cutTs || resetAt);
+  // 되살림이 최신(회의 전환·이어가기)이면 **되살린 쪽의 메시지는 통째로 지키고, 상대 쪽만 cutTs로 자른다.**
+  // 전환은 "현재 회의를 보관하고 다른 회의를 복원"이라 방 파일의 정체가 바뀌는데, 상대 기기가 아직 든 전환 직전
+  // 방 사본(= 방금 보관한 회의)이 union으로 되살아나 새 회의에 섞였다(#395 분리 검수 HIGH-1 재현: 2건 → 4건,
+  // 다음 마치기에 두 회의가 한 회의록으로). 되살린 회의는 보관한 회의보다 오래된 게 정상이라 양쪽을 한 값으로
+  // 자를 수 없고, 되살린 쪽 면제가 답이다. cutTs를 안 실은 되살림(크루 이어가기 — thread.mjs resumeSession은
+  // cutTs를 지운다)은 종전과 같은 union(회귀 0). 리셋이 최신이면 종전대로 양쪽을 자른다.
+  const resumed = resumedAt > 0 && resumedAt >= resetAt;
+  const resumer = !resumed ? null : (Number(L.resumedAt) || 0) >= (Number(R.resumedAt) || 0) ? L : R;
+  const cutAt = resumed ? 0 : (cutTs || resetAt); // 리셋이 최신 — 양쪽
+  const otherCut = resumed ? cutTs : 0;            // 되살림이 최신 — 되살린 쪽의 상대만
   const seen = new Set();
   const msgs = [];
-  for (const m of [...R.messages, ...L.messages]) {
-    if (cutAt && (Number(m?.ts) || 0) < cutAt) continue; // 리셋 이전 대화는 .archive에 남아 있다
-    const k = `${m?.ts ?? ''}|${m?.who ?? ''}|${typeof m?.text === 'string' ? m.text : JSON.stringify(m?.text ?? '')}`;
-    if (seen.has(k)) continue;
-    seen.add(k); msgs.push(m);
+  for (const [side, list] of [[R, R.messages], [L, L.messages]]) {
+    for (const m of list) {
+      const ts = Number(m?.ts) || 0;
+      if (cutAt && ts < cutAt) continue; // 리셋 이전 대화는 .archive에 남아 있다
+      if (otherCut && side !== resumer && ts < otherCut) continue; // 보관한 회의의 사본 — 그 회의는 .archive에 진행 중으로 남아 있다
+      const k = `${m?.ts ?? ''}|${m?.who ?? ''}|${typeof m?.text === 'string' ? m.text : JSON.stringify(m?.text ?? '')}`;
+      if (seen.has(k)) continue;
+      seen.add(k); msgs.push(m);
+    }
   }
   msgs.sort((a, b) => (a?.ts ?? 0) - (b?.ts ?? 0));
   const primary = prefer === 'local' ? L : R, other = prefer === 'local' ? R : L;

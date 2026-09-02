@@ -21,6 +21,9 @@ export const API_MSG = {
   e2ee_revoke_target_required: { status: 400, ko: '제거할 기기를 지정해 주세요', en: 'Specify a device to remove' },
   e2ee_revoke_self: { status: 400, ko: '이 기기 자신은 제거할 수 없습니다', en: 'This device cannot remove itself' },
   e2ee_unknown_action: { status: 400, ko: '알 수 없는 action', en: 'Unknown action' },
+  // 회의실(app/api/companies/[ws]/room·sessions) — 크루 발언 중 새 회의·전환·마치기 거절(코어 assertRoomIdle의 ROOM_BUSY).
+  // 화면은 errorCode로 사전(room.busyGate)을 다시 그리고, 이 문구는 API 소비자·로그용 표시 언어 본문(#393 DELETE 문구 계승).
+  room_busy: { status: 409, ko: '발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.', en: 'A crew is still speaking — try again after it finishes.' },
 };
 
 /** 기능 라우트 공통 오류 응답. lang은 ko|en(그 외 값·미지정은 ko). 미등록 코드는 throw —

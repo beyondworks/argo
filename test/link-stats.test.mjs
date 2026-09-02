@@ -7,8 +7,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { linkStats, buildGraph2D } from '../app/c/[ws]/graph2d-core.mjs';
 
-// 연결 7 + 고립 3 = 10 → 70%
+// 연결 7 + 고립 3 + 스캐폴드 안내 노트 1 = 11 → 70% (안내 노트는 분모에서 빠진다 — 검수 L-1)
 const docs = [
+  { rel: 'notes/argo-사용법.md', dir: 'notes', title: 'Argo 폴더 사용법', links: [], guide: true }, // 안내문 — 기억 아님
   { rel: 'notes/a.md', dir: 'notes', title: 'A', links: ['notes/b'] },
   { rel: 'notes/b.md', dir: 'notes', title: 'B', links: ['notes/a'] },          // a↔b 양방향 = 쌍 1개
   { rel: 'notes/c.md', dir: 'notes', title: 'C', links: ['B'] },                // 제목 표기
@@ -21,14 +22,34 @@ const docs = [
   { rel: 'notes/h.md', dir: 'notes', title: 'H', links: [] },                   // 링크 0 = 고립
 ];
 
-test('linkStats — 고유 쌍 5, 연결된 기억 7 (고립 3은 제외)', () => {
-  assert.deepEqual(linkStats(docs), { links: 5, linked: 7 });
-  assert.deepEqual(linkStats([]), { links: 0, linked: 0 });
+test('linkStats — 고유 쌍 5, 연결 7, 고립 3(안내 노트는 고립에서 제외)', () => {
+  const { deg, ...s } = linkStats(docs);
+  assert.deepEqual(s, { links: 5, linked: 7, isolated: 3 });
+  assert.deepEqual(Object.fromEntries(deg), { // 안내 노트는 deg에도 없다(지표 밖)
+    'notes/a.md': 3, 'notes/b.md': 2, 'notes/c.md': 1, 'notes/d.md': 1, 'notes/e.md': 1,
+    'journal/2026-09-01-x.md': 1, 'notes/i.md': 1, 'notes/f.md': 0, 'notes/g.md': 0, 'notes/h.md': 0,
+  }); // 표 "연결" 열 = 해석 후 차수: 받기만 하는 e는 1, 깨진 링크 g·자기 링크 f는 0
+  const empty = linkStats([]);
+  assert.deepEqual({ ...empty, deg: [...empty.deg] }, { links: 0, linked: 0, isolated: 0, deg: [] });
 });
 
-test('linkStats.linked + 그래프의 hiddenOrphans = 전체 — 데크와 기억 그래프가 같은 셈법', () => {
-  const { hiddenOrphans } = buildGraph2D({ docs });
-  assert.equal(linkStats(docs).linked + hiddenOrphans, docs.length);
+test('안내 노트에 링크가 붙어도 지표 밖 — 노드·엣지·deg 어디에도 세지 않는다(검수 MEDIUM-1: 자동 링크 자석 부풀림 차단)', () => {
+  const linkedGuide = docs.map((d) => (d.guide ? { ...d, links: ['notes/a', 'notes/h'] } : d));
+  const { deg, ...s } = linkStats(linkedGuide);
+  assert.deepEqual(s, { links: 5, linked: 7, isolated: 3 }); // h는 안내 노트만이 가리키므로 여전히 고립
+  assert.equal(deg.has('notes/argo-사용법.md'), false);
+  // 안내 노트 하나만 엮인 노트 1건 회사 — 옛 정의(고립일 때만 제외)는 100%, 지금은 0%
+  const tiny = [docs[0], { rel: 'notes/방침.md', dir: 'notes', title: '방침', links: ['notes/argo-사용법'] }];
+  const { deg: d2, ...s2 } = linkStats(tiny);
+  assert.deepEqual(s2, { links: 0, linked: 0, isolated: 1 });
+});
+
+test('linked + isolated + 안내 노트 = 전체, 안내 노트를 뺀 그래프의 hiddenOrphans = isolated — 데크와 기억 그래프가 같은 셈법', () => {
+  const guides = docs.filter((d) => d.guide).length;
+  const { hiddenOrphans } = buildGraph2D({ docs: docs.filter((d) => !d.guide) });
+  const { linked, isolated } = linkStats(docs);
+  assert.equal(linked + isolated + guides, docs.length);
+  assert.equal(hiddenOrphans, isolated);
   assert.equal(hiddenOrphans, 3);
 });
 
@@ -39,22 +60,31 @@ const stripComments = (src) => src
   .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 const load = (rel) => stripComments(readFileSync(new URL(rel, import.meta.url), 'utf8'));
 
-test('데크 산식 핀 — linked/memoryCount가 그대로 Dial에 닿는다, 옛 links/(n−1) 포화 산식 부재', () => {
+test('데크 산식 핀 — linked/(linked+isolated)가 그대로 Dial에 닿는다, 옛 links/(n−1) 포화·memoryCount 분모 부재', () => {
   const page = load('../app/c/[ws]/page.jsx');
   // 선언부터 Dial 소비까지 한 구간으로 — 선언만 남기고 다른 값을 넘기는 변이도 잡는다
-  assert.match(page, /const linkedPct = stats && data\.memoryCount > 0 \? \(stats\.linked \/ data\.memoryCount\) \* 100 : 0;[\s\S]*?<Dial value=\{linkedPct\} label=\{t\('deck\.linked'\)\} \/>/);
+  assert.match(page, /const linkedPct = stats && stats\.linked \+ stats\.isolated > 0 \? \(stats\.linked \/ \(stats\.linked \+ stats\.isolated\)\) \* 100 : 0;[\s\S]*?<Dial value=\{linkedPct\} label=\{t\('deck\.linked'\)\} \/>/);
   assert.equal((page.match(/linkedPct/g) ?? []).length, 2, 'linkedPct는 선언 1 + Dial 소비 1뿐');
   assert.doesNotMatch(page, /memoryCount - 1/);
   assert.doesNotMatch(page, /stats\.links \//);
+  assert.doesNotMatch(page, /stats\.linked \/ data\.memoryCount/, '분모는 memoryCount가 아니다(안내 노트가 섞인다)');
 });
 
-test('API 핀 — docStats가 자체 셈 대신 linkStats를 편입하고 뒤에서 덮어쓰지 않는다', () => {
+test('데크 표 "연결" 열 핀 — 원시 links.length가 아니라 해석 후 차수 deg', () => {
+  const page = load('../app/c/[ws]/page.jsx');
+  assert.match(page, /\{memories\.map\(\(m\) => \([\s\S]*?<td className="mono" style=\{\{ fontSize: 12 \}\}>\{m\.deg > 0 \? m\.deg : '—'\}<\/td>/);
+  assert.doesNotMatch(page, /m\.links\.length/);
+});
+
+test('API 핀 — linkStats 1회 결과가 stats(덮어쓰기 없이)와 memories.deg 양쪽에 실린다', () => {
   const route = load('../app/api/companies/[ws]/route.js');
-  const fn = route.match(/function docStats\(docs\) \{[\s\S]*?\n\}/)?.[0];
+  const fn = route.match(/function docStats\(docs, link\) \{[\s\S]*?\n\}/)?.[0];
   assert.ok(fn, 'docStats 함수 구간');
-  assert.match(fn, /return \{\n\s+\.\.\.linkStats\(docs\),/);
-  assert.doesNotMatch(fn, /\b(links|linked)\s*:/, '스프레드 뒤 덮어쓰기 금지');
+  assert.match(fn, /return \{\n\s+\.\.\.link,/);
+  assert.doesNotMatch(fn, /\b(links|linked|isolated)\s*:/, '스프레드 뒤 덮어쓰기 금지');
   assert.doesNotMatch(fn, /edges/, '자체 엣지 셈 부활 금지');
+  // GET 구간: 한 번 계산한 link/deg가 memories와 stats로 간다
+  assert.match(route, /const \{ deg, \.\.\.link \} = linkStats\(docs\);[\s\S]*?memories: docs\.slice\(0, 6\)\.map\(\(d\) => \(\{ \.\.\.d, deg: deg\.get\(d\.rel\) \?\? 0 \}\)\),[\s\S]*?stats: docStats\(docs, link\),/);
 });
 
 test('graph2d-core는 서버 라우트가 임포트하는 순수 모듈 — use client 유입 금지', () => {
