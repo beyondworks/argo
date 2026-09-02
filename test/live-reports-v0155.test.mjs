@@ -322,7 +322,7 @@ test('밴드 진입로: 분할 패널이 살아 있는 축과 정확히 같은 �
   assert.doesNotMatch(page, /matchMedia\(/, '크루 페이지 자체 판정 금지');
   assert.equal(effective('.split-pane', 'display', 899), 'none', '전제 — CSS가 899px에서 패널을 죽인다');
   // 배선(2R MEDIUM-1: 이 블록을 통째로 지워도 스위트가 초록이었다) — 밴드 구간 안에 있어야 한다
-  const bi = page.indexOf("'crew-phone-band'");
+  const bi = page.indexOf('"crew-phone-band"');
   const band = page.slice(bi, page.indexOf('<div className="thread"', bi));
   assert.match(band, /\{!embedded && splitAlive && \(\s*\n\s*<SideOpenMenu/, '밴드 안에 splitAlive 조건부 진입로');
 });

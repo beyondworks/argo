@@ -2,6 +2,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadCompany, updateCompany, archiveCompany, paths } from '../../../../src/workspace.mjs';
 import { listAgents, listDocs } from '../../../../src/hub.mjs';
+import { linkStats } from '../../../c/[ws]/graph2d-core.mjs'; // 연결 지표는 기억 그래프와 같은 셈법
 import { readDelegations } from '../../../../src/usage.mjs';
 import { readUsageSummary, monthCostByCrew } from '../../../../src/billing.mjs'; // 금액 집계는 billing 게이트로만
 import { ensureScheduler } from '../../../../src/scheduler.mjs';
@@ -12,16 +13,8 @@ import { guardCompany, authError, requestLang } from '../../../auth.mjs';
 ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
 ensureGateway(); // 메신저 게이트웨이(텔레그램/슬랙) 상주
 
-/** 대시보드 스탯 — 고유 연결 수(양방향 중복 제거), 오늘 기록, 종류별 수. */
-function docStats(docs) {
-  const keys = new Set(docs.map((d) => d.rel.replace(/\.md$/, '')));
-  const edges = new Set();
-  for (const d of docs) {
-    const from = d.rel.replace(/\.md$/, '');
-    for (const l of d.links) {
-      if (keys.has(l)) edges.add([from, l].sort().join('→'));
-    }
-  }
+/** 대시보드 스탯 — 연결 지표(link = linkStats의 links·linked·isolated), 오늘 기록, 종류별 수. */
+function docStats(docs, link) {
   const today = new Date().toISOString().slice(0, 10);
   // 최근 14일 일별 적립 수 — 관제탑 바 차트용
   const daily = [];
@@ -30,7 +23,7 @@ function docStats(docs) {
     daily.push({ date: d.slice(5), count: docs.filter((x) => x.rel.includes(d)).length });
   }
   return {
-    links: edges.size,
+    ...link, // links(고유 쌍)·linked(링크 1개 이상인 기억)·isolated(고립, 안내 노트 제외)
     today: docs.filter((d) => d.rel.includes(today)).length,
     conversations: docs.filter((d) => d.dir !== 'notes').length, // 일지 + 구버전 기록
     notes: docs.filter((d) => d.dir === 'notes').length,
@@ -55,11 +48,12 @@ export async function GET(req, { params }) {
       try { a.chatTs = (await stat(join(chatsDir, `${a.slug}.json`))).mtimeMs; } catch { /* 대화 없음 */ }
     }));
     if (light) return Response.json({ company, agents, light: true });
+    const { deg, ...link } = linkStats(docs); // 1회 계산 — 다이얼·칩·표 열이 같은 셈법을 본다
     return Response.json({
       company, agents,
-      memories: docs.slice(0, 6),
+      memories: docs.slice(0, 6).map((d) => ({ ...d, deg: deg.get(d.rel) ?? 0 })), // 표 "연결" 열 = 해석 후 차수
       memoryCount: docs.length,
-      stats: docStats(docs),
+      stats: docStats(docs, link),
       usage, delegations, payroll,
     });
   } catch {

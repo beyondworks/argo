@@ -43,6 +43,8 @@ const EXPECT = {
   e2ee_revoke_target_required: { status: 400, ko: '제거할 기기를 지정해 주세요', en: 'Specify a device to remove' },
   e2ee_revoke_self: { status: 400, ko: '이 기기 자신은 제거할 수 없습니다', en: 'This device cannot remove itself' },
   e2ee_unknown_action: { status: 400, ko: '알 수 없는 action', en: 'Unknown action' },
+  // 회의실 게이트(#395) — 세 라우트(새 회의·전환·마치기)가 같은 코드로 응답. 문구는 #393 DELETE 핀(/진행 중|still speaking/)을 잇는다
+  room_busy: { status: 409, ko: '발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.', en: 'A crew is still speaking — try again after it finishes.' },
 };
 
 test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태코드 + errorCode 동봉', async () => {
@@ -104,7 +106,8 @@ test('배선 — e2ee 라우트: apiError 코드 실존·전 코드 사용·언�
     assert.ok(shape[1] in API_MSG, `미등록 코드 '${shape[1]}' (오타 = 해당 갈래 500)`);
     used.add(shape[1]);
   }
-  for (const code of Object.keys(API_MSG)) {
+  // e2ee_ 접두 코드만 이 라우트의 책임 — 다른 기능 라우트의 코드(room_busy 등)는 각자 테스트가 배선을 잠근다
+  for (const code of Object.keys(API_MSG).filter((c) => c.startsWith('e2ee_'))) {
     assert.ok(used.has(code), `사전의 ${code}가 라우트에 배선되지 않음 — 그 갈래는 미번역 잔존`);
   }
   assert.match(src, /langFromCookieHeader\(req\.headers\.get\('cookie'\)\)/, 'argo-lang 쿠키를 읽지 않는다(상수화 변이)');

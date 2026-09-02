@@ -16,6 +16,7 @@
 // v1 한계(문서화): 서비스 키 기반(자가 호스팅 전제 — 패키징 앱은 사용자 JWT+RLS로 전환 예정),
 // 충돌은 LWW(더 최근 mtime 승) — md 양쪽 보존은 후속.
 import { mkdir, readFile, writeFile, readdir, stat, rm, utimes } from 'node:fs/promises';
+import { collidesWithRoom } from './slug.mjs';
 import { join, dirname, basename, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
@@ -61,6 +62,15 @@ export const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다�
 // 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선하되,
 // 호스티드 클라이언트에선 serviceCredsAllowed()가 서비스 모드를 금지해 세션이 쓰인다(ensureClient 참조).
 export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && process.env.ARGO_SYNC !== '0';
+
+/** 회의록 파일과 충돌하는 크루 카드(agents/<slug>.md, 세척 후 slug === 'room-main' — slug.mjs) — 옛 버전 기기가 만든
+    'Room Main' 크루는 이 기기에서 회의록 chats/room-main.json·회의 턴 마커를 덮는 파일 이름이 된다. 반입 문의 거절은
+    **diff 불가시**(자격 회수 noSecrets와 같은 계약: push·pull·삭제 전파·브레이크 집계 전부 스킵)다. EXCLUDE로 하면 안 된다 —
+    EXCLUDE는 로컬 walk에만 걸려 원격 전용 항목을 한 번 받아온 뒤(base 없음=신규) 다음 사이클에 '로컬 삭제'로 읽어 원격을
+    지우고, 그 기기의 카드까지 지운다(.gw-queue 잔재 청소 경로 — 회사 데이터엔 파괴적). 범위는 실제 충돌 이름만이다 —
+    영입 문의 접두(room-*) 예약을 여기 쓰면 이미 있는 정상 'room-service' 크루의 동기화가 조용히 끊긴다(분리 검수 MEDIUM-1).
+    .archive/(해고본)는 살아 있는 slug가 아니라 대상 아님. */
+export const isRoomCardRel = (rel) => /^agents\/[^/]+\.md$/.test(rel) && collidesWithRoom(rel.slice('agents/'.length, -'.md'.length));
 
 export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // ⚠ 순서 불변식(2026-07-23 검수 CRITICAL): **구조적 제외를 반드시 먼저** 평가한다.
@@ -361,14 +371,27 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   // 앵커되므로 max를 취해도 "어느 한쪽이 실제로 봤던 것"까지만 자른다. 구버전 blob(cutTs 부재)은
   // resetAt 폴백 — 옛 동작 그대로라 하위 호환.
   const cutTs = Math.max(Number(L.cutTs) || 0, Number(R.cutTs) || 0);
-  const cutAt = resumedAt >= resetAt ? 0 : (cutTs || resetAt);
+  // 되살림이 최신(회의 전환·이어가기)이면 **되살린 쪽의 메시지는 통째로 지키고, 상대 쪽만 cutTs로 자른다.**
+  // 전환은 "현재 회의를 보관하고 다른 회의를 복원"이라 방 파일의 정체가 바뀌는데, 상대 기기가 아직 든 전환 직전
+  // 방 사본(= 방금 보관한 회의)이 union으로 되살아나 새 회의에 섞였다(#395 분리 검수 HIGH-1 재현: 2건 → 4건,
+  // 다음 마치기에 두 회의가 한 회의록으로). 되살린 회의는 보관한 회의보다 오래된 게 정상이라 양쪽을 한 값으로
+  // 자를 수 없고, 되살린 쪽 면제가 답이다. cutTs를 안 실은 되살림(크루 이어가기 — thread.mjs resumeSession은
+  // cutTs를 지운다)은 종전과 같은 union(회귀 0). 리셋이 최신이면 종전대로 양쪽을 자른다.
+  const resumed = resumedAt > 0 && resumedAt >= resetAt;
+  const resumer = !resumed ? null : (Number(L.resumedAt) || 0) >= (Number(R.resumedAt) || 0) ? L : R;
+  const cutAt = resumed ? 0 : (cutTs || resetAt); // 리셋이 최신 — 양쪽
+  const otherCut = resumed ? cutTs : 0;            // 되살림이 최신 — 되살린 쪽의 상대만
   const seen = new Set();
   const msgs = [];
-  for (const m of [...R.messages, ...L.messages]) {
-    if (cutAt && (Number(m?.ts) || 0) < cutAt) continue; // 리셋 이전 대화는 .archive에 남아 있다
-    const k = `${m?.ts ?? ''}|${m?.who ?? ''}|${typeof m?.text === 'string' ? m.text : JSON.stringify(m?.text ?? '')}`;
-    if (seen.has(k)) continue;
-    seen.add(k); msgs.push(m);
+  for (const [side, list] of [[R, R.messages], [L, L.messages]]) {
+    for (const m of list) {
+      const ts = Number(m?.ts) || 0;
+      if (cutAt && ts < cutAt) continue; // 리셋 이전 대화는 .archive에 남아 있다
+      if (otherCut && side !== resumer && ts < otherCut) continue; // 보관한 회의의 사본 — 그 회의는 .archive에 진행 중으로 남아 있다
+      const k = `${m?.ts ?? ''}|${m?.who ?? ''}|${typeof m?.text === 'string' ? m.text : JSON.stringify(m?.text ?? '')}`;
+      if (seen.has(k)) continue;
+      seen.add(k); msgs.push(m);
+    }
   }
   msgs.sort((a, b) => (a?.ts ?? 0) - (b?.ts ?? 0));
   const primary = prefer === 'local' ? L : R, other = prefer === 'local' ? R : L;
@@ -559,7 +582,8 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     }
   }
 
-  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)]);
+  // 회의록 충돌 카드는 집합에서 빼 불가시 — 아래 브레이크 집계·전파 루프가 같은 집합을 돌므로 한 곳이면 된다(isRoomCardRel 주석).
+  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel)));
 
   const archMoves = archivalCreateNames(local, state); // .archive→.trash 이동의 목적지 basename
   // 로컬 손상(readJson이 .corrupt-로 치워둠)으로 '부재'가 된 삭제 후보 — 삭제가 아니라 self-heal 대상.

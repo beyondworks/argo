@@ -1,6 +1,6 @@
 // 회의실 — 사장 + 여러 크루가 한 방에서 대화한다(맥락 공유가 눈에 보이는 곳).
 // @멘션한 크루가 답하고, 뒤 순서 크루는 앞 크루의 발언을 보고 보탠다. 회의 내용은 각 턴의 일지로 회사 기억이 된다.
-import { mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, rm, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
@@ -12,6 +12,7 @@ import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 import { CC_MAX, sendCrewMail } from './crewmail.mjs';
 import { resetStamp, resumeStamp } from './reset-stamp.mjs';
+import { loadPins, activePin } from './workroots.mjs';
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 // sync가 chats/room-main.json을 쓸 때 쓰는 락 키(thread:ws:room-main)와 동일하게 맞춘다 —
@@ -19,6 +20,26 @@ const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 const rkey = (wsId) => `thread:${wsId}:room-main`;
 // 회의 아카이브 접두사 — 크루 slug는 [a-z0-9-]라 '_'를 못 쓰므로, 크루 세션 아카이브와 절대 겹치지 않는다
 const MEETING_RE = /^_room-\d+\.json$/;
+
+/** 회의 작업 폴더 — 크루 고정 폴더(.workroots.json pins)와 **같은 저장소·검증·API**를 쓴다(유건 지시 2026-09-02:
+    회의실도 크루 채팅과 같은 컴포넌트·계약). 키 '@room'은 크루 슬러그([a-z0-9-])와 절대 겹치지 않는다(입력 초안
+    키 '@room'과 같은 이름공간 규약). 회의 단위 저장(room-main.json 필드)을 택하지 않은 이유: 방 파일은 기기 간
+    동기화되는데 경로는 기기 고유값이라, 맥에서 고른 폴더가 윈도우에서 "지금 일할 곳"으로 뜬다 — pins는 그 이유로
+    이미 동기화에서 빠져 있다(sync.mjs EXCLUDE). 고정은 크루 핀처럼 사장이 풀기 전까지 유지된다(회의 마치기로
+    풀리지 않는다 — 회의마다 다시 고르게 하는 것이 2026-07-31 신고의 재연). 회의록에는 그 폴더를 남긴다. */
+export const ROOM_FOLDER_SLUG = '@room';
+const oneLine = (p) => String(p ?? '').replace(/[\r\n]+/g, ' '); // 개행 든 경로가 가짜 지시줄이 되지 않게(chat.mjs와 동일)
+/** 이 턴의 회의 폴더 — **한 번만 재서** 발언자 전원이 같은 스냅샷을 본다(도중에 풀어도 이 턴은 일관).
+    stale = 고정은 있는데 지금 검증을 못 넘는 경로(외장 디스크 분리·삭제·등록 해제 직후) — 조용히 빼면 사장은 크루가
+    그 폴더에서 일한 줄 안다. 호출부가 방에 알린다.
+    pin은 **원문 그대로**(개행 미접기) — chat 옵션으로 넘어가 activeFolders가 등록 폴더와 대조하는 값이라 접으면 개행 든
+    폴더가 매치 실패로 조용히 빠진다. 사람·프롬프트에 보이는 자리(folderLine·회의록·시스템 줄)가 각자 oneLine으로 접는다
+    (2R 검수 LOW-A — 새 소비처를 만들 때 이 규약을 지켜라). */
+export async function roomFolder(wsId) {
+  const raw = oneLine((await loadPins(wsId))[ROOM_FOLDER_SLUG]);
+  const pin = raw ? await activePin(wsId, ROOM_FOLDER_SLUG) : '';
+  return { pin, stale: raw && !pin ? raw : '' };
+}
 
 export async function loadRoom(wsId) {
   // 회의 대화는 유실이 치명적 — 손상을 조용히 빈 방으로 리셋하지 않고 throw로 드러낸다(readJson).
@@ -58,12 +79,13 @@ export async function listArchivedMeetings(wsId) {
         count: r.messages?.length ?? 0,
         title: r.title ?? null,  // 사장이 붙인 회의명(있으면 레일에서 topic 대신 표시) — 채팅 세션과 동일 규약
         pinned: r.pinned === true, // 고정 회의 — 레일 상단에 최근순으로 묶인다
+        open: r.open === true,     // 진행 중 — '새 회의'로 넘긴 회의(회의록 없음). 전환 대상이라 레일 최상단
         topic: String(first?.text ?? '').replace(/@\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 42),
       });
     } catch { /* 깨진 보관본은 건너뛴다 */ }
   }
-  // 고정 먼저, 그 안에서 최근순 — 채팅 세션 레일과 동일 정렬
-  return out.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.ts - a.ts);
+  // 진행 중 먼저(전환 대상), 그다음 고정, 그 안에서 최근순 — 뒤 두 단은 채팅 세션 레일과 동일 정렬
+  return out.sort((a, b) => (b.open ? 1 : 0) - (a.open ? 1 : 0) || (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.ts - a.ts);
 }
 
 export async function readArchivedMeeting(wsId, id) {
@@ -96,11 +118,37 @@ export async function setMeetingPinned(wsId, id, pinned) {
   });
 }
 
+/** 진행 중 턴 게이트 — 새 회의·전환·마치기는 크루가 발언하는 동안 거절한다(409 ROOM_BUSY). 세 동작 모두
+    sid를 올려 도는 턴의 발언을 무효화하므로(pushRoomMsg sid 불일치 → 버림, 개인 스레드 기록도 건너뜀),
+    화면 잠금(busy||serverBusy)만으론 8초 폴링 창의 다른 탭·API 직행이 그 발언을 유실시킨다(#391 MEDIUM-2는
+    UI 잠금까지). 판정은 getRoomTurn의 2분 신선 창 하나 — 크래시 잔재 마커는 길어야 2분 뒤 풀린다. */
+async function assertRoomIdle(wsId) {
+  if (!await getRoomTurn(wsId)) return;
+  const e = new Error('발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.'); // 라우트는 apiError('room_busy')로 표시 언어 본문을 다시 그린다
+  e.code = 'ROOM_BUSY';
+  throw e;
+}
+
+/** 보관본 쓰기 — 마치기(open 없음)와 진행 중 보관(open:true)이 같은 파일 규약(.archive/_room-<ts>.json)을 쓴다.
+    같은 ms의 연속 보관은 ts를 1씩 올려 피한다 — 이름이 겹치면 앞 회의를 덮어써 유실이다. 반환: 파일명.
+    알려진 한계: 회피는 **한 기기 안에서만** 성립한다 — 두 기기가 같은 ms에 보관하면 같은 이름이 클라우드에서
+    LWW로 겹친다(종전 endMeeting은 회피 자체가 없었으므로 순개선, 확률은 낮다 — 분리 검수 LOW-3).
+    now — 시각 주입(export: 회귀 테스트용 — 충돌 회피를 결정적으로 재현). 제품 경로는 인자 없이 부른다. */
+const fileExists = (f) => access(f).then(() => true, () => false);
+export async function archiveRoomFile(wsId, room, { open = false, now = Date.now() } = {}) {
+  const dir = join(paths(wsId).chats, '.archive');
+  let ts = now;
+  while (await fileExists(join(dir, `_room-${ts}.json`))) ts += 1;
+  await writeJsonAtomic(join(dir, `_room-${ts}.json`), open ? { ...room, open: true } : room);
+  return `_room-${ts}.json`;
+}
+
 /** 회의 마치기 — 회의록을 일지(vault/journal)로 남겨 회사 기억으로 적재하고, 방은 보관 후 비운다(회의 1건 = 적재 1건). */
 export async function endMeeting(wsId) {
   return withLock(rkey(wsId), () => endMeetingLocked(wsId));
 }
 async function endMeetingLocked(wsId) {
+  await assertRoomIdle(wsId);
   const room = await loadRoom(wsId);
   if (!room.messages?.length) return { archived: false };
   const agents = await listAgents(wsId);
@@ -110,19 +158,41 @@ async function endMeetingLocked(wsId) {
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const hm = now.toTimeString().slice(0, 5).replace(':', '');
   const topic = String(room.messages[0]?.text ?? '').replace(/@\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 30) || '안건 미기재';
-  const attendees = [...new Set(room.messages.filter((m) => m.who !== 'user').map((m) => nameOf(m.who)))];
+  // 시스템 줄(참조·루프·폴더 안내)은 참석자가 아니다 — 'system'이 참석자로 찍히던 기존 결함(분리 검수 LOW-1).
+  const attendees = [...new Set(room.messages.filter((m) => m.who !== 'user' && m.who !== 'system').map((m) => nameOf(m.who)))];
+  // 작업 폴더 — 이 회의의 턴이 **실제로 쓴** 폴더(사장 발언의 workFolder 각인). 마치기 시점의 고정 값이 아니다:
+  // 폴더 없이 다 하고 직전에 고정했거나 못 찾은 폴더면 적지 않는다(분리 검수 MEDIUM-2). 도중에 바꿨으면 전부.
+  const used = [...new Set(room.messages.filter((m) => m.who === 'user' && m.workFolder).map((m) => oneLine(m.workFolder)))];
   const md = `# ${day} 회의록 — ${topic}
 
-참석: 사장${attendees.length ? `, ${attendees.join(', ')}` : ''}
+참석: 사장${attendees.length ? `, ${attendees.join(', ')}` : ''}${used.length ? `\n작업 폴더: ${used.join(', ')}` : ''}
 
-${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: ${String(m.text).trim()}${m.attachments?.length ? `\n> 첨부: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')}` : ''}`).join('\n\n')}
+${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: ${String(m.text).trim()}${m.attachments?.length ? `\n> 첨부: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')}` : ''}${m.artifacts?.length ? `\n> 산출물: ${m.artifacts.map((a) => 'vault/' + a).join(', ')}` : ''}`).join('\n\n')}
 `;
-  const journalName = `${day}-회의록-${hm}.md`;
+  // 같은 분 안에 두 번 마치면(다시 열기→마치기, 짧은 회의 연속) HHMM 이름이 같아 앞 회의록이 **덮였다**(격리 실측
+  // 2026-09-02: DELETE 2회가 같은 journal/…-1953.md를 반환, 파일엔 뒤 회의만). 회의록은 vault/journal 일지 = 회사 기억이라
+  // 유실이 곧 기억 유실. 주제 노트(saveNote create)·옵시디언 임포트(reserve)와 같은 접미 규칙(-2, -3)으로 빈 이름을 잡되,
+  // 판정은 exists 검사가 아니라 배타 생성(wx — 이름 기준 원자 연산, 심링크 선점도 EEXIST)으로 한다: 동기화 풀이 먼저
+  // 내려놓은 같은 이름을 **여기서** 덮지 않는다(반대 방향 — pull이 방금 쓴 회의록을 덮는 경로 — 는 sync.mjs의 기존
+  // 동작으로 이 변경 범위 밖). 최종 이름에 직접 쓰므로 tmp→rename 원자성은 없다(종전과 동급 — 배타 생성은 최종
+  // 이름에 걸려야 성립해 writeFileAtomic으로 대체 불가). 초 단위 시각으로 바꾸지 않는 이유: 같은 초 재발 가능 +
+  // 일지 파일명 규약(HHMM)과 어긋난다.
   await mkdir(p.journal, { recursive: true });
-  await writeFile(join(p.journal, journalName), md);
+  const stem = `${day}-회의록-${hm}`;
+  let journalName = `${stem}.md`;
+  for (let n = 2; ; n += 1) {
+    try { await writeFile(join(p.journal, journalName), md, { flag: 'wx' }); break; }
+    catch (e) {
+      // EEXIST 외(EACCES·ENOSPC 등)는 그대로 던진다 — 삼키면 무한 루프이고, 회의실 락(withLock 체인)이 영원히 settle
+      // 되지 않아 그 회사의 마치기·다시 열기·회의 턴이 프로세스 수명 내내 멈춘다(분리 검수가 EACCES로 실증).
+      if (e?.code !== 'EEXIST') throw e;
+      // 상한 — 어떤 결함(접미 미증가 등)이든 매달리지 않고 예외로 끝나게. 같은 분에 회의록 999개는 사용이 아니다.
+      if (n > 999) throw new Error(`회의록 이름을 잡지 못했습니다 — journal/에 ${stem} 계열이 999개 이상`);
+      journalName = `${stem}-${n}.md`;
+    }
+  }
   await updateIndex(wsId).catch(() => {});
-  const dir = join(p.chats, '.archive');
-  await writeJsonAtomic(join(dir, `_room-${Date.now()}.json`), room);
+  await archiveRoomFile(wsId, room);
   // sid 증가 — 진행 중이던 runRoomTurn의 잔여 발언이 빈 방에 유령으로 남지 않도록 무효화한다
   // resetAt — 크루 채팅의 '새 대화'와 같은 tombstone(검수 MEDIUM-2: 회의실도 isThread라 같은
   // union 병합을 타는데 각인이 없어, '회의 마치기'가 동기화로 되살아났다 — 실측 재현).
@@ -131,41 +201,67 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
   return { archived: true, journal: `journal/${journalName}` };
 }
 
-/** 회의 다시 열기 — 보관된 회의를 현재 방으로 되돌려 이어서 대화한다(실사용 요청 2026-07-26).
-    "마치기"로 적재한 뒤 빠진 얘기가 생각나면 새 회의를 여는 수밖에 없었다.
-
-    설계 결정 3가지:
-    1. **현재 방이 비어 있을 때만** 연다. 진행 중 회의를 자동으로 마치고 덮으면 사장이 의도하지 않은
-       일지 적재가 생긴다 — 거절하고 "먼저 마치기"를 안내하는 쪽이 정직하다.
-    2. **방을 먼저 쓰고, 그다음 보관본을 지운다.** 순서를 뒤집으면 쓰기 실패 시 회의가 증발한다.
-       이 순서면 최악이 "레일에 중복 표시"(눈에 보이고 복구 가능) — 오차를 비파괴 방향으로 낸다.
-    3. **sid를 올린다.** 빈 방에서 돌던 잔여 턴의 발언이 되살린 회의에 유령으로 끼어들지 않게
-       (endMeeting과 같은 이유).
-
-    알려진 한계: 마칠 때 남긴 일지(회의록)는 그대로 둔다. 다시 마치면 회의록이 하나 더 쌓인다 —
-    일지는 append-only 기록이라 "두 번 마쳤다"는 사실 자체가 맞고, 지우는 건 기억 유실이라 안 한다. */
-export async function reopenMeeting(wsId, id) {
+/** 새 회의 — 지금 회의를 **마치지 않고**(회의록 없음) '진행 중'으로 보관한 뒤 방을 비운다(유건 요청 2026-09-02:
+    "기존 회의와 별개로 새 회의를 추가"). 마치기와의 차이는 회의록 한 줄뿐 — 보관본에 open:true 표식을 남겨
+    레일이 '진행 중'으로 구분하고, 전환(reopenMeeting)으로 되돌린다. 비움 각인(resetStamp)·sid 증가는
+    endMeeting과 같은 계약이라 **이 경로는** 동기화 병합(mergeThread)에 새 의미가 없다(전환 경로의 각인은
+    reopenMeeting 참조 — 거기는 새 규칙이 있다). 빈 방이면 아무것도 안 한다. */
+export async function parkMeeting(wsId) {
   return withLock(rkey(wsId), async () => {
-    const cur = await loadRoom(wsId);
-    if (cur.messages?.length) {
-      const e = new Error('진행 중인 회의가 있습니다 — 먼저 "회의 마치기"로 정리한 뒤 다시 열어 주세요.');
-      e.code = 'ROOM_BUSY';
-      throw e;
-    }
-    const archived = await readArchivedMeeting(wsId, id); // 없으면 여기서 throw — 방을 건드리기 전이다
-    if (!archived?.messages?.length) throw new Error('비어 있는 보관 회의는 열 수 없습니다.');
-    // 되살림 각인 — 없으면 endMeeting이 남긴 **원격 tombstone**이 이겨 되살린 회의가 다음 병합에서
-    // 통째로 잘린다(분리 검수 2R HIGH-1 재현: 2건 → 0건). reopenMeeting은 곧바로 보관본을 지우므로
-    // 그 회의는 회의록 md 말고 어디에도 남지 않는다. 크루의 resumeSession과 같은 대칭 계약.
-    delete archived.resetAt;
-    delete archived.cutTs; // 보관본의 옛 자르기 지점 정리 — thread.mjs resumeSession과 같은 이유(방어적 — 게이트가 먼저 걸려 현재 무행동)
-    await saveRoom(wsId, { ...archived, resumedAt: resumeStamp(cur), sid: (cur.sid ?? 0) + 1 });
-    await rm(join(paths(wsId).chats, '.archive', id), { force: true }).catch(() => {}); // 실패해도 유실 아님(중복 표시)
-    return { reopened: true, messages: archived.messages.length };
+    await assertRoomIdle(wsId);
+    const room = await loadRoom(wsId);
+    if (!room.messages?.length) return { parked: false };
+    await archiveRoomFile(wsId, room, { open: true });
+    await saveRoom(wsId, { messages: [], ...resetStamp(room), sid: (room.sid ?? 0) + 1 });
+    return { parked: true };
   });
 }
 
-/** 사장 발언 1건 → 멘션된 크루가 순서대로 응답(폭주 방지: 최대 3명). 멘션 없으면 첫 크루. */
+/** 회의 열기·전환 — 보관된 회의를 현재 방으로 되돌려 이어서 대화한다(실사용 요청 2026-07-26). 마친 회의든
+    진행 중 보관본이든 같은 원시다(레일에서 어느 회의를 눌러도 같은 동작).
+
+    설계 결정 3가지:
+    1. **현재 방이 비어 있지 않으면 진행 중으로 자동 보관한다**(회의록 없음). 종전엔 409로 거절하고 "먼저
+       마치기"를 안내했는데, 그 근거는 "자동으로 마치면 사장이 의도하지 않은 일지 적재가 생긴다"였다 —
+       진행 중 보관은 일지를 남기지 않으므로 그 우려가 없고, 새 회의 분기(2026-09-02)의 '전환'과 경로가 하나가 된다.
+    2. **보관본을 먼저 읽고(검증), 현재 방을 보관하고, 방을 쓰고, 그다음 보관본을 지운다.** 순서를 뒤집으면
+       쓰기 실패 시 회의가 증발한다. 이 순서면 최악이 "레일에 중복 표시"(눈에 보이고 복구 가능) — 오차를
+       비파괴 방향으로 낸다.
+    3. **sid를 올린다.** 빈 방에서 돌던 잔여 턴의 발언이 되살린 회의에 유령으로 끼어들지 않게
+       (endMeeting과 같은 이유). 발언이 도는 중이면 게이트(assertRoomIdle)가 먼저 거절한다.
+    4. **자르는 지점(cutTs)을 현재 방에서 물려받는다.** 되살림 각인(resumedAt)만 남기면 mergeThread가 자르기를
+       통째로 끄는데, 상대 기기가 아직 든 전환 직전 방 사본(= 방금 보관한 회의)이 union으로 되살아나 새 회의에
+       섞인다(분리 검수 HIGH-1 재현: 2건 → 4건). mergeThread는 되살림이 최신일 때 되살린 쪽은 지키고 상대 쪽만
+       이 cutTs로 자른다(src/sync.mjs). 산식은 resetStamp와 같다(보관한 회의의 마지막 ts+1, 직전 값 후퇴 금지) —
+       빈 방에서 열 때도 직전 비움의 cutTs가 이어져, 마치기가 아직 원격에 안 간 창에서도 옛 회의가 안 돌아온다.
+
+    알려진 한계: 마칠 때 남긴 일지(회의록)는 그대로 둔다. 다시 마치면 회의록이 하나 더 쌓인다(같은 분이면
+    -2 접미 — endMeetingLocked) — 일지는 append-only 기록이라 "두 번 마쳤다"는 사실 자체가 맞고, 지우는 건
+    기억 유실이라 안 한다.
+    두 기기가 8초 동기화 창 안에서 동시에 전환하면 나중 각인이 이겨 먼저 전환한 쪽의 회의가 방에서 밀리고
+    그 보관본은 이미 지워진 뒤라 회의록 없이 사라질 수 있다(크루 이어가기의 같은 창과 동급 — 미해결, 표기). */
+export async function reopenMeeting(wsId, id) {
+  return withLock(rkey(wsId), async () => {
+    await assertRoomIdle(wsId);
+    const archived = await readArchivedMeeting(wsId, id); // 없으면 여기서 throw — 방을 건드리기 전이다
+    if (!archived?.messages?.length) throw new Error('비어 있는 보관 회의는 열 수 없습니다.');
+    const cur = await loadRoom(wsId);
+    const parked = !!cur.messages?.length;
+    if (parked) await archiveRoomFile(wsId, cur, { open: true }); // 지금 회의는 진행 중으로 — 회의록 없음(결정 1)
+    // 되살림 각인 — 없으면 endMeeting·parkMeeting이 남긴 **원격 tombstone**이 이겨 되살린 회의가 다음 병합에서
+    // 통째로 잘린다(분리 검수 2R HIGH-1 재현: 2건 → 0건). 곧바로 보관본을 지우므로 그 회의는 회의록 md 말고
+    // 어디에도 남지 않는다. 크루의 resumeSession과 같은 대칭 계약.
+    delete archived.resetAt;
+    delete archived.cutTs; // 보관본의 옛 자르기 지점 정리 — thread.mjs resumeSession과 같은 이유(방어적 — 게이트가 먼저 걸려 현재 무행동)
+    delete archived.open;  // 진행 중 표식은 보관본의 것 — 현재 방으로 오면 의미가 없다(다시 보관될 때 새로 판정)
+    // cutTs = 현재 방 기준(결정 4) — 보관본의 옛 값이 아니라 지금 보관한 회의를 자르는 지점
+    await saveRoom(wsId, { ...archived, resumedAt: resumeStamp(cur), cutTs: resetStamp(cur).cutTs, sid: (cur.sid ?? 0) + 1 });
+    await rm(join(paths(wsId).chats, '.archive', id), { force: true }).catch(() => {}); // 실패해도 유실 아님(중복 표시)
+    return { reopened: true, parked, messages: archived.messages.length };
+  });
+}
+
+/** 사장 발언 1건 → 멘션된 크루가 순서대로 응답(상한 없음 — 부른 만큼 턴 비용, 인원·순서는 방의 안내 줄로 표기). 멘션 없으면 첫 크루. */
 // 락 안에서 방을 읽어 sid가 맞을 때만 메시지 추가. sid 불일치(회의 마침)면 false — 발언을 버린다.
 async function pushRoomMsg(wsId, msg, expectSid) {
   return withLock(rkey(wsId), async () => {
@@ -274,43 +370,57 @@ export function parseRoomDirectives(text, agents = []) {
     if (take(m[1], to) === 'all') allCall = true;
   }
 
-  return { loop, cc, ccAll, relay: relay.slice(0, HOP_MAX + 1), to, allCall, unknown };
+  // relayDropped — 연쇄 상한에 걸려 잘린 뒷사람들. 호출부가 이름으로 밝힌다(cc의 '제외' 안내와 같은 규칙 —
+  // 조용히 자르면 "부른 크루 모두 발언" 안내와 모순된다, 분리 검수 LOW-1).
+  return { loop, cc, ccAll, relay: relay.slice(0, HOP_MAX + 1), relayDropped: relay.slice(HOP_MAX + 1), to, allCall, unknown };
 }
 
 /** 회의실 턴 진행 마커 — 크루 채팅의 상태 파일 계약(turn-status.mjs)을 슬러그 'room-main'으로 그대로 쓴다.
     없으면 회의실 화면의 '회의 중' 표시가 **자기 탭의 POST 대기**뿐이라, 안건을 올리고 다른 페이지에 갔다
     돌아오면 서버에서 턴이 돌고 있어도 화면은 멈춘 것처럼 보였다(유건 실사용 제보 2026-09-02).
     부수 효과: 상주 재배포 IDLE 게이트(chats/*.status.json)에 회의실 턴도 잡힌다. */
-export const ROOM_TURN_SLUG = 'room-main';
+export const ROOM_TURN_SLUG = 'room-main'; // 크루 slug 예약어(slug.mjs RESERVED_SLUG_RE) 안 — 영입·반입 문이 같은 이름의 크루를 거절한다
 // 같은 방의 동시 턴(탭 2개·API 직접 호출)은 마커 하나를 공유한다 — 먼저 끝난 턴이 지우면 뒤 턴이 도는 동안
 // 다음 하트비트(≤30초)까지 표시가 꺼진다(분리 검수 MEDIUM-1, 1/100 축소 모형 실측). 프로세스 내 참조
 // 카운트로 마지막 턴만 지운다. 크로스 프로세스 동시 턴은 남지만 ≤30초 자가 치유.
 const ROOM_TURNS = new Map(); // wsId → 진행 중 턴 수
+// wsId → 마지막 마커 detail('발언자|다음…'). 하트비트는 파일을 **다시 읽지 않고** 이 값을 쓴다 — 읽고 나서 쓰는
+// 구조는 그 사이에 끼어든 인계·다른 쓰기를 되돌리고(#393 검수 LOW-1: 1ms 주기 2% 부활), 윈도우에서는 비원자
+// 쓰기와 겹친 읽기가 빈 값을 돌려줘 발언자를 지웠다(CI windows-latest 실사고 2026-09-02). 발언자 갱신은 반드시
+// 래퍼가 넘겨주는 mark()로 — 파일 직접 쓰기는 다음 하트비트가 덮는다.
+const ROOM_MARK = new Map();
 /** heartbeatMs — 턴이 도는 동안 마커 ts를 주기 갱신한다. 크루 상태 파일은 스트리밍·도구 이벤트마다 갱신되지만
     'memory'처럼 이벤트가 없는 단계가 2분을 넘기면 마커가 낡아 **턴이 살아 있는데 표시가 꺼진다**
     (격리 실측 2026-09-02: memory 단계 99초 무갱신). 하트비트는 프로세스가 살아 있음 자체의 신호라 단계와
     무관하고, 프로세스가 죽으면 멈춰 2분 뒤 만료된다(고아 방어). unref — 프로세스 종료를 잡지 않는다. */
 export async function withRoomTurnStatus(wsId, fn, { heartbeatMs = 30_000 } = {}) {
   ROOM_TURNS.set(wsId, (ROOM_TURNS.get(wsId) ?? 0) + 1);
-  await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', '');
+  if (!ROOM_MARK.has(wsId)) ROOM_MARK.set(wsId, ''); // 겹친 두 번째 턴은 현재 발언자를 지우지 않는다
   // 틱은 직렬화 + alive 게이트 — 해제(finally) 직후 **진행 중이던 틱**이 마커를 되살리면 화면이 2분간
   // 거짓 '회의 중'이 된다. 하중은 `await tick`(진행 중 틱을 기다린 뒤 지움)에 있다 — 분리 검수 HIGH-1이
   // 지연 주입으로 확정 red를 실증했고, 테스트는 heartbeatMs:1 × 40회 반복으로 잠근다.
   let alive = true; let tick = Promise.resolve();
-  const beat = async () => {
-    if (!alive) return;
-    const cur = await getTurnStatus(wsId, ROOM_TURN_SLUG); // 하트비트가 도는 한 2분 창 안 — 발언자(detail) 보존용
-    if (!alive) return;
-    await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', cur?.detail ?? '');
-  };
-  const hb = setInterval(() => { tick = tick.then(beat).catch(() => {}); }, heartbeatMs);
+  // 마커 쓰기는 **한 체인(tick)으로 직렬화**하고 실행 시점의 메모리 값을 쓴다 — mark()와 하트비트가 따로 쓰면
+  // 오래된 스냅샷을 든 쓰기가 나중에 착지해 최신 발언자를 되돌린다(1ms 주기 실측 5회 중 4회 red).
+  const write = () => setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', ROOM_MARK.get(wsId) ?? '');
+  const mark = async (detail) => { ROOM_MARK.set(wsId, detail); tick = tick.then(write).catch(() => {}); await tick; };
+  const beat = () => (alive ? write() : undefined); // 메모리 값 — 파일 읽기 없음
+  await mark(ROOM_MARK.get(wsId));
+  // 하트비트는 체인에 **최대 1개만** 대기 — 쓰기(fs 왕복)보다 짧은 주기에서 무한히 쌓이면 mark()가 자기 차례를
+  // 영원히 기다린다(1ms 주기 테스트에서 6분 정지 실측). 운영 30초 주기엔 무관하지만 구조로 막는다.
+  let queued = false;
+  const hb = setInterval(() => {
+    if (queued) return;
+    queued = true;
+    tick = tick.then(() => { queued = false; return beat(); }).catch(() => { queued = false; });
+  }, heartbeatMs);
   hb.unref?.();
-  try { return await fn(); }
+  try { return await fn(mark); }
   finally {
     alive = false; clearInterval(hb); await tick; // 진행 중 틱 완료 후에만 해제
     const left = (ROOM_TURNS.get(wsId) ?? 1) - 1;
     if (left > 0) ROOM_TURNS.set(wsId, left);
-    else { ROOM_TURNS.delete(wsId); await clearTurnStatus(wsId, ROOM_TURN_SLUG); } // 마지막 턴만 — 성공·실패·중단 모두
+    else { ROOM_TURNS.delete(wsId); ROOM_MARK.delete(wsId); await clearTurnStatus(wsId, ROOM_TURN_SLUG); } // 마지막 턴만 — 성공·실패·중단 모두
   }
 }
 /** 회의실 턴 진행 여부(화면 복원용) = 마커가 2분 안에 갱신됐는가, 단일 판정. 하트비트(30초)가 긴 발언을
@@ -318,28 +428,46 @@ export async function withRoomTurnStatus(wsId, fn, { heartbeatMs = 30_000 } = {}
     턴이 최대 30분 거짓 '회의 중'을 만든다(분리 검수 HIGH-2: 3/10/25/29분 전 마커 전부 ACTIVE 실측). */
 export async function getRoomTurn(wsId) {
   const s = await getTurnStatus(wsId, ROOM_TURN_SLUG);
-  return s ? { active: true, slug: s.detail || null, startedAt: s.startedAt } : null;
+  if (!s) return null;
+  // detail = '발언자|다음1,다음2'. 발언 크루의 상태 파일(크루 채팅이 스트리밍하는 stage·detail·partial)은
+  // **표시 보강**일 뿐 — 진행 판정은 위 마커 하나다(단일 판정 유지). 방에서도 "지금 무엇을 하며 무엇을
+  // 쓰고 있는지"가 보이게(유건 2026-09-02 "보는 재미"). 발언이 끝나면 chat()이 상태 파일을 지워 partial이
+  // 비고, 완성 말풍선이 정본이 된다.
+  const [slug = '', rest = ''] = String(s.detail || '').split('|');
+  // 출처 게이트 — 같은 크루의 다른 턴(개인 채팅·루틴·경쟁)이 같은 상태 파일을 쓰면 남의 문장이 발언으로 뜬다
+  // (#393 검수 MEDIUM-2 프로브). source==='room'일 때만 채택, 미상(구형 파일)은 비채택(fail-closed).
+  const cur = slug ? await getTurnStatus(wsId, slug) : null;
+  const live = cur?.source === 'room' ? cur : null;
+  return {
+    active: true, slug: slug || null, startedAt: s.startedAt,
+    queue: rest.split(',').filter(Boolean),
+    stage: live?.stage ?? null, detail: live?.detail ?? '', partial: live?.partial ?? '',
+  };
 }
 
 export async function runRoomTurn(wsId, text, attachments = []) {
-  return withRoomTurnStatus(wsId, async () => {
+  return withRoomTurnStatus(wsId, async (mark) => {
     // saved — 사장 발언이 방에 저장된 **뒤** 난 오류에 표식을 단다. 라우트가 오류 바디에 싣고, 화면은 이
     // 값으로 "입력창에 되돌릴지"를 가른다: 저장됐으면 되돌리지 않는다(되돌리면 방과 입력창에 같은 안건이
     // 나란히 남아 Enter 한 번에 두 번 적립·과금 — 분리 검수 #392 HIGH-1 실측), 저장 전 실패(크루 0명 등)면
     // 되돌린다(안 그러면 폴링이 낙관 말풍선까지 지워 글이 완전히 사라진다). chat 라우트의 {error, saved} 계약과 동형.
     const state = { saved: false };
-    try { return await runRoomTurnInner(wsId, text, attachments, state); }
+    try { return await runRoomTurnInner(wsId, text, attachments, state, mark); }
     catch (e) { if (state.saved && e && typeof e === 'object') e.saved = true; throw e; }
   });
 }
-async function runRoomTurnInner(wsId, text, attachments, state = {}) {
+async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = async () => {}) {
   const agents = await listAgents(wsId);
   if (!agents.length) throw new Error('아직 크루가 없습니다. 데크에서 먼저 영입해 주세요.');
+  // 회의 작업 폴더 — 턴 시작에 **한 번** 재서(roomFolder) 발언자 전원이 같은 값을 받는다. 사장 발언에 그 값을
+  // 각인해(workFolder) 회의록이 "이 회의가 실제로 쓴 폴더"를 적게 한다 — 마치기 시점의 고정 값은 그 회의가 쓴
+  // 폴더가 아닐 수 있다(폴더 없이 다 하고 직전에 고정·사라진 폴더 — 분리 검수 MEDIUM-2 실측).
+  const { pin: folder, stale: staleFolder } = await roomFolder(wsId);
   // 사장 발언 추가 + 현재 세션 sid 확보(이후 발언은 이 sid가 유지될 때만 기록)
   const sid = await withLock(rkey(wsId), async () => {
     const room = await loadRoom(wsId);
     const s = room.sid ?? 0;
-    room.messages.push({ who: 'user', text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) });
+    room.messages.push({ who: 'user', text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...(folder ? { workFolder: folder } : {}) });
     await saveRoom(wsId, room);
     return s;
   });
@@ -420,25 +548,56 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}) {
     }
   }
 
-  // ── 발언자 결정. relay(hop)면 그 순서 그대로, @전체면 전원, 아니면 기존 규칙(멘션 없으면 첫 크루).
+  // ── 발언자 결정. relay(hop)면 그 순서 그대로, @전체면 전원, 아니면 멘션한 크루 전원(멘션 없으면 첫 크루).
+  // 이름 멘션 3명 상한(.slice(0, 3))은 해제했다(유건 지시 2026-09-02 — 회의실 개선 2/6). 부른 만큼 턴 비용이
+  // 곱해지는 것은 그대로라, 아래 'speakers' 안내 줄이 인원·순서를 방에 정직하게 남긴다. 릴레이 상한(HOP_MAX)은 별개.
   const speakers = dir.relay.length
     ? dir.relay
-    : dir.allCall ? agents : (dir.to.length ? dir.to : [agents[0]]).slice(0, 3);
+    : dir.allCall ? agents : (dir.to.length ? dir.to : [agents[0]]);
   const isRelay = dir.relay.length > 0;
   // 참조만 지시했으면 여기서 끝 — 참조만 돌리려던 문장에 엉뚱한 크루가 답하지 않게.
   if (!speakers.length || (ccTargets.length && !dir.to.length && !dir.relay.length && !dir.allCall)) {
     return { replies: [], room: await loadRoom(wsId) };
   }
+  // 릴레이가 연쇄 상한에 잘렸으면 누가 빠졌는지 밝힌다 — cc의 '제외' 안내와 같은 규칙(조용히 자르면 아래
+  // 인원 안내가 부른 사람보다 적은 이유를 사장이 알 길이 없다).
+  if (dir.relayDropped?.length) {
+    const names = dir.relayDropped.map((a) => a.name).join(', ');
+    await sys('relay', en
+      ? `Relay stops at ${HOP_MAX + 1} — not included: ${names}`
+      : `이어받기는 ${HOP_MAX + 1}명까지 — 제외: ${names}`);
+  }
+  // 발언 인원·순서 안내 — 2명 이상일 때만(1명은 답 자체가 곧 표시). 상한을 없앤 대가는 턴 비용이라 "몇 명이
+  // 어떤 순서로 답하는지"를 발언 시작 전에 방에서 본다(참조·릴레이 절단 안내가 있으면 그 다음 줄). 시스템 줄은
+  // 크루 프롬프트 트랜스크립트에서 빠지는 기존 규약.
+  if (speakers.length > 1) {
+    await sys('speakers', en
+      ? `${speakers.length} speak in turn — ${speakers.map((a) => a.name).join(', ')}`
+      : `${speakers.length}명 발언 — ${speakers.map((a) => a.name).join(', ')} 순`);
+  }
 
   const nameOf = (slug) => agents.find((x) => x.slug === slug)?.name ?? slug;
-  // @all × 이미지 첨부 = 크루 수만큼 이미지 토큰이 곱해진다(검수 LOW — 이미지는 턴마다 임베드).
+  // 발언자 수 × 이미지 첨부 = 크루 수만큼 이미지 토큰이 곱해진다(검수 LOW — 이미지는 턴마다 임베드).
   // 앞 3명까지만 임베드하고 이후 발언자는 경로 노트로 받는다 — 파일은 vault/files에 있으니 필요한
-  // 크루는 Read로 열람 가능. 이름 멘션 경로는 speakers 자체가 3명 상한이라 이 캡에 걸리지 않는다.
+  // 크루는 Read로 열람 가능. 이름 멘션 상한 해제(2026-09-02) 뒤로는 @전체뿐 아니라 이름 멘션 4명째부터도
+  // 이 캡이 실제로 걸린다(test/room-speakers.test.mjs가 잠근다).
   const IMG_EMBED_MAX = 3;
   // 이 턴만의 식별자 — sid는 회의 세션이라 턴마다 같다. 같은 방에서 턴이 겹치면(탭 2개·API 직접
   // 호출) 키가 완전히 같아져 서로의 위임 이벤트를 주워 담는다(분리 검수 MEDIUM-3).
   const turnId = `${sid}-${Math.random().toString(36).slice(2, 8)}`;
+  // 회의 작업 폴더를 못 찾으면 알린다(스냅샷은 턴 시작에 1회) — 시스템 줄은 크루 프롬프트에서 제외되는 기존 규약이라
+  // 대화를 오염하지 않는다.
+  if (staleFolder) {
+    await sys('folder', en
+      ? `Work folder not found on this device: ${staleFolder} — proceeding without it (each crew's own default). Unpin it or reconnect the folder.`
+      : `작업 폴더를 이 기기에서 찾을 수 없습니다: ${staleFolder} — 폴더 없이 진행합니다(각자 기본 위치). 고정을 풀거나 폴더를 다시 연결해 주세요.`);
+  }
+  // 트랜스크립트 아래 한 줄 — 뒤 순서·릴레이 크루도 같은 폴더를 본다. 강제는 commonDirectives의 "지금 일할 폴더"가 한다.
+  // oneLine — 개행 든 폴더명이 "사장:" 가짜 줄을 만든다(commonDirectives와 같은 접기, 분리 검수 MEDIUM-1 실측).
+  const folderLine = folder ? `\n작업 폴더: ${oneLine(folder)} — 사장이 이 회의에 지정한 폴더다. 파일 작업은 여기서 하고, 동료 크루도 같은 폴더를 본다(위임받은 동료 포함).` : '';
   const replies = [];
+  // 마커 detail = '발언자|다음1,다음2' (getRoomTurn이 해석). j가 범위 밖이면 빈 값 = 발언자 미정(마무리 중).
+  const markerFor = (j) => (speakers[j] ? `${speakers[j].slug}|${speakers.slice(j + 1).map((s) => s.slug).join(',')}` : '');
   for (const [i, a] of speakers.entries()) {
     const att = i >= IMG_EMBED_MAX && attachments.some((x) => x.isImage)
       ? attachments.map((x) => (x.isImage ? { ...x, isImage: false } : x))
@@ -448,12 +607,14 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}) {
     const transcript = (await loadRoom(wsId)).messages.filter((m) => m.who !== 'system').slice(-20)
       // 첨부 경로 규약은 chat.mjs 스레드 맥락과 동일 문자열 — 후속 턴에서 "아까 그 파일"이 경로로
       // 이어진다(검수 M1: 이게 없으면 1턴 첨부를 2턴 크루가 못 찾는다 — 랜덤 접두 파일명이라 탐색 불가).
-      .map((m) => `${m.who === 'user' ? '사장' : nameOf(m.who)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}${m.attachments?.length ? ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ''}`)
+      // 산출물 노트 — 앞 크루가 이 회의에서 만든 파일 경로. 없으면 릴레이(@A > @B)의 B가 A의 답변 텍스트에만 의존해
+      // 경로를 받는다(분리 검수 LOW-2). 첨부 노트·회의록 `> 산출물:` 줄과 같은 vault/ 접두 규약.
+      .map((m) => `${m.who === 'user' ? '사장' : nameOf(m.who)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}${m.attachments?.length ? ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ''}${m.artifacts?.length ? ` (산출물, Read로 열람: ${m.artifacts.map((a) => 'vault/' + a).join(', ')})` : ''}`)
       .join('\n');
     const prompt = `지금 회의실에 있다 — 사장과 동료 크루가 함께 보는 방이다.
 
 ## 회의 대화 (최근)
-${transcript}
+${transcript}${folderLine}
 
 ## 지시
 사장의 마지막 발언에 "${a.name}"로서 답하라.
@@ -482,15 +643,27 @@ ${transcript}
     });
     let r;
     try {
-      await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', a.slug); // 발언자 갱신 — 화면 복원의 신선도 앵커(getRoomTurn)
+      await mark(markerFor(i)); // 발언자|다음 순서 — 화면 복원·발언 큐의 앵커(래퍼의 mark — 하트비트와 같은 값을 공유)
       // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다
-      r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx });
+      r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx, workFolder: folder });
+      // 발언이 끝나는 **즉시** 다음 발언자로 넘긴다 — chat()이 크루 상태 파일을 지운 뒤 답변 적재·스레드 기록·
+      // 다음 프롬프트 조립이 끝날 때까지 마커만 옛 발언자로 남으면, 화면에 완성 답변 아래 "페퍼 · 시동 거는 중"이
+      // 다시 뜬다(격리 실측 2026-09-02 shot-1). 마지막 발언자면 빈 값 → 종전 '회의 중' 줄로 마무리.
+      await mark(markerFor(i + 1));
     } catch (e) {
       // 발언 실패를 **방에 남긴다** — 오류는 POST 호출 탭에만 돌아가므로, 안건을 올리고 다른 페이지로 간
       // 사장에게는 방이 그냥 조용해져 "멈췄다"로 보였다(실사용 제보 2026-09-02 계열 — 격리 실측: 401 실패 190초
       // 뒤 방에 흔적 0). 시스템 줄(sys)은 크루 프롬프트 트랜스크립트에서 제외되는 기존 규약이라 대화를 오염하지 않는다.
       const msg = maskKeyLike(String(e?.message || e).replace(/\s+/g, ' ')).slice(0, 200); // 방 스레드는 동기화·회의록 적재 대상 — 키 모양은 가린다
       await sys('error', en ? `${a.name} could not respond: ${msg}` : `${a.name} 발언 실패: ${msg}`).catch(() => {});
+      // 인원 안내가 약속한 N명 중 아직 차례가 안 온 크루를 밝힌다 — 실패로 루프가 끊기면 뒷사람은 말없이 빠지는데,
+      // "N명 발언" 안내가 있는 지금은 그 침묵이 곧 거짓 약속이다(분리 검수 MEDIUM-2). 다시 부르면 이어간다.
+      const rest = speakers.slice(i + 1).map((x) => x.name);
+      if (rest.length) {
+        await sys('skipped', en
+          ? `Did not get to: ${rest.join(', ')} — mention them again to continue.`
+          : `차례가 오지 않은 크루: ${rest.join(', ')} — 다시 부르면 이어갑니다.`).catch(() => {});
+      }
       throw e; // 호출 탭의 오류 표시 계약은 그대로
     } finally {
       // emitNotify는 마이크로태스크로 핸들러를 돌린다 — 턴 종료 직후 한 틱 양보해야 마지막 위임을 놓치지 않는다
@@ -502,17 +675,20 @@ ${transcript}
       const live = await pushRoomMsg(wsId, {
         who: ev.to, text: ev.reply, ts: Date.now(),
         via: { from: ev.from, fromName: ev.fromName, task: String(ev.task ?? '').slice(0, 200) },
+        ...(ev.artifacts?.length ? { artifacts: ev.artifacts } : {}), // 위임받은 크루가 만든 파일도 방에서 바로 — chat.mjs delegate 이벤트가 싣는다
       }, sid);
       if (!live) return { replies, room: await loadRoom(wsId) }; // 회의가 마쳐졌다
     }
-    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now() }, sid);
+    // artifacts를 **방 메시지에도** 싣는다 — 지금까지 개인 스레드(appendTurn)에만 기록돼 회의실에선 크루가 만든 파일을
+    // 볼 수도 갈 수도 없었다(유건 요청 2026-09-02). 없으면 필드 자체를 안 쓴다(thread.mjs appendTurn과 같은 규약 — 스레드 비대화 방지).
+    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now(), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }, sid);
     if (!live) break; // 회의가 마쳐졌다 — 남은 발언을 빈 방에 남기지 않는다
     // ponytail: 회의실 턴을 크루 개인 스레드에 기록한다 — 마지막 남은 비대칭(루틴 #157 교훈).
     // 안 하면 회의에서 시킨 일이 개인 채팅에 안 보이고 이어가기가 안 된다(유건 제보 2026-08-08).
     const { appendTurn } = await import('./thread.mjs');
     await appendTurn(wsId, a.slug, { userMsg: prompt, reply: r.reply, handover: r.handover, sessionId: null, via: 'room', artifacts: r.artifacts })
       .catch((e) => console.error(`[argo] 회의실 스레드 기록 실패(${wsId}/${a.slug}):`, e.message));
-    replies.push({ slug: a.slug, name: a.name, reply: r.reply });
+    replies.push({ slug: a.slug, name: a.name, reply: r.reply, ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }); // 화면의 폴백 경로(room 스냅샷 부재)도 칩을 잃지 않게
   }
   return { replies, room: await loadRoom(wsId) };
 }

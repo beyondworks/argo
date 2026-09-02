@@ -94,10 +94,10 @@ export default function Deck({ params }) {
   );
   const memories = (data?.memories ?? []).filter((m) => !q || m.title.toLowerCase().includes(q));
   const lastTs = data?.memories?.[0] ? (tsFromRel(data.memories[0].rel) ?? data.memories[0].mtime) : null;
-  // 연결 밀도 — 기억 대비 자동 링크 쌍 비율 (기억이 얼마나 서로 엮여 있나)
-  const density = stats && data.memoryCount > 1
-    ? Math.min((stats.links / (data.memoryCount - 1)) * 100, 100)
-    : 0;
+  // 연결된 기억 비율 — 링크가 1개 이상인 기억 / (연결 + 고립). 100%면 정말 모든 기억이 엮인 것.
+  // 분모를 memoryCount가 아니라 linked+isolated로 두는 이유: 스캐폴드 안내 노트(링크 0)는 기억이 아니라서 빼야 신규 회사도 100%에 닿는다(검수 L-1).
+  // 예전 links/(n−1)은 쌍 수가 n−1(신장 트리)을 넘는 순간 100%로 포화해 정보가 0이었다(유건 제보 2026-09-02: 10,075쌍/2,263건 상시 100%).
+  const linkedPct = stats && stats.linked + stats.isolated > 0 ? (stats.linked / (stats.linked + stats.isolated)) * 100 : 0;
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
@@ -143,7 +143,7 @@ export default function Deck({ params }) {
                     <span className="microlabel">{t('deck.linkDensity')}</span>
                     <span className="chip">{t('deck.linksPair', { n: stats.links })}</span>
                   </div>
-                  <Dial value={density} label={t('deck.linked')} />
+                  <Dial value={linkedPct} label={t('deck.linked')} />
                 </div>
                 <div className="metric card fade-up" style={{ animationDelay: '0.12s' }}>
                   <div className="metric-top">
@@ -260,7 +260,7 @@ export default function Deck({ params }) {
                     <tr key={m.rel} onClick={() => router.push(`/c/${ws}/vault?doc=${encodeURIComponent(m.rel)}`)}>
                       <td style={{ fontWeight: 600, maxWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{m.title}</td>
                       <td><span className="pill"><span className="dot" />{m.dir === 'notes' ? t('deck.typeNote') : t('deck.typeConversation')}</span></td>
-                      <td className="mono" style={{ fontSize: 12 }}>{m.links.length > 0 ? m.links.length : '—'}</td>
+                      <td className="mono" style={{ fontSize: 12 }}>{m.deg > 0 ? m.deg : '—'}</td>{/* 해석 후 차수 — 다이얼·그래프와 같은 셈법(깨진·자기 링크는 0) */}
                       <td className="mono" style={{ color: 'var(--fg-3)', fontSize: 11.5 }}>{timeAgo(tsFromRel(m.rel) ?? m.mtime, lang)}</td>
                     </tr>
                   ))}

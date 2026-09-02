@@ -111,7 +111,7 @@ test('레이아웃 — 사이드바 크루 행 진입로(hover 버튼·cmd+클�
 // ── 회의실 진입로 ──
 test('회의실 — 발언자 아바타·이름이 canOpenSide(패널 삶 + 크루 실존)일 때만 버튼, 클릭 = ?side=crew:<slug>', () => {
   assert.match(room, /import \{ useRouter \} from 'next\/navigation';/);
-  assert.match(room, /import \{ sideParam, withSide \} from '\.\.\/split\.mjs';/);
+  assert.match(room, /import \{ (?:keepSide, )?sideParam, withSide \} from '\.\.\/split\.mjs';/); // keepSide는 커맨더(#398) 병존
   assert.match(room, /import \{ useSplitAlive \} from '\.\.\/split-alive';/);
   assert.match(room, /const splitAlive = useSplitAlive\(\);/);
   assert.doesNotMatch(room, /setSplitAlive|matchMedia\(/, '인라인 판정 금지');

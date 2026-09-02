@@ -1,11 +1,12 @@
 // 턴 진행 단계 — "작성중" 한 마디로 뭉개지 않는다(Hermes 교훈: 지연과 먹통을 구분 못 하면 신뢰 붕괴).
 // chat이 단계를 파일로 남기고, 크루 화면이 폴링해 보여준다.
 import { rm } from 'node:fs/promises';
+import { sanitizeFileSlug } from './slug.mjs';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 
-const file = (wsId, slug) => join(paths(wsId).chats, `${slug.replace(/[^a-z0-9-]/g, '')}.status.json`);
+const file = (wsId, slug) => join(paths(wsId).chats, `${sanitizeFileSlug(slug)}.status.json`); // 세척 단일 원천(slug.mjs) — thread.mjs와 같은 규칙
 
 // 안정적인 stage 코드만 기록한다 — 사람이 읽는 라벨은 클라이언트가 i18n으로 번역한다(영어 회사에 한국어
 // 진행 라벨이 노출되던 다국어 규칙 위반 수정). detail(파일명·명령 등 고유값)은 번역 대상이 아니라 그대로.
@@ -39,7 +40,7 @@ export function stageForTool(toolName) {
   return 'work';
 }
 
-export async function setTurnStatus(wsId, slug, stage, detail = '', partial) {
+export async function setTurnStatus(wsId, slug, stage, detail = '', partial, source) {
   try {
     // 상태 파일은 캐시성 — 손상은 관용(readJsonLenient). writeJsonAtomic가 mkdir까지 처리.
     const prev = await readJsonLenient(file(wsId, slug), {});
@@ -47,6 +48,10 @@ export async function setTurnStatus(wsId, slug, stage, detail = '', partial) {
       stage, detail,
       // partial — 완료 전 크루가 이미 말한 텍스트(스트리밍 체감). 미전달 시 이전 값 유지, 뒤 4000자만
       partial: String(partial ?? prev.partial ?? '').slice(-4000),
+      // source — 이 상태를 쓴 턴의 출처('room'|'chat'|'delegate'|'routine'…). 크루 상태 파일은 크루당 하나라
+      // 같은 크루의 다른 턴(개인 채팅·루틴)이 겹치면 회의실이 남의 문장을 발언으로 오인한다(#393 검수 MEDIUM-2).
+      // 미전달이면 이전 값 유지(같은 턴의 후속 갱신), 없으면 빈 값 — 소비자는 빈 값을 '출처 미상'으로 비채택.
+      source: source ?? prev.source ?? '',
       startedAt: prev.startedAt ?? Date.now(), ts: Date.now(),
     });
   } catch { /* 상태 표시는 베스트에포트 */ }
@@ -62,7 +67,7 @@ export async function getTurnStatus(wsId, slug) {
     const s = await readJsonLenient(file(wsId, slug), null);
     if (!s || !s.ts) return null;
     return Date.now() - s.ts < 120_000
-      ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', startedAt: s.startedAt ?? s.ts }
+      ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', source: s.source ?? '', startedAt: s.startedAt ?? s.ts }
       : null;
   } catch {
     return null;
