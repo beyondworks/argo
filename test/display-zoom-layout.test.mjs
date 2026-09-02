@@ -618,6 +618,56 @@ test('att-chip 폭 클램프 핀 — nowrap 칩의 고정 220px 상한 복원 �
     'min(220px, 100%) 복원 변이 — nowrap 칩이 좁은 유효 폭(배율 2, 열 186px)에서 행 밖으로 넘친다(검수 실측: 긴 파일명 칩이 문서 가로 스크롤)');
 });
 
+/* ── 인접 핀: 데크 배율 2 협폭 2열 겹침(선재 결함 — Dial 회전 중심 수정 검증 중 발견 2026-09-02) ─────
+   1400px 창 × 배율 2(유효 700 CSS px)에서 .deck-grid가 2열(1fr + 316px)을 유지한 채 왼쪽 열이 68px로
+   눌리고, 그 안의 지표 auto-fit(min 180px)이 트랙을 넘쳐 오른쪽 열 위로 겹쳐 그려졌다(크롬·WebKit 동일).
+   뿌리 둘: ① 접힘 규칙이 미디어쿼리(실 뷰포트 px)뿐이라 배율을 모른다 → 컨테이너 쿼리(.deck-page,
+   CSS px 폭)로 같은 임계를 한 번 더 건다. ② 맨 px min auto-fit·무템플릿 grid의 auto 열은 트랙보다
+   넓어질 수 있다 → 회의실·경쟁 정본(minmax(0,…)·min(Npx,100%))으로 잠근다. 실동작 검증은 해당 PR의
+   라이브 측정(크롬·WebKit × 배율 1·1.5·2, 배율 1 픽셀 무변경)이 담당. */
+test('deck grid 열 잠금 sweep — 모든 인라인 display:grid는 minmax(0,…) 열 또는 클램프형 auto-fit이어야 한다', () => {
+  const src = sources.get('app/c/[ws]/page.jsx');
+  const styles = collectInlineStyles(src);
+  // 탐지는 쪽지함 sweep 정본(:410)과 같은 느슨한 형태 — 리터럴 'grid' 고정은 inline-grid·삼항 조건부
+  // grid가 수집·역방향 양쪽을 지나가는 fail-open(분리 검수 M-1 실측: 무잠금 inline-grid·x ? 'grid' : 'flex' 추가가 전건 초록).
+  const GRID_RE = /display:\s*[^,}]*grid/;
+  const grids = styles.filter((s) => GRID_RE.test(s.body));
+  assert.ok(grids.length >= 11, `grid 인라인 ${grids.length}곳(현재 11) — 수집 워커가 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
+  for (const g of grids) {
+    const colDecls = (g.body.match(/gridTemplateColumns/g) ?? []).length;
+    const lockedCols = /gridTemplateColumns:\s*['"`][^'"`]*minmax\(0,/.test(g.body)
+      || /gridTemplateColumns:\s*['"`][^'"`]*minmax\(min\(\d+px, 100%\),/.test(g.body);
+    assert.ok(colDecls === 1 && lockedCols,
+      `deck:${lineOf(src, g.start)} — 암묵/auto-min 열 grid: gridTemplateColumns는 정확히 1회 선언에 minmax(0,…) 또는 minmax(min(Npx, 100%),…)를 포함해야 한다(자식 min-content로 트랙이 부풀어 배율 2에서 이웃 열 위로 겹침 — 덮어쓰기 ${colDecls}회 선언도 여기서 red)`);
+  }
+  for (const m of src.matchAll(/display:\s*[^,}]*grid/g)) {
+    assert.ok(styles.some((s) => m.index >= s.start && m.index < s.end), `deck:${lineOf(src, m.index)} — 수집되지 않은 display:grid (style={{…}} 인라인 밖이거나 워커가 모르는 표기)`);
+  }
+});
+
+test('deck 2열 접힘 — 컨테이너 쿼리(배율 반영 CSS px)가 미디어쿼리(실 뷰포트)와 같은 창 폭에서 전환된다', () => {
+  const css = sources.get('app/globals.css');
+  const page = sources.get('app/c/[ws]/page.jsx');
+  assert.match(page, /<div className="deck-page"/, '데크 래퍼에 컨테이너 클래스 deck-page가 있어야 한다');
+  assert.match(css, /\.deck-page\s*\{[^}]*container:\s*deck\s*\/\s*inline-size/, '.deck-page가 이름 있는(deck) inline-size 컨테이너여야 한다 — 무명이면 다른 컨테이너가 생길 때 .deck-grid가 엉뚱한 조상에 붙는다(검수 L-2)');
+  // rem 고정 — px면 WebKit이 auto 폭 컨테이너를 배율 곱한 폭으로 비교해 배율 2에서 안 접힌다(실측, globals 주석).
+  // 값은 16px 루트 기준 px로 환산해 아래 산식과 대조한다(rem 상수는 정규식이 잡는 유일한 단위 — px 복원은 여기서 red).
+  const cqRem = css.match(/@container\s+deck\s*\(max-width:\s*(\d+(?:\.\d+)?)rem\)\s*\{\s*\.deck-grid\s*\{\s*grid-template-columns:\s*1fr;?\s*\}\s*\}/);
+  const cq = cqRem && [cqRem[0], String(Number(cqRem[1]) * 16)];
+  const mq = css.match(/@media\s*\(max-width:\s*(\d+)px\)\s*\{\s*\.deck-grid\s*\{\s*grid-template-columns:\s*1fr;?\s*\}\s*\}/);
+  assert.ok(cq && mq, `.deck-grid 접힘 규칙 — 컨테이너 쿼리(rem 임계) ${!!cq}, 미디어쿼리 ${!!mq} 둘 다 있어야 한다(미디어쿼리 제거는 배율 1 종전 동작 변경, px 임계는 WebKit 배율 2 미매칭)`);
+  // 값 불변식 — 컨테이너 임계 = 2열이 겹침 없이 들어가는 최소 본문 폭 = 지표 auto-fit 최소폭 + gap + 레일 폭.
+  // 미디어 임계(1100 = 본문 808)보다 낮아야 배율 1·1.5의 종전 2열이 그대로다(높이면 1.5×1440에서 접혀 회귀).
+  const minCard = Number(page.match(/repeat\(auto-fit, minmax\(min\((\d+)px, 100%\), 1fr\)\)/)[1]);
+  const deck = css.match(/\.deck-grid\s*\{[^}]*grid-template-columns:\s*1fr\s+minmax\(0,\s*(\d+)px\)[^}]*gap:\s*(\d+)px/);
+  assert.ok(deck, '.deck-grid 2열 규칙(1fr + minmax(0, Npx) 레일, gap)이 있어야 한다');
+  const expect = minCard + Number(deck[2]) + Number(deck[1]);
+  assert.equal(Number(cq[1]), expect, `컨테이너 임계 ${cq[1]} ≠ 지표 최소 ${minCard} + gap ${deck[2]} + 레일 ${deck[1]} = ${expect}`);
+  const side = Number(css.match(/\.shell\s*\{[^}]*grid-template-columns:\s*(\d+)px/)[1]);
+  const pad = Number(css.match(/\.content\s*\{\s*padding:\s*\d+px\s+(\d+)px/)[1]);
+  assert.ok(Number(cq[1]) < Number(mq[1]) - side - 2 * pad, `컨테이너 임계 ${cq[1]}는 미디어 임계의 본문 폭 ${Number(mq[1]) - side - 2 * pad}보다 낮아야 배율 1·1.5 종전 레이아웃이 보존된다`);
+});
+
 /* ── 인접 핀: 데크 계기판(Dial) 바늘 — svg 내부 요소의 px transform-origin 금지 ─────────
    유건 제보(2026-09-02 스크린샷): 표시 배율에서 바늘의 회전 중심이 중앙 점을 벗어난다. 재현
    (독립 페이지, 시스템 WKWebView = Tauri 웹뷰 엔진): 배율 1.5에서 꼬리가 중심에서 (−11.2, +40.1),
