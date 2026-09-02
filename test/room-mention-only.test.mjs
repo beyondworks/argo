@@ -32,8 +32,15 @@ test('i18n — room.mentionOnly ko/en 등록', async () => {
 test('회의실 LANE = 크루 대화 LANE — 두 파일의 상수 값이 같아야 한다(입력창·대화 영역 폭 통일)', async () => {
   const room = await load('../app/c/[ws]/room/page.jsx');
   const crew = await load('../app/c/[ws]/crew/[slug]/page.jsx');
+  const compete = await load('../app/c/[ws]/compete/page.jsx');
   const pick = (src) => src.match(/^const LANE = ('[^']+');$/m)?.[1];
-  assert.ok(pick(room) && pick(crew), 'LANE 상수가 두 파일 모두에 있어야 한다');
+  assert.ok(pick(room) && pick(crew) && pick(compete), 'LANE 상수가 세 파일 모두에 있어야 한다');
   assert.equal(pick(room), pick(crew));
-  assert.match(room, /maxWidth: LANE, margin: '0 auto'/, '회의실 레인 소비(대화 영역·컴포저 열)');
+  assert.equal(pick(compete), pick(crew), '경쟁 시안 레인 = 크루(유건 2026-09-02: 창 크기·입력창 통일)');
+  // 자리별 앵커(}} 폐합) — 느슨한 존재 단언은 소비처 4곳 중 하나만 남아도 초록(검수 MEDIUM-1: 컴포저 열만 지운 변이가 초록).
+  // 요청의 핵심인 컴포저 열과 대화 영역(본문) 두 자리를 각각 잠근다.
+  assert.match(room, /gridTemplateColumns: 'minmax\(0, 1fr\)', gap: 6, width: '100%', maxWidth: LANE, margin: '0 auto' \}\}>/, '회의실 컴포저 열 레인');
+  assert.match(room, /gridTemplateColumns: 'minmax\(0, 1fr\)', gap: 14, width: '100%', maxWidth: LANE, margin: '0 auto' \}\}>/, '회의실 대화 영역 레인');
+  assert.match(compete, /gridTemplateColumns: 'minmax\(0, 1fr\)', gap: 6, width: '100%', maxWidth: LANE, margin: '0 auto' \}\}>/, '경쟁 컴포저 열 레인');
+  assert.match(compete, /gridTemplateColumns: 'minmax\(0, 1fr\)', gap: 12, minWidth: 0, width: '100%', maxWidth: LANE, margin: '0 auto' \}\}>/, '경쟁 본문(시안 비교) 레인');
 });

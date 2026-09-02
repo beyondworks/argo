@@ -458,7 +458,7 @@ export default function Room({ params }) {
             만들지 않게 한다. .md는 자체 break-word가 우선하지만 아래 열 잠금으로 박스가 좁아지면 그걸로 충분히 꺾인다. */}
         <div ref={scrollRef} style={{ padding: '4px 2px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' }}>
           {shown === null ? <Skeleton h={200} /> : shown.length === 0 ? (
-            <div className="empty">{t('room.empty')}</div>
+            <div className="empty" style={{ width: '100%', maxWidth: LANE, margin: '0 auto' }}>{t('room.empty')}</div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14, width: '100%', maxWidth: LANE, margin: '0 auto' }}> {/* 열 잠금 — 본문 열과 같은 이유(메시지 행 min-content 전파 차단). 레인 = 크루 스레드와 동일 */}
               {shown.map((m, i) => m.who === 'user' ? (
