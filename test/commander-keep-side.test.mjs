@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { readdirSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
+import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { keepSide, keepSideExcept, parseSide, sideParam, withSide } from '../app/c/[ws]/split.mjs';
 import { stripComments } from './helpers/strip-comments.mjs'; // 문자열 상태 추적 하드닝판 — 문자열 속 /*가 실코드를 지우지 않는다
@@ -154,7 +154,7 @@ const EXPECTED = {
 test('스위프: app/ 전역의 router.push 계열(옵셔널 체이닝·공백·대괄호 호출 정규화)은 search를 넘기는 keepSide·keepSideExcept, 레이아웃의 L 경유이거나 허용 목록(회사 밖 이동)뿐 — 파일별 개수 고정', async () => {
   const bad = []; const seenAllow = new Set(); const counts = {};
   for (const file of walk(join(ROOT, 'app'))) {
-    const rel = relative(ROOT, file);
+    const rel = relative(ROOT, file).split(sep).join('/'); // 윈도우 백슬래시 → 슬래시(EXPECTED 키·허용 목록과 같은 표기; CI windows-latest 실패 원인)
     const src = normalizeCalls(stripComments(await readFile(file, 'utf8')));
     for (const c of callsOf(src, 'router.push(')) {
       counts[rel] = (counts[rel] ?? 0) + 1;
