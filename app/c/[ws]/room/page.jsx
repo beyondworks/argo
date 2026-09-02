@@ -306,9 +306,11 @@ export default function Room({ params }) {
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title || s.topic || t('chat.sessions.untitled')}</span>
                 </span>
                 <span className="nav-sub" style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
-                  {/* 진행 중 칩 — '새 회의'로 넘긴 회의(회의록 없음). .chip을 쓰지 않는다(uppercase — 시스템 줄과 같은 이유) */}
+                  {/* 진행 중 칩 — '새 회의'로 넘긴 회의(회의록 없음). .chip을 쓰지 않는다(uppercase — 시스템 줄과 같은 이유).
+                      진행 중 항목은 날짜를 뺀다: 보관본 ts는 회의 날짜가 아니라 넘긴 시각이라 오해를 부르고, en에서
+                      칩+날짜+"3 messages"가 레일 폭(216px)을 넘겨 "3 …"로 잘렸다(격리 실측 스크린샷). */}
                   {s.open && <span style={{ flex: 'none', fontSize: 10, fontWeight: 650, lineHeight: 1.5, color: pinColor, padding: '0 5px', borderRadius: 999, border: `1px solid ${pinColor}` }}>{t('room.sessions.open')}</span>}
-                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{new Date(s.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: s.count })}</span>
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.open ? '' : `${new Date(s.ts).toLocaleDateString('sv-SE')} · `}{t('chat.sessions.msgs', { n: s.count })}</span>
                 </span>
               </span>
             </button>
