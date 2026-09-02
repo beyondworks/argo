@@ -11,7 +11,8 @@ export async function GET(_req, { params }) {
   return Response.json({ ...room, turn });
 }
 
-/** 회의 마치기 — 회의록을 vault 일지로 적재하고 방을 비운다(대화는 chats/.archive/에 보관). */
+/** 회의 마치기 — 회의록을 vault 일지로 적재하고 방을 비운다(대화는 chats/.archive/에 보관).
+    크루가 발언 중이면 409 ROOM_BUSY(errorCode 동봉 — 화면이 표시 언어 안내로 그린다). */
 export async function DELETE(_req, { params }) {
   try {
     const { ws } = await params;
@@ -24,7 +25,7 @@ export async function DELETE(_req, { params }) {
     }
     return Response.json(await endMeeting(ws));
   } catch (e) {
-    return Response.json({ error: String(e.message || e) }, { status: 400 });
+    return Response.json({ error: String(e.message || e), errorCode: e?.code }, { status: e?.code === 'ROOM_BUSY' ? 409 : 400 });
   }
 }
 

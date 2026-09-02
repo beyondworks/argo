@@ -86,15 +86,19 @@ export default function Room({ params }) {
   // 회의 다시 열기 — 보관 회의를 현재 방으로 되돌린다. 진행 중 회의가 있으면 서버가 409로 거절하므로
   // 덮어쓰기가 원천 차단된다(실사용 요청 2026-07-26 "보관한 회의를 다시 열어 이어갈 수 없나요").
   const [reopening, setReopening] = useState(null); // 진행 중인 id — 중복 클릭 차단
+  // 라우트 오류 → 표시 언어. ROOM_BUSY(크루 발언 중 — 새 회의·전환·마치기 공통 서버 게이트)는 사전 문구로,
+  // 그 외는 서버 문구 그대로(apimsg의 {error, errorCode} 바디 계약과 동형 — 회의실 라우트는 아직 사전 밖).
+  const routeError = (d, fallback = '') => new Error(d?.errorCode === 'ROOM_BUSY' ? t('room.busyGate') : (d?.error || fallback));
+  // 열기·전환 — 현재 회의가 있으면 서버가 '진행 중'으로 자동 보관하고 연다(종전 409 거절은 새 회의 분기로 폐지).
   async function doReopen(sess) {
-    if (reopening) return;
+    if (reopening || busy || serverBusy) return;
     setReopening(sess.id);
     try {
       const r = await fetch(`/api/companies/${ws}/room/sessions`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ id: sess.id, reopen: true }),
       });
-      if (!r.ok) { setError((await r.json().catch(() => ({}))).error || t('room.reopenFail')); return; }
+      if (!r.ok) { setError(routeError(await r.json().catch(() => ({})), t('room.reopenFail')).message); return; }
       setViewing(null); setArchMsgs(null); atBottomRef.current = true; setUnseen(false); // 보관 열람 상태 해제 — 되살린 회의는 '현재 회의'다(최신으로, 검수 D4)
       load(); loadSessions();
     } catch { setError(t('room.reopenFail')); } finally { setReopening(null); }
@@ -218,11 +222,26 @@ export default function Room({ params }) {
     try {
       const r = await fetch(`/api/companies/${ws}/room`, { method: 'DELETE' });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.error);
+      if (!r.ok) throw routeError(d);
       setMessages([]); setError('');
       atBottomRef.current = true; setUnseen(false); // 빈 방 = 초기 상태(검수 D4 — 우연한 클램프 의존 제거)
       loadSessions(); // 방금 마친 회의가 좌측 레일에 적재된다
       window.dispatchEvent(new Event('argo:refresh')); // 항해일지에 회의록이 바로 잡힌다
+    } catch (e2) { setError(String(e2.message)); }
+  }
+
+  // 새 회의 — 지금 회의를 마치지 않고(회의록 없음) '진행 중'으로 레일에 보관한 뒤 빈 방을 연다(유건 요청 2026-09-02).
+  // 마치기와 같은 잠금(busy || serverBusy): 도는 발언은 sid 불일치로 버려진다 — 서버 게이트(409 ROOM_BUSY)가 2차 방어.
+  // 항해일지 갱신(argo:refresh)은 없다 — 회의록을 쓰지 않았다.
+  async function newMeeting() {
+    if (busy || serverBusy) return;
+    try {
+      const r = await fetch(`/api/companies/${ws}/room/sessions`, { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw routeError(d);
+      setMessages([]); setError('');
+      atBottomRef.current = true; setUnseen(false);
+      loadSessions(); // 방금 넘긴 회의가 '진행 중'으로 레일에 적재된다
     } catch (e2) { setError(String(e2.message)); }
   }
 
@@ -255,6 +274,7 @@ export default function Room({ params }) {
   }, [mentionOpen]);
 
   const shown = viewing ? archMsgs : messages;
+  const viewingOpen = !!viewing && !!sessions.find((s) => s.id === viewing)?.open; // 열람 중인 보관본이 '진행 중'인가(배너 문구·버튼 라벨)
 
   return (
     // 그리드 기하(레일 216px + 본문 열, 높이 calc, marginBottom -70)는 .chat-cols(globals) — 크루 DM·
@@ -285,12 +305,16 @@ export default function Room({ params }) {
                   {s.pinned && <Icon name="pin" size={11} style={{ flex: 'none', color: pinColor }} />}
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title || s.topic || t('chat.sessions.untitled')}</span>
                 </span>
-                <span className="nav-sub">{new Date(s.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: s.count })}</span>
+                <span className="nav-sub" style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                  {/* 진행 중 칩 — '새 회의'로 넘긴 회의(회의록 없음). .chip을 쓰지 않는다(uppercase — 시스템 줄과 같은 이유) */}
+                  {s.open && <span style={{ flex: 'none', fontSize: 10, fontWeight: 650, lineHeight: 1.5, color: pinColor, padding: '0 5px', borderRadius: 999, border: `1px solid ${pinColor}` }}>{t('room.sessions.open')}</span>}
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{new Date(s.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: s.count })}</span>
+                </span>
               </span>
             </button>
             <span className="rail-actions" style={{ position: 'absolute', right: 5, top: 7, display: 'flex', gap: 1 }}>
-              <button type="button" title={t('room.sessions.reopen')} aria-label={t('room.sessions.reopen')}
-                disabled={reopening === s.id}
+              <button type="button" title={s.open ? t('room.sessions.switch') : t('room.sessions.reopen')} aria-label={s.open ? t('room.sessions.switch') : t('room.sessions.reopen')}
+                disabled={reopening === s.id || busy || serverBusy}
                 onClick={(e) => { e.stopPropagation(); doReopen(s); }}
                 style={{ display: 'grid', placeItems: 'center', width: 22, height: 22, border: 0, background: 'transparent', color: actColor, cursor: reopening === s.id ? 'wait' : 'pointer', borderRadius: 6 }}>
                 <Icon name="play" size={12} />
@@ -336,7 +360,11 @@ export default function Room({ params }) {
           <span className="microlabel" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('room.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
           {!viewing && (messages?.length ?? 0) > 0 && (
-            <button className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={endMeeting}>{t('room.end')}</button>
+            <>
+              {/* 새 회의 — 마치기와 같은 잠금·같은 축소 규칙. 회의록 없이 '진행 중'으로 보관한다 */}
+              <button className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={newMeeting}>{t('room.new')}</button>
+              <button className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={endMeeting}>{t('room.end')}</button>
+            </>
           )}
         </div>
 
@@ -441,10 +469,12 @@ export default function Room({ params }) {
         </div>
 
         {viewing ? (
-          <div className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--fg-2)' }}>
-            <Icon name="doc" size={13} /> {t('room.sessions.readonly')}
+          <div className="card" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12.5, color: 'var(--fg-2)' }}>
+            <Icon name="doc" size={13} /> {viewingOpen ? t('room.sessions.openReadonly') : t('room.sessions.readonly')}
             <span style={{ flex: 1 }} />
-            <button className="btn btn-primary sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
+            {/* 열기·전환 — 레일의 play 아이콘과 같은 동작(doReopen). 크루 채팅 배너의 '이어가기' 자리와 동형 */}
+            <button className="btn btn-primary sm" disabled={!!reopening || busy || serverBusy} onClick={() => doReopen({ id: viewing })}>{viewingOpen ? t('room.sessions.switchShort') : t('room.sessions.reopenShort')}</button>
+            <button className="btn sm" onClick={() => openSession(null)}>{t('chat.sessions.back')}</button>
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}> {/* 열 잠금 — 본문 열과 같은 이유(한 층 아래 같은 함정) */}
