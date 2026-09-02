@@ -25,27 +25,32 @@ const docs = [
 test('linkStats — 고유 쌍 5, 연결 7, 고립 3(안내 노트는 고립에서 제외)', () => {
   const { deg, ...s } = linkStats(docs);
   assert.deepEqual(s, { links: 5, linked: 7, isolated: 3 });
-  assert.deepEqual(Object.fromEntries(deg), {
-    'notes/argo-사용법.md': 0, 'notes/a.md': 3, 'notes/b.md': 2, 'notes/c.md': 1, 'notes/d.md': 1, 'notes/e.md': 1,
+  assert.deepEqual(Object.fromEntries(deg), { // 안내 노트는 deg에도 없다(지표 밖)
+    'notes/a.md': 3, 'notes/b.md': 2, 'notes/c.md': 1, 'notes/d.md': 1, 'notes/e.md': 1,
     'journal/2026-09-01-x.md': 1, 'notes/i.md': 1, 'notes/f.md': 0, 'notes/g.md': 0, 'notes/h.md': 0,
   }); // 표 "연결" 열 = 해석 후 차수: 받기만 하는 e는 1, 깨진 링크 g·자기 링크 f는 0
   const empty = linkStats([]);
   assert.deepEqual({ ...empty, deg: [...empty.deg] }, { links: 0, linked: 0, isolated: 0, deg: [] });
 });
 
-test('안내 노트에 링크가 생기면 보통 기억처럼 연결로 센다(제외는 고립일 때만)', () => {
-  const linkedGuide = docs.map((d) => (d.guide ? { ...d, links: ['notes/a'] } : d));
+test('안내 노트에 링크가 붙어도 지표 밖 — 노드·엣지·deg 어디에도 세지 않는다(검수 MEDIUM-1: 자동 링크 자석 부풀림 차단)', () => {
+  const linkedGuide = docs.map((d) => (d.guide ? { ...d, links: ['notes/a', 'notes/h'] } : d));
   const { deg, ...s } = linkStats(linkedGuide);
-  assert.deepEqual(s, { links: 6, linked: 8, isolated: 3 });
+  assert.deepEqual(s, { links: 5, linked: 7, isolated: 3 }); // h는 안내 노트만이 가리키므로 여전히 고립
+  assert.equal(deg.has('notes/argo-사용법.md'), false);
+  // 안내 노트 하나만 엮인 노트 1건 회사 — 옛 정의(고립일 때만 제외)는 100%, 지금은 0%
+  const tiny = [docs[0], { rel: 'notes/방침.md', dir: 'notes', title: '방침', links: ['notes/argo-사용법'] }];
+  const { deg: d2, ...s2 } = linkStats(tiny);
+  assert.deepEqual(s2, { links: 0, linked: 0, isolated: 1 });
 });
 
-test('linked + isolated + 안내 노트 = 전체, 그래프의 hiddenOrphans = isolated + 안내 노트 — 데크와 기억 그래프가 같은 셈법', () => {
-  const { hiddenOrphans } = buildGraph2D({ docs });
-  const { linked, isolated } = linkStats(docs);
+test('linked + isolated + 안내 노트 = 전체, 안내 노트를 뺀 그래프의 hiddenOrphans = isolated — 데크와 기억 그래프가 같은 셈법', () => {
   const guides = docs.filter((d) => d.guide).length;
+  const { hiddenOrphans } = buildGraph2D({ docs: docs.filter((d) => !d.guide) });
+  const { linked, isolated } = linkStats(docs);
   assert.equal(linked + isolated + guides, docs.length);
-  assert.equal(hiddenOrphans, isolated + guides);
-  assert.equal(hiddenOrphans, 4);
+  assert.equal(hiddenOrphans, isolated);
+  assert.equal(hiddenOrphans, 3);
 });
 
 // 소스 핀은 주석을 벗긴 뒤 스캔 — 산식을 주석으로 남기고 상수로 바꾸는 형태에 초록이면 게이트가 아니다(검수 M-1).
@@ -55,7 +60,7 @@ const stripComments = (src) => src
   .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 const load = (rel) => stripComments(readFileSync(new URL(rel, import.meta.url), 'utf8'));
 
-test('데크 산식 핀 — linked/memoryCount가 그대로 Dial에 닿는다, 옛 links/(n−1) 포화 산식 부재', () => {
+test('데크 산식 핀 — linked/(linked+isolated)가 그대로 Dial에 닿는다, 옛 links/(n−1) 포화·memoryCount 분모 부재', () => {
   const page = load('../app/c/[ws]/page.jsx');
   // 선언부터 Dial 소비까지 한 구간으로 — 선언만 남기고 다른 값을 넘기는 변이도 잡는다
   assert.match(page, /const linkedPct = stats && stats\.linked \+ stats\.isolated > 0 \? \(stats\.linked \/ \(stats\.linked \+ stats\.isolated\)\) \* 100 : 0;[\s\S]*?<Dial value=\{linkedPct\} label=\{t\('deck\.linked'\)\} \/>/);

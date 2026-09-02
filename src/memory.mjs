@@ -6,6 +6,7 @@ import { writeJsonAtomic } from './jsonstore.mjs';
 import { existsSync } from 'node:fs';
 import { join, basename, relative, sep } from 'node:path';
 import { paths } from './workspace.mjs';
+import { GUIDE_NOTE } from './provision.mjs'; // 스캐폴드 안내 노트 — 자동 링크 후보에서 뺀다
 import { docMeta, localDay, noteDate } from './vaultdoc.mjs';
 import { loadDocsMeta, invalidatePath } from './memindex.mjs';
 
@@ -81,7 +82,8 @@ export async function autoLink(wsId, newFile, { topK = 3, threshold = 0.12 } = {
   const docs = await vaultDocs(wsId);
   const target = docs.find((d) => d.file === newFile);
   if (!target) return [];
-  const others = docs.filter((d) => d.file !== newFile && d.rel.startsWith('notes/'));
+  // 안내 노트는 폴더 어휘를 다 담고 있어 자동 링크의 자석이 된다(검수 실측: 노트 1건 회사가 안내 노트와 엮여 연결 100%) — 후보에서 뺀다
+  const others = docs.filter((d) => d.file !== newFile && d.rel.startsWith('notes/') && d.rel !== `notes/${GUIDE_NOTE}`);
   if (!others.length) { await updateIndex(wsId); return []; }
 
   // idf — 문서 수가 적은 스파이크 규모에선 충분. 프로덕션은 임베딩으로 대체.
