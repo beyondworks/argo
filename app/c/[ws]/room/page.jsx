@@ -2,15 +2,18 @@
 // 회의실 — 사장 + 여러 크루가 한 방에서. "@이름"으로 부르면 그 크루들이 순서대로 발언한다.
 // 좌측 레일에 지난 회의가 적재되고(회의 마치기), 클릭으로 읽기 전용 열람 — 맥락 공유가 눈에 보이는 화면.
 import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
 import { useLang } from '../../../i18n';
 import { dropUpClamp } from '../zoom-math.mjs';
+import { matchSlash, SLASH_TOKEN_RE } from '../slash-match.mjs';
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 export default function Room({ params }) {
   const { ws } = use(params);
   const { t } = useLang();
+  const router = useRouter();
   const [agents, setAgents] = useState([]);
   const [messages, setMessages] = useState(null);
   const [input, setInput] = useState('');
@@ -79,6 +82,8 @@ export default function Room({ params }) {
       .then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); setError(''); })
       .catch((e) => setError(String(e?.message || '') || t('room.loadFail')));
     api(`/api/companies/${ws}/agents`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
+    // '/' 커맨더 사용자 별칭 — 회사 단위 공유(company.json.aliases). 크루 채팅과 같은 light GET.
+    api(`/api/companies/${ws}?light=1`).then((d) => setAliases(d.company?.aliases ?? [])).catch(() => {});
   }
   // 회의 다시 열기 — 보관 회의를 현재 방으로 되돌린다. 진행 중 회의가 있으면 서버가 409로 거절하므로
   // 덮어쓰기가 원천 차단된다(실사용 요청 2026-07-26 "보관한 회의를 다시 열어 이어갈 수 없나요").
@@ -165,6 +170,8 @@ export default function Room({ params }) {
 
   async function send(e) {
     e.preventDefault();
+    // 전송 버튼 경로에서도 '/' 커맨더 우선 — '/end' 같은 명령 토큰이 안건으로 방에 적립되지 않게(크루 채팅과 동일)
+    if (slashOpen) { runSlash(slashList[Math.min(slashIdx, slashList.length - 1)]); return; }
     const text = input.trim();
     if (!text || busy || uploading) return;
     const attachments = att;
@@ -219,7 +226,9 @@ export default function Room({ params }) {
     : [];
   const suggestAll = !!mention && agents.length > 1 && (!mq || 'all'.startsWith(mq) || '전체'.startsWith(mention[1]));
   const completeMention = (name) => setInput(input.replace(/@\S*$/, `@${name} `));
-  const mentionOpen = !!mention && (suggestAll || suggests.length > 0);
+  // 커맨더 토큰(`/…` 하나뿐인 입력) — 멘션 패널이 양보하는 기준. 두 패널은 같은 자리(bottom 100%)라 동시에 뜨지 않는다.
+  const slashTok = !viewing && SLASH_TOKEN_RE.test(input);
+  const mentionOpen = !!mention && !slashTok && (suggestAll || suggests.length > 0);
   const mentionPanelRef = useRef(null);
   const mentionWrapRef = useRef(null);
   const mentionNatW = useRef(0);
@@ -237,6 +246,51 @@ export default function Room({ params }) {
     window.addEventListener('argo:zoom', measure);
     return () => { window.removeEventListener('resize', measure); window.removeEventListener('argo:zoom', measure); };
   }, [mentionOpen]);
+
+  // '/' 커맨더 — 크루 채팅(crew/[slug])의 커맨더를 회의실에도(유건 요청 2026-09-02, 회의실 개선 1/6).
+  // 문법·후보 계산은 공유 매처(slash-match.mjs): 입력이 슬래시 토큰 하나일 때만 발동, ↑↓ 이동·Enter 실행.
+  // 후보 = 내장 명령 + 회사 별칭(/별칭 → 저장된 지시 삽입) + 회사 스킬(/스킬 → 사용 지시 삽입 — 크루 채팅과 같은
+  // 문장이라 서버는 손댈 것이 없다: 스킬 본문은 chat()이 출처 무관하게 매 턴 주입한다). 삽입 뒤 사장이 @이름·안건을
+  // 덧붙여 보낸다. 별칭 등록·삭제는 크루 채팅 커맨더에서(회사 공용 목록이라 여기서도 그대로 보인다).
+  const [aliases, setAliases] = useState([]);
+  const [skillCmds, setSkillCmds] = useState(null); // null = 아직 안 열어봄(첫 열림에 1회 로드)
+  const SLASH_CMDS = [
+    // 회의 마치기 — 헤더 버튼과 같은 노출 조건(빈 방·진행 중엔 후보에서 빠진다: 실행해도 안 되는 명령은 보이지 않게)
+    ...(!viewing && (messages?.length ?? 0) > 0 && !busy && !serverBusy ? [{ id: 'end', aliases: ['end', '마치기', '회의마치기'], label: t('room.end'), run: () => endMeeting() }] : []),
+    { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(`/c/${ws}/vault`) },
+    { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(`/c/${ws}`) },
+  ];
+  const slashList = viewing ? null : matchSlash(input, { builtins: SLASH_CMDS, aliases, skills: skillCmds ?? [], skillInsert: (s) => t('chat.cmd.skillPrefix', { name: s.title }) });
+  const slashOpen = !!slashList?.length;
+  // 회사 스킬 — 커맨더를 처음 여는 순간 1회 로드(마켓 GET의 installedSkills 재사용). 실패해도 내장·별칭은 동작.
+  useEffect(() => {
+    if (!slashTok || skillCmds !== null) return;
+    api(`/api/companies/${ws}/market`).then((d) => setSkillCmds(d.installedSkills ?? [])).catch(() => setSkillCmds([]));
+  }, [slashTok, skillCmds, ws]);
+  const [slashIdx, setSlashIdx] = useState(0);
+  useEffect(() => { setSlashIdx(0); }, [input]);
+  function runSlash(cmd) {
+    if (cmd.kind === 'builtin') { setInput(''); cmd.run(); }
+    else setInput(cmd.insert); // 별칭·스킬 = 지시 텍스트 삽입(바로 전송하지 않는다 — 사장이 @이름·안건을 덧붙여 보냄)
+    composerRef.current?.focus();
+  }
+  // 좌우 클램프 — 멘션 패널과 같은 기준 박스(mentionWrapRef)·같은 측정형 처방(dropUpClamp, #367)
+  const slashPanelRef = useRef(null);
+  const slashNatW = useRef(0);
+  const [slashClamp, setSlashClamp] = useState({ shift: 0, maxW: 0 });
+  useIsoLayoutEffect(() => {
+    if (!slashOpen) { setSlashClamp({ shift: 0, maxW: 0 }); slashNatW.current = 0; return; }
+    const measure = () => {
+      if (!mentionWrapRef.current || !slashPanelRef.current) return;
+      if (!slashNatW.current) slashNatW.current = slashPanelRef.current.offsetWidth;
+      setSlashClamp(dropUpClamp(mentionWrapRef.current.getBoundingClientRect(),
+        document.documentElement.clientWidth, slashNatW.current));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('argo:zoom', measure);
+    return () => { window.removeEventListener('resize', measure); window.removeEventListener('argo:zoom', measure); };
+  }, [slashOpen]);
 
   const shown = viewing ? archMsgs : messages;
 
@@ -436,6 +490,33 @@ export default function Room({ params }) {
                   ))}
                 </div>
               )}
+              {/* '/' 커맨더 드롭업 — 크루 채팅 커맨더와 같은 룩(입력창 위 세로 목록, ↑↓ 이동·Enter 실행). 멘션 패널과
+                  같은 기준 박스라 순서만 뒤(래퍼 첫 자식은 멘션 — 기존 클램프 핀). 별칭 관리 행은 없다(크루 채팅에서). */}
+              {slashOpen && (
+                <div ref={slashPanelRef} className="card card-float" role="listbox" style={{
+                  position: 'absolute', bottom: 'calc(100% + 6px)', left: slashClamp.shift, zIndex: 40,
+                  minWidth: slashClamp.maxW ? Math.min(320, slashClamp.maxW) : 320,
+                  maxWidth: slashClamp.maxW ? Math.min(slashClamp.maxW, 480) : undefined, maxHeight: 320, overflowY: 'auto', padding: 6,
+                  boxShadow: '0 8px 28px rgba(0,0,0,.14)',
+                }}>
+                  <div className="microlabel" style={{ padding: '4px 8px 2px' }}>{t('chat.commands')}</div>
+                  {slashList.map((c, i) => (
+                    <button key={c.key} type="button" role="option" aria-selected={i === slashIdx}
+                      onClick={() => runSlash(c)} onMouseEnter={() => setSlashIdx(i)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                        background: i === slashIdx ? 'var(--card-2)' : 'none', border: 0, borderRadius: 7,
+                        cursor: 'pointer', padding: '6px 8px', fontSize: 12.5, color: 'var(--fg)' }}>
+                      <span className="mono" style={{ flex: 'none', fontWeight: 650 }}>/{c.cmd}</span>
+                      <span style={{ minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-3)', fontSize: 11.5 }}>{c.desc}</span>
+                      {c.kind !== 'builtin' && (
+                        <span className="microlabel" style={{ flex: 'none', fontSize: 9 }}>
+                          {c.kind === 'skill' ? t('chat.cmd.skills') : t('chat.cmd.aliases')}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
               {(att.length > 0 || uploading) && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
                   {att.map((a, i) => (
@@ -463,8 +544,16 @@ export default function Room({ params }) {
                   onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
                   disabled={busy}
                   {...imeGuardWith((e) => {
+                    // '/' 커맨더가 떠 있으면 ↑↓ = 항목 순환 이동(커서 이동 아님)
+                    if (slashOpen && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+                      e.preventDefault();
+                      setSlashIdx((i) => (e.key === 'ArrowDown' ? (i + 1) % slashList.length : (i - 1 + slashList.length) % slashList.length));
+                      return;
+                    }
                     if (e.key !== 'Enter' || e.shiftKey) return; // Shift+Enter = 줄바꿈(textarea 기본)
                     e.preventDefault();
+                    // 커맨더가 떠 있으면 Enter = 선택 항목 실행(명령은 방에 전송되지 않는다)
+                    if (slashOpen) { runSlash(slashList[Math.min(slashIdx, slashList.length - 1)]); return; }
                     // 멘션 패널이 열려 있으면 Enter = 첫 후보 완성(전송 아님)
                     if (mentionOpen) { completeMention(suggestAll ? 'all' : suggests[0].name); return; }
                     e.currentTarget.form?.requestSubmit(); // Enter = 전송

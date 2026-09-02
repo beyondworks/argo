@@ -11,6 +11,7 @@ import { useLang, stageLabel } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
 import { sideParam, withSide } from '../../split.mjs';
 import { dropUpClamp } from '../../zoom-math.mjs';
+import { matchSlash } from '../../slash-match.mjs';
 
 // 러너 표시명(폴백 안내용) — runner-connect의 RUNNER_NAMES와 동일 값(서버 RUNNERS.name 준거)
 const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
@@ -878,15 +879,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     if (!slashToken || skillCmds !== null) return;
     api(`/api/companies/${ws}/market`).then((d) => setSkillCmds(d.installedSkills ?? [])).catch(() => setSkillCmds([]));
   }, [slashToken, skillCmds, ws]);
-  const matchTok = (tok) => tok.toLowerCase().startsWith(slashQ) || (!slashQ && true);
-  const slashMatches = slashToken ? [
-    ...SLASH_CMDS.filter((c) => c.aliases.some((al) => al.startsWith(slashQ)))
-      .map((c) => ({ kind: 'builtin', key: `b:${c.id}`, cmd: c.aliases[0], desc: c.label, run: c.run })),
-    ...aliases.filter((a) => matchTok(a.cmd))
-      .map((a) => ({ kind: 'alias', key: `a:${a.cmd}`, cmd: a.cmd, desc: a.text, insert: a.text })),
-    ...(skillCmds ?? []).filter((s) => matchTok(s.id) || matchTok(s.title))
-      .map((s) => ({ kind: 'skill', key: `s:${s.id}`, cmd: s.id, desc: s.title, insert: t('chat.cmd.skillPrefix', { name: s.title }) })),
-  ] : [];
+  // 후보 계산은 회의실 커맨더와 공유하는 순수 매처(slash-match.mjs) — 문법·순서·접두 매칭의 정본은 한 곳
+  const slashMatches = slashToken ? matchSlash(input, { builtins: SLASH_CMDS, aliases, skills: skillCmds ?? [], skillInsert: (s) => t('chat.cmd.skillPrefix', { name: s.title }) }) : [];
   const [slashIdx, setSlashIdx] = useState(0);
   useEffect(() => { setSlashIdx(0); }, [slashQ, slashToken?.[0]]);
   const slashPanelRef = useRef(null);
