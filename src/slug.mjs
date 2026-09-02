@@ -11,4 +11,7 @@
 export const RESERVED_SLUG_RE = /^room-/;
 export const isReservedSlug = (slug) => RESERVED_SLUG_RE.test(String(slug ?? ''));
 export const ROOM_FILE_SLUG = 'room-main';
-export const collidesWithRoom = (slug) => String(slug ?? '').replace(/[^a-z0-9-]/g, '') === ROOM_FILE_SLUG;
+/** slug → chats/ 파일 이름 세척. thread.mjs(<slug>.json)·turn-status.mjs(<slug>.status.json)·반입 문이 같은 함수를 쓴다 —
+    한쪽만 바뀌면 반입 문이 다른 이름을 지키게 된다(검수 2R LOW-A: 규칙이 세 곳에 복제되면 목록이 반드시 뒤처진다). */
+export const sanitizeFileSlug = (slug) => String(slug ?? '').replace(/[^a-z0-9-]/g, '');
+export const collidesWithRoom = (slug) => sanitizeFileSlug(slug) === ROOM_FILE_SLUG;

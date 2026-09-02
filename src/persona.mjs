@@ -160,8 +160,9 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   const t0 = Date.now();
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({})); // 시스템 언어 — 카드 생성 언어
   const avoid = name?.trim() ? [] : await existingNames(wsId); // 이름 지정 영입은 제외 불필요
-  // 이름 지정 영입은 slug를 미리 안다 — 예약어면 모델 턴(비용·최대 5분 대기·usage 적립) 전에 거절(분리 검수 LOW-1).
-  // 자동 이름·frontmatter slug 경로는 아래 사후 게이트가 같은 규칙으로 막는다.
+  // 이름 지정 영입은 **이름의 슬러그**를 미리 안다 — 예약어면 모델 턴(비용·최대 5분 대기·usage 적립) 전에 거절(분리 검수 LOW-1).
+  // 최종 slug는 모델 frontmatter의 slug:가 이길 수 있으므로 이것은 이름 기준의 보수적 조기 거절이다(검수 2R LOW-B) —
+  // 최종 판정은 아래 사후 게이트(base)가 자동 이름·frontmatter slug 경로까지 같은 규칙으로 맡는다.
   if (name?.trim() && isReservedSlug(slugify(name.trim()))) throw reservedSlugError(name.trim(), slugify(name.trim()), lang);
   // 상한 명시 — 기본(120s)은 사용자 대기 경로엔 맞지만 **첫 영입**은 다르다: 신규 회사는 무료
   // 모델(OPENROUTER_ONBOARD_MODEL)로 뽑히기 쉽고 무료 티어는 큐 지연이 크며, 러너가 하나뿐이라

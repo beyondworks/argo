@@ -38,7 +38,8 @@ const setCard = (name, slugLine = '') => writeFile(CARD, `---\nname: ${name}\n${
 
 const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;
-const { isReservedSlug, RESERVED_SLUG_RE, collidesWithRoom, ROOM_FILE_SLUG } = await import('../src/slug.mjs');
+const { isReservedSlug, RESERVED_SLUG_RE, collidesWithRoom, ROOM_FILE_SLUG, sanitizeFileSlug } = await import('../src/slug.mjs');
+const { readFile } = await import('node:fs/promises');
 const { createAgentFromPrompt } = await import('../src/persona.mjs');
 const { ROOM_TURN_SLUG } = await import('../src/room.mjs');
 const { PRESETS, PRESETS_EN } = await import('../src/presets.mjs');
@@ -133,4 +134,16 @@ test('반입 문 판정 — 세척 후 room-main이 되는 카드만 불가시(�
   assert.equal(isRoomCardRel('agents/.archive/1725000000000-room-main.md'), false, '대조군 — 보관함(해고본)은 살아 있는 slug가 아니다');
   assert.equal(isRoomCardRel('chats/room-main.json'), false, '인접 행동 핀 — 회의록 자체는 동기화 대상(예약어가 회의록을 끊으면 회귀)');
   assert.equal(EXCLUDE('agents/room-main.md'), false, '불가시는 EXCLUDE가 아니다 — EXCLUDE 전환은 원격 잔재를 삭제해 옛 기기 카드를 지운다(sync.mjs 주석)');
+});
+
+test('세척 단일 원천 — thread.mjs·turn-status.mjs의 파일 이름 생성이 slug.mjs sanitizeFileSlug를 쓴다(검수 2R LOW-A: 한쪽만 바뀌면 반입 문이 다른 이름을 지킨다)', async () => {
+  assert.equal(sanitizeFileSlug('Zroom-main'), 'room-main');
+  const src = async (f) => (await readFile(new URL(`../src/${f}`, import.meta.url), 'utf8'))
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^\S\n])\/\/[^\n]*/gm, '');
+  for (const f of ['thread.mjs', 'turn-status.mjs']) {
+    const code = await src(f);
+    assert.match(code, /import \{ sanitizeFileSlug \} from '\.\/slug\.mjs'/, `${f}: slug.mjs에서 세척을 가져온다`);
+    assert.match(code, /const file = \(wsId, slug\) => join\(paths\(wsId\)\.chats, `\$\{sanitizeFileSlug\(slug\)\}\.(status\.)?json`\)/, `${f}: 파일 이름은 sanitizeFileSlug(slug)로만`);
+  }
+  assert.doesNotMatch(await src('turn-status.mjs'), /\[\^a-z0-9-\]/, 'turn-status.mjs에 세척 정규식 사본이 남지 않는다');
 });
