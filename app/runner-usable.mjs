@@ -26,7 +26,7 @@ export const PICK_ORDER = ['claude', 'codex', 'gemini', 'glm', 'kimi', 'openrout
     실사고(2026-07-20)의 교체재. 이름은 서버 runnerStatus가 실어 준다(name 필드). */
 export function usableRunnerNames(runners) {
   return Object.entries(runners ?? {})
-    .filter(([, r]) => r.company?.connected && !r.company?.invalid)
+    .filter(([, r]) => r.company?.connected && !r.company?.invalid && !r.hidden) // 숨김 러너(gemini)는 명판에 안 세운다
     .sort(([a], [b]) => PICK_ORDER.indexOf(a) - PICK_ORDER.indexOf(b))
     .map(([id, r]) => r.name || id);
 }

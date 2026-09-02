@@ -37,6 +37,14 @@ test('배선 — 목록을 만드는 자리 전부가 숨김 판정을 쓴다(/a
   assert.match(chat, /if \(runner && isHiddenRunner\(runner\)\) return `\$\{RUNNERS\[runner\]\.name\} 러너는 더 이상 새로 지정할 수 없다/, '숨김 러너 새 지정 거절');
 });
 
+test('명판 "엔진" — runnerStatus의 hidden 표지를 usableRunnerNames가 걸러 저장된 gemini 자격이 있어도 세지 않는다', async () => {
+  const { usableRunnerNames } = await import('../app/runner-usable.mjs');
+  const st = { claude: { name: 'Claude', company: { connected: true, invalid: false }, hidden: false }, gemini: { name: 'Gemini', company: { connected: true, invalid: false }, hidden: true } };
+  assert.deepEqual(usableRunnerNames(st), ['Claude']);
+  const runners = await load('../src/runners.mjs');
+  assert.match(runners, /hidden: isHiddenRunner\(id\),/, 'runnerStatus가 hidden 표지를 싣는다(클라이언트는 이 표지만 본다)');
+});
+
 test('i18n — 제공 러너로서 Gemini를 안내하는 문구가 없다(실행 한계 서술은 허용)', async () => {
   const i18n = await load('../app/i18n.jsx');
   for (const k of ['settings.runners.help', 'market.mcpRunnerNote', 'settings.workroots.desc']) {
