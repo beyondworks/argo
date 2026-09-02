@@ -263,8 +263,18 @@ export const GROK_DEFAULT_MODEL = 'grok-4.6';
 /** 숨김 러너 — 새로 고르거나 자동으로 잡히지 않는다(기존 지정·자격은 유효). 목록을 만드는 모든 자리가 이 판정을 쓴다. */
 export const isHiddenRunner = (id) => !!RUNNERS[id]?.hidden;
 export const visibleRunnerIds = () => Object.keys(RUNNERS).filter((id) => !isHiddenRunner(id));
-/** 안내문용 가시 러너 이름 줄("Claude·Codex·…") — 하드코딩 4곳(chat/oneshot/persona/trial)이 숨김 러너를 권하던 것의 단일 원천 */
-export const visibleRunnerNamesLine = () => visibleRunnerIds().map((id) => RUNNERS[id].name).join('·');
+/** 안내문용 가시 러너 이름 줄 — ko "Claude·Codex·…", en "Claude, Codex, …, or Grok". 하드코딩 4곳(chat/oneshot/persona/trial)이
+    숨김 러너를 권하던 것의 단일 원천. **반드시 템플릿 리터럴 안에서** 보간할 것(작은따옴표 안이면 원문이 사용자에게 노출 — 재검수 HIGH 실사고). */
+export const visibleRunnerNamesLine = (lang = 'ko') => {
+  const names = visibleRunnerIds().map((id) => RUNNERS[id].name);
+  if (lang === 'en') return names.length > 1 ? `${names.slice(0, -1).join(', ')}, or ${names.at(-1)}` : (names[0] ?? '');
+  return names.join('·');
+};
+/** 연결된 것이 숨김 러너뿐인가(runnerStatus dict) — "연결은 됐는데 제공 종료" 전용 안내 분기(재검수 MEDIUM-5) */
+export const onlyHiddenConnectedStatus = (st) => {
+  const on = Object.entries(st ?? {}).filter(([, r]) => r?.company?.connected && !r?.company?.invalid);
+  return on.length > 0 && on.every(([id]) => isHiddenRunner(id));
+};
 
 export const RUNNER_AUTH = {
   // claude 웹 브리지(webConnect)는 철회(2026-07-18) — 구세대 엔드포인트 교환이 러너가 거절하는

@@ -1778,7 +1778,7 @@ function DefaultRunnerPicker({ ws }) {
       <span className="microlabel">{t('settings.defaultRunner')}</span>
       <select value={val} onChange={(e) => save(e.target.value)} style={{ ...fieldStyle, width: '100%' }}>
         <option value="">{t('settings.defaultRunnerAuto')}</option>
-        {connected.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+        {connected.map((r) => <option key={r.id} value={r.id}>{r.name}{r.hidden ? ` — ${t('runner.retired')}` : ''}</option>)}
       </select>
     </label>
   );

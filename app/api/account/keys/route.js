@@ -6,7 +6,7 @@ import {
   accountScope, runnerStatus, saveRunnerCred, clearRunnerCred,
   maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH, hostOptInAllowed, normalizePastedCred,
   probeGeminiHostOAuth,
-} from '../../../../src/runners.mjs';
+ isHiddenRunner,} from '../../../../src/runners.mjs';
 import { currentUser, tenantDenied, authError, requestLang } from '../../../auth.mjs';
 
 /** 로그인 가드 — 회사 소유권 검사 없이 인증만(companies POST와 동일 패턴).
@@ -32,6 +32,7 @@ export async function PUT(req) {
     const { runner, type = 'apikey', value, verify, lang = 'ko' } = await req.json();
     const meta = RUNNER_AUTH[runner];
     if (!meta) throw new Error('알 수 없는 러너');
+    if (isHiddenRunner(runner)) throw new Error('더 이상 제공되지 않는 러너입니다'); // 숨김(gemini) — 회사 라우트와 같은 거절(재검수 MEDIUM-2)
     // host — "이 컴퓨터 로그인 사용" 명시 옵트인(codex/gemini). 회사 라우트와 동일 검증·마커 저장.
     if (type === 'host') {
       if (!hostOptInAllowed(runner)) throw new Error('이 환경에서는 이 컴퓨터 로그인 사용을 쓸 수 없습니다'); // claude는 데스크톱 번들에서 제외(키체인)

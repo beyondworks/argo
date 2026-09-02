@@ -24,7 +24,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds , visibleRunnerNamesLine} from './runners.mjs';
+import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine , onlyHiddenConnectedStatus} from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -864,12 +864,18 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     if (__excludeRunners?.length) throw new Error(authExcludedNoRunnerMsg(__excludeRunners, lang));
     // 자격은 있는데 벤더 CLI가 없는 러너(codex/gemini)는 원인을 정확히 알려준다 — "연결했는데 왜 안 돼"의 답.
     const noCli = (resolved.credButNoCli ?? []).map((id) => RUNNERS[id]?.name || id);
+    // 연결된 것이 숨김 러너(gemini)뿐이면 "하나도 연결돼 있지 않다"는 거짓 — 제공 종료를 사실대로 말한다(재검수 MEDIUM-5)
+    if (!noCli.length && onlyHiddenConnectedStatus(await runnerStatus(wsId).catch(() => null))) {
+      throw new Error(lang === 'en'
+        ? `The connected runner is no longer offered. Connect another runner (${visibleRunnerNamesLine('en')}) in Settings → AI connections, then try again.`
+        : `연결된 러너는 더 이상 제공되지 않습니다. 설정 → AI 연결에서 다른 러너(${visibleRunnerNamesLine()})를 연결한 뒤 다시 말을 걸어 주세요.`);
+    }
     throw new Error(noCli.length
       ? (lang === 'en'
           ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — the ${noCli.join('/')} runner executes through the vendor CLI. Install it, or connect Claude (no install needed) in Settings → AI connections.`
           : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — ${noCli.join('/')} 러너는 벤더 CLI로 실행됩니다. CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
       : (lang === 'en'
-          ? 'No AI runner is connected. Connect one in Settings → AI connections (Claude, Codex, Gemini, Antigravity, GLM, Kimi, OpenRouter, or Grok), then try again.'
+          ? `No AI runner is connected. Connect one in Settings → AI connections (${visibleRunnerNamesLine('en')}), then try again.`
           : `AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 ${visibleRunnerNamesLine()} 중 하나를 연결한 뒤 다시 말을 걸어 주세요.`));
   }
   const runner = resolved.runner;

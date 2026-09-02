@@ -680,6 +680,7 @@ const DICT = {
   'deck.crewControl': ['크루 관제 · {name}', 'Crew Control · {name}'],
   'deck.runner.banner': ['AI 러너 연결이 필요합니다 — 크루가 일하려면 러너를 하나 연결해 주세요.', 'An AI runner is required — connect one so your crews can work.'],
   'deck.runner.reconnect': ['러너 연결이 끊겼습니다 — 다시 연결해 주세요.', 'Runner connection lost — please reconnect.'],
+  'deck.runner.retired': ['연결된 러너(Gemini)는 더 이상 제공되지 않습니다 — 설정 → AI 연결에서 다른 러너를 연결해 주세요. 같은 구글 모델은 Antigravity로 쓸 수 있습니다.', 'The connected runner (Gemini) is no longer offered — connect another runner in Settings → AI connections. Antigravity runs the same Google models.'],
   'deck.aiKey.cta': ['설정에서 연결하기', 'Connect in Settings'],
   'deck.memory': ['기억', 'Memory'],
   'deck.todayPlus': ['오늘 +{n}', 'Today +{n}'],

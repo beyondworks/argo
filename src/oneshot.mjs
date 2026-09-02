@@ -34,7 +34,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
           ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — install it, or connect Claude (no install needed) in Settings → AI connections.`
           : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
       : (lang === 'en'
-          ? 'No AI runner is connected — connect Claude, Codex, Gemini, Antigravity, GLM, Kimi, OpenRouter, or Grok in Settings → AI connections.'
+          ? `No AI runner is connected — connect ${visibleRunnerNamesLine('en')} in Settings → AI connections.`
           : `AI 러너가 하나도 연결돼 있지 않습니다 — 설정 → AI 연결에서 ${visibleRunnerNamesLine()} 중 하나를 연결해 주세요.`));
   }
   const runner = resolved.runner;
