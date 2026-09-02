@@ -4,7 +4,8 @@
 // 게이트: runOneShot 경유(주입 seam으로 실증 — 직접 SDK 호출로 되돌아가면 fake가 안 불려 red).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

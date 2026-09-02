@@ -10,7 +10,8 @@
 //  ③ 못 찾는 폴더(외장 분리·삭제)는 조용히 빼지 않고 방에 알린다 + 프롬프트에서 빠진다.
 //  ④ 회의록에 작업 폴더가 남는다.
 //  ⑤ 배선 — SDK 경로·재시도 재귀(실호출 불가: 자격 필요)는 구간 불변식으로, 화면 두 페이지는 공용 모듈 사용을 잠근다.
-import { mkdtemp, mkdir, writeFile, chmod, readFile, rm, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, chmod, readFile, rm, realpath } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

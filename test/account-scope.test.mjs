@@ -2,7 +2,8 @@
 // 임시 ARGO_ROOT 자가 설정 — 실데이터(~/.argo) 미접촉(approval-resolve 테스트와 동일 패턴).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

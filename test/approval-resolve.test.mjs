@@ -3,7 +3,8 @@
 // 실사용 갭(2026-07-18): 웹에서 승인하면 텔레그램 카드 버튼이 안 사라지던 문제.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

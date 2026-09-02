@@ -3,7 +3,8 @@
 // ⚠ ARGO_ROOT는 thread.mjs(→workspace.mjs) 동적 임포트보다 먼저(thread-artifacts와 동일 규칙).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

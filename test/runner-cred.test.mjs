@@ -2,7 +2,8 @@
 // 401로만 드러나던 실사용 사고(2026-07-18, 92자 비접두사 값) 재발 방지.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, stubRunnerToolDirs } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +14,9 @@ import { join } from 'node:path';
 // Windows에선 %USERPROFILE% — 둘 다 심어야 전 플랫폼 격리.
 process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-credhome-'));
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-credtest-'));
+// 러너 관리본 스텁 — 아래 saveRunnerCred들이 워밍업으로 codex/gemini CLI(~360MB)를 이 격리
+// 홈에 매 실행 내려받지 않게 조달을 존재 확인 단계에서 끊는다(이 파일은 CLI를 실행하지 않는다).
+await stubRunnerToolDirs();
 const { oauthFormatError, RUNNER_AUTH, startRunnerWebAuth, runnerStatus, saveRunnerCred, runnerCredEnv } = await import('../src/runners.mjs');
 
 test('RUNNER_AUTH: claude OAuth 접두사 규격 고정', () => {

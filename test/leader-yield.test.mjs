@@ -5,7 +5,7 @@
 // 격리: ARGO_ROOT를 먼저 세팅한 뒤 동적 import(WS_ROOT가 모듈 로드 시 고정 — 기존 배선 테스트 규약).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

@@ -6,7 +6,8 @@
 // PR #211이 응답 null 고정 변이(I)로 그 단언의 RED를 실증했다. 실렌더까지는 분리 검수 라이브 영역.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

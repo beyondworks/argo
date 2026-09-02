@@ -5,7 +5,8 @@
 //  ④ 변조 키(경로 탈출)는 FS 조립 전에 걸러진다 ⑤ in-flight 가드 ⑥ 목적지 자동 선택·충돌 회피
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

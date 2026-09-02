@@ -10,7 +10,8 @@
 // 이 파일이 잠그는 것: ① 유계 재시도·백오프 ② 성공 마킹의 CAS ③ 주간 롤업 append 멱등.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

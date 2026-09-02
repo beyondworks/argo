@@ -6,7 +6,8 @@
 //  ③ 안내는 수신자 인지형 — CLI 크루엔 start_long_task가 없고(검수 H1), 잡 턴엔 자기모순 금지(M4)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, mkdtemp } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

@@ -2,7 +2,8 @@
 // 실사고 2026-08-28: 상주 재배포가 실행 중 턴을 죽여 응답·실패기록·이벤트가 전부 없었다(무언 소멸).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

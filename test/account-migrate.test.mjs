@@ -3,7 +3,8 @@
 // 마이그레이션은 프로세스당 1회 플래그라, 격리를 위해 별도 테스트 파일에서 레거시 파일을 먼저 심은 뒤 import한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

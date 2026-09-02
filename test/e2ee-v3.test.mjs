@@ -4,7 +4,8 @@
 // **평문으로 통과**시키면 로컬 파일이 암호문으로 오염되고 재봉인·전파된다(마커 사고와 동일 계열).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, stat } from 'node:fs/promises';
+import { rm, readFile, stat } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

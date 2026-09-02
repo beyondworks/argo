@@ -3,7 +3,8 @@
 // 3월 절차가 7월 절차보다 위에 오는 일이 실제로 났다(2026-07-26 실측).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, utimes, stat } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, utimes, stat } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

@@ -3,7 +3,8 @@
 // bypass/fs 능력이 켜져 있어도 열리지 않는 것이 계약이다(permission-gate.mjs makeIsForbidden).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, symlink } from 'node:fs/promises';
+import { mkdir, writeFile, symlink } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir, homedir } from 'node:os';
 import { join, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';

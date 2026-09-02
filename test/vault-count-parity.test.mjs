@@ -4,7 +4,8 @@
 // 포함/제외 규칙(닷파일·심링크 제외, 재귀, md/비md 무구분)이 listProjectDocs와 갈라지면 여기서 잡힌다.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile, symlink } from 'node:fs/promises';
+import { rm, mkdir, writeFile, symlink } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

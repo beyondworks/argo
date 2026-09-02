@@ -3,7 +3,8 @@
 // 시각은 주입 불가(endMeetingLocked가 new Date())라, 분 경계를 넘긴 시도는 버리고 같은 분 안에서 다시 잰다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, chmod } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, rm, chmod } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

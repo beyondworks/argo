@@ -5,7 +5,8 @@
 // P2 폴백 투명화: chat 반환 fellBack → 스레드 크루 메시지 저장 → 크루 UI 안내.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

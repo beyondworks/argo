@@ -5,7 +5,8 @@
 //  ④ 화면 줄이면 상단바 항목 겹침 — 슬롯의 자동 최소 폭 해제가 뿌리(수용은 넘침 측정형 2단계로)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, mkdir } from 'node:fs/promises';
+import { writeFile, readFile, mkdir } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

@@ -8,7 +8,7 @@
 //  ③ 저장은 목록 밖 값·중복을 걸러 정규화한다(끈 목록이 쓰레기로 커지지 않게).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';

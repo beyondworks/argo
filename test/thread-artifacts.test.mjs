@@ -3,7 +3,8 @@
 // 격리가 산다(core.test.mjs에 넣었다가 워크트리 workspaces/에 쓰는 오염을 실측, 전용 파일로 분리).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

@@ -3,7 +3,8 @@
 // ⑤ 재실행은 변화분만(manifest). 설계 정본: docs/obsidian-import-design.md
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, utimes, symlink, stat, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, utimes, symlink, stat, rm } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

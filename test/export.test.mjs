@@ -2,7 +2,8 @@
 // 자격·연결 파일(.secrets·connections·mcp·직속 도트 전부)은 내보낸 사본에 절대 실리지 않는다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, realpath } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

@@ -11,7 +11,8 @@
 // 규칙과 목록이 어긋나면 언제나 목록이 앞서고 규칙이 막는다 — 그 간극이 곧 이 신고다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

@@ -2,7 +2,8 @@
 // 배선(스케줄러·도구 등록)은 소스 스캔으로 잠근다("부품만 잠그고 배선 무방비" 교훈).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
+import { rm, readdir, readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';

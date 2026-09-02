@@ -2,7 +2,8 @@
 // **턴 전체가 죽는다**(주입 도입 전엔 없던 실패 모드, 자가 발견 2026-08-19).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commandExists, writeCodexTurnConfig } from '../src/runners/codex.mjs';

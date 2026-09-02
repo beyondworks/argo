@@ -5,7 +5,8 @@
 // 크루가 예약했다고 말만 한다"로 돌아왔다. 이 테스트는 **말이 실제 실행으로 바뀌는지**를 잠근다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

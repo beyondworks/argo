@@ -6,7 +6,7 @@
 // WS_ROOT(모듈 로드 시 고정)가 임시 루트를 가리킨다(test/sync-integration.test.mjs와 동일 규약).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

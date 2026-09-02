@@ -4,7 +4,7 @@
 // 계약: PTY 출력에서 ① 인증 URL(브라우저 미개방 폴백 링크) ② 코드 프롬프트를 관측할 수 있어야 한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

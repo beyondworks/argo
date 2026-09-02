@@ -3,7 +3,8 @@
 // 경로(apiError)에 키 마스킹 부재 — SDK 경로만 마스킹돼 동기화 이벤트 로그에 키 조각 영속.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

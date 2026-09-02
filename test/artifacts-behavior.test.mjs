@@ -1,7 +1,8 @@
 // 산출물 수집 — **행동** 게이트(검수 CRITICAL-3 처방: 소스 개수 단언은 buggy 조합에서만 초록인
 // 안티 게이트였다. 반환 객체를 실제 실행으로 검증한다). 하네스는 분리 검수의 재현 스크립트 이식:
 // 가짜 codex 바이너리를 PATH 앞에 두어 벤더 CLI 없이 CLI 분기를 실제로 돌린다. 임시 ARGO_ROOT.
-import { mkdtemp, mkdir, writeFile, appendFile, chmod } from 'node:fs/promises';
+import { mkdir, writeFile, appendFile, chmod } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

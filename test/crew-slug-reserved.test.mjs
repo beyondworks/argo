@@ -4,7 +4,8 @@
 // 영입 문(persona.createAgentFromPrompt — UI 영입·결재 영입이 모두 이 함수로 모인다)과 반입 문(sync.EXCLUDE)이 본다.
 // 잠그는 것: ① 예약어 판정 + 회의실 상수·프리셋 slug가 그 집합과 정합 ② 영입 실호출(가짜 codex)이 거절하고 카드를 남기지
 // 않는다(이름 경로·frontmatter slug 경로·회사 언어 ko/en) ③ 영입 라우트 실호출이 400+errorCode ④ 반입 문 판정(인접 대조군 포함 — 실행 검증은 sync-integration RS1).
-import { mkdtemp, mkdir, writeFile, chmod, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, chmod, readdir } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

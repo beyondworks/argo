@@ -4,7 +4,8 @@
 // 잠그는 것: ① 헬퍼 순수 계약(ko/en·첨부→산출물 순서·500자 컷 바깥·없으면 노트 없음) ② 실제 CLI 턴(가짜 codex)이
 // 받은 프롬프트에 노트가 실린다(ko·en 각각 — 행동) ③ 두 빌더가 헬퍼를 지난다(소스 핀 — SDK 교차 경로는 가짜로 못 돈다).
 // ⚠ workspace.mjs의 WS_ROOT는 모듈 로드 시점에 고정 — env를 어떤 임포트보다 먼저 잡는다(실데이터 미접촉).
-import { mkdtemp, mkdir, writeFile, chmod, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, chmod, readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

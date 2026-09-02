@@ -2,7 +2,8 @@
 // LLM 판정은 oneshotFn 주입(실 러너 불필요) — 프리필터 통과 여부는 호출 수로 관측한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

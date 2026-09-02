@@ -2,7 +2,8 @@
 // 설치는 회사 공용(모든 크루 기본 사용), 크루 카드에서 크루별로 좁힐 수 있다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
