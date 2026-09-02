@@ -1584,6 +1584,10 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .room-speaker { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; border-radius: 999px; }
 .room-speaker.name:hover, .room-speaker.name:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
 .room-speaker:hover > .avatar, .room-speaker:focus-visible > .avatar { box-shadow: 0 0 0 2px var(--primary-soft); }
+/* 회의실 입력창 아래 줄의 텍스트형 액션(새 회의·마치기) — 크루 채팅 모델 버튼과 같은 룩(무테두리·11.5px·fg-3→fg) */
+.room-act { background: none; border: 0; cursor: pointer; padding: 2px 6px; font-size: 11.5px; font-family: inherit; color: var(--fg-3); transition: color 150ms ease-out; white-space: normal; text-align: right; }
+.room-act:hover:not(:disabled) { color: var(--fg); }
+.room-act:disabled { opacity: .5; cursor: default; }
 /* 좁은 폭(900 미만)에서는 패널을 내리지 않는다 — 본문이 전체폭을 되찾는다 */
 @media (max-width: 899px) { .split-pane { display: none; } }
 

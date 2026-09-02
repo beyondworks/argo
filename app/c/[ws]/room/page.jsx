@@ -438,28 +438,18 @@ export default function Room({ params }) {
           ~260px)만큼 부풀어, 표시 배율 2의 좁은 유효 폭(1열 ~178px)에서 문서 가로 넘침을 만든다(실측
           scrollWidth 1507 > 1408). 아이템 minWidth:0은 바깥 트랙만 지키고 자기 내부 트랙은 못 지킨다. */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
-        {/* 좁은 유효 폭 축소 규칙 — 라벨은 한 줄 ellipsis(단어별 세로 쌓임 방지), 버튼은 안 들어가면
-            wrap으로 아랫줄에, 그래도 좁으면 라벨 줄바꿈(.btn 전역 nowrap 해제) — 버튼이 유일한
-            비축소 요소라 좁은 창(실측 1280px 창 × 배율 2)에서 문서 가로 넘침을 만들었다.
-            버튼의 height auto+minHeight 28: .btn.sm 고정 height 28은 라벨이 2줄이 되는 좁은 폭
-            (en 실측 191px > 열 186px)에서 글자가 알약 밖으로 삐져나온다(검수 MEDIUM). */}
+        {/* 헤더 = 라벨 + 구분선만. 새 회의·마치기 버튼은 입력창 아래 줄(.room-act)로 옮겨졌다(2026-09-02 룩 통일) —
+            좁은 폭 넘침 처방(wrap·라벨 줄바꿈)도 그 줄이 이어받는다. 라벨은 한 줄 ellipsis(단어별 세로 쌓임 방지). */}
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
           <span className="microlabel" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('room.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
-          {!viewing && (messages?.length ?? 0) > 0 && (
-            <>
-              {/* 새 회의 — 마치기와 같은 잠금·같은 축소 규칙. 회의록 없이 '진행 중'으로 보관한다 */}
-              <button className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={newMeeting}>{t('room.new')}</button>
-              <button className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={endMeeting}>{t('room.end')}</button>
-            </>
-          )}
         </div>
 
         <div style={{ position: 'relative', minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)' }}>
-        {/* overflowWrap anywhere — 긴 무공백 토큰(URL·코드 조각)이 좁은 유효 폭에서 카드 내부 가로
-            스크롤을 만들지 않게 한다. 크루 채팅의 .thread .card·.msg-user(globals 1866)와 동형 처방.
-            .md는 자체 break-word가 우선하지만 아래 열 잠금으로 박스가 좁아지면 그걸로 충분히 꺾인다. */}
-        <div ref={scrollRef} className="card" style={{ padding: '16px 18px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' }}>
+        {/* 테두리 카드 없이 맨 스크롤 영역 — 크루 채팅 .thread와 같은 룩(유건 지시 2026-09-02: 대화 세션과 룩 통일).
+            overflowWrap anywhere — 긴 무공백 토큰(URL·코드 조각)이 좁은 유효 폭에서 내부 가로 스크롤을
+            만들지 않게 한다. .md는 자체 break-word가 우선하지만 아래 열 잠금으로 박스가 좁아지면 그걸로 충분히 꺾인다. */}
+        <div ref={scrollRef} style={{ padding: '4px 2px', overflowY: 'auto', minHeight: 0, overflowWrap: 'anywhere' }}>
           {shown === null ? <Skeleton h={200} /> : shown.length === 0 ? (
             <div className="empty">{t('room.empty')}</div>
           ) : (
@@ -655,12 +645,6 @@ export default function Room({ params }) {
                 </div>
               )}
               <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
-                {/* 작업 폴더(work-folder.jsx 공용) — 순서는 폴더 → 클립(유건 지시 2026-07-28, 크루 채팅과 동일) */}
-                <WorkFolderButton wf={wf} disabled={busy} hint={t('room.workFolder.hint')} iconStyle={{ transform: 'translateY(-0.18px)' }} />
-                <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
-                  onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
-                  <Icon name="clip" size={14} />
-                </button>
                 <input hidden multiple type="file" ref={fileRef} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
                 <textarea suppressHydrationWarning
                   ref={composerRef}
@@ -690,6 +674,26 @@ export default function Room({ params }) {
                   <Icon name="send" size={15} />
                 </button>
               </form>
+            </div>
+            {/* 입력창 아래 슬림 줄 — 왼쪽 폴더·클립, 오른쪽 새 회의·마치기(크루 채팅의 모델 버튼 자리). 크루 채팅 입력바와
+                같은 골격(유건 지시 2026-09-02: 대화 세션과 룩 통일). 폴더·클립 26px 폭·폴더 -0.18px 보정은 크루 정본 그대로. */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '0 6px', minHeight: 18, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 0, flex: 'none' }}>
+                {/* 작업 폴더(work-folder.jsx 공용) — 순서는 폴더 → 클립(유건 지시 2026-07-28, 크루 채팅과 동일) */}
+                <WorkFolderButton wf={wf} disabled={busy} hint={t('room.workFolder.hint')} style={{ width: 26 }} iconStyle={{ transform: 'translateY(-0.18px)' }} />
+                <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', width: 26, color: 'var(--fg-3)' }}
+                  onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
+                  <Icon name="clip" size={14} />
+                </button>
+              </div>
+              {/* 새 회의·마치기 — 텍스트형(크루 채팅 모델 버튼과 같은 룩), 같은 잠금. 좁은 폭에서는 wrap으로 아랫줄에
+                  (텍스트 버튼은 .btn nowrap이 아니라 라벨도 꺾인다 — 헤더 시절 넘침 처방의 등가). 회의 없으면 숨김. */}
+              {(messages?.length ?? 0) > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 2, minWidth: 0 }}>
+                  <button type="button" className="room-act" disabled={busy || serverBusy} onClick={newMeeting}>{t('room.new')}</button>
+                  <button type="button" className="room-act" disabled={busy || serverBusy} onClick={endMeeting}>{t('room.end')}</button>
+                </div>
+              )}
             </div>
           </div>
         )}
