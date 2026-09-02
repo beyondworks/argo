@@ -33,8 +33,10 @@ async function seed(ws) {
 }
 const statusPath = (ws, slug) => join(paths(ws).chats, `${slug}.status.json`);
 const backdate = async (ws, slug, ageMs) => {
+  // 원자 교체(tmp+rename) — 진행 중 하트비트의 읽기와 겹쳐도 빈 파일을 보이지 않는다(윈도우 CI 실사고)
   const f = statusPath(ws, slug); const s = JSON.parse(await readFile(f, 'utf8'));
-  await writeFile(f, JSON.stringify({ ...s, ts: Date.now() - ageMs }));
+  const tmp = `${f}.${process.pid}.tmp`; await writeFile(tmp, JSON.stringify({ ...s, ts: Date.now() - ageMs }));
+  await (await import('node:fs/promises')).rename(tmp, f);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -52,8 +54,8 @@ test('withRoomTurnStatus: 턴 동안 마커가 살아 있고, 끝나면(성공·
 test('withRoomTurnStatus: 하트비트가 마커를 주기 갱신하고 발언자를 보존한다 — 이벤트 없는 긴 단계에서도 표시 유지', async () => {
   const ws = 'rs-hb'; await seed(ws);
   let inside = null;
-  await withRoomTurnStatus(ws, async () => {
-    await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper'); // 발언자 갱신(루프가 하는 일)
+  await withRoomTurnStatus(ws, async (mark) => {
+    await mark('pepper'); // 발언자 갱신(루프가 하는 일) — 래퍼의 mark만이 하트비트와 값을 공유한다
     await backdate(ws, ROOM_TURN_SLUG, 100_000);               // 100초 전 — 아직 2분 창 안(하트비트가 읽을 수 있게)
     await sleep(180);                                          // 하트비트 40ms × 여러 회
     inside = await getTurnStatus(ws, ROOM_TURN_SLUG);
@@ -62,6 +64,25 @@ test('withRoomTurnStatus: 하트비트가 마커를 주기 갱신하고 발언�
   const raw = JSON.parse(await readFile(statusPath(ws, ROOM_TURN_SLUG), 'utf8').catch(() => 'null'));
   assert.equal(raw, null, '종료 후 마커 소멸');
   assert.equal(inside.detail, 'pepper', '하트비트가 발언자(detail)를 지우면 표시의 발언자 정보가 사라진다');
+});
+
+test('하트비트는 파일을 다시 읽지 않는다 — 인계 직후 틱이 옛 발언자를 되살리지 않는다(검수 LOW-1·윈도우 빈 읽기 실사고)', async () => {
+  const ws = 'rs-hb-mem'; await seed(ws);
+  let stale = 0;
+  await withRoomTurnStatus(ws, async (mark) => {
+    for (let i = 0; i < 60; i++) {
+      await mark('a|b'); await mark('b|');
+      await sleep(2);
+      if ((await getTurnStatus(ws, ROOM_TURN_SLUG))?.detail !== 'b|') stale += 1;
+    }
+  }, { heartbeatMs: 1 });
+  assert.equal(stale, 0, `인계 뒤 옛 발언자 부활 ${stale}/60 — 하트비트가 파일을 읽어 되쓰면 생긴다`);
+  const src = stripComments(await readFile(new URL('../src/room.mjs', import.meta.url), 'utf8'));
+  const wrap = src.slice(src.indexOf('export async function withRoomTurnStatus('), src.indexOf('export async function getRoomTurn'));
+  assert.doesNotMatch(wrap, /getTurnStatus\(/, '래퍼(하트비트)에 파일 읽기 금지');
+  assert.match(wrap, /const write = \(\) => setTurnStatus\(wsId, ROOM_TURN_SLUG, 'room', ROOM_MARK\.get\(wsId\) \?\? ''\);/, '실행 시점 메모리 값을 쓴다');
+  assert.match(wrap, /const mark = async \(detail\) => \{ ROOM_MARK\.set\(wsId, detail\); tick = tick\.then\(write\)/, 'mark도 같은 체인 — 따로 쓰면 오래된 스냅샷이 나중에 착지한다');
+  assert.match(wrap, /const beat = \(\) => \(alive \? write\(\) : undefined\);/, '하트비트 = 같은 write');
 });
 
 test('해제 경합: 진행 중 틱이 해제 뒤 마커를 되살리지 않는다(heartbeatMs 1 × 40회 — 검수 HIGH-1 비플레이키 핀)', async () => {
@@ -113,18 +134,119 @@ test('GET /api/companies/[ws]/room 은 turn을 동봉한다(실호출) — 없�
   await clearTurnStatus(ws, ROOM_TURN_SLUG);
 });
 
+test('getRoomTurn: 발언자|다음 순서 해석 + 발언 크루의 단계·부분 텍스트 보강(표시 전용 — 진행 판정은 마커 하나)', async () => {
+  const ws = 'rs-live'; await seed(ws);
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper|carmack,davinci');
+  let r = await getRoomTurn(ws);
+  assert.deepEqual({ slug: r.slug, queue: r.queue, stage: r.stage, detail: r.detail, partial: r.partial },
+    { slug: 'pepper', queue: ['carmack', 'davinci'], stage: null, detail: '', partial: '' }, '상태 파일 없으면 빈 값(크루 시동 전)');
+  await setTurnStatus(ws, 'pepper', 'tool', 'Grep', '지금까지 말한 텍스트', 'room');
+  r = await getRoomTurn(ws);
+  assert.deepEqual({ stage: r.stage, detail: r.detail, partial: r.partial }, { stage: 'tool', detail: 'Grep', partial: '지금까지 말한 텍스트' }, '발언 크루의 스트리밍 상태가 방에 실린다');
+  await clearTurnStatus(ws, 'pepper'); // 발언 완료 = chat()이 상태 파일을 지운다 → partial이 비고 완성 말풍선이 정본
+  r = await getRoomTurn(ws);
+  assert.deepEqual({ active: r.active, partial: r.partial }, { active: true, partial: '' }, '완료 후 partial 없음, 진행 판정은 마커만');
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper'); // 구분자 없는 구형 마커도 해석
+  r = await getRoomTurn(ws);
+  assert.deepEqual({ slug: r.slug, queue: r.queue }, { slug: 'pepper', queue: [] });
+  await backdate(ws, ROOM_TURN_SLUG, 5 * 60_000);
+  await setTurnStatus(ws, 'pepper', 'tool', 'Grep', 'x');
+  assert.equal(await getRoomTurn(ws), null, '낡은 마커는 발언 크루 상태가 신선해도 null — HIGH-2 단일 판정 유지');
+  await clearTurnStatus(ws, 'pepper'); await clearTurnStatus(ws, ROOM_TURN_SLUG);
+});
+
+test('출처 게이트: 발언 크루 상태는 source===room일 때만 채택 — 개인 채팅·루틴·미상 출처는 비채택(검수 MEDIUM-2)', async () => {
+  const ws = 'rs-source'; await seed(ws);
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper|');
+  await setTurnStatus(ws, 'pepper', 'think', '', '회의실 발언입니다', 'room');
+  assert.equal((await getRoomTurn(ws)).partial, '회의실 발언입니다', '자기 발언은 채택');
+  await setTurnStatus(ws, 'pepper', 'shell', 'npm test', '개인 채팅에서 쓰는 다른 문장', 'chat'); // 같은 파일을 다른 턴이 덮음
+  let r = await getRoomTurn(ws);
+  assert.deepEqual({ active: r.active, stage: r.stage, detail: r.detail, partial: r.partial }, { active: true, stage: null, detail: '', partial: '' }, '남의 턴 상태는 방에 뜨지 않는다(진행 판정은 그대로)');
+  await setTurnStatus(ws, 'pepper', 'think', '', '출처 없는 구형 파일'); // source 미전달 = 이전 값 유지('chat')
+  assert.equal((await getRoomTurn(ws)).partial, '', '이전 출처(chat) 유지 → 비채택');
+  await clearTurnStatus(ws, 'pepper');
+  await setTurnStatus(ws, 'pepper', 'think', '', '출처 미상'); // 새 파일에 출처 없음 = ''
+  assert.equal((await getTurnStatus(ws, 'pepper')).source, '', '출처 미상은 빈 값으로 저장');
+  assert.equal((await getRoomTurn(ws)).partial, '', '출처 미상은 비채택(fail-closed)');
+  await clearTurnStatus(ws, 'pepper'); await clearTurnStatus(ws, ROOM_TURN_SLUG);
+});
+
+test('배선: chat()이 상태 파일 갱신 전부에 턴 출처(turnSource)를 싣는다 — 하나라도 빠지면 회의실 표시가 그 단계에서 사라진다', async () => {
+  const src = stripComments(await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8'));
+  assert.match(src, /const turnSource = source \?\? \(from \? 'delegate' : 'chat'\);/, '출처 파생 — room 턴은 source=room 그대로');
+  const calls = src.match(/setTurnStatus\(wsId, agentSlug,[^\n]*\)/g) ?? [];
+  assert.ok(calls.length >= 4, `상태 갱신 호출 ${calls.length}곳(기대 ≥4: runner·boot·memory·단계)`);
+  for (const c of calls) assert.match(c, /turnSource\)/, `출처 누락 호출: ${c}`);
+});
+
+test('GET /room 이 발언자·다음 순서·단계·부분 텍스트를 그대로 싣는다(실호출) — 실시간 발언 표시의 유일한 원천', async () => {
+  const ws = 'rs-route-live'; await seed(ws);
+  const route = await import('../app/api/companies/[ws]/room/route.js');
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper|carmack');
+  await setTurnStatus(ws, 'pepper', 'think', '', '부분', 'room');
+  const d = await (await route.GET(new Request(`http://127.0.0.1/api/companies/${ws}/room`), { params: Promise.resolve({ ws }) })).json();
+  assert.deepEqual({ slug: d.turn?.slug, queue: d.turn?.queue, stage: d.turn?.stage, partial: d.turn?.partial },
+    { slug: 'pepper', queue: ['carmack'], stage: 'think', partial: '부분' });
+  await clearTurnStatus(ws, 'pepper'); await clearTurnStatus(ws, ROOM_TURN_SLUG);
+});
+
+test('배선: 회의실 페이지가 발언 중인 크루의 단계·부분 텍스트·다음 순서를 그리고, 진행 중엔 2.5초 폴링한다(소스 구간 불변식)', async () => {
+  const page = stripComments(await readFile(new URL('../app/c/[ws]/room/page.jsx', import.meta.url), 'utf8'));
+  assert.match(page, /const \[turn, setTurn\] = useState\(null\)/);
+  assert.match(page, /import \{ useLang, stageLabel \} from '\.\.\/\.\.\/\.\.\/i18n'/, '단계 라벨은 크루 채팅과 같은 사전 매핑');
+  assert.match(page, /\}, live \? 2500 : 8000\);\s*\n\s*return \(\) => clearInterval\(iv\);\s*\n\s*\}, \[ws, busy, serverBusy\]\);/, '진행 중 2.5초·유휴 8초, 상태 전환에 재설정');
+  assert.match(page, /const live = busy \|\| serverBusy;/, '자기 턴·서버 턴 모두 진행');
+  const live = page.slice(page.indexOf('{!viewing && (busy || serverBusy) && ('), page.indexOf('<div ref={endRef} />'));
+  assert.match(live, /turn\?\.slug \? \(/, '발언자를 알면 말풍선 형태');
+  assert.match(live, /<Avatar name=\{nameOf\(turn\.slug\)\} size=\{26\} \/>/);
+  assert.match(live, /\{turn\.stage \? t\('chat\.stageEllipsis', \{ stage: stageLabel\(t, turn\.stage, turn\.detail\) \}\) : t\('room\.speaking'\)\}/,
+    "단계 미상이면 '발언 중' — 'boot'를 지어내면 CLI 러너 발언이 2분 뒤 거짓 '시동 거는 중'(검수 HIGH-1)");
+  assert.doesNotMatch(live, /turn\.stage \|\| 'boot'/, "'boot' 폴백 금지");
+  assert.match(live, /\{turn\.stage !== 'runner' && turn\.detail \? ` · \$\{String\(turn\.detail\)\.slice\(0, 60\)\}` : ''\}/, 'runner 단계는 detail(러너명)이 라벨에 이미 있어 중복 억제(검수 LOW-4)');
+  assert.match(live, /\{turn\.partial && \(\s*\n\s*<div[^\n]*><Markdown text=\{turn\.partial\} wsId=\{ws\} \/><\/div>/, '부분 텍스트는 마크다운');
+  assert.match(live, /t\('room\.next', \{ names: turn\.queue\.map\(nameOf\)\.join\(' → '\) \}\)/, '다음 순서 줄');
+  assert.match(live, /\) : \(\s*\n\s*<div[^\n]*>\s*\n\s*<ArgoSpinner size=\{16\} \/> \{t\('room\.meeting'\)\}/, '발언자 미정이면 종전 스피너 줄');
+  const fin = page.slice(page.indexOf('} finally {', page.indexOf('async function send(')), page.indexOf('async function endMeeting('));
+  assert.match(fin, /setBusy\(false\); setTurn\(null\);/, '자기 턴 종료 시 turn만 즉시 내린다 — 마지막 partial이 완성 말풍선과 겹치지 않게');
+  assert.doesNotMatch(fin, /setServerBusy\(false\)/, 'serverBusy를 여기서 끄면 다른 탭 턴 중 마치기 잠금이 최대 8초 풀린다(검수 MEDIUM-1)');
+  assert.match(page, /\}, \[messages, busy, viewing, turn\?\.partial, turn\?\.stage\]\);/, '부분 텍스트가 자라는 동안 하단 추종');
+  const i18n = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  assert.match(i18n, /'room\.next': \['[^']*\{names\}[^']*', '[^']*\{names\}[^']*'\]/, 'ko/en 둘 다 {names} 치환');
+});
+
+test('DELETE /room(회의 마치기)은 턴 진행 중이면 409로 거절한다(실호출) — 서버 최종 게이트(검수 MEDIUM-1)', async () => {
+  const ws = 'rs-delete'; await seed(ws);
+  const route = await import('../app/api/companies/[ws]/room/route.js');
+  const del = () => route.DELETE(new Request(`http://127.0.0.1/api/companies/${ws}/room`, { method: 'DELETE' }), { params: Promise.resolve({ ws }) });
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'pepper|');
+  const busy = await del();
+  assert.equal(busy.status, 409, '진행 중 마치기 거절');
+  assert.match((await busy.json()).error, /진행 중|still speaking/, '안내 문구');
+  assert.equal((await getRoomTurn(ws))?.active, true, '거절은 마커를 건드리지 않는다');
+  await clearTurnStatus(ws, ROOM_TURN_SLUG);
+  const ok = await del();
+  assert.equal(ok.status, 200, '유휴면 종전대로 마친다');
+});
+
 test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전에 발언자를 갱신하며, 실패를 방에 남긴다(소스 구간 불변식)', async () => {
   const src = stripComments(await readFile(new URL('../src/room.mjs', import.meta.url), 'utf8'));
   // 불변식: runRoomTurn 본문은 withRoomTurnStatus 호출 하나이고, 실제 턴(runRoomTurnInner)은 그 안에서만 불린다.
   // (#392에서 saved 표식 래퍼가 안쪽에 들어와 한 줄 형태가 아니게 됐다 — 구간으로 잠근다)
   const rt = src.slice(src.indexOf('export async function runRoomTurn('), src.indexOf('async function runRoomTurnInner('));
-  assert.match(rt, /export async function runRoomTurn\(wsId, text, attachments = \[\]\) \{\s*\n\s*return withRoomTurnStatus\(wsId, async \(\) => \{/,
+  assert.match(rt, /export async function runRoomTurn\(wsId, text, attachments = \[\]\) \{\s*\n\s*return withRoomTurnStatus\(wsId, async \(mark\) => \{/,
     '래퍼를 우회하면 마커가 안 생겨 복원이 죽는다');
-  assert.match(rt, /return await runRoomTurnInner\(wsId, text, attachments, state\);/, '실제 턴은 래퍼 안에서만');
+  assert.match(rt, /return await runRoomTurnInner\(wsId, text, attachments, state, mark\);/, '실제 턴은 래퍼 안에서만, 발언자 갱신은 래퍼의 mark로');
   assert.equal((src.match(/(?<!function )runRoomTurnInner\(wsId, text, attachments/g) ?? []).length, 1, '래퍼 밖 직접 호출 금지(정의부 제외)');
   const i0 = src.indexOf('for (const [i, a] of speakers.entries())');
   const loop = src.slice(i0, src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
-  assert.match(loop, /setTurnStatus\(wsId, ROOM_TURN_SLUG, 'room', a\.slug\)/, '발언자 갱신이 chat() 앞에 있어야 발언자 표시의 앵커가 된다');
+  assert.match(src, /const markerFor = \(j\) => \(speakers\[j\] \? `\$\{speakers\[j\]\.slug\}\|\$\{speakers\.slice\(j \+ 1\)\.map\(\(s\) => s\.slug\)\.join\(','\)\}` : ''\);/,
+    "마커 인코딩 '발언자|다음1,다음2' — getRoomTurn의 해석과 짝");
+  assert.match(loop, /await mark\(markerFor\(i\)\)/, '발언자|다음 순서 갱신이 chat() 앞에 있어야 발언자 표시·발언 큐의 앵커가 된다');
+  assert.doesNotMatch(src.slice(src.indexOf('async function runRoomTurnInner(')), /setTurnStatus\(wsId, ROOM_TURN_SLUG/, '루프의 마커 직접 쓰기 금지 — 하트비트가 덮는다');
+  // 발언 종료 즉시 다음 발언자로 — 없으면 답변 적재~다음 프롬프트 조립 사이에 "옛 발언자 · 시동 거는 중"이 샌다(격리 실측 shot-1)
+  const afterChat = src.slice(src.indexOf('r = await chat(wsId, a.slug, prompt', i0), src.indexOf('} catch (e) {', i0));
+  assert.match(afterChat, /r = await chat\([^\n]*\);\s*\n\s*await mark\(markerFor\(i \+ 1\)\);/, 'chat() 반환 직후 마커 인계(마지막이면 빈 값)');
   // 발언 실패가 방에 남는가 — 오류는 POST 탭으로만 가므로 자리를 비운 사장에게 방은 그냥 조용하다(격리 실측: 401 뒤 흔적 0)
   const after = src.slice(src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
   const catchBlk = after.slice(after.indexOf('} catch (e) {'), after.indexOf('} finally {'));
@@ -139,8 +261,9 @@ test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전
 test('배선: 회의실 페이지가 turn.active를 serverBusy로 복원하고, 폴링·표시·마치기가 올바르게 묶여 있다', async () => {
   const page = stripComments(await readFile(new URL('../app/c/[ws]/room/page.jsx', import.meta.url), 'utf8'));
   assert.match(page, /const \[serverBusy, setServerBusy\] = useState\(false\)/, '서버 진행 상태는 별도 상태');
-  assert.match(page, /setMessages\(d\.messages \?\? \[\]\); setServerBusy\(!!d\.turn\?\.active\); setError\(''\);/, '마운트 로드에서 복원');
-  assert.match(page, /if \(!busy\) api\(`\/api\/companies\/\$\{ws\}\/room`\)\.then\(\(d\) => \{ setMessages\(d\.messages \?\? \[\]\); setServerBusy\(!!d\.turn\?\.active\); \}\)/, '폴링에서 복원(조건은 !busy — serverBusy로 폴링을 멈추면 영구 회의 중)');
+  assert.match(page, /setMessages\(d\.messages \?\? \[\]\); setServerBusy\(!!d\.turn\?\.active\); setTurn\(d\.turn \?\? null\); setError\(''\);/, '마운트 로드에서 복원');
+  assert.match(page, /setTurn\(d\.turn \?\? null\); setServerBusy\(!!d\.turn\?\.active\);\s*\n\s*const srv = d\.messages \?\? \[\];\s*\n\s*setMessages\(\(cur\) => \(!busy \|\| srv\.length >= \(cur\?\.length \?\? 0\)\) \? srv : cur\);/,
+    '폴링에서 복원 — serverBusy는 폴링 조건에 없다(멈추면 영구 회의 중); 자기 턴 중엔 서버 목록이 낙관 말풍선을 이미 담았을 때(길이 ≥ 로컬)만 받는다');
   assert.match(page, /\{!viewing && \(busy \|\| serverBusy\) && \(/, '표시는 둘 중 하나면 켜진다');
   assert.doesNotMatch(page, /if \(!busy && !serverBusy\)/, 'serverBusy가 폴링 조건에 들어가면 안 된다');
   // 마치기 — 서버 턴 중 마치면 도는 발언이 방·개인 스레드 어디에도 안 남는다(검수 MEDIUM-2)

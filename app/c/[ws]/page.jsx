@@ -94,10 +94,9 @@ export default function Deck({ params }) {
   );
   const memories = (data?.memories ?? []).filter((m) => !q || m.title.toLowerCase().includes(q));
   const lastTs = data?.memories?.[0] ? (tsFromRel(data.memories[0].rel) ?? data.memories[0].mtime) : null;
-  // 연결 밀도 — 기억 대비 자동 링크 쌍 비율 (기억이 얼마나 서로 엮여 있나)
-  const density = stats && data.memoryCount > 1
-    ? Math.min((stats.links / (data.memoryCount - 1)) * 100, 100)
-    : 0;
+  // 연결된 기억 비율 — 링크가 1개 이상인 기억 / 전체(고립 기억의 보수). 100%면 정말 모든 기억이 엮인 것.
+  // 예전 links/(n−1)은 쌍 수가 n−1(신장 트리)을 넘는 순간 100%로 포화해 정보가 0이었다(유건 제보 2026-09-02: 10,075쌍/2,263건 상시 100%).
+  const linkedPct = stats && data.memoryCount > 0 ? (stats.linked / data.memoryCount) * 100 : 0;
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
@@ -143,7 +142,7 @@ export default function Deck({ params }) {
                     <span className="microlabel">{t('deck.linkDensity')}</span>
                     <span className="chip">{t('deck.linksPair', { n: stats.links })}</span>
                   </div>
-                  <Dial value={density} label={t('deck.linked')} />
+                  <Dial value={linkedPct} label={t('deck.linked')} />
                 </div>
                 <div className="metric card fade-up" style={{ animationDelay: '0.12s' }}>
                   <div className="metric-top">
