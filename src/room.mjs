@@ -120,14 +120,24 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
   // 같은 분 안에 두 번 마치면(다시 열기→마치기, 짧은 회의 연속) HHMM 이름이 같아 앞 회의록이 **덮였다**(격리 실측
   // 2026-09-02: DELETE 2회가 같은 journal/…-1953.md를 반환, 파일엔 뒤 회의만). 회의록은 vault/journal 일지 = 회사 기억이라
   // 유실이 곧 기억 유실. 주제 노트(saveNote create)·옵시디언 임포트(reserve)와 같은 접미 규칙(-2, -3)으로 빈 이름을 잡되,
-  // 판정은 exists 검사가 아니라 배타 생성(wx — 이름 기준 원자 연산)으로 한다: 동기화 풀이 같은 이름을 같은 순간에
-  // 내려받아도 덮지 않는다. 초 단위 시각으로 바꾸지 않는 이유: 같은 초 재발 가능 + 일지 파일명 규약(HHMM)과 어긋난다.
+  // 판정은 exists 검사가 아니라 배타 생성(wx — 이름 기준 원자 연산, 심링크 선점도 EEXIST)으로 한다: 동기화 풀이 먼저
+  // 내려놓은 같은 이름을 **여기서** 덮지 않는다(반대 방향 — pull이 방금 쓴 회의록을 덮는 경로 — 는 sync.mjs의 기존
+  // 동작으로 이 변경 범위 밖). 최종 이름에 직접 쓰므로 tmp→rename 원자성은 없다(종전과 동급 — 배타 생성은 최종
+  // 이름에 걸려야 성립해 writeFileAtomic으로 대체 불가). 초 단위 시각으로 바꾸지 않는 이유: 같은 초 재발 가능 +
+  // 일지 파일명 규약(HHMM)과 어긋난다.
   await mkdir(p.journal, { recursive: true });
   const stem = `${day}-회의록-${hm}`;
   let journalName = `${stem}.md`;
   for (let n = 2; ; n += 1) {
     try { await writeFile(join(p.journal, journalName), md, { flag: 'wx' }); break; }
-    catch (e) { if (e?.code !== 'EEXIST') throw e; journalName = `${stem}-${n}.md`; }
+    catch (e) {
+      // EEXIST 외(EACCES·ENOSPC 등)는 그대로 던진다 — 삼키면 무한 루프이고, 회의실 락(withLock 체인)이 영원히 settle
+      // 되지 않아 그 회사의 마치기·다시 열기·회의 턴이 프로세스 수명 내내 멈춘다(분리 검수가 EACCES로 실증).
+      if (e?.code !== 'EEXIST') throw e;
+      // 상한 — 어떤 결함(접미 미증가 등)이든 매달리지 않고 예외로 끝나게. 같은 분에 회의록 999개는 사용이 아니다.
+      if (n > 999) throw new Error(`회의록 이름을 잡지 못했습니다 — journal/에 ${stem} 계열이 999개 이상`);
+      journalName = `${stem}-${n}.md`;
+    }
   }
   await updateIndex(wsId).catch(() => {});
   const dir = join(p.chats, '.archive');

@@ -3,7 +3,7 @@
 // 시각은 주입 불가(endMeetingLocked가 new Date())라, 분 경계를 넘긴 시도는 버리고 같은 분 안에서 다시 잰다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -35,6 +35,7 @@ test('같은 분 안에 두 번 마치면 회의록이 두 개 남고 각각의 
   const { r1, r2 } = await withinOneMinute(async () => {
     await rm(paths(ws).journal, { recursive: true, force: true });
     await seedRoom(ws, '첫 회의 안건'); const r1 = await endMeeting(ws);
+    await new Promise((res) => setTimeout(res, 10)); // mtime이 확실히 뒤가 되게(인덱스 순서 단언용)
     await seedRoom(ws, '둘째 회의 안건'); const r2 = await endMeeting(ws);
     return { r1, r2 };
   });
@@ -47,6 +48,21 @@ test('같은 분 안에 두 번 마치면 회의록이 두 개 남고 각각의 
   const [a, b] = await Promise.all([readFile(join(dir, r1.journal.replace(/^journal\//, '')), 'utf8'), readFile(join(dir, r2.journal.replace(/^journal\//, '')), 'utf8')]);
   assert.match(a, /첫 회의 안건/); assert.doesNotMatch(a, /둘째 회의 안건/, '첫 회의록이 뒤 회의로 덮이면 안 된다');
   assert.match(b, /둘째 회의 안건/);
+  // 인덱스 "최근 일지"는 최신(뒤 회의 = -2)이 위 — 파일명 역순이면 base → -2 순으로 뒤집힌다(검수 LOW-1 실측)
+  const idx = (await readFile(paths(ws).index, 'utf8')).split('\n');
+  const at = (rel) => idx.findIndex((l) => l.includes(`[[${rel.replace(/\.md$/, '')}]]`));
+  assert.ok(at(r1.journal) > 0 && at(r2.journal) > 0, '두 회의록 모두 인덱스에 등재');
+  assert.ok(at(r2.journal) < at(r1.journal), `뒤 회의(-2)가 위: ${idx.filter((l) => l.includes('회의록')).join(' | ')}`);
+});
+
+test('journal 폴더에 쓸 수 없으면(EACCES) 매달리지 않고 그 오류를 던진다 — 삼키면 무한 루프 + 회의실 락 영구 보유', { skip: process.platform === 'win32' ? 'chmod 의미 다름' : process.getuid?.() === 0 ? 'root는 권한 무시' : false }, async () => {
+  const ws = 'mn-eacces';
+  await seedRoom(ws, '권한 없는 폴더');
+  await chmod(paths(ws).journal, 0o555);
+  try {
+    const hang = new Promise((_, rej) => setTimeout(() => rej(new Error('HANG')), 5000).unref());
+    await assert.rejects(Promise.race([endMeeting(ws), hang]), (e) => e?.code === 'EACCES', 'EACCES를 그대로 — HANG이면 가드가 빠진 것');
+  } finally { await chmod(paths(ws).journal, 0o755); }
 });
 
 test('이미 -2까지 있으면 -3 — 비어 있는 첫 이름을 잡는다', async () => {
