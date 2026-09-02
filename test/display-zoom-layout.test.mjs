@@ -608,7 +608,12 @@ test('room 헤더 축소 규칙 핀 — wrap·ellipsis·버튼 세로 자람이 
   // 비축소 요소가 사라졌으므로 넘침 처방은 그 줄의 wrap 행 + .room-act white-space:normal이 이어받는다.
   assert.match(src, /<div style=\{\{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 2, minWidth: 0 \}\}>\s*<button type="button" className="room-act" disabled=\{busy \|\| serverBusy\} onClick=\{newMeeting\}>/,
     '새 회의·마치기 wrap 행 변이(표현식 전체 앵커 — 정당한 리팩터면 이 핀을 함께 갱신)');
-  assert.match(sources.get('app/globals.css'), /\.room-act \{[^}]*white-space: normal;/, '.room-act 라벨 줄바꿈 허용(en 라벨이 좁은 폭에서 행 밖으로 나가지 않게)');
+  // CSS "규칙 존재" 단언은 캐스케이드 fail-open(#348 실측·이번 검수 LOW-1: 뒤에 nowrap 재선언이 초록) — 같은 셀렉터의
+  // 모든 블록을 모아 마지막 white-space 선언이 normal인지 본다(뒤 재선언·다른 블록 이동에 red).
+  const actBlocks = [...sources.get('app/globals.css').matchAll(/(?:^|\n)\.room-act\s*\{([^}]*)\}/g)].map((m) => m[1]);
+  assert.ok(actBlocks.length >= 1, '.room-act 기본 규칙이 있어야 한다');
+  const wsDecls = actBlocks.flatMap((b) => [...b.matchAll(/white-space:\s*([a-z-]+)/g)].map((m) => m[1]));
+  assert.equal(wsDecls.at(-1), 'normal', `.room-act 라벨 줄바꿈 허용 — 마지막 white-space 선언이 normal이어야 한다(현재 ${wsDecls.join(',') || '없음'}; en 라벨이 좁은 폭에서 행 밖으로 나가지 않게)`);
 });
 
 test('att-chip 폭 클램프 핀 — nowrap 칩의 고정 220px 상한 복원 변이는 red', () => {

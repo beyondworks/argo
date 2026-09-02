@@ -438,11 +438,8 @@ export default function Room({ params }) {
           ~260px)만큼 부풀어, 표시 배율 2의 좁은 유효 폭(1열 ~178px)에서 문서 가로 넘침을 만든다(실측
           scrollWidth 1507 > 1408). 아이템 minWidth:0은 바깥 트랙만 지키고 자기 내부 트랙은 못 지킨다. */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'auto 1fr auto', gap: 12, height: '100%', minWidth: 0, minHeight: 0 }}>
-        {/* 좁은 유효 폭 축소 규칙 — 라벨은 한 줄 ellipsis(단어별 세로 쌓임 방지), 버튼은 안 들어가면
-            wrap으로 아랫줄에, 그래도 좁으면 라벨 줄바꿈(.btn 전역 nowrap 해제) — 버튼이 유일한
-            비축소 요소라 좁은 창(실측 1280px 창 × 배율 2)에서 문서 가로 넘침을 만들었다.
-            버튼의 height auto+minHeight 28: .btn.sm 고정 height 28은 라벨이 2줄이 되는 좁은 폭
-            (en 실측 191px > 열 186px)에서 글자가 알약 밖으로 삐져나온다(검수 MEDIUM). */}
+        {/* 헤더 = 라벨 + 구분선만. 새 회의·마치기 버튼은 입력창 아래 줄(.room-act)로 옮겨졌다(2026-09-02 룩 통일) —
+            좁은 폭 넘침 처방(wrap·라벨 줄바꿈)도 그 줄이 이어받는다. 라벨은 한 줄 ellipsis(단어별 세로 쌓임 방지). */}
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
           <span className="microlabel" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('room.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
