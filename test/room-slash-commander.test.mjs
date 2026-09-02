@@ -63,7 +63,7 @@ test('회의실: 공유 매처·내장 명령·별칭/스킬 출처가 배선돼
   assert.match(src, /const slashTok = !viewing && SLASH_TOKEN_RE\.test\(input\);/, '토큰 판정(멘션 양보 기준)');
   assert.match(src, /const slashOpen = !!slashList\?\.length;/, '패널 열림 = 후보 1개 이상');
   // 내장 명령 — 회의 마치기(버튼과 같은 노출 조건), 기억·데크 이동(크루 커맨더와 같은 별칭)
-  assert.match(src, /const SLASH_CMDS = \[\s*\{ id: 'memory', aliases: \['memory', '기억', 'vault'\], label: t\('nav\.memory'\), run: \(\) => router\.push\(`\/c\/\$\{ws\}\/vault`\) \},\s*\{ id: 'deck', aliases: \['deck', '데크', 'home'\], label: t\('nav\.deck'\), run: \(\) => router\.push\(`\/c\/\$\{ws\}`\) \},\s*\.\.\.\(!viewing && \(messages\?\.length \?\? 0\) > 0 && !busy && !serverBusy \? \[\{ id: 'end', aliases: \['end', '마치기', '회의마치기'\], label: t\('room\.end'\), run: \(\) => endMeeting\(\) \}\] : \[\]\),\s*\];/,
+  assert.match(src, /const SLASH_CMDS = \[\s*\{ id: 'memory', aliases: \['memory', '기억', 'vault'\], label: t\('nav\.memory'\), run: \(\) => router\.push\(keepSide\(`\/c\/\$\{ws\}\/vault`, window\.location\.search\)\) \},\s*\{ id: 'deck', aliases: \['deck', '데크', 'home'\], label: t\('nav\.deck'\), run: \(\) => router\.push\(keepSide\(`\/c\/\$\{ws\}`, window\.location\.search\)\) \},\s*\.\.\.\(!viewing && \(messages\?\.length \?\? 0\) > 0 && !busy && !serverBusy \? \[\{ id: 'end', aliases: \['end', '마치기', '회의마치기'\], label: t\('room\.end'\), run: \(\) => endMeeting\(\) \}\] : \[\]\),\s*\];/,
     '내장 명령 목록 — 회의 마치기는 버튼 노출 조건과 동일(빈 방·진행 중엔 후보에서 빠진다)하고 맨 뒤(`/` 직후 Enter의 기본 선택이 방을 비우는 명령이 아니게 — 검수 LOW-1)');
   assert.match(src, /const slashSel = slashOpen \? Math\.min\(slashIdx, slashList\.length - 1\) : 0;/, '선택 항목 단일 계산 — 표시·실행이 같은 항목(후보가 줄어도 어긋나지 않게 — 검수 MEDIUM-1)');
   // 출처 — 별칭은 회사 정본(company.json.aliases), 스킬은 마켓 GET의 installedSkills(크루 커맨더와 같은 계약)

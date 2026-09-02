@@ -7,6 +7,7 @@ import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api
 import { useLang, stageLabel } from '../../../i18n';
 import { dropUpClamp } from '../zoom-math.mjs';
 import { matchSlash, SLASH_TOKEN_RE } from '../slash-match.mjs';
+import { keepSide } from '../split.mjs';
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
@@ -242,8 +243,9 @@ export default function Room({ params }) {
   const [aliases, setAliases] = useState([]);
   const [skillCmds, setSkillCmds] = useState(null); // null = 아직 안 열어봄(첫 열림에 별칭·스킬을 1회 로드)
   const SLASH_CMDS = [
-    { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(`/c/${ws}/vault`) },
-    { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(`/c/${ws}`) },
+    // 이동은 keepSide로 — 생 router.push는 ?side=를 떨어뜨려 옆에 열어 둔 보조 패널이 닫힌다(레이아웃 내부 링크 규약과 동일)
+    { id: 'memory', aliases: ['memory', '기억', 'vault'], label: t('nav.memory'), run: () => router.push(keepSide(`/c/${ws}/vault`, window.location.search)) },
+    { id: 'deck', aliases: ['deck', '데크', 'home'], label: t('nav.deck'), run: () => router.push(keepSide(`/c/${ws}`, window.location.search)) },
     // 회의 마치기 — 헤더 버튼과 같은 노출 조건(빈 방·진행 중엔 후보에서 빠진다: 실행해도 안 되는 명령은 보이지 않게).
     // 맨 뒤에 두는 이유: `/` 직후 Enter의 기본 선택이 방을 비우는 명령이면 탐색 중 Enter 한 번에 회의가 마쳐진다
     // (분리 검수 LOW-1 — 레일에서 되살릴 수는 있지만 처음 보는 제스처의 기본값으로는 부적합).
