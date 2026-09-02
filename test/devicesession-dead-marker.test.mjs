@@ -6,7 +6,7 @@
 //     거절 시 디스크를 캐시 무시로 재독해 토큰이 바뀌었으면 그 세션으로 1회만 재시도(다른 프로세스 회전 자가 치유)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -65,7 +65,7 @@ test('정상 회전이면 마커 해제 + 미만료 세션은 항상 dead 아님
 test('거절 마커는 사유 JSON — kind·reason(토큰 마스킹)·status·code, 호출 1회(디스크 동일=재시도 없음), 로그 rejected', async () => {
   const root = await mkRoot(-10);
   const calls = [];
-  const token = 'A'.repeat(40);
+  const token = 'A'.repeat(22); // GoTrue 리프레시 토큰 모양(22자) — 임계 20을 넘는 최소 근방
   await getFreshDeviceSession({ root, _mkClient: clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return reject(`Invalid Refresh Token: Already Used ${token}`, { status: 400, code: 'refresh_token_already_used' }); }) });
   assert.deepEqual(calls, ['rt'], '디스크 토큰이 그대로면 재시도하지 않는다');
   const info = deviceSessionDeadInfo({ root });
@@ -81,6 +81,7 @@ test('거절 마커는 사유 JSON — kind·reason(토큰 마스킹)·status·c
   assert.equal(log[0].ev, 'rejected');
   assert.equal(log[0].kind, 'reused');
   assert.ok(!log[0].reason.includes(token), '로그에도 토큰 없음');
+  assert.ok(!('A'.repeat(19) + ' ').includes('***') && info.reason.includes('Refresh Token'), '일반 단어는 안 가린다(문구 보존)');
   assert.equal(deviceSessionDead({ root }), true, '판정 계약은 그대로');
 });
 
@@ -159,11 +160,49 @@ test('rejectionKind 값 집합 ↔ i18n 사전 me.sessionDead.kind.* 1:1 — /ap
   const kinds = new Set(['Invalid Refresh Token: Already Used', 'Invalid Refresh Token: Refresh Token Not Found',
     'Invalid Refresh Token: Session Expired (Inactivity)', 'Invalid Refresh Token', ''].map(rejectionKind));
   assert.deepEqual([...kinds].sort(), ['expired', 'rejected', 'reused', 'revoked']);
+  // 분기 추가 방향도 잠근다 — 고정 입력만 돌리면 새 return 'x'가 그물 밖(검수 MEDIUM-2 변이 실증) → 소스에서 기계 추출
+  const src = await readFile(new URL('../src/devicesession.mjs', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('export function rejectionKind('), src.indexOf('\n}', src.indexOf('export function rejectionKind(')));
+  const declared = new Set([...fn.matchAll(/return '([a-z_]+)'/g)].map((m) => m[1]));
+  assert.deepEqual([...declared].sort(), [...kinds].sort(), '함수의 return 리터럴 집합 = 입력으로 관측한 집합');
   const dict = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
-  for (const k of kinds) assert.ok(dict.includes(`'me.sessionDead.kind.${k}': [`), `사전 키 누락: ${k}`);
+  const dictKinds = [...dict.matchAll(/^\s*'me\.sessionDead\.kind\.([a-z_]+)': \[/gm)].map((m) => m[1]);
+  assert.deepEqual(dictKinds.sort(), [...declared].sort(), '사전 키 집합 = 함수 return 집합(양방향)');
+  assert.ok(/'me\.sessionDead\.raw': \[/.test(dict), '툴팁의 원문 접두 키');
   // 템플릿 키(t(`...${kind}`))는 i18n-keys 검사기 그물 밖 — 소비자 배선을 여기서 잠근다
   const me = await readFile(new URL('../app/api/me/route.js', import.meta.url), 'utf8');
-  assert.ok(/sessionDead = !cookieAlive;[\s\S]{0,400}deviceSessionDeadInfo\(\)[\s\S]{0,400}sessionDead: true, sessionDeadInfo \}/.test(me), '/api/me가 마커 사유를 실어 보낸다');
+  // 라우트 실호출은 currentUser의 cookies()가 요청 스코프 밖에서 던져 불가 — 조건식 없는 통과식 한 줄을 통째로 핀한다
+  // (검수 MEDIUM-1: `if (i)` 조건형은 `&& false` 변이에 초록이었다)
+  assert.ok(me.includes("import { deviceSessionDead, deviceSessionDeadInfo } from '../../../src/devicesession.mjs';"), '/api/me 임포트');
+  assert.ok(me.includes("  return Response.json({ authOn: AUTH_ON, user, ...(sessionDead ? { sessionDead: true, sessionDeadInfo: deviceSessionDeadInfo() } : {}) });"), '/api/me가 마커 사유를 조건 없이 실어 보낸다');
   const layout = await readFile(new URL('../app/c/[ws]/layout.jsx', import.meta.url), 'utf8');
-  assert.ok(/me\?\.sessionDead\s*\?\s*<Link[^>]*title=\{me\.sessionDeadInfo \? `[^`]*\$\{t\(`me\.sessionDead\.kind\.\$\{me\.sessionDeadInfo\.kind\}`\)\} \(\$\{me\.sessionDeadInfo\.reason\}\)`/.test(layout), '사이드바 툴팁이 분류 문구 + 원문 사유를 보여준다');
+  assert.ok(/me\?\.sessionDead\s*\?\s*<Link[^>]*title=\{me\.sessionDeadInfo \? `[^`]*\$\{t\(`me\.sessionDead\.kind\.\$\{me\.sessionDeadInfo\.kind\}`\)\} \(\$\{t\('me\.sessionDead\.raw'\)\}: \$\{me\.sessionDeadInfo\.reason\}\)`/.test(layout), '사이드바 툴팁이 분류 문구 + "서버 원문:" 접두 + 원문 사유를 보여준다');
+});
+
+test('거절 후 디스크 파일이 사라졌으면(다른 프로세스 로그아웃) null — 마커 없음·TypeError 없음·호출 1회', async () => {
+  const root = await mkRoot(-10);
+  const calls = [];
+  const out = await getFreshDeviceSession({ root, _mkClient: clientWith(async ({ refresh_token }) => {
+    calls.push(refresh_token);
+    await rm(join(root, '.device-session.json'));
+    return reject('Invalid Refresh Token: Already Used');
+  }) });
+  assert.equal(out, null);
+  assert.deepEqual(calls, ['rt']);
+  assert.equal(existsSync(marker(root)), false, '로그아웃은 사망이 아니다');
+  assert.deepEqual((await readLog(root)).map((l) => [l.ev, l.disk]), [['reread', 'gone']]);
+  assert.equal(deviceSessionDead({ root }), false);
+});
+
+test('로그 중복 제거는 root별 — 다른 root의 같은 사유를 삼키지 않는다(검수 LOW-4)', async () => {
+  const client = clientWith(async () => reject('Invalid Refresh Token: Already Used'));
+  const a = await mkRoot(-10); await getFreshDeviceSession({ root: a, _mkClient: client });
+  const b = await mkRoot(-10); await getFreshDeviceSession({ root: b, _mkClient: client });
+  assert.equal((await readLog(b)).length, 1, 'root B에도 rejected 한 줄');
+});
+
+test('상주 plist 생성기의 stderr 키는 StandardErrorPath — 오타(StandardErrPath)는 launchd가 무시해 console.warn이 어디에도 안 남는다(2026-09-02 실측)', async () => {
+  const svc = await readFile(new URL('../scripts/service.mjs', import.meta.url), 'utf8');
+  assert.ok(svc.includes('<key>StandardErrorPath</key>'), 'stderr 키');
+  assert.ok(!/StandardErrPath/.test(svc), '오타 키 재등장 금지');
 });

@@ -6,7 +6,7 @@
 //   .device-session.json.dead = 거절 사유 JSON({ at, lastAt, count, kind, reason, status, code, retried })
 //   .device-session.log       = 회전 성공·거절·오류 한 줄씩(JSONL, 같은 사유의 연속 반복은 한 줄만)
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { mkdir, writeFile, rename, rm, appendFile } from 'node:fs/promises';
+import { mkdir, writeFile, rename, rm, appendFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT } from './workspace.mjs';
@@ -80,8 +80,9 @@ export async function clearDeviceSession({ root = WS_ROOT } = {}) {
 
 /* ─── 사망 마커·진단 로그 ─── */
 
-/** 사유 문구의 토큰 모양(긴 base64url 런·JWT)을 가린다 — 마커·로그·/api/me 응답에 실리는 값. */
-const mask = (s) => String(s ?? '').replace(/[A-Za-z0-9_-]{24,}/g, '***').slice(0, 300);
+/** 사유 문구의 토큰 모양(20자 이상 base64url 런 — JWT 헤더 세그먼트 20자·리프레시 토큰 22자를 덮는다)을 가린다 —
+    마커·로그·콘솔·/api/me 응답에 실리는 값 전부 이 함수를 거친다. */
+const mask = (s) => String(s ?? '').replace(/[A-Za-z0-9_-]{20,}/g, '***').slice(0, 300);
 /** 리프레시 토큰 거절인가(Invalid Refresh Token 계열) — 네트워크 실패·5xx는 거절이 아니다. */
 const isRejection = (err) => /refresh token/i.test(String(err?.message ?? ''));
 
@@ -117,17 +118,21 @@ async function markDead(root, err, retried) {
     kind: rejectionKind(reason), reason, status: err?.status ?? null, code: err?.code ?? null, retried,
   };
   await writeFile(deadMarkerOf(root), JSON.stringify(info), { mode: 0o600 }).catch(() => {});
+  await chmod(deadMarkerOf(root), 0o600).catch(() => {}); // 발행본이 mode 없이 쓴 구형 마커(0644) 위에 덮어도 승격(검수 LOW-2)
   return info;
 }
 
-let lastLogKey = ''; // 같은 사유의 연속 반복(rejected/error)은 한 줄만 — rotated·reread는 항상 남긴다(회전 이력이 진단의 핵심)
+const lastLogKey = new Map(); // root → 마지막 줄 키. 같은 사유의 연속 반복(rejected/error)은 한 줄만 — rotated·reread는 항상 남긴다(회전 이력이 진단의 핵심)
 async function logLine(root, entry) {
   const key = `${entry.ev}|${entry.reason ?? ''}`;
-  if ((entry.ev === 'rejected' || entry.ev === 'error') && key === lastLogKey) return;
-  lastLogKey = key;
+  if ((entry.ev === 'rejected' || entry.ev === 'error') && key === lastLogKey.get(root)) return;
   const file = join(root, LOG);
   try { if (statSync(file).size > LOG_MAX) await rename(file, `${file}.1`); } catch { /* 없음 */ }
-  await appendFile(file, `${JSON.stringify({ ts: new Date().toISOString(), pid: process.pid, ...entry })}\n`, { mode: 0o600 }).catch(() => {});
+  try {
+    await appendFile(file, `${JSON.stringify({ ts: new Date().toISOString(), pid: process.pid, ...entry })}\n`, { mode: 0o600 });
+    await chmod(file, 0o600).catch(() => {});
+    lastLogKey.set(root, key); // 실제로 남긴 뒤에만 — 쓰기 실패가 그 사유를 영구 침묵시키지 않게(검수 LOW-5)
+  } catch { /* 로그는 진단 보조 — 실패해도 회전 경로를 막지 않는다 */ }
 }
 
 /** 기기 세션이 "만료 + 갱신 사망(리프레시 거절)" 상태인가 — 회전을 유발하지 않는 읽기 전용 판정.
@@ -165,7 +170,7 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
         await logLine(root, { ev: 'rotated', retried, expires_at: next.expires_at });
         return next;
       }
-      console.warn('[argo] 기기 세션 갱신 실패 — 재로그인 필요:', error?.message ?? 'no session');
+      console.warn('[argo] 기기 세션 갱신 실패 — 재로그인 필요:', mask(error?.message ?? 'no session')); // stderr 로그(0644)에도 토큰 모양은 안 싣는다
       // 사망 마커 — **리프레시 토큰이 서버에서 거절된 경우만**(Invalid Refresh Token 계열 = 가족 폐기,
       // 재시도 무의미). 네트워크 실패·5xx는 마커를 남기지 않는다 — 오프라인을 "재로그인 필요"로
       // 오진하면 사용자가 기기 재바인딩(다른 계정이면 이전 주인 로그아웃)까지 가는 과잉 처방이 된다

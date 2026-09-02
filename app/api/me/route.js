@@ -12,7 +12,6 @@ import { deviceSessionDead, deviceSessionDeadInfo } from '../../../src/deviceses
 export async function GET() {
   const user = await currentUser();
   let sessionDead = false;
-  let sessionDeadInfo = null; // 거절 사유(마커 JSON) — 사이드바 툴팁이 "왜"를 보여준다(2026-09-02 재발 제보)
   if (AUTH_ON && user && user.id !== 'local' && deviceSessionDead()) {
     // 기기 세션이 사망 마커 상태여도 **유효한** 쿠키 세션이 있으면 클라우드 기능은 산다.
     // 쿠키 "존재"만 보면 안 된다 — 무효 쿠키가 남은 브라우저에서 표시가 조용히 꺼진다
@@ -29,10 +28,8 @@ export async function GET() {
       cookieAlive = !!(await sb.auth.getUser()).data?.user;
     }
     sessionDead = !cookieAlive;
-    if (sessionDead) {
-      const i = deviceSessionDeadInfo();
-      if (i) sessionDeadInfo = { kind: i.kind, reason: i.reason, at: i.at, count: i.count }; // reason은 devicesession.mjs가 토큰 모양을 가린 값
-    }
   }
-  return Response.json({ authOn: AUTH_ON, user, ...(sessionDead ? { sessionDead: true, sessionDeadInfo } : {}) });
+  // sessionDeadInfo = 거절 사유(마커 JSON 그대로 — reason은 devicesession.mjs가 토큰 모양을 가린 값, 나머지는 시각·횟수·분류).
+  // 사이드바 툴팁이 "왜"를 보여준다(2026-09-02 재발 제보). 조건식 없이 통과시킨다 — 줄 전체를 테스트가 핀한다.
+  return Response.json({ authOn: AUTH_ON, user, ...(sessionDead ? { sessionDead: true, sessionDeadInfo: deviceSessionDeadInfo() } : {}) });
 }
