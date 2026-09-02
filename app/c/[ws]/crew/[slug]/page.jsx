@@ -10,6 +10,7 @@ import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
 import { sideParam, withSide } from '../../split.mjs';
+import { useSplitAlive } from '../../split-alive';
 import { dropUpClamp } from '../../zoom-math.mjs';
 
 // 러너 표시명(폴백 안내용) — runner-connect의 RUNNER_NAMES와 동일 값(서버 RUNNERS.name 준거)
@@ -808,18 +809,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     }).catch(() => {});
   }
 
-  // 분할 패널 가용 여부 — CSS가 .split-pane을 죽이는 축(실뷰포트 ≤899px)과 **같은 기준**으로 본다.
-  // 밴드의 '옆에 열기' 노출 조건(검수 MEDIUM-1). 유효 폭(배율 인지)과 섞으면 두 축이 다시 갈라진다.
-  // 질의는 CSS 규칙의 **정확한 여집합**으로 쓴다 — min-width:900 으로 쓰면 소수점 뷰포트(899.4px:
-  // 윈도우 OS 배율 150%·페이지 줌에서 발생)에서 둘 다 거짓이 돼 "패널은 살아 있는데 진입로가 없는"
-  // 1px 사각이 생긴다(분리 검수 2R LOW-1). max-width:899 의 부정이면 경계가 원천적으로 못 갈라진다.
-  const [splitAlive, setSplitAlive] = useState(true);
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 899px)');
-    const on = () => setSplitAlive(!mq.matches);
-    on(); mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, []);
+  // 분할 패널 가용 여부 — 밴드의 '옆에 열기' 노출 조건(검수 MEDIUM-1). 판정은 SplitPane 렌더·회의실 진입로와
+  // 공용 훅(split-alive) 하나 — 실뷰포트 축(CSS @media와 같은 질의의 여집합, 2R LOW-1) + 표시 배율 축.
+  // 여기서 따로 판정하면 패널과 진입로의 축이 다시 갈라진다.
+  const splitAlive = useSplitAlive();
 
   // 부분 코멘트(빨간펜) — 답변에서 고칠 부분을 드래그로 인용하고, 코멘트를 모아 묶음 수정 지시로 보낸다.
   // "전체 다시 써" 대신 "여기 이 문장만" — 상사가 보고서에 빨간펜 긋는 방식 그대로.
@@ -1021,8 +1014,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           <button className="btn sm" style={{ flex: 'none' }} onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen}>{t('crew.panel.open')}</button>
           <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
           <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
-          <SideOpenMenu crews={crewList.filter((c) => c.slug !== slug)}
-            onPick={(s) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'crew', key: s })))} />
+          {/* 슬롯의 '옆에 열기'도 밴드와 같은 게이트 — 패널 사망 축에 표시 배율이 더해져(useSplitAlive) 넓은 셸에서도
+              패널이 죽을 수 있다(배율 2 × 1280). 죽은 패널로 보내는 진입로는 무언 실패. */}
+          {splitAlive && (
+            <SideOpenMenu crews={crewList.filter((c) => c.slug !== slug)}
+              onPick={(s) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'crew', key: s })))} />
+          )}
         </>,
         slotEl,
       )}

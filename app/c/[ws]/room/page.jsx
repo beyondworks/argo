@@ -2,9 +2,12 @@
 // 회의실 — 사장 + 여러 크루가 한 방에서. "@이름"으로 부르면 그 크루들이 순서대로 발언한다.
 // 좌측 레일에 지난 회의가 적재되고(회의 마치기), 클릭으로 읽기 전용 열람 — 맥락 공유가 눈에 보이는 화면.
 import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
 import { useLang } from '../../../i18n';
 import { dropUpClamp } from '../zoom-math.mjs';
+import { sideParam, withSide } from '../split.mjs';
+import { useSplitAlive } from '../split-alive';
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
@@ -131,6 +134,16 @@ export default function Room({ params }) {
   const jumpToLatest = () => { atBottomRef.current = true; setUnseen(false); endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); };
 
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
+
+  // 발언자 클릭 → 그 크루의 개별 스레드를 옆 패널로(유건 요청 2026-09-02). 상태는 ?side=crew:<slug> 하나 —
+  // 패널은 레이아웃(SplitPane)이 그리므로 여기서는 URL만 바꾼다(크루 채팅 SideOpenMenu.onPick과 같은 호출).
+  const router = useRouter();
+  const openSide = (slug) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'crew', key: slug })));
+  // 분할 패널 가용 여부 — SplitPane 렌더·크루 채팅 진입로와 공용 훅 하나(실뷰포트 축 + 표시 배율 축).
+  // 죽은 패널로 보내는 진입로는 무언 실패이므로 노출하지 않는다(안 될 버튼 노출 금지 원칙).
+  const splitAlive = useSplitAlive();
+  // 진입로 조건 = 패널 살아 있음 + 크루 실존(해고된 크루의 옛 발언은 열 스레드가 없다 — 종전 평문 그대로)
+  const canOpenSide = (slug) => splitAlive && agents.some((a) => a.slug === slug);
 
   async function openSession(id) {
     if (!id) { setViewing(null); setArchMsgs(null); atBottomRef.current = true; setUnseen(false); return; } // 복귀=최신으로(검수 D2·D4)
@@ -362,10 +375,17 @@ export default function Room({ params }) {
                 </div>
               ) : (
                 <div key={i} style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
-                  <Avatar name={nameOf(m.who)} size={26} />
+                  {/* 발언자 아바타·이름 = '옆에 열기' 진입로 — canOpenSide일 때만 버튼(.room-speaker), 아니면 종전 평문 */}
+                  {canOpenSide(m.who) ? (
+                    <button type="button" className="room-speaker" onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })} aria-label={t('room.openSide', { name: nameOf(m.who) })}>
+                      <Avatar name={nameOf(m.who)} />
+                    </button>
+                  ) : <Avatar name={nameOf(m.who)} />}
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 11.5, fontWeight: 650, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      {nameOf(m.who)}
+                      {canOpenSide(m.who) ? (
+                        <button type="button" className="room-speaker name" onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })}>{nameOf(m.who)}</button>
+                      ) : nameOf(m.who)}
                       {/* 위임으로 들어온 발언 — 누가 무엇을 맡겨 나온 답인지 방 안에서 드러낸다(다른 창으로 새지 않는다) */}
                       {m.via && (
                         // 이름이 들어가는 라벨이라 .chip(uppercase)을 피한다 — 위 시스템 줄과 같은 이유

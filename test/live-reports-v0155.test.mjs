@@ -316,15 +316,15 @@ test('배선: fitBar는 매번 가장 넓은 상태에서 재측정하고 2단�
 });
 test('밴드 진입로: 분할 패널이 살아 있는 축과 정확히 같은 조건으로 노출한다(검수 MEDIUM-1)', async () => {
   const page = await readFile(new URL('../app/c/[ws]/crew/[slug]/page.jsx', import.meta.url), 'utf8');
-  // 질의는 CSS 규칙의 여집합 — min-width:900으로 쓰면 소수점 뷰포트(899.4)에서 둘 다 거짓이 된다(2R LOW-1)
-  assert.match(page, /matchMedia\('\(max-width: 899px\)'\)/, '.split-pane을 죽이는 규칙과 같은 질의');
-  assert.match(page, /setSplitAlive\(!mq\.matches\)/, '여집합 — 부정을 빠뜨리면 판정이 뒤집힌다');
+  // 판정은 공용 훅(split-alive)으로 이관(회의실 진입로 #5/6, 2026-09-02) — 질의 상수(CSS와 같은 여집합, 2R LOW-1)·
+  // 배율 축·세 소비자 배선은 test/room-side-panel.test.mjs가 잠근다. 여기서는 크루 페이지가 그 훅만 쓰는지 본다.
+  assert.match(page, /const splitAlive = useSplitAlive\(\);/, '판정은 훅 하나 — 인라인 matchMedia가 돌아오면 패널(훅)과 진입로의 축이 갈라진다');
+  assert.doesNotMatch(page, /matchMedia\(/, '크루 페이지 자체 판정 금지');
   assert.equal(effective('.split-pane', 'display', 899), 'none', '전제 — CSS가 899px에서 패널을 죽인다');
   // 배선(2R MEDIUM-1: 이 블록을 통째로 지워도 스위트가 초록이었다) — 밴드 구간 안에 있어야 한다
   const bi = page.indexOf("'crew-phone-band'");
   const band = page.slice(bi, page.indexOf('<div className="thread"', bi));
   assert.match(band, /\{!embedded && splitAlive && \(\s*\n\s*<SideOpenMenu/, '밴드 안에 splitAlive 조건부 진입로');
-  assert.match(page, /const \[splitAlive, setSplitAlive\] = useState\(true\)/, '초기값 true — false면 넓은 폭 첫 프레임에 진입로가 없다');
 });
 test('밴드 진입로 패널: 뷰포트 클램프 — 오른쪽 끝 트리거에서 문서 가로 넘침을 만들지 않는다', async () => {
   const page = await readFile(new URL('../app/c/[ws]/crew/[slug]/page.jsx', import.meta.url), 'utf8');
