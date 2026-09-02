@@ -170,6 +170,20 @@ test('⑤ room.mjs: 발언 호출이 workFolder=folder를 넘기고 프롬프트
   assert.equal(ROOM_FOLDER_SLUG, '@room', "서버 키 '@room' — 화면(useWorkFolder slug)·초안 키와 같은 이름공간");
 });
 
+test('팝오버 세로 클램프 — dropUpMaxH(순수) + 측정형 배선(배율 2에서 뷰포트 위로 잘리던 실결함)', async () => {
+  const { dropUpMaxH } = await import('../app/c/[ws]/zoom-math.mjs');
+  // 래퍼 상단 760(뷰포트 px) × 배율 2 → CSS 380 − gap 8 − margin 8 = 364. 배율 1이면 744.
+  assert.equal(dropUpMaxH({ top: 760 }, { z: 2 }), 364);
+  assert.equal(dropUpMaxH({ top: 760 }, { z: 1 }), 744);
+  assert.equal(dropUpMaxH({ top: 40 }, { z: 1 }), 120, '하한 — 래퍼가 화면 맨 위여도 입력 한 줄은 보인다');
+  assert.equal(dropUpMaxH({ top: 300.7 }, { z: 1 }), 284, '소수 rect는 내림(반올림하면 1px 넘침)');
+  const mod = await load('../app/c/[ws]/work-folder.jsx');
+  assert.match(mod, /if \(box\) setMaxH\(dropUpMaxH\(box\.getBoundingClientRect\(\)\)\);/, '기준 박스(offsetParent) 실측으로 상한');
+  assert.match(mod, /maxHeight: maxH \|\| undefined, overflowY: 'auto'/, '상한 + 내부 스크롤(둘 중 하나만 있으면 잘리거나 넘친다)');
+  assert.match(mod, /window\.addEventListener\('argo:zoom', measure\);/, '배율 변경 재측정(1회 측정은 배율에 낡는다)');
+  assert.match(mod, /window\.addEventListener\('resize', measure\);/, '리사이즈 재측정');
+});
+
 test('⑤ 화면: 회의실·크루 채팅이 같은 공용 모듈(work-folder.jsx)을 쓰고, 회의실 키는 서버와 같은 @room이다', async () => {
   const room = await load('../app/c/[ws]/room/page.jsx');
   assert.match(room, /import \{ useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton \} from '\.\.\/work-folder';/, '회의실 import');

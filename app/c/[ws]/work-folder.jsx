@@ -6,9 +6,12 @@
 // 들어간다(src/chat.mjs activeFolders). 예전엔 입력창에 문구를 붙일 뿐이라 한 번 보내면 풀렸다(실사용 신고
 // 2026-07-31). 등록 목록(roots)이 '가도 되는 곳', 이 고정이 '지금 일할 곳'이다. 서버가 등록 목록과 대조해 정본
 // 문자열로 저장한다. slug = 크루 슬러그 또는 '@room'(회의실 — 크루 슬러그 [a-z0-9-]와 불충돌, src/room.mjs ROOM_FOLDER_SLUG).
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Icon, Spinner, api, imeGuard, isTauriApp, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../ui';
 import { useLang } from '../../i18n';
+import { dropUpMaxH } from './zoom-math.mjs';
+
+const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 /** 고정 상태 + 조작. onError = 고정 실패 문구(팝오버는 닫힌 뒤라 스레드 상단 배너로), onPinned = 고정 뒤(입력창 포커스 복귀). */
 export function useWorkFolder({ ws, slug, onError, onPinned }) {
@@ -87,12 +90,29 @@ export function useWorkFolder({ ws, slug, onError, onPinned }) {
 export function WorkFolderPopover({ wf, note = '' }) {
   const { t } = useLang();
   const p = { fontSize: 11.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 };
+  // 세로 클램프(측정형, zoom-math dropUpMaxH) — 패널은 기준 박스(relative 래퍼 = offsetParent) 위로 열리므로
+  // 내용이 래퍼 상단까지의 높이보다 크면 뷰포트 위로 잘린다(실측: 회의실 × 배율 2, top −121px). 열릴 때·창 크기·
+  // 배율 변경마다 다시 잰다(1회 측정은 배율·리사이즈에 낡는다 — #363 교훈). layout effect — 클램프 전 프레임이
+  // 실제로 문서를 늘리지 않게.
+  const ref = useRef(null);
+  const [maxH, setMaxH] = useState(0);
+  useIsoLayoutEffect(() => {
+    const measure = () => {
+      const box = ref.current?.offsetParent;
+      if (box) setMaxH(dropUpMaxH(box.getBoundingClientRect()));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('argo:zoom', measure);
+    return () => { window.removeEventListener('resize', measure); window.removeEventListener('argo:zoom', measure); };
+  }, []);
   return (
-    <div className="card card-float" role="dialog" aria-label={t('chat.workFolder.open')}
+    <div ref={ref} className="card card-float" role="dialog" aria-label={t('chat.workFolder.open')}
       onKeyDown={(e) => { if (e.key === 'Escape') wf.close(); }}
       style={{
         position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 40,
         width: 'min(460px, 100%)', padding: 12, display: 'grid', gap: 8,
+        maxHeight: maxH || undefined, overflowY: 'auto', // 상한에 걸리면 안에서 스크롤 — 위쪽 문단·닫기 버튼이 화면 밖으로 나가지 않는다
         boxShadow: '0 8px 28px rgba(0,0,0,.14)',
       }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
