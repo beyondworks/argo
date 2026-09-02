@@ -12,20 +12,12 @@ import { parseSide, sideParam, withSide } from './split.mjs';
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
 
-/** 백그라운드 작업 독 — 지금 도는 턴이 있으면 배지가 켜지고, 패널에서 진행·최근 작업을 본다. */
-function TasksDock({ ws }) {
+/** 백그라운드 작업 독 — 지금 도는 턴이 있으면 배지가 켜지고, 패널에서 진행·최근 작업을 본다.
+    데이터(running/recent)와 열림 상태는 Shell이 쥔다 — 사이드바 크루 행의 '작성 중' 표지가 같은 폴·같은 목록을
+    쓰므로(독 배지와 행 점멸이 항상 함께 켜지고 꺼진다) 여기서 따로 폴링하지 않는다. */
+function TasksDock({ ws, data, open, setOpen }) {
   const { t } = useLang();
-  const [open, setOpen] = useState(false);
-  const [data, setData] = useState(null);
   const [, forceTick] = useState(0); // 경과 시간 1초 갱신용
-
-  useEffect(() => {
-    let alive = true;
-    const pull = () => api(`/api/companies/${ws}/tasks`).then((d) => { if (alive) setData(d); }).catch(() => {});
-    pull();
-    const t1 = setInterval(pull, open ? 3500 : 10000);
-    return () => { alive = false; clearInterval(t1); };
-  }, [ws, open]);
 
   useEffect(() => {
     if (!open || !(data?.running?.length)) return;
@@ -241,6 +233,30 @@ function Shell({ children, params }) {
     return () => { window.removeEventListener('argo:refresh', refresh); clearInterval(iv); };
   }, [refresh]);
 
+  // 지금 도는 턴(크루별 chats/<slug>.status.json — 작업 독과 같은 /tasks running 목록). 작업 독 배지·패널과
+  // 사이드바 크루 행의 '작성 중' 점멸이 한 폴을 나눠 쓴다. 도는 턴이 있거나 독이 열려 있으면 3.5초, 아니면 10초.
+  // 턴이 끝나 목록에서 빠지면 light 재조회를 바로 당긴다 — 답변 도착의 안읽음 점이 30초 폴을 기다리지 않게.
+  // argo:refresh(크루 페이지 턴 종료 등)에도 즉시 당겨, 이 탭에서 보낸 턴의 점멸이 제때 꺼진다.
+  const [dockOpen, setDockOpen] = useState(false);
+  const [tasks, setTasks] = useState(null);
+  const runningRef = useRef(new Set());
+  const anyRunning = (tasks?.running?.length ?? 0) > 0;
+  useEffect(() => {
+    let alive = true;
+    const pull = () => api(`/api/companies/${ws}/tasks`).then((d) => {
+      if (!alive) return;
+      const now = new Set((d.running ?? []).map((r) => r.slug));
+      if ([...runningRef.current].some((s) => !now.has(s))) refresh();
+      runningRef.current = now;
+      setTasks(d);
+    }).catch(() => {});
+    pull();
+    window.addEventListener('argo:refresh', pull);
+    const iv = setInterval(pull, dockOpen || anyRunning ? 3500 : 10000);
+    return () => { alive = false; window.removeEventListener('argo:refresh', pull); clearInterval(iv); };
+  }, [ws, dockOpen, anyRunning, refresh]);
+  const busySet = new Set((tasks?.running ?? []).map((r) => r.slug));
+
   // 크루 순서 저장 — company.json.crewOrder(slug 배열). 낙관 반영 후 서버 기록(crewPinned과 동일 계약).
   const [dragSlug, setDragSlug] = useState(null);
   const [dropSlug, setDropSlug] = useState(null);
@@ -376,8 +392,11 @@ function Shell({ children, params }) {
               const href = `/c/${ws}/crew/${a.slug}`;
               const active = pathname === href;
               const pinned = pinnedSet.has(a.slug);
+              // 작성 중 — 이 크루의 턴 상태 파일이 신선하다(/tasks running — 작업 독과 같은 목록). 회의실 발언도 chat()을 타므로 잡힌다.
+              const busy = busySet.has(a.slug);
               // 안읽음 — 기준선(seen)이 있고 그 뒤에 대화 파일이 갱신됐으면. 보고 있는 크루는 위 효과가 즉시 확인 처리.
-              const unread = !active && a.chatTs != null && seen?.[a.slug] !== undefined && a.chatTs > seen[a.slug];
+              // 작성 중엔 숨긴다 — 그 사이 갱신은 방금 들어온 지시(메신저·루틴)라 '답변 도착'이 아니다. 끝나면 점이 돌아온다(chatTs > seen 유지).
+              const unread = !active && !busy && a.chatTs != null && seen?.[a.slug] !== undefined && a.chatTs > seen[a.slug];
               return (
                 // pin 버튼은 <a>의 형제로 둔다 — a 안에 button을 넣으면 hydration mismatch(React #418). div로 감싸 position 기준을 잡는다(세션 레일 .rail-item과 동일 패턴).
                 // 행 자체가 드래그 소스/타깃 — 놓으면 끌던 크루가 이 행 앞으로 온다(crewOrder 저장).
@@ -403,10 +422,13 @@ function Shell({ children, params }) {
                       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.button === 0) { e.preventDefault(); if (!active) openSide({ type: 'crew', key: a.slug }); return; }
                       navClick(href)(e);
                     }} className={`nav-item${active ? ' active' : ''}`} style={{ paddingTop: 6, paddingBottom: 6, paddingRight: 52 }}>
-                    <span style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
+                    <span title={busy ? t('nav.writing') : undefined} style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
                       <Avatar name={a.name} sm />
+                      {/* 표지 셋은 자리가 다르다: 아바타를 두르는 링=작성 중(은은한 점멸, globals.css .crew-writing) ·
+                          아바타 모서리 점=텔레그램 직통 봇 · 이름 옆 점=답변 도착(안읽음). */}
+                      {busy && <span className="crew-writing" role="img" aria-label={t('nav.writing')} />}
                       {a.slug in tgAgents && (
-                        <span title={t('nav.tgConnected')} style={{
+                        <span role="img" title={tgAgents[a.slug] ? t('nav.tgConnected') : t('nav.tgIdle')} aria-label={tgAgents[a.slug] ? t('nav.tgConnected') : t('nav.tgIdle')} style={{
                           position: 'absolute', right: -1, bottom: -1, width: 7, height: 7, borderRadius: 999,
                           background: tgAgents[a.slug] ? 'var(--ok)' : 'var(--warn)',
                           boxShadow: '0 0 0 2px var(--bg)',
@@ -529,7 +551,7 @@ function Shell({ children, params }) {
             </span>
           ))}
           <Clock />
-          <TasksDock ws={ws} />
+          <TasksDock ws={ws} data={tasks} open={dockOpen} setOpen={setDockOpen} />
           <label className="search-pill">
             <Icon name="search" size={14} />
             <input suppressHydrationWarning placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} />

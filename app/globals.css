@@ -1466,6 +1466,18 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 }
 .nav-item.active .nav-sub { color: var(--primary-fg-dim); }
 
+/* 사이드바 크루 행 — '작성 중' 표지. 아바타를 두르는 가는 링이 은은하게 숨쉰다(투명도만 — 레이아웃·페인트 비용 0,
+   ease-in-out = 왕복 루프의 대칭 완화). 색은 '진행 중' 계열 액센트(작업 독 배지·아르고 스피너와 같은 토큰).
+   활성 행은 프라이머리 배경이라 온-프라이머리 전경색으로 대비를 잡는다(핀 버튼과 같은 규칙).
+   동작 줄이기: 아래 전역 규칙이 반복 횟수를 1로 잘라 기본 상태(불투명 링)로 정지한다 — 표지는 남고 점멸만 사라진다. */
+.crew-writing {
+  position: absolute; inset: -3px; border-radius: 999px; pointer-events: none;
+  border: 1.5px solid var(--accent);
+  animation: crewPulse 1.6s ease-in-out infinite;
+}
+.nav-item.active .crew-writing { border-color: var(--primary-fg); }
+@keyframes crewPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
 /* 세션 레일 액션(대화명 편집·삭제) — 항목 호버/포커스 시에만 노출 */
 .rail-item .rail-actions { opacity: 0; transition: opacity 0.12s; }
 .rail-item:hover .rail-actions, .rail-item .rail-actions:focus-within { opacity: 1; }

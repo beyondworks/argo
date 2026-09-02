@@ -51,6 +51,8 @@ const DICT = {
   'nav.settings': ['설정', 'Settings'],
   'nav.hire': ['크루 영입', 'Hire crew'],
   'nav.tgConnected': ['텔레그램 직통 봇 연결됨', 'Telegram bot connected'],
+  'nav.tgIdle': ['텔레그램 직통 봇 — 지금 수신 중 아님', 'Telegram bot — not receiving right now'],
+  'nav.writing': ['답변 작성 중', 'Writing a reply'],
   'nav.room': ['회의실', 'Meeting Room'],
   'room.header': ['회의실 — 여러 크루와 한 방에서', 'Meeting room — several crews, one thread'],
   'room.mention': ['부를 크루', 'Mention'],
