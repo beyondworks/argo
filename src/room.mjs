@@ -322,9 +322,17 @@ export async function getRoomTurn(wsId) {
 }
 
 export async function runRoomTurn(wsId, text, attachments = []) {
-  return withRoomTurnStatus(wsId, () => runRoomTurnInner(wsId, text, attachments));
+  return withRoomTurnStatus(wsId, async () => {
+    // saved — 사장 발언이 방에 저장된 **뒤** 난 오류에 표식을 단다. 라우트가 오류 바디에 싣고, 화면은 이
+    // 값으로 "입력창에 되돌릴지"를 가른다: 저장됐으면 되돌리지 않는다(되돌리면 방과 입력창에 같은 안건이
+    // 나란히 남아 Enter 한 번에 두 번 적립·과금 — 분리 검수 #392 HIGH-1 실측), 저장 전 실패(크루 0명 등)면
+    // 되돌린다(안 그러면 폴링이 낙관 말풍선까지 지워 글이 완전히 사라진다). chat 라우트의 {error, saved} 계약과 동형.
+    const state = { saved: false };
+    try { return await runRoomTurnInner(wsId, text, attachments, state); }
+    catch (e) { if (state.saved && e && typeof e === 'object') e.saved = true; throw e; }
+  });
 }
-async function runRoomTurnInner(wsId, text, attachments) {
+async function runRoomTurnInner(wsId, text, attachments, state = {}) {
   const agents = await listAgents(wsId);
   if (!agents.length) throw new Error('아직 크루가 없습니다. 데크에서 먼저 영입해 주세요.');
   // 사장 발언 추가 + 현재 세션 sid 확보(이후 발언은 이 sid가 유지될 때만 기록)
@@ -335,6 +343,7 @@ async function runRoomTurnInner(wsId, text, attachments) {
     await saveRoom(wsId, room);
     return s;
   });
+  state.saved = true; // 여기서부터의 실패는 "안건은 저장됨" — 화면이 입력을 되돌리지 않게(runRoomTurn 주석)
 
   const dir = parseRoomDirectives(text, agents);
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));

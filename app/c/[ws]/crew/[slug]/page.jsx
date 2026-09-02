@@ -220,7 +220,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const [shown, setShown] = useState(THREAD_WINDOW); // 렌더하는 최근 메시지 수 — 긴 대화(650건)를 전부 그리면 키 입력마다 130ms가 걸렸다(실측 2026-08-23)
   const [input, setInput] = useState('');
   // 입력 보존 — 새로고침·페이지 이탈에도 쓰던 내용이 남는다. input 상태를 그대로 따라가므로
-  // 전송(setInput(''))이면 자동 삭제되고, 턴 실패 복원(setInput(message))이면 자동 재저장된다.
+  // 전송(setInput(''))이면 자동 삭제된다. 턴 실패 때는 입력을 되돌리지 않는다(아래 send 주석: 실패 턴은
+  // 스레드에 failed로 남기고 입력창은 비운 채 둔다 — 되돌리면 "보낸 게 사라졌다"가 된다).
   const draftKey = `argo-draft:${ws}:${slug}`;
   useEffect(() => {
     try { const d = localStorage.getItem(draftKey); if (d) setInput((cur) => cur || d); } catch { /* 사파리 프라이빗 등 — 보존은 부가기능이라 실패해도 무시 */ }

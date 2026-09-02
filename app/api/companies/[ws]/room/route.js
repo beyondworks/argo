@@ -35,6 +35,7 @@ export async function POST(req, { params }) {
       .slice(0, 8);
     return Response.json(await runRoomTurn(ws, message.trim(), attachments));
   } catch (e) {
-    return Response.json({ error: String(e.message || e) }, { status: 500 });
+    // saved — 안건이 방에 저장된 뒤의 실패인지(runRoomTurn 표식). 화면은 미저장일 때만 입력을 되돌린다(chat 라우트 계약과 동형).
+    return Response.json({ error: String(e.message || e), saved: e?.saved === true }, { status: 500 });
   }
 }

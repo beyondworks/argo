@@ -14,6 +14,17 @@ export default function Room({ params }) {
   const [agents, setAgents] = useState([]);
   const [messages, setMessages] = useState(null);
   const [input, setInput] = useState('');
+  // 입력 보존 — 페이지 이동·새로고침에도 쓰던 안건이 남는다(유건 요청 2026-09-02). 크루 채팅(crew/[slug])의
+  // argo-draft 패턴(마운트 복원·입력 따라 저장/제거): input 상태를 따라가므로 전송(setInput(''))이면 자동 삭제.
+  // 실패 시 복원 조건은 크루와 다르다 — 회의실은 서버가 크루 실행 전에 안건을 저장하므로 send()의 saved 분기 참조.
+  // 키 이름공간 '@room' — 크루 슬러그([a-z0-9-])와 절대 겹치지 않게('room'이라는 크루가 있어도 충돌 0).
+  const draftKey = `argo-draft:${ws}:@room`;
+  useEffect(() => {
+    try { const d = localStorage.getItem(draftKey); if (d) setInput((cur) => cur || d); } catch { /* 사파리 프라이빗 등 — 보존은 부가기능이라 실패해도 무시 */ }
+  }, [draftKey]);
+  useEffect(() => {
+    try { if (input) localStorage.setItem(draftKey, input); else localStorage.removeItem(draftKey); } catch { /* 저장 불가 환경 — 무시 */ }
+  }, [input, draftKey]);
   // 여러 줄 입력 — 줄바꿈(Shift+Enter)하면 입력창이 따라 자란다(유건 2026-08-23). 크루 대화창과 같은 규칙: 최대 6줄 후 내부 스크롤
   const composerRef = useRef(null);
   useEffect(() => {
@@ -175,6 +186,10 @@ export default function Room({ params }) {
       // 전송 실패 시 첨부 복구(검수 LOW) — 업로드는 이미 끝난 파일들이라 다시 고르게 하지 않는다.
       // 대기 중 사용자가 새로 첨부했으면(컴포저가 비어 있지 않으면) 그쪽을 존중해 덮지 않는다.
       setAtt((cur) => (cur.length ? cur : attachments));
+      // 안건 복원은 **서버가 저장 못 했을 때만**(크루 0명 등 — 폴링이 낙관 말풍선까지 지워 글이 사라진다).
+      // 저장된 뒤의 실패(크루 발언 실패)는 방에 안건과 실패 안내가 남아 있으므로 되돌리지 않는다 — 되돌리면
+      // 같은 안건이 방·입력창에 나란히 남아 Enter 한 번에 두 번 적립된다(분리 검수 #392 HIGH-1 실측).
+      if (!err?.data?.saved) setInput((cur) => cur || text);
     } finally {
       setBusy(false);
     }
