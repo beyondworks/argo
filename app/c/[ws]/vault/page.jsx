@@ -10,6 +10,7 @@ import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo,
 import { Graph2D } from '../graph2d'; // 2D 옵시디언식 — 3D 별자리(graphview)는 데크 위젯 전용
 import { useLang } from '../../../i18n';
 import { sideParam, withSide } from '../split.mjs';
+import { useSplitAlive } from '../split-alive';
 import { dispZoom } from '../zoom-math.mjs'; // 표시 배율 — 커서(뷰포트 px)→CSS px 환산(#334)
 
 const GRAPH_TAB = { id: 'graph', kind: 'graph', root: null };
@@ -28,8 +29,11 @@ function Vault({ params }) {
   const { t, lang } = useLang();
   const initialDoc = useSearchParams().get('doc');
   const router = useRouter();
-  // 문서를 보조 패널(split-pane)로 — 주 화면(기억 페이지)은 그대로, ?side=doc:<rel>만 싣는다
-  const sideOpen = (rel) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'doc', key: rel })));
+  // 문서를 보조 패널(split-pane)로 — 주 화면(기억 페이지)은 그대로, ?side=doc:<rel>만 싣는다.
+  // 패널 가용 축(실뷰포트 + 표시 배율, split-alive)이 죽었으면 진입로 자체를 넘기지 않는다(null → 행 버튼 미렌더) —
+  // SplitPane이 죽은 축에서 null을 그리므로 게이트 없이 side를 세우면 무언 실패(분리 검수 #396 표면 C).
+  const splitAlive = useSplitAlive();
+  const sideOpen = splitAlive ? (rel) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'doc', key: rel }))) : null;
   const [docs, setDocs] = useState(null);
   const [projects, setProjects] = useState([]); // 크루 산출물(vault/projects/) — 기억과 별도 축
   const [q, setQ] = useState('');
@@ -469,9 +473,11 @@ function FileRow({ d, active, onOpen, onSide, lang }) {
         <span style={{ minWidth: 0, flex: 1, fontWeight: 500, color: 'var(--fg)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{d.title}</span>
         <span className="mono when" style={{ flex: 'none', fontSize: 9.5, color: 'var(--fg-3)' }}>{timeAgo(tsFromRel(d.rel) ?? d.mtime, lang)}</span>
       </button>
-      <button type="button" className="row-side" title={t('split.open')} aria-label={t('split.open')} onClick={(e) => { e.stopPropagation(); onSide(d.rel); }}>
-        <Icon name="split" size={12} />
-      </button>
+      {onSide && (
+        <button type="button" className="row-side" title={t('split.open')} aria-label={t('split.open')} onClick={(e) => { e.stopPropagation(); onSide(d.rel); }}>
+          <Icon name="split" size={12} />
+        </button>
+      )}
     </div>
   );
 }

@@ -56,6 +56,7 @@ const DICT = {
   'room.mention': ['부를 크루', 'Mention'],
   'room.routingHint': ['@이름 지시 · @A > @B 이어받기 · cc @이름 참조만 · 반복 30분 @이름 주기 실행', '@name to assign · @A > @B relay · cc @name for awareness · loop 30m @name to repeat'],
   'room.viaDelegate': ['{from} 위임', 'via {from}'],
+  'room.openSide': ['{name} 개별 스레드를 옆에 열기', "Open {name}'s thread beside"],
   'room.allCrew': ['모든 크루 호출 — 전원이 순서대로 발언합니다', 'Call every crew — all speak in turn'],
   'room.empty': ['"@이름 안건"으로 크루를 불러 회의를 시작하세요. 여러 명을 부르면 순서대로 발언하고, 서로의 발언을 보고 보탭니다.', 'Start with "@name topic". Mention several crews and they speak in turn, building on each other.'],
   'room.meeting': ['회의 중 — 크루들이 차례로 발언합니다', 'In session — crews are speaking in turn'],

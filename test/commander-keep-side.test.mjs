@@ -59,7 +59,7 @@ test('크루 채팅 커맨더: /memory·/room·/deck 이동이 keepSide를 탄�
 });
 
 test('회의실 커맨더: /memory·/deck 이동이 keepSide를 탄다', async () => {
-  await assertCommanderKeepsSide('../app/c/[ws]/room/page.jsx', /import \{ keepSide \} from '\.\.\/split\.mjs';/,
+  await assertCommanderKeepsSide('../app/c/[ws]/room/page.jsx', /import \{ keepSide(?:, [^}]*)? \} from '\.\.\/split\.mjs';/,
     [['memory', '\\/vault'], ['deck', '']], '회의실');
 });
 

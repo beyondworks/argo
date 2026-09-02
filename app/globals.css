@@ -1543,8 +1543,12 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 /* ─── 좌우 2분할(보조 패널) — ?side= 가 있으면 본문 옆에 <aside class="split-pane">. 상태는 URL 하나. ─── */
 .content-row { display: flex; min-width: 0; align-items: stretch; }
 .content-row > .content { flex: 1; min-width: 0; }
+/* 패널 양보 클램프 100% − 308: 본문(.content)이 채팅 그리드 바닥을 지키게 패널이 먼저 준다(레일 클램프 #365와
+   같은 원리). 308 = .chat-cols 바닥 244(본문 열 226 + gap 18, 레일 0) + .content 좌우 패딩 64. 실측(배율 1 × 920,
+   패널 480): 본문 212 → 그리드 148 → 레일 0·본문 열 130px로 압살. 클램프 후 본문 308 → 본문 열 226 확보.
+   min-width 360이 max를 이기는 구간(행 < 668 = 유효 폭 < 896)은 useSplitAlive가 패널을 아예 죽인다. */
 .split-pane {
-  flex: none; width: var(--split-w, 480px); min-width: 360px; max-width: 60vw;
+  flex: none; width: var(--split-w, 480px); min-width: 360px; max-width: min(60vw, 100% - 308px);
   position: sticky; top: 56px; height: calc(100vh / var(--z, 1) - 56px); overflow: hidden;
   border-left: 1px solid var(--border); background: var(--bg);
   display: flex; flex-direction: column;
@@ -1575,6 +1579,11 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .vault-tree .row-wrap:hover .row-side, .vault-tree .row-wrap .row-side:focus-visible { opacity: 1; }
 .vault-tree .row-wrap:hover .row .when { opacity: 0; }
 .vault-tree .row-wrap .row-side:hover { background: var(--border-soft); color: var(--fg); }
+/* 회의실 발언자(아바타·이름) '옆에 열기' — 클릭하면 그 크루의 개별 스레드가 보조 패널로(?side=crew:). 버튼 리셋 +
+   hover 밑줄(이름)·링(아바타)으로 진입로임을 드러낸다. 노출 자체는 페이지가 splitAlive·크루 실존으로 게이트한다. */
+.room-speaker { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; align-items: center; border-radius: 999px; }
+.room-speaker.name:hover, .room-speaker.name:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
+.room-speaker:hover > .avatar, .room-speaker:focus-visible > .avatar { box-shadow: 0 0 0 2px var(--primary-soft); }
 /* 좁은 폭(900 미만)에서는 패널을 내리지 않는다 — 본문이 전체폭을 되찾는다 */
 @media (max-width: 899px) { .split-pane { display: none; } }
 
@@ -1908,8 +1917,14 @@ body.split-resizing { cursor: col-resize; user-select: none; }
   height: calc(100vh / var(--z, 1) - 100px); margin-bottom: -70px;
 }
 /* 레일 폭은 트랙이 정한다(기본 stretch) — 고정 width는 트랙 양보 시 아이템이 트랙을 넘어 본문 위로
-   얹힌다(#365 검수 MEDIUM-3 실증). */
-.chat-cols > .side-rail { position: sticky; top: 72px; }
+   얹힌다(#365 검수 MEDIUM-3 실증).
+   overflow clip: 트랙이 0으로 양보되는 구간(보조 패널 열림 × 유효 폭 900~1016 — 패널 클램프가 본문을 바닥 308에
+   고정하므로 레일 몫이 0)에서 레일 내용(min-content 58px)이 본문 헤더 위로 겹쳐 흘렀다(실측 유효 920). 레일 안에는
+   밖으로 나가는 팝오버가 없다(세 페이지 전수 — rail-actions는 항목 안 absolute). 폰 밴드의 overflow-y:auto와 공존
+   (x는 hidden으로 계산). 잘리는 것은 기본 포커스 링(박스 밖 2px)뿐이라 레일 안 포커스 링은 안쪽으로 그린다 —
+   overflow-clip-margin 4px는 트랙 0 구간에서 활성 항목 배경이 4px 세로 띠로 남아(실측) 쓰지 않는다. */
+.chat-cols > .side-rail { position: sticky; top: 72px; overflow: clip; }
+.chat-cols > .side-rail :focus-visible { outline-offset: -2px; }
 /* 크루 컨트롤 인라인 밴드 — 기본은 없음(넓은 폭은 topbar 슬롯이 수용처), ≤900px 블록에서 등장 */
 .crew-phone-band { display: none; }
 /* overflow-anchor 차단 — 크롬 scroll anchoring이 턴 종료(작업 카드 unmount) 같은 DOM 변화에

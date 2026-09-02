@@ -8,7 +8,8 @@ import { useLang, stageLabel } from '../../../i18n';
 import { dropUpClamp } from '../zoom-math.mjs';
 import { ArtifactChips } from '../artifact-chips';
 import { matchSlash, SLASH_TOKEN_RE } from '../slash-match.mjs';
-import { keepSide } from '../split.mjs';
+import { keepSide, sideParam, withSide } from '../split.mjs';
+import { useSplitAlive } from '../split-alive';
 import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../work-folder';
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
@@ -159,6 +160,15 @@ export default function Room({ params }) {
   const jumpToLatest = () => { atBottomRef.current = true; setUnseen(false); endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); };
 
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
+
+  // 발언자 클릭 → 그 크루의 개별 스레드를 옆 패널로(유건 요청 2026-09-02). 상태는 ?side=crew:<slug> 하나 —
+  // 패널은 레이아웃(SplitPane)이 그리므로 여기서는 URL만 바꾼다(크루 채팅 SideOpenMenu.onPick과 같은 호출).
+  const openSide = (slug) => router.replace(withSide(`${window.location.pathname}${window.location.search}`, sideParam({ type: 'crew', key: slug })));
+  // 분할 패널 가용 여부 — SplitPane 렌더·크루 채팅 진입로와 공용 훅 하나(실뷰포트 축 + 표시 배율 축).
+  // 죽은 패널로 보내는 진입로는 무언 실패이므로 노출하지 않는다(안 될 버튼 노출 금지 원칙).
+  const splitAlive = useSplitAlive();
+  // 진입로 조건 = 패널 살아 있음 + 크루 실존(해고된 크루의 옛 발언은 열 스레드가 없다 — 종전 평문 그대로)
+  const canOpenSide = (slug) => splitAlive && agents.some((a) => a.slug === slug);
 
   async function openSession(id) {
     wf.close(); // 작업 폴더 팝오버 — 열람 갔다 오면 리마운트로 되살아나(autoFocus) 포커스를 뺏는다(크루 채팅과 동일)
@@ -483,10 +493,18 @@ export default function Room({ params }) {
                 </div>
               ) : (
                 <div key={i} style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
-                  <Avatar name={nameOf(m.who)} size={26} />
+                  {/* 발언자 아바타·이름 = '옆에 열기' 진입로 — canOpenSide일 때만 버튼(.room-speaker), 아니면 종전 평문.
+                      아바타는 이름 버튼과 같은 동작이라 탭 순서에서 뺀다(tabIndex −1) — 발언마다 정지점 둘은 키보드 중복(검수 F) */}
+                  {canOpenSide(m.who) ? (
+                    <button type="button" className="room-speaker" tabIndex={-1} onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })} aria-label={t('room.openSide', { name: nameOf(m.who) })}>
+                      <Avatar name={nameOf(m.who)} />
+                    </button>
+                  ) : <Avatar name={nameOf(m.who)} />}
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 11.5, fontWeight: 650, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      {nameOf(m.who)}
+                      {canOpenSide(m.who) ? (
+                        <button type="button" className="room-speaker name" onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })}>{nameOf(m.who)}</button>
+                      ) : nameOf(m.who)}
                       {/* 위임으로 들어온 발언 — 누가 무엇을 맡겨 나온 답인지 방 안에서 드러낸다(다른 창으로 새지 않는다) */}
                       {m.via && (
                         // 이름이 들어가는 라벨이라 .chip(uppercase)을 피한다 — 위 시스템 줄과 같은 이유
