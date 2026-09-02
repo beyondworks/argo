@@ -417,8 +417,6 @@ export default function Room({ params }) {
             {/* 라우팅 문법 안내 — 모르면 없는 기능이다. 방을 떠나지 않고 지시하는 법을 입력창 옆에 붙여 둔다 */}
             {/* 멘션 드롭업의 위치 기준 — 입력바를 relative로 감싼다 */}
             <div ref={mentionWrapRef} style={{ position: 'relative' }}>
-              {/* 작업 폴더 팝오버(work-folder.jsx 공용) — 멘션 드롭업과 같은 자리(bottom 100%)라 상호 배타 */}
-              {wf.open && !mentionOpen && <WorkFolderPopover wf={wf} note={t('room.workFolder.hint')} />}
               {mentionOpen && (
                 <div ref={mentionPanelRef} className="card card-float" role="listbox" style={{
                   position: 'absolute', bottom: 'calc(100% + 6px)', left: mentionClamp.shift, zIndex: 40,
@@ -444,6 +442,9 @@ export default function Room({ params }) {
                   ))}
                 </div>
               )}
+              {/* 작업 폴더 팝오버(work-folder.jsx 공용) — 멘션 드롭업과 같은 자리(bottom 100%, absolute라 DOM 순서 무관)라
+                  상호 배타. 멘션 패널 뒤에 두는 이유: 기준 박스 핀(display-zoom-layout)이 래퍼 첫 자식을 멘션 패널로 잡는다 */}
+              {wf.open && !mentionOpen && <WorkFolderPopover wf={wf} note={t('room.workFolder.hint')} />}
               {(att.length > 0 || uploading) && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
                   {att.map((a, i) => (
