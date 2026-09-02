@@ -520,7 +520,9 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
     const transcript = (await loadRoom(wsId)).messages.filter((m) => m.who !== 'system').slice(-20)
       // 첨부 경로 규약은 chat.mjs 스레드 맥락과 동일 문자열 — 후속 턴에서 "아까 그 파일"이 경로로
       // 이어진다(검수 M1: 이게 없으면 1턴 첨부를 2턴 크루가 못 찾는다 — 랜덤 접두 파일명이라 탐색 불가).
-      .map((m) => `${m.who === 'user' ? '사장' : nameOf(m.who)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}${m.attachments?.length ? ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ''}`)
+      // 산출물 노트 — 앞 크루가 이 회의에서 만든 파일 경로. 없으면 릴레이(@A > @B)의 B가 A의 답변 텍스트에만 의존해
+      // 경로를 받는다(분리 검수 LOW-2). 첨부 노트·회의록 `> 산출물:` 줄과 같은 vault/ 접두 규약.
+      .map((m) => `${m.who === 'user' ? '사장' : nameOf(m.who)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}${m.attachments?.length ? ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ''}${m.artifacts?.length ? ` (산출물, Read로 열람: ${m.artifacts.map((a) => 'vault/' + a).join(', ')})` : ''}`)
       .join('\n');
     const prompt = `지금 회의실에 있다 — 사장과 동료 크루가 함께 보는 방이다.
 
