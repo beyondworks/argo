@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -27,7 +28,7 @@ test('보관 회의를 되살리면 대화·제목이 그대로 오고 레일에
   const ws = 'reo-ok';
   const p = await seed(ws);
   const r = await reopenMeeting(ws, '_room-1753500000000.json');
-  assert.deepEqual(r, { reopened: true, messages: 2 });
+  assert.deepEqual(r, { reopened: true, parked: false, messages: 2 }); // parked — 현재 방이 비어 있어 보관 없음(새 회의 분기 계약)
   const room = await loadRoom(ws);
   assert.equal(room.messages.length, 2, '대화가 그대로 돌아와야 한다');
   assert.equal(room.title, '3분기 계획', '회의명 보존');
@@ -42,18 +43,21 @@ test('sid를 올린다 — 빈 방에서 돌던 잔여 턴이 되살린 회의�
   assert.equal((await loadRoom(ws)).sid, 5, 'sid가 그대로면 진행 중이던 턴의 발언이 끼어든다');
 });
 
-test('진행 중인 회의가 있으면 거절하고 현재 대화를 건드리지 않는다', async () => {
+// 종전 계약("현재 회의가 있으면 409 거절")은 새 회의 분기(2026-09-02)로 폐지 — 거절 근거였던 "자동으로 마치면
+// 의도하지 않은 일지 적재"가 '진행 중 보관'(회의록 없음)에는 해당이 없다. 새 계약: 현재 회의를 진행 중으로 보관하고 연다.
+test('진행 중인 회의가 있으면 그 회의를 "진행 중"으로 보관하고 연다 — 회의록은 남기지 않는다', async () => {
   const ws = 'reo-busy';
-  await seed(ws, { room: { messages: [{ who: 'user', text: '진행 중', ts: 9 }], sid: 1 } });
-  await assert.rejects(
-    () => reopenMeeting(ws, '_room-1753500000000.json'),
-    (e) => e.code === 'ROOM_BUSY',
-    '자동으로 덮으면 사장이 의도하지 않은 일지 적재가 생긴다',
-  );
+  const p = await seed(ws, { room: { messages: [{ who: 'user', text: '진행 중', ts: 9 }], sid: 1 } });
+  const r = await reopenMeeting(ws, '_room-1753500000000.json');
+  assert.deepEqual(r, { reopened: true, parked: true, messages: 2 });
   const room = await loadRoom(ws);
-  assert.equal(room.messages.length, 1, '거절했는데 현재 회의가 바뀌었다 — 유실 경로');
-  assert.equal(room.messages[0].text, '진행 중');
-  assert.equal((await listArchivedMeetings(ws)).length, 1, '거절 시 보관본도 그대로여야 한다');
+  assert.deepEqual(room.messages.map((m) => m.text), ['@페퍼 3분기 계획', '초안입니다'], '되살린 회의가 현재 방');
+  assert.equal(room.open, undefined, '진행 중 표식은 보관본의 것 — 현재 방에 실려 오면 안 된다');
+  const list = await listArchivedMeetings(ws);
+  assert.equal(list.length, 1, '보관본 1건 = 방금 보관된 "진행 중" 회의(되살린 것은 레일에서 빠진다)');
+  assert.equal(list[0].open, true, '진행 중 표식 — 레일이 마친 회의와 구분한다');
+  assert.equal(list[0].topic, '진행 중', '보관된 것은 종전 현재 회의');
+  assert.equal(existsSync(p.journal), false, '회의록(일지)을 남기면 안 된다 — 마치기가 아니라 보관이다');
 });
 
 test('없는 회의 id는 방을 건드리기 전에 실패한다', async () => {

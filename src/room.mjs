@@ -1,6 +1,6 @@
 // 회의실 — 사장 + 여러 크루가 한 방에서 대화한다(맥락 공유가 눈에 보이는 곳).
 // @멘션한 크루가 답하고, 뒤 순서 크루는 앞 크루의 발언을 보고 보탠다. 회의 내용은 각 턴의 일지로 회사 기억이 된다.
-import { mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, rm, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
@@ -79,12 +79,13 @@ export async function listArchivedMeetings(wsId) {
         count: r.messages?.length ?? 0,
         title: r.title ?? null,  // 사장이 붙인 회의명(있으면 레일에서 topic 대신 표시) — 채팅 세션과 동일 규약
         pinned: r.pinned === true, // 고정 회의 — 레일 상단에 최근순으로 묶인다
+        open: r.open === true,     // 진행 중 — '새 회의'로 넘긴 회의(회의록 없음). 전환 대상이라 레일 최상단
         topic: String(first?.text ?? '').replace(/@\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 42),
       });
     } catch { /* 깨진 보관본은 건너뛴다 */ }
   }
-  // 고정 먼저, 그 안에서 최근순 — 채팅 세션 레일과 동일 정렬
-  return out.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.ts - a.ts);
+  // 진행 중 먼저(전환 대상), 그다음 고정, 그 안에서 최근순 — 뒤 두 단은 채팅 세션 레일과 동일 정렬
+  return out.sort((a, b) => (b.open ? 1 : 0) - (a.open ? 1 : 0) || (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.ts - a.ts);
 }
 
 export async function readArchivedMeeting(wsId, id) {
@@ -117,11 +118,37 @@ export async function setMeetingPinned(wsId, id, pinned) {
   });
 }
 
+/** 진행 중 턴 게이트 — 새 회의·전환·마치기는 크루가 발언하는 동안 거절한다(409 ROOM_BUSY). 세 동작 모두
+    sid를 올려 도는 턴의 발언을 무효화하므로(pushRoomMsg sid 불일치 → 버림, 개인 스레드 기록도 건너뜀),
+    화면 잠금(busy||serverBusy)만으론 8초 폴링 창의 다른 탭·API 직행이 그 발언을 유실시킨다(#391 MEDIUM-2는
+    UI 잠금까지). 판정은 getRoomTurn의 2분 신선 창 하나 — 크래시 잔재 마커는 길어야 2분 뒤 풀린다. */
+async function assertRoomIdle(wsId) {
+  if (!await getRoomTurn(wsId)) return;
+  const e = new Error('발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.'); // 라우트는 apiError('room_busy')로 표시 언어 본문을 다시 그린다
+  e.code = 'ROOM_BUSY';
+  throw e;
+}
+
+/** 보관본 쓰기 — 마치기(open 없음)와 진행 중 보관(open:true)이 같은 파일 규약(.archive/_room-<ts>.json)을 쓴다.
+    같은 ms의 연속 보관은 ts를 1씩 올려 피한다 — 이름이 겹치면 앞 회의를 덮어써 유실이다. 반환: 파일명.
+    알려진 한계: 회피는 **한 기기 안에서만** 성립한다 — 두 기기가 같은 ms에 보관하면 같은 이름이 클라우드에서
+    LWW로 겹친다(종전 endMeeting은 회피 자체가 없었으므로 순개선, 확률은 낮다 — 분리 검수 LOW-3).
+    now — 시각 주입(export: 회귀 테스트용 — 충돌 회피를 결정적으로 재현). 제품 경로는 인자 없이 부른다. */
+const fileExists = (f) => access(f).then(() => true, () => false);
+export async function archiveRoomFile(wsId, room, { open = false, now = Date.now() } = {}) {
+  const dir = join(paths(wsId).chats, '.archive');
+  let ts = now;
+  while (await fileExists(join(dir, `_room-${ts}.json`))) ts += 1;
+  await writeJsonAtomic(join(dir, `_room-${ts}.json`), open ? { ...room, open: true } : room);
+  return `_room-${ts}.json`;
+}
+
 /** 회의 마치기 — 회의록을 일지(vault/journal)로 남겨 회사 기억으로 적재하고, 방은 보관 후 비운다(회의 1건 = 적재 1건). */
 export async function endMeeting(wsId) {
   return withLock(rkey(wsId), () => endMeetingLocked(wsId));
 }
 async function endMeetingLocked(wsId) {
+  await assertRoomIdle(wsId);
   const room = await loadRoom(wsId);
   if (!room.messages?.length) return { archived: false };
   const agents = await listAgents(wsId);
@@ -165,8 +192,7 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
     }
   }
   await updateIndex(wsId).catch(() => {});
-  const dir = join(p.chats, '.archive');
-  await writeJsonAtomic(join(dir, `_room-${Date.now()}.json`), room);
+  await archiveRoomFile(wsId, room);
   // sid 증가 — 진행 중이던 runRoomTurn의 잔여 발언이 빈 방에 유령으로 남지 않도록 무효화한다
   // resetAt — 크루 채팅의 '새 대화'와 같은 tombstone(검수 MEDIUM-2: 회의실도 isThread라 같은
   // union 병합을 타는데 각인이 없어, '회의 마치기'가 동기화로 되살아났다 — 실측 재현).
@@ -175,38 +201,63 @@ ${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: 
   return { archived: true, journal: `journal/${journalName}` };
 }
 
-/** 회의 다시 열기 — 보관된 회의를 현재 방으로 되돌려 이어서 대화한다(실사용 요청 2026-07-26).
-    "마치기"로 적재한 뒤 빠진 얘기가 생각나면 새 회의를 여는 수밖에 없었다.
+/** 새 회의 — 지금 회의를 **마치지 않고**(회의록 없음) '진행 중'으로 보관한 뒤 방을 비운다(유건 요청 2026-09-02:
+    "기존 회의와 별개로 새 회의를 추가"). 마치기와의 차이는 회의록 한 줄뿐 — 보관본에 open:true 표식을 남겨
+    레일이 '진행 중'으로 구분하고, 전환(reopenMeeting)으로 되돌린다. 비움 각인(resetStamp)·sid 증가는
+    endMeeting과 같은 계약이라 **이 경로는** 동기화 병합(mergeThread)에 새 의미가 없다(전환 경로의 각인은
+    reopenMeeting 참조 — 거기는 새 규칙이 있다). 빈 방이면 아무것도 안 한다. */
+export async function parkMeeting(wsId) {
+  return withLock(rkey(wsId), async () => {
+    await assertRoomIdle(wsId);
+    const room = await loadRoom(wsId);
+    if (!room.messages?.length) return { parked: false };
+    await archiveRoomFile(wsId, room, { open: true });
+    await saveRoom(wsId, { messages: [], ...resetStamp(room), sid: (room.sid ?? 0) + 1 });
+    return { parked: true };
+  });
+}
+
+/** 회의 열기·전환 — 보관된 회의를 현재 방으로 되돌려 이어서 대화한다(실사용 요청 2026-07-26). 마친 회의든
+    진행 중 보관본이든 같은 원시다(레일에서 어느 회의를 눌러도 같은 동작).
 
     설계 결정 3가지:
-    1. **현재 방이 비어 있을 때만** 연다. 진행 중 회의를 자동으로 마치고 덮으면 사장이 의도하지 않은
-       일지 적재가 생긴다 — 거절하고 "먼저 마치기"를 안내하는 쪽이 정직하다.
-    2. **방을 먼저 쓰고, 그다음 보관본을 지운다.** 순서를 뒤집으면 쓰기 실패 시 회의가 증발한다.
-       이 순서면 최악이 "레일에 중복 표시"(눈에 보이고 복구 가능) — 오차를 비파괴 방향으로 낸다.
+    1. **현재 방이 비어 있지 않으면 진행 중으로 자동 보관한다**(회의록 없음). 종전엔 409로 거절하고 "먼저
+       마치기"를 안내했는데, 그 근거는 "자동으로 마치면 사장이 의도하지 않은 일지 적재가 생긴다"였다 —
+       진행 중 보관은 일지를 남기지 않으므로 그 우려가 없고, 새 회의 분기(2026-09-02)의 '전환'과 경로가 하나가 된다.
+    2. **보관본을 먼저 읽고(검증), 현재 방을 보관하고, 방을 쓰고, 그다음 보관본을 지운다.** 순서를 뒤집으면
+       쓰기 실패 시 회의가 증발한다. 이 순서면 최악이 "레일에 중복 표시"(눈에 보이고 복구 가능) — 오차를
+       비파괴 방향으로 낸다.
     3. **sid를 올린다.** 빈 방에서 돌던 잔여 턴의 발언이 되살린 회의에 유령으로 끼어들지 않게
-       (endMeeting과 같은 이유).
+       (endMeeting과 같은 이유). 발언이 도는 중이면 게이트(assertRoomIdle)가 먼저 거절한다.
+    4. **자르는 지점(cutTs)을 현재 방에서 물려받는다.** 되살림 각인(resumedAt)만 남기면 mergeThread가 자르기를
+       통째로 끄는데, 상대 기기가 아직 든 전환 직전 방 사본(= 방금 보관한 회의)이 union으로 되살아나 새 회의에
+       섞인다(분리 검수 HIGH-1 재현: 2건 → 4건). mergeThread는 되살림이 최신일 때 되살린 쪽은 지키고 상대 쪽만
+       이 cutTs로 자른다(src/sync.mjs). 산식은 resetStamp와 같다(보관한 회의의 마지막 ts+1, 직전 값 후퇴 금지) —
+       빈 방에서 열 때도 직전 비움의 cutTs가 이어져, 마치기가 아직 원격에 안 간 창에서도 옛 회의가 안 돌아온다.
 
     알려진 한계: 마칠 때 남긴 일지(회의록)는 그대로 둔다. 다시 마치면 회의록이 하나 더 쌓인다(같은 분이면
     -2 접미 — endMeetingLocked) — 일지는 append-only 기록이라 "두 번 마쳤다"는 사실 자체가 맞고, 지우는 건
-    기억 유실이라 안 한다. */
+    기억 유실이라 안 한다.
+    두 기기가 8초 동기화 창 안에서 동시에 전환하면 나중 각인이 이겨 먼저 전환한 쪽의 회의가 방에서 밀리고
+    그 보관본은 이미 지워진 뒤라 회의록 없이 사라질 수 있다(크루 이어가기의 같은 창과 동급 — 미해결, 표기). */
 export async function reopenMeeting(wsId, id) {
   return withLock(rkey(wsId), async () => {
-    const cur = await loadRoom(wsId);
-    if (cur.messages?.length) {
-      const e = new Error('진행 중인 회의가 있습니다 — 먼저 "회의 마치기"로 정리한 뒤 다시 열어 주세요.');
-      e.code = 'ROOM_BUSY';
-      throw e;
-    }
+    await assertRoomIdle(wsId);
     const archived = await readArchivedMeeting(wsId, id); // 없으면 여기서 throw — 방을 건드리기 전이다
     if (!archived?.messages?.length) throw new Error('비어 있는 보관 회의는 열 수 없습니다.');
-    // 되살림 각인 — 없으면 endMeeting이 남긴 **원격 tombstone**이 이겨 되살린 회의가 다음 병합에서
-    // 통째로 잘린다(분리 검수 2R HIGH-1 재현: 2건 → 0건). reopenMeeting은 곧바로 보관본을 지우므로
-    // 그 회의는 회의록 md 말고 어디에도 남지 않는다. 크루의 resumeSession과 같은 대칭 계약.
+    const cur = await loadRoom(wsId);
+    const parked = !!cur.messages?.length;
+    if (parked) await archiveRoomFile(wsId, cur, { open: true }); // 지금 회의는 진행 중으로 — 회의록 없음(결정 1)
+    // 되살림 각인 — 없으면 endMeeting·parkMeeting이 남긴 **원격 tombstone**이 이겨 되살린 회의가 다음 병합에서
+    // 통째로 잘린다(분리 검수 2R HIGH-1 재현: 2건 → 0건). 곧바로 보관본을 지우므로 그 회의는 회의록 md 말고
+    // 어디에도 남지 않는다. 크루의 resumeSession과 같은 대칭 계약.
     delete archived.resetAt;
     delete archived.cutTs; // 보관본의 옛 자르기 지점 정리 — thread.mjs resumeSession과 같은 이유(방어적 — 게이트가 먼저 걸려 현재 무행동)
-    await saveRoom(wsId, { ...archived, resumedAt: resumeStamp(cur), sid: (cur.sid ?? 0) + 1 });
+    delete archived.open;  // 진행 중 표식은 보관본의 것 — 현재 방으로 오면 의미가 없다(다시 보관될 때 새로 판정)
+    // cutTs = 현재 방 기준(결정 4) — 보관본의 옛 값이 아니라 지금 보관한 회의를 자르는 지점
+    await saveRoom(wsId, { ...archived, resumedAt: resumeStamp(cur), cutTs: resetStamp(cur).cutTs, sid: (cur.sid ?? 0) + 1 });
     await rm(join(paths(wsId).chats, '.archive', id), { force: true }).catch(() => {}); // 실패해도 유실 아님(중복 표시)
-    return { reopened: true, messages: archived.messages.length };
+    return { reopened: true, parked, messages: archived.messages.length };
   });
 }
 
