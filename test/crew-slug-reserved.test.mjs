@@ -5,6 +5,7 @@
 // 잠그는 것: ① 예약어 판정 + 회의실 상수·프리셋 slug가 그 집합과 정합 ② 영입 실호출(가짜 codex)이 거절하고 카드를 남기지
 // 않는다(이름 경로·frontmatter slug 경로·회사 언어 ko/en) ③ 영입 라우트 실호출이 400+errorCode ④ 반입 문 판정(인접 대조군 포함 — 실행 검증은 sync-integration RS1).
 import { mkdtemp, mkdir, writeFile, chmod, readdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { register } from 'node:module';
@@ -37,11 +38,11 @@ const setCard = (name, slugLine = '') => writeFile(CARD, `---\nname: ${name}\n${
 
 const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;
-const { isReservedSlug, RESERVED_SLUG_RE } = await import('../src/slug.mjs');
+const { isReservedSlug, RESERVED_SLUG_RE, collidesWithRoom, ROOM_FILE_SLUG } = await import('../src/slug.mjs');
 const { createAgentFromPrompt } = await import('../src/persona.mjs');
 const { ROOM_TURN_SLUG } = await import('../src/room.mjs');
 const { PRESETS, PRESETS_EN } = await import('../src/presets.mjs');
-const { EXCLUDE, isReservedCardRel } = await import('../src/sync.mjs');
+const { EXCLUDE, isRoomCardRel } = await import('../src/sync.mjs');
 const { paths } = await import('../src/workspace.mjs');
 
 const mkws = async (ws, lang) => {
@@ -61,7 +62,8 @@ test('예약어 판정 — room- 접두만 막고 room·roommate·중간 포함�
 
 test('정합 — 회의실 턴 마커 슬러그는 예약어 안, 프리셋 크루 slug는 예약어 밖', () => {
   assert.equal(isReservedSlug(ROOM_TURN_SLUG), true, `room.mjs ROOM_TURN_SLUG=${ROOM_TURN_SLUG}가 예약어 밖이면 게이트가 보호하는 이름이 아니다`);
-  assert.equal(ROOM_TURN_SLUG, 'room-main', '회의록 파일(chats/room-main.json)과 같은 이름 — 바뀌면 slug.mjs 주석·예약어를 함께 본다');
+  assert.equal(ROOM_TURN_SLUG, ROOM_FILE_SLUG, '회의 마커 슬러그 = 반입 문이 지키는 회의록 파일 이름(slug.mjs ROOM_FILE_SLUG) — 어긋나면 반입 문이 다른 파일을 지킨다');
+  assert.equal(ROOM_FILE_SLUG, 'room-main', '회의록 파일(chats/room-main.json)과 같은 이름 — 바뀌면 room.mjs와 함께 본다');
   for (const P of [PRESETS, PRESETS_EN]) for (const k of Object.keys(P)) for (const c of P[k].crews) {
     assert.equal(isReservedSlug(c[1]), false, `프리셋 ${k}의 크루 slug ${c[1]}이 예약어라면 온보딩이 회의록을 덮는 크루를 심는다`);
   }
@@ -79,6 +81,7 @@ test('영입 실호출 — 이름 "Room Main"은 거절(code SLUG_RESERVED·회�
     return true;
   });
   assert.deepEqual(await cards(WS), [], 'room-main.md도 room-main-2.md도 생기지 않는다');
+  assert.equal(existsSync(paths(WS).usage), false, '이름 지정 영입은 모델 턴 전에 거절 — hire usage가 적립되지 않는다(비용·5분 대기 없음)');
   // 대조군 — 인접 행동: 예약어 밖 이름은 그대로 영입된다(게이트가 영입 문 자체를 막지 않는다)
   await setCard('Pepper');
   const ok = await createAgentFromPrompt(WS, '회의 진행 담당', { name: 'Pepper' });
@@ -98,6 +101,7 @@ test('영입 실호출 — frontmatter slug: room-main 경로(이름은 무해)�
     return true;
   });
   assert.deepEqual(await cards(WS), []);
+  assert.equal(existsSync(paths(WS).usage), true, '대조군 — frontmatter slug 경로는 모델 턴 뒤 사후 게이트라 usage는 남는다');
 });
 
 test('영입 라우트 실호출 — 예약 slug는 400 + errorCode crew_slug_reserved(500 아님)', { skip: POSIX }, async () => {
@@ -117,11 +121,16 @@ test('영입 라우트 실호출 — 예약 slug는 400 + errorCode crew_slug_re
   assert.deepEqual(await cards(WS), []);
 });
 
-test('반입 문 판정 — agents/room-*.md만 불가시, 회의록·보관함·일반 카드는 대조군으로 대상 유지(실행은 sync-integration RS1)', () => {
-  assert.equal(isReservedCardRel('agents/room-main.md'), true);
-  assert.equal(isReservedCardRel('agents/room-main-2.md'), true, '-n 회피본도 접두가 남는다');
-  assert.equal(isReservedCardRel('agents/pepper.md'), false, '대조군 — 일반 크루 카드는 동기화 대상');
-  assert.equal(isReservedCardRel('agents/.archive/1725000000000-room-main.md'), false, '대조군 — 보관함(해고본)은 살아 있는 slug가 아니다');
-  assert.equal(isReservedCardRel('chats/room-main.json'), false, '인접 행동 핀 — 회의록 자체는 동기화 대상(예약어가 회의록을 끊으면 회귀)');
-  assert.equal(EXCLUDE('agents/room-main.md'), false, '불가시는 EXCLUDE가 아니다 — EXCLUDE 전환은 원격 잔재를 삭제해 옛 기기 카드를 지운다(주석 참고)');
+test('반입 문 판정 — 세척 후 room-main이 되는 카드만 불가시(별칭 포함), 접두 room-*·회의록·보관함은 대조군으로 동기화 유지', () => {
+  assert.equal(collidesWithRoom('room-main'), true);
+  assert.equal(collidesWithRoom('Zroom-main'), true, '별칭 — thread/turn-status가 [^a-z0-9-]를 깎아 같은 파일 chats/room-main.json이 된다(검수 MEDIUM-2)');
+  assert.equal(collidesWithRoom('room_main'), false, '세척하면 roommain — 다른 파일');
+  assert.equal(isRoomCardRel('agents/room-main.md'), true);
+  assert.equal(isRoomCardRel('agents/Zroom-main.md'), true);
+  assert.equal(isRoomCardRel('agents/room-main-2.md'), false, '접두만 겹치는 카드는 파일 충돌이 아니다 — 영입 문은 막되 반입은 끊지 않는다(검수 MEDIUM-1)');
+  assert.equal(isRoomCardRel('agents/room-service.md'), false, '기존 정상 크루의 동기화를 조용히 끊지 않는다');
+  assert.equal(isRoomCardRel('agents/pepper.md'), false, '대조군 — 일반 크루 카드는 동기화 대상');
+  assert.equal(isRoomCardRel('agents/.archive/1725000000000-room-main.md'), false, '대조군 — 보관함(해고본)은 살아 있는 slug가 아니다');
+  assert.equal(isRoomCardRel('chats/room-main.json'), false, '인접 행동 핀 — 회의록 자체는 동기화 대상(예약어가 회의록을 끊으면 회귀)');
+  assert.equal(EXCLUDE('agents/room-main.md'), false, '불가시는 EXCLUDE가 아니다 — EXCLUDE 전환은 원격 잔재를 삭제해 옛 기기 카드를 지운다(sync.mjs 주석)');
 });
