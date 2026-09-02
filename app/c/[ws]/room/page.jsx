@@ -9,6 +9,7 @@ import { dropUpClamp } from '../zoom-math.mjs';
 import { ArtifactChips } from '../artifact-chips';
 import { matchSlash, SLASH_TOKEN_RE } from '../slash-match.mjs';
 import { keepSide } from '../split.mjs';
+import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../work-folder';
 
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
@@ -47,6 +48,10 @@ export default function Room({ params }) {
   // 크루 채팅처럼 쓰는 중인 문장이 자라며 보이게(유건 2026-09-02 "보는 재미"). 진행 판정(serverBusy)과 분리.
   const [turn, setTurn] = useState(null);
   const [error, setError] = useState('');
+  // 회의 작업 폴더 — 크루 채팅과 같은 컴포넌트·계약(work-folder.jsx, 유건 지시 2026-09-02). 키 '@room'(서버
+  // ROOM_FOLDER_SLUG — 크루 슬러그와 불충돌)로 고정하면 발언 크루 전원이 매 턴 "지금 일할 폴더"로 받는다
+  // (src/room.mjs → chat workFolder). 기기 로컬(.workroots.json pins)이고 사장이 풀기 전까지 유지된다.
+  const wf = useWorkFolder({ ws, slug: '@room', onError: (m) => setError(m), onPinned: () => composerRef.current?.focus() });
   const endRef = useRef(null);
   // 회의 적재 레일 — 마친 회의들이 좌측에 쌓인다
   const [sessions, setSessions] = useState([]);
@@ -152,6 +157,7 @@ export default function Room({ params }) {
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
 
   async function openSession(id) {
+    wf.close(); // 작업 폴더 팝오버 — 열람 갔다 오면 리마운트로 되살아나(autoFocus) 포커스를 뺏는다(크루 채팅과 동일)
     if (!id) { setViewing(null); setArchMsgs(null); atBottomRef.current = true; setUnseen(false); return; } // 복귀=최신으로(검수 D2·D4)
     try {
       const d = await api(`/api/companies/${ws}/room/sessions?id=${encodeURIComponent(id)}`);
@@ -303,7 +309,9 @@ export default function Room({ params }) {
   const completeMention = (name) => setInput(input.replace(/@\S*$/, `@${name} `));
   // 커맨더가 떠 있으면 멘션 패널은 양보한다(같은 자리 bottom 100%). 기준은 후보 유무(slashOpen) — `/@이름`처럼 커맨더
   // 후보가 없는 입력은 종전대로 멘션 완성이 된다(분리 검수 LOW-2). slashOpen ⟹ 슬래시 토큰이라 둘이 동시에 뜨지 않는다.
-  const mentionOpen = !!mention && !slashOpen && (suggestAll || suggests.length > 0);
+  // 작업 폴더 팝오버가 열려 있어도 닫는다(같은 자리) — 멘션은 입력 파생 상태라 버튼 클릭으로는 안 닫혀, '@' 입력 중 폴더
+  // 버튼이 무동작이었고 멘션을 완성하는 순간 팝오버가 불쑥 열려 포커스를 뺏었다(분리 검수 MEDIUM-4). Enter 완성 분기도 이 값을 본다.
+  const mentionOpen = !!mention && !slashOpen && (suggestAll || suggests.length > 0) && !wf.open;
   const mentionPanelRef = useRef(null);
   const mentionNatW = useRef(0);
   const [mentionClamp, setMentionClamp] = useState({ shift: 0, maxW: 0 });
@@ -574,6 +582,10 @@ export default function Room({ params }) {
                   ))}
                 </div>
               )}
+              {/* 작업 폴더 팝오버(work-folder.jsx 공용) — 멘션 드롭업과 같은 자리(bottom 100%, absolute라 DOM 순서 무관).
+                  상호 배타의 우선순위는 팝오버(mentionOpen이 !wf.open을 본다). 멘션 패널 뒤에 두는 이유: 기준 박스 핀
+                  (display-zoom-layout)이 래퍼 첫 자식을 멘션 패널로 잡는다 */}
+              {wf.open && <WorkFolderPopover wf={wf} note={t('room.workFolder.hint')} />}
               {(att.length > 0 || uploading) && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
                   {att.map((a, i) => (
@@ -586,7 +598,15 @@ export default function Room({ params }) {
                   {uploading && <span className="att-chip"><Spinner size={11} /> {t('chat.uploading')}</span>}
                 </div>
               )}
+              {/* 고정된 회의 작업 폴더 — 해제 전까지 발언 크루 전원의 프롬프트에 "지금 일할 폴더"로 들어간다(크루 채팅과 같은 컴포저 스택) */}
+              {wf.pinned && (
+                <div className="composer-stack" aria-label={t('chat.workFolder.open')}>
+                  <WorkFolderRow wf={wf} />
+                </div>
+              )}
               <form onSubmit={send} className="input-bar" style={{ background: 'var(--card-2)', alignItems: 'flex-end', borderRadius: 22 }}>
+                {/* 작업 폴더(work-folder.jsx 공용) — 순서는 폴더 → 클립(유건 지시 2026-07-28, 크루 채팅과 동일) */}
+                <WorkFolderButton wf={wf} disabled={busy} hint={t('room.workFolder.hint')} iconStyle={{ transform: 'translateY(-0.18px)' }} />
                 <button type="button" className="btn btn-icon sm" style={{ border: 0, flex: 'none', color: 'var(--fg-3)' }}
                   onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('chat.attach')} title={t('chat.attach')}>
                   <Icon name="clip" size={14} />

@@ -92,7 +92,7 @@ test('회의실: 키 처리 순서 — ↑↓=항목 이동, Enter=선택 실행
   assert.match(sendFn, /e\.preventDefault\(\);\s*if \(slashOpen\) \{ runSlash\(slashList\[slashSel\]\); return; \}\s*const text = input\.trim\(\);\s*if \(!text \|\| busy \|\| uploading\) return;/,
     '전송 가로채기 → 기존 빈 값·busy·uploading 게이트 보존');
   // 멘션 패널은 슬래시 토큰에 양보 — 같은 자리(bottom 100%)라 동시에 뜨지 않는다
-  assert.match(src, /const mentionOpen = !!mention && !slashOpen && \(suggestAll \|\| suggests\.length > 0\);/, '멘션 양보 — 기준은 후보 유무(`/@이름`처럼 후보 없는 입력은 멘션 완성 유지, 검수 LOW-2)');
+  assert.match(src, /const mentionOpen = !!mention && !slashOpen && \(suggestAll \|\| suggests\.length > 0\) && !wf\.open;/, '멘션 양보 — 기준은 후보 유무(`/@이름`처럼 후보 없는 입력은 멘션 완성 유지, 검수 LOW-2) + 작업 폴더 팝오버(#400)에도 양보');
   assert.match(src, /const slashTok = !viewing && SLASH_TOKEN_RE\.test\(input\);[\s\S]*?const slashList = [\s\S]*?const slashOpen = !!slashList\?\.length;[\s\S]*?const mentionOpen = /, '선언 순서: slashOpen이 mentionOpen보다 먼저(렌더 중 TDZ 없음)');
   // 실행 — 내장은 입력을 비우고 실행, 별칭·스킬은 지시 텍스트 삽입(바로 전송하지 않는다 — 사장이 @이름·안건을 덧붙인다)
   assert.match(src, /function runSlash\(cmd\) \{\s*if \(cmd\.kind === 'builtin'\) \{ setInput\(''\); cmd\.run\(\); \}\s*else setInput\(cmd\.insert\);\s*composerRef\.current\?\.focus\(\);\s*\}/, 'runSlash 의미');
@@ -142,5 +142,5 @@ test('chat(): 회사 스킬 주입(loadSkills)은 source 분기 앞에서 1회 �
   assert.match(body, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\)/, 'SDK 경로');
   assert.match(body, /systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false/, 'CLI 경로');
   const room = await load('../src/room.mjs');
-  assert.match(room, /r = await chat\(wsId, a\.slug, prompt, null, \{ source: 'room', attachments: att, mirrorCtx \}\);/, '회의실 발언 = 같은 chat() 진입점');
+  assert.match(room, /r = await chat\(wsId, a\.slug, prompt, null, \{ source: 'room', attachments: att, mirrorCtx, workFolder: folder \}\);/, '회의실 발언 = 같은 chat() 진입점(회의 작업 폴더 #400 포함)');
 });

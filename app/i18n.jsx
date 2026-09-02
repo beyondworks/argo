@@ -71,6 +71,7 @@ const DICT = {
   'room.reopenFail': ['회의를 다시 열지 못했습니다', "Couldn't reopen the meeting"],
   'room.sessions.idle': ['진행 중인 안건 없음', 'No topic in session'],
   'room.loadFail': ['회의 내용을 불러오지 못했습니다 — 잠시 후 자동으로 다시 시도합니다', "Couldn't load the meeting — retrying automatically"],
+  'room.workFolder.hint': ['이 회의에서 발언하는 크루 전원이 이 폴더를 "지금 일할 폴더"로 받습니다. 고정은 이 기기에만 남고, 풀기 전까지 유지됩니다.', 'Every crew speaking in this meeting gets this folder as "work here now". The pin stays on this device until you unpin it.'],
   'runner.effortLabel': ['추론 강도', 'Reasoning effort'],
   'runner.effortDefault': ['강도 기본', 'Default effort'],
   'runner.effortAutoHint': ['추론 강도 — Claude·Codex로 실행될 때 적용됩니다(Antigravity는 모델 선택에 강도가 포함 · Gemini·GLM·Kimi·OpenRouter·Grok은 미지원)', 'Reasoning effort — applies on Claude and Codex (Antigravity bakes effort into model choice; not supported on Gemini, GLM, Kimi, OpenRouter, Grok)'],
