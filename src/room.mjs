@@ -31,7 +31,10 @@ export const ROOM_FOLDER_SLUG = '@room';
 const oneLine = (p) => String(p ?? '').replace(/[\r\n]+/g, ' '); // 개행 든 경로가 가짜 지시줄이 되지 않게(chat.mjs와 동일)
 /** 이 턴의 회의 폴더 — **한 번만 재서** 발언자 전원이 같은 스냅샷을 본다(도중에 풀어도 이 턴은 일관).
     stale = 고정은 있는데 지금 검증을 못 넘는 경로(외장 디스크 분리·삭제·등록 해제 직후) — 조용히 빼면 사장은 크루가
-    그 폴더에서 일한 줄 안다. 호출부가 방에 알린다. */
+    그 폴더에서 일한 줄 안다. 호출부가 방에 알린다.
+    pin은 **원문 그대로**(개행 미접기) — chat 옵션으로 넘어가 activeFolders가 등록 폴더와 대조하는 값이라 접으면 개행 든
+    폴더가 매치 실패로 조용히 빠진다. 사람·프롬프트에 보이는 자리(folderLine·회의록·시스템 줄)가 각자 oneLine으로 접는다
+    (2R 검수 LOW-A — 새 소비처를 만들 때 이 규약을 지켜라). */
 export async function roomFolder(wsId) {
   const raw = oneLine((await loadPins(wsId))[ROOM_FOLDER_SLUG]);
   const pin = raw ? await activePin(wsId, ROOM_FOLDER_SLUG) : '';
