@@ -96,6 +96,7 @@ test('/api/companies/[ws]/keys 행동 — runnerStatus의 hidden 표지가 응�
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const { mkdir, writeFile } = await import('node:fs/promises');
+  const prevRoot = process.env.ARGO_ROOT;
   process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-hidden-'));
   delete process.env.NEXT_PUBLIC_SUPABASE_URL; delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const ws = 'hid-ws';
@@ -108,6 +109,26 @@ test('/api/companies/[ws]/keys 행동 — runnerStatus의 hidden 표지가 응�
   const j = await res.json();
   assert.equal(j.runners?.gemini?.hidden, true, 'gemini hidden 표지');
   assert.equal(j.runners?.antigravity?.hidden, false);
+  if (prevRoot === undefined) delete process.env.ARGO_ROOT; else process.env.ARGO_ROOT = prevRoot; // 같은 파일 뒤 테스트 오염 방지(3차 검수 LOW-5)
+});
+
+test('제공 종료 전용 턴 안내 — chat.mjs 분기 핀 + 서버·클라 판정 두 벌의 동치(3차 검수 잔여-2)', async () => {
+  const chat = await load('../src/chat.mjs');
+  assert.match(chat, /if \(!noCli\.length && onlyHiddenConnectedStatus\(await runnerStatus\(wsId\)\.catch\(\(\) => null\)\)\) \{\s*\n\s*throw new Error\(lang === 'en'/, '숨김만 연결 상태의 턴 오류 분기(삭제 변이 red)');
+  const { onlyHiddenConnectedStatus } = await import('../src/runners/catalog.mjs');
+  const { onlyHiddenConnected } = await import('../app/runner-usable.mjs');
+  const on = { company: { connected: true, invalid: false } };
+  const cases = [
+    [{ gemini: { ...on, hidden: true } }, true],
+    [{ gemini: { ...on, hidden: true }, claude: { ...on, hidden: false } }, false],
+    [{ claude: { ...on, hidden: false } }, false],
+    [{ gemini: { company: { connected: true, invalid: true }, hidden: true } }, false],
+    [{}, false],
+  ];
+  for (const [st, want] of cases) {
+    assert.equal(onlyHiddenConnectedStatus(st), want, `server: ${JSON.stringify(st)}`);
+    assert.equal(onlyHiddenConnected(st), want, `client: ${JSON.stringify(st)}`);
+  }
 });
 
 test('가용 판정 — anyRunnerUsable은 숨김 러너를 세지 않고, onlyHiddenConnected가 그 상태를 가려낸다(검수 HIGH-1 모순 해소)', async () => {
@@ -137,7 +158,7 @@ test('i18n — 제공 러너로서 Gemini를 안내하는 문구가 없다(실�
   // 형제 키 누락 방지(검수 MEDIUM-1): "Codex·Gemini"/"Codex, Gemini" 같은 나열형 제공 안내 패턴을 사전 전체에서 스윕
   const offers = i18n.split('\n').filter((l) => /Codex·Gemini|Codex, Gemini|Gemini, or an SDK|Gemini나 SDK/.test(l));
   assert.deepEqual(offers.map((l) => l.trim().slice(0, 40)), [], '나열형 제공 안내에 Gemini 잔존');
-  for (const k of ['runner.retired', 'settings.runners.retiredNote', 'deck.runner.retired']) {
+  for (const k of ['runner.retired', 'runner.retiredShort', 'settings.runners.retiredNote', 'deck.runner.retired']) {
     const m = i18n.match(new RegExp(`^\\s*'${k.replace(/\./g, '\\.')}':\\s*\\['([^']*)',\\s*'([^']*)'\\]`, 'm'));
     assert.ok(m && /[가-힣]/.test(m[1]) && !/[가-힣]/.test(m[2]), `${k} ko/en 등록`);
   }

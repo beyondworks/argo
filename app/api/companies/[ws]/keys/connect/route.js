@@ -9,8 +9,7 @@ import {
   startRunnerLogin, runnerLoginStatus, RUNNER_AUTH,
   startRunnerWebAuth, submitRunnerWebAuth, webAuthDone,
   startRunnerDeviceAuth, pollRunnerDeviceAuth,
-  startClaudeSetupToken, setupTokenStatus, submitSetupCode,
- isHiddenRunner,} from '../../../../../../src/runners.mjs';
+  startClaudeSetupToken, setupTokenStatus, submitSetupCode, isHiddenRunner } from '../../../../../../src/runners.mjs';
 import { guardCompany } from '../../../../../auth.mjs';
 
 export async function POST(req, { params }) {

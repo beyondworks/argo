@@ -754,6 +754,7 @@ const DICT = {
   'runner.notInstalled': ['미설치', 'not installed'],
   'runner.needConnect': ['연결 필요', 'connect needed'],
   'runner.retired': ['제공 종료 — 이 크루에만 유지', 'retired — kept for this crew only'],
+  'runner.retiredShort': ['제공 종료', 'retired'],
   'runner.gatedBadge': ['Ultra·유료 전용', 'Ultra/paid only'],
   'runner.freeBadge': ['무료 — 요청 한도 있음', 'Free — rate limited'],
   'runner.authHint': ['{name} CLI에 터미널에서 로그인하면 이 러너를 쓸 수 있습니다 (구독 OAuth).', 'Log in to the {name} CLI in your terminal to use this runner (subscription OAuth).'],

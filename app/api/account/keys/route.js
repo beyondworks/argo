@@ -5,8 +5,7 @@
 import {
   accountScope, runnerStatus, saveRunnerCred, clearRunnerCred,
   maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH, hostOptInAllowed, normalizePastedCred,
-  probeGeminiHostOAuth,
- isHiddenRunner,} from '../../../../src/runners.mjs';
+  probeGeminiHostOAuth, isHiddenRunner } from '../../../../src/runners.mjs';
 import { currentUser, tenantDenied, authError, requestLang } from '../../../auth.mjs';
 
 /** 로그인 가드 — 회사 소유권 검사 없이 인증만(companies POST와 동일 패턴).
