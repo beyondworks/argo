@@ -5,5 +5,5 @@
 import { createContext, useContext } from 'react';
 
 export const TasksContext = createContext(null);
-/** null = 첫 폴 전(모름). 소비자는 running이 빈 것과 구분하지 않아도 된다 — 둘 다 '대기'로 그린다. */
+/** 값 = { running } — 셸이 running의 slug 집합이 바뀔 때만 새 객체로 준다(첫 폴 전엔 빈 배열). 소비자는 개수·유무만 쓴다. */
 export const useTasks = () => useContext(TasksContext);

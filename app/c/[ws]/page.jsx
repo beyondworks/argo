@@ -135,10 +135,10 @@ export default function Deck({ params }) {
                 <div className="metric card fade-up" style={{ animationDelay: '0.04s' }}>
                   <div className="metric-top">
                     <span className="microlabel">{t('deck.crew')}</span>
-                    <span className="chip"><span className="dot" />{running > 0 ? t('deck.working') : t('deck.standby')}</span>
+                    <span className="chip" style={running > 0 ? { color: 'var(--accent)', borderColor: 'var(--accent)' } : undefined}><span className="dot" />{running > 0 ? t('deck.working') : t('deck.standby')}</span>
                   </div>
                   <Num value={data.agents.length} unit={t('common.people')} />
-                  <div className="metric-sub">{running === 0 ? t('deck.allStandby') : running >= data.agents.length ? t('deck.allWriting') : t('deck.someWriting', { n: running })}</div>
+                  <div className="metric-sub">{running === 0 ? t('deck.allStandby') : (data.agents.length > 0 && running >= data.agents.length) ? t('deck.allWriting') : t('deck.someWriting', { n: running })}</div>
                   <div className="metric-sub2">{t('deck.hireByPrompt')}</div>
                 </div>
                 <div className="metric card fade-up" style={{ animationDelay: '0.08s', alignItems: 'center' }}>

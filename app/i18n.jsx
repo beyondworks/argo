@@ -675,7 +675,7 @@ const DICT = {
   'deck.standby': ['대기', 'Standby'],
   'deck.allStandby': ['전원 대기 중', 'All on standby'],
   'deck.working': ['작성 중', 'Writing'],
-  'deck.someWriting': ['{n}명 작성 중 · 나머지 대기', '{n} writing · others on standby'],
+  'deck.someWriting': ['{n}명 작성 중', '{n} writing'], // 짧게 — 메트릭 카드 최소 폭(~140px)에서 줄바꿈으로 행 높이가 흔들리지 않게(검수 MEDIUM-4)
   'deck.allWriting': ['전원 작성 중', 'All writing'],
   'deck.hireByPrompt': ['한 줄 프롬프트로 영입', 'Hire with one prompt'],
   'deck.linkDensity': ['연결 밀도', 'Link Density'],

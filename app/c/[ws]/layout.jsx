@@ -1,6 +1,6 @@
 'use client';
 // 회사 앱셸 — 라벨 사이드바(회사/크루 그룹 + 사용자 footer) + 헤더(타이틀·검색).
-import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, InputModal, api } from '../../ui';
@@ -244,19 +244,27 @@ function Shell({ children, params }) {
   const anyRunning = (tasks?.running?.length ?? 0) > 0;
   useEffect(() => {
     let alive = true;
-    const pull = () => api(`/api/companies/${ws}/tasks`).then((d) => {
+    // 독이 닫혀 있으면 ?light=1 — running만 받는다(recent = events.jsonl 전량 파싱은 독을 열 때만).
+    const pull = (fromEvent) => api(`/api/companies/${ws}/tasks${dockOpen ? '' : '?light=1'}`).then((d) => {
       if (!alive) return;
       const now = new Set((d.running ?? []).map((r) => r.slug));
-      if ([...runningRef.current].some((s) => !now.has(s))) refresh();
+      // 종료 감지 → light 재조회. argo:refresh발 호출은 refresh가 같은 이벤트로 이미 돌므로 생략(중복 2회 → 1회).
+      if (fromEvent !== true && [...runningRef.current].some((s) => !now.has(s))) refresh();
       runningRef.current = now;
       setTasks(d);
     }).catch(() => {});
     pull();
-    window.addEventListener('argo:refresh', pull);
-    const iv = setInterval(pull, dockOpen || anyRunning ? 3500 : 10000);
-    return () => { alive = false; window.removeEventListener('argo:refresh', pull); clearInterval(iv); };
+    const onRefresh = () => pull(true);
+    window.addEventListener('argo:refresh', onRefresh);
+    const iv = setInterval(() => pull(), dockOpen || anyRunning ? 3500 : 10000);
+    return () => { alive = false; window.removeEventListener('argo:refresh', onRefresh); clearInterval(iv); };
   }, [ws, dockOpen, anyRunning, refresh]);
   const busySet = new Set((tasks?.running ?? []).map((r) => r.slug));
+  // 자식 페이지(데크)용 컨텍스트 값 — running의 slug 집합이 바뀔 때만 새 객체. 매 폴의 새 응답 객체를 그대로 넘기면
+  // 소비자 전체가 3.5~10초마다 재렌더된다(검수 LOW-5). 독은 recent까지 필요해 tasks를 prop으로 직접 받는다.
+  // 보장 범위는 slug 집합뿐 — 항목의 stage 등은 낡을 수 있다(소비자는 개수·유무만 쓴다).
+  const runningKey = (tasks?.running ?? []).map((r) => r.slug).join(',');
+  const tasksCtx = useMemo(() => ({ running: tasks?.running ?? [] }), [runningKey]); // eslint: 이 레포는 exhaustive-deps 미적용 — 키 의존이 의도
 
   // 크루 순서 저장 — company.json.crewOrder(slug 배열). 낙관 반영 후 서버 기록(crewPinned과 동일 계약).
   const [dragSlug, setDragSlug] = useState(null);
@@ -335,7 +343,7 @@ function Shell({ children, params }) {
   });
 
   return (
-    <TasksContext.Provider value={tasks}>
+    <TasksContext.Provider value={tasksCtx}>
     <div className="shell">
       <aside className="side">
         <Link href="/" className="nav-item" style={{ gap: 8, marginBottom: 4 }}>

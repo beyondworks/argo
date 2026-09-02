@@ -1469,14 +1469,18 @@ select option, select optgroup { background: var(--card); color: var(--fg); }
 /* 사이드바 크루 행 — '작성 중' 표지. 아바타를 두르는 가는 링이 은은하게 숨쉰다(투명도만 — 레이아웃·페인트 비용 0,
    ease-in-out = 왕복 루프의 대칭 완화). 색은 '진행 중' 계열 액센트(작업 독 배지·아르고 스피너와 같은 토큰).
    활성 행은 프라이머리 배경이라 온-프라이머리 전경색으로 대비를 잡는다(핀 버튼과 같은 규칙).
-   동작 줄이기: 아래 전역 규칙이 반복 횟수를 1로 잘라 기본 상태(불투명 링)로 정지한다 — 표지는 남고 점멸만 사라진다. */
+   대비(알려진 한계): 기본 라이트 테마에서 액센트 대 사이드바 배경은 1.87:1(분리 검수 계산)로 비텍스트 3:1에 못 미친다 —
+   '은은함'을 위해 토큰은 유지하고 선폭 2px·바닥 0.55로 보강했다. 상태 정보는 툴팁·접근성 라벨·독 배지·데크 카드가
+   중복 전달하므로 링 하나에 기대지 않는다.
+   동작 줄이기: 아래 전역 규칙이 반복 횟수를 1로 자르고 이 시트 규약대로 animation:none을 명시해 기본 상태(불투명 링)로
+   정지한다 — 표지는 남고 점멸만 사라진다(기본 상태에 opacity 선언을 두지 않는 이유). */
 .crew-writing {
   position: absolute; inset: -3px; border-radius: 999px; pointer-events: none;
-  border: 1.5px solid var(--accent);
+  border: 2px solid var(--accent);
   animation: crewPulse 1.6s ease-in-out infinite;
 }
 .nav-item.active .crew-writing { border-color: var(--primary-fg); }
-@keyframes crewPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes crewPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
 /* 세션 레일 액션(대화명 편집·삭제) — 항목 호버/포커스 시에만 노출 */
 .rail-item .rail-actions { opacity: 0; transition: opacity 0.12s; }
@@ -2145,6 +2149,7 @@ main.content:has(> .vault-split) .vault-split { height: calc(100vh / var(--z, 1)
   .skeleton::after { animation: none; }
   .dots i { animation: none; opacity: 1; }
   .argo-spin { animation: none; }
+  .crew-writing { animation: none; } /* 불투명 링으로 정지 — 기본 상태에 opacity 선언 없음 */
 
   /* 원형 스피너만 손을 더 댄다 — 멈추면 4분의 1 호가 한쪽에 남아 "고장난 바퀴"로 보인다.
      호를 지우고 링을 또렷하게 해 완전한 원으로 정리한다(의미는 role="status"가 계속 전달). */

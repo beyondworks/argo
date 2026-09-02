@@ -22,7 +22,7 @@ import { fold } from './pathcase.mjs'; // 폴더 비교는 판정(activePin)과 
 import { makePermissionGate } from './permission-gate.mjs';
 import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커넥터 = 러너 무관 단일 실행 경로(설계서 §2-2)
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
-import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
+import { setTurnStatus, clearTurnStatus, keepTurnStatusFresh, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
 import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
@@ -918,6 +918,10 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
     const evBase = { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };
     await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name); // 코드+러너명(detail) — 클라가 번역
+    // 하트비트 — CLI 턴은 스트리밍 이벤트가 없어 위 한 줄이 유일한 상태 쓰기였다. 2분을 넘기면 사이드바 링·독 배지·
+    // 진행 카드가 턴 도중 꺼지고 거짓 '답변 도착' 점까지 켜졌다(분리 검수 2026-09-02 MEDIUM-1). stop()은 모든
+    // clearTurnStatus·재귀 재시도 앞에서 await(진행 중 틱의 부활 방지), finally에서 한 번 더(탈출 경로 누수 방지).
+    const hb = keepTurnStatusFresh(wsId, agentSlug, 'runner', RUNNERS[runner].name);
     // 중단 배선 — SDK 경로처럼 정지 버튼이 실제로 프로세스를 끊게 한다(외부 CLI는 signal로 자식 kill).
     const ac = new AbortController();
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort());
@@ -1066,6 +1070,7 @@ ${lang === 'en'
         model: `${runner}${usedModel ? `:${usedModel}` : ''}`, usage: {}, costUsd: null, ms: Date.now() - t0,
         billed: await isBilledRunner(wsId, runner), // 이 경로는 costUsd가 null이라 금액엔 무영향 — 기록 일관성용
       });
+      await hb.stop();
       await clearTurnStatus(wsId, agentSlug);
       const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, journalRel: relative(p.vault, handover.file), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
@@ -1088,6 +1093,7 @@ ${lang === 'en'
       if (!aborted && !__crashRetry && isProcessCrash(e?.message || e)) {
         console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
         try {
+          await hb.stop();
           return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
@@ -1099,6 +1105,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 도구 잠김 감지 — 재조달 후 1회 재시도(${wsId}/${agentSlug})`);
         await reprovisionRunner(runner).catch((re) => console.warn(`[argo] ${runner} 재조달 실패:`, re?.message ?? re));
         try {
+          await hb.stop();
           return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
@@ -1125,12 +1132,14 @@ ${lang === 'en'
       if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
       await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
+      await hb.stop();
       await clearTurnStatus(wsId, agentSlug);
       // cc 공유 노트 복원 — 소비(takeSharedNotes)가 러너 실행 전이라, 복원 없이는 실패한 턴이 동료가
       // 공유한 맥락을 영구 소실시킨다. 이 프레임이 직접 소비한 경우만(__seedNotes 재시도 프레임 제외).
       if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
       throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : e;
     } finally {
+      await hb.stop(); // 멱등 — 위에서 이미 멈췄으면 무동작
       abortReg.release();
     }
   }
@@ -1247,6 +1256,7 @@ ${lang === 'en'
   // abortReg는 q(try 안에서 생성)에 의존하지만 catch·finally가 참조한다 — 늦은 대입 + 옵셔널 호출.
   // 자격 게이트(sdkEnvFor)가 등록 전에 던지면 null 그대로다(등록 전 실패 = 중단 불가 턴이 맞다).
   let abortReg = null;
+  let hb = null; // 상태 하트비트(keepTurnStatusFresh) — try 안에서 시작하므로 catch/finally가 보게 밖에서 선언
   let partial = ''; // 완료 전 크루가 이미 말한 텍스트 — 상태 파일로 흘려 스트리밍 체감
   try {
   // sdkEnvFor(자격 게이트 포함)·query 구성은 try **안**이어야 한다 — 게이트의 authExpired가
@@ -1258,6 +1268,9 @@ ${lang === 'en'
   // 사용액 표시가 청구서로 오해되던 신고(2026-07-26)의 교정. 턴당 1회만 읽는다(파일 I/O).
   const billed = await isBilledRunner(wsId, runner);
   await setTurnStatus(wsId, agentSlug, 'boot'); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
+  // 하트비트 — 이벤트 없는 긴 구간(긴 셸 도구·memory 단계: 격리 실측 99초 무갱신)에서도 2분 창 안에 붙든다.
+  // 틱은 스트리밍이 쓴 현재 stage·detail을 그대로 다시 쓴다. CLI 분기와 같은 stop 규약(clear·재귀 재시도 앞 + finally).
+  hb = keepTurnStatusFresh(wsId, agentSlug, 'boot');
   const q = query({
     prompt: promptInput,
     options: {
@@ -1421,6 +1434,7 @@ ${lang === 'en'
       try {
         // 제외 목록은 받은 그대로 넘긴다(tried 아님) — 세션 부재는 러너 잘못이 아니라서 같은 러너로
         // 다시 시도해야 한다. 여기서 현재 러너를 제외하면 세션 문제로 벤더가 갈리는 오작동이 된다.
+        await hb?.stop();
         return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
       } catch (e2) {
         e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
@@ -1435,6 +1449,7 @@ ${lang === 'en'
     if (!aborted && !retriedDown && !__crashRetry && isProcessCrash(e?.message || e)) {
       console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
       try {
+        await hb?.stop();
         return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
       } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
     }
@@ -1466,6 +1481,7 @@ ${lang === 'en'
       error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), // 진단 상세(errors[]/stderr 꼬리)까지 실리도록 400
       ...(aborted ? { aborted: true } : {}), // 중단 판정은 필드로(사유 문자열 동등 비교는 다국어화에 fail-open — 검수 관점3, thread aborted 필드 선례)
     });
+    await hb?.stop();
     await clearTurnStatus(wsId, agentSlug);
     // cc 공유 노트 복원 — CLI 경로와 동일: 이 프레임이 직접 소비한 노트만 최종 실패 시 pending으로 되살린다
     if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
@@ -1487,6 +1503,7 @@ ${lang === 'en'
           : e;
     throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : surfaced;
   } finally {
+    await hb?.stop(); // 멱등 — 성공 경로의 아래 clear 앞·실패 경로의 clear 뒤·재귀 재시도 뒤 모두 여기서 확실히 멈춘다
     abortReg?.release();
   }
   await clearTurnStatus(wsId, agentSlug);

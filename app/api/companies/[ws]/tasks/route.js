@@ -7,6 +7,10 @@ import { guardCompany } from '../../../../auth.mjs';
 export async function GET(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
+  // ?light=1 — running만(사이드바 링·독 배지·데크 카드). recent는 events.jsonl **전량 파싱**(readEvents)이라 독이
+  // 열렸을 때만 만든다 — 작성 중 3.5초 폴이 큰 워크스페이스에서 폴마다 이벤트 루프를 ~120ms 점유하던 비용
+  // (분리 검수 2026-09-02 MEDIUM-2, 크루 30·10만 줄 합성 실측). 크루 페이지 패널 폴은 recent가 필요해 그대로.
+  const light = new URL(req.url).searchParams.get('light') === '1';
   const agents = await listAgents(ws).catch(() => []);
   const running = (await Promise.all(
     agents.map(async (a) => {
@@ -15,7 +19,7 @@ export async function GET(req, { params }) {
     }),
   )).filter(Boolean);
 
-  const events = await readEvents(ws, 200).catch(() => []);
+  const events = light ? [] : await readEvents(ws, 200).catch(() => []);
   const recent = events
     .filter((e) => ['turn', 'routine', 'consolidate'].includes(e.type))
     .slice(-15)
