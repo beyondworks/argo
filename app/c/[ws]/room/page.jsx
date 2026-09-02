@@ -181,7 +181,7 @@ export default function Room({ params }) {
   }
 
   async function endMeeting() {
-    if (busy) return;
+    if (busy || serverBusy) return; // 서버 턴 중 마치기 = 도는 발언이 방·개인 스레드 어디에도 안 남는다(검수 MEDIUM-2)
     // 회의록은 서버(endMeeting)가 journal + .archive로 남기므로 비파괴 — 확인창 없이 바로 마친다.
     // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작 → 제거(새 대화와 동일 근본 원인).
     try {
@@ -305,7 +305,7 @@ export default function Room({ params }) {
           <span className="microlabel" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('room.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
           {!viewing && (messages?.length ?? 0) > 0 && (
-            <button className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy} onClick={endMeeting}>{t('room.end')}</button>
+            <button className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={endMeeting}>{t('room.end')}</button>
           )}
         </div>
 

@@ -6,6 +6,7 @@ import { paths, loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
 import { chat } from './chat.mjs';
 import { setTurnStatus, clearTurnStatus, getTurnStatus } from './turn-status.mjs';
+import { maskKeyLike } from './runners/shared.mjs';
 import { updateIndex } from './memory.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
@@ -281,40 +282,43 @@ export function parseRoomDirectives(text, agents = []) {
     돌아오면 서버에서 턴이 돌고 있어도 화면은 멈춘 것처럼 보였다(유건 실사용 제보 2026-09-02).
     부수 효과: 상주 재배포 IDLE 게이트(chats/*.status.json)에 회의실 턴도 잡힌다. */
 export const ROOM_TURN_SLUG = 'room-main';
+// 같은 방의 동시 턴(탭 2개·API 직접 호출)은 마커 하나를 공유한다 — 먼저 끝난 턴이 지우면 뒤 턴이 도는 동안
+// 다음 하트비트(≤30초)까지 표시가 꺼진다(분리 검수 MEDIUM-1, 1/100 축소 모형 실측). 프로세스 내 참조
+// 카운트로 마지막 턴만 지운다. 크로스 프로세스 동시 턴은 남지만 ≤30초 자가 치유.
+const ROOM_TURNS = new Map(); // wsId → 진행 중 턴 수
 /** heartbeatMs — 턴이 도는 동안 마커 ts를 주기 갱신한다. 크루 상태 파일은 스트리밍·도구 이벤트마다 갱신되지만
-    'memory'처럼 이벤트가 없는 단계가 2분을 넘기면 마커·발언자 둘 다 낡아 **턴이 살아 있는데 표시가 꺼진다**
+    'memory'처럼 이벤트가 없는 단계가 2분을 넘기면 마커가 낡아 **턴이 살아 있는데 표시가 꺼진다**
     (격리 실측 2026-09-02: memory 단계 99초 무갱신). 하트비트는 프로세스가 살아 있음 자체의 신호라 단계와
-    무관하고, 프로세스가 죽으면 멈춰 2분 뒤 만료된다(고아 방어 유지). unref — 프로세스 종료를 잡지 않는다. */
+    무관하고, 프로세스가 죽으면 멈춰 2분 뒤 만료된다(고아 방어). unref — 프로세스 종료를 잡지 않는다. */
 export async function withRoomTurnStatus(wsId, fn, { heartbeatMs = 30_000 } = {}) {
+  ROOM_TURNS.set(wsId, (ROOM_TURNS.get(wsId) ?? 0) + 1);
   await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', '');
   // 틱은 직렬화 + alive 게이트 — 해제(finally) 직후 **진행 중이던 틱**이 마커를 되살리면 화면이 2분간
-  // 거짓 '회의 중'이 된다(변이 배터리 복원 후 red 1로 실측된 경합). finally가 alive를 내리고 진행 중
-  // 틱을 기다린 뒤에만 지운다.
+  // 거짓 '회의 중'이 된다. 하중은 `await tick`(진행 중 틱을 기다린 뒤 지움)에 있다 — 분리 검수 HIGH-1이
+  // 지연 주입으로 확정 red를 실증했고, 테스트는 heartbeatMs:1 × 40회 반복으로 잠근다.
   let alive = true; let tick = Promise.resolve();
   const beat = async () => {
     if (!alive) return;
-    const cur = await getTurnStatus(wsId, ROOM_TURN_SLUG, { maxAgeMs: 30 * 60_000 });
+    const cur = await getTurnStatus(wsId, ROOM_TURN_SLUG); // 하트비트가 도는 한 2분 창 안 — 발언자(detail) 보존용
     if (!alive) return;
-    await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', cur?.detail ?? ''); // 발언자(detail) 보존
+    await setTurnStatus(wsId, ROOM_TURN_SLUG, 'room', cur?.detail ?? '');
   };
   const hb = setInterval(() => { tick = tick.then(beat).catch(() => {}); }, heartbeatMs);
   hb.unref?.();
   try { return await fn(); }
   finally {
-    alive = false; clearInterval(hb); /* MUT: await tick 제거 */ // 진행 중 틱 완료 후에만 해제
-    await clearTurnStatus(wsId, ROOM_TURN_SLUG); // 성공·실패·중단 모두 — 남으면 고아 표시
+    alive = false; clearInterval(hb); await tick; // 진행 중 틱 완료 후에만 해제
+    const left = (ROOM_TURNS.get(wsId) ?? 1) - 1;
+    if (left > 0) ROOM_TURNS.set(wsId, left);
+    else { ROOM_TURNS.delete(wsId); await clearTurnStatus(wsId, ROOM_TURN_SLUG); } // 마지막 턴만 — 성공·실패·중단 모두
   }
 }
-/** 회의실 턴 진행 여부(화면 복원용). 마커가 2분 안에 갱신됐으면 진행 중. 발언이 2분을 넘기면 마커는
-    낡지만 **발언 중인 크루의 상태 파일**(스트리밍·도구 이벤트마다 갱신)이 신선하므로 그것으로 이어 판정한다.
-    둘 다 낡았으면(프로세스 사망 등) null — 고아 마커가 화면을 영구히 '회의 중'으로 묶지 않는다. */
+/** 회의실 턴 진행 여부(화면 복원용) = 마커가 2분 안에 갱신됐는가, 단일 판정. 하트비트(30초)가 긴 발언을
+    덮으므로 발언자 상태로 이어 판정하는 폴백은 두지 않는다 — 두면 크래시로 남은 마커 + 무관한 개인 채팅
+    턴이 최대 30분 거짓 '회의 중'을 만든다(분리 검수 HIGH-2: 3/10/25/29분 전 마커 전부 ACTIVE 실측). */
 export async function getRoomTurn(wsId) {
-  const s = await getTurnStatus(wsId, ROOM_TURN_SLUG, { maxAgeMs: 30 * 60_000 });
-  if (!s) return null;
-  const speaker = s.detail || null;
-  if (Date.now() - s.ts < 120_000) return { active: true, slug: speaker, startedAt: s.startedAt };
-  if (speaker && await getTurnStatus(wsId, speaker)) return { active: true, slug: speaker, startedAt: s.startedAt };
-  return null;
+  const s = await getTurnStatus(wsId, ROOM_TURN_SLUG);
+  return s ? { active: true, slug: s.detail || null, startedAt: s.startedAt } : null;
 }
 
 export async function runRoomTurn(wsId, text, attachments = []) {
@@ -476,7 +480,7 @@ ${transcript}
       // 발언 실패를 **방에 남긴다** — 오류는 POST 호출 탭에만 돌아가므로, 안건을 올리고 다른 페이지로 간
       // 사장에게는 방이 그냥 조용해져 "멈췄다"로 보였다(실사용 제보 2026-09-02 계열 — 격리 실측: 401 실패 190초
       // 뒤 방에 흔적 0). 시스템 줄(sys)은 크루 프롬프트 트랜스크립트에서 제외되는 기존 규약이라 대화를 오염하지 않는다.
-      const msg = String(e?.message || e).replace(/\s+/g, ' ').slice(0, 200);
+      const msg = maskKeyLike(String(e?.message || e).replace(/\s+/g, ' ')).slice(0, 200); // 방 스레드는 동기화·회의록 적재 대상 — 키 모양은 가린다
       await sys('error', en ? `${a.name} could not respond: ${msg}` : `${a.name} 발언 실패: ${msg}`).catch(() => {});
       throw e; // 호출 탭의 오류 표시 계약은 그대로
     } finally {
