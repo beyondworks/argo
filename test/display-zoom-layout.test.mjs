@@ -659,37 +659,44 @@ test('att-chip 폭 클램프 핀 — nowrap 칩의 고정 220px 상한 복원 �
    왜 ①의 스위프가 못 잡았나: ①은 vh 치수(높이) 선언만 수집한다 — transform-origin은 치수도 vh도
    아니라 수집 대상 밖. 규칙 확장: svg 구간 안의 인라인 transformOrigin은 길이(px·숫자)를 쓰면 red.
    한계(정직 표기): 인라인 style={{…}}만 본다 — CSS 클래스는 어느 요소에 붙는지 정적으로 모른다
-   (globals.css의 transform-origin은 현재 keyword(center) 1곳뿐). */
+   (globals.css의 transform-origin은 현재 keyword(center) 1곳뿐). <svg> 리터럴 밖에서 svg 조각(<g>·<line>)만
+   반환하는 컴포넌트도 구간 밖이라 못 본다(분리 검수 M-2b — 현 소스에 없음, 생기면 그 컴포넌트를 svg 구간에
+   편입하는 수집 확장이 필요). */
 function collectSvgRanges(src) {
+  // 깊이 카운트 — 중첩 <svg>에서 첫 </svg>로 끊으면 바깥 svg의 나머지 구간이 미수집(분리 검수 M-2c).
   const out = [];
-  let i = 0;
-  while ((i = src.indexOf('<svg', i)) !== -1) {
-    const close = src.indexOf('</svg>', i);
-    const end = close === -1 ? src.length : close + 6;
-    out.push({ start: i, end });
-    i = end;
+  const tok = /<svg\b|<\/svg>/g;
+  let depth = 0, start = -1, m;
+  while ((m = tok.exec(src))) {
+    if (m[0] === '<svg') { if (depth === 0) start = m.index; depth += 1; }
+    else if (depth > 0) { depth -= 1; if (depth === 0) { out.push({ start, end: m.index + 6 }); start = -1; } }
   }
+  if (depth > 0) out.push({ start, end: src.length });
   return out;
 }
-// 배율 불변 원점 표기 — 0·퍼센트·키워드(center/top/…)만. 길이 단위·숫자(0 제외)·보간(${…})은 전부 red.
-const ZOOM_SAFE_ORIGIN = /^\s*(?:0|\d+(?:\.\d+)?%|center|top|bottom|left|right)(?:\s+(?:0|\d+(?:\.\d+)?%|center|top|bottom|left|right))?\s*$/;
+// 인라인 원점 키 — camelCase와 하이픈 문자열 키 둘 다(React는 'transform-origin' 키도 실제 적용한다 — 분리 검수 M-2a).
+const ORIGIN_KEY = String.raw`(?:transformOrigin|['"]transform-origin['"])`;
+// svg 안 허용 원점 = 0 계열(0·0px — 몇 배를 곱해도 0)만. %·키워드(center…)는 배율에는 불변이지만 참조 박스
+// (view-box) 기준으로 풀려 translate 그룹 아래 자식(Dial 패턴)에서는 중심을 벗어난다(분리 검수 M-1 실측:
+// '50% 50%' → 배율 1에서도 (−22, +38) 편차). 0이 아닌 길이·숫자·보간(${…})·%·키워드 전부 red.
+const ZOOM_SAFE_ORIGIN = /^\s*0(?:px)?(?:\s+0(?:px)?)?\s*$/;
 
 test('svg 내부 인라인 transformOrigin 스위프 — px·숫자·보간 원점은 red(WebKit이 배율만큼 한 번 더 곱한다)', () => {
   let seen = 0;
   for (const [file, src] of sources) {
     if (!file.endsWith('.jsx')) continue;
     const svgs = collectSvgRanges(src);
-    for (const m of src.matchAll(/transformOrigin\s*:\s*(['"`])([^'"`]*)\1/g)) {
+    for (const m of src.matchAll(new RegExp(ORIGIN_KEY + String.raw`\s*:\s*(['"\x60])([^'"\x60]*)\1`, 'g'))) {
       const inSvg = svgs.some((r) => m.index >= r.start && m.index < r.end);
       if (!inSvg) continue;
       seen += 1;
-      assert.ok(ZOOM_SAFE_ORIGIN.test(m[2]), `${file}:${lineOf(src, m.index)} — svg 안 transformOrigin '${m[2]}': 길이 원점은 표시 배율에서 회전 중심이 어긋난다(0·%·키워드만, 위치는 SVG 속성 translate로)`);
+      assert.ok(ZOOM_SAFE_ORIGIN.test(m[2]), `${file}:${lineOf(src, m.index)} — svg 안 transform-origin '${m[2]}': 0이 아닌 길이는 WebKit이 표시 배율만큼 한 번 더 곱해 회전 중심이 어긋나고, %·키워드는 view-box 기준이라 translate 그룹 아래에서 어긋난다(허용은 0·0 0뿐, 위치는 SVG 속성 translate로)`);
     }
     // 역방향 스캔 — svg 구간 안의 모든 transformOrigin 토큰은 위 정규식(따옴표 값)으로 수집돼야 한다.
     // 변수·식으로 원점을 넣으면 값 검사가 불가하니 여기서 red(수집 우회 = 무보호).
-    for (const m of src.matchAll(/transformOrigin/g)) {
+    for (const m of src.matchAll(new RegExp(ORIGIN_KEY, 'g'))) {
       if (!svgs.some((r) => m.index >= r.start && m.index < r.end)) continue;
-      assert.ok(/^transformOrigin\s*:\s*(['"`])[^'"`]*\1/.test(src.slice(m.index, m.index + 200)), `${file}:${lineOf(src, m.index)} — svg 안 transformOrigin이 따옴표 값이 아니라 값 검사가 불가(수집 우회)`);
+      assert.ok(new RegExp('^' + ORIGIN_KEY + String.raw`\s*:\s*(['"\x60])[^'"\x60]*\1`).test(src.slice(m.index, m.index + 200)), `${file}:${lineOf(src, m.index)} — svg 안 transform-origin이 따옴표 값이 아니라 값 검사가 불가(수집 우회)`);
     }
   }
   assert.ok(seen >= 1, `svg 안 transformOrigin ${seen}곳(현재 1 — Dial 바늘) — 수집기가 소스와 어긋났는지 확인(빈 수집 = 무효 게이트)`);
@@ -706,5 +713,5 @@ test('Dial 바늘 핀 — translate(사용자 좌표계) 그룹 안에서 로컬
   const iEnd = body.indexOf('</g>');
   assert.ok(iT !== -1 && iO !== -1 && iL !== -1, `Dial 바늘 구조 소실 — translate 그룹 ${iT}, 원점 0 0 ${iO}, 바늘 (0,0) 시작 ${iL}`);
   assert.ok(iT < iO && iO < iL && iL < iEnd, 'Dial 바늘 순서 — translate 그룹 › 회전 그룹(원점 0 0) › 바늘 line 이 중첩돼 있어야 한다');
-  assert.ok(/transition:\s*'transform 1s/.test(body.slice(iO, iL)), 'Dial 바늘 스윕 전환(transform 1s)이 회전 그룹에 남아 있어야 한다');
+  assert.ok(/transition:\s*'transform 1s/.test(body.slice(iT, iEnd)), 'Dial 바늘 스윕 전환(transform 1s)이 회전 그룹에 남아 있어야 한다(키 순서 무관 — 분리 검수 L-2)');
 });
