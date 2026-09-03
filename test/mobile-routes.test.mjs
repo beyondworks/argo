@@ -36,6 +36,7 @@ test('관리 API — 비루프백 Host·워커는 403 mobile_loopback_only, cros
     assert.equal(c.status, 403); assert.equal(c.body.errorCode, 'mobile_loopback_only');
     const d = await json(await pairRoute.POST(req('POST', '/api/mobile/pair', { host: '192.168.0.12:3031', body: { code: 'ABC123' } })));
     assert.equal(d.status, 403, '워커에선 페어링도 없음');
+    assert.equal(d.body.errorCode, 'mobile_loopback_only', '토글 off 403(mobile_disabled)과 구분 — 게이트 제거 변이가 같은 상태코드로 숨지 않게');
   } finally { delete process.env.ARGO_TENANT_OWNER; }
   assert.equal(mobileListenerStatus().listening, false, '거절된 호출은 리스너를 열지 않는다');
 });
