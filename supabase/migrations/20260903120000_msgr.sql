@@ -1042,7 +1042,7 @@ create or replace function public.msgr_channel_admins_guard() returns trigger
 begin
   if new.admin_user_ids is distinct from old.admin_user_ids then
     if auth.uid() is not null and not (old.created_by = auth.uid() or coalesce(public.msgr_is_admin(old.org_id), false)) then raise exception 'msgr_channel_admins_owner_only'; end if;
-    if exists (select 1 from unnest(new.admin_user_ids) u where not exists (select 1 from public.msgr_org_members m where m.org_id = old.org_id and m.user_id = u and m.removed_at is null)) then raise exception 'msgr_channel_admin_not_member'; end if;
+    if exists (select 1 from unnest(new.admin_user_ids) u where not exists (select 1 from public.msgr_org_members m where m.org_id = old.org_id and m.user_id = u and m.removed_at is null and (m.expires_at is null or m.expires_at > now()))) then raise exception 'msgr_channel_admin_not_member'; end if;
     -- 비공개 채널의 관리자는 그 채널 멤버 중에서(멤버가 아니면 RLS 열람이 막혀 설정을 못 바꾼다 — 드릴 실측)
     if old.kind = 'private' and exists (select 1 from unnest(new.admin_user_ids) u where not exists (select 1 from public.msgr_channel_members cm where cm.channel_id = old.id and cm.member_kind = 'user' and cm.member_id = u)) then raise exception 'msgr_channel_admin_not_channel_member'; end if;
     perform public.msgr_audit(old.org_id, 'channel.admins', 'channel', old.id::text, jsonb_build_object('admins', new.admin_user_ids));
@@ -1543,4 +1543,256 @@ begin
   insert into public.msgr_org_policies (org_id) values (new.id) on conflict do nothing;
   perform public.msgr_audit(new.id, 'org.create', 'org', new.id::text);
   return new;
+end $$;
+
+-- ── 분리 검수 반영(2026-09-04 보안 검수 — I-4~J-5): 쓰기 문에서 "대상이 이 조직 것인가"를 서버가 확인하지 않던 자리들.
+-- CRITICAL-1: 크루 생성 요청 행의 소속 컬럼 잠금 + done 시 crew_id는 같은 조직·서비스 계정 소유 크루만, 확정 뒤 재변경 금지.
+drop trigger if exists msgr_lock_crew_requests on public.msgr_crew_requests;
+create trigger msgr_lock_crew_requests before update on public.msgr_crew_requests for each row execute function public.msgr_lock_cols('org_id', 'channel_id', 'name', 'role_text', 'prompt', 'created_by', 'created_at');
+create or replace function public.msgr_crew_request_done() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare svc uuid;
+begin
+  if old.status <> 'pending' and (new.status is distinct from old.status or new.crew_id is distinct from old.crew_id) then raise exception 'msgr_crew_request_final'; end if;
+  select o.service_user_id into svc from public.msgr_orgs o where o.id = new.org_id;
+  if new.status = 'done' and old.status <> 'done' then
+    if new.crew_id is null then raise exception 'msgr_crew_request_no_crew'; end if;
+    if not exists (select 1 from public.msgr_crews c where c.id = new.crew_id and c.org_id = new.org_id and c.hosting = 'resident' and svc is not null and c.owner_user_id = svc) then
+      raise exception 'msgr_crew_request_bad_crew'; -- 다른 조직·다른 소유자의 크루를 완료 표시로 채널에 밀어 넣던 경로(검수 프로브 재현)
+    end if;
+    new.done_at := now();
+    if new.channel_id is not null then
+      insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values (new.channel_id, 'crew', new.crew_id, new.created_by) on conflict do nothing;
+      insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values (new.channel_id, 'user', svc, new.created_by) on conflict do nothing;
+    end if;
+    perform public.msgr_audit(new.org_id, 'crew.create', 'crew', new.crew_id::text, jsonb_build_object('name', new.name, 'channel', new.channel_id, 'by', new.created_by));
+  elsif new.status = 'failed' and old.status <> 'failed' then
+    new.done_at := now();
+  end if;
+  return new;
+end $$;
+
+-- HIGH-1: 채널 멤버 행의 대상이 그 채널 조직의 활성 멤버(user) / 그 조직의 크루(crew)여야 한다(다른 조직 크루 주입 경로 봉합).
+create or replace function public.msgr_channel_member_ok(ch uuid, kind text, mid uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select case kind
+      when 'user' then exists (select 1 from public.msgr_org_members m join public.msgr_channels c on c.id = ch
+                                where m.org_id = c.org_id and m.user_id = mid and m.removed_at is null and (m.expires_at is null or m.expires_at > now()))
+      when 'crew' then exists (select 1 from public.msgr_crews cr join public.msgr_channels c on c.id = ch where cr.id = mid and cr.org_id = c.org_id)
+      else false end
+$$;
+revoke all on function public.msgr_channel_member_ok(uuid, text, uuid) from public;
+revoke execute on function public.msgr_channel_member_ok(uuid, text, uuid) from anon;
+grant execute on function public.msgr_channel_member_ok(uuid, text, uuid) to authenticated;
+drop policy if exists msgr_channel_members_insert on public.msgr_channel_members;
+create policy msgr_channel_members_insert on public.msgr_channel_members for insert to authenticated
+  with check (public.msgr_can_manage_channel(channel_id) and public.msgr_channel_member_ok(channel_id, member_kind, member_id));
+drop policy if exists msgr_channel_members_update on public.msgr_channel_members;
+create policy msgr_channel_members_update on public.msgr_channel_members for update to authenticated
+  using (public.msgr_can_manage_channel(channel_id)) with check (public.msgr_can_manage_channel(channel_id) and public.msgr_channel_member_ok(channel_id, member_kind, member_id));
+
+-- MEDIUM-1: 채널 한정 게스트는 전사 문서(규칙집·용어집·프로젝트)를 읽지 않는다 — 초대받은 채널 범위 문서만.
+drop policy if exists msgr_docs_select on public.msgr_org_docs;
+create policy msgr_docs_select on public.msgr_org_docs for select to authenticated
+  using ((channel_id is null and public.msgr_role(org_id) in ('owner', 'admin', 'member')) or (channel_id is not null and public.msgr_can_read_channel(channel_id)));
+
+-- MEDIUM-2: 공개 메일 도메인 목록 확장(완전할 수는 없다 — 화면 안내가 보조).
+create or replace function public.msgr_public_email_domain(d text) returns boolean
+  language sql immutable as $$
+    select lower(d) = any (array['gmail.com','googlemail.com','naver.com','daum.net','hanmail.net','kakao.com','nate.com','outlook.com','outlook.kr','hotmail.com','hotmail.co.kr','live.com','live.co.kr','msn.com',
+      'yahoo.com','yahoo.co.kr','yahoo.co.jp','ymail.com','icloud.com','me.com','mac.com','proton.me','protonmail.com','pm.me','tutanota.com','tuta.io','zoho.com','zohomail.com','mail.com','gmx.com','gmx.de','gmx.net',
+      'yandex.com','yandex.ru','qq.com','163.com','126.com','sina.com','aol.com','fastmail.com','hey.com','duck.com','mailinator.com','tempmail.com','guerrillamail.com','lycos.com','dreamwiz.com','empas.com','korea.com','chol.com','paran.com'])
+$$;
+
+-- LOW-1: 크루 등록의 hosting은 서버가 판정 — resident는 조직 서비스 계정 소유일 때만, 등록 뒤 hosting·org 불변.
+drop policy if exists msgr_crews_insert on public.msgr_crews;
+create policy msgr_crews_insert on public.msgr_crews for insert to authenticated
+  with check (owner_user_id = (select auth.uid()) and public.msgr_role(org_id) in ('owner', 'admin', 'member')
+    and (hosting = 'local' or owner_user_id = (select o.service_user_id from public.msgr_orgs o where o.id = org_id)));
+drop trigger if exists msgr_lock_crews on public.msgr_crews;
+create trigger msgr_lock_crews before update on public.msgr_crews for each row execute function public.msgr_lock_cols('org_id', 'owner_user_id', 'ws_id', 'slug', 'registered_at', 'hosting');
+
+
+-- ── 분리 검수 반영 2(2026-09-04 코드 검수 — I-4~J-5): 22건 중 서버 쪽. 정책·함수는 전부 재정의로 덧붙인다(로컬 스택 제자리 적용).
+create or replace function public.msgr_org_before_update() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare me uuid := auth.uid(); my_role text;
+begin
+  my_role := case when me is null then null else public.msgr_role(old.id) end;
+  -- 삭제 표시·복구는 소유자 계정 기준(삭제된 조직은 msgr_role이 null이라 역할로는 판정 불가)
+  if me is not null and new.deleted_at is distinct from old.deleted_at and old.owner_user_id <> me then raise exception 'msgr_owner_only'; end if;
+  if new.deleted_at is distinct from old.deleted_at then
+    perform public.msgr_audit(old.id, case when new.deleted_at is null then 'org.restore' else 'org.delete' end, 'org', old.id::text, jsonb_build_object('at', coalesce(new.deleted_at, old.deleted_at)));
+    if new.deleted_at is not null then new.pending_owner_user_id := null; end if;
+  end if;
+  if new.owner_user_id is distinct from old.owner_user_id then
+    if me is not null then
+      if not (new.owner_user_id = me and coalesce(old.pending_owner_user_id = me, false)) then
+        if my_role is distinct from 'owner' then raise exception 'msgr_owner_only'; end if;
+        raise exception 'msgr_transfer_needs_accept';
+      end if;
+    end if;
+    if not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.owner_user_id and removed_at is null) then
+      raise exception 'msgr_owner_not_member';
+    end if;
+    update public.msgr_org_members set role = 'admin' where org_id = old.id and user_id = old.owner_user_id;
+    update public.msgr_org_members set role = 'owner' where org_id = old.id and user_id = new.owner_user_id;
+    new.pending_owner_user_id := null;
+    if new.successor_user_id = new.owner_user_id then new.successor_user_id := null; end if;
+    if new.auto_join_domain is not null and new.auto_join_domain is distinct from public.msgr_email_domain(new.owner_user_id) then new.auto_join_domain := null; end if; -- 검수 L-2: 새 소유자 도메인과 다르면 자동 가입 해제
+    perform public.msgr_audit(old.id, 'org.transfer', 'user', new.owner_user_id::text, jsonb_build_object('from', old.owner_user_id));
+  end if;
+  if new.pending_owner_user_id is distinct from old.pending_owner_user_id and new.owner_user_id = old.owner_user_id and new.deleted_at is not distinct from old.deleted_at then
+    if me is not null and my_role is distinct from 'owner' and not (new.pending_owner_user_id is null and coalesce(old.pending_owner_user_id = me, false)) then raise exception 'msgr_owner_only'; end if;
+    if new.pending_owner_user_id is not null and not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.pending_owner_user_id and removed_at is null and role = 'admin') then
+      raise exception 'msgr_transfer_not_admin';
+    end if;
+    perform public.msgr_audit(old.id, case when new.pending_owner_user_id is null then (case when coalesce(me = old.pending_owner_user_id, false) then 'org.transfer.decline' else 'org.transfer.cancel' end) else 'org.transfer.offer' end,
+                              'user', coalesce(new.pending_owner_user_id, old.pending_owner_user_id)::text);
+  end if;
+  if new.successor_user_id is distinct from old.successor_user_id and new.owner_user_id = old.owner_user_id then
+    if me is not null and my_role is distinct from 'owner' then raise exception 'msgr_owner_only'; end if;
+    if new.successor_user_id is not null and not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.successor_user_id and removed_at is null and role = 'admin') then
+      raise exception 'msgr_successor_not_admin';
+    end if;
+    perform public.msgr_audit(old.id, 'org.successor', 'user', coalesce(new.successor_user_id, old.successor_user_id)::text, jsonb_build_object('set', new.successor_user_id is not null));
+  end if;
+  if new.service_user_id is distinct from old.service_user_id then
+    -- 검수 H-6: 관리자가 자기를 서비스 계정으로 지정해 개인 크루를 회사 크루로 승격하던 경로 — 소유자 또는 노드 수락 RPC(세션 플래그)만
+    if me is not null and my_role is distinct from 'owner' and coalesce(current_setting('msgr.node_accept', true), '') <> '1' then raise exception 'msgr_owner_only'; end if;
+    if new.service_user_id is not null and not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.service_user_id and removed_at is null) then
+      raise exception 'msgr_service_not_member';
+    end if;
+    perform public.msgr_audit(old.id, 'org.service_account', 'org', old.id::text, jsonb_build_object('from', old.service_user_id, 'to', new.service_user_id));
+  end if;
+  return new;
+end $$;
+create or replace function public.msgr_accept_invite(code text) returns uuid
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare inv public.msgr_invites%rowtype;
+begin
+  if auth.uid() is null then raise exception 'msgr_auth_required'; end if;
+  select * into inv from public.msgr_invites i where i.code = msgr_accept_invite.code and i.accepted_at is null and i.expires_at > now() for update;
+  if inv.id is null then raise exception 'msgr_invite_invalid'; end if;
+  if inv.for_node and exists (select 1 from public.msgr_org_members where org_id = inv.org_id and user_id = auth.uid() and removed_at is null and role in ('owner', 'admin')) then
+    raise exception 'msgr_node_not_admin';
+  end if;
+  -- 이미 정식 멤버인 사람이 게스트 링크를 열면 강등하지 않는다(채널에만 넣는다)
+  if inv.role = 'guest' and exists (select 1 from public.msgr_org_members where org_id = inv.org_id and user_id = auth.uid() and removed_at is null and role <> 'guest' and (expires_at is null or expires_at > now())) then
+    null;
+  else
+    insert into public.msgr_org_members (org_id, user_id, role, display_name, expires_at)
+      values (inv.org_id, auth.uid(), inv.role, (select split_part(u.email, '@', 1) from auth.users u where u.id = auth.uid()),
+              case when inv.role = 'guest' then now() + make_interval(days => inv.guest_days) else null end)
+      on conflict (org_id, user_id) do update set role = excluded.role, removed_at = null, joined_at = now(), expires_at = excluded.expires_at,
+        display_name = coalesce(public.msgr_org_members.display_name, excluded.display_name);
+  end if;
+  if inv.channel_id is not null then
+    insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values (inv.channel_id, 'user', auth.uid(), inv.created_by) on conflict do nothing;
+  end if;
+  update public.msgr_invites set accepted_by = auth.uid(), accepted_at = now() where id = inv.id;
+  perform public.msgr_audit(inv.org_id, 'invite.accept', 'invite', inv.id::text, jsonb_build_object('role', inv.role, 'channel', inv.channel_id, 'guest_days', case when inv.role = 'guest' then inv.guest_days else null end));
+  if inv.for_node then
+    perform set_config('msgr.node_accept', '1', true); -- 트랜잭션 한정 플래그: 서비스 계정 지정은 소유자 또는 이 경로만(검수 H-6)
+    update public.msgr_orgs set service_user_id = auth.uid(), node_seen_at = now() where id = inv.org_id;
+    perform set_config('msgr.node_accept', '', true);
+  end if;
+  return inv.org_id;
+end $$;
+create or replace function public.msgr_member_self_guard() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  -- 본인 갱신(관리자 아님)은 표시명만 — 역할·제거 표시·소속은 관리자 정책으로만. NULL 주의: is_admin은 서비스 문맥에서 NULL.
+  if auth.uid() = old.user_id and not coalesce(public.msgr_is_admin(old.org_id), false)
+     and (new.role <> old.role or new.removed_at is distinct from old.removed_at or new.expires_at is distinct from old.expires_at) then -- 검수 C-1: 게스트가 자기 만료를 지우던 경로
+    raise exception 'msgr_member_self_only_name';
+  end if;
+  return new;
+end $$;
+-- H-1: 이메일 도메인 함수는 트리거·RPC 내부 전용 — anon·authenticated 실행 권한 회수(실측: anon이 임의 uid의 도메인을 읽었다)
+revoke execute on function public.msgr_email_domain(uuid) from anon, authenticated;
+-- H-2: 크루 요청 이름·역할에 개행 금지(카드 frontmatter 주입 — persona.createAgentCard도 세척)
+alter table public.msgr_crew_requests drop constraint if exists msgr_crew_requests_no_newline;
+alter table public.msgr_crew_requests add constraint msgr_crew_requests_no_newline check (name !~ '[\r\n]' and role_text !~ '[\r\n]');
+-- H-4·M-7: 도메인 자동 가입은 "이 조직에 행이 없는 사람"만 — 제거된 사람(재초대로만)·이미 멤버(강등 방지) 거절
+create or replace function public.msgr_joinable_orgs() returns table (id uuid, name text, slug text, role text)
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select o.id, o.name, o.slug, o.auto_join_role
+      from public.msgr_orgs o
+     where auth.uid() is not null and o.deleted_at is null and o.auto_join_domain is not null
+       and o.auto_join_domain = public.msgr_email_domain(auth.uid())
+       and not exists (select 1 from public.msgr_org_members m where m.org_id = o.id and m.user_id = auth.uid())
+$$;
+create or replace function public.msgr_join_by_domain(org uuid) returns uuid
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare o public.msgr_orgs%rowtype;
+begin
+  if auth.uid() is null then raise exception 'msgr_auth_required'; end if;
+  select * into o from public.msgr_orgs where id = org and deleted_at is null;
+  if o.id is null or o.auto_join_domain is null or o.auto_join_domain is distinct from public.msgr_email_domain(auth.uid()) then raise exception 'msgr_domain_mismatch'; end if;
+  if exists (select 1 from public.msgr_org_members where org_id = o.id and user_id = auth.uid() and removed_at is null) then raise exception 'msgr_already_member'; end if;
+  if exists (select 1 from public.msgr_org_members where org_id = o.id and user_id = auth.uid()) then raise exception 'msgr_removed_rejoin'; end if; -- 퇴사자는 관리자 재초대로만
+  insert into public.msgr_org_members (org_id, user_id, role, display_name)
+    values (o.id, auth.uid(), o.auto_join_role, (select split_part(u.email, '@', 1) from auth.users u where u.id = auth.uid()));
+  perform public.msgr_audit(o.id, 'member.join.domain', 'user', auth.uid()::text, jsonb_build_object('domain', o.auto_join_domain));
+  return o.id;
+end $$;
+-- L-3: 게스트는 채널 한정·기간 한정으로만 생긴다 — 채널 없는 게스트 초대·도메인 가입 역할 guest 금지
+alter table public.msgr_invites drop constraint if exists msgr_invites_guest_needs_channel;
+alter table public.msgr_invites add constraint msgr_invites_guest_needs_channel check (role <> 'guest' or channel_id is not null);
+alter table public.msgr_orgs drop constraint if exists msgr_orgs_auto_join_role_check;
+update public.msgr_orgs set auto_join_role = 'member' where auto_join_role = 'guest';
+alter table public.msgr_orgs add constraint msgr_orgs_auto_join_role_check check (auto_join_role = 'member');
+-- H-5: 게스트(외부 파트너)는 조직 운영 정보(요금·정책·크루 생성 요청)를 읽지 않는다 — 초대받은 채널과 그 참여자만
+drop policy if exists msgr_entitlements_select on public.msgr_org_entitlements;
+create policy msgr_entitlements_select on public.msgr_org_entitlements for select to authenticated using (public.msgr_role(org_id) in ('owner', 'admin', 'member'));
+drop policy if exists msgr_policies_select on public.msgr_org_policies;
+create policy msgr_policies_select on public.msgr_org_policies for select to authenticated using (public.msgr_role(org_id) in ('owner', 'admin', 'member'));
+drop policy if exists msgr_crew_requests_select on public.msgr_crew_requests;
+create policy msgr_crew_requests_select on public.msgr_crew_requests for select to authenticated using (public.msgr_role(org_id) in ('owner', 'admin', 'member'));
+-- M-1: 정책 member면 "자기가 쓸 수 있는 채널"에만(못 보는 비공개 채널에 크루 심기 차단)
+create or replace function public.msgr_can_create_crew(org uuid, ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select case
+    when public.msgr_is_admin(org) then true
+    when ch is null then false
+    when coalesce((select p.crew_create from public.msgr_org_policies p where p.org_id = org), 'channel_admin') = 'member'
+      then public.msgr_role(org) in ('owner', 'admin', 'member') and public.msgr_can_write_channel(ch)
+    when coalesce((select p.crew_create from public.msgr_org_policies p where p.org_id = org), 'channel_admin') = 'channel_admin'
+      then public.msgr_can_manage_channel(ch)
+    else false end
+$$;
+-- M-6: 결제 문제 읽기 전용을 쓰기 경로 전부에 — 채널 생성·크루 파견·초대·전사 문서 편집
+create or replace function public.msgr_can_edit_doc(org uuid, ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select not public.msgr_org_locked(org) and case when ch is null then public.msgr_is_admin(org)
+                else public.msgr_can_write_channel(ch) and exists (select 1 from public.msgr_channels c where c.id = ch and c.org_id = org) end
+$$;
+drop policy if exists msgr_channels_insert on public.msgr_channels;
+create policy msgr_channels_insert on public.msgr_channels for insert to authenticated
+  with check (created_by = (select auth.uid()) and public.msgr_role(org_id) in ('owner', 'admin', 'member') and not public.msgr_org_locked(org_id));
+drop policy if exists msgr_crews_insert on public.msgr_crews;
+create policy msgr_crews_insert on public.msgr_crews for insert to authenticated
+  with check (owner_user_id = (select auth.uid()) and public.msgr_role(org_id) in ('owner', 'admin', 'member') and not public.msgr_org_locked(org_id)
+    and (hosting = 'local' or owner_user_id = (select o.service_user_id from public.msgr_orgs o where o.id = org_id)));
+drop policy if exists msgr_invites_insert on public.msgr_invites;
+create policy msgr_invites_insert on public.msgr_invites for insert to authenticated
+  with check (created_by = (select auth.uid()) and accepted_at is null and not public.msgr_org_locked(org_id)
+    and ((channel_id is null and public.msgr_is_admin(org_id))
+      or (channel_id is not null and role = 'guest' and public.msgr_can_manage_channel(channel_id)
+          and exists (select 1 from public.msgr_channels c where c.id = channel_id and c.org_id = msgr_invites.org_id and c.kind = 'private' and c.archived_at is null))));
+-- M-2: purge가 첨부 실파일도 지운다(Storage 스키마가 있는 환경에서만 — 로컬 드릴에는 없다)
+create or replace function public.msgr_purge_orgs() returns int
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare n int; ids uuid[];
+begin
+  if auth.uid() is not null then raise exception 'msgr_service_only'; end if;
+  select array_agg(id) into ids from public.msgr_orgs where deleted_at is not null and deleted_at < now() - interval '30 days';
+  if ids is null then return 0; end if;
+  if to_regclass('storage.objects') is not null then
+    execute 'delete from storage.objects where bucket_id = ''msgr'' and (storage.foldername(name))[1] = any ($1)' using (select array_agg(x::text) from unnest(ids) x);
+  end if;
+  delete from public.msgr_orgs where id = any (ids);
+  get diagnostics n = row_count;
+  return n;
 end $$;

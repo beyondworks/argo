@@ -17,6 +17,8 @@ const PAGE = 100;
 const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
 const dayKey = (iso) => new Date(iso).toDateString();
+/** 서버 거절 원문 → 사람 문구(검수 M-5: RLS·check 제약 원문이 그대로 뜨던 자리들의 공통 매핑). 모르는 오류는 원문 유지(정직). */
+const friendlyErr = (msg, t) => /row-level security/.test(msg) ? t('err.denied') : /_check\b|violates check constraint/.test(msg) ? t('err.invalid') : /msgr_seat_limit/.test(msg) ? t('seat.limit') : /msgr_org_locked|read-only/.test(msg) ? t('org.locked.short') : msg;
 /** 오늘이면 시각만, 아니면 날짜+시각 — 초대 만료(7일 뒤)·노드 마지막 응답·기록처럼 며칠 전후일 수 있는 시각용(시간만 보이면 "오늘 02:31"로 읽힌다 — I-4 실측) */
 const fmtWhen = (iso, lang) => { const d = new Date(iso); const time = fmtTs(iso, lang); if (d.toDateString() === new Date().toDateString()) return time;
   return `${d.toLocaleDateString(lang === 'en' ? 'en-US' : 'ko-KR', { month: 'short', day: 'numeric' })} ${time}`; };
@@ -107,8 +109,8 @@ function Shell({ session }) {
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
   const rt = useRef(null);
   const loadOrgs = useCallback(async () => {
-    const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role)').eq('user_id', uid).is('removed_at', null));
-    const list = rows.filter((r) => r.msgr_orgs).map((r) => ({ id: r.org_id, role: r.role, ...r.msgr_orgs }));
+    const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at)').eq('user_id', uid).is('removed_at', null));
+    const list = rows.filter((r) => r.msgr_orgs && !r.msgr_orgs.deleted_at).map((r) => ({ id: r.org_id, role: r.role, ...r.msgr_orgs }));
     setOrgs(list);
     setOrgId((cur) => cur && list.some((o) => o.id === cur) ? cur : (list[0]?.id ?? null));
     setJoinable(await q(supabase.rpc('msgr_joinable_orgs')).catch(() => [])); // J-3: 내 이메일 도메인으로 들어갈 수 있는 조직(서버가 판정)
@@ -453,16 +455,17 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
   const addableUsers = members.filter((m) => !userIds.has(m.user_id));
   const addableCrews = crews.filter((c) => !crewIds.has(c.id) && ((channel.personal_crews ?? 'allowed') !== 'blocked' || crewTier(c, org) === 'company')); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
   const scoped = channel.kind !== 'public';
-  const nodeOn = !!org?.service_user_id; // I-5: 회사 노드가 있어야 회사 크루를 만들 수 있다(서버 RLS도 거절)
+  const nodeSet = !!org?.service_user_id; const nodeOn = nodeSet && !!org?.node_seen_at && Date.now() - Date.parse(org.node_seen_at) < AWAY_MS; // I-5·검수 M-4: 노드가 살아 있어야 만들 수 있다(죽은 노드면 영원한 '만드는 중')
   const crewCreate = policy?.crew_create ?? 'channel_admin';
-  const canCreateCrew = channel.kind !== 'dm' && nodeOn && (isAdmin || crewCreate === 'member' || (crewCreate === 'channel_admin' && canEdit)); // 권한 행렬 — 최종은 RLS msgr_can_create_crew
+  const myRole = members.find((m) => m.user_id === uid)?.role ?? 'member';
+  const canCreateCrew = channel.kind !== 'dm' && nodeOn && myRole !== 'guest' && (isAdmin || crewCreate === 'member' || (crewCreate === 'channel_admin' && canEdit)); // 권한 행렬 — 최종은 RLS msgr_can_create_crew // 권한 행렬 — 최종은 RLS msgr_can_create_crew
   const [newCrew, setNewCrew] = useState(null); const [requests, setRequests] = useState([]); const doneSeen = useRef(null);
   const [guestDays, setGuestDays] = useState(30); // J-4: 비공개 채널 게스트 링크(채널 관리자도 발급 — 최종은 RLS)
   const guestInvite = async () => {
     setBusy(true);
     const res = await supabase.from('msgr_invites').insert({ org_id: org.id, role: 'guest', channel_id: channel.id, guest_days: guestDays, created_by: uid }).select('code').single();
     setBusy(false);
-    if (res.error) return onError(res.error.message);
+    if (res.error) return onError(friendlyErr(res.error.message, t));
     const link = `${location.origin}${location.pathname}?invite=${res.data.code}`;
     await navigator.clipboard?.writeText(link).catch(() => {});
     onNote(`${t('ch.guest.made', { days: guestDays })} ${link}`);
@@ -479,7 +482,7 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
     setBusy(true);
     const res = await supabase.from('msgr_crew_requests').insert({ org_id: org.id, channel_id: newCrew.orgWide ? null : channel.id, name: newCrew.name.trim(), role_text: newCrew.role.trim(), prompt: newCrew.prompt.trim(), created_by: uid }).select('id');
     setBusy(false);
-    if (res.error) return onError(res.error.message);
+    if (res.error) return onError(friendlyErr(res.error.message, t));
     setNewCrew(null); onNote(t('ch.crew.new.sent')); loadRequests().catch(() => {});
   };
   return (
@@ -559,7 +562,7 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
           </>)}
           {channel.kind !== 'dm' && (canCreateCrew || (isAdmin && !nodeOn)) && (
             <div className="msgr-crewnew">
-              {!nodeOn ? <p className="note">{t('ch.crew.new.noNode')}</p> : newCrew ? (
+              {!nodeOn ? <p className="note">{t(nodeSet ? 'ch.crew.new.nodeOff' : 'ch.crew.new.noNode')}</p> : newCrew ? (
                 <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); submitCrew(); }}>
                   <input className="msgr-input" placeholder={t('ch.crew.new.name')} value={newCrew.name} onChange={(e) => setNewCrew({ ...newCrew, name: e.target.value })} autoFocus maxLength={40} />
                   <input className="msgr-input" placeholder={t('ch.crew.new.role')} value={newCrew.role} onChange={(e) => setNewCrew({ ...newCrew, role: e.target.value })} maxLength={60} />
@@ -570,7 +573,7 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
                 </form>
               ) : <div className="row"><button type="button" className="btn sm" disabled={busy} onClick={() => setNewCrew({ name: '', role: '', prompt: '', orgWide: false })}><I name="plus" size={13} />{t('ch.crew.new')}</button></div>}
               {requests.filter((r) => r.status !== 'done' || Date.now() - Date.parse(r.done_at ?? r.created_at) < 120_000).map((r) => (
-                <div key={r.id} className="row req"><span className="name">{r.name}</span><span className={`sub ${r.status}`}>{r.status === 'pending' ? t('ch.crew.new.pending') : r.status === 'failed' ? t('ch.crew.new.failed', { why: r.error ?? '' }) : t('ch.crew.new.done')}</span></div>
+                <div key={r.id} className="row req"><span className="name">{r.name}</span><span className={`sub ${r.status}`}>{r.status === 'pending' ? (nodeOn ? t('ch.crew.new.pending') : t('ch.crew.new.pendingOff')) : r.status === 'failed' ? t('ch.crew.new.failed', { why: r.error ?? '' }) : t('ch.crew.new.done')}</span></div>
               ))}
             </div>
           )}
@@ -764,6 +767,7 @@ function NotifyRow() {
 
 /* ─── F2-1·2·3·4 조직 카드(관리자): 조직 이름 · 멤버 역할/제거(2단계) · 초대 만들기/취소 · 감사 기록 ─── */
 const ROLES_ASSIGNABLE = ['admin', 'member', 'guest'];
+const INVITE_ROLES = ['admin', 'member']; // 검수 L-3: 게스트는 채널 시트의 채널 한정·기간 한정 링크로만 생긴다
 function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNote, onError }) {
   const { t, lang } = useT();
   const [name, setName] = useState(org.name); const [busy, setBusy] = useState(false);
@@ -810,7 +814,7 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
     setBusy(true);
     const res = await supabase.from('msgr_orgs').update({ name: name.trim() }).eq('id', org.id).select('id');
     setBusy(false);
-    if (res.error) return onError(res.error.message);
+    if (res.error) return onError(friendlyErr(res.error.message, t));
     if (!res.data?.length) return onError(t('org.noEdit'));
     onNote(t('org.name.saved')); onOrgsChanged();
   };
@@ -901,7 +905,6 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
         <div className="row">
           <span className="msgr-klabel">{t('org.domain')}</span>
           <input className="msgr-input inline" placeholder={t('org.domain.ph')} value={domain} maxLength={253} onChange={(e) => setDomain(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveDomain(); }} />
-          <div className="msgr-seg" role="radiogroup" aria-label={t('org.domain.role')}>{['member', 'guest'].map((r) => <button key={r} type="button" role="radio" aria-checked={domainRole === r} className={domainRole === r ? 'active' : ''} onClick={() => setDomainRole(r)}>{t(`role.${r}`)}</button>)}</div>
           <button type="button" className="btn btn-primary sm" disabled={busy || (domain.trim().toLowerCase() === (org.auto_join_domain ?? '') && domainRole === (org.auto_join_role ?? 'member'))} onClick={saveDomain}><I name="check" size={13} />{t('ui.save')}</button>
         </div>
         <p className="note">{org.auto_join_domain ? t('org.domain.on', { domain: org.auto_join_domain, role: t(`role.${org.auto_join_role ?? 'member'}`) }) : t('org.domain.desc')}</p>
@@ -923,7 +926,7 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
           <div key={m.user_id} className="row">
             <Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span>
             {m.role === 'owner' || isMe ? <span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
-              : <div className="msgr-seg" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy || (r === 'admin' && !isOwner && m.role !== 'admin' && false)} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
+              : <div className="msgr-seg" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
             {m.expires_at && <span className={`sub${Date.parse(m.expires_at) < Date.now() ? ' expired' : ''}`}>{Date.parse(m.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(m.expires_at, lang) })}</span>}
             {canEdit && confirmRemove !== m.user_id && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRemove(m.user_id)} title={t('org.member.remove')} aria-label={t('org.member.remove')}><I name="x" size={13} /></button>}
             {canEdit && confirmRemove === m.user_id && <span className="confirm-inline"><span>{t('org.member.remove.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => remove(m)}>{t('org.member.remove')}</button><button type="button" className="btn sm" onClick={() => setConfirmRemove(null)}>{t('ui.cancel')}</button></span>}
@@ -933,7 +936,7 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
       <h3>{t('org.invites')} · {open.length}</h3>
       <p>{t('org.invites.desc')}</p>
       <div className="row">
-        <div className="msgr-seg" role="radiogroup" aria-label={t('org.invite.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={inviteRole === r} className={inviteRole === r ? 'active' : ''} onClick={() => setInviteRole(r)}>{t(`role.${r}`)}</button>)}</div>
+        <div className="msgr-seg" role="radiogroup" aria-label={t('org.invite.role')}>{INVITE_ROLES.map((r) => <button key={r} type="button" role="radio" aria-checked={inviteRole === r} className={inviteRole === r ? 'active' : ''} onClick={() => setInviteRole(r)}>{t(`role.${r}`)}</button>)}</div>
         <button type="button" className="btn btn-primary sm" disabled={busy} onClick={makeInvite}><I name="copy" size={13} />{t('org.invite.make')}</button>
       </div>
       {open.length > 0 && (
@@ -989,7 +992,7 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
     setBusy(true);
     const res = await supabase.from('msgr_org_policies').update({ allow_default: draft.allow_default, allow_locked: draft.allow_locked, crew_memory_default: draft.crew_memory_default, crew_memory_locked: draft.crew_memory_locked, approval_high_by: draft.approval_high_by, approver_user_ids: draft.approver_user_ids ?? [], crew_create: draft.crew_create ?? 'channel_admin', crew_runner: draft.crew_runner?.trim() || null, crew_model: draft.crew_model?.trim() || null, guest_seats: !!draft.guest_seats }).eq('org_id', org.id).select('org_id');
     setBusy(false);
-    if (res.error) return onError(res.error.message);
+    if (res.error) return onError(friendlyErr(res.error.message, t));
     if (!res.data?.length) return onError(t('set.policy.adminOnly'));
     onNote(t('set.policy.saved')); onChanged();
   };

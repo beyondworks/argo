@@ -65,7 +65,8 @@ before(() => {
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`); // 체험 창 밖
   // 시드: owner가 조직 생성(트리거가 owner 멤버·free 자격 생성) → admin/member/guest/removed 초대 → 공개·비공개 채널 → 크루 2개
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
-  for (const [uid, role] of [[U.admin, 'admin'], [U.member, 'member'], [U.guest, 'guest']]) {
+  sql(`insert into public.msgr_org_members (org_id, user_id, role) values ('${ORG}', '${U.guest}', 'guest')`); // 게스트는 채널 링크로만 생긴다(검수 L-3) — 시드는 슈퍼유저
+  for (const [uid, role] of [[U.admin, 'admin'], [U.member, 'member']]) {
     sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${ORG}'`); // 시드 동안 좌석 넉넉히(좌석 테스트는 별도)
     const code = last(asUser(U.owner, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', '${role}', '${U.owner}') returning code`));
     assert.equal(last(asUser(uid, `select public.msgr_accept_invite('${code}')`)), ORG, `초대 수락 ${role}`);
@@ -76,7 +77,7 @@ before(() => {
   PRIV = last(asUser(U.admin, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'private', 'secret', '${U.admin}') returning id`));
   asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'user', '${U.guest}', '${U.admin}')`);
   CREW = last(asUser(U.member, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.member}', 'lean-ax-abcd', 'seoyun', '서윤') returning id`));
-  CREW_SVC = last(asUser(U.svc, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting) values ('${ORG}', '${U.svc}', 'lean-node', 'node-crew', '노드', 'resident') returning id`));
+  CREW_SVC = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting) values ('${ORG}', '${U.svc}', 'lean-node', 'node-crew', '노드', 'resident') returning id`)); // 시드는 슈퍼유저: resident는 서비스 계정 지정 뒤에만 사용자 문맥으로 등록 가능(검수 LOW-1 게이트)
 });
 
 test('조직 생성: 생성자가 owner 멤버로 자동 등록·free 자격 행·감사 행. 비멤버·제거 멤버는 조직이 보이지 않는다', { skip }, () => {
@@ -452,8 +453,9 @@ test('회사 크루 판별(I-1): msgr_crew_tier는 "서비스 계정 소유 + re
   assert.equal(last(sql(`select service_user_id is null from public.msgr_orgs where id = '${ORG}'`)), 't');
   assert.equal(tier(U.member, CREW_SVC), 'personal', '서비스 계정 미지정이면 resident여도 personal');
   assert.equal(last(asUser(U.member, `update public.msgr_orgs set service_user_id = '${U.svc}' where id = '${ORG}' returning 1`)), '', '멤버는 0행(RLS admin)');
-  denied(U.admin, `update public.msgr_orgs set service_user_id = '${U.outsider}' where id = '${ORG}'`, /msgr_service_not_member/);
-  assert.equal(last(asUser(U.admin, `update public.msgr_orgs set service_user_id = '${U.svc}' where id = '${ORG}' returning 1`)), '1');
+  denied(U.owner, `update public.msgr_orgs set service_user_id = '${U.outsider}' where id = '${ORG}'`, /msgr_service_not_member/);
+  denied(U.admin, `update public.msgr_orgs set service_user_id = '${U.svc}' where id = '${ORG}'`, /msgr_owner_only/); // 검수 H-6: 관리자는 지정 불가(자기 지정으로 회사 크루 위조 경로)
+  assert.equal(last(asUser(U.owner, `update public.msgr_orgs set service_user_id = '${U.svc}' where id = '${ORG}' returning 1`)), '1');
   assert.equal(tier(U.member, CREW_SVC), 'company');
   assert.equal(tier(U.guest, CREW), 'personal', '사람 소유 크루는 personal');
   sql(`update public.msgr_crews set hosting = 'local' where id = '${CREW_SVC}'`);
@@ -461,7 +463,7 @@ test('회사 크루 판별(I-1): msgr_crew_tier는 "서비스 계정 소유 + re
   sql(`update public.msgr_crews set hosting = 'resident' where id = '${CREW_SVC}'`);
   assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'org.service_account'`), '1');
   assert.equal(last(asUser(U.outsider, `select public.msgr_crew_tier('${CREW_SVC}')`)), '', '비멤버는 판정 자체가 빈 값(행 없음)');
-  assert.equal(last(asUser(U.admin, `update public.msgr_orgs set service_user_id = null where id = '${ORG}' returning 1`)), '1'); // 복원
+  assert.equal(last(asUser(U.owner, `update public.msgr_orgs set service_user_id = null where id = '${ORG}' returning 1`)), '1'); // 복원
 });
 
 test('채널 개인 크루 정책(I-3): read_only/blocked면 개인 크루는 소유자 지시도 channel_policy, 회사 크루는 ok, blocked는 멤버 추가 거절·전환 시 기존 개인 크루 멤버 제거·감사, 답글 게이트 연동', { skip }, () => {
@@ -501,7 +503,7 @@ test('조직 문서(G-1): 전사 문서는 멤버 열람·관리자 편집, 채�
   denied(U.member, `insert into public.msgr_org_docs (org_id, path, title, body, created_by, updated_by) values ('${ORG}', 'rules/handbook.md', '규칙집', '존댓말', '${U.member}', '${U.member}')`); // 멤버는 전사 문서 못 만듦
   denied(U.admin, `insert into public.msgr_org_docs (org_id, path, title, body, created_by, updated_by) values ('${ORG}', 'notes/x.md', 'x', '', '${U.admin}', '${U.admin}')`, /check constraint|violates/); // 폴더 3종만
   const d = last(asUser(U.admin, `insert into public.msgr_org_docs (org_id, path, title, body, created_by, updated_by) values ('${ORG}', 'rules/handbook.md', '규칙집', '답은 존댓말로', '${U.admin}', '${U.admin}') returning id`));
-  assert.equal(last(asUser(U.guest, `select title from public.msgr_org_docs where id = '${d}'`)), '규칙집', '전사 문서는 guest도 본다');
+  assert.equal(last(asUser(U.guest, `select title from public.msgr_org_docs where id = '${d}'`)), '', '전사 문서는 guest에게 안 보인다(검수 MEDIUM-1 — 채널 한정 외부 계정)');
   assert.equal(last(asUser(U.outsider, `select count(*) from public.msgr_org_docs where org_id = '${ORG}'`)), '0');
   assert.equal(last(asUser(U.member, `update public.msgr_org_docs set body = '해킹' where id = '${d}' returning 1`)), '', '멤버는 전사 문서 편집 0행');
   assert.equal(last(asUser(U.admin, `update public.msgr_org_docs set body = '답은 존댓말로. 숫자는 표로.' where id = '${d}' returning version || '|' || updated_by`)), `2|${U.admin}`, '갱신마다 버전 +1');
@@ -800,4 +802,69 @@ test('J-5 조직 삭제 유예·복구 — 소유자만 삭제 표시(즉시 전
   denied(U.owner, `select public.msgr_purge_orgs()`, /msgr_service_only|permission denied/);
   assert.equal(sql(`select public.msgr_purge_orgs()`), '1', '서비스 문맥 purge');
   assert.equal(sql(`select count(*) from public.msgr_orgs where id = '${TMP}'`), '0', '영구 삭제(cascade)');
+});
+
+test('검수 반영 — 크루 요청 컬럼 잠금·완료 크루 검증(CRITICAL-1), 채널 멤버 대상 조직 검증(HIGH-1), 게스트 전사 문서 차단(MEDIUM-1), resident는 서비스 계정만(LOW-1)', () => {
+  if (!DB) return;
+  const NODE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', G2 = '12121212-1212-4121-8121-121212121212';
+  sql(`update public.msgr_orgs set service_user_id = '${NODE}' where id = '${ORG}'`);
+  sql(`update public.msgr_org_policies set crew_create = 'admin' where org_id = '${ORG}'`);
+  const rq = last(asUser(U.admin, `insert into public.msgr_crew_requests (org_id, channel_id, name, prompt, created_by) values ('${ORG}', '${PUB}', '잠금 봇', 'x', '${U.admin}') returning id`));
+  denied(NODE, `update public.msgr_crew_requests set channel_id = '${PRIV}' where id = '${rq}'`, /msgr_immutable_channel_id/);      // 노드가 소속 채널을 바꿔 주입하던 경로
+  denied(NODE, `update public.msgr_crew_requests set status = 'done', crew_id = '${CREW}' where id = '${rq}'`, /msgr_crew_request_bad_crew/); // 서비스 계정 소유 아닌 크루로 완료 불가
+  const OTHER = last(sql(`insert into public.msgr_orgs (name, slug, owner_user_id) values ('타 조직', 'other-org', '${U.owner}') returning id`));
+  const oc = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${OTHER}', '${U.owner}', 'other', 'spy', '스파이', 'local', 'active', 'all') returning id`));
+  denied(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'crew', '${oc}', '${U.admin}')`, /row-level security/); // 다른 조직 크루 주입 불가
+  denied(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'user', '${U.outsider}', '${U.admin}')`, /row-level security/); // 비멤버 주입 불가
+  const mine = last(asUser(NODE, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${ORG}', '${NODE}', 'org-lean', 'lockbot', '잠금 봇', 'resident', 'active', 'all') returning id`));
+  assert.equal(last(asUser(NODE, `update public.msgr_crew_requests set status = 'done', crew_id = '${mine}' where id = '${rq}' returning status`)), 'done', '서비스 계정 소유 resident 크루로만 완료');
+  denied(NODE, `update public.msgr_crew_requests set status = 'failed' where id = '${rq}'`, /msgr_crew_request_final/);            // 확정 뒤 재변경 불가
+  denied(U.member, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${ORG}', '${U.member}', 'w', 'fake', '가짜', 'resident', 'active', 'all')`, /row-level security/); // 개인이 resident 주장 불가
+  denied(NODE, `update public.msgr_crews set hosting = 'local' where id = '${mine}'`, /msgr_immutable_hosting/);
+  sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${ORG}', null, 'rules/handbook.md', '규칙집', '비밀 규칙', '${U.admin}', '${U.admin}') on conflict do nothing`);
+  assert.notEqual(last(asUser(U.member, `select count(*) from public.msgr_org_docs where org_id = '${ORG}' and channel_id is null`)), '0', '멤버는 전사 문서를 본다');
+  assert.equal(last(asUser(G2, `select count(*) from public.msgr_org_docs where org_id = '${ORG}' and channel_id is null`)), '0', '채널 한정 게스트는 전사 문서를 못 본다');
+  assert.equal(last(asUser(U.owner, `select public.msgr_public_email_domain('QQ.com')`)), 't', '확장된 공개 도메인 목록');
+  sql(`update public.msgr_org_policies set crew_create = 'channel_admin' where org_id = '${ORG}'`);
+});
+
+test('검수 반영 2 — 게스트 자기 만료 삭제(C-1)·도메인 함수 권한(H-1)·퇴사자 재가입·기존 멤버 강등(H-4·M-7)·관리자 서비스 계정 자기 지정(H-6)·member 정책은 쓸 수 있는 채널만(M-1)·채널 없는 게스트 초대(L-3)·잠금 시 초대·채널 생성(M-6)', () => {
+  if (!DB) return;
+  const G2 = '12121212-1212-4121-8121-121212121212', NODE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  sql(`update public.msgr_orgs set service_user_id = '${NODE}', auto_join_domain = null where id = '${ORG}'`);
+  sql(`update public.msgr_org_members set expires_at = now() + interval '1 day' where org_id = '${ORG}' and user_id = '${G2}'`);
+  denied(G2, `update public.msgr_org_members set expires_at = null where org_id = '${ORG}' and user_id = '${G2}'`, /msgr_member_self_only_name/);          // C-1
+  denied(G2, `update public.msgr_org_members set expires_at = now() + interval '365 days' where org_id = '${ORG}' and user_id = '${G2}'`, /msgr_member_self_only_name/);
+  assert.equal(sql(`select has_function_privilege('anon', 'public.msgr_email_domain(uuid)', 'execute') or has_function_privilege('authenticated', 'public.msgr_email_domain(uuid)', 'execute')`), 'f', 'H-1: 도메인 함수는 내부 전용');
+  // H-4·M-7: 퇴사자는 도메인으로 못 돌아오고, 기존 멤버는 강등되지 않는다
+  sql(`update auth.users set email = 'owner@lean.co' where id = '${U.owner}'`);
+  sql(`update auth.users set email = 'removed@lean.co' where id = '${U.removed}'`);
+  sql(`update auth.users set email = 'member@lean.co' where id = '${U.member}'`);
+  asUser(U.owner, `update public.msgr_orgs set auto_join_domain = 'lean.co' where id = '${ORG}'`);
+  assert.equal(last(asUser(U.removed, `select count(*) from public.msgr_joinable_orgs()`)), '0', '퇴사자에게는 후보로 안 뜬다');
+  denied(U.removed, `select public.msgr_join_by_domain('${ORG}')`, /msgr_removed_rejoin/);
+  denied(U.member, `select public.msgr_join_by_domain('${ORG}')`, /msgr_already_member/);
+  assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.member}'`), 'member', '강등 없음');
+  denied(U.owner, `update public.msgr_orgs set auto_join_role = 'guest' where id = '${ORG}'`, /msgr_orgs_auto_join_role_check/); // L-3
+  asUser(U.owner, `update public.msgr_orgs set auto_join_domain = null where id = '${ORG}'`);
+  // H-6: 관리자가 자기를 서비스 계정으로 지정 불가(소유자·노드 수락 RPC만)
+  denied(U.admin, `update public.msgr_orgs set service_user_id = '${U.admin}' where id = '${ORG}'`, /msgr_owner_only/);
+  assert.equal(sql(`select service_user_id from public.msgr_orgs where id = '${ORG}'`), NODE);
+  assert.equal(last(asUser(U.owner, `update public.msgr_orgs set service_user_id = '${U.svc}' where id = '${ORG}' returning 1`)), '1', '소유자는 지정 가능');
+  sql(`update public.msgr_orgs set service_user_id = '${NODE}' where id = '${ORG}'`);
+  // M-1: member 정책이어도 못 보는(=못 쓰는) 비공개 채널엔 크루 요청 불가
+  sql(`update public.msgr_org_policies set crew_create = 'member' where org_id = '${ORG}'`);
+  sql(`delete from public.msgr_channel_members where channel_id = '${PRIV}' and member_kind = 'user' and member_id = '${U.svc}'`);
+  denied(U.svc, `insert into public.msgr_crew_requests (org_id, channel_id, name, prompt, created_by) values ('${ORG}', '${PRIV}', '몰래', 'x', '${U.svc}')`, /row-level security/);
+  sql(`update public.msgr_org_policies set crew_create = 'channel_admin' where org_id = '${ORG}'`);
+  // L-3: 채널 없는 게스트 초대 불가
+  denied(U.owner, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'guest', '${U.owner}')`, /msgr_invites_guest_needs_channel/);
+  // M-6: 잠금이면 초대·채널·크루 파견·전사 문서 편집도 막힌다
+  sql(`update public.msgr_org_entitlements set ls_status = 'unpaid' where org_id = '${ORG}'`);
+  denied(U.owner, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'member', '${U.owner}')`, /row-level security/);
+  denied(U.owner, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'public', 'locked-ch', '${U.owner}')`, /row-level security/);
+  denied(U.member, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.member}', 'w2', 'lockedcrew', 'x')`, /row-level security/);
+  assert.equal(last(asUser(U.admin, `select public.msgr_can_edit_doc('${ORG}', null)`)), 'f', '잠금이면 전사 문서 편집 불가');
+  sql(`update public.msgr_org_entitlements set ls_status = null where org_id = '${ORG}'`);
+  assert.equal(last(asUser(U.admin, `select public.msgr_can_edit_doc('${ORG}', null)`)), 't');
 });

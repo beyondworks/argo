@@ -116,7 +116,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
 
 test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크루(서버 msgr_crew_tier와 같은 규칙), 레일 카드·시트에 등급 배지·소유 표기·한계 문장', () => {
   assert.match(app, /export const crewTier = \(crew, org\) => \(org\?\.service_user_id && crew\?\.owner_user_id === org\.service_user_id && crew\?\.hosting === 'resident'\) \? 'company' : 'personal';/, '등급 규칙이 서버 함수와 다르다');
-  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role\)/, '조직 조회에 service_user_id가 없다'); // I-4·J-2가 열 추가
+  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at\)/, '조직 조회에 service_user_id가 없다'); // I-4·J-2가 열 추가
   assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다');
   assert.match(app, /\{company \? t\('crew\.tier\.company\.sub'/, '구성 행 부제가 등급별이 아니다');
   const crewSheet = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
@@ -281,7 +281,7 @@ test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·
 test('I-4 회사 노드 — 조직 행에 하트비트, 노드용 초대는 member·for_node, 노드 코드는 사람 초대 목록 제외, 다시 만들면 이전 코드 취소', () => {
   const app = read('apps/messenger/src/App.jsx');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
-  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role\)/, '조직 행에 node_seen_at');
+  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at\)/, '조직 행에 node_seen_at');
   assert.match(oc, /insert\(\{ org_id: org\.id, role: 'member', for_node: true, created_by: uid \}\)/, '노드용 초대 = member + for_node');
   assert.match(oc, /const open = live\.filter\(\(i\) => !i\.for_node\); const nodeInvite = live\.find\(\(i\) => i\.for_node\) \?\? null;/, '노드 코드는 사람 초대 목록에서 제외');
   assert.match(oc, /const nodeAlive = !!org\.service_user_id && nodeSeen > 0 && Date\.now\(\) - nodeSeen < AWAY_MS;/, '연결됨 판정 = 서비스 계정 있음 ∧ 90초 이내 하트비트');
@@ -299,7 +299,8 @@ test('I-5 회사 크루 만들기 — 정책 crew_create 세그먼트·저장, �
   assert.match(pc, /crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)\.eq\('org_id', org\.id\)/, '정책 저장에 crew_create');
   assert.match(pc, /\['admin', 'channel_admin', 'member'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.crew_create \?\? 'channel_admin'\) === v\}/, '3옵션 세그먼트');
   const cs = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
-  assert.match(cs, /const canCreateCrew = channel\.kind !== 'dm' && nodeOn && \(isAdmin \|\| crewCreate === 'member' \|\| \(crewCreate === 'channel_admin' && canEdit\)\);/, '권한 행렬(서버 msgr_can_create_crew와 같은 규칙)');
+  assert.match(cs, /const canCreateCrew = channel\.kind !== 'dm' && nodeOn && myRole !== 'guest' && \(isAdmin \|\| crewCreate === 'member' \|\| \(crewCreate === 'channel_admin' && canEdit\)\);/, '권한 행렬(서버 msgr_can_create_crew와 같은 규칙, 게스트 제외)');
+  assert.match(cs, /const nodeOn = nodeSet && !!org\?\.node_seen_at && Date\.now\(\) - Date\.parse\(org\.node_seen_at\) < AWAY_MS;/, '검수 M-4: 살아 있는 노드만');
   assert.match(cs, /insert\(\{ org_id: org\.id, channel_id: newCrew\.orgWide \? null : channel\.id, name: newCrew\.name\.trim\(\), role_text: newCrew\.role\.trim\(\), prompt: newCrew\.prompt\.trim\(\), created_by: uid \}\)/, '요청 행 모양');
   assert.match(cs, /\(canCreateCrew \|\| \(isAdmin && !nodeOn\)\) && \(/, '노드 없음 안내는 관리자에게만(안 될 버튼 노출 금지)');
   assert.match(cs, /\{isAdmin && <label className="switchrow"><input type="checkbox" checked=\{newCrew\.orgWide\}/, '조직 전체 범위는 관리자만');
@@ -378,4 +379,24 @@ test('J-5 조직 삭제 유예·복구 — 이름 입력 2단계 삭제(네이�
   assert.match(sql, /revoke execute on function public\.msgr_purge_orgs\(\) from anon, authenticated;/, 'purge는 service_role만');
   const dict = read('apps/messenger/src/i18n.js');
   for (const k of ['org.delete', 'org.delete.typeName', 'org.delete.confirm', 'org.delete.desc', 'org.restore.cta', 'org.restore.expired', 'org.step.restore']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('검수 반영(코드) — 삭제 조직 목록 제외, 오류 문구 매핑, 조직 전체 초대는 게스트 제외, 카드 값 개행 세척, 서버 가드', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /rows\.filter\(\(r\) => r\.msgr_orgs && !r\.msgr_orgs\.deleted_at\)/, 'M-3');
+  assert.match(app, /const friendlyErr = \(msg, t\) => \/row-level security\/\.test\(msg\) \? t\('err\.denied'\)/, 'M-5 매핑');
+  assert.ok((app.match(/onError\(friendlyErr\(res\.error\.message, t\)\)/g) || []).length >= 4, 'M-5 적용 4곳 이상');
+  assert.match(app, /aria-label=\{t\('org\.invite\.role'\)\}>\{INVITE_ROLES\.map\(/, 'L-3 초대 역할');
+  assert.ok(!/&& false\)\}/.test(app), 'L-5 죽은 조건 제거');
+  const persona = read('src/persona.mjs');
+  assert.match(persona, /const line = \(v\) => String\(v \?\? ''\)\.replace\(\/\[\\r\\n\]\+\/g, ' '\)\.trim\(\);/, 'H-2 세척');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /revoke execute on function public\.msgr_email_domain\(uuid\) from anon, authenticated;/, 'H-1');
+  assert.match(sql, /or new\.expires_at is distinct from old\.expires_at\) then/, 'C-1');
+  assert.match(sql, /raise exception 'msgr_removed_rejoin'/, 'H-4');
+  assert.match(sql, /coalesce\(current_setting\('msgr\.node_accept', true\), ''\) <> '1' then raise exception 'msgr_owner_only'/, 'H-6');
+  assert.match(sql, /msgr_lock_cols\('org_id', 'channel_id', 'name', 'role_text', 'prompt', 'created_by', 'created_at'\)/, 'CRITICAL-1 잠금');
+  assert.match(sql, /and public\.msgr_channel_member_ok\(channel_id, member_kind, member_id\)\)/, 'HIGH-1');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['ch.crew.new.nodeOff', 'ch.crew.new.pendingOff', 'err.denied', 'err.invalid']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
 });

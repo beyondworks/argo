@@ -244,7 +244,8 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
 /** I-5 회사 노드용 — 모델 호출 없이 카드를 쓴다(이름·역할·한 줄 지시가 곧 카드. 페르소나 다듬기는 크루가 일하며 배운다).
     slug·예약어·동명 -n 규칙은 영입 문(createAgentFromPrompt)과 동일 — 카드 파일 이름은 이 두 문으로만 생긴다. */
 export async function createAgentCard(wsId, { name, role = '', prompt, runner = '', model = '' } = {}) {
-  const nameFinal = String(name ?? '').trim();
+  const line = (v) => String(v ?? '').replace(/[\r\n]+/g, ' ').trim(); // 검수 H-2: frontmatter 값에 개행이 섞이면 키 주입(runner:·model:)이 된다 — setFrontmatterKey와 같은 세척
+  const nameFinal = line(name);
   if (!nameFinal) throw new Error('크루 이름이 필요합니다');
   const body = String(prompt ?? '').trim();
   if (!body) throw new Error('한 줄 지시가 필요합니다');
@@ -253,14 +254,14 @@ export async function createAgentCard(wsId, { name, role = '', prompt, runner = 
   let slug = base;
   for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)); n++) slug = `${base}-${n}`;
   if (!SLUG_RE.test(slug)) throw new Error(`크루 slug를 만들지 못했습니다: ${slug}`);
-  const fm = ['---', `name: ${nameFinal}`, `slug: ${slug}`, `role: ${String(role ?? '').trim()}`];
-  if (runner) fm.push(`runner: ${runner}`);
-  if (model) fm.push(`model: ${model}`);
+  const fm = ['---', `name: ${nameFinal}`, `slug: ${slug}`, `role: ${line(role)}`];
+  if (line(runner)) fm.push(`runner: ${line(runner)}`);
+  if (line(model)) fm.push(`model: ${line(model)}`);
   fm.push('---');
   const file = cardPath(wsId, slug);
   await writeJsonAtomic(file, `${fm.join('\n')}\n\n${body}\n`);
   await appendEvent(wsId, { type: 'crew', op: 'hire', slug, name: nameFinal });
-  return { slug, name: nameFinal, role: String(role ?? '').trim(), file };
+  return { slug, name: nameFinal, role: line(role), file };
 }
 
 const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
