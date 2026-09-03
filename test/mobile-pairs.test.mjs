@@ -43,7 +43,8 @@ test('옳은 코드 → 토큰 1회 발급(소문자·공백 관용), 재사용 
   assert.ok(!raw.includes(code), '소비된 코드가 파일에 남지 않는다');
   const v = await M.verifyMobileToken(r.token, { root });
   assert.equal(v?.id, r.pair.id);
-  assert.equal(await M.verifyMobileToken(r.token.slice(0, 63) + '0', { root }), null, '한 글자 다른 토큰 거절');
+  const flipped = r.token.slice(0, 63) + (r.token.endsWith('0') ? '1' : '0'); // 마지막 글자가 이미 '0'이면 같은 토큰이 된다(CI windows 1/16 확률 실패 실측)
+  assert.equal(await M.verifyMobileToken(flipped, { root }), null, '한 글자 다른 토큰 거절');
   assert.equal(await M.verifyMobileToken('', { root }), null);
   // 해제 → 즉시 무효
   assert.equal(await M.revokePair(r.pair.id, { root }), true);
