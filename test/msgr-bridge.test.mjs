@@ -3,6 +3,7 @@
 // 실행: npm test (node --test). 임시 ARGO_ROOT — 실데이터 미접촉.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
@@ -260,4 +261,23 @@ test('배선 핀: 게이트웨이 매니저·pushEvent·채널 종류 등재(구
   assert.deepEqual([...CHANNEL_EVENTS.msgr], ['approval', 'delegate']);
   assert.equal(channelSends('msgr', { enabled: true }, 'approval'), true);
   assert.equal(channelSends('msgr', { enabled: true, mutedEvents: ['approval'] }, 'approval'), false, '음소거 존중');
+});
+
+// ── crewChannels = DM만(검수 HIGH-2 → 2R 핀) — makeDb에 가짜 supabase 클라이언트를 물려 행동으로 잠근다 ──
+function fakeClient(rows) {
+  const chain = { select() { return chain; }, eq() { return chain; }, then(res) { return Promise.resolve({ data: rows, error: null }).then(res); } };
+  return { from() { return chain; } };
+}
+test('crewChannels는 크루가 멤버인 채널 중 kind=dm만 돌려준다 — private 멤버십은 멘션으로만 발화', async () => {
+  const db = M.makeDb(fakeClient([
+    { channel_id: 'dm-1', msgr_channels: { kind: 'dm' } },
+    { channel_id: 'priv-1', msgr_channels: { kind: 'private' } },
+    { channel_id: 'pub-1', msgr_channels: { kind: 'public' } },
+    { channel_id: 'dm-2', msgr_channels: { kind: 'dm' } },
+  ]));
+  assert.deepEqual(await db.crewChannels(CREW), ['dm-1', 'dm-2']);
+});
+test('crewChannels 조회 실패는 로그를 남기고 빈 집합으로 — 조용한 무응답 금지(검수 2R MEDIUM-2)', () => {
+  const src = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
+  assert.match(src, /db\.crewChannels\(crew\.id\)\.catch\(\(e\) => \{ console\.error\(/, 'crewChannels 실패 경로에 console.error가 없다');
 });

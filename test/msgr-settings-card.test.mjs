@@ -36,3 +36,11 @@ test('카드가 쓰는 i18n 키는 전부 ko/en 쌍으로 있다', () => {
   assert.ok(keys.size >= 18, `키 수집이 너무 적다(${keys.size})`);
   for (const k of keys) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} 라벨이 ko·en 둘 다 있어야 한다`);
 });
+
+// ── 메신저 앱 구간 불변식(검수 2R MEDIUM-1: 수정이 핀 없이 들어갔다) ──
+test('채널 시트 닫기 효과의 의존성은 [chId]뿐 — tick이 섞이면 15초마다 시트가 닫힌다(HIGH-1 재발 방지)', () => {
+  const app = stripComments(read('apps/messenger/src/App.jsx'));
+  assert.match(app, /useEffect\(\(\) => \{ setChSheet\(false\); \}, \[chId\]\);/, '닫기 효과가 [chId] 단독 의존이 아니다');
+  const reload = /useEffect\(\(\) => \{ loadChMembers\(chId\)[^\n]*\}, \[chId, loadChMembers, tick\]\);/.exec(app);
+  assert.ok(reload && !/setChSheet/.test(reload[0]), '멤버 재조회 효과 안에 setChSheet가 있다 — tick마다 시트가 닫힌다');
+});

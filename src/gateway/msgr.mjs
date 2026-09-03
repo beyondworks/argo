@@ -148,7 +148,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   if (!crews.length) return out;
   await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
   for (const crew of crews) {
-    const dm = new Set(await db.crewChannels(crew.id).catch(() => []));
+    const dm = new Set(await db.crewChannels(crew.id).catch((e) => { console.error('[argo] msgr DM 채널 조회 실패 — 크루 DM 무응답 위험:', e?.message ?? e); return []; })); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
     const msgs = await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0);
     let max = crew.cursor_msg_id ?? 0;
     for (const m of msgs) {

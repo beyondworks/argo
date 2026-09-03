@@ -353,3 +353,20 @@ test('검수 HIGH-3: 좌석 게이트는 동시 insert를 직렬화한다(adviso
   assert.ok(elapsed >= 800, `B가 락에 블록되지 않았다(${elapsed}ms)`);
   assert.equal(sql(`select count(*) from public.msgr_org_members where org_id = '${org}' and removed_at is null`), String(FREE_SEATS));
 });
+
+test('검수 2R: DM 멤버 정책 — 생성자만 구성, 참가자는 나가기만, 관리자 조항은 DM 제외, 구성 상한(msgr_dm_full)', { skip }, () => {
+  // 멤버(생성자)가 크루 DM: 나 + 크루 + 크루 소유자(=member 본인이 소유자라 2행). 상대 사람 DM은 owner와.
+  const DM = last(asUser(U.member, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'dm', 'dm:owner', '${U.member}') returning id`));
+  assert.ok(DM, 'DM 채널 생성');
+  assert.equal(asUserRaw(U.member, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${DM}', 'user', '${U.member}', '${U.member}'), ('${DM}', 'user', '${U.owner}', '${U.member}'), ('${DM}', 'crew', '${CREW}', '${U.member}')`).status, 0, '생성자의 3행 한 문장 insert(사람 2·크루 1)는 통과');
+  // 참가자(owner — 조직 소유자이기도 하다)가 제3자를 끼워 넣기 → 거절(관리자 조항은 dm 제외)
+  // BEFORE 트리거(msgr_dm_shape)가 RLS with check보다 먼저 돈다 — 어느 쪽이 막든 거절이면 된다
+  denied(U.owner, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${DM}', 'user', '${U.admin}', '${U.owner}')`, /row-level security policy|msgr_dm_full/);
+  // 참가자(조직 소유자)가 생성자 행을 삭제 → 0행
+  assert.equal(last(asUser(U.owner, `delete from public.msgr_channel_members where channel_id = '${DM}' and member_kind = 'user' and member_id = '${U.member}' returning 1`)), '', '참가 중인 관리자도 DM에서 생성자를 축출할 수 없다');
+  // 생성자가 3번째 사람 추가 → 구성 상한
+  denied(U.member, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${DM}', 'user', '${U.admin}', '${U.member}')`, /msgr_dm_full/);
+  // 참가자가 자기 행 삭제(나가기) → 1행
+  assert.equal(last(asUser(U.owner, `delete from public.msgr_channel_members where channel_id = '${DM}' and member_kind = 'user' and member_id = '${U.owner}' returning 1`)), '1', '나가기는 허용');
+  sql(`delete from public.msgr_channels where id = '${DM}'`);
+});
