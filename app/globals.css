@@ -2229,6 +2229,7 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 [data-shell="mobile"] .phone-tab svg { color: inherit; }
 [data-shell="mobile"] .phone-tab.active { color: var(--primary-strong); font-weight: 600; }
 [data-shell="mobile"] .phone-badge { position: absolute; top: 4px; left: calc(50% + 6px); min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--primary); color: var(--primary-fg); font-size: 10px; font-weight: 700; display: grid; place-items: center; }
+[data-shell="mobile"] .phone-sheet-backdrop { position: fixed; inset: 0; z-index: 58; background: var(--overlay); }
 [data-shell="mobile"] .phone-sheet { position: fixed; left: 0; right: 0; bottom: calc(58px + env(safe-area-inset-bottom, 0px)); z-index: 59; background: var(--card); border-top: 1px solid var(--border-soft); border-radius: 16px 16px 0 0; padding: 10px 10px 12px; display: grid; gap: 2px; box-shadow: var(--shadow-card); }
 [data-shell="mobile"] .phone-sheet .nav-item { min-height: 44px; }
 [data-shell="mobile"] .phone-pc { display: grid; gap: 5px; padding: 10px 12px 4px; border-top: 1px dashed var(--border-soft); margin-top: 6px; }

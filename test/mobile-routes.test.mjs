@@ -100,4 +100,7 @@ test('/m/home — 비루프백은 유효 토큰만 회사로(무토큰·무효 �
     const r2 = await home.GET(req('GET', '/m/home', { host: 'argo.fly.dev' }));
     assert.equal(r2.headers.get('location'), 'http://argo.fly.dev/m/pair');
   } finally { delete process.env.ARGO_TENANT_OWNER; }
+  // 오픈 리다이렉트(검수 L1) — x-forwarded-host는 무시, x-forwarded-proto만 존중
+  const r3 = await home.GET(req('GET', '/m/home', { host: '127.0.0.1:3001', headers: { 'x-forwarded-host': 'evil.example.com', 'x-forwarded-proto': 'https' } }));
+  assert.equal(r3.headers.get('location'), 'https://127.0.0.1:3001/c/co-home');
 });

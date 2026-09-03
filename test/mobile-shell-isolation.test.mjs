@@ -49,3 +49,28 @@ test('/api/me — mobile 필드는 판정 참일 때만 스프레드', async () 
   assert.match(s, /\.\.\.\(mobile \? \{ mobile: true \} : \{\}\)/);
   assert.match(s, /mobileAccess\(\{ host: req\.headers\.get\('host'\), cookieHeader: req\.headers\.get\('cookie'\) \}\)\)\.kind === 'mobile'/);
 });
+
+// ── 검수(2026-09-03) 미탐 4종 봉합 — "폰 셸을 폭으로 켜는 다른 경로"를 잠근다 ──
+test('사각 봉합 — CSS 파일은 globals.css 하나, 좁은 폭 브레이크포인트 집합 고정, data-shell 쓰기는 Shell 한 곳, 사이드바 태그 무인라인', async () => {
+  const { readdirSync, statSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const APP = fileURLToPath(new URL('../app', import.meta.url));
+  const walk = (d) => readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; });
+  const files = walk(APP);
+  assert.deepEqual(files.filter((f) => f.endsWith('.css')).map((f) => f.slice(APP.length + 1)), ['globals.css'], '새 CSS 파일 = 이 게이트 밖 — 추가하려면 여기서 의도 확인');
+  const css = await src('../app/globals.css');
+  const bps = [...css.matchAll(/@media \(max-width:\s*(\d+)px\)/g)].map((m) => Number(m[1])).sort((a, b) => a - b);
+  assert.deepEqual([...new Set(bps)], [560, 899, 900, 1100], '좁은 폭 브레이크포인트 집합 고정 — 폰 셸을 미디어쿼리로 켜는 새 규칙은 red');
+  const { stripComments } = await import('./helpers/strip-comments.mjs'); // 주석 속 "data-shell" 언급은 쓰기가 아니다(문자열 보존 스트리퍼)
+  const jsx = files.filter((f) => /\.(jsx|js|mjs)$/.test(f));
+  let writers = [];
+  for (const f of jsx) {
+    const t = stripComments(await readFile(f, 'utf8'));
+    if (/dataset\.shell\s*=(?!=)|setAttribute\(\s*['"]data-shell['"]|<[a-zA-Z][^>]*\sdata-shell=/.test(t)) writers.push(f.slice(APP.length + 1));
+  }
+  assert.deepEqual(writers, ['c/[ws]/layout.jsx'], 'data-shell 마커 쓰기(dataset·setAttribute·JSX 속성)는 Shell 한 곳');
+  const layout = await src('../app/c/[ws]/layout.jsx');
+  assert.ok(layout.includes('<aside className="side">'), '사이드바 여는 태그는 인라인 style 없이 그대로(폭 조건 인라인 숨김 차단)');
+  assert.ok(!/innerWidth\s*[<>]/.test(layout.slice(0, layout.indexOf('function PhoneTabs'))), 'Shell 본문에 폭 비교로 셸을 바꾸는 코드 없음');
+});

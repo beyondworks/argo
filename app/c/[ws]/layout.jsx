@@ -111,17 +111,19 @@ function PhoneTabs({ ws, pathname, agents, seen, L }) {
   }, [ws]);
   useEffect(() => { if (more) api('/api/ping').then(setPing).catch(() => {}); }, [more]);
   useEffect(() => { setMore(false); }, [pathname]);
-  const unread = seen ? agents.filter((a) => a.chatTs != null && seen[a.slug] !== undefined && seen[a.slug] !== a.chatTs).length : 0;
+  // 안읽음 = 사이드바 행과 같은 식(chatTs > 기준선, 보고 있는 크루 제외) — 기준선은 Shell이 갱신, 여기선 읽기만
+  const unread = seen ? agents.filter((a) => a.chatTs != null && seen[a.slug] !== undefined && a.chatTs > seen[a.slug] && pathname !== `/c/${ws}/crew/${a.slug}`).length : 0;
   const isHome = pathname === `/c/${ws}`;
   const isCrew = pathname.includes(`/c/${ws}/crew`);
   const tab = (href, active, icon, label, badge) => (
-    <Link href={L(href)} className={`phone-tab${active ? ' active' : ''}`} onClick={() => setMore(false)}>
+    <Link href={L(href)} className={`phone-tab${active && !more ? ' active' : ''}`} onClick={() => setMore(false)}>
       <Icon name={icon} size={20} />{label}
       {badge > 0 && <span className="phone-badge" aria-label={String(badge)}>{badge > 9 ? '9+' : badge}</span>}
     </Link>
   );
   return (
     <>
+      {more && <div className="phone-sheet-backdrop" onClick={() => setMore(false)} aria-hidden="true" />}
       {more && (
         <div className="phone-sheet" role="dialog" aria-label={t('mobile.tab.more')}>
           <Link href={L(`/c/${ws}/mail`)} className="nav-item"><Icon name="mail" size={16} /> {t('nav.mail')}</Link>

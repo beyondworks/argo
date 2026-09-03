@@ -7,7 +7,8 @@
 		<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- 사용자 자기 PC(LAN·Tailscale 사설망)의 아르고 서버에 평문 HTTP로 붙는다 — 심사 사유 문구는 docs/mobile.md -->
-		<key>NSAllowsArbitraryLoads</key>
+		<!-- iOS 10+: LocalNetworking/InWebContent 키가 있으면 ArbitraryLoads는 무시된다 — WebView 콘텐츠(전부)와 로컬 네트워크를 각각 명시 -->
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
 		<true/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>

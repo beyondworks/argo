@@ -53,7 +53,7 @@ export default function CrewListPage({ params }) {
           {label && <div className="side-group" style={{ padding: '8px 10px 4px' }}>{label}</div>}
           {list.map((a) => {
             const run = running[a.slug];
-            const unread = a.chatTs != null && seen[a.slug] !== undefined && seen[a.slug] !== a.chatTs;
+            const unread = a.chatTs != null && seen[a.slug] !== undefined && a.chatTs > seen[a.slug]; // 사이드바와 같은 식
             const sub = run ? stageLabel(t, run.stage, run.detail) : pending[a.slug] ? t('mobile.crew.approvals', { n: pending[a.slug] }) : unread ? t('mobile.crew.unread') : (a.role || '');
             return (
               <Link key={a.slug} href={`/c/${ws}/crew/${a.slug}`} className="nav-item" style={{ minHeight: 52, gap: 12 }}>

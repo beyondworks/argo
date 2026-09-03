@@ -3,18 +3,21 @@
 import { listCompanies } from '../../../src/hub.mjs';
 import { mobileAccess } from '../../../src/mobile-pairs.mjs';
 import { AUTH_ON, currentUser } from '../../auth.mjs';
-import { publicUrl } from '../../http-origin.mjs';
+
+// 리다이렉트 목적지 — Host 헤더(클라이언트가 실제로 접속한 이름) + x-forwarded-proto(TLS 종단 프록시 뒤 https 유지)만.
+// x-forwarded-host는 믿지 않는다(무인증 공개 라우트의 오픈 리다이렉트, 검수 L1). req.url은 런타임에 따라 host가 정규화돼 쓰지 않는다.
+const dest = (req, path) => new URL(path, `${req.headers.get('x-forwarded-proto') === 'https' ? 'https' : 'http'}://${req.headers.get('host') || 'localhost'}`);
 
 export async function GET(req) {
   // 워커(TENANT)는 폰 경로 자체가 없다 — 다른 모바일 라우트와 같이 env를 직접 본다(tenantDenied는 무인증 모드에서 null)
-  if (process.env.ARGO_TENANT_OWNER?.trim()) return Response.redirect(publicUrl(req, '/m/pair'), 302);
+  if (process.env.ARGO_TENANT_OWNER?.trim()) return Response.redirect(dest(req, '/m/pair'), 302);
   // 미들웨어가 이 경로를 마커 없이도 통과시키므로(연결 화면 진입점) 여기서 직접 판정한다 — 비루프백은 유효 토큰이 있을 때만
   // 회사로 보낸다. 무인증 모드에서 currentUser가 local로 떨어져 페어링 안 된 LAN 요청에 회사 id가 새던 결함(분리 검수 NEW-1).
   const acc = await mobileAccess({ host: req.headers.get('host'), cookieHeader: req.headers.get('cookie') });
-  if (acc.kind !== 'mobile' && acc.kind !== 'loopback') return Response.redirect(publicUrl(req, '/m/pair'), 302);
+  if (acc.kind !== 'mobile' && acc.kind !== 'loopback') return Response.redirect(dest(req, '/m/pair'), 302);
   const user = await currentUser();
-  if (!user) return Response.redirect(publicUrl(req, '/m/pair'), 302);
+  if (!user) return Response.redirect(dest(req, '/m/pair'), 302);
   const all = await listCompanies();
   const mine = AUTH_ON ? all.filter((c) => (user.id === 'local' ? !c.ownerId : c.ownerId === user.id)) : all;
-  return Response.redirect(publicUrl(req, mine[0]?.id ? `/c/${mine[0].id}` : '/'), 302);
+  return Response.redirect(dest(req, mine[0]?.id ? `/c/${mine[0].id}` : '/'), 302);
 }
