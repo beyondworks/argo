@@ -49,7 +49,7 @@ test('채널 시트 닫기 효과의 의존성은 [chId]뿐 — tick이 섞이�
 
 // ── H-0 조직 정책: 잠긴 허용 범위는 카드·시트에서 선택 불가 + 정책 안내, 정책 카드는 관리자만 저장 ──
 test('H-0: 라우트가 조직별 policy를 싣고, 카드는 잠금이면 라디오를 끄고 안내를 보인다', () => {
-  assert.match(route, /from\('msgr_org_policies'\)\.select\('org_id, allow_default, allow_locked'\)/, '라우트가 정책을 조회하지 않는다');
+  assert.match(route, /from\('msgr_org_policies'\)\.select\('org_id, allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by'\)/, '라우트가 정책을 조회하지 않는다');
   assert.match(route, /o\.policy = /, '조직에 policy가 붙지 않는다');
   const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
   assert.match(src, /role="radio" aria-checked=\{allow === v\} disabled=\{busy === a\.slug \|\| !!org\?\.policy\?\.allow_locked\}/, '허용 범위 라디오가 정책 잠금에 비활성화되지 않는다');
@@ -127,6 +127,41 @@ test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크
   assert.match(sql, /c\.owner_user_id = o\.service_user_id and c\.hosting = 'resident' then 'company' else 'personal'/, '서버 판정 규칙');
   assert.match(sql, /raise exception 'msgr_service_not_member'/, '서비스 계정 멤버 검사');
   for (const k of ['crew.tier', 'crew.tier.company', 'crew.tier.personal', 'crew.tier.company.owner', 'crew.tier.company.sub', 'crew.tier.personal.sub', 'crew.tier.company.note', 'crew.tier.personal.note']) {
+    assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('I-2: 아르고 설정 카드가 조직 정책 요약(허용 범위·고위험 결재권·크루 기억·잠금)과 "파견 = 개인 크루" 한계 문장을 보이고, 라우트가 정책 3항목을 더 싣는다', () => {
+  assert.match(route, /select\('org_id, allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by'\)/, '라우트 정책 조회');
+  const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
+  assert.match(src, /\{org\?\.policy && \(/, '정책 요약 블록');
+  assert.match(src, /t\('settings\.msgr\.policy\.summary', \{ allow: [^\n]*approver: t\(`settings\.msgr\.policy\.approver\.\$\{org\.policy\.approval_high_by \?\? 'admin'\}`\)[^\n]*memory: /, '요약 문장에 세 항목이 없다');
+  assert.match(src, /\{t\('settings\.msgr\.tierNote'\)\}/, '파견 = 개인 크루 한계 문장이 없다');
+  for (const k of ['settings.msgr.policy', 'settings.msgr.policy.summary', 'settings.msgr.policy.locked', 'settings.msgr.policy.approver.admin', 'settings.msgr.policy.approver.owner', 'settings.msgr.policy.memory.on', 'settings.msgr.policy.memory.off', 'settings.msgr.tierNote']) {
+    assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외)·차단 안내·멤버 추가 거절 문구·멘션 후보 필터, 브리지는 사유 RPC(채널 포함)로 묻고 채널 사유를 안내, 서버 게이트 3종', () => {
+  assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by'\)/, '채널 조회에 personal_crews가 없다');
+  const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
+  assert.match(ch, /\{channel\.kind !== 'dm' && \(\n\s*<section>\n\s*<h3>\{t\('ch\.personal'\)\}<\/h3>/, '개인 크루 정책 섹션(dm 제외)');
+  assert.match(ch, /\['allowed', 'read_only', 'blocked'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(channel\.personal_crews \?\? 'allowed'\) === v\}[^\n]*disabled=\{!canEdit \|\| busy\} onClick=\{\(\) => upd\(\{ personal_crews: v \}, t\('ch\.personal\.saved'\)\)\}/, '세그먼트');
+  assert.match(ch, /\/msgr_channel_personal_blocked\/\.test\(res\.error\.message\) \? t\('err\.channelPersonalBlocked'\)/, '멤버 추가 거절 문구');
+  assert.match(ch, /const addableCrews = crews\.filter\(\(c\) => !crewIds\.has\(c\.id\) && \(\(channel\.personal_crews \?\? 'allowed'\) !== 'blocked' \|\| crewTier\(c, org\) === 'company'\)\);/, '차단 채널의 추가 후보에 개인 크루가 남는다(안 될 버튼)');
+  const comp = app.slice(app.indexOf('function Composer('));
+  assert.match(comp, /const usable = channel\?\.personal_crews && channel\.personal_crews !== 'allowed' \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews;/, '멘션 후보 필터');
+  assert.match(comp, /const list = \[\.\.\.usable\.map\(/, '후보가 usable을 안 쓴다');
+  const bridge = stripComments(read('src/gateway/msgr.mjs'));
+  assert.match(bridge, /const why = await db\.instructCheck\(crew\.id, m\.author_user_id, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
+  assert.match(bridge, /if \(why !== 'ok'\) \{/, '허용 판정 분기');
+  assert.match(bridge, /body: why === 'channel_policy'\n\s*\? pick\(`이 채널은 회사 크루만 일할 수 있습니다\(채널 정책\)/, '채널 사유 안내');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /when channel is not null and ch\.personal_crews <> 'allowed'\n\s*and not \(o\.service_user_id is not null and c\.owner_user_id = o\.service_user_id and c\.hosting = 'resident'\) then 'channel_policy'/, '서버 채널 정책 판정');
+  assert.match(sql, /if not public\.msgr_can_instruct\(new\.crew_id, src\.author_user_id, new\.channel_id\) then/, '답글 게이트가 채널을 안 본다');
+  assert.match(sql, /raise exception 'msgr_channel_personal_blocked'/, '멤버 게이트');
+  assert.match(sql, /if new\.personal_crews = 'blocked' and old\.personal_crews <> 'blocked' then\n\s*delete from public\.msgr_channel_members cm/, 'blocked 전환 sweep');
+  for (const k of ['ch.personal', 'ch.personal.desc', 'ch.personal.allowed', 'ch.personal.read_only', 'ch.personal.blocked', 'ch.personal.saved', 'ch.personal.blocked.note', 'err.channelPersonalBlocked']) {
     assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   }
 });

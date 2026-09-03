@@ -32,7 +32,7 @@ const crew = (over = {}) => ({ id: CREW, org_id: ORG, slug: 'seoyun', display_na
 const msg = (id, over = {}) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: MEMBER, crew_id: null, kind: 'text', body: `m${id}`,
   mentions: [{ kind: 'crew', id: CREW }], reply_to: null, thread_root: null, created_at: new Date().toISOString(), ...over });
 /** 가짜 db — 호출 기록 + 시나리오 데이터. makeDb의 메서드 이름·반환 계약만 흉내 낸다. */
-function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false } = {}) {
+function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {} } = {}) {
   const calls = [];
   const rec = (k, ...a) => { calls.push([k, ...a]); };
   return {
@@ -55,7 +55,7 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], ap
     async updateApproval(id, patch) { rec('updateApproval', id, patch); return approvalRows; },
     async approvalsByIds(ids) { rec('approvalsByIds', ids); return approvals; },
     // H-2: 서버 판정 흉내 — 실제 msgr_can_instruct와 같은 규칙(크루 행 기준). throw 시 브리지는 로컬 판정으로 폴백한다.
-    async canInstruct(crewId, authorId) { rec('canInstruct', crewId, authorId); if (canInstructThrows) throw new Error('rpc down'); const c = crews.find((x) => x.id === crewId); return M.allowedToInstruct(c, authorId, OWNER); },
+    async instructCheck(crewId, authorId, channelId) { rec('instructCheck', crewId, authorId, channelId); if (canInstructThrows) throw new Error('rpc down'); if (channelPolicy[channelId] && channelPolicy[channelId] !== 'allowed') return 'channel_policy'; const c = crews.find((x) => x.id === crewId); return M.allowedToInstruct(c, authorId, OWNER) ? 'ok' : 'crew_allow'; },
     async canDecide(apId) { rec('canDecide', apId); return canDecide; },
   };
 }
@@ -295,7 +295,7 @@ test('H-2 drain: 허용 판정은 서버 RPC(canInstruct)가 정본 — 메시�
   const enq = fakeEnqueue();
   const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
   assert.equal(r.denied, 1); assert.deepEqual(jobsOf(enq).map((j) => j.msgId), [22]);
-  assert.deepEqual(db.calls.filter((c) => c[0] === 'canInstruct').map((c) => c[2]), [MEMBER, OWNER], '대상 메시지마다 서버에 묻는다');
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'instructCheck').map((c) => [c[2], c[3]]), [[MEMBER, CH], [OWNER, CH]], '대상 메시지마다 서버에 (작성자, 채널)로 묻는다');
   const db2 = fakeDb({ crews: [crew({ allow: 'owner' })], messages: [msg(23)], canInstructThrows: true });
   const enq2 = fakeEnqueue(); const errs = []; const orig = console.error; console.error = (...a) => errs.push(a.join(' '));
   try { const r2 = await M.drain(WS, { db: db2, uid: OWNER, enqueue: enq2 }); assert.equal(r2.denied, 1, '폴백 로컬 판정도 owner 전용을 지킨다'); }
@@ -343,4 +343,13 @@ test('H-2 정직한 신호: 정책 밖 로컬 확정(가드 우회)이 미러 �
   const s2 = (await loadApprovals(WS)).find((a) => a.id === it2.id);
   await M.msgrPush({ type: 'approval_resolved', wsId: WS, item: { ...s2, status: 'approved' } }, { session: async () => ({ db: db2, uid: OWNER }) });
   assert.equal(db2.calls.filter((c) => c[0] === 'insertMessage' && c[1].client_msg_id?.startsWith('apl:')).length, 0);
+});
+
+test('I-3 채널 정책: 서버가 channel_policy를 돌려주면 소유자 지시라도 적재하지 않고 채널 정책 사유로 안내한다', async () => {
+  const db = fakeDb({ crews: [crew({ allow: 'all' })], messages: [msg(31, { author_user_id: OWNER })], channelPolicy: { [CH]: 'read_only' } });
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.denied, 1); assert.equal(jobsOf(enq).length, 0);
+  const sys = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
+  assert.equal(sys[0].client_msg_id, `deny:${CREW}:31`); assert.match(sys[0].body, /회사 크루만 일할 수 있습니다\(채널 정책\)/);
 });

@@ -121,7 +121,7 @@ function Shell({ session }) {
   const loadOrg = useCallback(async (id) => {
     if (!id) return;
     const [chs, mems, crs, e, pol] = await Promise.all([
-      q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, created_by').eq('org_id', id).is('archived_at', null).order('created_at')),
+      q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name').eq('org_id', id).is('removed_at', null)),
       q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at').eq('org_id', id).eq('status', 'active')),
       supabase.from('msgr_org_entitlements').select('plan, seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
@@ -269,7 +269,7 @@ function Shell({ session }) {
       </aside>
       <main className="msgr-main">
         {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
-        {chSheet && channel && <ChannelSheet channel={channel} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} nameOfUser={nameOfUser} onClose={() => setChSheet(false)} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
+        {chSheet && channel && <ChannelSheet channel={channel} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} nameOfUser={nameOfUser} onClose={() => setChSheet(false)} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {(err || note) && (
           <div className="msgr-notice">
             <span style={{ color: err ? 'var(--danger)' : 'var(--fg-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{err ? `${t('ui.error')}: ${err}` : note}</span>
@@ -279,7 +279,7 @@ function Shell({ session }) {
         {page === 'settings' ? (
           <Settings session={session} me={me} org={org} isAdmin={!!isAdmin} policy={policy} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
-          <Channel key={chId} channel={channel} orgId={orgId} uid={uid} isAdmin={!!isAdmin} policy={policy} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} dmName={dmName} />
+          <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} policy={policy} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} dmName={dmName} />
         ) : (
           <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={createOrg} createChannel={createChannel} invite={isAdmin ? invite : null} />
         )}
@@ -359,7 +359,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
 }
 
 /* ─── 채널 시트: 이름·주제(관리자·생성자) · 크루 기억 스위치 · 멤버(비공개·DM: 사람·크루 추가/내보내기, 크루=소유자 동반) · 보관 ─── */
-function ChannelSheet({ channel, uid, isAdmin, policy, members, crews, chMembers, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
+function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMembers, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
   const { t } = useT();
   const canEdit = isAdmin || channel.created_by === uid;
   const memLocked = !!policy?.crew_memory_locked; // H-0: 서버 트리거 msgr_channel_policy_gate가 최종
@@ -382,7 +382,7 @@ function ChannelSheet({ channel, uid, isAdmin, policy, members, crews, chMembers
     if (crew && !chMembers.some((m) => m.member_kind === 'user' && m.member_id === crew.owner_user_id)) rows.push({ channel_id: channel.id, member_kind: 'user', member_id: crew.owner_user_id, added_by: uid }); // 크루 = 소유자 동반
     const res = await supabase.from('msgr_channel_members').upsert(rows, { onConflict: 'channel_id,member_kind,member_id' });
     setBusy(false); setPick(null);
-    if (res.error) return onError(res.error.message);
+    if (res.error) return onError(/msgr_channel_personal_blocked/.test(res.error.message) ? t('err.channelPersonalBlocked') : res.error.message); // I-3: 서버 게이트의 거절을 정직한 문구로
     await onChanged();
   };
   const removeMember = async (kind, id) => {
@@ -398,7 +398,7 @@ function ChannelSheet({ channel, uid, isAdmin, policy, members, crews, chMembers
   const userIds = new Set(chMembers.filter((m) => m.member_kind === 'user').map((m) => m.member_id));
   const crewIds = new Set(chMembers.filter((m) => m.member_kind === 'crew').map((m) => m.member_id));
   const addableUsers = members.filter((m) => !userIds.has(m.user_id));
-  const addableCrews = crews.filter((c) => !crewIds.has(c.id));
+  const addableCrews = crews.filter((c) => !crewIds.has(c.id) && ((channel.personal_crews ?? 'allowed') !== 'blocked' || crewTier(c, org) === 'company')); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
   const scoped = channel.kind !== 'public';
   return (
     <div className="msgr-sheetwrap">
@@ -421,6 +421,16 @@ function ChannelSheet({ channel, uid, isAdmin, policy, members, crews, chMembers
           <label className="switchrow"><input type="checkbox" checked={channel.crew_memory !== false} disabled={!canEdit || busy || memLocked} onChange={(e) => upd({ crew_memory: e.target.checked })} /><span>{channel.crew_memory === false ? t('ch.memory.off') : t('ch.memory.on')}</span></label>
           {memLocked && <p className="note">{t('ch.memory.locked')}</p>}
         </section>
+        {channel.kind !== 'dm' && (
+          <section>
+            <h3>{t('ch.personal')}</h3>
+            <p>{t('ch.personal.desc')}</p>
+            <div className="msgr-seg" role="radiogroup" aria-label={t('ch.personal')}>
+              {['allowed', 'read_only', 'blocked'].map((v) => <button key={v} type="button" role="radio" aria-checked={(channel.personal_crews ?? 'allowed') === v} className={(channel.personal_crews ?? 'allowed') === v ? 'active' : ''} disabled={!canEdit || busy} onClick={() => upd({ personal_crews: v }, t('ch.personal.saved'))}>{t(`ch.personal.${v}`)}</button>)}
+            </div>
+            {(channel.personal_crews ?? 'allowed') === 'blocked' && <p className="note">{t('ch.personal.blocked.note')}</p>}
+          </section>
+        )}
         <section>
           <h3>{t('ch.members')}</h3>
           {!scoped && <p>{t('ch.members.public')}</p>}
@@ -571,7 +581,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite }) {
 }
 
 /* ─── 채널 본문: 상단(제목·멤버 스택·세그먼트 탭) + 척추 스레드 + 2단 독 ─── */
-function Channel({ channel, orgId, uid, isAdmin, policy, members, crews, nameOfUser, crewOf, event, typing, onError, onMenu, onCrew, onTitle, dmName }) {
+function Channel({ channel, orgId, org, uid, isAdmin, policy, members, crews, nameOfUser, crewOf, event, typing, onError, onMenu, onCrew, onTitle, dmName }) {
   const { t, lang } = useT();
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
   const [tab, setTab] = useState('all');
@@ -639,7 +649,7 @@ function Channel({ channel, orgId, uid, isAdmin, policy, members, crews, nameOfU
         {typingCrews.map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /></div></div></div>)}
       </div>
     </div>
-    <Composer chId={chId} orgId={orgId} uid={uid} members={members} crews={crews} channel={channel} sbw={sbw} typingCrews={typingCrews} onSent={() => load(lastId).catch(() => {})} onError={onError} />
+    <Composer chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} sbw={sbw} typingCrews={typingCrews} onSent={() => load(lastId).catch(() => {})} onError={onError} />
   </>);
 }
 
@@ -721,7 +731,7 @@ function Attachment({ a }) {
 }
 
 /* ─── 2단 다크 독: 입력 줄 + 도구 줄(첨부·멘션 │ 기억 상태) + 옐로 원형 전송. @멘션 팝업(사람·크루), Enter 전송(IME 조합 제외) ─── */
-function Composer({ chId, orgId, uid, members, crews, channel, sbw = 0, typingCrews, onSent, onError }) {
+function Composer({ chId, orgId, org, uid, members, crews, channel, sbw = 0, typingCrews, onSent, onError }) {
   const { t } = useT();
   const [text, setText] = useState(''); const [busy, setBusy] = useState(false); const [files, setFiles] = useState([]);
   const [pop, setPop] = useState(null); const [sel, setSel] = useState(0);
@@ -731,9 +741,10 @@ function Composer({ chId, orgId, uid, members, crews, channel, sbw = 0, typingCr
   const candidates = useMemo(() => {
     if (!pop) return [];
     const needle = pop.q.toLowerCase();
-    const list = [...crews.map((c) => ({ kind: 'crew', id: c.id, name: c.display_name, sub: c.role_text })), ...members.map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8), sub: m.role }))];
+    const usable = channel?.personal_crews && channel.personal_crews !== 'allowed' ? crews.filter((c) => crewTier(c, org) === 'company') : crews; // I-3: 이 채널이 회사 크루만이면 개인 크루는 멘션 후보에서 뺀다(안 될 버튼 노출 금지 — 최종 판정은 서버)
+    const list = [...usable.map((c) => ({ kind: 'crew', id: c.id, name: c.display_name, sub: c.role_text })), ...members.map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8), sub: m.role }))];
     return list.filter((x) => !needle || x.name.toLowerCase().includes(needle)).slice(0, 8);
-  }, [pop, crews, members]);
+  }, [pop, crews, members, channel?.personal_crews, org]);
   const autosize = (el) => { if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 200)}px`; };
   const detect = (v, caret) => { const upto = v.slice(0, caret); const m = upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); };
   const onChange = (e) => { const v = e.target.value; setText(v); autosize(e.target); detect(v, e.target.selectionStart); };

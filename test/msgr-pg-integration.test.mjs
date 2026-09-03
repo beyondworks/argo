@@ -463,3 +463,36 @@ test('회사 크루 판별(I-1): msgr_crew_tier는 "서비스 계정 소유 + re
   assert.equal(last(asUser(U.outsider, `select public.msgr_crew_tier('${CREW_SVC}')`)), '', '비멤버는 판정 자체가 빈 값(행 없음)');
   assert.equal(last(asUser(U.admin, `update public.msgr_orgs set service_user_id = null where id = '${ORG}' returning 1`)), '1'); // 복원
 });
+
+test('채널 개인 크루 정책(I-3): read_only/blocked면 개인 크루는 소유자 지시도 channel_policy, 회사 크루는 ok, blocked는 멤버 추가 거절·전환 시 기존 개인 크루 멤버 제거·감사, 답글 게이트 연동', { skip }, () => {
+  const chk = (u, crewId, author, ch) => last(asUser(u, `select public.msgr_instruct_check('${crewId}', '${author}', ${ch ? `'${ch}'` : 'null'})`));
+  sql(`update public.msgr_crews set allow = 'all' where id in ('${CREW}', '${CREW_SVC}')`); // H-0 잠금 sweep이 남긴 'owner'를 되돌린다
+  sql(`update public.msgr_orgs set service_user_id = '${U.svc}' where id = '${ORG}'`);
+  assert.equal(chk(U.member, CREW, U.member, PRIV), 'ok', '기본 allowed');
+  assert.equal(last(asUser(U.admin, `update public.msgr_channels set personal_crews = 'read_only' where id = '${PRIV}' returning personal_crews`)), 'read_only');
+  assert.equal(chk(U.member, CREW, U.member, PRIV), 'channel_policy', 'read_only: 개인 크루는 소유자도 지시 불가');
+  assert.equal(chk(U.member, CREW, U.member, null), 'ok', '채널 없이 물으면 크루 규칙만');
+  assert.equal(chk(U.svc, CREW_SVC, U.member, PRIV), 'ok', '회사 크루는 채널 정책 무관');
+  assert.equal(chk(U.member, CREW, U.outsider, PRIV), 'channel_policy', '채널 정책이 크루 규칙보다 먼저');
+  sql(`update public.msgr_channels set personal_crews = 'allowed' where id = '${PRIV}'`);
+  assert.equal(chk(U.member, CREW, U.outsider, PRIV), 'crew_allow');
+  // 답글 게이트 연동: read_only 채널에서 개인 크루 답글 거절
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'user', '${U.member}', '${U.admin}') on conflict do nothing`);
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'crew', '${CREW}', '${U.admin}') on conflict do nothing`);
+  const src = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body) values ('${PRIV}', 'user', '${U.member}', '@서윤 해줘') returning id`));
+  sql(`update public.msgr_channels set personal_crews = 'read_only' where id = '${PRIV}'`);
+  denied(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to) values ('${PRIV}', 'crew', '${CREW}', '답', 'reply:${CREW}:${src}', ${src})`, /msgr_not_allowed/);
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${PRIV}' and member_kind = 'crew' and member_id = '${CREW}'`), '1', 'read_only는 멤버 유지');
+  // blocked: 전환 시 기존 개인 크루 멤버 제거 + 감사, 추가 거절, 회사 크루는 추가 가능
+  assert.equal(last(asUser(U.admin, `update public.msgr_channels set personal_crews = 'blocked' where id = '${PRIV}' returning 1`)), '1');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${PRIV}' and member_kind = 'crew' and member_id = '${CREW}'`), '0', 'blocked 전환이 개인 크루 멤버를 제거');
+  denied(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'crew', '${CREW}', '${U.admin}')`, /msgr_channel_personal_blocked/);
+  assert.match(last(asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'crew', '${CREW_SVC}', '${U.admin}') returning member_id`)), /^[0-9a-f-]{36}$/, '회사 크루는 추가 가능');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'channel.personal_crews' and target_id = '${PRIV}'`), '4', '전환 4회(allowed→read_only→allowed→read_only→blocked) = 감사 4건');
+  // 복원
+  sql(`delete from public.msgr_channel_members where channel_id = '${PRIV}' and member_id in ('${CREW_SVC}', '${U.member}')`);
+  sql(`delete from public.msgr_messages where id = ${src}`);
+  sql(`update public.msgr_channels set personal_crews = 'allowed' where id = '${PRIV}'`);
+  sql(`update public.msgr_orgs set service_user_id = null where id = '${ORG}'`);
+  sql(`update public.msgr_crews set allow = 'list', allow_users = array['${U.owner}'::uuid] where id = '${CREW}'`);
+});

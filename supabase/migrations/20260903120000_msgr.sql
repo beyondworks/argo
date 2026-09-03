@@ -807,3 +807,76 @@ $$;
 revoke all on function public.msgr_crew_tier(uuid) from public;
 revoke execute on function public.msgr_crew_tier(uuid) from anon;
 grant execute on function public.msgr_crew_tier(uuid) to authenticated;
+
+-- ── I-3 채널의 개인 크루 참여 정책(부록 I·K — 민감한 채널은 회사 크루만): allowed | read_only(멤버·열람은 되나 지시 불가) | blocked(멤버 추가도 불가).
+--    판정 정본 msgr_instruct_check(crew, author, channel) → 'ok' | 'inactive' | 'crew_allow' | 'channel_policy'. msgr_can_instruct는 그 boolean 포장.
+alter table public.msgr_channels add column if not exists personal_crews text not null default 'allowed' check (personal_crews in ('allowed', 'read_only', 'blocked'));
+create or replace function public.msgr_instruct_check(crew uuid, author uuid, channel uuid default null) returns text
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select case
+      when c.id is null or c.status <> 'active' or author is null then 'inactive'
+      when channel is not null and ch.personal_crews <> 'allowed'
+           and not (o.service_user_id is not null and c.owner_user_id = o.service_user_id and c.hosting = 'resident') then 'channel_policy' -- 개인 크루는 이 채널에서 지시 불가(소유자도)
+      when c.owner_user_id = author then 'ok'
+      when c.allow = 'owner' then 'crew_allow'
+      when c.allow = 'list' then case when author = any (c.allow_users) and m.user_id is not null then 'ok' else 'crew_allow' end
+      else case when m.user_id is not null then 'ok' else 'crew_allow' end
+    end
+      from (select 1) x
+      left join public.msgr_crews c on c.id = crew
+      left join public.msgr_orgs o on o.id = c.org_id
+      left join public.msgr_channels ch on ch.id = channel
+      left join public.msgr_org_members m on m.org_id = c.org_id and m.user_id = author and m.removed_at is null
+$$;
+revoke all on function public.msgr_instruct_check(uuid, uuid, uuid) from public;
+revoke execute on function public.msgr_instruct_check(uuid, uuid, uuid) from anon;
+grant execute on function public.msgr_instruct_check(uuid, uuid, uuid) to authenticated;
+create or replace function public.msgr_can_instruct(crew uuid, author uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$ select public.msgr_instruct_check(crew, author, null) = 'ok' $$;
+create or replace function public.msgr_can_instruct(crew uuid, author uuid, channel uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$ select public.msgr_instruct_check(crew, author, channel) = 'ok' $$;
+revoke all on function public.msgr_can_instruct(uuid, uuid, uuid) from public;
+revoke execute on function public.msgr_can_instruct(uuid, uuid, uuid) from anon;
+grant execute on function public.msgr_can_instruct(uuid, uuid, uuid) to authenticated;
+-- 크루 답글 게이트: 채널 정책까지 재판정
+create or replace function public.msgr_crew_reply_gate() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare src public.msgr_messages; src_id bigint;
+begin
+  if new.author_kind <> 'crew' or new.client_msg_id is null or new.client_msg_id !~ '^reply:[^:]+:[0-9]+$' then return new; end if;
+  src_id := split_part(new.client_msg_id, ':', 3)::bigint;
+  select * into src from public.msgr_messages where id = src_id;
+  if src.id is null or src.author_kind <> 'user' then return new; end if; -- 원문 없음(삭제)·크루/시스템 원문은 지시가 아니다
+  if not public.msgr_can_instruct(new.crew_id, src.author_user_id, new.channel_id) then
+    raise exception 'msgr_not_allowed' using detail = 'crew reply to an author outside the crew allow policy or channel policy';
+  end if;
+  return new;
+end $$;
+-- 채널 멤버 게이트: blocked 채널에는 개인 크루를 넣을 수 없다. 정책을 blocked로 바꾸면 기존 개인 크루 멤버는 제거(sweep).
+create or replace function public.msgr_channel_personal_gate() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.member_kind = 'crew' and exists (select 1 from public.msgr_channels ch where ch.id = new.channel_id and ch.personal_crews = 'blocked')
+     and not exists (select 1 from public.msgr_crews c join public.msgr_orgs o on o.id = c.org_id
+                       where c.id = new.member_id and o.service_user_id is not null and c.owner_user_id = o.service_user_id and c.hosting = 'resident') then
+    raise exception 'msgr_channel_personal_blocked';
+  end if;
+  return new;
+end $$;
+drop trigger if exists msgr_channel_personal_gate on public.msgr_channel_members;
+create trigger msgr_channel_personal_gate before insert on public.msgr_channel_members for each row execute function public.msgr_channel_personal_gate();
+create or replace function public.msgr_channel_policy_sweep() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.personal_crews = 'blocked' and old.personal_crews <> 'blocked' then
+    delete from public.msgr_channel_members cm using public.msgr_crews c left join public.msgr_orgs o on o.id = c.org_id
+     where cm.channel_id = new.id and cm.member_kind = 'crew' and cm.member_id = c.id
+       and not (o.service_user_id is not null and c.owner_user_id = o.service_user_id and c.hosting = 'resident');
+  end if;
+  if new.personal_crews is distinct from old.personal_crews then
+    perform public.msgr_audit(new.org_id, 'channel.personal_crews', 'channel', new.id::text, jsonb_build_object('from', old.personal_crews, 'to', new.personal_crews));
+  end if;
+  return new;
+end $$;
+drop trigger if exists msgr_channel_policy_sweep on public.msgr_channels;
+create trigger msgr_channel_policy_sweep after update on public.msgr_channels for each row execute function public.msgr_channel_policy_sweep();

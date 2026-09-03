@@ -120,7 +120,7 @@ export function makeDb(client) {
     /** 0행 = RLS가 거절(결재권 없음·이미 확정) — 호출자가 정직한 신호를 낼 수 있게 행 수를 돌려준다. */
     async updateApproval(id, patch) { return unwrap(await client.from('msgr_crew_approvals').update(patch).eq('id', id).select('id')) ?? []; },
     /** H-2: 허용 판정의 정본은 서버(msgr_can_instruct). 실패는 throw — 호출자가 로컬 판정으로 폴백하고 로그한다. */
-    async canInstruct(crewId, authorId) { return unwrap(await client.rpc('msgr_can_instruct', { crew: crewId, author: authorId })) === true; },
+    async instructCheck(crewId, authorId, channelId) { return unwrap(await client.rpc('msgr_instruct_check', { crew: crewId, author: authorId, channel: channelId ?? null })); }, // 'ok'|'inactive'|'crew_allow'|'channel_policy'(I-3)
     /** H-1/H-2: 이 세션(크루 소유자)이 이 결재를 확정할 수 있나 — 정책·위험 등급 반영(msgr_can_decide). */
     async canDecide(apRowId) { return unwrap(await client.rpc('msgr_can_decide', { ap: apRowId })) === true; },
     async approvalsByIds(ids) {
@@ -160,13 +160,16 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     for (const m of msgs) {
       max = Math.max(max, m.id);
       if (!targetsCrew(m, crew, dm)) continue;
-      const allowed = await db.canInstruct(crew.id, m.author_user_id).catch((e) => { console.error('[argo] msgr 허용 판정 RPC 실패 — 로컬 판정으로 폴백:', e?.message ?? e); return allowedToInstruct(crew, m.author_user_id, uid); }); // H-2: 서버가 정본, 답글도 서버 트리거가 재판정
-      if (!allowed) {
+      const why = await db.instructCheck(crew.id, m.author_user_id, m.channel_id).catch((e) => { console.error('[argo] msgr 허용 판정 RPC 실패 — 로컬 판정으로 폴백:', e?.message ?? e); return allowedToInstruct(crew, m.author_user_id, uid) ? 'ok' : 'crew_allow'; }); // H-2: 서버가 정본(채널 정책 포함), 답글도 서버 트리거가 재판정
+      if (why !== 'ok') {
         out.denied++;
         await db.insertMessage({
           channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, client_msg_id: `deny:${crew.id}:${m.id}`,
-          body: pick(`${crew.display_name}에게는 ${crew.allow === 'owner' ? '소유자만' : '허용된 멤버만'} 일을 시킬 수 있습니다 — 소유자에게 허용을 요청하세요.`,
-            `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — ask the owner for access.`, lang),
+          body: why === 'channel_policy'
+            ? pick(`이 채널은 회사 크루만 일할 수 있습니다(채널 정책). ${crew.display_name}은(는) 개인 크루라 여기서는 지시를 받지 않습니다.`,
+              `Only company crews can work in this channel (channel policy). ${crew.display_name} is a personal crew and does not take instructions here.`, lang)
+            : pick(`${crew.display_name}에게는 ${crew.allow === 'owner' ? '소유자만' : '허용된 멤버만'} 일을 시킬 수 있습니다 — 소유자에게 허용을 요청하세요.`,
+              `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — ask the owner for access.`, lang),
         }).catch((e) => console.error('[argo] msgr 거절 안내 실패:', e.message));
         continue;
       }

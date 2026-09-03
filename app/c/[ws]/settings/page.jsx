@@ -783,6 +783,13 @@ function MsgrCard({ ws, agents }) {
             {st.orgs.map((o) => <option key={o.id} value={o.id}>{o.name} · {t(`role.${o.role}`)}</option>)}
           </select>
         </label>
+        {org?.policy && (
+          <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.5 }}>
+            <span className="microlabel" style={{ marginRight: 6 }}>{t('settings.msgr.policy')}</span>
+            {t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') })}
+          </p>
+        )}
+        <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.5 }}>{t('settings.msgr.tierNote')}</p>
         {!agents.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noCrews')}</p>}
         {agents.map((a) => {
           const reg = regOf(a.slug);
