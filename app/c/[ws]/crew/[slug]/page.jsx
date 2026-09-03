@@ -715,7 +715,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     } catch { /* 실패해도 다음 로드에서 서버 정본으로 복구 */ }
   }
 
-  const rail = (
+  const rail = embedded ? null : ( // 보조 패널(embedded)은 레일이 없다 — 만들지도 않는다
       <div className="side-rail" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('chat.sessions.title')}{sessions.length ? ` · ${sessions.length + 1}` : ''}

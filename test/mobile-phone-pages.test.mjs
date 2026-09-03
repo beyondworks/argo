@@ -26,7 +26,7 @@ for (const [name, path, cond] of [
     const s = await src(path);
     assert.match(s, /const phone = usePhoneShell\(\);/);
     assert.match(s, /const \[railOpen, setRailOpen\] = useState\(false\);/);
-    assert.match(s, /const rail = \(\n\s*<div className="side-rail"/, '레일 JSX는 rail 변수 한 벌');
+    assert.match(s, /const rail = (?:embedded \? null : )?\([^\n]*\n\s*<div className="side-rail"/, '레일 JSX는 rail 변수 한 벌(크루는 embedded면 null)');
     assert.equal((s.match(/className="side-rail"/g) || []).length, 1, 'side-rail 마크업 중복 없음(두 벌이면 한쪽만 고쳐진다)');
     assert.match(s, cond, '시트 갈래 형태 고정');
     assert.equal((s.match(/phone-sheet/g) || []).length, 2, 'phone-sheet 참조는 시트 갈래의 2건뿐');
@@ -46,7 +46,11 @@ test('크루 대화 — 컴포저 autoFocus 속성 없음(SSR autofocus = 사파
   assert.match(ui, /dataset\.shell === 'mobile' \|\| phoneHint\(\)/, 'isPhoneShell = 마커 또는 localStorage 힌트');
   const lay = await src('../app/c/[ws]/layout.jsx');
   const eff = lay.slice(lay.indexOf('useEffect(() => {\n    if (!mobile) return;'), lay.indexOf('}, [mobile]);'));
-  assert.ok(eff.includes("localStorage.setItem('argo-phone', '1')") && eff.includes('maximum-scale=1'), '힌트·maximum-scale은 mobile 게이트 effect 안');
+  assert.match(eff, /try \{ localStorage\.setItem\('argo-phone', '1'\); \}/, '힌트 쓰기는 mobile 게이트 effect 안(문 전체 앵커 — 주석은 fail-open)');
+  assert.match(eff, /vp\.content \+= ', viewport-fit=cover';/);
+  assert.ok(!/maximum-scale/.test(lay.replace(/\/\/[^\n]*/g, '')), 'maximum-scale 금지 — Android는 손가락 확대까지 막힌다(코드 기준, 주석 제외)');
+  const css = await src('../app/globals.css');
+  assert.match(css, /^\[data-shell="mobile"\] \.input-bar textarea, \[data-shell="mobile"\] \.input-bar input \{ font-size: 16px; \}$/m, 'iOS 포커스 확대 트리거(16px 미만) 제거는 폰 블록 16px');
 });
 
 test('활동 — 2열 산식은 .activity-cols(globals), 인라인 316px 없음', async () => {
@@ -58,16 +62,23 @@ test('활동 — 2열 산식은 .activity-cols(globals), 인라인 316px 없음'
   assert.match(css, /^\[data-shell="mobile"\] \.activity-cols \{ grid-template-columns: minmax\(0, 1fr\); \}$/m);
 });
 
-test('폰 블록 .chat-cols — 하단 탭(58)+safe-area를 뺀 높이, 레일 시트 상한', async () => {
+test('폰 블록 .chat-cols — 하단 탭(59)+safe-area를 뺀 높이, 열·행 하나는 in-flow 레일 없는 그리드만, 레일 시트 상한, 밴드 마커 전환', async () => {
   const css = await src('../app/globals.css');
   const block = css.slice(css.indexOf('/* ── 휴대폰 셸 — data-shell="mobile"'));
   const m = block.match(/^\[data-shell="mobile"\] \.chat-cols \{ ([^}]*)\}$/m);
   assert.ok(m, '폰 블록 .chat-cols 규칙');
-  assert.match(m[1], /grid-template-columns: minmax\(0, 1fr\); grid-template-rows: minmax\(0, 1fr\);/);
-  assert.match(m[1], /height: calc\(100dvh \/ var\(--z, 1\) - 140px - env\(safe-area-inset-bottom, 0px\)\)/);
+  assert.ok(!/grid-template/.test(m[1]), '.chat-cols 공용 규칙에 열·행 없음 — 경쟁(in-flow 레일)이 같이 탄다(검수 H-2)');
+  assert.match(block, /^\[data-shell="mobile"\] \.chat-cols:not\(:has\(> \.side-rail\)\) \{ grid-template-columns: minmax\(0, 1fr\); grid-template-rows: minmax\(0, 1fr\); \}$/m);
+  assert.match(m[1], /height: calc\(100dvh \/ var\(--z, 1\) - 141px - env\(safe-area-inset-bottom, 0px\)\)/);
   assert.match(m[1], /margin-bottom: -28px;/);
-  // 탭 높이 산식의 원천(.phone-tab min-height 48 + 패딩 4+6 = 58) — 탭이 커지면 140도 같이 바꿔야 한다
+  // 탭 높이 산식의 원천(.phone-tab min-height 48 + 패딩 4+6 + 위 테두리 1 = 59) — 탭이 커지면 141·시트 bottom 59도 같이 바꿔야 한다
   assert.match(block, /\.phone-tab \{[^}]*min-height: 48px;/);
-  assert.match(block, /\.phone-tabs \{[^}]*padding: 4px 4px calc\(6px \+ env\(safe-area-inset-bottom, 0px\)\);/);
+  assert.match(block, /\.phone-tabs \{[^}]*border-top: 1px solid[^}]*padding: 4px 4px calc\(6px \+ env\(safe-area-inset-bottom, 0px\)\);/);
+  assert.match(block, /\.phone-sheet \{[^}]*bottom: calc\(59px \+ env\(safe-area-inset-bottom, 0px\)\);/);
+  // .content 상단 16·좌우 14 = ≤900 블록과 동일(폰 셸 × 넓은 폭에서 산식 16이 서야 body 스크롤 0 — 검수 M-4)
+  assert.match(block, /^\[data-shell="mobile"\] \.content \{ padding: 16px 14px calc\(96px \+ env\(safe-area-inset-bottom, 0px\)\); \}$/m);
+  // 밴드 마커 전환(검수 H-1) — ≤900 블록의 두 규칙과 같은 내용
+  assert.match(block, /^\[data-shell="mobile"\] #argo-topbar-slot \{ display: none; \}$/m);
+  assert.match(block, /^\[data-shell="mobile"\] \.crew-phone-band \{ display: flex; flex-wrap: wrap; \}$/m);
   assert.match(block, /^\[data-shell="mobile"\] \.rail-sheet \{ max-height: calc\(70vh \/ var\(--z, 1\)\); overflow-y: auto; \}$/m);
 });

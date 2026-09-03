@@ -246,12 +246,10 @@ function Shell({ children, params }) {
     // 마커 전 렌더가 이미 autoFocus로 키보드를 올렸을 수 있다(첫 진입 경합) — 한 번 내린다
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur?.();
     // iOS 안전 영역(env(safe-area-inset-*))은 viewport-fit=cover가 있어야 0이 아니다 — 기존 메타에 덧붙인다.
-    // maximum-scale=1: 위 autoFocus 경합이 iOS 사파리의 입력 포커스 자동 확대(16px 미만 폰트)를 이미 일으킨 뒤라
-    // 화면이 1.4배로 확대된 채 하단 탭이 시야 밖으로 밀렸다(실측 2026-09-03 크루 대화 URL 직접 열기). 메타 재설정이
-    // 배율을 1로 되돌리고 이후 포커스 확대를 막는다(iOS는 접근성상 손가락 확대는 계속 허용). blur 뒤에 두는 이유 —
-    // 포커스가 남아 있으면 재평가 직후 다시 확대된다.
+    // maximum-scale=1은 넣지 않는다 — 이미 일어난 포커스 확대를 되돌리지 못하고(실측 2026-09-03 3회), Android(Blink)에서는
+    // 손가락 확대까지 막는다. 확대의 원인(SSR autofocus·16px 미만 컴포저)은 크루 대화 마운트 효과와 폰 블록 16px가 없앤다.
     const vp = document.querySelector('meta[name="viewport"]');
-    if (vp && !/viewport-fit/.test(vp.content)) vp.content += ', maximum-scale=1, viewport-fit=cover';
+    if (vp && !/viewport-fit/.test(vp.content)) vp.content += ', viewport-fit=cover';
     return () => { delete d.dataset.shell; };
   }, [mobile]);
 
