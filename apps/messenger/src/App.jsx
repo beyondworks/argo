@@ -28,7 +28,8 @@ function Av({ name, crew, size }) {
 }
 /** 본문 속 @멘션을 굵게·줄바꿈 금지로(평가 1차: @와 이름 사이 줄바꿈). */
 function Body({ text }) {
-  const parts = String(text ?? '').split(/(@[^\s@]+)/g);
+  // 앞이 문자열 시작/공백일 때만 멘션(이메일의 @domain은 제외 — 검수 M4)
+  const parts = String(text ?? '').split(/((?:^|(?<=\s))@[^\s@]+)/g);
   return parts.map((p, i) => p.startsWith('@') ? <span key={i} className="msgr-mention">{p}</span> : p);
 }
 
@@ -136,6 +137,7 @@ function Shell({ session }) {
     return () => { ch?.unsubscribe(); rt.current = null; };
   }, [orgId, session.access_token]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
+  useEffect(() => { if (!rail) return; const on = (e) => { if (e.key === 'Escape') setRail(false); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [rail]);
   useEffect(() => { if (tick % 2 === 0 && orgId) loadOrg(orgId).catch(() => {}); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const org = orgs?.find((o) => o.id === orgId);
   const me = members.find((m) => m.user_id === uid);
@@ -177,7 +179,7 @@ function Shell({ session }) {
   const shownCh = allChips ? sortedCh : sortedCh.slice(0, CHIP_MAX);
   return (
     <div className={`shell msgr-shell${rail ? ' rail-open' : ''}`}>
-      {rail && <div className="msgr-scrim" onClick={() => setRail(false)} />}
+      {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
       <aside className="side msgr-side">
         <div className="msgr-brand"><svg width="14" height="14" viewBox="0 0 16 16"><path d={STAR_D} /></svg>ARGO</div>
         <div className="msgr-org">
@@ -231,7 +233,7 @@ function Shell({ session }) {
           </div>
         )}
         {chId ? (
-          <Channel key={chId} channel={channel} orgId={orgId} uid={uid} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} rt={rt} onError={setErr} onMenu={() => setRail(true)} />
+          <Channel key={chId} channel={channel} orgId={orgId} uid={uid} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} />
         ) : (
           <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={createOrg} createChannel={createChannel} invite={isAdmin ? invite : null} />
         )}
@@ -254,7 +256,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite }) {
   return (<>
     <div className="msgr-top"><button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t('ch.empty') : t('org.none')}</span></div>
     <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
-      <span className="msgr-klabel">{t('ch.step1') && (org ? t('ch.list') : t('org.pick'))}</span>
+      <span className="msgr-klabel">{org ? t('ch.list') : t('org.pick')}</span>
       <h1>{org ? t('ch.noChannelTitle') : t('org.noneTitle')}</h1>
       <p>{org ? t('ch.noChannelDesc') : t('org.noneDesc')}</p>
       <div className="msgr-steps">
@@ -267,7 +269,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite }) {
 }
 
 /* ─── 채널 본문: 상단(제목·멤버 스택·세그먼트 탭) + 척추 스레드 + 2단 독 ─── */
-function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, event, typing, rt, onError, onMenu }) {
+function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, event, typing, onError, onMenu }) {
   const { t, lang } = useT();
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
   const [tab, setTab] = useState('all');
@@ -305,8 +307,10 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
   const apOf = (m) => m.kind === 'approval_card' ? aps[(m.mentions ?? []).find((x) => x.kind === 'approval')?.id] : null;
   const isMention = (m) => (m.mentions ?? []).some((x) => x.kind === 'user' && x.id === uid);
   const all = msgs ?? [];
-  const counts = { mention: all.filter(isMention).length, approval: all.filter((m) => apOf(m)?.status === 'pending').length, crew: all.filter((m) => m.author_kind === 'crew').length };
-  const shown = all.filter((m) => tab === 'all' || (tab === 'mention' && isMention(m)) || (tab === 'approval' && !!apOf(m)) || (tab === 'crew' && m.author_kind === 'crew'));
+  // 배지 수와 탭 모수는 같은 술어(검수 M2): 결재 탭 = 대기 중인 결재만
+  const isPending = (m) => apOf(m)?.status === 'pending';
+  const counts = { mention: all.filter(isMention).length, approval: all.filter(isPending).length, crew: all.filter((m) => m.author_kind === 'crew').length };
+  const shown = all.filter((m) => tab === 'all' || (tab === 'mention' && isMention(m)) || (tab === 'approval' && isPending(m)) || (tab === 'crew' && m.author_kind === 'crew'));
   const rows = []; let day = null;
   for (const m of shown) {
     const k = dayKey(m.created_at);
@@ -321,7 +325,7 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
       {channel.topic && <span className="topic">{channel.topic}</span>}
       {channel.crew_memory === false && <span className="msgr-klabel" title={t('ch.crewMemory')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><I name="memoff" size={13} />{t('ch.memoryOff')}</span>}
       <div className="members" title={t('ui.members')}>{members.slice(0, 4).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} size="sm" />)}{crews.slice(0, 2).map((c) => <Av key={c.id} name={c.display_name} crew size="sm" />)}</div>
-      <div className="msgr-seg">{tabs.map(([k, ic, n]) => <button key={k} type="button" className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{ic && <I name={ic} size={13} />}{t(`tab.${k}`)}{n > 0 && <span className="n">{n}</span>}</button>)}</div>
+      <div className="msgr-seg" role="tablist">{tabs.map(([k, ic, n]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{ic && <I name={ic} size={13} />}{t(`tab.${k}`)}{n > 0 && <span className="n">{n}</span>}</button>)}</div>
     </div>
     <div className="msgr-thread" ref={feed}>
       <div className="msgr-spine">
@@ -331,14 +335,14 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
         {typingCrews.map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /></div></div></div>)}
       </div>
     </div>
-    <Composer chId={chId} orgId={orgId} uid={uid} members={members} crews={crews} rt={rt} channel={channel} typingCrews={typingCrews} onSent={() => load(lastId).catch(() => {})} onError={onError} />
+    <Composer chId={chId} orgId={orgId} uid={uid} members={members} crews={crews} channel={channel} typingCrews={typingCrews} onSent={() => load(lastId).catch(() => {})} onError={onError} />
   </>);
 }
 
 function Message({ m, uid, lang, t, nameOfUser, crewOf, ap, atts, decide, parent }) {
   const [copied, setCopied] = useState(false);
   const crew = m.crew_id ? crewOf(m.crew_id) : null;
-  const name = m.author_kind === 'user' ? nameOfUser(m.author_user_id) : (crew?.display_name ?? '크루');
+  const name = m.author_kind === 'user' ? nameOfUser(m.author_user_id) : (crew?.display_name ?? t('org.crews'));
   const body = m.deleted_at ? '' : m.body;
   const copy = () => { navigator.clipboard?.writeText(body).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); };
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
@@ -373,7 +377,8 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, ap, atts, decide, parent
 
 /** 결재 슬립 — 머리띠(요청=옐로 / 확정=차콜 / 만료=회색) + 본문 + 도장 실. 보는 사람이 소유자면 버튼, 아니면 대기 표시. */
 function Slip({ ap, uid, lang, t, crew, nameOfUser, decide }) {
-  const owner = crew?.owner_user_id === uid;
+  // 소유자 판정은 화면용 — 크루가 목록에 없으면(비활성 등) 소유자 미상으로 보고 버튼을 띄운다. 최종 판정은 RLS(decide의 0행 처리). 검수 M1
+  const owner = crew ? crew.owner_user_id === uid : true;
   const ownerName = nameOfUser(crew?.owner_user_id);
   const cls = `msgr-slip ${ap.status}${ap.status === 'pending' && !owner ? ' wait' : ''}`;
   const band = ap.status === 'pending' ? (owner ? t('ap.request') : t('ap.wait', { name: ownerName })) : t(`ap.${ap.status}.band`);

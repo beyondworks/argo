@@ -1424,6 +1424,8 @@
 }
 :root[data-theme='linen'] .side, :root[data-theme='linen'] .msgr-composer {
   background: #1f1e1b; border-right-color: rgba(230, 226, 216, 0.1); color: #e6e2d8;
+  --bg: #1f1e1b;   /* 스코프 안 --bg = 레일 자기 배경(아바타 링·후광이 캔버스색으로 새지 않게 — 검수 H1) */
+  --ok: #6fb387; --ok-soft: rgba(111, 179, 135, 0.12); --info: #8fa3bd; --info-soft: rgba(143, 163, 189, 0.12); --warn: #d2a24f; --warn-soft: rgba(210, 162, 79, 0.13); --danger: #e2705f; --danger-soft: rgba(226, 112, 95, 0.11);   /* 차콜 위 상태색은 다크 갈래 값 */
   --fg: #e6e2d8; --fg-2: #a8a297; --fg-3: #8d877c;
   --border: rgba(230, 226, 216, 0.12); --border-soft: rgba(230, 226, 216, 0.06);
   --card: #2a2926; --card-2: #33322e; --secondary: #3c3a35;
@@ -1470,6 +1472,8 @@
   }
   :root[data-theme='linen'] .side, :root[data-theme='linen'] .msgr-composer {
   background: #171614; border-right-color: rgba(230, 226, 216, 0.1); color: #e6e2d8;
+  --bg: #171614;
+  --ok: #6fb387; --ok-soft: rgba(111, 179, 135, 0.12); --info: #8fa3bd; --info-soft: rgba(143, 163, 189, 0.12); --warn: #d2a24f; --warn-soft: rgba(210, 162, 79, 0.13); --danger: #e2705f; --danger-soft: rgba(226, 112, 95, 0.11);
   --fg: #e6e2d8; --fg-2: #a8a297; --fg-3: #8d877c;
   --border: rgba(230, 226, 216, 0.12); --border-soft: rgba(230, 226, 216, 0.06);
   --card: #2a2926; --card-2: #33322e; --secondary: #3c3a35;
@@ -1515,6 +1519,8 @@
 }
 :root[data-theme='linen-light'] .side, :root[data-theme='linen-light'] .msgr-composer {
   background: #1f1e1b; border-right-color: rgba(230, 226, 216, 0.1); color: #e6e2d8;
+  --bg: #1f1e1b;   /* 스코프 안 --bg = 레일 자기 배경(아바타 링·후광이 캔버스색으로 새지 않게 — 검수 H1) */
+  --ok: #6fb387; --ok-soft: rgba(111, 179, 135, 0.12); --info: #8fa3bd; --info-soft: rgba(143, 163, 189, 0.12); --warn: #d2a24f; --warn-soft: rgba(210, 162, 79, 0.13); --danger: #e2705f; --danger-soft: rgba(226, 112, 95, 0.11);   /* 차콜 위 상태색은 다크 갈래 값 */
   --fg: #e6e2d8; --fg-2: #a8a297; --fg-3: #8d877c;
   --border: rgba(230, 226, 216, 0.12); --border-soft: rgba(230, 226, 216, 0.06);
   --card: #2a2926; --card-2: #33322e; --secondary: #3c3a35;
@@ -1559,6 +1565,8 @@
 }
 :root[data-theme='linen-dark'] .side, :root[data-theme='linen-dark'] .msgr-composer {
   background: #171614; border-right-color: rgba(230, 226, 216, 0.1); color: #e6e2d8;
+  --bg: #171614;
+  --ok: #6fb387; --ok-soft: rgba(111, 179, 135, 0.12); --info: #8fa3bd; --info-soft: rgba(143, 163, 189, 0.12); --warn: #d2a24f; --warn-soft: rgba(210, 162, 79, 0.13); --danger: #e2705f; --danger-soft: rgba(226, 112, 95, 0.11);
   --fg: #e6e2d8; --fg-2: #a8a297; --fg-3: #8d877c;
   --border: rgba(230, 226, 216, 0.12); --border-soft: rgba(230, 226, 216, 0.06);
   --card: #2a2926; --card-2: #33322e; --secondary: #3c3a35;

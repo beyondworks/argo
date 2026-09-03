@@ -36,3 +36,16 @@ test('[linen] 라이트 .side가 캔버스보다 어둡다(차콜 레일) — �
     assert.equal(m[1], '#1f1e1b', `${sel}: 라이트 레일이 차콜(#1f1e1b)이 아니다`);
   }
 });
+
+test('[linen] 레일 스코프 안 --bg == 레일 배경, 상태색은 다크 갈래 — 링·후광·danger 글자가 캔버스 값으로 새지 않게(검수 H1)', () => {
+  const re = /:root\[data-theme='(linen(?:-light|-dark)?)'\] \.side, [^{]+\{\s*background: (#[0-9a-f]{6});([\s\S]*?)\n\}/g;
+  let n = 0;
+  for (const m of css.matchAll(re)) {
+    n++;
+    const bg = /--bg: (#[0-9a-f]{6});/.exec(m[3])?.[1];
+    assert.equal(bg, m[2], `${m[1]} 레일 스코프의 --bg(${bg})가 레일 배경(${m[2]})과 다르다`);
+    assert.match(m[3], /--danger: #e2705f;/, `${m[1]} 레일 스코프에 다크 갈래 --danger가 없다(차콜 위 라이트 danger는 2.8:1)`);
+    assert.match(m[3], /--ok: #6fb387;/, `${m[1]} 레일 스코프에 다크 갈래 --ok가 없다`);
+  }
+  assert.equal(n, 4, `레일 스코프 블록이 4개(자동 라이트·자동 다크·light·dark)여야 한다: ${n}`);
+});

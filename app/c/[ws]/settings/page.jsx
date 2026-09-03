@@ -373,7 +373,7 @@ const THEME_SWATCHES = {
 };
 
 // 아르고 시그니처 = 라이트/다크/시스템 3-모드. 나머지 테마는 "다른 스킨"으로 분리(모드 토글과 중복 제거).
-// 기본 패밀리 2종(그래파이트=기본, 아르고=시그니처) × 모드 3종(시스템/라이트/다크). 패밀리 코드: 시스템 자동은
+// 기본 패밀리 3종(그래파이트=기본, 아르고=시그니처, 리넨=메신저 기본) × 모드 3종(시스템/라이트/다크). 패밀리 코드: 시스템 자동은
 // 접미 없음, 고정은 -light/-dark. 다른 스킨(목록)은 패밀리 밖이라 모드 세그먼트가 적용되지 않는다.
 const FAMILIES = [['graphite', 'settings.family.graphite'], ['argo', 'settings.family.argo'], ['linen', 'settings.family.linen']];
 const MODE_SUFFIX = [['', 'settings.mode.system'], ['-light', 'settings.mode.light'], ['-dark', 'settings.mode.dark']];

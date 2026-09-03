@@ -135,7 +135,7 @@
 .msgr-dock > div { position: relative; }
 .msgr-composer { background: var(--card); color: var(--fg); border-radius: 22px; padding: 12px 12px 10px 16px; display: grid; gap: 8px; box-shadow: var(--shadow-float); border: 1px solid var(--border); transition: box-shadow 150ms ease; }
 .msgr-composer:focus-within { box-shadow: var(--shadow-float), 0 0 0 2px rgba(var(--mark-rgb), .45); }
-.msgr-composer textarea { width: 100%; min-height: 44px; max-height: 40vh; resize: none; background: transparent; border: 0; outline: 0; color: inherit; font: inherit; font-size: 13.5px; line-height: 1.55; padding: 4px 0 0; }
+.msgr-composer textarea { width: 100%; min-height: 44px; max-height: 200px; /* autosize 상한과 동일(검수 L9) */ resize: none; background: transparent; border: 0; outline: 0; color: inherit; font: inherit; font-size: 13.5px; line-height: 1.55; padding: 4px 0 0; }
 .msgr-composer textarea::placeholder { color: var(--fg-3); }
 .msgr-tools { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
 .msgr-tools .tb { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px; border-radius: 999px; color: var(--fg-2); font-size: 12px; border: 0; background: none; cursor: pointer; transition: background 120ms ease, color 120ms ease; }

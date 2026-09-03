@@ -6,7 +6,8 @@ import { readFileSync } from 'node:fs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const theme = read('app/theme.jsx');
-const THEMES = [...theme.matchAll(/'([a-z0-9-]+)'/g)].map((m) => m[1]);
+const arr = /export const THEMES = \[([\s\S]*?)\];/.exec(theme)?.[1] ?? '';   // 배열 리터럴 구간만(주석 속 따옴표에 fail-open하지 않게)
+const THEMES = [...arr.replace(/\/\/[^\n]*/g, '').matchAll(/'([a-z0-9-]+)'/g)].map((m) => m[1]);
 const DEFAULT = /export const DEFAULT_THEME = '([a-z0-9-]+)'/.exec(theme)?.[1];
 const bootOf = (src) => /localStorage\.getItem\('argo-theme'\)\|\|'([a-z0-9-]+)'/.exec(src)?.[1];
 
