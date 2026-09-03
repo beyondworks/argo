@@ -29,7 +29,13 @@ test('globals.css — 폰 셸 규칙은 파일 끝 한 블록, 전 셀렉터가 
   assert.ok(n >= 15, `규칙 수 ${n} — 블록이 통째로 비면 게이트가 무의미`);
   // 효과 기반 단언(검수 L-a: 기전 열거는 다음 고리를 못 막는다) — 마커 블록 **앞** 구간에서 사이드바를 숨기는 규칙과
   // .phone- 셀렉터는 어떤 형태(미디어쿼리·rem·data-narrow 속성·screen and)로도 등장하지 않는다
-  const before = css.slice(0, at).replace(/\/\*[\s\S]*?\*\//g, '');
+  let before = css.slice(0, at).replace(/\/\*[\s\S]*?\*\//g, '');
+  // 인쇄(@media print)는 화면 셸이 아니다 — 그 블록만 중괄호 균형으로 잘라낸다(기존 print 규칙이 .side를 숨긴다)
+  for (let i = before.indexOf('@media print'); i >= 0; i = before.indexOf('@media print')) {
+    let depth = 0, j = before.indexOf('{', i);
+    for (; j < before.length; j++) { if (before[j] === '{') depth++; else if (before[j] === '}' && --depth === 0) break; }
+    before = before.slice(0, i) + before.slice(j + 1);
+  }
   for (const m of before.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const sel = m[1].trim(), body = m[2];
     if (/(^|[\s,>+~])\.side(\s|$|[,:>])/.test(sel)) assert.ok(!/display\s*:\s*none/.test(body), `마커 블록 밖에서 .side 숨김: ${sel}`);
