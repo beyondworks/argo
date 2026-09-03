@@ -45,6 +45,7 @@
   },
   "devDependencies": {
     "eslint": "^10.8.0",
+    "espree": "^11.2.0",
     "express": "^5.2.1",
     "globals": "^17.8.0"
   }
