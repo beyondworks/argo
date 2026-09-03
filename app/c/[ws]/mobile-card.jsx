@@ -54,7 +54,8 @@ export function MobileCard({ embedded = false } = {}) {
 
   // 폴링 응답은 **내용이 바뀌었을 때만** 상태에 반영한다 — 같은 값으로 매번 setState하면 카드 전체가 다시 그려져
   // 열어 둔 주소 드롭다운이 닫히고 드래그 선택이 풀린다(유건 제보 2026-09-03). 카운트다운도 같은 이유로 자식 컴포넌트에 격리.
-  const pull = () => call('GET').then((d) => { setSt((prev) => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d)); // 서버 publicView/view()의 키 순서가 고정이라는 전제(순서만 바뀌면 재렌더가 늘 뿐 재마운트는 아님) setError(''); }).catch((e) => setError(String(e.message)));
+  // JSON 동등 비교는 서버 publicView/view()의 키 순서가 고정이라는 전제(순서만 바뀌면 재렌더가 늘 뿐 재마운트는 아님).
+  const pull = () => call('GET').then((d) => { setSt((prev) => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d)); setError(''); }).catch((e) => setError(String(e.message)));
   useEffect(() => { pull(); }, []);
   // 켜져 있을 때만 폴링 — 폰이 페어링되면 목록에 바로 뜬다.
   useEffect(() => {
