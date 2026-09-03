@@ -336,7 +336,8 @@ function Shell({ children, params }) {
     const load = () => api(`/api/companies/${ws}/connections`).then((d) => {
       const map = {};
       for (const [slug, a] of Object.entries(d.connections?.telegram?.agents ?? {})) {
-        if (a.hasToken) map[slug] = !!d.gateway?.agents?.[slug]?.alive;
+        // 토큰 단위 소유(2026-09-03): alive=이 기기가 수신 중, holder 'other'=다른 기기가 수신 중 — 색으로 가른다
+        if (a.hasToken) { const g = d.gateway?.agents?.[slug]; map[slug] = { alive: !!g?.alive, other: g?.holder === 'other', device: g?.holderDevice ?? '' }; }
       }
       setTgAgents(map);
     }).catch(() => {});
@@ -484,10 +485,12 @@ function Shell({ children, params }) {
                     <span style={{ position: 'relative', display: 'inline-flex', flex: 'none' }}>
                       <Avatar name={a.name} sm />
                       {a.slug in tgAgents && (
-                        <span title={t('nav.tgConnected')} style={{
+                        <span title={tgAgents[a.slug].alive ? t('nav.tgConnected') : tgAgents[a.slug].other ? t('nav.tgOtherDevice', { device: tgAgents[a.slug].device }) : t('nav.tgWaiting')} style={{
                           position: 'absolute', right: -1, bottom: -1, width: 7, height: 7, borderRadius: 999,
-                          background: tgAgents[a.slug] ? 'var(--ok)' : 'var(--warn)',
-                          boxShadow: '0 0 0 2px var(--bg)',
+                          // 초록 꽉 찬 점 = 이 기기가 수신 중 · 파랑 속 빈 원 = 다른 기기가 수신 중(색+모양 이중 표지, 브랜드 테마 색상 유사 대비) ·
+                          // 주황 = 연결됐지만 아무도 못 받는 중(유건 지시 2026-09-03)
+                          background: tgAgents[a.slug].alive ? 'var(--ok)' : tgAgents[a.slug].other ? 'var(--bg)' : 'var(--warn)',
+                          boxShadow: tgAgents[a.slug].other ? '0 0 0 2px var(--tg-remote)' : '0 0 0 2px var(--bg)',
                         }} />
                       )}
                     </span>

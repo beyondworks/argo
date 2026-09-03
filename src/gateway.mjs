@@ -16,7 +16,7 @@ import { resolveWithFollowUp } from './approval-actions.mjs';
 import { setApprovalMeta } from './approvals.mjs';
 import { onNotify, emitNotify } from './notify.mjs'; // emitNotify = 장시간 작업 완료 통지(잡 핸들러)
 import { daemonLease } from './lock.mjs';
-import { isCloudLeader } from './sync.mjs';
+import { isCloudLeader, setClaimTokens, tokenOwnership, deviceLabel } from './sync.mjs';
 import { appendEvent } from './events.mjs';
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { mkdir, readFile, writeFile, readdir, stat, rename, copyFile, unlink } from 'node:fs/promises';
@@ -952,16 +952,26 @@ export function ensureGateway() {
       console.log(`[argo] 게이트웨이 리더 ${leader ? '획득' : '양보'} (pid ${process.pid})`);
       wasLeader = leader;
     }
-    if (!procLeader) { // 데몬 주체가 아님 — 폴러·워커 모두 내린다(이 기기의 리스 소유 프로세스가 맡는다)
-      for (const [id, cur] of running) { cur.stop(); running.delete(id); }
-      for (const [id, stop] of drainers) { stop(); drainers.delete(id); }
-      return;
-    }
     const companies = await listCompanies().catch(() => []);
     const loaded = [];
     for (const c of companies) {
       const all = await loadConnections(c.id).catch(() => null);
       if (all) loaded.push([c, all]);
+    }
+    // 토큰 단위 소유(2026-09-03): 텔레그램 폴러는 기기 리더가 아니라 **이 기기의 토큰 클레임**으로 켠다. 슬랙·서류함
+    // 감시는 종전대로 기기 리더만. 이 기기에 저장된 토큰 전부를 동기화 cycle에 등록해 30초마다 클레임을 갱신한다.
+    // 등록은 **procLeader 게이트보다 앞**에 둔다 — 게이트웨이 주체(daemonLease)와 동기화 주체(holdSyncLock)가 다른
+    // 프로세스에 갈리면, 주체가 아닌 쪽이 등록을 건너뛰어 아무도 클레임을 안 쓰는 창이 있었다(재검수 MEDIUM-B).
+    const myTokens = [];
+    for (const [, all] of loaded) {
+      if (all.telegram.enabled && all.telegram.token) myTokens.push(all.telegram.token);
+      for (const bot of Object.values(all.telegram.agents ?? {})) if (bot?.token) myTokens.push(bot.token);
+    }
+    setClaimTokens(myTokens);
+    if (!procLeader) { // 데몬 주체가 아님 — 폴러·워커 모두 내린다(이 기기의 리스 소유 프로세스가 맡는다)
+      for (const [id, cur] of running) { cur.stop(); running.delete(id); }
+      for (const [id, stop] of drainers) { stop(); drainers.delete(id); }
+      return;
     }
     // ── 큐 드레인 워커 — 클라우드 리더가 아니어도 돈다(백로그: 리더 전환 시 큐잉 지시 멈춤).
     //    잡은 적재한 기기에만 있으므로(큐 동기화 제외 + dev 태그) 기기 간 이중 실행이 없고, 턴 실행·회신은
@@ -1000,10 +1010,7 @@ export function ensureGateway() {
       }
     }
     for (const [id, stop] of drainers) if (!aliveDrain.has(id)) { stop(); drainers.delete(id); }
-    if (!leader) { // 클라우드 리더가 아니면 폴러만 내린다 — 드레인 워커는 위에서 유지(잔여 잡 처리)
-      for (const [id, cur] of running) { cur.stop(); running.delete(id); }
-      return;
-    }
+    const tgOwned = (token) => tokenOwnership(token); // { mine, holder, pending }
     const alive = new Set();
     // 텔레그램 토큰 클레임 — 토큰당 폴러 1개(getUpdates Conflict). 저장 가드(connections.mjs
     // findTelegramTokenUse)가 신규 중복을 막지만, 기존 데이터·동기화 유입 중복은 여기서 한쪽만
@@ -1024,8 +1031,14 @@ export function ensureGateway() {
         const id = gwCfgKey(c.id, kind); // 폴러 id = cfg 키(같은 값 — 조립도 같은 함수로)
         const key = `${cfg.enabled}:${cfg.token}:${cfg.channel ?? ''}`;
         const tgDupe = kind === 'telegram' && cfg.enabled && cfg.token && claimedTg.get(cfg.token)?.id !== id;
+        const own = kind === 'telegram' && cfg.enabled && cfg.token ? tgOwned(cfg.token) : null;
         if (tgDupe) { // 같은 토큰을 다른 회사 게이트웨이가 선점 — alive 미등록 → 아래 정리 루프가 폴러도 내린다
           beatGateway(c.id, 'telegram', false, `토큰 중복 — ${claimedTg.get(cfg.token).label}에서 사용 중. 텔레그램 봇은 한 곳에만 연결할 수 있습니다`).catch(() => {});
+        } else if (own && !own.mine) { // 다른 기기가 이 토큰을 받는 중(또는 클레임 판정 전) — 이 기기는 물러난다
+          if (own.holder) beatGateway(c.id, 'telegram', false, `다른 기기(${deviceLabel(own.holder)})에서 수신 중`, { holder: 'other', holderDevice: deviceLabel(own.holder) }).catch(() => {});
+          else beatGateway(c.id, 'telegram', false, '수신 기기 판정 중(최대 30초) — 클라우드 클레임 확인 실패가 계속되면 동기화 상태를 확인하세요', { holder: 'pending' }).catch(() => {});
+        } else if (kind === 'slack' && !leader) { // 슬랙은 종전대로 기기 리더만
+          /* 비리더 — 폴러 미기동(alive 미등록 → 정리 루프가 내린다) */
         } else if (cfg.enabled && cfg.token && (kind === 'telegram' || cfg.channel)) {
           alive.add(id);
           const cur = running.get(id);
@@ -1038,7 +1051,7 @@ export function ensureGateway() {
         if (globalThis.__argoGwCfg) globalThis.__argoGwCfg[id] = cfg;
       }
       // 받은 서류함 감시 — 회사마다 1개(리더만). 파일 드롭 = 지시
-      {
+      if (leader) {
         const id = `${c.id}:inbox`;
         alive.add(id);
         if (!running.has(id)) running.set(id, { key: 'v1', stop: startInboxWatcher(c.id) });
@@ -1050,6 +1063,12 @@ export function ensureGateway() {
         const holder = claimedTg.get(bot.token);
         if (holder && holder.id !== id) { // 게이트웨이 또는 다른 크루가 선점 — 이 직통 봇은 쉰다
           beatGateway(c.id, `tg-${slug}`, false, `토큰 중복 — ${holder.label}에서 사용 중. 이 크루 전용 봇을 @BotFather로 새로 만들어 연결하세요`).catch(() => {});
+          continue;
+        }
+        const own = tgOwned(bot.token);
+        if (!own.mine) { // 다른 기기가 받는 중(또는 클레임 판정 전) — 이 기기는 물러난다(alive 미등록 → 정리 루프가 내린다)
+          if (own.holder) beatGateway(c.id, `tg-${slug}`, false, `다른 기기(${deviceLabel(own.holder)})에서 수신 중`, { holder: 'other', holderDevice: deviceLabel(own.holder) }).catch(() => {});
+          else beatGateway(c.id, `tg-${slug}`, false, '수신 기기 판정 중(최대 30초) — 클라우드 클레임 확인 실패가 계속되면 동기화 상태를 확인하세요', { holder: 'pending' }).catch(() => {}); // 침묵 대신 원인(재검수 L-2)
           continue;
         }
         if (!holder) claimedTg.set(bot.token, { id, label: `크루 직통 봇(${slug})` });

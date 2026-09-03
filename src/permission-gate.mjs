@@ -259,6 +259,7 @@ const WS_DOT_FILES = new Set([
   '.account-secrets',
   '.device-id', '.guest-mode.json', '.sync-process.lock', '.tombstones',
   '.scheduler.lock', // daemonLease('scheduler') — 미래 ts를 심으면 리더 선출이 영구 실패한다
+  '.tg-claims-state.json', '.tg-claims', // 텔레그램 토큰 클레임 상태(sync.mjs) — 크루가 mine을 심으면 두 기기가 같은 봇을 동시 폴링(getUpdates Conflict)
   '.mobile.json', // 휴대폰 페어링 토글·토큰 해시(mobile-pairs.mjs) — 크루가 켜거나 페어링을 심으면 LAN 접근 경로가 결재 없이 열린다
 ]);
 const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];

@@ -7,9 +7,10 @@ import { paths } from '../workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from '../jsonstore.mjs';
 
 /** 폴러 하트비트 — 연결 카드의 "가동 중 · N초 전 응답" 표시의 원천. root의 dotfile이라 vault 스캔 무관. */
-export async function beatGateway(wsId, kind, ok, error = '') {
+export async function beatGateway(wsId, kind, ok, error = '', extra = {}) {
   try {
-    await writeFile(join(paths(wsId).root, `.gateway-${kind}.json`), JSON.stringify({ ts: Date.now(), ok, error: String(error).slice(0, 200) }));
+    // extra.holder='other' + holderDevice — 토큰을 다른 기기가 받는 중(토큰 단위 소유). 카드·사이드바가 색으로 가른다.
+    await writeFile(join(paths(wsId).root, `.gateway-${kind}.json`), JSON.stringify({ ts: Date.now(), ok, error: String(error).slice(0, 200), ...extra }));
   } catch { /* 하트비트는 베스트에포트 */ }
 }
 

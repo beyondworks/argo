@@ -478,7 +478,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       const { gatewayStatus, loadConnections } = await import('./connections.mjs');
       const conn = await loadConnections(wsId);
       const st = await gatewayStatus(wsId);
-      if (conn.telegram.enabled && conn.telegram.token && !st.telegram.alive) {
+      if (conn.telegram.enabled && conn.telegram.token && !st.telegram.alive && st.telegram.holder !== 'other') { // 다른 기기가 받는 중이면 정상 분담(재검수 L-1)
         return lang === 'en'
           ? ' Note: Telegram is not responding right now, so the approve button may not arrive — also tell the captain to approve from the web (approval inbox / the card in chat).'
           : ' 주의: 지금 텔레그램 연결이 응답하지 않아 승인 버튼이 안 갈 수 있다 — 사장에게 웹 화면(결재함·대화창 카드)에서 승인해 달라고 함께 안내하라.';

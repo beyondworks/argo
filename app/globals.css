@@ -24,6 +24,8 @@
 }
 
 :root {
+  /* 텔레그램 수신 주체 — 다른 기기 수신 표지 전용 파랑(테마 무관: 브랜드 --info가 골드라 --warn과 색상각 1° 차이로 구분 불가 — 재검수 M-3) */
+  --tg-remote: #3a6ea5;
   /* ── Argo 라이트 (웜 아이보리 + 새틴 골드) ── */
   --bg: #f5f0e3;            /* 웜 아이보리 캔버스 */
   --card: #fcfaf2;
@@ -71,6 +73,7 @@
    두 블록의 토큰 값은 항상 동일하게 유지한다(한쪽을 고치면 다른 쪽도). */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
+    --tg-remote: #7fb0e6;
     color-scheme: dark;
     /* 명암 완화 — near-black 대신 웜 차콜로 올려 극단적 대비를 압축. 카드·2·3차 텍스트·보더도 올려 가시성 확보 */
     --bg: #1c1813; --card: #26211a; --card-2: #322c21; --secondary: #3d371f;
@@ -94,6 +97,7 @@
 :root[data-theme='argo-light'] { color-scheme: light; }
 /* 수동 다크 — 위 @media 블록과 동일한 다크 값 */
 :root[data-theme='argo-dark'] {
+  --tg-remote: #7fb0e6;
   color-scheme: dark;
   /* 명암 완화 — @media 블록과 동일 값 유지 */
   --bg: #1c1813; --card: #26211a; --card-2: #322c21; --secondary: #3d371f;
@@ -163,6 +167,7 @@
 
 /* [apple-dark] Apple HIG 다크 — 시스템 블랙 위 elevated 표면, 다크 전용 밝은 시스템 컬러. */
 :root[data-theme='apple-dark'] {
+  --tg-remote: #7fb0e6;
   color-scheme: dark;
   --bg: #161617;            /* apple.com 다크 캔버스 */
   --card: #1d1d1f;
@@ -251,6 +256,7 @@
 
 /* [glass-dark] 리퀴드 글래스 다크 — 딥 네이비 그라디언트 위 다크 유리 표면. */
 :root[data-theme='glass-dark'] {
+  --tg-remote: #7fb0e6;
   color-scheme: dark;
   --bg: #1a1a1c;            /* 폴백 — 실제 캔버스는 아래 body 그라디언트 (#1c1c1c 계열) */
   --card: rgba(255, 255, 255, 0.07);
@@ -433,6 +439,7 @@
 /* [frost] 프로스트 — 차콜 블랙 오브 그라디언트 위 초미니멀 화이트 글래스.
    레퍼런스: Minimal Glassmorphism (다크 하프) — Clean. Calm. Clear. */
 :root[data-theme='frost'] {
+  --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #0b0d12;            /* 폴백 — 실제 캔버스는 아래 body 그라디언트 */
   --card: rgba(255, 255, 255, 0.07);
@@ -655,6 +662,7 @@
 
 /* [tokyo-night] */
 :root[data-theme='tokyo-night'] {
+  --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #1a1b26; --card: #1e202e; --card-2: #292e42; --secondary: #3b4261;
   --fg: #c0caf5; --fg-2: #a9b1d6; --fg-3: #6b76a6;
@@ -678,6 +686,7 @@
 
 /* [nord] */
 :root[data-theme='nord'] {
+  --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #2e3440; --card: #3b4252; --card-2: #434c5e; --secondary: #4c566a;
   --fg: #eceff4; --fg-2: #c8cfdb; --fg-3: rgba(216, 222, 233, 0.56);
@@ -701,6 +710,7 @@
 
 /* [everforest] (dark medium) */
 :root[data-theme='everforest'] {
+  --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #2d353b; --card: #343f44; --card-2: #3d484d; --secondary: #475258;
   --fg: #d3c6aa; --fg-2: #a6b2a9; --fg-3: #8b978d;
@@ -724,6 +734,7 @@
 
 /* [dracula] (Soft) */
 :root[data-theme='dracula'] {
+  --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #282a36; --card: #313342; --card-2: #44475a; --secondary: #3a3d4d;
   --fg: #f8f8f2; --fg-2: #b8bacb; --fg-3: #7d8cbd;
@@ -747,6 +758,7 @@
 
 /* [monokai] (Pro) */
 :root[data-theme='monokai'] {
+  --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #2d2a2e; --card: #353236; --card-2: #403e41; --secondary: #49474b;
   --fg: #fcfcfa; --fg-2: #c1c0c0; --fg-3: #8b898c;
@@ -770,6 +782,7 @@
 
 /* [rose-pine] (main) */
 :root[data-theme='rose-pine'] {
+  --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #191724; --card: #1f1d2e; --card-2: #26233a; --secondary: #302b4a;
   --fg: #e0def4; --fg-2: #908caa; --fg-3: #6e6a86;
@@ -814,6 +827,7 @@
 }
 
 :root[data-theme='codex-gh-dark'] {
+  --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #0d1117; --card: #010409; --card-2: #0d1117; --secondary: #21262d;
   --fg: #c9d1d9; --fg-2: #949ba3; --fg-3: #676d74;
@@ -874,6 +888,7 @@
 }
 
 :root[data-theme='minimal-dark'] {
+  --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #2e3440; --card: #373d48; --card-2: #434c5e; --secondary: #4c566a;
   --fg: #d8dee9; --fg-2: #a8aeba; --fg-3: #808691;
@@ -945,6 +960,7 @@
 /* [calm-dark] 차분 다크 — 눈부심을 없앤 야간용. 순흑 배경 + 순백 글자 조합은 대비가 과해
    글자가 번져 보이는(할레이션) 주범이라, 배경은 들어올린 먹회색·글자는 은회색으로 낮춘다. */
 :root[data-theme='calm-dark'] {
+  --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #1b1e24;            /* 순흑 대신 들어올린 먹회색 */
   --card: #22262e;
@@ -1232,6 +1248,7 @@
    test/theme-graphite-sync.test.mjs가 막는다(손으로 옮겨 적는 순간 한쪽만 고쳐지기 때문). */
 @media (prefers-color-scheme: dark) {
   :root[data-theme='graphite'] {
+    --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #202020;            /* surface2 — 콘텐츠 캔버스 */
   --card: #252525;          /* surface3 — 콘텐츠 위 표면(스펙의 빈 단계를 여기서 채운다) */
@@ -1331,6 +1348,7 @@
 :root[data-theme='graphite-light'] .msg-user { background: var(--secondary); color: var(--fg); }
 
 :root[data-theme='graphite-dark'] {
+  --tg-remote: #7fb0e6; /* 다른 기기 수신 링 — 다크 대비(재검수 M-3) */
   color-scheme: dark;
   --bg: #202020;            /* surface2 — 콘텐츠 캔버스 */
   --card: #252525;          /* surface3 — 콘텐츠 위 표면(스펙의 빈 단계를 여기서 채운다) */
