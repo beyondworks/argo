@@ -107,11 +107,16 @@ function Shell({ session }) {
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
   const rt = useRef(null);
   const loadOrgs = useCallback(async () => {
-    const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id)').eq('user_id', uid).is('removed_at', null));
+    const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role)').eq('user_id', uid).is('removed_at', null));
     const list = rows.filter((r) => r.msgr_orgs).map((r) => ({ id: r.org_id, role: r.role, ...r.msgr_orgs }));
     setOrgs(list);
     setOrgId((cur) => cur && list.some((o) => o.id === cur) ? cur : (list[0]?.id ?? null));
+    setJoinable(await q(supabase.rpc('msgr_joinable_orgs')).catch(() => [])); // J-3: 내 이메일 도메인으로 들어갈 수 있는 조직(서버가 판정)
   }, [uid]);
+  const joinDomain = async (o) => {
+    try { await q(supabase.rpc('msgr_join_by_domain', { org: o.id })); setNote(t('org.joined')); await loadOrgs(); setOrgId(o.id); }
+    catch (e) { setErr(/msgr_seat_limit/.test(e.message) ? t('seat.limit') : e.message); }
+  };
   useEffect(() => { // 초대 링크 수락(?invite=code)
     const code = new URLSearchParams(location.search).get('invite');
     (async () => {
@@ -185,6 +190,7 @@ function Shell({ session }) {
   const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || id?.slice(0, 8) || '?';
   const crewOf = (id) => crews.find((c) => c.id === id);
   const [newOrg, setNewOrg] = useState(null); // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
+  const [joinable, setJoinable] = useState([]); // J-3 도메인 자동 가입 후보
   const [newCh, setNewCh] = useState(null);   // { name, kind }
   const createOrg = async (name) => {
     if (!name?.trim()) return;
@@ -253,6 +259,7 @@ function Shell({ session }) {
             <div className="msgr-scrim clear" onClick={() => setOrgMenu(false)} />
             <div className="msgr-menu-pop" role="menu">
               {orgs.map((o) => <button key={o.id} type="button" role="menuitemradio" aria-checked={o.id === orgId} className={o.id === orgId ? 'on' : ''} onClick={() => { setOrgId(o.id); setOrgMenu(false); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t(`role.${o.role}`)}</span></button>)}
+              {joinable.map((o) => <button key={`j-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOrgMenu(false); joinDomain(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}
               {ent && <div className="seatline"><span className="msgr-klabel">{t('seat.status', { used: members.length, seats: ent.seats, plan: t(`plan.${ent.plan}`) })}</span></div>}
               <div className="sep" />
               {isAdmin && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); invite(); }}><span className="msgr-av sm ghost"><I name="copy" size={13} /></span><span className="label">{t('org.invite')}</span></button>}
@@ -316,7 +323,7 @@ function Shell({ session }) {
         ) : chId ? (
           <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} dmName={dmName} />
         ) : (
-          <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? invite : null} />
+          <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? invite : null} joinable={joinable} joinDomain={joinDomain} />
         )}
       </main>
     </div>
@@ -741,6 +748,16 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
   const isOwner = org.role === 'owner';
   const admins = members.filter((m) => m.role === 'admin'); // J-2: 이전 제안·승계 대상은 활성 관리자만(서버 트리거와 같은 규칙)
   const iAmNominee = org.pending_owner_user_id === uid;
+  const [domain, setDomain] = useState(org.auto_join_domain ?? ''); const [domainRole, setDomainRole] = useState(org.auto_join_role ?? 'member'); // J-3
+  useEffect(() => { setDomain(org.auto_join_domain ?? ''); setDomainRole(org.auto_join_role ?? 'member'); }, [org.id, org.auto_join_domain, org.auto_join_role]);
+  const saveDomain = async () => {
+    setBusy(true);
+    const res = await supabase.from('msgr_orgs').update({ auto_join_domain: domain.trim().toLowerCase() || null, auto_join_role: domainRole }).eq('id', org.id).select('id');
+    setBusy(false);
+    if (res.error) return onError(/msgr_domain_public/.test(res.error.message) ? t('org.domain.public') : /msgr_domain_not_owners/.test(res.error.message) ? t('org.domain.notOwners') : /msgr_owner_only/.test(res.error.message) ? t('org.noEdit') : /auto_join_domain_check/.test(res.error.message) ? t('org.domain.invalid') : res.error.message);
+    if (!res.data?.length) return onError(t('org.noEdit'));
+    onNote(domain.trim() ? t('org.domain.saved') : t('org.domain.off')); onOrgsChanged();
+  };
   const patchOrg = async (patch, okMsg) => {
     setBusy(true);
     const res = await supabase.from('msgr_orgs').update(patch).eq('id', org.id).select('id');
@@ -847,6 +864,13 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
             : admins.length ? <div className="picks">{admins.map((m) => <button key={m.user_id} type="button" className="msgr-chan" disabled={busy} onClick={() => patchOrg({ pending_owner_user_id: m.user_id }, t('org.transfer.sent', { name: m.display_name || m.user_id.slice(0, 8) }))}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}</div> : <span className="sub">{t('org.owner.noAdmins')}</span>}
         </div>
         <p className="note">{t('org.transfer.desc')}</p>
+        <div className="row">
+          <span className="msgr-klabel">{t('org.domain')}</span>
+          <input className="msgr-input inline" placeholder={t('org.domain.ph')} value={domain} maxLength={253} onChange={(e) => setDomain(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveDomain(); }} />
+          <div className="msgr-seg" role="radiogroup" aria-label={t('org.domain.role')}>{['member', 'guest'].map((r) => <button key={r} type="button" role="radio" aria-checked={domainRole === r} className={domainRole === r ? 'active' : ''} onClick={() => setDomainRole(r)}>{t(`role.${r}`)}</button>)}</div>
+          <button type="button" className="btn btn-primary sm" disabled={busy || (domain.trim().toLowerCase() === (org.auto_join_domain ?? '') && domainRole === (org.auto_join_role ?? 'member'))} onClick={saveDomain}><I name="check" size={13} />{t('ui.save')}</button>
+        </div>
+        <p className="note">{org.auto_join_domain ? t('org.domain.on', { domain: org.auto_join_domain, role: t(`role.${org.auto_join_role ?? 'member'}`) }) : t('org.domain.desc')}</p>
       </>)}
       <h3>{t('org.members')} · {members.length}</h3>
       <div className="msgr-rows">
@@ -973,14 +997,15 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
 }
 
 /** 빈 상태 — 척추 위 단계 노드가 다음 행동을 가르친다(조직 없음 / 채널 없음). */
-function EmptyOrg({ org, onMenu, createOrg, createChannel, invite }) {
+function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, joinable = [], joinDomain }) {
   const { t } = useT();
   const steps = org ? [
     ['mark', t('ch.step1'), t('ch.step1.sub'), <button key="a" type="button" className="btn btn-primary sm" onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>],
     ['', t('ch.step2'), t('ch.step2.sub'), invite ? <button key="b" type="button" className="btn sm" onClick={invite}><I name="copy" size={13} />{t('org.invite')}</button> : null],
     ['', t('ch.step3'), t('ch.step3.sub'), null],
   ] : [
-    ['mark', t('org.step.create'), t('org.step.create.sub'), <button key="a" type="button" className="btn btn-primary sm" onClick={createOrg}><I name="plus" size={13} />{t('org.new')}</button>],
+    ...(joinable.length ? [['mark', t('org.step.join'), t('org.step.join.sub'), <div key="j" className="msgr-chips">{joinable.map((o) => <button key={o.id} type="button" className="msgr-chan" onClick={() => joinDomain(o)}><span>{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}</div>]] : []), // J-3: 회사 도메인 계정이면 초대 없이 바로
+    [joinable.length ? '' : 'mark', t('org.step.create'), t('org.step.create.sub'), <button key="a" type="button" className="btn btn-primary sm" onClick={createOrg}><I name="plus" size={13} />{t('org.new')}</button>],
     ['', t('org.step.invite'), t('org.step.invite.sub'), null],
   ];
   return (<>

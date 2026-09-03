@@ -383,3 +383,7 @@
 /* J-2 결제 문제 읽기 전용 배너·소유권 선택 칩 */
 .msgr-notice.locked { color: var(--warn, var(--fg)); }
 .msgr-setcard .picks .msgr-chan.active { border-color: currentColor; }
+
+/* J-3 도메인 자동 가입 — 메뉴의 가입 후보 */
+.msgr-menu-pop button.join .msgr-klabel { margin-left: auto; }
+.msgr-chips .msgr-chan .msgr-klabel { margin-left: 6px; }

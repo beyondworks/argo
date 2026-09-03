@@ -699,3 +699,32 @@ test('J-2 소유권 제안→수락·승계 관리자·결제 문제 읽기 전�
   assert.equal(last(asUser(U.owner, `select public.msgr_org_locked('${ORG}')`)), 'f');
   assert.match(last(asUser(U.owner, `insert into public.msgr_messages (org_id, channel_id, author_kind, author_user_id, body) values ('${ORG}', '${PUB}', 'user', '${U.owner}', '잠금 해제') returning id`)), /^[0-9]+$/, '해제 후 쓰기 복귀');
 });
+
+test('J-3 도메인 자동 가입 — 등록은 소유자만·본인 도메인만·공개 도메인 거절, 목록은 같은 도메인 미가입자만, 가입 RPC는 좌석 게이트·감사', () => {
+  if (!DB) return;
+  // 픽스처: 소유자 이메일 도메인을 회사 도메인으로, 같은 도메인의 외부인 2명(하나는 제거됐던 멤버)
+  sql(`update auth.users set email = 'owner@lean.co' where id = '${U.owner}'`);
+  sql(`update auth.users set email = 'admin@lean.co' where id = '${U.admin}'`);
+  const D1 = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', D2 = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  sql(`insert into auth.users (id, created_at, email) values ('${D1}', now(), 'newbie@lean.co'), ('${D2}', now(), 'stranger@other.co') on conflict do nothing`);
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 50 where org_id = '${ORG}'`);
+  denied(U.admin, `update public.msgr_orgs set auto_join_domain = 'lean.co' where id = '${ORG}'`, /msgr_owner_only/);
+  denied(U.owner, `update public.msgr_orgs set auto_join_domain = 'gmail.com' where id = '${ORG}'`, /msgr_domain_public/);
+  denied(U.owner, `update public.msgr_orgs set auto_join_domain = 'other.co' where id = '${ORG}'`, /msgr_domain_not_owners/);
+  assert.equal(last(asUser(U.owner, `update public.msgr_orgs set auto_join_domain = 'Lean.CO' where id = '${ORG}' returning auto_join_domain`)), 'lean.co', '소문자 정규화');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'org.domain'`), '1');
+  assert.equal(last(asUser(D1, `select count(*) from public.msgr_joinable_orgs()`)), '1', '같은 도메인 미가입자에게 보인다');
+  assert.equal(last(asUser(D2, `select count(*) from public.msgr_joinable_orgs()`)), '0', '다른 도메인은 안 보인다');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_joinable_orgs()`)), '0', '이미 멤버면 안 보인다');
+  denied(D2, `select public.msgr_join_by_domain('${ORG}')`, /msgr_domain_mismatch/);
+  assert.equal(last(asUser(D1, `select public.msgr_join_by_domain('${ORG}')`)), ORG, '가입');
+  assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${D1}'`), 'member');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'member.join.domain' and target_id = '${D1}'`), '1');
+  assert.equal(last(asUser(D1, `select count(*) from public.msgr_joinable_orgs()`)), '0', '가입 뒤엔 목록에서 사라진다');
+  sql(`update public.msgr_org_entitlements set seats = 1 where org_id = '${ORG}'`); // 좌석이 차면 가입도 막힌다(초대 수락과 같은 게이트)
+  sql(`update auth.users set email = 'late@lean.co' where id = '${D2}'`);
+  denied(D2, `select public.msgr_join_by_domain('${ORG}')`, /msgr_seat_limit/);
+  sql(`update public.msgr_org_entitlements set seats = 50 where org_id = '${ORG}'`);
+  assert.equal(last(asUser(U.owner, `update public.msgr_orgs set auto_join_domain = null where id = '${ORG}' returning auto_join_domain is null`)), 't', '끄기');
+  assert.equal(last(asUser(D2, `select count(*) from public.msgr_joinable_orgs()`)), '0', '끄면 목록 없음');
+});

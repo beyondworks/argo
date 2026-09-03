@@ -116,7 +116,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
 
 test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크루(서버 msgr_crew_tier와 같은 규칙), 레일 카드·시트에 등급 배지·소유 표기·한계 문장', () => {
   assert.match(app, /export const crewTier = \(crew, org\) => \(org\?\.service_user_id && crew\?\.owner_user_id === org\.service_user_id && crew\?\.hosting === 'resident'\) \? 'company' : 'personal';/, '등급 규칙이 서버 함수와 다르다');
-  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id\)/, '조직 조회에 service_user_id가 없다'); // I-4·J-2가 열 추가
+  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role\)/, '조직 조회에 service_user_id가 없다'); // I-4·J-2가 열 추가
   assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다');
   assert.match(app, /\{company \? t\('crew\.tier\.company\.sub'/, '구성 행 부제가 등급별이 아니다');
   const crewSheet = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
@@ -281,7 +281,7 @@ test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·
 test('I-4 회사 노드 — 조직 행에 하트비트, 노드용 초대는 member·for_node, 노드 코드는 사람 초대 목록 제외, 다시 만들면 이전 코드 취소', () => {
   const app = read('apps/messenger/src/App.jsx');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
-  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id\)/, '조직 행에 node_seen_at');
+  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role\)/, '조직 행에 node_seen_at');
   assert.match(oc, /insert\(\{ org_id: org\.id, role: 'member', for_node: true, created_by: uid \}\)/, '노드용 초대 = member + for_node');
   assert.match(oc, /const open = live\.filter\(\(i\) => !i\.for_node\); const nodeInvite = live\.find\(\(i\) => i\.for_node\) \?\? null;/, '노드 코드는 사람 초대 목록에서 제외');
   assert.match(oc, /const nodeAlive = !!org\.service_user_id && nodeSeen > 0 && Date\.now\(\) - nodeSeen < AWAY_MS;/, '연결됨 판정 = 서비스 계정 있음 ∧ 90초 이내 하트비트');
@@ -327,4 +327,22 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
   assert.match(sql, /and not public\.msgr_org_locked\(c\.org_id\)/, '잠금이면 채널 쓰기 불가');
   const dict = read('apps/messenger/src/i18n.js');
   for (const k of ['org.owner', 'org.successor', 'org.transfer', 'org.transfer.pending', 'org.transfer.offered', 'org.transfer.accept', 'org.transfer.decline', 'org.locked', 'org.locked.admin', 'org.locked.short']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('J-3 도메인 자동 가입 — 소유자 도메인 행·저장 모양·오류 문구 분기, 메뉴·빈 화면의 가입 후보는 RPC 결과, 서버 가드·RPC', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(oc, /update\(\{ auto_join_domain: domain\.trim\(\)\.toLowerCase\(\) \|\| null, auto_join_role: domainRole \}\)/, '저장 모양(빈 값 = 끄기)');
+  assert.match(oc, /msgr_domain_public.*org\.domain\.public.*msgr_domain_not_owners.*org\.domain\.notOwners/, '서버 거절 사유 → 문구');
+  assert.match(app, /setJoinable\(await q\(supabase\.rpc\('msgr_joinable_orgs'\)\)\.catch\(\(\) => \[\]\)\);/, '가입 후보는 서버 RPC');
+  assert.match(app, /await q\(supabase\.rpc\('msgr_join_by_domain', \{ org: o\.id \}\)\)/, '가입은 RPC로만');
+  assert.match(app, /\{joinable\.map\(\(o\) => <button key=\{`j-\$\{o\.id\}`\} type="button" role="menuitem" className="join"/, '메뉴 후보');
+  assert.match(app, /joinable\.length \? \[\['mark', t\('org\.step\.join'\)/, '조직 없음 화면 첫 단계');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /raise exception 'msgr_domain_not_owners'/, '소유자 도메인 검증');
+  assert.match(sql, /raise exception 'msgr_domain_public'/, '공개 도메인 거절');
+  assert.match(sql, /and not exists \(select 1 from public\.msgr_org_members m where m\.org_id = o\.id and m\.user_id = auth\.uid\(\) and m\.removed_at is null\)/, '후보는 미가입자만');
+  assert.ok(!/'example\.test'/.test(sql), '로컬 시드 도메인은 공개 목록에 없다');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['org.domain', 'org.domain.ph', 'org.domain.desc', 'org.domain.on', 'org.domain.public', 'org.domain.notOwners', 'org.join.cta', 'org.step.join']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
 });

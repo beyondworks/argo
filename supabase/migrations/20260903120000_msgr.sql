@@ -1279,3 +1279,69 @@ create policy msgr_crew_requests_insert on public.msgr_crew_requests for insert 
     and (select o.service_user_id from public.msgr_orgs o where o.id = org_id) is not null
     and not public.msgr_org_locked(org_id)
     and public.msgr_can_create_crew(org_id, channel_id));
+
+-- ── J-3 도메인 자동 가입(부록 I "가입(공유) 경로 ③"): 소유자가 회사 이메일 도메인을 등록하면 같은 도메인 계정은 스스로 멤버로 들어온다.
+--    인증 = 소유자 본인의 로그인 이메일이 그 도메인이어야 한다(그 메일함의 주인이 곧 소유자 — DNS TXT 인증은 후속). 공개 메일 도메인은 거절.
+--    가입은 RPC로만(초대 수락과 같은 경로: 멤버 insert → 좌석 게이트 → 감사 member.join.domain). 목록은 "내 도메인과 같은 조직 중 아직 안 들어간 곳"만.
+alter table public.msgr_orgs add column if not exists auto_join_domain text check (auto_join_domain is null or auto_join_domain ~ '^[a-z0-9][a-z0-9.-]{0,251}\.[a-z]{2,}$');
+alter table public.msgr_orgs add column if not exists auto_join_role text not null default 'member' check (auto_join_role in ('member', 'guest'));
+
+create or replace function public.msgr_public_email_domain(d text) returns boolean
+  language sql immutable as $$
+    select lower(d) = any (array['gmail.com','googlemail.com','naver.com','daum.net','hanmail.net','kakao.com','nate.com','outlook.com','hotmail.com','live.com','yahoo.com','icloud.com','me.com','proton.me','protonmail.com'])
+$$;
+
+create or replace function public.msgr_email_domain(u uuid) returns text
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select lower(split_part(email, '@', 2)) from auth.users where id = u
+$$;
+revoke all on function public.msgr_email_domain(uuid) from public; -- 오라클 방지: 트리거·RPC 내부에서만
+
+-- 도메인 등록 가드: 소유자만, 소유자 이메일 도메인과 같아야, 공개 도메인 금지, 감사.
+create or replace function public.msgr_org_domain_guard() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.auto_join_domain is distinct from old.auto_join_domain or new.auto_join_role is distinct from old.auto_join_role then
+    if auth.uid() is not null and public.msgr_role(old.id) is distinct from 'owner' then raise exception 'msgr_owner_only'; end if;
+    if new.auto_join_domain is not null then
+      new.auto_join_domain := lower(new.auto_join_domain);
+      if public.msgr_public_email_domain(new.auto_join_domain) then raise exception 'msgr_domain_public'; end if;
+      if auth.uid() is not null and public.msgr_email_domain(auth.uid()) is distinct from new.auto_join_domain then raise exception 'msgr_domain_not_owners'; end if;
+    end if;
+    perform public.msgr_audit(old.id, 'org.domain', 'org', old.id::text, jsonb_build_object('domain', new.auto_join_domain, 'role', new.auto_join_role));
+  end if;
+  return new;
+end $$;
+drop trigger if exists msgr_org_domain_guard on public.msgr_orgs;
+create trigger msgr_org_domain_guard before update on public.msgr_orgs for each row execute function public.msgr_org_domain_guard();
+
+-- 내가 들어갈 수 있는 조직(도메인 일치 · 미가입 · 살아 있음). 이름·슬러그·역할만 노출.
+create or replace function public.msgr_joinable_orgs() returns table (id uuid, name text, slug text, role text)
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select o.id, o.name, o.slug, o.auto_join_role
+      from public.msgr_orgs o
+     where auth.uid() is not null and o.deleted_at is null and o.auto_join_domain is not null
+       and o.auto_join_domain = public.msgr_email_domain(auth.uid())
+       and not exists (select 1 from public.msgr_org_members m where m.org_id = o.id and m.user_id = auth.uid() and m.removed_at is null)
+$$;
+create or replace function public.msgr_join_by_domain(org uuid) returns uuid
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare o public.msgr_orgs%rowtype;
+begin
+  if auth.uid() is null then raise exception 'msgr_auth_required'; end if;
+  select * into o from public.msgr_orgs where id = org and deleted_at is null;
+  if o.id is null or o.auto_join_domain is null or o.auto_join_domain is distinct from public.msgr_email_domain(auth.uid()) then raise exception 'msgr_domain_mismatch'; end if;
+  insert into public.msgr_org_members (org_id, user_id, role, display_name)
+    values (o.id, auth.uid(), o.auto_join_role, (select split_part(u.email, '@', 1) from auth.users u where u.id = auth.uid()))
+    on conflict (org_id, user_id) do update set removed_at = null, joined_at = now(), role = excluded.role,
+      display_name = coalesce(public.msgr_org_members.display_name, excluded.display_name);
+  perform public.msgr_audit(o.id, 'member.join.domain', 'user', auth.uid()::text, jsonb_build_object('domain', o.auto_join_domain));
+  return o.id;
+end $$;
+do $$ declare f text; begin
+  foreach f in array array['msgr_joinable_orgs()', 'msgr_join_by_domain(uuid)'] loop
+    execute format('revoke all on function public.%s from public', f);
+    execute format('revoke execute on function public.%s from anon', f);
+    execute format('grant execute on function public.%s to authenticated', f);
+  end loop;
+end $$;
