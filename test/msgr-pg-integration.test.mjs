@@ -422,3 +422,27 @@ test('결재권 규칙(H-1): 저위험은 크루 소유자만, 고위험은 정�
   assert.equal(last(asUser(U.admin, `update public.msgr_org_policies set approval_high_by = 'admin' where org_id = '${ORG}' returning 1`)), '1');
   sql(`delete from public.msgr_crew_approvals where approval_id in ('ap-lo', 'ap-hi', 'ap-hi2')`);
 });
+
+test('허용 판정 서버 이관(H-2): msgr_can_instruct는 소유자·allow·멤버십·상태를 보고, 크루 답글(reply:<crew>:<src>)은 트리거가 원문 작성자를 재판정해 정책 밖이면 거절', { skip }, () => {
+  const can = (u, author) => last(asUser(u, `select public.msgr_can_instruct('${CREW}', '${author}')`));
+  sql(`update public.msgr_crews set allow = 'owner', allow_users = '{}' where id = '${CREW}'`);
+  assert.equal(can(U.member, U.member), 't', '소유자는 항상');
+  assert.equal(can(U.member, U.admin), 'f', "'owner'면 관리자도 못 시킨다");
+  sql(`update public.msgr_crews set allow = 'list', allow_users = array['${U.admin}'::uuid, '${U.removed}'::uuid] where id = '${CREW}'`);
+  assert.equal(can(U.member, U.admin), 't'); assert.equal(can(U.member, U.owner), 'f'); assert.equal(can(U.member, U.removed), 'f', '목록에 있어도 제거된 멤버는 불가');
+  sql(`update public.msgr_crews set allow = 'all' where id = '${CREW}'`);
+  assert.equal(can(U.member, U.guest), 't', "'all' = 활성 멤버 전원(guest 포함)"); assert.equal(can(U.member, U.outsider), 'f'); assert.equal(can(U.member, U.removed), 'f');
+  sql(`update public.msgr_crews set status = 'detached' where id = '${CREW}'`); assert.equal(can(U.member, U.member), 'f', 'detached면 소유자도 불가'); sql(`update public.msgr_crews set status = 'active' where id = '${CREW}'`);
+  assert.equal(last(asUser(U.member, `select public.msgr_can_instruct('00000000-0000-4000-8000-000000000000', '${U.member}')`)), 'f', '없는 크루');
+  // 답글 게이트: 정책 밖 작성자의 지시에 대한 크루 답글은 서버가 거절, 소유자 원문·다른 접두(deny:)·크루 원문은 통과
+  sql(`update public.msgr_crews set allow = 'owner' where id = '${CREW}'`);
+  const src = last(asUser(U.admin, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body) values ('${PUB}', 'user', '${U.admin}', '@서윤 해줘') returning id`));
+  denied(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to) values ('${PUB}', 'crew', '${CREW}', '답', 'reply:${CREW}:${src}', ${src})`, /msgr_not_allowed/);
+  assert.match(last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, client_msg_id, reply_to) values ('${PUB}', 'crew', '${CREW}', 'system', '거절 안내', 'deny:${CREW}:${src}', ${src}) returning id`)), /^\d+$/, '거절 안내(deny:)는 통과');
+  const own = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body) values ('${PUB}', 'user', '${U.member}', '소유자 지시') returning id`));
+  assert.match(last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to) values ('${PUB}', 'crew', '${CREW}', '답', 'reply:${CREW}:${own}', ${own}) returning id`)), /^\d+$/, '소유자 원문 답글 통과');
+  sql(`update public.msgr_crews set allow = 'all' where id = '${CREW}'`);
+  assert.match(last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to) values ('${PUB}', 'crew', '${CREW}', '답', 'reply:${CREW}:${src}', ${src}) returning id`)), /^\d+$/, "정책을 'all'로 열면 같은 원문 답글 통과");
+  sql(`delete from public.msgr_messages where id in (${src}, ${own}) or reply_to in (${src}, ${own})`);
+  sql(`update public.msgr_crews set allow = 'list', allow_users = array['${U.owner}'::uuid] where id = '${CREW}'`); // 앞 테스트가 남긴 상태로 복원
+});

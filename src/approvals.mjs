@@ -54,6 +54,8 @@ export async function resolveApproval(wsId, id, approve, { resolvedBy = null } =
     const it = list.find((a) => a.id === id);
     if (!it) throw new Error('존재하지 않는 결재입니다');
     if (it.status !== 'pending') throw new Error('이미 처리된 결재입니다');
+    // H-2 협조적 강제(부록 K ②): 팀 메신저에서 올라온 결재를 서버가 "소유자는 확정 불가"로 판정했으면(고위험·조직 정책) 로컬 창구(웹·텔레그램·슬랙)에서도 거절한다.
+    if (it.msgr?.ownerMayDecide === false && resolvedBy?.via !== 'msgr') throw new Error('조직 정책: 이 결재는 팀 메신저에서 조직 관리자(결재권자)만 확정할 수 있습니다');
     it.status = approve ? 'approved' : 'rejected';
     it.resolvedAt = new Date().toISOString();
     if (resolvedBy) it.resolvedBy = resolvedBy; // 누가 확정했나 {uid, via, at} — 팀 메신저(다중 사용자)에서 감사 근거. 기존 창구는 미기록(단일 사장)

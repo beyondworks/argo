@@ -32,7 +32,7 @@ const crew = (over = {}) => ({ id: CREW, org_id: ORG, slug: 'seoyun', display_na
 const msg = (id, over = {}) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: MEMBER, crew_id: null, kind: 'text', body: `m${id}`,
   mentions: [{ kind: 'crew', id: CREW }], reply_to: null, thread_root: null, created_at: new Date().toISOString(), ...over });
 /** 가짜 db — 호출 기록 + 시나리오 데이터. makeDb의 메서드 이름·반환 계약만 흉내 낸다. */
-function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], approvals = [], parent = null, dupReply = false } = {}) {
+function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false } = {}) {
   const calls = [];
   const rec = (k, ...a) => { calls.push([k, ...a]); };
   return {
@@ -52,8 +52,11 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], ap
     async download(path) { rec('download', path); return Buffer.from('PNGDATA'); },
     async upload(path, buf, ct) { rec('upload', path, buf.length, ct); },
     async insertApproval(row) { rec('insertApproval', row); return { id: 'ap-row-1' }; },
-    async updateApproval(id, patch) { rec('updateApproval', id, patch); },
+    async updateApproval(id, patch) { rec('updateApproval', id, patch); return approvalRows; },
     async approvalsByIds(ids) { rec('approvalsByIds', ids); return approvals; },
+    // H-2: 서버 판정 흉내 — 실제 msgr_can_instruct와 같은 규칙(크루 행 기준). throw 시 브리지는 로컬 판정으로 폴백한다.
+    async canInstruct(crewId, authorId) { rec('canInstruct', crewId, authorId); if (canInstructThrows) throw new Error('rpc down'); const c = crews.find((x) => x.id === crewId); return M.allowedToInstruct(c, authorId, OWNER); },
+    async canDecide(apId) { rec('canDecide', apId); return canDecide; },
   };
 }
 const jobsOf = (enq) => enq.calls.map((c) => c[3]);
@@ -285,4 +288,59 @@ test('crewChannels는 크루가 멤버인 채널 중 kind=dm만 돌려준다 —
 test('crewChannels 조회 실패는 로그를 남기고 빈 집합으로 — 조용한 무응답 금지(검수 2R MEDIUM-2)', () => {
   const src = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
   assert.match(src, /db\.crewChannels\(crew\.id\)\.catch\(\(e\) => \{ console\.error\(/, 'crewChannels 실패 경로에 console.error가 없다');
+});
+
+test('H-2 drain: 허용 판정은 서버 RPC(canInstruct)가 정본 — 메시지마다 묻고, RPC가 죽으면 로컬 판정으로 폴백(로그)', async () => {
+  const db = fakeDb({ crews: [crew({ allow: 'owner' })], messages: [msg(21), msg(22, { author_user_id: OWNER })] });
+  const enq = fakeEnqueue();
+  const r = await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.equal(r.denied, 1); assert.deepEqual(jobsOf(enq).map((j) => j.msgId), [22]);
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'canInstruct').map((c) => c[2]), [MEMBER, OWNER], '대상 메시지마다 서버에 묻는다');
+  const db2 = fakeDb({ crews: [crew({ allow: 'owner' })], messages: [msg(23)], canInstructThrows: true });
+  const enq2 = fakeEnqueue(); const errs = []; const orig = console.error; console.error = (...a) => errs.push(a.join(' '));
+  try { const r2 = await M.drain(WS, { db: db2, uid: OWNER, enqueue: enq2 }); assert.equal(r2.denied, 1, '폴백 로컬 판정도 owner 전용을 지킨다'); }
+  finally { console.error = orig; }
+  assert.ok(errs.some((e) => /허용 판정 RPC 실패/.test(e)), '폴백은 조용하지 않다');
+});
+
+test('H-2 협조적 강제: 미러 시 서버 결재권 판정을 항목에 각인 — false면 로컬 창구(resolveApproval)가 거절, 메신저 경유(via msgr)는 통과', async () => {
+  const session = async () => ({ db, uid: OWNER });
+  const db = fakeDb({ canDecide: false });
+  const it = await addApproval(WS, { slug: 'seoyun', action: '거래처에 견적서 메일 발송', reason: '월말', msgr: { orgId: ORG, channelId: CH, crewId: CREW } });
+  assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: it }, { session }), true);
+  const saved = (await loadApprovals(WS)).find((a) => a.id === it.id);
+  assert.equal(saved.msgr.ownerMayDecide, false); assert.equal(saved.msgr.risk, 'high');
+  await assert.rejects(() => resolveApproval(WS, it.id, true), /조직 정책: 이 결재는 팀 메신저에서/, '웹·텔레그램 창구의 로컬 확정 거절');
+  await assert.rejects(() => resolveWithFollowUp(WS, it.id, true), /조직 정책/, '후속 실행 경로도 같은 게이트');
+  assert.equal((await loadApprovals(WS)).find((a) => a.id === it.id).status, 'pending', '거절됐으니 그대로 pending');
+  const done = await resolveApproval(WS, it.id, true, { resolvedBy: { uid: MEMBER, via: 'msgr', at: new Date().toISOString() } });
+  assert.equal(done.status, 'approved', '메신저에서 관리자가 확정한 것은 통과');
+  // 메신저 경유 확정은 미러 갱신을 하지 않는다(서버가 이미 최종)
+  assert.equal(await M.msgrPush({ type: 'approval_resolved', wsId: WS, item: done }, { session }), false);
+  assert.equal(db.calls.filter((c) => c[0] === 'updateApproval' && c[2].status).length, 0);
+  // 판정 RPC 실패 → true(현행 유지)
+  const db3 = fakeDb(); db3.canDecide = async () => { throw new Error('down'); };
+  const it3 = await addApproval(WS, { slug: 'seoyun', action: '초안 정리', msgr: { orgId: ORG, channelId: CH, crewId: CREW } });
+  const orig = console.error; console.error = () => {};
+  try { await M.msgrPush({ type: 'approval', wsId: WS, item: it3 }, { session: async () => ({ db: db3, uid: OWNER }) }); } finally { console.error = orig; }
+  assert.equal((await loadApprovals(WS)).find((a) => a.id === it3.id).msgr.ownerMayDecide, true);
+});
+
+test('H-2 정직한 신호: 정책 밖 로컬 확정(가드 우회)이 미러 갱신 0행으로 드러나면 채널에 시스템 메시지 — 확정 가능했던 결재의 0행은 신호 없음', async () => {
+  const db = fakeDb({ canDecide: false, approvalRows: [] });
+  const session = async () => ({ db, uid: OWNER });
+  const it = await addApproval(WS, { slug: 'seoyun', action: '광고비 결제', msgr: { orgId: ORG, channelId: CH, crewId: CREW } });
+  await M.msgrPush({ type: 'approval', wsId: WS, item: it }, { session });
+  const saved = (await loadApprovals(WS)).find((a) => a.id === it.id);
+  const bypassed = { ...saved, status: 'approved', resolvedAt: new Date().toISOString() }; // 가드를 우회한 앱이 만든 상태
+  assert.equal(await M.msgrPush({ type: 'approval_resolved', wsId: WS, item: bypassed }, { session }), true);
+  const sig = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]).find((m) => m.client_msg_id === `apl:${CREW}:${it.id}`);
+  assert.ok(sig, '정책 밖 확정 신호가 없다'); assert.equal(sig.kind, 'system'); assert.match(sig.body, /조직 정책 밖에서 소유자 기기에서 승인/); assert.equal(sig.reply_to, saved.msgr.messageId);
+  // 소유자가 확정 가능한 결재(ownerMayDecide true)의 0행(이미 확정 등)은 신호가 아니다
+  const db2 = fakeDb({ canDecide: true, approvalRows: [] });
+  const it2 = await addApproval(WS, { slug: 'seoyun', action: '초안 정리', msgr: { orgId: ORG, channelId: CH, crewId: CREW } });
+  await M.msgrPush({ type: 'approval', wsId: WS, item: it2 }, { session: async () => ({ db: db2, uid: OWNER }) });
+  const s2 = (await loadApprovals(WS)).find((a) => a.id === it2.id);
+  await M.msgrPush({ type: 'approval_resolved', wsId: WS, item: { ...s2, status: 'approved' } }, { session: async () => ({ db: db2, uid: OWNER }) });
+  assert.equal(db2.calls.filter((c) => c[0] === 'insertMessage' && c[1].client_msg_id?.startsWith('apl:')).length, 0);
 });

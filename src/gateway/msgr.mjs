@@ -117,7 +117,12 @@ export function makeDb(client) {
       unwrap(await client.storage.from('msgr').upload(path, buf, { contentType: contentType || 'application/octet-stream', upsert: false }));
     },
     async insertApproval(row) { return unwrap(await client.from('msgr_crew_approvals').insert(row).select('id').single()); },
-    async updateApproval(id, patch) { unwrap(await client.from('msgr_crew_approvals').update(patch).eq('id', id)); },
+    /** 0행 = RLS가 거절(결재권 없음·이미 확정) — 호출자가 정직한 신호를 낼 수 있게 행 수를 돌려준다. */
+    async updateApproval(id, patch) { return unwrap(await client.from('msgr_crew_approvals').update(patch).eq('id', id).select('id')) ?? []; },
+    /** H-2: 허용 판정의 정본은 서버(msgr_can_instruct). 실패는 throw — 호출자가 로컬 판정으로 폴백하고 로그한다. */
+    async canInstruct(crewId, authorId) { return unwrap(await client.rpc('msgr_can_instruct', { crew: crewId, author: authorId })) === true; },
+    /** H-1/H-2: 이 세션(크루 소유자)이 이 결재를 확정할 수 있나 — 정책·위험 등급 반영(msgr_can_decide). */
+    async canDecide(apRowId) { return unwrap(await client.rpc('msgr_can_decide', { ap: apRowId })) === true; },
     async approvalsByIds(ids) {
       if (!ids.length) return [];
       return unwrap(await client.from('msgr_crew_approvals').select('id, status, decided_by, decided_at').in('id', ids)) ?? [];
@@ -155,7 +160,8 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     for (const m of msgs) {
       max = Math.max(max, m.id);
       if (!targetsCrew(m, crew, dm)) continue;
-      if (!allowedToInstruct(crew, m.author_user_id, uid)) {
+      const allowed = await db.canInstruct(crew.id, m.author_user_id).catch((e) => { console.error('[argo] msgr 허용 판정 RPC 실패 — 로컬 판정으로 폴백:', e?.message ?? e); return allowedToInstruct(crew, m.author_user_id, uid); }); // H-2: 서버가 정본, 답글도 서버 트리거가 재판정
+      if (!allowed) {
         out.denied++;
         await db.insertMessage({
           channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, client_msg_id: `deny:${crew.id}:${m.id}`,
@@ -311,7 +317,7 @@ function startTyping(wsId, orgId, channelId, crewId) {
 /* ─── push — 코어 이벤트(onNotify)를 채널로. msgr 문맥이 없는 이벤트는 즉시 반환(클라이언트 생성 0). ─── */
 export async function msgrPush(event, { session = sessionClient } = {}) {
   const it = event.item;
-  const company = (event.type === 'approval' || event.type === 'delegate') ? await loadCompany(event.wsId).catch(() => ({})) : null;
+  const company = (event.type === 'approval' || event.type === 'delegate' || event.type === 'approval_resolved') ? await loadCompany(event.wsId).catch(() => ({})) : null;
   const muted = (type) => company && !channelSends('msgr', { enabled: true, mutedEvents: company.msgr?.mutedEvents }, type); // 끈 목록(company.json.msgr.mutedEvents) — 판정 정본 channelSends
   if (event.type === 'approval') {
     if (muted('approval')) return false;
@@ -333,12 +339,23 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
       mentions: [{ kind: 'approval', id: ap.id }],
     });
     if (card) await c.db.updateApproval(ap.id, { message_id: card.id }).catch(() => {});
-    await setApprovalMeta(event.wsId, it.id, { msgr: { ...(it.msgr ?? {}), rowId: ap.id, orgId: ctx.orgId, channelId: ctx.channelId, crewId: ctx.crewId, messageId: card?.id ?? null } });
+    // H-2 협조적 강제: 서버 판정(msgr_can_decide)을 항목에 각인 — false면 정식 아르고 앱·텔레그램의 로컬 확정을 거절한다(approvals.resolveApproval). 판정 실패는 true(현행 유지)로.
+    const ownerMayDecide = await c.db.canDecide(ap.id).catch((e) => { console.error('[argo] msgr 결재권 판정 RPC 실패 — 로컬 확정 허용 유지:', e?.message ?? e); return true; });
+    await setApprovalMeta(event.wsId, it.id, { msgr: { ...(it.msgr ?? {}), rowId: ap.id, orgId: ctx.orgId, channelId: ctx.channelId, crewId: ctx.crewId, messageId: card?.id ?? null, risk, ownerMayDecide } });
     return true;
   }
   if (event.type === 'approval_resolved' && it?.msgr?.rowId) { // 웹·텔레그램에서 확정 → 미러 행도 최종 상태로(아직 pending일 때만 — RLS using)
+    if (it.resolvedBy?.via === 'msgr') return false; // 메신저에서 확정된 것 — 서버가 이미 최종 상태(갱신 불필요)
     const c = await session(); if (!c) return false;
-    await c.db.updateApproval(it.msgr.rowId, { status: it.status, decided_by: c.uid, decided_at: new Date().toISOString() }).catch(() => {});
+    const rows = await c.db.updateApproval(it.msgr.rowId, { status: it.status, decided_by: c.uid, decided_at: new Date().toISOString() }).catch(() => null);
+    if (Array.isArray(rows) && rows.length === 0 && it.msgr.ownerMayDecide === false) {
+      // H-2 정직한 신호(부록 K ③): 정책 밖 로컬 확정(정식 앱 가드를 우회) — 막지 못한 것은 보이게 한다. 카드는 서버에서 pending으로 남는다.
+      const { lang = 'ko' } = company ?? {};
+      await c.db.insertMessage({ channel_id: it.msgr.channelId, author_kind: 'crew', crew_id: it.msgr.crewId, kind: 'system', reply_to: it.msgr.messageId ?? null,
+        client_msg_id: `apl:${it.msgr.crewId}:${it.id}`,
+        body: pick(`결재 ${it.id}(${it.action})이 조직 정책 밖에서 소유자 기기에서 ${it.status === 'approved' ? '승인' : '거절'}되었습니다. 카드는 확정되지 않았고 관리자 확인이 필요합니다.`,
+          `Approval ${it.id} (${it.action}) was ${it.status} on the owner's device outside organization policy. The card is not decided; an admin should review.`, lang) }).catch((e) => console.error('[argo] msgr 정책 밖 확정 신호 실패:', e.message));
+    }
     return true;
   }
   if (event.type === 'approval_followup' && it?.msgr?.channelId) {

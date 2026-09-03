@@ -734,3 +734,37 @@ create policy msgr_approvals_decide on public.msgr_crew_approvals for update to 
   with check ((status = 'pending' and decided_by is null                                             -- 브리지(크루 소유자)의 카드 링크(message_id) 등 pending 유지 갱신
                 and exists (select 1 from public.msgr_crews c where c.id = msgr_crew_approvals.crew_id and c.owner_user_id = (select auth.uid())))
            or (status in ('approved', 'rejected', 'expired') and decided_by = (select auth.uid()) and public.msgr_can_decide(id))); -- 확정은 결재권자 본인 명의로만
+
+-- ── H-2 허용 판정을 서버로(부록 H·K): "누가 이 크루에게 일을 시킬 수 있나"의 정본 판정은 msgr_can_instruct. 브리지는 이 RPC를 묻고,
+--    크루 답글(client_msg_id 'reply:<crew>:<src>')은 서버 트리거가 원문 작성자를 다시 판정해 정책 밖 답글을 거절한다(브리지가 무시해도 서버가 막는다).
+create or replace function public.msgr_can_instruct(crew uuid, author uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select case
+      when c.id is null or c.status <> 'active' or author is null then false
+      when c.owner_user_id = author then true
+      when c.allow = 'owner' then false
+      when c.allow = 'list' then author = any (c.allow_users) and m.user_id is not null
+      else m.user_id is not null   -- 'all' = 활성 조직 멤버 전원
+    end
+      from (select 1) x
+      left join public.msgr_crews c on c.id = crew
+      left join public.msgr_org_members m on m.org_id = c.org_id and m.user_id = author and m.removed_at is null
+$$;
+revoke all on function public.msgr_can_instruct(uuid, uuid) from public;
+revoke execute on function public.msgr_can_instruct(uuid, uuid) from anon;
+grant execute on function public.msgr_can_instruct(uuid, uuid) to authenticated;
+create or replace function public.msgr_crew_reply_gate() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare src public.msgr_messages; src_id bigint;
+begin
+  if new.author_kind <> 'crew' or new.client_msg_id is null or new.client_msg_id !~ '^reply:[^:]+:[0-9]+$' then return new; end if;
+  src_id := split_part(new.client_msg_id, ':', 3)::bigint;
+  select * into src from public.msgr_messages where id = src_id;
+  if src.id is null or src.author_kind <> 'user' then return new; end if; -- 원문 없음(삭제)·크루/시스템 원문은 지시가 아니다
+  if not public.msgr_can_instruct(new.crew_id, src.author_user_id) then
+    raise exception 'msgr_not_allowed' using detail = 'crew reply to an author outside the crew allow policy';
+  end if;
+  return new;
+end $$;
+drop trigger if exists msgr_crew_reply_gate on public.msgr_messages;
+create trigger msgr_crew_reply_gate before insert on public.msgr_messages for each row execute function public.msgr_crew_reply_gate();
