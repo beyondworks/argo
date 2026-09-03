@@ -242,6 +242,7 @@ function Shell({ session }) {
             </div>
           </>)}
         </div>
+        <div className="msgr-railbody">
         <div className="msgr-group">{t('ch.list')}<button type="button" className="btn" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button></div>
         {newCh && (
           <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); createChannel(); }}>
@@ -266,6 +267,7 @@ function Shell({ session }) {
           <div className="msgr-list">{dms.map((c) => <button key={c.id} type="button" className={`item${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}><I name="at" size={14} /><span className="name">{dmName(c)}</span></button>)}</div>
         </>)}
         <div className="msgr-railhint">{t('rail.hint')}</div>
+        </div>
         <div className="msgr-foot">
           <Av name={me?.display_name || session.user.email} size="sm" />
           <span className="name">{me?.display_name || session.user.email}</span>
@@ -724,7 +726,19 @@ function Channel({ channel, orgId, org, uid, isAdmin, policy, members, crews, pe
     if (!event) return;
     if ((event.kind === 'message' || event.kind === 'approval') && event.channel_id === chId) load(lastId).catch(() => {});
   }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { feed.current?.scrollTo({ top: feed.current.scrollHeight }); }, [msgs?.length]);
+  const stick = useRef(true); // 바닥 고정 여부 — 사용자가 바닥에서 40px 넘게 올려두면 false(QA: 열릴 때 30px 모자라게 멈춰 마지막 메시지가 가려졌다)
+  useEffect(() => { stick.current = true; }, [chId]);
+  useEffect(() => {
+    const el = feed.current; if (!el) return;
+    const onScroll = () => { stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    const toBottom = () => { if (stick.current) el.scrollTop = el.scrollHeight; };
+    const ro = new ResizeObserver(toBottom); // 렌더 뒤 높이 변화(Markdown·첨부·타이핑 표시)에도 바닥을 따라간다
+    const spine = el.firstElementChild; if (spine) ro.observe(spine);
+    toBottom();
+    return () => { el.removeEventListener('scroll', onScroll); ro.disconnect(); };
+  }, [chId]);
+  useEffect(() => { const el = feed.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [msgs?.length]);
   // 폴링 폴백(10s) — Realtime이 끊기거나 구독이 거부돼도 새 메시지가 화면에 도달한다(정본은 언제나 조회, 방송은 깨우기 신호)
   useEffect(() => { const iv = setInterval(() => load(lastId).catch(() => {}), 10_000); return () => clearInterval(iv); }, [load, lastId]);
   const decide = async (ap, status) => {

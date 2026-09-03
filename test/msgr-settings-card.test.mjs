@@ -217,3 +217,18 @@ test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목�
   assert.match(ch, /\{scoped && canEdit && channel\.kind !== 'dm' && !isMe && <button[^\n]*removeMember\('user', m\.user_id\)/, '비공개 채널 사람 내보내기');
   for (const k of ['ch.composition', 'ch.composition.count', 'ch.composition.public', 'ch.composition.scoped', 'ch.people', 'ch.crews', 'ch.crews.none', 'ch.crews.none.scoped', 'ch.open.crew', 'ui.me', 'rail.hint']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });
+
+test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(렌더 뒤 높이 변화 추적)·위로 올려두면 유지, 채널 전환 시 바닥부터; 레일은 railbody만 스크롤(풋터 고정)', () => {
+  const ch = app.slice(app.indexOf('function Channel('), app.indexOf('function Message('));
+  assert.match(ch, /const stick = useRef\(true\);/, '바닥 고정 ref');
+  assert.match(ch, /useEffect\(\(\) => \{ stick\.current = true; \}, \[chId\]\);/, '채널 전환 시 바닥부터');
+  assert.match(ch, /stick\.current = el\.scrollHeight - el\.scrollTop - el\.clientHeight < 40;/, '바닥 근접 판정 40px');
+  assert.match(ch, /const ro = new ResizeObserver\(toBottom\);/, '높이 변화 추적');
+  assert.match(ch, /useEffect\(\(\) => \{ const el = feed\.current; if \(el && stick\.current\) el\.scrollTop = el\.scrollHeight; \}, \[msgs\?\.length\]\);/, '새 메시지는 고정 중일 때만 바닥');
+  assert.doesNotMatch(ch, /feed\.current\?\.scrollTo\(\{ top: feed\.current\.scrollHeight \}\)/, '무조건 바닥 스크롤이 남아 있다(위로 올린 사용자를 끌어내린다)');
+  assert.match(app, /<div className="msgr-railbody">\n\s*<div className="msgr-group">\{t\('ch\.list'\)\}/, '레일 본문 스크롤 영역');
+  const css = read('apps/messenger/src/styles.css');
+  assert.match(css, /^\.msgr-side \{[^\n]*overflow: hidden; \}/m, '레일 자체 스크롤 금지(풋터 고정)');
+  assert.match(css, /^\.msgr-railbody \{ flex: 1; min-height: 0; overflow-y: auto;/m, '레일 본문만 스크롤');
+  assert.match(css, /^\.msgr-sheetwrap \.msgr-crewsheet \{ z-index: 66; \}/m, '시트가 투명 스크림(z 65) 아래면 시트 위 휠이 스레드를 굴린다');
+});

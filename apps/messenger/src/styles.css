@@ -22,7 +22,8 @@
 .msgr-av.sm { width: 22px; height: 22px; font-size: 10px; }
 
 /* ── 레일(.side 토큰 스코프 안: linen에선 차콜) ── */
-.msgr-side { width: 268px; padding: 16px 14px 14px; gap: 4px; border-right: 1px solid var(--border-soft); }
+.msgr-side { width: 268px; padding: 16px 14px 14px; gap: 4px; border-right: 1px solid var(--border-soft); overflow: hidden; } /* 스크롤은 railbody만 — 풋터는 항상 보인다(QA: 채널 30개면 풋터가 밀려 사라졌다) */
+.msgr-railbody { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
 .shell.msgr-shell { grid-template-columns: 268px minmax(0, 1fr); height: calc(100vh / var(--z, 1)); min-height: 0; }
 .msgr-brand { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; font-family: var(--mono); font-weight: 600; letter-spacing: 0.16em; font-size: 12px; }
 .msgr-brand svg { fill: var(--mark); }
@@ -189,6 +190,7 @@
 .msgr-namebtn:hover { text-decoration: underline; text-underline-offset: 3px; }
 .msgr-sheetwrap { position: absolute; inset: 0; z-index: 50; pointer-events: none; }
 .msgr-sheetwrap > * { pointer-events: auto; }
+.msgr-sheetwrap .msgr-crewsheet { z-index: 66; } /* 투명 스크림(.msgr-scrim.clear, z 65)보다 위 — 아니면 시트 위의 휠이 스크림에 먹혀 뒤의 스레드가 스크롤된다(유건 실측 2026-09-04) */
 .msgr-crewsheet { position: absolute; top: 72px; right: 24px; width: min(380px, calc(100% - 48px)); max-height: calc(100% - 96px); overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 20px 6px 20px 20px; box-shadow: var(--shadow-float); padding: 16px 18px 18px; display: grid; gap: 14px; animation: msgrPopIn 180ms cubic-bezier(.23,1,.32,1) both; }
 .msgr-crewsheet .head { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 .msgr-crewsheet .head .name { font-size: 15px; font-weight: 600; }
