@@ -1034,6 +1034,7 @@ export function ensureGateway() {
           beatGateway(c.id, 'telegram', false, `토큰 중복 — ${claimedTg.get(cfg.token).label}에서 사용 중. 텔레그램 봇은 한 곳에만 연결할 수 있습니다`).catch(() => {});
         } else if (own && !own.mine) { // 다른 기기가 이 토큰을 받는 중(또는 클레임 판정 전) — 이 기기는 물러난다
           if (own.holder) beatGateway(c.id, 'telegram', false, `다른 기기(${deviceLabel(own.holder)})에서 수신 중`, { holder: 'other', holderDevice: deviceLabel(own.holder) }).catch(() => {});
+          else beatGateway(c.id, 'telegram', false, '수신 기기 판정 중(최대 30초) — 클라우드 클레임 확인 실패가 계속되면 동기화 상태를 확인하세요', { holder: 'pending' }).catch(() => {});
         } else if (kind === 'slack' && !leader) { // 슬랙은 종전대로 기기 리더만
           /* 비리더 — 폴러 미기동(alive 미등록 → 정리 루프가 내린다) */
         } else if (cfg.enabled && cfg.token && (kind === 'telegram' || cfg.channel)) {
@@ -1065,6 +1066,7 @@ export function ensureGateway() {
         const own = tgOwned(bot.token);
         if (!own.mine) { // 다른 기기가 받는 중(또는 클레임 판정 전) — 이 기기는 물러난다(alive 미등록 → 정리 루프가 내린다)
           if (own.holder) beatGateway(c.id, `tg-${slug}`, false, `다른 기기(${deviceLabel(own.holder)})에서 수신 중`, { holder: 'other', holderDevice: deviceLabel(own.holder) }).catch(() => {});
+          else beatGateway(c.id, `tg-${slug}`, false, '수신 기기 판정 중(최대 30초) — 클라우드 클레임 확인 실패가 계속되면 동기화 상태를 확인하세요', { holder: 'pending' }).catch(() => {}); // 침묵 대신 원인(재검수 L-2)
           continue;
         }
         if (!holder) claimedTg.set(bot.token, { id, label: `크루 직통 봇(${slug})` });

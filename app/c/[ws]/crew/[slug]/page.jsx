@@ -1920,7 +1920,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="microlabel">{t('chat.tg.title')}</span>
               {tgBot?.hasToken && (
-                <span className="chip" style={{ color: tgAlive ? 'var(--ok)' : tgOther !== null ? 'var(--info)' : 'var(--warn)', borderColor: 'currentColor' }}>
+                <span className="chip" style={{ color: tgAlive ? 'var(--ok)' : tgOther !== null ? 'var(--tg-remote)' : 'var(--warn)', borderColor: 'currentColor' }}>
                   <span style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor', display: 'inline-block', marginRight: 5 }} />
                   {tgAlive ? t('chat.tg.live') : tgOther !== null ? t('chat.tg.otherDevice', { device: tgOther }) : t('chat.tg.waiting')}
                   {tgBot.paired ? ` · ${t('chat.tg.paired')}` : ''}

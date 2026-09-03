@@ -1063,7 +1063,7 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
           {t('settings.conn.gwFollower')}
         </div>
       ) : on && gw && (
-        <div style={{ fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 6, color: gw.alive ? 'var(--ok)' : gw.holder === 'other' ? 'var(--info)' : gw.error ? 'var(--danger)' : 'var(--warn)' }}>
+        <div style={{ fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 6, color: gw.alive ? 'var(--ok)' : gw.holder === 'other' ? 'var(--tg-remote)' : gw.error ? 'var(--danger)' : 'var(--warn)' }}>
           <span style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} aria-hidden="true" />
           {gw.alive
             ? t('settings.conn.gwAlive', { s: Math.max(0, Math.round((Date.now() - gw.lastTs) / 1000)) })

@@ -24,6 +24,8 @@
 }
 
 :root {
+  /* 텔레그램 수신 주체 — 다른 기기 수신 표지 전용 파랑(테마 무관: 브랜드 --info가 골드라 --warn과 색상각 1° 차이로 구분 불가 — 재검수 M-3) */
+  --tg-remote: #3a6ea5;
   /* ── Argo 라이트 (웜 아이보리 + 새틴 골드) ── */
   --bg: #f5f0e3;            /* 웜 아이보리 캔버스 */
   --card: #fcfaf2;
@@ -71,6 +73,7 @@
    두 블록의 토큰 값은 항상 동일하게 유지한다(한쪽을 고치면 다른 쪽도). */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
+    --tg-remote: #7fb0e6;
     color-scheme: dark;
     /* 명암 완화 — near-black 대신 웜 차콜로 올려 극단적 대비를 압축. 카드·2·3차 텍스트·보더도 올려 가시성 확보 */
     --bg: #1c1813; --card: #26211a; --card-2: #322c21; --secondary: #3d371f;
@@ -94,6 +97,7 @@
 :root[data-theme='argo-light'] { color-scheme: light; }
 /* 수동 다크 — 위 @media 블록과 동일한 다크 값 */
 :root[data-theme='argo-dark'] {
+  --tg-remote: #7fb0e6;
   color-scheme: dark;
   /* 명암 완화 — @media 블록과 동일 값 유지 */
   --bg: #1c1813; --card: #26211a; --card-2: #322c21; --secondary: #3d371f;
@@ -163,6 +167,7 @@
 
 /* [apple-dark] Apple HIG 다크 — 시스템 블랙 위 elevated 표면, 다크 전용 밝은 시스템 컬러. */
 :root[data-theme='apple-dark'] {
+  --tg-remote: #7fb0e6;
   color-scheme: dark;
   --bg: #161617;            /* apple.com 다크 캔버스 */
   --card: #1d1d1f;
@@ -251,6 +256,7 @@
 
 /* [glass-dark] 리퀴드 글래스 다크 — 딥 네이비 그라디언트 위 다크 유리 표면. */
 :root[data-theme='glass-dark'] {
+  --tg-remote: #7fb0e6;
   color-scheme: dark;
   --bg: #1a1a1c;            /* 폴백 — 실제 캔버스는 아래 body 그라디언트 (#1c1c1c 계열) */
   --card: rgba(255, 255, 255, 0.07);

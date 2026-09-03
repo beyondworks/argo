@@ -100,7 +100,7 @@ async function collectFiles(storage, keyPrefix, relBase, out, state) {
     반환 { target, companies, files, failed, unsafe }. (export: 통합 테스트용 — 실 Supabase 없이 검증) */
 export async function exportCloudAll({ storage, owner, targetDir }) {
   const top = await listDir(storage, owner);
-  // 회사 = 폴더(id 없음). 점 접두(.tombstones)·직속 파일(_device-lease.json)은 동기화 인프라 — 자료가 아니다.
+  // 회사 = 폴더(id 없음). 점 접두(.tombstones·.tg-claims)·직속 파일(_device-lease.json)은 동기화 인프라 — 자료가 아니다.
   const companies = top.filter((e) => !e.id && !String(e.name).startsWith('.'));
   if (companies.length === 0) throw err('empty', `클라우드에 회사 없음: ${owner}`);
   const tmp = `${targetDir}.partial`;
