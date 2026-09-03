@@ -1345,3 +1345,86 @@ do $$ declare f text; begin
     execute format('grant execute on function public.%s to authenticated', f);
   end loop;
 end $$;
+
+-- ── J-4 게스트(부록 I "가입(공유) 경로 ④"): 채널 한정·기간 한정. 채널 관리자가 비공개 채널의 게스트 초대 링크를 만들고, 수락한 사람은
+--    그 채널에만 들어오며(공개 채널은 원래 게스트에게 안 보임) expires_at이 지나면 멤버십 판정(msgr_role)이 곧바로 null이 된다(전 RLS 동시 차단).
+--    좌석: 기본으로 게스트는 좌석을 차지하지 않는다(정책 guest_seats로 차지하게 가능).
+alter table public.msgr_org_members add column if not exists expires_at timestamptz;
+alter table public.msgr_invites add column if not exists channel_id uuid references public.msgr_channels (id) on delete cascade;
+alter table public.msgr_invites add column if not exists guest_days int not null default 30 check (guest_days between 1 and 365);
+alter table public.msgr_invites drop constraint if exists msgr_invites_channel_guest;
+alter table public.msgr_invites add constraint msgr_invites_channel_guest check (channel_id is null or role = 'guest'); -- 채널 한정 초대 = 게스트
+alter table public.msgr_org_policies add column if not exists guest_seats boolean not null default false;
+
+create or replace function public.msgr_role(org uuid) returns text
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select m.role from public.msgr_org_members m
+      join public.msgr_orgs o on o.id = m.org_id and o.deleted_at is null
+     where m.org_id = org and m.user_id = auth.uid() and m.removed_at is null
+       and (m.expires_at is null or m.expires_at > now())
+$$;
+
+-- 좌석 게이트: 게스트는 정책이 켜져 있을 때만 좌석을 센다.
+create or replace function public.msgr_member_seat_gate() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare lim int; n int; gseats boolean;
+begin
+  if new.removed_at is not null then return new; end if;
+  if tg_op = 'UPDATE' and old.removed_at is null then return new; end if; -- 활성→활성(역할 변경)은 좌석 불변
+  select coalesce(p.guest_seats, false) into gseats from public.msgr_org_policies p where p.org_id = new.org_id;
+  gseats := coalesce(gseats, false);
+  if new.role = 'guest' and not gseats then return new; end if;
+  perform pg_advisory_xact_lock(hashtext('msgr_seats:' || new.org_id::text));
+  select case when public.msgr_org_plan(new.org_id) = 'team' then coalesce(e.seats, 0) else 3 end
+    into lim from public.msgr_org_entitlements e where e.org_id = new.org_id;
+  if lim is null then lim := 3; end if;
+  select count(*) into n from public.msgr_org_members where org_id = new.org_id and removed_at is null and user_id <> new.user_id
+     and (role <> 'guest' or gseats) and (expires_at is null or expires_at > now());
+  if n >= lim then raise exception 'msgr_seat_limit' using detail = format('%s/%s', n, lim); end if;
+  return new;
+end $$;
+
+-- 초대 정책: 채널 게스트 초대는 그 채널의 관리자도 만들고·보고·취소한다(비공개 채널만 — 공개 채널은 게스트가 못 본다).
+drop policy if exists msgr_invites_select on public.msgr_invites;
+create policy msgr_invites_select on public.msgr_invites for select to authenticated
+  using (public.msgr_is_admin(org_id) or (channel_id is not null and public.msgr_can_manage_channel(channel_id)));
+drop policy if exists msgr_invites_insert on public.msgr_invites;
+create policy msgr_invites_insert on public.msgr_invites for insert to authenticated
+  with check (created_by = (select auth.uid()) and accepted_at is null
+    and ((channel_id is null and public.msgr_is_admin(org_id))
+      or (channel_id is not null and role = 'guest' and public.msgr_can_manage_channel(channel_id)
+          and exists (select 1 from public.msgr_channels c where c.id = channel_id and c.org_id = msgr_invites.org_id and c.kind = 'private' and c.archived_at is null))));
+drop policy if exists msgr_invites_delete on public.msgr_invites;
+create policy msgr_invites_delete on public.msgr_invites for delete to authenticated
+  using (public.msgr_is_admin(org_id) or (channel_id is not null and public.msgr_can_manage_channel(channel_id)));
+
+create or replace function public.msgr_accept_invite(code text) returns uuid
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare inv public.msgr_invites%rowtype;
+begin
+  if auth.uid() is null then raise exception 'msgr_auth_required'; end if;
+  select * into inv from public.msgr_invites i where i.code = msgr_accept_invite.code and i.accepted_at is null and i.expires_at > now() for update;
+  if inv.id is null then raise exception 'msgr_invite_invalid'; end if;
+  if inv.for_node and exists (select 1 from public.msgr_org_members where org_id = inv.org_id and user_id = auth.uid() and removed_at is null and role in ('owner', 'admin')) then
+    raise exception 'msgr_node_not_admin';
+  end if;
+  -- 이미 정식 멤버인 사람이 게스트 링크를 열면 강등하지 않는다(채널에만 넣는다)
+  if inv.role = 'guest' and exists (select 1 from public.msgr_org_members where org_id = inv.org_id and user_id = auth.uid() and removed_at is null and role <> 'guest' and (expires_at is null or expires_at > now())) then
+    null;
+  else
+    insert into public.msgr_org_members (org_id, user_id, role, display_name, expires_at)
+      values (inv.org_id, auth.uid(), inv.role, (select split_part(u.email, '@', 1) from auth.users u where u.id = auth.uid()),
+              case when inv.role = 'guest' then now() + make_interval(days => inv.guest_days) else null end)
+      on conflict (org_id, user_id) do update set role = excluded.role, removed_at = null, joined_at = now(), expires_at = excluded.expires_at,
+        display_name = coalesce(public.msgr_org_members.display_name, excluded.display_name);
+  end if;
+  if inv.channel_id is not null then
+    insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values (inv.channel_id, 'user', auth.uid(), inv.created_by) on conflict do nothing;
+  end if;
+  update public.msgr_invites set accepted_by = auth.uid(), accepted_at = now() where id = inv.id;
+  perform public.msgr_audit(inv.org_id, 'invite.accept', 'invite', inv.id::text, jsonb_build_object('role', inv.role, 'channel', inv.channel_id, 'guest_days', case when inv.role = 'guest' then inv.guest_days else null end));
+  if inv.for_node then
+    update public.msgr_orgs set service_user_id = auth.uid(), node_seen_at = now() where id = inv.org_id;
+  end if;
+  return inv.org_id;
+end $$;

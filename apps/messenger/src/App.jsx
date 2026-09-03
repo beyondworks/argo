@@ -130,10 +130,10 @@ function Shell({ session }) {
     if (!id) return;
     const [chs, mems, crs, e, pol] = await Promise.all([
       q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids').eq('org_id', id).is('archived_at', null).order('created_at')),
-      q(supabase.from('msgr_org_members').select('user_id, role, display_name').eq('org_id', id).is('removed_at', null)),
+      q(supabase.from('msgr_org_members').select('user_id, role, display_name, expires_at').eq('org_id', id).is('removed_at', null)),
       q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at').eq('org_id', id).eq('status', 'active')),
       supabase.from('msgr_org_entitlements').select('plan, seats, ls_status').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
-      supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
+      supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
     ]);
     const orgRow = orgs.find((o) => o.id === id);
     crs.sort((a, b) => (crewTier(b, orgRow) === 'company') - (crewTier(a, orgRow) === 'company') || a.display_name.localeCompare(b.display_name, 'ko')); // 순서 고정: 회사 크루 먼저, 이름순(QA: 화면마다 순서가 달랐다)
@@ -450,6 +450,16 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
   const crewCreate = policy?.crew_create ?? 'channel_admin';
   const canCreateCrew = channel.kind !== 'dm' && nodeOn && (isAdmin || crewCreate === 'member' || (crewCreate === 'channel_admin' && canEdit)); // 권한 행렬 — 최종은 RLS msgr_can_create_crew
   const [newCrew, setNewCrew] = useState(null); const [requests, setRequests] = useState([]); const doneSeen = useRef(null);
+  const [guestDays, setGuestDays] = useState(30); // J-4: 비공개 채널 게스트 링크(채널 관리자도 발급 — 최종은 RLS)
+  const guestInvite = async () => {
+    setBusy(true);
+    const res = await supabase.from('msgr_invites').insert({ org_id: org.id, role: 'guest', channel_id: channel.id, guest_days: guestDays, created_by: uid }).select('code').single();
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    const link = `${location.origin}${location.pathname}?invite=${res.data.code}`;
+    await navigator.clipboard?.writeText(link).catch(() => {});
+    onNote(`${t('ch.guest.made', { days: guestDays })} ${link}`);
+  };
   const loadRequests = useCallback(async () => {
     const rows = await q(supabase.from('msgr_crew_requests').select('id, name, status, error, crew_id, created_at, done_at').eq('org_id', org.id).eq('channel_id', channel.id).order('created_at', { ascending: false }).limit(10));
     setRequests(rows);
@@ -531,6 +541,13 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
               <div className="msgr-chips">{addableUsers.map((m) => <button key={m.user_id} type="button" className="msgr-chan" onClick={() => addMember('user', m.user_id)}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}</div>
               <p className="note">{t('ch.add.user.pool', { n: members.length, seats: ent?.seats ?? '?', plan: t(`plan.${ent?.plan ?? 'free'}`) })}{onInvite && <> <button type="button" className="btn sm" onClick={onInvite}><I name="copy" size={12} />{t('org.invite')}</button></>}</p>
             </>)}
+            {channel.kind === 'private' && (
+              <div className="row">
+                <span className="msgr-klabel">{t('ch.guest')}</span>
+                <div className="msgr-seg" role="radiogroup" aria-label={t('ch.guest.days')}>{[7, 30, 90].map((d) => <button key={d} type="button" role="radio" aria-checked={guestDays === d} className={guestDays === d ? 'active' : ''} onClick={() => setGuestDays(d)}>{t('ch.guest.day', { n: d })}</button>)}</div>
+                <button type="button" className="btn sm" disabled={busy} onClick={guestInvite}><I name="copy" size={13} />{t('ch.guest.link')}</button>
+              </div>
+            )}
             {pick === 'crew' && (<><div className="msgr-chips">{addableCrews.map((c) => <button key={c.id} type="button" className="msgr-chan" onClick={() => addMember('crew', c.id)}><I name="star" size={13} /><span>{c.display_name}</span></button>)}</div><p className="note">{t('ch.add.crew.note')}</p></>)}
           </>)}
           {channel.kind !== 'dm' && (canCreateCrew || (isAdmin && !nodeOn)) && (
@@ -879,6 +896,7 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
             <Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span>
             {m.role === 'owner' || isMe ? <span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
               : <div className="msgr-seg" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy || (r === 'admin' && !isOwner && m.role !== 'admin' && false)} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
+            {m.expires_at && <span className={`sub${Date.parse(m.expires_at) < Date.now() ? ' expired' : ''}`}>{Date.parse(m.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(m.expires_at, lang) })}</span>}
             {canEdit && confirmRemove !== m.user_id && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRemove(m.user_id)} title={t('org.member.remove')} aria-label={t('org.member.remove')}><I name="x" size={13} /></button>}
             {canEdit && confirmRemove === m.user_id && <span className="confirm-inline"><span>{t('org.member.remove.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => remove(m)}>{t('org.member.remove')}</button><button type="button" className="btn sm" onClick={() => setConfirmRemove(null)}>{t('ui.cancel')}</button></span>}
           </div>
@@ -937,11 +955,11 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
   const { t } = useT();
   const [draft, setDraft] = useState(policy); const [busy, setBusy] = useState(false);
   useEffect(() => { setDraft(policy); }, [policy]);
-  const dirty = ['allow_default', 'allow_locked', 'crew_memory_default', 'crew_memory_locked', 'approval_high_by', 'crew_create', 'crew_runner', 'crew_model'].some((k) => draft?.[k] !== policy?.[k]) || JSON.stringify(draft?.approver_user_ids ?? []) !== JSON.stringify(policy?.approver_user_ids ?? []);
+  const dirty = ['allow_default', 'allow_locked', 'crew_memory_default', 'crew_memory_locked', 'approval_high_by', 'crew_create', 'crew_runner', 'crew_model', 'guest_seats'].some((k) => draft?.[k] !== policy?.[k]) || JSON.stringify(draft?.approver_user_ids ?? []) !== JSON.stringify(policy?.approver_user_ids ?? []);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const save = async () => {
     setBusy(true);
-    const res = await supabase.from('msgr_org_policies').update({ allow_default: draft.allow_default, allow_locked: draft.allow_locked, crew_memory_default: draft.crew_memory_default, crew_memory_locked: draft.crew_memory_locked, approval_high_by: draft.approval_high_by, approver_user_ids: draft.approver_user_ids ?? [], crew_create: draft.crew_create ?? 'channel_admin', crew_runner: draft.crew_runner?.trim() || null, crew_model: draft.crew_model?.trim() || null }).eq('org_id', org.id).select('org_id');
+    const res = await supabase.from('msgr_org_policies').update({ allow_default: draft.allow_default, allow_locked: draft.allow_locked, crew_memory_default: draft.crew_memory_default, crew_memory_locked: draft.crew_memory_locked, approval_high_by: draft.approval_high_by, approver_user_ids: draft.approver_user_ids ?? [], crew_create: draft.crew_create ?? 'channel_admin', crew_runner: draft.crew_runner?.trim() || null, crew_model: draft.crew_model?.trim() || null, guest_seats: !!draft.guest_seats }).eq('org_id', org.id).select('org_id');
     setBusy(false);
     if (res.error) return onError(res.error.message);
     if (!res.data?.length) return onError(t('set.policy.adminOnly'));
@@ -962,6 +980,11 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
         <span className="msgr-klabel">{t('set.policy.memory')}</span>
         <label className="switchrow"><input type="checkbox" checked={draft.crew_memory_default !== false} disabled={ro} onChange={(e) => set({ crew_memory_default: e.target.checked })} /><span>{draft.crew_memory_default === false ? t('ch.memory.off') : t('ch.memory.on')}</span></label>
         <label className="switchrow"><input type="checkbox" checked={!!draft.crew_memory_locked} disabled={ro} onChange={(e) => set({ crew_memory_locked: e.target.checked })} /><span>{t('set.policy.lock')}</span></label>
+      </div>
+      <div className="row">
+        <span className="msgr-klabel">{t('set.policy.guests')}</span>
+        <label className="switchrow"><input type="checkbox" checked={!!draft.guest_seats} disabled={ro} onChange={(e) => set({ guest_seats: e.target.checked })} /><span>{t('set.policy.guests.seats')}</span></label>
+        <span className="note">{t('set.policy.guests.desc')}</span>
       </div>
       <div className="row">
         <span className="msgr-klabel">{t('set.policy.approval')}</span>

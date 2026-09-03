@@ -728,3 +728,47 @@ test('J-3 도메인 자동 가입 — 등록은 소유자만·본인 도메인�
   assert.equal(last(asUser(U.owner, `update public.msgr_orgs set auto_join_domain = null where id = '${ORG}' returning auto_join_domain is null`)), 't', '끄기');
   assert.equal(last(asUser(D2, `select count(*) from public.msgr_joinable_orgs()`)), '0', '끄면 목록 없음');
 });
+
+test('J-4 게스트 — 채널 관리자의 비공개 채널 게스트 링크(공개 채널·비관리자 거절), 수락 = 게스트+기간+채널 멤버, 만료 즉시 판정 null, 좌석은 정책 guest_seats에 따라', () => {
+  if (!DB) return;
+  const G1 = 'ffffffff-ffff-4fff-8fff-ffffffffffff', G2 = '12121212-1212-4121-8121-121212121212';
+  for (const [id, m] of [[G1, 'guest1'], [G2, 'guest2']]) sql(`insert into auth.users (id, created_at, email) values ('${id}', now(), '${m}@partner.co') on conflict do nothing`);
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 50 where org_id = '${ORG}'`);
+  sql(`update public.msgr_org_policies set guest_seats = false where org_id = '${ORG}'`);
+  sql(`update public.msgr_channels set admin_user_ids = '{}' where id in ('${PUB}', '${PRIV}')`);
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${PRIV}', 'user', '${U.member}') on conflict do nothing`); // 픽스처: 앞 케이스가 남긴 상태에 의존하지 않는다
+  const inv = (u, ch, days = 30) => `insert into public.msgr_invites (org_id, role, channel_id, guest_days, created_by) values ('${ORG}', 'guest', ${ch ? `'${ch}'` : 'null'}, ${days}, '${u}') returning code`;
+  denied(U.member, inv(U.member, PRIV), /row-level security/);                                   // 채널 관리자 아님
+  assert.equal(last(asUser(U.admin, `update public.msgr_channels set admin_user_ids = array['${U.member}'::uuid] where id = '${PRIV}' returning 1`)), '1', '채널 관리자 지정(생성자 — 소유자는 앞 케이스가 PRIV 멤버에서 뺐다: UPDATE는 SELECT 열람도 지나야 해 0행이 된다)');
+  denied(U.member, inv(U.member, PUB), /row-level security/);                                    // 공개 채널 게스트 링크 불가
+  denied(U.member, `insert into public.msgr_invites (org_id, role, channel_id, created_by) values ('${ORG}', 'member', '${PRIV}', '${U.member}')`, /msgr_invites_channel_guest|row-level security/); // 채널 한정은 게스트만
+  const code = last(asUser(U.member, inv(U.member, PRIV, 1)));
+  assert.match(code, /^[0-9a-f]{48}$/, '채널 관리자의 게스트 링크');
+  assert.equal(last(asUser(U.member, `select count(*) from public.msgr_invites where channel_id = '${PRIV}'`)), '1', '채널 관리자는 자기 채널 초대를 본다');
+  assert.equal(last(asUser(G1, `select public.msgr_accept_invite('${code}')`)), ORG, '게스트 수락');
+  assert.equal(sql(`select role || ' ' || (expires_at > now() + interval '23 hours' and expires_at < now() + interval '25 hours') from public.msgr_org_members where org_id = '${ORG}' and user_id = '${G1}'`), 'guest true', '게스트 + 1일 기간');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${PRIV}' and member_kind = 'user' and member_id = '${G1}'`), '1', '채널에 자동 등록');
+  assert.equal(last(asUser(G1, `select count(*) from public.msgr_channels where id = '${PRIV}'`)), '1', '게스트가 그 채널을 본다');
+  assert.equal(last(asUser(G1, `select count(*) from public.msgr_channels where id = '${PUB}'`)), '0', '공개 채널은 안 보인다');
+  // 좌석: 기본 게스트 미차지 — 좌석 1로 줄여도 게스트는 들어오고 멤버는 막힌다
+  sql(`update public.msgr_org_entitlements set seats = 1 where org_id = '${ORG}'`);
+  const code2 = last(asUser(U.member, inv(U.member, PRIV, 7)));
+  assert.equal(last(asUser(G2, `select public.msgr_accept_invite('${code2}')`)), ORG, '게스트는 좌석을 안 쓴다');
+  const mcode = last(asUser(U.owner, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'member', '${U.owner}') returning code`));
+  const M3 = '13131313-1313-4131-8131-131313131313'; sql(`insert into auth.users (id, created_at, email) values ('${M3}', now(), 'm3@partner.co') on conflict do nothing`);
+  denied(M3, `select public.msgr_accept_invite('${mcode}')`, /msgr_seat_limit/);
+  sql(`update public.msgr_org_policies set guest_seats = true where org_id = '${ORG}'`);
+  const code3 = last(asUser(U.member, inv(U.member, PRIV, 7)));
+  const G3 = '14141414-1414-4141-8141-141414141414'; sql(`insert into auth.users (id, created_at, email) values ('${G3}', now(), 'g3@partner.co') on conflict do nothing`);
+  denied(G3, `select public.msgr_accept_invite('${code3}')`, /msgr_seat_limit/);                  // 정책이 켜지면 게스트도 좌석
+  sql(`update public.msgr_org_entitlements set seats = 50 where org_id = '${ORG}'`);
+  sql(`update public.msgr_org_policies set guest_seats = false where org_id = '${ORG}'`);
+  // 만료 → 즉시 판정 null(채널·조직 불가시), 정식 멤버가 게스트 링크를 열어도 강등되지 않는다
+  sql(`update public.msgr_org_members set expires_at = now() - interval '1 second' where org_id = '${ORG}' and user_id = '${G1}'`);
+  assert.equal(last(asUser(G1, `select count(*) from public.msgr_channels where id = '${PRIV}'`)), '0', '만료 게스트는 채널 불가시');
+  assert.equal(last(asUser(G1, `select public.msgr_is_member('${ORG}')`)), 'f');
+  const code4 = last(asUser(U.member, inv(U.member, PRIV, 7)));
+  assert.equal(last(asUser(U.svc, `select public.msgr_accept_invite('${code4}')`)), ORG);
+  assert.equal(sql(`select role || ' ' || (expires_at is null) from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.svc}'`), 'member true', '정식 멤버는 강등 없이 채널만 추가');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${PRIV}' and member_kind = 'user' and member_id = '${U.svc}'`), '1');
+});

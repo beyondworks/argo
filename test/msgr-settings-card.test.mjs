@@ -59,7 +59,7 @@ test('H-0: 라우트가 조직별 policy를 싣고, 카드는 잠금이면 라�
 });
 
 test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 시트는 잠금에 비활성, 정책 카드는 관리자만 저장·비관리자는 안내', () => {
-  assert.match(app, /from\('msgr_org_policies'\)\.select\('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model'\)/, '조직 정책 조회가 없다');
+  assert.match(app, /from\('msgr_org_policies'\)\.select\('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats'\)/, '조직 정책 조회가 없다');
   assert.match(app, /setEnt\(e\); setPolicy\(pol\);/, '정책이 상태에 실리지 않는다');
   const crew = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
   assert.match(crew, /const locked = !!policy\?\.allow_locked;/, '크루 시트 잠금 판정');
@@ -72,7 +72,7 @@ test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 
   assert.match(ch, /memLocked && <p className="note">\{t\('ch\.memory\.locked'\)\}<\/p>/, '기억 잠금 안내가 없다');
   assert.match(ch, /\/msgr_policy_locked\/\.test\(res\.error\.message\) \? t\('err\.policyLocked'\)/, '채널 서버 거절 문구');
   const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
-  assert.match(pc, /from\('msgr_org_policies'\)\.update\(\{ allow_default: draft\.allow_default, allow_locked: draft\.allow_locked, crew_memory_default: draft\.crew_memory_default, crew_memory_locked: draft\.crew_memory_locked, approval_high_by: draft\.approval_high_by, approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null \}\)\.eq\('org_id', org\.id\)\.select\('org_id'\)/, '정책 저장 문장');
+  assert.match(pc, /from\('msgr_org_policies'\)\.update\(\{ allow_default: draft\.allow_default, allow_locked: draft\.allow_locked, crew_memory_default: draft\.crew_memory_default, crew_memory_locked: draft\.crew_memory_locked, approval_high_by: draft\.approval_high_by, approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)\.eq\('org_id', org\.id\)\.select\('org_id'\)/, '정책 저장 문장');
   assert.match(pc, /if \(!res\.data\?\.length\) return onError\(t\('set\.policy\.adminOnly'\)\);/, 'RLS 0행(비관리자)을 안내로 바꾸지 않는다');
   assert.match(pc, /const ro = !isAdmin \|\| busy;/, '비관리자 읽기 전용');
   assert.match(pc, /\{isAdmin \? <div className="row"><button[^\n]*onClick=\{save\}/, '저장 버튼이 관리자에게만 있지 않다');
@@ -101,7 +101,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   assert.match(slip, /\{high && <span className="msgr-klabel risk">\{t\('ap\.high'\)\}<\/span>\}/, '고위험 배지가 없다');
   assert.match(app, /onError\(t\(ap\.risk === 'high' \? 'ap\.approverOnly' : 'ap\.ownerOnly'\)\)/, 'RLS 0행 문구가 등급별이 아니다');
   const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
-  assert.match(pc, /approval_high_by: draft\.approval_high_by, approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null \}\)/, '정책 저장에 approval_high_by·approver_user_ids가 없다');
+  assert.match(pc, /approval_high_by: draft\.approval_high_by, approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)/, '정책 저장에 approval_high_by·approver_user_ids가 없다');
   assert.match(pc, /\['admin', 'approvers', 'owner'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.approval_high_by \?\? 'admin'\) === v\}/, '고위험 결재권 세그먼트');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /const risk = approvalRisk\(it\);/, '브리지 위험 판정');
@@ -261,7 +261,7 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
 
 test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·태그, 지정은 관리자·생성자만)와 지정 결재권자(approvers 정책·피커·슬립 확정권), 서버 함수·가드', () => {
   assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids'\)/, '채널 조회에 admin_user_ids');
-  assert.match(app, /select\('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model'\)/, '정책 조회에 approver_user_ids');
+  assert.match(app, /select\('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats'\)/, '정책 조회에 approver_user_ids');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(ch, /const canEdit = isAdmin \|\| channel\.created_by === uid \|\| chAdmins\.includes\(uid\);/, '채널 관리자 편집권');
   assert.match(ch, /const canAssignAdmins = \(isAdmin \|\| channel\.created_by === uid\) && channel\.kind !== 'dm';/, '지정은 조직 관리자·생성자만');
@@ -269,7 +269,7 @@ test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·
   assert.match(slip, /const can = byAdmin \? \(!!isAdmin \|\| \(mode === 'approvers' && isApprover\)\) : owner;/, '슬립 확정권에 지정 결재권자');
   const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
   assert.match(pc, /\['admin', 'approvers', 'owner'\]\.map/, '정책 세그먼트 3옵션');
-  assert.match(pc, /approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null \}\)/, '결재권자 저장');
+  assert.match(pc, /approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)/, '결재권자 저장');
   assert.match(pc, /members\.filter\(\(m\) => m\.role !== 'owner' && m\.role !== 'guest'\)\.map/, '결재권자 후보에서 게스트 제외(공개 채널 열람 불가)');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /c\.created_by = auth\.uid\(\) or auth\.uid\(\) = any \(c\.admin_user_ids\) or \(c\.kind <> 'dm' and coalesce\(public\.msgr_is_admin\(c\.org_id\), false\)\)/, '채널 관리 판정');
@@ -294,9 +294,9 @@ test('I-4 회사 노드 — 조직 행에 하트비트, 노드용 초대는 memb
 
 test('I-5 회사 크루 만들기 — 정책 crew_create 세그먼트·저장, 채널 시트 권한 행렬·요청 insert 모양·노드 없음 안내, i18n', () => {
   const app = read('apps/messenger/src/App.jsx');
-  assert.match(app, /approver_user_ids, crew_create, crew_runner, crew_model'\)\.eq\('org_id', id\)/, '정책 조회에 crew_create');
+  assert.match(app, /approver_user_ids, crew_create, crew_runner, crew_model, guest_seats'\)\.eq\('org_id', id\)/, '정책 조회에 crew_create');
   const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
-  assert.match(pc, /crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null \}\)\.eq\('org_id', org\.id\)/, '정책 저장에 crew_create');
+  assert.match(pc, /crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)\.eq\('org_id', org\.id\)/, '정책 저장에 crew_create');
   assert.match(pc, /\['admin', 'channel_admin', 'member'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.crew_create \?\? 'channel_admin'\) === v\}/, '3옵션 세그먼트');
   const cs = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(cs, /const canCreateCrew = channel\.kind !== 'dm' && nodeOn && \(isAdmin \|\| crewCreate === 'member' \|\| \(crewCreate === 'channel_admin' && canEdit\)\);/, '권한 행렬(서버 msgr_can_create_crew와 같은 규칙)');
@@ -345,4 +345,20 @@ test('J-3 도메인 자동 가입 — 소유자 도메인 행·저장 모양·�
   assert.ok(!/'example\.test'/.test(sql), '로컬 시드 도메인은 공개 목록에 없다');
   const dict = read('apps/messenger/src/i18n.js');
   for (const k of ['org.domain', 'org.domain.ph', 'org.domain.desc', 'org.domain.on', 'org.domain.public', 'org.domain.notOwners', 'org.join.cta', 'org.step.join']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('J-4 게스트 — 비공개 채널 시트의 게스트 링크(기간 세그먼트·채널 한정 insert), 멤버 목록 만료 표기, 정책 guest_seats, 서버 판정·좌석·수락', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const cs = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
+  assert.match(cs, /insert\(\{ org_id: org\.id, role: 'guest', channel_id: channel\.id, guest_days: guestDays, created_by: uid \}\)/, '게스트 링크 insert 모양');
+  assert.match(cs, /\{channel\.kind === 'private' && \(\s*<div className="row">\s*<span className="msgr-klabel">\{t\('ch\.guest'\)\}/, '비공개 채널에만 노출');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(oc, /t\('org\.guest\.until', \{ when: fmtWhen\(m\.expires_at, lang\) \}\)/, '만료 표기');
+  assert.match(app, /select\('user_id, role, display_name, expires_at'\)/, '멤버 조회에 expires_at');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /and \(m\.expires_at is null or m\.expires_at > now\(\)\)\n\$\$;/, 'msgr_role이 만료를 본다');
+  assert.match(sql, /if new\.role = 'guest' and not gseats then return new; end if;/, '게스트 좌석 미차지(정책 off)');
+  assert.match(sql, /check \(channel_id is null or role = 'guest'\)/, '채널 한정 초대 = 게스트');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['ch.guest', 'ch.guest.link', 'ch.guest.made', 'org.guest.until', 'org.guest.expired', 'set.policy.guests', 'set.policy.guests.seats']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
 });

@@ -387,3 +387,6 @@
 /* J-3 도메인 자동 가입 — 메뉴의 가입 후보 */
 .msgr-menu-pop button.join .msgr-klabel { margin-left: auto; }
 .msgr-chips .msgr-chan .msgr-klabel { margin-left: 6px; }
+
+/* J-4 게스트 만료 표기 */
+.msgr-setcard .msgr-rows .row .sub.expired { color: var(--danger); }
