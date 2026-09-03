@@ -94,6 +94,7 @@ function Shell({ session }) {
   const [allChips, setAllChips] = useState(false);
   const [page, setPage] = useState('chat'); // 'chat' | 'settings' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03)
   const [orgMenu, setOrgMenu] = useState(false);
+  const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
   const rt = useRef(null);
   const loadOrgs = useCallback(async () => {
     const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug)').eq('user_id', uid).is('removed_at', null));
@@ -203,13 +204,13 @@ function Shell({ session }) {
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
         <div className="msgr-group">{t('org.crews')}</div>
         {crews.map((c) => { const on = c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS; return (
-          <div key={c.id} className="msgr-crewcard" title={`${c.role_text ?? ''} · ${nameOfUser(c.owner_user_id)}`}>
+          <button key={c.id} type="button" className={`msgr-crewcard${sheet === c.id ? ' on' : ''}`} onClick={() => setSheet((s) => s === c.id ? null : c.id)} title={`${c.role_text ?? ''} · ${nameOfUser(c.owner_user_id)}`}>
             <Av name={c.display_name} crew size="lg" />
             <span style={{ minWidth: 0 }}>
               <span className="name">{c.display_name}<span className={`st${on ? '' : ' off'}`}><span className={`msgr-dot${on ? ' mark' : ''}`} />{on ? t('crew.online') : t('crew.away')}</span></span>
               <span className="sub">{[c.role_text, `${nameOfUser(c.owner_user_id)}`].filter(Boolean).join(' · ')}</span>
             </span>
-          </div>
+          </button>
         ); })}
         {!crews.length && <div className="msgr-hint">{t('org.crewsHint')}</div>}
         <div className="msgr-group">{t('org.members')} · {members.length}{isAdmin && <button type="button" className="btn" onClick={invite} title={t('org.invite')} aria-label={t('org.invite')}><I name="plus" size={14} /></button>}</div>
@@ -225,6 +226,7 @@ function Shell({ session }) {
         </div>
       </aside>
       <main className="msgr-main">
+        {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} uid={uid} me={me} members={members} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} />}
         {(err || note) && (
           <div className="msgr-notice">
             <span style={{ color: err ? 'var(--danger)' : 'var(--fg-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{err ? `${t('ui.error')}: ${err}` : note}</span>
@@ -234,11 +236,76 @@ function Shell({ session }) {
         {page === 'settings' ? (
           <Settings session={session} me={me} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
-          <Channel key={chId} channel={channel} orgId={orgId} uid={uid} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} />
+          <Channel key={chId} channel={channel} orgId={orgId} uid={uid} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} />
         ) : (
           <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={createOrg} createChannel={createChannel} invite={isAdmin ? invite : null} />
         )}
       </main>
+    </div>
+  );
+}
+
+/* ─── 크루 시트: 소유자·실행 위치·접속 + 누가 시킬 수 있나(소유자만 편집, RLS msgr_crews_update_owner) + 허용 요청 ─── */
+function CrewSheet({ crew, uid, me, members, channelId, nameOfUser, onClose, onChanged, onPosted, onNote, onError }) {
+  const { t, lang } = useT();
+  const owner = crew.owner_user_id === uid;
+  const [allow, setAllow] = useState(crew.allow); const [list, setList] = useState(crew.allow_users ?? []); const [busy, setBusy] = useState(false);
+  useEffect(() => { setAllow(crew.allow); setList(crew.allow_users ?? []); }, [crew.id, crew.allow, crew.allow_users]);
+  useEffect(() => { const on = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [onClose]);
+  const on = crew.last_seen_at && Date.now() - Date.parse(crew.last_seen_at) < AWAY_MS;
+  const canMe = owner || crew.allow === 'all' || (crew.allow === 'list' && (crew.allow_users ?? []).includes(uid));
+  const save = async (nextAllow, nextList) => {
+    setBusy(true);
+    const res = await supabase.from('msgr_crews').update({ allow: nextAllow, allow_users: nextAllow === 'list' ? nextList : [] }).eq('id', crew.id).select('id');
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    if (!res.data?.length) return onError(t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) })); // RLS 0행
+    onNote(t('crew.allow.saved')); onChanged();
+  };
+  const pickAllow = (v) => { setAllow(v); if (v !== 'list') save(v, []); };
+  const toggle = (id) => { const next = list.includes(id) ? list.filter((x) => x !== id) : [...list, id]; setList(next); save('list', next); };
+  const request = async () => {
+    if (!channelId) return;
+    const ownerName = nameOfUser(crew.owner_user_id); const meName = me?.display_name || uid.slice(0, 8);
+    const body = t('crew.request.body', { owner: ownerName, me: meName, crew: crew.display_name });
+    const { error } = await supabase.from('msgr_messages').insert({ channel_id: channelId, author_kind: 'user', author_user_id: uid, body, mentions: [{ kind: 'user', id: crew.owner_user_id }], client_msg_id: crypto.randomUUID() });
+    if (error) return onError(error.message);
+    onNote(t('crew.request.sent')); onPosted?.(); onClose();
+  };
+  const others = members.filter((m) => m.user_id !== crew.owner_user_id);
+  return (
+    <div className="msgr-sheetwrap">
+      <div className="msgr-scrim clear" onClick={onClose} />
+      <aside className="msgr-crewsheet" role="dialog" aria-label={t('crew.sheet')}>
+        <div className="head">
+          <Av name={crew.display_name} crew size="lg" />
+          <div style={{ minWidth: 0 }}><div className="name">{crew.display_name}</div><div className="msgr-klabel">{crew.role_text}</div></div>
+          <button type="button" className="btn ghost" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={15} /></button>
+        </div>
+        <div className="facts">
+          <div><span className="msgr-klabel">{t('crew.owner')}</span><span><Av name={nameOfUser(crew.owner_user_id)} size="sm" /> {nameOfUser(crew.owner_user_id)}</span></div>
+          <div><span className="msgr-klabel">{t('tab.crew')}</span><span>{t(`crew.hosting.${crew.hosting === 'resident' ? 'resident' : 'local'}`)}</span></div>
+          <div><span className="msgr-klabel">{on ? t('crew.online') : t('crew.away')}</span><span><span className={`msgr-dot${on ? ' mark' : ''}`} /> {crew.last_seen_at ? t('crew.lastSeen', { when: fmtTs(crew.last_seen_at, lang) }) : '—'}</span></div>
+        </div>
+        <section>
+          <h3>{t('crew.allow')}</h3>
+          <p>{t('crew.allow.desc')}</p>
+          <div className="msgr-seg" role="radiogroup" aria-label={t('crew.allow')}>
+            {['all', 'list', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={allow === v} className={allow === v ? 'active' : ''} disabled={!owner || busy} onClick={() => pickAllow(v)}>{t(`crew.allow.${v}`)}</button>)}
+          </div>
+          {allow === 'list' && (
+            <div className="picks">
+              <span className="msgr-klabel">{t('crew.allow.pick')}</span>
+              {others.map((m) => <label key={m.user_id} className={`pick${list.includes(m.user_id) ? ' on' : ''}`}><input type="checkbox" checked={list.includes(m.user_id)} disabled={!owner || busy} onChange={() => toggle(m.user_id)} /><Av name={m.display_name || m.user_id} size="sm" /><span>{m.display_name || m.user_id.slice(0, 8)}</span><span className="msgr-klabel">{t(`role.${m.role}`)}</span></label>)}
+            </div>
+          )}
+          {!owner && <p className="note">{t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) })}</p>}
+          <div className="me">
+            <span className={`msgr-dot${canMe ? ' ok' : ''}`} /><span>{canMe ? t('crew.allow.me.yes') : t('crew.allow.me.no')}</span>
+            {!owner && !canMe && <button type="button" className="btn btn-primary sm" onClick={request} disabled={!channelId}><I name="at" size={13} />{t('crew.request')}</button>}
+          </div>
+        </section>
+      </aside>
     </div>
   );
 }
@@ -321,7 +388,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite }) {
 }
 
 /* ─── 채널 본문: 상단(제목·멤버 스택·세그먼트 탭) + 척추 스레드 + 2단 독 ─── */
-function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, event, typing, onError, onMenu }) {
+function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, event, typing, onError, onMenu, onCrew }) {
   const { t, lang } = useT();
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
   const [tab, setTab] = useState('all');
@@ -369,7 +436,7 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
   for (const m of shown) {
     const k = dayKey(m.created_at);
     if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
-    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} />);
+    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} onCrew={onCrew} />);
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'stamp', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
@@ -393,7 +460,7 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
   </>);
 }
 
-function Message({ m, uid, lang, t, nameOfUser, crewOf, ap, atts, decide, parent }) {
+function Message({ m, uid, lang, t, nameOfUser, crewOf, ap, atts, decide, parent, onCrew }) {
   const [copied, setCopied] = useState(false);
   const crew = m.crew_id ? crewOf(m.crew_id) : null;
   const name = m.author_kind === 'user' ? nameOfUser(m.author_user_id) : (crew?.display_name ?? t('org.crews'));
@@ -414,9 +481,9 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, ap, atts, decide, parent
   const isCrew = m.author_kind === 'crew';
   return ( // 동료·크루 글 — 척추 위 아바타(사람 원 / 크루 타일), 크루 답은 척추에 붙는 시트
     <div className="msgr-row">
-      <Av name={name} crew={isCrew} />
+      {isCrew && crew ? <button type="button" className="msgr-avbtn" onClick={() => onCrew?.(crew.id)} title={t('crew.sheet')}><Av name={name} crew /></button> : <Av name={name} crew={isCrew} />}
       <div style={{ minWidth: 0 }}>
-        <div className="who">{name}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
+        <div className="who">{isCrew && crew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew?.(crew.id)}>{name}</button> : name}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
         {m.deleted_at ? <div className="msgr-sys">{t('msg.deleted')}</div>
           : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} />
           : m.kind === 'system' ? <div className="msgr-sys">{body}</div>
@@ -499,7 +566,10 @@ function Composer({ chId, orgId, uid, members, crews, channel, sbw = 0, typingCr
     const body = text.trim(); if (!body || busy) return;
     setBusy(true);
     try {
-      const ment = mentions.filter((x) => body.includes(`@${x.name}`)).map(({ kind, id }) => ({ kind, id }));
+      // 멘션 = 팝업에서 고른 것 + 본문의 @이름을 크루·멤버 이름과 대조한 것(직접 타이핑한 @준도 멘션으로 — 실검수 2026-09-03: 팝업 없이 쓰면 mentions가 비어 크루가 응답하지 않았다)
+      const byName = [...crews.map((c) => ({ kind: 'crew', id: c.id, name: c.display_name })), ...members.map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8) }))];
+      const seen = new Set(); const ment = [];
+      for (const x of [...mentions, ...byName]) { if (!x.name || seen.has(`${x.kind}:${x.id}`)) continue; if (new RegExp(`(?:^|\\s)@${x.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[\\s,.!?:;])`).test(body)) { seen.add(`${x.kind}:${x.id}`); ment.push({ kind: x.kind, id: x.id }); } }
       const row = await q(supabase.from('msgr_messages').insert({ channel_id: chId, author_kind: 'user', author_user_id: uid, body, mentions: ment, client_msg_id: crypto.randomUUID() }).select('id').single());
       for (const f of files) {
         const path = `${orgId}/${chId}/${row.id}/${f.name.replace(/[\\/]/g, '_')}`;

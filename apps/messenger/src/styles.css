@@ -48,7 +48,8 @@
 .msgr-chan.active { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
 .msgr-chan.active .mi { color: var(--primary-fg); }
 .msgr-chan.more { border-style: dashed; color: var(--fg-3); }
-.msgr-crewcard { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: center; padding: 10px; border-radius: 14px; background: var(--card); border: 1px solid var(--border-soft); transition: background 120ms ease; }
+.msgr-crewcard { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: center; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; padding: 10px; border-radius: 14px; background: var(--card); border: 1px solid var(--border-soft); transition: background 120ms ease; }
+.msgr-crewcard.on { border-color: var(--mark); }
 .msgr-crewcard + .msgr-crewcard { margin-top: 6px; }
 .msgr-crewcard:hover { background: var(--card-2); }
 .msgr-crewcard .msgr-av.crew .star { border-color: var(--card); }
@@ -171,6 +172,33 @@
 .msgr-pop button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 10px; padding: 6px 8px; font-size: 12.5px; color: var(--fg); background: none; cursor: pointer; }
 .msgr-pop button.on, .msgr-pop button:hover { background: var(--card-2); }
 .msgr-pop .tag { margin-left: auto; }
+
+/* 크루 시트 — 본문 우측에 떠오르는 카드(척추 모티프와 같은 6/20 반경). 소유자만 허용 범위 편집 */
+.msgr-avbtn, .msgr-namebtn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.msgr-namebtn:hover { text-decoration: underline; text-underline-offset: 3px; }
+.msgr-sheetwrap { position: absolute; inset: 0; z-index: 50; pointer-events: none; }
+.msgr-sheetwrap > * { pointer-events: auto; }
+.msgr-crewsheet { position: absolute; top: 72px; right: 24px; width: min(380px, calc(100% - 48px)); max-height: calc(100% - 96px); overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 20px 6px 20px 20px; box-shadow: var(--shadow-float); padding: 16px 18px 18px; display: grid; gap: 14px; animation: msgrPopIn 180ms cubic-bezier(.23,1,.32,1) both; }
+.msgr-crewsheet .head { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.msgr-crewsheet .head .name { font-size: 15px; font-weight: 600; }
+.msgr-crewsheet .head .btn.ghost { border: 0; background: none; width: 30px; height: 30px; padding: 0; border-radius: 9px; color: var(--fg-3); }
+.msgr-crewsheet .facts { display: grid; gap: 8px; padding: 10px 0; border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
+.msgr-crewsheet .facts > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 12.5px; }
+.msgr-crewsheet .facts > div > span:last-child { display: inline-flex; align-items: center; gap: 6px; }
+.msgr-crewsheet section { display: grid; gap: 10px; }
+.msgr-crewsheet h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
+.msgr-crewsheet p { margin: 0; font-size: 12px; color: var(--fg-2); line-height: 1.55; }
+.msgr-crewsheet p.note { color: var(--fg-3); }
+.msgr-crewsheet .msgr-seg { justify-self: start; }
+.msgr-crewsheet .msgr-seg button:disabled { cursor: default; }
+.msgr-crewsheet .picks { display: grid; gap: 4px; }
+.msgr-crewsheet .pick { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; font-size: 12.5px; cursor: pointer; }
+.msgr-crewsheet .pick.on { background: var(--card-2); }
+.msgr-crewsheet .pick input { accent-color: var(--primary); }
+.msgr-crewsheet .pick > span:first-of-type + span { flex: 1; }
+.msgr-crewsheet .me { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; padding-top: 6px; border-top: 1px solid var(--border-soft); }
+.msgr-crewsheet .me .btn { margin-left: auto; }
+.msgr-main { position: relative; }
 
 /* 설정 페이지 — 카드 3장(언어·테마·계정), 세그먼트는 상단 탭과 같은 부품 */
 .msgr-settings { margin: 0 auto; width: 100%; max-width: 640px; padding: 8px 0 32px; display: grid; gap: 14px; }
