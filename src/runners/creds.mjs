@@ -2,6 +2,7 @@
 // (runners.mjs 관심사 분리 2026-07-28)
 
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from '../jsonstore.mjs';
@@ -14,8 +15,22 @@ import { grokAccessToken, grokExpired, grokNeedsRefresh, refreshGrokTokens } fro
 
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
     베이스: api.moonshot.ai/anthropic (Claude Code 연동 공식 경로, 2026-07 문서 확인). */
+/** Anthropic 호환(비 Anthropic) 엔드포인트용 SDK 격리 env — 실측 2026-09-03(OpenRouter 무료 모델 E2E):
+    ① 호스트 `~/.claude`(Claude Code 로그인·설정)가 있으면 SDK CLI가 제3자 base로 가는 요청에 인증 헤더를 빼고
+       190초를 재시도한 뒤 401 "Missing Authentication header"를 낸다 → Argo가 "인증 실패"로 오분류해 폴백.
+       CLAUDE_CONFIG_DIR을 회사별 격리 폴더로 주면 1.6초에 통과(HOME은 그대로 — host 옵트인 러너는 건드리지 않는다).
+    ② CLI 2.1.x가 기본으로 켜는 도구 검색(deferred tools)은 "Anthropic-compatible provider endpoints that implement
+       deferral"에서만 받는다 — OpenRouter/minimax는 400. ENABLE_TOOL_SEARCH=false로 끈다(Anthropic 본가 claude 러너는 그대로).
+    codex-home-<ws>·gemini-home-<ws>와 같은 자리(~/.argo/)에 둔다. */
+export function compatSdkEnv(scope = 'host') {
+  const dir = join(homedir(), '.argo', `claude-config-${scope}`);
+  try { mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch { /* 읽기 전용 FS 등 — 없으면 CLI가 만든다 */ }
+  return { ENABLE_TOOL_SEARCH: 'false', CLAUDE_CONFIG_DIR: dir };
+}
+
 export const kimiEnv = () => ({
   ...scrubServerSecrets(process.env, 'kimi'),
+  ...compatSdkEnv('host-kimi'),
   ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic',
   ANTHROPIC_AUTH_TOKEN: process.env.KIMI_API_KEY ?? '',
   ANTHROPIC_API_KEY: '',
@@ -23,6 +38,7 @@ export const kimiEnv = () => ({
 });
 export const glmEnv = () => ({
   ...scrubServerSecrets(process.env, 'glm'),
+  ...compatSdkEnv('host-glm'), // scrub 뒤에 — 호스트 env의 CLAUDE_CONFIG_DIR(예: Claude Code 안에서 실행)이 격리를 덮지 않게
   ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic',
   ANTHROPIC_AUTH_TOKEN: process.env.GLM_API_KEY ?? '',
   ANTHROPIC_API_KEY: '',
@@ -182,10 +198,10 @@ export async function runnerCredEnv(wsId, runner) {
   if (runner === 'glm') {
     // CLAUDE_CODE_OAUTH_TOKEN 명시 소거 — claude 분기와 대칭. Anthropic 구독 토큰이 제3자(z.ai) 향
     // 턴 env에 남으면 자식 프로세스에서 열람 가능(감사 2026-07-20 — scrub 러너 인자와 벨트앤서스펜더).
-    return { env: { ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+    return { env: { ...compatSdkEnv(wsId), ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'kimi') {
-    return { env: { ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+    return { env: { ...compatSdkEnv(wsId), ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'openrouter') {
     // GLM·Kimi와 동일한 Anthropic 호환 패턴 — BYOK 계열 일반화(설계 2026-07-27).
@@ -195,6 +211,7 @@ export async function runnerCredEnv(wsId, runner) {
     // 선검사(실측 402)하지만, 저잔액은 402 안내문(chat.mjs·oneshot)이 원인·충전처를 알려준다.
     // 운영자가 원하면 env로만 상한 선언(OPENROUTER_MAX_OUTPUT_TOKENS).
     return { env: {
+      ...compatSdkEnv(wsId),
       ANTHROPIC_BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api',
       ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '',
       ...(process.env.OPENROUTER_MAX_OUTPUT_TOKENS ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.OPENROUTER_MAX_OUTPUT_TOKENS } : {}),
@@ -229,7 +246,7 @@ export async function runnerCredEnv(wsId, runner) {
       }
       tok = grokAccessToken(cur);
     }
-    return { env: { ANTHROPIC_BASE_URL: process.env.GROK_BASE_URL || 'https://api.x.ai', ANTHROPIC_AUTH_TOKEN: tok, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+    return { env: { ...compatSdkEnv(wsId), ANTHROPIC_BASE_URL: process.env.GROK_BASE_URL || 'https://api.x.ai', ANTHROPIC_AUTH_TOKEN: tok, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'codex') {
     // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를
