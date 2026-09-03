@@ -4,7 +4,7 @@
 // argo.uid 세션 변수(auth.uid() 스텁이 읽는다) — 슈퍼유저는 RLS를 우회하므로 반드시 역할을 낮춰 실행한다.
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ROLES, ROLE_MATRIX, FREE_SEATS, FREE_PUBLIC_CHANNELS } from './helpers/msgr-cases.mjs';
 
@@ -23,7 +23,8 @@ function psql(args) { const r = psqlRaw(args); if (r.status !== 0) throw new Err
 const sql = (q) => psql(['-A', '-t', '-c', q]).trim();                 // 슈퍼유저(RLS 우회) — 시드·관찰 전용
 const asUser = (uid, q) => sql(`set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`);
 const asUserRaw = (uid, q) => psqlRaw(['-A', '-t', '-c', `set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`]);
-const denied = (uid, q, re = /policy|permission denied|msgr_/i) => { const r = asUserRaw(uid, q); assert.notEqual(r.status, 0, `허용됨: ${q.slice(0, 80)}`); assert.match(r.stderr, re); };
+// denied 기본 정규식은 RLS·권한만(msgr_ 접두 예외는 명시 정규식으로 — 검수 MEDIUM-7: 이 스키마는 이름이 전부 msgr_라 무의미한 안전망)
+const denied = (uid, q, re = /row-level security policy|permission denied for/i) => { const r = asUserRaw(uid, q); assert.notEqual(r.status, 0, `허용됨: ${q.slice(0, 80)}`); assert.match(r.stderr, re); };
 const last = (s) => s.split('\n').filter(Boolean).pop() ?? '';        // set_config 출력 뒤 마지막 결과 줄
 
 let ORG, PUB, PRIV, CREW, CREW_SVC;
@@ -38,7 +39,7 @@ before(() => {
     grant usage on schema public to anon, authenticated, service_role;
     create schema if not exists auth;
     grant usage on schema auth to anon, authenticated, service_role; -- 정책 본문의 auth.uid()는 호출 역할로 평가된다(실 Supabase와 동일 권한)
-    create table if not exists auth.users (id uuid primary key, created_at timestamptz not null default now());
+    create table if not exists auth.users (id uuid primary key, created_at timestamptz not null default now(), email text);
     -- auth.uid() 스텁: 세션 변수 argo.uid — asUser()가 set_config로 사용자를 흉내 낸다
     create or replace function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('argo.uid', true), '')::uuid $$;
     -- storage 스텁(정책 문법·foldername 계약만) — 실 Supabase의 storage.objects와 같은 열 이름
@@ -61,7 +62,7 @@ before(() => {
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql',
     '20260903120000_msgr.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
-  for (const id of Object.values(U)) sql(`insert into auth.users (id, created_at) values ('${id}', now() - interval '30 days') on conflict do nothing`); // 체험 창 밖
+  for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`); // 체험 창 밖
   // 시드: owner가 조직 생성(트리거가 owner 멤버·free 자격 생성) → admin/member/guest/removed 초대 → 공개·비공개 채널 → 크루 2개
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
   for (const [uid, role] of [[U.admin, 'admin'], [U.member, 'member'], [U.guest, 'guest']]) {
@@ -119,6 +120,9 @@ test('역할 경계표(helpers/msgr-cases): 6역할 × 8행동이 실제 RLS 판
 test('초대 흐름: 코드 1회·만료 거부, 수락 후 역할 반영, admin은 owner 행을 못 바꾸고 owner만 소유권 이전', { skip }, () => {
   const code = last(asUser(U.admin, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'member', '${U.admin}') returning code`));
   assert.equal(last(asUser(U.extra, `select public.msgr_accept_invite('${code}')`)), ORG);
+  assert.equal(sql(`select display_name from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.extra}'`), 'extra', '수락 시 display_name = 이메일 앞부분');
+  const inv2 = last(asUser(U.owner, `insert into public.msgr_invites (org_id, created_by) values ('${ORG}', '${U.owner}') returning id`));
+  assert.equal(last(asUser(U.admin, `update public.msgr_invites set accepted_by = '${U.outsider}', accepted_at = now(), created_by = '${U.admin}' where id = '${inv2}' returning 1`)), '', 'admin의 초대 위조(update) 경로 없음(검수 MEDIUM-8)');
   denied(U.outsider, `select public.msgr_accept_invite('${code}')`, /msgr_invite_invalid/);       // 재사용 불가
   const expired = last(asUser(U.admin, `insert into public.msgr_invites (org_id, created_by, expires_at) values ('${ORG}', '${U.admin}', now() - interval '1 second') returning code`));
   denied(U.outsider, `select public.msgr_accept_invite('${expired}')`, /msgr_invite_invalid/);
@@ -190,7 +194,8 @@ test('메시지: 작성자 위장·타인 크루 명의·detached 크루·보관
   assert.equal(sql(`select thread_root from public.msgr_messages where id = ${c1}`), m1, 'thread_root는 reply_to로 채움');
   const dup = asUserRaw(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id) values ('${PUB}', 'crew', '${CREW}', '답변2', 'reply:${CREW}:${m1}')`);
   assert.notEqual(dup.status, 0); assert.match(dup.stderr, /msgr_messages_client_id|duplicate key/);
-  denied(U.member, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, reply_to) values ('${PRIV}', 'user', '${U.member}', 'x', ${m1})`); // member는 PRIV 미초대 + cross
+  denied(U.member, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, reply_to) values ('${PRIV}', 'user', '${U.member}', 'x', ${m1})`, /msgr_reply_cross_channel|row-level security/); // BEFORE 트리거(타 채널 답글)가 RLS보다 먼저 막는다
+  denied(U.owner, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, reply_to) values ('${PRIV}', 'user', '${U.owner}', 'x', ${m1})`, /msgr_reply_cross_channel/); // 쓰기 권한이 있어도 타 채널 답글은 트리거가 거부
   sql(`update public.msgr_crews set status = 'detached' where id = '${CREW}'`);
   denied(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body) values ('${PUB}', 'crew', '${CREW}', 'detached')`);
   sql(`update public.msgr_crews set status = 'active' where id = '${CREW}'`);
@@ -215,11 +220,13 @@ test('Realtime 방송: insert마다 org:<id> private topic으로 본문 없는 p
   const id = last(asUser(U.owner, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, mentions) values ('${PUB}', 'user', '${U.owner}', '비밀 본문', '[{"kind":"crew","id":"${CREW}"}]') returning id`));
   const row = sql(`select event || '|' || topic || '|' || private::text || '|' || (payload ? 'body')::text || '|' || (payload->>'id') || '|' || (payload->'mentions'->0->>'id') from realtime.sent`);
   assert.equal(row, `message|org:${ORG}|true|false|${id}|${CREW}`);
-  const canRecv = (u, topic) => last(asUser(u, `select set_config('realtime.topic', '${topic}', false); select count(*) from realtime.messages`)) !== null
-    && asUserRaw(u, `select set_config('realtime.topic', '${topic}', false); insert into realtime.messages (topic, extension, payload) values ('${topic}', 'broadcast', '{}')`).status === 0;
-  assert.equal(canRecv(U.member, `org:${ORG}`), true);
-  assert.equal(canRecv(U.outsider, `org:${ORG}`), false);
-  assert.equal(canRecv(U.removed, `org:${ORG}`), false);
+  sql(`delete from realtime.messages; insert into realtime.messages (topic, extension, payload) values ('org:${ORG}', 'broadcast', '{}')`); // 수신 게이트는 심어 둔 행의 가시성으로(검수 MEDIUM-6: 0행 필터와 실제 0행을 구분)
+  const recv = (u, topic) => last(asUser(u, `select set_config('realtime.topic', '${topic}', false); select count(*) from realtime.messages`));
+  const canSend = (u, topic) => asUserRaw(u, `select set_config('realtime.topic', '${topic}', false); insert into realtime.messages (topic, extension, payload) values ('${topic}', 'broadcast', '{}')`).status === 0;
+  assert.equal(recv(U.member, `org:${ORG}`), '1'); assert.equal(canSend(U.member, `org:${ORG}`), true);
+  assert.equal(recv(U.outsider, `org:${ORG}`), '0'); assert.equal(canSend(U.outsider, `org:${ORG}`), false);
+  assert.equal(recv(U.removed, `org:${ORG}`), '0'); assert.equal(canSend(U.removed, `org:${ORG}`), false);
+  assert.equal(recv(U.member, 'org:not-a-uuid'), '0', '형식 불일치 topic은 예외가 아니라 0행');
   assert.equal(asUserRaw(U.member, `select set_config('realtime.topic', 'org:${ORG}', false); insert into realtime.messages (topic, extension, payload) values ('org:${ORG}', 'presence', '{}')`).status === 0, false, 'presence는 1차 미허용');
 });
 
@@ -255,7 +262,12 @@ test('첨부·Storage 경로: 메시지 작성자만 첨부 행, 버킷 msgr 1�
   asUser(U.member, `insert into storage.objects (bucket_id, name) values ('msgr', '${ORG}/${PUB}/${m}/a.png')`);
   denied(U.outsider, `insert into storage.objects (bucket_id, name) values ('msgr', '${ORG}/x/y/z.png')`);
   assert.equal(last(asUser(U.outsider, `select count(*) from storage.objects where bucket_id = 'msgr'`)), '0');
-  assert.equal(last(asUser(U.guest, `select count(*) from storage.objects where bucket_id = 'msgr'`)), '1', '버킷 정책은 조직 단위(채널 비밀은 서명 URL 발급 측이 지킨다)');
+  assert.equal(last(asUser(U.guest, `select count(*) from storage.objects where bucket_id = 'msgr'`)), '0', '공개 채널 첨부는 guest 불가시 — 버킷 정책은 채널 단위(검수 HIGH-5: authenticated 직접 다운로드 경로)');
+  assert.equal(last(asUser(U.member, `select count(*) from storage.objects where bucket_id = 'msgr'`)), '1');
+  asUser(U.admin, `insert into storage.objects (bucket_id, name) values ('msgr', '${ORG}/${PRIV}/1/secret.pdf')`);
+  assert.equal(last(asUser(U.guest, `select count(*) from storage.objects where name like '%secret.pdf'`)), '1', '초대된 비공개 채널 첨부는 guest도');
+  assert.equal(last(asUser(U.member, `select count(*) from storage.objects where name like '%secret.pdf'`)), '0', '비공개 채널 밖 멤버는 불가시');
+  denied(U.member, `insert into storage.objects (bucket_id, name) values ('msgr', '${ORG}/${PRIV}/2/x.pdf')`);
   denied(U.member, `insert into storage.objects (bucket_id, name) values ('msgr', 'not-a-uuid/x.png')`, /row-level security/); // 형식 불일치 경로는 캐스트 예외가 아니라 정책 거부
 
 });
@@ -266,4 +278,49 @@ test('권한: anon은 멤버십 함수 실행 불가, authenticated는 감사 �
   denied(U.owner, `select public.msgr_audit('${ORG}', 'fake', 'x', 'y')`, /permission denied/i);
   denied(U.owner, `insert into public.msgr_audit_log (org_id, action) values ('${ORG}', 'fake')`);
   denied(U.owner, `update public.msgr_org_entitlements set plan = 'team' where org_id = '${ORG}'`); // 자기 승격 불가
+});
+
+test('검수 CRITICAL: 채널 org 재부모화·결재 확정 시 org/channel 변조·크루 소유 이전·멤버 재소속 전부 거부(불변 컬럼 트리거)', { skip }, () => {
+  const org2 = last(asUser(U.member, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Two', 'two', '${U.member}') returning id`));
+  const mine = last(asUser(U.member, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'private', 'mine', '${U.member}') returning id`));
+  denied(U.member, `update public.msgr_channels set org_id = '${org2}' where id = '${mine}'`, /msgr_immutable_org_id/);
+  denied(U.member, `update public.msgr_channels set kind = 'public' where id = '${mine}'`, /msgr_immutable_kind/);
+  assert.equal(last(asUser(U.member, `update public.msgr_channels set topic = 't' where id = '${mine}' returning topic`)), 't', '일반 컬럼은 수정 가능');
+  const ap = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action) values ('${ORG}', '${PUB}', '${CREW}', 'ap-lock', '송금') returning id`));
+  const decoyCh = last(asUser(U.member, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${org2}', 'private', 'decoy', '${U.member}') returning id`));
+  denied(U.member, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.member}', decided_at = now(), org_id = '${org2}', channel_id = '${decoyCh}' where id = '${ap}'`, /msgr_immutable_org_id/);
+  denied(U.member, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.member}', decided_at = now(), channel_id = '${decoyCh}' where id = '${ap}'`, /msgr_immutable_channel_id/);
+  assert.equal(sql(`select status || '|' || org_id from public.msgr_crew_approvals where id = '${ap}'`), `pending|${ORG}`, '변조 시도 후 원 조직에 pending 그대로');
+  assert.equal(last(asUser(U.admin, `select count(*) from public.msgr_crew_approvals where id = '${ap}'`)), '1', '원 조직 admin이 계속 본다');
+  denied(U.member, `update public.msgr_crews set org_id = '${org2}' where id = '${CREW}'`, /msgr_immutable_org_id/);
+  denied(U.member, `update public.msgr_crews set slug = 'other' where id = '${CREW}'`, /msgr_immutable_slug/);
+  denied(U.admin, `update public.msgr_org_members set org_id = '${org2}' where org_id = '${ORG}' and user_id = '${U.guest}'`, /msgr_immutable_org_id/);
+  const m = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, client_msg_id) values ('${PUB}', 'user', '${U.member}', 'lock', 'c-lock') returning id`));
+  denied(U.member, `update public.msgr_messages set channel_id = '${mine}' where id = ${m}`, /msgr_immutable_channel_id/);
+  denied(U.member, `update public.msgr_messages set author_user_id = '${U.owner}' where id = ${m}`, /msgr_immutable_author_user_id/);
+  assert.equal(sql(`update public.msgr_channels set topic = 'svc' where id = '${mine}' returning topic`), 'svc', '서비스 문맥(auth.uid null)은 트리거 통과');
+});
+
+test('검수 HIGH-4: client_msg_id는 작성자 축 포함 — 멤버가 reply:<crew>:<msg>를 선점해도 크루 답글은 들어간다', { skip }, () => {
+  const m = last(asUser(U.owner, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body) values ('${PUB}', 'user', '${U.owner}', 'src') returning id`));
+  asUser(U.admin, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, client_msg_id) values ('${PUB}', 'user', '${U.admin}', '선점', 'reply:${CREW}:${m}')`);
+  assert.match(last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id) values ('${PUB}', 'crew', '${CREW}', '진짜 답', 'reply:${CREW}:${m}') returning id`)), /^\d+$/);
+  const dup = asUserRaw(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id) values ('${PUB}', 'crew', '${CREW}', '재실행', 'reply:${CREW}:${m}')`);
+  assert.notEqual(dup.status, 0); assert.match(dup.stderr, /msgr_messages_client_id/, '같은 크루의 재실행은 여전히 1건');
+});
+
+test('검수 HIGH-3: 좌석 게이트는 동시 insert를 직렬화한다(advisory lock) — free 3좌석에 4명이 들어가지 않는다', { skip }, async () => {
+  const org = last(asUser(U.extra, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Race', 'race', '${U.extra}') returning id`));
+  sql(`insert into public.msgr_org_members (org_id, user_id, role) values ('${org}', '${U.guest}', 'member')`); // 2/3
+  const aSql = `begin; insert into public.msgr_org_members (org_id, user_id, role) values ('${org}', '${U.member}', 'member'); select pg_sleep(1.5); commit;`;
+  const a = spawn('psql', [DB, '-X', '-v', 'ON_ERROR_STOP=1', '-q', '-A', '-t', '-c', aSql]);
+  const aDone = new Promise((res, rej) => { a.on('error', rej); a.on('close', (code) => (code === 0 ? res() : rej(new Error(`A 실패 exit ${code}`)))); });
+  await new Promise((r) => setTimeout(r, 400));
+  const t0 = Date.now();
+  const b = psqlRaw(['-c', `insert into public.msgr_org_members (org_id, user_id, role) values ('${org}', '${U.admin}', 'member')`]);
+  const elapsed = Date.now() - t0;
+  await aDone;
+  assert.notEqual(b.status, 0, 'B가 통과 — 레이스 재현'); assert.match(b.stderr, /msgr_seat_limit/);
+  assert.ok(elapsed >= 800, `B가 락에 블록되지 않았다(${elapsed}ms)`);
+  assert.equal(sql(`select count(*) from public.msgr_org_members where org_id = '${org}' and removed_at is null`), String(FREE_SEATS));
 });

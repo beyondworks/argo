@@ -169,7 +169,11 @@ create table if not exists public.msgr_messages (
       or (author_kind = 'crew' and crew_id is not null)
       or (author_kind = 'system'))
 );
-create unique index if not exists msgr_messages_client_id on public.msgr_messages (channel_id, client_msg_id) where client_msg_id is not null;
+-- 멱등 키는 **작성자 축을 포함**한다(분리 검수 HIGH-4): (channel_id, client_msg_id)만이면 일반 멤버가 'reply:<crew>:<msg>'를
+-- 선점해 크루 답글 insert를 유니크 위반으로 막을 수 있었다(DoS 실증). 같은 크루의 재실행(리더 교체 창)은 여전히 한 키다.
+drop index if exists public.msgr_messages_client_id;
+create unique index if not exists msgr_messages_client_id on public.msgr_messages
+  (channel_id, author_kind, coalesce(crew_id::text, author_user_id::text, ''), client_msg_id) where client_msg_id is not null;
 create index if not exists msgr_messages_org_id_id on public.msgr_messages (org_id, id);
 create index if not exists msgr_messages_channel_id_id on public.msgr_messages (channel_id, id);
 
@@ -223,6 +227,29 @@ create or replace function public.msgr_audit(org uuid, act text, tkind text, tid
 $$;
 
 -- ── 트리거 ──────────────────────────────────────────────────────────────────────
+-- 불변 컬럼 잠금(분리 검수 2026-09-03 CRITICAL-1·2): RLS with check는 "새 값"만 보므로 org_id·channel_id 같은 소속 컬럼을
+-- 같은 UPDATE에서 바꾸면 채널 재부모화(타 조직 메시지 노출)·결재 확정과 동시에 org 이동(감사 회피)이 가능했다(exploit 실증).
+-- 처방은 old 값을 볼 수 있는 유일한 자리인 트리거. 서비스 문맥(auth.uid() null)은 통과 — 운영 도구·엣지 펑션용.
+create or replace function public.msgr_lock_cols() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare col text; n jsonb := to_jsonb(new); o jsonb := to_jsonb(old);
+begin
+  if auth.uid() is null then return new; end if;
+  foreach col in array tg_argv loop
+    if n->col is distinct from o->col then raise exception 'msgr_immutable_%', col; end if;
+  end loop;
+  return new;
+end $$;
+drop trigger if exists msgr_lock_channels on public.msgr_channels;
+create trigger msgr_lock_channels before update on public.msgr_channels for each row execute function public.msgr_lock_cols('org_id', 'kind', 'created_by', 'created_at');
+drop trigger if exists msgr_lock_approvals on public.msgr_crew_approvals;
+create trigger msgr_lock_approvals before update on public.msgr_crew_approvals for each row execute function public.msgr_lock_cols('org_id', 'channel_id', 'crew_id', 'approval_id', 'action', 'created_at');
+drop trigger if exists msgr_lock_crews on public.msgr_crews;
+create trigger msgr_lock_crews before update on public.msgr_crews for each row execute function public.msgr_lock_cols('org_id', 'owner_user_id', 'ws_id', 'slug', 'registered_at');
+drop trigger if exists msgr_lock_members on public.msgr_org_members;
+create trigger msgr_lock_members before update on public.msgr_org_members for each row execute function public.msgr_lock_cols('org_id', 'user_id');
+drop trigger if exists msgr_lock_messages on public.msgr_messages;
+create trigger msgr_lock_messages before update on public.msgr_messages for each row execute function public.msgr_lock_cols('org_id', 'channel_id', 'author_kind', 'author_user_id', 'crew_id', 'kind', 'client_msg_id', 'created_at');
 -- 조직 생성자는 자동 owner 멤버(security definer — 아직 멤버가 아니라 members insert 정책을 못 지난다).
 create or replace function public.msgr_org_after_insert() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
@@ -242,6 +269,7 @@ declare lim int; n int;
 begin
   if new.removed_at is not null then return new; end if;
   if tg_op = 'UPDATE' and old.removed_at is null then return new; end if; -- 활성→활성(역할 변경)은 좌석 불변
+  perform pg_advisory_xact_lock(hashtext('msgr_seats:' || new.org_id::text)); -- 동시 insert 2건이 각자 스냅샷에서 통과하던 레이스(분리 검수 HIGH-3 실증) 직렬화
   select case when public.msgr_org_plan(new.org_id) = 'team' then coalesce(e.seats, 0) else 3 end
     into lim from public.msgr_org_entitlements e where e.org_id = new.org_id;
   if lim is null then lim := 3; end if;
@@ -269,6 +297,7 @@ create trigger msgr_member_audit after insert or update or delete on public.msgr
 create or replace function public.msgr_channel_gate() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 begin
+  perform pg_advisory_xact_lock(hashtext('msgr_channels:' || new.org_id::text)); -- 좌석 게이트와 같은 레이스 계열
   if new.kind = 'public' and public.msgr_org_plan(new.org_id) = 'free'
      and (select count(*) from public.msgr_channels where org_id = new.org_id and kind = 'public' and archived_at is null) >= 1 then
     raise exception 'msgr_channel_limit';
@@ -328,8 +357,10 @@ begin
   if auth.uid() is null then raise exception 'msgr_auth_required'; end if;
   select * into inv from public.msgr_invites i where i.code = msgr_accept_invite.code and i.accepted_at is null and i.expires_at > now() for update;
   if inv.id is null then raise exception 'msgr_invite_invalid'; end if;
-  insert into public.msgr_org_members (org_id, user_id, role) values (inv.org_id, auth.uid(), inv.role)
-    on conflict (org_id, user_id) do update set role = excluded.role, removed_at = null, joined_at = now();
+  insert into public.msgr_org_members (org_id, user_id, role, display_name)
+    values (inv.org_id, auth.uid(), inv.role, (select split_part(u.email, '@', 1) from auth.users u where u.id = auth.uid()))
+    on conflict (org_id, user_id) do update set role = excluded.role, removed_at = null, joined_at = now(),
+      display_name = coalesce(public.msgr_org_members.display_name, excluded.display_name);
   update public.msgr_invites set accepted_by = auth.uid(), accepted_at = now() where id = inv.id;
   perform public.msgr_audit(inv.org_id, 'invite.accept', 'invite', inv.id::text);
   return inv.org_id;
@@ -398,9 +429,15 @@ create policy msgr_members_delete on public.msgr_org_members for delete to authe
 drop policy if exists msgr_entitlements_select on public.msgr_org_entitlements;
 create policy msgr_entitlements_select on public.msgr_org_entitlements for select to authenticated using (public.msgr_is_member(org_id));
 
+-- update 정책 없음(분리 검수 MEDIUM-8): 수락 표기는 msgr_accept_invite RPC만 쓴다 — admin이 남의 초대를 "수락됨"으로 위조하던 경로 차단.
 drop policy if exists msgr_invites_admin on public.msgr_invites;
-create policy msgr_invites_admin on public.msgr_invites for all to authenticated
-  using (public.msgr_is_admin(org_id)) with check (public.msgr_is_admin(org_id) and created_by = (select auth.uid()));
+drop policy if exists msgr_invites_select on public.msgr_invites;
+create policy msgr_invites_select on public.msgr_invites for select to authenticated using (public.msgr_is_admin(org_id));
+drop policy if exists msgr_invites_insert on public.msgr_invites;
+create policy msgr_invites_insert on public.msgr_invites for insert to authenticated
+  with check (public.msgr_is_admin(org_id) and created_by = (select auth.uid()));
+drop policy if exists msgr_invites_delete on public.msgr_invites;
+create policy msgr_invites_delete on public.msgr_invites for delete to authenticated using (public.msgr_is_admin(org_id));
 
 drop policy if exists msgr_channels_select on public.msgr_channels;
 -- 자기 테이블 select 정책은 함수(msgr_can_read_channel) 대신 행 컬럼으로 판정한다(드릴 실측): STABLE 함수는 호출 문장의
@@ -502,29 +539,33 @@ do $$ declare f text; begin
 end $$;
 revoke execute on function public.msgr_audit(uuid,text,text,text,jsonb) from authenticated; -- 감사는 트리거·RPC 내부에서만(직접 위조 금지)
 
+-- uuid 형식이 아니면 null → 비멤버 판정(캐스트 예외로 정책 평가 자체가 터지지 않게 — AND 평가 순서는 보장되지 않는다). Realtime·Storage 정책 공용.
+create or replace function public.msgr_uuid_or_null(t text) returns uuid
+  language sql immutable as $$
+    select case when t ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' then t::uuid else null end
+$$;
+
 -- ── Realtime 인가(private topic org:<org_id>) ─────────────────────────────────
 -- 수신(select)·송신(insert, 타이핑 표시) 모두 조직 멤버만. payload에 본문이 없으니 채널 비밀은 PostgREST RLS가 지킨다.
 drop policy if exists msgr_realtime_recv on realtime.messages;
 create policy msgr_realtime_recv on realtime.messages for select to authenticated
   using (realtime.messages.extension = 'broadcast' and (select realtime.topic()) like 'org:%'
-         and public.msgr_is_member(substr((select realtime.topic()), 5)::uuid));
+         and public.msgr_is_member(public.msgr_uuid_or_null(substr((select realtime.topic()), 5))));
 drop policy if exists msgr_realtime_send on realtime.messages;
 create policy msgr_realtime_send on realtime.messages for insert to authenticated
   with check (realtime.messages.extension = 'broadcast' and (select realtime.topic()) like 'org:%'
-              and public.msgr_is_member(substr((select realtime.topic()), 5)::uuid));
+              and public.msgr_is_member(public.msgr_uuid_or_null(substr((select realtime.topic()), 5))));
 
 -- ── Storage 버킷 msgr — name = <org_id>/<channel_id>/<message_id>/<file>, 1세그먼트 = 조직 멤버십 ────
--- 1세그먼트가 uuid 형식이 아니면 null → 비멤버 판정(캐스트 예외로 정책 평가 자체가 터지지 않게 — AND 평가 순서는 보장되지 않는다).
-create or replace function public.msgr_uuid_or_null(t text) returns uuid
-  language sql immutable as $$
-    select case when t ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' then t::uuid else null end
-$$;
+-- 채널 단위(분리 검수 HIGH-5): Supabase Storage는 서명 URL 없이도 authenticated 경로로 RLS select만 통과하면 직접 내려받는다 —
+-- 조직 단위 정책이면 비공개 채널·DM 첨부가 조직 전체에 공개된다. 2세그먼트(channel_id)로 채널 열람 판정을 건다.
 drop policy if exists msgr_files_select on storage.objects;
 create policy msgr_files_select on storage.objects for select to authenticated
-  using (bucket_id = 'msgr' and public.msgr_is_member(public.msgr_uuid_or_null((storage.foldername(name))[1])));
+  using (bucket_id = 'msgr' and public.msgr_can_read_channel(public.msgr_uuid_or_null((storage.foldername(name))[2])));
 drop policy if exists msgr_files_insert on storage.objects;
 create policy msgr_files_insert on storage.objects for insert to authenticated
-  with check (bucket_id = 'msgr' and public.msgr_is_member(public.msgr_uuid_or_null((storage.foldername(name))[1])));
+  with check (bucket_id = 'msgr' and public.msgr_is_member(public.msgr_uuid_or_null((storage.foldername(name))[1]))
+              and public.msgr_can_write_channel(public.msgr_uuid_or_null((storage.foldername(name))[2])));
 drop policy if exists msgr_files_delete on storage.objects;
 create policy msgr_files_delete on storage.objects for delete to authenticated
   using (bucket_id = 'msgr' and public.msgr_is_admin(public.msgr_uuid_or_null((storage.foldername(name))[1])));
