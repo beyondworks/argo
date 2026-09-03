@@ -5,7 +5,7 @@ import { use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isPhoneShell } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isPhoneShell, usePhoneShell } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
@@ -82,6 +82,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // URL을 만들 때마다 한 번씩만 감싼다.
   const slug = useMemo(() => { try { return decodeURIComponent(slugParam); } catch { return slugParam; } }, [slugParam]);
   const { t } = useLang();
+  const phone = usePhoneShell(); // 폰 셸 — 세션 레일을 시트로
+  const [railOpen, setRailOpen] = useState(false);
   const WAIT_STAGES = [t('chat.waitStage1'), t('chat.waitStage2'), t('chat.waitStage3')];
   const router = useRouter();
   const [agent, setAgent] = useState(null);
@@ -219,6 +221,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // 세션 적재 레일 — 새 대화로 넘긴 이전 대화들이 좌측에 쌓이고, 클릭으로 읽기 전용 열람
   const [sessions, setSessions] = useState([]);
   const [viewing, setViewing] = useState(null); // 보관 세션 id (null = 현재 대화)
+  // 컴포저 포커스 — autoFocus 속성 대신 마운트 효과. autoFocus는 SSR이 autofocus 속성을 HTML에 실어 사파리가 스크립트보다
+  // 먼저 포커스하고, 폰(페어링 마커·힌트 어느 것도 파싱 시점엔 없다)에선 입력창으로 1.4배 확대돼 하단 탭이 시야 밖으로
+  // 밀렸다(실측 2026-09-03 — 사후 viewport 재설정으로 안 풀림). viewing 의존 = 열람에서 돌아와 컴포저가 다시 마운트될 때도
+  // 종전(autoFocus 재마운트)과 같이 포커스. 데스크톱은 하이드레이션 직후 포커스(종전은 파싱 시점) — 그 외 동일.
+  useEffect(() => { if (!viewing && !isPhoneShell()) inputRef.current?.focus(); }, [viewing]);
   const [archMsgs, setArchMsgs] = useState(null);
   const [renameSess, setRenameSess] = useState(null); // 대화명 편집 모달 대상 세션
   const [threadTitle, setThreadTitle] = useState(null); // 현재(활성) 대화의 사용자 지정 이름
@@ -708,18 +715,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     } catch { /* 실패해도 다음 로드에서 서버 정본으로 복구 */ }
   }
 
-  return (
-    // 세션레일(216, 좌측 원위치) + 채팅 컬럼(나머지 전체). 채팅은 .thread를 컬럼 전체폭으로 두고 안쪽 레인만 중앙정렬 →
-    // 스크롤바는 컬럼 우측 끝에 고정되고 메시지는 중앙 레인에 담긴다(가장 LLM다운 형태).
-    // embedded(보조 패널): 세션 레일 없이 채팅 컬럼만, 높이는 패널 본문을 가득(패널이 sticky·고정 높이).
-    <div className={embedded ? undefined : 'chat-cols'} style={embedded
-      ? { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', alignItems: 'start', height: '100%', minHeight: 0 }
-      : undefined}>
-      {/* 주 화면 그리드 기하(레일 216px + 본문 열, 높이 calc, marginBottom -70)는 .chat-cols(globals) —
-          컨테스트와 공용이고, 폰 폭(≤560px)의 레일 스택 전환을 CSS가 인라인과 싸우지 않고 하기 위함. */}
-      {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정.
-          sticky·폭 216은 .chat-cols > .side-rail(globals) — 폰 폭에서 static·전폭 스택으로 뒤집힌다 */}
-      {!embedded && <div className="side-rail" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
+  const rail = embedded ? null : ( // 보조 패널(embedded)은 레일이 없다 — 만들지도 않는다
+      <div className="side-rail" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('chat.sessions.title')}{sessions.length ? ` · ${sessions.length + 1}` : ''}
         </span>
@@ -779,7 +776,25 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           );
         })}
         {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('chat.sessions.empty')}</span>}
-      </div>}
+      </div>
+  );
+
+  return (
+    // 세션레일(216, 좌측 원위치) + 채팅 컬럼(나머지 전체). 채팅은 .thread를 컬럼 전체폭으로 두고 안쪽 레인만 중앙정렬 →
+    // 스크롤바는 컬럼 우측 끝에 고정되고 메시지는 중앙 레인에 담긴다(가장 LLM다운 형태).
+    // embedded(보조 패널): 세션 레일 없이 채팅 컬럼만, 높이는 패널 본문을 가득(패널이 sticky·고정 높이).
+    <div className={embedded ? undefined : 'chat-cols'} style={embedded
+      ? { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', alignItems: 'start', height: '100%', minHeight: 0 }
+      : undefined}>
+      {/* 주 화면 그리드 기하(레일 216px + 본문 열, 높이 calc, marginBottom -70)는 .chat-cols(globals) —
+          컨테스트와 공용이고, 폰 폭(≤560px)의 레일 스택 전환을 CSS가 인라인과 싸우지 않고 하기 위함. */}
+      {/* 세션 레일 — 대화가 여기 적재된다. 무템플릿 grid는 트랙이 max-content로 자라 긴 제목이 폭을 밀어낸다 — minmax(0,1fr) 고정.
+          sticky·폭 216은 .chat-cols > .side-rail(globals) — 폰 폭에서 static·전폭 스택으로 뒤집힌다 */}
+      {/* 폰 셸: 레일은 위 스택이 아니라 시트로(밴드의 "대화 세션" 버튼) — 폰에서 대화 위 26vh 스택은 화면 절반을 먹었다(실측 2026-09-03) */}
+      {!embedded && (phone ? (railOpen && (<>
+        <div className="phone-sheet-backdrop" onClick={() => setRailOpen(false)} />
+        <div className="phone-sheet rail-sheet" role="dialog" aria-label={t('chat.sessions.title')} onClick={(e) => { if (e.target.closest('.nav-item')) setRailOpen(false); }}>{rail}</div>
+      </>)) : rail)}
     <div
       // 열 잠금 minmax(0,1fr) — 무템플릿 grid의 암묵 auto 열은 자식 min-content(컴포저 textarea 고유폭
       // 144px + 전송 버튼 등 = 212px 실측)만큼 부풀어, 폰 폭(360px, 본문 트랙 98px)에서 .thread·.empty·
@@ -833,6 +848,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         ) : (
           <span className="pill" style={{ flex: 'none' }}><span className="dot" />{t('chat.newSession')}</span>
         )}
+        {phone && <button className="btn sm" style={{ flex: 'none' }} onClick={() => setRailOpen(true)} aria-haspopup="dialog">{t('chat.sessions.title')}{sessions.length ? ` · ${sessions.length + 1}` : ''}</button>}
         {!embedded && <button className="btn sm" style={{ flex: 'none' }} onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen}>{t('crew.panel.open')}</button>}
         <button className="btn sm" style={{ flex: 'none' }} onClick={() => setCardOpen(true)}>{t('chat.card')}</button>
         <button className="btn sm" style={{ flex: 'none' }} onClick={newChat} disabled={busy || !(thread?.length)}>{t('chat.newChat')}</button>
@@ -1177,7 +1193,6 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             onChange={(e) => { histIdx.current = -1; setInput(e.target.value); }}
             onKeyDown={onInputKeyDown}
             onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
-            autoFocus={!isPhoneShell()} /* 폰 셸에선 진입마다 키보드가 먼저 올라오는 것을 막는다 — 데스크톱은 종전(true) */
           />
           <button className="btn btn-primary btn-icon" disabled={uploading || !input.trim()} aria-label={busy ? t('chat.queue.add') : t('chat.send')}>
             <Icon name="send" size={15} />

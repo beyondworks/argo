@@ -3,7 +3,7 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, InputModal, api } from '../../ui';
+import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, InputModal, api, PhoneShellCtx } from '../../ui';
 import { useLang, stageLabel } from '../../i18n';
 import { useAppUpdate } from '../../use-app-update';
 import { SplitPane } from './split-pane';
@@ -242,11 +242,14 @@ function Shell({ children, params }) {
     if (!mobile) return;
     const d = document.documentElement;
     d.dataset.shell = 'mobile';
-    // iOS 안전 영역(env(safe-area-inset-*))은 viewport-fit=cover가 있어야 0이 아니다 — 기존 메타에 덧붙인다
-    const vp = document.querySelector('meta[name="viewport"]');
-    if (vp && !/viewport-fit/.test(vp.content)) vp.content += ', viewport-fit=cover';
+    try { localStorage.setItem('argo-phone', '1'); } catch { /* 힌트 실패는 무해 — 마커가 정본 */ }
     // 마커 전 렌더가 이미 autoFocus로 키보드를 올렸을 수 있다(첫 진입 경합) — 한 번 내린다
     if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur?.();
+    // iOS 안전 영역(env(safe-area-inset-*))은 viewport-fit=cover가 있어야 0이 아니다 — 기존 메타에 덧붙인다.
+    // maximum-scale=1은 넣지 않는다 — 이미 일어난 포커스 확대를 되돌리지 못하고(실측 2026-09-03 3회), Android(Blink)에서는
+    // 손가락 확대까지 막는다. 확대의 원인(SSR autofocus·16px 미만 컴포저)은 크루 대화 마운트 효과와 폰 블록 16px가 없앤다.
+    const vp = document.querySelector('meta[name="viewport"]');
+    if (vp && !/viewport-fit/.test(vp.content)) vp.content += ', viewport-fit=cover';
     return () => { delete d.dataset.shell; };
   }, [mobile]);
 
@@ -392,6 +395,7 @@ function Shell({ children, params }) {
   });
 
   return (
+    <PhoneShellCtx.Provider value={mobile}>
     <div className="shell">
       <aside className="side">
         <Link href="/" className="nav-item" style={{ gap: 8, marginBottom: 4 }}>
@@ -635,5 +639,6 @@ function Shell({ children, params }) {
       )}
       {fbOpen && <FeedbackModal onClose={() => setFbOpen(false)} />}
     </div>
+    </PhoneShellCtx.Provider>
   );
 }

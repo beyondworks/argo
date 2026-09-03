@@ -156,7 +156,8 @@ export default function Activity({ params }) {
         <span className="microlabel">{new Date().toLocaleDateString('sv-SE')}</span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 316px', gap: 14, alignItems: 'start' }}>
+      {/* 열 산식은 .activity-cols(globals) — 폰 셸이 1열로 뒤집는다(인라인이면 CSS가 못 이긴다) */}
+      <div className="activity-cols" style={{ display: 'grid', gap: 14, alignItems: 'start' }}>
         <div className="card" style={{ padding: '16px 18px' }}>
           <div className="card-head">
             <span className="microlabel">{t('activity.timeline')}</span>
