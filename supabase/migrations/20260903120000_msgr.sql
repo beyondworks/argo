@@ -1428,3 +1428,119 @@ begin
   end if;
   return inv.org_id;
 end $$;
+
+-- ── J-5 조직 삭제 유예·복구(부록 I "조직 삭제"): 소유자만 삭제 표시(deleted_at) → 그 순간 멤버십 판정(msgr_role)이 전원 null(전 RLS 차단, 브리지도 크루 0).
+--    30일 안에는 소유자가 복구(msgr_restore_org — 삭제된 조직은 role이 null이라 일반 UPDATE 정책을 못 지나므로 RPC), 지나면 msgr_purge_orgs()가 영구 삭제
+--    (service_role 전용 — 운영 잡이 하루 1회 부른다; pg_cron·엣지 펑션 배선은 후속). 삭제 표시·복구는 감사.
+create or replace function public.msgr_org_before_update() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare me uuid := auth.uid(); my_role text;
+begin
+  my_role := case when me is null then null else public.msgr_role(old.id) end;
+  -- 삭제 표시·복구는 소유자 계정 기준(삭제된 조직은 msgr_role이 null이라 역할로는 판정 불가)
+  if me is not null and new.deleted_at is distinct from old.deleted_at and old.owner_user_id <> me then raise exception 'msgr_owner_only'; end if;
+  if new.deleted_at is distinct from old.deleted_at then
+    perform public.msgr_audit(old.id, case when new.deleted_at is null then 'org.restore' else 'org.delete' end, 'org', old.id::text, jsonb_build_object('at', coalesce(new.deleted_at, old.deleted_at)));
+    if new.deleted_at is not null then new.pending_owner_user_id := null; end if;
+  end if;
+  if new.owner_user_id is distinct from old.owner_user_id then
+    if me is not null then
+      if not (new.owner_user_id = me and coalesce(old.pending_owner_user_id = me, false)) then
+        if my_role is distinct from 'owner' then raise exception 'msgr_owner_only'; end if;
+        raise exception 'msgr_transfer_needs_accept';
+      end if;
+    end if;
+    if not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.owner_user_id and removed_at is null) then
+      raise exception 'msgr_owner_not_member';
+    end if;
+    update public.msgr_org_members set role = 'admin' where org_id = old.id and user_id = old.owner_user_id;
+    update public.msgr_org_members set role = 'owner' where org_id = old.id and user_id = new.owner_user_id;
+    new.pending_owner_user_id := null;
+    if new.successor_user_id = new.owner_user_id then new.successor_user_id := null; end if;
+    perform public.msgr_audit(old.id, 'org.transfer', 'user', new.owner_user_id::text, jsonb_build_object('from', old.owner_user_id));
+  end if;
+  if new.pending_owner_user_id is distinct from old.pending_owner_user_id and new.owner_user_id = old.owner_user_id and new.deleted_at is not distinct from old.deleted_at then
+    if me is not null and my_role is distinct from 'owner' and not (new.pending_owner_user_id is null and coalesce(old.pending_owner_user_id = me, false)) then raise exception 'msgr_owner_only'; end if;
+    if new.pending_owner_user_id is not null and not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.pending_owner_user_id and removed_at is null and role = 'admin') then
+      raise exception 'msgr_transfer_not_admin';
+    end if;
+    perform public.msgr_audit(old.id, case when new.pending_owner_user_id is null then (case when coalesce(me = old.pending_owner_user_id, false) then 'org.transfer.decline' else 'org.transfer.cancel' end) else 'org.transfer.offer' end,
+                              'user', coalesce(new.pending_owner_user_id, old.pending_owner_user_id)::text);
+  end if;
+  if new.successor_user_id is distinct from old.successor_user_id and new.owner_user_id = old.owner_user_id then
+    if me is not null and my_role is distinct from 'owner' then raise exception 'msgr_owner_only'; end if;
+    if new.successor_user_id is not null and not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.successor_user_id and removed_at is null and role = 'admin') then
+      raise exception 'msgr_successor_not_admin';
+    end if;
+    perform public.msgr_audit(old.id, 'org.successor', 'user', coalesce(new.successor_user_id, old.successor_user_id)::text, jsonb_build_object('set', new.successor_user_id is not null));
+  end if;
+  if new.service_user_id is distinct from old.service_user_id then
+    if new.service_user_id is not null and not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.service_user_id and removed_at is null) then
+      raise exception 'msgr_service_not_member';
+    end if;
+    perform public.msgr_audit(old.id, 'org.service_account', 'org', old.id::text, jsonb_build_object('from', old.service_user_id, 'to', new.service_user_id));
+  end if;
+  return new;
+end $$;
+
+-- 삭제 표시는 소유자의 일반 UPDATE(정책 admin ✓ + 위 트리거). 복구는 RPC(삭제 뒤엔 정책을 못 지난다).
+create or replace function public.msgr_restore_org(org uuid) returns boolean
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare o public.msgr_orgs%rowtype;
+begin
+  if auth.uid() is null then raise exception 'msgr_auth_required'; end if;
+  select * into o from public.msgr_orgs where id = org for update;
+  if o.id is null or o.owner_user_id <> auth.uid() then raise exception 'msgr_owner_only'; end if;
+  if o.deleted_at is null then return false; end if;
+  if o.deleted_at < now() - interval '30 days' then raise exception 'msgr_restore_expired'; end if;
+  update public.msgr_orgs set deleted_at = null where id = o.id; -- 트리거가 org.restore 감사
+  return true;
+end $$;
+-- 내가 소유한 삭제 예정 조직(복구 화면용) — 삭제 뒤엔 멤버십이 없어 select 정책의 owner 분기만 남지만, 남은 날짜 계산까지 한 번에 준다.
+create or replace function public.msgr_my_deleted_orgs() returns table (id uuid, name text, slug text, deleted_at timestamptz, purge_at timestamptz)
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select o.id, o.name, o.slug, o.deleted_at, o.deleted_at + interval '30 days'
+      from public.msgr_orgs o where o.owner_user_id = auth.uid() and o.deleted_at is not null and o.deleted_at > now() - interval '30 days'
+     order by o.deleted_at desc
+$$;
+-- 영구 삭제: 유예가 끝난 조직을 지운다(cascade). service_role 전용 — 운영 잡이 부른다. 지운 개수를 돌려준다.
+create or replace function public.msgr_purge_orgs() returns int
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare n int;
+begin
+  if auth.uid() is not null then raise exception 'msgr_service_only'; end if;
+  with gone as (delete from public.msgr_orgs where deleted_at is not null and deleted_at < now() - interval '30 days' returning id)
+  select count(*) into n from gone;
+  return n;
+end $$;
+do $$ declare f text; begin
+  foreach f in array array['msgr_restore_org(uuid)', 'msgr_my_deleted_orgs()'] loop
+    execute format('revoke all on function public.%s from public', f);
+    execute format('revoke execute on function public.%s from anon', f);
+    execute format('grant execute on function public.%s to authenticated', f);
+  end loop;
+end $$;
+revoke all on function public.msgr_purge_orgs() from public;
+revoke execute on function public.msgr_purge_orgs() from anon, authenticated;
+grant execute on function public.msgr_purge_orgs() to service_role;
+
+-- 감사 함수 가드(J-5 purge 실측): 조직 행이 cascade로 지워지는 문장 안에서 자식 행 트리거가 감사를 남기려 하면 FK가 깨진다 →
+-- 조직이 이미 없으면 조용히 건너뛴다(영구 삭제는 기록 자체를 지우는 행위이므로 감사 대상이 아니다).
+create or replace function public.msgr_audit(org uuid, act text, tkind text, tid text, m jsonb default '{}'::jsonb) returns void
+  language sql security definer set search_path = public, pg_temp as $$
+    insert into public.msgr_audit_log (org_id, actor_user_id, action, target_kind, target_id, meta)
+    select org, auth.uid(), act, tkind, tid, coalesce(m, '{}'::jsonb)
+     where exists (select 1 from public.msgr_orgs o where o.id = org)
+$$;
+
+-- 새 조직의 소유자 멤버 행에 표시명(이메일 앞부분)을 채운다 — 없으면 멤버 목록에 uid 앞자리가 보였다(J-5 실측). 초대 수락과 같은 규칙.
+create or replace function public.msgr_org_after_insert() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  insert into public.msgr_org_members (org_id, user_id, role, display_name)
+    values (new.id, new.owner_user_id, 'owner', (select split_part(u.email, '@', 1) from auth.users u where u.id = new.owner_user_id));
+  insert into public.msgr_org_entitlements (org_id) values (new.id) on conflict do nothing;
+  insert into public.msgr_org_policies (org_id) values (new.id) on conflict do nothing;
+  perform public.msgr_audit(new.id, 'org.create', 'org', new.id::text);
+  return new;
+end $$;

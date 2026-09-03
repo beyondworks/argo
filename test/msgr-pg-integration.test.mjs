@@ -740,7 +740,8 @@ test('J-4 게스트 — 채널 관리자의 비공개 채널 게스트 링크(�
   const inv = (u, ch, days = 30) => `insert into public.msgr_invites (org_id, role, channel_id, guest_days, created_by) values ('${ORG}', 'guest', ${ch ? `'${ch}'` : 'null'}, ${days}, '${u}') returning code`;
   denied(U.member, inv(U.member, PRIV), /row-level security/);                                   // 채널 관리자 아님
   assert.equal(last(asUser(U.admin, `update public.msgr_channels set admin_user_ids = array['${U.member}'::uuid] where id = '${PRIV}' returning 1`)), '1', '채널 관리자 지정(생성자 — 소유자는 앞 케이스가 PRIV 멤버에서 뺐다: UPDATE는 SELECT 열람도 지나야 해 0행이 된다)');
-  denied(U.member, inv(U.member, PUB), /row-level security/);                                    // 공개 채널 게스트 링크 불가
+  asUser(U.owner, `update public.msgr_channels set admin_user_ids = array['${U.member}'::uuid] where id = '${PUB}'`); // 공개 채널 관리자로 만들어도
+  denied(U.member, inv(U.member, PUB), /row-level security/);                                    // 공개 채널 게스트 링크 불가(kind = private 조건 — 변이 배터리가 드러낸 구멍)
   denied(U.member, `insert into public.msgr_invites (org_id, role, channel_id, created_by) values ('${ORG}', 'member', '${PRIV}', '${U.member}')`, /msgr_invites_channel_guest|row-level security/); // 채널 한정은 게스트만
   const code = last(asUser(U.member, inv(U.member, PRIV, 1)));
   assert.match(code, /^[0-9a-f]{48}$/, '채널 관리자의 게스트 링크');
@@ -771,4 +772,32 @@ test('J-4 게스트 — 채널 관리자의 비공개 채널 게스트 링크(�
   assert.equal(last(asUser(U.svc, `select public.msgr_accept_invite('${code4}')`)), ORG);
   assert.equal(sql(`select role || ' ' || (expires_at is null) from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.svc}'`), 'member true', '정식 멤버는 강등 없이 채널만 추가');
   assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${PRIV}' and member_kind = 'user' and member_id = '${U.svc}'`), '1');
+});
+
+test('J-5 조직 삭제 유예·복구 — 소유자만 삭제 표시(즉시 전원 불가시·감사), 30일 안 소유자 복구 RPC, 지나면 복구 거절·purge(service_role만)', () => {
+  if (!DB) return;
+  const TMP = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('지울 조직', 'to-delete', '${U.owner}') returning id`));
+  assert.equal(sql(`select display_name from public.msgr_org_members where org_id = '${TMP}' and user_id = '${U.owner}'`), 'owner', '새 조직 소유자 표시명 = 이메일 앞부분');
+  asUser(U.owner, `insert into public.msgr_invites (org_id, role, created_by) values ('${TMP}', 'admin', '${U.owner}')`);
+  const code = last(asUser(U.owner, `select code from public.msgr_invites where org_id = '${TMP}' limit 1`));
+  asUser(U.admin, `select public.msgr_accept_invite('${code}')`);
+  denied(U.admin, `update public.msgr_orgs set deleted_at = now() where id = '${TMP}'`, /msgr_owner_only/);
+  assert.equal(last(asUser(U.owner, `update public.msgr_orgs set deleted_at = now() where id = '${TMP}' returning 1`)), '1', '소유자 삭제 표시');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${TMP}' and action = 'org.delete'`), '1');
+  assert.equal(last(asUser(U.admin, `select public.msgr_is_member('${TMP}')`)), 'f', '삭제 즉시 멤버십 판정 null');
+  assert.equal(last(asUser(U.admin, `select count(*) from public.msgr_channels where org_id = '${TMP}'`)), '0');
+  assert.equal(last(asUser(U.owner, `update public.msgr_orgs set deleted_at = null where id = '${TMP}' returning 1`)), '', '삭제 뒤엔 일반 UPDATE 정책을 못 지난다(0행) — 복구는 RPC');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_my_deleted_orgs()`)), '1', '소유자의 삭제 예정 목록');
+  assert.equal(last(asUser(U.admin, `select count(*) from public.msgr_my_deleted_orgs()`)), '0', '관리자에겐 없다');
+  denied(U.admin, `select public.msgr_restore_org('${TMP}')`, /msgr_owner_only/);
+  assert.equal(last(asUser(U.owner, `select public.msgr_restore_org('${TMP}')`)), 't', '소유자 복구');
+  assert.equal(last(asUser(U.admin, `select public.msgr_is_member('${TMP}')`)), 't', '복구 즉시 멤버십 복귀');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${TMP}' and action = 'org.restore'`), '1');
+  assert.equal(last(asUser(U.owner, `select public.msgr_restore_org('${TMP}')`)), 'f', '이미 살아 있으면 false');
+  sql(`update public.msgr_orgs set deleted_at = now() - interval '31 days' where id = '${TMP}'`);
+  denied(U.owner, `select public.msgr_restore_org('${TMP}')`, /msgr_restore_expired/);
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_my_deleted_orgs()`)), '0', '유예가 끝난 조직은 복구 목록에 없다');
+  denied(U.owner, `select public.msgr_purge_orgs()`, /msgr_service_only|permission denied/);
+  assert.equal(sql(`select public.msgr_purge_orgs()`), '1', '서비스 문맥 purge');
+  assert.equal(sql(`select count(*) from public.msgr_orgs where id = '${TMP}'`), '0', '영구 삭제(cascade)');
 });

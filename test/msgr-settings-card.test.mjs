@@ -362,3 +362,20 @@ test('J-4 게스트 — 비공개 채널 시트의 게스트 링크(기간 세�
   const dict = read('apps/messenger/src/i18n.js');
   for (const k of ['ch.guest', 'ch.guest.link', 'ch.guest.made', 'org.guest.until', 'org.guest.expired', 'set.policy.guests', 'set.policy.guests.seats']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
 });
+
+test('J-5 조직 삭제 유예·복구 — 이름 입력 2단계 삭제(네이티브 confirm 없음), 복구는 RPC, 삭제 예정 목록은 메뉴·빈 화면, 서버 트리거·RPC·purge 권한', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(oc, /disabled=\{busy \|\| delName\.trim\(\) !== org\.name\} onClick=\{deleteOrg\}/, '이름이 정확히 같아야 삭제 버튼 활성');
+  assert.match(oc, /update\(\{ deleted_at: new Date\(\)\.toISOString\(\) \}\)\.eq\('id', org\.id\)/, '삭제 = deleted_at 표시(서버 트리거가 소유자 판정)');
+  assert.ok(!/window\.confirm|window\.prompt|confirm\(/.test(oc), '네이티브 대화상자 없음');
+  assert.match(app, /await q\(supabase\.rpc\('msgr_restore_org', \{ org: o\.id \}\)\)/, '복구는 RPC');
+  assert.match(app, /setDeletedOrgs\(await q\(supabase\.rpc\('msgr_my_deleted_orgs'\)\)\.catch\(\(\) => \[\]\)\);/, '삭제 예정 목록은 RPC');
+  assert.match(app, /deletedOrgs\.length \? \[\['', t\('org\.step\.restore'\)/, '빈 화면 복구 단계');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /if me is not null and new\.deleted_at is distinct from old\.deleted_at and old\.owner_user_id <> me then raise exception 'msgr_owner_only'; end if;/, '삭제·복구는 소유자 계정 기준');
+  assert.match(sql, /if o\.deleted_at < now\(\) - interval '30 days' then raise exception 'msgr_restore_expired'; end if;/, '30일 유예');
+  assert.match(sql, /revoke execute on function public\.msgr_purge_orgs\(\) from anon, authenticated;/, 'purge는 service_role만');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['org.delete', 'org.delete.typeName', 'org.delete.confirm', 'org.delete.desc', 'org.restore.cta', 'org.restore.expired', 'org.step.restore']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
