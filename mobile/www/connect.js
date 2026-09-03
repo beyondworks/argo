@@ -76,9 +76,11 @@
   // 밖 주소는 안내만. 콜드 스타트는 getLaunchUrl, 실행 중엔 appUrlOpen. Android 뒤로가기는 WebView 히스토리로.
   const fromDeepLink = (url) => {
     try {
-      const u = new URL(url);
-      if (u.protocol !== 'argo:' || u.hostname !== 'pair') return false;
-      const origin = normOrigin(u.searchParams.get('u')), code = u.searchParams.get('c') || '';
+      // URL 파서는 비표준 스킴의 호스트를 엔진마다 다르게 준다(Android Chromium: '' / iOS WebKit: 'pair') — 정규식으로 본다
+      const m = String(url || '').match(/^argo:\/\/pair\/?\?(.*)$/i);
+      if (!m) return false;
+      const q = new URLSearchParams(m[1]);
+      const origin = normOrigin(q.get('u')), code = q.get('c') || '';
       if (!origin || !code) return false;
       connectScreen(); // 먼저 그리고(저장된 주소로 채움) 그 위에 딥링크 값을 덮는다(검수 L4)
       $('addr').value = origin.replace(/^https?:\/\//, ''); $('code').value = code;
