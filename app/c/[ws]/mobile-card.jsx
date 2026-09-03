@@ -36,7 +36,7 @@ function Countdown({ exp }) {
 }
 
 export function MobileCard({ embedded = false } = {}) {
-  const { t, lang } = useLang();
+  const { t } = useLang();
   const [st, setSt] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');

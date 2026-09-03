@@ -41,7 +41,7 @@ export async function PUT(req) {
     const upstreamPort = hostPort(req);
     let cfg;
     try {
-      cfg = await startMobileListener({ port: Number.isInteger(port) && port > 0 ? port : cur.port, upstreamPort });
+      cfg = await startMobileListener({ port: Number.isInteger(port) && port >= 0 ? port : cur.port, upstreamPort }); // 0 = OS 배정(테스트·충돌 회피), 미지정 = 저장값
     } catch (e) {
       if (e.code === 'EADDRINUSE' || e.code === 'EACCES') return apiError('mobile_port_busy', await requestLang());
       throw e;
