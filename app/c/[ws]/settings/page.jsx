@@ -768,9 +768,9 @@ function MsgrCard({ ws, agents }) {
   }
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <strong style={{ fontSize: 14 }}>{t('settings.msgr.title')}</strong>
-        {st?.signedIn && <span className="chip" style={{ fontSize: 10 }}>{bridgeOn ? t('settings.msgr.bridge.on') : t('settings.msgr.bridge.off')}</span>}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{t('settings.msgr.title')}</strong>
+        {st?.signedIn && <span className="chip" style={{ fontSize: 10 }} title={bridgeOn ? t('settings.msgr.bridge.on') : t('settings.msgr.bridge.off')}>{bridgeOn ? t('settings.msgr.bridge.onShort') : t('settings.msgr.bridge.offShort')}</span>}
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.help')}</p>
       {st === null && <Skeleton h={44} />}

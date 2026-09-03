@@ -200,6 +200,16 @@
 .msgr-crewsheet .me .btn { margin-left: auto; }
 .msgr-main { position: relative; }
 
+/* 채널 시트 부품 — 크루 시트와 같은 카드, 입력 필드·스위치 행 */
+.msgr-titlebtn { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+.msgr-titlebtn .caret { color: var(--fg-3); }
+.msgr-crewsheet .field { display: grid; gap: 4px; }
+.msgr-crewsheet .field input { height: 34px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; }
+.msgr-crewsheet .field input:disabled { opacity: .6; }
+.msgr-crewsheet .switchrow { display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; line-height: 1.5; cursor: pointer; }
+.msgr-crewsheet .switchrow input { accent-color: var(--primary); margin-top: 3px; }
+.msgr-crewsheet .pick .btn { margin-left: auto; }
+
 /* 설정 페이지 — 카드 3장(언어·테마·계정), 세그먼트는 상단 탭과 같은 부품 */
 .msgr-settings { margin: 0 auto; width: 100%; max-width: 640px; padding: 8px 0 32px; display: grid; gap: 14px; }
 .msgr-setcard { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 18px 20px; display: grid; gap: 12px; }
