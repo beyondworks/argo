@@ -1913,6 +1913,25 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 }
 @keyframes drawerIn { from { transform: translateX(22px); opacity: 0; } to { transform: none; opacity: 1; } }
 .crew-drawer-tabs { display: flex; align-items: center; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--border-soft); flex: none; }
+/* 공용 가로 탭(설정·크루 카드) — 크루 서랍 탭과 같은 룩. 좁은 폭에서는 줄바꿈 없이 가로 스크롤(스크롤바 숨김). */
+.tabbar { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border-soft); flex: none; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.tabbar::-webkit-scrollbar { display: none; }
+.tabbar .tab { flex: none; border: 0; background: transparent; color: var(--fg-3); font: inherit; font-size: 12.5px; font-weight: 600; padding: 5px 10px; border-radius: 7px; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; line-height: 1.4; transition: background 0.12s, color 0.12s; }
+.tabbar .tab:hover { color: var(--fg); }
+.tabbar .tab[aria-selected="true"] { background: var(--card-2); color: var(--fg); }
+.tabbar .tab[data-tone="danger"][aria-selected="true"] { color: var(--danger); }
+.tabbar .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tabbar .tab-n { font-family: var(--mono); font-size: 10px; font-weight: 500; color: var(--fg-3); }
+/* 설정 탭 본문 — 행 묶음 배치: 비슷한 카드끼리 한 행(.cardrow)에 두고 행 안에서 높이를 같게 늘린다(stretch) → 행 바닥이 맞고 빈 셀이 없다.
+   한 행의 카드 수는 그 행이 정한다(2장 행·3장 행). 폭이 좁으면 auto-fit이 행을 접는다(폰 1열). 변동이 큰 카드는 혼자 한 행(전폭).
+   이름은 .row(목록 행, 테두리 있음)와 겹치지 않게 — 겹치면 행 사이에 가는 선이 생긴다(격리 실측). */
+.cardcols { display: grid; gap: 14px; }
+.cardrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 14px; align-items: stretch; }
+.cardrow > * { min-width: 0; }
+.cardrow:empty { display: none; } /* 조건부로 아무것도 그리지 않는 카드(E2EE 미지원 환경 등)의 빈 행 — 간격만 남기지 않는다 */
+/* 탭 텍스트를 카드 본문 텍스트 왼쪽선에 맞춘다: 설정(카드 패딩 18) → 바 패딩 8 + 탭 패딩 10, 크루 카드(헤더 패딩 20) → 바 패딩 10 + 탭 패딩 10 */
+.settings-tabs { padding: 4px 8px 8px; margin-bottom: 2px; }
+.crew-card-tabs { padding: 0 10px 8px; }
 .crew-tab { border: 0; background: transparent; color: var(--fg-3); font-size: 12.5px; font-weight: 600; padding: 5px 10px; border-radius: 7px; cursor: pointer; }
 .crew-tab:hover { color: var(--fg); }
 .crew-tab.active { background: var(--card-2); color: var(--fg); }

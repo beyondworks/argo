@@ -3,7 +3,7 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, artifactDownload, openBillingPortal, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
+import { Tabs, useRememberedTab, Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, artifactDownload, openBillingPortal, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
 import { useLang, adjustZoom } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
@@ -12,6 +12,8 @@ import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
 import { CHANNEL_EVENTS } from '../../../../src/channel-events.mjs'; // 순수 상수 — connections.mjs는 fs를 끌어 클라 번들이 깨진다
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
+// 설정 탭 — 각 카드는 정확히 한 탭에만 속한다(test/tabs-layout). 렌더 순서: 작은 카드 → 전폭(.wide) 카드.
+const SETTINGS_TABS = ['general', 'ai', 'connections', 'devices', 'danger'];
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
 const LS_YEARLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_YEARLY || '';
 
@@ -31,13 +33,10 @@ function Settings({ params }) {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
-  // 딥링크 ?ai=1 — 데크/홈의 "연결하기"가 러너 연결 섹션으로 바로 데려온다(vault ?doc= 패턴)
-  const aiRef = useRef(null);
-  const wantAi = useSearchParams().get('ai');
-  useEffect(() => {
-    if (!wantAi) return;
-    requestAnimationFrame(() => aiRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-  }, [wantAi, data]);
+  // 탭 — 딥링크 ?ai=1(데크/홈의 "연결하기")은 AI 연결 탭을, ?tab=<id>는 그 탭을 연다. 그 외엔 마지막 탭(localStorage) → 일반.
+  const sp = useSearchParams();
+  const wantTab = sp.get('ai') ? 'ai' : sp.get('tab');
+  const [tab, setTab] = useRememberedTab('argo-settings-tab', SETTINGS_TABS, 'general', wantTab);
 
   useEffect(() => {
     api(`/api/companies/${ws}`).then((d) => {
@@ -104,7 +103,17 @@ function Settings({ params }) {
     <div style={{ display: 'grid', gap: 16, maxWidth: 1060, margin: '0 auto', width: '100%' }}>
       <span className="microlabel">{t('settings.head')}</span>
 
-      <Section label={t('settings.general')}>
+      <Tabs label={t('settings.tab.label')} value={tab} onChange={setTab} className="settings-tabs" tabs={[
+        { id: 'general', label: t('settings.tab.general') },
+        { id: 'ai', label: t('settings.tab.ai') },
+        { id: 'connections', label: t('settings.tab.connections') },
+        { id: 'devices', label: t('settings.tab.devices') },
+        { id: 'danger', label: t('settings.tab.danger'), tone: 'danger' },
+      ]} />
+
+      {tab === 'general' && (
+      <div className="cardcols" data-tab-pane="general">
+      <div className="cardrow">
       <form onSubmit={saveName} className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span className="card-title">{t('settings.companyInfo')}</span>
         <label style={{ display: 'grid', gap: 5 }}>
@@ -127,7 +136,6 @@ function Settings({ params }) {
           <span style={{ fontSize: 12, color: msg === t('settings.saved') ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>
         </div>
       </form>
-
       <div className="card" style={{ padding: 18 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           <span className="card-title">{t('settings.spec')}</span>
@@ -148,50 +156,60 @@ function Settings({ params }) {
           <span className="microlabel">{t('deck.sailTogether')}</span>
         </div>
       </div>
-
-      {/* 화면 언어 + 크루 응답 언어 + 표시 배율 — 화면 표시 설정 한 묶음이라 한 열에 세로로 쌓는다
-          (풀어놓으면 일반 카드 4장이 3열 그리드에서 4번째만 다음 줄에 홀로 떨어짐 — 분리 검수 MEDIUM) */}
-      <div style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
-        <LanguageCard />
-        <CrewLanguageCard ws={ws} sysLang={data?.company?.lang} />
-        <ZoomCard />
       </div>
-      <ThemeCard />
-      <TrashCard ws={ws} />
-      <ExportCard ws={ws} />
-      <ImportCard ws={ws} />
-      </Section>
-
-      <div ref={aiRef} style={{ scrollMarginTop: 84 }}>
-        <Section label={t('settings.ai.section')}>
-          <AiConnectionCard ws={ws} accordion />
-        </Section>
+      <div className="cardrow">
+      <LanguageCard />
+      <CrewLanguageCard ws={ws} sysLang={data?.company?.lang} />
+      <ZoomCard />
       </div>
+      <div className="cardrow"><ThemeCard /></div>
+      </div>
+      )}
 
-      <Section label={t('settings.devices.section')}>
-        <DevicesCard ws={ws} />
-        <UpdateCard />
-      </Section>
+      {tab === 'ai' && (
+      <div className="cardcols" data-tab-pane="ai">
+      <div className="cardrow"><AiConnectionCard ws={ws} accordion /></div>
+      </div>
+      )}
 
-      <Section label={t('settings.capabilities')}>
-        <WorkRootsCard ws={ws} />
-        <SystemPermissionsCard />
-      </Section>
-
-      <Section label={t('settings.connections')}>
+      {tab === 'connections' && (
+      <div className="cardcols" data-tab-pane="connections">
+      <div className="cardrow">
       <ConnectionCard ws={ws} kind="telegram" title={t('activity.telegram')}
         help={t('settings.conn.tgHelp')}
         agents={data?.agents ?? []} />
+      </div>
+      <div className="cardrow">
       <ConnectionCard ws={ws} kind="slack" title={t('activity.slack')}
         help={t('settings.conn.slackHelp')}
         agents={data?.agents ?? []} />
-      <ConnectorsCard ws={ws} />
-      <SyncCard ws={ws} />
-      <E2eeCard />
-      </Section>
+      </div>
+      <div className="cardrow"><ConnectorsCard ws={ws} /></div>
+      </div>
+      )}
 
-      <Section label={t('settings.danger')}>
-      <div className="card" style={{ padding: 18, borderColor: 'var(--danger)', gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+      {tab === 'devices' && (
+      <div className="cardcols" data-tab-pane="devices">
+      <div className="cardrow">
+      <DevicesCard ws={ws} />
+      <UpdateCard />
+      <SystemPermissionsCard />
+      </div>
+      <div className="cardrow">
+      <ExportCard ws={ws} />
+      <TrashCard ws={ws} />
+      </div>
+      <div className="cardrow"><WorkRootsCard ws={ws} /></div>
+      <div className="cardrow"><SyncCard ws={ws} /></div>
+      <div className="cardrow"><E2eeCard /></div>
+      <div className="cardrow"><ImportCard ws={ws} /></div>
+      </div>
+      )}
+
+      {tab === 'danger' && (
+      <div className="cardcols" data-tab-pane="danger">
+      <div className="cardrow">
+      <div className="card" style={{ padding: 18, borderColor: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 260 }}>
           <span className="card-title" style={{ color: 'var(--danger)' }}>{t('settings.archive.title')}</span>
           <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: '6px 0 0' }}>
@@ -204,7 +222,9 @@ function Settings({ params }) {
           <Icon name="trash" size={13} /> {t('settings.archive.btn')}
         </button>
       </div>
-      </Section>
+      </div>
+      </div>
+      )}
 
       <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--fg-3)', padding: '6px 2px 4px' }}>
         <Link href="/legal" style={{ color: 'inherit' }}>{t('legal.link')}</Link>
@@ -388,7 +408,7 @@ function ThemeCard() {
     background: on ? 'var(--primary)' : 'transparent', color: on ? 'var(--primary-fg)' : 'var(--fg-2)', transition: 'background 0.15s, color 0.15s',
   });
   return (
-    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 18 }}>
       {/* 모드 — 시스템/라이트/다크 세그먼트 (아르고 시그니처 테마의 밝기) */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
         <span className="card-title">{t('settings.mode')}</span>
@@ -513,7 +533,7 @@ function ExportCard({ ws }) {
   }
 
   return (
-    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8, alignContent: 'start' }}>
+    <div className="card" style={{ padding: 18, display: 'grid', gap: 8, alignContent: 'start' }}>
       <span className="card-title">{t('settings.export.title')}</span>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.export.desc')}</p>
       <form onSubmit={doExport} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -585,7 +605,7 @@ function ImportCard({ ws }) {
 
   const planVars = (x) => ({ j: x.journal, n: x.notes, f: x.files, u: x.unsorted, s: x.skipped, a: x.already });
   return (
-    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8, alignContent: 'start' }}>
+    <div className="card" style={{ padding: 18, display: 'grid', gap: 8, alignContent: 'start' }}>
       <span className="card-title">{t('settings.import.title')}</span>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.import.desc')}</p>
       <form onSubmit={preview} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -689,7 +709,7 @@ function TrashCard({ ws }) {
     catch { /* */ } finally { setBusy(''); }
   }
   return (
-    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.trash')}{items?.length ? ` · ${items.length}` : ''}</span>
       <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.trash.desc')}</p>
       {items === null ? <Skeleton h={40} /> : items.length === 0 ? (
@@ -850,7 +870,7 @@ function WorkRootsCard({ ws }) {
   }
 
   return (
-    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8 }}>
+    <div className="card" style={{ padding: 18, display: 'grid', gap: 8 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span className="card-title">{t('settings.workroots.title')}</span>
         <span className="chip">{t('settings.workroots.deviceLocal')}</span>
@@ -910,7 +930,7 @@ function SystemPermissionsCard() {
   };
 
   return (
-    <div className="card" style={{ padding: 18, gridColumn: '1 / -1', display: 'grid', gap: 8 }}>
+    <div className="card" style={{ padding: 18, display: 'grid', gap: 8 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span className="card-title">{t('settings.perms.title')}</span>
         <span className="chip">{os === 'mac' ? 'macOS' : 'Windows'}</span>
@@ -945,19 +965,6 @@ function SystemPermissionsCard() {
 }
 
 /** 설정 섹션 — 대시 룰 헤더 + 2열 등고 그리드(내용이 하나면 전체 폭). */
-function Section({ label, children }) {
-  return (
-    <section style={{ display: 'grid', gap: 10, marginTop: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span className="microlabel" style={{ flex: 'none' }}>{label}</span>
-        <span style={{ flex: 1, borderTop: '1px dashed var(--border-soft)' }} aria-hidden="true" />
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 14 }}>
-        {children}
-      </div>
-    </section>
-  );
-}
 
 
 /** 메신저 연결 카드 — 토큰은 서버에만 저장(화면은 마스킹), 가동 토글로 게이트웨이 시작/중지. */
@@ -1250,7 +1257,7 @@ function SyncCard({ ws }) {
   return (
     // 와이드 — 이 카드는 상태 줄·결제 표면·내보내기가 겹쳐 세로로 길어지는데 340px 트랙 하나에
     // 갇혀 있었다(유건 지시 2026-08-19). 위험 구역 카드와 같은 방식으로 열 전체를 쓴다.
-    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, gridColumn: '1 / -1' }}>
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="card-title">{t('settings.sync.title')}</span>
         <span style={{ flex: 1 }} />
@@ -1415,7 +1422,7 @@ function E2eeCard() {
   if (!st?.available) return null; // 로그인-연동 기기 전용 — 없는 환경엔 카드 자체를 안 보인다
   const pending = (st.devices ?? []).filter((d) => !d.hasWrap && !d.isThis);
   return (
-    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8, gridColumn: '1 / -1' }}>
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="card-title">{t('settings.e2ee.title')}</span>
         <span style={{ flex: 1 }} />
