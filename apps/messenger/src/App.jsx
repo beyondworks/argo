@@ -1,20 +1,36 @@
-// Argo 메신저 — 조직·채널·메시지·크루·결재 카드. 데이터는 Supabase 직결(RLS가 경계), 실시간은 private topic org:<id> 방송.
-// 룩은 Argo 앱과 동일: 클래스(.shell .side .nav-item .btn .chip .pill .input-bar .msg-user .msg-crew .card .fade-up)와
-// 컴포넌트(Icon·Avatar·Markdown·DropUp)를 globals.css/ui.jsx에서 그대로 쓴다. 메신저 고유 배치만 styles.css.
-// 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 카드 · 크루 부재중 · 타이핑.
+// Argo 메신저 — 조직·채널·메시지·크루·결재 슬립. 데이터는 Supabase 직결(RLS가 경계), 실시간은 private topic org:<id> 방송.
+// 룩 = linen v2(apps/messenger/design): 타임라인 척추 · 사람 원/크루 타일 · 2단 다크 독 · 결재 슬립 · 자체 아이콘(icons.jsx).
+// Argo 부품은 .shell/.side(테마 토큰 스코프)·.btn·DropUp·Markdown·imeGuardWith만 쓰고, 나머지는 styles.css의 .msgr-*.
+// 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, configured, q } from './supabase.js';
-import { t as tm, readLang } from './i18n.js';
+import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
-import { Icon, Avatar, Markdown, DropUp, Logo, imeGuardWith } from '@argo/ui';
+import { Markdown, DropUp, imeGuardWith } from '@argo/ui';
+import { Sprite, I, STAR_D } from './icons.jsx';
 
 const AWAY_MS = 90_000;
 const PAGE = 100;
+const CHIP_MAX = 6; // 채널 칩 랩 상한 — 초과분은 점선 '+N' 칩 뒤로(평가 v2: 태그 구름 방지)
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
+const dayKey = (iso) => new Date(iso).toDateString();
+const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
+  ? [d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), d.toLocaleDateString('en-US', { weekday: 'long' })]
+  : [d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' }), d.toLocaleDateString('ko-KR', { weekday: 'long' })]; };
 
 /** 메신저 사전 t — 언어 상태는 Argo LanguageProvider(cmd+/ 전환·localStorage argo-lang)를 그대로 쓴다. */
 function useT() { const { lang, setLang, t: ta } = useLang(); return { lang, setLang, ta, t: (k, vars) => tm(k, lang, vars) }; }
+
+/** 아바타 — 사람은 원, 크루는 둥근 사각 타일 + 옐로 별(시안 v2 모티프 ②). */
+function Av({ name, crew, size }) {
+  return <span className={`msgr-av${crew ? ' crew' : ''}${size ? ` ${size}` : ''}`}>{(name || '?').slice(0, 1)}{crew && <span className="star"><svg viewBox="0 0 16 16"><path d={STAR_D} /></svg></span>}</span>;
+}
+/** 본문 속 @멘션을 굵게·줄바꿈 금지로(평가 1차: @와 이름 사이 줄바꿈). */
+function Body({ text }) {
+  const parts = String(text ?? '').split(/(@[^\s@]+)/g);
+  return parts.map((p, i) => p.startsWith('@') ? <span key={i} className="msgr-mention">{p}</span> : p);
+}
 
 export default function App() {
   const { t } = useT();
@@ -25,42 +41,46 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
-  if (!configured) return <div className="msgr-auth"><div className="card"><Logo size={15} /><p style={{ color: 'var(--danger)', fontSize: 13 }}>{t('auth.notConfigured')}</p></div></div>;
-  if (session === undefined) return <div className="msgr-auth"><span className="microlabel">{t('ui.loading')}</span></div>;
-  if (!session) return <Auth />;
-  return <Shell session={session} />;
+  let body;
+  if (!configured) body = <div className="msgr-auth"><div className="msgr-card"><div className="body"><p style={{ color: 'var(--danger)' }}>{t('auth.notConfigured')}</p></div></div></div>;
+  else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
+  else if (!session) body = <Auth />;
+  else body = <Shell session={session} />;
+  return <><Sprite />{body}</>;
 }
 
-/* ─── 로그인: 이메일 OTP(운영). 개발 빌드에서는 비밀번호 로그인도(로컬 스택엔 메일 서버가 없다). ─── */
+/* ─── 로그인: 머리띠 카드 + 이메일 OTP(운영). 개발 빌드에서는 비밀번호 로그인도(로컬 스택엔 메일 서버가 없다). ─── */
 function Auth() {
   const { t, lang, setLang } = useT();
   const [email, setEmail] = useState(''); const [code, setCode] = useState(''); const [pw, setPw] = useState('');
   const [sent, setSent] = useState(false); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
   const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
   return (
-    <div className="msgr-auth"><form className="card fade-up" onSubmit={(e) => e.preventDefault()}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Logo size={15} /><span className="microlabel">{t('app.title')}</span>
+    <div className="msgr-auth"><form className="msgr-card" onSubmit={(e) => e.preventDefault()}>
+      <div className="band"><svg width="14" height="14" viewBox="0 0 16 16"><path d={STAR_D} /></svg>ARGO<span className="tag">{t('auth.tag')}</span></div>
+      <div className="body">
+        <h1>{t('auth.title')}</h1>
+        <p>{t('auth.desc')}</p>
+        <label className="msgr-field"><I name="at" /><input type="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus /></label>
+        {!sent ? (
+          <button className="btn btn-primary" disabled={busy || !email} onClick={() => run(async () => { await q(supabase.auth.signInWithOtp({ email })); setSent(true); })}>{t('auth.sendCode')} <I name="up" size={14} /></button>
+        ) : (<>
+          <p>{t('auth.sent')}</p>
+          <label className="msgr-field"><I name="lock" /><input placeholder={t('auth.code')} value={code} onChange={(e) => setCode(e.target.value)} /></label>
+          <button className="btn btn-primary" disabled={busy || !code} onClick={() => run(async () => { await q(supabase.auth.verifyOtp({ email, token: code.trim(), type: 'email' })); })}>{t('auth.verify')}</button>
+        </>)}
+        {import.meta.env.DEV && (<>
+          <label className="msgr-field"><I name="lock" /><input type="password" placeholder={t('auth.password')} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
+          <button className="btn" disabled={busy || !email || !pw} onClick={() => run(async () => { await q(supabase.auth.signInWithPassword({ email, password: pw })); })}>{t('auth.verify')} (dev)</button>
+        </>)}
+        {err && <p style={{ color: 'var(--danger)' }}>{err}</p>}
+        <div className="foot"><I name="lock" size={13} /><span style={{ flex: 1 }}>{t('auth.foot')}</span><button type="button" className="btn sm" onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}>{t('ui.lang')}</button></div>
       </div>
-      <label className="input-bar"><input type="email" placeholder={t('auth.email')} value={email} onChange={(e) => setEmail(e.target.value)} autoFocus /></label>
-      {!sent ? (
-        <button className="btn btn-primary" disabled={busy || !email} onClick={() => run(async () => { await q(supabase.auth.signInWithOtp({ email })); setSent(true); })}>{t('auth.sendCode')}</button>
-      ) : (<>
-        <p style={{ margin: 0, fontSize: 12.5, color: 'var(--fg-2)' }}>{t('auth.sent')}</p>
-        <label className="input-bar"><input placeholder={t('auth.code')} value={code} onChange={(e) => setCode(e.target.value)} /></label>
-        <button className="btn btn-primary" disabled={busy || !code} onClick={() => run(async () => { await q(supabase.auth.verifyOtp({ email, token: code.trim(), type: 'email' })); })}>{t('auth.verify')}</button>
-      </>)}
-      {import.meta.env.DEV && (<>
-        <label className="input-bar"><input type="password" placeholder={t('auth.password')} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
-        <button className="btn" disabled={busy || !email || !pw} onClick={() => run(async () => { await q(supabase.auth.signInWithPassword({ email, password: pw })); })}>{t('auth.verify')} (dev)</button>
-      </>)}
-      {err && <p style={{ margin: 0, color: 'var(--danger)', fontSize: 12.5 }}>{err}</p>}
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button type="button" className="btn sm" onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}>{t('ui.lang')}</button></div>
     </form></div>
   );
 }
 
-/* ─── 셸: 사이드바(조직·채널·크루·멤버) + 본문 ─── */
+/* ─── 셸: 레일(조직·채널 칩·크루 카드·멤버 스택) + 본문 ─── */
 function Shell({ session }) {
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
@@ -70,6 +90,8 @@ function Shell({ session }) {
   const [members, setMembers] = useState([]); const [crews, setCrews] = useState([]);
   const [err, setErr] = useState(''); const [note, setNote] = useState('');
   const [tick, setTick] = useState(0);
+  const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
+  const [allChips, setAllChips] = useState(false);
   const rt = useRef(null);
   const loadOrgs = useCallback(async () => {
     const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug)').eq('user_id', uid).is('removed_at', null));
@@ -143,84 +165,119 @@ function Shell({ session }) {
     } catch (e) { setErr(e.message); }
   };
   const themeGroups = useMemo(() => [
+    { label: ta('settings.family.linen'), items: ['linen', 'linen-light', 'linen-dark'].map((v) => ({ value: v, label: ta(`settings.theme.${v}`) })) },
     { label: ta('settings.family.graphite'), items: ['graphite', 'graphite-light', 'graphite-dark'].map((v) => ({ value: v, label: ta(`settings.theme.${v}`) })) },
     { label: 'Argo', items: ['argo', 'argo-light', 'argo-dark'].map((v) => ({ value: v, label: ta(`settings.theme.${v}`) })) },
-    { label: '…', items: THEMES.filter((v) => !/^(graphite|argo)/.test(v)).map((v) => ({ value: v, label: ta(`settings.theme.${v}`) })) },
+    { label: '…', items: THEMES.filter((v) => !/^(linen|graphite|argo)/.test(v)).map((v) => ({ value: v, label: ta(`settings.theme.${v}`) })) },
   ], [ta]);
-  if (orgs === null) return <div className="msgr-auth"><span className="microlabel">{t('ui.loading')}</span></div>;
+  if (orgs === null) return <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   const channel = channels.find((c) => c.id === chId);
+  // 채널 칩 — 정렬: 현재 → 이름순. 6개 초과는 '+N'(펼치기)
+  const sortedCh = [...channels].sort((a, b) => (a.id === chId ? -1 : b.id === chId ? 1 : a.name.localeCompare(b.name)));
+  const shownCh = allChips ? sortedCh : sortedCh.slice(0, CHIP_MAX);
   return (
-    <div className="shell">
-      <aside className="side">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 4px 6px' }}>
-          <Logo size={13} />
-          <span style={{ flex: 1 }} />
-          <DropUp value={orgId ?? ''} placeholder={t('org.pick')} width={130} height={26} ariaLabel={t('org.pick')}
+    <div className={`shell msgr-shell${rail ? ' rail-open' : ''}`}>
+      {rail && <div className="msgr-scrim" onClick={() => setRail(false)} />}
+      <aside className="side msgr-side">
+        <div className="msgr-brand"><svg width="14" height="14" viewBox="0 0 16 16"><path d={STAR_D} /></svg>ARGO</div>
+        <div className="msgr-org">
+          <Av name={org?.name ?? '?'} />
+          <DropUp value={orgId ?? ''} placeholder={t('org.pick')} width={150} height={30} ariaLabel={t('org.pick')}
             groups={[{ label: t('org.pick'), items: orgs.map((o) => ({ value: o.id, label: o.name, badge: o.role })) }]} onChange={setOrgId} />
-          <button type="button" className="btn sm btn-icon" style={{ width: 26, height: 26 }} onClick={createOrg} title={t('org.new')} aria-label={t('org.new')}><Icon name="plus" size={13} /></button>
+          <button type="button" className="btn sm" style={{ width: 28, height: 28, padding: 0, border: 0, marginLeft: 'auto' }} onClick={createOrg} title={t('org.new')} aria-label={t('org.new')}><I name="plus" size={14} /></button>
         </div>
-        {!orgs.length && <p style={{ padding: '4px 10px', fontSize: 12.5, color: 'var(--fg-3)' }}>{t('org.none')}</p>}
-        <div className="side-group-row"><span className="side-group" style={{ flex: 1 }}>{t('ch.list')}</span>
-          <button type="button" className="btn sm btn-icon" style={{ width: 24, height: 24, border: 0, color: 'var(--fg-3)', margin: '12px 0 2px' }} onClick={createChannel} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')}><Icon name="plus" size={12} /></button></div>
-        {channels.map((c) => (
-          <button key={c.id} type="button" className={`nav-item${c.id === chId ? ' active' : ''}`} onClick={() => setChId(c.id)}>
-            <span className="mono" style={{ width: 14, textAlign: 'center', color: c.id === chId ? 'inherit' : 'var(--fg-3)' }}>{c.kind === 'private' ? '🔒' : c.kind === 'dm' ? '✉' : '#'}</span>
-            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
-          </button>
-        ))}
-        <div className="side-group">{t('org.crews')}</div>
+        <div className="msgr-group">{t('ch.list')}<button type="button" className="btn" onClick={createChannel} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')}><I name="plus" size={14} /></button></div>
+        {channels.length ? (
+          <div className="msgr-chips">
+            {shownCh.map((c) => (
+              <button key={c.id} type="button" className={`msgr-chan${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); }}>
+                <I name={c.kind === 'private' ? 'lock' : 'hash'} size={13} /><span>{c.name}</span>
+              </button>
+            ))}
+            {sortedCh.length > CHIP_MAX && <button type="button" className="msgr-chan more" onClick={() => setAllChips((v) => !v)}>{allChips ? '−' : t('ch.more', { n: sortedCh.length - CHIP_MAX })}</button>}
+          </div>
+        ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
+        <div className="msgr-group">{t('org.crews')}</div>
         {crews.map((c) => { const on = c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS; return (
-          <div key={c.id} className="msgr-crew-row" title={`${c.role_text ?? ''} · ${nameOfUser(c.owner_user_id)}`}>
-            <Avatar name={c.display_name} sm />
-            <span style={{ minWidth: 0, flex: 1 }}><span style={{ display: 'block', color: 'var(--fg)', fontWeight: 500 }}>{c.display_name}</span><span className="nav-sub">{c.role_text}</span></span>
-            <span className={`pill${on ? ' ok' : ''}`}><span className="dot" />{on ? t('crew.online') : t('crew.away')}</span>
+          <div key={c.id} className="msgr-crewcard" title={`${c.role_text ?? ''} · ${nameOfUser(c.owner_user_id)}`}>
+            <Av name={c.display_name} crew size="lg" />
+            <span style={{ minWidth: 0 }}>
+              <span className="name">{c.display_name}<span className={`st${on ? '' : ' off'}`}><span className={`msgr-dot${on ? ' mark' : ''}`} />{on ? t('crew.online') : t('crew.away')}</span></span>
+              <span className="sub">{[c.role_text, `${nameOfUser(c.owner_user_id)}`].filter(Boolean).join(' · ')}</span>
+            </span>
           </div>
         ); })}
-        {!crews.length && <p style={{ padding: '2px 10px', fontSize: 12, color: 'var(--fg-3)' }}>{t('org.crewsHint')}</p>}
-        <div className="side-group-row"><span className="side-group" style={{ flex: 1 }}>{t('org.members')} · {members.length}</span>
-          {isAdmin && <button type="button" className="btn sm" style={{ margin: '12px 0 2px' }} onClick={invite}>{t('org.invite')}</button>}</div>
-        <div className="msgr-members">
-          {members.map((m) => <div key={m.user_id} className="msgr-member"><Avatar name={m.display_name || m.user_id} sm /><span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.display_name || m.user_id.slice(0, 8)}</span><span className="chip role">{m.role}</span></div>)}
+        {!crews.length && <div className="msgr-hint">{t('org.crewsHint')}</div>}
+        <div className="msgr-group">{t('org.members')} · {members.length}{isAdmin && <button type="button" className="btn" onClick={invite} title={t('org.invite')} aria-label={t('org.invite')}><I name="plus" size={14} /></button>}</div>
+        <div className="msgr-stack" title={members.map((m) => `${m.display_name || m.user_id.slice(0, 8)} (${m.role})`).join('\n')}>
+          {members.slice(0, 6).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} />)}
+          <span className="more">{members.map((m) => m.display_name || m.user_id.slice(0, 8)).join(' · ')}</span>
         </div>
-        <div className="side-footer" style={{ flexWrap: 'wrap' }}>
-          <Avatar name={me?.display_name || session.user.email} sm />
-          <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{me?.display_name || session.user.email}</span>
-          <button type="button" className="btn sm" onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}>{t('ui.lang')}</button>
-          <DropUp value={theme} groups={themeGroups} onChange={setTheme} width={150} height={28} align="left" ariaLabel={t('ui.theme.family')} />
-          <button type="button" className="btn sm" onClick={() => supabase.auth.signOut()}>{t('auth.signOut')}</button>
+        <div className="msgr-foot">
+          <Av name={me?.display_name || session.user.email} size="sm" />
+          <span className="name">{me?.display_name || session.user.email}</span>
+          <button type="button" className="btn ghost" onClick={() => supabase.auth.signOut()} title={t('auth.signOut')} aria-label={t('auth.signOut')}><I name="out" size={15} /></button>
+          <div className="ctl">
+            <button type="button" className="btn sm" style={{ border: 0, background: 'none', color: 'var(--fg-3)', padding: '0 6px' }} onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}>{t('ui.lang')}</button>
+            <DropUp value={theme} groups={themeGroups} onChange={setTheme} width={180} height={28} align="left" ariaLabel={t('ui.theme.family')} />
+          </div>
         </div>
       </aside>
       <main className="msgr-main">
-        <div className="topbar">
-          <span className="topbar-title">{channel ? `${channel.kind === 'private' ? '🔒 ' : '# '}${channel.name}` : t('app.title')}</span>
-          {channel?.topic && <span style={{ fontSize: 12.5, color: 'var(--fg-3)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{channel.topic}</span>}
-          <span style={{ flex: 1 }} />
-          {channel?.crew_memory === false && <span className="chip" title={t('ch.crewMemory')}>memory off</span>}
-          {org && <span className="chip">{org.name}</span>}
-        </div>
         {(err || note) && (
           <div className="msgr-notice">
             <span style={{ color: err ? 'var(--danger)' : 'var(--fg-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{err ? `${t('ui.error')}: ${err}` : note}</span>
-            <button type="button" className="btn sm btn-icon" style={{ width: 24, height: 24, border: 0 }} onClick={() => { setErr(''); setNote(''); }} aria-label="×">×</button>
+            <button type="button" className="btn sm" style={{ border: 0, width: 24, height: 24, padding: 0 }} onClick={() => { setErr(''); setNote(''); }} aria-label="×"><I name="x" size={12} /></button>
           </div>
         )}
-        {chId ? <Channel key={chId} channel={channel} orgId={orgId} uid={uid} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} rt={rt} onError={setErr} /> : <div className="msgr-empty">{t('ch.empty')}</div>}
+        {chId ? (
+          <Channel key={chId} channel={channel} orgId={orgId} uid={uid} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} rt={rt} onError={setErr} onMenu={() => setRail(true)} />
+        ) : (
+          <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={createOrg} createChannel={createChannel} invite={isAdmin ? invite : null} />
+        )}
       </main>
     </div>
   );
 }
 
-/* ─── 채널 본문: 스레드 + 컴포저 ─── */
-function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, event, typing, rt, onError }) {
+/** 빈 상태 — 척추 위 단계 노드가 다음 행동을 가르친다(조직 없음 / 채널 없음). */
+function EmptyOrg({ org, onMenu, createOrg, createChannel, invite }) {
+  const { t } = useT();
+  const steps = org ? [
+    ['mark', t('ch.step1'), t('ch.step1.sub'), <button key="a" type="button" className="btn btn-primary sm" onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>],
+    ['', t('ch.step2'), t('ch.step2.sub'), invite ? <button key="b" type="button" className="btn sm" onClick={invite}><I name="copy" size={13} />{t('org.invite')}</button> : null],
+    ['', t('ch.step3'), t('ch.step3.sub'), null],
+  ] : [
+    ['mark', t('org.step.create'), t('org.step.create.sub'), <button key="a" type="button" className="btn btn-primary sm" onClick={createOrg}><I name="plus" size={13} />{t('org.new')}</button>],
+    ['', t('org.step.invite'), t('org.step.invite.sub'), null],
+  ];
+  return (<>
+    <div className="msgr-top"><button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t('ch.empty') : t('org.none')}</span></div>
+    <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
+      <span className="msgr-klabel">{t('ch.step1') && (org ? t('ch.list') : t('org.pick'))}</span>
+      <h1>{org ? t('ch.noChannelTitle') : t('org.noneTitle')}</h1>
+      <p>{org ? t('ch.noChannelDesc') : t('org.noneDesc')}</p>
+      <div className="msgr-steps">
+        {steps.map(([mark, title, sub, act], i) => (
+          <div key={i} className="msgr-step"><span className={`num${mark ? ' mark' : ''}`}>{i + 1}</span><div className="card"><div><b>{title}</b><span>{sub}</span></div>{act}</div></div>
+        ))}
+      </div>
+    </div></div>
+  </>);
+}
+
+/* ─── 채널 본문: 상단(제목·멤버 스택·세그먼트 탭) + 척추 스레드 + 2단 독 ─── */
+function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, event, typing, rt, onError, onMenu }) {
   const { t, lang } = useT();
-  const [msgs, setMsgs] = useState([]); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
+  const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
+  const [tab, setTab] = useState('all');
   const feed = useRef(null);
   const chId = channel.id;
   const load = useCallback(async (afterId = 0) => {
     const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, deleted_at')
       .eq('channel_id', chId).gt('id', afterId).order('id', { ascending: afterId ? true : false }).limit(PAGE));
     const list = afterId ? rows : rows.reverse();
-    setMsgs((cur) => { const seen = new Set(cur.map((m) => m.id)); return afterId ? [...cur, ...list.filter((m) => !seen.has(m.id))] : list; });
+    setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); return afterId ? [...base, ...list.filter((m) => !seen.has(m.id))] : list; });
     const ids = list.map((m) => m.id);
     if (ids.length) {
       const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids));
@@ -230,76 +287,114 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
     setAps(Object.fromEntries(apRows.map((r) => [r.id, r])));
   }, [chId]);
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lastId = msgs?.at(-1)?.id ?? 0;
   useEffect(() => {
     if (!event) return;
-    if ((event.kind === 'message' || event.kind === 'approval') && event.channel_id === chId) load(msgs.at(-1)?.id ?? 0).catch(() => {});
+    if ((event.kind === 'message' || event.kind === 'approval') && event.channel_id === chId) load(lastId).catch(() => {});
   }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { feed.current?.scrollTo({ top: feed.current.scrollHeight }); }, [msgs.length]);
+  useEffect(() => { feed.current?.scrollTo({ top: feed.current.scrollHeight }); }, [msgs?.length]);
   // 폴링 폴백(10s) — Realtime이 끊기거나 구독이 거부돼도 새 메시지가 화면에 도달한다(정본은 언제나 조회, 방송은 깨우기 신호)
-  useEffect(() => { const iv = setInterval(() => load(msgs.at(-1)?.id ?? 0).catch(() => {}), 10_000); return () => clearInterval(iv); }, [load, msgs]);
+  useEffect(() => { const iv = setInterval(() => load(lastId).catch(() => {}), 10_000); return () => clearInterval(iv); }, [load, lastId]);
   const decide = async (ap, status) => {
     const res = await supabase.from('msgr_crew_approvals').update({ status, decided_by: uid, decided_at: new Date().toISOString() }).eq('id', ap.id).select('id');
     if (res.error) return onError(res.error.message);
     if (!res.data?.length) return onError(t('ap.ownerOnly')); // RLS 0행 = 소유자가 아니다
-    load(msgs.at(-1)?.id ?? 0).catch(() => {});
+    load(lastId).catch(() => {});
   };
-  const typingNames = Object.entries(typing).filter(([k, at]) => k.startsWith(`${chId}:`) && Date.now() - at < 6000).map(([k]) => crewOf(k.split(':')[1])?.display_name).filter(Boolean);
+  const typingCrews = Object.entries(typing).filter(([k, at]) => k.startsWith(`${chId}:`) && Date.now() - at < 6000).map(([k]) => crewOf(k.split(':')[1])).filter(Boolean);
+  const apOf = (m) => m.kind === 'approval_card' ? aps[(m.mentions ?? []).find((x) => x.kind === 'approval')?.id] : null;
+  const isMention = (m) => (m.mentions ?? []).some((x) => x.kind === 'user' && x.id === uid);
+  const all = msgs ?? [];
+  const counts = { mention: all.filter(isMention).length, approval: all.filter((m) => apOf(m)?.status === 'pending').length, crew: all.filter((m) => m.author_kind === 'crew').length };
+  const shown = all.filter((m) => tab === 'all' || (tab === 'mention' && isMention(m)) || (tab === 'approval' && !!apOf(m)) || (tab === 'crew' && m.author_kind === 'crew'));
+  const rows = []; let day = null;
+  for (const m of shown) {
+    const k = dayKey(m.created_at);
+    if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
+    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} />);
+  }
+  const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'stamp', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
+    <div className="msgr-top">
+      <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
+      <span className="title"><I name={channel.kind === 'private' ? 'lock' : 'hash'} size={18} />{channel.name}</span>
+      {channel.topic && <span className="topic">{channel.topic}</span>}
+      {channel.crew_memory === false && <span className="msgr-klabel" title={t('ch.crewMemory')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><I name="memoff" size={13} />{t('ch.memoryOff')}</span>}
+      <div className="members" title={t('ui.members')}>{members.slice(0, 4).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} size="sm" />)}{crews.slice(0, 2).map((c) => <Av key={c.id} name={c.display_name} crew size="sm" />)}</div>
+      <div className="msgr-seg">{tabs.map(([k, ic, n]) => <button key={k} type="button" className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{ic && <I name={ic} size={13} />}{t(`tab.${k}`)}{n > 0 && <span className="n">{n}</span>}</button>)}</div>
+    </div>
     <div className="msgr-thread" ref={feed}>
-      <div className="thread">
-        {!msgs.length && <div className="msgr-empty">{t('ch.empty')}</div>}
-        {msgs.map((m) => <Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} aps={aps} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? msgs.find((x) => x.id === m.reply_to) : null} />)}
+      <div className="msgr-spine">
+        {msgs === null && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-skel"><i /><i /><i /></div></div>}
+        {msgs !== null && !all.length && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-sys">{t('ch.empty')}</div></div>}
+        {rows}
+        {typingCrews.map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /></div></div></div>)}
       </div>
     </div>
-    <Composer chId={chId} orgId={orgId} uid={uid} members={members} crews={crews} rt={rt} typingNames={typingNames} onSent={() => load(msgs.at(-1)?.id ?? 0).catch(() => {})} onError={onError} />
+    <Composer chId={chId} orgId={orgId} uid={uid} members={members} crews={crews} rt={rt} channel={channel} typingCrews={typingCrews} onSent={() => load(lastId).catch(() => {})} onError={onError} />
   </>);
 }
 
-function Message({ m, uid, lang, t, nameOfUser, crewOf, aps, atts, decide, parent }) {
+function Message({ m, uid, lang, t, nameOfUser, crewOf, ap, atts, decide, parent }) {
   const [copied, setCopied] = useState(false);
   const crew = m.crew_id ? crewOf(m.crew_id) : null;
   const name = m.author_kind === 'user' ? nameOfUser(m.author_user_id) : (crew?.display_name ?? '크루');
-  const ap = m.kind === 'approval_card' ? aps[(m.mentions ?? []).find((x) => x.kind === 'approval')?.id] : null;
   const body = m.deleted_at ? '' : m.body;
   const copy = () => { navigator.clipboard?.writeText(body).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); };
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
-  const quote = parent && <div className="msgr-quote">↩ {parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</div>;
+  const quote = parent && <div className="msgr-quote"><I name="reply" size={13} />{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</div>;
   const attRow = atts.length > 0 && <div>{atts.map((a) => <Attachment key={a.id} a={a} />)}</div>;
-  if (mine) return ( // 내 글 — 크루 대화의 사장 말풍선(우측·primary)과 같은 문법
-    <div className="msg-wrap fade-up" style={{ alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '75%' }}>
-      <div className="msg-user" style={{ alignSelf: 'auto', maxWidth: '100%', whiteSpace: 'pre-wrap' }}>{quote}{body}</div>
+  const acts = !ap && !m.deleted_at && <div className="msgr-acts"><button type="button" onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button></div>;
+  if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
+    <div className="msgr-mine">
+      <div className="bubble">{quote}{m.deleted_at ? <i>{t('msg.deleted')}</i> : <Body text={body} />}</div>
       {attRow}
-      <div className="msg-actions"><span className="ts mono" style={{ fontSize: 10, color: 'var(--fg-3)', padding: '2px 4px' }}>{fmtTs(m.created_at, lang)}</span><button type="button" onClick={copy}>{copied ? t('ui.copied') : t('ui.copy')}</button></div>
+      <div className="meta"><I name="check" size={12} /><span className="mono">{fmtTs(m.created_at, lang)}</span></div>
+      {acts}
     </div>
   );
-  return ( // 동료·크루 글 — 좌측, 아바타 + 카드(크루는 Markdown)
-    <div className={`${m.author_kind === 'crew' ? 'msg-crew' : 'msgr-peer'} fade-up`}>
-      <Avatar name={name} sm />
-      <div className="msg-wrap">
-        <div className="msgr-who"><span>{name}</span>{crew?.role_text && <span className="nav-sub" style={{ display: 'inline' }}>{crew.role_text}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
-        {ap ? (
-          <div className="card invert" style={{ padding: '12px 15px', display: 'grid', gap: 8, minWidth: 0 }}>
-            <span className="microlabel">{ap.status === 'pending' ? t('ap.pending') : t(`ap.${ap.status}`)}</span>
-            <div style={{ fontSize: 13.5, fontWeight: 600 }}>{ap.action}</div>
-            {ap.reason && <div style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>{ap.reason}</div>}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              {ap.status === 'pending' ? (<>
-                <button type="button" className="btn btn-primary sm" onClick={() => decide(ap, 'approved')}><Icon name="check" size={12} />{t('ap.approve')}</button>
-                <button type="button" className="btn sm" onClick={() => decide(ap, 'rejected')}>{t('ap.reject')}</button>
-                <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('ap.ownerOnly')}</span>
-              </>) : <span className="pill"><span className="dot" />{t('ap.by', { name: nameOfUser(ap.decided_by) })}</span>}
-            </div>
-          </div>
-        ) : m.kind === 'system' ? (
-          <div className="card" style={{ padding: '8px 12px' }}><span className="msgr-sys">{body}</span></div>
-        ) : (
-          <div className="card" style={{ padding: m.author_kind === 'crew' ? '13px 16px' : '9px 13px', minWidth: 0 }}>
-            {quote}
-            {m.author_kind === 'crew' ? <Markdown text={body} /> : <div style={{ whiteSpace: 'pre-wrap', fontSize: 13.5 }}>{body}</div>}
-          </div>
-        )}
+  const isCrew = m.author_kind === 'crew';
+  return ( // 동료·크루 글 — 척추 위 아바타(사람 원 / 크루 타일), 크루 답은 척추에 붙는 시트
+    <div className="msgr-row">
+      <Av name={name} crew={isCrew} />
+      <div style={{ minWidth: 0 }}>
+        <div className="who">{name}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
+        {m.deleted_at ? <div className="msgr-sys">{t('msg.deleted')}</div>
+          : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} />
+          : m.kind === 'system' ? <div className="msgr-sys">{body}</div>
+          : isCrew ? <div className="msgr-sheet">{quote}<Markdown text={body} /></div>
+          : <div className="text">{quote}<Body text={body} /></div>}
         {attRow}
-        {!ap && <div className="msg-actions"><button type="button" onClick={copy}>{copied ? t('ui.copied') : t('ui.copy')}</button></div>}
+        {acts}
+      </div>
+    </div>
+  );
+}
+
+/** 결재 슬립 — 머리띠(요청=옐로 / 확정=차콜 / 만료=회색) + 본문 + 도장 실. 보는 사람이 소유자면 버튼, 아니면 대기 표시. */
+function Slip({ ap, uid, lang, t, crew, nameOfUser, decide }) {
+  const owner = crew?.owner_user_id === uid;
+  const ownerName = nameOfUser(crew?.owner_user_id);
+  const cls = `msgr-slip ${ap.status}${ap.status === 'pending' && !owner ? ' wait' : ''}`;
+  const band = ap.status === 'pending' ? (owner ? t('ap.request') : t('ap.wait', { name: ownerName })) : t(`ap.${ap.status}.band`);
+  const bandIcon = ap.status === 'expired' ? 'clock' : 'stamp';
+  const when = ap.decided_at ? fmtTs(ap.decided_at, lang) : '';
+  return (
+    <div className={cls}>
+      <div className="band"><I name={bandIcon} size={14} />{band}<span className="id">{ap.approval_id}</span></div>
+      <div className="body">
+        <div className="action">{ap.action}</div>
+        {ap.reason && <div className="reason">{ap.reason}</div>}
+        <div className="row2">
+          {ap.status === 'pending' && owner && (<>
+            <button type="button" className="btn btn-primary sm" onClick={() => decide(ap, 'approved')}><I name="check" size={13} />{t('ap.approve')}</button>
+            <button type="button" className="btn sm" onClick={() => decide(ap, 'rejected')}><I name="x" size={13} />{t('ap.reject')}</button>
+          </>)}
+          {ap.status === 'pending' && !owner && <span className="note">{t('ap.ownerNote')}</span>}
+          {ap.status === 'approved' && <span className="msgr-seal ok"><I name="check" />{nameOfUser(ap.decided_by)} · {when}</span>}
+          {ap.status === 'rejected' && <span className="msgr-seal no"><I name="x" />{nameOfUser(ap.decided_by)} · {when}</span>}
+          {ap.status === 'expired' && <span className="msgr-seal"><I name="clock" />{t('ap.noDecision')}</span>}
+        </div>
       </div>
     </div>
   );
@@ -310,11 +405,11 @@ function Attachment({ a }) {
     if (error) return alert(error.message);
     window.open(data.signedUrl, '_blank', 'noopener');
   };
-  return <button type="button" className="chip msgr-att" onClick={open}><Icon name="clip" size={11} />{a.name}{a.bytes ? <span>{Math.round(a.bytes / 1024)}KB</span> : null}</button>;
+  return <button type="button" className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.round(a.bytes / 1024)}KB</span> : null}</button>;
 }
 
-/* ─── 컴포저: Argo 입력바 + @멘션 팝업(사람·크루) + Enter 전송(IME 조합 제외) + 첨부 ─── */
-function Composer({ chId, orgId, uid, members, crews, rt, typingNames, onSent, onError }) {
+/* ─── 2단 다크 독: 입력 줄 + 도구 줄(첨부·멘션 │ 기억 상태) + 옐로 원형 전송. @멘션 팝업(사람·크루), Enter 전송(IME 조합 제외) ─── */
+function Composer({ chId, orgId, uid, members, crews, channel, typingCrews, onSent, onError }) {
   const { t } = useT();
   const [text, setText] = useState(''); const [busy, setBusy] = useState(false); const [files, setFiles] = useState([]);
   const [pop, setPop] = useState(null); const [sel, setSel] = useState(0);
@@ -326,12 +421,14 @@ function Composer({ chId, orgId, uid, members, crews, rt, typingNames, onSent, o
     const list = [...crews.map((c) => ({ kind: 'crew', id: c.id, name: c.display_name, sub: c.role_text })), ...members.map((m) => ({ kind: 'user', id: m.user_id, name: m.display_name || m.user_id.slice(0, 8), sub: m.role }))];
     return list.filter((x) => !needle || x.name.toLowerCase().includes(needle)).slice(0, 8);
   }, [pop, crews, members]);
-  const autosize = (el) => { if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 132)}px`; };
-  const onChange = (e) => {
-    const v = e.target.value; setText(v); autosize(e.target);
-    const upto = v.slice(0, e.target.selectionStart);
-    const m = upto.match(/(?:^|\s)@([^\s@]*)$/);
-    setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0);
+  const autosize = (el) => { if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 200)}px`; };
+  const detect = (v, caret) => { const upto = v.slice(0, caret); const m = upto.match(/(?:^|\s)@([^\s@]*)$/); setPop(m ? { q: m[1], start: upto.length - m[1].length - 1 } : null); setSel(0); };
+  const onChange = (e) => { const v = e.target.value; setText(v); autosize(e.target); detect(v, e.target.selectionStart); };
+  const insertAt = () => { // 도구 줄 '멘션' — 커서 자리에 @를 넣고 팝업을 연다
+    const el = ta.current; const pos = el?.selectionStart ?? text.length;
+    const before = text.slice(0, pos); const sp = before && !/\s$/.test(before) ? ' ' : '';
+    const next = `${before}${sp}@${text.slice(pos)}`; setText(next);
+    requestAnimationFrame(() => { el?.focus(); const p = before.length + sp.length + 1; el?.setSelectionRange(p, p); autosize(el); detect(next, p); });
   };
   const pick = (c) => {
     const before = text.slice(0, pop.start); const after = text.slice(ta.current.selectionStart);
@@ -364,26 +461,29 @@ function Composer({ chId, orgId, uid, members, crews, rt, typingNames, onSent, o
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   };
   return (
-    <div className="msgr-compose"><div>
+    <div className="msgr-dock"><div>
       {pop && candidates.length > 0 && (
-        <div className="msgr-pop card" role="listbox">
+        <div className="msgr-pop" role="listbox">
           {candidates.map((c, i) => <button key={`${c.kind}:${c.id}`} type="button" role="option" aria-selected={i === sel} className={i === sel ? 'on' : ''} onMouseDown={(e) => { e.preventDefault(); pick(c); }}>
-            <Avatar name={c.name} sm /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="microlabel">{c.kind === 'crew' ? 'crew' : c.sub}</span>
+            <Av name={c.name} crew={c.kind === 'crew'} size="sm" /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.kind === 'crew' ? t('org.crews') : c.sub}</span>
           </button>)}
         </div>
       )}
-      <form className="input-bar" onSubmit={(e) => { e.preventDefault(); send(); }}>
+      <form className="msgr-composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
         <input hidden multiple type="file" ref={fileRef} onChange={(e) => { setFiles([...e.target.files]); e.target.value = ''; }} />
-        <textarea ref={ta} rows={1} value={text} onChange={onChange} {...imeGuardWith(onKey)} placeholder={t('msg.placeholder')} />
-        <button className="btn btn-primary btn-icon" disabled={busy || !text.trim()} aria-label={t('msg.send')} title={t('msg.send')}><Icon name="send" size={15} /></button>
-      </form>
-      <div className="msgr-subrow">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <button type="button" className="btn btn-icon sm" style={{ border: 0, width: 26, color: 'var(--fg-3)' }} onClick={() => fileRef.current?.click()} disabled={busy} aria-label={t('msg.attach')} title={t('msg.attach')}><Icon name="clip" size={14} /></button>
-          {files.map((f) => <span key={f.name} className="chip">{f.name}</span>)}
-          <span className="msgr-typing">{typingNames.length ? t('msg.typing', { name: typingNames.join(', ') }) : ''}</span>
+        <textarea ref={ta} rows={1} value={text} onChange={onChange} {...imeGuardWith(onKey)} placeholder={t('msg.placeholder2')} />
+        <div className="msgr-tools">
+          <button type="button" className="tb" onClick={() => fileRef.current?.click()} disabled={busy} title={t('msg.attach')}><I name="clip" size={15} /><span>{t('msg.attach')}</span></button>
+          <button type="button" className="tb" onClick={insertAt} disabled={busy} title={t('msg.mention')}><I name="at" size={15} /><span>{t('msg.mention')}</span></button>
+          {(files.length > 0 || channel.crew_memory === false) && <span className="sep" />}
+          {files.map((f) => <span key={f.name} className="filechip"><I name="doc" size={12} />{f.name}</span>)}
+          {channel.crew_memory === false && <span className="tb on" title={t('ch.crewMemory')}><I name="memoff" size={15} /><span>{t('ch.memoryOff')}</span></span>}
+          <button className="send" disabled={busy || !text.trim()} aria-label={t('msg.send')} title={t('msg.send')}><I name="up" size={16} /></button>
         </div>
-        <span className="microlabel" style={{ fontSize: 9 }}>{t('msg.mentionHint')}</span>
+      </form>
+      <div className="msgr-sub">
+        <span className="typing-line">{typingCrews.length > 0 && <><span className="msgr-dot mark" />{t('msg.typing', { name: typingCrews.map((c) => c.display_name).join(', ') })}</>}</span>
+        <span><span className="msgr-kbd">enter</span> {t('msg.enter')} · <span className="msgr-kbd">shift</span>+<span className="msgr-kbd">enter</span> {t('msg.newline')}</span>
       </div>
     </div></div>
   );
