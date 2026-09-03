@@ -388,7 +388,7 @@ function ApprovalsCard({ ws, agents }) {
   }
 
   return (
-    <div className="card fade-up" style={{ padding: '16px 18px' }}>
+    <div className="card fade-up deck-approvals" style={{ padding: '16px 18px' }}>
       <div className="card-head">
         <span className="microlabel">{t('deck.approvalsTitle')}</span>
         <span className="rule" />

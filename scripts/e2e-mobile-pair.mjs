@@ -93,7 +93,11 @@ let WS;
   const adm = await phone('/api/mobile', { cookie }); if (adm.status !== 403 || adm.json?.errorCode !== 'mobile_loopback_only') fail(`폰이 관리 API에 닿는다(${adm.status})`);
   const page = await phone(`/c/${WS}`, { cookie }); if (page.status !== 200) fail(`페이지 ${page.status}`);
   const bogus = await phone('/api/companies', { cookie: 'argo-mobile=' + '0'.repeat(64) }); if (bogus.status !== 401) fail(`위조 토큰이 거절되지 않는다(${bogus.status})`);
-  console.log('[e2e] 폰 접근: 회사·결재·tasks·페이지 200 / 관리 403 / 위조 401');
+  // 폰 셸 마커 — 폰의 /api/me는 mobile:true, 데스크톱(루프백)의 /api/me엔 필드 자체가 없다(무간섭 게이트 ③)
+  const meP = await phone('/api/me', { cookie }); if (meP.json?.mobile !== true) fail(`폰 /api/me에 mobile:true 없음: ${meP.text.slice(0, 120)}`);
+  const meD = await pc('/api/me'); if ('mobile' in (meD.json ?? {})) fail('데스크톱 /api/me에 mobile 필드가 실렸다');
+  const crewPage = await phone(`/c/${WS}/crew`, { cookie }); if (crewPage.status !== 200) fail(`크루 목록 페이지 ${crewPage.status}`);
+  console.log('[e2e] 폰 접근: 회사·결재·tasks·페이지 200 / 관리 403 / 위조 401 / me.mobile 폰만');
 }
 // 5. PC: 연결 해제 → 폰 401 / 다시 페어링 → 200 / 토글 off → 리스너 정지·토큰 거절
 {

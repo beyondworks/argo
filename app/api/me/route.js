@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { AUTH_ON, currentUser } from '../../auth.mjs';
 import { deviceSessionDead, deviceSessionDeadInfo } from '../../../src/devicesession.mjs';
+import { mobileAccess } from '../../../src/mobile-pairs.mjs';
 
 /** 현재 사용자 — 사이드바 사용자 표시·로그아웃 노출 판단의 원천.
     sessionDead: 기기 세션이 "만료 + 갱신 사망(리프레시 거절 마커)"인 상태. 숨기면 피드백·동기화가
@@ -9,8 +10,12 @@ import { deviceSessionDead, deviceSessionDeadInfo } from '../../../src/deviceses
     판정은 **회전 없이**(deviceSessionDead — 파일만 읽음): 이 라우트가 갱신을 트리거하면 상주·사이드카
     이중 회전으로 세션 가족이 폐기되는 2026-08-14 사고 구조를 UI 마운트마다 재생산한다(분리 검수 M4).
     마커가 아직 없으면(첫 감지 전) 다음 피드백·동기화 시도가 남긴 뒤 표시된다 — 지연은 있어도 오탐은 없다. */
-export async function GET() {
+export async function GET(req) {
   const user = await currentUser();
+  // 휴대폰 셸 마커 — 페어링 토큰이 유효한 비루프백 요청에만 mobile:true를 싣는다. Shell이 이 값으로
+  // data-shell="mobile"을 박아 폰 셸(하단 탭·사이드바 숨김)을 켠다. 데스크톱(루프백)은 판정 자체가 없어 필드 부재.
+  const mobile = !process.env.ARGO_TENANT_OWNER?.trim()
+    && (await mobileAccess({ host: req.headers.get('host'), cookieHeader: req.headers.get('cookie') })).kind === 'mobile';
   let sessionDead = false;
   if (AUTH_ON && user && user.id !== 'local' && deviceSessionDead()) {
     // 기기 세션이 사망 마커 상태여도 **유효한** 쿠키 세션이 있으면 클라우드 기능은 산다.
@@ -31,5 +36,5 @@ export async function GET() {
   }
   // sessionDeadInfo = 거절 사유(마커 JSON 그대로 — reason은 devicesession.mjs가 토큰 모양을 가린 값, 나머지는 시각·횟수·분류).
   // 사이드바 툴팁이 "왜"를 보여준다(2026-09-02 재발 제보). 조건식 없이 통과시킨다 — 줄 전체를 테스트가 핀한다.
-  return Response.json({ authOn: AUTH_ON, user, ...(sessionDead ? { sessionDead: true, sessionDeadInfo: deviceSessionDeadInfo() } : {}) });
+  return Response.json({ authOn: AUTH_ON, user, ...(mobile ? { mobile: true } : {}), ...(sessionDead ? { sessionDead: true, sessionDeadInfo: deviceSessionDeadInfo() } : {}) });
 }
