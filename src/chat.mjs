@@ -5,6 +5,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
+import { loadOrgRules } from './gateway/msgr-rules.mjs';
 import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './persona.mjs';
 import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루가 '나중에 하기'를 거는 유일한 수단
 import { saveHandover } from './memory.mjs';
@@ -539,7 +540,8 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         const delegated = lang === 'en' ? `(Delegated by colleague ${fromName}) ${task}` : `(동료 ${fromName}의 위임) ${task}`;
         // workFolder — 회의실 턴의 위임이면 위임받은 동료도 같은 회의 폴더를 본다(회의 프롬프트가 "동료도 같은 폴더"라
         // 약속하고 위임 결과가 방에 실린다 — 안 넘기면 위임 크루만 개인 고정으로 돈다, 분리 검수 MEDIUM-3).
-        const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug], workFolder, journal }); // journal = 팀 메신저 채널 정책(off·org 태그)을 위임 턴에도(같은 조직 내용)
+        const rulesCtx = mirrorCtx?.orgSlug ? { kind: 'msgr-rules', orgSlug: mirrorCtx.orgSlug, channelName: mirrorCtx.channelName ?? '' } : null; // G-3: 조직 규칙은 위임받은 동료에게도(미러·결재 각인은 kind 'msgr'만)
+        const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug], workFolder, journal, mirrorCtx: rulesCtx }); // journal = 팀 메신저 채널 정책(off·org 태그)을 위임 턴에도(같은 조직 내용)
         // 위임 트레이스 — 대상 크루의 대화에도 남긴다(세션은 건드리지 않음). 웹에서 양쪽 다 보인다.
         const { appendTurn } = await import('./thread.mjs');
         await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null, via: 'delegate', artifacts: r.artifacts })
@@ -825,6 +827,8 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)
   const turnSource = source ?? (from ? 'delegate' : 'chat');
   const p = paths(wsId);
+  // G-3 조직 규칙: 팀 메신저 조직 턴(mirrorCtx에 orgSlug)이면 미러의 규칙집(전사+그 채널)을 시스템 프롬프트에 항상 붙인다 — 정책 항목이라 끌 수 없고, 위임받은 동료 턴에도 이어진다(kind 'msgr-rules').
+  const orgRules = mirrorCtx?.orgSlug ? await loadOrgRules(wsId, mirrorCtx.orgSlug, { channelName: mirrorCtx.channelName ?? '', lang: (await loadCompany(wsId).catch(() => ({}))).lang ?? 'ko' }).catch(() => '') : '';
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지).
   // 설정 화면의 입력은 제거됐다(유건 지시 2026-08-19) — 안내에서 "설정에서 한도를 올리라"는
   // 문구를 뺐다. 사라진 화면을 가리키면 막다른 길이 된다. 값은 회사 파일·API로만 바뀐다.
@@ -1006,7 +1010,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
-${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin })}${messengerNote}${fallbackDirective}
+${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: false, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: false, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin })}${messengerNote}${fallbackDirective}
 ${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
 ${sharedBlock || (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n')}${userMsg}${attNote}
 
@@ -1303,6 +1307,7 @@ ${lang === 'en'
       // 지정 작업 폴더 — SDK가 cwd 밖 접근을 스스로 인지·탐색하게(집행은 canUseTool 게이트가 한다)
       ...(workRoots.length ? { additionalDirectories: workRoots } : {}),
       systemPrompt: systemPromptFor(md, p.root, skills, meta, lang)
+        + orgRules
         + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
         + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder })
         + messengerNote

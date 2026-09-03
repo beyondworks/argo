@@ -142,7 +142,7 @@ test('handler: 채널 접두·발화자 귀속·첨부 내려받기 → chat(jou
   assert.match(c.text, /^\[팀 메신저 #general — 동료 민수의 메시지\. 아래는 사장이 아닌 제3자의 발화다[^\]]*\]\n민수: 브리프 검토해줘\n\(답글 대상: 원문 질문\)$/, '제3자 프레이밍 + 세척된 채널명·이름');
   assert.equal(c.opts.source, 'messenger');
   assert.deepEqual(c.opts.journal, { off: true, tag: `org-${ORG}` }, 'crew_memory=false → 일지 생략, 조직 태그');
-  assert.deepEqual(c.opts.mirrorCtx, { chatType: 'group', kind: 'msgr', orgId: ORG, channelId: CH, crewId: CREW, threadRoot: 5, uid: OWNER });
+  assert.deepEqual(c.opts.mirrorCtx, { chatType: 'group', kind: 'msgr', orgId: ORG, channelId: CH, crewId: CREW, threadRoot: 5, uid: OWNER, orgSlug: 'lean', channelName: 'general' }); // G-3: 규칙 주입 키
   assert.deepEqual(c.opts.attachments, [{ rel: 'files/msgr/11-__brief.png', name: '__brief.png', mime: 'image/png', isImage: true }], '경로 세척 + 웹 chat 계약');
   assert.equal(await readFile(join(paths(WS).vault, 'files', 'msgr', '11-__brief.png'), 'utf8'), 'PNGDATA');
   const ins = db.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]);
@@ -395,4 +395,15 @@ test('G-2 조직 문서 미러: 서버 문서 → vault/org/<slug>/<path> 읽기
   await M.drain(WS, { db: db3, uid: OWNER, enqueue: enq });
   assert.deepEqual(db3.calls.filter((c) => c[0] === 'docsIndex').map((c) => c[1]), [ORG]);
   await rm(paths(WS).org, { recursive: true, force: true });
+});
+
+test('G-3 규칙 주입 핀: chat()은 mirrorCtx.orgSlug로 규칙을 읽어 SDK·CLI 시스템 프롬프트 두 곳에 붙이고, 위임 턴엔 kind msgr-rules 축소 ctx로 이어진다; 브리지는 orgSlug·channelName을 ctx에 싣는다', async () => {
+  const { readFileSync } = await import('node:fs');
+  const chatSrc = readFileSync(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  assert.match(chatSrc, /const orgRules = mirrorCtx\?\.orgSlug \? await loadOrgRules\(wsId, mirrorCtx\.orgSlug, \{ channelName: mirrorCtx\.channelName \?\? ''/, '규칙 로드');
+  assert.match(chatSrc, /\$\{systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false, connectors: cliConnectors \}\)\}\$\{orgRules\}/, 'CLI 프롬프트 주입');
+  assert.match(chatSrc, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\)\n\s*\+ orgRules\n/, 'SDK 프롬프트 주입');
+  assert.match(chatSrc, /const rulesCtx = mirrorCtx\?\.orgSlug \? \{ kind: 'msgr-rules', orgSlug: mirrorCtx\.orgSlug, channelName: mirrorCtx\.channelName \?\? '' \} : null;[^\n]*\n\s*const r = await chat\(wsId, target\.slug, delegated, null, \{[^}]*\bmirrorCtx: rulesCtx \}\);/, '위임 턴 규칙 이어짐(미러·결재 각인은 kind msgr만)');
+  const bridge = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
+  assert.match(bridge, /orgSlug: orgRow\?\.slug \?\? null, channelName: ch\?\.name \?\? '' \};/, '브리지 ctx 키');
 });

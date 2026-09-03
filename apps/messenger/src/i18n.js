@@ -196,6 +196,7 @@ export const DICT = {
   'ch.members': ['채널 멤버', 'Channel members'],
   'ch.composition': ['참여 구성', 'Who’s here'],
   'ch.composition.count': ['{p}명 · 크루 {c}', '{p} people · {c} crews'],
+  'ch.composition.public.noAdd': ['공개 채널이라 추가·내보내기 버튼이 없습니다. 사람은 조직 메뉴의 초대 링크로 조직에 들이고, 크루는 아르고 앱 설정에서 파견합니다. 특정 사람만 모으려면 비공개 채널을 만드세요.', 'Public channels have no add/remove buttons: invite people to the organization from the org menu, and dispatch crews from the Argo app settings. To gather specific people, create a private channel.'],
   'ch.composition.public': ['공개 채널: 조직 멤버 전원이 보고, 이 채널 정책이 허용하는 크루가 @로 불리면 일합니다.', 'Public channel: every organization member can read, and crews allowed by the channel policy work when @mentioned.'],
   'ch.composition.scoped': ['이 채널의 멤버만 봅니다. 크루를 넣으면 소유자도 함께 들어옵니다.', 'Only channel members can read. Adding a crew also adds its owner.'],
   'ch.people': ['사람', 'People'],

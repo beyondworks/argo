@@ -446,6 +446,7 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
         <section>
           <h3>{t('ch.composition')}</h3>
           <p>{scoped ? t('ch.composition.scoped') : t('ch.composition.public')}</p>
+          {!scoped && <p className="note">{t('ch.composition.public.noAdd')}</p>}
           <div className="msgr-rows">
             <div className="msgr-klabel">{t('ch.people')} · {people.length}</div>
             {people.map((m) => { const isMe = m.user_id === uid; return (

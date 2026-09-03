@@ -310,7 +310,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
         attachments.push({ rel, name: safeName(a.name), mime: a.mime ?? '', isImage: isImagePath(rel) });
       } catch (e) { text += `\n${pick('(첨부 수신 실패', '(Attachment failed', lang)}: ${safeName(a.name)} — ${String(e.message).slice(0, 80)})`; }
     }
-    const ctx = { chatType: 'group', kind: 'msgr', orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, uid };
+    const orgRow = await db.org(job.orgId).catch(() => null); // G-3 규칙 주입 키(미러 폴더 = org slug)·채널 이름(채널 범위 규칙)
+    const ctx = { chatType: 'group', kind: 'msgr', orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, uid, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '' };
     const ctxKey = `${wsId}:${job.slug}`;
     activeCtx.set(ctxKey, ctx);
     const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId);
