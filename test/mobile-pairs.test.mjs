@@ -78,3 +78,16 @@ test('publicView — 해시·tries 비노출, 만료 코드는 null', async () =
   assert.ok(v.pairs.every((p) => !('hash' in p)));
   assert.equal(M.publicView({ ...m, pending: { code: 'ABC', exp: 1, tries: 0 } }, 2).pending, null);
 });
+
+// ── 배선 트립와이어 — currentUser(app/auth.mjs)가 토큰 판정을 AUTH_ON 분기보다 **먼저** 부르는지(무인증 모드에서도
+// 무효 토큰이 local로 새지 않게). 행동은 scripts/e2e-mobile-pair.mjs가 격리 서버로 실증한다(cookies() 요청 스코프).
+test('배선 — currentUser: mobileDenied가 AUTH_ON 분기보다 앞, 루프백은 판정 없음, 검증 오류는 fail-closed', async () => {
+  const src = await readFile(new URL('../app/auth.mjs', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('export async function currentUser()'), src.indexOf('async function mobileDenied()'));
+  const iDeny = fn.indexOf('await mobileDenied()'), iAuth = fn.indexOf("if (!AUTH_ON) return { id: 'local'");
+  assert.ok(iDeny > 0 && iAuth > iDeny, '토큰 판정이 무인증 local 반환보다 먼저');
+  assert.match(fn, /if \(!TENANT && \(await mobileDenied\(\)\)\) return null;/);
+  const helper = src.slice(src.indexOf('async function mobileDenied()'));
+  assert.match(helper, /mobileAccess\(\{ host, cookieHeader \}\)\)\.kind === 'deny'/, '판정은 src/mobile-pairs.mjs mobileAccess 단일 원천');
+  assert.ok(!/catch[^}]*return true/.test(helper), '검증 오류를 삼켜 deny로 만들지 않는다(throw = 500 fail-closed)');
+});

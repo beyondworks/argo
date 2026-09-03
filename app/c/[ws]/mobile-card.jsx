@@ -62,10 +62,13 @@ export function MobileCard() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="card-title" style={{ flex: 1 }}>{t('mobile.title')}</span>
         {st && (
-          <button type="button" className={`btn sm ${st.enabled ? '' : 'btn-primary'}`} disabled={busy} onClick={() => toggle(!st.enabled)}
-            aria-pressed={st.enabled} aria-label={t('mobile.toggle')}>
-            {busy ? <Spinner size={12} /> : null}{st.enabled ? t('mobile.off') : t('mobile.on')}
-          </button>
+          <>
+            <span className="chip" style={{ color: st.enabled ? 'var(--ok)' : 'var(--fg-3)' }}>{st.enabled ? t('mobile.on') : t('mobile.off')}</span>
+            <button type="button" className={`btn sm ${st.enabled ? '' : 'btn-primary'}`} disabled={busy} onClick={() => toggle(!st.enabled)}
+              aria-pressed={st.enabled} aria-label={t('mobile.toggle')}>
+              {busy ? <Spinner size={12} /> : null}{st.enabled ? t('mobile.turnOff') : t('mobile.turnOn')}
+            </button>
+          </>
         )}
       </div>
       <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('mobile.help')}</p>

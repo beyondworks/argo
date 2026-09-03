@@ -37,7 +37,7 @@ function Pair() {
       setBusy(false);
     }
   }
-  useEffect(() => { if (initial) submit(initial); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (initial) submit(initial); }, [initial]); // QR로 왔으면 바로 제출 — initial은 마운트 후 불변
 
   return (
     <div style={{ minHeight: 'calc(100vh / var(--z, 1))', display: 'grid', placeItems: 'center', padding: 24 }}>

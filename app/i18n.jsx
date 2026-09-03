@@ -384,6 +384,8 @@ const DICT = {
   'mobile.toggle': ['휴대폰 접근', 'Phone access'],
   'mobile.on': ['켜짐', 'On'],
   'mobile.off': ['꺼짐', 'Off'],
+  'mobile.turnOn': ['켜기', 'Turn on'],
+  'mobile.turnOff': ['끄기', 'Turn off'],
   'mobile.address': ['주소', 'Address'],
   'mobile.addrHint': ['휴대폰이 닿을 수 있는 이 컴퓨터의 주소를 고르세요. Tailscale 주소를 고르면 밖에서도 연결됩니다.', 'Pick the address your phone can reach. Choose the Tailscale address to connect from outside.'],
   'mobile.noAddress': ['네트워크 주소를 찾지 못했습니다 — 와이파이 연결을 확인해 주세요.', 'No network address found — check the Wi-Fi connection.'],
