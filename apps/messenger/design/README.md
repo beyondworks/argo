@@ -1,6 +1,6 @@
 # linen — 아르고 메신저 디자인 시안·시스템
 
-> 메신저 앱(`apps/messenger`)의 룩 정본. 토큰은 `tokens.css` 한 파일, v2 컴포넌트 계약은 `system-v2.css`. 정적 시안은 `0*-v2.html` 5장(v1 `0*.html`·`system.css`는 비교용 보관).
+> 메신저 앱(`apps/messenger`)의 룩 정본. 토큰은 `tokens.css` 한 파일, v2 컴포넌트 계약은 `system-v2.css`. 정적 시안은 `0*-v2.html` 5장. 스크린샷(`shots/`)은 로컬 실측 산출물이라 커밋하지 않는다.
 > Argo 앱의 `app/globals.css` linen 테마 가족은 **이 폴더의 tokens.css에서 생성**한다(손으로 옮겨 적지 않는다 — 두 곳이 갈리면 `test/theme-linen-sync`가 잡는다).
 
 ## 보는 법
