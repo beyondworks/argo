@@ -50,9 +50,9 @@ create table if not exists public.msgr_invites (
   role text not null default 'member' check (role in ('admin', 'member', 'guest')),
   email text,
   expires_at timestamptz not null default (now() + interval '7 days'),
-  accepted_by uuid references auth.users (id),
+  accepted_by uuid references auth.users (id) on delete set null,   -- 계정 삭제가 초대 이력에 막히지 않게(실측: FK restrict로 사용자 삭제 실패)
   accepted_at timestamptz,
-  created_by uuid not null references auth.users (id),
+  created_by uuid not null references auth.users (id) on delete cascade,
   created_at timestamptz not null default now()
 );
 
@@ -83,7 +83,7 @@ create table if not exists public.msgr_channels (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.msgr_orgs (id) on delete cascade,
   kind text not null check (kind in ('public', 'private', 'dm')),
-  name text not null check (length(name) between 1 and 80),
+  name text not null check (name ~ '^[^\r\n]{1,80}$'), -- 개행 금지: 채널명은 크루 프롬프트의 발신 문맥 줄에 실린다(S2 검수 HIGH-4 인젝션 표면)
   topic text,
   crew_memory boolean not null default true, -- false = 이 채널 발 크루 턴은 소유자 vault 일지에 남기지 않는다(noJournal)
   created_by uuid not null references auth.users (id),
@@ -165,8 +165,10 @@ create table if not exists public.msgr_messages (
   created_at timestamptz not null default now(),
   edited_at timestamptz,
   deleted_at timestamptz,
+  -- crew 글의 crew_id는 insert 정책이 요구한다(소유자 명의). CHECK에서 not null을 강제하지 않는 이유: 크루 삭제(on delete set null)
+  -- 뒤에도 글은 남아야 하고("삭제된 크루" 표시), 강제하면 FK 캐스케이드가 CHECK 위반으로 크루 삭제 자체를 막는다(드릴 실측).
   check ((author_kind = 'user' and author_user_id is not null and crew_id is null)
-      or (author_kind = 'crew' and crew_id is not null)
+      or (author_kind = 'crew')
       or (author_kind = 'system'))
 );
 -- 멱등 키는 **작성자 축을 포함**한다(분리 검수 HIGH-4): (channel_id, client_msg_id)만이면 일반 멤버가 'reply:<crew>:<msg>'를
@@ -235,6 +237,7 @@ create or replace function public.msgr_lock_cols() returns trigger
 declare col text; n jsonb := to_jsonb(new); o jsonb := to_jsonb(old);
 begin
   if auth.uid() is null then return new; end if;
+  if pg_trigger_depth() > 1 then return new; end if; -- FK 캐스케이드(on delete set null)·다른 트리거의 내부 UPDATE는 통과(실측: 크루 삭제가 막혔다)
   foreach col in array tg_argv loop
     if n->col is distinct from o->col then raise exception 'msgr_immutable_%', col; end if;
   end loop;
@@ -501,7 +504,7 @@ create policy msgr_attachments_select on public.msgr_attachments for select to a
   using (exists (select 1 from public.msgr_messages m where m.id = message_id and public.msgr_can_read_channel(m.channel_id)));
 drop policy if exists msgr_attachments_insert on public.msgr_attachments;
 create policy msgr_attachments_insert on public.msgr_attachments for insert to authenticated
-  with check (exists (select 1 from public.msgr_messages m where m.id = message_id and m.org_id = org_id
+  with check (exists (select 1 from public.msgr_messages m where m.id = msgr_attachments.message_id and m.org_id = msgr_attachments.org_id
                         and ((m.author_kind = 'user' and m.author_user_id = (select auth.uid()))
                           or (m.author_kind = 'crew' and exists (select 1 from public.msgr_crews c where c.id = m.crew_id and c.owner_user_id = (select auth.uid()))))));
 
@@ -509,13 +512,15 @@ drop policy if exists msgr_approvals_select on public.msgr_crew_approvals;
 create policy msgr_approvals_select on public.msgr_crew_approvals for select to authenticated using (public.msgr_can_read_channel(channel_id));
 drop policy if exists msgr_approvals_insert on public.msgr_crew_approvals;
 create policy msgr_approvals_insert on public.msgr_crew_approvals for insert to authenticated
-  with check (status = 'pending' and exists (select 1 from public.msgr_crews c where c.id = crew_id and c.owner_user_id = (select auth.uid()) and c.org_id = org_id));
+  -- ⚠ 서브쿼리 안의 맨 org_id는 c.org_id로 묶인다(자기 비교=항상 참) — 바깥 행은 테이블명으로 한정한다(실측 2026-09-03).
+  with check (status = 'pending' and exists (select 1 from public.msgr_crews c where c.id = msgr_crew_approvals.crew_id and c.owner_user_id = (select auth.uid()) and c.org_id = msgr_crew_approvals.org_id));
 -- 확정은 크루 소유자만(역할 무관 — BYOK·책임 귀속). pending인 행만, 최종 상태로만.
 drop policy if exists msgr_approvals_decide on public.msgr_crew_approvals;
 create policy msgr_approvals_decide on public.msgr_crew_approvals for update to authenticated
-  using (status = 'pending' and exists (select 1 from public.msgr_crews c where c.id = crew_id and c.owner_user_id = (select auth.uid())))
-  with check (status in ('approved', 'rejected', 'expired') and decided_by = (select auth.uid())
-              and exists (select 1 from public.msgr_crews c where c.id = crew_id and c.owner_user_id = (select auth.uid())));
+  using (status = 'pending' and exists (select 1 from public.msgr_crews c where c.id = msgr_crew_approvals.crew_id and c.owner_user_id = (select auth.uid())))
+  with check (exists (select 1 from public.msgr_crews c where c.id = msgr_crew_approvals.crew_id and c.owner_user_id = (select auth.uid()))
+              and ((status = 'pending' and decided_by is null)                                     -- 브리지의 카드 링크(message_id) 등 pending 유지 갱신
+                or (status in ('approved', 'rejected', 'expired') and decided_by = (select auth.uid())))); -- 확정은 본인 명의로만
 
 drop policy if exists msgr_audit_select on public.msgr_audit_log;
 create policy msgr_audit_select on public.msgr_audit_log for select to authenticated using (public.msgr_is_admin(org_id));

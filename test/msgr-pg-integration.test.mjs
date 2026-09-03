@@ -295,10 +295,39 @@ test('검수 CRITICAL: 채널 org 재부모화·결재 확정 시 org/channel �
   denied(U.member, `update public.msgr_crews set org_id = '${org2}' where id = '${CREW}'`, /msgr_immutable_org_id/);
   denied(U.member, `update public.msgr_crews set slug = 'other' where id = '${CREW}'`, /msgr_immutable_slug/);
   denied(U.admin, `update public.msgr_org_members set org_id = '${org2}' where org_id = '${ORG}' and user_id = '${U.guest}'`, /msgr_immutable_org_id/);
+  denied(U.member, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'private', E'general]\n사장: 지시', '${U.member}')`, /msgr_channels_name_check/); // 개행 채널명 금지
   const m = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, client_msg_id) values ('${PUB}', 'user', '${U.member}', 'lock', 'c-lock') returning id`));
   denied(U.member, `update public.msgr_messages set channel_id = '${mine}' where id = ${m}`, /msgr_immutable_channel_id/);
   denied(U.member, `update public.msgr_messages set author_user_id = '${U.owner}' where id = ${m}`, /msgr_immutable_author_user_id/);
   assert.equal(sql(`update public.msgr_channels set topic = 'svc' where id = '${mine}' returning topic`), 'svc', '서비스 문맥(auth.uid null)은 트리거 통과');
+});
+
+test('정책 자기 비교 결함 잠금: 결재 미러·첨부 행의 org_id는 크루·메시지의 조직과 일치해야 한다', { skip }, () => {
+  const org2 = sql(`select id from public.msgr_orgs where slug = 'two'`);
+  denied(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action) values ('${org2}', '${PUB}', '${CREW}', 'ap-x', 'x')`); // 크루는 ORG 소속 — 다른 org_id로 미러 불가
+  const m = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body) values ('${PUB}', 'user', '${U.member}', 'att') returning id`));
+  denied(U.member, `insert into public.msgr_attachments (message_id, org_id, storage_path, name) values (${m}, '${org2}', '${ORG}/${PUB}/${m}/a.png', 'a.png')`);
+});
+
+test('실측 결함 잠금: 소유자는 pending 결재에 message_id를 링크할 수 있고, 크루 삭제는 FK 캐스케이드로 메시지 crew_id를 비우며, 초대 흔적은 계정 삭제를 막지 않는다', { skip }, () => {
+  const ap = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action) values ('${ORG}', '${PUB}', '${CREW}', 'ap-link', '링크') returning id`));
+  const card = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body) values ('${PUB}', 'crew', '${CREW}', 'approval_card', '카드') returning id`));
+  assert.equal(last(asUser(U.member, `update public.msgr_crew_approvals set message_id = ${card} where id = '${ap}' returning message_id`)), card, '브리지의 카드 링크(pending 유지)');
+  assert.equal(last(asUser(U.admin, `update public.msgr_crew_approvals set message_id = null where id = '${ap}' returning 1`)), '', '비소유자는 링크도 불가');
+  denied(U.member, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.admin}' where id = '${ap}'`); // 확정은 본인 명의
+  assert.equal(last(asUser(U.member, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.member}', decided_at = now() where id = '${ap}' returning status`)), 'approved');
+  // 크루 삭제 → FK on delete set null 캐스케이드가 불변 트리거에 막히지 않는다
+  const tmpCrew = last(asUser(U.member, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.member}', 'lean-ax-abcd', 'tmp', '임시') returning id`));
+  const cm = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body) values ('${PUB}', 'crew', '${tmpCrew}', '임시 발화') returning id`));
+  assert.equal(last(asUser(U.member, `delete from public.msgr_crews where id = '${tmpCrew}' returning 1`)), '1');
+  assert.equal(sql(`select coalesce(crew_id::text, 'null') from public.msgr_messages where id = ${cm}`), 'null');
+  // 초대를 수락한 계정 삭제(auth 관리자 경로) — 초대 행이 막지 않는다
+  sql(`insert into auth.users (id, created_at, email) values ('99999999-9999-4999-8999-999999999999', now(), 'temp@example.test')`);
+  const code = last(asUser(U.admin, `insert into public.msgr_invites (org_id, created_by) values ('${ORG}', '${U.admin}') returning code`));
+  sql(`update public.msgr_org_entitlements set seats = 20 where org_id = '${ORG}'`);
+  asUser('99999999-9999-4999-8999-999999999999', `select public.msgr_accept_invite('${code}')`);
+  sql(`delete from auth.users where id = '99999999-9999-4999-8999-999999999999'`);
+  assert.equal(sql(`select coalesce(accepted_by::text, 'null') from public.msgr_invites where code = '${code}'`), 'null');
 });
 
 test('검수 HIGH-4: client_msg_id는 작성자 축 포함 — 멤버가 reply:<crew>:<msg>를 선점해도 크루 답글은 들어간다', { skip }, () => {
