@@ -131,7 +131,7 @@ test('초대 흐름: 코드 1회·만료 거부, 수락 후 역할 반영, admin
   assert.equal(last(asUser(U.admin, `update public.msgr_org_members set role = 'admin' where org_id = '${ORG}' and user_id = '${U.extra}' returning role`)), 'admin');
   assert.equal(last(asUser(U.admin, `update public.msgr_org_members set role = 'member' where org_id = '${ORG}' and user_id = '${U.owner}' returning 1`)), '', 'admin이 owner 행 변경');
   denied(U.admin, `update public.msgr_orgs set owner_user_id = '${U.admin}' where id = '${ORG}'`, /msgr_owner_only/);
-  denied(U.owner, `update public.msgr_orgs set owner_user_id = '${U.outsider}' where id = '${ORG}'`, /msgr_owner_not_member/);
+  denied(U.owner, `update public.msgr_orgs set owner_user_id = '${U.outsider}' where id = '${ORG}'`, /msgr_transfer_needs_accept/); // J-2: 소유자도 제안 없는 직접 이전은 불가
   assert.equal(last(asUser(U.owner, `update public.msgr_orgs set name = 'Lean2' where id = '${ORG}' returning name`)), 'Lean2'); // 일반 수정은 admin도 가능
   assert.equal(last(asUser(U.admin, `update public.msgr_orgs set name = 'Lean' where id = '${ORG}' returning name`)), 'Lean');
   // 오프보딩: removed_at → 즉시 조직·채널·메시지 불가시
@@ -657,4 +657,45 @@ test('I-5 회사 크루 요청 — 정책 게이트(관리자·채널 관리자�
   assert.equal(last(asUser(NODE, `select crew_runner || ' ' || crew_model from public.msgr_org_policies where org_id = '${ORG}'`)), 'openrouter minimax/minimax-m3:free', '노드가 기본 엔진을 읽는다');
   denied(U.admin, `update public.msgr_org_policies set crew_runner = 'Bad Runner!' where org_id = '${ORG}'`, /msgr_org_policies_crew_runner_check/);
   sql(`update public.msgr_org_policies set crew_runner = null, crew_model = null where org_id = '${ORG}'`);
+});
+
+test('J-2 소유권 제안→수락·승계 관리자·결제 문제 읽기 전용 — 제안은 소유자만(관리자 대상), 거절은 당사자만, 수락은 당사자만, 잠금은 쓰기 전부 차단', () => {
+  if (!DB) return;
+  assert.equal(sql(`select owner_user_id from public.msgr_orgs where id = '${ORG}'`), U.owner, '전제');
+  denied(U.admin, `update public.msgr_orgs set pending_owner_user_id = '${U.admin}' where id = '${ORG}'`, /msgr_owner_only/);            // 관리자가 스스로 제안 불가
+  denied(U.owner, `update public.msgr_orgs set pending_owner_user_id = '${U.member}' where id = '${ORG}'`, /msgr_transfer_not_admin/);    // 멤버에게는 불가
+  assert.equal(last(asUser(U.owner, `update public.msgr_orgs set pending_owner_user_id = '${U.admin}' where id = '${ORG}' returning pending_owner_user_id`)), U.admin, '관리자에게 제안');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'org.transfer.offer' and target_id = '${U.admin}'`), '1');
+  assert.equal(last(asUser(U.svc, `update public.msgr_orgs set owner_user_id = '${U.svc}' where id = '${ORG}' returning 1`)), '', '제3자(멤버) 수락 불가 — RLS 0행');
+  denied(U.admin, `update public.msgr_orgs set owner_user_id = '${U.svc}' where id = '${ORG}'`, /msgr_owner_only/); // 제안받은 관리자라도 자기 아닌 사람으로 확정은 불가
+  denied(U.owner, `update public.msgr_orgs set owner_user_id = '${U.admin}' where id = '${ORG}'`, /msgr_transfer_needs_accept/);          // 소유자가 대신 확정 불가
+  assert.equal(last(asUser(U.admin, `update public.msgr_orgs set pending_owner_user_id = null where id = '${ORG}' returning pending_owner_user_id is null`)), 't', '당사자 거절');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'org.transfer.decline'`), '1');
+  asUser(U.owner, `update public.msgr_orgs set pending_owner_user_id = '${U.admin}' where id = '${ORG}'`);
+  assert.equal(last(asUser(U.owner, `update public.msgr_orgs set pending_owner_user_id = null where id = '${ORG}' returning 1`)), '1', '소유자 취소');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'org.transfer.cancel'`), '1');
+  // 승계 관리자
+  denied(U.owner, `update public.msgr_orgs set successor_user_id = '${U.member}' where id = '${ORG}'`, /msgr_successor_not_admin/);
+  denied(U.admin, `update public.msgr_orgs set successor_user_id = '${U.admin}' where id = '${ORG}'`, /msgr_owner_only/);
+  assert.equal(last(asUser(U.owner, `update public.msgr_orgs set successor_user_id = '${U.admin}' where id = '${ORG}' returning successor_user_id`)), U.admin);
+  // 수락 = 소유자 교대(역할 스왑·제안 비움·승계 지정이 새 소유자면 비움·감사)
+  asUser(U.owner, `update public.msgr_orgs set pending_owner_user_id = '${U.admin}' where id = '${ORG}'`);
+  assert.equal(last(asUser(U.admin, `update public.msgr_orgs set owner_user_id = '${U.admin}' where id = '${ORG}' returning owner_user_id`)), U.admin, '당사자 수락');
+  assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.admin}'`), 'owner');
+  assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.owner}'`), 'admin');
+  assert.equal(sql(`select pending_owner_user_id is null and successor_user_id is null from public.msgr_orgs where id = '${ORG}'`), 't');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'org.transfer' and target_id = '${U.admin}'`), '1');
+  // 되돌리기(뒤 케이스·재실행 안정): 새 소유자가 제안 → 옛 소유자 수락
+  asUser(U.admin, `update public.msgr_orgs set pending_owner_user_id = '${U.owner}' where id = '${ORG}'`);
+  assert.equal(last(asUser(U.owner, `update public.msgr_orgs set owner_user_id = '${U.owner}' where id = '${ORG}' returning owner_user_id`)), U.owner);
+  assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.admin}'`), 'admin');
+  // 결제 문제 = 읽기 전용: 메시지·크루 답글·크루 생성 요청 차단, 열람은 그대로
+  sql(`update public.msgr_org_entitlements set ls_status = 'past_due' where org_id = '${ORG}'`);
+  assert.equal(last(asUser(U.owner, `select public.msgr_org_locked('${ORG}')`)), 't');
+  denied(U.owner, `insert into public.msgr_messages (org_id, channel_id, author_kind, author_user_id, body) values ('${ORG}', '${PUB}', 'user', '${U.owner}', '잠금 중')`, /row-level security/);
+  denied(U.admin, `insert into public.msgr_crew_requests (org_id, channel_id, name, prompt, created_by) values ('${ORG}', '${PUB}', '봇', 'x', '${U.admin}')`, /row-level security/);
+  assert.notEqual(last(asUser(U.member, `select count(*) from public.msgr_messages where org_id = '${ORG}'`)), '0', '열람은 된다');
+  sql(`update public.msgr_org_entitlements set ls_status = null where org_id = '${ORG}'`);
+  assert.equal(last(asUser(U.owner, `select public.msgr_org_locked('${ORG}')`)), 'f');
+  assert.match(last(asUser(U.owner, `insert into public.msgr_messages (org_id, channel_id, author_kind, author_user_id, body) values ('${ORG}', '${PUB}', 'user', '${U.owner}', '잠금 해제') returning id`)), /^[0-9]+$/, '해제 후 쓰기 복귀');
 });

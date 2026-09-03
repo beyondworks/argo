@@ -1202,3 +1202,80 @@ create trigger msgr_crew_request_broadcast after insert or update on public.msgr
 --    비우면 노드 회사의 기본 러너(company.json.defaultRunner)와 그 러너의 기본 모델. 실측: 기본 모델이 유료라 첫 멘션이 402로 실패 — 정책이 정해야 한다.
 alter table public.msgr_org_policies add column if not exists crew_runner text check (crew_runner is null or crew_runner ~ '^[a-z0-9_-]{1,32}$');
 alter table public.msgr_org_policies add column if not exists crew_model text check (crew_model is null or length(crew_model) between 1 and 120);
+
+-- ── J-2 소유권 이전(제안→수락)·승계 관리자·결제 문제 읽기 전용(부록 I "조직의 소유·공유 조건"):
+--    소유자는 관리자 한 명에게 **제안**(pending_owner_user_id)만 할 수 있고, 상대가 수락(owner_user_id를 자기로 갱신)해야 확정된다.
+--    직접 이전(제안 없이 owner_user_id 변경)은 사용자 문맥에서 거절(msgr_transfer_needs_accept). 승계 관리자(successor_user_id)는 소유자가 지정하는 관리자.
+--    결제 문제(ls_status past_due·unpaid)는 조직을 읽기 전용으로 — 메시지·크루 답글·크루 생성 요청이 서버에서 막힌다(삭제하지 않는다).
+alter table public.msgr_orgs add column if not exists pending_owner_user_id uuid references auth.users (id) on delete set null;
+alter table public.msgr_orgs add column if not exists successor_user_id uuid references auth.users (id) on delete set null;
+
+create or replace function public.msgr_org_before_update() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare me uuid := auth.uid(); my_role text;
+begin
+  my_role := case when me is null then null else public.msgr_role(old.id) end;
+  if me is not null and new.deleted_at is distinct from old.deleted_at and my_role is distinct from 'owner' then raise exception 'msgr_owner_only'; end if;
+  -- 소유권: 사용자 문맥에서는 "제안받은 사람이 자기로 수락"만 허용. 소유자라도 직접 이전은 거절(수락 없는 이전 금지).
+  if new.owner_user_id is distinct from old.owner_user_id then
+    if me is not null then
+      if not (new.owner_user_id = me and coalesce(old.pending_owner_user_id = me, false)) then -- NULL 함정: 제안이 없으면 (= me)가 NULL이라 not NULL도 NULL → 통과해 버린다(드릴 실측)
+        if my_role is distinct from 'owner' then raise exception 'msgr_owner_only'; end if;
+        raise exception 'msgr_transfer_needs_accept';
+      end if;
+    end if;
+    if not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.owner_user_id and removed_at is null) then
+      raise exception 'msgr_owner_not_member';
+    end if;
+    update public.msgr_org_members set role = 'admin' where org_id = old.id and user_id = old.owner_user_id;
+    update public.msgr_org_members set role = 'owner' where org_id = old.id and user_id = new.owner_user_id;
+    new.pending_owner_user_id := null;
+    if new.successor_user_id = new.owner_user_id then new.successor_user_id := null; end if;
+    perform public.msgr_audit(old.id, 'org.transfer', 'user', new.owner_user_id::text, jsonb_build_object('from', old.owner_user_id));
+  end if;
+  -- 이전 제안: 소유자만 제안·취소, 제안받은 사람은 거절(null)만. 대상은 활성 관리자.
+  if new.pending_owner_user_id is distinct from old.pending_owner_user_id and new.owner_user_id = old.owner_user_id then
+    if me is not null and my_role is distinct from 'owner' and not (new.pending_owner_user_id is null and coalesce(old.pending_owner_user_id = me, false)) then raise exception 'msgr_owner_only'; end if;
+    if new.pending_owner_user_id is not null and not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.pending_owner_user_id and removed_at is null and role = 'admin') then
+      raise exception 'msgr_transfer_not_admin';
+    end if;
+    perform public.msgr_audit(old.id, case when new.pending_owner_user_id is null then (case when coalesce(me = old.pending_owner_user_id, false) then 'org.transfer.decline' else 'org.transfer.cancel' end) else 'org.transfer.offer' end,
+                              'user', coalesce(new.pending_owner_user_id, old.pending_owner_user_id)::text);
+  end if;
+  -- 승계 관리자: 소유자만, 활성 관리자만.
+  if new.successor_user_id is distinct from old.successor_user_id and new.owner_user_id = old.owner_user_id then
+    if me is not null and my_role is distinct from 'owner' then raise exception 'msgr_owner_only'; end if;
+    if new.successor_user_id is not null and not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.successor_user_id and removed_at is null and role = 'admin') then
+      raise exception 'msgr_successor_not_admin';
+    end if;
+    perform public.msgr_audit(old.id, 'org.successor', 'user', coalesce(new.successor_user_id, old.successor_user_id)::text, jsonb_build_object('set', new.successor_user_id is not null));
+  end if;
+  if new.service_user_id is distinct from old.service_user_id then
+    if new.service_user_id is not null and not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.service_user_id and removed_at is null) then
+      raise exception 'msgr_service_not_member';
+    end if;
+    perform public.msgr_audit(old.id, 'org.service_account', 'org', old.id::text, jsonb_build_object('from', old.service_user_id, 'to', new.service_user_id));
+  end if;
+  return new;
+end $$;
+
+create or replace function public.msgr_org_locked(org uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select coalesce((select e.ls_status in ('past_due', 'unpaid') from public.msgr_org_entitlements e where e.org_id = org), false)
+$$;
+revoke all on function public.msgr_org_locked(uuid) from public;
+revoke execute on function public.msgr_org_locked(uuid) from anon;
+grant execute on function public.msgr_org_locked(uuid) to authenticated;
+
+create or replace function public.msgr_can_write_channel(ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select public.msgr_can_read_channel(ch)
+       and exists (select 1 from public.msgr_channels c where c.id = ch and c.archived_at is null and not public.msgr_org_locked(c.org_id))
+$$;
+drop policy if exists msgr_crew_requests_insert on public.msgr_crew_requests;
+create policy msgr_crew_requests_insert on public.msgr_crew_requests for insert to authenticated
+  with check (created_by = (select auth.uid()) and status = 'pending' and crew_id is null
+    and (channel_id is null or exists (select 1 from public.msgr_channels c where c.id = channel_id and c.org_id = msgr_crew_requests.org_id and c.kind <> 'dm' and c.archived_at is null))
+    and (select o.service_user_id from public.msgr_orgs o where o.id = org_id) is not null
+    and not public.msgr_org_locked(org_id)
+    and public.msgr_can_create_crew(org_id, channel_id));

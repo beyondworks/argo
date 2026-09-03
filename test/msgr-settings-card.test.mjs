@@ -116,7 +116,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
 
 test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크루(서버 msgr_crew_tier와 같은 규칙), 레일 카드·시트에 등급 배지·소유 표기·한계 문장', () => {
   assert.match(app, /export const crewTier = \(crew, org\) => \(org\?\.service_user_id && crew\?\.owner_user_id === org\.service_user_id && crew\?\.hosting === 'resident'\) \? 'company' : 'personal';/, '등급 규칙이 서버 함수와 다르다');
-  assert.match(app, /msgr_orgs\(id, name, slug, service_user_id, node_seen_at\)/, '조직 조회에 service_user_id가 없다'); // I-4가 node_seen_at 추가
+  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id\)/, '조직 조회에 service_user_id가 없다'); // I-4·J-2가 열 추가
   assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다');
   assert.match(app, /\{company \? t\('crew\.tier\.company\.sub'/, '구성 행 부제가 등급별이 아니다');
   const crewSheet = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
@@ -281,7 +281,7 @@ test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·
 test('I-4 회사 노드 — 조직 행에 하트비트, 노드용 초대는 member·for_node, 노드 코드는 사람 초대 목록 제외, 다시 만들면 이전 코드 취소', () => {
   const app = read('apps/messenger/src/App.jsx');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
-  assert.match(app, /msgr_orgs\(id, name, slug, service_user_id, node_seen_at\)/, '조직 행에 node_seen_at');
+  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id\)/, '조직 행에 node_seen_at');
   assert.match(oc, /insert\(\{ org_id: org\.id, role: 'member', for_node: true, created_by: uid \}\)/, '노드용 초대 = member + for_node');
   assert.match(oc, /const open = live\.filter\(\(i\) => !i\.for_node\); const nodeInvite = live\.find\(\(i\) => i\.for_node\) \?\? null;/, '노드 코드는 사람 초대 목록에서 제외');
   assert.match(oc, /const nodeAlive = !!org\.service_user_id && nodeSeen > 0 && Date\.now\(\) - nodeSeen < AWAY_MS;/, '연결됨 판정 = 서비스 계정 있음 ∧ 90초 이내 하트비트');
@@ -306,4 +306,25 @@ test('I-5 회사 크루 만들기 — 정책 crew_create 세그먼트·저장, �
   assert.match(pc, /placeholder=\{t\('set\.policy\.crewEngine\.model'\)\} value=\{draft\.crew_model \?\? ''\} maxLength=\{120\} disabled=\{ro\}/, 'I-5b 기본 엔진 입력(관리자만)');
   const dict = read('apps/messenger/src/i18n.js');
   for (const k of ['set.policy.crewCreate', 'set.policy.crewCreate.admin', 'set.policy.crewCreate.channel_admin', 'set.policy.crewCreate.member', 'ch.crew.new', 'ch.crew.new.noNode', 'ch.crew.new.pending', 'ch.crew.new.failed', 'ch.crew.new.done', 'ch.crew.new.orgWide']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 대상은 관리자 칩, 당사자에게 수락/거절, 잠금은 배너+보내기 비활성, 서버 함수·가드', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(oc, /const admins = members\.filter\(\(m\) => m\.role === 'admin'\);/, '대상은 관리자만');
+  assert.match(oc, /const iAmNominee = org\.pending_owner_user_id === uid;/, '당사자 판정');
+  assert.match(oc, /t\('org\.transfer\.offered', \{ name: nameOfUser\(org\.owner_user_id\) \}\)/, '제안자 이름은 조직 행의 owner_user_id(실측: 미조회면 ?)');
+  assert.match(oc, /onClick=\{\(\) => patchOrg\(\{ owner_user_id: uid \}, t\('org\.transfer\.accepted'\)\)\}/, '수락 = 자기로 owner 갱신(서버 트리거가 검증)');
+  assert.match(oc, /onClick=\{\(\) => patchOrg\(\{ pending_owner_user_id: m\.user_id \}, /, '제안');
+  assert.match(oc, /patchOrg\(\{ successor_user_id: on \? null : m\.user_id \}, /, '승계 토글');
+  assert.match(app, /const orgLocked = ent\?\.ls_status === 'past_due' \|\| ent\?\.ls_status === 'unpaid';/, '잠금 판정(서버 msgr_org_locked와 같은 규칙)');
+  assert.match(app, /\{orgLocked && <div className="msgr-notice locked">/, '잠금 배너');
+  assert.match(app, /disabled=\{busy \|\| locked \|\| !text\.trim\(\)\}/, '잠금이면 보내기 비활성');
+  assert.match(app, /select\('plan, seats, ls_status'\)/, '자격 조회에 ls_status');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /coalesce\(old\.pending_owner_user_id = me, false\)\) then/, '수락 판정 NULL 방어');
+  assert.match(sql, /raise exception 'msgr_transfer_needs_accept'/, '직접 이전 거절');
+  assert.match(sql, /and not public\.msgr_org_locked\(c\.org_id\)/, '잠금이면 채널 쓰기 불가');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['org.owner', 'org.successor', 'org.transfer', 'org.transfer.pending', 'org.transfer.offered', 'org.transfer.accept', 'org.transfer.decline', 'org.locked', 'org.locked.admin', 'org.locked.short']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
 });
