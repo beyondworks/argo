@@ -11,6 +11,7 @@ import { docMeta, localDay, noteDate } from './vaultdoc.mjs';
 import { loadDocsMeta, invalidatePath } from './memindex.mjs';
 
 export { localDay, noteDate }; // 기존 호출·회귀 테스트 호환(판정 정본은 vaultdoc.mjs 한 곳)
+export { vaultDocs as vaultDocsForTest }; // 회귀 테스트용(조직 문서 미러 org/ 색인 범위 — G-2)
 
 // ── 토큰화 — 한글(2gram)+영문 단어. 짧은 조사류 노이즈를 줄이는 최소 구현.
 function tokens(text) {
@@ -49,9 +50,9 @@ const warnedVaultReadFail = new Set(); // 같은 파일 경고 반복 방지(mem
 async function vaultDocs(wsId) {
   const p = paths(wsId);
   const docs = [];
-  for (const dir of [p.journal, p.conversations, p.notes]) {
+  for (const dir of [p.journal, p.conversations, p.notes, p.org]) { // org/ = 조직 문서 미러(G-2) — 하위 폴더까지
     let names = [];
-    try { names = await readdir(dir); } catch { continue; }
+    try { names = (await readdir(dir, dir === p.org ? { recursive: true } : undefined)).map((n) => String(n).split('\\').join('/')); } catch { continue; }
     for (const n of names) {
       if (!n.endsWith('.md')) continue;
       const file = join(dir, n);
@@ -283,6 +284,7 @@ export async function updateIndex(wsId) {
     .sort((a, b) => dayOf(b).localeCompare(dayOf(a)) || (b.mtimeMs - a.mtimeMs) || b.rel.localeCompare(a.rel));
   const weeklies = docs.filter((d) => d.kind === 'weekly').slice(0, 8);
   const legacy = docs.filter((d) => d.kind === 'legacy').slice(0, 10);
+  const orgDocs = docs.filter((d) => d.kind === 'org').sort((a, b) => a.rel.localeCompare(b.rel)); // 팀 메신저 조직 문서 미러(G-2) — 정본은 서버, 여기서는 읽기만
   await writeJsonAtomic(p.index, `# 회사 기억 인덱스
 
 주제 노트가 정리된 지식이다 — 먼저 여기서 찾고, 상세 근거가 필요할 때만 일지를 열어라.
@@ -294,7 +296,7 @@ ${notes.map(({ d, stamp }) => line(d, stamp)).join('\n') || '(아직 없음)'}${
 
 ## 최근 일지 (턴 원본, 14일)
 ${journals.map((d) => line(d)).join('\n') || '(아직 없음)'}
-${weeklies.length ? `\n## 주간 일지 (7일 지난 기억의 요약, 최근 8주)\n${weeklies.map((d) => line(d)).join('\n')}\n` : ''}${legacy.length ? `\n## 이전 기록\n${legacy.map((d) => line(d)).join('\n')}\n` : ''}${conflicts.length ? `\n## 동기화 충돌 사본 (다른 기기와 같은 노트를 동시에 고쳐 갈라진 것 — 내용은 옛 판일 수 있다. 확인 후 병합하고 지워라)\n${conflicts.map((d) => line(d)).join('\n')}${allConflicts.length > conflicts.length ? `\n(외 ${allConflicts.length - conflicts.length}개 더 — vault/notes/ 의 .conflict- 파일을 확인하라)` : ''}\n` : ''}`);
+${orgDocs.length ? `\n## 조직 문서 (팀 메신저 조직의 규칙집·용어집·프로젝트 맥락 — 서버 정본의 읽기 전용 미러. 전사 규칙은 개인 규칙보다 우선한다)\n${orgDocs.map((d) => line(d)).join('\n')}\n` : ''}${weeklies.length ? `\n## 주간 일지 (7일 지난 기억의 요약, 최근 8주)\n${weeklies.map((d) => line(d)).join('\n')}\n` : ''}${legacy.length ? `\n## 이전 기록\n${legacy.map((d) => line(d)).join('\n')}\n` : ''}${conflicts.length ? `\n## 동기화 충돌 사본 (다른 기기와 같은 노트를 동시에 고쳐 갈라진 것 — 내용은 옛 판일 수 있다. 확인 후 병합하고 지워라)\n${conflicts.map((d) => line(d)).join('\n')}${allConflicts.length > conflicts.length ? `\n(외 ${allConflicts.length - conflicts.length}개 더 — vault/notes/ 의 .conflict- 파일을 확인하라)` : ''}\n` : ''}`);
 }
 
 /* ── 사장 프로필 — "회사가 아는 사장". 크루가 자동 기록·갱신하고, 사장이 크루 카드에서 정정한다. */

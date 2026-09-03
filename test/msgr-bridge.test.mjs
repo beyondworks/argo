@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile, rm } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +32,7 @@ const crew = (over = {}) => ({ id: CREW, org_id: ORG, slug: 'seoyun', display_na
 const msg = (id, over = {}) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: MEMBER, crew_id: null, kind: 'text', body: `m${id}`,
   mentions: [{ kind: 'crew', id: CREW }], reply_to: null, thread_root: null, created_at: new Date().toISOString(), ...over });
 /** 가짜 db — 호출 기록 + 시나리오 데이터. makeDb의 메서드 이름·반환 계약만 흉내 낸다. */
-function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {} } = {}) {
+function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' } } = {}) {
   const calls = [];
   const rec = (k, ...a) => { calls.push([k, ...a]); };
   return {
@@ -57,6 +57,10 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], ap
     // H-2: 서버 판정 흉내 — 실제 msgr_can_instruct와 같은 규칙(크루 행 기준). throw 시 브리지는 로컬 판정으로 폴백한다.
     async instructCheck(crewId, authorId, channelId) { rec('instructCheck', crewId, authorId, channelId); if (canInstructThrows) throw new Error('rpc down'); if (channelPolicy[channelId] && channelPolicy[channelId] !== 'allowed') return 'channel_policy'; const c = crews.find((x) => x.id === crewId); return M.allowedToInstruct(c, authorId, OWNER) ? 'ok' : 'crew_allow'; },
     async canDecide(apId) { rec('canDecide', apId); return canDecide; },
+    // G-2 조직 문서 미러 — 기본은 문서 0(드레인 테스트가 미러로 오염되지 않게)
+    async org(orgId) { rec('org', orgId); return orgInfo; },
+    async docsIndex(orgId) { rec('docsIndex', orgId); return docs.map(({ id, channel_id, path, version, updated_at }) => ({ id, channel_id, path, version, updated_at })); },
+    async docsByIds(ids) { rec('docsByIds', ids); return docs.filter((d) => ids.includes(d.id)); },
   };
 }
 const jobsOf = (enq) => enq.calls.map((c) => c[3]);
@@ -352,4 +356,43 @@ test('I-3 채널 정책: 서버가 channel_policy를 돌려주면 소유자 지�
   assert.equal(r.denied, 1); assert.equal(jobsOf(enq).length, 0);
   const sys = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
   assert.equal(sys[0].client_msg_id, `deny:${CREW}:31`); assert.match(sys[0].body, /회사 크루만 일할 수 있습니다\(채널 정책\)/);
+});
+
+test('G-2 조직 문서 미러: 서버 문서 → vault/org/<slug>/<path> 읽기 전용 파일(frontmatter), 상태 파일로 바뀐 것만 내려받고 사라진 문서는 지운다, 동기화 제외, 인덱서가 색인한다', async () => {
+  const { EXCLUDE } = await import('../src/sync.mjs');
+  assert.equal(EXCLUDE('vault/org/lean/rules/handbook.md'), true, '미러는 클라우드 동기화 제외(기기별 파생물)');
+  assert.equal(EXCLUDE('vault/notes/x.md'), false);
+  const d1 = { id: 'd-1', channel_id: null, path: 'rules/handbook.md', title: '규칙집', body: '- 답은 존댓말로.', version: 1, updated_at: '2026-09-04T00:00:00Z' };
+  const d2 = { id: 'd-2', channel_id: 'ch-9', path: 'glossary/terms.md', title: '용어집', body: 'CTR = 클릭률', version: 3, updated_at: '2026-09-04T00:00:00Z', msgr_channels: { name: 'marketing' } };
+  const db = fakeDb({ docs: [d1, d2] });
+  const r1 = await M.syncOrgDocs(WS, ORG, { db, log: null });
+  assert.deepEqual(r1, { wrote: 2, removed: 0, total: 2 });
+  const dir = join(paths(WS).org, 'lean');
+  const f1 = await readFile(join(dir, 'rules', 'handbook.md'), 'utf8');
+  assert.match(f1, /^---\ntitle: "규칙집"\norg: lean\norg_name: "린 컴퍼니"\nscope: org\ndoc: d-1\nversion: 1\nupdated: 2026-09-04T00:00:00Z\nreadonly: true\nsource: msgr\n---\n\n# 규칙집\n\n- 답은 존댓말로\.\n$/);
+  assert.match(await readFile(join(dir, 'glossary', 'terms.md'), 'utf8'), /scope: channel:marketing\n/);
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'docsByIds').map((c) => c[1]), [['d-1', 'd-2']]);
+  // 두 번째: 바뀐 것 없음 → 본문 조회 0
+  const r2 = await M.syncOrgDocs(WS, ORG, { db, log: null });
+  assert.deepEqual(r2, { wrote: 0, removed: 0, total: 2 });
+  assert.equal(db.calls.filter((c) => c[0] === 'docsByIds').length, 1, '안 바뀐 문서는 다시 내려받지 않는다');
+  // 세 번째: d1 버전 갱신 + d2 사라짐(삭제·열람권 상실) → 갱신 1·회수 1
+  const db2 = fakeDb({ docs: [{ ...d1, body: '- 답은 존댓말로. 숫자는 표로.', version: 2 }] });
+  const r3 = await M.syncOrgDocs(WS, ORG, { db: db2, log: null });
+  assert.deepEqual(r3, { wrote: 1, removed: 1, total: 1 });
+  assert.match(await readFile(join(dir, 'rules', 'handbook.md'), 'utf8'), /version: 2\n[\s\S]*숫자는 표로/);
+  await assert.rejects(() => readFile(join(dir, 'glossary', 'terms.md'), 'utf8'), /ENOENT/, '사라진 문서의 미러는 지운다');
+  const state = JSON.parse(await readFile(join(dir, M.ORG_DOCS_STATE), 'utf8'));
+  assert.deepEqual(state.docs, { 'd-1': { path: 'rules/handbook.md', version: 2 } });
+  // 인덱서: org/ 미러가 기억 검색 인덱스에 오른다(재귀 폴더) + 인덱스 파일에 '조직 문서' 섹션
+  const { vaultDocsForTest, updateIndex } = await import('../src/memory.mjs');
+  const rels = (await vaultDocsForTest(WS)).map((d) => d.rel);
+  assert.ok(rels.includes('org/lean/rules/handbook.md'), `org 미러가 색인 대상이 아니다: ${rels.join(',')}`);
+  await updateIndex(WS);
+  assert.match(await readFile(paths(WS).index, 'utf8'), /## 조직 문서[^\n]*\n- \[\[org\/lean\/rules\/handbook\]\] — 규칙집/, '_index.md에 조직 문서 섹션이 없다');
+  // drain이 조직마다 1회 미러를 부른다(하트비트 뒤) — 문서 0인 서버 → 미러 회수
+  const db3 = fakeDb({ docs: [] }); const enq = fakeEnqueue();
+  await M.drain(WS, { db: db3, uid: OWNER, enqueue: enq });
+  assert.deepEqual(db3.calls.filter((c) => c[0] === 'docsIndex').map((c) => c[1]), [ORG]);
+  await rm(paths(WS).org, { recursive: true, force: true });
 });

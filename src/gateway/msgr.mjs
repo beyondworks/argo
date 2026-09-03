@@ -20,8 +20,8 @@
 // DB 접근은 makeDb(client) 한 층에 모은다 — 단위 테스트는 가짜 db를 주입하고(test/msgr-bridge.test.mjs), 실제
 // supabase-js 체인 호출·RLS 왕복은 로컬 Supabase 스택 E2E(scripts/e2e-msgr-bridge.mjs)가 검증한다.
 import { createClient } from '@supabase/supabase-js';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
 import { paths, loadCompany } from '../workspace.mjs';
 import { enqueueJob } from './queue.mjs';
@@ -55,6 +55,54 @@ export function allowedToInstruct(crew, authorId, ownerId) {
   if (crew.allow === 'list') return (crew.allow_users ?? []).includes(authorId);
   return true; // 'all'
 }
+/* ─── G-2 조직 문서 로컬 미러 — 서버 정본 → vault/org/<org-slug>/<path> 읽기 전용 파일(frontmatter org·scope·version). 기존 인덱서가 색인해
+   크루 검색·기억 그래프에 그대로 오른다. 상태 파일(.docs-state.json)로 바뀐 것만 내려받고, 서버에서 사라진 문서는 지운다(오프보딩 회수 단위). ─── */
+export const ORG_DOCS_STATE = '.docs-state.json';
+const safeSeg = (s) => String(s ?? '').replace(/[^a-z0-9_-]/gi, '-').slice(0, 60) || 'org';
+export function renderOrgDoc(doc, org) {
+  const scope = doc.channel_id ? `channel:${doc.msgr_channels?.name ?? doc.channel_id}` : 'org';
+  const fm = ['---', `title: ${JSON.stringify(doc.title ?? '')}`, `org: ${org.slug}`, `org_name: ${JSON.stringify(org.name ?? '')}`, `scope: ${scope}`, `doc: ${doc.id}`, `version: ${doc.version}`, `updated: ${doc.updated_at}`, 'readonly: true', 'source: msgr', '---'];
+  const body = String(doc.body ?? '');
+  const head = /^#\s/.test(body) ? '' : `# ${doc.title ?? ''}\n\n`; // 인덱스 제목은 첫 # 제목에서 뽑는다(vaultdoc.docMeta) — 본문에 없으면 제목을 앞에 붙인다
+  return `${fm.join('\n')}\n\n${head}${body}\n`;
+}
+export async function syncOrgDocs(wsId, orgId, { db, log = console.error } = {}) {
+  const org = await db.org(orgId); if (!org) return { skipped: 'no-org' };
+  const dir = join(paths(wsId).org, safeSeg(org.slug));
+  const statePath = join(dir, ORG_DOCS_STATE);
+  let state = { docs: {} };
+  try { state = JSON.parse(await readFile(statePath, 'utf8')); if (!state || typeof state.docs !== 'object') state = { docs: {} }; } catch { /* 첫 미러 */ }
+  const index = await db.docsIndex(orgId);
+  const want = new Map(index.map((d) => [d.id, d]));
+  const changed = index.filter((d) => !state.docs[d.id] || state.docs[d.id].version !== d.version || state.docs[d.id].path !== d.path).map((d) => d.id);
+  const gone = Object.keys(state.docs).filter((id) => !want.has(id));
+  let wrote = 0, removed = 0;
+  await mkdir(dir, { recursive: true });
+  for (const id of gone) { // 서버에서 사라짐(삭제·열람권 상실) → 미러도 회수
+    const rel = state.docs[id]?.path;
+    if (rel) await unlink(join(dir, rel)).catch(() => {});
+    delete state.docs[id]; removed++;
+  }
+  const bodies = changed.length ? await db.docsByIds(changed) : [];
+  for (const doc of bodies) {
+    const prev = state.docs[doc.id];
+    if (prev && prev.path !== doc.path) await unlink(join(dir, prev.path)).catch(() => {}); // 경로가 바뀐 옛 파일 정리(경로는 잠겨 있어 사실상 없음)
+    const file = join(dir, doc.path);
+    await mkdir(dirname(file), { recursive: true });
+    await unlink(file).catch(() => {}); // 직전 미러가 읽기 전용(0444)이라 덮어쓰기가 EACCES — 지우고 새로 쓴다
+    await writeFile(file, renderOrgDoc(doc, org), 'utf8');
+    await chmod(file, 0o444).catch(() => {}); // 읽기 전용 — 정본은 서버(윈도우는 chmod가 부분 적용)
+    state.docs[doc.id] = { path: doc.path, version: doc.version };
+    wrote++;
+  }
+  if (wrote || removed || !Object.keys(state.docs).length) {
+    state.org = { id: org.id, slug: org.slug, name: org.name }; state.at = new Date().toISOString();
+    await writeFile(statePath, JSON.stringify(state, null, 2));
+  }
+  if (wrote || removed) log?.(`[argo] msgr 조직 문서 미러(${org.slug}): 갱신 ${wrote} · 회수 ${removed}`);
+  return { wrote, removed, total: want.size };
+}
+
 /** 이 메시지가 이 크루를 겨냥하는가 — 멘션 또는 크루가 참가한 DM. 크루가 쓴 글·시스템 글은 트리거가 아니다. (export: 회귀 테스트용) */
 export function targetsCrew(m, crew, dmChannels) {
   if (m.author_kind !== 'user' || m.kind !== 'text') return false;
@@ -75,6 +123,13 @@ export function makeDb(client) {
     },
     async heartbeat(ids) {
       if (ids.length) unwrap(await client.from('msgr_crews').update({ last_seen_at: new Date().toISOString() }).in('id', ids));
+    },
+    /** G-2 조직 문서 미러용: 조직 이름·슬러그, 문서 목록(가벼운 열), 본문(바뀐 것만) — RLS가 열람 범위를 정한다(채널 문서는 열람자만). */
+    async org(orgId) { return unwrap(await client.from('msgr_orgs').select('id, slug, name').eq('id', orgId).maybeSingle()); },
+    async docsIndex(orgId) { return unwrap(await client.from('msgr_org_docs').select('id, channel_id, path, version, updated_at').eq('org_id', orgId)) ?? []; },
+    async docsByIds(ids) {
+      if (!ids.length) return [];
+      return unwrap(await client.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_at, msgr_channels(name)').in('id', ids)) ?? [];
     },
     async setCursor(crewId, id) { // 단조 — 과거 값으로 되돌리지 않는다
       unwrap(await client.from('msgr_crews').update({ cursor_msg_id: id }).eq('id', crewId).lt('cursor_msg_id', id));
@@ -153,6 +208,9 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   const out = { crews: crews.length, queued: 0, denied: 0, stale: 0, list: crews };
   if (!crews.length) return out;
   await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
+  for (const orgId of new Set(crews.map((c) => c.org_id))) { // G-2: 조직 문서 미러 — 바뀐 것만, 실패는 로그(턴 처리와 무관)
+    await syncOrgDocs(wsId, orgId, { db }).catch((e) => console.error('[argo] msgr 조직 문서 미러 실패:', e?.message ?? e));
+  }
   for (const crew of crews) {
     const dm = new Set(await db.crewChannels(crew.id).catch((e) => { console.error('[argo] msgr DM 채널 조회 실패 — 크루 DM 무응답 위험:', e?.message ?? e); return []; })); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
     const msgs = await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0);

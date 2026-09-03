@@ -85,6 +85,9 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // 타면 지운 파일이 원격에서 되살아나 같은 쪽지를 이중 배달한다(.gw-queue와 동일 결함 계급,
   // 분리 검수 CRITICAL-2 2026-07-27). 세션 간 소통은 배달 결과가 스레드(동기화 대상)로 남아 성립한다.
   if (rel.split('/')[0] === 'mail') return true;
+  // 조직 문서 미러(vault/org/) — 팀 메신저 서버가 정본이고 브리지가 기기마다 내려받는 파생물(G-2). 동기화를 타면
+  // 두 기기의 미러가 서로를 덮고, 오프보딩 회수(미러 삭제)가 원격에서 되살아난다.
+  if (rel.startsWith('vault/org/')) return true;
   const base = rel.split('/').pop();
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
