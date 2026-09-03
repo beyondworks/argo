@@ -35,6 +35,7 @@
 .msgr-menu-pop button.on .label { font-weight: 600; }
 .msgr-menu-pop .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-menu-pop .sep { height: 1px; background: var(--border-soft); margin: 4px 6px; }
+.msgr-menu-pop .seatline { padding: 4px 10px 2px; }
 .msgr-av.ghost { background: transparent; border-style: dashed; color: var(--fg-3); }
 .msgr-scrim.clear { background: transparent; z-index: 65; position: fixed; inset: 0; }
 .msgr-group { display: flex; align-items: center; justify-content: space-between; padding: 0 6px; margin: 18px 0 8px; font-size: 11px; font-weight: 500; letter-spacing: 0.02em; color: var(--fg-3); }
@@ -164,6 +165,7 @@
 .msgr-tools .send:active { transform: scale(.94); }
 .msgr-tools .send:disabled { opacity: .4; cursor: default; transform: none; }
 .msgr-tools .filechip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-2); }
+.msgr-tools .filechip.busy { border-color: var(--mark); } .msgr-tools .filechip.busy .msgr-klabel { color: var(--mark); animation: msgrPulse 1.2s ease-in-out infinite; }
 .msgr-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 14px 0; font-size: 11px; color: var(--fg-3); }
 .msgr-sub .typing-line { display: flex; align-items: center; gap: 6px; min-height: 16px; }
 .msgr-sub .msgr-dot { width: 6px; height: 6px; }

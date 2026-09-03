@@ -12,7 +12,8 @@ import { Sprite, I, STAR_D } from './icons.jsx';
 
 const AWAY_MS = 90_000;
 const PAGE = 100;
-const CHIP_MAX = 6; // 채널 칩 랩 상한 — 초과분은 점선 '+N' 칩 뒤로(평가 v2: 태그 구름 방지)
+const CHIP_MAX = 6;
+const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다 // 채널 칩 랩 상한 — 초과분은 점선 '+N' 칩 뒤로(평가 v2: 태그 구름 방지)
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
 const dayKey = (iso) => new Date(iso).toDateString();
 const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
@@ -89,6 +90,7 @@ function Shell({ session }) {
   const [channels, setChannels] = useState([]); const [chId, setChId] = useState(null);
   const [members, setMembers] = useState([]); const [crews, setCrews] = useState([]);
   const [chMembers, setChMembers] = useState([]); // 현재 채널의 msgr_channel_members(비공개·DM)
+  const [ent, setEnt] = useState(null); // msgr_org_entitlements(plan·seats) — 좌석 표시·한도 안내
   const [err, setErr] = useState(''); const [note, setNote] = useState('');
   const [tick, setTick] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
@@ -110,17 +112,18 @@ function Shell({ session }) {
       try {
         if (code) { await q(supabase.rpc('msgr_accept_invite', { code })); history.replaceState(null, '', location.pathname); setNote(t('org.joined')); }
         await loadOrgs();
-      } catch (e) { setErr(e.message); await loadOrgs().catch(() => {}); }
+      } catch (e) { setErr(/msgr_seat_limit/.test(e.message) ? t('seat.limit') : e.message); await loadOrgs().catch(() => {}); }
     })();
   }, [loadOrgs]); // eslint-disable-line react-hooks/exhaustive-deps
   const loadOrg = useCallback(async (id) => {
     if (!id) return;
-    const [chs, mems, crs] = await Promise.all([
+    const [chs, mems, crs, e] = await Promise.all([
       q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, created_by').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name').eq('org_id', id).is('removed_at', null)),
       q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, last_seen_at').eq('org_id', id).eq('status', 'active')),
+      supabase.from('msgr_org_entitlements').select('plan, seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
     ]);
-    setChannels(chs); setMembers(mems); setCrews(crs);
+    setChannels(chs); setMembers(mems); setCrews(crs); setEnt(e);
     setChId((cur) => cur && chs.some((c) => c.id === cur) ? cur : (chs[0]?.id ?? null));
   }, []);
   useEffect(() => { loadOrg(orgId).catch((e) => setErr(e.message)); }, [orgId, loadOrg]);
@@ -211,6 +214,7 @@ function Shell({ session }) {
             <div className="msgr-scrim clear" onClick={() => setOrgMenu(false)} />
             <div className="msgr-menu-pop" role="menu">
               {orgs.map((o) => <button key={o.id} type="button" role="menuitemradio" aria-checked={o.id === orgId} className={o.id === orgId ? 'on' : ''} onClick={() => { setOrgId(o.id); setOrgMenu(false); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t(`role.${o.role}`)}</span></button>)}
+              {ent && <div className="seatline"><span className="msgr-klabel">{t('seat.status', { used: members.filter((m) => m.role !== 'guest').length, seats: ent.seats, plan: t(`plan.${ent.plan}`) })}</span></div>}
               <div className="sep" />
               <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); createOrg(); }}><span className="msgr-av sm ghost"><I name="plus" size={13} /></span><span className="label">{t('org.new')}</span></button>
             </div>
@@ -657,6 +661,7 @@ function Composer({ chId, orgId, uid, members, crews, channel, sbw = 0, typingCr
   const { t } = useT();
   const [text, setText] = useState(''); const [busy, setBusy] = useState(false); const [files, setFiles] = useState([]);
   const [pop, setPop] = useState(null); const [sel, setSel] = useState(0);
+  const [uploading, setUploading] = useState(''); // 올리는 중인 파일 이름
   const [mentions, setMentions] = useState([]);
   const ta = useRef(null); const fileRef = useRef(null);
   const candidates = useMemo(() => {
@@ -690,13 +695,14 @@ function Composer({ chId, orgId, uid, members, crews, channel, sbw = 0, typingCr
       for (const x of [...mentions, ...byName]) { if (!x.name || seen.has(`${x.kind}:${x.id}`)) continue; if (new RegExp(`(?:^|\\s)@${x.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[\\s,.!?:;])`).test(body)) { seen.add(`${x.kind}:${x.id}`); ment.push({ kind: x.kind, id: x.id }); } }
       const row = await q(supabase.from('msgr_messages').insert({ channel_id: chId, author_kind: 'user', author_user_id: uid, body, mentions: ment, client_msg_id: crypto.randomUUID() }).select('id').single());
       for (const f of files) {
+        setUploading(f.name);
         const path = `${orgId}/${chId}/${row.id}/${f.name.replace(/[\\/]/g, '_')}`;
         const up = await supabase.storage.from('msgr').upload(path, f, { contentType: f.type || 'application/octet-stream' });
         if (up.error) { onError(`${t('msg.attachFail')}: ${f.name} — ${up.error.message}`); continue; }
         await q(supabase.from('msgr_attachments').insert({ message_id: row.id, org_id: orgId, storage_path: path, name: f.name, mime: f.type, bytes: f.size }));
       }
       setText(''); setMentions([]); setFiles([]); if (ta.current) ta.current.style.height = 'auto'; onSent();
-    } catch (e) { onError(e.message); } finally { setBusy(false); }
+    } catch (e) { onError(e.message); } finally { setBusy(false); setUploading(''); }
   };
   const onKey = (e) => {
     if (pop && candidates.length) {
@@ -717,13 +723,13 @@ function Composer({ chId, orgId, uid, members, crews, channel, sbw = 0, typingCr
         </div>
       )}
       <form className="msgr-composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
-        <input hidden multiple type="file" ref={fileRef} onChange={(e) => { setFiles([...e.target.files]); e.target.value = ''; }} />
+        <input hidden multiple type="file" ref={fileRef} onChange={(e) => { const all = [...e.target.files]; for (const f of all.filter((f) => f.size > ATTACH_MAX)) onError(t('att.tooBig', { name: f.name })); setFiles(all.filter((f) => f.size <= ATTACH_MAX)); e.target.value = ''; }} />
         <textarea ref={ta} rows={1} value={text} onChange={onChange} {...imeGuardWith(onKey)} placeholder={t('msg.placeholder2')} />
         <div className="msgr-tools">
           <button type="button" className="tb" onClick={() => fileRef.current?.click()} disabled={busy} title={t('msg.attach')}><I name="clip" size={15} /><span>{t('msg.attach')}</span></button>
           <button type="button" className="tb" onClick={insertAt} disabled={busy} title={t('msg.mention')}><I name="at" size={15} /><span>{t('msg.mention')}</span></button>
           {(files.length > 0 || channel.crew_memory === false) && <span className="sep" />}
-          {files.map((f) => <span key={f.name} className="filechip"><I name="doc" size={12} />{f.name}</span>)}
+          {files.map((f) => <span key={f.name} className={`filechip${uploading === f.name ? ' busy' : ''}`}><I name="doc" size={12} />{f.name}<span className="msgr-klabel">{uploading === f.name ? t('att.uploading') : `${Math.max(1, Math.round(f.size / 1024))}KB`}</span></span>)}
           {channel.crew_memory === false && <span className="tb on" title={t('ch.crewMemory')}><I name="memoff" size={15} /><span>{t('ch.memoryOff')}</span></span>}
           <button className="send" disabled={busy || !text.trim()} aria-label={t('msg.send')} title={t('msg.send')}><I name="up" size={16} /></button>
         </div>
