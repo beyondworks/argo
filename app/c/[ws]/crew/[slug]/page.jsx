@@ -5,7 +5,7 @@ import { use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard, isPhoneShell } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
@@ -1177,7 +1177,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             onChange={(e) => { histIdx.current = -1; setInput(e.target.value); }}
             onKeyDown={onInputKeyDown}
             onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
-            autoFocus
+            autoFocus={!isPhoneShell()} /* 폰 셸에선 진입마다 키보드가 먼저 올라오는 것을 막는다 — 데스크톱은 종전(true) */
           />
           <button className="btn btn-primary btn-icon" disabled={uploading || !input.trim()} aria-label={busy ? t('chat.queue.add') : t('chat.send')}>
             <Icon name="send" size={15} />

@@ -665,6 +665,9 @@ export function FeedbackModal({ onClose }) {
 }
 
 /** Tauri 데스크톱 감지 — 분산 복제 방지용 단일 출처(분리 검수 MEDIUM 2026-07-28). */
+/** 폰 셸(페어링된 휴대폰) — Shell이 /api/me mobile:true로 루트에 박는 data-shell="mobile" 마커. 데스크톱은 항상 false.
+    자동 포커스처럼 폰에서 키보드를 먼저 띄우는 동작을 거를 때 쓴다(마운트 직후엔 마커 전 렌더 창이 있어 Shell이 한 번 blur한다). */
+export const isPhoneShell = () => typeof document !== 'undefined' && document.documentElement.dataset.shell === 'mobile';
 export const isTauriApp = () => typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri'));
 
 /** 산출물 다운로드 onClick — 데스크톱 앱은 <a download>가 무동작(WKWebView/WebView2, 실사용 제보

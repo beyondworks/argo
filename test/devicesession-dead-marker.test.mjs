@@ -175,7 +175,8 @@ test('rejectionKind 값 집합 ↔ i18n 사전 me.sessionDead.kind.* 1:1 — /ap
   // 라우트 실호출은 currentUser의 cookies()가 요청 스코프 밖에서 던져 불가 — 조건식 없는 통과식 한 줄을 통째로 핀한다
   // (검수 MEDIUM-1: `if (i)` 조건형은 `&& false` 변이에 초록이었다)
   assert.ok(me.includes("import { deviceSessionDead, deviceSessionDeadInfo } from '../../../src/devicesession.mjs';"), '/api/me 임포트');
-  assert.ok(me.includes("  return Response.json({ authOn: AUTH_ON, user, ...(sessionDead ? { sessionDead: true, sessionDeadInfo: deviceSessionDeadInfo() } : {}) });"), '/api/me가 마커 사유를 조건 없이 실어 보낸다');
+  // mobile 스프레드(휴대폰 셸 마커, 2026-09-03)는 sessionDead 스프레드 앞에 같은 줄로 앉는다 — 핀은 줄 전체 그대로
+  assert.ok(me.includes("  return Response.json({ authOn: AUTH_ON, user, ...(mobile ? { mobile: true } : {}), ...(sessionDead ? { sessionDead: true, sessionDeadInfo: deviceSessionDeadInfo() } : {}) });"), '/api/me가 마커 사유를 조건 없이 실어 보낸다');
   const layout = await readFile(new URL('../app/c/[ws]/layout.jsx', import.meta.url), 'utf8');
   assert.ok(/me\?\.sessionDead\s*\?\s*<Link[^>]*title=\{me\.sessionDeadInfo \? `[^`]*\$\{t\(`me\.sessionDead\.kind\.\$\{me\.sessionDeadInfo\.kind\}`\)\} \(\$\{t\('me\.sessionDead\.raw'\)\}: \$\{me\.sessionDeadInfo\.reason\}\)`/.test(layout), '사이드바 툴팁이 분류 문구 + "서버 원문:" 접두 + 원문 사유를 보여준다');
 });

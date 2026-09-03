@@ -2216,3 +2216,30 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
    2026-09-01). 규칙 내용은 위 900px 블록과 동일 — 한쪽만 고치면 두 축이 갈라지므로 함께 갱신할 것. */
 :root[data-narrow-shell] #argo-topbar-slot { display: none; }
 :root[data-narrow-shell] .crew-phone-band { display: flex; flex-wrap: wrap; }
+
+/* ── 휴대폰 셸 — data-shell="mobile"(페어링 토큰이 유효한 폰 요청에만 /api/me → Shell이 박는 마커) 아래에서만
+   발화한다. 미디어쿼리가 아니다: 데스크톱 앱·브라우저 :3001은 마커를 받을 수 없어 창을 좁혀도 화면 불변
+   (유건 지시 2026-09-03 무간섭). 이 블록의 모든 셀렉터는 [data-shell="mobile"]로 시작해야 한다 —
+   test/mobile-shell-isolation.test.mjs가 역방향 스캔으로 잠근다. 기존 900/560px 블록은 폰에서 함께 발화(자산). */
+[data-shell="mobile"] .shell { grid-template-columns: minmax(0, 1fr); }
+[data-shell="mobile"] .side { display: none; }
+[data-shell="mobile"] .content { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+[data-shell="mobile"] .phone-tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; display: flex; background: var(--card); border-top: 1px solid var(--border-soft); padding: 4px 4px calc(6px + env(safe-area-inset-bottom, 0px)); }
+[data-shell="mobile"] .phone-tab { flex: 1; min-height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; color: var(--fg-3); text-decoration: none; background: none; border: 0; border-radius: 10px; position: relative; cursor: pointer; font-family: inherit; }
+[data-shell="mobile"] .phone-tab svg { color: inherit; }
+[data-shell="mobile"] .phone-tab.active { color: var(--primary-strong); font-weight: 600; }
+[data-shell="mobile"] .phone-badge { position: absolute; top: 4px; left: calc(50% + 6px); min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--primary); color: var(--primary-fg); font-size: 10px; font-weight: 700; display: grid; place-items: center; }
+[data-shell="mobile"] .phone-sheet-backdrop { position: fixed; inset: 0; z-index: 58; background: var(--overlay); }
+[data-shell="mobile"] .phone-sheet { position: fixed; left: 0; right: 0; bottom: calc(58px + env(safe-area-inset-bottom, 0px)); z-index: 59; background: var(--card); border-top: 1px solid var(--border-soft); border-radius: 16px 16px 0 0; padding: 10px 10px 12px; display: grid; gap: 2px; box-shadow: var(--shadow-card); }
+[data-shell="mobile"] .phone-sheet .nav-item { min-height: 44px; }
+[data-shell="mobile"] .phone-pc { display: grid; gap: 5px; padding: 10px 12px 4px; border-top: 1px dashed var(--border-soft); margin-top: 6px; }
+/* 데크 — 결재함이 폰에서는 맨 위(홈 = 판단이 필요한 것부터) */
+[data-shell="mobile"] .deck-approvals { order: -1; }
+/* 호버 전용 액션은 터치에서 도달 불가 — 상시 표시 */
+[data-shell="mobile"] .msg-actions, [data-shell="mobile"] .rail-item .rail-actions, [data-shell="mobile"] .crew-row .crew-pin,
+[data-shell="mobile"] .crew-row .crew-side, [data-shell="mobile"] .vault-tree .row-wrap .row-side, [data-shell="mobile"] .vault-tab-x,
+[data-shell="mobile"] .side-group-row .tm-edit, [data-shell="mobile"] .vault-tree .row .when { opacity: 1; }
+/* 히트 타깃 — 폰 손가락 기준 최소 36px(레이아웃을 흔들지 않는 선) */
+[data-shell="mobile"] .btn.sm { min-height: 36px; }
+[data-shell="mobile"] .msg-actions button { min-width: 36px; min-height: 36px; }
+

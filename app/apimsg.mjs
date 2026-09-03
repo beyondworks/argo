@@ -24,6 +24,14 @@ export const API_MSG = {
   // 회의실(app/api/companies/[ws]/room·sessions) — 크루 발언 중 새 회의·전환·마치기 거절(코어 assertRoomIdle의 ROOM_BUSY).
   // 화면은 errorCode로 사전(room.busyGate)을 다시 그리고, 이 문구는 API 소비자·로그용 표시 언어 본문(#393 DELETE 문구 계승).
   room_busy: { status: 409, ko: '발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.', en: 'A crew is still speaking — try again after it finishes.' },
+  // 휴대폰 페어링(app/api/mobile·app/api/mobile/pair) — 폰의 /m/pair 페이지와 PC 설정 카드가 errorCode로 다시 그린다
+  mobile_disabled: { status: 403, ko: '휴대폰에서 열기가 꺼져 있습니다 — PC 설정에서 켜 주세요', en: 'Phone access is off — turn it on in the PC settings' },
+  mobile_code_expired: { status: 410, ko: '코드가 만료됐습니다 — PC 설정에서 새 코드를 받아 주세요', en: 'The code has expired — get a new one from the PC settings' },
+  mobile_code_wrong: { status: 400, ko: '코드가 맞지 않습니다', en: 'The code is incorrect' },
+  mobile_code_locked: { status: 429, ko: '틀린 횟수가 많아 코드를 폐기했습니다 — PC 설정에서 새 코드를 받아 주세요', en: 'Too many wrong attempts — get a new code from the PC settings' },
+  mobile_loopback_only: { status: 403, ko: '휴대폰 연결 관리는 이 컴퓨터에서만 가능합니다', en: 'Phone access can only be managed on this computer' },
+  mobile_port_busy: { status: 409, ko: '포트가 이미 사용 중입니다 — 다른 포트를 지정해 주세요', en: 'That port is already in use — choose another port' },
+  mobile_pair_not_found: { status: 404, ko: '연결된 휴대폰을 찾을 수 없습니다', en: 'That phone is not connected' },
 };
 
 /** 기능 라우트 공통 오류 응답. lang은 ko|en(그 외 값·미지정은 ko). 미등록 코드는 throw —

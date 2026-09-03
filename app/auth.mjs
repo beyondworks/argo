@@ -3,7 +3,7 @@
 // env: NEXT_PUBLIC_SUPABASE_URL · NEXT_PUBLIC_SUPABASE_ANON_KEY (.env.local 또는 배포 env — 값 평문 기록 금지)
 import { readFile } from 'node:fs/promises';
 import { writeJsonAtomic } from '../src/jsonstore.mjs';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { paths } from '../src/workspace.mjs';
 import { loadDeviceSession } from '../src/devicesession.mjs';
@@ -38,6 +38,11 @@ export async function requestLang() {
     덮어쓰기)의 결과다 — 이전 주인은 이 기기에서 로그아웃되며, 재바인딩 확인 관문은 별도 과제.
     데스크톱 앱 웹뷰는 sb-* 쿠키가 없어 기존처럼 기기 세션으로 떨어진다(회귀 0). */
 export async function currentUser() {
+  // 휴대폰 페어링(비루프백 Host + argo-mobile 쿠키) — 미들웨어는 마커만 보고 통과시키므로 토큰 검증은 여기가
+  // 유일하다. 무효 토큰(해제·토글 off·위조)은 모드 무관 즉시 null. 유효하면 아래 종전 경로로 떨어져 이 PC의
+  // 신원(무인증=local, 인증=기기 세션 ?? 게스트)이 된다 — 폰은 이 PC의 화면이다. 루프백 Host·쿠키 없음은
+  // 판정 자체가 없어 데스크톱·호스티드·워커 경로가 한 줄도 달라지지 않는다(src/mobile-pairs.mjs mobileAccess).
+  if (!TENANT && (await mobileDenied())) return null;
   if (!AUTH_ON) return { id: 'local', email: '' };
   const store = await cookies();
   // sb-* 쿠키가 있을 때만 GoTrue 왕복 — 무쿠키 요청(데스크톱 다수)이 매번 ~160ms를 내지 않게
@@ -63,6 +68,17 @@ export async function currentUser() {
     if (guestModeOn()) return { id: 'local', email: '' };
   }
   return null;
+}
+
+async function mobileDenied() {
+  let host, cookieHeader;
+  try {
+    host = (await headers()).get('host');
+    cookieHeader = (await headers()).get('cookie');
+  } catch { return false; } // 요청 스코프 밖(내부 호출·테스트) — 판정 없음 = 종전 경로
+  if (!cookieHeader?.includes('argo-mobile=')) return false; // 빠른 탈출 — 파일 읽기는 폰 요청에만
+  const { mobileAccess } = await import('../src/mobile-pairs.mjs'); // 동적 — edge 번들 오염 방지 관례
+  return (await mobileAccess({ host, cookieHeader })).kind === 'deny'; // 검증 오류는 throw(fail-closed)
 }
 
 /** 회사 소유권 가드 — 위반 시 Response를 돌려준다(핸들러가 그대로 return). 통과 시 null.
