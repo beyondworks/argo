@@ -274,6 +274,8 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
   const [tab, setTab] = useState('all');
   const feed = useRef(null);
+  const [sbw, setSbw] = useState(0); // 스레드 스크롤바 폭의 절반 — 독 좌우를 대화 열과 맞춘다(오버레이 스크롤바면 0)
+  useEffect(() => { const el = feed.current; if (!el) return; const m = () => setSbw((el.offsetWidth - el.clientWidth) / 2); m(); window.addEventListener('resize', m); return () => window.removeEventListener('resize', m); }, []);
   const chId = channel.id;
   const load = useCallback(async (afterId = 0) => {
     const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, deleted_at')
@@ -335,7 +337,7 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
         {typingCrews.map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /></div></div></div>)}
       </div>
     </div>
-    <Composer chId={chId} orgId={orgId} uid={uid} members={members} crews={crews} channel={channel} typingCrews={typingCrews} onSent={() => load(lastId).catch(() => {})} onError={onError} />
+    <Composer chId={chId} orgId={orgId} uid={uid} members={members} crews={crews} channel={channel} sbw={sbw} typingCrews={typingCrews} onSent={() => load(lastId).catch(() => {})} onError={onError} />
   </>);
 }
 
@@ -414,7 +416,7 @@ function Attachment({ a }) {
 }
 
 /* ─── 2단 다크 독: 입력 줄 + 도구 줄(첨부·멘션 │ 기억 상태) + 옐로 원형 전송. @멘션 팝업(사람·크루), Enter 전송(IME 조합 제외) ─── */
-function Composer({ chId, orgId, uid, members, crews, channel, typingCrews, onSent, onError }) {
+function Composer({ chId, orgId, uid, members, crews, channel, sbw = 0, typingCrews, onSent, onError }) {
   const { t } = useT();
   const [text, setText] = useState(''); const [busy, setBusy] = useState(false); const [files, setFiles] = useState([]);
   const [pop, setPop] = useState(null); const [sel, setSel] = useState(0);
@@ -466,7 +468,7 @@ function Composer({ chId, orgId, uid, members, crews, channel, typingCrews, onSe
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   };
   return (
-    <div className="msgr-dock"><div>
+    <div className="msgr-dock" style={{ '--sbw': `${sbw}px` }}><div>
       {pop && candidates.length > 0 && (
         <div className="msgr-pop" role="listbox">
           {candidates.map((c, i) => <button key={`${c.kind}:${c.id}`} type="button" role="option" aria-selected={i === sel} className={i === sel ? 'on' : ''} onMouseDown={(e) => { e.preventDefault(); pick(c); }}>

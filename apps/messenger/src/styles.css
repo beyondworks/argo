@@ -131,7 +131,9 @@
 .msgr-slip .btn { border-radius: 999px; }
 
 /* 2단 다크 독 — .msgr-composer는 linen 차콜 스코프(globals.css). 다른 테마에선 카드 표면. */
-.msgr-dock { padding: 14px max(24px, calc((100% - 720px) / 2)) 16px; overflow-y: auto; scrollbar-gutter: stable both-edges; position: sticky; bottom: 0; background: linear-gradient(to top, var(--bg) 70%, transparent); }
+/* 독은 overflow를 열어 둔다(멘션 팝업이 위로 뜬다 — 유건 실검수 2026-09-03: overflow-y auto가 팝업을 잘랐다).
+   스레드의 스크롤바 거터와 좌우를 맞추는 건 JS가 잰 --sbw(스크롤바 폭 절반)로. */
+.msgr-dock { padding: 14px calc(max(24px, (100% - 720px) / 2) + var(--sbw, 0px)) 16px; background: var(--bg); }
 .msgr-dock > div { position: relative; }
 .msgr-composer { background: var(--card); color: var(--fg); border-radius: 22px; padding: 12px 12px 10px 16px; display: grid; gap: 8px; box-shadow: var(--shadow-float); border: 1px solid var(--border); transition: box-shadow 150ms ease; }
 .msgr-composer:focus-within { box-shadow: var(--shadow-float), 0 0 0 2px rgba(var(--mark-rgb), .45); }
