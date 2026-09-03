@@ -340,6 +340,9 @@ const THEME_SWATCHES = {
   graphite: ['#f0f0f0', '#202020', '#1a1a1a'],   // 자동 — 밝은 판·어두운 판을 함께 보여 시스템 따라감을 드러낸다
   'graphite-light': ['#f0f0f0', '#ffffff', '#1a1a1a'],
   'graphite-dark': ['#202020', '#252525', '#ededed'],
+  linen: ['#e9e6df', '#1f1e1b', '#e8e400'],   // 자동 — 그레이지 판·차콜 판 + 옐로 마크
+  'linen-light': ['#e9e6df', '#fbfaf7', '#1f1e1b'],
+  'linen-dark': ['#1f1e1b', '#2a2926', '#ececea'],
   argo: ['#e3e5d6', '#e9ebdd', '#22241c'],
   calm: ['#eff1f4', '#f8f9fb', '#5a6b8c'],
   'calm-dark': ['#1b1e24', '#22262e', '#8098bd'],
@@ -372,7 +375,7 @@ const THEME_SWATCHES = {
 // 아르고 시그니처 = 라이트/다크/시스템 3-모드. 나머지 테마는 "다른 스킨"으로 분리(모드 토글과 중복 제거).
 // 기본 패밀리 2종(그래파이트=기본, 아르고=시그니처) × 모드 3종(시스템/라이트/다크). 패밀리 코드: 시스템 자동은
 // 접미 없음, 고정은 -light/-dark. 다른 스킨(목록)은 패밀리 밖이라 모드 세그먼트가 적용되지 않는다.
-const FAMILIES = [['graphite', 'settings.family.graphite'], ['argo', 'settings.family.argo']];
+const FAMILIES = [['graphite', 'settings.family.graphite'], ['argo', 'settings.family.argo'], ['linen', 'settings.family.linen']];
 const MODE_SUFFIX = [['', 'settings.mode.system'], ['-light', 'settings.mode.light'], ['-dark', 'settings.mode.dark']];
 const FAMILY_CODES = FAMILIES.flatMap(([f]) => MODE_SUFFIX.map(([sfx]) => `${f}${sfx}`));
 const ARGO_CODES = FAMILY_CODES;

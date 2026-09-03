@@ -61,6 +61,9 @@
 
   --accent: #d8ab4a;       /* 계기 액센트 — 골드(계기·게이지 가독 위해 primary보다 살짝 깊게) */
   --accent-rgb: 216, 171, 74;
+  /* --mark 가족 — '표시' 색(점·노드·결재 머리띠). 기본은 액센트와 같고 linen만 형광 옐로로 갈라진다. */
+  --mark: var(--accent); --mark-rgb: var(--accent-rgb); --mark-fg: var(--primary-fg); --mark-wash: var(--primary-soft);
+  --shadow-float: 0 8px 24px rgba(60, 50, 20, 0.12);
 
   /* 캔버스(기억 그래프)용 RGB 트리플릿 — --fg / --card와 동기 */
   --ink-rgb: 34, 30, 21;
@@ -1381,6 +1384,193 @@
 :root[data-theme='graphite-dark'] .row.active { background: var(--secondary); color: var(--fg); }
 :root[data-theme='graphite'] .msg-user,
 :root[data-theme='graphite-dark'] .msg-user { background: var(--secondary); color: var(--fg); }
+
+/* [linen] 웜 뉴트럴 — 메신저 시안(apps/messenger/design, 2026-09-03 유건 승인)에서 확정한 값.
+   그레이지 캔버스 위 순백 카드, **레일은 라이트에서도 차콜**(핀 프레임 문법 — cream-pop처럼 .side 스코프에서
+   토큰을 갈아끼운다), 액션은 그래파이트와 같은 명도 반전. 형광 옐로는 --accent가 아니라 **--mark**다:
+   --accent 소비자(Dial·Bars·meter·스피너·데크 알림)가 저대비 옐로 계기판이 되지 않도록 분리했다.
+   토큰 값의 원천은 apps/messenger/design/tokens.css — 양쪽을 손으로 맞추지 말고 그 파일에서 다시 생성한다.
+   시스템 자동/고정 세 갈래의 동기는 test/theme-linen-sync가 잠근다(그래파이트와 같은 계약). */
+:root[data-theme='linen'] {
+  color-scheme: light;
+  --bg: #e9e6df;
+  --card: #fbfaf7;
+  --card-2: #f1efe9;
+  --secondary: #e0dcd3;
+  --fg: #26241f;
+  --fg-2: #5a564d;
+  --fg-3: #6b655e;
+  --border: rgba(38, 36, 31, 0.14);
+  --border-soft: rgba(38, 36, 31, 0.07);
+  --primary: #1f1e1b;
+  --primary-strong: #000000;
+  --primary-fg: #f4f2ec;
+  --primary-fg-dim: rgba(244, 242, 236, 0.72);
+  --primary-fg-line: rgba(244, 242, 236, 0.28);
+  --primary-soft: rgba(31, 30, 27, 0.07);
+  --ok: #3f7a52; --ok-soft: rgba(63, 122, 82, 0.12);
+  --info: #56688a; --info-soft: rgba(86, 104, 138, 0.12);
+  --warn: #9a6f1e; --warn-soft: rgba(154, 111, 30, 0.13);
+  --danger: #a8433a; --danger-soft: rgba(168, 67, 58, 0.11);
+  --ring: rgba(31, 30, 27, 0.32);
+  --selection: rgba(232, 228, 0, 0.35);
+  --overlay: rgba(31, 30, 27, 0.36);
+  --shadow-card: none;   /* 그래파이트 규칙 계승 — 표면 단계로만 위계. 플로팅 컴포저·팝업만 --shadow-float */
+  --shadow-float: 0 8px 24px rgba(31, 30, 27, 0.14);
+  --accent: #1f1e1b; --accent-rgb: 31, 30, 27;   /* primary와 같은 값 — 계기판(Dial·Bars·meter)은 차콜. 옐로는 --mark로 분리 */
+  --mark: #e8e400; --mark-rgb: 232, 228, 0; --mark-fg: #1f1e1b;   /* 형광 옐로 — 점·노드·결재 머리띠·전송 버튼에만(면 채움은 그 둘뿐) */
+  --mark-wash: color-mix(in srgb, var(--mark) 7%, var(--card));
+  --ink-rgb: 38, 36, 31; --paper-rgb: 251, 250, 247;
+}
+:root[data-theme='linen'] .side, :root[data-theme='linen'] .msgr-composer {
+  background: #1f1e1b; border-right-color: rgba(230, 226, 216, 0.1); color: #e6e2d8;
+  --fg: #e6e2d8; --fg-2: #a8a297; --fg-3: #8d877c;
+  --border: rgba(230, 226, 216, 0.12); --border-soft: rgba(230, 226, 216, 0.06);
+  --card: #2a2926; --card-2: #33322e; --secondary: #3c3a35;
+  --primary: #ececea; --primary-strong: #ffffff; --primary-fg: #1f1e1b; --primary-fg-dim: rgba(31, 30, 27, 0.72); --primary-fg-line: rgba(31, 30, 27, 0.35); --primary-soft: rgba(236, 236, 234, 0.09);
+  --ring: rgba(236, 236, 234, 0.35);
+}
+:root[data-theme='linen'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+:root[data-theme='linen'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
+:root[data-theme='linen'] .nav-item.active, :root[data-theme='linen'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
+:root[data-theme='linen'] .row.active { background: var(--secondary); color: var(--fg); }
+
+/* ⚠ 자동(@media) 블록은 위 라이트 오버라이드보다 **반드시 뒤에**(그래파이트와 같은 순서 계약). */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='linen'] {
+  color-scheme: dark;
+  --bg: #1f1e1b;
+  --card: #2a2926;
+  --card-2: #33322e;
+  --secondary: #3c3a35;
+  --fg: #e6e2d8;
+  --fg-2: #b3ada2;
+  --fg-3: #979185;
+  --border: rgba(230, 226, 216, 0.12);
+  --border-soft: rgba(230, 226, 216, 0.06);
+  --primary: #ececea;
+  --primary-strong: #ffffff;
+  --primary-fg: #1f1e1b;
+  --primary-fg-dim: rgba(31, 30, 27, 0.72);
+  --primary-fg-line: rgba(31, 30, 27, 0.35);
+  --primary-soft: rgba(236, 236, 234, 0.09);
+  --ok: #6fb387; --ok-soft: rgba(111, 179, 135, 0.12);
+  --info: #8fa3bd; --info-soft: rgba(143, 163, 189, 0.12);
+  --warn: #d2a24f; --warn-soft: rgba(210, 162, 79, 0.13);
+  --danger: #e2705f; --danger-soft: rgba(226, 112, 95, 0.11);
+  --ring: rgba(236, 236, 234, 0.35);
+  --selection: rgba(241, 238, 58, 0.28);
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-card: none;   /* 그래파이트 규칙 계승 — 표면 단계로만 위계. 플로팅 컴포저·팝업만 --shadow-float */
+  --shadow-float: none;
+  --accent: #ececea; --accent-rgb: 236, 236, 234;   /* primary와 같은 값 — 계기판(Dial·Bars·meter)은 차콜. 옐로는 --mark로 분리 */
+  --mark: #f1ee3a; --mark-rgb: 241, 238, 58; --mark-fg: #1f1e1b;   /* 형광 옐로 — 점·노드·결재 머리띠·전송 버튼에만(면 채움은 그 둘뿐) */
+  --mark-wash: var(--card);
+  --ink-rgb: 230, 226, 216; --paper-rgb: 42, 41, 38;
+  }
+  :root[data-theme='linen'] .side, :root[data-theme='linen'] .msgr-composer {
+  background: #171614; border-right-color: rgba(230, 226, 216, 0.1); color: #e6e2d8;
+  --fg: #e6e2d8; --fg-2: #a8a297; --fg-3: #8d877c;
+  --border: rgba(230, 226, 216, 0.12); --border-soft: rgba(230, 226, 216, 0.06);
+  --card: #2a2926; --card-2: #33322e; --secondary: #3c3a35;
+  --primary: #ececea; --primary-strong: #ffffff; --primary-fg: #1f1e1b; --primary-fg-dim: rgba(31, 30, 27, 0.72); --primary-fg-line: rgba(31, 30, 27, 0.35); --primary-soft: rgba(236, 236, 234, 0.09);
+  --ring: rgba(236, 236, 234, 0.35);
+}
+  :root[data-theme='linen'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+  :root[data-theme='linen'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
+  :root[data-theme='linen'] .nav-item.active,   :root[data-theme='linen'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
+  :root[data-theme='linen'] .row.active { background: var(--secondary); color: var(--fg); }
+}
+
+:root[data-theme='linen-light'] {
+  color-scheme: light;
+  --bg: #e9e6df;
+  --card: #fbfaf7;
+  --card-2: #f1efe9;
+  --secondary: #e0dcd3;
+  --fg: #26241f;
+  --fg-2: #5a564d;
+  --fg-3: #6b655e;
+  --border: rgba(38, 36, 31, 0.14);
+  --border-soft: rgba(38, 36, 31, 0.07);
+  --primary: #1f1e1b;
+  --primary-strong: #000000;
+  --primary-fg: #f4f2ec;
+  --primary-fg-dim: rgba(244, 242, 236, 0.72);
+  --primary-fg-line: rgba(244, 242, 236, 0.28);
+  --primary-soft: rgba(31, 30, 27, 0.07);
+  --ok: #3f7a52; --ok-soft: rgba(63, 122, 82, 0.12);
+  --info: #56688a; --info-soft: rgba(86, 104, 138, 0.12);
+  --warn: #9a6f1e; --warn-soft: rgba(154, 111, 30, 0.13);
+  --danger: #a8433a; --danger-soft: rgba(168, 67, 58, 0.11);
+  --ring: rgba(31, 30, 27, 0.32);
+  --selection: rgba(232, 228, 0, 0.35);
+  --overlay: rgba(31, 30, 27, 0.36);
+  --shadow-card: none;   /* 그래파이트 규칙 계승 — 표면 단계로만 위계. 플로팅 컴포저·팝업만 --shadow-float */
+  --shadow-float: 0 8px 24px rgba(31, 30, 27, 0.14);
+  --accent: #1f1e1b; --accent-rgb: 31, 30, 27;   /* primary와 같은 값 — 계기판(Dial·Bars·meter)은 차콜. 옐로는 --mark로 분리 */
+  --mark: #e8e400; --mark-rgb: 232, 228, 0; --mark-fg: #1f1e1b;   /* 형광 옐로 — 점·노드·결재 머리띠·전송 버튼에만(면 채움은 그 둘뿐) */
+  --mark-wash: color-mix(in srgb, var(--mark) 7%, var(--card));
+  --ink-rgb: 38, 36, 31; --paper-rgb: 251, 250, 247;
+}
+:root[data-theme='linen-light'] .side, :root[data-theme='linen-light'] .msgr-composer {
+  background: #1f1e1b; border-right-color: rgba(230, 226, 216, 0.1); color: #e6e2d8;
+  --fg: #e6e2d8; --fg-2: #a8a297; --fg-3: #8d877c;
+  --border: rgba(230, 226, 216, 0.12); --border-soft: rgba(230, 226, 216, 0.06);
+  --card: #2a2926; --card-2: #33322e; --secondary: #3c3a35;
+  --primary: #ececea; --primary-strong: #ffffff; --primary-fg: #1f1e1b; --primary-fg-dim: rgba(31, 30, 27, 0.72); --primary-fg-line: rgba(31, 30, 27, 0.35); --primary-soft: rgba(236, 236, 234, 0.09);
+  --ring: rgba(236, 236, 234, 0.35);
+}
+:root[data-theme='linen-light'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+:root[data-theme='linen-light'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
+:root[data-theme='linen-light'] .nav-item.active, :root[data-theme='linen-light'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
+:root[data-theme='linen-light'] .row.active { background: var(--secondary); color: var(--fg); }
+
+:root[data-theme='linen-dark'] {
+  color-scheme: dark;
+  --bg: #1f1e1b;
+  --card: #2a2926;
+  --card-2: #33322e;
+  --secondary: #3c3a35;
+  --fg: #e6e2d8;
+  --fg-2: #b3ada2;
+  --fg-3: #979185;
+  --border: rgba(230, 226, 216, 0.12);
+  --border-soft: rgba(230, 226, 216, 0.06);
+  --primary: #ececea;
+  --primary-strong: #ffffff;
+  --primary-fg: #1f1e1b;
+  --primary-fg-dim: rgba(31, 30, 27, 0.72);
+  --primary-fg-line: rgba(31, 30, 27, 0.35);
+  --primary-soft: rgba(236, 236, 234, 0.09);
+  --ok: #6fb387; --ok-soft: rgba(111, 179, 135, 0.12);
+  --info: #8fa3bd; --info-soft: rgba(143, 163, 189, 0.12);
+  --warn: #d2a24f; --warn-soft: rgba(210, 162, 79, 0.13);
+  --danger: #e2705f; --danger-soft: rgba(226, 112, 95, 0.11);
+  --ring: rgba(236, 236, 234, 0.35);
+  --selection: rgba(241, 238, 58, 0.28);
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-card: none;   /* 그래파이트 규칙 계승 — 표면 단계로만 위계. 플로팅 컴포저·팝업만 --shadow-float */
+  --shadow-float: none;
+  --accent: #ececea; --accent-rgb: 236, 236, 234;   /* primary와 같은 값 — 계기판(Dial·Bars·meter)은 차콜. 옐로는 --mark로 분리 */
+  --mark: #f1ee3a; --mark-rgb: 241, 238, 58; --mark-fg: #1f1e1b;   /* 형광 옐로 — 점·노드·결재 머리띠·전송 버튼에만(면 채움은 그 둘뿐) */
+  --mark-wash: var(--card);
+  --ink-rgb: 230, 226, 216; --paper-rgb: 42, 41, 38;
+}
+:root[data-theme='linen-dark'] .side, :root[data-theme='linen-dark'] .msgr-composer {
+  background: #171614; border-right-color: rgba(230, 226, 216, 0.1); color: #e6e2d8;
+  --fg: #e6e2d8; --fg-2: #a8a297; --fg-3: #8d877c;
+  --border: rgba(230, 226, 216, 0.12); --border-soft: rgba(230, 226, 216, 0.06);
+  --card: #2a2926; --card-2: #33322e; --secondary: #3c3a35;
+  --primary: #ececea; --primary-strong: #ffffff; --primary-fg: #1f1e1b; --primary-fg-dim: rgba(31, 30, 27, 0.72); --primary-fg-line: rgba(31, 30, 27, 0.35); --primary-soft: rgba(236, 236, 234, 0.09);
+  --ring: rgba(236, 236, 234, 0.35);
+}
+:root[data-theme='linen-dark'] .nav-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--fg); }
+:root[data-theme='linen-dark'] .nav-item.active { background: rgba(255, 255, 255, 0.11); color: var(--fg); }
+:root[data-theme='linen-dark'] .nav-item.active, :root[data-theme='linen-dark'] .row.active { --primary-fg: var(--fg); --primary-fg-dim: var(--fg-2); --primary-fg-line: var(--border); }
+:root[data-theme='linen-dark'] .row.active { background: var(--secondary); color: var(--fg); }
+
+/* 내 말풍선은 차콜 반전 그대로(--primary) — 그래파이트처럼 표면으로 바꾸지 않는다(시안 v2: 내 글 = 척추 반대편 차콜). */
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
