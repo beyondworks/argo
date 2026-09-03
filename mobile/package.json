@@ -1,0 +1,21 @@
+{
+  "name": "argo-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Argo 휴대폰 껍데기 — PC의 아르고에 페어링해 그 오리진으로 WebView를 이동하는 연결 화면 하나(Capacitor).",
+  "scripts": {
+    "sync": "cap sync",
+    "ios": "cap run ios",
+    "android": "cap run android",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/barcode-scanner": "^2.2.6",
+    "@capacitor/cli": "^7.6.9",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/ios": "^7.6.9"
+  }
+}

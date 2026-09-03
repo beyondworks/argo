@@ -1,0 +1,19 @@
+{
+  "appId": "com.beyondworks.argo.mobile",
+  "appName": "Argo",
+  "webDir": "www",
+  "server": {
+    "allowNavigation": [
+      "*"
+    ],
+    "cleartext": true
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "limitsNavigationsToAppBoundDomains": false,
+    "packageManager": "SPM"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
