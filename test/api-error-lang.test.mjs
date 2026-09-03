@@ -46,6 +46,14 @@ const EXPECT = {
   e2ee_unknown_action: { status: 400, ko: '알 수 없는 action', en: 'Unknown action' },
   // 회의실 게이트(#395) — 세 라우트(새 회의·전환·마치기)가 같은 코드로 응답. 문구는 #393 DELETE 핀(/진행 중|still speaking/)을 잇는다
   room_busy: { status: 409, ko: '발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.', en: 'A crew is still speaking — try again after it finishes.' },
+  // 휴대폰 페어링(app/api/mobile·pair) — 신규 표면(2026-09-03). 폰 /m/pair 페이지·PC 설정 카드가 error를 렌더.
+  mobile_disabled: { status: 403, ko: '휴대폰에서 열기가 꺼져 있습니다 — PC 설정에서 켜 주세요', en: 'Phone access is off — turn it on in the PC settings' },
+  mobile_code_expired: { status: 410, ko: '코드가 만료됐습니다 — PC 설정에서 새 코드를 받아 주세요', en: 'The code has expired — get a new one from the PC settings' },
+  mobile_code_wrong: { status: 400, ko: '코드가 맞지 않습니다', en: 'The code is incorrect' },
+  mobile_code_locked: { status: 429, ko: '틀린 횟수가 많아 코드를 폐기했습니다 — PC 설정에서 새 코드를 받아 주세요', en: 'Too many wrong attempts — get a new code from the PC settings' },
+  mobile_loopback_only: { status: 403, ko: '휴대폰 연결 관리는 이 컴퓨터에서만 가능합니다', en: 'Phone access can only be managed on this computer' },
+  mobile_port_busy: { status: 409, ko: '포트가 이미 사용 중입니다 — 다른 포트를 지정해 주세요', en: 'That port is already in use — choose another port' },
+  mobile_pair_not_found: { status: 404, ko: '연결된 휴대폰을 찾을 수 없습니다', en: 'That phone is not connected' },
 };
 
 test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태코드 + errorCode 동봉', async () => {

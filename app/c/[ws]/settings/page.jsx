@@ -8,6 +8,7 @@ import { useLang, adjustZoom } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 import { useAppUpdate } from '../../../use-app-update';
+import { MobileCard } from '../mobile-card';
 import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
 import { CHANNEL_EVENTS } from '../../../../src/channel-events.mjs'; // 순수 상수 — connections.mjs는 fs를 끌어 클라 번들이 깨진다
 
@@ -170,6 +171,7 @@ function Settings({ params }) {
 
       <Section label={t('settings.devices.section')}>
         <DevicesCard ws={ws} />
+        <MobileCard />
         <UpdateCard />
       </Section>
 

@@ -6,5 +6,6 @@
 // 후 라우트를 동적 임포트한다. node --test는 파일별 자식 프로세스라 다른 테스트로 새지 않는다.
 export async function resolve(specifier, context, nextResolve) {
   if (specifier === 'next/headers') return nextResolve('next/headers.js', context);
+  if (specifier === 'next/server') return nextResolve('next/server.js', context); // middleware.js 실호출(test/middleware-mobile-*.test.mjs)
   return nextResolve(specifier, context);
 }

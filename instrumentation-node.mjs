@@ -3,6 +3,7 @@
 import { ensureScheduler } from './src/scheduler.mjs';
 import { ensureGateway } from './src/gateway.mjs';
 import { ensureSync } from './src/sync.mjs';
+import { ensureMobileListener } from './src/mobile-listener.mjs';
 
 // 부모(데스크톱 셸) 감시 — 앱이 넘긴 ARGO_PARENT_PID가 사라지면 서버도 종료한다.
 // Tauri 사이드카는 부모가 죽어도 자동 종료되지 않아(실측: macOS·Windows 공통) 고아 node가
@@ -18,6 +19,7 @@ if (parentPid > 0) {
 ensureScheduler();
 ensureGateway();
 ensureSync(); // C-1 기기 간 동기화 — env(서비스 키) 있을 때만 켜진다
+ensureMobileListener(); // 휴대폰 LAN 리스너 — .mobile.json 토글이 켜져 있을 때만(기본 off = 무동작)
 
 // 고아 턴 스위퍼 — 이전 프로세스가 턴 도중 죽었으면(재배포·크래시) awaiting 지시를 정직한 실패
 // 표시로 전환한다(무언 소멸 금지 — 실사고 2026-08-28). 몇 초 늦춰 부팅 경로를 막지 않는다.

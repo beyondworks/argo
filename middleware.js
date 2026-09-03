@@ -12,6 +12,12 @@ const URL_ENV = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const KEY_ENV = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 const LOCAL_HOST_RE = /^(127\.0\.0\.1|localhost|\[::1\]|::1)(:\d+)?$/;
+// 휴대폰 페어링(LAN 리스너 경유, 비루프백 Host) — 마커 쿠키는 UX 게이트, 토큰 검증은 라우트 currentUser
+// (src/mobile-pairs.mjs mobileAccess)가 한다(기기·게스트 마커와 같은 계약). 페어링 진입점과 ping은 쿠키
+// 이전 호출이라 공개. DNS 리바인딩 공격 오리진에는 이 쿠키가 실리지 않으므로 아래 421·401은 그대로 선다.
+// 루프백 Host에서는 이 분기가 아예 돌지 않는다 — 데스크톱·상주 경로 불변.
+const MOBILE_PUBLIC = (p) => p === '/m/pair' || p === '/api/mobile/pair' || p === '/api/ping';
+const mobilePass = (req) => !!req.cookies.get('argo-mobile')?.value || MOBILE_PUBLIC(req.nextUrl.pathname);
 
 export async function middleware(req) {
   // 로컬 무인증 모드(Supabase env 없음)에서는 Host가 반드시 루프백이어야 한다 —
@@ -20,8 +26,15 @@ export async function middleware(req) {
   if (!URL_ENV || !KEY_ENV) {
     const host = req.headers.get('host') || '';
     if (!LOCAL_HOST_RE.test(host)) {
+      if (mobilePass(req)) return NextResponse.next();
       return NextResponse.json({ error: 'invalid host' }, { status: 421 });
     }
+    return NextResponse.next();
+  }
+  // 휴대폰 지름길(비루프백 한정·워커 제외) — 위 기기/게스트 지름길과 같은 계약. 세션 조회 없이 통과.
+  if (!process.env.ARGO_TENANT_OWNER?.trim()
+    && !LOCAL_HOST_RE.test(req.headers.get('host') || '')
+    && mobilePass(req)) {
     return NextResponse.next();
   }
   // 기기/게스트 마커 지름길(루프백 한정) — 세션 조회(GoTrue 네트워크 왕복)보다 먼저 본다. 로컬 모드가
@@ -60,7 +73,7 @@ export async function middleware(req) {
   // /api/billing/webhook — 호출 주체가 레몬스퀴지 서버(세션 없음). 인증은 라우트 자체의
   // HMAC 서명 검증(fail-closed)이 담당한다 — 미들웨어가 막으면 결제 이벤트가 영영 도달 못 한다
   // (상주 스모크 실측 2026-07-28: 미들웨어 401 '로그인이 필요합니다'가 라우트보다 먼저 응답).
-  const isPublic = p === '/login' || p === '/legal' || p === '/api/ping' || p === '/api/billing/webhook' || p.startsWith('/auth') || p.startsWith('/api/auth/pair') || p.startsWith('/api/device/');
+  const isPublic = p === '/login' || p === '/legal' || p === '/m/pair' || p === '/api/ping' || p === '/api/billing/webhook' || p.startsWith('/auth') || p.startsWith('/api/auth/pair') || p.startsWith('/api/device/');
   // 기기 연동 모드 — 마커 쿠키는 UX 게이트(리다이렉트 회피)일 뿐, 권한은 라우트 currentUser(기기 파일)가 검증.
   // 루프백 한정: 원격에서 마커만 들고 오는 요청은 통과시키지 않는다. 워커(TENANT)는 이 분기 없음.
   if (!process.env.ARGO_TENANT_OWNER?.trim() && req.cookies.get('argo-device')?.value === '1') {
