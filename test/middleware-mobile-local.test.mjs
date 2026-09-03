@@ -26,10 +26,13 @@ test('비루프백 — 마커 없으면 421, 마커 있으면 통과(권한은 �
   assert.equal(r.status, 421);
   assert.equal((await r.json()).error, 'invalid host');
   assert.equal((await call('http://192.168.0.5:3031/c/ws')).status, 421, '페이지도 421');
-  assert.ok(isNext(await call('http://192.168.0.5:3031/api/companies', { cookie: 'a=b; argo-mobile=tok' })));
+  assert.ok(isNext(await call('http://192.168.0.5:3031/api/companies', { cookie: `a=b; argo-mobile=${'0'.repeat(64)}` })));
   assert.ok(isNext(await call('http://100.101.1.2:3031/m/pair')));
   assert.ok(isNext(await call('http://100.101.1.2:3031/api/mobile/pair')));
   assert.ok(isNext(await call('http://100.101.1.2:3031/api/ping')));
   assert.equal((await call('http://100.101.1.2:3031/api/mobile')).status, 421, '관리 API는 공개 아님');
   assert.equal((await call('http://192.168.0.5:3031/api/companies', { cookie: 'argo-mobile=' })).status, 421, '빈 마커는 마커 아님');
+  assert.equal((await call('http://192.168.0.5:3031/api/companies', { cookie: 'argo-mobile=tok' })).status, 421, '형태 밖 마커(짧은 값)는 마커 아님');
+  assert.equal((await call('http://192.168.0.5:3031/api/companies', { cookie: `argo-mobile=${'A'.repeat(64)}` })).status, 421, '대문자 hex 아님');
+  assert.ok(isNext(await call('http://192.168.0.5:3031/api/companies', { cookie: `argo-mobile=${'0'.repeat(64)}` })), '64자리 hex 형태면 마커(진위는 라우트)');
 });

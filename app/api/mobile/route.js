@@ -3,8 +3,8 @@
 //   GET    상태(토글·포트·주소 후보·연결된 폰·발급 중 코드·리스너 실상태)
 //   PUT    { enabled, port? } — 켜면 같은 프로세스의 LAN 리스너를 시작하고 코드를 발급, 끄면 리스너 정지
 //   POST   새 코드 발급   DELETE { id } 연결 해제
-// 리스너의 업스트림 포트는 이 요청의 Host 포트(=Next 서버 자신)에서 취한다 — next start -p는 요청 시점엔
-// PORT env를 박지만(start-server.js) 요청 Host가 더 확실하다.
+// 리스너의 업스트림 포트는 PORT env(next start -p·Tauri 사이드카 모두 기동 시 박는다, start-server.js:302)가
+// 1순위, 없으면 이 요청의 Host 포트(=Next 서버 자신 — 루프백 한정 라우트라 리스너 경유 위조 불가).
 import { networkInterfaces } from 'node:os';
 import { authError, csrfDenied, currentUser, isLoopbackHost, requestLang } from '../../auth.mjs';
 import { apiError } from '../../apimsg.mjs';
@@ -17,7 +17,7 @@ async function gate(req) {
   if (!(await currentUser())) return authError('auth_required', lang);
   return null;
 }
-const hostPort = (req) => Number((req.headers.get('host') || '').match(/:(\d+)$/)?.[1]) || Number(process.env.PORT) || 80;
+const hostPort = (req) => Number(process.env.PORT) || Number((req.headers.get('host') || '').match(/:(\d+)$/)?.[1]) || 80;
 // 폰이 닿을 수 있는 이 PC의 주소 후보 — 비내부 IPv4. Tailscale(100.64/10)은 표시용 플래그.
 export const lanAddresses = () => Object.entries(networkInterfaces()).flatMap(([iface, list]) =>
   (list || []).filter((a) => a.family === 'IPv4' && !a.internal)

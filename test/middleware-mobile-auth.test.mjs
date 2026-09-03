@@ -16,8 +16,8 @@ const isNext = (r) => r.status === 200 && r.headers.get('x-middleware-next') ===
 
 test('비루프백 + 마커 → 세션 조회 없이 통과 / 페어링 진입점 공개 / 마커 없으면 종전(401·/login)', async () => {
   const t0 = Date.now();
-  assert.ok(isNext(await call('http://192.168.0.5:3031/api/companies', { cookie: 'argo-mobile=tok' })));
-  assert.ok(isNext(await call('http://192.168.0.5:3031/c/ws', { cookie: 'argo-mobile=tok' })));
+  assert.ok(isNext(await call('http://192.168.0.5:3031/api/companies', { cookie: `argo-mobile=${'0'.repeat(64)}` })));
+  assert.ok(isNext(await call('http://192.168.0.5:3031/c/ws', { cookie: `argo-mobile=${'0'.repeat(64)}` })));
   assert.ok(isNext(await call('http://192.168.0.5:3031/m/pair')));
   assert.ok(isNext(await call('http://192.168.0.5:3031/api/mobile/pair')));
   assert.ok(Date.now() - t0 < 1500, '지름길은 네트워크 왕복이 없다');
@@ -32,7 +32,7 @@ test('비루프백 + 마커 → 세션 조회 없이 통과 / 페어링 진입�
 test('루프백 — 기기·게스트 마커 지름길 종전 동일, 휴대폰 마커는 지름길 아님(세션 경로 → /login)', async () => {
   assert.ok(isNext(await call('http://127.0.0.1:3001/c/ws', { cookie: 'argo-device=1' })));
   assert.ok(isNext(await call('http://127.0.0.1:3001/c/ws', { cookie: 'argo-guest=1' })));
-  const r = await call('http://127.0.0.1:3001/c/ws', { cookie: 'argo-mobile=tok' });
+  const r = await call('http://127.0.0.1:3001/c/ws', { cookie: `argo-mobile=${'0'.repeat(64)}` });
   assert.equal(r.status, 307, '루프백에서 휴대폰 마커는 아무 의미 없음');
   assert.ok(isNext(await call('http://127.0.0.1:3001/m/pair')), '/m/pair는 공개 경로');
 });
@@ -40,7 +40,8 @@ test('루프백 — 기기·게스트 마커 지름길 종전 동일, 휴대폰 
 test('워커(TENANT) — 휴대폰 지름길 없음(쿠키 세션 전용 유지)', async () => {
   process.env.ARGO_TENANT_OWNER = 'u-1';
   try {
-    const r = await call('http://argo.fly.dev/api/companies', { cookie: 'argo-mobile=tok' });
+    const r = await call('http://argo.fly.dev/api/companies', { cookie: `argo-mobile=${'0'.repeat(64)}` });
     assert.equal(r.status, 401);
+    assert.equal((await call('http://argo.fly.dev/m/pair')).status, 307, '워커에선 /m/pair도 공개 아님');
   } finally { delete process.env.ARGO_TENANT_OWNER; }
 });

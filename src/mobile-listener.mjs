@@ -5,6 +5,13 @@
 // ponytail: WebSocket 미지원 — 앱에 WS·SSE가 0건(전부 폴링)이라 필요 없다. 필요해지면 'upgrade' 핸들러 추가.
 import http from 'node:http';
 
+// 루프백형 Host 거절 — 미들웨어·currentUser·관리 API는 Host 문자열로 "이 컴퓨터에서 온 요청"을 판정한다. 리스너가
+// 클라이언트 Host를 그대로 넘기면 LAN의 누구든 `Host: 127.0.0.1:<포트>`로 루프백을 가장해 토큰 없이 전권을 얻는다
+// (분리 검수 CRITICAL 2026-09-03 실측). 서버는 127.0.0.1에만 바인딩돼 LAN에서 오는 길은 이 리스너뿐이므로 여기서
+// 닫으면 충분하다. 같은 이유로 클라이언트가 보낸 x-forwarded-*도 버린다(어떤 소비자도 신뢰하지 않지만 표면 제거).
+const LOOPBACK_HOST_RE = /^(127\.0\.0\.1|localhost|\[::1\]|::1)(:\d+)?$/i;
+export const forgedHost = (host) => !host || LOOPBACK_HOST_RE.test(String(host).trim());
+
 // globalThis 가드 — Next는 라우트 청크와 instrumentation이 모듈 인스턴스를 따로 가질 수 있다(ensure* 관례).
 const G = globalThis;
 const state = () => (G.__argoMobileListener ??= { server: null, cfg: null });
@@ -21,7 +28,13 @@ export async function startMobileListener({ port, upstreamPort }) {
   if (s.server && s.cfg.port === port && s.cfg.upstreamPort === upstreamPort) return s.cfg;
   await stopMobileListener();
   const srv = http.createServer((req, res) => {
-    const up = http.request({ host: '127.0.0.1', port: upstreamPort, method: req.method, path: req.url, headers: req.headers }, (ur) => {
+    if (forgedHost(req.headers.host)) {
+      res.writeHead(421, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'invalid host' }));
+    }
+    const headers = { ...req.headers };
+    for (const k of Object.keys(headers)) if (k.startsWith('x-forwarded-') || k === 'forwarded') delete headers[k];
+    const up = http.request({ host: '127.0.0.1', port: upstreamPort, method: req.method, path: req.url, headers }, (ur) => {
       res.writeHead(ur.statusCode, ur.headers);
       ur.pipe(res);
     });

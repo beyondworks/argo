@@ -10,15 +10,17 @@ const upstream = http.createServer((req, res) => {
   req.on('data', (c) => { body += c; });
   req.on('end', () => {
     res.writeHead(201, { 'content-type': 'application/json', 'set-cookie': 'argo-mobile=tok; Path=/' });
-    res.end(JSON.stringify({ method: req.method, url: req.url, host: req.headers.host, cookie: req.headers.cookie ?? null, body }));
+    const forwarded = Object.keys(req.headers).filter((k) => k.startsWith('x-forwarded-') || k === 'forwarded');
+    res.end(JSON.stringify({ method: req.method, url: req.url, host: req.headers.host, cookie: req.headers.cookie ?? null, body, ...(forwarded.length ? { forwarded } : {}) }));
   });
 });
 await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
 const upstreamPort = upstream.address().port;
 after(async () => { await stopMobileListener(); upstream.close(); });
 
+// 기본 Host는 비루프백(폰이 보내는 형태) — 루프백형 Host는 리스너가 421로 끊는 것이 계약이다.
 const raw = (port, { method = 'GET', path = '/', headers = {}, body = '' } = {}) => new Promise((resolve, reject) => {
-  const req = http.request({ host: '127.0.0.1', port, method, path, headers }, (res) => {
+  const req = http.request({ host: '127.0.0.1', port, method, path, headers: { host: '192.168.0.12:3031', ...headers } }, (res) => {
     let data = ''; res.on('data', (c) => { data += c; }); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, data }));
   });
   req.on('error', reject);
@@ -34,6 +36,25 @@ test('Host·쿠키·메서드·바디 보존 + 응답 상태·Set-Cookie 회송'
   assert.equal(r.headers['set-cookie'][0], 'argo-mobile=tok; Path=/');
   const j = JSON.parse(r.data);
   assert.deepEqual([j.method, j.url, j.host, j.cookie, j.body.length], ['POST', '/api/companies/w/chat?mtime=1', '192.168.0.12:3031', 'argo-mobile=abc', big.length]);
+});
+
+test('루프백 위조 Host·Host 부재는 리스너가 421로 끊는다(업스트림 미도달), x-forwarded-*는 제거', async () => {
+  const cfg = await startMobileListener({ port: 0, upstreamPort });
+  for (const host of [`127.0.0.1:${upstreamPort}`, 'localhost:3001', 'LOCALHOST', '[::1]:3001', '::1', ' 127.0.0.1 ']) {
+    const r = await raw(cfg.port, { headers: { host, cookie: 'argo-mobile=abc' } });
+    assert.equal(r.status, 421, `위조 Host ${JSON.stringify(host)}`);
+    assert.equal(JSON.parse(r.data).error, 'invalid host');
+  }
+  const noHost = await new Promise((resolve, reject) => {
+    const s = http.request({ host: '127.0.0.1', port: cfg.port, path: '/', setHost: false }, (res) => { let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve({ status: res.statusCode, data: d })); });
+    s.on('error', reject); s.end();
+  });
+  assert.ok(noHost.status === 400 || noHost.status === 421, `Host 부재는 Node(400) 또는 리스너(421)가 끊는다 — 업스트림 미도달 (${noHost.status})`);
+  const ok = await raw(cfg.port, { headers: { host: '127.0.0.1.nip.io:3031', 'x-forwarded-host': '127.0.0.1', 'x-forwarded-for': '1.2.3.4', forwarded: 'host=localhost' } });
+  assert.equal(ok.status, 201, '루프백으로 해석되는 도메인이라도 Host 문자열이 비루프백이면 통과(판정은 문자열)');
+  const j = JSON.parse(ok.data);
+  assert.equal(j.host, '127.0.0.1.nip.io:3031');
+  assert.equal(j.forwarded, undefined, 'x-forwarded-*·forwarded 헤더 제거');
 });
 
 test('같은 설정 재시작은 무동작, 정지 후 접속 거부', async () => {
