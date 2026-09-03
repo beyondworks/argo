@@ -49,6 +49,11 @@ test('토글 on → 리스너 실제 개방 + 코드 발급 → 페어링 → �
   assert.equal(on.body.listener.listening, true);
   assert.ok(on.body.listener.port > 0 && on.body.port === on.body.listener.port, 'OS 배정 포트가 상태에 기록');
   assert.equal(on.body.upstreamPort, 3001, '업스트림 = 요청 Host 포트(PORT env 부재)');
+  process.env.PORT = '4321'; // next start·사이드카가 박는 값 — 요청 Host 포트보다 우선(검수 정정 핀)
+  try {
+    const on2 = await json(await admin.PUT(req('PUT', '/api/mobile', { body: { enabled: true, port: on.body.port } })));
+    assert.equal(on2.body.upstreamPort, 4321, 'PORT env가 1순위');
+  } finally { delete process.env.PORT; }
   assert.match(on.body.pending.code, /^[A-Z0-9]{6}$/);
   assert.ok(Array.isArray(on.body.addresses));
   // 페어링(비루프백 Host — 폰 경로)
@@ -74,14 +79,22 @@ test('토글 on → 리스너 실제 개방 + 코드 발급 → 페어링 → �
 });
 
 // /m/home — 폰 진입 목적지: 회사 없음 → '/', 있음 → 첫 회사, 워커 → /m/pair. 리다이렉트는 요청 Host 기준(publicUrl).
-test('/m/home — 첫 회사로 302, 회사 없으면 /, 워커는 /m/pair', async () => {
+test('/m/home — 비루프백은 유효 토큰만 회사로(무토큰·무효 → /m/pair, 회사 id 비유출), 루프백은 첫 회사, 회사 없으면 /, 워커는 /m/pair', async () => {
   const home = await import('../app/m/home/route.js');
   const { createCompany } = await import('../src/workspace.mjs');
-  const r0 = await home.GET(req('GET', '/m/home', { host: '192.168.0.12:3031' }));
-  assert.equal(r0.status, 302); assert.equal(r0.headers.get('location'), 'http://192.168.0.12:3031/');
+  const M = await import('../src/mobile-pairs.mjs');
+  const r0 = await home.GET(req('GET', '/m/home', { host: '127.0.0.1:3001' }));
+  assert.equal(r0.status, 302); assert.equal(r0.headers.get('location'), 'http://127.0.0.1:3001/');
   await createCompany('co-home', '홈', 'captain');
-  const r1 = await home.GET(req('GET', '/m/home', { host: '192.168.0.12:3031' }));
-  assert.equal(r1.headers.get('location'), 'http://192.168.0.12:3031/c/co-home');
+  assert.equal((await home.GET(req('GET', '/m/home', { host: '127.0.0.1:3001' }))).headers.get('location'), 'http://127.0.0.1:3001/c/co-home', '루프백(데스크톱)은 판정 없이 첫 회사');
+  assert.equal((await home.GET(req('GET', '/m/home', { host: '192.168.0.12:3031' }))).headers.get('location'), 'http://192.168.0.12:3031/m/pair', '무토큰 LAN 요청엔 회사 id를 주지 않는다(NEW-1)');
+  assert.equal((await home.GET(req('GET', '/m/home', { host: '192.168.0.12:3031', headers: { cookie: `argo-mobile=${'0'.repeat(64)}` } }))).headers.get('location'), 'http://192.168.0.12:3031/m/pair', '무효 토큰도 /m/pair');
+  await M.setMobileEnabled(true, { port: 3031, upstreamPort: 3001 });
+  const { code } = await M.newPairCode();
+  const { token } = await M.consumePairCode(code, { name: 'p' });
+  const r1 = await home.GET(req('GET', '/m/home', { host: '192.168.0.12:3031', headers: { cookie: `argo-mobile=${token}` } }));
+  assert.equal(r1.headers.get('location'), 'http://192.168.0.12:3031/c/co-home', '유효 토큰만 회사로');
+  await M.setMobileEnabled(false);
   process.env.ARGO_TENANT_OWNER = 'u-1';
   try {
     const r2 = await home.GET(req('GET', '/m/home', { host: 'argo.fly.dev' }));
