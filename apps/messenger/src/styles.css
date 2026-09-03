@@ -42,7 +42,8 @@
 .msgr-menu-pop .sep { height: 1px; background: var(--border-soft); margin: 4px 6px; }
 .msgr-menu-pop .seatline { padding: 4px 10px 2px; }
 .msgr-av.ghost { background: transparent; border-style: dashed; color: var(--fg-3); }
-.msgr-scrim.clear { background: transparent; z-index: 65; position: fixed; inset: 0; }
+.msgr-scrim { display: none; } /* 레일 오버레이 스크림은 폰 폭에서만 — 데스크톱에서 rail 상태가 켜지면 스타일 없는 div가 그리드 첫 칸을 차지해 레일이 밀리고 본문이 다음 행으로 떨어졌다(QA 실측) */
+.msgr-scrim.clear { display: block; background: transparent; z-index: 65; position: fixed; inset: 0; }
 .msgr-group { display: flex; align-items: center; justify-content: space-between; padding: 0 6px; margin: 18px 0 8px; font-size: 11px; font-weight: 500; letter-spacing: 0.02em; color: var(--fg-3); }
 .msgr-group .btn { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--fg-3); }
 .msgr-group .btn:hover { background: var(--card-2); color: var(--fg); }
@@ -105,7 +106,8 @@
 .msgr-row .who .ts { font-family: var(--mono); font-size: 10px; font-weight: 500; color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .msgr-row .text { font-size: 13.5px; line-height: 1.6; max-width: 640px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msgr-sheet { background: var(--card); border: 1px solid var(--border); border-radius: 6px 20px 20px 20px; padding: 13px 16px; font-size: 13.5px; line-height: 1.6; max-width: 640px; min-width: 0; }
-.msgr-quote { display: flex; gap: 8px; align-items: center; color: var(--fg-3); font-size: 12px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msgr-quote .q { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-quote { display: flex; gap: 8px; align-items: center; min-width: 0; color: var(--fg-3); font-size: 12px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .msgr-mine .msgr-quote { color: var(--primary-fg-dim); border-color: var(--primary-fg-line); }
 .msgr-acts { display: flex; gap: 4px; margin-top: 6px; opacity: 0; transition: opacity 150ms ease; }
 .msgr-row:hover .msgr-acts, .msgr-row:focus-within .msgr-acts, .msgr-mine:hover .msgr-acts, .msgr-mine:focus-within .msgr-acts { opacity: 1; }
@@ -215,8 +217,10 @@
 .msgr-crewsheet .field { display: grid; gap: 4px; }
 .msgr-crewsheet .field input { height: 34px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; }
 .msgr-crewsheet .field input:disabled { opacity: .6; }
-.msgr-crewsheet .switchrow { display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; line-height: 1.5; cursor: pointer; }
-.msgr-crewsheet .switchrow input { accent-color: var(--primary); margin-top: 3px; }
+.switchrow { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; line-height: 1.5; cursor: pointer; }
+.switchrow input { accent-color: var(--primary); width: 15px; height: 15px; margin: 0; flex: none; }
+.msgr-crewsheet .switchrow { display: flex; align-items: flex-start; gap: 10px; }
+.msgr-crewsheet .switchrow input { margin-top: 3px; }
 .msgr-crewsheet .pick .btn { margin-left: auto; }
 
 /* 설정 페이지 — 카드 3장(언어·테마·계정), 세그먼트는 상단 탭과 같은 부품 */
@@ -273,7 +277,7 @@
 /* 폰 폭 레일 — 메뉴 버튼으로 오버레이(안 될 버튼은 노출 금지: 메뉴 버튼이 실제로 연다) */
 @media (max-width: 720px) {
   .msgr-shell.rail-open .msgr-side { display: flex; position: fixed; inset: 0 auto 0 0; z-index: 60; width: min(300px, 88vw); }
-  .msgr-scrim { position: fixed; inset: 0; z-index: 55; background: var(--overlay); }
+  .msgr-scrim { display: block; position: fixed; inset: 0; z-index: 55; background: var(--overlay); }
 }
 /* ─── 조직 문서(G-1) ─── */
 .msgr-docs { margin: 0 auto; width: 100%; max-width: 980px; padding: 8px 0 32px; display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: 16px; align-items: start; }
@@ -295,3 +299,17 @@
 .msgr-docs .msgr-input { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--fg); padding: 8px 10px; font: inherit; font-size: 13px; }
 .msgr-docs .msgr-input.body { min-height: 260px; resize: vertical; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
 @media (max-width: 720px) { .msgr-docs { grid-template-columns: minmax(0, 1fr); } }
+.msgr-auth .devsep { display: block; margin: 6px 0 -4px; padding-top: 10px; border-top: 1px dashed var(--border); }
+/* ─── 인라인 폼(새 채널·새 조직) — 네이티브 prompt 대체. 레일(차콜)·메뉴(카드) 어디서든 토큰만 ─── */
+.msgr-inline { display: grid; gap: 8px; padding: 8px 6px 10px; }
+.msgr-inline .msgr-input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; outline: 0; }
+.msgr-inline .msgr-input:focus { box-shadow: 0 0 0 2px var(--ring); }
+.msgr-inline .msgr-input::placeholder { color: var(--fg-3); }
+.msgr-inline .msgr-seg { width: max-content; max-width: 100%; }
+.msgr-inline .msgr-seg button { height: 26px; padding: 0 10px; font-size: 12px; }
+.msgr-inline .acts { display: flex; gap: 6px; }
+@media (max-width: 720px) { .msgr-inline .msgr-seg { order: 0; width: max-content; overflow: visible; } } /* 폰 폭의 전역 .msgr-seg order:9(탭 줄바꿈용)가 폼 안 종류 선택을 버튼 뒤로 보냈다(QA) */
+.msgr-menu-pop .msgr-inline { padding: 4px 4px 6px; }
+.msgr-crewsheet .confirm { display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); }
+.msgr-crewsheet .confirm p { margin: 0; font-size: 12.5px; color: var(--fg-2); line-height: 1.5; }
+.btn.btn-primary.danger { background: var(--danger); border-color: var(--danger); color: #fff; }

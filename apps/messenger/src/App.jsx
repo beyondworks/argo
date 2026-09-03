@@ -74,6 +74,7 @@ function Auth() {
           <button className="btn btn-primary" disabled={busy || !code} onClick={() => run(async () => { await q(supabase.auth.verifyOtp({ email, token: code.trim(), type: 'email' })); })}>{t('auth.verify')}</button>
         </>)}
         {import.meta.env.DEV && (<>
+          <span className="msgr-klabel devsep">{t('auth.devOnly')}</span>
           <label className="msgr-field"><I name="lock" /><input type="password" placeholder={t('auth.password')} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
           <button className="btn" disabled={busy || !email || !pw} onClick={() => run(async () => { await q(supabase.auth.signInWithPassword({ email, password: pw })); })}>{t('auth.verify')} (dev)</button>
         </>)}
@@ -127,11 +128,13 @@ function Shell({ session }) {
       supabase.from('msgr_org_entitlements').select('plan, seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
       supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
     ]);
+    const orgRow = orgs.find((o) => o.id === id);
+    crs.sort((a, b) => (crewTier(b, orgRow) === 'company') - (crewTier(a, orgRow) === 'company') || a.display_name.localeCompare(b.display_name, 'ko')); // 순서 고정: 회사 크루 먼저, 이름순(QA: 화면마다 순서가 달랐다)
     setChannels(chs); setMembers(mems); setCrews(crs); setEnt(e); setPolicy(pol);
     setChId((cur) => cur && chs.some((c) => c.id === cur) ? cur : (chs[0]?.id ?? null)); // 라벨용 보조 조회보다 먼저(검수 2R LOW-1: 보조 조회가 던지면 채널 선택이 안 됐다)
     const dmIds = chs.filter((c) => c.kind === 'dm').map((c) => c.id);
     if (dmIds.length) { try { const rows = await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', dmIds)); const map = {}; for (const r of rows) (map[r.channel_id] ??= []).push(r); setDmMembers(map); } catch { setDmMembers({}); } } else setDmMembers({});
-  }, []);
+  }, [orgs]);
   useEffect(() => { loadOrg(orgId).catch((e) => setErr(e.message)); }, [orgId, loadOrg]);
   const loadChMembers = useCallback(async (id) => { if (!id) { setChMembers([]); return; } const rows = await q(supabase.from('msgr_channel_members').select('member_kind, member_id, added_by').eq('channel_id', id)); setChMembers(rows); }, []);
   useEffect(() => { loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, tick]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -160,10 +163,12 @@ function Shell({ session }) {
   const isAdmin = org && ['owner', 'admin'].includes(org.role);
   const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || id?.slice(0, 8) || '?';
   const crewOf = (id) => crews.find((c) => c.id === id);
-  const createOrg = async () => {
-    const name = prompt(t('org.name')); if (!name?.trim()) return;
+  const [newOrg, setNewOrg] = useState(null); // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
+  const [newCh, setNewCh] = useState(null);   // { name, kind }
+  const createOrg = async (name) => {
+    if (!name?.trim()) return;
     const slug = `${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'org'}-${Date.now().toString(36).slice(-4)}`;
-    try { const o = await q(supabase.from('msgr_orgs').insert({ name: name.trim(), slug, owner_user_id: uid }).select('id').single()); await loadOrgs(); setOrgId(o.id); } catch (e) { setErr(e.message); }
+    try { const o = await q(supabase.from('msgr_orgs').insert({ name: name.trim(), slug, owner_user_id: uid }).select('id').single()); setNewOrg(null); setOrgMenu(false); await loadOrgs(); setOrgId(o.id); } catch (e) { setErr(e.message); }
   };
   const invite = async () => {
     try {
@@ -193,15 +198,16 @@ function Shell({ session }) {
       await loadOrg(orgId); setChId(c.id); setPage('chat'); setRail(false); setSheet(null);
     } catch (e) { setErr(e.message); }
   };
-  const createChannel = async () => {
-    const name = prompt(t('ch.name')); if (!name?.trim()) return;
-    const priv = confirm(`${t('ch.private')}?`);
+  const createChannel = async ({ name, kind } = newCh ?? {}) => {
+    if (!name?.trim()) return;
+    const priv = kind === 'private';
     try {
       const c = await q(supabase.from('msgr_channels').insert({ org_id: orgId, kind: priv ? 'private' : 'public', name: name.trim(), created_by: uid }).select('id').single());
       if (priv) await q(supabase.from('msgr_channel_members').insert({ channel_id: c.id, member_kind: 'user', member_id: uid, added_by: uid }));
-      await loadOrg(orgId); setChId(c.id);
+      setNewCh(null); await loadOrg(orgId); setChId(c.id); setPage('chat');
     } catch (e) { setErr(/msgr_channel_limit/.test(e.message) ? t('ch.freeLimit') : e.message); }
   };
+  const openNewCh = () => { setNewCh({ name: '', kind: 'public' }); setRail(true); };
   if (orgs === null) return <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   const channel = channels.find((c) => c.id === chId);
   // 채널 칩 — 정렬: 현재 → 이름순. 6개 초과는 '+N'(펼치기)
@@ -225,11 +231,25 @@ function Shell({ session }) {
               {orgs.map((o) => <button key={o.id} type="button" role="menuitemradio" aria-checked={o.id === orgId} className={o.id === orgId ? 'on' : ''} onClick={() => { setOrgId(o.id); setOrgMenu(false); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t(`role.${o.role}`)}</span></button>)}
               {ent && <div className="seatline"><span className="msgr-klabel">{t('seat.status', { used: members.length, seats: ent.seats, plan: t(`plan.${ent.plan}`) })}</span></div>}
               <div className="sep" />
-              <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); createOrg(); }}><span className="msgr-av sm ghost"><I name="plus" size={13} /></span><span className="label">{t('org.new')}</span></button>
+              {newOrg === null
+                ? <button type="button" role="menuitem" onClick={() => setNewOrg('')}><span className="msgr-av sm ghost"><I name="plus" size={13} /></span><span className="label">{t('org.new')}</span></button>
+                : <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); createOrg(newOrg); }}>
+                    <input className="msgr-input" placeholder={t('org.name')} value={newOrg} onChange={(e) => setNewOrg(e.target.value)} autoFocus maxLength={80} />
+                    <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!newOrg.trim()}><I name="check" size={13} />{t('ui.create')}</button><button type="button" className="btn sm" onClick={() => setNewOrg(null)}>{t('ui.cancel')}</button></div>
+                  </form>}
             </div>
           </>)}
         </div>
-        <div className="msgr-group">{t('ch.list')}<button type="button" className="btn" onClick={createChannel} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')}><I name="plus" size={14} /></button></div>
+        <div className="msgr-group">{t('ch.list')}<button type="button" className="btn" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button></div>
+        {newCh && (
+          <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); createChannel(); }}>
+            <input className="msgr-input" placeholder={t('ch.name')} value={newCh.name} onChange={(e) => setNewCh((c) => ({ ...c, name: e.target.value }))} autoFocus maxLength={80} />
+            <div className="msgr-seg" role="radiogroup" aria-label={t('ch.new.kind')}>
+              {[['public', t('ch.new.public')], ['private', t('ch.new.private')]].map(([v, l]) => <button key={v} type="button" role="radio" aria-checked={newCh.kind === v} className={newCh.kind === v ? 'active' : ''} onClick={() => setNewCh((c) => ({ ...c, kind: v }))}><I name={v === 'private' ? 'lock' : 'hash'} size={12} />{l}</button>)}
+            </div>
+            <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!newCh.name.trim()}><I name="check" size={13} />{t('ui.create')}</button><button type="button" className="btn sm" onClick={() => setNewCh(null)}>{t('ui.cancel')}</button></div>
+          </form>
+        )}
         {channels.length ? (
           <div className="msgr-chips">
             {shownCh.map((c) => (
@@ -284,7 +304,7 @@ function Shell({ session }) {
         ) : chId ? (
           <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} policy={policy} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} dmName={dmName} />
         ) : (
-          <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={createOrg} createChannel={createChannel} invite={isAdmin ? invite : null} />
+          <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? invite : null} />
         )}
       </main>
     </div>
@@ -397,7 +417,8 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
     if (!res.data?.length) return onError(t('ch.noEdit'));
     await onChanged();
   };
-  const archive = async () => { if (!confirm(t('ch.archive.confirm'))) return; await upd({ archived_at: new Date().toISOString() }); onArchived(); };
+  const [confirmArchive, setConfirmArchive] = useState(false); // 네이티브 confirm 대신 2단계 버튼(QA)
+  const archive = async () => { await upd({ archived_at: new Date().toISOString() }); onArchived(); };
   const userIds = new Set(chMembers.filter((m) => m.member_kind === 'user').map((m) => m.member_id));
   const crewIds = new Set(chMembers.filter((m) => m.member_kind === 'crew').map((m) => m.member_id));
   const addableUsers = members.filter((m) => !userIds.has(m.user_id));
@@ -454,7 +475,11 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
           </>)}
         </section>
         {canEdit && channel.kind !== 'dm' && (
-          <section><div className="row"><button type="button" className="btn sm" disabled={busy} onClick={archive}><I name="x" size={13} />{t('ch.archive')}</button></div></section>
+          <section>
+            {!confirmArchive
+              ? <div className="row"><button type="button" className="btn sm" disabled={busy} onClick={() => setConfirmArchive(true)}><I name="x" size={13} />{t('ch.archive')}</button></div>
+              : <div className="confirm"><p>{t('ch.archive.confirm')}</p><div className="row"><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={archive}><I name="x" size={13} />{t('ch.archive')}</button><button type="button" className="btn sm" onClick={() => setConfirmArchive(false)}>{t('ui.cancel')}</button></div></div>}
+          </section>
         )}
       </aside>
     </div>
@@ -720,7 +745,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, policy, members, crews, na
   for (const m of shown) {
     const k = dayKey(m.created_at);
     if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
-    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} onCrew={onCrew} />);
+    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} onCrew={onCrew} onError={onError} />);
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'stamp', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
@@ -744,15 +769,15 @@ function Channel({ channel, orgId, org, uid, isAdmin, policy, members, crews, na
   </>);
 }
 
-function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew }) {
+function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError }) {
   const [copied, setCopied] = useState(false);
   const crew = m.crew_id ? crewOf(m.crew_id) : null;
   const name = m.author_kind === 'user' ? nameOfUser(m.author_user_id) : (crew?.display_name ?? t('org.crews'));
   const body = m.deleted_at ? '' : m.body;
   const copy = () => { navigator.clipboard?.writeText(body).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); };
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
-  const quote = parent && <div className="msgr-quote"><I name="reply" size={13} />{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</div>;
-  const attRow = atts.length > 0 && <div>{atts.map((a) => <Attachment key={a.id} a={a} />)}</div>;
+  const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
+  const attRow = atts.length > 0 && <div>{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} />)}</div>;
   const acts = !ap && !m.deleted_at && <div className="msgr-acts"><button type="button" onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button></div>;
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
     <div className="msgr-mine">
@@ -812,10 +837,10 @@ function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
     </div>
   );
 }
-function Attachment({ a }) {
+function Attachment({ a, onError }) {
   const open = async () => {
     const { data, error } = await supabase.storage.from('msgr').createSignedUrl(a.storage_path, 600); // 서명 URL(단수명) — 버킷 정책은 채널 단위
-    if (error) return alert(error.message);
+    if (error) return onError?.(error.message);
     window.open(data.signedUrl, '_blank', 'noopener');
   };
   return <button type="button" className="msgr-file" onClick={open}><I name="doc" size={13} />{a.name}{a.bytes ? <span>{Math.round(a.bytes / 1024)}KB</span> : null}</button>;

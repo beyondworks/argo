@@ -185,3 +185,21 @@ test('G-1: 조직 문서 — 풋터 버튼·페이지 분기, 목록은 org 단�
     assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   }
 });
+
+test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 조직은 인라인 폼, 보관은 2단계 확인, 첨부 오류는 토스트; 인용 말줄임 span; 크루 순서 고정; 개발용 로그인은 DEV에서만', () => {
+  assert.doesNotMatch(app, /\b(prompt|confirm|alert)\(/, '네이티브 대화상자가 남아 있다(사용성·룩 불일치)');
+  assert.match(app, /<form className="msgr-inline" onSubmit=\{\(e\) => \{ e\.preventDefault\(\); createChannel\(\); \}\}>/, '새 채널 인라인 폼');
+  assert.match(app, /<form className="msgr-inline" onSubmit=\{\(e\) => \{ e\.preventDefault\(\); createOrg\(newOrg\); \}\}>/, '새 조직 인라인 폼');
+  assert.match(app, /const \[confirmArchive, setConfirmArchive\] = useState\(false\);/, '보관 2단계 상태');
+  assert.match(app, /: <div className="confirm"><p>\{t\('ch\.archive\.confirm'\)\}<\/p>/, '보관 확인 문구');
+  assert.match(app, /if \(error\) return onError\?\.\(error\.message\);/, '첨부 오류 토스트');
+  assert.match(app, /<span className="q">\{parent\.author_kind === 'user'/, '인용 말줄임 span');
+  assert.match(app, /crs\.sort\(\(a, b\) => \(crewTier\(b, orgRow\) === 'company'\) - \(crewTier\(a, orgRow\) === 'company'\) \|\| a\.display_name\.localeCompare\(b\.display_name, 'ko'\)\);/, '크루 순서 고정');
+  assert.match(app, /\{import\.meta\.env\.DEV && \(<>/, '개발용 로그인 DEV 게이트');
+  const css = read('apps/messenger/src/styles.css');
+  assert.match(css, /^\.msgr-quote \.q \{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/m, '인용 말줄임 CSS');
+  assert.match(css, /^\.switchrow \{ display: inline-flex; align-items: center; gap: 8px;/m, '체크박스 행 간격');
+  assert.match(css, /^\.msgr-scrim \{ display: none; \}/m, '데스크톱에서 레일 스크림이 그리드 칸을 차지한다(레일 밀림)');
+  assert.match(css, /\n  \.msgr-scrim \{ display: block; position: fixed;/, '폰 폭 스크림 표시');
+  for (const k of ['ch.new.kind', 'ch.new.public', 'ch.new.private', 'ui.create', 'auth.devOnly']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+});
