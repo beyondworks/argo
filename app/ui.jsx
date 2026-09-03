@@ -1,6 +1,7 @@
 'use client';
 // 공용 클라이언트 조각들 — 화면 전체가 같이 쓴다.
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { resolveTab } from './tabs-state.mjs';
 import { marked } from 'marked';
 import { useLang } from './i18n';
 import { rewriteVaultHref } from '../src/vault-links.mjs'; // 산출물 링크 재작성(순수 — 테스트는 src 쪽)
@@ -597,6 +598,34 @@ export function DropUp({ value, placeholder = '—', groups, onChange, disabled,
 }
 
 /** 베타 피드백 — 인앱에서 작성하면 서버(/api/feedback)가 Supabase에 저장한다. 브라우저(메일앱)를 열지 않는다. */
+/** 가로 탭 바 — 설정·크루 카드 공용(크루 서랍 .crew-tab과 같은 룩). tabs: [{ id, label, count?, tone? }] */
+export function Tabs({ tabs, value, onChange, label, right, className = '' }) {
+  return (
+    <div className={`tabbar ${className}`.trim()} role="tablist" aria-label={label}>
+      {tabs.map((tb) => (
+        <button key={tb.id} type="button" role="tab" className="tab" aria-selected={value === tb.id} data-tone={tb.tone || undefined}
+          onClick={() => onChange(tb.id)}>
+          {tb.label}{tb.count != null && <span className="tab-n">{tb.count}</span>}
+        </button>
+      ))}
+      {right && <><span style={{ flex: 1 }} /><span className="tabbar-right">{right}</span></>}
+    </div>
+  );
+}
+/** 마지막 탭 기억 — localStorage(기기 편의). 초기값 우선순위는 tabs-state.mjs(resolveTab): ?tab= → 저장값 → 기본.
+    storage 접근은 전부 try/catch — 프라이빗 창·차단 환경에서도 기본 탭으로 뜬다. */
+export function useRememberedTab(key, ids, fallback, queryTab) {
+  const [tab, setTabState] = useState(() => {
+    let stored = null;
+    try { stored = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null; } catch { /* 저장소 차단 */ }
+    return resolveTab({ query: queryTab, stored, ids, fallback });
+  });
+  // 딥링크가 뒤늦게 바뀌면(같은 페이지에서 ?tab= 이동) 따라간다 — 목록 밖 값은 무시
+  useEffect(() => { if (queryTab && ids.includes(queryTab)) setTabState(queryTab); }, [queryTab, ids]);
+  const setTab = (id) => { setTabState(id); try { localStorage.setItem(key, id); } catch { /* 저장 실패는 무시 */ } };
+  return [tab, setTab];
+}
+
 export function FeedbackModal({ onClose }) {
   const { t } = useLang();
   useScrollLock();
