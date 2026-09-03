@@ -70,7 +70,11 @@ test('사각 봉합 — CSS 파일은 globals.css 하나, 좁은 폭 브레이�
     if (/dataset\.shell\s*=(?!=)|setAttribute\(\s*['"]data-shell['"]|<[a-zA-Z][^>]*\sdata-shell=/.test(t)) writers.push(f.slice(APP.length + 1));
   }
   assert.deepEqual(writers, ['c/[ws]/layout.jsx'], 'data-shell 마커 쓰기(dataset·setAttribute·JSX 속성)는 Shell 한 곳');
-  const layout = await src('../app/c/[ws]/layout.jsx');
+  const layout = stripComments(await src('../app/c/[ws]/layout.jsx'));
   assert.ok(layout.includes('<aside className="side">'), '사이드바 여는 태그는 인라인 style 없이 그대로(폭 조건 인라인 숨김 차단)');
-  assert.ok(!/innerWidth\s*[<>]/.test(layout.slice(0, layout.indexOf('function PhoneTabs'))), 'Shell 본문에 폭 비교로 셸을 바꾸는 코드 없음');
+  // 같은 파일 안의 두 번째 쓰기도 잡는다(검수 M3 변이: 폭 조건 setAttribute) — 허용 형태 2개, 각 1회, setAttribute 0회
+  assert.equal((layout.match(/dataset\.shell\s*=(?!=)/g) || []).length, 1, "dataset.shell 쓰기는 `d.dataset.shell = 'mobile'` 1회");
+  assert.equal((layout.match(/delete d\.dataset\.shell/g) || []).length, 1, '해제 1회');
+  assert.equal((layout.match(/setAttribute\(\s*['"]data-shell['"]/g) || []).length, 0, 'setAttribute 형태 금지');
+  assert.ok(!/innerWidth\s*[<>]/.test(layout), 'layout.jsx 어디에도 폭 비교로 셸을 바꾸는 코드 없음(폭 판정은 split-alive.mjs 한 곳)');
 });
