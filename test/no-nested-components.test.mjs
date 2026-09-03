@@ -35,9 +35,12 @@ function makesComponent(init) {
   if (init.type === 'ClassExpression') return true;
   if (init.type === 'ConditionalExpression') return makesComponent(init.consequent) || makesComponent(init.alternate);
   if (init.type === 'LogicalExpression') return makesComponent(init.left) || makesComponent(init.right);
-  if (init.type === 'CallExpression') return init.arguments.some((a) => makesComponent(a));
+  // 호출은 HOC 화이트리스트만 — 일반 호출(items.map(x => <li/>) 등)까지 보면 대문자 배열 변수가 오탐(검수 권고)
+  if (init.type === 'CallExpression' && isHoc(init.callee)) return init.arguments.some((a) => makesComponent(a));
   return false;
 }
+const HOC = new Set(['memo', 'forwardRef', 'lazy']);
+const isHoc = (c) => (c.type === 'Identifier' && HOC.has(c.name)) || (c.type === 'MemberExpression' && c.property.type === 'Identifier' && HOC.has(c.property.name));
 /** 파일의 위반 목록 — [{name, line}] */
 export function nestedComponents(src) {
   const ast = espree.parse(src, { ecmaVersion: 'latest', sourceType: 'module', ecmaFeatures: { jsx: true }, loc: true });
@@ -55,6 +58,11 @@ export function nestedComponents(src) {
       if ((n.type === 'FunctionDeclaration' || n.type === 'ClassDeclaration') && n.id && /^[A-Z]/.test(n.id.name) && (n.type === 'ClassDeclaration' || hasJsx(n) || tags.has(n.id.name))) {
         hits.push({ name: n.id.name, line: n.loc.start.line });
       }
+      // 재할당 형태(`let Wrap; if (e) Wrap = ({c}) => <div/>`) — 원본 결함의 if 버전(검수 권고)
+      if (n.type === 'AssignmentExpression' && n.left.type === 'Identifier' && /^[A-Z]/.test(n.left.name)
+        && (makesComponent(n.right) || ((n.right.type === 'CallExpression' || FN.has(n.right.type)) && tags.has(n.left.name)))) {
+        hits.push({ name: n.left.name, line: n.loc.start.line });
+      }
     }
     const inner = FN.has(n.type) ? depth + 1 : depth;
     for (const k of Object.keys(n)) {
@@ -70,7 +78,7 @@ export function nestedComponents(src) {
 
 test('app/**/*.jsx — 함수 본문 안에서 JSX 컴포넌트를 정의하지 않는다(재마운트 결함, AST 판정)', () => {
   const hits = [];
-  for (const f of walkDir(APP).filter((x) => x.endsWith('.jsx'))) {
+  for (const f of walkDir(APP).filter((x) => /\.jsx?$/.test(x))) { // Next는 .js에도 JSX 허용
     for (const h of nestedComponents(readFileSync(f, 'utf8'))) hits.push(`${f.slice(APP.length + 1)}:${h.line} ${h.name}`);
   }
   assert.deepEqual(hits, [], '컴포넌트 안 컴포넌트 정의 — 모듈 수준으로 올릴 것');
@@ -92,6 +100,7 @@ test('판정기 — 원본 결함·회피 형태 red, 정상 형태 green', () =
     '팩토리 호출을 태그로': `  const Wrap = makeWrap(embedded);`,
     '중첩 function 선언': `  function Wrap({ children }) { return <div>{children}</div>; }`,
     '헬퍼 위임 화살표(JSX 태그로 씀)': `  const Wrap = ({ children }) => renderWrap(children);`,
+    'if 재할당(원본의 사촌)': `  let Wrap; if (embedded) Wrap = ({ children }) => <div>{children}</div>; else Wrap = CardWrap;`,
   };
   for (const [name, body] of Object.entries(RED)) assert.ok(nestedComponents(wrap(body)).length > 0, `red 기대: ${name}`);
   const GREEN = {
@@ -99,6 +108,7 @@ test('판정기 — 원본 결함·회피 형태 red, 정상 형태 green', () =
     '모듈 수준 정의': `const Wrap = ({ children }) => <div>{children}</div>;\nexport function Card() { return <Wrap><div /></Wrap>; }`,
     '상수 선택(식별자 삼항)': `const A = () => <div />; const B = () => <span />;\nexport function Card({ e }) {\n  const Wrap = e ? A : B;\n  return <Wrap />;\n}`,
     '훅 호출 결과(태그 아님)': `export function Card() {\n  const State = useState(0);\n  return <div>{State[0]}</div>;\n}`,
+    '대문자 배열 변수 map(JSX 목록, 태그 아님)': `export function List({ items }) {\n  const Rows = items.map((x) => <li key={x}>{x}</li>);\n  return <ul>{Rows}</ul>;\n}`,
   };
   for (const [name, src] of Object.entries(GREEN)) assert.deepEqual(nestedComponents(src), [], `green 기대: ${name}`);
 });
