@@ -545,3 +545,19 @@ test('조직 문서 제안 결재(G-4): 크루 소유자가 org_doc 결재를 �
   assert.notEqual(forced.status, 0); assert.match(forced.stderr, /msgr_org_doc_forbidden/, '비관리자 명의 강제 승인은 트리거가 거절');
   sql(`delete from public.msgr_crew_approvals where approval_id like 'ap-doc%'`); sql(`delete from public.msgr_org_docs where org_id = '${ORG}'`);
 });
+
+test('조직 운영(F2): 본인은 표시명만(역할·제거 표시 변경 거절), 관리자가 멤버를 제거하면 그 사람의 크루 detach·비공개 채널/DM 멤버십과 크루 멤버십 제거·감사, 되살리면 크루 복구', { skip }, () => {
+  assert.equal(last(asUser(U.member, `update public.msgr_org_members set display_name = '민수(마케팅)' where org_id = '${ORG}' and user_id = '${U.member}' returning display_name`)), '민수(마케팅)');
+  denied(U.member, `update public.msgr_org_members set role = 'admin' where org_id = '${ORG}' and user_id = '${U.member}'`, /msgr_member_self_only_name/);
+  assert.equal(last(asUser(U.member, `update public.msgr_org_members set display_name = 'x' where org_id = '${ORG}' and user_id = '${U.admin}' returning 1`)), '', '남의 표시명은 0행');
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'user', '${U.member}', '${U.admin}') on conflict do nothing`);
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'crew', '${CREW}', '${U.admin}') on conflict do nothing`);
+  assert.equal(last(asUser(U.admin, `update public.msgr_org_members set removed_at = now() where org_id = '${ORG}' and user_id = '${U.member}' returning 1`)), '1');
+  assert.equal(sql(`select status from public.msgr_crews where id = '${CREW}'`), 'detached', '제거 → 크루 detach');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${PRIV}' and ((member_kind = 'user' and member_id = '${U.member}') or (member_kind = 'crew' and member_id = '${CREW}'))`), '0', '비공개 채널 멤버십·크루 멤버십 제거');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'member.offboard' and target_id = '${U.member}'`), '1');
+  assert.equal(last(asUser(U.member, `select count(*) from public.msgr_channels where org_id = '${ORG}'`)), '0', '제거된 멤버는 조직이 안 보인다');
+  assert.equal(last(asUser(U.admin, `update public.msgr_org_members set removed_at = null where org_id = '${ORG}' and user_id = '${U.member}' returning 1`)), '1');
+  assert.equal(sql(`select status from public.msgr_crews where id = '${CREW}'`), 'active', '되살림 → 크루 복구');
+  sql(`update public.msgr_org_members set display_name = null where org_id = '${ORG}' and user_id = '${U.member}'`);
+});

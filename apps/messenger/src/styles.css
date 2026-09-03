@@ -340,3 +340,20 @@
 .msgr-slip .docprop { display: grid; gap: 6px; margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border-soft); }
 .msgr-slip .docprop .title { font-weight: 600; font-size: 13px; }
 .msgr-slip .docprop .msgr-sheet { padding: 8px 10px; }
+/* ─── F2 조직 카드·계정 ─── */
+.msgr-setcard h3 { margin: 6px 0 0; font-size: 13px; font-weight: 600; color: var(--fg-2); }
+.msgr-input.inline { flex: 1; min-width: 160px; max-width: 320px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13px; outline: 0; }
+.msgr-input.inline:focus { box-shadow: 0 0 0 2px var(--ring); }
+.msgr-setcard .msgr-rows .row .msgr-seg { margin-left: auto; }
+.msgr-setcard .msgr-rows .row .msgr-seg button { height: 24px; padding: 0 9px; font-size: 11.5px; }
+.msgr-setcard .confirm-inline { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; color: var(--fg-2); flex-wrap: wrap; }
+.msgr-setcard .name.mono { font-family: var(--mono); font-weight: 500; font-size: 12px; }
+.msgr-audit { display: grid; gap: 2px; }
+.msgr-audit .row { display: grid; grid-template-columns: 96px 88px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: center; font-size: 12px; padding: 4px 6px; border-radius: 8px; }
+.msgr-audit .row:hover { background: var(--card-2); }
+.msgr-audit .when { font-family: var(--mono); font-size: 11px; color: var(--fg-3); }
+.msgr-audit .who { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-audit .act { font-family: var(--mono); font-size: 11.5px; }
+.msgr-audit .tgt { color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-audit .empty { margin: 0; color: var(--fg-3); font-size: 12px; }
+@media (max-width: 720px) { .msgr-audit .row { grid-template-columns: 80px minmax(0, 1fr); } .msgr-audit .who, .msgr-audit .tgt { display: none; } }

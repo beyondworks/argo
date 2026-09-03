@@ -232,3 +232,29 @@ test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(
   assert.match(css, /^\.msgr-railbody \{ flex: 1; min-height: 0; overflow-y: auto;/m, '레일 본문만 스크롤');
   assert.match(css, /^\.msgr-sheetwrap \.msgr-crewsheet \{ z-index: 66; \}/m, '시트가 투명 스크림(z 65) 아래면 시트 위 휠이 스레드를 굴린다');
 });
+
+test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조직 카드(이름·역할·제거 2단계·초대 만들기/취소·감사), 로컬 알림(멘션·관리자 결재, 자기 글 제외, 다른 채널/숨김일 때만), 오프보딩 트리거', () => {
+  const dn = app.slice(app.indexOf('function DisplayNameRow('), app.indexOf('function NotifyRow('));
+  assert.match(dn, /from\('msgr_org_members'\)\.update\(\{ display_name: name\.trim\(\) \|\| null \}\)\.eq\('org_id', org\.id\)\.eq\('user_id', me\.user_id\)\.select\('user_id'\)/, '본인 표시명 갱신');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(oc, /from\('msgr_orgs'\)\.update\(\{ name: name\.trim\(\) \}\)\.eq\('id', org\.id\)\.select\('id'\)/, '조직 이름');
+  assert.match(oc, /const canEdit = !isMe && m\.role !== 'owner';/, '본인·소유자 행은 편집 불가');
+  assert.match(oc, /\{canEdit && confirmRemove === m\.user_id && <span className="confirm-inline">/, '제거 2단계');
+  assert.match(oc, /update\(\{ removed_at: new Date\(\)\.toISOString\(\) \}\)/, '제거 = removed_at(삭제 아님, 발언 유지)');
+  assert.match(oc, /from\('msgr_invites'\)\.insert\(\{ org_id: org\.id, role: inviteRole, created_by: uid \}\)\.select\('code'\)\.single\(\)/, '초대 만들기(역할)');
+  assert.match(oc, /from\('msgr_invites'\)\.delete\(\)\.eq\('id', inv\.id\)\.select\('id'\)/, '초대 취소');
+  assert.match(oc, /from\('msgr_audit_log'\)\.select\([^)]*\)\.eq\('org_id', org\.id\)\.order\('at', \{ ascending: false \}\)\.limit\(50\)/, '감사 50건');
+  assert.match(app, /const notifyMention = \(payload\) => \{[\s\S]*?if \(!payload \|\| payload\.author_user_id === r\.uid\) return;[\s\S]*?m\?\.kind === 'user' && m\.id === r\.uid/, '멘션 알림: 자기 글 제외·나를 부른 것만');
+  assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; return document\.visibilityState === 'hidden' \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널은 알리지 않는다');
+  assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/, '결재 알림은 관리자·대기 중만');
+  assert.match(app, /Notification\.permission !== 'granted'\) return;/, '권한 없으면 조용히');
+  assert.match(app, /\{org && isAdmin && <OrgCard org=\{org\} uid=\{uid\} members=\{members\}/, '조직 카드는 관리자만');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /create policy msgr_members_update_self on public\.msgr_org_members for update to authenticated\n\s*using \(user_id = \(select auth\.uid\(\)\) and removed_at is null\)/, '본인 갱신 정책');
+  assert.match(sql, /raise exception 'msgr_member_self_only_name'/, '본인은 역할·제거 표시 변경 불가');
+  assert.match(sql, /update public\.msgr_crews set status = 'detached' where org_id = new\.org_id and owner_user_id = new\.user_id and status = 'active';/, '오프보딩 → 크루 detach');
+  assert.match(sql, /'author_user_id', new\.author_user_id, 'crew_id', new\.crew_id/, '방송 payload에 author_user_id');
+  for (const k of ['set.name', 'set.name.placeholder', 'set.name.saved', 'set.name.noEdit', 'set.notify.ask', 'set.notify.on', 'set.notify.denied', 'set.notify.unsupported', 'set.org', 'set.org.desc', 'org.name.saved', 'org.noEdit', 'org.member.role', 'org.member.roleSaved', 'org.member.noEdit', 'org.member.remove', 'org.member.remove.confirm', 'org.member.removed', 'org.invites', 'org.invites.desc', 'org.invite.role', 'org.invite.make', 'org.invite.copy', 'org.invite.copied', 'org.invite.revoke', 'org.invite.revoked', 'org.invite.expires', 'org.audit', 'org.audit.load', 'org.audit.reload', 'org.audit.empty', 'org.audit.system', 'notify.mention', 'notify.approval']) {
+    assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});

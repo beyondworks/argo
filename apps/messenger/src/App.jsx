@@ -144,8 +144,8 @@ function Shell({ session }) {
     (async () => {
       await supabase.realtime.setAuth(session.access_token);
       ch = supabase.channel(`org:${orgId}`, { config: { private: true } })
-        .on('broadcast', { event: 'message' }, ({ payload }) => setEvent({ kind: 'message', ...payload, at: Date.now() }))
-        .on('broadcast', { event: 'approval' }, ({ payload }) => setEvent({ kind: 'approval', ...payload, at: Date.now() }))
+        .on('broadcast', { event: 'message' }, ({ payload }) => { setEvent({ kind: 'message', ...payload, at: Date.now() }); notifyMention(payload); })
+        .on('broadcast', { event: 'approval' }, ({ payload }) => { setEvent({ kind: 'approval', ...payload, at: Date.now() }); notifyApproval(payload); })
         .on('broadcast', { event: 'typing' }, ({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() })))
         .subscribe((status, e) => { if (import.meta.env.DEV) console.log('[rt]', status, e?.message ?? ''); });
       rt.current = ch;
@@ -159,6 +159,25 @@ function Shell({ session }) {
   const org = orgs?.find((o) => o.id === orgId);
   const me = members.find((m) => m.user_id === uid);
   const isAdmin = org && ['owner', 'admin'].includes(org.role);
+  // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
+  const notifyRef = useRef({ channels, members, chId, uid, isAdmin, page });
+  notifyRef.current = { channels, members, chId, uid, isAdmin, page };
+  const osNotify = (title, body, tag) => { try { if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return; const n = new Notification(title, { body, tag }); n.onclick = () => { window.focus(); n.close(); }; } catch { /* 알림 불가 환경 */ } };
+  const shouldNotify = (channelId) => { const r = notifyRef.current; return document.visibilityState === 'hidden' || r.page !== 'chat' || r.chId !== channelId; };
+  const notifyMention = (payload) => {
+    const r = notifyRef.current;
+    if (!payload || payload.author_user_id === r.uid) return;
+    const mentioned = Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === r.uid);
+    if (!mentioned || !shouldNotify(payload.channel_id)) return;
+    const ch = r.channels.find((c) => c.id === payload.channel_id); const who = r.members.find((m) => m.user_id === payload.author_user_id);
+    osNotify(t('notify.mention', { name: who?.display_name || '?', channel: ch?.name ?? '' }), '', `m:${payload.id}`);
+  };
+  const notifyApproval = (payload) => {
+    const r = notifyRef.current;
+    if (!payload || payload.status !== 'pending' || !r.isAdmin || !shouldNotify(payload.channel_id)) return; // 확정권 정본은 서버 — 관리자에게만 알린다(저위험은 소유자가 카드에서 본다)
+    const ch = r.channels.find((c) => c.id === payload.channel_id);
+    osNotify(t('notify.approval', { channel: ch?.name ?? '' }), '', `a:${payload.id}`);
+  };
   const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || id?.slice(0, 8) || '?';
   const crewOf = (id) => crews.find((c) => c.id === id);
   const [newOrg, setNewOrg] = useState(null); // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
@@ -288,7 +307,7 @@ function Shell({ session }) {
         {page === 'docs' && org ? (
           <Docs org={org} isAdmin={!!isAdmin} channels={channels} chId={chId} uid={uid} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : page === 'settings' ? (
-          <Settings session={session} me={me} org={org} isAdmin={!!isAdmin} policy={policy} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+          <Settings session={session} me={me} uid={uid} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
           <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} dmName={dmName} />
         ) : (
@@ -496,7 +515,7 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
 const FAMILIES = [['linen', 'settings.family.linen'], ['graphite', 'settings.family.graphite'], ['argo', 'settings.family.argo']];
 const MODES = [['', 'set.mode.system'], ['-light', 'set.mode.light'], ['-dark', 'set.mode.dark']];
 const FAMILY_CODES = FAMILIES.flatMap(([f]) => MODES.map(([s]) => `${f}${s}`));
-function Settings({ session, me, org, isAdmin, policy, onChanged, onNote, onError, onBack, onMenu }) {
+function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
@@ -534,11 +553,13 @@ function Settings({ session, me, org, isAdmin, policy, onChanged, onNote, onErro
           <div className="msgr-chips">{skins.map((c) => <button key={c} type="button" className={`msgr-chan${theme === c ? ' active' : ''}`} onClick={() => setTheme(c)} title={ta(`settings.theme.${c}`)}><span>{ta(`settings.theme.${c}`).split(' — ')[0]}</span></button>)}</div>
         </div>
       </section>
+      {org && isAdmin && <OrgCard org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
       {org && policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} onChanged={onChanged} onNote={onNote} onError={onError} />}
       <section className="msgr-setcard">
         <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
         <div className="row"><Av name={me?.display_name || session.user.email} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
-        <div className="row"><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
+        {org && me && <DisplayNameRow org={org} me={me} onChanged={onChanged} onNote={onNote} onError={onError} />}
+        <div className="row"><NotifyRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
       </section>
     </div></div>
   </>);
@@ -630,6 +651,150 @@ function Docs({ org, isAdmin, channels, chId, uid, nameOfUser, onNote, onError, 
       </section>
     </div></div>
   </>);
+}
+
+/* ─── F2-3 본인 표시명 편집(RLS msgr_members_update_self — 역할·제거 표시는 트리거가 막는다) ─── */
+function DisplayNameRow({ org, me, onChanged, onNote, onError }) {
+  const { t } = useT();
+  const [name, setName] = useState(me.display_name ?? ''); const [busy, setBusy] = useState(false);
+  useEffect(() => { setName(me.display_name ?? ''); }, [me.display_name]);
+  const save = async () => {
+    setBusy(true);
+    const res = await supabase.from('msgr_org_members').update({ display_name: name.trim() || null }).eq('org_id', org.id).eq('user_id', me.user_id).select('user_id');
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    if (!res.data?.length) return onError(t('set.name.noEdit'));
+    onNote(t('set.name.saved')); onChanged();
+  };
+  return (
+    <div className="row">
+      <span className="msgr-klabel">{t('set.name')}</span>
+      <input className="msgr-input inline" value={name} maxLength={40} placeholder={t('set.name.placeholder')} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save(); }} />
+      <button type="button" className="btn btn-primary sm" disabled={busy || name.trim() === (me.display_name ?? '')} onClick={save}><I name="check" size={13} />{t('ui.save')}</button>
+    </div>
+  );
+}
+
+/* ─── F2-5 로컬 알림(앱이 열려 있을 때 나를 부르거나 내가 확정할 결재가 오면 OS 알림) — 권한은 여기서만 요청 ─── */
+function NotifyRow() {
+  const { t } = useT();
+  const supported = typeof Notification !== 'undefined';
+  const [perm, setPerm] = useState(supported ? Notification.permission : 'unsupported');
+  if (!supported) return <span className="note">{t('set.notify.unsupported')}</span>;
+  if (perm === 'granted') return <span className="note"><I name="check" size={12} /> {t('set.notify.on')}</span>;
+  if (perm === 'denied') return <span className="note">{t('set.notify.denied')}</span>;
+  return <button type="button" className="btn sm" onClick={async () => setPerm(await Notification.requestPermission())}><I name="at" size={13} />{t('set.notify.ask')}</button>;
+}
+
+/* ─── F2-1·2·3·4 조직 카드(관리자): 조직 이름 · 멤버 역할/제거(2단계) · 초대 만들기/취소 · 감사 기록 ─── */
+const ROLES_ASSIGNABLE = ['admin', 'member', 'guest'];
+function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNote, onError }) {
+  const { t, lang } = useT();
+  const [name, setName] = useState(org.name); const [busy, setBusy] = useState(false);
+  const [invites, setInvites] = useState([]); const [inviteRole, setInviteRole] = useState('member');
+  const [confirmRemove, setConfirmRemove] = useState(null); const [audit, setAudit] = useState(null);
+  const isOwner = org.role === 'owner';
+  useEffect(() => { setName(org.name); }, [org.id, org.name]);
+  const loadInvites = useCallback(async () => {
+    const rows = await q(supabase.from('msgr_invites').select('id, code, role, email, expires_at, accepted_by, accepted_at, created_at').eq('org_id', org.id).order('created_at', { ascending: false }));
+    setInvites(rows);
+  }, [org.id]);
+  useEffect(() => { loadInvites().catch((e) => onError(e.message)); }, [loadInvites]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveName = async () => {
+    setBusy(true);
+    const res = await supabase.from('msgr_orgs').update({ name: name.trim() }).eq('id', org.id).select('id');
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    if (!res.data?.length) return onError(t('org.noEdit'));
+    onNote(t('org.name.saved')); onOrgsChanged();
+  };
+  const setRole = async (m, role) => {
+    if (role === m.role) return;
+    setBusy(true);
+    const res = await supabase.from('msgr_org_members').update({ role }).eq('org_id', org.id).eq('user_id', m.user_id).select('user_id');
+    setBusy(false);
+    if (res.error) return onError(/msgr_owner_only|msgr_member_self_only_name/.test(res.error.message) ? t('org.member.noEdit') : res.error.message);
+    if (!res.data?.length) return onError(t('org.member.noEdit'));
+    onNote(t('org.member.roleSaved', { name: m.display_name || m.user_id.slice(0, 8), role: t(`role.${role}`) })); onChanged();
+  };
+  const remove = async (m) => {
+    setBusy(true);
+    const res = await supabase.from('msgr_org_members').update({ removed_at: new Date().toISOString() }).eq('org_id', org.id).eq('user_id', m.user_id).select('user_id');
+    setBusy(false); setConfirmRemove(null);
+    if (res.error) return onError(res.error.message);
+    if (!res.data?.length) return onError(t('org.member.noEdit'));
+    onNote(t('org.member.removed', { name: m.display_name || m.user_id.slice(0, 8) })); onChanged();
+  };
+  const makeInvite = async () => {
+    setBusy(true);
+    const res = await supabase.from('msgr_invites').insert({ org_id: org.id, role: inviteRole, created_by: uid }).select('code').single();
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    const link = `${location.origin}${location.pathname}?invite=${res.data.code}`;
+    await navigator.clipboard?.writeText(link).catch(() => {});
+    onNote(`${t('org.inviteMade')} ${link}`); loadInvites().catch(() => {});
+  };
+  const revoke = async (inv) => {
+    setBusy(true);
+    const res = await supabase.from('msgr_invites').delete().eq('id', inv.id).select('id');
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    onNote(t('org.invite.revoked')); loadInvites().catch(() => {});
+  };
+  const loadAudit = async () => {
+    const rows = await q(supabase.from('msgr_audit_log').select('id, actor_user_id, actor_crew_id, action, target_kind, target_id, meta, at').eq('org_id', org.id).order('at', { ascending: false }).limit(50));
+    setAudit(rows);
+  };
+  const copyLink = async (inv) => { const link = `${location.origin}${location.pathname}?invite=${inv.code}`; await navigator.clipboard?.writeText(link).catch(() => {}); onNote(`${t('org.invite.copied')} ${link}`); };
+  const open = invites.filter((i) => !i.accepted_at && Date.parse(i.expires_at) > Date.now());
+  return (
+    <section className="msgr-setcard">
+      <h2>{t('set.org')}</h2><p>{t('set.org.desc')}</p>
+      <div className="row">
+        <span className="msgr-klabel">{t('org.name')}</span>
+        <input className="msgr-input inline" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); }} />
+        <button type="button" className="btn btn-primary sm" disabled={busy || !name.trim() || name.trim() === org.name} onClick={saveName}><I name="check" size={13} />{t('ui.save')}</button>
+      </div>
+      <h3>{t('org.members')} · {members.length}</h3>
+      <div className="msgr-rows">
+        {members.map((m) => { const isMe = m.user_id === uid; const canEdit = !isMe && m.role !== 'owner'; return (
+          <div key={m.user_id} className="row">
+            <Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span>
+            {m.role === 'owner' || isMe ? <span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
+              : <div className="msgr-seg" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy || (r === 'admin' && !isOwner && m.role !== 'admin' && false)} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
+            {canEdit && confirmRemove !== m.user_id && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRemove(m.user_id)} title={t('org.member.remove')} aria-label={t('org.member.remove')}><I name="x" size={13} /></button>}
+            {canEdit && confirmRemove === m.user_id && <span className="confirm-inline"><span>{t('org.member.remove.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => remove(m)}>{t('org.member.remove')}</button><button type="button" className="btn sm" onClick={() => setConfirmRemove(null)}>{t('ui.cancel')}</button></span>}
+          </div>
+        ); })}
+      </div>
+      <h3>{t('org.invites')} · {open.length}</h3>
+      <p>{t('org.invites.desc')}</p>
+      <div className="row">
+        <div className="msgr-seg" role="radiogroup" aria-label={t('org.invite.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={inviteRole === r} className={inviteRole === r ? 'active' : ''} onClick={() => setInviteRole(r)}>{t(`role.${r}`)}</button>)}</div>
+        <button type="button" className="btn btn-primary sm" disabled={busy} onClick={makeInvite}><I name="copy" size={13} />{t('org.invite.make')}</button>
+      </div>
+      {open.length > 0 && (
+        <div className="msgr-rows">
+          {open.map((inv) => (
+            <div key={inv.id} className="row">
+              <span className="msgr-klabel">{t(`role.${inv.role}`)}</span><span className="name mono">…{inv.code.slice(-8)}</span>
+              <span className="sub">{t('org.invite.expires', { when: fmtTs(inv.expires_at, lang) })}</span>
+              <button type="button" className="btn sm ghost" onClick={() => copyLink(inv)} title={t('org.invite.copy')} aria-label={t('org.invite.copy')}><I name="copy" size={13} /></button>
+              <button type="button" className="btn sm ghost" disabled={busy} onClick={() => revoke(inv)} title={t('org.invite.revoke')} aria-label={t('org.invite.revoke')}><I name="x" size={13} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+      <h3>{t('org.audit')}</h3>
+      {audit === null
+        ? <div className="row"><button type="button" className="btn sm" onClick={() => loadAudit().catch((e) => onError(e.message))}><I name="doc" size={13} />{t('org.audit.load')}</button></div>
+        : (<div className="msgr-audit">
+            {!audit.length && <p className="empty">{t('org.audit.empty')}</p>}
+            {audit.map((a) => <div key={a.id} className="row"><span className="when">{fmtTs(a.at, lang)}</span><span className="who">{a.actor_user_id ? nameOfUser(a.actor_user_id) : (a.actor_crew_id ? t('org.crews') : t('org.audit.system'))}</span><span className="act">{a.action}</span><span className="tgt">{a.target_kind ? `${a.target_kind}${a.target_id ? ` · ${String(a.target_id).slice(0, 12)}` : ''}` : ''}</span></div>)}
+            <div className="row"><button type="button" className="btn sm" onClick={() => loadAudit().catch((e) => onError(e.message))}>{t('org.audit.reload')}</button></div>
+          </div>)}
+    </section>
+  );
 }
 
 /* ─── 조직 정책 카드(H-0): 관리자만 편집(RLS msgr_policies_update), 멤버는 열람. 잠금 = 조직 전체 강제(서버 트리거) ─── */

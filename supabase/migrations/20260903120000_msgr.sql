@@ -330,7 +330,7 @@ create or replace function public.msgr_message_broadcast() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   perform realtime.send(
-    jsonb_build_object('id', new.id, 'channel_id', new.channel_id, 'author_kind', new.author_kind, 'crew_id', new.crew_id,
+    jsonb_build_object('id', new.id, 'channel_id', new.channel_id, 'author_kind', new.author_kind, 'author_user_id', new.author_user_id, 'crew_id', new.crew_id, -- author_user_id: 로컬 알림이 자기 글을 거르고 보낸 이름을 붙인다(F2-5). 본문은 여전히 없음
                        'kind', new.kind, 'mentions', new.mentions, 'reply_to', new.reply_to),
     'message', 'org:' || new.org_id::text, true);
   return new;
@@ -978,3 +978,37 @@ begin
 end $$;
 drop trigger if exists msgr_apply_org_doc on public.msgr_crew_approvals;
 create trigger msgr_apply_org_doc after update on public.msgr_crew_approvals for each row execute function public.msgr_apply_org_doc();
+
+-- ── F2 조직 운영(부록 F): ① 본인 표시명 편집(역할·제거 표시는 못 바꿈) ② 오프보딩 자동 사슬(멤버 제거 → 그 사람의 크루 detach, 비공개 채널·DM 멤버십 제거, 크루의 채널 멤버십 제거) ③ 초대 만료·취소는 기존 정책.
+drop policy if exists msgr_members_update_self on public.msgr_org_members;
+create policy msgr_members_update_self on public.msgr_org_members for update to authenticated
+  using (user_id = (select auth.uid()) and removed_at is null) with check (user_id = (select auth.uid()) and removed_at is null);
+create or replace function public.msgr_member_self_guard() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  -- 본인 갱신(관리자 아님)은 표시명만 — 역할·제거 표시·소속은 관리자 정책으로만. NULL 주의: is_admin은 서비스 문맥에서 NULL.
+  if auth.uid() = old.user_id and not coalesce(public.msgr_is_admin(old.org_id), false)
+     and (new.role <> old.role or new.removed_at is distinct from old.removed_at) then
+    raise exception 'msgr_member_self_only_name';
+  end if;
+  return new;
+end $$;
+drop trigger if exists msgr_member_self_guard on public.msgr_org_members;
+create trigger msgr_member_self_guard before update on public.msgr_org_members for each row execute function public.msgr_member_self_guard();
+create or replace function public.msgr_member_offboard() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.removed_at is not null and old.removed_at is null then
+    update public.msgr_crews set status = 'detached' where org_id = new.org_id and owner_user_id = new.user_id and status = 'active';
+    delete from public.msgr_channel_members cm using public.msgr_channels c
+     where cm.channel_id = c.id and c.org_id = new.org_id
+       and ((cm.member_kind = 'user' and cm.member_id = new.user_id)
+         or (cm.member_kind = 'crew' and cm.member_id in (select id from public.msgr_crews where org_id = new.org_id and owner_user_id = new.user_id)));
+    perform public.msgr_audit(new.org_id, 'member.offboard', 'user', new.user_id::text, jsonb_build_object('crews_detached', (select count(*) from public.msgr_crews where org_id = new.org_id and owner_user_id = new.user_id and status = 'detached')));
+  elsif new.removed_at is null and old.removed_at is not null then
+    update public.msgr_crews set status = 'active' where org_id = new.org_id and owner_user_id = new.user_id and status = 'detached'; -- 되살림 = 파견 복구(채널 멤버십은 다시 넣어야 한다)
+  end if;
+  return new;
+end $$;
+drop trigger if exists msgr_member_offboard on public.msgr_org_members;
+create trigger msgr_member_offboard after update on public.msgr_org_members for each row execute function public.msgr_member_offboard();
