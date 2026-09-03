@@ -47,7 +47,7 @@ export async function addApproval(wsId, { slug, from, action, reason, kind = 'ac
 /** 승인/거절 — 상태만 바꾼다. 후속 턴 실행은 API 계층 책임.
     락 안에서 상태를 재확인하므로, 같은 결재에 두 요청(데크 카드+채팅 카드, 웹+메신저)이
     동시에 와도 두 번째는 'approved'를 보고 막힌다 — 되돌릴 수 없는 후속 턴 이중 실행 차단. */
-export async function resolveApproval(wsId, id, approve) {
+export async function resolveApproval(wsId, id, approve, { resolvedBy = null } = {}) {
   const item = await withLock(lockKey(wsId), async () => {
     const list = await loadApprovals(wsId);
     const it = list.find((a) => a.id === id);
@@ -55,6 +55,7 @@ export async function resolveApproval(wsId, id, approve) {
     if (it.status !== 'pending') throw new Error('이미 처리된 결재입니다');
     it.status = approve ? 'approved' : 'rejected';
     it.resolvedAt = new Date().toISOString();
+    if (resolvedBy) it.resolvedBy = resolvedBy; // 누가 확정했나 {uid, via, at} — 팀 메신저(다중 사용자)에서 감사 근거. 기존 창구는 미기록(단일 사장)
     await save(wsId, list);
     return it;
   });

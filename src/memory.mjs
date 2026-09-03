@@ -179,16 +179,19 @@ export async function appendSourceLinks(file, rels) {
 }
 
 /** 턴 핸드오버 — 크루별 하루 1파일 일지에 append(원수 층). 링크·정제는 정리 데몬이 맡는다. */
-export async function saveHandover(wsId, agentSlug, userMsg, reply, label = agentSlug) {
+export async function saveHandover(wsId, agentSlug, userMsg, reply, label = agentSlug, { tag = '' } = {}) {
   const p = paths(wsId);
   const now = new Date();
   // 일지 날짜·시각은 사용자 로컬 기준 — UTC 혼용 시 저녁 턴이 어제 일지에 적힌다
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const hm = now.toTimeString().slice(0, 5);
-  const file = join(p.journal, `${day}-${agentSlug}.md`);
+  // tag(예: org-<orgId>) = 팀 메신저 조직 채널 턴 — 같은 날 일지라도 **별도 파일**로 둔다. 하루 파일은 절(section)을
+  // 덧붙이는 구조라 절 단위 삭제가 불가능한데, 오프보딩 "조직 데이터 회수"는 파일 단위로 지워야 하기 때문(MESSENGER-DESIGN.md).
+  const safeTag = String(tag).replace(/[^a-z0-9-]/gi, '').slice(0, 60);
+  const file = join(p.journal, `${day}-${agentSlug}${safeTag ? `.${safeTag}` : ''}.md`);
   await mkdir(p.journal, { recursive: true });
   const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 48);
-  const head = existsSync(file) ? '' : `# ${day} ${label} 일지\n`;
+  const head = existsSync(file) ? '' : `# ${day} ${label} 일지${safeTag ? ` (${safeTag})` : ''}\n`;
   // 장문 응답은 절단 표시를 남긴다 — 표시 없이 자르면 크루·정리 데몬이 잘린 걸 완전한 기록으로 오인한다
   const full = reply.trim();
   const body = full.length > 1500 ? `${full.slice(0, 1500).trim()}\n…(길이 초과로 생략 — 전체 ${full.length}자, 원문은 대화 스레드에)` : full;

@@ -1,0 +1,372 @@
+// 아르고 팀 메신저 브리지 — 조직 채널의 @크루 멘션·DM을 이 회사 크루의 턴으로 잇는다(설계 정본: 루트 MESSENGER-DESIGN.md).
+// 위치: 텔레그램·슬랙 옆의 새 채널 종류 'msgr'. 정본은 Supabase(msgr_* 테이블)이고 이 프로세스는 **크루 소유자의
+// 기기 세션(JWT)**으로 붙는 한 사용자다 — RLS가 "자기 크루 명의로만 발화·결재 확정"을 서버에서 집행한다.
+// 상주 노드도 같은 코드다(서비스 계정의 기기 세션으로 로그인) — 러너 중립·기능 비분기.
+//
+// 프로토콜(텔레그램 offset 규율과 동형 — src/gateway/queue.mjs:10-25):
+//   1) 폴(15s) 또는 Realtime 방송(깨우기 신호)에 drain: 내 크루마다 msgr_crews.cursor_msg_id 이후 메시지를 읽어
+//      멘션·DM만 디스크 큐(.gw-queue-msgr/<msgId>-<slug>.json)에 **적재한 직후** 서버 커서를 전진시킨다(at-least-once).
+//   2) 워커가 잡을 집어 chat()을 돌리고 답글을 insert — client_msg_id='reply:<crew>:<msg>' unique라 리더 교체 창의
+//      중복 실행은 DB가 거른다(두 번째 insert는 23505 → 조용히 폐기).
+//   3) 결재: 턴 중 request_approval → push('approval')이 채널에 카드(미러 행 + approval_card 메시지). 앱 버튼은 미러 행의
+//      status를 바꾸고(RLS: 크루 소유자만), drain의 syncApprovals가 그것을 보고 **큐를 우회해** resolveWithFollowUp
+//      (텔레그램 handleApprovalCallback과 같은 데드락 이유 — gateway.mjs:249 주석).
+// 1차 범위 밖(정직 표기): 크루가 쓴 글에는 반응하지 않는다(author_kind='crew' 무시 — 크루끼리 멘션 핑퐁 루프 차단.
+//   같은 소유자의 위임 미러는 push('delegate')로 별도), 채널별 세션 분리 없음(크루 1명 = chats/<slug>.json 1개),
+//   Presence 미사용(하트비트 last_seen_at가 부재중 판정 정본).
+// DB 접근은 makeDb(client) 한 층에 모은다 — 단위 테스트는 가짜 db를 주입하고(test/msgr-bridge.test.mjs), 실제
+// supabase-js 체인 호출·RLS 왕복은 로컬 Supabase 스택 E2E(scripts/e2e-msgr-bridge.mjs)가 검증한다.
+import { createClient } from '@supabase/supabase-js';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
+import { getFreshDeviceSession } from '../devicesession.mjs';
+import { paths, loadCompany } from '../workspace.mjs';
+import { enqueueJob } from './queue.mjs';
+import { pick } from './protocol.mjs';
+import { beatGateway } from './persist.mjs';
+import { chat } from '../chat.mjs';
+import { loadThread, appendTurn } from '../thread.mjs';
+import { loadApprovals, setApprovalMeta } from '../approvals.mjs';
+import { resolveWithFollowUp } from '../approval-actions.mjs';
+import { extractFileRefs, attachFailureNote, isImagePath } from '../tg-format.mjs';
+import { appendEvent } from '../events.mjs';
+
+export const MSGR_KEY = 'msgr';
+export const POLL_MS = 15_000;          // 폴 주기 = 하트비트 주기(같은 tick). 앱은 last_seen_at 90s 초과를 부재중으로 그린다
+export const STALE_MS = 24 * 3_600_000; // 이보다 오래 대기한 지시는 실행 대신 정직 폐기(queue.mjs LEGACY_JOB_MAX_AGE_MS 관례)
+export const AWAY_NOTE_MS = 90_000;     // 이보다 늦게 처리한 답글엔 "(부재중 대기분 · N분 전 지시)" 접두
+export const PAGE = 50;                 // 크루당 1회 drain 최대 메시지 — 비용 폭주 방지(나머지는 다음 tick)
+const MSG_MAX = 20_000;                 // msgr_messages.body check 제약과 동일
+const TYPING_MS = 4_000;
+
+/* ─── 허용 범위 게이트(순수) — 누가 이 크루에게 일을 시킬 수 있나. 'all' 조직 멤버 전원 / 'list' 지정 멤버 / 'owner' 소유자만.
+   거절은 채널에 시스템 메시지로 정직 표기(침묵 금지 — 텔레그램 attachFailureNote와 같은 정책). (export: 회귀 테스트용) */
+export function allowedToInstruct(crew, authorId, ownerId) {
+  if (!authorId) return false;
+  if (authorId === ownerId) return true;
+  if (crew.allow === 'owner') return false;
+  if (crew.allow === 'list') return (crew.allow_users ?? []).includes(authorId);
+  return true; // 'all'
+}
+/** 이 메시지가 이 크루를 겨냥하는가 — 멘션 또는 크루가 참가한 DM. 크루가 쓴 글·시스템 글은 트리거가 아니다. (export: 회귀 테스트용) */
+export function targetsCrew(m, crew, dmChannels) {
+  if (m.author_kind !== 'user' || m.kind !== 'text') return false;
+  const mentioned = (Array.isArray(m.mentions) ? m.mentions : []).some((x) => x?.kind === 'crew' && x.id === crew.id);
+  return mentioned || dmChannels.has(m.channel_id);
+}
+
+/* ─── DB 층 — supabase-js 체인은 여기에만. 반환은 평범한 값/예외. ─── */
+const unwrap = ({ data, error }) => { if (error) throw new Error(`msgr db: ${error.message}`); return data; };
+export function makeDb(client) {
+  return {
+    async myCrews(uid, wsId) {
+      return unwrap(await client.from('msgr_crews').select('id, org_id, slug, display_name, allow, allow_users, cursor_msg_id, hosting')
+        .eq('owner_user_id', uid).eq('ws_id', wsId).eq('status', 'active')) ?? [];
+    },
+    async crewBySlug(uid, wsId, slug) {
+      return unwrap(await client.from('msgr_crews').select('id, org_id, slug').eq('owner_user_id', uid).eq('ws_id', wsId).eq('slug', slug).eq('status', 'active').maybeSingle());
+    },
+    async heartbeat(ids) {
+      if (ids.length) unwrap(await client.from('msgr_crews').update({ last_seen_at: new Date().toISOString() }).in('id', ids));
+    },
+    async setCursor(crewId, id) { // 단조 — 과거 값으로 되돌리지 않는다
+      unwrap(await client.from('msgr_crews').update({ cursor_msg_id: id }).eq('id', crewId).lt('cursor_msg_id', id));
+    },
+    async messagesAfter(orgId, afterId, limit = PAGE) {
+      return unwrap(await client.from('msgr_messages').select('id, channel_id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, thread_root, created_at')
+        .eq('org_id', orgId).gt('id', afterId).is('deleted_at', null).order('id', { ascending: true }).limit(limit)) ?? [];
+    },
+    async message(id) {
+      return unwrap(await client.from('msgr_messages').select('id, channel_id, author_kind, author_user_id, crew_id, body, created_at').eq('id', id).maybeSingle());
+    },
+    async crewChannels(crewId) {
+      return (unwrap(await client.from('msgr_channel_members').select('channel_id').eq('member_kind', 'crew').eq('member_id', crewId)) ?? []).map((r) => r.channel_id);
+    },
+    async channel(id) {
+      return unwrap(await client.from('msgr_channels').select('id, org_id, kind, name, crew_memory').eq('id', id).maybeSingle());
+    },
+    async memberName(orgId, uid) {
+      const r = unwrap(await client.from('msgr_org_members').select('display_name').eq('org_id', orgId).eq('user_id', uid).maybeSingle());
+      return r?.display_name ?? null;
+    },
+    /** 답글·카드 insert. 중복(client_msg_id unique) → null. */
+    async insertMessage(row) {
+      const { data, error } = await client.from('msgr_messages').insert(row).select('id').single();
+      if (error) { if (error.code === '23505') return null; throw new Error(`msgr db: ${error.message}`); }
+      return data;
+    },
+    async attachmentsOf(messageId) {
+      return unwrap(await client.from('msgr_attachments').select('storage_path, name, mime, bytes').eq('message_id', messageId)) ?? [];
+    },
+    async insertAttachment(row) { unwrap(await client.from('msgr_attachments').insert(row)); },
+    async download(path) {
+      const blob = unwrap(await client.storage.from('msgr').download(path));
+      return Buffer.from(await blob.arrayBuffer());
+    },
+    async upload(path, buf, contentType) {
+      unwrap(await client.storage.from('msgr').upload(path, buf, { contentType: contentType || 'application/octet-stream', upsert: false }));
+    },
+    async insertApproval(row) { return unwrap(await client.from('msgr_crew_approvals').insert(row).select('id').single()); },
+    async updateApproval(id, patch) { unwrap(await client.from('msgr_crew_approvals').update(patch).eq('id', id)); },
+    async approvalsByIds(ids) {
+      if (!ids.length) return [];
+      return unwrap(await client.from('msgr_crew_approvals').select('id, status, decided_by, decided_at').in('id', ids)) ?? [];
+    },
+  };
+}
+
+/* ─── 세션 클라이언트 — 기기 세션 JWT(회전은 devicesession이 담당). 토큰이 바뀌면 재생성(sync.mjs ensureClient 관례). ─── */
+let cached = null; // { key, client, db, uid }
+export async function sessionClient() {
+  const sess = await getFreshDeviceSession();
+  if (!sess) return null;
+  const key = sess.access_token.slice(-24);
+  if (cached?.key !== key) {
+    const client = createClient(sess.url, sess.anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${sess.access_token}` } },
+    });
+    try { await client.realtime.setAuth(sess.access_token); } catch { /* realtime 미가용 — 폴만으로도 완결 */ }
+    cached = { key, client, db: makeDb(client), uid: sess.user.id };
+  }
+  return cached;
+}
+
+/* ─── drain — 멘션·DM을 큐에 적재하고 커서 전진 + 결재 결정 반영. 순수 의존은 db·uid·enqueue(테스트 주입). ─── */
+export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now } = {}) {
+  const crews = await db.myCrews(uid, wsId);
+  const out = { crews: crews.length, queued: 0, denied: 0, stale: 0 };
+  if (!crews.length) return out;
+  await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
+  for (const crew of crews) {
+    const dm = new Set(await db.crewChannels(crew.id).catch(() => []));
+    const msgs = await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0);
+    let max = crew.cursor_msg_id ?? 0;
+    for (const m of msgs) {
+      max = Math.max(max, m.id);
+      if (!targetsCrew(m, crew, dm)) continue;
+      if (!allowedToInstruct(crew, m.author_user_id, uid)) {
+        out.denied++;
+        await db.insertMessage({
+          channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, client_msg_id: `deny:${crew.id}:${m.id}`,
+          body: pick(`${crew.display_name}에게는 ${crew.allow === 'owner' ? '소유자만' : '허용된 멤버만'} 일을 시킬 수 있습니다 — 소유자에게 허용을 요청하세요.`,
+            `Only ${crew.allow === 'owner' ? 'the owner' : 'allowed members'} can instruct ${crew.display_name} — ask the owner for access.`, lang),
+        }).catch((e) => console.error('[argo] msgr 거절 안내 실패:', e.message));
+        continue;
+      }
+      if (now() - Date.parse(m.created_at) > STALE_MS) {
+        out.stale++;
+        await db.insertMessage({
+          channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, client_msg_id: `stale:${crew.id}:${m.id}`,
+          body: pick('대기 시간이 24시간을 넘어 이 지시는 실행하지 않았습니다 — 다시 지시해 주세요.', 'This request waited over 24 hours and was not run — please ask again.', lang),
+        }).catch((e) => console.error('[argo] msgr 만료 안내 실패:', e.message));
+        continue;
+      }
+      await enqueue(wsId, MSGR_KEY, `${m.id}-${crew.slug}`, {
+        msgId: m.id, orgId: crew.org_id, channelId: m.channel_id, crewId: crew.id, slug: crew.slug, text: m.body,
+        authorId: m.author_user_id, replyTo: m.reply_to, threadRoot: m.thread_root ?? m.id, createdAt: m.created_at,
+      });
+      out.queued++;
+    }
+    if (max > (crew.cursor_msg_id ?? 0)) await db.setCursor(crew.id, max); // 적재 후에만 전진(at-least-once)
+  }
+  await syncApprovals(wsId, { db, uid }).catch((e) => console.error('[argo] msgr 결재 동기화 실패:', e.message));
+  return out;
+}
+
+/** 앱에서 확정된 결재를 로컬 정본에 반영 — 큐 우회(대기 턴과의 데드락 방지). 로컬 pending + 미러 결정됨 → resolveWithFollowUp. */
+export async function syncApprovals(wsId, { db, uid, resolve = resolveWithFollowUp } = {}) {
+  const pending = (await loadApprovals(wsId)).filter((a) => a.status === 'pending' && a.msgr?.rowId);
+  if (!pending.length) return 0;
+  const rows = await db.approvalsByIds(pending.map((a) => a.msgr.rowId));
+  let n = 0;
+  for (const r of rows) {
+    if (r.status !== 'approved' && r.status !== 'rejected') continue;
+    const it = pending.find((a) => a.msgr.rowId === r.id);
+    if (!it) continue;
+    await resolve(wsId, it.id, r.status === 'approved', { resolvedBy: { uid: r.decided_by ?? uid, via: 'msgr', at: r.decided_at } })
+      .catch((e) => console.error(`[argo] msgr 결재 반영 실패(${it.id}):`, e.message)); // '이미 처리된 결재'(웹에서 먼저 확정)도 여기로 — 무해
+    n++;
+  }
+  return n;
+}
+
+/* ─── 턴 문맥 — 턴 중 request_approval·delegate가 어느 채널에서 왔는지(push가 본다). 전역 맵 대신 wsId:slug 단위. ─── */
+const activeCtx = new Map();
+export const _activeCtxForTest = activeCtx;
+const rtChannels = new Map(); // orgId → realtime channel(타이핑 방송용, start()가 채움)
+const safeName = (n) => String(n ?? 'file').replace(/[\\/]/g, '_').replace(/\.\./g, '_').slice(0, 80) || 'file';
+
+/* ─── 잡 핸들러 — 워커가 집는다. 턴 실패는 에러 회신으로 내부 종결(정상 반환 = 잡 완료). ─── */
+export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat, now = Date.now } = {}) {
+  return async (job) => {
+    const c = await session();
+    if (!c) { throw new Error('기기 세션 없음 — 다음 틱 재시도'); } // 인프라 예외 = 파일 유지·재시도(queue.mjs 계약)
+    const { db, uid } = c;
+    const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+    const ch = await db.channel(job.channelId).catch(() => null);
+    if (!ch) return; // 채널 삭제 — 잡 폐기
+    const authorName = (await db.memberName(job.orgId, job.authorId).catch(() => null)) ?? pick('멤버', 'member', lang);
+    let text = `[#${ch.name}] ${authorName}: ${job.text}`;
+    if (job.replyTo) {
+      const parent = await db.message(job.replyTo).catch(() => null);
+      if (parent?.body) text += `\n${pick('(답글 대상', '(In reply to', lang)}: ${String(parent.body).replace(/\s+/g, ' ').trim().slice(0, 300)})`;
+    }
+    // 첨부 — Storage에서 vault/files/msgr/로 내려 웹 chat 라우트와 같은 {rel,name,mime,isImage} 계약으로
+    const attachments = [];
+    for (const a of await db.attachmentsOf(job.msgId).catch(() => [])) {
+      try {
+        const buf = await db.download(a.storage_path);
+        const rel = `files/msgr/${job.msgId}-${safeName(a.name)}`;
+        await mkdir(join(paths(wsId).vault, 'files', 'msgr'), { recursive: true });
+        await writeFile(join(paths(wsId).vault, rel), buf);
+        attachments.push({ rel, name: safeName(a.name), mime: a.mime ?? '', isImage: isImagePath(rel) });
+      } catch (e) { text += `\n${pick('(첨부 수신 실패', '(Attachment failed', lang)}: ${safeName(a.name)} — ${String(e.message).slice(0, 80)})`; }
+    }
+    const ctx = { chatType: 'group', kind: 'msgr', orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, uid };
+    activeCtx.set(`${wsId}:${job.slug}`, ctx);
+    const stopTyping = startTyping(job.orgId, job.channelId, job.crewId);
+    let reply; let failed = false;
+    try {
+      const t = await loadThread(wsId, job.slug);
+      const turn = await runChat(wsId, job.slug, text, t.sessionId, {
+        source: 'messenger', attachments, mirrorCtx: ctx,
+        journal: { off: ch.crew_memory === false, tag: `org-${job.orgId}` }, // 채널 설정: 기억 안 남김 / 조직 태그 파일(회수 단위)
+      });
+      await appendTurn(wsId, job.slug, { userMsg: text, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
+        via: 'msgr', actor: { uid: job.authorId, name: authorName } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭)
+      reply = turn.reply;
+    } catch (e) {
+      failed = true;
+      reply = pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang);
+    } finally {
+      stopTyping();
+      activeCtx.delete(`${wsId}:${job.slug}`);
+    }
+    const waited = now() - Date.parse(job.createdAt);
+    if (!failed && waited > AWAY_NOTE_MS) {
+      const min = Math.max(1, Math.round(waited / 60_000));
+      reply = `${pick(`(부재중 대기분 · ${min}분 전 지시)`, `(Handled after being away · asked ${min} min ago)`, lang)}\n${reply}`;
+    }
+    const row = await db.insertMessage({
+      channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId,
+      client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(reply ?? '').slice(0, MSG_MAX),
+    });
+    await appendEvent(wsId, { type: 'gateway', op: 'msgr_reply', slug: job.slug, ok: !failed, dup: !row, actor: { uid: job.authorId } });
+    if (!row || failed) return; // 중복(다른 기기가 먼저 답함) 또는 실패 — 첨부 없음
+    // 답변 속 파일 참조 → Storage 업로드 + 첨부 행. 실패는 채널에 알린다(침묵 금지).
+    const fails = [];
+    for (const ref of extractFileRefs(reply)) {
+      const name = basename(ref);
+      try {
+        const buf = await readFile(join(paths(wsId).vault, ref));
+        const path = `${job.orgId}/${job.channelId}/${row.id}/${safeName(name)}`;
+        await db.upload(path, buf, isImagePath(ref) ? `image/${ref.split('.').pop().toLowerCase().replace('jpg', 'jpeg')}` : '');
+        await db.insertAttachment({ message_id: row.id, org_id: job.orgId, storage_path: path, name: safeName(name), bytes: buf.length });
+      } catch (e) { fails.push({ name, reason: /ENOENT/.test(e.message) ? pick('파일이 없습니다', 'file not found', lang) : String(e.message).slice(0, 80) }); }
+    }
+    if (fails.length) {
+      await db.insertMessage({ channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'system', reply_to: row.id,
+        client_msg_id: `attfail:${job.crewId}:${job.msgId}`, body: attachFailureNote(fails, lang) }).catch(() => {});
+    }
+  };
+}
+
+function startTyping(orgId, channelId, crewId) {
+  const ch = rtChannels.get(orgId);
+  if (!ch) return () => {};
+  const send = () => ch.send({ type: 'broadcast', event: 'typing', payload: { channel_id: channelId, crew_id: crewId } }).catch?.(() => {});
+  try { send(); } catch { /* 무해 */ }
+  const iv = setInterval(() => { try { send(); } catch { /* 무해 */ } }, TYPING_MS);
+  iv.unref?.();
+  return () => clearInterval(iv);
+}
+
+/* ─── push — 코어 이벤트(onNotify)를 채널로. msgr 문맥이 없는 이벤트는 즉시 반환(클라이언트 생성 0). ─── */
+export async function msgrPush(event, { session = sessionClient } = {}) {
+  const it = event.item;
+  if (event.type === 'approval') {
+    const ctx = activeCtx.get(`${event.wsId}:${it?.slug}`);
+    if (!ctx) return false;
+    const c = await session(); if (!c) return false;
+    const { lang = 'ko' } = await loadCompany(event.wsId).catch(() => ({}));
+    const ap = await c.db.insertApproval({ org_id: ctx.orgId, channel_id: ctx.channelId, crew_id: ctx.crewId, approval_id: it.id, action: it.action, reason: it.reason ?? null });
+    const card = await c.db.insertMessage({
+      channel_id: ctx.channelId, author_kind: 'crew', crew_id: ctx.crewId, kind: 'approval_card', reply_to: ctx.threadRoot ?? null,
+      client_msg_id: `ap:${ctx.crewId}:${it.id}`,
+      body: pick(`결재 요청: ${it.action}${it.reason ? `\n사유: ${it.reason}` : ''}\n(확정은 이 크루의 소유자만 할 수 있습니다)`,
+        `Approval requested: ${it.action}${it.reason ? `\nReason: ${it.reason}` : ''}\n(Only this crew's owner can decide)`, lang),
+      mentions: [{ kind: 'approval', id: ap.id }],
+    });
+    if (card) await c.db.updateApproval(ap.id, { message_id: card.id }).catch(() => {});
+    await setApprovalMeta(event.wsId, it.id, { msgr: { rowId: ap.id, orgId: ctx.orgId, channelId: ctx.channelId, crewId: ctx.crewId, messageId: card?.id ?? null } });
+    return true;
+  }
+  if (event.type === 'approval_resolved' && it?.msgr?.rowId) { // 웹·텔레그램에서 확정 → 미러 행도 최종 상태로(아직 pending일 때만 — RLS using)
+    const c = await session(); if (!c) return false;
+    await c.db.updateApproval(it.msgr.rowId, { status: it.status, decided_by: c.uid, decided_at: new Date().toISOString() }).catch(() => {});
+    return true;
+  }
+  if (event.type === 'approval_followup' && it?.msgr?.channelId) {
+    const c = await session(); if (!c) return false;
+    await c.db.insertMessage({ channel_id: it.msgr.channelId, author_kind: 'crew', crew_id: it.msgr.crewId, kind: 'text', reply_to: it.msgr.messageId ?? null,
+      client_msg_id: `apf:${it.msgr.crewId}:${it.id}`, body: String(event.reply ?? '').slice(0, MSG_MAX) });
+    return true;
+  }
+  if (event.type === 'delegate' && event.ctx?.kind === 'msgr') { // 같은 소유자의 다른 크루가 같은 채널에 자기 이름으로(위임 미러)
+    const c = await session(); if (!c) return false;
+    const target = await c.db.crewBySlug(c.uid, event.wsId, event.to).catch(() => null);
+    if (!target || target.org_id !== event.ctx.orgId) return false; // 조직에 등록되지 않은 크루 — A의 답에 통합돼 있으니 생략
+    const { lang = 'ko' } = await loadCompany(event.wsId).catch(() => ({}));
+    await c.db.insertMessage({ channel_id: event.ctx.channelId, author_kind: 'crew', crew_id: target.id, kind: 'text', reply_to: event.ctx.threadRoot ?? null,
+      body: pick(`(${event.fromName}의 요청: ${String(event.task).replace(/\s+/g, ' ').slice(0, 80)})\n\n${event.reply}`, `(${event.fromName}'s request: ${String(event.task).replace(/\s+/g, ' ').slice(0, 80)})\n\n${event.reply}`, lang).slice(0, MSG_MAX) });
+    return true;
+  }
+  return false;
+}
+
+/* ─── 폴러(클라우드 리더 전용, 매니저가 소유) — 15s drain + Realtime 방송 수신 시 즉시 drain. ─── */
+export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_MS } = {}) {
+  let stopped = false; let busy = false; let subscribedOrgs = new Set();
+  const tick = async () => {
+    if (stopped || busy) return;
+    busy = true;
+    try {
+      const c = await session();
+      if (!c) { await beatGateway(wsId, MSGR_KEY, false, '기기 세션 없음 — 로그인 필요').catch(() => {}); return; }
+      const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+      const r = await drain(wsId, { db: c.db, uid: c.uid, lang });
+      await beatGateway(wsId, MSGR_KEY, true).catch(() => {});
+      subscribe(c, await c.db.myCrews(c.uid, wsId).catch(() => []));
+      return r;
+    } catch (e) {
+      console.error(`[argo] msgr drain 실패(${wsId}):`, e.message);
+      await beatGateway(wsId, MSGR_KEY, false, String(e.message).slice(0, 200)).catch(() => {});
+    } finally { busy = false; }
+  };
+  // Realtime = 깨우기 신호(정본은 커서 조회). 구독 실패해도 폴만으로 완결된다.
+  const subscribe = (c, crews) => {
+    const orgs = new Set(crews.map((x) => x.org_id));
+    for (const orgId of orgs) {
+      if (subscribedOrgs.has(orgId) && rtChannels.get(orgId)?.__client === c.client) continue;
+      try {
+        rtChannels.get(orgId)?.unsubscribe?.();
+        const ch = c.client.channel(`org:${orgId}`, { config: { private: true } })
+          .on('broadcast', { event: 'message' }, () => { tick().catch(() => {}); })
+          .on('broadcast', { event: 'approval' }, () => { tick().catch(() => {}); });
+        ch.__client = c.client;
+        ch.subscribe();
+        rtChannels.set(orgId, ch);
+        subscribedOrgs.add(orgId);
+      } catch (e) { console.warn(`[argo] msgr realtime 구독 실패(org ${orgId}):`, e.message); }
+    }
+  };
+  const iv = setInterval(() => tick().catch(() => {}), pollMs);
+  iv.unref?.();
+  tick().catch(() => {});
+  return () => {
+    stopped = true; clearInterval(iv);
+    for (const orgId of subscribedOrgs) { try { rtChannels.get(orgId)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(orgId); }
+    subscribedOrgs = new Set();
+  };
+}

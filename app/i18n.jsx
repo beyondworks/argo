@@ -571,6 +571,7 @@ const DICT = {
   'settings.connectors.status.reauth': ['재연결 필요', 'Reconnect needed'],
   'settings.connectors.status.error': ['오류', 'Error'],
   'settings.conn.ev.inbox': ['받은 서류함 처리 결과', 'Inbox file results'],
+  'settings.conn.ev.delegate': ['위임 결과 미러(크루 간)', 'Delegation results (crew to crew)'], // 팀 메신저(msgr) 채널 종류 — channel-events.mjs와 짝
   'settings.saved': ['저장됨', 'Saved'],
   'settings.save': ['저장', 'Save'],
   'settings.nameplate.runtime': ['가동 환경', 'Runtime'],

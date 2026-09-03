@@ -814,7 +814,10 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
  *   재시도 재귀 호출에도 그대로 넘긴다 — 빠지면 재시도 턴만 개인 고정으로 돌아가 발언자마다 폴더가 갈린다.
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
-export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, workFolder = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false } = {}) {
+export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, workFolder = '', journal = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false } = {}) {
+  // journal = 팀 메신저 채널 턴의 일지 정책 {off, tag} — off면 saveHandover 생략(402 creditTurn과 같은 갈래), tag면 별도 파일.
+  // 세 saveHandover 지점이 모두 이 한 함수를 거친다(한 지점만 빠지면 crew_memory=false 채널의 내용이 기억에 새는 무언 결함).
+  const journalWrite = (reply, label) => journal?.off ? null : saveHandover(wsId, agentSlug, userMsg, reply, label, { tag: journal?.tag ?? '' });
   // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)
   const turnSource = source ?? (from ? 'delegate' : 'chat');
   const p = paths(wsId);
@@ -832,11 +835,11 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
       const reply = lang === 'en'
         ? "We've reached this company's monthly spending limit, so I can't start a new task right now. I'll pick it right back up next month."
         : '이번 달 회사 지출 한도에 도달해서 지금은 새 작업을 시작할 수 없어요. 다음 달이 되면 바로 이어서 하겠습니다.';
-      const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
+      const handover = await journalWrite(reply, meta.name || agentSlug);
       await appendEvent(wsId, {
         type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...(from ? { from } : {}),
         gist: userMsg.replace(/\s+/g, ' ').trim().slice(0, 60), ok: true, ms: 0, budgetBlocked: true,
-        journalRel: relative(p.vault, handover.file),
+        ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}),
       });
       // 모델을 부르지 않은 턴 — 산출물 diff 없음(여기서 artBefore를 참조하면 TDZ로 예산 턴 전체가
       // 죽는다. 분리 검수 CRITICAL-1 실측: 변이 복원 오타겟이 심은 회귀).
@@ -1098,8 +1101,8 @@ ${lang === 'en'
         billed: await isBilledRunner(wsId, runner), // 이 경로는 costUsd가 null이라 금액엔 무영향 — 기록 일관성용
       });
       await clearTurnStatus(wsId, agentSlug);
-      const handover = await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
-      await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, journalRel: relative(p.vault, handover.file), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
+      const handover = await journalWrite(reply, meta.name || agentSlug);
+      await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
       // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파.
       // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
       return { reply, sessionId: null, handover, artifacts: await artDiff(), ...fellBackInfo };
@@ -1524,7 +1527,7 @@ ${lang === 'en'
 
   // 402(크레딧 소진) 턴은 일지에 남기지 않는다 — 남기면 consolidate가 오류 원문을 기억 노트로
   // 정제할 수 있다(2R N3, oneshot HIGH-1과 동일 논리). 화면 답변·이벤트·사용량 집계는 그대로.
-  const handover = creditTurn ? null : await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
+  const handover = creditTurn ? null : await journalWrite(reply, meta.name || agentSlug);
   await appendEvent(wsId, {
     ...evBase, ok: true, ms: Date.now() - t0, steps,
     ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
