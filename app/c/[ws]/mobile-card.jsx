@@ -16,17 +16,24 @@ async function call(method, body) {
   return data;
 }
 
-/** embedded — 회사 정보 카드 안 한 구획으로(카드 래퍼 없이, 위 구분선 + 소제목). 회사 정보 카드의 빈 여백에 앉힌다(유건 2026-09-03).
-    폼(<form>) 안에 들어가므로 버튼은 전부 type="button"이다 — 이름 저장 submit을 건드리지 않는다. */
 // 래퍼는 반드시 모듈 수준에 둔다 — 컴포넌트 안에서 정의하면 React가 렌더마다 다른 타입으로 보고 자식을 전부 재마운트한다.
 const EmbeddedWrap = ({ children }) => <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '1px dashed var(--border-soft)', paddingTop: 12, marginTop: 4 }}>{children}</div>;
 const CardWrap = ({ children }) => <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>{children}</div>;
+
+/** 상대시각("마지막 접속 N분 전") — 부모가 폴 결과 동일로 재렌더하지 않으므로 30초마다 스스로 갱신한다(검수 M-2: 동결). */
+function TimeAgoLive({ ts }) {
+  const { t, lang } = useLang();
+  const [, tick] = useState(0);
+  useEffect(() => { const iv = setInterval(() => tick((n) => n + 1), 30000); return () => clearInterval(iv); }, []);
+  return <>{t('mobile.lastSeen', { when: timeAgo(ts, lang) })}</>;
+}
 
 /** 만료 카운트다운 — 이 span만 1초마다 다시 그린다(부모 카드는 건드리지 않는다). */
 function Countdown({ exp }) {
   const { t } = useLang();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    setNow(Date.now()); // exp가 바뀔 때 즉시 갱신 — 만료로 인터벌이 멎은 뒤 새 코드를 받으면 낡은 now로 "337초"가 뜨던 회귀(검수 M-1)
     if (!exp) return;
     const iv = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(iv);
@@ -35,6 +42,8 @@ function Countdown({ exp }) {
   return <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{exp && s > 0 ? t('mobile.expiresIn', { s }) : t('mobile.expired')}</span>;
 }
 
+/** embedded — 회사 정보 카드 안 한 구획으로(카드 래퍼 없이, 위 구분선 + 소제목). 회사 정보 카드의 빈 여백에 앉힌다(유건 2026-09-03).
+    폼(<form>) 안에 들어가므로 버튼은 전부 type="button"이다 — 이름 저장 submit을 건드리지 않는다. */
 export function MobileCard({ embedded = false } = {}) {
   const { t } = useLang();
   const [st, setSt] = useState(null);
@@ -45,7 +54,7 @@ export function MobileCard({ embedded = false } = {}) {
 
   // 폴링 응답은 **내용이 바뀌었을 때만** 상태에 반영한다 — 같은 값으로 매번 setState하면 카드 전체가 다시 그려져
   // 열어 둔 주소 드롭다운이 닫히고 드래그 선택이 풀린다(유건 제보 2026-09-03). 카운트다운도 같은 이유로 자식 컴포넌트에 격리.
-  const pull = () => call('GET').then((d) => { setSt((prev) => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d)); setError(''); }).catch((e) => setError(String(e.message)));
+  const pull = () => call('GET').then((d) => { setSt((prev) => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d)); // 서버 publicView/view()의 키 순서가 고정이라는 전제(순서만 바뀌면 재렌더가 늘 뿐 재마운트는 아님) setError(''); }).catch((e) => setError(String(e.message)));
   useEffect(() => { pull(); }, []);
   // 켜져 있을 때만 폴링 — 폰이 페어링되면 목록에 바로 뜬다.
   useEffect(() => {
@@ -126,7 +135,7 @@ export function MobileCard({ embedded = false } = {}) {
             <span className="microlabel">{t('mobile.paired')}</span>
             {st.pairs.length === 0 ? <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{t('mobile.none')}</span> : st.pairs.map((p) => (
               <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5 }}>
-                <span style={{ flex: 1 }}>{p.name || 'Phone'} <span style={{ color: 'var(--fg-3)' }}>· {t('mobile.lastSeen', { when: timeAgo(p.lastSeen, lang) })}</span></span>
+                <span style={{ flex: 1 }}>{p.name || 'Phone'} <span style={{ color: 'var(--fg-3)' }}>· <TimeAgoLive ts={p.lastSeen} /></span></span>
                 <button type="button" className="btn sm" onClick={() => setRevoke(p)}>{t('mobile.revoke')}</button>
               </div>
             ))}
