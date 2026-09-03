@@ -4,7 +4,7 @@
 import globals from 'globals';
 
 export default [
-  { ignores: ['node_modules/**', '.next/**', 'desktop/**', 'landing/**', 'demo-video/**', 'supabase/functions/**', 'workspaces/**', '.omc/**', '.fablize/**', 'mobile/android/app/build/**', 'mobile/ios/DerivedData/**', 'mobile/node_modules/**'] },
+  { ignores: ['node_modules/**', '.next/**', 'desktop/**', 'landing/**', 'demo-video/**', 'supabase/functions/**', 'workspaces/**', '.omc/**', '.fablize/**'] },
   {
     // '*.mjs' = 루트 런타임 파일(instrumentation-node·next.config·demo) — instrumentation-node는
     // 스케줄러·게이트웨이·동기화를 부팅하는 상주 진입점이라, 여기가 빠지면 게이트가 겨냥한

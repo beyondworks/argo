@@ -24,5 +24,4 @@ dist-server/
 /docs/*
 !/docs/selfhost.md
 !/docs/privacy-sync.md
-!/docs/mobile.md
 /PRODUCT-SPEC.md

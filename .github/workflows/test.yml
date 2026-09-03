@@ -54,19 +54,3 @@ jobs:
 
       # Windows에서도 glob이 동작한다 — cmd는 글롭 확장을 안 하지만 node --test가 패턴을 직접 해석(Node 21+)
       - run: npm test
-
-  # 휴대폰 페어링 E2E — 격리 서버(임시 ARGO_ROOT·별도 포트·Supabase env 없음)에서 토글→코드→비루프백 Host 페어링→
-  # 회사 API 접근→해제→정지까지 실측. 단위 테스트가 못 보는 것(currentUser의 토큰 판정이 요청 스코프에서 실제로
-  # 도는지, 미들웨어+라우트+리스너 조합)을 잠근다 — 분리 검수 HIGH-1(행동 게이트 부재) 해소. next build 포함이라 macOS 1대.
-  e2e-mobile:
-    runs-on: macos-15
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: node scripts/e2e-mobile-pair.mjs
-

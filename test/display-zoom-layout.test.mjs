@@ -40,11 +40,7 @@ function evalSize(expr, { z } = {}) {
     // 폴백 없는 var(--z)는 변수 미설정(배율 1) 시 선언 전체가 무효 — 실브라우저와 같게 실패시킨다
     throw new Error(`var(--z) 폴백 없음 — 배율 1(변수 미설정)에서 선언이 무효가 된다: ${expr}`);
   });
-  // env(safe-area-inset-*, 폴백) — 폰 셸(#424)의 하단 탭 산식. 데스크톱·안전 영역 없는 화면에서는 폴백(0px)과 같고,
-  // 안전 영역이 있으면 그만큼 더 줄어드니 뷰포트 안 불변식은 폴백으로 평가하는 쪽이 상한이다.
-  s = s.replace(/env\(\s*safe-area-inset-[a-z]+\s*,\s*([^)]+)\)/g, (_, fb) => `(${fb.trim()})`);
-  // dvh = 사파리 툴바 접힘 반영(동적 뷰포트) — 최대치가 vh와 같으므로 vh로 평가(상한). svh·lvh는 평가기 밖(residue로 red).
-  s = s.replace(/(\d*\.?\d+)d?vh/gi, (_, n) => `(${n}*${V}/100)`);
+  s = s.replace(/(\d*\.?\d+)vh/gi, (_, n) => `(${n}*${V}/100)`);
   s = s.replace(/(\d*\.?\d+)px/gi, '($1)');
   s = s.replace(/\bcalc\(/gi, '(').replace(/\bmin\(/gi, 'Math.min(').replace(/\bmax\(/gi, 'Math.max(');
   const residue = s.replace(/Math\.(min|max)/g, '').replace(/[\d\s+\-*/().,]/g, '');
@@ -97,12 +93,12 @@ const decls = [...sources.entries()].flatMap(([f, src]) => (f.endsWith('.css') ?
 test('수집 스위프가 비지 않는다 — 빈 목록 통과(무효 게이트) 방지', () => {
   // 하한 = 현재 개수 그대로(슬랙 0 — 분리 검수: 슬랙 2칸이 조용한 소실을 허용했다).
   // 정당하게 줄이는 리팩터라면 보정 경로가 실제로 준 것인지 확인하고 이 숫자를 함께 내린다.
-  assert.ok(decls.length >= 20, `치수 선언 ${decls.length}곳(현재 16) — 수집 정규식이 소스와 어긋났는지 확인`);
+  assert.ok(decls.length >= 16, `치수 선언 ${decls.length}곳(현재 16) — 수집 정규식이 소스와 어긋났는지 확인`);
   const has = (f, n) => assert.ok(decls.filter((d) => d.file === f).length >= n, `${f}에 vh 치수 ${n}곳 이상이어야 한다`);
   // 크루·경쟁·회의실의 채팅 그리드 높이(100vh 계열)는 폰 폭 레일 스택을 위해 .chat-cols(globals)로 이동 —
   // JSX 쪽 하한을 그만큼 내린다(크루 2→1·경쟁 1→0 삭제·회의실 1→0 삭제, globals는 셋이 한 선언을
   // 공유하므로 10 그대로 — 총합 17→16은 정본 단일화로 인한 정당한 감소, 소실 아님)
-  has('app/globals.css', 13); // body·.shell·.side·기억분할·팝오버·vault·.chat-cols(높이+레일 상한) 계열
+  has('app/globals.css', 10); // body·.shell·.side·기억분할·팝오버·vault·.chat-cols(높이+레일 상한) 계열
   has('app/c/[ws]/crew/[slug]/page.jsx', 1); // 모달 86vh
 });
 
