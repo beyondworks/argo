@@ -88,8 +88,10 @@ export async function gatewayStatus(wsId) {
   const read = async (kind) => {
     // 게이트웨이 하트비트는 캐시성(재생성 가능) — 손상은 관용하고 "가동 안 함"으로 본다(readJsonLenient).
     const s = await readJsonLenient(join(paths(wsId).root, `.gateway-${kind}.json`), null);
-    if (!s) return { alive: false, lastTs: null, error: '' };
-    return { alive: s.ok && Date.now() - s.ts < 40_000, lastTs: s.ts, error: s.ok ? '' : s.error };
+    if (!s) return { alive: false, lastTs: null, error: '', holder: null, holderDevice: null };
+    // holder 'other' = 다른 기기가 이 토큰을 받는 중(토큰 단위 소유) — 40초 창 밖이면 낡은 표지라 버린다
+    const fresh = Date.now() - s.ts < 40_000;
+    return { alive: s.ok && fresh, lastTs: s.ts, error: s.ok ? '' : s.error, holder: fresh && s.holder === 'other' ? 'other' : null, holderDevice: fresh && s.holder === 'other' ? (s.holderDevice ?? null) : null };
   };
   const out = { telegram: await read('telegram'), slack: await read('slack'), agents: {} };
   const all = await loadConnections(wsId);

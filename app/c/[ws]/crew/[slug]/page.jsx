@@ -1669,6 +1669,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
   // 텔레그램 직통 봇 — 이 크루의 개인 연락처
   const [tgBot, setTgBot] = useState(null); // { hasToken, botUsername, paired }
   const [tgAlive, setTgAlive] = useState(false);
+  const [tgOther, setTgOther] = useState(null); // 다른 기기가 수신 중이면 그 기기 라벨(토큰 단위 소유), 아니면 null
   const [tgToken, setTgToken] = useState('');
   const [tgBusy, setTgBusy] = useState(false);
   const [tgMsg, setTgMsg] = useState('');
@@ -1677,6 +1678,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
     api(`/api/companies/${ws}/connections`).then((d) => {
       setTgBot(d.connections?.telegram?.agents?.[slug] ?? { hasToken: false });
       setTgAlive(!!d.gateway?.agents?.[slug]?.alive);
+      setTgOther(d.gateway?.agents?.[slug]?.holder === 'other' ? (d.gateway.agents[slug].holderDevice || '') : null); // 다른 기기 수신 중(토큰 단위 소유)
     }).catch(() => {});
   }, [ws, slug]);
 
@@ -1918,9 +1920,9 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="microlabel">{t('chat.tg.title')}</span>
               {tgBot?.hasToken && (
-                <span className="chip" style={{ color: tgAlive ? 'var(--ok)' : 'var(--warn)', borderColor: 'currentColor' }}>
+                <span className="chip" style={{ color: tgAlive ? 'var(--ok)' : tgOther !== null ? 'var(--info)' : 'var(--warn)', borderColor: 'currentColor' }}>
                   <span style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor', display: 'inline-block', marginRight: 5 }} />
-                  {tgAlive ? t('chat.tg.live') : t('chat.tg.waiting')}
+                  {tgAlive ? t('chat.tg.live') : tgOther !== null ? t('chat.tg.otherDevice', { device: tgOther }) : t('chat.tg.waiting')}
                   {tgBot.paired ? ` · ${t('chat.tg.paired')}` : ''}
                 </span>
               )}

@@ -276,6 +276,85 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   leaseState.checkedAt = Date.now();
 }
 
+/* ─── 텔레그램 토큰 클레임 — 토큰 단위 소유(유건 결정 2026-09-03) ───
+   왜: 봇 토큰(connections.json)은 연결한 기기에만 있는데 폴러 주체는 기기 단위 리더 하나였다. 그래서
+   비리더 기기에서 연결한 크루 봇은 어느 기기도 받지 않았다(리더는 토큰이 없고, 토큰 보유 기기는 폴러를 내림).
+   처방: 기기 리더 리스와 별개로 **토큰마다** 클레임 파일(<owner>/_tg-claims/<토큰 지문>.json)을 두고,
+   자기 기기에 저장된 토큰만 클레임해 폴링한다. 같은 토큰을 두 기기에 연결하면 나중 기기가 'other'로 물러나
+   카드에 "다른 기기에서 수신 중"이 보인다. 토큰 원문은 어디에도 올리지 않는다(sha256 지문만). */
+export const TG_CLAIM_TTL_MS = LEASE_TTL_MS;
+const CLAIM_RENEW_MS = 30_000; // 갱신 주기 — 토큰마다 요청이 나가므로 리스(8s)보다 성기게(TTL 120s의 1/4)
+const claimState = (globalThis.__argoTgClaims ??= { tokens: new Set(), byHash: new Map(), renewedAt: 0, bootAt: Date.now() });
+const CLAIM_ARBITRATION_GRACE_MS = 90_000; // 이 시간 동안 클레임 중재가 한 번도 안 돌았으면(자격 만료·오프라인) 단일 기기처럼 mine — 폴러 전멸 방지
+export const tokenClaimHash = (token) => createHash('sha256').update(String(token)).digest('hex').slice(0, 24);
+export const deviceLabel = (id) => String(id ?? '').replace(/-[0-9a-f]{8}$/i, ''); // "Geony-Mac-Pro-c40da337" → "Geony-Mac-Pro"
+/** 순수 판정 — 원격 클레임 cur를 보고 이 기기(me)가 할 일: 'other'(살아 있는 남의 클레임 — 물러남) / 'acquire'(비었거나 만료·내 것 — 갱신·획득) */
+export const claimDecision = (cur, me, now = Date.now(), ttl = TG_CLAIM_TTL_MS) =>
+  (cur && now - cur.ts < ttl && cur.deviceId !== me) ? 'other' : 'acquire';
+/** 게이트웨이가 이 기기의 텔레그램 토큰 집합을 등록한다 — cycle()이 이 집합을 갱신·클레임한다 */
+export function setClaimTokens(tokens) {
+  claimState.tokens = new Set([...tokens].filter(Boolean));
+  for (const h of [...claimState.byHash.keys()]) { // 연결 해제된 토큰의 상태는 버린다(다음 클레임 대상 아님)
+    if (![...claimState.tokens].some((t) => tokenClaimHash(t) === h)) claimState.byHash.delete(h);
+  }
+}
+/** 이 기기가 이 토큰을 폴링해도 되는가 — 동기화 off(단일 기기)면 항상 mine. 클레임 전(미판정)은 mine이 아니다(이중 폴링 창 방지). */
+export function tokenOwnership(token) {
+  if (!syncOn()) return { mine: true, holder: null, pending: false };
+  const st = claimState.byHash.get(tokenClaimHash(token));
+  if (!st) {
+    // 중재 불능 폴백 — 동기화가 켜져 있어도 클라우드에 한 번도 닿지 못했다면(자격 만료·오프라인) 종전(리더 기본값)처럼
+    // 이 기기가 받는다. 이중 폴링 위험보다 "어느 기기도 안 받음"이 나쁘다(리스의 미획득 기본값과 같은 절충).
+    const orphan = claimState.renewedAt === 0 && Date.now() - claimState.bootAt > CLAIM_ARBITRATION_GRACE_MS;
+    return { mine: orphan, holder: null, pending: !orphan };
+  }
+  return { mine: st.mine, holder: st.holder, pending: false };
+}
+export function _setTokenClaimForTest(token, state) { claimState.byHash.set(tokenClaimHash(token), state); }
+export function _resetTokenClaimsForTest(bootAt = Date.now()) { claimState.tokens = new Set(); claimState.byHash.clear(); claimState.renewedAt = 0; claimState.bootAt = bootAt; }
+export const CLAIM_ARBITRATION_GRACE = CLAIM_ARBITRATION_GRACE_MS;
+/** 토큰별 클레임 갱신 — write-후-재확인(리스와 같은 CAS 근사). 판정 불가(쓰기 실패)면 보유 중이던 것만 TTL 내 유지. (export: 배선·행동 테스트용) */
+export async function renewTokenClaims(owner, { now = Date.now(), force = false } = {}) {
+  if (!force && now - claimState.renewedAt < CLAIM_RENEW_MS) return;
+  claimState.renewedAt = now;
+  const me = await getDeviceId();
+  for (const token of claimState.tokens) {
+    const hash = tokenClaimHash(token);
+    const key = skey(owner, '_tg-claims', `${hash}.json`);
+    const prev = claimState.byHash.get(hash);
+    let cur = null;
+    try {
+      const { data } = await client().storage.from(BUCKET).download(`${key}?t=${now}`);
+      if (data) cur = JSON.parse(Buffer.from(await data.arrayBuffer()).toString());
+    } catch { /* 최초·미존재 */ }
+    if (claimDecision(cur, me, now) === 'other') {
+      if (prev?.mine) console.log(`[argo] 텔레그램 토큰 클레임 양보 → ${deviceLabel(cur.deviceId)} (${hash.slice(0, 6)})`);
+      claimState.byHash.set(hash, { mine: false, holder: cur.deviceId, ts: now });
+      continue;
+    }
+    const nonce = randomUUID();
+    const { error: upErr } = await client().storage.from(BUCKET).upload(
+      key, new Blob([JSON.stringify({ deviceId: me, nonce, ts: now })]), { upsert: true, contentType: 'application/json' },
+    );
+    if (upErr) { // 판정 불가 — 이미 확인된 보유자이고 TTL 내면 유지, 아니면 미보유
+      const keep = !!(prev?.mine && prev.ownedAt > 0 && now - prev.ownedAt < TG_CLAIM_TTL_MS);
+      claimState.byHash.set(hash, { mine: keep, holder: keep ? me : null, ts: now, ownedAt: keep ? prev.ownedAt : 0 });
+      continue;
+    }
+    // 내가 이미 확인된 보유자였고 원격도 내 것이면 재확인 생략(갱신) — 신규 획득만 800ms 뒤 승자 확인
+    if (prev?.mine && cur?.deviceId === me) { claimState.byHash.set(hash, { mine: true, holder: me, ts: now, ownedAt: prev.ownedAt }); continue; }
+    await new Promise((r) => setTimeout(r, 800));
+    let winner = null;
+    try {
+      const { data } = await client().storage.from(BUCKET).download(`${key}?t=${now + 1}`);
+      if (data) winner = JSON.parse(Buffer.from(await data.arrayBuffer()).toString());
+    } catch { /* 재확인 실패 — 보수적으로 미보유 */ }
+    const iWon = !!winner && winner.nonce === nonce;
+    if (iWon && !prev?.mine) console.log(`[argo] 텔레그램 토큰 클레임 획득 (${hash.slice(0, 6)})`);
+    claimState.byHash.set(hash, { mine: iWon, holder: iWon ? me : (winner?.deviceId ?? null), ts: now, ownedAt: iWon ? now : 0 });
+  }
+}
+
 /* ─── 로컬 스캔 (내용 해시 포함 — 변경 판별의 진실) ─── */
 const hashBuf = (buf) => createHash('sha1').update(buf).digest('hex').slice(0, 16);
 async function walk(dir, base = dir, out = {}, failed = null) {
@@ -1056,6 +1135,7 @@ async function cycle() {
     probe.ts = Date.now();
   }
   if (localOwners[0]) await renewLease(localOwners[0], { runnerUsable: probe.ok }); // 단일 오너 전제(자가 호스팅) — 다중 오너는 P2
+  if (localOwners[0]) await renewTokenClaims(localOwners[0]).catch((e) => console.warn('[argo] 텔레그램 토큰 클레임 갱신 실패:', String(e.message).slice(0, 80))); // 토큰 단위 소유 — 리더와 별개
   // 요금제 게이트(M-2d 스캐폴드) — 세션 모드에만. 서비스 모드(셀프호스트·워커)는 자기 인프라라 통과.
   // 강제는 ARGO_ENFORCE_PLAN=1일 때만(기본 off). 차단 = 조기 return — diff가 안 돌아 부작용 없음.
   // 판정은 ensureClient()의 실효 모드와 동일 조건(자격 존재 && serviceCredsAllowed) — 자격만 보면
