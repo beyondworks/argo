@@ -150,7 +150,59 @@ test('동기화 발견·내보내기 — .tg-claims 폴더는 점 접두라 회�
   const exp = await load('../src/cloudexport.mjs');
   assert.match(exp, /!String\(e\.name\)\.startsWith\('\.'\)/, '내보내기도 점 접두를 거른다');
   const mig = await load('../supabase/migrations/20260903120000_tg_claims_pro_gate_exception.sql');
-  assert.equal((mig.match(/or name like \(select auth\.uid\(\)::text\) \|\| '\/\.tg-claims\/%'/g) ?? []).length, 2, 'insert·update 정책 둘 다 Pro 게이트 예외(재검수 H-1)');
+  // 예외는 프리픽스(like %)가 아니라 실제 키 형태(24 hex + .json)만 — 비-Pro의 무제한 저장 채널 차단(재검수 L-A)
+  assert.equal((mig.match(/or name ~ \('\^' \|\| \(select auth\.uid\(\)::text\) \|\| '\/\\\.tg-claims\/\[0-9a-f\]\{24\}\\\.json\$'\)/g) ?? []).length, 2, 'insert·update 정책 둘 다 키 형태 예외(재검수 H-1·L-A)');
+  assert.doesNotMatch(mig, /like .*tg-claims/, '프리픽스 like 예외 금지');
+  assert.match(`789b51bd-0000-4000-8000-000000000000/.tg-claims/${tokenClaimHash('x')}.json`, /^[0-9a-f-]{36}\/\.tg-claims\/[0-9a-f]{24}\.json$/, '실제 키가 정규식 형태와 일치');
+});
+
+test('② 해제 청소는 원격 클레임이 내 것일 때만 지운다 — 남의(또는 남이 인수한) 클레임을 지우면 이중 폴링 슬롯이 열린다(재검수 MEDIUM-A)', async () => {
+  _resetTokenClaimsForTest();
+  const me = await getDeviceId();
+  const fs_ = fakeStorage(); _setSyncClientForTest(fs_.client);
+  fs_.store.set(keyOf('owner1', 'tokK'), JSON.stringify({ deviceId: 'Win-PC-deadbeef', nonce: 'x', ts: Date.now() })); // 남이 보유 중
+  setClaimTokens(['tokK', 'tokL']);
+  await renewTokenClaims('owner1', { force: true }); // tokK 양보, tokL 획득
+  assert.equal(tokenOwnership('tokK').mine, false); assert.equal(tokenOwnership('tokL').mine, true);
+  setClaimTokens([]); // 둘 다 해제
+  await renewTokenClaims('owner1', { force: true });
+  assert.ok(!fs_.removed.includes(keyOf('owner1', 'tokK')), '남의 살아 있는 클레임은 지우지 않는다');
+  assert.ok(fs_.store.has(keyOf('owner1', 'tokK')), '남의 클레임 잔존');
+  assert.ok(fs_.removed.includes(keyOf('owner1', 'tokL')), '내 클레임은 지운다');
+  assert.equal(JSON.parse(fs_.store.get(keyOf('owner1', 'tokK'))).deviceId, 'Win-PC-deadbeef');
+  // 내 만료 뒤 남이 인수한 경우 — prev.mine이 true였어도 원격이 남의 것이면 지우지 않는다
+  _resetTokenClaimsForTest();
+  const fs2 = fakeStorage(); _setSyncClientForTest(fs2.client);
+  setClaimTokens(['tokM']); await renewTokenClaims('owner1', { force: true });
+  assert.equal(JSON.parse(fs2.store.get(keyOf('owner1', 'tokM'))).deviceId, me);
+  fs2.store.set(keyOf('owner1', 'tokM'), JSON.stringify({ deviceId: 'Other-9abcdef0', nonce: 'z', ts: Date.now() })); // 남이 인수
+  setClaimTokens([]); await renewTokenClaims('owner1', { force: true });
+  assert.ok(fs2.store.has(keyOf('owner1', 'tokM')), '남이 인수한 클레임 보존');
+});
+
+test('gatewayStatus — pending 하트비트는 holder:pending으로 통과(카드가 빨간 오류 대신 주황 대기 — 재검수 MEDIUM-C)', async () => {
+  const { gatewayStatus } = await import('../src/connections.mjs');
+  const { paths } = await import('../src/workspace.mjs');
+  const ws = 'claimws-1';
+  await mkdir(paths(ws).root, { recursive: true });
+  await writeFile(join(paths(ws).root, '.gateway-telegram.json'), JSON.stringify({ ts: Date.now(), ok: false, error: '수신 기기 판정 중(최대 30초)', holder: 'pending' }));
+  const st = await gatewayStatus(ws);
+  assert.deepEqual({ alive: st.telegram.alive, holder: st.telegram.holder, holderDevice: st.telegram.holderDevice }, { alive: false, holder: 'pending', holderDevice: null });
+  await writeFile(join(paths(ws).root, '.gateway-telegram.json'), JSON.stringify({ ts: Date.now() - 41_000, ok: false, error: 'x', holder: 'pending' }));
+  assert.equal((await gatewayStatus(ws)).telegram.holder, null, '40초 창 밖이면 낡은 표지');
+  const settings = await load('../app/c/[ws]/settings/page.jsx');
+  assert.match(settings, /gw\.holder === 'pending' \? 'var\(--warn\)' : gw\.error \? 'var\(--danger\)'/, '카드 색: pending은 주황(오류 빨강보다 앞)');
+  assert.match(settings, /gw\.holder === 'pending'[^\n]*\n\s*\? t\('settings\.conn\.gwClaimPending'\)/, '카드 문구: i18n 키');
+  const i18n = await load('../app/i18n.jsx');
+  assert.match(i18n, /'settings\.conn\.gwClaimPending': \['[^']+', '[^']+'\]/, 'ko/en 등록');
+});
+
+test('③ 배선 — 토큰 등록(setClaimTokens)은 procLeader 게이트보다 앞이다(동기화 주체와 게이트웨이 주체가 다른 프로세스여도 클레임이 돈다 — 재검수 MEDIUM-B)', async () => {
+  const gw = await load('../src/gateway.mjs');
+  const reg = gw.indexOf('setClaimTokens(myTokens);'); const gate = gw.indexOf('if (!procLeader) {');
+  assert.ok(reg > 0 && gate > 0 && reg < gate, `등록(${reg}) < 게이트(${gate})`);
+  assert.equal((gw.match(/setClaimTokens\(myTokens\);/g) ?? []).length, 1);
+  assert.ok(gw.indexOf('const loaded = [];') < reg, '연결 로드도 게이트 앞(토큰 원천)');
 });
 
 test('③ 배선 — 텔레그램 폴러는 토큰 소유(tokenOwnership)로, 슬랙·서류함은 기기 리더로 켠다', async () => {
@@ -203,7 +255,7 @@ test('④ 화면 — 사이드바 점·설정 카드·크루 칩이 초록(이 �
   assert.doesNotMatch(css, /\n:root\[data-theme='graphite'\] \{\n\s*--tg-remote/, '라이트 graphite 블록(열 0)에 다크 값 금지 — @media 안 블록은 들여쓰기라 제외');
   assert.match(layout, /map\[slug\] = \{ alive: !!g\?\.alive, other: g\?\.holder === 'other', device: g\?\.holderDevice \?\? '' \}/);
   const settings = await load('../app/c/[ws]/settings/page.jsx');
-  assert.match(settings, /color: gw\.alive \? 'var\(--ok\)' : gw\.holder === 'other' \? 'var\(--tg-remote\)' : gw\.error \? 'var\(--danger\)' : 'var\(--warn\)'/);
+  assert.match(settings, /color: gw\.alive \? 'var\(--ok\)' : gw\.holder === 'other' \? 'var\(--tg-remote\)' : gw\.holder === 'pending' \? 'var\(--warn\)' : gw\.error \? 'var\(--danger\)' : 'var\(--warn\)'/);
   assert.match(settings, /t\('settings\.conn\.gwOtherDevice', \{ device: gw\.holderDevice \|\| '' \}\)/);
   const crew = await load('../app/c/[ws]/crew/[slug]/page.jsx');
   assert.match(crew, /color: tgAlive \? 'var\(--ok\)' : tgOther !== null \? 'var\(--tg-remote\)' : 'var\(--warn\)'/);

@@ -641,6 +641,7 @@ const DICT = {
   'legal.feedbackSubject': ['Argo 피드백', 'Argo feedback'],
   'settings.conn.gwAlive': ['게이트웨이 가동 중 · {s}초 전 응답', 'Gateway live · replied {s}s ago'],
   'settings.conn.gwOtherDevice': ['다른 기기({device})가 수신 중 — 이 기기는 대기합니다', 'Another device ({device}) is receiving — this device stands by'],
+  'settings.conn.gwClaimPending': ['수신 기기 판정 중(최대 30초) — 계속되면 동기화 상태를 확인하세요', 'Deciding which device receives (up to 30s) — if this persists, check sync status'],
   'settings.conn.gwWaiting': ['게이트웨이 폴러 대기 중 — 잠시 후에도 그대로면 서버 재시작 필요', 'Gateway poller pending — restart the server if this persists'],
   'settings.conn.gwError': ['게이트웨이 오류: {msg}', 'Gateway error: {msg}'],
   'settings.conn.telegramPlaceholder': ['123456:ABC-…', '123456:ABC-…'],

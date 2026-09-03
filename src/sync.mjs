@@ -286,7 +286,8 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
    카드에 "다른 기기에서 수신 중"이 보인다. 토큰 원문은 어디에도 올리지 않는다(sha256 지문만). */
 export const TG_CLAIM_TTL_MS = LEASE_TTL_MS;
 const CLAIM_RENEW_MS = 30_000; // 갱신 주기 — 토큰마다 요청이 나가므로 리스(8s)보다 성기게(TTL 120s의 1/4)
-const claimState = (globalThis.__argoTgClaims ??= { tokens: new Set(), byHash: new Map(), renewedAt: 0, bootAt: Date.now(), removed: new Set() });
+const CLAIM_NEVER = -Infinity; // renewedAt 센티널 '한 번도 안 돌았음/즉시 실행' — 0이면 작은 now를 주는 하네스에서 레이트리밋이 조용히 옛 동작(재검수 L-C)
+const claimState = (globalThis.__argoTgClaims ??= { tokens: new Set(), byHash: new Map(), renewedAt: CLAIM_NEVER, bootAt: Date.now(), removed: new Set() });
 const CLAIM_DIR = '.tg-claims';
 /** 클레임 상태를 기기 로컬 파일로도 남긴다 — 게이트웨이(daemonLease)와 동기화(holdSyncLock)가 다른 프로세스에 갈리면
     globalThis가 공유되지 않아 게이트웨이가 영원히 미판정(→ 90초 뒤 orphan 폴백 = 이중 폴링)이 되던 창(재검수 M-4)을 닫는다. */
@@ -311,7 +312,7 @@ export function setClaimTokens(tokens) {
     if (!nextHashes.has(h)) { claimState.byHash.delete(h); claimState.removed.add(h); }
   }
   // 아직 판정 없는 토큰이 생겼으면(기동·신규 연결) 갱신 레이트리밋을 풀어 다음 cycle이 바로 클레임한다(재검수 M-2: 최대 30초 공백)
-  if ([...nextHashes].some((h) => !claimState.byHash.has(h))) claimState.renewedAt = 0;
+  if ([...nextHashes].some((h) => !claimState.byHash.has(h))) claimState.renewedAt = CLAIM_NEVER;
   claimState.tokens = next;
 }
 /** 이 기기가 이 토큰을 폴링해도 되는가 — 동기화 off(단일 기기)면 항상 mine. 클레임 전(미판정)은 mine이 아니다(이중 폴링 창 방지). */
@@ -319,22 +320,29 @@ export function tokenOwnership(token) {
   if (!syncOn()) return { mine: true, holder: null, pending: false };
   const hash = tokenClaimHash(token);
   let st = claimState.byHash.get(hash);
-  if (!st && claimState.renewedAt === 0) { // 이 프로세스가 클레임을 돌린 적 없음 — 동기화 프로세스가 남긴 상태 파일(TTL 내)을 본다(M-4)
+  if (!st && claimState.renewedAt === CLAIM_NEVER) { // 이 프로세스가 클레임을 돌린 적 없음 — 동기화 프로세스가 남긴 상태 파일(TTL 내)을 본다(M-4)
     const disk = readClaimStateSync();
     if (disk && Date.now() - disk.at < TG_CLAIM_TTL_MS) st = disk.byHash?.[hash] ?? null;
   }
   if (!st) {
     // 중재 불능 폴백 — 동기화가 켜져 있어도 클라우드에 한 번도 닿지 못했다면(자격 만료·오프라인) 종전(리더 기본값)처럼
     // 이 기기가 받는다. 이중 폴링 위험보다 "어느 기기도 안 받음"이 나쁘다(리스의 미획득 기본값과 같은 절충).
-    const orphan = claimState.renewedAt === 0 && Date.now() - claimState.bootAt > CLAIM_ARBITRATION_GRACE_MS;
+    const orphan = claimState.renewedAt === CLAIM_NEVER && Date.now() - claimState.bootAt > CLAIM_ARBITRATION_GRACE_MS;
     return { mine: orphan, holder: null, pending: !orphan };
   }
   return { mine: st.mine, holder: st.holder, pending: false };
 }
 export function _setTokenClaimForTest(token, state) { claimState.byHash.set(tokenClaimHash(token), state); }
-export function _resetTokenClaimsForTest(bootAt = Date.now()) { claimState.tokens = new Set(); claimState.byHash.clear(); claimState.removed = new Set(); claimState.renewedAt = 0; claimState.bootAt = bootAt; try { unlinkSync(claimStateFile()); } catch { /* 없음 */ } }
+export function _resetTokenClaimsForTest(bootAt = Date.now()) { claimState.tokens = new Set(); claimState.byHash.clear(); claimState.removed = new Set(); claimState.renewedAt = CLAIM_NEVER; claimState.bootAt = bootAt; try { unlinkSync(claimStateFile()); } catch { /* 없음 */ } }
 export const _claimStateForTest = () => Object.fromEntries(claimState.byHash);
 export const CLAIM_ARBITRATION_GRACE = CLAIM_ARBITRATION_GRACE_MS;
+/** 원격 클레임 1건 읽기(캐시버스터) — 없음·손상은 null. 갱신 루프와 해제 청소가 같은 읽기를 쓴다. */
+async function readRemoteClaim(key) {
+  try {
+    const { data } = await client().storage.from(BUCKET).download(`${key}?t=${Date.now()}`);
+    return data ? JSON.parse(Buffer.from(await data.arrayBuffer()).toString()) : null;
+  } catch { return null; } // 최초·미존재
+}
 /** 토큰별 클레임 갱신 — write-후-재확인(리스와 같은 CAS 근사). 판정 불가(쓰기 실패)면 보유 중이던 것만 TTL 내 유지. (export: 배선·행동 테스트용) */
 export async function renewTokenClaims(owner, { now = Date.now(), force = false } = {}) {
   if (!force && now - claimState.renewedAt < CLAIM_RENEW_MS) return;
@@ -342,18 +350,19 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
   claimState.renewedAt = now;
   const me = await getDeviceId();
   for (const h of [...claimState.removed]) { // 해제된 토큰의 원격 클레임 정리 — 옮겨 간 기기가 TTL(120s)을 기다리지 않게(L-3)
-    await client().storage.from(BUCKET).remove([skey(owner, CLAIM_DIR, `${h}.json`)]).catch(() => {});
+    // 원격 클레임이 **내 것일 때만** 지운다 — 남이 보유 중인(또는 내 만료 뒤 남이 인수한) 클레임을 지우면 슬롯이 비어
+    // 제3 기기가 획득 → 같은 토큰 이중 폴링(재검수 MEDIUM-A). 소유 확인·삭제 실패는 재시도하지 않는다: 상대는 TTL(120s)을
+    // 기다리면 되고, 이 경로는 토큰 해제라는 드문 사건이다(L-B).
+    const key = skey(owner, CLAIM_DIR, `${h}.json`);
+    const cur = await readRemoteClaim(key);
+    if (cur?.deviceId === me) await client().storage.from(BUCKET).remove([key]).catch(() => {});
     claimState.removed.delete(h);
   }
   for (const token of claimState.tokens) {
     const hash = tokenClaimHash(token);
     const key = skey(owner, CLAIM_DIR, `${hash}.json`);
     const prev = claimState.byHash.get(hash);
-    let cur = null;
-    try {
-      const { data } = await client().storage.from(BUCKET).download(`${key}?t=${now}`);
-      if (data) cur = JSON.parse(Buffer.from(await data.arrayBuffer()).toString());
-    } catch { /* 최초·미존재 */ }
+    const cur = await readRemoteClaim(key);
     if (claimDecision(cur, me, now) === 'other') {
       if (prev?.mine) console.log(`[argo] 텔레그램 토큰 클레임 양보 → ${deviceLabel(cur.deviceId)} (${hash.slice(0, 6)})`);
       claimState.byHash.set(hash, { mine: false, holder: cur.deviceId, ts: now });

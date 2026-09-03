@@ -1063,12 +1063,14 @@ function ConnectionCard({ ws, kind, title, help, agents }) {
           {t('settings.conn.gwFollower')}
         </div>
       ) : on && gw && (
-        <div style={{ fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 6, color: gw.alive ? 'var(--ok)' : gw.holder === 'other' ? 'var(--tg-remote)' : gw.error ? 'var(--danger)' : 'var(--warn)' }}>
+        <div style={{ fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 6, color: gw.alive ? 'var(--ok)' : gw.holder === 'other' ? 'var(--tg-remote)' : gw.holder === 'pending' ? 'var(--warn)' : gw.error ? 'var(--danger)' : 'var(--warn)' }}>
           <span style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} aria-hidden="true" />
           {gw.alive
             ? t('settings.conn.gwAlive', { s: Math.max(0, Math.round((Date.now() - gw.lastTs) / 1000)) })
             : gw.holder === 'other' // 토큰 단위 소유 — 다른 기기가 받는 중(파랑). 오류가 아니라 정상 분담
               ? t('settings.conn.gwOtherDevice', { device: gw.holderDevice || '' })
+              : gw.holder === 'pending' // 클레임 판정 전 — 정상 과도 상태(주황), 오류 아님(재검수 MEDIUM-C)
+                ? t('settings.conn.gwClaimPending')
               : gw.error
                 ? t('settings.conn.gwError', { msg: String(gw.error).slice(0, 80) })
                 : t('settings.conn.gwWaiting')}
