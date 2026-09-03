@@ -40,6 +40,7 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], ap
     async myCrews() { rec('myCrews'); return crews; },
     async crewBySlug(uid, ws, slug) { rec('crewBySlug', slug); return crews.find((c) => c.slug === slug) ?? null; },
     async heartbeat(ids) { rec('heartbeat', ids); },
+    async nodeHeartbeat(org) { rec('nodeHeartbeat', org); },
     async setCursor(id, n) { rec('setCursor', id, n); },
     async messagesAfter(org, after) { rec('messagesAfter', org, after); return messages.filter((m) => m.id > after); },
     async message(id) { rec('message', id); return parent; },
@@ -429,4 +430,13 @@ test('G-4 조직 문서 제안: 브리지 미러가 kind org_doc·payload를 싣
   const app = readFileSync(new URL('../apps/messenger/src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /\{ap\.kind === 'org_doc' && ap\.payload && \(/, '슬립 제안 미리보기');
   assert.match(app, /message_id, risk, kind, payload'\)/, '결재 조회에 kind·payload');
+});
+
+test('I-4 노드 하트비트 — nodeOrgId가 있으면 크루 0명이어도 찍고, 없으면 안 찍는다', async () => {
+  const db = fakeDb({ crews: [] }); await M.drain(WS, { db, uid: OWNER, nodeOrgId: ORG, enqueue: fakeEnqueue() });
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'nodeHeartbeat'), [['nodeHeartbeat', ORG]], '크루 없는 조직 회사도 노드 생존 신호');
+  const db2 = fakeDb({ crews: [] }); await M.drain(WS, { db: db2, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(db2.calls.filter((c) => c[0] === 'nodeHeartbeat').length, 0, '개인 회사는 노드 하트비트 없음');
+  const src = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
+  assert.match(src, /nodeOrgId: msgr\?\.nodeOrgId \?\? null/, '폴러가 company.json.msgr.nodeOrgId를 drain에 전달');
 });

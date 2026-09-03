@@ -131,6 +131,9 @@ export function makeDb(client) {
       if (!ids.length) return [];
       return unwrap(await client.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_at, msgr_channels(name)').in('id', ids)) ?? [];
     },
+    async nodeHeartbeat(orgId) { // I-4: 회사 노드 생존 신호 — 서비스 계정 본인만 찍힌다(RPC가 판정), 조직 카드 '연결됨'의 정본
+      unwrap(await client.rpc('msgr_node_heartbeat', { org: orgId }));
+    },
     async setCursor(crewId, id) { // 단조 — 과거 값으로 되돌리지 않는다
       unwrap(await client.from('msgr_crews').update({ cursor_msg_id: id }).eq('id', crewId).lt('cursor_msg_id', id));
     },
@@ -203,9 +206,10 @@ export async function sessionClient() {
 }
 
 /* ─── drain — 멘션·DM을 큐에 적재하고 커서 전진 + 결재 결정 반영. 순수 의존은 db·uid·enqueue(테스트 주입). ─── */
-export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now } = {}) {
+export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null } = {}) {
   const crews = await db.myCrews(uid, wsId);
   const out = { crews: crews.length, queued: 0, denied: 0, stale: 0, list: crews };
+  if (nodeOrgId) await db.nodeHeartbeat(nodeOrgId).catch((e) => console.error('[argo] msgr 노드 하트비트 실패:', e.message)); // I-4: 크루 0명이어도 — 노드 부트스트랩 직후 조직 카드가 '연결됨'을 보여야 한다
   if (!crews.length) return out;
   await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
   for (const orgId of new Set(crews.map((c) => c.org_id))) { // G-2: 조직 문서 미러 — 바뀐 것만, 실패는 로그(턴 처리와 무관)
@@ -454,8 +458,8 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
     try {
       const c = await session();
       if (!c) { await beatGateway(wsId, MSGR_KEY, false, '기기 세션 없음 — 로그인 필요').catch(() => {}); return; }
-      const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
-      const r = await drain(wsId, { db: c.db, uid: c.uid, lang });
+      const { lang = 'ko', msgr } = await loadCompany(wsId).catch(() => ({}));
+      const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
       await beatGateway(wsId, MSGR_KEY, true).catch(() => {});
       subscribe(c, r.list ?? []);
       return r;

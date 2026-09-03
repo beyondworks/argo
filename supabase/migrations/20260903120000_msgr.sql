@@ -1068,3 +1068,45 @@ create or replace function public.msgr_can_decide(ap uuid) returns boolean
       left join public.msgr_org_policies p on p.org_id = a.org_id
      where a.id = ap
 $$;
+
+-- ── I-4 상주 노드 부트스트랩(부록 I·F3-1): 관리자가 "노드용 초대"(for_node)를 만들고 노드가 그 코드로 수락하면 그 계정이
+--    곧 조직의 서비스 계정(service_user_id)이 된다 — 별도 지정 단계 없이 한 번에(지정 감사는 msgr_org_before_update가 남긴다).
+--    노드는 자기 조직에만 하트비트(node_seen_at)를 찍을 수 있고(서비스 계정 본인만), 앱은 90초 초과를 "응답 없음"으로 그린다.
+alter table public.msgr_invites add column if not exists for_node boolean not null default false;
+alter table public.msgr_invites drop constraint if exists msgr_invites_node_role;
+alter table public.msgr_invites add constraint msgr_invites_node_role check (not for_node or role = 'member'); -- 노드는 member로만(관리 권한 없음)
+alter table public.msgr_orgs add column if not exists node_seen_at timestamptz;
+
+create or replace function public.msgr_accept_invite(code text) returns uuid
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare inv public.msgr_invites%rowtype;
+begin
+  if auth.uid() is null then raise exception 'msgr_auth_required'; end if;
+  select * into inv from public.msgr_invites i where i.code = msgr_accept_invite.code and i.accepted_at is null and i.expires_at > now() for update;
+  if inv.id is null then raise exception 'msgr_invite_invalid'; end if;
+  -- 노드용 코드를 소유자·관리자 계정이 수락하면 그 계정이 member로 강등되고 관리 계정이 노드가 된다 — 멤버십을 건드리기 전에 막는다(코드는 그대로 남는다)
+  if inv.for_node and exists (select 1 from public.msgr_org_members where org_id = inv.org_id and user_id = auth.uid() and removed_at is null and role in ('owner', 'admin')) then
+    raise exception 'msgr_node_not_admin';
+  end if;
+  insert into public.msgr_org_members (org_id, user_id, role, display_name)
+    values (inv.org_id, auth.uid(), inv.role, (select split_part(u.email, '@', 1) from auth.users u where u.id = auth.uid()))
+    on conflict (org_id, user_id) do update set role = excluded.role, removed_at = null, joined_at = now(),
+      display_name = coalesce(public.msgr_org_members.display_name, excluded.display_name);
+  update public.msgr_invites set accepted_by = auth.uid(), accepted_at = now() where id = inv.id;
+  perform public.msgr_audit(inv.org_id, 'invite.accept', 'invite', inv.id::text);
+  if inv.for_node then
+    update public.msgr_orgs set service_user_id = auth.uid(), node_seen_at = now() where id = inv.org_id;
+  end if;
+  return inv.org_id;
+end $$;
+
+create or replace function public.msgr_node_heartbeat(org uuid) returns boolean
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is null then raise exception 'msgr_auth_required'; end if;
+  update public.msgr_orgs set node_seen_at = now() where id = org and service_user_id = auth.uid() and deleted_at is null;
+  return found;
+end $$;
+revoke all on function public.msgr_node_heartbeat(uuid) from public;
+revoke execute on function public.msgr_node_heartbeat(uuid) from anon;
+grant execute on function public.msgr_node_heartbeat(uuid) to authenticated;

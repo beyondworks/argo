@@ -363,3 +363,10 @@
 .msgr-setcard .picks .pick { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 6px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; cursor: pointer; }
 .msgr-setcard .picks .pick.on { border-color: var(--mark); background: var(--card-2); }
 .msgr-setcard .picks .pick input { margin: 0; accent-color: var(--primary); }
+
+/* I-4 회사 노드 — 조직 카드의 연결 상태 태그와 실행 명령 블록 */
+.msgr-setcard .msgr-tag.on { color: var(--ok); border-color: currentColor; }
+.msgr-node-cmd { display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card-2); margin: 4px 0 8px; }
+.msgr-node-cmd code { display: block; font: 12px/1.6 var(--mono); word-break: break-all; user-select: all; }
+.msgr-node-cmd .acts { display: flex; gap: 6px; }
+.msgr-node-cmd .note { margin: 0; }

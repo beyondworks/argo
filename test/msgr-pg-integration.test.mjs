@@ -587,3 +587,29 @@ test('역할 정식화(J-1): 채널 관리자는 자기 채널 설정·멤버만
   sql(`delete from public.msgr_channels where id = '${priv2}'`); sql(`delete from public.msgr_crew_approvals where approval_id like 'ap-appr%'`);
   sql(`update public.msgr_crews set allow = 'list', allow_users = array['${U.owner}'::uuid] where id = '${CREW}'`);
 });
+
+test('I-4 노드 초대 수락 = 서비스 계정 지정, 하트비트는 서비스 계정만, 관리 계정·일반 초대는 무관', () => {
+  if (!DB) return;
+  const NODE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', N2 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  for (const [id, m] of [[NODE, 'node'], [N2, 'n2']]) sql(`insert into auth.users (id, created_at, email) values ('${id}', now(), '${m}@example.test') on conflict do nothing`);
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 50 where org_id = '${ORG}'`);
+  sql(`update public.msgr_orgs set service_user_id = null, node_seen_at = null where id = '${ORG}'`);
+  denied(U.owner, `insert into public.msgr_invites (org_id, role, for_node, created_by) values ('${ORG}', 'admin', true, '${U.owner}')`, /msgr_invites_node_role/); // 노드는 member로만
+  const code = last(asUser(U.owner, `insert into public.msgr_invites (org_id, for_node, created_by) values ('${ORG}', true, '${U.owner}') returning code`));
+  denied(U.admin, `select public.msgr_accept_invite('${code}')`, /msgr_node_not_admin/); // 관리 계정은 노드가 될 수 없다(강등 방지)
+  assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${U.admin}'`), 'admin', '거절된 수락은 역할을 건드리지 않는다');
+  assert.equal(last(asUser(NODE, `select public.msgr_accept_invite('${code}')`)), ORG, '노드 수락');
+  assert.equal(sql(`select service_user_id from public.msgr_orgs where id = '${ORG}'`), NODE, '서비스 계정 = 노드');
+  assert.equal(sql(`select role from public.msgr_org_members where org_id = '${ORG}' and user_id = '${NODE}'`), 'member');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'org.service_account' and meta->>'to' = '${NODE}'`), '1', '서비스 계정 지정 감사');
+  denied(U.outsider, `select public.msgr_accept_invite('${code}')`, /msgr_invite_invalid/); // 1회용
+  sql(`update public.msgr_orgs set node_seen_at = null where id = '${ORG}'`);
+  assert.equal(last(asUser(U.member, `select public.msgr_node_heartbeat('${ORG}')`)), 'f', '멤버는 노드 하트비트 불가');
+  assert.equal(last(asUser(U.owner, `select public.msgr_node_heartbeat('${ORG}')`)), 'f', '소유자도 노드 하트비트 불가(서비스 계정 본인만)');
+  assert.equal(sql(`select node_seen_at is null from public.msgr_orgs where id = '${ORG}'`), 't');
+  assert.equal(last(asUser(NODE, `select public.msgr_node_heartbeat('${ORG}')`)), 't', '서비스 계정 하트비트');
+  assert.equal(last(asUser(U.member, `select node_seen_at is not null from public.msgr_orgs where id = '${ORG}'`)), 't', '멤버가 노드 상태를 본다');
+  const code2 = last(asUser(U.owner, `insert into public.msgr_invites (org_id, created_by) values ('${ORG}', '${U.owner}') returning code`));
+  assert.equal(last(asUser(N2, `select public.msgr_accept_invite('${code2}')`)), ORG);
+  assert.equal(sql(`select service_user_id from public.msgr_orgs where id = '${ORG}'`), NODE, '일반 초대는 서비스 계정 불변');
+});

@@ -116,7 +116,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
 
 test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크루(서버 msgr_crew_tier와 같은 규칙), 레일 카드·시트에 등급 배지·소유 표기·한계 문장', () => {
   assert.match(app, /export const crewTier = \(crew, org\) => \(org\?\.service_user_id && crew\?\.owner_user_id === org\.service_user_id && crew\?\.hosting === 'resident'\) \? 'company' : 'personal';/, '등급 규칙이 서버 함수와 다르다');
-  assert.match(app, /msgr_orgs\(id, name, slug, service_user_id\)/, '조직 조회에 service_user_id가 없다');
+  assert.match(app, /msgr_orgs\(id, name, slug, service_user_id, node_seen_at\)/, '조직 조회에 service_user_id가 없다'); // I-4가 node_seen_at 추가
   assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다');
   assert.match(app, /\{company \? t\('crew\.tier\.company\.sub'/, '구성 행 부제가 등급별이 아니다');
   const crewSheet = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
@@ -276,4 +276,18 @@ test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·
   assert.match(sql, /raise exception 'msgr_channel_admins_owner_only'/, '관리자 자기 증식 방지');
   assert.match(sql, /when coalesce\(p\.approval_high_by, 'admin'\) = 'approvers' then coalesce\(public\.msgr_is_admin\(a\.org_id\), false\) or auth\.uid\(\) = any \(coalesce\(p\.approver_user_ids, '\{\}'::uuid\[\]\)\)/, '지정 결재권자 판정');
   for (const k of ['ch.admin', 'ch.admin.creator', 'ch.admin.set', 'ch.admin.unset', 'ch.admin.saved', 'set.policy.approval.approvers', 'set.policy.approvers', 'set.policy.approvers.desc', 'ap.approverNote']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+});
+
+test('I-4 회사 노드 — 조직 행에 하트비트, 노드용 초대는 member·for_node, 노드 코드는 사람 초대 목록 제외, 다시 만들면 이전 코드 취소', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(app, /msgr_orgs\(id, name, slug, service_user_id, node_seen_at\)/, '조직 행에 node_seen_at');
+  assert.match(oc, /insert\(\{ org_id: org\.id, role: 'member', for_node: true, created_by: uid \}\)/, '노드용 초대 = member + for_node');
+  assert.match(oc, /const open = live\.filter\(\(i\) => !i\.for_node\); const nodeInvite = live\.find\(\(i\) => i\.for_node\) \?\? null;/, '노드 코드는 사람 초대 목록에서 제외');
+  assert.match(oc, /const nodeAlive = !!org\.service_user_id && nodeSeen > 0 && Date\.now\(\) - nodeSeen < AWAY_MS;/, '연결됨 판정 = 서비스 계정 있음 ∧ 90초 이내 하트비트');
+  assert.match(oc, /<code>\{nodeCmd\}<\/code>/, '명령 블록');
+  assert.ok(!/fmtTs\(/.test(oc) && /fmtWhen\(nodeInvite\.expires_at, lang\)/.test(oc) && /fmtWhen\(org\.node_seen_at, lang\)/.test(oc), '조직 카드 시각은 날짜 포함형(fmtWhen) — 7일 뒤 만료·며칠 전 응답을 시간만으로 보이지 않게');
+  assert.match(oc, /if \(nodeInvite\) \{ const d = await supabase\.from\('msgr_invites'\)\.delete\(\)\.eq\('id', nodeInvite\.id\);/, '다시 만들기 = 이전 노드 코드 취소 후 발급');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['org.node', 'org.node.none', 'org.node.never', 'org.node.on', 'org.node.off', 'org.node.make', 'org.node.remake', 'org.node.cmd', 'org.node.hint']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
 });

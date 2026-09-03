@@ -17,6 +17,9 @@ const PAGE = 100;
 const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
 const dayKey = (iso) => new Date(iso).toDateString();
+/** 오늘이면 시각만, 아니면 날짜+시각 — 초대 만료(7일 뒤)·노드 마지막 응답·기록처럼 며칠 전후일 수 있는 시각용(시간만 보이면 "오늘 02:31"로 읽힌다 — I-4 실측) */
+const fmtWhen = (iso, lang) => { const d = new Date(iso); const time = fmtTs(iso, lang); if (d.toDateString() === new Date().toDateString()) return time;
+  return `${d.toLocaleDateString(lang === 'en' ? 'en-US' : 'ko-KR', { month: 'short', day: 'numeric' })} ${time}`; };
 const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
   ? [d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), d.toLocaleDateString('en-US', { weekday: 'long' })]
   : [d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' }), d.toLocaleDateString('ko-KR', { weekday: 'long' })]; };
@@ -103,7 +106,7 @@ function Shell({ session }) {
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
   const rt = useRef(null);
   const loadOrgs = useCallback(async () => {
-    const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, service_user_id)').eq('user_id', uid).is('removed_at', null));
+    const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, service_user_id, node_seen_at)').eq('user_id', uid).is('removed_at', null));
     const list = rows.filter((r) => r.msgr_orgs).map((r) => ({ id: r.org_id, role: r.role, ...r.msgr_orgs }));
     setOrgs(list);
     setOrgId((cur) => cur && list.some((o) => o.id === cur) ? cur : (list[0]?.id ?? null));
@@ -700,7 +703,7 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
   const isOwner = org.role === 'owner';
   useEffect(() => { setName(org.name); }, [org.id, org.name]);
   const loadInvites = useCallback(async () => {
-    const rows = await q(supabase.from('msgr_invites').select('id, code, role, email, expires_at, accepted_by, accepted_at, created_at').eq('org_id', org.id).order('created_at', { ascending: false }));
+    const rows = await q(supabase.from('msgr_invites').select('id, code, role, email, for_node, expires_at, accepted_by, accepted_at, created_at').eq('org_id', org.id).order('created_at', { ascending: false }));
     setInvites(rows);
   }, [org.id]);
   useEffect(() => { loadInvites().catch((e) => onError(e.message)); }, [loadInvites]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -750,7 +753,20 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
     setAudit(rows);
   };
   const copyLink = async (inv) => { const link = `${location.origin}${location.pathname}?invite=${inv.code}`; await navigator.clipboard?.writeText(link).catch(() => {}); onNote(`${t('org.invite.copied')} ${link}`); };
-  const open = invites.filter((i) => !i.accepted_at && Date.parse(i.expires_at) > Date.now());
+  const live = invites.filter((i) => !i.accepted_at && Date.parse(i.expires_at) > Date.now());
+  const open = live.filter((i) => !i.for_node); const nodeInvite = live.find((i) => i.for_node) ?? null; // I-4: 노드용 코드는 사람 초대 목록에 섞지 않는다(노드 섹션에서 명령으로)
+  const nodeCmd = nodeInvite ? `ARGO_NODE_CODE=${nodeInvite.code} node scripts/msgr-node-bootstrap.mjs` : '';
+  const nodeSeen = org.node_seen_at ? Date.parse(org.node_seen_at) : 0; const nodeAlive = !!org.service_user_id && nodeSeen > 0 && Date.now() - nodeSeen < AWAY_MS;
+  const nodeStatus = !org.service_user_id ? t('org.node.none') : !nodeSeen ? t('org.node.never') : t(nodeAlive ? 'org.node.on' : 'org.node.off', { when: fmtWhen(org.node_seen_at, lang) });
+  const makeNodeInvite = async () => {
+    setBusy(true);
+    if (nodeInvite) { const d = await supabase.from('msgr_invites').delete().eq('id', nodeInvite.id); if (d.error) { setBusy(false); return onError(d.error.message); } } // 노드 코드는 한 번에 하나 — 다시 만들면 이전 코드 취소(안내 문구와 같은 계약)
+    const res = await supabase.from('msgr_invites').insert({ org_id: org.id, role: 'member', for_node: true, created_by: uid }).select('code').single();
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    onNote(t('org.node.made')); loadInvites().catch(() => {});
+  };
+  const copyNodeCmd = async () => { await navigator.clipboard?.writeText(nodeCmd).catch(() => {}); onNote(t('org.node.copied')); };
   return (
     <section className="msgr-setcard">
       <h2>{t('set.org')}</h2><p>{t('set.org.desc')}</p>
@@ -782,11 +798,29 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
           {open.map((inv) => (
             <div key={inv.id} className="row">
               <span className="msgr-klabel">{t(`role.${inv.role}`)}</span><span className="name mono">…{inv.code.slice(-8)}</span>
-              <span className="sub">{t('org.invite.expires', { when: fmtTs(inv.expires_at, lang) })}</span>
+              <span className="sub">{t('org.invite.expires', { when: fmtWhen(inv.expires_at, lang) })}</span>
               <button type="button" className="btn sm ghost" onClick={() => copyLink(inv)} title={t('org.invite.copy')} aria-label={t('org.invite.copy')}><I name="copy" size={13} /></button>
               <button type="button" className="btn sm ghost" disabled={busy} onClick={() => revoke(inv)} title={t('org.invite.revoke')} aria-label={t('org.invite.revoke')}><I name="x" size={13} /></button>
             </div>
           ))}
+        </div>
+      )}
+      <h3>{t('org.node')}</h3>
+      <p>{t('org.node.desc')}</p>
+      <div className="row">
+        <span className={`msgr-tag${nodeAlive ? ' on' : ''}`}>{nodeStatus}</span>
+        {org.service_user_id && <span className="sub">{nameOfUser(org.service_user_id)}</span>}
+        <button type="button" className="btn btn-primary sm" disabled={busy} onClick={makeNodeInvite}><I name="doc" size={13} />{t(nodeInvite ? 'org.node.remake' : 'org.node.make')}</button>
+      </div>
+      {nodeInvite && (
+        <div className="msgr-node-cmd">
+          <span className="msgr-klabel">{t('org.node.cmd')} · {t('org.invite.expires', { when: fmtWhen(nodeInvite.expires_at, lang) })}</span>
+          <code>{nodeCmd}</code>
+          <div className="acts">
+            <button type="button" className="btn sm" onClick={copyNodeCmd}><I name="copy" size={13} />{t('org.node.copy')}</button>
+            <button type="button" className="btn sm ghost" disabled={busy} onClick={() => revoke(nodeInvite)} title={t('org.invite.revoke')} aria-label={t('org.invite.revoke')}><I name="x" size={13} /></button>
+          </div>
+          <p className="note">{t('org.node.hint')}</p>
         </div>
       )}
       <h3>{t('org.audit')}</h3>
@@ -794,7 +828,7 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
         ? <div className="row"><button type="button" className="btn sm" onClick={() => loadAudit().catch((e) => onError(e.message))}><I name="doc" size={13} />{t('org.audit.load')}</button></div>
         : (<div className="msgr-audit">
             {!audit.length && <p className="empty">{t('org.audit.empty')}</p>}
-            {audit.map((a) => <div key={a.id} className="row"><span className="when">{fmtTs(a.at, lang)}</span><span className="who">{a.actor_user_id ? nameOfUser(a.actor_user_id) : (a.actor_crew_id ? t('org.crews') : t('org.audit.system'))}</span><span className="act">{a.action}</span><span className="tgt">{a.target_kind ? `${a.target_kind}${a.target_id ? ` · ${String(a.target_id).slice(0, 12)}` : ''}` : ''}</span></div>)}
+            {audit.map((a) => <div key={a.id} className="row"><span className="when">{fmtWhen(a.at, lang)}</span><span className="who">{a.actor_user_id ? nameOfUser(a.actor_user_id) : (a.actor_crew_id ? t('org.crews') : t('org.audit.system'))}</span><span className="act">{a.action}</span><span className="tgt">{a.target_kind ? `${a.target_kind}${a.target_id ? ` · ${String(a.target_id).slice(0, 12)}` : ''}` : ''}</span></div>)}
             <div className="row"><button type="button" className="btn sm" onClick={() => loadAudit().catch((e) => onError(e.message))}>{t('org.audit.reload')}</button></div>
           </div>)}
     </section>
