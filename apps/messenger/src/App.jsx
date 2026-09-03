@@ -1,13 +1,13 @@
 // Argo 메신저 — 조직·채널·메시지·크루·결재 슬립. 데이터는 Supabase 직결(RLS가 경계), 실시간은 private topic org:<id> 방송.
 // 룩 = linen v2(apps/messenger/design): 타임라인 척추 · 사람 원/크루 타일 · 2단 다크 독 · 결재 슬립 · 자체 아이콘(icons.jsx).
-// Argo 부품은 .shell/.side(테마 토큰 스코프)·.btn·DropUp·Markdown·imeGuardWith만 쓰고, 나머지는 styles.css의 .msgr-*.
+// Argo 부품은 .shell/.side(테마 토큰 스코프)·.btn·Markdown·imeGuardWith만 쓰고, 나머지는 styles.css의 .msgr-*.
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, configured, q } from './supabase.js';
 import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
-import { Markdown, DropUp, imeGuardWith } from '@argo/ui';
+import { Markdown, imeGuardWith } from '@argo/ui';
 import { Sprite, I, STAR_D } from './icons.jsx';
 
 const AWAY_MS = 90_000;
@@ -83,8 +83,7 @@ function Auth() {
 
 /* ─── 셸: 레일(조직·채널 칩·크루 카드·멤버 스택) + 본문 ─── */
 function Shell({ session }) {
-  const { t, ta, lang, setLang } = useT();
-  const { theme, setTheme } = useTheme();
+  const { t } = useT();
   const uid = session.user.id;
   const [orgs, setOrgs] = useState(null); const [orgId, setOrgId] = useState(null);
   const [channels, setChannels] = useState([]); const [chId, setChId] = useState(null);
@@ -93,6 +92,8 @@ function Shell({ session }) {
   const [tick, setTick] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
   const [allChips, setAllChips] = useState(false);
+  const [page, setPage] = useState('chat'); // 'chat' | 'settings' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03)
+  const [orgMenu, setOrgMenu] = useState(false);
   const rt = useRef(null);
   const loadOrgs = useCallback(async () => {
     const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug)').eq('user_id', uid).is('removed_at', null));
@@ -137,7 +138,7 @@ function Shell({ session }) {
     return () => { ch?.unsubscribe(); rt.current = null; };
   }, [orgId, session.access_token]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
-  useEffect(() => { if (!rail) return; const on = (e) => { if (e.key === 'Escape') setRail(false); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [rail]);
+  useEffect(() => { if (!rail && !orgMenu) return; const on = (e) => { if (e.key === 'Escape') { setRail(false); setOrgMenu(false); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [rail, orgMenu]);
   useEffect(() => { if (tick % 2 === 0 && orgId) loadOrg(orgId).catch(() => {}); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const org = orgs?.find((o) => o.id === orgId);
   const me = members.find((m) => m.user_id === uid);
@@ -166,12 +167,6 @@ function Shell({ session }) {
       await loadOrg(orgId); setChId(c.id);
     } catch (e) { setErr(e.message); }
   };
-  const themeGroups = useMemo(() => [
-    { label: ta('settings.family.linen'), items: ['linen', 'linen-light', 'linen-dark'].map((v) => ({ value: v, label: ta(`settings.theme.${v}`) })) },
-    { label: ta('settings.family.graphite'), items: ['graphite', 'graphite-light', 'graphite-dark'].map((v) => ({ value: v, label: ta(`settings.theme.${v}`) })) },
-    { label: 'Argo', items: ['argo', 'argo-light', 'argo-dark'].map((v) => ({ value: v, label: ta(`settings.theme.${v}`) })) },
-    { label: '…', items: THEMES.filter((v) => !/^(linen|graphite|argo)/.test(v)).map((v) => ({ value: v, label: ta(`settings.theme.${v}`) })) },
-  ], [ta]);
   if (orgs === null) return <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   const channel = channels.find((c) => c.id === chId);
   // 채널 칩 — 정렬: 현재 → 이름순. 6개 초과는 '+N'(펼치기)
@@ -182,17 +177,24 @@ function Shell({ session }) {
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
       <aside className="side msgr-side">
         <div className="msgr-brand"><svg width="14" height="14" viewBox="0 0 16 16"><path d={STAR_D} /></svg>ARGO</div>
-        <div className="msgr-org">
-          <Av name={org?.name ?? '?'} />
-          <DropUp value={orgId ?? ''} placeholder={t('org.pick')} width={150} height={30} ariaLabel={t('org.pick')}
-            groups={[{ label: t('org.pick'), items: orgs.map((o) => ({ value: o.id, label: o.name, badge: o.role })) }]} onChange={setOrgId} />
-          <button type="button" className="btn sm" style={{ width: 28, height: 28, padding: 0, border: 0, marginLeft: 'auto' }} onClick={createOrg} title={t('org.new')} aria-label={t('org.new')}><I name="plus" size={14} /></button>
+        <div className="msgr-orgwrap">
+          <button type="button" className={`msgr-org${orgMenu ? ' open' : ''}`} onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} title={t('org.switch')}>
+            <Av name={org?.name ?? '?'} /><span className="name">{org?.name ?? t('org.pick')}</span><I name="caret" size={14} className="caret" />
+          </button>
+          {orgMenu && (<>
+            <div className="msgr-scrim clear" onClick={() => setOrgMenu(false)} />
+            <div className="msgr-menu-pop" role="menu">
+              {orgs.map((o) => <button key={o.id} type="button" role="menuitemradio" aria-checked={o.id === orgId} className={o.id === orgId ? 'on' : ''} onClick={() => { setOrgId(o.id); setOrgMenu(false); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t(`role.${o.role}`)}</span></button>)}
+              <div className="sep" />
+              <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); createOrg(); }}><span className="msgr-av sm ghost"><I name="plus" size={13} /></span><span className="label">{t('org.new')}</span></button>
+            </div>
+          </>)}
         </div>
         <div className="msgr-group">{t('ch.list')}<button type="button" className="btn" onClick={createChannel} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')}><I name="plus" size={14} /></button></div>
         {channels.length ? (
           <div className="msgr-chips">
             {shownCh.map((c) => (
-              <button key={c.id} type="button" className={`msgr-chan${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); }}>
+              <button key={c.id} type="button" className={`msgr-chan${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}>
                 <I name={c.kind === 'private' ? 'lock' : 'hash'} size={13} /><span>{c.name}</span>
               </button>
             ))}
@@ -218,11 +220,8 @@ function Shell({ session }) {
         <div className="msgr-foot">
           <Av name={me?.display_name || session.user.email} size="sm" />
           <span className="name">{me?.display_name || session.user.email}</span>
+          <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
           <button type="button" className="btn ghost" onClick={() => supabase.auth.signOut()} title={t('auth.signOut')} aria-label={t('auth.signOut')}><I name="out" size={15} /></button>
-          <div className="ctl">
-            <button type="button" className="btn sm" style={{ border: 0, background: 'none', color: 'var(--fg-3)', padding: '0 6px' }} onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}>{t('ui.lang')}</button>
-            <DropUp value={theme} groups={themeGroups} onChange={setTheme} width={180} height={28} align="left" ariaLabel={t('ui.theme.family')} />
-          </div>
         </div>
       </aside>
       <main className="msgr-main">
@@ -232,7 +231,9 @@ function Shell({ session }) {
             <button type="button" className="btn sm" style={{ border: 0, width: 24, height: 24, padding: 0 }} onClick={() => { setErr(''); setNote(''); }} aria-label="×"><I name="x" size={12} /></button>
           </div>
         )}
-        {chId ? (
+        {page === 'settings' ? (
+          <Settings session={session} me={me} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+        ) : chId ? (
           <Channel key={chId} channel={channel} orgId={orgId} uid={uid} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} />
         ) : (
           <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={createOrg} createChannel={createChannel} invite={isAdmin ? invite : null} />
@@ -240,6 +241,57 @@ function Shell({ session }) {
       </main>
     </div>
   );
+}
+
+/* ─── 설정 페이지: 언어 · 테마(아르고와 같은 가족×모드) · 계정 ─── */
+const FAMILIES = [['linen', 'settings.family.linen'], ['graphite', 'settings.family.graphite'], ['argo', 'settings.family.argo']];
+const MODES = [['', 'set.mode.system'], ['-light', 'set.mode.light'], ['-dark', 'set.mode.dark']];
+const FAMILY_CODES = FAMILIES.flatMap(([f]) => MODES.map(([s]) => `${f}${s}`));
+function Settings({ session, me, onBack, onMenu }) {
+  const { t, ta, lang, setLang } = useT();
+  const { theme, setTheme } = useTheme();
+  const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
+  const mode = family ? theme.slice(family.length) : null;
+  const skins = THEMES.filter((c) => !FAMILY_CODES.includes(c));
+  return (<>
+    <div className="msgr-top">
+      <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
+      <span className="title"><I name="gear" size={18} />{t('ui.settings')}</span>
+      <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
+    </div>
+    <div className="msgr-thread"><div className="msgr-settings">
+      <section className="msgr-setcard">
+        <h2>{t('set.lang')}</h2><p>{t('set.lang.desc')}</p>
+        <div className="msgr-seg" role="radiogroup" aria-label={t('set.lang')}>
+          {[['ko', '한국어'], ['en', 'English']].map(([v, l]) => <button key={v} type="button" role="radio" aria-checked={lang === v} className={lang === v ? 'active' : ''} onClick={() => setLang(v)}>{l}</button>)}
+        </div>
+      </section>
+      <section className="msgr-setcard">
+        <h2>{t('set.theme')}</h2><p>{t('set.theme.desc')}</p>
+        <div className="row">
+          <span className="msgr-klabel">{t('set.family')}</span>
+          <div className="msgr-seg" role="radiogroup" aria-label={t('set.family')}>
+            {FAMILIES.map(([f, label]) => <button key={f} type="button" role="radio" aria-checked={family === f} className={family === f ? 'active' : ''} onClick={() => setTheme(`${f}${mode ?? ''}`)}>{ta(label)}</button>)}
+          </div>
+        </div>
+        <div className="row">
+          <span className="msgr-klabel">{t('set.mode')}</span>
+          <div className="msgr-seg" role="radiogroup" aria-label={t('set.mode')}>
+            {MODES.map(([s, label]) => <button key={s} type="button" role="radio" aria-checked={family != null && mode === s} className={family != null && mode === s ? 'active' : ''} onClick={() => setTheme(`${family ?? 'linen'}${s}`)}>{t(label)}</button>)}
+          </div>
+        </div>
+        <div className="row">
+          <span className="msgr-klabel">{t('set.skins')}</span>
+          <div className="msgr-chips">{skins.map((c) => <button key={c} type="button" className={`msgr-chan${theme === c ? ' active' : ''}`} onClick={() => setTheme(c)} title={ta(`settings.theme.${c}`)}><span>{ta(`settings.theme.${c}`).split(' — ')[0]}</span></button>)}</div>
+        </div>
+      </section>
+      <section className="msgr-setcard">
+        <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
+        <div className="row"><Av name={me?.display_name || session.user.email} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
+        <div className="row"><button type="button" className="btn sm" onClick={() => supabase.auth.signOut()}><I name="out" size={13} />{t('auth.signOut')}</button></div>
+      </section>
+    </div></div>
+  </>);
 }
 
 /** 빈 상태 — 척추 위 단계 노드가 다음 행동을 가르친다(조직 없음 / 채널 없음). */
@@ -490,7 +542,6 @@ function Composer({ chId, orgId, uid, members, crews, channel, sbw = 0, typingCr
       </form>
       <div className="msgr-sub">
         <span className="typing-line">{typingCrews.length > 0 && <><span className="msgr-dot mark" />{t('msg.typing', { name: typingCrews.map((c) => c.display_name).join(', ') })}</>}</span>
-        <span><span className="msgr-kbd">enter</span> {t('msg.enter')} · <span className="msgr-kbd">shift</span>+<span className="msgr-kbd">enter</span> {t('msg.newline')}</span>
       </div>
     </div></div>
   );
