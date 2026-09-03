@@ -46,7 +46,9 @@ a { color: var(--accent); }
 .m.crew .av { background: var(--accent); color: var(--accent-ink); }
 .m .who { font-weight: 600; font-size: 13px; display: flex; gap: 8px; align-items: baseline; }
 .m .who .ts { color: var(--ink-2); font-weight: 400; font-size: 11px; }
-.m .body { white-space: pre-wrap; word-break: break-word; }
+.m .body { word-break: break-word; } /* 마크다운(marked breaks:true)이 개행을 처리한다 — pre-wrap을 겹치면 목록·문단 사이 빈 줄이 두 배(실측) */
+.m .body ul, .m .body ol { margin: 4px 0 6px; padding-left: 22px; }
+.m .body li { margin: 2px 0; }
 .m .body p { margin: 0 0 6px; }
 .m .body pre { background: var(--card-2); padding: 8px 10px; border-radius: 8px; overflow: auto; }
 .m.system .body { color: var(--ink-2); font-style: italic; }
