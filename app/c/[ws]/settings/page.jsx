@@ -121,6 +121,8 @@ function Settings({ params }) {
             연결된 러너가 2개 미만이면 스스로 렌더하지 않는다(선택의 의미가 없다).
             즉시 저장이라 이 폼의 submit(회사 이름 저장)과 무관하다. */}
         <DefaultRunnerPicker ws={ws} />
+        {/* 휴대폰에서 열기 — 회사 정보 카드의 빈 여백에(유건 2026-09-03). 자체 API(/api/mobile)라 이 폼의 submit과 무관. */}
+        <MobileCard embedded />
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto', paddingTop: 10 }}>
           <button className="btn btn-primary sm" disabled={saving || !name.trim()}>
             {saving ? <Spinner size={12} /> : t('settings.save')}
@@ -171,7 +173,6 @@ function Settings({ params }) {
 
       <Section label={t('settings.devices.section')}>
         <DevicesCard ws={ws} />
-        <MobileCard />
         <UpdateCard />
       </Section>
 

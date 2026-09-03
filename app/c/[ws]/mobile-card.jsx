@@ -16,7 +16,9 @@ async function call(method, body) {
   return data;
 }
 
-export function MobileCard() {
+/** embedded — 회사 정보 카드 안 한 구획으로(카드 래퍼 없이, 위 구분선 + 소제목). 회사 정보 카드의 빈 여백에 앉힌다(유건 2026-09-03).
+    폼(<form>) 안에 들어가므로 버튼은 전부 type="button"이다 — 이름 저장 submit을 건드리지 않는다. */
+export function MobileCard({ embedded = false } = {}) {
   const { t, lang } = useLang();
   const [st, setSt] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -57,10 +59,13 @@ export function MobileCard() {
   const newCode = () => run(async () => { await call('POST', {}); await pull(); });
   const doRevoke = () => run(async () => { await call('DELETE', { id: revoke.id }); setRevoke(null); await pull(); });
 
+  const Wrap = embedded
+    ? ({ children }) => <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '1px dashed var(--border-soft)', paddingTop: 12, marginTop: 4 }}>{children}</div>
+    : ({ children }) => <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>{children}</div>;
   return (
-    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <Wrap>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span className="card-title" style={{ flex: 1 }}>{t('mobile.title')}</span>
+        <span className={embedded ? 'microlabel' : 'card-title'} style={{ flex: 1 }}>{t('mobile.title')}</span>
         {st && (
           <>
             <span className="chip" style={{ color: st.enabled ? 'var(--ok)' : 'var(--fg-3)' }}>{st.enabled ? t('mobile.on') : t('mobile.off')}</span>
@@ -120,6 +125,6 @@ export function MobileCard() {
         <ConfirmModal title={t('mobile.revokeTitle')} description={t('mobile.revokeDesc')} confirmLabel={t('mobile.revoke')} busy={busy}
           onConfirm={doRevoke} onClose={() => setRevoke(null)} />
       )}
-    </div>
+    </Wrap>
   );
 }
