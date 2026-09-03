@@ -21,7 +21,13 @@ async function myRegistrations(c, ws) {
 async function myOrgs(c) {
   const { data, error } = await c.client.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug)').eq('user_id', c.uid).is('removed_at', null); // 본인 행만(멤버 select 정책은 조직 전원 행을 준다 — 검수 MEDIUM-2)
   if (error) throw new Error(error.message);
-  return (data ?? []).filter((m) => m.msgr_orgs).map((m) => ({ id: m.org_id, name: m.msgr_orgs.name, slug: m.msgr_orgs.slug, role: m.role }));
+  const orgs = (data ?? []).filter((m) => m.msgr_orgs).map((m) => ({ id: m.org_id, name: m.msgr_orgs.name, slug: m.msgr_orgs.slug, role: m.role }));
+  if (!orgs.length) return orgs;
+  // 조직별 멤버(허용 범위 '지정 멤버' 선택지) — 본인 제외, 표시명·역할만
+  const { data: mems, error: e2 } = await c.client.from('msgr_org_members').select('org_id, user_id, role, display_name').in('org_id', orgs.map((o) => o.id)).is('removed_at', null);
+  if (e2) throw new Error(e2.message);
+  for (const o of orgs) o.members = (mems ?? []).filter((m) => m.org_id === o.id && m.user_id !== c.uid).map((m) => ({ id: m.user_id, name: m.display_name || m.user_id.slice(0, 8), role: m.role }));
+  return orgs;
 }
 async function syncEnabled(ws, c) {
   let regs;
@@ -49,7 +55,8 @@ export async function POST(req, { params }) {
   const denied = await guardCompany(ws); if (denied) return denied;
   const cs = await csrfDenied(req); if (cs) return cs;
   const lang = await requestLang();
-  const { orgId, slug, allow = 'all', allowUsers = [] } = await req.json().catch(() => ({}));
+  // 기본 'owner' — 조직 정책 테이블(부록 H-0) 전까지는 가장 좁게 시작하고 크루 시트/카드에서 연다(유건 결정 2026-09-03)
+  const { orgId, slug, allow = 'owner', allowUsers = [] } = await req.json().catch(() => ({}));
   const users = Array.isArray(allowUsers) ? allowUsers : [];
   if (!UUID.test(String(orgId ?? '')) || !slug || !ALLOW.has(allow) || !users.every((u) => UUID.test(String(u)))) return apiError('msgr_bad_request', lang);
   const agent = (await listAgents(ws)).find((a) => a.slug === slug);
