@@ -6,7 +6,13 @@ import { fileURLToPath } from 'node:url';
 const shared = (p) => fileURLToPath(new URL(`../../${p}`, import.meta.url));
 export default defineConfig({
   plugins: [react()],
-  resolve: { alias: { '@argo/slash-match': shared('app/c/[ws]/slash-match.mjs') } },
+  resolve: { alias: {
+    '@argo/slash-match': shared('app/c/[ws]/slash-match.mjs'),
+    '@argo/globals.css': shared('app/globals.css'), // 디자인 시스템 정본 — 토큰·컴포넌트·테마 전부(사본 금지)
+    '@argo/theme': shared('app/theme.jsx'),          // ThemeProvider·THEMES·DEFAULT_THEME(graphite) — localStorage 'argo-theme' 공유
+    '@argo/ui': shared('app/ui.jsx'),                // Icon·Avatar·Markdown·DropUp·imeGuardWith
+    '@argo/i18n': shared('app/i18n.jsx'),            // LangProvider(ui.jsx가 요구) + 테마 라벨
+  } },
   server: { fs: { allow: [shared('.')] } },
   clearScreen: false,
   envPrefix: ['VITE_', 'TAURI_ENV_'],

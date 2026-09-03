@@ -1,68 +1,35 @@
-/* Argo 메신저 — 토큰은 Argo 앱 globals.css의 라이트/다크(웜 아이보리·웜 차콜 + 골드)를 축약해 그대로 따른다. */
-:root { color-scheme: light; --bg: #f5f0e3; --card: #fcfaf2; --card-2: #f1ecdf; --line: rgba(34,30,21,.12); --ink: #221e15; --ink-2: #6b6355; --accent: #d8ab4a; --accent-ink: #3a2c0c; --danger: #b34a3a; --ok: #3f8a5b; --radius: 12px; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) { color-scheme: dark; --bg: #1c1813; --card: #26211a; --card-2: #322c21; --line: rgba(236,230,215,.12); --ink: #ece6d7; --ink-2: #a89e8c; --accent: #c6a052; --accent-ink: #1c1813; } }
-:root[data-theme='dark'] { color-scheme: dark; --bg: #1c1813; --card: #26211a; --card-2: #322c21; --line: rgba(236,230,215,.12); --ink: #ece6d7; --ink-2: #a89e8c; --accent: #c6a052; --accent-ink: #1c1813; }
-* { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; }
-body { background: var(--bg); color: var(--ink); font: 14px/1.5 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', sans-serif; }
-button, input, textarea, select { font: inherit; color: inherit; }
-a { color: var(--accent); }
-.btn { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 12px; cursor: pointer; }
-.btn:hover { background: var(--card-2); }
-.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
-.btn.small { padding: 3px 9px; font-size: 12px; }
-.btn:disabled { opacity: .5; cursor: default; }
-.input { width: 100%; border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 9px 11px; outline: none; }
-.input:focus { border-color: var(--accent); }
-.err { color: var(--danger); font-size: 13px; }
-.muted { color: var(--ink-2); }
-.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; font-size: 12px; background: var(--card); }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-2); display: inline-block; }
-.dot.on { background: var(--ok); }
-
-/* 로그인 */
-.auth { min-height: 100%; display: grid; place-items: center; padding: 24px; }
-.auth .card { width: min(380px, 100%); background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; display: grid; gap: 10px; }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
-.brand img { width: 26px; height: 26px; }
-
-/* 셸 — 레일(조직·채널·크루) + 본문 */
-.shell { height: 100%; display: grid; grid-template-columns: 264px minmax(0, 1fr); }
-.rail { border-right: 1px solid var(--line); background: var(--card); display: flex; flex-direction: column; min-height: 0; }
-.rail .top { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.rail .sec { padding: 10px 14px 4px; font-size: 11px; letter-spacing: .04em; color: var(--ink-2); display: flex; justify-content: space-between; align-items: center; }
-.rail .list { overflow: auto; }
-.rail .item { display: flex; align-items: center; gap: 8px; padding: 6px 14px; cursor: pointer; border: 0; background: none; width: 100%; text-align: left; border-radius: 0; }
-.rail .item:hover { background: var(--card-2); }
-.rail .item.on { background: var(--card-2); font-weight: 600; }
-.rail .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rail .foot { margin-top: auto; padding: 10px 14px; border-top: 1px solid var(--line); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-.head { padding: 12px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
-.head h2 { margin: 0; font-size: 15px; }
-.feed { flex: 1; overflow: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
-.m { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; }
-.m .av { width: 34px; height: 34px; border-radius: 10px; background: var(--card-2); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
-.m.crew .av { background: var(--accent); color: var(--accent-ink); }
-.m .who { font-weight: 600; font-size: 13px; display: flex; gap: 8px; align-items: baseline; }
-.m .who .ts { color: var(--ink-2); font-weight: 400; font-size: 11px; }
-.m .body { word-break: break-word; } /* 마크다운(marked breaks:true)이 개행을 처리한다 — pre-wrap을 겹치면 목록·문단 사이 빈 줄이 두 배(실측) */
-.m .body ul, .m .body ol { margin: 4px 0 6px; padding-left: 22px; }
-.m .body li { margin: 2px 0; }
-.m .body p { margin: 0 0 6px; }
-.m .body pre { background: var(--card-2); padding: 8px 10px; border-radius: 8px; overflow: auto; }
-.m.system .body { color: var(--ink-2); font-style: italic; }
-.m .quote { border-left: 2px solid var(--line); padding-left: 8px; color: var(--ink-2); font-size: 12px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card-ap { border: 1px solid var(--accent); border-radius: var(--radius); padding: 10px 12px; background: var(--card); display: grid; gap: 8px; }
-.card-ap .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.att { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; margin: 4px 6px 0 0; background: var(--card); font-size: 12px; }
-.compose { border-top: 1px solid var(--line); padding: 10px 18px 14px; display: grid; gap: 6px; position: relative; }
-.compose textarea { width: 100%; min-height: 44px; max-height: 40vh; resize: vertical; border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 10px 12px; outline: none; }
-.compose textarea:focus { border-color: var(--accent); }
-.compose .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
-.typing { font-size: 12px; color: var(--ink-2); min-height: 16px; }
-.popup { position: absolute; bottom: 100%; left: 18px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 6px; display: grid; min-width: 220px; max-height: 240px; overflow: auto; box-shadow: 0 8px 24px rgba(0,0,0,.12); z-index: 3; }
-.popup button { text-align: left; border: 0; background: none; padding: 6px 10px; border-radius: 8px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
-.popup button.on, .popup button:hover { background: var(--card-2); }
-.empty { margin: auto; color: var(--ink-2); text-align: center; }
-@media (max-width: 720px) { .shell { grid-template-columns: 1fr; } .rail { display: none; } .rail.open { display: flex; position: fixed; inset: 0; z-index: 5; } }
+/* 메신저 고유 레이아웃만 — 색·글꼴·버튼·칩·입력바·말풍선·모션은 전부 @argo/globals.css(아르고 앱과 동일)를 쓴다.
+   여기 규칙은 토큰만 참조하고 색 평문을 쓰지 않는다(globals.css 머리 규칙과 동일). */
+.msgr-main { display: flex; flex-direction: column; min-width: 0; min-height: calc(100vh / var(--z, 1)); }
+.msgr-thread { flex: 1; overflow-y: auto; padding: 22px 26px 8px; overscroll-behavior: contain; }
+.msgr-thread .thread { max-width: 768px; margin: 0 auto; } /* 크루 대화·회의실과 같은 읽기 레인 768 */
+.msgr-compose { padding: 8px 26px 16px; }
+.msgr-compose > div { max-width: 768px; margin: 0 auto; position: relative; }
+.msgr-compose .input-bar { background: var(--card-2); align-items: flex-end; border-radius: 22px; }
+.msgr-compose .input-bar textarea { max-height: 40vh; }
+.msgr-subrow { display: flex; align-items: center; justify-content: space-between; padding: 0 6px; min-height: 18px; margin-top: 4px; }
+.msgr-typing { font-size: 11.5px; color: var(--fg-3); }
+/* 멘션 팝업 — DropUp 패널과 같은 표면·등장(카드 + 아래에서 살짝 떠오름) */
+.msgr-pop { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 40; min-width: 240px; max-height: 300px; overflow-y: auto; padding: 6px; box-shadow: 0 8px 28px rgba(0,0,0,.14); animation: msgrPopIn 160ms cubic-bezier(0.23,1,0.32,1) both; }
+@keyframes msgrPopIn { from { opacity: 0; transform: scale(0.97) translateY(4px); } to { opacity: 1; transform: none; } }
+.msgr-pop button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 7px; padding: 6px 8px; font-size: 12.5px; color: var(--fg); background: none; cursor: pointer; }
+.msgr-pop button.on, .msgr-pop button:hover { background: var(--card-2); }
+/* 동료(타인) 발화 — 사장 말풍선(우측 primary)과 구분해 좌측 중립 카드(크루 대화의 배달 지시 카드와 같은 문법) */
+.msgr-peer { display: flex; gap: 11px; max-width: 94%; }
+.msgr-peer .card { padding: 9px 13px; font-size: 13.5px; }
+.msgr-who { display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+.msgr-who .ts { font-family: var(--mono); font-size: 10px; font-weight: 500; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.msgr-quote { border-left: 2px solid var(--border); padding-left: 8px; color: var(--fg-3); font-size: 12px; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msgr-sys { font-size: 12.5px; color: var(--fg-3); font-style: italic; }
+.msgr-att { display: inline-flex; align-items: center; gap: 6px; margin: 6px 6px 0 0; }
+.msgr-empty { margin: auto; color: var(--fg-3); text-align: center; font-size: 13px; }
+.msgr-auth { min-height: calc(100vh / var(--z, 1)); display: grid; place-items: center; padding: 24px; }
+.msgr-auth .card { width: min(380px, 100%); padding: 22px; display: grid; gap: 12px; }
+.msgr-crew-row { display: flex; align-items: center; gap: 9px; padding: 6px 10px; border-radius: 10px; font-size: 13px; color: var(--fg-2); }
+.msgr-crew-row .nav-sub { flex: 1; }
+.msgr-crew-row .pill { font-size: 10.5px; padding: 1px 8px; }
+.msgr-members { display: flex; flex-direction: column; gap: 1px; }
+.msgr-member { display: flex; align-items: center; gap: 8px; padding: 4px 10px; font-size: 12.5px; color: var(--fg-2); }
+.msgr-member .role { margin-left: auto; }
+.msgr-notice { display: flex; align-items: center; gap: 8px; padding: 8px 26px 0; font-size: 12.5px; }
+@media (max-width: 720px) { .shell { grid-template-columns: 1fr; } .side { display: none; } }

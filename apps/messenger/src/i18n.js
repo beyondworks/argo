@@ -46,6 +46,10 @@ export const DICT = {
   'ui.error': ['오류', 'Error'],
   'ui.loading': ['불러오는 중…', 'Loading…'],
   'ui.copy': ['복사', 'Copy'],
+  'ui.copied': ['복사됨', 'Copied'],
+  'ui.theme.family': ['테마', 'Theme'],
+  'org.pick': ['조직', 'Organization'],
+  'msg.mentionHint': ['@로 멘션 · Enter 전송 · Shift+Enter 줄바꿈', '@ to mention · Enter to send · Shift+Enter newline'],
 };
 export const LANGS = ['ko', 'en'];
 export function readLang() { try { const v = localStorage.getItem('argo-lang'); return LANGS.includes(v) ? v : 'ko'; } catch { return 'ko'; } }
