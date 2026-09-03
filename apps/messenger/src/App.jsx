@@ -842,7 +842,7 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
       {(draft.approval_high_by === 'approvers') && (
         <div className="row">
           <span className="msgr-klabel">{t('set.policy.approvers')}</span>
-          <div className="picks">{members.filter((m) => m.role !== 'owner' && m.role !== 'guest').map((m) => { const on = (draft.approver_user_ids ?? []).includes(m.user_id); // 게스트 제외: 공개 채널을 못 읽어 결재를 확정할 수 없다 return <label key={m.user_id} className={`pick${on ? ' on' : ''}`}><input type="checkbox" checked={on} disabled={ro} onChange={() => set({ approver_user_ids: on ? (draft.approver_user_ids ?? []).filter((x) => x !== m.user_id) : [...(draft.approver_user_ids ?? []), m.user_id] })} /><Av name={m.display_name || m.user_id} size="sm" /><span>{m.display_name || m.user_id.slice(0, 8)}</span></label>; })}</div>
+          <div className="picks">{members.filter((m) => m.role !== 'owner' && m.role !== 'guest').map((m) => { const on = (draft.approver_user_ids ?? []).includes(m.user_id); /* 게스트 제외: 공개 채널을 못 읽어 결재를 확정할 수 없다 */ return <label key={m.user_id} className={`pick${on ? ' on' : ''}`}><input type="checkbox" checked={on} disabled={ro} onChange={() => set({ approver_user_ids: on ? (draft.approver_user_ids ?? []).filter((x) => x !== m.user_id) : [...(draft.approver_user_ids ?? []), m.user_id] })} /><Av name={m.display_name || m.user_id} size="sm" /><span>{m.display_name || m.user_id.slice(0, 8)}</span></label>; })}</div>
           <span className="note">{t('set.policy.approvers.desc')}</span>
         </div>
       )}
