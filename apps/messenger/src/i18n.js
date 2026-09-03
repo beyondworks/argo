@@ -134,6 +134,7 @@ export const DICT = {
   'ch.add.crew': ['크루 추가', 'Add crew'],
   'ch.add.crewNote': ['크루를 넣으면 그 크루의 소유자도 함께 들어옵니다(소유자 컴퓨터가 답을 올립니다).', 'Adding a crew also adds its owner (the owner’s computer posts the replies).'],
   'ch.remove': ['내보내기', 'Remove'],
+  'ch.remove.ownerBlocked': ['이 사람의 크루가 채널에 있어 내보낼 수 없습니다. 크루를 먼저 내보내세요(소유자가 없으면 크루가 답할 수 없습니다).', 'This person’s crew is in the channel. Remove the crew first (a crew cannot answer without its owner).'],
   'ch.archive': ['채널 보관', 'Archive channel'],
   'ch.archive.confirm': ['이 채널을 보관할까요? 목록에서 사라지고 새 글을 쓸 수 없습니다. 기록은 남습니다.', 'Archive this channel? It leaves the list and accepts no new messages. History is kept.'],
   'ch.saved': ['채널 정보를 저장했습니다.', 'Channel saved.'],

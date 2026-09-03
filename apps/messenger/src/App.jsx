@@ -12,8 +12,8 @@ import { Sprite, I, STAR_D } from './icons.jsx';
 
 const AWAY_MS = 90_000;
 const PAGE = 100;
-const CHIP_MAX = 6;
-const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다 // 채널 칩 랩 상한 — 초과분은 점선 '+N' 칩 뒤로(평가 v2: 태그 구름 방지)
+const CHIP_MAX = 6; // 채널 칩 랩 상한 — 초과분은 점선 '+N' 칩 뒤로(평가 v2: 태그 구름 방지)
+const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
 const dayKey = (iso) => new Date(iso).toDateString();
 const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
@@ -91,6 +91,7 @@ function Shell({ session }) {
   const [members, setMembers] = useState([]); const [crews, setCrews] = useState([]);
   const [chMembers, setChMembers] = useState([]); // 현재 채널의 msgr_channel_members(비공개·DM)
   const [ent, setEnt] = useState(null); // msgr_org_entitlements(plan·seats) — 좌석 표시·한도 안내
+  const [dmMembers, setDmMembers] = useState({}); // dm 채널 id → 멤버 행(레일 라벨용: 나 아닌 참가자)
   const [err, setErr] = useState(''); const [note, setNote] = useState('');
   const [tick, setTick] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
@@ -120,15 +121,18 @@ function Shell({ session }) {
     const [chs, mems, crs, e] = await Promise.all([
       q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, created_by').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name').eq('org_id', id).is('removed_at', null)),
-      q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, last_seen_at').eq('org_id', id).eq('status', 'active')),
+      q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at').eq('org_id', id).eq('status', 'active')),
       supabase.from('msgr_org_entitlements').select('plan, seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
     ]);
     setChannels(chs); setMembers(mems); setCrews(crs); setEnt(e);
+    const dmIds = chs.filter((c) => c.kind === 'dm').map((c) => c.id);
+    if (dmIds.length) { const rows = await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', dmIds)); const map = {}; for (const r of rows) (map[r.channel_id] ??= []).push(r); setDmMembers(map); } else setDmMembers({});
     setChId((cur) => cur && chs.some((c) => c.id === cur) ? cur : (chs[0]?.id ?? null));
   }, []);
   useEffect(() => { loadOrg(orgId).catch((e) => setErr(e.message)); }, [orgId, loadOrg]);
   const loadChMembers = useCallback(async (id) => { if (!id) { setChMembers([]); return; } const rows = await q(supabase.from('msgr_channel_members').select('member_kind, member_id, added_by').eq('channel_id', id)); setChMembers(rows); }, []);
-  useEffect(() => { loadChMembers(chId).catch(() => setChMembers([])); setChSheet(false); }, [chId, loadChMembers, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setChSheet(false); }, [chId]); // 채널을 바꿀 때만 닫는다(검수 HIGH-1: tick 의존이면 15초마다 시트가 닫혔다)
   const [event, setEvent] = useState(null); const [typing, setTyping] = useState({});
   useEffect(() => { // Realtime — 조직 topic 하나. 방송은 id·채널만 싣는다(본문은 RLS를 지난 조회로).
     if (!orgId) return;
@@ -173,7 +177,8 @@ function Shell({ session }) {
       const dmIds = mine.filter((r) => r.msgr_channels?.kind === 'dm' && r.msgr_channels.org_id === orgId && !r.msgr_channels.archived_at).map((r) => r.channel_id);
       if (dmIds.length) {
         const others = await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', dmIds));
-        const hit = dmIds.find((cid) => { const ms = others.filter((m) => m.channel_id === cid); return ms.length === (kind === 'crew' ? 3 : 2) && ms.some((m) => m.member_kind === kind && m.member_id === id); });
+        const wantUsers = new Set(kind === 'crew' ? [uid, crewOf(id)?.owner_user_id].filter(Boolean) : [uid, id]); // 자기 크루면 {나}, 남의 크루면 {나, 소유자}
+        const hit = dmIds.find((cid) => { const ms = others.filter((m) => m.channel_id === cid); const users = new Set(ms.filter((m) => m.member_kind === 'user').map((m) => m.member_id)); const crewsIn = ms.filter((m) => m.member_kind === 'crew').map((m) => m.member_id); const sameUsers = users.size === wantUsers.size && [...wantUsers].every((u) => users.has(u)); return sameUsers && (kind === 'crew' ? crewsIn.length === 1 && crewsIn[0] === id : crewsIn.length === 0); });
         if (hit) { setChId(hit); setPage('chat'); setRail(false); setSheet(null); return; }
       }
       const other = kind === 'crew' ? crewOf(id) : members.find((m) => m.user_id === id);
@@ -192,12 +197,13 @@ function Shell({ session }) {
       const c = await q(supabase.from('msgr_channels').insert({ org_id: orgId, kind: priv ? 'private' : 'public', name: name.trim(), created_by: uid }).select('id').single());
       if (priv) await q(supabase.from('msgr_channel_members').insert({ channel_id: c.id, member_kind: 'user', member_id: uid, added_by: uid }));
       await loadOrg(orgId); setChId(c.id);
-    } catch (e) { setErr(e.message); }
+    } catch (e) { setErr(/msgr_channel_limit/.test(e.message) ? t('ch.freeLimit') : e.message); }
   };
   if (orgs === null) return <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   const channel = channels.find((c) => c.id === chId);
   // 채널 칩 — 정렬: 현재 → 이름순. 6개 초과는 '+N'(펼치기)
-  const dmName = (c) => c.name.replace(/^dm:/, '');
+  // DM 라벨 = 나 아닌 참가자(검수 MEDIUM-2: 저장된 이름은 생성자 시점). 크루 DM에 다른 사람도 있으면(소유자 동반) '서윤 · 민수'처럼 병기
+  const dmName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); if (crew) return [crewOf(crew.member_id)?.display_name ?? c.name.replace(/^dm:/, ''), other ? nameOfUser(other.member_id) : null].filter(Boolean).join(' · '); return other ? nameOfUser(other.member_id) : c.name.replace(/^dm:/, ''); };
   const dms = channels.filter((c) => c.kind === 'dm');
   const sortedCh = [...channels].filter((c) => c.kind !== 'dm').sort((a, b) => (a.id === chId ? -1 : b.id === chId ? 1 : a.name.localeCompare(b.name)));
   const shownCh = allChips ? sortedCh : sortedCh.slice(0, CHIP_MAX);
@@ -214,7 +220,7 @@ function Shell({ session }) {
             <div className="msgr-scrim clear" onClick={() => setOrgMenu(false)} />
             <div className="msgr-menu-pop" role="menu">
               {orgs.map((o) => <button key={o.id} type="button" role="menuitemradio" aria-checked={o.id === orgId} className={o.id === orgId ? 'on' : ''} onClick={() => { setOrgId(o.id); setOrgMenu(false); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t(`role.${o.role}`)}</span></button>)}
-              {ent && <div className="seatline"><span className="msgr-klabel">{t('seat.status', { used: members.filter((m) => m.role !== 'guest').length, seats: ent.seats, plan: t(`plan.${ent.plan}`) })}</span></div>}
+              {ent && <div className="seatline"><span className="msgr-klabel">{t('seat.status', { used: members.length, seats: ent.seats, plan: t(`plan.${ent.plan}`) })}</span></div>}
               <div className="sep" />
               <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); createOrg(); }}><span className="msgr-av sm ghost"><I name="plus" size={13} /></span><span className="label">{t('org.new')}</span></button>
             </div>
@@ -260,7 +266,7 @@ function Shell({ session }) {
       </aside>
       <main className="msgr-main">
         {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} uid={uid} me={me} members={members} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
-        {chSheet && channel && <ChannelSheet channel={channel} org={org} uid={uid} isAdmin={isAdmin} members={members} crews={crews} chMembers={chMembers} nameOfUser={nameOfUser} onClose={() => setChSheet(false)} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
+        {chSheet && channel && <ChannelSheet channel={channel} uid={uid} isAdmin={isAdmin} members={members} crews={crews} chMembers={chMembers} nameOfUser={nameOfUser} onClose={() => setChSheet(false)} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {(err || note) && (
           <div className="msgr-notice">
             <span style={{ color: err ? 'var(--danger)' : 'var(--fg-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{err ? `${t('ui.error')}: ${err}` : note}</span>
@@ -316,7 +322,6 @@ function CrewSheet({ crew, uid, me, members, channelId, nameOfUser, onClose, onC
           <div style={{ minWidth: 0 }}><div className="name">{crew.display_name}</div><div className="msgr-klabel">{crew.role_text}</div></div>
           <button type="button" className="btn ghost" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={15} /></button>
         </div>
-        <div className="row"><button type="button" className="btn sm" onClick={onDm}><I name="at" size={13} />{t('ui.dm')}</button><span className="msgr-klabel">{t('dm.crewNote')}</span></div>
         <div className="facts">
           <div><span className="msgr-klabel">{t('crew.owner')}</span><span><Av name={nameOfUser(crew.owner_user_id)} size="sm" /> {nameOfUser(crew.owner_user_id)}</span></div>
           <div><span className="msgr-klabel">{t('tab.crew')}</span><span>{t(`crew.hosting.${crew.hosting === 'resident' ? 'resident' : 'local'}`)}</span></div>
@@ -337,6 +342,7 @@ function CrewSheet({ crew, uid, me, members, channelId, nameOfUser, onClose, onC
           {!owner && <p className="note">{t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) })}</p>}
           <div className="me">
             <span className={`msgr-dot${canMe ? ' ok' : ''}`} /><span>{canMe ? t('crew.allow.me.yes') : t('crew.allow.me.no')}</span>
+            {canMe && <button type="button" className="btn btn-primary sm" onClick={onDm} title={t('dm.crewNote')}><I name="at" size={13} />{t('ui.dm')}</button>}
             {!owner && !canMe && <button type="button" className="btn btn-primary sm" onClick={request} disabled={!channelId}><I name="at" size={13} />{t('crew.request')}</button>}
           </div>
         </section>
@@ -346,11 +352,11 @@ function CrewSheet({ crew, uid, me, members, channelId, nameOfUser, onClose, onC
 }
 
 /* ─── 채널 시트: 이름·주제(관리자·생성자) · 크루 기억 스위치 · 멤버(비공개·DM: 사람·크루 추가/내보내기, 크루=소유자 동반) · 보관 ─── */
-function ChannelSheet({ channel, org, uid, isAdmin, members, crews, chMembers, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
+function ChannelSheet({ channel, uid, isAdmin, members, crews, chMembers, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
   const { t } = useT();
   const canEdit = isAdmin || channel.created_by === uid;
   const [name, setName] = useState(channel.name); const [topic, setTopic] = useState(channel.topic ?? ''); const [busy, setBusy] = useState(false); const [pick, setPick] = useState(null); // 'user' | 'crew'
-  useEffect(() => { setName(channel.name); setTopic(channel.topic ?? ''); }, [channel.id, channel.name, channel.topic]);
+  useEffect(() => { setName(channel.name); setTopic(channel.topic ?? ''); }, [channel.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const on = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [onClose]);
   const upd = async (patch, okMsg) => {
     setBusy(true);
@@ -372,6 +378,7 @@ function ChannelSheet({ channel, org, uid, isAdmin, members, crews, chMembers, n
     await onChanged();
   };
   const removeMember = async (kind, id) => {
+    if (kind === 'user' && crews.some((c) => c.owner_user_id === id && chMembers.some((m) => m.member_kind === 'crew' && m.member_id === c.id))) return onError(t('ch.remove.ownerBlocked')); // 검수 HIGH-3: 소유자가 빠지면 크루가 조용히 죽는다
     setBusy(true);
     const res = await supabase.from('msgr_channel_members').delete().eq('channel_id', channel.id).eq('member_kind', kind).eq('member_id', id).select('member_id');
     setBusy(false);
@@ -723,7 +730,7 @@ function Composer({ chId, orgId, uid, members, crews, channel, sbw = 0, typingCr
         </div>
       )}
       <form className="msgr-composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
-        <input hidden multiple type="file" ref={fileRef} onChange={(e) => { const all = [...e.target.files]; for (const f of all.filter((f) => f.size > ATTACH_MAX)) onError(t('att.tooBig', { name: f.name })); setFiles(all.filter((f) => f.size <= ATTACH_MAX)); e.target.value = ''; }} />
+        <input hidden multiple type="file" ref={fileRef} onChange={(e) => { const all = [...e.target.files]; const big = all.filter((f) => f.size > ATTACH_MAX); if (big.length) onError(big.map((f) => t('att.tooBig', { name: f.name })).join(' ')); setFiles(all.filter((f) => f.size <= ATTACH_MAX)); e.target.value = ''; }} />
         <textarea ref={ta} rows={1} value={text} onChange={onChange} {...imeGuardWith(onKey)} placeholder={t('msg.placeholder2')} />
         <div className="msgr-tools">
           <button type="button" className="tb" onClick={() => fileRef.current?.click()} disabled={busy} title={t('msg.attach')}><I name="clip" size={15} /><span>{t('msg.attach')}</span></button>

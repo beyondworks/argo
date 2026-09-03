@@ -85,8 +85,11 @@ export function makeDb(client) {
     async message(id) {
       return unwrap(await client.from('msgr_messages').select('id, channel_id, author_kind, author_user_id, crew_id, body, created_at').eq('id', id).maybeSingle());
     },
+    /** 크루가 참가한 **DM** 채널만 — 비공개 채널에 멤버로 넣은 것은 멘션으로만 발화한다(검수 HIGH-2: 그 채널의 모든 메시지가 LLM 턴으로 나가고,
+        allow='owner'면 매 메시지마다 거절 안내가 채널을 도배). 이름 그대로 dmChannels다. */
     async crewChannels(crewId) {
-      return (unwrap(await client.from('msgr_channel_members').select('channel_id').eq('member_kind', 'crew').eq('member_id', crewId)) ?? []).map((r) => r.channel_id);
+      const rows = unwrap(await client.from('msgr_channel_members').select('channel_id, msgr_channels!inner(kind)').eq('member_kind', 'crew').eq('member_id', crewId)) ?? [];
+      return rows.filter((r) => r.msgr_channels?.kind === 'dm').map((r) => r.channel_id);
     },
     async channel(id) {
       return unwrap(await client.from('msgr_channels').select('id, org_id, kind, name, crew_memory').eq('id', id).maybeSingle());

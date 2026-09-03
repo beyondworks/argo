@@ -30,7 +30,7 @@ test('라우트: 기본 allow는 owner, GET은 조직별 members를 싣는다', 
 
 test('카드가 쓰는 i18n 키는 전부 ko/en 쌍으로 있다', () => {
   const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
-  const keys = new Set([...src.matchAll(/t\('([a-z0-9.]+)'\)/g)].map((m) => m[1]));
+  const keys = new Set([...src.matchAll(/t\('([A-Za-z0-9._-]+)'\)/g)].map((m) => m[1])); // 대소문자 — noCrews·notSignedIn 같은 키를 놓치던 수집기(검수 LOW-1)
   for (const v of ['all', 'list', 'owner']) keys.add(`settings.msgr.allow.${v}`);
   for (const r of ['owner', 'admin', 'member', 'guest']) keys.add(`role.${r}`);
   assert.ok(keys.size >= 18, `키 수집이 너무 적다(${keys.size})`);

@@ -459,12 +459,37 @@ create policy msgr_channels_update on public.msgr_channels for update to authent
 
 drop policy if exists msgr_channel_members_select on public.msgr_channel_members;
 create policy msgr_channel_members_select on public.msgr_channel_members for select to authenticated using (public.msgr_can_read_channel(channel_id));
+-- 멤버 쓰기: 관리자·채널 생성자. DM 참가자는 **자기 행 삭제(나가기)만** — 검수 MEDIUM-5(2026-09-03): 참가자면 누구나
+-- 제3자를 1:1에 끼워 넣거나 생성자를 축출할 수 있었다. DM 구성은 생성 시점 트리거(msgr_dm_shape)가 사람 2·크루 1로 고정한다.
 drop policy if exists msgr_channel_members_write on public.msgr_channel_members;
-create policy msgr_channel_members_write on public.msgr_channel_members for all to authenticated
-  using (exists (select 1 from public.msgr_channels c where c.id = channel_id
-                   and (public.msgr_is_admin(c.org_id) or c.created_by = (select auth.uid()) or (c.kind = 'dm' and public.msgr_can_read_channel(c.id)))))
+drop policy if exists msgr_channel_members_insert on public.msgr_channel_members;
+create policy msgr_channel_members_insert on public.msgr_channel_members for insert to authenticated
   with check (exists (select 1 from public.msgr_channels c where c.id = channel_id
-                   and (public.msgr_is_admin(c.org_id) or c.created_by = (select auth.uid()) or (c.kind = 'dm' and public.msgr_can_read_channel(c.id)))));
+                   and (public.msgr_is_admin(c.org_id) or c.created_by = (select auth.uid()))));
+drop policy if exists msgr_channel_members_update on public.msgr_channel_members;
+create policy msgr_channel_members_update on public.msgr_channel_members for update to authenticated
+  using (exists (select 1 from public.msgr_channels c where c.id = channel_id and (public.msgr_is_admin(c.org_id) or c.created_by = (select auth.uid()))))
+  with check (exists (select 1 from public.msgr_channels c where c.id = channel_id and (public.msgr_is_admin(c.org_id) or c.created_by = (select auth.uid()))));
+drop policy if exists msgr_channel_members_delete on public.msgr_channel_members;
+create policy msgr_channel_members_delete on public.msgr_channel_members for delete to authenticated
+  using ((member_kind = 'user' and member_id = (select auth.uid()))
+      or exists (select 1 from public.msgr_channels c where c.id = channel_id and (public.msgr_is_admin(c.org_id) or c.created_by = (select auth.uid()))));
+
+-- DM 구성 고정: 사람 ≤ 2(생성자·상대 또는 생성자·크루 소유자), 크루 ≤ 1. 초과 insert는 거절(제3자 끼워넣기 차단).
+create or replace function public.msgr_dm_shape() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare k text; nu int; nc int;
+begin
+  select kind into k from public.msgr_channels where id = new.channel_id;
+  if k <> 'dm' then return new; end if;
+  select count(*) filter (where member_kind = 'user'), count(*) filter (where member_kind = 'crew') into nu, nc
+    from public.msgr_channel_members where channel_id = new.channel_id;
+  if (new.member_kind = 'user' and nu >= 2) or (new.member_kind = 'crew' and nc >= 1) then raise exception 'msgr_dm_full'; end if;
+  return new;
+end $$;
+revoke execute on function public.msgr_dm_shape() from anon, public;
+drop trigger if exists msgr_dm_shape on public.msgr_channel_members;
+create trigger msgr_dm_shape before insert on public.msgr_channel_members for each row execute function public.msgr_dm_shape();
 
 drop policy if exists msgr_crews_select on public.msgr_crews;
 create policy msgr_crews_select on public.msgr_crews for select to authenticated using (public.msgr_is_member(org_id));
