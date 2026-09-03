@@ -1944,6 +1944,8 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .chat-cols > .side-rail :focus-visible { outline-offset: -2px; }
 /* 크루 컨트롤 인라인 밴드 — 기본은 없음(넓은 폭은 topbar 슬롯이 수용처), ≤900px 블록에서 등장 */
 .crew-phone-band { display: none; }
+/* 활동 2열(타임라인 + 316px 통계) — activity/page.jsx 인라인에서 이관(값 동일). 폰 셸 블록이 1열로 뒤집는다 */
+.activity-cols { grid-template-columns: minmax(0, 1fr) 316px; }
 /* overflow-anchor 차단 — 크롬 scroll anchoring이 턴 종료(작업 카드 unmount) 같은 DOM 변화에
    scrollTop을 수백 px 보정해 화면이 튄다(실측 1068→540). 스크롤은 페이지 코드가 전담한다. */
 .thread { display: flex; flex-direction: column; gap: 20px; overflow-anchor: none; overflow-x: hidden; }
@@ -2242,4 +2244,11 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 /* 히트 타깃 — 폰 손가락 기준 최소 36px(레이아웃을 흔들지 않는 선) */
 [data-shell="mobile"] .btn.sm { min-height: 36px; }
 [data-shell="mobile"] .msg-actions button { min-width: 36px; min-height: 36px; }
-
+/* 채팅·회의실 — 고정 하단 탭(58px + safe-area) 위로 컴포저를 올린다(실측 2026-09-03: 입력창이 탭 아래 가려짐).
+   140 = 상단바 56 + 콘텐츠 상단 패딩 16 + 탭 58 + 컴포저 아래 틈 10. margin-bottom −28 = 위 72(56+16)와
+   .content 하단 패딩(96+safe)을 상쇄해 body 스크롤 0. 100dvh = 사파리 툴바 접힘 반영(미지원 엔진은 앞 줄 vh).
+   레일(세션·회의 기록)은 시트로 빠지므로 열·행 하나 — 폰 밴드(≤560)의 'auto 1fr' 2행이면 본문이 auto 행에 얹혀 못 편다. */
+[data-shell="mobile"] .chat-cols { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: calc(100vh / var(--z, 1) - 140px - env(safe-area-inset-bottom, 0px)); height: calc(100dvh / var(--z, 1) - 140px - env(safe-area-inset-bottom, 0px)); margin-bottom: -28px; }
+[data-shell="mobile"] .rail-sheet { max-height: calc(70vh / var(--z, 1)); overflow-y: auto; }
+/* 활동 — 316px 통계 열이 폰 폭에서 타임라인을 40px로 압살(실측) → 1열 스택 */
+[data-shell="mobile"] .activity-cols { grid-template-columns: minmax(0, 1fr); }

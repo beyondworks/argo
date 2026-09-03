@@ -40,7 +40,11 @@ function evalSize(expr, { z } = {}) {
     // 폴백 없는 var(--z)는 변수 미설정(배율 1) 시 선언 전체가 무효 — 실브라우저와 같게 실패시킨다
     throw new Error(`var(--z) 폴백 없음 — 배율 1(변수 미설정)에서 선언이 무효가 된다: ${expr}`);
   });
-  s = s.replace(/(\d*\.?\d+)vh/gi, (_, n) => `(${n}*${V}/100)`);
+  // env(safe-area-inset-*, 폴백) — 폰 셸(#424)의 하단 탭 산식. 데스크톱·안전 영역 없는 화면에서는 폴백(0px)과 같고,
+  // 안전 영역이 있으면 그만큼 더 줄어드니 뷰포트 안 불변식은 폴백으로 평가하는 쪽이 상한이다.
+  s = s.replace(/env\(\s*safe-area-inset-[a-z]+\s*,\s*([^)]+)\)/g, (_, fb) => `(${fb.trim()})`);
+  // dvh = 사파리 툴바 접힘 반영(동적 뷰포트) — 최대치가 vh와 같으므로 vh로 평가(상한). svh·lvh는 평가기 밖(residue로 red).
+  s = s.replace(/(\d*\.?\d+)d?vh/gi, (_, n) => `(${n}*${V}/100)`);
   s = s.replace(/(\d*\.?\d+)px/gi, '($1)');
   s = s.replace(/\bcalc\(/gi, '(').replace(/\bmin\(/gi, 'Math.min(').replace(/\bmax\(/gi, 'Math.max(');
   const residue = s.replace(/Math\.(min|max)/g, '').replace(/[\d\s+\-*/().,]/g, '');

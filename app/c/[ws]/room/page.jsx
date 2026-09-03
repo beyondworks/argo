@@ -3,7 +3,7 @@
 // 좌측 레일에 지난 회의가 적재되고(회의 마치기), 클릭으로 읽기 전용 열람 — 맥락 공유가 눈에 보이는 화면.
 import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
+import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith, usePhoneShell } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
 import { dropUpClamp } from '../zoom-math.mjs';
 import { ArtifactChips } from '../artifact-chips';
@@ -20,6 +20,8 @@ const LANE = 'min(768px, 100%)';
 export default function Room({ params }) {
   const { ws } = use(params);
   const { t } = useLang();
+  const phone = usePhoneShell(); // 폰 셸 — 회의 기록 레일을 시트로
+  const [railOpen, setRailOpen] = useState(false);
   const router = useRouter();
   const [agents, setAgents] = useState([]);
   const [messages, setMessages] = useState(null);
@@ -368,13 +370,7 @@ export default function Room({ params }) {
   const shown = viewing ? archMsgs : messages;
   const viewingOpen = !!viewing && !!sessions.find((s) => s.id === viewing)?.open; // 열람 중인 보관본이 '진행 중'인가(배너 문구·버튼 라벨)
 
-  return (
-    // 그리드 기하(레일 216px + 본문 열, 높이 calc, marginBottom -70)는 .chat-cols(globals) — 크루 DM·
-    // 컨테스트와 정본 공용(값이 동일한데 인라인로 남아 정본이 둘로 갈라져 있던 것을 편입).
-    // 폰 폭(≤560px)의 레일 스택 전환도 이 클래스로 함께 받는다.
-    <div className="chat-cols">
-      {/* 회의 레일 — 마친 회의가 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr).
-          sticky·폭 216은 .chat-cols > .side-rail(globals) — 폰 폭에서 static·전폭 스택으로 뒤집힌다 */}
+  const rail = (
       <div className="side-rail" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
         <span className="microlabel" style={{ padding: '2px 6px 4px' }}>
           {t('room.sessions.title')}{sessions.length ? ` · ${sessions.length}` : ''}
@@ -429,6 +425,20 @@ export default function Room({ params }) {
         })}
         {sessions.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--fg-3)', padding: '2px 6px', lineHeight: 1.5 }}>{t('room.sessions.empty')}</span>}
       </div>
+  );
+
+  return (
+    // 그리드 기하(레일 216px + 본문 열, 높이 calc, marginBottom -70)는 .chat-cols(globals) — 크루 DM·
+    // 컨테스트와 정본 공용(값이 동일한데 인라인로 남아 정본이 둘로 갈라져 있던 것을 편입).
+    // 폰 폭(≤560px)의 레일 스택 전환도 이 클래스로 함께 받는다.
+    <div className="chat-cols">
+      {/* 회의 레일 — 마친 회의가 적재된다. 무템플릿 grid 함정 방지: minmax(0,1fr).
+          sticky·폭 216은 .chat-cols > .side-rail(globals) — 폰 폭에서 static·전폭 스택으로 뒤집힌다 */}
+      {/* 폰 셸: 회의 기록 레일은 시트로(헤더의 "회의 기록" 버튼) — 크루 대화와 같은 처방 */}
+      {phone ? (railOpen && (<>
+        <div className="phone-sheet-backdrop" onClick={() => setRailOpen(false)} />
+        <div className="phone-sheet rail-sheet" role="dialog" aria-label={t('room.sessions.title')} onClick={(e) => { if (e.target.closest('.nav-item')) setRailOpen(false); }}>{rail}</div>
+      </>)) : rail}
 
       {renameSess && (
         <InputModal
@@ -450,6 +460,7 @@ export default function Room({ params }) {
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
           <span className="microlabel" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('room.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
+          {phone && <button type="button" className="btn sm" style={{ flex: 'none' }} onClick={() => setRailOpen(true)} aria-haspopup="dialog">{t('room.sessions.title')}{sessions.length ? ` · ${sessions.length}` : ''}</button>}
         </div>
 
         <div style={{ position: 'relative', minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)' }}>

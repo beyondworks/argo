@@ -1,6 +1,6 @@
 'use client';
 // 공용 클라이언트 조각들 — 화면 전체가 같이 쓴다.
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import { useLang } from './i18n';
 import { rewriteVaultHref } from '../src/vault-links.mjs'; // 산출물 링크 재작성(순수 — 테스트는 src 쪽)
@@ -667,7 +667,15 @@ export function FeedbackModal({ onClose }) {
 /** Tauri 데스크톱 감지 — 분산 복제 방지용 단일 출처(분리 검수 MEDIUM 2026-07-28). */
 /** 폰 셸(페어링된 휴대폰) — Shell이 /api/me mobile:true로 루트에 박는 data-shell="mobile" 마커. 데스크톱은 항상 false.
     자동 포커스처럼 폰에서 키보드를 먼저 띄우는 동작을 거를 때 쓴다(마운트 직후엔 마커 전 렌더 창이 있어 Shell이 한 번 blur한다). */
-export const isPhoneShell = () => typeof document !== 'undefined' && document.documentElement.dataset.shell === 'mobile';
+export const isPhoneShell = () => typeof document !== 'undefined' && (document.documentElement.dataset.shell === 'mobile' || phoneHint());
+/** 마커 전 렌더 창을 메우는 힌트 — Shell이 마커를 박을 때 폰 오리진의 localStorage에 남긴다. 크루 대화 URL을 폰에서 직접
+    열면(재시작·뒤로가기) 마커가 /api/me 뒤에 오는데 autoFocus는 마운트에 이미 돌아 iOS가 입력창으로 1.4배 확대해 버렸다
+    (실측 2026-09-03 — 사후 viewport 재설정으로는 안 풀림). 데스크톱(루프백 오리진)은 마커가 없어 이 키가 생기지 않는다. */
+const phoneHint = () => { try { return localStorage.getItem('argo-phone') === '1'; } catch { return false; } };
+/** 같은 마커를 렌더 트리로 — Shell이 /api/me mobile 값을 Provider로 내리고, 페이지는 이 훅으로 폰 전용 JSX를 분기한다.
+    첫 렌더는 항상 false(하이드레이션 일치), 마커가 생기면 Shell 재렌더로 함께 참이 된다. 데스크톱은 영원히 false. */
+export const PhoneShellCtx = createContext(false);
+export const usePhoneShell = () => useContext(PhoneShellCtx);
 export const isTauriApp = () => typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || navigator.userAgent.includes('Tauri'));
 
 /** 산출물 다운로드 onClick — 데스크톱 앱은 <a download>가 무동작(WKWebView/WebView2, 실사용 제보
