@@ -117,8 +117,8 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
 test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크루(서버 msgr_crew_tier와 같은 규칙), 레일 카드·시트에 등급 배지·소유 표기·한계 문장', () => {
   assert.match(app, /export const crewTier = \(crew, org\) => \(org\?\.service_user_id && crew\?\.owner_user_id === org\.service_user_id && crew\?\.hosting === 'resident'\) \? 'company' : 'personal';/, '등급 규칙이 서버 함수와 다르다');
   assert.match(app, /msgr_orgs\(id, name, slug, service_user_id\)/, '조직 조회에 service_user_id가 없다');
-  assert.match(app, /<Av name=\{c\.display_name\} crew size="lg" company=\{crewTier\(c, org\) === 'company'\} \/>/, '레일 카드 아바타에 회사 배지가 없다');
-  assert.match(app, /crewTier\(c, org\) === 'company' \? t\('crew\.tier\.company\.sub'/, '레일 카드 부제가 등급별이 아니다');
+  assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다');
+  assert.match(app, /\{company \? t\('crew\.tier\.company\.sub'/, '구성 행 부제가 등급별이 아니다');
   const crewSheet = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
   assert.match(crewSheet, /const tier = crewTier\(crew, org\);/, '시트 등급 판정');
   assert.match(crewSheet, /<span className=\{`msgr-tier \$\{tier\}`\}>\{tier === 'company' \? t\('crew\.tier\.company'\) : t\('crew\.tier\.personal'\)\}<\/span>/, '등급 배지');
@@ -202,4 +202,18 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
   assert.match(css, /^\.msgr-scrim \{ display: none; \}/m, '데스크톱에서 레일 스크림이 그리드 칸을 차지한다(레일 밀림)');
   assert.match(css, /\n  \.msgr-scrim \{ display: block; position: fixed;/, '폰 폭 스크림 표시');
   for (const k of ['ch.new.kind', 'ch.new.public', 'ch.new.private', 'ui.create', 'auth.devOnly']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+});
+
+test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목록만(크루 카드·멤버 스택 없음), 상단 참여 버튼이 시트를 열고, 시트의 참여 구성은 공개=조직 전원+정책 허용 크루 / 비공개=채널 멤버, 초대는 조직 메뉴', () => {
+  assert.doesNotMatch(app, /msgr-crewcard|msgr-stack/, '레일에 크루 카드·멤버 스택이 남아 있다');
+  assert.match(app, /<div className="msgr-list">\n\s*\{sortedCh\.map\(\(c\) => \(/, '채널 세로 목록');
+  assert.match(app, /const chPeople = !channel \? \[\] : channel\.kind === 'public' \? members : members\.filter\(\(m\) => chMembers\.some\(/, '사람 구성 계산');
+  assert.match(app, /const chCrews = !channel \? \[\] : channel\.kind === 'public' \? usableCrews : crews\.filter\(\(c\) => chMembers\.some\(/, '크루 구성 계산(공개=정책 허용 크루)');
+  assert.match(app, /<button type="button" className="members" onClick=\{onTitle\} title=\{t\('ch\.composition'\)\}/, '상단 참여 버튼');
+  assert.match(app, /onCrew=\{\(id\) => \{ setChSheet\(false\); setSheet\(id\); \}\} onDm=\{\(id\) => openDm\('user', id\)\}/, '구성에서 크루 시트·1:1 연결');
+  assert.match(app, /\{isAdmin && <button type="button" role="menuitem" onClick=\{\(\) => \{ setOrgMenu\(false\); invite\(\); \}\}>/, '초대가 조직 메뉴에 없다');
+  const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
+  assert.match(ch, /<h3>\{t\('ch\.composition'\)\}<\/h3>/, '구성 섹션');
+  assert.match(ch, /\{scoped && canEdit && channel\.kind !== 'dm' && !isMe && <button[^\n]*removeMember\('user', m\.user_id\)/, '비공개 채널 사람 내보내기');
+  for (const k of ['ch.composition', 'ch.composition.count', 'ch.composition.public', 'ch.composition.scoped', 'ch.people', 'ch.crews', 'ch.crews.none', 'ch.crews.none.scoped', 'ch.open.crew', 'ui.me', 'rail.hint']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });

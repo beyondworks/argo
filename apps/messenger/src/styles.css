@@ -313,3 +313,25 @@
 .msgr-crewsheet .confirm { display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); }
 .msgr-crewsheet .confirm p { margin: 0; font-size: 12.5px; color: var(--fg-2); line-height: 1.5; }
 .btn.btn-primary.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+/* ─── 채널 중심 레일(2026-09-04): 세로 목록 행. 크루·멤버는 채널 구성으로 이동 ─── */
+.msgr-list { display: grid; gap: 2px; padding: 0 2px; }
+.msgr-list .item { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 10px; border: 0; background: none; color: var(--fg-2); font: inherit; font-size: 13px; text-align: left; cursor: pointer; min-width: 0; }
+.msgr-list .item .mi { color: var(--fg-3); flex: none; }
+.msgr-list .item .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-list .item:hover { background: var(--card-2); color: var(--fg); }
+.msgr-list .item.active { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
+.msgr-list .item.active .mi { color: var(--primary-fg); }
+.msgr-railhint { margin-top: auto; padding: 14px 8px 6px; font-size: 11px; line-height: 1.5; color: var(--fg-3); }
+.msgr-top .members { display: inline-flex; align-items: center; gap: 0; padding: 3px 10px 3px 4px; border-radius: 999px; border: 1px solid transparent; background: none; cursor: pointer; font: inherit; }
+.msgr-top .members:hover { background: var(--card-2); border-color: var(--border); }
+.msgr-top .members .n { margin-left: 8px; font-size: 11.5px; color: var(--fg-3); white-space: nowrap; }
+@media (max-width: 720px) { .msgr-top .members .n { display: none; } .msgr-top .members .msgr-av:nth-child(n+5) { display: none; } } /* 폰 폭: 제목 옆 공간이 좁다 — 아바타 4개만 */
+.msgr-rows { display: grid; gap: 4px; }
+.msgr-rows .msgr-klabel { margin-top: 6px; }
+.msgr-rows .row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 3px 6px; border-radius: 10px; }
+.msgr-rows .row:hover { background: var(--card-2); }
+.msgr-rows .row .name { font-weight: 600; font-size: 13px; }
+.msgr-rows .row .sub { flex: 1; min-width: 0; font-size: 11.5px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-rows .row .btn.ghost { border: 0; background: none; width: 26px; height: 26px; padding: 0; color: var(--fg-3); }
+.msgr-rows .row .btn.ghost:hover { background: var(--bg); color: var(--fg); }
+.msgr-rows .empty { margin: 0 0 4px; font-size: 12px; color: var(--fg-3); }
