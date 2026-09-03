@@ -123,7 +123,7 @@ function Shell({ session }) {
       q(supabase.from('msgr_org_members').select('user_id, role, display_name').eq('org_id', id).is('removed_at', null)),
       q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at').eq('org_id', id).eq('status', 'active')),
       supabase.from('msgr_org_entitlements').select('plan, seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
-      supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
+      supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
     ]);
     setChannels(chs); setMembers(mems); setCrews(crs); setEnt(e); setPolicy(pol);
     setChId((cur) => cur && chs.some((c) => c.id === cur) ? cur : (chs[0]?.id ?? null)); // 라벨용 보조 조회보다 먼저(검수 2R LOW-1: 보조 조회가 던지면 채널 선택이 안 됐다)
@@ -277,7 +277,7 @@ function Shell({ session }) {
         {page === 'settings' ? (
           <Settings session={session} me={me} org={org} isAdmin={!!isAdmin} policy={policy} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
-          <Channel key={chId} channel={channel} orgId={orgId} uid={uid} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} dmName={dmName} />
+          <Channel key={chId} channel={channel} orgId={orgId} uid={uid} isAdmin={!!isAdmin} policy={policy} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} dmName={dmName} />
         ) : (
           <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={createOrg} createChannel={createChannel} invite={isAdmin ? invite : null} />
         )}
@@ -500,11 +500,11 @@ function PolicyCard({ org, isAdmin, policy, onChanged, onNote, onError }) {
   const { t } = useT();
   const [draft, setDraft] = useState(policy); const [busy, setBusy] = useState(false);
   useEffect(() => { setDraft(policy); }, [policy]);
-  const dirty = ['allow_default', 'allow_locked', 'crew_memory_default', 'crew_memory_locked'].some((k) => draft?.[k] !== policy?.[k]);
+  const dirty = ['allow_default', 'allow_locked', 'crew_memory_default', 'crew_memory_locked', 'approval_high_by'].some((k) => draft?.[k] !== policy?.[k]);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const save = async () => {
     setBusy(true);
-    const res = await supabase.from('msgr_org_policies').update({ allow_default: draft.allow_default, allow_locked: draft.allow_locked, crew_memory_default: draft.crew_memory_default, crew_memory_locked: draft.crew_memory_locked }).eq('org_id', org.id).select('org_id');
+    const res = await supabase.from('msgr_org_policies').update({ allow_default: draft.allow_default, allow_locked: draft.allow_locked, crew_memory_default: draft.crew_memory_default, crew_memory_locked: draft.crew_memory_locked, approval_high_by: draft.approval_high_by }).eq('org_id', org.id).select('org_id');
     setBusy(false);
     if (res.error) return onError(res.error.message);
     if (!res.data?.length) return onError(t('set.policy.adminOnly'));
@@ -525,6 +525,13 @@ function PolicyCard({ org, isAdmin, policy, onChanged, onNote, onError }) {
         <span className="msgr-klabel">{t('set.policy.memory')}</span>
         <label className="switchrow"><input type="checkbox" checked={draft.crew_memory_default !== false} disabled={ro} onChange={(e) => set({ crew_memory_default: e.target.checked })} /><span>{draft.crew_memory_default === false ? t('ch.memory.off') : t('ch.memory.on')}</span></label>
         <label className="switchrow"><input type="checkbox" checked={!!draft.crew_memory_locked} disabled={ro} onChange={(e) => set({ crew_memory_locked: e.target.checked })} /><span>{t('set.policy.lock')}</span></label>
+      </div>
+      <div className="row">
+        <span className="msgr-klabel">{t('set.policy.approval')}</span>
+        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.approval')}>
+          {['admin', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={(draft.approval_high_by ?? 'admin') === v} className={(draft.approval_high_by ?? 'admin') === v ? 'active' : ''} disabled={ro} onClick={() => set({ approval_high_by: v })}>{t(`set.policy.approval.${v}`)}</button>)}
+        </div>
+        <span className="note">{t('set.policy.approval.desc')}</span>
       </div>
       <p className="note">{t('set.policy.limit')}</p>
       {isAdmin ? <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !dirty} onClick={save}><I name="check" size={13} />{t('ui.save')}</button></div> : <p className="note">{t('set.policy.adminOnly')}</p>}
@@ -559,7 +566,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite }) {
 }
 
 /* ─── 채널 본문: 상단(제목·멤버 스택·세그먼트 탭) + 척추 스레드 + 2단 독 ─── */
-function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, event, typing, onError, onMenu, onCrew, onTitle, dmName }) {
+function Channel({ channel, orgId, uid, isAdmin, policy, members, crews, nameOfUser, crewOf, event, typing, onError, onMenu, onCrew, onTitle, dmName }) {
   const { t, lang } = useT();
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
   const [tab, setTab] = useState('all');
@@ -577,7 +584,7 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
       const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids));
       setAtts((cur) => { const n = { ...cur }; for (const r of a) (n[r.message_id] ??= []).push(r); return n; });
     }
-    const apRows = await q(supabase.from('msgr_crew_approvals').select('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id').eq('channel_id', chId));
+    const apRows = await q(supabase.from('msgr_crew_approvals').select('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id, risk').eq('channel_id', chId));
     setAps(Object.fromEntries(apRows.map((r) => [r.id, r])));
   }, [chId]);
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -592,7 +599,7 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
   const decide = async (ap, status) => {
     const res = await supabase.from('msgr_crew_approvals').update({ status, decided_by: uid, decided_at: new Date().toISOString() }).eq('id', ap.id).select('id');
     if (res.error) return onError(res.error.message);
-    if (!res.data?.length) return onError(t('ap.ownerOnly')); // RLS 0행 = 소유자가 아니다
+    if (!res.data?.length) return onError(t(ap.risk === 'high' ? 'ap.approverOnly' : 'ap.ownerOnly')); // RLS 0행 = 결재권 없음(최종 판정은 서버 msgr_can_decide)
     load(lastId).catch(() => {});
   };
   const typingCrews = Object.entries(typing).filter(([k, at]) => k.startsWith(`${chId}:`) && Date.now() - at < 6000).map(([k]) => crewOf(k.split(':')[1])).filter(Boolean);
@@ -607,7 +614,7 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
   for (const m of shown) {
     const k = dayKey(m.created_at);
     if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
-    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} onCrew={onCrew} />);
+    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} onCrew={onCrew} />);
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'stamp', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
@@ -631,7 +638,7 @@ function Channel({ channel, orgId, uid, members, crews, nameOfUser, crewOf, even
   </>);
 }
 
-function Message({ m, uid, lang, t, nameOfUser, crewOf, ap, atts, decide, parent, onCrew }) {
+function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew }) {
   const [copied, setCopied] = useState(false);
   const crew = m.crew_id ? crewOf(m.crew_id) : null;
   const name = m.author_kind === 'user' ? nameOfUser(m.author_user_id) : (crew?.display_name ?? t('org.crews'));
@@ -656,7 +663,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, ap, atts, decide, parent
       <div style={{ minWidth: 0 }}>
         <div className="who">{isCrew && crew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew?.(crew.id)}>{name}</button> : name}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
         {m.deleted_at ? <div className="msgr-sys">{t('msg.deleted')}</div>
-          : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} />
+          : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} isAdmin={isAdmin} policy={policy} />
           : m.kind === 'system' ? <div className="msgr-sys">{body}</div>
           : isCrew ? <div className="msgr-sheet">{quote}<Markdown text={body} /></div>
           : <div className="text">{quote}<Body text={body} /></div>}
@@ -668,26 +675,29 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, ap, atts, decide, parent
 }
 
 /** 결재 슬립 — 머리띠(요청=옐로 / 확정=차콜 / 만료=회색) + 본문 + 도장 실. 보는 사람이 소유자면 버튼, 아니면 대기 표시. */
-function Slip({ ap, uid, lang, t, crew, nameOfUser, decide }) {
-  // 소유자 판정은 화면용 — 크루가 목록에 없으면(비활성 등) 소유자 미상으로 보고 버튼을 띄운다. 최종 판정은 RLS(decide의 0행 처리). 검수 M1
+function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
+  // 결재권 판정은 화면용 — 최종은 RLS(msgr_can_decide, decide의 0행 처리). 크루가 목록에 없으면(비활성 등) 소유자 미상으로 보고 버튼을 띄운다(검수 M1).
   const owner = crew ? crew.owner_user_id === uid : true;
+  const high = ap.risk === 'high';
+  const byAdmin = high && (policy?.approval_high_by ?? 'admin') !== 'owner'; // H-1: 고위험은 정책의 결재권자(기본 관리자)
+  const can = byAdmin ? !!isAdmin : owner;
   const ownerName = nameOfUser(crew?.owner_user_id);
-  const cls = `msgr-slip ${ap.status}${ap.status === 'pending' && !owner ? ' wait' : ''}`;
-  const band = ap.status === 'pending' ? (owner ? t('ap.request') : t('ap.wait', { name: ownerName })) : t(`ap.${ap.status}.band`);
+  const cls = `msgr-slip ${ap.status}${ap.status === 'pending' && !can ? ' wait' : ''}${high ? ' high' : ''}`;
+  const band = ap.status === 'pending' ? (can ? t('ap.request') : (byAdmin ? t('ap.wait.admin') : t('ap.wait', { name: ownerName }))) : t(`ap.${ap.status}.band`);
   const bandIcon = ap.status === 'expired' ? 'clock' : 'stamp';
   const when = ap.decided_at ? fmtTs(ap.decided_at, lang) : '';
   return (
     <div className={cls}>
-      <div className="band"><I name={bandIcon} size={14} />{band}<span className="id">{ap.approval_id}</span></div>
+      <div className="band"><I name={bandIcon} size={14} />{band}{high && <span className="msgr-klabel risk">{t('ap.high')}</span>}<span className="id">{ap.approval_id}</span></div>
       <div className="body">
         <div className="action">{ap.action}</div>
         {ap.reason && <div className="reason">{ap.reason}</div>}
         <div className="row2">
-          {ap.status === 'pending' && owner && (<>
+          {ap.status === 'pending' && can && (<>
             <button type="button" className="btn btn-primary sm" onClick={() => decide(ap, 'approved')}><I name="check" size={13} />{t('ap.approve')}</button>
             <button type="button" className="btn sm" onClick={() => decide(ap, 'rejected')}><I name="x" size={13} />{t('ap.reject')}</button>
           </>)}
-          {ap.status === 'pending' && !owner && <span className="note">{t('ap.ownerNote')}</span>}
+          {ap.status === 'pending' && !can && <span className="note">{byAdmin ? t('ap.adminNote') : t('ap.ownerNote')}</span>}
           {ap.status === 'approved' && <span className="msgr-seal ok"><I name="check" />{nameOfUser(ap.decided_by)} · {when}</span>}
           {ap.status === 'rejected' && <span className="msgr-seal no"><I name="x" />{nameOfUser(ap.decided_by)} · {when}</span>}
           {ap.status === 'expired' && <span className="msgr-seal"><I name="clock" />{t('ap.noDecision')}</span>}

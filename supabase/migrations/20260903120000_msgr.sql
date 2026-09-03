@@ -705,3 +705,32 @@ begin
 end $$;
 drop trigger if exists msgr_channel_policy_gate on public.msgr_channels;
 create trigger msgr_channel_policy_gate before insert or update on public.msgr_channels for each row execute function public.msgr_channel_policy_gate();
+
+-- ── H-1 결재권 규칙·위험 등급(부록 H): 저위험은 크루 소유자, 고위험(발송·결제·삭제·게시·계약·커넥터 쓰기)은 조직 정책의 결재권자.
+--    risk는 브리지가 등록 시 코드 판정(src/approval-risk.mjs)으로 싣고, 이후 잠긴다(등급 하향 금지). 정책 approval_high_by: 'admin'(기본) | 'owner'.
+alter table public.msgr_crew_approvals add column if not exists risk text not null default 'low' check (risk in ('low', 'high'));
+alter table public.msgr_org_policies add column if not exists approval_high_by text not null default 'admin' check (approval_high_by in ('owner', 'admin'));
+drop trigger if exists msgr_lock_approvals on public.msgr_crew_approvals;
+create trigger msgr_lock_approvals before update on public.msgr_crew_approvals for each row execute function public.msgr_lock_cols('org_id', 'channel_id', 'crew_id', 'approval_id', 'action', 'created_at', 'risk');
+-- 결재 확정권 판정(호출자 본인 기준, 행은 문장 전 스냅샷 — STABLE). 저위험=크루 소유자 / 고위험=정책이 'owner'면 소유자, 'admin'이면 조직 관리자.
+create or replace function public.msgr_can_decide(ap uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select case
+      when a.risk = 'low' then c.owner_user_id = auth.uid()
+      when coalesce(p.approval_high_by, 'admin') = 'owner' then c.owner_user_id = auth.uid()
+      else public.msgr_is_admin(a.org_id)
+    end
+      from public.msgr_crew_approvals a
+      join public.msgr_crews c on c.id = a.crew_id
+      left join public.msgr_org_policies p on p.org_id = a.org_id
+     where a.id = ap
+$$;
+revoke all on function public.msgr_can_decide(uuid) from public;
+revoke execute on function public.msgr_can_decide(uuid) from anon;
+grant execute on function public.msgr_can_decide(uuid) to authenticated;
+drop policy if exists msgr_approvals_decide on public.msgr_crew_approvals;
+create policy msgr_approvals_decide on public.msgr_crew_approvals for update to authenticated
+  using (status = 'pending' and (public.msgr_can_decide(id) or exists (select 1 from public.msgr_crews c where c.id = msgr_crew_approvals.crew_id and c.owner_user_id = (select auth.uid()))))
+  with check ((status = 'pending' and decided_by is null                                             -- 브리지(크루 소유자)의 카드 링크(message_id) 등 pending 유지 갱신
+                and exists (select 1 from public.msgr_crews c where c.id = msgr_crew_approvals.crew_id and c.owner_user_id = (select auth.uid())))
+           or (status in ('approved', 'rejected', 'expired') and decided_by = (select auth.uid()) and public.msgr_can_decide(id))); -- 확정은 결재권자 본인 명의로만

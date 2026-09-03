@@ -399,3 +399,26 @@ test('조직 정책(H-0): 행 자동 생성·멤버 열람·관리자만 편집,
   assert.equal(last(asUser(U.member, `update public.msgr_crews set allow = 'list', allow_users = array['${U.owner}'::uuid] where id = '${CREW}' returning allow`)), 'list');
   assert.equal(last(asUser(U.owner, `update public.msgr_channels set crew_memory = true where id = '${PUB}' returning crew_memory`)), 't');
 });
+
+test('결재권 규칙(H-1): 저위험은 크루 소유자만, 고위험은 정책(기본 admin)의 결재권자만 — 소유자 0행·관리자 확정, 정책 owner면 소유자, risk 잠김, 카드 링크는 소유자', { skip }, () => {
+  const lo = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk) values ('${ORG}', '${PUB}', '${CREW}', 'ap-lo', '초안 정리', 'low') returning id`));
+  const hi = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk) values ('${ORG}', '${PUB}', '${CREW}', 'ap-hi', '견적서 메일 발송', 'high') returning id`));
+  assert.equal(last(sql(`select approval_high_by from public.msgr_org_policies where org_id = '${ORG}'`)), 'admin');
+  // 저위험: 관리자 0행, 소유자 확정
+  assert.equal(last(asUser(U.admin, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.admin}', decided_at = now() where id = '${lo}' returning 1`)), '');
+  assert.equal(last(asUser(U.member, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.member}', decided_at = now() where id = '${lo}' returning status`)), 'approved');
+  // 고위험: 소유자(비관리자)는 0행, risk 하향도 잠김, 카드 링크(pending 유지)는 소유자 가능, 관리자 확정
+  denied(U.member, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.member}', decided_at = now() where id = '${hi}'`); // 소유자는 USING(링크 갱신용)은 지나고 WITH CHECK에서 막힌다 → RLS 위반 오류
+  denied(U.member, `update public.msgr_crew_approvals set risk = 'low' where id = '${hi}'`, /msgr_immutable|immutable|permission|row-level/i);
+  assert.equal(last(asUser(U.member, `update public.msgr_crew_approvals set message_id = null where id = '${hi}' returning status`)), 'pending');
+  assert.equal(last(asUser(U.guest, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.guest}', decided_at = now() where id = '${hi}' returning 1`)), '');
+  assert.equal(last(asUser(U.admin, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.admin}', decided_at = now() where id = '${hi}' returning status`)), 'approved');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'approval.approved' and target_id = 'ap-hi'`), '1');
+  // 정책 owner → 고위험도 소유자가 확정, 관리자는 0행
+  const hi2 = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk) values ('${ORG}', '${PUB}', '${CREW}', 'ap-hi2', '광고비 결제', 'high') returning id`));
+  assert.equal(last(asUser(U.admin, `update public.msgr_org_policies set approval_high_by = 'owner' where org_id = '${ORG}' returning approval_high_by`)), 'owner');
+  assert.equal(last(asUser(U.admin, `update public.msgr_crew_approvals set status = 'rejected', decided_by = '${U.admin}', decided_at = now() where id = '${hi2}' returning 1`)), '');
+  assert.equal(last(asUser(U.member, `update public.msgr_crew_approvals set status = 'rejected', decided_by = '${U.member}', decided_at = now() where id = '${hi2}' returning status`)), 'rejected');
+  assert.equal(last(asUser(U.admin, `update public.msgr_org_policies set approval_high_by = 'admin' where org_id = '${ORG}' returning 1`)), '1');
+  sql(`delete from public.msgr_crew_approvals where approval_id in ('ap-lo', 'ap-hi', 'ap-hi2')`);
+});

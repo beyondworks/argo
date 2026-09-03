@@ -196,7 +196,12 @@ test('push: 턴 중 결재 → 미러 행 + 카드 + 로컬 메타, 웹 확정 �
     assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: it2 }, { session }), false, '음소거된 종류는 카드 없음');
   } finally { await seedCompany(); }
   const ap = db.calls.find((x) => x[0] === 'insertApproval')[1];
-  assert.deepEqual(ap, { org_id: ORG, channel_id: CH, crew_id: CREW, approval_id: it.id, action: '광고 집행', reason: '예산 10만원' });
+  assert.deepEqual(ap, { org_id: ORG, channel_id: CH, crew_id: CREW, approval_id: it.id, action: '광고 집행', reason: '예산 10만원', risk: 'low' });
+  // H-1: 고위험 문장은 risk 'high' + 카드 본문이 결재권자 안내로 바뀐다
+  const hi = await addApproval(WS, { slug: 'seoyun', action: '거래처에 견적서 메일 발송', reason: '월말 마감', msgr: { orgId: ORG, channelId: CH, crewId: CREW } });
+  assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: hi }, { session }), true);
+  const hiRow = db.calls.filter((x) => x[0] === 'insertApproval').at(-1)[1]; assert.equal(hiRow.risk, 'high'); assert.equal(hiRow.approval_id, hi.id);
+  const hiCard = db.calls.filter((x) => x[0] === 'insertMessage').at(-1)[1]; assert.match(hiCard.body, /^결재 요청\(고위험\): 거래처에 견적서 메일 발송\n사유: 월말 마감\n\(고위험 행동 — 조직 정책의 결재권자가 확정합니다\)$/);
   const card = db.calls.find((x) => x[0] === 'insertMessage')[1];
   assert.equal(card.kind, 'approval_card'); assert.equal(card.client_msg_id, `ap:${CREW}:${it.id}`); assert.match(card.body, /결재 요청: 광고 집행\n사유: 예산 10만원\n\(확정은 이 크루의 소유자만/);
   const saved = (await loadApprovals(WS)).find((a) => a.id === it.id);

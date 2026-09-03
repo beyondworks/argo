@@ -30,6 +30,7 @@ import { beatGateway } from './persist.mjs';
 import { chat } from '../chat.mjs';
 import { loadThread, appendTurn } from '../thread.mjs';
 import { loadApprovals, setApprovalMeta } from '../approvals.mjs';
+import { approvalRisk } from '../approval-risk.mjs';
 import { resolveWithFollowUp } from '../approval-actions.mjs';
 import { extractFileRefs, attachFailureNote, isImagePath } from '../tg-format.mjs';
 import { createHash } from 'node:crypto';
@@ -319,12 +320,16 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     if (!ctx?.channelId || it?.msgr?.rowId) return false; // 목적지 없음 또는 이미 미러됨
     const c = await session(); if (!c) return false;
     const { lang = 'ko' } = company;
-    const ap = await c.db.insertApproval({ org_id: ctx.orgId, channel_id: ctx.channelId, crew_id: ctx.crewId, approval_id: it.id, action: it.action, reason: it.reason ?? null });
+    const risk = approvalRisk(it); // H-1: 코드 판정 — 고위험은 조직 정책의 결재권자(기본 관리자)가 확정. 서버가 risk를 잠근다
+    const ap = await c.db.insertApproval({ org_id: ctx.orgId, channel_id: ctx.channelId, crew_id: ctx.crewId, approval_id: it.id, action: it.action, reason: it.reason ?? null, risk });
     const card = await c.db.insertMessage({
       channel_id: ctx.channelId, author_kind: 'crew', crew_id: ctx.crewId, kind: 'approval_card', reply_to: ctx.threadRoot ?? null,
       client_msg_id: `ap:${ctx.crewId}:${it.id}`,
-      body: pick(`결재 요청: ${it.action}${it.reason ? `\n사유: ${it.reason}` : ''}\n(확정은 이 크루의 소유자만 할 수 있습니다)`,
-        `Approval requested: ${it.action}${it.reason ? `\nReason: ${it.reason}` : ''}\n(Only this crew's owner can decide)`, lang),
+      body: risk === 'high'
+        ? pick(`결재 요청(고위험): ${it.action}${it.reason ? `\n사유: ${it.reason}` : ''}\n(고위험 행동 — 조직 정책의 결재권자가 확정합니다)`,
+          `Approval requested (high risk): ${it.action}${it.reason ? `\nReason: ${it.reason}` : ''}\n(High-risk action — decided by the approver set in organization policy)`, lang)
+        : pick(`결재 요청: ${it.action}${it.reason ? `\n사유: ${it.reason}` : ''}\n(확정은 이 크루의 소유자만 할 수 있습니다)`,
+          `Approval requested: ${it.action}${it.reason ? `\nReason: ${it.reason}` : ''}\n(Only this crew's owner can decide)`, lang),
       mentions: [{ kind: 'approval', id: ap.id }],
     });
     if (card) await c.db.updateApproval(ap.id, { message_id: card.id }).catch(() => {});
