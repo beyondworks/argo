@@ -43,5 +43,6 @@ test('워커(TENANT) — 휴대폰 지름길 없음(쿠키 세션 전용 유지)
     const r = await call('http://argo.fly.dev/api/companies', { cookie: `argo-mobile=${'0'.repeat(64)}` });
     assert.equal(r.status, 401);
     assert.equal((await call('http://argo.fly.dev/m/pair')).status, 307, '워커에선 /m/pair도 공개 아님');
+    assert.equal((await call('http://argo.fly.dev/m/home')).status, 307, '워커에선 /m/home도 공개 아님');
   } finally { delete process.env.ARGO_TENANT_OWNER; }
 });

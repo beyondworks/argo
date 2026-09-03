@@ -243,6 +243,8 @@ function Shell({ children, params }) {
     // iOS 안전 영역(env(safe-area-inset-*))은 viewport-fit=cover가 있어야 0이 아니다 — 기존 메타에 덧붙인다
     const vp = document.querySelector('meta[name="viewport"]');
     if (vp && !/viewport-fit/.test(vp.content)) vp.content += ', viewport-fit=cover';
+    // 마커 전 렌더가 이미 autoFocus로 키보드를 올렸을 수 있다(첫 진입 경합) — 한 번 내린다
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur?.();
     return () => { delete d.dataset.shell; };
   }, [mobile]);
 

@@ -72,3 +72,19 @@ test('토글 on → 리스너 실제 개방 + 코드 발급 → 페어링 → �
   assert.equal(off2.body.pending, null, '끄면 발급 중 코드 폐기');
   assert.equal(mobileListenerStatus().listening, false);
 });
+
+// /m/home — 폰 진입 목적지: 회사 없음 → '/', 있음 → 첫 회사, 워커 → /m/pair. 리다이렉트는 요청 Host 기준(publicUrl).
+test('/m/home — 첫 회사로 302, 회사 없으면 /, 워커는 /m/pair', async () => {
+  const home = await import('../app/m/home/route.js');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const r0 = await home.GET(req('GET', '/m/home', { host: '192.168.0.12:3031' }));
+  assert.equal(r0.status, 302); assert.equal(r0.headers.get('location'), 'http://192.168.0.12:3031/');
+  await createCompany('co-home', '홈', 'captain');
+  const r1 = await home.GET(req('GET', '/m/home', { host: '192.168.0.12:3031' }));
+  assert.equal(r1.headers.get('location'), 'http://192.168.0.12:3031/c/co-home');
+  process.env.ARGO_TENANT_OWNER = 'u-1';
+  try {
+    const r2 = await home.GET(req('GET', '/m/home', { host: 'argo.fly.dev' }));
+    assert.equal(r2.headers.get('location'), 'http://argo.fly.dev/m/pair');
+  } finally { delete process.env.ARGO_TENANT_OWNER; }
+});

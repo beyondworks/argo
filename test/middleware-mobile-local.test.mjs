@@ -28,6 +28,7 @@ test('비루프백 — 마커 없으면 421, 마커 있으면 통과(권한은 �
   assert.equal((await call('http://192.168.0.5:3031/c/ws')).status, 421, '페이지도 421');
   assert.ok(isNext(await call('http://192.168.0.5:3031/api/companies', { cookie: `a=b; argo-mobile=${'0'.repeat(64)}` })));
   assert.ok(isNext(await call('http://100.101.1.2:3031/m/pair')));
+  assert.ok(isNext(await call('http://100.101.1.2:3031/m/home')), '/m/home은 공개(라우트가 토큰 없으면 /m/pair로 보낸다)');
   assert.ok(isNext(await call('http://100.101.1.2:3031/api/mobile/pair')));
   assert.ok(isNext(await call('http://100.101.1.2:3031/api/ping')));
   assert.equal((await call('http://100.101.1.2:3031/api/mobile')).status, 421, '관리 API는 공개 아님');

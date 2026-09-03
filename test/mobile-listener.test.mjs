@@ -20,7 +20,8 @@ after(async () => { await stopMobileListener(); upstream.close(); });
 
 // 기본 Host는 비루프백(폰이 보내는 형태) — 루프백형 Host는 리스너가 421로 끊는 것이 계약이다.
 const raw = (port, { method = 'GET', path = '/', headers = {}, body = '' } = {}) => new Promise((resolve, reject) => {
-  const req = http.request({ host: '127.0.0.1', port, method, path, headers: { host: '192.168.0.12:3031', ...headers } }, (res) => {
+  // agent:false — 기본 에이전트의 keep-alive 풀이 이전 리스너 소켓을 재사용하는 경우를 배제(전체 스위트 1회 간헐 실패 2026-09-03, 단독·병렬 10회 미재현)
+  const req = http.request({ host: '127.0.0.1', port, method, path, agent: false, headers: { host: '192.168.0.12:3031', ...headers } }, (res) => {
     let data = ''; res.on('data', (c) => { data += c; }); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, data }));
   });
   req.on('error', reject);
@@ -42,7 +43,7 @@ test('루프백 위조 Host·Host 부재는 리스너가 421로 끊는다(업스
   const cfg = await startMobileListener({ port: 0, upstreamPort });
   for (const host of [`127.0.0.1:${upstreamPort}`, 'localhost:3001', 'LOCALHOST', '[::1]:3001', '::1', ' 127.0.0.1 ']) {
     const r = await raw(cfg.port, { headers: { host, cookie: 'argo-mobile=abc' } });
-    assert.equal(r.status, 421, `위조 Host ${JSON.stringify(host)}`);
+    assert.equal(r.status, 421, `위조 Host ${JSON.stringify(host)} → ${r.status} 업스트림 관측: ${r.data.slice(0, 160)}`);
     assert.equal(JSON.parse(r.data).error, 'invalid host');
   }
   const noHost = await new Promise((resolve, reject) => {

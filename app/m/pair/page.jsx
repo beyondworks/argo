@@ -31,7 +31,7 @@ function Pair() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       setDone(true);
-      window.location.replace('/');
+      window.location.replace('/m/home'); // 첫 회사로 직행(회사 선택 랜딩은 폰 셸 밖 화면)
     } catch (e) {
       setError(String(e.message || e));
       setBusy(false);

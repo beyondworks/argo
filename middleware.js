@@ -18,7 +18,7 @@ const LOCAL_HOST_RE = /^(127\.0\.0\.1|localhost|\[::1\]|::1)(:\d+)?$/;
 // 루프백 Host에서는 이 분기가 아예 돌지 않는다 — 데스크톱·상주 경로 불변.
 // 마커는 토큰 원문(32바이트 hex)이라 형태가 고정이다 — 형태 밖 값은 마커로 치지 않는다(임의 문자열로 미들웨어 층을
 // 통째로 비활성시키던 표면 제거, 분리 검수 M-2). 진위는 라우트가 파일 대조로 판정한다.
-const MOBILE_PUBLIC = (p) => p === '/m/pair' || p === '/api/mobile/pair' || p === '/api/ping';
+const MOBILE_PUBLIC = (p) => p === '/m/pair' || p === '/m/home' || p === '/api/mobile/pair' || p === '/api/ping';
 const mobilePass = (req) => /^[0-9a-f]{64}$/.test(req.cookies.get('argo-mobile')?.value || '') || MOBILE_PUBLIC(req.nextUrl.pathname);
 
 export async function middleware(req) {
@@ -75,7 +75,7 @@ export async function middleware(req) {
   // /api/billing/webhook — 호출 주체가 레몬스퀴지 서버(세션 없음). 인증은 라우트 자체의
   // HMAC 서명 검증(fail-closed)이 담당한다 — 미들웨어가 막으면 결제 이벤트가 영영 도달 못 한다
   // (상주 스모크 실측 2026-07-28: 미들웨어 401 '로그인이 필요합니다'가 라우트보다 먼저 응답).
-  const isPublic = p === '/login' || p === '/legal' || (p === '/m/pair' && !process.env.ARGO_TENANT_OWNER?.trim()) || p === '/api/ping' || p === '/api/billing/webhook' || p.startsWith('/auth') || p.startsWith('/api/auth/pair') || p.startsWith('/api/device/');
+  const isPublic = p === '/login' || p === '/legal' || ((p === '/m/pair' || p === '/m/home') && !process.env.ARGO_TENANT_OWNER?.trim()) || p === '/api/ping' || p === '/api/billing/webhook' || p.startsWith('/auth') || p.startsWith('/api/auth/pair') || p.startsWith('/api/device/');
   // 기기 연동 모드 — 마커 쿠키는 UX 게이트(리다이렉트 회피)일 뿐, 권한은 라우트 currentUser(기기 파일)가 검증.
   // 루프백 한정: 원격에서 마커만 들고 오는 요청은 통과시키지 않는다. 워커(TENANT)는 이 분기 없음.
   if (!process.env.ARGO_TENANT_OWNER?.trim() && req.cookies.get('argo-device')?.value === '1') {
