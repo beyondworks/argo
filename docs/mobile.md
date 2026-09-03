@@ -51,7 +51,7 @@ cd mobile && npx cap run ios --target "<시뮬레이터 UDID>"
 cd mobile && npx cap run android
 ```
 
-Android 빌드는 JDK 21이 필요합니다(QR 스캐너 플러그인이 21 툴체인을 요구하고, Gradle 8.11은 JDK 25를 지원하지 않음 — `JAVA_HOME=/opt/homebrew/opt/openjdk@21` 같은 식으로 지정). iOS는 Swift Package Manager로 구성돼 CocoaPods가 필요 없습니다(`capacitor.config.json`의 `ios.packageManager`). 평문 HTTP 접속을 위해 iOS `NSAllowsArbitraryLoads`, Android `usesCleartextTraffic`가 켜져 있습니다 — 사용자 자신의 PC에 붙기 위한 설정이며, 스토어 심사 시 이 문서의 1~3절을 사유로 제시합니다.
+Android 빌드는 JDK 21이 필요합니다(QR 스캐너 플러그인이 21 툴체인을 요구하고, Gradle 8.11은 JDK 25를 지원하지 않음 — `JAVA_HOME=/opt/homebrew/opt/openjdk@21` 같은 식으로 지정). iOS는 Swift Package Manager로 구성돼 CocoaPods가 필요 없습니다(`capacitor.config.json`의 `ios.packageManager`). 평문 HTTP 접속을 위해 iOS `NSAllowsArbitraryLoadsInWebContent`+`NSAllowsLocalNetworking`, Android `usesCleartextTraffic`가 켜져 있습니다 — 사용자 자신의 PC에 붙기 위한 설정이며, 스토어 심사 시 이 문서의 1~3절을 사유로 제시합니다.
 
 ### 스토어 발행 체크리스트(유건 소관)
 

@@ -17,7 +17,7 @@
   const plugin = (name) => window.Capacitor?.registerPlugin?.(name) ?? window.Capacitor?.Plugins?.[name] ?? null;
   // QR·딥링크로 들어오는 주소는 사설망·Tailscale·로컬 테스트 도메인만 받는다 — 임의 인터넷 오리진으로 앱을 재지정하는
   // 피싱 면 차단(분리 검수 M1·H1과 같은 허용 범위 = capacitor.config.json allowNavigation). 수동 입력은 사용자 의도라 제한 없음.
-  const privateHost = (origin) => { try { const h = new URL(origin).hostname; return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.)/.test(h) || /\.ts\.net$/.test(h) || h === '127.0.0.1.nip.io'; } catch { return false; } };
+  const privateHost = (origin) => { try { const h = new URL(origin).hostname; return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(h) || /\.ts\.net$/.test(h); } catch { return false; } }; // 100.64/10만(CGNAT·Tailscale) — 100/8 전체는 공인 대역 포함(검수 L-b)
 
   const $ = (id) => document.getElementById(id);
   const show = (id, on) => { $(id).hidden = !on; };

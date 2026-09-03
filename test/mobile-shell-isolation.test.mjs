@@ -27,6 +27,15 @@ test('globals.css — 폰 셸 규칙은 파일 끝 한 블록, 전 셀렉터가 
     }
   }
   assert.ok(n >= 15, `규칙 수 ${n} — 블록이 통째로 비면 게이트가 무의미`);
+  // 효과 기반 단언(검수 L-a: 기전 열거는 다음 고리를 못 막는다) — 마커 블록 **앞** 구간에서 사이드바를 숨기는 규칙과
+  // .phone- 셀렉터는 어떤 형태(미디어쿼리·rem·data-narrow 속성·screen and)로도 등장하지 않는다
+  const before = css.slice(0, at).replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const m of before.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const sel = m[1].trim(), body = m[2];
+    if (/(^|[\s,>+~])\.side(\s|$|[,:>])/.test(sel)) assert.ok(!/display\s*:\s*none/.test(body), `마커 블록 밖에서 .side 숨김: ${sel}`);
+    assert.ok(!/\.phone-/.test(sel), `마커 블록 밖 .phone- 셀렉터: ${sel}`);
+  }
+  // 수집 범위는 app/ — public/·src/는 이 게이트 밖(현재 data-shell 쓰기 0건, 늘면 여기서 범위를 넓힐 것)
   // 사이드바 숨김·하단 탭·결재 최상단 — 폰 셸의 핵심 3규칙 실존
   assert.match(body, /\[data-shell="mobile"\] \.side \{ display: none; \}/);
   assert.match(body, /\[data-shell="mobile"\] \.phone-tabs \{ position: fixed;/);
