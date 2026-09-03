@@ -211,7 +211,7 @@ function Shell({ session }) {
         ); })}
         {!crews.length && <div className="msgr-hint">{t('org.crewsHint')}</div>}
         <div className="msgr-group">{t('org.members')} · {members.length}{isAdmin && <button type="button" className="btn" onClick={invite} title={t('org.invite')} aria-label={t('org.invite')}><I name="plus" size={14} /></button>}</div>
-        <div className="msgr-stack" title={members.map((m) => `${m.display_name || m.user_id.slice(0, 8)} (${m.role})`).join('\n')}>
+        <div className="msgr-stack" title={members.map((m) => `${m.display_name || m.user_id.slice(0, 8)} (${t(`role.${m.role}`)})`).join('\n')}>
           {members.slice(0, 6).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} />)}
           <span className="more">{members.map((m) => m.display_name || m.user_id.slice(0, 8)).join(' · ')}</span>
         </div>
@@ -472,7 +472,7 @@ function Composer({ chId, orgId, uid, members, crews, channel, sbw = 0, typingCr
       {pop && candidates.length > 0 && (
         <div className="msgr-pop" role="listbox">
           {candidates.map((c, i) => <button key={`${c.kind}:${c.id}`} type="button" role="option" aria-selected={i === sel} className={i === sel ? 'on' : ''} onMouseDown={(e) => { e.preventDefault(); pick(c); }}>
-            <Av name={c.name} crew={c.kind === 'crew'} size="sm" /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.kind === 'crew' ? t('org.crews') : c.sub}</span>
+            <Av name={c.name} crew={c.kind === 'crew'} size="sm" /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.kind === 'crew' ? t('org.crews') : t(`role.${c.sub}`)}</span>
           </button>)}
         </div>
       )}

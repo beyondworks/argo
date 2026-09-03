@@ -76,6 +76,10 @@ export const DICT = {
   'msg.newline': ['줄바꿈', 'newline'],
   'msg.placeholder2': ['메시지 — @로 사람·크루를 부르세요', 'Message — @ to call a person or crew'],
   'ui.menu': ['메뉴', 'Menu'],
+  'role.owner': ['소유자', 'Owner'],
+  'role.admin': ['관리자', 'Admin'],
+  'role.member': ['멤버', 'Member'],
+  'role.guest': ['게스트', 'Guest'],
   'ui.members': ['멤버', 'Members'],
 };
 export const LANGS = ['ko', 'en'];
