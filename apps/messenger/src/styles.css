@@ -370,3 +370,12 @@
 .msgr-node-cmd code { display: block; font: 12px/1.6 var(--mono); word-break: break-all; user-select: all; }
 .msgr-node-cmd .acts { display: flex; gap: 6px; }
 .msgr-node-cmd .note { margin: 0; }
+
+/* I-5 회사 크루 만들기 — 채널 시트 안 인라인 폼과 요청 상태 */
+.msgr-crewnew { display: grid; gap: 6px; margin-top: 6px; }
+.msgr-inline textarea.msgr-input { height: auto; min-height: 72px; padding: 8px 12px; border-radius: 14px; resize: vertical; line-height: 1.5; }
+.msgr-crewnew .row.req { padding: 4px 6px; }
+.msgr-crewnew .row.req .sub.failed { color: var(--danger); }
+.msgr-crewnew .row.req .sub.done { color: var(--ok); }
+
+.msgr-setcard .msgr-input.inline.wide { flex: 1 1 260px; min-width: 0; }

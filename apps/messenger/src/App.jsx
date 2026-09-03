@@ -127,7 +127,7 @@ function Shell({ session }) {
       q(supabase.from('msgr_org_members').select('user_id, role, display_name').eq('org_id', id).is('removed_at', null)),
       q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at').eq('org_id', id).eq('status', 'active')),
       supabase.from('msgr_org_entitlements').select('plan, seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
-      supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
+      supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
     ]);
     const orgRow = orgs.find((o) => o.id === id);
     crs.sort((a, b) => (crewTier(b, orgRow) === 'company') - (crewTier(a, orgRow) === 'company') || a.display_name.localeCompare(b.display_name, 'ko')); // 순서 고정: 회사 크루 먼저, 이름순(QA: 화면마다 순서가 달랐다)
@@ -437,6 +437,25 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
   const addableUsers = members.filter((m) => !userIds.has(m.user_id));
   const addableCrews = crews.filter((c) => !crewIds.has(c.id) && ((channel.personal_crews ?? 'allowed') !== 'blocked' || crewTier(c, org) === 'company')); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
   const scoped = channel.kind !== 'public';
+  const nodeOn = !!org?.service_user_id; // I-5: 회사 노드가 있어야 회사 크루를 만들 수 있다(서버 RLS도 거절)
+  const crewCreate = policy?.crew_create ?? 'channel_admin';
+  const canCreateCrew = channel.kind !== 'dm' && nodeOn && (isAdmin || crewCreate === 'member' || (crewCreate === 'channel_admin' && canEdit)); // 권한 행렬 — 최종은 RLS msgr_can_create_crew
+  const [newCrew, setNewCrew] = useState(null); const [requests, setRequests] = useState([]); const doneSeen = useRef(null);
+  const loadRequests = useCallback(async () => {
+    const rows = await q(supabase.from('msgr_crew_requests').select('id, name, status, error, crew_id, created_at, done_at').eq('org_id', org.id).eq('channel_id', channel.id).order('created_at', { ascending: false }).limit(10));
+    setRequests(rows);
+    const done = rows.filter((r) => r.status === 'done').map((r) => r.id).join(',');
+    if (doneSeen.current !== null && doneSeen.current !== done) onChanged(); // 노드가 만들었다 → 참여 구성 다시 읽기
+    doneSeen.current = done;
+  }, [org?.id, channel.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!nodeOn || channel.kind === 'dm') return; loadRequests().catch(() => {}); const iv = setInterval(() => loadRequests().catch(() => {}), 3000); return () => clearInterval(iv); }, [loadRequests, nodeOn, channel.kind]);
+  const submitCrew = async () => {
+    setBusy(true);
+    const res = await supabase.from('msgr_crew_requests').insert({ org_id: org.id, channel_id: newCrew.orgWide ? null : channel.id, name: newCrew.name.trim(), role_text: newCrew.role.trim(), prompt: newCrew.prompt.trim(), created_by: uid }).select('id');
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    setNewCrew(null); onNote(t('ch.crew.new.sent')); loadRequests().catch(() => {});
+  };
   return (
     <div className="msgr-sheetwrap">
       <div className="msgr-scrim clear" onClick={onClose} />
@@ -505,6 +524,23 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
             </>)}
             {pick === 'crew' && (<><div className="msgr-chips">{addableCrews.map((c) => <button key={c.id} type="button" className="msgr-chan" onClick={() => addMember('crew', c.id)}><I name="star" size={13} /><span>{c.display_name}</span></button>)}</div><p className="note">{t('ch.add.crew.note')}</p></>)}
           </>)}
+          {channel.kind !== 'dm' && (canCreateCrew || (isAdmin && !nodeOn)) && (
+            <div className="msgr-crewnew">
+              {!nodeOn ? <p className="note">{t('ch.crew.new.noNode')}</p> : newCrew ? (
+                <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); submitCrew(); }}>
+                  <input className="msgr-input" placeholder={t('ch.crew.new.name')} value={newCrew.name} onChange={(e) => setNewCrew({ ...newCrew, name: e.target.value })} autoFocus maxLength={40} />
+                  <input className="msgr-input" placeholder={t('ch.crew.new.role')} value={newCrew.role} onChange={(e) => setNewCrew({ ...newCrew, role: e.target.value })} maxLength={60} />
+                  <textarea className="msgr-input area" placeholder={t('ch.crew.new.prompt')} value={newCrew.prompt} onChange={(e) => setNewCrew({ ...newCrew, prompt: e.target.value })} maxLength={2000} rows={3} />
+                  {isAdmin && <label className="switchrow"><input type="checkbox" checked={newCrew.orgWide} onChange={(e) => setNewCrew({ ...newCrew, orgWide: e.target.checked })} /><span>{t('ch.crew.new.orgWide')}</span></label>}
+                  <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={busy || !newCrew.name.trim() || !newCrew.prompt.trim()}><I name="check" size={13} />{t('ch.crew.new.submit')}</button><button type="button" className="btn sm" onClick={() => setNewCrew(null)}>{t('ui.cancel')}</button></div>
+                  <p className="note">{t('ch.crew.new.desc')}</p>
+                </form>
+              ) : <div className="row"><button type="button" className="btn sm" disabled={busy} onClick={() => setNewCrew({ name: '', role: '', prompt: '', orgWide: false })}><I name="plus" size={13} />{t('ch.crew.new')}</button></div>}
+              {requests.filter((r) => r.status !== 'done' || Date.now() - Date.parse(r.done_at ?? r.created_at) < 120_000).map((r) => (
+                <div key={r.id} className="row req"><span className="name">{r.name}</span><span className={`sub ${r.status}`}>{r.status === 'pending' ? t('ch.crew.new.pending') : r.status === 'failed' ? t('ch.crew.new.failed', { why: r.error ?? '' }) : t('ch.crew.new.done')}</span></div>
+              ))}
+            </div>
+          )}
         </section>
         {canEdit && channel.kind !== 'dm' && (
           <section>
@@ -840,11 +876,11 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
   const { t } = useT();
   const [draft, setDraft] = useState(policy); const [busy, setBusy] = useState(false);
   useEffect(() => { setDraft(policy); }, [policy]);
-  const dirty = ['allow_default', 'allow_locked', 'crew_memory_default', 'crew_memory_locked', 'approval_high_by'].some((k) => draft?.[k] !== policy?.[k]) || JSON.stringify(draft?.approver_user_ids ?? []) !== JSON.stringify(policy?.approver_user_ids ?? []);
+  const dirty = ['allow_default', 'allow_locked', 'crew_memory_default', 'crew_memory_locked', 'approval_high_by', 'crew_create', 'crew_runner', 'crew_model'].some((k) => draft?.[k] !== policy?.[k]) || JSON.stringify(draft?.approver_user_ids ?? []) !== JSON.stringify(policy?.approver_user_ids ?? []);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const save = async () => {
     setBusy(true);
-    const res = await supabase.from('msgr_org_policies').update({ allow_default: draft.allow_default, allow_locked: draft.allow_locked, crew_memory_default: draft.crew_memory_default, crew_memory_locked: draft.crew_memory_locked, approval_high_by: draft.approval_high_by, approver_user_ids: draft.approver_user_ids ?? [] }).eq('org_id', org.id).select('org_id');
+    const res = await supabase.from('msgr_org_policies').update({ allow_default: draft.allow_default, allow_locked: draft.allow_locked, crew_memory_default: draft.crew_memory_default, crew_memory_locked: draft.crew_memory_locked, approval_high_by: draft.approval_high_by, approver_user_ids: draft.approver_user_ids ?? [], crew_create: draft.crew_create ?? 'channel_admin', crew_runner: draft.crew_runner?.trim() || null, crew_model: draft.crew_model?.trim() || null }).eq('org_id', org.id).select('org_id');
     setBusy(false);
     if (res.error) return onError(res.error.message);
     if (!res.data?.length) return onError(t('set.policy.adminOnly'));
@@ -880,6 +916,19 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
           <span className="note">{t('set.policy.approvers.desc')}</span>
         </div>
       )}
+      <div className="row">
+        <span className="msgr-klabel">{t('set.policy.crewCreate')}</span>
+        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.crewCreate')}>
+          {['admin', 'channel_admin', 'member'].map((v) => <button key={v} type="button" role="radio" aria-checked={(draft.crew_create ?? 'channel_admin') === v} className={(draft.crew_create ?? 'channel_admin') === v ? 'active' : ''} disabled={ro} onClick={() => set({ crew_create: v })}>{t(`set.policy.crewCreate.${v}`)}</button>)}
+        </div>
+        <span className="note">{t('set.policy.crewCreate.desc')}</span>
+      </div>
+      <div className="row">
+        <span className="msgr-klabel">{t('set.policy.crewEngine')}</span>
+        <input className="msgr-input inline" placeholder={t('set.policy.crewEngine.runner')} value={draft.crew_runner ?? ''} maxLength={32} disabled={ro} onChange={(e) => set({ crew_runner: e.target.value })} />
+        <input className="msgr-input inline wide" placeholder={t('set.policy.crewEngine.model')} value={draft.crew_model ?? ''} maxLength={120} disabled={ro} onChange={(e) => set({ crew_model: e.target.value })} />
+        <span className="note">{t('set.policy.crewEngine.desc')}</span>
+      </div>
       <p className="note">{t('set.policy.limit')}</p>
       {isAdmin ? <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !dirty} onClick={save}><I name="check" size={13} />{t('ui.save')}</button></div> : <p className="note">{t('set.policy.adminOnly')}</p>}
     </section>

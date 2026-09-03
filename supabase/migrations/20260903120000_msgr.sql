@@ -1110,3 +1110,95 @@ end $$;
 revoke all on function public.msgr_node_heartbeat(uuid) from public;
 revoke execute on function public.msgr_node_heartbeat(uuid) from anon;
 grant execute on function public.msgr_node_heartbeat(uuid) to authenticated;
+
+-- ── I-5 채널·조직에서 회사 크루 만들기(부록 I "봇의 정문"): 요청 행(msgr_crew_requests)을 DB에 두면 회사 노드가 집어 카드를 쓰고
+--    msgr_crews에 등록한다(결재와 같은 큐 패턴 — 노드에 인바운드 포트 0). 누가 만들 수 있나는 정책 crew_create(권한 행렬: 조직 전체
+--    범위는 조직 관리자만, 채널 범위는 channel_admin=채널 관리자·member=멤버 전원). 노드가 없으면 서버가 거절한다(안 될 버튼의 서버 쪽).
+alter table public.msgr_org_policies add column if not exists crew_create text not null default 'channel_admin' check (crew_create in ('admin', 'channel_admin', 'member'));
+create table if not exists public.msgr_crew_requests (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.msgr_orgs (id) on delete cascade,
+  channel_id uuid references public.msgr_channels (id) on delete set null,   -- null = 조직 전체 범위(어느 채널에도 자동으로 넣지 않음)
+  name text not null check (length(name) between 1 and 40),
+  role_text text not null default '' check (length(role_text) <= 60),
+  prompt text not null check (length(prompt) between 1 and 2000),
+  status text not null default 'pending' check (status in ('pending', 'done', 'failed')),
+  error text,
+  crew_id uuid references public.msgr_crews (id) on delete set null,
+  created_by uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  done_at timestamptz
+);
+alter table public.msgr_crew_requests enable row level security;
+grant select, insert, update, delete on public.msgr_crew_requests to authenticated;
+grant all on public.msgr_crew_requests to service_role;
+
+create or replace function public.msgr_can_create_crew(org uuid, ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select case
+    when public.msgr_is_admin(org) then true
+    when ch is null then false                                                                           -- 조직 전체 범위는 조직 관리자만
+    when coalesce((select p.crew_create from public.msgr_org_policies p where p.org_id = org), 'channel_admin') = 'member'
+      then public.msgr_role(org) in ('owner', 'admin', 'member')
+    when coalesce((select p.crew_create from public.msgr_org_policies p where p.org_id = org), 'channel_admin') = 'channel_admin'
+      then public.msgr_can_manage_channel(ch)
+    else false end
+$$;
+revoke all on function public.msgr_can_create_crew(uuid, uuid) from public;
+revoke execute on function public.msgr_can_create_crew(uuid, uuid) from anon;
+grant execute on function public.msgr_can_create_crew(uuid, uuid) to authenticated;
+
+drop policy if exists msgr_crew_requests_select on public.msgr_crew_requests;
+create policy msgr_crew_requests_select on public.msgr_crew_requests for select to authenticated using (public.msgr_is_member(org_id));
+drop policy if exists msgr_crew_requests_insert on public.msgr_crew_requests;
+create policy msgr_crew_requests_insert on public.msgr_crew_requests for insert to authenticated
+  with check (created_by = (select auth.uid()) and status = 'pending' and crew_id is null
+    and (channel_id is null or exists (select 1 from public.msgr_channels c where c.id = channel_id and c.org_id = msgr_crew_requests.org_id and c.kind <> 'dm' and c.archived_at is null))
+    and (select o.service_user_id from public.msgr_orgs o where o.id = org_id) is not null
+    and public.msgr_can_create_crew(org_id, channel_id));
+drop policy if exists msgr_crew_requests_update_node on public.msgr_crew_requests;
+create policy msgr_crew_requests_update_node on public.msgr_crew_requests for update to authenticated
+  using ((select o.service_user_id from public.msgr_orgs o where o.id = org_id) = (select auth.uid()))   -- 상태 갱신은 회사 노드(서비스 계정)만
+  with check (status in ('done', 'failed'));
+drop policy if exists msgr_crew_requests_delete on public.msgr_crew_requests;
+create policy msgr_crew_requests_delete on public.msgr_crew_requests for delete to authenticated
+  using (status = 'pending' and (created_by = (select auth.uid()) or public.msgr_is_admin(org_id)));
+
+-- done → 채널 범위면 크루(+서비스 계정, 비공개 채널의 답글 쓰기 권한)를 채널에 넣고 감사. done_at 각인. crew_id 없는 done은 거절.
+create or replace function public.msgr_crew_request_done() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare svc uuid;
+begin
+  if new.status = 'done' and old.status <> 'done' then
+    if new.crew_id is null then raise exception 'msgr_crew_request_no_crew'; end if;
+    new.done_at := now();
+    if new.channel_id is not null then
+      select o.service_user_id into svc from public.msgr_orgs o where o.id = new.org_id;
+      insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values (new.channel_id, 'crew', new.crew_id, new.created_by) on conflict do nothing;
+      if svc is not null then
+        insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values (new.channel_id, 'user', svc, new.created_by) on conflict do nothing;
+      end if;
+    end if;
+    perform public.msgr_audit(new.org_id, 'crew.create', 'crew', new.crew_id::text, jsonb_build_object('name', new.name, 'channel', new.channel_id, 'by', new.created_by));
+  elsif new.status = 'failed' and old.status <> 'failed' then
+    new.done_at := now();
+  end if;
+  return new;
+end $$;
+drop trigger if exists msgr_crew_request_done on public.msgr_crew_requests;
+create trigger msgr_crew_request_done before update on public.msgr_crew_requests for each row execute function public.msgr_crew_request_done();
+
+-- 방송: 노드는 이 신호로 즉시 깨어나고(정본은 pending 조회), 앱은 완료를 안다. 본문 없음.
+create or replace function public.msgr_crew_request_broadcast() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  perform realtime.send(jsonb_build_object('id', new.id, 'channel_id', new.channel_id, 'status', new.status, 'crew_id', new.crew_id), 'crew_request', 'org:' || new.org_id::text, true);
+  return new;
+end $$;
+drop trigger if exists msgr_crew_request_broadcast on public.msgr_crew_requests;
+create trigger msgr_crew_request_broadcast after insert or update on public.msgr_crew_requests for each row execute function public.msgr_crew_request_broadcast();
+
+-- ── I-5b 회사 크루 기본 러너·모델(정책 항목 — 부록 H "러너·모델"의 첫 조각): 노드가 만드는 카드의 frontmatter에 적힌다.
+--    비우면 노드 회사의 기본 러너(company.json.defaultRunner)와 그 러너의 기본 모델. 실측: 기본 모델이 유료라 첫 멘션이 402로 실패 — 정책이 정해야 한다.
+alter table public.msgr_org_policies add column if not exists crew_runner text check (crew_runner is null or crew_runner ~ '^[a-z0-9_-]{1,32}$');
+alter table public.msgr_org_policies add column if not exists crew_model text check (crew_model is null or length(crew_model) between 1 and 120);

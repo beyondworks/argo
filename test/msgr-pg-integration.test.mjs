@@ -613,3 +613,48 @@ test('I-4 노드 초대 수락 = 서비스 계정 지정, 하트비트는 서비
   assert.equal(last(asUser(N2, `select public.msgr_accept_invite('${code2}')`)), ORG);
   assert.equal(sql(`select service_user_id from public.msgr_orgs where id = '${ORG}'`), NODE, '일반 초대는 서비스 계정 불변');
 });
+
+test('I-5 회사 크루 요청 — 정책 게이트(관리자·채널 관리자·멤버), 노드 없으면 거절, 상태 갱신은 서비스 계정만, done이면 채널 멤버(크루+서비스 계정)·감사', () => {
+  if (!DB) return;
+  const NODE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'; // I-4 케이스가 서비스 계정으로 지정한 노드
+  assert.equal(sql(`select service_user_id from public.msgr_orgs where id = '${ORG}'`), NODE, '전제: 노드 연결');
+  sql(`update public.msgr_org_policies set crew_create = 'channel_admin' where org_id = '${ORG}'`);
+  sql(`update public.msgr_channels set admin_user_ids = '{}' where id = '${PUB}'`);
+  const ins = (u, ch, name = '온보딩 봇') => `insert into public.msgr_crew_requests (org_id, channel_id, name, role_text, prompt, created_by) values ('${ORG}', ${ch ? `'${ch}'` : 'null'}, '${name}', '온보딩', '신입에게 첫 주 안내를 한다', '${u}') returning id`;
+  denied(U.member, ins(U.member, PUB), /row-level security/);                 // channel_admin 정책: 채널 관리자 아닌 멤버 불가
+  denied(U.member, ins(U.member, null), /row-level security/);                // 조직 전체 범위는 관리자만
+  asUser(U.owner, `update public.msgr_channels set admin_user_ids = array['${U.member}'::uuid] where id = '${PUB}'`);
+  const r1 = last(asUser(U.member, ins(U.member, PUB)));
+  assert.match(r1, /^[0-9a-f-]{36}$/, '채널 관리자는 자기 채널 범위 크루 요청 가능');
+  denied(U.member, ins(U.member, null), /row-level security/);                // 채널 관리자여도 조직 전체 범위는 불가
+  sql(`update public.msgr_org_policies set crew_create = 'admin' where org_id = '${ORG}'`);
+  denied(U.member, ins(U.member, PUB, '봇2'), /row-level security/);          // admin 정책: 채널 관리자도 불가
+  sql(`update public.msgr_org_policies set crew_create = 'member' where org_id = '${ORG}'`);
+  assert.match(last(asUser(U.svc, ins(U.svc, PUB, '봇3'))), /^[0-9a-f-]{36}$/, 'member 정책: 일반 멤버도 채널 범위 요청 가능');
+  denied(U.guest, ins(U.guest, PUB, '봇4'), /row-level security/);            // 게스트는 불가
+  const rOrg = last(asUser(U.admin, ins(U.admin, null, '전사 봇')));
+  assert.match(rOrg, /^[0-9a-f-]{36}$/, '관리자는 조직 전체 범위');
+  sql(`update public.msgr_orgs set service_user_id = null where id = '${ORG}'`);
+  denied(U.admin, ins(U.admin, PUB, '봇5'), /row-level security/);            // 노드 없으면 관리자도 불가(서버 쪽 "안 될 버튼")
+  sql(`update public.msgr_orgs set service_user_id = '${NODE}' where id = '${ORG}'`);
+  // 상태 갱신: 요청자·관리자는 0행, 서비스 계정만. done은 crew_id 필수.
+  assert.equal(last(asUser(U.member, `update public.msgr_crew_requests set status = 'done' where id = '${r1}' returning status`)), '', '요청자는 상태 갱신 불가');
+  assert.equal(last(asUser(U.admin, `update public.msgr_crew_requests set status = 'failed', error = 'x' where id = '${r1}' returning status`)), '', '관리자도 상태 갱신 불가(노드 몫)');
+  denied(NODE, `update public.msgr_crew_requests set status = 'done' where id = '${r1}'`, /msgr_crew_request_no_crew/);
+  const crewId = last(asUser(NODE, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${ORG}', '${NODE}', 'org-lean', 'onboarding-bot', '온보딩 봇', 'resident', 'active', 'all') returning id`));
+  assert.equal(last(asUser(NODE, `update public.msgr_crew_requests set status = 'done', crew_id = '${crewId}' where id = '${r1}' returning status`)), 'done', '서비스 계정이 완료 표시');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${PUB}' and ((member_kind = 'crew' and member_id = '${crewId}') or (member_kind = 'user' and member_id = '${NODE}'))`), '2', '채널에 크루+서비스 계정');
+  assert.equal(sql(`select done_at is not null from public.msgr_crew_requests where id = '${r1}'`), 't');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'crew.create' and target_id = '${crewId}'`), '1', '생성 감사');
+  assert.equal(sql(`select public.msgr_crew_tier('${crewId}'::uuid)`), 'company', '노드가 만든 크루 = 회사 크루');
+  assert.equal(last(asUser(NODE, `update public.msgr_crew_requests set status = 'failed', error = '카드 쓰기 실패' where id = '${rOrg}' returning status`)), 'failed');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where member_kind = 'crew' and member_id = '${crewId}'`), '1', '조직 전체 범위 요청은 채널에 넣지 않는다');
+  assert.equal(last(asUser(U.member, `select count(*) from public.msgr_crew_requests where org_id = '${ORG}'`)), '3', '멤버가 요청 목록을 본다');
+  sql(`update public.msgr_org_policies set crew_create = 'channel_admin' where org_id = '${ORG}'`);
+  // I-5b 기본 엔진: 관리자만 쓰고, 노드(멤버)는 읽는다. 러너 id 형식은 check.
+  assert.equal(last(asUser(U.admin, `update public.msgr_org_policies set crew_runner = 'openrouter', crew_model = 'minimax/minimax-m3:free' where org_id = '${ORG}' returning crew_runner`)), 'openrouter');
+  assert.equal(last(asUser(U.member, `update public.msgr_org_policies set crew_model = 'x' where org_id = '${ORG}' returning crew_model`)), '', '멤버는 정책 수정 불가');
+  assert.equal(last(asUser(NODE, `select crew_runner || ' ' || crew_model from public.msgr_org_policies where org_id = '${ORG}'`)), 'openrouter minimax/minimax-m3:free', '노드가 기본 엔진을 읽는다');
+  denied(U.admin, `update public.msgr_org_policies set crew_runner = 'Bad Runner!' where org_id = '${ORG}'`, /msgr_org_policies_crew_runner_check/);
+  sql(`update public.msgr_org_policies set crew_runner = null, crew_model = null where org_id = '${ORG}'`);
+});

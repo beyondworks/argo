@@ -241,6 +241,28 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
 }
 
 // 정규식 메타문자 리터럴화 — 이름 등 사용자 값으로 RegExp를 만들 때 오작동/rename 실패 방지.
+/** I-5 회사 노드용 — 모델 호출 없이 카드를 쓴다(이름·역할·한 줄 지시가 곧 카드. 페르소나 다듬기는 크루가 일하며 배운다).
+    slug·예약어·동명 -n 규칙은 영입 문(createAgentFromPrompt)과 동일 — 카드 파일 이름은 이 두 문으로만 생긴다. */
+export async function createAgentCard(wsId, { name, role = '', prompt, runner = '', model = '' } = {}) {
+  const nameFinal = String(name ?? '').trim();
+  if (!nameFinal) throw new Error('크루 이름이 필요합니다');
+  const body = String(prompt ?? '').trim();
+  if (!body) throw new Error('한 줄 지시가 필요합니다');
+  const base = slugify(nameFinal) || 'crew';
+  if (isReservedSlug(base)) throw reservedSlugError(nameFinal, base, 'ko');
+  let slug = base;
+  for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)); n++) slug = `${base}-${n}`;
+  if (!SLUG_RE.test(slug)) throw new Error(`크루 slug를 만들지 못했습니다: ${slug}`);
+  const fm = ['---', `name: ${nameFinal}`, `slug: ${slug}`, `role: ${String(role ?? '').trim()}`];
+  if (runner) fm.push(`runner: ${runner}`);
+  if (model) fm.push(`model: ${model}`);
+  fm.push('---');
+  const file = cardPath(wsId, slug);
+  await writeJsonAtomic(file, `${fm.join('\n')}\n\n${body}\n`);
+  await appendEvent(wsId, { type: 'crew', op: 'hire', slug, name: nameFinal });
+  return { slug, name: nameFinal, role: String(role ?? '').trim(), file };
+}
+
 const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** 카드 편집 저장 — 카드가 곧 시스템 프롬프트(투명성 원칙). frontmatter 최소 검증. */

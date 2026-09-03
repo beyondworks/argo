@@ -23,6 +23,7 @@ import { createClient } from '@supabase/supabase-js';
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
+import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요청 행으로 카드를 쓴다(모델 호출 없음)
 import { paths, loadCompany } from '../workspace.mjs';
 import { enqueueJob } from './queue.mjs';
 import { pick } from './protocol.mjs';
@@ -134,6 +135,16 @@ export function makeDb(client) {
     async nodeHeartbeat(orgId) { // I-4: 회사 노드 생존 신호 — 서비스 계정 본인만 찍힌다(RPC가 판정), 조직 카드 '연결됨'의 정본
       unwrap(await client.rpc('msgr_node_heartbeat', { org: orgId }));
     },
+    // I-5 회사 크루 만들기 요청 — 상태 갱신은 RLS가 서비스 계정만 허용, done 트리거가 채널 멤버·감사를 맡는다
+    async pendingCrewRequests(orgId) {
+      return unwrap(await client.from('msgr_crew_requests').select('id, org_id, channel_id, name, role_text, prompt, created_by').eq('org_id', orgId).eq('status', 'pending').order('created_at', { ascending: true }));
+    },
+    async finishCrewRequest(id, patch) { unwrap(await client.from('msgr_crew_requests').update(patch).eq('id', id)); },
+    async upsertCrew(row) { return unwrap(await client.from('msgr_crews').upsert(row, { onConflict: 'org_id,owner_user_id,ws_id,slug' }).select('id').single()); },
+    async crewDefaults(orgId) { // I-5b 정책의 회사 크루 기본 러너·모델(비우면 노드 회사 기본)
+      const r = unwrap(await client.from('msgr_org_policies').select('crew_runner, crew_model').eq('org_id', orgId).maybeSingle());
+      return { runner: r?.crew_runner ?? '', model: r?.crew_model ?? '' };
+    },
     async setCursor(crewId, id) { // 단조 — 과거 값으로 되돌리지 않는다
       unwrap(await client.from('msgr_crews').update({ cursor_msg_id: id }).eq('id', crewId).lt('cursor_msg_id', id));
     },
@@ -210,6 +221,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   const crews = await db.myCrews(uid, wsId);
   const out = { crews: crews.length, queued: 0, denied: 0, stale: 0, list: crews };
   if (nodeOrgId) await db.nodeHeartbeat(nodeOrgId).catch((e) => console.error('[argo] msgr 노드 하트비트 실패:', e.message)); // I-4: 크루 0명이어도 — 노드 부트스트랩 직후 조직 카드가 '연결됨'을 보여야 한다
+  if (nodeOrgId) await createRequestedCrews(wsId, nodeOrgId, { db, uid }).catch((e) => console.error('[argo] msgr 크루 생성 요청 처리 실패:', e.message)); // I-5: 채널에서 만든 회사 크루(카드 → 등록 → 완료 표시)
   if (!crews.length) return out;
   await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
   for (const orgId of new Set(crews.map((c) => c.org_id))) { // G-2: 조직 문서 미러 — 바뀐 것만, 실패는 로그(턴 처리와 무관)
@@ -450,6 +462,25 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
 }
 
 /* ─── 폴러(클라우드 리더 전용, 매니저가 소유) — 15s drain + Realtime 방송 수신 시 즉시 drain. ─── */
+/* ─── I-5 회사 크루 만들기 — 메신저가 올린 요청 행을 노드가 집어 카드(agents/<slug>.md)를 쓰고 msgr_crews에 등록한 뒤 done(트리거가 채널 멤버·감사).
+   실패는 행에 사유를 남긴다(무언 소실 금지 — 화면이 "실패: 사유"로 보여준다). 허용 범위는 'all'(회사 직원 — 정책 잠금이면 게이트가 기본값으로 맞춘다). ─── */
+export async function createRequestedCrews(wsId, orgId, { db, uid, createCard = createAgentCard } = {}) {
+  const reqs = await db.pendingCrewRequests(orgId);
+  let made = 0;
+  const eng = reqs.length ? await db.crewDefaults(orgId).catch((e) => { console.error('[argo] msgr 크루 기본 엔진 조회 실패(노드 기본으로):', e.message); return { runner: '', model: '' }; }) : null;
+  for (const r of reqs) {
+    try {
+      const card = await createCard(wsId, { name: r.name, role: r.role_text, prompt: r.prompt, runner: eng.runner, model: eng.model });
+      const crew = await db.upsertCrew({ org_id: orgId, owner_user_id: uid, ws_id: wsId, slug: card.slug, display_name: card.name, role_text: card.role || null, hosting: 'resident', status: 'active', allow: 'all', allow_users: [] });
+      await db.finishCrewRequest(r.id, { status: 'done', crew_id: crew.id });
+      made++;
+    } catch (e) {
+      await db.finishCrewRequest(r.id, { status: 'failed', error: String(e?.message ?? e).slice(0, 300) }).catch((e2) => console.error('[argo] msgr 크루 요청 실패 표시 실패:', e2.message));
+    }
+  }
+  return made;
+}
+
 export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_MS } = {}) {
   let stopped = false; let busy = false; let subscribedOrgs = new Set();
   const tick = async () => {
@@ -461,7 +492,7 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
       const { lang = 'ko', msgr } = await loadCompany(wsId).catch(() => ({}));
       const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
       await beatGateway(wsId, MSGR_KEY, true).catch(() => {});
-      subscribe(c, r.list ?? []);
+      subscribe(c, r.list ?? [], msgr?.nodeOrgId ?? null); // I-5: 조직 회사는 크루 0명이어도 조직 토픽을 구독(크루 요청 신호)
       return r;
     } catch (e) {
       console.error(`[argo] msgr drain 실패(${wsId}):`, e.message);
@@ -469,8 +500,9 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
     } finally { busy = false; }
   };
   // Realtime = 깨우기 신호(정본은 커서 조회). 구독 실패해도 폴만으로 완결된다.
-  const subscribe = (c, crews) => {
+  const subscribe = (c, crews, extraOrg = null) => {
     const orgs = new Set(crews.map((x) => x.org_id));
+    if (extraOrg) orgs.add(extraOrg);
     for (const orgId of orgs) {
       const key = `${wsId}:${orgId}`;
       if (subscribedOrgs.has(orgId) && rtChannels.get(key)?.__client === c.client) continue;
@@ -478,7 +510,8 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
         rtChannels.get(key)?.unsubscribe?.();
         const ch = c.client.channel(`org:${orgId}`, { config: { private: true } })
           .on('broadcast', { event: 'message' }, () => { tick().catch(() => {}); })
-          .on('broadcast', { event: 'approval' }, () => { tick().catch(() => {}); });
+          .on('broadcast', { event: 'approval' }, () => { tick().catch(() => {}); })
+          .on('broadcast', { event: 'crew_request' }, () => { tick().catch(() => {}); }); // I-5: 요청 즉시 깨어난다(정본은 pending 조회)
         ch.__client = c.client;
         ch.subscribe();
         rtChannels.set(key, ch);

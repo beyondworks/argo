@@ -32,7 +32,7 @@ const crew = (over = {}) => ({ id: CREW, org_id: ORG, slug: 'seoyun', display_na
 const msg = (id, over = {}) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: MEMBER, crew_id: null, kind: 'text', body: `m${id}`,
   mentions: [{ kind: 'crew', id: CREW }], reply_to: null, thread_root: null, created_at: new Date().toISOString(), ...over });
 /** 가짜 db — 호출 기록 + 시나리오 데이터. makeDb의 메서드 이름·반환 계약만 흉내 낸다. */
-function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' } } = {}) {
+function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], approvals = [], parent = null, dupReply = false, canDecide = true, approvalRows = [{ id: 'ap-row-1' }], canInstructThrows = false, channelPolicy = {}, docs = [], orgInfo = { id: ORG, slug: 'lean', name: '린 컴퍼니' }, crewRequests = [], crewDefaults = { runner: 'openrouter', model: 'm/x:free' } } = {}) {
   const calls = [];
   const rec = (k, ...a) => { calls.push([k, ...a]); };
   return {
@@ -41,6 +41,10 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], ap
     async crewBySlug(uid, ws, slug) { rec('crewBySlug', slug); return crews.find((c) => c.slug === slug) ?? null; },
     async heartbeat(ids) { rec('heartbeat', ids); },
     async nodeHeartbeat(org) { rec('nodeHeartbeat', org); },
+    async pendingCrewRequests(org) { rec('pendingCrewRequests', org); return crewRequests; },
+    async finishCrewRequest(id, patch) { rec('finishCrewRequest', id, patch); },
+    async upsertCrew(row) { rec('upsertCrew', row); return { id: `crew-${row.slug}` }; },
+    async crewDefaults(org) { rec('crewDefaults', org); return crewDefaults; },
     async setCursor(id, n) { rec('setCursor', id, n); },
     async messagesAfter(org, after) { rec('messagesAfter', org, after); return messages.filter((m) => m.id > after); },
     async message(id) { rec('message', id); return parent; },
@@ -439,4 +443,23 @@ test('I-4 노드 하트비트 — nodeOrgId가 있으면 크루 0명이어도 �
   assert.equal(db2.calls.filter((c) => c[0] === 'nodeHeartbeat').length, 0, '개인 회사는 노드 하트비트 없음');
   const src = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
   assert.match(src, /nodeOrgId: msgr\?\.nodeOrgId \?\? null/, '폴러가 company.json.msgr.nodeOrgId를 drain에 전달');
+});
+
+test('I-5 createRequestedCrews — 카드 → 등록(resident·서비스 계정 소유) → done, 카드 실패는 failed+사유, nodeOrgId 없으면 호출 안 함', async () => {
+  const reqs = [{ id: 'rq-1', org_id: ORG, channel_id: CH, name: '온보딩 봇', role_text: '온보딩', prompt: '신입 안내', created_by: MEMBER }, { id: 'rq-2', org_id: ORG, channel_id: null, name: 'room-main', role_text: '', prompt: 'x', created_by: MEMBER }];
+  const db = fakeDb({ crews: [], crewRequests: reqs });
+  const seen = [];
+  const createCard = async (ws, { name, role, prompt, runner, model }) => { seen.push({ runner, model }); if (name === 'room-main') throw new Error('예약어'); return { slug: 'onboarding-bot', name, role, file: `${ws}/agents/onboarding-bot.md` }; };
+  const made = await M.createRequestedCrews(WS, ORG, { db, uid: OWNER, createCard });
+  assert.equal(made, 1);
+  assert.deepEqual(seen[0], { runner: 'openrouter', model: 'm/x:free' }, 'I-5b: 정책의 기본 엔진이 카드에 실린다');
+  const up = db.calls.find((c) => c[0] === 'upsertCrew')[1];
+  assert.deepEqual(up, { org_id: ORG, owner_user_id: OWNER, ws_id: WS, slug: 'onboarding-bot', display_name: '온보딩 봇', role_text: '온보딩', hosting: 'resident', status: 'active', allow: 'all', allow_users: [] });
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'finishCrewRequest').map((c) => [c[1], c[2]]), [['rq-1', { status: 'done', crew_id: 'crew-onboarding-bot' }], ['rq-2', { status: 'failed', error: '예약어' }]]);
+  const db2 = fakeDb({ crews: [], crewRequests: reqs }); await M.drain(WS, { db: db2, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(db2.calls.filter((c) => c[0] === 'pendingCrewRequests').length, 0, '개인 회사는 요청을 보지 않는다');
+  const src = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
+  assert.match(src, /if \(nodeOrgId\) await createRequestedCrews\(wsId, nodeOrgId, \{ db, uid \}\)/, 'drain이 조직 회사에서 요청을 처리');
+  assert.match(src, /subscribe\(c, r\.list \?\? \[\], msgr\?\.nodeOrgId \?\? null\)/, '조직 회사는 크루 0명이어도 조직 토픽 구독');
+  assert.match(src, /\.on\('broadcast', \{ event: 'crew_request' \}/, '요청 신호로 깨어남');
 });
