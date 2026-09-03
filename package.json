@@ -38,7 +38,6 @@
     "d3-force": "^3.0.0",
     "marked": "^18.0.6",
     "next": "^15.5.22",
-    "qrcode-generator": "^1.5.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zod": "^4.4.3"

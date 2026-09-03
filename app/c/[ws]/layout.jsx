@@ -3,7 +3,7 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, InputModal, api, PhoneShellCtx } from '../../ui';
+import { StarMark, Icon, Avatar, Skeleton, Clock, ArgoSpinner, FeedbackModal, InputModal, api } from '../../ui';
 import { useLang, stageLabel } from '../../i18n';
 import { useAppUpdate } from '../../use-app-update';
 import { SplitPane } from './split-pane';
@@ -96,61 +96,6 @@ function TasksDock({ ws }) {
   );
 }
 
-/** 휴대폰 하단 탭 — data-shell="mobile"(페어링된 폰)에서만 Shell이 렌더한다. 홈·크루·회의실·활동·더보기.
-    배지: 크루 = 안읽음(사이드바와 같은 argo-seen 계산), 홈 = 결재 대기 수(20초 폴 — 폰에서만 돈다). */
-function PhoneTabs({ ws, pathname, agents, seen, L }) {
-  const { t } = useLang();
-  const [more, setMore] = useState(false);
-  const [pending, setPending] = useState(0);
-  const [ping, setPing] = useState(null);
-  useEffect(() => {
-    const pull = () => api(`/api/companies/${ws}/approvals`).then((d) => setPending(d.pending ?? 0)).catch(() => {});
-    pull();
-    const iv = setInterval(pull, 20000);
-    return () => clearInterval(iv);
-  }, [ws]);
-  useEffect(() => { if (more) api('/api/ping').then(setPing).catch(() => {}); }, [more]);
-  useEffect(() => { setMore(false); }, [pathname]);
-  // 안읽음 = 사이드바 행과 같은 식(chatTs > 기준선, 보고 있는 크루 제외) — 기준선은 Shell이 갱신, 여기선 읽기만
-  const unread = seen ? agents.filter((a) => a.chatTs != null && seen[a.slug] !== undefined && a.chatTs > seen[a.slug] && pathname !== `/c/${ws}/crew/${a.slug}`).length : 0;
-  const isHome = pathname === `/c/${ws}`;
-  const isCrew = pathname.includes(`/c/${ws}/crew`);
-  const tab = (href, active, icon, label, badge) => (
-    <Link href={L(href)} className={`phone-tab${active && !more ? ' active' : ''}`} onClick={() => setMore(false)}>
-      <Icon name={icon} size={20} />{label}
-      {badge > 0 && <span className="phone-badge" aria-label={String(badge)}>{badge > 9 ? '9+' : badge}</span>}
-    </Link>
-  );
-  return (
-    <>
-      {more && <div className="phone-sheet-backdrop" onClick={() => setMore(false)} aria-hidden="true" />}
-      {more && (
-        <div className="phone-sheet" role="dialog" aria-label={t('mobile.tab.more')}>
-          <Link href={L(`/c/${ws}/mail`)} className="nav-item"><Icon name="mail" size={16} /> {t('nav.mail')}</Link>
-          <Link href={L(`/c/${ws}/routines`)} className="nav-item"><Icon name="clock" size={16} /> {t('nav.routines')}</Link>
-          <Link href={L(`/c/${ws}/vault`)} className="nav-item"><Icon name="memory" size={16} /> {t('nav.memory')}</Link>
-          <Link href={L(`/c/${ws}/settings`)} className="nav-item"><Icon name="settings" size={16} /> {t('nav.settings')}</Link>
-          <div className="phone-pc">
-            <span className="microlabel">{t('mobile.more.pc')}</span>
-            <span className="mono" style={{ fontSize: 12 }}>{typeof window === 'undefined' ? '' : window.location.host}{ping?.version ? ` · v${ping.version}` : ''}</span>
-            <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('mobile.more.pcHint')}</span>
-            <a className="btn sm" href="/m/pair" style={{ alignSelf: 'flex-start' }}>{t('mobile.more.repair')}</a>
-          </div>
-        </div>
-      )}
-      <nav className="phone-tabs" aria-label={t('nav.company')}>
-        {tab(`/c/${ws}`, isHome, 'deck', t('mobile.tab.home'), pending)}
-        {tab(`/c/${ws}/crew`, isCrew, 'user', t('mobile.tab.crew'), unread)}
-        {tab(`/c/${ws}/room`, pathname.endsWith('/room'), 'bolt', t('mobile.tab.room'), 0)}
-        {tab(`/c/${ws}/activity`, pathname.endsWith('/activity'), 'clock', t('mobile.tab.activity'), 0)}
-        <button type="button" className={`phone-tab${more ? ' active' : ''}`} onClick={() => setMore((m) => !m)} aria-expanded={more}>
-          <Icon name="settings" size={20} />{t('mobile.tab.more')}
-        </button>
-      </nav>
-    </>
-  );
-}
-
 // useSearchParams는 Suspense 경계 안에서 — 정적 프리렌더 bailout(next build 경고)을 막는다(vault 페이지와 동일 패턴)
 export default function CompanyShell(props) {
   return (
@@ -235,23 +180,6 @@ function Shell({ children, params }) {
   const [me, setMe] = useState(null);
   const [fbOpen, setFbOpen] = useState(false); // 베타 피드백 모달
   useEffect(() => { api('/api/me').then(setMe).catch(() => {}); }, []);
-  // 휴대폰 셸 — /api/me가 mobile:true(페어링 토큰 유효, 비루프백)일 때만 루트 마커를 박는다. 데스크톱·브라우저
-  // :3001은 이 값을 받을 수 없어 아래 effect·PhoneTabs 모두 무동작(JSX 트리 동일) — 계획 원칙 6(무간섭).
-  const mobile = !!me?.mobile;
-  useEffect(() => {
-    if (!mobile) return;
-    const d = document.documentElement;
-    d.dataset.shell = 'mobile';
-    try { localStorage.setItem('argo-phone', '1'); } catch { /* 힌트 실패는 무해 — 마커가 정본 */ }
-    // 마커 전 렌더가 이미 autoFocus로 키보드를 올렸을 수 있다(첫 진입 경합) — 한 번 내린다
-    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur?.();
-    // iOS 안전 영역(env(safe-area-inset-*))은 viewport-fit=cover가 있어야 0이 아니다 — 기존 메타에 덧붙인다.
-    // maximum-scale=1은 넣지 않는다 — 이미 일어난 포커스 확대를 되돌리지 못하고(실측 2026-09-03 3회), Android(Blink)에서는
-    // 손가락 확대까지 막는다. 확대의 원인(SSR autofocus·16px 미만 컴포저)은 크루 대화 마운트 효과와 폰 블록 16px가 없앤다.
-    const vp = document.querySelector('meta[name="viewport"]');
-    if (vp && !/viewport-fit/.test(vp.content)) vp.content += ', viewport-fit=cover';
-    return () => { delete d.dataset.shell; };
-  }, [mobile]);
 
   // 상단 버전 뱃지 — 데스크톱 앱에서는 네이티브 설치 버전 + Tauri 업데이터가 단일 진실(설정 카드와 동일 소스).
   // 새 버전이 있으면 뱃지가 '업데이트'로 바뀌고, 클릭하면 바로 다운로드·설치·재시작한다.
@@ -366,7 +294,6 @@ function Shell({ children, params }) {
     : pathname.endsWith('/activity') ? t('nav.activity')
     : pathname.endsWith('/mail') ? t('nav.mail')
     : pathname.endsWith('/settings') ? t('nav.settings')
-    : pathname.endsWith('/crew') ? t('mobile.crew.title') // 크루 목록(폰 셸 탭·데스크톱 URL 직접 열기)
     : currentCrew ? currentCrew.name : t('nav.deck');
   // 슬롯 밖 항목(제목·업데이트 칩·버전)이 바뀌면 상자 크기가 안 변해 관찰기가 안 돈다 — 직접 재측정.
   // title 선언 뒤여야 한다(위에 두면 TDZ로 클라이언트 렌더가 통째로 죽는다 — 실측).
@@ -396,7 +323,6 @@ function Shell({ children, params }) {
   });
 
   return (
-    <PhoneShellCtx.Provider value={mobile}>
     <div className="shell">
       <aside className="side">
         <Link href="/" className="nav-item" style={{ gap: 8, marginBottom: 4 }}>
@@ -635,13 +561,11 @@ function Shell({ children, params }) {
         )}
         </div>
       </div>
-      {mobile && <PhoneTabs ws={ws} pathname={pathname} agents={agents} seen={seen} L={L} />}
       {renameTeam != null && (
         <InputModal title={t('deck.renameTeam')} label={t('deck.renameTeamPrompt', { team: renameTeam })} defaultValue={renameTeam}
           confirmLabel={t('common.save')} onConfirm={doRenameTeam} onClose={() => setRenameTeam(null)} />
       )}
       {fbOpen && <FeedbackModal onClose={() => setFbOpen(false)} />}
     </div>
-    </PhoneShellCtx.Provider>
   );
 }

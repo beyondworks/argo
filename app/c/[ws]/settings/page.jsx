@@ -8,7 +8,6 @@ import { useLang, adjustZoom } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 import { useAppUpdate } from '../../../use-app-update';
-import { MobileCard } from '../mobile-card';
 import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
 import { CHANNEL_EVENTS } from '../../../../src/channel-events.mjs'; // 순수 상수 — connections.mjs는 fs를 끌어 클라 번들이 깨진다
 
@@ -121,8 +120,6 @@ function Settings({ params }) {
             연결된 러너가 2개 미만이면 스스로 렌더하지 않는다(선택의 의미가 없다).
             즉시 저장이라 이 폼의 submit(회사 이름 저장)과 무관하다. */}
         <DefaultRunnerPicker ws={ws} />
-        {/* 휴대폰에서 열기 — 회사 정보 카드의 빈 여백에(유건 2026-09-03). 자체 API(/api/mobile)라 이 폼의 submit과 무관. */}
-        <MobileCard embedded />
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto', paddingTop: 10 }}>
           <button className="btn btn-primary sm" disabled={saving || !name.trim()}>
             {saving ? <Spinner size={12} /> : t('settings.save')}

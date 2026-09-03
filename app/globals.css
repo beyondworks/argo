@@ -1962,8 +1962,6 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .chat-cols > .side-rail :focus-visible { outline-offset: -2px; }
 /* 크루 컨트롤 인라인 밴드 — 기본은 없음(넓은 폭은 topbar 슬롯이 수용처), ≤900px 블록에서 등장 */
 .crew-phone-band { display: none; }
-/* 활동 2열(타임라인 + 316px 통계) — activity/page.jsx 인라인에서 이관(값 동일). 폰 셸 블록이 1열로 뒤집는다 */
-.activity-cols { grid-template-columns: minmax(0, 1fr) 316px; }
 /* overflow-anchor 차단 — 크롬 scroll anchoring이 턴 종료(작업 카드 unmount) 같은 DOM 변화에
    scrollTop을 수백 px 보정해 화면이 튄다(실측 1068→540). 스크롤은 페이지 코드가 전담한다. */
 .thread { display: flex; flex-direction: column; gap: 20px; overflow-anchor: none; overflow-x: hidden; }
@@ -2236,48 +2234,3 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
    2026-09-01). 규칙 내용은 위 900px 블록과 동일 — 한쪽만 고치면 두 축이 갈라지므로 함께 갱신할 것. */
 :root[data-narrow-shell] #argo-topbar-slot { display: none; }
 :root[data-narrow-shell] .crew-phone-band { display: flex; flex-wrap: wrap; }
-
-/* ── 휴대폰 셸 — data-shell="mobile"(페어링 토큰이 유효한 폰 요청에만 /api/me → Shell이 박는 마커) 아래에서만
-   발화한다. 미디어쿼리가 아니다: 데스크톱 앱·브라우저 :3001은 마커를 받을 수 없어 창을 좁혀도 화면 불변
-   (유건 지시 2026-09-03 무간섭). 이 블록의 모든 셀렉터는 [data-shell="mobile"]로 시작해야 한다 —
-   test/mobile-shell-isolation.test.mjs가 역방향 스캔으로 잠근다. 기존 900/560px 블록은 폰에서 함께 발화(자산). */
-[data-shell="mobile"] .shell { grid-template-columns: minmax(0, 1fr); }
-[data-shell="mobile"] .side { display: none; }
-/* 상단·좌우는 ≤900 블록과 같은 값 — 폰 셸은 폭이 아니라 마커 기준이라 넓은 폰(가로·태블릿)에서도 같은 기하여야 아래 .chat-cols 산식(16)이 선다(검수 M-4: 26이면 body 10px 스크롤) */
-[data-shell="mobile"] .content { padding: 16px 14px calc(96px + env(safe-area-inset-bottom, 0px)); }
-[data-shell="mobile"] .phone-tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; display: flex; background: var(--card); border-top: 1px solid var(--border-soft); padding: 4px 4px calc(6px + env(safe-area-inset-bottom, 0px)); }
-[data-shell="mobile"] .phone-tab { flex: 1; min-height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; color: var(--fg-3); text-decoration: none; background: none; border: 0; border-radius: 10px; position: relative; cursor: pointer; font-family: inherit; }
-[data-shell="mobile"] .phone-tab svg { color: inherit; }
-[data-shell="mobile"] .phone-tab.active { color: var(--primary-strong); font-weight: 600; }
-[data-shell="mobile"] .phone-badge { position: absolute; top: 4px; left: calc(50% + 6px); min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--primary); color: var(--primary-fg); font-size: 10px; font-weight: 700; display: grid; place-items: center; }
-[data-shell="mobile"] .phone-sheet-backdrop { position: fixed; inset: 0; z-index: 58; background: var(--overlay); }
-[data-shell="mobile"] .phone-sheet { position: fixed; left: 0; right: 0; bottom: calc(59px + env(safe-area-inset-bottom, 0px)); z-index: 59; background: var(--card); border-top: 1px solid var(--border-soft); border-radius: 16px 16px 0 0; padding: 10px 10px 12px; display: grid; gap: 2px; box-shadow: var(--shadow-card); }
-[data-shell="mobile"] .phone-sheet .nav-item { min-height: 44px; }
-[data-shell="mobile"] .phone-pc { display: grid; gap: 5px; padding: 10px 12px 4px; border-top: 1px dashed var(--border-soft); margin-top: 6px; }
-/* 데크 — 결재함이 폰에서는 맨 위(홈 = 판단이 필요한 것부터) */
-[data-shell="mobile"] .deck-approvals { order: -1; }
-/* 호버 전용 액션은 터치에서 도달 불가 — 상시 표시 */
-[data-shell="mobile"] .msg-actions, [data-shell="mobile"] .rail-item .rail-actions, [data-shell="mobile"] .crew-row .crew-pin,
-[data-shell="mobile"] .crew-row .crew-side, [data-shell="mobile"] .vault-tree .row-wrap .row-side, [data-shell="mobile"] .vault-tab-x,
-[data-shell="mobile"] .side-group-row .tm-edit, [data-shell="mobile"] .vault-tree .row .when { opacity: 1; }
-/* 히트 타깃 — 폰 손가락 기준 최소 36px(레이아웃을 흔들지 않는 선) */
-[data-shell="mobile"] .btn.sm { min-height: 36px; }
-[data-shell="mobile"] .msg-actions button { min-width: 36px; min-height: 36px; }
-/* 채팅·회의실·경쟁 — 고정 하단 탭(59px + safe-area: 패딩 4+6 + 탭 48 + 위 테두리 1) 위로 컴포저를 올린다(실측 2026-09-03: 입력창이
-   탭 아래 가려짐). 141 = 상단바 56 + 콘텐츠 상단 패딩 16 + 탭 59 + 컴포저 아래 틈 10. margin-bottom −28 = 위 72(56+16)와
-   .content 하단 패딩(96+safe)을 상쇄해 body 스크롤 0. 100dvh = 사파리 툴바 접힘 반영(미지원 엔진은 앞 줄 vh). */
-[data-shell="mobile"] .chat-cols { height: calc(100vh / var(--z, 1) - 141px - env(safe-area-inset-bottom, 0px)); height: calc(100dvh / var(--z, 1) - 141px - env(safe-area-inset-bottom, 0px)); margin-bottom: -28px; }
-/* 레일이 시트로 빠진 그리드(크루·회의실)만 열·행 하나 — 폰 밴드(≤560)의 'auto 1fr' 2행이면 본문이 auto 행에 얹혀 못 편다.
-   경쟁(.chat-cols 셋째 소비자)은 레일이 아직 in-flow라 이 규칙을 타면 레일이 1fr을 먹고 본문이 407px 아래로 밀린다(검수 H-2 실측) —
-   :has로 "in-flow 레일 없음"을 조건으로 건다(main.content:has(> .vault-split)와 같은 관례). */
-[data-shell="mobile"] .chat-cols:not(:has(> .side-rail)) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-[data-shell="mobile"] .rail-sheet { max-height: calc(70vh / var(--z, 1)); overflow-y: auto; }
-/* 크루 컨트롤 밴드 — ≤900 블록과 같은 전환을 마커 기준으로도. 폰 셸은 폭과 직교라 넓은 폰(가로 932pt·태블릿)에서 밴드가 숨으면
-   "대화 세션" 시트 진입로가 0이 된다(검수 H-1 실측). 슬롯 숨김을 함께 걸어 상단바와 밴드에 컨트롤이 두 벌 뜨지 않게 한다. */
-[data-shell="mobile"] #argo-topbar-slot { display: none; }
-[data-shell="mobile"] .crew-phone-band { display: flex; flex-wrap: wrap; }
-/* 컴포저 글자 16px — iOS 사파리는 16px 미만 입력창 포커스에 자동 확대한다. maximum-scale=1은 Android(Blink)에서 손가락 확대까지
-   막으므로(WCAG 1.4.4) 쓰지 않고 트리거를 없앤다(검수 M-2). 데스크톱 13.5px 불변. */
-[data-shell="mobile"] .input-bar textarea, [data-shell="mobile"] .input-bar input { font-size: 16px; }
-/* 활동 — 316px 통계 열이 폰 폭에서 타임라인을 40px로 압살(실측) → 1열 스택 */
-[data-shell="mobile"] .activity-cols { grid-template-columns: minmax(0, 1fr); }
