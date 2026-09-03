@@ -34,5 +34,7 @@ const M = await import('../src/gateway/msgr.mjs');
 const { startQueueWorker } = await import('../src/gateway/queue.mjs');
 startQueueWorker(ws, M.MSGR_KEY, M.makeMsgrHandler(ws));
 M.startMsgrBridge(ws, { pollMs: 5000 });
+const { onNotify } = await import('../src/notify.mjs');
+onNotify((ev) => M.msgrPush(ev).catch((e) => console.error('[real-bridge] msgr 푸시 실패:', e.message))); // 운영 게이트웨이의 pushEvent 접합과 같은 역할(결재 카드·위임·후속 보고 미러) — 없으면 크루가 올린 결재가 로컬에만 남는다(G-4 실측)
 console.log(`[real-bridge] ready — ws=${ws} root=${ROOT} owner=${owner.email} seoyun=openrouter:${freeModel} jun=claude:host`);
 setInterval(() => {}, 60_000);

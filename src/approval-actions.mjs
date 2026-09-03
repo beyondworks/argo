@@ -91,6 +91,11 @@ async function followUp(wsId, item, approve) {
       outcome = `적용 실패: ${String(e.message || e).slice(0, 160)}`;
     }
     msg = `(사장 결재) "${item.action}" 이(가) 승인되었고 시스템이 처리했다 — ${outcome}\n결과를 사용자에게 한두 줄로 보고하라. 다시 실행하려 하지 마라(이미 처리됨).`;
+  } else if (item.kind === 'org_doc') {
+    // G-4: 서버(msgr_apply_org_doc)가 승인자의 권한으로 이미 반영했다 — 크루는 다시 쓰지 않는다
+    msg = approve
+      ? `(관리자 결재) 조직 문서 제안 "${item.action}" 이(가) 승인되어 서버가 문서에 반영했다. 사용자에게 한두 줄로 보고하라. 문서를 다시 쓰거나 제안하지 마라(이미 반영됨).`
+      : `(관리자 결재) 조직 문서 제안 "${item.action}" 이(가) 거절되었다. 반영되지 않았다 — 대안이 있으면 한두 줄로 정리하라.`;
   } else {
     msg = item.kind === 'capability'
       ? (approve

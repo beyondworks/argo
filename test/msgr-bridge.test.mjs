@@ -407,3 +407,26 @@ test('G-3 규칙 주입 핀: chat()은 mirrorCtx.orgSlug로 규칙을 읽어 SDK
   const bridge = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
   assert.match(bridge, /orgSlug: orgRow\?\.slug \?\? null, channelName: ch\?\.name \?\? '' \};/, '브리지 ctx 키');
 });
+
+test('G-4 조직 문서 제안: 브리지 미러가 kind org_doc·payload를 싣고 카드 본문이 제안 안내, 위험 high; chat()은 propose_org_doc 도구를 메신저 턴에만 등록; 후속 문구는 "서버가 반영"', async () => {
+  const session = async () => ({ db, uid: OWNER });
+  const db = fakeDb();
+  const it = await addApproval(WS, { slug: 'seoyun', kind: 'org_doc', action: '조직 문서 제안 — 용어집 (전사 · glossary/terms.md)', reason: '채널에서 배운 용어', payload: { scope: 'org', channel_id: null, path: 'glossary/terms.md', title: '용어집', body: 'CTR = 클릭률' }, msgr: { orgId: ORG, channelId: CH, crewId: CREW } });
+  assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item: it }, { session }), true);
+  const row = db.calls.filter((c) => c[0] === 'insertApproval').at(-1)[1];
+  assert.equal(row.kind, 'org_doc'); assert.equal(row.risk, 'high'); assert.deepEqual(row.payload, it.payload);
+  const card = db.calls.filter((c) => c[0] === 'insertMessage').at(-1)[1];
+  assert.match(card.body, /^조직 문서 제안: 용어집\n사유: 채널에서 배운 용어\n\(관리자가 승인하면 서버가 문서에 반영합니다\)$/);
+  const { readFileSync } = await import('node:fs');
+  const chatSrc = readFileSync(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  assert.match(chatSrc, /const proposeOrgDoc = tool\(\n\s*'propose_org_doc',/, '도구 정의');
+  assert.match(chatSrc, /const path = `\$\{folder\}\/\$\{docSlug\(slug \|\| title\)\}\.md`;/, '영문 slug 인자 우선(한글 제목은 시간 기반 이름)');
+  assert.match(chatSrc, /if \(mirrorCtx\?\.kind !== 'msgr'\) return text\('이 도구는 팀 메신저 조직 채널의 턴에서만/, '메신저 밖 거절');
+  assert.match(chatSrc, /requestApproval, requestToolInstall, \.\.\.\(mirrorCtx\?\.kind === 'msgr' \? \[proposeOrgDoc\] : \[\]\),/, '메신저 턴에만 등록');
+  assert.match(chatSrc, /kind: 'org_doc',[\s\S]{0,400}payload: \{ scope, channel_id: scope === 'channel' \? mirrorCtx\.channelId : null, path, title: String\(title\)\.slice\(0, 120\), body: String\(body\)\.slice\(0, 65536\) \}/, '제안 payload');
+  const actions = readFileSync(new URL('../src/approval-actions.mjs', import.meta.url), 'utf8');
+  assert.match(actions, /\} else if \(item\.kind === 'org_doc'\) \{[\s\S]*?서버가 문서에 반영했다[\s\S]*?다시 쓰거나 제안하지 마라/, '후속 문구');
+  const app = readFileSync(new URL('../apps/messenger/src/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /\{ap\.kind === 'org_doc' && ap\.payload && \(/, '슬립 제안 미리보기');
+  assert.match(app, /message_id, risk, kind, payload'\)/, '결재 조회에 kind·payload');
+});

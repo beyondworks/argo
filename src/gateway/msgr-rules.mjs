@@ -47,3 +47,7 @@ export async function loadOrgRules(wsId, orgSlug, { channelName = '', lang = 'ko
   }
   return formatOrgRules(docs, { org: orgSlug, channelName, lang, cap });
 }
+
+/** 문서 경로 슬러그 — 메신저 앱 docSlug와 같은 규칙(영문·숫자만, 한글 제목은 시간 기반). 제안 결재(G-4)가 path를 만들 때 쓴다. */
+export const docSlug = (title) => { const s = String(title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60); return s || `doc-${Date.now().toString(36)}`; };
+export const DOC_FOLDERS = ['rules', 'glossary', 'projects'];

@@ -520,3 +520,28 @@ test('조직 문서(G-1): 전사 문서는 멤버 열람·관리자 편집, 채�
   sql(`delete from public.msgr_org_docs where org_id = '${ORG}'`);
   sql(`delete from public.msgr_channel_members where channel_id = '${PRIV}' and member_id = '${U.member}'`);
 });
+
+test('조직 문서 제안 결재(G-4): 크루 소유자가 org_doc 결재를 올리면(payload) 관리자만 확정하고, 승인 시 서버가 승인자 권한으로 문서를 만들거나 갱신(version+1)·감사, 거절은 미반영, payload 잠김', { skip }, () => {
+  const pl = (title, body, ch = null) => `'${JSON.stringify({ scope: ch ? 'channel' : 'org', channel_id: ch, path: 'glossary/terms.md', title, body }).replace(/'/g, "''")}'::jsonb`;
+  const a1 = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk, kind, payload) values ('${ORG}', '${PUB}', '${CREW}', 'ap-doc1', '조직 문서 제안 — 용어집', 'high', 'org_doc', ${pl('용어집', 'CTR = 클릭률')}) returning id`));
+  denied(U.member, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.member}', decided_at = now() where id = '${a1}'`); // 소유자(비관리자)는 확정 불가(고위험)
+  denied(U.member, `update public.msgr_crew_approvals set payload = ${pl('용어집', '바꿔치기')} where id = '${a1}'`, /msgr_immutable|immutable|permission|row-level/i);
+  assert.equal(last(asUser(U.admin, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.admin}', decided_at = now() where id = '${a1}' returning status`)), 'approved');
+  assert.equal(sql(`select title || '|' || body || '|' || version || '|' || (created_by = '${U.admin}') from public.msgr_org_docs where org_id = '${ORG}' and channel_id is null and path = 'glossary/terms.md'`), '용어집|CTR = 클릭률|1|true', '승인자 명의로 생성'); // boolean || text = 'true'
+  const a2 = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk, kind, payload) values ('${ORG}', '${PUB}', '${CREW}', 'ap-doc2', '조직 문서 제안 — 용어집(갱신)', 'high', 'org_doc', ${pl('용어집', 'CTR = 클릭률\nCVR = 전환율')}) returning id`));
+  assert.equal(last(asUser(U.admin, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.admin}', decided_at = now() where id = '${a2}' returning status`)), 'approved');
+  assert.equal(sql(`select version || '|' || (updated_by = '${U.admin}') from public.msgr_org_docs where org_id = '${ORG}' and channel_id is null and path = 'glossary/terms.md'`), '2|true', '같은 경로는 갱신(version+1)');
+  const a3 = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk, kind, payload) values ('${ORG}', '${PUB}', '${CREW}', 'ap-doc3', '제안', 'high', 'org_doc', ${pl('용어집', '거절될 내용')}) returning id`));
+  assert.equal(last(asUser(U.admin, `update public.msgr_crew_approvals set status = 'rejected', decided_by = '${U.admin}', decided_at = now() where id = '${a3}' returning status`)), 'rejected');
+  assert.equal(sql(`select version from public.msgr_org_docs where org_id = '${ORG}' and channel_id is null and path = 'glossary/terms.md'`), '2', '거절은 미반영');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'doc.proposal.applied'`), '2');
+  // 채널 범위 제안: 채널의 org와 다른 채널 id는 거절
+  const a4 = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk, kind, payload) values ('${ORG}', '${PUB}', '${CREW}', 'ap-doc4', '채널 제안', 'high', 'org_doc', ${pl('채널 용어', 'x', PRIV)}) returning id`));
+  assert.equal(last(asUser(U.admin, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.admin}', decided_at = now() where id = '${a4}' returning status`)), 'approved');
+  assert.equal(sql(`select count(*) from public.msgr_org_docs where org_id = '${ORG}' and channel_id = '${PRIV}' and path = 'glossary/terms.md'`), '1', '채널 범위 문서 생성(관리자)');
+  // 방어 2층: RLS를 우회한 서비스 문맥에서 비관리자 명의로 승인해도 트리거가 거절(승인자 권한 검사)
+  const a5 = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk, kind, payload) values ('${ORG}', '${PUB}', '${CREW}', 'ap-doc5', '제안', 'high', 'org_doc', ${pl('용어집', 'x')}) returning id`));
+  const forced = psqlRaw(['-A', '-t', '-c', `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.guest}', decided_at = now() where id = '${a5}'`]); // 슈퍼유저(RLS 우회)
+  assert.notEqual(forced.status, 0); assert.match(forced.stderr, /msgr_org_doc_forbidden/, '비관리자 명의 강제 승인은 트리거가 거절');
+  sql(`delete from public.msgr_crew_approvals where approval_id like 'ap-doc%'`); sql(`delete from public.msgr_org_docs where org_id = '${ORG}'`);
+});

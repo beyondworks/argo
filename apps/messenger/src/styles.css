@@ -337,3 +337,6 @@
 .msgr-rows .row .btn.ghost { border: 0; background: none; width: 26px; height: 26px; padding: 0; color: var(--fg-3); }
 .msgr-rows .row .btn.ghost:hover { background: var(--bg); color: var(--fg); }
 .msgr-rows .empty { margin: 0 0 4px; font-size: 12px; color: var(--fg-3); }
+.msgr-slip .docprop { display: grid; gap: 6px; margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border-soft); }
+.msgr-slip .docprop .title { font-weight: 600; font-size: 13px; }
+.msgr-slip .docprop .msgr-sheet { padding: 8px 10px; }

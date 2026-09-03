@@ -947,3 +947,34 @@ begin
 end $$;
 drop trigger if exists msgr_doc_audit on public.msgr_org_docs;
 create trigger msgr_doc_audit after insert or update or delete on public.msgr_org_docs for each row execute function public.msgr_doc_audit();
+
+-- ── G-4 조직 문서 제안 결재(부록 G·H): 크루가 배운 것을 "조직 문서 제안" 결재 카드로 올리고, 범위의 관리자(전사=조직 관리자, 채널=편집권자)가 승인하면
+--    서버가 문서를 만들거나 갱신한다(브리지·크루 소유자는 문서를 쓰지 않는다 — 승인자의 권한으로만 반영). 위험 등급은 항상 high(관리자 확정).
+alter table public.msgr_crew_approvals add column if not exists kind text not null default 'action' check (kind in ('action', 'profile', 'hire', 'connector', 'loop', 'mcp', 'capability', 'org_doc'));
+alter table public.msgr_crew_approvals add column if not exists payload jsonb;
+drop trigger if exists msgr_lock_approvals on public.msgr_crew_approvals;
+create trigger msgr_lock_approvals before update on public.msgr_crew_approvals for each row execute function public.msgr_lock_cols('org_id', 'channel_id', 'crew_id', 'approval_id', 'action', 'created_at', 'risk', 'kind', 'payload');
+create or replace function public.msgr_apply_org_doc() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare ch uuid; pth text; ttl text; bdy text; existing uuid; who uuid;
+begin
+  if new.kind <> 'org_doc' or new.status <> 'approved' or old.status = 'approved' then return new; end if;
+  who := coalesce(new.decided_by, auth.uid());
+  ch := nullif(new.payload->>'channel_id', '')::uuid;
+  pth := new.payload->>'path'; ttl := coalesce(new.payload->>'title', ''); bdy := coalesce(new.payload->>'body', '');
+  if pth is null or ttl = '' then raise exception 'msgr_org_doc_payload'; end if;
+  if ch is not null and not exists (select 1 from public.msgr_channels c where c.id = ch and c.org_id = new.org_id) then raise exception 'msgr_org_doc_channel'; end if;
+  -- 승인자의 편집권으로만 반영(정책: 승인 = 범위의 관리자). 결재 RLS가 이미 관리자만 확정하게 하지만, 채널 범위는 편집권까지 다시 본다.
+  -- NULL 주의: auth.uid()가 없는 서비스 문맥에서 msgr_is_admin은 false가 아니라 NULL이고 `if not NULL`은 조용히 통과한다(변이 배터리 실측) → coalesce로 닫는다
+  if not coalesce(public.msgr_is_admin(new.org_id), false) and not coalesce(ch is not null and public.msgr_can_edit_doc(new.org_id, ch), false) then raise exception 'msgr_org_doc_forbidden'; end if;
+  select id into existing from public.msgr_org_docs d where d.org_id = new.org_id and coalesce(d.channel_id, d.org_id) = coalesce(ch, new.org_id) and d.path = pth;
+  if existing is null then
+    insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values (new.org_id, ch, pth, ttl, bdy, who, who);
+  else
+    update public.msgr_org_docs set title = ttl, body = bdy where id = existing; -- before_write 트리거가 version+1·updated_by(=auth.uid()=승인자)
+  end if;
+  perform public.msgr_audit(new.org_id, 'doc.proposal.applied', 'approval', new.id::text, jsonb_build_object('path', pth, 'channel_id', ch, 'crew_id', new.crew_id));
+  return new;
+end $$;
+drop trigger if exists msgr_apply_org_doc on public.msgr_crew_approvals;
+create trigger msgr_apply_org_doc after update on public.msgr_crew_approvals for each row execute function public.msgr_apply_org_doc();

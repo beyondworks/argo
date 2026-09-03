@@ -91,7 +91,7 @@ test('메신저 로그아웃은 이 기기(scope local)만 — 전역이면 같�
 });
 
 test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(고위험=관리자 기본), 정책 카드에 고위험 결재권 행, 브리지가 risk를 싣는다', () => {
-  assert.match(app, /select\('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id, risk'\)/, '결재 조회에 risk가 없다');
+  assert.match(app, /select\('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id, risk, kind, payload'\)/, '결재 조회에 risk·kind·payload가 없다');
   const slip = app.slice(app.indexOf('function Slip('), app.indexOf('function Attachment('));
   assert.match(slip, /const high = ap\.risk === 'high';/, '위험 판정');
   assert.match(slip, /const byAdmin = high && \(policy\?\.approval_high_by \?\? 'admin'\) !== 'owner';/, '정책 기본값은 admin이어야 한다');
@@ -105,7 +105,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   assert.match(pc, /\['admin', 'owner'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.approval_high_by \?\? 'admin'\) === v\}/, '고위험 결재권 세그먼트');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /const risk = approvalRisk\(it\);/, '브리지 위험 판정');
-  assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk \}\);/, '미러 행에 risk가 없다');
+  assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \{\}\) \}\);/, '미러 행에 risk·(org_doc이면 kind·payload)가 없다');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /'approval_id', 'action', 'created_at', 'risk'\);/, 'risk가 잠긴 컬럼이 아니다(등급 하향 가능)');
   assert.match(sql, /and decided_by = \(select auth\.uid\(\)\) and public\.msgr_can_decide\(id\)\)\);/, '확정 with check가 msgr_can_decide를 안 본다');

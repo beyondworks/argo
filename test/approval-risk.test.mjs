@@ -5,6 +5,7 @@ import { approvalRisk, RISK_LEVELS } from '../src/approval-risk.mjs';
 test('위험 등급: 커넥터 쓰기는 항상 고위험, 회사 안 kind는 문장과 무관하게 저위험, 자유 문장은 발송·결제·삭제·게시·계약 키워드(ko/en)', () => {
   assert.deepEqual(RISK_LEVELS, ['low', 'high']);
   assert.equal(approvalRisk({ kind: 'connector', action: 'google-calendar · list_events' }), 'high');
+  assert.equal(approvalRisk({ kind: 'org_doc', action: '조직 문서 제안 — 용어집' }), 'high', '문서 제안은 관리자 승인');
   assert.equal(approvalRisk({ kind: 'profile', action: '프로필 변경 — 서윤: 규칙 삭제' }), 'low');
   assert.equal(approvalRisk({ kind: 'hire', action: '크루 영입 — 메일 발송 담당' }), 'low');
   assert.equal(approvalRisk({ kind: 'loop', action: '루프 재개 — 결제 정산' }), 'low');

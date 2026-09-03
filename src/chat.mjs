@@ -5,7 +5,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
-import { loadOrgRules } from './gateway/msgr-rules.mjs';
+import { loadOrgRules, docSlug, DOC_FOLDERS } from './gateway/msgr-rules.mjs';
 import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './persona.mjs';
 import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루가 '나중에 하기'를 거는 유일한 수단
 import { saveHandover } from './memory.mjs';
@@ -500,6 +500,22 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
 
+  // G-4 조직 문서 제안 — 팀 메신저 조직 턴에서만. 크루는 문서를 직접 쓰지 못하고 제안만 한다; 승인(범위의 관리자)이 나면 서버가 문서를 만들거나 갱신한다.
+  const proposeOrgDoc = tool(
+    'propose_org_doc',
+    '조직이 공유해야 할 규칙·용어·프로젝트 맥락을 배웠을 때, 조직 문서(규칙집 rules / 용어집 glossary / 프로젝트 projects)에 반영해 달라고 제안한다. 직접 쓰지 않는다 — 관리자가 승인하면 서버가 반영한다. scope는 org(전사) 또는 channel(이 채널). body는 문서 전체 본문(마크다운). 같은 title이면 기존 문서를 갱신하는 제안이 된다.',
+    { scope: z.enum(['org', 'channel']), folder: z.enum(['rules', 'glossary', 'projects']), title: z.string(), body: z.string(), reason: z.string(), slug: z.string().optional().describe('파일 이름(영문 소문자·숫자·하이픈, 예 marketing-glossary). 비우면 제목에서 만들되 한글 제목은 시간 기반 이름이 되므로 영문 slug를 주는 편이 좋다') },
+    async ({ scope, folder, title, body, reason, slug }) => {
+      if (mirrorCtx?.kind !== 'msgr') return text('이 도구는 팀 메신저 조직 채널의 턴에서만 쓸 수 있다.');
+      const path = `${folder}/${docSlug(slug || title)}.md`;
+      const item = await addApproval(wsId, { slug: fromSlug, kind: 'org_doc', ...(delegatedBy ? { from: delegatedBy } : {}),
+        action: `조직 문서 제안 — ${String(title).slice(0, 80)} (${scope === 'org' ? '전사' : '채널'} · ${path})`, reason,
+        payload: { scope, channel_id: scope === 'channel' ? mirrorCtx.channelId : null, path, title: String(title).slice(0, 120), body: String(body).slice(0, 65536) },
+        msgr: { orgId: mirrorCtx.orgId, channelId: mirrorCtx.channelId, crewId: mirrorCtx.crewId, threadRoot: mirrorCtx.threadRoot ?? null } });
+      return text(`조직 문서 제안을 결재로 올렸다(${item.id}). 관리자가 승인하면 서버가 문서에 반영한다 — 승인 전에는 반영된 것처럼 말하지 마라.`);
+    },
+  );
+
   const requestToolInstall = tool(
     'request_tool_install',
     '작업에 필요한 외부 도구(MCP)가 이 회사에 없을 때 설치한다(준비 작업 자동 승인 — 결재 없이 즉시 설치되고 활동에 기록된다). source=catalog는 검증된 카탈로그의 id, source=host는 이 컴퓨터의 Claude Code에 이미 등록된 MCP 이름을 env까지 그대로 가져온다. why에는 어떤 작업에 왜 필요한지 한 문장.',
@@ -767,7 +783,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   return createSdkMcpServer({
     name: 'crew', version: '1.0.0',
     tools: [
-      requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask,
+      requestApproval, requestToolInstall, ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), updateProfile, hireCrew, scheduleTask, startLongTask,
       ...(colleagues.length ? [delegate, sendToCrew] : []),
       // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
       ...(connectors.length ? [useConnector] : []),
