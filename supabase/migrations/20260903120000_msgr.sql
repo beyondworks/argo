@@ -768,3 +768,42 @@ begin
 end $$;
 drop trigger if exists msgr_crew_reply_gate on public.msgr_messages;
 create trigger msgr_crew_reply_gate before insert on public.msgr_messages for each row execute function public.msgr_crew_reply_gate();
+
+-- ── I-1 조직 서비스 계정·회사 크루 판별(부록 I·K): 회사 크루 = "조직의 서비스 계정이 소유하고 상주 노드에서 도는 크루"를 서버 조인으로 판정한다.
+--    브리지가 "나는 회사 크루"라고 주장할 방법이 없다. 서비스 계정은 관리자가 지정하며 활성 멤버여야 한다(상주 노드 부트스트랩 I-4가 채운다).
+alter table public.msgr_orgs add column if not exists service_user_id uuid references auth.users (id) on delete set null;
+create or replace function public.msgr_org_before_update() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  -- 서비스 문맥(auth.uid() null: 서비스 롤·엣지 펑션·운영 도구)은 통과 — 일반 사용자는 RLS(admin)가 먼저 거르고,
+  -- 이 트리거는 admin 중 owner가 아닌 사람의 소유권 이전·삭제 표시를 막는 두 번째 층이다.
+  if auth.uid() is not null
+     and (new.owner_user_id is distinct from old.owner_user_id or new.deleted_at is distinct from old.deleted_at)
+     and public.msgr_role(old.id) is distinct from 'owner' then
+    raise exception 'msgr_owner_only';
+  end if;
+  if new.owner_user_id is distinct from old.owner_user_id then
+    if not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.owner_user_id and removed_at is null) then
+      raise exception 'msgr_owner_not_member';
+    end if;
+    update public.msgr_org_members set role = 'admin' where org_id = old.id and user_id = old.owner_user_id;
+    update public.msgr_org_members set role = 'owner' where org_id = old.id and user_id = new.owner_user_id;
+    perform public.msgr_audit(old.id, 'org.transfer', 'user', new.owner_user_id::text);
+  end if;
+  if new.service_user_id is distinct from old.service_user_id then
+    if new.service_user_id is not null and not exists (select 1 from public.msgr_org_members where org_id = old.id and user_id = new.service_user_id and removed_at is null) then
+      raise exception 'msgr_service_not_member';
+    end if;
+    perform public.msgr_audit(old.id, 'org.service_account', 'org', old.id::text, jsonb_build_object('from', old.service_user_id, 'to', new.service_user_id));
+  end if;
+  return new;
+end $$;
+-- 크루 등급: 'company'(서비스 계정 소유 + resident) | 'personal'(그 외). 화면·채널 정책(I-3)·결재권의 단일 판정.
+create or replace function public.msgr_crew_tier(crew uuid) returns text
+  language sql stable security invoker set search_path = public, pg_temp as $$ -- invoker: 호출자의 RLS를 따른다(비멤버는 행이 없어 null) — 판정을 오라클로 쓰지 못하게
+    select case when o.service_user_id is not null and c.owner_user_id = o.service_user_id and c.hosting = 'resident' then 'company' else 'personal' end
+      from public.msgr_crews c join public.msgr_orgs o on o.id = c.org_id where c.id = crew
+$$;
+revoke all on function public.msgr_crew_tier(uuid) from public;
+revoke execute on function public.msgr_crew_tier(uuid) from anon;
+grant execute on function public.msgr_crew_tier(uuid) to authenticated;

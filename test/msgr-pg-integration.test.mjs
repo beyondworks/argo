@@ -446,3 +446,20 @@ test('허용 판정 서버 이관(H-2): msgr_can_instruct는 소유자·allow·�
   sql(`delete from public.msgr_messages where id in (${src}, ${own}) or reply_to in (${src}, ${own})`);
   sql(`update public.msgr_crews set allow = 'list', allow_users = array['${U.owner}'::uuid] where id = '${CREW}'`); // 앞 테스트가 남긴 상태로 복원
 });
+
+test('회사 크루 판별(I-1): msgr_crew_tier는 "서비스 계정 소유 + resident"만 company — 서비스 계정 지정은 관리자만·활성 멤버만, 변경은 감사', { skip }, () => {
+  const tier = (u, id) => last(asUser(u, `select public.msgr_crew_tier('${id}')`));
+  assert.equal(last(sql(`select service_user_id is null from public.msgr_orgs where id = '${ORG}'`)), 't');
+  assert.equal(tier(U.member, CREW_SVC), 'personal', '서비스 계정 미지정이면 resident여도 personal');
+  assert.equal(last(asUser(U.member, `update public.msgr_orgs set service_user_id = '${U.svc}' where id = '${ORG}' returning 1`)), '', '멤버는 0행(RLS admin)');
+  denied(U.admin, `update public.msgr_orgs set service_user_id = '${U.outsider}' where id = '${ORG}'`, /msgr_service_not_member/);
+  assert.equal(last(asUser(U.admin, `update public.msgr_orgs set service_user_id = '${U.svc}' where id = '${ORG}' returning 1`)), '1');
+  assert.equal(tier(U.member, CREW_SVC), 'company');
+  assert.equal(tier(U.guest, CREW), 'personal', '사람 소유 크루는 personal');
+  sql(`update public.msgr_crews set hosting = 'local' where id = '${CREW_SVC}'`);
+  assert.equal(tier(U.member, CREW_SVC), 'personal', '서비스 계정 소유라도 local이면 personal(회사 크루는 노드에서만)');
+  sql(`update public.msgr_crews set hosting = 'resident' where id = '${CREW_SVC}'`);
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'org.service_account'`), '1');
+  assert.equal(last(asUser(U.outsider, `select public.msgr_crew_tier('${CREW_SVC}')`)), '', '비멤버는 판정 자체가 빈 값(행 없음)');
+  assert.equal(last(asUser(U.admin, `update public.msgr_orgs set service_user_id = null where id = '${ORG}' returning 1`)), '1'); // 복원
+});

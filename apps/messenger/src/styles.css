@@ -13,6 +13,11 @@
 .msgr-av.crew { border-radius: 9px; background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
 .msgr-av.crew .star { position: absolute; right: -6px; top: -6px; width: 15px; height: 15px; border-radius: 999px; background: var(--mark); border: 2px solid var(--bg); display: grid; place-items: center; z-index: 1; }
 .msgr-av.crew .star svg { width: 8px; height: 8px; fill: var(--mark-fg); }
+.msgr-av.crew.company .star { border-radius: 4px; background: var(--primary); border-color: var(--mark); color: var(--mark); }
+.msgr-av.crew.company .star svg { width: 9px; height: 9px; }
+.msgr-tier { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); color: var(--fg-2); }
+.msgr-tier.company { border-color: var(--mark); color: var(--fg); }
+.msgr-crewsheet .note.tier { margin: 2px 0 6px; }
 .msgr-av.lg { width: 40px; height: 40px; font-size: 14px; } .msgr-av.lg.crew { border-radius: 12px; }
 .msgr-av.sm { width: 22px; height: 22px; font-size: 10px; }
 
