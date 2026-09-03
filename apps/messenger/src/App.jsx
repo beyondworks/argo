@@ -121,8 +121,9 @@ function Shell({ ui, session }) {
         .on('broadcast', { event: 'message' }, ({ payload }) => setEvent({ kind: 'message', ...payload, at: Date.now() }))
         .on('broadcast', { event: 'approval' }, ({ payload }) => setEvent({ kind: 'approval', ...payload, at: Date.now() }))
         .on('broadcast', { event: 'typing' }, ({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() })))
-        .subscribe();
+        .subscribe((status, err) => { if (import.meta.env.DEV) console.log('[rt]', status, err?.message ?? ''); }); // 구독 상태는 개발 콘솔에(실측 진단용)
       rt.current = ch;
+      if (import.meta.env.DEV) window.__argoRt = ch;
     })();
     return () => { ch?.unsubscribe(); rt.current = null; };
   }, [orgId, session.access_token]);
@@ -221,6 +222,8 @@ function Channel({ channel, orgId, uid, lang, members, crews, nameOfUser, crewOf
     if (event.kind === 'approval' && event.channel_id === chId) load(msgs.at(-1)?.id ?? 0).catch(() => {});
   }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { feed.current?.scrollTo({ top: feed.current.scrollHeight }); }, [msgs.length]);
+  // 폴링 폴백(10s) — Realtime이 끊기거나 구독이 거부돼도 새 메시지가 화면에 도달한다(정본은 언제나 조회, 방송은 깨우기 신호)
+  useEffect(() => { const iv = setInterval(() => load(msgs.at(-1)?.id ?? 0).catch(() => {}), 10_000); return () => clearInterval(iv); }, [load, msgs]);
   const decide = async (ap, status) => {
     const res = await supabase.from('msgr_crew_approvals').update({ status, decided_by: uid, decided_at: new Date().toISOString() }).eq('id', ap.id).select('id');
     if (res.error) return onError(res.error.message);
