@@ -617,3 +617,91 @@ $$;
 revoke all on function public.is_pro() from public;
 revoke execute on function public.is_pro() from anon;
 grant execute on function public.is_pro() to authenticated;
+
+-- ── H-0 조직 정책(부록 H, 2026-09-03): 정책의 정본은 조직. 항목마다 기본값+잠금. 관리자만 편집, 변경은 감사 로그.
+--    잠긴 항목은 크루 소유자·채널 생성자가 못 바꾼다(서버 트리거가 거절 — 소유자 코드가 우회 못 함). 잠그는 순간 기존 행을 기본값으로 정리(sweep).
+--    조직이 강제할 수 있는 것은 서버가 검증하는 항목뿐이다 — 개인 PC 브리지의 실제 러너·로컬 기록은 여기서 못 막는다(관리자 화면에 정직 표기).
+create table if not exists public.msgr_org_policies (
+  org_id uuid primary key references public.msgr_orgs (id) on delete cascade,
+  allow_default text not null default 'owner' check (allow_default in ('all', 'list', 'owner')), -- 크루 허용 범위 기본값(등록 시 강제 적용은 잠금일 때만)
+  allow_locked boolean not null default false,
+  crew_memory_default boolean not null default true,                                             -- 채널 crew_memory 기본값
+  crew_memory_locked boolean not null default false,
+  updated_by uuid,
+  updated_at timestamptz not null default now()
+);
+alter table public.msgr_org_policies enable row level security;
+grant select, update on public.msgr_org_policies to authenticated;
+grant all on public.msgr_org_policies to service_role;
+drop policy if exists msgr_policies_select on public.msgr_org_policies;
+create policy msgr_policies_select on public.msgr_org_policies for select to authenticated using (public.msgr_is_member(org_id));
+drop policy if exists msgr_policies_update on public.msgr_org_policies;
+create policy msgr_policies_update on public.msgr_org_policies for update to authenticated
+  using (public.msgr_is_admin(org_id)) with check (public.msgr_is_admin(org_id));
+drop trigger if exists msgr_lock_policies on public.msgr_org_policies;
+create trigger msgr_lock_policies before update on public.msgr_org_policies for each row execute function public.msgr_lock_cols('org_id');
+-- 행은 조직 생성 트리거가 만든다(클라이언트 insert 정책 없음). 이미 있는 조직은 백필.
+insert into public.msgr_org_policies (org_id) select id from public.msgr_orgs on conflict do nothing;
+create or replace function public.msgr_org_after_insert() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  insert into public.msgr_org_members (org_id, user_id, role) values (new.id, new.owner_user_id, 'owner');
+  insert into public.msgr_org_entitlements (org_id) values (new.id) on conflict do nothing;
+  insert into public.msgr_org_policies (org_id) values (new.id) on conflict do nothing;
+  perform public.msgr_audit(new.id, 'org.create', 'org', new.id::text);
+  return new;
+end $$;
+-- 정책 갱신: 도장(updated_by·at) → 잠금이면 기존 크루·채널을 기본값으로 정리 → 감사.
+create or replace function public.msgr_policy_before_update() returns trigger
+  language plpgsql as $$
+begin
+  new.updated_by := auth.uid(); new.updated_at := now();
+  return new;
+end $$;
+drop trigger if exists msgr_policy_before_update on public.msgr_org_policies;
+create trigger msgr_policy_before_update before update on public.msgr_org_policies for each row execute function public.msgr_policy_before_update();
+create or replace function public.msgr_policy_after_update() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.allow_locked then
+    update public.msgr_crews set allow = new.allow_default, allow_users = case when new.allow_default = 'list' then allow_users else '{}'::uuid[] end
+     where org_id = new.org_id and allow <> new.allow_default;
+  end if;
+  if new.crew_memory_locked then
+    update public.msgr_channels set crew_memory = new.crew_memory_default where org_id = new.org_id and crew_memory <> new.crew_memory_default;
+  end if;
+  perform public.msgr_audit(new.org_id, 'policy.update', 'policy', new.org_id::text, jsonb_build_object(
+    'allow_default', new.allow_default, 'allow_locked', new.allow_locked, 'crew_memory_default', new.crew_memory_default, 'crew_memory_locked', new.crew_memory_locked));
+  return new;
+end $$;
+drop trigger if exists msgr_policy_after_update on public.msgr_org_policies;
+create trigger msgr_policy_after_update after update on public.msgr_org_policies for each row execute function public.msgr_policy_after_update();
+-- 크루 허용 범위 게이트: 잠금이면 insert는 기본값으로 맞추고(등록 카드가 읽어 보여준다), update로 다른 값을 넣으면 거절.
+create or replace function public.msgr_crew_policy_gate() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare p public.msgr_org_policies;
+begin
+  select * into p from public.msgr_org_policies where org_id = new.org_id;
+  if p.org_id is null or not p.allow_locked then return new; end if;
+  if tg_op = 'INSERT' then
+    new.allow := p.allow_default; if new.allow <> 'list' then new.allow_users := '{}'::uuid[]; end if;
+    return new;
+  end if;
+  if new.allow <> p.allow_default then raise exception 'msgr_policy_locked' using detail = 'allow'; end if;
+  return new;
+end $$;
+drop trigger if exists msgr_crew_policy_gate on public.msgr_crews;
+create trigger msgr_crew_policy_gate before insert or update on public.msgr_crews for each row execute function public.msgr_crew_policy_gate();
+-- 채널 크루 기억 게이트: 같은 규칙(insert 맞춤·update 거절).
+create or replace function public.msgr_channel_policy_gate() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare p public.msgr_org_policies;
+begin
+  select * into p from public.msgr_org_policies where org_id = new.org_id;
+  if p.org_id is null or not p.crew_memory_locked then return new; end if;
+  if tg_op = 'INSERT' then new.crew_memory := p.crew_memory_default; return new; end if;
+  if new.crew_memory <> p.crew_memory_default then raise exception 'msgr_policy_locked' using detail = 'crew_memory'; end if;
+  return new;
+end $$;
+drop trigger if exists msgr_channel_policy_gate on public.msgr_channels;
+create trigger msgr_channel_policy_gate before insert or update on public.msgr_channels for each row execute function public.msgr_channel_policy_gate();

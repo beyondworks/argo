@@ -799,7 +799,7 @@ function MsgrCard({ ws, agents }) {
                 {reg ? (
                   <button type="button" className="btn sm" disabled={busy === a.slug} onClick={() => unregister(a.slug)}>{busy === a.slug ? <Spinner size={12} /> : t('settings.msgr.unregister')}</button>
                 ) : (
-                  <button type="button" className="btn sm btn-primary" disabled={busy === a.slug} onClick={() => register(a.slug, 'owner', [])}>{busy === a.slug ? <Spinner size={12} /> : t('settings.msgr.register')}</button>
+                  <button type="button" className="btn sm btn-primary" disabled={busy === a.slug} onClick={() => register(a.slug, org?.policy?.allow_locked ? org.policy.allow_default : 'owner', [])}>{busy === a.slug ? <Spinner size={12} /> : t('settings.msgr.register')}</button>
                 )}
               </div>
               {reg && (
@@ -807,12 +807,13 @@ function MsgrCard({ ws, agents }) {
                   <span className="microlabel">{t('settings.msgr.allow')}</span>
                   <div role="radiogroup" aria-label={t('settings.msgr.allow')} style={{ display: 'inline-flex', gap: 3, background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
                     {['all', 'list', 'owner'].map((v) => (
-                      <button key={v} type="button" role="radio" aria-checked={allow === v} disabled={busy === a.slug} onClick={() => register(a.slug, v, v === 'list' ? picked : [])}
+                      <button key={v} type="button" role="radio" aria-checked={allow === v} disabled={busy === a.slug || !!org?.policy?.allow_locked} onClick={() => register(a.slug, v, v === 'list' ? picked : [])}
                         style={{ cursor: 'pointer', border: 0, borderRadius: 999, padding: '4px 12px', fontSize: 12, fontWeight: 600, background: allow === v ? 'var(--primary)' : 'transparent', color: allow === v ? 'var(--primary-fg)' : 'var(--fg-2)' }}>
                         {t(`settings.msgr.allow.${v}`)}
                       </button>
                     ))}
                   </div>
+                  {!!org?.policy?.allow_locked && <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.msgr.allow.locked')}</span>}
                   {allow === 'list' && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
                       <span className="microlabel">{t('settings.msgr.allow.pick')}</span>

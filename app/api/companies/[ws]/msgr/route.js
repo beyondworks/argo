@@ -27,6 +27,9 @@ async function myOrgs(c) {
   const { data: mems, error: e2 } = await c.client.from('msgr_org_members').select('org_id, user_id, role, display_name').in('org_id', orgs.map((o) => o.id)).is('removed_at', null);
   if (e2) throw new Error(e2.message);
   for (const o of orgs) o.members = (mems ?? []).filter((m) => m.org_id === o.id && m.user_id !== c.uid).map((m) => ({ id: m.user_id, name: m.display_name || m.user_id.slice(0, 8), role: m.role }));
+  // 조직 정책(H-0): 허용 범위가 잠겼으면 카드가 선택지를 잠그고 정책값을 보여준다(서버 트리거 msgr_crew_policy_gate가 최종)
+  const { data: pols } = await c.client.from('msgr_org_policies').select('org_id, allow_default, allow_locked').in('org_id', orgs.map((o) => o.id));
+  for (const o of orgs) o.policy = (pols ?? []).find((p) => p.org_id === o.id) ?? null;
   return orgs;
 }
 async function syncEnabled(ws, c) {

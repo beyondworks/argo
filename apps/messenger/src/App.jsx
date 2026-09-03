@@ -90,7 +90,7 @@ function Shell({ session }) {
   const [channels, setChannels] = useState([]); const [chId, setChId] = useState(null);
   const [members, setMembers] = useState([]); const [crews, setCrews] = useState([]);
   const [chMembers, setChMembers] = useState([]); // 현재 채널의 msgr_channel_members(비공개·DM)
-  const [ent, setEnt] = useState(null); // msgr_org_entitlements(plan·seats) — 좌석 표시·한도 안내
+  const [ent, setEnt] = useState(null); const [policy, setPolicy] = useState(null); // msgr_org_entitlements(plan·seats) — 좌석 표시·한도 안내
   const [dmMembers, setDmMembers] = useState({}); // dm 채널 id → 멤버 행(레일 라벨용: 나 아닌 참가자)
   const [err, setErr] = useState(''); const [note, setNote] = useState('');
   const [tick, setTick] = useState(0);
@@ -118,13 +118,14 @@ function Shell({ session }) {
   }, [loadOrgs]); // eslint-disable-line react-hooks/exhaustive-deps
   const loadOrg = useCallback(async (id) => {
     if (!id) return;
-    const [chs, mems, crs, e] = await Promise.all([
+    const [chs, mems, crs, e, pol] = await Promise.all([
       q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, created_by').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name').eq('org_id', id).is('removed_at', null)),
       q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at').eq('org_id', id).eq('status', 'active')),
       supabase.from('msgr_org_entitlements').select('plan, seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
+      supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
     ]);
-    setChannels(chs); setMembers(mems); setCrews(crs); setEnt(e);
+    setChannels(chs); setMembers(mems); setCrews(crs); setEnt(e); setPolicy(pol);
     setChId((cur) => cur && chs.some((c) => c.id === cur) ? cur : (chs[0]?.id ?? null)); // 라벨용 보조 조회보다 먼저(검수 2R LOW-1: 보조 조회가 던지면 채널 선택이 안 됐다)
     const dmIds = chs.filter((c) => c.kind === 'dm').map((c) => c.id);
     if (dmIds.length) { try { const rows = await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', dmIds)); const map = {}; for (const r of rows) (map[r.channel_id] ??= []).push(r); setDmMembers(map); } catch { setDmMembers({}); } } else setDmMembers({});
@@ -261,12 +262,12 @@ function Shell({ session }) {
           <Av name={me?.display_name || session.user.email} size="sm" />
           <span className="name">{me?.display_name || session.user.email}</span>
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
-          <button type="button" className="btn ghost" onClick={() => supabase.auth.signOut()} title={t('auth.signOut')} aria-label={t('auth.signOut')}><I name="out" size={15} /></button>
+          <button type="button" className="btn ghost" onClick={() => supabase.auth.signOut({ scope: 'local' })} title={t('auth.signOut')} aria-label={t('auth.signOut')}><I name="out" size={15} /></button>
         </div>
       </aside>
       <main className="msgr-main">
-        {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} uid={uid} me={me} members={members} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
-        {chSheet && channel && <ChannelSheet channel={channel} uid={uid} isAdmin={isAdmin} members={members} crews={crews} chMembers={chMembers} nameOfUser={nameOfUser} onClose={() => setChSheet(false)} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
+        {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
+        {chSheet && channel && <ChannelSheet channel={channel} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} nameOfUser={nameOfUser} onClose={() => setChSheet(false)} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {(err || note) && (
           <div className="msgr-notice">
             <span style={{ color: err ? 'var(--danger)' : 'var(--fg-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{err ? `${t('ui.error')}: ${err}` : note}</span>
@@ -274,7 +275,7 @@ function Shell({ session }) {
           </div>
         )}
         {page === 'settings' ? (
-          <Settings session={session} me={me} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+          <Settings session={session} me={me} org={org} isAdmin={!!isAdmin} policy={policy} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
           <Channel key={chId} channel={channel} orgId={orgId} uid={uid} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} dmName={dmName} />
         ) : (
@@ -286,9 +287,10 @@ function Shell({ session }) {
 }
 
 /* ─── 크루 시트: 소유자·실행 위치·접속 + 누가 시킬 수 있나(소유자만 편집, RLS msgr_crews_update_owner) + 허용 요청 ─── */
-function CrewSheet({ crew, uid, me, members, channelId, nameOfUser, onClose, onChanged, onPosted, onNote, onError, onDm }) {
+function CrewSheet({ crew, uid, me, members, policy, channelId, nameOfUser, onClose, onChanged, onPosted, onNote, onError, onDm }) {
   const { t, lang } = useT();
   const owner = crew.owner_user_id === uid;
+  const locked = !!policy?.allow_locked; // H-0: 조직 정책이 잠그면 소유자도 못 바꾼다(서버 트리거 msgr_crew_policy_gate가 최종)
   const [allow, setAllow] = useState(crew.allow); const [list, setList] = useState(crew.allow_users ?? []); const [busy, setBusy] = useState(false);
   useEffect(() => { setAllow(crew.allow); setList(crew.allow_users ?? []); }, [crew.id, crew.allow, crew.allow_users]);
   useEffect(() => { const on = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [onClose]);
@@ -298,7 +300,7 @@ function CrewSheet({ crew, uid, me, members, channelId, nameOfUser, onClose, onC
     setBusy(true);
     const res = await supabase.from('msgr_crews').update({ allow: nextAllow, allow_users: nextAllow === 'list' ? nextList : [] }).eq('id', crew.id).select('id');
     setBusy(false);
-    if (res.error) return onError(res.error.message);
+    if (res.error) return onError(/msgr_policy_locked/.test(res.error.message) ? t('err.policyLocked') : res.error.message);
     if (!res.data?.length) return onError(t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) })); // RLS 0행
     onNote(t('crew.allow.saved')); onChanged();
   };
@@ -331,7 +333,7 @@ function CrewSheet({ crew, uid, me, members, channelId, nameOfUser, onClose, onC
           <h3>{t('crew.allow')}</h3>
           <p>{t('crew.allow.desc')}</p>
           <div className="msgr-seg" role="radiogroup" aria-label={t('crew.allow')}>
-            {['all', 'list', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={allow === v} className={allow === v ? 'active' : ''} disabled={!owner || busy} onClick={() => pickAllow(v)}>{t(`crew.allow.${v}`)}</button>)}
+            {['all', 'list', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={allow === v} className={allow === v ? 'active' : ''} disabled={!owner || busy || locked} onClick={() => pickAllow(v)}>{t(`crew.allow.${v}`)}</button>)}
           </div>
           {allow === 'list' && (
             <div className="picks">
@@ -339,7 +341,7 @@ function CrewSheet({ crew, uid, me, members, channelId, nameOfUser, onClose, onC
               {others.map((m) => <label key={m.user_id} className={`pick${list.includes(m.user_id) ? ' on' : ''}`}><input type="checkbox" checked={list.includes(m.user_id)} disabled={!owner || busy} onChange={() => toggle(m.user_id)} /><Av name={m.display_name || m.user_id} size="sm" /><span>{m.display_name || m.user_id.slice(0, 8)}</span><span className="msgr-klabel">{t(`role.${m.role}`)}</span></label>)}
             </div>
           )}
-          {!owner && <p className="note">{t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) })}</p>}
+          {locked ? <p className="note">{t('crew.allow.locked')}</p> : !owner && <p className="note">{t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) })}</p>}
           <div className="me">
             <span className={`msgr-dot${canMe ? ' ok' : ''}`} /><span>{canMe ? t('crew.allow.me.yes') : t('crew.allow.me.no')}</span>
             {canMe && <button type="button" className="btn btn-primary sm" onClick={onDm} title={t('dm.crewNote')}><I name="at" size={13} />{t('ui.dm')}</button>}
@@ -352,9 +354,10 @@ function CrewSheet({ crew, uid, me, members, channelId, nameOfUser, onClose, onC
 }
 
 /* ─── 채널 시트: 이름·주제(관리자·생성자) · 크루 기억 스위치 · 멤버(비공개·DM: 사람·크루 추가/내보내기, 크루=소유자 동반) · 보관 ─── */
-function ChannelSheet({ channel, uid, isAdmin, members, crews, chMembers, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
+function ChannelSheet({ channel, uid, isAdmin, policy, members, crews, chMembers, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
   const { t } = useT();
   const canEdit = isAdmin || channel.created_by === uid;
+  const memLocked = !!policy?.crew_memory_locked; // H-0: 서버 트리거 msgr_channel_policy_gate가 최종
   const [name, setName] = useState(channel.name); const [topic, setTopic] = useState(channel.topic ?? ''); const [busy, setBusy] = useState(false); const [pick, setPick] = useState(null); // 'user' | 'crew'
   useEffect(() => { setName(channel.name); setTopic(channel.topic ?? ''); }, [channel.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const on = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [onClose]);
@@ -362,7 +365,7 @@ function ChannelSheet({ channel, uid, isAdmin, members, crews, chMembers, nameOf
     setBusy(true);
     const res = await supabase.from('msgr_channels').update(patch).eq('id', channel.id).select('id');
     setBusy(false);
-    if (res.error) return onError(res.error.message);
+    if (res.error) return onError(/msgr_policy_locked/.test(res.error.message) ? t('err.policyLocked') : res.error.message);
     if (!res.data?.length) return onError(t('ch.noEdit'));
     if (okMsg) onNote(okMsg); await onChanged();
   };
@@ -410,7 +413,8 @@ function ChannelSheet({ channel, uid, isAdmin, members, crews, chMembers, nameOf
         )}
         <section>
           <h3>{t('ch.memory')}</h3>
-          <label className="switchrow"><input type="checkbox" checked={channel.crew_memory !== false} disabled={!canEdit || busy} onChange={(e) => upd({ crew_memory: e.target.checked })} /><span>{channel.crew_memory === false ? t('ch.memory.off') : t('ch.memory.on')}</span></label>
+          <label className="switchrow"><input type="checkbox" checked={channel.crew_memory !== false} disabled={!canEdit || busy || memLocked} onChange={(e) => upd({ crew_memory: e.target.checked })} /><span>{channel.crew_memory === false ? t('ch.memory.off') : t('ch.memory.on')}</span></label>
+          {memLocked && <p className="note">{t('ch.memory.locked')}</p>}
         </section>
         <section>
           <h3>{t('ch.members')}</h3>
@@ -443,7 +447,7 @@ function ChannelSheet({ channel, uid, isAdmin, members, crews, chMembers, nameOf
 const FAMILIES = [['linen', 'settings.family.linen'], ['graphite', 'settings.family.graphite'], ['argo', 'settings.family.argo']];
 const MODES = [['', 'set.mode.system'], ['-light', 'set.mode.light'], ['-dark', 'set.mode.dark']];
 const FAMILY_CODES = FAMILIES.flatMap(([f]) => MODES.map(([s]) => `${f}${s}`));
-function Settings({ session, me, onBack, onMenu }) {
+function Settings({ session, me, org, isAdmin, policy, onChanged, onNote, onError, onBack, onMenu }) {
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
@@ -481,13 +485,51 @@ function Settings({ session, me, onBack, onMenu }) {
           <div className="msgr-chips">{skins.map((c) => <button key={c} type="button" className={`msgr-chan${theme === c ? ' active' : ''}`} onClick={() => setTheme(c)} title={ta(`settings.theme.${c}`)}><span>{ta(`settings.theme.${c}`).split(' — ')[0]}</span></button>)}</div>
         </div>
       </section>
+      {org && policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} onChanged={onChanged} onNote={onNote} onError={onError} />}
       <section className="msgr-setcard">
         <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
         <div className="row"><Av name={me?.display_name || session.user.email} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
-        <div className="row"><button type="button" className="btn sm" onClick={() => supabase.auth.signOut()}><I name="out" size={13} />{t('auth.signOut')}</button></div>
+        <div className="row"><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
       </section>
     </div></div>
   </>);
+}
+
+/* ─── 조직 정책 카드(H-0): 관리자만 편집(RLS msgr_policies_update), 멤버는 열람. 잠금 = 조직 전체 강제(서버 트리거) ─── */
+function PolicyCard({ org, isAdmin, policy, onChanged, onNote, onError }) {
+  const { t } = useT();
+  const [draft, setDraft] = useState(policy); const [busy, setBusy] = useState(false);
+  useEffect(() => { setDraft(policy); }, [policy]);
+  const dirty = ['allow_default', 'allow_locked', 'crew_memory_default', 'crew_memory_locked'].some((k) => draft?.[k] !== policy?.[k]);
+  const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
+  const save = async () => {
+    setBusy(true);
+    const res = await supabase.from('msgr_org_policies').update({ allow_default: draft.allow_default, allow_locked: draft.allow_locked, crew_memory_default: draft.crew_memory_default, crew_memory_locked: draft.crew_memory_locked }).eq('org_id', org.id).select('org_id');
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    if (!res.data?.length) return onError(t('set.policy.adminOnly'));
+    onNote(t('set.policy.saved')); onChanged();
+  };
+  const ro = !isAdmin || busy;
+  return (
+    <section className="msgr-setcard">
+      <h2>{t('set.policy')}</h2><p>{t('set.policy.desc')}</p>
+      <div className="row">
+        <span className="msgr-klabel">{t('set.policy.allow')}</span>
+        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.allow')}>
+          {['all', 'list', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={draft.allow_default === v} className={draft.allow_default === v ? 'active' : ''} disabled={ro} onClick={() => set({ allow_default: v })}>{t(`crew.allow.${v}`)}</button>)}
+        </div>
+        <label className="switchrow"><input type="checkbox" checked={!!draft.allow_locked} disabled={ro} onChange={(e) => set({ allow_locked: e.target.checked })} /><span>{t('set.policy.lock')}</span></label>
+      </div>
+      <div className="row">
+        <span className="msgr-klabel">{t('set.policy.memory')}</span>
+        <label className="switchrow"><input type="checkbox" checked={draft.crew_memory_default !== false} disabled={ro} onChange={(e) => set({ crew_memory_default: e.target.checked })} /><span>{draft.crew_memory_default === false ? t('ch.memory.off') : t('ch.memory.on')}</span></label>
+        <label className="switchrow"><input type="checkbox" checked={!!draft.crew_memory_locked} disabled={ro} onChange={(e) => set({ crew_memory_locked: e.target.checked })} /><span>{t('set.policy.lock')}</span></label>
+      </div>
+      <p className="note">{t('set.policy.limit')}</p>
+      {isAdmin ? <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !dirty} onClick={save}><I name="check" size={13} />{t('ui.save')}</button></div> : <p className="note">{t('set.policy.adminOnly')}</p>}
+    </section>
+  );
 }
 
 /** 빈 상태 — 척추 위 단계 노드가 다음 행동을 가르친다(조직 없음 / 채널 없음). */

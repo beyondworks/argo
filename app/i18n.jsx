@@ -578,6 +578,7 @@ const DICT = {
   'settings.msgr.allow.list': ['지정 멤버', 'Selected members'],
   'settings.msgr.allow.owner': ['나만', 'Only me'],
   'settings.msgr.allow.pick': ['허용할 멤버', 'Allowed members'],
+  'settings.msgr.allow.locked': ['조직 정책으로 고정된 값입니다 — 관리자가 메신저 설정 › 조직 정책에서 바꿉니다.', 'Fixed by organization policy — admins change it under the messenger’s Settings › Organization policy.'],
   'settings.msgr.allow.noMembers': ['아직 다른 멤버가 없습니다.', 'No other members yet.'],
   'settings.msgr.policyNote': ['결재 확정과 허용 범위 기본값은 조직 정책이 정합니다. 여기서는 정책이 허용한 범위 안에서만 바꿀 수 있습니다.', 'Approval authority and the default access scope are set by organization policy. You can only adjust within what the policy allows.'],
   'settings.msgr.bridge.on': ['브리지 켜짐 — 이 컴퓨터가 조직 채널을 지켜봅니다', 'Bridge on — this computer watches the org channels'],

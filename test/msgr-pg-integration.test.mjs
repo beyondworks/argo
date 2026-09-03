@@ -87,7 +87,7 @@ test('조직 생성: 생성자가 owner 멤버로 자동 등록·free 자격 행
   denied(U.outsider, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('X', 'x-org', '${U.owner}')`); // 남 명의 조직 생성 불가
 });
 
-test('역할 경계표(helpers/msgr-cases): 6역할 × 8행동이 실제 RLS 판정과 일치', { skip }, () => {
+test('역할 경계표(helpers/msgr-cases): 6역할 × 9행동이 실제 RLS 판정과 일치', { skip }, () => {
   const probes = {
     readPublicChannel: (u) => last(asUser(u, `select count(*) from public.msgr_channels where id = '${PUB}'`)) === '1',
     postPublicChannel: (u) => asUserRaw(u, `insert into public.msgr_messages (org_id, channel_id, author_kind, author_user_id, body) values ('${ORG}', '${PUB}', 'user', '${u}', 'hi')`).status === 0,
@@ -97,6 +97,7 @@ test('역할 경계표(helpers/msgr-cases): 6역할 × 8행동이 실제 RLS 판
     registerCrew: (u) => asUserRaw(u, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${u}', 'ws-${u.slice(0, 4)}', 'c', 'c')`).status === 0,
     readAudit: (u) => Number(last(asUser(u, `select count(*) from public.msgr_audit_log where org_id = '${ORG}'`))) > 0,
     readInvitedPrivateChannel: (u) => last(asUser(u, `select count(*) from public.msgr_channels where id = '${PRIV}'`)) === '1',
+    editPolicy: (u) => last(asUser(u, `update public.msgr_org_policies set updated_at = now() where org_id = '${ORG}' returning 1`)) === '1', // RLS update는 거절 대신 0행
   };
   for (const action of Object.keys(ROLE_MATRIX)) {
     for (const role of ROLES) {
@@ -369,4 +370,32 @@ test('검수 2R: DM 멤버 정책 — 생성자만 구성, 참가자는 나가�
   // 참가자가 자기 행 삭제(나가기) → 1행
   assert.equal(last(asUser(U.owner, `delete from public.msgr_channel_members where channel_id = '${DM}' and member_kind = 'user' and member_id = '${U.owner}' returning 1`)), '1', '나가기는 허용');
   sql(`delete from public.msgr_channels where id = '${DM}'`);
+});
+
+test('조직 정책(H-0): 행 자동 생성·멤버 열람·관리자만 편집, allow 잠금이면 기존 크루 정리·소유자 변경 거절·등록은 기본값으로, crew_memory 잠금 동형, 감사 행', { skip }, () => {
+  assert.equal(last(asUser(U.member, `select allow_locked from public.msgr_org_policies where org_id = '${ORG}'`)), 'f'); // 조직 생성 트리거가 만든 행
+  assert.equal(last(asUser(U.outsider, `select count(*) from public.msgr_org_policies where org_id = '${ORG}'`)), '0');
+  assert.equal(last(asUser(U.member, `update public.msgr_org_policies set allow_locked = true where org_id = '${ORG}' returning 1`)), ''); // 멤버는 0행
+  const auditN = () => Number(last(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'policy.update' and meta->>'allow_locked' = 'true'`))); // 경계표 프로브의 무잠금 갱신은 제외
+  const before = auditN();
+  // 소유자가 크루를 'all'로 열어 둔 상태에서 관리자가 'owner' 잠금 → 기존 크루가 정리된다
+  assert.equal(last(asUser(U.member, `update public.msgr_crews set allow = 'all' where id = '${CREW}' returning allow`)), 'all');
+  assert.equal(last(asUser(U.admin, `update public.msgr_org_policies set allow_default = 'owner', allow_locked = true where org_id = '${ORG}' returning allow_locked`)), 't');
+  assert.equal(last(sql(`select allow from public.msgr_crews where id = '${CREW}'`)), 'owner');
+  denied(U.member, `update public.msgr_crews set allow = 'all' where id = '${CREW}'`, /msgr_policy_locked/);              // 소유자도 못 넓힌다
+  assert.equal(last(asUser(U.member, `update public.msgr_crews set last_seen_at = now() where id = '${CREW}' returning allow`)), 'owner'); // 하트비트는 그대로
+  assert.equal(last(asUser(U.member, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, allow) values ('${ORG}', '${U.member}', 'ws-pol', 'p', 'p', 'all') returning allow`)), 'owner'); // 등록은 기본값으로 맞춤
+  sql(`delete from public.msgr_crews where org_id = '${ORG}' and ws_id = 'ws-pol'`);
+  // crew_memory 잠금: 기존 채널 정리·생성자도 못 켬·새 채널은 기본값
+  assert.equal(last(asUser(U.admin, `update public.msgr_org_policies set crew_memory_default = false, crew_memory_locked = true where org_id = '${ORG}' returning crew_memory_locked`)), 't');
+  assert.equal(last(sql(`select crew_memory from public.msgr_channels where id = '${PUB}'`)), 'f');
+  denied(U.owner, `update public.msgr_channels set crew_memory = true where id = '${PUB}'`, /msgr_policy_locked/);
+  assert.equal(last(asUser(U.admin, `insert into public.msgr_channels (org_id, kind, name, created_by, crew_memory) values ('${ORG}', 'private', 'pol-ch', '${U.admin}', true) returning crew_memory`)), 'f');
+  sql(`delete from public.msgr_channels where org_id = '${ORG}' and name = 'pol-ch'`);
+  assert.equal(last(sql(`select updated_by from public.msgr_org_policies where org_id = '${ORG}'`)), U.admin);
+  assert.equal(auditN() - before, 2, '잠금 갱신 2회 = 감사 행 2건');
+  // 잠금 해제 → 소유자가 다시 바꿀 수 있다(뒤 테스트 격리)
+  assert.equal(last(asUser(U.admin, `update public.msgr_org_policies set allow_locked = false, crew_memory_locked = false, crew_memory_default = true where org_id = '${ORG}' returning 1`)), '1');
+  assert.equal(last(asUser(U.member, `update public.msgr_crews set allow = 'list', allow_users = array['${U.owner}'::uuid] where id = '${CREW}' returning allow`)), 'list');
+  assert.equal(last(asUser(U.owner, `update public.msgr_channels set crew_memory = true where id = '${PUB}' returning crew_memory`)), 't');
 });
