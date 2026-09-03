@@ -191,7 +191,16 @@ test('④ 화면 — 사이드바 점·설정 카드·크루 칩이 초록(이 �
   assert.match(layout, /background: tgAgents\[a\.slug\]\.alive \? 'var\(--ok\)' : tgAgents\[a\.slug\]\.other \? 'var\(--bg\)' : 'var\(--warn\)',\n\s*boxShadow: tgAgents\[a\.slug\]\.other \? '0 0 0 2px var\(--tg-remote\)' : '0 0 0 2px var\(--bg\)'/);
   const css = await load('../app/globals.css');
   assert.match(css, /:root \{[^}]*--tg-remote: #3a6ea5;/, '라이트 원격 색');
-  assert.equal((css.match(/--tg-remote: #7fb0e6;/g) ?? []).length, 4, '다크 4곳(미디어 root + argo-dark·apple-dark·glass-dark)');
+  // 불변식: color-scheme: dark를 선언한 모든 토큰 블록(시스템 자동 @media 포함)이 다크용 링 색을 갖는다 — 격리 실측에서
+  // graphite-dark가 라이트 값(#3a6ea5)으로 찍혀 4곳 고정 개수 핀을 이 불변식으로 격상
+  const dark = []; let depth = 0; let open = null;
+  for (const m of css.matchAll(/[{}]/g)) {
+    if (m[0] === '{') { depth++; if (depth <= 2) open = m.index + 1; }
+    else { if (open !== null && depth <= 2) { const body = css.slice(open, m.index); if (body.includes('color-scheme: dark')) dark.push({ head: css.slice(0, open).split('\n').at(-1), ok: body.includes('--tg-remote: #7fb0e6') }); open = null; } depth--; }
+  }
+  assert.ok(dark.length >= 12, `다크 블록 수집 ${dark.length}`);
+  assert.deepEqual(dark.filter((d) => !d.ok).map((d) => d.head), [], '다크 블록마다 --tg-remote 다크 값');
+  assert.doesNotMatch(css, /\n:root\[data-theme='graphite'\] \{\n\s*--tg-remote/, '라이트 graphite 블록(열 0)에 다크 값 금지 — @media 안 블록은 들여쓰기라 제외');
   assert.match(layout, /map\[slug\] = \{ alive: !!g\?\.alive, other: g\?\.holder === 'other', device: g\?\.holderDevice \?\? '' \}/);
   const settings = await load('../app/c/[ws]/settings/page.jsx');
   assert.match(settings, /color: gw\.alive \? 'var\(--ok\)' : gw\.holder === 'other' \? 'var\(--tg-remote\)' : gw\.error \? 'var\(--danger\)' : 'var\(--warn\)'/);
