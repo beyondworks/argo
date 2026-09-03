@@ -496,3 +496,27 @@ test('채널 개인 크루 정책(I-3): read_only/blocked면 개인 크루는 �
   sql(`update public.msgr_orgs set service_user_id = null where id = '${ORG}'`);
   sql(`update public.msgr_crews set allow = 'list', allow_users = array['${U.owner}'::uuid] where id = '${CREW}'`);
 });
+
+test('조직 문서(G-1): 전사 문서는 멤버 열람·관리자 편집, 채널 문서는 채널 열람자만·쓰기 가능 채널 멤버 편집, 갱신마다 버전+1·경로 잠김·org 위조 무력화·감사, 경로는 폴더 3종만', { skip }, () => {
+  denied(U.member, `insert into public.msgr_org_docs (org_id, path, title, body, created_by, updated_by) values ('${ORG}', 'rules/handbook.md', '규칙집', '존댓말', '${U.member}', '${U.member}')`); // 멤버는 전사 문서 못 만듦
+  denied(U.admin, `insert into public.msgr_org_docs (org_id, path, title, body, created_by, updated_by) values ('${ORG}', 'notes/x.md', 'x', '', '${U.admin}', '${U.admin}')`, /check constraint|violates/); // 폴더 3종만
+  const d = last(asUser(U.admin, `insert into public.msgr_org_docs (org_id, path, title, body, created_by, updated_by) values ('${ORG}', 'rules/handbook.md', '규칙집', '답은 존댓말로', '${U.admin}', '${U.admin}') returning id`));
+  assert.equal(last(asUser(U.guest, `select title from public.msgr_org_docs where id = '${d}'`)), '규칙집', '전사 문서는 guest도 본다');
+  assert.equal(last(asUser(U.outsider, `select count(*) from public.msgr_org_docs where org_id = '${ORG}'`)), '0');
+  assert.equal(last(asUser(U.member, `update public.msgr_org_docs set body = '해킹' where id = '${d}' returning 1`)), '', '멤버는 전사 문서 편집 0행');
+  assert.equal(last(asUser(U.admin, `update public.msgr_org_docs set body = '답은 존댓말로. 숫자는 표로.' where id = '${d}' returning version || '|' || updated_by`)), `2|${U.admin}`, '갱신마다 버전 +1');
+  denied(U.admin, `update public.msgr_org_docs set path = 'rules/other.md' where id = '${d}'`, /msgr_immutable|immutable|permission|row-level/i);
+  denied(U.admin, `insert into public.msgr_org_docs (org_id, path, title, created_by, updated_by) values ('${ORG}', 'rules/handbook.md', '중복', '${U.admin}', '${U.admin}')`, /duplicate key|msgr_org_docs_path/);
+  // 채널 문서: 비공개 채널(PRIV) — 채널 열람자만 보고, 쓰기 가능 채널 멤버가 편집. org_id 위조는 채널의 org로 덮임
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'user', '${U.member}', '${U.admin}') on conflict do nothing`);
+  const cd = last(asUser(U.member, `insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${U.outsider}', '${PRIV}', 'glossary/terms.md', '용어집', 'CTR = 클릭률', '${U.member}', '${U.member}') returning id`));
+  assert.equal(sql(`select org_id from public.msgr_org_docs where id = '${cd}'`), ORG, 'org_id 위조는 채널의 org로');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_org_docs where id = '${cd}'`)), '0', '채널 밖 owner 역할은 비공개 채널 문서를 못 본다(멤버가 아니면)');
+  assert.equal(last(asUser(U.guest, `select title from public.msgr_org_docs where id = '${cd}'`)), '용어집', '초대된 guest는 본다');
+  assert.equal(last(asUser(U.guest, `update public.msgr_org_docs set body = 'x' where id = '${cd}' returning version`)), '2', '채널 열람자(guest 포함)는 채널 문서를 편집한다');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action in ('doc.insert', 'doc.update') and target_kind = 'doc'`), '4', '생성 2 + 갱신 2 = 감사 4건(거절된 시도는 기록 없음)');
+  assert.equal(last(asUser(U.member, `delete from public.msgr_org_docs where id = '${d}' returning 1`)), '', '멤버는 전사 문서 삭제 0행');
+  assert.equal(last(asUser(U.admin, `delete from public.msgr_org_docs where id = '${d}' returning 1`)), '1');
+  sql(`delete from public.msgr_org_docs where org_id = '${ORG}'`);
+  sql(`delete from public.msgr_channel_members where channel_id = '${PRIV}' and member_id = '${U.member}'`);
+});

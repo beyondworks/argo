@@ -165,3 +165,23 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
     assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   }
 });
+
+test('G-1: 조직 문서 — 풋터 버튼·페이지 분기, 목록은 org 단위 조회, 편집권 힌트(전사=관리자·채널=멤버)와 RLS 0행 문구, 생성 경로는 폴더/슬러그.md, 서버 편집권 함수·버전 트리거·감사', () => {
+  assert.match(app, /aria-label=\{t\('docs\.title'\)\} aria-pressed=\{page === 'docs'\} disabled=\{!org\}/, '풋터 문서 버튼');
+  assert.match(app, /\{page === 'docs' && org \? \(\n\s*<Docs org=\{org\} isAdmin=\{!!isAdmin\} channels=\{channels\} chId=\{chId\} uid=\{uid\}/, '문서 페이지 분기');
+  const docs = app.slice(app.indexOf('function Docs('), app.indexOf('function PolicyCard('));
+  assert.match(docs, /from\('msgr_org_docs'\)\.select\('id, channel_id, path, title, version, updated_by, updated_at'\)\.eq\('org_id', org\.id\)\.order\('path'\)/, '목록 조회');
+  assert.match(docs, /const canEdit = \(d\) => d\.channel_id \? true : isAdmin;/, '편집권 힌트');
+  assert.match(docs, /if \(!res\.data\?\.length\) return onError\(t\('docs\.noEdit'\)\);/, 'RLS 0행 문구');
+  assert.match(docs, /path: `\$\{creating\.folder\}\/\$\{docSlug\(title\)\}\.md`, title, body: '', created_by: uid, updated_by: uid/, '생성 경로·작성자');
+  assert.match(docs, /disabled=\{v === 'org' && !isAdmin\}/, '비관리자는 전사 범위를 못 고른다');
+  assert.match(app, /export const docSlug = \(title\) =>/, '슬러그 함수');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /select case when ch is null then public\.msgr_is_admin\(org\)\n\s*else public\.msgr_can_write_channel\(ch\) and exists/, '서버 편집권');
+  assert.match(sql, /new\.version := old\.version \+ 1; new\.updated_at := now\(\);/, '버전 트리거');
+  assert.match(sql, /'doc\.' \|\| lower\(tg_op\), 'doc', r\.id::text/, '문서 감사');
+  assert.match(sql, /path ~ '\^\(rules\|glossary\|projects\)\//, '폴더 3종 경로 제약');
+  for (const k of ['docs.title', 'docs.scope', 'docs.scope.org', 'docs.scope.channel', 'docs.folder', 'docs.folder.rules', 'docs.folder.glossary', 'docs.folder.projects', 'docs.new', 'docs.new.title', 'docs.new.placeholder', 'docs.create', 'docs.created', 'docs.dup', 'docs.edit', 'docs.saved', 'docs.noEdit', 'docs.adminOnly', 'docs.meta', 'docs.pick', 'docs.blank', 'docs.empty.all', 'docs.empty.org', 'docs.empty.channel', 'ui.cancel']) {
+    assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});

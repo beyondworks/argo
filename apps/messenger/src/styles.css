@@ -71,7 +71,7 @@
 .msgr-stack > * + * { margin-left: -4px; } /* 아바타가 버튼에 싸여도 겹침 유지(검수 MEDIUM-4) */
 .msgr-stack > .more { margin-left: 10px; }
 .msgr-stack .more { margin-left: 10px; font-size: 11.5px; color: var(--fg-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msgr-foot { margin-top: auto; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 12px 6px 0; border-top: 1px solid var(--border-soft); color: var(--fg-2); font-size: 12.5px; }
+.msgr-foot { margin-top: auto; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 8px; padding: 12px 6px 0; border-top: 1px solid var(--border-soft); color: var(--fg-2); font-size: 12.5px; }
 .msgr-foot .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-foot .btn.ghost { border: 0; background: none; color: var(--fg-3); width: 30px; height: 30px; padding: 0; border-radius: 9px; }
 .msgr-foot .btn.ghost:hover, .msgr-foot .btn.ghost.on { background: var(--card-2); color: var(--fg); }
@@ -275,3 +275,23 @@
   .msgr-shell.rail-open .msgr-side { display: flex; position: fixed; inset: 0 auto 0 0; z-index: 60; width: min(300px, 88vw); }
   .msgr-scrim { position: fixed; inset: 0; z-index: 55; background: var(--overlay); }
 }
+/* ─── 조직 문서(G-1) ─── */
+.msgr-docs { margin: 0 auto; width: 100%; max-width: 980px; padding: 8px 0 32px; display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.msgr-docs .list { display: grid; gap: 4px; align-content: start; }
+.msgr-docs .list .head { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; min-height: 28px; }
+.msgr-docs .list .item { display: grid; gap: 2px; text-align: left; padding: 8px 10px; border-radius: 12px; border: 1px solid transparent; background: transparent; color: var(--fg); cursor: pointer; }
+.msgr-docs .list .item:hover { background: var(--card-2); }
+.msgr-docs .list .item.on { background: var(--card); border-color: var(--border); }
+.msgr-docs .list .item .path { font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); }
+.msgr-docs .list .item .name { font-size: 13px; font-weight: 600; }
+.msgr-docs .empty { color: var(--fg-3); font-size: 12.5px; margin: 4px 0; }
+.msgr-docs .doc { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 18px 20px; min-height: 240px; display: grid; gap: 12px; align-content: start; }
+.msgr-docs .doc h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.msgr-docs .doc .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.msgr-docs .doc .meta { display: flex; align-items: center; gap: 10px; color: var(--fg-3); font-size: 11.5px; flex-wrap: wrap; }
+.msgr-docs .doc article { display: grid; gap: 12px; }
+.msgr-docs .doc header { display: grid; gap: 6px; }
+.msgr-docs .doc .new { display: grid; gap: 10px; }
+.msgr-docs .msgr-input { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--fg); padding: 8px 10px; font: inherit; font-size: 13px; }
+.msgr-docs .msgr-input.body { min-height: 260px; resize: vertical; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
+@media (max-width: 720px) { .msgr-docs { grid-template-columns: minmax(0, 1fr); } }

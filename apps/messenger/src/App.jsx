@@ -98,7 +98,7 @@ function Shell({ session }) {
   const [tick, setTick] = useState(0);
   const [rail, setRail] = useState(false); // 폰 폭: 메뉴 버튼으로 레일 열기
   const [allChips, setAllChips] = useState(false);
-  const [page, setPage] = useState('chat'); // 'chat' | 'settings' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03)
+  const [page, setPage] = useState('chat'); // 'chat' | 'settings' | 'docs' — 언어·테마·계정은 설정 페이지(유건 실검수 2026-09-03), 문서 = 조직 문서(G-1)
   const [orgMenu, setOrgMenu] = useState(false);
   const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
@@ -263,6 +263,7 @@ function Shell({ session }) {
         <div className="msgr-foot">
           <Av name={me?.display_name || session.user.email} size="sm" />
           <span className="name">{me?.display_name || session.user.email}</span>
+          <button type="button" className={`btn ghost${page === 'docs' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'docs' ? 'chat' : 'docs'); setRail(false); }} title={t('docs.title')} aria-label={t('docs.title')} aria-pressed={page === 'docs'} disabled={!org}><I name="doc" size={15} /></button>
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
           <button type="button" className="btn ghost" onClick={() => supabase.auth.signOut({ scope: 'local' })} title={t('auth.signOut')} aria-label={t('auth.signOut')}><I name="out" size={15} /></button>
         </div>
@@ -276,7 +277,9 @@ function Shell({ session }) {
             <button type="button" className="btn sm" style={{ border: 0, width: 24, height: 24, padding: 0 }} onClick={() => { setErr(''); setNote(''); }} aria-label="×"><I name="x" size={12} /></button>
           </div>
         )}
-        {page === 'settings' ? (
+        {page === 'docs' && org ? (
+          <Docs org={org} isAdmin={!!isAdmin} channels={channels} chId={chId} uid={uid} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+        ) : page === 'settings' ? (
           <Settings session={session} me={me} org={org} isAdmin={!!isAdmin} policy={policy} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
           <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} policy={policy} members={members} crews={crews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} dmName={dmName} />
@@ -505,6 +508,94 @@ function Settings({ session, me, org, isAdmin, policy, onChanged, onNote, onErro
         <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
         <div className="row"><Av name={me?.display_name || session.user.email} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
         <div className="row"><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
+      </section>
+    </div></div>
+  </>);
+}
+
+/* ─── 조직 문서(G-1): 전사(rules/·glossary/·projects/) + 채널 범위. 정본은 서버, 편집권은 RLS(msgr_can_edit_doc) — 화면은 힌트만 ─── */
+const DOC_FOLDERS = ['rules', 'glossary', 'projects'];
+export const docSlug = (title) => { const s = String(title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60); return s || `doc-${Date.now().toString(36)}`; }; // 한글 제목은 시간 기반 슬러그(경로 규칙은 영문·숫자만)
+function Docs({ org, isAdmin, channels, chId, uid, nameOfUser, onNote, onError, onBack, onMenu }) {
+  const { t, lang } = useT();
+  const [docs, setDocs] = useState([]); const [sel, setSel] = useState(null); const [full, setFull] = useState(null);
+  const [edit, setEdit] = useState(null); const [busy, setBusy] = useState(false); const [creating, setCreating] = useState(null); // creating: { scope:'org'|channelId, folder, title }
+  const load = useCallback(async () => {
+    const rows = await q(supabase.from('msgr_org_docs').select('id, channel_id, path, title, version, updated_by, updated_at').eq('org_id', org.id).order('path'));
+    setDocs(rows); setSel((cur) => cur && rows.some((d) => d.id === cur) ? cur : (rows[0]?.id ?? null));
+  }, [org.id]);
+  useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { // 본문은 선택할 때만
+    if (!sel) { setFull(null); return; }
+    let on = true;
+    supabase.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_by, updated_at').eq('id', sel).maybeSingle().then((r) => { if (on) { setFull(r.data ?? null); setEdit(null); } });
+    return () => { on = false; };
+  }, [sel]);
+  const chName = (id) => channels.find((c) => c.id === id)?.name ?? '?';
+  const canEdit = (d) => d.channel_id ? true : isAdmin; // 채널 문서는 채널 멤버 누구나(최종 판정은 RLS), 전사는 관리자
+  const orgDocs = docs.filter((d) => !d.channel_id); const chDocs = docs.filter((d) => d.channel_id);
+  const save = async () => {
+    setBusy(true);
+    const res = await supabase.from('msgr_org_docs').update({ title: edit.title.trim(), body: edit.body }).eq('id', full.id).select('id');
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    if (!res.data?.length) return onError(t('docs.noEdit'));
+    onNote(t('docs.saved')); setEdit(null); await load(); setSel(null); setTimeout(() => setSel(full.id), 0);
+  };
+  const create = async () => {
+    const title = creating.title.trim(); if (!title) return;
+    setBusy(true);
+    const channel_id = creating.scope === 'org' ? null : creating.scope;
+    const res = await supabase.from('msgr_org_docs').insert({ org_id: org.id, channel_id, path: `${creating.folder}/${docSlug(title)}.md`, title, body: '', created_by: uid, updated_by: uid }).select('id').single();
+    setBusy(false);
+    if (res.error) return onError(/duplicate key|msgr_org_docs_path/.test(res.error.message) ? t('docs.dup') : res.error.message);
+    onNote(t('docs.created')); setCreating(null); await load(); setSel(res.data.id);
+  };
+  const scopes = [['org', t('docs.scope.org')], ...channels.filter((c) => c.kind !== 'dm').map((c) => [c.id, `#${c.name}`])];
+  return (<>
+    <div className="msgr-top">
+      <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
+      <span className="title"><I name="doc" size={18} />{t('docs.title')}</span>
+      <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
+    </div>
+    <div className="msgr-thread"><div className="msgr-docs">
+      <aside className="list">
+        <div className="head"><span className="msgr-klabel">{t('docs.scope.org')}</span>{isAdmin && <button type="button" className="btn sm" onClick={() => setCreating({ scope: 'org', folder: 'rules', title: '' })}><I name="plus" size={12} />{t('docs.new')}</button>}</div>
+        {!orgDocs.length && <p className="empty">{t('docs.empty.org')}</p>}
+        {orgDocs.map((d) => <button key={d.id} type="button" className={`item${sel === d.id ? ' on' : ''}`} onClick={() => setSel(d.id)}><span className="path">{d.path}</span><span className="name">{d.title}</span></button>)}
+        <div className="head"><span className="msgr-klabel">{t('docs.scope.channel')}</span>{chId && <button type="button" className="btn sm" onClick={() => setCreating({ scope: chId, folder: 'projects', title: '' })}><I name="plus" size={12} />{t('docs.new')}</button>}</div>
+        {!chDocs.length && <p className="empty">{t('docs.empty.channel')}</p>}
+        {chDocs.map((d) => <button key={d.id} type="button" className={`item${sel === d.id ? ' on' : ''}`} onClick={() => setSel(d.id)}><span className="path">#{chName(d.channel_id)} · {d.path}</span><span className="name">{d.title}</span></button>)}
+      </aside>
+      <section className="doc">
+        {creating && (
+          <div className="new">
+            <h2>{t('docs.new.title')}</h2>
+            <div className="row"><span className="msgr-klabel">{t('docs.scope')}</span>
+              <div className="msgr-seg" role="radiogroup" aria-label={t('docs.scope')}>{scopes.map(([v, l]) => <button key={v} type="button" role="radio" aria-checked={creating.scope === v} className={creating.scope === v ? 'active' : ''} disabled={v === 'org' && !isAdmin} onClick={() => setCreating((c) => ({ ...c, scope: v }))}>{l}</button>)}</div></div>
+            <div className="row"><span className="msgr-klabel">{t('docs.folder')}</span>
+              <div className="msgr-seg" role="radiogroup" aria-label={t('docs.folder')}>{DOC_FOLDERS.map((f) => <button key={f} type="button" role="radio" aria-checked={creating.folder === f} className={creating.folder === f ? 'active' : ''} onClick={() => setCreating((c) => ({ ...c, folder: f }))}>{t(`docs.folder.${f}`)}</button>)}</div></div>
+            <input className="msgr-input" placeholder={t('docs.new.placeholder')} value={creating.title} onChange={(e) => setCreating((c) => ({ ...c, title: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} autoFocus />
+            <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !creating.title.trim()} onClick={create}><I name="check" size={13} />{t('docs.create')}</button><button type="button" className="btn sm" onClick={() => setCreating(null)}>{t('ui.cancel')}</button></div>
+          </div>
+        )}
+        {!creating && !full && <p className="empty">{docs.length ? t('docs.pick') : t('docs.empty.all')}</p>}
+        {!creating && full && (
+          <article>
+            <header>
+              <div><span className="msgr-klabel">{full.channel_id ? `#${chName(full.channel_id)} · ${full.path}` : full.path}</span></div>
+              {edit ? <input className="msgr-input" value={edit.title} onChange={(e) => setEdit((x) => ({ ...x, title: e.target.value }))} /> : <h2>{full.title}</h2>}
+              <div className="meta">{t('docs.meta', { v: full.version, name: nameOfUser(full.updated_by), when: fmtTs(full.updated_at, lang) })}
+                {!edit && canEdit(full) && <button type="button" className="btn sm" onClick={() => setEdit({ title: full.title, body: full.body })}>{t('docs.edit')}</button>}
+                {!edit && !canEdit(full) && <span className="note">{t('docs.adminOnly')}</span>}
+              </div>
+            </header>
+            {edit ? (<>
+              <textarea className="msgr-input body" value={edit.body} onChange={(e) => setEdit((x) => ({ ...x, body: e.target.value }))} rows={16} />
+              <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !edit.title.trim()} onClick={save}><I name="check" size={13} />{t('ui.save')}</button><button type="button" className="btn sm" disabled={busy} onClick={() => setEdit(null)}>{t('ui.cancel')}</button></div>
+            </>) : (full.body ? <div className="msgr-sheet"><Markdown text={full.body} /></div> : <p className="empty">{t('docs.blank')}</p>)}
+          </article>
+        )}
       </section>
     </div></div>
   </>);

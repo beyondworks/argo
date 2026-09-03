@@ -880,3 +880,70 @@ begin
 end $$;
 drop trigger if exists msgr_channel_policy_sweep on public.msgr_channels;
 create trigger msgr_channel_policy_sweep after update on public.msgr_channels for each row execute function public.msgr_channel_policy_sweep();
+
+-- ── G-1 조직 문서(부록 G): 규칙집(rules/)·용어집(glossary/)·프로젝트 맥락(projects/)의 정본은 서버. 범위 = 전사(channel_id null) | 채널.
+--    편집: 전사=관리자, 채널=채널 멤버(쓰기 가능 채널). 버전은 갱신마다 +1, 변경은 감사. 로컬 미러(G-2)·규칙 주입(G-3)·제안 결재(G-4)가 이 테이블을 읽는다.
+create table if not exists public.msgr_org_docs (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.msgr_orgs (id) on delete cascade,
+  channel_id uuid references public.msgr_channels (id) on delete cascade,      -- null = 전사
+  path text not null check (path ~ '^(rules|glossary|projects)/[a-z0-9][a-z0-9_-]{0,79}\.md$'), -- 미러 파일 경로(vault/org/<org>/<path>) — 폴더 3종 고정
+  title text not null check (length(title) between 1 and 120),
+  body text not null default '' check (length(body) <= 65536),
+  version int not null default 1,
+  created_by uuid not null references auth.users (id),
+  updated_by uuid not null references auth.users (id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index if not exists msgr_org_docs_path on public.msgr_org_docs (org_id, coalesce(channel_id, org_id), path);
+create index if not exists msgr_org_docs_org_updated on public.msgr_org_docs (org_id, updated_at);
+alter table public.msgr_org_docs enable row level security;
+grant select, insert, update, delete on public.msgr_org_docs to authenticated;
+grant all on public.msgr_org_docs to service_role;
+-- 편집권 판정(범위별): 전사=관리자, 채널=쓰기 가능 채널(보관 채널 제외)의 열람자
+create or replace function public.msgr_can_edit_doc(org uuid, ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select case when ch is null then public.msgr_is_admin(org)
+                else public.msgr_can_write_channel(ch) and exists (select 1 from public.msgr_channels c where c.id = ch and c.org_id = org) end
+$$;
+revoke all on function public.msgr_can_edit_doc(uuid, uuid) from public;
+revoke execute on function public.msgr_can_edit_doc(uuid, uuid) from anon;
+grant execute on function public.msgr_can_edit_doc(uuid, uuid) to authenticated;
+drop policy if exists msgr_docs_select on public.msgr_org_docs;
+create policy msgr_docs_select on public.msgr_org_docs for select to authenticated
+  using ((channel_id is null and public.msgr_is_member(org_id)) or (channel_id is not null and public.msgr_can_read_channel(channel_id)));
+drop policy if exists msgr_docs_insert on public.msgr_org_docs;
+create policy msgr_docs_insert on public.msgr_org_docs for insert to authenticated
+  with check (public.msgr_can_edit_doc(org_id, channel_id) and created_by = (select auth.uid()) and updated_by = (select auth.uid()));
+drop policy if exists msgr_docs_update on public.msgr_org_docs;
+create policy msgr_docs_update on public.msgr_org_docs for update to authenticated
+  using (public.msgr_can_edit_doc(org_id, channel_id)) with check (public.msgr_can_edit_doc(org_id, channel_id));
+drop policy if exists msgr_docs_delete on public.msgr_org_docs;
+create policy msgr_docs_delete on public.msgr_org_docs for delete to authenticated using (public.msgr_can_edit_doc(org_id, channel_id));
+drop trigger if exists msgr_lock_docs on public.msgr_org_docs;
+create trigger msgr_lock_docs before update on public.msgr_org_docs for each row execute function public.msgr_lock_cols('org_id', 'channel_id', 'path', 'created_by', 'created_at');
+create or replace function public.msgr_doc_before_write() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.channel_id is not null then
+    select org_id into new.org_id from public.msgr_channels where id = new.channel_id; -- 채널 문서의 org는 채널의 org(위조 무력화)
+    if new.org_id is null then raise exception 'msgr_doc_channel_missing'; end if;
+  end if;
+  if tg_op = 'UPDATE' then
+    new.version := old.version + 1; new.updated_at := now(); new.updated_by := coalesce(auth.uid(), old.updated_by); -- 갱신마다 버전 +1(서비스 문맥은 이전 갱신자 유지)
+  end if;
+  return new;
+end $$;
+drop trigger if exists msgr_doc_before_write on public.msgr_org_docs;
+create trigger msgr_doc_before_write before insert or update on public.msgr_org_docs for each row execute function public.msgr_doc_before_write();
+create or replace function public.msgr_doc_audit() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare r public.msgr_org_docs;
+begin
+  r := coalesce(new, old);
+  perform public.msgr_audit(r.org_id, 'doc.' || lower(tg_op), 'doc', r.id::text, jsonb_build_object('path', r.path, 'channel_id', r.channel_id, 'version', r.version));
+  return null;
+end $$;
+drop trigger if exists msgr_doc_audit on public.msgr_org_docs;
+create trigger msgr_doc_audit after insert or update or delete on public.msgr_org_docs for each row execute function public.msgr_doc_audit();
