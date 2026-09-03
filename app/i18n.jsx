@@ -253,7 +253,6 @@ const DICT = {
   'settings.zoom.auto': ['자동', 'Auto'],
   'settings.zoom.shortcut': ['단축키', 'Shortcuts'],
   'settings.head': ['설정 · 회사 설정', 'Settings · Company'],
-  'settings.general': ['일반', 'General'],
   'settings.tab.general': ['일반', 'General'],
   'settings.tab.ai': ['AI 연결', 'AI connection'],
   'settings.tab.connections': ['연결', 'Connections'],
@@ -265,10 +264,8 @@ const DICT = {
   'chat.card.tab.style': ['방식', 'Working style'],
   'chat.card.tab.link': ['연결·원문', 'Links & raw'],
   'chat.card.tab.label': ['크루 카드 구획', 'Crew card sections'],
+  'chat.card.saveRaw': ['원문 저장', 'Save raw card'],
   'chat.card.abilityEmpty': ['설치된 스킬·플러그인이 아직 없습니다. 스킬·도구에서 설치하면 여기서 크루별 사용 범위를 정합니다.', 'No skills or plugins installed yet. Install them under Skills & tools, then set this crew’s scope here.'],
-  'settings.capabilities': ['로컬 능력 — 크루가 로컬에 손댈 수 있는 범위', 'Capabilities — what crew can touch locally'],
-  'settings.connections': ['연결 — 메신저가 회사의 정문이 됩니다', 'Connections — messengers become the front door'],
-  'settings.danger': ['위험 구역', 'Danger Zone'],
   'settings.companyInfo': ['회사 정보', 'Company Info'],
   'settings.companyName': ['회사 이름', 'Company Name'],
   'settings.spec': ['제원', 'Specifications'],
@@ -374,7 +371,6 @@ const DICT = {
   'settings.caps.bypass.desc': ['도구 설치·능력 켜기 같은 준비성 결재를 자동 승인합니다. 이메일 발송·게시·구매·삭제처럼 사람이 판단해야 하는 일은 그대로 결재를 받습니다', 'Auto-approves preparation requests like tool installs and capability grants. Actions needing your judgment — sending email, publishing, purchases, deletions — still wait for approval'],
 
   // ── AI 연결 (Claude BYOK) — 일반 사용자 온보딩
-  'settings.ai.section': ['AI 연결', 'AI Connection'],
   'settings.ai.title': ['AI 연결 (Claude)', 'AI Connection (Claude)'],
   'settings.ai.help': ['크루의 두뇌는 Claude입니다. 여기에 Claude API 키를 넣으면 이 회사의 모든 크루가 그 키로 일합니다. 키를 넣지 않으면 이 컴퓨터에 로그인된 Claude 자격을 대신 씁니다.', 'Your crews think with Claude. Add a Claude API key here and every crew in this company runs on it. Without a key, they fall back to the Claude credentials signed in on this computer.'],
   'settings.ai.connected': ['연결됨', 'Connected'],
@@ -391,7 +387,6 @@ const DICT = {
   'settings.ai.saved': ['저장되었습니다', 'Saved'],
   'settings.ai.verified': ['연결 확인됨', 'Connection verified'],
   // ── 기기 페어링 — 다른 기기에 연결 코드로 회사(기억·크루·대화) 넘기기
-  'settings.devices.section': ['기기', 'Devices'],
   'settings.devices.title': ['다른 기기와 연결', 'Link another device'],
   'settings.devices.desc': ['연결 코드를 만들어 다른 기기의 홈 화면에 붙여넣으면, 이 회사(기억·크루·대화)가 그 기기로 내려갑니다.', 'Create a link code and paste it on another device’s home screen — this company (memory, crews, chats) syncs down there.'],
   'settings.devices.generate': ['연결 코드 만들기', 'Create link code'],

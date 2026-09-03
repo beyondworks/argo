@@ -66,6 +66,9 @@ test('설정 — 카드 17개가 정확히 한 탭에만, 순서는 작은 카�
   assert.equal(cardCount(rows.find((r) => r.includes('<DevicesCard'))), 3, '기기·업데이트·권한 한 행');
   assert.equal(cardCount(rows.find((r) => r.includes('<ExportCard'))), 2, '내보내기·보관함 한 행');
   assert.match(src, /<Tabs label=\{t\('settings\.tab\.label'\)\} value=\{tab\} onChange=\{setTab\} className="settings-tabs"/, '공용 Tabs 배선');
+  // pane 게이트: `{tab === 'x' && (` 바로 뒤에 같은 id의 pane — 조건과 pane을 묶어 잠근다(검수 변이: 조건 id 바꿈·false && 앞세움이 초록이었다)
+  for (const id of ids) assert.match(src, new RegExp(`\\{tab === '${id}' && \\(\\n\\s*<div className="cardcols" data-tab-pane="${id}">`), `${id} 게이트 = pane`);
+  assert.equal((src.match(/\{tab === '/g) ?? []).length, 5, '탭 조건은 정확히 5개(false && 같은 앞세움 없음)');
   assert.equal((src.match(/<div className="cardcols" data-tab-pane="/g) ?? []).length, 5, '탭 본문 5개 전부 행 묶음(.cardcols > .cardrow)');
   assert.equal((src.match(/<div className="cardrow">/g) ?? []).length, 14, '행 수: 일반 3·AI 1·연결 3·기기 6·위험 1');
   assert.doesNotMatch(src, /gridColumn: '1 \/ -1'/, '카드 안 전폭 인라인 잔재 없음(행이 폭을 정한다)');
@@ -77,6 +80,9 @@ test('크루 카드 — 구간 11개가 탭 4개에 정확히 한 번, 모달 �
   const ids = ['overview', 'ability', 'style', 'link'];
   assert.match(src, /const CARD_TABS = \['overview', 'ability', 'style', 'link'\];/);
   assert.match(src, /useRememberedTab\('argo-card-tab', CARD_TABS, 'overview'\)/);
+  for (const id of ids) assert.match(src, new RegExp(`\\{tab === '${id}' && \\(<div data-tab-pane="${id}"`), `${id} 게이트 = pane`);
+  assert.equal((src.match(/\{tab === '/g) ?? []).length, 4, '탭 조건은 정확히 4개');
+  assert.match(src, /t\('chat\.card\.saveRaw'\)/, '푸터 저장 버튼은 원문 저장임을 라벨로 명시');
   const p = panes(src, ids);
   const sections = {
     overview: ["t('chat.recentWork')", "t('chat.card.engine')", '<StatsBlock'],
@@ -96,7 +102,10 @@ test('크루 카드 — 구간 11개가 탭 4개에 정확히 한 번, 모달 �
 
 test('공용 Tabs — ui.jsx 정의·크루 서랍과 같은 룩의 CSS·다단 배치·i18n ko/en', async () => {
   const ui = await load('../app/ui.jsx');
-  assert.match(ui, /export function Tabs\(\{ tabs, value, onChange, label, right, className = '' \}\)/);
+  assert.match(ui, /export function Tabs\(\{ tabs, value, onChange, label, className = '' \}\)/);
+  // 하이드레이션: 초기값은 쿼리/기본만(localStorage 미접근), 저장값은 useEffect에서 — 서버 HTML과 첫 클라 렌더가 같다
+  assert.match(ui, /useState\(\(\) => resolveTab\(\{ query: queryTab, stored: null, ids, fallback \}\)\)/, '초기 렌더는 저장값을 읽지 않는다');
+  assert.match(ui, /useEffect\(\(\) => \{\n\s*if \(queryTab && ids\.includes\(queryTab\)\) \{ setTabState\(queryTab\); return; \}[^\n]*\n\s*let stored = null;\n\s*try \{ stored = localStorage\.getItem\(key\); \}/, '저장값은 마운트 뒤, 딥링크 우선');
   assert.match(ui, /role="tablist"/); assert.match(ui, /role="tab" className="tab" aria-selected=\{value === tb\.id\} data-tone=\{tb\.tone \|\| undefined\}/);
   assert.match(ui, /export function useRememberedTab\(key, ids, fallback, queryTab\)/);
   assert.match(ui, /try \{ localStorage\.setItem\(key, id\); \} catch/, '저장 실패 무시');
@@ -111,7 +120,8 @@ test('공용 Tabs — ui.jsx 정의·크루 서랍과 같은 룩의 CSS·다단 
   assert.match(css, /\.cardrow \{ display: grid; grid-template-columns: repeat\(auto-fit, minmax\(min\(300px, 100%\), 1fr\)\); gap: 14px; align-items: stretch; \}/);
   assert.doesNotMatch(ui, /export function Cols\(/, 'JS 측정형 배치 없음(순수 CSS)');
   const i18n = await load('../app/i18n.jsx');
-  for (const k of ['settings.tab.general', 'settings.tab.ai', 'settings.tab.connections', 'settings.tab.devices', 'settings.tab.danger', 'settings.tab.label', 'chat.card.tab.overview', 'chat.card.tab.ability', 'chat.card.tab.style', 'chat.card.tab.link', 'chat.card.tab.label']) {
+  for (const k of ['settings.general', 'settings.capabilities', 'settings.connections', 'settings.danger', 'settings.ai.section', 'settings.devices.section']) assert.doesNotMatch(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}':`), `${k} 고아 키 제거(Section 래퍼와 함께)`);
+  for (const k of ['settings.tab.general', 'settings.tab.ai', 'settings.tab.connections', 'settings.tab.devices', 'settings.tab.danger', 'settings.tab.label', 'chat.card.tab.overview', 'chat.card.tab.ability', 'chat.card.tab.style', 'chat.card.tab.link', 'chat.card.tab.label', 'chat.card.abilityEmpty', 'chat.card.saveRaw']) {
     const m = i18n.match(new RegExp(`'${k.replace(/\./g, '\\.')}': \\['([^']+)', '([^']+)'\\]`));
     assert.ok(m, `${k} ko/en 등록`);
     assert.doesNotMatch(m[2], /[가-힣]/, `${k} 영어에 한글 없음`);

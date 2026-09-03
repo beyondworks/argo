@@ -599,7 +599,7 @@ export function DropUp({ value, placeholder = '—', groups, onChange, disabled,
 
 /** 베타 피드백 — 인앱에서 작성하면 서버(/api/feedback)가 Supabase에 저장한다. 브라우저(메일앱)를 열지 않는다. */
 /** 가로 탭 바 — 설정·크루 카드 공용(크루 서랍 .crew-tab과 같은 룩). tabs: [{ id, label, count?, tone? }] */
-export function Tabs({ tabs, value, onChange, label, right, className = '' }) {
+export function Tabs({ tabs, value, onChange, label, className = '' }) {
   return (
     <div className={`tabbar ${className}`.trim()} role="tablist" aria-label={label}>
       {tabs.map((tb) => (
@@ -608,20 +608,20 @@ export function Tabs({ tabs, value, onChange, label, right, className = '' }) {
           {tb.label}{tb.count != null && <span className="tab-n">{tb.count}</span>}
         </button>
       ))}
-      {right && <><span style={{ flex: 1 }} /><span className="tabbar-right">{right}</span></>}
     </div>
   );
 }
-/** 마지막 탭 기억 — localStorage(기기 편의). 초기값 우선순위는 tabs-state.mjs(resolveTab): ?tab= → 저장값 → 기본.
-    storage 접근은 전부 try/catch — 프라이빗 창·차단 환경에서도 기본 탭으로 뜬다. */
+/** 마지막 탭 기억 — localStorage(기기 편의). 우선순위는 tabs-state.mjs(resolveTab): ?tab= → 저장값 → 기본.
+    저장값은 **마운트 뒤**에 적용한다(i18n `argo-lang`·theme와 같은 관례) — 초기 렌더에서 localStorage를 읽으면 서버 HTML(기본 탭)과
+    클라 첫 렌더가 달라 하이드레이션 불일치가 난다(분리 검수 실측: 서버가 그린 '일반'이 0.5초 보였다 교체). storage 접근은 전부 try/catch. */
 export function useRememberedTab(key, ids, fallback, queryTab) {
-  const [tab, setTabState] = useState(() => {
+  const [tab, setTabState] = useState(() => resolveTab({ query: queryTab, stored: null, ids, fallback }));
+  useEffect(() => {
+    if (queryTab && ids.includes(queryTab)) { setTabState(queryTab); return; } // 딥링크가 저장값보다 우선(같은 페이지 ?tab= 이동 포함)
     let stored = null;
-    try { stored = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null; } catch { /* 저장소 차단 */ }
-    return resolveTab({ query: queryTab, stored, ids, fallback });
-  });
-  // 딥링크가 뒤늦게 바뀌면(같은 페이지에서 ?tab= 이동) 따라간다 — 목록 밖 값은 무시
-  useEffect(() => { if (queryTab && ids.includes(queryTab)) setTabState(queryTab); }, [queryTab, ids]);
+    try { stored = localStorage.getItem(key); } catch { /* 저장소 차단 — 기본 탭 유지 */ }
+    if (stored && ids.includes(stored)) setTabState(stored);
+  }, [key, queryTab, ids]);
   const setTab = (id) => { setTabState(id); try { localStorage.setItem(key, id); } catch { /* 저장 실패는 무시 */ } };
   return [tab, setTab];
 }

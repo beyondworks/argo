@@ -1953,8 +1953,9 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
         </div>
         {/* 푸터 — 탭과 무관하게 항상 보인다: 원문 저장·정보 편집·해고 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px 14px', borderTop: '1px solid var(--border-soft)', flex: 'none' }}>
+          {/* 원문(md) 저장 — 규칙·기억 카드·범위는 즉시 저장이라, 이 버튼은 연결·원문 탭의 textarea 편집만 담는다(검수: 라벨로 대상 명시) */}
           <button className="btn btn-primary sm" onClick={() => save()} disabled={saving || md === null}>
-            {saving ? <Spinner size={12} /> : t('chat.save')}
+            {saving ? <Spinner size={12} /> : t('chat.card.saveRaw')}
           </button>
           <span style={{ fontSize: 12, color: msg === t('chat.saved') ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>
           <span style={{ flex: 1 }} />
