@@ -156,6 +156,8 @@ try {
   const meta = (await loadApprovals(ws)).find((a) => a.id === it.id)?.msgr;
   check('결재 카드 미러 행 + 로컬 메타', pushed && !!meta?.rowId && !!meta?.messageId, JSON.stringify(meta ?? null).slice(0, 80));
   const card = (await admin.from('msgr_messages').select('kind, body').eq('id', meta.messageId).single()).data;
+  const rowLink = (await admin.from('msgr_crew_approvals').select('message_id').eq('id', meta.rowId).single()).data;
+  check('미러 행 ↔ 카드 메시지 링크(pending 갱신 정책)', rowLink?.message_id === meta.messageId, `${rowLink?.message_id}/${meta.messageId}`);
   check('채널에 approval_card 메시지', card?.kind === 'approval_card' && /결재 요청: 메일 발송/.test(card?.body ?? ''));
   const bTry = await B.client.from('msgr_crew_approvals').update({ status: 'approved', decided_by: B.id, decided_at: new Date().toISOString() }).eq('id', meta.rowId).select('id');
   check('B(비소유자)의 확정 → RLS 0행', !bTry.error && (bTry.data ?? []).length === 0);

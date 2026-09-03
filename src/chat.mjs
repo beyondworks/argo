@@ -466,7 +466,7 @@ export function connectorToolDescription(connectors, lang = 'ko') {
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단).
     connectors = 이 턴의 커넥터 요약(connectorBriefing). 비어 있으면 use_connector를 **등재하지 않는다**.
     (export: 행동 테스트용 — 등재 조건·수렴 경로를 인메모리 MCP 클라이언트로 실제로 돌려 확인한다) */
-export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '') {
+export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', journal = null) {
   const text = async (t) => ({ content: [{ type: 'text', text: t }] });
   // 위임 체인의 직전 크루 — 이 크루가 올리는 결재에 "누구의 위임으로 온 요청인지"를 실어 흐름을 보이게 한다
   const delegatedBy = chain.length ? chain[chain.length - 1] : null;
@@ -492,7 +492,9 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     '되돌리기 어렵거나 회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약 등)을 실행하기 전에 사장의 결재를 요청한다. action은 하려는 행동 한 문장, reason은 왜 필요한지.',
     { action: z.string(), reason: z.string() },
     async ({ action, reason }) => {
-      const item = await addApproval(wsId, { slug: fromSlug, ...(delegatedBy ? { from: delegatedBy } : {}), action, reason });
+      // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다 — 같은 크루의 동시 턴에서도 오배달 없음)
+      const item = await addApproval(wsId, { slug: fromSlug, ...(delegatedBy ? { from: delegatedBy } : {}), action, reason,
+        ...(mirrorCtx?.kind === 'msgr' ? { msgr: { orgId: mirrorCtx.orgId, channelId: mirrorCtx.channelId, crewId: mirrorCtx.crewId, threadRoot: mirrorCtx.threadRoot ?? null } } : {}) });
       return text(`결재 요청이 등록되었다(${item.id}). 승인 전에는 절대 그 행동을 실행하지 마라. 지금은 "결재를 올렸고 승인되면 진행하겠다"고 사용자에게 알리고 턴을 마무리하라.${await channelHealthNote()}`);
     },
   );
@@ -537,7 +539,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         const delegated = lang === 'en' ? `(Delegated by colleague ${fromName}) ${task}` : `(동료 ${fromName}의 위임) ${task}`;
         // workFolder — 회의실 턴의 위임이면 위임받은 동료도 같은 회의 폴더를 본다(회의 프롬프트가 "동료도 같은 폴더"라
         // 약속하고 위임 결과가 방에 실린다 — 안 넘기면 위임 크루만 개인 고정으로 돈다, 분리 검수 MEDIUM-3).
-        const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug], workFolder });
+        const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug], workFolder, journal }); // journal = 팀 메신저 채널 정책(off·org 태그)을 위임 턴에도(같은 조직 내용)
         // 위임 트레이스 — 대상 크루의 대화에도 남긴다(세션은 건드리지 않음). 웹에서 양쪽 다 보인다.
         const { appendTurn } = await import('./thread.mjs');
         await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null, via: 'delegate', artifacts: r.artifacts })
@@ -654,6 +656,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       ].filter(Boolean).join(', ');
       const item = await addApproval(wsId, {
         slug: fromSlug, kind: 'profile', ...(delegatedBy ? { from: delegatedBy } : {}),
+        ...(mirrorCtx?.kind === 'msgr' ? { msgr: { orgId: mirrorCtx.orgId, channelId: mirrorCtx.channelId, crewId: mirrorCtx.crewId, threadRoot: mirrorCtx.threadRoot ?? null } } : {}), // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다)
         action: `프로필 변경 — ${who.name}: ${summary}`, reason: why,
         payload: { slug: who.slug, changes, ...(rule ? { rule } : {}) },
       });
@@ -677,6 +680,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       if (bad) return text(bad);
       const item = await addApproval(wsId, {
         slug: fromSlug, kind: 'hire', ...(delegatedBy ? { from: delegatedBy } : {}),
+        ...(mirrorCtx?.kind === 'msgr' ? { msgr: { orgId: mirrorCtx.orgId, channelId: mirrorCtx.channelId, crewId: mirrorCtx.crewId, threadRoot: mirrorCtx.threadRoot ?? null } } : {}), // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다)
         action: `크루 영입 — ${name ? `${name}: ` : ''}${brief}${runner ? ` (러너 ${runner}${model ? ` · ${model}` : ''})` : ''}`,
         reason: why,
         payload: { brief, ...(name ? { name } : {}), ...(team ? { team } : {}), ...(runner ? { runner } : {}), ...(model ? { model } : {}) },
@@ -1122,7 +1126,7 @@ ${lang === 'en'
       if (!aborted && !__crashRetry && isProcessCrash(e?.message || e)) {
         console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       // 도구 잠김(L2 자가치유, 2026-08-25) — 실행기 자체 고장(예: codex code-mode host)은 자격도 모델도
@@ -1133,7 +1137,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 도구 잠김 감지 — 재조달 후 1회 재시도(${wsId}/${agentSlug})`);
         await reprovisionRunner(runner).catch((re) => console.warn(`[argo] ${runner} 재조달 실패:`, re?.message ?? re));
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       if (!aborted && (AUTH_ERR_RE.test(String(e.message || e)) || lockupAction(e, { retried: __lockupRetry }) === 'switch')) {
@@ -1147,7 +1151,7 @@ ${lang === 'en'
             // 실패한 러너의 사건을 먼저 남긴다 — 치유 성공 시 조기 return이 실패 기록을 삼켜,
             // P2가 "인증 오류"라 말하는 턴에 연결 카드(P1-1)의 그 러너는 멀쩡해 보였다(검수 관점3 미탐).
             await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {});
-            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners: tried });
+            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners: tried });
             return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
@@ -1191,7 +1195,7 @@ ${lang === 'en'
   // 커넥터 요약 — 턴 시작 1회(설계서 §2-2). 연결 0이면 빈 배열이라 도구가 등재되지 않는다.
   // 조회 실패가 턴을 죽이지 않게 낙하: 커넥터가 없는 것처럼 진행한다(기능 없음 > 턴 사망).
   const connectors = await connectorBriefing(wsId).catch(() => []);
-  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder);
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, journal);
 
   // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
   // 게이트로 보낸다 — 게이트가 금지 구역(앱 코드·타사 데이터·자격, 2026-07-22 크리티컬)을 판정한다.
@@ -1455,7 +1459,7 @@ ${lang === 'en'
       try {
         // 제외 목록은 받은 그대로 넘긴다(tried 아님) — 세션 부재는 러너 잘못이 아니라서 같은 러너로
         // 다시 시도해야 한다. 여기서 현재 러너를 제외하면 세션 문제로 벤더가 갈리는 오작동이 된다.
-        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
+        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
       } catch (e2) {
         e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
       }
@@ -1469,7 +1473,7 @@ ${lang === 'en'
     if (!aborted && !retriedDown && !__crashRetry && isProcessCrash(e?.message || e)) {
       console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
       try {
-        return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
+        return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
       } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
     }
     if (!aborted && !retriedDown && AUTH_ERR_RE.test(String(e.message || e))) {
@@ -1478,7 +1482,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
           await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {}); // 실패 러너 사건 선기록(CLI 갈래와 대칭 — P1-1 미탐 봉합)
-          const healed = await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
+          const healed = await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
           return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하

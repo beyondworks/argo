@@ -28,7 +28,7 @@ import { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT }
 import { clip, pollBackoffMs, pick, tidy, parseApprovalText, parseApprovalCallback, pairCodeMatches, classifySlackMessage, telegramBriefingDest } from './gateway/protocol.mjs';
 import { routeMessage, crewStatusReply, approvalWho, defaultCrew, resolveTelegramDest } from './gateway/routing.mjs';
 import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스트도 같은 함수를 본다
-import { CHANNEL_EVENTS } from './channel-events.mjs'; // msgr 푸시 대상 종류 집합(pushEvent 머리) — 판정 자체는 msgrPush 안 channelSends
+import { CHANNEL_EVENTS } from './channel-events.mjs'; // msgr 푸시 대상 종류 집합(pushEvent 머리) — 음소거(company.json.msgr.mutedEvents) 판정은 msgrPush 안에서 channelSends로
 const channelSendsKinds = (kind) => CHANNEL_EVENTS[kind] ?? [];
 import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
 
