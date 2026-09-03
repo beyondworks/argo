@@ -1012,3 +1012,59 @@ begin
 end $$;
 drop trigger if exists msgr_member_offboard on public.msgr_org_members;
 create trigger msgr_member_offboard after update on public.msgr_org_members for each row execute function public.msgr_member_offboard();
+
+-- ── J-1 역할 정식화(부록 I 권한 행렬): ① 채널 관리자(admin_user_ids) — 조직 정책 안에서 자기 채널만 관리(설정·멤버·문서 범위) ② 지정 결재권자(approver_user_ids) — 고위험 결재를 관리자 대신/함께 확정.
+alter table public.msgr_channels add column if not exists admin_user_ids uuid[] not null default '{}';
+create or replace function public.msgr_can_manage_channel(ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select exists (select 1 from public.msgr_channels c where c.id = ch
+                     and (c.created_by = auth.uid() or auth.uid() = any (c.admin_user_ids) or (c.kind <> 'dm' and coalesce(public.msgr_is_admin(c.org_id), false)))
+                     and coalesce(public.msgr_is_member(c.org_id), false))
+$$;
+revoke all on function public.msgr_can_manage_channel(uuid) from public;
+revoke execute on function public.msgr_can_manage_channel(uuid) from anon;
+grant execute on function public.msgr_can_manage_channel(uuid) to authenticated;
+drop policy if exists msgr_channels_update on public.msgr_channels;
+create policy msgr_channels_update on public.msgr_channels for update to authenticated
+  using (public.msgr_can_manage_channel(id)) with check (public.msgr_can_manage_channel(id));
+drop policy if exists msgr_channel_members_insert on public.msgr_channel_members;
+create policy msgr_channel_members_insert on public.msgr_channel_members for insert to authenticated
+  with check (public.msgr_can_manage_channel(channel_id));
+drop policy if exists msgr_channel_members_update on public.msgr_channel_members;
+create policy msgr_channel_members_update on public.msgr_channel_members for update to authenticated
+  using (public.msgr_can_manage_channel(channel_id)) with check (public.msgr_can_manage_channel(channel_id));
+drop policy if exists msgr_channel_members_delete on public.msgr_channel_members;
+create policy msgr_channel_members_delete on public.msgr_channel_members for delete to authenticated
+  using ((member_kind = 'user' and member_id = (select auth.uid())) or public.msgr_can_manage_channel(channel_id));
+-- 채널 관리자 지정은 조직 관리자 또는 생성자만(관리자가 관리자를 늘리는 자기 증식 방지) — 다른 컬럼 갱신은 관리자면 됨
+create or replace function public.msgr_channel_admins_guard() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.admin_user_ids is distinct from old.admin_user_ids then
+    if auth.uid() is not null and not (old.created_by = auth.uid() or coalesce(public.msgr_is_admin(old.org_id), false)) then raise exception 'msgr_channel_admins_owner_only'; end if;
+    if exists (select 1 from unnest(new.admin_user_ids) u where not exists (select 1 from public.msgr_org_members m where m.org_id = old.org_id and m.user_id = u and m.removed_at is null)) then raise exception 'msgr_channel_admin_not_member'; end if;
+    -- 비공개 채널의 관리자는 그 채널 멤버 중에서(멤버가 아니면 RLS 열람이 막혀 설정을 못 바꾼다 — 드릴 실측)
+    if old.kind = 'private' and exists (select 1 from unnest(new.admin_user_ids) u where not exists (select 1 from public.msgr_channel_members cm where cm.channel_id = old.id and cm.member_kind = 'user' and cm.member_id = u)) then raise exception 'msgr_channel_admin_not_channel_member'; end if;
+    perform public.msgr_audit(old.org_id, 'channel.admins', 'channel', old.id::text, jsonb_build_object('admins', new.admin_user_ids));
+  end if;
+  return new;
+end $$;
+drop trigger if exists msgr_channel_admins_guard on public.msgr_channels;
+create trigger msgr_channel_admins_guard before update on public.msgr_channels for each row execute function public.msgr_channel_admins_guard();
+-- 지정 결재권자
+alter table public.msgr_org_policies add column if not exists approver_user_ids uuid[] not null default '{}';
+alter table public.msgr_org_policies drop constraint if exists msgr_org_policies_approval_high_by_check;
+alter table public.msgr_org_policies add constraint msgr_org_policies_approval_high_by_check check (approval_high_by in ('owner', 'admin', 'approvers'));
+create or replace function public.msgr_can_decide(ap uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select case
+      when a.risk = 'low' then c.owner_user_id = auth.uid()
+      when coalesce(p.approval_high_by, 'admin') = 'owner' then c.owner_user_id = auth.uid()
+      when coalesce(p.approval_high_by, 'admin') = 'approvers' then coalesce(public.msgr_is_admin(a.org_id), false) or auth.uid() = any (coalesce(p.approver_user_ids, '{}'::uuid[]))
+      else public.msgr_is_admin(a.org_id)
+    end
+      from public.msgr_crew_approvals a
+      join public.msgr_crews c on c.id = a.crew_id
+      left join public.msgr_org_policies p on p.org_id = a.org_id
+     where a.id = ap
+$$;

@@ -561,3 +561,29 @@ test('조직 운영(F2): 본인은 표시명만(역할·제거 표시 변경 거
   assert.equal(sql(`select status from public.msgr_crews where id = '${CREW}'`), 'active', '되살림 → 크루 복구');
   sql(`update public.msgr_org_members set display_name = null where org_id = '${ORG}' and user_id = '${U.member}'`);
 });
+
+test('역할 정식화(J-1): 채널 관리자는 자기 채널 설정·멤버만(지정은 조직 관리자·생성자만, 멤버여야), 지정 결재권자는 정책 approvers일 때 고위험 결재 확정(관리자도 유지)', { skip }, () => {
+  const priv2 = last(asUser(U.admin, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'private', 'ops', '${U.admin}') returning id`));
+  assert.equal(last(asUser(U.member, `update public.msgr_channels set topic = 'x' where id = '${priv2}' returning 1`)), '', '멤버는 남의 채널 설정 0행');
+  assert.equal(last(asUser(U.guest, `update public.msgr_channels set admin_user_ids = array['${U.guest}'::uuid] where id = '${priv2}' returning 1`)), '', '관리자 아님 → USING 실패 = 0행');
+  denied(U.admin, `update public.msgr_channels set admin_user_ids = array['${U.outsider}'::uuid] where id = '${priv2}'`, /msgr_channel_admin_not_member/);
+  denied(U.admin, `update public.msgr_channels set admin_user_ids = array['${U.member}'::uuid] where id = '${priv2}'`, /msgr_channel_admin_not_channel_member/); // 비공개 채널 관리자는 채널 멤버 중에서
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${priv2}', 'user', '${U.member}', '${U.admin}')`);
+  assert.equal(last(asUser(U.admin, `update public.msgr_channels set admin_user_ids = array['${U.member}'::uuid] where id = '${priv2}' returning 1`)), '1');
+  assert.equal(last(asUser(U.member, `update public.msgr_channels set topic = '운영' where id = '${priv2}' returning topic`)), '운영', '채널 관리자는 설정 가능');
+  assert.match(last(asUser(U.member, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${priv2}', 'user', '${U.guest}', '${U.member}') returning member_id`)), /^[0-9a-f-]{36}$/, '채널 관리자는 멤버 추가 가능');
+  denied(U.member, `update public.msgr_channels set admin_user_ids = array['${U.member}'::uuid, '${U.guest}'::uuid] where id = '${priv2}'`, /msgr_channel_admins_owner_only/); // 관리자가 관리자를 늘리지 못한다
+  assert.equal(last(asUser(U.member, `update public.msgr_channels set topic = 'y' where id = '${PRIV}' returning 1`)), '', '다른 채널은 여전히 0행');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where org_id = '${ORG}' and action = 'channel.admins' and target_id = '${priv2}'`), '1');
+  // 지정 결재권자
+  sql(`update public.msgr_crews set allow = 'all' where id = '${CREW}'`);
+  const hi = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk) values ('${ORG}', '${PUB}', '${CREW}', 'ap-appr', '결제', 'high') returning id`));
+  assert.equal(last(asUser(U.admin, `update public.msgr_org_policies set approval_high_by = 'approvers', approver_user_ids = array['${U.svc}'::uuid] where org_id = '${ORG}' returning approval_high_by`)), 'approvers'); // 결재권자는 채널을 읽을 수 있어야 한다(게스트는 공개 채널 열람 불가 → 0행)
+  denied(U.member, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.member}', decided_at = now() where id = '${hi}'`); // 소유자(비권자)
+  assert.equal(last(asUser(U.svc, `update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.svc}', decided_at = now() where id = '${hi}' returning status`)), 'approved', '지정 결재권자 확정');
+  const hi2 = last(asUser(U.member, `insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk) values ('${ORG}', '${PUB}', '${CREW}', 'ap-appr2', '결제', 'high') returning id`));
+  assert.equal(last(asUser(U.admin, `update public.msgr_crew_approvals set status = 'rejected', decided_by = '${U.admin}', decided_at = now() where id = '${hi2}' returning status`)), 'rejected', 'approvers 정책에서도 관리자는 확정 가능');
+  sql(`update public.msgr_org_policies set approval_high_by = 'admin', approver_user_ids = '{}' where org_id = '${ORG}'`);
+  sql(`delete from public.msgr_channels where id = '${priv2}'`); sql(`delete from public.msgr_crew_approvals where approval_id like 'ap-appr%'`);
+  sql(`update public.msgr_crews set allow = 'list', allow_users = array['${U.owner}'::uuid] where id = '${CREW}'`);
+});

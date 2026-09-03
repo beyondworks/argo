@@ -59,7 +59,7 @@ test('H-0: 라우트가 조직별 policy를 싣고, 카드는 잠금이면 라�
 });
 
 test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 시트는 잠금에 비활성, 정책 카드는 관리자만 저장·비관리자는 안내', () => {
-  assert.match(app, /from\('msgr_org_policies'\)\.select\('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by'\)/, '조직 정책 조회가 없다');
+  assert.match(app, /from\('msgr_org_policies'\)\.select\('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids'\)/, '조직 정책 조회가 없다');
   assert.match(app, /setEnt\(e\); setPolicy\(pol\);/, '정책이 상태에 실리지 않는다');
   const crew = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
   assert.match(crew, /const locked = !!policy\?\.allow_locked;/, '크루 시트 잠금 판정');
@@ -72,7 +72,7 @@ test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 
   assert.match(ch, /memLocked && <p className="note">\{t\('ch\.memory\.locked'\)\}<\/p>/, '기억 잠금 안내가 없다');
   assert.match(ch, /\/msgr_policy_locked\/\.test\(res\.error\.message\) \? t\('err\.policyLocked'\)/, '채널 서버 거절 문구');
   const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
-  assert.match(pc, /from\('msgr_org_policies'\)\.update\(\{ allow_default: draft\.allow_default, allow_locked: draft\.allow_locked, crew_memory_default: draft\.crew_memory_default, crew_memory_locked: draft\.crew_memory_locked, approval_high_by: draft\.approval_high_by \}\)\.eq\('org_id', org\.id\)\.select\('org_id'\)/, '정책 저장 문장');
+  assert.match(pc, /from\('msgr_org_policies'\)\.update\(\{ allow_default: draft\.allow_default, allow_locked: draft\.allow_locked, crew_memory_default: draft\.crew_memory_default, crew_memory_locked: draft\.crew_memory_locked, approval_high_by: draft\.approval_high_by, approver_user_ids: draft\.approver_user_ids \?\? \[\] \}\)\.eq\('org_id', org\.id\)\.select\('org_id'\)/, '정책 저장 문장');
   assert.match(pc, /if \(!res\.data\?\.length\) return onError\(t\('set\.policy\.adminOnly'\)\);/, 'RLS 0행(비관리자)을 안내로 바꾸지 않는다');
   assert.match(pc, /const ro = !isAdmin \|\| busy;/, '비관리자 읽기 전용');
   assert.match(pc, /\{isAdmin \? <div className="row"><button[^\n]*onClick=\{save\}/, '저장 버튼이 관리자에게만 있지 않다');
@@ -94,15 +94,15 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   assert.match(app, /select\('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id, risk, kind, payload'\)/, '결재 조회에 risk·kind·payload가 없다');
   const slip = app.slice(app.indexOf('function Slip('), app.indexOf('function Attachment('));
   assert.match(slip, /const high = ap\.risk === 'high';/, '위험 판정');
-  assert.match(slip, /const byAdmin = high && \(policy\?\.approval_high_by \?\? 'admin'\) !== 'owner';/, '정책 기본값은 admin이어야 한다');
-  assert.match(slip, /const can = byAdmin \? !!isAdmin : owner;/, '확정권 = 고위험이면 관리자, 아니면 소유자');
+  assert.match(slip, /const mode = policy\?\.approval_high_by \?\? 'admin';\n\s*const byAdmin = high && mode !== 'owner';/, '정책 기본값은 admin이어야 한다');
+  assert.match(slip, /const can = byAdmin \? \(!!isAdmin \|\| \(mode === 'approvers' && isApprover\)\) : owner;/, '확정권 = 고위험이면 관리자(또는 지정 결재권자), 아니면 소유자');
   assert.match(slip, /\{ap\.status === 'pending' && can && \(<>/, '버튼은 확정권자에게만');
-  assert.match(slip, /\{ap\.status === 'pending' && !can && <span className="note">\{byAdmin \? t\('ap\.adminNote'\) : t\('ap\.ownerNote'\)\}<\/span>\}/, '비권자 안내가 등급별이 아니다');
+  assert.match(slip, /\{ap\.status === 'pending' && !can && <span className="note">\{byAdmin \? \(mode === 'approvers' \? t\('ap\.approverNote'\) : t\('ap\.adminNote'\)\) : t\('ap\.ownerNote'\)\}<\/span>\}/, '비권자 안내가 등급별이 아니다');
   assert.match(slip, /\{high && <span className="msgr-klabel risk">\{t\('ap\.high'\)\}<\/span>\}/, '고위험 배지가 없다');
   assert.match(app, /onError\(t\(ap\.risk === 'high' \? 'ap\.approverOnly' : 'ap\.ownerOnly'\)\)/, 'RLS 0행 문구가 등급별이 아니다');
   const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
-  assert.match(pc, /approval_high_by: draft\.approval_high_by \}\)/, '정책 저장에 approval_high_by가 없다');
-  assert.match(pc, /\['admin', 'owner'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.approval_high_by \?\? 'admin'\) === v\}/, '고위험 결재권 세그먼트');
+  assert.match(pc, /approval_high_by: draft\.approval_high_by, approver_user_ids: draft\.approver_user_ids \?\? \[\] \}\)/, '정책 저장에 approval_high_by·approver_user_ids가 없다');
+  assert.match(pc, /\['admin', 'approvers', 'owner'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(draft\.approval_high_by \?\? 'admin'\) === v\}/, '고위험 결재권 세그먼트');
   const bridge = stripComments(read('src/gateway/msgr.mjs'));
   assert.match(bridge, /const risk = approvalRisk\(it\);/, '브리지 위험 판정');
   assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \{\}\) \}\);/, '미러 행에 risk·(org_doc이면 kind·payload)가 없다');
@@ -143,7 +143,7 @@ test('I-2: 아르고 설정 카드가 조직 정책 요약(허용 범위·고위
 });
 
 test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외)·차단 안내·멤버 추가 거절 문구·멘션 후보 필터, 브리지는 사유 RPC(채널 포함)로 묻고 채널 사유를 안내, 서버 게이트 3종', () => {
-  assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by'\)/, '채널 조회에 personal_crews가 없다');
+  assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids'\)/, '채널 조회에 personal_crews가 없다');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
   assert.match(ch, /\{channel\.kind !== 'dm' && \(\n\s*<section>\n\s*<h3>\{t\('ch\.personal'\)\}<\/h3>/, '개인 크루 정책 섹션(dm 제외)');
   assert.match(ch, /\['allowed', 'read_only', 'blocked'\]\.map\(\(v\) => <button key=\{v\} type="button" role="radio" aria-checked=\{\(channel\.personal_crews \?\? 'allowed'\) === v\}[^\n]*disabled=\{!canEdit \|\| busy\} onClick=\{\(\) => upd\(\{ personal_crews: v \}, t\('ch\.personal\.saved'\)\)\}/, '세그먼트');
@@ -257,4 +257,23 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   for (const k of ['set.name', 'set.name.placeholder', 'set.name.saved', 'set.name.noEdit', 'set.notify.ask', 'set.notify.on', 'set.notify.denied', 'set.notify.unsupported', 'set.org', 'set.org.desc', 'org.name.saved', 'org.noEdit', 'org.member.role', 'org.member.roleSaved', 'org.member.noEdit', 'org.member.remove', 'org.member.remove.confirm', 'org.member.removed', 'org.invites', 'org.invites.desc', 'org.invite.role', 'org.invite.make', 'org.invite.copy', 'org.invite.copied', 'org.invite.revoke', 'org.invite.revoked', 'org.invite.expires', 'org.audit', 'org.audit.load', 'org.audit.reload', 'org.audit.empty', 'org.audit.system', 'notify.mention', 'notify.approval']) {
     assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   }
+});
+
+test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·태그, 지정은 관리자·생성자만)와 지정 결재권자(approvers 정책·피커·슬립 확정권), 서버 함수·가드', () => {
+  assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids'\)/, '채널 조회에 admin_user_ids');
+  assert.match(app, /select\('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids'\)/, '정책 조회에 approver_user_ids');
+  const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
+  assert.match(ch, /const canEdit = isAdmin \|\| channel\.created_by === uid \|\| chAdmins\.includes\(uid\);/, '채널 관리자 편집권');
+  assert.match(ch, /const canAssignAdmins = \(isAdmin \|\| channel\.created_by === uid\) && channel\.kind !== 'dm';/, '지정은 조직 관리자·생성자만');
+  const slip = app.slice(app.indexOf('function Slip('), app.indexOf('function Attachment('));
+  assert.match(slip, /const can = byAdmin \? \(!!isAdmin \|\| \(mode === 'approvers' && isApprover\)\) : owner;/, '슬립 확정권에 지정 결재권자');
+  const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
+  assert.match(pc, /\['admin', 'approvers', 'owner'\]\.map/, '정책 세그먼트 3옵션');
+  assert.match(pc, /approver_user_ids: draft\.approver_user_ids \?\? \[\] \}\)/, '결재권자 저장');
+  assert.match(pc, /members\.filter\(\(m\) => m\.role !== 'owner' && m\.role !== 'guest'\)\.map/, '결재권자 후보에서 게스트 제외(공개 채널 열람 불가)');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /c\.created_by = auth\.uid\(\) or auth\.uid\(\) = any \(c\.admin_user_ids\) or \(c\.kind <> 'dm' and coalesce\(public\.msgr_is_admin\(c\.org_id\), false\)\)/, '채널 관리 판정');
+  assert.match(sql, /raise exception 'msgr_channel_admins_owner_only'/, '관리자 자기 증식 방지');
+  assert.match(sql, /when coalesce\(p\.approval_high_by, 'admin'\) = 'approvers' then coalesce\(public\.msgr_is_admin\(a\.org_id\), false\) or auth\.uid\(\) = any \(coalesce\(p\.approver_user_ids, '\{\}'::uuid\[\]\)\)/, '지정 결재권자 판정');
+  for (const k of ['ch.admin', 'ch.admin.creator', 'ch.admin.set', 'ch.admin.unset', 'ch.admin.saved', 'set.policy.approval.approvers', 'set.policy.approvers', 'set.policy.approvers.desc', 'ap.approverNote']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });

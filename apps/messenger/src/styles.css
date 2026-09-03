@@ -357,3 +357,9 @@
 .msgr-audit .tgt { color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-audit .empty { margin: 0; color: var(--fg-3); font-size: 12px; }
 @media (max-width: 720px) { .msgr-audit .row { grid-template-columns: 80px minmax(0, 1fr); } .msgr-audit .who, .msgr-audit .tgt { display: none; } }
+.msgr-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); font-size: 10.5px; color: var(--fg-3); }
+.msgr-rows .row .btn.ghost.on { color: var(--fg); background: var(--card); border: 1px solid var(--mark); }
+.msgr-setcard .picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.msgr-setcard .picks .pick { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 6px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; cursor: pointer; }
+.msgr-setcard .picks .pick.on { border-color: var(--mark); background: var(--card-2); }
+.msgr-setcard .picks .pick input { margin: 0; accent-color: var(--primary); }

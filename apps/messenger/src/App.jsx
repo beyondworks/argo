@@ -120,11 +120,11 @@ function Shell({ session }) {
   const loadOrg = useCallback(async (id) => {
     if (!id) return;
     const [chs, mems, crs, e, pol] = await Promise.all([
-      q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by').eq('org_id', id).is('archived_at', null).order('created_at')),
+      q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name').eq('org_id', id).is('removed_at', null)),
       q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at').eq('org_id', id).eq('status', 'active')),
       supabase.from('msgr_org_entitlements').select('plan, seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
-      supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
+      supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
     ]);
     const orgRow = orgs.find((o) => o.id === id);
     crs.sort((a, b) => (crewTier(b, orgRow) === 'company') - (crewTier(a, orgRow) === 'company') || a.display_name.localeCompare(b.display_name, 'ko')); // 순서 고정: 회사 크루 먼저, 이름순(QA: 화면마다 순서가 달랐다)
@@ -391,7 +391,10 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
 /* ─── 채널 시트: 이름·주제(관리자·생성자) · 크루 기억 스위치 · 멤버(비공개·DM: 사람·크루 추가/내보내기, 크루=소유자 동반) · 보관 ─── */
 function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMembers, people = [], chCrews = [], ent, onInvite, onCrew, onDm, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
   const { t } = useT();
-  const canEdit = isAdmin || channel.created_by === uid;
+  const chAdmins = channel.admin_user_ids ?? [];
+  const canEdit = isAdmin || channel.created_by === uid || chAdmins.includes(uid); // J-1: 채널 관리자도 설정·멤버 관리(최종은 RLS msgr_can_manage_channel)
+  const canAssignAdmins = (isAdmin || channel.created_by === uid) && channel.kind !== 'dm'; // 지정은 조직 관리자·생성자만(자기 증식 방지 — 서버 트리거와 동일)
+  const toggleChAdmin = async (userId) => { const next = chAdmins.includes(userId) ? chAdmins.filter((x) => x !== userId) : [...chAdmins, userId]; await upd({ admin_user_ids: next }, t('ch.admin.saved')); };
   const memLocked = !!policy?.crew_memory_locked; // H-0: 서버 트리거 msgr_channel_policy_gate가 최종
   const [name, setName] = useState(channel.name); const [topic, setTopic] = useState(channel.topic ?? ''); const [busy, setBusy] = useState(false); const [pick, setPick] = useState(null); // 'user' | 'crew'
   useEffect(() => { setName(channel.name); setTopic(channel.topic ?? ''); }, [channel.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -470,7 +473,8 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
             <div className="msgr-klabel">{t('ch.people')} · {people.length}</div>
             {people.map((m) => { const isMe = m.user_id === uid; return (
               <div key={`u:${m.user_id}`} className="row">
-                <Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
+                <Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}{(chAdmins.includes(m.user_id) || channel.created_by === m.user_id) && <span className="msgr-tag">{channel.created_by === m.user_id ? t('ch.admin.creator') : t('ch.admin')}</span>}</span>
+                {canAssignAdmins && !isMe && channel.created_by !== m.user_id && <button type="button" className={`btn sm ghost${chAdmins.includes(m.user_id) ? ' on' : ''}`} disabled={busy} onClick={() => toggleChAdmin(m.user_id)} title={chAdmins.includes(m.user_id) ? t('ch.admin.unset') : t('ch.admin.set')} aria-label={chAdmins.includes(m.user_id) ? t('ch.admin.unset') : t('ch.admin.set')}><I name="gear" size={13} /></button>}
                 {!isMe && <button type="button" className="btn sm ghost" onClick={() => onDm?.(m.user_id)} title={t('ui.dm')} aria-label={t('ui.dm')}><I name="at" size={13} /></button>}
                 {scoped && canEdit && channel.kind !== 'dm' && !isMe && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => removeMember('user', m.user_id)} title={t('ch.remove')} aria-label={t('ch.remove')}><I name="x" size={13} /></button>}
               </div>
@@ -554,7 +558,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
         </div>
       </section>
       {org && isAdmin && <OrgCard org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
-      {org && policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} onChanged={onChanged} onNote={onNote} onError={onError} />}
+      {org && policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
       <section className="msgr-setcard">
         <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
         <div className="row"><Av name={me?.display_name || session.user.email} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
@@ -798,15 +802,15 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
 }
 
 /* ─── 조직 정책 카드(H-0): 관리자만 편집(RLS msgr_policies_update), 멤버는 열람. 잠금 = 조직 전체 강제(서버 트리거) ─── */
-function PolicyCard({ org, isAdmin, policy, onChanged, onNote, onError }) {
+function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onError }) {
   const { t } = useT();
   const [draft, setDraft] = useState(policy); const [busy, setBusy] = useState(false);
   useEffect(() => { setDraft(policy); }, [policy]);
-  const dirty = ['allow_default', 'allow_locked', 'crew_memory_default', 'crew_memory_locked', 'approval_high_by'].some((k) => draft?.[k] !== policy?.[k]);
+  const dirty = ['allow_default', 'allow_locked', 'crew_memory_default', 'crew_memory_locked', 'approval_high_by'].some((k) => draft?.[k] !== policy?.[k]) || JSON.stringify(draft?.approver_user_ids ?? []) !== JSON.stringify(policy?.approver_user_ids ?? []);
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const save = async () => {
     setBusy(true);
-    const res = await supabase.from('msgr_org_policies').update({ allow_default: draft.allow_default, allow_locked: draft.allow_locked, crew_memory_default: draft.crew_memory_default, crew_memory_locked: draft.crew_memory_locked, approval_high_by: draft.approval_high_by }).eq('org_id', org.id).select('org_id');
+    const res = await supabase.from('msgr_org_policies').update({ allow_default: draft.allow_default, allow_locked: draft.allow_locked, crew_memory_default: draft.crew_memory_default, crew_memory_locked: draft.crew_memory_locked, approval_high_by: draft.approval_high_by, approver_user_ids: draft.approver_user_ids ?? [] }).eq('org_id', org.id).select('org_id');
     setBusy(false);
     if (res.error) return onError(res.error.message);
     if (!res.data?.length) return onError(t('set.policy.adminOnly'));
@@ -831,10 +835,17 @@ function PolicyCard({ org, isAdmin, policy, onChanged, onNote, onError }) {
       <div className="row">
         <span className="msgr-klabel">{t('set.policy.approval')}</span>
         <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.approval')}>
-          {['admin', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={(draft.approval_high_by ?? 'admin') === v} className={(draft.approval_high_by ?? 'admin') === v ? 'active' : ''} disabled={ro} onClick={() => set({ approval_high_by: v })}>{t(`set.policy.approval.${v}`)}</button>)}
+          {['admin', 'approvers', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={(draft.approval_high_by ?? 'admin') === v} className={(draft.approval_high_by ?? 'admin') === v ? 'active' : ''} disabled={ro} onClick={() => set({ approval_high_by: v })}>{t(`set.policy.approval.${v}`)}</button>)}
         </div>
         <span className="note">{t('set.policy.approval.desc')}</span>
       </div>
+      {(draft.approval_high_by === 'approvers') && (
+        <div className="row">
+          <span className="msgr-klabel">{t('set.policy.approvers')}</span>
+          <div className="picks">{members.filter((m) => m.role !== 'owner' && m.role !== 'guest').map((m) => { const on = (draft.approver_user_ids ?? []).includes(m.user_id); // 게스트 제외: 공개 채널을 못 읽어 결재를 확정할 수 없다 return <label key={m.user_id} className={`pick${on ? ' on' : ''}`}><input type="checkbox" checked={on} disabled={ro} onChange={() => set({ approver_user_ids: on ? (draft.approver_user_ids ?? []).filter((x) => x !== m.user_id) : [...(draft.approver_user_ids ?? []), m.user_id] })} /><Av name={m.display_name || m.user_id} size="sm" /><span>{m.display_name || m.user_id.slice(0, 8)}</span></label>; })}</div>
+          <span className="note">{t('set.policy.approvers.desc')}</span>
+        </div>
+      )}
       <p className="note">{t('set.policy.limit')}</p>
       {isAdmin ? <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !dirty} onClick={save}><I name="check" size={13} />{t('ui.save')}</button></div> : <p className="note">{t('set.policy.adminOnly')}</p>}
     </section>
@@ -993,8 +1004,10 @@ function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
   // 결재권 판정은 화면용 — 최종은 RLS(msgr_can_decide, decide의 0행 처리). 크루가 목록에 없으면(비활성 등) 소유자 미상으로 보고 버튼을 띄운다(검수 M1).
   const owner = crew ? crew.owner_user_id === uid : true;
   const high = ap.risk === 'high';
-  const byAdmin = high && (policy?.approval_high_by ?? 'admin') !== 'owner'; // H-1: 고위험은 정책의 결재권자(기본 관리자)
-  const can = byAdmin ? !!isAdmin : owner;
+  const mode = policy?.approval_high_by ?? 'admin';
+  const byAdmin = high && mode !== 'owner'; // H-1: 고위험은 정책의 결재권자(기본 관리자). J-1: 'approvers'면 지정 결재권자도
+  const isApprover = (policy?.approver_user_ids ?? []).includes(uid);
+  const can = byAdmin ? (!!isAdmin || (mode === 'approvers' && isApprover)) : owner;
   const ownerName = nameOfUser(crew?.owner_user_id);
   const cls = `msgr-slip ${ap.status}${ap.status === 'pending' && !can ? ' wait' : ''}${high ? ' high' : ''}`;
   const band = ap.status === 'pending' ? (can ? t('ap.request') : (byAdmin ? t('ap.wait.admin') : t('ap.wait', { name: ownerName }))) : t(`ap.${ap.status}.band`);
@@ -1019,7 +1032,7 @@ function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
             <button type="button" className="btn btn-primary sm" onClick={() => decide(ap, 'approved')}><I name="check" size={13} />{t('ap.approve')}</button>
             <button type="button" className="btn sm" onClick={() => decide(ap, 'rejected')}><I name="x" size={13} />{t('ap.reject')}</button>
           </>)}
-          {ap.status === 'pending' && !can && <span className="note">{byAdmin ? t('ap.adminNote') : t('ap.ownerNote')}</span>}
+          {ap.status === 'pending' && !can && <span className="note">{byAdmin ? (mode === 'approvers' ? t('ap.approverNote') : t('ap.adminNote')) : t('ap.ownerNote')}</span>}
           {ap.status === 'approved' && <span className="msgr-seal ok"><I name="check" />{nameOfUser(ap.decided_by)} · {when}</span>}
           {ap.status === 'rejected' && <span className="msgr-seal no"><I name="x" />{nameOfUser(ap.decided_by)} · {when}</span>}
           {ap.status === 'expired' && <span className="msgr-seal"><I name="clock" />{t('ap.noDecision')}</span>}
