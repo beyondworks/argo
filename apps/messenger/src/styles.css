@@ -499,4 +499,23 @@
 .msgr-actlist .item .when { flex: none; width: 64px; color: var(--fg-3); font-family: var(--mono); font-size: 11px; }
 .msgr-actlist .item .text { min-width: 0; }
 .msgr-actlist .empty { color: var(--fg-3); font-size: 13px; margin: 6px 0; }
+.msgr-memlist { display: grid; gap: 14px; }
+.msgr-memlist .folder { display: grid; gap: 4px; }
+.msgr-memlist .memitem { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--fg); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.msgr-memlist .memitem:hover { background: var(--card-2); }
+.msgr-memlist .memitem .name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.msgr-memlist .memitem .meta { color: var(--fg-3); font-size: 11.5px; white-space: nowrap; }
+.msgr-memnew { display: grid; gap: 10px; padding: 12px; border: 1px dashed var(--border); border-radius: 12px; }
+.msgr-memnew .row { display: flex; align-items: center; gap: 10px; }
+.msgr-memdoc header { display: grid; gap: 6px; margin-bottom: 12px; }
+.msgr-memdoc header h2 { margin: 0; font-size: 20px; }
+.msgr-memdoc header .meta { display: flex; align-items: center; gap: 10px; color: var(--fg-3); font-size: 12px; }
+.msgr-memdoc header .note { color: var(--fg-3); font-size: 12px; }
+.msgr-memdoc textarea.body { width: 100%; min-height: 320px; font-family: var(--mono); font-size: 13px; line-height: 1.6; resize: vertical; }
+.msgr-memdoc .row { display: flex; gap: 8px; margin-top: 8px; }
+.msgr-actfold { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.msgr-actfold > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--fg-2); font-size: 13px; list-style: none; padding: 6px 0; }
+.msgr-actfold > summary::before { content: '▸'; font-size: 9px; color: var(--fg-3); transition: transform .12s; }
+.msgr-actfold[open] > summary::before { transform: rotate(90deg); }
+.msgr-actfold > summary .sub { color: var(--fg-3); font-family: var(--mono); font-size: 11px; }
 @media (max-width: 900px) { .msgr-actsplit { flex-direction: column; } .msgr-acttree { width: auto; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--border); } }

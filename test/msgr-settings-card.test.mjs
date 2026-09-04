@@ -167,14 +167,15 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
 });
 
 test('G-1: 조직 문서 — 풋터 버튼·페이지 분기, 목록은 org 단위 조회, 편집권 힌트(전사=관리자·채널=멤버)와 RLS 0행 문구, 생성 경로는 폴더/슬러그.md, 서버 편집권 함수·버전 트리거·감사', () => {
-  assert.match(app, /aria-label=\{t\('docs\.title'\)\} aria-pressed=\{page === 'docs'\} disabled=\{!org\}/, '풋터 문서 버튼');
-  assert.match(app, /: page === 'docs' && org \? \(\n\s*<Docs org=\{org\} isAdmin=\{!!isAdmin\} channels=\{channels\} chId=\{chId\} uid=\{uid\}/, '문서 페이지 분기(활동 페이지 뒤)');
-  const docs = app.slice(app.indexOf('function Docs('), app.indexOf('function PolicyCard('));
-  assert.match(docs, /from\('msgr_org_docs'\)\.select\('id, channel_id, path, title, version, updated_by, updated_at'\)\.eq\('org_id', org\.id\)\.order\('path'\)/, '목록 조회');
+  assert.doesNotMatch(app, /page === 'docs'|function Docs\(/, '별도 문서 페이지 없음 — 조직 문서(=조직의 기억)는 기억 페이지 한 곳(유건 지적 2026-09-04: 보이는 건 활동이 아니라 기억이어야)');
+  const docs = app.slice(app.indexOf('function MemDoc('), app.indexOf('function Activity('));
+  const actv = app.slice(app.indexOf('function Activity('), app.indexOf('/* ─── 조직 문서(G-1)'));
+  assert.match(actv, /from\('msgr_org_docs'\)\.select\('id, channel_id, path, title, body, version, updated_by, updated_at'\)\.eq\('org_id', org\.id\)\.order\('path'\)/, '목록 조회(본문 포함 — 문서 탭·[[링크]] 그래프)');
+  assert.match(actv, /const canNew = sel === 'org' \? isAdmin : !!ch;/, '새 기억은 전사=관리자·채널=멤버, 사람·크루 탭엔 없음');
+  assert.match(actv, /<details className="msgr-actfold">/, '활동 기록은 접힌 보조 정보(주 내용은 기억)');
   assert.match(docs, /const canEdit = \(d\) => d\.channel_id \? true : isAdmin;/, '편집권 힌트');
   assert.match(docs, /if \(!res\.data\?\.length\) return onError\(t\('docs\.noEdit'\)\);/, 'RLS 0행 문구');
   assert.match(docs, /path: `\$\{creating\.folder\}\/\$\{docSlug\(title\)\}\.md`, title, body: '', created_by: uid, updated_by: uid/, '생성 경로·작성자');
-  assert.match(docs, /disabled=\{v === 'org' && !isAdmin\}/, '비관리자는 전사 범위를 못 고른다');
   assert.match(app, /export const docSlug = \(title\) =>/, '슬러그 함수');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /select case when ch is null then public\.msgr_is_admin\(org\)\n\s*else public\.msgr_can_write_channel\(ch\) and exists/, '서버 편집권');
@@ -446,7 +447,7 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   assert.match(app, /className="vault-tab-x" onClick=\{\(e\) => \{ e\.stopPropagation\(\); closeTab\(pane\.id, tb\.id\); \}\}/, '탭 닫기(창 단위)');
   assert.match(app, /^function ActRow\(\{ c, id, label, sub, depth = 0, kids = null, icon = null \}\) \{/m, '트리 행은 모듈 수준 컴포넌트(안에서 정의하면 클릭마다 리마운트)');
   assert.doesNotMatch(app.slice(app.indexOf('function Activity(')), /const Row = \(/, 'Activity 안에 행 컴포넌트를 정의하지 않는다');
-  assert.match(app, /\}, \[org\.id, channels\.map\(\(c\) => c\.id\)\.join\(','\)\]\);/, '감사 재조회는 채널 id 목록 키(배열 정체 아님)');
+  assert.match(app, /const chKey = channels\.map\(\(c\) => c\.id\)\.join\(','\);\n\s*const load = useCallback\(/, '재조회는 채널 id 목록 키(배열 정체 아님) + 저장 뒤 재사용');
   assert.match(app, /onAuxClick=\{\(e\) => \{ if \(e\.button === 1\) \{ e\.preventDefault\(\); closeTab\(pane\.id, tb\.id\); \} \}\}/, '가운데 클릭 닫기(창 단위)');
   assert.match(app, /const closeAll = \(paneId\) => keepIn\(paneId, \(\) => false\);/, '모두 닫기(창 단위)');
   assert.match(app, /onSelectDoc=\{\(rel\) => openEntity\(relOfDoc\(rel\), \{ split: true \}\)\}/, '그래프 노드 클릭 = 옆 창에 열기(아르고 기억 페이지와 같은 모양)');

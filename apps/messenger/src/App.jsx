@@ -362,7 +362,6 @@ function Shell({ session }) {
         <div className="msgr-foot">
           <Av name={me?.display_name || session.user.email} size="sm" />
           <span className="name">{me?.display_name || session.user.email}</span>
-          <button type="button" className={`btn ghost${page === 'docs' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'docs' ? 'chat' : 'docs'); setRail(false); }} title={t('docs.title')} aria-label={t('docs.title')} aria-pressed={page === 'docs'} disabled={!org}><I name="doc" size={15} /></button>
           {org && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="memory" size={15} /></button>}
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
           <button type="button" className="btn ghost" onClick={() => supabase.auth.signOut({ scope: 'local' })} title={t('auth.signOut')} aria-label={t('auth.signOut')}><I name="out" size={15} /></button>
@@ -380,9 +379,7 @@ function Shell({ session }) {
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
         {page === 'activity' && org ? (
-          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
-        ) : page === 'docs' && org ? (
-          <Docs org={org} isAdmin={!!isAdmin} channels={channels} chId={chId} uid={uid} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
@@ -774,6 +771,59 @@ const ACT_KIND = { 'org.create': 'org', 'org.transfer': 'org', 'org.transfer.off
   'member.add': 'member', 'member.role': 'member', 'member.remove': 'member', 'member.delete': 'member', 'member.offboard': 'member', 'member.join.domain': 'member', 'invite.accept': 'member',
   'channel.admins': 'channel', 'channel.personal_crews': 'channel', 'crew.create': 'crew', 'approval.approved': 'approval', 'approval.rejected': 'approval', 'approval.pending': 'approval', 'policy.update': 'org',
   'doc.insert': 'doc', 'doc.update': 'doc', 'doc.delete': 'doc', 'doc.proposal.applied': 'doc', 'node.bootstrap': 'org' };
+/* 기억 문서 보기·편집(대상 탭) — 조직 문서 = 조직의 기억(부록 G). 편집권 최종 판정은 RLS(전사=관리자·채널=쓰기 가능 멤버) */
+function MemDoc({ doc, isAdmin, nameOfUser, chName, onSaved, onNote, onError }) {
+  const { t, lang } = useT();
+  const [edit, setEdit] = useState(null); const [busy, setBusy] = useState(false);
+  useEffect(() => { setEdit(null); }, [doc.id]);
+  const canEdit = (d) => d.channel_id ? true : isAdmin;
+  const save = async () => {
+    setBusy(true);
+    const res = await supabase.from('msgr_org_docs').update({ title: edit.title.trim(), body: edit.body }).eq('id', doc.id).select('id');
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    if (!res.data?.length) return onError(t('docs.noEdit'));
+    onNote(t('docs.saved')); setEdit(null); await onSaved();
+  };
+  return (
+    <article className="msgr-memdoc">
+      <header>
+        <span className="msgr-klabel">{doc.channel_id ? `#${chName(doc.channel_id)} · ${doc.path}` : doc.path}</span>
+        {edit ? <input className="msgr-input" value={edit.title} onChange={(e) => setEdit((x) => ({ ...x, title: e.target.value }))} /> : <h2>{doc.title}</h2>}
+        <div className="meta">{t('docs.meta', { v: doc.version, name: nameOfUser(doc.updated_by), when: fmtTs(doc.updated_at, lang) })}
+          {!edit && canEdit(doc) && <button type="button" className="btn sm" onClick={() => setEdit({ title: doc.title, body: doc.body ?? '' })}>{t('docs.edit')}</button>}
+          {!edit && !canEdit(doc) && <span className="note">{t('docs.adminOnly')}</span>}
+        </div>
+      </header>
+      {edit ? (<>
+        <textarea className="msgr-input body" value={edit.body} onChange={(e) => setEdit((x) => ({ ...x, body: e.target.value }))} rows={16} />
+        <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !edit.title.trim()} onClick={save}><I name="check" size={13} />{t('ui.save')}</button><button type="button" className="btn sm" disabled={busy} onClick={() => setEdit(null)}>{t('ui.cancel')}</button></div>
+      </>) : (doc.body ? <div className="msgr-sheet"><Markdown text={doc.body} /></div> : <p className="empty">{t('docs.blank')}</p>)}
+    </article>
+  );
+}
+/* 새 기억 — 범위(전사/채널)는 열린 탭이 정한다. 종류(규칙집·용어집·프로젝트)만 고른다 */
+function MemNew({ org, channelId, uid, onCreated, onNote, onError, onCancel }) {
+  const { t } = useT();
+  const [creating, setCreating] = useState({ folder: channelId ? 'projects' : 'rules', title: '' }); const [busy, setBusy] = useState(false);
+  const create = async () => {
+    const title = creating.title.trim(); if (!title) return;
+    setBusy(true);
+    const res = await supabase.from('msgr_org_docs').insert({ org_id: org.id, channel_id: channelId ?? null, path: `${creating.folder}/${docSlug(title)}.md`, title, body: '', created_by: uid, updated_by: uid }).select('id, path').single();
+    setBusy(false);
+    if (res.error) return onError(/duplicate key|msgr_org_docs_path/.test(res.error.message) ? t('docs.dup') : res.error.message);
+    onNote(t('docs.created')); await onCreated(res.data);
+  };
+  return (
+    <div className="msgr-memnew">
+      <div className="row"><span className="msgr-klabel">{t('docs.folder')}</span>
+        <div className="msgr-seg" role="radiogroup" aria-label={t('docs.folder')}>{DOC_FOLDERS.map((f) => <button key={f} type="button" role="radio" aria-checked={creating.folder === f} className={creating.folder === f ? 'active' : ''} onClick={() => setCreating((c) => ({ ...c, folder: f }))}>{t(`docs.folder.${f}`)}</button>)}</div></div>
+      <input className="msgr-input" placeholder={t('docs.new.placeholder')} value={creating.title} onChange={(e) => setCreating((c) => ({ ...c, title: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} autoFocus />
+      <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !creating.title.trim()} onClick={create}><I name="check" size={13} />{t('docs.create')}</button><button type="button" className="btn sm" onClick={onCancel}>{t('ui.cancel')}</button></div>
+    </div>
+  );
+}
+
 /* 활동 트리 행 — Activity 밖 모듈 수준(안에서 정의하면 렌더마다 새 컴포넌트 타입이라 클릭마다 트리가 리마운트된다, 유건 제보 2026-09-04) */
 function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
   const { openIds, toggle, sel, active, openTab } = c; const has = !!kids; const open = openIds.has(id);
@@ -789,7 +839,7 @@ function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
   );
 }
 
-function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onError, onBack, onMenu, onOpenChannel }) {
+function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onNote, onError, onBack, onMenu, onOpenChannel }) {
   const { t, lang } = useT();
   const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
   // 창(pane)·탭 — 아르고 기억 페이지와 같은 모양: 그래프 노드를 누르면 옆 창(새 창)에 열리고, 트리는 포커스 창에 연다(유건 지시 2026-09-04)
@@ -838,20 +888,18 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
   const closeOthers = (paneId, id) => keepIn(paneId, (x) => x.id === id, id);
   const closeRight = (paneId, id) => setPanes((prev) => { const next = prev.map((p) => ({ ...p, tabs: [...p.tabs] })); const pane = next.find((p) => p.id === paneId); if (!pane) return prev; const k = pane.tabs.findIndex((x) => x.id === id); pane.tabs = pane.tabs.slice(0, k + 1); if (!pane.tabs.some((x) => x.id === pane.active)) pane.active = id; return next; });
   const closeAll = (paneId) => keepIn(paneId, () => false);
-  useEffect(() => {
-    let on = true;
-    (async () => {
-      try {
-        const [a, d, m] = await Promise.all([
-          q(supabase.from('msgr_audit_log').select('id, actor_user_id, actor_crew_id, action, target_kind, target_id, meta, at').eq('org_id', org.id).order('at', { ascending: false }).limit(400)).catch(() => []), // 감사 열람은 관리자(RLS) — 멤버는 빈 목록 + 안내
-          q(supabase.from('msgr_org_docs').select('id, channel_id, path, title').eq('org_id', org.id)).catch(() => []),
-          channels.length ? q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', channels.map((c) => c.id))).catch(() => []) : [],
-        ]);
-        if (on) { setRows(a); setDocs(d); setCm(m); }
-      } catch (e) { if (on) onError(e.message); }
-    })();
-    return () => { on = false; };
-  }, [org.id, channels.map((c) => c.id).join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chKey = channels.map((c) => c.id).join(',');
+  const load = useCallback(async () => {
+    const [a, d, m] = await Promise.all([
+      q(supabase.from('msgr_audit_log').select('id, actor_user_id, actor_crew_id, action, target_kind, target_id, meta, at').eq('org_id', org.id).order('at', { ascending: false }).limit(400)).catch(() => []), // 감사 열람은 관리자(RLS) — 멤버는 빈 목록
+      q(supabase.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_by, updated_at').eq('org_id', org.id).order('path')).catch(() => []), // 본문까지 — 문서 탭·[[링크]] 그래프
+      channels.length ? q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', channels.map((c) => c.id))).catch(() => []) : [],
+    ]);
+    setRows(a); setDocs(d); setCm(m);
+  }, [org.id, chKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [creating, setCreating] = useState(null); // 새 기억 폼이 열린 대상(rel)
+  const docRelOf = (d) => `docs/${d.path.replace(/\.md$/, '')}`;
   const chName = (id) => channels.find((c) => c.id === id)?.name ?? t('act.deletedChannel');
   const crewName = (id) => crews.find((c) => c.id === id)?.display_name ?? t('act.deletedCrew');
   const docTitle = (id) => docs.find((d) => d.id === id)?.title ?? null;
@@ -871,7 +919,8 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
     }
     for (const m of members) out.push({ rel: `${peopleRel(m.user_id)}.md`, title: m.display_name || m.user_id.slice(0, 8), dir: 'notes', links: [] });
     for (const c of crews) out.push({ rel: `${crewRel(c)}.md`, title: c.display_name, dir: 'doc', links: [peopleRel(c.owner_user_id)] });
-    for (const d of docs) out.push({ rel: `${docRel(d)}.md`, title: d.title, dir: 'doc', links: d.channel_id ? [] : [`org/${org.slug}`] });
+    const wikiLinks = (body) => [...String(body ?? '').matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim()); // 본문의 [[제목]]이 기억 사이 엣지(아르고 vault와 같은 문법)
+    for (const d of docs) out.push({ rel: `${docRel(d)}.md`, title: d.title, dir: 'doc', links: [...wikiLinks(d.body), ...(d.channel_id ? [] : [`org/${org.slug}`])] });
     return out;
   }, [org, channels, members, crews, docs, cm]);
   // 선택 대상과 행의 관계
@@ -961,7 +1010,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
                   </div>
                 ); })}
                 <span style={{ flex: 1 }} />
-                {cur.kind === 'entity' && panes.length < MAX_PANES && <button type="button" className="msgr-tabact" title={t('act.tab.openSide')} onClick={() => openEntity(cur.rel, { split: true })}>⫿</button>}
+                {cur.kind === 'entity' && panes.length < MAX_PANES && <button type="button" className="msgr-tabact" onClick={() => openEntity(cur.rel, { split: true })}>{t('act.tab.openSide')}</button>}
                 {(pane.tabs.length > 1 || panes.length > 1) && <button type="button" className="msgr-tabact" onClick={() => closeAll(pane.id)}>{t('act.tab.closeAll')}</button>}
               </div>
               {tabMenu && tabMenu.paneId === pane.id && <>
@@ -978,19 +1027,42 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
                   <Graph3D key="all" docs={gdocs} hint={t('act.graph.hint')} onSelectDoc={(rel) => openEntity(relOfDoc(rel), { split: true })} />
                 ) : (
                   <div className="msgr-actlist">
-                    <div className="head"><h3>{sel === 'org' ? t('act.all') : t('act.of', { name: entityTitle(sel) })}</h3><span className="sub">{ev.list.length}</span>
-                      {sel.startsWith('channels/') && <button type="button" className="btn sm" onClick={() => { const c = channels.find((x) => `channels/${x.name}` === sel); if (c) onOpenChannel(c.id); }}><I name="hash" size={12} />{t('act.openChannel')}</button>}
-                    </div>
-                    <div className="msgr-actlocal"><Graph3D key={sel} docs={gdocs} compact focusRel={sel === 'org' ? `org/${org.slug}.md` : `${sel}.md`} onSelectDoc={(rel) => openEntity(relOfDoc(rel))} height={260} /></div>
-                    {rows === null && <p className="empty">…</p>}
-                    {rows !== null && !ev.list.length && <p className="empty">{isAdmin ? t('act.empty') : t('act.adminOnly')}</p>}
-                    {ev.days.map((g) => (
-                      <div key={g.d} className="day">
-                        <div className="daylabel">{fmtDay(g.at, lang).join(' · ')}</div>
-                        {g.rows.map((r) => <div key={r.id} className="item"><span className="when">{fmtTs(r.at, lang)}</span><span className="text">{sentence(r)}</span></div>)}
-                      </div>
-                    ))}
-                    {ev.list.length > ev.shown.length && <div className="row"><button type="button" className="btn sm" onClick={() => setLimits((m) => ({ ...m, [sel]: limitOf(sel) + 60 }))}>{t('act.more')}</button></div>}
+                    {(() => {
+                      const doc = sel.startsWith('docs/') ? docs.find((d) => docRelOf(d) === sel) : null;
+                      const ch = sel.startsWith('channels/') ? channels.find((x) => `channels/${x.name}` === sel) : null;
+                      const scopeDocs = doc ? [] : sel === 'org' ? docs.filter((d) => !d.channel_id) : ch ? docs.filter((d) => d.channel_id === ch.id) : sel.startsWith('people/') ? docs.filter((d) => d.updated_by === sel.slice(7)) : [];
+                      const canNew = sel === 'org' ? isAdmin : !!ch;
+                      return (<>
+                        {!doc && <div className="head"><h3>{sel === 'org' ? t('mem.all') : t('mem.of', { name: entityTitle(sel) })}</h3><span className="sub">{scopeDocs.length}</span>
+                          {ch && <button type="button" className="btn sm" onClick={() => onOpenChannel(ch.id)}><I name="hash" size={12} />{t('act.openChannel')}</button>}
+                          {canNew && creating !== sel && <button type="button" className="btn sm" onClick={() => setCreating(sel)}><I name="plus" size={12} />{t('mem.new')}</button>}
+                        </div>}
+                        {!doc && <div className="msgr-actlocal"><Graph3D key={sel} docs={gdocs} compact focusRel={sel === 'org' ? `org/${org.slug}.md` : `${sel}.md`} onSelectDoc={(rel) => openEntity(relOfDoc(rel))} height={260} /></div>}
+                        {creating === sel && <MemNew org={org} channelId={ch?.id ?? null} uid={uid} onNote={onNote} onError={onError} onCancel={() => setCreating(null)} onCreated={async (d) => { setCreating(null); await load(); openEntity(`docs/${d.path.replace(/\.md$/, '')}`); }} />}
+                        {doc ? <MemDoc doc={doc} isAdmin={isAdmin} nameOfUser={nameOfUser} chName={chName} onSaved={load} onNote={onNote} onError={onError} /> : (
+                          <div className="msgr-memlist">
+                            {!scopeDocs.length && creating !== sel && <p className="empty">{sel.startsWith('people/') || sel.startsWith('crews/') ? t('mem.none.person') : t('mem.none')}</p>}
+                            {DOC_FOLDERS.map((f) => { const fs = scopeDocs.filter((d) => d.path.startsWith(`${f}/`)); return fs.length ? (
+                              <div key={f} className="folder"><div className="msgr-klabel">{t(`docs.folder.${f}`)}</div>
+                                {fs.map((d) => <button key={d.id} type="button" className="memitem" onClick={(e) => openEntity(docRelOf(d), { split: !!(e.metaKey || e.altKey) })}><I name="doc" size={13} /><span className="name">{d.title}</span><span className="meta">{d.channel_id ? `#${chName(d.channel_id)} · ` : ''}v{d.version} · {nameOfUser(d.updated_by)}</span></button>)}
+                              </div>) : null; })}
+                          </div>
+                        )}
+                        {isAdmin && (
+                          <details className="msgr-actfold">
+                            <summary>{t('mem.activity')}<span className="sub">{ev.list.length}</span></summary>
+                            {rows !== null && !ev.list.length && <p className="empty">{t('act.empty')}</p>}
+                            {ev.days.map((g) => (
+                              <div key={g.d} className="day">
+                                <div className="daylabel">{fmtDay(g.at, lang).join(' · ')}</div>
+                                {g.rows.map((r) => <div key={r.id} className="item"><span className="when">{fmtTs(r.at, lang)}</span><span className="text">{sentence(r)}</span></div>)}
+                              </div>
+                            ))}
+                            {ev.list.length > ev.shown.length && <div className="row"><button type="button" className="btn sm" onClick={() => setLimits((m) => ({ ...m, [sel]: limitOf(sel) + 60 }))}>{t('act.more')}</button></div>}
+                          </details>
+                        )}
+                      </>);
+                    })()}
                   </div>
                 )}
               </div>
@@ -1005,91 +1077,6 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
 /* ─── 조직 문서(G-1): 전사(rules/·glossary/·projects/) + 채널 범위. 정본은 서버, 편집권은 RLS(msgr_can_edit_doc) — 화면은 힌트만 ─── */
 const DOC_FOLDERS = ['rules', 'glossary', 'projects'];
 export const docSlug = (title) => { const s = String(title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60); return s || `doc-${Date.now().toString(36)}`; }; // 한글 제목은 시간 기반 슬러그(경로 규칙은 영문·숫자만)
-function Docs({ org, isAdmin, channels, chId, uid, nameOfUser, onNote, onError, onBack, onMenu }) {
-  const { t, lang } = useT();
-  const [docs, setDocs] = useState([]); const [sel, setSel] = useState(null); const [full, setFull] = useState(null);
-  const [edit, setEdit] = useState(null); const [busy, setBusy] = useState(false); const [creating, setCreating] = useState(null); // creating: { scope:'org'|channelId, folder, title }
-  const load = useCallback(async () => {
-    const rows = await q(supabase.from('msgr_org_docs').select('id, channel_id, path, title, version, updated_by, updated_at').eq('org_id', org.id).order('path'));
-    setDocs(rows); setSel((cur) => cur && rows.some((d) => d.id === cur) ? cur : (rows[0]?.id ?? null));
-  }, [org.id]);
-  useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { // 본문은 선택할 때만
-    if (!sel) { setFull(null); return; }
-    let on = true;
-    supabase.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_by, updated_at').eq('id', sel).maybeSingle().then((r) => { if (on) { setFull(r.data ?? null); setEdit(null); } });
-    return () => { on = false; };
-  }, [sel]);
-  const chName = (id) => channels.find((c) => c.id === id)?.name ?? '?';
-  const canEdit = (d) => d.channel_id ? true : isAdmin; // 채널 문서는 채널 멤버 누구나(최종 판정은 RLS), 전사는 관리자
-  const orgDocs = docs.filter((d) => !d.channel_id); const chDocs = docs.filter((d) => d.channel_id);
-  const save = async () => {
-    setBusy(true);
-    const res = await supabase.from('msgr_org_docs').update({ title: edit.title.trim(), body: edit.body }).eq('id', full.id).select('id');
-    setBusy(false);
-    if (res.error) return onError(res.error.message);
-    if (!res.data?.length) return onError(t('docs.noEdit'));
-    onNote(t('docs.saved')); setEdit(null); await load(); setSel(null); setTimeout(() => setSel(full.id), 0);
-  };
-  const create = async () => {
-    const title = creating.title.trim(); if (!title) return;
-    setBusy(true);
-    const channel_id = creating.scope === 'org' ? null : creating.scope;
-    const res = await supabase.from('msgr_org_docs').insert({ org_id: org.id, channel_id, path: `${creating.folder}/${docSlug(title)}.md`, title, body: '', created_by: uid, updated_by: uid }).select('id').single();
-    setBusy(false);
-    if (res.error) return onError(/duplicate key|msgr_org_docs_path/.test(res.error.message) ? t('docs.dup') : res.error.message);
-    onNote(t('docs.created')); setCreating(null); await load(); setSel(res.data.id);
-  };
-  const scopes = [['org', t('docs.scope.org')], ...channels.filter((c) => c.kind !== 'dm').map((c) => [c.id, `#${c.name}`])];
-  return (<>
-    <div className="msgr-top">
-      <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
-      <span className="title"><I name="doc" size={18} />{t('docs.title')}</span>
-      <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
-    </div>
-    <div className="msgr-thread page"><div className="msgr-docs">
-      <aside className="list">
-        <div className="head"><span className="msgr-klabel">{t('docs.scope.org')}</span>{isAdmin && <button type="button" className="btn sm" onClick={() => setCreating({ scope: 'org', folder: 'rules', title: '' })}><I name="plus" size={12} />{t('docs.new')}</button>}</div>
-        {!orgDocs.length && <p className="empty">{t('docs.empty.org')}</p>}
-        {orgDocs.map((d) => <button key={d.id} type="button" className={`item${sel === d.id ? ' on' : ''}`} onClick={() => setSel(d.id)}><span className="path">{d.path}</span><span className="name">{d.title}</span></button>)}
-        <div className="head"><span className="msgr-klabel">{t('docs.scope.channel')}</span>{chId && <button type="button" className="btn sm" onClick={() => setCreating({ scope: chId, folder: 'projects', title: '' })}><I name="plus" size={12} />{t('docs.new')}</button>}</div>
-        {!chDocs.length && <p className="empty">{t('docs.empty.channel')}</p>}
-        {chDocs.map((d) => <button key={d.id} type="button" className={`item${sel === d.id ? ' on' : ''}`} onClick={() => setSel(d.id)}><span className="path">#{chName(d.channel_id)} · {d.path}</span><span className="name">{d.title}</span></button>)}
-      </aside>
-      <section className="doc">
-        {creating && (
-          <div className="new">
-            <h2>{t('docs.new.title')}</h2>
-            <div className="row"><span className="msgr-klabel">{t('docs.scope')}</span>
-              <div className="msgr-seg" role="radiogroup" aria-label={t('docs.scope')}>{scopes.map(([v, l]) => <button key={v} type="button" role="radio" aria-checked={creating.scope === v} className={creating.scope === v ? 'active' : ''} disabled={v === 'org' && !isAdmin} onClick={() => setCreating((c) => ({ ...c, scope: v }))}>{l}</button>)}</div></div>
-            <div className="row"><span className="msgr-klabel">{t('docs.folder')}</span>
-              <div className="msgr-seg" role="radiogroup" aria-label={t('docs.folder')}>{DOC_FOLDERS.map((f) => <button key={f} type="button" role="radio" aria-checked={creating.folder === f} className={creating.folder === f ? 'active' : ''} onClick={() => setCreating((c) => ({ ...c, folder: f }))}>{t(`docs.folder.${f}`)}</button>)}</div></div>
-            <input className="msgr-input" placeholder={t('docs.new.placeholder')} value={creating.title} onChange={(e) => setCreating((c) => ({ ...c, title: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Enter') create(); }} autoFocus />
-            <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !creating.title.trim()} onClick={create}><I name="check" size={13} />{t('docs.create')}</button><button type="button" className="btn sm" onClick={() => setCreating(null)}>{t('ui.cancel')}</button></div>
-          </div>
-        )}
-        {!creating && !full && <p className="empty">{docs.length ? t('docs.pick') : t('docs.empty.all')}</p>}
-        {!creating && full && (
-          <article>
-            <header>
-              <div><span className="msgr-klabel">{full.channel_id ? `#${chName(full.channel_id)} · ${full.path}` : full.path}</span></div>
-              {edit ? <input className="msgr-input" value={edit.title} onChange={(e) => setEdit((x) => ({ ...x, title: e.target.value }))} /> : <h2>{full.title}</h2>}
-              <div className="meta">{t('docs.meta', { v: full.version, name: nameOfUser(full.updated_by), when: fmtTs(full.updated_at, lang) })}
-                {!edit && canEdit(full) && <button type="button" className="btn sm" onClick={() => setEdit({ title: full.title, body: full.body })}>{t('docs.edit')}</button>}
-                {!edit && !canEdit(full) && <span className="note">{t('docs.adminOnly')}</span>}
-              </div>
-            </header>
-            {edit ? (<>
-              <textarea className="msgr-input body" value={edit.body} onChange={(e) => setEdit((x) => ({ ...x, body: e.target.value }))} rows={16} />
-              <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !edit.title.trim()} onClick={save}><I name="check" size={13} />{t('ui.save')}</button><button type="button" className="btn sm" disabled={busy} onClick={() => setEdit(null)}>{t('ui.cancel')}</button></div>
-            </>) : (full.body ? <div className="msgr-sheet"><Markdown text={full.body} /></div> : <p className="empty">{t('docs.blank')}</p>)}
-          </article>
-        )}
-      </section>
-    </div></div>
-  </>);
-}
-
 /* ─── F2-3 본인 표시명 편집(RLS msgr_members_update_self — 역할·제거 표시는 트리거가 막는다) ─── */
 function DisplayNameRow({ org, me, onChanged, onNote, onError }) {
   const { t } = useT();
