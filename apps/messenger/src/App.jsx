@@ -330,10 +330,10 @@ function Shell({ session }) {
                   <div className="msgr-rowmenu" role="menu" onClick={(e) => e.stopPropagation()}>
                     <button type="button" role="menuitem" onClick={() => { setRailMenu(null); setChId(c.id); setPage('chat'); setRail(false); setChSheet(true); }}><I name="gear" size={13} />{t('ch.menu.settings')}</button>
                     {c.kind === 'private' && (railConfirm === `leave:${c.id}`
-                      ? <button type="button" role="menuitem" className="danger" onClick={() => leaveChannel(c)}><I name="out" size={13} />{t('ch.leave.confirm')}</button>
+                      ? <button type="button" role="menuitem" className="danger confirm" onClick={() => leaveChannel(c)}><I name="out" size={13} /><span className="cf">{t('ch.leave.confirm')}<span className="note">{t('ch.leave.confirm.note')}</span></span></button>
                       : <button type="button" role="menuitem" onClick={() => setRailConfirm(`leave:${c.id}`)}><I name="out" size={13} />{t('ch.leave')}</button>)}
                     {canManage && (railConfirm === `archive:${c.id}`
-                      ? <button type="button" role="menuitem" className="danger" onClick={() => archiveChannel(c)}><I name="x" size={13} />{t('ch.archive.confirm.short')}</button>
+                      ? <button type="button" role="menuitem" className="danger confirm" onClick={() => archiveChannel(c)}><I name="x" size={13} /><span className="cf">{t('ch.archive.confirm.short')}<span className="note">{t('ch.archive.confirm.note')}</span></span></button>
                       : <button type="button" role="menuitem" onClick={() => setRailConfirm(`archive:${c.id}`)}><I name="x" size={13} />{t('ch.archive')}</button>)}
                   </div>
                 )}
@@ -350,7 +350,7 @@ function Shell({ session }) {
               {open && (
                 <div className="msgr-rowmenu" role="menu" onClick={(e) => e.stopPropagation()}>
                   {railConfirm === `leave:${c.id}`
-                    ? <button type="button" role="menuitem" className="danger" onClick={() => leaveChannel(c)}><I name="out" size={13} />{t('dm.leave.confirm')}</button>
+                    ? <button type="button" role="menuitem" className="danger confirm" onClick={() => leaveChannel(c)}><I name="out" size={13} /><span className="cf">{t('dm.leave.confirm')}<span className="note">{t('dm.leave.confirm.note')}</span></span></button>
                     : <button type="button" role="menuitem" onClick={() => setRailConfirm(`leave:${c.id}`)}><I name="out" size={13} />{t('dm.leave')}</button>}
                 </div>
               )}
