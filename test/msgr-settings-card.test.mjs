@@ -79,7 +79,7 @@ test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 
   assert.match(pc, /: <p className="note">\{t\('set\.policy\.adminOnly'\)\}<\/p>\}/, '비관리자 안내가 없다');
   assert.match(pc, /\{t\('set\.policy\.limit'\)\}/, '개인 PC 크루 한계 정직 표기가 없다');
   const settings = app.slice(app.indexOf('function Settings('), app.indexOf('function PolicyCard('));
-  assert.match(settings, /\{org && policy && <PolicyCard org=\{org\} isAdmin=\{isAdmin\} policy=\{policy\}/, '설정 페이지에 정책 카드가 없다');
+  assert.match(settings, /\{policy && <PolicyCard org=\{org\} isAdmin=\{isAdmin\} policy=\{policy\}/, '설정 페이지(크루와 서버 탭)에 정책 카드가 없다');
   for (const k of ['set.policy', 'set.policy.desc', 'set.policy.allow', 'set.policy.memory', 'set.policy.lock', 'set.policy.limit', 'set.policy.saved', 'set.policy.adminOnly', 'crew.allow.locked', 'ch.memory.locked', 'err.policyLocked']) {
     assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   }
@@ -239,17 +239,18 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   assert.match(dn, /from\('msgr_org_members'\)\.update\(\{ display_name: name\.trim\(\) \|\| null \}\)\.eq\('org_id', org\.id\)\.eq\('user_id', me\.user_id\)\.select\('user_id'\)/, '본인 표시명 갱신');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
   assert.match(oc, /from\('msgr_orgs'\)\.update\(\{ name: name\.trim\(\) \}\)\.eq\('id', org\.id\)\.select\('id'\)/, '조직 이름');
-  assert.match(oc, /const canEdit = !isMe && m\.role !== 'owner';/, '본인·소유자 행은 편집 불가');
+  assert.match(oc, /const canEdit = !isMe && !isSvc && m\.role !== 'owner';/, '본인·소유자·서버 계정 행은 편집 불가');
   assert.match(oc, /\{canEdit && confirmRemove === m\.user_id && <span className="confirm-inline">/, '제거 2단계');
   assert.match(oc, /update\(\{ removed_at: new Date\(\)\.toISOString\(\) \}\)/, '제거 = removed_at(삭제 아님, 발언 유지)');
-  assert.match(oc, /from\('msgr_invites'\)\.insert\(\{ org_id: org\.id, role: inviteRole, created_by: uid \}\)\.select\('code'\)\.single\(\)/, '초대 만들기(역할)');
+  assert.match(oc, /const makeInvite = async \(role = 'member'\) => \{[\s\S]*?insert\(\{ org_id: org\.id, role, created_by: uid \}\)/, '초대 만들기(역할 인자)');
   assert.match(oc, /from\('msgr_invites'\)\.delete\(\)\.eq\('id', inv\.id\)\.select\('id'\)/, '초대 취소');
   assert.match(oc, /from\('msgr_audit_log'\)\.select\([^)]*\)\.eq\('org_id', org\.id\)\.order\('at', \{ ascending: false \}\)\.limit\(50\)/, '감사 50건');
   assert.match(app, /const notifyMention = \(payload\) => \{[\s\S]*?if \(!payload \|\| payload\.author_user_id === r\.uid\) return;[\s\S]*?m\?\.kind === 'user' && m\.id === r\.uid/, '멘션 알림: 자기 글 제외·나를 부른 것만');
   assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; return document\.visibilityState === 'hidden' \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널은 알리지 않는다');
   assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/, '결재 알림은 관리자·대기 중만');
   assert.match(app, /Notification\.permission !== 'granted'\) return;/, '권한 없으면 조용히');
-  assert.match(app, /\{org && isAdmin && <OrgCard org=\{org\} uid=\{uid\} members=\{members\}/, '조직 카드는 관리자만');
+  assert.match(app, /\{tab === 'org' && org && \(isAdmin\s*\? <OrgCard part="org"/, '조직 카드는 관리자만(조직 탭)');
+  assert.match(app, /\{tab === 'members' && org && \(isAdmin\s*\? <OrgCard part="members"/, '멤버 탭은 관리자 편집·멤버 읽기');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /create policy msgr_members_update_self on public\.msgr_org_members for update to authenticated\n\s*using \(user_id = \(select auth\.uid\(\)\) and removed_at is null\)/, '본인 갱신 정책');
   assert.match(sql, /raise exception 'msgr_member_self_only_name'/, '본인은 역할·제거 표시 변경 불가');
@@ -271,7 +272,7 @@ test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·
   const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
   assert.match(pc, /\['admin', 'approvers', 'owner'\]\.map/, '정책 세그먼트 3옵션');
   assert.match(pc, /approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)/, '결재권자 저장');
-  assert.match(pc, /members\.filter\(\(m\) => m\.role !== 'owner' && m\.role !== 'guest'\)\.map/, '결재권자 후보에서 게스트 제외(공개 채널 열람 불가)');
+  assert.match(pc, /members\.filter\(\(m\) => m\.role !== 'owner' && m\.role !== 'guest' && m\.user_id !== org\.service_user_id\)\.map/, '결재권자 후보에서 게스트·서버 계정 제외');
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /c\.created_by = auth\.uid\(\) or auth\.uid\(\) = any \(c\.admin_user_ids\) or \(c\.kind <> 'dm' and coalesce\(public\.msgr_is_admin\(c\.org_id\), false\)\)/, '채널 관리 판정');
   assert.match(sql, /raise exception 'msgr_channel_admins_owner_only'/, '관리자 자기 증식 방지');
@@ -314,12 +315,12 @@ test('I-5 회사 크루 만들기 — 정책 crew_create 세그먼트·저장, �
 test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 대상은 관리자 칩, 당사자에게 수락/거절, 잠금은 배너+보내기 비활성, 서버 함수·가드', () => {
   const app = read('apps/messenger/src/App.jsx');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
-  assert.match(oc, /const admins = members\.filter\(\(m\) => m\.role === 'admin'\);/, '대상은 관리자만');
+  assert.match(oc, /const admins = members\.filter\(\(m\) => m\.role === 'admin' && m\.user_id !== org\.service_user_id\);/, '대상은 관리자만(서버 계정 제외)');
   assert.match(oc, /const iAmNominee = org\.pending_owner_user_id === uid;/, '당사자 판정');
   assert.match(oc, /t\('org\.transfer\.offered', \{ name: nameOfUser\(org\.owner_user_id\) \}\)/, '제안자 이름은 조직 행의 owner_user_id(실측: 미조회면 ?)');
   assert.match(oc, /onClick=\{\(\) => patchOrg\(\{ owner_user_id: uid \}, t\('org\.transfer\.accepted'\)\)\}/, '수락 = 자기로 owner 갱신(서버 트리거가 검증)');
-  assert.match(oc, /onClick=\{\(\) => patchOrg\(\{ pending_owner_user_id: m\.user_id \}, /, '제안');
-  assert.match(oc, /patchOrg\(\{ successor_user_id: on \? null : m\.user_id \}, /, '승계 토글');
+  assert.match(oc, /patchOrg\(\{ pending_owner_user_id: transfer \}, t\('org\.transfer\.sent'/, '제안(확인 문장 뒤 넘기기)');
+  assert.ok(!/successor_user_id/.test(oc), '승계 관리자 지정 UI는 자동 승계가 생기기 전까지 숨김(유건 UX 지시 2026-09-04)');
   assert.match(app, /const orgLocked = ent\?\.ls_status === 'past_due' \|\| ent\?\.ls_status === 'unpaid';/, '잠금 판정(서버 msgr_org_locked와 같은 규칙)');
   assert.match(app, /\{orgLocked && <div className="msgr-notice locked">/, '잠금 배너');
   assert.match(app, /disabled=\{busy \|\| locked \|\| !text\.trim\(\)\}/, '잠금이면 보내기 비활성');
@@ -335,7 +336,7 @@ test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 �
 test('J-3 도메인 자동 가입 — 소유자 도메인 행·저장 모양·오류 문구 분기, 메뉴·빈 화면의 가입 후보는 RPC 결과, 서버 가드·RPC', () => {
   const app = read('apps/messenger/src/App.jsx');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
-  assert.match(oc, /update\(\{ auto_join_domain: domain\.trim\(\)\.toLowerCase\(\) \|\| null, auto_join_role: domainRole \}\)/, '저장 모양(빈 값 = 끄기)');
+  assert.match(oc, /patchOrg\(\{ auto_join_domain: domainOn \? null : myDomain, auto_join_role: 'member' \}/, '토글 = 내 이메일 도메인 켜고 끄기(입력 없음)');
   assert.match(oc, /msgr_domain_public.*org\.domain\.public.*msgr_domain_not_owners.*org\.domain\.notOwners/, '서버 거절 사유 → 문구');
   assert.match(app, /setJoinable\(await q\(supabase\.rpc\('msgr_joinable_orgs'\)\)\.catch\(\(\) => \[\]\)\);/, '가입 후보는 서버 RPC');
   assert.match(app, /await q\(supabase\.rpc\('msgr_join_by_domain', \{ org: o\.id \}\)\)/, '가입은 RPC로만');
@@ -389,7 +390,8 @@ test('검수 반영(코드) — 삭제 조직 목록 제외, 오류 문구 매�
   assert.match(app, /rows\.filter\(\(r\) => r\.msgr_orgs && !r\.msgr_orgs\.deleted_at\)/, 'M-3');
   assert.match(app, /const friendlyErr = \(msg, t\) => \/row-level security\/\.test\(msg\) \? t\('err\.denied'\)/, 'M-5 매핑');
   assert.ok((app.match(/onError\(friendlyErr\(res\.error\.message, t\)\)/g) || []).length >= 4, 'M-5 적용 4곳 이상');
-  assert.match(app, /aria-label=\{t\('org\.invite\.role'\)\}>\{INVITE_ROLES\.map\(/, 'L-3 초대 역할');
+  assert.match(app, /onClick=\{\(\) => makeInvite\('admin'\)\}/, 'L-3 초대는 멤버·관리자 두 버튼');
+  assert.ok(!/makeInvite\('guest'\)/.test(app), 'L-3 조직 전체 게스트 초대 없음');
   assert.ok(!/&& false\)\}/.test(app), 'L-5 죽은 조건 제거');
   const persona = read('src/persona.mjs');
   assert.match(persona, /const line = \(v\) => String\(v \?\? ''\)\.replace\(\/\[\\r\\n\]\+\/g, ' '\)\.trim\(\);/, 'H-2 세척');

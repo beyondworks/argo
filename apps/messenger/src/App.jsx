@@ -453,7 +453,7 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
   const archive = async () => { await upd({ archived_at: new Date().toISOString() }); onArchived(); };
   const userIds = new Set(chMembers.filter((m) => m.member_kind === 'user').map((m) => m.member_id));
   const crewIds = new Set(chMembers.filter((m) => m.member_kind === 'crew').map((m) => m.member_id));
-  const addableUsers = members.filter((m) => !userIds.has(m.user_id));
+  const addableUsers = members.filter((m) => !userIds.has(m.user_id) && m.user_id !== org?.service_user_id); // 회사 크루 서버(기계 계정)는 사람 후보가 아니다(실측: 첫 칩이 '회사 노드')
   const addableCrews = crews.filter((c) => !crewIds.has(c.id) && ((channel.personal_crews ?? 'allowed') !== 'blocked' || crewTier(c, org) === 'company')); // I-3: 차단 채널엔 회사 크루만 후보(안 될 버튼 노출 금지 — 최종은 서버 게이트)
   const scoped = channel.kind !== 'public';
   const nodeSet = !!org?.service_user_id; const nodeOn = nodeSet && !!org?.node_seen_at && Date.now() - Date.parse(org.node_seen_at) < AWAY_MS; // I-5·검수 M-4: 노드가 살아 있어야 만들 수 있다(죽은 노드면 영원한 '만드는 중')
@@ -631,46 +631,65 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
   const mode = family ? theme.slice(family.length) : null;
   const skins = THEMES.filter((c) => !FAMILY_CODES.includes(c));
+  const tabs = [org && ['members', 'set.tab.members'], org && ['org', 'set.tab.org'], org && ['crews', 'set.tab.crews'], org && isAdmin && ['audit', 'set.tab.audit'], ['me', 'set.tab.me']].filter(Boolean); // UX 2/3: 세로 3천px 카드 더미 대신 탭 — 자주 쓰는 멤버가 첫 화면
+  const [tab, setTab] = useState(org ? 'members' : 'me');
+  useEffect(() => { if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]); }, [org?.id, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   return (<>
     <div className="msgr-top">
       <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
       <span className="title"><I name="gear" size={18} />{t('ui.settings')}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
-    <div className="msgr-thread"><div className="msgr-settings">
-      <section className="msgr-setcard">
-        <h2>{t('set.lang')}</h2><p>{t('set.lang.desc')}</p>
-        <div className="msgr-seg" role="radiogroup" aria-label={t('set.lang')}>
-          {[['ko', '한국어'], ['en', 'English']].map(([v, l]) => <button key={v} type="button" role="radio" aria-checked={lang === v} className={lang === v ? 'active' : ''} onClick={() => setLang(v)}>{l}</button>)}
-        </div>
-      </section>
-      <section className="msgr-setcard">
-        <h2>{t('set.theme')}</h2><p>{t('set.theme.desc')}</p>
-        <div className="row">
-          <span className="msgr-klabel">{t('set.family')}</span>
-          <div className="msgr-seg" role="radiogroup" aria-label={t('set.family')}>
-            {FAMILIES.map(([f, label]) => <button key={f} type="button" role="radio" aria-checked={family === f} className={family === f ? 'active' : ''} onClick={() => setTheme(`${f}${mode ?? ''}`)}>{ta(label)}</button>)}
-          </div>
-        </div>
-        <div className="row">
-          <span className="msgr-klabel">{t('set.mode')}</span>
-          <div className="msgr-seg" role="radiogroup" aria-label={t('set.mode')}>
-            {MODES.map(([s, label]) => <button key={s} type="button" role="radio" aria-checked={family != null && mode === s} className={family != null && mode === s ? 'active' : ''} onClick={() => setTheme(`${family ?? 'linen'}${s}`)}>{t(label)}</button>)}
-          </div>
-        </div>
-        <div className="row">
-          <span className="msgr-klabel">{t('set.skins')}</span>
-          <div className="msgr-chips">{skins.map((c) => <button key={c} type="button" className={`msgr-chan${theme === c ? ' active' : ''}`} onClick={() => setTheme(c)} title={ta(`settings.theme.${c}`)}><span>{ta(`settings.theme.${c}`).split(' — ')[0]}</span></button>)}</div>
-        </div>
-      </section>
-      {org && isAdmin && <OrgCard org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
-      {org && policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
-      <section className="msgr-setcard">
-        <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
-        <div className="row"><Av name={me?.display_name || session.user.email} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
-        {org && me && <DisplayNameRow org={org} me={me} onChanged={onChanged} onNote={onNote} onError={onError} />}
-        <div className="row"><NotifyRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
-      </section>
+    <div className="msgr-thread"><div className="msgr-settings tabs">
+      <nav className="msgr-setnav" aria-label={t('ui.settings')}>
+        {tabs.map(([k, label]) => <button key={k} type="button" className={tab === k ? 'on' : ''} aria-current={tab === k ? 'page' : undefined} onClick={() => setTab(k)}>{t(label)}</button>)}
+      </nav>
+      <div className="msgr-setbody">
+        {tab === 'members' && org && (isAdmin
+          ? <OrgCard part="members" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />
+          : <section className="msgr-setcard"><h2>{t('org.members')} · {members.length}</h2><div className="msgr-rows">{members.map((m) => <div key={m.user_id} className="row"><Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{m.user_id === org.service_user_id ? t('org.node') : t(`role.${m.role}`)}{m.user_id === uid ? ` · ${t('ui.me')}` : ''}</span></div>)}</div></section>)}
+        {tab === 'org' && org && (isAdmin
+          ? <OrgCard part="org" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} myEmail={session.user.email} />
+          : <section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section>)}
+        {tab === 'crews' && org && (<>
+          {isAdmin && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
+          {policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
+        </>)}
+        {tab === 'audit' && org && isAdmin && <OrgCard part="audit" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
+        {tab === 'me' && (<>
+          <section className="msgr-setcard">
+            <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
+            <div className="row"><Av name={me?.display_name || session.user.email} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
+            {org && me && <DisplayNameRow org={org} me={me} onChanged={onChanged} onNote={onNote} onError={onError} />}
+            <div className="row"><NotifyRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
+          </section>
+          <section className="msgr-setcard">
+            <h2>{t('set.lang')}</h2>
+            <div className="msgr-seg" role="radiogroup" aria-label={t('set.lang')}>
+              {[['ko', '한국어'], ['en', 'English']].map(([v, l]) => <button key={v} type="button" role="radio" aria-checked={lang === v} className={lang === v ? 'active' : ''} onClick={() => setLang(v)}>{l}</button>)}
+            </div>
+          </section>
+          <section className="msgr-setcard">
+            <h2>{t('set.theme')}</h2>
+            <div className="row">
+              <span className="msgr-klabel">{t('set.family')}</span>
+              <div className="msgr-seg" role="radiogroup" aria-label={t('set.family')}>
+                {FAMILIES.map(([f, label]) => <button key={f} type="button" role="radio" aria-checked={family === f} className={family === f ? 'active' : ''} onClick={() => setTheme(`${f}${mode ?? ''}`)}>{ta(label)}</button>)}
+              </div>
+            </div>
+            <div className="row">
+              <span className="msgr-klabel">{t('set.mode')}</span>
+              <div className="msgr-seg" role="radiogroup" aria-label={t('set.mode')}>
+                {MODES.map(([sfx, label]) => <button key={sfx} type="button" role="radio" aria-checked={family != null && mode === sfx} className={family != null && mode === sfx ? 'active' : ''} onClick={() => setTheme(`${family ?? 'linen'}${sfx}`)}>{t(label)}</button>)}
+              </div>
+            </div>
+            <div className="row">
+              <span className="msgr-klabel">{t('set.skins')}</span>
+              <div className="msgr-chips">{skins.map((c) => <button key={c} type="button" className={`msgr-chan${theme === c ? ' active' : ''}`} onClick={() => setTheme(c)} title={ta(`settings.theme.${c}`)}><span>{ta(`settings.theme.${c}`).split(' — ')[0]}</span></button>)}</div>
+            </div>
+          </section>
+        </>)}
+      </div>
     </div></div>
   </>);
 }
@@ -798,16 +817,19 @@ function NotifyRow() {
 
 /* ─── F2-1·2·3·4 조직 카드(관리자): 조직 이름 · 멤버 역할/제거(2단계) · 초대 만들기/취소 · 감사 기록 ─── */
 const ROLES_ASSIGNABLE = ['admin', 'member', 'guest'];
-const INVITE_ROLES = ['admin', 'member']; // 검수 L-3: 게스트는 채널 시트의 채널 한정·기간 한정 링크로만 생긴다
-function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNote, onError }) {
+function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '' }) {
   const { t, lang } = useT();
   const [name, setName] = useState(org.name); const [busy, setBusy] = useState(false);
-  const [invites, setInvites] = useState([]); const [inviteRole, setInviteRole] = useState('member');
+  const [invites, setInvites] = useState([]);
   const [confirmRemove, setConfirmRemove] = useState(null); const [audit, setAudit] = useState(null);
   const isOwner = org.role === 'owner';
-  const admins = members.filter((m) => m.role === 'admin'); // J-2: 이전 제안·승계 대상은 활성 관리자만(서버 트리거와 같은 규칙)
+  const admins = members.filter((m) => m.role === 'admin' && m.user_id !== org.service_user_id); // J-2: 이전 제안·승계 대상은 활성 관리자만(서버 트리거와 같은 규칙), 서비스 계정 제외
   const iAmNominee = org.pending_owner_user_id === uid;
-  const [domain, setDomain] = useState(org.auto_join_domain ?? ''); const [domainRole, setDomainRole] = useState(org.auto_join_role ?? 'member'); // J-3
+  const myDomain = String(myEmail ?? '').split('@')[1]?.toLowerCase() ?? ''; // 등록 가능한 도메인은 소유자 로그인 이메일 도메인뿐 — 입력창 대신 토글(UX 2/3)
+  const domainOn = !!org.auto_join_domain;
+  const toggleDomain = () => patchOrg({ auto_join_domain: domainOn ? null : myDomain, auto_join_role: 'member' }, domainOn ? t('org.domain.off') : t('org.domain.saved'));
+  const [transfer, setTransfer] = useState(null); // null | 'pick' | <userId 확인 단계>
+  const [nodeGuide, setNodeGuide] = useState(false);
   const [delName, setDelName] = useState(null); // J-5: 이름을 그대로 입력해야 삭제(깃헙식 확인 — 네이티브 confirm 금지)
   const deleteOrg = async () => {
     if (delName.trim() !== org.name) return;
@@ -818,20 +840,11 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
     if (!res.data?.length) return onError(t('org.noEdit'));
     setDelName(null); onNote(t('org.delete.done', { name: org.name })); onOrgsChanged();
   };
-  useEffect(() => { setDomain(org.auto_join_domain ?? ''); setDomainRole(org.auto_join_role ?? 'member'); }, [org.id, org.auto_join_domain, org.auto_join_role]);
-  const saveDomain = async () => {
-    setBusy(true);
-    const res = await supabase.from('msgr_orgs').update({ auto_join_domain: domain.trim().toLowerCase() || null, auto_join_role: domainRole }).eq('id', org.id).select('id');
-    setBusy(false);
-    if (res.error) return onError(/msgr_domain_public/.test(res.error.message) ? t('org.domain.public') : /msgr_domain_not_owners/.test(res.error.message) ? t('org.domain.notOwners') : /msgr_owner_only/.test(res.error.message) ? t('org.noEdit') : /auto_join_domain_check/.test(res.error.message) ? t('org.domain.invalid') : res.error.message);
-    if (!res.data?.length) return onError(t('org.noEdit'));
-    onNote(domain.trim() ? t('org.domain.saved') : t('org.domain.off')); onOrgsChanged();
-  };
   const patchOrg = async (patch, okMsg) => {
     setBusy(true);
     const res = await supabase.from('msgr_orgs').update(patch).eq('id', org.id).select('id');
     setBusy(false);
-    if (res.error) return onError(/msgr_transfer_not_admin|msgr_successor_not_admin/.test(res.error.message) ? t('org.owner.notAdmin') : /msgr_owner_only/.test(res.error.message) ? t('org.noEdit') : res.error.message);
+    if (res.error) return onError(/msgr_transfer_not_admin|msgr_successor_not_admin/.test(res.error.message) ? t('org.owner.notAdmin') : /msgr_domain_public/.test(res.error.message) ? t('org.domain.public') : /msgr_domain_not_owners/.test(res.error.message) ? t('org.domain.notOwners') : /msgr_owner_only/.test(res.error.message) ? t('org.noEdit') : friendlyErr(res.error.message, t));
     if (!res.data?.length) return onError(t('org.noEdit'));
     if (okMsg) onNote(okMsg); onOrgsChanged(); onChanged();
   };
@@ -866,9 +879,9 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
     if (!res.data?.length) return onError(t('org.member.noEdit'));
     onNote(t('org.member.removed', { name: m.display_name || m.user_id.slice(0, 8) })); onChanged();
   };
-  const makeInvite = async () => {
+  const makeInvite = async (role = 'member') => {
     setBusy(true);
-    const res = await supabase.from('msgr_invites').insert({ org_id: org.id, role: inviteRole, created_by: uid }).select('code').single();
+    const res = await supabase.from('msgr_invites').insert({ org_id: org.id, role, created_by: uid }).select('code').single();
     setBusy(false);
     if (res.error) return onError(res.error.message);
     const link = `${location.origin}${location.pathname}?invite=${res.data.code}`;
@@ -901,14 +914,82 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
     onNote(t('org.node.made')); loadInvites().catch(() => {});
   };
   const copyNodeCmd = async () => { await navigator.clipboard?.writeText(nodeCmd).catch(() => {}); onNote(t('org.node.copied')); };
+  const nodeCmdBlock = nodeInvite && (<>
+    <code>{nodeCmd}</code>
+    <div className="acts"><button type="button" className="btn sm" onClick={copyNodeCmd}><I name="copy" size={13} />{t('org.node.copy')}</button><span className="msgr-klabel">{t('org.invite.expires', { when: fmtWhen(nodeInvite.expires_at, lang) })}</span></div>
+  </>);
+  if (part === 'members') return (
+    <section className="msgr-setcard">
+      <h2>{t('org.members')} · {members.length}</h2>
+      <div className="msgr-rows">
+        {members.map((m) => { const isMe = m.user_id === uid; const isSvc = m.user_id === org.service_user_id; const canEdit = !isMe && !isSvc && m.role !== 'owner'; return (
+          <div key={m.user_id} className="row">
+            <Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span>
+            {isSvc ? <span className="sub">{t('org.node')}</span> : m.role === 'owner' || isMe ? <span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
+              : <div className="msgr-seg" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
+            {m.expires_at && <span className={`sub${Date.parse(m.expires_at) < Date.now() ? ' expired' : ''}`}>{Date.parse(m.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(m.expires_at, lang) })}</span>}
+            {canEdit && confirmRemove !== m.user_id && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRemove(m.user_id)} title={t('org.member.remove')} aria-label={t('org.member.remove')}><I name="x" size={13} /></button>}
+            {canEdit && confirmRemove === m.user_id && <span className="confirm-inline"><span>{t('org.member.remove.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => remove(m)}>{t('org.member.remove')}</button><button type="button" className="btn sm" onClick={() => setConfirmRemove(null)}>{t('ui.cancel')}</button></span>}
+          </div>
+        ); })}
+      </div>
+      <h3>{t('org.invites.h')}</h3>
+      <p>{t('org.invites.desc2')}</p>
+      <div className="row">
+        <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => makeInvite('member')}><I name="copy" size={13} />{t('org.invite.member')}</button>
+        <button type="button" className="btn sm" disabled={busy} onClick={() => makeInvite('admin')}>{t('org.invite.admin')}</button>
+      </div>
+      {open.length > 0 && (
+        <div className="msgr-rows">
+          {open.map((inv) => (
+            <div key={inv.id} className="row">
+              <span className="name">{t(`org.invite.kind.${inv.role}`)}</span>
+              <span className="sub">{t('org.invite.expires', { when: fmtWhen(inv.expires_at, lang) })}</span>
+              <button type="button" className="btn sm ghost" onClick={() => copyLink(inv)} title={t('org.invite.copy')} aria-label={t('org.invite.copy')}><I name="copy" size={13} /></button>
+              <button type="button" className="btn sm ghost" disabled={busy} onClick={() => revoke(inv)} title={t('org.invite.revoke')} aria-label={t('org.invite.revoke')}><I name="x" size={13} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+  if (part === 'node') return (
+    <section className="msgr-setcard">
+      <h2>{t('org.node')}</h2><p>{t('org.node.desc')}</p>
+      <div className="row">
+        <span className={`msgr-tag${nodeAlive ? ' on' : ''}`}>{nodeStatus}</span>
+        <button type="button" className={`btn sm${nodeSet ? '' : ' btn-primary'}`} disabled={busy} onClick={() => setNodeGuide((v) => !v)} aria-expanded={nodeGuide}>{nodeSet ? t('org.node.reconnect') : t('org.node.connect')}</button>
+      </div>
+      {nodeGuide && (
+        <div className="msgr-node-cmd">
+          <ol className="steps">
+            <li>{t('org.node.step1')}</li>
+            <li>{t('org.node.step2')}</li>
+            <li>{t('org.node.step3')}</li>
+          </ol>
+          {nodeInvite ? nodeCmdBlock : <div className="acts"><button type="button" className="btn btn-primary sm" disabled={busy} onClick={makeNodeInvite}><I name="doc" size={13} />{t('org.node.make')}</button></div>}
+          {nodeInvite && <div className="acts"><button type="button" className="btn sm ghost" disabled={busy} onClick={makeNodeInvite}>{t('org.node.remake')}</button><button type="button" className="btn sm ghost" disabled={busy} onClick={() => revoke(nodeInvite)}>{t('org.invite.revoke')}</button></div>}
+          <p className="note">{t('org.node.hint')}</p>
+        </div>
+      )}
+    </section>
+  );
+  if (part === 'audit') return (
+    <section className="msgr-setcard">
+      <h2>{t('org.audit')}</h2>
+      {audit === null
+        ? <div className="row"><button type="button" className="btn sm" onClick={() => loadAudit().catch((e) => onError(e.message))}><I name="doc" size={13} />{t('org.audit.load')}</button></div>
+        : (<div className="msgr-audit">
+            {!audit.length && <p className="empty">{t('org.audit.empty')}</p>}
+            {audit.map((a) => <div key={a.id} className="row"><span className="when">{fmtWhen(a.at, lang)}</span><span className="who">{a.actor_user_id ? nameOfUser(a.actor_user_id) : (a.actor_crew_id ? t('org.crews') : t('org.audit.system'))}</span><span className="act">{a.action}</span><span className="tgt">{a.target_kind}{a.target_id ? ` · ${String(a.target_id).slice(0, 8)}` : ''}</span></div>)}
+            <div className="row"><button type="button" className="btn sm" onClick={() => loadAudit().catch((e) => onError(e.message))}>{t('org.audit.reload')}</button></div>
+          </div>)}
+    </section>
+  );
+  const nomineeName = transfer && transfer !== 'pick' ? (members.find((m) => m.user_id === transfer)?.display_name || transfer.slice(0, 8)) : '';
   return (
     <section className="msgr-setcard">
       <h2>{t('set.org')}</h2><p>{t('set.org.desc')}</p>
-      <div className="row">
-        <span className="msgr-klabel">{t('org.name')}</span>
-        <input className="msgr-input inline" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); }} />
-        <button type="button" className="btn btn-primary sm" disabled={busy || !name.trim() || name.trim() === org.name} onClick={saveName}><I name="check" size={13} />{t('ui.save')}</button>
-      </div>
       {iAmNominee && (
         <div className="msgr-node-cmd">
           <span className="msgr-klabel">{t('org.owner')}</span>
@@ -919,26 +1000,25 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
           </div>
         </div>
       )}
+      <div className="row">
+        <span className="msgr-klabel">{t('org.name')}</span>
+        <input className="msgr-input inline" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); }} />
+        <button type="button" className="btn btn-primary sm" disabled={busy || !name.trim() || name.trim() === org.name} onClick={saveName}><I name="check" size={13} />{t('ui.save')}</button>
+      </div>
       {isOwner && (<>
-        <h3>{t('org.owner')}</h3>
-        <p>{t('org.owner.desc')}</p>
         <div className="row">
-          <span className="msgr-klabel">{t('org.successor')}</span>
-          {admins.length ? <div className="picks">{admins.map((m) => { const on = org.successor_user_id === m.user_id; return <button key={m.user_id} type="button" className={`msgr-chan${on ? ' active' : ''}`} aria-pressed={on} disabled={busy} onClick={() => patchOrg({ successor_user_id: on ? null : m.user_id }, t('org.successor.saved'))}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>; })}</div> : <span className="sub">{t('org.owner.noAdmins')}</span>}
+          <label className="switchrow"><input type="checkbox" checked={domainOn} disabled={busy || !myDomain} onChange={toggleDomain} /><span>{t('org.domain.toggle', { domain: org.auto_join_domain ?? myDomain })}</span></label>
         </div>
+        <p className="note">{t('org.domain.note')}</p>
         <div className="row">
           <span className="msgr-klabel">{t('org.transfer')}</span>
           {org.pending_owner_user_id
             ? <><span className="msgr-tag">{t('org.transfer.pending', { name: nameOfUser(org.pending_owner_user_id) })}</span><button type="button" className="btn sm ghost" disabled={busy} onClick={() => patchOrg({ pending_owner_user_id: null }, t('org.transfer.cancelled'))} title={t('org.transfer.cancel')} aria-label={t('org.transfer.cancel')}><I name="x" size={13} /></button></>
-            : admins.length ? <div className="picks">{admins.map((m) => <button key={m.user_id} type="button" className="msgr-chan" disabled={busy} onClick={() => patchOrg({ pending_owner_user_id: m.user_id }, t('org.transfer.sent', { name: m.display_name || m.user_id.slice(0, 8) }))}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}</div> : <span className="sub">{t('org.owner.noAdmins')}</span>}
+            : transfer === null ? <button type="button" className="btn sm" disabled={busy} onClick={() => setTransfer('pick')}>{t('org.transfer.start')}</button>
+            : transfer !== 'pick' ? <span className="confirm-inline"><span>{t('org.transfer.confirm', { name: nomineeName })}</span><button type="button" className="btn btn-primary sm" disabled={busy} onClick={async () => { await patchOrg({ pending_owner_user_id: transfer }, t('org.transfer.sent', { name: nomineeName })); setTransfer(null); }}>{t('org.transfer.do')}</button><button type="button" className="btn sm" onClick={() => setTransfer(null)}>{t('ui.cancel')}</button></span>
+            : admins.length ? <div className="picks">{admins.map((m) => <button key={m.user_id} type="button" className="msgr-chan" disabled={busy} onClick={() => setTransfer(m.user_id)}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}<button type="button" className="btn sm ghost" onClick={() => setTransfer(null)}>{t('ui.cancel')}</button></div> : <span className="sub">{t('org.owner.noAdmins')}</span>}
         </div>
         <p className="note">{t('org.transfer.desc')}</p>
-        <div className="row">
-          <span className="msgr-klabel">{t('org.domain')}</span>
-          <input className="msgr-input inline" placeholder={t('org.domain.ph')} value={domain} maxLength={253} onChange={(e) => setDomain(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveDomain(); }} />
-          <button type="button" className="btn btn-primary sm" disabled={busy || (domain.trim().toLowerCase() === (org.auto_join_domain ?? '') && domainRole === (org.auto_join_role ?? 'member'))} onClick={saveDomain}><I name="check" size={13} />{t('ui.save')}</button>
-        </div>
-        <p className="note">{org.auto_join_domain ? t('org.domain.on', { domain: org.auto_join_domain, role: t(`role.${org.auto_join_role ?? 'member'}`) }) : t('org.domain.desc')}</p>
         <div className="row">
           <span className="msgr-klabel">{t('org.delete')}</span>
           {delName === null
@@ -951,68 +1031,10 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
         </div>
         <p className="note">{t('org.delete.desc')}</p>
       </>)}
-      <h3>{t('org.members')} · {members.length}</h3>
-      <div className="msgr-rows">
-        {members.map((m) => { const isMe = m.user_id === uid; const canEdit = !isMe && m.role !== 'owner'; return (
-          <div key={m.user_id} className="row">
-            <Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span>
-            {m.role === 'owner' || isMe ? <span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
-              : <div className="msgr-seg" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
-            {m.expires_at && <span className={`sub${Date.parse(m.expires_at) < Date.now() ? ' expired' : ''}`}>{Date.parse(m.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(m.expires_at, lang) })}</span>}
-            {canEdit && confirmRemove !== m.user_id && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRemove(m.user_id)} title={t('org.member.remove')} aria-label={t('org.member.remove')}><I name="x" size={13} /></button>}
-            {canEdit && confirmRemove === m.user_id && <span className="confirm-inline"><span>{t('org.member.remove.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => remove(m)}>{t('org.member.remove')}</button><button type="button" className="btn sm" onClick={() => setConfirmRemove(null)}>{t('ui.cancel')}</button></span>}
-          </div>
-        ); })}
-      </div>
-      <h3>{t('org.invites')} · {open.length}</h3>
-      <p>{t('org.invites.desc')}</p>
-      <div className="row">
-        <div className="msgr-seg" role="radiogroup" aria-label={t('org.invite.role')}>{INVITE_ROLES.map((r) => <button key={r} type="button" role="radio" aria-checked={inviteRole === r} className={inviteRole === r ? 'active' : ''} onClick={() => setInviteRole(r)}>{t(`role.${r}`)}</button>)}</div>
-        <button type="button" className="btn btn-primary sm" disabled={busy} onClick={makeInvite}><I name="copy" size={13} />{t('org.invite.make')}</button>
-      </div>
-      {open.length > 0 && (
-        <div className="msgr-rows">
-          {open.map((inv) => (
-            <div key={inv.id} className="row">
-              <span className="msgr-klabel">{t(`role.${inv.role}`)}</span><span className="name mono">…{inv.code.slice(-8)}</span>
-              <span className="sub">{t('org.invite.expires', { when: fmtWhen(inv.expires_at, lang) })}</span>
-              <button type="button" className="btn sm ghost" onClick={() => copyLink(inv)} title={t('org.invite.copy')} aria-label={t('org.invite.copy')}><I name="copy" size={13} /></button>
-              <button type="button" className="btn sm ghost" disabled={busy} onClick={() => revoke(inv)} title={t('org.invite.revoke')} aria-label={t('org.invite.revoke')}><I name="x" size={13} /></button>
-            </div>
-          ))}
-        </div>
-      )}
-      <h3>{t('org.node')}</h3>
-      <p>{t('org.node.desc')}</p>
-      <div className="row">
-        <span className={`msgr-tag${nodeAlive ? ' on' : ''}`}>{nodeStatus}</span>
-        {org.service_user_id && <span className="sub">{nameOfUser(org.service_user_id)}</span>}
-        <button type="button" className="btn btn-primary sm" disabled={busy} onClick={makeNodeInvite}><I name="doc" size={13} />{t(nodeInvite ? 'org.node.remake' : 'org.node.make')}</button>
-      </div>
-      {nodeInvite && (
-        <div className="msgr-node-cmd">
-          <span className="msgr-klabel">{t('org.node.cmd')} · {t('org.invite.expires', { when: fmtWhen(nodeInvite.expires_at, lang) })}</span>
-          <code>{nodeCmd}</code>
-          <div className="acts">
-            <button type="button" className="btn sm" onClick={copyNodeCmd}><I name="copy" size={13} />{t('org.node.copy')}</button>
-            <button type="button" className="btn sm ghost" disabled={busy} onClick={() => revoke(nodeInvite)} title={t('org.invite.revoke')} aria-label={t('org.invite.revoke')}><I name="x" size={13} /></button>
-          </div>
-          <p className="note">{t('org.node.hint')}</p>
-        </div>
-      )}
-      <h3>{t('org.audit')}</h3>
-      {audit === null
-        ? <div className="row"><button type="button" className="btn sm" onClick={() => loadAudit().catch((e) => onError(e.message))}><I name="doc" size={13} />{t('org.audit.load')}</button></div>
-        : (<div className="msgr-audit">
-            {!audit.length && <p className="empty">{t('org.audit.empty')}</p>}
-            {audit.map((a) => <div key={a.id} className="row"><span className="when">{fmtWhen(a.at, lang)}</span><span className="who">{a.actor_user_id ? nameOfUser(a.actor_user_id) : (a.actor_crew_id ? t('org.crews') : t('org.audit.system'))}</span><span className="act">{a.action}</span><span className="tgt">{a.target_kind ? `${a.target_kind}${a.target_id ? ` · ${String(a.target_id).slice(0, 12)}` : ''}` : ''}</span></div>)}
-            <div className="row"><button type="button" className="btn sm" onClick={() => loadAudit().catch((e) => onError(e.message))}>{t('org.audit.reload')}</button></div>
-          </div>)}
     </section>
   );
 }
 
-/* ─── 조직 정책 카드(H-0): 관리자만 편집(RLS msgr_policies_update), 멤버는 열람. 잠금 = 조직 전체 강제(서버 트리거) ─── */
 function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onError }) {
   const { t } = useT();
   const [draft, setDraft] = useState(policy); const [busy, setBusy] = useState(false);
@@ -1028,60 +1050,58 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
     onNote(t('set.policy.saved')); onChanged();
   };
   const ro = !isAdmin || busy;
+  const [adv, setAdv] = useState(false); // 고급(기억·게스트 좌석·엔진·잠금)은 접어 둔다 — 기본값 그대로면 볼 일이 없다
   return (
     <section className="msgr-setcard">
       <h2>{t('set.policy')}</h2><p>{t('set.policy.desc')}</p>
-      <div className="row">
-        <span className="msgr-klabel">{t('set.policy.allow')}</span>
-        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.allow')}>
+      <div className="q">
+        <span className="qlabel">{t('set.policy.q.allow')}</span>
+        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.q.allow')}>
           {['all', 'list', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={draft.allow_default === v} className={draft.allow_default === v ? 'active' : ''} disabled={ro} onClick={() => set({ allow_default: v })}>{t(`crew.allow.${v}`)}</button>)}
         </div>
-        <label className="switchrow"><input type="checkbox" checked={!!draft.allow_locked} disabled={ro} onChange={(e) => set({ allow_locked: e.target.checked })} /><span>{t('set.policy.lock')}</span></label>
+        <label className="switchrow"><input type="checkbox" checked={!!draft.allow_locked} disabled={ro} onChange={(e) => set({ allow_locked: e.target.checked })} /><span>{t('set.policy.lock2')}</span></label>
       </div>
-      <div className="row">
-        <span className="msgr-klabel">{t('set.policy.memory')}</span>
-        <label className="switchrow"><input type="checkbox" checked={draft.crew_memory_default !== false} disabled={ro} onChange={(e) => set({ crew_memory_default: e.target.checked })} /><span>{draft.crew_memory_default === false ? t('ch.memory.off') : t('ch.memory.on')}</span></label>
-        <label className="switchrow"><input type="checkbox" checked={!!draft.crew_memory_locked} disabled={ro} onChange={(e) => set({ crew_memory_locked: e.target.checked })} /><span>{t('set.policy.lock')}</span></label>
-      </div>
-      <div className="row">
-        <span className="msgr-klabel">{t('set.policy.guests')}</span>
-        <label className="switchrow"><input type="checkbox" checked={!!draft.guest_seats} disabled={ro} onChange={(e) => set({ guest_seats: e.target.checked })} /><span>{t('set.policy.guests.seats')}</span></label>
-        <span className="note">{t('set.policy.guests.desc')}</span>
-      </div>
-      <div className="row">
-        <span className="msgr-klabel">{t('set.policy.approval')}</span>
-        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.approval')}>
+      <div className="q">
+        <span className="qlabel">{t('set.policy.q.approval')}</span>
+        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.q.approval')}>
           {['admin', 'approvers', 'owner'].map((v) => <button key={v} type="button" role="radio" aria-checked={(draft.approval_high_by ?? 'admin') === v} className={(draft.approval_high_by ?? 'admin') === v ? 'active' : ''} disabled={ro} onClick={() => set({ approval_high_by: v })}>{t(`set.policy.approval.${v}`)}</button>)}
         </div>
+        {(draft.approval_high_by === 'approvers') && (
+          <div className="picks">{members.filter((m) => m.role !== 'owner' && m.role !== 'guest' && m.user_id !== org.service_user_id).map((m) => { const on = (draft.approver_user_ids ?? []).includes(m.user_id); /* 게스트 제외: 공개 채널을 못 읽어 결재를 확정할 수 없다 */ return <button key={m.user_id} type="button" className={`msgr-chan${on ? ' active' : ''}`} aria-pressed={on} disabled={ro} onClick={() => set({ approver_user_ids: on ? (draft.approver_user_ids ?? []).filter((x) => x !== m.user_id) : [...(draft.approver_user_ids ?? []), m.user_id] })}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>; })}</div>
+        )}
         <span className="note">{t('set.policy.approval.desc')}</span>
       </div>
-      {(draft.approval_high_by === 'approvers') && (
-        <div className="row">
-          <span className="msgr-klabel">{t('set.policy.approvers')}</span>
-          <div className="picks">{members.filter((m) => m.role !== 'owner' && m.role !== 'guest').map((m) => { const on = (draft.approver_user_ids ?? []).includes(m.user_id); /* 게스트 제외: 공개 채널을 못 읽어 결재를 확정할 수 없다 */ return <label key={m.user_id} className={`pick${on ? ' on' : ''}`}><input type="checkbox" checked={on} disabled={ro} onChange={() => set({ approver_user_ids: on ? (draft.approver_user_ids ?? []).filter((x) => x !== m.user_id) : [...(draft.approver_user_ids ?? []), m.user_id] })} /><Av name={m.display_name || m.user_id} size="sm" /><span>{m.display_name || m.user_id.slice(0, 8)}</span></label>; })}</div>
-          <span className="note">{t('set.policy.approvers.desc')}</span>
-        </div>
-      )}
-      <div className="row">
-        <span className="msgr-klabel">{t('set.policy.crewCreate')}</span>
-        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.crewCreate')}>
+      <div className="q">
+        <span className="qlabel">{t('set.policy.q.crewCreate')}</span>
+        <div className="msgr-seg" role="radiogroup" aria-label={t('set.policy.q.crewCreate')}>
           {['admin', 'channel_admin', 'member'].map((v) => <button key={v} type="button" role="radio" aria-checked={(draft.crew_create ?? 'channel_admin') === v} className={(draft.crew_create ?? 'channel_admin') === v ? 'active' : ''} disabled={ro} onClick={() => set({ crew_create: v })}>{t(`set.policy.crewCreate.${v}`)}</button>)}
         </div>
-        <span className="note">{t('set.policy.crewCreate.desc')}</span>
       </div>
-      <div className="row">
-        <span className="msgr-klabel">{t('set.policy.crewEngine')}</span>
-        <input className="msgr-input inline" placeholder={t('set.policy.crewEngine.runner')} value={draft.crew_runner ?? ''} maxLength={32} disabled={ro} onChange={(e) => set({ crew_runner: e.target.value })} />
-        <input className="msgr-input inline wide" placeholder={t('set.policy.crewEngine.model')} value={draft.crew_model ?? ''} maxLength={120} disabled={ro} onChange={(e) => set({ crew_model: e.target.value })} />
-        <span className="note">{t('set.policy.crewEngine.desc')}</span>
+      <div className="msgr-fold">
+        <button type="button" className="fold-head" onClick={() => setAdv((v) => !v)} aria-expanded={adv}><h3>{t('set.policy.advanced')}</h3><I name="caret" size={14} className={adv ? 'open' : ''} /></button>
+        {adv && (<>
+          <div className="q">
+            <label className="switchrow"><input type="checkbox" checked={draft.crew_memory_default !== false} disabled={ro} onChange={(e) => set({ crew_memory_default: e.target.checked })} /><span>{t('set.policy.memory2')}</span></label>
+            <label className="switchrow"><input type="checkbox" checked={!!draft.crew_memory_locked} disabled={ro} onChange={(e) => set({ crew_memory_locked: e.target.checked })} /><span>{t('set.policy.lock3')}</span></label>
+          </div>
+          <div className="q">
+            <label className="switchrow"><input type="checkbox" checked={!!draft.guest_seats} disabled={ro} onChange={(e) => set({ guest_seats: e.target.checked })} /><span>{t('set.policy.guests.seats')}</span></label>
+            <span className="note">{t('set.policy.guests.desc')}</span>
+          </div>
+          <div className="q">
+            <span className="qlabel">{t('set.policy.crewEngine')}</span>
+            <input className="msgr-input inline" placeholder={t('set.policy.crewEngine.runner')} value={draft.crew_runner ?? ''} maxLength={32} disabled={ro} onChange={(e) => set({ crew_runner: e.target.value })} />
+            <input className="msgr-input inline wide" placeholder={t('set.policy.crewEngine.model')} value={draft.crew_model ?? ''} maxLength={120} disabled={ro} onChange={(e) => set({ crew_model: e.target.value })} />
+            <span className="note">{t('set.policy.crewEngine.desc')}</span>
+          </div>
+          <p className="note">{t('set.policy.limit')}</p>
+        </>)}
       </div>
-      <p className="note">{t('set.policy.limit')}</p>
       {isAdmin ? <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !dirty} onClick={save}><I name="check" size={13} />{t('ui.save')}</button></div> : <p className="note">{t('set.policy.adminOnly')}</p>}
     </section>
   );
 }
 
-/** 빈 상태 — 척추 위 단계 노드가 다음 행동을 가르친다(조직 없음 / 채널 없음). */
 function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, joinable = [], joinDomain, deletedOrgs = [], restoreOrg }) {
   const { t } = useT();
   const steps = org ? [

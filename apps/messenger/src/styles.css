@@ -416,3 +416,24 @@
 .msgr-crewsheet .row.wrap { flex-wrap: wrap; }
 
 .msgr-crewsheet .msgr-rows .empty { border: 0; background: transparent; min-height: 0; padding: 6px 2px; margin: 0; text-align: left; }
+
+/* 설정 탭(UX 2/3) — 세로 카드 더미 대신 왼쪽 탭, 폰에서는 가로 스크롤 */
+.msgr-settings.tabs { max-width: 880px; display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 20px; align-items: start; }
+.msgr-setnav { display: grid; gap: 4px; position: sticky; top: 8px; }
+.msgr-setnav button { height: 34px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--fg-2); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; transition: background 120ms ease, color 120ms ease; }
+.msgr-setnav button:hover { background: var(--card-2); color: var(--fg); }
+.msgr-setnav button.on { background: var(--card); color: var(--fg); font-weight: 600; box-shadow: inset 0 0 0 1px var(--border); }
+.msgr-setbody { display: grid; gap: 14px; min-width: 0; }
+@media (max-width: 720px) {
+  .msgr-settings.tabs { grid-template-columns: 1fr; gap: 10px; }
+  .msgr-setnav { display: flex; gap: 4px; position: static; overflow-x: auto; scrollbar-width: none; }
+  .msgr-setnav button { flex: 0 0 auto; }
+}
+/* 질문형 규칙 블록 */
+.msgr-setcard .q { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--border); }
+.msgr-setcard .q:first-of-type { border-top: 0; }
+.msgr-setcard .qlabel { font-weight: 600; font-size: 13.5px; }
+.msgr-setcard .msgr-fold { padding-top: 8px; border-top: 1px solid var(--border); }
+.msgr-setcard .msgr-fold .fold-head h3 { margin: 6px 0; }
+/* 서버 연결 안내 단계 */
+.msgr-node-cmd .steps { margin: 0 0 4px 18px; padding: 0; display: grid; gap: 4px; font-size: 13px; line-height: 1.5; }
