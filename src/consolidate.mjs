@@ -216,6 +216,7 @@ export async function consolidateMemory(wsId) {
     실패는 던진다(워터마크는 성공한 청크까지 전진해 있으므로 스케줄러 재시도가 이어 받는다). 반환은 로그·테스트용 요약. */
 export async function consolidateBacklog(wsId, { deadlineMs = Infinity, nightlyBytes = NIGHTLY_BYTES, billedMaxChunks = BILLED_MAX_CHUNKS, maxChunks = 500, now = () => Date.now(), onChunk = null } = {}) {
   let chunks = 0; let bytes = 0; const notes = []; let stoppedBy = 'drained';
+  if (onChunk) await Promise.resolve().then(() => onChunk({ chunks, bytes })).catch(() => {}); // 진입 직후 1회 — 첫 청크가 5분을 넘어도 선점 창이 열리지 않게(검수 권고)
   for (;;) {
     if (now() >= deadlineMs) { stoppedBy = 'deadline'; break; }
     if (bytes >= nightlyBytes) { stoppedBy = 'nightly-bytes'; break; }

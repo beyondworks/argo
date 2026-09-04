@@ -131,7 +131,8 @@ test('배선 — 스케줄러가 야간 루프(consolidateBacklog)를 08:00 마�
   assert.match(sched, /const CONSOLIDATE_UNTIL_HOUR = 8;/);
   assert.match(sched, /consolidateBacklog\(cid, \{ deadlineMs: Math\.max\(deadline, now\.getTime\(\) \+ 60_000\), onChunk: \(\) => bumpConsolidateClaim\(cid, Date\.now\(\), today\) \}\)[\s\S]{0,300}?\.then\(\(\) => rollupJournals\(cid\)\)/, '루프 뒤 롤업 + 청크마다 선점 스탬프 연장');
   const route = await readFile(new URL('../app/api/companies/[ws]/vault/consolidate/route.js', import.meta.url), 'utf8');
-  assert.match(route, /export const maxDuration = 900;/, '수동 정리 라우트 상한 = 청크 264초 + 복구 3분 여유(검수 MEDIUM-2)');
+  assert.match(route, /export const maxDuration = 800;/, '수동 정리 라우트 상한 = 청크 264초 + 복구 3분 여유, 호스티드 함수 상한 800 안(검수 MEDIUM-2)');
+  assert.match(src, /if \(onChunk\) await Promise\.resolve\(\)\.then\(\(\) => onChunk\(\{ chunks, bytes \}\)\)\.catch\(\(\) => \{\}\); \/\/ 진입 직후 1회/, '루프 진입 직후 선점 스탬프 연장');
 
   assert.doesNotMatch(sched, /consolidateMemory\(cid\)/, '단발 호출 잔재 없음');
   const src = await readFile(new URL('../src/consolidate.mjs', import.meta.url), 'utf8');
