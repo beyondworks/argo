@@ -11,7 +11,7 @@ import { mkdtemp } from './helpers/tmp.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getFreshDeviceSession, deviceSessionDead, deviceSessionDeadInfo, rejectionKind } from '../src/devicesession.mjs';
+import { getFreshDeviceSession, loadDeviceSession, deviceSessionDead, deviceSessionDeadInfo, rejectionKind } from '../src/devicesession.mjs';
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 const sessJson = (rt, expiresInSec, at = 'at') => JSON.stringify({
@@ -86,12 +86,13 @@ test('거절 마커는 사유 JSON — kind·reason(토큰 마스킹)·status·c
   assert.equal(deviceSessionDead({ root }), true, '판정 계약은 그대로');
 });
 
-test('같은 사유가 반복되면 at(최초 시각) 보존 + count 증가, 로그는 한 줄만(동기화 8초 주기 방어)', async () => {
+test('같은 사유가 반복되면(토큰이 바뀐 재거절) at(최초 시각) 보존 + count 증가, 로그는 한 줄만', async () => {
   const root = await mkRoot(-10);
   const client = clientWith(async () => reject('Invalid Refresh Token: Refresh Token Not Found'));
   await getFreshDeviceSession({ root, _mkClient: client });
   const first = deviceSessionDeadInfo({ root });
   await new Promise((r) => setTimeout(r, 5));
+  await writeFile(join(root, '.device-session.json'), sessJson('rt2', -10)); // 재로그인했는데 그 토큰도 죽어 있음
   await getFreshDeviceSession({ root, _mkClient: client });
   const second = deviceSessionDeadInfo({ root });
   assert.equal(second.kind, 'revoked');
@@ -220,4 +221,46 @@ test('console.warn(stderr)에도 토큰 모양은 가린다 — plist stderr 키
   const line = seen.find((l) => l.includes('기기 세션 갱신 실패'));
   assert.ok(line, '경고 줄이 남는다');
   assert.ok(!line.includes(token) && line.includes('***'), `콘솔 원문에 토큰 없음: ${line}`);
+});
+
+// ── ⑤ 2026-09-03 실사고: 모듈 사본 둘(instrumentation·라우트 번들)의 낡은 캐시 + 8초 루프의 죽은 토큰 난사 ──
+test('캐시는 디스크 도장(mtime+size)이 바뀌면 무효 — 다른 사본이 회전한 뒤 옛 토큰으로 갱신을 보내지 않는다', async () => {
+  const root = await mkRoot(3600);
+  assert.equal(loadDeviceSession({ root })?.refresh_token, 'rt', '캐시 적재');
+  await writeFile(join(root, '.device-session.json'), sessJson('rt2', -5, 'at2')); // 다른 사본/프로세스가 회전해 파일이 바뀜(크기·mtime)
+  const calls = [];
+  const out = await getFreshDeviceSession({ root, _mkClient: clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return ok('at3', 'rt3'); }) });
+  assert.deepEqual(calls, ['rt2'], '갱신은 디스크의 현재 토큰으로만 — 옛 토큰(rt) 재사용은 GoTrue 가족 폐기');
+  assert.equal(out?.access_token, 'at3');
+});
+
+test('사망 게이트 — 마커가 같은 토큰의 거절이면 네트워크 없이 null(로그 skipped 한 줄), 토큰이 바뀌면 다시 시도', async () => {
+  const root = await mkRoot(-10);
+  const calls = [];
+  const client = clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return reject('Invalid Refresh Token: Already Used'); });
+  assert.equal(await getFreshDeviceSession({ root, _mkClient: client }), null);
+  const info = deviceSessionDeadInfo({ root });
+  assert.equal(typeof info.tokenTag, 'string');
+  assert.equal(info.tokenTag.length, 16);
+  assert.ok(!readFileSync(marker(root), 'utf8').includes('"rt"'), '마커에 토큰 원문 없음(지문만)');
+  assert.equal(await getFreshDeviceSession({ root, _mkClient: client }), null);
+  assert.equal(await getFreshDeviceSession({ root, _mkClient: client }), null);
+  assert.deepEqual(calls, ['rt'], '같은 토큰은 한 번만 서버에 간다');
+  assert.equal(deviceSessionDeadInfo({ root }).count, 1);
+  assert.equal(deviceSessionDead({ root }), true, '판정은 그대로 사망');
+  assert.deepEqual((await readLog(root)).map((l) => l.ev), ['rejected', 'skipped'], 'skipped는 연속 중복 제거');
+  await writeFile(join(root, '.device-session.json'), sessJson('rt2', -10)); // 재로그인(다른 토큰) — persist가 아닌 외부 쓰기라 마커는 남아 있음
+  assert.equal(await getFreshDeviceSession({ root, _mkClient: client }), null);
+  assert.deepEqual(calls, ['rt', 'rt2'], '토큰이 바뀌면 게이트가 열린다');
+});
+
+test('지문 없는 구형 마커(발행본 v0.1.60 이하)는 게이트 없음 — 1회 시도 후 지문 달린 마커로 교체', async () => {
+  const root = await mkRoot(-10);
+  await writeFile(marker(root), JSON.stringify({ at: 'x', lastAt: 'x', count: 3, kind: 'reused', reason: 'Invalid Refresh Token: Already Used' }));
+  const calls = [];
+  await getFreshDeviceSession({ root, _mkClient: clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return reject('Invalid Refresh Token: Already Used'); }) });
+  assert.deepEqual(calls, ['rt']);
+  assert.equal(deviceSessionDeadInfo({ root }).tokenTag?.length, 16);
+  await getFreshDeviceSession({ root, _mkClient: clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return reject('Invalid Refresh Token: Already Used'); }) });
+  assert.deepEqual(calls, ['rt'], '교체된 마커부터 게이트 작동');
 });

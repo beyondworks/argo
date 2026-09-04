@@ -11,11 +11,12 @@ import { join } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
+import { createHash } from 'node:crypto';
 
 const FILE = '.device-session.json';
 const LOG = '.device-session.log';
 const LOG_MAX = 256 * 1024; // 넘치면 .1로 한 세대만 밀어낸다
-let cache = null; // { root, sess }
+let cache = null; // { root, sess, stamp } — stamp = 디스크 mtime+size. 다른 모듈 사본·프로세스가 회전해 파일이 바뀌면 캐시는 무효다
 let epoch = 0;
 export const deviceEpoch = () => epoch;
 const fileOf = (root) => join(root, FILE);
@@ -32,11 +33,20 @@ function readDisk(root) {
   return null;
 }
 
-/** 기기 세션 또는 null (프로세스 캐시 — persist/clear가 비운다). */
+/** 디스크 파일의 정체 도장(mtime+size). 없음 = 'none'. */
+function diskStamp(root) {
+  try { const st = statSync(fileOf(root)); return `${st.mtimeMs}:${st.size}`; } catch { return 'none'; }
+}
+
+/** 기기 세션 또는 null. 캐시는 디스크 도장(mtime+size)이 같을 때만 쓴다 — Next는 instrumentation(동기화 루프)과
+    API 라우트에 이 모듈을 **따로 번들**하므로 한 프로세스에 캐시가 둘이다. 도장 없는 캐시는 한쪽이 회전한 뒤
+    다른 쪽이 옛 토큰으로 갱신을 보내게 했고, GoTrue는 재사용 간격(10초) 밖 재사용을 "가족 폐기"로 처리해
+    새 토큰까지 죽였다(2026-09-03 실사고 — 라우트 사본이 8분 뒤 옛 토큰 재사용 → 다음 회전 Already Used). */
 export function loadDeviceSession({ root = WS_ROOT } = {}) {
-  if (cache && cache.root === root) return cache.sess;
+  const stamp = diskStamp(root);
+  if (cache && cache.root === root && cache.stamp === stamp) return cache.sess;
   const sess = readDisk(root);
-  cache = { root, sess };
+  cache = { root, sess, stamp };
   return sess;
 }
 
@@ -83,6 +93,8 @@ export async function clearDeviceSession({ root = WS_ROOT } = {}) {
 /** 사유 문구의 토큰 모양(20자 이상 base64url 런 — JWT 헤더 세그먼트 20자·리프레시 토큰 22자를 덮는다)을 가린다 —
     마커·로그·콘솔·/api/me 응답에 실리는 값 전부 이 함수를 거친다. */
 const mask = (s) => String(s ?? '').replace(/[A-Za-z0-9_-]{20,}/g, '***').slice(0, 300);
+/** 리프레시 토큰 지문(sha256 앞 16자) — 마커에 "어느 토큰이 거절됐나"를 값 노출 없이 남긴다. */
+const tokenTag = (rt) => createHash('sha256').update(String(rt ?? '')).digest('hex').slice(0, 16);
 /** 리프레시 토큰 거절인가(Invalid Refresh Token 계열) — 네트워크 실패·5xx는 거절이 아니다. */
 const isRejection = (err) => /refresh token/i.test(String(err?.message ?? ''));
 
@@ -108,7 +120,7 @@ export function deviceSessionDeadInfo({ root = WS_ROOT } = {}) {
 }
 
 /** 마커 기록 — 같은 사유가 반복되면 최초 시각(at)을 보존하고 count만 올린다(동기화가 8초마다 다시 부딪친다). */
-async function markDead(root, err, retried) {
+async function markDead(root, err, retried, sess) {
   const reason = mask(err?.message ?? 'no session');
   const prev = deviceSessionDeadInfo({ root });
   const same = prev?.reason === reason;
@@ -116,6 +128,7 @@ async function markDead(root, err, retried) {
   const info = {
     at: same ? prev.at : now, lastAt: now, count: same ? (prev.count ?? 0) + 1 : 1,
     kind: rejectionKind(reason), reason, status: err?.status ?? null, code: err?.code ?? null, retried,
+    tokenTag: tokenTag(sess?.refresh_token), // 이 토큰이 거절됐다 — 같은 토큰이면 다시 보내지 않는다(아래 게이트)
   };
   await writeFile(deadMarkerOf(root), JSON.stringify(info), { mode: 0o600 }).catch(() => {});
   await chmod(deadMarkerOf(root), 0o600).catch(() => {}); // 발행본이 mode 없이 쓴 구형 마커(0644) 위에 덮어도 승격(검수 LOW-2)
@@ -125,7 +138,7 @@ async function markDead(root, err, retried) {
 const lastLogKey = new Map(); // root → 마지막 줄 키. 같은 사유의 연속 반복(rejected/error)은 한 줄만 — rotated·reread는 항상 남긴다(회전 이력이 진단의 핵심)
 async function logLine(root, entry) {
   const key = `${entry.ev}|${entry.reason ?? ''}`;
-  if ((entry.ev === 'rejected' || entry.ev === 'error') && key === lastLogKey.get(root)) return;
+  if ((entry.ev === 'rejected' || entry.ev === 'error' || entry.ev === 'skipped') && key === lastLogKey.get(root)) return;
   const file = join(root, LOG);
   try { if (statSync(file).size > LOG_MAX) await rename(file, `${file}.1`); } catch { /* 없음 */ }
   try {
@@ -154,6 +167,14 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
     for (;;) {
       if (!sess) return null;
       if ((sess.expires_at ?? 0) * 1000 - Date.now() > 60_000) return sess;
+      // 사망 게이트 — 마커가 "바로 이 토큰"의 거절이면 다시 보내지 않는다. 8초 동기화 루프가 죽은 토큰을
+      // 계속 보내 기기당 하루 1만 회(24기기 11만 회/일)의 "Possible abuse attempt"를 만들었다(2026-09-04 인증 로그 실측).
+      // 디스크 토큰이 바뀌면(재로그인·다른 사본 회전) 지문이 달라져 게이트가 열린다 — persist도 마커를 지운다.
+      const dead = deviceSessionDeadInfo({ root });
+      if (dead?.tokenTag && dead.tokenTag === tokenTag(sess.refresh_token)) {
+        await logLine(root, { ev: 'skipped', reason: dead.reason });
+        return null;
+      }
       const sb = _mkClient(sess.url, sess.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
       const { data, error } = await sb.auth.refreshSession({ refresh_token: sess.refresh_token });
       if (!error && data?.session) {
@@ -192,7 +213,7 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
           continue;
         }
       }
-      const info = await markDead(root, error, retried);
+      const info = await markDead(root, error, retried, sess);
       await logLine(root, { ev: 'rejected', kind: info.kind, reason: info.reason, status: info.status, code: info.code, retried, count: info.count });
       return null;
     }
