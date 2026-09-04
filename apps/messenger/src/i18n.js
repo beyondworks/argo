@@ -137,6 +137,7 @@ export const DICT = {
   'act.empty': ['아직 기록이 없습니다.', 'Nothing recorded yet.'],
   'act.adminOnly': ['활동 기록은 관리자만 볼 수 있습니다. 관계 그래프는 누구나 봅니다.', 'Only admins can see the activity log. Everyone can see the graph.'],
   'act.tab.graph': ['그래프', 'Graph'],
+  'act.graph.hint': ['드래그 회전 · 휠 줌 · 클릭 열기 · 더블클릭 집중(빈 곳은 전체)', 'Drag to orbit · wheel to zoom · click to open · double-click to focus (empty space resets)'],
   'act.closeTab': ['탭 닫기', 'Close tab'],
   'act.tab.closeOthers': ['다른 탭 닫기', 'Close other tabs'],
   'act.tab.closeRight': ['오른쪽 탭 닫기', 'Close tabs to the right'],

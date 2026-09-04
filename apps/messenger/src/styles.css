@@ -485,6 +485,7 @@
 .msgr-actpane { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; position: relative; }
 .msgr-actbody { flex: 1; min-height: 0; position: relative; overflow: auto; }
 .msgr-actbody > canvas, .msgr-actbody > div:first-child > canvas { display: block; }
+.g3-hint { position: absolute; left: 18px; bottom: 12px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--fg-3); pointer-events: none; }
 .msgr-actlist { display: grid; gap: 10px; padding: 18px 28px 40px; max-width: 1100px; }
 .msgr-actlocal { height: 220px; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; position: relative; }
 .msgr-actlist .head { display: flex; align-items: center; gap: 10px; }

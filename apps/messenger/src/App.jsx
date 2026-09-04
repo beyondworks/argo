@@ -3,7 +3,7 @@
 // Argo 부품은 .shell/.side(테마 토큰 스코프)·.btn·Markdown·imeGuardWith만 쓰고, 나머지는 styles.css의 .msgr-*.
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Graph2D } from '@argo/graph2d'; // 아르고 기억 그래프 — 활동 페이지(조직·채널·사람·크루·문서 관계)
+import { Graph3D } from './graph3d.jsx'; // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
 import { supabase, configured, q } from './supabase.js';
 import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
@@ -932,13 +932,13 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
         </>}
         <div className="msgr-actbody">
           {cur.kind === 'graph' ? (
-            <Graph2D key="all" docs={gdocs} agents={[]} nodeShape="circle" onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); openTab(id.startsWith('org/') ? 'org' : id); }} />
+            <Graph3D key="all" docs={gdocs} hint={t('act.graph.hint')} onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); openTab(id.startsWith('org/') ? 'org' : id); }} />
           ) : (
             <div className="msgr-actlist">
               <div className="head"><h3>{sel === 'org' ? t('act.all') : t('act.of', { name: entityTitle(sel) })}</h3><span className="sub">{list.length}</span>
                 {sel.startsWith('channels/') && <button type="button" className="btn sm" onClick={() => { const c = channels.find((x) => `channels/${x.name}` === sel); if (c) onOpenChannel(c.id); }}><I name="hash" size={12} />{t('act.openChannel')}</button>}
               </div>
-              <div className="msgr-actlocal"><Graph2D key={sel} docs={gdocs} agents={[]} nodeShape="circle" compact focusRel={sel === 'org' ? `org/${org.slug}.md` : `${sel}.md`} onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); openTab(id.startsWith('org/') ? 'org' : id); }} height={220} /></div>
+              <div className="msgr-actlocal"><Graph3D key={sel} docs={gdocs} compact focusRel={sel === 'org' ? `org/${org.slug}.md` : `${sel}.md`} onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); openTab(id.startsWith('org/') ? 'org' : id); }} height={220} /></div>
               {rows === null && <p className="empty">…</p>}
               {rows !== null && !list.length && <p className="empty">{isAdmin ? t('act.empty') : t('act.adminOnly')}</p>}
               {days.map((g) => (

@@ -432,9 +432,16 @@ test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(�
 
 test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→크루·문서/사람/크루/전사 문서)+아르고 기억 그래프(별칭)+문장 목록, 감사 19종 문장 사전, 한국어 조사, 설정의 기록 탭 제거', () => {
   const app = read('apps/messenger/src/App.jsx');
-  assert.match(app, /import \{ Graph2D \} from '@argo\/graph2d';/, '그래프는 아르고 컴포넌트 재사용(사본 금지)');
+  assert.match(app, /import \{ Graph3D \} from '\.\/graph3d\.jsx';/, '활동 그래프는 3D 컴포넌트(구성은 아르고 코어 재사용)');
   assert.match(app, /\{page === 'activity' && org \? \(\n\s*<Activity /, '활동 페이지 분기');
-  assert.match(app, /<Graph2D key="all" docs=\{gdocs\} agents=\{\[\]\} nodeShape="circle"/, '그래프 탭: 조직 관계 문서, 원형 노드');
+  assert.match(app, /<Graph3D key="all" docs=\{gdocs\} hint=\{t\('act\.graph\.hint'\)\} onSelectDoc=/, '그래프 탭: 3D 활동 그래프(조직 관계 문서)');
+  assert.match(app, /<Graph3D key=\{sel\} docs=\{gdocs\} compact focusRel=/, '대상 탭: 집중 노드 3D 로컬 그래프');
+  assert.doesNotMatch(app, /Graph2D/, '메신저 활동 페이지는 2D 그래프를 쓰지 않는다');
+  const g3 = read('apps/messenger/src/graph3d.jsx');
+  assert.match(g3, /import \{ buildGraph2D, stem \} from '@argo\/graph2d-core';/, '3D 그래프 구성은 아르고 코어 재사용(사본 금지)');
+  assert.match(g3, /prefers-reduced-motion: reduce/, '자동 회전은 동작 축소 설정을 존중');
+  assert.match(g3, /rgbVar\('--graph-rgb', null\)/, '3D 그래프도 --graph-rgb 우선');
+  assert.match(g3, /canvas\.addEventListener\('wheel', onWheel, \{ passive: false \}\)/, '휠 줌은 페이지 스크롤을 막는다');
   assert.match(app, /const openTab = \(rel\) => \{ setTabs\(\(ts\) => ts\.some\(\(x\) => x\.id === rel\) \? ts : \[\.\.\.ts, \{ id: rel, kind: 'entity', rel \}\]\); setActive\(rel\);/, '가로 다중 탭');
   assert.match(app, /className="vault-tab-x" onClick=\{\(e\) => \{ e\.stopPropagation\(\); closeTab\(tb\.id\); \}\}/, '탭 닫기');
   assert.match(app, /^function ActRow\(\{ c, id, label, sub, depth = 0, kids = null, icon = null \}\) \{/m, '트리 행은 모듈 수준 컴포넌트(안에서 정의하면 클릭마다 리마운트)');
