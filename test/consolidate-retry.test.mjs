@@ -219,7 +219,7 @@ test('상한은 호출부가 용도에 맞게 명시한다 — 통일된 knob �
       .map((f) => readFile(new URL(f, import.meta.url), 'utf8')));
   // 기본값 자체를 잠근다 — I-3: '호출부에 문자열이 있나'만 보면 기본값을 30분으로 바꿔도 안 잡힌다
   assert.match(oneshot, /timeoutMs = 120_000/, '명시 안 한 호출의 기본 상한');
-  assert.match(cons, /runOneShot\([\s\S]{0,400}?timeoutMs: 10 \* 60_000/, '기억 정리 = 새벽 배치, 대기자 없음');
+  assert.match(cons, /oneShot\(wsId, PROMPT\([\s\S]{0,400}?timeoutMs: 10 \* 60_000/, '기억 정리 = 새벽 배치, 대기자 없음(oneShot = runOneShot 테스트 오버라이드 가능)');
   // I-1: SDK 경로엔 이번에 처음 상한이 생긴다(이전 무제한). 첫 영입은 무료 모델(큐 지연) + 단일
   // 러너(자가치유 대체 없음) 조합이라 기본 120s면 온보딩이 통째로 실패할 수 있다.
   assert.match(persona, /CARD_PROMPT\([\s\S]{0,120}?timeoutMs: 5 \* 60_000/, '첫 영입은 기본보다 넉넉히');

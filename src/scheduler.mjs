@@ -9,7 +9,7 @@ import { chat } from './chat.mjs';
 import { readAgentCard } from './persona.mjs';
 import { resolveRunner, isCliRunner } from './runners.mjs';
 import { appendTurn } from './thread.mjs';
-import { consolidateMemory, rollupJournals } from './consolidate.mjs';
+import { consolidateBacklog, rollupJournals } from './consolidate.mjs';
 import { runHealthChecks } from './runner-health.mjs';
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader } from './sync.mjs';
@@ -19,6 +19,7 @@ import { paths } from './workspace.mjs';
 import { join } from 'node:path';
 
 const CONSOLIDATE_AT = '04:00'; // 새벽 정리 — 사람 뇌의 수면 정리처럼
+const CONSOLIDATE_UNTIL_HOUR = 8; // 야간 루프 마감(로컬 08:00) — 그 뒤엔 낮 크루 턴과 러너를 나눠 쓰지 않는다
 // 하루 1회 실행 스탬프 — 정각(hhmm===) 일치는 그 1분에 기기가 수면·앱 종료면 그날 정리가 영영 스킵된다.
 // "04:00 이후 첫 틱에 아직 오늘 안 돌았으면 실행"으로 캐치업한다(랩탑 현실 대응).
 const RUN_STAMP = (wsId) => join(paths(wsId).vault, '.consolidate-run.json');
@@ -229,7 +230,10 @@ export function ensureScheduler() {
               console.log(`[argo] 기억 정리: ${cid} (${nth})`);
               // 재시도는 consolidate부터 다시 탄다 — 워터마크가 성공 후에만 전진하므로 이미 정제된
               // 구간은 조기 반환(LLM 호출 0)이고, rollup은 주간 블록 중복 append를 자체 차단한다.
-              consolidateMemory(cid)
+              // 야간 루프 — 잔량 소진·밤당 7MB·08:00·청구 러너 5청크 중 먼저 닿는 것까지 청크를 연속 정리
+              const deadline = new Date(now.getFullYear(), now.getMonth(), now.getDate(), CONSOLIDATE_UNTIL_HOUR, 0, 0).getTime();
+              consolidateBacklog(cid, { deadlineMs: Math.max(deadline, now.getTime() + 60_000) }) // 08:00 뒤 캐치업이면 최소 1청크
+                .then((r) => console.log(`[argo] 기억 정리 끝: ${cid} 청크 ${r.chunks}·${Math.round(r.bytes / 1024)}KB·노트 ${r.notes.length} (${r.stoppedBy})`))
                 .then(() => rollupJournals(cid)) // 정제가 소화한 일지만 주간으로 접힌다
                 .then(() => markConsolidateDone(cid, today))
                 .catch((e) => console.error(
