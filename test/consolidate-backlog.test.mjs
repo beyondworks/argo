@@ -132,12 +132,12 @@ test('배선 — 스케줄러가 야간 루프(consolidateBacklog)를 08:00 마�
   assert.match(sched, /consolidateBacklog\(cid, \{ deadlineMs: Math\.max\(deadline, now\.getTime\(\) \+ 60_000\), onChunk: \(\) => bumpConsolidateClaim\(cid, Date\.now\(\), today\) \}\)[\s\S]{0,300}?\.then\(\(\) => rollupJournals\(cid\)\)/, '루프 뒤 롤업 + 청크마다 선점 스탬프 연장');
   const route = await readFile(new URL('../app/api/companies/[ws]/vault/consolidate/route.js', import.meta.url), 'utf8');
   assert.match(route, /export const maxDuration = 800;/, '수동 정리 라우트 상한 = 청크 264초 + 복구 3분 여유, 호스티드 함수 상한 800 안(검수 MEDIUM-2)');
-  assert.match(src, /if \(onChunk\) await Promise\.resolve\(\)\.then\(\(\) => onChunk\(\{ chunks, bytes \}\)\)\.catch\(\(\) => \{\}\); \/\/ 진입 직후 1회/, '루프 진입 직후 선점 스탬프 연장');
 
   assert.doesNotMatch(sched, /consolidateMemory\(cid\)/, '단발 호출 잔재 없음');
   const src = await readFile(new URL('../src/consolidate.mjs', import.meta.url), 'utf8');
   assert.match(src, /\{ lang, model: CONSOLIDATE_MODEL, maxTurns: 2, readOnly: true, timeoutMs: 10 \* 60_000 \}/, '본 호출: sonnet 5·읽기 전용·2턴');
   assert.doesNotMatch(src, /claude-haiku/, 'haiku 잔재 없음');
+  assert.match(src, /if \(onChunk\) await Promise\.resolve\(\)\.then\(\(\) => onChunk\(\{ chunks, bytes \}\)\)\.catch\(\(\) => \{\}\); \/\/ 진입 직후 1회/, '루프 진입 직후 선점 스탬프 연장');
   assert.match(src, /isBilledRunner\(wsId, runner\)\.catch\(\(\) => true\)/, '청구 판정 실패는 청구로(fail-closed — 비용 상한 소멸 방지)');
   assert.match(src, /if \(!parsed && out\.length <= REPAIR_MAX\)/, '잘린 출력은 복구하지 않는다');
   assert.match(src, /appendSourceLinks\(file, sources\.slice\(0, SOURCE_LINK_CAP\)\)/, '근거 링크 상한');
