@@ -26,7 +26,8 @@ function syncThemeRgb() {
   const light = (pr * 299 + pg * 587 + pb * 114) / 1000 > 128;
   // 별 포인트 = 테마의 '점·노드 강조색'. linen 가족은 --accent가 차콜(무채색)이고 옐로를 --mark로 분리했으므로 --mark-rgb를 먼저 본다(메신저 활동 그래프·기억 그래프 룩 통일, 2026-09-04)
   const chroma = (v) => { const a = (v || '').split(',').map(Number); return a.length === 3 && !a.some(Number.isNaN) && Math.max(...a) - Math.min(...a) >= 40 ? a : null; };
-  let acc = chroma(st.getPropertyValue('--mark-rgb').trim()) ?? (st.getPropertyValue('--accent-rgb').trim() || '').split(',').map(Number);
+  // --graph-rgb: 그래프 전용 포인트색(있으면 최우선). 메신저 linen은 옐로가 그레이지 캔버스에서 묻혀 러스트로 지정(유건 지적 2026-09-04). 아르고 본체는 미정의라 종전 그대로.
+  let acc = chroma(st.getPropertyValue('--graph-rgb').trim()) ?? chroma(st.getPropertyValue('--mark-rgb').trim()) ?? (st.getPropertyValue('--accent-rgb').trim() || '').split(',').map(Number);
   if (acc.length !== 3 || acc.some(Number.isNaN) || Math.max(...acc) - Math.min(...acc) < 40) acc = light ? [62, 130, 247] : [120, 170, 255]; // 무채색 포인트면 푸른 계열
   ACCENT = acc.join(', ');
   // 라벨은 배경 대비로 한 단계 — 밝은 종이엔 짙게, 어두운 종이엔 밝게

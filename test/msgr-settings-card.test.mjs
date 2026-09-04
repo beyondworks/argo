@@ -437,8 +437,16 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   assert.match(app, /<Graph2D key="all" docs=\{gdocs\} agents=\{\[\]\} nodeShape="circle"/, '그래프 탭: 조직 관계 문서, 원형 노드');
   assert.match(app, /const openTab = \(rel\) => \{ setTabs\(\(ts\) => ts\.some\(\(x\) => x\.id === rel\) \? ts : \[\.\.\.ts, \{ id: rel, kind: 'entity', rel \}\]\); setActive\(rel\);/, '가로 다중 탭');
   assert.match(app, /className="vault-tab-x" onClick=\{\(e\) => \{ e\.stopPropagation\(\); closeTab\(tb\.id\); \}\}/, '탭 닫기');
+  assert.match(app, /^function ActRow\(\{ c, id, label, sub, depth = 0, kids = null, icon = null \}\) \{/m, '트리 행은 모듈 수준 컴포넌트(안에서 정의하면 클릭마다 리마운트)');
+  assert.doesNotMatch(app.slice(app.indexOf('function Activity(')), /const Row = \(/, 'Activity 안에 행 컴포넌트를 정의하지 않는다');
+  assert.match(app, /\}, \[org\.id, channels\.map\(\(c\) => c\.id\)\.join\(','\)\]\);/, '감사 재조회는 채널 id 목록 키(배열 정체 아님)');
+  assert.match(app, /onAuxClick=\{\(e\) => \{ if \(e\.button === 1\) \{ e\.preventDefault\(\); closeTab\(tb\.id\); \} \}\}/, '가운데 클릭 닫기');
+  assert.match(app, /const closeAll = \(\) => \{ setTabs\(\[\{ id: 'graph', kind: 'graph' \}\]\); setActive\('graph'\); \};/, '모두 닫기');
   const g2 = read('app/c/[ws]/graph2d.jsx');
   assert.match(g2, /nodeShape = 'star'/, '아르고 기억 그래프 기본은 별(변경 없음)');
+  assert.match(g2, /chroma\(st\.getPropertyValue\('--graph-rgb'\)\.trim\(\)\) \?\? chroma\(st\.getPropertyValue\('--mark-rgb'\)\.trim\(\)\)/, '--graph-rgb 최우선, 없으면 --mark-rgb');
+  const css = read('apps/messenger/src/styles.css');
+  assert.match(css, /:root\[data-theme='linen'\], :root\[data-theme='linen-light'\] \{ --graph-rgb: 176, 82, 30; \}/, '메신저 linen 그래프 포인트색 러스트');
   assert.match(g2, /if \(shapeRef\.current === 'circle'\) \{ plain\.moveTo/, '원형 노드 분기(의존 배열 밖 ref)');
   assert.ok(!/\['audit', 'set\.tab\.audit'\]/.test(app), '설정의 기록 탭 제거');
   assert.match(app, /return lang === 'en' \? out : koJosa\(out\);/, '한국어 조사 처리');

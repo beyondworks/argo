@@ -774,6 +774,21 @@ const ACT_KIND = { 'org.create': 'org', 'org.transfer': 'org', 'org.transfer.off
   'member.add': 'member', 'member.role': 'member', 'member.remove': 'member', 'member.delete': 'member', 'member.offboard': 'member', 'member.join.domain': 'member', 'invite.accept': 'member',
   'channel.admins': 'channel', 'channel.personal_crews': 'channel', 'crew.create': 'crew', 'approval.approved': 'approval', 'approval.rejected': 'approval', 'approval.pending': 'approval', 'policy.update': 'org',
   'doc.insert': 'doc', 'doc.update': 'doc', 'doc.delete': 'doc', 'doc.proposal.applied': 'doc', 'node.bootstrap': 'org' };
+/* 활동 트리 행 — Activity 밖 모듈 수준(안에서 정의하면 렌더마다 새 컴포넌트 타입이라 클릭마다 트리가 리마운트된다, 유건 제보 2026-09-04) */
+function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
+  const { openIds, toggle, sel, active, openTab } = c; const has = !!kids; const open = openIds.has(id);
+  return (
+    <div>
+      <button type="button" className={`row${sel === id && active !== 'graph' ? ' active' : ''}`} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => { if (['channels', 'people', 'crews', 'docs'].includes(id)) { toggle(id); return; } openTab(id); if (has && !open) toggle(id); }} onDoubleClick={() => has && toggle(id)}>
+        {has ? <span className="caret" style={{ transform: open ? 'rotate(90deg)' : 'none' }} onClick={(e) => { e.stopPropagation(); toggle(id); }}>▸</span> : <span className="caret" />}
+        {icon && <I name={icon} size={12} />}
+        <span className="lbl">{label}</span>{sub != null && <span className="cnt">{sub}</span>}
+      </button>
+      {has && open && <div className="tree-kids">{kids}</div>}
+    </div>
+  );
+}
+
 function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onError, onBack, onMenu, onOpenChannel }) {
   const { t, lang } = useT();
   const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
@@ -782,6 +797,11 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
   const openTab = (rel) => { setTabs((ts) => ts.some((x) => x.id === rel) ? ts : [...ts, { id: rel, kind: 'entity', rel }]); setActive(rel); setLimit(60); };
   const closeTab = (id) => { setTabs((ts) => { const n = ts.filter((x) => x.id !== id); if (active === id) setActive(n[n.length - 1]?.id ?? 'graph'); return n.length ? n : [{ id: 'graph', kind: 'graph' }]; }); };
   const [limit, setLimit] = useState(60); const [openIds, setOpenIds] = useState(() => new Set(['org', 'channels']));
+  const [tabMenu, setTabMenu] = useState(null); // { id, x, y } — 탭 우클릭 메뉴
+  const keepTabs = (pred) => setTabs((ts) => { const n = ts.filter(pred); const nx = n.length ? n : [{ id: 'graph', kind: 'graph' }]; if (!nx.some((x) => x.id === active)) setActive(nx[nx.length - 1].id); return nx; });
+  const closeOthers = (id) => keepTabs((x) => x.id === id);
+  const closeRight = (id) => setTabs((ts) => { const k = ts.findIndex((x) => x.id === id); const n = ts.slice(0, k + 1); if (!n.some((x) => x.id === active)) setActive(id); return n; });
+  const closeAll = () => { setTabs([{ id: 'graph', kind: 'graph' }]); setActive('graph'); };
   useEffect(() => {
     let on = true;
     (async () => {
@@ -795,7 +815,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
       } catch (e) { if (on) onError(e.message); }
     })();
     return () => { on = false; };
-  }, [org.id, channels]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [org.id, channels.map((c) => c.id).join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
   const chName = (id) => channels.find((c) => c.id === id)?.name ?? t('act.deletedChannel');
   const crewName = (id) => crews.find((c) => c.id === id)?.display_name ?? t('act.deletedCrew');
   const docTitle = (id) => docs.find((d) => d.id === id)?.title ?? null;
@@ -846,6 +866,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
     const p = { who: who(r), target: r.target_kind === 'user' ? nameOfUser(r.target_id) : r.target_kind === 'channel' ? `#${chName(r.target_id)}` : r.target_kind === 'crew' ? crewName(r.target_id) : r.target_kind === 'doc' ? (docTitle(r.target_id) ?? m.path ?? '') : '',
       from: m.from ? (a === 'member.role' || a === 'channel.personal_crews' ? (a === 'member.role' ? roleName(m.from) : t(`ch.personal.${m.from}`)) : nameOfUser(m.from)) : '', to: m.to ? (a === 'member.role' ? roleName(m.to) : a === 'channel.personal_crews' ? t(`ch.personal.${m.to}`) : nameOfUser(m.to)) : '',
       role: roleName(m.role), channel: m.channel || m.channel_id ? `#${chName(m.channel ?? m.channel_id)}` : '', name: m.name ?? '', domain: m.domain ?? '', path: m.path ?? '', n: m.crews_detached ?? 0, days: m.guest_days ?? '', admins: Array.isArray(m.admins) ? m.admins.map(nameOfUser).join(', ') : '' };
+    p.detail = (p.role || p.channel) ? ` (${p.role}${p.channel})` : ''; // 초대 수락: 역할·채널이 둘 다 없으면 빈 괄호를 남기지 않는다
     const key = a === 'channel.admins' && !p.admins ? 'act.channel.admins.none' : `act.${a}`;
     const txt = t(key, p);
     const out = txt === key ? t('act.fallback', { who: p.who, action: a }) : txt;
@@ -855,16 +876,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
   const shown = list.slice(0, limit);
   const days = []; for (const r of shown) { const d = dayKey(r.at); const g = days.find((x) => x.d === d); if (g) g.rows.push(r); else days.push({ d, at: r.at, rows: [r] }); }
   const toggle = (id) => setOpenIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const Row = ({ id, label, sub, depth = 0, kids = null, icon = null }) => { const has = !!kids; const open = openIds.has(id); return (
-    <div>
-      <button type="button" className={`row${sel === id && active !== 'graph' ? ' active' : ''}`} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => { if (['channels', 'people', 'crews', 'docs'].includes(id)) { toggle(id); return; } openTab(id); if (has && !open) toggle(id); }} onDoubleClick={() => has && toggle(id)}>
-        {has ? <span className="caret" style={{ transform: open ? 'rotate(90deg)' : 'none' }} onClick={(e) => { e.stopPropagation(); toggle(id); }}>▸</span> : <span className="caret" />}
-        {icon && <I name={icon} size={12} />}
-        <span className="lbl">{label}</span>{sub != null && <span className="cnt">{sub}</span>}
-      </button>
-      {has && open && <div className="tree-kids">{kids}</div>}
-    </div>
-  ); };
+  const rc = { openIds, toggle, sel, active, openTab }; // 트리 행 컨텍스트(ActRow는 모듈 수준 — 리마운트 없음)
   const countFor = (rel) => (rows ?? []).filter((r) => relOf(r) === rel || (rel.startsWith('channels/') && channels.some((c) => `channels/${c.name}` === rel && chOf(r) === c.id))).length;
   const visibleCh = channels.filter((c) => c.kind !== 'dm');
   const entityTitle = (rel) => rel === 'org' ? org.name : rel.startsWith('channels/') ? `#${rel.slice(9)}` : rel.startsWith('people/') ? nameOfUser(rel.slice(7)) : rel.startsWith('crews/') ? crewName(rel.slice(6)) : rel.startsWith('docs/') ? (docs.find((d) => `docs/${d.path.replace(/\.md$/, '')}` === rel)?.title ?? rel) : rel;
@@ -882,32 +894,42 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
           <span style={{ flex: 1 }} />
         </div>
         <div className="msgr-acttree-body">
-          <Row id="org" label={org.name} sub={rows?.length ?? ''} icon="hash" kids={<>
-            <Row id="channels" label={t('act.tree.channels')} sub={visibleCh.length} depth={1} kids={visibleCh.map((c) => {
+          <ActRow c={rc} id="org" label={org.name} sub={rows?.length ?? ''} icon="hash" kids={<>
+            <ActRow c={rc} id="channels" label={t('act.tree.channels')} sub={visibleCh.length} depth={1} kids={visibleCh.map((c) => {
               const ms = cm.filter((x) => x.channel_id === c.id); const cs = ms.filter((x) => x.member_kind === 'crew'); const ds = docs.filter((d) => d.channel_id === c.id);
               const rel = `channels/${c.name}`;
-              return <Row key={c.id} id={rel} label={c.name} sub={countFor(rel)} depth={2} icon={c.kind === 'private' ? 'lock' : 'hash'} kids={<>
-                {cs.map((x) => <Row key={x.member_id} id={`crews/${x.member_id}`} label={crewName(x.member_id)} sub={countFor(`crews/${x.member_id}`)} depth={3} icon="star" />)}
-                {ds.map((d) => <Row key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={3} icon="doc" />)}
+              return <ActRow c={rc} key={c.id} id={rel} label={c.name} sub={countFor(rel)} depth={2} icon={c.kind === 'private' ? 'lock' : 'hash'} kids={<>
+                {cs.map((x) => <ActRow c={rc} key={x.member_id} id={`crews/${x.member_id}`} label={crewName(x.member_id)} sub={countFor(`crews/${x.member_id}`)} depth={3} icon="star" />)}
+                {ds.map((d) => <ActRow c={rc} key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={3} icon="doc" />)}
                 {!cs.length && !ds.length && <div className="tree-empty">{t('act.tree.empty')}</div>}
               </>} />;
             })} />
-            <Row id="people" label={t('act.tree.people')} sub={members.length} depth={1} kids={members.map((m) => <Row key={m.user_id} id={`people/${m.user_id}`} label={m.display_name || m.user_id.slice(0, 8)} sub={countFor(`people/${m.user_id}`)} depth={2} icon="at" />)} />
-            <Row id="crews" label={t('act.tree.crews')} sub={crews.length} depth={1} kids={crews.map((c) => <Row key={c.id} id={`crews/${c.id}`} label={c.display_name} sub={countFor(`crews/${c.id}`)} depth={2} icon="star" />)} />
-            <Row id="docs" label={t('act.tree.docs')} sub={docs.filter((d) => !d.channel_id).length} depth={1} kids={docs.filter((d) => !d.channel_id).map((d) => <Row key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={2} icon="doc" />)} />
+            <ActRow c={rc} id="people" label={t('act.tree.people')} sub={members.length} depth={1} kids={members.map((m) => <ActRow c={rc} key={m.user_id} id={`people/${m.user_id}`} label={m.display_name || m.user_id.slice(0, 8)} sub={countFor(`people/${m.user_id}`)} depth={2} icon="at" />)} />
+            <ActRow c={rc} id="crews" label={t('act.tree.crews')} sub={crews.length} depth={1} kids={crews.map((c) => <ActRow c={rc} key={c.id} id={`crews/${c.id}`} label={c.display_name} sub={countFor(`crews/${c.id}`)} depth={2} icon="star" />)} />
+            <ActRow c={rc} id="docs" label={t('act.tree.docs')} sub={docs.filter((d) => !d.channel_id).length} depth={1} kids={docs.filter((d) => !d.channel_id).map((d) => <ActRow c={rc} key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={2} icon="doc" />)} />
           </>} />
         </div>
       </aside>
       <section className="msgr-actpane">
         <div className="vault-tabs" role="tablist">
           {tabs.map((tb) => { const title = tb.kind === 'graph' ? t('act.tab.graph') : entityTitle(tb.rel); return (
-            <div key={tb.id} className={`vault-tab${tb.id === active ? ' active' : ''}`} onClick={() => setActive(tb.id)} title={title} role="tab" aria-selected={tb.id === active}>
+            <div key={tb.id} className={`vault-tab${tb.id === active ? ' active' : ''}`} onClick={() => setActive(tb.id)} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(tb.id); } }} onContextMenu={(e) => { e.preventDefault(); const r = e.currentTarget.closest('.msgr-actpane').getBoundingClientRect(); setTabMenu({ id: tb.id, x: e.clientX - r.left, y: e.clientY - r.top }); }} title={title} role="tab" aria-selected={tb.id === active}>
               <span className="vault-tab-title">{title}</span>
               <button type="button" className="vault-tab-x" onClick={(e) => { e.stopPropagation(); closeTab(tb.id); }} aria-label={t('act.closeTab')}>×</button>
             </div>
           ); })}
           <span style={{ flex: 1 }} />
+          {tabs.length > 1 && <button type="button" className="msgr-tabact" onClick={closeAll}>{t('act.tab.closeAll')}</button>}
         </div>
+        {tabMenu && <>
+          <div className="msgr-menubg" onClick={() => setTabMenu(null)} onContextMenu={(e) => { e.preventDefault(); setTabMenu(null); }} />
+          <div className="msgr-rowmenu msgr-tabmenu" style={{ left: tabMenu.x, top: tabMenu.y }} role="menu">
+            <button type="button" onClick={() => { closeTab(tabMenu.id); setTabMenu(null); }}>{t('act.closeTab')}</button>
+            <button type="button" onClick={() => { closeOthers(tabMenu.id); setTabMenu(null); }}>{t('act.tab.closeOthers')}</button>
+            <button type="button" onClick={() => { closeRight(tabMenu.id); setTabMenu(null); }}>{t('act.tab.closeRight')}</button>
+            <button type="button" onClick={() => { closeAll(); setTabMenu(null); }}>{t('act.tab.closeAll')}</button>
+          </div>
+        </>}
         <div className="msgr-actbody">
           {cur.kind === 'graph' ? (
             <Graph2D key="all" docs={gdocs} agents={[]} nodeShape="circle" onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); openTab(id.startsWith('org/') ? 'org' : id); }} />
