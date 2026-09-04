@@ -439,3 +439,12 @@
 .msgr-node-cmd .steps { margin: 0 0 4px 18px; padding: 0; display: grid; gap: 4px; font-size: 13px; line-height: 1.5; }
 
 .msgr-setcard select.msgr-input.inline { height: 34px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; }
+
+/* 레일 행 '…' 메뉴 — 호버·열림에만 보인다 */
+.msgr-railrow { position: relative; display: flex; align-items: center; min-width: 0; }
+.msgr-railrow .item { flex: 1; min-width: 0; padding-right: 30px; }
+.msgr-railrow .more { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--fg-3); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background 120ms ease; }
+.msgr-railrow:hover .more, .msgr-railrow.open .more, .msgr-railrow .more:focus-visible { opacity: 1; }
+.msgr-railrow .more:hover { background: var(--card-2); color: var(--fg); }
+.msgr-railrow .msgr-rowmenu { right: 4px; top: calc(100% + 2px); z-index: 20; }
+.msgr-setcard .msgr-seg.right { margin-left: auto; }

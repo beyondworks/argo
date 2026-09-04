@@ -206,7 +206,7 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
 
 test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목록만(크루 카드·멤버 스택 없음), 상단 참여 버튼이 시트를 열고, 시트의 참여 구성은 공개=조직 전원+정책 허용 크루 / 비공개=채널 멤버, 초대는 조직 메뉴', () => {
   assert.doesNotMatch(app, /msgr-crewcard|msgr-stack/, '레일에 크루 카드·멤버 스택이 남아 있다');
-  assert.match(app, /<div className="msgr-list">\n\s*\{sortedCh\.map\(\(c\) => \(/, '채널 세로 목록');
+  assert.match(app, /<div className="msgr-list">\n\s*\{sortedCh\.map\(\(c\) => \{ const canManage/, '채널 세로 목록(행 메뉴 포함)');
   assert.match(app, /const chPeople = !channel \? \[\] : channel\.kind === 'public' \? members : members\.filter\(\(m\) => chMembers\.some\(/, '사람 구성 계산');
   assert.match(app, /const chCrews = !channel \? \[\] : channel\.kind === 'public' \? usableCrews : crews\.filter\(\(c\) => chMembers\.some\(/, '크루 구성 계산(공개=정책 허용 크루)');
   assert.match(app, /<button type="button" className="members" onClick=\{onTitle\} title=\{t\('ch\.composition'\)\}/, '상단 참여 버튼');
@@ -417,4 +417,15 @@ test('UX 3/3 회사 크루 AI 드롭다운 — 서버 목록(node_info)이 있�
   assert.match(sql, /node_info = coalesce\(info, node_info\)/, '정보 없는 하트비트는 목록 유지');
   const bridge = read('src/gateway/msgr.mjs');
   assert.match(bridge, /await db\.nodeHeartbeat\(nodeOrgId, await runnerInfo\(wsId\)\.catch\(\(\) => null\)\)/, '하트비트에 러너 목록');
+});
+
+test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(내 크루 있으면 차단)·보관(관리 권한만), 1:1 나가기, 게스트 행 세그먼트 오른쪽, 게스트 링크 라벨', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /const leaveChannel = async \(c\) => \{[\s\S]*?if \(stuck\.length\) return setErr\(t\('ch\.leave\.blocked'\)\);[\s\S]*?\.delete\(\)\.eq\('channel_id', c\.id\)\.eq\('member_kind', 'user'\)\.eq\('member_id', uid\)/, '나가기 = 내 멤버 행 삭제, 내 크루가 있으면 차단');
+  assert.match(app, /\{canManage && \(railConfirm === `archive:\$\{c\.id\}`/, '보관은 관리 권한만, 2단계');
+  assert.match(app, /\{c\.kind === 'private' && \(railConfirm === `leave:\$\{c\.id\}`/, '나가기는 비공개 채널만(공개는 전원 자동)');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.ok(oc.indexOf("t('org.guest.until'") < oc.indexOf('<div className="msgr-seg right"'), '게스트 만료 문구는 세그먼트보다 앞(세그먼트 오른쪽 고정)');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['org.invite.kind.guest', 'ch.leave', 'ch.leave.blocked', 'ch.archive.confirm.short', 'dm.leave', 'ch.menu.settings']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
 });

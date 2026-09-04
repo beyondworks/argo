@@ -2,7 +2,7 @@
 // 룩 = linen v2(apps/messenger/design): 타임라인 척추 · 사람 원/크루 타일 · 2단 다크 독 · 결재 슬립 · 자체 아이콘(icons.jsx).
 // Argo 부품은 .shell/.side(테마 토큰 스코프)·.btn·Markdown·imeGuardWith만 쓰고, 나머지는 styles.css의 .msgr-*.
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, configured, q } from './supabase.js';
 import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
@@ -198,6 +198,31 @@ function Shell({ session }) {
   const crewOf = (id) => crews.find((c) => c.id === id);
   const [newOrg, setNewOrg] = useState(null); // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
   const [joinable, setJoinable] = useState([]); // J-3 도메인 자동 가입 후보
+  const [railMenu, setRailMenu] = useState(null); const [railConfirm, setRailConfirm] = useState(null); // 레일 행 '…' 메뉴(채널 설정·나가기·보관, 1:1 나가기) — 유건 지적 2026-09-04
+  useEffect(() => { if (!railMenu) return; const off = () => { setRailMenu(null); setRailConfirm(null); }; window.addEventListener('click', off); return () => window.removeEventListener('click', off); }, [railMenu]);
+  const leaveChannel = async (c) => {
+    setRailMenu(null); setRailConfirm(null);
+    const mine = crews.filter((cr) => cr.owner_user_id === uid).map((cr) => cr.id);
+    if (mine.length) { // 내 크루가 그 채널에 있으면 내가 빠지는 순간 크루가 조용히 죽는다(검수 HIGH-3) — 먼저 크루를 빼게 한다
+      const stuck = await q(supabase.from('msgr_channel_members').select('member_id').eq('channel_id', c.id).eq('member_kind', 'crew').in('member_id', mine)).catch(() => []);
+      if (stuck.length) return setErr(t('ch.leave.blocked'));
+    }
+    const res = await supabase.from('msgr_channel_members').delete().eq('channel_id', c.id).eq('member_kind', 'user').eq('member_id', uid).select('member_id');
+    if (res.error) return setErr(friendlyErr(res.error.message, t));
+    if (!res.data?.length) return setErr(t('err.denied'));
+    setNote(t(c.kind === 'dm' ? 'dm.leave.done' : 'ch.leave.done', { name: c.kind === 'dm' ? dmName(c) : c.name }));
+    if (chId === c.id) setChId(null);
+    await loadOrg(orgId).catch(() => {});
+  };
+  const archiveChannel = async (c) => {
+    setRailMenu(null); setRailConfirm(null);
+    const res = await supabase.from('msgr_channels').update({ archived_at: new Date().toISOString() }).eq('id', c.id).select('id');
+    if (res.error) return setErr(friendlyErr(res.error.message, t));
+    if (!res.data?.length) return setErr(t('ch.noEdit'));
+    setNote(t('ch.archive.done', { name: c.name }));
+    if (chId === c.id) setChId(null);
+    await loadOrg(orgId).catch(() => {});
+  };
   const [deletedOrgs, setDeletedOrgs] = useState([]); // J-5 삭제 예정(복구 가능) 조직
   const [newCh, setNewCh] = useState(null);   // { name, kind }
   const createOrg = async (name) => {
@@ -294,16 +319,42 @@ function Shell({ session }) {
         )}
         {channels.length ? (
           <div className="msgr-list">
-            {sortedCh.map((c) => (
-              <button key={c.id} type="button" className={`item${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}>
-                <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>
-              </button>
-            ))}
+            {sortedCh.map((c) => { const canManage = isAdmin || c.created_by === uid || (c.admin_user_ids ?? []).includes(uid); const open = railMenu === c.id; return (
+              <div key={c.id} className={`msgr-railrow${open ? ' open' : ''}`}>
+                <button type="button" className={`item${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}>
+                  <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>
+                </button>
+                <button type="button" className="more" onClick={(e) => { e.stopPropagation(); setRailMenu(open ? null : c.id); setRailConfirm(null); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={open}><I name="dots" size={13} /></button>
+                {open && (
+                  <div className="msgr-rowmenu" role="menu" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" role="menuitem" onClick={() => { setRailMenu(null); setChId(c.id); setPage('chat'); setRail(false); setChSheet(true); }}><I name="gear" size={13} />{t('ch.menu.settings')}</button>
+                    {c.kind === 'private' && (railConfirm === `leave:${c.id}`
+                      ? <button type="button" role="menuitem" className="danger" onClick={() => leaveChannel(c)}><I name="out" size={13} />{t('ch.leave.confirm')}</button>
+                      : <button type="button" role="menuitem" onClick={() => setRailConfirm(`leave:${c.id}`)}><I name="out" size={13} />{t('ch.leave')}</button>)}
+                    {canManage && (railConfirm === `archive:${c.id}`
+                      ? <button type="button" role="menuitem" className="danger" onClick={() => archiveChannel(c)}><I name="x" size={13} />{t('ch.archive.confirm.short')}</button>
+                      : <button type="button" role="menuitem" onClick={() => setRailConfirm(`archive:${c.id}`)}><I name="x" size={13} />{t('ch.archive')}</button>)}
+                  </div>
+                )}
+              </div>
+            ); })}
           </div>
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
         {dms.length > 0 && (<>
           <div className="msgr-group">{t('ch.dms')}</div>
-          <div className="msgr-list">{dms.map((c) => <button key={c.id} type="button" className={`item${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}><I name="at" size={14} /><span className="name">{dmName(c)}</span></button>)}</div>
+          <div className="msgr-list">{dms.map((c) => { const open = railMenu === c.id; return (
+            <div key={c.id} className={`msgr-railrow${open ? ' open' : ''}`}>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}><I name="at" size={14} /><span className="name">{dmName(c)}</span></button>
+              <button type="button" className="more" onClick={(e) => { e.stopPropagation(); setRailMenu(open ? null : c.id); setRailConfirm(null); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={open}><I name="dots" size={13} /></button>
+              {open && (
+                <div className="msgr-rowmenu" role="menu" onClick={(e) => e.stopPropagation()}>
+                  {railConfirm === `leave:${c.id}`
+                    ? <button type="button" role="menuitem" className="danger" onClick={() => leaveChannel(c)}><I name="out" size={13} />{t('dm.leave.confirm')}</button>
+                    : <button type="button" role="menuitem" onClick={() => setRailConfirm(`leave:${c.id}`)}><I name="out" size={13} />{t('dm.leave')}</button>}
+                </div>
+              )}
+            </div>
+          ); })}</div>
         </>)}
         <div className="msgr-railhint">{t('rail.hint')}</div>
         </div>
@@ -325,6 +376,7 @@ function Shell({ session }) {
             <button type="button" className="btn sm" style={{ border: 0, width: 24, height: 24, padding: 0 }} onClick={() => { setErr(''); setNote(''); }} aria-label="×"><I name="x" size={12} /></button>
           </div>
         )}
+        <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
         {page === 'docs' && org ? (
           <Docs org={org} isAdmin={!!isAdmin} channels={channels} chId={chId} uid={uid} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : page === 'settings' ? (
@@ -334,6 +386,7 @@ function Shell({ session }) {
         ) : (
           <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? invite : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} />
         )}
+        </PageBoundary>
       </main>
     </div>
   );
@@ -625,6 +678,23 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
 const FAMILIES = [['linen', 'settings.family.linen'], ['graphite', 'settings.family.graphite'], ['argo', 'settings.family.argo']];
 const MODES = [['', 'set.mode.system'], ['-light', 'set.mode.light'], ['-dark', 'set.mode.dark']];
 const FAMILY_CODES = FAMILIES.flatMap(([f]) => MODES.map(([s]) => `${f}${s}`));
+/* ─── 화면 오류 경계 — 한 화면의 렌더 오류가 앱 전체를 빈 화면으로 만들지 않게(실측 2026-09-04: 설정 탭 ReferenceError로 전체 소실) ─── */
+class PageBoundary extends Component {
+  constructor(p) { super(p); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err) { console.error('[msgr] page render error:', err); }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return (
+      <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
+        <h1>{this.props.title}</h1>
+        <p>{String(this.state.err?.message ?? this.state.err)}</p>
+        <div className="row"><button type="button" className="btn btn-primary sm" onClick={() => { this.setState({ err: null }); this.props.onReset?.(); }}>{this.props.retry}</button></div>
+      </div></div>
+    );
+  }
+}
+
 function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
@@ -830,6 +900,7 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
   const toggleDomain = () => patchOrg({ auto_join_domain: domainOn ? null : myDomain, auto_join_role: 'member' }, domainOn ? t('org.domain.off') : t('org.domain.saved'));
   const [transfer, setTransfer] = useState(null); // null | 'pick' | <userId 확인 단계>
   const [nodeGuide, setNodeGuide] = useState(false);
+  const nodeSet = !!org.service_user_id; // 서버 계정이 지정돼 있는가(실측: 채널 시트의 이름을 그대로 써 ReferenceError → 앱 전체 빈 화면)
   const [delName, setDelName] = useState(null); // J-5: 이름을 그대로 입력해야 삭제(깃헙식 확인 — 네이티브 confirm 금지)
   const deleteOrg = async () => {
     if (delName.trim() !== org.name) return;
@@ -925,9 +996,9 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
         {members.map((m) => { const isMe = m.user_id === uid; const isSvc = m.user_id === org.service_user_id; const canEdit = !isMe && !isSvc && m.role !== 'owner'; return (
           <div key={m.user_id} className="row">
             <Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span>
-            {isSvc ? <span className="sub">{t('org.node')}</span> : m.role === 'owner' || isMe ? <span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
-              : <div className="msgr-seg" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
             {m.expires_at && <span className={`sub${Date.parse(m.expires_at) < Date.now() ? ' expired' : ''}`}>{Date.parse(m.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(m.expires_at, lang) })}</span>}
+            {isSvc ? <span className="sub">{t('org.node')}</span> : m.role === 'owner' || isMe ? <span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}</span>
+              : <div className="msgr-seg right" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={m.role === r} className={m.role === r ? 'active' : ''} disabled={busy} onClick={() => setRole(m, r)}>{t(`role.${r}`)}</button>)}</div>}
             {canEdit && confirmRemove !== m.user_id && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRemove(m.user_id)} title={t('org.member.remove')} aria-label={t('org.member.remove')}><I name="x" size={13} /></button>}
             {canEdit && confirmRemove === m.user_id && <span className="confirm-inline"><span>{t('org.member.remove.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => remove(m)}>{t('org.member.remove')}</button><button type="button" className="btn sm" onClick={() => setConfirmRemove(null)}>{t('ui.cancel')}</button></span>}
           </div>
