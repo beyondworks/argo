@@ -3,6 +3,7 @@
 // Argo 부품은 .shell/.side(테마 토큰 스코프)·.btn·Markdown·imeGuardWith만 쓰고, 나머지는 styles.css의 .msgr-*.
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Graph2D } from '@argo/graph2d'; // 아르고 기억 그래프 — 활동 페이지(조직·채널·사람·크루·문서 관계)
 import { supabase, configured, q } from './supabase.js';
 import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
@@ -362,6 +363,7 @@ function Shell({ session }) {
           <Av name={me?.display_name || session.user.email} size="sm" />
           <span className="name">{me?.display_name || session.user.email}</span>
           <button type="button" className={`btn ghost${page === 'docs' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'docs' ? 'chat' : 'docs'); setRail(false); }} title={t('docs.title')} aria-label={t('docs.title')} aria-pressed={page === 'docs'} disabled={!org}><I name="doc" size={15} /></button>
+          {org && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="memory" size={15} /></button>}
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
           <button type="button" className="btn ghost" onClick={() => supabase.auth.signOut({ scope: 'local' })} title={t('auth.signOut')} aria-label={t('auth.signOut')}><I name="out" size={15} /></button>
         </div>
@@ -377,7 +379,9 @@ function Shell({ session }) {
           </div>
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
-        {page === 'docs' && org ? (
+        {page === 'activity' && org ? (
+          <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
+        ) : page === 'docs' && org ? (
           <Docs org={org} isAdmin={!!isAdmin} channels={channels} chId={chId} uid={uid} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
@@ -701,7 +705,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
   const mode = family ? theme.slice(family.length) : null;
   const skins = THEMES.filter((c) => !FAMILY_CODES.includes(c));
-  const tabs = [org && ['members', 'set.tab.members'], org && ['org', 'set.tab.org'], org && ['crews', 'set.tab.crews'], org && isAdmin && ['audit', 'set.tab.audit'], ['me', 'set.tab.me']].filter(Boolean); // UX 2/3: 세로 3천px 카드 더미 대신 탭 — 자주 쓰는 멤버가 첫 화면
+  const tabs = [org && ['members', 'set.tab.members'], org && ['org', 'set.tab.org'], org && ['crews', 'set.tab.crews'], ['me', 'set.tab.me']].filter(Boolean); // 기록은 활동 페이지(트리+그래프)로 — 유건 지시 2026-09-04 // UX 2/3: 세로 3천px 카드 더미 대신 탭 — 자주 쓰는 멤버가 첫 화면
   const [tab, setTab] = useState(org ? 'members' : 'me');
   useEffect(() => { if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]); }, [org?.id, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   return (<>
@@ -725,7 +729,6 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
           {isAdmin && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
           {policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
         </>)}
-        {tab === 'audit' && org && isAdmin && <OrgCard part="audit" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
         {tab === 'me' && (<>
           <section className="msgr-setcard">
             <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
@@ -760,6 +763,148 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
           </section>
         </>)}
       </div>
+    </div></div>
+  </>);
+}
+
+
+/* ─── 활동 페이지(유건 지시 2026-09-04): 아르고 "기억"처럼 — 왼쪽은 조직 → 채널 → 사람·크루·문서 트리, 오른쪽은 같은 룩의 관계 그래프,
+   고른 대상의 활동은 문장으로("유건이 민수를 관리자로 바꿈"). 정본은 서버 감사 로그(msgr_audit_log) — 화면은 이름으로 치환만 한다. ─── */
+const ACT_KIND = { 'org.create': 'org', 'org.transfer': 'org', 'org.transfer.offer': 'org', 'org.transfer.cancel': 'org', 'org.transfer.decline': 'org', 'org.successor': 'org', 'org.service_account': 'org', 'org.domain': 'org', 'org.delete': 'org', 'org.restore': 'org',
+  'member.add': 'member', 'member.role': 'member', 'member.remove': 'member', 'member.delete': 'member', 'member.offboard': 'member', 'member.join.domain': 'member', 'invite.accept': 'member',
+  'channel.admins': 'channel', 'channel.personal_crews': 'channel', 'crew.create': 'crew', 'approval.approved': 'approval', 'approval.rejected': 'approval', 'approval.pending': 'approval', 'policy.update': 'org',
+  'doc.insert': 'doc', 'doc.update': 'doc', 'doc.delete': 'doc', 'doc.proposal.applied': 'doc', 'node.bootstrap': 'org' };
+function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onError, onBack, onMenu, onOpenChannel }) {
+  const { t, lang } = useT();
+  const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
+  const [sel, setSel] = useState('org'); const [limit, setLimit] = useState(60); const [openIds, setOpenIds] = useState(() => new Set(['org', 'channels']));
+  useEffect(() => {
+    let on = true;
+    (async () => {
+      try {
+        const [a, d, m] = await Promise.all([
+          q(supabase.from('msgr_audit_log').select('id, actor_user_id, actor_crew_id, action, target_kind, target_id, meta, at').eq('org_id', org.id).order('at', { ascending: false }).limit(400)).catch(() => []), // 감사 열람은 관리자(RLS) — 멤버는 빈 목록 + 안내
+          q(supabase.from('msgr_org_docs').select('id, channel_id, path, title').eq('org_id', org.id)).catch(() => []),
+          channels.length ? q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', channels.map((c) => c.id))).catch(() => []) : [],
+        ]);
+        if (on) { setRows(a); setDocs(d); setCm(m); }
+      } catch (e) { if (on) onError(e.message); }
+    })();
+    return () => { on = false; };
+  }, [org.id, channels]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chName = (id) => channels.find((c) => c.id === id)?.name ?? t('act.deletedChannel');
+  const crewName = (id) => crews.find((c) => c.id === id)?.display_name ?? t('act.deletedCrew');
+  const docTitle = (id) => docs.find((d) => d.id === id)?.title ?? null;
+  const roleName = (r) => (r ? t(`role.${r}`) : '');
+  // 그래프 문서: rel(stem) = 노드 id, [[links]]가 엣지 — 아르고 기억 그래프의 계약 그대로
+  const gdocs = useMemo(() => {
+    const peopleRel = (id) => `people/${id}`; const chRel = (c) => `channels/${c.name}`; const crewRel = (c) => `crews/${c.id}`; const docRel = (d) => `docs/${d.path.replace(/\.md$/, '')}`;
+    const out = [];
+    const visible = channels.filter((c) => c.kind !== 'dm');
+    out.push({ rel: `org/${org.slug}.md`, title: org.name, dir: 'doc', links: [...visible.map(chRel), ...members.map((m) => peopleRel(m.user_id))] });
+    for (const c of visible) {
+      const ms = cm.filter((x) => x.channel_id === c.id);
+      const people = c.kind === 'public' ? members.filter((m) => m.role !== 'guest').map((m) => peopleRel(m.user_id)) : ms.filter((x) => x.member_kind === 'user').map((x) => peopleRel(x.member_id));
+      const cs = ms.filter((x) => x.member_kind === 'crew').map((x) => `crews/${x.member_id}`);
+      const ds = docs.filter((d) => d.channel_id === c.id).map(docRel);
+      out.push({ rel: `${chRel(c)}.md`, title: `#${c.name}`, dir: 'doc', links: [...people, ...cs, ...ds] });
+    }
+    for (const m of members) out.push({ rel: `${peopleRel(m.user_id)}.md`, title: m.display_name || m.user_id.slice(0, 8), dir: 'notes', links: [] });
+    for (const c of crews) out.push({ rel: `${crewRel(c)}.md`, title: c.display_name, dir: 'doc', links: [peopleRel(c.owner_user_id)] });
+    for (const d of docs) out.push({ rel: `${docRel(d)}.md`, title: d.title, dir: 'doc', links: d.channel_id ? [] : [`org/${org.slug}`] });
+    return out;
+  }, [org, channels, members, crews, docs, cm]);
+  // 선택 대상과 행의 관계
+  const relOf = (r) => {
+    if (r.target_kind === 'user') return `people/${r.target_id}`;
+    if (r.target_kind === 'channel') { const c = channels.find((x) => x.id === r.target_id); return c ? `channels/${c.name}` : null; }
+    if (r.target_kind === 'crew') return `crews/${r.target_id}`;
+    if (r.target_kind === 'doc') { const d = docs.find((x) => x.id === r.target_id); return d ? `docs/${d.path.replace(/\.md$/, '')}` : null; }
+    return null;
+  };
+  const chOf = (r) => r.meta?.channel ?? r.meta?.channel_id ?? (r.target_kind === 'channel' ? r.target_id : null);
+  const matches = (r) => {
+    if (sel === 'org') return true;
+    if (sel.startsWith('channels/')) { const c = channels.find((x) => `channels/${x.name}` === sel); return !!c && (chOf(r) === c.id || relOf(r) === sel); }
+    if (sel.startsWith('people/')) return relOf(r) === sel || `people/${r.actor_user_id}` === sel;
+    if (sel.startsWith('crews/')) return relOf(r) === sel || `crews/${r.actor_crew_id}` === sel || `crews/${r.meta?.crew_id}` === sel;
+    return relOf(r) === sel;
+  };
+  const who = (r) => r.actor_user_id ? nameOfUser(r.actor_user_id) : r.actor_crew_id ? crewName(r.actor_crew_id) : t('act.system');
+  // 한국어 조사 — 사전 문장의 "이(가)·을(를)·(으)로·은(는)"을 앞말 받침에 맞춰 고른다(영문·숫자 끝은 받침 없음으로)
+  const koJosa = (txt) => txt.replace(/(\S)(이\(가\)|을\(를\)|\(으\)로|은\(는\))/g, (all, ch, j) => {
+    const code = ch.charCodeAt(0); const hangul = code >= 0xac00 && code <= 0xd7a3; const jong = hangul ? (code - 0xac00) % 28 : 0;
+    const pick = { '이(가)': jong ? '이' : '가', '을(를)': jong ? '을' : '를', '(으)로': (jong && jong !== 8) ? '으로' : '로', '은(는)': jong ? '은' : '는' }[j];
+    return ch + pick;
+  });
+  const sentence = (r) => {
+    const m = r.meta ?? {}; const a = r.action;
+    const p = { who: who(r), target: r.target_kind === 'user' ? nameOfUser(r.target_id) : r.target_kind === 'channel' ? `#${chName(r.target_id)}` : r.target_kind === 'crew' ? crewName(r.target_id) : r.target_kind === 'doc' ? (docTitle(r.target_id) ?? m.path ?? '') : '',
+      from: m.from ? (a === 'member.role' || a === 'channel.personal_crews' ? (a === 'member.role' ? roleName(m.from) : t(`ch.personal.${m.from}`)) : nameOfUser(m.from)) : '', to: m.to ? (a === 'member.role' ? roleName(m.to) : a === 'channel.personal_crews' ? t(`ch.personal.${m.to}`) : nameOfUser(m.to)) : '',
+      role: roleName(m.role), channel: m.channel || m.channel_id ? `#${chName(m.channel ?? m.channel_id)}` : '', name: m.name ?? '', domain: m.domain ?? '', path: m.path ?? '', n: m.crews_detached ?? 0, days: m.guest_days ?? '', admins: Array.isArray(m.admins) ? m.admins.map(nameOfUser).join(', ') : '' };
+    const key = a === 'channel.admins' && !p.admins ? 'act.channel.admins.none' : `act.${a}`;
+    const txt = t(key, p);
+    const out = txt === key ? t('act.fallback', { who: p.who, action: a }) : txt;
+    return lang === 'en' ? out : koJosa(out);
+  };
+  const list = (rows ?? []).filter(matches);
+  const shown = list.slice(0, limit);
+  const days = []; for (const r of shown) { const d = dayKey(r.at); const g = days.find((x) => x.d === d); if (g) g.rows.push(r); else days.push({ d, at: r.at, rows: [r] }); }
+  const toggle = (id) => setOpenIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const Row = ({ id, label, sub, depth = 0, kids = null, icon = null }) => { const has = !!kids; const open = openIds.has(id); return (
+    <div>
+      <button type="button" className={`row${sel === id ? ' active' : ''}`} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => { setSel(id); setLimit(60); if (has && !open) toggle(id); }} onDoubleClick={() => has && toggle(id)}>
+        {has ? <span className="caret" style={{ transform: open ? 'rotate(90deg)' : 'none' }} onClick={(e) => { e.stopPropagation(); toggle(id); }}>▸</span> : <span className="caret" />}
+        {icon && <I name={icon} size={12} />}
+        <span className="lbl">{label}</span>{sub != null && <span className="cnt">{sub}</span>}
+      </button>
+      {has && open && <div className="tree-kids">{kids}</div>}
+    </div>
+  ); };
+  const countFor = (rel) => (rows ?? []).filter((r) => relOf(r) === rel || (rel.startsWith('channels/') && channels.some((c) => `channels/${c.name}` === rel && chOf(r) === c.id))).length;
+  const visibleCh = channels.filter((c) => c.kind !== 'dm');
+  return (<>
+    <div className="msgr-top">
+      <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
+      <span className="title"><I name="memory" size={18} />{t('act.title')}</span>
+      <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
+    </div>
+    <div className="msgr-thread page"><div className="msgr-act">
+      <aside className="msgr-acttree vault-tree">
+        <Row id="org" label={org.name} sub={rows?.length ?? ''} icon="hash" kids={<>
+          <Row id="channels" label={t('act.tree.channels')} sub={visibleCh.length} depth={1} kids={visibleCh.map((c) => {
+            const ms = cm.filter((x) => x.channel_id === c.id); const cs = ms.filter((x) => x.member_kind === 'crew'); const ds = docs.filter((d) => d.channel_id === c.id);
+            const rel = `channels/${c.name}`;
+            return <Row key={c.id} id={rel} label={c.name} sub={countFor(rel)} depth={2} icon={c.kind === 'private' ? 'lock' : 'hash'} kids={<>
+              {cs.map((x) => <Row key={x.member_id} id={`crews/${x.member_id}`} label={crewName(x.member_id)} sub={countFor(`crews/${x.member_id}`)} depth={3} icon="star" />)}
+              {ds.map((d) => <Row key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={3} icon="doc" />)}
+              {!cs.length && !ds.length && <div className="tree-empty">{t('act.tree.empty')}</div>}
+            </>} />;
+          })} />
+          <Row id="people" label={t('act.tree.people')} sub={members.length} depth={1} kids={members.map((m) => <Row key={m.user_id} id={`people/${m.user_id}`} label={m.display_name || m.user_id.slice(0, 8)} sub={countFor(`people/${m.user_id}`)} depth={2} icon="at" />)} />
+          <Row id="crews" label={t('act.tree.crews')} sub={crews.length} depth={1} kids={crews.map((c) => <Row key={c.id} id={`crews/${c.id}`} label={c.display_name} sub={countFor(`crews/${c.id}`)} depth={2} icon="star" />)} />
+          <Row id="docs" label={t('act.tree.docs')} sub={docs.filter((d) => !d.channel_id).length} depth={1} kids={docs.filter((d) => !d.channel_id).map((d) => <Row key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={2} icon="doc" />)} />
+        </>} />
+      </aside>
+      <section className="msgr-actmain">
+        <div className="msgr-actgraph">
+          <Graph2D docs={gdocs} agents={[]} focusRel={['org', 'channels', 'people', 'crews', 'docs'].includes(sel) ? null : `${sel}.md`} onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); if (id.startsWith('org/')) setSel('org'); else setSel(id); setLimit(60); }} height={380} />
+        </div>
+        <div className="msgr-actlist">
+          <div className="head"><h3>{sel === 'org' ? t('act.all') : t('act.of', { name: sel.startsWith('channels/') ? `#${sel.slice(9)}` : sel.startsWith('people/') ? nameOfUser(sel.slice(7)) : sel.startsWith('crews/') ? crewName(sel.slice(6)) : sel.startsWith('docs/') ? (docs.find((d) => `docs/${d.path.replace(/\.md$/, '')}` === sel)?.title ?? sel) : t(`act.tree.${sel}`) })}</h3><span className="sub">{list.length}</span>
+            {sel.startsWith('channels/') && <button type="button" className="btn sm" onClick={() => { const c = channels.find((x) => `channels/${x.name}` === sel); if (c) onOpenChannel(c.id); }}><I name="hash" size={12} />{t('act.openChannel')}</button>}
+          </div>
+          {rows === null && <p className="empty">…</p>}
+          {rows !== null && !list.length && <p className="empty">{isAdmin ? t('act.empty') : t('act.adminOnly')}</p>}
+          {days.map((g) => (
+            <div key={g.d} className="day">
+              <div className="daylabel">{fmtDay(g.at, lang).join(' · ')}</div>
+              {g.rows.map((r) => <div key={r.id} className="item"><span className="when">{fmtTs(r.at, lang)}</span><span className="text">{sentence(r)}</span></div>)}
+            </div>
+          ))}
+          {list.length > shown.length && <div className="row"><button type="button" className="btn sm" onClick={() => setLimit((n) => n + 60)}>{t('act.more')}</button></div>}
+        </div>
+      </section>
     </div></div>
   </>);
 }

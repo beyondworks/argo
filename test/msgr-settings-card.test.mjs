@@ -168,7 +168,7 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
 
 test('G-1: 조직 문서 — 풋터 버튼·페이지 분기, 목록은 org 단위 조회, 편집권 힌트(전사=관리자·채널=멤버)와 RLS 0행 문구, 생성 경로는 폴더/슬러그.md, 서버 편집권 함수·버전 트리거·감사', () => {
   assert.match(app, /aria-label=\{t\('docs\.title'\)\} aria-pressed=\{page === 'docs'\} disabled=\{!org\}/, '풋터 문서 버튼');
-  assert.match(app, /\{page === 'docs' && org \? \(\n\s*<Docs org=\{org\} isAdmin=\{!!isAdmin\} channels=\{channels\} chId=\{chId\} uid=\{uid\}/, '문서 페이지 분기');
+  assert.match(app, /: page === 'docs' && org \? \(\n\s*<Docs org=\{org\} isAdmin=\{!!isAdmin\} channels=\{channels\} chId=\{chId\} uid=\{uid\}/, '문서 페이지 분기(활동 페이지 뒤)');
   const docs = app.slice(app.indexOf('function Docs('), app.indexOf('function PolicyCard('));
   assert.match(docs, /from\('msgr_org_docs'\)\.select\('id, channel_id, path, title, version, updated_by, updated_at'\)\.eq\('org_id', org\.id\)\.order\('path'\)/, '목록 조회');
   assert.match(docs, /const canEdit = \(d\) => d\.channel_id \? true : isAdmin;/, '편집권 힌트');
@@ -428,4 +428,20 @@ test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(�
   assert.ok(oc.indexOf("t('org.guest.until'") < oc.indexOf('<div className="msgr-seg right"'), '게스트 만료 문구는 세그먼트보다 앞(세그먼트 오른쪽 고정)');
   const dict = read('apps/messenger/src/i18n.js');
   for (const k of ['org.invite.kind.guest', 'ch.leave', 'ch.leave.blocked', 'ch.archive.confirm.short', 'dm.leave', 'ch.menu.settings']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→크루·문서/사람/크루/전사 문서)+아르고 기억 그래프(별칭)+문장 목록, 감사 19종 문장 사전, 한국어 조사, 설정의 기록 탭 제거', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /import \{ Graph2D \} from '@argo\/graph2d';/, '그래프는 아르고 컴포넌트 재사용(사본 금지)');
+  assert.match(app, /\{page === 'activity' && org \? \(\n\s*<Activity /, '활동 페이지 분기');
+  assert.match(app, /<Graph2D docs=\{gdocs\} agents=\{\[\]\} focusRel=/, '그래프에 조직 관계 문서를 넣는다');
+  assert.ok(!/\['audit', 'set\.tab\.audit'\]/.test(app), '설정의 기록 탭 제거');
+  assert.match(app, /return lang === 'en' \? out : koJosa\(out\);/, '한국어 조사 처리');
+  const dict = read('apps/messenger/src/i18n.js');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  const actions = new Set([...sql.matchAll(/msgr_audit\([^,]*, '([a-z_.]+)'/g)].map((m) => m[1]));
+  for (const a of actions) if (!a.endsWith('.')) assert.ok(dict.includes(`'act.${a}':`), `문장 사전 act.${a}`); // 'approval.'·'doc.'은 서버가 상태·연산을 이어 붙이는 접두 — 아래 완성형으로 확인
+  for (const a of ['approval.approved', 'approval.rejected', 'doc.insert', 'doc.update', 'doc.delete', 'channel.admins.none']) assert.ok(dict.includes(`'act.${a}':`), `문장 사전 act.${a}`);
+  const vite = read('apps/messenger/vite.config.js');
+  assert.match(vite, /'@argo\/graph2d': shared\('app\/c\/\[ws\]\/graph2d\.jsx'\)/, '그래프 별칭');
 });

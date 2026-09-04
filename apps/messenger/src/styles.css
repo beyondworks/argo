@@ -460,3 +460,28 @@
   .msgr-thread.page { padding: 12px 14px 24px; }
   .msgr-thread.page .msgr-docs { grid-template-columns: 1fr; }
 }
+
+/* 활동 페이지 — 아르고 기억 페이지의 트리·그래프 룩 */
+.msgr-act { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; align-items: start; }
+.msgr-acttree { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 10px 6px; position: sticky; top: 8px; max-height: calc(100vh / var(--z, 1) - 120px); overflow: auto; }
+.msgr-acttree .row { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; font: inherit; font-size: 13px; color: var(--fg-2); cursor: pointer; text-align: left; }
+.msgr-acttree .row .caret { display: inline-block; width: 10px; flex: none; text-align: center; color: var(--fg-3); font-size: 9px; transition: transform .12s; }
+.msgr-acttree .row .lbl { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.msgr-acttree .row .cnt { color: var(--fg-3); font-size: 11px; font-family: var(--mono); }
+.msgr-acttree .row .mi { color: var(--fg-3); flex: none; }
+.msgr-acttree .tree-empty { padding: 4px 6px 4px 30px; color: var(--fg-3); font-size: 12px; }
+.msgr-actmain { display: grid; gap: 16px; min-width: 0; }
+.msgr-actgraph { height: 380px; background: var(--card); border: 1px solid var(--border); border-radius: 20px; overflow: hidden; position: relative; }
+.msgr-actgraph canvas { display: block; }
+.msgr-actlist { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 18px 22px; display: grid; gap: 10px; }
+.msgr-actlist .head { display: flex; align-items: center; gap: 10px; }
+.msgr-actlist .head h3 { margin: 0; font-size: 14px; }
+.msgr-actlist .head .sub { color: var(--fg-3); font-family: var(--mono); font-size: 11px; }
+.msgr-actlist .head .btn { margin-left: auto; }
+.msgr-actlist .day { display: grid; gap: 2px; }
+.msgr-actlist .daylabel { font-size: 11.5px; color: var(--fg-3); padding: 8px 0 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.msgr-actlist .item { display: flex; gap: 12px; align-items: baseline; padding: 5px 0; font-size: 13.5px; line-height: 1.5; }
+.msgr-actlist .item .when { flex: none; width: 64px; color: var(--fg-3); font-family: var(--mono); font-size: 11px; }
+.msgr-actlist .item .text { min-width: 0; }
+.msgr-actlist .empty { color: var(--fg-3); font-size: 13px; margin: 6px 0; }
+@media (max-width: 900px) { .msgr-act { grid-template-columns: 1fr; } .msgr-acttree { position: static; max-height: none; } }

@@ -12,6 +12,7 @@ export default defineConfig({
     '@argo/theme': shared('app/theme.jsx'),          // ThemeProvider·THEMES·DEFAULT_THEME(graphite) — localStorage 'argo-theme' 공유
     '@argo/ui': shared('app/ui.jsx'),                // Icon·Avatar·Markdown·DropUp·imeGuardWith
     '@argo/i18n': shared('app/i18n.jsx'),            // LangProvider(ui.jsx가 요구) + 테마 라벨
+    '@argo/graph2d': shared('app/c/[ws]/graph2d.jsx'), // 기억 그래프 2D(캔버스·테마 토큰) — 활동 페이지가 조직·채널·사람·크루·문서 관계를 같은 룩으로 그린다
   } },
   server: { fs: { allow: [shared('.')] } },
   clearScreen: false,
