@@ -792,16 +792,52 @@ function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
 function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onError, onBack, onMenu, onOpenChannel }) {
   const { t, lang } = useT();
   const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
-  const [tabs, setTabs] = useState([{ id: 'graph', kind: 'graph' }, { id: 'org', kind: 'entity', rel: 'org' }]); const [active, setActive] = useState('graph'); // 가로 다중 탭(아르고 기억 페이지처럼) — 그래프 + 대상별 활동
-  const sel = (tabs.find((x) => x.id === active) ?? tabs[0]).kind === 'entity' ? (tabs.find((x) => x.id === active) ?? tabs[0]).rel : 'org';
-  const openTab = (rel) => { setTabs((ts) => ts.some((x) => x.id === rel) ? ts : [...ts, { id: rel, kind: 'entity', rel }]); setActive(rel); setLimit(60); };
-  const closeTab = (id) => { setTabs((ts) => { const n = ts.filter((x) => x.id !== id); if (active === id) setActive(n[n.length - 1]?.id ?? 'graph'); return n.length ? n : [{ id: 'graph', kind: 'graph' }]; }); };
-  const [limit, setLimit] = useState(60); const [openIds, setOpenIds] = useState(() => new Set(['org', 'channels']));
-  const [tabMenu, setTabMenu] = useState(null); // { id, x, y } — 탭 우클릭 메뉴
-  const keepTabs = (pred) => setTabs((ts) => { const n = ts.filter(pred); const nx = n.length ? n : [{ id: 'graph', kind: 'graph' }]; if (!nx.some((x) => x.id === active)) setActive(nx[nx.length - 1].id); return nx; });
-  const closeOthers = (id) => keepTabs((x) => x.id === id);
-  const closeRight = (id) => setTabs((ts) => { const k = ts.findIndex((x) => x.id === id); const n = ts.slice(0, k + 1); if (!n.some((x) => x.id === active)) setActive(id); return n; });
-  const closeAll = () => { setTabs([{ id: 'graph', kind: 'graph' }]); setActive('graph'); };
+  // 창(pane)·탭 — 아르고 기억 페이지와 같은 모양: 그래프 노드를 누르면 옆 창(새 창)에 열리고, 트리는 포커스 창에 연다(유건 지시 2026-09-04)
+  const GRAPH_TAB = { id: 'graph', kind: 'graph' }; const MAX_PANES = 2;
+  const [panes, setPanes] = useState(() => [{ id: 1, tabs: [GRAPH_TAB, { id: 'org', kind: 'entity', rel: 'org' }], active: 'graph' }]);
+  const [focusPane, setFocusPane] = useState(1);
+  const [limits, setLimits] = useState({}); const limitOf = (rel) => limits[rel] ?? 60;
+  const [openIds, setOpenIds] = useState(() => new Set(['org', 'channels']));
+  const [tabMenu, setTabMenu] = useState(null); // { paneId, id, x, y }
+  const focusP = panes.find((p) => p.id === focusPane) ?? panes[0];
+  const focusTab = focusP.tabs.find((x) => x.id === focusP.active) ?? focusP.tabs[0];
+  const sel = focusTab?.kind === 'entity' ? focusTab.rel : 'org';
+  const openTab = (tab, { split = false } = {}) => {
+    setPanes((prev) => {
+      let target = prev.find((p) => p.id === focusPane) ?? prev[0];
+      const next = prev.map((p) => ({ ...p, tabs: [...p.tabs] }));
+      if (split) {
+        const other = next.find((p) => p.id !== target.id);
+        if (other) target = other;
+        else if (next.length < MAX_PANES) { const np = { id: Math.max(...next.map((p) => p.id)) + 1, tabs: [], active: null }; next.push(np); target = np; }
+        setFocusPane(target.id);
+      }
+      const pane = next.find((p) => p.id === target.id);
+      if (!pane.tabs.some((x) => x.id === tab.id)) pane.tabs.push(tab);
+      pane.active = tab.id;
+      return next;
+    });
+  };
+  const openEntity = (rel, opts) => openTab({ id: rel, kind: 'entity', rel }, opts);
+  const relOfDoc = (docRel) => { const id = docRel.replace(/\.md$/, ''); return id.startsWith('org/') ? 'org' : id; };
+  const closeTab = (paneId, tabId) => setPanes((prev) => {
+    const next = prev.map((p) => ({ ...p, tabs: [...p.tabs] })); const pane = next.find((p) => p.id === paneId); if (!pane) return prev;
+    const i = pane.tabs.findIndex((x) => x.id === tabId); if (i < 0) return prev;
+    pane.tabs.splice(i, 1);
+    if (!pane.tabs.length) { if (next.length > 1) { const rest = next.filter((p) => p.id !== paneId); setFocusPane(rest[0].id); return rest; } pane.tabs.push(GRAPH_TAB); pane.active = 'graph'; return next; }
+    if (pane.active === tabId) pane.active = pane.tabs[Math.min(i, pane.tabs.length - 1)].id;
+    return next;
+  });
+  const keepIn = (paneId, pred, activeAfter) => setPanes((prev) => {
+    const next = prev.map((p) => ({ ...p, tabs: [...p.tabs] })); const pane = next.find((p) => p.id === paneId); if (!pane) return prev;
+    pane.tabs = pane.tabs.filter(pred);
+    if (!pane.tabs.length) { if (next.length > 1) { const rest = next.filter((p) => p.id !== paneId); setFocusPane(rest[0].id); return rest; } pane.tabs.push(GRAPH_TAB); }
+    if (!pane.tabs.some((x) => x.id === pane.active)) pane.active = activeAfter && pane.tabs.some((x) => x.id === activeAfter) ? activeAfter : pane.tabs[pane.tabs.length - 1].id;
+    return next;
+  });
+  const closeOthers = (paneId, id) => keepIn(paneId, (x) => x.id === id, id);
+  const closeRight = (paneId, id) => setPanes((prev) => { const next = prev.map((p) => ({ ...p, tabs: [...p.tabs] })); const pane = next.find((p) => p.id === paneId); if (!pane) return prev; const k = pane.tabs.findIndex((x) => x.id === id); pane.tabs = pane.tabs.slice(0, k + 1); if (!pane.tabs.some((x) => x.id === pane.active)) pane.active = id; return next; });
+  const closeAll = (paneId) => keepIn(paneId, () => false);
   useEffect(() => {
     let on = true;
     (async () => {
@@ -847,7 +883,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
     return null;
   };
   const chOf = (r) => r.meta?.channel ?? r.meta?.channel_id ?? (r.target_kind === 'channel' ? r.target_id : null);
-  const matches = (r) => {
+  const matches = (r, sel) => {
     if (sel === 'org') return true;
     if (sel.startsWith('channels/')) { const c = channels.find((x) => `channels/${x.name}` === sel); return !!c && (chOf(r) === c.id || relOf(r) === sel); }
     if (sel.startsWith('people/')) return relOf(r) === sel || `people/${r.actor_user_id}` === sel;
@@ -872,15 +908,16 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
     const out = txt === key ? t('act.fallback', { who: p.who, action: a }) : txt;
     return lang === 'en' ? out : koJosa(out);
   };
-  const list = (rows ?? []).filter(matches);
-  const shown = list.slice(0, limit);
-  const days = []; for (const r of shown) { const d = dayKey(r.at); const g = days.find((x) => x.d === d); if (g) g.rows.push(r); else days.push({ d, at: r.at, rows: [r] }); }
+  const entityView = (sel) => {
+    const list = (rows ?? []).filter((r) => matches(r, sel)); const shown = list.slice(0, limitOf(sel));
+    const days = []; for (const r of shown) { const d = dayKey(r.at); const g = days.find((x) => x.d === d); if (g) g.rows.push(r); else days.push({ d, at: r.at, rows: [r] }); }
+    return { list, shown, days };
+  };
   const toggle = (id) => setOpenIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const rc = { openIds, toggle, sel, active, openTab }; // 트리 행 컨텍스트(ActRow는 모듈 수준 — 리마운트 없음)
+  const rc = { openIds, toggle, sel, active: focusTab?.id ?? 'graph', openTab: (rel) => openEntity(rel) }; // 트리 행 컨텍스트(ActRow는 모듈 수준 — 리마운트 없음)
   const countFor = (rel) => (rows ?? []).filter((r) => relOf(r) === rel || (rel.startsWith('channels/') && channels.some((c) => `channels/${c.name}` === rel && chOf(r) === c.id))).length;
   const visibleCh = channels.filter((c) => c.kind !== 'dm');
   const entityTitle = (rel) => rel === 'org' ? org.name : rel.startsWith('channels/') ? `#${rel.slice(9)}` : rel.startsWith('people/') ? nameOfUser(rel.slice(7)) : rel.startsWith('crews/') ? crewName(rel.slice(6)) : rel.startsWith('docs/') ? (docs.find((d) => `docs/${d.path.replace(/\.md$/, '')}` === rel)?.title ?? rel) : rel;
-  const cur = tabs.find((x) => x.id === active) ?? tabs[0];
   return (<>
     <div className="msgr-top">
       <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
@@ -890,7 +927,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
     <div className="msgr-actsplit">
       <aside className="msgr-acttree vault-tree">
         <div className="vault-toolbar">
-          <button type="button" className={`tb${active === 'graph' ? ' on' : ''}`} onClick={() => { setTabs((ts) => ts.some((x) => x.id === 'graph') ? ts : [{ id: 'graph', kind: 'graph' }, ...ts]); setActive('graph'); }} title={t('act.tab.graph')} aria-label={t('act.tab.graph')}><I name="memory" size={14} /></button>
+          <button type="button" className={`tb${focusTab?.id === 'graph' ? ' on' : ''}`} onClick={() => openTab(GRAPH_TAB)} title={t('act.tab.graph')} aria-label={t('act.tab.graph')}><I name="memory" size={14} /></button>
           <span style={{ flex: 1 }} />
         </div>
         <div className="msgr-acttree-body">
@@ -910,48 +947,57 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
           </>} />
         </div>
       </aside>
-      <section className="msgr-actpane">
-        <div className="vault-tabs" role="tablist">
-          {tabs.map((tb) => { const title = tb.kind === 'graph' ? t('act.tab.graph') : entityTitle(tb.rel); return (
-            <div key={tb.id} className={`vault-tab${tb.id === active ? ' active' : ''}`} onClick={() => setActive(tb.id)} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(tb.id); } }} onContextMenu={(e) => { e.preventDefault(); const r = e.currentTarget.closest('.msgr-actpane').getBoundingClientRect(); setTabMenu({ id: tb.id, x: e.clientX - r.left, y: e.clientY - r.top }); }} title={title} role="tab" aria-selected={tb.id === active}>
-              <span className="vault-tab-title">{title}</span>
-              <button type="button" className="vault-tab-x" onClick={(e) => { e.stopPropagation(); closeTab(tb.id); }} aria-label={t('act.closeTab')}>×</button>
-            </div>
-          ); })}
-          <span style={{ flex: 1 }} />
-          {tabs.length > 1 && <button type="button" className="msgr-tabact" onClick={closeAll}>{t('act.tab.closeAll')}</button>}
-        </div>
-        {tabMenu && <>
-          <div className="msgr-menubg" onClick={() => setTabMenu(null)} onContextMenu={(e) => { e.preventDefault(); setTabMenu(null); }} />
-          <div className="msgr-rowmenu msgr-tabmenu" style={{ left: tabMenu.x, top: tabMenu.y }} role="menu">
-            <button type="button" onClick={() => { closeTab(tabMenu.id); setTabMenu(null); }}>{t('act.closeTab')}</button>
-            <button type="button" onClick={() => { closeOthers(tabMenu.id); setTabMenu(null); }}>{t('act.tab.closeOthers')}</button>
-            <button type="button" onClick={() => { closeRight(tabMenu.id); setTabMenu(null); }}>{t('act.tab.closeRight')}</button>
-            <button type="button" onClick={() => { closeAll(); setTabMenu(null); }}>{t('act.tab.closeAll')}</button>
-          </div>
-        </>}
-        <div className="msgr-actbody">
-          {cur.kind === 'graph' ? (
-            <Graph3D key="all" docs={gdocs} hint={t('act.graph.hint')} onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); openTab(id.startsWith('org/') ? 'org' : id); }} />
-          ) : (
-            <div className="msgr-actlist">
-              <div className="head"><h3>{sel === 'org' ? t('act.all') : t('act.of', { name: entityTitle(sel) })}</h3><span className="sub">{list.length}</span>
-                {sel.startsWith('channels/') && <button type="button" className="btn sm" onClick={() => { const c = channels.find((x) => `channels/${x.name}` === sel); if (c) onOpenChannel(c.id); }}><I name="hash" size={12} />{t('act.openChannel')}</button>}
+      <div className="msgr-actpanes">
+        {panes.map((pane, pi) => {
+          const cur = pane.tabs.find((x) => x.id === pane.active) ?? pane.tabs[0]; const isFocus = pane.id === focusPane;
+          const ev = cur.kind === 'entity' ? entityView(cur.rel) : null; const sel = cur.kind === 'entity' ? cur.rel : null;
+          return (
+            <section key={pane.id} className={`msgr-actpane vault-pane${isFocus ? ' focus' : ''}`} style={{ borderLeft: pi > 0 ? '1px solid var(--border)' : 0 }} onMouseDown={() => setFocusPane(pane.id)}>
+              <div className="vault-tabs" role="tablist">
+                {pane.tabs.map((tb) => { const title = tb.kind === 'graph' ? t('act.tab.graph') : entityTitle(tb.rel); return (
+                  <div key={tb.id} className={`vault-tab${tb.id === pane.active ? ' active' : ''}`} onClick={() => setPanes((prev) => prev.map((p) => p.id === pane.id ? { ...p, active: tb.id } : p))} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(pane.id, tb.id); } }} onContextMenu={(e) => { e.preventDefault(); const r = e.currentTarget.closest('.msgr-actpane').getBoundingClientRect(); setTabMenu({ paneId: pane.id, id: tb.id, x: e.clientX - r.left, y: e.clientY - r.top }); }} title={title} role="tab" aria-selected={tb.id === pane.active}>
+                    <span className="vault-tab-title">{title}</span>
+                    <button type="button" className="vault-tab-x" onClick={(e) => { e.stopPropagation(); closeTab(pane.id, tb.id); }} aria-label={t('act.closeTab')}>×</button>
+                  </div>
+                ); })}
+                <span style={{ flex: 1 }} />
+                {cur.kind === 'entity' && panes.length < MAX_PANES && <button type="button" className="msgr-tabact" title={t('act.tab.openSide')} onClick={() => openEntity(cur.rel, { split: true })}>⫿</button>}
+                {(pane.tabs.length > 1 || panes.length > 1) && <button type="button" className="msgr-tabact" onClick={() => closeAll(pane.id)}>{t('act.tab.closeAll')}</button>}
               </div>
-              <div className="msgr-actlocal"><Graph3D key={sel} docs={gdocs} compact focusRel={sel === 'org' ? `org/${org.slug}.md` : `${sel}.md`} onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); openTab(id.startsWith('org/') ? 'org' : id); }} height={260} /></div>
-              {rows === null && <p className="empty">…</p>}
-              {rows !== null && !list.length && <p className="empty">{isAdmin ? t('act.empty') : t('act.adminOnly')}</p>}
-              {days.map((g) => (
-                <div key={g.d} className="day">
-                  <div className="daylabel">{fmtDay(g.at, lang).join(' · ')}</div>
-                  {g.rows.map((r) => <div key={r.id} className="item"><span className="when">{fmtTs(r.at, lang)}</span><span className="text">{sentence(r)}</span></div>)}
+              {tabMenu && tabMenu.paneId === pane.id && <>
+                <div className="msgr-menubg" onClick={() => setTabMenu(null)} onContextMenu={(e) => { e.preventDefault(); setTabMenu(null); }} />
+                <div className="msgr-rowmenu msgr-tabmenu" style={{ left: tabMenu.x, top: tabMenu.y }} role="menu">
+                  <button type="button" onClick={() => { closeTab(pane.id, tabMenu.id); setTabMenu(null); }}>{t('act.closeTab')}</button>
+                  <button type="button" onClick={() => { closeOthers(pane.id, tabMenu.id); setTabMenu(null); }}>{t('act.tab.closeOthers')}</button>
+                  <button type="button" onClick={() => { closeRight(pane.id, tabMenu.id); setTabMenu(null); }}>{t('act.tab.closeRight')}</button>
+                  <button type="button" onClick={() => { closeAll(pane.id); setTabMenu(null); }}>{t('act.tab.closeAll')}</button>
                 </div>
-              ))}
-              {list.length > shown.length && <div className="row"><button type="button" className="btn sm" onClick={() => setLimit((n) => n + 60)}>{t('act.more')}</button></div>}
-            </div>
-          )}
-        </div>
-      </section>
+              </>}
+              <div className="msgr-actbody">
+                {cur.kind === 'graph' ? (
+                  <Graph3D key="all" docs={gdocs} hint={t('act.graph.hint')} onSelectDoc={(rel) => openEntity(relOfDoc(rel), { split: true })} />
+                ) : (
+                  <div className="msgr-actlist">
+                    <div className="head"><h3>{sel === 'org' ? t('act.all') : t('act.of', { name: entityTitle(sel) })}</h3><span className="sub">{ev.list.length}</span>
+                      {sel.startsWith('channels/') && <button type="button" className="btn sm" onClick={() => { const c = channels.find((x) => `channels/${x.name}` === sel); if (c) onOpenChannel(c.id); }}><I name="hash" size={12} />{t('act.openChannel')}</button>}
+                    </div>
+                    <div className="msgr-actlocal"><Graph3D key={sel} docs={gdocs} compact focusRel={sel === 'org' ? `org/${org.slug}.md` : `${sel}.md`} onSelectDoc={(rel) => openEntity(relOfDoc(rel))} height={260} /></div>
+                    {rows === null && <p className="empty">…</p>}
+                    {rows !== null && !ev.list.length && <p className="empty">{isAdmin ? t('act.empty') : t('act.adminOnly')}</p>}
+                    {ev.days.map((g) => (
+                      <div key={g.d} className="day">
+                        <div className="daylabel">{fmtDay(g.at, lang).join(' · ')}</div>
+                        {g.rows.map((r) => <div key={r.id} className="item"><span className="when">{fmtTs(r.at, lang)}</span><span className="text">{sentence(r)}</span></div>)}
+                      </div>
+                    ))}
+                    {ev.list.length > ev.shown.length && <div className="row"><button type="button" className="btn sm" onClick={() => setLimits((m) => ({ ...m, [sel]: limitOf(sel) + 60 }))}>{t('act.more')}</button></div>}
+                  </div>
+                )}
+              </div>
+            </section>
+          );
+        })}
+      </div>
     </div>
   </>);
 }

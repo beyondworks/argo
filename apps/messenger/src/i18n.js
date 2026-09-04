@@ -142,6 +142,7 @@ export const DICT = {
   'act.tab.closeOthers': ['다른 탭 닫기', 'Close other tabs'],
   'act.tab.closeRight': ['오른쪽 탭 닫기', 'Close tabs to the right'],
   'act.tab.closeAll': ['모두 닫기', 'Close all'],
+  'act.tab.openSide': ['옆 창에 열기', 'Open to the side'],
   'act.more': ['더 보기', 'Show more'],
   'act.openChannel': ['채널 열기', 'Open channel'],
   'act.system': ['시스템', 'System'],
