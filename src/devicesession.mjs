@@ -94,6 +94,8 @@ export async function clearDeviceSession({ root = WS_ROOT } = {}) {
     마커·로그·콘솔·/api/me 응답에 실리는 값 전부 이 함수를 거친다. */
 const mask = (s) => String(s ?? '').replace(/[A-Za-z0-9_-]{20,}/g, '***').slice(0, 300);
 /** 리프레시 토큰 지문(sha256 앞 16자) — 마커에 "어느 토큰이 거절됐나"를 값 노출 없이 남긴다. */
+const DEAD_GATE_KINDS = new Set(['reused', 'revoked', 'expired']); // 종결 거절만 게이트 — catch-all 'rejected'는 재시도 유지
+const DEAD_RETRY_MS = 60 * 60_000; // 게이트 탈출 밸브 — 같은 토큰 재시도 최소 간격
 const tokenTag = (rt) => createHash('sha256').update(String(rt ?? '')).digest('hex').slice(0, 16);
 /** 리프레시 토큰 거절인가(Invalid Refresh Token 계열) — 네트워크 실패·5xx는 거절이 아니다. */
 const isRejection = (err) => /refresh token/i.test(String(err?.message ?? ''));
@@ -119,7 +121,8 @@ export function deviceSessionDeadInfo({ root = WS_ROOT } = {}) {
   } catch { return null; }
 }
 
-/** 마커 기록 — 같은 사유가 반복되면 최초 시각(at)을 보존하고 count만 올린다(동기화가 8초마다 다시 부딪친다). */
+/** 마커 기록 — 같은 사유가 반복되면 최초 시각(at)을 보존하고 count만 올린다.
+    게이트 도입 후 count·lastAt은 "서버까지 간 거절"만 센다(같은 토큰은 1시간에 1회, 토큰이 바뀐 재거절은 즉시). */
 async function markDead(root, err, retried, sess) {
   const reason = mask(err?.message ?? 'no session');
   const prev = deviceSessionDeadInfo({ root });
@@ -169,10 +172,13 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
       if ((sess.expires_at ?? 0) * 1000 - Date.now() > 60_000) return sess;
       // 사망 게이트 — 마커가 "바로 이 토큰"의 거절이면 다시 보내지 않는다. 8초 동기화 루프가 죽은 토큰을
       // 계속 보내 기기당 하루 1만 회(24기기 11만 회/일)의 "Possible abuse attempt"를 만들었다(2026-09-04 인증 로그 실측).
-      // 디스크 토큰이 바뀌면(재로그인·다른 사본 회전) 지문이 달라져 게이트가 열린다 — persist도 마커를 지운다.
+      // 게이트는 모든 사본에 걸리므로 자동 회생은 두 가지뿐이다: 재로그인(persist가 마커 제거·토큰 교체)과
+      // 아래 탈출 밸브 — 종결 kind(reused·revoked·expired)만 막고, 마지막 시도가 1시간 지났으면 1회 다시 보낸다
+      // (오분류·서버 측 복구를 하루 24회로 자가 치유, 난사는 1/450). 그 외 kind는 게이트 없이 종전처럼 재시도.
       const dead = deviceSessionDeadInfo({ root });
-      if (dead?.tokenTag && dead.tokenTag === tokenTag(sess.refresh_token)) {
-        await logLine(root, { ev: 'skipped', reason: dead.reason });
+      if (dead?.tokenTag && dead.tokenTag === tokenTag(sess.refresh_token) && DEAD_GATE_KINDS.has(dead.kind)
+        && Date.now() - (Date.parse(dead.lastAt) || 0) < DEAD_RETRY_MS) {
+        await logLine(root, { ev: 'skipped', reason: mask(dead.reason) });
         return null;
       }
       const sb = _mkClient(sess.url, sess.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -204,8 +210,9 @@ export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = create
       // 디스크가 바뀌었을 수 있다 — 캐시를 무시하고 디스크를 재독해 토큰이 다르면 그 세션으로 딱 한 번
       // 다시 간다(자가 치유). 디스크도 같은 토큰(=진짜 사망)이거나 재시도까지 거절될 때만 마커를 남긴다.
       if (!retried) {
+        const stamp = diskStamp(root); // 도장은 읽기보다 먼저 — 뒤집으면 "새 도장 + 옛 내용"이 영구 캐시
         const disk = readDisk(root);
-        cache = { root, sess: disk };
+        cache = { root, sess: disk, stamp };
         if (!disk || disk.refresh_token !== sess.refresh_token) {
           await logLine(root, { ev: 'reread', disk: disk ? 'changed' : 'gone' });
           retried = true;

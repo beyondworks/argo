@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile, readFile, rm } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getFreshDeviceSession, loadDeviceSession, deviceSessionDead, deviceSessionDeadInfo, rejectionKind } from '../src/devicesession.mjs';
@@ -227,10 +227,12 @@ test('console.warn(stderr)에도 토큰 모양은 가린다 — plist stderr 키
 test('캐시는 디스크 도장(mtime+size)이 바뀌면 무효 — 다른 사본이 회전한 뒤 옛 토큰으로 갱신을 보내지 않는다', async () => {
   const root = await mkRoot(3600);
   assert.equal(loadDeviceSession({ root })?.refresh_token, 'rt', '캐시 적재');
-  await writeFile(join(root, '.device-session.json'), sessJson('rt2', -5, 'at2')); // 다른 사본/프로세스가 회전해 파일이 바뀜(크기·mtime)
+  const before = statSync(join(root, '.device-session.json')).size;
+  await writeFile(join(root, '.device-session.json'), sessJson('rx', -5)); // 다른 사본/프로세스가 회전 — 실운영 회전은 길이가 같다(토큰 22자·exp 10자리 고정) → mtime만이 판별자(검수 MEDIUM-1)
+  assert.equal(statSync(join(root, '.device-session.json')).size, before, '전제 — 회전 전후 크기 동일');
   const calls = [];
   const out = await getFreshDeviceSession({ root, _mkClient: clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return ok('at3', 'rt3'); }) });
-  assert.deepEqual(calls, ['rt2'], '갱신은 디스크의 현재 토큰으로만 — 옛 토큰(rt) 재사용은 GoTrue 가족 폐기');
+  assert.deepEqual(calls, ['rx'], '갱신은 디스크의 현재 토큰으로만 — 옛 토큰(rt) 재사용은 GoTrue 가족 폐기');
   assert.equal(out?.access_token, 'at3');
 });
 
@@ -263,4 +265,28 @@ test('지문 없는 구형 마커(발행본 v0.1.60 이하)는 게이트 없음 
   assert.equal(deviceSessionDeadInfo({ root }).tokenTag?.length, 16);
   await getFreshDeviceSession({ root, _mkClient: clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return reject('Invalid Refresh Token: Already Used'); }) });
   assert.deepEqual(calls, ['rt'], '교체된 마커부터 게이트 작동');
+});
+
+test('게이트 탈출 밸브 — 마지막 시도가 1시간 지났으면 같은 토큰도 1회 재시도(count·lastAt 갱신), catch-all kind는 게이트 없음', async () => {
+  const root = await mkRoot(-10);
+  const calls = [];
+  const client = clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return reject('Invalid Refresh Token: Already Used'); });
+  await getFreshDeviceSession({ root, _mkClient: client });
+  const first = deviceSessionDeadInfo({ root });
+  await writeFile(marker(root), JSON.stringify({ ...first, lastAt: new Date(Date.now() - 2 * 3600_000).toISOString() })); // 1시간 넘게 잠잠
+  await getFreshDeviceSession({ root, _mkClient: client });
+  assert.deepEqual(calls, ['rt', 'rt'], '밸브 열림 — 1회 재시도');
+  const second = deviceSessionDeadInfo({ root });
+  assert.equal(second.count, 2);
+  assert.ok(Date.parse(second.lastAt) > Date.now() - 10_000, 'lastAt 갱신');
+  await getFreshDeviceSession({ root, _mkClient: client });
+  assert.deepEqual(calls, ['rt', 'rt'], '갱신 직후엔 다시 닫힘');
+  // catch-all 'rejected'(모르는 문구) — 오분류 폭발반경을 영구 사망으로 키우지 않는다(검수 MEDIUM-2)
+  const root2 = await mkRoot(-10);
+  const calls2 = [];
+  const odd = clientWith(async ({ refresh_token }) => { calls2.push(refresh_token); return reject('refresh token service temporarily unavailable'); });
+  await getFreshDeviceSession({ root: root2, _mkClient: odd });
+  assert.equal(deviceSessionDeadInfo({ root: root2 }).kind, 'rejected');
+  await getFreshDeviceSession({ root: root2, _mkClient: odd });
+  assert.deepEqual(calls2, ['rt', 'rt'], '종결 kind가 아니면 종전처럼 재시도');
 });
