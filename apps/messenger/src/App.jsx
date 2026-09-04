@@ -777,7 +777,11 @@ const ACT_KIND = { 'org.create': 'org', 'org.transfer': 'org', 'org.transfer.off
 function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onError, onBack, onMenu, onOpenChannel }) {
   const { t, lang } = useT();
   const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
-  const [sel, setSel] = useState('org'); const [limit, setLimit] = useState(60); const [openIds, setOpenIds] = useState(() => new Set(['org', 'channels']));
+  const [tabs, setTabs] = useState([{ id: 'graph', kind: 'graph' }, { id: 'org', kind: 'entity', rel: 'org' }]); const [active, setActive] = useState('graph'); // 가로 다중 탭(아르고 기억 페이지처럼) — 그래프 + 대상별 활동
+  const sel = (tabs.find((x) => x.id === active) ?? tabs[0]).kind === 'entity' ? (tabs.find((x) => x.id === active) ?? tabs[0]).rel : 'org';
+  const openTab = (rel) => { setTabs((ts) => ts.some((x) => x.id === rel) ? ts : [...ts, { id: rel, kind: 'entity', rel }]); setActive(rel); setLimit(60); };
+  const closeTab = (id) => { setTabs((ts) => { const n = ts.filter((x) => x.id !== id); if (active === id) setActive(n[n.length - 1]?.id ?? 'graph'); return n.length ? n : [{ id: 'graph', kind: 'graph' }]; }); };
+  const [limit, setLimit] = useState(60); const [openIds, setOpenIds] = useState(() => new Set(['org', 'channels']));
   useEffect(() => {
     let on = true;
     (async () => {
@@ -853,7 +857,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
   const toggle = (id) => setOpenIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const Row = ({ id, label, sub, depth = 0, kids = null, icon = null }) => { const has = !!kids; const open = openIds.has(id); return (
     <div>
-      <button type="button" className={`row${sel === id ? ' active' : ''}`} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => { setSel(id); setLimit(60); if (has && !open) toggle(id); }} onDoubleClick={() => has && toggle(id)}>
+      <button type="button" className={`row${sel === id && active !== 'graph' ? ' active' : ''}`} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => { if (['channels', 'people', 'crews', 'docs'].includes(id)) { toggle(id); return; } openTab(id); if (has && !open) toggle(id); }} onDoubleClick={() => has && toggle(id)}>
         {has ? <span className="caret" style={{ transform: open ? 'rotate(90deg)' : 'none' }} onClick={(e) => { e.stopPropagation(); toggle(id); }}>▸</span> : <span className="caret" />}
         {icon && <I name={icon} size={12} />}
         <span className="lbl">{label}</span>{sub != null && <span className="cnt">{sub}</span>}
@@ -863,49 +867,70 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
   ); };
   const countFor = (rel) => (rows ?? []).filter((r) => relOf(r) === rel || (rel.startsWith('channels/') && channels.some((c) => `channels/${c.name}` === rel && chOf(r) === c.id))).length;
   const visibleCh = channels.filter((c) => c.kind !== 'dm');
+  const entityTitle = (rel) => rel === 'org' ? org.name : rel.startsWith('channels/') ? `#${rel.slice(9)}` : rel.startsWith('people/') ? nameOfUser(rel.slice(7)) : rel.startsWith('crews/') ? crewName(rel.slice(6)) : rel.startsWith('docs/') ? (docs.find((d) => `docs/${d.path.replace(/\.md$/, '')}` === rel)?.title ?? rel) : rel;
+  const cur = tabs.find((x) => x.id === active) ?? tabs[0];
   return (<>
     <div className="msgr-top">
       <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
       <span className="title"><I name="memory" size={18} />{t('act.title')}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
-    <div className="msgr-thread page"><div className="msgr-act">
+    <div className="msgr-actsplit">
       <aside className="msgr-acttree vault-tree">
-        <Row id="org" label={org.name} sub={rows?.length ?? ''} icon="hash" kids={<>
-          <Row id="channels" label={t('act.tree.channels')} sub={visibleCh.length} depth={1} kids={visibleCh.map((c) => {
-            const ms = cm.filter((x) => x.channel_id === c.id); const cs = ms.filter((x) => x.member_kind === 'crew'); const ds = docs.filter((d) => d.channel_id === c.id);
-            const rel = `channels/${c.name}`;
-            return <Row key={c.id} id={rel} label={c.name} sub={countFor(rel)} depth={2} icon={c.kind === 'private' ? 'lock' : 'hash'} kids={<>
-              {cs.map((x) => <Row key={x.member_id} id={`crews/${x.member_id}`} label={crewName(x.member_id)} sub={countFor(`crews/${x.member_id}`)} depth={3} icon="star" />)}
-              {ds.map((d) => <Row key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={3} icon="doc" />)}
-              {!cs.length && !ds.length && <div className="tree-empty">{t('act.tree.empty')}</div>}
-            </>} />;
-          })} />
-          <Row id="people" label={t('act.tree.people')} sub={members.length} depth={1} kids={members.map((m) => <Row key={m.user_id} id={`people/${m.user_id}`} label={m.display_name || m.user_id.slice(0, 8)} sub={countFor(`people/${m.user_id}`)} depth={2} icon="at" />)} />
-          <Row id="crews" label={t('act.tree.crews')} sub={crews.length} depth={1} kids={crews.map((c) => <Row key={c.id} id={`crews/${c.id}`} label={c.display_name} sub={countFor(`crews/${c.id}`)} depth={2} icon="star" />)} />
-          <Row id="docs" label={t('act.tree.docs')} sub={docs.filter((d) => !d.channel_id).length} depth={1} kids={docs.filter((d) => !d.channel_id).map((d) => <Row key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={2} icon="doc" />)} />
-        </>} />
-      </aside>
-      <section className="msgr-actmain">
-        <div className="msgr-actgraph">
-          <Graph2D docs={gdocs} agents={[]} focusRel={['org', 'channels', 'people', 'crews', 'docs'].includes(sel) ? null : `${sel}.md`} onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); if (id.startsWith('org/')) setSel('org'); else setSel(id); setLimit(60); }} height={380} />
+        <div className="vault-toolbar">
+          <button type="button" className={`tb${active === 'graph' ? ' on' : ''}`} onClick={() => { setTabs((ts) => ts.some((x) => x.id === 'graph') ? ts : [{ id: 'graph', kind: 'graph' }, ...ts]); setActive('graph'); }} title={t('act.tab.graph')} aria-label={t('act.tab.graph')}><I name="memory" size={14} /></button>
+          <span style={{ flex: 1 }} />
         </div>
-        <div className="msgr-actlist">
-          <div className="head"><h3>{sel === 'org' ? t('act.all') : t('act.of', { name: sel.startsWith('channels/') ? `#${sel.slice(9)}` : sel.startsWith('people/') ? nameOfUser(sel.slice(7)) : sel.startsWith('crews/') ? crewName(sel.slice(6)) : sel.startsWith('docs/') ? (docs.find((d) => `docs/${d.path.replace(/\.md$/, '')}` === sel)?.title ?? sel) : t(`act.tree.${sel}`) })}</h3><span className="sub">{list.length}</span>
-            {sel.startsWith('channels/') && <button type="button" className="btn sm" onClick={() => { const c = channels.find((x) => `channels/${x.name}` === sel); if (c) onOpenChannel(c.id); }}><I name="hash" size={12} />{t('act.openChannel')}</button>}
-          </div>
-          {rows === null && <p className="empty">…</p>}
-          {rows !== null && !list.length && <p className="empty">{isAdmin ? t('act.empty') : t('act.adminOnly')}</p>}
-          {days.map((g) => (
-            <div key={g.d} className="day">
-              <div className="daylabel">{fmtDay(g.at, lang).join(' · ')}</div>
-              {g.rows.map((r) => <div key={r.id} className="item"><span className="when">{fmtTs(r.at, lang)}</span><span className="text">{sentence(r)}</span></div>)}
+        <div className="msgr-acttree-body">
+          <Row id="org" label={org.name} sub={rows?.length ?? ''} icon="hash" kids={<>
+            <Row id="channels" label={t('act.tree.channels')} sub={visibleCh.length} depth={1} kids={visibleCh.map((c) => {
+              const ms = cm.filter((x) => x.channel_id === c.id); const cs = ms.filter((x) => x.member_kind === 'crew'); const ds = docs.filter((d) => d.channel_id === c.id);
+              const rel = `channels/${c.name}`;
+              return <Row key={c.id} id={rel} label={c.name} sub={countFor(rel)} depth={2} icon={c.kind === 'private' ? 'lock' : 'hash'} kids={<>
+                {cs.map((x) => <Row key={x.member_id} id={`crews/${x.member_id}`} label={crewName(x.member_id)} sub={countFor(`crews/${x.member_id}`)} depth={3} icon="star" />)}
+                {ds.map((d) => <Row key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={3} icon="doc" />)}
+                {!cs.length && !ds.length && <div className="tree-empty">{t('act.tree.empty')}</div>}
+              </>} />;
+            })} />
+            <Row id="people" label={t('act.tree.people')} sub={members.length} depth={1} kids={members.map((m) => <Row key={m.user_id} id={`people/${m.user_id}`} label={m.display_name || m.user_id.slice(0, 8)} sub={countFor(`people/${m.user_id}`)} depth={2} icon="at" />)} />
+            <Row id="crews" label={t('act.tree.crews')} sub={crews.length} depth={1} kids={crews.map((c) => <Row key={c.id} id={`crews/${c.id}`} label={c.display_name} sub={countFor(`crews/${c.id}`)} depth={2} icon="star" />)} />
+            <Row id="docs" label={t('act.tree.docs')} sub={docs.filter((d) => !d.channel_id).length} depth={1} kids={docs.filter((d) => !d.channel_id).map((d) => <Row key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={2} icon="doc" />)} />
+          </>} />
+        </div>
+      </aside>
+      <section className="msgr-actpane">
+        <div className="vault-tabs" role="tablist">
+          {tabs.map((tb) => { const title = tb.kind === 'graph' ? t('act.tab.graph') : entityTitle(tb.rel); return (
+            <div key={tb.id} className={`vault-tab${tb.id === active ? ' active' : ''}`} onClick={() => setActive(tb.id)} title={title} role="tab" aria-selected={tb.id === active}>
+              <span className="vault-tab-title">{title}</span>
+              <button type="button" className="vault-tab-x" onClick={(e) => { e.stopPropagation(); closeTab(tb.id); }} aria-label={t('act.closeTab')}>×</button>
             </div>
-          ))}
-          {list.length > shown.length && <div className="row"><button type="button" className="btn sm" onClick={() => setLimit((n) => n + 60)}>{t('act.more')}</button></div>}
+          ); })}
+          <span style={{ flex: 1 }} />
+        </div>
+        <div className="msgr-actbody">
+          {cur.kind === 'graph' ? (
+            <Graph2D key="all" docs={gdocs} agents={[]} nodeShape="circle" onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); openTab(id.startsWith('org/') ? 'org' : id); }} />
+          ) : (
+            <div className="msgr-actlist">
+              <div className="head"><h3>{sel === 'org' ? t('act.all') : t('act.of', { name: entityTitle(sel) })}</h3><span className="sub">{list.length}</span>
+                {sel.startsWith('channels/') && <button type="button" className="btn sm" onClick={() => { const c = channels.find((x) => `channels/${x.name}` === sel); if (c) onOpenChannel(c.id); }}><I name="hash" size={12} />{t('act.openChannel')}</button>}
+              </div>
+              <div className="msgr-actlocal"><Graph2D key={sel} docs={gdocs} agents={[]} nodeShape="circle" compact focusRel={sel === 'org' ? `org/${org.slug}.md` : `${sel}.md`} onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); openTab(id.startsWith('org/') ? 'org' : id); }} height={220} /></div>
+              {rows === null && <p className="empty">…</p>}
+              {rows !== null && !list.length && <p className="empty">{isAdmin ? t('act.empty') : t('act.adminOnly')}</p>}
+              {days.map((g) => (
+                <div key={g.d} className="day">
+                  <div className="daylabel">{fmtDay(g.at, lang).join(' · ')}</div>
+                  {g.rows.map((r) => <div key={r.id} className="item"><span className="when">{fmtTs(r.at, lang)}</span><span className="text">{sentence(r)}</span></div>)}
+                </div>
+              ))}
+              {list.length > shown.length && <div className="row"><button type="button" className="btn sm" onClick={() => setLimit((n) => n + 60)}>{t('act.more')}</button></div>}
+            </div>
+          )}
         </div>
       </section>
-    </div></div>
+    </div>
   </>);
 }
 

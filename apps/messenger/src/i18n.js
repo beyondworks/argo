@@ -136,6 +136,8 @@ export const DICT = {
   'act.tree.empty': ['크루·문서 없음', 'No crews or docs'],
   'act.empty': ['아직 기록이 없습니다.', 'Nothing recorded yet.'],
   'act.adminOnly': ['활동 기록은 관리자만 볼 수 있습니다. 관계 그래프는 누구나 봅니다.', 'Only admins can see the activity log. Everyone can see the graph.'],
+  'act.tab.graph': ['그래프', 'Graph'],
+  'act.closeTab': ['탭 닫기', 'Close tab'],
   'act.more': ['더 보기', 'Show more'],
   'act.openChannel': ['채널 열기', 'Open channel'],
   'act.system': ['시스템', 'System'],

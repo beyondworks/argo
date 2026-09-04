@@ -461,21 +461,26 @@
   .msgr-thread.page .msgr-docs { grid-template-columns: 1fr; }
 }
 
-/* 활동 페이지 — 아르고 기억 페이지의 트리·그래프 룩 */
-.msgr-act { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; align-items: start; }
-.msgr-acttree { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 10px 6px; position: sticky; top: 8px; max-height: calc(100vh / var(--z, 1) - 120px); overflow: auto; }
-.msgr-acttree .row { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; font: inherit; font-size: 13px; color: var(--fg-2); cursor: pointer; text-align: left; }
+/* 활동 페이지 — 아르고 기억 페이지처럼 화면 전체를 쓰는 분할(트리 | 탭 + 본문). 카드 섹션 없음(유건 지시 2026-09-04) */
+.msgr-actsplit { flex: 1; min-height: 0; display: flex; align-items: stretch; background: var(--bg); }
+.msgr-acttree { width: 280px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--card); }
+.msgr-acttree-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 12px; }
+.msgr-acttree .row { display: flex; align-items: center; gap: 6px; width: calc(100% - 12px); margin: 1px 6px; padding: 5px 8px 5px 6px; min-height: 30px; border: 0; border-radius: 6px; background: none; font: inherit; font-size: 13.5px; color: var(--fg-2); cursor: pointer; text-align: left; }
+.msgr-acttree .row:hover { background: var(--card-2); }
+.msgr-acttree .row.active { background: var(--border-soft, var(--card-2)); color: var(--fg); }
 .msgr-acttree .row .caret { display: inline-block; width: 10px; flex: none; text-align: center; color: var(--fg-3); font-size: 9px; transition: transform .12s; }
 .msgr-acttree .row .lbl { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .msgr-acttree .row .cnt { color: var(--fg-3); font-size: 11px; font-family: var(--mono); }
 .msgr-acttree .row .mi { color: var(--fg-3); flex: none; }
+.msgr-acttree .tree-kids { margin-left: 15px; border-left: 1px solid var(--border); }
 .msgr-acttree .tree-empty { padding: 4px 6px 4px 30px; color: var(--fg-3); font-size: 12px; }
-.msgr-actmain { display: grid; gap: 16px; min-width: 0; }
-.msgr-actgraph { height: 380px; background: var(--card); border: 1px solid var(--border); border-radius: 20px; overflow: hidden; position: relative; }
-.msgr-actgraph canvas { display: block; }
-.msgr-actlist { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 18px 22px; display: grid; gap: 10px; }
+.msgr-actpane { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.msgr-actbody { flex: 1; min-height: 0; position: relative; overflow: auto; }
+.msgr-actbody > canvas, .msgr-actbody > div:first-child > canvas { display: block; }
+.msgr-actlist { display: grid; gap: 10px; padding: 18px 28px 40px; max-width: 1100px; }
+.msgr-actlocal { height: 220px; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; position: relative; }
 .msgr-actlist .head { display: flex; align-items: center; gap: 10px; }
-.msgr-actlist .head h3 { margin: 0; font-size: 14px; }
+.msgr-actlist .head h3 { margin: 0; font-size: 15px; }
 .msgr-actlist .head .sub { color: var(--fg-3); font-family: var(--mono); font-size: 11px; }
 .msgr-actlist .head .btn { margin-left: auto; }
 .msgr-actlist .day { display: grid; gap: 2px; }
@@ -484,4 +489,4 @@
 .msgr-actlist .item .when { flex: none; width: 64px; color: var(--fg-3); font-family: var(--mono); font-size: 11px; }
 .msgr-actlist .item .text { min-width: 0; }
 .msgr-actlist .empty { color: var(--fg-3); font-size: 13px; margin: 6px 0; }
-@media (max-width: 900px) { .msgr-act { grid-template-columns: 1fr; } .msgr-acttree { position: static; max-height: none; } }
+@media (max-width: 900px) { .msgr-actsplit { flex-direction: column; } .msgr-acttree { width: auto; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--border); } }

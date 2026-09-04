@@ -434,7 +434,12 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   const app = read('apps/messenger/src/App.jsx');
   assert.match(app, /import \{ Graph2D \} from '@argo\/graph2d';/, '그래프는 아르고 컴포넌트 재사용(사본 금지)');
   assert.match(app, /\{page === 'activity' && org \? \(\n\s*<Activity /, '활동 페이지 분기');
-  assert.match(app, /<Graph2D docs=\{gdocs\} agents=\{\[\]\} focusRel=/, '그래프에 조직 관계 문서를 넣는다');
+  assert.match(app, /<Graph2D key="all" docs=\{gdocs\} agents=\{\[\]\} nodeShape="circle"/, '그래프 탭: 조직 관계 문서, 원형 노드');
+  assert.match(app, /const openTab = \(rel\) => \{ setTabs\(\(ts\) => ts\.some\(\(x\) => x\.id === rel\) \? ts : \[\.\.\.ts, \{ id: rel, kind: 'entity', rel \}\]\); setActive\(rel\);/, '가로 다중 탭');
+  assert.match(app, /className="vault-tab-x" onClick=\{\(e\) => \{ e\.stopPropagation\(\); closeTab\(tb\.id\); \}\}/, '탭 닫기');
+  const g2 = read('app/c/[ws]/graph2d.jsx');
+  assert.match(g2, /nodeShape = 'star'/, '아르고 기억 그래프 기본은 별(변경 없음)');
+  assert.match(g2, /if \(shapeRef\.current === 'circle'\) \{ plain\.moveTo/, '원형 노드 분기(의존 배열 밖 ref)');
   assert.ok(!/\['audit', 'set\.tab\.audit'\]/.test(app), '설정의 기록 탭 제거');
   assert.match(app, /return lang === 'en' \? out : koJosa\(out\);/, '한국어 조사 처리');
   const dict = read('apps/messenger/src/i18n.js');
