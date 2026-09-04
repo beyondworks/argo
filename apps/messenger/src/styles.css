@@ -390,3 +390,29 @@
 
 /* J-4 게스트 만료 표기 */
 .msgr-setcard .msgr-rows .row .sub.expired { color: var(--danger); }
+
+/* 채널 패널 재구성 — 구성 먼저, '+ 추가' 하나, 행 '…' 메뉴, 접히는 채널 설정 */
+.msgr-crewsheet .sec-head { display: flex; align-items: baseline; gap: 8px; }
+.msgr-crewsheet .sec-head h3 { margin: 0; }
+.msgr-crewsheet .sec-head .sub { color: var(--fg-3); font-size: 12px; }
+.msgr-rowmenu-wrap { position: relative; margin-left: auto; }
+.msgr-rowmenu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; min-width: 180px; display: grid; padding: 6px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+.msgr-rowmenu button { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.msgr-rowmenu button:hover { background: var(--card-2); }
+.msgr-rowmenu button.danger { color: var(--danger); }
+.msgr-addwrap { display: grid; gap: 8px; margin-top: 10px; }
+.msgr-addmenu { display: grid; gap: 2px; padding: 6px; border-radius: 14px; background: var(--card-2); }
+.msgr-addmenu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.msgr-addmenu button:hover:not(:disabled) { background: var(--card); }
+.msgr-addmenu button:disabled { opacity: .55; cursor: default; }
+.msgr-addmenu button span { display: grid; gap: 1px; min-width: 0; }
+.msgr-addmenu button b { font-weight: 600; font-size: 13px; }
+.msgr-addmenu button small { color: var(--fg-3); font-size: 12px; line-height: 1.35; }
+.msgr-addmenu button.cancel { justify-content: center; color: var(--fg-3); font-size: 12px; padding: 6px; }
+.msgr-fold .fold-head { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.msgr-fold .fold-head h3 { margin: 0; }
+.msgr-fold .fold-head .mi { color: var(--fg-3); transition: transform 160ms cubic-bezier(.23,1,.32,1); }
+.msgr-fold .fold-head .mi.open { transform: rotate(180deg); }
+.msgr-crewsheet .row.wrap { flex-wrap: wrap; }
+
+.msgr-crewsheet .msgr-rows .empty { border: 0; background: transparent; min-height: 0; padding: 6px 2px; margin: 0; text-align: left; }

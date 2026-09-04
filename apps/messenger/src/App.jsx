@@ -417,7 +417,8 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
   const canAssignAdmins = (isAdmin || channel.created_by === uid) && channel.kind !== 'dm'; // 지정은 조직 관리자·생성자만(자기 증식 방지 — 서버 트리거와 동일)
   const toggleChAdmin = async (userId) => { const next = chAdmins.includes(userId) ? chAdmins.filter((x) => x !== userId) : [...chAdmins, userId]; await upd({ admin_user_ids: next }, t('ch.admin.saved')); };
   const memLocked = !!policy?.crew_memory_locked; // H-0: 서버 트리거 msgr_channel_policy_gate가 최종
-  const [name, setName] = useState(channel.name); const [topic, setTopic] = useState(channel.topic ?? ''); const [busy, setBusy] = useState(false); const [pick, setPick] = useState(null); // 'user' | 'crew'
+  const [name, setName] = useState(channel.name); const [topic, setTopic] = useState(channel.topic ?? ''); const [busy, setBusy] = useState(false); const [add, setAdd] = useState(null); // null | 'menu' | 'user' | 'crew' | 'guest' | 'newcrew' — '+ 추가' 하나로 모은다(UX 재구성)
+  const [rowMenu, setRowMenu] = useState(null); const [more, setMore] = useState(false); // 행 '…' 메뉴 · '채널 설정' 접힘
   useEffect(() => { setName(channel.name); setTopic(channel.topic ?? ''); }, [channel.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const on = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [onClose]);
   const upd = async (patch, okMsg) => {
@@ -435,7 +436,7 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
     const crew = kind === 'crew' ? crews.find((c) => c.id === id) : null;
     if (crew && !chMembers.some((m) => m.member_kind === 'user' && m.member_id === crew.owner_user_id)) rows.push({ channel_id: channel.id, member_kind: 'user', member_id: crew.owner_user_id, added_by: uid }); // 크루 = 소유자 동반
     const res = await supabase.from('msgr_channel_members').upsert(rows, { onConflict: 'channel_id,member_kind,member_id' });
-    setBusy(false); setPick(null);
+    setBusy(false); setAdd(null);
     if (res.error) return onError(/msgr_channel_personal_blocked/.test(res.error.message) ? t('err.channelPersonalBlocked') : res.error.message); // I-3: 서버 게이트의 거절을 정직한 문구로
     await onChanged();
   };
@@ -483,108 +484,138 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
     const res = await supabase.from('msgr_crew_requests').insert({ org_id: org.id, channel_id: newCrew.orgWide ? null : channel.id, name: newCrew.name.trim(), role_text: newCrew.role.trim(), prompt: newCrew.prompt.trim(), created_by: uid }).select('id');
     setBusy(false);
     if (res.error) return onError(friendlyErr(res.error.message, t));
-    setNewCrew(null); onNote(t('ch.crew.new.sent')); loadRequests().catch(() => {});
+    setNewCrew(null); setAdd(null); onNote(t('ch.crew.new.sent')); loadRequests().catch(() => {});
   };
+  const canAddPeople = scoped && canEdit && channel.kind !== 'dm' && addableUsers.length > 0;
+  const canAddCrew = scoped && canEdit && channel.kind !== 'dm' && addableCrews.length > 0;
+  const canGuest = channel.kind === 'private' && canEdit;
+  const showNewCrewItem = channel.kind !== 'dm' && (canCreateCrew || (isAdmin && !nodeOn)); // 관리자에겐 서버가 없거나 죽어도 항목은 보이되 비활성+이유(안 될 버튼 노출 금지의 예외: 왜 안 되는지 알려줘야 하는 자리)
+  const canAddAny = canAddPeople || canAddCrew || canGuest || showNewCrewItem;
+  const personalLabel = (v) => t(`ch.personal.${v}`);
+  const pendingReqs = requests.filter((r) => r.status !== 'done' || Date.now() - Date.parse(r.done_at ?? r.created_at) < 120_000);
   return (
     <div className="msgr-sheetwrap">
       <div className="msgr-scrim clear" onClick={onClose} />
-      <aside className="msgr-crewsheet" role="dialog" aria-label={t('ch.sheet')}>
+      <aside className="msgr-crewsheet" role="dialog" aria-label={t('ch.sheet')} onClick={() => rowMenu && setRowMenu(null)}>
         <div className="head">
           <span className="msgr-av lg" style={{ borderRadius: 12 }}><I name={channel.kind === 'private' ? 'lock' : channel.kind === 'dm' ? 'at' : 'hash'} size={18} /></span>
-          <div style={{ minWidth: 0 }}><div className="name">{channel.kind === 'dm' ? t('ch.kind.dm') : channel.name}</div><div className="msgr-klabel">{t(`ch.kind.${channel.kind}`)}</div></div>
+          <div style={{ minWidth: 0 }}><div className="name">{channel.kind === 'dm' ? t('ch.kind.dm') : channel.name}</div><div className="msgr-klabel">{channel.kind === 'dm' ? t('ch.kind.dm') : channel.topic || t(`ch.kind.${channel.kind}`)}</div></div>
           <button type="button" className="btn ghost" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={15} /></button>
         </div>
-        {channel.kind !== 'dm' && (
-          <section>
-            <label className="field"><span className="msgr-klabel">{t('ch.name')}</span><input value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit || busy} /></label>
-            <label className="field"><span className="msgr-klabel">{t('ch.topic')}</span><input value={topic} placeholder={t('ch.topic.ph')} onChange={(e) => setTopic(e.target.value)} disabled={!canEdit || busy} /></label>
-            {canEdit ? <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || (name === channel.name && (topic || '') === (channel.topic || ''))} onClick={saveText}><I name="check" size={13} />{t('ui.save')}</button></div> : <p className="note">{t('ch.noEdit')}</p>}
-          </section>
-        )}
+        {/* 1. 누가 있나 — 패널을 여는 이유가 먼저 */}
         <section>
-          <h3>{t('ch.memory')}</h3>
-          <label className="switchrow"><input type="checkbox" checked={channel.crew_memory !== false} disabled={!canEdit || busy || memLocked} onChange={(e) => upd({ crew_memory: e.target.checked })} /><span>{channel.crew_memory === false ? t('ch.memory.off') : t('ch.memory.on')}</span></label>
-          {memLocked && <p className="note">{t('ch.memory.locked')}</p>}
-        </section>
-        {channel.kind !== 'dm' && (
-          <section>
-            <h3>{t('ch.personal')}</h3>
-            <p>{t('ch.personal.desc')}</p>
-            <div className="msgr-seg" role="radiogroup" aria-label={t('ch.personal')}>
-              {['allowed', 'read_only', 'blocked'].map((v) => <button key={v} type="button" role="radio" aria-checked={(channel.personal_crews ?? 'allowed') === v} className={(channel.personal_crews ?? 'allowed') === v ? 'active' : ''} disabled={!canEdit || busy} onClick={() => upd({ personal_crews: v }, t('ch.personal.saved'))}>{t(`ch.personal.${v}`)}</button>)}
-            </div>
-            {(channel.personal_crews ?? 'allowed') === 'blocked' && <p className="note">{t('ch.personal.blocked.note')}</p>}
-          </section>
-        )}
-        <section>
-          <h3>{t('ch.composition')}</h3>
-          <p>{scoped ? t('ch.composition.scoped') : t('ch.composition.public')}</p>
-          {!scoped && <p className="note">{t('ch.composition.public.noAdd')}</p>}
+          <div className="sec-head"><h3>{t('ch.who')}</h3><span className="sub">{t('ch.who.count', { p: people.length, c: chCrews.length })}</span></div>
+          {!scoped && <p className="note">{t('ch.who.public')}</p>}
           <div className="msgr-rows">
-            <div className="msgr-klabel">{t('ch.people')} · {people.length}</div>
-            {people.map((m) => { const isMe = m.user_id === uid; return (
-              <div key={`u:${m.user_id}`} className="row">
-                <Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}{(chAdmins.includes(m.user_id) || channel.created_by === m.user_id) && <span className="msgr-tag">{channel.created_by === m.user_id ? t('ch.admin.creator') : t('ch.admin')}</span>}</span>
-                {canAssignAdmins && !isMe && channel.created_by !== m.user_id && <button type="button" className={`btn sm ghost${chAdmins.includes(m.user_id) ? ' on' : ''}`} disabled={busy} onClick={() => toggleChAdmin(m.user_id)} title={chAdmins.includes(m.user_id) ? t('ch.admin.unset') : t('ch.admin.set')} aria-label={chAdmins.includes(m.user_id) ? t('ch.admin.unset') : t('ch.admin.set')}><I name="gear" size={13} /></button>}
-                {!isMe && <button type="button" className="btn sm ghost" onClick={() => onDm?.(m.user_id)} title={t('ui.dm')} aria-label={t('ui.dm')}><I name="at" size={13} /></button>}
-                {scoped && canEdit && channel.kind !== 'dm' && !isMe && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => removeMember('user', m.user_id)} title={t('ch.remove')} aria-label={t('ch.remove')}><I name="x" size={13} /></button>}
+            {people.map((m) => { const isMe = m.user_id === uid; const isCreator = channel.created_by === m.user_id; const isChAdmin = chAdmins.includes(m.user_id); const key = `u:${m.user_id}`; return (
+              <div key={key} className="row">
+                <Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{t(`role.${m.role}`)}{isMe ? ` · ${t('ui.me')}` : ''}{(isChAdmin || isCreator) && <span className="msgr-tag">{isCreator ? t('ch.admin.creator') : t('ch.admin')}</span>}</span>
+                {!isMe && (canAssignAdmins || scoped) && (
+                  <span className="msgr-rowmenu-wrap" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" className="btn sm ghost" onClick={() => setRowMenu(rowMenu === key ? null : key)} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={rowMenu === key}><I name="dots" size={13} /></button>
+                    {rowMenu === key && (
+                      <div className="msgr-rowmenu" role="menu">
+                        <button type="button" role="menuitem" onClick={() => { setRowMenu(null); onDm?.(m.user_id); }}><I name="at" size={13} />{t('ui.dm')}</button>
+                        {canAssignAdmins && !isCreator && <button type="button" role="menuitem" disabled={busy} onClick={() => { setRowMenu(null); toggleChAdmin(m.user_id); }}><I name="gear" size={13} />{isChAdmin ? t('ch.admin.unset') : t('ch.admin.set')}</button>}
+                        {scoped && canEdit && channel.kind !== 'dm' && <button type="button" role="menuitem" className="danger" disabled={busy} onClick={() => { setRowMenu(null); removeMember('user', m.user_id); }}><I name="x" size={13} />{t('ch.remove')}</button>}
+                      </div>
+                    )}
+                  </span>
+                )}
               </div>
             ); })}
-            <div className="msgr-klabel">{t('ch.crews')} · {chCrews.length}</div>
-            {!chCrews.length && <p className="empty">{scoped ? t('ch.crews.none.scoped') : t('ch.crews.none')}</p>}
-            {chCrews.map((c) => { const on = c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS; const company = crewTier(c, org) === 'company'; return (
-              <div key={`c:${c.id}`} className="row">
+            {chCrews.map((c) => { const on = c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS; const company = crewTier(c, org) === 'company'; const key = `c:${c.id}`; return (
+              <div key={key} className="row">
                 <Av name={c.display_name} crew size="sm" company={company} /><span className="name">{c.display_name}</span>
                 <span className="sub">{company ? t('crew.tier.company.sub', { org: org?.name ?? '', role: c.role_text ?? '' }) : t('crew.tier.personal.sub', { name: nameOfUser(c.owner_user_id), role: c.role_text ?? '' })}</span>
                 <span className={`msgr-dot${on ? ' mark' : ''}`} title={on ? t('crew.online') : t('crew.away')} />
-                <button type="button" className="btn sm ghost" onClick={() => onCrew?.(c.id)} title={t('ch.open.crew')} aria-label={t('ch.open.crew')}><I name="star" size={13} /></button>
-                {scoped && canEdit && channel.kind !== 'dm' && <button type="button" className="btn sm ghost" disabled={busy} onClick={() => removeMember('crew', c.id)} title={t('ch.remove')} aria-label={t('ch.remove')}><I name="x" size={13} /></button>}
+                <span className="msgr-rowmenu-wrap" onClick={(e) => e.stopPropagation()}>
+                  <button type="button" className="btn sm ghost" onClick={() => setRowMenu(rowMenu === key ? null : key)} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={rowMenu === key}><I name="dots" size={13} /></button>
+                  {rowMenu === key && (
+                    <div className="msgr-rowmenu" role="menu">
+                      <button type="button" role="menuitem" onClick={() => { setRowMenu(null); onCrew?.(c.id); }}><I name="star" size={13} />{t('ch.open.crew')}</button>
+                      {scoped && canEdit && channel.kind !== 'dm' && <button type="button" role="menuitem" className="danger" disabled={busy} onClick={() => { setRowMenu(null); removeMember('crew', c.id); }}><I name="x" size={13} />{t('ch.remove')}</button>}
+                    </div>
+                  )}
+                </span>
               </div>
             ); })}
+            {!chCrews.length && <p className="empty">{scoped ? t('ch.crews.none.scoped') : t('ch.crews.none')}</p>}
           </div>
-          {scoped && canEdit && channel.kind !== 'dm' && (<>
-            <div className="row">
-              <button type="button" className="btn sm" disabled={busy || !addableUsers.length} onClick={() => setPick(pick === 'user' ? null : 'user')}><I name="plus" size={13} />{t('ch.add.user')}</button>
-              <button type="button" className="btn sm" disabled={busy || !addableCrews.length} onClick={() => setPick(pick === 'crew' ? null : 'crew')}><I name="star" size={13} />{t('ch.add.crew')}</button>
-            </div>
-            {pick === 'user' && (<>
-              <div className="msgr-chips">{addableUsers.map((m) => <button key={m.user_id} type="button" className="msgr-chan" onClick={() => addMember('user', m.user_id)}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}</div>
-              <p className="note">{t('ch.add.user.pool', { n: members.length, seats: ent?.seats ?? '?', plan: t(`plan.${ent?.plan ?? 'free'}`) })}{onInvite && <> <button type="button" className="btn sm" onClick={onInvite}><I name="copy" size={12} />{t('org.invite')}</button></>}</p>
-            </>)}
-            {channel.kind === 'private' && (
-              <div className="row">
-                <span className="msgr-klabel">{t('ch.guest')}</span>
-                <div className="msgr-seg" role="radiogroup" aria-label={t('ch.guest.days')}>{[7, 30, 90].map((d) => <button key={d} type="button" role="radio" aria-checked={guestDays === d} className={guestDays === d ? 'active' : ''} onClick={() => setGuestDays(d)}>{t('ch.guest.day', { n: d })}</button>)}</div>
-                <button type="button" className="btn sm" disabled={busy} onClick={guestInvite}><I name="copy" size={13} />{t('ch.guest.link')}</button>
-              </div>
-            )}
-            {pick === 'crew' && (<><div className="msgr-chips">{addableCrews.map((c) => <button key={c.id} type="button" className="msgr-chan" onClick={() => addMember('crew', c.id)}><I name="star" size={13} /><span>{c.display_name}</span></button>)}</div><p className="note">{t('ch.add.crew.note')}</p></>)}
-          </>)}
-          {channel.kind !== 'dm' && (canCreateCrew || (isAdmin && !nodeOn)) && (
-            <div className="msgr-crewnew">
-              {!nodeOn ? <p className="note">{t(nodeSet ? 'ch.crew.new.nodeOff' : 'ch.crew.new.noNode')}</p> : newCrew ? (
+          {pendingReqs.map((r) => (
+            <div key={r.id} className="row req"><span className="name">{r.name}</span><span className={`sub ${r.status}`}>{r.status === 'pending' ? (nodeOn ? t('ch.crew.new.pending') : t('ch.crew.new.pendingOff')) : r.status === 'failed' ? t('ch.crew.new.failed', { why: r.error ?? '' }) : t('ch.crew.new.done')}</span></div>
+          ))}
+          {canAddAny && (
+            <div className="msgr-addwrap">
+              {add === null && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => setAdd('menu')}><I name="plus" size={13} />{t('ch.add')}</button>}
+              {add === 'menu' && (
+                <div className="msgr-addmenu" role="menu">
+                  {canAddPeople && <button type="button" role="menuitem" onClick={() => setAdd('user')}><I name="plus" size={14} /><span><b>{t('ch.add.user')}</b><small>{t('ch.add.user.desc')}</small></span></button>}
+                  {canAddCrew && <button type="button" role="menuitem" onClick={() => setAdd('crew')}><I name="star" size={14} /><span><b>{t('ch.add.crew')}</b><small>{t('ch.add.crew.desc')}</small></span></button>}
+                  {canGuest && <button type="button" role="menuitem" onClick={() => setAdd('guest')}><I name="copy" size={14} /><span><b>{t('ch.add.guest')}</b><small>{t('ch.add.guest.desc')}</small></span></button>}
+                  {showNewCrewItem && <button type="button" role="menuitem" disabled={!canCreateCrew} onClick={() => { setAdd('newcrew'); setNewCrew({ name: '', role: '', prompt: '', orgWide: false }); }}><I name="hash" size={14} /><span><b>{t('ch.add.newcrew')}</b><small>{canCreateCrew ? t('ch.add.newcrew.desc') : t(nodeSet ? 'ch.crew.new.nodeOff' : 'ch.crew.new.noNode')}</small></span></button>}
+                  <button type="button" role="menuitem" className="cancel" onClick={() => setAdd(null)}>{t('ui.cancel')}</button>
+                </div>
+              )}
+              {add === 'user' && (<>
+                <div className="msgr-klabel">{t('ch.add.user')}</div>
+                <div className="msgr-chips">{addableUsers.map((m) => <button key={m.user_id} type="button" className="msgr-chan" onClick={() => addMember('user', m.user_id)}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}</div>
+                <p className="note">{t('ch.add.user.pool', { n: members.length, seats: ent?.seats ?? '?', plan: t(`plan.${ent?.plan ?? 'free'}`) })}{onInvite && <> <button type="button" className="btn sm" onClick={onInvite}><I name="copy" size={12} />{t('org.invite')}</button></>}</p>
+                <div className="acts"><button type="button" className="btn sm" onClick={() => setAdd(null)}>{t('ui.cancel')}</button></div>
+              </>)}
+              {add === 'crew' && (<>
+                <div className="msgr-klabel">{t('ch.add.crew')}</div>
+                <div className="msgr-chips">{addableCrews.map((c) => <button key={c.id} type="button" className="msgr-chan" onClick={() => addMember('crew', c.id)}><I name="star" size={13} /><span>{c.display_name}</span></button>)}</div>
+                <p className="note">{t('ch.add.crew.note')}</p>
+                <div className="acts"><button type="button" className="btn sm" onClick={() => setAdd(null)}>{t('ui.cancel')}</button></div>
+              </>)}
+              {add === 'guest' && (
+                <div className="msgr-inline">
+                  <div className="msgr-klabel">{t('ch.add.guest')}</div>
+                  <p className="note">{t('ch.add.guest.desc')}</p>
+                  <div className="msgr-seg" role="radiogroup" aria-label={t('ch.guest.days')}>{[7, 30, 90].map((d) => <button key={d} type="button" role="radio" aria-checked={guestDays === d} className={guestDays === d ? 'active' : ''} onClick={() => setGuestDays(d)}>{t('ch.guest.day', { n: d })}</button>)}</div>
+                  <div className="acts"><button type="button" className="btn btn-primary sm" disabled={busy} onClick={guestInvite}><I name="copy" size={13} />{t('ch.guest.link')}</button><button type="button" className="btn sm" onClick={() => setAdd(null)}>{t('ui.cancel')}</button></div>
+                </div>
+              )}
+              {add === 'newcrew' && newCrew && (
                 <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); submitCrew(); }}>
+                  <div className="msgr-klabel">{t('ch.add.newcrew')}</div>
                   <input className="msgr-input" placeholder={t('ch.crew.new.name')} value={newCrew.name} onChange={(e) => setNewCrew({ ...newCrew, name: e.target.value })} autoFocus maxLength={40} />
                   <input className="msgr-input" placeholder={t('ch.crew.new.role')} value={newCrew.role} onChange={(e) => setNewCrew({ ...newCrew, role: e.target.value })} maxLength={60} />
                   <textarea className="msgr-input area" placeholder={t('ch.crew.new.prompt')} value={newCrew.prompt} onChange={(e) => setNewCrew({ ...newCrew, prompt: e.target.value })} maxLength={2000} rows={3} />
                   {isAdmin && <label className="switchrow"><input type="checkbox" checked={newCrew.orgWide} onChange={(e) => setNewCrew({ ...newCrew, orgWide: e.target.checked })} /><span>{t('ch.crew.new.orgWide')}</span></label>}
-                  <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={busy || !newCrew.name.trim() || !newCrew.prompt.trim()}><I name="check" size={13} />{t('ch.crew.new.submit')}</button><button type="button" className="btn sm" onClick={() => setNewCrew(null)}>{t('ui.cancel')}</button></div>
+                  <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={busy || !newCrew.name.trim() || !newCrew.prompt.trim()}><I name="check" size={13} />{t('ch.crew.new.submit')}</button><button type="button" className="btn sm" onClick={() => { setAdd(null); setNewCrew(null); }}>{t('ui.cancel')}</button></div>
                   <p className="note">{t('ch.crew.new.desc')}</p>
                 </form>
-              ) : <div className="row"><button type="button" className="btn sm" disabled={busy} onClick={() => setNewCrew({ name: '', role: '', prompt: '', orgWide: false })}><I name="plus" size={13} />{t('ch.crew.new')}</button></div>}
-              {requests.filter((r) => r.status !== 'done' || Date.now() - Date.parse(r.done_at ?? r.created_at) < 120_000).map((r) => (
-                <div key={r.id} className="row req"><span className="name">{r.name}</span><span className={`sub ${r.status}`}>{r.status === 'pending' ? (nodeOn ? t('ch.crew.new.pending') : t('ch.crew.new.pendingOff')) : r.status === 'failed' ? t('ch.crew.new.failed', { why: r.error ?? '' }) : t('ch.crew.new.done')}</span></div>
-              ))}
+              )}
             </div>
           )}
         </section>
-        {canEdit && channel.kind !== 'dm' && (
-          <section>
-            {!confirmArchive
-              ? <div className="row"><button type="button" className="btn sm" disabled={busy} onClick={() => setConfirmArchive(true)}><I name="x" size={13} />{t('ch.archive')}</button></div>
-              : <div className="confirm"><p>{t('ch.archive.confirm')}</p><div className="row"><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={archive}><I name="x" size={13} />{t('ch.archive')}</button><button type="button" className="btn sm" onClick={() => setConfirmArchive(false)}>{t('ui.cancel')}</button></div></div>}
-          </section>
-        )}
+        {/* 2. 채널 설정 — 접어 둔다(자주 안 만진다) */}
+        <section className="msgr-fold">
+          <button type="button" className="fold-head" onClick={() => setMore((v) => !v)} aria-expanded={more}><h3>{t('ch.settings')}</h3><I name="caret" size={14} className={more ? 'open' : ''} /></button>
+          {more && (<>
+            {channel.kind !== 'dm' && (<>
+              <label className="field"><span className="msgr-klabel">{t('ch.name')}</span><input value={name} onChange={(e) => setName(e.target.value)} disabled={!canEdit || busy} /></label>
+              <label className="field"><span className="msgr-klabel">{t('ch.topic')}</span><input value={topic} placeholder={t('ch.topic.ph')} onChange={(e) => setTopic(e.target.value)} disabled={!canEdit || busy} /></label>
+              {canEdit ? <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || (name === channel.name && (topic || '') === (channel.topic || ''))} onClick={saveText}><I name="check" size={13} />{t('ui.save')}</button></div> : <p className="note">{t('ch.noEdit')}</p>}
+            </>)}
+            <label className="switchrow"><input type="checkbox" checked={channel.crew_memory !== false} disabled={!canEdit || busy || memLocked} onChange={(e) => upd({ crew_memory: e.target.checked })} /><span>{t('ch.memory.on')}</span></label>
+            {memLocked && <p className="note">{t('ch.memory.locked')}</p>}
+            {channel.kind !== 'dm' && (<>
+              <div className="row wrap">
+                <span className="msgr-klabel">{t('ch.personal')}</span>
+                <div className="msgr-seg" role="radiogroup" aria-label={t('ch.personal')}>
+                  {['allowed', 'read_only', 'blocked'].map((v) => <button key={v} type="button" role="radio" aria-checked={(channel.personal_crews ?? 'allowed') === v} className={(channel.personal_crews ?? 'allowed') === v ? 'active' : ''} disabled={!canEdit || busy} onClick={() => upd({ personal_crews: v }, t('ch.personal.saved'))}>{personalLabel(v)}</button>)}
+                </div>
+              </div>
+              {(channel.personal_crews ?? 'allowed') === 'blocked' && <p className="note">{t('ch.personal.blocked.note')}</p>}
+              {canEdit && (!confirmArchive
+                ? <div className="row"><button type="button" className="btn sm" disabled={busy} onClick={() => setConfirmArchive(true)}><I name="x" size={13} />{t('ch.archive')}</button></div>
+                : <div className="confirm"><p>{t('ch.archive.confirm')}</p><div className="row"><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={archive}><I name="x" size={13} />{t('ch.archive')}</button><button type="button" className="btn sm" onClick={() => setConfirmArchive(false)}>{t('ui.cancel')}</button></div></div>)}
+            </>)}
+          </>)}
+        </section>
       </aside>
     </div>
   );
