@@ -849,6 +849,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
   const [limits, setLimits] = useState({}); const limitOf = (rel) => limits[rel] ?? 60;
   const [openIds, setOpenIds] = useState(() => new Set(['org', 'channels']));
   const [tabMenu, setTabMenu] = useState(null); // { paneId, id, x, y }
+  useEffect(() => { for (const el of document.querySelectorAll('.msgr-actpane .vault-tab.active')) el.scrollIntoView({ inline: 'nearest', block: 'nearest' }); }, [panes]);
   const focusP = panes.find((p) => p.id === focusPane) ?? panes[0];
   const focusTab = focusP.tabs.find((x) => x.id === focusP.active) ?? focusP.tabs[0];
   const sel = focusTab?.kind === 'entity' ? focusTab.rel : 'org';
@@ -1003,13 +1004,14 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
           return (
             <section key={pane.id} className={`msgr-actpane vault-pane${isFocus ? ' focus' : ''}`} style={{ borderLeft: pi > 0 ? '1px solid var(--border)' : 0 }} onMouseDown={() => setFocusPane(pane.id)}>
               <div className="vault-tabs" role="tablist">
+                <div className="msgr-tabscroll">{/* 탭만 가로 스크롤 — 창이 많아져도 오른쪽 동작 버튼은 줄바꿈·잘림 없이 제자리(유건 제보 2026-09-04) */}
                 {pane.tabs.map((tb) => { const title = tb.kind === 'graph' ? t('act.tab.graph') : entityTitle(tb.rel); return (
                   <div key={tb.id} className={`vault-tab${tb.id === pane.active ? ' active' : ''}`} onClick={() => setPanes((prev) => prev.map((p) => p.id === pane.id ? { ...p, active: tb.id } : p))} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(pane.id, tb.id); } }} onContextMenu={(e) => { e.preventDefault(); const r = e.currentTarget.closest('.msgr-actpane').getBoundingClientRect(); setTabMenu({ paneId: pane.id, id: tb.id, x: e.clientX - r.left, y: e.clientY - r.top }); }} title={title} role="tab" aria-selected={tb.id === pane.active}>
                     <span className="vault-tab-title">{title}</span>
                     <button type="button" className="vault-tab-x" onClick={(e) => { e.stopPropagation(); closeTab(pane.id, tb.id); }} aria-label={t('act.closeTab')}>×</button>
                   </div>
                 ); })}
-                <span style={{ flex: 1 }} />
+                </div>
                 {cur.kind === 'entity' && panes.length < MAX_PANES && <button type="button" className="msgr-tabact" onClick={() => openEntity(cur.rel, { split: true })}>{t('act.tab.openSide')}</button>}
                 {(pane.tabs.length > 1 || panes.length > 1) && <button type="button" className="msgr-tabact" onClick={() => closeAll(pane.id)}>{t('act.tab.closeAll')}</button>}
               </div>

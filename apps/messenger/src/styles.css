@@ -465,7 +465,11 @@
 :root[data-theme='linen'], :root[data-theme='linen-light'] { --graph-rgb: 176, 82, 30; }
 :root[data-theme='linen-dark'] { --graph-rgb: 228, 136, 84; }
 @media (prefers-color-scheme: dark) { :root[data-theme='linen'] { --graph-rgb: 228, 136, 84; } }
-.msgr-tabact { margin: 4px 6px 0 0; height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--fg-3); font: inherit; font-size: 12px; cursor: pointer; align-self: center; }
+.msgr-actpane .vault-tabs { overflow: hidden; } /* 스크롤은 탭 묶음(.msgr-tabscroll)만 */
+.msgr-tabscroll { flex: 1; min-width: 0; display: flex; align-items: stretch; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.msgr-tabscroll::-webkit-scrollbar { display: none; }
+.msgr-tabscroll .vault-tab { flex: none; min-width: 96px; } /* 탭은 줄어들지 않고 밀린다 — 제목이 '그…'로 뭉개지지 않게 */
+.msgr-tabact { flex: none; white-space: nowrap; margin: 0 6px 0 0; height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--fg-3); font: inherit; font-size: 12px; cursor: pointer; align-self: center; }
 .msgr-tabact:hover { color: var(--fg); background: var(--card-2); }
 .msgr-menubg { position: fixed; inset: 0; z-index: 6; }
 .msgr-tabmenu { position: absolute; right: auto; top: auto; z-index: 7; }
