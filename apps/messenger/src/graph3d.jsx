@@ -13,27 +13,40 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, compa
   useEffect(() => {
     const canvas = ref.current; if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    const { nodes, edges } = buildGraph2D({ docs, agents, showCrew: true, showOrphans: true });
+    let { nodes, edges } = buildGraph2D({ docs, agents, showCrew: true, showOrphans: true });
+    let adj = nodes.map(() => new Set()); for (const [a, b] of edges) { adj[a].add(b); adj[b].add(a); }
+    const focusId = focusRel ? stem(focusRel) : null; let fi = focusId ? nodes.findIndex((x) => x.id === focusId) : -1;
+    // 대상 탭(compact+focus) = 옵시디언 로컬 그래프: 집중 노드와 이웃만 남겨 크게 그린다(전체를 작게 넣으면 겹치고 읽히지 않는다 — 유건 제보 2026-09-04)
+    const local = compact && fi >= 0;
+    if (local) {
+      const keep = [fi, ...adj[fi]]; const map = new Map(keep.map((i, k) => [i, k]));
+      nodes = keep.map((i) => nodes[i]); edges = edges.filter(([a, b]) => map.has(a) && map.has(b)).map(([a, b]) => [map.get(a), map.get(b)]);
+      adj = nodes.map(() => new Set()); for (const [a, b] of edges) { adj[a].add(b); adj[b].add(a); }
+      fi = 0;
+    }
     const n = nodes.length;
-    const adj = nodes.map(() => new Set()); for (const [a, b] of edges) { adj[a].add(b); adj[b].add(a); }
-    const focusId = focusRel ? stem(focusRel) : null; const fi = focusId ? nodes.findIndex((x) => x.id === focusId) : -1;
-    const near = fi >= 0 ? new Set([fi, ...adj[fi]]) : null;
+    const near = fi >= 0 && !local ? new Set([fi, ...adj[fi]]) : null;
     // 초기 배치 — 결정적 난수로 구 안에(재마운트마다 같은 하늘)
     let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     const P = nodes.map(() => { const u = rnd() * 2 - 1, th = rnd() * Math.PI * 2, r = 50 + rnd() * 90, s = Math.sqrt(1 - u * u); return { x: r * s * Math.cos(th), y: r * s * Math.sin(th), z: r * u, vx: 0, vy: 0, vz: 0 }; });
     // ponytail: 반발은 O(n²) 전수 — 조직 그래프는 수백 노드 이하. 넘으면 옥트리(Barnes-Hut)로
     const tick = (alpha) => {
       for (let i = 0; i < n; i++) { const a = P[i]; for (let j = i + 1; j < n; j++) { const b = P[j]; const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z; const d2 = dx * dx + dy * dy + dz * dz + 1; const d = Math.sqrt(d2); const f = (1500 / d2) * alpha; const fx = (dx / d) * f, fy = (dy / d) * f, fz = (dz / d) * f; a.vx += fx; a.vy += fy; a.vz += fz; b.vx -= fx; b.vy -= fy; b.vz -= fz; } }
-      for (const [i, j] of edges) { const a = P[i], b = P[j]; const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z; const d = Math.sqrt(dx * dx + dy * dy + dz * dz) + 0.01; const f = (d - 52) * 0.05 * alpha; const fx = (dx / d) * f, fy = (dy / d) * f, fz = (dz / d) * f; a.vx += fx; a.vy += fy; a.vz += fz; b.vx -= fx; b.vy -= fy; b.vz -= fz; }
+      for (const [i, j] of edges) { const a = P[i], b = P[j]; const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z; const d = Math.sqrt(dx * dx + dy * dy + dz * dz) + 0.01; const f = (d - (local ? 78 : 52)) * 0.05 * alpha; const fx = (dx / d) * f, fy = (dy / d) * f, fz = (dz / d) * f; a.vx += fx; a.vy += fy; a.vz += fz; b.vx -= fx; b.vy -= fy; b.vz -= fz; }
       for (const a of P) { a.vx -= a.x * 0.016 * alpha; a.vy -= a.y * 0.016 * alpha; a.vz -= a.z * 0.016 * alpha; a.vx *= 0.82; a.vy *= 0.82; a.vz *= 0.82; a.x += a.vx; a.y += a.vy; a.z += a.vz; }
+      if (local) { P[0].x = 0; P[0].y = 0; P[0].z = 0; } // 로컬 그래프의 집중 노드는 원점에 고정
     };
-    for (let k = 0; k < 260; k++) tick(1 - k / 280);
+    if (local) { // 로컬 그래프는 힘 배치 대신 기하학적 고리: 집중 노드 원점, 이웃은 같은 간격의 고리(위아래 교대) — 겹침 없이 폭을 채운다
+      P[0].x = P[0].y = P[0].z = 0; const m = n - 1;
+      for (let k = 1; k < n; k++) { const t = ((k - 1) / Math.max(m, 1)) * Math.PI * 2 - Math.PI / 2; P[k].x = Math.cos(t) * 90; P[k].z = Math.sin(t) * 90; P[k].y = k % 2 ? 16 : -16; }
+    } else for (let k = 0; k < 260; k++) tick(1 - k / 280);
     let radius = 40; for (const a of P) radius = Math.max(radius, Math.hypot(a.x, a.y, a.z));
     // 카메라 — 현재값과 목표값
-    const home = fi >= 0 ? { x: P[fi].x, y: P[fi].y, z: P[fi].z } : { x: 0, y: 0, z: 0 };
-    const fitDist = fi >= 0 ? radius * 1.6 : radius * 2.4;
-    const cam = { yaw: 0.6, pitch: 0.35, dist: fitDist * 1.6, cx: home.x, cy: home.y, cz: home.z };
-    const tgt = { yaw: 0.6, pitch: 0.35, dist: fitDist, cx: home.x, cy: home.y, cz: home.z };
+    const home = fi >= 0 && !local ? { x: P[fi].x, y: P[fi].y, z: P[fi].z } : { x: 0, y: 0, z: 0 };
+    const fitDist = local ? radius * 2.3 : fi >= 0 ? radius * 1.6 : radius * 2.4;
+    const pitch0 = local ? 1.0 : 0.35; // 로컬 그래프는 위에서 내려다봐 이웃 고리가 가로로 펼쳐진다
+    const cam = { yaw: 0.6, pitch: pitch0, dist: fitDist * 1.6, cx: home.x, cy: home.y, cz: home.z };
+    const tgt = { yaw: 0.6, pitch: pitch0, dist: fitDist, cx: home.x, cy: home.y, cz: home.z };
     let vyaw = 0, vpitch = 0, idleAt = performance.now(), dragging = false, moved = 0, last = null, hover = -1, raf = 0, frame = 0;
     let INK = [42, 40, 36], PAPER = [233, 230, 223], ACC = [176, 82, 30], LAB = ACC, light = true;
     const colors = () => {
@@ -51,7 +64,7 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, compa
     const proj = new Array(n);
     const project = () => {
       const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
-      const F = (cam.dist * Math.min(W, H) * 0.42) / radius;
+      const F = (cam.dist * Math.min(W, H) * (local ? 0.34 : 0.42)) / radius;
       for (let i = 0; i < n; i++) {
         const a = P[i]; const x0 = a.x - cam.cx, y0 = a.y - cam.cy, z0 = a.z - cam.cz;
         const x1 = x0 * cy - z0 * sy, z1 = x0 * sy + z0 * cy; // 요(Y축)
@@ -60,13 +73,13 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, compa
         proj[i] = { x: W / 2 + x1 * f, y: H / 2 + y2 * f, s: cam.dist / Math.max(zc, 1), z: z2 };
       }
     };
-    const nodeR = (i, s) => (compact ? 2.6 : 3.2) + Math.min(nodes[i].deg, 8) * (compact ? 0.55 : 0.8) * s * 0.9 + 0.001;
+    const nodeR = (i, s) => (local ? 3.4 : compact ? 2.6 : 3.2) + Math.min(nodes[i].deg, 8) * (local ? 0.7 : compact ? 0.55 : 0.8) * s * 0.9 + 0.001;
     const draw = () => {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = `rgb(${PAPER.join(',')})`; ctx.fillRect(0, 0, W, H);
       ctx.font = `${compact ? 11 : 12}px ${getComputedStyle(document.documentElement).getPropertyValue('--font') || 'Pretendard, sans-serif'}`;
       // 기하학적 지평 — 경계 구의 적도 원(회전에 따라 타원으로 눕는다)
-      { ctx.beginPath(); const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch); const F = (cam.dist * Math.min(W, H) * 0.42) / radius;
+      if (!compact) { ctx.beginPath(); const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch); const F = (cam.dist * Math.min(W, H) * (local ? 0.34 : 0.42)) / radius;
         for (let k = 0; k <= 72; k++) { const t = (k / 72) * Math.PI * 2; const x0 = Math.cos(t) * radius * 1.15 - cam.cx, y0 = -cam.cy, z0 = Math.sin(t) * radius * 1.15 - cam.cz; const x1 = x0 * cy - z0 * sy, z1 = x0 * sy + z0 * cy; const y2 = y0 * cp - z1 * sp, z2 = y0 * sp + z1 * cp; const f = F / Math.max(cam.dist + z2, 1); const px = W / 2 + x1 * f, py = H / 2 + y2 * f; k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
         ctx.strokeStyle = `rgba(${INK.join(',')}, ${light ? 0.07 : 0.1})`; ctx.lineWidth = 1; ctx.setLineDash([2, 5]); ctx.stroke(); ctx.setLineDash([]); }
       const depthA = (z) => 0.45 + 0.55 * (1 - Math.min(1, Math.max(0, (z + radius) / (2 * radius))));
@@ -90,9 +103,10 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, compa
       // 라벨 — 허브·집중·호버·이웃(호버 중)만
       for (const i of order) {
         const q = proj[i]; const show = i === hover || i === fi || (hover >= 0 && adj[hover].has(i)) || (hover < 0 && (near ? near.has(i) : nodes[i].deg >= (compact ? 4 : 3)));
-        if (!show || (compact && i !== hover && i !== fi && nodes[i].deg < 3)) continue;
+        if (!local && (!show || (compact && i !== hover && i !== fi && nodes[i].deg < 3))) continue; // 로컬 그래프는 전원 라벨(몇 개 안 된다)
         const r = nodeR(i, q.s); const al = depthA(q.z) * (i === hover || i === fi ? 1 : 0.85);
-        ctx.fillStyle = `rgba(${(i === hover || i === fi || nodes[i].deg >= 4 ? LAB : INK).join(',')}, ${al})`; ctx.textBaseline = 'middle'; ctx.fillText(nodes[i].label, q.x + r + 6, q.y);
+        ctx.fillStyle = `rgba(${(i === hover || i === fi || nodes[i].deg >= 4 ? LAB : INK).join(',')}, ${al})`; ctx.textBaseline = 'middle';
+        const leftSide = local && q.x < W / 2 - 4; ctx.textAlign = leftSide ? 'right' : 'left'; ctx.fillText(nodes[i].label, leftSide ? q.x - r - 6 : q.x + r + 6, q.y); ctx.textAlign = 'left';
       }
     };
     const loop = (now) => {
@@ -101,7 +115,7 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, compa
       if (!dragging) { tgt.yaw += vyaw; tgt.pitch = Math.max(-1.25, Math.min(1.25, tgt.pitch + vpitch)); vyaw *= 0.92; vpitch *= 0.92; if (Math.abs(vyaw) < 1e-4) vyaw = 0; if (Math.abs(vpitch) < 1e-4) vpitch = 0; }
       if (!dragging && hover < 0 && !reduced() && now - idleAt > 2500) tgt.yaw += 0.0012; // 쉬는 동안 천천히 돈다
       const k = 0.11; cam.yaw += (tgt.yaw - cam.yaw) * k; cam.pitch += (tgt.pitch - cam.pitch) * k; cam.dist += (tgt.dist - cam.dist) * k; cam.cx += (tgt.cx - cam.cx) * k; cam.cy += (tgt.cy - cam.cy) * k; cam.cz += (tgt.cz - cam.cz) * k;
-      if (frame < 200) tick(0.25 * (1 - frame / 200)); // 마운트 뒤 잠깐 더 자리를 잡는다
+      if (!local && frame < 200) tick(0.25 * (1 - frame / 200)); // 마운트 뒤 잠깐 더 자리를 잡는다
       project(); draw();
     };
     raf = requestAnimationFrame(loop);

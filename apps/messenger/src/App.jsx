@@ -938,7 +938,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onE
               <div className="head"><h3>{sel === 'org' ? t('act.all') : t('act.of', { name: entityTitle(sel) })}</h3><span className="sub">{list.length}</span>
                 {sel.startsWith('channels/') && <button type="button" className="btn sm" onClick={() => { const c = channels.find((x) => `channels/${x.name}` === sel); if (c) onOpenChannel(c.id); }}><I name="hash" size={12} />{t('act.openChannel')}</button>}
               </div>
-              <div className="msgr-actlocal"><Graph3D key={sel} docs={gdocs} compact focusRel={sel === 'org' ? `org/${org.slug}.md` : `${sel}.md`} onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); openTab(id.startsWith('org/') ? 'org' : id); }} height={220} /></div>
+              <div className="msgr-actlocal"><Graph3D key={sel} docs={gdocs} compact focusRel={sel === 'org' ? `org/${org.slug}.md` : `${sel}.md`} onSelectDoc={(rel) => { const id = rel.replace(/\.md$/, ''); openTab(id.startsWith('org/') ? 'org' : id); }} height={260} /></div>
               {rows === null && <p className="empty">…</p>}
               {rows !== null && !list.length && <p className="empty">{isAdmin ? t('act.empty') : t('act.adminOnly')}</p>}
               {days.map((g) => (
