@@ -436,7 +436,7 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   assert.match(app, /import \{ Graph3D \} from '\.\/graph3d\.jsx';/, '활동 그래프는 3D 컴포넌트(구성은 아르고 코어 재사용)');
   assert.match(app, /\{page === 'activity' && org \? \(\n\s*<Activity /, '활동 페이지 분기');
   assert.match(app, /<Graph3D key="all" docs=\{gdocs\} hint=\{t\('act\.graph\.hint'\)\} onSelectDoc=/, '그래프 탭: 3D 활동 그래프(조직 관계 문서)');
-  assert.match(app, /<Graph3D key=\{sel\} docs=\{gdocs\} compact focusRel=/, '대상 탭: 집중 노드 3D 로컬 그래프');
+  assert.doesNotMatch(app, /msgr-actlocal|<Graph3D key=\{sel\}/, '대상 탭엔 작은 그래프를 넣지 않는다 — 그래프는 그래프 탭 전담(유건 지시 2026-09-04)');
   assert.doesNotMatch(app, /Graph2D/, '메신저 활동 페이지는 2D 그래프를 쓰지 않는다');
   const g3 = read('apps/messenger/src/graph3d.jsx');
   assert.match(g3, /import \{ buildGraph2D, stem \} from '@argo\/graph2d-core';/, '3D 그래프 구성은 아르고 코어 재사용(사본 금지)');
@@ -454,9 +454,13 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   assert.match(app, /const MAX_PANES = 2;/, '창은 둘까지');
   const g2 = read('app/c/[ws]/graph2d.jsx');
   assert.match(g2, /nodeShape = 'star'/, '아르고 기억 그래프 기본은 별(변경 없음)');
-  assert.match(g2, /chroma\(st\.getPropertyValue\('--graph-rgb'\)\.trim\(\)\) \?\? chroma\(st\.getPropertyValue\('--mark-rgb'\)\.trim\(\)\)/, '--graph-rgb 최우선, 없으면 --mark-rgb');
+  assert.match(g2, /const explicit = parseRgb\(st\.getPropertyValue\('--graph-rgb'\)\.trim\(\)\);/, '--graph-rgb 최우선');
+  assert.match(g2, /if \(!explicit && \(acc\.length !== 3/, '명시 --graph-rgb는 무채색 폴백(파랑)을 타지 않는다');
   const css = read('apps/messenger/src/styles.css');
-  assert.match(css, /:root\[data-theme='linen'\], :root\[data-theme='linen-light'\] \{ --graph-rgb: 176, 82, 30; \}/, '메신저 linen 그래프 포인트색 러스트');
+  assert.match(css, /:root\[data-theme='linen'\], :root\[data-theme='linen-light'\] \{ --graph-rgb: 38, 36, 31; \}/, '메신저 linen 그래프 노드는 흑백(잉크) 계열');
+  assert.match(css, /\.msgr-actsplit \{[^}]*background: var\(--card\);/, '기억 페이지 판은 카드색 한 판(그래프 캔버스 --paper-rgb와 같은 값)');
+  const g3b = read('apps/messenger/src/graph3d.jsx');
+  assert.match(g3b, /ACC = g \|\| \(m && chroma\(m\) && m\)/, '3D도 명시 --graph-rgb는 채도 검사 면제');
   assert.match(g2, /if \(shapeRef\.current === 'circle'\) \{ plain\.moveTo/, '원형 노드 분기(의존 배열 밖 ref)');
   assert.ok(!/\['audit', 'set\.tab\.audit'\]/.test(app), '설정의 기록 탭 제거');
   assert.match(app, /return lang === 'en' \? out : koJosa\(out\);/, '한국어 조사 처리');
