@@ -448,3 +448,15 @@
 .msgr-railrow .more:hover { background: var(--card-2); color: var(--fg); }
 .msgr-railrow .msgr-rowmenu { right: 4px; top: calc(100% + 2px); z-index: 20; }
 .msgr-setcard .msgr-seg.right { margin-left: auto; }
+
+/* 페이지형 화면(설정·문서)은 대화의 720px 읽기 레인을 쓰지 않는다 — 데스크톱 폭을 쓴다(유건 지적 2026-09-04) */
+.msgr-thread.page { padding: 20px 32px 32px; }
+.msgr-thread.page .msgr-settings.tabs { max-width: 1240px; margin: 0; grid-template-columns: 200px minmax(0, 1fr); gap: 28px; }
+.msgr-thread.page .msgr-docs { max-width: none; margin: 0; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 24px; }
+.msgr-thread.page .msgr-setcard { padding: 22px 26px; }
+.msgr-thread.page .msgr-docs .doc { padding: 22px 26px; min-height: 420px; }
+.msgr-thread.page .msgr-docs .msgr-input.body { min-height: 420px; }
+@media (max-width: 720px) {
+  .msgr-thread.page { padding: 12px 14px 24px; }
+  .msgr-thread.page .msgr-docs { grid-template-columns: 1fr; }
+}

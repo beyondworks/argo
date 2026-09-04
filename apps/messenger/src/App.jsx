@@ -710,7 +710,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
       <span className="title"><I name="gear" size={18} />{t('ui.settings')}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
-    <div className="msgr-thread"><div className="msgr-settings tabs">
+    <div className="msgr-thread page"><div className="msgr-settings tabs">
       <nav className="msgr-setnav" aria-label={t('ui.settings')}>
         {tabs.map(([k, label]) => <button key={k} type="button" className={tab === k ? 'on' : ''} aria-current={tab === k ? 'page' : undefined} onClick={() => setTab(k)}>{t(label)}</button>)}
       </nav>
@@ -809,7 +809,7 @@ function Docs({ org, isAdmin, channels, chId, uid, nameOfUser, onNote, onError, 
       <span className="title"><I name="doc" size={18} />{t('docs.title')}</span>
       <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
-    <div className="msgr-thread"><div className="msgr-docs">
+    <div className="msgr-thread page"><div className="msgr-docs">
       <aside className="list">
         <div className="head"><span className="msgr-klabel">{t('docs.scope.org')}</span>{isAdmin && <button type="button" className="btn sm" onClick={() => setCreating({ scope: 'org', folder: 'rules', title: '' })}><I name="plus" size={12} />{t('docs.new')}</button>}</div>
         {!orgDocs.length && <p className="empty">{t('docs.empty.org')}</p>}
