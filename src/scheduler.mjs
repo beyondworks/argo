@@ -61,6 +61,17 @@ export function planConsolidate(st, nowMs, today) {
   return attempt(n + 1);
 }
 
+/** 루프 진행 중 스탬프 연장 — 야간 루프는 청크(≤10분+복구 3분)마다 nextRetryAt을 지금+15분으로 밀어, 다른 기기가 리더가 되거나 앱이
+    재기동돼도 "재시도 가능"으로 읽지 않는다(검수 MEDIUM-3: 선점+5분 스탬프가 4시간 루프 중 만료돼 두 번째 루프 → 워터마크 되감기·중복 과금). */
+export async function bumpConsolidateClaim(wsId, nowMs, today) {
+  return withLock(`consolidate:${wsId}`, async () => {
+    let cur = {};
+    try { cur = await readJson(RUN_STAMP(wsId), {}); } catch { return; }
+    if ((cur.day ?? '') !== today || cur.done) return;
+    await writeJsonAtomic(RUN_STAMP(wsId), { ...cur, nextRetryAt: new Date(nowMs + 15 * 60_000).toISOString() });
+  });
+}
+
 /** 실행 직전 선점 — 락 안에서 읽고 판정하고 쓴다(claimRoutine과 같은 원칙). 반환 = 쓴 스탬프 또는 null. */
 export async function claimConsolidate(wsId, nowMs, today) { // export: 회귀 테스트용(스탬프 실제 기록 여부)
   return withLock(`consolidate:${wsId}`, async () => {
@@ -232,7 +243,7 @@ export function ensureScheduler() {
               // 구간은 조기 반환(LLM 호출 0)이고, rollup은 주간 블록 중복 append를 자체 차단한다.
               // 야간 루프 — 잔량 소진·밤당 7MB·08:00·청구 러너 5청크 중 먼저 닿는 것까지 청크를 연속 정리
               const deadline = new Date(now.getFullYear(), now.getMonth(), now.getDate(), CONSOLIDATE_UNTIL_HOUR, 0, 0).getTime();
-              consolidateBacklog(cid, { deadlineMs: Math.max(deadline, now.getTime() + 60_000) }) // 08:00 뒤 캐치업이면 최소 1청크
+              consolidateBacklog(cid, { deadlineMs: Math.max(deadline, now.getTime() + 60_000), onChunk: () => bumpConsolidateClaim(cid, Date.now(), today) }) // 08:00 뒤 캐치업이면 최소 1청크
                 .then((r) => console.log(`[argo] 기억 정리 끝: ${cid} 청크 ${r.chunks}·${Math.round(r.bytes / 1024)}KB·노트 ${r.notes.length} (${r.stoppedBy})`))
                 .then(() => rollupJournals(cid)) // 정제가 소화한 일지만 주간으로 접힌다
                 .then(() => markConsolidateDone(cid, today))

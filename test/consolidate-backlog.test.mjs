@@ -129,9 +129,65 @@ test('배선 — 스케줄러가 야간 루프(consolidateBacklog)를 08:00 마�
   const sched = await readFile(new URL('../src/scheduler.mjs', import.meta.url), 'utf8');
   assert.match(sched, /import \{ consolidateBacklog, rollupJournals \} from '\.\/consolidate\.mjs';/);
   assert.match(sched, /const CONSOLIDATE_UNTIL_HOUR = 8;/);
-  assert.match(sched, /consolidateBacklog\(cid, \{ deadlineMs: Math\.max\(deadline, now\.getTime\(\) \+ 60_000\) \}\)[\s\S]{0,300}?\.then\(\(\) => rollupJournals\(cid\)\)/, '루프 뒤 롤업');
+  assert.match(sched, /consolidateBacklog\(cid, \{ deadlineMs: Math\.max\(deadline, now\.getTime\(\) \+ 60_000\), onChunk: \(\) => bumpConsolidateClaim\(cid, Date\.now\(\), today\) \}\)[\s\S]{0,300}?\.then\(\(\) => rollupJournals\(cid\)\)/, '루프 뒤 롤업 + 청크마다 선점 스탬프 연장');
+  const route = await readFile(new URL('../app/api/companies/[ws]/vault/consolidate/route.js', import.meta.url), 'utf8');
+  assert.match(route, /export const maxDuration = 900;/, '수동 정리 라우트 상한 = 청크 264초 + 복구 3분 여유(검수 MEDIUM-2)');
+
   assert.doesNotMatch(sched, /consolidateMemory\(cid\)/, '단발 호출 잔재 없음');
   const src = await readFile(new URL('../src/consolidate.mjs', import.meta.url), 'utf8');
   assert.match(src, /\{ lang, model: CONSOLIDATE_MODEL, maxTurns: 2, readOnly: true, timeoutMs: 10 \* 60_000 \}/, '본 호출: sonnet 5·읽기 전용·2턴');
   assert.doesNotMatch(src, /claude-haiku/, 'haiku 잔재 없음');
+  assert.match(src, /isBilledRunner\(wsId, runner\)\.catch\(\(\) => true\)/, '청구 판정 실패는 청구로(fail-closed — 비용 상한 소멸 방지)');
+  assert.match(src, /if \(!parsed && out\.length <= REPAIR_MAX\)/, '잘린 출력은 복구하지 않는다');
+  assert.match(src, /appendSourceLinks\(file, sources\.slice\(0, SOURCE_LINK_CAP\)\)/, '근거 링크 상한');
+  assert.match(src, /const NOTE_CAP = 40;/); assert.doesNotMatch(src, /\.slice\(0, 8\)/, '옛 노트 상한 8 잔재 없음');
+});
+
+test('절단 진행 보장 — 창 안 유일한 줄바꿈이 시작 직후면 줄 경계를 버리고 하드 컷(MIN_ROOM 이상 전진), UTF-8 글자를 쪼개지 않는다(검수 HIGH-2·LOW)', async () => {
+  const oneLine = 'x짧은 첫 줄\n' + '가'.repeat(40_000); // 120KB 한 줄. 접두 16바이트(≡1 mod 3) — 60,000 하드 컷이 한글 글자 중간에 떨어지게 잡는다(15바이트면 우연히 정렬돼 검사가 헛돈다)
+  const p = await seed({ journals: { '2026-09-05-pepper.md': oneLine } });
+  const c = await gatherNewJournal(WS, { v: 2, offsets: {} });
+  assert.ok(c.consumed >= 4096, `자투리 청크 금지: ${c.consumed}`);
+  assert.ok(c.consumed > 55_000 && c.consumed <= 60_000, `하드 컷 ≈ 60KB: ${c.consumed}`);
+  assert.doesNotMatch(c.text, /�/, 'UTF-8 연속 바이트 경계에서 물러나 절단');
+  assert.equal(c.consumed % 3, Buffer.byteLength('x짧은 첫 줄\n') % 3, '한글 3바이트 단위로 끊긴다(하드 컷 60,000에서 2바이트 후퇴)');
+  assert.equal(c.consumed, 59_998);
+  const c2 = await gatherNewJournal(WS, c.next);
+  assert.doesNotMatch(c2.text, /�/); assert.ok(c2.consumed > 0);
+  // 루프도 전진한다(옛 결함: 매일 15바이트만 집어 스킵 → 영구 스톨)
+  _setOneShotForTest(async () => ({ runner: 'claude', text: '{"notes":[]}', usage: {}, costUsd: 0 }));
+  try { const r = await consolidateBacklog(WS); assert.equal(r.stoppedBy, 'drained'); assert.ok(r.chunks >= 2, `청크 ${r.chunks}`); } finally { _setOneShotForTest(null); }
+  void p;
+});
+
+test('노트 상한 40 — 초과분은 조용히 버리지 않고 memory 실패 이벤트로 남긴다(검수 HIGH-1), 워터마크는 전진', async () => {
+  const p = await seed({ journals: { '2026-09-06-pepper.md': lines(30, 120) } });
+  const many = Array.from({ length: 45 }, (_, i) => ({ title: `주제 ${i + 1}`, content: `본문 ${i + 1}` }));
+  _setOneShotForTest(async () => ({ runner: 'claude', text: JSON.stringify({ notes: many }), usage: {}, costUsd: 0 }));
+  try {
+    const r = await consolidateMemory(WS);
+    assert.equal(r.notes.length, 40);
+    const ev = (await readFile(join(p.root, 'events.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
+    const over = ev.find((e) => e.type === 'memory' && e.ok === false && /45개 중 40개만/.test(e.error));
+    assert.ok(over, '초과 이벤트'); assert.match(over.error, /주제 41/, '버려진 제목 명시');
+    assert.ok(ev.some((e) => e.type === 'memory' && e.ok === true && e.notes.length === 40));
+  } finally { _setOneShotForTest(null); }
+});
+
+test('bumpConsolidateClaim — 오늘 미완료 스탬프의 nextRetryAt을 지금+15분으로 연장, done·다른 날 스탬프는 손대지 않는다(검수 MEDIUM-3)', async () => {
+  const { claimConsolidate, bumpConsolidateClaim } = await import('../src/scheduler.mjs');
+  const p = await seed({});
+  const today = '2026-09-04'; const t0 = Date.parse('2026-09-04T04:00:00Z');
+  const st = await claimConsolidate(WS, t0, today); assert.ok(st && st.attempts === 1);
+  await bumpConsolidateClaim(WS, t0 + 3 * 60_000, today);
+  const cur = JSON.parse(await readFile(join(p.vault, '.consolidate-run.json'), 'utf8'));
+  assert.equal(Date.parse(cur.nextRetryAt), t0 + 18 * 60_000, '3분 뒤 청크 완료 → 재시도 창 = 그 시점 + 15분');
+  assert.equal(cur.attempts, 1); assert.equal(cur.done, false);
+  await bumpConsolidateClaim(WS, t0, '2026-09-05'); // 다른 날 → 무시
+  assert.equal(JSON.parse(await readFile(join(p.vault, '.consolidate-run.json'), 'utf8')).nextRetryAt, cur.nextRetryAt);
+  const { markConsolidateDone } = await import('../src/scheduler.mjs');
+  await markConsolidateDone(WS, today); // 완료 뒤 늦게 도착한 하트비트는 done 스탬프를 되살리지 않는다
+  await bumpConsolidateClaim(WS, t0 + 60 * 60_000, today);
+  const fin = JSON.parse(await readFile(join(p.vault, '.consolidate-run.json'), 'utf8'));
+  assert.equal(fin.done, true); assert.equal(fin.nextRetryAt, null, 'done 스탬프는 손대지 않는다');
 });

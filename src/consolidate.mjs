@@ -13,8 +13,9 @@ import { appendEvent } from './events.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 
 const WATERMARK = (wsId) => join(paths(wsId).vault, '.consolidate.json');
-// 정리 모델 — A/B 실측(2026-09-04, 같은 청크·같은 프롬프트): sonnet 5가 주제 포착 3/3·기존 제목 재사용·JSON 정상에 비용도
+// 정리 모델 — A/B 실측(2026-09-04, 같은 14KB 청크·같은 프롬프트): sonnet 5가 주제 포착 3/3·기존 제목 재사용·JSON 정상에 비용도
 // 4.6(0.19$)·4.5(0.38$)보다 낮은 0.14$. haiku는 주제 1/3만 건지고 기존 노트 옆에 사본을 만들었다(유건 승인으로 교체).
+// 실운영 청크(가져온 200KB) 1회 실측: 264초·0.74$(출력 22.6K 토큰) — 밤당 7MB ≈ 36청크 ≈ 27$(가격표 기준, 구독은 청구 0).
 export const CONSOLIDATE_MODEL = 'claude-sonnet-5';
 // 청크 크기(바이트) — 회당 고정 오버헤드(시스템 프롬프트·노트 발췌 ≈ 20K 토큰)가 크므로 청크를 키워 회수를 줄인다.
 // 가져온(imported) 일지는 이미 세션 요약본이라 200KB, 크루 일지는 정제 품질을 위해 60KB. 한 파일이 청크보다 크면
@@ -26,7 +27,10 @@ export const chunkCapFor = (name) => (IMPORTED_RE.test(name) ? CHUNK_IMPORTED : 
 // 야간 루프 상한(consolidateBacklog) — 21MB 백로그를 3밤에(유건 지시) → 밤당 7MB. 청구 러너(BYOK)는 비용 상한으로 5청크.
 export const NIGHTLY_BYTES = 7 * 1024 * 1024;
 export const BILLED_MAX_CHUNKS = 5;
-const MIN_ROOM = 4096; // 청크 남은 자리가 이보다 작으면 다음 파일을 시작하지 않는다(자투리 조각 방지)
+const MIN_ROOM = 4096; // 청크 남은 자리가 이보다 작으면 다음 파일을 시작하지 않는다(자투리 조각 방지). 줄 경계 절단도 이만큼은 전진해야 채택
+const NOTE_CAP = 40; // 청크당 저장 노트 상한 — 200KB 청크는 주제가 십수 개일 수 있다(옛 8은 조용한 유실 창 — 검수 HIGH-1). 초과는 이벤트로 남긴다
+const SOURCE_LINK_CAP = 20; // 노트 하나에 붙이는 근거 일지 링크 상한 — 청크 하나가 30여 파일이라 링크 섹션이 본문을 삼킨다(검수 LOW)
+const REPAIR_MAX = 60_000; // 이보다 긴 출력은 복구를 시도하지 않는다 — 잘린 JSON을 "고치면" 노트가 빠진 채 문법만 맞아 워터마크가 전진한다
 const MIN_TEXT = 400; // 소량이면 스킵(워터마크도 안 움직임) — 정제할 만큼 쌓일 때까지 기다린다
 let oneShot = runOneShot;
 export const _setOneShotForTest = (fn) => { oneShot = fn ?? runOneShot; };
@@ -95,7 +99,8 @@ export async function gatherNewJournal(wsId, mark) {
   for (const n of names) {
     const file = join(dir, n);
     // Buffer로 읽어 바이트 기준으로 자른다 — 워터마크 오프셋 단위는 바이트. buf.length를 쓰면 읽기·크기가 같은 스냅샷이라 레이스도 없다.
-    const buf = await readFile(file);
+    let buf;
+    try { buf = await readFile(file); } catch { continue; } // readdir 뒤 사라진 파일(수동 롤업·동기화 삭제) — 그 밤 루프를 통째로 던지지 않는다
     const size = buf.length;
     const done = Math.min(mark.offsets[n] ?? 0, size);
     if (size <= done) { next.offsets[n] = done; continue; }
@@ -104,9 +109,12 @@ export async function gatherNewJournal(wsId, mark) {
     // 청크가 찼거나 남은 자리가 자투리(4KB 미만)면 손대지 않는다 — 다음 파일 앞 몇 줄만 떼어 오면 문맥이 끊긴 조각이 된다
     if (room < MIN_ROOM) { remaining += size - done; next.offsets[n] = done; continue; }
     let end = Math.min(size, done + room);
-    if (end < size) { // 파일 중간 절단 — 상한 안의 마지막 줄바꿈까지(멀티바이트 글자 절단 방지, 다음 청크가 줄 단위로 이어 받음)
+    if (end < size) { // 파일 중간 절단 — 상한 안의 마지막 줄바꿈까지, 단 그래도 MIN_ROOM 이상 전진할 때만(검수 HIGH-2: 창 안 유일한
+      // 줄바꿈이 done 바로 뒤면 몇 바이트짜리 청크가 되어 MIN_TEXT 미만 스킵 → 워터마크가 영영 안 움직였다). 아니면 하드 컷 —
+      // UTF-8 연속 바이트(10xxxxxx) 앞으로 물러나 글자를 쪼개지 않는다(검수 LOW: 하드 컷이 U+FFFD를 만들었다).
       const nl = buf.lastIndexOf(0x0a, end - 1);
-      if (nl > done) end = nl + 1;
+      if (nl > done && nl + 1 - done >= MIN_ROOM) end = nl + 1;
+      else while (end > done + 1 && (buf[end] & 0xc0) === 0x80) end -= 1;
     }
     text += `\n[${n}]\n${buf.subarray(done, end).toString('utf8')}`;
     sources.push(`journal/${n.replace(/\.md$/, '')}`);
@@ -164,17 +172,19 @@ export async function consolidateMemory(wsId) {
   // 러너 독립(runOneShot) — Claude 없이 Codex/Gemini/GLM만 연결한 회사도 기억 정리가 돈다.
   // (이전: SDK 직호출 + env 미주입 — 호스트 Claude 로그인에만 의존해 BYOK 웹 사용자·타 러너 사용자는 조용히 실패)
   // model은 claude 러너일 때만 haiku 적용(정리는 잔일 — 저비용), maxTurns 4 = 도구 거부돼도 최종 답까지.
-  // 읽기 전용·2턴 상한 — 프롬프트가 도구 금지를 말해도 도구 턴이 열려 있으면 파일을 읽으러 다녀 비용이 5배로 뛰었다(A/B 실측).
+  // 2턴 상한 — 프롬프트가 도구 금지를 말해도 턴이 열려 있으면 파일을 읽으러 다녀 비용이 5배로 뛰었다(A/B 실측). readOnly는 CLI 경로
+  // (codex/agy 샌드박스·caps)를 막고, SDK 경로는 이미 allowedTools []라 무효 — 비용 절감은 maxTurns가 담당한다(검수 확인).
   // 배치 작업(새벽 자동 실행, 사용자 대기 없음)이라 공통 기본(120s)보다 넉넉히 — 상한의 목적은
   // 지연 SLO가 아니라 "영원히 안 끝나는 것"을 끊어 스케줄러 in-flight 표시를 반드시 풀어주는 것이다.
   const { runner, text: out, usage, costUsd } = await oneShot(wsId, PROMPT(text, noteTitles, lang, noteCtx),
     { lang, model: CONSOLIDATE_MODEL, maxTurns: 2, readOnly: true, timeoutMs: 10 * 60_000 });
   // billed 각인 — 구독 러너의 기억 정리 턴 금액이 청구로 새지 않게(검수 2026-07-27 부수 발견)
-  const billed = await isBilledRunner(wsId, runner).catch(() => undefined);
+  // 판정 실패는 청구로 본다(fail-closed) — 자격 파일 손상 시 1회 throw가 명세라, undefined로 두면 비용 상한이 조용히 사라진다(검수 MEDIUM-1)
+  const billed = await isBilledRunner(wsId, runner).catch(() => true);
   await appendUsage(wsId, { kind: 'consolidate', slug: '', runner, usage, costUsd, ms: Date.now() - t0, billed });
 
   let parsed = parseNotes(out);
-  if (!parsed) { // JSON 복구 1회 — 본문 안 따옴표 미이스케이프 같은 형식 오류로 하루치 정리가 통째로 날아가지 않게(A/B: sonnet 4.6이 실증)
+  if (!parsed && out.length <= REPAIR_MAX) { // JSON 복구 1회(출력이 상한 안일 때만 — 잘린 JSON을 고치면 노트가 빠진 채 통과한다) — 본문 안 따옴표 미이스케이프 같은 형식 오류로 하루치 정리가 통째로 날아가지 않게(A/B: sonnet 4.6이 실증)
     const fix = await oneShot(wsId, REPAIR_PROMPT(out.slice(0, 60_000), lang), { lang, model: CONSOLIDATE_MODEL, maxTurns: 1, readOnly: true, timeoutMs: 3 * 60_000 });
     await appendUsage(wsId, { kind: 'consolidate', slug: '', runner: fix.runner, usage: fix.usage, costUsd: fix.costUsd, ms: 0, billed });
     parsed = parseNotes(fix.text);
@@ -185,10 +195,15 @@ export async function consolidateMemory(wsId) {
   }
 
   const written = [];
-  for (const n of (parsed.notes ?? []).slice(0, 8)) {
+  const all = parsed.notes ?? [];
+  if (all.length > NOTE_CAP) { // 조용히 버리지 않는다 — 초과 주제는 사용자가 알아야 다시 정리시킬 수 있다
+    console.warn(`[argo] 기억 정리: 노트 ${all.length}개 중 ${NOTE_CAP}개만 저장(${wsId}) — 청크가 너무 크다`);
+    await appendEvent(wsId, { type: 'memory', ok: false, error: `노트 ${all.length}개 중 ${NOTE_CAP}개만 저장 — 초과: ${all.slice(NOTE_CAP).map((n) => n.title).join(', ').slice(0, 200)}` });
+  }
+  for (const n of all.slice(0, NOTE_CAP)) {
     if (!n.title?.trim() || !n.content?.trim()) continue;
     const { file } = await saveNote(wsId, n.title, n.content, { merge: true });
-    await appendSourceLinks(file, sources); // 이 결론의 근거 일지 — 드릴다운 경로(섹션 파서 경유)
+    await appendSourceLinks(file, sources.slice(0, SOURCE_LINK_CAP)); // 이 결론의 근거 일지 — 드릴다운 경로(섹션 파서 경유)
     written.push(n.title.trim());
   }
   await writeJsonAtomic(WATERMARK(wsId), next); // 정리 성공 후에만 전진
@@ -199,15 +214,20 @@ export async function consolidateMemory(wsId) {
 
 /** 야간 루프 — 청크를 연속으로 정리한다. 멈춤 조건(먼저 닿는 것): 잔량 소진 · 밤당 바이트 상한 · 마감 시각 · 청구 러너 청크 상한.
     실패는 던진다(워터마크는 성공한 청크까지 전진해 있으므로 스케줄러 재시도가 이어 받는다). 반환은 로그·테스트용 요약. */
-export async function consolidateBacklog(wsId, { deadlineMs = Infinity, nightlyBytes = NIGHTLY_BYTES, billedMaxChunks = BILLED_MAX_CHUNKS, maxChunks = 500, now = () => Date.now() } = {}) {
+export async function consolidateBacklog(wsId, { deadlineMs = Infinity, nightlyBytes = NIGHTLY_BYTES, billedMaxChunks = BILLED_MAX_CHUNKS, maxChunks = 500, now = () => Date.now(), onChunk = null } = {}) {
   let chunks = 0; let bytes = 0; const notes = []; let stoppedBy = 'drained';
   for (;;) {
     if (now() >= deadlineMs) { stoppedBy = 'deadline'; break; }
     if (bytes >= nightlyBytes) { stoppedBy = 'nightly-bytes'; break; }
     if (chunks >= maxChunks) { stoppedBy = 'max-chunks'; break; }
     const r = await consolidateMemory(wsId);
-    if (!r.consumed) { stoppedBy = r.remaining ? 'too-small' : 'drained'; break; } // 소량 스킵 또는 잔량 0
+    if (!r.consumed) { // 소량 스킵 또는 잔량 0
+      stoppedBy = r.remaining ? 'too-small' : 'drained';
+      if (r.remaining) console.warn(`[argo] 기억 정리: ${wsId} 잔량 ${Math.round(r.remaining / 1024)}KB인데 청크가 소량이라 스킵 — 일지 분할·워터마크 확인`);
+      break;
+    }
     chunks += 1; bytes += r.consumed; notes.push(...r.notes);
+    if (onChunk) await Promise.resolve().then(() => onChunk({ chunks, bytes })).catch(() => {}); // 스케줄러 선점 스탬프 연장(4시간 루프 동안 다른 기기·재기동이 두 번째 루프를 열지 않게)
     console.log(`[argo] 기억 정리 청크 ${chunks}: ${wsId} ${Math.round(r.consumed / 1024)}KB → 노트 ${r.notes.length}, 잔량 ${Math.round(r.remaining / 1024)}KB`);
     if (r.billed && chunks >= billedMaxChunks) { stoppedBy = 'billed-cap'; break; }
     if (!r.remaining) { stoppedBy = 'drained'; break; }
