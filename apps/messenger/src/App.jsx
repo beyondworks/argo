@@ -109,7 +109,7 @@ function Shell({ session }) {
   const [chSheet, setChSheet] = useState(false); // 채널 시트 — 이름·주제·기억·멤버·보관
   const rt = useRef(null);
   const loadOrgs = useCallback(async () => {
-    const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at)').eq('user_id', uid).is('removed_at', null));
+    const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info)').eq('user_id', uid).is('removed_at', null));
     const list = rows.filter((r) => r.msgr_orgs && !r.msgr_orgs.deleted_at).map((r) => ({ id: r.org_id, role: r.role, ...r.msgr_orgs }));
     setOrgs(list);
     setOrgId((cur) => cur && list.some((o) => o.id === cur) ? cur : (list[0]?.id ?? null));
@@ -1050,6 +1050,7 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
     onNote(t('set.policy.saved')); onChanged();
   };
   const ro = !isAdmin || busy;
+  const nodeRunners = Array.isArray(org?.node_info?.runners) ? org.node_info.runners : []; // 서버가 하트비트에 실은 목록 — 있으면 드롭다운, 없으면 텍스트(정직)
   const [adv, setAdv] = useState(false); // 고급(기억·게스트 좌석·엔진·잠금)은 접어 둔다 — 기본값 그대로면 볼 일이 없다
   return (
     <section className="msgr-setcard">
@@ -1090,8 +1091,21 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
           </div>
           <div className="q">
             <span className="qlabel">{t('set.policy.crewEngine')}</span>
-            <input className="msgr-input inline" placeholder={t('set.policy.crewEngine.runner')} value={draft.crew_runner ?? ''} maxLength={32} disabled={ro} onChange={(e) => set({ crew_runner: e.target.value })} />
-            <input className="msgr-input inline wide" placeholder={t('set.policy.crewEngine.model')} value={draft.crew_model ?? ''} maxLength={120} disabled={ro} onChange={(e) => set({ crew_model: e.target.value })} />
+            {nodeRunners.length ? (<>
+              <select className="msgr-input inline" value={draft.crew_runner ?? ''} disabled={ro} onChange={(e) => set({ crew_runner: e.target.value || null, crew_model: null })}>
+                <option value="">{t('set.policy.crewEngine.default')}</option>
+                {nodeRunners.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+              {draft.crew_runner && (nodeRunners.find((r) => r.id === draft.crew_runner)?.models ?? []).length > 0 && (
+                <select className="msgr-input inline wide" value={draft.crew_model ?? ''} disabled={ro} onChange={(e) => set({ crew_model: e.target.value || null })}>
+                  <option value="">{t('set.policy.crewEngine.defaultModel')}</option>
+                  {nodeRunners.find((r) => r.id === draft.crew_runner).models.map((m) => <option key={m.id} value={m.id}>{m.label}{m.free ? ` · ${t('set.policy.crewEngine.free')}` : ''}</option>)}
+                </select>
+              )}
+            </>) : (<>
+              <input className="msgr-input inline" placeholder={t('set.policy.crewEngine.runner')} value={draft.crew_runner ?? ''} maxLength={32} disabled={ro} onChange={(e) => set({ crew_runner: e.target.value })} />
+              <input className="msgr-input inline wide" placeholder={t('set.policy.crewEngine.model')} value={draft.crew_model ?? ''} maxLength={120} disabled={ro} onChange={(e) => set({ crew_model: e.target.value })} />
+            </>)}
             <span className="note">{t('set.policy.crewEngine.desc')}</span>
           </div>
           <p className="note">{t('set.policy.limit')}</p>

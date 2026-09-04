@@ -437,3 +437,5 @@
 .msgr-setcard .msgr-fold .fold-head h3 { margin: 6px 0; }
 /* 서버 연결 안내 단계 */
 .msgr-node-cmd .steps { margin: 0 0 4px 18px; padding: 0; display: grid; gap: 4px; font-size: 13px; line-height: 1.5; }
+
+.msgr-setcard select.msgr-input.inline { height: 34px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; }

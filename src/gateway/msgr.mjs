@@ -132,8 +132,8 @@ export function makeDb(client) {
       if (!ids.length) return [];
       return unwrap(await client.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_at, msgr_channels(name)').in('id', ids)) ?? [];
     },
-    async nodeHeartbeat(orgId) { // I-4: 회사 노드 생존 신호 — 서비스 계정 본인만 찍힌다(RPC가 판정), 조직 카드 '연결됨'의 정본
-      unwrap(await client.rpc('msgr_node_heartbeat', { org: orgId }));
+    async nodeHeartbeat(orgId, info = null) { // I-4: 회사 노드 생존 신호 — 서비스 계정 본인만 찍힌다(RPC가 판정), 조직 카드 '연결됨'의 정본. info = 쓸 수 있는 러너·모델(UX 3/3 드롭다운)
+      unwrap(await client.rpc('msgr_node_heartbeat', { org: orgId, info }));
     },
     // I-5 회사 크루 만들기 요청 — 상태 갱신은 RLS가 서비스 계정만 허용, done 트리거가 채널 멤버·감사를 맡는다
     async pendingCrewRequests(orgId) {
@@ -217,10 +217,24 @@ export async function sessionClient() {
 }
 
 /* ─── drain — 멘션·DM을 큐에 적재하고 커서 전진 + 결재 결정 반영. 순수 의존은 db·uid·enqueue(테스트 주입). ─── */
-export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null } = {}) {
+/* ─── UX 3/3 서버가 쓸 수 있는 AI 목록 — 자격이 있고 숨김이 아닌 러너와 그 모델(id·label·free). 5분 캐시(runnerStatus는 CLI 감지를 부른다). ─── */
+const runnerInfoCache = new Map(); // wsId → { at, info }
+export async function nodeRunnerInfo(wsId, { status = null, catalog = null, now = Date.now } = {}) {
+  const hit = runnerInfoCache.get(wsId);
+  if (hit && now() - hit.at < 300_000) return hit.info;
+  const st = status ?? await (await import('../runners.mjs')).runnerStatus(wsId);
+  const cat = catalog ?? (await import('../runners/catalog.mjs')).RUNNERS;
+  const runners = Object.entries(st).filter(([, r]) => r.company?.connected && !r.company?.invalid && !r.hidden)
+    .map(([id, r]) => ({ id, name: r.name ?? id, models: (cat[id]?.models ?? []).map((m) => ({ id: m.id, label: m.label ?? m.id, ...(m.free ? { free: true } : {}) })).slice(0, 40) }));
+  const info = { runners, at: new Date(now()).toISOString() };
+  runnerInfoCache.set(wsId, { at: now(), info });
+  return info;
+}
+
+export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, runnerInfo = nodeRunnerInfo } = {}) {
   const crews = await db.myCrews(uid, wsId);
   const out = { crews: crews.length, queued: 0, denied: 0, stale: 0, list: crews };
-  if (nodeOrgId) await db.nodeHeartbeat(nodeOrgId).catch((e) => console.error('[argo] msgr 노드 하트비트 실패:', e.message)); // I-4: 크루 0명이어도 — 노드 부트스트랩 직후 조직 카드가 '연결됨'을 보여야 한다
+  if (nodeOrgId) await db.nodeHeartbeat(nodeOrgId, await runnerInfo(wsId).catch(() => null)).catch((e) => console.error('[argo] msgr 노드 하트비트 실패:', e.message)); // I-4: 크루 0명이어도 — 노드 부트스트랩 직후 조직 카드가 '연결됨'을 보여야 한다
   if (nodeOrgId) await createRequestedCrews(wsId, nodeOrgId, { db, uid }).catch((e) => console.error('[argo] msgr 크루 생성 요청 처리 실패:', e.message)); // I-5: 채널에서 만든 회사 크루(카드 → 등록 → 완료 표시)
   if (!crews.length) return out;
   await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));

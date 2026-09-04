@@ -40,7 +40,7 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], ap
     async myCrews() { rec('myCrews'); return crews; },
     async crewBySlug(uid, ws, slug) { rec('crewBySlug', slug); return crews.find((c) => c.slug === slug) ?? null; },
     async heartbeat(ids) { rec('heartbeat', ids); },
-    async nodeHeartbeat(org) { rec('nodeHeartbeat', org); },
+    async nodeHeartbeat(org, info = null) { rec('nodeHeartbeat', org, info); },
     async pendingCrewRequests(org) { rec('pendingCrewRequests', org); return crewRequests; },
     async finishCrewRequest(id, patch) { rec('finishCrewRequest', id, patch); },
     async upsertCrew(row) { rec('upsertCrew', row); return { id: `crew-${row.slug}` }; },
@@ -437,8 +437,8 @@ test('G-4 조직 문서 제안: 브리지 미러가 kind org_doc·payload를 싣
 });
 
 test('I-4 노드 하트비트 — nodeOrgId가 있으면 크루 0명이어도 찍고, 없으면 안 찍는다', async () => {
-  const db = fakeDb({ crews: [] }); await M.drain(WS, { db, uid: OWNER, nodeOrgId: ORG, enqueue: fakeEnqueue() });
-  assert.deepEqual(db.calls.filter((c) => c[0] === 'nodeHeartbeat'), [['nodeHeartbeat', ORG]], '크루 없는 조직 회사도 노드 생존 신호');
+  const db = fakeDb({ crews: [] }); await M.drain(WS, { db, uid: OWNER, nodeOrgId: ORG, enqueue: fakeEnqueue(), runnerInfo: async () => ({ runners: [{ id: 'openrouter', name: 'OpenRouter', models: [] }] }) });
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'nodeHeartbeat'), [['nodeHeartbeat', ORG, { runners: [{ id: 'openrouter', name: 'OpenRouter', models: [] }] }]], '크루 없는 조직 회사도 노드 생존 신호 + 러너 목록');
   const db2 = fakeDb({ crews: [] }); await M.drain(WS, { db: db2, uid: OWNER, enqueue: fakeEnqueue() });
   assert.equal(db2.calls.filter((c) => c[0] === 'nodeHeartbeat').length, 0, '개인 회사는 노드 하트비트 없음');
   const src = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
@@ -462,4 +462,14 @@ test('I-5 createRequestedCrews — 카드 → 등록(resident·서비스 계정 
   assert.match(src, /if \(nodeOrgId\) await createRequestedCrews\(wsId, nodeOrgId, \{ db, uid \}\)/, 'drain이 조직 회사에서 요청을 처리');
   assert.match(src, /subscribe\(c, r\.list \?\? \[\], msgr\?\.nodeOrgId \?\? null\)/, '조직 회사는 크루 0명이어도 조직 토픽 구독');
   assert.match(src, /\.on\('broadcast', \{ event: 'crew_request' \}/, '요청 신호로 깨어남');
+});
+
+test('UX 3/3 nodeRunnerInfo — 자격 있는 비숨김 러너만, 모델 id·label·free, 5분 캐시', async () => {
+  const status = { openrouter: { name: 'OpenRouter', company: { connected: true } }, claude: { name: 'Claude', company: { connected: true, invalid: true } }, gemini: { name: 'Gemini', hidden: true, company: { connected: true } }, codex: { name: 'Codex', company: { connected: false } } };
+  const catalog = { openrouter: { models: [{ id: 'm/x:free', label: 'X', free: true }, { id: 'm/y' }] } };
+  let t = 1_000_000; const now = () => t;
+  const info = await M.nodeRunnerInfo('ws-info', { status, catalog, now });
+  assert.deepEqual(info.runners, [{ id: 'openrouter', name: 'OpenRouter', models: [{ id: 'm/x:free', label: 'X', free: true }, { id: 'm/y', label: 'm/y' }] }]);
+  const again = await M.nodeRunnerInfo('ws-info', { status: {}, catalog: {}, now }); assert.equal(again, info, '캐시');
+  t += 301_000; const fresh = await M.nodeRunnerInfo('ws-info', { status: {}, catalog: {}, now }); assert.deepEqual(fresh.runners, [], '5분 뒤 재계산');
 });

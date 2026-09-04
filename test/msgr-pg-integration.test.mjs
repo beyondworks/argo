@@ -610,6 +610,10 @@ test('I-4 노드 초대 수락 = 서비스 계정 지정, 하트비트는 서비
   assert.equal(last(asUser(U.owner, `select public.msgr_node_heartbeat('${ORG}')`)), 'f', '소유자도 노드 하트비트 불가(서비스 계정 본인만)');
   assert.equal(sql(`select node_seen_at is null from public.msgr_orgs where id = '${ORG}'`), 't');
   assert.equal(last(asUser(NODE, `select public.msgr_node_heartbeat('${ORG}')`)), 't', '서비스 계정 하트비트');
+  assert.equal(last(asUser(NODE, `select public.msgr_node_heartbeat('${ORG}', '{"runners":[{"id":"openrouter","name":"OpenRouter","models":[{"id":"minimax/minimax-m3:free","label":"MiniMax M3","free":true}]}]}'::jsonb)`)), 't', '하트비트에 러너 목록');
+  assert.equal(last(asUser(U.member, `select node_info->'runners'->0->>'id' from public.msgr_orgs where id = '${ORG}'`)), 'openrouter', '멤버가 서버의 러너 목록을 본다(드롭다운)');
+  assert.equal(last(asUser(NODE, `select public.msgr_node_heartbeat('${ORG}')`)), 't');
+  assert.equal(sql(`select node_info->'runners'->0->>'id' from public.msgr_orgs where id = '${ORG}'`), 'openrouter', '정보 없는 하트비트는 목록을 지우지 않는다');
   assert.equal(last(asUser(U.member, `select node_seen_at is not null from public.msgr_orgs where id = '${ORG}'`)), 't', '멤버가 노드 상태를 본다');
   const code2 = last(asUser(U.owner, `insert into public.msgr_invites (org_id, created_by) values ('${ORG}', '${U.owner}') returning code`));
   assert.equal(last(asUser(N2, `select public.msgr_accept_invite('${code2}')`)), ORG);

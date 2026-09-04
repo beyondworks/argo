@@ -1796,3 +1796,18 @@ begin
   get diagnostics n = row_count;
   return n;
 end $$;
+
+-- ── UX 3/3 회사 크루 AI 드롭다운: 서버(노드)가 하트비트에 자기가 쓸 수 있는 러너·모델 목록(node_info)을 싣는다 — 관리자는 텍스트 대신 목록에서 고른다.
+alter table public.msgr_orgs add column if not exists node_info jsonb;
+drop function if exists public.msgr_node_heartbeat(uuid);
+create or replace function public.msgr_node_heartbeat(org uuid, info jsonb default null) returns boolean
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is null then raise exception 'msgr_auth_required'; end if;
+  if info is not null and pg_column_size(info) > 16384 then raise exception 'msgr_node_info_too_big'; end if;
+  update public.msgr_orgs set node_seen_at = now(), node_info = coalesce(info, node_info) where id = org and service_user_id = auth.uid() and deleted_at is null;
+  return found;
+end $$;
+revoke all on function public.msgr_node_heartbeat(uuid, jsonb) from public;
+revoke execute on function public.msgr_node_heartbeat(uuid, jsonb) from anon;
+grant execute on function public.msgr_node_heartbeat(uuid, jsonb) to authenticated;

@@ -116,7 +116,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
 
 test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크루(서버 msgr_crew_tier와 같은 규칙), 레일 카드·시트에 등급 배지·소유 표기·한계 문장', () => {
   assert.match(app, /export const crewTier = \(crew, org\) => \(org\?\.service_user_id && crew\?\.owner_user_id === org\.service_user_id && crew\?\.hosting === 'resident'\) \? 'company' : 'personal';/, '등급 규칙이 서버 함수와 다르다');
-  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at\)/, '조직 조회에 service_user_id가 없다'); // I-4·J-2가 열 추가
+  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info\)/, '조직 조회에 service_user_id가 없다'); // I-4·J-2가 열 추가
   assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다');
   assert.match(app, /\{company \? t\('crew\.tier\.company\.sub'/, '구성 행 부제가 등급별이 아니다');
   const crewSheet = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
@@ -283,7 +283,7 @@ test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·
 test('I-4 회사 노드 — 조직 행에 하트비트, 노드용 초대는 member·for_node, 노드 코드는 사람 초대 목록 제외, 다시 만들면 이전 코드 취소', () => {
   const app = read('apps/messenger/src/App.jsx');
   const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
-  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at\)/, '조직 행에 node_seen_at');
+  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info\)/, '조직 행에 node_seen_at');
   assert.match(oc, /insert\(\{ org_id: org\.id, role: 'member', for_node: true, created_by: uid \}\)/, '노드용 초대 = member + for_node');
   assert.match(oc, /const open = live\.filter\(\(i\) => !i\.for_node\); const nodeInvite = live\.find\(\(i\) => i\.for_node\) \?\? null;/, '노드 코드는 사람 초대 목록에서 제외');
   assert.match(oc, /const nodeAlive = !!org\.service_user_id && nodeSeen > 0 && Date\.now\(\) - nodeSeen < AWAY_MS;/, '연결됨 판정 = 서비스 계정 있음 ∧ 90초 이내 하트비트');
@@ -404,4 +404,17 @@ test('검수 반영(코드) — 삭제 조직 목록 제외, 오류 문구 매�
   assert.match(sql, /and public\.msgr_channel_member_ok\(channel_id, member_kind, member_id\)\)/, 'HIGH-1');
   const dict = read('apps/messenger/src/i18n.js');
   for (const k of ['ch.crew.new.nodeOff', 'ch.crew.new.pendingOff', 'err.denied', 'err.invalid']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('UX 3/3 회사 크루 AI 드롭다운 — 서버 목록(node_info)이 있으면 select, 없으면 텍스트, 러너 바꾸면 모델 초기화, 서버 RPC 2인자', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
+  assert.match(pc, /const nodeRunners = Array\.isArray\(org\?\.node_info\?\.runners\) \? org\.node_info\.runners : \[\];/, '목록은 조직 행의 node_info');
+  assert.match(pc, /onChange=\{\(e\) => set\(\{ crew_runner: e\.target\.value \|\| null, crew_model: null \}\)\}/, '러너 바꾸면 모델 초기화');
+  assert.match(pc, /\{nodeRunners\.length \? \(<>[\s\S]*?<select[\s\S]*?<\/>\) : \(<>[\s\S]*?<input className="msgr-input inline" placeholder=\{t\('set\.policy\.crewEngine\.runner'\)\}/, '목록 없으면 텍스트 입력');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /create or replace function public\.msgr_node_heartbeat\(org uuid, info jsonb default null\)/, 'RPC 2인자');
+  assert.match(sql, /node_info = coalesce\(info, node_info\)/, '정보 없는 하트비트는 목록 유지');
+  const bridge = read('src/gateway/msgr.mjs');
+  assert.match(bridge, /await db\.nodeHeartbeat\(nodeOrgId, await runnerInfo\(wsId\)\.catch\(\(\) => null\)\)/, '하트비트에 러너 목록');
 });
