@@ -466,10 +466,10 @@
   .msgr-thread.page .msgr-docs { grid-template-columns: 1fr; }
 }
 
-/* 기억 그래프 포인트색 — 흑백 계열(라이트 잉크 38,36,31 / 다크 230,226,216). 명시 지정이라 렌더러의 채도 검사를 면제받는다(유건 지시 2026-09-04) */
-:root[data-theme='linen'], :root[data-theme='linen-light'] { --graph-rgb: 38, 36, 31; }
-:root[data-theme='linen-dark'] { --graph-rgb: 230, 226, 216; }
-@media (prefers-color-scheme: dark) { :root[data-theme='linen'] { --graph-rgb: 230, 226, 216; } }
+/* 기억 그래프 색 — 노드는 흑백 계열(라이트 잉크 / 다크 밝은 회백), 판은 --bg와 같은 베이지(--graph-paper-rgb). 명시 지정이라 렌더러의 채도 검사를 면제받는다(유건 지시 2026-09-04) */
+:root[data-theme='linen'], :root[data-theme='linen-light'] { --graph-rgb: 38, 36, 31; --graph-paper-rgb: 233, 230, 223; }
+:root[data-theme='linen-dark'] { --graph-rgb: 230, 226, 216; --graph-paper-rgb: 31, 30, 27; }
+@media (prefers-color-scheme: dark) { :root[data-theme='linen'] { --graph-rgb: 230, 226, 216; --graph-paper-rgb: 31, 30, 27; } }
 .msgr-actpane .vault-tabs { overflow: hidden; } /* 스크롤은 탭 묶음(.msgr-tabscroll)만 */
 .msgr-tabscroll { flex: 1; min-width: 0; display: flex; align-items: stretch; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .msgr-tabscroll::-webkit-scrollbar { display: none; }
@@ -479,8 +479,8 @@
 .msgr-menubg { position: fixed; inset: 0; z-index: 6; }
 .msgr-tabmenu { position: absolute; right: auto; top: auto; z-index: 7; }
 /* 활동 페이지 — 아르고 기억 페이지처럼 화면 전체를 쓰는 분할(트리 | 탭 + 본문). 카드 섹션 없음(유건 지시 2026-09-04) */
-.msgr-actsplit { flex: 1; min-height: 0; display: flex; align-items: stretch; background: var(--card); } /* 트리·탭줄·본문·그래프 캔버스(--paper-rgb == --card)를 한 판으로 — 유건 지시 2026-09-04 */
-.msgr-acttree { width: 280px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--card); }
+.msgr-actsplit { flex: 1; min-height: 0; display: flex; align-items: stretch; background: var(--bg); } /* 트리·탭줄·본문·그래프 캔버스가 상단 바와 같은 베이지 한 판 — 유건 지시 2026-09-04 */
+.msgr-acttree { width: 280px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--bg); }
 .msgr-acttree-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 12px; }
 .msgr-acttree .row { display: flex; align-items: center; gap: 6px; width: calc(100% - 12px); margin: 1px 6px; padding: 5px 8px 5px 6px; min-height: 30px; border: 0; border-radius: 6px; background: none; font: inherit; font-size: 13.5px; color: var(--fg-2); cursor: pointer; text-align: left; }
 .msgr-acttree .row:hover { background: var(--card-2); }
@@ -495,6 +495,9 @@
 .msgr-actpane { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; position: relative; }
 .msgr-actbody { flex: 1; min-height: 0; position: relative; overflow: auto; }
 .msgr-actbody > canvas, .msgr-actbody > div:first-child > canvas { display: block; }
+.g3-zoom { position: absolute; right: 14px; bottom: 12px; display: grid; gap: 5px; }
+.g3-zoom button { width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--fg-3); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; transition: color 120ms ease, background 120ms ease; }
+.g3-zoom button:hover { color: var(--fg); background: var(--card-2); }
 .g3-hint { position: absolute; left: 18px; bottom: 12px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--fg-3); pointer-events: none; }
 .msgr-actlist { display: grid; gap: 10px; padding: 18px 28px 40px; max-width: 1100px; }
 .msgr-actlist .head { display: flex; align-items: center; gap: 10px; }

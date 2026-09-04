@@ -435,7 +435,7 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   const app = read('apps/messenger/src/App.jsx');
   assert.match(app, /import \{ Graph3D \} from '\.\/graph3d\.jsx';/, '활동 그래프는 3D 컴포넌트(구성은 아르고 코어 재사용)');
   assert.match(app, /\{page === 'activity' && org \? \(\n\s*<Activity /, '활동 페이지 분기');
-  assert.match(app, /<Graph3D key="all" docs=\{gdocs\} hint=\{t\('act\.graph\.hint'\)\} onSelectDoc=/, '그래프 탭: 3D 활동 그래프(조직 관계 문서)');
+  assert.match(app, /<Graph3D key="all" docs=\{gdocs\} hint=\{t\('act\.graph\.hint'\)\} labels=\{\{ zoomIn: t\('act\.graph\.zoomIn'\)/, '그래프 탭: 3D 기억 그래프 + 줌 버튼 라벨');
   assert.doesNotMatch(app, /msgr-actlocal|<Graph3D key=\{sel\}/, '대상 탭엔 작은 그래프를 넣지 않는다 — 그래프는 그래프 탭 전담(유건 지시 2026-09-04)');
   assert.doesNotMatch(app, /Graph2D/, '메신저 활동 페이지는 2D 그래프를 쓰지 않는다');
   const g3 = read('apps/messenger/src/graph3d.jsx');
@@ -457,10 +457,16 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   assert.match(g2, /const explicit = parseRgb\(st\.getPropertyValue\('--graph-rgb'\)\.trim\(\)\);/, '--graph-rgb 최우선');
   assert.match(g2, /if \(!explicit && \(acc\.length !== 3/, '명시 --graph-rgb는 무채색 폴백(파랑)을 타지 않는다');
   const css = read('apps/messenger/src/styles.css');
-  assert.match(css, /:root\[data-theme='linen'\], :root\[data-theme='linen-light'\] \{ --graph-rgb: 38, 36, 31; \}/, '메신저 linen 그래프 노드는 흑백(잉크) 계열');
-  assert.match(css, /\.msgr-actsplit \{[^}]*background: var\(--card\);/, '기억 페이지 판은 카드색 한 판(그래프 캔버스 --paper-rgb와 같은 값)');
+  assert.match(css, /:root\[data-theme='linen'\], :root\[data-theme='linen-light'\] \{ --graph-rgb: 38, 36, 31; --graph-paper-rgb: 233, 230, 223; \}/, '메신저 linen — 노드는 흑백(잉크), 판은 --bg와 같은 베이지');
+  assert.match(css, /\.msgr-actsplit \{[^}]*background: var\(--bg\);/, '기억 페이지 판은 상단 바와 같은 베이지 한 판');
+  assert.match(css, /\.msgr-acttree \{[^}]*background: var\(--bg\);/, '트리도 같은 판');
   const g3b = read('apps/messenger/src/graph3d.jsx');
   assert.match(g3b, /ACC = g \|\| \(m && chroma\(m\) && m\)/, '3D도 명시 --graph-rgb는 채도 검사 면제');
+  assert.match(g3b, /PAPER = rgbVar\('--graph-paper-rgb', null\) \|\| rgbVar\('--paper-rgb', PAPER\);/, '그래프 판 색은 --graph-paper-rgb 우선(판과 같은 색이라야 노드 테두리 링이 맞는다)');
+  assert.match(g3b, /api\.current = \{ \/\/ 줌 버튼/, '줌 버튼 API — 휠·트랙패드 없이도 확대·축소');
+  assert.match(g3b, /const dr = RED \? 0 : 1\.5;/, '노드 부유는 동작 축소 설정에서 멈춘다');
+  assert.match(g3b, /glow\[i\] \+= \(want\(i\) - glow\[i\]\) \* 0\.16;/, '호버 강조는 이징(툭 끊기지 않게)');
+  assert.doesNotMatch(g3b, /기하학적 지평/, '지평선 장식 제거(미니멀)');
   assert.match(g2, /if \(shapeRef\.current === 'circle'\) \{ plain\.moveTo/, '원형 노드 분기(의존 배열 밖 ref)');
   assert.ok(!/\['audit', 'set\.tab\.audit'\]/.test(app), '설정의 기록 탭 제거');
   assert.match(app, /return lang === 'en' \? out : koJosa\(out\);/, '한국어 조사 처리');

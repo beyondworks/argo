@@ -1026,7 +1026,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
               </>}
               <div className="msgr-actbody">
                 {cur.kind === 'graph' ? (
-                  <Graph3D key="all" docs={gdocs} hint={t('act.graph.hint')} onSelectDoc={(rel) => openEntity(relOfDoc(rel), { split: true })} />
+                  <Graph3D key="all" docs={gdocs} hint={t('act.graph.hint')} labels={{ zoomIn: t('act.graph.zoomIn'), zoomOut: t('act.graph.zoomOut'), fit: t('act.graph.fit') }} onSelectDoc={(rel) => openEntity(relOfDoc(rel), { split: true })} />
                 ) : (
                   <div className="msgr-actlist">
                     {(() => {
