@@ -1811,3 +1811,33 @@ end $$;
 revoke all on function public.msgr_node_heartbeat(uuid, jsonb) from public;
 revoke execute on function public.msgr_node_heartbeat(uuid, jsonb) from anon;
 grant execute on function public.msgr_node_heartbeat(uuid, jsonb) to authenticated;
+
+-- ── 나가기 실측(2026-09-04): 만든 사람은 멤버가 아니어도 계속 보이던 조항(insert … returning용) → "아직 사람 멤버가 없을 때(방금 만든 채널)"로 좁힌다.
+--    만든 사람이 채널·1:1에서 나가면 목록에서도 사라진다(멤버 행 삭제 = 나가기).
+create or replace function public.msgr_can_read_channel(ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select exists (
+      select 1 from public.msgr_channels c
+       where c.id = ch and (
+         (c.kind = 'public' and public.msgr_role(c.org_id) in ('owner', 'admin', 'member'))
+         or (c.created_by = auth.uid() and public.msgr_is_member(c.org_id)
+             and not exists (select 1 from public.msgr_channel_members m0 where m0.channel_id = c.id and m0.member_kind = 'user')) -- 생성 직후(멤버 등록 전)만
+         or exists (select 1 from public.msgr_channel_members m
+                     where m.channel_id = c.id and m.member_kind = 'user' and m.member_id = auth.uid()
+                       and public.msgr_is_member(c.org_id))
+       )
+    )
+$$;
+-- 채널 목록 정책의 생성자 조항도 같은 규칙으로(정책 순환 방지: security definer 도우미로 멤버 유무만 본다).
+create or replace function public.msgr_channel_has_users(ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select exists (select 1 from public.msgr_channel_members m where m.channel_id = ch and m.member_kind = 'user')
+$$;
+revoke all on function public.msgr_channel_has_users(uuid) from public;
+revoke execute on function public.msgr_channel_has_users(uuid) from anon;
+grant execute on function public.msgr_channel_has_users(uuid) to authenticated;
+drop policy if exists msgr_channels_select on public.msgr_channels;
+create policy msgr_channels_select on public.msgr_channels for select to authenticated
+  using ((kind = 'public' and public.msgr_role(org_id) in ('owner', 'admin', 'member'))
+      or (created_by = (select auth.uid()) and public.msgr_is_member(org_id) and not public.msgr_channel_has_users(id))
+      or (public.msgr_is_channel_user(id) and public.msgr_is_member(org_id)));

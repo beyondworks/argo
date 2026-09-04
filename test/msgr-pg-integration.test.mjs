@@ -75,6 +75,7 @@ before(() => {
   sql(`insert into public.msgr_org_members (org_id, user_id, role) values ('${ORG}', '${U.svc}', 'member')`);                        // 상주 노드 서비스 계정
   PUB = last(asUser(U.owner, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'public', 'general', '${U.owner}') returning id`));
   PRIV = last(asUser(U.admin, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'private', 'secret', '${U.admin}') returning id`));
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'user', '${U.admin}', '${U.admin}')`); // 앱과 같게: 만든 사람은 첫 멤버(나가기 실측 뒤 생성자 예외가 '멤버 0명일 때'로 좁혀짐)
   asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'user', '${U.guest}', '${U.admin}')`);
   CREW = last(asUser(U.member, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.member}', 'lean-ax-abcd', 'seoyun', '서윤') returning id`));
   CREW_SVC = last(sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting) values ('${ORG}', '${U.svc}', 'lean-node', 'node-crew', '노드', 'resident') returning id`)); // 시드는 슈퍼유저: resident는 서비스 계정 지정 뒤에만 사용자 문맥으로 등록 가능(검수 LOW-1 게이트)
@@ -566,6 +567,7 @@ test('조직 운영(F2): 본인은 표시명만(역할·제거 표시 변경 거
 
 test('역할 정식화(J-1): 채널 관리자는 자기 채널 설정·멤버만(지정은 조직 관리자·생성자만, 멤버여야), 지정 결재권자는 정책 approvers일 때 고위험 결재 확정(관리자도 유지)', { skip }, () => {
   const priv2 = last(asUser(U.admin, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'private', 'ops', '${U.admin}') returning id`));
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${priv2}', 'user', '${U.admin}', '${U.admin}')`); // 앱과 같게 만든 사람이 첫 멤버
   assert.equal(last(asUser(U.member, `update public.msgr_channels set topic = 'x' where id = '${priv2}' returning 1`)), '', '멤버는 남의 채널 설정 0행');
   assert.equal(last(asUser(U.guest, `update public.msgr_channels set admin_user_ids = array['${U.guest}'::uuid] where id = '${priv2}' returning 1`)), '', '관리자 아님 → USING 실패 = 0행');
   denied(U.admin, `update public.msgr_channels set admin_user_ids = array['${U.outsider}'::uuid] where id = '${priv2}'`, /msgr_channel_admin_not_member/);
@@ -871,4 +873,15 @@ test('검수 반영 2 — 게스트 자기 만료 삭제(C-1)·도메인 함수 
   assert.equal(last(asUser(U.admin, `select public.msgr_can_edit_doc('${ORG}', null)`)), 'f', '잠금이면 전사 문서 편집 불가');
   sql(`update public.msgr_org_entitlements set ls_status = null where org_id = '${ORG}'`);
   assert.equal(last(asUser(U.admin, `select public.msgr_can_edit_doc('${ORG}', null)`)), 't');
+});
+
+test('나가기(레일 메뉴) — 만든 사람이 비공개 채널·1:1에서 나가면 열람도 끝난다(생성 직후 예외만), 남은 멤버는 그대로', () => {
+  if (!DB) return;
+  const ch = last(asUser(U.member, `insert into public.msgr_channels (org_id, kind, name, created_by) values ('${ORG}', 'private', 'leave-me', '${U.member}') returning id`));
+  assert.equal(last(asUser(U.member, `select count(*) from public.msgr_channels where id = '${ch}'`)), '1', '생성 직후(멤버 0) 생성자가 본다');
+  asUser(U.member, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'user', '${U.member}', '${U.member}'), ('${ch}', 'user', '${U.svc}', '${U.member}')`);
+  assert.equal(last(asUser(U.member, `delete from public.msgr_channel_members where channel_id = '${ch}' and member_kind = 'user' and member_id = '${U.member}' returning 1`)), '1', '본인 나가기');
+  assert.equal(last(asUser(U.member, `select count(*) from public.msgr_channels where id = '${ch}'`)), '0', '나간 생성자는 더 이상 못 본다');
+  assert.equal(last(asUser(U.svc, `select count(*) from public.msgr_channels where id = '${ch}'`)), '1', '남은 멤버는 본다');
+  assert.equal(last(asUser(U.admin, `select count(*) from public.msgr_channels where id = '${ch}'`)), '0', '조직 관리자도 비공개 채널은 멤버가 아니면 안 본다(기존 규칙 유지)');
 });
