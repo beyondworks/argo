@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdir, writeFile, readFile, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from './helpers/tmp.mjs';
 
@@ -122,8 +122,8 @@ test('R3-6 MEDIUM-5·LOW-c. 윈도우 스크롤은 uint(음수 그대로 금지)
 });
 
 test('R3-7 LOW-a/b. 프로필은 회사 폴더 밖(동기화 대상 아님), 크롬 argv에 키체인 무접촉 인자·포트 0·프로필 인자 — 가짜 크롬으로 실측', async (t) => {
-  const p = BrowserSession.profileDir('ws1', { ARGO_ROOT: '/x/workspaces' });
-  assert.equal(p, '/x/browser/ws1'); assert.ok(!p.startsWith('/x/workspaces/'), '회사 폴더 밖');
+  const p = BrowserSession.profileDir('ws1', { ARGO_ROOT: join('/x', 'workspaces') }); // 윈도우는 백슬래시 — 경로 비교는 join으로(CI 실측)
+  assert.equal(p, join('/x', 'browser', 'ws1')); assert.ok(!p.startsWith(join('/x', 'workspaces') + sep), '회사 폴더 밖');
   if (process.platform === 'win32') { t.skip('셸 스크립트 가짜 크롬은 POSIX 전용'); return; }
   const dir = await mkdtemp(join(tmpdir(), 'argo-r3-fake-chrome-')); const argvFile = join(dir, 'argv.txt'); const fake = join(dir, 'chrome.sh');
   await writeFile(fake, `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvFile}"\nexit 0\n`); await chmod(fake, 0o755);
