@@ -24,6 +24,14 @@ async function fetchKey(sb, ownerId) {
   return data?.key_b64 ?? null;
 }
 
+/** 읽기 전용 로더 — 있으면 캐시에 넣고 돌려주고, 없으면 만들지 않는다(null). 드라이런·감사처럼 DB에 아무것도 쓰면 안 되는 호출자용. */
+export async function loadAccountKeyReadOnly(sb, ownerId) {
+  if (!ownerId) return null;
+  if (cached && cachedOwner === ownerId) return cached;
+  try { const b64 = await fetchKey(sb, ownerId); if (!b64) return null; cached = Buffer.from(b64, 'base64'); cachedOwner = ownerId; lastError = ''; return cached; }
+  catch (e) { lastError = String(e?.message ?? e).slice(0, 160); return null; }
+}
+
 /** get-or-create + 캐시. 실패는 throw하지 않고 null(호출자는 warn 후 진행 — 크레덴셜만 이번 사이클 제외). */
 export async function ensureAccountKey(sb, ownerId) {
   if (!ownerId) { return null; }

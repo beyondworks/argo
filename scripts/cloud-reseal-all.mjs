@@ -6,7 +6,7 @@
 // ② blob 해시가 매니페스트 h와 다르면 skip(클라이언트가 blob을 먼저 쓴 순간) ③ 업로드 직전 재다운로드로 바이트 동일할 때만 upload
 // ④ 업로드 뒤 매니페스트 h가 바뀐 rel은 RECHECK 로그. 재개: 회사 단위 진행을 .reseal-all-progress.json(cwd, 소유자는 해시)에 남긴다.
 // 출력에 값·내용·소유자 id·경로(노트 제목)는 싣지 않는다(rel은 해시 8자). 드라이런은 DB에 아무것도 쓰지 않는다(계정 키 확보는 --apply에서만).
-// 사용: node scripts/cloud-reseal-all.mjs [--apply] [--owner <uuid>] [--limit <회사 수>] [--concurrency 4] [--max-mb 64]
+// 사용: node scripts/cloud-reseal-all.mjs [--apply] [--owner <uuid>] [--limit <회사 수>] [--concurrency 4] [--max-mb 64] [--retry-skipped]
 //   (env: NEXT_PUBLIC_SUPABASE_URL·SUPABASE_SERVICE_ROLE_KEY — .env.local 자동 로드) 기본 드라이런 = 집계만.
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -22,7 +22,7 @@ if (existsSync(envFile)) for (const l of readFileSync(envFile, 'utf8').split('\n
 const { NEXT_PUBLIC_SUPABASE_URL: URL_, SUPABASE_SERVICE_ROLE_KEY: KEY } = process.env;
 if (!URL_ || !KEY) { console.error('NEXT_PUBLIC_SUPABASE_URL·SUPABASE_SERVICE_ROLE_KEY가 필요합니다(.env.local 또는 env)'); process.exit(2); }
 const sb = createClient(URL_, KEY, { auth: { persistSession: false } });
-const { ensureAccountKey, clearAccountKey } = await import(join(ROOT, 'src', 'accountkey.mjs'));
+const { ensureAccountKey, loadAccountKeyReadOnly, clearAccountKey } = await import(join(ROOT, 'src', 'accountkey.mjs'));
 const { sealSecret, openSecret, openSecretCompat, isEnvelopeGeneration, isCredWithdrawn } = await import(join(ROOT, 'src', 'secretbox.mjs'));
 const { encSeg } = await import(join(ROOT, 'src', 'sync.mjs')); // 스토리지 키 인코더 — 비ASCII 조각은 u8-<base64url>(동기화와 단일 원천)
 const keyOf = (owner, ws, rel) => [owner, ws, ...String(rel).split('/')].map(encSeg).join('/');
@@ -35,6 +35,7 @@ const onlyOwner = arg('--owner', null);
 const limit = Number(arg('--limit', 0)) || Infinity;
 const concurrency = Math.max(1, Number(arg('--concurrency', 4)) || 4);
 const maxBytes = (Number(arg('--max-mb', 64)) || 64) * 1024 * 1024;
+const retrySkipped = process.argv.includes('--retry-skipped'); // partial(해시 불일치·경합·부재)로 남은 회사를 다시 본다
 const LEASE_FRESH_MS = 120_000;
 const B = 'companies';
 const PROGRESS = join(process.cwd(), '.reseal-all-progress.json');
@@ -54,7 +55,7 @@ async function listAll(prefix) {
 }
 async function mapLimit(items, n, fn) { const it = items[Symbol.iterator](); await Promise.all(Array.from({ length: n }, async () => { for (let c = it.next(); !c.done; c = it.next()) await fn(c.value); })); }
 async function leaseFresh(owner) {
-  const { data } = await fresh(keyOf(owner, '_device-lease.json', '').replace(/\/$/, ''));
+  const { data } = await fresh([owner, '_device-lease.json'].map(encSeg).join('/')); // 소유자 직속 — 빈 rel을 keyOf에 넘기면 encSeg('')='u8-'가 붙어 404(#437 2차 검수 HIGH)
   if (!data) return false;
   try { const j = JSON.parse(Buffer.from(await data.arrayBuffer()).toString()); return Date.now() - (Number(j?.ts) || 0) < LEASE_FRESH_MS; } catch { return false; }
 }
@@ -63,7 +64,8 @@ const total = { companies: 0, sealed: 0, plain: 0, resealed: 0, skippedBig: 0, s
 const t0 = Date.now();
 async function company(owner, ws) {
   const ck = `${sha8(owner)}/${ws}`;
-  if (progress.done[ck]) return;
+  const prev = progress.done[ck];
+  if (prev && !(retrySkipped && prev.partial)) return;
   const mkey = keyOf(owner, ws, '__manifest__.json');
   const { data: mdata, error: merr } = await fresh(mkey);
   if (merr || !mdata) { total.noManifest += 1; console.log('NO-MANIFEST', tag(owner, ws)); return; }
@@ -122,17 +124,18 @@ async function company(owner, ws) {
   total.companies += 1;
   console.log(apply ? 'DONE ' : 'DRY  ', tag(owner, ws), JSON.stringify(c));
   // 완료 기록은 실패 0 + 크기 초과 0일 때만(--max-mb를 키워 재실행하면 그 회사를 다시 본다)
-  if (apply && c.failed === 0 && c.skippedBig === 0) { progress.done[ck] = { ...c, at: new Date().toISOString() }; saveProgress(); }
+  // 완료 기록은 실패 0 + 크기 초과 0일 때만. 해시 불일치·경합·부재로 건너뛴 파일이 있으면 partial로 남겨 --retry-skipped가 다시 본다(#437 2차 검수 LOW)
+  if (apply && c.failed === 0 && c.skippedBig === 0) { progress.done[ck] = { ...c, partial: (c.skippedHash + c.skippedRace + c.missing) || undefined, at: new Date().toISOString() }; saveProgress(); }
 }
 
 const owners = (await listAll('')).map((o) => o.name).filter((n) => n && !n.startsWith('.') && (!onlyOwner || n === onlyOwner));
 let n = 0;
 outer: for (const owner of owners) {
+  clearAccountKey();
   if (apply) {
     if (await leaseFresh(owner)) { total.busyOwners += 1; console.log('BUSY  ', tag(owner, ''), '(기기 동기화 중 — 이번 실행 스킵)'); continue; } // ① 유실 창 회피
-    clearAccountKey();
     if (!(await ensureAccountKey(sb, owner))) { total.nokey += 1; console.log('NOKEY ', tag(owner, '')); continue; }
-  }
+  } else if (!(await loadAccountKeyReadOnly(sb, owner))) { console.log('NOKEY ', tag(owner, ''), '(드라이런: v2 매니페스트 회사는 못 읽는다 — 키 미생성)'); } // 드라이런은 select만(DB 쓰기 0)
   for (const e of await listAll(owner)) {
     if (e.id) continue; // 파일(소유자 직속 제어 객체) 제외 — 폴더(회사)만
     if (e.name.startsWith('.') || e.name.startsWith('_')) continue;
