@@ -46,8 +46,9 @@ async function collect(q) { const out = []; for await (const m of q) out.push(m)
 test('E1. authFromEnv — Bearer/x-api-key 매핑, 구독 OAuth 거절, 오류 message 추출', () => {
   assert.deepEqual(authFromEnv({ ANTHROPIC_BASE_URL: 'https://x/api/', ANTHROPIC_AUTH_TOKEN: 't' }), { base: 'https://x/api', headers: { authorization: 'Bearer t' } });
   assert.deepEqual(authFromEnv({ ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_API_KEY: 'k' }), { base: 'https://x', headers: { 'x-api-key': 'k' } });
-  assert.throws(() => authFromEnv({ ANTHROPIC_BASE_URL: 'https://x', CLAUDE_CODE_OAUTH_TOKEN: 'o' }), /SDK-only/);
-  assert.throws(() => authFromEnv({ ANTHROPIC_BASE_URL: 'https://x' }), /no credential/);
+  assert.throws(() => authFromEnv({ ANTHROPIC_BASE_URL: 'https://x', CLAUDE_CODE_OAUTH_TOKEN: 'o' }), /구독 로그인/);
+  assert.throws(() => authFromEnv({ ANTHROPIC_BASE_URL: 'https://x', CLAUDE_CODE_OAUTH_TOKEN: 'o' }, 'en'), /subscription login/);
+  assert.throws(() => authFromEnv({ ANTHROPIC_BASE_URL: 'https://x' }), /자격이 없습니다/);
   assert.equal(extractErrorMessage('{"error":{"type":"authentication_error","message":"invalid x-api-key"}}'), 'invalid x-api-key');
   assert.equal(extractErrorMessage('<html>bad gateway</html>'), '<html>bad gateway</html>');
   assert.equal(nativeRunnerEnabled('openrouter', { ARGO_NATIVE_RUNNERS: 'openrouter, glm' }), true);
@@ -81,7 +82,9 @@ test('E2. 루프 — Read 왕복 → 금지 구역 Write는 게이트 deny → �
     const b1 = srv.bodies[0].body;
     assert.equal(b1.system, 'SYS'); assert.equal(b1.max_tokens, 8192, 'max_tokens 기본 8192 — SDK의 32000이 OpenRouter 선불 잔액 402(716토큰만 감당)를 부르던 실측 완화. 상수와 비교하면 동어반복(변이 N7 green)'); assert.equal(b1.model, 'fake-model');
     assert.equal(srv.bodies[0].headers.authorization, 'Bearer tok-fake-1234567890');
-    for (const n of ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'WebFetch', 'mcp__crew__request_approval']) assert.ok(b1.tools.some((t) => t.name === n), `도구 ${n}`);
+    for (const n of ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'WebFetch', 'WebSearch', 'mcp__crew__request_approval']) assert.ok(b1.tools.some((t) => t.name === n), `도구 ${n}`);
+    assert.equal(srv.bodies[0].headers['anthropic-version'], '2023-06-01', 'Messages API 버전 헤더');
+    for (const ghost of ['mcp__crew__delegate', 'mcp__crew__send_to_crew', 'mcp__crew__use_connector']) assert.ok(!b1.tools.some((t) => t.name === ghost), `동료 0·커넥터 0에서 유령 도구 금지: ${ghost}`);
     // 2번째 요청 = Read 결과(파일 내용·줄번호) 회신
     const tr1 = srv.bodies[1].body.messages.at(-1); assert.equal(tr1.role, 'user'); assert.equal(tr1.content[0].tool_use_id, 'tu1'); assert.match(tr1.content[0].content, /1\thello native/);
     // 3번째 요청 = 게이트 deny(is_error + 금지 문구) + 결재 등록 결과
@@ -110,6 +113,7 @@ test('E3. 오류 매핑 — 401/402/529는 `API Error: <status> <message>`로 �
     try {
       await assert.rejects(collect(nativeQuery({ wsId: ws, slug: 's', prompt: 'x', cwd: root, systemPrompt: '', env: env(srv.base), model: 'm', saveSession: false })),
         (e) => { assert.match(e.message, new RegExp(`^API Error: ${status} `)); assert.equal(e.status, status); assert.equal(classifyRunnerError(e.message).code, code); return true; });
+      assert.equal(srv.bodies.length, 1, `${status}은 재시도하지 않는다(죽은 자격 재발사 금지 — 불변식 A)`);
     } finally { await srv.close(); }
   }
   const srv = await fakeMessages([{ status: 529, json: { error: { message: 'Overloaded' } } }, msg([{ type: 'text', text: 'ok after retry' }])]);
@@ -137,7 +141,7 @@ test('E5. 내장 도구 — Read 줄번호·Edit 유일성·Glob·Grep 모드·B
   await mkdir(join(cwd, 'a', 'b'), { recursive: true });
   await writeFile(join(cwd, 'a', 'x.md'), 'alpha\nbeta\nalpha\n'); await writeFile(join(cwd, 'a', 'b', 'y.txt'), 'gamma\n');
   const t = builtinRunners({ cwd, env: { PATH: process.env.PATH, ANTHROPIC_AUTH_TOKEN: 'leak', HOME: process.env.HOME } });
-  assert.equal(await t.Read({ file_path: 'a/x.md', offset: 1, limit: 1 }), '2\tbeta\n…[1 more lines]');
+  assert.equal(await t.Read({ file_path: 'a/x.md', offset: 2, limit: 1 }), '2\tbeta\n…[1 more lines]', 'offset은 Claude Code와 같은 1-based');
   await assert.rejects(t.Edit({ file_path: 'a/x.md', old_string: 'alpha', new_string: 'z' }), /matches 2 times/);
   assert.match(await t.Edit({ file_path: 'a/x.md', old_string: 'alpha', new_string: 'z', replace_all: true }), /2 replacements/);
   assert.equal((await t.Glob({ pattern: '**/*.md' })).trim(), 'a/x.md');
@@ -154,7 +158,7 @@ test('E5. 내장 도구 — Read 줄번호·Edit 유일성·Glob·Grep 모드·B
   const srv = createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<html><script>x()</script><p>Hello <b>web</b></p></html>'); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   try { assert.match(await t.WebFetch({ url: `http://127.0.0.1:${srv.address().port}/` }), /^HTTP 200\nHello web$/); } finally { srv.close(); }
-  assert.deepEqual(BUILTIN_SPECS.map((s) => s.name), ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'WebFetch'], 'Claude Code와 같은 이름 — permission-gate readToolTargets 호환');
+  assert.deepEqual(BUILTIN_SPECS.map((s) => s.name), ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'WebFetch', 'WebSearch'], 'Claude Code와 같은 이름 — permission-gate readToolTargets 호환');
 });
 
 test('E6. 세션 절단·크루 도구 스키마 — tool_result만 남는 머리는 버린다, zod→JSON 스키마 변환·입력 검증', async () => {
@@ -174,7 +178,7 @@ test('E6. 세션 절단·크루 도구 스키마 — tool_result만 남는 머�
 test('E7. 배선 핀 — chat.mjs가 플래그 러너를 nativeQuery로 갈라 같은 프롬프트 꼬리·모델·게이트·크루 도구를 넘긴다', async () => {
   const src = await readFile(join(ROOT, 'src', 'chat.mjs'), 'utf8');
   assert.match(src, /import \{ query, createSdkMcpServer, tool as sdkTool \} from '@anthropic-ai\/claude-agent-sdk';/);
-  assert.match(src, /const tool = \(name, description, shape, handler\) => \{ sink\?\.push\(\{ name, description, shape, handler \}\); return sdkTool\(name, description, shape, handler\); \};/);
+  assert.match(src, /const tool = \(name, description, shape, handler\) => \{ const t = sdkTool\(name, description, shape, handler\); if \(sink\) defs\.set\(t, \{ name, description, shape, handler \}\); return t; \};/, 'sink 정의 수집(WeakMap) — 등재는 최종 배열에서');
   assert.match(src, /const nativeOn = nativeRunnerEnabled\(runner\);\n\s*const crewSink = nativeOn \? \[\] : null;\n\s*const crewServer = makeCrewServer\([^\n]*workFolder, crewSink\);/);
   const branch = src.split('const q = nativeOn ? nativeQuery({')[1]?.split('}) : query({')[0] ?? '';
   assert.ok(branch, 'q 분기가 존재');

@@ -4,13 +4,14 @@
 
 /** 자격 env(runnerCredEnv/sdkEnvFor 산출) → 베이스 URL + 인증 헤더(순수). 구독 OAuth(CLAUDE_CODE_OAUTH_TOKEN)는
     SDK 전용 — 정책 위험(설계서 개정 2026-09-05)으로 이 엔진이 받지 않는다. */
-export function authFromEnv(env = {}) {
+export function authFromEnv(env = {}, lang = 'ko') {
+  const en = lang === 'en';
   const base = String(env.ANTHROPIC_BASE_URL || '').trim().replace(/\/+$/, '');
-  if (!base) throw Object.assign(new Error('native engine: ANTHROPIC_BASE_URL missing'), { code: 'native_no_base' });
-  if (env.CLAUDE_CODE_OAUTH_TOKEN) throw Object.assign(new Error('native engine: subscription OAuth is SDK-only'), { code: 'native_oauth_unsupported' });
+  if (!base) throw Object.assign(new Error(en ? 'Runner endpoint is not configured (ANTHROPIC_BASE_URL missing)' : '러너 엔드포인트가 설정되지 않았습니다(ANTHROPIC_BASE_URL 없음)'), { code: 'native_no_base' });
+  if (env.CLAUDE_CODE_OAUTH_TOKEN) throw Object.assign(new Error(en ? 'This runner is connected with a subscription login, which the native engine cannot use — connect it with an API key in Settings → AI connections' : '이 러너는 구독 로그인으로 연결돼 있어 네이티브 엔진이 쓸 수 없습니다 — 설정 → AI 연결에서 API 키로 연결하세요'), { code: 'native_oauth_unsupported' });
   if (env.ANTHROPIC_AUTH_TOKEN) return { base, headers: { authorization: `Bearer ${env.ANTHROPIC_AUTH_TOKEN}` } };
   if (env.ANTHROPIC_API_KEY) return { base, headers: { 'x-api-key': env.ANTHROPIC_API_KEY } };
-  throw Object.assign(new Error('native engine: no credential in env'), { code: 'native_no_cred' });
+  throw Object.assign(new Error(en ? 'No runner credential found — connect it in Settings → AI connections' : '러너 자격이 없습니다 — 설정 → AI 연결에서 연결하세요'), { code: 'native_no_cred' });
 }
 
 /** 벤더 오류 본문에서 message만(순수) — JSON `{error:{message}}` 우선, 아니면 앞 300자. 키 마스킹은 호출부(chat.mjs)가 한다. */

@@ -51,10 +51,10 @@ const sumUsage = (acc, u = {}) => {
 };
 
 async function* run(opts, ac, isInterrupted) {
-  const { wsId, slug, prompt, cwd, systemPrompt, env = {}, model, crewTools = [], mcpServers = {}, canUseTool,
+  const { wsId, slug, prompt, cwd, systemPrompt, env = {}, model, crewTools = [], mcpServers = {}, canUseTool, lang = 'ko',
     resume = null, maxTokens, maxSteps = NATIVE_MAX_STEPS, fetchImpl = globalThis.fetch, saveSession = true } = opts;
   if (!model) throw new Error('native engine: model is required');
-  const { base, headers } = authFromEnv(env);
+  const { base, headers } = authFromEnv(env, lang);
   const max_tokens = Number(maxTokens) || Number(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) || NATIVE_DEFAULT_MAX_TOKENS;
   const sess = await loadNativeSession(wsId, slug, resume);
   const mcp = await connectMcpServers(mcpServers, { env: shellEnv(env), cwd });
@@ -74,14 +74,26 @@ async function* run(opts, ac, isInterrupted) {
         yield { type: 'result', subtype: 'error_max_turns', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps - 1, errors: [`max steps ${maxSteps}`] };
         return;
       }
-      const res = await callMessages({ base, headers, signal: ac.signal, fetchImpl,
-        body: { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) } });
+      let res;
+      try {
+        res = await callMessages({ base, headers, signal: ac.signal, fetchImpl,
+          body: { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) } });
+      } catch (e) {
+        // 이미 토큰을 쓴 뒤의 실패는 SDK처럼 usage를 실은 실패 result로 낸다(분리 검수 MEDIUM-1: 던지기만 하면 appendUsage 미도달,
+        // 예산·대시보드 과소 집계). 원문은 errors[]에 — chat.mjs가 `턴 실패: … — <원문>`으로 감싸도 401/402 정규식이 문다.
+        if (e?.aborted || !((usage.input_tokens ?? 0) + (usage.output_tokens ?? 0))) throw e;
+        if (saveSession) await saveNativeSession(wsId, slug, sess);
+        yield { type: 'result', subtype: 'error_during_execution', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps, errors: [String(e?.message || e)] };
+        return;
+      }
       sumUsage(usage, res?.usage);
       const content = Array.isArray(res?.content) ? res.content : [];
       sess.messages.push({ role: 'assistant', content });
       yield { type: 'assistant', message: { model: res?.model || model, content } };
       const uses = content.filter((b) => b?.type === 'tool_use');
-      if (res?.stop_reason !== 'tool_use' || !uses.length) {
+      // tool_use 블록이 있으면 stop_reason과 무관하게 실행한다(분리 검수 HIGH-2: max_tokens 절단 응답의 tool_use를 버리면
+      // 도구는 안 돌고 전사에는 짝 없는 tool_use가 남아 다음 턴이 죽는다).
+      if (!uses.length) {
         const text = content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
         if (saveSession) await saveNativeSession(wsId, slug, sess);
         // total_cost_usd: null — Anthropic 단가로 타 벤더를 계산하던 오액(openrouter 규칙)을 전 러너로. 토큰은 usage에.

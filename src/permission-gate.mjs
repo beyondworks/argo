@@ -32,7 +32,14 @@ const READ_FILE_TOOLS = new Set(['Read', 'Glob', 'Grep']);
 export function readToolTargets(toolName, input = {}) {
   const s = (v) => (typeof v === 'string' && v.length > 0 ? [v] : []);
   if (toolName === 'Glob') return [...s(input.path), ...s(input.pattern)];
-  if (toolName === 'Grep') return s(input.path); // pattern은 정규식 — 경로 아님
+  if (toolName === 'Grep') {
+    // glob은 루트 상대 필터가 계약(rg)이지만, 절대경로·`~`·`..`가 오면 곧 경로다 — 네이티브 엔진 실측(분리 검수 CRITICAL-1):
+    // `path:'vault', glob:'../.secrets.json'`이 게이트를 통과해 금고를 읽었다. 경로형 glob은 path 기준으로 이어 붙여 판정한다.
+    const g = typeof input.glob === 'string' ? input.glob : '';
+    const absLike = /^(~|\/|[A-Za-z]:[\\/]|\\\\)/.test(g);
+    const pathy = absLike || /(^|[\\/])\.\.([\\/]|$)/.test(g);
+    return [...s(input.path), ...(pathy ? [absLike ? g : `${input.path || '.'}/${g}`] : [])]; // pattern은 정규식 — 경로 아님
+  }
   return s(input.file_path); // Read
 }
 /* Glob 패턴의 열거 베이스 — SDK Glob은 **절대 패턴이면 path 인자를 무시하고** 패턴을

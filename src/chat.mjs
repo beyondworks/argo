@@ -474,7 +474,10 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   const text = async (t) => ({ content: [{ type: 'text', text: t }] });
   // 네이티브 엔진(하네스 통일 P-A)이 **같은 도구 정의·같은 핸들러**를 쓴다 — sink에 {name, description, shape, handler}를 수집한다
   // (SDK 서버 객체는 도구를 내보내지 않는다). sink가 없으면 종전과 동일.
-  const tool = (name, description, shape, handler) => { sink?.push({ name, description, shape, handler }); return sdkTool(name, description, shape, handler); };
+  // sink는 **최종 등재 배열**(아래 createSdkMcpServer tools)과 같은 원천에서 채운다 — tool() 호출 시점에 모으면 동료 0·커넥터 0에서도
+  // delegate·send_to_crew·use_connector가 광고된다(분리 검수 HIGH-1: 유령 도구 3종, 설계서 §2-2 위반).
+  const defs = new WeakMap();
+  const tool = (name, description, shape, handler) => { const t = sdkTool(name, description, shape, handler); if (sink) defs.set(t, { name, description, shape, handler }); return t; };
   // 위임 체인의 직전 크루 — 이 크루가 올리는 결재에 "누구의 위임으로 온 요청인지"를 실어 흐름을 보이게 한다
   const delegatedBy = chain.length ? chain[chain.length - 1] : null;
 
@@ -765,15 +768,14 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
 
-  return createSdkMcpServer({
-    name: 'crew', version: '1.0.0',
-    tools: [
-      requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask,
-      ...(colleagues.length ? [delegate, sendToCrew] : []),
-      // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
-      ...(connectors.length ? [useConnector] : []),
-    ],
-  });
+  const tools = [
+    requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask,
+    ...(colleagues.length ? [delegate, sendToCrew] : []),
+    // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
+    ...(connectors.length ? [useConnector] : []),
+  ];
+  if (sink) sink.push(...tools.map((t) => defs.get(t)).filter(Boolean)); // 네이티브 엔진 = SDK와 같은 집합
+  return createSdkMcpServer({ name: 'crew', version: '1.0.0', tools });
 }
 
 /** 대체 실행 실패의 맥락 프리픽스(순수) — 성공 턴의 자가 고지(fallbackDirective)와 달리, 대체
@@ -1367,7 +1369,7 @@ ${lang === 'en'
     + fallbackDirective;
   const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || OPENROUTER_DEFAULT_MODEL) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : (effModel || null);
   const q = nativeOn ? nativeQuery({
-    wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root, workRoots,
+    wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root,
     systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail,
     env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {},
     canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots),

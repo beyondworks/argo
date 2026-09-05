@@ -24,11 +24,34 @@ export function trimMessages(messages, maxChars = SESSION_MAX_CHARS, trimTo = SE
   return out;
 }
 
-/** 세션 로드 — resumeId가 파일의 id와 같을 때만 이어간다. 아니면(첫 턴·다른 기기·파일 유실) 새 id로 시작. */
+/** 전사 정리(순수) — 이전 턴이 도중에 죽어 남긴 꼬리를 걷어낸다(분리 검수 HIGH-2 실측: 짝 없는 tool_use·답 없는 user가
+    다음 턴에 그대로 벤더로 가면 400/역할 연속). 규칙: ① assistant의 tool_use는 바로 다음 user에 대응 tool_result가 전부 있어야
+    한다(없으면 그 assistant부터 절단) ② 꼬리의 user 메시지(답 없는 지시·tool_result)는 버린다 ③ 첫 메시지는 user다. */
+export function sanitizeTranscript(messages) {
+  const out = (messages ?? []).slice();
+  // 꼬리 정리와 짝 검사는 서로를 다시 만든다(tool_result를 버리면 그 앞 tool_use가 짝을 잃는다) — 안정될 때까지 반복
+  let prev = -1;
+  while (out.length !== prev) {
+    prev = out.length;
+    for (let i = 0; i < out.length; i++) {
+      const m = out[i]; if (m?.role !== 'assistant' || !Array.isArray(m.content)) continue;
+      const ids = m.content.filter((b) => b?.type === 'tool_use').map((b) => b.id);
+      if (!ids.length) continue;
+      const next = out[i + 1];
+      const got = next?.role === 'user' && Array.isArray(next.content) ? next.content.filter((b) => b?.type === 'tool_result').map((b) => b.tool_use_id) : [];
+      if (!ids.every((id) => got.includes(id))) { out.length = i; break; }
+    }
+    while (out.length && out.at(-1).role === 'user') out.pop();
+  }
+  while (out.length && out[0].role !== 'user') out.shift();
+  return out;
+}
+
+/** 세션 로드 — resumeId가 파일의 id와 같을 때만 이어간다. 아니면(첫 턴·다른 기기·파일 유실) 새 id로 시작. 이어갈 때 전사를 정리한다. */
 export async function loadNativeSession(wsId, slug, resumeId = null) {
   const f = sessionFile(wsId, slug);
   const saved = await readJson(f, null).catch(() => null);
-  if (saved && resumeId && saved.id === resumeId && Array.isArray(saved.messages)) return { id: saved.id, messages: saved.messages, resumed: true };
+  if (saved && resumeId && saved.id === resumeId && Array.isArray(saved.messages)) return { id: saved.id, messages: sanitizeTranscript(saved.messages), resumed: true };
   return { id: `native-${randomUUID()}`, messages: [], resumed: false };
 }
 
