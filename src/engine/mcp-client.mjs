@@ -9,6 +9,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { shellEnv } from './builtin-tools.mjs';
 
 const safe = (s) => String(s).replace(/[^A-Za-z0-9_-]/g, '_');
+export const MCP_CONNECT_TIMEOUT_MS = 8_000; // 서버당 접속+목록 상한(병렬) — 죽은 서버가 턴 시작을 이 이상 밀지 않는다(3차 검수 T10: 상수 핀)
 
 function withTimeout(p, ms, label) {
   let t;
@@ -56,7 +57,7 @@ async function connectOne(name, def, { env, cwd, timeoutMs }) {
 }
 
 /** 서버 맵(materializeMcpServers 산출) 전부 접속 — 실패는 status:'failed'로. close()는 전 클라이언트 종료. */
-export async function connectMcpServers(servers = {}, { env = process.env, cwd = process.cwd(), timeoutMs = 8_000 } = {}) {
+export async function connectMcpServers(servers = {}, { env = process.env, cwd = process.cwd(), timeoutMs = MCP_CONNECT_TIMEOUT_MS } = {}) {
   const clients = []; const tools = []; const statuses = [];
   // 병렬 접속 — 직렬이면 죽은 서버 하나당 상한만큼 턴 시작이 밀린다(재검수 LOW: 15s×2대 = 턴 시작 ~90초). 순서는 입력 순서로 고정.
   const entries = Object.entries(servers ?? {});
