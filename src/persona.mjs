@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { appendUsage } from './usage.mjs';
 import { isBilledRunner, visibleRunnerNamesLine } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
+import { normalizeModelId } from './runners/catalog-remote.mjs'; // 모델 저장 시 alias 정규화(불변식 D)
 import { appendEvent } from './events.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 Codex/Gemini/GLM만 연결해도 영입 가능
 import { isReservedSlug } from './slug.mjs'; // 회의실 내부 이름(room-*)과의 파일 충돌 차단 — 예약어 원천
@@ -319,6 +320,15 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
   }
   if (role !== undefined) md = setFrontmatterKey(md, 'role', role.trim());
   if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
+  // 모델 저장 정규화(불변식 D, 2026-09-05) — 폐기 id는 원격 alias로 현행 id로 바꿔 저장한다. **거절하지 않는다**
+  // (분리 검수 HIGH-2 라이브 실측: 거절하면 카탈로그에서 제거된 모델(f50a997 등)을 쓰던 업그레이드 사용자의 크루가
+  // 이름·역할 편집까지 전부 막힌다 — crew-edit는 model을 항상 보낸다). 목록 밖 id는 그대로 저장되고, 실행 시
+  // chat.mjs가 기본 모델로 답하며 modelFallback으로 고지한다(오류를 만들지 않는다 — 유건 목적 "모델 스위치에 오류 없이").
+  if (model !== undefined && String(model).trim()) {
+    const rid = (runner !== undefined ? String(runner).trim() : String(before.runner ?? '').trim()) || null;
+    const m = String(model).trim();
+    model = rid ? normalizeModelId(rid, m) : m;
+  }
   if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
   if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = 회사 연결 러너(기본)
   // 추론 강도(요청 2026-07-25) — 화이트리스트 밖 값은 저장하지 않는다(SDK가 거부하는 값이 카드에 굳는 것 방지).

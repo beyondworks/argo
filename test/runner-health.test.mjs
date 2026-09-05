@@ -14,6 +14,7 @@ const {
   HEALTH_INTERVAL_MS, HEALTH_INTERVAL_BILLED_MS, HEALTH_BACKOFF_CAP_MS, HEALTH_BILLED_RUNNERS,
 } = await import('../src/runner-health.mjs');
 const { saveRunnerCred, loadRunnerCred } = await import('../src/runners.mjs');
+const { credHash } = await import('../src/runners/shared.mjs'); // 실패 엔트리의 자격 지문(턴 전 게이트 열쇠 — 불변식 A)
 const { readEvents } = await import('../src/events.mjs');
 
 const T0 = 1_760_000_000_000;
@@ -69,7 +70,7 @@ test('runHealthChecks: 실패는 이벤트 + 상태, 판정 불가는 조용히,
   assert.equal(ev[0].reason, 'auth');
   const st = await stateOf(ws);
   assert.deepEqual(st.claude, { at: T0, ok: true, fails: 0 });
-  assert.deepEqual(st.glm, { at: T0, ok: false, fails: 1, reason: 'auth' });
+  assert.deepEqual(st.glm, { at: T0, ok: false, fails: 1, reason: 'auth', credHash: credHash((await loadRunnerCred(ws, 'glm')).value) }, '실패 엔트리는 어느 자격의 실패인지 지문을 각인한다(불변식 A)');
   assert.deepEqual(st.kimi, { at: T0 }, '판정 불가 — 시각만');
   // ③ 자격 미삭제(절대 제약) — 실패한 glm도 그대로 있어야 한다
   assert.ok(await loadRunnerCred(ws, 'glm'), '검진 실패가 자격을 지우면 일시 장애가 연결 해제로 둔갑한다');

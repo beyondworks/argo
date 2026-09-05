@@ -929,6 +929,21 @@ const DICT = {
   'chat.annotate': ['빨간펜', 'Annotate'],
   'chat.fellBack.auth': ['{from} 인증 오류로 {to}이(가) 대신 답했습니다 — 반복되면 설정 → AI 연결에서 {from}을(를) 다시 연결해 주세요.', '{to} answered instead because {from} hit an authentication error — if this repeats, reconnect {from} in Settings → AI connections.'],
   'chat.fellBack.unavailable': ['지정 러너 {from}을(를) 쓸 수 없어 {to}이(가) 대신 답했습니다.', '{to} answered instead — the assigned runner {from} was unavailable.'],
+  // 모델 강등 고지(불변식 D, 2026-09-05) — 지정 모델이 러너 목록에 없어 기본 모델로 답한 사실
+  'chat.modelFallback': ['지정 모델 {wanted}은(는) {runner}에서 쓸 수 없어 기본 모델로 답했습니다 — 크루 카드에서 모델을 다시 골라 주세요.', 'The assigned model {wanted} is not available on {runner}, so the default model answered — pick a model again in the crew card.'],
+  // 크루 편집 모델 select — 저장값이 목록에 없을 때(폐기·러너 불일치) 현재 값 예외 옵션 라벨(분리 검수 HIGH-2)
+  'deck.modelNotInList': ['목록에 없음(기본 모델로 실행됨)', 'not in list (runs on the default model)'],
+  // 실패 코드 표(src/runners/error-class.mjs FAIL_CODES)와 1:1 — 원문({msg}) 대신 "할 일"을 먼저 보인다(불변식 C)
+  'chat.fail.auth_expired': ['로그인이 만료됐거나 유효하지 않습니다 — 설정 → AI 연결에서 다시 연결해 주세요. 입력은 복원했습니다.', 'Sign-in expired or invalid — reconnect in Settings → AI connections. Your input was restored.'],
+  'chat.fail.subscription_blocked': ['구독 사용이 벤더 정책으로 차단됐습니다(로그인 문제 아님) — 설정 → AI 연결에서 API 키 방식으로 바꾸거나 다른 러너를 지정해 주세요.', 'Subscription use is blocked by the vendor (not a sign-in problem) — switch to an API key in Settings → AI connections, or assign another runner.'],
+  'chat.fail.quota': ['사용 한도 또는 잔액이 소진됐습니다 — 잠시 뒤 다시 보내거나 다른 러너를 지정해 주세요. ({msg})', 'Usage limit or balance exhausted — try again later or assign another runner. ({msg})'],
+  'chat.fail.vendor_overloaded': ['AI 서비스 쪽 일시 장애입니다(과부하·연결 끊김) — 잠시 뒤 다시 보내 주세요. 입력은 복원했습니다.', 'Temporary issue on the AI service side (overloaded or dropped) — try again shortly. Your input was restored.'],
+  'chat.fail.endpoint_not_found': ['엔드포인트가 404를 돌려줬습니다 — 설정 → AI 연결의 base URL·데이터 정책·프록시를 확인해 주세요. ({msg})', 'The endpoint returned 404 — check the base URL, data policy and proxy in Settings → AI connections. ({msg})'],
+  'chat.fail.cli_missing': ['러너 실행 파일을 찾지 못했습니다 — 앱을 재시작하거나 설정 → AI 연결에서 다시 연결해 주세요.', 'Runner executable not found — restart the app or reconnect in Settings → AI connections.'],
+  'chat.fail.model_unavailable': ['이 계정·러너에서 쓸 수 없는 모델입니다 — 크루 카드에서 다른 모델을 골라 주세요. ({msg})', 'This model is not available for this account or runner — pick another model in the crew card. ({msg})'],
+  'chat.fail.crash': ['러너 프로세스가 비정상 종료됐습니다 — 다시 보내 주세요. 반복되면 앱을 재시작해 주세요. ({msg})', 'The runner process crashed — try again. If it repeats, restart the app. ({msg})'],
+  'chat.fail.aborted': ['중단됐습니다.', 'Stopped.'],
+  'chat.fail.unknown': ['턴 실패: {msg} — 입력을 복원했습니다. 다시 보내보세요.', 'Turn failed: {msg} — your input was restored. Try sending again.'],
   'settings.runners.lastTurnFailed': ['마지막 사용 시 오류가 났습니다 — 연결을 확인해 주세요.', 'The last turn with this runner failed — please check the connection.'],
   'settings.runners.healthFailed': ['자격 확인에 실패했습니다 — 만료·철회됐을 수 있습니다. 다시 연결해 주세요.', 'A credential check failed — it may be expired or revoked. Please reconnect.'],
   'activity.runnerHealth': ['자격 확인', 'Credential check'],

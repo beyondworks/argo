@@ -341,12 +341,18 @@ jobs:
         run: node scripts/stage-server.mjs
       - name: Attach install script
         run: cp scripts/install.sh dist-server/install.sh
+      # 원격 모델 카탈로그 오버레이(src/runners/catalog-remote.mjs) — 릴리스 자산 model-catalog.json.
+      # 첫 발행은 빈 오버레이(코드 목록 그대로). 벤더가 모델을 바꾸면 이 파일만 고쳐 Latest 자산으로
+      # 다시 올린다(앱 발행 불필요 — 전 기기 20분 TTL 안에 반영). 발행 드릴의 `*/*` 글롭이 함께 올린다.
+      - name: Generate model catalog overlay
+        run: node scripts/gen-model-catalog.mjs dist-server/model-catalog.json
       - uses: actions/upload-artifact@v4
         with:
           name: argo-server-linux-x64
           path: |
             dist-server/*.tar.gz
             dist-server/install.sh
+            dist-server/model-catalog.json
           if-no-files-found: error
           retention-days: 3
 

@@ -4,6 +4,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
+import { effectiveModels } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor , visibleRunnerNamesLine} from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
@@ -73,8 +74,8 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1: openrouter-only
         // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
         ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: KIMI_DEFAULT_MODEL }
-          : runner === 'openrouter' ? { model: RUNNERS.openrouter.models.some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL }
-          : runner === 'grok' ? { model: RUNNERS.grok.models.some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL }
+          : runner === 'openrouter' ? { model: effectiveModels('openrouter').some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL }
+          : runner === 'grok' ? { model: effectiveModels('grok').some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL }
           : (model ? { model } : {})),
       },
     })) {

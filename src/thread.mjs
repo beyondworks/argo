@@ -50,7 +50,7 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via } = {}) 
   return turnId;
 }
 
-export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, failed, aborted, fellBack }) {
+export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, failed, aborted, fellBack, failedCode, failedOrigin, modelFallback }) {
   return withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();
@@ -63,8 +63,10 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       delete m.awaiting;
       if (attachments?.length) m.attachments = attachments;
       if (failed) m.failed = failed;
+      if (failedCode) m.failedCode = failedCode; // 실패 코드 표(error-class.mjs) — UI가 chat.fail.<code>로 행동 안내를 그린다
+      if (failedOrigin) m.failedOrigin = failedOrigin; // vendor/argo/probe — 출처 판정(유건 기준)
       if (aborted) m.aborted = true;
-      if (!failed) t.messages.splice(at + 1, 0, { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
+      if (!failed) t.messages.splice(at + 1, 0, { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
       if (sessionId) { t.sessionId = sessionId; t.sessionDevice = await getDeviceId().catch(() => t.sessionDevice ?? null); }
       await writeJsonAtomic(file(wsId, slug), t);
       return t;
@@ -73,7 +75,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       // via = 사장이 직접 쓴 글이 아닌 배달 지시(crewmail·delegate·routine). who:'user'는 러너 프롬프트
       // 관점의 역할일 뿐인데 UI가 사장 말풍선으로 그려 "내가 쓴 게 아니거든"이 됐다(신고 2026-07-28).
       // aborted = 사장 지시 중단(사유 문자열과 별도 — 원문이 우연히 'aborted'여도 오판 없음, 재검수 MEDIUM).
-      { who: 'user', text: userMsg, ts, ...(attachments?.length ? { attachments } : {}), ...(via ? { via } : {}), ...(failed ? { failed } : {}), ...(aborted ? { aborted: true } : {}) },
+      { who: 'user', text: userMsg, ts, ...(attachments?.length ? { attachments } : {}), ...(via ? { via } : {}), ...(failed ? { failed } : {}), ...(failedCode ? { failedCode } : {}), ...(failedOrigin ? { failedOrigin } : {}), ...(aborted ? { aborted: true } : {}) },
     );
     // 실패·중단 턴은 크루 답변이 없다 — 지시문만 사유(failed)와 함께 보존한다. 성공 뒤에만 저장하면
     // 실패 턴의 지시문이 새로고침에 증발하고 비용만 남는다(전수리뷰 2026-07-30 #1).
@@ -81,7 +83,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
     // approval-actions의 실패 사유를 담은 crew 메시지(부작용은 이미 적용돼 보고만 실패). 의도적 구분.
     if (!failed) t.messages.push(
       // artifacts = 이 턴에 크루가 만든/고친 vault 문서(rel) — 답변 칩으로 바로 연다
-      { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}) }, // 검수 L1 — turnId 없는 갈래(선저장 실패·턴 중 리셋)도 폴백 표식 보존
+      { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }, // 검수 L1 — turnId 없는 갈래(선저장 실패·턴 중 리셋)도 폴백 표식 보존
     );
     if (sessionId) {
       // SDK 세션 저장소는 기기 로컬이라 소유 기기를 함께 기록한다 — 다른 기기가 이 sessionId를
