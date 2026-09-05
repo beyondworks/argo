@@ -18,10 +18,15 @@ import { join } from 'node:path';
 const ROOT = await mkdtemp(join(tmpdir(), 'argo-freerestore-'));
 process.env.ARGO_ROOT = ROOT;
 const { syncCompany, syncStateExists, _setSyncClientForTest } = await import('../src/sync.mjs');
+const { ensureAccountKey, clearAccountKey } = await import('../src/accountkey.mjs');
+const { openSecretCompat } = await import('../src/secretbox.mjs');
+// 회사 데이터 전체 봉투(v2)가 기본 켜짐(2026-09-06) — free 기기도 account_keys는 본인 행 insert 정책이라 키를 얻는다.
+const fakeKeySb = (b64) => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { key_b64: b64 }, error: null }) }) }) }) });
+await ensureAccountKey(fakeKeySb(Buffer.alloc(32, 11).toString('base64')), 'owner-free-restore');
 
 // 임시 루트 정리는 훅으로 — 마지막 테스트 본문에 두면 그 테스트가 먼저 실패할 때 누수되고,
 // 뒤에 테스트를 추가하는 순간 루트가 사라진 채로 돈다(분리 검수 LOW).
-after(() => rm(ROOT, { recursive: true, force: true }));
+after(() => { clearAccountKey(); return rm(ROOT, { recursive: true, force: true }); });
 
 const OWNER = 'o';
 const WS = 'ws1';
@@ -173,7 +178,7 @@ test('MEDIUM-I: 원격·로컬 편집이 겹친 free 첫 동기화 — .conflict
   // Pro 승격 1사이클 — 양쪽 판본이 모두 클라우드에 남아야 한다(어느 쪽도 조용히 소멸하지 않는다)
   fake.state.writable = true;
   await syncCompany(WS5, OWNER, false, {});
-  const cloud = [...fake.store.entries()].filter(([k]) => k.includes('vault/notes')).map(([, v]) => v.toString());
+  const cloud = [...fake.store.entries()].filter(([k]) => k.includes('vault/notes')).map(([, v]) => openSecretCompat(v).toString()); // 업로드는 v2 봉투(전체 봉투 기본 켜짐) — 관용 개봉 뒤 비교
   assert.ok(cloud.includes(REMOTE), '원격본이 클라우드에 살아있다(유실 금지)');
   assert.ok(cloud.includes(LOCAL), '로컬 편집본도 사본으로 올라간다');
 });

@@ -150,6 +150,7 @@ test('경합: 두 독립 프로세스가 동시에 최초 생성해도 같은 �
 /* ── sync 통합: v3 원격 파일 + DEK 미보유 기기 = 보류(불가시 홀드) — 오염·오삭제 없음 ── */
 test('sync 홀드: DEK 없는 기기가 v3 원격 파일을 만나면 failed 보류 — 로컬 미기록·원격 미삭제', async () => {
   const { syncCompany, _setSyncClientForTest } = await import('../src/sync.mjs');
+  await ensureAccountKey(fakeKeySb(Buffer.alloc(32, 4).toString('base64')), 'o-e2ee-hold'); // 전체 봉투 기본 켜짐 — 계정 키 없으면 EXCLUDE 전체 보류(이 테스트의 축 아님)
   const { mkdir, writeFile } = await import('node:fs/promises');
   const { existsSync } = await import('node:fs');
   // 송신측 DEK로 v3 봉인 → 수신측(이 프로세스)은 DEK 캐시를 비워 "승인 전 기기" 재현

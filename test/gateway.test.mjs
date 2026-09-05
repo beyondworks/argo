@@ -6,6 +6,8 @@ import { readFile, writeFile, readdir, mkdir, utimes } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { useFakeAccountKey } from './helpers/fake-account-key.mjs';
+await useFakeAccountKey(); // 전체 봉투 기본 켜짐 — 계정 키 없으면 EXCLUDE가 전체를 보류한다
 
 // 워크스페이스 루트를 임시 폴더로 — WS_ROOT는 모듈 로드 시 확정되므로 import보다 먼저 심는다.
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-gwtest-'));

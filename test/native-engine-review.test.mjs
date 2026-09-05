@@ -10,6 +10,8 @@ import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { mkdtemp } from './helpers/tmp.mjs';
+import { useFakeAccountKey } from './helpers/fake-account-key.mjs';
+await useFakeAccountKey(); // 전체 봉투 기본 켜짐 — 계정 키 없으면 EXCLUDE가 전체를 보류한다
 
 process.env.HOME = await mkdtemp(join(tmpdir(), 'argo-native-rv-home-'));
 process.env.USERPROFILE = process.env.HOME;

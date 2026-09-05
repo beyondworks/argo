@@ -1,5 +1,5 @@
 // M-ENC-1 E1a 회귀 테스트 — 암호화 대상 예측자·롤아웃 스위치·관용 개봉 불변식.
-// E1a는 스위치 off가 기본이라 "동작 불변"이 최우선 불변식이고, 켰을 때 봉투 왕복이 성립해야 한다.
+// 2026-09-06부터 스위치는 기본 켜짐(옵트아웃만 꺼짐) — 봉투 왕복·관용 개봉·키 미확보 보류가 최우선 불변식이다.
 // 랜덤 IV로 암호문이 매번 달라진다는 사실도 못 박는다 — 매니페스트 해시가 평문 기준이어야 하는 이유.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,19 +15,33 @@ const withFlag = async (val, fn) => {
 // account_keys 조회를 흉내 — v2 봉투 키(계정 키) 확보용
 const fakeKeySb = (b64) => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { key_b64: b64 }, error: null }) }) }) }) });
 
-test('스위치 off(기본) — 암호화 대상은 크레덴셜 3종뿐(기존 동작 불변)', async () => {
+test('스위치 기본 켜짐 — 환경변수 없이도 동기 대상 전체가 암호화 대상(2026-09-06 유건 승인)', async () => {
   await withFlag(undefined, () => {
+    assert.equal(encVaultOn(), true, '기본값 = 켜짐');
+    assert.equal(encVaultOn({}), true);
+    assert.equal(isEncRel('vault/notes/기억.md'), true);
+    assert.equal(isEncRel('chats/sales.json'), true);
+    assert.equal(isEncRel('usage.jsonl'), true);
+    assert.equal(isEncRel('connections.json'), true);
+  });
+  // '1'·'true'·'on'·빈 문자열·공백은 켜짐, 옵트아웃 4종만 꺼짐(대소문자·공백 무관)
+  for (const v of ['1', 'true', 'on', '', '  ']) assert.equal(encVaultOn({ ARGO_ENC_VAULT: v }), true, `값 ${JSON.stringify(v)} = 켜짐`);
+  for (const v of ['0', 'false', 'off', 'none', 'OFF', ' False ']) assert.equal(encVaultOn({ ARGO_ENC_VAULT: v }), false, `값 ${JSON.stringify(v)} = 옵트아웃`);
+});
+
+test('명시 옵트아웃(ARGO_ENC_VAULT=0) — 암호화 대상은 크레덴셜 3종뿐(종전 동작)', async () => {
+  await withFlag('0', () => {
     assert.equal(encVaultOn(), false);
     assert.equal(isEncRel('connections.json'), true);
     assert.equal(isEncRel('.secrets.json'), true);
     assert.equal(isEncRel('mcp.json'), true);
-    assert.equal(isEncRel('vault/notes/기억.md'), false, 'off면 vault는 평문 — 기존 동작 유지');
+    assert.equal(isEncRel('vault/notes/기억.md'), false, '옵트아웃이면 vault는 평문 — 종전 동작');
     assert.equal(isEncRel('chats/sales.json'), false);
     assert.equal(isEncRel('usage.jsonl'), false);
   });
 });
 
-test('스위치 on — 동기 대상 전체가 암호화 대상(회사 폴더 전부)', async () => {
+test('스위치 on(명시 1) — 동기 대상 전체가 암호화 대상(회사 폴더 전부)', async () => {
   await withFlag('1', () => {
     assert.equal(encVaultOn(), true);
     assert.equal(isEncRel('vault/notes/기억.md'), true);

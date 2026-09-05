@@ -8,6 +8,8 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { useFakeAccountKey } from './helpers/fake-account-key.mjs';
+await useFakeAccountKey(); // 전체 봉투 기본 켜짐 — 계정 키 없으면 EXCLUDE가 전체를 보류한다
 import { channelSends } from '../src/channel-events.mjs'; // 슬랙 타입 게이트를 행동으로 단언(순수 모듈이라 정적 임포트 안전)
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');

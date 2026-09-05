@@ -35,7 +35,7 @@ const asHosted = async (fn) => {
 
 const { syncCompany, _setSyncClientForTest, _tombstonesForTest } = await import('../src/sync.mjs');
 const { ensureAccountKey, clearAccountKey } = await import('../src/accountkey.mjs');
-const { sealSecret } = await import('../src/secretbox.mjs');
+const { sealSecret, openSecretCompat } = await import('../src/secretbox.mjs');
 
 const OWNER = 'o';
 const hashBuf = (buf) => createHash('sha1').update(buf).digest('hex').slice(0, 16);
@@ -94,7 +94,7 @@ async function setup(wsId, { localFiles = {}, state = {}, remoteFiles = {}, remo
   return { wsRoot, fake };
 }
 
-const manifest = (fake, wsId) => JSON.parse(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`).toString());
+const manifest = (fake, wsId) => JSON.parse(openSecretCompat(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`)).toString()); // 전체 봉투 기본 켜짐 — 매니페스트도 v2
 const SECRETS = Buffer.from(JSON.stringify({ claude: { key: 'sk-test-not-real' } }));
 const CONNS = Buffer.from(JSON.stringify({ telegram: { token: 'tg-test-not-real' }, slack: {} }));
 const MCP = Buffer.from(JSON.stringify({ servers: { x: { command: 'node', env: { T: 'v' } } } }));
