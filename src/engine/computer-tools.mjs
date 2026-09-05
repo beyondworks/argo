@@ -3,7 +3,8 @@
 // Windows = PowerShell(System.Drawing 캡처, user32 입력), Linux = xdotool + import(ImageMagick). 권한이 없으면(맥 접근성·화면 기록) 정직한 안내를 돌려준다.
 // 러너·모델과 무관하게 같은 도구·같은 게이트(하네스 통일 — 유건 요구 2026-09-05 "컴퓨터 유즈도 아르고 하네스로").
 import { execFile } from 'node:child_process';
-import { readFile, unlink, mkdtemp } from 'node:fs/promises';
+import { IMAGE_MAX_B64 } from './session.mjs';
+import { readFile, unlink, mkdtemp, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -104,6 +105,11 @@ export function computerRunners({ platform = process.platform, exec = run, jxa =
           const info = await exec('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', file]).catch(() => '');
           const w = Number(info.match(/pixelWidth:\s*(\d+)/)?.[1] || 0), h = Number(info.match(/pixelHeight:\s*(\d+)/)?.[1] || 0);
           if (w > 1280) await exec('sips', ['-Z', '1280', file]);
+          // 전사 상한 사다리 — 색 밀도 높은 화면은 1280 JPEG도 상한을 넘긴다(4R MEDIUM: 넘치면 버리지 말고 줄인다)
+          for (const [z, q] of [[1280, 70], [960, 50], [720, 35]]) {
+            await exec('sips', ['-Z', String(z), '-s', 'format', 'jpeg', '-s', 'formatOptions', String(q), file]).catch(() => {});
+            if ((await stat(file)).size * 4 / 3 <= IMAGE_MAX_B64) break;
+          }
           const sw = w > 1280 ? 1280 : w, sh = w > 1280 ? Math.round(h * 1280 / w) : h;
           // 좌표 안내 — 레티나(2x)는 논리 화면 좌표가 픽셀의 절반. computer_click 좌표는 **논리 좌표**(스크린샷 픽셀 × scale)
           const logicalW = Number((await exec('osascript', ['-e', 'tell application "Finder" to get bounds of window of desktop']).catch(() => '')).split(',')[2] || 0);

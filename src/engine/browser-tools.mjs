@@ -3,8 +3,9 @@
 // 설계 원칙 — 사용자의 일상 크롬 프로필을 건드리지 않는다(전용 프로필 디렉터리, 워크스페이스별). 프로필은 회사 폴더 밖(동기화 대상 아님).
 // 의존성 0: Node 22의 전역 WebSocket + 시스템 크롬(Chrome/Chromium/Edge/Brave). 없으면 도구가 정직한 오류를 돌려준다(마켓의 브라우저 MCP가 대안).
 import { spawn } from 'node:child_process';
+import { IMAGE_MAX_B64 } from './session.mjs';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -44,6 +45,8 @@ export function findChrome(env = process.env, platform = process.platform) {
 
 /** 디버깅 포트 준비 대기 상한 — Puppeteer 기본(30초)의 2배. 윈도우 콜드 스타트+Defender 검사+병렬 부하 여유. */
 const LAUNCH_TIMEOUT_MS = 60_000;
+/** 스크린샷 품질 사다리 (JPEG 품질, 배율) — 마지막 단계는 상한을 넘겨도 채택(그래도 300KB 안팎). */
+const SHOT_LADDER = [[70, 1], [50, 0.75], [35, 0.5]];
 /** stderr 누적 버퍼에서 완결된 'DevTools listening on ws://…' 줄만 채택(순수) — 줄 종료가 없으면 아직 조각이다. */
 export const devToolsUrlFrom = (acc) => acc.match(/DevTools listening on (ws:\/\/\S+)\r?\n/)?.[1] ?? null;
 /** 프로필의 DevToolsActivePort 파일(1행 포트, 2행 /devtools/browser/<id>) — 두 행이 다 있어야 채택(쓰는 중 조각 방지). */
@@ -105,6 +108,10 @@ export function parseKeyCombo(combo) {
 /** 워크스페이스별 브라우저 세션(프로세스 싱글턴 맵) — 첫 사용 시 크롬을 띄우고 idle 뒤 정리한다. */
 const sessions = new Map();
 const launching = new Map(); // wsId → 기동 중 Promise
+const children = new Set(); // 살아 있는 크롬 자식 전수 — 프로세스 종료 시 동기 스위퍼(4R MEDIUM: 재배포마다 고아가 쌓이면 SingletonLock으로 그 회사 브라우저가 막힌다)
+process.on('exit', () => { for (const c of children) { try { c.kill('SIGKILL'); } catch { /* */ } } });
+/** 테스트 전용 — 세션 map(축출 가드 핀). */
+export const _sessionsForTest = () => sessions;
 export class BrowserSession {
   static profileDir(wsId, env = process.env) { const root = env.ARGO_ROOT ? dirname(env.ARGO_ROOT) : join(homedir(), '.argo'); return join(root, 'browser', wsId); }
   static async get(wsId, { env = process.env, headless = env.ARGO_BROWSER_HEADLESS === '1' } = {}) {
@@ -125,6 +132,9 @@ export class BrowserSession {
     const bin = findChrome(this.env);
     if (!bin) throw new Error('Chrome/Chromium/Edge/Brave를 찾지 못했습니다 — 설치하거나 ARGO_CHROME_PATH로 경로를 지정하세요(대안: 스킬·도구의 브라우저 MCP)');
     const profile = BrowserSession.profileDir(this.wsId, this.env); await mkdir(profile, { recursive: true });
+    // 잔재 DevToolsActivePort(비정상 종료가 남김)를 스폰 전에 지운다 — 남아 있으면 죽은 포트를 채택해 127ms 만에 'CDP 연결 실패'로 죽고(4R 검수 HIGH),
+    // 고아 크롬이 그 파일을 덮어 그 회사 브라우저가 계속 고장난다. Playwright도 같은 이유로 스폰 전에 지운다.
+    await rm(join(profile, 'DevToolsActivePort'), { force: true }).catch(() => {});
     // --use-mock-keychain / --password-store=basic: OS 키체인을 건드리지 않는다 — 없으면 macOS가 "'Chrome'을 저장할 키체인을 찾을 수 없습니다" 대화상자를
     // 띄운다(실사고 2026-09-05: 테스트·배터리가 반복 실행하며 유건 화면에 계속 뜸). Playwright·Puppeteer의 기본 인자와 같다. 쿠키·로그인은 프로필 안에 유지된다.
     // stderr는 진단용 꼬리만 보관(값 없음 — 크롬은 'DevTools listening' 정도만 쓴다). 파이프는 반드시 소비한다(안 읽으면 크롬이 막힌다).
@@ -139,7 +149,8 @@ export class BrowserSession {
     this.child.stderr.on('data', (d) => { const t = String(d); tail.push(t); if (tail.length > 20) tail.shift(); acc = (acc + t).slice(-64_000); if (!wsUrl) wsUrl = devToolsUrlFrom(acc); });
     let spawnErr = null; let exited = null;
     this.child.on('error', (e) => { spawnErr = e; });
-    this.child.on('exit', (code, sig) => { exited = { code, sig }; this.alive = false; if (sessions.get(this.wsId) === this) sessions.delete(this.wsId); this.cdp?.close(); }); // map 가드 — 남의 산 세션을 밀어내지 않는다
+    children.add(this.child);
+    this.child.on('exit', (code, sig) => { exited = { code, sig }; children.delete(this.child); this.alive = false; if (sessions.get(this.wsId) === this) sessions.delete(this.wsId); this.cdp?.close(); }); // map 가드 — 남의 산 세션을 밀어내지 않는다
     // 준비 판정은 시간 기준(LAUNCH_TIMEOUT_MS). 실행 오류·조기 종료는 상한을 기다리지 않고 즉시 실패로 돌린다(원인이 문구에 실린다).
     const diag = () => { const t = tail.join('').trim().split(/\r?\n/).slice(-3).join(' | ').slice(0, 400); return t ? ` — stderr: ${t}` : ''; };
     const t0 = Date.now();
@@ -150,9 +161,10 @@ export class BrowserSession {
       if (!wsUrl) wsUrl = await devToolsUrlFromFile(profile);
       await sleep(100);
     }
-    if (!wsUrl) { this.child.kill(); throw new Error(`브라우저가 ${Math.round(LAUNCH_TIMEOUT_MS / 1000)}초 안에 뜨지 않았습니다${diag()}`); }
+    if (!wsUrl) { await this.kill(); throw new Error(`브라우저가 ${Math.round(LAUNCH_TIMEOUT_MS / 1000)}초 안에 뜨지 않았습니다${diag()}`); }
     const ws = new WebSocket(wsUrl);
-    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error(`CDP 연결 실패(${wsUrl})${diag()}`)); });
+    try { await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error(`CDP 연결 실패(${wsUrl})${diag()}`)); }); }
+    catch (e) { this.kill(); throw e; } // 연결 실패도 자식을 남기지 않는다(4R: 고아 크롬이 SingletonLock을 쥐면 다음 기동도 실패)
     this.cdp = new Cdp(ws);
     const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await this.cdp.send('Target.attachToTarget', { targetId, flatten: true });
@@ -160,7 +172,14 @@ export class BrowserSession {
     await this.cdp.send('Page.enable', {}, sessionId); await this.cdp.send('Runtime.enable', {}, sessionId);
     this.alive = true; this.touch();
   }
-  async close() { clearTimeout(this.timer); this.alive = false; if (sessions.get(this.wsId) === this) sessions.delete(this.wsId); try { this.cdp?.close(); } catch { /* */ } try { this.child?.kill(); const c = this.child; setTimeout(() => { try { c?.kill('SIGKILL'); } catch { /* */ } }, 2000).unref?.(); } catch { /* */ } } // SIGTERM 뒤 2초 유예 후 SIGKILL — 헤드리스 크롬이 좀비로 남던 실측
+  /** 자식 종료 — SIGTERM 뒤 최대 1.5초 기다렸다가 살아 있으면 SIGKILL(await — unref 타이머는 프로세스가 먼저 끝나면 안 발화해 고아를 남겼다, 4R MEDIUM). */
+  async kill() {
+    const c = this.child; if (!c || c.exitCode !== null || c.signalCode !== null) return;
+    try { c.kill(); } catch { /* */ }
+    await Promise.race([new Promise((r) => c.once('exit', r)), sleep(1500)]);
+    if (c.exitCode === null && c.signalCode === null) { try { c.kill('SIGKILL'); } catch { /* */ } }
+  }
+  async close() { clearTimeout(this.timer); this.alive = false; if (sessions.get(this.wsId) === this) sessions.delete(this.wsId); try { this.cdp?.close(); } catch { /* */ } await this.kill(); }
   send(method, params) { return this.cdp.send(method, params, this.sid); }
   /** 페이지 안 JS 실행 — Node eval이 아니라 CDP Runtime.evaluate(브라우저 컨텍스트). browser_eval 도구의 실체이며 Hermes browser_exec·OpenClaw와 같은 능력.
       결과는 값으로만 돌아오고 Argo 프로세스에는 닿지 않는다. */
@@ -215,7 +234,18 @@ export class BrowserSession {
     return `scrolled ${direction}\n${await this.snapshot(3000)}`;
   }
   async back() { await this.evaluate('history.back()'); await sleep(800); this.touch(); return this.snapshot(3000); }
-  async screenshotJpeg() { const r = await this.send('Page.captureScreenshot', { format: 'jpeg', quality: 70 }); this.touch(); return Buffer.from(r.data, 'base64'); } // JPEG q70 — PNG 대비 1/5, 전사 상한 안
+  /** JPEG 스크린샷 — 전사 상한(IMAGE_MAX_B64) 안에 들 때까지 품질·배율을 낮춘다(4R MEDIUM: 색 밀도 높은 페이지는 q70도 상한을 넘겨 이미지가 통째로 버려졌다). */
+  async screenshotJpeg(maxB64 = IMAGE_MAX_B64) {
+    let out = null;
+    for (const [quality, scale] of SHOT_LADDER) {
+      const { layoutViewport: v } = await this.send('Page.getLayoutMetrics');
+      const clip = scale < 1 && v ? { clip: { x: 0, y: 0, width: v.clientWidth, height: v.clientHeight, scale } } : {};
+      const r = await this.send('Page.captureScreenshot', { format: 'jpeg', quality, ...clip });
+      out = Buffer.from(r.data, 'base64');
+      if (out.toString('base64').length <= maxB64) break;
+    }
+    this.touch(); return out;
+  }
 }
 
 /** 실행기 — 이미지 반환은 호출부(native-query)가 모델의 비전 지원 여부로 이미지 블록/파일 경로를 결정한다. */

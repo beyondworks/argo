@@ -25,4 +25,5 @@ dist-server/
 !/docs/selfhost.md
 !/docs/privacy-sync.md
 /PRODUCT-SPEC.md
-browser/ # 브라우저 유즈 크롬 프로필(dirname(ARGO_ROOT)/browser) — dev에서 레포 루트에 생긴다
+# 브라우저 유즈 크롬 프로필(dirname(ARGO_ROOT)/browser) — dev에서 레포 루트에 생긴다
+browser/

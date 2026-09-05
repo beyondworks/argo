@@ -10,6 +10,8 @@ export const sessionFile = (wsId, slug) => join(paths(wsId).root, '.sessions', '
 
 // ponytail: 문맥 예산은 JSON 길이로 근사(토큰 아님). 넘치면 앞 턴부터 버린다 — 정밀 예산은 모델별 컨텍스트 창을 알게 되면.
 export const SESSION_MAX_CHARS = 400_000;
+/** 이미지 1장의 base64 상한 — 전사 상한 안에서 지시·도구 결과가 남게(≤ SESSION_MAX_CHARS의 80%, 테스트가 절대값으로 잠근다). 넘으면 브라우저는 품질 사다리로 줄이고, 그래도 넘으면 파일로만. */
+export const IMAGE_MAX_B64 = 300_000;
 export const SESSION_TRIM_TO = 300_000;
 
 /** 전사 절단(순수) — 앞에서부터 버리되, 남은 첫 메시지가 tool_result만 든 user 메시지가 되지 않게 맞춘다
@@ -37,8 +39,9 @@ export function trimMessages(messages, maxChars = SESSION_MAX_CHARS, trimTo = SE
   out = dropOldImages(out);
   while (out.length > 2 && size() > trimTo) out.shift();
   while (out.length && !isPromptMsg(out[0])) out.shift();
-  // 불변식: 전사는 절대 비지 않는다 — 비면 다음 벤더 호출이 messages:[]로 나가 400·턴 사망(분리 검수 HIGH-1 실루프 재현).
-  // 머리 정리가 전부 걷어냈으면 마지막 실제 지시(user·비tool_result)를 되살린다(이미지는 뺀 채).
+  // 불변식: 실제 지시(user·비tool_result)가 하나라도 있는 전사는 절대 비지 않는다 — 비면 다음 벤더 호출이 messages:[]로 나가 400·턴 사망
+  // (분리 검수 HIGH-1 실루프 재현). 머리 정리가 전부 걷어냈으면 마지막 실제 지시를 되살린다(이미지는 뺀 채). 지시가 전무한 전사(엔진 경로에선 도달 불가 —
+  // run()이 프롬프트를 먼저 push하고 resume은 sanitize가 머리를 보장)는 빈 배열이 맞다(4R LOW: 보장 범위를 정직히 적는다).
   if (!out.length) { const last = [...messages].reverse().find(isPromptMsg); if (last) out = dropOldImages([last]).map((m) => ({ ...m, content: Array.isArray(m.content) ? m.content.map((b) => (b?.type === 'image' ? IMAGE_DROPPED : b)) : m.content })); }
   return out;
 }

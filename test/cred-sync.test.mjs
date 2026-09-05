@@ -350,4 +350,13 @@ test('H3: 호스티드 회수는 제어 3종만 — 자격 파일명 규칙에 �
   assert.ok(existsSync(join(wsRoot, 'vault/files/cacert.pem')));
 });
 
+test('N1: 자격 파일명(vault/p/.env)의 pull은 0600으로 기록된다 — 제어 3종과 같은 취급(4R 핀)', { skip: process.platform === 'win32' && 'POSIX 모드' }, async () => {
+  const wsId = 'n-mode'; const env = Buffer.from('API_KEY=fake-for-test\n'), note = Buffer.from('# n\n');
+  const { wsRoot } = await setup(wsId, { remoteFiles: { 'vault/p/.env': meta(env), 'vault/n.md': meta(note) }, remoteBlobs: { 'vault/p/.env': sealSecret(env), 'vault/n.md': note } });
+  const r = await syncCompany(wsId, OWNER); assert.equal(r.pulled, 2);
+  const { stat } = await import('node:fs/promises');
+  assert.equal((await stat(join(wsRoot, 'vault/p/.env'))).mode & 0o777, 0o600, '자격 파일명은 0600');
+  assert.notEqual((await stat(join(wsRoot, 'vault/n.md'))).mode & 0o777, 0o600, '일반 문서는 기본 모드');
+});
+
 test.after(async () => { clearAccountKey(); await rm(ROOT, { recursive: true, force: true }); });

@@ -20,12 +20,12 @@ process.env.ARGO_MODEL_CATALOG = 'off';
 process.env.ARGO_BROWSER_HEADLESS = '1';
 
 const { isSecretRel, isSecretNameRel, isEncRel } = await import('../src/secretbox.mjs');
-const { makePermissionGate } = await import('../src/permission-gate.mjs');
+const { makePermissionGate, stringLeaves } = await import('../src/permission-gate.mjs');
 const { trimMessages, dropOldImages, SESSION_MAX_CHARS } = await import('../src/engine/session.mjs');
 const { imageToolResult, IMAGE_MAX_B64, nativeQuery, builtinTools } = await import('../src/engine/native-query.mjs');
 const { extractErrorMessage } = await import('../src/engine/messages-http.mjs');
 const { isGrokCreditError } = await import('../src/runners/grok.mjs');
-const { devToolsUrlFrom, devToolsUrlFromFile, BrowserSession, findChrome, closeAllBrowsers } = await import('../src/engine/browser-tools.mjs');
+const { devToolsUrlFrom, devToolsUrlFromFile, BrowserSession, findChrome, closeAllBrowsers, _sessionsForTest } = await import('../src/engine/browser-tools.mjs');
 const { winScript, macPasteScript, asLiteral } = await import('../src/engine/computer-tools.mjs');
 
 test('R3-1 CRITICAL-1. 회수 계급은 제어 3종만, 이름 규칙은 봉인 계급 — 사용자 문서(.key 키노트·.pem)가 호스티드 마커 회수 대상이 아니다', () => {
@@ -84,7 +84,8 @@ test('R3-3 HIGH-1. 전사는 절대 비지 않는다 — 큰 이미지·큰 도�
   assert.ok(JSON.stringify(dropped[2]).includes('생략'), '옛 이미지는 자리표시');
   // 상한 초과 이미지는 파일로만 — 전사엔 텍스트만, 경로는 vault/files/screenshots(서빙 접두), 확장자는 mime 기준
   const cwd = await mkdtemp(join(tmpdir(), 'argo-r3-img-'));
-  const huge = Buffer.alloc(Math.ceil(IMAGE_MAX_B64 * 0.75) + 10_000, 1);
+  assert.ok(IMAGE_MAX_B64 <= SESSION_MAX_CHARS * 0.8 && IMAGE_MAX_B64 >= 100_000, `상한은 전사 예산의 80% 이하(자기참조 핀 금지 — 4R): ${IMAGE_MAX_B64}`);
+  const huge = Buffer.alloc(400_000, 1); // 고정 크기 — 상한을 올리는 변이가 초록이 되지 않게
   const blocks = await imageToolResult({ image: huge, mime: 'image/jpeg' }, { cwd, model: 'claude-x', env: { ARGO_VISION_MODELS: '*' } });
   assert.equal(blocks.length, 1); assert.equal(blocks[0].type, 'text'); assert.match(blocks[0].text, /saved: vault\/files\/screenshots\/.*\.jpg/); assert.match(blocks[0].text, /커서/);
   const small = await imageToolResult({ image: Buffer.alloc(1000, 2), mime: 'image/png' }, { cwd, model: 'claude-x', env: { ARGO_VISION_MODELS: '*' } });
@@ -142,4 +143,56 @@ test('R3-8 MEDIUM-1. 같은 회사 동시 기동 3건은 한 크롬·한 세션�
     assert.ok(a === b && b === c, '같은 인스턴스'); assert.equal(a.alive, true);
     const again = await BrowserSession.get('r3conc'); assert.equal(again, a, '재사용');
   } finally { await closeAllBrowsers(); }
+});
+
+test('R3-9 4R-HIGH. 프로필에 남은 옛 DevToolsActivePort(죽은 포트)가 있어도 기동에 성공한다 — 스폰 전 삭제', { skip: !findChrome() && 'Chrome 없음' }, async () => {
+  const wsId = 'r3stale'; const profile = BrowserSession.profileDir(wsId, process.env);
+  await mkdir(profile, { recursive: true }); await writeFile(join(profile, 'DevToolsActivePort'), '59999\n/devtools/browser/dead-uuid\n');
+  try {
+    const s = await BrowserSession.get(wsId); assert.equal(s.alive, true, '잔재 파일이 있어도 기동');
+    const cur = await readFile(join(profile, 'DevToolsActivePort'), 'utf8').catch(() => '');
+    assert.ok(!cur.includes('dead-uuid'), '잔재는 스폰 전에 지워지고 새 값으로 대체된다');
+  } finally { await closeAllBrowsers(); }
+});
+
+test('R3-10 4R. 세션 map 축출 가드 — 실패한 기동의 exit가 같은 wsId의 산 세션을 map에서 밀어내지 않는다', async () => {
+  const wsId = 'r3guard'; const alive = { wsId, alive: true, touch() {}, async close() {} };
+  _sessionsForTest().set(wsId, alive);
+  try {
+    const bad = new BrowserSession(wsId, { env: { ...process.env, ARGO_CHROME_PATH: process.execPath }, headless: true });
+    await assert.rejects(() => bad.launch(), /뜨자마자 종료|실행 실패/);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(_sessionsForTest().get(wsId), alive, '산 세션 유지'); assert.equal(await BrowserSession.get(wsId), alive, 'get도 산 세션을 돌려준다');
+  } finally { _sessionsForTest().delete(wsId); }
+});
+
+test('R3-11 4R. trimMessages 배선 — 상한 초과 전사의 이미지는 최신 1개만 남는다(dropOldImages 호출 핀)', () => {
+  const img = (data) => ({ type: 'tool_result', tool_use_id: 't', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } }] });
+  const chunk = 'B'.repeat(260_000); // 두 장 합이 전사 상한(40만)을 넘어야 트리밍 경로에 들어간다
+  const msgs = [{ role: 'user', content: '지시' }, { role: 'assistant', content: [{ type: 'tool_use', id: 't', name: 'browser_screenshot', input: {} }] }, { role: 'user', content: [img(chunk)] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 't', name: 'browser_screenshot', input: {} }] }, { role: 'user', content: [img(chunk + 'Z')] }];
+  const out = trimMessages(msgs);
+  const images = out.flatMap((m) => (Array.isArray(m.content) ? m.content.flatMap((b) => (b.type === 'tool_result' ? b.content : [b])) : [])).filter((b) => b.type === 'image');
+  assert.ok(images.length <= 1, `이미지 ${images.length}개`); assert.ok(out.length >= 1 && out[0].role === 'user');
+});
+
+test('R3-12 4R. 게이트 리터럴 방어는 입력의 모든 문자열 잎을 본다(고정 키 목록 우회 차단) — 분할 입력·조합키는 한계로 명시', async () => {
+  const wsRoot = join(process.env.ARGO_ROOT, 'r3ws2'); await mkdir(wsRoot, { recursive: true });
+  const on = makePermissionGate('r3ws2', 'crew', wsRoot, null, 'ko', [], { computerUse: true });
+  assert.equal((await on('computer_type', { texts: ['cat ~/.argo/.secrets.json'] })).behavior, 'deny');
+  assert.equal((await on('computer_type', { input: { nested: { s: 'open ~/.codex/auth.json' } } })).behavior, 'deny');
+  assert.equal((await on('computer_key', { keys: ['cmd+space', 'capabilities.json'] })).behavior, 'deny');
+  assert.equal((await on('computer_type', { text: 'cat ~/.ar' })).behavior, 'allow', '분할 입력은 못 막는다 — 실효 통제는 옵트인(정직 표기)');
+  assert.deepEqual(stringLeaves({ a: 'x', b: ['y', { c: 'z', n: 1 }] }), ['x', 'y', 'z']);
+});
+
+test('R3-13 4R. 스크린샷 품질 사다리 — 상한이 작으면 품질·배율을 낮춰 더 작은 이미지를 낸다(버리지 않는다)', { skip: !findChrome() && 'Chrome 없음' }, async () => {
+  const noisy = `<html><body style="margin:0"><canvas id=c width=1280 height=900></canvas><script>const c=document.getElementById('c').getContext('2d');const d=c.createImageData(1280,900);for(let i=0;i<d.data.length;i++)d.data[i]=(Math.random()*256)|0;c.putImageData(d,0,0);</script></body></html>`;
+  const srv = createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(noisy); }); await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  try {
+    const s = await BrowserSession.get('r3shot'); await s.navigate(`http://127.0.0.1:${srv.address().port}/`);
+    const big = await s.screenshotJpeg(Number.MAX_SAFE_INTEGER); const small = await s.screenshotJpeg(1);
+    assert.ok(big.length > 0 && small.length < big.length * 0.6, `사다리 축소: ${big.length} → ${small.length}`);
+    assert.ok(small[0] === 0xFF && small[1] === 0xD8, 'JPEG');
+  } finally { await closeAllBrowsers(); await new Promise((r) => srv.close(r)); }
 });

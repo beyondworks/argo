@@ -10,7 +10,7 @@ import { COMPUTER_SPECS, computerRunners } from './computer-tools.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { connectMcpServers } from './mcp-client.mjs';
-import { loadNativeSession, saveNativeSession } from './session.mjs';
+import { loadNativeSession, saveNativeSession, IMAGE_MAX_B64 } from './session.mjs';
 
 export const NATIVE_DEFAULT_MAX_TOKENS = 8192; // SDK 기본 32000이 OpenRouter 선불 잔액 402를 부르던 것 완화(실측 2026-09-05)
 export const NATIVE_MAX_STEPS = 60;
@@ -78,8 +78,7 @@ export function builtinTools({ cwd, env, fetchImpl, wsId = 'ws', browser = true,
 }
 
 /** 이미지 결과({image,mime,note}) → tool_result content 블록(순수 조립 + 파일 저장). 비전 미지원 모델에는 경로만. */
-/** 이미지 1장의 base64 상한 — 세션 전사 상한(SESSION_MAX_CHARS 40만 자) 안에서 문맥이 남게. 넘으면 파일로만 저장하고 텍스트로 안내(분리 검수 HIGH-1). */
-export const IMAGE_MAX_B64 = 300_000;
+export { IMAGE_MAX_B64 }; // 정본은 session.mjs(전사 예산 옆) — 브라우저·컴퓨터 스크린샷 사다리가 같은 값을 쓴다
 export async function imageToolResult(out, { cwd, model, env = process.env, now = Date.now() }) {
   const mime = out.mime || 'image/png'; const ext = mime === 'image/jpeg' ? 'jpg' : 'png';
   // vault/files/ 아래 — 서빙 접두(files/)·산출물 칩이 닿는 곳이라 사장이 앱에서 열 수 있다(vault/screenshots는 서빙 밖 — 분리 검수 MEDIUM-4)
