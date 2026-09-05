@@ -234,7 +234,10 @@ export async function nodeRunnerInfo(wsId, { status = null, catalog = null, now 
 export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, runnerInfo = nodeRunnerInfo } = {}) {
   const crews = await db.myCrews(uid, wsId);
   const out = { crews: crews.length, queued: 0, denied: 0, stale: 0, list: crews };
-  if (nodeOrgId) await db.nodeHeartbeat(nodeOrgId, await runnerInfo(wsId).catch(() => null)).catch((e) => console.error('[argo] msgr 노드 하트비트 실패:', e.message)); // I-4: 크루 0명이어도 — 노드 부트스트랩 직후 조직 카드가 '연결됨'을 보여야 한다
+  if (nodeOrgId) { // 정보(러너·모델)는 CLI 감지를 스폰하므로 3초까지만 기다린다 — 감지가 멈춰도 생존 신호는 나간다(검수 M-5: 90초 넘기면 '연결 끊김'으로 뒤집히던 결합). I-4: 크루 0명이어도 노드는 살아 있다고 알린다
+    let timer; const info = await Promise.race([runnerInfo(wsId).catch(() => null), new Promise((r) => { timer = setTimeout(r, 3000, null); timer.unref?.(); })]).finally(() => clearTimeout(timer));
+    await db.nodeHeartbeat(nodeOrgId, info).catch((e) => console.error('[argo] msgr 노드 하트비트 실패:', e.message));
+  }
   if (nodeOrgId) await createRequestedCrews(wsId, nodeOrgId, { db, uid }).catch((e) => console.error('[argo] msgr 크루 생성 요청 처리 실패:', e.message)); // I-5: 채널에서 만든 회사 크루(카드 → 등록 → 완료 표시)
   if (!crews.length) return out;
   await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));

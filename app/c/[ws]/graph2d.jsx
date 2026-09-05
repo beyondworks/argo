@@ -24,13 +24,8 @@ function syncThemeRgb() {
   FONT = st.getPropertyValue('--font').trim() || FONT;
   const [pr, pg, pb] = PAPER.split(',').map(Number);
   const light = (pr * 299 + pg * 587 + pb * 114) / 1000 > 128;
-  // 별 포인트 = 테마의 '점·노드 강조색'. linen 가족은 --accent가 차콜(무채색)이고 옐로를 --mark로 분리했으므로 --mark-rgb를 먼저 본다(메신저 활동 그래프·기억 그래프 룩 통일, 2026-09-04)
-  const parseRgb = (v) => { const a = (v || '').split(',').map(Number); return a.length === 3 && !a.some(Number.isNaN) ? a : null; };
-  const chroma = (v) => { const a = parseRgb(v); return a && Math.max(...a) - Math.min(...a) >= 40 ? a : null; };
-  // --graph-rgb: 그래프 전용 포인트색(있으면 최우선). 명시 지정이므로 무채색(흑백)이어도 채도 검사를 면제한다 — 폴백은 "테마가 포인트색을 안 준 경우"의 안전장치다. 아르고 본체는 미정의라 종전 그대로.
-  const explicit = parseRgb(st.getPropertyValue('--graph-rgb').trim());
-  let acc = explicit ?? chroma(st.getPropertyValue('--mark-rgb').trim()) ?? (st.getPropertyValue('--accent-rgb').trim() || '').split(',').map(Number);
-  if (!explicit && (acc.length !== 3 || acc.some(Number.isNaN) || Math.max(...acc) - Math.min(...acc) < 40)) acc = light ? [62, 130, 247] : [120, 170, 255]; // 무채색 포인트면 푸른 계열
+  let acc = (st.getPropertyValue('--accent-rgb').trim() || '').split(',').map(Number);
+  if (acc.length !== 3 || acc.some(Number.isNaN) || Math.max(...acc) - Math.min(...acc) < 40) acc = light ? [62, 130, 247] : [120, 170, 255]; // 무채색 포인트면 푸른 계열
   ACCENT = acc.join(', ');
   // 라벨은 배경 대비로 한 단계 — 밝은 종이엔 짙게, 어두운 종이엔 밝게
   LABEL_ACCENT = (light ? acc.map((v) => Math.round(v * 0.72)) : acc.map((v) => Math.round(v + (255 - v) * 0.35))).join(', ');
@@ -86,11 +81,10 @@ function createSim2D({ nodes, edges }) {
  * 2D 그래프 캔버스 — 줌·팬·노드 드래그·호버 로컬 포커스·더블클릭 로컬 그래프.
  * props: docs, agents, onSelectDoc(rel), focusRel(선택 문서 — 있으면 깊이 2 로컬 그래프로 수렴), compact(뷰어 우측 미니)
  */
-export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compact = false, height = '100%', nodeShape = 'star' }) { // nodeShape: 'star'(성도 — 아르고 기억) | 'circle'(옵시디언식 원 — 메신저 활동, 유건 지시 2026-09-04)
+export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compact = false, height = '100%' }) {
   const { t } = useLang();
   const ref = useRef(null);
   const cb = useRef({}); cb.current = { onSelectDoc };
-  const shapeRef = useRef(nodeShape); shapeRef.current = nodeShape; // 프레임마다 읽는다 — 의존 배열(8개 고정, 재실행 루프 핀)에 안 끼운다
   const [showCrew, setShowCrew] = useState(false);
   const [showOrphans, setShowOrphans] = useState(false);
   const [hiddenOrphans, setHiddenOrphans] = useState(0);
@@ -262,7 +256,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         const r = nodeRadius(n) * rs;
         const f = focus[i];
         if (n.type === 'agent' || hubs.has(i) || i === rootIdx || (anyFocus && f > 0.5)) { specials.push([i, q, r, f]); continue; }
-        if (shapeRef.current === 'circle') { plain.moveTo(q.x + r * 1.1, q.y); plain.arc(q.x, q.y, r * 1.1, 0, Math.PI * 2); } else star4(plain, q.x, q.y, r * 1.35);
+        star4(plain, q.x, q.y, r * 1.35);
       }
       const dim = anyFocus ? 0.22 : 1;
       ctx.fillStyle = `rgba(${INK}, ${0.5 * dim})`; ctx.fill(plain);
@@ -281,16 +275,12 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
           g.addColorStop(0, `rgba(${ACCENT}, ${0.18 * a})`); g.addColorStop(1, `rgba(${ACCENT}, 0)`);
           ctx.fillStyle = g; ctx.beginPath(); ctx.arc(q.x, q.y, r * 2.4, 0, Math.PI * 2); ctx.fill();
           ctx.lineWidth = 0.7; ctx.strokeStyle = `rgba(${ACCENT}, ${0.4 * a})`; ctx.beginPath(); ctx.arc(q.x, q.y, r * 1.9, 0, Math.PI * 2); ctx.stroke();
-          if (shapeRef.current !== 'circle') { // 십자 빛살은 별에만 — 원형은 헤일로·링만(옵시디언 룩)
-            const L = r * (isRoot ? 2.8 : 2.3);
-            ctx.lineWidth = 1; ctx.strokeStyle = `rgba(${ACCENT}, ${0.9 * a})`;
-            ctx.beginPath(); ctx.moveTo(q.x - L, q.y); ctx.lineTo(q.x + L, q.y); ctx.moveTo(q.x, q.y - L); ctx.lineTo(q.x, q.y + L); ctx.stroke();
-          }
+          const L = r * (isRoot ? 2.8 : 2.3);
+          ctx.lineWidth = 1; ctx.strokeStyle = `rgba(${ACCENT}, ${0.9 * a})`;
+          ctx.beginPath(); ctx.moveTo(q.x - L, q.y); ctx.lineTo(q.x + L, q.y); ctx.moveTo(q.x, q.y - L); ctx.lineTo(q.x, q.y + L); ctx.stroke();
           ctx.fillStyle = `rgba(${ACCENT}, ${0.95 * a})`;
         } else ctx.fillStyle = `rgba(${INK}, ${0.5 * a})`;
-        const sp = new Path2D();
-        if (shapeRef.current === 'circle') { const rr = r * (big ? 1.45 : 1.1); sp.moveTo(q.x + rr, q.y); sp.arc(q.x, q.y, rr, 0, Math.PI * 2); } else star4(sp, q.x, q.y, r * (big ? 1.5 : 1.35));
-        ctx.fill(sp);
+        const sp = new Path2D(); star4(sp, q.x, q.y, r * (big ? 1.5 : 1.35)); ctx.fill(sp);
       }
       // 라벨 — 성도의 별 이름처럼 세리프. compact는 중심·호버만, 같은 제목 허브는 프레임당 한 번.
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';

@@ -417,7 +417,8 @@ test('UX 3/3 회사 크루 AI 드롭다운 — 서버 목록(node_info)이 있�
   assert.match(sql, /create or replace function public\.msgr_node_heartbeat\(org uuid, info jsonb default null\)/, 'RPC 2인자');
   assert.match(sql, /node_info = coalesce\(info, node_info\)/, '정보 없는 하트비트는 목록 유지');
   const bridge = read('src/gateway/msgr.mjs');
-  assert.match(bridge, /await db\.nodeHeartbeat\(nodeOrgId, await runnerInfo\(wsId\)\.catch\(\(\) => null\)\)/, '하트비트에 러너 목록');
+  assert.match(bridge, /await db\.nodeHeartbeat\(nodeOrgId, info\)\.catch\(/, '하트비트에 러너 목록(정보 조회는 3초 타임아웃 — 검수 M-5)');
+  assert.match(bridge, /Promise\.race\(\[runnerInfo\(wsId\)\.catch\(\(\) => null\), new Promise\(\(r\) => \{ timer = setTimeout\(r, 3000, null\);/, 'CLI 감지가 멈춰도 생존 신호는 나간다');
 });
 
 test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(내 크루 있으면 차단)·보관(관리 권한만), 1:1 나가기, 게스트 행 세그먼트 오른쪽, 게스트 링크 라벨', () => {
@@ -440,34 +441,43 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   assert.doesNotMatch(app, /Graph2D/, '메신저 활동 페이지는 2D 그래프를 쓰지 않는다');
   const g3 = read('apps/messenger/src/graph3d.jsx');
   assert.match(g3, /import \{ buildGraph2D, stem \} from '@argo\/graph2d-core';/, '3D 그래프 구성은 아르고 코어 재사용(사본 금지)');
+  assert.match(g3, /agents = NO_AGENTS/, '기본 인자는 모듈 상수(렌더마다 새 배열 = 그래프 재구축, 검수 H-1)');
+  assert.match(g3, /const clampD = \(d\) => Math\.max\(far \* 1\.15,/, '줌 하한은 현재 중심 기준 반경(집중 뒤 카메라 뒤 노드 — 검수 H-2)');
+  assert.match(app, /const gdocs = useMemo\(\(\) => gbuilt, \[gkey\]\);/, '그래프 입력은 내용 키로 안정화(30초 재적재마다 재구축 금지)');
+  assert.match(app, /supabase\.rpc\('msgr_create_channel', \{ org: orgId, kind: priv \? 'private' : 'public', name: name\.trim\(\) \}\)/, '채널 생성은 RPC(생성+첫 멤버 한 번 — 생성 직후 열람 예외 폐지)');
+  assert.match(app, /supabase\.rpc\('msgr_create_channel', \{ org: orgId, kind: 'dm', name: `dm:\$\{name\}`, others \}\)/, '1:1도 RPC');
+  assert.doesNotMatch(app, /from\('msgr_channels'\)\.insert\(/, '채널 직접 insert 없음');
+  assert.match(app, /if \(!stuck\) return setErr\(t\('ch\.leave\.checkFailed'\)\);/, '나가기 크루 가드는 조회 실패 시 중단(fail-closed)');
+  assert.match(app, /const chRel = \(c\) => `channels\/\$\{c\.id\}`;/, '채널 키는 id(이름은 유일하지 않다)');
   assert.match(g3, /prefers-reduced-motion: reduce/, '자동 회전은 동작 축소 설정을 존중');
-  assert.match(g3, /rgbVar\('--graph-rgb', null\)/, '3D 그래프도 --graph-rgb 우선');
+  assert.match(g3, /rgbOf\(st, '--graph-rgb', null\)/, '3D 그래프도 --graph-rgb 우선(getComputedStyle은 한 번)');
   assert.match(g3, /canvas\.addEventListener\('wheel', onWheel, \{ passive: false \}\)/, '휠 줌은 페이지 스크롤을 막는다');
-  assert.match(app, /const openTab = \(tab, \{ split = false \} = \{\}\) => \{/, '가로 다중 탭(창·분할 계약 = 기억 페이지 openTab과 같은 서명)');
+  const panes = read('apps/messenger/src/panes.mjs');
+  assert.match(panes, /export function openTab\(panes, focus, tab, \{ split = false \} = \{\}\) \{/, '창·탭 전이는 순수 모듈(행동 테스트 test/msgr-panes.test.mjs가 잠근다)');
+  assert.match(app, /const openTab = \(tab, opts\) => setSt\(\(s\) => Panes\.openTab\(s\.panes, s\.focus, tab, opts\)\);/, 'Activity는 전이를 위임하고 상태 하나(setSt)만 쓴다 — 업데이터 안 다른 setState 없음');
+  assert.doesNotMatch(app.slice(app.indexOf('function Activity(')), /setPanes\(|setFocusPane\] = useState/, '옛 이중 상태 없음');
   assert.match(app, /className="vault-tab-x" onClick=\{\(e\) => \{ e\.stopPropagation\(\); closeTab\(pane\.id, tb\.id\); \}\}/, '탭 닫기(창 단위)');
   assert.match(app, /^function ActRow\(\{ c, id, label, sub, depth = 0, kids = null, icon = null \}\) \{/m, '트리 행은 모듈 수준 컴포넌트(안에서 정의하면 클릭마다 리마운트)');
   assert.doesNotMatch(app.slice(app.indexOf('function Activity(')), /const Row = \(/, 'Activity 안에 행 컴포넌트를 정의하지 않는다');
   assert.match(app, /const chKey = channels\.map\(\(c\) => c\.id\)\.join\(','\);\n\s*const load = useCallback\(/, '재조회는 채널 id 목록 키(배열 정체 아님) + 저장 뒤 재사용');
   assert.match(app, /onAuxClick=\{\(e\) => \{ if \(e\.button === 1\) \{ e\.preventDefault\(\); closeTab\(pane\.id, tb\.id\); \} \}\}/, '가운데 클릭 닫기(창 단위)');
-  assert.match(app, /const closeAll = \(paneId\) => keepIn\(paneId, \(\) => false\);/, '모두 닫기(창 단위)');
+  assert.match(app, /const closeAll = \(paneId\) => setSt\(\(s\) => Panes\.closeAll\(s\.panes, s\.focus, paneId\)\);/, '모두 닫기(창 단위, 순수 전이)');
   assert.match(app, /onSelectDoc=\{\(rel\) => openEntity\(relOfDoc\(rel\), \{ split: true \}\)\}/, '그래프 노드 클릭 = 옆 창에 열기(아르고 기억 페이지와 같은 모양)');
-  assert.match(app, /const MAX_PANES = 2;/, '창은 둘까지');
+  assert.match(panes, /export const MAX_PANES = 2;/, '창은 둘까지');
   const g2 = read('app/c/[ws]/graph2d.jsx');
-  assert.match(g2, /nodeShape = 'star'/, '아르고 기억 그래프 기본은 별(변경 없음)');
-  assert.match(g2, /const explicit = parseRgb\(st\.getPropertyValue\('--graph-rgb'\)\.trim\(\)\);/, '--graph-rgb 최우선');
-  assert.match(g2, /if \(!explicit && \(acc\.length !== 3/, '명시 --graph-rgb는 무채색 폴백(파랑)을 타지 않는다');
+  assert.doesNotMatch(g2, /nodeShape|--graph-rgb/, '아르고 본체 기억 그래프는 손대지 않는다(검수 M-3·M-4: 소비자 0인 분기·linen 포인트색 변경 되돌림)');
+  assert.doesNotMatch(read('apps/messenger/vite.config.js'), /@argo\/graph2d'/, '메신저는 본체 2D 렌더러를 쓰지 않는다(별칭 제거)');
   const css = read('apps/messenger/src/styles.css');
   assert.match(css, /:root\[data-theme='linen'\], :root\[data-theme='linen-light'\] \{ --graph-rgb: 38, 36, 31; --graph-paper-rgb: 233, 230, 223; \}/, '메신저 linen — 노드는 흑백(잉크), 판은 --bg와 같은 베이지');
   assert.match(css, /\.msgr-actsplit \{[^}]*background: var\(--bg\);/, '기억 페이지 판은 상단 바와 같은 베이지 한 판');
   assert.match(css, /\.msgr-acttree \{[^}]*background: var\(--bg\);/, '트리도 같은 판');
   const g3b = read('apps/messenger/src/graph3d.jsx');
   assert.match(g3b, /ACC = g \|\| \(m && chroma\(m\) && m\)/, '3D도 명시 --graph-rgb는 채도 검사 면제');
-  assert.match(g3b, /PAPER = rgbVar\('--graph-paper-rgb', null\) \|\| rgbVar\('--paper-rgb', PAPER\);/, '그래프 판 색은 --graph-paper-rgb 우선(판과 같은 색이라야 노드 테두리 링이 맞는다)');
+  assert.match(g3b, /PAPER = rgbOf\(st, '--graph-paper-rgb', null\) \|\| rgbOf\(st, '--paper-rgb', PAPER\);/, '그래프 판 색은 --graph-paper-rgb 우선(판과 같은 색이라야 노드 테두리 링이 맞는다)');
   assert.match(g3b, /api\.current = \{ \/\/ 줌 버튼/, '줌 버튼 API — 휠·트랙패드 없이도 확대·축소');
   assert.match(g3b, /const dr = RED \? 0 : 1\.5;/, '노드 부유는 동작 축소 설정에서 멈춘다');
   assert.match(g3b, /glow\[i\] \+= \(want\(i\) - glow\[i\]\) \* 0\.16;/, '호버 강조는 이징(툭 끊기지 않게)');
   assert.doesNotMatch(g3b, /기하학적 지평/, '지평선 장식 제거(미니멀)');
-  assert.match(g2, /if \(shapeRef\.current === 'circle'\) \{ plain\.moveTo/, '원형 노드 분기(의존 배열 밖 ref)');
   assert.ok(!/\['audit', 'set\.tab\.audit'\]/.test(app), '설정의 기록 탭 제거');
   assert.match(app, /return lang === 'en' \? out : koJosa\(out\);/, '한국어 조사 처리');
   const dict = read('apps/messenger/src/i18n.js');
@@ -476,5 +486,12 @@ test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→�
   for (const a of actions) if (!a.endsWith('.')) assert.ok(dict.includes(`'act.${a}':`), `문장 사전 act.${a}`); // 'approval.'·'doc.'은 서버가 상태·연산을 이어 붙이는 접두 — 아래 완성형으로 확인
   for (const a of ['approval.approved', 'approval.rejected', 'doc.insert', 'doc.update', 'doc.delete', 'channel.admins.none']) assert.ok(dict.includes(`'act.${a}':`), `문장 사전 act.${a}`);
   const vite = read('apps/messenger/vite.config.js');
-  assert.match(vite, /'@argo\/graph2d': shared\('app\/c\/\[ws\]\/graph2d\.jsx'\)/, '그래프 별칭');
+});
+
+test('i18n 전수 스윕 — App.jsx·graph3d.jsx의 정적 t(\'키\')는 전부 사전에 ko/en 쌍으로 있다(검수 M-7: 손 목록만 보던 검사기)', () => {
+  const dict = new Map(); for (const m of msgrI18n.matchAll(/^\s*'([^']+)': \[('[^']*'|"[^"]*"), ('[^']*'|"[^"]*")\]/gm)) dict.set(m[1], true);
+  const used = new Set(); for (const src of [app, read('apps/messenger/src/graph3d.jsx')]) for (const m of src.matchAll(/\bt\('([a-z0-9.]+)'/g)) used.add(m[1]);
+  const missing = [...used].filter((k) => !dict.has(k));
+  assert.deepEqual(missing, [], `사전에 없는 키: ${missing.join(', ')}`);
+  assert.ok(used.size > 150, `스윕이 실제로 키를 모았다(${used.size})`);
 });

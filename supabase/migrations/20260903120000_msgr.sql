@@ -1841,3 +1841,75 @@ create policy msgr_channels_select on public.msgr_channels for select to authent
   using ((kind = 'public' and public.msgr_role(org_id) in ('owner', 'admin', 'member'))
       or (created_by = (select auth.uid()) and public.msgr_is_member(org_id) and not public.msgr_channel_has_users(id))
       or (public.msgr_is_channel_user(id) and public.msgr_is_member(org_id)));
+
+-- ═══ 분리 검수(2026-09-05) 반영 ═══════════════════════════════════════════════════════════════
+-- SEC-HIGH-1: "사람 멤버 0명이면 생성자 열람" 조항은 마지막 사람이 나간 뒤 생성자를 되살렸다(로컬 스택 실측). 생성과 첫 멤버 등록을 RPC 한 번으로 묶어
+--   "생성 직후(insert … returning)" 창 자체를 없애고, 열람·목록·관리 판정에서 생성자 예외를 걷어낸다 — 비공개·1:1은 멤버십만이 자격, 공개는 조직 역할.
+create or replace function public.msgr_create_channel(org uuid, kind text, name text, others jsonb default '[]'::jsonb) returns uuid
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare me uuid := auth.uid(); ch uuid; r jsonb;
+begin
+  if me is null then raise exception 'msgr_auth_required'; end if;
+  if kind not in ('public', 'private', 'dm') then raise exception 'msgr_bad_kind'; end if;
+  if not coalesce(public.msgr_role(org) in ('owner', 'admin', 'member'), false) or coalesce(public.msgr_org_locked(org), false) then raise exception 'msgr_forbidden'; end if; -- 역할 NULL(비멤버)은 not(null)=null이라 IF를 통과한다 — coalesce 필수(드릴이 적발)
+  insert into public.msgr_channels (org_id, kind, name, created_by) values (org, kind, name, me) returning id into ch; -- 한도·정책 트리거는 그대로 돈다
+  if kind <> 'public' then
+    insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values (ch, 'user', me, me);
+    for r in select value from jsonb_array_elements(coalesce(others, '[]'::jsonb)) loop
+      if (r->>'kind') not in ('user', 'crew') or (r->>'id') is null or not public.msgr_channel_member_ok(ch, r->>'kind', (r->>'id')::uuid) then raise exception 'msgr_bad_member'; end if;
+      insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values (ch, r->>'kind', (r->>'id')::uuid, me) on conflict do nothing;
+    end loop;
+  end if;
+  return ch;
+end $$;
+revoke all on function public.msgr_create_channel(uuid, text, text, jsonb) from public;
+revoke execute on function public.msgr_create_channel(uuid, text, text, jsonb) from anon;
+grant execute on function public.msgr_create_channel(uuid, text, text, jsonb) to authenticated;
+create or replace function public.msgr_can_read_channel(ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select exists (
+      select 1 from public.msgr_channels c
+       where c.id = ch and (
+         (c.kind = 'public' and public.msgr_role(c.org_id) in ('owner', 'admin', 'member'))
+         or exists (select 1 from public.msgr_channel_members m
+                     where m.channel_id = c.id and m.member_kind = 'user' and m.member_id = auth.uid()
+                       and public.msgr_is_member(c.org_id))
+       )
+    )
+$$;
+drop policy if exists msgr_channels_select on public.msgr_channels;
+create policy msgr_channels_select on public.msgr_channels for select to authenticated
+  using ((kind = 'public' and public.msgr_role(org_id) in ('owner', 'admin', 'member'))
+      or (public.msgr_is_channel_user(id) and public.msgr_is_member(org_id)));
+drop function if exists public.msgr_channel_has_users(uuid); -- 생성자 예외와 함께 퇴장(누구나 부를 수 있던 "멤버 있나" 오라클)
+-- 관리 자격도 멤버십에 묶는다: 비공개·1:1을 만든 사람(또는 채널 관리자)이 나가면 자기를 다시 넣을 수 없다. 공개 채널은 멤버 행이 없으니 생성자 그대로.
+create or replace function public.msgr_can_manage_channel(ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select exists (select 1 from public.msgr_channels c where c.id = ch
+                     and (((c.created_by = auth.uid() or auth.uid() = any (c.admin_user_ids)) and (c.kind = 'public' or public.msgr_is_channel_user(c.id)))
+                          or (c.kind <> 'dm' and coalesce(public.msgr_is_admin(c.org_id), false)))
+                     and coalesce(public.msgr_is_member(c.org_id), false))
+$$;
+-- SEC-MED-1: node_info는 회사 노드(서비스 계정)만 쓴다 — 관리자의 직접 update와 16KB 초과를 트리거가 막는다. RPC는 초과 정보만 버리고 생존 신호는 남긴다(상한이 '연결됨'을 끄지 않게 — 검수 LOW).
+create or replace function public.msgr_org_node_info_guard() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if new.node_info is distinct from old.node_info then
+    if auth.uid() is null or auth.uid() is distinct from old.service_user_id then raise exception 'msgr_node_only'; end if;
+    if new.node_info is not null and pg_column_size(new.node_info) > 16384 then raise exception 'msgr_node_info_too_big'; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists msgr_org_node_info_guard on public.msgr_orgs;
+create trigger msgr_org_node_info_guard before update of node_info on public.msgr_orgs for each row execute function public.msgr_org_node_info_guard();
+create or replace function public.msgr_node_heartbeat(org uuid, info jsonb default null) returns boolean
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is null then raise exception 'msgr_auth_required'; end if;
+  if info is not null and pg_column_size(info) > 16384 then info := null; end if; -- 정보만 버리고 생존 신호는 찍는다
+  update public.msgr_orgs set node_seen_at = now(), node_info = coalesce(info, node_info) where id = org and service_user_id = auth.uid() and deleted_at is null;
+  return found;
+end $$;
+-- SEC-MED-3: 표시명 길이는 화면(maxLength 40)뿐이었다 — DB 제약(기존 행은 검사하지 않는 not valid).
+alter table public.msgr_org_members drop constraint if exists msgr_members_display_name_len;
+alter table public.msgr_org_members add constraint msgr_members_display_name_len check (display_name is null or (length(display_name) between 1 and 40 and display_name !~ '[\r\n]')) not valid;

@@ -438,6 +438,8 @@ export const DICT = {
   'ch.menu.settings': ['채널 설정 열기', 'Open channel settings'],
   'ch.leave': ['채널 나가기', 'Leave channel'],
   'ch.leave.confirm': ['정말 나가기', 'Leave for real'],
+  'ch.leave.checkFailed': ['크루 확인에 실패해 나가기를 멈췄습니다. 다시 시도하세요.', 'Couldn’t verify your crews, so leaving was stopped. Try again.'],
+  'ch.dup': ['같은 이름의 채널이 이미 있습니다.', 'A channel with that name already exists.'],
   'ch.leave.confirm.note': ['다시 들어오려면 초대가 필요합니다', 'You’ll need an invite to return'],
   'ch.leave.done': ['#{name}에서 나왔습니다.', 'You left #{name}.'],
   'ch.leave.blocked': ['내 크루가 이 채널에 있어 나갈 수 없습니다. 참여 구성에서 크루를 먼저 빼세요.', 'Your crew is in this channel, so you can’t leave yet. Remove the crew first.'],

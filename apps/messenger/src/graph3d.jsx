@@ -5,12 +5,13 @@
 import { useEffect, useRef } from 'react';
 import { buildGraph2D, stem } from '@argo/graph2d-core';
 
-const rgbVar = (name, fb) => { const a = getComputedStyle(document.documentElement).getPropertyValue(name).trim().split(',').map(Number); return a.length === 3 && !a.some(Number.isNaN) ? a : fb; };
+const rgbOf = (st, name, fb) => { const a = st.getPropertyValue(name).trim().split(',').map(Number); return a.length === 3 && !a.some(Number.isNaN) ? a : fb; };
+const NO_AGENTS = []; // 기본값을 호출마다 새 배열로 만들면 의존 배열이 매 렌더 바뀌어 그래프가 통째로 재구축된다(검수 H-1)
 const chroma = (a) => Math.max(...a) - Math.min(...a) >= 40;
 const reduced = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const TAU = Math.PI * 2;
 
-export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, height = '100%', hint = '', labels = {} }) {
+export function Graph3D({ docs, agents = NO_AGENTS, focusRel = null, onSelectDoc, height = '100%', hint = '', labels = {} }) {
   const ref = useRef(null); const cb = useRef({}); cb.current = { onSelectDoc };
   const api = useRef({});
   useEffect(() => {
@@ -37,17 +38,21 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, heigh
     // 카메라 — 현재값과 목표값
     const home = fi >= 0 ? { x: P[fi].x, y: P[fi].y, z: P[fi].z } : { x: 0, y: 0, z: 0 };
     const fitDist = fi >= 0 ? radius * 1.6 : radius * 2.4;
-    const clampD = (d) => Math.max(radius * 1.15, Math.min(radius * 9, d)); // 하한은 노드가 카메라 뒤로 넘어가지 않는 선
+    let far = radius; // 현재 중심에서 가장 먼 노드까지 — 집중(더블클릭)으로 중심이 옮겨가면 반경이 최대 2배까지 커지므로 줌 하한은 이 값으로(검수 H-2)
+    const clampD = (d) => Math.max(far * 1.15, Math.min(radius * 9, d)); // 하한은 노드가 카메라 뒤로 넘어가지 않는 선(zc ≥ 0.15·far > 0)
+    const recenter = (x, y, z) => { tgt.cx = x; tgt.cy = y; tgt.cz = z; far = 40; for (const a of P) far = Math.max(far, Math.hypot(a.x - x, a.y - y, a.z - z)); };
     const cam = { yaw: 0.6, pitch: 0.35, dist: fitDist * 1.6, cx: home.x, cy: home.y, cz: home.z };
     const tgt = { yaw: 0.6, pitch: 0.35, dist: fitDist, cx: home.x, cy: home.y, cz: home.z };
     let vyaw = 0, vpitch = 0, idleAt = performance.now(), dragging = false, moved = 0, last = null, hover = -1, raf = 0, frame = 0, RED = reduced();
     let INK = [42, 40, 36], PAPER = [233, 230, 223], ACC = [176, 82, 30], LAB = ACC, light = true;
+    let FONT = 'Pretendard, sans-serif';
     const colors = () => {
-      INK = rgbVar('--ink-rgb', INK);
+      const st = getComputedStyle(document.documentElement); // 한 번만 읽는다(30프레임마다 6회 호출하던 것)
+      INK = rgbOf(st, '--ink-rgb', INK); FONT = st.getPropertyValue('--font').trim() || FONT;
       // 판 색 — 그래프가 앉는 면과 같아야 한다(노드 테두리 링도 이 색). 메신저는 베이지 판이라 --graph-paper-rgb로 따로 준다.
-      PAPER = rgbVar('--graph-paper-rgb', null) || rgbVar('--paper-rgb', PAPER);
+      PAPER = rgbOf(st, '--graph-paper-rgb', null) || rgbOf(st, '--paper-rgb', PAPER);
       light = (PAPER[0] * 299 + PAPER[1] * 587 + PAPER[2] * 114) / 1000 > 128;
-      const g = rgbVar('--graph-rgb', null), m = rgbVar('--mark-rgb', null), a = rgbVar('--accent-rgb', null);
+      const g = rgbOf(st, '--graph-rgb', null), m = rgbOf(st, '--mark-rgb', null), a = rgbOf(st, '--accent-rgb', null);
       ACC = g || (m && chroma(m) && m) || (a && chroma(a) && a) || (light ? [62, 130, 247] : [120, 170, 255]); // --graph-rgb는 그래프 전용 명시 지정 — 흑백(무채색)이어도 의도이므로 채도 검사를 걸지 않는다
       LAB = light ? ACC.map((v) => Math.round(v * 0.72)) : ACC.map((v) => Math.round(v + (255 - v) * 0.35));
     };
@@ -68,21 +73,21 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, heigh
         const x1 = x0 * cy - z0 * sy, z1 = x0 * sy + z0 * cy; // 요(Y축)
         const y2 = y0 * cp - z1 * sp, z2 = y0 * sp + z1 * cp; // 피치(X축)
         const zc = cam.dist + z2; const f = F / Math.max(zc, 1);
-        proj[i] = { x: W / 2 + x1 * f, y: H / 2 + y2 * f, s: fitDist / Math.max(zc, 1), z: z2 };
+        proj[i] = { x: W / 2 + x1 * f, y: H / 2 + y2 * f, s: fitDist / Math.max(zc, 1), z: z2, behind: zc < 1 }; // 카메라 뒤(중심 이동 과도기)는 그리지도 집지도 않는다
       }
     };
     const nodeR = (i, s) => 3.2 + Math.min(nodes[i].deg, 8) * 0.8 * s * 0.9 + 0.001;
     const draw = (t) => {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = `rgb(${PAPER.join(',')})`; ctx.fillRect(0, 0, W, H);
-      ctx.font = `11.5px ${getComputedStyle(document.documentElement).getPropertyValue('--font') || 'Pretendard, sans-serif'}`;
+      ctx.font = `11.5px ${FONT}`;
       const intro = Math.min(1, frame / 26); // 진입 페이드
       const depthA = (z) => (0.45 + 0.55 * (1 - Math.min(1, Math.max(0, (z + radius) / (2 * radius))))) * intro;
       const want = (i) => ((hover < 0 ? (near ? near.has(i) : true) : (i === hover || adj[hover].has(i))) ? 1 : 0.2);
       for (let i = 0; i < n; i++) glow[i] += (want(i) - glow[i]) * 0.16;
       // 연결선 — 두 끝 노드의 밝기 평균을 따른다
       for (const [i, j] of edges) {
-        const a = proj[i], b = proj[j]; const g = (glow[i] + glow[j]) / 2; const on = g > 0.6;
+        const a = proj[i], b = proj[j]; if (a.behind || b.behind) continue; const g = (glow[i] + glow[j]) / 2; const on = g > 0.6;
         const al = depthA((a.z + b.z) / 2) * (0.06 + 0.3 * Math.max(0, (g - 0.2) / 0.8));
         ctx.strokeStyle = `rgba(${(on ? ACC : INK).join(',')}, ${al})`; ctx.lineWidth = on && hover >= 0 ? 1.3 : 1;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
@@ -91,7 +96,7 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, heigh
       if (hover >= 0 && !RED) {
         const p = (t % 1500) / 1500;
         for (const [i, j] of edges) {
-          if (i !== hover && j !== hover) continue;
+          if ((i !== hover && j !== hover) || proj[i].behind || proj[j].behind) continue;
           const from = proj[i === hover ? i : j], to = proj[i === hover ? j : i];
           ctx.beginPath(); ctx.arc(from.x + (to.x - from.x) * p, from.y + (to.y - from.y) * p, 1.7, 0, TAU);
           ctx.fillStyle = `rgba(${ACC.join(',')}, ${0.5 * (1 - p) * intro})`; ctx.fill();
@@ -100,7 +105,7 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, heigh
       // 노드 — 먼 것부터
       const order = [...Array(n).keys()].sort((i, j) => proj[j].z - proj[i].z);
       for (const i of order) {
-        const q = proj[i]; const r = nodeR(i, q.s); const g = glow[i]; const al = depthA(q.z) * g;
+        const q = proj[i]; if (q.behind) continue; const r = nodeR(i, q.s); const g = glow[i]; const al = depthA(q.z) * g;
         if (g > 0.6 && (nodes[i].deg >= 4 || i === fi || i === hover)) { ctx.beginPath(); ctx.arc(q.x, q.y, r * 1.9, 0, TAU); ctx.strokeStyle = `rgba(${ACC.join(',')}, ${al * 0.4})`; ctx.lineWidth = 1; ctx.stroke(); }
         if (i === hover) { ctx.beginPath(); ctx.arc(q.x, q.y, r * 2.6 + (RED ? 0 : Math.sin(t * 0.0035) * 1.8), 0, TAU); ctx.strokeStyle = `rgba(${ACC.join(',')}, ${0.28 * intro})`; ctx.lineWidth = 1; ctx.stroke(); }
         ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, TAU); ctx.fillStyle = `rgba(${(g > 0.6 ? ACC : INK).join(',')}, ${al})`; ctx.fill();
@@ -108,7 +113,7 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, heigh
       }
       // 라벨 — 허브·집중·호버·이웃(호버 중)만
       for (const i of order) {
-        const q = proj[i]; const show = i === hover || i === fi || (hover >= 0 && adj[hover].has(i)) || (hover < 0 && (near ? near.has(i) : nodes[i].deg >= 3));
+        const q = proj[i]; if (q.behind) continue; const show = i === hover || i === fi || (hover >= 0 && adj[hover].has(i)) || (hover < 0 && (near ? near.has(i) : nodes[i].deg >= 3));
         if (!show) continue;
         const r = nodeR(i, q.s); const al = depthA(q.z) * (i === hover || i === fi ? 1 : 0.8) * glow[i];
         ctx.fillStyle = `rgba(${(i === hover || i === fi || nodes[i].deg >= 4 ? LAB : INK).join(',')}, ${al})`; ctx.textBaseline = 'middle';
@@ -127,10 +132,10 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, heigh
     raf = requestAnimationFrame(loop);
     api.current = { // 줌 버튼 — 휠·트랙패드가 없어도 확대·축소가 되어야 한다(유건 지시)
       zoom: (f) => { tgt.dist = clampD(tgt.dist * f); idleAt = performance.now(); },
-      fit: () => { tgt.cx = home.x; tgt.cy = home.y; tgt.cz = home.z; tgt.dist = fitDist; idleAt = performance.now(); },
+      fit: () => { recenter(home.x, home.y, home.z); tgt.dist = clampD(fitDist); idleAt = performance.now(); },
     };
     const pos = (e) => { const b = canvas.getBoundingClientRect(); return { x: e.clientX - b.left, y: e.clientY - b.top }; };
-    const pick = (p) => { let best = -1, bd = 1e9; for (let i = 0; i < n; i++) { const q = proj[i]; const d = Math.hypot(q.x - p.x, q.y - p.y); const lim = nodeR(i, q.s) + 6; if (d < lim && q.z < bd) { best = i; bd = q.z; } } return best; };
+    const pick = (p) => { let best = -1, bd = 1e9; for (let i = 0; i < n; i++) { const q = proj[i]; if (q.behind) continue; const d = Math.hypot(q.x - p.x, q.y - p.y); const lim = nodeR(i, q.s) + 6; if (d < lim && q.z < bd) { best = i; bd = q.z; } } return best; };
     const onDown = (e) => { if (e.button !== 0) return; dragging = true; moved = 0; last = pos(e); vyaw = 0; vpitch = 0; idleAt = performance.now(); canvas.setPointerCapture?.(e.pointerId); };
     const onMove = (e) => {
       const p = pos(e); idleAt = performance.now();
@@ -138,7 +143,7 @@ export function Graph3D({ docs, agents = [], focusRel = null, onSelectDoc, heigh
       const h = pick(p); if (h !== hover) { hover = h; canvas.style.cursor = h >= 0 ? 'pointer' : 'grab'; }
     };
     const onUp = (e) => { if (!dragging) return; dragging = false; last = null; if (moved < 4) { const h = pick(pos(e)); if (h >= 0 && nodes[h].rel) cb.current.onSelectDoc?.(nodes[h].rel); } };
-    const onDbl = (e) => { e.preventDefault(); const h = pick(pos(e)); if (h >= 0) { tgt.cx = P[h].x; tgt.cy = P[h].y; tgt.cz = P[h].z; tgt.dist = radius * 1.2; idleAt = performance.now(); } else api.current.fit(); };
+    const onDbl = (e) => { e.preventDefault(); const h = pick(pos(e)); if (h >= 0) { recenter(P[h].x, P[h].y, P[h].z); tgt.dist = clampD(radius * 1.2); idleAt = performance.now(); } else api.current.fit(); };
     const onWheel = (e) => { e.preventDefault(); tgt.dist = clampD(tgt.dist * Math.pow(e.ctrlKey ? 1.02 : 1.0028, e.deltaY)); idleAt = performance.now(); }; // ctrl+휠 = 트랙패드 핀치
     const onLeave = () => { hover = -1; canvas.style.cursor = 'grab'; };
     canvas.style.cursor = 'grab'; canvas.style.touchAction = 'none';

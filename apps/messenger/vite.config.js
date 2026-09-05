@@ -12,8 +12,7 @@ export default defineConfig({
     '@argo/theme': shared('app/theme.jsx'),          // ThemeProvider·THEMES·DEFAULT_THEME(graphite) — localStorage 'argo-theme' 공유
     '@argo/ui': shared('app/ui.jsx'),                // Icon·Avatar·Markdown·DropUp·imeGuardWith
     '@argo/i18n': shared('app/i18n.jsx'),            // LangProvider(ui.jsx가 요구) + 테마 라벨
-    '@argo/graph2d': shared('app/c/[ws]/graph2d.jsx'),
-    '@argo/graph2d-core': shared('app/c/[ws]/graph2d-core.mjs'), // 그래프 구성(순수) — 3D 활동 그래프(graph3d.jsx)가 같은 구성을 쓴다 // 기억 그래프 2D(캔버스·테마 토큰) — 활동 페이지가 조직·채널·사람·크루·문서 관계를 같은 룩으로 그린다
+    '@argo/graph2d-core': shared('app/c/[ws]/graph2d-core.mjs'), // 그래프 구성(순수) — 3D 기억 그래프(graph3d.jsx)가 같은 구성을 쓴다(본체 2D 렌더러는 쓰지 않는다)
   } },
   server: { fs: { allow: [shared('.')] } },
   clearScreen: false,

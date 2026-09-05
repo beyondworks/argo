@@ -3,7 +3,8 @@
 // Argo 부품은 .shell/.side(테마 토큰 스코프)·.btn·Markdown·imeGuardWith만 쓰고, 나머지는 styles.css의 .msgr-*.
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Graph3D } from './graph3d.jsx'; // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
+import { Graph3D } from './graph3d.jsx';
+import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './panes.mjs'; // 창·탭 전이(순수) // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
 import { supabase, configured, q } from './supabase.js';
 import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
@@ -205,7 +206,8 @@ function Shell({ session }) {
     setRailMenu(null); setRailConfirm(null);
     const mine = crews.filter((cr) => cr.owner_user_id === uid).map((cr) => cr.id);
     if (mine.length) { // 내 크루가 그 채널에 있으면 내가 빠지는 순간 크루가 조용히 죽는다(검수 HIGH-3) — 먼저 크루를 빼게 한다
-      const stuck = await q(supabase.from('msgr_channel_members').select('member_id').eq('channel_id', c.id).eq('member_kind', 'crew').in('member_id', mine)).catch(() => []);
+      const stuck = await q(supabase.from('msgr_channel_members').select('member_id').eq('channel_id', c.id).eq('member_kind', 'crew').in('member_id', mine)).catch(() => null);
+      if (!stuck) return setErr(t('ch.leave.checkFailed')); // 조회 실패면 통과가 아니라 중단(검수 LOW: fail-open)
       if (stuck.length) return setErr(t('ch.leave.blocked'));
     }
     const res = await supabase.from('msgr_channel_members').delete().eq('channel_id', c.id).eq('member_kind', 'user').eq('member_id', uid).select('member_id');
@@ -252,21 +254,20 @@ function Shell({ session }) {
       }
       const other = kind === 'crew' ? crewOf(id) : members.find((m) => m.user_id === id);
       const name = kind === 'crew' ? other?.display_name : (other?.display_name || id.slice(0, 8));
-      const c = await q(supabase.from('msgr_channels').insert({ org_id: orgId, kind: 'dm', name: `dm:${name}`, created_by: uid }).select('id').single());
-      const rows = [{ channel_id: c.id, member_kind: 'user', member_id: uid, added_by: uid }, { channel_id: c.id, member_kind: kind, member_id: id, added_by: uid }];
-      if (kind === 'crew' && other && other.owner_user_id !== uid) rows.push({ channel_id: c.id, member_kind: 'user', member_id: other.owner_user_id, added_by: uid }); // 크루 = 소유자 동반 규칙
-      await q(supabase.from('msgr_channel_members').insert(rows));
-      await loadOrg(orgId); setChId(c.id); setPage('chat'); setRail(false); setSheet(null);
+      const others = [{ kind, id }];
+      if (kind === 'crew' && other && other.owner_user_id !== uid) others.push({ kind: 'user', id: other.owner_user_id }); // 크루 = 소유자 동반 규칙
+      const cid = await q(supabase.rpc('msgr_create_channel', { org: orgId, kind: 'dm', name: `dm:${name}`, others })); // 나는 서버가 첫 멤버로 넣는다
+      await loadOrg(orgId); setChId(cid); setPage('chat'); setRail(false); setSheet(null);
     } catch (e) { setErr(e.message); }
   };
   const createChannel = async ({ name, kind } = newCh ?? {}) => {
     if (!name?.trim()) return;
     const priv = kind === 'private';
     try {
-      const c = await q(supabase.from('msgr_channels').insert({ org_id: orgId, kind: priv ? 'private' : 'public', name: name.trim(), created_by: uid }).select('id').single());
-      if (priv) await q(supabase.from('msgr_channel_members').insert({ channel_id: c.id, member_kind: 'user', member_id: uid, added_by: uid }));
-      setNewCh(null); await loadOrg(orgId); setChId(c.id); setPage('chat');
-    } catch (e) { setErr(/msgr_channel_limit/.test(e.message) ? t('ch.freeLimit') : e.message); }
+      if (channels.some((c) => c.kind !== 'dm' && c.name.toLowerCase() === name.trim().toLowerCase())) return setErr(t('ch.dup')); // 검수 M-2: 이름이 기억 페이지 밖에서도 표시 키라 동명은 막는다
+      const id = await q(supabase.rpc('msgr_create_channel', { org: orgId, kind: priv ? 'private' : 'public', name: name.trim() })); // 생성+첫 멤버를 서버가 한 번에(생성 직후 열람 예외 폐지 — 검수 HIGH)
+      setNewCh(null); await loadOrg(orgId); setChId(id); setPage('chat');
+    } catch (e) { setErr(/msgr_channel_limit/.test(e.message) ? t('ch.freeLimit') : friendlyErr(e.message, t)); }
   };
   const openNewCh = () => { setNewCh({ name: '', kind: 'public' }); setRail(true); };
   if (orgs === null) return <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
@@ -767,10 +768,8 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
 
 /* ─── 활동 페이지(유건 지시 2026-09-04): 아르고 "기억"처럼 — 왼쪽은 조직 → 채널 → 사람·크루·문서 트리, 오른쪽은 같은 룩의 관계 그래프,
    고른 대상의 활동은 문장으로("유건이 민수를 관리자로 바꿈"). 정본은 서버 감사 로그(msgr_audit_log) — 화면은 이름으로 치환만 한다. ─── */
-const ACT_KIND = { 'org.create': 'org', 'org.transfer': 'org', 'org.transfer.offer': 'org', 'org.transfer.cancel': 'org', 'org.transfer.decline': 'org', 'org.successor': 'org', 'org.service_account': 'org', 'org.domain': 'org', 'org.delete': 'org', 'org.restore': 'org',
-  'member.add': 'member', 'member.role': 'member', 'member.remove': 'member', 'member.delete': 'member', 'member.offboard': 'member', 'member.join.domain': 'member', 'invite.accept': 'member',
-  'channel.admins': 'channel', 'channel.personal_crews': 'channel', 'crew.create': 'crew', 'approval.approved': 'approval', 'approval.rejected': 'approval', 'approval.pending': 'approval', 'policy.update': 'org',
-  'doc.insert': 'doc', 'doc.update': 'doc', 'doc.delete': 'doc', 'doc.proposal.applied': 'doc', 'node.bootstrap': 'org' };
+const docRelOf = (d) => `docs/${d.path.replace(/\.md$/, '')}`; // 문서 → 그래프·탭 id(한 곳)
+
 /* 기억 문서 보기·편집(대상 탭) — 조직 문서 = 조직의 기억(부록 G). 편집권 최종 판정은 RLS(전사=관리자·채널=쓰기 가능 멤버) */
 function MemDoc({ doc, isAdmin, nameOfUser, chName, onSaved, onNote, onError }) {
   const { t, lang } = useT();
@@ -781,7 +780,7 @@ function MemDoc({ doc, isAdmin, nameOfUser, chName, onSaved, onNote, onError }) 
     setBusy(true);
     const res = await supabase.from('msgr_org_docs').update({ title: edit.title.trim(), body: edit.body }).eq('id', doc.id).select('id');
     setBusy(false);
-    if (res.error) return onError(res.error.message);
+    if (res.error) return onError(friendlyErr(res.error.message, t));
     if (!res.data?.length) return onError(t('docs.noEdit'));
     onNote(t('docs.saved')); setEdit(null); await onSaved();
   };
@@ -811,7 +810,7 @@ function MemNew({ org, channelId, uid, onCreated, onNote, onError, onCancel }) {
     setBusy(true);
     const res = await supabase.from('msgr_org_docs').insert({ org_id: org.id, channel_id: channelId ?? null, path: `${creating.folder}/${docSlug(title)}.md`, title, body: '', created_by: uid, updated_by: uid }).select('id, path').single();
     setBusy(false);
-    if (res.error) return onError(/duplicate key|msgr_org_docs_path/.test(res.error.message) ? t('docs.dup') : res.error.message);
+    if (res.error) return onError(/duplicate key|msgr_org_docs_path/.test(res.error.message) ? t('docs.dup') : friendlyErr(res.error.message, t));
     onNote(t('docs.created')); await onCreated(res.data);
   };
   return (
@@ -842,72 +841,43 @@ function ActRow({ c, id, label, sub, depth = 0, kids = null, icon = null }) {
 function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onNote, onError, onBack, onMenu, onOpenChannel }) {
   const { t, lang } = useT();
   const [rows, setRows] = useState(null); const [docs, setDocs] = useState([]); const [cm, setCm] = useState([]);
-  // 창(pane)·탭 — 아르고 기억 페이지와 같은 모양: 그래프 노드를 누르면 옆 창(새 창)에 열리고, 트리는 포커스 창에 연다(유건 지시 2026-09-04)
-  const GRAPH_TAB = { id: 'graph', kind: 'graph' }; const MAX_PANES = 2;
-  const [panes, setPanes] = useState(() => [{ id: 1, tabs: [GRAPH_TAB, { id: 'org', kind: 'entity', rel: 'org' }], active: 'graph' }]);
-  const [focusPane, setFocusPane] = useState(1);
+  // 창(pane)·탭 — 아르고 기억 페이지와 같은 모양: 그래프 노드를 누르면 옆 창(새 창)에 열리고, 트리는 포커스 창에 연다(유건 지시 2026-09-04). 전이는 panes.mjs(순수)
+  const [st, setSt] = useState(() => ({ panes: [{ id: 1, tabs: [GRAPH_TAB, { id: 'org', kind: 'entity', rel: 'org' }], active: 'graph' }], focus: 1 }));
+  const { panes, focus: focusPane } = st;
   const [limits, setLimits] = useState({}); const limitOf = (rel) => limits[rel] ?? 60;
   const [openIds, setOpenIds] = useState(() => new Set(['org', 'channels']));
-  const [tabMenu, setTabMenu] = useState(null); // { paneId, id, x, y }
+  const [tabMenu, setTabMenu] = useState(null); // { paneId, id, x, y } — 탭 우클릭 메뉴
   useEffect(() => { for (const el of document.querySelectorAll('.msgr-actpane .vault-tab.active')) el.scrollIntoView({ inline: 'nearest', block: 'nearest' }); }, [panes]);
   const focusP = panes.find((p) => p.id === focusPane) ?? panes[0];
   const focusTab = focusP.tabs.find((x) => x.id === focusP.active) ?? focusP.tabs[0];
   const sel = focusTab?.kind === 'entity' ? focusTab.rel : 'org';
-  const openTab = (tab, { split = false } = {}) => {
-    setPanes((prev) => {
-      let target = prev.find((p) => p.id === focusPane) ?? prev[0];
-      const next = prev.map((p) => ({ ...p, tabs: [...p.tabs] }));
-      if (split) {
-        const other = next.find((p) => p.id !== target.id);
-        if (other) target = other;
-        else if (next.length < MAX_PANES) { const np = { id: Math.max(...next.map((p) => p.id)) + 1, tabs: [], active: null }; next.push(np); target = np; }
-        setFocusPane(target.id);
-      }
-      const pane = next.find((p) => p.id === target.id);
-      if (!pane.tabs.some((x) => x.id === tab.id)) pane.tabs.push(tab);
-      pane.active = tab.id;
-      return next;
-    });
-  };
+  const openTab = (tab, opts) => setSt((s) => Panes.openTab(s.panes, s.focus, tab, opts));
   const openEntity = (rel, opts) => openTab({ id: rel, kind: 'entity', rel }, opts);
   const relOfDoc = (docRel) => { const id = docRel.replace(/\.md$/, ''); return id.startsWith('org/') ? 'org' : id; };
-  const closeTab = (paneId, tabId) => setPanes((prev) => {
-    const next = prev.map((p) => ({ ...p, tabs: [...p.tabs] })); const pane = next.find((p) => p.id === paneId); if (!pane) return prev;
-    const i = pane.tabs.findIndex((x) => x.id === tabId); if (i < 0) return prev;
-    pane.tabs.splice(i, 1);
-    if (!pane.tabs.length) { if (next.length > 1) { const rest = next.filter((p) => p.id !== paneId); setFocusPane(rest[0].id); return rest; } pane.tabs.push(GRAPH_TAB); pane.active = 'graph'; return next; }
-    if (pane.active === tabId) pane.active = pane.tabs[Math.min(i, pane.tabs.length - 1)].id;
-    return next;
-  });
-  const keepIn = (paneId, pred, activeAfter) => setPanes((prev) => {
-    const next = prev.map((p) => ({ ...p, tabs: [...p.tabs] })); const pane = next.find((p) => p.id === paneId); if (!pane) return prev;
-    pane.tabs = pane.tabs.filter(pred);
-    if (!pane.tabs.length) { if (next.length > 1) { const rest = next.filter((p) => p.id !== paneId); setFocusPane(rest[0].id); return rest; } pane.tabs.push(GRAPH_TAB); }
-    if (!pane.tabs.some((x) => x.id === pane.active)) pane.active = activeAfter && pane.tabs.some((x) => x.id === activeAfter) ? activeAfter : pane.tabs[pane.tabs.length - 1].id;
-    return next;
-  });
-  const closeOthers = (paneId, id) => keepIn(paneId, (x) => x.id === id, id);
-  const closeRight = (paneId, id) => setPanes((prev) => { const next = prev.map((p) => ({ ...p, tabs: [...p.tabs] })); const pane = next.find((p) => p.id === paneId); if (!pane) return prev; const k = pane.tabs.findIndex((x) => x.id === id); pane.tabs = pane.tabs.slice(0, k + 1); if (!pane.tabs.some((x) => x.id === pane.active)) pane.active = id; return next; });
-  const closeAll = (paneId) => keepIn(paneId, () => false);
+  const closeTab = (paneId, tabId) => setSt((s) => Panes.closeTab(s.panes, s.focus, paneId, tabId));
+  const closeOthers = (paneId, id) => setSt((s) => Panes.closeOthers(s.panes, s.focus, paneId, id));
+  const closeRight = (paneId, id) => setSt((s) => Panes.closeRight(s.panes, s.focus, paneId, id));
+  const closeAll = (paneId) => setSt((s) => Panes.closeAll(s.panes, s.focus, paneId));
+  const setFocusPane = (paneId) => setSt((s) => (s.focus === paneId ? s : { ...s, focus: paneId }));
+  const activateTab = (paneId, tabId) => setSt((s) => Panes.setActive(s.panes, s.focus, paneId, tabId));
   const chKey = channels.map((c) => c.id).join(',');
   const load = useCallback(async () => {
     const [a, d, m] = await Promise.all([
       q(supabase.from('msgr_audit_log').select('id, actor_user_id, actor_crew_id, action, target_kind, target_id, meta, at').eq('org_id', org.id).order('at', { ascending: false }).limit(400)).catch(() => []), // 감사 열람은 관리자(RLS) — 멤버는 빈 목록
-      q(supabase.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_by, updated_at').eq('org_id', org.id).order('path')).catch(() => []), // 본문까지 — 문서 탭·[[링크]] 그래프
+      q(supabase.from('msgr_org_docs').select('id, channel_id, path, title, body, version, updated_by, updated_at').eq('org_id', org.id).order('path').limit(400)).catch(() => []), // 본문까지 — 문서 탭·[[링크]] 그래프
       channels.length ? q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', channels.map((c) => c.id))).catch(() => []) : [],
     ]);
     setRows(a); setDocs(d); setCm(m);
   }, [org.id, chKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
   const [creating, setCreating] = useState(null); // 새 기억 폼이 열린 대상(rel)
-  const docRelOf = (d) => `docs/${d.path.replace(/\.md$/, '')}`;
   const chName = (id) => channels.find((c) => c.id === id)?.name ?? t('act.deletedChannel');
   const crewName = (id) => crews.find((c) => c.id === id)?.display_name ?? t('act.deletedCrew');
   const docTitle = (id) => docs.find((d) => d.id === id)?.title ?? null;
   const roleName = (r) => (r ? t(`role.${r}`) : '');
   // 그래프 문서: rel(stem) = 노드 id, [[links]]가 엣지 — 아르고 기억 그래프의 계약 그대로
-  const gdocs = useMemo(() => {
-    const peopleRel = (id) => `people/${id}`; const chRel = (c) => `channels/${c.name}`; const crewRel = (c) => `crews/${c.id}`; const docRel = (d) => `docs/${d.path.replace(/\.md$/, '')}`;
+  const gbuilt = useMemo(() => {
+    const peopleRel = (id) => `people/${id}`; const chRel = (c) => `channels/${c.id}`; const crewRel = (c) => `crews/${c.id}`; const docRel = docRelOf; // 채널은 id로(이름은 유일하지 않다 — 검수 M-2)
     const out = [];
     const visible = channels.filter((c) => c.kind !== 'dm');
     out.push({ rel: `org/${org.slug}.md`, title: org.name, dir: 'doc', links: [...visible.map(chRel), ...members.map((m) => peopleRel(m.user_id))] });
@@ -924,10 +894,12 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
     for (const d of docs) out.push({ rel: `${docRel(d)}.md`, title: d.title, dir: 'doc', links: [...wikiLinks(d.body), ...(d.channel_id ? [] : [`org/${org.slug}`])] });
     return out;
   }, [org, channels, members, crews, docs, cm]);
+  const gkey = JSON.stringify(gbuilt); // 내용 키 — 부모가 30초마다 새 배열을 내려도 그래프는 내용이 바뀔 때만 다시 세운다(검수 H-1)
+  const gdocs = useMemo(() => gbuilt, [gkey]); // eslint-disable-line react-hooks/exhaustive-deps
   // 선택 대상과 행의 관계
   const relOf = (r) => {
     if (r.target_kind === 'user') return `people/${r.target_id}`;
-    if (r.target_kind === 'channel') { const c = channels.find((x) => x.id === r.target_id); return c ? `channels/${c.name}` : null; }
+    if (r.target_kind === 'channel') return channels.some((x) => x.id === r.target_id) ? `channels/${r.target_id}` : null;
     if (r.target_kind === 'crew') return `crews/${r.target_id}`;
     if (r.target_kind === 'doc') { const d = docs.find((x) => x.id === r.target_id); return d ? `docs/${d.path.replace(/\.md$/, '')}` : null; }
     return null;
@@ -935,7 +907,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
   const chOf = (r) => r.meta?.channel ?? r.meta?.channel_id ?? (r.target_kind === 'channel' ? r.target_id : null);
   const matches = (r, sel) => {
     if (sel === 'org') return true;
-    if (sel.startsWith('channels/')) { const c = channels.find((x) => `channels/${x.name}` === sel); return !!c && (chOf(r) === c.id || relOf(r) === sel); }
+    if (sel.startsWith('channels/')) { const cid = sel.slice(9); return channels.some((x) => x.id === cid) && (chOf(r) === cid || relOf(r) === sel); }
     if (sel.startsWith('people/')) return relOf(r) === sel || `people/${r.actor_user_id}` === sel;
     if (sel.startsWith('crews/')) return relOf(r) === sel || `crews/${r.actor_crew_id}` === sel || `crews/${r.meta?.crew_id}` === sel;
     return relOf(r) === sel;
@@ -965,9 +937,9 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
   };
   const toggle = (id) => setOpenIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const rc = { openIds, toggle, sel, active: focusTab?.id ?? 'graph', openTab: (rel) => openEntity(rel) }; // 트리 행 컨텍스트(ActRow는 모듈 수준 — 리마운트 없음)
-  const countFor = (rel) => (rows ?? []).filter((r) => relOf(r) === rel || (rel.startsWith('channels/') && channels.some((c) => `channels/${c.name}` === rel && chOf(r) === c.id))).length;
+  const countFor = (rel) => (rows ?? []).filter((r) => relOf(r) === rel || (rel.startsWith('channels/') && chOf(r) === rel.slice(9))).length;
   const visibleCh = channels.filter((c) => c.kind !== 'dm');
-  const entityTitle = (rel) => rel === 'org' ? org.name : rel.startsWith('channels/') ? `#${rel.slice(9)}` : rel.startsWith('people/') ? nameOfUser(rel.slice(7)) : rel.startsWith('crews/') ? crewName(rel.slice(6)) : rel.startsWith('docs/') ? (docs.find((d) => `docs/${d.path.replace(/\.md$/, '')}` === rel)?.title ?? rel) : rel;
+  const entityTitle = (rel) => rel === 'org' ? org.name : rel.startsWith('channels/') ? `#${channels.find((x) => x.id === rel.slice(9))?.name ?? t('act.deletedChannel')}` : rel.startsWith('people/') ? nameOfUser(rel.slice(7)) : rel.startsWith('crews/') ? crewName(rel.slice(6)) : rel.startsWith('docs/') ? (docs.find((d) => `docs/${d.path.replace(/\.md$/, '')}` === rel)?.title ?? rel) : rel;
   return (<>
     <div className="msgr-top">
       <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
@@ -984,7 +956,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
           <ActRow c={rc} id="org" label={org.name} sub={rows?.length ?? ''} icon="hash" kids={<>
             <ActRow c={rc} id="channels" label={t('act.tree.channels')} sub={visibleCh.length} depth={1} kids={visibleCh.map((c) => {
               const ms = cm.filter((x) => x.channel_id === c.id); const cs = ms.filter((x) => x.member_kind === 'crew'); const ds = docs.filter((d) => d.channel_id === c.id);
-              const rel = `channels/${c.name}`;
+              const rel = `channels/${c.id}`;
               return <ActRow c={rc} key={c.id} id={rel} label={c.name} sub={countFor(rel)} depth={2} icon={c.kind === 'private' ? 'lock' : 'hash'} kids={<>
                 {cs.map((x) => <ActRow c={rc} key={x.member_id} id={`crews/${x.member_id}`} label={crewName(x.member_id)} sub={countFor(`crews/${x.member_id}`)} depth={3} icon="star" />)}
                 {ds.map((d) => <ActRow c={rc} key={d.id} id={`docs/${d.path.replace(/\.md$/, '')}`} label={d.title} depth={3} icon="doc" />)}
@@ -1006,7 +978,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
               <div className="vault-tabs" role="tablist">
                 <div className="msgr-tabscroll">{/* 탭만 가로 스크롤 — 창이 많아져도 오른쪽 동작 버튼은 줄바꿈·잘림 없이 제자리(유건 제보 2026-09-04) */}
                 {pane.tabs.map((tb) => { const title = tb.kind === 'graph' ? t('act.tab.graph') : entityTitle(tb.rel); return (
-                  <div key={tb.id} className={`vault-tab${tb.id === pane.active ? ' active' : ''}`} onClick={() => setPanes((prev) => prev.map((p) => p.id === pane.id ? { ...p, active: tb.id } : p))} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(pane.id, tb.id); } }} onContextMenu={(e) => { e.preventDefault(); const r = e.currentTarget.closest('.msgr-actpane').getBoundingClientRect(); setTabMenu({ paneId: pane.id, id: tb.id, x: e.clientX - r.left, y: e.clientY - r.top }); }} title={title} role="tab" aria-selected={tb.id === pane.active}>
+                  <div key={tb.id} className={`vault-tab${tb.id === pane.active ? ' active' : ''}`} onClick={() => activateTab(pane.id, tb.id)} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(pane.id, tb.id); } }} onContextMenu={(e) => { e.preventDefault(); const r = e.currentTarget.closest('.msgr-actpane').getBoundingClientRect(); setTabMenu({ paneId: pane.id, id: tb.id, x: e.clientX - r.left, y: e.clientY - r.top }); }} title={title} role="tab" aria-selected={tb.id === pane.active}>
                     <span className="vault-tab-title">{title}</span>
                     <button type="button" className="vault-tab-x" onClick={(e) => { e.stopPropagation(); closeTab(pane.id, tb.id); }} aria-label={t('act.closeTab')}>×</button>
                   </div>
@@ -1031,7 +1003,7 @@ function Activity({ org, uid, isAdmin, channels, members, crews, nameOfUser, onN
                   <div className="msgr-actlist">
                     {(() => {
                       const doc = sel.startsWith('docs/') ? docs.find((d) => docRelOf(d) === sel) : null;
-                      const ch = sel.startsWith('channels/') ? channels.find((x) => `channels/${x.name}` === sel) : null;
+                      const ch = sel.startsWith('channels/') ? channels.find((x) => x.id === sel.slice(9)) : null;
                       const scopeDocs = doc ? [] : sel === 'org' ? docs.filter((d) => !d.channel_id) : ch ? docs.filter((d) => d.channel_id === ch.id) : sel.startsWith('people/') ? docs.filter((d) => d.updated_by === sel.slice(7)) : [];
                       const canNew = sel === 'org' ? isAdmin : !!ch;
                       return (<>
