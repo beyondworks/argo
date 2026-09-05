@@ -5,7 +5,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -45,7 +44,6 @@ export function findChrome(env = process.env, platform = process.platform) {
 
 /** 디버깅 포트 준비 대기 상한 — Puppeteer 기본(30초)의 2배. 윈도우 콜드 스타트+Defender 검사+병렬 부하 여유. */
 const LAUNCH_TIMEOUT_MS = 60_000;
-const freePort = () => new Promise((res, rej) => { const s = createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); s.on('error', rej); });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 최소 CDP 클라이언트 — 전역 WebSocket, flatten 세션. */
@@ -113,30 +111,30 @@ export class BrowserSession {
     const bin = findChrome(this.env);
     if (!bin) throw new Error('Chrome/Chromium/Edge/Brave를 찾지 못했습니다 — 설치하거나 ARGO_CHROME_PATH로 경로를 지정하세요(대안: 스킬·도구의 브라우저 MCP)');
     const profile = BrowserSession.profileDir(this.wsId, this.env); await mkdir(profile, { recursive: true });
-    const port = await freePort();
     // --use-mock-keychain / --password-store=basic: OS 키체인을 건드리지 않는다 — 없으면 macOS가 "'Chrome'을 저장할 키체인을 찾을 수 없습니다" 대화상자를
     // 띄운다(실사고 2026-09-05: 테스트·배터리가 반복 실행하며 유건 화면에 계속 뜸). Playwright·Puppeteer의 기본 인자와 같다. 쿠키·로그인은 프로필 안에 유지된다.
     // stderr는 진단용 꼬리만 보관(값 없음 — 크롬은 'DevTools listening' 정도만 쓴다). 파이프는 반드시 소비한다(안 읽으면 크롬이 막힌다).
     const tail = [];
-    this.child = spawn(bin, [`--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-background-networking', '--window-size=1280,900',
+    this.child = spawn(bin, ['--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-background-networking', '--window-size=1280,900',
       '--use-mock-keychain', '--password-store=basic', '--disable-features=PasswordManagerOnboarding,AutofillServerCommunication', '--disable-component-update',
       ...(this.headless ? ['--headless=new', '--hide-scrollbars'] : []), 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], detached: false, windowsHide: true });
-    this.child.stderr.on('data', (d) => { tail.push(String(d)); if (tail.length > 20) tail.shift(); });
+    // 포트는 크롬이 고른다(--remote-debugging-port=0) — 우리가 먼저 빈 포트를 고르면 병렬 프로세스가 그 사이 차지할 수 있다(윈도우 CI 실사고:
+    // 크롬은 살아 있는데 /json/version 무응답 60초). 주소는 크롬이 stderr에 찍는 'DevTools listening on ws://…' 줄에서 읽는다(Puppeteer·Playwright 동일).
+    let wsUrl = null;
+    this.child.stderr.on('data', (d) => { const t = String(d); tail.push(t); if (tail.length > 20) tail.shift(); const m = t.match(/DevTools listening on (ws:\/\/\S+)/); if (m && !wsUrl) wsUrl = m[1]; });
     let spawnErr = null; let exited = null;
     this.child.on('error', (e) => { spawnErr = e; });
     this.child.on('exit', (code, sig) => { exited = { code, sig }; this.alive = false; sessions.delete(this.wsId); this.cdp?.close(); });
-    // 준비 판정은 시간 기준(LAUNCH_TIMEOUT_MS) — 윈도우 러너 실측: 한가할 때 콜드 스타트 4.7초, 전체 스위트 병렬 부하에서는 15초 상한을
-    // 넘겼다(PR #435 CI). 실행 오류·조기 종료는 상한을 기다리지 않고 즉시 실패로 돌린다(원인이 문구에 실린다).
+    // 준비 판정은 시간 기준(LAUNCH_TIMEOUT_MS). 실행 오류·조기 종료는 상한을 기다리지 않고 즉시 실패로 돌린다(원인이 문구에 실린다).
     const diag = () => { const t = tail.join('').trim().split(/\r?\n/).slice(-3).join(' | ').slice(0, 400); return t ? ` — stderr: ${t}` : ''; };
-    const t0 = Date.now(); let info = null;
-    while (!info && Date.now() - t0 < LAUNCH_TIMEOUT_MS) {
+    const t0 = Date.now();
+    while (!wsUrl && Date.now() - t0 < LAUNCH_TIMEOUT_MS) {
       if (spawnErr) throw new Error(`브라우저 실행 실패: ${spawnErr.message}`);
       if (exited) throw new Error(`브라우저가 뜨자마자 종료됐습니다(code ${exited.code ?? exited.sig})${diag()}`);
-      try { const r = await fetch(`http://127.0.0.1:${port}/json/version`); if (r.ok) info = await r.json(); } catch { /* 부팅 중 */ }
-      if (!info) await sleep(250);
+      await sleep(100);
     }
-    if (!info) { this.child.kill(); throw new Error(`브라우저가 ${Math.round(LAUNCH_TIMEOUT_MS / 1000)}초 안에 뜨지 않았습니다${diag()}`); }
-    const ws = new WebSocket(info.webSocketDebuggerUrl);
+    if (!wsUrl) { this.child.kill(); throw new Error(`브라우저가 ${Math.round(LAUNCH_TIMEOUT_MS / 1000)}초 안에 뜨지 않았습니다${diag()}`); }
+    const ws = new WebSocket(wsUrl);
     await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('CDP 연결 실패')); });
     this.cdp = new Cdp(ws);
     const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank' });
