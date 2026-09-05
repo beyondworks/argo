@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFile, readFile, rm } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getFreshDeviceSession, loadDeviceSession, deviceSessionDead, deviceSessionDeadInfo, rejectionKind } from '../src/devicesession.mjs';
@@ -289,4 +289,21 @@ test('게이트 탈출 밸브 — 마지막 시도가 1시간 지났으면 같�
   assert.equal(deviceSessionDeadInfo({ root: root2 }).kind, 'rejected');
   await getFreshDeviceSession({ root: root2, _mkClient: odd });
   assert.deepEqual(calls2, ['rt', 'rt'], '종결 kind가 아니면 종전처럼 재시도');
+});
+
+test('회전 경로는 도장이 똑같아도 디스크를 다시 읽는다 — 같은 크기·같은 mtime 회전(윈도우 CI 실패 조건 재현)', async () => {
+  const root = await mkRoot(3600);
+  const f = join(root, '.device-session.json');
+  const FIXED = new Date(Math.floor(Date.now() / 1000) * 1000); // 초 단위 — utimes 왕복에 소수부가 깎이지 않게
+  utimesSync(f, FIXED, FIXED);
+  const st0 = statSync(f);
+  assert.equal(loadDeviceSession({ root })?.refresh_token, 'rt', '캐시 적재');
+  await writeFile(f, sessJson('rx', -5)); // 다른 사본이 회전 — 실운영은 길이가 같다
+  utimesSync(f, FIXED, FIXED);            // 파일시스템 시각 해상도가 낮으면 mtime까지 같아진다(윈도우 실측)
+  const st1 = statSync(f);
+  assert.equal(`${st1.mtimeMs}:${st1.size}`, `${st0.mtimeMs}:${st0.size}`, '전제 — 도장이 완전히 동일');
+  const calls = [];
+  const out = await getFreshDeviceSession({ root, _mkClient: clientWith(async ({ refresh_token }) => { calls.push(refresh_token); return ok('at3', 'rt3'); }) });
+  assert.deepEqual(calls, ['rx'], '도장이 같아도 옛 토큰(rt)을 보내지 않는다 — 보내면 GoTrue가 가족을 폐기한다');
+  assert.equal(out?.access_token, 'at3');
 });
