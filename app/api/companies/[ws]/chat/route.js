@@ -55,18 +55,20 @@ export async function POST(req, { params }) {
       // 중단했습니다"로 원인을 오도한다(재검수 MEDIUM). 사유는 원문 그대로, 표시 문구는 UI가 t()로.
       const failed = String(e?.message || e);
       const aborted = !!e?.aborted;
+      const failedCode = e?.failCode ?? null; // 실패 코드 표(src/runners/error-class.mjs) — UI 행동 안내·통계
+      const failedOrigin = e?.failOrigin ?? null; // vendor/argo/probe
       // 저장 성공 여부(saved)를 응답에 싣는다 — 클라 낙관 사본은 saved=false일 때만 폴링 병합에서
       // 캐리오버한다. 안 실으면 서버 보존분과 사본이 라운드마다 복제 누적된다(분리 검수 HIGH 시뮬레이션).
       // 기록 실패는 무증상으로 삼키지 않는다(scheduler·routines와 같은 규칙 — 검수 LOW).
-      const saved = await appendTurn(ws, slug, { turnId, userMsg: message.trim(), failed, aborted, attachments })
+      const saved = await appendTurn(ws, slug, { turnId, userMsg: message.trim(), failed, failedCode, failedOrigin, aborted, attachments })
         .then(() => true)
         .catch((err) => { console.error(`[argo] 실패 턴 기록 실패(${ws}/${slug}):`, err?.message ?? err); return false; });
       if (saved) nudgeSync();
-      return Response.json({ error: failed, aborted, saved }, { status: 500 });
+      return Response.json({ error: failed, code: failedCode, origin: failedOrigin, aborted, saved }, { status: 500 });
     }
     // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
-    await appendTurn(ws, slug, { turnId, userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts, fellBack: t.fellBack });
+    await appendTurn(ws, slug, { turnId, userMsg: message.trim(), reply: t.reply, handover, sessionId: t.sessionId, attachments, artifacts: t.artifacts, fellBack: t.fellBack, modelFallback: t.modelFallback });
     nudgeSync(); // 로컬 변경 즉시 다른 기기로 전파(준실시간 — 다음 대기 건너뜀)
     // 크루 길들이기(리서치 접목 F) — 이 라우트는 **사장 직접 대화의 단일 관문**이다(위임·루틴·쪽지
     // 미경유라 "직접 턴" 판정이 구조로 보장된다). 교정 감지는 fire-and-forget: 응답을 막지 않고,
@@ -79,7 +81,7 @@ export async function POST(req, { params }) {
         return detectAndTrack(ws, { userMsg: message.trim(), lang });
       })
       .catch((e) => console.error(`[argo] 교정 감지 실패(${ws}/${slug}):`, e?.message ?? e));
-    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts, ...(t.fellBack ? { fellBack: t.fellBack } : {}) }); // 폴백 안내를 그 턴에 즉시(검수 M1 — 폴링 병합이 같은 길이면 서버 사본을 안 받는다)
+    return Response.json({ reply: t.reply, sessionId: t.sessionId, handover, artifacts: t.artifacts, ...(t.fellBack ? { fellBack: t.fellBack } : {}), ...(t.modelFallback ? { modelFallback: t.modelFallback } : {}) }); // 폴백 안내를 그 턴에 즉시(검수 M1 — 폴링 병합이 같은 길이면 서버 사본을 안 받는다)
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 500 });
   }

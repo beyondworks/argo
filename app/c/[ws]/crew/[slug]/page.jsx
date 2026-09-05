@@ -539,7 +539,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
       setTimeout(loadSuggestions, 4000); // 교정 감지는 응답 뒤 백그라운드로 돈다 — 잠시 후 제안을 당겨온다(검수 M2: 마운트 1회뿐이라 그 턴에 칩이 안 떴다)
-      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ...(r.fellBack ? { fellBack: r.fellBack } : {}) }]); // 폴백 안내 즉시 표시(검수 M1)
+      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ...(r.fellBack ? { fellBack: r.fellBack } : {}), ...(r.modelFallback ? { modelFallback: r.modelFallback } : {}) }]); // 폴백·모델 강등 안내 즉시 표시(검수 M1)
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
       // 실패 턴도 서버가 보존한다(route.js가 failed·aborted로 appendTurn) — 로컬 사본에 같은 필드를
@@ -549,7 +549,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       const failed = err?.data?.failed ?? String(err.message);
       const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true } : {};
       const unsaved = err?.data?.saved === true ? {} : { unsaved: true };
-      setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed, ...aborted, ...unsaved } : m)));
+      // 실패 코드·출처(route.js가 code/origin으로 응답) — 서버 보존분(failedCode)과 같은 필드명으로 로컬 사본에도(렌더 일치)
+      const coded = err?.data?.code ? { failedCode: err.data.code, ...(err.data.origin ? { failedOrigin: err.data.origin } : {}) } : {};
+      setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed, ...coded, ...aborted, ...unsaved } : m)));
       setQueueHeld(true); // 대기열 자동 전송 중지 — 남겨 두고 사장이 판단한다
     } finally {
       setBusy(false);
@@ -890,7 +892,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
               {m.failed && !viewing && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, fontSize: 12, color: 'var(--danger)', maxWidth: '100%' }}>
                   {/* failed는 코드/원문 — 표시 문구는 여기서 사전(t)으로. 서버 보존분·로컬 사본 공통 */}
-                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.aborted ? t('chat.aborted') : t('chat.turnFailed', { msg: m.failed })}</span>
+                  {/* failedCode(error-class.mjs 표) — 원문 대신 "할 일"을 먼저(불변식 C). 코드 없음/미상은 종전 원문 표시 */}
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.failed}>{m.aborted ? t('chat.aborted') : (m.failedCode && m.failedCode !== 'unknown') ? t(`chat.fail.${m.failedCode}`, { msg: m.failed }) : t('chat.turnFailed', { msg: m.failed })}</span>
                   <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy || uploading}
                     onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
                 </div>
@@ -912,6 +915,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                   <p style={{ margin: '0 0 4px', fontSize: 11.5, color: 'var(--fg-2)' }}>
                     {t(m.fellBack.reason === 'auth' ? 'chat.fellBack.auth' : 'chat.fellBack.unavailable',
                       { from: RUNNER_LABELS[m.fellBack.from] ?? m.fellBack.from, to: RUNNER_LABELS[m.fellBack.to] ?? m.fellBack.to })}
+                  </p>
+                )}
+                {/* 모델 강등 고지(불변식 D) — 지정 모델이 이 러너에 없어 기본 모델로 답한 사실. 종전엔 조용히 강등됐다. */}
+                {m.modelFallback && (
+                  <p style={{ margin: '0 0 4px', fontSize: 11.5, color: 'var(--fg-2)' }}>
+                    {t('chat.modelFallback', { wanted: m.modelFallback.wanted, runner: RUNNER_LABELS[m.modelFallback.runner] ?? m.modelFallback.runner })}
                   </p>
                 )}
                 <div className="card" style={{ minWidth: 0, padding: '13px 16px', ...(annotIdx === i ? { borderColor: 'var(--primary)', cursor: 'text' } : {}) }}

@@ -7,6 +7,8 @@ import { dirname, join, resolve } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { appendUsage } from './usage.mjs';
 import { isBilledRunner, visibleRunnerNamesLine } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
+import { RUNNERS } from './runners/catalog.mjs'; // 의존 0 모듈
+import { isKnownModel, normalizeModelId, effectiveModels } from './runners/catalog-remote.mjs'; // 모델 저장 검증(불변식 D)
 import { appendEvent } from './events.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 Codex/Gemini/GLM만 연결해도 영입 가능
 import { isReservedSlug } from './slug.mjs'; // 회의실 내부 이름(room-*)과의 파일 충돌 차단 — 예약어 원천
@@ -319,6 +321,19 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
   }
   if (role !== undefined) md = setFrontmatterKey(md, 'role', role.trim());
   if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
+  // 모델 저장 검증(불변식 D, 2026-09-05) — 러너 목록에 없는 id는 **저장 시점에** 거절한다(종전엔 그대로 저장돼
+  // 턴마다 조용히 기본 모델로 강등 = "모델 바꾸면 오류/무시"). 폐기 id는 원격 alias로 현행 id로 바꿔 저장.
+  // 러너 미지정(회사 기본)이면 어느 러너든 아는 id면 통과 — 실행 러너와 다르면 chat.mjs가 modelFallback으로 고지한다.
+  if (model !== undefined && String(model).trim()) {
+    const rid = (runner !== undefined ? String(runner).trim() : String(before.runner ?? '').trim()) || null;
+    const m = String(model).trim();
+    const known = rid ? isKnownModel(rid, m) : Object.keys(RUNNERS).some((id) => isKnownModel(id, m));
+    if (!known) {
+      const avail = (rid ? effectiveModels(rid) : []).map((x) => x.id).filter(Boolean).slice(0, 12).join(', ');
+      throw new Error(`model_not_in_catalog: ${m}${rid ? ` (${RUNNERS[rid]?.name ?? rid})` : ''}${avail ? ` — 사용 가능 / available: ${avail}` : ''}`);
+    }
+    model = rid ? normalizeModelId(rid, m) : m;
+  }
   if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
   if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = 회사 연결 러너(기본)
   // 추론 강도(요청 2026-07-25) — 화이트리스트 밖 값은 저장하지 않는다(SDK가 거부하는 값이 카드에 굳는 것 방지).

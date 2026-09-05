@@ -171,4 +171,12 @@ export function homeEnv(home, platform = process.platform) {
   return { HOME: home, USERPROFILE: home, ...(m ? { HOMEDRIVE: m[1], HOMEPATH: m[2] } : {}) };
 }
 
+/** 자격 값의 지문(순수) — 검진 엔트리와 턴 전 게이트가 "그때 실패한 그 자격인가"를 대조하는 열쇠.
+    값 자체는 어디에도 남기지 않는다(sha256 16자 — 역산 불가, 충돌은 이 용도에 무해). */
+export function credHash(value) {
+  return createHash('sha256').update(String(value ?? '')).digest('hex').slice(0, 16);
+}
+/** 러너 검진 상태 파일명 — runner-health.mjs(쓰기)와 creds.mjs(턴 전 읽기)가 같은 이름을 본다(순환 임포트 회피). */
+export const HEALTH_FILE_NAME = '.runner-health.json';
+
 export { execP, exists, exec, seedAuthFile }; // 러너 모듈 내부 공용(facade 미노출)

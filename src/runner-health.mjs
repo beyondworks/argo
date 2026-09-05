@@ -16,6 +16,7 @@ import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { appendEvent } from './events.mjs';
 import { RUNNER_AUTH, loadRunnerCred, verifyRunnerCred } from './runners.mjs';
 import { grokExpired } from './runners/grok.mjs';
+import { credHash, HEALTH_FILE_NAME } from './runners/shared.mjs';
 
 export const HEALTH_INTERVAL_MS = 30 * 60_000;            // 기본 30분(계획서 값)
 export const HEALTH_INTERVAL_BILLED_MS = 6 * 60 * 60_000; // 과금 검증 러너는 6시간
@@ -26,7 +27,7 @@ export const HEALTH_BACKOFF_CAP_MS = 24 * 60 * 60_000;     // 백오프 상한 2
     verifyRunnerCred의 그 갈래가 과금인지 보고 이 집합을 갱신한다. */
 export const HEALTH_BILLED_RUNNERS = new Set(['grok']);
 
-const healthFile = (wsId) => join(paths(wsId).root, '.runner-health.json');
+const healthFile = (wsId) => join(paths(wsId).root, HEALTH_FILE_NAME);
 /** 상태 저장 실패 시의 프로세스 내 폴백(검수 MEDIUM-2) — 디스크가 정본, 이건 폭주 방지용 백스톱뿐. */
 const memoState = new Map();
 /** 회사·러너별 결정적 지터(0 ~ 기본 간격의 10%) — 동시 발사 분산용(검수 LOW). 랜덤이 아니라
@@ -55,11 +56,26 @@ export function healthDue(entry, runner, now, { intervalMs, billedIntervalMs, ji
 }
 
 /** 검진 결과를 상태에 반영(순수) — ok:null은 시각만 갱신하고 연속 실패는 건드리지 않는다(제약 ②). */
-export function applyHealthResult(entry, result, now) {
+export function applyHealthResult(entry, result, now, hash = null) {
   const prev = Number(entry?.fails) || 0;
-  if (result?.ok === false) return { at: now, ok: false, fails: prev + 1, ...(result.reason ? { reason: result.reason } : {}) };
+  // credHash = 실패가 **어느 자격**에 대한 것인지(턴 전 게이트가 대조). 자격이 바뀌면 지문이 달라 게이트가 안 탄다.
+  if (result?.ok === false) return { at: now, ok: false, fails: prev + 1, ...(result.reason ? { reason: result.reason } : {}), ...(hash ? { credHash: hash } : {}) };
   if (result?.ok === true) return { at: now, ok: true, fails: 0 };
-  return { ...(entry ?? {}), at: now }; // 판정 불가 — 직전 판정(ok/fails/reason)을 그대로 보존
+  return { ...(entry ?? {}), at: now }; // 판정 불가 — 직전 판정(ok/fails/reason/credHash)을 그대로 보존
+}
+
+/** 턴 실패가 **인증 실패로 확정**됐을 때 chat.mjs가 부른다 — 다음 턴의 턴 전 게이트(creds.mjs runnerCredEnv)가
+    같은 자격으로 다시 쏘지 않게 한다(OpenClaw "must fail loudly" 불변식의 Argo판). 30분 검진을 기다리지 않는다.
+    자격은 지우지 않는다(제약 ③). 전이 이벤트는 검진과 같은 규칙(실패 진입 1회만). */
+export async function markRunnerAuthFail(wsId, runner, credValue, { nowMs = Date.now() } = {}) {
+  const file = healthFile(wsId);
+  const state = await readJson(file, {});
+  const entry = state[runner];
+  const wasFail = entry?.ok === false;
+  state[runner] = applyHealthResult(entry, { ok: false, reason: 'auth' }, nowMs, credHash(credValue));
+  await writeJsonAtomic(file, state);
+  if (!wasFail) await appendEvent(wsId, { type: 'runner-health', runner, ok: false, reason: 'auth', source: 'turn' }).catch(() => {});
+  return state[runner];
 }
 
 /** 한 회사의 연결된 러너를 검진한다. 상태 파일 갱신 + ok:false만 활동 이벤트.
@@ -94,7 +110,7 @@ export async function runHealthChecks(wsId, {
       state[runner] = { ...(entry ?? {}), at: nowMs }; changed = true; continue;
     }
     const r = await verifyFn(runner, cred.type, cred.value).catch(() => ({ ok: null }));
-    const next = applyHealthResult(entry, r, nowMs);
+    const next = applyHealthResult(entry, r, nowMs, credHash(cred.value));
     const wasFail = entry?.ok === false;
     state[runner] = next; changed = true;
     checked.push({ runner, ok: r?.ok ?? null, reason: r?.reason ?? null });

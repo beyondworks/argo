@@ -174,7 +174,7 @@ test('verifyRunnerCred: Gemini 무효 키(HTTP 400 API_KEY_INVALID)를 무효로
   const { verifyRunnerCred } = await import('../src/runners.mjs');
   let restore = mockFetchOnce(async () => new Response(JSON.stringify({ error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT', details: [{ reason: 'API_KEY_INVALID' }] } }), { status: 400 }));
   try {
-    assert.deepEqual(await verifyRunnerCred('gemini', 'apikey', 'bogus'), { ok: false }, '400 API_KEY_INVALID = 무효(이전엔 ok:true로 거짓 통과)');
+    assert.deepEqual(await verifyRunnerCred('gemini', 'apikey', 'bogus'), { ok: false, reason: 'auth' }, '400 API_KEY_INVALID = 무효(이전엔 ok:true로 거짓 통과) — reason:auth는 턴 전 게이트 열쇠(불변식 A)');
   } finally { restore(); }
   restore = mockFetchOnce(async () => new Response(JSON.stringify({ models: [{ name: 'models/gemini-2.5-pro' }] }), { status: 200 }));
   try {
@@ -190,11 +190,11 @@ test('verifyRunnerCred: GLM 무효 키(HTTP 200 + 바디 code:401)를 무효로 
   const { verifyRunnerCred } = await import('../src/runners.mjs');
   let restore = mockFetchOnce(async () => new Response(JSON.stringify({ code: 401, msg: 'token expired or incorrect', success: false }), { status: 200 }));
   try {
-    assert.deepEqual(await verifyRunnerCred('glm', 'apikey', 'bogus'), { ok: false }, 'HTTP 200 바디 401 = 무효(이전엔 ok:true로 거짓 통과)');
+    assert.deepEqual(await verifyRunnerCred('glm', 'apikey', 'bogus'), { ok: false, reason: 'auth' }, 'HTTP 200 바디 401 = 무효(이전엔 ok:true로 거짓 통과)');
   } finally { restore(); }
   restore = mockFetchOnce(async () => new Response('unauthorized', { status: 401 }));
   try {
-    assert.deepEqual(await verifyRunnerCred('glm', 'apikey', 'bogus'), { ok: false }, '진짜 HTTP 401도 무효');
+    assert.deepEqual(await verifyRunnerCred('glm', 'apikey', 'bogus'), { ok: false, reason: 'auth' }, '진짜 HTTP 401도 무효');
   } finally { restore(); }
   restore = mockFetchOnce(async () => new Response(JSON.stringify({ data: [{ type: 'model', id: 'glm-4.6' }], has_more: false }), { status: 200 }));
   try {
@@ -215,7 +215,7 @@ test('verifyRunnerCred: Grok 무효 키(HTTP 400 Incorrect API key)를 무효로
   // 401만 거부하던 구멍으로 "not even a key"까지 통과했다 — gemini(400)·glm(200바디)와 같은 계열.
   let restore = mockFetchOnce(async () => new Response(JSON.stringify({ code: 'invalid-argument', error: 'Incorrect API key provided. You can obtain an API key from https://console.x.ai.' }), { status: 400 }));
   try {
-    assert.deepEqual(await verifyRunnerCred('grok', 'apikey', 'not even a key'), { ok: false }, '400 Incorrect API key = 무효(이전엔 ok:true 거짓 통과)');
+    assert.deepEqual(await verifyRunnerCred('grok', 'apikey', 'not even a key'), { ok: false, reason: 'auth' }, '400 Incorrect API key = 무효(이전엔 ok:true 거짓 통과)');
   } finally { restore(); }
   // 모델 미존재(키는 유효)는 거절하면 안 된다 — xAI가 모델을 키보다 먼저 검사한다
   restore = mockFetchOnce(async () => new Response(JSON.stringify({ code: 'invalid-argument', error: 'Model not found: grok-nope' }), { status: 400 }));
@@ -225,7 +225,7 @@ test('verifyRunnerCred: Grok 무효 키(HTTP 400 Incorrect API key)를 무효로
   // 빈 토큰 = 401 unauthenticated도 무효
   restore = mockFetchOnce(async () => new Response(JSON.stringify({ code: 'unauthenticated:bad-credentials' }), { status: 401 }));
   try {
-    assert.deepEqual(await verifyRunnerCred('grok', 'apikey', 'x'), { ok: false }, '401 bad credentials = 무효');
+    assert.deepEqual(await verifyRunnerCred('grok', 'apikey', 'x'), { ok: false, reason: 'auth' }, '401 bad credentials = 무효');
   } finally { restore(); }
   // 정상 200 응답은 유효
   restore = mockFetchOnce(async () => new Response(JSON.stringify({ id: 'msg_1', type: 'message', content: [{ type: 'text', text: 'hi' }] }), { status: 200 }));
@@ -248,9 +248,9 @@ test('verifyRunnerCred: 정상 401 러너(kimi·codex·claude apikey)는 회귀 
   const { verifyRunnerCred } = await import('../src/runners.mjs');
   let restore = mockFetchOnce(async () => new Response('unauthorized', { status: 401 }));
   try {
-    assert.deepEqual(await verifyRunnerCred('kimi', 'apikey', 'x'), { ok: false }, 'kimi 401 무효');
-    assert.deepEqual(await verifyRunnerCred('codex', 'apikey', 'x'), { ok: false }, 'codex 401 무효');
-    assert.deepEqual(await verifyRunnerCred('claude', 'apikey', 'x'), { ok: false }, 'claude apikey 401 무효');
+    assert.deepEqual(await verifyRunnerCred('kimi', 'apikey', 'x'), { ok: false, reason: 'auth' }, 'kimi 401 무효');
+    assert.deepEqual(await verifyRunnerCred('codex', 'apikey', 'x'), { ok: false, reason: 'auth' }, 'codex 401 무효');
+    assert.deepEqual(await verifyRunnerCred('claude', 'apikey', 'x'), { ok: false, reason: 'auth' }, 'claude apikey 401 무효');
   } finally { restore(); }
   restore = mockFetchOnce(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
   try {

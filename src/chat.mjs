@@ -6,6 +6,9 @@ import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
 import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './persona.mjs';
+import { classifyRunnerError, subscriptionBlockedNotice } from './runners/error-class.mjs'; // 실패 코드 표(불변식 C)
+import { markRunnerAuthFail, HEALTH_BILLED_RUNNERS } from './runner-health.mjs'; // 다음 턴 차단(불변식 A)
+import { effectiveModels, normalizeModelId, loadRemoteCatalog } from './runners/catalog-remote.mjs'; // 원격 카탈로그·alias(불변식 D)
 import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루가 '나중에 하기'를 거는 유일한 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
@@ -24,7 +27,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus } from './runners.mjs';
+import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -783,7 +786,44 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
 // 2026-08-26: 다른 러너가 연결돼 있어도 채팅 턴이 죽고, 영입은 게이트가 달라 살아나는 비대칭).
 // **문구 기준으로만** 추가한다 — `\b400\b`처럼 상태코드 전체를 넣으면 모델 미존재·요청 오류까지
 // 러너 교체로 오분류돼 사용자 고지 없이 실과금 키로 넘어간다(검수 D2).
-export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|incorrect api key|bad credentials|invalid authentication|authentication[_ ]error|api[_ ]?key[_ ]?(?:not valid|invalid)|token (?:is )?(?:expired|revoked|invalid|incorrect)|\b401\b/i;
+export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|incorrect api key|bad credentials|invalid authentication|authentication[_ ]error|api[_ ]?key[_ ]?(?:not valid|invalid)|token (?:is )?(?:expired|revoked|invalid|incorrect)|oauth session expired|\b401\b/i; // 'oauth session expired' — 상주 실패 1위(9건, Claude setup-token 만료)가 어느 갈래에도 안 걸려 자가치유·안내 둘 다 못 받았다(2026-09-05)
+
+/** 턴 실패의 구조화·출처 판정·다음 턴 차단(불변식 A·C, 2026-09-05) — CLI·SDK 두 catch가 같은 함수를 지난다.
+    ① classifyRunnerError로 코드를 붙인다(e.failCode/failOrigin — 스레드·이벤트·UI가 읽는다; 원문은 보존).
+    ② 인증 실패로 분류되면 같은 자격으로 **맨 검증을 1회** 쏜다(유건 기준 "Argo 오류 = 벤더에서도 나야 한다"):
+       벤더가 거절(ok:false) → origin 'vendor' + markRunnerAuthFail → 다음 턴은 runnerCredEnv 게이트가 실행 전에
+       끊는다(같은 자격 재발사 금지 — OpenClaw "did not start the run"). 벤더가 통과(ok:true) → origin 'argo'
+       = 자격은 멀쩡한데 우리 배관이 401을 만든 것(예: 호환 러너 SDK 격리 누락 #430) — 차단하지 않는다(fail-open).
+       판정 불가(null)도 차단하지 않는다. 과금 프로브 러너(grok)는 프로브 없이 원문 기준 'probe'로 남긴다.
+    ③ 구독 차단은 인증 실패가 아니다 — 재연결 안내(runnerAuthNotice) 대신 키 전환 안내로 대체하고 authError를
+       붙이지 않아 자가치유(다른 러너 갈아타기)가 발동하지 않게 한다.
+    ④ 원문만 있는 인증 만료(AUTH_ERR_RE 밖 문구)에도 행동 안내를 덧붙인다 — 사용자가 할 일이 보이게. */
+export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null, verifyFn = verifyRunnerCred, markFn = markRunnerAuthFail, loadCredFn = loadRunnerCred } = {}) {
+  const eMsg = String(e?.message || e);
+  const flags = { aborted: !!e?.aborted, endpointNotFound: !!e?.endpointNotFound, credit: !!e?.credit, crash: isProcessCrash(eMsg), lockup: !!e?.toolLockup, auth: !!(e?.authError || e?.authExpired || AUTH_ERR_RE.test(eMsg)) };
+  const cls = classifyRunnerError(eMsg, { flags });
+  let out = e;
+  let origin = cls.origin;
+  if (cls.code === 'subscription_blocked' && !e?.subscriptionBlocked) {
+    out = Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${subscriptionBlockedNotice(lang, RUNNERS[runner]?.name)}`), { subscriptionBlocked: true, cause: e });
+  } else if (cls.code === 'auth_expired') {
+    if (!e?.authError && !e?.authExpired) out = Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${runnerAuthNotice(lang, runner)}`), { authError: true, cause: e });
+    if (!e?.knownInvalid) { // 게이트가 이미 끊은 턴은 재프로브·재각인 불요(이미 vendor 확정)
+      const c = cred ?? await loadCredFn(wsId, runner).catch(() => null);
+      if (c && c.type !== 'host') {
+        if (HEALTH_BILLED_RUNNERS.has(runner)) { origin = 'probe'; }
+        else {
+          const v = await verifyFn(runner, c.type, c.value).catch(() => ({ ok: null }));
+          origin = v?.ok === false ? 'vendor' : v?.ok === true ? 'argo' : 'probe';
+          if (v?.ok === false) await markFn(wsId, runner, c.value).catch(() => {});
+        }
+      }
+    } else origin = 'vendor';
+  }
+  out.failCode = cls.code;
+  out.failOrigin = origin;
+  return out;
+}
 /** 접근권 게이트 모델(gated:true) 실패 시그니처 — 모델이 없어서가 아니라 이 계정에 권한이 없어서 나는
     에러(Gemini 3.x는 Ultra·유료 전용 — 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
 export const GATED_MODEL_ERR_RE = /requested entity was not found|NOT_FOUND|PERMISSION_DENIED/i;
@@ -883,9 +923,16 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   const tried = excludeWith(__excludeRunners, runner);
   // 폴백이면 크루에 지정된 model은 원래 러너의 것이라 무효 — 폴백 러너의 기본 모델로 실행한다.
   // 무선호(want=null)로 뽑힌 러너도 카드 model이 그 러너 소속일 때만 적용(다른 러너 모델 오적용 방지).
-  const wantModel = modelOverride || meta.model;
-  const effModel = resolved.fellBack ? ''
-    : (wantModel && RUNNERS[runner]?.models.some((m) => m.id === wantModel) ? wantModel : '');
+  // 원격 카탈로그 오버레이(불변식 D) — alias(폐기 id→현행)를 먼저 적용하고, 유효 목록은 코드+오버레이로 판정.
+  // 갱신은 fire-and-forget(TTL 20분) — 턴을 원격 fetch에 묶지 않는다(첫 호출도 디스크 캐시로 즉시 채워진다).
+  loadRemoteCatalog().catch(() => null);
+  const wantModel = normalizeModelId(runner, modelOverride || meta.model);
+  const knownHere = !!(wantModel && effectiveModels(runner).some((m) => m.id === wantModel));
+  const effModel = resolved.fellBack ? '' : (knownHere ? wantModel : '');
+  // 모델 강등 고지 — 지정 모델이 이 러너 목록에 없으면 종전엔 **조용히** 기본 모델로 돌았다("모델 바꾸면
+  // 오류/무시"의 뿌리). 실행은 그대로 기본 모델로 살리고(턴을 죽이지 않는다), 사실을 fellBackInfo와 같은
+  // 통로로 표면에 싣는다 — 스레드(thread.mjs)·UI(chat.modelFallback)가 그린다.
+  const modelFallbackInfo = (!resolved.fellBack && wantModel && !knownHere) ? { modelFallback: { wanted: wantModel, runner } } : {};
   // 러너 대체 고지 — 조용한 폴백은 사용자가 "왜 딴 모델 말투/비용?"을 겪게 한다(신뢰 훼손). 크루가
   // 스스로 한 줄 알리게 지시한다(UI 변경 없이 chat·회의실·경쟁·위임·메신저 전 경로에 자연 반영).
   const rn = (id) => RUNNERS[id]?.name ?? id;
@@ -1102,7 +1149,7 @@ ${lang === 'en'
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, journalRel: relative(p.vault, handover.file), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
       // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파.
       // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
-      return { reply, sessionId: null, handover, artifacts: await artDiff(), ...fellBackInfo };
+      return { reply, sessionId: null, handover, artifacts: await artDiff(), ...fellBackInfo, ...modelFallbackInfo };
     } catch (e) {
       let aborted = abortReg.wasAborted();
       // 인증 오탐 자가 치유 — 이 러너의 자격이 실은 죽어 있던 경우, **죽은 러너를 누적 제외**하고 남은
@@ -1153,9 +1200,9 @@ ${lang === 'en'
       }
       // 크래시 원문("...exited with code 3221225477")만으론 사용자가 아무것도 할 수 없다 — 무엇이 일어났고 무엇이 아닌지를 앞에 붙인다
       if (!aborted && isProcessCrash(e?.message || e)) e = Object.assign(new Error(`${crashHint(lang)} (${String(e.message || e).slice(0, 120)})`), { cause: e });
-      if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
+      if (!aborted) { e = await surfaceRunnerFailure(e, { wsId, runner, lang }); prefixFallbackError(e); } // 구조화·출처·다음 턴 차단(불변식 A·C) → 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
-      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
+      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}), ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
       await clearTurnStatus(wsId, agentSlug);
       // cc 공유 노트 복원 — 소비(takeSharedNotes)가 러너 실행 전이라, 복원 없이는 실패한 턴이 동료가
       // 공유한 맥락을 영구 소실시킨다. 이 프레임이 직접 소비한 경우만(__seedNotes 재시도 프레임 제외).
@@ -1490,12 +1537,16 @@ ${lang === 'en'
       const rebranded = scrubSdkBrand(runner, String(e?.message ?? e));
       if (rebranded !== String(e?.message ?? e)) e = Object.assign(new Error(rebranded), { cause: e, aborted: e?.aborted });
     }
+    // 구조화·출처·다음 턴 차단(불변식 A·C) — **이벤트보다 먼저** 돌아야 failCode/failOrigin이 사건에 실린다.
+    // 아래 surfaced 체인은 이 e를 감싸 새 Error를 만들므로 코드는 throw 직전에 옮겨 싣는다(재프로브 금지 — 1회).
+    if (!aborted) e = await surfaceRunnerFailure(e, { wsId, runner, lang });
     if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
     // 실패도 회사의 사건이다 — 활동 화면의 "오류" 필터가 이 기록을 먹는다
     await appendEvent(wsId, {
       ...evBase, ok: false, ms: Date.now() - t0, steps,
       error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), // 진단 상세(errors[]/stderr 꼬리)까지 실리도록 400
       ...(aborted ? { aborted: true } : {}), // 중단 판정은 필드로(사유 문자열 동등 비교는 다국어화에 fail-open — 검수 관점3, thread aborted 필드 선례)
+      ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}), // 실패 코드 표·출처(vendor/argo/probe)
     });
     await clearTurnStatus(wsId, agentSlug);
     // cc 공유 노트 복원 — CLI 경로와 동일: 이 프레임이 직접 소비한 노트만 최종 실패 시 pending으로 되살린다
@@ -1525,6 +1576,8 @@ ${lang === 'en'
         : (AUTH_ERR_RE.test(eMsg) && !e?.credit && !e?.authError)
           ? Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${runnerAuthNotice(lang, runner)}`), { authError: true, cause: e })
           : e;
+    // failCode/failOrigin은 위(이벤트 전)에서 e에 붙었다 — surfaced가 e를 감싼 새 객체면 옮겨 싣는다(재분류·재프로브 없음)
+    if (surfaced !== e && e?.failCode) Object.assign(surfaced, { failCode: e.failCode, failOrigin: e.failOrigin });
     throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : surfaced;
   } finally {
     abortReg?.release();
@@ -1541,5 +1594,5 @@ ${lang === 'en'
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
   // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
   for (const r of await artDiff()) artifacts.add(r);
-  return { reply, sessionId: sid, handover, costUsd, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
+  return { reply, sessionId: sid, handover, costUsd, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }
