@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, mkdir } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -12,6 +12,11 @@ import { mkdtemp } from './helpers/tmp.mjs';
 
 process.env.HOME = await mkdtemp(join(tmpdir(), 'argo-bc-home-'));
 process.env.USERPROFILE = process.env.HOME;
+// 윈도우 크롬은 USERPROFILE로 기본 데이터 폴더(AppData\Local)를 찾다 실패하면 원격 디버깅을 거부한다
+// ("DevTools remote debugging requires a non-default data directory") — 격리용 임시 USERPROFILE 아래에 그 폴더를 만들어 준다.
+// 윈도우 러너 실측(PR #435 프로브 3): AppData\Local 없음=거부, 있음=0.3초 기동, HOME만 바꾼 경우=무관. 실사용 환경엔 항상 있다.
+await mkdir(join(process.env.HOME, 'AppData', 'Local'), { recursive: true });
+await mkdir(join(process.env.HOME, 'AppData', 'Roaming'), { recursive: true });
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-bc-'));
 process.env.ARGO_MODEL_CATALOG = 'off';
 process.env.ARGO_BROWSER_HEADLESS = '1';
