@@ -173,7 +173,10 @@ test('R3-11 4R. trimMessages 배선 — 상한 초과 전사의 이미지는 최
     { role: 'assistant', content: [{ type: 'tool_use', id: 't', name: 'browser_screenshot', input: {} }] }, { role: 'user', content: [img(chunk + 'Z')] }];
   const out = trimMessages(msgs);
   const images = out.flatMap((m) => (Array.isArray(m.content) ? m.content.flatMap((b) => (b.type === 'tool_result' ? b.content : [b])) : [])).filter((b) => b.type === 'image');
-  assert.ok(images.length <= 1, `이미지 ${images.length}개`); assert.ok(out.length >= 1 && out[0].role === 'user');
+  // 5R: '<= 1'은 0개 붕괴(dropOldImages 배선 제거)에도 초록이었다 — 정확히 1개·최신 데이터·전사 길이 보존·자리표시 존재까지 단언
+  assert.equal(images.length, 1, `이미지 ${images.length}개`); assert.equal(images[0].source.data, chunk + 'Z', '최신 이미지가 남는다');
+  assert.equal(out.length, 5, '전사가 붕괴하지 않는다'); assert.ok(JSON.stringify(out[2]).includes('생략'), '옛 이미지는 자리표시');
+  assert.equal(out[0].role, 'user');
 });
 
 test('R3-12 4R. 게이트 리터럴 방어는 입력의 모든 문자열 잎을 본다(고정 키 목록 우회 차단) — 분할 입력·조합키는 한계로 명시', async () => {
@@ -192,6 +195,12 @@ test('R3-13 4R. 스크린샷 품질 사다리 — 상한이 작으면 품질·�
   try {
     const s = await BrowserSession.get('r3shot'); await s.navigate(`http://127.0.0.1:${srv.address().port}/`);
     const big = await s.screenshotJpeg(Number.MAX_SAFE_INTEGER); const small = await s.screenshotJpeg(1);
+    // 스크롤 뒤 저하단 clip이 현재 뷰포트(pageY)를 가리키는지 — 문서 좌표 0,0이면 뷰포트 밖 백지(5R HIGH)
+    await s.evaluate('(() => { document.body.style.height = "5000px"; window.scrollTo(0, 1800); return 1; })()');
+    const calls = []; const orig = s.send.bind(s); s.send = (m, p) => { if (m === 'Page.captureScreenshot') calls.push(p); return orig(m, p); };
+    try { await s.screenshotJpeg(1); } finally { s.send = orig; }
+    const clipped = calls.filter((p) => p.clip); assert.ok(clipped.length >= 1, '저하단이 돌았다');
+    for (const p of clipped) assert.ok(p.clip.y >= 1700 && p.clip.y <= 1900, `clip.y가 스크롤 위치를 반영: ${p.clip.y}`);
     assert.ok(big.length > 0 && small.length < big.length * 0.6, `사다리 축소: ${big.length} → ${small.length}`);
     assert.ok(small[0] === 0xFF && small[1] === 0xD8, 'JPEG');
   } finally { await closeAllBrowsers(); await new Promise((r) => srv.close(r)); }

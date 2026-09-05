@@ -176,7 +176,7 @@ export class BrowserSession {
   async kill() {
     const c = this.child; if (!c || c.exitCode !== null || c.signalCode !== null) return;
     try { c.kill(); } catch { /* */ }
-    await Promise.race([new Promise((r) => c.once('exit', r)), sleep(1500)]);
+    let t; await Promise.race([new Promise((r) => c.once('exit', r)), new Promise((r) => { t = setTimeout(r, 1500); t.unref?.(); })]); clearTimeout(t); // 타이머가 프로세스 종료를 붙잡지 않게(5R LOW)
     if (c.exitCode === null && c.signalCode === null) { try { c.kill('SIGKILL'); } catch { /* */ } }
   }
   async close() { clearTimeout(this.timer); this.alive = false; if (sessions.get(this.wsId) === this) sessions.delete(this.wsId); try { this.cdp?.close(); } catch { /* */ } await this.kill(); }
@@ -239,7 +239,8 @@ export class BrowserSession {
     let out = null;
     for (const [quality, scale] of SHOT_LADDER) {
       const { layoutViewport: v } = await this.send('Page.getLayoutMetrics');
-      const clip = scale < 1 && v ? { clip: { x: 0, y: 0, width: v.clientWidth, height: v.clientHeight, scale } } : {};
+      // clip은 문서 좌표 — 스크롤 위치(pageX/pageY)를 넣지 않으면 스크롤된 페이지에서 뷰포트 밖(백지)을 찍는다(5R 검수 HIGH 픽셀 실측)
+      const clip = scale < 1 && v ? { clip: { x: v.pageX ?? 0, y: v.pageY ?? 0, width: v.clientWidth, height: v.clientHeight, scale } } : {};
       const r = await this.send('Page.captureScreenshot', { format: 'jpeg', quality, ...clip });
       out = Buffer.from(r.data, 'base64');
       if (out.toString('base64').length <= maxB64) break;
