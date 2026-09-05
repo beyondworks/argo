@@ -113,3 +113,13 @@ test('B5. 배선 핀 — chat.mjs 네이티브 턴 프롬프트에 도구 안내
   assert.match(nq, /if \(out && typeof out === 'object' && Buffer\.isBuffer\(out\.image\)\) blocks = await imageToolResult\(out, \{ cwd, model, env \}\);/);
   assert.match(nq, /content: blocks \?\? \(text\.slice\(0, TOOL_RESULT_CAP\) \|\| '\(empty\)'\)/);
 });
+
+test('B6. 브라우저 기동 실패 판정 — 뜨자마자 종료되는 실행 파일은 상한(60초)을 기다리지 않고 즉시 원인 있는 오류', async () => {
+  // node 실행 파일을 가짜 크롬으로: 크롬 인자('--remote-debugging-port=…')를 node가 잘못된 옵션으로 거절해 즉시 종료(모든 OS 공통).
+  const env = { ...process.env, ARGO_CHROME_PATH: process.execPath, ARGO_ROOT: join(tmpdir(), `argo-bt6-${Date.now()}`, 'workspaces') };
+  const s = new BrowserSession('bt6', { env, headless: true });
+  const t0 = Date.now();
+  await assert.rejects(() => s.launch(), (e) => /뜨자마자 종료|실행 실패/.test(e.message) && !/60초/.test(e.message), '조기 종료가 원인으로 실림');
+  assert.ok(Date.now() - t0 < 15_000, `상한을 기다리지 않는다(${Date.now() - t0}ms)`);
+  await s.close();
+});
