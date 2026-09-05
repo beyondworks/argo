@@ -67,7 +67,7 @@ export async function PUT(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { name, budgetUsd, lang, crewPinned, crewOrder, aliases, defaultRunner, credSync } = await req.json();
+    const { name, budgetUsd, lang, crewPinned, crewOrder, aliases, defaultRunner, credSync, computerUse } = await req.json();
     const patch = {};
     if (credSync !== undefined) {
       // 자격 증명(러너 로그인·봇 토큰·MCP env) 클라우드 동기화 — false만 옵트아웃(부재/true = 현행 유지).
@@ -104,6 +104,7 @@ export async function PUT(req, { params }) {
       if (lang !== 'ko' && lang !== 'en') return Response.json({ error: '언어는 ko 또는 en이어야 합니다' }, { status: 400 });
       patch.lang = lang; // 시스템(크루 생성) 언어 — 크루 답변·기억이 이 언어를 따른다
     }
+    if (computerUse !== undefined) patch.computerUse = computerUse === true; // 컴퓨터 유즈 옵트인 — 불리언만(문자열 'true' 등은 꺼짐으로)
     if (budgetUsd !== undefined) {
       const n = Number(budgetUsd);
       if (!Number.isFinite(n) || n < 0) return Response.json({ error: '예산은 0 이상의 숫자' }, { status: 400 });

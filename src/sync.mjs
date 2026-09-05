@@ -24,7 +24,7 @@ import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
-import { cryptoOn, isSecretRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
+import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
 import { dek, tryClaimDek } from './e2ee.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
@@ -657,7 +657,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     const doWrite = async () => {
       const full = relFull(rel);
       // 복호화된 시크릿(.secrets.json·connections)이 신규 기기 복원 시 0644로 생기지 않게 0600 강제(P1-8).
-      await writeFileAtomic(full, buf, isSecretRel(rel) ? { mode: 0o600 } : undefined);
+      await writeFileAtomic(full, buf, (isSecretRel(rel) || isSecretNameRel(rel)) ? { mode: 0o600 } : undefined); // 자격 파일명(.env·credentials.json…)도 0600
       if (mtime) {
         await utimes(full, new Date(mtime), new Date(mtime));
         // 원격 mtime을 심는 쓰기 — 기억 인덱스 캐시의 변경 판정 키가 mtime+size라, 심은 mtime과

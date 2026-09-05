@@ -2,6 +2,7 @@
 // 실사용 신고(2026-07-19): 크루 영입이 Claude SDK 하드코딩이라 Codex만 연결한 사용자는 영입 자체가
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { nativeOneShot, nativeRunnerEnabled } from './engine/native-query.mjs'; // 하네스 통일 P-A' — 플래그 러너의 원샷도 Argo 엔진으로(같은 러너 두 경로 갈림 제거)
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
 import { effectiveModels } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
@@ -61,7 +62,26 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // (검수 2026-07-27 M-1). 외부 CLI 경로는 이미 timeoutMs로 상한이 있어 두 경로를 맞추는 것이기도 하다.
     // 지연 SLO가 아니라 순수 hang 가드라 넉넉히 잡는다 — 정상 작업을 잘라내면 안 된다.
     hangGuard = setTimeout(() => ac.abort(), timeoutMs);
-    for await (const msg of query({
+    // 모델 선택은 두 엔진이 같은 값을 쓴다(한 곳 정의). openrouter는 카탈로그 검증 — 호출자가 넘긴 타 러너용 모델(예: consolidate의 claude-haiku
+    // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
+    const osModel = runner === 'glm' ? GLM_DEFAULT_MODEL : runner === 'kimi' ? KIMI_DEFAULT_MODEL
+      : runner === 'openrouter' ? (effectiveModels('openrouter').some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL)
+      : runner === 'grok' ? (effectiveModels('grok').some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL)
+      : (model || null);
+    if (nativeRunnerEnabled(runner)) {
+      // 네이티브 엔진(P-A') — 도구 없는 단발 호출. 오류는 `API Error: <status> …`로 던져 아래 catch(자가치유·안내)가 그대로 받는다.
+      let r;
+      try { r = await nativeOneShot({ env: sdkEnv, model: osModel, prompt, signal: ac.signal, lang }); }
+      catch (e) {
+        // SDK 경로는 삼킨 오류 텍스트를 아래에서 openrouter-credit/limit 접두로 승격하지만 네이티브는 바로 throw라 승격 지점을 지나지
+        // 않았다(분리 검수 HIGH-2: 429가 말없이 타 벤더 자가치유로 갈아탐 — 2R 검수 M1 위반). 같은 접두로 승격해 같은 catch 갈래를 태운다.
+        const t = `${String(e?.message ?? e)} ${String(e?.body ?? '')}`;
+        if (runner === 'openrouter' && isOpenRouterCreditError(t)) throw Object.assign(new Error(`openrouter-credit: ${t.slice(0, 140)}`), { cause: e });
+        if (runner === 'openrouter' && isOpenRouterLimitError(t)) throw Object.assign(new Error(`openrouter-limit: ${t.slice(0, 140)}`), { cause: e });
+        throw e;
+      }
+      text = r.text; usage = r.usage; costUsd = null;
+    } else for await (const msg of query({
       prompt,
       options: {
         abortController: ac,
@@ -73,10 +93,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         // openrouter는 카탈로그 검증 — 호출자가 넘긴 타 러너용 모델(예: consolidate의 claude-haiku
         // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1: openrouter-only
         // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
-        ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: KIMI_DEFAULT_MODEL }
-          : runner === 'openrouter' ? { model: effectiveModels('openrouter').some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL }
-          : runner === 'grok' ? { model: effectiveModels('grok').some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL }
-          : (model ? { model } : {})),
+        ...(osModel ? { model: osModel } : {}),
       },
     })) {
       if (msg.type === 'result') {

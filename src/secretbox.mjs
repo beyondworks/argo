@@ -54,8 +54,20 @@ function key1() {
   return k1;
 }
 
-/** 동기화에서 봉투 대상 파일 — 회사 폴더의 크레덴셜 저장소.
-    mcp.json 포함: 호스트 MCP 가져오기가 env(토큰)를 담으므로 클라우드에는 항상 암호문으로. */
+/** 이름으로 판정하는 자격 파일(순수) — 사용자가 vault·작업 폴더에 둔 .env·키·토큰 파일. 클라우드 감사(2026-09-05 실측): 회사 vault의
+    `.env`·`credentials.json`·`token.json`·`*.pem`·k8s `secret.yaml`이 평문으로 올라가 있었다(vault 암호화는 옵트인이라 제어 파일 3종만 봉투였다).
+    유건 지시 "환경변수는 Supabase에 평문으로 남으면 안 돼" → 이 이름들은 제어 파일과 같은 계급(봉투, 키 없으면 미업로드).
+    예시 파일(.env.example/.sample/.template/.dist)은 비밀이 아니라 제외. 공개 CA 번들(cacert.pem·roots.pem)은 봉인해도 무해라 굳이 안 가른다. */
+export const SECRET_NAME_RE = /^(\.env(\.(?!example$|sample$|template$|dist$)[^/]+)?|\.envrc|\.npmrc|\.netrc|\.pypirc|\.git-credentials|\.htpasswd|kubeconfig|auth\.json|credentials(\.json)?|\.credentials\.json|tokens?\.json|id_(rsa|ed25519|ecdsa|dsa)(\.pub)?|[^/]*\.(pem|key|p12|pfx|jks|keystore)|service[-_]?account[^/]*\.json|secrets?(\.[^/]+)?\.(json|ya?ml|env)|settings\.local\.json)$/i;
+export const SECRET_DIR_RE = /(^|\/)\.(aws|ssh|gnupg|codex|config\/gh|azure|kube)\//;
+export const isSecretNameRel = (rel) => { const r = String(rel ?? ''); const base = r.split('/').pop() ?? '';
+  if (/\.(example|sample|template|dist)$/i.test(base)) return false; // .env.local.example 같은 예시 파일은 비밀이 아니다
+  return SECRET_NAME_RE.test(base) || SECRET_DIR_RE.test(r); };
+
+/** 회수·불가시 계급 — 회사 폴더의 크레덴셜 저장소 3종**만**. 호스티드 credSync-off 회수 루프(sync.mjs noSecrets)·마커 판정·엄격 개봉이 이 계급을 쓴다.
+    mcp.json 포함: 호스트 MCP 가져오기가 env(토큰)를 담으므로 클라우드에는 항상 암호문으로.
+    ⚠ 이름 규칙(isSecretNameRel)을 여기에 합치지 않는다 — 합치면 호스티드 동기화가 사용자 문서(.key 키노트·.pem 번들·auth.json…)의
+    클라우드 사본을 26바이트 마커로 덮어 비가역 유실시킨다(분리 검수 CRITICAL-1, 격리 저장소 실측). 이름 규칙은 봉인 계급(isEncRel)에만 태운다. */
 export const isSecretRel = (rel) => rel === 'connections.json' || rel === '.secrets.json' || rel === 'mcp.json';
 
 /** credSync off 회수 마커 — 클라우드의 자격 암호문을 "삭제" 대신 이 내용으로 덮어쓴다(upsert).
@@ -78,7 +90,7 @@ export const encVaultOn = () => process.env.ARGO_ENC_VAULT === '1';
 
 /** 봉투 암호화 대상 — 크레덴셜은 항상, 그 외 동기 대상은 스위치가 켜졌을 때.
     읽기(개봉)는 이 예측자와 무관하게 항상 관용 개봉이라, 다른 기기가 먼저 켜도 안전하다(sync.mjs pullBuf). */
-export const isEncRel = (rel) => isSecretRel(rel) || encVaultOn();
+export const isEncRel = (rel) => isSecretRel(rel) || isSecretNameRel(rel) || encVaultOn(); // 봉인 계급: 제어 3종 + 자격 파일명 + (스위치) 전체
 
 /** 봉투/레거시 평문 겸용 개봉 — 봉투 도입 전에 클라우드에 올라간 평문(mcp.json 등)을 수용한다.
     평문이면 그대로 반환하고, 다음 로컬 변경 push에서 봉투로 승격된다.
