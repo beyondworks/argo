@@ -35,6 +35,8 @@ export function readToolTargets(toolName, input = {}) {
   if (toolName === 'Grep') {
     // glob은 루트 상대 필터가 계약(rg)이지만, 절대경로·`~`·`..`가 오면 곧 경로다 — 네이티브 엔진 실측(분리 검수 CRITICAL-1):
     // `path:'vault', glob:'../.secrets.json'`이 게이트를 통과해 금고를 읽었다. 경로형 glob은 path 기준으로 이어 붙여 판정한다.
+    // ⚠ 한계(재검수 LOW): 와일드카드가 낀 합성 경로(`../*.json`·`~/*`·`/etc/*`)는 isForbidden이 리터럴 파일명으로 봐 통과할 수 있다 —
+    // 이 층은 3중 방어의 바깥이고, 실제 차단은 실행기(경로형 glob 거절)·워커(필터 전용·실경로 봉쇄·심링크 미추종)가 한다.
     const g = typeof input.glob === 'string' ? input.glob : '';
     const absLike = /^(~|\/|[A-Za-z]:[\\/]|\\\\)/.test(g);
     const pathy = absLike || /(^|[\\/])\.\.([\\/]|$)/.test(g);

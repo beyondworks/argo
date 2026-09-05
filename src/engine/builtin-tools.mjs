@@ -2,9 +2,11 @@
 // 그래야 permission-gate(readToolTargets: file_path·path·pattern·glob·command)가 같은 판정을 한다.
 // 하네스 통일의 요점: 어느 러너든 이 도구들이 같은 게이트를 지난다(SDK 경로는 allowedTools 항목이 게이트를 우회했다).
 // 게이트는 1차 방어이고, 실행기 자체도 루트 봉쇄·경로형 인자 거절을 한다(분리 검수 CRITICAL-1: Grep glob이 게이트 밖이었다).
-import { readFile, writeFile, mkdir, glob as fsGlob } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, lstat, realpath, glob as fsGlob } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
+import { fileURLToPath } from 'node:url';
 import { resolve, dirname, isAbsolute, sep } from 'node:path';
 
 const OUT_CAP = 30_000; // 도구 출력 상한(문자) — 모델 문맥 보호
@@ -37,6 +39,22 @@ const cap = (s, n = OUT_CAP) => (s.length > n ? `${s.slice(0, n)}\n…[truncated
 const abs = (cwd, p) => (isAbsolute(String(p)) ? resolve(String(p)) : resolve(cwd, String(p)));
 /** 도구 출력 경로는 OS 무관 `/` — 윈도우 fs.glob이 `a\x.md`를 돌려준다(CI windows-latest 실측 2026-09-05). sepChar 주입은 테스트용. */
 export const posixify = (p, sepChar = sep) => String(p).split(sepChar).join('/');
+
+/** Grep 워커 파일 경로 — 번들러(webpack)가 `new URL('./x', import.meta.url)`을 청크 에셋(/_next/NNNN.js)으로 재작성해 프로덕션·standalone에서
+    MODULE_NOT_FOUND가 났다(재검수 NEW-HIGH-2). 런타임에 실재 파일을 찾는다: ① env 지정 ② cwd 기준 소스(레포 루트 `next start`·standalone의 nft 사본)
+    ③ 실행 파일(server.js) 기준 ④ 소스 실행(테스트·dev)의 import.meta.url. import.meta.url 표현은 nft 추적(standalone 복사)용으로도 남긴다. */
+export function grepWorkerPath({ env = process.env, cwd = process.cwd(), argv1 = process.argv[1] } = {}) {
+  const rel = ['src', 'engine', 'grep-worker.mjs'];
+  const candidates = [
+    env.ARGO_GREP_WORKER,
+    resolve(cwd, ...rel),
+    argv1 ? resolve(dirname(argv1), ...rel) : null,
+    (() => { try { return fileURLToPath(new URL('./grep-worker.mjs', import.meta.url)); } catch { return null; } })(),
+  ].filter(Boolean);
+  const hit = candidates.find((p) => { try { return existsSync(p); } catch { return false; } });
+  if (!hit) throw new Error(`grep worker file not found — tried: ${candidates.join(' | ')}`);
+  return hit;
+}
 
 /** 셸·MCP 자식 env — 러너 자격(ANTHROPIC_*·OAuth)은 크루 명령에 필요 없다. SDK 경로는 상속시켰지만 여기서는 뺀다(시크릿 규칙). */
 export function shellEnv(env = process.env) {
@@ -71,7 +89,8 @@ function runGrep({ cwd, timeoutMs }, input, signal) {
     const glob = input.glob ? String(input.glob) : '';
     if (glob && PATHY_GLOB_RE.test(glob)) return rej(new Error('glob must be a relative filename filter (no absolute paths, ~ or ..)'));
     let re; try { re = new RegExp(String(input.pattern), input['-i'] ? 'i' : ''); } catch (e) { return rej(new Error(`invalid regex: ${e.message}`)); }
-    const w = new Worker(new URL('./grep-worker.mjs', import.meta.url), { workerData: {
+    let file; try { file = grepWorkerPath(); } catch (e) { return rej(e); }
+    const w = new Worker(file, { workerData: {
       root, pattern: re.source, flags: re.flags, glob, mode: input.output_mode || 'files_with_matches', headLimit: Number(input.head_limit) > 0 ? Number(input.head_limit) : 200,
     } });
     let done = false;
@@ -127,8 +146,14 @@ export function builtinRunners({ cwd, env = process.env, fetchImpl = globalThis.
     Glob: async ({ pattern, path }) => {
       if (PATHY_GLOB_RE.test(String(pattern))) throw new Error('pattern must be relative to path (no absolute paths, ~ or ..)');
       const root = path ? abs(cwd, path) : rootAbs; const out = [];
-      const inside = (f) => { const a = resolve(root, f); return a === root || a.startsWith(root + sep); }; // 루트 봉쇄(2중 방어)
-      for await (const f of fsGlob(pattern, { cwd: root, exclude: (p) => SKIP_DIR_RE.test(p) })) { if (!inside(f)) continue; out.push(posixify(f)); if (out.length >= 500) break; }
+      const rootReal = await realpath(root).catch(() => root);
+      // 루트 봉쇄는 실경로 기준 + 심링크 항목 미노출(재검수 NEW-HIGH-1 — 렉시컬 resolve는 심링크를 못 본다, rg·SDK Glob 기본 미추종과 같은 계약)
+      for await (const f of fsGlob(pattern, { cwd: root, exclude: (p) => SKIP_DIR_RE.test(p) })) {
+        const a = resolve(root, f);
+        const ls = await lstat(a).catch(() => null); if (!ls || ls.isSymbolicLink()) continue;
+        const r = await realpath(a).catch(() => null); if (!r || !(r === rootReal || r.startsWith(rootReal + sep))) continue;
+        out.push(posixify(f)); if (out.length >= 500) break;
+      }
       return out.join('\n') || '(no matches)';
     },
     Grep: (input, { signal } = {}) => runGrep({ cwd, timeoutMs: grepTimeoutMs }, input, signal),

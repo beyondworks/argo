@@ -43,7 +43,8 @@ export function sanitizeTranscript(messages) {
     }
     while (out.length && out.at(-1).role === 'user') out.pop();
   }
-  while (out.length && out[0].role !== 'user') out.shift();
+  // 머리는 텍스트를 품은 user여야 한다 — tool_result만 든 user가 머리에 남으면 짝 없는 결과(재검수 LOW, trimMessages와 같은 술어)
+  while (out.length && !(out[0].role === 'user' && (typeof out[0].content === 'string' || out[0].content.some((b) => b?.type !== 'tool_result')))) out.shift();
   return out;
 }
 

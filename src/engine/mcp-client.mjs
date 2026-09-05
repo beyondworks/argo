@@ -56,16 +56,18 @@ async function connectOne(name, def, { env, cwd, timeoutMs }) {
 }
 
 /** 서버 맵(materializeMcpServers 산출) 전부 접속 — 실패는 status:'failed'로. close()는 전 클라이언트 종료. */
-export async function connectMcpServers(servers = {}, { env = process.env, cwd = process.cwd(), timeoutMs = 15_000 } = {}) {
+export async function connectMcpServers(servers = {}, { env = process.env, cwd = process.cwd(), timeoutMs = 8_000 } = {}) {
   const clients = []; const tools = []; const statuses = [];
-  for (const [name, def] of Object.entries(servers ?? {})) {
-    if (!def || typeof def !== 'object') { statuses.push({ name, status: 'failed' }); continue; }
-    try {
-      const c = await connectOne(name, def, { env, cwd, timeoutMs });
-      clients.push(c.client); tools.push(...c.tools); statuses.push({ name, status: 'connected' });
-    } catch (e) {
-      statuses.push({ name, status: 'failed', error: String(e?.message || e).slice(0, 200) });
-    }
+  // 병렬 접속 — 직렬이면 죽은 서버 하나당 상한만큼 턴 시작이 밀린다(재검수 LOW: 15s×2대 = 턴 시작 ~90초). 순서는 입력 순서로 고정.
+  const entries = Object.entries(servers ?? {});
+  const results = await Promise.all(entries.map(async ([name, def]) => {
+    if (!def || typeof def !== 'object') return { name, status: 'failed' };
+    try { const c = await connectOne(name, def, { env, cwd, timeoutMs }); return { name, status: 'connected', c }; }
+    catch (e) { return { name, status: 'failed', error: String(e?.message || e).slice(0, 200) }; }
+  }));
+  for (const r of results) {
+    if (r.c) { clients.push(r.c.client); tools.push(...r.c.tools); statuses.push({ name: r.name, status: 'connected' }); }
+    else statuses.push({ name: r.name, status: r.status, ...(r.error ? { error: r.error } : {}) });
   }
   return { tools, statuses, close: async () => { for (const c of clients) await c.close().catch(() => {}); } };
 }

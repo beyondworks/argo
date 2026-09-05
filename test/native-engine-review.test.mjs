@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, stat, symlink, copyFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
@@ -19,7 +19,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const POSIX = process.platform !== 'win32';
 
 const { nativeQuery } = await import('../src/engine/native-query.mjs');
-const { builtinRunners, parseSearchResults, posixify, PATHY_GLOB_RE } = await import('../src/engine/builtin-tools.mjs');
+const { builtinRunners, parseSearchResults, posixify, PATHY_GLOB_RE, grepWorkerPath, GREP_TIMEOUT_MS } = await import('../src/engine/builtin-tools.mjs');
 const { sanitizeTranscript, saveNativeSession, sessionFile, SESSION_TRIM_TO } = await import('../src/engine/session.mjs');
 const { connectMcpServers } = await import('../src/engine/mcp-client.mjs');
 const { createCompany, paths } = await import('../src/workspace.mjs');
@@ -82,6 +82,9 @@ test('C1. Grep glob 우회 봉쇄 — 금고·타사 워크스페이스·홈 자
     const out = await runWorker(glob);
     assert.ok(!/CREWKEY|OTHER-CANARY|HOME-CANARY/.test(out), `워커 단독으로도 유출 없음: ${glob} → ${out.slice(0, 80)}`);
   }
+  // 계약 핀: glob은 **루트 상대 필터**이지 열거 패턴이 아니다 — 루트 안 파일의 절대경로를 glob으로 주면 필터로는 아무것도 못 고른다
+  // (열거 패턴 자리에 넣는 회귀는 이 파일을 찾아낸다: 실경로 봉쇄만으로는 구분 못 하는 축)
+  assert.equal(await runWorker(join(root, 'vault', 'a.txt')), '(no matches)', 'glob=절대경로는 필터로서 무매치(열거 패턴 회귀 감지)');
 });
 
 test('H1. 크루 도구 노출 집합 = SDK 최종 등재 배열 — 동료 0·커넥터 0이면 delegate·send_to_crew·use_connector 부재, 동료 있으면 등재', async () => {
@@ -237,4 +240,54 @@ test('LOW·R15·R18·R19·R14. WebSearch 파서·경로 정규화·인증 원문
   assert.equal((src.match(/abortReg = registerTurn\(/g) ?? []).length, 2, 'CLI·SDK 두 갈래 각 1회'); assert.doesNotMatch(src, /\n\s*abortReg = (?!registerTurn\()/, '중단 핸들을 뒤에서 덮어쓰지 않는다(R14)');
   assert.match(src, /const tools = \[\n\s*requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask,/, '크루 도구 최종 배열 한 원천');
   assert.match(src, /if \(sink\) sink\.push\(\.\.\.tools\.map\(\(t\) => defs\.get\(t\)\)\.filter\(Boolean\)\);/, 'sink = 최종 배열');
+});
+
+test('SYM. 심링크 미추종(재검수 NEW-HIGH-1) — Grep·Glob이 vault 안 심링크로 금고·홈 자격에 닿지 않고, 내부 심링크도 노출하지 않는다', { skip: !POSIX }, async () => {
+  const root = await company('rv-sym');
+  await writeFile(join(root, '.secrets.json'), '{"k":"WSKEY-CANARY"}');
+  await mkdir(join(process.env.HOME, '.claude'), { recursive: true }); await writeFile(join(process.env.HOME, '.claude', 'creds.json'), '{"t":"HOMECRED-CANARY"}');
+  await writeFile(join(root, 'vault', 'a.txt'), 'CANARY a\n'); await writeFile(join(root, 'vault', 'b.md'), 'CANARY b\n');
+  await symlink(join(root, '.secrets.json'), join(root, 'vault', 'note.json'));            // 파일 심링크 → 금고
+  await symlink(join(process.env.HOME, '.claude', 'creds.json'), join(root, 'vault', 'hc.json')); // 파일 심링크 → 홈 자격
+  await symlink(join(process.env.HOME, '.claude'), join(root, 'vault', 'dir'));               // 디렉터리 심링크 → 홈(하강 시 실경로 루트 밖)
+  await symlink(join(root, 'vault', 'b.md'), join(root, 'vault', 'link.md'));                 // 내부 심링크(실경로는 루트 안 — lstat 층이 단독으로 막는다)
+  const gate = makePermissionGate('rv-sym', 's', root, null, 'ko', []);
+  assert.equal((await gate('Grep', { pattern: 'CANARY', path: 'vault' })).behavior, 'allow', '게이트는 path만 본다 — 실행기가 지켜야 한다');
+  const t = builtinRunners({ cwd: root });
+  assert.equal(await t.Grep({ pattern: 'CANARY', path: 'vault' }), 'a.txt\nb.md', '심링크(금고·홈·디렉터리 하강·내부)는 전부 결과 밖');
+  const g = (await t.Glob({ pattern: '**/*', path: 'vault' })).split('\n');
+  assert.ok(g.includes('a.txt') && g.includes('b.md'), '실파일은 나온다');
+  for (const bad of ['note.json', 'hc.json', 'dir', 'link.md']) assert.ok(!g.some((x) => x === bad || x.startsWith(`${bad}/`)), `Glob 심링크 미노출·하강분 미노출: ${bad}`);
+  const content = await t.Grep({ pattern: 'CANARY', path: 'vault', output_mode: 'content' });
+  assert.ok(!/WSKEY|HOMECRED/.test(content), '내용도 유출 없음');
+});
+
+test('WP·S11·S21. 워커 경로 런타임 해석(번들 재작성 무관)·기본 상한 상수·긴 Grep 중 정지 신호', async () => {
+  // 후보 순서: env > cwd/src/engine > argv1 기준 > 소스 import.meta.url
+  const tmp = await mkdtemp(join(tmpdir(), 'argo-wp-')); await mkdir(join(tmp, 'src', 'engine'), { recursive: true });
+  await copyFile(join(ROOT, 'src', 'engine', 'grep-worker.mjs'), join(tmp, 'src', 'engine', 'grep-worker.mjs'));
+  assert.equal(grepWorkerPath({ env: {}, cwd: tmp, argv1: null }), join(tmp, 'src', 'engine', 'grep-worker.mjs'), 'cwd 기준(standalone·next start)');
+  const alt = await mkdtemp(join(tmpdir(), 'argo-wp2-')); await mkdir(join(alt, 'src', 'engine'), { recursive: true }); await copyFile(join(ROOT, 'src', 'engine', 'grep-worker.mjs'), join(alt, 'src', 'engine', 'grep-worker.mjs'));
+  assert.equal(grepWorkerPath({ env: {}, cwd: '/nonexistent-cwd', argv1: join(alt, 'server.js') }), join(alt, 'src', 'engine', 'grep-worker.mjs'), 'server.js 기준(사이드카)');
+  assert.equal(grepWorkerPath({ env: { ARGO_GREP_WORKER: join(alt, 'src', 'engine', 'grep-worker.mjs') }, cwd: tmp, argv1: null }), join(alt, 'src', 'engine', 'grep-worker.mjs'), 'env 지정이 우선');
+  assert.equal(grepWorkerPath({ env: {}, cwd: '/nonexistent-cwd', argv1: null }), join(ROOT, 'src', 'engine', 'grep-worker.mjs'), '소스 실행 폴백(테스트·dev)');
+  assert.equal(GREP_TIMEOUT_MS, 30_000, '기본 상한 30초(S11)');
+  const root = await company('rv-s21'); await writeFile(join(root, 'vault', 'e.txt'), `${'a'.repeat(60)}!\n`);
+  const srv = await fakeMessages([msg([{ type: 'tool_use', id: 'g1', name: 'Grep', input: { pattern: '(a+)+$', path: 'vault' } }], 'tool_use'), msg([{ type: 'text', text: 'never' }])]);
+  try {
+    const q = nativeQuery({ wsId: 'rv-s21', slug: 's', prompt: 'x', cwd: root, systemPrompt: '', env: env(srv.base), model: 'm', canUseTool: makePermissionGate('rv-s21', 's', root, null, 'ko', []) });
+    const p = collect(q); setTimeout(() => q.interrupt(), 400); const t1 = Date.now();
+    await assert.rejects(Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('interrupt ignored during Grep')), 8000))]), (e) => e.aborted === true);
+    assert.ok(Date.now() - t1 < 6000, '긴 Grep(기본 상한 30초) 중 정지 버튼이 통한다(S21)');
+  } finally { await srv.close(); }
+});
+
+test('LOW. MCP 접속은 병렬(죽은 서버 2대 ≈ 1대 시간)·전사 머리는 텍스트 user', { skip: !POSIX }, async () => {
+  const dead = (n) => ({ command: process.execPath, args: ['-e', `process.title='mcp-dead-${n}-${Date.now()}'; setInterval(() => {}, 1000)`] });
+  const t0 = Date.now(); const one = await connectMcpServers({ a: dead(1) }, { timeoutMs: 1200 }); const t1 = Date.now() - t0; await one.close();
+  const t2 = Date.now(); const two = await connectMcpServers({ a: dead(2), b: dead(3) }, { timeoutMs: 1200 }); const t3 = Date.now() - t2; await two.close();
+  assert.deepEqual(two.statuses.map((s) => s.status), ['failed', 'failed']);
+  assert.ok(t3 < t1 + 1200, `병렬 접속: 2대 ${t3}ms vs 1대 ${t1}ms (직렬이면 상한만큼 더 걸린다)`);
+  assert.deepEqual(sanitizeTranscript([{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'r' }] }, { role: 'assistant', content: [{ type: 'text', text: 'a' }] }, { role: 'user', content: 'q' }, { role: 'assistant', content: [{ type: 'text', text: 'b' }] }]),
+    [{ role: 'user', content: 'q' }, { role: 'assistant', content: [{ type: 'text', text: 'b' }] }], '머리에 tool_result만 든 user가 남지 않는다');
 });
