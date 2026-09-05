@@ -18,6 +18,13 @@ process.env.ARGO_SYNC = '1';
 delete process.env.ARGO_SYNC_ALLOW_MASS_DELETE;
 
 const { syncCompany, _setSyncClientForTest, _tombstonesForTest, isDiscoverDue } = await import('../src/sync.mjs');
+const { ensureAccountKey, clearAccountKey } = await import('../src/accountkey.mjs');
+const { openSecretCompat } = await import('../src/secretbox.mjs');
+// 회사 데이터 전체 봉투(v2)가 기본 켜짐(2026-09-06) — 실환경처럼 계정 키를 확보해야 동기화가 돈다(미확보 = 전체 불가시 보류).
+const fakeKeySb = (b64) => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { key_b64: b64 }, error: null }) }) }) }) });
+await ensureAccountKey(fakeKeySb(Buffer.alloc(32, 9).toString('base64')), 'owner-sync-integration');
+/** 클라우드 사본 판독 — 업로드는 봉투이므로 관용 개봉 뒤 JSON */
+const cloudJson = (buf) => JSON.parse(openSecretCompat(buf).toString());
 const { archiveCompany, TOMBSTONE_DIR } = await import('../src/workspace.mjs');
 
 const OWNER = 'o';
@@ -166,11 +173,11 @@ test('통합: 스레드 양쪽 편집 충돌은 union 병합으로 양쪽 turn �
   // 세션 소유 짝 — sessionId를 제공한 쪽(primary=원격이 최근)의 sessionDevice가 함께 온다
   assert.equal(localMerged.sessionId, 'sess-app', '세션은 최근 편집(로컬 mtime=now > 원격 2000) 쪽으로 수렴');
   assert.equal(localMerged.sessionDevice, 'dev-app', 'sessionDevice가 sessionId와 같은 쪽에서 짝으로 병합');
-  const remoteMerged = JSON.parse(fake._store.get(`${OWNER}/${wsId}/chats/team.json`).toString());
+  const remoteMerged = cloudJson(fake._store.get(`${OWNER}/${wsId}/chats/team.json`));
   assert.deepEqual(remoteMerged.messages.map((m) => m.text).sort(), ['hello', 'hi', '앱턴', '웹턴'].sort(), '원격도 병합본으로 수렴');
 });
 
-test.after(async () => { await rm(ROOT, { recursive: true, force: true }); });
+test.after(async () => { clearAccountKey(); await rm(ROOT, { recursive: true, force: true }); });
 
 /* ── [T] 회사 tombstone — 보관이 동기화 복원에 지지 않는다 ── */
 
@@ -307,7 +314,7 @@ test('통합 M1: 매니페스트 항목만 유실(blob 생존)이면 삭제 대�
   assert.ok(existsSync(join(wsRoot, 'agents', 'shuri.md')), '로컬 카드 오삭제 안 됨');
   assert.equal(r.deletedL, 0, '로컬 삭제 0');
   assert.equal(r.healed, 1, '자기치유 1건');
-  const man = JSON.parse(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`).toString());
+  const man = cloudJson(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`));
   assert.ok(man.files['agents/shuri.md'], '매니페스트 항목 복원됨');
 });
 
@@ -345,7 +352,7 @@ test('통합 M3: 업로드 직전 재읽기 병합 — 다른 기기가 방금 �
         manifestReads++;
         if (manifestReads >= 2) {
           fake._store.set(`${OWNER}/${wsId}/vault/notes/theirs.md`, theirs);
-          const cur = JSON.parse(fake._store.get(manifestKey).toString());
+          const cur = cloudJson(fake._store.get(manifestKey));
           cur.files['vault/notes/theirs.md'] = { m: 2000, s: theirs.length, h: 'x'.repeat(16) };
           fake._store.set(manifestKey, Buffer.from(JSON.stringify(cur)));
         }
@@ -356,7 +363,7 @@ test('통합 M3: 업로드 직전 재읽기 병합 — 다른 기기가 방금 �
   _setSyncClientForTest({ ...fake, storage: { from: () => patched } });
   await syncCompany(wsId, OWNER);
 
-  const man = JSON.parse(fake._store.get(manifestKey).toString());
+  const man = cloudJson(fake._store.get(manifestKey));
   assert.ok(man.files['vault/notes/mine.md'], '내 신규 항목 업로드됨');
   assert.ok(man.files['vault/notes/theirs.md'], '다른 기기의 동시 추가 항목 보존됨(lost-update 방지)');
   const st = JSON.parse(await readFile(join(wsRoot, '.sync-state.json'), 'utf8'));
@@ -403,7 +410,7 @@ test('통합 M5(회귀 가드): 원격 blob 삭제 실패 시 매니페스트 �
 
   assert.equal(r.deletedR, 0, '삭제 전파 안 됨(보류)');
   assert.ok(r.failed >= 1, '보류 집계');
-  const man = JSON.parse(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`).toString());
+  const man = cloudJson(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`));
   assert.ok(man.files['vault/notes/bye.md'], '항목 유지 — blob만 살아남아 부활 오판되는 상태를 안 만든다');
   assert.ok(fake._store.has(`${OWNER}/${wsId}/vault/notes/bye.md`), 'blob도 그대로');
 });
@@ -423,7 +430,7 @@ test('통합 M6: 재읽기 병합은 blob이 죽은 항목(남의 삭제 진행 
     if (key === manifestKey) {
       manifestReads++;
       if (manifestReads >= 2) { // 재읽기 시점: 매니페스트엔 항목이 있지만 blob은 이미 제거된 상태
-        const cur = JSON.parse(fake._store.get(manifestKey).toString());
+        const cur = cloudJson(fake._store.get(manifestKey));
         cur.files['vault/notes/dead.md'] = { m: 2000, s: 4, h: 'y'.repeat(16) };
         fake._store.set(manifestKey, Buffer.from(JSON.stringify(cur)));
       }
@@ -433,7 +440,7 @@ test('통합 M6: 재읽기 병합은 blob이 죽은 항목(남의 삭제 진행 
   _setSyncClientForTest({ ...fake, storage: { from: () => patched } });
   await syncCompany(wsId, OWNER);
 
-  const man = JSON.parse(fake._store.get(manifestKey).toString());
+  const man = cloudJson(fake._store.get(manifestKey));
   assert.ok(man.files['vault/notes/mine2.md'], '내 항목은 업로드');
   assert.ok(!man.files['vault/notes/dead.md'], '죽은 blob 항목은 병합하지 않음(삭제 미전파 방지)');
 });
@@ -538,7 +545,7 @@ test('통합 GW1: 큐 잔재 대량(base 8개↑)도 mass-delete 브레이크를
   assert.equal(r.deletedR, 8, '원격 큐 잔재 8개가 정리된다(브레이크 미발화)');
   const qKeys = [...fake._store.keys()].filter((k) => k.includes('.gw-queue'));
   assert.equal(qKeys.length, 0, '원격 스토리지에 큐 blob이 남지 않는다');
-  const manifest = JSON.parse(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`).toString());
+  const manifest = cloudJson(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`));
   assert.ok(!Object.keys(manifest.files).some((k) => k.includes('.gw-queue')), '매니페스트에서도 큐 키 제거');
   assert.ok(manifest.files['vault/a.md'], '회사 데이터는 매니페스트에 유지');
   assert.ok(existsSync(join(wsRoot, 'vault', 'a.md')), '로컬 회사 데이터 무사');
@@ -563,7 +570,7 @@ test('통합 RS1: 원격 room-main·별칭 카드는 안 내려오고 원격도 
   assert.equal(r.deletedR, 0);
   assert.ok(!fake._store.has(`${OWNER}/${wsId}/agents/room-main.md`), '로컬 잔존 충돌 카드는 밀지 않는다');
   assert.ok(fake._store.has(`${OWNER}/${wsId}/agents/room-x.md`), '접두만 겹치는 로컬 카드는 종전대로 밀린다');
-  const manifest = JSON.parse(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`).toString());
+  const manifest = cloudJson(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`));
   assert.ok(manifest.files['agents/Zroom-main.md'], '매니페스트 항목도 유지');
   assert.ok(!manifest.files['agents/room-main.md']);
   // 두 번째 사이클(base에 원격 충돌 항목이 남은 상태) — 여기서 '로컬 삭제'로 읽혀 원격이 지워지는 게 EXCLUDE 방식의 결함이었다
