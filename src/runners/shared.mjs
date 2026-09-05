@@ -75,12 +75,15 @@ export const isServerSecretKey = (k) => EXPLICIT_SERVER_SECRETS.has(k) || SERVER
 const PROVIDER_AUTH_OWNERS = {
   ANTHROPIC_API_KEY: ['claude'],
   CLAUDE_CODE_OAUTH_TOKEN: ['claude'],
-  ANTHROPIC_AUTH_TOKEN: ['claude', 'glm', 'kimi'], // openrouter는 미등재 — cred.env가 항상 명시 세팅하므로 불필요하고, 등재하면 cred 없는 경로에서 호스트 Anthropic 토큰이 살아남는 이론적 구멍(검수 LOW, 호스트 스캐빈징 금지)
+  ANTHROPIC_AUTH_TOKEN: ['claude', 'glm', 'kimi'],
+  ANTHROPIC_BASE_URL: ['claude', 'glm', 'kimi', 'openrouter'],
   OPENAI_API_KEY: ['codex'],
   GEMINI_API_KEY: ['gemini'],
   GOOGLE_API_KEY: ['gemini'],
   GLM_API_KEY: ['glm'],
   KIMI_API_KEY: ['kimi'],
+  DEEPSEEK_LOCAL_BASE_URL: ['deepseeklocal'],
+  DEEPSEEK_LOCAL_API_KEY: ['deepseeklocal'],
 };
 /** 서버 시크릿(+실행 러너 외 제공사 키)을 제거한 env 사본. runner 미지정 = 서버 시크릿만(기존 동작).
     runner 지정 = 그 러너 소유가 아닌 제공사 인증 변수도 제거 — 크로스 러너 키 상속 차단. (export: 회귀 테스트용) */
