@@ -3,7 +3,7 @@
 // 하네스 통일의 요점: 어느 러너든 이 도구들이 같은 게이트를 지난다(SDK 경로는 allowedTools 항목이 게이트를 우회했다).
 import { readFile, writeFile, mkdir, stat, glob as fsGlob } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { resolve, dirname, isAbsolute, relative } from 'node:path';
+import { resolve, dirname, isAbsolute, relative, sep } from 'node:path';
 
 const OUT_CAP = 30_000; // 도구 출력 상한(문자) — 모델 문맥 보호
 const READ_LINE_CAP = 2000;
@@ -27,6 +27,8 @@ export const BUILTIN_SPECS = Object.freeze([
 
 const cap = (s, n = OUT_CAP) => (s.length > n ? `${s.slice(0, n)}\n…[truncated ${s.length - n} chars]` : s);
 const abs = (cwd, p) => (isAbsolute(String(p)) ? resolve(String(p)) : resolve(cwd, String(p)));
+const posix = (p) => String(p).split(sep).join('/'); // 도구 출력 경로는 OS 무관 `/` — 윈도우 fs.glob이 `a\x.md`를 돌려준다(CI windows-latest 실측 2026-09-05)
+const SKIP_DIR_RE = /(^|[\\/])(node_modules|\.git)([\\/]|$)/; // 구분자 무관 제외(윈도우 경로는 백슬래시)
 
 /** 셸 자식 env — 러너 자격(ANTHROPIC_*·OAuth)은 크루 명령에 필요 없다. SDK 경로는 상속시켰지만 여기서는 뺀다(시크릿 규칙). */
 export function shellEnv(env = process.env) {
@@ -58,14 +60,15 @@ async function grepJs(root, re, globPat, mode, headLimit) {
   const files = [];
   const st = await stat(root).catch(() => null);
   if (st?.isFile()) files.push(root);
-  else for await (const f of fsGlob(globPat || '**/*', { cwd: root, exclude: (p) => /(^|\/)(node_modules|\.git)(\/|$)/.test(p) })) files.push(resolve(root, f));
+  else for await (const f of fsGlob(globPat || '**/*', { cwd: root, exclude: (p) => SKIP_DIR_RE.test(p) })) files.push(resolve(root, f));
   const lines = []; const hits = []; let n = 0;
   for (const f of files) {
     const s = await stat(f).catch(() => null); if (!s?.isFile() || s.size > 2_000_000) continue;
     const txt = await readFile(f, 'utf8').catch(() => null); if (txt == null) continue;
     let c = 0;
-    txt.split('\n').forEach((line, i) => { if (re.test(line)) { c += 1; if (mode === 'content' && lines.length < headLimit) lines.push(`${relative(root, f) || f}:${i + 1}:${line}`); } });
-    if (c) { n += c; hits.push({ f: relative(root, f) || f, c }); }
+    const rel = posix(relative(root, f) || f);
+    txt.split('\n').forEach((line, i) => { if (re.test(line)) { c += 1; if (mode === 'content' && lines.length < headLimit) lines.push(`${rel}:${i + 1}:${line}`); } });
+    if (c) { n += c; hits.push({ f: rel, c }); }
   }
   if (mode === 'files_with_matches') return hits.slice(0, headLimit).map((h) => h.f).join('\n') || '(no matches)';
   if (mode === 'count') return hits.slice(0, headLimit).map((h) => `${h.f}:${h.c}`).join('\n') || '(no matches)';
@@ -98,7 +101,7 @@ export function builtinRunners({ cwd, env = process.env, fetchImpl = globalThis.
     },
     Glob: async ({ pattern, path }) => {
       const root = path ? abs(cwd, path) : cwd; const out = [];
-      for await (const f of fsGlob(pattern, { cwd: root, exclude: (p) => /(^|\/)(node_modules|\.git)(\/|$)/.test(p) })) { out.push(f); if (out.length >= 500) break; }
+      for await (const f of fsGlob(pattern, { cwd: root, exclude: (p) => SKIP_DIR_RE.test(p) })) { out.push(posix(f)); if (out.length >= 500) break; }
       return out.join('\n') || '(no matches)';
     },
     Grep: async (input) => {
