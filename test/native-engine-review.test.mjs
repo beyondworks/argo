@@ -21,7 +21,7 @@ const POSIX = process.platform !== 'win32';
 const { nativeQuery } = await import('../src/engine/native-query.mjs');
 const { builtinRunners, parseSearchResults, posixify, PATHY_GLOB_RE, grepWorkerPath, GREP_TIMEOUT_MS } = await import('../src/engine/builtin-tools.mjs');
 const { sanitizeTranscript, saveNativeSession, sessionFile, SESSION_TRIM_TO } = await import('../src/engine/session.mjs');
-const { connectMcpServers } = await import('../src/engine/mcp-client.mjs');
+const { connectMcpServers, MCP_CONNECT_TIMEOUT_MS } = await import('../src/engine/mcp-client.mjs');
 const { createCompany, paths } = await import('../src/workspace.mjs');
 const { makePermissionGate, readToolTargets } = await import('../src/permission-gate.mjs');
 const { classifyRunnerError, AUTH_TEXT_RE } = await import('../src/runners/error-class.mjs');
@@ -288,6 +288,7 @@ test('LOW. MCP 접속은 병렬(죽은 서버 2대 ≈ 1대 시간)·전사 머�
   const t2 = Date.now(); const two = await connectMcpServers({ a: dead(2), b: dead(3) }, { timeoutMs: 1200 }); const t3 = Date.now() - t2; await two.close();
   assert.deepEqual(two.statuses.map((s) => s.status), ['failed', 'failed']);
   assert.ok(t3 < t1 + 1200, `병렬 접속: 2대 ${t3}ms vs 1대 ${t1}ms (직렬이면 상한만큼 더 걸린다)`);
+  assert.equal(MCP_CONNECT_TIMEOUT_MS, 8_000, '기본 상한 8초(3차 검수 T10 — 테스트가 주입하는 값과 별개로 기본값 경로를 핀)');
   assert.deepEqual(sanitizeTranscript([{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'r' }] }, { role: 'assistant', content: [{ type: 'text', text: 'a' }] }, { role: 'user', content: 'q' }, { role: 'assistant', content: [{ type: 'text', text: 'b' }] }]),
     [{ role: 'user', content: 'q' }, { role: 'assistant', content: [{ type: 'text', text: 'b' }] }], '머리에 tool_result만 든 user가 남지 않는다');
 });

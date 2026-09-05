@@ -54,3 +54,9 @@ jobs:
 
       # Windows에서도 glob이 동작한다 — cmd는 글롭 확장을 안 하지만 node --test가 패턴을 직접 해석(Node 21+)
       - run: npm test
+
+      # 네이티브 엔진 산출물 검사(분리 검수 2026-09-05 NEW-HIGH-2·T8) — 소스만 임포트하는 스위트가 못 보는 축: webpack이 워커 URL을
+      # 청크 에셋으로 재작성해 프로덕션·standalone에서만 MODULE_NOT_FOUND가 났다. standalone을 로컬 모드로 재빌드해 실제로 부팅·Grep 턴을 완주한다.
+      # 이 잡은 패키징을 하지 않으므로 .next가 로컬 모드 산출물로 바뀌어도 무해하다(릴리스 잡은 stage-sidecar가 자기 빌드를 만든다). 맥 러너만(시간).
+      - if: runner.os == 'macOS'
+        run: npm run smoke:standalone
