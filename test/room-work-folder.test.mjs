@@ -189,7 +189,7 @@ test('⑤ chat.mjs: 폴더 조회 2곳(SDK·CLI) 모두 workFolder를 넘기고,
   assert.match(src, /workFolder = ''/, 'chat() 서명에 workFolder 기본값');
   // 7번째 경로 — 위임 도구(delegate)의 chat(): 회의실 턴의 위임이 회의 폴더를 잃으면 위임 크루만 개인 고정으로 돈다(검수 MEDIUM-3)
   assert.match(src, /chat\(wsId, target\.slug, delegated, null, \{[^}]*\bworkFolder\b[^}]*\}\)/, '위임 턴이 workFolder를 안 넘긴다');
-  assert.match(src, /makeCrewServer\(wsId, agentSlug, meta\.name \|\| agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder\)/, '크루 서버 생성이 workFolder를 안 넘긴다');
+  assert.match(src, /makeCrewServer\(wsId, agentSlug, meta\.name \|\| agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink\)/, '크루 서버 생성이 workFolder를 안 넘긴다'); // crewSink = 네이티브 엔진 도구 정의 sink(P-A)
 });
 
 test('⑤ room.mjs: 발언 호출이 workFolder=folder를 넘기고 프롬프트에 폴더 줄이 조립된다(스냅샷 1회)', async () => {

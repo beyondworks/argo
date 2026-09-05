@@ -17,6 +17,9 @@
 export const SUBSCRIPTION_BLOCKED_RE = /organization has disabled claude subscription|subscription access for claude code|extra usage credits/i;
 /** 상주 실측 1위(9건): 붙여넣은 setup-token 스냅숏은 Argo가 갱신 못 한다 — 사용자 행동은 "다시 로그인" 하나. */
 export const OAUTH_SESSION_EXPIRED_RE = /oauth session expired|could not be refreshed/i;
+// 인증 실패 원문(러너 무관) — 네이티브 엔진·SDK가 내는 `API Error: 401 …`류를 플래그 없이도 분류한다(하네스 통일 P-A).
+// 403은 구독 차단·정책·권한이 섞여 있어 넣지 않는다(구독 차단은 위에서 먼저 잡힌다).
+export const AUTH_TEXT_RE = /\b401\b|invalid (?:api[- ]?key|x-api-key|token|credentials?)|authentication[_ ]error|unauthori[sz]ed/i;
 export const QUOTA_RE = /weekly limit|rate.?limit|too many requests|\b429\b|quota exceeded|usage limit|run out of credits|insufficient.*(credit|balance|fund)|\b402\b/i;
 export const OVERLOADED_RE = /\boverloaded\b|\b529\b|\b503\b|connection closed mid-response|server-side issue|\bECONNRESET\b|\bETIMEDOUT\b/i;
 export const CLI_MISSING_RE = /러너 CLI를 찾지 못했습니다|runner cli not found|\bENOENT\b|command not found/i;
@@ -45,7 +48,7 @@ export function classifyRunnerError(msg, { flags = {} } = {}) {
   if (flags.crash || flags.lockup) return out('crash');
   if (CLI_MISSING_RE.test(s)) return out('cli_missing');
   if (flags.credit || QUOTA_RE.test(s)) return out('quota');
-  if (flags.auth || OAUTH_SESSION_EXPIRED_RE.test(s)) return out('auth_expired');
+  if (flags.auth || OAUTH_SESSION_EXPIRED_RE.test(s) || AUTH_TEXT_RE.test(s)) return out('auth_expired');
   if (MODEL_UNAVAILABLE_RE.test(s)) return out('model_unavailable');
   if (OVERLOADED_RE.test(s)) return out('vendor_overloaded');
   return out('unknown');

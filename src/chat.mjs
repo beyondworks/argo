@@ -2,7 +2,7 @@
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
 import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
-import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { query, createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
 import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './persona.mjs';
@@ -13,6 +13,7 @@ import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루�
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
 import { materializeMcpServers } from './runners/npx.mjs'; // node/npx를 실행형으로 — 시스템 npm 없는 기기 지원
+import { nativeQuery, nativeRunnerEnabled } from './engine/native-query.mjs'; // 하네스 통일 P-A — Argo 소유 도구 루프(플래그 러너)
 import { appendUsage } from './usage.mjs';
 import { monthCost } from './billing.mjs'; // 금액 집계는 billing 게이트로만(현재 자격 기준 단일 판정)
 import { loadCompany } from './workspace.mjs';
@@ -469,8 +470,11 @@ export function connectorToolDescription(connectors, lang = 'ko') {
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단).
     connectors = 이 턴의 커넥터 요약(connectorBriefing). 비어 있으면 use_connector를 **등재하지 않는다**.
     (export: 행동 테스트용 — 등재 조건·수렴 경로를 인메모리 MCP 클라이언트로 실제로 돌려 확인한다) */
-export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '') {
+export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null) {
   const text = async (t) => ({ content: [{ type: 'text', text: t }] });
+  // 네이티브 엔진(하네스 통일 P-A)이 **같은 도구 정의·같은 핸들러**를 쓴다 — sink에 {name, description, shape, handler}를 수집한다
+  // (SDK 서버 객체는 도구를 내보내지 않는다). sink가 없으면 종전과 동일.
+  const tool = (name, description, shape, handler) => { sink?.push({ name, description, shape, handler }); return sdkTool(name, description, shape, handler); };
   // 위임 체인의 직전 크루 — 이 크루가 올리는 결재에 "누구의 위임으로 온 요청인지"를 실어 흐름을 보이게 한다
   const delegatedBy = chain.length ? chain[chain.length - 1] : null;
 
@@ -1250,7 +1254,10 @@ ${lang === 'en'
   // 커넥터 요약 — 턴 시작 1회(설계서 §2-2). 연결 0이면 빈 배열이라 도구가 등재되지 않는다.
   // 조회 실패가 턴을 죽이지 않게 낙하: 커넥터가 없는 것처럼 진행한다(기능 없음 > 턴 사망).
   const connectors = await connectorBriefing(wsId).catch(() => []);
-  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder);
+  // 하네스 통일(P-A): 플래그 러너(ARGO_NATIVE_RUNNERS)는 Argo 소유 루프(nativeQuery)로 — 크루 도구 정의를 sink로 받아 같은 핸들러를 실행한다.
+  const nativeOn = nativeRunnerEnabled(runner);
+  const crewSink = nativeOn ? [] : null;
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink);
 
   // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
   // 게이트로 보낸다 — 게이트가 금지 구역(앱 코드·타사 데이터·자격, 2026-07-22 크리티컬)을 판정한다.
@@ -1303,8 +1310,10 @@ ${lang === 'en'
       : `\n\n(사장이 첨부한 파일 — Read 도구로 열람하라: ${fileAtt.map((a) => `vault/${a.rel}`).join(', ')})`;
   }
   let promptInput = promptText;
+  let promptBlocks = null; // 네이티브 엔진용 — 이미지 첨부는 Messages content 블록 그대로
   if (imgAtt.length) {
     const blocks = [{ type: 'text', text: promptText }];
+    promptBlocks = blocks;
     for (const a of imgAtt) {
       const buf = await readFile(join(p.vault, a.rel));
       blocks.push({ type: 'image', source: { type: 'base64', media_type: a.mime, data: buf.toString('base64') } });
@@ -1351,23 +1360,31 @@ ${lang === 'en'
   // 사용액 표시가 청구서로 오해되던 신고(2026-07-26)의 교정. 턴당 1회만 읽는다(파일 I/O).
   const billed = await isBilledRunner(wsId, runner);
   await setTurnStatus(wsId, agentSlug, 'boot', '', undefined, turnSource); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
-  const q = query({
+  // 시스템 프롬프트 꼬리·모델 선택은 SDK·네이티브 두 엔진이 **같은 값**을 쓴다(한 곳 정의 — 갈라지면 러너 차등).
+  const sysTail = (colleagues.length ? rosterPrompt(colleagues, lang) : '')
+    + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder })
+    + messengerNote
+    + fallbackDirective;
+  const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || OPENROUTER_DEFAULT_MODEL) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : (effModel || null);
+  const q = nativeOn ? nativeQuery({
+    wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root, workRoots,
+    systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail,
+    env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {},
+    canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots),
+    resume: resumeId, lang,
+  }) : query({
     prompt: promptInput,
     options: {
       cwd: p.root,
       // 지정 작업 폴더 — SDK가 cwd 밖 접근을 스스로 인지·탐색하게(집행은 canUseTool 게이트가 한다)
       ...(workRoots.length ? { additionalDirectories: workRoots } : {}),
-      systemPrompt: systemPromptFor(md, p.root, skills, meta, lang)
-        + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
-        + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder })
-        + messengerNote
-        + fallbackDirective,
+      systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail,
       mcpServers: { ...(servers ?? {}), crew: crewServer },
       // CLI stderr 꼬리 보관 — 실패 시 errors[]가 비면 이걸 진단으로 쓴다(아래 결과 처리).
       stderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); },
       // 회사 자격 env(claude=키/OAuth 토큰, glm=z.ai 토큰) 주입 + 크루별 모델(카드 frontmatter). glm 기본 모델 보정.
       ...(sdkEnv ? { env: sdkEnv } : {}),
-      ...(runner === 'glm' ? { model: effModel || GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: effModel || KIMI_DEFAULT_MODEL } : runner === 'openrouter' ? { model: effModel || OPENROUTER_DEFAULT_MODEL } : runner === 'grok' ? { model: effModel || GROK_DEFAULT_MODEL } : (effModel ? { model: effModel } : {})),
+      ...(sdkModel ? { model: sdkModel } : {}),
       // 크루별 추론 강도(요청 2026-07-25) — claude 러너에만. glm/kimi는 SDK 호환 경로로 타 벤더
       // 엔드포인트에 붙어 이 파라미터를 보장하지 않으므로 보내지 않는다(카탈로그 규칙과 같은 원칙:
       // 실행 경로가 받는 것만 보낸다). 화이트리스트는 persona.EFFORT_LEVELS가 저장 시점에 이미 강제.

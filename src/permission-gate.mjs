@@ -259,6 +259,7 @@ const WS_DOT_FILES = new Set([
   '.account-secrets',
   '.device-id', '.guest-mode.json', '.sync-process.lock', '.tombstones',
   '.scheduler.lock', // daemonLease('scheduler') — 미래 ts를 심으면 리더 선출이 영구 실패한다
+  '.sessions', // 네이티브 엔진 전사(<ws>/.sessions/native/<slug>.json — 도구 출력·대화 원문). 크루가 자기 전사를 고치면 문맥 위조·타 크루 전사 열람(하네스 통일 P-A)
   '.tg-claims-state.json', '.tg-claims', // 텔레그램 토큰 클레임 상태(sync.mjs) — 크루가 mine을 심으면 두 기기가 같은 봇을 동시 폴링(getUpdates Conflict)
 ]);
 const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];
