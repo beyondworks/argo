@@ -6,6 +6,9 @@ import { randomBytes } from 'node:crypto';
 
 let cached = null;   // Buffer | null
 let cachedOwner = '';
+let lastError = '';  // 마지막 확보 실패 사유(표면화용 — #436 검수 HIGH-2: 키 없으면 push·pull이 전부 멈추는데 신호가 없었다)
+/** 마지막 계정 키 확보 실패 사유('' = 정상). sync 상태 카드가 싣는다. */
+export const accountKeyError = () => lastError;
 
 /** 동기 캐시 접근 — secretbox 전용. */
 export const accountKey = () => cached;
@@ -34,12 +37,13 @@ export async function ensureAccountKey(sb, ownerId) {
       else if (error.code === '23505') b64 = await fetchKey(sb, ownerId); // 경합 — 승자 키 채택
       else throw new Error(`계정 키 생성 실패: ${error.message}`);
     }
-    if (!b64) { console.warn('[argo] 계정 키 경합 재조회도 비어 있음 — 다음 사이클 재시도'); return null; }
+    if (!b64) { lastError = '계정 키 경합 재조회도 비어 있음'; console.warn('[argo] 계정 키 경합 재조회도 비어 있음 — 다음 사이클 재시도'); return null; }
     cached = Buffer.from(b64, 'base64');
-    cachedOwner = ownerId;
+    cachedOwner = ownerId; lastError = '';
     return cached;
   } catch (e) {
-    console.warn('[argo] 계정 키 확보 실패 — 이번 사이클 크레덴셜 동기화 제외:', e.message);
+    lastError = String(e?.message ?? e).slice(0, 160);
+    console.warn('[argo] 계정 키 확보 실패 — 이번 사이클 암호화 대상(기본: 회사 데이터 전체) 동기화 보류:', e.message);
     return null;
   }
 }

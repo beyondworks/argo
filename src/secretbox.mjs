@@ -82,10 +82,6 @@ export const isSecretRel = (rel) => rel === 'connections.json' || rel === '.secr
 export const CRED_WITHDRAWN = Buffer.from('argosecret.v2:credSync-off');
 export const isCredWithdrawn = (buf) => buf.length === CRED_WITHDRAWN.length && buf.equals(CRED_WITHDRAWN);
 
-/** M-ENC-1 롤아웃 스위치 — 켜면 동기되는 회사 폴더 전체(기억·대화·크루·스킬·원장)를 봉투 암호화한다.
-    off(기본)면 기존과 동일(크레덴셜 3종만) = 동작 불변.
-    ⚠ 2단계 롤아웃 강제: "봉투를 읽을 수 있는" 버전이 전 기기에 배포된 뒤에만 켠다.
-    구버전은 암호문을 평문으로 오인해 로컬에 기록 → 그 기기의 기억이 손상된다. */
 /** 회사 데이터 전체 봉투(v2·계정 키) 스위치 — 기본 켜짐(2026-09-06 유건 승인: 자료가 Supabase에 평문으로 남지 않게).
     끄기는 명시 옵트아웃(0·false·off·none)만. 켜져 있어도 읽기는 관용 개봉이라 구 클라이언트·기존 평문과 공존하고,
     계정 키 미확보 사이클은 EXCLUDE가 전체를 불가시로 보류한다(삭제 오판 없음 — sync.mjs isRealDelete). 사용자 절차는 불변(기기 승인 없음). */
