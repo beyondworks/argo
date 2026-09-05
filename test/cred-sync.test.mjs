@@ -328,4 +328,26 @@ test('H2: 호스티드는 credSync:true(포함 의사)도 무시한다 — 토�
   assert.ok(!fake._store.has(`${OWNER}/${wsId}/.secrets.json`), '자격 blob 자체가 생기지 않는다');
 });
 
+test('H3: 호스티드 회수는 제어 3종만 — 자격 파일명 규칙에 걸리는 사용자 문서(.key 키노트·.pem)는 마커로 덮이지 않고 다른 기기로 내려온다(검수 CRITICAL-1)', async () => {
+  const wsId = 'h-names';
+  const deck = Buffer.from('KEYNOTE-BINARY'), pem = Buffer.from('-----BEGIN CERTIFICATE-----\nca\n');
+  // 이 기기에는 없고 클라우드(다른 기기가 올림)에만 있는 상태 + 회수 대상인 진짜 자격 암호문 1개
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'vault/data.md': Buffer.from('# d\n') },
+    remoteFiles: { 'vault/decks/deck.key': meta(deck), 'vault/files/cacert.pem': meta(pem), '.secrets.json': meta(SECRETS) },
+    remoteBlobs: { 'vault/decks/deck.key': deck, 'vault/files/cacert.pem': pem, '.secrets.json': sealSecret(SECRETS) },
+  });
+  await asHosted(async () => {
+    const r = await syncCompany(wsId, OWNER);
+    assert.equal(r.withdrawn, 1, '회수는 제어 파일(.secrets.json) 1건뿐');
+  });
+  const man = manifest(fake, wsId);
+  assert.ok(man.files['vault/decks/deck.key'] && man.files['vault/files/cacert.pem'], '문서는 매니페스트에 남는다');
+  assert.deepEqual(fake._store.get(`${OWNER}/${wsId}/vault/decks/deck.key`), deck, '클라우드 사본 보존(마커 아님)');
+  assert.deepEqual(fake._store.get(`${OWNER}/${wsId}/vault/files/cacert.pem`), pem);
+  assert.equal(fake._store.get(`${OWNER}/${wsId}/.secrets.json`).toString(), 'argosecret.v2:credSync-off', '진짜 자격만 마커');
+  assert.deepEqual(await readFile(join(wsRoot, 'vault/decks/deck.key')), deck, '로컬에 없던 문서가 내려왔다');
+  assert.ok(existsSync(join(wsRoot, 'vault/files/cacert.pem')));
+});
+
 test.after(async () => { clearAccountKey(); await rm(ROOT, { recursive: true, force: true }); });

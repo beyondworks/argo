@@ -68,8 +68,20 @@ test('OS2. 벤더 401은 러너별 원인 대장으로 정직하게 실패한다
 
 test('OS3. 배선 핀 — oneshot.mjs가 플래그 러너를 nativeOneShot로 가르고 모델 선택은 두 엔진 공용(osModel)', async () => {
   const src = await readFile(join(ROOT, 'src', 'oneshot.mjs'), 'utf8');
-  assert.match(src, /if \(nativeRunnerEnabled\(runner\)\) \{\n[\s\S]*?const r = await nativeOneShot\(\{ env: sdkEnv, model: osModel, prompt, signal: ac\.signal, lang \}\);/);
+  assert.match(src, /if \(nativeRunnerEnabled\(runner\)\) \{\n[\s\S]*?try \{ r = await nativeOneShot\(\{ env: sdkEnv, model: osModel, prompt, signal: ac\.signal, lang \}\); \}/);
+  // 네이티브 실패도 openrouter-credit/limit 접두로 승격(분리 검수 3R HIGH-2 — 승격 없이는 429가 말없이 타 벤더로 갈아탄다)
+  assert.match(src, /if \(runner === 'openrouter' && isOpenRouterLimitError\(t\)\) throw Object\.assign\(new Error\(`openrouter-limit: \$\{t\.slice\(0, 140\)\}`\), \{ cause: e \}\);/);
   assert.match(src, /\} else for await \(const msg of query\(\{/, '구 경로(SDK) 폴백 유지');
   assert.equal((src.match(/osModel/g) ?? []).length >= 3, true, '모델 선택 한 곳 정의·두 엔진 사용');
   assert.match(src, /\.\.\.\(osModel \? \{ model: osModel \} : \{\}\),/);
+});
+
+test('OS4. 네이티브 원샷의 OpenRouter 429는 요청 한도 안내로 정직하게 실패한다 — 타 벤더 자가치유로 갈아타지 않는다(3R HIGH-2)', async () => {
+  const ws = 'os4'; await createCompany(ws, '원샷4', '사장'); await saveRunnerCred(ws, 'openrouter', 'apikey', 'fake-or-key-1234567890');
+  const srv = await fakeMessages([{ status: 429, json: { error: { message: 'Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day', code: 429 } } }]);
+  process.env.OPENROUTER_BASE_URL = srv.base;
+  try {
+    await assert.rejects(runOneShot(ws, '직함을 추천해', { timeoutMs: 20_000 }), (e) => { assert.match(e.message, /요청 한도|rate limit/i, `429 안내: ${e.message}`); return true; });
+    assert.equal(srv.bodies.length, 1, '재시도 폭주 없음(429는 기다리면 풀린다)');
+  } finally { await srv.close(); delete process.env.OPENROUTER_BASE_URL; }
 });

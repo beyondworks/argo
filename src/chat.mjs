@@ -882,7 +882,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지).
   // 설정 화면의 입력은 제거됐다(유건 지시 2026-08-19) — 안내에서 "설정에서 한도를 올리라"는
   // 문구를 뺐다. 사라진 화면을 가리키면 막다른 길이 된다. 값은 회사 파일·API로만 바뀐다.
-  const { budgetUsd, lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+  const { budgetUsd, lang = 'ko', computerUse = false } = await loadCompany(wsId).catch(() => ({}));
+  // 컴퓨터 유즈는 회사 명시 옵트인(computerUse:true)만 — 기본 꺼짐(분리 검수 CRITICAL-2: 화면 채널은 권한 게이트 하드라인을 우회한다)
+  const computerOn = computerUse === true;
   if (budgetUsd > 0) {
     const spent = (await monthCost(wsId)).costUsd; // 청구 턴만 — 구독(OAuth) 턴은 돈이 안 나가 예산을 갉지 않는다
     if (spent >= budgetUsd) {
@@ -1371,8 +1373,8 @@ ${lang === 'en'
   const q = nativeOn ? nativeQuery({
     wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root,
     systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail + nativeToolsDirective(lang), // 브라우저·컴퓨터 유즈 안내는 네이티브 턴에만(SDK 턴엔 그 도구가 없다)
-    env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {},
-    canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots),
+    env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {}, computer: computerOn,
+    canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots, { computerUse: computerOn }),
     resume: resumeId, lang,
   }) : query({
     prompt: promptInput,

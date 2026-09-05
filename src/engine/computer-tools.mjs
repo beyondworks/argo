@@ -25,6 +25,10 @@ const num = (v, name) => { const n = Number(v); if (!Number.isFinite(n)) throw n
 const MAC_KEYCODES = { enter: 36, return: 36, tab: 48, space: 49, delete: 51, backspace: 51, escape: 53, esc: 53, forwarddelete: 117, home: 115, end: 119, pageup: 116, pagedown: 121,
   left: 123, right: 124, down: 125, up: 126, arrowleft: 123, arrowright: 124, arrowdown: 125, arrowup: 126, f1: 122, f2: 120, f3: 99, f4: 118, f5: 96, f6: 97, f7: 98, f8: 100, f9: 101, f10: 109, f11: 103, f12: 111 };
 /** "cmd+shift+t" → AppleScript keystroke/key code 문장(순수) */
+/** AppleScript 문자열 리터럴 — JSON 이스케이프와 AppleScript 이스케이프(\" \\ \n \r \t)가 일치한다. 원시 보간 금지(핀: 검수 LOW-c). */
+export const asLiteral = (t) => JSON.stringify(String(t));
+/** 맥 붙여넣기 스크립트(순수) — osascript 인자 배열. */
+export const macPasteScript = (t) => [['-e', `set the clipboard to ${asLiteral(t)}`, '-e', 'tell application "System Events" to keystroke "v" using {command down}']];
 export function macKeyScript(combo) {
   const parts = String(combo).split('+').map((s) => s.trim()).filter(Boolean); const name = (parts.pop() ?? '').toLowerCase();
   const mods = parts.map((m) => m.toLowerCase()).map((m) => ({ cmd: 'command down', command: 'command down', meta: 'command down', ctrl: 'control down', control: 'control down', alt: 'option down', option: 'option down', shift: 'shift down' })[m]).filter(Boolean);
@@ -71,7 +75,7 @@ $w = [Math]::Min(1280, $b.Width); $h = [int]($b.Height * $w / $b.Width); $s = Ne
     : kind === 'move' ? move(a.x, a.y)
     : kind === 'left' ? `${move(a.x, a.y)} ${click}` : kind === 'double' ? `${move(a.x, a.y)} ${click} Start-Sleep -Milliseconds 60; ${click}` : kind === 'right' ? `${move(a.x, a.y)} ${rclick}`
     : kind === 'drag' ? `${move(a.x, a.y)} ${m(2)}; Start-Sleep -Milliseconds 80; ${move(a.x2, a.y2)} ${m(4)};`
-    : kind === 'scroll' ? `${a.x != null ? move(a.x, a.y) : ''} ${m(0x0800, (-(a.dy ?? 0) * 120) & 0xFFFFFFFF)};`
+    : kind === 'scroll' ? `${a.x != null ? move(a.x, a.y) : ''} ${m(0x0800, ((-(a.dy ?? 0) * 120) >>> 0))};`
     : kind === 'type' ? `[System.Windows.Forms.SendKeys]::SendWait(${psq(String(a.text).replace(/[+^%~(){}\[\]]/g, '{$&}'))});`
     : kind === 'key' ? `[System.Windows.Forms.SendKeys]::SendWait(${psq(winKeyString(a.key))});`
     : (() => { throw new Error(`unknown kind ${kind}`); })();
@@ -92,11 +96,11 @@ export function computerRunners({ platform = process.platform, exec = run, jxa =
   const xdo = (...args) => exec('xdotool', args);
   return {
     computer_screenshot: async () => {
-      const dir = await mkdtemp(join(tmpdir(), 'argo-shot-')); const file = join(dir, 'shot.png');
+      const dir = await mkdtemp(join(tmpdir(), 'argo-shot-')); const file = join(dir, mac ? 'shot.jpg' : 'shot.png');
       let note = '';
       try {
         if (mac) {
-          await exec('screencapture', ['-x', '-t', 'png', file]);
+          await exec('screencapture', ['-x', '-t', 'jpg', file]); // JPEG — PNG 대비 1/5, 전사 상한 안(분리 검수 HIGH-1)
           const info = await exec('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', file]).catch(() => '');
           const w = Number(info.match(/pixelWidth:\s*(\d+)/)?.[1] || 0), h = Number(info.match(/pixelHeight:\s*(\d+)/)?.[1] || 0);
           if (w > 1280) await exec('sips', ['-Z', '1280', file]);
@@ -108,7 +112,7 @@ export function computerRunners({ platform = process.platform, exec = run, jxa =
         } else if (win) { const out = await exec('powershell', ['-NoProfile', '-NonInteractive', '-Command', winScript('screenshot', { file })]); note = `screenshot ${out.trim()} (클릭 좌표 = 원본 픽셀 × 원본/축소 비율)`; }
         else { await exec('import', ['-window', 'root', file]); note = 'screenshot (xdotool 좌표 = 원본 픽셀)'; }
         const image = await readFile(file);
-        return { image, mime: 'image/png', note };
+        return { image, mime: mac ? 'image/jpeg' : 'image/png', note };
       } catch (e) {
         if (mac && /not permitted|could not create image|screen recording/i.test(String(e.message))) throw new Error('화면 기록 권한이 없어 스크린샷을 찍을 수 없습니다 — 시스템 설정 → 개인정보 보호 및 보안 → 화면 및 시스템 오디오 녹음에서 Argo(또는 실행 중인 터미널/Node)를 허용하세요');
         if (linux && /ENOENT/.test(String(e.message))) throw new Error('리눅스 컴퓨터 유즈에는 xdotool과 ImageMagick(import)이 필요합니다');
@@ -130,8 +134,10 @@ export function computerRunners({ platform = process.platform, exec = run, jxa =
     },
     computer_type: async ({ text }) => {
       const t = String(text ?? ''); if (!t) return 'nothing to type';
-      if (mac) { // 유니코드(한글) 안전 — 클립보드 경유 붙여넣기(System Events keystroke는 ASCII 밖에서 깨진다)
-        await exec('osascript', ['-e', `set the clipboard to ${JSON.stringify(t)}`, '-e', 'tell application "System Events" to keystroke "v" using {command down}']);
+      if (mac) { // 유니코드(한글) 안전 — 클립보드 경유 붙여넣기(System Events keystroke는 ASCII 밖에서 깨진다). 사장 클립보드(텍스트)는 복원.
+        const prev = await exec('osascript', ['-e', 'the clipboard as text']).catch(() => null);
+        await exec('osascript', ...macPasteScript(t));
+        if (prev != null) await exec('osascript', ['-e', `set the clipboard to ${asLiteral(prev.replace(/\n$/, ''))}`]).catch(() => {});
       } else if (win) await exec('powershell', ['-NoProfile', '-NonInteractive', '-Command', winScript('type', { text: t })]);
       else await xdo('type', '--delay', '20', t);
       return `typed ${t.length} chars`;

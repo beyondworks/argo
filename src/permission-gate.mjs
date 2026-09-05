@@ -423,7 +423,7 @@ const FORBIDDEN_MSG = {
     lang = 거절 메시지 언어. workRoots = 사장이 지정한 외부 작업 폴더 — **이 게이트 판정에는 현재
     미사용**(전권이라 안/밖 경계가 없고, 재귀 판정은 "워크스페이스를 품는가" 하나로 족하다). 소비처는
     codex writable_roots·시스템 프롬프트 주입이며, 파라미터는 호출 계약 유지용(재검수 LOW 정직화). */
-export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko', workRoots = []) {
+export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko', workRoots = [], opts = {}) {
   const isForbidden = makeIsForbidden(wsRoot);
   const denyHard = () => ({ behavior: 'deny', message: FORBIDDEN_MSG[lang === 'en' ? 'en' : 'ko'] });
   // Bash 보완 방어 — 명령 문자열에 금지 구역 경로가 리터럴로 들어간 순진한 시도를 차단한다.
@@ -510,6 +510,18 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
     if (toolName.startsWith('mcp__')) {
       if (toolName.startsWith('mcp__crew__') || toolName === 'mcp__crew') return allow;
       return (await argPathsForbidden(input)) ? denyHard() : allow;
+    }
+    // 컴퓨터 유즈(computer_*) — 화면·키보드 채널이라 경로 인자가 없고, 하드라인(앱 본체·~/.argo·벤더 자격)을 통째로 우회할 수 있다
+    // (분리 검수 CRITICAL-2 실측: computer_type 'cat ~/.argo/.secrets.json'이 allow). 회사가 명시 옵트인(company.json computerUse)
+    // 하지 않으면 deny — 도구 자체도 안 실리지만(chat.mjs) 게이트가 이중으로 막는다. 옵트인이어도 입력 텍스트(type·key)에 하드존
+    // 리터럴이 있으면 deny(Bash 리터럴 방어와 같은 목록·같은 폴딩). 셸과 같은 한계(간접 우회 가능)라 1차 방어 + 옵트인 계약이다.
+    if (toolName.startsWith('computer_')) {
+      if (opts.computerUse !== true) return { behavior: 'deny', message: lang === 'en'
+        ? 'Computer use is off for this company — turn it on in company settings (computerUse) to allow screen control.'
+        : '이 회사는 컴퓨터 유즈가 꺼져 있습니다 — 회사 설정(computerUse)에서 켜야 화면 조작이 허용됩니다.' };
+      const typed = ['text', 'key'].map((k) => String(input?.[k] ?? '')).join(' ');
+      if (typed.trim() && (bashHardLiterals.some((r) => fold(typed).includes(fold(r))) || BASH_GUARDED.some((n) => fold(typed).includes(fold(n))) || BASH_DIR_RE.test(typed))) return denyHard();
+      return allow;
     }
 
     if (READ_FILE_TOOLS.has(toolName)) {

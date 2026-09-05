@@ -70,7 +70,16 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       : (model || null);
     if (nativeRunnerEnabled(runner)) {
       // 네이티브 엔진(P-A') — 도구 없는 단발 호출. 오류는 `API Error: <status> …`로 던져 아래 catch(자가치유·안내)가 그대로 받는다.
-      const r = await nativeOneShot({ env: sdkEnv, model: osModel, prompt, signal: ac.signal, lang });
+      let r;
+      try { r = await nativeOneShot({ env: sdkEnv, model: osModel, prompt, signal: ac.signal, lang }); }
+      catch (e) {
+        // SDK 경로는 삼킨 오류 텍스트를 아래에서 openrouter-credit/limit 접두로 승격하지만 네이티브는 바로 throw라 승격 지점을 지나지
+        // 않았다(분리 검수 HIGH-2: 429가 말없이 타 벤더 자가치유로 갈아탐 — 2R 검수 M1 위반). 같은 접두로 승격해 같은 catch 갈래를 태운다.
+        const t = `${String(e?.message ?? e)} ${String(e?.body ?? '')}`;
+        if (runner === 'openrouter' && isOpenRouterCreditError(t)) throw Object.assign(new Error(`openrouter-credit: ${t.slice(0, 140)}`), { cause: e });
+        if (runner === 'openrouter' && isOpenRouterLimitError(t)) throw Object.assign(new Error(`openrouter-limit: ${t.slice(0, 140)}`), { cause: e });
+        throw e;
+      }
       text = r.text; usage = r.usage; costUsd = null;
     } else for await (const msg of query({
       prompt,

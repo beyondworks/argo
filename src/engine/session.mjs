@@ -14,13 +14,32 @@ export const SESSION_TRIM_TO = 300_000;
 
 /** 전사 절단(순수) — 앞에서부터 버리되, 남은 첫 메시지가 tool_result만 든 user 메시지가 되지 않게 맞춘다
     (assistant tool_use 없는 tool_result는 API가 거절한다). */
+const IMAGE_DROPPED = { type: 'text', text: '(이전 스크린샷은 전사에서 생략 — 저장 파일 참조)' };
+/** 이미지 블록은 최신 1개만 남기고 나머지는 자리표시 텍스트로(순수). 스크린샷 한 장(base64 60만 자)이 상한을 넘겨 전사를 통째로
+    비우던 실사고(분리 검수 HIGH-1)의 1차 처방 — 오래된 화면은 모델에 더 필요 없다. */
+export function dropOldImages(messages) {
+  let keep = null;
+  for (let i = messages.length - 1; i >= 0 && keep === null; i--) {
+    const c = messages[i]?.content; if (!Array.isArray(c)) continue;
+    for (const b of c) { const inner = b?.type === 'tool_result' && Array.isArray(b.content) ? b.content : [b]; if (inner.some((x) => x?.type === 'image')) { keep = i; break; } }
+  }
+  return messages.map((m, i) => {
+    if (i === keep || !Array.isArray(m?.content)) return m;
+    const strip = (arr) => arr.map((x) => (x?.type === 'image' ? IMAGE_DROPPED : x));
+    return { ...m, content: m.content.map((b) => (b?.type === 'tool_result' && Array.isArray(b.content) ? { ...b, content: strip(b.content) } : b?.type === 'image' ? IMAGE_DROPPED : b)) };
+  });
+}
+const isPromptMsg = (m) => m?.role === 'user' && (Array.isArray(m.content) ? m.content.some((b) => b?.type !== 'tool_result') : true);
 export function trimMessages(messages, maxChars = SESSION_MAX_CHARS, trimTo = SESSION_TRIM_TO) {
   let out = messages.slice();
   const size = () => JSON.stringify(out).length;
   if (size() <= maxChars) return out;
+  out = dropOldImages(out);
   while (out.length > 2 && size() > trimTo) out.shift();
-  while (out.length && !(out[0].role === 'user' && Array.isArray(out[0].content)
-    ? out[0].content.some((b) => b.type !== 'tool_result') : out[0].role === 'user')) out.shift();
+  while (out.length && !isPromptMsg(out[0])) out.shift();
+  // 불변식: 전사는 절대 비지 않는다 — 비면 다음 벤더 호출이 messages:[]로 나가 400·턴 사망(분리 검수 HIGH-1 실루프 재현).
+  // 머리 정리가 전부 걷어냈으면 마지막 실제 지시(user·비tool_result)를 되살린다(이미지는 뺀 채).
+  if (!out.length) { const last = [...messages].reverse().find(isPromptMsg); if (last) out = dropOldImages([last]).map((m) => ({ ...m, content: Array.isArray(m.content) ? m.content.map((b) => (b?.type === 'image' ? IMAGE_DROPPED : b)) : m.content })); }
   return out;
 }
 

@@ -78,12 +78,18 @@ export function builtinTools({ cwd, env, fetchImpl, wsId = 'ws', browser = true,
 }
 
 /** 이미지 결과({image,mime,note}) → tool_result content 블록(순수 조립 + 파일 저장). 비전 미지원 모델에는 경로만. */
+/** 이미지 1장의 base64 상한 — 세션 전사 상한(SESSION_MAX_CHARS 40만 자) 안에서 문맥이 남게. 넘으면 파일로만 저장하고 텍스트로 안내(분리 검수 HIGH-1). */
+export const IMAGE_MAX_B64 = 300_000;
 export async function imageToolResult(out, { cwd, model, env = process.env, now = Date.now() }) {
-  const dir = join(cwd, 'vault', 'screenshots'); await mkdir(dir, { recursive: true });
-  const name = `${new Date(now).toISOString().replace(/[:.]/g, '-')}.png`; await writeFile(join(dir, name), out.image);
-  const text = `${out.note ? `${out.note}\n` : ''}saved: vault/screenshots/${name}`;
+  const mime = out.mime || 'image/png'; const ext = mime === 'image/jpeg' ? 'jpg' : 'png';
+  // vault/files/ 아래 — 서빙 접두(files/)·산출물 칩이 닿는 곳이라 사장이 앱에서 열 수 있다(vault/screenshots는 서빙 밖 — 분리 검수 MEDIUM-4)
+  const dir = join(cwd, 'vault', 'files', 'screenshots'); await mkdir(dir, { recursive: true });
+  const name = `${new Date(now).toISOString().replace(/[:.]/g, '-')}.${ext}`; await writeFile(join(dir, name), out.image);
+  const text = `${out.note ? `${out.note}\n` : ''}saved: vault/files/screenshots/${name}`;
+  const b64 = out.image.toString('base64');
+  if (b64.length > IMAGE_MAX_B64) return [{ type: 'text', text: `${text}\n(이미지가 커서(${Math.round(out.image.length / 1024)}KB) 전사에는 싣지 않았습니다 — 파일로 저장됨)` }];
   return visionCapable(model, env)
-    ? [{ type: 'text', text }, { type: 'image', source: { type: 'base64', media_type: out.mime || 'image/png', data: out.image.toString('base64') } }]
+    ? [{ type: 'text', text }, { type: 'image', source: { type: 'base64', media_type: mime, data: b64 } }]
     : [{ type: 'text', text: `${text}\n(이 모델은 이미지 입력을 지원하지 않는 것으로 판정돼 파일로만 저장했습니다 — ARGO_VISION_MODELS로 조정 가능)` }];
 }
 
@@ -100,7 +106,8 @@ async function* run(opts, ac, isInterrupted) {
   const max_tokens = Number(maxTokens) || Number(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) || NATIVE_DEFAULT_MAX_TOKENS;
   const sess = await loadNativeSession(wsId, slug, resume);
   const mcp = await connectMcpServers(mcpServers, { env: shellEnv(env), cwd });
-  const tools = [...builtinTools({ cwd, env, fetchImpl, wsId, browser: opts.browser !== false, computer: opts.computer !== false }), ...crewToolSpecs(crewTools), ...mcp.tools];
+  // 컴퓨터 유즈는 명시 옵트인만(회사 설정 computerUse — 분리 검수 CRITICAL-2: 화면 채널은 권한 게이트 하드라인을 우회한다)
+  const tools = [...builtinTools({ cwd, env, fetchImpl, wsId, browser: opts.browser !== false, computer: opts.computer === true }), ...crewToolSpecs(crewTools), ...mcp.tools];
   const byName = new Map(tools.map((t) => [t.name, t]));
   const specs = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
   const usage = {};

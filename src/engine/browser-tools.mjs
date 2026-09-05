@@ -4,7 +4,7 @@
 // 의존성 0: Node 22의 전역 WebSocket + 시스템 크롬(Chrome/Chromium/Edge/Brave). 없으면 도구가 정직한 오류를 돌려준다(마켓의 브라우저 MCP가 대안).
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -44,6 +44,12 @@ export function findChrome(env = process.env, platform = process.platform) {
 
 /** 디버깅 포트 준비 대기 상한 — Puppeteer 기본(30초)의 2배. 윈도우 콜드 스타트+Defender 검사+병렬 부하 여유. */
 const LAUNCH_TIMEOUT_MS = 60_000;
+/** stderr 누적 버퍼에서 완결된 'DevTools listening on ws://…' 줄만 채택(순수) — 줄 종료가 없으면 아직 조각이다. */
+export const devToolsUrlFrom = (acc) => acc.match(/DevTools listening on (ws:\/\/\S+)\r?\n/)?.[1] ?? null;
+/** 프로필의 DevToolsActivePort 파일(1행 포트, 2행 /devtools/browser/<id>) — 두 행이 다 있어야 채택(쓰는 중 조각 방지). */
+export async function devToolsUrlFromFile(profile) {
+  try { const [port, path] = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split(/\r?\n/); return /^\d+$/.test(port ?? '') && path?.startsWith('/') ? `ws://127.0.0.1:${port}${path}` : null; } catch { return null; }
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 최소 CDP 클라이언트 — 전역 WebSocket, flatten 세션. */
@@ -98,12 +104,20 @@ export function parseKeyCombo(combo) {
 
 /** 워크스페이스별 브라우저 세션(프로세스 싱글턴 맵) — 첫 사용 시 크롬을 띄우고 idle 뒤 정리한다. */
 const sessions = new Map();
+const launching = new Map(); // wsId → 기동 중 Promise
 export class BrowserSession {
   static profileDir(wsId, env = process.env) { const root = env.ARGO_ROOT ? dirname(env.ARGO_ROOT) : join(homedir(), '.argo'); return join(root, 'browser', wsId); }
   static async get(wsId, { env = process.env, headless = env.ARGO_BROWSER_HEADLESS === '1' } = {}) {
-    let s = sessions.get(wsId);
+    const s = sessions.get(wsId);
     if (s && s.alive) { s.touch(); return s; }
-    s = new BrowserSession(wsId, { env, headless }); sessions.set(wsId, s); await s.launch(); return s;
+    // 기동 중 뮤텍스 — 같은 회사 두 크루가 동시에 부르면 프로필 SingletonLock 경합으로 둘 다 실패하고, 실패한 기동이 map에서 산 세션을
+    // 밀어내 그 회사 브라우저가 계속 실패했다(분리 검수 MEDIUM-1 실측). 진행 중인 기동 약속을 공유한다.
+    if (launching.has(wsId)) return launching.get(wsId);
+    const p = (async () => {
+      const n = new BrowserSession(wsId, { env, headless });
+      try { await n.launch(); sessions.set(wsId, n); return n; } finally { launching.delete(wsId); }
+    })();
+    launching.set(wsId, p); return p;
   }
   constructor(wsId, { env, headless }) { this.wsId = wsId; this.env = env; this.headless = headless; this.alive = false; this.idleMs = 5 * 60_000; }
   touch() { clearTimeout(this.timer); this.timer = setTimeout(() => this.close().catch(() => {}), this.idleMs); this.timer.unref?.(); }
@@ -120,22 +134,25 @@ export class BrowserSession {
       ...(this.headless ? ['--headless=new', '--hide-scrollbars'] : []), 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], detached: false, windowsHide: true });
     // 포트는 크롬이 고른다(--remote-debugging-port=0) — 우리가 먼저 빈 포트를 고르면 병렬 프로세스가 그 사이 차지할 수 있다(윈도우 CI 실사고:
     // 크롬은 살아 있는데 /json/version 무응답 60초). 주소는 크롬이 stderr에 찍는 'DevTools listening on ws://…' 줄에서 읽는다(Puppeteer·Playwright 동일).
-    let wsUrl = null;
-    this.child.stderr.on('data', (d) => { const t = String(d); tail.push(t); if (tail.length > 20) tail.shift(); const m = t.match(/DevTools listening on (ws:\/\/\S+)/); if (m && !wsUrl) wsUrl = m[1]; });
+    let wsUrl = null; let acc = '';
+    // 누적 버퍼 + 줄 종료 요구 — 파이프 청크가 URL 중간에서 갈라지면 잘린 주소를 채택해 'CDP 연결 실패'로 죽는다(분리 검수 MEDIUM-3 실측).
+    this.child.stderr.on('data', (d) => { const t = String(d); tail.push(t); if (tail.length > 20) tail.shift(); acc = (acc + t).slice(-64_000); if (!wsUrl) wsUrl = devToolsUrlFrom(acc); });
     let spawnErr = null; let exited = null;
     this.child.on('error', (e) => { spawnErr = e; });
-    this.child.on('exit', (code, sig) => { exited = { code, sig }; this.alive = false; sessions.delete(this.wsId); this.cdp?.close(); });
+    this.child.on('exit', (code, sig) => { exited = { code, sig }; this.alive = false; if (sessions.get(this.wsId) === this) sessions.delete(this.wsId); this.cdp?.close(); }); // map 가드 — 남의 산 세션을 밀어내지 않는다
     // 준비 판정은 시간 기준(LAUNCH_TIMEOUT_MS). 실행 오류·조기 종료는 상한을 기다리지 않고 즉시 실패로 돌린다(원인이 문구에 실린다).
     const diag = () => { const t = tail.join('').trim().split(/\r?\n/).slice(-3).join(' | ').slice(0, 400); return t ? ` — stderr: ${t}` : ''; };
     const t0 = Date.now();
     while (!wsUrl && Date.now() - t0 < LAUNCH_TIMEOUT_MS) {
       if (spawnErr) throw new Error(`브라우저 실행 실패: ${spawnErr.message}`);
       if (exited) throw new Error(`브라우저가 뜨자마자 종료됐습니다(code ${exited.code ?? exited.sig})${diag()}`);
+      // 폴백: 크롬이 프로필에 쓰는 DevToolsActivePort(1행 포트·2행 브라우저 경로) — stderr 버퍼링과 무관(Playwright 방식)
+      if (!wsUrl) wsUrl = await devToolsUrlFromFile(profile);
       await sleep(100);
     }
     if (!wsUrl) { this.child.kill(); throw new Error(`브라우저가 ${Math.round(LAUNCH_TIMEOUT_MS / 1000)}초 안에 뜨지 않았습니다${diag()}`); }
     const ws = new WebSocket(wsUrl);
-    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('CDP 연결 실패')); });
+    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error(`CDP 연결 실패(${wsUrl})${diag()}`)); });
     this.cdp = new Cdp(ws);
     const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await this.cdp.send('Target.attachToTarget', { targetId, flatten: true });
@@ -143,7 +160,7 @@ export class BrowserSession {
     await this.cdp.send('Page.enable', {}, sessionId); await this.cdp.send('Runtime.enable', {}, sessionId);
     this.alive = true; this.touch();
   }
-  async close() { clearTimeout(this.timer); this.alive = false; sessions.delete(this.wsId); try { this.cdp?.close(); } catch { /* */ } try { this.child?.kill(); } catch { /* */ } }
+  async close() { clearTimeout(this.timer); this.alive = false; if (sessions.get(this.wsId) === this) sessions.delete(this.wsId); try { this.cdp?.close(); } catch { /* */ } try { this.child?.kill(); const c = this.child; setTimeout(() => { try { c?.kill('SIGKILL'); } catch { /* */ } }, 2000).unref?.(); } catch { /* */ } } // SIGTERM 뒤 2초 유예 후 SIGKILL — 헤드리스 크롬이 좀비로 남던 실측
   send(method, params) { return this.cdp.send(method, params, this.sid); }
   /** 페이지 안 JS 실행 — Node eval이 아니라 CDP Runtime.evaluate(브라우저 컨텍스트). browser_eval 도구의 실체이며 Hermes browser_exec·OpenClaw와 같은 능력.
       결과는 값으로만 돌아오고 Argo 프로세스에는 닿지 않는다. */
@@ -198,7 +215,7 @@ export class BrowserSession {
     return `scrolled ${direction}\n${await this.snapshot(3000)}`;
   }
   async back() { await this.evaluate('history.back()'); await sleep(800); this.touch(); return this.snapshot(3000); }
-  async screenshotPng() { const r = await this.send('Page.captureScreenshot', { format: 'png' }); this.touch(); return Buffer.from(r.data, 'base64'); }
+  async screenshotJpeg() { const r = await this.send('Page.captureScreenshot', { format: 'jpeg', quality: 70 }); this.touch(); return Buffer.from(r.data, 'base64'); } // JPEG q70 — PNG 대비 1/5, 전사 상한 안
 }
 
 /** 실행기 — 이미지 반환은 호출부(native-query)가 모델의 비전 지원 여부로 이미지 블록/파일 경로를 결정한다. */
@@ -212,7 +229,7 @@ export function browserRunners({ wsId, env = process.env, headless }) {
     browser_press: async ({ key }) => (await get()).press(String(key)),
     browser_scroll: async ({ direction, amount }) => (await get()).scroll(String(direction), amount),
     browser_back: async () => (await get()).back(),
-    browser_screenshot: async () => ({ image: await (await get()).screenshotPng(), mime: 'image/png' }),
+    browser_screenshot: async () => ({ image: await (await get()).screenshotJpeg(), mime: 'image/jpeg' }),
     browser_eval: async ({ js }) => { const v = await (await get()).evaluate(String(js)); return typeof v === 'string' ? v : JSON.stringify(v ?? null, null, 0).slice(0, 30_000); },
   };
 }

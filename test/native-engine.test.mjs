@@ -187,8 +187,12 @@ test('E7. 배선 핀 — chat.mjs가 플래그 러너를 nativeQuery로 갈라 �
   assert.match(src, /const nativeOn = nativeRunnerEnabled\(runner\);\n\s*const crewSink = nativeOn \? \[\] : null;\n\s*const crewServer = makeCrewServer\([^\n]*workFolder, crewSink\);/);
   const branch = src.split('const q = nativeOn ? nativeQuery({')[1]?.split('}) : query({')[0] ?? '';
   assert.ok(branch, 'q 분기가 존재');
-  for (const re of [/systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/, /env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers \?\? \{\}/, /canUseTool: makePermissionGate\(wsId, agentSlug, p\.root, chain\.length \? chain\[chain\.length - 1\] : null, lang, workRoots\)/, /resume: resumeId/, /prompt: promptBlocks \?\? promptText/]) assert.match(branch, re);
+  for (const re of [/systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/, /env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers \?\? \{\}/, /canUseTool: makePermissionGate\(wsId, agentSlug, p\.root, chain\.length \? chain\[chain\.length - 1\] : null, lang, workRoots, \{ computerUse: computerOn \}\)/, /resume: resumeId/, /prompt: promptBlocks \?\? promptText/]) assert.match(branch, re);
   assert.equal((src.match(/systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/g) ?? []).length, 2, '두 엔진이 같은 프롬프트 꼬리');
   assert.equal((src.match(/\.\.\.\(sdkModel \? \{ model: sdkModel \} : \{\}\)/g) ?? []).length, 1, 'SDK 경로도 같은 모델 선택식');
   assert.match(src, /abortReg = registerTurn\(wsId, agentSlug, \(\) => q\.interrupt\(\)\);/, '중단 핸들은 두 엔진 공통 계약');
+  // 컴퓨터 유즈는 회사 옵트인(computerUse:true)만 — 네이티브 도구 목록·게이트 양쪽에 같은 값(분리 검수 3R CRITICAL-2)
+  assert.match(src, /const \{ budgetUsd, lang = 'ko', computerUse = false \} = await loadCompany\(wsId\)/);
+  assert.match(src, /const computerOn = computerUse === true;/);
+  assert.match(branch, /computer: computerOn,/);
 });

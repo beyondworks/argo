@@ -17,7 +17,10 @@ process.env.USERPROFILE = process.env.HOME;
 // 윈도우 러너 실측(PR #435 프로브 3): AppData\Local 없음=거부, 있음=0.3초 기동, HOME만 바꾼 경우=무관. 실사용 환경엔 항상 있다.
 await mkdir(join(process.env.HOME, 'AppData', 'Local'), { recursive: true });
 await mkdir(join(process.env.HOME, 'AppData', 'Roaming'), { recursive: true });
-process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-bc-'));
+// ARGO_ROOT는 임시 루트 **아래**(…/workspaces) — 크롬 프로필은 dirname(ARGO_ROOT)/browser/<ws>라, 임시 루트를 직접 쓰면 실행마다 tmpdir/browser/<ws>를 공유해
+// 앞선(취소된) 실행의 크롬이 프로필 락을 쥔 채 남으면 다음 실행이 멈춘다(실측). 실행마다 고유 부모 아래에 둔다.
+process.env.ARGO_ROOT = join(await mkdtemp(join(tmpdir(), 'argo-bc-')), 'workspaces');
+await mkdir(process.env.ARGO_ROOT, { recursive: true });
 process.env.ARGO_MODEL_CATALOG = 'off';
 process.env.ARGO_BROWSER_HEADLESS = '1';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -55,7 +58,7 @@ test('B1. 브라우저 유즈 실구동(헤드리스 크롬) — 이동·스냅�
     const scrolled = await br.browser_scroll({ direction: 'bottom' }); assert.match(scrolled, /scrolled bottom/);
     assert.ok(Number(await br.browser_eval({ js: 'window.scrollY' })) > 1000, '실제로 스크롤됨');
     assert.match(await br.browser_press({ key: 'Escape' }), /pressed Escape/);
-    const shot = await br.browser_screenshot({}); assert.ok(Buffer.isBuffer(shot.image) && shot.image.subarray(1, 4).toString() === 'PNG', 'PNG 스크린샷');
+    const shot = await br.browser_screenshot({}); assert.ok(Buffer.isBuffer(shot.image) && shot.image[0] === 0xFF && shot.image[1] === 0xD8 && shot.mime === 'image/jpeg', 'JPEG 스크린샷(q70 — 전사 상한 안, 3R HIGH-1)');
     assert.match(await br.browser_click({ ref: '#lnk' }), /clicked #lnk/, 'CSS 셀렉터도 된다');
     await assert.rejects(br.browser_click({ ref: 'e999' }), /element not found/);
     await assert.rejects(br.browser_navigate({ url: 'file:///etc/passwd' }), /http\(s\) URL/);
@@ -87,20 +90,20 @@ test('B3. 이미지 결과 조립 — 비전 모델은 이미지 블록 + 파일
   const ws = 'bt3'; await createCompany(ws, '스샷', '사장'); const root = paths(ws).root;
   const png = Buffer.concat([Buffer.from([0x89]), Buffer.from('PNG\r\n\x1a\n'), Buffer.alloc(16)]);
   const a = await imageToolResult({ image: png, mime: 'image/png', note: 'n' }, { cwd: root, model: 'claude-x', now: 1_700_000_000_000 });
-  assert.equal(a.length, 2); assert.equal(a[1].type, 'image'); assert.equal(a[1].source.media_type, 'image/png'); assert.match(a[0].text, /saved: vault\/screenshots\/2023-11-14T22-13-20-000Z\.png/);
+  assert.equal(a.length, 2); assert.equal(a[1].type, 'image'); assert.equal(a[1].source.media_type, 'image/png'); assert.match(a[0].text, /saved: vault\/files\/screenshots\/2023-11-14T22-13-20-000Z\.png/); // vault/files/ = 서빙 접두(3R MEDIUM-4)
   const b = await imageToolResult({ image: png, mime: 'image/png', note: 'n' }, { cwd: root, model: 'deepseek/x', now: 1_700_000_000_001 });
   assert.equal(b.length, 1); assert.match(b[0].text, /이미지 입력을 지원하지 않는/);
-  assert.equal((await readdir(join(root, 'vault', 'screenshots'))).length, 2);
+  assert.equal((await readdir(join(root, 'vault', 'files', 'screenshots'))).length, 2);
   // 루프 배선 — 가짜 벤더가 computer_screenshot을 부르면 tool_result.content가 블록 배열(이미지 포함)이다(비전 모델). 실행기는 주입 없이 스텁 불가라 builtinTools를 비전 모델로 돌리되 도구 자체는 가짜 서버가 부르지 않는 경로로 검증.
   const srv = createServer((req, res) => { let d = ''; req.on('data', (c) => { d += c; }); req.on('end', () => { const body = JSON.parse(d); const n = (srv.bodies ??= []).push(body);
     res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(n === 1 ? { content: [{ type: 'tool_use', id: 'w1', name: 'Write', input: { file_path: 'vault/x.md', content: 'x' } }], stop_reason: 'tool_use', usage: {}, model: 'claude-x' } : { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: {}, model: 'claude-x' })); }); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   try {
-    const q = nativeQuery({ wsId: ws, slug: 's', prompt: 'x', cwd: root, systemPrompt: '', env: { ANTHROPIC_BASE_URL: `http://127.0.0.1:${srv.address().port}`, ANTHROPIC_AUTH_TOKEN: 't' }, model: 'claude-x', canUseTool: makePermissionGate(ws, 's', root, null, 'ko', []) });
+    const q = nativeQuery({ wsId: ws, slug: 's', prompt: 'x', cwd: root, systemPrompt: '', env: { ANTHROPIC_BASE_URL: `http://127.0.0.1:${srv.address().port}`, ANTHROPIC_AUTH_TOKEN: 't' }, model: 'claude-x', computer: true, canUseTool: makePermissionGate(ws, 's', root, null, 'ko', []) });
     const out = []; for await (const m of q) out.push(m);
     assert.equal(out.at(-1).result, 'ok');
     const toolNames = srv.bodies[0].tools.map((t) => t.name);
-    assert.ok(toolNames.includes('browser_screenshot') && toolNames.includes('computer_click'), '브라우저·컴퓨터 도구가 벤더에 광고된다');
+    assert.ok(toolNames.includes('browser_screenshot') && toolNames.includes('computer_click'), '브라우저·컴퓨터(옵트인 computer:true) 도구가 벤더에 광고된다');
   } finally { srv.close(); }
 });
 

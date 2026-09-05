@@ -18,13 +18,13 @@ if (existsSync(envFile)) for (const l of readFileSync(envFile, 'utf8').split('\n
 const { NEXT_PUBLIC_SUPABASE_URL: URL_, SUPABASE_SERVICE_ROLE_KEY: KEY } = process.env;
 if (!URL_ || !KEY) { console.error('NEXT_PUBLIC_SUPABASE_URL·SUPABASE_SERVICE_ROLE_KEY가 필요합니다(.env.local 또는 env)'); process.exit(2); }
 const sb = createClient(URL_, KEY, { auth: { persistSession: false } });
-const { isSecretRel } = await import(join(ROOT, 'src', 'secretbox.mjs'));
+const { isSecretRel, isSecretNameRel } = await import(join(ROOT, 'src', 'secretbox.mjs'));
 const { ensureAccountKey, clearAccountKey } = await import(join(ROOT, 'src', 'accountkey.mjs'));
 const { sealSecret, openSecret, isEnvelopeGeneration } = await import(join(ROOT, 'src', 'secretbox.mjs'));
 const reseal = process.argv.includes('--reseal'); const verify = process.argv.includes('--verify');
 const B = 'companies'; const mask = (k) => k.replace(/^[^/]+\//, '<owner>/');
 const DEPS = /(\/node_modules\/|\/\.git\/)/; // 의존성 트리는 CA 번들뿐이라 걷지 않는다(속도) — 필요하면 제거
-const fresh = (k) => sb.storage.from(B).download(`${k}?t=${Date.now()}`);
+const fresh = (k) => sb.storage.from(B).download(`${k}?t=${Date.now()}`); // `?t=` 캐시 버스터 — 없으면 CDN이 옛 평문을 돌려줘 재봉인 검증이 거짓 실패(sync.mjs와 같은 의존)
 
 const candidates = []; let dirs = 0;
 async function walk(prefix, relBase) {
@@ -36,7 +36,7 @@ async function walk(prefix, relBase) {
     for (const e of data ?? []) {
       const p = `${prefix}/${e.name}`; const rel = relBase ? `${relBase}/${e.name}` : e.name;
       if (e.id === null || e.metadata === null) { if (!DEPS.test(`${p}/`)) sub.push([p, rel]); }
-      else if (isSecretRel(rel)) candidates.push({ key: p, rel, owner: prefix.split('/')[0], size: e.metadata?.size ?? 0 });
+      else if (isSecretRel(rel) || isSecretNameRel(rel)) candidates.push({ key: p, rel, owner: prefix.split('/')[0], size: e.metadata?.size ?? 0 });
     }
     dirs += 1;
     for (let i = 0; i < sub.length; i += 8) await Promise.all(sub.slice(i, i + 8).map(([p, rel]) => walk(p, rel)));
@@ -44,10 +44,19 @@ async function walk(prefix, relBase) {
   }
 }
 const t0 = Date.now();
-const { data: owners } = await sb.storage.from(B).list('', { limit: 1000 });
+/** 접두 바로 아래 항목 전수 — Supabase list는 limit 상한이 있어 페이징 없이는 조용히 잘린다(소유자·회사가 1,000을 넘는 순간 미검사 = 영구 유실 계열). */
+async function listAll(prefix) {
+  const out = []; let offset = 0;
+  for (;;) {
+    const { data, error } = await sb.storage.from(B).list(prefix, { limit: 1000, offset });
+    if (error) throw new Error(`list ${prefix || '/'} 실패: ${error.message}`);
+    out.push(...(data ?? [])); if (!data || data.length < 1000) return out; offset += 1000;
+  }
+}
+const owners = await listAll('');
 for (let i = 0; i < (owners ?? []).length; i += 4) {
   await Promise.all(owners.slice(i, i + 4).map(async (o) => {
-    const { data: cos } = await sb.storage.from(B).list(o.name, { limit: 1000 });
+    const cos = await listAll(o.name);
     for (const c of cos ?? []) if (c.id === null || c.metadata === null) await walk(`${o.name}/${c.name}`, '');
   }));
   if (i % 40 === 0) console.log(`  소유자 ${i}/${owners.length}, 디렉터리 ${dirs}, 후보 ${candidates.length}, ${Math.round((Date.now() - t0) / 1000)}s`);
