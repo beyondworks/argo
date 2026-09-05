@@ -11,7 +11,7 @@ import { mkdir, writeFile, readFile, utimes, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkdtemp } from './helpers/tmp.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -79,9 +79,13 @@ test('B. withDirLock — 두 프로세스의 임계 구간이 겹치지 않는�
   const dir = await mkdtemp(join(tmpdir(), 'argo-lock-'));
   const log = join(dir, 'log.txt');
   const lock = join(dir, 'auth.json.lockd');
-  const child = `import { appendFile } from 'node:fs/promises'; import { withDirLock } from ${JSON.stringify(join(ROOT, 'src', 'mutex.mjs'))};
+  // ESM import 지정자는 **file:// URL**이어야 한다 — Windows 절대 경로(D:\a\…)를 그대로 넣으면 'd:' 스킴으로
+  // 해석돼 ERR_UNSUPPORTED_ESM_URL_SCHEME으로 자식이 죽는다(CI windows-latest 실측 2026-09-05: child exit 1).
+  const mutexUrl = pathToFileURL(join(ROOT, 'src', 'mutex.mjs')).href;
+  const child = `import { appendFile } from 'node:fs/promises'; import { withDirLock } from ${JSON.stringify(mutexUrl)};
     await withDirLock(${JSON.stringify(lock)}, async () => { await appendFile(${JSON.stringify(log)}, 'start\\n'); await new Promise((r) => setTimeout(r, 150)); await appendFile(${JSON.stringify(log)}, 'end\\n'); });`;
-  const run = () => new Promise((res, rej) => { const p = spawn(process.execPath, ['--input-type=module', '-e', child], { stdio: 'ignore' }); p.on('exit', (c) => (c === 0 ? res() : rej(new Error(`child exit ${c}`)))); });
+  // stderr는 상속 — 자식이 죽으면 CI 로그에 원인이 보이게(무음 'child exit 1'만 남던 것)
+  const run = () => new Promise((res, rej) => { const p = spawn(process.execPath, ['--input-type=module', '-e', child], { stdio: ['ignore', 'ignore', 'inherit'] }); p.on('exit', (c) => (c === 0 ? res() : rej(new Error(`child exit ${c}`)))); });
   await Promise.all([run(), run(), run()]);
   const lines = (await readFile(log, 'utf8')).trim().split('\n');
   assert.deepEqual(lines, ['start', 'end', 'start', 'end', 'start', 'end'], '겹치면 start,start가 연달아 나온다');
