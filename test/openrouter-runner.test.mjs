@@ -10,6 +10,8 @@ import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// 실 홈 미접촉 — 러너 env 조립이 ~/.argo/claude-config-*를 만든다(검수 LOW-1)
+process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-home-'));
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-or-'));
 const { paths } = await import('../src/workspace.mjs');
 const { RUNNERS, RUNNER_AUTH, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, isOpenRouterCreditError, isOpenRouterCreditReply, saveRunnerCred, runnerCredEnv, isBilledRunner } = await import('../src/runners.mjs');

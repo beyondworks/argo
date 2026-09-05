@@ -24,7 +24,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus } from './runners.mjs';
+import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -1509,7 +1509,16 @@ ${lang === 'en'
     // 벤더 원문 인증 실패(AUTH_ERR_RE — 자가치유가 실패/불가로 여기까지 낙하한 경우)는 원문을
     // 보존한 채 행동 안내를 **덧붙인다**(정직 오류 원칙 — 벤더 상세를 지우지 않는다).
     const eMsg = String(e?.message || e);
-    const surfaced = (runner === 'grok' && isGrokCreditError(eMsg))
+    // 엔드포인트 404 — CLI가 "선택한 모델 문제"로 번역해 내보내 사용자가 모델만 바꾸며 헤맨다
+    // (실사용 제보 2026-09-05). 원문은 보존하고 확인 순서를 덧붙인다. 인증류보다 앞에 둔다 —
+    // 이 문구엔 인증 단어가 없어 AUTH_ERR_RE에 안 걸리지만, 순서를 명시해 나중 규칙 추가로
+    // 조용히 가려지지 않게 한다.
+    // !e?.endpointNotFound — 재시도 프레임(fresh-retry·crash-retry·인증 자가치유)이 안쪽 프레임의
+    // 안내를 다시 감싸면 원문이 slice(0,300)에 문장 중간에서 잘리고 안내가 두 번 붙는다(검수 MEDIUM-1
+    // 라이브 재현). 아래 인증 갈래의 !e?.authError와 같은 계약.
+    const surfaced = (isEndpointNotFoundMsg(eMsg) && !e?.endpointNotFound)
+      ? Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${endpointNotFoundNotice(lang, runner)}`), { endpointNotFound: true, cause: e })
+      : (runner === 'grok' && isGrokCreditError(eMsg))
       ? Object.assign(new Error(grokCreditNotice(lang)), { credit: true, cause: e })
       : e?.authExpired
         ? Object.assign(new Error(runnerAuthNotice(lang, e.authExpired)), { authError: true, cause: e })

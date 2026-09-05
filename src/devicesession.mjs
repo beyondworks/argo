@@ -165,7 +165,13 @@ export function deviceSessionDead({ root = WS_ROOT } = {}) {
  * _mkClient: 테스트 주입용 — 기본값은 실제 Supabase 클라이언트 팩토리(createClient). 프로덕션 호출부는 지정하지 않는다. */
 export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = createClient } = {}) {
   return withLock(`devsess:${root}`, async () => {
-    let sess = loadDeviceSession({ root });
+    // 회전 경로는 캐시를 쓰지 않는다 — 디스크가 정본이다. 도장(mtime+size)은 회전이 같은 크기로 덮어쓰는
+    // 실운영 조건에서 mtime 해상도에만 기대는데, 파일시스템에 따라 두 쓰기가 같은 mtime을 받을 수 있다
+    // (윈도우 CI 실패 실측 2026-09-05). 그때 옛 토큰으로 갱신을 보내면 GoTrue가 가족을 폐기한다 —
+    // 이 함수는 락 안에서 사이클당 1회만 도니 파일 1회 읽기가 훨씬 싸다. loadDeviceSession의 도장 캐시는
+    // user.id만 읽는 잦은 호출부(sync·market·auth)를 위해 그대로 둔다(그쪽 낡음은 무해).
+    let sess = readDisk(root);
+    cache = { root, sess, stamp: diskStamp(root) };
     let retried = false;
     for (;;) {
       if (!sess) return null;
