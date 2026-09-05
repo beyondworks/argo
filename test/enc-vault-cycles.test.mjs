@@ -85,3 +85,20 @@ test('V2-3 옵트아웃 기기(ARGO_ENC_VAULT=0)도 계정 키가 있으면 매�
   assert.deepEqual(fake.store.get(K(ws, 'vault/notes/o.md')), plain, '옵트아웃이면 파일은 평문(사용자 선택)');
   assert.ok(fake.store.get(K(ws, '__manifest__.json')).subarray(0, V2.length).toString() === V2, '매니페스트는 v2 유지');
 });
+
+test('V2-4 계정 키 미확보 사이클 — 로컬 walk에서 불가시가 된 파일 다수(base·원격에 있음)를 브레이크 집계가 "로컬 삭제"로 세지 않는다(isRealDelete 가드 — M2 핀)', async () => {
+  const ws = 'v2d'; await mkdir(join(ROOT, ws, 'vault', 'notes'), { recursive: true });
+  const files = {}; for (let i = 0; i < 10; i++) files[`vault/notes/n${i}.md`] = Buffer.from(`# 노트 ${i}\n`);
+  for (const [k, v] of Object.entries(files)) await writeFile(join(ROOT, ws, k), v);
+  const metas = Object.fromEntries(Object.entries(files).map(([k, v]) => [k, meta(v)]));
+  await writeFile(join(ROOT, ws, '.sync-state.json'), JSON.stringify({ files: metas, ts: 1 }));
+  const fake = storage({ [K(ws, '__manifest__.json')]: Buffer.from(JSON.stringify({ files: metas })), ...Object.fromEntries(Object.entries(files).map(([k, v]) => [K(ws, k), v])) });
+  _setSyncClientForTest(fake.client);
+  clearAccountKey();
+  // 가드가 없으면 EXCLUDE로 local에서 빠진 10개가 "!l && r && base"로 집계돼 대량 삭제 브레이크(≥max(8, base/2))가 사이클을 던진다.
+  const r = await syncCompany(ws, OWNER, false, {});
+  assert.equal(r.deletedR, 0); assert.equal(r.deletedL, 0); assert.ok(r.held >= 10, `보류 집계: ${JSON.stringify(r)}`);
+  assert.deepEqual(fake.removed, []); for (const k of Object.keys(files)) assert.ok(existsSync(join(ROOT, ws, k)), `로컬 보존: ${k}`);
+  await key(); const m = await syncCompany(ws, OWNER, false, {});
+  assert.equal(m.deletedR, 0); assert.equal(m.deletedL, 0); assert.equal(m.pulled, 0, '이미 동일 — 받을 것 없음');
+});
