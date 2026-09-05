@@ -753,10 +753,11 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   }
 
   for (const rel of allRels) {
-    if (isEncRel(rel) && !cryptoOn()) { held++; continue; } // 키 미확보 사이클 — 암호화 대상은 diff 자체에서 불가시(삭제 오인 차단). held로 표면화(#436 HIGH-2)
     // credSync off — 자격 3종은 push/pull/삭제 전파 전부 불가시. 회수(마커 upsert)는 위 단계가 전담하고,
     // 여기서 real-delete로 흐르면 blob remove가 나가 미반영 기기의 로컬 자격 오삭제로 이어진다(가드 필수).
+    // held 집계보다 앞에 둔다 — 어차피 안 올라가는 자격이 키 미확보 사이클에 "보류 1개"로 거짓 표시되던 것(#436 2차 검수 LOW-B).
     if (noSecrets && isSecretRel(rel)) continue;
+    if (isEncRel(rel) && !cryptoOn()) { held++; continue; } // 키 미확보 사이클 — 암호화 대상은 diff 자체에서 불가시(삭제 오인 차단). held로 표면화(#436 HIGH-2)
     const l = local[rel], r = remote.files[rel], base = state[rel];
     if (!l && !r) continue; // state에만 남은 항목(EXCLUDE 전환·타기기 선정리) — 사이클 말미 state 갱신이 정리한다
     const localChg = changed(base, l);   // base 대비 로컬 변경(생성/수정/삭제)
