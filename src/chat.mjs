@@ -1513,7 +1513,10 @@ ${lang === 'en'
     // (실사용 제보 2026-09-05). 원문은 보존하고 확인 순서를 덧붙인다. 인증류보다 앞에 둔다 —
     // 이 문구엔 인증 단어가 없어 AUTH_ERR_RE에 안 걸리지만, 순서를 명시해 나중 규칙 추가로
     // 조용히 가려지지 않게 한다.
-    const surfaced = isEndpointNotFoundMsg(eMsg)
+    // !e?.endpointNotFound — 재시도 프레임(fresh-retry·crash-retry·인증 자가치유)이 안쪽 프레임의
+    // 안내를 다시 감싸면 원문이 slice(0,300)에 문장 중간에서 잘리고 안내가 두 번 붙는다(검수 MEDIUM-1
+    // 라이브 재현). 아래 인증 갈래의 !e?.authError와 같은 계약.
+    const surfaced = (isEndpointNotFoundMsg(eMsg) && !e?.endpointNotFound)
       ? Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${endpointNotFoundNotice(lang, runner)}`), { endpointNotFound: true, cause: e })
       : (runner === 'grok' && isGrokCreditError(eMsg))
       ? Object.assign(new Error(grokCreditNotice(lang)), { credit: true, cause: e })

@@ -237,7 +237,9 @@ export const isSwallowedSdkError = (isError, apiErrorStatus, reply) =>
     그대로 나오므로 이 문구는 **404 전용 신호**다. 그래서 모델을 바꿔도 같은 문구가 반복된다 — 모델이
     아니라 엔드포인트가 원인이라, 사용자가 "모델이 없다"는 안내를 믿고 모델만 바꾸며 시간을 버린다
     (실사용 제보 2026-09-05: OpenRouter 잔액 있음·모델 무관·VPS). 문구는 CLI 소유라 원문은 보존하고
-    행동 안내만 덧붙인다(정직 오류 원칙). */
+    행동 안내만 덧붙인다(정직 오류 원칙).
+    ⚠ 404의 원인을 단정하지 않는다 — 벤더가 모델 슬러그를 내려도 404다(:free 슬러그는 수시로 내려간다).
+    그때는 모델 교체가 정답이라, "바꿔도 소용없다"고 단정하면 사용자를 반대로 몬다(검수 MEDIUM-2). */
 export const isEndpointNotFoundMsg = (s) => /There['’ʼ`]?s an issue with the selected model/i.test(String(s ?? ''));
 
 /** 위 404의 행동 안내 — 원인 후보를 확인 순서대로. openrouter는 실제 404 사유(데이터 정책·base URL)를 짚는다. */
@@ -245,12 +247,12 @@ export const endpointNotFoundNotice = (lang, runner) => {
   const name = RUNNERS[runner]?.name ?? runner;
   if (runner === 'openrouter') {
     return lang === 'en'
-      ? `This is a 404 from the endpoint, not a problem with the model — the model name is sent unchanged, which is why switching models does not help. Check, in order: (1) your OpenRouter privacy settings at https://openrouter.ai/settings/privacy — a data policy that excludes every provider makes all models return 404; (2) if you self-host, OPENROUTER_BASE_URL must be https://openrouter.ai/api (adding /v1 doubles the path and returns 404); (3) an outbound proxy or firewall on the server answering instead of OpenRouter.`
-      : `이 오류는 모델 문제가 아니라 **엔드포인트가 404**를 돌려준 경우입니다 — 모델 이름은 그대로 전달되므로 모델을 바꿔도 같은 문구가 나옵니다. 순서대로 확인해 주세요. ① OpenRouter 개인정보 설정(https://openrouter.ai/settings/privacy) — 데이터 정책이 모든 제공사를 제외하면 전 모델이 404가 됩니다. ② 셀프호스트라면 OPENROUTER_BASE_URL이 https://openrouter.ai/api 여야 합니다(끝에 /v1을 붙이면 경로가 겹쳐 404). ③ 서버의 아웃바운드 프록시·방화벽이 OpenRouter 대신 응답하고 있는지.`;
+      ? `This wording appears whenever the endpoint answers 404 — the model id is sent unchanged, so the cause is often not the model itself. Check, in order: (1) your OpenRouter privacy settings at https://openrouter.ai/settings/privacy — a data policy that excludes every provider makes all models return 404; (2) if you self-host, OPENROUTER_BASE_URL must be https://openrouter.ai/api (adding /v1 doubles the path and returns 404); (3) an outbound proxy or firewall on the server answering instead of OpenRouter; (4) the model may have been retired by its provider — try one other model once to tell these apart.`
+      : `이 문구는 **엔드포인트가 404**를 돌려줄 때 나옵니다 — 모델 id는 그대로 전달되므로 원인이 모델이 아닌 경우가 많습니다. 순서대로 확인해 주세요. ① OpenRouter 개인정보 설정(https://openrouter.ai/settings/privacy) — 데이터 정책이 모든 제공사를 제외하면 전 모델이 404가 됩니다. ② 셀프호스트라면 OPENROUTER_BASE_URL이 https://openrouter.ai/api 여야 합니다(끝에 /v1을 붙이면 경로가 겹쳐 404). ③ 서버의 아웃바운드 프록시·방화벽이 OpenRouter 대신 응답하고 있는지. ④ 이 모델이 제공사 사정으로 내려갔을 수 있습니다 — 다른 모델로 한 번만 시험해 보면 ①~③과 구분됩니다.`;
   }
   return lang === 'en'
-    ? `This is a 404 from the ${name} endpoint, not a problem with the model — the model name is sent unchanged, so switching models will not help. Check the base URL for ${name} and whether an outbound proxy or firewall is answering instead of the provider.`
-    : `이 오류는 모델 문제가 아니라 ${name} **엔드포인트가 404**를 돌려준 경우입니다 — 모델 이름은 그대로 전달되므로 모델을 바꿔도 해결되지 않습니다. ${name}의 base URL 설정과, 서버의 아웃바운드 프록시·방화벽이 제공사 대신 응답하고 있는지 확인해 주세요.`;
+    ? `This wording appears whenever the ${name} endpoint answers 404 — the model id is sent unchanged, so the cause is often not the model itself. Check the base URL for ${name}, whether an outbound proxy or firewall is answering instead of the provider, and whether this model was retired (try one other model once to tell these apart).`
+    : `이 문구는 ${name} **엔드포인트가 404**를 돌려줄 때 나옵니다 — 모델 id는 그대로 전달되므로 원인이 모델이 아닌 경우가 많습니다. ${name}의 base URL 설정, 서버의 아웃바운드 프록시·방화벽이 제공사 대신 응답하고 있는지, 그리고 이 모델이 내려간 것은 아닌지(다른 모델로 한 번 시험) 확인해 주세요.`;
 };
 
 /** 러너 인증 실패의 사용자 안내 — "API Error: 400" 원문만으론 사용자가 할 일을 모른다(유건 제보).

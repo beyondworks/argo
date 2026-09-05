@@ -4,7 +4,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
-import { scrubSdkBrand, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor , visibleRunnerNamesLine} from './runners.mjs';
+import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor , visibleRunnerNamesLine} from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -168,6 +168,12 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       throw Object.assign(new Error(lang === 'en'
         ? `The AI program crashed on this computer (it was terminated by the OS, not by Argo). This is not a connection or credit problem — Argo already retried and tried other connected runners. If it keeps happening, reinstalling the runner CLI usually fixes it; security software blocking the process is the other common cause. (${String(e.message).slice(0, 120)})`
         : `AI 프로그램이 이 컴퓨터에서 비정상 종료됐습니다(Argo가 아니라 운영체제가 프로세스를 강제 종료했습니다). 연결이나 크레딧 문제가 아닙니다 — Argo가 이미 다시 시도했고, 연결된 다른 러너로도 넘겨봤습니다. 계속 반복되면 러너 CLI 재설치로 해결되는 경우가 많고, 보안 프로그램이 프로세스를 막는 것도 흔한 원인입니다. (${String(e.message).slice(0, 120)})` + otherCauses()), { cause: e });
+    }
+    // 엔드포인트 404 — chat과 같은 안내를 여기에도(검수 MEDIUM-3: 402·429·크래시는 양쪽에 있는데 404만
+    // 한쪽이었다). oneshot은 온보딩·크루 영입·루틴·기억정리 경로라, base URL이 어긋난 셀프호스트가
+    // **가장 먼저 만나는 화면**이 여기다. 원문(러너별 대장)은 그대로 두고 안내만 덧붙인다.
+    if (isEndpointNotFoundMsg(e?.message)) {
+      throw Object.assign(new Error(`${formatOneShotFailure(__failures, runner, e, lang)}\n\n${endpointNotFoundNotice(lang, runner)}`), { endpointNotFound: true, cause: e });
     }
     throw Object.assign(new Error(formatOneShotFailure(__failures, runner, e, lang)), { cause: e });
   } finally {

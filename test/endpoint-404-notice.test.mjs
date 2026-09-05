@@ -26,6 +26,11 @@ test('isEndpointNotFoundMsg: 다른 실패는 잡지 않는다 — 400 원문·�
   assert.equal(isEndpointNotFoundMsg('API Error: 400 Deferred custom tools are only supported on Anthropic models'), false, '400은 원문 경로');
   assert.equal(isEndpointNotFoundMsg('API Error: 402 This request requires more credits'), false);
   assert.equal(isEndpointNotFoundMsg('Failed to authenticate.'), false);
+  // 근접 문자열 — 매처를 "There's an issue"까지로 넓히면 SDK의 다른 오류에 404 안내가 붙는다(검수 MEDIUM-4 변이 실증)
+  assert.equal(isEndpointNotFoundMsg("There's an issue with your request. Please try again."), false, '요청 일반 오류');
+  assert.equal(isEndpointNotFoundMsg("There's an issue with the selected tool (Bash)."), false, '도구 오류');
+  assert.equal(isEndpointNotFoundMsg("There's an issue with the configured advisor model"), false, 'advisor 모델 오류');
+  assert.equal(isEndpointNotFoundMsg('The model claude-x is not available on your deployment.'), false, '배포 미지원(별도 문구)');
   assert.equal(isEndpointNotFoundMsg(''), false);
   assert.equal(isEndpointNotFoundMsg(null), false);
 });
@@ -33,7 +38,9 @@ test('isEndpointNotFoundMsg: 다른 실패는 잡지 않는다 — 400 원문·�
 test('endpointNotFoundNotice(openrouter): 404임을 밝히고 확인 순서 3종 — 데이터 정책·base URL·프록시', () => {
   const ko = endpointNotFoundNotice('ko', 'openrouter');
   assert.ok(ko.includes('404'), '원인을 404로 명시');
-  assert.ok(ko.includes('모델을 바꿔도'), '모델 교체가 해법이 아님을 먼저 알린다(제보자가 이미 시도했다)');
+  assert.ok(ko.includes('원인이 모델이 아닌 경우가 많습니다'), '원인을 단정하지 않는다 — 벤더가 모델을 내려도 404다(검수 MEDIUM-2)');
+  assert.ok(!ko.includes('모델을 바꿔도 같은 문구가 나옵니다'), '"바꿔도 소용없다"는 단정 금지 — 모델이 실제로 내려간 사용자를 반대로 몬다');
+  assert.ok(ko.includes('④') && ko.includes('다른 모델로 한 번만 시험'), '모델 회수 가능성을 후보 ④로 제시');
   assert.ok(ko.includes('openrouter.ai/settings/privacy'), '데이터 정책 확인처');
   assert.ok(ko.includes('OPENROUTER_BASE_URL') && ko.includes('https://openrouter.ai/api'), '셀프호스트 base URL 정본');
   assert.ok(ko.includes('프록시') || ko.includes('방화벽'), '서버 아웃바운드 확인');
@@ -67,9 +74,30 @@ test('chat.mjs 배선: 404 문구면 원문을 남기고 안내를 덧붙인다 
   const i = src.indexOf('const surfaced = ');
   assert.ok(i > 0, 'surfaced 선언 존재');
   const seg = src.slice(i, src.indexOf('throw aborted ?', i));
-  assert.ok(/^const surfaced = isEndpointNotFoundMsg\(eMsg\)\s*\n\s*\? Object\.assign\(new Error\(`\$\{eMsg\.slice\(0, 300\)\}/.test(seg),
+  assert.ok(/^const surfaced = \(isEndpointNotFoundMsg\(eMsg\) && !e\?\.endpointNotFound\)\s*\n\s*\? Object\.assign\(new Error\(`\$\{eMsg\.slice\(0, 300\)\}/.test(seg),
     '첫 갈래가 404 판정이고 원문(eMsg)을 보존한다 — 안내로 대체하면 벤더 상세가 사라진다(정직 오류 원칙)');
   assert.ok(seg.includes('${endpointNotFoundNotice(lang, runner)}'), '사용자 언어·러너로 안내를 붙인다');
   assert.ok(seg.includes('endpointNotFound: true'), '표면이 종류를 구분할 수 있게 표식');
   assert.ok(seg.indexOf('isEndpointNotFoundMsg') < seg.indexOf('isGrokCreditError'), '뒤 갈래가 이 문구를 먼저 삼키지 않는다');
+});
+
+// ── oneshot 패리티 — 온보딩·영입·루틴·기억정리가 같은 안내를 받는가(검수 MEDIUM-3) ──
+test('oneshot.mjs 배선: 최종 실패 직전에 404 안내를 덧붙인다 — 러너별 원문 대장은 보존', async () => {
+  const src = await readFile(new URL('../src/oneshot.mjs', import.meta.url), 'utf8');
+  const i = src.indexOf('if (isEndpointNotFoundMsg(e?.message))');
+  assert.ok(i > 0, 'oneshot에도 404 분기가 있다');
+  const seg = src.slice(i, i + 400);
+  assert.ok(seg.includes('formatOneShotFailure(__failures, runner, e, lang)'), '러너별 원인 대장을 그대로 싣는다');
+  assert.ok(seg.includes('${endpointNotFoundNotice(lang, runner)}'), '사용자 언어·러너로 안내를 붙인다');
+  assert.ok(seg.includes('endpointNotFound: true'), '표식');
+  assert.ok(i < src.indexOf('throw Object.assign(new Error(formatOneShotFailure(__failures, runner, e, lang)), { cause: e });'), '무조건 throw보다 앞');
+});
+
+// ── 재부착 방지 — 재시도 프레임이 안내를 두 번 붙이면 원문이 중간에서 잘린다(검수 MEDIUM-1 라이브 재현) ──
+test('chat.mjs 배선: 이미 안내가 붙은 오류(endpointNotFound)는 다시 감싸지 않는다', async () => {
+  const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  const i = src.indexOf('const surfaced = ');
+  const seg = src.slice(i, src.indexOf('throw aborted ?', i));
+  assert.ok(/isEndpointNotFoundMsg\(eMsg\)\s*&&\s*!e\?\.endpointNotFound/.test(seg),
+    '재부착 가드 — 아래 인증 갈래의 !e?.authError와 같은 계약');
 });

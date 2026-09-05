@@ -21,16 +21,29 @@ import { grokAccessToken, grokExpired, grokNeedsRefresh, refreshGrokTokens } fro
        CLAUDE_CONFIG_DIR을 회사별 격리 폴더로 주면 1.6초에 통과(HOME은 그대로 — host 옵트인 러너는 건드리지 않는다).
     ② CLI 2.1.x가 기본으로 켜는 도구 검색(deferred tools)은 "Anthropic-compatible provider endpoints that implement
        deferral"에서만 받는다 — OpenRouter/minimax는 400. ENABLE_TOOL_SEARCH=false로 끈다(Anthropic 본가 claude 러너는 그대로).
+    ⚠ 실측 축은 **OpenRouter/minimax 하나뿐**이다 — glm·kimi·grok은 같은 SDK 배관이라 같은 처방을 걸었을 뿐
+      실엔드포인트 확인은 미검증이다(검수 LOW-4, "확인 못 한 축은 완료 보고에 넣지 않는다").
     codex-home-<ws>·gemini-home-<ws>와 같은 자리(~/.argo/)에 둔다. */
+let __compatMkdirWarned = false;
 export function compatSdkEnv(scope = 'host') {
+  // 접두로 네임스페이스를 가른다 — wsId와 호스트 폴백 이름이 한 공간에 섞이면 슬러그가 'host-glm'인
+  // 회사가 호스트 폴백 버킷과 같은 폴더(세션·대화 전사본이 쌓이는 곳)를 쓴다. WS_ID_RE가 그 이름을
+  // 허용하므로 실제로 가능하다(검수 LOW-2, room-* 예약어 선례와 같은 계열).
+  // 호스트 폴백(glmEnv·kimiEnv)은 **배포 전역 스코프**다 — 이 함수가 동기라 wsId를 못 받는다.
+  // main(전원이 ~/.claude 공유)보다는 좁지만 회사별은 아니다(검수 LOW-3).
   const dir = join(homedir(), '.argo', `claude-config-${scope}`);
-  try { mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch { /* 읽기 전용 FS 등 — 없으면 CLI가 만든다 */ }
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  } catch (e) {
+    // 읽기 전용 FS 등 — 없으면 CLI가 만든다. 완전 침묵이면 못 만드는 홈에서 단서가 0이라 1회만 남긴다.
+    if (!__compatMkdirWarned) { __compatMkdirWarned = true; console.warn(`[argo] 호환 러너 격리 폴더 생성 실패(계속 진행): ${e?.code ?? e?.message ?? e}`); }
+  }
   return { ENABLE_TOOL_SEARCH: 'false', CLAUDE_CONFIG_DIR: dir };
 }
 
 export const kimiEnv = () => ({
   ...scrubServerSecrets(process.env, 'kimi'),
-  ...compatSdkEnv('host-kimi'),
+  ...compatSdkEnv('hostfb-kimi'),
   ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic',
   ANTHROPIC_AUTH_TOKEN: process.env.KIMI_API_KEY ?? '',
   ANTHROPIC_API_KEY: '',
@@ -38,7 +51,7 @@ export const kimiEnv = () => ({
 });
 export const glmEnv = () => ({
   ...scrubServerSecrets(process.env, 'glm'),
-  ...compatSdkEnv('host-glm'), // scrub 뒤에 — 호스트 env의 CLAUDE_CONFIG_DIR(예: Claude Code 안에서 실행)이 격리를 덮지 않게
+  ...compatSdkEnv('hostfb-glm'), // scrub 뒤에 — 호스트 env의 CLAUDE_CONFIG_DIR(예: Claude Code 안에서 실행)이 격리를 덮지 않게
   ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic',
   ANTHROPIC_AUTH_TOKEN: process.env.GLM_API_KEY ?? '',
   ANTHROPIC_API_KEY: '',
@@ -198,10 +211,10 @@ export async function runnerCredEnv(wsId, runner) {
   if (runner === 'glm') {
     // CLAUDE_CODE_OAUTH_TOKEN 명시 소거 — claude 분기와 대칭. Anthropic 구독 토큰이 제3자(z.ai) 향
     // 턴 env에 남으면 자식 프로세스에서 열람 가능(감사 2026-07-20 — scrub 러너 인자와 벨트앤서스펜더).
-    return { env: { ...compatSdkEnv(wsId), ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+    return { env: { ...compatSdkEnv(`ws-${wsId}`), ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'kimi') {
-    return { env: { ...compatSdkEnv(wsId), ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+    return { env: { ...compatSdkEnv(`ws-${wsId}`), ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'openrouter') {
     // GLM·Kimi와 동일한 Anthropic 호환 패턴 — BYOK 계열 일반화(설계 2026-07-27).
@@ -211,7 +224,7 @@ export async function runnerCredEnv(wsId, runner) {
     // 선검사(실측 402)하지만, 저잔액은 402 안내문(chat.mjs·oneshot)이 원인·충전처를 알려준다.
     // 운영자가 원하면 env로만 상한 선언(OPENROUTER_MAX_OUTPUT_TOKENS).
     return { env: {
-      ...compatSdkEnv(wsId),
+      ...compatSdkEnv(`ws-${wsId}`),
       ANTHROPIC_BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api',
       ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '',
       ...(process.env.OPENROUTER_MAX_OUTPUT_TOKENS ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.OPENROUTER_MAX_OUTPUT_TOKENS } : {}),
@@ -246,7 +259,7 @@ export async function runnerCredEnv(wsId, runner) {
       }
       tok = grokAccessToken(cur);
     }
-    return { env: { ...compatSdkEnv(wsId), ANTHROPIC_BASE_URL: process.env.GROK_BASE_URL || 'https://api.x.ai', ANTHROPIC_AUTH_TOKEN: tok, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+    return { env: { ...compatSdkEnv(`ws-${wsId}`), ANTHROPIC_BASE_URL: process.env.GROK_BASE_URL || 'https://api.x.ai', ANTHROPIC_AUTH_TOKEN: tok, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'codex') {
     // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를

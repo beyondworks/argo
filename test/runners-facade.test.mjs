@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // 임시 ARGO_ROOT — WS_ROOT는 모듈 로드 시 고정되므로 import보다 먼저 심는다(실데이터 미접촉)
+// 실 홈 미접촉 — 러너 env 조립이 ~/.argo/claude-config-*를 만든다(검수 LOW-1)
+process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-home-'));
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-facadetest-'));
 const R = await import('../src/runners.mjs');
 
