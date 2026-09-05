@@ -9,6 +9,8 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { useFakeAccountKey } from './helpers/fake-account-key.mjs';
+await useFakeAccountKey(); // 전체 봉투 기본 켜짐 — 계정 키 없으면 EXCLUDE가 전체를 보류한다
 
 process.env.TZ = 'Asia/Seoul';
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-memcache-'));

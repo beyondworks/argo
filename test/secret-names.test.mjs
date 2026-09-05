@@ -28,6 +28,11 @@ test('SN1. 감사에서 평문으로 발견된 이름 전부 봉투 계급, 예�
 
 test('SN2. 동기화 효과 — 키 미확보 사이클에서 자격 파일명은 EXCLUDE(미업로드), 제어 파일 3종과 같은 취급', () => {
   // cryptoOn()은 계정 키 캐시 유무 — 테스트 프로세스는 키가 없다(=false) → isEncRel && !cryptoOn → EXCLUDE
+  // 기본 켜짐(#436)에서는 키가 없으면 회사 데이터 전체가 보류된다 — 이름 규칙 축만 보려면 옵트아웃(ARGO_ENC_VAULT=0)에서 대조한다
+  for (const r of ['vault/notes/a.md', 'company.json']) assert.equal(EXCLUDE(r), true, `기본 켜짐 + 키 없음 = 전체 보류: ${r}`);
+  const prev = process.env.ARGO_ENC_VAULT; process.env.ARGO_ENC_VAULT = '0';
+  try {
   for (const r of ['.secrets.json', 'mcp.json', 'connections.json', 'vault/projects/x/.env', 'vault/files/credentials.json', 'vault/k.pem']) assert.equal(EXCLUDE(r), true, `키 없으면 미업로드: ${r}`);
-  for (const r of ['vault/notes/a.md', 'vault/p/.env.example', 'company.json']) assert.equal(EXCLUDE(r), false, `일반 파일은 업로드: ${r}`);
+  for (const r of ['vault/notes/a.md', 'vault/p/.env.example', 'company.json']) assert.equal(EXCLUDE(r), false, `일반 파일은 업로드(옵트아웃 축): ${r}`);
+  } finally { if (prev === undefined) delete process.env.ARGO_ENC_VAULT; else process.env.ARGO_ENC_VAULT = prev; }
 });

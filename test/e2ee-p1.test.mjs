@@ -14,6 +14,10 @@ process.env.ARGO_ROOT = ROOT;
 process.env.ARGO_SYNC = '1';
 
 const { syncCompany, _setSyncClientForTest } = await import('../src/sync.mjs');
+const { ensureAccountKey, clearAccountKey } = await import('../src/accountkey.mjs');
+// 회사 데이터 전체 봉투(v2)가 기본 켜짐(2026-09-06) — 계정 키가 있어야 EXCLUDE가 전체를 보류하지 않는다(DEK 유무와 별개 축).
+const fakeAccountKeySb = (b64) => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { key_b64: b64 }, error: null }) }) }) }) });
+await ensureAccountKey(fakeAccountKeySb(Buffer.alloc(32, 13).toString('base64')), 'owner-e2ee-p1');
 const {
   loadDeviceE2ee, dek, setDek, clearDekCache, wrapDekFor, pubFingerprint,
   generateRecoveryCode, normalizeRecoveryCode, deriveRecoveryKek, wrapDekWithKek, openDekWithKek,
@@ -222,4 +226,4 @@ test('세대 게이트: 재읽기에서 열 수 없는 v3를 만나면 평문 �
   assert.equal(after.toString('utf8', 0, 14), 'argosecret.v3:', '원격 매니페스트가 v3로 유지된다(다운그레이드 없음)');
 });
 
-test.after(async () => { clearDekCache(); await rm(ROOT, { recursive: true, force: true }); });
+test.after(async () => { clearAccountKey(); clearDekCache(); await rm(ROOT, { recursive: true, force: true }); });

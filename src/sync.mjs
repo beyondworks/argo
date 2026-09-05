@@ -28,7 +28,7 @@ import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecre
 import { dek, tryClaimDek } from './e2ee.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
-import { ensureAccountKey } from './accountkey.mjs';
+import { accountKeyError, ensureAccountKey } from './accountkey.mjs';
 import { ensureDeviceKeyRegistered } from './e2ee.mjs';
 import { syncEntitled } from './entitlement.mjs';
 import { resolveRunner } from './runners.mjs'; // 리더 양보 판단 — 이 기기에서 턴을 돌릴 러너가 있는가
@@ -613,6 +613,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     for (const k of Object.keys(state)) delete state[k];
   }
   let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0, denied = 0, withdrawn = 0;
+  let held = 0; // 계정 키 미확보로 이번 사이클 불가시 보류된 암호화 대상 파일 수
   const deletedRels = new Set(); // 이번 사이클에 내가 원격 삭제한 rel — 매니페스트 병합에서 재추가 금지
   // blob 실존 검사 — 매니페스트 항목 부재가 "삭제"인지 "동시 쓰기로 항목만 유실"인지 가르는 판별자.
   // 404만 "없음"이다. 타임아웃·5xx 등 확인 불가는 throw → per-file catch가 이번 사이클 보류(failed++).
@@ -752,10 +753,11 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   }
 
   for (const rel of allRels) {
-    if (isEncRel(rel) && !cryptoOn()) continue; // 키 미확보 사이클 — 암호화 대상은 diff 자체에서 불가시(삭제 오인 차단)
     // credSync off — 자격 3종은 push/pull/삭제 전파 전부 불가시. 회수(마커 upsert)는 위 단계가 전담하고,
     // 여기서 real-delete로 흐르면 blob remove가 나가 미반영 기기의 로컬 자격 오삭제로 이어진다(가드 필수).
+    // held 집계보다 앞에 둔다 — 어차피 안 올라가는 자격이 키 미확보 사이클에 "보류 1개"로 거짓 표시되던 것(#436 2차 검수 LOW-B).
     if (noSecrets && isSecretRel(rel)) continue;
+    if (isEncRel(rel) && !cryptoOn()) { held++; continue; } // 키 미확보 사이클 — 암호화 대상은 diff 자체에서 불가시(삭제 오인 차단). held로 표면화(#436 HIGH-2)
     const l = local[rel], r = remote.files[rel], base = state[rel];
     if (!l && !r) continue; // state에만 남은 항목(EXCLUDE 전환·타기기 선정리) — 사이클 말미 state 갱신이 정리한다
     const localChg = changed(base, l);   // base 대비 로컬 변경(생성/수정/삭제)
@@ -915,7 +917,9 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     // 매니페스트 개봉이 보류 오류로 떨어져 회사 동기화가 통째로 멈춘다(파일 단위 오염·오삭제 원천 불가,
     // 기존 "매니페스트 읽기 실패 — 삭제 보류" 경로 재사용). 구버전(전방 게이트 없는 ≤0.1.51)도 매니페스트
     // JSON 파싱 실패로 같은 보류에 떨어진다 — 켜기 전 전 기기 업데이트 안내는 라우트·UI가 담당.
-    await upload(manifestKey, dek() ? sealSecretV3(manifestBuf) : encVaultOn() && cryptoOn() ? sealSecret(manifestBuf) : manifestBuf);
+    // 매니페스트(메타데이터)는 계정 키만 있으면 옵트아웃(ARGO_ENC_VAULT=0) 기기도 v2로 쓴다 — 평문으로 되돌리면 ≤v0.1.23 클라이언트가
+    // "평문 매니페스트 + v2 파일" 혼합을 만나 v2 노트를 암호문 그대로 로컬에 기록한다(#436 검수 MEDIUM-4 실코드 재현). v2 매니페스트면 그 버전은 파싱 실패로 보류(fail-closed).
+    await upload(manifestKey, dek() ? sealSecretV3(manifestBuf) : cryptoOn() ? sealSecret(manifestBuf) : manifestBuf);
   } catch (e) {
     // free 복원의 완결 처리(재검수 HIGH-E) — pull은 전부 끝났는데 매니페스트 업로드만 RLS에 거부되면,
     // 여기서 throw할 경우 state가 영영 안 써져 복원이 영구 restoring이 된다(지운 노트가 8초마다 부활,
@@ -926,8 +930,16 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     if (!(opts.freePlan && failed === 0)) throw e;
     manifestDenied = true;
   }
-  await writeJsonAtomic(stateFile(wsId), { files: remote.files, ts: Date.now() });
-  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}) };
+  // base는 **디스크가 실제로 가진 것만** 주장한다(분리 검수 #436 CRITICAL-1 실측: 키 미확보·pull 실패로 손대지 않은 원격 항목을 그대로
+  // 흡수하면 다음 사이클이 그것을 "로컬에서 지웠음"으로 읽어 원격·원본 기기 로컬까지 삭제 — 어디에도 안 남음). 이번 사이클에 로컬과
+  // 일치한 항목은 원격 메타로, 못 받은 항목은 종전 base(있으면)로, 한 번도 안 받은 항목은 base 밖(다음 사이클 pull 대상)으로.
+  const nextFiles = {};
+  for (const [rel, m] of Object.entries(remote.files)) {
+    if (local[rel] && !changed(local[rel], m)) nextFiles[rel] = m;
+    else if (state[rel]) nextFiles[rel] = state[rel];
+  }
+  await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now() });
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}) };
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.
@@ -1262,6 +1274,8 @@ async function cycle() {
       // 다음 사이클이 회사째 재시도한다(무변경 재푸시 비용 < 영구 평문 잔존).
       if (reseal && (r.failed ?? 0) === 0) await clearReseal(wsId).catch(() => {});
       status.companies[wsId] = { ts: Date.now(), ...r };
+      // 키 미확보 보류는 "성공"이 아니다 — 무증상이면 셀프호스트의 account_keys 미적용 같은 영구 무동작이 정상으로 보인다(#436 검수 HIGH-2)
+      if (r.held) { status.lastError = `${wsId}: 계정 키 미확보 — 파일 ${r.held}개 동기화 보류(재시도 중)${accountKeyError() ? ` — ${accountKeyError()}` : ''}`; companyFailed++; }
     } catch (e) {
       status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;
       console.error(`[argo] 동기화 실패(${wsId}):`, e.message);
