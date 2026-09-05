@@ -101,6 +101,11 @@ export function CrewEditModal({ ws, agent, teams: teamsProp = null, onClose, onS
             <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} style={field}
               disabled={curRunner && !curRunner.authed}>
               {!form.model && <option value="" disabled>—</option>}{/* 레거시 미선택 크루 표시용 */}
+              {/* 현재 값 예외(분리 검수 HIGH-2): 목록에 없는 저장값(폐기·러너 불일치)을 첫 옵션으로 오표시하지 않고 그대로 보인다 —
+                  숨김 러너와 같은 처방. 저장은 통과하고 실행 시 modelFallback 고지가 뜬다. */}
+              {form.model && !(curRunner?.models ?? []).some((m) => m.id === form.model) && (
+                <option value={form.model}>{form.model} — {t('deck.modelNotInList')}</option>
+              )}
               {(curRunner?.models ?? []).map((m) => (
                 <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>
               ))}

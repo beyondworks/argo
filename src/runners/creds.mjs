@@ -149,10 +149,13 @@ export async function saveRunnerCred(wsId, runner, type, value) {
     키가 0600으로 남아 있었다(검수 — env 주입 시절엔 apikey가 디스크에 자격 파일을 안 만들었으니
     auth.json 전환이 새로 연 표면). saveRunnerCred의 리셋과 대칭. */
 export async function clearRunnerCred(wsId, runner) {
-  const s = await loadSecrets(wsId);
-  const { claude, ...rest } = s;
-  if (rest.runners) delete rest.runners[runner];
-  await writeJsonAtomic(secretsFile(wsId), rest);
+  // save와 같은 락(분리 검수 MEDIUM-4): 한쪽만 잠그면 save↔clear 경합의 lost-update가 그대로 남는다(불변식 B 반쪽).
+  await withDirLock(`${secretsFile(wsId)}.lockd`, async () => {
+    const s = await loadSecrets(wsId);
+    const { claude, ...rest } = s;
+    if (rest.runners) delete rest.runners[runner];
+    await writeJsonAtomic(secretsFile(wsId), rest);
+  });
   if (!isAccountScope(wsId)) {
     if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
     if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});

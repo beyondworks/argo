@@ -584,7 +584,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   );
   // 러너·모델 인자 검증 — 카탈로그 대조 + 회사/호스트 연결 확인. 문제면 사용자에게 물어볼 안내문을 돌려준다.
   const runnerCatalog = () => Object.entries(RUNNERS).filter(([id]) => !isHiddenRunner(id))
-    .map(([id, r]) => `${id}(${r.name}): ${r.models.map((m) => m.id).join(', ')}`).join(' | ');
+    .map(([id, r]) => `${id}(${r.name}): ${effectiveModels(id).map((m) => m.id).join(', ')}`).join(' | '); // 오버레이 반영(MEDIUM-3)
   // effRunner — 이 변경 후 크루가 실제로 쓸 러너(runner 미지정이면 현재 크루의 러너). 모델은 이 러너 기준으로 검증한다.
   async function checkRunnerModel(runner, model, effRunner = null) {
     if (!runner && !model) return null;
@@ -594,10 +594,10 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     if (runner && isHiddenRunner(runner) && runner !== effRunner) return `${RUNNERS[runner].name} 러너는 더 이상 새로 지정할 수 없다. 가능한 값: ${visibleRunnerIds().join(', ')}`;
     if (model) {
       const target = runner || effRunner; // 지정 러너 우선, 없으면 크루의 현재 러너
-      if (target && RUNNERS[target] && !RUNNERS[target].models.some((m) => m.id === model)) {
-        return `모델 "${model}"은 ${RUNNERS[target].name} 러너의 모델이 아니다. ${RUNNERS[target].name} 모델: ${RUNNERS[target].models.map((m) => m.id).join(', ')} (다른 러너 모델을 쓰려면 runner도 함께 바꿔라)`;
+      if (target && RUNNERS[target] && !effectiveModels(target).some((m) => m.id === model)) { // 오버레이 반영(MEDIUM-3)
+        return `모델 "${model}"은 ${RUNNERS[target].name} 러너의 모델이 아니다. ${RUNNERS[target].name} 모델: ${effectiveModels(target).map((m) => m.id).join(', ')} (다른 러너 모델을 쓰려면 runner도 함께 바꿔라)`;
       }
-      if (!target && !Object.keys(RUNNERS).some((id) => RUNNERS[id].models.some((m) => m.id === model))) {
+      if (!target && !Object.keys(RUNNERS).some((id) => effectiveModels(id).some((m) => m.id === model))) { // 오버레이 반영(MEDIUM-3)
         return `모델 "${model}"이 카탈로그에 없다. 카탈로그: ${runnerCatalog()}`;
       }
     }
@@ -618,9 +618,9 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     return hit ? { slug: hit.slug, name: hit.name, runner: hit.runner ?? null } : null;
   };
 
-  const catalogLine = Object.entries(RUNNERS).filter(([id]) => !isHiddenRunner(id)).map(([id, r]) => `${id}=${r.models.map((m) => m.id).join('/')}`).join(' · ');
+  const catalogLine = Object.entries(RUNNERS).filter(([id]) => !isHiddenRunner(id)).map(([id]) => `${id}=${effectiveModels(id).map((m) => m.id).join('/')}`).join(' · '); // 오버레이 반영(MEDIUM-3)
   // 접근권 게이트 모델 고지 — 크루가 무권한 계정에 게이트 모델을 권하기 전에 알고 안내하게 한다(강등 가드가 최종 안전망).
-  const gatedIds = Object.values(RUNNERS).flatMap((r) => r.models.filter((m) => m.gated).map((m) => m.id));
+  const gatedIds = Object.keys(RUNNERS).flatMap((id) => effectiveModels(id).filter((m) => m.gated).map((m) => m.id)); // 오버레이 반영(MEDIUM-3)
   const updateProfile = tool(
     'update_profile',
     `크루 프로필 변경을 사장 결재로 올린다(승인 시 시스템이 적용). 자기 자신("me") 또는 동료의 이름·역할·팀·일하는 방식 규칙 추가·러너·모델을 바꿀 수 있다. 사장이 러너/모델을 정하지 않았으면 선택지를 제시하고 물어본 뒤 올려라. 러너·모델 카탈로그: ${catalogLine}${gatedIds.length ? ` (접근권 게이트 모델 — Ultra·유료 계정 전용, 무권한 계정은 턴이 기본 모델로 자동 강등: ${gatedIds.join(', ')})` : ''}`,
@@ -638,7 +638,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       // 모델만 지정하고 러너를 안 바꾸면 다음 턴에서 러너/모델 불일치가 난다 —
       // 모델의 소속 러너를 자동 도출해 함께 설정(항상 정합).
       if (model && !runner) {
-        const owner = Object.keys(RUNNERS).find((id) => RUNNERS[id].models.some((m) => m.id === model));
+        const owner = Object.keys(RUNNERS).find((id) => effectiveModels(id).some((m) => m.id === model)); // 오버레이 반영(MEDIUM-3)
         if (owner) runner = owner;
       }
       // 대상 크루의 현재 러너 — 같은 러너 안의 모델 변경(숨김 러너 포함)을 허용하기 위한 기준(검수 LOW-3). 동료는 명단 값, 자신은 카드.
@@ -788,6 +788,18 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
 // 러너 교체로 오분류돼 사용자 고지 없이 실과금 키로 넘어간다(검수 D2).
 export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|incorrect api key|bad credentials|invalid authentication|authentication[_ ]error|api[_ ]?key[_ ]?(?:not valid|invalid)|token (?:is )?(?:expired|revoked|invalid|incorrect)|oauth session expired|\b401\b/i; // 'oauth session expired' — 상주 실패 1위(9건, Claude setup-token 만료)가 어느 갈래에도 안 걸려 자가치유·안내 둘 다 못 받았다(2026-09-05)
 
+/** 인증 자가치유(다른 가용 러너로 재시도) 발동 판정(순수) — CLI·SDK 두 catch가 같은 판정을 쓴다.
+    **필드가 먼저다**(분리 검수 HIGH-1 실측 2026-09-05): 턴 전 게이트(runnerCredEnv)가 끊은 오류는 문구가
+    'credential known-invalid … not started'라 AUTH_ERR_RE에 안 걸려, 러너 2개 연결 사용자에게서 한쪽 자격이
+    만료되면 종전엔 다른 러너로 계속 일하던 것이 게이트 무장 뒤 턴이 죽었다(라이브 A/B: 미무장 → GLM 폴백 답변,
+    무장 → 시도 0회). 판정은 문자열이 아니라 필드로(aborted 선례). 구독 차단(subscriptionBlocked)은 여기 걸리지
+    않는다 — 그 문구는 AUTH_ERR_RE 밖이고 authExpired 필드도 없다(E 불변식). (export: 회귀 테스트용) */
+export function shouldSelfHeal(e, { retried = false, lockup = true } = {}) {
+  if (e?.authExpired) return true;
+  if (AUTH_ERR_RE.test(String(e?.message || e))) return true;
+  return lockup && lockupAction(e, { retried }) === 'switch';
+}
+
 /** 턴 실패의 구조화·출처 판정·다음 턴 차단(불변식 A·C, 2026-09-05) — CLI·SDK 두 catch가 같은 함수를 지난다.
     ① classifyRunnerError로 코드를 붙인다(e.failCode/failOrigin — 스레드·이벤트·UI가 읽는다; 원문은 보존).
     ② 인증 실패로 분류되면 같은 자격으로 **맨 검증을 1회** 쏜다(유건 기준 "Argo 오류 = 벤더에서도 나야 한다"):
@@ -799,6 +811,9 @@ export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|incorrect 
        붙이지 않아 자가치유(다른 러너 갈아타기)가 발동하지 않게 한다.
     ④ 원문만 있는 인증 만료(AUTH_ERR_RE 밖 문구)에도 행동 안내를 덧붙인다 — 사용자가 할 일이 보이게. */
 export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null, verifyFn = verifyRunnerCred, markFn = markRunnerAuthFail, loadCredFn = loadRunnerCred } = {}) {
+  // 프로브·각인은 실패당 **1회**(분리 검수 MEDIUM-2): 크래시·잠김·fresh 재시도 프레임이 안쪽 프레임이 이미
+  // 처리한 e를 다시 통과시키면 verify 2회·fails 카운터 2배(검진 백오프 산식 오염)였다. 코드가 붙어 있으면 그대로.
+  if (e?.failCode) return e;
   const eMsg = String(e?.message || e);
   const flags = { aborted: !!e?.aborted, endpointNotFound: !!e?.endpointNotFound, credit: !!e?.credit, crash: isProcessCrash(eMsg), lockup: !!e?.toolLockup, auth: !!(e?.authError || e?.authExpired || AUTH_ERR_RE.test(eMsg)) };
   const cls = classifyRunnerError(eMsg, { flags });
@@ -1070,7 +1085,7 @@ ${lang === 'en'
       try {
         reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
       } catch (e) {
-        const gated = !!(effModel && RUNNERS[runner]?.models.find((m) => m.id === effModel)?.gated);
+        const gated = !!(effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated); // 오버레이 반영(MEDIUM-3)
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
@@ -1180,7 +1195,7 @@ ${lang === 'en'
           return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
-      if (!aborted && (AUTH_ERR_RE.test(String(e.message || e)) || lockupAction(e, { retried: __lockupRetry }) === 'switch')) {
+      if (!aborted && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1)
         const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
         if (alt?.available && !tried.includes(alt.runner)) {
           console.warn(`[argo] ${runner} ${e?.toolLockup ? '도구 잠김(재조달 후에도)' : '인증 실패'} — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
@@ -1516,7 +1531,7 @@ ${lang === 'en'
         return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
       } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
     }
-    if (!aborted && !retriedDown && AUTH_ERR_RE.test(String(e.message || e))) {
+    if (!aborted && !retriedDown && shouldSelfHeal(e, { lockup: false })) { // SDK 경로는 잠김 교체 없음(종전 계약) — 인증 문구·authExpired 필드만(HIGH-1)
       const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
       if (alt?.available && !tried.includes(alt.runner)) {
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);

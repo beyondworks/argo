@@ -156,14 +156,23 @@ test('배선: chat.mjs 두 실행 경로(CLI·SDK)의 자가치유가 누적 목
   // → **승인 목록 비교**로 전환: 발동 조건의 정규화 원문이 아래 목록과 일치해야 한다. 조건을 바꾸려면
   // 이 목록을 의도적으로 갱신해야 하며(변경 통제), 무단 OR 확대·가드 삭제·제3 사이트는 전부 red다.
   // lockupAction은 toolLockup 마커 + 재조달 재시도 소진 후에만 'switch'라 "아무 실패로 갈아타기"는 여전히 차단된다.
+  // 2026-09-05 #432 HIGH-1: 발동 조건이 순수 함수 shouldSelfHeal(필드 authExpired 우선 → AUTH_ERR_RE → 잠김 교체)로
+  // 모였다. 승인 목록은 두 층이다 — ① if 줄 호출부(갈래 수·가드), ② 함수 본체(OR 확대·필드 삭제·정규식 확대).
+  // 한 층만 잠그면 다른 층에서 "아무 실패로 갈아타기"가 되살아난다(호출부만 세면 본체에 `|| /rate limit/`가 초록).
   const norm = (c) => c.replace(/\s+/g, ' ').trim();
-  const healConds = [...src.matchAll(/if \(([^\n]*AUTH_ERR_RE\.test\([^\n]*)\) \{/g)].map((m) => m[1]);
+  const healConds = [...src.matchAll(/if \(([^\n]*shouldSelfHeal\([^\n]*)\) \{/g)].map((m) => m[1]);
   assert.deepEqual(healConds.map(norm).sort(), [
-    "!aborted && !retriedDown && AUTH_ERR_RE.test(String(e.message || e))", // SDK 갈래
-    "!aborted && (AUTH_ERR_RE.test(String(e.message || e)) || lockupAction(e, { retried: __lockupRetry }) === 'switch')", // CLI 갈래(잠김 합류 승인분)
-  ].sort(), '자가치유 발동 조건 승인 목록 — 무단 OR 확대·가드 삭제·제3 사이트 차단');
+    "!aborted && !retriedDown && shouldSelfHeal(e, { lockup: false })", // SDK 갈래 — 잠김 교체 없음(종전 계약)
+    "!aborted && shouldSelfHeal(e, { retried: __lockupRetry })", // CLI 갈래(잠김 합류 승인분)
+  ].sort(), '자가치유 발동 호출부 승인 목록 — 가드 삭제·제3 사이트 차단');
+  const healBody = src.split('export function shouldSelfHeal(e, { retried = false, lockup = true } = {}) {')[1]?.split('\n}')[0] ?? '';
+  assert.equal(norm(healBody), "if (e?.authExpired) return true; if (AUTH_ERR_RE.test(String(e?.message || e))) return true; return lockup && lockupAction(e, { retried }) === 'switch';", '자가치유 판정 본체 승인 — 무단 OR 확대(일시 실패로 실과금 벤더 전환)·필드 판정 삭제(HIGH-1 회귀) 차단');
+  assert.doesNotMatch(src, /if \([^\n]*AUTH_ERR_RE\.test\(String\(e\.message \|\| e\)\)/, '옛 문자열 판정 호출부 잔존 금지(제3 사이트)');
   // 도구 잠김(L2) 배선 불변식 — 재조달 분기 1곳·재시도 마커 1곳·재조달 호출 1곳(무한 재시도 금지 골격)
-  assert.equal((src.match(/lockupAction\(e, \{ retried: __lockupRetry \}\)/g) ?? []).length, 2, '잠김 판정은 분기+교체 두 자리');
+  // 2026-09-05 #432 HIGH-1: 교체 자리는 shouldSelfHeal 본체(lockupAction(e, { retried }))로 이관 — 호출부가 __lockupRetry를 넘긴다
+  assert.equal((src.match(/lockupAction\(e, \{ retried: __lockupRetry \}\)/g) ?? []).length, 1, '잠김 판정 분기(재조달) 한 자리');
+  assert.equal((src.match(/lockupAction\(e, \{ retried \}\) === 'switch'/g) ?? []).length, 1, '잠김 교체 판정은 shouldSelfHeal 본체 한 자리');
+  assert.equal((src.match(/shouldSelfHeal\(e, \{ retried: __lockupRetry \}\)/g) ?? []).length, 1, 'CLI 갈래가 재시도 마커를 판정에 넘긴다(안 넘기면 잠김 무한 교체)');
   assert.equal((src.match(/__lockupRetry: true/g) ?? []).length, 1, '재조달 재시도는 1회 한정');
   assert.equal((src.match(/reprovisionRunner\(runner\)/g) ?? []).length, 1, '재조달 호출은 잠김 분기 한 자리');
   // 읽는 자리(위)와 **쓰는 자리**를 함께 잠근다 — 대입만 지워도 가드는 항상 참이 되는데 읽는 자리

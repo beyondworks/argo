@@ -78,7 +78,9 @@ async function readCache() {
 /** 오버레이 로드 — 메모리(TTL) → 디스크 → 원격. 원격 성공 시 디스크 갱신. 어떤 실패도 던지지 않는다.
     주입(fetchImpl·now·ttlMs·url)은 테스트 전용. 반환은 오버레이 또는 null(코드 목록 그대로 쓰라는 뜻). */
 export async function loadRemoteCatalog({ fetchImpl = globalThis.fetch, now = Date.now(), ttlMs = CATALOG_TTL_MS, url = process.env.ARGO_MODEL_CATALOG_URL || REMOTE_CATALOG_URL, timeoutMs = 8000 } = {}) {
-  if (mem.overlay !== null && now - mem.at < ttlMs) return mem.overlay;
+  // TTL은 오버레이 유무와 무관(분리 검수 MEDIUM-1): null(자산 미게시·오프라인·방화벽 = 기본 상태)에서도 TTL 안에는
+  // 재요청하지 않는다 — 종전엔 null이면 매 턴·매 /api/runners 호출마다 원격 fetch(8s 상한)가 나갔다.
+  if (mem.at !== 0 && now - mem.at < ttlMs) return mem.overlay;
   if (mem.overlay === null && mem.at === 0) { // 첫 호출 — 디스크 캐시로 즉시 채운다(원격은 아래서 시도)
     const disk = await readCache();
     if (disk) mem = { at: 0, overlay: disk };

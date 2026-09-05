@@ -131,7 +131,9 @@ test('배선: oneshot.mjs — 402는 성공이 아니라 실패로 승격(크루
   assert.match(src, /runner === 'openrouter' && isOpenRouterCreditError\(text\)/, '402 텍스트가 성공으로 반환되면 크루 카드에 영구 저장된다(검수 HIGH-1)');
   assert.match(src, /costUsd: runner === 'openrouter' \? null : costUsd/);
   // 2R H1: 호출자 모델을 카탈로그 검증 없이 넘기면 consolidate의 claude-haiku 하드코딩이 400으로 전멸
-  assert.match(src, /RUNNERS\.openrouter\.models\.some\(\(m\) => m\.id === model\)/, 'openrouter 원샷은 카탈로그 밖 id를 기본 모델로 강등해야 한다');
+  // 2026-09-05 #432 MEDIUM-3: 카탈로그는 원목록(RUNNERS)이 아니라 원격 오버레이가 반영된 effectiveModels — 원목록 소비로 되돌아가면 red
+  assert.match(src, /effectiveModels\('openrouter'\)\.some\(\(m\) => m\.id === model\)/, 'openrouter 원샷은 (오버레이 반영) 카탈로그 밖 id를 기본 모델로 강등해야 한다');
+  assert.doesNotMatch(src, /RUNNERS\.openrouter\.models\.some/, '원목록(RUNNERS) 직접 소비 회귀 — 폐기·추가 모델을 못 본다');
   // 외부 CLI 경로(externalExec)에 openrouter 분기가 생기면 BYOK 원칙 위반
   const runners = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
   const external = runners.split('export async function externalExec')[1]?.split('\n}')[0] ?? '';

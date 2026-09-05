@@ -23,6 +23,10 @@ export function withLock(key, fn) {
     — 조용히 진행하면 이 함수가 존재할 이유가 없다. 락 디렉터리의 부모는 있어야 한다(자격 파일 옆에 둔다). */
 export async function withDirLock(lockDir, fn, { staleMs = 30_000, retryMs = 25, timeoutMs = 10_000 } = {}) {
   const { mkdir, rm, stat } = await import('node:fs/promises');
+  const { dirname } = await import('node:path');
+  // 부모가 없으면 만든다(분리 검수 MEDIUM-4): 회사 디렉터리가 아직 없는 wsId의 첫 저장(writeJsonAtomic은 mkdir -p)이
+  // 락 mkdir(non-recursive)에서 ENOENT로 죽던 회귀 — 락은 보호 대상 파일보다 먼저 생기므로 부모 보장은 락의 몫.
+  await mkdir(dirname(lockDir), { recursive: true }).catch(() => {});
   const t0 = Date.now();
   for (;;) {
     try { await mkdir(lockDir); break; } catch (e) {

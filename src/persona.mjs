@@ -7,8 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { appendUsage } from './usage.mjs';
 import { isBilledRunner, visibleRunnerNamesLine } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
-import { RUNNERS } from './runners/catalog.mjs'; // 의존 0 모듈
-import { isKnownModel, normalizeModelId, effectiveModels } from './runners/catalog-remote.mjs'; // 모델 저장 검증(불변식 D)
+import { normalizeModelId } from './runners/catalog-remote.mjs'; // 모델 저장 시 alias 정규화(불변식 D)
 import { appendEvent } from './events.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 Codex/Gemini/GLM만 연결해도 영입 가능
 import { isReservedSlug } from './slug.mjs'; // 회의실 내부 이름(room-*)과의 파일 충돌 차단 — 예약어 원천
@@ -321,17 +320,13 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
   }
   if (role !== undefined) md = setFrontmatterKey(md, 'role', role.trim());
   if (team !== undefined) md = setFrontmatterKey(md, 'team', team.trim());
-  // 모델 저장 검증(불변식 D, 2026-09-05) — 러너 목록에 없는 id는 **저장 시점에** 거절한다(종전엔 그대로 저장돼
-  // 턴마다 조용히 기본 모델로 강등 = "모델 바꾸면 오류/무시"). 폐기 id는 원격 alias로 현행 id로 바꿔 저장.
-  // 러너 미지정(회사 기본)이면 어느 러너든 아는 id면 통과 — 실행 러너와 다르면 chat.mjs가 modelFallback으로 고지한다.
+  // 모델 저장 정규화(불변식 D, 2026-09-05) — 폐기 id는 원격 alias로 현행 id로 바꿔 저장한다. **거절하지 않는다**
+  // (분리 검수 HIGH-2 라이브 실측: 거절하면 카탈로그에서 제거된 모델(f50a997 등)을 쓰던 업그레이드 사용자의 크루가
+  // 이름·역할 편집까지 전부 막힌다 — crew-edit는 model을 항상 보낸다). 목록 밖 id는 그대로 저장되고, 실행 시
+  // chat.mjs가 기본 모델로 답하며 modelFallback으로 고지한다(오류를 만들지 않는다 — 유건 목적 "모델 스위치에 오류 없이").
   if (model !== undefined && String(model).trim()) {
     const rid = (runner !== undefined ? String(runner).trim() : String(before.runner ?? '').trim()) || null;
     const m = String(model).trim();
-    const known = rid ? isKnownModel(rid, m) : Object.keys(RUNNERS).some((id) => isKnownModel(id, m));
-    if (!known) {
-      const avail = (rid ? effectiveModels(rid) : []).map((x) => x.id).filter(Boolean).slice(0, 12).join(', ');
-      throw new Error(`model_not_in_catalog: ${m}${rid ? ` (${RUNNERS[rid]?.name ?? rid})` : ''}${avail ? ` — 사용 가능 / available: ${avail}` : ''}`);
-    }
     model = rid ? normalizeModelId(rid, m) : m;
   }
   if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
