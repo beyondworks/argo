@@ -13,7 +13,7 @@ import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루�
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
 import { materializeMcpServers } from './runners/npx.mjs'; // node/npx를 실행형으로 — 시스템 npm 없는 기기 지원
-import { nativeQuery, nativeRunnerEnabled } from './engine/native-query.mjs'; // 하네스 통일 P-A — Argo 소유 도구 루프(플래그 러너)
+import { nativeQuery, nativeRunnerEnabled, nativeToolsDirective } from './engine/native-query.mjs'; // 하네스 통일 P-A — Argo 소유 도구 루프(플래그 러너)
 import { appendUsage } from './usage.mjs';
 import { monthCost } from './billing.mjs'; // 금액 집계는 billing 게이트로만(현재 자격 기준 단일 판정)
 import { loadCompany } from './workspace.mjs';
@@ -1370,7 +1370,7 @@ ${lang === 'en'
   const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || OPENROUTER_DEFAULT_MODEL) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : (effModel || null);
   const q = nativeOn ? nativeQuery({
     wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root,
-    systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail,
+    systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail + nativeToolsDirective(lang), // 브라우저·컴퓨터 유즈 안내는 네이티브 턴에만(SDK 턴엔 그 도구가 없다)
     env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {},
     canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots),
     resume: resumeId, lang,

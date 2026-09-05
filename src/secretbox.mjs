@@ -54,9 +54,17 @@ function key1() {
   return k1;
 }
 
-/** 동기화에서 봉투 대상 파일 — 회사 폴더의 크레덴셜 저장소.
+/** 이름으로 판정하는 자격 파일(순수) — 사용자가 vault·작업 폴더에 둔 .env·키·토큰 파일. 클라우드 감사(2026-09-05 실측): 회사 vault의
+    `.env`·`credentials.json`·`token.json`·`*.pem`·k8s `secret.yaml`이 평문으로 올라가 있었다(vault 암호화는 옵트인이라 제어 파일 3종만 봉투였다).
+    유건 지시 "환경변수는 Supabase에 평문으로 남으면 안 돼" → 이 이름들은 제어 파일과 같은 계급(봉투, 키 없으면 미업로드).
+    예시 파일(.env.example/.sample/.template/.dist)은 비밀이 아니라 제외. 공개 CA 번들(cacert.pem·roots.pem)은 봉인해도 무해라 굳이 안 가른다. */
+export const SECRET_NAME_RE = /^(\.env(\.(?!example$|sample$|template$|dist$)[^/]+)?|\.envrc|\.npmrc|\.netrc|\.pypirc|\.git-credentials|\.htpasswd|kubeconfig|auth\.json|credentials(\.json)?|\.credentials\.json|tokens?\.json|id_(rsa|ed25519|ecdsa|dsa)(\.pub)?|[^/]*\.(pem|key|p12|pfx|jks|keystore)|service[-_]?account[^/]*\.json|secrets?(\.[^/]+)?\.(json|ya?ml|env)|settings\.local\.json)$/i;
+export const SECRET_DIR_RE = /(^|\/)\.(aws|ssh|gnupg|codex|config\/gh|azure|kube)\//;
+export const isSecretNameRel = (rel) => { const r = String(rel ?? ''); const base = r.split('/').pop() ?? ''; return SECRET_NAME_RE.test(base) || SECRET_DIR_RE.test(r); };
+
+/** 동기화에서 봉투 대상 파일 — 회사 폴더의 크레덴셜 저장소 + 이름으로 판정한 자격 파일.
     mcp.json 포함: 호스트 MCP 가져오기가 env(토큰)를 담으므로 클라우드에는 항상 암호문으로. */
-export const isSecretRel = (rel) => rel === 'connections.json' || rel === '.secrets.json' || rel === 'mcp.json';
+export const isSecretRel = (rel) => rel === 'connections.json' || rel === '.secrets.json' || rel === 'mcp.json' || isSecretNameRel(rel);
 
 /** credSync off 회수 마커 — 클라우드의 자격 암호문을 "삭제" 대신 이 내용으로 덮어쓴다(upsert).
     blob을 지우면 아직 토글을 못 받은 기기(구버전 포함)가 "원격 부재 + base 무변경 = 삭제"로 오판해

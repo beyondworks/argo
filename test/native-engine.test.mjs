@@ -53,7 +53,12 @@ test('E1. authFromEnv — Bearer/x-api-key 매핑, 구독 OAuth 거절, 오류 m
   assert.equal(extractErrorMessage('<html>bad gateway</html>'), '<html>bad gateway</html>');
   assert.equal(nativeRunnerEnabled('openrouter', { ARGO_NATIVE_RUNNERS: 'openrouter, glm' }), true);
   assert.equal(nativeRunnerEnabled('claude', { ARGO_NATIVE_RUNNERS: 'openrouter, glm' }), false);
-  assert.equal(nativeRunnerEnabled('glm', {}), false, '기본 off — 구 경로(SDK)');
+  assert.equal(nativeRunnerEnabled('kimi', { ARGO_NATIVE_RUNNERS: 'openrouter, glm' }), false, '목록이 있으면 그 러너만');
+  for (const r of ['openrouter', 'glm', 'kimi', 'grok']) assert.equal(nativeRunnerEnabled(r, {}), true, `기본 on(유건 승인 2026-09-05): ${r}`);
+  assert.equal(nativeRunnerEnabled('claude', {}), false, '구독 OAuth 러너는 기본 목록 밖');
+  assert.equal(nativeRunnerEnabled('codex', {}), false);
+  for (const off of ['none', 'off', '0', 'false']) assert.equal(nativeRunnerEnabled('openrouter', { ARGO_NATIVE_RUNNERS: off }), false, `옵트아웃 ${off}`);
+  assert.equal(nativeRunnerEnabled('glm', { ARGO_NATIVE_RUNNERS: '' }), true, '빈 값 = 기본');
 });
 
 test('E2. 루프 — Read 왕복 → 금지 구역 Write는 게이트 deny → 크루 도구(결재) 실호출 → 최종 답변; SDK와 같은 스트림·세션 영속·max_tokens 기본', async () => {
