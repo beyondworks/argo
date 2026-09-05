@@ -62,7 +62,9 @@ test('스위프: 러너 env를 조립하는 테스트 파일은 모두 HOME을 �
   const missing = [];
   for (const f of files) {
     const src = await rf(new URL(f, dir), 'utf8');
-    const buildsEnv = /\b(runnerCredEnv|compatSdkEnv|glmEnv\(|kimiEnv\()/.test(src);
+    // sdkEnvFor도 compatSdkEnv에 도달한다 — 이 토큰이 빠져 있으면 자격만 심고 sdkEnvFor를 부르는
+    // 테스트가 실 홈에 폴더를 만들면서도 스위프를 통과한다(2차 검수 실측 미탐).
+    const buildsEnv = /\b(runnerCredEnv|sdkEnvFor|compatSdkEnv|glmEnv\(|kimiEnv\()/.test(src);
     if (buildsEnv && !/process\.env\.HOME\s*=/.test(src)) missing.push(f);
   }
   assert.deepEqual(missing, [], `HOME 임시화 누락 — 실 홈에 claude-config-*가 쌓인다: ${missing.join(', ')}`);
