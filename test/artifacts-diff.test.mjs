@@ -55,7 +55,7 @@ test('배선: 반환부·호출부 전파(행동 검증은 artifacts-behavior.te
   const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   // 검수 CRITICAL-3 교훈: "diff 호출 개수" 단언은 위치를 못 보고, buggy 조합(예산 분기 오염 +
   // CLI 미수정)에서만 초록인 안티 게이트였다. 위치는 유니크 앵커로, 유효성은 행동 파일이 잠근다.
-  assert.match(chat, /journalRel: relative\(p\.vault, handover\.file\),\n      \}\);\n      \/\/ 모델을 부르지 않은 턴/, '예산 분기는 diff 미참조(TDZ 회귀 금지)');
+  assert.match(chat, /\.\.\.\(handover \? \{ journalRel: relative\(p\.vault, handover\.file\) \} : \{\}\),\n      \}\);\n      \/\/ 모델을 부르지 않은 턴/, '예산 분기는 diff 미참조(TDZ 회귀 금지) — journalRel은 journal.off(팀 메신저 crew_memory=false)면 부재');
   assert.match(chat, /downgradedFrom: effModel \} : \{\}\) \}\);[\s\S]{0,400}?return \{ reply, sessionId: null, handover, artifacts: await artDiff\(\), \.\.\.fellBackInfo \};/, 'CLI 반환부가 diff를 싣는다(주석 줄수 무관 — 검수 LOW-5, fellBackInfo는 폴백 투명화 P2)');
   assert.match(chat, /source === 'compete' \? null/, '경쟁 턴은 diff 제외(합집합 오귀속 방지 — 검수 HIGH)');
   assert.match(chat, /via: 'delegate', artifacts: r\.artifacts/, '위임 미러 전파');

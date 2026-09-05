@@ -58,6 +58,7 @@ export function paths(wsId) {
     conversations: join(root, 'vault', 'conversations'), // 구버전 — 마이그레이션 후 읽기 전용
     journal: join(root, 'vault', 'journal'),
     notes: join(root, 'vault', 'notes'),
+    org: join(root, 'vault', 'org'),                // 팀 메신저 조직 문서 읽기 전용 미러(G-2): org/<org-slug>/<rules|glossary|projects>/<slug>.md — 정본은 서버, 기기별 파생물(동기화 제외)
     // 크루 산출물(projects)·첨부(files) — 스캐폴드(provision)만 만들고 paths에 없던 탓에
     // listDocs 허용 목록에서 빠져 UI 어디서도 안 보였다(고객 신고 2026-07-20: "Finder로 찾아가야 하나").
     projects: join(root, 'vault', 'projects'),

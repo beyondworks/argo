@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Argo Messenger</title>
+    <link rel="icon" href="/icon.svg" />
+    <!-- 테마 부팅 — Argo 앱(app/layout.jsx themeBoot)과 같은 키, 기본값만 linen(main.jsx defaultTheme와 동일 — test/theme-boot-default가 잠근다). 첫 그리기 전에 적용해 번쩍임을 막는다 -->
+    <script>try{var t=localStorage.getItem('argo-theme')||'linen';if(t!=='argo')document.documentElement.dataset.theme=t}catch(e){}</script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

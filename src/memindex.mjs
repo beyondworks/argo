@@ -9,6 +9,12 @@
 //  2) 열기·읽기 실패는 치명적이지 않다 — null을 돌려 호출자가 정본 전수 읽기로 폴백한다.
 //  3) DB 파일은 동기화 대상이 아니다(sync.mjs EXCLUDE). 기기마다 자기 캐시를 갖는다.
 import { readdir, stat, readFile, unlink } from 'node:fs/promises';
+
+/** .md 이름 목록 — org 미러는 하위 폴더까지(readdir recursive, 구분자 '/' 고정). 그 외 폴더는 종전대로 평면(하위 폴더 무시). */
+async function listMd(dir, recursive) {
+  const names = await readdir(dir, recursive ? { recursive: true } : undefined);
+  return names.map((n) => String(n).split('\\').join('/')).filter((n) => n.endsWith('.md'));
+}
 import { join, relative, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { paths, WS_ROOT } from './workspace.mjs';
@@ -99,7 +105,7 @@ async function refresh(db, wsId) {
   const pendingUpsert = [];
   const pendingDelete = [];
   // 폴더 → 논리 접두 매핑 — readdir 실패를 "빈 폴더"로 오인하면 그 폴더의 전 행이 삭제 대상이 된다
-  const DIR_PREFIX = new Map([[p.journal, 'journal/'], [p.conversations, 'conversations/'], [p.notes, 'notes/']]);
+  const DIR_PREFIX = new Map([[p.journal, 'journal/'], [p.conversations, 'conversations/'], [p.notes, 'notes/'], [p.org, 'org/']]); // org/ = 조직 문서 미러(G-2, 재귀)
 
   // stat은 병렬로 — 이게 스캔 비용의 지배 항목이다. 문서 10만에서 직렬 1275ms → 병렬 363ms(실측).
   // 읽기 동시성은 stat과 분리해 훨씬 낮게 잡는다: stat은 fd를 오래 쥐지 않지만 readFile은 쥔다.
@@ -108,9 +114,9 @@ async function refresh(db, wsId) {
   const STAT_BATCH = 512;
   const READ_BATCH = 24;
   let readFailed = 0;
-  for (const dir of [p.journal, p.conversations, p.notes]) {
+  for (const dir of [p.journal, p.conversations, p.notes, p.org]) {
     let names = [];
-    try { names = await readdir(dir); } catch (e) {
+    try { names = await listMd(dir, dir === p.org); } catch (e) {
       // 없는 폴더(ENOENT)는 장애가 아니라 정당한 삭제다 — 기존대로 건너뛰어 not-seen 경로가 죽은
       // 행을 정리하게 둔다. 이걸 장애로 오인하면 known에 행이 남는 한 매 턴 unhealthy → 그 회사의
       // 캐시가 영구 무력화된다(3라운드 재검수 G1: conversations/ 폴더를 지운 회사에서 재현 — 이
@@ -125,7 +131,6 @@ async function refresh(db, wsId) {
       }
       continue;
     }
-    names = names.filter((n) => n.endsWith('.md'));
     for (let i = 0; i < names.length; i += STAT_BATCH) {
       const slice = names.slice(i, i + STAT_BATCH);
       const stats = await Promise.all(slice.map((n) => stat(join(dir, n)).catch(() => null)));

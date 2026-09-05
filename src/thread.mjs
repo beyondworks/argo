@@ -50,7 +50,7 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via } = {}) 
   return turnId;
 }
 
-export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, failed, aborted, fellBack }) {
+export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, fellBack }) {
   return withLock(lockKey(wsId, slug), async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();
@@ -62,6 +62,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       const m = t.messages[at];
       delete m.awaiting;
       if (attachments?.length) m.attachments = attachments;
+      if (actor) m.actor = actor; // 팀 메신저: 사람 발화자 {uid,name} — who:'user'만으로는 누가 말했는지 구분 불가(MESSENGER-DESIGN.md)
       if (failed) m.failed = failed;
       if (aborted) m.aborted = true;
       if (!failed) t.messages.splice(at + 1, 0, { who: 'crew', text: reply, handover, ts, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
@@ -73,7 +74,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       // via = 사장이 직접 쓴 글이 아닌 배달 지시(crewmail·delegate·routine). who:'user'는 러너 프롬프트
       // 관점의 역할일 뿐인데 UI가 사장 말풍선으로 그려 "내가 쓴 게 아니거든"이 됐다(신고 2026-07-28).
       // aborted = 사장 지시 중단(사유 문자열과 별도 — 원문이 우연히 'aborted'여도 오판 없음, 재검수 MEDIUM).
-      { who: 'user', text: userMsg, ts, ...(attachments?.length ? { attachments } : {}), ...(via ? { via } : {}), ...(failed ? { failed } : {}), ...(aborted ? { aborted: true } : {}) },
+      { who: 'user', text: userMsg, ts, ...(attachments?.length ? { attachments } : {}), ...(via ? { via } : {}), ...(actor ? { actor } : {}), ...(failed ? { failed } : {}), ...(aborted ? { aborted: true } : {}) },
     );
     // 실패·중단 턴은 크루 답변이 없다 — 지시문만 사유(failed)와 함께 보존한다. 성공 뒤에만 저장하면
     // 실패 턴의 지시문이 새로고침에 증발하고 비용만 남는다(전수리뷰 2026-07-30 #1).

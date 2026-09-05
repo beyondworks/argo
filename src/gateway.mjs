@@ -28,6 +28,9 @@ import { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT }
 import { clip, pollBackoffMs, pick, tidy, parseApprovalText, parseApprovalCallback, pairCodeMatches, classifySlackMessage, telegramBriefingDest } from './gateway/protocol.mjs';
 import { routeMessage, crewStatusReply, approvalWho, defaultCrew, resolveTelegramDest } from './gateway/routing.mjs';
 import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스트도 같은 함수를 본다
+import { CHANNEL_EVENTS } from './channel-events.mjs'; // msgr 푸시 대상 종류 집합(pushEvent 머리) — 음소거(company.json.msgr.mutedEvents) 판정은 msgrPush 안에서 channelSends로
+const channelSendsKinds = (kind) => CHANNEL_EVENTS[kind] ?? [];
+import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
 
 // facade — 기존 임포터(chat.mjs 동적 import·테스트)가 gateway.mjs에서 그대로 가져간다(무수정 계약).
 export { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT, JOBS_MAX_PENDING, enqueueLongJob } from './gateway/queue.mjs';
@@ -771,7 +774,13 @@ function startSlack(wsId, getCfg) {
 
 /* ─── 알림 푸시 — 결재는 버튼과 함께, 루틴은 브리핑으로, 위임은 상대 크루 봇의 발화로 ───
    결재 문구 정돈(tidy)은 protocol, 결재 주체 표기(approvalWho)는 routing에서 온다. */
+const MSGR_PUSH_TYPES = new Set([...channelSendsKinds('msgr'), 'approval_resolved', 'approval_followup']); // 카드 상태 갱신·후속 보고는 결재의 일부(음소거 대상 아님)
 async function pushEvent(event) {
+  // 팀 메신저 채널 — msgr 문맥(턴 중 결재·위임, 카드 메타)이 있는 이벤트만 처리하고 아니면 즉시 false(클라이언트 생성 0).
+  // 텔레그램·슬랙 경로와 독립 — 여기서 던져도 아래 발송을 막지 않는다.
+  if (MSGR_PUSH_TYPES.has(event.type)) {
+    await msgrPush(event).catch((e) => console.error('[argo] msgr 푸시 실패:', e.message));
+  }
   const all = await loadConnections(event.wsId);
   const { lang = 'ko' } = await loadCompany(event.wsId).catch(() => ({}));
   const who = event.type === 'approval' ? await approvalWho(event.wsId, event.item, lang) : '';
@@ -981,6 +990,7 @@ export function ensureGateway() {
       cfgMap[gwCfgKey(c.id, 'slack')] = all.slack;
       for (const [slug, bot] of Object.entries(all.telegram.agents ?? {})) cfgMap[gwCfgKey(c.id, tgAgentQkey(slug))] = bot;
       const qkeys = new Set(['telegram', 'slack', ...Object.keys(all.telegram.agents ?? {}).map(tgAgentQkey)]);
+      if (c.msgr?.enabled) qkeys.add(MSGR_KEY); // 팀 메신저 — company.json.msgr.enabled(조직에 크루 등록 시 켜짐)
       // 설정이 사라진 잔여 큐 디렉터리도 대상 — 핸들러가 cfg 부재 잡을 폐기해 스스로 청소된다
       try {
         for (const n of await readdir(paths(c.id).root)) if (n.startsWith('.gw-queue-')) qkeys.add(n.slice('.gw-queue-'.length));
@@ -993,6 +1003,7 @@ export function ensureGateway() {
         const handler = qkey === 'telegram' ? makeTgGatewayHandler(c.id, getCfg)
           : qkey === 'slack' ? makeSlackHandler(c.id, getCfg)
             : qkey === JOBS_QUEUE ? makeJobHandler(c.id) // 장시간 작업 — 메신저 연결과 무관하게 항상 드레인
+            : qkey === MSGR_KEY ? makeMsgrHandler(c.id)
               : qkey.startsWith(TG_AGENT_Q) ? makeTgAgentHandler(c.id, qkey.slice(TG_AGENT_Q.length), getCfg)
                 : null;
         // 장시간 작업은 동시 1 — 한 회사의 긴 작업이 메신저 응답 슬롯을 다 먹지 않게 큐를 분리한다
@@ -1042,6 +1053,12 @@ export function ensureGateway() {
         const id = `${c.id}:inbox`;
         alive.add(id);
         if (!running.has(id)) running.set(id, { key: 'v1', stop: startInboxWatcher(c.id) });
+      }
+      // 팀 메신저 브리지 — 회사마다 1개(리더만). 폴+Realtime 깨우기로 멘션·DM을 큐에 적재(드레인 워커는 위에서 리더 무관 상시)
+      if (c.msgr?.enabled) {
+        const id = `${c.id}:${MSGR_KEY}`;
+        alive.add(id);
+        if (!running.has(id)) running.set(id, { key: 'v1', stop: startMsgrBridge(c.id) });
       }
       // 크루 직통 봇 — 토큰이 있으면 곧 연결(별도 토글 없음: 연결 해제 = 토큰 제거)
       for (const [slug, bot] of Object.entries(all.telegram.agents ?? {})) {

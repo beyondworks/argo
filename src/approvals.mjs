@@ -19,7 +19,7 @@ async function save(wsId, list) {
 
 /** 결재 요청 등록 — kind: 'action'(행동 결재, 승인 시 후속 턴) | 'tool'(권한 게이트, 승인 시 그 자리에서 재개)
     | 'capability'(능력 켜기 제안 — 승인 시 능력 on + 후속 턴이 원래 요청 재개). cap은 capability 전용. */
-export async function addApproval(wsId, { slug, from, action, reason, kind = 'action', cap, payload }) {
+export async function addApproval(wsId, { slug, from, action, reason, kind = 'action', cap, payload, msgr }) {
   // 락 안에서 read-modify-write — 두 크루가 동시에 결재를 등록해도 유실 없음
   const item = await withLock(lockKey(wsId), async () => {
     const list = await loadApprovals(wsId);
@@ -29,6 +29,7 @@ export async function addApproval(wsId, { slug, from, action, reason, kind = 'ac
       slug, kind, ...(from ? { from } : {}), ...(cap ? { cap } : {}),
       // payload — 승인 시 서버가 실행할 구조화 데이터(profile 변경·hire 스펙). 300자 상한의 action과 별개
       ...(payload ? { payload } : {}),
+      ...(msgr ? { msgr } : {}), // 팀 메신저 턴에서 올린 결재 — 카드 목적지(orgId·channelId·crewId). 푸시가 rowId·messageId를 덧붙인다
       action: String(action).slice(0, 300),
       reason: String(reason ?? '').slice(0, 500),
       status: 'pending',
@@ -47,14 +48,17 @@ export async function addApproval(wsId, { slug, from, action, reason, kind = 'ac
 /** 승인/거절 — 상태만 바꾼다. 후속 턴 실행은 API 계층 책임.
     락 안에서 상태를 재확인하므로, 같은 결재에 두 요청(데크 카드+채팅 카드, 웹+메신저)이
     동시에 와도 두 번째는 'approved'를 보고 막힌다 — 되돌릴 수 없는 후속 턴 이중 실행 차단. */
-export async function resolveApproval(wsId, id, approve) {
+export async function resolveApproval(wsId, id, approve, { resolvedBy = null } = {}) {
   const item = await withLock(lockKey(wsId), async () => {
     const list = await loadApprovals(wsId);
     const it = list.find((a) => a.id === id);
     if (!it) throw new Error('존재하지 않는 결재입니다');
     if (it.status !== 'pending') throw new Error('이미 처리된 결재입니다');
+    // H-2 협조적 강제(부록 K ②): 팀 메신저에서 올라온 결재를 서버가 "소유자는 확정 불가"로 판정했으면(고위험·조직 정책) 로컬 창구(웹·텔레그램·슬랙)에서도 거절한다.
+    if (it.msgr?.ownerMayDecide === false && resolvedBy?.via !== 'msgr') throw new Error('조직 정책: 이 결재는 팀 메신저에서 조직 관리자(결재권자)만 확정할 수 있습니다');
     it.status = approve ? 'approved' : 'rejected';
     it.resolvedAt = new Date().toISOString();
+    if (resolvedBy) it.resolvedBy = resolvedBy; // 누가 확정했나 {uid, via, at} — 팀 메신저(다중 사용자)에서 감사 근거. 기존 창구는 미기록(단일 사장)
     await save(wsId, list);
     return it;
   });

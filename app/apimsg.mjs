@@ -24,6 +24,10 @@ export const API_MSG = {
   // 회의실(app/api/companies/[ws]/room·sessions) — 크루 발언 중 새 회의·전환·마치기 거절(코어 assertRoomIdle의 ROOM_BUSY).
   // 화면은 errorCode로 사전(room.busyGate)을 다시 그리고, 이 문구는 API 소비자·로그용 표시 언어 본문(#393 DELETE 문구 계승).
   room_busy: { status: 409, ko: '발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.', en: 'A crew is still speaking — try again after it finishes.' },
+  // 팀 메신저 크루 등록(app/api/companies/[ws]/msgr)
+  msgr_bad_request: { status: 400, ko: '조직 id·크루·허용 범위(all|list|owner)를 확인해 주세요', en: 'Check the organization id, crew, and allow scope (all|list|owner)' },
+  msgr_crew_not_found: { status: 404, ko: '크루가 없습니다', en: 'Crew not found' },
+  msgr_upstream: { status: 502, ko: '조직 서버 응답 오류 — 잠시 후 다시 시도해 주세요', en: 'Organization server error — please try again shortly' },
 };
 
 /** 기능 라우트 공통 오류 응답. lang은 ko|en(그 외 값·미지정은 ko). 미등록 코드는 throw —

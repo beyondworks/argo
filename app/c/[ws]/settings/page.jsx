@@ -185,6 +185,7 @@ function Settings({ params }) {
       <ConnectionCard ws={ws} kind="slack" title={t('activity.slack')}
         help={t('settings.conn.slackHelp')}
         agents={data?.agents ?? []} />
+      <MsgrCard ws={ws} agents={data?.agents ?? []} />
       <ConnectorsCard ws={ws} />
       <SyncCard ws={ws} />
       <E2eeCard />
@@ -340,6 +341,9 @@ const THEME_SWATCHES = {
   graphite: ['#f0f0f0', '#202020', '#1a1a1a'],   // 자동 — 밝은 판·어두운 판을 함께 보여 시스템 따라감을 드러낸다
   'graphite-light': ['#f0f0f0', '#ffffff', '#1a1a1a'],
   'graphite-dark': ['#202020', '#252525', '#ededed'],
+  linen: ['#e9e6df', '#1f1e1b', '#e8e400'],   // 자동 — 그레이지 판·차콜 판 + 옐로 마크
+  'linen-light': ['#e9e6df', '#fbfaf7', '#1f1e1b'],
+  'linen-dark': ['#1f1e1b', '#2a2926', '#ececea'],
   argo: ['#e3e5d6', '#e9ebdd', '#22241c'],
   calm: ['#eff1f4', '#f8f9fb', '#5a6b8c'],
   'calm-dark': ['#1b1e24', '#22262e', '#8098bd'],
@@ -370,9 +374,9 @@ const THEME_SWATCHES = {
 };
 
 // 아르고 시그니처 = 라이트/다크/시스템 3-모드. 나머지 테마는 "다른 스킨"으로 분리(모드 토글과 중복 제거).
-// 기본 패밀리 2종(그래파이트=기본, 아르고=시그니처) × 모드 3종(시스템/라이트/다크). 패밀리 코드: 시스템 자동은
+// 기본 패밀리 3종(그래파이트=기본, 아르고=시그니처, 리넨=메신저 기본) × 모드 3종(시스템/라이트/다크). 패밀리 코드: 시스템 자동은
 // 접미 없음, 고정은 -light/-dark. 다른 스킨(목록)은 패밀리 밖이라 모드 세그먼트가 적용되지 않는다.
-const FAMILIES = [['graphite', 'settings.family.graphite'], ['argo', 'settings.family.argo']];
+const FAMILIES = [['graphite', 'settings.family.graphite'], ['argo', 'settings.family.argo'], ['linen', 'settings.family.linen']];
 const MODE_SUFFIX = [['', 'settings.mode.system'], ['-light', 'settings.mode.light'], ['-dark', 'settings.mode.dark']];
 const FAMILY_CODES = FAMILIES.flatMap(([f]) => MODE_SUFFIX.map(([sfx]) => `${f}${sfx}`));
 const ARGO_CODES = FAMILY_CODES;
@@ -734,6 +738,112 @@ function TrashCard({ ws }) {
 /** 로그인만으로 붙는 외부 서비스(커넥터) — 카탈로그 × 이 회사 연결 상태.
     "연결"은 브라우저 동의 창을 열고 **끝나기를 기다리지 않는다**(사용자가 구글에서 로그인하는 동안
     응답이 막히면 화면이 죽은 것처럼 보인다). 완료는 목록을 다시 읽어 상태로 관측한다 — 코어와 같은 계약. */
+/** 팀 메신저 — 이 회사 크루를 조직에 등록(파견)/해제하고 허용 범위를 고른다. 조직·채널·메시지는 메신저 앱이 다룬다.
+    데이터는 /api/companies/[ws]/msgr(기기 세션 JWT로 Supabase msgr_crews에 씀). 기본 허용 범위는 '나만'(부록 H — 정책 테이블 전까지 가장 좁게). */
+function MsgrCard({ ws, agents }) {
+  const { t } = useLang();
+  const [st, setSt] = useState(null); // { signedIn, orgs:[{id,name,role,members}], crews:[등록 행] }
+  const [orgId, setOrgId] = useState('');
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+  const load = useCallback(() => api(`/api/companies/${ws}/msgr`)
+    .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
+    .catch(() => { setSt({ signedIn: false, orgs: [], crews: [] }); setErr(t('settings.msgr.err.load')); }), [ws, t]);
+  useEffect(() => { load(); }, [load]);
+  const org = st?.orgs?.find((o) => o.id === orgId);
+  const regOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug && r.status === 'active');
+  const bridgeOn = !!st?.crews?.some((r) => r.status === 'active');
+  async function register(slug, allow, allowUsers) {
+    if (busy) return; setBusy(slug); setErr('');
+    try { await api(`/api/companies/${ws}/msgr`, { orgId, slug, allow, allowUsers }); await load(); }
+    catch (e) { setErr(String(e.message)); } finally { setBusy(''); }
+  }
+  async function unregister(slug) {
+    if (busy) return; setBusy(slug); setErr('');
+    try {
+      const r = await fetch(`/api/companies/${ws}/msgr`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ orgId, slug }) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `${r.status}`);
+      await load();
+    } catch (e) { setErr(String(e.message)); } finally { setBusy(''); }
+  }
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{t('settings.msgr.title')}</strong>
+        {st?.signedIn && <span className="chip" style={{ fontSize: 10 }} title={bridgeOn ? t('settings.msgr.bridge.on') : t('settings.msgr.bridge.off')}>{bridgeOn ? t('settings.msgr.bridge.onShort') : t('settings.msgr.bridge.offShort')}</span>}
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.help')}</p>
+      {st === null && <Skeleton h={44} />}
+      {st && !st.signedIn && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.notSignedIn')}</p>}
+      {st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noOrg')}</p>}
+      {st?.signedIn && !!st.orgs?.length && (<>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5 }}>
+          <span className="microlabel">{t('settings.msgr.org')}</span>
+          <select className="input" value={orgId} onChange={(e) => setOrgId(e.target.value)} style={{ height: 30, fontSize: 12.5 }}>
+            {st.orgs.map((o) => <option key={o.id} value={o.id}>{o.name} · {t(`role.${o.role}`)}</option>)}
+          </select>
+        </label>
+        {org?.policy && (
+          <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.5 }}>
+            <span className="microlabel" style={{ marginRight: 6 }}>{t('settings.msgr.policy')}</span>
+            {t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') })}
+          </p>
+        )}
+        <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.5 }}>{t('settings.msgr.tierNote')}</p>
+        {!agents.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noCrews')}</p>}
+        {agents.map((a) => {
+          const reg = regOf(a.slug);
+          const allow = reg?.allow ?? 'owner';
+          const picked = reg?.allow_users ?? [];
+          return (
+            <div key={a.slug} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 0', borderTop: '1px solid var(--border-soft)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 180 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{a.name}</span>
+                  <span style={{ fontSize: 11.5, color: 'var(--fg-3)', marginLeft: 8 }}>{a.role}</span>
+                  <span className="chip" style={{ fontSize: 10, marginLeft: 8 }}>{reg ? t('settings.msgr.registered') : t('settings.msgr.notRegistered')}</span>
+                </div>
+                {reg ? (
+                  <button type="button" className="btn sm" disabled={busy === a.slug} onClick={() => unregister(a.slug)}>{busy === a.slug ? <Spinner size={12} /> : t('settings.msgr.unregister')}</button>
+                ) : (
+                  <button type="button" className="btn sm btn-primary" disabled={busy === a.slug} onClick={() => register(a.slug, org?.policy?.allow_locked ? org.policy.allow_default : 'owner', [])}>{busy === a.slug ? <Spinner size={12} /> : t('settings.msgr.register')}</button>
+                )}
+              </div>
+              {reg && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span className="microlabel">{t('settings.msgr.allow')}</span>
+                  <div role="radiogroup" aria-label={t('settings.msgr.allow')} style={{ display: 'inline-flex', gap: 3, background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
+                    {['all', 'list', 'owner'].map((v) => (
+                      <button key={v} type="button" role="radio" aria-checked={allow === v} disabled={busy === a.slug || !!org?.policy?.allow_locked} onClick={() => register(a.slug, v, v === 'list' ? picked : [])}
+                        style={{ cursor: 'pointer', border: 0, borderRadius: 999, padding: '4px 12px', fontSize: 12, fontWeight: 600, background: allow === v ? 'var(--primary)' : 'transparent', color: allow === v ? 'var(--primary-fg)' : 'var(--fg-2)' }}>
+                        {t(`settings.msgr.allow.${v}`)}
+                      </button>
+                    ))}
+                  </div>
+                  {!!org?.policy?.allow_locked && <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.msgr.allow.locked')}</span>}
+                  {allow === 'list' && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                      <span className="microlabel">{t('settings.msgr.allow.pick')}</span>
+                      {!org?.members?.length && <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.msgr.allow.noMembers')}</span>}
+                      {org?.members?.map((m) => {
+                        const on = picked.includes(m.id);
+                        return <button key={m.id} type="button" className="chip" aria-pressed={on} disabled={busy === a.slug} onClick={() => register(a.slug, 'list', on ? picked.filter((x) => x !== m.id) : [...picked, m.id])}
+                          style={{ cursor: 'pointer', textTransform: 'none', letterSpacing: 0, background: on ? 'var(--primary)' : undefined, color: on ? 'var(--primary-fg)' : undefined }}>{m.name}</button>;
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>{t('settings.msgr.policyNote')}</p>
+      </>)}
+      {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
+    </div>
+  );
+}
+
 function ConnectorsCard({ ws }) {
   const { t, lang } = useLang();
   const [rows, setRows] = useState(null);

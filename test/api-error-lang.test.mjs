@@ -46,6 +46,10 @@ const EXPECT = {
   e2ee_unknown_action: { status: 400, ko: '알 수 없는 action', en: 'Unknown action' },
   // 회의실 게이트(#395) — 세 라우트(새 회의·전환·마치기)가 같은 코드로 응답. 문구는 #393 DELETE 핀(/진행 중|still speaking/)을 잇는다
   room_busy: { status: 409, ko: '발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.', en: 'A crew is still speaking — try again after it finishes.' },
+  // 팀 메신저 크루 등록(app/api/companies/[ws]/msgr) — S2 검수 MEDIUM-5(하드코딩 문구·PG 원문 노출 제거)
+  msgr_bad_request: { status: 400, ko: '조직 id·크루·허용 범위(all|list|owner)를 확인해 주세요', en: 'Check the organization id, crew, and allow scope (all|list|owner)' },
+  msgr_crew_not_found: { status: 404, ko: '크루가 없습니다', en: 'Crew not found' },
+  msgr_upstream: { status: 502, ko: '조직 서버 응답 오류 — 잠시 후 다시 시도해 주세요', en: 'Organization server error — please try again shortly' },
 };
 
 test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태코드 + errorCode 동봉', async () => {

@@ -9,8 +9,8 @@ import { emitNotify } from './notify.mjs'; // 후속 턴 결과를 원 채널(�
     사용자에게 보고한다.
     kind:'capability'는 없어졌다(2026-07-30) — 능력이 설치 시점부터 전권이라 켤 것이 없다
     (capabilities.mjs). 옛 결재함에 남은 capability 항목은 여기서 특별 처리 없이 그냥 해소된다. */
-export async function resolveWithFollowUp(wsId, id, approve) {
-  const item = await resolveApproval(wsId, id, approve);
+export async function resolveWithFollowUp(wsId, id, approve, opts = {}) {
+  const item = await resolveApproval(wsId, id, approve, opts);
   if (item.kind === 'loop') {
     // 루프 막힘(LOOP: blocked) 결재 — 승인이면 루틴을 다시 켠다(다음 틱에 재개), 거절이면 정지 유지.
     // 후속 턴을 돌리지 않는다: 재개된 루프의 다음 회차가 곧 후속이고, 여기서 턴을 더 쓰면 비용 이중.
@@ -91,6 +91,11 @@ async function followUp(wsId, item, approve) {
       outcome = `적용 실패: ${String(e.message || e).slice(0, 160)}`;
     }
     msg = `(사장 결재) "${item.action}" 이(가) 승인되었고 시스템이 처리했다 — ${outcome}\n결과를 사용자에게 한두 줄로 보고하라. 다시 실행하려 하지 마라(이미 처리됨).`;
+  } else if (item.kind === 'org_doc') {
+    // G-4: 서버(msgr_apply_org_doc)가 승인자의 권한으로 이미 반영했다 — 크루는 다시 쓰지 않는다
+    msg = approve
+      ? `(관리자 결재) 조직 문서 제안 "${item.action}" 이(가) 승인되어 서버가 문서에 반영했다. 사용자에게 한두 줄로 보고하라. 문서를 다시 쓰거나 제안하지 마라(이미 반영됨).`
+      : `(관리자 결재) 조직 문서 제안 "${item.action}" 이(가) 거절되었다. 반영되지 않았다 — 대안이 있으면 한두 줄로 정리하라.`;
   } else {
     msg = item.kind === 'capability'
       ? (approve
