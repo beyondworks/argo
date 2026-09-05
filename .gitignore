@@ -27,3 +27,5 @@ dist-server/
 /PRODUCT-SPEC.md
 # 브라우저 유즈 크롬 프로필(dirname(ARGO_ROOT)/browser) — dev에서 레포 루트에 생긴다
 browser/
+# 서버 일괄 재봉인 진행 파일(scripts/cloud-reseal-all.mjs)
+.reseal-all-progress.json
