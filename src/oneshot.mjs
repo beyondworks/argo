@@ -6,7 +6,7 @@ import { nativeOneShot, nativeRunnerEnabled } from './engine/native-query.mjs'; 
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
 import { effectiveModels } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
-import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor , visibleRunnerNamesLine, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType } from './runners.mjs';
+import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor, visibleRunnerNamesLine, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -71,6 +71,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       : runner === 'openrouter' ? (effectiveModels('openrouter').some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL)
       : runner === 'grok' ? (effectiveModels('grok').some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL)
       : runner === 'gemini' ? (effectiveModels('gemini').some((m) => m.id === model) ? model : GEMINI_DEFAULT_MODEL)
+      : runner === 'codex' ? (effectiveModels('codex').some((m) => m.id === model) ? model : CODEX_DEFAULT_MODEL)
       : (model || null);
     if (nativeRunnerEnabled(runner)) {
       // 네이티브 엔진(P-A') — 도구 없는 단발 호출. 오류는 `API Error: <status> …`로 던져 아래 catch(자가치유·안내)가 그대로 받는다.

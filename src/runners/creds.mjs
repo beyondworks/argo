@@ -14,6 +14,8 @@ import { provisionCodexCli } from './codex.mjs';
 import { provisionGeminiCli, geminiTurnHome, probeGeminiSubscription } from './gemini.mjs';
 import { nativeRunnerEnabled } from '../engine/native-flags.mjs';
 import { GEMINI_DEFAULT_BASE } from '../engine/gemini-wire.mjs';
+import { CODEX_BACKEND_BASE, OPENAI_API_BASE } from '../engine/responses-wire.mjs';
+import { parseCodexAuth, accessExpiring, refreshCodexTokens, readCliCodexAuth, cliAuthCandidates, mergeCodexAuth, codexHeaders } from './codex-oauth.mjs';
 import { grokAccessToken, grokExpired, grokNeedsRefresh, refreshGrokTokens } from './grok.mjs';
 
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
@@ -195,6 +197,43 @@ export const normalizePastedCred = (value) => {
 /** 러너 실행에 주입할 env(부분) — 회사 자격이 있으면 러너 종류에 맞는 변수로. 없으면 null(호스트 자격 폴백=회귀 0).
     반환: { env, home } — env=주입 변수 dict, home=회사 자격 격리 홈 경로(codex는 apikey·oauth 모두
     auth.json 경유 — env 키 주입('clean')은 CLI가 안 읽어 폐기 2026-07-26). */
+/** Codex 구독 액세스 토큰 확보 — 만료 임박(120초 스큐)이면 락 안에서 최신 자격을 다시 읽고(다른 프로세스가 먼저 갱신했을 수 있다) 리프레시 뒤 저장.
+    리프레시가 재로그인 계급이면 CLI 파일(~/.codex/auth.json)의 더 새로운 refresh 토큰을 1회 반입해 재시도(Hermes _recover_codex_tokens_from_cli). */
+export async function ensureCodexAccess(wsId, cred, { fetchImpl = globalThis.fetch } = {}) {
+  let t = parseCodexAuth(cred.value);
+  if (!t) throw Object.assign(new Error('codex oauth credential is not an auth.json payload'), { authExpired: 'codex' });
+  if (!accessExpiring(t.access_token)) return t;
+  // 락 대기 상한은 리프레시 HTTP 상한(20초)의 두 번(본 토큰 + CLI 반입)보다 길게 — 짧으면 느린 토큰 엔드포인트에서 옆 턴이 ELOCKTIMEOUT 원문으로 죽는다(검수 MEDIUM-2)
+  return withDirLock(`${secretsFile(wsId)}.lockd`, async () => {
+    const latest = parseCodexAuth((await loadSecrets(wsId)).runners?.codex?.value ?? '') ?? t;
+    if (!accessExpiring(latest.access_token)) return latest; // 다른 프로세스가 방금 갱신
+    const persist = async (raw, next) => {
+      const json = mergeCodexAuth(raw, next); const s = await loadSecrets(wsId);
+      // 회전된 새 refresh 토큰을 못 남기면 옛 토큰은 이미 소비돼 이후 갱신이 영구 실패한다 — 조용한 no-op 금지(검수 LOW-6)
+      if (!s.runners?.codex) throw Object.assign(new Error('codex credential was removed during token refresh — reconnect'), { authExpired: 'codex' });
+      s.runners.codex = { ...s.runners.codex, value: json }; await writeJsonAtomic(secretsFile(wsId), s); return parseCodexAuth(json);
+    };
+    // 토큰 확보(리프레시 → 실패 시 CLI 파일 반입)와 저장(persist)을 분리한다 — 저장 실패(자격 삭제)를 리프레시 실패로 오인해 CLI 반입까지 타지 않게.
+    const got = await (async () => {
+      try { return { raw: latest.raw, next: await refreshCodexTokens(latest.refresh_token, { fetchImpl }) }; }
+      catch (e) {
+        if (!e?.authExpired) throw e; // 한도(429)·네트워크는 그대로(재로그인 안내 금지)
+        // CLI 파일이 더 새 토큰을 쥐고 있다 — 격리 홈(Argo의 codex CLI 턴이 회전시킨 곳) → 호스트 ~/.codex 순으로 1회씩 반입(쓰기 금지, MEDIUM-3).
+        // 호스트 개인 로그인을 가져오면 그쪽 CLI 세션이 회전으로 깨질 수 있다 — 경고 로그로 남긴다.
+        for (const file of cliAuthCandidates(wsId)) {
+          const cli = await readCliCodexAuth(file);
+          if (!cli || cli.refresh_token === latest.refresh_token) continue;
+          console.warn(`[argo] codex 토큰 리프레시 실패 — CLI 파일에서 1회 반입(${file.includes('.argo') ? '격리 홈' : '호스트 ~/.codex — 그쪽 로그인이 회전될 수 있음'})`);
+          try { return { raw: cli.raw, next: await refreshCodexTokens(cli.refresh_token, { fetchImpl }) }; }
+          catch (e2) { if (!e2?.authExpired) throw e2; }
+        }
+        throw Object.assign(new Error('codex subscription login expired — reconnect'), { authExpired: 'codex', cause: e });
+      }
+    })();
+    return await persist(got.raw, got.next);
+  }, { timeoutMs: 45_000 }).catch((e) => { if (e?.code !== 'ELOCKTIMEOUT') throw e; throw Object.assign(new Error('API Error: 503 codex token refresh is taking too long (another turn is refreshing) — retry shortly'), { status: 503, cause: e }); });
+}
+
 /** 저장된 자격의 종류만(apikey·oauth·host·null) — 턴 분기(isCliTurn)가 러너 종류 옆에 자격 축을 본다. */
 export async function runnerCredType(wsId, runner) { return (await loadRunnerCred(wsId, runner))?.type ?? null; }
 
@@ -292,6 +331,15 @@ export async function runnerCredEnv(wsId, runner) {
       tok = grokAccessToken(cur);
     }
     return { env: { ...compatSdkEnv(`ws-${wsId}`), ANTHROPIC_BASE_URL: process.env.GROK_BASE_URL || 'https://api.x.ai', ANTHROPIC_AUTH_TOKEN: tok, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+  }
+  if (runner === 'codex' && cred.type !== 'host' && nativeRunnerEnabled('codex')) {
+    // P-B(옵트인): Argo가 Responses 와이어로 직접 호출 — apikey는 api.openai.com, oauth(구독)는 ChatGPT 백엔드(Hermes·OpenClaw 동일 경로).
+    // 토큰은 Argo가 독립 리프레시(codex-oauth.mjs) — CLI 파일 공유로 생기던 refresh-token 회전 충돌을 끊는다. 정책 위험은 플래그·CLI 폴백으로 격리.
+    // 네임스페이스 env(ARGO_*) — OPENAI_BASE_URL은 생태계 공용 이름이라 무관한 프록시 설정이 회사 키를 그쪽으로 보낸다(검수 LOW-3, ARGO_CLAUDE_BASE_URL 선례).
+    // 주의: ARGO_CODEX_ENGINE=appserver는 CLI 턴(externalExec) 안의 선택지라 이 플래그를 켠 apikey·oauth 자격에는 도달하지 않는다(host만 CLI) — 검수 LOW-7.
+    if (cred.type === 'apikey') return { env: { ARGO_WIRE: 'responses', RESPONSES_BASE_URL: process.env.ARGO_OPENAI_BASE_URL || OPENAI_API_BASE, RESPONSES_TOKEN: v }, authType: 'apikey' };
+    const tokens = await ensureCodexAccess(wsId, cred);
+    return { env: { ARGO_WIRE: 'responses', RESPONSES_BASE_URL: process.env.ARGO_CODEX_BASE_URL || CODEX_BACKEND_BASE, RESPONSES_TOKEN: tokens.access_token, RESPONSES_HEADERS: JSON.stringify(codexHeaders(tokens)) }, authType: 'oauth' };
   }
   if (runner === 'codex') {
     // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를

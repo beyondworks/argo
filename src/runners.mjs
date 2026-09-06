@@ -34,7 +34,7 @@ export {
   endpointNotFoundNotice, isEndpointNotFoundMsg,
   isOpenRouterCreditError, isOpenRouterCreditReply, isOpenRouterLimitError, isOpenRouterLimitReply,
   isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice,
-  pickRunner, autoRunnerOf, oauthFormatError, excludeWith, authExcludedNoRunnerMsg, isCliTurn, GEMINI_DEFAULT_MODEL } from './runners/catalog.mjs';
+  pickRunner, autoRunnerOf, oauthFormatError, excludeWith, authExcludedNoRunnerMsg, isCliTurn, GEMINI_DEFAULT_MODEL, CODEX_DEFAULT_MODEL } from './runners/catalog.mjs';
 export {
   provisionCodexCli, CODEX_EFFORTS, codexEffortArgs, CODEX_PIN, CODEX_LOCKUP_RE,
   importCodexAuth, recoverCodexAuth, writeCodexTurnConfig,
