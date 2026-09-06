@@ -11,7 +11,7 @@ import { readEvents, appendEvent } from './events.mjs';
 export const DIGEST_WINDOW_MS = 24 * 60 * 60_000;
 export const DIGEST_MIN_COUNT = 3;
 export const DIGEST_REPORT_INTERVAL_MS = 24 * 60 * 60_000;
-export const DIGEST_FILE_NAME = '.failure-digest.json';
+export const DIGEST_FILE_NAME = '.failure-digest.json'; // 동기화 대상(sync EXCLUDE 아님, 봉투 켜짐이면 암호문) — 서명별 보고 시각은 그 기기가 아니라 회사의 사실이라 리더가 바뀌어도 같은 서명을 다시 보고하지 않는다(#446 검수 D12). 크루 셸 방어는 permission-gate WS_DOT_FILES(D1).
 const digestFile = (wsId) => join(paths(wsId).root, DIGEST_FILE_NAME);
 
 /** 오류 원문에서 벤더·실행기 원문 핵심만(순수) — chat.mjs가 앞뒤에 붙이는 Argo 층(대체 실행 접두·크래시 안내·`\n\n` 뒤 재연결 안내)을 벗긴다.
