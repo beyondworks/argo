@@ -39,6 +39,15 @@ test('D1. errorSignature(순수) — 요청 id·긴 숫자·경로·따옴표 �
   const en400b = `The assigned runner Grok is connected but hit an authentication error this turn, so Claude ran instead (reconnect Grok if this keeps happening). API Error: 400 The model does not exist`;
   assert.notEqual(errorSignature(en400a), errorSignature(en400b), 'EN 접두가 같아도 벤더 상세가 다르면 다른 서명');
   assert.equal(errorCore('plain failure text'), 'plain failure text');
+  // 2R N1: 상표 문구(스크럽 전 선기록) vs 러너 이름 접두(스크럽 뒤 최종) — 상주 실패 1위 픽스처(runner-invariants.test.mjs setup-token 만료)
+  const setup = 'Claude Code returned an error result: Failed to authenticate: OAuth session expired and could not be refreshed';
+  assert.equal(errorCore(setup), 'Failed to authenticate: OAuth session expired and could not be refreshed'); assert.equal(errorSignature(setup), errorSignature('Claude: Failed to authenticate: OAuth session expired and could not be refreshed'));
+  // 2R N2: 원문 301자 이상 — 선기록(400자 캡) vs 최종(300자 캡 + 안내)이 같은 서명
+  const long = `API Error: 400 ${'y'.repeat(320)} model does not exist`;
+  assert.equal(errorSignature(long.slice(0, 400)), errorSignature(`${long.slice(0, 300)}\n\n안내 문장`), '공통 접두 300자로 정렬');
+  // 2R N3a: 원문이 ')'로 끝나고 KO 접두가 괄호를 품어도 괄호 원문 추출이 오탐하지 않는다(가드 제거 변이 red)
+  const safety = 'API Error: 400 Gemini returned no candidates (SAFETY)';
+  assert.equal(errorCore(`지정 러너 Gemini가 연결돼 있지만 인증 오류가 나 Claude(으)로 대체 실행됐습니다(반복되면 Gemini를 다시 연결해 주세요). ${safety}`), safety);
   // D3: 원문 핵심 자체가 160자를 넘을 때 — 꼬리의 벤더 상세가 서명·샘플에 살아남는다(앞 160자만 뜨면 두 원인이 한 서명으로 뭉친다)
   const longPre = `API Error: 400 ${'Invalid request content. '.repeat(8)}`; // 215자 상수 앞부분
   assert.notEqual(errorSignature(`${longPre}model does not exist`), errorSignature(`${longPre}context length exceeded`), '꼬리가 다르면 다른 서명');
@@ -107,3 +116,11 @@ test('D5. 방어·동기화 축 — 상태 파일은 크루 셸 1차 방어에 �
   const { EXCLUDE } = await import('../src/sync.mjs');
   assert.equal(EXCLUDE(DIGEST_FILE_NAME), false, '동기화 대상 — 서명별 보고 시각은 회사의 사실이라 리더가 바뀌어도 같은 서명을 다시 보고하지 않는다(D12)');
 });
+
+test('D6. 배선 — 활동 행: failure-digest 분기는 danger:true(오류 계급 색)·반복 실패 칩 — 분기 구간만 본다(2R N3b)', async () => {
+  const src = stripComments(await readFile(new URL('../app/c/[ws]/activity/page.jsx', import.meta.url), 'utf8'));
+  const i = src.indexOf("if (e.type === 'failure-digest')"); assert.ok(i >= 0, '분기 존재');
+  const block = src.slice(i, src.indexOf('\n    }', i)); assert.ok(block.length > 0 && block.length < 800, `분기 구간 ${block.length}자`);
+  assert.match(block, /danger: true/, '오류 계급 색(D4)'); assert.match(block, /chip: t\('activity\.failureDigestChip'\)/);
+});
+

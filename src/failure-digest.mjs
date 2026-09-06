@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { readEvents, appendEvent } from './events.mjs';
+import { RUNNERS } from './runners/catalog.mjs';
 
 export const DIGEST_WINDOW_MS = 24 * 60 * 60_000;
 export const DIGEST_MIN_COUNT = 3;
@@ -16,15 +17,18 @@ const digestFile = (wsId) => join(paths(wsId).root, DIGEST_FILE_NAME);
 
 /** 오류 원문에서 벤더·실행기 원문 핵심만(순수) — chat.mjs가 앞뒤에 붙이는 Argo 층(대체 실행 접두·크래시 안내·`\n\n` 뒤 재연결 안내)을 벗긴다.
     같은 원인이 자가치유 선기록(원문)과 최종 기록(안내 덧붙음)으로 두 서명에 갈리던 것(#446 검수 D2), 안내가 160자 예산을 먹어 크래시 코드가 잘리던 것(D3). */
+/** 상표 문구·러너 이름 접두 — chat.mjs가 자가치유 선기록은 스크럽 전(`Claude Code returned an error result: …`), 최종 기록은 scrubSdkBrand 뒤(`Claude: …`)로 남겨 같은 원인이 갈리던 것(2R N1). 러너는 이미 열쇠 축이라 이름은 정보가 아니다. */
+const BRAND_PREFIX = new RegExp(String.raw`^(?:Claude Code returned an error result:?\s*)?(?:(?:${Object.values(RUNNERS).map((r) => String(r.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')}):\s+)?`, 'i');
 export function errorCore(error) {
-  let s = String(error ?? '').replace(/\r/g, '').split('\n\n')[0];
+  let s = String(error ?? '').replace(/\r/g, '').split('\n\n')[0].trim().replace(BRAND_PREFIX, '');
   const marks = ['API Error:', 'exited with code', 'Error:', 'error:', '턴 실패:'].map((m) => s.indexOf(m)).filter((i) => i >= 0);
   if (marks.length) {
     const at = Math.min(...marks); // Argo 접두 뒤의 첫 원문 표지
     const open = s.lastIndexOf('(', at); // 크래시 안내는 원문을 뒤에 괄호로 감싼다(`안내 (Claude Code process exited with code N)`) — 괄호 안 원문 전체
     s = open >= 0 && s.endsWith(')') && !s.slice(open, at).includes(')') ? s.slice(open + 1, -1) : s.slice(at);
   }
-  return s.replace(/^턴 실패: \w+ — /, '').trim();
+  // 최종 기록은 원문을 300자로 자른 뒤 안내를 붙이고(chat.mjs eMsg.slice(0, 300)) 선기록은 400자 — 공통 접두 300자로 정렬해야 긴 벤더 상세가 두 서명으로 갈리지 않는다(2R N2)
+  return s.replace(/^턴 실패: \w+ — /, '').replace(BRAND_PREFIX, '').trim().slice(0, 300);
 }
 const headTail = (s, head, tail) => (s.length <= head + tail + 3 ? s : `${s.slice(0, head)} … ${s.slice(-tail)}`);
 /** 오류 원문 → 서명(순수). 원문 핵심을 뽑고 가변 부분(긴 숫자·16진 id·경로·따옴표 안 값)을 접어 같은 원인이 같은 열쇠로 모이게 한다.

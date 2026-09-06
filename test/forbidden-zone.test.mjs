@@ -532,7 +532,7 @@ test('Bash 리터럴: 과차단 없음 — 크루의 평범한 명령은 그대�
 // `resolve()`·문자열 결합(`${root}/.x`)을 쓰거나, join 첫 인자 이름에 root/WS_ROOT가 없으면 놓친다.
 // 실제로 1차 판에서 **src 최상위만 훑어** src/runners/·src/gateway/를 통째로 빠뜨렸고, 거기 있던
 // `.account-secrets-${uid}.json`(러너 자격)이 그대로 열려 있었다(분리 검수 HIGH). 재귀 + 따옴표 3종
-// + 템플릿 접두 + daemonLease 팩토리까지 여기서 닫는다. 표기를 더 늘리면 이 스캔도 함께 늘릴 것.
+// + 템플릿 접두 + daemonLease 팩토리 + `join(paths(x).root, CONST)`·root 별칭 한 홉(#446 2R N4)까지 여기서 닫는다. 표기를 더 늘리면 이 스캔도 함께 늘릴 것.
 test('드리프트: 루트 직속 도트 리터럴은 전부 BASH_GUARDED 등재', async () => {
   const { readFile, readdir } = await import('node:fs/promises');
   const srcDir = new URL('../src/', import.meta.url);
@@ -571,10 +571,12 @@ test('드리프트: 루트 직속 도트 리터럴은 전부 BASH_GUARDED 등재
       // `const FILE = '.x'` 후 join(root, FILE) 하는 모듈(synccreds·devicesession·gueststate). 식별자를 FILE로
       // 고정했더니 devicesession의 `const LOG = '.device-session.log'`를 못 봤다(분리 검수 MEDIUM-3, 2026-09-02) —
       // 대문자 상수 전부로 넓힌다(규칙 vs 목록이면 목록이 뒤처진다, PR #215 계열).
-      ...(/WS_ROOT/.test(code) ? [...code.matchAll(new RegExp(String.raw`const [A-Z_]+ = ${Q}${LIT}`, 'g'))].map((m) => m[1]) : []),
+      ...(/WS_ROOT/.test(code) ? [...code.matchAll(new RegExp(String.raw`const [A-Za-z_][A-Za-z0-9_]* = ${Q}${LIT}`, 'g'))].map((m) => m[1]) : []), // 상수명은 소문자·숫자 포함까지(`[A-Z_]+`는 V2_STATE_FILE에서 끊겼다 — #446 2R N4)
       // `join(paths(x).root, CONST)`로 회사 루트 직속 파일을 여는 모듈(failure-digest 등) — WS_ROOT만 보던 스캔이 `.failure-digest.json`을 놓쳤다(#446 검수 D1: 규칙 vs 목록[x4]).
       // 상수 이름을 join 호출부에서 잡아 그 정의만 본다(파일 전체의 대문자 상수를 훑으면 mail/ 하위 큐 파일 상수까지 오탐).
-      ...[...code.matchAll(/join\(\s*paths\(\w+\)\.root\s*,\s*([A-Z_]+)\s*\)/g)].map((m) => code.match(new RegExp(String.raw`const ${m[1]} = ${Q}${LIT}`))?.[1]).filter(Boolean),
+      ...[...code.matchAll(/join\(\s*paths\([\w.]+\)\.root\s*,\s*([A-Za-z_]\w*)\s*\)/g)].map((m) => code.match(new RegExp(String.raw`const ${m[1]} = ${Q}${LIT}`))?.[1]).filter(Boolean),
+      // 별칭 한 홉(#446 2R N4): `const root = paths(ws).root` 뒤 `join(root, CONST)`. 두 홉 이상·문자열 결합은 여전히 사각(위 헤더).
+      ...[...code.matchAll(/const (\w+) = paths\([\w.]+\)\.root\b/g)].flatMap((a) => [...code.matchAll(new RegExp(String.raw`join\(\s*${a[1]}\s*,\s*([A-Za-z_]\w*)\s*\)`, 'g'))].map((m) => code.match(new RegExp(String.raw`const ${m[1]} = ${Q}${LIT}`))?.[1]).filter(Boolean)),
       // daemonLease('x') → WS_ROOT/.x.lock (lock.mjs가 이름을 변수로 조립해 위 스캔이 못 본다)
       ...[...code.matchAll(/daemonLease\(\s*'([\w-]+)'/g)].map((m) => `.${m[1]}.lock`),
     ];
