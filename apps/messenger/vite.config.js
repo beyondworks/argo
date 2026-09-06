@@ -6,7 +6,10 @@ import { fileURLToPath } from 'node:url';
 const shared = (p) => fileURLToPath(new URL(`../../${p}`, import.meta.url));
 export default defineConfig({
   plugins: [react()],
-  resolve: { alias: {
+  // React 사본 하나로(실사고 2026-09-07 v0.1.0: @argo/* 별칭이 루트 node_modules의 react를, 메신저 코드는 apps/messenger의
+  // react를 들고 와 빌드에 React가 둘 실렸다 → "Cannot read properties of null (reading 'useState')"로 첫 발행 설치본이 빈 화면.
+  // dev는 사전 번들이 가려 안 보였다 — 프로덕션 번들 실측이 필수인 이유).
+  resolve: { dedupe: ['react', 'react-dom'], alias: {
     '@argo/slash-match': shared('app/c/[ws]/slash-match.mjs'),
     '@argo/globals.css': shared('app/globals.css'), // 디자인 시스템 정본 — 토큰·컴포넌트·테마 전부(사본 금지)
     '@argo/theme': shared('app/theme.jsx'),          // ThemeProvider·THEMES·DEFAULT_THEME(graphite) — localStorage 'argo-theme' 공유

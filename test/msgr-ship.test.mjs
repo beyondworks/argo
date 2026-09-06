@@ -72,7 +72,7 @@ test('tauri.conf·Rust·capabilities: 업데이터 배선과 회사 서버를 �
   assert.match(toml, /tauri-plugin-updater = "2"/); assert.match(toml, /tauri-plugin-process = "2"/);
   const pkg = JSON.parse(read('apps/messenger/package.json'));
   assert.ok(pkg.dependencies['@tauri-apps/plugin-updater'] && pkg.dependencies['@tauri-apps/plugin-process']);
-  assert.match(read('apps/messenger/src-tauri/Cargo.lock'), /name = "argo-messenger"\nversion = "0\.1\.0"/, 'Cargo.lock 추적(bump-version --root 앵커)');
+  assert.match(read('apps/messenger/src-tauri/Cargo.lock'), /name = "argo-messenger"\nversion = "\d+\.\d+\.\d+"/, 'Cargo.lock 추적(bump-version --root 앵커)');
 });
 
 test('release-messenger.yml: 3타깃·작업 디렉터리·버전 게이트·고정 파일명·릴리스 repo·전부-또는-없음', () => {
@@ -101,4 +101,13 @@ test('마켓 카드·메신저 새 i18n 키는 ko/en 쌍', () => {
     assert.match(m, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko·en`);
   }
   for (const f of ['docs/privacy-sync.md', 'docs/selfhost.md']) assert.match(read(f), /팀 메신저/, `${f} 메신저 절`);
+});
+
+test('빌드 결함 핀(v0.1.0 실사고): React 사본 dedupe, 설치파일은 dist 밖(installers/)·공백 없는 이름', () => {
+  const vc = read('apps/messenger/vite.config.js');
+  assert.match(vc, /dedupe: \['react', 'react-dom'\]/, "@argo/* 별칭이 루트 react를 끌어와 React가 둘 실린다 → 'useState' of null 빈 화면");
+  const y = read('.github/workflows/release-messenger.yml');
+  assert.match(y, /mkdir -p installers/); assert.match(y, /path: apps\/messenger\/installers\/\*/);
+  assert.doesNotMatch(y, /path: apps\/messenger\/dist\/\*/, 'dist/는 Vite 산출물 — index.html·assets가 릴리스에 섞인다');
+  assert.match(y, /sed 's\/Argo Messenger\/argo-messenger\/'/, '공백 파일명은 GitHub 자산명에서 점으로 바뀌어 latest.json과 어긋난다');
 });
