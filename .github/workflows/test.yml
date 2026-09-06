@@ -54,6 +54,11 @@ jobs:
 
       # 윈도우: Bash 도구의 POSIX sh(동봉 busybox UTF-8 빌드)를 해시 고정으로 레포 루트 bin/에 — 테스트가 실제 실행기(사다리의 cwd/bin 후보)로 돈다
       - if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: bin/busybox64u.exe
+          key: busybox64u-6e263d154d8548d1eb936f65d1d8312c80df31c45974e48d6335e4dcc0f4f34c
+      - if: runner.os == 'Windows'
         run: node scripts/fetch-busybox.mjs bin
 
       # Windows에서도 glob이 동작한다 — cmd는 글롭 확장을 안 하지만 node --test가 패턴을 직접 해석(Node 21+)

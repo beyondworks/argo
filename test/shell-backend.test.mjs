@@ -51,3 +51,21 @@ test('자가 진단 폴백 — 동봉 파일이 실행 안 되면(백신 격리�
   assert.deepEqual(resolveShell({ platform: 'darwin' }), { kind: 'sh', file: '/bin/sh', tried: [] });
   resetShellCache();
 });
+
+test('동봉 다운로드 — 해시 고정(불일치 throw), 일시 장애 재시도(2회 실패 뒤 성공), 같은 해시 파일이 있으면 재다운로드 없음, 로컬 경로', async () => {
+  const { fetchBusybox } = await import('../scripts/fetch-busybox.mjs');
+  const { createHash } = await import('node:crypto');
+  const dir = await mkdtemp(join(tmpdir(), 'argo-busybox-'));
+  const body = Buffer.from('fake-busybox-binary'); const good = createHash('sha256').update(body).digest('hex');
+  let calls = 0;
+  const flaky = async () => { calls += 1; if (calls < 3) throw Object.assign(new Error('connect timeout'), { code: 'UND_ERR_CONNECT_TIMEOUT' }); return { ok: true, arrayBuffer: async () => body }; };
+  const r = await fetchBusybox(dir, { sha256: good, fetchImpl: flaky, localPath: null, waitMs: 1 });
+  assert.equal(calls, 3, '2회 실패 뒤 3회째 성공'); assert.equal(r.bytes, body.length); assert.equal(r.cached, false);
+  const r2 = await fetchBusybox(dir, { sha256: good, fetchImpl: async () => { throw new Error('must not download'); }, localPath: null });
+  assert.equal(r2.cached, true, '같은 해시 파일이 있으면 배포 서버를 두드리지 않는다');
+  await assert.rejects(fetchBusybox(join(dir, 'other'), { sha256: 'deadbeef', fetchImpl: async () => ({ ok: true, arrayBuffer: async () => body }), localPath: null }), /해시 불일치/);
+  await assert.rejects(fetchBusybox(join(dir, 'other2'), { sha256: good, fetchImpl: async () => { throw new Error('down'); }, localPath: null, attempts: 2, waitMs: 1 }), /다운로드 실패\(2회\)/);
+  const local = join(dir, 'local.exe'); await writeFile(local, body);
+  assert.equal((await fetchBusybox(join(dir, 'other3'), { sha256: good, localPath: local, fetchImpl: async () => { throw new Error('must not download'); } })).bytes, body.length, 'ARGO_BUSYBOX_PATH 오프라인');
+});
+
