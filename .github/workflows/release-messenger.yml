@@ -179,22 +179,24 @@ jobs:
       - name: Collect installers
         shell: bash
         run: |
+          # dist/는 Vite 산출물(frontendDist)이라 거기에 모으면 index.html·assets가 릴리스 자산에 섞인다(v0.1.0 실사고) → installers/.
+          # productName "Argo Messenger"의 공백은 GitHub 자산명에서 점으로 바뀌어 latest.json URL과 어긋나므로 공백 없는 이름으로 복사.
           B="src-tauri/target/${{ matrix.rust_target }}/release/bundle"
-          mkdir -p dist
-          cp "$B"/dmg/*.dmg dist/ 2>/dev/null || true
-          cp "$B"/nsis/*.exe "$B"/nsis/*.sig dist/ 2>/dev/null || true
-          for f in "$B"/macos/*.app.tar.gz;     do [ -e "$f" ] && cp "$f" "dist/argo-messenger-${{ matrix.rust_target }}.app.tar.gz"; done
-          for f in "$B"/macos/*.app.tar.gz.sig; do [ -e "$f" ] && cp "$f" "dist/argo-messenger-${{ matrix.rust_target }}.app.tar.gz.sig"; done
+          mkdir -p installers
+          for f in "$B"/dmg/*.dmg;           do [ -e "$f" ] && cp "$f" "installers/$(basename "$f" | sed 's/Argo Messenger/argo-messenger/')"; done
+          for f in "$B"/nsis/*.exe "$B"/nsis/*.sig; do [ -e "$f" ] && cp "$f" "installers/$(basename "$f" | sed 's/Argo Messenger/argo-messenger/')"; done
+          for f in "$B"/macos/*.app.tar.gz;     do [ -e "$f" ] && cp "$f" "installers/argo-messenger-${{ matrix.rust_target }}.app.tar.gz"; done
+          for f in "$B"/macos/*.app.tar.gz.sig; do [ -e "$f" ] && cp "$f" "installers/argo-messenger-${{ matrix.rust_target }}.app.tar.gz.sig"; done
           # 고정 파일명 — 랜딩·마켓 카드의 releases/latest 직다운로드 링크가 버전과 무관하게 유지되도록
-          for f in "$B"/dmg/*aarch64.dmg;  do [ -e "$f" ] && cp "$f" dist/argo-messenger-macos-apple-silicon.dmg; done
-          for f in "$B"/dmg/*x64.dmg;      do [ -e "$f" ] && cp "$f" dist/argo-messenger-macos-intel.dmg; done
-          for f in "$B"/nsis/*-setup.exe;  do [ -e "$f" ] && cp "$f" dist/argo-messenger-windows-setup.exe; done
-          ls -la dist
+          for f in "$B"/dmg/*aarch64.dmg;  do [ -e "$f" ] && cp "$f" installers/argo-messenger-macos-apple-silicon.dmg; done
+          for f in "$B"/dmg/*x64.dmg;      do [ -e "$f" ] && cp "$f" installers/argo-messenger-macos-intel.dmg; done
+          for f in "$B"/nsis/*-setup.exe;  do [ -e "$f" ] && cp "$f" installers/argo-messenger-windows-setup.exe; done
+          ls -la installers
 
       - uses: actions/upload-artifact@v4
         with:
           name: argo-messenger-${{ matrix.rust_target }}
-          path: apps/messenger/dist/*
+          path: apps/messenger/installers/*
           if-no-files-found: error
           retention-days: 3
 
