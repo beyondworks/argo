@@ -26,16 +26,20 @@ const stripSchema = (s) => { const { $schema, ...rest } = s ?? {}; return rest; 
     v0.1.62의 browser_snapshot·browser_back·browser_screenshot·computer_screenshot이 그 모양이라 Grok 네이티브 턴이 전부 죽었다).
     빈 required는 JSON Schema로 적법하고 MCP 서버들이 흔히 내보내는 모양이라 다른 벤더(Anthropic·OpenRouter·GLM·Kimi)에도 안전하다.
     내장 도구 정의를 고치는 대신 여기(스펙 조립 단일 지점)에서 정규화하는 이유: MCP·크루 도구 스키마는 우리가 편집할 수 없다. */
-export function ensureRequired(schema, depth = 0) {
-  if (!schema || typeof schema !== 'object' || Array.isArray(schema) || depth > 16) return schema;
+export function ensureRequired(schema, depth = 0, seen = new WeakSet()) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema) || depth > 64 || seen.has(schema)) return schema;
+  seen.add(schema); // 순환 참조 방어(JSON.parse 산출엔 없지만 인메모리 스키마엔 있을 수 있다)
+  const rec = (x) => ensureRequired(x, depth + 1, seen);
+  const mapObj = (o) => (o && typeof o === 'object' && !Array.isArray(o) ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, rec(v)])) : o);
   const out = { ...schema };
   const isObj = out.type === 'object' || (Array.isArray(out.type) && out.type.includes('object'));
   if (isObj && !Array.isArray(out.required)) out.required = []; // 없음·null·true(Swagger 2.0 관례) 전부 배열로
-  if (out.properties && typeof out.properties === 'object' && !Array.isArray(out.properties)) out.properties = Object.fromEntries(Object.entries(out.properties).map(([k, v]) => [k, ensureRequired(v, depth + 1)]));
-  if (out.items && typeof out.items === 'object') out.items = Array.isArray(out.items) ? out.items.map((x) => ensureRequired(x, depth + 1)) : ensureRequired(out.items, depth + 1);
-  for (const k of ['anyOf', 'oneOf', 'allOf']) if (Array.isArray(out[k])) out[k] = out[k].map((x) => ensureRequired(x, depth + 1));
-  if (out.additionalProperties && typeof out.additionalProperties === 'object') out.additionalProperties = ensureRequired(out.additionalProperties, depth + 1);
-  for (const k of ['$defs', 'definitions']) if (out[k] && typeof out[k] === 'object' && !Array.isArray(out[k])) out[k] = Object.fromEntries(Object.entries(out[k]).map(([n, v]) => [n, ensureRequired(v, depth + 1)]));
+  // 하위 스키마가 사는 모든 자리(JSON Schema 2020-12 적용자 키워드) — MCP 서버가 prefixItems·patternProperties·if/then 아래 object를 주면 거기도 xAI 검증 대상(검수 M1)
+  for (const k of ['properties', 'patternProperties', 'dependentSchemas', '$defs', 'definitions']) if (out[k] !== undefined) out[k] = mapObj(out[k]);
+  for (const k of ['items', 'additionalProperties', 'additionalItems', 'unevaluatedProperties', 'unevaluatedItems', 'contains', 'propertyNames', 'not', 'if', 'then', 'else']) {
+    if (out[k] && typeof out[k] === 'object') out[k] = Array.isArray(out[k]) ? out[k].map(rec) : rec(out[k]);
+  }
+  for (const k of ['prefixItems', 'anyOf', 'oneOf', 'allOf']) if (Array.isArray(out[k])) out[k] = out[k].map(rec);
   return out;
 }
 

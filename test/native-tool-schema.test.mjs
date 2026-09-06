@@ -25,8 +25,9 @@ const missing = (s, path = '$', out = []) => {
   if ((s.type === 'object' || (Array.isArray(s.type) && s.type.includes('object'))) && !Array.isArray(s.required)) out.push(path);
   for (const [k, v] of Object.entries(s.properties ?? {})) missing(v, `${path}.${k}`, out);
   if (s.items) (Array.isArray(s.items) ? s.items : [s.items]).forEach((x, i) => missing(x, `${path}[${i}]`, out));
-  for (const k of ['anyOf', 'oneOf', 'allOf']) (s[k] ?? []).forEach((x, i) => missing(x, `${path}|${k}${i}`, out));
-  for (const [k, v] of Object.entries(s.$defs ?? {})) missing(v, `${path}#${k}`, out);
+  for (const k of ['anyOf', 'oneOf', 'allOf', 'prefixItems']) (s[k] ?? []).forEach((x, i) => missing(x, `${path}|${k}${i}`, out));
+  for (const k of ['$defs', 'definitions', 'patternProperties', 'dependentSchemas']) for (const [n, v] of Object.entries(s[k] ?? {})) missing(v, `${path}#${k}.${n}`, out);
+  for (const k of ['additionalProperties', 'not', 'if', 'then', 'else', 'contains', 'propertyNames', 'unevaluatedProperties']) if (s[k] && typeof s[k] === 'object') missing(s[k], `${path}<${k}>`, out);
   return out;
 };
 
@@ -40,14 +41,24 @@ test('S1. ensureRequired(순수) — 최상위·중첩(properties·items·anyOf�
   assert.deepEqual(ensureRequired({ type: 'object', required: null }).required, []); assert.deepEqual(ensureRequired({ type: 'object', required: true }).required, [], 'Swagger 2.0 관례 required:true도 배열로');
   assert.deepEqual(ensureRequired({ type: ['object', 'null'], properties: {} }).required, []);
   assert.equal(ensureRequired(null), null); assert.equal(ensureRequired('x'), 'x');
+  // 적용자 키워드 전수(검수 C1·M1): $defs·allOf·additionalProperties·prefixItems·patternProperties·if/then/else·dependentSchemas·not·contains — 각 자리의 object에 required가 붙는다
+  const app = ensureRequired({ type: 'object', $defs: { A: { type: 'object' } }, allOf: [{ type: 'object' }], additionalProperties: { type: 'object' }, patternProperties: { '^x': { type: 'object' } }, dependentSchemas: { a: { type: 'object' } },
+    if: { type: 'object' }, then: { type: 'object' }, else: { type: 'object' }, not: { type: 'object' }, properties: { l: { type: 'array', prefixItems: [{ type: 'object' }], contains: { type: 'object' } } } });
+  assert.deepEqual(missing(app), []);
+  for (const [k, v] of [['$defs', app.$defs.A], ['allOf', app.allOf[0]], ['additionalProperties', app.additionalProperties], ['patternProperties', app.patternProperties['^x']], ['dependentSchemas', app.dependentSchemas.a], ['if', app.if], ['then', app.then], ['else', app.else], ['not', app.not], ['prefixItems', app.properties.l.prefixItems[0]], ['contains', app.properties.l.contains]]) assert.deepEqual(v.required, [], `${k} 아래 object`);
+  // 깊이 20 중첩(검수 M2)·순환 참조
+  let deep = { type: 'object' }; for (let i = 0; i < 20; i++) deep = { type: 'object', properties: { c: deep } };
+  assert.deepEqual(missing(ensureRequired(deep)), [], '깊이 20까지 정규화');
+  const cyc = { type: 'object', properties: {} }; cyc.properties.self = cyc; assert.doesNotThrow(() => ensureRequired(cyc), '순환 참조에 무한 재귀 없음');
   assert.deepEqual(missing({ type: 'object', properties: { max_chars: { type: 'number' } } }), ['$'], '워커 자체가 제보 모양을 잡는다(대조군)');
 });
 
 test('S2. 내장·브라우저·컴퓨터 스펙 전량 — 정규화 전에는 제보한 4종이 required 없음, 정규화 뒤에는 0', () => {
   const all = [...BUILTIN_SPECS, ...BROWSER_SPECS, ...COMPUTER_SPECS];
   const before = all.filter((t) => missing(t.input_schema).length).map((t) => t.name);
-  assert.deepEqual(before.sort(), ['browser_back', 'browser_screenshot', 'browser_snapshot', 'computer_screenshot'], '제보(browser_snapshot·browser_back·browser_screenshot)와 일치 + computer_screenshot');
-  assert.deepEqual(all.filter((t) => missing(ensureRequired(t.input_schema)).length).map((t) => t.name), []);
+  const known = new Set(['browser_back', 'browser_screenshot', 'browser_snapshot', 'computer_screenshot', 'use_connector']); // 제보 3종 + 감사로 찾은 2종(중첩 args 포함)
+  assert.ok(before.every((n) => known.has(n)), `정의 자체의 누락은 알려진 집합 안에서만(새 도구가 required 없이 추가되면 여기서 잡는다): ${before.join(', ')}`); // 정의를 고쳐 누락이 줄어드는 방향은 허용(검수 L1)
+  assert.deepEqual(all.filter((t) => missing(ensureRequired(t.input_schema)).length).map((t) => t.name), [], '정규화 뒤 0');
 });
 
 test('S3. 배선 — 네이티브 턴이 벤더(가짜 Anthropic /v1/messages)로 보내는 tools 전량에 required 배열이 있다(내장·크루 도구 포함), browser_snapshot은 required: []', async () => {
