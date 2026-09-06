@@ -356,6 +356,10 @@ test('runTurnProbe(실제 프로브) — 엄격 xAI 가짜 벤더는 정규화�
   try {
     await seed(ws, { gemini: ['apikey', 'fake-gemini-key-probe'] }); process.env.GEMINI_BASE_URL = gem.base;
     assert.deepEqual(await runTurnProbe(ws, 'gemini'), { ok: true }); assert.equal(gem.bodies[0].generationConfig.maxOutputTokens, PROBE_MIN_OUTPUT_TOKENS, '엔진 기본 하한 16384 대신 프로브 하한');
+    // 옵션이 본문의 같은 이름 필드를 덮는다 — 생산 지점이 옵션뿐임을 구조로(3R INFO, 변이 '본문 우선' red)
+    const { callMessages } = await import('../src/engine/messages-http.mjs');
+    await callMessages({ wire: 'gemini', base: gem.base, headers: {}, minOutputTokens: 2048, body: { model: 'gemini-2.5-flash', max_tokens: 8, min_output_tokens: 777, messages: [{ role: 'user', content: 'ok' }] } });
+    assert.equal(gem.bodies[1].generationConfig.maxOutputTokens, 2048, '본문 min_output_tokens(777)보다 옵션(2048)이 우선');
   } finally { await gem.close(); delete process.env.GEMINI_BASE_URL; }
   // MEDIUM-3: 기본 프로브 안전장치 — 스파이 서버로 결정적 단언(가드 제거 변이 red)
   const spy = await startStrictVendor({ vendor: 'xai' });
