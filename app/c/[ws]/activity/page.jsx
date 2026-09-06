@@ -127,6 +127,10 @@ export default function Activity({ params }) {
       const label = RUNNER_LABELS[e.runner] ?? e.runner ?? '?';
       return { who: label, avatar: label, desc: `${t('activity.failureDigest', { count: e.count })} — ${e.sample ?? e.signature ?? ''}`, chip: t('activity.failureDigestChip'), danger: true, href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
     }
+    if (e.type === 'shell-fallback') {
+      // 윈도우 셸 사다리 폴백(동봉 busybox를 못 씀 — 없음·백신 격리) — 조용히 퇴화하지 않고 한 번 드러낸다(shell-backend.mjs). 건너뛴 후보·사유는 제보용 원문
+      return { who: t('activity.shell'), avatar: t('activity.shell').slice(0, 1), desc: `${t('activity.shellFallback', { kind: e.kind })} — ${(e.tried ?? []).join(', ')}`, chip: t('activity.shellFallbackChip'), danger: true, href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
+    }
     if (e.type === 'gateway') {
       return { who: e.kind === 'telegram' ? t('activity.telegram') : t('activity.slack'), avatar: t('activity.connected').slice(0, 1), desc: t('activity.gatewayPaired'), chip: t('activity.connected'), href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
     }

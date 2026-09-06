@@ -587,3 +587,12 @@ test('드리프트: 루트 직속 도트 리터럴은 전부 BASH_GUARDED 등재
   }
   assert.deepEqual(missing, [], `루트 직속 도트 항목이 셸 방어에 미등재 — WS_DOT_FILES에 추가할 것:\n  ${missing.join('\n  ')}`);
 });
+
+test('윈도우식 홈 표기도 Bash 리터럴 방어 — Bash 도구가 PowerShell·cmd 표면을 열었다(#448 1R H1): ~\\·$HOME\\·$env:USERPROFILE\\·%USERPROFILE%\\ 전부 deny, 대조군 allow', async () => {
+  const wsRoot = join(await mkdtemp(join(tmpdir(), 'argo-winhome-')), 'win-co'); await mkdir(wsRoot, { recursive: true });
+  const gate = makePermissionGate('win-co', 's', wsRoot, null, 'ko', []);
+  const deny = ['Get-Content ~\\.codex\\auth.json', 'Get-Content $env:USERPROFILE\\.claude\\.credentials.json', 'Get-Content "$HOME\\.codex\\auth.json"', 'cat $HOME/.codex/auth.json', 'type %USERPROFILE%\\.codex\\auth.json', 'type %USERPROFILE%/.gemini/oauth_creds.json', 'cat $USERPROFILE/.argo/x', 'Get-Content ~/.codex/auth.json'];
+  for (const c of deny) assert.equal((await gate('Bash', { command: c })).behavior, 'deny', c);
+  for (const c of ['Get-Content notes.md', 'echo $HOME', 'type %USERPROFILE%\\Desktop\\todo.txt', 'ls ~/projects']) assert.equal((await gate('Bash', { command: c })).behavior, 'allow', c);
+});
+

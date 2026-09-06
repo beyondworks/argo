@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname, isAbsolute, sep } from 'node:path';
+import { planShellRun, normalizeMsysPaths } from './shell-backend.mjs';
 
 const OUT_CAP = 30_000; // 도구 출력 상한(문자) — 모델 문맥 보호
 const READ_LINE_CAP = 2000;
@@ -28,7 +29,7 @@ export const BUILTIN_SPECS = Object.freeze([
     input_schema: { type: 'object', properties: { pattern: { type: 'string' }, path: { type: 'string' } }, required: ['pattern'] } },
   { name: 'Grep', description: 'Search file contents with a regular expression under path (file or folder, default: company folder). glob = relative filename filter such as "**/*.md" (no absolute paths, ~ or ..). output_mode: content | files_with_matches | count.',
     input_schema: { type: 'object', properties: { pattern: { type: 'string' }, path: { type: 'string' }, glob: { type: 'string' }, output_mode: { type: 'string', enum: ['content', 'files_with_matches', 'count'] }, '-i': { type: 'boolean' }, head_limit: { type: 'number' } }, required: ['pattern'] } },
-  { name: 'Bash', description: 'Run a shell command in the company folder. Output (stdout+stderr) is capped. timeout in ms (default 120000, max 600000).',
+  { name: 'Bash', description: 'Run a shell command in the company folder with a POSIX sh (also on Windows — write POSIX syntax and forward-slash paths; plain cmd.exe verbs such as dir, type FILE, copy, del, %VAR% and PowerShell Verb-Noun commands are routed to their native interpreter). Output (stdout+stderr) is capped. timeout in ms (default 120000, max 600000).',
     input_schema: { type: 'object', properties: { command: { type: 'string' }, timeout: { type: 'number' }, description: { type: 'string' } }, required: ['command'] } },
   { name: 'WebFetch', description: 'Fetch a URL and return its raw text content (HTML tags stripped, capped at 50k chars). The prompt argument is accepted for compatibility but not applied — summarize the returned text yourself.',
     input_schema: { type: 'object', properties: { url: { type: 'string' }, prompt: { type: 'string' } }, required: ['url'] } },
@@ -66,14 +67,17 @@ export function shellEnv(env = process.env) {
   return out;
 }
 
-async function runBash(cwd, env, { command, timeout }, signal) {
+async function runBash(cwd, env, { command, timeout }, signal, onShellFallback, platform = process.platform) {
   const ms = Math.min(Math.max(Number(timeout) || 120_000, 1000), 600_000);
-  const win = process.platform === 'win32';
+  const win = platform === 'win32';
+  // 윈도우: 라우터(cmd 고유 문법·PowerShell은 원래 실행기) + 사다리(동봉 busybox → Git Bash → cmd.exe). 비윈도우는 /bin/sh(shell-backend.mjs 머리 주석).
+  const plan = await planShellRun(command, { env, platform });
+  if (plan.fallback) onShellFallback?.(plan);
   return await new Promise((res) => {
-    const child = spawn(win ? 'cmd.exe' : '/bin/sh', win ? ['/d', '/s', '/c', command] : ['-c', command],
-      { cwd, env, windowsHide: true, detached: !win, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(plan.file, plan.args,
+      { cwd, env, windowsHide: true, detached: !win, windowsVerbatimArguments: plan.verbatim, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = ''; let done = false;
-    const finish = (tail) => { if (done) return; done = true; clearTimeout(timer); signal?.removeEventListener('abort', onAbort); res(cap(out) + tail); };
+    const finish = (tail) => { if (done) return; done = true; clearTimeout(timer); signal?.removeEventListener('abort', onAbort); res(cap(plan.normalize ? normalizeMsysPaths(out) : out) + tail); };
     const kill = () => { try { if (win) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }); else process.kill(-child.pid, 'SIGKILL'); } catch { /* 이미 종료 */ } };
     const onAbort = () => { kill(); finish('\n[aborted]'); };
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -122,7 +126,7 @@ export function parseSearchResults(html) {
 }
 
 /** 실행기 — 인자·cwd만 받는 사이드이펙트 함수들. 게이트 판정은 호출부(루프)가 먼저 한다. */
-export function builtinRunners({ cwd, env = process.env, fetchImpl = globalThis.fetch, grepTimeoutMs = GREP_TIMEOUT_MS, searchBase = 'https://html.duckduckgo.com/html/?q=' }) {
+export function builtinRunners({ cwd, env = process.env, fetchImpl = globalThis.fetch, grepTimeoutMs = GREP_TIMEOUT_MS, searchBase = 'https://html.duckduckgo.com/html/?q=', onShellFallback = null, platform = process.platform }) {
   const senv = shellEnv(env);
   const rootAbs = resolve(cwd);
   return {
@@ -160,7 +164,7 @@ export function builtinRunners({ cwd, env = process.env, fetchImpl = globalThis.
       return out.join('\n') || '(no matches)';
     },
     Grep: (input, { signal } = {}) => runGrep({ cwd, timeoutMs: grepTimeoutMs }, input, signal),
-    Bash: (input, { signal } = {}) => runBash(cwd, senv, input, signal),
+    Bash: (input, { signal } = {}) => runBash(cwd, senv, input, signal, onShellFallback, platform), // platform 주입은 테스트용(맥에서 윈도우 배선 핀)
     WebFetch: async ({ url }) => {
       const r = await fetchImpl(url, { signal: AbortSignal.timeout(30_000), headers: { 'user-agent': 'Argo/native-engine' } });
       const t = await r.text();

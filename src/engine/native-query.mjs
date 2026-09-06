@@ -11,6 +11,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { connectMcpServers } from './mcp-client.mjs';
 import { loadNativeSession, saveNativeSession, IMAGE_MAX_B64 } from './session.mjs';
+import { appendEvent } from '../events.mjs';
 
 export const NATIVE_DEFAULT_MAX_TOKENS = 8192; // SDK 기본 32000이 OpenRouter 선불 잔액 402를 부르던 것 완화(실측 2026-09-05)
 export const NATIVE_MAX_STEPS = 60;
@@ -81,8 +82,17 @@ export function nativeToolsDirective(lang = 'ko') {
 }
 
 /** 내장 도구 사양 + 실행기 묶음 — 파일·셸·웹 + 브라우저 유즈 + 컴퓨터 유즈(하네스 통일: 러너 무관 같은 도구·같은 게이트) */
+/** 윈도우 셸 사다리 폴백 알림기(순수 팩토리) — 동봉 busybox를 못 쓰면(없음·백신 격리·실행 거부) 조용히 퇴화하지 않고 활동 피드에 드러낸다(shell-backend.mjs).
+    회사당 프로세스 1회 — 매 명령마다 적재하면 타임라인이 덮인다. appendFn·noted 주입은 테스트용. */
+export function makeShellFallbackNoter(appendFn = appendEvent, noted = new Set()) {
+  return (wsId) => (plan) => {
+    if (noted.has(wsId)) return; noted.add(wsId);
+    Promise.resolve(appendFn(wsId, { type: 'shell-fallback', ok: false, kind: plan.kind, file: plan.file, tried: (plan.tried ?? []).map((t) => `${t.kind}: ${t.reason}`) })).catch(() => {});
+  };
+}
+const noteShellFallback = makeShellFallbackNoter();
 export function builtinTools({ cwd, env, fetchImpl, wsId = 'ws', browser = true, computer = true }) {
-  const runners = builtinRunners({ cwd, env, fetchImpl });
+  const runners = builtinRunners({ cwd, env, fetchImpl, onShellFallback: noteShellFallback(wsId) });
   const list = BUILTIN_SPECS.map((s) => ({ ...s, gated: true, run: (input, extra) => runners[s.name](input, extra) }));
   if (browser) { const br = browserRunners({ wsId, env }); list.push(...BROWSER_SPECS.map((s) => ({ ...s, gated: true, run: (input, extra) => br[s.name](input, extra) }))); }
   if (computer) { const cr = computerRunners(); list.push(...COMPUTER_SPECS.map((s) => ({ ...s, gated: true, run: (input, extra) => cr[s.name](input, extra) }))); }

@@ -102,6 +102,16 @@ const leaks = [];
 })(serverDest);
 if (leaks.length) { console.error('[stage] 시크릿 파일 잔존 — 배포 차단:\n' + leaks.join('\n')); process.exit(1); }
 
+// 3.5) 윈도우: POSIX 셸 동봉 — busybox-w32 UTF-8 빌드를 해시 고정으로 resources/server/bin/에(Bash 도구의 기본 실행기, src/engine/shell-backend.mjs).
+//      cmd.exe는 모델의 bash 문법을 못 받는다(2026-09-06 윈도우 CI 실측: 표준 명령 14/30, 따옴표 손상, 한글 0/4). 실패는 빌드 중단.
+if (process.platform === 'win32') {
+  const { fetchBusybox } = await import('./fetch-busybox.mjs');
+  const r = await fetchBusybox(join(serverDest, 'bin'));
+  copyFileSync(join(ROOT, 'vendor', 'busybox-w32-LICENSE'), join(serverDest, 'bin', 'busybox-w32-LICENSE')); // GPLv2 전문 동반(1R M3)
+  copyFileSync(join(ROOT, 'THIRD-PARTY-NOTICES.md'), join(serverDest, 'THIRD-PARTY-NOTICES.md'));
+  console.log(`[stage] busybox 동봉 — ${r.dest} ${r.bytes}B sha256=${r.sha256} (+LICENSE·THIRD-PARTY-NOTICES)`);
+}
+
 // 4) node 런타임을 사이드카로 복사 — Windows는 .exe 확장자 필수(Tauri가 node-<triple>.exe를 찾는다)
 const binDir = join(TAURI, 'binaries');
 mkdirSync(binDir, { recursive: true });
