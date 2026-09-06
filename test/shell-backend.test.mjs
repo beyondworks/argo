@@ -111,10 +111,14 @@ test('자가 진단 동시성·타임아웃·배선 — 동시 첫 호출은 프
   const slow = async () => { probes += 1; await new Promise((r) => setTimeout(r, 60)); return true; };
   const rs = await Promise.all([1, 2, 3, 4, 5].map(() => resolveShell({ platform: 'win32', env: { ARGO_SHELL: bb }, cwd: root, argv1: null, probe: slow })));
   assert.equal(probes, 1, '동시 5건 → 프로브 1회'); assert.deepEqual(rs.map((r) => r.kind), ['busybox', 'busybox', 'busybox', 'busybox', 'busybox']);
-  // 멈춘 후보(실행은 되지만 응답이 없는 exe — 백신이 첫 실행을 잡는 상황) → 2초 상한 뒤 다음 후보
-  const hang = join(root, 'hang-bash'); await writeFile(hang, '#!/bin/sh\nsleep 10\n', { mode: 0o755 });
-  resetShellCache(); const t0 = Date.now();
-  const r = await resolveShell({ platform: 'win32', env: { ARGO_SHELL: hang }, cwd: root, argv1: null, force: true });
+  // 멈춘 후보(실행은 되지만 응답이 없는 exe — 백신이 첫 실행을 잡는 상황) → 2초 상한 뒤 다음 후보.
+  // 후보 = node 실행 파일 자체 + NODE_OPTIONS 프리로드로 10초 블로킹. 셸 스크립트(#!/bin/sh)는 윈도우 CI가 spawn을 못 해
+  // reason이 ENOENT로 나왔다(run 34043531982) — 맥·윈도우 양쪽에서 같은 실행 파일을 쓴다.
+  const hangPre = join(root, 'hang.cjs'); await writeFile(hangPre, 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);\n');
+  const prevOpts = process.env.NODE_OPTIONS; process.env.NODE_OPTIONS = `--require "${hangPre}"`;
+  resetShellCache(); const t0 = Date.now(); let r;
+  try { r = await resolveShell({ platform: 'win32', env: { ARGO_SHELL: process.execPath }, cwd: root, argv1: null, force: true }); }
+  finally { if (prevOpts === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = prevOpts; }
   assert.equal(r.kind, 'cmd'); assert.deepEqual(r.tried.map((t) => t.reason), ['timeout', 'missing']); assert.ok(Date.now() - t0 < 4000, `상한 2초(실측 ${Date.now() - t0}ms)`);
   // runBash 배선: 스탠드얼론에서 폴백이면 onShellFallback(plan) — 맥에서 platform 주입으로 핀
   const { builtinRunners } = await import('../src/engine/builtin-tools.mjs');
