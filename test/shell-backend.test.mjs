@@ -121,12 +121,14 @@ test('자가 진단 동시성·타임아웃·배선 — 동시 첫 호출은 프
   try { r = await resolveShell({ platform: 'win32', env: { ARGO_SHELL: process.execPath }, cwd: root, argv1: null, force: true }); }
   finally { if (prevOpts === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = prevOpts; }
   assert.equal(r.kind, 'cmd'); assert.deepEqual(r.tried.map((t) => t.reason), ['timeout', 'missing']); assert.ok(Date.now() - t0 < 4000, `상한 2초(실측 ${Date.now() - t0}ms)`);
-  // runBash 배선: 스탠드얼론에서 폴백이면 onShellFallback(plan) — 맥에서 platform 주입으로 핀
+  // runBash 배선: 스탠드얼론에서 폴백이면 onShellFallback(plan) — 맥에서 platform 주입으로 핀.
+  // 사다리는 process.cwd()/bin 도 후보로 본다 — 윈도우 CI는 레포 루트 bin/에 동봉본이 실재해 폴백이 안 일어났다(run 34046233035: seen 0).
+  // 단언 동안 cwd를 빈 임시 폴더로 옮겨 두 OS에서 같은 조건(후보 전부 없음)을 만든다.
   const { builtinRunners } = await import('../src/engine/builtin-tools.mjs');
   resetShellCache(); const seen = [];
   const t = builtinRunners({ cwd: root, env: { PATH: process.env.PATH, ARGO_SHELL: join(root, 'nope.exe'), ARGO_STANDALONE: '1' }, platform: 'win32', onShellFallback: (plan) => seen.push(plan) });
-  await t.Bash({ command: 'ls' }); // cmd.exe가 없는 맥에선 spawn error로 끝난다 — 여기선 배선만 본다
+  const prevCwd = process.cwd(); process.chdir(root);
+  try { await t.Bash({ command: 'ls' }); } finally { process.chdir(prevCwd); } // cmd.exe가 없는 맥에선 spawn error로 끝난다 — 여기선 배선만 본다
   assert.equal(seen.length, 1); assert.equal(seen[0].kind, 'cmd'); assert.equal(seen[0].fallback, true); assert.ok(seen[0].tried.length >= 2 && seen[0].tried.every((x) => x.reason === 'missing'), 'ARGO_SHELL·cwd bin·실행 파일 bin 전부 없음');
   resetShellCache();
 });
-
