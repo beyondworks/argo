@@ -948,6 +948,8 @@ const DICT = {
   'settings.runners.lastTurnFailed': ['마지막 사용 시 오류가 났습니다 — 연결을 확인해 주세요.', 'The last turn with this runner failed — please check the connection.'],
   'settings.runners.healthFailed': ['자격 확인에 실패했습니다 — 만료·철회됐을 수 있습니다. 다시 연결해 주세요.', 'A credential check failed — it may be expired or revoked. Please reconnect.'],
   'activity.runnerHealth': ['자격 확인', 'Credential check'],
+  'activity.failureDigest': ['같은 오류가 24시간 안에 {count}회 반복됐습니다 — 설정에서 러너 상태를 확인하고, 앱 업데이트 뒤에도 계속되면 아래 원문과 함께 제보해 주세요', 'The same error repeated {count} times in 24 hours — check the runner in Settings, and if it persists after updating, report it with the message below'],
+  'activity.failureDigestChip': ['반복 실패', 'Repeated failure'],
   'activity.runnerHealthOk': ['{runner} 자격이 다시 정상입니다', '{runner} credential is healthy again'],
   'settings.runners.checkNow': ['연결 확인', 'Verify connection'],
   'settings.runners.checkOk': ['연결이 확인됐습니다.', 'Connection verified.'],

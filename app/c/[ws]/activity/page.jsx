@@ -122,6 +122,11 @@ export default function Activity({ params }) {
       const desc = e.ok === false ? t(healthFailMessageKey(e.reason)) : t('activity.runnerHealthOk', { runner: label });
       return { who: label, avatar: label, desc, chip: t('activity.runnerHealth'), href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
     }
+    if (e.type === 'failure-digest') {
+      // 실패 서명 다이제스트(재발 방지 5) — 같은 오류가 24h에 N회 반복. 원문(sample)은 제보에 쓰는 문장이라 그대로 보인다.
+      const label = RUNNER_LABELS[e.runner] ?? e.runner ?? '?';
+      return { who: label, avatar: label, desc: `${t('activity.failureDigest', { count: e.count })} — ${e.sample ?? e.signature ?? ''}`, chip: t('activity.failureDigestChip'), href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
+    }
     if (e.type === 'gateway') {
       return { who: e.kind === 'telegram' ? t('activity.telegram') : t('activity.slack'), avatar: t('activity.connected').slice(0, 1), desc: t('activity.gatewayPaired'), chip: t('activity.connected'), href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
     }
