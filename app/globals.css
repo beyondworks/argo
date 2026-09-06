@@ -1459,6 +1459,7 @@
 @media (prefers-color-scheme: dark) {
   :root[data-theme='linen'] {
   color-scheme: dark;
+  --tg-remote: #7fb0e6; /* 다른 기기가 든 텔레그램 봇의 속 빈 링(다크) — 모든 다크 블록 불변식 */
   --bg: #1f1e1b;
   --card: #2a2926;
   --card-2: #33322e;
@@ -1552,6 +1553,7 @@
 
 :root[data-theme='linen-dark'] {
   color-scheme: dark;
+  --tg-remote: #7fb0e6; /* 다른 기기가 든 텔레그램 봇의 속 빈 링(다크) — 모든 다크 블록 불변식 */
   --bg: #1f1e1b;
   --card: #2a2926;
   --card-2: #33322e;

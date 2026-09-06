@@ -794,7 +794,8 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   );
 
   const tools = [
-    requestApproval, requestToolInstall, ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), updateProfile, hireCrew, scheduleTask, startLongTask,
+    requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, startLongTask,
+    ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), // 팀 메신저 채널 턴에만 — 조직 문서 제안(G-4). sink(네이티브 엔진)도 같은 배열을 받는다
     ...(colleagues.length ? [delegate, sendToCrew] : []),
     // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
     ...(connectors.length ? [useConnector] : []),
