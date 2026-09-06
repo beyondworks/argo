@@ -197,6 +197,16 @@ test('G9. 자동 선택의 자격 축(H1)·제공되지 않는 방식은 무효 
   await writeFile(join(rootH, 'agents', 'auto.md'), '---\nname: 자동\n---\n\n전문가.\n');
   const stH = await runnerStatus(wsH); assert.equal(stH.gemini.company.invalid, true); assert.equal(stH.gemini.company.unsupportedMethod, true); assert.deepEqual(unsupportedMethodStatus(stH), [{ id: 'gemini', type: 'host' }]);
   await assert.rejects(chat(wsH, 'auto', '안녕'), (e) => /Gemini 연결 방식\(이 컴퓨터 로그인\)은 더 이상 제공되지 않습니다/.test(e.message) && !/하나도 연결돼/.test(e.message), 'chat(host)');
+  // 환경 제한(hostOptInAllowed: standalone claude·테넌트)은 invalid만 — "제공되지 않는 방식"으로 오표기하면 막힌 방식을 다시 권하게 된다(5R LOW-2 게이트: !meta.hostUsable → !hostOptInAllowed 변이 red)
+  const wsE = 'claude-host-env'; await createCompany(wsE, '환경', '사장');
+  await writeFile(join(paths(wsE).root, '.secrets.json'), JSON.stringify({ runners: { claude: { type: 'host', value: 'host-marker' }, codex: { type: 'host', value: 'host-marker' } } }));
+  const prevStandalone = process.env.ARGO_STANDALONE; const prevTenant = process.env.ARGO_TENANT_OWNER;
+  process.env.ARGO_STANDALONE = '1'; process.env.ARGO_TENANT_OWNER = 'tenant-owner-x';
+  try {
+    const stE = await runnerStatus(wsE);
+    for (const id of ['claude', 'codex']) { assert.equal(stE[id].company.invalid, true, `${id} host는 환경 제한으로 무효`); assert.equal(stE[id].company.unsupportedMethod, undefined, `${id} host는 제공되는 방식 — unsupportedMethod 없음`); }
+    assert.deepEqual(unsupportedMethodStatus(stE), [], '환경 제한 회사는 "제공 종료" 안내가 아니라 재연결 안내');
+  } finally { if (prevStandalone === undefined) delete process.env.ARGO_STANDALONE; else process.env.ARGO_STANDALONE = prevStandalone; if (prevTenant === undefined) delete process.env.ARGO_TENANT_OWNER; else process.env.ARGO_TENANT_OWNER = prevTenant; }
   const { invalidChipKey } = await import('../app/runner-usable.mjs');
   assert.equal(invalidChipKey(stH.gemini.company), 'settings.runners.companyUnsupported'); assert.equal(invalidChipKey({ connected: true, invalid: true }), 'settings.runners.companyInvalid');
   assert.match(await readFile(join(ROOT, 'app', 'runner-connect.jsx'), 'utf8'), /<span className="dot" \/>\{t\(invalidChipKey\(company\)\)\}/, '카드 칩이 순수 키 선택을 쓴다(4R LOW-2)');
