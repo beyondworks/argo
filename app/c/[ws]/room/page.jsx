@@ -51,6 +51,17 @@ export default function Room({ params }) {
   // 서버 턴의 발언자·단계·부분 텍스트·다음 순서(GET turn). 발언이 끝나야 말풍선이 통째로 뜨던 방을,
   // 크루 채팅처럼 쓰는 중인 문장이 자라며 보이게(유건 2026-09-02 "보는 재미"). 진행 판정(serverBusy)과 분리.
   const [turn, setTurn] = useState(null);
+  // 경과 시각 — 마커의 startedAt 기준(자기 탭 POST가 아니라 서버 회의 시작). 진행 줄에 붙어 "멈춘 게 아니라 오래 걸리는 것"을 보인다.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const live = busy || serverBusy;
+    if (!live) { setElapsed(0); return; }
+    const tick = () => setElapsed(Math.max(0, Date.now() - (turn?.startedAt ?? Date.now())));
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [busy, serverBusy, turn?.startedAt]);
+  const fmtElapsed = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
   const [error, setError] = useState('');
   // 회의 작업 폴더 — 크루 채팅과 같은 컴포넌트·계약(work-folder.jsx, 유건 지시 2026-09-02). 키 '@room'(서버
   // ROOM_FOLDER_SLUG — 크루 슬러그와 불충돌)로 고정하면 발언 크루 전원이 매 턴 "지금 일할 폴더"로 받는다
@@ -450,6 +461,17 @@ export default function Room({ params }) {
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
           <span className="microlabel" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('room.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
+          {/* 진행 줄 — 회의가 도는 동안 절대 꺼지지 않는다. 근거는 회의 마커(turn.active)뿐이라 발언 크루의 상태 파일이
+              낡아도(2분 무갱신) 이 줄은 남는다(유건 제보 2026-09-06: 표시가 꺼져 회의가 누락된 것처럼 보임).
+              done = 인원 − 남은 큐 − 발언 중 1. 인원을 모르는 구형 마커면 경과만. */}
+          {!viewing && (busy || serverBusy) && (
+            <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums', flex: 'none' }}>
+              <ArgoSpinner size={11} />
+              {turn?.total
+                ? t('room.progress', { done: Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) })
+                : t('room.progressNoCount', { elapsed: fmtElapsed(elapsed) })}
+            </span>
+          )}
         </div>
 
         <div style={{ position: 'relative', minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)' }}>

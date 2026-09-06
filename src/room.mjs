@@ -433,7 +433,8 @@ export async function getRoomTurn(wsId) {
   // **표시 보강**일 뿐 — 진행 판정은 위 마커 하나다(단일 판정 유지). 방에서도 "지금 무엇을 하며 무엇을
   // 쓰고 있는지"가 보이게(유건 2026-09-02 "보는 재미"). 발언이 끝나면 chat()이 상태 파일을 지워 partial이
   // 비고, 완성 말풍선이 정본이 된다.
-  const [slug = '', rest = ''] = String(s.detail || '').split('|');
+  const [slug = '', rest = '', totalRaw = ''] = String(s.detail || '').split('|');
+  const total = Number(totalRaw) || null; // 구형 마커(두 구간)는 null — 화면이 인원 표시를 생략한다
   // 출처 게이트 — 같은 크루의 다른 턴(개인 채팅·루틴·경쟁)이 같은 상태 파일을 쓰면 남의 문장이 발언으로 뜬다
   // (#393 검수 MEDIUM-2 프로브). source==='room'일 때만 채택, 미상(구형 파일)은 비채택(fail-closed).
   const cur = slug ? await getTurnStatus(wsId, slug) : null;
@@ -442,6 +443,7 @@ export async function getRoomTurn(wsId) {
     active: true, slug: slug || null, startedAt: s.startedAt,
     queue: rest.split(',').filter(Boolean),
     stage: live?.stage ?? null, detail: live?.detail ?? '', partial: live?.partial ?? '',
+    total, // 발언 인원(마커 세 번째 구간) — done = total − 남은 큐 − 발언 중 1
   };
 }
 
@@ -596,8 +598,10 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   // oneLine — 개행 든 폴더명이 "사장:" 가짜 줄을 만든다(commonDirectives와 같은 접기, 분리 검수 MEDIUM-1 실측).
   const folderLine = folder ? `\n작업 폴더: ${oneLine(folder)} — 사장이 이 회의에 지정한 폴더다. 파일 작업은 여기서 하고, 동료 크루도 같은 폴더를 본다(위임받은 동료 포함).` : '';
   const replies = [];
-  // 마커 detail = '발언자|다음1,다음2' (getRoomTurn이 해석). j가 범위 밖이면 빈 값 = 발언자 미정(마무리 중).
-  const markerFor = (j) => (speakers[j] ? `${speakers[j].slug}|${speakers.slice(j + 1).map((s) => s.slug).join(',')}` : '');
+  // 마커 detail = '발언자|다음1,다음2|인원' (getRoomTurn이 해석). j가 범위 밖이면 빈 값 = 발언자 미정(마무리 중).
+  // 세 번째 구간 = 이 턴의 발언 인원 — 화면이 "3/12 발언 완료"를 계산한다(진행 표시가 발언자 이름 하나뿐이면 12명
+  // 회의에서 사장은 얼마나 남았는지 알 수 없다 — 유건 제보 2026-09-06). 앞 두 구간 해석은 그대로(구형 호환).
+  const markerFor = (j) => (speakers[j] ? `${speakers[j].slug}|${speakers.slice(j + 1).map((s) => s.slug).join(',')}|${speakers.length}` : '');
   for (const [i, a] of speakers.entries()) {
     const att = i >= IMG_EMBED_MAX && attachments.some((x) => x.isImage)
       ? attachments.map((x) => (x.isImage ? { ...x, isImage: false } : x))

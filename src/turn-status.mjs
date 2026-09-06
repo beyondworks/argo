@@ -40,24 +40,64 @@ export function stageForTool(toolName) {
   return 'work';
 }
 
-export async function setTurnStatus(wsId, slug, stage, detail = '', partial, source) {
-  try {
-    // 상태 파일은 캐시성 — 손상은 관용(readJsonLenient). writeJsonAtomic가 mkdir까지 처리.
-    const prev = await readJsonLenient(file(wsId, slug), {});
-    await writeJsonAtomic(file(wsId, slug), {
-      stage, detail,
-      // partial — 완료 전 크루가 이미 말한 텍스트(스트리밍 체감). 미전달 시 이전 값 유지, 뒤 4000자만
-      partial: String(partial ?? prev.partial ?? '').slice(-4000),
-      // source — 이 상태를 쓴 턴의 출처('room'|'chat'|'delegate'|'routine'…). 크루 상태 파일은 크루당 하나라
-      // 같은 크루의 다른 턴(개인 채팅·루틴)이 겹치면 회의실이 남의 문장을 발언으로 오인한다(#393 검수 MEDIUM-2).
-      // 미전달이면 이전 값 유지(같은 턴의 후속 갱신), 없으면 빈 값 — 소비자는 빈 값을 '출처 미상'으로 비채택.
-      source: source ?? prev.source ?? '',
-      startedAt: prev.startedAt ?? Date.now(), ts: Date.now(),
-    });
-  } catch { /* 상태 표시는 베스트에포트 */ }
+/* ─── 심박 — 턴이 살아 있는 동안 상태 파일의 ts를 주기 갱신한다 ───
+   이벤트가 없는 긴 단계(도구 실행·모델 응답 대기·기억 조회)가 2분을 넘기면 파일이 낡아 **턴이 살아 있는데
+   표시가 꺼진다** — 회의실·1:1 대화 양쪽에서 사고 과정이 사라져 회의가 누락된 것처럼 보였다(유건 제보 2026-09-06,
+   격리 재현: 150초 지연 스텁에서 memory 단계 2분 뒤 stage null). 회의실 마커(room.mjs withRoomTurnStatus)가 같은
+   이유로 하트비트를 갖고 있었고, 크루 상태 파일에는 없었다.
+   · setTurnStatus가 키별로 타이머 하나를 켜고 clearTurnStatus가 끈다 — 호출부(chat.mjs) 변경 없음.
+   · 키별 쓰기는 **한 체인**으로 직렬화한다 — 심박(읽고 ts만 갱신)이 갱신 쓰기와 엇갈리면 옛 스냅샷이 나중에 착지해
+     최신 단계·문장을 되돌린다(회의실 마커 검수 LOW-1과 같은 결함 구조). 심박은 체인에 최대 1개만 대기.
+   · 지워진 파일은 되살리지 않는다(심박이 없으면 그만) — 종료 뒤 부활은 거짓 '작성 중'이다.
+   · 프로세스가 죽으면 심박도 멈춰 2분 뒤 만료 — 고아 판정(getTurnStatus 120초)은 그대로다. */
+let HEARTBEAT_MS = 30_000;
+/** 테스트 전용 — 운영 30초를 ms 단위로 줄여 심박·해제 경합을 결정적으로 돌린다. */
+export function _setHeartbeatMsForTest(ms) { HEARTBEAT_MS = ms; }
+const live = new Map(); // key → { chain, timer, queued }
+const keyOf = (wsId, slug) => `${wsId}/${sanitizeFileSlug(slug)}`;
+const enqueue = (e, job) => { e.chain = e.chain.then(job, job); return e.chain; }; // 앞 작업 실패에도 이어간다
+async function touch(wsId, slug) {
+  const s = await readJsonLenient(file(wsId, slug), null);
+  if (!s || !s.ts) return; // 지워졌거나 아직 없음 — 되살리지 않는다
+  await writeJsonAtomic(file(wsId, slug), { ...s, ts: Date.now() });
 }
 
+export async function setTurnStatus(wsId, slug, stage, detail = '', partial, source) {
+  const k = keyOf(wsId, slug);
+  let e = live.get(k);
+  if (!e) {
+    e = { chain: Promise.resolve(), timer: null, queued: false };
+    live.set(k, e);
+    e.timer = setInterval(() => {
+      if (e.queued) return; // 체인에 심박은 최대 1개 — 쓰기보다 짧은 주기에서 무한히 쌓이지 않게(회의실 마커와 같은 구조)
+      e.queued = true;
+      enqueue(e, () => touch(wsId, slug)).catch(() => {}).finally(() => { e.queued = false; });
+    }, HEARTBEAT_MS);
+    e.timer.unref?.(); // 프로세스 종료를 붙들지 않는다
+  }
+  await enqueue(e, async () => {
+    try {
+      // 상태 파일은 캐시성 — 손상은 관용(readJsonLenient). writeJsonAtomic가 mkdir까지 처리.
+      const prev = await readJsonLenient(file(wsId, slug), {});
+      await writeJsonAtomic(file(wsId, slug), {
+        stage, detail,
+        // partial — 완료 전 크루가 이미 말한 텍스트(스트리밍 체감). 미전달 시 이전 값 유지, 뒤 4000자만
+        partial: String(partial ?? prev.partial ?? '').slice(-4000),
+        // source — 이 상태를 쓴 턴의 출처('room'|'chat'|'delegate'|'routine'…). 크루 상태 파일은 크루당 하나라
+        // 같은 크루의 다른 턴(개인 채팅·루틴)이 겹치면 회의실이 남의 문장을 발언으로 오인한다(#393 검수 MEDIUM-2).
+        // 미전달이면 이전 값 유지(같은 턴의 후속 갱신), 없으면 빈 값 — 소비자는 빈 값을 '출처 미상'으로 비채택.
+        source: source ?? prev.source ?? '',
+        startedAt: prev.startedAt ?? Date.now(), ts: Date.now(),
+      });
+    } catch { /* 상태 표시는 베스트에포트 */ }
+  });
+}
+
+/** 종료 — 심박을 끄고, **진행 중인 쓰기가 끝난 뒤** 파일을 지운다(해제 직후 착지하는 심박이 거짓 '작성 중'을 되살리지 않게). */
 export async function clearTurnStatus(wsId, slug) {
+  const k = keyOf(wsId, slug);
+  const e = live.get(k);
+  if (e) { clearInterval(e.timer); live.delete(k); await e.chain.catch(() => {}); }
   try { await rm(file(wsId, slug), { force: true }); } catch { /* 없으면 그만 */ }
 }
 

@@ -1037,6 +1037,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontSize: 13, minWidth: 0 }}>
                 <ArgoSpinner size={15} />
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {/* 출처 배지 — 회의실 발언(source==='room')임을 밝힌다. 회의실에서 돌던 턴이 1:1 화면에만 사고 과정으로 보여
+                      "어디서 뭘 하는지" 어긋나던 것(유건 제보 2026-09-06). 회의가 끝나면 상태 파일과 함께 사라진다. */}
+                  {liveStage?.source === 'room' && (
+                    <span style={{ fontSize: 10, fontWeight: 650, color: 'var(--primary)', border: '1px solid var(--primary)', borderRadius: 999, padding: '0 6px', marginRight: 7, verticalAlign: 'middle' }}>{t('chat.inRoom')}</span>
+                  )}
                   {t('chat.stageEllipsis', { stage: liveStage ? stageLabel(t, liveStage.stage, liveStage.detail) : WAIT_STAGES[stage] })}
                   {liveStage?.detail && liveStage.stage !== 'runner' && (
                     <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', marginLeft: 8 }}>{liveStage.detail}</span>
