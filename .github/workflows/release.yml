@@ -416,7 +416,8 @@ jobs:
           }
           EOF
       # 배포 repo(beyondworks/argo-agent)에 발행 — 소스 레포와 배포 레포 분리(릴리스 자산만 저쪽에).
-      # ※ argo 소스 레포도 현재 public이다(2026-07-23 전환) — "private라 유출 없음" 옛 전제는 폐기.
+      # ※ argo 소스 레포는 public이다(2026-07-23 전환, 2026-09-07 하루 private 뒤 복귀 — 프라이빗 플랜 릴리스 한도).
+      #   "private라 유출 없음" 옛 전제는 폐기 상태 그대로. argo-agent도 public(다운로드·업데이터).
       # cross-repo라 RELEASE_TOKEN(argo-agent contents:write PAT) 필요. draft=true라 검토 후 사람이 게시.
       - uses: softprops/action-gh-release@v2
         with:

@@ -25,6 +25,13 @@ dist-server/
 !/docs/selfhost.md
 !/docs/privacy-sync.md
 /PRODUCT-SPEC.md
+# 루트 설계·핸드오버 문서 — 내부용(보안 검토 2026-09-06: gitignore 밖에 있어 실수 커밋 위험)
+/E2EE-DESIGN.md
+/ENGINE-HARNESS-DESIGN.md
+/MESSENGER-DESIGN.md
+/HOSTING-COST-SIM.md
+/HANDOVER.md
+/SESSION_HANDOVER.md
 
 # 메신저 디자인 시안 스크린샷 — 로컬 실측 산출물(유건 지시 2026-09-03: 커밋 금지)
 apps/messenger/design/shots/
