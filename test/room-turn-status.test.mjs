@@ -178,7 +178,7 @@ test('배선: chat()이 상태 파일 갱신 전부에 턴 출처(turnSource)를
   assert.match(src, /const turnSource = source \?\? \(from \? 'delegate' : 'chat'\);/, '출처 파생 — room 턴은 source=room 그대로');
   const calls = src.match(/setTurnStatus\(wsId, agentSlug,[^\n]*\)/g) ?? [];
   assert.ok(calls.length >= 4, `상태 갱신 호출 ${calls.length}곳(기대 ≥4: runner·boot·memory·단계)`);
-  for (const c of calls) assert.match(c, /turnSource\)/, `출처 누락 호출: ${c}`);
+  for (const c of calls) assert.match(c, /turnSource(, thought)?\)/, `출처 누락 호출: ${c}`);
 });
 
 test('GET /room 이 발언자·다음 순서·단계·부분 텍스트를 그대로 싣는다(실호출) — 실시간 발언 표시의 유일한 원천', async () => {
@@ -230,33 +230,35 @@ test('DELETE /room(회의 마치기)은 턴 진행 중이면 409로 거절한다
   assert.equal(ok.status, 200, '유휴면 종전대로 마친다');
 });
 
-test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전에 발언자를 갱신하며, 실패를 방에 남긴다(소스 구간 불변식)', async () => {
+test('배선: runRoomTurn이 마커 래퍼를 타고, 순차 경로는 발언마다 발언자를 갱신하며, 실패를 방에 남긴다(소스 구간 불변식)', async () => {
   const src = stripComments(await readFile(new URL('../src/room.mjs', import.meta.url), 'utf8'));
   // 불변식: runRoomTurn 본문은 withRoomTurnStatus 호출 하나이고, 실제 턴(runRoomTurnInner)은 그 안에서만 불린다.
-  // (#392에서 saved 표식 래퍼가 안쪽에 들어와 한 줄 형태가 아니게 됐다 — 구간으로 잠근다)
   const rt = src.slice(src.indexOf('export async function runRoomTurn('), src.indexOf('async function runRoomTurnInner('));
-  assert.match(rt, /export async function runRoomTurn\(wsId, text, attachments = \[\]\) \{\s*\n\s*return withRoomTurnStatus\(wsId, async \(mark\) => \{/,
-    '래퍼를 우회하면 마커가 안 생겨 복원이 죽는다');
-  assert.match(rt, /return await runRoomTurnInner\(wsId, text, attachments, state, mark\);/, '실제 턴은 래퍼 안에서만, 발언자 갱신은 래퍼의 mark로');
+  assert.match(rt, /export async function runRoomTurn\(wsId, text, attachments = \[\], \{ rounds = 2, concurrency = ROOM_CONCURRENCY \} = \{\}\) \{\s*\n\s*return withRoomTurnStatus\(wsId, async \(mark\) => \{/,
+    '래퍼를 우회하면 마커가 안 생겨 복원이 죽는다 — 반응 라운드 기본 2, 동시 상한 기본 ROOM_CONCURRENCY');
+  assert.match(rt, /return await runRoomTurnInner\(wsId, text, attachments, state, mark, \{ rounds, concurrency \}\);/, '실제 턴은 래퍼 안에서만, 발언자 갱신은 래퍼의 mark로');
   assert.equal((src.match(/(?<!function )runRoomTurnInner\(wsId, text, attachments/g) ?? []).length, 1, '래퍼 밖 직접 호출 금지(정의부 제외)');
-  const i0 = src.indexOf('for (const [i, a] of speakers.entries())');
-  const loop = src.slice(i0, src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
+  const inner = src.slice(src.indexOf('async function runRoomTurnInner('));
+  assert.doesNotMatch(inner, /setTurnStatus\(wsId, ROOM_TURN_SLUG/, '루프의 마커 직접 쓰기 금지 — 하트비트가 덮는다');
+  // 순차(릴레이·1명) 경로 — 마커 인코딩·발언자 갱신 위치·실패 처리
   assert.match(src, /const markerFor = \(j\) => \(speakers\[j\] \? `\$\{speakers\[j\]\.slug\}\|\$\{speakers\.slice\(j \+ 1\)\.map\(\(s\) => s\.slug\)\.join\(','\)\}\|\$\{speakers\.length\}` : `\|\|\$\{speakers\.length\}`\);/,
-    "마커 인코딩 '발언자|다음1,다음2' — getRoomTurn의 해석과 짝");
-  assert.match(loop, /await mark\(markerFor\(i\)\)/, '발언자|다음 순서 갱신이 chat() 앞에 있어야 발언자 표시·발언 큐의 앵커가 된다');
-  assert.doesNotMatch(src.slice(src.indexOf('async function runRoomTurnInner(')), /setTurnStatus\(wsId, ROOM_TURN_SLUG/, '루프의 마커 직접 쓰기 금지 — 하트비트가 덮는다');
-  // 발언 종료 즉시 다음 발언자로 — 없으면 답변 적재~다음 프롬프트 조립 사이에 "옛 발언자 · 시동 거는 중"이 샌다(격리 실측 shot-1)
-  const afterChat = src.slice(src.indexOf('r = await chat(wsId, a.slug, prompt', i0), src.indexOf('} catch (e) {', i0));
-  assert.match(afterChat, /r = await chat\([^\n]*\);\s*\n\s*await mark\(markerFor\(i \+ 1\)\);/, 'chat() 반환 직후 마커 인계(마지막이면 빈 값)');
-  // 발언 실패가 방에 남는가 — 오류는 POST 탭으로만 가므로 자리를 비운 사장에게 방은 그냥 조용하다(격리 실측: 401 뒤 흔적 0)
-  const after = src.slice(src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
-  const catchBlk = after.slice(after.indexOf('} catch (e) {'), after.indexOf('} finally {'));
-  assert.match(catchBlk, /await sys\('error', en \? `\$\{a\.name\} could not respond: \$\{msg\}` : `\$\{a\.name\} 발언 실패: \$\{msg\}`\)/, '실패 시스템 줄(ko/en)');
-  assert.match(catchBlk, /maskKeyLike\(String\(e\?\.message \|\| e\)/, '오류 원문은 키 모양을 가려 적재 — 방 스레드는 동기화·회의록 대상(검수 LOW-3)');
+    "마커 인코딩 '발언자|다음1,다음2|인원' — getRoomTurn의 해석과 짝");
+  const i0 = src.indexOf('for (const [i, a] of speakers.entries())');
+  const loop = src.slice(i0, src.indexOf('} catch (e) {', i0));
+  assert.match(loop, /await mark\(markerFor\(i\)\);\s*\n\s*out = await speakOne\(a, i, prompt, 1\);\s*\n[\s\S]*?await mark\(markerFor\(i \+ 1\)\);/, '발언자 갱신 → 발언 → 반환 직후 마커 인계(마지막이면 빈 발언자)');
+  const catchBlk = src.slice(src.indexOf('} catch (e) {', i0), src.indexOf('if (!out.live) break;', i0));
+  assert.match(catchBlk, /await failLine\(a, e\);/, '실패 시스템 줄(공용 failLine)');
   assert.match(catchBlk, /\n\s*throw e;/, '되던 오류 전파를 삼키면 안 된다');
+  const fl = src.slice(src.indexOf('const failLine = async (a, e) => {'), src.indexOf('if (!isParallel) {'));
+  assert.match(fl, /await sys\('error', en \? `\$\{a\.name\} could not respond: \$\{msg\}` : `\$\{a\.name\} 발언 실패: \$\{msg\}`\)/, '실패 시스템 줄(ko/en)');
+  assert.match(fl, /maskKeyLike\(String\(e\?\.message \|\| e\)/, '오류 원문은 키 모양을 가려 적재 — 방 스레드는 동기화·회의록 대상(검수 LOW-3)');
+  // 동시 경로 — 마커 v2는 push(JSON)로만, 라운드 시작마다 전원 큐
+  const par = src.slice(src.indexOf('const st = { v: 2, round: 1'));
+  assert.match(par, /const push = \(\) => mark\(JSON\.stringify\(st\)\);/, 'v2 마커는 래퍼의 mark로');
+  assert.match(par, /if \(!r1\.results\.some\(\(r\) => r\.ok\)\) throw r1\.results\[0\]\.e;/, '전원 실패만 던진다 — 일부 실패는 줄로 남고 답변은 산다');
   // getRoomTurn은 단일 판정 — 발언자 폴백·확장 만료 창이 되살아나면 HIGH-2가 돌아온다
-  const grt = src.slice(src.indexOf('export async function getRoomTurn'), src.indexOf('export async function runRoomTurn'));
-  assert.doesNotMatch(grt, /maxAgeMs|speaker|30 \* 60_000/, 'getRoomTurn에 발언자 폴백·30분 창 금지');
+  const grt = src.slice(src.indexOf('export async function getRoomTurn'), src.indexOf('async function roomTurnV2'));
+  assert.doesNotMatch(grt, /maxAgeMs|30 \* 60_000/, 'getRoomTurn에 확장 만료 창 금지');
 });
 
 test('배선: 회의실 페이지가 turn.active를 serverBusy로 복원하고, 폴링·표시·마치기가 올바르게 묶여 있다', async () => {
@@ -289,6 +291,7 @@ test('배선: 회의실 헤더 진행 줄은 회의 마커(active)만 보고 그
   assert.ok(hdr.includes("t('room.progress', { done: Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) })"), 'done = 인원 − 남은 큐 − 발언 중 1');
   assert.ok(hdr.includes("t('room.progressNoCount', { elapsed: fmtElapsed(elapsed) })"), '인원 미상(구형 마커)이면 경과만');
   assert.ok(hdr.includes('{turn?.total > 1'), '발언자 한 명이면 "0/1명" 대신 경과만(격리 캡처에서 소음으로 확인)');
+  assert.ok(hdr.includes("{turn?.v === 2 && turn.rounds > 1 ? `${t('room.roundNow', { n: turn.round })} · ` : ''}"), '반응 라운드 회의는 현재 라운드를 진행 줄에');
   assert.ok(/flex: '0 1 auto', minWidth: 0 \}\}>[\s\S]{0,600}<span style=\{\{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' \}\}>/.test(hdr), '협폭 가드 — 진행 줄이 flex:none이면 배율 2 협폭에서 가로 넘침(2차 검수 실측 255px vs 178px)');
   assert.ok(!/fontVariantNumeric: 'tabular-nums', flex: 'none' \}\}>/.test(hdr), 'flex:none 금지');
   assert.ok(/if \(turn\?\.startedAt\) startedRef\.current = turn\.startedAt;/.test(page) && /setElapsed\(Math\.max\(0, Date\.now\(\) - startedRef\.current\)\)/.test(page), '경과는 서버 마커의 startedAt을 ref에 보관 — 자기 턴 종료 직후 0:00 스냅 방지(검수 LOW-1)');

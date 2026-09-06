@@ -32,14 +32,15 @@ export async function POST(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { message, attachments: rawAtt } = await req.json();
+    const { message, attachments: rawAtt, rounds: rawRounds } = await req.json();
     if (!message?.trim()) return Response.json({ error: 'message가 필요합니다' }, { status: 400 });
     // 첨부는 업로드 API가 발급한 vault/files/ 상대경로만 신뢰한다(경로 탈출 차단 — chat 라우트와 동일 규칙)
     const attachments = (Array.isArray(rawAtt) ? rawAtt : [])
       .filter((a) => typeof a?.rel === 'string' && a.rel.startsWith('files/') && !a.rel.includes('..'))
       .map((a) => ({ rel: a.rel, name: String(a.name ?? ''), mime: String(a.mime ?? ''), isImage: !!a.isImage }))
       .slice(0, 8);
-    return Response.json(await runRoomTurn(ws, message.trim(), attachments));
+    const rounds = rawRounds === 1 || rawRounds === '1' ? 1 : 2; // 반응 라운드 기본 켜짐(유건 결정 2026-09-06) — 입력창 토글이 1을 보낸다
+    return Response.json(await runRoomTurn(ws, message.trim(), attachments, { rounds }));
   } catch (e) {
     // saved — 안건이 방에 저장된 뒤의 실패인지(runRoomTurn 표식). 화면은 미저장일 때만 입력을 되돌린다(chat 라우트 계약과 동형).
     return Response.json({ error: String(e.message || e), saved: e?.saved === true }, { status: 500 });

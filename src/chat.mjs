@@ -1394,6 +1394,7 @@ ${lang === 'en'
   // 자격 게이트(sdkEnvFor)가 등록 전에 던지면 null 그대로다(등록 전 실패 = 중단 불가 턴이 맞다).
   let abortReg = null;
   let partial = ''; // 완료 전 크루가 이미 말한 텍스트 — 상태 파일로 흘려 스트리밍 체감
+  let thought = ''; // 모델의 사고(thinking 블록) 누적 — 상태 파일 thought(뒤 1500자)
   try {
   // sdkEnvFor(자격 게이트 포함)·query 구성은 try **안**이어야 한다 — 게이트의 authExpired가
   // try 밖에서 터지면 아래 catch의 자가치유(AUTH_ERR_RE)·사용자 언어 번역이 전부 미발동하고
@@ -1488,10 +1489,14 @@ ${lang === 'en'
       // 크루가 이미 말한 텍스트를 상태 파일로 흘린다 — UI 폴이 완료 전에도 부분 표시(스트리밍 체감)
       const said = (msg.message?.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
       if (said) partial = partial ? `${partial}\n\n${said}` : said;
+      // 사고 과정 — thinking 블록(SDK가 확장 사고를 켠 모델에서 싣는다)을 상태 파일 thought로 흘린다. 회의실·1:1 카드가
+      // "무엇을 생각하며 이 답을 내는지"를 접이식으로 보인다(유건 요청 2026-09-06). 없으면 이전 값 유지(setTurnStatus).
+      const thoughtNow = (msg.message?.content ?? []).filter((b) => b.type === 'thinking' && typeof b.thinking === 'string').map((b) => b.thinking).join('\n').trim();
+      if (thoughtNow) thought = thought ? `${thought}\n\n${thoughtNow}` : thoughtNow;
       const stage = tu ? stageForTool(tu.name) : 'think'; // 코드 — 클라가 번역(가장 흔한 상태라 누락 시 영어 회사에 한국어 노출)
       const detail = tu ? detailForTool(tu.name, tu.input) : '';
       for (const b of tus) step(stageForTool(b.name), detailForTool(b.name, b.input)); // 도구 하나 = 단계 하나
-      await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource);
+      await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought);
     }
     if (msg.type === 'result') {
       sid = msg.session_id ?? sid;

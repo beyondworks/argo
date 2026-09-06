@@ -134,3 +134,29 @@ test('배선: chat.mjs의 SDK·CLI 두 경로 finally에 clearTurnStatus가 있�
   assert.equal(finals.length, 2, 'abortReg를 해제하는 finally = 러너 경로 2개(CLI·SDK)');
   for (const b of finals) assert.ok(/await clearTurnStatus\(wsId, agentSlug\);/.test(b), `finally에 clear가 없다: ${b.slice(0, 80)}…`);
 });
+
+test('낡은 잔재 파일(120초 무갱신)은 새 턴의 전 상태가 아니다 — startedAt·partial·thought·source를 물려받지 않는다', async () => {
+  const ws = 'hb-stale-prev'; await seed(ws);
+  await writeFile(statusPath(ws, 'lee'), JSON.stringify({ stage: 'think', detail: '', partial: '옛 문장', thought: '옛 생각', source: 'chat', startedAt: Date.now() - 1_900_000, ts: Date.now() - 1_800_000 }));
+  await setTurnStatus(ws, 'lee', 'boot', '', undefined, 'room');
+  const s = await getTurnStatus(ws, 'lee');
+  assert.ok(Date.now() - s.startedAt < 5_000, `경과가 새 턴 기준이어야 한다(실측: 낡은 마커 상속으로 31:54 표시) — startedAt ${Date.now() - s.startedAt}ms 전`);
+  assert.equal(s.partial, ''); assert.equal(s.thought ?? '', ''); assert.equal(s.source, 'room');
+  await clearTurnStatus(ws, 'lee');
+});
+
+// ── 사고 과정(thought) 배선 — chat.mjs가 thinking 블록을 상태 파일로 흘려야 회의실·1:1 카드의 "생각"이 산다(유건 요청 (가)).
+test('배선: chat.mjs가 assistant 메시지의 thinking 블록을 누적해 단계 갱신에 thought로 싣는다', async () => {
+  const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  assert.ok(src.includes("let thought = '';"), 'thought 누적 변수');
+  assert.ok(/filter\(\(b\) => b\.type === 'thinking' && typeof b\.thinking === 'string'\)\.map\(\(b\) => b\.thinking\)/.test(src), 'thinking 블록 수집');
+  assert.ok(/if \(thoughtNow\) thought = thought \? `\$\{thought\}\\n\\n\$\{thoughtNow\}` : thoughtNow;/.test(src), '누적(이전 생각 뒤에 덧붙임)');
+  assert.ok(src.includes("await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought);"), '단계 갱신에 thought 전달');
+  // 상태 파일 왕복 — thought는 뒤 1500자만, 미전달 시 유지
+  const ws = 'hb-thought'; await seed(ws);
+  await setTurnStatus(ws, 'kim', 'think', '', '', 'room', 'x'.repeat(2000));
+  assert.equal((await getTurnStatus(ws, 'kim')).thought.length, 1500, '뒤 1500자');
+  await setTurnStatus(ws, 'kim', 'write', 'a.md', '문장', 'room');
+  assert.equal((await getTurnStatus(ws, 'kim')).thought.length, 1500, '미전달이면 이전 생각 유지');
+  await clearTurnStatus(ws, 'kim');
+});

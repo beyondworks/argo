@@ -1031,6 +1031,13 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             <Avatar name={agent?.name} sm />
             <div className="card" style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 9, flex: 1, minWidth: 0 }}>
               {/* 크루가 이미 말한 부분 — 완료를 기다리지 않고 흘러 들어온다(스트리밍 체감) */}
+              {/* 생각 — 모델 사고(thinking) 뒤 1500자, 접이식(회의실 발언 카드와 같은 계약 — turn-status thought) */}
+              {liveStage?.thought && (
+                <details style={{ marginBottom: 2 }}>
+                  <summary style={{ fontSize: 11, color: 'var(--fg-3)', cursor: 'pointer' }}>{t('room.thought')}</summary>
+                  <div style={{ fontSize: 12, color: 'var(--fg-3)', whiteSpace: 'pre-wrap', borderLeft: '2px solid var(--border)', paddingLeft: 8, marginTop: 4 }}>{liveStage.thought}</div>
+                </details>
+              )}
               {liveStage?.partial && (
                 <div style={{ color: 'var(--fg-2)', fontSize: 13 }}><Markdown text={liveStage.partial} wsId={ws} /></div>
               )}

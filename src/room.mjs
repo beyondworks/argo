@@ -433,7 +433,12 @@ export async function getRoomTurn(wsId) {
   // **표시 보강**일 뿐 — 진행 판정은 위 마커 하나다(단일 판정 유지). 방에서도 "지금 무엇을 하며 무엇을
   // 쓰고 있는지"가 보이게(유건 2026-09-02 "보는 재미"). 발언이 끝나면 chat()이 상태 파일을 지워 partial이
   // 비고, 완성 말풍선이 정본이 된다.
-  const [slug = '', rest = '', totalRaw = ''] = String(s.detail || '').split('|');
+  const raw = String(s.detail || '');
+  // v2(동시 발언) 마커 = JSON {v:2, round, rounds, total, active[], queue[], done[], failed[]} — 발언자가 여럿이라 문자열 한 줄로는
+  // 못 싣는다. 구형 '발언자|다음|인원'은 릴레이·이전 프로세스 마커 호환으로 그대로 해석한다.
+  const v2 = raw.startsWith('{') ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : null;
+  if (v2 && v2.v === 2) return roomTurnV2(wsId, s, v2);
+  const [slug = '', rest = '', totalRaw = ''] = raw.split('|');
   const total = Number(totalRaw) || null; // 구형 마커(두 구간)는 null — 화면이 인원 표시를 생략한다
   // 출처 게이트 — 같은 크루의 다른 턴(개인 채팅·루틴·경쟁)이 같은 상태 파일을 쓰면 남의 문장이 발언으로 뜬다
   // (#393 검수 MEDIUM-2 프로브). source==='room'일 때만 채택, 미상(구형 파일)은 비채택(fail-closed).
@@ -447,18 +452,47 @@ export async function getRoomTurn(wsId) {
   };
 }
 
-export async function runRoomTurn(wsId, text, attachments = []) {
+/** v2 마커 → 화면 계약. speakers[] = 발언자별 {slug, state, stage, detail, partial, thought, startedAt}. state: speaking|queued|done|failed.
+    발언 중인 크루의 상태 파일(source==='room'만 채택 — 개인 채팅·루틴이 겹치면 남의 문장이 발언으로 뜬다)로 단계·문장·사고를 보강한다.
+    slug/queue/total/done도 함께 실어 구형 소비자(진행 줄)가 그대로 돈다. */
+async function roomTurnV2(wsId, s, m) {
+  const active = Array.isArray(m.active) ? m.active : [];
+  const queue = Array.isArray(m.queue) ? m.queue : [];
+  const done = Array.isArray(m.done) ? m.done : [];
+  const failed = Array.isArray(m.failed) ? m.failed : [];
+  const live = await Promise.all(active.map(async (slug) => {
+    const cur = await getTurnStatus(wsId, slug);
+    const ok = cur?.source === 'room' ? cur : null;
+    return { slug, state: 'speaking', stage: ok?.stage ?? null, detail: ok?.detail ?? '', partial: ok?.partial ?? '', thought: ok?.thought ?? '', startedAt: ok?.startedAt ?? null };
+  }));
+  const speakers = [
+    ...live,
+    ...queue.map((slug) => ({ slug, state: 'queued' })),
+    ...failed.map((slug) => ({ slug, state: 'failed' })),
+  ];
+  const first = live[0];
+  return {
+    active: true, v: 2, round: m.round ?? 1, rounds: m.rounds ?? 1, startedAt: s.startedAt,
+    slug: first?.slug ?? null, queue, total: m.total ?? null, done: done.length,
+    stage: first?.stage ?? null, detail: first?.detail ?? '', partial: first?.partial ?? '',
+    speakers,
+  };
+}
+
+/** 동시 발언 상한 — Claude 러너는 크루마다 CLI 프로세스를 띄우므로 무제한이면 12명 회의가 노트북을 눌러 앉힌다. env로 조정. */
+export const ROOM_CONCURRENCY = Math.max(1, Number(process.env.ARGO_ROOM_CONCURRENCY) || 8);
+export async function runRoomTurn(wsId, text, attachments = [], { rounds = 2, concurrency = ROOM_CONCURRENCY } = {}) {
   return withRoomTurnStatus(wsId, async (mark) => {
     // saved — 사장 발언이 방에 저장된 **뒤** 난 오류에 표식을 단다. 라우트가 오류 바디에 싣고, 화면은 이
     // 값으로 "입력창에 되돌릴지"를 가른다: 저장됐으면 되돌리지 않는다(되돌리면 방과 입력창에 같은 안건이
     // 나란히 남아 Enter 한 번에 두 번 적립·과금 — 분리 검수 #392 HIGH-1 실측), 저장 전 실패(크루 0명 등)면
     // 되돌린다(안 그러면 폴링이 낙관 말풍선까지 지워 글이 완전히 사라진다). chat 라우트의 {error, saved} 계약과 동형.
     const state = { saved: false };
-    try { return await runRoomTurnInner(wsId, text, attachments, state, mark); }
+    try { return await runRoomTurnInner(wsId, text, attachments, state, mark, { rounds, concurrency }); }
     catch (e) { if (state.saved && e && typeof e === 'object') e.saved = true; throw e; }
   });
 }
-async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = async () => {}) {
+async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = async () => {}, { rounds = 2, concurrency = ROOM_CONCURRENCY } = {}) {
   const agents = await listAgents(wsId);
   if (!agents.length) throw new Error('아직 크루가 없습니다. 데크에서 먼저 영입해 주세요.');
   // 회의 작업 폴더 — 턴 시작에 **한 번** 재서(roomFolder) 발언자 전원이 같은 값을 받는다. 사장 발언에 그 값을
@@ -569,13 +603,22 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
       ? `Relay stops at ${HOP_MAX + 1} — not included: ${names}`
       : `이어받기는 ${HOP_MAX + 1}명까지 — 제외: ${names}`);
   }
+  // ── 실행 방식. 릴레이(@A > @B)는 앞사람 답을 출발점으로 삼는 계약이라 순차. 그 외 2명 이상은 **동시 발언**
+  // (유건 결정 2026-09-06: 12명 순차가 15~30분 — 동시 호출 비용은 각자 답하나 동시에 답하나 같다). 동시 발언은 앞사람
+  // 답을 읽고 보태던 "듣고 말하기"를 잃으므로 **반응 라운드**(rounds=2 기본)가 대신한다 — 전원이 1라운드 발언을 읽고
+  // 동의·반박·보완을 동시에. 사장이 빠른 의견 수집만 원하면 rounds:1(입력창 토글).
+  const isParallel = !isRelay && speakers.length > 1;
+  const doRound2 = isParallel && rounds >= 2;
   // 발언 인원·순서 안내 — 2명 이상일 때만(1명은 답 자체가 곧 표시). 상한을 없앤 대가는 턴 비용이라 "몇 명이
-  // 어떤 순서로 답하는지"를 발언 시작 전에 방에서 본다(참조·릴레이 절단 안내가 있으면 그 다음 줄). 시스템 줄은
+  // 어떤 방식으로 답하는지"를 발언 시작 전에 방에서 본다(참조·릴레이 절단 안내가 있으면 그 다음 줄). 시스템 줄은
   // 크루 프롬프트 트랜스크립트에서 빠지는 기존 규약.
   if (speakers.length > 1) {
-    await sys('speakers', en
-      ? `${speakers.length} speak in turn — ${speakers.map((a) => a.name).join(', ')}`
-      : `${speakers.length}명 발언 — ${speakers.map((a) => a.name).join(', ')} 순`);
+    const names = speakers.map((a) => a.name).join(', ');
+    await sys('speakers', isRelay
+      ? (en ? `${speakers.length} speak in turn — ${names}` : `${speakers.length}명 발언 — ${names} 순`)
+      : (en
+        ? `${speakers.length} speak at once — ${names}${doRound2 ? ' · then a reaction round' : ''}`
+        : `${speakers.length}명 동시 발언 — ${names}${doRound2 ? ' · 이어서 반응 라운드' : ''}`));
   }
 
   const nameOf = (slug) => agents.find((x) => x.slug === slug)?.name ?? slug;
@@ -584,6 +627,9 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   // 크루는 Read로 열람 가능. 이름 멘션 상한 해제(2026-09-02) 뒤로는 @전체뿐 아니라 이름 멘션 4명째부터도
   // 이 캡이 실제로 걸린다(test/room-speakers.test.mjs가 잠근다).
   const IMG_EMBED_MAX = 3;
+  const attFor = (i) => (i >= IMG_EMBED_MAX && attachments.some((x) => x.isImage)
+    ? attachments.map((x) => (x.isImage ? { ...x, isImage: false } : x))
+    : attachments);
   // 이 턴만의 식별자 — sid는 회의 세션이라 턴마다 같다. 같은 방에서 턴이 겹치면(탭 2개·API 직접
   // 호출) 키가 완전히 같아져 서로의 위임 이벤트를 주워 담는다(분리 검수 MEDIUM-3).
   const turnId = `${sid}-${Math.random().toString(36).slice(2, 8)}`;
@@ -598,24 +644,27 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   // oneLine — 개행 든 폴더명이 "사장:" 가짜 줄을 만든다(commonDirectives와 같은 접기, 분리 검수 MEDIUM-1 실측).
   const folderLine = folder ? `\n작업 폴더: ${oneLine(folder)} — 사장이 이 회의에 지정한 폴더다. 파일 작업은 여기서 하고, 동료 크루도 같은 폴더를 본다(위임받은 동료 포함).` : '';
   const replies = [];
-  // 마커 detail = '발언자|다음1,다음2|인원' (getRoomTurn이 해석). j가 범위 밖이면 빈 값 = 발언자 미정(마무리 중).
-  // 세 번째 구간 = 이 턴의 발언 인원 — 화면이 "3/12 발언 완료"를 계산한다(진행 표시가 발언자 이름 하나뿐이면 12명
-  // 회의에서 사장은 얼마나 남았는지 알 수 없다 — 유건 제보 2026-09-06). 앞 두 구간 해석은 그대로(구형 호환).
-  const markerFor = (j) => (speakers[j] ? `${speakers[j].slug}|${speakers.slice(j + 1).map((s) => s.slug).join(',')}|${speakers.length}` : `||${speakers.length}`); // 마무리 중에도 인원은 남긴다 — "N/N명"이 마지막에 사라지지 않게(검수 LOW-2)
-  for (const [i, a] of speakers.entries()) {
-    const att = i >= IMG_EMBED_MAX && attachments.some((x) => x.isImage)
-      ? attachments.map((x) => (x.isImage ? { ...x, isImage: false } : x))
-      : attachments;
-    // 매 발언 직전 최신 트랜스크립트 — 뒤 크루는 앞 크루의 답을 보고 겹치지 않게 보탠다.
-    // 시스템 안내(참조·루프·오타 멘션)는 사람에게 주는 줄이라 프롬프트에서 뺀다 — 크루가 답할 대상이 아니다.
-    const transcript = (await loadRoom(wsId)).messages.filter((m) => m.who !== 'system').slice(-20)
-      // 첨부 경로 규약은 chat.mjs 스레드 맥락과 동일 문자열 — 후속 턴에서 "아까 그 파일"이 경로로
-      // 이어진다(검수 M1: 이게 없으면 1턴 첨부를 2턴 크루가 못 찾는다 — 랜덤 접두 파일명이라 탐색 불가).
-      // 산출물 노트 — 앞 크루가 이 회의에서 만든 파일 경로. 없으면 릴레이(@A > @B)의 B가 A의 답변 텍스트에만 의존해
-      // 경로를 받는다(분리 검수 LOW-2). 첨부 노트·회의록 `> 산출물:` 줄과 같은 vault/ 접두 규약.
-      .map((m) => `${m.who === 'user' ? '사장' : nameOf(m.who)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}${m.attachments?.length ? ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ''}${m.artifacts?.length ? ` (산출물, Read로 열람: ${m.artifacts.map((a) => 'vault/' + a).join(', ')})` : ''}`)
-      .join('\n');
-    const prompt = `지금 회의실에 있다 — 사장과 동료 크루가 함께 보는 방이다.
+  // 최신 트랜스크립트 — 순차(릴레이)는 매 발언 직전, 동시 발언은 라운드 시작에 한 번(전원이 같은 대화를 본다).
+  // 시스템 안내(참조·루프·오타 멘션)는 사람에게 주는 줄이라 프롬프트에서 뺀다 — 크루가 답할 대상이 아니다.
+  const transcriptNow = async () => (await loadRoom(wsId)).messages.filter((m) => m.who !== 'system').slice(-20)
+    // 첨부 경로 규약은 chat.mjs 스레드 맥락과 동일 문자열 — 후속 턴에서 "아까 그 파일"이 경로로
+    // 이어진다(검수 M1: 이게 없으면 1턴 첨부를 2턴 크루가 못 찾는다 — 랜덤 접두 파일명이라 탐색 불가).
+    // 산출물 노트 — 앞 크루가 이 회의에서 만든 파일 경로. 없으면 릴레이(@A > @B)의 B가 A의 답변 텍스트에만 의존해
+    // 경로를 받는다(분리 검수 LOW-2). 첨부 노트·회의록 `> 산출물:` 줄과 같은 vault/ 접두 규약.
+    .map((m) => `${m.who === 'user' ? '사장' : nameOf(m.who)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}${m.attachments?.length ? ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ''}${m.artifacts?.length ? ` (산출물, Read로 열람: ${m.artifacts.map((a) => 'vault/' + a).join(', ')})` : ''}`)
+    .join('\n');
+  const promptFor = (a, i, transcript, round) => round === 2
+    ? `지금 회의실에 있다 — 사장과 동료 크루가 함께 보는 방이다. 방금 동료 ${speakers.length - 1}명과 네가 같은 안건에 동시에 답했다.
+
+## 회의 대화 (최근 — 마지막에 1라운드 발언들이 있다)
+${transcript}${folderLine}
+
+## 지시 — 반응 라운드
+동료들의 1라운드 발언을 읽고 "${a.name}"로서 **동의·반박·보완**을 말하라.
+- 누구의 어떤 말에 반응하는지 이름을 들어 밝혀라(예: "미나의 둘째 안은 …").
+- 이미 나온 말을 반복하지 마라. 네 전문성으로 새로 보태는 것만, 5줄 이내.
+- 정말 보탤 것이 없으면 "추가 의견 없음" 한 줄만 답하라.`
+    : `지금 회의실에 있다 — 사장과 동료 크루가 함께 보는 방이다.
 
 ## 회의 대화 (최근)
 ${transcript}${folderLine}
@@ -626,6 +675,10 @@ ${transcript}${folderLine}
 - 동료의 전문(검수·리뷰·다른 분야)이 필요하면 **말로만 "맡기겠다"고 하지 말고 delegate 도구(to=동료 slug, task=구체 지시)로 실제로 위임해** 그 동료의 결과를 받아 네 답에 통합하고, 어느 동료 작업인지 밝혀라.
 - 확정 정보가 부족하면 되묻기만 하고 멈추지 말고, 합리적 가정을 명시한 뒤 그 방향으로 **실제 산출물/검토 결과까지 만들어** 답하라.
 - 단순 논의·의견이면 동료가 이미 말한 건 반복 말고 네 전문성으로 간결히 보태라(이 경우엔 5줄 이내).${
+      isParallel
+        ? `\n- 동료 ${speakers.length - 1}명이 **같은 안건에 동시에** 답하고 있다 — 남이 다룰 만한 일반론은 짧게, 네 전문 분야의 몫에 집중하라.${doRound2 ? ' 이어지는 반응 라운드에서 서로의 답을 보고 보탤 기회가 있다.' : ''}`
+        : ''
+    }${
       isRelay && i > 0
         ? `\n- **이어받기(릴레이)**: 사장이 "${speakers[i - 1].name} → ${a.name}" 순서를 지정했다. 바로 앞 ${speakers[i - 1].name}의 답을 출발점으로 삼아 네 몫을 이어서 완성하라 — 처음부터 다시 하지 말고, 앞 결과의 무엇을 받아 무엇을 더했는지 밝혀라.`
         : ''
@@ -634,12 +687,16 @@ ${transcript}${folderLine}
         ? `\n- 네 답 다음에는 ${speakers[i + 1].name}이(가) 이어받는다. 넘길 것을 분명히 남겨라.`
         : ''
     }`;
+
+  /** 발언 한 건 — 위임 미러 수집 → chat() → 위임 결과·답변을 방에 적재 → 개인 스레드 기록. 반환 {live, reply}.
+      live=false는 회의가 마쳐졌다는 뜻(남은 발언을 빈 방에 남기지 않는다). chat() 실패는 그대로 던진다(호출부가 방에 남긴다). */
+  const speakOne = async (a, i, prompt, round) => {
     // 위임을 방 안에서 보이게 한다 — 지금까지 크루가 회의 중 delegate하면 그 대화는 상대 크루의
     // **개인 채팅 스레드**에만 적재되고 방엔 최종 답만 왔다. 사장 눈에는 "각자 다른 창으로 흩어졌다
     // 돌아오는" 것으로 보인다(유건 지시 2026-07-28의 핵심 불만). 텔레그램 그룹이 쓰던 위임 미러
     // (gateway.mjs delegate 이벤트)와 같은 방식을 인앱 회의실에도 건다.
-    // mirrorCtx로 **이 턴의 위임만** 받는다 — 동시에 도는 다른 턴의 위임이 이 방에 섞이지 않게.
-    const mirrorCtx = { room: `${turnId}:${a.slug}:${i}` };
+    // mirrorCtx로 **이 발언의 위임만** 받는다 — 동시에 도는 다른 발언·다른 턴의 위임이 섞이지 않게.
+    const mirrorCtx = { room: `${turnId}:${a.slug}:${i}:${round}` };
     const mirrored = [];
     const { onNotify } = await import('./notify.mjs');
     const off = onNotify((ev) => {
@@ -647,28 +704,9 @@ ${transcript}${folderLine}
     });
     let r;
     try {
-      await mark(markerFor(i)); // 발언자|다음 순서 — 화면 복원·발언 큐의 앵커(래퍼의 mark — 하트비트와 같은 값을 공유)
       // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다
+      const att = attFor(i);
       r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx, workFolder: folder });
-      // 발언이 끝나는 **즉시** 다음 발언자로 넘긴다 — chat()이 크루 상태 파일을 지운 뒤 답변 적재·스레드 기록·
-      // 다음 프롬프트 조립이 끝날 때까지 마커만 옛 발언자로 남으면, 화면에 완성 답변 아래 "페퍼 · 시동 거는 중"이
-      // 다시 뜬다(격리 실측 2026-09-02 shot-1). 마지막 발언자면 빈 값 → 종전 '회의 중' 줄로 마무리.
-      await mark(markerFor(i + 1));
-    } catch (e) {
-      // 발언 실패를 **방에 남긴다** — 오류는 POST 호출 탭에만 돌아가므로, 안건을 올리고 다른 페이지로 간
-      // 사장에게는 방이 그냥 조용해져 "멈췄다"로 보였다(실사용 제보 2026-09-02 계열 — 격리 실측: 401 실패 190초
-      // 뒤 방에 흔적 0). 시스템 줄(sys)은 크루 프롬프트 트랜스크립트에서 제외되는 기존 규약이라 대화를 오염하지 않는다.
-      const msg = maskKeyLike(String(e?.message || e).replace(/\s+/g, ' ')).slice(0, 200); // 방 스레드는 동기화·회의록 적재 대상 — 키 모양은 가린다
-      await sys('error', en ? `${a.name} could not respond: ${msg}` : `${a.name} 발언 실패: ${msg}`).catch(() => {});
-      // 인원 안내가 약속한 N명 중 아직 차례가 안 온 크루를 밝힌다 — 실패로 루프가 끊기면 뒷사람은 말없이 빠지는데,
-      // "N명 발언" 안내가 있는 지금은 그 침묵이 곧 거짓 약속이다(분리 검수 MEDIUM-2). 다시 부르면 이어간다.
-      const rest = speakers.slice(i + 1).map((x) => x.name);
-      if (rest.length) {
-        await sys('skipped', en
-          ? `Did not get to: ${rest.join(', ')} — mention them again to continue.`
-          : `차례가 오지 않은 크루: ${rest.join(', ')} — 다시 부르면 이어갑니다.`).catch(() => {});
-      }
-      throw e; // 호출 탭의 오류 표시 계약은 그대로
     } finally {
       // emitNotify는 마이크로태스크로 핸들러를 돌린다 — 턴 종료 직후 한 틱 양보해야 마지막 위임을 놓치지 않는다
       await new Promise((res) => setTimeout(res, 0));
@@ -681,18 +719,106 @@ ${transcript}${folderLine}
         via: { from: ev.from, fromName: ev.fromName, task: String(ev.task ?? '').slice(0, 200) },
         ...(ev.artifacts?.length ? { artifacts: ev.artifacts } : {}), // 위임받은 크루가 만든 파일도 방에서 바로 — chat.mjs delegate 이벤트가 싣는다
       }, sid);
-      if (!live) return { replies, room: await loadRoom(wsId) }; // 회의가 마쳐졌다
+      if (!live) return { live: false, reply: r.reply }; // 회의가 마쳐졌다
     }
     // artifacts를 **방 메시지에도** 싣는다 — 지금까지 개인 스레드(appendTurn)에만 기록돼 회의실에선 크루가 만든 파일을
     // 볼 수도 갈 수도 없었다(유건 요청 2026-09-02). 없으면 필드 자체를 안 쓴다(thread.mjs appendTurn과 같은 규약 — 스레드 비대화 방지).
-    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now(), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }, sid);
-    if (!live) break; // 회의가 마쳐졌다 — 남은 발언을 빈 방에 남기지 않는다
+    // round — 반응 라운드 발언은 화면이 "반응"으로 구분한다(1라운드는 필드 없음 — 구형 메시지와 같은 모양).
+    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now(), ...(round === 2 ? { round: 2 } : {}), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }, sid);
+    if (!live) return { live: false, reply: r.reply }; // 회의가 마쳐졌다 — 남은 발언을 빈 방에 남기지 않는다
     // ponytail: 회의실 턴을 크루 개인 스레드에 기록한다 — 마지막 남은 비대칭(루틴 #157 교훈).
     // 안 하면 회의에서 시킨 일이 개인 채팅에 안 보이고 이어가기가 안 된다(유건 제보 2026-08-08).
     const { appendTurn } = await import('./thread.mjs');
     await appendTurn(wsId, a.slug, { userMsg: prompt, reply: r.reply, handover: r.handover, sessionId: null, via: 'room', artifacts: r.artifacts })
       .catch((e) => console.error(`[argo] 회의실 스레드 기록 실패(${wsId}/${a.slug}):`, e.message));
-    replies.push({ slug: a.slug, name: a.name, reply: r.reply, ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }); // 화면의 폴백 경로(room 스냅샷 부재)도 칩을 잃지 않게
+    replies.push({ slug: a.slug, name: a.name, reply: r.reply, ...(round === 2 ? { round: 2 } : {}), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }); // 화면의 폴백 경로(room 스냅샷 부재)도 칩을 잃지 않게
+    return { live: true, reply: r.reply };
+  };
+  const failLine = async (a, e) => {
+    // 발언 실패를 **방에 남긴다** — 오류는 POST 호출 탭에만 돌아가므로, 안건을 올리고 다른 페이지로 간
+    // 사장에게는 방이 그냥 조용해져 "멈췄다"로 보였다(실사용 제보 2026-09-02 계열 — 격리 실측: 401 실패 190초
+    // 뒤 방에 흔적 0). 시스템 줄(sys)은 크루 프롬프트 트랜스크립트에서 제외되는 기존 규약이라 대화를 오염하지 않는다.
+    const msg = maskKeyLike(String(e?.message || e).replace(/\s+/g, ' ')).slice(0, 200); // 방 스레드는 동기화·회의록 적재 대상 — 키 모양은 가린다
+    await sys('error', en ? `${a.name} could not respond: ${msg}` : `${a.name} 발언 실패: ${msg}`).catch(() => {});
+  };
+
+  if (!isParallel) {
+    // ── 순차(릴레이·1명) — 종전 그대로. 마커 detail = '발언자|다음1,다음2|인원' (getRoomTurn이 해석). j가 범위 밖이면 발언자 빈 값 = 마무리 중.
+    // 세 번째 구간 = 이 턴의 발언 인원 — 화면이 "3/12 발언 완료"를 계산한다. 앞 두 구간 해석은 그대로(구형 호환).
+    const markerFor = (j) => (speakers[j] ? `${speakers[j].slug}|${speakers.slice(j + 1).map((s) => s.slug).join(',')}|${speakers.length}` : `||${speakers.length}`); // 마무리 중에도 인원은 남긴다 — "N/N명"이 마지막에 사라지지 않게(검수 LOW-2)
+    for (const [i, a] of speakers.entries()) {
+      // 매 발언 직전 최신 트랜스크립트 — 뒤 크루는 앞 크루의 답을 보고 겹치지 않게 보탠다(릴레이 계약).
+      const prompt = promptFor(a, i, await transcriptNow(), 1);
+      let out;
+      try {
+        await mark(markerFor(i)); // 발언자|다음 순서 — 화면 복원·발언 큐의 앵커(래퍼의 mark — 하트비트와 같은 값을 공유)
+        out = await speakOne(a, i, prompt, 1);
+        // 발언이 끝나는 **즉시** 다음 발언자로 넘긴다 — chat()이 크루 상태 파일을 지운 뒤 답변 적재·스레드 기록·
+        // 다음 프롬프트 조립이 끝날 때까지 마커만 옛 발언자로 남으면, 화면에 완성 답변 아래 "페퍼 · 시동 거는 중"이
+        // 다시 뜬다(격리 실측 2026-09-02 shot-1). 마지막 발언자면 빈 값 → 종전 '회의 중' 줄로 마무리.
+        await mark(markerFor(i + 1));
+      } catch (e) {
+        await failLine(a, e);
+        // 인원 안내가 약속한 N명 중 아직 차례가 안 온 크루를 밝힌다 — 실패로 루프가 끊기면 뒷사람은 말없이 빠지는데,
+        // "N명 발언" 안내가 있는 지금은 그 침묵이 곧 거짓 약속이다(분리 검수 MEDIUM-2). 다시 부르면 이어간다.
+        const rest = speakers.slice(i + 1).map((x) => x.name);
+        if (rest.length) {
+          await sys('skipped', en
+            ? `Did not get to: ${rest.join(', ')} — mention them again to continue.`
+            : `차례가 오지 않은 크루: ${rest.join(', ')} — 다시 부르면 이어갑니다.`).catch(() => {});
+        }
+        throw e; // 호출 탭의 오류 표시 계약은 그대로
+      }
+      if (!out.live) break; // 회의가 마쳐졌다
+    }
+    return { replies, room: await loadRoom(wsId) };
+  }
+
+  // ── 동시 발언. 마커 v2 = JSON(발언자별 상태) — 화면이 발언 카드를 사람 수만큼 그린다. 상한(concurrency)까지 동시에 시작하고
+  // 넘치면 큐에서 차례로. 한 명의 실패가 나머지를 멈추지 않는다(실패는 방에 줄로 남고 마커 failed에 표시). 전원 실패만 던진다.
+  const st = { v: 2, round: 1, rounds: doRound2 ? 2 : 1, total: speakers.length, active: [], queue: speakers.map((a) => a.slug), done: [], failed: [] };
+  const push = () => mark(JSON.stringify(st));
+  const runRound = async (round) => {
+    const transcript = await transcriptNow(); // 라운드 시작 스냅샷 — 전원이 같은 대화(2라운드는 1라운드 발언 포함)를 본다
+    st.round = round; st.active = []; st.queue = speakers.map((a) => a.slug); st.done = []; st.failed = [];
+    await push();
+    let ended = false;
+    const results = await runLimited(speakers, concurrency, async (a, i) => {
+      if (ended) return { live: false };
+      st.queue = st.queue.filter((x) => x !== a.slug); st.active.push(a.slug); await push();
+      try {
+        const out = await speakOne(a, i, promptFor(a, i, transcript, round), round);
+        st.active = st.active.filter((x) => x !== a.slug); st.done.push(a.slug); await push();
+        if (!out.live) ended = true;
+        return out;
+      } catch (e) {
+        st.active = st.active.filter((x) => x !== a.slug); st.failed.push(a.slug); await push();
+        await failLine(a, e);
+        throw e;
+      }
+    });
+    return { results, ended };
+  };
+  const r1 = await runRound(1);
+  if (!r1.results.some((r) => r.ok)) throw r1.results[0].e; // 전원 실패 — 호출 탭의 오류 표시 계약(안건은 저장됨)
+  if (r1.ended) return { replies, room: await loadRoom(wsId) }; // 회의가 마쳐졌다
+  if (doRound2) {
+    await sys('round', en ? 'Reaction round — everyone replies to the first round.' : '반응 라운드 — 1라운드 발언에 서로 답합니다.');
+    await runRound(2); // 실패는 줄로 남는다 — 1라운드 답이 이미 있으므로 던지지 않는다
   }
   return { replies, room: await loadRoom(wsId) };
+}
+
+/** 동시 실행 상한 — items를 limit개씩 동시에, 순서대로 착수. 결과는 {ok, v|e}로 정착(한 항목의 실패가 나머지를 끊지 않는다). */
+export async function runLimited(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i).then((v) => ({ ok: true, v }), (e) => ({ ok: false, e }));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return out;
 }

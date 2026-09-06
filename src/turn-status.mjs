@@ -62,7 +62,7 @@ async function touch(wsId, slug) {
   await writeJsonAtomic(file(wsId, slug), { ...s, ts: Date.now() });
 }
 
-export async function setTurnStatus(wsId, slug, stage, detail = '', partial, source) {
+export async function setTurnStatus(wsId, slug, stage, detail = '', partial, source, thought) {
   const k = keyOf(wsId, slug);
   let e = live.get(k);
   if (!e) {
@@ -78,7 +78,10 @@ export async function setTurnStatus(wsId, slug, stage, detail = '', partial, sou
   await enqueue(e, async () => {
     try {
       // 상태 파일은 캐시성 — 손상은 관용(readJsonLenient). writeJsonAtomic가 mkdir까지 처리.
-      const prev = await readJsonLenient(file(wsId, slug), {});
+      // 낡은 파일(120초 무갱신 = 죽은 턴의 잔재 — 크래시·kill로 clear가 못 돈 경우)은 새 턴의 전 상태가 아니다. 그대로 이어받으면
+      // startedAt이 몇 십 분 전으로 잡혀 경과가 "31:54"로 뜨고, 옛 partial·thought·source가 새 발언에 섞인다(격리 실측 2026-09-07).
+      const prev0 = await readJsonLenient(file(wsId, slug), {});
+      const prev = prev0?.ts && Date.now() - prev0.ts < 120_000 ? prev0 : {};
       await writeJsonAtomic(file(wsId, slug), {
         stage, detail,
         // partial — 완료 전 크루가 이미 말한 텍스트(스트리밍 체감). 미전달 시 이전 값 유지, 뒤 4000자만
@@ -87,6 +90,9 @@ export async function setTurnStatus(wsId, slug, stage, detail = '', partial, sou
         // 같은 크루의 다른 턴(개인 채팅·루틴)이 겹치면 회의실이 남의 문장을 발언으로 오인한다(#393 검수 MEDIUM-2).
         // 미전달이면 이전 값 유지(같은 턴의 후속 갱신), 없으면 빈 값 — 소비자는 빈 값을 '출처 미상'으로 비채택.
         source: source ?? prev.source ?? '',
+        // thought — 모델의 사고(thinking 블록) 뒤 1500자. 회의실 발언 카드·1:1 진행 카드의 접이식 "생각"(유건 요청 2026-09-06 (가)).
+        // 미전달이면 이전 값 유지(같은 턴의 후속 갱신).
+        thought: String(thought ?? prev.thought ?? '').slice(-1500),
         startedAt: prev.startedAt ?? Date.now(), ts: Date.now(),
       });
     } catch { /* 상태 표시는 베스트에포트 */ }
@@ -107,7 +113,7 @@ export async function getTurnStatus(wsId, slug) {
     const s = await readJsonLenient(file(wsId, slug), null);
     if (!s || !s.ts) return null;
     return Date.now() - s.ts < 120_000
-      ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', source: s.source ?? '', startedAt: s.startedAt ?? s.ts }
+      ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', thought: s.thought ?? '', source: s.source ?? '', startedAt: s.startedAt ?? s.ts }
       : null;
   } catch {
     return null;
