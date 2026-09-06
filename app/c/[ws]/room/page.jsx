@@ -463,11 +463,11 @@ export default function Room({ params }) {
           <span className="rule" style={{ flex: 1 }} />
           {/* 진행 줄 — 회의가 도는 동안 절대 꺼지지 않는다. 근거는 회의 마커(turn.active)뿐이라 발언 크루의 상태 파일이
               낡아도(2분 무갱신) 이 줄은 남는다(유건 제보 2026-09-06: 표시가 꺼져 회의가 누락된 것처럼 보임).
-              done = 인원 − 남은 큐 − 발언 중 1. 인원을 모르는 구형 마커면 경과만. */}
+              done = 인원 − 남은 큐 − 발언 중 1. 인원을 모르는 구형 마커거나 발언자가 한 명이면("0/1명"은 소음) 경과만. */}
           {!viewing && (busy || serverBusy) && (
             <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums', flex: 'none' }}>
               <ArgoSpinner size={11} />
-              {turn?.total
+              {turn?.total > 1
                 ? t('room.progress', { done: Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) })
                 : t('room.progressNoCount', { elapsed: fmtElapsed(elapsed) })}
             </span>
