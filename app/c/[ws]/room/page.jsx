@@ -51,6 +51,22 @@ export default function Room({ params }) {
   // 서버 턴의 발언자·단계·부분 텍스트·다음 순서(GET turn). 발언이 끝나야 말풍선이 통째로 뜨던 방을,
   // 크루 채팅처럼 쓰는 중인 문장이 자라며 보이게(유건 2026-09-02 "보는 재미"). 진행 판정(serverBusy)과 분리.
   const [turn, setTurn] = useState(null);
+  // 경과 시각 — 마커의 startedAt 기준(자기 탭 POST가 아니라 서버 회의 시작). 진행 줄에 붙어 "멈춘 게 아니라 오래 걸리는 것"을 보인다.
+  const [elapsed, setElapsed] = useState(0);
+  // startedAt은 ref로 — 자기 턴 종료 직후 setTurn(null)이 먼저 오고 serverBusy는 다음 폴까지 true라, 그 창에서 경과가
+  // 0:00으로 튀었다 사라진다(검수 LOW-1). 크루 화면 startRef와 같은 선례. live가 꺼질 때만 비운다.
+  const startedRef = useRef(0);
+  useEffect(() => {
+    const live = busy || serverBusy;
+    if (!live) { setElapsed(0); startedRef.current = 0; return; }
+    if (turn?.startedAt) startedRef.current = turn.startedAt;
+    if (!startedRef.current) startedRef.current = Date.now();
+    const tick = () => setElapsed(Math.max(0, Date.now() - startedRef.current));
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [busy, serverBusy, turn?.startedAt]);
+  const fmtElapsed = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
   const [error, setError] = useState('');
   // 회의 작업 폴더 — 크루 채팅과 같은 컴포넌트·계약(work-folder.jsx, 유건 지시 2026-09-02). 키 '@room'(서버
   // ROOM_FOLDER_SLUG — 크루 슬러그와 불충돌)로 고정하면 발언 크루 전원이 매 턴 "지금 일할 폴더"로 받는다
@@ -450,6 +466,21 @@ export default function Room({ params }) {
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
           <span className="microlabel" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('room.header')}</span>
           <span className="rule" style={{ flex: 1 }} />
+          {/* 진행 줄 — 회의가 도는 동안 절대 꺼지지 않는다. 근거는 회의 마커(turn.active)뿐이라 발언 크루의 상태 파일이
+              낡아도(2분 무갱신) 이 줄은 남는다(유건 제보 2026-09-06: 표시가 꺼져 회의가 누락된 것처럼 보임).
+              done = 인원 − 남은 큐 − 발언 중 1. 인원을 모르는 구형 마커거나 발언자가 한 명이면("0/1명"은 소음) 경과만. */}
+          {!viewing && (busy || serverBusy) && (
+            <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums', flex: '0 1 auto', minWidth: 0 }}>
+              {/* 협폭 가드 — 형제 microlabel과 같은 규칙. flex:none이면 배율 2의 1열 유효 폭(~178px)에서 "회의 진행 중 · 11/12명 발언 완료 · 12:34"(≈255px)가
+                  우측으로 넘친다(2차 검수 실측 — #340·#350·#357과 같은 자리). 스피너는 고정, 글은 줄임표. */}
+              <span style={{ flex: 'none', display: 'inline-flex' }}><ArgoSpinner size={11} /></span>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {turn?.total > 1
+                ? t('room.progress', { done: Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) })
+                : t('room.progressNoCount', { elapsed: fmtElapsed(elapsed) })}
+              </span>
+            </span>
+          )}
         </div>
 
         <div style={{ position: 'relative', minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)' }}>

@@ -241,7 +241,7 @@ test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전
   assert.equal((src.match(/(?<!function )runRoomTurnInner\(wsId, text, attachments/g) ?? []).length, 1, '래퍼 밖 직접 호출 금지(정의부 제외)');
   const i0 = src.indexOf('for (const [i, a] of speakers.entries())');
   const loop = src.slice(i0, src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
-  assert.match(src, /const markerFor = \(j\) => \(speakers\[j\] \? `\$\{speakers\[j\]\.slug\}\|\$\{speakers\.slice\(j \+ 1\)\.map\(\(s\) => s\.slug\)\.join\(','\)\}` : ''\);/,
+  assert.match(src, /const markerFor = \(j\) => \(speakers\[j\] \? `\$\{speakers\[j\]\.slug\}\|\$\{speakers\.slice\(j \+ 1\)\.map\(\(s\) => s\.slug\)\.join\(','\)\}\|\$\{speakers\.length\}` : `\|\|\$\{speakers\.length\}`\);/,
     "마커 인코딩 '발언자|다음1,다음2' — getRoomTurn의 해석과 짝");
   assert.match(loop, /await mark\(markerFor\(i\)\)/, '발언자|다음 순서 갱신이 chat() 앞에 있어야 발언자 표시·발언 큐의 앵커가 된다');
   assert.doesNotMatch(src.slice(src.indexOf('async function runRoomTurnInner(')), /setTurnStatus\(wsId, ROOM_TURN_SLUG/, '루프의 마커 직접 쓰기 금지 — 하트비트가 덮는다');
@@ -270,4 +270,30 @@ test('배선: 회의실 페이지가 turn.active를 serverBusy로 복원하고, 
   // 마치기 — 서버 턴 중 마치면 도는 발언이 방·개인 스레드 어디에도 안 남는다(검수 MEDIUM-2)
   assert.match(page, /async function endMeeting\(\) \{\s*\n\s*if \(busy \|\| serverBusy\) return;/, '마치기 가드에 serverBusy');
   assert.match(page, /disabled=\{busy \|\| serverBusy\} onClick=\{endMeeting\}/, '마치기 버튼 잠금에 serverBusy');
+});
+
+test('getRoomTurn: 마커 세 번째 구간 = 발언 인원(total) — 구형 두 구간 마커는 null(진행 줄이 인원 표시를 생략)', async () => {
+  const ws = 'rs-total'; await seed(ws);
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'mina|pepper,jun|12');
+  const t = await getRoomTurn(ws);
+  assert.equal(t?.slug, 'mina'); assert.deepEqual(t?.queue, ['pepper', 'jun']); assert.equal(t?.total, 12, '12명 회의에서 "3/12"를 계산할 근거');
+  await setTurnStatus(ws, ROOM_TURN_SLUG, 'room', 'mina|pepper');
+  assert.equal((await getRoomTurn(ws))?.total, null, '구형 마커 호환');
+  await clearTurnStatus(ws, ROOM_TURN_SLUG);
+});
+
+test('배선: 회의실 헤더 진행 줄은 회의 마커(active)만 보고 그려지며 인원·경과를 싣고, 1:1 화면은 회의실 출처 배지를 단다', async () => {
+  const page = await readFile(new URL('../app/c/[ws]/room/page.jsx', import.meta.url), 'utf8');
+  const hdr = page.slice(page.indexOf("t('room.header')"), page.indexOf("t('room.header')") + 1600);
+  assert.ok(/\{!viewing && \(busy \|\| serverBusy\) && \(/.test(hdr), '진행 줄 조건 = 회의 진행(마커) — 발언 크루 상태(turn.stage)가 아니다');
+  assert.ok(hdr.includes("t('room.progress', { done: Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) })"), 'done = 인원 − 남은 큐 − 발언 중 1');
+  assert.ok(hdr.includes("t('room.progressNoCount', { elapsed: fmtElapsed(elapsed) })"), '인원 미상(구형 마커)이면 경과만');
+  assert.ok(hdr.includes('{turn?.total > 1'), '발언자 한 명이면 "0/1명" 대신 경과만(격리 캡처에서 소음으로 확인)');
+  assert.ok(/flex: '0 1 auto', minWidth: 0 \}\}>[\s\S]{0,600}<span style=\{\{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' \}\}>/.test(hdr), '협폭 가드 — 진행 줄이 flex:none이면 배율 2 협폭에서 가로 넘침(2차 검수 실측 255px vs 178px)');
+  assert.ok(!/fontVariantNumeric: 'tabular-nums', flex: 'none' \}\}>/.test(hdr), 'flex:none 금지');
+  assert.ok(/if \(turn\?\.startedAt\) startedRef\.current = turn\.startedAt;/.test(page) && /setElapsed\(Math\.max\(0, Date\.now\(\) - startedRef\.current\)\)/.test(page), '경과는 서버 마커의 startedAt을 ref에 보관 — 자기 턴 종료 직후 0:00 스냅 방지(검수 LOW-1)');
+  const crew = await readFile(new URL('../app/c/[ws]/crew/[slug]/page.jsx', import.meta.url), 'utf8');
+  assert.ok(crew.includes("liveStage?.source === 'room' && (") && crew.includes("t('chat.inRoom')"), '1:1 진행 카드에 회의실 출처 배지');
+  const dict = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  for (const k of ['room.progress', 'room.progressNoCount', 'chat.inRoom']) assert.ok(dict.includes(`'${k}': [`), `i18n ${k}`);
 });

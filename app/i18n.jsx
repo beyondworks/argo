@@ -62,6 +62,9 @@ const DICT = {
   'room.allCrew': ['모든 크루 호출 — 전원이 순서대로 발언합니다', 'Call every crew — all speak in turn'],
   'room.empty': ['"@이름 안건"으로 크루를 불러 회의를 시작하세요. 여러 명을 부르면 순서대로 발언하고, 서로의 발언을 보고 보탭니다.', 'Start with "@name topic". Mention several crews and they speak in turn, building on each other.'],
   'room.meeting': ['회의 중 — 크루들이 차례로 발언합니다', 'In session — crews are speaking in turn'],
+  // 진행 표시줄 — 회의가 도는 동안 헤더에 고정. 상태 파일이 낡거나 발언자가 바뀌어도 이 줄은 마커(회의 자체)만 보고 유지된다.
+  'room.progress': ['회의 진행 중 · {done}/{total}명 발언 완료 · {elapsed}', 'Meeting in progress · {done}/{total} spoke · {elapsed}'],
+  'room.progressNoCount': ['회의 진행 중 · {elapsed}', 'Meeting in progress · {elapsed}'],
   'room.next': ['다음 발언: {names}', 'Up next: {names}'],
   'room.speaking': ['발언 중…', 'Speaking…'],
   'room.placeholder': ['@이름 을 붙여 안건을 던지세요 (여러 명 가능, 부른 크루 모두 발언) · / 명령·스킬', 'Mention @name(s) and drop a topic (everyone mentioned speaks) · / commands & skills'],
@@ -941,6 +944,7 @@ const DICT = {
   'chat.recordedInMemory': ['기억에 기록됨', 'Recorded in memory'],
   'chat.linkedMemories': ['· 관련 기억 {n}건과 연결', '· linked with {n} related memories'],
   'chat.stageEllipsis': ['{stage}…', '{stage}…'],
+  'chat.inRoom': ['회의실 발언', 'Room'], // 1:1 화면 진행 카드의 출처 배지 — 이 턴이 회의실 발언임을 알린다(source==='room')
   // 진행 단계 — 서버는 코드만 남기고 여기서 번역(stageLabel). detail(파일명·명령)은 코드 밖 값이라 그대로.
   'chat.stage.boot': ['시동 거는 중', 'Starting up'],
   'chat.stage.memory': ['기억을 살피는 중', 'Checking memory'],
