@@ -72,9 +72,9 @@ async function runBash(cwd, env, { command, timeout }, signal, onShellFallback) 
   const win = process.platform === 'win32';
   // 윈도우: 라우터(cmd 고유 문법·PowerShell은 원래 실행기) + 사다리(동봉 busybox → Git Bash → cmd.exe). 비윈도우는 /bin/sh(shell-backend.mjs 머리 주석).
   const route = win ? classifyCommand(command) : 'sh';
-  const sel = !win ? { kind: 'sh', file: '/bin/sh' } : route === 'sh' ? resolveShell({ env }) : { kind: route, file: route === 'cmd' ? 'cmd.exe' : 'powershell.exe' };
+  const sel = !win ? { kind: 'sh', file: '/bin/sh' } : { kind: 'cmd-legacy', file: 'cmd.exe' }; // RED 실증: 종전 경로 강제
   if (win && route === 'sh' && isShellFallback(sel, env)) onShellFallback?.(sel);
-  const { args, verbatim } = shellSpawn(sel.kind, command);
+  const { args, verbatim } = sel.kind === 'cmd-legacy' ? { args: ['/d', '/s', '/c', command], verbatim: false } : shellSpawn(sel.kind, command); // RED 실증: 종전 spawn 인자
   return await new Promise((res) => {
     const child = spawn(sel.file, args,
       { cwd, env, windowsHide: true, detached: !win, windowsVerbatimArguments: verbatim, stdio: ['ignore', 'pipe', 'pipe'] });
