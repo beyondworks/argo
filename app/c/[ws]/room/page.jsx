@@ -68,6 +68,10 @@ export default function Room({ params }) {
   }, [busy, serverBusy, turn?.startedAt]);
   const fmtElapsed = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
   const [error, setError] = useState('');
+  // 반응 라운드 토글 — 기본 켜짐(유건 결정). 마지막 선택은 이 브라우저에 기억(복원은 useEffect — SSR 하이드레이션 불일치 방지).
+  const [rounds, setRounds] = useState(2);
+  useEffect(() => { try { if (localStorage.getItem('argo-room-rounds') === '1') setRounds(1); } catch { /* 저장소 없음 */ } }, []);
+  const toggleRounds = () => setRounds((r) => { const n = r === 2 ? 1 : 2; try { localStorage.setItem('argo-room-rounds', String(n)); } catch { /* 무시 */ } return n; });
   // 회의 작업 폴더 — 크루 채팅과 같은 컴포넌트·계약(work-folder.jsx, 유건 지시 2026-09-02). 키 '@room'(서버
   // ROOM_FOLDER_SLUG — 크루 슬러그와 불충돌)로 고정하면 발언 크루 전원이 매 턴 "지금 일할 폴더"로 받는다
   // (src/room.mjs → chat workFolder). 기기 로컬(.workroots.json pins)이고 사장이 풀기 전까지 유지된다.
@@ -237,7 +241,7 @@ export default function Room({ params }) {
     setMessages((m) => [...(m ?? []), { who: 'user', text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) }]);
     setInput(''); setAtt([]);
     try {
-      const d = await api(`/api/companies/${ws}/room`, { message: text, attachments });
+      const d = await api(`/api/companies/${ws}/room`, { message: text, attachments, rounds });
       // 서버 스냅샷이 비어 있으면(동시 '회의 마치기'로 방이 리셋됐거나 응답 형태 이상) 화면을 지우지
       // 않는다 — 방금까지 보던 대화가 사라지는 것으로 보이던 경로. 답변만 이어 붙이고, 8초 폴이 정본으로 수렴시킨다.
       const snap = Array.isArray(d.room?.messages) ? d.room.messages : null;
@@ -475,8 +479,10 @@ export default function Room({ params }) {
                   우측으로 넘친다(2차 검수 실측 — #340·#350·#357과 같은 자리). 스피너는 고정, 글은 줄임표. */}
               <span style={{ flex: 'none', display: 'inline-flex' }}><ArgoSpinner size={11} /></span>
               <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {/* 라운드 표시 — 반응 라운드가 있는 회의는 "2라운드 · 1/4명"처럼 어느 라운드의 진행인지 함께(격리 캡처: 라운드 없이 1/4만 보이면 되감긴 듯 읽힌다) */}
+              {turn?.v === 2 && turn.rounds > 1 ? `${t('room.roundNow', { n: turn.round })} · ` : ''}
               {turn?.total > 1
-                ? t('room.progress', { done: Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) })
+                ? t('room.progress', { done: turn.v === 2 ? (turn.done ?? 0) : Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) }) /* v2는 마커의 done 그대로 — 옛 공식은 '발언 중 1명' 전제라 동시 발언에선 시작 즉시 3/4(검수 HIGH-1 실측) */
                 : t('room.progressNoCount', { elapsed: fmtElapsed(elapsed) })}
               </span>
             </span>
@@ -492,7 +498,12 @@ export default function Room({ params }) {
             <div className="empty" style={{ width: '100%', maxWidth: LANE, margin: '0 auto' }}>{t('room.empty')}</div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14, width: '100%', maxWidth: LANE, margin: '0 auto' }}> {/* 열 잠금 — 본문 열과 같은 이유(메시지 행 min-content 전파 차단). 레인 = 크루 스레드와 동일 */}
-              {shown.map((m, i) => m.who === 'user' ? (
+              {shown.map((m, i) => m.noAdd ? (
+                // 반응 라운드 "추가 의견 없음" — 말풍선 대신 접힌 한 줄(room.mjs noAdd). 12명이면 같은 말풍선 12개가 쌓이던 것.
+                <div key={i} style={{ justifySelf: 'start', fontSize: 11.5, color: 'var(--fg-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Avatar name={nameOf(m.who)} size={18} /> {nameOf(m.who)} · {t('room.noAdd')}
+                </div>
+              ) : m.who === 'user' ? (
                 <div key={i} style={{ justifySelf: 'end', maxWidth: '78%' }}>
                   <div className="bubble-user" style={{ background: 'var(--primary)', color: 'var(--primary-fg)', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
                     {m.attachments?.length > 0 && (
@@ -533,6 +544,10 @@ export default function Room({ params }) {
                       {canOpenSide(m.who) ? (
                         <button type="button" className="room-speaker name" onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })}>{nameOf(m.who)}</button>
                       ) : nameOf(m.who)}
+                      {/* 반응 라운드 발언 — 1라운드 답을 읽고 낸 반응임을 표시(room.mjs round:2) */}
+                      {m.round === 2 && (
+                        <span style={{ fontSize: 10, fontWeight: 650, color: 'var(--primary)', border: '1px solid var(--primary)', borderRadius: 999, padding: '0 6px' }}>{t('room.round2')}</span>
+                      )}
                       {/* 위임으로 들어온 발언 — 누가 무엇을 맡겨 나온 답인지 방 안에서 드러낸다(다른 창으로 새지 않는다) */}
                       {m.via && (
                         // 이름이 들어가는 라벨이라 .chip(uppercase)을 피한다 — 위 시스템 줄과 같은 이유
@@ -552,7 +567,55 @@ export default function Room({ params }) {
                   </div>
                 </div>
               ))}
-              {!viewing && (busy || serverBusy) && (
+              {!viewing && (busy || serverBusy) && turn?.v === 2 && (
+                // 동시 발언 — 발언자마다 카드. 발언 중: 단계·쓰는 중인 문장·접이식 생각. 대기: 상한(ROOM_CONCURRENCY)에 밀린 크루. 실패: 줄로도 남는다.
+                // 완료한 크루는 위 말풍선이 정본이라 카드를 두지 않는다(done은 헤더 진행 줄이 센다).
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10 }}>
+                  {turn.speakers.filter((sp) => sp.state === 'speaking').map((sp) => (
+                    <div key={sp.slug} style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
+                      <Avatar name={nameOf(sp.slug)} size={26} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 11.5, fontWeight: 650, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          {nameOf(sp.slug)}
+                          {turn.round === 2 && <span style={{ fontSize: 10, fontWeight: 650, color: 'var(--primary)', border: '1px solid var(--primary)', borderRadius: 999, padding: '0 6px' }}>{t('room.round2')}</span>}
+                          <span style={{ fontSize: 10.5, fontWeight: 500, color: 'var(--fg-3)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                            <ArgoSpinner size={11} />
+                            {sp.stage ? t('chat.stageEllipsis', { stage: stageLabel(t, sp.stage, sp.detail) }) : t('room.speaking')}
+                            {sp.stage !== 'runner' && sp.detail ? ` · ${String(sp.detail).slice(0, 60)}` : ''}
+                          </span>
+                        </div>
+                        {/* 생각 — 모델의 사고(thinking) 뒤 1500자. 접이식·기본 펼침: "무엇을 생각하며 이 답을 내는지"가 요청의 핵심(유건 2026-09-06). */}
+                        {/* 발언 중 카드가 2장 이하일 때만 펼침 — 8장 × 생각 1500자면 라이브 영역이 화면을 넘긴다(검수 LOW) */}
+                        {sp.thought && (
+                          <details open={turn.speakers.filter((x) => x.state === 'speaking').length <= 2} style={{ marginBottom: 6 }}>
+                            <summary style={{ fontSize: 11, color: 'var(--fg-3)', cursor: 'pointer' }}>{t('room.thought')}</summary>
+                            <div style={{ fontSize: 12, color: 'var(--fg-3)', whiteSpace: 'pre-wrap', borderLeft: '2px solid var(--border)', paddingLeft: 8, marginTop: 4 }}>{sp.thought}</div>
+                          </details>
+                        )}
+                        {sp.partial && (
+                          <div style={{ fontSize: 13.5, color: 'var(--fg-2)' }}><Markdown text={sp.partial} wsId={ws} /></div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {turn.speakers.some((sp) => sp.state !== 'speaking') && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 11, color: 'var(--fg-3)' }}>
+                      {turn.speakers.filter((sp) => sp.state === 'queued').map((sp) => (
+                        <span key={sp.slug} style={{ border: '1px solid var(--border)', borderRadius: 999, padding: '1px 8px' }}>{nameOf(sp.slug)} · {t('room.queued')}</span>
+                      ))}
+                      {turn.speakers.filter((sp) => sp.state === 'failed').map((sp) => (
+                        <span key={sp.slug} style={{ border: '1px solid var(--danger, #c0392b)', color: 'var(--danger, #c0392b)', borderRadius: 999, padding: '1px 8px' }}>{nameOf(sp.slug)} · {t('room.failedChip')}</span>
+                      ))}
+                    </div>
+                  )}
+                  {turn.speakers.every((sp) => sp.state !== 'speaking') && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: 'var(--fg-2)', fontSize: 12.5 }}>
+                      <ArgoSpinner size={16} /> {t('room.meeting')}
+                    </div>
+                  )}
+                </div>
+              )}
+              {!viewing && (busy || serverBusy) && turn?.v !== 2 && (
                 turn?.slug ? (
                   // 발언 중인 크루 — 아바타·이름·단계(도구·파일)·쓰는 중인 문장·다음 발언 순서. 크루 말풍선과 같은 골격.
                   <div style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
@@ -730,6 +793,9 @@ export default function Room({ params }) {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
                   <button type="button" className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={newMeeting}>{t('room.new')}</button>
                   <button type="button" className="btn sm" style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px' }} disabled={busy || serverBusy} onClick={endMeeting}>{t('room.end')}</button>
+                  <button type="button" className="btn sm" title={t('room.roundsHint')} aria-pressed={rounds === 2}
+                    style={{ whiteSpace: 'normal', height: 'auto', minHeight: 28, padding: '4px 12px', ...(rounds === 2 ? { borderColor: 'var(--primary)', color: 'var(--primary)' } : {}) }}
+                    disabled={busy || serverBusy} onClick={toggleRounds}>{rounds === 2 ? t('room.roundsOn') : t('room.roundsOff')}</button>
                 </div>
               )}
             </div>

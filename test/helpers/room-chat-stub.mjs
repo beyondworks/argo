@@ -12,8 +12,13 @@ export async function resolve(specifier, context, nextResolve) {
   return nextResolve(specifier, context);
 }
 
-export const state = { calls: [], reply: (slug) => `${slug} 답변` };
+// delayMs — 발언마다 기다리는 시간(동시 발언·상한 검증용). inflight/maxInflight — 동시에 도는 chat() 수와 그 최댓값.
+export const state = { calls: [], reply: (slug) => `${slug} 답변`, delayMs: 0, inflight: 0, maxInflight: 0 };
 export async function chat(wsId, slug, prompt, sessionId, opts = {}) {
-  state.calls.push({ wsId, slug, prompt, opts });
-  return { reply: state.reply(slug), handover: null, artifacts: [] };
+  state.calls.push({ wsId, slug, prompt, opts, at: Date.now() });
+  state.inflight += 1; state.maxInflight = Math.max(state.maxInflight, state.inflight);
+  try {
+    if (state.delayMs) await new Promise((r) => setTimeout(r, state.delayMs));
+    return { reply: await state.reply(slug), handover: null, artifacts: [] };
+  } finally { state.inflight -= 1; }
 }

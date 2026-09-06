@@ -43,6 +43,10 @@ curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/in
 같은 404는 OpenRouter 계정의 데이터 정책이 모든 제공사를 제외했을 때도 난다
 (<https://openrouter.ai/settings/privacy>). 서버의 아웃바운드 프록시가 대신 응답하는 경우도 같은 증상이다.
 
+## 회의실 동시 발언 상한
+
+회의실에서 여러 크루를 부르면 동시에 발언한다(릴레이 `@A > @B` 제외). 동시 실행 상한은 `ARGO_ROOM_CONCURRENCY`(기본 8, 1~16으로 클램프). Claude 러너는 크루마다 CLI 프로세스를 띄우므로 메모리가 작은 서버는 3~4를 권한다.
+
 ## 24/7 활용
 
 루틴·텔레그램/슬랙 게이트웨이가 노트북 수면과 무관하게 상시 동작 — VPS가 리더 기기가 된다.
