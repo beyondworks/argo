@@ -19,7 +19,7 @@ import { createRequire } from 'node:module';
 import { RUNNER_AUTH, loadRunnerCred, verifyRunnerCred, runnerCredEnv, isCliTurn } from './runners.mjs';
 import { GEMINI_DEFAULT_MODEL, CODEX_DEFAULT_MODEL, GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, GROK_DEFAULT_MODEL } from './runners/catalog.mjs';
 import { grokExpired } from './runners/grok.mjs';
-import { credHash, HEALTH_FILE_NAME } from './runners/shared.mjs';
+import { credHash, HEALTH_FILE_NAME, maskKeyLike } from './runners/shared.mjs';
 import { nativeRunnerEnabled } from './engine/native-flags.mjs';
 import { authFromEnv, callMessages } from './engine/messages-http.mjs';
 import { ensureRequired } from './engine/native-query.mjs';
@@ -42,6 +42,11 @@ export const HEALTH_BILLED_RUNNERS = new Set(['grok']);
 // 목록을 실은 1턴(max_tokens 8)을 보내 카드가 먼저 말하게 한다. 비용 통제: 도구 목록·앱 버전의 지문이 바뀌었을 때(=업데이트 직후) 또는
 // 하루 1회만. 판정 불가(네트워크·5xx)는 무해 스킵(제약 ②), 자격은 지우지 않는다(제약 ③).
 export const HEALTH_PROBE_INTERVAL_MS = 24 * 60 * 60_000;
+export const HEALTH_PROBE_RETRY_MS = 60 * 60_000; // 프로브가 실패한 러너는 1시간마다 다시(거짓 경보·벤더 일시 거절이 하루 종일 굳지 않게, 회복도 1시간 안에)
+/** 검진 1회당 프로브 상한 — 회사 × 러너가 앱 업데이트 직후 한꺼번에 터지지 않게(1R MEDIUM-4). 나머지 러너는 다음 검진(30분)에. */
+export const HEALTH_PROBE_PER_RUN = 1;
+/** gemini 프로브의 출력 상한(사고 토큰 포함) — 엔진 기본 하한 16384 대신(1R MEDIUM-1). 사고가 이걸 넘기면 합성 오류 → 판정 불가(거짓 경보 없음). */
+export const PROBE_MIN_OUTPUT_TOKENS = 1024;
 const PROBE_MODEL = { openrouter: OPENROUTER_DEFAULT_MODEL, glm: GLM_DEFAULT_MODEL, kimi: KIMI_DEFAULT_MODEL, grok: GROK_DEFAULT_MODEL, gemini: GEMINI_DEFAULT_MODEL, codex: CODEX_DEFAULT_MODEL };
 const APP_VERSION = (() => { try { return createRequire(import.meta.url)('../package.json').version; } catch { return '0.0.0'; } })();
 let probeSpecsCache = null;
@@ -55,30 +60,39 @@ export function turnProbeHash(specs = probeToolSpecs(), version = APP_VERSION) {
   return createHash('sha256').update(`${version}\n${JSON.stringify(specs)}`).digest('hex').slice(0, 16);
 }
 /** 프로브 차례인가(순수) — 지문이 다르거나 마지막 프로브가 intervalMs 이전. */
-export function turnProbeDue(entry, hash, now, intervalMs = HEALTH_PROBE_INTERVAL_MS) {
-  return entry?.probeHash !== hash || !Number.isFinite(entry?.probeAt) || now - entry.probeAt >= intervalMs;
+export function turnProbeDue(entry, hash, now, intervalMs = HEALTH_PROBE_INTERVAL_MS, retryMs = HEALTH_PROBE_RETRY_MS) {
+  const gap = entry?.probeOk === false ? Math.min(retryMs, intervalMs) : intervalMs;
+  return entry?.probeHash !== hash || !Number.isFinite(entry?.probeAt) || now - entry.probeAt >= gap;
 }
 /** 이 자격의 턴이 네이티브(Argo 엔진 직행)인가 — 프로브 대상. CLI·SDK 턴의 요청 형태는 그 실행기가 만든다. */
 export const turnProbeApplies = (runner, credType) => Boolean(PROBE_MODEL[runner]) && nativeRunnerEnabled(runner) && !isCliTurn(runner, credType);
 /** 프로브 오류 → 검진 계급(순수). 401/403 인증, 402/429 크레딧·한도, 그 밖의 4xx는 "요청 형태 거절"(schema), 5xx·네트워크는 판정 불가(null). */
+/** 프로브 오류 → 판정(순수). 벤더의 4xx = 요청 거절(reason 'probe' — 인증·모델·형식 어느 쪽이든 원문을 그대로 보인다; 턴 전 게이트를 켜는 'auth' 계급으로
+    각인하지 않는다 — verify가 방금 자격 유효라 판정했고 프로브 요청은 실제 턴의 상위집합이라 확정이 아니다, 1R HIGH-2). 402=크레딧, 429·5xx·네트워크·
+    **와이어가 스스로 합성한 오류(synthetic — gemini MAX_TOKENS·SAFETY 등)**는 판정 불가(1R HIGH-3: 거짓 경보 1회면 카드는 다음부터 무시된다).
+    detail은 maskKeyLike를 지난다 — 이벤트 로그는 동기화된다(1R MEDIUM-2). */
 export function classifyProbeError(e) {
-  const status = Number(e?.status) || 0; const msg = String(e?.message || e || '').slice(0, 300);
-  if (e?.authExpired || status === 401 || status === 403) return { ok: false, reason: 'auth', detail: msg };
-  if (status === 402 || status === 429 || e?.quota) return { ok: false, reason: 'credit', detail: msg };
-  if (status >= 400 && status < 500) return { ok: false, reason: 'schema', detail: msg };
+  const status = Number(e?.status) || 0; const msg = maskKeyLike(String(e?.message || e || '')).slice(0, 300);
+  if (e?.synthetic || e?.aborted) return { ok: null, detail: msg };
+  if (status === 402) return { ok: false, reason: 'credit', detail: msg };
+  if (status === 429 || e?.quota) return { ok: null, detail: msg };
+  if (status >= 400 && status < 500) return { ok: false, reason: 'probe', detail: msg };
   return { ok: null, detail: msg };
 }
 /** 실제 프로브 — 자격 env → 와이어 판정 → 도구 전량 광고 1턴. 결과는 {ok, reason?, detail?}. (테스트는 probeFn 주입) */
 export async function runTurnProbe(wsId, runner, { fetchImpl = globalThis.fetch, timeoutMs = 30_000 } = {}) {
+  // runnerCredEnv는 실제 턴과 같은 자격 준비를 한다(grok·codex는 만료 임박 토큰 갱신 포함 — 표시만 바꾼다는 검진 제약의 예외이지만 턴이 어차피 하는 회전이고 자격을 지우진 않는다, 1R LOW-2)
   const ce = await runnerCredEnv(wsId, runner);
   if (!ce?.env) return { ok: null, detail: 'no env' };
   const { wire, base, headers } = authFromEnv(ce.env);
   try {
     await callMessages({ wire, base, headers, fetchImpl, timeoutMs, retry: 0,
-      body: { model: PROBE_MODEL[runner], max_tokens: 8, system: 'Health probe. Reply with "ok" only. Do not call tools.', messages: [{ role: 'user', content: 'ok' }], tools: probeToolSpecs() } });
+      body: { model: PROBE_MODEL[runner], max_tokens: 8, min_output_tokens: PROBE_MIN_OUTPUT_TOKENS, system: 'Health probe. Reply with "ok" only. Do not call tools.', messages: [{ role: 'user', content: 'ok' }], tools: probeToolSpecs() } });
     return { ok: true };
   } catch (e) { return classifyProbeError(e); }
 }
+/** 프로브 선택(순수) — verify를 주입한 호출(테스트)은 프로브도 주입해야 한다. 기본 프로브는 실벤더 HTTP라 가짜 verify 옆에서 실호출이 새어 나간다(도입 시 실측). */
+export const resolveProbe = (probeFn, verifyFn) => probeFn ?? (verifyFn === verifyRunnerCred ? runTurnProbe : null);
 
 const healthFile = (wsId) => join(paths(wsId).root, HEALTH_FILE_NAME);
 /** 상태 저장 실패 시의 프로세스 내 폴백(검수 MEDIUM-2) — 디스크가 정본, 이건 폭주 방지용 백스톱뿐. */
@@ -111,7 +125,8 @@ export function healthDue(entry, runner, now, { intervalMs, billedIntervalMs, ji
 /** 검진 결과를 상태에 반영(순수) — ok:null은 시각만 갱신하고 연속 실패는 건드리지 않는다(제약 ②). */
 export function applyHealthResult(entry, result, now, hash = null) {
   const prev = Number(entry?.fails) || 0;
-  const probe = entry?.probeAt ? { probeAt: entry.probeAt, probeHash: entry.probeHash } : {}; // 프로브 기록은 verify 판정과 독립(하루 1회 통제 유지)
+  // 프로브 판정은 verify 판정과 **독립 저장**(probeOk/probeReason/probeDetail/probeAt/probeHash) — verify 성공이 프로브 실패를 덮지 않고(1R HIGH-1), 프로브 실패가 ok:false·credHash(턴 전 게이트)를 건드리지 않는다(1R HIGH-2)
+  const probe = Object.fromEntries(['probeOk', 'probeReason', 'probeDetail', 'probeAt', 'probeHash'].filter((k) => entry?.[k] !== undefined).map((k) => [k, entry[k]]));
   // credHash = 실패가 **어느 자격**에 대한 것인지(턴 전 게이트가 대조). 자격이 바뀌면 지문이 달라 게이트가 안 탄다.
   if (result?.ok === false) return { ...probe, at: now, ok: false, fails: prev + 1, ...(result.reason ? { reason: result.reason } : {}), ...(result.detail ? { detail: String(result.detail).slice(0, 300) } : {}), ...(hash ? { credHash: hash } : {}) };
   if (result?.ok === true) return { ...probe, at: now, ok: true, fails: 0 };
@@ -140,7 +155,8 @@ export async function runHealthChecks(wsId, {
   probeFn, probeIntervalMs = HEALTH_PROBE_INTERVAL_MS, probeHash = turnProbeHash(), // 턴 모양 프로브(주입은 테스트 전용)
 } = {}) {
   // verify를 주입한 호출(테스트)은 프로브도 주입해야 한다 — 기본 프로브는 실벤더 HTTP라 가짜 verify 옆에서 실호출이 새어 나간다(도입 시 실측: 기존 테스트가 xAI를 때렸다)
-  const probe = probeFn ?? (verifyFn === verifyRunnerCred ? runTurnProbe : async () => ({ ok: null }));
+  const probe = resolveProbe(probeFn, verifyFn);
+  let probesThisRun = 0;
   const file = healthFile(wsId);
   const disk = await readJson(file, {});
   // 디스크 쓰기가 실패한 적이 있으면 그때의 상태를 얹는다 — 쓰기 불가 환경에서도 스로틀 유지.
@@ -166,26 +182,30 @@ export async function runHealthChecks(wsId, {
     if (runner === 'grok' && cred.type === 'oauth' && grokExpired(cred.value, nowMs)) {
       state[runner] = { ...(entry ?? {}), at: nowMs }; changed = true; continue;
     }
-    let r = await verifyFn(runner, cred.type, cred.value).catch(() => ({ ok: null }));
-    let probed = null;
-    // 자격이 유효해도 벤더가 요청 형태를 거절할 수 있다 — 네이티브 러너는 지문 변경·하루 1회 실제 턴 모양으로 확인(위 주석). 판정 불가는 기록 안 함(다음 검진에 재시도).
-    if (r?.ok === true && turnProbeApplies(runner, cred.type) && turnProbeDue(entry, probeHash, nowMs, probeIntervalMs)) {
-      probed = await probe(wsId, runner, cred).catch(() => ({ ok: null }));
-      if (probed?.ok === false) r = { ok: false, reason: probed.reason, detail: probed.detail };
-    }
+    const r = await verifyFn(runner, cred.type, cred.value).catch(() => ({ ok: null }));
     const next = applyHealthResult(entry, r, nowMs, credHash(cred.value));
-    if (probed && probed.ok !== null) { next.probeAt = nowMs; next.probeHash = probeHash; }
-    const wasFail = entry?.ok === false;
+    // 자격이 유효해도 벤더가 요청 형태를 거절할 수 있다 — 네이티브 러너는 지문 변경·하루 1회(실패 뒤엔 1시간) 실제 턴 모양으로 확인(위 주석). 판정 불가는 기록 안 함(다음 검진에 재시도).
+    if (probe && r?.ok === true &&  probesThisRun < HEALTH_PROBE_PER_RUN && turnProbeApplies(runner, cred.type) && turnProbeDue(entry, probeHash, nowMs, probeIntervalMs)) {
+      probesThisRun += 1;
+      const probed = await probe(wsId, runner).catch(() => ({ ok: null }));
+      if (probed?.ok === true) { next.probeOk = true; delete next.probeReason; delete next.probeDetail; next.probeAt = nowMs; next.probeHash = probeHash; }
+      else if (probed?.ok === false) { next.probeOk = false; next.probeReason = probed.reason; next.probeDetail = String(probed.detail ?? '').slice(0, 300); next.probeAt = nowMs; next.probeHash = probeHash; }
+    }
+    // 실패 = verify 실패 **또는** 프로브 실패(독립 저장). 회복 = 둘 다 아님.
+    const failNow = next.ok === false || next.probeOk === false;
+    const wasFail = entry?.ok === false || entry?.probeOk === false;
+    const failReason = next.ok === false ? (next.reason ?? null) : next.probeOk === false ? next.probeReason : null;
+    const failDetail = next.ok === false ? null : next.probeDetail ?? null;
     state[runner] = next; changed = true;
-    checked.push({ runner, ok: r?.ok ?? null, reason: r?.reason ?? null });
+    checked.push({ runner, ok: failNow ? false : (r?.ok ?? null), reason: failNow ? failReason : null });
     // 이벤트는 **상태 전이에서만**(검수 HIGH-1·2): 실패 진입 1회 + 회복(false→true) 1회.
     //  · 지속 실패를 매 검진 적재하면 유휴 회사 타임라인이 검진 행으로 덮인다(러너 수만큼 곱).
     //  · 회복 이벤트가 없으면 재연결 뒤에도 카드가 옛 실패를 계속 읽어 "다시 연결" 경고가 굳는다
     //    (검수 재현: 성공 검진 2회 후에도 ok:false — 사용자는 재연결이 실패했다고 읽는다).
     // 판정 불가(ok:null)는 어느 쪽도 아니다 — 활동 화면을 채우지 않는다. 자격은 그대로(제약 ③).
-    if (r?.ok === false && !wasFail) {
-      await appendEvent(wsId, { type: 'runner-health', runner, ok: false, ...(r.reason ? { reason: r.reason } : {}), ...(r.detail ? { detail: String(r.detail).slice(0, 300) } : {}) }).catch(() => {});
-    } else if (r?.ok === true && wasFail) {
+    if (failNow && !wasFail) {
+      await appendEvent(wsId, { type: 'runner-health', runner, ok: false, ...(failReason ? { reason: failReason } : {}), ...(failDetail ? { detail: failDetail } : {}) }).catch(() => {});
+    } else if (!failNow && r?.ok === true && wasFail) {
       await appendEvent(wsId, { type: 'runner-health', runner, ok: true }).catch(() => {});
     }
   }

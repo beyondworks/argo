@@ -74,6 +74,6 @@ export function lastHealthFailByRunner(events) {
 export function healthFailMessageKey(reason) {
   if (reason === 'gemini-license') return 'settings.runners.geminiLicenseBlocked';
   if (reason === 'credit' || reason === 'tier') return 'settings.runners.checkCreditTier';
-  if (reason === 'schema') return 'settings.runners.schemaRejected'; // 턴 모양 프로브: 자격은 유효한데 벤더가 Argo의 요청 형태를 거절
+  if (reason === 'probe') return 'settings.runners.probeRejected'; // 턴 모양 프로브: 자격은 유효한데 실제 턴 모양의 요청이 거절됨(인증·모델·형식 어느 쪽이든 원문 동봉)
   return 'settings.runners.healthFailed';
 }

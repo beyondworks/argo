@@ -15,10 +15,10 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-hc-'));
 const {
   healthDue, applyHealthResult, runHealthChecks,
   HEALTH_INTERVAL_MS, HEALTH_INTERVAL_BILLED_MS, HEALTH_BACKOFF_CAP_MS, HEALTH_BILLED_RUNNERS,
-  HEALTH_PROBE_INTERVAL_MS, turnProbeHash, turnProbeDue, turnProbeApplies, classifyProbeError, runTurnProbe, probeToolSpecs,
+  HEALTH_PROBE_INTERVAL_MS, HEALTH_PROBE_RETRY_MS, HEALTH_PROBE_PER_RUN, PROBE_MIN_OUTPUT_TOKENS, turnProbeHash, turnProbeDue, turnProbeApplies, classifyProbeError, runTurnProbe, probeToolSpecs, resolveProbe,
 } = await import('../src/runner-health.mjs');
 const { startStrictVendor } = await import('./helpers/strict-vendor.mjs');
-const { saveRunnerCred, loadRunnerCred } = await import('../src/runners.mjs');
+const { saveRunnerCred, loadRunnerCred, verifyRunnerCred } = await import('../src/runners.mjs');
 const { credHash } = await import('../src/runners/shared.mjs'); // 실패 엔트리의 자격 지문(턴 전 게이트 열쇠 — 불변식 A)
 const { readEvents } = await import('../src/events.mjs');
 
@@ -234,51 +234,77 @@ test('배선: 카드가 검진 실패를 턴 실패와 별개 소스로 읽고 �
 
 
 // ── ④ 턴 모양 프로브(2026-09-06 Grok 400 제보 뒤) ─────────────────────────────────────────────────────
-test('프로브 순수 함수 — 지문은 버전·도구 정의로 결정, 차례 판정(지문 변경·24h), 대상은 네이티브 자격만, 오류 계급 매핑', () => {
+test('프로브 순수 함수 — 지문(버전·도구 정의), 차례(지문 변경·24h·실패 뒤 1h), 대상(네이티브 자격만), 오류 계급(4xx=probe·402=credit·429/5xx/네트워크/합성=판정 불가·키 마스킹), 프로브 선택', () => {
   const h1 = turnProbeHash(probeToolSpecs(), '0.1.63'); const h2 = turnProbeHash(probeToolSpecs(), '0.1.64'); const h3 = turnProbeHash([{ name: 'x', input_schema: { type: 'object', required: [] } }], '0.1.63');
   assert.ok(h1 !== h2 && h1 !== h3 && /^[0-9a-f]{16}$/.test(h1), '버전·도구 정의가 바뀌면 지문이 바뀐다(업데이트 직후 즉시 재프로브)');
-  assert.equal(turnProbeDue(undefined, h1, T0), true); assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1 }, h1, T0 + HEALTH_PROBE_INTERVAL_MS - 1), false); assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1 }, h1, T0 + HEALTH_PROBE_INTERVAL_MS), true);
-  assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1 }, h2, T0 + 1), true, '지문이 다르면 즉시');
+  assert.equal(turnProbeDue(undefined, h1, T0), true); assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: true }, h1, T0 + HEALTH_PROBE_INTERVAL_MS - 1), false); assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: true }, h1, T0 + HEALTH_PROBE_INTERVAL_MS), true);
+  assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: true }, h2, T0 + 1), true, '지문이 다르면 즉시');
+  assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: false }, h1, T0 + HEALTH_PROBE_RETRY_MS - 1), false); assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: false }, h1, T0 + HEALTH_PROBE_RETRY_MS), true, '실패한 프로브는 1시간 뒤 재시도(거짓 경보·일시 거절이 하루 종일 굳지 않게)');
   assert.equal(turnProbeApplies('grok', 'apikey'), true); assert.equal(turnProbeApplies('openrouter', 'apikey'), true); assert.equal(turnProbeApplies('gemini', 'apikey'), true);
   assert.equal(turnProbeApplies('gemini', 'oauth'), false, 'CLI 턴은 대상 아님'); assert.equal(turnProbeApplies('claude', 'apikey'), false, 'SDK 경로는 대상 아님'); assert.equal(turnProbeApplies('codex', 'apikey'), false, '옵트인 전엔 CLI');
-  assert.deepEqual(classifyProbeError(Object.assign(new Error('API Error: 400 Invalid request content: Schema validation failed'), { status: 400 })).reason, 'schema');
-  assert.deepEqual(classifyProbeError(Object.assign(new Error('x'), { status: 401 })).reason, 'auth'); assert.deepEqual(classifyProbeError(Object.assign(new Error('x'), { status: 429 })).reason, 'credit');
-  assert.equal(classifyProbeError(Object.assign(new Error('x'), { status: 503 })).ok, null, '5xx는 판정 불가'); assert.equal(classifyProbeError(new Error('fetch failed')).ok, null, '네트워크는 판정 불가');
+  const err = (status, msg = 'x', extra = {}) => Object.assign(new Error(msg), { status, ...extra });
+  assert.deepEqual(classifyProbeError(err(400, 'API Error: 400 Invalid request content: Schema validation failed')).reason, 'probe');
+  assert.deepEqual(classifyProbeError(err(401)).reason, 'probe', "401도 'auth'로 각인하지 않는다 — 턴 전 게이트를 켜지 않게(HIGH-2)"); assert.deepEqual(classifyProbeError(err(403)).reason, 'probe'); assert.deepEqual(classifyProbeError(err(404, 'model not found')).reason, 'probe');
+  assert.deepEqual(classifyProbeError(err(402)).reason, 'credit'); assert.equal(classifyProbeError(err(429)).ok, null, '429는 일시 — 판정 불가');
+  assert.equal(classifyProbeError(err(503)).ok, null, '5xx는 판정 불가'); assert.equal(classifyProbeError(new Error('fetch failed')).ok, null, '네트워크는 판정 불가');
+  assert.equal(classifyProbeError(err(400, 'API Error: 400 Gemini returned no usable content (finishReason=MAX_TOKENS)', { synthetic: true })).ok, null, '와이어가 합성한 400은 벤더 거절이 아니다(HIGH-3)');
+  assert.equal(classifyProbeError(err(400, 'Incorrect API key provided: sk-or-v1-abcdefghijklmnopqrstuvwxyz012345 — check')).detail.includes('abcdefghijklmnop'), false, '원문의 키 조각은 마스킹(MEDIUM-2)');
   assert.deepEqual(probeToolSpecs().filter((t) => t.input_schema?.type === 'object' && !Array.isArray(t.input_schema.required)), [], '프로브 스펙도 같은 정규화 관문을 지난다');
+  const fake = async () => ({ ok: true });
+  assert.equal(resolveProbe(fake, async () => ({ ok: true })), fake); assert.equal(resolveProbe(undefined, async () => ({ ok: true })), null, 'verify 주입 + 프로브 미주입 = 프로브 없음(실벤더 실호출 방지)'); assert.equal(resolveProbe(undefined, verifyRunnerCred), runTurnProbe, '실행 경로(기본 verify)는 실제 프로브');
 });
 
-test('runHealthChecks: 네이티브 러너는 verify 성공 뒤 턴 모양 프로브 — 벤더가 요청 형태를 거절하면 reason schema + 원문(detail)이 상태·이벤트로, CLI 자격·지문 동일·24h 안에는 프로브 없음', async () => {
+test('runHealthChecks: 프로브 판정은 verify와 독립 — 실패는 probeOk로 남고(ok·credHash 불변 → 턴 전 게이트 미발동), verify만 도는 다음 검진이 덮지 않으며 거짓 회복 없음, 1h 뒤 재프로브, 통과해야 회복, CLI 자격 제외, 검진 1회당 1개', async () => {
   const ws = 'hc-probe';
   await seed(ws, { openrouter: ['apikey', 'or-key-1'], gemini: ['oauth', JSON.stringify({ access_token: 'x' })] });
   const verifyFn = async () => ({ ok: true });
   const probes = [];
-  const probeFn = async (_ws, runner) => { probes.push(runner); return { ok: false, reason: 'schema', detail: 'Schema validation failed: /required: null is not of type "array"' }; };
+  const failProbe = async (_ws, runner) => { probes.push(runner); return { ok: false, reason: 'probe', detail: 'API Error: 400 Schema validation failed: /required: null is not of type "array"' }; };
   const hash = 'h-aaaa';
-  let checked = await runHealthChecks(ws, { verifyFn, probeFn, probeHash: hash, nowMs: T0, jitterMs: 0 });
-  assert.deepEqual(probes, ['openrouter'], 'gemini oauth(CLI 턴)는 프로브 대상이 아니다');
-  assert.deepEqual(checked.find((c) => c.runner === 'openrouter'), { runner: 'openrouter', ok: false, reason: 'schema' });
-  const st = JSON.parse(await readFile(join(process.env.ARGO_ROOT, ws, '.runner-health.json'), 'utf8'));
-  assert.equal(st.openrouter.ok, false); assert.equal(st.openrouter.reason, 'schema'); assert.match(st.openrouter.detail, /required: null/); assert.equal(st.openrouter.probeHash, hash); assert.equal(st.openrouter.probeAt, T0);
-  const ev = (await readEvents(ws)).find((e) => e.type === 'runner-health' && e.runner === 'openrouter');
-  assert.equal(ev.ok, false); assert.equal(ev.reason, 'schema'); assert.match(ev.detail, /required: null/, '카드가 보일 벤더 원문');
-  // 같은 지문·24h 안: verify는 백오프 뒤 다시 돌아도 프로브는 안 쏜다(비용 통제)
+  let checked = await runHealthChecks(ws, { verifyFn, probeFn: failProbe, probeHash: hash, nowMs: T0, jitterMs: 0 });
+  assert.deepEqual(probes, ['openrouter'], 'gemini oauth(CLI 턴)는 대상 아님');
+  assert.deepEqual(checked.find((c) => c.runner === 'openrouter'), { runner: 'openrouter', ok: false, reason: 'probe' });
+  const file = join(process.env.ARGO_ROOT, ws, '.runner-health.json');
+  let st = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(st.openrouter.ok, true, 'verify 판정은 그대로(자격 유효)'); assert.equal(st.openrouter.probeOk, false); assert.equal(st.openrouter.probeReason, 'probe'); assert.match(st.openrouter.probeDetail, /required: null/); assert.equal(st.openrouter.probeHash, hash);
+  assert.equal(st.openrouter.credHash, undefined, '프로브 실패는 자격 지문을 각인하지 않는다');
+  const { runnerCredEnv } = await import('../src/runners.mjs');
+  assert.ok((await runnerCredEnv(ws, 'openrouter'))?.env, '턴 전 게이트가 프로브 실패로 켜지지 않는다(HIGH-2)');
+  let ev = await readEvents(ws); let hev = ev.filter((e) => e.type === 'runner-health' && e.runner === 'openrouter');
+  assert.equal(hev.length, 1); assert.equal(hev[0].ok, false); assert.equal(hev[0].reason, 'probe'); assert.match(hev[0].detail, /required: null/);
+  // 다음 검진(verify만, 프로브 차례 아님): 실패 상태 유지·거짓 회복 이벤트 없음(HIGH-1)
   probes.length = 0;
-  await runHealthChecks(ws, { verifyFn, probeFn, probeHash: hash, nowMs: T0 + 2 * HEALTH_INTERVAL_MS, jitterMs: 0 });
-  assert.deepEqual(probes, [], '지문 동일·24h 안 = 프로브 없음');
-  // 지문이 바뀌면(앱 업데이트) 즉시 다시 — 이번엔 통과 → 회복 이벤트
+  checked = await runHealthChecks(ws, { verifyFn, probeFn: failProbe, probeHash: hash, nowMs: T0 + HEALTH_INTERVAL_MS, jitterMs: 0 });
+  assert.deepEqual(probes, [], 'openrouter는 1h 재시도 전이라 안 돈다');
+  st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.probeOk, false, 'verify 성공이 프로브 실패를 덮지 않는다');
+  ev = await readEvents(ws); hev = ev.filter((e) => e.type === 'runner-health' && e.runner === 'openrouter'); assert.equal(hev.length, 1, '거짓 회복 이벤트 없음');
+  assert.deepEqual(checked.find((c) => c.runner === 'openrouter'), { runner: 'openrouter', ok: false, reason: 'probe' }, '카드 원천은 여전히 실패');
+  // 1h 뒤 재프로브(같은 지문) — 실패 유지면 이벤트 추가 없음
+  probes.length = 0;
+  await runHealthChecks(ws, { verifyFn, probeFn: failProbe, probeHash: hash, nowMs: T0 + 2 * HEALTH_INTERVAL_MS, jitterMs: 0 });
+  assert.ok(probes.includes('openrouter'), '실패 프로브는 1h 뒤 재시도'); assert.equal((await readEvents(ws)).filter((e) => e.type === 'runner-health' && e.runner === 'openrouter').length, 1);
+  // 통과하는 프로브 → 회복 이벤트 + probeOk true
   const okProbe = async (_ws, runner) => { probes.push(runner); return { ok: true }; };
+  probes.length = 0;
   await runHealthChecks(ws, { verifyFn, probeFn: okProbe, probeHash: 'h-bbbb', nowMs: T0 + 3 * HEALTH_INTERVAL_MS, jitterMs: 0 });
-  assert.deepEqual(probes, ['openrouter']);
-  const st2 = JSON.parse(await readFile(join(process.env.ARGO_ROOT, ws, '.runner-health.json'), 'utf8'));
-  assert.equal(st2.openrouter.ok, true); assert.equal(st2.openrouter.probeHash, 'h-bbbb');
-  assert.ok((await readEvents(ws)).some((e) => e.type === 'runner-health' && e.runner === 'openrouter' && e.ok === true), '회복 이벤트');
-  // 판정 불가(ok:null) 프로브는 기록하지 않아 다음 검진에 다시 시도한다
-  await runHealthChecks(ws, { verifyFn, probeFn: async () => ({ ok: null }), probeHash: 'h-cccc', nowMs: T0 + 4 * HEALTH_INTERVAL_MS, jitterMs: 0 });
-  const st3 = JSON.parse(await readFile(join(process.env.ARGO_ROOT, ws, '.runner-health.json'), 'utf8'));
-  assert.equal(st3.openrouter.probeHash, 'h-bbbb', '판정 불가는 지문을 갱신하지 않는다'); assert.equal(st3.openrouter.ok, true);
+  st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.probeOk, true); assert.equal(st.openrouter.probeReason, undefined); assert.equal(st.openrouter.probeHash, 'h-bbbb');
+  hev = (await readEvents(ws)).filter((e) => e.type === 'runner-health' && e.runner === 'openrouter'); assert.equal(hev.length, 2); assert.equal(hev[0].ok, true, '회복 이벤트(최신)');
+  // 판정 불가 프로브는 기록하지 않는다
+  await runHealthChecks(ws, { verifyFn, probeFn: async () => ({ ok: null }), probeHash: 'h-cccc', nowMs: T0 + 5 * HEALTH_INTERVAL_MS, jitterMs: 0 });
+  st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.probeHash, 'h-bbbb', '판정 불가는 지문을 갱신하지 않는다'); assert.equal(st.openrouter.probeOk, true);
+  // 검진 1회당 프로브 상한(MEDIUM-4): glm·openrouter 둘 다 네이티브면 첫 검진엔 하나만, 나머지는 다음 검진에
+  const ws2 = 'hc-probe-cap'; await seed(ws2, { glm: ['apikey', 'glm-key-1'], openrouter: ['apikey', 'or-key-2'] });
+  probes.length = 0;
+  await runHealthChecks(ws2, { verifyFn, probeFn: okProbe, probeHash: 'h-cap', nowMs: T0, jitterMs: 0 });
+  assert.equal(probes.length, HEALTH_PROBE_PER_RUN, `검진 1회당 ${HEALTH_PROBE_PER_RUN}개`);
+  await runHealthChecks(ws2, { verifyFn, probeFn: okProbe, probeHash: 'h-cap', nowMs: T0 + HEALTH_INTERVAL_MS, jitterMs: 0 });
+  assert.deepEqual(probes.sort(), ['glm', 'openrouter'], '두 번째 검진에서 나머지');
+  // verify 실패는 종전대로 ok:false + credHash(턴 전 게이트) — 프로브와 무관
+  await runHealthChecks(ws, { verifyFn: async () => ({ ok: false, reason: 'auth' }), probeFn: okProbe, probeHash: 'h-bbbb', nowMs: T0 + 30 * HEALTH_INTERVAL_MS, jitterMs: 0 });
+  st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.ok, false); assert.ok(st.openrouter.credHash); assert.equal(st.openrouter.probeOk, true, '프로브 기록은 verify 실패에도 보존');
 });
 
-test('runTurnProbe(실제 프로브) — 엄격 xAI 가짜 벤더는 정규화된 도구 전량을 받아 200(제보 규칙 통과), 항상 거절하는 벤더는 schema, 닫힌 포트는 판정 불가; verify 주입 테스트는 기본 프로브를 안 탄다', async () => {
+test('runTurnProbe(실제 프로브) — 엄격 xAI 가짜 벤더는 정규화된 도구 전량을 받아 200, 거절 벤더는 probe+원문, 닫힌 포트는 판정 불가; gemini 프로브는 출력 하한을 낮춘다; verify 주입 시 기본 프로브 실호출 0(스파이 서버로 결정적)', async () => {
   const ws = 'hc-probe-real';
   const strict = await startStrictVendor({ vendor: 'xai' });
   try {
@@ -288,15 +314,22 @@ test('runTurnProbe(실제 프로브) — 엄격 xAI 가짜 벤더는 정규화�
     assert.deepEqual(r, { ok: true }); assert.equal(strict.calls.length, 1); assert.equal(strict.calls[0].url, '/v1/messages');
     assert.ok(strict.calls[0].body.tools.length >= 24 && strict.calls[0].body.max_tokens === 8, '실제 대화와 같은 도구 목록·1턴');
   } finally { await strict.close(); delete process.env.GROK_BASE_URL; }
-  const reject = await startStrictVendor({ vendor: 'xai', reply: null });
+  const deny = await new Promise((resolve) => { const s = createServer((q, res) => { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Invalid request content: Schema validation failed: [standard_violation] /required: null is not of type "array"' } })); }); s.listen(0, '127.0.0.1', () => resolve({ base: `http://127.0.0.1:${s.address().port}`, close: () => new Promise((r) => s.close(r)) })); });
+  try { process.env.GROK_BASE_URL = deny.base; const r2 = await runTurnProbe(ws, 'grok'); assert.equal(r2.ok, false); assert.equal(r2.reason, 'probe'); assert.match(r2.detail, /required: null/); } finally { await deny.close(); }
+  process.env.GROK_BASE_URL = 'http://127.0.0.1:1'; const r3 = await runTurnProbe(ws, 'grok'); assert.equal(r3.ok, null, '네트워크 불통은 판정 불가'); delete process.env.GROK_BASE_URL;
+  // gemini: 프로브 출력 하한(MEDIUM-1) — 가짜 Gemini 서버가 받은 generationConfig
+  const gem = await new Promise((resolve) => { const bodies = []; const s = createServer((q, res) => { let d = ''; q.on('data', (c) => { d += c; }); q.on('end', () => { bodies.push(JSON.parse(d)); res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'ok' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } })); }); }); s.listen(0, '127.0.0.1', () => resolve({ base: `http://127.0.0.1:${s.address().port}`, bodies, close: () => new Promise((r) => s.close(r)) })); });
   try {
-    // 규칙에 걸리는 모양을 강제로 — 프로브 스펙은 정규화돼 통과하므로, 서버 쪽에서 모든 요청을 거절하는 규칙을 흉내(400 원문)
-    const deny = await new Promise((resolve) => { const s = createServer((q, res) => { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Invalid request content: Schema validation failed: [standard_violation] /required: null is not of type "array"' } })); }); s.listen(0, '127.0.0.1', () => resolve({ base: `http://127.0.0.1:${s.address().port}`, close: () => new Promise((r) => s.close(r)) })); });
-    try { process.env.GROK_BASE_URL = deny.base; const r2 = await runTurnProbe(ws, 'grok'); assert.equal(r2.ok, false); assert.equal(r2.reason, 'schema'); assert.match(r2.detail, /required: null/); } finally { await deny.close(); }
-    process.env.GROK_BASE_URL = 'http://127.0.0.1:1'; const r3 = await runTurnProbe(ws, 'grok'); assert.equal(r3.ok, null, '네트워크 불통은 판정 불가');
-  } finally { await reject.close(); delete process.env.GROK_BASE_URL; }
-  // verify를 주입한 호출은 기본 프로브(실벤더 HTTP)를 타지 않는다 — 가짜 verify 옆에서 실호출이 새는 사고 방지
-  process.env.GROK_BASE_URL = 'http://127.0.0.1:1';
-  try { const checked = await runHealthChecks('hc-probe-real', { verifyFn: async () => ({ ok: true }), nowMs: T0 + 10 * HEALTH_INTERVAL_BILLED_MS, jitterMs: 0 }); assert.deepEqual(checked.find((c) => c.runner === 'grok'), { runner: 'grok', ok: true, reason: null }, '프로브 미주입 = 판정 불가로 무해'); }
-  finally { delete process.env.GROK_BASE_URL; }
+    await seed(ws, { gemini: ['apikey', 'fake-gemini-key-probe'] }); process.env.GEMINI_BASE_URL = gem.base;
+    assert.deepEqual(await runTurnProbe(ws, 'gemini'), { ok: true }); assert.equal(gem.bodies[0].generationConfig.maxOutputTokens, PROBE_MIN_OUTPUT_TOKENS, '엔진 기본 하한 16384 대신 프로브 하한');
+  } finally { await gem.close(); delete process.env.GEMINI_BASE_URL; }
+  // MEDIUM-3: 기본 프로브 안전장치 — 스파이 서버로 결정적 단언(가드 제거 변이 red)
+  const spy = await startStrictVendor({ vendor: 'xai' });
+  try {
+    await seed('hc-probe-spy', { grok: ['apikey', 'xai-key-spy'] }); process.env.GROK_BASE_URL = spy.base;
+    await runHealthChecks('hc-probe-spy', { verifyFn: async () => ({ ok: true }), nowMs: T0, jitterMs: 0 });
+    assert.equal(spy.calls.length, 0, 'verify 주입 + 프로브 미주입 = 실벤더 호출 0');
+    await runHealthChecks('hc-probe-spy', { verifyFn: async () => ({ ok: true }), probeFn: runTurnProbe, nowMs: T0 + HEALTH_INTERVAL_BILLED_MS, jitterMs: 0 });
+    assert.equal(spy.calls.length, 1, '프로브를 명시 주입하면 1회');
+  } finally { await spy.close(); delete process.env.GROK_BASE_URL; }
 });

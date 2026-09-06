@@ -946,7 +946,7 @@ const DICT = {
   'chat.fail.aborted': ['중단됐습니다.', 'Stopped.'],
   'chat.fail.unknown': ['턴 실패: {msg} — 입력을 복원했습니다. 다시 보내보세요.', 'Turn failed: {msg} — your input was restored. Try sending again.'],
   'settings.runners.lastTurnFailed': ['마지막 사용 시 오류가 났습니다 — 연결을 확인해 주세요.', 'The last turn with this runner failed — please check the connection.'],
-  'settings.runners.schemaRejected': ['자격은 유효하지만 이 벤더가 Argo의 요청 형식(도구 정의)을 거절했습니다 — 앱을 업데이트해도 계속되면 아래 원문과 함께 제보해 주세요.', 'The credential works, but this vendor rejected Argo’s request format (tool definitions) — if it persists after updating, please report it with the message below.'],
+  'settings.runners.probeRejected': ['자격 확인은 통과했지만 실제 턴 모양의 요청을 벤더가 거절했습니다 — 앱을 업데이트해도 계속되면 아래 원문과 함께 제보해 주세요.', 'The credential check passed, but the vendor rejected a real-turn-shaped request — if it persists after updating, please report it with the message below.'],
   'settings.runners.healthFailed': ['자격 확인에 실패했습니다 — 만료·철회됐을 수 있습니다. 다시 연결해 주세요.', 'A credential check failed — it may be expired or revoked. Please reconnect.'],
   'activity.runnerHealth': ['자격 확인', 'Credential check'],
   'activity.runnerHealthOk': ['{runner} 자격이 다시 정상입니다', '{runner} credential is healthy again'],
