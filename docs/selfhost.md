@@ -27,6 +27,22 @@ curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/in
 - **Codex/Gemini OAuth**: "로그인 페이지 열기" → 노트북 브라우저에서 승인 → 리다이렉트된 주소를 복사해 붙여넣기(콜백은 서버에 못 오므로 붙여넣기 폴백이 정식 경로).
 - **Claude**: 노트북 터미널에서 `claude setup-token` → 출력 토큰 붙여넣기(줄바꿈 섞여도 자기치유).
 
+### base URL을 손대지 말 것 (2026-09-05 실사용 장애)
+
+러너 base URL은 Argo가 러너마다 정한다. env로 덮을 수 있지만 **끝에 `/v1`을 붙이면 안 된다** — Argo가
+`/v1/messages`를 덧붙이므로 경로가 겹쳐 전 모델이 404가 되고, 화면에는 "선택한 모델에 문제가 있습니다"로
+보인다(모델을 바꿔도 같다). 정본 값:
+
+| env | 정본 값 |
+|---|---|
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api` |
+| `GLM_BASE_URL` | `https://api.z.ai/api/anthropic` |
+| `KIMI_BASE_URL` | `https://api.moonshot.ai/anthropic` |
+| `GROK_BASE_URL` | `https://api.x.ai` |
+
+같은 404는 OpenRouter 계정의 데이터 정책이 모든 제공사를 제외했을 때도 난다
+(<https://openrouter.ai/settings/privacy>). 서버의 아웃바운드 프록시가 대신 응답하는 경우도 같은 증상이다.
+
 ## 24/7 활용
 
 루틴·텔레그램/슬랙 게이트웨이가 노트북 수면과 무관하게 상시 동작 — VPS가 리더 기기가 된다.

@@ -97,7 +97,8 @@ test('③ chat: CLI·SDK **두 갈래 모두** 크래시를 잡고, 각자 인�
   const crashes = [...src.matchAll(/isProcessCrash\(e\?\.message \|\| e\)\) \{/g)].map((m) => m.index);
   // 조건은 골격이 바뀔 수 있다(2026-08-25 도구 잠김 OR 합류 — 승인된 확장은 runner-neutrality의
   // 발동 조건 목록이 잠근다). 여기서는 위치·개수만 본다: if 줄에 AUTH_ERR_RE가 있는 자가치유 갈래 2곳.
-  const auths = [...src.matchAll(/if \([^\n]*AUTH_ERR_RE\.test/g)].map((m) => m.index);
+  // 2026-09-05 #432 HIGH-1: 발동 조건이 shouldSelfHeal(필드 우선) 한 곳으로 모였다 — if 줄의 호출부가 갈래 앵커
+  const auths = [...src.matchAll(/if \([^\n]*shouldSelfHeal\(e, \{/g)].map((m) => m.index);
   assert.equal(auths.length, 2, '전제: 자가치유 갈래는 CLI·SDK 둘이다');
   assert.equal(crashes.length, 2, '크래시 재시도도 두 갈래 모두에 있어야 한다 — 한쪽만 고치면 신고된 경로가 그대로 남는다');
   for (const [i, a] of auths.entries()) {

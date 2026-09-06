@@ -7,10 +7,22 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from '../jsonstore.mjs';
 import { WS_ROOT, paths } from '../workspace.mjs';
-import { exists, homeEnv, scrubServerSecrets, seedAuthFile } from './shared.mjs';
+import { withDirLock } from '../mutex.mjs';
+import { exists, homeEnv, scrubServerSecrets, seedAuthFile, credHash, HEALTH_FILE_NAME } from './shared.mjs';
 import { RUNNER_AUTH, GROK_DEFAULT_MODEL } from './catalog.mjs';
 import { provisionCodexCli } from './codex.mjs';
 import { provisionGeminiCli, geminiTurnHome, probeGeminiSubscription } from './gemini.mjs';
+import { nativeRunnerEnabled } from '../engine/native-flags.mjs';
+import { GEMINI_DEFAULT_BASE } from '../engine/gemini-wire.mjs';
+import { CODEX_BACKEND_BASE, OPENAI_API_BASE } from '../engine/responses-wire.mjs';
+import { parseCodexAuth, accessExpiring, refreshCodexTokens, readCliCodexAuth, cliAuthCandidates, mergeCodexAuth, codexHeaders, REFRESH_TIMEOUT_MS } from './codex-oauth.mjs';
+
+/** codex 토큰 회전 락 — 최대 보유 = 리프레시 (1 + CLI 반입 후보 수)회 × REFRESH_TIMEOUT_MS(=24초). 불변식 셋(C13): stale > 최대 보유(2R N1: 아니면 대기자가
+    잔재로 오판해 락을 탈취 → 같은 refresh 토큰 2회 교환 = 'Already Used' 재현), timeout > 최대 보유(1R MEDIUM-2: 옆 턴 503), timeout ≥ stale(3R NEW-2: 크래시 잔재는
+    대기자가 포기하기 전에 회수돼 턴이 진행). stale은 mutex 기본값과 같은 30초 — 잔재 회수 지연을 늘리지 않는다. */
+export const CODEX_LOCK_TIMEOUT_MS = 50_000;
+export const CODEX_LOCK_STALE_MS = 30_000;
+export const codexLockMaxHoldMs = () => (1 + cliAuthCandidates('x').length) * REFRESH_TIMEOUT_MS;
 import { grokAccessToken, grokExpired, grokNeedsRefresh, refreshGrokTokens } from './grok.mjs';
 
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
@@ -21,16 +33,29 @@ import { grokAccessToken, grokExpired, grokNeedsRefresh, refreshGrokTokens } fro
        CLAUDE_CONFIG_DIR을 회사별 격리 폴더로 주면 1.6초에 통과(HOME은 그대로 — host 옵트인 러너는 건드리지 않는다).
     ② CLI 2.1.x가 기본으로 켜는 도구 검색(deferred tools)은 "Anthropic-compatible provider endpoints that implement
        deferral"에서만 받는다 — OpenRouter/minimax는 400. ENABLE_TOOL_SEARCH=false로 끈다(Anthropic 본가 claude 러너는 그대로).
+    ⚠ 실측 축은 **OpenRouter/minimax 하나뿐**이다 — glm·kimi·grok은 같은 SDK 배관이라 같은 처방을 걸었을 뿐
+      실엔드포인트 확인은 미검증이다(검수 LOW-4, "확인 못 한 축은 완료 보고에 넣지 않는다").
     codex-home-<ws>·gemini-home-<ws>와 같은 자리(~/.argo/)에 둔다. */
+let __compatMkdirWarned = false;
 export function compatSdkEnv(scope = 'host') {
+  // 접두로 네임스페이스를 가른다 — wsId와 호스트 폴백 이름이 한 공간에 섞이면 슬러그가 'host-glm'인
+  // 회사가 호스트 폴백 버킷과 같은 폴더(세션·대화 전사본이 쌓이는 곳)를 쓴다. WS_ID_RE가 그 이름을
+  // 허용하므로 실제로 가능하다(검수 LOW-2, room-* 예약어 선례와 같은 계열).
+  // 호스트 폴백(glmEnv·kimiEnv)은 **배포 전역 스코프**다 — 이 함수가 동기라 wsId를 못 받는다.
+  // main(전원이 ~/.claude 공유)보다는 좁지만 회사별은 아니다(검수 LOW-3).
   const dir = join(homedir(), '.argo', `claude-config-${scope}`);
-  try { mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch { /* 읽기 전용 FS 등 — 없으면 CLI가 만든다 */ }
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  } catch (e) {
+    // 읽기 전용 FS 등 — 없으면 CLI가 만든다. 완전 침묵이면 못 만드는 홈에서 단서가 0이라 1회만 남긴다.
+    if (!__compatMkdirWarned) { __compatMkdirWarned = true; console.warn(`[argo] 호환 러너 격리 폴더 생성 실패(계속 진행): ${e?.code ?? e?.message ?? e}`); }
+  }
   return { ENABLE_TOOL_SEARCH: 'false', CLAUDE_CONFIG_DIR: dir };
 }
 
 export const kimiEnv = () => ({
   ...scrubServerSecrets(process.env, 'kimi'),
-  ...compatSdkEnv('host-kimi'),
+  ...compatSdkEnv('hostfb-kimi'),
   ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic',
   ANTHROPIC_AUTH_TOKEN: process.env.KIMI_API_KEY ?? '',
   ANTHROPIC_API_KEY: '',
@@ -38,7 +63,7 @@ export const kimiEnv = () => ({
 });
 export const glmEnv = () => ({
   ...scrubServerSecrets(process.env, 'glm'),
-  ...compatSdkEnv('host-glm'), // scrub 뒤에 — 호스트 env의 CLAUDE_CONFIG_DIR(예: Claude Code 안에서 실행)이 격리를 덮지 않게
+  ...compatSdkEnv('hostfb-glm'), // scrub 뒤에 — 호스트 env의 CLAUDE_CONFIG_DIR(예: Claude Code 안에서 실행)이 격리를 덮지 않게
   ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic',
   ANTHROPIC_AUTH_TOKEN: process.env.GLM_API_KEY ?? '',
   ANTHROPIC_API_KEY: '',
@@ -108,10 +133,15 @@ export async function loadRunnerCred(wsId, runner) {
 /** 러너 자격 저장 — 원자적. 다른 러너·필드는 보존. 레거시 claude 필드는 정리. */
 export async function saveRunnerCred(wsId, runner, type, value) {
   if (!RUNNER_AUTH[runner]) throw new Error('알 수 없는 러너');
-  const s = await loadSecrets(wsId);
-  const { claude, ...rest } = s; // 레거시 평문 필드 제거
-  rest.runners = { ...rest.runners, [runner]: { type: credType(type), value: String(value).trim() } };
-  await writeJsonAtomic(secretsFile(wsId), rest);
+  // 크로스 프로세스 잠금(불변식 B, 2026-09-05) — 상주·앱 사이드카·grok 갱신·동기화가 같은 .secrets.json을
+  // read-modify-write 한다. 인프로세스 withLock만으론 다른 프로세스의 lost-update를 못 막는다(기기 세션
+  // 사망 #429·codex refresh-token 재사용 충돌과 같은 클래스). Hermes _auth_store_lock(flock)과 같은 자리.
+  await withDirLock(`${secretsFile(wsId)}.lockd`, async () => {
+    const s = await loadSecrets(wsId); // 락 안에서 최신을 읽는다
+    const { claude, ...rest } = s; // 레거시 평문 필드 제거
+    rest.runners = { ...rest.runners, [runner]: { type: credType(type), value: String(value).trim() } };
+    await writeJsonAtomic(secretsFile(wsId), rest);
+  });
   // 격리 홈 리셋 — 재연결 시 이전 토큰 파일이 새 자격을 가리지 않게(runnerCredEnv가 재생성).
   // 계정 스코프엔 실행 홈이 없다(온보딩 저장용 — 실행은 회사 wsId로) — 스킵.
   if (!isAccountScope(wsId)) {
@@ -122,7 +152,7 @@ export async function saveRunnerCred(wsId, runner, type, value) {
   }
   // 연결 즉시 실행기 워밍업 — 첫 턴이 다운로드를 기다리지 않게(백그라운드, 실패는 턴 시점 조달이 재시도).
   // 모든 연결 경로(회사 키·계정 키·웹 브리지)가 이 함수를 지나므로 여기가 단일 관문이다.
-  if (runner === 'gemini') provisionGeminiCli().catch(() => {});
+  if (runner === 'gemini' && credType(type) !== 'apikey') provisionGeminiCli().catch(() => {}); // API 키 자격은 네이티브 — CLI를 안 띄우므로 조달 불필요(검수 L4)
   if (runner === 'codex') provisionCodexCli().catch(() => {}); // ~100MB — 연결 시점에 미리 받아 첫 턴 대기 제거
 }
 
@@ -130,10 +160,13 @@ export async function saveRunnerCred(wsId, runner, type, value) {
     키가 0600으로 남아 있었다(검수 — env 주입 시절엔 apikey가 디스크에 자격 파일을 안 만들었으니
     auth.json 전환이 새로 연 표면). saveRunnerCred의 리셋과 대칭. */
 export async function clearRunnerCred(wsId, runner) {
-  const s = await loadSecrets(wsId);
-  const { claude, ...rest } = s;
-  if (rest.runners) delete rest.runners[runner];
-  await writeJsonAtomic(secretsFile(wsId), rest);
+  // save와 같은 락(분리 검수 MEDIUM-4): 한쪽만 잠그면 save↔clear 경합의 lost-update가 그대로 남는다(불변식 B 반쪽).
+  await withDirLock(`${secretsFile(wsId)}.lockd`, async () => {
+    const s = await loadSecrets(wsId);
+    const { claude, ...rest } = s;
+    if (rest.runners) delete rest.runners[runner];
+    await writeJsonAtomic(secretsFile(wsId), rest);
+  });
   if (!isAccountScope(wsId)) {
     if (runner === 'codex') await rm(join(homedir(), '.argo', `codex-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
     if (runner === 'gemini') await rm(join(homedir(), '.argo', `gemini-home-${wsId}`), { recursive: true, force: true }).catch(() => {});
@@ -171,13 +204,80 @@ export const normalizePastedCred = (value) => {
 /** 러너 실행에 주입할 env(부분) — 회사 자격이 있으면 러너 종류에 맞는 변수로. 없으면 null(호스트 자격 폴백=회귀 0).
     반환: { env, home } — env=주입 변수 dict, home=회사 자격 격리 홈 경로(codex는 apikey·oauth 모두
     auth.json 경유 — env 키 주입('clean')은 CLI가 안 읽어 폐기 2026-07-26). */
+/** Codex 구독 액세스 토큰 확보 — 만료 임박(120초 스큐)이면 락 안에서 최신 자격을 다시 읽고(다른 프로세스가 먼저 갱신했을 수 있다) 리프레시 뒤 저장.
+    리프레시가 재로그인 계급이면 CLI 파일(~/.codex/auth.json)의 더 새로운 refresh 토큰을 1회 반입해 재시도(Hermes _recover_codex_tokens_from_cli). */
+export async function ensureCodexAccess(wsId, cred, { fetchImpl = globalThis.fetch } = {}) {
+  let t = parseCodexAuth(cred.value);
+  if (!t) throw Object.assign(new Error('codex oauth credential is not an auth.json payload'), { authExpired: 'codex' });
+  if (!accessExpiring(t.access_token)) return t;
+  // 락 대기·stale 상한은 최대 보유(리프레시 (1+후보 수)회 × 상한)보다 길게 — 짧으면 옆 턴이 ELOCKTIMEOUT 원문으로 죽거나(1R MEDIUM-2) 잔재로 오판해 탈취한다(2R N1)
+  return withDirLock(`${secretsFile(wsId)}.lockd`, async () => {
+    const latest = parseCodexAuth((await loadSecrets(wsId)).runners?.codex?.value ?? '') ?? t;
+    if (!accessExpiring(latest.access_token)) return latest; // 다른 프로세스가 방금 갱신
+    const persist = async (raw, next) => {
+      const json = mergeCodexAuth(raw, next); const s = await loadSecrets(wsId);
+      // 회전된 새 refresh 토큰을 못 남기면 옛 토큰은 이미 소비돼 이후 갱신이 영구 실패한다 — 조용한 no-op 금지(검수 LOW-6)
+      if (!s.runners?.codex) throw Object.assign(new Error('codex credential was removed during token refresh — reconnect'), { authExpired: 'codex' });
+      s.runners.codex = { ...s.runners.codex, value: json }; await writeJsonAtomic(secretsFile(wsId), s); return parseCodexAuth(json);
+    };
+    // 토큰 확보(리프레시 → 실패 시 CLI 파일 반입)와 저장(persist)을 분리한다 — 저장 실패(자격 삭제)를 리프레시 실패로 오인해 CLI 반입까지 타지 않게.
+    // 일시 장애(네트워크·타임아웃·5xx — 인증도 한도도 아님)는 grok 선례와 같이: 액세스 토큰이 **실제로** 아직 살아 있으면(스큐 없이 exp > now) 쓰던 토큰으로 진행하고
+    // 진짜 만료면 503 계급으로 던진다(2R N2: 생 'fetch failed'는 자가치유·재연결 안내 어디에도 안 걸려 사용자가 원문을 봤다). null next = 저장 없이 그대로.
+    const transient = (err) => err?.transient === true || Number(err?.status) >= 500; // 명시 화이트리스트 — 영구 4xx(invalid_client 등)·형식 오류는 일시 장애가 아니다(3R NEW-3)
+    const keepOrThrow = (err) => {
+      if (!accessExpiring(latest.access_token, 0)) { console.warn(`[argo] codex 토큰 리프레시 일시 실패 — 아직 만료 전이라 쓰던 토큰으로 진행: ${String(err?.message || err).slice(0, 100)}`); return { raw: latest.raw, next: null }; }
+      throw Object.assign(new Error(`API Error: 503 codex token refresh failed and the access token has expired — retry shortly (${String(err?.message || err).slice(0, 100)})`), { status: 503, cause: err });
+    };
+    const got = await (async () => {
+      try { return { raw: latest.raw, next: await refreshCodexTokens(latest.refresh_token, { fetchImpl }) }; }
+      catch (e) {
+        if (e?.quota) throw e; // 한도(429)는 그대로(재로그인 안내 금지)
+        if (transient(e)) return keepOrThrow(e);
+        if (!e?.authExpired) throw e; // 영구 4xx·형식 오류 — CLI 반입으로 풀리지 않으니 원문 계급 그대로
+        // CLI 파일이 더 새 토큰을 쥐고 있다 — 격리 홈(Argo의 codex CLI 턴이 회전시킨 곳) → 호스트 ~/.codex 순으로 1회씩 반입(쓰기 금지, MEDIUM-3).
+        // 호스트 개인 로그인을 가져오면 그쪽 CLI 세션이 회전으로 깨질 수 있다 — 경고 로그로 남긴다.
+        for (const file of cliAuthCandidates(wsId)) {
+          const cli = await readCliCodexAuth(file);
+          if (!cli || cli.refresh_token === latest.refresh_token) continue;
+          console.warn(`[argo] codex 토큰 리프레시 실패 — CLI 파일에서 1회 반입(${file.includes('.argo') ? '격리 홈' : '호스트 ~/.codex — 그쪽 로그인이 회전될 수 있음'})`);
+          try { return { raw: cli.raw, next: await refreshCodexTokens(cli.refresh_token, { fetchImpl }) }; }
+          catch (e2) { if (e2?.quota) throw e2; if (transient(e2)) return keepOrThrow(e2); if (!e2?.authExpired) throw e2; }
+        }
+        throw Object.assign(new Error('codex subscription login expired — reconnect'), { authExpired: 'codex', cause: e });
+      }
+    })();
+    return got.next ? await persist(got.raw, got.next) : latest;
+  }, { timeoutMs: CODEX_LOCK_TIMEOUT_MS, staleMs: CODEX_LOCK_STALE_MS }).catch((e) => { if (e?.code !== 'ELOCKTIMEOUT') throw e; throw Object.assign(new Error('API Error: 503 codex credential lock held too long (another turn may be refreshing, or a stale lock is being reclaimed) — retry shortly'), { status: 503, cause: e }); });
+}
+
+/** 저장된 자격의 종류만(apikey·oauth·host·null) — 턴 분기(isCliTurn)가 러너 종류 옆에 자격 축을 본다. */
+export async function runnerCredType(wsId, runner) { return (await loadRunnerCred(wsId, runner))?.type ?? null; }
+
 export async function runnerCredEnv(wsId, runner) {
   const cred = await loadRunnerCred(wsId, runner);
   if (!cred) return null;
+  // 턴 전 자격 판정 — 전 러너(불변식 A, 2026-09-05). 검진(30분) 또는 직전 턴(markRunnerAuthFail)이 "이 자격은
+  // 인증 실패"로 확정했고 그 뒤 자격이 안 바뀌었으면(지문 일치) **실행하지 않는다**. OpenClaw cli-backend.ts의
+  // "An expired token here … must fail loudly. OpenClaw did not start the run"과 같은 불변식. 종전엔 만료
+  // 토큰으로 일단 쏘고 벤더 400/401을 정규식으로 사후 매칭했고, 그것이 상주 실패 1위(OAuth 만료 9건)였다.
+  //  · host 마커는 원격 판정 대상이 아니다(검진과 같은 계약) · 재연결(saveRunnerCred)은 엔트리를 지워 새 자격은
+  //    게이트를 안 탄다 · 파일 없음·손상·지문 불일치는 통과 — 게이트가 멀쩡한 자격을 막는 것이 최악의 실패다.
+  //  · 표면은 chat.mjs의 authExpired 갈래가 이미 그린다(runnerAuthNotice) — grok 게이트(#372)와 같은 신호.
+  if (cred.type !== 'host') {
+    const entry = await readJson(join(paths(wsId).root, HEALTH_FILE_NAME), {}).then((s) => s?.[runner] ?? null).catch(() => null);
+    if (entry?.ok === false && entry.reason === 'auth' && entry.credHash && entry.credHash === credHash(cred.value)) {
+      throw Object.assign(new Error(`${runner} credential known-invalid since ${new Date(Number(entry.at) || 0).toISOString()} — not started`), { authExpired: runner, knownInvalid: true });
+    }
+  }
   // gemini는 host 옵트인도 격리 HOME으로 실행한다(아래 geminiTurnHome) — codex(CODEX_HOME)·SDK(settingSources:[])와
   // 달리 gemini는 HOME 전역 config(GEMINI.md·save_memory·전 도구)를 상속해 테넌트 격리가 없었다. host는 로그인만 빌리고
   // 나머지는 격리한다. 그래서 아래 일반 host→null 분기보다 먼저 처리한다.
   if (runner === 'gemini') {
+    // API 키 자격은 Argo 엔진(네이티브) — Google AI Studio generateContent 와이어(ARGO_WIRE=gemini, engine/gemini-wire.mjs). CLI를 띄우지 않으므로 격리 HOME도 불필요.
+    // ARGO_NATIVE_RUNNERS=none이면 종전대로 CLI에 GEMINI_API_KEY로 넘긴다(폴백 보존).
+    if (cred.type === 'apikey' && nativeRunnerEnabled('gemini')) {
+      return { env: { ARGO_WIRE: 'gemini', GEMINI_API_KEY: cred.value, GEMINI_BASE_URL: process.env.GEMINI_BASE_URL || GEMINI_DEFAULT_BASE }, authType: 'apikey' };
+    }
     const g = await geminiTurnHome(wsId, cred);
     if (!g) return null; // host인데 호스트 로그인이 없음 — 폴백 없음(명시 연결 원칙)
     return { env: { ...homeEnv(g.home), ...g.env }, home: g.home, authType: g.authType };
@@ -198,10 +298,10 @@ export async function runnerCredEnv(wsId, runner) {
   if (runner === 'glm') {
     // CLAUDE_CODE_OAUTH_TOKEN 명시 소거 — claude 분기와 대칭. Anthropic 구독 토큰이 제3자(z.ai) 향
     // 턴 env에 남으면 자식 프로세스에서 열람 가능(감사 2026-07-20 — scrub 러너 인자와 벨트앤서스펜더).
-    return { env: { ...compatSdkEnv(wsId), ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+    return { env: { ...compatSdkEnv(`ws-${wsId}`), ANTHROPIC_BASE_URL: process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'kimi') {
-    return { env: { ...compatSdkEnv(wsId), ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+    return { env: { ...compatSdkEnv(`ws-${wsId}`), ANTHROPIC_BASE_URL: process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
   if (runner === 'openrouter') {
     // GLM·Kimi와 동일한 Anthropic 호환 패턴 — BYOK 계열 일반화(설계 2026-07-27).
@@ -211,7 +311,7 @@ export async function runnerCredEnv(wsId, runner) {
     // 선검사(실측 402)하지만, 저잔액은 402 안내문(chat.mjs·oneshot)이 원인·충전처를 알려준다.
     // 운영자가 원하면 env로만 상한 선언(OPENROUTER_MAX_OUTPUT_TOKENS).
     return { env: {
-      ...compatSdkEnv(wsId),
+      ...compatSdkEnv(`ws-${wsId}`),
       ANTHROPIC_BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api',
       ANTHROPIC_AUTH_TOKEN: v, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '',
       ...(process.env.OPENROUTER_MAX_OUTPUT_TOKENS ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.OPENROUTER_MAX_OUTPUT_TOKENS } : {}),
@@ -246,7 +346,16 @@ export async function runnerCredEnv(wsId, runner) {
       }
       tok = grokAccessToken(cur);
     }
-    return { env: { ...compatSdkEnv(wsId), ANTHROPIC_BASE_URL: process.env.GROK_BASE_URL || 'https://api.x.ai', ANTHROPIC_AUTH_TOKEN: tok, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+    return { env: { ...compatSdkEnv(`ws-${wsId}`), ANTHROPIC_BASE_URL: process.env.GROK_BASE_URL || 'https://api.x.ai', ANTHROPIC_AUTH_TOKEN: tok, ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '' } };
+  }
+  if (runner === 'codex' && cred.type !== 'host' && nativeRunnerEnabled('codex')) {
+    // P-B(옵트인): Argo가 Responses 와이어로 직접 호출 — apikey는 api.openai.com, oauth(구독)는 ChatGPT 백엔드(Hermes·OpenClaw 동일 경로).
+    // 토큰은 Argo가 독립 리프레시(codex-oauth.mjs) — CLI 파일 공유로 생기던 refresh-token 회전 충돌을 끊는다. 정책 위험은 플래그·CLI 폴백으로 격리.
+    // 네임스페이스 env(ARGO_*) — OPENAI_BASE_URL은 생태계 공용 이름이라 무관한 프록시 설정이 회사 키를 그쪽으로 보낸다(검수 LOW-3, ARGO_CLAUDE_BASE_URL 선례).
+    // 주의: ARGO_CODEX_ENGINE=appserver는 CLI 턴(externalExec) 안의 선택지라 이 플래그를 켠 apikey·oauth 자격에는 도달하지 않는다(host만 CLI) — 검수 LOW-7.
+    if (cred.type === 'apikey') return { env: { ARGO_WIRE: 'responses', RESPONSES_BASE_URL: process.env.ARGO_OPENAI_BASE_URL || OPENAI_API_BASE, RESPONSES_TOKEN: v }, authType: 'apikey' };
+    const tokens = await ensureCodexAccess(wsId, cred);
+    return { env: { ARGO_WIRE: 'responses', RESPONSES_BASE_URL: process.env.ARGO_CODEX_BASE_URL || CODEX_BACKEND_BASE, RESPONSES_TOKEN: tokens.access_token, RESPONSES_HEADERS: JSON.stringify(codexHeaders(tokens)) }, authType: 'oauth' };
   }
   if (runner === 'codex') {
     // apikey·oauth 모두 격리 CODEX_HOME의 auth.json으로 — codex CLI(0.144 실측)는 env OPENAI_API_KEY를
@@ -329,7 +438,7 @@ export async function verifyRunnerCred(runner, type, value) {
       // 턴과 같은 base(runnerCredEnv의 ARGO_CLAUDE_BASE_URL 고정과 대칭) — 검증=실행 동일 경로 원칙
       const cbase = process.env.ARGO_CLAUDE_BASE_URL || 'https://api.anthropic.com';
       const r = await fetch(`${cbase}/v1/models?limit=1`, { headers: { 'x-api-key': v, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
-      return { ok: !(r.status === 401 || r.status === 403) };
+      return (r.status === 401 || r.status === 403) ? { ok: false, reason: 'auth' } : { ok: true }; // reason:'auth' = 턴 전 게이트·분류표의 열쇠(불변식 A)
     }
     if (runner === 'claude' && type === 'oauth') {
       // CLAUDE_CODE_OAUTH_TOKEN 검증 — Bearer + oauth 베타 헤더. 실측(2026-07-18): 무효 토큰에
@@ -340,21 +449,21 @@ export async function verifyRunnerCred(runner, type, value) {
       // 실측이 갖춰져 오탐 위험은 근거 있이 낮다.
       const cbase2 = process.env.ARGO_CLAUDE_BASE_URL || 'https://api.anthropic.com';
       const r = await fetch(`${cbase2}/v1/models?limit=1`, { headers: { authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20' }, signal: AbortSignal.timeout(10_000) });
-      return { ok: !(r.status === 401 || r.status === 403) };
+      return (r.status === 401 || r.status === 403) ? { ok: false, reason: 'auth' } : { ok: true }; // reason:'auth' = 턴 전 게이트·분류표의 열쇠(불변식 A)
     }
     if (runner === 'glm') {
       const base = process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic';
       const r = await fetch(`${base}/v1/models?limit=1`, { headers: { 'x-api-key': v, authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });
-      if (r.status === 401 || r.status === 403) return { ok: false };
+      if (r.status === 401 || r.status === 403) return { ok: false, reason: 'auth' };
       // z.ai(GLM)는 무효 키에도 HTTP 200을 주고 바디에 인증 실패를 담는다({code:401,success:false}) — 실측 2026-07-20.
       // 상태코드만 보면 '연결됨'으로 저장돼 전 호출이 실패한다(거짓 연결). 바디 레벨 에러도 무효로 본다.
-      if (bodyIndicatesAuthError(await r.text().catch(() => ''))) return { ok: false };
+      if (bodyIndicatesAuthError(await r.text().catch(() => ''))) return { ok: false, reason: 'auth' };
       return { ok: r.ok ? true : null };
     }
     if (runner === 'kimi') {
       const base = process.env.KIMI_OPENAI_BASE_URL || 'https://api.moonshot.ai/v1';
       const r = await fetch(`${base}/models`, { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
-      return { ok: !(r.status === 401 || r.status === 403) };
+      return (r.status === 401 || r.status === 403) ? { ok: false, reason: 'auth' } : { ok: true }; // reason:'auth' = 턴 전 게이트·분류표의 열쇠(불변식 A)
     }
     if (runner === 'grok') {
       // ponytail: /v1/messages 최소 호출로 **실대화 가능 여부**까지 확인(유건 제보 2026-08-08:
@@ -371,7 +480,7 @@ export async function verifyRunnerCred(runner, type, value) {
         body: JSON.stringify({ model: GROK_DEFAULT_MODEL, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
         signal: AbortSignal.timeout(15_000),
       });
-      if (r.status === 401) return { ok: false };
+      if (r.status === 401) return { ok: false, reason: 'auth' };
       if (r.status === 403) {
         // 403 = 등급 제한(Heavy-only) 또는 크레딧 소진. 사용자에게 사유를 갈라 안내할 수 있도록
         // body에서 코드를 꺼내 본다 — 꺼내지 못해도 ok:false는 확정(연결 거부).
@@ -390,7 +499,7 @@ export async function verifyRunnerCred(runner, type, value) {
         // "invalid-argument"는 xAI의 제네릭 400 코드다 — Model not found도 같은 코드를 달고 온다(위
         // 분기가 그 증거). 코드가 아니라 **인증 특정 문구**로만 무효 판정해야 유효 키의 비인증 400을
         // 오거절하지 않는다(적대 검수 2026-08-26 권고 — 무효 키 바디는 "Incorrect API key"를 담는다).
-        if (/incorrect api key|invalid[ _-]*api[ _-]*key|api[ _-]*key[ _-]*(?:invalid|not valid)|"code"\s*:\s*"unauthenticated|bad[ _-]*credentials/i.test(body)) return { ok: false };
+        if (/incorrect api key|invalid[ _-]*api[ _-]*key|api[ _-]*key[ _-]*(?:invalid|not valid)|"code"\s*:\s*"unauthenticated|bad[ _-]*credentials/i.test(body)) return { ok: false, reason: 'auth' };
         return { ok: true }; // 그 밖의 400(요청 형식 등)은 인증과 무관 — 유효로 본다
       }
       return { ok: true }; // 200·기타 4xx는 인증+등급 통과
@@ -398,20 +507,20 @@ export async function verifyRunnerCred(runner, type, value) {
     if (runner === 'openrouter') {
       // GET /api/v1/key = 키 자체 조회(잔액·한도) — 무효 키는 401. 모델 목록(공개)과 달리 키 유효성을 직접 판정한다.
       const r = await fetch('https://openrouter.ai/api/v1/key', { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
-      return { ok: !(r.status === 401 || r.status === 403) };
+      return (r.status === 401 || r.status === 403) ? { ok: false, reason: 'auth' } : { ok: true }; // reason:'auth' = 턴 전 게이트·분류표의 열쇠(불변식 A)
     }
     if (runner === 'codex' && type === 'apikey') {
       const r = await fetch('https://api.openai.com/v1/models?limit=1', { headers: { authorization: `Bearer ${v}` }, signal: AbortSignal.timeout(10_000) });
-      return { ok: !(r.status === 401 || r.status === 403) };
+      return (r.status === 401 || r.status === 403) ? { ok: false, reason: 'auth' } : { ok: true }; // reason:'auth' = 턴 전 게이트·분류표의 열쇠(불변식 A)
     }
     if (runner === 'gemini' && type === 'apikey') {
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(v)}&pageSize=1`, { signal: AbortSignal.timeout(10_000) });
-      if (r.status === 401 || r.status === 403) return { ok: false };
+      const r = await fetch(`${String(process.env.GEMINI_BASE_URL || GEMINI_DEFAULT_BASE).replace(/\/+$/, '')}/models?key=${encodeURIComponent(v)}&pageSize=1`, { signal: AbortSignal.timeout(10_000) }); // 검진과 턴의 목적지는 같아야 한다(검수 L3)
+      if (r.status === 401 || r.status === 403) return { ok: false, reason: 'auth' };
       // Google Generative Language API는 무효 키에 HTTP 400 + reason:API_KEY_INVALID를 준다(401 아님) — 실측 2026-07-20.
       // 400을 무조건 무효로 몰면 키와 무관한 요청 오류까지 키 탓이 되므로, 키 무효 신호가 있을 때만 거절한다.
       if (r.status === 400) {
         const body = await r.text().catch(() => '');
-        return /API_KEY_INVALID|API key not valid/i.test(body) ? { ok: false } : { ok: null };
+        return /API_KEY_INVALID|API key not valid/i.test(body) ? { ok: false, reason: 'auth' } : { ok: null };
       }
       return { ok: r.ok ? true : null };
     }

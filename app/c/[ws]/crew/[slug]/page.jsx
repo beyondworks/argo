@@ -5,7 +5,7 @@ import { use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
+import { Tabs, useRememberedTab, Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel } from '../../../../i18n';
 import { CrewEditModal } from '../../crew-edit';
@@ -539,7 +539,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       const r = await api(`/api/companies/${ws}/chat`, { slug, message, sessionId: sessionRef.current, attachments });
       sessionRef.current = r.sessionId;
       setTimeout(loadSuggestions, 4000); // 교정 감지는 응답 뒤 백그라운드로 돈다 — 잠시 후 제안을 당겨온다(검수 M2: 마운트 1회뿐이라 그 턴에 칩이 안 떴다)
-      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ...(r.fellBack ? { fellBack: r.fellBack } : {}) }]); // 폴백 안내 즉시 표시(검수 M1)
+      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ...(r.fellBack ? { fellBack: r.fellBack } : {}), ...(r.modelFallback ? { modelFallback: r.modelFallback } : {}) }]); // 폴백·모델 강등 안내 즉시 표시(검수 M1)
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (err) {
       // 실패 턴도 서버가 보존한다(route.js가 failed·aborted로 appendTurn) — 로컬 사본에 같은 필드를
@@ -549,7 +549,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       const failed = err?.data?.failed ?? String(err.message);
       const aborted = (err?.data?.aborted ?? (String(err.message) === '중단됨')) ? { aborted: true } : {};
       const unsaved = err?.data?.saved === true ? {} : { unsaved: true };
-      setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed, ...aborted, ...unsaved } : m)));
+      // 실패 코드·출처(route.js가 code/origin으로 응답) — 서버 보존분(failedCode)과 같은 필드명으로 로컬 사본에도(렌더 일치)
+      const coded = err?.data?.code ? { failedCode: err.data.code, ...(err.data.origin ? { failedOrigin: err.data.origin } : {}) } : {};
+      setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed, ...coded, ...aborted, ...unsaved } : m)));
       setQueueHeld(true); // 대기열 자동 전송 중지 — 남겨 두고 사장이 판단한다
     } finally {
       setBusy(false);
@@ -890,7 +892,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
               {m.failed && !viewing && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, fontSize: 12, color: 'var(--danger)', maxWidth: '100%' }}>
                   {/* failed는 코드/원문 — 표시 문구는 여기서 사전(t)으로. 서버 보존분·로컬 사본 공통 */}
-                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.aborted ? t('chat.aborted') : t('chat.turnFailed', { msg: m.failed })}</span>
+                  {/* failedCode(error-class.mjs 표) — 원문 대신 "할 일"을 먼저(불변식 C). 코드 없음/미상은 종전 원문 표시 */}
+                  {/* 코드 안내는 행동 지시가 뒤에 오므로 줄바꿈 허용(검수 LOW: EN 한 줄 말줄임이 "switch to an API key in S…"에서 잘림) */}
+                  <span style={{ minWidth: 0, overflow: 'hidden', ...(m.failedCode && m.failedCode !== 'unknown' ? { whiteSpace: 'normal' } : { textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }} title={m.failed}>{m.aborted ? t('chat.aborted') : (m.failedCode && m.failedCode !== 'unknown') ? t(`chat.fail.${m.failedCode}`, { msg: m.failed }) : t('chat.turnFailed', { msg: m.failed })}</span>
                   <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy || uploading}
                     onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
                 </div>
@@ -912,6 +916,12 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                   <p style={{ margin: '0 0 4px', fontSize: 11.5, color: 'var(--fg-2)' }}>
                     {t(m.fellBack.reason === 'auth' ? 'chat.fellBack.auth' : 'chat.fellBack.unavailable',
                       { from: RUNNER_LABELS[m.fellBack.from] ?? m.fellBack.from, to: RUNNER_LABELS[m.fellBack.to] ?? m.fellBack.to })}
+                  </p>
+                )}
+                {/* 모델 강등 고지(불변식 D) — 지정 모델이 이 러너에 없어 기본 모델로 답한 사실. 종전엔 조용히 강등됐다. */}
+                {m.modelFallback && (
+                  <p style={{ margin: '0 0 4px', fontSize: 11.5, color: 'var(--fg-2)' }}>
+                    {t('chat.modelFallback', { wanted: m.modelFallback.wanted, runner: RUNNER_LABELS[m.modelFallback.runner] ?? m.modelFallback.runner })}
                   </p>
                 )}
                 <div className="card" style={{ minWidth: 0, padding: '13px 16px', ...(annotIdx === i ? { borderColor: 'var(--primary)', cursor: 'text' } : {}) }}
@@ -1606,9 +1616,12 @@ function ScopeGroup({ label, items, value, onToggle, t, onReset }) {
   );
 }
 
+const CARD_TABS = ['overview', 'ability', 'style', 'link']; // 각 구간은 정확히 한 탭(test/tabs-layout)
 function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onRunnerChange, onClose, onFired, onEdited }) {
   const [editOpen, setEditOpen] = useState(false); // 이름·역할·팀·러너·모델 — 데크 목록에서 옮겨온 편집
   const { t, fmtMoney } = useLang();
+  // 탭 4개 — 개요(최근·엔진·상세) / 능력(스킬·MCP) / 방식(규칙·사장 기억) / 연결·원문(텔레그램·페어링·원문). 마지막 탭 기억.
+  const [tab, setTab] = useRememberedTab('argo-card-tab', CARD_TABS, 'overview');
   useScrollLock();
   const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n ?? 0));
   const [md, setMd] = useState(null);
@@ -1654,6 +1667,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
   // 텔레그램 직통 봇 — 이 크루의 개인 연락처
   const [tgBot, setTgBot] = useState(null); // { hasToken, botUsername, paired }
   const [tgAlive, setTgAlive] = useState(false);
+  const [tgOther, setTgOther] = useState(null); // 다른 기기가 수신 중이면 그 기기 라벨(토큰 단위 소유), 아니면 null
   const [tgToken, setTgToken] = useState('');
   const [tgBusy, setTgBusy] = useState(false);
   const [tgMsg, setTgMsg] = useState('');
@@ -1662,6 +1676,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
     api(`/api/companies/${ws}/connections`).then((d) => {
       setTgBot(d.connections?.telegram?.agents?.[slug] ?? { hasToken: false });
       setTgAlive(!!d.gateway?.agents?.[slug]?.alive);
+      setTgOther(d.gateway?.agents?.[slug]?.holder === 'other' ? (d.gateway.agents[slug].holderDevice || '') : null); // 다른 기기 수신 중(토큰 단위 소유)
     }).catch(() => {});
   }, [ws, slug]);
 
@@ -1763,15 +1778,23 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <div className="card card-float fade-up" style={{ width: 'min(680px, 100%)', maxHeight: 'calc(86vh / var(--z, 1))', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
-        <div className="card-head">
+      {/* 높이는 탭 내용과 무관하게 고정(86vh) — 탭을 오갈 때 모달이 들썩이지 않는다. 본문만 스크롤, 푸터(저장·편집·해고)는 항상 보인다. */}
+      <div className="card card-float fade-up crew-card-modal" style={{ width: 'min(680px, 100%)', height: 'calc(86vh / var(--z, 1))', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div className="card-head" style={{ paddingBottom: 10 }}>
           <span className="card-title">{t('chat.cardTitle')}</span>
           <span className="microlabel">{t('chat.systemPromptEq')}</span>
           <span className="rule" />
           <button className="btn sm" onClick={onClose}>{t('chat.closeEsc')}</button>
         </div>
-        <div style={{ padding: '0 20px 18px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, overflowY: 'auto' }}>
-          {/* 크루 프로필 — 자주 하는 업무와 적용 스킬이 카드에서 한눈에 */}
+        <Tabs label={t('chat.card.tab.label')} value={tab} onChange={setTab} className="crew-card-tabs" tabs={[
+          { id: 'overview', label: t('chat.card.tab.overview') },
+          { id: 'ability', label: t('chat.card.tab.ability'), count: profile.skills.length + profile.mcp.length || undefined },
+          { id: 'style', label: t('chat.card.tab.style'), count: rules.length + (boss?.items?.length ?? 0) || undefined },
+          { id: 'link', label: t('chat.card.tab.link') },
+        ]} />
+        <div style={{ padding: '14px 20px 18px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0, flex: 1, overflowY: 'auto' }}>
+          {tab === 'overview' && (<div data-tab-pane="overview" style={{ display: 'grid', gap: 14 }}>
+          {/* 크루 프로필 — 자주 하는 업무 */}
           <div style={{ display: 'grid', gap: 8 }}>
             <span className="microlabel">{t('chat.recentWork')}</span>
             {profile.recent.length === 0 ? (
@@ -1785,6 +1808,22 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+          {/* 엔진 — 러너·모델을 카드에서 바로 선택. 채팅 셀렉터와 같은 상태(즉시 저장). */}
+          <div style={{ display: 'grid', gap: 7 }}>
+            <span className="microlabel">{t('chat.card.engine')}</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <RunnerPicker runners={runners} sel={sel} onChange={onRunnerChange} />
+            </div>
+          </div>
+          {/* 상세 정보 — 처리량·토큰·비용·많이 쓴 도구 (usage.jsonl 집계) */}
+          <StatsBlock stats={stats} t={t} fmtTok={fmtTok} fmtMoney={fmtMoney} />
+          </div>)}
+
+          {tab === 'ability' && (<div data-tab-pane="ability" style={{ display: 'grid', gap: 12 }}>
+            {profile.skills.length === 0 && profile.mcp.length === 0 && (
+              <span style={{ fontSize: 12, color: 'var(--fg-3)', lineHeight: 1.6 }}>{t('chat.card.abilityEmpty')}</span>
             )}
             {/* 능력 범위 — 설치는 회사 공용(모든 크루 기본), 크루별로 좁힐 수 있다(유건 지시 2026-07-19).
                 칩 토글 = 즉시 저장(엔진 셀렉터와 동일 관례). 전부 켬=''(전체 — 새 설치 자동 포함), 전부 끔='none'. */}
@@ -1801,45 +1840,9 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
             {profile.mcp.length > 0 && (runners ?? []).some((r) => r.id === (sel.runner || autoRunnerId) && r.kind === 'cli' && !r.mcp) && (
               <span className="microlabel" style={{ color: 'var(--warn, #b5893a)', lineHeight: 1.5 }}>{t('chat.card.mcpCliWarn')}</span>
             )}
-          </div>
-          {/* 엔진 — 러너·모델을 카드에서 바로 선택. 채팅 셀렉터와 같은 상태(즉시 저장). */}
-          <div style={{ display: 'grid', gap: 7 }}>
-            <span className="microlabel">{t('chat.card.engine')}</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <RunnerPicker runners={runners} sel={sel} onChange={onRunnerChange} />
-            </div>
-          </div>
-          {/* 상세 정보 — 처리량·토큰·비용·많이 쓴 도구 (usage.jsonl 집계) */}
-          <div style={{ display: 'grid', gap: 8 }}>
-            <span className="microlabel">{t('chat.card.stats')}</span>
-            {!stats || stats.turns === 0 ? (
-              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{t('chat.card.noStats')}</span>
-            ) : (
-              <>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-                  {[
-                    [t('chat.card.turns'), String(stats.turns)],
-                    [t('chat.card.tokens'), `${fmtTok(stats.contextTotal)} / ${fmtTok(stats.output)}`],
-                    [t('chat.card.cost'), stats.costUsd != null ? fmtMoney(stats.costUsd, { approx: false }) : '—'],
-                    [t('chat.card.avgTime'), stats.avgMs != null ? `${(stats.avgMs / 1000).toFixed(0)}s` : '—'],
-                  ].map(([k, v]) => (
-                    <div key={k}>
-                      <div className="mono" style={{ fontSize: 15, fontWeight: 650 }}>{v}</div>
-                      <div className="microlabel" style={{ marginTop: 2 }}>{k}</div>
-                    </div>
-                  ))}
-                </div>
-                {stats.topTools?.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
-                    <span className="microlabel">{t('chat.card.topTools')}</span>
-                    {stats.topTools.map((tool) => (
-                      <span key={tool.name} className="chip mono" style={{ fontSize: 10.5 }}>{tool.name} ×{tool.count}</span>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+          </div>)}
+
+          {tab === 'style' && (<div data-tab-pane="style" style={{ display: 'grid', gap: 14 }}>
           {/* 규칙 — 카드의 "일하는 방식" 섹션을 그대로 파싱. 추가하면 카드에 불릿으로 붙고 즉시 저장 */}
           <div style={{ display: 'grid', gap: 7 }}>
             <span className="microlabel">{t('chat.card.rules')} · {rules.length}</span>
@@ -1898,14 +1901,17 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
               </button>
             </div>
           </div>
+          </div>)}
+
+          {tab === 'link' && (<div data-tab-pane="link" style={{ display: 'grid', gap: 14 }}>
           {/* 텔레그램 직통 봇 — 이 크루의 개인 연락처. 연결되면 그린 도트 */}
           <div style={{ display: 'grid', gap: 7, padding: '12px 14px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="microlabel">{t('chat.tg.title')}</span>
               {tgBot?.hasToken && (
-                <span className="chip" style={{ color: tgAlive ? 'var(--ok)' : 'var(--warn)', borderColor: 'currentColor' }}>
+                <span className="chip" style={{ color: tgAlive ? 'var(--ok)' : tgOther !== null ? 'var(--tg-remote)' : 'var(--warn)', borderColor: 'currentColor' }}>
                   <span style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor', display: 'inline-block', marginRight: 5 }} />
-                  {tgAlive ? t('chat.tg.live') : t('chat.tg.waiting')}
+                  {tgAlive ? t('chat.tg.live') : tgOther !== null ? t('chat.tg.otherDevice', { device: tgOther }) : t('chat.tg.waiting')}
                   {tgBot.paired ? ` · ${t('chat.tg.paired')}` : ''}
                 </span>
               )}
@@ -1953,15 +1959,18 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
               }}
             />
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button className="btn btn-primary sm" onClick={() => save()} disabled={saving || md === null}>
-              {saving ? <Spinner size={12} /> : t('chat.save')}
-            </button>
-            <span style={{ fontSize: 12, color: msg === t('chat.saved') ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>
-            <span style={{ flex: 1 }} />
-            <button className="btn sm" onClick={() => setEditOpen(true)}>{t('chat.editInfo')}</button>
-            <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => setFireOpen(true)}>{t('chat.fire')}</button>
-          </div>
+          </div>)}
+        </div>
+        {/* 푸터 — 탭과 무관하게 항상 보인다: 원문 저장·정보 편집·해고 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px 14px', borderTop: '1px solid var(--border-soft)', flex: 'none' }}>
+          {/* 원문(md) 저장 — 규칙·기억 카드·범위는 즉시 저장이라, 이 버튼은 연결·원문 탭의 textarea 편집만 담는다(검수: 라벨로 대상 명시) */}
+          <button className="btn btn-primary sm" onClick={() => save()} disabled={saving || md === null}>
+            {saving ? <Spinner size={12} /> : t('chat.card.saveRaw')}
+          </button>
+          <span style={{ fontSize: 12, color: msg === t('chat.saved') ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>
+          <span style={{ flex: 1 }} />
+          <button className="btn sm" onClick={() => setEditOpen(true)}>{t('chat.editInfo')}</button>
+          <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => setFireOpen(true)}>{t('chat.fire')}</button>
         </div>
       </div>
       {editOpen && agent && (
@@ -1981,5 +1990,41 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
         />
       )}
     </div>
+  );
+}
+
+/** 상세 정보 — 처리량·토큰·비용·많이 쓴 도구 (usage.jsonl 집계). 카드 개요 탭. */
+function StatsBlock({ stats, t, fmtTok, fmtMoney }) {
+  return (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <span className="microlabel">{t('chat.card.stats')}</span>
+            {!stats || stats.turns === 0 ? (
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{t('chat.card.noStats')}</span>
+            ) : (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                  {[
+                    [t('chat.card.turns'), String(stats.turns)],
+                    [t('chat.card.tokens'), `${fmtTok(stats.contextTotal)} / ${fmtTok(stats.output)}`],
+                    [t('chat.card.cost'), stats.costUsd != null ? fmtMoney(stats.costUsd, { approx: false }) : '—'],
+                    [t('chat.card.avgTime'), stats.avgMs != null ? `${(stats.avgMs / 1000).toFixed(0)}s` : '—'],
+                  ].map(([k, v]) => (
+                    <div key={k}>
+                      <div className="mono" style={{ fontSize: 15, fontWeight: 650 }}>{v}</div>
+                      <div className="microlabel" style={{ marginTop: 2 }}>{k}</div>
+                    </div>
+                  ))}
+                </div>
+                {stats.topTools?.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
+                    <span className="microlabel">{t('chat.card.topTools')}</span>
+                    {stats.topTools.map((tool) => (
+                      <span key={tool.name} className="chip mono" style={{ fontSize: 10.5 }}>{tool.name} ×{tool.count}</span>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
   );
 }

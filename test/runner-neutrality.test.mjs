@@ -29,8 +29,8 @@ test('pickRunner — exclude 목록을 받아 남은 러너를 고른다(자가�
   const st = { claude: on, codex: on, gemini: on, antigravity: on };
   // 라이브 재현 시나리오(2026-07-30): claude OAuth 만료 → codex 402. 이전엔 재시도가 1회뿐이라
   // 멀쩡한 gemini·antigravity가 시도조차 못 받고 영입이 통째로 실패했다.
-  // gemini는 숨김(카탈로그 hidden, 2026-09-03) — 자동 폴백은 건너뛰고 antigravity가 시도를 받는다. 명시 지정은 별도 테스트(runner-hidden)
-  assert.equal(pickRunner(st, null, ['claude', 'codex']).runner, 'antigravity');
+  // gemini 복귀(2026-09-06, API 키 경로) — 자동 폴백 순서는 정의 순: claude → codex → gemini → … → antigravity
+  assert.equal(pickRunner(st, null, ['claude', 'codex']).runner, 'gemini');
   assert.equal(pickRunner(st, null, ['claude', 'codex', 'gemini']).runner, 'antigravity');
   assert.equal(pickRunner(st, null, ['claude', 'codex', 'gemini', 'antigravity']).available, false);
   assert.equal(pickRunner(st, null, 'claude').runner, 'codex'); // 문자열 단수도 하위호환
@@ -115,11 +115,11 @@ test('채팅 자가치유 3러너 연쇄 — claude 401 → codex 401 → gemini
     tried = excludeWith(tried, pick.runner); // 이 러너가 401 — 누적 제외하고 다음 프레임
   }
   // 핵심 회귀: 3·4번째 러너가 시도를 받아야 한다. 단수 제외 시절엔 chain이 ['claude','codex']에서 끝났다.
-  assert.deepEqual(chain, ['claude', 'codex', 'antigravity']); // gemini 숨김 — 자동 사슬에서 제외
+  assert.deepEqual(chain, ['claude', 'codex', 'gemini', 'antigravity']); // gemini 복귀 — 자동 사슬에 포함
   // 전부 소진되면 자가치유가 멈춘다 — 재귀는 러너 수로 자연 종료(무한 루프 없음).
   assert.equal(pickRunner(st, null, tried).available, false);
   // 크루 지정 러너(want)가 있어도 같다 — 지정 러너가 죽으면 남은 러너를 다 시도한다.
-  assert.equal(pickRunner(st, 'claude', excludeWith('claude', 'codex')).runner, 'antigravity');
+  assert.equal(pickRunner(st, 'claude', excludeWith('claude', 'codex')).runner, 'gemini'); // gemini 복귀 — 세 번째 시도는 gemini
 });
 
 // 배선 트립와이어 — 순수 함수가 맞아도 두 catch가 목록을 안 쓰면 3번째 시도는 없다(HIGH-1과 같은 계열:
@@ -156,14 +156,23 @@ test('배선: chat.mjs 두 실행 경로(CLI·SDK)의 자가치유가 누적 목
   // → **승인 목록 비교**로 전환: 발동 조건의 정규화 원문이 아래 목록과 일치해야 한다. 조건을 바꾸려면
   // 이 목록을 의도적으로 갱신해야 하며(변경 통제), 무단 OR 확대·가드 삭제·제3 사이트는 전부 red다.
   // lockupAction은 toolLockup 마커 + 재조달 재시도 소진 후에만 'switch'라 "아무 실패로 갈아타기"는 여전히 차단된다.
+  // 2026-09-05 #432 HIGH-1: 발동 조건이 순수 함수 shouldSelfHeal(필드 authExpired 우선 → AUTH_ERR_RE → 잠김 교체)로
+  // 모였다. 승인 목록은 두 층이다 — ① if 줄 호출부(갈래 수·가드), ② 함수 본체(OR 확대·필드 삭제·정규식 확대).
+  // 한 층만 잠그면 다른 층에서 "아무 실패로 갈아타기"가 되살아난다(호출부만 세면 본체에 `|| /rate limit/`가 초록).
   const norm = (c) => c.replace(/\s+/g, ' ').trim();
-  const healConds = [...src.matchAll(/if \(([^\n]*AUTH_ERR_RE\.test\([^\n]*)\) \{/g)].map((m) => m[1]);
+  const healConds = [...src.matchAll(/if \(([^\n]*shouldSelfHeal\([^\n]*)\) \{/g)].map((m) => m[1]);
   assert.deepEqual(healConds.map(norm).sort(), [
-    "!aborted && !retriedDown && AUTH_ERR_RE.test(String(e.message || e))", // SDK 갈래
-    "!aborted && (AUTH_ERR_RE.test(String(e.message || e)) || lockupAction(e, { retried: __lockupRetry }) === 'switch')", // CLI 갈래(잠김 합류 승인분)
-  ].sort(), '자가치유 발동 조건 승인 목록 — 무단 OR 확대·가드 삭제·제3 사이트 차단');
+    "!aborted && !retriedDown && shouldSelfHeal(e, { lockup: false })", // SDK 갈래 — 잠김 교체 없음(종전 계약)
+    "!aborted && shouldSelfHeal(e, { retried: __lockupRetry })", // CLI 갈래(잠김 합류 승인분)
+  ].sort(), '자가치유 발동 호출부 승인 목록 — 가드 삭제·제3 사이트 차단');
+  const healBody = src.split('export function shouldSelfHeal(e, { retried = false, lockup = true } = {}) {')[1]?.split('\n}')[0] ?? '';
+  assert.equal(norm(healBody), "if (e?.authExpired) return true; if (AUTH_ERR_RE.test(String(e?.message || e))) return true; return lockup && lockupAction(e, { retried }) === 'switch';", '자가치유 판정 본체 승인 — 무단 OR 확대(일시 실패로 실과금 벤더 전환)·필드 판정 삭제(HIGH-1 회귀) 차단');
+  assert.doesNotMatch(src, /if \([^\n]*AUTH_ERR_RE\.test\(String\(e\.message \|\| e\)\)/, '옛 문자열 판정 호출부 잔존 금지(제3 사이트)');
   // 도구 잠김(L2) 배선 불변식 — 재조달 분기 1곳·재시도 마커 1곳·재조달 호출 1곳(무한 재시도 금지 골격)
-  assert.equal((src.match(/lockupAction\(e, \{ retried: __lockupRetry \}\)/g) ?? []).length, 2, '잠김 판정은 분기+교체 두 자리');
+  // 2026-09-05 #432 HIGH-1: 교체 자리는 shouldSelfHeal 본체(lockupAction(e, { retried }))로 이관 — 호출부가 __lockupRetry를 넘긴다
+  assert.equal((src.match(/lockupAction\(e, \{ retried: __lockupRetry \}\)/g) ?? []).length, 1, '잠김 판정 분기(재조달) 한 자리');
+  assert.equal((src.match(/lockupAction\(e, \{ retried \}\) === 'switch'/g) ?? []).length, 1, '잠김 교체 판정은 shouldSelfHeal 본체 한 자리');
+  assert.equal((src.match(/shouldSelfHeal\(e, \{ retried: __lockupRetry \}\)/g) ?? []).length, 1, 'CLI 갈래가 재시도 마커를 판정에 넘긴다(안 넘기면 잠김 무한 교체)');
   assert.equal((src.match(/__lockupRetry: true/g) ?? []).length, 1, '재조달 재시도는 1회 한정');
   assert.equal((src.match(/reprovisionRunner\(runner\)/g) ?? []).length, 1, '재조달 호출은 잠김 분기 한 자리');
   // 읽는 자리(위)와 **쓰는 자리**를 함께 잠근다 — 대입만 지워도 가드는 항상 참이 되는데 읽는 자리

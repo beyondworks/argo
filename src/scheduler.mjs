@@ -7,10 +7,11 @@ import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
 import { emitNotify } from './notify.mjs';
 import { chat } from './chat.mjs';
 import { readAgentCard } from './persona.mjs';
-import { resolveRunner, isCliRunner } from './runners.mjs';
+import { resolveRunner, isCliTurn, runnerCredType } from './runners.mjs';
 import { appendTurn } from './thread.mjs';
-import { consolidateMemory, rollupJournals } from './consolidate.mjs';
+import { consolidateBacklog, rollupJournals } from './consolidate.mjs';
 import { runHealthChecks } from './runner-health.mjs';
+import { runFailureDigest } from './failure-digest.mjs';
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader } from './sync.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
@@ -19,6 +20,7 @@ import { paths } from './workspace.mjs';
 import { join } from 'node:path';
 
 const CONSOLIDATE_AT = '04:00'; // 새벽 정리 — 사람 뇌의 수면 정리처럼
+const CONSOLIDATE_UNTIL_HOUR = 8; // 야간 루프 마감(로컬 08:00) — 그 뒤엔 낮 크루 턴과 러너를 나눠 쓰지 않는다
 // 하루 1회 실행 스탬프 — 정각(hhmm===) 일치는 그 1분에 기기가 수면·앱 종료면 그날 정리가 영영 스킵된다.
 // "04:00 이후 첫 틱에 아직 오늘 안 돌았으면 실행"으로 캐치업한다(랩탑 현실 대응).
 const RUN_STAMP = (wsId) => join(paths(wsId).vault, '.consolidate-run.json');
@@ -58,6 +60,17 @@ export function planConsolidate(st, nowMs, today) {
   if (n >= CONSOLIDATE_MAX_ATTEMPTS) return null;                 // 오늘 시도 소진
   if (s.nextRetryAt && nowMs < Date.parse(s.nextRetryAt)) return null; // 백오프 대기 중
   return attempt(n + 1);
+}
+
+/** 루프 진행 중 스탬프 연장 — 야간 루프는 청크(≤10분+복구 3분)마다 nextRetryAt을 지금+15분으로 밀어, 다른 기기가 리더가 되거나 앱이
+    재기동돼도 "재시도 가능"으로 읽지 않는다(검수 MEDIUM-3: 선점+5분 스탬프가 4시간 루프 중 만료돼 두 번째 루프 → 워터마크 되감기·중복 과금). */
+export async function bumpConsolidateClaim(wsId, nowMs, today) {
+  return withLock(`consolidate:${wsId}`, async () => {
+    let cur = {};
+    try { cur = await readJson(RUN_STAMP(wsId), {}); } catch { return; }
+    if ((cur.day ?? '') !== today || cur.done) return;
+    await writeJsonAtomic(RUN_STAMP(wsId), { ...cur, nextRetryAt: new Date(nowMs + 15 * 60_000).toISOString() });
+  });
 }
 
 /** 실행 직전 선점 — 락 안에서 읽고 판정하고 쓴다(claimRoutine과 같은 원칙). 반환 = 쓴 스탬프 또는 null. */
@@ -112,6 +125,8 @@ async function claimRoutine(wsId, routineId, now) {
 const consolidating = new Set();
 const mailDelivering = new Set(); // 회사별 우편 배달 in-flight — 틱 겹침 시 이중 진입 차단(HIGH-4)
 const healthChecking = new Set(); // 러너 검진 in-flight(회사별) — 틱 겹침 시 중복 벤더 호출 방지
+const digestLastRun = new Map(); // 실패 서명 다이제스트 — 회사별 마지막 실행(시간당 1회, 프로세스 내)
+export const DIGEST_TICK_MS = 60 * 60_000;
 // `${wsId}/${routineId}` → 시작 시각(ms). 같은 루틴의 실행 겹침 차단(검수 LOW-5). Set이 아니라
 // Map인 이유: SDK 러너 턴에는 상한이 없어(수동 정지 핸들뿐, CLI만 cliTimeoutMs 자가 회복) 영영
 // 안 끝나는 실행이 가드를 영구 점유하면 그 루틴이 '가동' 표시인 채 다시는 발화하지 않는다(검수
@@ -160,6 +175,14 @@ export function tickHealthCheck(cid, { runFn = runHealthChecks, inflight = healt
   return true;
 }
 
+/** 실패 서명 다이제스트 틱 — 시간당 1회(프로세스 내 스로틀), 읽기 전용·벤더 호출 0. 반환 = 실행 여부. */
+export function tickFailureDigest(cid, { runFn = runFailureDigest, now = Date.now(), lastRun = digestLastRun, intervalMs = DIGEST_TICK_MS } = {}) {
+  if (now - (lastRun.get(cid) ?? 0) < intervalMs) return false;
+  lastRun.set(cid, now);
+  runFn(cid, { now }).catch((e) => console.error(`[argo] 실패 다이제스트 오류(${cid}):`, e.message));
+  return true;
+}
+
 export function ensureScheduler() {
   if (globalThis.__argoScheduler) return;
   globalThis.__argoScheduler = true;
@@ -201,7 +224,7 @@ export function ensureScheduler() {
               try {
                 const { meta } = await readAgentCard(cid, slug);
                 const resolved = await resolveRunner(cid, (meta.runner ?? '').toLowerCase() || null);
-                hasTools = !isCliRunner(resolved.runner);
+                hasTools = !isCliTurn(resolved.runner, await runnerCredType(cid, resolved.runner)); // gemini API 키(네이티브)는 도구 있음
               } catch { /* 크루 카드·러너 상태 읽기 실패 — 기본값 유지, 실행은 chat()이 판단 */ }
               const prompt = mailPrompt(msg, 'ko', { hasTools });
               const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail' });
@@ -219,6 +242,8 @@ export function ensureScheduler() {
           // 있어 매 틱 호출해도 실제 벤더 호출은 드물다. cloudLeader 게이트 안에 두는 이유: 기기마다
           // 돌면 같은 자격에 대한 과금 검증이 기기 수만큼 곱해진다(#378 검수 지적의 확대판).
           if (cloudLeader) tickHealthCheck(cid);
+          // 실패 서명 다이제스트 — 같은 오류가 24h에 N회 반복되면 활동 한 줄(서명당 하루 1회). 검진과 같은 이유로 리더만(기기 수만큼 곱하지 않게).
+          if (cloudLeader) tickFailureDigest(cid);
           if (cloudLeader && hhmm >= CONSOLIDATE_AT) {
             const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
             // 진행 중이면 시도 횟수를 태우지 않고 그냥 넘긴다(선점 자체를 하지 않는다)
@@ -229,7 +254,10 @@ export function ensureScheduler() {
               console.log(`[argo] 기억 정리: ${cid} (${nth})`);
               // 재시도는 consolidate부터 다시 탄다 — 워터마크가 성공 후에만 전진하므로 이미 정제된
               // 구간은 조기 반환(LLM 호출 0)이고, rollup은 주간 블록 중복 append를 자체 차단한다.
-              consolidateMemory(cid)
+              // 야간 루프 — 잔량 소진·밤당 7MB·08:00·청구 러너 5청크 중 먼저 닿는 것까지 청크를 연속 정리
+              const deadline = new Date(now.getFullYear(), now.getMonth(), now.getDate(), CONSOLIDATE_UNTIL_HOUR, 0, 0).getTime();
+              consolidateBacklog(cid, { deadlineMs: Math.max(deadline, now.getTime() + 60_000), onChunk: () => bumpConsolidateClaim(cid, Date.now(), today) }) // 08:00 뒤 캐치업이면 최소 1청크
+                .then((r) => console.log(`[argo] 기억 정리 끝: ${cid} 청크 ${r.chunks}·${Math.round(r.bytes / 1024)}KB·노트 ${r.notes.length} (${r.stoppedBy})`))
                 .then(() => rollupJournals(cid)) // 정제가 소화한 일지만 주간으로 접힌다
                 .then(() => markConsolidateDone(cid, today))
                 .catch((e) => console.error(

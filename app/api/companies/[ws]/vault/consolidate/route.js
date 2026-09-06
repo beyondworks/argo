@@ -1,7 +1,7 @@
 import { consolidateMemory, rollupJournals } from '../../../../../../src/consolidate.mjs';
 import { guardCompany } from '../../../../../auth.mjs';
 
-export const maxDuration = 120; // 하이쿠 1턴 — 수십 초
+export const maxDuration = 800; // 호스티드(Vercel Pro) 함수 상한 800 안 — // sonnet 5 청크 1회 실측 264초 + JSON 복구 최대 3분 — 옛 120(하이쿠 1턴)은 상시 타임아웃(검수 MEDIUM-2)
 
 /** 기억 정리 수동 실행 — 새 일지를 주제 노트로 정제 + 오래된 일지 주간 롤업. */
 export async function POST(_req, { params }) {

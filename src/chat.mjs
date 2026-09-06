@@ -2,15 +2,19 @@
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
 import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
-import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { query, createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
 import { loadOrgRules, docSlug, DOC_FOLDERS } from './gateway/msgr-rules.mjs';
 import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './persona.mjs';
+import { classifyRunnerError, subscriptionBlockedNotice } from './runners/error-class.mjs'; // 실패 코드 표(불변식 C)
+import { markRunnerAuthFail, HEALTH_BILLED_RUNNERS } from './runner-health.mjs'; // 다음 턴 차단(불변식 A)
+import { effectiveModels, normalizeModelId, loadRemoteCatalog } from './runners/catalog-remote.mjs'; // 원격 카탈로그·alias(불변식 D)
 import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루가 '나중에 하기'를 거는 유일한 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
 import { materializeMcpServers } from './runners/npx.mjs'; // node/npx를 실행형으로 — 시스템 npm 없는 기기 지원
+import { nativeQuery, nativeRunnerEnabled, nativeToolsDirective } from './engine/native-query.mjs'; // 하네스 통일 P-A — Argo 소유 도구 루프(플래그 러너)
 import { appendUsage } from './usage.mjs';
 import { monthCost } from './billing.mjs'; // 금액 집계는 billing 게이트로만(현재 자격 기준 단일 판정)
 import { loadCompany } from './workspace.mjs';
@@ -25,7 +29,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { scrubSdkBrand, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus } from './runners.mjs';
+import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_EFFORTS } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -467,8 +471,14 @@ export function connectorToolDescription(connectors, lang = 'ko') {
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단).
     connectors = 이 턴의 커넥터 요약(connectorBriefing). 비어 있으면 use_connector를 **등재하지 않는다**.
     (export: 행동 테스트용 — 등재 조건·수렴 경로를 인메모리 MCP 클라이언트로 실제로 돌려 확인한다) */
-export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', journal = null) {
+export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null) { // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달)
   const text = async (t) => ({ content: [{ type: 'text', text: t }] });
+  // 네이티브 엔진(하네스 통일 P-A)이 **같은 도구 정의·같은 핸들러**를 쓴다 — sink에 {name, description, shape, handler}를 수집한다
+  // (SDK 서버 객체는 도구를 내보내지 않는다). sink가 없으면 종전과 동일.
+  // sink는 **최종 등재 배열**(아래 createSdkMcpServer tools)과 같은 원천에서 채운다 — tool() 호출 시점에 모으면 동료 0·커넥터 0에서도
+  // delegate·send_to_crew·use_connector가 광고된다(분리 검수 HIGH-1: 유령 도구 3종, 설계서 §2-2 위반).
+  const defs = new WeakMap();
+  const tool = (name, description, shape, handler) => { const t = sdkTool(name, description, shape, handler); if (sink) defs.set(t, { name, description, shape, handler }); return t; };
   // 위임 체인의 직전 크루 — 이 크루가 올리는 결재에 "누구의 위임으로 온 요청인지"를 실어 흐름을 보이게 한다
   const delegatedBy = chain.length ? chain[chain.length - 1] : null;
 
@@ -479,7 +489,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       const { gatewayStatus, loadConnections } = await import('./connections.mjs');
       const conn = await loadConnections(wsId);
       const st = await gatewayStatus(wsId);
-      if (conn.telegram.enabled && conn.telegram.token && !st.telegram.alive) {
+      if (conn.telegram.enabled && conn.telegram.token && !st.telegram.alive && st.telegram.holder !== 'other') { // 다른 기기가 받는 중이면 정상 분담(재검수 L-1)
         return lang === 'en'
           ? ' Note: Telegram is not responding right now, so the approve button may not arrive — also tell the captain to approve from the web (approval inbox / the card in chat).'
           : ' 주의: 지금 텔레그램 연결이 응답하지 않아 승인 버튼이 안 갈 수 있다 — 사장에게 웹 화면(결재함·대화창 카드)에서 승인해 달라고 함께 안내하라.';
@@ -601,7 +611,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   );
   // 러너·모델 인자 검증 — 카탈로그 대조 + 회사/호스트 연결 확인. 문제면 사용자에게 물어볼 안내문을 돌려준다.
   const runnerCatalog = () => Object.entries(RUNNERS).filter(([id]) => !isHiddenRunner(id))
-    .map(([id, r]) => `${id}(${r.name}): ${r.models.map((m) => m.id).join(', ')}`).join(' | ');
+    .map(([id, r]) => `${id}(${r.name}): ${effectiveModels(id).map((m) => m.id).join(', ')}`).join(' | '); // 오버레이 반영(MEDIUM-3)
   // effRunner — 이 변경 후 크루가 실제로 쓸 러너(runner 미지정이면 현재 크루의 러너). 모델은 이 러너 기준으로 검증한다.
   async function checkRunnerModel(runner, model, effRunner = null) {
     if (!runner && !model) return null;
@@ -611,16 +621,19 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     if (runner && isHiddenRunner(runner) && runner !== effRunner) return `${RUNNERS[runner].name} 러너는 더 이상 새로 지정할 수 없다. 가능한 값: ${visibleRunnerIds().join(', ')}`;
     if (model) {
       const target = runner || effRunner; // 지정 러너 우선, 없으면 크루의 현재 러너
-      if (target && RUNNERS[target] && !RUNNERS[target].models.some((m) => m.id === model)) {
-        return `모델 "${model}"은 ${RUNNERS[target].name} 러너의 모델이 아니다. ${RUNNERS[target].name} 모델: ${RUNNERS[target].models.map((m) => m.id).join(', ')} (다른 러너 모델을 쓰려면 runner도 함께 바꿔라)`;
+      if (target && RUNNERS[target] && !effectiveModels(target).some((m) => m.id === model)) { // 오버레이 반영(MEDIUM-3)
+        return `모델 "${model}"은 ${RUNNERS[target].name} 러너의 모델이 아니다. ${RUNNERS[target].name} 모델: ${effectiveModels(target).map((m) => m.id).join(', ')} (다른 러너 모델을 쓰려면 runner도 함께 바꿔라)`;
       }
-      if (!target && !Object.keys(RUNNERS).some((id) => RUNNERS[id].models.some((m) => m.id === model))) {
+      if (!target && !Object.keys(RUNNERS).some((id) => effectiveModels(id).some((m) => m.id === model))) { // 오버레이 반영(MEDIUM-3)
         return `모델 "${model}"이 카탈로그에 없다. 카탈로그: ${runnerCatalog()}`;
       }
     }
     if (runner) {
       const st = await runnerStatus(wsId).catch(() => null);
       const s = st?.[runner];
+      if (s && s.company.connected && s.company.invalid) { // 무효 자격(제공되지 않는 방식·로그아웃된 host 마커) — 연결된 척 배정하면 모든 턴이 조용히 폴백된다(3R L-1)
+        return `${RUNNERS[runner].name} 러너 연결이 무효(재연결 필요) 상태다. 사용자에게 "설정 → AI 연결에서 ${RUNNERS[runner].name}을 다시 연결해 주시면 됩니다"라고 안내해라.`;
+      }
       if (s && !s.company.connected && !s.hostAuthed) {
         return `${RUNNERS[runner].name} 러너가 아직 연결되지 않았다. 사용자에게 "설정 → 러너 연결에서 ${RUNNERS[runner].name}을 연결(API 키 또는 OAuth)해 주시면 바꿔드리겠다"고 안내하라.`;
       }
@@ -635,9 +648,9 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     return hit ? { slug: hit.slug, name: hit.name, runner: hit.runner ?? null } : null;
   };
 
-  const catalogLine = Object.entries(RUNNERS).filter(([id]) => !isHiddenRunner(id)).map(([id, r]) => `${id}=${r.models.map((m) => m.id).join('/')}`).join(' · ');
+  const catalogLine = Object.entries(RUNNERS).filter(([id]) => !isHiddenRunner(id)).map(([id]) => `${id}=${effectiveModels(id).map((m) => m.id).join('/')}`).join(' · '); // 오버레이 반영(MEDIUM-3)
   // 접근권 게이트 모델 고지 — 크루가 무권한 계정에 게이트 모델을 권하기 전에 알고 안내하게 한다(강등 가드가 최종 안전망).
-  const gatedIds = Object.values(RUNNERS).flatMap((r) => r.models.filter((m) => m.gated).map((m) => m.id));
+  const gatedIds = Object.keys(RUNNERS).flatMap((id) => effectiveModels(id).filter((m) => m.gated).map((m) => m.id)); // 오버레이 반영(MEDIUM-3)
   const updateProfile = tool(
     'update_profile',
     `크루 프로필 변경을 사장 결재로 올린다(승인 시 시스템이 적용). 자기 자신("me") 또는 동료의 이름·역할·팀·일하는 방식 규칙 추가·러너·모델을 바꿀 수 있다. 사장이 러너/모델을 정하지 않았으면 선택지를 제시하고 물어본 뒤 올려라. 러너·모델 카탈로그: ${catalogLine}${gatedIds.length ? ` (접근권 게이트 모델 — Ultra·유료 계정 전용, 무권한 계정은 턴이 기본 모델로 자동 강등: ${gatedIds.join(', ')})` : ''}`,
@@ -655,7 +668,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       // 모델만 지정하고 러너를 안 바꾸면 다음 턴에서 러너/모델 불일치가 난다 —
       // 모델의 소속 러너를 자동 도출해 함께 설정(항상 정합).
       if (model && !runner) {
-        const owner = Object.keys(RUNNERS).find((id) => RUNNERS[id].models.some((m) => m.id === model));
+        const owner = Object.keys(RUNNERS).find((id) => effectiveModels(id).some((m) => m.id === model)); // 오버레이 반영(MEDIUM-3)
         if (owner) runner = owner;
       }
       // 대상 크루의 현재 러너 — 같은 러너 안의 모델 변경(숨김 러너 포함)을 허용하기 위한 기준(검수 LOW-3). 동료는 명단 값, 자신은 카드.
@@ -780,15 +793,14 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
 
-  return createSdkMcpServer({
-    name: 'crew', version: '1.0.0',
-    tools: [
-      requestApproval, requestToolInstall, ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), updateProfile, hireCrew, scheduleTask, startLongTask,
-      ...(colleagues.length ? [delegate, sendToCrew] : []),
-      // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
-      ...(connectors.length ? [useConnector] : []),
-    ],
-  });
+  const tools = [
+    requestApproval, requestToolInstall, ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), updateProfile, hireCrew, scheduleTask, startLongTask,
+    ...(colleagues.length ? [delegate, sendToCrew] : []),
+    // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
+    ...(connectors.length ? [useConnector] : []),
+  ];
+  if (sink) sink.push(...tools.map((t) => defs.get(t)).filter(Boolean)); // 네이티브 엔진 = SDK와 같은 집합
+  return createSdkMcpServer({ name: 'crew', version: '1.0.0', tools });
 }
 
 /** 대체 실행 실패의 맥락 프리픽스(순수) — 성공 턴의 자가 고지(fallbackDirective)와 달리, 대체
@@ -805,7 +817,59 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
 // 2026-08-26: 다른 러너가 연결돼 있어도 채팅 턴이 죽고, 영입은 게이트가 달라 살아나는 비대칭).
 // **문구 기준으로만** 추가한다 — `\b400\b`처럼 상태코드 전체를 넣으면 모델 미존재·요청 오류까지
 // 러너 교체로 오분류돼 사용자 고지 없이 실과금 키로 넘어간다(검수 D2).
-export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|incorrect api key|bad credentials|invalid authentication|authentication[_ ]error|api[_ ]?key[_ ]?(?:not valid|invalid)|token (?:is )?(?:expired|revoked|invalid|incorrect)|\b401\b/i;
+export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|incorrect api key|bad credentials|invalid authentication|authentication[_ ]error|api[_ ]?key[_ ]?(?:not valid|invalid)|token (?:is )?(?:expired|revoked|invalid|incorrect)|oauth session expired|\b401\b/i; // 'oauth session expired' — 상주 실패 1위(9건, Claude setup-token 만료)가 어느 갈래에도 안 걸려 자가치유·안내 둘 다 못 받았다(2026-09-05)
+
+/** 인증 자가치유(다른 가용 러너로 재시도) 발동 판정(순수) — CLI·SDK 두 catch가 같은 판정을 쓴다.
+    **필드가 먼저다**(분리 검수 HIGH-1 실측 2026-09-05): 턴 전 게이트(runnerCredEnv)가 끊은 오류는 문구가
+    'credential known-invalid … not started'라 AUTH_ERR_RE에 안 걸려, 러너 2개 연결 사용자에게서 한쪽 자격이
+    만료되면 종전엔 다른 러너로 계속 일하던 것이 게이트 무장 뒤 턴이 죽었다(라이브 A/B: 미무장 → GLM 폴백 답변,
+    무장 → 시도 0회). 판정은 문자열이 아니라 필드로(aborted 선례). 구독 차단(subscriptionBlocked)은 여기 걸리지
+    않는다 — 그 문구는 AUTH_ERR_RE 밖이고 authExpired 필드도 없다(E 불변식). (export: 회귀 테스트용) */
+export function shouldSelfHeal(e, { retried = false, lockup = true } = {}) {
+  if (e?.authExpired) return true;
+  if (AUTH_ERR_RE.test(String(e?.message || e))) return true;
+  return lockup && lockupAction(e, { retried }) === 'switch';
+}
+
+/** 턴 실패의 구조화·출처 판정·다음 턴 차단(불변식 A·C, 2026-09-05) — CLI·SDK 두 catch가 같은 함수를 지난다.
+    ① classifyRunnerError로 코드를 붙인다(e.failCode/failOrigin — 스레드·이벤트·UI가 읽는다; 원문은 보존).
+    ② 인증 실패로 분류되면 같은 자격으로 **맨 검증을 1회** 쏜다(유건 기준 "Argo 오류 = 벤더에서도 나야 한다"):
+       벤더가 거절(ok:false) → origin 'vendor' + markRunnerAuthFail → 다음 턴은 runnerCredEnv 게이트가 실행 전에
+       끊는다(같은 자격 재발사 금지 — OpenClaw "did not start the run"). 벤더가 통과(ok:true) → origin 'argo'
+       = 자격은 멀쩡한데 우리 배관이 401을 만든 것(예: 호환 러너 SDK 격리 누락 #430) — 차단하지 않는다(fail-open).
+       판정 불가(null)도 차단하지 않는다. 과금 프로브 러너(grok)는 프로브 없이 원문 기준 'probe'로 남긴다.
+    ③ 구독 차단은 인증 실패가 아니다 — 재연결 안내(runnerAuthNotice) 대신 키 전환 안내로 대체하고 authError를
+       붙이지 않아 자가치유(다른 러너 갈아타기)가 발동하지 않게 한다.
+    ④ 원문만 있는 인증 만료(AUTH_ERR_RE 밖 문구)에도 행동 안내를 덧붙인다 — 사용자가 할 일이 보이게. */
+export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null, verifyFn = verifyRunnerCred, markFn = markRunnerAuthFail, loadCredFn = loadRunnerCred } = {}) {
+  // 프로브·각인은 실패당 **1회**(분리 검수 MEDIUM-2): 크래시·잠김·fresh 재시도 프레임이 안쪽 프레임이 이미
+  // 처리한 e를 다시 통과시키면 verify 2회·fails 카운터 2배(검진 백오프 산식 오염)였다. 코드가 붙어 있으면 그대로.
+  if (e?.failCode) return e;
+  const eMsg = String(e?.message || e);
+  const flags = { aborted: !!e?.aborted, endpointNotFound: !!e?.endpointNotFound, credit: !!e?.credit, crash: isProcessCrash(eMsg), lockup: !!e?.toolLockup, auth: !!(e?.authError || e?.authExpired || AUTH_ERR_RE.test(eMsg)) };
+  const cls = classifyRunnerError(eMsg, { flags });
+  let out = e;
+  let origin = cls.origin;
+  if (cls.code === 'subscription_blocked' && !e?.subscriptionBlocked) {
+    out = Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${subscriptionBlockedNotice(lang, RUNNERS[runner]?.name)}`), { subscriptionBlocked: true, cause: e });
+  } else if (cls.code === 'auth_expired') {
+    if (!e?.authError && !e?.authExpired) out = Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${runnerAuthNotice(lang, runner)}`), { authError: true, cause: e });
+    if (!e?.knownInvalid) { // 게이트가 이미 끊은 턴은 재프로브·재각인 불요(이미 vendor 확정)
+      const c = cred ?? await loadCredFn(wsId, runner).catch(() => null);
+      if (c && c.type !== 'host') {
+        if (HEALTH_BILLED_RUNNERS.has(runner)) { origin = 'probe'; }
+        else {
+          const v = await verifyFn(runner, c.type, c.value).catch(() => ({ ok: null }));
+          origin = v?.ok === false ? 'vendor' : v?.ok === true ? 'argo' : 'probe';
+          if (v?.ok === false) await markFn(wsId, runner, c.value).catch(() => {});
+        }
+      }
+    } else origin = 'vendor';
+  }
+  out.failCode = cls.code;
+  out.failOrigin = origin;
+  return out;
+}
 /** 접근권 게이트 모델(gated:true) 실패 시그니처 — 모델이 없어서가 아니라 이 계정에 권한이 없어서 나는
     에러(Gemini 3.x는 Ultra·유료 전용 — 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
 export const GATED_MODEL_ERR_RE = /requested entity was not found|NOT_FOUND|PERMISSION_DENIED/i;
@@ -836,7 +900,7 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
  *   재시도 재귀 호출에도 그대로 넘긴다 — 빠지면 재시도 턴만 개인 고정으로 돌아가 발언자마다 폴더가 갈린다.
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
-export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, workFolder = '', journal = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false } = {}) {
+export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
   // journal = 팀 메신저 채널 턴의 일지 정책 {off, tag} — off면 saveHandover 생략(402 creditTurn과 같은 갈래), tag면 별도 파일.
   // 세 saveHandover 지점이 모두 이 한 함수를 거친다(한 지점만 빠지면 crew_memory=false 채널의 내용이 기억에 새는 무언 결함).
   const journalWrite = (reply, label) => journal?.off ? null : saveHandover(wsId, agentSlug, userMsg, reply, label, { tag: journal?.tag ?? '' });
@@ -848,7 +912,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   // 월 예산 상한 — 초과하면 턴 자체를 시작하지 않는다(오픈클로 "자는 동안 $20" 방지).
   // 설정 화면의 입력은 제거됐다(유건 지시 2026-08-19) — 안내에서 "설정에서 한도를 올리라"는
   // 문구를 뺐다. 사라진 화면을 가리키면 막다른 길이 된다. 값은 회사 파일·API로만 바뀐다.
-  const { budgetUsd, lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+  const { budgetUsd, lang = 'ko', computerUse = false } = await loadCompany(wsId).catch(() => ({}));
+  // 컴퓨터 유즈는 회사 명시 옵트인(computerUse:true)만 — 기본 꺼짐(분리 검수 CRITICAL-2: 화면 채널은 권한 게이트 하드라인을 우회한다)
+  const computerOn = computerUse === true;
   if (budgetUsd > 0) {
     const spent = (await monthCost(wsId)).costUsd; // 청구 턴만 — 구독(OAuth) 턴은 돈이 안 나가 예산을 갉지 않는다
     if (spent >= budgetUsd) {
@@ -892,7 +958,11 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     // 자격은 있는데 벤더 CLI가 없는 러너(codex/gemini)는 원인을 정확히 알려준다 — "연결했는데 왜 안 돼"의 답.
     const noCli = (resolved.credButNoCli ?? []).map((id) => RUNNERS[id]?.name || id);
     // 연결된 것이 숨김 러너(gemini)뿐이면 "하나도 연결돼 있지 않다"는 거짓 — 제공 종료를 사실대로 말한다(재검수 MEDIUM-5)
-    if (!noCli.length && onlyHiddenConnectedStatus(await runnerStatus(wsId).catch(() => null))) {
+    const stNow = noCli.length ? null : await runnerStatus(wsId).catch(() => null);
+    // 저장 자격의 방식이 더 이상 제공되지 않는 경우(gemini 구독) — "하나도 연결돼 있지 않다"는 거짓, API 키 재연결을 정확히 안내(3R M-2, 두 번 닫은 사고의 재개봉 방지)
+    const unsupported = stNow ? unsupportedMethodStatus(stNow) : [];
+    if (unsupported.length) throw new Error(unsupportedMethodNotice(lang, unsupported));
+    if (!noCli.length && onlyHiddenConnectedStatus(stNow)) {
       throw new Error(lang === 'en'
         ? `The connected runner is no longer offered. Connect another runner (${visibleRunnerNamesLine('en')}) in Settings → AI connections, then try again.`
         : `연결된 러너는 더 이상 제공되지 않습니다. 설정 → AI 연결에서 다른 러너(${visibleRunnerNamesLine()})를 연결한 뒤 다시 말을 걸어 주세요.`);
@@ -910,9 +980,16 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   const tried = excludeWith(__excludeRunners, runner);
   // 폴백이면 크루에 지정된 model은 원래 러너의 것이라 무효 — 폴백 러너의 기본 모델로 실행한다.
   // 무선호(want=null)로 뽑힌 러너도 카드 model이 그 러너 소속일 때만 적용(다른 러너 모델 오적용 방지).
-  const wantModel = modelOverride || meta.model;
-  const effModel = resolved.fellBack ? ''
-    : (wantModel && RUNNERS[runner]?.models.some((m) => m.id === wantModel) ? wantModel : '');
+  // 원격 카탈로그 오버레이(불변식 D) — alias(폐기 id→현행)를 먼저 적용하고, 유효 목록은 코드+오버레이로 판정.
+  // 갱신은 fire-and-forget(TTL 20분) — 턴을 원격 fetch에 묶지 않는다(첫 호출도 디스크 캐시로 즉시 채워진다).
+  loadRemoteCatalog().catch(() => null);
+  const wantModel = normalizeModelId(runner, modelOverride || meta.model);
+  const knownHere = !!(wantModel && effectiveModels(runner).some((m) => m.id === wantModel));
+  const effModel = resolved.fellBack ? '' : (knownHere ? wantModel : '');
+  // 모델 강등 고지 — 지정 모델이 이 러너 목록에 없으면 종전엔 **조용히** 기본 모델로 돌았다("모델 바꾸면
+  // 오류/무시"의 뿌리). 실행은 그대로 기본 모델로 살리고(턴을 죽이지 않는다), 사실을 fellBackInfo와 같은
+  // 통로로 표면에 싣는다 — 스레드(thread.mjs)·UI(chat.modelFallback)가 그린다.
+  const modelFallbackInfo = (!resolved.fellBack && wantModel && !knownHere) ? { modelFallback: { wanted: wantModel, runner } } : {};
   // 러너 대체 고지 — 조용한 폴백은 사용자가 "왜 딴 모델 말투/비용?"을 겪게 한다(신뢰 훼손). 크루가
   // 스스로 한 줄 알리게 지시한다(UI 변경 없이 chat·회의실·경쟁·위임·메신저 전 경로에 자연 반영).
   const rn = (id) => RUNNERS[id]?.name ?? id;
@@ -971,7 +1048,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
   };
 
   // 외부 CLI 러너(Codex/Gemini/Antigravity) — 로컬 OAuth 로그인(구독)을 빌려 1턴 실행. 세션은 스레드 맥락으로 잇는다.
-  if (isCliRunner(runner)) {
+  // gemini API 키 자격은 Argo 엔진(네이티브)으로 — 구독·host 자격만 CLI(isCliTurn: 러너 종류 + 자격 축, 2026-09-06)
+  const cliTurn = isCliTurn(runner, await runnerCredType(wsId, runner));
+  if (cliTurn) {
     const t0 = Date.now();
     const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
     const evBase = { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };
@@ -1050,7 +1129,7 @@ ${lang === 'en'
       try {
         reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
       } catch (e) {
-        const gated = !!(effModel && RUNNERS[runner]?.models.find((m) => m.id === effModel)?.gated);
+        const gated = !!(effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated); // 오버레이 반영(MEDIUM-3)
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
@@ -1129,7 +1208,7 @@ ${lang === 'en'
       await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
       // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파.
       // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
-      return { reply, sessionId: null, handover, artifacts: await artDiff(), ...fellBackInfo };
+      return { reply, sessionId: null, handover, artifacts: await artDiff(), ...fellBackInfo, ...modelFallbackInfo };
     } catch (e) {
       let aborted = abortReg.wasAborted();
       // 인증 오탐 자가 치유 — 이 러너의 자격이 실은 죽어 있던 경우, **죽은 러너를 누적 제외**하고 남은
@@ -1146,7 +1225,7 @@ ${lang === 'en'
       if (!aborted && !__crashRetry && isProcessCrash(e?.message || e)) {
         console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, __downgradedFrom, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       // 도구 잠김(L2 자가치유, 2026-08-25) — 실행기 자체 고장(예: codex code-mode host)은 자격도 모델도
@@ -1157,10 +1236,10 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 도구 잠김 감지 — 재조달 후 1회 재시도(${wsId}/${agentSlug})`);
         await reprovisionRunner(runner).catch((re) => console.warn(`[argo] ${runner} 재조달 실패:`, re?.message ?? re));
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, __downgradedFrom, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
-      if (!aborted && (AUTH_ERR_RE.test(String(e.message || e)) || lockupAction(e, { retried: __lockupRetry }) === 'switch')) {
+      if (!aborted && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1)
         const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
         if (alt?.available && !tried.includes(alt.runner)) {
           console.warn(`[argo] ${runner} ${e?.toolLockup ? '도구 잠김(재조달 후에도)' : '인증 실패'} — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
@@ -1171,7 +1250,7 @@ ${lang === 'en'
             // 실패한 러너의 사건을 먼저 남긴다 — 치유 성공 시 조기 return이 실패 기록을 삼켜,
             // P2가 "인증 오류"라 말하는 턴에 연결 카드(P1-1)의 그 러너는 멀쩡해 보였다(검수 관점3 미탐).
             await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {});
-            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners: tried });
+            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { from, source, __downgradedFrom: null, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners: tried });
             return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
@@ -1180,9 +1259,9 @@ ${lang === 'en'
       }
       // 크래시 원문("...exited with code 3221225477")만으론 사용자가 아무것도 할 수 없다 — 무엇이 일어났고 무엇이 아닌지를 앞에 붙인다
       if (!aborted && isProcessCrash(e?.message || e)) e = Object.assign(new Error(`${crashHint(lang)} (${String(e.message || e).slice(0, 120)})`), { cause: e });
-      if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
+      if (!aborted) { e = await surfaceRunnerFailure(e, { wsId, runner, lang }); prefixFallbackError(e); } // 구조화·출처·다음 턴 차단(불변식 A·C) → 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
-      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
+      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}), ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
       await clearTurnStatus(wsId, agentSlug);
       // cc 공유 노트 복원 — 소비(takeSharedNotes)가 러너 실행 전이라, 복원 없이는 실패한 턴이 동료가
       // 공유한 맥락을 영구 소실시킨다. 이 프레임이 직접 소비한 경우만(__seedNotes 재시도 프레임 제외).
@@ -1215,7 +1294,10 @@ ${lang === 'en'
   // 커넥터 요약 — 턴 시작 1회(설계서 §2-2). 연결 0이면 빈 배열이라 도구가 등재되지 않는다.
   // 조회 실패가 턴을 죽이지 않게 낙하: 커넥터가 없는 것처럼 진행한다(기능 없음 > 턴 사망).
   const connectors = await connectorBriefing(wsId).catch(() => []);
-  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, journal);
+  // 하네스 통일(P-A): 플래그 러너(ARGO_NATIVE_RUNNERS)는 Argo 소유 루프(nativeQuery)로 — 크루 도구 정의를 sink로 받아 같은 핸들러를 실행한다.
+  const nativeOn = nativeRunnerEnabled(runner);
+  const crewSink = nativeOn ? [] : null;
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal);
 
   // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
   // 게이트로 보낸다 — 게이트가 금지 구역(앱 코드·타사 데이터·자격, 2026-07-22 크리티컬)을 판정한다.
@@ -1268,8 +1350,10 @@ ${lang === 'en'
       : `\n\n(사장이 첨부한 파일 — Read 도구로 열람하라: ${fileAtt.map((a) => `vault/${a.rel}`).join(', ')})`;
   }
   let promptInput = promptText;
+  let promptBlocks = null; // 네이티브 엔진용 — 이미지 첨부는 Messages content 블록 그대로
   if (imgAtt.length) {
     const blocks = [{ type: 'text', text: promptText }];
+    promptBlocks = blocks;
     for (const a of imgAtt) {
       const buf = await readFile(join(p.vault, a.rel));
       blocks.push({ type: 'image', source: { type: 'base64', media_type: a.mime, data: buf.toString('base64') } });
@@ -1316,24 +1400,33 @@ ${lang === 'en'
   // 사용액 표시가 청구서로 오해되던 신고(2026-07-26)의 교정. 턴당 1회만 읽는다(파일 I/O).
   const billed = await isBilledRunner(wsId, runner);
   await setTurnStatus(wsId, agentSlug, 'boot', '', undefined, turnSource); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
-  const q = query({
+  // 시스템 프롬프트 꼬리·모델 선택은 SDK·네이티브 두 엔진이 **같은 값**을 쓴다(한 곳 정의 — 갈라지면 러너 차등).
+  const sysTail = orgRules // 조직 규칙집(팀 메신저 채널 턴) — SDK·네이티브 두 엔진이 같은 꼬리를 쓴다
+    + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
+    + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder })
+    + messengerNote
+    + fallbackDirective;
+  const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || OPENROUTER_DEFAULT_MODEL) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : runner === 'gemini' ? (effModel || GEMINI_DEFAULT_MODEL) : runner === 'codex' ? (effModel || CODEX_DEFAULT_MODEL) : (effModel || null);
+  const q = nativeOn ? nativeQuery({
+    wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root,
+    systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail + nativeToolsDirective(lang), // 브라우저·컴퓨터 유즈 안내는 네이티브 턴에만(SDK 턴엔 그 도구가 없다)
+    env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {}, computer: computerOn,
+    ...(runner === 'codex' && CODEX_EFFORTS.includes(String(meta.effort ?? '')) ? { effort: meta.effort } : {}), // Responses reasoning.effort(크루 카드 추론 강도)
+    canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : null, lang, workRoots, { computerUse: computerOn }),
+    resume: resumeId, lang,
+  }) : query({
     prompt: promptInput,
     options: {
       cwd: p.root,
       // 지정 작업 폴더 — SDK가 cwd 밖 접근을 스스로 인지·탐색하게(집행은 canUseTool 게이트가 한다)
       ...(workRoots.length ? { additionalDirectories: workRoots } : {}),
-      systemPrompt: systemPromptFor(md, p.root, skills, meta, lang)
-        + orgRules
-        + (colleagues.length ? rosterPrompt(colleagues, lang) : '')
-        + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder })
-        + messengerNote
-        + fallbackDirective,
+      systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail,
       mcpServers: { ...(servers ?? {}), crew: crewServer },
       // CLI stderr 꼬리 보관 — 실패 시 errors[]가 비면 이걸 진단으로 쓴다(아래 결과 처리).
       stderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); },
       // 회사 자격 env(claude=키/OAuth 토큰, glm=z.ai 토큰) 주입 + 크루별 모델(카드 frontmatter). glm 기본 모델 보정.
       ...(sdkEnv ? { env: sdkEnv } : {}),
-      ...(runner === 'glm' ? { model: effModel || GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: effModel || KIMI_DEFAULT_MODEL } : runner === 'openrouter' ? { model: effModel || OPENROUTER_DEFAULT_MODEL } : runner === 'grok' ? { model: effModel || GROK_DEFAULT_MODEL } : (effModel ? { model: effModel } : {})),
+      ...(sdkModel ? { model: sdkModel } : {}),
       // 크루별 추론 강도(요청 2026-07-25) — claude 러너에만. glm/kimi는 SDK 호환 경로로 타 벤더
       // 엔드포인트에 붙어 이 파라미터를 보장하지 않으므로 보내지 않는다(카탈로그 규칙과 같은 원칙:
       // 실행 경로가 받는 것만 보낸다). 화이트리스트는 persona.EFFORT_LEVELS가 저장 시점에 이미 강제.
@@ -1480,10 +1573,20 @@ ${lang === 'en'
       try {
         // 제외 목록은 받은 그대로 넘긴다(tried 아님) — 세션 부재는 러너 잘못이 아니라서 같은 러너로
         // 다시 시도해야 한다. 여기서 현재 러너를 제외하면 세션 문제로 벤더가 갈리는 오작동이 된다.
-        return await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
+        return await chat(wsId, agentSlug, userMsg, null, { from, source, __downgradedFrom, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
       } catch (e2) {
         e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
       }
+    }
+    // 접근권 게이트 모델 강등(네이티브 경로) — CLI 경로의 externalExec catch와 같은 계약: gated 모델(예: Gemini 3.x = Ultra·유료 전용) 실패는
+    // 같은 러너의 기본 모델로 1회 재시도 + 답변 머리 고지(분리 검수 M1: gemini API 키 턴이 네이티브로 옮겨 오며 이 안전망 밖으로 나갔다).
+    // 벤더는 갈아타지 않는다(강등은 모델 축) — __downgradedFrom으로 재귀 1회 제한.
+    if (!aborted && !retriedDown && !__downgradedFrom && nativeOn && effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated && GATED_MODEL_ERR_RE.test(String(e?.message || e))) {
+      const baseModel = effectiveModels(runner).find((m) => !m.gated)?.id ?? '';
+      console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델(${baseModel})로 강등 재시도(${wsId}/${agentSlug})`);
+      try {
+        return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride: baseModel, workFolder, journal, __freshRetry, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry, __downgradedFrom: effModel });
+      } catch (e2) { e = e2; retriedDown = true; if (e2?.aborted) aborted = true; }
     }
     // 인증 오탐 자가 치유 — SDK 러너의 자격이 실은 죽어 있던 경우(스테일 로그인 흔적 등), **죽은 러너를
     // 누적 제외**하고 남은 가용 러너를 차례로 시도한다. 러너가 바뀌면 세션 resume이 무의미하므로 새 세션 +
@@ -1494,16 +1597,16 @@ ${lang === 'en'
     if (!aborted && !retriedDown && !__crashRetry && isProcessCrash(e?.message || e)) {
       console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
       try {
-        return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
+        return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, __downgradedFrom, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
       } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
     }
-    if (!aborted && !retriedDown && AUTH_ERR_RE.test(String(e.message || e))) {
+    if (!aborted && !retriedDown && shouldSelfHeal(e, { lockup: false })) { // SDK 경로는 잠김 교체 없음(종전 계약) — 인증 문구·authExpired 필드만(HIGH-1)
       const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
       if (alt?.available && !tried.includes(alt.runner)) {
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
           await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {}); // 실패 러너 사건 선기록(CLI 갈래와 대칭 — P1-1 미탐 봉합)
-          const healed = await chat(wsId, agentSlug, userMsg, null, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
+          const healed = await chat(wsId, agentSlug, userMsg, null, { from, source, __downgradedFrom: null, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
           return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하
@@ -1518,12 +1621,16 @@ ${lang === 'en'
       const rebranded = scrubSdkBrand(runner, String(e?.message ?? e));
       if (rebranded !== String(e?.message ?? e)) e = Object.assign(new Error(rebranded), { cause: e, aborted: e?.aborted });
     }
+    // 구조화·출처·다음 턴 차단(불변식 A·C) — **이벤트보다 먼저** 돌아야 failCode/failOrigin이 사건에 실린다.
+    // 아래 surfaced 체인은 이 e를 감싸 새 Error를 만들므로 코드는 throw 직전에 옮겨 싣는다(재프로브 금지 — 1회).
+    if (!aborted) e = await surfaceRunnerFailure(e, { wsId, runner, lang });
     if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
     // 실패도 회사의 사건이다 — 활동 화면의 "오류" 필터가 이 기록을 먹는다
     await appendEvent(wsId, {
       ...evBase, ok: false, ms: Date.now() - t0, steps,
       error: aborted ? '사장 지시로 중단' : String(e.message || e).slice(0, 400), // 진단 상세(errors[]/stderr 꼬리)까지 실리도록 400
       ...(aborted ? { aborted: true } : {}), // 중단 판정은 필드로(사유 문자열 동등 비교는 다국어화에 fail-open — 검수 관점3, thread aborted 필드 선례)
+      ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}), // 실패 코드 표·출처(vendor/argo/probe)
     });
     await clearTurnStatus(wsId, agentSlug);
     // cc 공유 노트 복원 — CLI 경로와 동일: 이 프레임이 직접 소비한 노트만 최종 실패 시 pending으로 되살린다
@@ -1537,13 +1644,24 @@ ${lang === 'en'
     // 벤더 원문 인증 실패(AUTH_ERR_RE — 자가치유가 실패/불가로 여기까지 낙하한 경우)는 원문을
     // 보존한 채 행동 안내를 **덧붙인다**(정직 오류 원칙 — 벤더 상세를 지우지 않는다).
     const eMsg = String(e?.message || e);
-    const surfaced = (runner === 'grok' && isGrokCreditError(eMsg))
+    // 엔드포인트 404 — CLI가 "선택한 모델 문제"로 번역해 내보내 사용자가 모델만 바꾸며 헤맨다
+    // (실사용 제보 2026-09-05). 원문은 보존하고 확인 순서를 덧붙인다. 인증류보다 앞에 둔다 —
+    // 이 문구엔 인증 단어가 없어 AUTH_ERR_RE에 안 걸리지만, 순서를 명시해 나중 규칙 추가로
+    // 조용히 가려지지 않게 한다.
+    // !e?.endpointNotFound — 재시도 프레임(fresh-retry·crash-retry·인증 자가치유)이 안쪽 프레임의
+    // 안내를 다시 감싸면 원문이 slice(0,300)에 문장 중간에서 잘리고 안내가 두 번 붙는다(검수 MEDIUM-1
+    // 라이브 재현). 아래 인증 갈래의 !e?.authError와 같은 계약.
+    const surfaced = (isEndpointNotFoundMsg(eMsg) && !e?.endpointNotFound)
+      ? Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${endpointNotFoundNotice(lang, runner)}`), { endpointNotFound: true, cause: e })
+      : (runner === 'grok' && isGrokCreditError(eMsg))
       ? Object.assign(new Error(grokCreditNotice(lang)), { credit: true, cause: e })
       : e?.authExpired
         ? Object.assign(new Error(runnerAuthNotice(lang, e.authExpired)), { authError: true, cause: e })
         : (AUTH_ERR_RE.test(eMsg) && !e?.credit && !e?.authError)
           ? Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${runnerAuthNotice(lang, runner)}`), { authError: true, cause: e })
           : e;
+    // failCode/failOrigin은 위(이벤트 전)에서 e에 붙었다 — surfaced가 e를 감싼 새 객체면 옮겨 싣는다(재분류·재프로브 없음)
+    if (surfaced !== e && e?.failCode) Object.assign(surfaced, { failCode: e.failCode, failOrigin: e.failOrigin });
     throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : surfaced;
   } finally {
     abortReg?.release();
@@ -1552,13 +1670,19 @@ ${lang === 'en'
 
   // 402(크레딧 소진) 턴은 일지에 남기지 않는다 — 남기면 consolidate가 오류 원문을 기억 노트로
   // 정제할 수 있다(2R N3, oneshot HIGH-1과 동일 논리). 화면 답변·이벤트·사용량 집계는 그대로.
+  // 강등 고지(네이티브 경로) — CLI 경로(usedModel !== effModel)와 같은 문구·같은 이벤트 필드(downgradedFrom)
+  if (__downgradedFrom && reply) {
+    reply = (lang === 'en'
+      ? `(This account doesn't have access to ${__downgradedFrom} — an Ultra/paid-only model — so I answered with the runner's default model.)`
+      : `(이 계정에는 ${__downgradedFrom} 접근 권한이 없어 — Ultra·유료 전용 모델 — 러너 기본 모델로 대신 답했습니다.)`) + `\n\n${reply}`;
+  }
   const handover = creditTurn ? null : await journalWrite(reply, meta.name || agentSlug);
   await appendEvent(wsId, {
-    ...evBase, ok: true, ms: Date.now() - t0, steps,
+    ...evBase, ok: true, ms: Date.now() - t0, steps, ...(__downgradedFrom ? { downgradedFrom: __downgradedFrom } : {}),
     ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
   });
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
   // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
   for (const r of await artDiff()) artifacts.add(r);
-  return { reply, sessionId: sid, handover, costUsd, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
+  return { reply, sessionId: sid, handover, costUsd, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }

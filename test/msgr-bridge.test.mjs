@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-msgr-'));
+process.env.ARGO_ENC_VAULT = '0'; // 회사 데이터 봉투(v2, 기본 켜짐)는 이 파일의 관심 밖 — 키 없는 임시 루트에서 일반 노트가 '불가시'로 제외되어 미러 제외 판정(G-2)을 가린다
 const M = await import('../src/gateway/msgr.mjs');
 const { paths } = await import('../src/workspace.mjs');
 const { addApproval, loadApprovals, resolveApproval } = await import('../src/approvals.mjs');
@@ -257,7 +258,7 @@ test('journal 전파 핀: chat() 재귀 재시도 6곳·위임 1곳·makeCrewSer
   const calls = src.split('\n').filter((l) => /await chat\(wsId, (agentSlug|target\.slug),/.test(l));
   assert.ok(calls.length >= 7, `재귀·위임 호출 ${calls.length}곳(기대 7+)`);
   for (const l of calls) assert.match(l, /\bjournal\b/, `journal 미전달: ${l.trim().slice(0, 90)}`);
-  assert.match(src, /makeCrewServer\(wsId, agentSlug, [^\n]*workFolder, journal\)/, 'makeCrewServer 호출부');
+  assert.match(src, /makeCrewServer\(wsId, agentSlug, [^\n]*workFolder, crewSink, journal\)/, 'makeCrewServer 호출부(crewSink = 네이티브 엔진 도구 sink, 하네스 통일 P-A)');
   assert.match(src, /addApproval\(wsId, \{ slug: fromSlug,[^\n]*action, reason,\n\s*\.\.\.\(mirrorCtx\?\.kind === 'msgr' \? \{ msgr: \{ orgId: mirrorCtx\.orgId, channelId: mirrorCtx\.channelId, crewId: mirrorCtx\.crewId/, 'request_approval 각인');
   assert.equal((src.match(/\.\.\.\(mirrorCtx\?\.kind === 'msgr' \? \{ msgr: \{/g) ?? []).length, 3, '결재 등록 3곳(request_approval·profile·hire) 전부 각인');
   const { isOrgTagged } = await import('../src/consolidate.mjs');
@@ -407,7 +408,8 @@ test('G-3 규칙 주입 핀: chat()은 mirrorCtx.orgSlug로 규칙을 읽어 SDK
   const chatSrc = readFileSync(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(chatSrc, /const orgRules = mirrorCtx\?\.orgSlug \? await loadOrgRules\(wsId, mirrorCtx\.orgSlug, \{ channelName: mirrorCtx\.channelName \?\? ''/, '규칙 로드');
   assert.match(chatSrc, /\$\{systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: false, connectors: cliConnectors \}\)\}\$\{orgRules\}/, 'CLI 프롬프트 주입');
-  assert.match(chatSrc, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\)\n\s*\+ orgRules\n/, 'SDK 프롬프트 주입');
+  assert.match(chatSrc, /const sysTail = orgRules[^\n]*\n\s*\+ \(colleagues\.length \? rosterPrompt/, 'SDK·네이티브 공용 프롬프트 꼬리(sysTail) 머리에 규칙집 — 두 엔진이 같은 값');
+  assert.match(chatSrc, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/, 'SDK 프롬프트가 꼬리를 붙인다');
   assert.match(chatSrc, /const rulesCtx = mirrorCtx\?\.orgSlug \? \{ kind: 'msgr-rules', orgSlug: mirrorCtx\.orgSlug, channelName: mirrorCtx\.channelName \?\? '' \} : null;[^\n]*\n\s*const r = await chat\(wsId, target\.slug, delegated, null, \{[^}]*\bmirrorCtx: rulesCtx \}\);/, '위임 턴 규칙 이어짐(미러·결재 각인은 kind msgr만)');
   const bridge = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
   assert.match(bridge, /orgSlug: orgRow\?\.slug \?\? null, channelName: ch\?\.name \?\? '' \};/, '브리지 ctx 키');

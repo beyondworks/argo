@@ -2,9 +2,11 @@
 // 실사용 신고(2026-07-19): 크루 영입이 Claude SDK 하드코딩이라 Codex만 연결한 사용자는 영입 자체가
 // 불가였고, 에러 문구조차 "Claude 키를 연결하라"였다. 어떤 러너든 연결만 되면 이 경로도 돌아야 한다.
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { nativeOneShot, nativeRunnerEnabled } from './engine/native-query.mjs'; // 하네스 통일 P-A' — 플래그 러너의 원샷도 Argo 엔진으로(같은 러너 두 경로 갈림 제거)
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
-import { scrubSdkBrand, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor , visibleRunnerNamesLine} from './runners.mjs';
+import { effectiveModels } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
+import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor, visibleRunnerNamesLine, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -29,6 +31,9 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // (실사고 2026-07-20: Gemini OAuth만 연결한 Windows 사용자가 "하나도 연결돼 있지 않습니다"를 받아
     //  설정의 '연결됨' 배지와 정면 모순 — 어느 쪽도 거짓말은 아니었지만 사용자에겐 둘 다 거짓이 된다)
     const noCli = (resolved.credButNoCli ?? []).map((id) => RUNNERS[id]?.name || id);
+    // 저장 자격의 방식이 더 이상 제공되지 않는 경우(gemini 구독) — chat.mjs 게이트와 같은 안내(3R M-2)
+    const unsupported = noCli.length ? [] : unsupportedMethodStatus(await runnerStatus(wsId).catch(() => null));
+    if (unsupported.length) throw new Error(unsupportedMethodNotice(lang, unsupported));
     throw new Error(noCli.length
       ? (lang === 'en'
           ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — install it, or connect Claude (no install needed) in Settings → AI connections.`
@@ -41,7 +46,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   let hangGuard = null;            // SDK 경로 hang 상한 타이머 — 아래 finally에서 항상 해제
   const ac = new AbortController(); // catch에서도 봐야 한다(중단 원인을 정직한 문구로 바꾸기 위해)
   try {
-    if (isCliRunner(runner)) {
+    if (isCliTurn(runner, await runnerCredType(wsId, runner))) { // gemini API 키는 네이티브(아래 nativeOneShot)
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격 우선, 없으면 호스트 로그인
       // caps 명시 전달(분리 검수 2026-08-21 MED-2) — 안 넘기면 러너마다 기본값 방향이 갈려
       // (gemini fail-closed 셸 제외 vs codex 전권) 같은 유틸 턴의 권한이 러너 따라 3갈래가 된다.
@@ -60,7 +65,28 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // (검수 2026-07-27 M-1). 외부 CLI 경로는 이미 timeoutMs로 상한이 있어 두 경로를 맞추는 것이기도 하다.
     // 지연 SLO가 아니라 순수 hang 가드라 넉넉히 잡는다 — 정상 작업을 잘라내면 안 된다.
     hangGuard = setTimeout(() => ac.abort(), timeoutMs);
-    for await (const msg of query({
+    // 모델 선택은 두 엔진이 같은 값을 쓴다(한 곳 정의). openrouter는 카탈로그 검증 — 호출자가 넘긴 타 러너용 모델(예: consolidate의 claude-haiku
+    // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
+    const osModel = runner === 'glm' ? GLM_DEFAULT_MODEL : runner === 'kimi' ? KIMI_DEFAULT_MODEL
+      : runner === 'openrouter' ? (effectiveModels('openrouter').some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL)
+      : runner === 'grok' ? (effectiveModels('grok').some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL)
+      : runner === 'gemini' ? (effectiveModels('gemini').some((m) => m.id === model) ? model : GEMINI_DEFAULT_MODEL)
+      : runner === 'codex' ? (effectiveModels('codex').some((m) => m.id === model) ? model : CODEX_DEFAULT_MODEL)
+      : (model || null);
+    if (nativeRunnerEnabled(runner)) {
+      // 네이티브 엔진(P-A') — 도구 없는 단발 호출. 오류는 `API Error: <status> …`로 던져 아래 catch(자가치유·안내)가 그대로 받는다.
+      let r;
+      try { r = await nativeOneShot({ env: sdkEnv, model: osModel, prompt, signal: ac.signal, lang }); }
+      catch (e) {
+        // SDK 경로는 삼킨 오류 텍스트를 아래에서 openrouter-credit/limit 접두로 승격하지만 네이티브는 바로 throw라 승격 지점을 지나지
+        // 않았다(분리 검수 HIGH-2: 429가 말없이 타 벤더 자가치유로 갈아탐 — 2R 검수 M1 위반). 같은 접두로 승격해 같은 catch 갈래를 태운다.
+        const t = `${String(e?.message ?? e)} ${String(e?.body ?? '')}`;
+        if (runner === 'openrouter' && isOpenRouterCreditError(t)) throw Object.assign(new Error(`openrouter-credit: ${t.slice(0, 140)}`), { cause: e });
+        if (runner === 'openrouter' && isOpenRouterLimitError(t)) throw Object.assign(new Error(`openrouter-limit: ${t.slice(0, 140)}`), { cause: e });
+        throw e;
+      }
+      text = r.text; usage = r.usage; costUsd = null;
+    } else for await (const msg of query({
       prompt,
       options: {
         abortController: ac,
@@ -72,10 +98,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         // openrouter는 카탈로그 검증 — 호출자가 넘긴 타 러너용 모델(예: consolidate의 claude-haiku
         // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1: openrouter-only
         // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
-        ...(runner === 'glm' ? { model: GLM_DEFAULT_MODEL } : runner === 'kimi' ? { model: KIMI_DEFAULT_MODEL }
-          : runner === 'openrouter' ? { model: RUNNERS.openrouter.models.some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL }
-          : runner === 'grok' ? { model: RUNNERS.grok.models.some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL }
-          : (model ? { model } : {})),
+        ...(osModel ? { model: osModel } : {}),
       },
     })) {
       if (msg.type === 'result') {
@@ -168,6 +191,12 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       throw Object.assign(new Error(lang === 'en'
         ? `The AI program crashed on this computer (it was terminated by the OS, not by Argo). This is not a connection or credit problem — Argo already retried and tried other connected runners. If it keeps happening, reinstalling the runner CLI usually fixes it; security software blocking the process is the other common cause. (${String(e.message).slice(0, 120)})`
         : `AI 프로그램이 이 컴퓨터에서 비정상 종료됐습니다(Argo가 아니라 운영체제가 프로세스를 강제 종료했습니다). 연결이나 크레딧 문제가 아닙니다 — Argo가 이미 다시 시도했고, 연결된 다른 러너로도 넘겨봤습니다. 계속 반복되면 러너 CLI 재설치로 해결되는 경우가 많고, 보안 프로그램이 프로세스를 막는 것도 흔한 원인입니다. (${String(e.message).slice(0, 120)})` + otherCauses()), { cause: e });
+    }
+    // 엔드포인트 404 — chat과 같은 안내를 여기에도(검수 MEDIUM-3: 402·429·크래시는 양쪽에 있는데 404만
+    // 한쪽이었다). oneshot은 온보딩·크루 영입·루틴·기억정리 경로라, base URL이 어긋난 셀프호스트가
+    // **가장 먼저 만나는 화면**이 여기다. 원문(러너별 대장)은 그대로 두고 안내만 덧붙인다.
+    if (isEndpointNotFoundMsg(e?.message)) {
+      throw Object.assign(new Error(`${formatOneShotFailure(__failures, runner, e, lang)}\n\n${endpointNotFoundNotice(lang, runner)}`), { endpointNotFound: true, cause: e });
     }
     throw Object.assign(new Error(formatOneShotFailure(__failures, runner, e, lang)), { cause: e });
   } finally {

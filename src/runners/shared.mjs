@@ -79,6 +79,12 @@ const PROVIDER_AUTH_OWNERS = {
   OPENAI_API_KEY: ['codex'],
   GEMINI_API_KEY: ['gemini'],
   GOOGLE_API_KEY: ['gemini'],
+  GEMINI_BASE_URL: ['gemini'],
+  // 네이티브 와이어 선택·자격(runnerCredEnv가 cred.env로 명시 세팅) — 호스트 셸에서 상속되면 다른 러너의 와이어를 탈취한다(분리 검수 L1·LOW-2)
+  ARGO_WIRE: ['gemini', 'codex'],
+  RESPONSES_BASE_URL: ['codex'],
+  RESPONSES_TOKEN: ['codex'],
+  RESPONSES_HEADERS: ['codex'],
   GLM_API_KEY: ['glm'],
   KIMI_API_KEY: ['kimi'],
 };
@@ -135,7 +141,8 @@ export function crashHint(lang = 'ko') {
 /** 키 형태 마스킹(방어심층) — 에러·로그에 실릴 문자열에서 벤더 키 패턴을 가린다.
     chat.mjs SDK 실패 경로와 아래 apiError(외부 CLI 실패 경로)가 공유 — 한쪽만 마스킹하면
     CLI stderr의 키 조각이 동기화되는 이벤트 로그(events.jsonl)에 영속된다(감사 2026-07-20). */
-export const maskKeyLike = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,})\b/g, 'sk-***');
+// 벤더별 키 형태를 각각 문다(패턴 하나로 '시크릿 없음' 선언 금지): sk-·sk-ant-(OpenAI·Anthropic·OpenRouter·Kimi)·AIza(Google)·xai-(Grok BYOK)·JWT 3분절(Grok BYOA 액세스 토큰)·<32hex>.<secret>(GLM). #445 2R N-MEDIUM-3
+export const maskKeyLike = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,}|xai-[\w-]{16,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}|[0-9a-f]{32}\.[\w-]{16,})\b/g, 'sk-***');
 
 /** 격리 홈 자격 파일 시드 — "어느 원본으로 시드했나"를 마커(.argo-seed-<name>)에 해시로 남겨,
     원본이 바뀌면(타 기기 재연결이 동기화로 도착, 호스트 재로그인 등) 파일을 재시드한다.
@@ -170,5 +177,13 @@ export function homeEnv(home, platform = process.platform) {
   const m = /^([A-Za-z]:)(.*)$/.exec(home);
   return { HOME: home, USERPROFILE: home, ...(m ? { HOMEDRIVE: m[1], HOMEPATH: m[2] } : {}) };
 }
+
+/** 자격 값의 지문(순수) — 검진 엔트리와 턴 전 게이트가 "그때 실패한 그 자격인가"를 대조하는 열쇠.
+    값 자체는 어디에도 남기지 않는다(sha256 16자 — 역산 불가, 충돌은 이 용도에 무해). */
+export function credHash(value) {
+  return createHash('sha256').update(String(value ?? '')).digest('hex').slice(0, 16);
+}
+/** 러너 검진 상태 파일명 — runner-health.mjs(쓰기)와 creds.mjs(턴 전 읽기)가 같은 이름을 본다(순환 임포트 회피). */
+export const HEALTH_FILE_NAME = '.runner-health.json';
 
 export { execP, exists, exec, seedAuthFile }; // 러너 모듈 내부 공용(facade 미노출)

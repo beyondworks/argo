@@ -32,7 +32,16 @@ const READ_FILE_TOOLS = new Set(['Read', 'Glob', 'Grep']);
 export function readToolTargets(toolName, input = {}) {
   const s = (v) => (typeof v === 'string' && v.length > 0 ? [v] : []);
   if (toolName === 'Glob') return [...s(input.path), ...s(input.pattern)];
-  if (toolName === 'Grep') return s(input.path); // pattern은 정규식 — 경로 아님
+  if (toolName === 'Grep') {
+    // glob은 루트 상대 필터가 계약(rg)이지만, 절대경로·`~`·`..`가 오면 곧 경로다 — 네이티브 엔진 실측(분리 검수 CRITICAL-1):
+    // `path:'vault', glob:'../.secrets.json'`이 게이트를 통과해 금고를 읽었다. 경로형 glob은 path 기준으로 이어 붙여 판정한다.
+    // ⚠ 한계(재검수 LOW): 와일드카드가 낀 합성 경로(`../*.json`·`~/*`·`/etc/*`)는 isForbidden이 리터럴 파일명으로 봐 통과할 수 있다 —
+    // 이 층은 3중 방어의 바깥이고, 실제 차단은 실행기(경로형 glob 거절)·워커(필터 전용·실경로 봉쇄·심링크 미추종)가 한다.
+    const g = typeof input.glob === 'string' ? input.glob : '';
+    const absLike = /^(~|\/|[A-Za-z]:[\\/]|\\\\)/.test(g);
+    const pathy = absLike || /(^|[\\/])\.\.([\\/]|$)/.test(g);
+    return [...s(input.path), ...(pathy ? [absLike ? g : `${input.path || '.'}/${g}`] : [])]; // pattern은 정규식 — 경로 아님
+  }
   return s(input.file_path); // Read
 }
 /* Glob 패턴의 열거 베이스 — SDK Glob은 **절대 패턴이면 path 인자를 무시하고** 패턴을
@@ -240,6 +249,7 @@ const WS_DOT_FILES = new Set([
   // 회사 루트 직속(<ws>/.x)
   '.secrets.json', '.connector-secrets.json', // 자격(#213)
   '.workroots.json', '.scaffold.json', '.sync-state.json', '.index.sqlite', '.import.status.json',
+  '.failure-digest.json', // 실패 서명 다이제스트 상태(보고 시각) — 크루가 고치면 반복 실패 경보를 영구 침묵시킬 수 있다(#446 검수 D1)
   '.runner-health.json', // 주기 검진 상태(P1-2 후속) — 크루가 고치면 죽은 자격이 초록으로 위장되거나 과금 스로틀이 풀린다
   '.gw-queue-', '.gw-offset', // 게이트웨이 큐·오프셋(접두 — 채널 접미를 함께 덮는다)
   // 게이트웨이 상태·락은 **실제 파일 형태로만** 좁힌다(.gateway-{kind}.json / .gateway.lock).
@@ -259,6 +269,8 @@ const WS_DOT_FILES = new Set([
   '.account-secrets',
   '.device-id', '.guest-mode.json', '.sync-process.lock', '.tombstones',
   '.scheduler.lock', // daemonLease('scheduler') — 미래 ts를 심으면 리더 선출이 영구 실패한다
+  '.sessions', // 네이티브 엔진 전사(<ws>/.sessions/native/<slug>.json — 도구 출력·대화 원문). 크루가 자기 전사를 고치면 문맥 위조·타 크루 전사 열람(하네스 통일 P-A)
+  '.tg-claims-state.json', '.tg-claims', // 텔레그램 토큰 클레임 상태(sync.mjs) — 크루가 mine을 심으면 두 기기가 같은 봇을 동시 폴링(getUpdates Conflict)
 ]);
 const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];
 // 경계 클래스에 리다이렉트·쉼표(<>,) 포함 — `>chats/b.json`(공백 없는 리다이렉트)이 위조 명령의 가장
@@ -412,7 +424,15 @@ const FORBIDDEN_MSG = {
     lang = 거절 메시지 언어. workRoots = 사장이 지정한 외부 작업 폴더 — **이 게이트 판정에는 현재
     미사용**(전권이라 안/밖 경계가 없고, 재귀 판정은 "워크스페이스를 품는가" 하나로 족하다). 소비처는
     codex writable_roots·시스템 프롬프트 주입이며, 파라미터는 호출 계약 유지용(재검수 LOW 정직화). */
-export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko', workRoots = []) {
+/** 객체의 모든 문자열 잎(중첩·배열 포함, 깊이 6) — 게이트 리터럴 방어 입력. */
+export const stringLeaves = (v, depth = 0, out = []) => {
+  if (depth > 6 || v == null) return out;
+  if (typeof v === 'string') out.push(v);
+  else if (Array.isArray(v)) for (const x of v) stringLeaves(x, depth + 1, out);
+  else if (typeof v === 'object') for (const x of Object.values(v)) stringLeaves(x, depth + 1, out);
+  return out;
+};
+export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko', workRoots = [], opts = {}) {
   const isForbidden = makeIsForbidden(wsRoot);
   const denyHard = () => ({ behavior: 'deny', message: FORBIDDEN_MSG[lang === 'en' ? 'en' : 'ko'] });
   // Bash 보완 방어 — 명령 문자열에 금지 구역 경로가 리터럴로 들어간 순진한 시도를 차단한다.
@@ -499,6 +519,20 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
     if (toolName.startsWith('mcp__')) {
       if (toolName.startsWith('mcp__crew__') || toolName === 'mcp__crew') return allow;
       return (await argPathsForbidden(input)) ? denyHard() : allow;
+    }
+    // 컴퓨터 유즈(computer_*) — 화면·키보드 채널이라 경로 인자가 없고, 하드라인(앱 본체·~/.argo·벤더 자격)을 통째로 우회할 수 있다
+    // (분리 검수 CRITICAL-2 실측: computer_type 'cat ~/.argo/.secrets.json'이 allow). 회사가 명시 옵트인(company.json computerUse)
+    // 하지 않으면 deny — 도구 자체도 안 실리지만(chat.mjs) 게이트가 이중으로 막는다. 옵트인이어도 입력 텍스트(type·key)에 하드존
+    // 리터럴이 있으면 deny(Bash 리터럴 방어와 같은 목록·같은 폴딩). 셸과 같은 한계(간접 우회 가능)라 1차 방어 + 옵트인 계약이다.
+    if (toolName.startsWith('computer_')) {
+      if (opts.computerUse !== true) return { behavior: 'deny', message: lang === 'en'
+        ? 'Computer use is off for this company — turn it on in company settings (computerUse) to allow screen control.'
+        : '이 회사는 컴퓨터 유즈가 꺼져 있습니다 — 회사 설정(computerUse)에서 켜야 화면 조작이 허용됩니다.' };
+      // 입력의 모든 문자열 잎(중첩 포함)을 훑는다 — 고정 키 목록은 다른 이름(texts·input·label)으로 우회됐다(4R). 분할 입력·조합키 한 글자씩은 못 막는다 —
+      // 실효 통제는 옵트인이고 이 줄은 순진한 시도의 1차 방어다(셸 리터럴 방어와 같은 정직 표기).
+      const typed = stringLeaves(input).join(' ');
+      if (typed.trim() && (bashHardLiterals.some((r) => fold(typed).includes(fold(r))) || BASH_GUARDED.some((n) => fold(typed).includes(fold(n))) || BASH_DIR_RE.test(typed))) return denyHard();
+      return allow;
     }
 
     if (READ_FILE_TOOLS.has(toolName)) {

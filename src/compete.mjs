@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { paths, loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
 import { RUNNERS } from './runners.mjs';
+import { effectiveModels } from './runners/catalog-remote.mjs'; // 오버레이 반영 — /api/runners·크루 카드와 같은 목록(분리 검수 MEDIUM-3)
 import { chat } from './chat.mjs';
 import { monthCost } from './billing.mjs'; // 금액 집계는 billing 게이트로만(현재 자격 기준 단일 판정)
 import { appendTurn } from './thread.mjs';
@@ -64,7 +65,7 @@ export async function startCompetition(wsId, prompt, spec) {
   // 모델 스펙 검증 — runner/model이 오면 카탈로그 소속이어야 한다(오탈자·죽은 id 조기 거절)
   for (const it of items) {
     if (it.runner && !RUNNERS[it.runner]) throw new Error(`알 수 없는 러너: ${it.runner}`);
-    if (it.model && it.runner && !RUNNERS[it.runner].models.some((m) => m.id === it.model)) {
+    if (it.model && it.runner && !effectiveModels(it.runner).some((m) => m.id === it.model)) {
       throw new Error(`${RUNNERS[it.runner].name} 러너에 없는 모델: ${it.model}`);
     }
   }
@@ -85,7 +86,7 @@ export async function startCompetition(wsId, prompt, spec) {
   const entrants = uniqItems.map((it, i) => {
     const a = agents.find((x) => x.slug === it.slug);
     if (!a) throw new Error(`크루를 찾을 수 없습니다: ${it.slug}`);
-    const modelLabel = it.model ? (RUNNERS[it.runner]?.models.find((m) => m.id === it.model)?.label ?? it.model) : null;
+    const modelLabel = it.model ? (effectiveModels(it.runner).find((m) => m.id === it.model)?.label ?? it.model) : null;
     return { key: `e${i}`, slug: a.slug, name: a.name, role: a.role ?? '', runner: it.runner, model: it.model, modelLabel,
       status: 'running', reply: null, error: null, ms: null, sessionId: null };
   });

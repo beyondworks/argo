@@ -6,6 +6,7 @@ import { statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { exec, exists } from './shared.mjs';
+import { withDirLock } from '../mutex.mjs';
 
 /** Argo 전용 CODEX_HOME — 사용자 전역 config(커스텀 에이전트·모델 핀)와 격리하고 auth만 빌린다.
     (전역 config의 spawn_agent 커스텀 스키마가 신형 모델의 예약 도구와 충돌하는 사례 확인) */
@@ -276,10 +277,15 @@ export async function importCodexAuth(baseHome, turnHome) {
     만료 시 재로그인 안내가 정상 경로로 나온다. 되돌렸으면 true. */
 export async function recoverCodexAuth(handle) {
   if (handle?.mode !== 'copy') return false;
-  const [a, b] = await Promise.all([stat(handle.dst).catch(() => null), stat(handle.src).catch(() => null)]);
-  if (!a || !b || !(a.mtimeMs > b.mtimeMs)) return false;
-  await copyFile(handle.dst, handle.src);
-  return true;
+  // 크로스 프로세스 잠금(불변식 B) — 복사 폴백(Windows 심링크 EPERM)에서 병렬 턴 둘이 각자 회전한 사본을
+  // 되돌리면 나중 쓰기가 앞 쓰기의 회전 토큰을 지운다("refresh token already used" 실측 2건과 같은 클래스).
+  // mtime 비교와 복사를 같은 락 안에서 한다 — 비교만 밖에서 하면 TOCTOU.
+  return withDirLock(`${handle.src}.lockd`, async () => {
+    const [a, b] = await Promise.all([stat(handle.dst).catch(() => null), stat(handle.src).catch(() => null)]);
+    if (!a || !b || !(a.mtimeMs > b.mtimeMs)) return false;
+    await copyFile(handle.dst, handle.src);
+    return true;
+  });
 }
 
 /** 이 명령이 실제로 실행 가능한가 — codex config.toml에 못 도는 MCP를 실으면 턴 전체가 죽는다.

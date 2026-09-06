@@ -89,7 +89,7 @@ test('P2 사슬: chat 반환 fellBack → 라우트 전달 → 스레드 저장 
   // 자가치유 성공 래핑 — CLI·SDK 두 갈래 모두, 첫 원인 우선(안쪽 표식 유지)
   const heals = chatSrc.match(/fellBack: healed\.fellBack \?\? \{ from: runner, to: alt\.runner, reason: 'auth' \}/g) ?? [];
   assert.equal(heals.length, 2, '자가치유 래핑 2갈래(CLI·SDK)');
-  assert.match(routeSrc, /artifacts: t\.artifacts, fellBack: t\.fellBack \}\)/, '라우트 전달');
+  assert.match(routeSrc, /artifacts: t\.artifacts, fellBack: t\.fellBack, modelFallback: t\.modelFallback \}\)/, '라우트 전달(폴백 + 모델 강등 고지)');
   // M1 — 그 턴 즉시 표시: 라우트 응답·낙관 사본에도 실려야 한다(폴링 병합은 같은 길이면 교체 안 함)
   assert.match(routeSrc, /\.\.\.\(t\.fellBack \? \{ fellBack: t\.fellBack \} : \{\}\)/, '라우트 응답 동봉');
   assert.match(crewSrc, /\.\.\.\(r\.fellBack \? \{ fellBack: r\.fellBack \} : \{\}\)/, '낙관 사본 동봉');

@@ -9,6 +9,8 @@ import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// 실 홈 미접촉 — sdkEnvFor가 호환 러너 경로에서 ~/.argo/claude-config-*를 만든다(검수 LOW-1 스위프)
+process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-billinghome-'));
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-billing-'));
 const { paths } = await import('../src/workspace.mjs');
 const { readUsageSummary, monthCost } = await import('../src/usage.mjs');

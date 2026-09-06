@@ -13,7 +13,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
-import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, pickRunner, oauthFormatError, isHiddenRunner } from './runners/catalog.mjs';
+import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isCliTurn, pickRunner, oauthFormatError, isHiddenRunner } from './runners/catalog.mjs';
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli } from './runners/codex.mjs';
 import { execCodexAppServer } from './runners/codex-appserver.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
@@ -29,12 +29,12 @@ export const agyDirArgs = (caps, workRoots = []) => openRoots(caps, workRoots).f
 // ── 분리 모듈 re-export — 기존 임포터·테스트가 쓰는 이름 전부(62개 표면의 나머지 57개) ──
 export { isServerSecretKey, scrubServerSecrets, maskKeyLike, homeEnv, isProcessCrash, crashHint } from './runners/shared.mjs';
 export {
-  RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus,
+  RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice,
   GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL, GROK_DEFAULT_MODEL,
+  endpointNotFoundNotice, isEndpointNotFoundMsg,
   isOpenRouterCreditError, isOpenRouterCreditReply, isOpenRouterLimitError, isOpenRouterLimitReply,
   isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice,
-  pickRunner, autoRunnerOf, oauthFormatError, excludeWith, authExcludedNoRunnerMsg,
-} from './runners/catalog.mjs';
+  pickRunner, autoRunnerOf, oauthFormatError, excludeWith, authExcludedNoRunnerMsg, isCliTurn, GEMINI_DEFAULT_MODEL, CODEX_DEFAULT_MODEL } from './runners/catalog.mjs';
 export {
   provisionCodexCli, CODEX_EFFORTS, codexEffortArgs, CODEX_PIN, CODEX_LOCKUP_RE,
   importCodexAuth, recoverCodexAuth, writeCodexTurnConfig,
@@ -76,8 +76,7 @@ export { provisionGeminiCli, probeGeminiOAuth, probeGeminiHostOAuth, probeGemini
 export {
   accountScope, loadRunnerCred, saveRunnerCred, clearRunnerCred, seedRunnerCreds,
   maskCred, normalizePastedCred, runnerCredEnv, sdkEnvFor, kimiEnv, glmEnv, verifyRunnerCred,
-  loadClaudeKey, maskClaudeKey, claudeEnvFor,
-} from './runners/creds.mjs';
+  loadClaudeKey, maskClaudeKey, claudeEnvFor, runnerCredType } from './runners/creds.mjs';
 export { startRunnerWebAuth, submitRunnerWebAuth, webAuthDone, startRunnerDeviceAuth, pollRunnerDeviceAuth, deviceAuthSupported } from './runners/webauth.mjs';
 export { isGrokCreditError, grokCreditNotice } from './runners/grok.mjs';
 export {
@@ -323,7 +322,7 @@ export async function runnerStatus(wsId) {
       connectable: !!meta.connect, // Connect 버튼(CLI 브라우저 로그인 대행) 지원 여부 — codex
       webConnect: !!meta.webConnect, // 웹 브리지(로그인 URL 표시 + 코드 입력) — claude
       hostUsable: hostOptInAllowed(id), // "이 컴퓨터 로그인 사용" 옵트인 — claude는 non-standalone에서만(키체인)
-      cli: isCliRunner(id), // 외부 CLI 래핑 — 크루 도구(쪽지·루틴·위임)가 없어(chat.mjs hasTools:false) 카드가 정직 표기한다
+      cli: isCliTurn(id, credType(cred?.type ?? meta.methods?.[0])), // 실행 판정(runnerCredType)과 같은 정규화(검수 L2) // 외부 CLI 래핑 — 크루 도구(쪽지·루틴·위임)가 없어(chat.mjs hasTools:false) 카드가 정직 표기한다. 미연결이면 첫 연결 방식 기준(gemini=apikey → 네이티브 → false)
       // claude 원클릭(setup-token)은 데스크톱 번들 사이드카에서만 완주 — 상주/웹은 붙여넣기가 정식 경로
       setupOneClick: id === 'claude' && process.env.ARGO_STANDALONE === '1',
       keyUrl: meta.keyUrl,
@@ -342,6 +341,14 @@ export async function runnerStatus(wsId) {
         //   동기화로 데스크톱 standalone에 넘어온 경우 — 재서명 node가 키체인에 막혀 "Not logged in")
         //   invalid로 표시해 pickRunner가 스킵하고 setup-token 재연결을 유도한다(검수 HIGH — 소비 측 대칭 게이트).
         ...(cred.type === 'host' && (!(host[id]?.installed && host[id]?.authed) || !hostOptInAllowed(id)) ? { invalid: true } : {}),
+        // host 방식 자체가 이 러너에 더 이상 제공되지 않으면(gemini hostUsable:false — 4R MEDIUM-1) "제공되지 않는 방식"으로 — 환경 제한(hostOptInAllowed: 테넌트·
+        // claude standalone)은 여기 넣지 않는다(멀쩡한 claude host 마커를 "제공 종료"로 오표기).
+        ...(cred.type === 'host' && !meta.hostUsable ? { invalid: true, unsupportedMethod: true } : {}),
+        // 저장 자격의 연결 방식이 더 이상 제공되지 않으면(gemini 구독 oauth — Google이 외부 앱 사용을 막아 2026-09-06부터 API 키 전용) 무효로 표시 —
+        // host 마커와 같은 소비 측 대칭 게이트: 배너·명판·자동 선택(pickRunner)·턴 오류가 한목소리로 "재연결 필요"(2R MEDIUM-1: pickRunner만 제외하면
+        // 온보딩 게이트·명판은 통과하는데 턴은 "러너 없음"이라 했다). 카드는 API 키 입력을 보인다(runner-connect shownMethod).
+        // 뒤집는 집합(전 러너×자격 행렬 3R 실측): gemini oauth(의도) + glm/kimi/openrouter oauth·antigravity apikey(keys PUT 게이트가 막아 새로 저장될 수 없는 레거시만 — 계정→회사 복사가 옮길 수 있어 같은 규칙으로 무효)
+        ...(credType(cred.type) !== 'host' && !meta.methods?.includes(credType(cred.type)) ? { invalid: true, unsupportedMethod: true } : {}),
       } : { connected: false },
     };
   }

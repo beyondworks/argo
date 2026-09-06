@@ -7,15 +7,17 @@ import { useLang } from '../i18n';
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const UPDATED = '2026-07-13';
 
+// 섹션 래퍼 — 모듈 수준(컴포넌트 안에서 정의하면 렌더마다 새 타입 = 하위 재마운트, test/no-nested-components)
+const S = ({ title, children }) => (
+  <section style={{ display: 'grid', gap: 6 }}>
+    <h2 style={{ fontSize: 15, fontWeight: 700, margin: '10px 0 0' }}>{title}</h2>
+    <div style={{ fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.7 }}>{children}</div>
+  </section>
+);
+
 export default function LegalPage() {
   const { lang } = useLang();
   const ko = lang === 'ko';
-  const S = ({ title, children }) => (
-    <section style={{ display: 'grid', gap: 6 }}>
-      <h2 style={{ fontSize: 15, fontWeight: 700, margin: '10px 0 0' }}>{title}</h2>
-      <div style={{ fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.7 }}>{children}</div>
-    </section>
-  );
   return (
     <div style={{ minHeight: 'calc(100vh / var(--z, 1))', display: 'grid', placeItems: 'start center', padding: '40px 24px' }}>
       <div className="card fade-up" style={{ width: 'min(720px, 100%)', padding: '34px 34px', display: 'grid', gap: 4 }}>
