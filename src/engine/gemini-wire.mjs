@@ -52,6 +52,7 @@ export function cleanSchema(s, root = s, depth = 0) {
     if (k === 'items') { out.items = cleanSchema(Array.isArray(v) ? v[0] : v, root, depth + 1); continue; }
     if (k === 'enum') { if (Array.isArray(v) && v.length) { const vals = v.filter((x) => x !== null); if (vals.length !== v.length) nullable = true; if (vals.length) { if (vals.every((x) => typeof x === 'string')) out.enum = vals; else hint = vals; } } continue; }
     if (k === 'required' || k === 'propertyOrdering') { if (Array.isArray(v)) { const arr = v.filter((x) => typeof x === 'string'); if (arr.length) out[k] = arr; } continue; }
+    if (k === 'description' || k === 'format' || k === 'title' || k === 'pattern') { if (typeof v === 'string') out[k] = v; continue; } // 문자열 필드는 문자열만(비문자 값은 벤더 400 — 4R INFO-1)
     out[k] = v;
   }
   if (src.const !== undefined && src.const !== null && !out.enum && !hint) { if (typeof src.const === 'string') out.enum = [src.const]; else hint = [src.const]; }

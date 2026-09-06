@@ -297,8 +297,8 @@ export const isHiddenRunner = (id) => !!RUNNERS[id]?.hidden;
 export const visibleRunnerIds = () => Object.keys(RUNNERS).filter((id) => !isHiddenRunner(id));
 /** 안내문용 가시 러너 이름 줄 — ko "Claude·Codex·…", en "Claude, Codex, …, or Grok". 하드코딩 4곳(chat/oneshot/persona/trial)이
     숨김 러너를 권하던 것의 단일 원천. **반드시 템플릿 리터럴 안에서** 보간할 것(작은따옴표 안이면 원문이 사용자에게 노출 — 재검수 HIGH 실사고). */
-export const visibleRunnerNamesLine = (lang = 'ko') => {
-  const names = visibleRunnerIds().map((id) => RUNNERS[id].name);
+export const visibleRunnerNamesLine = (lang = 'ko', exclude = []) => {
+  const names = visibleRunnerIds().filter((id) => !exclude.includes(id)).map((id) => RUNNERS[id].name);
   if (lang === 'en') return names.length > 1 ? `${names.slice(0, -1).join(', ')}, or ${names.at(-1)}` : (names[0] ?? '');
   return names.join('·');
 };
@@ -313,14 +313,23 @@ export const onlyHiddenConnectedStatus = (st) => {
 export const unsupportedMethodStatus = (st) => {
   const rows = Object.entries(st ?? {}).filter(([, r]) => r?.company?.connected);
   if (rows.some(([id, r]) => !r.company.invalid && !isHiddenRunner(id))) return [];
-  return rows.filter(([, r]) => r.company.unsupportedMethod).map(([id]) => id);
+  return rows.filter(([, r]) => r.company.unsupportedMethod).map(([id, r]) => ({ id, type: r.company.type }));
 };
-/** 그 안내문(서버 언어 인자 — visibleRunnerNamesLine과 같은 규칙, 템플릿 보간 전용). */
-export const unsupportedMethodNotice = (lang, ids) => {
-  const names = ids.map((id) => RUNNERS[id]?.name || id).join(lang === 'en' ? '/' : '·');
-  return lang === 'en'
-    ? `The stored ${names} connection method (subscription login) is no longer offered. Reconnect ${names} with an API key, or connect another runner (${visibleRunnerNamesLine('en')}), in Settings → AI connections, then try again.`
-    : `저장된 ${names} 연결 방식(구독 로그인)은 더 이상 제공되지 않습니다. 설정 → AI 연결에서 ${names}를 API 키로 다시 연결하거나 다른 러너(${visibleRunnerNamesLine()})를 연결한 뒤 다시 말을 걸어 주세요.`;
+const METHOD_NAME = { ko: { apikey: 'API 키', oauth: '구독 로그인', host: '이 컴퓨터 로그인' }, en: { apikey: 'API key', oauth: 'subscription login', host: "this computer's login" } };
+const ro = (s) => { const c = s.charCodeAt(s.length - 1); const jong = c >= 0xac00 && c <= 0xd7a3 ? (c - 0xac00) % 28 : 0; return jong && jong !== 8 ? '으로' : '로'; }; // 받침(ㄹ 제외)이면 '으로'
+/** 그 안내문(서버 언어 인자 — visibleRunnerNamesLine과 같은 규칙, 템플릿 보간 전용). 저장된 방식·지금 제공되는 방식은 러너별로 파생한다(하드코딩 "구독→API 키"는
+    antigravity 레거시 apikey에서 정반대 안내 — 4R LOW-1). "다른 러너" 목록에서 그 러너는 뺀다(4R LOW-3). */
+export const unsupportedMethodNotice = (lang, entries) => {
+  const en = lang === 'en'; const M = METHOD_NAME[en ? 'en' : 'ko'];
+  const offeredOf = (id) => { const a = RUNNER_AUTH[id] ?? { methods: [] }; return [...a.methods, ...(a.hostUsable ? ['host'] : [])].map((m) => M[m] ?? m); };
+  const parts = entries.map(({ id, type }) => ({ name: RUNNERS[id]?.name || id, stored: M[type] ?? String(type), offered: offeredOf(id) }));
+  const others = visibleRunnerNamesLine(en ? 'en' : 'ko', entries.map((e) => e.id));
+  if (en) {
+    return parts.map((p) => `The stored ${p.name} connection method (${p.stored}) is no longer offered${p.offered.length ? ` — reconnect ${p.name} with ${p.offered.join(' or ')}` : ''}.`).join(' ')
+      + ` Or connect another runner (${others}) in Settings → AI connections, then try again.`;
+  }
+  return parts.map((p) => `저장된 ${p.name} 연결 방식(${p.stored})은 더 이상 제공되지 않습니다${p.offered.length ? ` — 설정 → AI 연결에서 ${p.name}를 ${p.offered.join('·')}${ro(p.offered.at(-1))} 다시 연결하세요` : ''}.`).join(' ')
+    + ` 또는 다른 러너(${others})를 연결한 뒤 다시 말을 걸어 주세요.`;
 };
 
 export const RUNNER_AUTH = {

@@ -179,12 +179,27 @@ test('G9. 자동 선택의 자격 축(H1)·제공되지 않는 방식은 무효 
   assert.equal(stO.gemini.company.invalid, true); assert.equal(stO.gemini.company.unsupportedMethod, true);
   assert.equal(anyRunnerUsable(stO), false, '온보딩 게이트·배너: 가용 없음'); assert.deepEqual(usableRunnerNames(stO), [], '명판에 Gemini 없음'); assert.equal(runnerNeedsReconnect(stO), true, '"끊김" 안내 분기'); assert.equal(autoRunnerOf(stO), null);
   // 턴 문구(3R M-2): "하나도 연결돼 있지 않습니다"는 거짓 — chat·oneshot 두 갈래 모두 API 키 재연결 안내
-  const { unsupportedMethodStatus } = await import('../src/runners/catalog.mjs'); assert.deepEqual(unsupportedMethodStatus(stO), ['gemini']); assert.deepEqual(unsupportedMethodStatus({ ...stO, glm: { company: { connected: true, type: 'apikey' } } }), [], '가용 러너가 있으면 해당 없음');
+  const { unsupportedMethodStatus, unsupportedMethodNotice } = await import('../src/runners/catalog.mjs'); assert.deepEqual(unsupportedMethodStatus(stO), [{ id: 'gemini', type: 'oauth' }]); assert.deepEqual(unsupportedMethodStatus({ ...stO, glm: { company: { connected: true, type: 'apikey' } } }), [], '가용 러너가 있으면 해당 없음');
+  const en = unsupportedMethodNotice('en', [{ id: 'gemini', type: 'oauth' }]);
+  assert.match(en, /stored Gemini connection method \(subscription login\) is no longer offered — reconnect Gemini with API key/); assert.ok(!/[가-힣]/.test(en), '영어 갈래에 한국어 없음(4R LOW-3)'); assert.ok(!/another runner \([^)]*Gemini/.test(en), '"다른 러너" 목록에 자기 자신 없음');
+  assert.match(unsupportedMethodNotice('ko', [{ id: 'gemini', type: 'host' }]), /Gemini 연결 방식\(이 컴퓨터 로그인\)은 더 이상 제공되지 않습니다 — 설정 → AI 연결에서 Gemini를 API 키로 다시 연결하세요/);
+  assert.match(unsupportedMethodNotice('ko', [{ id: 'antigravity', type: 'apikey' }]), /Antigravity 연결 방식\(API 키\)은 더 이상 제공되지 않습니다 — 설정 → AI 연결에서 Antigravity를 구독 로그인·이 컴퓨터 로그인으로 다시 연결하세요/, '저장 방식·제공 방식은 러너별 파생(4R LOW-1 — 하드코딩은 antigravity에서 정반대)');
+  assert.ok(!/다른 러너\([^)]*Gemini/.test(unsupportedMethodNotice('ko', [{ id: 'gemini', type: 'oauth' }])));
   const rootO = paths(wsO).root; for (const d of [['agents'], ['chats'], ['vault', 'journal'], ['vault', 'projects'], ['vault', 'files'], ['vault', 'notes']]) await mkdir(join(rootO, ...d), { recursive: true });
   await writeFile(join(rootO, 'agents', 'auto.md'), '---\nname: 자동\n---\n\n전문가.\n'); await writeFile(join(rootO, 'agents', 'gem.md'), '---\nname: 지정\nrunner: gemini\n---\n\n전문가.\n');
   const { chat } = await import('../src/chat.mjs'); const { runOneShot } = await import('../src/oneshot.mjs');
   for (const slug of ['auto', 'gem']) await assert.rejects(chat(wsO, slug, '안녕'), (e) => /Gemini 연결 방식\(구독 로그인\)은 더 이상 제공되지 않습니다/.test(e.message) && /API 키로 다시 연결/.test(e.message) && !/하나도 연결돼/.test(e.message), `chat(${slug})`);
   await assert.rejects(runOneShot(wsO, '직함'), (e) => /더 이상 제공되지 않습니다/.test(e.message) && !/하나도 연결돼/.test(e.message), 'oneshot');
+  // host 축(4R MEDIUM-1): gemini host 마커만 있는 회사도 같은 정직 문구 — hostUsable:false는 "제공되지 않는 방식"(환경 제한 hostOptInAllowed는 invalid만)
+  const wsH = 'gem-host'; await createCompany(wsH, '호스트', '사장'); const rootH = paths(wsH).root;
+  await writeFile(join(rootH, '.secrets.json'), JSON.stringify({ runners: { gemini: { type: 'host', value: 'host-marker' } } }));
+  for (const d of [['agents'], ['chats'], ['vault', 'journal'], ['vault', 'projects'], ['vault', 'files'], ['vault', 'notes']]) await mkdir(join(rootH, ...d), { recursive: true });
+  await writeFile(join(rootH, 'agents', 'auto.md'), '---\nname: 자동\n---\n\n전문가.\n');
+  const stH = await runnerStatus(wsH); assert.equal(stH.gemini.company.invalid, true); assert.equal(stH.gemini.company.unsupportedMethod, true); assert.deepEqual(unsupportedMethodStatus(stH), [{ id: 'gemini', type: 'host' }]);
+  await assert.rejects(chat(wsH, 'auto', '안녕'), (e) => /Gemini 연결 방식\(이 컴퓨터 로그인\)은 더 이상 제공되지 않습니다/.test(e.message) && !/하나도 연결돼/.test(e.message), 'chat(host)');
+  const { invalidChipKey } = await import('../app/runner-usable.mjs');
+  assert.equal(invalidChipKey(stH.gemini.company), 'settings.runners.companyUnsupported'); assert.equal(invalidChipKey({ connected: true, invalid: true }), 'settings.runners.companyInvalid');
+  assert.match(await readFile(join(ROOT, 'app', 'runner-connect.jsx'), 'utf8'), /<span className="dot" \/>\{t\(invalidChipKey\(company\)\)\}/, '카드 칩이 순수 키 선택을 쓴다(4R LOW-2)');
   await saveRunnerCred(wsO, 'gemini', 'apikey', 'fake-gemini-key-ok');
   const stK = await runnerStatus(wsO); assert.equal(stK.gemini.company.invalid, undefined); assert.deepEqual(usableRunnerNames(stK), ['Gemini']); assert.equal(autoRunnerOf(stK), 'gemini');
   assert.equal(pickRunner(st({ claude: 'host', glm: 'apikey' }), null).runner, 'claude', 'host 옵트인 러너는 종전대로 자동 대상(회귀 0)');
@@ -215,6 +230,8 @@ test('G10. 스키마 정리(H2) — MCP형 $ref/$defs·anyOf null·oneOf·const�
   assert.doesNotThrow(() => cleanSchema({ allOf: [null] })); assert.doesNotThrow(() => cleanSchema({ allOf: ['x'] })); assert.doesNotThrow(() => cleanSchema({ allOf: [{ $ref: '#/components/schemas/X' }] }));
   assert.doesNotThrow(() => cleanSchema({ type: 'object', properties: { body: { allOf: [{ $ref: '#/$defs/Box' }], required: true } }, $defs: { Box: { type: 'object', properties: { w: { type: 'integer' } } } } }), 'Swagger 2.0 관례 required:true + allOf(3R M-1)');
   assert.doesNotThrow(() => cleanSchema({ required: { a: 1 }, allOf: [{}] })); assert.deepEqual(cleanSchema({ type: 'object', allOf: [{ required: { x: 1 }, properties: 'nope' }] }), { type: 'object' }, '비객체 properties는 문자 스프레드로 가짜 속성을 만들지 않는다');
+  assert.deepEqual(cleanSchema({ type: 'object', properties: [{ type: 'string' }] }), { type: 'object' }, 'properties 배열은 속성이 아니다(4R INFO-2)');
+  assert.deepEqual(cleanSchema({ type: 'string', description: { x: 1 }, format: 3, title: null, pattern: ['a'] }), { type: 'string' }, '문자열 필드는 문자열만(4R INFO-1)');
   // 임의 입력 무예외 — 시드 고정 퍼즈(모양 3개를 더하는 식으로는 이 계열이 잠기지 않는다 — 3R M-1)
   let seed = 20260906; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
   const pick = (xs) => xs[Math.floor(rnd() * xs.length)];

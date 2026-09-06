@@ -17,7 +17,7 @@ export const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--ca
 // 가용 판정(순수)은 runner-usable.mjs로 분리 — 데크 배너·홈 안내·온보딩 게이트·회귀 테스트가 공유.
 // 기존 소비처(import from './runner-connect') 호환을 위해 재수출한다.
 export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenConnected, PICK_ORDER } from './runner-usable.mjs';
-import { lastTurnByRunner, lastHealthFailByRunner, healthFailMessageKey } from './runner-usable.mjs';
+import { invalidChipKey, lastTurnByRunner, lastHealthFailByRunner, healthFailMessageKey } from './runner-usable.mjs';
 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
@@ -389,7 +389,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
     company.invalid ? (
       // 무효 자격(형식 불량 토큰·로그아웃된 host 마커) — 연결된 척하지 않고 재연결을 요구한다
       <span className="chip" style={{ color: 'var(--danger)', borderColor: 'currentColor' }}>
-        <span className="dot" />{t(company.unsupportedMethod ? 'settings.runners.companyUnsupported' : 'settings.runners.companyInvalid')}{company.masked && <> · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span></>}
+        <span className="dot" />{t(invalidChipKey(company))}{company.masked && <> · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span></>}
       </span>
     ) : (
       <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>

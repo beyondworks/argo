@@ -341,6 +341,9 @@ export async function runnerStatus(wsId) {
         //   동기화로 데스크톱 standalone에 넘어온 경우 — 재서명 node가 키체인에 막혀 "Not logged in")
         //   invalid로 표시해 pickRunner가 스킵하고 setup-token 재연결을 유도한다(검수 HIGH — 소비 측 대칭 게이트).
         ...(cred.type === 'host' && (!(host[id]?.installed && host[id]?.authed) || !hostOptInAllowed(id)) ? { invalid: true } : {}),
+        // host 방식 자체가 이 러너에 더 이상 제공되지 않으면(gemini hostUsable:false — 4R MEDIUM-1) "제공되지 않는 방식"으로 — 환경 제한(hostOptInAllowed: 테넌트·
+        // claude standalone)은 여기 넣지 않는다(멀쩡한 claude host 마커를 "제공 종료"로 오표기).
+        ...(cred.type === 'host' && !meta.hostUsable ? { invalid: true, unsupportedMethod: true } : {}),
         // 저장 자격의 연결 방식이 더 이상 제공되지 않으면(gemini 구독 oauth — Google이 외부 앱 사용을 막아 2026-09-06부터 API 키 전용) 무효로 표시 —
         // host 마커와 같은 소비 측 대칭 게이트: 배너·명판·자동 선택(pickRunner)·턴 오류가 한목소리로 "재연결 필요"(2R MEDIUM-1: pickRunner만 제외하면
         // 온보딩 게이트·명판은 통과하는데 턴은 "러너 없음"이라 했다). 카드는 API 키 입력을 보인다(runner-connect shownMethod).
