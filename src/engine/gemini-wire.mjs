@@ -15,6 +15,8 @@ export const GEMINI_MIN_OUTPUT_TOKENS = 16_384;
 const SCHEMA_KEEP = new Set(['type', 'format', 'title', 'description', 'enum', 'maxItems', 'minItems', 'properties', 'required', 'minProperties', 'maxProperties', 'minLength', 'maxLength', 'pattern', 'example', 'propertyOrdering', 'default', 'items', 'minimum', 'maximum']);
 const TYPES = new Set(['string', 'number', 'integer', 'boolean', 'array', 'object']);
 
+const arr = (x) => (Array.isArray(x) ? x : []);
+const obj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
 function resolveRef(ref, root) {
   if (typeof ref !== 'string' || !ref.startsWith('#/')) return null;
   let cur = root;
@@ -33,7 +35,8 @@ export function cleanSchema(s, root = s, depth = 0) {
     let merged = { ...src }; delete merged.allOf;
     for (const b of src.allOf) {
       const r = (b && typeof b === 'object' ? (typeof b.$ref === 'string' ? resolveRef(b.$ref, root) : b) : null); if (!r) continue;
-      merged = { ...r, ...merged, properties: { ...(r.properties ?? {}), ...(merged.properties ?? {}) }, required: [...new Set([...(merged.required ?? []), ...(r.required ?? [])])] };
+      // 비배열 required(Swagger 2.0 관례 `required: true`)·비객체 properties는 스프레드에서 TypeError — 배열/객체로 강제(3R M-1: 2R HIGH-1과 같은 턴 전멸 계열)
+      merged = { ...r, ...merged, properties: { ...obj(r.properties), ...obj(merged.properties) }, required: [...new Set([...arr(merged.required), ...arr(r.required)])] };
     }
     // 해석 불가 가지(#/components/schemas/… 외부 $ref·null·문자열)뿐이면 병합 결과가 비어 있다 — undefined 접근으로 턴 전체가 TypeError로 죽던 것(2R HIGH-1)
     if (!Object.keys(merged.properties ?? {}).length) delete merged.properties; if (!(merged.required ?? []).length) delete merged.required;
@@ -45,7 +48,7 @@ export function cleanSchema(s, root = s, depth = 0) {
   for (const [k, v] of Object.entries(src)) {
     if (!SCHEMA_KEEP.has(k)) continue;
     if (k === 'type') { const arr = (Array.isArray(v) ? v : [v]).map((x) => String(x).toLowerCase()); if (arr.includes('null')) nullable = true; const t = arr.find((x) => TYPES.has(x)); if (t) out.type = t; continue; }
-    if (k === 'properties') { if (v && typeof v === 'object') out.properties = Object.fromEntries(Object.entries(v).map(([n, p]) => [n, cleanSchema(p, root, depth + 1)])); continue; }
+    if (k === 'properties') { if (v && typeof v === 'object' && !Array.isArray(v)) out.properties = Object.fromEntries(Object.entries(v).map(([n, p]) => [n, cleanSchema(p, root, depth + 1)])); continue; }
     if (k === 'items') { out.items = cleanSchema(Array.isArray(v) ? v[0] : v, root, depth + 1); continue; }
     if (k === 'enum') { if (Array.isArray(v) && v.length) { const vals = v.filter((x) => x !== null); if (vals.length !== v.length) nullable = true; if (vals.length) { if (vals.every((x) => typeof x === 'string')) out.enum = vals; else hint = vals; } } continue; }
     if (k === 'required' || k === 'propertyOrdering') { if (Array.isArray(v)) { const arr = v.filter((x) => typeof x === 'string'); if (arr.length) out[k] = arr; } continue; }

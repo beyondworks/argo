@@ -29,7 +29,7 @@ export const agyDirArgs = (caps, workRoots = []) => openRoots(caps, workRoots).f
 // ── 분리 모듈 re-export — 기존 임포터·테스트가 쓰는 이름 전부(62개 표면의 나머지 57개) ──
 export { isServerSecretKey, scrubServerSecrets, maskKeyLike, homeEnv, isProcessCrash, crashHint } from './runners/shared.mjs';
 export {
-  RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus,
+  RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice,
   GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, KIMI_DEFAULT_MODEL, GROK_DEFAULT_MODEL,
   endpointNotFoundNotice, isEndpointNotFoundMsg,
   isOpenRouterCreditError, isOpenRouterCreditReply, isOpenRouterLimitError, isOpenRouterLimitReply,
@@ -344,7 +344,8 @@ export async function runnerStatus(wsId) {
         // 저장 자격의 연결 방식이 더 이상 제공되지 않으면(gemini 구독 oauth — Google이 외부 앱 사용을 막아 2026-09-06부터 API 키 전용) 무효로 표시 —
         // host 마커와 같은 소비 측 대칭 게이트: 배너·명판·자동 선택(pickRunner)·턴 오류가 한목소리로 "재연결 필요"(2R MEDIUM-1: pickRunner만 제외하면
         // 온보딩 게이트·명판은 통과하는데 턴은 "러너 없음"이라 했다). 카드는 API 키 입력을 보인다(runner-connect shownMethod).
-        ...(cred.type !== 'host' && !meta.methods.includes(credType(cred.type)) ? { invalid: true, unsupportedMethod: true } : {}),
+        // 뒤집는 집합(전 러너×자격 행렬 3R 실측): gemini oauth(의도) + glm/kimi/openrouter oauth·antigravity apikey(keys PUT 게이트가 막아 새로 저장될 수 없는 레거시만 — 계정→회사 복사가 옮길 수 있어 같은 규칙으로 무효)
+        ...(credType(cred.type) !== 'host' && !meta.methods?.includes(credType(cred.type)) ? { invalid: true, unsupportedMethod: true } : {}),
       } : { connected: false },
     };
   }

@@ -389,7 +389,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
     company.invalid ? (
       // 무효 자격(형식 불량 토큰·로그아웃된 host 마커) — 연결된 척하지 않고 재연결을 요구한다
       <span className="chip" style={{ color: 'var(--danger)', borderColor: 'currentColor' }}>
-        <span className="dot" />{t('settings.runners.companyInvalid')}{company.masked && <> · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span></>}
+        <span className="dot" />{t(company.unsupportedMethod ? 'settings.runners.companyUnsupported' : 'settings.runners.companyInvalid')}{company.masked && <> · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span></>}
       </span>
     ) : (
       <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>

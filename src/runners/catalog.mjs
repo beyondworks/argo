@@ -308,6 +308,21 @@ export const onlyHiddenConnectedStatus = (st) => {
   return on.length > 0 && on.every(([id]) => isHiddenRunner(id));
 };
 
+/** 저장 자격의 연결 방식이 더 이상 제공되지 않는 러너(runnerStatus가 unsupportedMethod를 단 것)만 있고 가용 러너가 없는가 — 그 러너 id 목록(빈 배열=해당 없음).
+    "하나도 연결돼 있지 않습니다"는 이 회사에 거짓이다(3R M-2 — main의 onlyHiddenConnectedStatus 안내가 hidden 해제로 꺼지면서 총부정 문구로 낙하했다). */
+export const unsupportedMethodStatus = (st) => {
+  const rows = Object.entries(st ?? {}).filter(([, r]) => r?.company?.connected);
+  if (rows.some(([id, r]) => !r.company.invalid && !isHiddenRunner(id))) return [];
+  return rows.filter(([, r]) => r.company.unsupportedMethod).map(([id]) => id);
+};
+/** 그 안내문(서버 언어 인자 — visibleRunnerNamesLine과 같은 규칙, 템플릿 보간 전용). */
+export const unsupportedMethodNotice = (lang, ids) => {
+  const names = ids.map((id) => RUNNERS[id]?.name || id).join(lang === 'en' ? '/' : '·');
+  return lang === 'en'
+    ? `The stored ${names} connection method (subscription login) is no longer offered. Reconnect ${names} with an API key, or connect another runner (${visibleRunnerNamesLine('en')}), in Settings → AI connections, then try again.`
+    : `저장된 ${names} 연결 방식(구독 로그인)은 더 이상 제공되지 않습니다. 설정 → AI 연결에서 ${names}를 API 키로 다시 연결하거나 다른 러너(${visibleRunnerNamesLine()})를 연결한 뒤 다시 말을 걸어 주세요.`;
+};
+
 export const RUNNER_AUTH = {
   // claude 웹 브리지(webConnect)는 철회(2026-07-18) — 구세대 엔드포인트 교환이 러너가 거절하는
   // 비 oat01 토큰을 저장해 "연결됨인데 전 턴 401"을 만들었다(실측). CLAUDE_CODE_OAUTH_TOKEN은

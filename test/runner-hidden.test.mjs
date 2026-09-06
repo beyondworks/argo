@@ -116,7 +116,9 @@ test('/api/companies/[ws]/keys 행동 — runnerStatus의 hidden 표지가 응�
 
 test('제공 종료 전용 턴 안내 — chat.mjs 분기 핀 + 서버·클라 판정 두 벌의 동치(3차 검수 잔여-2)', async () => {
   const chat = await load('../src/chat.mjs');
-  assert.match(chat, /if \(!noCli\.length && onlyHiddenConnectedStatus\(await runnerStatus\(wsId\)\.catch\(\(\) => null\)\)\) \{\s*\n\s*throw new Error\(lang === 'en'/, '숨김만 연결 상태의 턴 오류 분기(삭제 변이 red)');
+  assert.match(chat, /const stNow = noCli\.length \? null : await runnerStatus\(wsId\)\.catch\(\(\) => null\);/, '턴 게이트가 러너 상태를 1회 읽는다(제공 종료·제공되지 않는 방식 두 분기가 공유)');
+  assert.match(chat, /if \(!noCli\.length && onlyHiddenConnectedStatus\(stNow\)\) \{\s*\n\s*throw new Error\(lang === 'en'/, '숨김만 연결 상태의 턴 오류 분기(삭제 변이 red)');
+  assert.match(chat, /const unsupported = stNow \? unsupportedMethodStatus\(stNow\) : \[\];\s*\n\s*if \(unsupported\.length\) throw new Error\(unsupportedMethodNotice\(lang, unsupported\)\);/, '제공되지 않는 연결 방식 분기(3R M-2)');
   const { onlyHiddenConnectedStatus } = await import('../src/runners/catalog.mjs');
   const { onlyHiddenConnected } = await import('../app/runner-usable.mjs');
   const on = { company: { connected: true, invalid: false } };

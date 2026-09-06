@@ -28,7 +28,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType } from './runners.mjs';
+import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -611,6 +611,9 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     if (runner) {
       const st = await runnerStatus(wsId).catch(() => null);
       const s = st?.[runner];
+      if (s && s.company.connected && s.company.invalid) { // 무효 자격(제공되지 않는 방식·로그아웃된 host 마커) — 연결된 척 배정하면 모든 턴이 조용히 폴백된다(3R L-1)
+        return `${RUNNERS[runner].name} 러너 연결이 무효(재연결 필요) 상태다. 사용자에게 "설정 → AI 연결에서 ${RUNNERS[runner].name}을 다시 연결해 주시면 됩니다"라고 안내해라.`;
+      }
       if (s && !s.company.connected && !s.hostAuthed) {
         return `${RUNNERS[runner].name} 러너가 아직 연결되지 않았다. 사용자에게 "설정 → 러너 연결에서 ${RUNNERS[runner].name}을 연결(API 키 또는 OAuth)해 주시면 바꿔드리겠다"고 안내하라.`;
       }
@@ -928,7 +931,11 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = 
     // 자격은 있는데 벤더 CLI가 없는 러너(codex/gemini)는 원인을 정확히 알려준다 — "연결했는데 왜 안 돼"의 답.
     const noCli = (resolved.credButNoCli ?? []).map((id) => RUNNERS[id]?.name || id);
     // 연결된 것이 숨김 러너(gemini)뿐이면 "하나도 연결돼 있지 않다"는 거짓 — 제공 종료를 사실대로 말한다(재검수 MEDIUM-5)
-    if (!noCli.length && onlyHiddenConnectedStatus(await runnerStatus(wsId).catch(() => null))) {
+    const stNow = noCli.length ? null : await runnerStatus(wsId).catch(() => null);
+    // 저장 자격의 방식이 더 이상 제공되지 않는 경우(gemini 구독) — "하나도 연결돼 있지 않다"는 거짓, API 키 재연결을 정확히 안내(3R M-2, 두 번 닫은 사고의 재개봉 방지)
+    const unsupported = stNow ? unsupportedMethodStatus(stNow) : [];
+    if (unsupported.length) throw new Error(unsupportedMethodNotice(lang, unsupported));
+    if (!noCli.length && onlyHiddenConnectedStatus(stNow)) {
       throw new Error(lang === 'en'
         ? `The connected runner is no longer offered. Connect another runner (${visibleRunnerNamesLine('en')}) in Settings → AI connections, then try again.`
         : `연결된 러너는 더 이상 제공되지 않습니다. 설정 → AI 연결에서 다른 러너(${visibleRunnerNamesLine()})를 연결한 뒤 다시 말을 걸어 주세요.`);
@@ -1216,7 +1223,7 @@ ${lang === 'en'
             // 실패한 러너의 사건을 먼저 남긴다 — 치유 성공 시 조기 return이 실패 기록을 삼켜,
             // P2가 "인증 오류"라 말하는 턴에 연결 카드(P1-1)의 그 러너는 멀쩡해 보였다(검수 관점3 미탐).
             await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {});
-            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { from, source, __downgradedFrom, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners: tried });
+            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { from, source, __downgradedFrom: null, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __seedNotes: sharedNotes, __excludeRunners: tried });
             return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
@@ -1570,7 +1577,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
           await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {}); // 실패 러너 사건 선기록(CLI 갈래와 대칭 — P1-1 미탐 봉합)
-          const healed = await chat(wsId, agentSlug, userMsg, null, { from, source, __downgradedFrom, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
+          const healed = await chat(wsId, agentSlug, userMsg, null, { from, source, __downgradedFrom: null, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
           return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하

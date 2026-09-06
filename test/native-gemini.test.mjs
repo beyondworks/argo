@@ -173,10 +173,18 @@ test('G9. 자동 선택의 자격 축(H1)·제공되지 않는 방식은 무효 
   assert.deepEqual(pickRunner(st({ gemini: 'oauth' }), 'gemini'), { runner: 'gemini', fellBack: false, available: true }, 'pickRunner 수준에서 명시 지정은 자격 종류를 묻지 않는다(무효 표지는 runnerStatus가 단다 — available까지 단언, 2R MEDIUM-2)');
   // 실 상태(runnerStatus)에서는 제공되지 않는 방식(oauth)이 무효로 표시돼 배너·명판·자동 선택·턴이 한목소리(2R MEDIUM-1)
   const { runnerStatus } = await import('../src/runners.mjs'); const { anyRunnerUsable, usableRunnerNames, runnerNeedsReconnect } = await import('../app/runner-usable.mjs');
-  const wsO = 'gem-oauth'; await createCompany(wsO, '구독', '사장'); await saveRunnerCred(wsO, 'gemini', 'oauth', JSON.stringify({ access_token: 'fake-oauth-json' }));
+  const wsO = 'gem-oauth'; await createCompany(wsO, '구독', '사장');
+  await writeFile(join(paths(wsO).root, '.secrets.json'), JSON.stringify({ runners: { gemini: { type: 'oauth', value: JSON.stringify({ access_token: 'fake-oauth-json' }) } } })); // saveRunnerCred는 oauth 저장 시 CLI 조달(npm)을 켠다 — 테스트는 파일 직접 기록(3R L-3)
   const stO = await runnerStatus(wsO);
   assert.equal(stO.gemini.company.invalid, true); assert.equal(stO.gemini.company.unsupportedMethod, true);
   assert.equal(anyRunnerUsable(stO), false, '온보딩 게이트·배너: 가용 없음'); assert.deepEqual(usableRunnerNames(stO), [], '명판에 Gemini 없음'); assert.equal(runnerNeedsReconnect(stO), true, '"끊김" 안내 분기'); assert.equal(autoRunnerOf(stO), null);
+  // 턴 문구(3R M-2): "하나도 연결돼 있지 않습니다"는 거짓 — chat·oneshot 두 갈래 모두 API 키 재연결 안내
+  const { unsupportedMethodStatus } = await import('../src/runners/catalog.mjs'); assert.deepEqual(unsupportedMethodStatus(stO), ['gemini']); assert.deepEqual(unsupportedMethodStatus({ ...stO, glm: { company: { connected: true, type: 'apikey' } } }), [], '가용 러너가 있으면 해당 없음');
+  const rootO = paths(wsO).root; for (const d of [['agents'], ['chats'], ['vault', 'journal'], ['vault', 'projects'], ['vault', 'files'], ['vault', 'notes']]) await mkdir(join(rootO, ...d), { recursive: true });
+  await writeFile(join(rootO, 'agents', 'auto.md'), '---\nname: 자동\n---\n\n전문가.\n'); await writeFile(join(rootO, 'agents', 'gem.md'), '---\nname: 지정\nrunner: gemini\n---\n\n전문가.\n');
+  const { chat } = await import('../src/chat.mjs'); const { runOneShot } = await import('../src/oneshot.mjs');
+  for (const slug of ['auto', 'gem']) await assert.rejects(chat(wsO, slug, '안녕'), (e) => /Gemini 연결 방식\(구독 로그인\)은 더 이상 제공되지 않습니다/.test(e.message) && /API 키로 다시 연결/.test(e.message) && !/하나도 연결돼/.test(e.message), `chat(${slug})`);
+  await assert.rejects(runOneShot(wsO, '직함'), (e) => /더 이상 제공되지 않습니다/.test(e.message) && !/하나도 연결돼/.test(e.message), 'oneshot');
   await saveRunnerCred(wsO, 'gemini', 'apikey', 'fake-gemini-key-ok');
   const stK = await runnerStatus(wsO); assert.equal(stK.gemini.company.invalid, undefined); assert.deepEqual(usableRunnerNames(stK), ['Gemini']); assert.equal(autoRunnerOf(stK), 'gemini');
   assert.equal(pickRunner(st({ claude: 'host', glm: 'apikey' }), null).runner, 'claude', 'host 옵트인 러너는 종전대로 자동 대상(회귀 0)');
@@ -205,6 +213,17 @@ test('G10. 스키마 정리(H2) — MCP형 $ref/$defs·anyOf null·oneOf·const�
   assert.deepEqual(out.properties.flag, { type: 'boolean', description: '(allowed values: true, false)' }); assert.deepEqual(out.properties.seven, { type: 'integer', description: '(allowed values: 7)' });
   assert.deepEqual(out.properties.body, { type: 'string' }, '해석 불가 allOf($ref 외부)는 죽지 않고 문자열로(2R HIGH-1 — TypeError로 턴 전멸하던 자리)'); assert.deepEqual(out.properties.body2, { type: 'object' });
   assert.doesNotThrow(() => cleanSchema({ allOf: [null] })); assert.doesNotThrow(() => cleanSchema({ allOf: ['x'] })); assert.doesNotThrow(() => cleanSchema({ allOf: [{ $ref: '#/components/schemas/X' }] }));
+  assert.doesNotThrow(() => cleanSchema({ type: 'object', properties: { body: { allOf: [{ $ref: '#/$defs/Box' }], required: true } }, $defs: { Box: { type: 'object', properties: { w: { type: 'integer' } } } } }), 'Swagger 2.0 관례 required:true + allOf(3R M-1)');
+  assert.doesNotThrow(() => cleanSchema({ required: { a: 1 }, allOf: [{}] })); assert.deepEqual(cleanSchema({ type: 'object', allOf: [{ required: { x: 1 }, properties: 'nope' }] }), { type: 'object' }, '비객체 properties는 문자 스프레드로 가짜 속성을 만들지 않는다');
+  // 임의 입력 무예외 — 시드 고정 퍼즈(모양 3개를 더하는 식으로는 이 계열이 잠기지 않는다 — 3R M-1)
+  let seed = 20260906; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const pick = (xs) => xs[Math.floor(rnd() * xs.length)];
+  const junk = () => pick([null, undefined, 3, 'str', true, [], [1, 'a', null], {}, { a: 1 }, { $ref: '#/$defs/A' }, { $ref: '#/components/x' }]);
+  const gen = (d = 0) => { if (d > 3 || rnd() < 0.15) return junk(); const o = {};
+    for (const k of ['type', 'properties', 'required', 'items', 'allOf', 'anyOf', 'oneOf', 'enum', 'const', '$ref', 'default', 'nullable', 'description']) if (rnd() < 0.35) o[k] = k === 'type' ? pick(['object', 'array', 'string', 'integer', ['string', 'null'], 'null', 7, null]) : k === 'properties' ? (rnd() < 0.7 ? { p: gen(d + 1), q: gen(d + 1) } : junk()) : k === 'items' ? (rnd() < 0.7 ? gen(d + 1) : junk()) : /Of$/.test(k) ? (rnd() < 0.7 ? [gen(d + 1), junk(), gen(d + 1)] : junk()) : k === 'enum' ? pick([['a', 'b'], [1, 2], [null, 'x'], 'bad', []]) : k === '$ref' ? pick(['#/$defs/A', '#/$defs/B', '#/nope', 3]) : junk();
+    if (rnd() < 0.3) o.$defs = { A: gen(d + 1), B: { type: 'object', properties: { z: gen(d + 1) } } }; return o; };
+  const check = (n, path) => { if (!n || typeof n !== 'object') return `${path}: not object`; if (!n.type && !Array.isArray(n.anyOf)) return `${path}: no type`; for (const [k, v] of Object.entries(n.properties ?? {})) { const r = check(v, `${path}.${k}`); if (r) return r; } if (n.items) { const r = check(n.items, `${path}[]`); if (r) return r; } for (const [i, a] of (n.anyOf ?? []).entries()) { const r = check(a, `${path}|${i}`); if (r) return r; } return null; };
+  for (let i = 0; i < 400; i++) { const input = gen(); const show = String(JSON.stringify(input)).slice(0, 200); let out; assert.doesNotThrow(() => { out = cleanSchema(input); }, `퍼즈 #${i}: ${show}`); const bad = check(out, '$'); assert.equal(bad, null, `퍼즈 #${i} 불변식: ${bad} ← ${show}`); }
   assert.deepEqual(out.properties.any, { type: 'string' }); assert.deepEqual(out.properties.nul, { type: 'string', nullable: true });
   assert.deepEqual(out.properties.box, { type: 'object', properties: { w: { type: 'integer' } }, required: ['w'] });
   assert.deepEqual(out.properties.list.items, { type: 'object', properties: { w: { type: 'integer' } }, required: ['w'] });
@@ -272,8 +291,11 @@ test('G13. 오류 문구에 Google 계급 보존(M1) — 404 NOT_FOUND·403 PERM
   assert.match(block, /modelOverride: baseModel/); assert.match(block, /__downgradedFrom: effModel/); assert.match(block, /catch \(e2\) \{ e = e2; retriedDown = true;/);
   assert.match(src, /if \(__downgradedFrom && reply\) \{/); assert.match(src, /\.\.\.\(__downgradedFrom \? \{ downgradedFrom: __downgradedFrom \} : \{\}\),/);
   const recursions = src.split('\n').filter((l) => l.includes('await chat(wsId, agentSlug, userMsg,'));
-  assert.ok(recursions.length >= 7 && recursions.every((l) => l.includes('__downgradedFrom')), `모든 재귀(${recursions.length})가 강등 표식을 전달한다 — 크래시·인증 재시도 뒤 고지·이벤트가 사라지지 않게(2R LOW-2)`);
+  const switching = recursions.filter((l) => l.includes('const healed = await chat(')); const same = recursions.filter((l) => !l.includes('const healed = await chat('));
+  assert.ok(same.length >= 5 && same.every((l) => l.includes('__downgradedFrom,') || l.includes('__downgradedFrom: effModel')), `같은 러너 재귀(${same.length})는 강등 표식을 전달한다 — 크래시·잠김 재시도 뒤 고지·이벤트가 사라지지 않게(2R LOW-2)`);
+  assert.ok(switching.length === 2 && switching.every((l) => l.includes('__downgradedFrom: null')), '러너를 갈아타는 자가치유 재귀 2줄은 표식을 떨군다 — 다른 러너 답변에 오귀속 고지 금지(3R L-2)');
   assert.equal(stripForeignBlocks([{ role: 'assistant', content: [{ type: 'gem_thought', text: 't' }] }, { role: 'user', content: 'x' }]).length, 1, '사고 파트만 든 메시지는 통째로 제외(빈 content는 400)');
+  assert.match(src, /if \(s && s\.company\.connected && s\.company\.invalid\) \{/, '러너 변경 크루 도구 게이트가 무효 자격을 본다(3R L-1)');
 });
 
 test('G14. 자격 유출 차단(검수 HIGH-1) — 크루 Bash 자식이 GEMINI_API_KEY·ARGO_WIRE·RESPONSES_*를 상속하지 않는다(가짜 서버가 printenv를 요청 — 전사·세션 파일에 키 없음), 다른 러너 env에도 ARGO_WIRE 미상속(L1)', async () => {
