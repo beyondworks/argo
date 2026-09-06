@@ -286,7 +286,11 @@ test('MEDIUM-4. 락 부모 디렉터리 부재에서도 save/clear가 성공하�
   await clearRunnerCred(ws, 'claude');
   assert.equal(await loadRunnerCred(ws, 'claude'), null);
   const src = await readFile(join(ROOT, 'src', 'runners', 'creds.mjs'), 'utf8');
-  assert.equal((src.match(/await withDirLock\(`\$\{secretsFile\(wsId\)\}\.lockd`/g) ?? []).length, 2, 'save·clear 둘 다 같은 락(반쪽 잠금 금지)');
+  // 비밀 파일 쓰기 지점 전수가 같은 락 안에 있어야 한다(반쪽 잠금 금지) — 쓰기 수는 정확히(save·clear·codex 토큰 회전)
+  const LOCK = 'withDirLock(`${secretsFile(wsId)}.lockd`';
+  const writes = [...src.matchAll(/writeJsonAtomic\(secretsFile\(wsId\)/g)].map((m) => m.index);
+  assert.equal(writes.length, 3, '비밀 파일 쓰기 지점 수(새 쓰기 지점은 락 안에 넣고 이 수를 올린다)');
+  for (const w of writes) { const before = src.slice(0, w); assert.ok(before.lastIndexOf(LOCK) > before.lastIndexOf('\nexport async function'), `비밀 파일 쓰기(offset ${w})가 락 밖`); }
 });
 
 test('R4. thread.appendTurn — failedCode/failedOrigin·modelFallback이 실제로 저장된다(배선 행동)', async () => {

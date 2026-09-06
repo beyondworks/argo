@@ -188,8 +188,12 @@ export const hostOptInAllowed = (runner) =>
 export const isCliRunner = (r) => RUNNERS[r]?.kind === 'cli';
 /** 이 자격으로 도는 턴이 외부 CLI인가 — gemini는 API 키 자격이면 Argo 엔진(네이티브)이라 CLI가 아니다(구독·host만 CLI). 카드 정보(runners.mjs)·
     스케줄러(hasTools)·chat·oneshot의 분기가 전부 이 하나를 쓴다(러너 종류만 보던 isCliRunner는 자격 축을 몰라 gemini에서 갈렸다). */
-export const isCliTurn = (r, credType) => isCliRunner(r) && !(r === 'gemini' && credType === 'apikey' && nativeRunnerEnabled('gemini'));
+export const isCliTurn = (r, credType) => isCliRunner(r) && !(
+  (r === 'gemini' && credType === 'apikey' && nativeRunnerEnabled('gemini'))
+  || (r === 'codex' && (credType === 'apikey' || credType === 'oauth') && nativeRunnerEnabled('codex')) // P-B: 옵트인 플래그(ARGO_NATIVE_RUNNERS에 codex 명시)일 때만 — host(이 컴퓨터 로그인)는 CLI
+);
 export const GEMINI_DEFAULT_MODEL = 'gemini-2.5-pro';
+export const CODEX_DEFAULT_MODEL = 'gpt-5.6-sol';
 
 export const GLM_DEFAULT_MODEL = 'glm-5.3';
 

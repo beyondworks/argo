@@ -6,6 +6,15 @@
     SDK 전용 — 정책 위험(설계서 개정 2026-09-05)으로 이 엔진이 받지 않는다. */
 export function authFromEnv(env = {}, lang = 'ko') {
   const en = lang === 'en';
+  // OpenAI Responses(Codex 구독 백엔드 또는 api.openai.com) — runnerCredEnv가 codex 자격에 ARGO_WIRE=responses를 찍는다(옵트인 플래그).
+  // 헤더는 자격 계층(codex-oauth.codexHeaders)이 만든 것을 그대로 — 제3자 하네스 표기(originator)·계정 id는 여기서 다시 만들지 않는다.
+  if (env.ARGO_WIRE === 'responses') {
+    const rbase = String(env.RESPONSES_BASE_URL || '').trim().replace(/\/+$/, '');
+    if (!rbase || !env.RESPONSES_TOKEN) throw Object.assign(new Error(en ? 'No Codex credential — connect it in Settings → AI connections' : 'Codex 자격이 없습니다 — 설정 → AI 연결에서 연결하세요'), { code: 'no_credential' });
+    let headers = { authorization: `Bearer ${env.RESPONSES_TOKEN}` };
+    try { if (env.RESPONSES_HEADERS) headers = { ...headers, ...JSON.parse(env.RESPONSES_HEADERS) }; } catch { /* 헤더 JSON 아님 — 기본만 */ }
+    return { wire: 'responses', base: rbase, headers };
+  }
   // Gemini(Google AI Studio API 키) — 와이어가 다르다(gemini-wire.mjs). runnerCredEnv가 gemini API 키 자격에 ARGO_WIRE=gemini를 찍는다.
   if (env.ARGO_WIRE === 'gemini') {
     const gbase = String(env.GEMINI_BASE_URL || GEMINI_DEFAULT_BASE).trim().replace(/\/+$/, '');
@@ -24,12 +33,14 @@ export { extractErrorMessage } from './http-errors.mjs';
 
 import { extractErrorMessage } from './http-errors.mjs';
 import { callGemini, GEMINI_DEFAULT_BASE } from './gemini-wire.mjs';
+import { callResponses } from './responses-wire.mjs';
 
 const RETRYABLE = new Set([500, 502, 503, 504, 529]);
 
 /** POST /v1/messages 1회(+과부하·네트워크 1회 재시도). 실패는 `API Error: <status> <message>`(status 필드 동봉). */
-export async function callMessages({ wire = 'messages', base, headers, body, signal, fetchImpl = globalThis.fetch, timeoutMs = 600_000, retry = 1 }) {
+export async function callMessages({ wire = 'messages', base, headers, body, effort = '', signal, fetchImpl = globalThis.fetch, timeoutMs = 600_000, retry = 1 }) {
   if (wire === 'gemini') return callGemini({ base, headers, body, signal, fetchImpl, timeoutMs, retry }); // 요청·응답 모양은 Messages 그대로, 변환은 gemini-wire가
+  if (wire === 'responses') return callResponses({ base, headers, body, effort, signal, fetchImpl, timeoutMs, retry }); // effort(추론 강도)는 Responses에만 실린다
   const url = `${base}/v1/messages`;
   let attempt = 0;
   for (;;) {

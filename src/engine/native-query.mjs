@@ -88,7 +88,7 @@ const sumUsage = (acc, u = {}) => {
 
 async function* run(opts, ac, isInterrupted) {
   const { wsId, slug, prompt, cwd, systemPrompt, env = {}, model, crewTools = [], mcpServers = {}, canUseTool, lang = 'ko',
-    resume = null, maxTokens, maxSteps = NATIVE_MAX_STEPS, fetchImpl = globalThis.fetch, saveSession = true } = opts;
+    resume = null, maxTokens, maxSteps = NATIVE_MAX_STEPS, fetchImpl = globalThis.fetch, saveSession = true, effort = '' } = opts;
   if (!model) throw new Error('native engine: model is required');
   const { base, headers, wire } = authFromEnv(env, lang);
   const max_tokens = Number(maxTokens) || Number(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) || NATIVE_DEFAULT_MAX_TOKENS;
@@ -113,7 +113,7 @@ async function* run(opts, ac, isInterrupted) {
       }
       let res;
       try {
-        res = await callMessages({ wire, base, headers, signal: ac.signal, fetchImpl,
+        res = await callMessages({ wire, base, headers, effort, signal: ac.signal, fetchImpl,
           body: { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) } });
       } catch (e) {
         // 이미 토큰을 쓴 뒤의 실패는 SDK처럼 usage를 실은 실패 result로 낸다(분리 검수 MEDIUM-1: 던지기만 하면 appendUsage 미도달,
