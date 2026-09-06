@@ -1663,7 +1663,7 @@ function CredSyncRow({ ws, value, onChange, hosted }) {
         </div>
         <span style={{ fontSize: 12, color: 'var(--fg-3)', lineHeight: 1.6 }}>
           {t('settings.sync.credHostedNote')}{' '}
-          <a href="https://github.com/beyondworks/argo/blob/main/docs/privacy-sync.md" target="_blank" rel="noreferrer" style={{ color: 'var(--fg-2)' }}>
+          <a href="https://argo.ceo/docs#privacy-sync" target="_blank" rel="noreferrer" style={{ color: 'var(--fg-2)' }}>
             {t('settings.sync.credDocs')}
           </a>
         </span>
@@ -1688,7 +1688,7 @@ function CredSyncRow({ ws, value, onChange, hosted }) {
       </div>
       <span style={{ fontSize: 12, color: 'var(--fg-3)', lineHeight: 1.6 }}>
         {t('settings.sync.credNote')}{' '}
-        <a href="https://github.com/beyondworks/argo/blob/main/docs/privacy-sync.md" target="_blank" rel="noreferrer" style={{ color: 'var(--fg-2)' }}>
+        <a href="https://argo.ceo/docs#privacy-sync" target="_blank" rel="noreferrer" style={{ color: 'var(--fg-2)' }}>
           {t('settings.sync.credDocs')}
         </a>
       </span>
