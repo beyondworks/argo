@@ -11,7 +11,11 @@ import { fileURLToPath } from 'node:url';
 /** 레포 동봉본 위치 — 같은 해시의 파일을 vendor/에 둔다(해시 검증은 똑같이 거친다). 갱신 절차: 새 FRP 릴리스 다운로드 → sha256 확인 → 상수·파일 함께 교체. */
 export const VENDOR_DIR = join(dirname(dirname(fileURLToPath(import.meta.url))), 'vendor');
 
-export const BUSYBOX_URL = 'https://frippery.org/files/busybox/busybox64u.exe';
+export const BUSYBOX_URL = 'https://frippery.org/files/busybox/busybox-w64u-FRP-6075-g169694ebd.exe'; // 판 고정 파일명(롤링 busybox64u.exe는 upstream 릴리스 때 해시가 바뀐다 — 1R L1)
+/** 대응 소스(GPLv2 §3) — 발행 드릴이 릴리스 자산에 함께 올린다: `node scripts/fetch-busybox.mjs source <dir>` */
+export const BUSYBOX_SRC_URL = 'https://frippery.org/files/busybox/busybox-w32-FRP-6075-g169694ebd.tgz';
+export const BUSYBOX_SRC_SHA256 = '44401413c86a839deeec3eba088af244a1594f18ff9fd0622811100e4cc2e7b4'; // 3,690,927B
+export const BUSYBOX_SRC_FILE = 'busybox-w32-FRP-6075-g169694ebd.tgz';
 export const BUSYBOX_SHA256 = '6e263d154d8548d1eb936f65d1d8312c80df31c45974e48d6335e4dcc0f4f34c'; // BusyBox v1.38.0-FRP-6075-g169694ebd (2026-05-06), 675,840B
 export const BUSYBOX_FILE = 'busybox64u.exe';
 
@@ -41,7 +45,14 @@ export async function fetchBusybox(destDir, { url = BUSYBOX_URL, sha256 = BUSYBO
   return { dest, bytes: buf.length, sha256: got, cached: false };
 }
 
+export async function fetchBusyboxSource(destDir, { url = BUSYBOX_SRC_URL, sha256 = BUSYBOX_SRC_SHA256, fetchImpl = globalThis.fetch, attempts, timeoutMs, waitMs } = {}) {
+  const buf = await download(url, { fetchImpl, attempts, timeoutMs, waitMs }); const got = sha(buf);
+  if (got !== sha256) throw new Error(`busybox 소스 해시 불일치 — 기대 ${sha256}, 실제 ${got} (${url})`);
+  mkdirSync(destDir, { recursive: true }); const dest = join(destDir, BUSYBOX_SRC_FILE); writeFileSync(dest, buf);
+  return { dest, bytes: buf.length, sha256: got };
+}
+
 if (process.argv[1] && /fetch-busybox\.mjs$/.test(process.argv[1])) {
-  const dir = process.argv[2] || 'bin';
-  const r = await fetchBusybox(dir); console.log(`[busybox] ${r.dest} ${r.bytes}B sha256=${r.sha256}${r.cached ? ' (캐시)' : ''}`);
+  if (process.argv[2] === 'source') { const r = await fetchBusyboxSource(process.argv[3] || 'bin'); console.log(`[busybox-src] ${r.dest} ${r.bytes}B sha256=${r.sha256}`); }
+  else { const r = await fetchBusybox(process.argv[2] || 'bin'); console.log(`[busybox] ${r.dest} ${r.bytes}B sha256=${r.sha256}${r.cached ? ' (캐시)' : ''}`); }
 }

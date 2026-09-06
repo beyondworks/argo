@@ -4,19 +4,24 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classifyCommand, shellCandidates, shellSpawn, normalizeMsysPaths, resolveShell, resetShellCache, isShellFallback, BUSYBOX_FILE } from '../src/engine/shell-backend.mjs';
+import { classifyCommand, stripDataText, shellCandidates, shellSpawn, normalizeMsysPaths, resolveShell, resetShellCache, isShellFallback, planShellRun, FALLBACK_RECHECK_MS, BUSYBOX_FILE } from '../src/engine/shell-backend.mjs';
 
 test('라우터 — bash 문법은 sh, cmd 고유 문법은 cmd, 동사-명사는 powershell (2026-09-06 윈도우 시뮬 59건 기준)', () => {
   const sh = ['ls -la', 'pwd', 'cat package.json | head -5', 'grep -n "x" a.md', 'find . -name "*.json" | wc -l', 'git status && git log --oneline -1',
     'mkdir -p a/b && cd a/b && pwd', 'export FOO=1; echo "$FOO"', 'X=$(node -e "console.log(1)"); echo "$X"', "cat <<'EOF' > h.txt\nline\nEOF\ncat h.txt", "sed -n '1,3p' a",
     'test -f a && echo yes || echo no', '[ -d src ] && echo dir', 'for f in *.json; do echo "F:$f"; done', 'set -e; false; echo x', 'set -o pipefail; false | true',
     'date +%Y%m%d', 'printf "%s\\n" a b | sort', 'echo 100%', 'echo $HOME', 'type node', 'type -a git', 'command -v node', 'rmdir empty', 'powershell -Command "Get-Date -Format yyyy"', 'pwsh -c "1+1"',
-    'findstr /i name package.json', 'where node', 'tasklist | head', 'start=1; echo $start', 'echo "dir listing"', 'cd src && ls', ''];
+    'findstr /i name package.json', 'where node', 'tasklist | head', 'start=1; echo $start', 'echo "dir listing"', 'cd src && ls', '',
+    // 1R M2: 데이터(히어독 본문·따옴표 문자열) 속 cmd 동사·%VAR%는 명령이 아니다
+    "cat > notes.md <<'EOF'\nStart the server with npm start\nEOF", "cat > README.md <<'EOF'\nCopy the config file first.\nEOF", "cat > run.bat <<'EOF'\n@echo off\ndir /b\nEOF",
+    'git commit -m "refactor: split module; move helpers to utils"', 'git commit -m "chore: cleanup && move assets"', 'grep "%VERSION%" template.txt', "grep '%VERSION%' template.txt",
+    'python -c "import time; start = time.time(); print(start)"', 'copy() { cp "$@"; }; copy a b', 'cut -d, -f2 <<< "x,y,z"', 'echo "type this"; ls'];
   for (const c of sh) assert.equal(classifyCommand(c), 'sh', c);
   const cmd = ['dir', 'dir /b', 'type package.json', 'type sim-out\\pkg.txt', 'type "a b.txt"', 'copy a.txt b.txt', 'del a.txt', 'erase a.txt', 'move a b', 'ren a b', 'rename a b', 'md x', 'rd x', 'cls', 'call build.bat', 'start .', 'mklink /D a b',
-    'set FOO=1 && echo %FOO%', 'echo %USERPROFILE%', 'cd %USERPROFILE%\\Desktop', 'echo "%TEMP%"', 'rmdir /s /q build', 'cd src && dir /b | findstr mjs', 'ls; dir'];
+    'set FOO=1 && echo %FOO%', 'set FOO=1', 'SET FOO=1', 'set "FOO=1"', 'TYPE a.txt', 'echo %USERPROFILE%', 'cd %USERPROFILE%\\Desktop', 'echo %TEMP%', 'rmdir /s /q build', 'cd src && dir /b | findstr mjs', 'ls; dir', 'DIR /b'];
   for (const c of cmd) assert.equal(classifyCommand(c), 'cmd', c);
-  const ps = ['Get-ChildItem -Recurse', 'Get-Content a.txt', 'Get-Date -Format yyyy', 'Set-Location src'];
+  const ps = ['Get-ChildItem -Recurse', 'Get-Content a.txt', 'Get-Date -Format yyyy', 'Set-Location src', 'cd src && Get-ChildItem', 'Get-Date; Get-Location'];
+  assert.equal(stripDataText("cat <<'EOF' > h\nmove me\nEOF\ntype x.txt"), "cat <<'' > h\ntype x.txt", '히어독 본문 제거·명령 줄 유지(종결자 따옴표는 데이터로 비워진다)'); assert.equal(stripDataText('type "a b.txt" && echo "hi"'), 'type "p.p" && echo ""');
   for (const c of ps) assert.equal(classifyCommand(c), 'powershell', c);
 });
 
@@ -37,19 +42,44 @@ test('MSYS 경로 정규화 — /c/Users/x → C:/Users/x, URL·상대 경로는
   assert.equal(normalizeMsysPaths('http://host/c/y and ./c/z and /usr/bin'), 'http://host/c/y and ./c/z and /usr/bin');
 });
 
-test('자가 진단 폴백 — 동봉 파일이 실행 안 되면(백신 격리·실행 거부) 다음 후보, 전부 없으면 cmd.exe + tried 사유; 폴백 판정은 스탠드얼론에서만', async () => {
+test('자가 진단 폴백 — 동봉 파일이 실행 안 되면(백신 격리·실행 거부) 다음 후보, 전부 없으면 cmd.exe + tried 사유; 폴백 판정은 스탠드얼론에서만; 폴백이면 10분마다 재진단', async () => {
   const root = await mkdtemp(join(tmpdir(), 'argo-shell-')); await mkdir(join(root, 'bin')); await writeFile(join(root, 'bin', BUSYBOX_FILE), 'not-a-binary');
-  resetShellCache();
-  const bad = resolveShell({ platform: 'win32', env: {}, cwd: root, argv1: null, probe: () => 'EACCES', force: true });
+  const T0 = 1_800_000_000_000; resetShellCache();
+  const bad = await resolveShell({ platform: 'win32', env: {}, cwd: root, argv1: null, probe: async () => 'EACCES', now: T0 });
   assert.equal(bad.kind, 'cmd'); assert.deepEqual(bad.tried.map((t) => `${t.kind}:${t.reason}`), ['busybox:EACCES']);
   assert.equal(isShellFallback(bad, { ARGO_STANDALONE: '1' }), true); assert.equal(isShellFallback(bad, {}), false, '개발 실행(동봉 없음)은 폴백이 아니다');
+  let probes = 0;
+  assert.equal((await resolveShell({ platform: 'win32', env: {}, cwd: root, argv1: null, probe: async () => { probes += 1; return true; }, now: T0 + FALLBACK_RECHECK_MS - 1 })).kind, 'cmd', '재진단 간격 전엔 캐시'); assert.equal(probes, 0);
+  const back = await resolveShell({ platform: 'win32', env: {}, cwd: root, argv1: null, probe: async () => { probes += 1; return true; }, now: T0 + FALLBACK_RECHECK_MS });
+  assert.equal(back.kind, 'busybox', '폴백 상태는 10분 뒤 재진단 — 백신 예외·재설치 뒤 재시작 없이 복구(1R L3)'); assert.equal(probes, 1);
+  assert.equal((await resolveShell({ platform: 'win32', env: {}, cwd: root, argv1: null, probe: async () => { throw new Error('probe must not run'); }, now: T0 + 10 * FALLBACK_RECHECK_MS })).kind, 'busybox', '동봉이 잡히면 프로세스당 1회');
+  assert.deepEqual(await resolveShell({ platform: 'darwin' }), { kind: 'sh', file: '/bin/sh', tried: [] });
   resetShellCache();
-  const ok = resolveShell({ platform: 'win32', env: {}, cwd: root, argv1: null, probe: () => true, force: true });
-  assert.equal(ok.kind, 'busybox'); assert.deepEqual(ok.tried, []); assert.equal(isShellFallback(ok, { ARGO_STANDALONE: '1' }), false);
-  const cached = resolveShell({ platform: 'win32', env: {}, cwd: root, argv1: null, probe: () => { throw new Error('probe must not run'); } });
-  assert.equal(cached.kind, 'busybox', '프로세스당 1회 캐시');
-  assert.deepEqual(resolveShell({ platform: 'darwin' }), { kind: 'sh', file: '/bin/sh', tried: [] });
+});
+
+test('실행 계획(planShellRun) — 비윈도우 /bin/sh, 윈도우 라우팅별 실행기·인자·verbatim·정규화·폴백 플래그(runBash 배선의 단일 원천, 1R L2)', async () => {
+  const mac = await planShellRun('ls', { platform: 'darwin' }); assert.deepEqual([mac.kind, mac.file, mac.args, mac.verbatim, mac.normalize, mac.fallback], ['sh', '/bin/sh', ['-c', 'ls'], false, false, false]);
+  const root = await mkdtemp(join(tmpdir(), 'argo-plan-')); const bb = join(root, 'busybox64u.exe'); await writeFile(bb, 'x'); const gb = join(root, 'bash.exe'); await writeFile(gb, 'x');
   resetShellCache();
+  const cmd = await planShellRun('dir /b', { platform: 'win32', env: { ARGO_SHELL: bb, ARGO_STANDALONE: '1' }, probe: async () => { throw new Error('cmd 라우트는 진단 없음'); } });
+  assert.deepEqual([cmd.kind, cmd.file, cmd.verbatim, cmd.fallback, cmd.args.at(-1)], ['cmd', 'cmd.exe', true, false, '"dir /b"']);
+  const ps = await planShellRun('Get-Date', { platform: 'win32', env: { ARGO_SHELL: bb } }); assert.deepEqual([ps.kind, ps.file, ps.args[0]], ['powershell', 'powershell.exe', '-NoProfile']);
+  const ok = await planShellRun('ls', { platform: 'win32', env: { ARGO_SHELL: bb, ARGO_STANDALONE: '1' }, cwd: root, argv1: null, probe: async () => true, force: true });
+  assert.deepEqual([ok.kind, ok.file, ok.args, ok.normalize, ok.fallback], ['busybox', bb, ['sh', '-c', 'ls'], false, false]);
+  const gitbash = await planShellRun('pwd', { platform: 'win32', env: { ARGO_SHELL: gb, ARGO_STANDALONE: '1' }, cwd: root, argv1: null, probe: async () => true, force: true });
+  assert.deepEqual([gitbash.kind, gitbash.normalize, gitbash.fallback, gitbash.args], ['gitbash', true, true, ['-c', 'pwd']], 'Git Bash면 출력 정규화 + 스탠드얼론 폴백 표시');
+  const fb = await planShellRun('ls', { platform: 'win32', env: { ARGO_SHELL: bb, ARGO_STANDALONE: '1' }, cwd: root, argv1: null, probe: async () => 'EACCES', force: true });
+  assert.deepEqual([fb.kind, fb.verbatim, fb.fallback, fb.tried.map((t) => t.reason)], ['cmd', true, true, ['EACCES', 'missing']], 'ARGO_SHELL 거부 → cwd/bin 동봉 없음 → cmd');
+  resetShellCache();
+});
+
+test('폴백 알림기 — 회사당 프로세스 1회, tried 사유 동봉, 적재 실패는 삼킴(1R L2)', async () => {
+  const { makeShellFallbackNoter } = await import('../src/engine/native-query.mjs');
+  const calls = []; const noter = makeShellFallbackNoter(async (ws, ev) => { calls.push([ws, ev]); }, new Set());
+  const plan = { kind: 'cmd', file: 'cmd.exe', tried: [{ kind: 'busybox', reason: 'EACCES' }, { kind: 'gitbash', reason: 'missing' }] };
+  noter('c1')(plan); noter('c1')(plan); noter('c2')(plan);
+  assert.equal(calls.length, 2); assert.deepEqual(calls[0][1], { type: 'shell-fallback', ok: false, kind: 'cmd', file: 'cmd.exe', tried: ['busybox: EACCES', 'gitbash: missing'] });
+  const bad = makeShellFallbackNoter(async () => { throw new Error('disk'); }, new Set()); assert.doesNotThrow(() => bad('c3')(plan));
 });
 
 test('동봉 다운로드 — 해시 고정(불일치 throw), 일시 장애 재시도(2회 실패 뒤 성공), 같은 해시 파일이 있으면 재다운로드 없음, 로컬 경로', async () => {

@@ -439,7 +439,9 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
   // (셸은 변수·상대경로로 우회 가능한 프로세스 단위 도구 — 완전 차단이 아니라 1차 방어 + 프롬프트
   //  지시가 계약. 파일 헤더의 "셸 한계" 참조.) 목록은 하드라인(HARD_HOME_PATHS)과 공유 — 갈라지면
   // 같은 파일의 도구별 판정이 갈린다(분리 검수 2026-07-30 HIGH).
-  const bashHardLiterals = [APP_ROOT, ...HARD_HOME_PATHS.flatMap((d) => [...(homeDir() ? [join(homeDir(), d)] : []), `~/${d}`])]; // 틸드 형태 포함(재검수 HIGH — 셸이 확장하는 가장 자연스러운 표기)
+  // 윈도우식 홈 표기(#448 1R H1): Bash 도구가 PowerShell·cmd 표면을 열어 `~\.codex\auth.json`·`$env:USERPROFILE\…`·`%USERPROFILE%\…`가 실행된다 — 게이트는 셸 무관 리터럴이라 형태를 등재한다(전부 셸이 확실히 확장하는 순진한 시도)
+  const winHomeForms = (d) => { const b = d.replace(/\//g, '\\'); return [`~\\${b}`, `$HOME/${d}`, `$HOME\\${b}`, `$env:USERPROFILE\\${b}`, `$env:USERPROFILE/${d}`, `%USERPROFILE%\\${b}`, `%USERPROFILE%/${d}`, `$USERPROFILE/${d}`, `$USERPROFILE\\${b}`]; };
+  const bashHardLiterals = [APP_ROOT, ...HARD_HOME_PATHS.flatMap((d) => [...(homeDir() ? [join(homeDir(), d)] : []), `~/${d}`, ...winHomeForms(d)])]; // 틸드 형태 포함(재검수 HIGH — 셸이 확장하는 가장 자연스러운 표기)
   const wsAbs = resolve(wsRoot);
 
   /* 검색 루트가 금고를 품는가 — Grep/Glob은 준 경로 **아래를 재귀**하므로, 경로 자체가 금지가 아니어도

@@ -82,11 +82,17 @@ export function nativeToolsDirective(lang = 'ko') {
 }
 
 /** 내장 도구 사양 + 실행기 묶음 — 파일·셸·웹 + 브라우저 유즈 + 컴퓨터 유즈(하네스 통일: 러너 무관 같은 도구·같은 게이트) */
-const shellFallbackNoted = new Set(); // 회사당 프로세스 1회 — 매 명령마다 적재하면 타임라인이 덮인다
+/** 윈도우 셸 사다리 폴백 알림기(순수 팩토리) — 동봉 busybox를 못 쓰면(없음·백신 격리·실행 거부) 조용히 퇴화하지 않고 활동 피드에 드러낸다(shell-backend.mjs).
+    회사당 프로세스 1회 — 매 명령마다 적재하면 타임라인이 덮인다. appendFn·noted 주입은 테스트용. */
+export function makeShellFallbackNoter(appendFn = appendEvent, noted = new Set()) {
+  return (wsId) => (plan) => {
+    if (noted.has(wsId)) return; noted.add(wsId);
+    Promise.resolve(appendFn(wsId, { type: 'shell-fallback', ok: false, kind: plan.kind, file: plan.file, tried: (plan.tried ?? []).map((t) => `${t.kind}: ${t.reason}`) })).catch(() => {});
+  };
+}
+const noteShellFallback = makeShellFallbackNoter();
 export function builtinTools({ cwd, env, fetchImpl, wsId = 'ws', browser = true, computer = true }) {
-  // 윈도우 셸 사다리 폴백(동봉 busybox를 못 씀 — 없음·백신 격리·실행 거부)은 조용히 퇴화하지 않고 활동 피드에 한 번 드러낸다(shell-backend.mjs)
-  const onShellFallback = (sel) => { if (shellFallbackNoted.has(wsId)) return; shellFallbackNoted.add(wsId); appendEvent(wsId, { type: 'shell-fallback', ok: false, kind: sel.kind, file: sel.file, tried: (sel.tried ?? []).map((t) => `${t.kind}: ${t.reason}`) }).catch(() => {}); };
-  const runners = builtinRunners({ cwd, env, fetchImpl, onShellFallback });
+  const runners = builtinRunners({ cwd, env, fetchImpl, onShellFallback: noteShellFallback(wsId) });
   const list = BUILTIN_SPECS.map((s) => ({ ...s, gated: true, run: (input, extra) => runners[s.name](input, extra) }));
   if (browser) { const br = browserRunners({ wsId, env }); list.push(...BROWSER_SPECS.map((s) => ({ ...s, gated: true, run: (input, extra) => br[s.name](input, extra) }))); }
   if (computer) { const cr = computerRunners(); list.push(...COMPUTER_SPECS.map((s) => ({ ...s, gated: true, run: (input, extra) => cr[s.name](input, extra) }))); }

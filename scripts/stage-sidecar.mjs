@@ -107,7 +107,9 @@ if (leaks.length) { console.error('[stage] 시크릿 파일 잔존 — 배포 �
 if (process.platform === 'win32') {
   const { fetchBusybox } = await import('./fetch-busybox.mjs');
   const r = await fetchBusybox(join(serverDest, 'bin'));
-  console.log(`[stage] busybox 동봉 — ${r.dest} ${r.bytes}B sha256=${r.sha256}`);
+  copyFileSync(join(ROOT, 'vendor', 'busybox-w32-LICENSE'), join(serverDest, 'bin', 'busybox-w32-LICENSE')); // GPLv2 전문 동반(1R M3)
+  copyFileSync(join(ROOT, 'THIRD-PARTY-NOTICES.md'), join(serverDest, 'THIRD-PARTY-NOTICES.md'));
+  console.log(`[stage] busybox 동봉 — ${r.dest} ${r.bytes}B sha256=${r.sha256} (+LICENSE·THIRD-PARTY-NOTICES)`);
 }
 
 // 4) node 런타임을 사이드카로 복사 — Windows는 .exe 확장자 필수(Tauri가 node-<triple>.exe를 찾는다)

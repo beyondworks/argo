@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname, isAbsolute, sep } from 'node:path';
-import { classifyCommand, resolveShell, shellSpawn, normalizeMsysPaths, isShellFallback } from './shell-backend.mjs';
+import { planShellRun, normalizeMsysPaths } from './shell-backend.mjs';
 
 const OUT_CAP = 30_000; // 도구 출력 상한(문자) — 모델 문맥 보호
 const READ_LINE_CAP = 2000;
@@ -71,15 +71,13 @@ async function runBash(cwd, env, { command, timeout }, signal, onShellFallback) 
   const ms = Math.min(Math.max(Number(timeout) || 120_000, 1000), 600_000);
   const win = process.platform === 'win32';
   // 윈도우: 라우터(cmd 고유 문법·PowerShell은 원래 실행기) + 사다리(동봉 busybox → Git Bash → cmd.exe). 비윈도우는 /bin/sh(shell-backend.mjs 머리 주석).
-  const route = win ? classifyCommand(command) : 'sh';
-  const sel = !win ? { kind: 'sh', file: '/bin/sh' } : route === 'sh' ? resolveShell({ env }) : { kind: route, file: route === 'cmd' ? 'cmd.exe' : 'powershell.exe' };
-  if (win && route === 'sh' && isShellFallback(sel, env)) onShellFallback?.(sel);
-  const { args, verbatim } = shellSpawn(sel.kind, command);
+  const plan = await planShellRun(command, { env });
+  if (plan.fallback) onShellFallback?.(plan);
   return await new Promise((res) => {
-    const child = spawn(sel.file, args,
-      { cwd, env, windowsHide: true, detached: !win, windowsVerbatimArguments: verbatim, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(plan.file, plan.args,
+      { cwd, env, windowsHide: true, detached: !win, windowsVerbatimArguments: plan.verbatim, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = ''; let done = false;
-    const finish = (tail) => { if (done) return; done = true; clearTimeout(timer); signal?.removeEventListener('abort', onAbort); res(cap(sel.kind === 'gitbash' ? normalizeMsysPaths(out) : out) + tail); };
+    const finish = (tail) => { if (done) return; done = true; clearTimeout(timer); signal?.removeEventListener('abort', onAbort); res(cap(plan.normalize ? normalizeMsysPaths(out) : out) + tail); };
     const kill = () => { try { if (win) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }); else process.kill(-child.pid, 'SIGKILL'); } catch { /* 이미 종료 */ } };
     const onAbort = () => { kill(); finish('\n[aborted]'); };
     signal?.addEventListener('abort', onAbort, { once: true });
