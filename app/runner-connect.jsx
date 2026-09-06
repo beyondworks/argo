@@ -26,7 +26,7 @@ const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antig
 // 화면에 그릴 순서 — **이 목록에 없으면 카드가 아예 안 뜬다**(러너를 추가하고 여기를 빠뜨리면
 // 연결 수단이 UI에서 사라진다. 분리 검수 2026-08-03이 grok 누락으로 실제 적발).
 // test/runner-order-sync.test.mjs가 RUNNER_AUTH(숨김 제외)와의 동기화를 잠근다. gemini는 숨김(카탈로그 hidden — 유건 결정 2026-09-03).
-const RUNNER_ORDER = ['claude', 'codex', 'antigravity', 'glm', 'kimi', 'openrouter', 'grok'];
+const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter', 'grok']; // gemini 복귀(2026-09-06 — API 키만, 구독 CLI는 Google 정책으로 외부 앱 차단)
 
 export function AiConnectionCard({ ws, accordion = false }) {
   const { t } = useLang();

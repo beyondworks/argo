@@ -44,8 +44,8 @@ const env = (base) => ({ ANTHROPIC_BASE_URL: base, ANTHROPIC_AUTH_TOKEN: 'tok-fa
 async function collect(q) { const out = []; for await (const m of q) out.push(m); return out; }
 
 test('E1. authFromEnv — Bearer/x-api-key 매핑, 구독 OAuth 거절, 오류 message 추출', () => {
-  assert.deepEqual(authFromEnv({ ANTHROPIC_BASE_URL: 'https://x/api/', ANTHROPIC_AUTH_TOKEN: 't' }), { base: 'https://x/api', headers: { authorization: 'Bearer t' } });
-  assert.deepEqual(authFromEnv({ ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_API_KEY: 'k' }), { base: 'https://x', headers: { 'x-api-key': 'k' } });
+  assert.deepEqual(authFromEnv({ ANTHROPIC_BASE_URL: 'https://x/api/', ANTHROPIC_AUTH_TOKEN: 't' }), { wire: 'messages', base: 'https://x/api', headers: { authorization: 'Bearer t' } });
+  assert.deepEqual(authFromEnv({ ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_API_KEY: 'k' }), { wire: 'messages', base: 'https://x', headers: { 'x-api-key': 'k' } });
   assert.throws(() => authFromEnv({ ANTHROPIC_BASE_URL: 'https://x', CLAUDE_CODE_OAUTH_TOKEN: 'o' }), /구독 로그인/);
   assert.throws(() => authFromEnv({ ANTHROPIC_BASE_URL: 'https://x', CLAUDE_CODE_OAUTH_TOKEN: 'o' }, 'en'), /subscription login/);
   assert.throws(() => authFromEnv({ ANTHROPIC_BASE_URL: 'https://x' }), /자격이 없습니다/);
@@ -54,7 +54,7 @@ test('E1. authFromEnv — Bearer/x-api-key 매핑, 구독 OAuth 거절, 오류 m
   assert.equal(nativeRunnerEnabled('openrouter', { ARGO_NATIVE_RUNNERS: 'openrouter, glm' }), true);
   assert.equal(nativeRunnerEnabled('claude', { ARGO_NATIVE_RUNNERS: 'openrouter, glm' }), false);
   assert.equal(nativeRunnerEnabled('kimi', { ARGO_NATIVE_RUNNERS: 'openrouter, glm' }), false, '목록이 있으면 그 러너만');
-  for (const r of ['openrouter', 'glm', 'kimi', 'grok']) assert.equal(nativeRunnerEnabled(r, {}), true, `기본 on(유건 승인 2026-09-05): ${r}`);
+  for (const r of ['openrouter', 'glm', 'kimi', 'grok', 'gemini']) assert.equal(nativeRunnerEnabled(r, {}), true, `기본 on(유건 승인 2026-09-05): ${r}`);
   assert.equal(nativeRunnerEnabled('claude', {}), false, '구독 OAuth 러너는 기본 목록 밖');
   assert.equal(nativeRunnerEnabled('codex', {}), false);
   for (const off of ['none', 'off', '0', 'false']) assert.equal(nativeRunnerEnabled('openrouter', { ARGO_NATIVE_RUNNERS: off }), false, `옵트아웃 ${off}`);

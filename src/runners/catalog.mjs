@@ -2,6 +2,8 @@
 // (runners.mjs 관심사 분리 2026-07-28 — 의존 0: 다른 모듈을 임포트하지 않는다)
 
 /** 러너별 모델 카탈로그 — id '' = 그 러너의 기본 모델. 라벨은 고유명사라 언어 공통. */
+import { nativeRunnerEnabled } from '../engine/native-flags.mjs';
+
 export const RUNNERS = {
   claude: {
     // 표시명은 'Claude' — Agent SDK 브랜딩 지침(code.claude.com/docs/en/agent-sdk/overview)이 서드파티 제품에
@@ -45,7 +47,9 @@ export const RUNNERS = {
     // hidden — 화면·목록·자동 선택에서 제외(유건 결정 2026-09-03: Antigravity가 같은 구글 모델을 더 안정적으로 실행하고,
     // Gemini CLI는 워크스페이스 계정에서 GOOGLE_CLOUD_PROJECT를 요구해 스모크 실패). 실행 경로는 남긴다 — 이미 gemini로
     // 지정된 크루·저장된 자격은 그대로 돈다(isHiddenRunner 소비처: /api/runners 목록·설정 카드 순서·pickRunner 자동·검진·크루 도구 안내).
-    hidden: true,
+    // 2026-09-06 복귀(유건 승인): API 키 자격은 Argo 엔진(네이티브, gemini-wire)으로 돈다 — Hermes·OpenClaw의 gemini 프로바이더와 같은 공개 API 경로.
+    // 구독(oauth)·host 자격은 CLI 경로 그대로(isCliTurn)이며 신규 연결 방식은 API 키뿐(RUNNER_AUTH — Google이 구독의 외부 앱 사용을 막았다).
+    hidden: false,
     name: 'Gemini', kind: 'cli', mcp: true, // settings.json mcpServers 주입(0.21.2 mcp list 실프로브 2026-08-21)
     models: [
       // 실측(2026-07-19): OAuth(Code Assist) 경로 실턴 통과 = 2.5 Pro/Flash. 3.x id는 실존하나
@@ -182,6 +186,10 @@ export const hostOptInAllowed = (runner) =>
 /** 외부 CLI 러너 판정 — 디스패치(chat/oneshot)의 단일 진실. 하드코딩 열거('codex'||'gemini')는
     러너 추가 때마다 배선 누락을 만든다(#119 전수 수색의 교훈) — kind가 카탈로그에 있으니 그걸 쓴다. */
 export const isCliRunner = (r) => RUNNERS[r]?.kind === 'cli';
+/** 이 자격으로 도는 턴이 외부 CLI인가 — gemini는 API 키 자격이면 Argo 엔진(네이티브)이라 CLI가 아니다(구독·host만 CLI). 카드 정보(runners.mjs)·
+    스케줄러(hasTools)·chat·oneshot의 분기가 전부 이 하나를 쓴다(러너 종류만 보던 isCliRunner는 자격 축을 몰라 gemini에서 갈렸다). */
+export const isCliTurn = (r, credType) => isCliRunner(r) && !(r === 'gemini' && credType === 'apikey' && nativeRunnerEnabled('gemini'));
+export const GEMINI_DEFAULT_MODEL = 'gemini-2.5-pro';
 
 export const GLM_DEFAULT_MODEL = 'glm-5.3';
 
@@ -311,7 +319,7 @@ export const RUNNER_AUTH = {
   // 노출한다(claudeHostAllowed). 데스크톱은 setup-token 원클릭이 정식 경로.
   claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPrefix: 'sk-ant-oat01-', oauthPasteable: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', hostUsable: true, keyUrl: 'https://console.anthropic.com/settings/keys' },
   codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
-  gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://aistudio.google.com/apikey' },
+  gemini: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, webConnect: false, hostUsable: false, keyUrl: 'https://aistudio.google.com/apikey' }, // 신규 연결은 API 키만(2026-09-06) — 기존 oauth·host 자격은 CLI로 계속 돈다
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
   kimi: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' }, // 접두사 무차단(GLM 관례) — 리전·미래 키 형식 변화에 저장이 막히지 않게, 판정은 verifyRunnerCred가
   openrouter: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://openrouter.ai/keys' }, // BYOK 단일(설계 2026-07-27) — OAuth·크레딧 대행 안 함

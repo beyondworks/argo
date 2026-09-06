@@ -44,7 +44,7 @@ test('배선 — chat/oneshot이 하드코딩 열거 대신 isCliRunner를 쓴�
   // 'codex' || 'gemini' 하드코딩이 남으면 다음 CLI 러너 추가 때 배선 누락이 재발한다(#119 전수 수색 교훈).
   for (const f of ['src/chat.mjs', 'src/oneshot.mjs']) {
     const src = read(f);
-    assert.ok(src.includes('isCliRunner(runner)'), `${f}가 isCliRunner를 쓰지 않는다`);
+    assert.ok(/isCliTurn\(runner, await runnerCredType\(wsId, runner\)\)/.test(src), `${f}가 isCliTurn(자격 축 판정)을 쓰지 않는다`); // 2026-09-06: gemini API 키는 네이티브라 러너 종류만으론 못 가른다
     assert.ok(!/runner === 'codex' \|\| runner === 'gemini'/.test(src),
       `${f}에 CLI 러너 하드코딩 열거가 남아 있다 — antigravity가 SDK 경로로 새서 죽는다`);
   }
@@ -52,7 +52,7 @@ test('배선 — chat/oneshot이 하드코딩 열거 대신 isCliRunner를 쓴�
 
 test('자동 선택 순서 — PICK_ORDER는 RUNNER_AUTH 정의 순과 일치한다', () => {
   // pickRunner가 RUNNER_AUTH 정의 순이므로 어긋나면 "자동" 표시가 실제 실행 러너와 다르게 뜬다(주석 참조).
-  // 숨김 러너(gemini, 2026-09-03)는 자동 선택 대상이 아니라 PICK_ORDER에서도 뺀다 — 가시 러너끼리 정의 순 일치
+  // 숨김 러너는 자동 선택 대상이 아니라 PICK_ORDER에서도 뺀다(현재 숨김 없음 — gemini는 2026-09-06 복귀) — 가시 러너끼리 정의 순 일치
   assert.deepEqual(PICK_ORDER, Object.keys(RUNNER_AUTH).filter((id) => !isHiddenRunner(id)));
 });
 

@@ -8,25 +8,27 @@ import { RUNNERS, RUNNER_AUTH, isHiddenRunner, visibleRunnerIds, pickRunner } fr
 const load = (p) => readFile(new URL(p, import.meta.url), 'utf8');
 const on = { company: { connected: true, invalid: false } };
 
-test('카탈로그 — gemini는 hidden, 실행 정의(RUNNERS·RUNNER_AUTH)는 남아 있다', () => {
-  assert.equal(isHiddenRunner('gemini'), true);
+test('카탈로그 — gemini는 숨김 해제(2026-09-06 API 키 경로 복귀), 숨김 기구·실행 정의는 유지', () => {
+  assert.equal(isHiddenRunner('gemini'), false);
   assert.ok(RUNNERS.gemini?.models?.length, '실행 경로(모델 카탈로그)는 유지');
-  assert.ok(RUNNER_AUTH.gemini, '자격 정의 유지 — 저장된 자격·기존 크루가 계속 돈다');
-  assert.ok(!visibleRunnerIds().includes('gemini') && visibleRunnerIds().includes('antigravity'));
+  assert.deepEqual(RUNNER_AUTH.gemini.methods, ['apikey'], '신규 연결은 API 키만(구독 CLI는 Google 정책으로 외부 앱 차단)');
+  assert.equal(RUNNER_AUTH.gemini.hostUsable, false); assert.equal(RUNNER_AUTH.gemini.webConnect, false);
+  assert.ok(visibleRunnerIds().includes('gemini') && visibleRunnerIds().includes('antigravity'));
+  assert.equal(typeof isHiddenRunner, 'function', '숨김 기구는 남는다(다음 러너 정책 변경용)');
 });
 
-test('pickRunner — 자동 선택(기본 러너·순서 폴백)은 숨김 러너를 건너뛰고, 명시 지정은 존중한다', () => {
+test('pickRunner — gemini 복귀(2026-09-06) 뒤 자동 선택은 정의 순(gemini가 antigravity보다 앞), 명시 지정은 존중한다', () => {
   const st = { gemini: on, antigravity: on };
-  assert.equal(pickRunner(st, null).runner, 'antigravity', '순서 폴백에서 gemini 제외');
-  assert.equal(pickRunner(st, null, null, { defaultRunner: 'gemini' }).runner, 'antigravity', '회사 기본 러너가 숨김이면 건너뛴다');
+  assert.equal(pickRunner(st, null).runner, 'gemini', '순서 폴백에 gemini 포함');
+  assert.equal(pickRunner(st, null, null, { defaultRunner: 'gemini' }).runner, 'gemini', '회사 기본 러너 gemini 존중');
   assert.equal(pickRunner(st, 'gemini').runner, 'gemini', '이미 gemini로 지정된 크루는 그대로');
-  assert.equal(pickRunner({ gemini: on }, null).available, false, '숨김 러너만 연결된 회사는 자동 크루가 러너 없음');
+  assert.equal(pickRunner({ gemini: on }, null).available, true, 'gemini만 연결된 회사도 자동 크루가 돈다');
 });
 
 test('배선 — 목록을 만드는 자리 전부가 숨김 판정을 쓴다(설정 카드 순서·크루 도구 안내·셀렉터·경쟁 슬롯·keys PUT)', async () => {
   const connect = await load('../app/runner-connect.jsx');
   const order = JSON.parse((connect.match(/const RUNNER_ORDER = (\[[^\]]*\]);/) ?? [])[1].replace(/'/g, '"'));
-  assert.ok(!order.includes('gemini'), '설정·온보딩 카드 순서에서 제외');
+  assert.ok(order.includes('gemini'), '설정·온보딩 카드 순서에 포함(2026-09-06 복귀)');
   assert.match(connect, /filter\(\(id\) => runners\[id\]\?\.hidden && runners\[id\]\?\.company\?\.connected\)\.map\(\(id\) => \(\s*<RunnerRow[^\n]*retired/, '보관된 숨김 자격은 "제공 종료 · 해제만" 행으로(검수 MEDIUM-4)');
   assert.match(connect, /\{hostLinked \|\| retired \? \(/, '제공 종료 행은 연결 폼 없이 해제만');
   const chat = await load('../src/chat.mjs');
@@ -58,7 +60,7 @@ test('배선 — 목록을 만드는 자리 전부가 숨김 판정을 쓴다(�
   const { visibleRunnerNamesLine } = await import('../src/runners/catalog.mjs');
   for (const lang of ['ko', 'en']) {
     const line = visibleRunnerNamesLine(lang);
-    assert.ok(!/Gemini/.test(line) && /Antigravity/.test(line) && !line.includes('${'), `${lang}: ${line}`);
+    assert.ok(/Gemini/.test(line) && /Antigravity/.test(line) && !line.includes('${'), `${lang}: ${line}`); // gemini 복귀 — 가시 러너 줄에 포함
   }
   assert.match(visibleRunnerNamesLine('en'), /, or [A-Za-z]+$/, 'en 나열은 ", or 마지막"');
   for (const f of ['../src/chat.mjs', '../src/oneshot.mjs', '../src/persona.mjs', '../src/trial.mjs']) {
@@ -78,7 +80,7 @@ test('배선 — 목록을 만드는 자리 전부가 숨김 판정을 쓴다(�
   }
 });
 
-test('/api/runners 행동 — 목록에 gemini가 hidden:true로 남고(현재 값 정직 표기용) 가시 러너는 hidden:false', async () => {
+test('/api/runners 행동 — hidden 표지가 실리고(gemini는 2026-09-06부터 false) 가시 러너는 hidden:false', async () => {
   // 라우트 실호출(next-esm-resolve 훅) — 소스 문자열 핀은 리터럴을 두고 결과만 되살리는 변이에 초록이었다(검수 MEDIUM-3 실증)
   delete process.env.NEXT_PUBLIC_SUPABASE_URL; delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const { register } = await import('node:module');
@@ -87,7 +89,7 @@ test('/api/runners 행동 — 목록에 gemini가 hidden:true로 남고(현재 �
   const res = await route.GET(new Request('http://127.0.0.1/api/runners'));
   const j = await res.json();
   const g = j.runners.find((r) => r.id === 'gemini');
-  assert.ok(g && g.hidden === true, 'gemini 항목은 남되 hidden');
+  assert.ok(g && g.hidden === false, 'gemini는 숨김 해제(2026-09-06)');
   assert.ok(j.runners.filter((r) => !r.hidden).every((r) => !isHiddenRunner(r.id)) && j.runners.some((r) => r.id === 'antigravity' && r.hidden === false));
 });
 
@@ -107,7 +109,7 @@ test('/api/companies/[ws]/keys 행동 — runnerStatus의 hidden 표지가 응�
   const route = await import('../app/api/companies/[ws]/keys/route.js');
   const res = await route.GET(new Request(`http://127.0.0.1/api/companies/${ws}/keys`), { params: Promise.resolve({ ws }) });
   const j = await res.json();
-  assert.equal(j.runners?.gemini?.hidden, true, 'gemini hidden 표지');
+  assert.equal(j.runners?.gemini?.hidden, false, 'hidden 표지가 응답에 실린다(gemini는 숨김 해제 상태)');
   assert.equal(j.runners?.antigravity?.hidden, false);
   if (prevRoot === undefined) delete process.env.ARGO_ROOT; else process.env.ARGO_ROOT = prevRoot; // 같은 파일 뒤 테스트 오염 방지(3차 검수 LOW-5)
 });
@@ -118,11 +120,12 @@ test('제공 종료 전용 턴 안내 — chat.mjs 분기 핀 + 서버·클라 �
   const { onlyHiddenConnectedStatus } = await import('../src/runners/catalog.mjs');
   const { onlyHiddenConnected } = await import('../app/runner-usable.mjs');
   const on = { company: { connected: true, invalid: false } };
+  // 2026-09-06 현재 숨김 러너가 없다(gemini 복귀) — 상태 표지(클라)와 카탈로그 판정(서버)이 같은 사실을 보므로 전부 false로 일치해야 한다
   const cases = [
-    [{ gemini: { ...on, hidden: true } }, true],
-    [{ gemini: { ...on, hidden: true }, claude: { ...on, hidden: false } }, false],
+    [{ gemini: { ...on, hidden: false } }, false],
+    [{ gemini: { ...on, hidden: false }, claude: { ...on, hidden: false } }, false],
     [{ claude: { ...on, hidden: false } }, false],
-    [{ gemini: { company: { connected: true, invalid: true }, hidden: true } }, false],
+    [{ gemini: { company: { connected: true, invalid: true }, hidden: false } }, false],
     [{}, false],
   ];
   for (const [st, want] of cases) {
@@ -137,7 +140,7 @@ test('가용 판정 — anyRunnerUsable은 숨김 러너를 세지 않고, onlyH
   assert.equal(anyRunnerUsable(st), false);
   assert.equal(onlyHiddenConnected(st), true);
   assert.equal(anyRunnerUsable({ ...st, claude: { company: { connected: true, invalid: false }, hidden: false } }), true);
-  assert.ok(!PICK_ORDER.includes('gemini'), 'PICK_ORDER(자동 표시 순서)에서 제외 — 판정이 두 벌이 되지 않게(검수 LOW-1)');
+  assert.ok(PICK_ORDER.includes('gemini'), 'PICK_ORDER(자동 표시 순서)에 포함 — 카탈로그 정의 순과 한 벌(검수 LOW-1)');
 });
 
 test('명판 "엔진" — runnerStatus의 hidden 표지를 usableRunnerNames가 걸러 저장된 gemini 자격이 있어도 세지 않는다', async () => {

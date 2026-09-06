@@ -12,6 +12,8 @@ import { exists, homeEnv, scrubServerSecrets, seedAuthFile, credHash, HEALTH_FIL
 import { RUNNER_AUTH, GROK_DEFAULT_MODEL } from './catalog.mjs';
 import { provisionCodexCli } from './codex.mjs';
 import { provisionGeminiCli, geminiTurnHome, probeGeminiSubscription } from './gemini.mjs';
+import { nativeRunnerEnabled } from '../engine/native-flags.mjs';
+import { GEMINI_DEFAULT_BASE } from '../engine/gemini-wire.mjs';
 import { grokAccessToken, grokExpired, grokNeedsRefresh, refreshGrokTokens } from './grok.mjs';
 
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
@@ -193,6 +195,9 @@ export const normalizePastedCred = (value) => {
 /** 러너 실행에 주입할 env(부분) — 회사 자격이 있으면 러너 종류에 맞는 변수로. 없으면 null(호스트 자격 폴백=회귀 0).
     반환: { env, home } — env=주입 변수 dict, home=회사 자격 격리 홈 경로(codex는 apikey·oauth 모두
     auth.json 경유 — env 키 주입('clean')은 CLI가 안 읽어 폐기 2026-07-26). */
+/** 저장된 자격의 종류만(apikey·oauth·host·null) — 턴 분기(isCliTurn)가 러너 종류 옆에 자격 축을 본다. */
+export async function runnerCredType(wsId, runner) { return (await loadRunnerCred(wsId, runner))?.type ?? null; }
+
 export async function runnerCredEnv(wsId, runner) {
   const cred = await loadRunnerCred(wsId, runner);
   if (!cred) return null;
@@ -213,6 +218,11 @@ export async function runnerCredEnv(wsId, runner) {
   // 달리 gemini는 HOME 전역 config(GEMINI.md·save_memory·전 도구)를 상속해 테넌트 격리가 없었다. host는 로그인만 빌리고
   // 나머지는 격리한다. 그래서 아래 일반 host→null 분기보다 먼저 처리한다.
   if (runner === 'gemini') {
+    // API 키 자격은 Argo 엔진(네이티브) — Google AI Studio generateContent 와이어(ARGO_WIRE=gemini, engine/gemini-wire.mjs). CLI를 띄우지 않으므로 격리 HOME도 불필요.
+    // ARGO_NATIVE_RUNNERS=none이면 종전대로 CLI에 GEMINI_API_KEY로 넘긴다(폴백 보존).
+    if (cred.type === 'apikey' && nativeRunnerEnabled('gemini')) {
+      return { env: { ARGO_WIRE: 'gemini', GEMINI_API_KEY: cred.value, GEMINI_BASE_URL: process.env.GEMINI_BASE_URL || GEMINI_DEFAULT_BASE }, authType: 'apikey' };
+    }
     const g = await geminiTurnHome(wsId, cred);
     if (!g) return null; // host인데 호스트 로그인이 없음 — 폴백 없음(명시 연결 원칙)
     return { env: { ...homeEnv(g.home), ...g.env }, home: g.home, authType: g.authType };

@@ -93,7 +93,7 @@ test('배선 — 두 맥락 빌더(CLI 경로·SDK 기기 교차 경로)가 thre
   assert.equal((src.match(/첨부, Read로 열람/g) ?? []).length, 1, '첨부 노트 문구는 threadCtxLine 안 1곳');
   assert.equal((src.match(/산출물, Read로 열람/g) ?? []).length, 1, '산출물 노트 문구는 threadCtxLine 안 1곳');
   // 두 호출부가 각각 어느 구간에 있는지 — CLI(isCliRunner 블록)·SDK(crossCtx 블록)
-  const cli = src.indexOf('if (isCliRunner(runner)) {'); const sdk = src.indexOf('let crossCtx = ');
+  const cli = src.indexOf('if (cliTurn) {'); const sdk = src.indexOf('let crossCtx = '); // CLI 블록 앵커 = isCliTurn 결과(2026-09-06)
   assert.ok(cli > 0 && sdk > cli, '두 블록 앵커');
   assert.ok(src.indexOf('threadCtxLine(m, lang', cli) < sdk, 'CLI 블록 안에 호출 1');
   assert.ok(src.indexOf('threadCtxLine(m, lang', sdk) > sdk, 'crossCtx 블록 안에 호출 2');
