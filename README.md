@@ -85,6 +85,7 @@ Treat the code like a password.
 |---|---|
 | [docs/selfhost.md](docs/selfhost.md) | Linux VPS / CLI install, security defaults, headless runner connect |
 | [docs/privacy-sync.md](docs/privacy-sync.md) | What syncs to the cloud (credentials included), where the encryption key lives, and how to opt out |
+| [SECURITY.md](SECURITY.md) | Trust model — what the permission gate actually guarantees, what it cannot (shell, prompt injection, external CLI runners), and how to report |
 
 ## License
 
@@ -106,3 +107,4 @@ AI 회사입니다. 러너·기억·오케스트레이션은 전부 로컬에서
 - 러너 연결은 설정 → AI 연결에서 본인 계정으로(BYOK — Claude·Codex·Gemini·GLM·Kimi)
 - 셀프호스트 보안 기본값·헤드리스 연결: [docs/selfhost.md](docs/selfhost.md)
 - 클라우드 동기화 범위(자격 증명 포함)·암호화 열쇠 위치·끄는 방법: [docs/privacy-sync.md](docs/privacy-sync.md)
+- 신뢰 모델 — 권한 게이트가 보장하는 것과 못 막는 것(셸·프롬프트 인젝션·외부 CLI 러너), 제보 방법: [SECURITY.md](SECURITY.md)
