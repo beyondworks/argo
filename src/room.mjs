@@ -601,7 +601,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   // 마커 detail = '발언자|다음1,다음2|인원' (getRoomTurn이 해석). j가 범위 밖이면 빈 값 = 발언자 미정(마무리 중).
   // 세 번째 구간 = 이 턴의 발언 인원 — 화면이 "3/12 발언 완료"를 계산한다(진행 표시가 발언자 이름 하나뿐이면 12명
   // 회의에서 사장은 얼마나 남았는지 알 수 없다 — 유건 제보 2026-09-06). 앞 두 구간 해석은 그대로(구형 호환).
-  const markerFor = (j) => (speakers[j] ? `${speakers[j].slug}|${speakers.slice(j + 1).map((s) => s.slug).join(',')}|${speakers.length}` : '');
+  const markerFor = (j) => (speakers[j] ? `${speakers[j].slug}|${speakers.slice(j + 1).map((s) => s.slug).join(',')}|${speakers.length}` : `||${speakers.length}`); // 마무리 중에도 인원은 남긴다 — "N/N명"이 마지막에 사라지지 않게(검수 LOW-2)
   for (const [i, a] of speakers.entries()) {
     const att = i >= IMG_EMBED_MAX && attachments.some((x) => x.isImage)
       ? attachments.map((x) => (x.isImage ? { ...x, isImage: false } : x))

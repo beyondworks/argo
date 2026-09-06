@@ -1270,6 +1270,9 @@ ${lang === 'en'
       throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : e;
     } finally {
       abortReg.release();
+      // 심박(turn-status 레지스트리)이 생긴 뒤로 clear는 **프로세스 수명 자원(타이머) 해제**다 — 위 두 clear가 도달하지
+      // 못하는 경로가 생기면 그 크루가 상주에서 영구 "작성 중"이 된다(검수 MEDIUM-2). 멱등이라 finally에 한 번 더.
+      await clearTurnStatus(wsId, agentSlug);
     }
   }
   // 설치된 MCP 도구 — 서버 단위 allow(mcp__<name>)로 해당 서버의 전체 도구 허용
@@ -1666,6 +1669,7 @@ ${lang === 'en'
     throw aborted ? Object.assign(new Error('중단됨'), { aborted: true }) : surfaced;
   } finally {
     abortReg?.release();
+    await clearTurnStatus(wsId, agentSlug); // 타이머 해제의 마지막 방어선(검수 MEDIUM-2) — 멱등
   }
   await clearTurnStatus(wsId, agentSlug);
 

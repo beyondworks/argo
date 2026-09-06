@@ -241,7 +241,7 @@ test('배선: runRoomTurn이 마커 래퍼를 타고, 발언마다 chat() 직전
   assert.equal((src.match(/(?<!function )runRoomTurnInner\(wsId, text, attachments/g) ?? []).length, 1, '래퍼 밖 직접 호출 금지(정의부 제외)');
   const i0 = src.indexOf('for (const [i, a] of speakers.entries())');
   const loop = src.slice(i0, src.indexOf('r = await chat(wsId, a.slug, prompt', i0));
-  assert.match(src, /const markerFor = \(j\) => \(speakers\[j\] \? `\$\{speakers\[j\]\.slug\}\|\$\{speakers\.slice\(j \+ 1\)\.map\(\(s\) => s\.slug\)\.join\(','\)\}\|\$\{speakers\.length\}` : ''\);/,
+  assert.match(src, /const markerFor = \(j\) => \(speakers\[j\] \? `\$\{speakers\[j\]\.slug\}\|\$\{speakers\.slice\(j \+ 1\)\.map\(\(s\) => s\.slug\)\.join\(','\)\}\|\$\{speakers\.length\}` : `\|\|\$\{speakers\.length\}`\);/,
     "마커 인코딩 '발언자|다음1,다음2' — getRoomTurn의 해석과 짝");
   assert.match(loop, /await mark\(markerFor\(i\)\)/, '발언자|다음 순서 갱신이 chat() 앞에 있어야 발언자 표시·발언 큐의 앵커가 된다');
   assert.doesNotMatch(src.slice(src.indexOf('async function runRoomTurnInner(')), /setTurnStatus\(wsId, ROOM_TURN_SLUG/, '루프의 마커 직접 쓰기 금지 — 하트비트가 덮는다');
@@ -289,7 +289,7 @@ test('배선: 회의실 헤더 진행 줄은 회의 마커(active)만 보고 그
   assert.ok(hdr.includes("t('room.progress', { done: Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) })"), 'done = 인원 − 남은 큐 − 발언 중 1');
   assert.ok(hdr.includes("t('room.progressNoCount', { elapsed: fmtElapsed(elapsed) })"), '인원 미상(구형 마커)이면 경과만');
   assert.ok(hdr.includes('{turn?.total > 1'), '발언자 한 명이면 "0/1명" 대신 경과만(격리 캡처에서 소음으로 확인)');
-  assert.ok(/setElapsed\(Math\.max\(0, Date\.now\(\) - \(turn\?\.startedAt \?\? Date\.now\(\)\)\)\)/.test(page), '경과는 서버 마커의 startedAt 기준(자기 탭 POST 아님)');
+  assert.ok(/if \(turn\?\.startedAt\) startedRef\.current = turn\.startedAt;/.test(page) && /setElapsed\(Math\.max\(0, Date\.now\(\) - startedRef\.current\)\)/.test(page), '경과는 서버 마커의 startedAt을 ref에 보관 — 자기 턴 종료 직후 0:00 스냅 방지(검수 LOW-1)');
   const crew = await readFile(new URL('../app/c/[ws]/crew/[slug]/page.jsx', import.meta.url), 'utf8');
   assert.ok(crew.includes("liveStage?.source === 'room' && (") && crew.includes("t('chat.inRoom')"), '1:1 진행 카드에 회의실 출처 배지');
   const dict = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');

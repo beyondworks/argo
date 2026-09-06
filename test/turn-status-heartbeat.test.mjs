@@ -25,12 +25,15 @@ async function backdate(ws, slug, ms) {
   await writeFile(f, JSON.stringify({ ...j, ts: Date.now() - ms }));
 }
 
-test('심박: 이벤트 없이도 ts가 갱신돼 2분 창을 넘긴 긴 단계에서 표시가 살아 있다 — 단계·문장·출처 보존', async () => {
+test('심박: 이벤트 없이도 ts가 갱신돼 2분 창을 넘긴 긴 단계에서 표시가 살아 있다 — 단계·문장·출처 보존', { timeout: 20_000 }, async () => {
   _setHeartbeatMsForTest(20);
   const ws = 'hb-alive'; await seed(ws);
   await setTurnStatus(ws, 'mina', 'shell', 'sleep 300', '지금까지 쓴 문장', 'room');
-  await backdate(ws, 'mina', 110_000); // 110초 전 — 곧 만료될 참
-  await sleep(120);                    // 심박 20ms × 여러 회
+  await backdate(ws, 'mina', 119_500); // 창(120초) 바로 안 — 심박이 0회면 다음 순간 만료된다
+  const before = JSON.parse(await readFile(statusPath(ws, 'mina'), 'utf8')).ts;
+  await sleep(150);                    // 심박 20ms × 여러 회
+  const after = JSON.parse(await readFile(statusPath(ws, 'mina'), 'utf8')).ts;
+  assert.ok(after > before, `심박이 파일 ts를 앞당긴다(전진 ${after - before}ms) — 만료 여부만 보면 창 안 backdate에 심박 0회도 통과한다(검수 HIGH-1)`);
   const s = await getTurnStatus(ws, 'mina');
   assert.ok(s, '심박이 ts를 앞당겨 만료를 막는다');
   assert.equal(s.stage, 'shell'); assert.equal(s.detail, 'sleep 300'); assert.equal(s.partial, '지금까지 쓴 문장'); assert.equal(s.source, 'room');
@@ -43,7 +46,7 @@ test('심박 없이 120초를 넘긴 파일은 종전대로 null(고아 판정 �
   assert.equal(await getTurnStatus(ws, 'ghost'), null, '다른 프로세스가 죽인 파일은 심박이 없으니 만료');
 });
 
-test('종료: clearTurnStatus 뒤에는 심박이 파일을 되살리지 않는다(해제 경합 ×40, 심박 1ms)', async () => {
+test('종료: clearTurnStatus 뒤에는 심박이 파일을 되살리지 않는다(해제 경합 ×40, 심박 1ms)', { timeout: 20_000 }, async () => {
   _setHeartbeatMsForTest(1);
   const ws = 'hb-clear'; await seed(ws);
   for (let i = 0; i < 40; i++) {
@@ -69,7 +72,7 @@ test('다른 프로세스가 지운 파일 — 이 프로세스의 턴이 살아
   assert.equal(existsSync(statusPath(ws, 'jun')), false, '이 턴이 끝난 뒤에는 어떤 심박도 파일을 남기지 않는다');
 });
 
-test('직렬화: 심박(읽고 ts 갱신)이 단계 갱신과 엇갈려 옛 단계를 되살리지 않는다(심박 1ms × 60회 교차)', async () => {
+test('직렬화: 심박(읽고 ts 갱신)이 단계 갱신과 엇갈려 옛 단계를 되살리지 않는다(심박 1ms × 60회 교차)', { timeout: 20_000 }, async () => {
   _setHeartbeatMsForTest(1);
   const ws = 'hb-order'; await seed(ws);
   let stale = 0;
@@ -107,4 +110,27 @@ test('심박은 내용을 지어내지 않는다 — 파일이 없으면 아무�
   await sleep(140); // 심박 2회 이상
   assert.equal(existsSync(statusPath(ws, 'yun')), false, '없는 파일에서 심박이 상태를 창조하면 단계·문장·출처가 조작된 유령 턴이 뜬다');
   await clearTurnStatus(ws, 'yun');
+});
+
+test('동시 크루: 두 크루가 같이 도는 중 한쪽이 끝나도 다른 쪽 심박은 살아 있다 — 타이머는 키별(검수 MEDIUM-1 프로브: 전역 타이머면 0ms 전진)', { timeout: 20_000 }, async () => {
+  _setHeartbeatMsForTest(20);
+  const ws = 'hb-two'; await seed(ws);
+  await setTurnStatus(ws, 'mina', 'think', '', '', 'room');
+  await setTurnStatus(ws, 'pepper', 'think', '', '', 'delegate');
+  await clearTurnStatus(ws, 'pepper'); // 위임받은 동료가 먼저 끝남
+  const before = JSON.parse(await readFile(statusPath(ws, 'mina'), 'utf8')).ts;
+  await sleep(150);
+  const after = JSON.parse(await readFile(statusPath(ws, 'mina'), 'utf8')).ts;
+  assert.ok(after > before, `pepper의 종료가 mina의 심박을 죽였다(전진 ${after - before}ms)`);
+  assert.equal(existsSync(statusPath(ws, 'pepper')), false, '끝난 쪽은 사라진다');
+  await clearTurnStatus(ws, 'mina');
+});
+
+// ── 배선 — 심박이 생긴 뒤 clear는 프로세스 수명 자원(타이머) 해제다. 두 러너 경로의 finally에 마지막 방어선이 있어야
+// 어떤 실패 경로도 크루를 상주에서 영구 "작성 중"으로 남기지 않는다(검수 MEDIUM-2). 구간 불변식으로만 잠근다.
+test('배선: chat.mjs의 SDK·CLI 두 경로 finally에 clearTurnStatus가 있다(타이머 누수 방어선)', async () => {
+  const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  const finals = [...src.matchAll(/\} finally \{[\s\S]*?\n\s{2,6}\}/g)].map((m) => m[0]).filter((b) => /abortReg\??\.release\(\);/.test(b));
+  assert.equal(finals.length, 2, 'abortReg를 해제하는 finally = 러너 경로 2개(CLI·SDK)');
+  for (const b of finals) assert.ok(/await clearTurnStatus\(wsId, agentSlug\);/.test(b), `finally에 clear가 없다: ${b.slice(0, 80)}…`);
 });

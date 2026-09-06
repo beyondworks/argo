@@ -53,10 +53,15 @@ export default function Room({ params }) {
   const [turn, setTurn] = useState(null);
   // 경과 시각 — 마커의 startedAt 기준(자기 탭 POST가 아니라 서버 회의 시작). 진행 줄에 붙어 "멈춘 게 아니라 오래 걸리는 것"을 보인다.
   const [elapsed, setElapsed] = useState(0);
+  // startedAt은 ref로 — 자기 턴 종료 직후 setTurn(null)이 먼저 오고 serverBusy는 다음 폴까지 true라, 그 창에서 경과가
+  // 0:00으로 튀었다 사라진다(검수 LOW-1). 크루 화면 startRef와 같은 선례. live가 꺼질 때만 비운다.
+  const startedRef = useRef(0);
   useEffect(() => {
     const live = busy || serverBusy;
-    if (!live) { setElapsed(0); return; }
-    const tick = () => setElapsed(Math.max(0, Date.now() - (turn?.startedAt ?? Date.now())));
+    if (!live) { setElapsed(0); startedRef.current = 0; return; }
+    if (turn?.startedAt) startedRef.current = turn.startedAt;
+    if (!startedRef.current) startedRef.current = Date.now();
+    const tick = () => setElapsed(Math.max(0, Date.now() - startedRef.current));
     tick();
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
