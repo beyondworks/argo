@@ -168,11 +168,11 @@ async function* run(opts, ac, isInterrupted) {
 
 /** 원샷(도구 없는 단발 생성 — 크루 카드 생성·직함·기억 정리·브리핑)용 — oneshot.mjs가 플래그 러너에서 SDK query 대신 쓴다(P-A').
     반환 { text, usage, model }. 실패는 callMessages가 `API Error: <status> <msg>`로 던진다(oneshot의 자가치유·안내 경로 그대로). */
-export async function nativeOneShot({ env = {}, model, prompt, systemPrompt = '', maxTokens, signal, lang = 'ko', fetchImpl = globalThis.fetch }) {
+export async function nativeOneShot({ env = {}, model, prompt, systemPrompt = '', maxTokens, signal, lang = 'ko', fetchImpl = globalThis.fetch, effort = '' }) {
   if (!model) throw new Error('native engine: model is required');
   const { base, headers, wire } = authFromEnv(env, lang);
   const max_tokens = Number(maxTokens) || Number(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) || NATIVE_DEFAULT_MAX_TOKENS;
-  const res = await callMessages({ wire, base, headers, signal, fetchImpl,
+  const res = await callMessages({ wire, base, headers, signal, fetchImpl, effort, // effort는 Responses 와이어(codex)만 싣는다 — 원샷 호출부는 크루 카드가 없어 벤더 기본 강도(2R N4)
     body: { model, max_tokens, ...(systemPrompt ? { system: systemPrompt } : {}), messages: [{ role: 'user', content: String(prompt) }] } });
   const text = (Array.isArray(res?.content) ? res.content : []).filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
   return { text, usage: sumUsage({}, res?.usage), model: res?.model || model };

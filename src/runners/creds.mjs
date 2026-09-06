@@ -15,7 +15,13 @@ import { provisionGeminiCli, geminiTurnHome, probeGeminiSubscription } from './g
 import { nativeRunnerEnabled } from '../engine/native-flags.mjs';
 import { GEMINI_DEFAULT_BASE } from '../engine/gemini-wire.mjs';
 import { CODEX_BACKEND_BASE, OPENAI_API_BASE } from '../engine/responses-wire.mjs';
-import { parseCodexAuth, accessExpiring, refreshCodexTokens, readCliCodexAuth, cliAuthCandidates, mergeCodexAuth, codexHeaders } from './codex-oauth.mjs';
+import { parseCodexAuth, accessExpiring, refreshCodexTokens, readCliCodexAuth, cliAuthCandidates, mergeCodexAuth, codexHeaders, REFRESH_TIMEOUT_MS } from './codex-oauth.mjs';
+
+/** codex 토큰 회전 락 — 최대 보유 = 리프레시 (1 + CLI 반입 후보 수)회 × REFRESH_TIMEOUT_MS. stale 회수·대기 상한 둘 다 그보다 커야 상호배제가 산다
+    (2R N1 실측: staleMs 30초 < 보유 35초면 대기자가 잔재로 보고 락을 탈취해 같은 refresh 토큰을 두 번 교환 — 'Already Used' 재현). 불변식은 C13이 잠근다. */
+export const CODEX_LOCK_TIMEOUT_MS = 50_000;
+export const CODEX_LOCK_STALE_MS = 90_000;
+export const codexLockMaxHoldMs = () => (1 + cliAuthCandidates('x').length) * REFRESH_TIMEOUT_MS;
 import { grokAccessToken, grokExpired, grokNeedsRefresh, refreshGrokTokens } from './grok.mjs';
 
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
@@ -203,7 +209,7 @@ export async function ensureCodexAccess(wsId, cred, { fetchImpl = globalThis.fet
   let t = parseCodexAuth(cred.value);
   if (!t) throw Object.assign(new Error('codex oauth credential is not an auth.json payload'), { authExpired: 'codex' });
   if (!accessExpiring(t.access_token)) return t;
-  // 락 대기 상한은 리프레시 HTTP 상한(20초)의 두 번(본 토큰 + CLI 반입)보다 길게 — 짧으면 느린 토큰 엔드포인트에서 옆 턴이 ELOCKTIMEOUT 원문으로 죽는다(검수 MEDIUM-2)
+  // 락 대기·stale 상한은 최대 보유(리프레시 (1+후보 수)회 × 상한)보다 길게 — 짧으면 옆 턴이 ELOCKTIMEOUT 원문으로 죽거나(1R MEDIUM-2) 잔재로 오판해 탈취한다(2R N1)
   return withDirLock(`${secretsFile(wsId)}.lockd`, async () => {
     const latest = parseCodexAuth((await loadSecrets(wsId)).runners?.codex?.value ?? '') ?? t;
     if (!accessExpiring(latest.access_token)) return latest; // 다른 프로세스가 방금 갱신
@@ -214,10 +220,18 @@ export async function ensureCodexAccess(wsId, cred, { fetchImpl = globalThis.fet
       s.runners.codex = { ...s.runners.codex, value: json }; await writeJsonAtomic(secretsFile(wsId), s); return parseCodexAuth(json);
     };
     // 토큰 확보(리프레시 → 실패 시 CLI 파일 반입)와 저장(persist)을 분리한다 — 저장 실패(자격 삭제)를 리프레시 실패로 오인해 CLI 반입까지 타지 않게.
+    // 일시 장애(네트워크·타임아웃·5xx — 인증도 한도도 아님)는 grok 선례와 같이: 액세스 토큰이 **실제로** 아직 살아 있으면(스큐 없이 exp > now) 쓰던 토큰으로 진행하고
+    // 진짜 만료면 503 계급으로 던진다(2R N2: 생 'fetch failed'는 자가치유·재연결 안내 어디에도 안 걸려 사용자가 원문을 봤다). null next = 저장 없이 그대로.
+    const transient = (err) => !err?.authExpired && !err?.quota;
+    const keepOrThrow = (err) => {
+      if (!accessExpiring(latest.access_token, 0)) { console.warn(`[argo] codex 토큰 리프레시 일시 실패 — 아직 만료 전이라 쓰던 토큰으로 진행: ${String(err?.message || err).slice(0, 100)}`); return { raw: latest.raw, next: null }; }
+      throw Object.assign(new Error(`API Error: 503 codex token refresh failed and the access token has expired — retry shortly (${String(err?.message || err).slice(0, 100)})`), { status: 503, cause: err });
+    };
     const got = await (async () => {
       try { return { raw: latest.raw, next: await refreshCodexTokens(latest.refresh_token, { fetchImpl }) }; }
       catch (e) {
-        if (!e?.authExpired) throw e; // 한도(429)·네트워크는 그대로(재로그인 안내 금지)
+        if (e?.quota) throw e; // 한도(429)는 그대로(재로그인 안내 금지)
+        if (transient(e)) return keepOrThrow(e);
         // CLI 파일이 더 새 토큰을 쥐고 있다 — 격리 홈(Argo의 codex CLI 턴이 회전시킨 곳) → 호스트 ~/.codex 순으로 1회씩 반입(쓰기 금지, MEDIUM-3).
         // 호스트 개인 로그인을 가져오면 그쪽 CLI 세션이 회전으로 깨질 수 있다 — 경고 로그로 남긴다.
         for (const file of cliAuthCandidates(wsId)) {
@@ -225,13 +239,13 @@ export async function ensureCodexAccess(wsId, cred, { fetchImpl = globalThis.fet
           if (!cli || cli.refresh_token === latest.refresh_token) continue;
           console.warn(`[argo] codex 토큰 리프레시 실패 — CLI 파일에서 1회 반입(${file.includes('.argo') ? '격리 홈' : '호스트 ~/.codex — 그쪽 로그인이 회전될 수 있음'})`);
           try { return { raw: cli.raw, next: await refreshCodexTokens(cli.refresh_token, { fetchImpl }) }; }
-          catch (e2) { if (!e2?.authExpired) throw e2; }
+          catch (e2) { if (e2?.quota) throw e2; if (transient(e2)) return keepOrThrow(e2); }
         }
         throw Object.assign(new Error('codex subscription login expired — reconnect'), { authExpired: 'codex', cause: e });
       }
     })();
-    return await persist(got.raw, got.next);
-  }, { timeoutMs: 45_000 }).catch((e) => { if (e?.code !== 'ELOCKTIMEOUT') throw e; throw Object.assign(new Error('API Error: 503 codex token refresh is taking too long (another turn is refreshing) — retry shortly'), { status: 503, cause: e }); });
+    return got.next ? await persist(got.raw, got.next) : latest;
+  }, { timeoutMs: CODEX_LOCK_TIMEOUT_MS, staleMs: CODEX_LOCK_STALE_MS }).catch((e) => { if (e?.code !== 'ELOCKTIMEOUT') throw e; throw Object.assign(new Error('API Error: 503 codex token refresh is taking too long (another turn is refreshing) — retry shortly'), { status: 503, cause: e }); });
 }
 
 /** 저장된 자격의 종류만(apikey·oauth·host·null) — 턴 분기(isCliTurn)가 러너 종류 옆에 자격 축을 본다. */

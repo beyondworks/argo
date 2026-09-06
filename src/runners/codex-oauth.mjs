@@ -10,6 +10,8 @@ import { createRequire } from 'node:module';
 
 export const CODEX_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'; // codex CLI와 같은 client id(Hermes CODEX_OAUTH_CLIENT_ID)
 export const CODEX_OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
+/** 리프레시 HTTP 상한 — 락 보유 시간의 항(본 토큰 1회 + CLI 반입 후보 수) → creds의 락 stale·timeout 상수가 이보다 커야 한다(산술 불변식은 테스트 C13). */
+export const REFRESH_TIMEOUT_MS = 15_000;
 const ARGO_VERSION = (() => { try { return createRequire(import.meta.url)('../../package.json').version; } catch { return '0.0.0'; } })();
 
 /** auth.json 원문(자격 value) → 토큰(순수). 형식 아님이면 null. */
@@ -33,9 +35,14 @@ export function codexHeaders(tokens) {
 /** 리프레시 1회(순수 HTTP) — 429는 한도(quota, 재로그인 무효), invalid_grant·refresh_token_reused는 재로그인(authExpired). */
 export async function refreshCodexTokens(refreshToken, { fetchImpl = globalThis.fetch, tokenUrl = process.env.CODEX_OAUTH_TOKEN_URL || CODEX_OAUTH_TOKEN_URL } = {}) {
   if (!refreshToken) throw Object.assign(new Error('codex auth is missing refresh_token'), { authExpired: 'codex' });
-  const r = await fetchImpl(tokenUrl, { method: 'POST', signal: AbortSignal.timeout(20_000),
-    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': `Argo/${ARGO_VERSION}` },
-    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: CODEX_OAUTH_CLIENT_ID }).toString() });
+  let r;
+  try {
+    r = await fetchImpl(tokenUrl, { method: 'POST', signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': `Argo/${ARGO_VERSION}` },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: CODEX_OAUTH_CLIENT_ID }).toString() });
+  } catch (e) { // 네트워크·타임아웃 — 인증 실패가 아니라 일시 장애 계급(2R N2: 생 'fetch failed'는 자가치유·안내 어디에도 안 걸린다)
+    throw Object.assign(new Error(`API Error: 503 codex token endpoint unreachable (${String(e?.message || e).slice(0, 80)})`), { status: 503, transient: true, cause: e });
+  }
   const text = await r.text().catch(() => '');
   if (r.status === 429) throw Object.assign(new Error('codex quota exhausted (token endpoint 429)'), { quota: true, status: 429, retryAfter: Number(r.headers.get('retry-after')) || null });
   if (!r.ok) {

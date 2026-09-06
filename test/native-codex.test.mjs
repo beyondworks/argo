@@ -16,7 +16,7 @@ delete process.env.ARGO_NATIVE_RUNNERS;
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 const { toResponsesRequest, fromResponsesResponse, finalFromSse, callResponses, CODEX_BACKEND_BASE, OPENAI_API_BASE } = await import('../src/engine/responses-wire.mjs');
-const { parseCodexAuth, jwtClaims, accessExpiring, accountIdOf, codexHeaders, refreshCodexTokens, mergeCodexAuth, CODEX_OAUTH_CLIENT_ID } = await import('../src/runners/codex-oauth.mjs');
+const { parseCodexAuth, jwtClaims, accessExpiring, accountIdOf, codexHeaders, refreshCodexTokens, mergeCodexAuth, CODEX_OAUTH_CLIENT_ID, REFRESH_TIMEOUT_MS, cliAuthCandidates } = await import('../src/runners/codex-oauth.mjs');
 const { authFromEnv, callMessages } = await import('../src/engine/messages-http.mjs');
 const { nativeQuery, NATIVE_DEFAULT_RUNNERS } = await import('../src/engine/native-query.mjs');
 const { isCliTurn, CODEX_DEFAULT_MODEL } = await import('../src/runners/catalog.mjs');
@@ -24,7 +24,7 @@ const { createCompany, paths } = await import('../src/workspace.mjs');
 const { shellEnv } = await import('../src/engine/builtin-tools.mjs');
 const { sessionFile } = await import('../src/engine/session.mjs');
 const { scrubServerSecrets } = await import('../src/runners/shared.mjs');
-const { saveRunnerCred, loadRunnerCred, runnerCredEnv, ensureCodexAccess } = await import('../src/runners/creds.mjs');
+const { saveRunnerCred, loadRunnerCred, runnerCredEnv, ensureCodexAccess, CODEX_LOCK_TIMEOUT_MS, CODEX_LOCK_STALE_MS, codexLockMaxHoldMs } = await import('../src/runners/creds.mjs');
 const { makePermissionGate } = await import('../src/permission-gate.mjs');
 
 const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -204,8 +204,8 @@ test('C9. 원샷 — 플래그 on + codex API 키 회사의 runOneShot이 가짜
 
 test('C10. 자격 유출 차단(검수 HIGH-1, 행동) — 크루 Bash 자식이 RESPONSES_TOKEN·RESPONSES_HEADERS·ARGO_WIRE를 상속하지 않는다(가짜 백엔드가 printenv 요청 — 전사·세션 파일·재전송에 토큰 없음), 호스트 셸의 RESPONSES_*는 다른 러너에 미상속(LOW-2)', async () => {
   const CANARY = 'ZZCODEXCANARYZZ';
-  const stripped = shellEnv({ PATH: '/bin', RESPONSES_TOKEN: CANARY, RESPONSES_HEADERS: '{}', RESPONSES_BASE_URL: 'u', ARGO_WIRE: 'responses', ANTHROPIC_API_KEY: 'a', HOME: '/h' });
-  assert.deepEqual(Object.keys(stripped).sort(), ['HOME', 'PATH']);
+  const stripped = shellEnv({ PATH: '/bin', RESPONSES_TOKEN: CANARY, RESPONSES_HEADERS: '{}', RESPONSES_BASE_URL: 'u', ARGO_WIRE: 'responses', ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'host-key', HOME: '/h' });
+  assert.deepEqual(Object.keys(stripped).sort(), ['HOME', 'PATH'], '호스트 OPENAI_API_KEY도 도구 자식에 안 간다(2R N3)');
   const ws = 'cx-leak'; await createCompany(ws, '유출', '사장'); const root = paths(ws).root;
   const srv = await fakeServer((c, n, res) => respond(res, 200, n === 1
     ? sse([completed([{ type: 'function_call', call_id: 'c1', name: 'Bash', arguments: JSON.stringify({ command: 'printenv RESPONSES_TOKEN; printenv RESPONSES_HEADERS; printenv ARGO_WIRE; echo done' }) }])])
@@ -266,4 +266,27 @@ test('C12. CLI 반입 후보 순서(검수 MEDIUM-3)·삭제 중 회전(LOW-6) �
       await assert.rejects(ensureCodexAccess('cx-home2', await loadRunnerCred('cx-home2', 'codex')), (e) => e.authExpired === 'codex' && /removed during token refresh/.test(e.message));
     } finally { await srv2.close(); }
   } finally { await srv.close(); delete process.env.CODEX_OAUTH_TOKEN_URL; }
+});
+
+test('C13. 락 산술 불변식(2R N1) — stale 회수·대기 상한 둘 다 최대 보유(리프레시 (1+CLI 후보 수)회 × 상한)보다 크고, ensureCodexAccess가 그 상수를 실제로 넘긴다', async () => {
+  const maxHold = codexLockMaxHoldMs();
+  assert.equal(maxHold, (1 + cliAuthCandidates('x').length) * REFRESH_TIMEOUT_MS);
+  assert.ok(CODEX_LOCK_STALE_MS > maxHold, `stale ${CODEX_LOCK_STALE_MS} > 최대 보유 ${maxHold} — 아니면 대기자가 잔재로 오판해 락을 탈취한다`);
+  assert.ok(CODEX_LOCK_TIMEOUT_MS > maxHold, `timeout ${CODEX_LOCK_TIMEOUT_MS} > 최대 보유 ${maxHold} — 아니면 옆 턴이 503으로 죽는다`);
+  const src = await readFile(join(ROOT, 'src', 'runners', 'creds.mjs'), 'utf8');
+  assert.match(src, /\}, \{ timeoutMs: CODEX_LOCK_TIMEOUT_MS, staleMs: CODEX_LOCK_STALE_MS \}\)/, '락 호출이 두 상수를 넘긴다');
+});
+
+test('C14. 일시 장애(2R N2) — 토큰 엔드포인트 불통일 때 액세스 토큰이 아직 살아 있으면(스큐 안, 실제 만료 전) 쓰던 토큰으로 턴이 진행되고(저장 없음), 실제 만료면 503 계급(authExpired 아님)', async () => {
+  const ws = 'cx-net'; await createCompany(ws, '장애', '사장');
+  process.env.CODEX_OAUTH_TOKEN_URL = 'http://127.0.0.1:1/oauth/token'; // 닫힌 포트 — 즉시 ECONNREFUSED
+  try {
+    await saveRunnerCred(ws, 'codex', 'oauth', authJson({ exp: Math.floor(Date.now() / 1000) + 100, refresh: 'rt-alive' })); // 120초 스큐 안이지만 살아 있음
+    const t = await ensureCodexAccess(ws, await loadRunnerCred(ws, 'codex'));
+    assert.equal(t.refresh_token, 'rt-alive', '쓰던 토큰 그대로'); assert.equal(parseCodexAuth((await loadRunnerCred(ws, 'codex')).value).refresh_token, 'rt-alive', '저장본 불변');
+    await withFlag(async () => { const env = await runnerCredEnv(ws, 'codex'); assert.equal(env.env.ARGO_WIRE, 'responses', '턴이 진행된다(grok 선례: 일시 장애는 연결 해제가 아니다)'); });
+    await saveRunnerCred(ws, 'codex', 'oauth', authJson({ exp: Math.floor(Date.now() / 1000) - 10, refresh: 'rt-dead' }));
+    await assert.rejects(ensureCodexAccess(ws, await loadRunnerCred(ws, 'codex')), (e) => e.status === 503 && !e.authExpired && /API Error: 503/.test(e.message), '진짜 만료 + 불통 = 503 계급(재로그인 안내 아님)');
+    await assert.rejects(refreshCodexTokens('rt-x', { tokenUrl: 'http://127.0.0.1:1/oauth/token' }), (e) => e.status === 503 && e.transient === true);
+  } finally { delete process.env.CODEX_OAUTH_TOKEN_URL; }
 });
