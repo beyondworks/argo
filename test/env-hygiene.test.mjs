@@ -50,6 +50,11 @@ test('maskKeyLike: 벤더 키 패턴 마스킹 — CLI 실패 경로와 SDK 경�
   assert.equal(maskKeyLike('Incorrect API key provided: sk-proj-abcdefghijklmnop1234'), 'Incorrect API key provided: sk-***');
   assert.equal(maskKeyLike('token sk-ant-oat01-AbCdEf bad'), 'token sk-*** bad');
   assert.equal(maskKeyLike('key AIzaSyA1234567890abcdefghij invalid'), 'key sk-*** invalid');
+  // #445 2R N-MEDIUM-3: 프로브 detail이 동기화 원장에 실린다 — grok BYOK·BYOA(JWT)·GLM(<32hex>.<secret>) 형태도 각각 문다
+  assert.equal(maskKeyLike('Invalid API key: xai-AbCdEfGhIjKlMnOpQrStUv'), 'Invalid API key: sk-***');
+  assert.equal(maskKeyLike('Bad token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnopqrstuv end'), 'Bad token: sk-*** end');
+  assert.equal(maskKeyLike('z.ai rejected key 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d.9Zx8Yw7Vu6Ts5Rq4Pp3Oo2 x'), 'z.ai rejected key sk-*** x');
+  assert.equal(maskKeyLike('xai-short and 1a2b3c4d5e6f7a8b.9Zx8Yw7Vu6Ts5Rq4 stay'), 'xai-short and 1a2b3c4d5e6f7a8b.9Zx8Yw7Vu6Ts5Rq4 stay', '짧은 접두·16hex는 키 형태가 아니다(과마스킹 금지)');
   assert.equal(maskKeyLike('no key here (exit 1)'), 'no key here (exit 1)', '키 없는 메시지는 그대로');
 });
 

@@ -1,7 +1,7 @@
 // 도구 스키마 required 정규화 — xAI(Grok) Anthropic 호환 엔드포인트의 400(`/required: null is not of type "array"`) 제보(2026-09-06, v0.1.62) 대응. 실벤더 호출 0.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { startStrictVendor } from './helpers/strict-vendor.mjs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -61,20 +61,35 @@ test('S2. 내장·브라우저·컴퓨터 스펙 전량 — 정규화 전에는 
   assert.deepEqual(all.filter((t) => missing(ensureRequired(t.input_schema)).length).map((t) => t.name), [], '정규화 뒤 0');
 });
 
-test('S3. 배선 — 네이티브 턴이 벤더(가짜 Anthropic /v1/messages)로 보내는 tools 전량에 required 배열이 있다(내장·크루 도구 포함), browser_snapshot은 required: []', async () => {
+test('S3. 배선 — 네이티브 턴이 벤더로 보내는 tools 전량에 required 배열이 있다(내장·크루 도구 포함) — **엄격 xAI 가짜 벤더**(제보 규칙: required 없는 object 스키마는 400)가 턴을 받아 준다, browser_snapshot은 required: []', async () => {
   const ws = 'sch1'; await createCompany(ws, '스키마', '사장'); const root = paths(ws).root;
-  const bodies = [];
-  const srv = createServer((req, res) => { let d = ''; req.on('data', (c) => { d += c; }); req.on('end', () => { bodies.push(JSON.parse(d)); res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ id: 'm1', type: 'message', role: 'assistant', model: 'grok-4', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } })); }); });
-  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
-  const base = `http://127.0.0.1:${srv.address().port}`;
+  const strict = await startStrictVendor({ vendor: 'xai', reply: (body) => ({ id: 'm1', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }) });
+  const bodies = strict.calls.map((c) => c.body); const base = strict.base; const srv = { close: strict.close };
   try {
     let last; for await (const ev of nativeQuery({ wsId: ws, slug: 's', prompt: '안녕', cwd: root, systemPrompt: 'SYS', model: 'grok-4', saveSession: false, computer: true,
       env: { ANTHROPIC_BASE_URL: base, ANTHROPIC_AUTH_TOKEN: 'fake-grok-token' }, crewTools: [{ name: 'ping', description: 'p', shape: {}, handler: async () => ({ content: [{ type: 'text', text: 'pong' }] }) }],
       canUseTool: makePermissionGate(ws, 's', root, null, 'ko', []) })) last = ev;
-    assert.equal(last.subtype, 'success'); assert.equal(bodies.length, 1);
+    assert.equal(last.subtype, 'success', `엄격 벤더가 거절하지 않는다: ${JSON.stringify(last.errors ?? null)}`); assert.equal(strict.calls.length, 1);
+    bodies.push(...strict.calls.map((c) => c.body));
+    assert.deepEqual(Object.keys(bodies[0]).sort(), ['max_tokens', 'messages', 'model', 'system', 'tools'], '실제 턴 본문 최상위 키 — runner-health 테스트의 TURN_BODY_KEYS(프로브 본문)와 같은 집합(2R N-HIGH-1)');
     const tools = bodies[0].tools; assert.ok(tools.length >= 25, `도구 ${tools.length}개`);
     assert.deepEqual(tools.filter((t) => missing(t.input_schema).length).map((t) => t.name), [], 'required 없는 object 노드를 가진 도구 0');
     assert.deepEqual(tools.find((t) => t.name === 'browser_snapshot').input_schema.required, []); assert.ok(tools.find((t) => t.name === 'mcp__crew__ping')); assert.deepEqual(tools.find((t) => t.name === 'mcp__crew__ping').input_schema.required, []);
     assert.deepEqual(tools.find((t) => t.name === 'Read').input_schema.required, ['file_path'], '기존 required는 그대로');
-  } finally { await new Promise((r) => srv.close(r)); }
+  } finally { await srv.close(); }
 });
+
+test('S4. 엄격 가짜 벤더 규칙 자체 핀 — 타 경로 404·무인증 401(x-goog-api-key만은 인증 아님)·미지 최상위 필드 400·공식 선택 필드 200·xAI required 규칙(3R N3-LOW-1: 규칙이 사라져도 아무도 모르던 자리)', async () => {
+  const strict = await startStrictVendor({ vendor: 'xai' });
+  const post = (path, body, headers = { 'x-api-key': 'k' }) => fetch(`${strict.base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  const ok = { model: 'grok-4', max_tokens: 8, messages: [{ role: 'user', content: 'hi' }] };
+  try {
+    assert.equal((await post('/v1/complete', ok)).status, 404, '경로');
+    assert.equal((await post('/v1/messages', ok, {})).status, 401, '인증 헤더 없음'); assert.equal((await post('/v1/messages', ok, { 'x-goog-api-key': 'k' })).status, 401, 'Gemini 헤더는 이 벤더의 인증이 아니다');
+    assert.equal((await post('/v1/messages', ok, { authorization: 'Bearer k' })).status, 200, 'authorization도 인증');
+    const r400 = await post('/v1/messages', { ...ok, min_output_tokens: 1024 }); assert.equal(r400.status, 400); assert.match((await r400.json()).error.message, /^min_output_tokens: Extra inputs are not permitted$/);
+    assert.equal((await post('/v1/messages', { ...ok, temperature: 0, metadata: { user_id: 'u' }, stop_sequences: ['x'] })).status, 200, '공식 선택 필드는 통과');
+    const rReq = await post('/v1/messages', { ...ok, tools: [{ name: 't', input_schema: { type: 'object', properties: {} } }] }); assert.equal(rReq.status, 400); assert.match((await rReq.json()).error.message, /required/, 'xAI 규칙(제보): object 스키마에 required 없으면 400');
+  } finally { await strict.close(); }
+});
+

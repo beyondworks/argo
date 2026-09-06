@@ -83,7 +83,7 @@ const sigOut = (b) => (typeof b?._gemSig === 'string' && b._gemSig ? { thoughtSi
 const vendorId = (id) => (typeof id === 'string' && id && !id.startsWith('gem_') ? { id } : {}); // 벤더가 준 functionCall.id만 되싣는다(우리가 만든 gem_ id는 전사 안에서만 유효)
 
 /** Messages 요청 → generateContent 요청(순수). tool_result는 functionResponse가 되는데 Gemini는 이름(과 벤더 id)으로 짝을 맞추므로 앞선 tool_use의 id→name을 찾는다. */
-export function toGeminiRequest({ system, messages, tools, max_tokens }) {
+export function toGeminiRequest({ system, messages, tools, max_tokens, min_output_tokens }) {
   const names = new Map();
   for (const m of messages ?? []) if (m.role === 'assistant' && Array.isArray(m.content)) for (const b of m.content) if (b?.type === 'tool_use') names.set(b.id, b.name);
   const contents = [];
@@ -112,7 +112,7 @@ export function toGeminiRequest({ system, messages, tools, max_tokens }) {
     ...(system ? { systemInstruction: { parts: [{ text: textOf(system) }] } } : {}),
     contents,
     ...(decls.length ? { tools: [{ functionDeclarations: decls }] } : {}),
-    generationConfig: { maxOutputTokens: Math.max(Number(max_tokens) || 0, GEMINI_MIN_OUTPUT_TOKENS) },
+    generationConfig: { maxOutputTokens: Math.max(Number(max_tokens) || 0, Number(min_output_tokens) > 0 ? Number(min_output_tokens) : GEMINI_MIN_OUTPUT_TOKENS) }, // 검진 프로브는 하한을 낮춘다(1R MEDIUM-1)
   };
 }
 
@@ -122,7 +122,7 @@ const sigIn = (p) => (typeof p?.thoughtSignature === 'string' && p.thoughtSignat
     가시 파트(텍스트·함수 호출) 0은 조용한 빈 답이 아니라 오류다(H4) — SAFETY·RECITATION·MAX_TOKENS(사고가 상한 소진)·MALFORMED_FUNCTION_CALL… 사유를 실어 던진다. */
 export function fromGeminiResponse(json, model) {
   const cand = json?.candidates?.[0];
-  if (!cand) throw Object.assign(new Error(`API Error: 400 Gemini returned no candidates (${json?.promptFeedback?.blockReason || 'empty'})`), { status: 400 });
+  if (!cand) throw Object.assign(new Error(`API Error: 400 Gemini returned no candidates (${json?.promptFeedback?.blockReason || 'empty'})`), { status: 400, synthetic: true }); // synthetic = 벤더 HTTP 오류가 아니라 와이어가 합성(검진 프로브는 판정 불가로 흡수)
   const content = [];
   for (const p of cand.content?.parts ?? []) {
     if (p?.thought) content.push({ type: 'gem_thought', text: typeof p.text === 'string' ? p.text : '', ...sigIn(p) });
@@ -135,7 +135,7 @@ export function fromGeminiResponse(json, model) {
   if (!content.some((b) => b.type === 'tool_use' || (b.type === 'text' && b.text.trim()))) {
     const reason = String(cand.finishReason || 'UNKNOWN');
     // usage 동봉 — 차단 응답도 프롬프트 토큰은 썼다. native-query가 첫 스텝이어도 집계에 실을 수 있게(2R LOW-3)
-    throw Object.assign(new Error(`API Error: 400 Gemini returned no usable content (finishReason=${reason}${cand.finishMessage ? ` — ${String(cand.finishMessage).slice(0, 200)}` : ''}${reason === 'MAX_TOKENS' ? ' — thinking consumed the output budget' : ''})`), { status: 400, finishReason: reason, usage });
+    throw Object.assign(new Error(`API Error: 400 Gemini returned no usable content (finishReason=${reason}${cand.finishMessage ? ` — ${String(cand.finishMessage).slice(0, 200)}` : ''}${reason === 'MAX_TOKENS' ? ' — thinking consumed the output budget' : ''})`), { status: 400, finishReason: reason, usage, synthetic: true });
   }
   const stop_reason = content.some((b) => b.type === 'tool_use') ? 'tool_use' : cand.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
   return { id: `gem_${Date.now().toString(36)}`, type: 'message', role: 'assistant', model: json.modelVersion || model, content, stop_reason, usage };
@@ -144,9 +144,9 @@ export function fromGeminiResponse(json, model) {
 const RETRYABLE = new Set([500, 502, 503, 504]);
 /** POST models/{model}:generateContent 1회(+과부하·네트워크 1회 재시도). 실패는 `API Error: <status> <message>` — 무효 키(400 API_KEY_INVALID)는 401로 승격해
     인증 분류기(AUTH_TEXT_RE)·턴 전 게이트가 같은 계급으로 문다. */
-export async function callGemini({ base, headers, body, signal, fetchImpl = globalThis.fetch, timeoutMs = 600_000, retry = 1 }) {
+export async function callGemini({ base, headers, body, minOutputTokens = 0, signal, fetchImpl = globalThis.fetch, timeoutMs = 600_000, retry = 1 }) {
   const url = `${base}/models/${encodeURIComponent(body.model)}:generateContent`;
-  const req = toGeminiRequest(body);
+  const req = toGeminiRequest({ ...body, min_output_tokens: minOutputTokens }); // 출력 하한 오버라이드(검진 프로브)는 옵션으로만 — 본문에 같은 이름의 필드가 있어도 덮는다(생산 지점이 옵션뿐임을 구조로, 3R INFO)
   let attempt = 0;
   for (;;) {
     attempt += 1;
