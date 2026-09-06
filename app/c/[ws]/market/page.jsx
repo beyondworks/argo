@@ -8,6 +8,43 @@ import { useLang } from '../../../i18n';
 const fmtN = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 const safeId = (item) => String(item.name ?? '').toLowerCase().replace(/[^a-z0-9가-힣-]/g, '-').replace(/^-+|-+$/g, '');
 
+// Argo Messenger(팀 메신저) 설치파일 — 릴리스 repo의 고정 파일명(release-messenger.yml Collect 스텝이 매 릴리스 갱신).
+const MSGR_RELEASES = 'https://github.com/beyondworks/argo-messenger/releases/latest';
+const MSGR_DL = {
+  silicon: `${MSGR_RELEASES}/download/argo-messenger-macos-apple-silicon.dmg`,
+  intel: `${MSGR_RELEASES}/download/argo-messenger-macos-intel.dmg`,
+  win: `${MSGR_RELEASES}/download/argo-messenger-windows-setup.exe`,
+};
+
+/** 앱 — Argo 메신저 내려받기 카드(유건 결정 2026-09-06 "아르고 앱에서도 다운로드 받을 수 있는 플러그인으로 등재").
+ *  설치는 OS 설치파일이라 여기서는 링크만(안 될 버튼 노출 금지 — 기기 OS를 보고 첫 버튼만 굵게). 크루 파견은 설정 → 연결. */
+function MessengerAppCard({ t }) {
+  const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
+  const links = [
+    ['silicon', t('market.msgr.silicon'), isMac],
+    ['intel', t('market.msgr.intel'), false],
+    ['win', t('market.msgr.win'), !isMac],
+  ];
+  return (
+    <div className="card" style={{ overflow: 'hidden' }}>
+      <div className="card-head">
+        <span className="card-title"><Icon name="send" size={14} />{t('market.appsSectionTitle')}</span>
+        <span className="rule" />
+        <a className="pill" href={MSGR_RELEASES} target="_blank" rel="noopener noreferrer">{t('market.msgr.all')}</a>
+      </div>
+      <div style={{ display: 'grid', gap: 10, padding: '2px 18px 18px' }}>
+        <span style={{ fontSize: 12.5, color: 'var(--fg-2)', lineHeight: 1.6, maxWidth: 640 }}>{t('market.msgr.desc')}</span>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {links.map(([k, label, primary]) => (
+            <a key={k} className={`btn sm${primary ? ' primary' : ''}`} href={MSGR_DL[k]} target="_blank" rel="noopener noreferrer">{label}</a>
+          ))}
+        </div>
+        <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)' }}>{t('market.msgr.dispatchHint')}</span>
+      </div>
+    </div>
+  );
+}
+
 /** 추천 — 스킬(★순) / MCP(npm 주간 다운로드순). 행 클릭 = 상세. */
 function TopList({ ws, kind, installedIds, onInstalled, onDetail, customMcpAllowed = true }) {
   const { t } = useLang();
@@ -397,6 +434,9 @@ export default function Market({ params }) {
         <span className="microlabel">{t('market.header')}</span>
         {error && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>}
       </div>
+
+      {/* ── 앱 — Argo 메신저 ── */}
+      <MessengerAppCard t={t} />
 
       {/* ── 스킬 ── */}
       <div className="card" style={{ overflow: 'hidden' }}>
