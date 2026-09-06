@@ -63,7 +63,9 @@ export function turnProbeHash(specs = probeToolSpecs(), version = APP_VERSION) {
 export function turnProbeDue(entry, hash, now, intervalMs = HEALTH_PROBE_INTERVAL_MS, retryMs = HEALTH_PROBE_RETRY_MS) {
   // 실패 뒤엔 1h → 2h → 4h … intervalMs 상한(2R N-MEDIUM-2: 프로브 실패는 ok:true·fails:0을 유지해 verify 백오프를 안 타므로 자체 백오프가 없으면 영구 거절 벤더에 24회/일).
   // 실패 러너가 물러나야 검진당 1개 슬롯이 나머지 러너에 돌아간다(N-MEDIUM-1: 실패 러너 2개 = 슬롯 100% 포화 → 나머지 러너 영구 미프로브).
-  const gap = entry?.probeOk === false ? Math.min(intervalMs, retryMs * 2 ** Math.max(0, (Number(entry.probeFails) || 1) - 1)) : intervalMs;
+  // 판정 불가(ok:null)도 같은 카운터로 물러난다(3R N3-MEDIUM-1: 영구 판정 불가 러너가 매 검진 슬롯을 독점해 뒤 러너가 굶고 48회/일). 카운터 없는 옛 실패 상태는 1회로.
+  const n = Number(entry?.probeFails) || (entry?.probeOk === false ? 1 : 0);
+  const gap = n > 0 ? Math.min(intervalMs, retryMs * 2 ** (n - 1)) : intervalMs;
   return entry?.probeHash !== hash || !Number.isFinite(entry?.probeAt) || now - entry.probeAt >= gap;
 }
 /** 이 자격의 턴이 네이티브(Argo 엔진 직행)인가 — 프로브 대상. CLI·SDK 턴의 요청 형태는 그 실행기가 만든다. */
@@ -85,8 +87,8 @@ export async function runTurnProbe(wsId, runner, { fetchImpl = globalThis.fetch,
   // runnerCredEnv는 실제 턴과 같은 자격 준비를 한다(grok·codex는 만료 임박 토큰 갱신 포함 — 표시만 바꾼다는 검진 제약의 예외이지만 턴이 어차피 하는 회전이고 자격을 지우진 않는다, 1R LOW-2)
   const ce = await runnerCredEnv(wsId, runner);
   if (!ce?.env) return { ok: null, detail: 'no env' };
-  const { wire, base, headers } = authFromEnv(ce.env);
   try {
+    const { wire, base, headers } = authFromEnv(ce.env); // 와이어 판정이 던지는 조합(옵트인 전 codex apikey 등)도 판정 불가로(3R INFO)
     // 출력 하한은 **옵션**으로만 — 본문에 실으면 messages 와이어가 벤더로 그대로 내보내 프로브 본문 ≠ 턴 본문이 되고, 미지 필드에 엄격한 벤더에선 프로브가 스스로 거짓 400을 만든다(2R N-HIGH-1)
     await callMessages({ wire, base, headers, fetchImpl, timeoutMs, retry: 0, minOutputTokens: PROBE_MIN_OUTPUT_TOKENS,
       body: { model: PROBE_MODEL[runner], max_tokens: 8, system: 'Health probe. Reply with "ok" only. Do not call tools.', messages: [{ role: 'user', content: 'ok' }], tools: probeToolSpecs() } });
@@ -186,12 +188,13 @@ export async function runHealthChecks(wsId, {
     }
     const r = await verifyFn(runner, cred.type, cred.value).catch(() => ({ ok: null }));
     const next = applyHealthResult(entry, r, nowMs, credHash(cred.value));
-    // 자격이 유효해도 벤더가 요청 형태를 거절할 수 있다 — 네이티브 러너는 지문 변경·하루 1회(실패 뒤엔 1h→24h 백오프) 실제 턴 모양으로 확인(위 주석). 판정 불가는 기록 안 함(다음 검진에 재시도).
+    // 자격이 유효해도 벤더가 요청 형태를 거절할 수 있다 — 네이티브 러너는 지문 변경·하루 1회(실패·판정 불가 뒤엔 1h→24h 백오프) 실제 턴 모양으로 확인(위 주석). 판정 불가는 판정(probeOk)을 바꾸지 않는다.
     if (probe && r?.ok === true && probesThisRun < HEALTH_PROBE_PER_RUN && turnProbeApplies(runner, cred.type) && turnProbeDue(entry, probeHash, nowMs, probeIntervalMs)) {
       probesThisRun += 1;
       const probed = await probe(wsId, runner).catch(() => ({ ok: null }));
       if (probed?.ok === true) { next.probeOk = true; delete next.probeReason; delete next.probeDetail; delete next.probeFails; next.probeAt = nowMs; next.probeHash = probeHash; }
       else if (probed?.ok === false) { next.probeOk = false; next.probeReason = probed.reason; next.probeDetail = String(probed.detail ?? '').slice(0, 300); next.probeFails = (Number(entry?.probeFails) || 0) + 1; next.probeAt = nowMs; next.probeHash = probeHash; }
+      else { next.probeFails = (Number(entry?.probeFails) || 0) + 1; next.probeAt = nowMs; next.probeHash = probeHash; } // 판정 불가(429·5xx·네트워크·합성 오류): 직전 판정은 그대로, 시각·지문·카운터만 — 같은 백오프로 물러나 슬롯을 돌려준다(3R N3-MEDIUM-1)
     }
     // 실패 = verify 실패 **또는** 프로브 실패(독립 저장). 회복 = 둘 다 아님.
     const failNow = next.ok === false || next.probeOk === false;

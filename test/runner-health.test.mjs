@@ -247,6 +247,7 @@ test('프로브 순수 함수 — 지문(버전·도구 정의), 차례(지문 �
   assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: false, probeFails: 3 }, h1, T0 + 4 * HEALTH_PROBE_RETRY_MS - 1), false, '3회 실패 뒤 4h'); assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: false, probeFails: 3 }, h1, T0 + 4 * HEALTH_PROBE_RETRY_MS), true);
   assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: false, probeFails: 9 }, h1, T0 + HEALTH_PROBE_INTERVAL_MS - 1), false, '상한 24h'); assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: false, probeFails: 9 }, h1, T0 + HEALTH_PROBE_INTERVAL_MS), true);
   assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: false, probeFails: 9 }, h2, T0 + 1), true, '백오프 중이라도 지문이 바뀌면(업데이트) 즉시');
+  assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: true, probeFails: 2 }, h1, T0 + 2 * HEALTH_PROBE_RETRY_MS - 1), false, '판정 불가 뒤에도 같은 백오프(probeOk는 직전 판정 그대로, 3R N3-MEDIUM-1)'); assert.equal(turnProbeDue({ probeAt: T0, probeHash: h1, probeOk: true, probeFails: 2 }, h1, T0 + 2 * HEALTH_PROBE_RETRY_MS), true);
   assert.equal(turnProbeApplies('grok', 'apikey'), true); assert.equal(turnProbeApplies('openrouter', 'apikey'), true); assert.equal(turnProbeApplies('gemini', 'apikey'), true);
   assert.equal(turnProbeApplies('gemini', 'oauth'), false, 'CLI 턴은 대상 아님'); assert.equal(turnProbeApplies('claude', 'apikey'), false, 'SDK 경로는 대상 아님'); assert.equal(turnProbeApplies('codex', 'apikey'), false, '옵트인 전엔 CLI');
   const err = (status, msg = 'x', extra = {}) => Object.assign(new Error(msg), { status, ...extra });
@@ -301,9 +302,13 @@ test('runHealthChecks: 프로브 판정은 verify와 독립 — 실패는 probeO
   await runHealthChecks(ws, { verifyFn, probeFn: okProbe, probeHash: 'h-bbbb', nowMs: T0 + 4 * HEALTH_INTERVAL_MS, jitterMs: 0 }); // 백오프 중이라도 지문이 바뀌면 즉시
   st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.probeOk, true); assert.equal(st.openrouter.probeReason, undefined); assert.equal(st.openrouter.probeHash, 'h-bbbb'); assert.equal(st.openrouter.probeFails, undefined, '통과하면 백오프 카운터 소거');
   hev = (await readEvents(ws)).filter((e) => e.type === 'runner-health' && e.runner === 'openrouter'); assert.equal(hev.length, 2); assert.equal(hev[0].ok, true, '회복 이벤트(최신)');
-  // 판정 불가 프로브는 기록하지 않는다
+  // 판정 불가 프로브는 판정(probeOk)·이벤트를 바꾸지 않되, 시각·지문·카운터는 찍어 같은 백오프로 물러난다(3R N3-MEDIUM-1)
   await runHealthChecks(ws, { verifyFn, probeFn: async () => ({ ok: null }), probeHash: 'h-cccc', nowMs: T0 + 5 * HEALTH_INTERVAL_MS, jitterMs: 0 });
-  st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.probeHash, 'h-bbbb', '판정 불가는 지문을 갱신하지 않는다'); assert.equal(st.openrouter.probeOk, true);
+  st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.probeOk, true, '판정 불가는 판정을 바꾸지 않는다'); assert.equal(st.openrouter.probeHash, 'h-cccc'); assert.equal(st.openrouter.probeFails, 1, '판정 불가도 백오프 카운터');
+  assert.equal((await readEvents(ws)).filter((e) => e.type === 'runner-health' && e.runner === 'openrouter').length, 2, '판정 불가는 이벤트 없음');
+  probes.length = 0;
+  await runHealthChecks(ws, { verifyFn, probeFn: async () => ({ ok: null }), probeHash: 'h-cccc', nowMs: T0 + 6 * HEALTH_INTERVAL_MS, jitterMs: 0 });
+  st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.probeFails, 1, '30분 뒤엔 재시도 안 함(1h 백오프)');
   // 검진 1회당 프로브 상한(MEDIUM-4): glm·openrouter 둘 다 네이티브면 첫 검진엔 하나만, 나머지는 다음 검진에
   const ws2 = 'hc-probe-cap'; await seed(ws2, { glm: ['apikey', 'glm-key-1'], openrouter: ['apikey', 'or-key-2'] });
   probes.length = 0;
@@ -318,6 +323,14 @@ test('runHealthChecks: 프로브 판정은 verify와 독립 — 실패는 probeO
   const st3 = JSON.parse(await readFile(join(process.env.ARGO_ROOT, ws3, '.runner-health.json'), 'utf8'));
   assert.equal(st3.openrouter.probeOk, true, '실패 러너가 백오프로 물러나 12시간 안에 나머지 러너가 프로브를 받는다(굶주림 없음)');
   assert.ok(st3.glm.probeFails >= 3 && st3.glm.probeFails <= 5, `실패 러너는 12h에 3~5회(1h·2h·4h 백오프) — 실측 ${st3.glm.probeFails}`);
+  // 3R N3-MEDIUM-1: 영구 판정 불가 러너(gemini — 키 순서 첫 자리)가 검진마다 슬롯을 독점하면 뒤 러너(openrouter)는 영원히 프로브를 못 받고 48회/일 — 판정 불가도 백오프
+  const ws4 = 'hc-probe-null'; await seed(ws4, { gemini: ['apikey', 'fake-gemini-key-null'], openrouter: ['apikey', 'or-key-n'] });
+  const nullish = async (_ws, runner) => { probes.push(runner); return runner === 'gemini' ? { ok: null, detail: 'API Error: 429 quota' } : { ok: true }; };
+  probes.length = 0;
+  for (let i = 0; i < 96; i++) await runHealthChecks(ws4, { verifyFn, probeFn: nullish, probeHash: 'h-n', nowMs: T0 + i * HEALTH_INTERVAL_MS, jitterMs: 0 });
+  const st4 = JSON.parse(await readFile(join(process.env.ARGO_ROOT, ws4, '.runner-health.json'), 'utf8'));
+  assert.equal(st4.openrouter.probeOk, true, '판정 불가 러너가 물러나 뒤 러너가 프로브를 받는다'); assert.equal(st4.gemini.probeOk, undefined, '판정 불가는 판정 없음');
+  const gem = probes.filter((r) => r === 'gemini').length; assert.ok(gem >= 5 && gem <= 7, `영구 판정 불가 러너는 48h에 5~7회(1h·2h·4h·8h·16h·24h) — 실측 ${gem}`);
   // verify 실패는 종전대로 ok:false + credHash(턴 전 게이트) — 프로브와 무관
   await runHealthChecks(ws, { verifyFn: async () => ({ ok: false, reason: 'auth' }), probeFn: okProbe, probeHash: 'h-bbbb', nowMs: T0 + 30 * HEALTH_INTERVAL_MS, jitterMs: 0 });
   st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.ok, false); assert.ok(st.openrouter.credHash); assert.equal(st.openrouter.probeOk, true, '프로브 기록은 verify 실패에도 보존');

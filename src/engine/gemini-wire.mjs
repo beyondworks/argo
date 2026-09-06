@@ -146,7 +146,7 @@ const RETRYABLE = new Set([500, 502, 503, 504]);
     인증 분류기(AUTH_TEXT_RE)·턴 전 게이트가 같은 계급으로 문다. */
 export async function callGemini({ base, headers, body, minOutputTokens = 0, signal, fetchImpl = globalThis.fetch, timeoutMs = 600_000, retry = 1 }) {
   const url = `${base}/models/${encodeURIComponent(body.model)}:generateContent`;
-  const req = toGeminiRequest(minOutputTokens > 0 ? { ...body, min_output_tokens: minOutputTokens } : body); // 출력 하한 오버라이드(검진 프로브)는 옵션으로만 들어온다
+  const req = toGeminiRequest({ ...body, min_output_tokens: minOutputTokens }); // 출력 하한 오버라이드(검진 프로브)는 옵션으로만 — 본문에 같은 이름의 필드가 있어도 덮는다(생산 지점이 옵션뿐임을 구조로, 3R INFO)
   let attempt = 0;
   for (;;) {
     attempt += 1;

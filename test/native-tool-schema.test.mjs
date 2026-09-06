@@ -78,3 +78,18 @@ test('S3. 배선 — 네이티브 턴이 벤더로 보내는 tools 전량에 req
     assert.deepEqual(tools.find((t) => t.name === 'Read').input_schema.required, ['file_path'], '기존 required는 그대로');
   } finally { await srv.close(); }
 });
+
+test('S4. 엄격 가짜 벤더 규칙 자체 핀 — 타 경로 404·무인증 401(x-goog-api-key만은 인증 아님)·미지 최상위 필드 400·공식 선택 필드 200·xAI required 규칙(3R N3-LOW-1: 규칙이 사라져도 아무도 모르던 자리)', async () => {
+  const strict = await startStrictVendor({ vendor: 'xai' });
+  const post = (path, body, headers = { 'x-api-key': 'k' }) => fetch(`${strict.base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  const ok = { model: 'grok-4', max_tokens: 8, messages: [{ role: 'user', content: 'hi' }] };
+  try {
+    assert.equal((await post('/v1/complete', ok)).status, 404, '경로');
+    assert.equal((await post('/v1/messages', ok, {})).status, 401, '인증 헤더 없음'); assert.equal((await post('/v1/messages', ok, { 'x-goog-api-key': 'k' })).status, 401, 'Gemini 헤더는 이 벤더의 인증이 아니다');
+    assert.equal((await post('/v1/messages', ok, { authorization: 'Bearer k' })).status, 200, 'authorization도 인증');
+    const r400 = await post('/v1/messages', { ...ok, min_output_tokens: 1024 }); assert.equal(r400.status, 400); assert.match((await r400.json()).error.message, /^min_output_tokens: Extra inputs are not permitted$/);
+    assert.equal((await post('/v1/messages', { ...ok, temperature: 0, metadata: { user_id: 'u' }, stop_sequences: ['x'] })).status, 200, '공식 선택 필드는 통과');
+    const rReq = await post('/v1/messages', { ...ok, tools: [{ name: 't', input_schema: { type: 'object', properties: {} } }] }); assert.equal(rReq.status, 400); assert.match((await rReq.json()).error.message, /required/, 'xAI 규칙(제보): object 스키마에 required 없으면 400');
+  } finally { await strict.close(); }
+});
+
