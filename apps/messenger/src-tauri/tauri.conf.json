@@ -11,14 +11,40 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [{ "title": "Argo Messenger", "width": 1100, "height": 760, "minWidth": 720, "minHeight": 520 }],
+    "windows": [
+      {
+        "title": "Argo Messenger",
+        "width": 1100,
+        "height": 760,
+        "minWidth": 720,
+        "minHeight": 520
+      }
+    ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*; frame-ancestors 'none'; object-src 'none'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https: wss: http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*; frame-ancestors 'none'; object-src 'none'"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk4NUM3ODU4MkU2NTlEQzcKUldUSG5XVXVXSGhjbURBMTNYajlGUi9SbjF3TVk0VkFNQ3MrVEdUbnpBOWo4QkZkNnU4emVibWMK",
+      "endpoints": [
+        "https://github.com/beyondworks/argo-messenger/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -6,6 +6,9 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { Graph3D } from './graph3d.jsx';
 import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './panes.mjs'; // 창·탭 전이(순수) // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
 import { supabase, configured, q } from './supabase.js';
+import { customServer, SB_URL } from './supabase.js';
+import { readProfile, writeProfile, clearProfile, normalizeUrl, hostOf } from './server-profile.mjs';
+import { UpdateBar } from './update.jsx';
 import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -52,11 +55,30 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
   let body;
-  if (!configured) body = <div className="msgr-auth"><div className="msgr-card"><div className="body"><p style={{ color: 'var(--danger)' }}>{t('auth.notConfigured')}</p></div></div></div>;
+  if (!configured) body = <div className="msgr-auth"><div className="msgr-card"><div className="body"><p style={{ color: 'var(--danger)' }}>{t('auth.notConfigured')}</p><ServerRow t={t} open /></div></div></div>;
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth />;
   else body = <Shell session={session} />;
-  return <><Sprite />{body}</>;
+  return <><Sprite /><UpdateBar t={t} />{body}</>;
+}
+
+/* ─── 서버 선택(부록 L): 기본 Argo 클라우드 / 회사 서버(셀프호스트 Supabase) — 프로필은 이 기기에만, 저장 뒤 새로고침 ─── */
+function ServerRow({ t, open = false }) {
+  const cur = readProfile(localStorage);
+  const [edit, setEdit] = useState(open);
+  const [url, setUrl] = useState(cur?.url ?? ''); const [anon, setAnon] = useState(cur?.anon ?? ''); const [bad, setBad] = useState(false);
+  const save = () => { if (!normalizeUrl(url) || !anon.trim()) { setBad(true); return; } writeProfile(localStorage, { url, anon }); location.reload(); };
+  const reset = () => { clearProfile(localStorage); location.reload(); };
+  return (
+    <details className="msgr-server" open={edit} onToggle={(e) => setEdit(e.currentTarget.open)}>
+      <summary><I name="hash" size={12} />{customServer ? t('auth.server.custom', { host: hostOf(SB_URL) }) : t('auth.server.cloud')}<span className="msgr-klabel">{t('auth.server')}</span></summary>
+      <p>{t('auth.server.desc')}</p>
+      <label className="msgr-field"><I name="at" /><input placeholder="https://supabase.company.com" value={url} onChange={(e) => { setUrl(e.target.value); setBad(false); }} spellCheck={false} /></label>
+      <label className="msgr-field"><I name="lock" /><input placeholder={t('auth.server.key')} value={anon} onChange={(e) => { setAnon(e.target.value); setBad(false); }} spellCheck={false} /></label>
+      {bad && <p style={{ color: 'var(--danger)' }}>{t('auth.server.bad')}</p>}
+      <div className="row"><button type="button" className="btn sm btn-primary" onClick={save} disabled={!url || !anon}>{t('auth.server.save')}</button>{customServer && <button type="button" className="btn sm ghost" onClick={reset}>{t('auth.server.reset')}</button>}</div>
+    </details>
+  );
 }
 
 /* ─── 로그인: 머리띠 카드 + 이메일 OTP(운영). 개발 빌드에서는 비밀번호 로그인도(로컬 스택엔 메일 서버가 없다). ─── */
@@ -85,6 +107,7 @@ function Auth() {
           <button className="btn" disabled={busy || !email || !pw} onClick={() => run(async () => { await q(supabase.auth.signInWithPassword({ email, password: pw })); })}>{t('auth.verify')} (dev)</button>
         </>)}
         {err && <p style={{ color: 'var(--danger)' }}>{err}</p>}
+        <ServerRow t={t} />
         <div className="foot"><I name="lock" size={13} /><span style={{ flex: 1 }}>{t('auth.foot')}</span><button type="button" className="btn sm" onClick={() => setLang(lang === 'ko' ? 'en' : 'ko')}>{t('ui.lang')}</button></div>
       </div>
     </form></div>

@@ -530,3 +530,14 @@
 .msgr-actfold[open] > summary::before { transform: rotate(90deg); }
 .msgr-actfold > summary .sub { color: var(--fg-3); font-family: var(--mono); font-size: 11px; }
 @media (max-width: 900px) { .msgr-actsplit { flex-direction: column; } .msgr-acttree { width: auto; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--border); } }
+
+/* ── 서버 선택(로그인 카드 안 접힘 행) — 기본 Argo 클라우드, 회사 서버는 펼쳐서 입력 ── */
+.msgr-server { display: grid; gap: 10px; border-top: 1px solid var(--border); padding-top: 12px; }
+.msgr-server summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12.5px; color: var(--fg-2); list-style: none; }
+.msgr-server summary::-webkit-details-marker { display: none; }
+.msgr-server summary .msgr-klabel { margin-left: auto; }
+.msgr-server[open] summary { color: var(--fg); }
+.msgr-server .row { display: flex; gap: 8px; align-items: center; }
+/* ── 인앱 업데이트 막대 — 상단 한 줄(sticky), 화면 흐름을 밀지 않는다 ── */
+.msgr-updbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px; padding: 8px 14px; font-size: 12.5px; background: var(--card); border-bottom: 1px solid var(--border); }
+.msgr-updbar span { flex: 1; min-width: 0; }
