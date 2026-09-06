@@ -29,3 +29,4 @@ dist-server/
 browser/
 # 서버 일괄 재봉인 진행 파일(scripts/cloud-reseal-all.mjs)
 .reseal-all-progress.json
+/bin/

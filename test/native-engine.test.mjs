@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { mkdtemp } from './helpers/tmp.mjs';
+import { existsSync } from 'node:fs';
 
 process.env.HOME = await mkdtemp(join(tmpdir(), 'argo-native-home-'));
 process.env.USERPROFILE = process.env.HOME;
@@ -154,9 +155,23 @@ test('E5. 내장 도구 — Read 줄번호·Edit 유일성·Glob·Grep 모드·B
   assert.equal(await t.Grep({ pattern: '^z', path: 'a', output_mode: 'count' }), 'x.md:2');
   assert.match(await t.Grep({ pattern: 'GAMMA', '-i': true, output_mode: 'content' }), /a\/b\/y\.txt:1:gamma/);
   assert.match(await t.Write({ file_path: 'new/dir/f.txt', content: 'hi' }), /Wrote 2 bytes/);
-  if (process.platform !== 'win32') {
-    assert.match(await t.Bash({ command: 'echo $ANTHROPIC_AUTH_TOKEN-x; exit 3' }), /^-x\n\n\[exit 3\]$/, '자격 env 미상속 + 종료 코드');
-    assert.match(await t.Bash({ command: 'sleep 5', timeout: 1000 }), /\[timeout after 1000ms\]/);
+  assert.match(await t.Bash({ command: 'echo $ANTHROPIC_AUTH_TOKEN-x; exit 3' }), /^-x\n\n\[exit 3\]$/, '자격 env 미상속 + 종료 코드');
+  assert.match(await t.Bash({ command: 'sleep 5', timeout: 1000 }), /\[timeout after 1000ms\]/);
+  if (process.platform === 'win32') {
+    // 윈도우: 동봉 POSIX sh(test.yml이 bin/busybox64u.exe를 해시 고정으로 내려받는다). 2026-09-06 실측 깨짐(따옴표 손상·'-p' 디렉터리·한글·MSYS 경로)을 잠근다
+    const { resolveShell } = await import('../src/engine/shell-backend.mjs');
+    const sel = resolveShell({ force: true }); assert.equal(sel.kind, 'busybox', `동봉 실행기 선택 — tried=${JSON.stringify(sel.tried)}`);
+    assert.equal((await t.Bash({ command: 'echo "a b"' })).trim(), 'a b', '따옴표가 \\"로 새지 않는다(cmd.exe 시절 손상)');
+    assert.match(await t.Bash({ command: 'mkdir -p d1/d2 && ls' }), /^d1$/m); assert.doesNotMatch(await t.Bash({ command: 'ls' }), /^-p$/m, "'-p' 디렉터리 생성 없음");
+    assert.match(await t.Bash({ command: 'echo 한글 && printf "한글\\n" > k.txt && cat k.txt && ls' }), /한글[\s\S]*한글[\s\S]*k\.txt/, 'UTF-8 인자·파일');
+    const pwd = (await t.Bash({ command: 'pwd' })).trim(); assert.ok(existsSync(pwd), `셸이 낸 경로를 Node가 연다(MSYS /d/… 아님): ${pwd}`);
+    assert.match(await t.Bash({ command: 'X=$(node -e "console.log(21*2)"); echo "answer=$X"' }), /answer=42/);
+    assert.match(await t.Bash({ command: "cat <<'EOF' > h.txt\nline1\nEOF\ncat h.txt" }), /line1/, '히어독');
+    // 라우터: cmd 고유 문법·PowerShell은 원래 실행기로(번역 아님)
+    await t.Bash({ command: 'echo abc > a.txt' });
+    assert.match(await t.Bash({ command: 'type a.txt' }), /abc/, 'type 파일 → cmd.exe'); assert.match(await t.Bash({ command: 'dir /b' }), /a\.txt/, 'dir /b → cmd.exe');
+    assert.match(await t.Bash({ command: 'cd d1 && dir /b' }), /d2/, '구획 뒤 cmd 동사'); assert.match(await t.Bash({ command: 'echo %USERPROFILE%' }), /^[A-Za-z]:\\/m, '%VAR% → cmd.exe');
+    assert.match(await t.Bash({ command: 'Get-Date -Format yyyy' }), /20\d\d/, '동사-명사 → powershell');
   }
   assert.equal(shellEnv({ ANTHROPIC_API_KEY: 'a', CLAUDE_CODE_OAUTH_TOKEN: 'b', CLAUDE_CONFIG_DIR: 'c', PATH: 'p' }).PATH, 'p');
   assert.deepEqual(Object.keys(shellEnv({ ANTHROPIC_API_KEY: 'a', CLAUDE_CODE_OAUTH_TOKEN: 'b', CLAUDE_CONFIG_DIR: 'c', PATH: 'p' })), ['PATH']);

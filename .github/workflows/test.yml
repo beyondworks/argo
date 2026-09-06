@@ -52,6 +52,10 @@ jobs:
       # caps 참조 같은 무음 실패 클래스)를 커밋 시점에 잡는다. 규칙은 no-undef 하나(eslint.config.mjs).
       - run: npm run lint
 
+      # 윈도우: Bash 도구의 POSIX sh(동봉 busybox UTF-8 빌드)를 해시 고정으로 레포 루트 bin/에 — 테스트가 실제 실행기(사다리의 cwd/bin 후보)로 돈다
+      - if: runner.os == 'Windows'
+        run: node scripts/fetch-busybox.mjs bin
+
       # Windows에서도 glob이 동작한다 — cmd는 글롭 확장을 안 하지만 node --test가 패턴을 직접 해석(Node 21+)
       - run: npm test
 
