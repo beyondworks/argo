@@ -12,7 +12,6 @@ const DICT = {
   'nav.docs': ['문서', 'Docs'],
   'nav.install': ['설치', 'Install'],
   'nav.contact': ['문의', 'Contact'],
-  'nav.githubSoon': ['GitHub — 공개 예정', 'GitHub — coming soon'],
 
   // hero — 표지
   'hero.kicker': ['자율형 AI 에이전트', 'The autonomous AI agent'],
@@ -211,16 +210,6 @@ const DICT = {
   'download.win': ['Windows용 다운로드', 'Download for Windows'],
   'download.note': ['macOS 13+ · Windows 10+ · Apple Silicon/Intel', 'macOS 13+ · Windows 10+ · Apple Silicon/Intel'],
 
-  // star modal (다운로드 전 깃헙 스타 요청)
-  'star.title': ['잠깐 — 스타 하나가 큰 힘이 됩니다', 'One star goes a long way'],
-  'star.desc': [
-    'Argo가 쓸 만해 보인다면 깃헙 스타로 응원해 주세요. 아래 버튼을 누르면 깃헙 승인 창이 뜨고, 승인하는 순간 스타가 자동으로 눌린 뒤 다운로드 페이지로 이동합니다.',
-    'If Argo looks useful, a GitHub star helps a lot. Approve on GitHub and the star is added automatically — then you land right on the download page.',
-  ],
-  'star.yes': ['스타 누르고 다운로드', 'Star & download'],
-  'star.no': ['그냥 다운로드', 'Just download'],
-  'star.hint': ['깃헙 계정의 별점(star) 권한만 요청하며, 그 외 어떤 것도 접근하지 않습니다.', 'We only request starring permission — nothing else.'],
-
   // pricing
   'pricing.kicker': ['가격', 'Pricing'],
   'pricing.title': ['쓰는 만큼만, 단순하게', 'Simple, usage-based pricing'],
@@ -266,7 +255,7 @@ const DICT = {
   'faq.q6': ['텔레그램·슬랙으로도 일을 시킬 수 있나요?', 'Can I delegate work via Telegram or Slack?'],
   'faq.a6': ['됩니다. 설정에서 봇 토큰을 연결하면 메신저에서 지시를 보내고 결과·파일을 받을 수 있습니다. 크루가 결재(승인)가 필요한 일은 메신저로 승인 요청이 옵니다.', 'Yes. Connect a bot token in Settings, then send instructions and receive results and files in your messenger. When a crew needs an approval, the request reaches you there too.'],
   'faq.q7': ['원하는 러너가 목록에 없어요 / 권한을 더 세밀하게 조정하고 싶어요.', 'My runner is not in the list / I want finer-grained permissions.'],
-  'faq.a7': ['Argo는 소스 공개형입니다 — GitHub(github.com/beyondworks/argo)에서 클론한 뒤, Claude Code나 Codex 같은 코딩 에이전트에게 "이 러너를 추가해줘", "이 권한 규칙을 바꿔줘"라고 요청하면 원하는 러너 추가와 권한 설정을 직접 반영해 쓸 수 있습니다.', 'Argo is source-available — clone it from GitHub (github.com/beyondworks/argo) and ask a coding agent like Claude Code or Codex to "add this runner" or "change this permission rule". You can wire in the runner you want and tune permissions yourself.'],
+  'faq.a7': ['Claude·Codex·Gemini·GLM·Kimi·Grok·OpenRouter 러너를 기본 지원하며, OpenRouter를 통하면 그 밖의 대부분 모델도 연결할 수 있습니다. 목록에 없는 러너나 더 세밀한 권한 규칙이 필요하면 아래 문의로 알려 주세요 — 요청이 모이는 순서대로 반영합니다.', 'Claude, Codex, Gemini, GLM, Kimi, Grok and OpenRouter are supported out of the box, and OpenRouter covers most other models. If you need a runner not on the list or finer permission rules, tell us via the contact form below — we add them in order of demand.'],
 
   // footer
   'footer.line': [

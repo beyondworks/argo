@@ -226,6 +226,39 @@ const GROUPS = [
           },
         ],
       },
+      {
+        // 앱 설정 → 동기화 카드의 "자세히 보기"가 여기로 온다(argo.ceo/docs#privacy-sync).
+        // 정본은 소스 레포 docs/privacy-sync.md — 레포가 프라이빗이라 사용자에게 보이는 사본은 이 절이다.
+        // 정본이 바뀌면 이 절도 같이 고친다(2026-09-07 기준 동기화).
+        id: 'privacy-sync',
+        h: { ko: '14-1. 동기화와 자격 증명 — 무엇이 올라가고, 열쇠는 어디에', en: '14-1. Sync & credentials — what goes up, where the key lives' },
+        body: [
+          {
+            ko: '로그인하지 않으면 아무것도 컴퓨터 밖으로 나가지 않습니다. 동기화 전체는 환경변수 ARGO_SYNC=0으로 끌 수 있습니다.',
+            en: 'If you never sign in, nothing leaves your computer. Set the environment variable ARGO_SYNC=0 to disable sync entirely.',
+          },
+          {
+            ko: '자격 증명은 클라우드로 가지 않습니다 — 러너 로그인 토큰·API 키(.secrets.json), 텔레그램·슬랙 봇 토큰(connections.json), MCP 환경변수(mcp.json) 세 파일은 호스티드 동기화에서 구조적으로 제외됩니다. 새로 저장되는 자격은 운영자를 포함해 본인 외에는 아무도 볼 수 없고, 새 기기에서는 러너·봇을 다시 연결하면 됩니다. 과거 버전에서 올라간 사본은 다음 동기화에 회수됩니다(무료 플랜은 클라우드 쓰기 제약으로 보류되고 Pro·체험이 되면 실행됩니다).',
+            en: 'Credentials are not uploaded — the three credential files (runner login tokens and API keys in .secrets.json, Telegram/Slack bot tokens in connections.json, MCP env vars in mcp.json) are structurally excluded from hosted sync. Newly saved credentials are reachable by no one but you, operator included; new devices simply reconnect runners and bots. A copy left by an older version is withdrawn on the next sync (deferred on the free plan by a cloud-write restriction, and run once you are on Pro/trial).',
+          },
+          {
+            ko: '회사 데이터(기억·대화·크루)는 봉투 암호화(AES-256-GCM)로 Argo 클라우드에 복제됩니다. 다만 그 봉투를 여는 계정별 열쇠가 같은 클라우드에 있어, 서버 운영자는 기술적으로 회사 데이터를 복호화할 수 있습니다 — 이 데이터에 한해서는 "운영자도 절대 볼 수 없다"고 말하지 않습니다. 사용자만 여는 종단간 암호화는 별도로 진행 중입니다.',
+            en: 'Company data (memory, chats, crew) replicates to Argo cloud with envelope encryption (AES-256-GCM). Its per-account key lives in the same cloud, so the operator can technically decrypt that data — for this category we do not claim "operator-proof". End-to-end encryption that only you can open is in progress separately.',
+          },
+          {
+            ko: '팀 메신저의 조직·채널·메시지·첨부는 구성원이 함께 보는 데이터라 서버에 평문으로 저장되며(조직 간은 RLS로 분리), 운영자가 기술적으로 읽을 수 있습니다. 원치 않으면 셀프호스트 Supabase를 쓰거나 메신저를 쓰지 않으면 됩니다.',
+            en: 'Team messenger data (orgs, channels, messages, attachments) is shared among members, so it is stored in plaintext on the server (orgs are separated by RLS) and the operator can technically read it. If you prefer not, self-host Supabase or skip the messenger.',
+          },
+          {
+            ko: '셀프호스트(내 서버·내 Supabase)에서는 운영자가 곧 본인이므로, 자격 증명을 기기 간에 동기화할지 회사 단위로 선택할 수 있습니다(설정 → 기기 간 동기화 → 자격 증명 동기화).',
+            en: 'On self-hosting (your server, your Supabase) the operator is you, so you may choose per company whether credential files sync across devices (Settings → Device sync → Credential sync).',
+          },
+        ],
+        caveat: {
+          ko: '클라우드 워커(운영자가 프로비저닝해 사용자 대신 크루를 돌리는 인스턴스)는 자격 접근이 전제인 위임 모델이라 위 보장의 범위 밖이며, 별도 설계 중입니다. 플랫폼 차원의 백업·스냅샷 보존 기간 동안의 과거 사본까지는 보장하지 않습니다.',
+          en: 'Cloud workers (operator-provisioned instances that run your crew for you) are a delegation model that presumes credential access, so they fall outside the guarantee above and are designed separately. Past copies within platform-level backup/snapshot retention are not covered.',
+        },
+      },
     ],
   },
   {
