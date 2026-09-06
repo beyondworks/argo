@@ -289,6 +289,8 @@ test('배선: 회의실 헤더 진행 줄은 회의 마커(active)만 보고 그
   assert.ok(hdr.includes("t('room.progress', { done: Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) })"), 'done = 인원 − 남은 큐 − 발언 중 1');
   assert.ok(hdr.includes("t('room.progressNoCount', { elapsed: fmtElapsed(elapsed) })"), '인원 미상(구형 마커)이면 경과만');
   assert.ok(hdr.includes('{turn?.total > 1'), '발언자 한 명이면 "0/1명" 대신 경과만(격리 캡처에서 소음으로 확인)');
+  assert.ok(/flex: '0 1 auto', minWidth: 0 \}\}>[\s\S]{0,600}<span style=\{\{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' \}\}>/.test(hdr), '협폭 가드 — 진행 줄이 flex:none이면 배율 2 협폭에서 가로 넘침(2차 검수 실측 255px vs 178px)');
+  assert.ok(!/fontVariantNumeric: 'tabular-nums', flex: 'none' \}\}>/.test(hdr), 'flex:none 금지');
   assert.ok(/if \(turn\?\.startedAt\) startedRef\.current = turn\.startedAt;/.test(page) && /setElapsed\(Math\.max\(0, Date\.now\(\) - startedRef\.current\)\)/.test(page), '경과는 서버 마커의 startedAt을 ref에 보관 — 자기 턴 종료 직후 0:00 스냅 방지(검수 LOW-1)');
   const crew = await readFile(new URL('../app/c/[ws]/crew/[slug]/page.jsx', import.meta.url), 'utf8');
   assert.ok(crew.includes("liveStage?.source === 'room' && (") && crew.includes("t('chat.inRoom')"), '1:1 진행 카드에 회의실 출처 배지');

@@ -470,11 +470,15 @@ export default function Room({ params }) {
               낡아도(2분 무갱신) 이 줄은 남는다(유건 제보 2026-09-06: 표시가 꺼져 회의가 누락된 것처럼 보임).
               done = 인원 − 남은 큐 − 발언 중 1. 인원을 모르는 구형 마커거나 발언자가 한 명이면("0/1명"은 소음) 경과만. */}
           {!viewing && (busy || serverBusy) && (
-            <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums', flex: 'none' }}>
-              <ArgoSpinner size={11} />
+            <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums', flex: '0 1 auto', minWidth: 0 }}>
+              {/* 협폭 가드 — 형제 microlabel과 같은 규칙. flex:none이면 배율 2의 1열 유효 폭(~178px)에서 "회의 진행 중 · 11/12명 발언 완료 · 12:34"(≈255px)가
+                  우측으로 넘친다(2차 검수 실측 — #340·#350·#357과 같은 자리). 스피너는 고정, 글은 줄임표. */}
+              <span style={{ flex: 'none', display: 'inline-flex' }}><ArgoSpinner size={11} /></span>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {turn?.total > 1
                 ? t('room.progress', { done: Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) })
                 : t('room.progressNoCount', { elapsed: fmtElapsed(elapsed) })}
+              </span>
             </span>
           )}
         </div>
