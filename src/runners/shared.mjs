@@ -79,6 +79,12 @@ const PROVIDER_AUTH_OWNERS = {
   OPENAI_API_KEY: ['codex'],
   GEMINI_API_KEY: ['gemini'],
   GOOGLE_API_KEY: ['gemini'],
+  GEMINI_BASE_URL: ['gemini'],
+  // 네이티브 와이어 선택·자격(runnerCredEnv가 cred.env로 명시 세팅) — 호스트 셸에서 상속되면 다른 러너의 와이어를 탈취한다(분리 검수 L1·LOW-2)
+  ARGO_WIRE: ['gemini', 'codex'],
+  RESPONSES_BASE_URL: ['codex'],
+  RESPONSES_TOKEN: ['codex'],
+  RESPONSES_HEADERS: ['codex'],
   GLM_API_KEY: ['glm'],
   KIMI_API_KEY: ['kimi'],
 };

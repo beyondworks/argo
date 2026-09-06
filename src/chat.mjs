@@ -875,7 +875,7 @@ export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excl
  *   재시도 재귀 호출에도 그대로 넘긴다 — 빠지면 재시도 턴만 개인 고정으로 돌아가 발언자마다 폴더가 갈린다.
  * 반환: { reply, sessionId, handover } — handover에 자동링크 결과 포함.
  */
-export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, workFolder = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false } = {}) {
+export async function chat(wsId, agentSlug, userMsg, sessionId = null, { from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, workFolder = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
   // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)
   const turnSource = source ?? (from ? 'delegate' : 'chat');
   const p = paths(wsId);
@@ -1542,6 +1542,16 @@ ${lang === 'en'
         e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
       }
     }
+    // 접근권 게이트 모델 강등(네이티브 경로) — CLI 경로의 externalExec catch와 같은 계약: gated 모델(예: Gemini 3.x = Ultra·유료 전용) 실패는
+    // 같은 러너의 기본 모델로 1회 재시도 + 답변 머리 고지(분리 검수 M1: gemini API 키 턴이 네이티브로 옮겨 오며 이 안전망 밖으로 나갔다).
+    // 벤더는 갈아타지 않는다(강등은 모델 축) — __downgradedFrom으로 재귀 1회 제한.
+    if (!aborted && !retriedDown && !__downgradedFrom && nativeOn && effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated && GATED_MODEL_ERR_RE.test(String(e?.message || e))) {
+      const baseModel = effectiveModels(runner).find((m) => !m.gated)?.id ?? '';
+      console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델(${baseModel})로 강등 재시도(${wsId}/${agentSlug})`);
+      try {
+        return await chat(wsId, agentSlug, userMsg, sessionId, { from, source, attachments, hop, chain, toolHop, mirrorCtx, runnerOverride, modelOverride: baseModel, workFolder, __freshRetry, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry, __downgradedFrom: effModel });
+      } catch (e2) { e = e2; retriedDown = true; if (e2?.aborted) aborted = true; }
+    }
     // 인증 오탐 자가 치유 — SDK 러너의 자격이 실은 죽어 있던 경우(스테일 로그인 흔적 등), **죽은 러너를
     // 누적 제외**하고 남은 가용 러너를 차례로 시도한다. 러너가 바뀌면 세션 resume이 무의미하므로 새 세션 +
     // 최근 대화 접붙임(__freshRetry)으로 맥락을 잇는다. 발동은 AUTH_ERR_RE 한정 유지(CLI 갈래와 같은 계약).
@@ -1624,9 +1634,15 @@ ${lang === 'en'
 
   // 402(크레딧 소진) 턴은 일지에 남기지 않는다 — 남기면 consolidate가 오류 원문을 기억 노트로
   // 정제할 수 있다(2R N3, oneshot HIGH-1과 동일 논리). 화면 답변·이벤트·사용량 집계는 그대로.
+  // 강등 고지(네이티브 경로) — CLI 경로(usedModel !== effModel)와 같은 문구·같은 이벤트 필드(downgradedFrom)
+  if (__downgradedFrom && reply) {
+    reply = (lang === 'en'
+      ? `(This account doesn't have access to ${__downgradedFrom} — an Ultra/paid-only model — so I answered with the runner's default model.)`
+      : `(이 계정에는 ${__downgradedFrom} 접근 권한이 없어 — Ultra·유료 전용 모델 — 러너 기본 모델로 대신 답했습니다.)`) + `\n\n${reply}`;
+  }
   const handover = creditTurn ? null : await saveHandover(wsId, agentSlug, userMsg, reply, meta.name || agentSlug);
   await appendEvent(wsId, {
-    ...evBase, ok: true, ms: Date.now() - t0, steps,
+    ...evBase, ok: true, ms: Date.now() - t0, steps, ...(__downgradedFrom ? { downgradedFrom: __downgradedFrom } : {}),
     ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
   });
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는

@@ -27,6 +27,14 @@ import { callGemini, GEMINI_DEFAULT_BASE } from './gemini-wire.mjs';
 
 const RETRYABLE = new Set([500, 502, 503, 504, 529]);
 
+/** 다른 와이어가 전사에 남긴 사이드채널(gemini 사고 파트 gem_thought·thoughtSignature _gemSig)은 Anthropic 와이어에 보내지 않는다(순수) —
+    크루 러너를 바꿔 같은 세션을 이어갈 때 알 수 없는 필드로 400이 나지 않게. */
+export function stripForeignBlocks(messages) {
+  return (messages ?? []).map((m) => (Array.isArray(m?.content)
+    ? { ...m, content: m.content.filter((b) => b?.type !== 'gem_thought').map((b) => { if (b && typeof b === 'object' && '_gemSig' in b) { const { _gemSig, ...rest } = b; return rest; } return b; }) }
+    : m));
+}
+
 /** POST /v1/messages 1회(+과부하·네트워크 1회 재시도). 실패는 `API Error: <status> <message>`(status 필드 동봉). */
 export async function callMessages({ wire = 'messages', base, headers, body, signal, fetchImpl = globalThis.fetch, timeoutMs = 600_000, retry = 1 }) {
   if (wire === 'gemini') return callGemini({ base, headers, body, signal, fetchImpl, timeoutMs, retry }); // 요청·응답 모양은 Messages 그대로, 변환은 gemini-wire가
@@ -41,7 +49,7 @@ export async function callMessages({ wire = 'messages', base, headers, body, sig
       r = await fetchImpl(url, {
         method: 'POST', signal: sig,
         headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', accept: 'application/json', ...headers },
-        body: JSON.stringify(body),
+        body: JSON.stringify(Array.isArray(body?.messages) ? { ...body, messages: stripForeignBlocks(body.messages) } : body),
       });
     } catch (e) {
       if (signal?.aborted) throw Object.assign(new Error('aborted'), { aborted: true, cause: e });

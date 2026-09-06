@@ -3,6 +3,7 @@
 // 하네스 통일의 요점: 어느 러너든 이 도구들이 같은 게이트를 지난다(SDK 경로는 allowedTools 항목이 게이트를 우회했다).
 // 게이트는 1차 방어이고, 실행기 자체도 루트 봉쇄·경로형 인자 거절을 한다(분리 검수 CRITICAL-1: Grep glob이 게이트 밖이었다).
 import { readFile, writeFile, mkdir, lstat, realpath, glob as fsGlob } from 'node:fs/promises';
+import { WIRE_ENV_KEYS } from './native-flags.mjs';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
@@ -56,10 +57,12 @@ export function grepWorkerPath({ env = process.env, cwd = process.cwd(), argv1 =
   return hit;
 }
 
-/** 셸·MCP 자식 env — 러너 자격(ANTHROPIC_*·OAuth)은 크루 명령에 필요 없다. SDK 경로는 상속시켰지만 여기서는 뺀다(시크릿 규칙). */
+/** 셸·MCP 자식 env — 러너 자격(ANTHROPIC_*·OAuth·와이어 자격 WIRE_ENV_KEYS)은 크루 명령에 필요 없다. SDK 경로는 상속시켰지만 여기서는 뺀다(시크릿 규칙 —
+    분리 검수 HIGH-1: GEMINI_API_KEY·RESPONSES_TOKEN이 Bash printenv로 전사·세션 파일에 평문으로 남았다). */
+const WIRE_ENV = new Set(WIRE_ENV_KEYS);
 export function shellEnv(env = process.env) {
   const out = {};
-  for (const [k, v] of Object.entries(env)) if (!/^(ANTHROPIC_|CLAUDE_CODE_OAUTH_TOKEN$|CLAUDE_CONFIG_DIR$)/.test(k)) out[k] = v;
+  for (const [k, v] of Object.entries(env)) if (!/^(ANTHROPIC_|CLAUDE_CODE_OAUTH_TOKEN$|CLAUDE_CONFIG_DIR$)/.test(k) && !WIRE_ENV.has(k)) out[k] = v;
   return out;
 }
 

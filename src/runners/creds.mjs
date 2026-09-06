@@ -143,7 +143,7 @@ export async function saveRunnerCred(wsId, runner, type, value) {
   }
   // 연결 즉시 실행기 워밍업 — 첫 턴이 다운로드를 기다리지 않게(백그라운드, 실패는 턴 시점 조달이 재시도).
   // 모든 연결 경로(회사 키·계정 키·웹 브리지)가 이 함수를 지나므로 여기가 단일 관문이다.
-  if (runner === 'gemini') provisionGeminiCli().catch(() => {});
+  if (runner === 'gemini' && credType(type) !== 'apikey') provisionGeminiCli().catch(() => {}); // API 키 자격은 네이티브 — CLI를 안 띄우므로 조달 불필요(검수 L4)
   if (runner === 'codex') provisionCodexCli().catch(() => {}); // ~100MB — 연결 시점에 미리 받아 첫 턴 대기 제거
 }
 
@@ -450,7 +450,7 @@ export async function verifyRunnerCred(runner, type, value) {
       return (r.status === 401 || r.status === 403) ? { ok: false, reason: 'auth' } : { ok: true }; // reason:'auth' = 턴 전 게이트·분류표의 열쇠(불변식 A)
     }
     if (runner === 'gemini' && type === 'apikey') {
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(v)}&pageSize=1`, { signal: AbortSignal.timeout(10_000) });
+      const r = await fetch(`${String(process.env.GEMINI_BASE_URL || GEMINI_DEFAULT_BASE).replace(/\/+$/, '')}/models?key=${encodeURIComponent(v)}&pageSize=1`, { signal: AbortSignal.timeout(10_000) }); // 검진과 턴의 목적지는 같아야 한다(검수 L3)
       if (r.status === 401 || r.status === 403) return { ok: false, reason: 'auth' };
       // Google Generative Language API는 무효 키에 HTTP 400 + reason:API_KEY_INVALID를 준다(401 아님) — 실측 2026-07-20.
       // 400을 무조건 무효로 몰면 키와 무관한 요청 오류까지 키 탓이 되므로, 키 무효 신호가 있을 때만 거절한다.

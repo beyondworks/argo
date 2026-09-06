@@ -15,12 +15,16 @@ process.env.ARGO_MODEL_CATALOG = 'off';
 delete process.env.ARGO_NATIVE_RUNNERS;
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
-const { toGeminiRequest, fromGeminiResponse, cleanSchema, callGemini, GEMINI_DEFAULT_BASE } = await import('../src/engine/gemini-wire.mjs');
-const { authFromEnv, callMessages } = await import('../src/engine/messages-http.mjs');
+const { toGeminiRequest, fromGeminiResponse, cleanSchema, callGemini, GEMINI_DEFAULT_BASE, GEMINI_MIN_OUTPUT_TOKENS } = await import('../src/engine/gemini-wire.mjs');
+const { authFromEnv, callMessages, stripForeignBlocks } = await import('../src/engine/messages-http.mjs');
+const { extractErrorMessage } = await import('../src/engine/http-errors.mjs');
+const { shellEnv } = await import('../src/engine/builtin-tools.mjs');
+const { sessionFile } = await import('../src/engine/session.mjs');
+const { scrubServerSecrets } = await import('../src/runners/shared.mjs');
 const { nativeQuery, NATIVE_DEFAULT_RUNNERS, nativeRunnerEnabled } = await import('../src/engine/native-query.mjs');
-const { isCliTurn, GEMINI_DEFAULT_MODEL, RUNNER_AUTH, isHiddenRunner } = await import('../src/runners/catalog.mjs');
+const { isCliTurn, GEMINI_DEFAULT_MODEL, RUNNER_AUTH, isHiddenRunner, pickRunner, autoRunnerOf } = await import('../src/runners/catalog.mjs');
 const { createCompany, paths } = await import('../src/workspace.mjs');
-const { saveRunnerCred, runnerCredEnv, runnerCredType } = await import('../src/runners/creds.mjs');
+const { saveRunnerCred, runnerCredEnv, runnerCredType, verifyRunnerCred } = await import('../src/runners/creds.mjs');
 const { makePermissionGate } = await import('../src/permission-gate.mjs');
 
 async function fakeGemini(script) {
@@ -53,25 +57,28 @@ test('G1. 요청 변환(순수) — system→systemInstruction, 역할·연속 �
     ],
   });
   assert.deepEqual(req.systemInstruction, { parts: [{ text: 'SYS' }] });
-  assert.equal(req.generationConfig.maxOutputTokens, 123);
+  assert.equal(req.generationConfig.maxOutputTokens, GEMINI_MIN_OUTPUT_TOKENS, '사고 토큰이 상한에 포함되므로 하한을 둔다(H4)'); assert.equal(toGeminiRequest({ messages: [], max_tokens: 40_000 }).generationConfig.maxOutputTokens, 40_000, '더 큰 상한은 그대로');
   assert.deepEqual(req.contents.map((c) => c.role), ['user', 'model', 'user'], '같은 역할 연속은 한 항목으로');
   assert.deepEqual(req.contents[0].parts, [{ text: '첫 지시' }, { text: '이어서' }]);
-  assert.deepEqual(req.contents[1].parts[1], { functionCall: { name: 'Read', args: { file_path: 'a.md' } } });
-  assert.deepEqual(req.contents[2].parts[0], { functionResponse: { name: 'Read', response: { result: 'A' } } });
-  assert.deepEqual(req.contents[2].parts[1], { inlineData: { mimeType: 'image/jpeg', data: 'QUJD' } }, '도구 결과의 이미지는 옆 파트로');
-  assert.deepEqual(req.contents[2].parts[2], { functionResponse: { name: 'tool', response: { result: 'x', error: true } } }, '짝 없는 결과는 이름 폴백');
+  assert.deepEqual(req.contents[1].parts[1], { functionCall: { id: 'tu1', name: 'Read', args: { file_path: 'a.md' } } }, 'gem_ 접두가 아닌 id는 벤더 id로 보존(M3)');
+  assert.deepEqual(req.contents[2].parts[0], { functionResponse: { id: 'tu1', name: 'Read', response: { result: 'A' }, parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'QUJD' } }] } }, '도구 결과의 이미지는 FunctionResponse.parts(멀티모달 함수 응답 — M4)');
+  assert.equal(req.contents[2].parts.length, 2, '형제 inlineData 파트 없음(함수 응답 파트 수 = 호출 수)');
+  assert.deepEqual(req.contents[2].parts[1], { functionResponse: { id: 'nope', name: 'tool', response: { result: 'x', error: true } } }, '짝 없는 결과는 이름 폴백');
+  const own = toGeminiRequest({ messages: [{ role: 'assistant', content: [{ type: 'tool_use', id: 'gem_abc_1', name: 'Read', input: {} }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'gem_abc_1', content: 'r' }] }] });
+  assert.equal('id' in own.contents[0].parts[0].functionCall, false, '우리가 만든 gem_ id는 벤더에 보내지 않는다'); assert.equal('id' in own.contents[1].parts[0].functionResponse, false);
   const decl = req.tools[0].functionDeclarations;
-  assert.deepEqual(decl[0].parameters, { type: 'object', properties: { file_path: { type: 'string', nullable: true }, n: { type: 'integer', minimum: 1 } }, required: ['file_path'] }, '$schema·additionalProperties·default·pattern 제거, null 타입은 nullable');
+  assert.deepEqual(decl[0].parameters, { type: 'object', properties: { file_path: { type: 'string', default: '', pattern: '.*', nullable: true }, n: { type: 'integer', minimum: 1 } }, required: ['file_path'] }, '$schema·additionalProperties 제거, 공식 필드(default·pattern) 보존, null 타입은 nullable');
   assert.equal('parameters' in decl[1], false, '빈 properties는 parameters 생략(거절 방지)');
-  assert.deepEqual(cleanSchema({ type: 'array', items: { type: 'object', properties: {}, title: 't' } }), { type: 'array', items: { type: 'object' } });
+  assert.deepEqual(cleanSchema({ type: 'array', items: { type: 'object', properties: {}, title: 't' } }), { type: 'array', items: { type: 'object', title: 't' } }, 'title은 공식 필드, 빈 properties는 제거');
 });
 
-test('G2. 응답 변환(순수) — text+functionCall→tool_use(id 생성)·stop_reason, MAX_TOKENS, thought 파트 제거, usage, 후보 없음은 400 오류', () => {
+test('G2. 응답 변환(순수) — text+functionCall→tool_use(id 생성)·stop_reason, MAX_TOKENS, thought 파트 보존(gem_thought), usage(+사고 토큰), 후보 없음은 400 오류', () => {
   const r = fromGeminiResponse({ candidates: [{ content: { parts: [{ text: 'a' }, { thought: true, text: '생각' }, { functionCall: { name: 'Read', args: { file_path: 'x' } } }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 2 }, modelVersion: 'gemini-2.5-pro-001' }, 'gemini-2.5-pro');
   assert.equal(r.role, 'assistant'); assert.equal(r.stop_reason, 'tool_use'); assert.equal(r.model, 'gemini-2.5-pro-001');
-  assert.deepEqual(r.content.map((b) => b.type), ['text', 'tool_use'], 'thought 파트는 버린다');
-  assert.ok(r.content[1].id.startsWith('gem_') && r.content[1].name === 'Read'); assert.deepEqual(r.content[1].input, { file_path: 'x' });
+  assert.deepEqual(r.content.map((b) => b.type), ['text', 'gem_thought', 'tool_use'], 'thought 파트는 gem_thought 블록으로 보존(표시·도구 실행은 type으로 거른다)');
+  assert.ok(r.content[2].id.startsWith('gem_') && r.content[2].name === 'Read'); assert.deepEqual(r.content[2].input, { file_path: 'x' });
   assert.deepEqual(r.usage, { input_tokens: 5, output_tokens: 2 });
+  assert.deepEqual(fromGeminiResponse({ candidates: [{ content: { parts: [{ text: 'a' }] } }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 9, thoughtsTokenCount: 1500 } }, 'm').usage, { input_tokens: 5, output_tokens: 1509 }, '사고 토큰도 출력 과금(M5)');
   assert.equal(fromGeminiResponse({ candidates: [{ content: { parts: [{ text: 'cut' }] }, finishReason: 'MAX_TOKENS' }] }, 'm').stop_reason, 'max_tokens');
   assert.throws(() => fromGeminiResponse({ promptFeedback: { blockReason: 'SAFETY' } }, 'm'), /API Error: 400 .*SAFETY/);
 });
@@ -151,6 +158,153 @@ test('G8. 배선 핀 — chat·oneshot·스케줄러·카드 정보가 자격 �
   const sch = await readFile(join(ROOT, 'src', 'scheduler.mjs'), 'utf8');
   assert.match(sch, /hasTools = !isCliTurn\(resolved\.runner, await runnerCredType\(cid, resolved\.runner\)\);/);
   const fac = await readFile(join(ROOT, 'src', 'runners.mjs'), 'utf8');
-  assert.match(fac, /cli: isCliTurn\(id, cred\?\.type \?\? meta\.methods\?\.\[0\]\),/, '미연결 카드는 첫 연결 방식 기준(gemini=apikey → 네이티브)');
+  assert.match(fac, /cli: isCliTurn\(id, credType\(cred\?\.type \?\? meta\.methods\?\.\[0\]\)\),/, '미연결 카드는 첫 연결 방식 기준(gemini=apikey → 네이티브), 저장 자격은 정규화 종류로(L2)');
   assert.equal((chat.match(/isCliRunner\(runner\)/g) ?? []).length >= 1, true, 'commonDirectives의 CLI 문구 분기는 runner 미전달 경로(네이티브)에선 false');
+});
+
+const gemSafety = (finishReason, parts = []) => ({ candidates: [{ content: { role: 'model', parts }, finishReason }], usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 0 } });
+const st = (o) => Object.fromEntries(Object.entries(o).map(([id, type]) => [id, { company: type ? { connected: true, type } : { connected: false } }]));
+
+test('G9. 자동 선택의 자격 축(H1) — gemini oauth·host만 연결된 회사의 자동 크루는 gemini로 가지 않는다(죽은 CLI 경로), API 키면 간다; host 가능 러너(claude)는 종전대로', () => {
+  assert.equal(pickRunner(st({ gemini: 'oauth', glm: 'apikey' }), null).runner, 'glm', 'oauth gemini는 자동 대상이 아니다(Google이 구독의 외부 앱 사용을 막았다)');
+  assert.equal(pickRunner(st({ gemini: 'host', glm: 'apikey' }), null).runner, 'glm');
+  assert.equal(pickRunner(st({ gemini: 'apikey', glm: 'apikey' }), null).runner, 'gemini', 'API 키 gemini는 네이티브 — 자동 대상');
+  assert.equal(autoRunnerOf(st({ gemini: 'oauth' })), null, 'oauth gemini뿐이면 자동 러너 없음');
+  assert.equal(pickRunner(st({ gemini: 'oauth' }), 'gemini').runner, 'gemini', '명시 지정은 자격 종류를 묻지 않는다(굳힌 크루는 계속 돈다)');
+  assert.equal(pickRunner(st({ claude: 'host', glm: 'apikey' }), null).runner, 'claude', 'host 옵트인 러너는 종전대로 자동 대상(회귀 0)');
+  assert.equal(pickRunner(st({ codex: 'oauth' }), null).runner, 'codex');
+  assert.equal(pickRunner(st({ gemini: 'oauth', glm: 'apikey' }), null, null, { defaultRunner: 'gemini' }).runner, 'glm', '회사 기본 러너도 자격 축을 지킨다');
+});
+
+test('G10. 스키마 정리(H2) — MCP형 $ref/$defs·anyOf null·oneOf·const·정수 enum·type 없음이 전부 type 또는 anyOf를 가진 노드로 정리된다(불변식 워커)', () => {
+  const mcp = { type: 'object', $defs: { Mode: { type: 'string', enum: ['fast', 'slow'], description: '모드' }, Box: { type: 'object', properties: { w: { type: 'integer' } }, required: ['w'] } },
+    properties: {
+      mode: { $ref: '#/$defs/Mode' }, limit: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }], default: 10, description: '상한' },
+      kind: { oneOf: [{ type: 'string' }, { type: 'number' }] }, fixed: { const: 'v1' }, level: { type: 'integer', enum: [1, 2, 3] }, any: {}, nul: { type: 'null' },
+      box: { $ref: '#/$defs/Box' }, list: { type: 'array', items: { $ref: '#/$defs/Box' } }, both: { allOf: [{ $ref: '#/$defs/Box' }, { properties: { h: { type: 'integer' } }, required: ['h'] }] },
+      tuple: { type: 'array', items: [{ type: 'string' }] },
+    }, required: ['mode', 'ghost'], additionalProperties: false, $schema: 'http://json-schema.org/draft-07/schema#' };
+  const out = cleanSchema(mcp);
+  const bad = []; const walk = (n, path) => { if (!n || typeof n !== 'object') return; if (!n.type && !Array.isArray(n.anyOf)) bad.push(path); for (const [k, v] of Object.entries(n.properties ?? {})) walk(v, `${path}.${k}`); if (n.items) walk(n.items, `${path}[]`); for (const [i, a] of (n.anyOf ?? []).entries()) walk(a, `${path}|${i}`); if ('$ref' in n || '$defs' in n || 'oneOf' in n || 'allOf' in n || 'const' in n || '__null' in n) bad.push(`${path}:foreign`); };
+  walk(out, '$');
+  assert.deepEqual(bad, [], 'type 없는 노드·JSON Schema 전용 키가 남지 않는다');
+  assert.deepEqual(out.properties.mode, { type: 'string', enum: ['fast', 'slow'], description: '모드' }, '$ref 인라인');
+  assert.deepEqual(out.properties.limit, { type: 'integer', minimum: 1, default: 10, description: '상한', nullable: true }, 'anyOf [X, null] → X + nullable, 부모 description 보존');
+  assert.deepEqual(out.properties.kind, { anyOf: [{ type: 'string' }, { type: 'number' }] }, 'oneOf → anyOf');
+  assert.deepEqual(out.properties.fixed, { type: 'string', enum: ['v1'] }, 'const → enum');
+  assert.deepEqual(out.properties.level, { type: 'string', enum: ['1', '2', '3'] }, 'enum은 STRING 전용');
+  assert.deepEqual(out.properties.any, { type: 'string' }); assert.deepEqual(out.properties.nul, { type: 'string', nullable: true });
+  assert.deepEqual(out.properties.box, { type: 'object', properties: { w: { type: 'integer' } }, required: ['w'] });
+  assert.deepEqual(out.properties.list.items, { type: 'object', properties: { w: { type: 'integer' } }, required: ['w'] });
+  assert.deepEqual(out.properties.both, { type: 'object', properties: { w: { type: 'integer' }, h: { type: 'integer' } }, required: ['w', 'h'] }, 'allOf 병합');
+  assert.deepEqual(out.properties.tuple, { type: 'array', items: { type: 'string' } });
+  assert.deepEqual(out.required, ['mode'], '없는 속성은 required에서 제거');
+  assert.equal(JSON.stringify(cleanSchema({ $defs: { A: { $ref: '#/$defs/A' } }, type: 'object', properties: { a: { $ref: '#/$defs/A' } } })).includes('nested too deep'), true, '순환 $ref는 깊이 상한에서 끊는다');
+});
+
+test('G11. thoughtSignature 왕복(H3)·벤더 functionCall.id 보존(M3) — 응답의 서명·사고 파트가 블록에 남고 다음 요청의 같은 파트에 그대로 되붙는다(가짜 서버 2회차 실측), Anthropic 와이어에는 안 나간다', async () => {
+  const r = fromGeminiResponse({ candidates: [{ content: { parts: [{ thought: true, text: '계획', thoughtSignature: 'SIG-T' }, { text: '둘 다 읽을게요', thoughtSignature: 'SIG-TEXT' }, { functionCall: { id: 'fc-1', name: 'Read', args: { file_path: 'a.md' } }, thoughtSignature: 'SIG-A' }, { functionCall: { id: 'fc-2', name: 'Read', args: { file_path: 'b.md' } } }] }, finishReason: 'STOP' }] }, 'm');
+  assert.deepEqual(r.content.map((b) => [b.type, b._gemSig ?? null]), [['gem_thought', 'SIG-T'], ['text', 'SIG-TEXT'], ['tool_use', 'SIG-A'], ['tool_use', null]]);
+  assert.deepEqual(r.content.slice(2).map((b) => b.id), ['fc-1', 'fc-2'], '벤더 id 보존');
+  const req = toGeminiRequest({ messages: [{ role: 'user', content: '읽어' }, { role: 'assistant', content: r.content }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'fc-1', content: 'A' }, { type: 'tool_result', tool_use_id: 'fc-2', content: 'B' }] }] });
+  assert.deepEqual(req.contents[1].parts, [{ thought: true, text: '계획', thoughtSignature: 'SIG-T' }, { text: '둘 다 읽을게요', thoughtSignature: 'SIG-TEXT' }, { functionCall: { id: 'fc-1', name: 'Read', args: { file_path: 'a.md' } }, thoughtSignature: 'SIG-A' }, { functionCall: { id: 'fc-2', name: 'Read', args: { file_path: 'b.md' } } }], '받은 그대로 되돌린다');
+  assert.deepEqual(req.contents[2].parts.map((p) => p.functionResponse.id), ['fc-1', 'fc-2'], 'functionResponse.id로 짝 맞춤(같은 이름 병렬 호출 구분)');
+  const anth = stripForeignBlocks([{ role: 'assistant', content: r.content }]);
+  assert.deepEqual(anth[0].content.map((b) => b.type), ['text', 'tool_use', 'tool_use']); assert.ok(anth[0].content.every((b) => !('_gemSig' in b)), 'Anthropic 와이어엔 사이드채널 없음');
+  const anthSrv = await fakeGemini([{ json: { id: 'm1', type: 'message', role: 'assistant', model: 'm', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } } }]);
+  try {
+    const res = await callMessages({ wire: 'messages', base: anthSrv.base, headers: {}, body: { model: 'm', max_tokens: 5, messages: [{ role: 'user', content: 'x' }, { role: 'assistant', content: r.content }, { role: 'user', content: 'y' }] } });
+    assert.equal(res.content[0].text, 'ok'); const sent = JSON.stringify(anthSrv.calls[0].body);
+    assert.ok(!sent.includes('gem_thought') && !sent.includes('_gemSig') && sent.includes('"fc-1"'), 'Messages 와이어 실호출에도 사이드채널이 안 나간다(블록 자체는 유지)');
+  } finally { await anthSrv.close(); }
+  // 실루프 — 2회차 요청에 서명이 붙어 나간다
+  const ws = 'gem-sig'; await createCompany(ws, '서명', '사장'); const root = paths(ws).root; await mkdir(join(root, 'vault'), { recursive: true }); await writeFile(join(root, 'vault', 'a.md'), 'A\n');
+  const srv = await fakeGemini([{ candidates: [{ content: { role: 'model', parts: [{ text: '읽을게요', thoughtSignature: 'SIG-1' }, { functionCall: { id: 'fc-9', name: 'Read', args: { file_path: 'vault/a.md' } }, thoughtSignature: 'SIG-2' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } }, gemText('끝')]);
+  try {
+    let last; for await (const ev of nativeQuery({ wsId: ws, slug: 's', prompt: '읽어', cwd: root, systemPrompt: 'SYS', model: 'gemini-2.5-pro', saveSession: false, env: { ARGO_WIRE: 'gemini', GEMINI_API_KEY: 'test-key', GEMINI_BASE_URL: srv.base }, canUseTool: makePermissionGate(ws, 's', root, null, 'ko', []) })) last = ev;
+    assert.equal(last.subtype, 'success'); assert.equal(last.result, '끝');
+    const model = srv.calls[1].body.contents.find((c) => c.role === 'model');
+    assert.deepEqual(model.parts.map((p) => p.thoughtSignature ?? null), ['SIG-1', 'SIG-2']); assert.equal(model.parts[1].functionCall.id, 'fc-9');
+    assert.equal(srv.calls[1].body.contents.at(-1).parts[0].functionResponse.id, 'fc-9');
+  } finally { await srv.close(); }
+});
+
+test('G12. 빈 응답은 오류(H4) — SAFETY 파트 0·사고만 남은 MAX_TOKENS·빈 텍스트는 finishReason을 실은 오류로 던지고, 네이티브 턴은 조용한 성공("")이 아니라 실패한다', async () => {
+  assert.throws(() => fromGeminiResponse(gemSafety('SAFETY'), 'm'), (e) => e.status === 400 && e.finishReason === 'SAFETY' && /finishReason=SAFETY/.test(e.message));
+  assert.throws(() => fromGeminiResponse(gemSafety('MAX_TOKENS', [{ thought: true, text: '…' }]), 'm'), /finishReason=MAX_TOKENS — thinking consumed the output budget/);
+  assert.throws(() => fromGeminiResponse(gemSafety('STOP', [{ text: '   ' }]), 'm'), /finishReason=STOP/);
+  assert.throws(() => fromGeminiResponse({ candidates: [{ finishReason: 'PROHIBITED_CONTENT', finishMessage: 'blocked' }] }, 'm'), /PROHIBITED_CONTENT — blocked/);
+  assert.equal(fromGeminiResponse(gemSafety('MAX_TOKENS', [{ text: 'cut' }]), 'm').stop_reason, 'max_tokens', '가시 텍스트가 있으면 절단으로 정상 반환');
+  const ws = 'gem-empty'; await createCompany(ws, '빈답', '사장'); const root = paths(ws).root;
+  const srv = await fakeGemini([gemSafety('SAFETY')]);
+  try {
+    await assert.rejects((async () => { for await (const ev of nativeQuery({ wsId: ws, slug: 's', prompt: 'x', cwd: root, systemPrompt: 'SYS', model: 'gemini-2.5-pro', saveSession: false, env: { ARGO_WIRE: 'gemini', GEMINI_API_KEY: 'test-key', GEMINI_BASE_URL: srv.base }, canUseTool: makePermissionGate(ws, 's', root, null, 'ko', []) })) if (ev.type === 'result' && ev.subtype === 'success' && !ev.result) throw new Error('silent-empty-success'); })(), /finishReason=SAFETY/);
+  } finally { await srv.close(); }
+});
+
+test('G13. 오류 문구에 Google 계급 보존(M1) — 404 NOT_FOUND·403 PERMISSION_DENIED가 게이트 모델 강등 정규식에 걸리고, API_KEY_INVALID reason도 남는다; chat 네이티브 경로 강등 분기 배선 핀', async () => {
+  const { GATED_MODEL_ERR_RE } = await import('../src/chat.mjs');
+  const nf = extractErrorMessage(JSON.stringify({ error: { code: 404, message: 'models/gemini-3.1-pro-preview is not found for API version v1beta, or is not supported for generateContent.', status: 'NOT_FOUND' } }));
+  assert.match(nf, /\(NOT_FOUND\)$/); assert.equal(GATED_MODEL_ERR_RE.test(`API Error: 404 ${nf}`), true);
+  assert.equal(GATED_MODEL_ERR_RE.test(`API Error: 403 ${extractErrorMessage(JSON.stringify({ error: { code: 403, message: 'You do not have permission', status: 'PERMISSION_DENIED' } }))}`), true);
+  assert.match(extractErrorMessage(JSON.stringify({ error: { code: 400, message: 'API key not valid.', status: 'INVALID_ARGUMENT', details: [{ '@type': 'x', reason: 'API_KEY_INVALID' }] } })), /\(INVALID_ARGUMENT, API_KEY_INVALID\)$/);
+  assert.equal(extractErrorMessage(JSON.stringify({ error: { message: 'usage limit (RESOURCE_EXHAUSTED)', status: 'RESOURCE_EXHAUSTED' } })), 'usage limit (RESOURCE_EXHAUSTED)', '문구에 이미 있으면 중복 안 붙임');
+  assert.equal(extractErrorMessage(JSON.stringify({ code: 'personal-team-blocked' })), '(personal-team-blocked)', 'xAI code 보존은 그대로');
+  const src = await readFile(join(ROOT, 'src', 'chat.mjs'), 'utf8');
+  const i = src.indexOf("!__downgradedFrom && nativeOn && effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated && GATED_MODEL_ERR_RE.test(String(e?.message || e))");
+  assert.ok(i > 0, '네이티브 경로 강등 분기(게이트 모델·정규식·1회 제한)');
+  const block = src.slice(i, i + 900);
+  assert.match(block, /modelOverride: baseModel/); assert.match(block, /__downgradedFrom: effModel/); assert.match(block, /catch \(e2\) \{ e = e2; retriedDown = true;/);
+  assert.match(src, /if \(__downgradedFrom && reply\) \{/); assert.match(src, /\.\.\.\(__downgradedFrom \? \{ downgradedFrom: __downgradedFrom \} : \{\}\),/);
+});
+
+test('G14. 자격 유출 차단(검수 HIGH-1) — 크루 Bash 자식이 GEMINI_API_KEY·ARGO_WIRE·RESPONSES_*를 상속하지 않는다(가짜 서버가 printenv를 요청 — 전사·세션 파일에 키 없음), 다른 러너 env에도 ARGO_WIRE 미상속(L1)', async () => {
+  const stripped = shellEnv({ PATH: '/bin', GEMINI_API_KEY: 'k', GOOGLE_API_KEY: 'k', GEMINI_BASE_URL: 'u', ARGO_WIRE: 'gemini', RESPONSES_TOKEN: 't', RESPONSES_HEADERS: '{}', RESPONSES_BASE_URL: 'u', ANTHROPIC_API_KEY: 'a', HOME: '/h' });
+  assert.deepEqual(Object.keys(stripped).sort(), ['HOME', 'PATH']);
+  const ws = 'gem-leak'; await createCompany(ws, '유출', '사장'); const root = paths(ws).root;
+  const CANARY = 'ZZGEMINICANARYZZ';
+  const srv = await fakeGemini([gemCall('Bash', { command: 'printenv GEMINI_API_KEY; printenv ARGO_WIRE; echo done' }), gemText('끝')]);
+  try {
+    const out = []; for await (const ev of nativeQuery({ wsId: ws, slug: 's', prompt: 'env', cwd: root, systemPrompt: 'SYS', model: 'gemini-2.5-pro', saveSession: true, env: { PATH: process.env.PATH, ARGO_WIRE: 'gemini', GEMINI_API_KEY: CANARY, GEMINI_BASE_URL: srv.base }, canUseTool: makePermissionGate(ws, 's', root, null, 'ko', []) })) out.push(ev);
+    assert.equal(out.at(-1).subtype, 'success');
+    assert.equal(JSON.stringify(out).includes(CANARY), false, '전사(도구 결과)에 키 평문 금지'); assert.equal(JSON.stringify(srv.calls[1].body).includes(CANARY), false, '벤더 재전송에도 없음');
+    assert.equal((await readFile(sessionFile(ws, 's'), 'utf8')).includes(CANARY), false, '세션 파일에 키 평문 금지');
+    assert.equal(srv.calls[0].headers['x-goog-api-key'], CANARY, '벤더 호출 자체는 키를 쓴다(대조군)');
+  } finally { await srv.close(); }
+  const other = scrubServerSecrets({ ARGO_WIRE: 'gemini', GEMINI_API_KEY: 'k', GEMINI_BASE_URL: 'u', RESPONSES_TOKEN: 't', PATH: '/bin' }, 'openrouter');
+  assert.deepEqual(Object.keys(other), ['PATH'], '호스트 셸의 와이어 env는 다른 러너에 상속되지 않는다');
+  assert.deepEqual(Object.keys(scrubServerSecrets({ ARGO_WIRE: 'gemini', GEMINI_API_KEY: 'k', PATH: '/bin' }, 'gemini')).sort(), ['ARGO_WIRE', 'GEMINI_API_KEY', 'PATH']);
+});
+
+test('G15. 검진 목적지(L3)·카드 표기(M2 핀) — verifyRunnerCred(gemini)가 GEMINI_BASE_URL을 따르고, 설정 카드는 제공되지 않는 연결 방식(oauth)을 첫 제공 방식으로 보인다', async () => {
+  const srv = await fakeGemini([{ status: 200, json: { models: [] } }]);
+  const prev = process.env.GEMINI_BASE_URL; process.env.GEMINI_BASE_URL = srv.base;
+  try { const r = await verifyRunnerCred('gemini', 'apikey', 'fake-gemini-key-000'); assert.deepEqual(r, { ok: true }); assert.equal(srv.calls.length, 1); assert.match(srv.calls[0].url, /^\/models\?key=fake-gemini-key-000&pageSize=1$/); }
+  finally { await srv.close(); if (prev === undefined) delete process.env.GEMINI_BASE_URL; else process.env.GEMINI_BASE_URL = prev; }
+  const jsx = await readFile(join(ROOT, 'app', 'runner-connect.jsx'), 'utf8');
+  assert.match(jsx, /const shownMethod = \(type\) => \(methods\.includes\(type\) \? type : \(methods\[0\] \?\? 'apikey'\)\);/);
+  assert.match(jsx, /useState\(company\.connected \? shownMethod\(company\.type\) : 'apikey'\)/); assert.match(jsx, /if \(company\.connected\) setMethod\(shownMethod\(company\.type\)\);/);
+  const creds = await readFile(join(ROOT, 'src', 'runners', 'creds.mjs'), 'utf8');
+  assert.match(creds, /if \(runner === 'gemini' && credType\(type\) !== 'apikey'\) provisionGeminiCli\(\)/, 'API 키 저장은 CLI 조달 생략(L4)');
+});
+
+test('G16. 게이트 모델 강등(M1, 행동) — gemini API 키 크루가 gated 모델(3.1 Pro)로 404 NOT_FOUND를 받으면 chat()이 기본 모델로 1회 재시도하고 답 머리에 고지·이벤트에 downgradedFrom을 남긴다', async () => {
+  const { chat } = await import('../src/chat.mjs');
+  const ws = 'gem-down'; await createCompany(ws, '강등', '사장'); const root = paths(ws).root;
+  for (const d of [['agents'], ['chats'], ['vault', 'journal'], ['vault', 'projects'], ['vault', 'files'], ['vault', 'notes']]) await mkdir(join(root, ...d), { recursive: true });
+  await writeFile(join(root, 'agents', 'crew-g.md'), '---\nname: 크루G\nrunner: gemini\nmodel: gemini-3.1-pro-preview\n---\n\n전문가.\n');
+  await saveRunnerCred(ws, 'gemini', 'apikey', 'fake-gemini-key-down');
+  const srv = await fakeGemini([(call) => (call.url.includes('gemini-3.1-pro-preview')
+    ? { status: 404, json: { error: { code: 404, message: 'models/gemini-3.1-pro-preview is not found for API version v1beta, or is not supported for generateContent.', status: 'NOT_FOUND' } } }
+    : gemText('기본 모델 답'))]);
+  const prev = process.env.GEMINI_BASE_URL; process.env.GEMINI_BASE_URL = srv.base;
+  try {
+    const r = await chat(ws, 'crew-g', '안녕');
+    assert.match(r.reply, /^\(이 계정에는 gemini-3.1-pro-preview 접근 권한이 없어/, '강등 고지가 답 머리에');
+    assert.match(r.reply, /기본 모델 답/);
+    assert.deepEqual(srv.calls.map((c) => c.url), ['/models/gemini-3.1-pro-preview:generateContent', '/models/gemini-2.5-pro:generateContent'], '게이트 모델 1회 → 기본 모델 1회');
+    const events = (await readFile(join(root, 'events.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
+    const turn = events.filter((e) => e.type === 'turn' && e.ok).at(-1);
+    assert.equal(turn?.downgradedFrom, 'gemini-3.1-pro-preview', '이벤트 필드는 CLI 경로와 같다');
+  } finally { await srv.close(); if (prev === undefined) delete process.env.GEMINI_BASE_URL; else process.env.GEMINI_BASE_URL = prev; }
 });

@@ -4,9 +4,12 @@ export function extractErrorMessage(text) {
   const s = String(text ?? '');
   try {
     const j = JSON.parse(s); const m = j?.error?.message ?? j?.message ?? j?.error; const code = j?.error?.code ?? j?.code;
-    // code 필드 보존 — xAI는 {"code":"personal-team-blocked"}처럼 원인을 code에만 싣는다(분리 검수 HIGH-2: 버리면 크레딧 분류기가 못 문다)
+    // code 필드 보존 — xAI는 {"code":"personal-team-blocked"}처럼 원인을 code에만 싣는다(분리 검수 HIGH-2: 버리면 크레딧 분류기가 못 문다).
+    // Google은 error.status(NOT_FOUND·PERMISSION_DENIED)·details[].reason(API_KEY_INVALID)에만 계급을 싣는다 — 게이트 모델 강등(GATED_MODEL_ERR_RE)이 문다(검수 M1).
     const msg = typeof m === 'string' && m ? m : '';
-    if (msg || (typeof code === 'string' && code)) return `${msg}${typeof code === 'string' && code && !msg.includes(code) ? `${msg ? ' ' : ''}(${code})` : ''}`.slice(0, 600);
+    const reason = Array.isArray(j?.error?.details) ? j.error.details.map((d) => d?.reason).find((r) => typeof r === 'string' && r) : undefined;
+    const tags = [...new Set([code, j?.error?.status, reason].filter((x) => typeof x === 'string' && x && !msg.includes(x)))];
+    if (msg || tags.length) return `${msg}${tags.length ? `${msg ? ' ' : ''}(${tags.join(', ')})` : ''}`.slice(0, 600);
   } catch { /* 본문이 JSON이 아니다 */ }
   return s.replace(/\s+/g, ' ').trim().slice(0, 300);
 }

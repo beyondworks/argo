@@ -322,7 +322,7 @@ export async function runnerStatus(wsId) {
       connectable: !!meta.connect, // Connect 버튼(CLI 브라우저 로그인 대행) 지원 여부 — codex
       webConnect: !!meta.webConnect, // 웹 브리지(로그인 URL 표시 + 코드 입력) — claude
       hostUsable: hostOptInAllowed(id), // "이 컴퓨터 로그인 사용" 옵트인 — claude는 non-standalone에서만(키체인)
-      cli: isCliTurn(id, cred?.type ?? meta.methods?.[0]), // 외부 CLI 래핑 — 크루 도구(쪽지·루틴·위임)가 없어(chat.mjs hasTools:false) 카드가 정직 표기한다. 미연결이면 첫 연결 방식 기준(gemini=apikey → 네이티브 → false)
+      cli: isCliTurn(id, credType(cred?.type ?? meta.methods?.[0])), // 실행 판정(runnerCredType)과 같은 정규화(검수 L2) // 외부 CLI 래핑 — 크루 도구(쪽지·루틴·위임)가 없어(chat.mjs hasTools:false) 카드가 정직 표기한다. 미연결이면 첫 연결 방식 기준(gemini=apikey → 네이티브 → false)
       // claude 원클릭(setup-token)은 데스크톱 번들 사이드카에서만 완주 — 상주/웹은 붙여넣기가 정식 경로
       setupOneClick: id === 'claude' && process.env.ARGO_STANDALONE === '1',
       keyUrl: meta.keyUrl,

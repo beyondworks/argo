@@ -363,7 +363,10 @@ export function pickRunner(st, want, exclude = null, { defaultRunner = null } = 
   const skip = new Set(asList(exclude));
   const usable = (id) => !!st[id]?.company.connected && !st[id]?.company.invalid && !skip.has(id);
   // 명시 지정(want)은 숨김 러너도 존중한다 — 이미 gemini로 굳힌 크루는 계속 돈다. 자동 선택(기본 러너·순서 폴백)만 숨김 제외.
-  const autoUsable = (id) => usable(id) && !isHiddenRunner(id);
+  // 자격 축 — 자동 선택은 그 러너가 **저장된 자격 종류로 실제로 돌 수 있을 때만**(분리 검수 H1: gemini 숨김 해제로 oauth 자격 회사의 자동 크루가
+  // Google이 막은 구독 CLI 경로로 유도됐다). 명시 지정(want)은 종전대로 자격 종류를 묻지 않는다 — 이미 그 러너로 굳힌 크루는 계속 돈다.
+  const credAutoOk = (id) => { const type = st[id]?.company?.type; const m = RUNNER_AUTH[id]; return !type || !m || m.methods.includes(type) || (type === 'host' && !!m.hostUsable); };
+  const autoUsable = (id) => usable(id) && !isHiddenRunner(id) && credAutoOk(id);
   if (want && usable(want)) return { runner: want, fellBack: false, available: true };
   // ponytail: 회사 기본 러너 — "자동일 때 이 러너부터"(K1 해소, 유건 제보 2026-08-08: Grok만
   // 연결했는데 하드코딩 순서가 claude를 먼저 잡는다). 가용하면 우선, 아니면 기존 순서 폴백.

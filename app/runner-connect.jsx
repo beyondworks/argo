@@ -75,7 +75,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
   const oauthPaste = !!st?.oauthPasteable;
   const connectable = !!st?.connectable;
   const company = st?.company ?? { connected: false };
-  const [method, setMethod] = useState(company.connected ? company.type : 'apikey');
+  // 연결된 방식이 이제 제공되지 않으면(gemini 구독 → API 키 전용) 첫 제공 방식으로 — 종전엔 oauth 상태에 갇혀 "이 컴퓨터에서 로그인" 안내와 해제 버튼만 보였다(검수 M2)
+  const shownMethod = (type) => (methods.includes(type) ? type : (methods[0] ?? 'apikey'));
+  const [method, setMethod] = useState(company.connected ? shownMethod(company.type) : 'apikey');
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState('');
   const busyWasHost = useRef(false); // 마지막 msg가 host 옵트인에서 났는지(렌더 자리 선택)
@@ -230,7 +232,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
   }
 
   // 연결/제거로 상태가 바뀌면 선택 방식을 회사 연결 방식에 맞춘다
-  useEffect(() => { if (company.connected) setMethod(company.type); }, [company.connected, company.type]);
+  useEffect(() => { if (company.connected) setMethod(shownMethod(company.type)); }, [company.connected, company.type]);
 
   // 언마운트 시 폴링 정리 — stale 폴링/setState 누수 방지
   useEffect(() => {
