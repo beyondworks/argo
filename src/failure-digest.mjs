@@ -20,7 +20,7 @@ const digestFile = (wsId) => join(paths(wsId).root, DIGEST_FILE_NAME);
 /** 상표 문구·러너 이름 접두 — chat.mjs가 자가치유 선기록은 스크럽 전(`Claude Code returned an error result: …`), 최종 기록은 scrubSdkBrand 뒤(`Claude: …`)로 남겨 같은 원인이 갈리던 것(2R N1). 러너는 이미 열쇠 축이라 이름은 정보가 아니다. */
 const BRAND_PREFIX = new RegExp(String.raw`^(?:Claude Code returned an error result:?\s*)?(?:(?:${Object.values(RUNNERS).map((r) => String(r.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')}):\s+)?`, 'i');
 export function errorCore(error) {
-  let s = String(error ?? '').replace(/\r/g, '').split('\n\n')[0].trim().replace(BRAND_PREFIX, '');
+  let s = String(error ?? '').replace(/\r/g, '').split('\n\n')[0].trim();
   const marks = ['API Error:', 'exited with code', 'Error:', 'error:', '턴 실패:'].map((m) => s.indexOf(m)).filter((i) => i >= 0);
   if (marks.length) {
     const at = Math.min(...marks); // Argo 접두 뒤의 첫 원문 표지
@@ -28,7 +28,7 @@ export function errorCore(error) {
     s = open >= 0 && s.endsWith(')') && !s.slice(open, at).includes(')') ? s.slice(open + 1, -1) : s.slice(at);
   }
   // 최종 기록은 원문을 300자로 자른 뒤 안내를 붙이고(chat.mjs eMsg.slice(0, 300)) 선기록은 400자 — 공통 접두 300자로 정렬해야 긴 벤더 상세가 두 서명으로 갈리지 않는다(2R N2)
-  return s.replace(/^턴 실패: \w+ — /, '').replace(BRAND_PREFIX, '').trim().slice(0, 300);
+  return s.replace(/^턴 실패: \w+ — /, '').replace(BRAND_PREFIX, '').trim().slice(0, 300); // 접두 벗김은 이 한 곳(턴 실패 접두 뒤) — 두 곳이면 한쪽 제거 변이가 초록
 }
 const headTail = (s, head, tail) => (s.length <= head + tail + 3 ? s : `${s.slice(0, head)} … ${s.slice(-tail)}`);
 /** 오류 원문 → 서명(순수). 원문 핵심을 뽑고 가변 부분(긴 숫자·16진 id·경로·따옴표 안 값)을 접어 같은 원인이 같은 열쇠로 모이게 한다.
