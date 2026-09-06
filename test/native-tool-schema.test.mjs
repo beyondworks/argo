@@ -71,6 +71,7 @@ test('S3. 배선 — 네이티브 턴이 벤더로 보내는 tools 전량에 req
       canUseTool: makePermissionGate(ws, 's', root, null, 'ko', []) })) last = ev;
     assert.equal(last.subtype, 'success', `엄격 벤더가 거절하지 않는다: ${JSON.stringify(last.errors ?? null)}`); assert.equal(strict.calls.length, 1);
     bodies.push(...strict.calls.map((c) => c.body));
+    assert.deepEqual(Object.keys(bodies[0]).sort(), ['max_tokens', 'messages', 'model', 'system', 'tools'], '실제 턴 본문 최상위 키 — runner-health 테스트의 TURN_BODY_KEYS(프로브 본문)와 같은 집합(2R N-HIGH-1)');
     const tools = bodies[0].tools; assert.ok(tools.length >= 25, `도구 ${tools.length}개`);
     assert.deepEqual(tools.filter((t) => missing(t.input_schema).length).map((t) => t.name), [], 'required 없는 object 노드를 가진 도구 0');
     assert.deepEqual(tools.find((t) => t.name === 'browser_snapshot').input_schema.required, []); assert.ok(tools.find((t) => t.name === 'mcp__crew__ping')); assert.deepEqual(tools.find((t) => t.name === 'mcp__crew__ping').input_schema.required, []);

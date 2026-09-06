@@ -14,11 +14,16 @@ export const VENDOR_RULES = {
   // Anthropic — 도구 이름·max_tokens 필수(공식 문서)
   anthropic: [
     (body) => (!Number.isInteger(body.max_tokens) || body.max_tokens < 1 ? 'max_tokens: Field required' : null),
+    // 미지 최상위 필드 → 400(#445 2R N-HIGH-1: 프로브 전용 min_output_tokens가 messages 본문에 실려 나갔다 — 이 서버의 존재 이유가 정확히 '예상 밖 필드에 엄격한 벤더')
+    (body) => { const bad = Object.keys(body).find((k) => !ANTHROPIC_TOP.has(k)); return bad ? `${bad}: Extra inputs are not permitted` : null; },
     (body) => { for (const t of body.tools ?? []) if (!/^[a-zA-Z0-9_-]{1,128}$/.test(String(t.name ?? ''))) return `tools.${t.name}.name: String should match pattern '^[a-zA-Z0-9_-]{1,128}$'`; return null; },
   ],
 };
 
 /** 엄격 가짜 벤더를 띄운다 — vendor 규칙 전부 통과하면 reply(body)로 응답(기본: 텍스트 'ok'), 위반하면 400 + Anthropic 오류 모양. */
+/** Messages API 최상위 필드(공식 레퍼런스) — 이 밖은 벤더가 거절할 수 있는 필드로 본다. */
+const ANTHROPIC_TOP = new Set(['model', 'max_tokens', 'messages', 'system', 'tools', 'tool_choice', 'metadata', 'stop_sequences', 'stream', 'temperature', 'top_p', 'top_k', 'thinking', 'service_tier']);
+
 export async function startStrictVendor({ vendor = 'xai', reply = null } = {}) {
   const rules = [...(VENDOR_RULES[vendor] ?? []), ...(vendor !== 'anthropic' ? VENDOR_RULES.anthropic : [])];
   const calls = [];
@@ -27,6 +32,9 @@ export async function startStrictVendor({ vendor = 'xai', reply = null } = {}) {
     req.on('end', () => {
       let body = {}; try { body = JSON.parse(d || '{}'); } catch { /* 빈 본문 */ }
       calls.push({ url: req.url, headers: req.headers, body });
+      // 경로·인증 헤더도 본다(1R LOW-4 잔여): 실벤더는 /v1/messages 밖은 404, 키 없는 요청은 401
+      if (req.url !== '/v1/messages') { res.writeHead(404, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'not_found_error', message: `Not Found: ${req.url}` } })); }
+      if (!req.headers['x-api-key'] && !req.headers.authorization) { res.writeHead(401, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'missing api key' } })); }
       for (const rule of rules) { const bad = rule(body); if (bad) { res.writeHead(400, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: bad } })); } }
       const out = typeof reply === 'function' ? reply(body, calls.length) : (reply ?? { id: `msg_${calls.length}`, type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
       res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out));

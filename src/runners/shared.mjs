@@ -141,7 +141,8 @@ export function crashHint(lang = 'ko') {
 /** 키 형태 마스킹(방어심층) — 에러·로그에 실릴 문자열에서 벤더 키 패턴을 가린다.
     chat.mjs SDK 실패 경로와 아래 apiError(외부 CLI 실패 경로)가 공유 — 한쪽만 마스킹하면
     CLI stderr의 키 조각이 동기화되는 이벤트 로그(events.jsonl)에 영속된다(감사 2026-07-20). */
-export const maskKeyLike = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,})\b/g, 'sk-***');
+// 벤더별 키 형태를 각각 문다(패턴 하나로 '시크릿 없음' 선언 금지): sk-·sk-ant-(OpenAI·Anthropic·OpenRouter·Kimi)·AIza(Google)·xai-(Grok BYOK)·JWT 3분절(Grok BYOA 액세스 토큰)·<32hex>.<secret>(GLM). #445 2R N-MEDIUM-3
+export const maskKeyLike = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,}|xai-[\w-]{16,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}|[0-9a-f]{32}\.[\w-]{16,})\b/g, 'sk-***');
 
 /** 격리 홈 자격 파일 시드 — "어느 원본으로 시드했나"를 마커(.argo-seed-<name>)에 해시로 남겨,
     원본이 바뀌면(타 기기 재연결이 동기화로 도착, 호스트 재로그인 등) 파일을 재시드한다.

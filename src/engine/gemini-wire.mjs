@@ -144,9 +144,9 @@ export function fromGeminiResponse(json, model) {
 const RETRYABLE = new Set([500, 502, 503, 504]);
 /** POST models/{model}:generateContent 1회(+과부하·네트워크 1회 재시도). 실패는 `API Error: <status> <message>` — 무효 키(400 API_KEY_INVALID)는 401로 승격해
     인증 분류기(AUTH_TEXT_RE)·턴 전 게이트가 같은 계급으로 문다. */
-export async function callGemini({ base, headers, body, signal, fetchImpl = globalThis.fetch, timeoutMs = 600_000, retry = 1 }) {
+export async function callGemini({ base, headers, body, minOutputTokens = 0, signal, fetchImpl = globalThis.fetch, timeoutMs = 600_000, retry = 1 }) {
   const url = `${base}/models/${encodeURIComponent(body.model)}:generateContent`;
-  const req = toGeminiRequest(body);
+  const req = toGeminiRequest(minOutputTokens > 0 ? { ...body, min_output_tokens: minOutputTokens } : body); // 출력 하한 오버라이드(검진 프로브)는 옵션으로만 들어온다
   let attempt = 0;
   for (;;) {
     attempt += 1;
