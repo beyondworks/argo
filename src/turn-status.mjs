@@ -81,7 +81,7 @@ export async function setTurnStatus(wsId, slug, stage, detail = '', partial, sou
       // 낡은 파일(120초 무갱신 = 죽은 턴의 잔재 — 크래시·kill로 clear가 못 돈 경우)은 새 턴의 전 상태가 아니다. 그대로 이어받으면
       // startedAt이 몇 십 분 전으로 잡혀 경과가 "31:54"로 뜨고, 옛 partial·thought·source가 새 발언에 섞인다(격리 실측 2026-09-07).
       const prev0 = await readJsonLenient(file(wsId, slug), {});
-      const prev = prev0?.ts && Date.now() - prev0.ts < 120_000 ? prev0 : {};
+      const prev = prev0?.ts && Date.now() - prev0.ts < 120_000 ? prev0 : {}; // 120초 = getTurnStatus의 만료 창과 같은 값 — 심박(30초)이 이 창을 덮어야 정상 턴이 잔재로 오인되지 않는다(HEARTBEAT_MS ≪ 120초 결합)
       await writeJsonAtomic(file(wsId, slug), {
         stage, detail,
         // partial — 완료 전 크루가 이미 말한 텍스트(스트리밍 체감). 미전달 시 이전 값 유지, 뒤 4000자만

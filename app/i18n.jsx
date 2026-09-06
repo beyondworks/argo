@@ -59,8 +59,8 @@ const DICT = {
   'room.routingHint': ['@이름 지시 · @A > @B 이어받기 · cc @이름 참조만 · 반복 30분 @이름 주기 실행', '@name to assign · @A > @B relay · cc @name for awareness · loop 30m @name to repeat'],
   'room.viaDelegate': ['{from} 위임', 'via {from}'],
   'room.openSide': ['{name} 개별 스레드를 옆에 열기', "Open {name}'s thread beside"],
-  'room.allCrew': ['모든 크루 호출 — 전원이 순서대로 발언합니다', 'Call every crew — all speak in turn'],
-  'room.empty': ['"@이름 안건"으로 크루를 불러 회의를 시작하세요. 여러 명을 부르면 순서대로 발언하고, 서로의 발언을 보고 보탭니다.', 'Start with "@name topic". Mention several crews and they speak in turn, building on each other.'],
+  'room.allCrew': ['모든 크루 호출 — 전원이 동시에 발언합니다', 'Call every crew — all speak at once'],
+  'room.empty': ['"@이름 안건"으로 크루를 불러 회의를 시작하세요. 여러 명을 부르면 동시에 발언하고, 반응 라운드에서 서로의 발언에 답합니다. "@A > @B"는 이어받기(순서대로).', 'Start with "@name topic". Mention several crews and they speak at once, then reply to each other in a reaction round. "@A > @B" relays in order.'],
   'room.meeting': ['회의 중 — 크루들이 발언합니다', 'In session — crews are speaking'],
   // 진행 표시줄 — 회의가 도는 동안 헤더에 고정. 상태 파일이 낡거나 발언자가 바뀌어도 이 줄은 마커(회의 자체)만 보고 유지된다.
   'room.progress': ['회의 진행 중 · {done}/{total}명 발언 완료 · {elapsed}', 'Meeting in progress · {done}/{total} spoke · {elapsed}'],
@@ -76,6 +76,7 @@ const DICT = {
   'room.queued': ['대기 중', 'Waiting'],
   'room.failedChip': ['실패', 'Failed'],
   'room.thought': ['생각', 'Thinking'],
+  'room.noAdd': ['추가 의견 없음', 'Nothing to add'],
   'room.placeholder': ['@이름 을 붙여 안건을 던지세요 (여러 명 가능, 부른 크루 모두 발언) · / 명령·스킬', 'Mention @name(s) and drop a topic (everyone mentioned speaks) · / commands & skills'],
   'room.mentionOnly': ['이름 뒤에 안건을 적어 주세요 — 이름만으로는 보내지 않습니다', 'Add the topic after the name — a mention alone is not sent'],
   'room.newMsgs': ['새 메시지 ↓', 'New messages ↓'],

@@ -13,6 +13,7 @@ import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 import { CC_MAX, sendCrewMail } from './crewmail.mjs';
 import { resetStamp, resumeStamp } from './reset-stamp.mjs';
 import { loadPins, activePin } from './workroots.mjs';
+import { monthCost } from './billing.mjs'; // 반응 라운드 착수 전 예산 게이트(검수 MEDIUM-1)
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
 // sync가 chats/room-main.json을 쓸 때 쓰는 락 키(thread:ws:room-main)와 동일하게 맞춘다 —
@@ -452,7 +453,7 @@ export async function getRoomTurn(wsId) {
   };
 }
 
-/** v2 마커 → 화면 계약. speakers[] = 발언자별 {slug, state, stage, detail, partial, thought, startedAt}. state: speaking|queued|done|failed.
+/** v2 마커 → 화면 계약. speakers[] = 발언자별 {slug, state, stage, detail, partial, thought, startedAt}. state: speaking|queued|failed(끝난 크루는 말풍선이 정본 — done은 수만).
     발언 중인 크루의 상태 파일(source==='room'만 채택 — 개인 채팅·루틴이 겹치면 남의 문장이 발언으로 뜬다)로 단계·문장·사고를 보강한다.
     slug/queue/total/done도 함께 실어 구형 소비자(진행 줄)가 그대로 돈다. */
 async function roomTurnV2(wsId, s, m) {
@@ -480,7 +481,7 @@ async function roomTurnV2(wsId, s, m) {
 }
 
 /** 동시 발언 상한 — Claude 러너는 크루마다 CLI 프로세스를 띄우므로 무제한이면 12명 회의가 노트북을 눌러 앉힌다. env로 조정. */
-export const ROOM_CONCURRENCY = Math.max(1, Number(process.env.ARGO_ROOM_CONCURRENCY) || 8);
+export const ROOM_CONCURRENCY = Math.min(16, Math.max(1, Number(process.env.ARGO_ROOM_CONCURRENCY) || 8)); // 1~16으로 클램프 — =100이면 프로세스 100개(검수 LOW)
 export async function runRoomTurn(wsId, text, attachments = [], { rounds = 2, concurrency = ROOM_CONCURRENCY } = {}) {
   return withRoomTurnStatus(wsId, async (mark) => {
     // saved — 사장 발언이 방에 저장된 **뒤** 난 오류에 표식을 단다. 라우트가 오류 바디에 싣고, 화면은 이
@@ -500,10 +501,11 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   // 폴더가 아닐 수 있다(폴더 없이 다 하고 직전에 고정·사라진 폴더 — 분리 검수 MEDIUM-2 실측).
   const { pin: folder, stale: staleFolder } = await roomFolder(wsId);
   // 사장 발언 추가 + 현재 세션 sid 확보(이후 발언은 이 sid가 유지될 때만 기록)
+  const agendaTs = Date.now(); // 이 턴의 안건 메시지 식별 — 반응 라운드 트랜스크립트가 창 밖으로 밀려도 선두에 고정한다(검수 HIGH-2)
   const sid = await withLock(rkey(wsId), async () => {
     const room = await loadRoom(wsId);
     const s = room.sid ?? 0;
-    room.messages.push({ who: 'user', text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...(folder ? { workFolder: folder } : {}) });
+    room.messages.push({ who: 'user', text, ts: agendaTs, ...(attachments.length ? { attachments } : {}), ...(folder ? { workFolder: folder } : {}) });
     await saveRoom(wsId, room);
     return s;
   });
@@ -646,13 +648,24 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   const replies = [];
   // 최신 트랜스크립트 — 순차(릴레이)는 매 발언 직전, 동시 발언은 라운드 시작에 한 번(전원이 같은 대화를 본다).
   // 시스템 안내(참조·루프·오타 멘션)는 사람에게 주는 줄이라 프롬프트에서 뺀다 — 크루가 답할 대상이 아니다.
-  const transcriptNow = async () => (await loadRoom(wsId)).messages.filter((m) => m.who !== 'system').slice(-20)
+  // keep — 창 크기. 릴레이·1라운드는 20건(종전). 2라운드는 1라운드 발언 **전부**가 한 창에 들어가야 하는 계약이라 인원에서 파생하고,
+  // 위임 미러(방 메시지로 쌓인다)가 창을 밀어내도 이 턴의 안건은 선두에 고정한다 — 실측(검수 HIGH-2): 22명·위임 포함 13명에서
+  // 2라운드 프롬프트에 안건이 없었다.
+  const transcriptNow = async ({ keep = 20, pinAgenda = false } = {}) => {
+    const all = (await loadRoom(wsId)).messages.filter((m) => m.who !== 'system');
+    let win = all.slice(-keep);
+    if (pinAgenda) {
+      const agenda = all.find((m) => m.who === 'user' && m.ts === agendaTs);
+      if (agenda && !win.includes(agenda)) win = [agenda, ...win];
+    }
+    return win
     // 첨부 경로 규약은 chat.mjs 스레드 맥락과 동일 문자열 — 후속 턴에서 "아까 그 파일"이 경로로
     // 이어진다(검수 M1: 이게 없으면 1턴 첨부를 2턴 크루가 못 찾는다 — 랜덤 접두 파일명이라 탐색 불가).
     // 산출물 노트 — 앞 크루가 이 회의에서 만든 파일 경로. 없으면 릴레이(@A > @B)의 B가 A의 답변 텍스트에만 의존해
     // 경로를 받는다(분리 검수 LOW-2). 첨부 노트·회의록 `> 산출물:` 줄과 같은 vault/ 접두 규약.
     .map((m) => `${m.who === 'user' ? '사장' : nameOf(m.who)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}${m.attachments?.length ? ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ''}${m.artifacts?.length ? ` (산출물, Read로 열람: ${m.artifacts.map((a) => 'vault/' + a).join(', ')})` : ''}`)
     .join('\n');
+  };
   const promptFor = (a, i, transcript, round) => round === 2
     ? `지금 회의실에 있다 — 사장과 동료 크루가 함께 보는 방이다. 방금 동료 ${speakers.length - 1}명과 네가 같은 안건에 동시에 답했다.
 
@@ -704,8 +717,10 @@ ${transcript}${folderLine}
     });
     let r;
     try {
-      // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다
-      const att = attFor(i);
+      // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다.
+      // 반응 라운드는 첨부를 다시 보내지 않는다 — 1라운드 트랜스크립트에 `(첨부, Read로 열람: vault/…)` 경로가 이미 실려 있고,
+      // 이미지를 또 임베드하면 이미지 토큰이 인원×2로 곱해진다(검수 MEDIUM-2 실측).
+      const att = round === 2 ? [] : attFor(i);
       r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx, workFolder: folder });
     } finally {
       // emitNotify는 마이크로태스크로 핸들러를 돌린다 — 턴 종료 직후 한 틱 양보해야 마지막 위임을 놓치지 않는다
@@ -724,7 +739,9 @@ ${transcript}${folderLine}
     // artifacts를 **방 메시지에도** 싣는다 — 지금까지 개인 스레드(appendTurn)에만 기록돼 회의실에선 크루가 만든 파일을
     // 볼 수도 갈 수도 없었다(유건 요청 2026-09-02). 없으면 필드 자체를 안 쓴다(thread.mjs appendTurn과 같은 규약 — 스레드 비대화 방지).
     // round — 반응 라운드 발언은 화면이 "반응"으로 구분한다(1라운드는 필드 없음 — 구형 메시지와 같은 모양).
-    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now(), ...(round === 2 ? { round: 2 } : {}), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }, sid);
+    // noAdd — 반응 라운드의 "추가 의견 없음"(프롬프트가 지정한 한 줄)은 말풍선 대신 접힌 칩으로(12명이면 같은 줄 12개 — 검수 LOW).
+    const noAdd = round === 2 && NO_ADD_RE.test(String(r.reply ?? ''));
+    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now(), ...(round === 2 ? { round: 2 } : {}), ...(noAdd ? { noAdd: true } : {}), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }, sid);
     if (!live) return { live: false, reply: r.reply }; // 회의가 마쳐졌다 — 남은 발언을 빈 방에 남기지 않는다
     // ponytail: 회의실 턴을 크루 개인 스레드에 기록한다 — 마지막 남은 비대칭(루틴 #157 교훈).
     // 안 하면 회의에서 시킨 일이 개인 채팅에 안 보이고 이어가기가 안 된다(유건 제보 2026-08-08).
@@ -779,7 +796,9 @@ ${transcript}${folderLine}
   const st = { v: 2, round: 1, rounds: doRound2 ? 2 : 1, total: speakers.length, active: [], queue: speakers.map((a) => a.slug), done: [], failed: [] };
   const push = () => mark(JSON.stringify(st));
   const runRound = async (round) => {
-    const transcript = await transcriptNow(); // 라운드 시작 스냅샷 — 전원이 같은 대화(2라운드는 1라운드 발언 포함)를 본다
+    const transcript = round === 2
+      ? await transcriptNow({ keep: Math.max(20, speakers.length * 2 + 8), pinAgenda: true }) // 1라운드 전부 + 안건 고정
+      : await transcriptNow(); // 라운드 시작 스냅샷 — 전원이 같은 대화를 본다
     st.round = round; st.active = []; st.queue = speakers.map((a) => a.slug); st.done = []; st.failed = [];
     await push();
     let ended = false;
@@ -803,11 +822,22 @@ ${transcript}${folderLine}
   if (!r1.results.some((r) => r.ok)) throw r1.results[0].e; // 전원 실패 — 호출 탭의 오류 표시 계약(안건은 저장됨)
   if (r1.ended) return { replies, room: await loadRoom(wsId) }; // 회의가 마쳐졌다
   if (doRound2) {
+    // 예산 게이트(검수 MEDIUM-1) — chat()의 월 한도 검사는 누적 이벤트를 읽는 TOCTOU라, 동시 발언에서는 첫 웨이브 전원이 기록 전에
+    // 통과해 한도를 최대 concurrency턴 초과할 수 있다. 라운드 경계에서 한 번 더 본다: 넘었으면 반응 라운드를 접고 방에 남긴다.
+    const { budgetUsd = 0 } = await loadCompany(wsId).catch(() => ({}));
+    const over = budgetUsd > 0 && (await monthCost(wsId).catch(() => ({ costUsd: 0 }))).costUsd >= budgetUsd;
+    if (over) {
+      await sys('round', en ? 'Reaction round skipped — monthly spend limit reached.' : '반응 라운드 생략 — 월 지출 한도에 도달했습니다.');
+      return { replies, room: await loadRoom(wsId) };
+    }
     await sys('round', en ? 'Reaction round — everyone replies to the first round.' : '반응 라운드 — 1라운드 발언에 서로 답합니다.');
     await runRound(2); // 실패는 줄로 남는다 — 1라운드 답이 이미 있으므로 던지지 않는다
   }
   return { replies, room: await loadRoom(wsId) };
 }
+
+/** 반응 라운드 "보탤 것 없음" 판정 — 프롬프트가 지정한 한 줄(ko) + 영어 회사 크루가 낼 법한 동의어. 화면이 칩으로 접는다. */
+export const NO_ADD_RE = /^\s*[\[(]?\s*(추가 의견 없음|no further (comment|comments|opinion)|nothing to add)\s*[\])]?\.?\s*$/i;
 
 /** 동시 실행 상한 — items를 limit개씩 동시에, 순서대로 착수. 결과는 {ok, v|e}로 정착(한 항목의 실패가 나머지를 끊지 않는다). */
 export async function runLimited(items, limit, fn) {

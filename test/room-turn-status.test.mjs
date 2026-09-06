@@ -286,9 +286,9 @@ test('getRoomTurn: 마커 세 번째 구간 = 발언 인원(total) — 구형 �
 
 test('배선: 회의실 헤더 진행 줄은 회의 마커(active)만 보고 그려지며 인원·경과를 싣고, 1:1 화면은 회의실 출처 배지를 단다', async () => {
   const page = await readFile(new URL('../app/c/[ws]/room/page.jsx', import.meta.url), 'utf8');
-  const hdr = page.slice(page.indexOf("t('room.header')"), page.indexOf("t('room.header')") + 1600);
+  const hdr = page.slice(page.indexOf("t('room.header')"), page.indexOf('</div>\n\n        <div style={{ position:'));  // 헤더 행 전체 — 고정 길이는 주석 한 줄에도 끊긴다
   assert.ok(/\{!viewing && \(busy \|\| serverBusy\) && \(/.test(hdr), '진행 줄 조건 = 회의 진행(마커) — 발언 크루 상태(turn.stage)가 아니다');
-  assert.ok(hdr.includes("t('room.progress', { done: Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) })"), 'done = 인원 − 남은 큐 − 발언 중 1');
+  assert.ok(hdr.includes("t('room.progress', { done: turn.v === 2 ? (turn.done ?? 0) : Math.max(0, turn.total - (turn.queue?.length ?? 0) - (turn.slug ? 1 : 0)), total: turn.total, elapsed: fmtElapsed(elapsed) })"), 'v2는 마커 done, 구형은 인원 − 남은 큐 − 발언 중 1(동시 발언에 옛 공식은 시작 즉시 3/4 — 검수 HIGH-1)');
   assert.ok(hdr.includes("t('room.progressNoCount', { elapsed: fmtElapsed(elapsed) })"), '인원 미상(구형 마커)이면 경과만');
   assert.ok(hdr.includes('{turn?.total > 1'), '발언자 한 명이면 "0/1명" 대신 경과만(격리 캡처에서 소음으로 확인)');
   assert.ok(hdr.includes("{turn?.v === 2 && turn.rounds > 1 ? `${t('room.roundNow', { n: turn.round })} · ` : ''}"), '반응 라운드 회의는 현재 라운드를 진행 줄에');
