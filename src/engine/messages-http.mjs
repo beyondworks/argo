@@ -32,7 +32,7 @@ const RETRYABLE = new Set([500, 502, 503, 504, 529]);
 export function stripForeignBlocks(messages) {
   return (messages ?? []).map((m) => (Array.isArray(m?.content)
     ? { ...m, content: m.content.filter((b) => b?.type !== 'gem_thought').map((b) => { if (b && typeof b === 'object' && '_gemSig' in b) { const { _gemSig, ...rest } = b; return rest; } return b; }) }
-    : m));
+    : m)).filter((m) => !(Array.isArray(m?.content) && m.content.length === 0)); // 사고 파트만 든 메시지는 통째로(빈 content는 400 — 2R INFO)
 }
 
 /** POST /v1/messages 1회(+과부하·네트워크 1회 재시도). 실패는 `API Error: <status> <message>`(status 필드 동봉). */

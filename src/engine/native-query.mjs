@@ -118,6 +118,7 @@ async function* run(opts, ac, isInterrupted) {
       } catch (e) {
         // 이미 토큰을 쓴 뒤의 실패는 SDK처럼 usage를 실은 실패 result로 낸다(분리 검수 MEDIUM-1: 던지기만 하면 appendUsage 미도달,
         // 예산·대시보드 과소 집계). 원문은 errors[]에 — chat.mjs가 `턴 실패: … — <원문>`으로 감싸도 401/402 정규식이 문다.
+        if (e?.usage && !e?.aborted) sumUsage(usage, e.usage); // 차단 응답(SAFETY 등)도 프롬프트 토큰은 썼다 — 첫 스텝이어도 집계(2R LOW-3)
         if (e?.aborted || !((usage.input_tokens ?? 0) + (usage.output_tokens ?? 0))) throw e;
         if (saveSession) await saveNativeSession(wsId, slug, sess);
         yield { type: 'result', subtype: 'error_during_execution', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps, errors: [String(e?.message || e)] };

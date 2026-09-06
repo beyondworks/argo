@@ -48,7 +48,7 @@ export const RUNNERS = {
     // Gemini CLI는 워크스페이스 계정에서 GOOGLE_CLOUD_PROJECT를 요구해 스모크 실패). 실행 경로는 남긴다 — 이미 gemini로
     // 지정된 크루·저장된 자격은 그대로 돈다(isHiddenRunner 소비처: /api/runners 목록·설정 카드 순서·pickRunner 자동·검진·크루 도구 안내).
     // 2026-09-06 복귀(유건 승인): API 키 자격은 Argo 엔진(네이티브, gemini-wire)으로 돈다 — Hermes·OpenClaw의 gemini 프로바이더와 같은 공개 API 경로.
-    // 구독(oauth)·host 자격은 CLI 경로 그대로(isCliTurn)이며 신규 연결 방식은 API 키뿐(RUNNER_AUTH — Google이 구독의 외부 앱 사용을 막았다).
+    // 구독(oauth)·host 자격은 runnerStatus가 무효(재연결 필요)로 표시해 배너·명판·자동 선택·턴이 한목소리다(2R MEDIUM-1). 신규 연결 방식은 API 키뿐(RUNNER_AUTH — Google이 구독의 외부 앱 사용을 막았다). CLI 경로 코드는 남는다(isCliTurn).
     hidden: false,
     name: 'Gemini', kind: 'cli', mcp: true, // settings.json mcpServers 주입(0.21.2 mcp list 실프로브 2026-08-21)
     models: [
@@ -319,7 +319,7 @@ export const RUNNER_AUTH = {
   // 노출한다(claudeHostAllowed). 데스크톱은 setup-token 원클릭이 정식 경로.
   claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPrefix: 'sk-ant-oat01-', oauthPasteable: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', hostUsable: true, keyUrl: 'https://console.anthropic.com/settings/keys' },
   codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
-  gemini: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, webConnect: false, hostUsable: false, keyUrl: 'https://aistudio.google.com/apikey' }, // 신규 연결은 API 키만(2026-09-06) — 기존 oauth·host 자격은 CLI로 계속 돈다
+  gemini: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, webConnect: false, hostUsable: false, keyUrl: 'https://aistudio.google.com/apikey' }, // 신규 연결은 API 키만(2026-09-06) — 기존 oauth·host 자격은 runnerStatus가 '재연결 필요(제공되지 않는 방식)'로 표시(2R MEDIUM-1)
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
   kimi: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' }, // 접두사 무차단(GLM 관례) — 리전·미래 키 형식 변화에 저장이 막히지 않게, 판정은 verifyRunnerCred가
   openrouter: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://openrouter.ai/keys' }, // BYOK 단일(설계 2026-07-27) — OAuth·크레딧 대행 안 함

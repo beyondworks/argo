@@ -35,21 +35,23 @@ export function cleanSchema(s, root = s, depth = 0) {
       const r = (b && typeof b === 'object' ? (typeof b.$ref === 'string' ? resolveRef(b.$ref, root) : b) : null); if (!r) continue;
       merged = { ...r, ...merged, properties: { ...(r.properties ?? {}), ...(merged.properties ?? {}) }, required: [...new Set([...(merged.required ?? []), ...(r.required ?? [])])] };
     }
-    if (!Object.keys(merged.properties).length) delete merged.properties; if (!merged.required.length) delete merged.required;
+    // 해석 불가 가지(#/components/schemas/… 외부 $ref·null·문자열)뿐이면 병합 결과가 비어 있다 — undefined 접근으로 턴 전체가 TypeError로 죽던 것(2R HIGH-1)
+    if (!Object.keys(merged.properties ?? {}).length) delete merged.properties; if (!(merged.required ?? []).length) delete merged.required;
     src = merged;
   }
   const out = {};
   let nullable = src.nullable === true;
+  let hint = null; // 비문자 enum/const — Gemini enum은 STRING 전용이라 값을 문자열로 강등하면 도구가 받는 인자 타입이 바뀐다(2R LOW-1) → 원 타입 유지 + 허용값은 설명에
   for (const [k, v] of Object.entries(src)) {
     if (!SCHEMA_KEEP.has(k)) continue;
     if (k === 'type') { const arr = (Array.isArray(v) ? v : [v]).map((x) => String(x).toLowerCase()); if (arr.includes('null')) nullable = true; const t = arr.find((x) => TYPES.has(x)); if (t) out.type = t; continue; }
     if (k === 'properties') { if (v && typeof v === 'object') out.properties = Object.fromEntries(Object.entries(v).map(([n, p]) => [n, cleanSchema(p, root, depth + 1)])); continue; }
     if (k === 'items') { out.items = cleanSchema(Array.isArray(v) ? v[0] : v, root, depth + 1); continue; }
-    if (k === 'enum') { if (Array.isArray(v) && v.length) { const vals = v.filter((x) => x !== null); if (vals.length !== v.length) nullable = true; if (vals.length) out.enum = vals.map(String); } continue; }
+    if (k === 'enum') { if (Array.isArray(v) && v.length) { const vals = v.filter((x) => x !== null); if (vals.length !== v.length) nullable = true; if (vals.length) { if (vals.every((x) => typeof x === 'string')) out.enum = vals; else hint = vals; } } continue; }
     if (k === 'required' || k === 'propertyOrdering') { if (Array.isArray(v)) { const arr = v.filter((x) => typeof x === 'string'); if (arr.length) out[k] = arr; } continue; }
     out[k] = v;
   }
-  if (src.const !== undefined && src.const !== null && !out.enum) out.enum = [String(src.const)];
+  if (src.const !== undefined && src.const !== null && !out.enum && !hint) { if (typeof src.const === 'string') out.enum = [src.const]; else hint = [src.const]; }
   const branches = Array.isArray(src.anyOf) ? src.anyOf : Array.isArray(src.oneOf) ? src.oneOf : null;
   if (branches && branches.length) {
     const isNull = (b) => !!b && typeof b === 'object' && (b.type === 'null' || (Array.isArray(b.type) && b.type.length && b.type.every((x) => x === 'null')) || (Array.isArray(b.enum) && b.enum.length && b.enum.every((x) => x === null)));
@@ -58,7 +60,11 @@ export function cleanSchema(s, root = s, depth = 0) {
     if (nonNull.length === 1) { const inline = nonNull[0]; if (inline.nullable) nullable = true; delete inline.nullable; Object.assign(out, { ...inline, ...out }); } // 단일 대안은 인라인(부모 description 등 우선)
     else if (nonNull.length > 1) { out.anyOf = nonNull; delete out.type; }
   }
-  if (out.enum) out.type = 'string'; // Gemini enum은 STRING 전용
+  if (out.enum) out.type = 'string'; // Gemini enum은 STRING 전용(여기 도달하는 enum은 전부 문자열 값)
+  if (hint) {
+    out.description = `${out.description ? `${out.description} ` : ''}(allowed values: ${hint.map((x) => JSON.stringify(x)).join(', ')})`;
+    if (!out.type && !out.anyOf) out.type = typeof hint[0] === 'number' ? (Number.isInteger(hint[0]) ? 'integer' : 'number') : typeof hint[0] === 'boolean' ? 'boolean' : 'string';
+  }
   if (!out.type && !out.anyOf) out.type = out.properties ? 'object' : out.items ? 'array' : 'string';
   if (out.type !== 'object') { delete out.properties; delete out.required; delete out.propertyOrdering; delete out.minProperties; delete out.maxProperties; }
   if (out.type !== 'array') { delete out.items; delete out.minItems; delete out.maxItems; }
@@ -119,15 +125,16 @@ export function fromGeminiResponse(json, model) {
     else if (typeof p?.text === 'string') content.push({ type: 'text', text: p.text, ...sigIn(p) });
     else if (p?.functionCall) content.push({ type: 'tool_use', id: (typeof p.functionCall.id === 'string' && p.functionCall.id) || `gem_${Date.now().toString(36)}_${++seq}`, name: p.functionCall.name, input: p.functionCall.args ?? {}, ...sigIn(p) });
   }
+  const u = json.usageMetadata ?? {};
+  // 사고 토큰도 출력 과금(문서: 응답 가격 = 출력 + 사고 토큰 — M5). 대시보드 output·inPerOut이 2.5 Pro에서 상시 과소이던 것 교정.
+  const usage = { input_tokens: Number(u.promptTokenCount) || 0, output_tokens: (Number(u.candidatesTokenCount) || 0) + (Number(u.thoughtsTokenCount) || 0) };
   if (!content.some((b) => b.type === 'tool_use' || (b.type === 'text' && b.text.trim()))) {
     const reason = String(cand.finishReason || 'UNKNOWN');
-    throw Object.assign(new Error(`API Error: 400 Gemini returned no usable content (finishReason=${reason}${cand.finishMessage ? ` — ${String(cand.finishMessage).slice(0, 200)}` : ''}${reason === 'MAX_TOKENS' ? ' — thinking consumed the output budget' : ''})`), { status: 400, finishReason: reason });
+    // usage 동봉 — 차단 응답도 프롬프트 토큰은 썼다. native-query가 첫 스텝이어도 집계에 실을 수 있게(2R LOW-3)
+    throw Object.assign(new Error(`API Error: 400 Gemini returned no usable content (finishReason=${reason}${cand.finishMessage ? ` — ${String(cand.finishMessage).slice(0, 200)}` : ''}${reason === 'MAX_TOKENS' ? ' — thinking consumed the output budget' : ''})`), { status: 400, finishReason: reason, usage });
   }
   const stop_reason = content.some((b) => b.type === 'tool_use') ? 'tool_use' : cand.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
-  const u = json.usageMetadata ?? {};
-  return { id: `gem_${Date.now().toString(36)}`, type: 'message', role: 'assistant', model: json.modelVersion || model, content, stop_reason,
-    // 사고 토큰도 출력 과금(문서: 응답 가격 = 출력 + 사고 토큰 — M5). 대시보드 output·inPerOut이 2.5 Pro에서 상시 과소이던 것 교정.
-    usage: { input_tokens: Number(u.promptTokenCount) || 0, output_tokens: (Number(u.candidatesTokenCount) || 0) + (Number(u.thoughtsTokenCount) || 0) } };
+  return { id: `gem_${Date.now().toString(36)}`, type: 'message', role: 'assistant', model: json.modelVersion || model, content, stop_reason, usage };
 }
 
 const RETRYABLE = new Set([500, 502, 503, 504]);
