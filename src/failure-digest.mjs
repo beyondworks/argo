@@ -19,7 +19,11 @@ const digestFile = (wsId) => join(paths(wsId).root, DIGEST_FILE_NAME);
 export function errorCore(error) {
   let s = String(error ?? '').replace(/\r/g, '').split('\n\n')[0];
   const marks = ['API Error:', 'exited with code', 'Error:', 'error:', '턴 실패:'].map((m) => s.indexOf(m)).filter((i) => i >= 0);
-  if (marks.length) s = s.slice(Math.min(...marks)); // Argo 접두 뒤의 첫 원문 표지부터
+  if (marks.length) {
+    const at = Math.min(...marks); // Argo 접두 뒤의 첫 원문 표지
+    const open = s.lastIndexOf('(', at); // 크래시 안내는 원문을 뒤에 괄호로 감싼다(`안내 (Claude Code process exited with code N)`) — 괄호 안 원문 전체
+    s = open >= 0 && s.endsWith(')') && !s.slice(open, at).includes(')') ? s.slice(open + 1, -1) : s.slice(at);
+  }
   return s.replace(/^턴 실패: \w+ — /, '').trim();
 }
 const headTail = (s, head, tail) => (s.length <= head + tail + 3 ? s : `${s.slice(0, head)} … ${s.slice(-tail)}`);

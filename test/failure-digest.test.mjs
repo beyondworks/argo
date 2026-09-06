@@ -34,7 +34,7 @@ test('D1. errorSignature(순수) — 요청 id·긴 숫자·경로·따옴표 �
   // D3: 크래시 안내(166~294자)가 앞에 붙어도 종료 코드가 살아남고, 코드가 다르면 다른 서명
   const crash = (code) => `AI 프로그램이 이 컴퓨터에서 비정상 종료됐습니다 — Argo가 아니라 운영체제가 프로세스를 강제 종료했습니다. 연결이나 크레딧 문제가 아니며, Argo가 이미 한 번 재시도했습니다. 계속되면 앱을 재설치해 주세요. (Claude Code process exited with code ${code})`;
   assert.match(errorSignature(crash(3221225477)), /exited with code 3221225477/); assert.notEqual(errorSignature(crash(3221225477)), errorSignature(crash(134)));
-  assert.match(errorSample(crash(3221225477)), /code 3221225477\)$/, '샘플 꼬리에 코드 보존');
+  assert.equal(errorSample(crash(3221225477)), 'Claude Code process exited with code 3221225477', '크래시 안내가 괄호로 감싼 원문 전체(샘플 = 제보 문장)');
   const en400a = `The assigned runner Grok is connected but hit an authentication error this turn, so Claude ran instead (reconnect Grok if this keeps happening). API Error: 400 Invalid request content`;
   const en400b = `The assigned runner Grok is connected but hit an authentication error this turn, so Claude ran instead (reconnect Grok if this keeps happening). API Error: 400 The model does not exist`;
   assert.notEqual(errorSignature(en400a), errorSignature(en400b), 'EN 접두가 같아도 벤더 상세가 다르면 다른 서명');
