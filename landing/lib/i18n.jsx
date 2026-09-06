@@ -12,6 +12,7 @@ const DICT = {
   'nav.docs': ['문서', 'Docs'],
   'nav.install': ['설치', 'Install'],
   'nav.contact': ['문의', 'Contact'],
+  'nav.githubSoon': ['GitHub — 공개 예정', 'GitHub — coming soon'],
 
   // hero — 표지
   'hero.kicker': ['자율형 AI 에이전트', 'The autonomous AI agent'],
@@ -209,6 +210,16 @@ const DICT = {
   'download.mac': ['macOS용 다운로드', 'Download for macOS'],
   'download.win': ['Windows용 다운로드', 'Download for Windows'],
   'download.note': ['macOS 13+ · Windows 10+ · Apple Silicon/Intel', 'macOS 13+ · Windows 10+ · Apple Silicon/Intel'],
+
+  // star modal (다운로드 전 깃헙 스타 요청)
+  'star.title': ['잠깐 — 스타 하나가 큰 힘이 됩니다', 'One star goes a long way'],
+  'star.desc': [
+    'Argo가 쓸 만해 보인다면 깃헙 스타로 응원해 주세요. 아래 버튼을 누르면 깃헙 승인 창이 뜨고, 승인하는 순간 스타가 자동으로 눌린 뒤 다운로드 페이지로 이동합니다.',
+    'If Argo looks useful, a GitHub star helps a lot. Approve on GitHub and the star is added automatically — then you land right on the download page.',
+  ],
+  'star.yes': ['스타 누르고 다운로드', 'Star & download'],
+  'star.no': ['그냥 다운로드', 'Just download'],
+  'star.hint': ['깃헙 계정의 별점(star) 권한만 요청하며, 그 외 어떤 것도 접근하지 않습니다.', 'We only request starring permission — nothing else.'],
 
   // pricing
   'pricing.kicker': ['가격', 'Pricing'],

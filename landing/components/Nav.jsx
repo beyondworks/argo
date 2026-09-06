@@ -4,17 +4,27 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useLang } from '@/lib/i18n';
 import { useLenis } from '@/components/SmoothScroll';
-import { DL, detectTarget } from '@/lib/downloads';
+import { useStarGate } from '@/components/StarModal';
+import { DL } from '@/lib/downloads';
 import BrandMark from '@/components/BrandMark';
 
-// 소스 레포 링크·스타 게이트 제거(2026-09-07 유건 지시: 레포 프라이빗 전환, 다운로드는 파일로만).
-// 상단 DOWNLOAD = 기기 맞춤 설치파일 직다운로드(argo-agent 릴리스 자산 — 페이지가 아니라 파일).
+// 소스 레포(2026-07-23 공개) — 코드·README·LICENSE·스타가 쌓이는 정문. 릴리스 자산은 argo-agent(StarModal DL) 유지.
+const GITHUB_URL = 'https://github.com/beyondworks/argo';
+
+function GitHubMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M12 .5C5.73.5.5 5.73.5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.41-5.26 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5Z" />
+    </svg>
+  );
+}
 
 export default function Nav() {
   const { t, toggle } = useLang();
   const { lenis } = useLenis();
   const pathname = usePathname();
   const onLanding = pathname === '/';
+  const { gate, modal } = useStarGate(); // 상단 DOWNLOAD = 스타 게이트 → 기기 맞춤 직다운로드
 
   const scrollTo = (id) => {
     const el = document.getElementById(id);
@@ -68,13 +78,34 @@ export default function Nav() {
           </a>
         </span>
 
+        {GITHUB_URL ? (
+          <a
+            className="nav-icon"
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="GitHub"
+          >
+            <GitHubMark />
+          </a>
+        ) : (
+          <span
+            className="nav-icon nav-icon-soon"
+            title={t('nav.githubSoon')}
+            aria-label="GitHub (준비 중)"
+          >
+            <GitHubMark />
+          </span>
+        )}
+
         <button className="nav-lang" onClick={toggle} title="cmd+/">
           {t('nav.lang')}
         </button>
-        <a className="nav-cta" href={DL.silicon} onClick={(e) => { e.preventDefault(); window.location.assign(DL[detectTarget()]); }}>
+        <a className="nav-cta" href={DL.silicon} onClick={(e) => gate(e)}>
           {t('nav.cta')}
         </a>
       </nav>
+      {modal}
     </header>
   );
 }

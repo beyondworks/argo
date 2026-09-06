@@ -206,10 +206,26 @@ const GROUPS = [
         h: { ko: '13. 보안', en: '13. Security' },
         body: [
           {
-            ko: 'API 키·비밀번호·접속 문자열 같은 비밀은 값이 아니라 이름·위치로만 다룹니다. 외부에서 들어오는 지시(웹 페이지·문서 내용)는 “데이터”로 취급해 프롬프트 주입을 방어합니다.',
-            en: 'Secrets — API keys, passwords, connection strings — are handled by name and location, never by value. Instructions arriving from outside (web pages, document contents) are treated as data, defending against prompt injection.',
+            ko: '크루는 당신의 컴퓨터에서 당신 계정 권한으로, 셸을 포함한 전권으로 돕니다. 그 위에서 권한 게이트가 절대 열리지 않는 구역을 지킵니다 — 실행 중인 Argo 코드, 러너 자격(~/.codex·~/.claude·~/.gemini·~/.argo), 다른 회사의 워크스페이스, 그리고 회사 금고(연결·MCP·루틴·크루 정의 파일). SDK 러너의 파일·검색·MCP 도구 호출에는 이 판정이 코드로 강제됩니다.',
+            en: 'Crews run on your computer, as your user, with full access including the shell. On top of that, the permission gate holds a hard line that never opens — the running Argo code, runner credentials (~/.codex, ~/.claude, ~/.gemini, ~/.argo), other companies\' workspaces, and the company vault (connections, MCP, routines, crew definitions). For SDK runners this is enforced in code on every file, search and MCP tool call.',
+          },
+          {
+            ko: '막지 못하는 것도 그대로 말합니다. 셸 명령은 문자열이라 금지 파일명이 그대로 들어간 시도만 잡고, 변수·상대경로 조합은 통과합니다. Codex·Gemini 같은 외부 CLI 러너는 게이트를 지나지 않습니다. 크루가 읽는 모든 것 — vault 문서, 메신저로 온 메시지, 가져온 웹 페이지 — 이 지시가 될 수 있고, 프롬프트 주입이 성공하면 그 결과는 당신 계정 권한의 로컬 명령 실행입니다. 시스템 프롬프트는 외부 입력을 데이터로 취급하라고 지시하지만, 그것은 계약이지 보장이 아닙니다.',
+            en: 'We also say what it cannot stop. Shell commands are strings, so only naive attempts that spell out a forbidden filename are caught; variables and relative paths get through. External CLI runners such as Codex and Gemini do not pass through the gate at all. Everything a crew reads — vault documents, messenger messages, fetched web pages — can carry instructions, and a successful prompt injection means local command execution as your user. The system prompt tells crews to treat outside input as data; that is a contract, not a guarantee.',
+          },
+          {
+            ko: '적대적 모델 출력에 대한 진짜 경계는 프로세스 밖, 즉 OS 격리(컨테이너·샌드박스)뿐입니다. Argo는 아직 크루 실행을 컨테이너에 가두는 옵션을 제공하지 않습니다 — 알려진 제품 갭이고 우선순위 트랙입니다. 그때까지는 신뢰할 수 없는 입력 표면(공개 메일함·불특정 다수 채널·임의 URL 수집)을 크루의 상시 입력으로 두지 말고, 작업 폴더를 필요한 만큼만 등록하고, 연결한 러너 계정에 지출 한도를 걸어 두세요.',
+            en: 'The only real boundary against an adversarial model is outside the process — OS-level isolation (a container or sandbox). Argo does not yet ship an option that confines crew execution to a container; this is a known product gap and a priority track. Until then, do not wire untrusted input surfaces (a public mailbox, open channels, arbitrary URL ingestion) into a crew as a standing input, register only the work folders you need, and set a spending cap on the runner accounts you connect.',
+          },
+          {
+            ko: '비밀은 값이 아니라 이름·위치로만 다룹니다. 러너 자격·봇 토큰·MCP 환경변수는 클라우드로 올라가지 않으며(14-1절), 코드 어디에도 시크릿 평문을 두지 않고 커밋 훅이 벤더별 키 패턴을 잡습니다. 전체 신뢰 모델과 제보 범위는 소스 레포의 SECURITY.md에 있습니다.',
+            en: 'Secrets are handled by name and location, never by value. Runner credentials, bot tokens and MCP env vars never sync to the cloud (see 14-1), no secret is kept in plaintext anywhere in the code, and a commit hook catches vendor key patterns. The full trust model and report scope live in SECURITY.md in the source repo.',
           },
         ],
+        caveat: {
+          ko: '"완료·검증됨·무결" 같은 도장을 붙이지 않습니다. 이 페이지가 말하는 경계와 코드가 어긋나면 코드가 정본이고, 그 어긋남 자체가 유용한 제보입니다.',
+          en: 'We do not stamp "complete", "verified" or "airtight" on anything. Where this page and the code disagree, the code is canonical — and the disagreement itself is a useful report.',
+        },
       },
     ],
   },
