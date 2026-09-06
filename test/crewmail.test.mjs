@@ -194,7 +194,7 @@ test('배선 — 우편 배달은 클라우드 리더 게이트를 타지 않는
 test('배선 — 스케줄러가 수신 크루 러너를 판정해 mailPrompt에 hasTools를 전달한다', () => {
   // 판정 없이 mailPrompt(msg)만 부르면 CLI 러너 수신 크루가 없는 send_to_crew 지시를 받는다(검수 MEDIUM 2026-07-28)
   const s = read('src/scheduler.mjs');
-  assert.match(s, /isCliRunner\(resolved\.runner\)/, '수신 러너 CLI 판정이 없다');
+  assert.match(s, /isCliTurn\(resolved\.runner, await runnerCredType\(cid, resolved\.runner\)\)/, '수신 러너 CLI 판정(자격 축)이 없다');
   assert.match(s, /mailPrompt\(msg, 'ko', \{ hasTools \}\)/, 'mailPrompt에 hasTools 미전달');
 });
 

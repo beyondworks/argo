@@ -17,7 +17,7 @@ export const fieldStyle = { height: 34, padding: '0 12px', background: 'var(--ca
 // 가용 판정(순수)은 runner-usable.mjs로 분리 — 데크 배너·홈 안내·온보딩 게이트·회귀 테스트가 공유.
 // 기존 소비처(import from './runner-connect') 호환을 위해 재수출한다.
 export { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenConnected, PICK_ORDER } from './runner-usable.mjs';
-import { lastTurnByRunner, lastHealthFailByRunner, healthFailMessageKey } from './runner-usable.mjs';
+import { invalidChipKey, lastTurnByRunner, lastHealthFailByRunner, healthFailMessageKey } from './runner-usable.mjs';
 
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
@@ -26,7 +26,7 @@ const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antig
 // 화면에 그릴 순서 — **이 목록에 없으면 카드가 아예 안 뜬다**(러너를 추가하고 여기를 빠뜨리면
 // 연결 수단이 UI에서 사라진다. 분리 검수 2026-08-03이 grok 누락으로 실제 적발).
 // test/runner-order-sync.test.mjs가 RUNNER_AUTH(숨김 제외)와의 동기화를 잠근다. gemini는 숨김(카탈로그 hidden — 유건 결정 2026-09-03).
-const RUNNER_ORDER = ['claude', 'codex', 'antigravity', 'glm', 'kimi', 'openrouter', 'grok'];
+const RUNNER_ORDER = ['claude', 'codex', 'gemini', 'antigravity', 'glm', 'kimi', 'openrouter', 'grok']; // gemini 복귀(2026-09-06 — API 키만, 구독 CLI는 Google 정책으로 외부 앱 차단)
 
 export function AiConnectionCard({ ws, accordion = false }) {
   const { t } = useLang();
@@ -75,7 +75,9 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
   const oauthPaste = !!st?.oauthPasteable;
   const connectable = !!st?.connectable;
   const company = st?.company ?? { connected: false };
-  const [method, setMethod] = useState(company.connected ? company.type : 'apikey');
+  // 연결된 방식이 이제 제공되지 않으면(gemini 구독 → API 키 전용) 첫 제공 방식으로 — 종전엔 oauth 상태에 갇혀 "이 컴퓨터에서 로그인" 안내와 해제 버튼만 보였다(검수 M2)
+  const shownMethod = (type) => (methods.includes(type) ? type : (methods[0] ?? 'apikey'));
+  const [method, setMethod] = useState(company.connected ? shownMethod(company.type) : 'apikey');
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState('');
   const busyWasHost = useRef(false); // 마지막 msg가 host 옵트인에서 났는지(렌더 자리 선택)
@@ -230,7 +232,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
   }
 
   // 연결/제거로 상태가 바뀌면 선택 방식을 회사 연결 방식에 맞춘다
-  useEffect(() => { if (company.connected) setMethod(company.type); }, [company.connected, company.type]);
+  useEffect(() => { if (company.connected) setMethod(shownMethod(company.type)); }, [company.connected, company.type]);
 
   // 언마운트 시 폴링 정리 — stale 폴링/setState 누수 방지
   useEffect(() => {
@@ -387,7 +389,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
     company.invalid ? (
       // 무효 자격(형식 불량 토큰·로그아웃된 host 마커) — 연결된 척하지 않고 재연결을 요구한다
       <span className="chip" style={{ color: 'var(--danger)', borderColor: 'currentColor' }}>
-        <span className="dot" />{t('settings.runners.companyInvalid')}{company.masked && <> · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span></>}
+        <span className="dot" />{t(invalidChipKey(company))}{company.masked && <> · <span className="mono" style={{ fontSize: 10.5 }}>{company.masked}</span></>}
       </span>
     ) : (
       <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>

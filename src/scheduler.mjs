@@ -7,7 +7,7 @@ import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
 import { emitNotify } from './notify.mjs';
 import { chat } from './chat.mjs';
 import { readAgentCard } from './persona.mjs';
-import { resolveRunner, isCliRunner } from './runners.mjs';
+import { resolveRunner, isCliTurn, runnerCredType } from './runners.mjs';
 import { appendTurn } from './thread.mjs';
 import { consolidateBacklog, rollupJournals } from './consolidate.mjs';
 import { runHealthChecks } from './runner-health.mjs';
@@ -213,7 +213,7 @@ export function ensureScheduler() {
               try {
                 const { meta } = await readAgentCard(cid, slug);
                 const resolved = await resolveRunner(cid, (meta.runner ?? '').toLowerCase() || null);
-                hasTools = !isCliRunner(resolved.runner);
+                hasTools = !isCliTurn(resolved.runner, await runnerCredType(cid, resolved.runner)); // gemini API 키(네이티브)는 도구 있음
               } catch { /* 크루 카드·러너 상태 읽기 실패 — 기본값 유지, 실행은 chat()이 판단 */ }
               const prompt = mailPrompt(msg, 'ko', { hasTools });
               const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail' });

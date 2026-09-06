@@ -6,7 +6,7 @@ import { nativeOneShot, nativeRunnerEnabled } from './engine/native-query.mjs'; 
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
 import { effectiveModels } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
-import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor , visibleRunnerNamesLine} from './runners.mjs';
+import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor , visibleRunnerNamesLine, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -31,6 +31,9 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // (실사고 2026-07-20: Gemini OAuth만 연결한 Windows 사용자가 "하나도 연결돼 있지 않습니다"를 받아
     //  설정의 '연결됨' 배지와 정면 모순 — 어느 쪽도 거짓말은 아니었지만 사용자에겐 둘 다 거짓이 된다)
     const noCli = (resolved.credButNoCli ?? []).map((id) => RUNNERS[id]?.name || id);
+    // 저장 자격의 방식이 더 이상 제공되지 않는 경우(gemini 구독) — chat.mjs 게이트와 같은 안내(3R M-2)
+    const unsupported = noCli.length ? [] : unsupportedMethodStatus(await runnerStatus(wsId).catch(() => null));
+    if (unsupported.length) throw new Error(unsupportedMethodNotice(lang, unsupported));
     throw new Error(noCli.length
       ? (lang === 'en'
           ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — install it, or connect Claude (no install needed) in Settings → AI connections.`
@@ -43,7 +46,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   let hangGuard = null;            // SDK 경로 hang 상한 타이머 — 아래 finally에서 항상 해제
   const ac = new AbortController(); // catch에서도 봐야 한다(중단 원인을 정직한 문구로 바꾸기 위해)
   try {
-    if (isCliRunner(runner)) {
+    if (isCliTurn(runner, await runnerCredType(wsId, runner))) { // gemini API 키는 네이티브(아래 nativeOneShot)
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격 우선, 없으면 호스트 로그인
       // caps 명시 전달(분리 검수 2026-08-21 MED-2) — 안 넘기면 러너마다 기본값 방향이 갈려
       // (gemini fail-closed 셸 제외 vs codex 전권) 같은 유틸 턴의 권한이 러너 따라 3갈래가 된다.
@@ -67,6 +70,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     const osModel = runner === 'glm' ? GLM_DEFAULT_MODEL : runner === 'kimi' ? KIMI_DEFAULT_MODEL
       : runner === 'openrouter' ? (effectiveModels('openrouter').some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL)
       : runner === 'grok' ? (effectiveModels('grok').some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL)
+      : runner === 'gemini' ? (effectiveModels('gemini').some((m) => m.id === model) ? model : GEMINI_DEFAULT_MODEL)
       : (model || null);
     if (nativeRunnerEnabled(runner)) {
       // 네이티브 엔진(P-A') — 도구 없는 단발 호출. 오류는 `API Error: <status> …`로 던져 아래 catch(자가치유·안내)가 그대로 받는다.

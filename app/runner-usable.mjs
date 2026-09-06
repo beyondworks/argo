@@ -19,6 +19,11 @@ export function onlyHiddenConnected(runners) {
   return on.length > 0 && on.every((r) => r.hidden);
 }
 
+/** 무효 자격 칩의 i18n 키(순수) — 제공되지 않는 연결 방식(gemini 구독·host)은 "토큰 형식 불량"이 아니라 "이 방식은 더 이상 제공되지 않음"으로(3R M-2·4R LOW-2 게이트). */
+export function invalidChipKey(company) {
+  return company?.unsupportedMethod ? 'settings.runners.companyUnsupported' : 'settings.runners.companyInvalid';
+}
+
 /** 저장 자격이 있는데 무효(재연결 필요)인 러너가 있는가 — "미연결"과 "끊김" 안내 문구 분기용. */
 export function runnerNeedsReconnect(runners) {
   return Object.values(runners ?? {}).some((r) => r.company?.connected && r.company?.invalid);
@@ -26,7 +31,7 @@ export function runnerNeedsReconnect(runners) {
 
 /** 서버 자동 선택(pickRunner = RUNNER_AUTH 정의 순) 순서 — "자동" 표시가 실제 실행 러너와 어긋나지 않게.
     카탈로그(/api/runners = RUNNERS 순)는 kimi·glm 순서가 달라 첫 authed를 그냥 집으면 오표시가 난다. */
-export const PICK_ORDER = ['claude', 'codex', 'glm', 'kimi', 'openrouter', 'grok', 'antigravity']; // gemini 숨김(2026-09-03) — 자동 선택 대상 아님
+export const PICK_ORDER = ['claude', 'codex', 'gemini', 'glm', 'kimi', 'openrouter', 'grok', 'antigravity']; // RUNNER_AUTH 정의 순(숨김 제외) — gemini는 2026-09-06 API 키 경로로 복귀
 
 /** 연결(유효)된 러너의 표시 이름 목록 — 명판 '엔진' 표기의 단일 진실.
     'Claude Agent SDK' 하드코딩이 Gemini만 연결한 사용자에게 "클로드로 떠 있다" 혼란을 준

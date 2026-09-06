@@ -2,6 +2,8 @@
 // (runners.mjs 관심사 분리 2026-07-28 — 의존 0: 다른 모듈을 임포트하지 않는다)
 
 /** 러너별 모델 카탈로그 — id '' = 그 러너의 기본 모델. 라벨은 고유명사라 언어 공통. */
+import { nativeRunnerEnabled } from '../engine/native-flags.mjs';
+
 export const RUNNERS = {
   claude: {
     // 표시명은 'Claude' — Agent SDK 브랜딩 지침(code.claude.com/docs/en/agent-sdk/overview)이 서드파티 제품에
@@ -45,7 +47,9 @@ export const RUNNERS = {
     // hidden — 화면·목록·자동 선택에서 제외(유건 결정 2026-09-03: Antigravity가 같은 구글 모델을 더 안정적으로 실행하고,
     // Gemini CLI는 워크스페이스 계정에서 GOOGLE_CLOUD_PROJECT를 요구해 스모크 실패). 실행 경로는 남긴다 — 이미 gemini로
     // 지정된 크루·저장된 자격은 그대로 돈다(isHiddenRunner 소비처: /api/runners 목록·설정 카드 순서·pickRunner 자동·검진·크루 도구 안내).
-    hidden: true,
+    // 2026-09-06 복귀(유건 승인): API 키 자격은 Argo 엔진(네이티브, gemini-wire)으로 돈다 — Hermes·OpenClaw의 gemini 프로바이더와 같은 공개 API 경로.
+    // 구독(oauth)·host 자격은 runnerStatus가 무효(재연결 필요)로 표시해 배너·명판·자동 선택·턴이 한목소리다(2R MEDIUM-1). 신규 연결 방식은 API 키뿐(RUNNER_AUTH — Google이 구독의 외부 앱 사용을 막았다). CLI 경로 코드는 남는다(isCliTurn).
+    hidden: false,
     name: 'Gemini', kind: 'cli', mcp: true, // settings.json mcpServers 주입(0.21.2 mcp list 실프로브 2026-08-21)
     models: [
       // 실측(2026-07-19): OAuth(Code Assist) 경로 실턴 통과 = 2.5 Pro/Flash. 3.x id는 실존하나
@@ -182,6 +186,10 @@ export const hostOptInAllowed = (runner) =>
 /** 외부 CLI 러너 판정 — 디스패치(chat/oneshot)의 단일 진실. 하드코딩 열거('codex'||'gemini')는
     러너 추가 때마다 배선 누락을 만든다(#119 전수 수색의 교훈) — kind가 카탈로그에 있으니 그걸 쓴다. */
 export const isCliRunner = (r) => RUNNERS[r]?.kind === 'cli';
+/** 이 자격으로 도는 턴이 외부 CLI인가 — gemini는 API 키 자격이면 Argo 엔진(네이티브)이라 CLI가 아니다(구독·host만 CLI). 카드 정보(runners.mjs)·
+    스케줄러(hasTools)·chat·oneshot의 분기가 전부 이 하나를 쓴다(러너 종류만 보던 isCliRunner는 자격 축을 몰라 gemini에서 갈렸다). */
+export const isCliTurn = (r, credType) => isCliRunner(r) && !(r === 'gemini' && credType === 'apikey' && nativeRunnerEnabled('gemini'));
+export const GEMINI_DEFAULT_MODEL = 'gemini-2.5-pro';
 
 export const GLM_DEFAULT_MODEL = 'glm-5.3';
 
@@ -289,8 +297,8 @@ export const isHiddenRunner = (id) => !!RUNNERS[id]?.hidden;
 export const visibleRunnerIds = () => Object.keys(RUNNERS).filter((id) => !isHiddenRunner(id));
 /** 안내문용 가시 러너 이름 줄 — ko "Claude·Codex·…", en "Claude, Codex, …, or Grok". 하드코딩 4곳(chat/oneshot/persona/trial)이
     숨김 러너를 권하던 것의 단일 원천. **반드시 템플릿 리터럴 안에서** 보간할 것(작은따옴표 안이면 원문이 사용자에게 노출 — 재검수 HIGH 실사고). */
-export const visibleRunnerNamesLine = (lang = 'ko') => {
-  const names = visibleRunnerIds().map((id) => RUNNERS[id].name);
+export const visibleRunnerNamesLine = (lang = 'ko', exclude = []) => {
+  const names = visibleRunnerIds().filter((id) => !exclude.includes(id)).map((id) => RUNNERS[id].name);
   if (lang === 'en') return names.length > 1 ? `${names.slice(0, -1).join(', ')}, or ${names.at(-1)}` : (names[0] ?? '');
   return names.join('·');
 };
@@ -298,6 +306,30 @@ export const visibleRunnerNamesLine = (lang = 'ko') => {
 export const onlyHiddenConnectedStatus = (st) => {
   const on = Object.entries(st ?? {}).filter(([, r]) => r?.company?.connected && !r?.company?.invalid);
   return on.length > 0 && on.every(([id]) => isHiddenRunner(id));
+};
+
+/** 저장 자격의 연결 방식이 더 이상 제공되지 않는 러너(runnerStatus가 unsupportedMethod를 단 것)만 있고 가용 러너가 없는가 — 그 러너 id 목록(빈 배열=해당 없음).
+    "하나도 연결돼 있지 않습니다"는 이 회사에 거짓이다(3R M-2 — main의 onlyHiddenConnectedStatus 안내가 hidden 해제로 꺼지면서 총부정 문구로 낙하했다). */
+export const unsupportedMethodStatus = (st) => {
+  const rows = Object.entries(st ?? {}).filter(([, r]) => r?.company?.connected);
+  if (rows.some(([id, r]) => !r.company.invalid && !isHiddenRunner(id))) return [];
+  return rows.filter(([, r]) => r.company.unsupportedMethod).map(([id, r]) => ({ id, type: r.company.type }));
+};
+const METHOD_NAME = { ko: { apikey: 'API 키', oauth: '구독 로그인', host: '이 컴퓨터 로그인' }, en: { apikey: 'API key', oauth: 'subscription login', host: "this computer's login" } };
+const ro = (s) => { const c = s.charCodeAt(s.length - 1); const jong = c >= 0xac00 && c <= 0xd7a3 ? (c - 0xac00) % 28 : 0; return jong && jong !== 8 ? '으로' : '로'; }; // 받침(ㄹ 제외)이면 '으로'
+/** 그 안내문(서버 언어 인자 — visibleRunnerNamesLine과 같은 규칙, 템플릿 보간 전용). 저장된 방식·지금 제공되는 방식은 러너별로 파생한다(하드코딩 "구독→API 키"는
+    antigravity 레거시 apikey에서 정반대 안내 — 4R LOW-1). "다른 러너" 목록에서 그 러너는 뺀다(4R LOW-3). */
+export const unsupportedMethodNotice = (lang, entries) => {
+  const en = lang === 'en'; const M = METHOD_NAME[en ? 'en' : 'ko'];
+  const offeredOf = (id) => { const a = RUNNER_AUTH[id] ?? { methods: [] }; return [...a.methods, ...(a.hostUsable ? ['host'] : [])].map((m) => M[m] ?? m); };
+  const parts = entries.map(({ id, type }) => ({ name: RUNNERS[id]?.name || id, stored: M[type] ?? String(type), offered: offeredOf(id) }));
+  const others = visibleRunnerNamesLine(en ? 'en' : 'ko', entries.map((e) => e.id));
+  if (en) {
+    return parts.map((p) => `The stored ${p.name} connection method (${p.stored}) is no longer offered${p.offered.length ? ` — reconnect ${p.name} with ${p.offered.join(' or ')}` : ''}.`).join(' ')
+      + ` Or connect another runner (${others}) in Settings → AI connections, then try again.`;
+  }
+  return parts.map((p) => `저장된 ${p.name} 연결 방식(${p.stored})은 더 이상 제공되지 않습니다${p.offered.length ? ` — 설정 → AI 연결에서 ${p.name}를 ${p.offered.join('·')}${ro(p.offered.at(-1))} 다시 연결하세요` : ''}.`).join(' ')
+    + ` 또는 다른 러너(${others})를 연결한 뒤 다시 말을 걸어 주세요.`;
 };
 
 export const RUNNER_AUTH = {
@@ -311,7 +343,7 @@ export const RUNNER_AUTH = {
   // 노출한다(claudeHostAllowed). 데스크톱은 setup-token 원클릭이 정식 경로.
   claude: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-ant-', oauthPrefix: 'sk-ant-oat01-', oauthPasteable: true, oauthEnv: 'CLAUDE_CODE_OAUTH_TOKEN', hostUsable: true, keyUrl: 'https://console.anthropic.com/settings/keys' },
   codex: { methods: ['apikey', 'oauth'], apikeyPrefix: 'sk-', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://platform.openai.com/api-keys', connect: { bin: 'codex', loginArgs: ['login'], statusArgs: ['login', 'status'], ok: /Logged in/i } },
-  gemini: { methods: ['apikey', 'oauth'], apikeyPrefix: '', oauthPasteable: false, webConnect: true, hostUsable: true, keyUrl: 'https://aistudio.google.com/apikey' },
+  gemini: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, webConnect: false, hostUsable: false, keyUrl: 'https://aistudio.google.com/apikey' }, // 신규 연결은 API 키만(2026-09-06) — 기존 oauth·host 자격은 runnerStatus가 '재연결 필요(제공되지 않는 방식)'로 표시(2R MEDIUM-1)
   glm: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
   kimi: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://platform.moonshot.ai/console/api-keys' }, // 접두사 무차단(GLM 관례) — 리전·미래 키 형식 변화에 저장이 막히지 않게, 판정은 verifyRunnerCred가
   openrouter: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: 'https://openrouter.ai/keys' }, // BYOK 단일(설계 2026-07-27) — OAuth·크레딧 대행 안 함
@@ -355,7 +387,10 @@ export function pickRunner(st, want, exclude = null, { defaultRunner = null } = 
   const skip = new Set(asList(exclude));
   const usable = (id) => !!st[id]?.company.connected && !st[id]?.company.invalid && !skip.has(id);
   // 명시 지정(want)은 숨김 러너도 존중한다 — 이미 gemini로 굳힌 크루는 계속 돈다. 자동 선택(기본 러너·순서 폴백)만 숨김 제외.
-  const autoUsable = (id) => usable(id) && !isHiddenRunner(id);
+  // 자격 축 — 자동 선택은 그 러너가 **저장된 자격 종류로 실제로 돌 수 있을 때만**(분리 검수 H1: gemini 숨김 해제로 oauth 자격 회사의 자동 크루가
+  // Google이 막은 구독 CLI 경로로 유도됐다). 명시 지정(want)은 종전대로 자격 종류를 묻지 않는다 — 이미 그 러너로 굳힌 크루는 계속 돈다.
+  const credAutoOk = (id) => { const type = st[id]?.company?.type; const m = RUNNER_AUTH[id]; return !type || !m || m.methods.includes(type) || (type === 'host' && !!m.hostUsable); };
+  const autoUsable = (id) => usable(id) && !isHiddenRunner(id) && credAutoOk(id);
   if (want && usable(want)) return { runner: want, fellBack: false, available: true };
   // ponytail: 회사 기본 러너 — "자동일 때 이 러너부터"(K1 해소, 유건 제보 2026-08-08: Grok만
   // 연결했는데 하드코딩 순서가 claude를 먼저 잡는다). 가용하면 우선, 아니면 기존 순서 폴백.

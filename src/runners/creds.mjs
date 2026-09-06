@@ -12,6 +12,8 @@ import { exists, homeEnv, scrubServerSecrets, seedAuthFile, credHash, HEALTH_FIL
 import { RUNNER_AUTH, GROK_DEFAULT_MODEL } from './catalog.mjs';
 import { provisionCodexCli } from './codex.mjs';
 import { provisionGeminiCli, geminiTurnHome, probeGeminiSubscription } from './gemini.mjs';
+import { nativeRunnerEnabled } from '../engine/native-flags.mjs';
+import { GEMINI_DEFAULT_BASE } from '../engine/gemini-wire.mjs';
 import { grokAccessToken, grokExpired, grokNeedsRefresh, refreshGrokTokens } from './grok.mjs';
 
 /** Kimi(Moonshot) — GLM과 동일한 Anthropic 호환 엔드포인트 방식(SDK가 그대로 탄다).
@@ -141,7 +143,7 @@ export async function saveRunnerCred(wsId, runner, type, value) {
   }
   // 연결 즉시 실행기 워밍업 — 첫 턴이 다운로드를 기다리지 않게(백그라운드, 실패는 턴 시점 조달이 재시도).
   // 모든 연결 경로(회사 키·계정 키·웹 브리지)가 이 함수를 지나므로 여기가 단일 관문이다.
-  if (runner === 'gemini') provisionGeminiCli().catch(() => {});
+  if (runner === 'gemini' && credType(type) !== 'apikey') provisionGeminiCli().catch(() => {}); // API 키 자격은 네이티브 — CLI를 안 띄우므로 조달 불필요(검수 L4)
   if (runner === 'codex') provisionCodexCli().catch(() => {}); // ~100MB — 연결 시점에 미리 받아 첫 턴 대기 제거
 }
 
@@ -193,6 +195,9 @@ export const normalizePastedCred = (value) => {
 /** 러너 실행에 주입할 env(부분) — 회사 자격이 있으면 러너 종류에 맞는 변수로. 없으면 null(호스트 자격 폴백=회귀 0).
     반환: { env, home } — env=주입 변수 dict, home=회사 자격 격리 홈 경로(codex는 apikey·oauth 모두
     auth.json 경유 — env 키 주입('clean')은 CLI가 안 읽어 폐기 2026-07-26). */
+/** 저장된 자격의 종류만(apikey·oauth·host·null) — 턴 분기(isCliTurn)가 러너 종류 옆에 자격 축을 본다. */
+export async function runnerCredType(wsId, runner) { return (await loadRunnerCred(wsId, runner))?.type ?? null; }
+
 export async function runnerCredEnv(wsId, runner) {
   const cred = await loadRunnerCred(wsId, runner);
   if (!cred) return null;
@@ -213,6 +218,11 @@ export async function runnerCredEnv(wsId, runner) {
   // 달리 gemini는 HOME 전역 config(GEMINI.md·save_memory·전 도구)를 상속해 테넌트 격리가 없었다. host는 로그인만 빌리고
   // 나머지는 격리한다. 그래서 아래 일반 host→null 분기보다 먼저 처리한다.
   if (runner === 'gemini') {
+    // API 키 자격은 Argo 엔진(네이티브) — Google AI Studio generateContent 와이어(ARGO_WIRE=gemini, engine/gemini-wire.mjs). CLI를 띄우지 않으므로 격리 HOME도 불필요.
+    // ARGO_NATIVE_RUNNERS=none이면 종전대로 CLI에 GEMINI_API_KEY로 넘긴다(폴백 보존).
+    if (cred.type === 'apikey' && nativeRunnerEnabled('gemini')) {
+      return { env: { ARGO_WIRE: 'gemini', GEMINI_API_KEY: cred.value, GEMINI_BASE_URL: process.env.GEMINI_BASE_URL || GEMINI_DEFAULT_BASE }, authType: 'apikey' };
+    }
     const g = await geminiTurnHome(wsId, cred);
     if (!g) return null; // host인데 호스트 로그인이 없음 — 폴백 없음(명시 연결 원칙)
     return { env: { ...homeEnv(g.home), ...g.env }, home: g.home, authType: g.authType };
@@ -440,7 +450,7 @@ export async function verifyRunnerCred(runner, type, value) {
       return (r.status === 401 || r.status === 403) ? { ok: false, reason: 'auth' } : { ok: true }; // reason:'auth' = 턴 전 게이트·분류표의 열쇠(불변식 A)
     }
     if (runner === 'gemini' && type === 'apikey') {
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(v)}&pageSize=1`, { signal: AbortSignal.timeout(10_000) });
+      const r = await fetch(`${String(process.env.GEMINI_BASE_URL || GEMINI_DEFAULT_BASE).replace(/\/+$/, '')}/models?key=${encodeURIComponent(v)}&pageSize=1`, { signal: AbortSignal.timeout(10_000) }); // 검진과 턴의 목적지는 같아야 한다(검수 L3)
       if (r.status === 401 || r.status === 403) return { ok: false, reason: 'auth' };
       // Google Generative Language API는 무효 키에 HTTP 400 + reason:API_KEY_INVALID를 준다(401 아님) — 실측 2026-07-20.
       // 400을 무조건 무효로 몰면 키와 무관한 요청 오류까지 키 탓이 되므로, 키 무효 신호가 있을 때만 거절한다.

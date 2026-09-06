@@ -414,6 +414,7 @@ const DICT = {
   'settings.runners.method.host': ['이 컴퓨터 로그인', 'This computer\u2019s login'],
   'settings.runners.companyConnected': ['연결됨', 'Connected'],
   'settings.runners.companyInvalid': ['재연결 필요 — 저장된 토큰이 유효한 형식이 아닙니다', 'Reconnect needed — the stored token isn’t in a valid format'],
+  'settings.runners.companyUnsupported': ['재연결 필요 — 이 연결 방식은 더 이상 제공되지 않습니다. 아래에서 다시 연결해 주세요', 'Reconnect needed — this connection method is no longer offered. Reconnect below'],
   'settings.runners.setupConnect': ['브라우저로 바로 연결', 'Connect via browser'],
   'settings.runners.setupHint': ['클릭하면 브라우저가 열립니다 — 로그인을 승인하면 토큰이 자동 저장됩니다 (Claude 구독 필요)', 'Opens your browser — approve the sign-in and the token is saved automatically (Claude subscription required)'],
   // 구독 연결의 과금 주체를 화면에서 밝힌다 — 앤트로픽 헬프센터 'Use the Claude Agent SDK with your Claude plan'(2026-06-16)

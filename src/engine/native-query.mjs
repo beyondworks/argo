@@ -16,18 +16,7 @@ export const NATIVE_DEFAULT_MAX_TOKENS = 8192; // SDK 기본 32000이 OpenRouter
 export const NATIVE_MAX_STEPS = 60;
 const TOOL_RESULT_CAP = 60_000;
 
-/** 기본 네이티브 러너 — 키 기반 4종(전부 Anthropic Messages 와이어 포맷). 유건 승인 2026-09-05: 검수 3R·실벤더·산출물 스모크 뒤 기본 on. */
-export const NATIVE_DEFAULT_RUNNERS = Object.freeze(['openrouter', 'glm', 'kimi', 'grok']);
-
-/** 네이티브 러너 판정(순수) — env ARGO_NATIVE_RUNNERS: 미설정/빈 값 = 기본 4종 on · `none`/`off`/`0` = 전부 off(구 경로 SDK 폴백) · 목록 = 그 러너만.
-    구독 OAuth(claude)는 목록에 넣어도 엔진이 거절한다(authFromEnv). */
-export function nativeRunnerEnabled(runner, env = process.env) {
-  const raw = String(env.ARGO_NATIVE_RUNNERS ?? '').trim().toLowerCase();
-  const r = String(runner ?? '').toLowerCase();
-  if (!raw) return NATIVE_DEFAULT_RUNNERS.includes(r);
-  if (['none', 'off', '0', 'false'].includes(raw)) return false;
-  return raw.split(',').map((s) => s.trim()).filter(Boolean).includes(r);
-}
+export { NATIVE_DEFAULT_RUNNERS, nativeRunnerEnabled } from './native-flags.mjs'; // 판정은 순수 모듈에(creds·catalog와 공유, 순환 없음)
 
 const stripSchema = (s) => { const { $schema, ...rest } = s ?? {}; return rest; };
 
@@ -101,7 +90,7 @@ async function* run(opts, ac, isInterrupted) {
   const { wsId, slug, prompt, cwd, systemPrompt, env = {}, model, crewTools = [], mcpServers = {}, canUseTool, lang = 'ko',
     resume = null, maxTokens, maxSteps = NATIVE_MAX_STEPS, fetchImpl = globalThis.fetch, saveSession = true } = opts;
   if (!model) throw new Error('native engine: model is required');
-  const { base, headers } = authFromEnv(env, lang);
+  const { base, headers, wire } = authFromEnv(env, lang);
   const max_tokens = Number(maxTokens) || Number(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) || NATIVE_DEFAULT_MAX_TOKENS;
   const sess = await loadNativeSession(wsId, slug, resume);
   const mcp = await connectMcpServers(mcpServers, { env: shellEnv(env), cwd });
@@ -124,11 +113,12 @@ async function* run(opts, ac, isInterrupted) {
       }
       let res;
       try {
-        res = await callMessages({ base, headers, signal: ac.signal, fetchImpl,
+        res = await callMessages({ wire, base, headers, signal: ac.signal, fetchImpl,
           body: { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) } });
       } catch (e) {
         // 이미 토큰을 쓴 뒤의 실패는 SDK처럼 usage를 실은 실패 result로 낸다(분리 검수 MEDIUM-1: 던지기만 하면 appendUsage 미도달,
         // 예산·대시보드 과소 집계). 원문은 errors[]에 — chat.mjs가 `턴 실패: … — <원문>`으로 감싸도 401/402 정규식이 문다.
+        if (e?.usage && !e?.aborted) sumUsage(usage, e.usage); // 차단 응답(SAFETY 등)도 프롬프트 토큰은 썼다 — 첫 스텝이어도 집계(2R LOW-3)
         if (e?.aborted || !((usage.input_tokens ?? 0) + (usage.output_tokens ?? 0))) throw e;
         if (saveSession) await saveNativeSession(wsId, slug, sess);
         yield { type: 'result', subtype: 'error_during_execution', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps, errors: [String(e?.message || e)] };
@@ -180,9 +170,9 @@ async function* run(opts, ac, isInterrupted) {
     반환 { text, usage, model }. 실패는 callMessages가 `API Error: <status> <msg>`로 던진다(oneshot의 자가치유·안내 경로 그대로). */
 export async function nativeOneShot({ env = {}, model, prompt, systemPrompt = '', maxTokens, signal, lang = 'ko', fetchImpl = globalThis.fetch }) {
   if (!model) throw new Error('native engine: model is required');
-  const { base, headers } = authFromEnv(env, lang);
+  const { base, headers, wire } = authFromEnv(env, lang);
   const max_tokens = Number(maxTokens) || Number(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) || NATIVE_DEFAULT_MAX_TOKENS;
-  const res = await callMessages({ base, headers, signal, fetchImpl,
+  const res = await callMessages({ wire, base, headers, signal, fetchImpl,
     body: { model, max_tokens, ...(systemPrompt ? { system: systemPrompt } : {}), messages: [{ role: 'user', content: String(prompt) }] } });
   const text = (Array.isArray(res?.content) ? res.content : []).filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
   return { text, usage: sumUsage({}, res?.usage), model: res?.model || model };
