@@ -45,8 +45,8 @@ export async function fetchBusybox(destDir, { url = BUSYBOX_URL, sha256 = BUSYBO
   return { dest, bytes: buf.length, sha256: got, cached: false };
 }
 
-export async function fetchBusyboxSource(destDir, { url = BUSYBOX_SRC_URL, sha256 = BUSYBOX_SRC_SHA256, fetchImpl = globalThis.fetch, attempts, timeoutMs, waitMs } = {}) {
-  const buf = await download(url, { fetchImpl, attempts, timeoutMs, waitMs }); const got = sha(buf);
+export async function fetchBusyboxSource(destDir, { url = BUSYBOX_SRC_URL, sha256 = BUSYBOX_SRC_SHA256, localPath = process.env.ARGO_BUSYBOX_SRC_PATH, fetchImpl = globalThis.fetch, attempts, timeoutMs, waitMs } = {}) {
+  const buf = localPath ? readFileSync(localPath) : await download(url, { fetchImpl, attempts, timeoutMs, waitMs }); const got = sha(buf); // ARGO_BUSYBOX_SRC_PATH: 발행 시점에 frippery.org가 죽어도 보관본으로(2R N7)
   if (got !== sha256) throw new Error(`busybox 소스 해시 불일치 — 기대 ${sha256}, 실제 ${got} (${url})`);
   mkdirSync(destDir, { recursive: true }); const dest = join(destDir, BUSYBOX_SRC_FILE); writeFileSync(dest, buf);
   return { dest, bytes: buf.length, sha256: got };

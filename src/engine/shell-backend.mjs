@@ -19,23 +19,27 @@ const CMD_BUILTINS = new Set(['dir', 'copy', 'del', 'erase', 'move', 'ren', 'ren
 const SEGMENT_RE = /\|\||&&|;|\||&|\n/; // 명령 구획(cmd·POSIX 공통 연산자)
 const VERB_NOUN_RE = /^[A-Z][a-z]+-[A-Z][A-Za-z]+(\s|$)/; // Get-ChildItem — powershell.exe 호출 자체는 실행 파일이라 sh
 
+/** 따옴표 안 내용의 대체(순수) — 명령이 아닌 데이터는 비우되, 판정에 필요한 **모양**만 남긴다:
+    `%VAR%\경로`(cmd 관용구 — 2R N1: 공백 든 윈도우 경로는 따옴표로 싼다) → `"%p%\p"`, `X=1`(`set "X=1"`) → `"p=p"`, 경로 모양(`.`·`\`·`/`) → `"p.p"`, 그 밖은 `""`. */
+const WIN_ENV_RE = /^%(USERPROFILE|TEMP|TMP|APPDATA|LOCALAPPDATA|PROGRAMFILES(?:\(X86\))?|PROGRAMDATA|SYSTEMROOT|SYSTEMDRIVE|WINDIR|HOMEPATH|HOMEDRIVE|COMPUTERNAME|USERNAME|PUBLIC|CD|DATE|TIME|ERRORLEVEL|PATH|OS)%/i; // 윈도우 환경변수 — `"%VERSION%"` 같은 템플릿 자리표시와 구분
+const quotedShape = (c, q) => (WIN_ENV_RE.test(c) || /^%[A-Za-z_]\w*%[\\/]/.test(c) ? `${q}%p%${/[\\/]/.test(c) ? '\\p' : ''}${q}` : /^[A-Za-z_]\w*=/.test(c) ? `${q}p=p${q}` : /[.\\/]/.test(c) ? `${q}p.p${q}` : `${q}${q}`);
 /** 데이터 비우기(순수) — 히어독 본문과 따옴표 문자열은 명령이 아니다(1R M2: 커밋 메시지·grep 패턴·히어독 산문 속 `move`·`Start`·`%VERSION%`이 cmd로 샜다).
-    따옴표 안은 경로처럼 보이면(`.`·`\`·`/`) `"p.p"`, 아니면 `""`로 — `type "a b.txt"` 판정만 남긴다. `<<<`(here-string)는 히어독이 아니다. */
+    히어독은 줄 단위로 걷어내고, 따옴표는 이어 붙인 전체에서 비운다(여러 줄에 걸친 커밋 본문도 데이터 — 2R N2). `<<<`(here-string)는 히어독이 아니다. */
 export function stripDataText(command) {
   const out = []; let term = null;
   for (const line of String(command ?? '').split('\n')) {
     if (term !== null) { if (line.replace(/^\t+/, '') === term) term = null; continue; } // 히어독 본문(종결자 줄까지)은 버린다
     const m = line.match(/<<-?\s*(['"]?)([A-Za-z_]\w*)\1/); if (m) term = m[2];
-    out.push(line.replace(/"((?:[^"\\]|\\.)*)"/g, (_, c) => (/^[A-Za-z_]\w*=/.test(c) ? '"p=p"' : /[.\\/]/.test(c) ? '"p.p"' : '""')).replace(/'([^']*)'/g, (_, c) => (/[.\\/]/.test(c) ? "'p.p'" : "''"))); // `set "X=1"`(cmd 관용구)의 모양은 남긴다
+    out.push(line);
   }
-  return out.join('\n');
+  return out.join('\n').replace(/"((?:[^"\\]|\\[\s\S])*)"/g, (_, c) => quotedShape(c, '"')).replace(/'([^']*)'/g, (_, c) => quotedShape(c, "'"));
 }
 
 /** 라우터(순수) — 'sh' | 'cmd' | 'powershell'. 데이터를 비운 뒤 구획마다 첫 단어와 `%VAR%` 토큰만 본다(대소문자 무관). */
 export function classifyCommand(command) {
   const s = stripDataText(command).trim();
   if (!s) return 'sh';
-  if (/(^|[\s=(])%[A-Za-z_][A-Za-z0-9_]*%(?=[\s\\/;&|)]|$)/.test(s)) return 'cmd'; // %USERPROFILE% 토큰 — date +%Y%m%d·printf "%s"·echo 100%는 안 걸린다
+  if (/(^|[\s=("'])%[A-Za-z_][A-Za-z0-9_]*%(?=[\s"'\\/;&|)]|$)/.test(s)) return 'cmd'; // %USERPROFILE% 토큰(따옴표 안 경로 모양 포함) — date +%Y%m%d·printf "%s"·echo 100%는 안 걸린다
   if (/\b[A-Za-z_]\w*\s*\(\)\s*\{/.test(s)) return 'sh'; // 셸 함수 정의(`copy() { … }`)는 POSIX — 그 이름이 cmd 동사여도 명령이 아니다(1R M2)
   for (const seg of s.split(SEGMENT_RE)) {
     const t = seg.trim(); if (!t) continue;
@@ -80,24 +84,29 @@ function probeAsync(cand) {
   });
 }
 export const FALLBACK_RECHECK_MS = 10 * 60_000; // 폴백 상태면 10분마다 동봉 실행기를 다시 시도 — 백신 예외 추가·재설치 뒤 재시작 없이 복구(1R L3)
-let picked = null; let pickedAt = 0;
+let picked = null; let pickedAt = 0; let inflight = null; // 진행 중 공유 — 동시 첫 호출이 프로브를 중복하고 늦게 끝난 결과가 캐시를 덮던 것(2R N3)
 /** 실제 POSIX sh 선택 — 동봉이 잡히면 프로세스당 1회, 폴백이면 FALLBACK_RECHECK_MS마다 재진단. 실패(없음·백신 격리·실행 거부)는 다음 후보로 내려가고 tried에 사유를 남긴다.
     비윈도우는 /bin/sh 고정. probe·platform·now 주입은 테스트용. */
 export async function resolveShell(opts = {}) {
   const platform = opts.platform ?? process.platform; const now = opts.now ?? Date.now();
   if (platform !== 'win32') return { kind: 'sh', file: '/bin/sh', tried: [] };
   if (picked && !opts.force && (picked.kind === 'busybox' || now - pickedAt < FALLBACK_RECHECK_MS)) return picked;
-  const tried = []; const probe = opts.probe ?? probeAsync;
-  for (const cand of shellCandidates(opts)) {
-    if (cand.kind === 'cmd') break;
-    if (!existsSync(cand.file)) { tried.push({ ...cand, reason: 'missing' }); continue; }
-    const r = await probe(cand);
-    if (r !== true) { tried.push({ ...cand, reason: String(r) }); continue; }
-    picked = { ...cand, tried }; pickedAt = now; return picked;
-  }
-  picked = { kind: 'cmd', file: 'cmd.exe', tried }; pickedAt = now; return picked;
+  if (inflight && !opts.force) return inflight;
+  const run = (async () => {
+    const tried = []; const probe = opts.probe ?? probeAsync;
+    for (const cand of shellCandidates(opts)) {
+      if (cand.kind === 'cmd') break;
+      if (!existsSync(cand.file)) { tried.push({ ...cand, reason: 'missing' }); continue; }
+      const r = await probe(cand);
+      if (r !== true) { tried.push({ ...cand, reason: String(r) }); continue; }
+      picked = { ...cand, tried }; pickedAt = now; return picked;
+    }
+    picked = { kind: 'cmd', file: 'cmd.exe', tried }; pickedAt = now; return picked;
+  })();
+  inflight = run.finally(() => { inflight = null; });
+  return inflight;
 }
-export const resetShellCache = () => { picked = null; pickedAt = 0; };
+export const resetShellCache = () => { picked = null; pickedAt = 0; inflight = null; };
 /** 폴백인가(순수) — 스탠드얼론(동봉 있음)에서 동봉 실행기를 못 쓰는 상태. 개발 실행(동봉 없음)은 폴백이 아니다. */
 export const isShellFallback = (sel, env = process.env) => Boolean(env.ARGO_STANDALONE) && sel?.kind !== 'busybox';
 /** Git Bash(MSYS) 출력의 `/c/Users/…`를 `C:/Users/…`로 — 모델이 pwd·find 출력을 Read·Edit 인자로 복사할 때 Node가 열 수 있게. URL(`http://x/c/y`)은 앞이 `/`라 안 걸린다.

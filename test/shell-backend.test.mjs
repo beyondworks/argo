@@ -15,13 +15,17 @@ test('라우터 — bash 문법은 sh, cmd 고유 문법은 cmd, 동사-명사�
     // 1R M2: 데이터(히어독 본문·따옴표 문자열) 속 cmd 동사·%VAR%는 명령이 아니다
     "cat > notes.md <<'EOF'\nStart the server with npm start\nEOF", "cat > README.md <<'EOF'\nCopy the config file first.\nEOF", "cat > run.bat <<'EOF'\n@echo off\ndir /b\nEOF",
     'git commit -m "refactor: split module; move helpers to utils"', 'git commit -m "chore: cleanup && move assets"', 'grep "%VERSION%" template.txt', "grep '%VERSION%' template.txt",
-    'python -c "import time; start = time.time(); print(start)"', 'copy() { cp "$@"; }; copy a b', 'cut -d, -f2 <<< "x,y,z"', 'echo "type this"; ls'];
+    'python -c "import time; start = time.time(); print(start)"', 'copy() { cp "$@"; }; copy a b', 'cut -d, -f2 <<< "x,y,z"', 'echo "type this"; ls',
+    'git commit -m "feat: x\n\nMove helpers to utils\nStart the server"', 'grep "%VERSION%" template.txt']; // 2R N2: 여러 줄 따옴표 본문도 데이터 · 윈도우 환경변수가 아닌 템플릿 자리표시(%VERSION%)는 비운다
   for (const c of sh) assert.equal(classifyCommand(c), 'sh', c);
   const cmd = ['dir', 'dir /b', 'type package.json', 'type sim-out\\pkg.txt', 'type "a b.txt"', 'copy a.txt b.txt', 'del a.txt', 'erase a.txt', 'move a b', 'ren a b', 'rename a b', 'md x', 'rd x', 'cls', 'call build.bat', 'start .', 'mklink /D a b',
-    'set FOO=1 && echo %FOO%', 'set FOO=1', 'SET FOO=1', 'set "FOO=1"', 'TYPE a.txt', 'echo %USERPROFILE%', 'cd %USERPROFILE%\\Desktop', 'echo %TEMP%', 'rmdir /s /q build', 'cd src && dir /b | findstr mjs', 'ls; dir', 'DIR /b'];
+    'set FOO=1 && echo %FOO%', 'set FOO=1', 'SET FOO=1', 'set "FOO=1"', 'TYPE a.txt', 'echo %USERPROFILE%', 'cd %USERPROFILE%\\Desktop', 'echo %TEMP%', 'rmdir /s /q build', 'cd src && dir /b | findstr mjs', 'ls; dir', 'DIR /b',
+    // 2R N1: 공백 든 윈도우 경로는 따옴표로 싼다 — 따옴표 안 `%VAR%\\경로` 모양은 남는다
+    'cd "%USERPROFILE%\\Desktop"', 'mkdir "%USERPROFILE%\\Desktop\\New Folder"', 'echo "%USERPROFILE%" > out.txt', 'xcopy "%USERPROFILE%\\a" "b" /s', 'if exist "%USERPROFILE%\\x" (echo yes)', 'echo "%TEMP%"'];
   for (const c of cmd) assert.equal(classifyCommand(c), 'cmd', c);
   const ps = ['Get-ChildItem -Recurse', 'Get-Content a.txt', 'Get-Date -Format yyyy', 'Set-Location src', 'cd src && Get-ChildItem', 'Get-Date; Get-Location'];
   assert.equal(stripDataText("cat <<'EOF' > h\nmove me\nEOF\ntype x.txt"), "cat <<'' > h\ntype x.txt", '히어독 본문 제거·명령 줄 유지(종결자 따옴표는 데이터로 비워진다)'); assert.equal(stripDataText('type "a b.txt" && echo "hi"'), 'type "p.p" && echo ""');
+  assert.equal(stripDataText('cd "%USERPROFILE%\\Desktop" && echo "%TEMP%" && grep "%VERSION%"'), 'cd "%p%\\p" && echo "%p%" && grep ""', '윈도우 환경변수·환경변수 경로 모양만 남고 템플릿 자리표시(%VERSION%)는 비운다'); assert.equal(stripDataText('git commit -m "a\nmove b"'), 'git commit -m ""', '여러 줄 따옴표');
   for (const c of ps) assert.equal(classifyCommand(c), 'powershell', c);
 });
 
@@ -99,5 +103,25 @@ test('동봉 다운로드 — 해시 고정(불일치 throw), 일시 장애 재�
   const local = join(dir, 'local.exe'); await writeFile(local, body);
   assert.equal((await fetchBusybox(join(dir, 'other3'), { sha256: good, localPath: local, vendorDir: noVendor, fetchImpl: async () => { throw new Error('must not download'); } })).bytes, body.length, 'ARGO_BUSYBOX_PATH 오프라인');
   assert.equal((await fetchBusybox(join(dir, 'other4'), { localPath: null, fetchImpl: async () => { throw new Error('must not download'); } })).bytes, 675840, '동봉본 우선 — 네트워크 없음');
+});
+
+test('자가 진단 동시성·타임아웃·배선 — 동시 첫 호출은 프로브 1회 공유(2R N3), 멈춘 후보는 2초 상한(N4), runBash가 폴백을 알림기에 넘긴다(N5)', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-shell-cc-')); const bb = join(root, 'busybox64u.exe'); await writeFile(bb, 'x');
+  resetShellCache(); let probes = 0;
+  const slow = async () => { probes += 1; await new Promise((r) => setTimeout(r, 60)); return true; };
+  const rs = await Promise.all([1, 2, 3, 4, 5].map(() => resolveShell({ platform: 'win32', env: { ARGO_SHELL: bb }, cwd: root, argv1: null, probe: slow })));
+  assert.equal(probes, 1, '동시 5건 → 프로브 1회'); assert.deepEqual(rs.map((r) => r.kind), ['busybox', 'busybox', 'busybox', 'busybox', 'busybox']);
+  // 멈춘 후보(실행은 되지만 응답이 없는 exe — 백신이 첫 실행을 잡는 상황) → 2초 상한 뒤 다음 후보
+  const hang = join(root, 'hang-bash'); await writeFile(hang, '#!/bin/sh\nsleep 10\n', { mode: 0o755 });
+  resetShellCache(); const t0 = Date.now();
+  const r = await resolveShell({ platform: 'win32', env: { ARGO_SHELL: hang }, cwd: root, argv1: null, force: true });
+  assert.equal(r.kind, 'cmd'); assert.deepEqual(r.tried.map((t) => t.reason), ['timeout', 'missing']); assert.ok(Date.now() - t0 < 4000, `상한 2초(실측 ${Date.now() - t0}ms)`);
+  // runBash 배선: 스탠드얼론에서 폴백이면 onShellFallback(plan) — 맥에서 platform 주입으로 핀
+  const { builtinRunners } = await import('../src/engine/builtin-tools.mjs');
+  resetShellCache(); const seen = [];
+  const t = builtinRunners({ cwd: root, env: { PATH: process.env.PATH, ARGO_SHELL: join(root, 'nope.exe'), ARGO_STANDALONE: '1' }, platform: 'win32', onShellFallback: (plan) => seen.push(plan) });
+  await t.Bash({ command: 'ls' }); // cmd.exe가 없는 맥에선 spawn error로 끝난다 — 여기선 배선만 본다
+  assert.equal(seen.length, 1); assert.equal(seen[0].kind, 'cmd'); assert.equal(seen[0].fallback, true); assert.ok(seen[0].tried.length >= 2 && seen[0].tried.every((x) => x.reason === 'missing'), 'ARGO_SHELL·cwd bin·실행 파일 bin 전부 없음');
+  resetShellCache();
 });
 

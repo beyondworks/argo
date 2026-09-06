@@ -67,11 +67,11 @@ export function shellEnv(env = process.env) {
   return out;
 }
 
-async function runBash(cwd, env, { command, timeout }, signal, onShellFallback) {
+async function runBash(cwd, env, { command, timeout }, signal, onShellFallback, platform = process.platform) {
   const ms = Math.min(Math.max(Number(timeout) || 120_000, 1000), 600_000);
-  const win = process.platform === 'win32';
+  const win = platform === 'win32';
   // 윈도우: 라우터(cmd 고유 문법·PowerShell은 원래 실행기) + 사다리(동봉 busybox → Git Bash → cmd.exe). 비윈도우는 /bin/sh(shell-backend.mjs 머리 주석).
-  const plan = await planShellRun(command, { env });
+  const plan = await planShellRun(command, { env, platform });
   if (plan.fallback) onShellFallback?.(plan);
   return await new Promise((res) => {
     const child = spawn(plan.file, plan.args,
@@ -126,7 +126,7 @@ export function parseSearchResults(html) {
 }
 
 /** 실행기 — 인자·cwd만 받는 사이드이펙트 함수들. 게이트 판정은 호출부(루프)가 먼저 한다. */
-export function builtinRunners({ cwd, env = process.env, fetchImpl = globalThis.fetch, grepTimeoutMs = GREP_TIMEOUT_MS, searchBase = 'https://html.duckduckgo.com/html/?q=', onShellFallback = null }) {
+export function builtinRunners({ cwd, env = process.env, fetchImpl = globalThis.fetch, grepTimeoutMs = GREP_TIMEOUT_MS, searchBase = 'https://html.duckduckgo.com/html/?q=', onShellFallback = null, platform = process.platform }) {
   const senv = shellEnv(env);
   const rootAbs = resolve(cwd);
   return {
@@ -164,7 +164,7 @@ export function builtinRunners({ cwd, env = process.env, fetchImpl = globalThis.
       return out.join('\n') || '(no matches)';
     },
     Grep: (input, { signal } = {}) => runGrep({ cwd, timeoutMs: grepTimeoutMs }, input, signal),
-    Bash: (input, { signal } = {}) => runBash(cwd, senv, input, signal, onShellFallback),
+    Bash: (input, { signal } = {}) => runBash(cwd, senv, input, signal, onShellFallback, platform), // platform 주입은 테스트용(맥에서 윈도우 배선 핀)
     WebFetch: async ({ url }) => {
       const r = await fetchImpl(url, { signal: AbortSignal.timeout(30_000), headers: { 'user-agent': 'Argo/native-engine' } });
       const t = await r.text();
