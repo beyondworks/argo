@@ -2,6 +2,7 @@
 // 아르고 Bash 도구를 윈도우에서 POSIX 셸로 바꾸기 전 근거 수집용(제품 코드 아님, 브랜치 sim/win-shell 전용).
 import { spawn } from 'node:child_process';
 import { rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+process.env.ARGO_SIM_ENV = 'passed';
 import { resolve } from 'node:path';
 
 const win = process.platform === 'win32';
@@ -9,6 +10,7 @@ const SHELLS = win ? {
   'cmd.exe': { file: 'cmd.exe', args: (c) => ['/d', '/s', '/c', c] },
   'git-bash': { file: process.env.GIT_BASH || 'C:\\Program Files\\Git\\bin\\bash.exe', args: (c) => ['-c', c] },
   'busybox-sh': { file: process.env.BUSYBOX || resolve('sim-bin', 'busybox64.exe'), args: (c) => ['sh', '-c', c] },
+  'busybox-u': { file: process.env.BUSYBOX_U || resolve('sim-bin', 'busybox64u.exe'), args: (c) => ['sh', '-c', c] }, // UTF-8 매니페스트 빌드
 } : {
   'sh': { file: '/bin/sh', args: (c) => ['-c', c] },
   'bash': { file: '/bin/bash', args: (c) => ['-c', c] },
@@ -66,6 +68,15 @@ const CORPUS = [
   { id: 48, cls: 'enc', cmd: 'echo 한글 テスト', ok: rx(/한글 テスト/) },
   { id: 49, cls: 'enc', cmd: 'node -e "console.log(\'한글\')"', ok: rx(/한글/) },
   { id: 50, cls: 'enc', cmd: 'mkdir -p sim-out && printf "한글\\n" > sim-out/k.txt && cat sim-out/k.txt', ok: rx(/한글/) },
+  { id: 51, cls: 'enc', cmd: 'mkdir -p sim-out && echo x > "sim-out/한글 파일.txt" && ls sim-out', ok: rx(/한글 파일\.txt/) },
+  { id: 52, cls: 'pathout', cmd: 'pwd', ok: (out, code) => code === 0 && existsSync(out.trim()) },            // 셸이 낸 경로를 Node(fs)가 그대로 열 수 있나 — 모델이 pwd 출력을 Read 인자로 복사한다
+  { id: 53, cls: 'pathout', cmd: 'echo "$HOME"', ok: (out, code) => code === 0 && existsSync(out.trim()) },
+  { id: 54, cls: 'pathout', cmd: 'cd src && pwd', ok: (out, code) => code === 0 && existsSync(out.trim()) },
+  { id: 55, cls: 'pathout', cmd: 'ls -d "$(pwd)/src"', ok: rx(/src/) },
+  { id: 56, cls: 'proc', cmd: 'exit 3', ok: (out, code) => code === 3 },
+  { id: 57, cls: 'proc', cmd: 'echo "env=$ARGO_SIM_ENV"', ok: rx(/env=passed/) },
+  { id: 58, cls: 'proc', cmd: 'cat', ok: (out, code) => code === 0 }, // stdin은 ignore — 읽기 대기로 멈추지 않아야 한다
+  { id: 59, cls: 'proc', cmd: 'echo "$0"', ok: rx(/\S/) },
 ];
 function run(sh, command) {
   return new Promise((res) => {
@@ -77,10 +88,22 @@ function run(sh, command) {
     child.on('close', (code) => { clearTimeout(timer); res({ code, out, ms: Date.now() - t0 }); });
   });
 }
-const results = {}; const versions = {};
+const results = {}; const versions = {}; const killRows = {};
+async function killTreeProbe(sh) {
+  if (!win) return 'n/a';
+  const child = spawn(sh.file, sh.args('sleep 30'), { cwd: process.cwd(), env: process.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  await new Promise((r) => setTimeout(r, 1500));
+  await new Promise((r) => { const k = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }); k.on('close', r); k.on('error', r); });
+  await new Promise((r) => setTimeout(r, 1000));
+  const list = await run({ file: 'cmd.exe', args: (c) => ['/d', '/s', '/c', c] }, 'tasklist');
+  const left = (list.out.match(/sleep\.exe/gi) || []).length;
+  if (left) await run({ file: 'cmd.exe', args: (c) => ['/d', '/s', '/c', c] }, 'taskkill /IM sleep.exe /F');
+  return left ? `잔존 ${left}` : '트리 종료';
+}
 for (const [name, sh] of Object.entries(SHELLS)) {
   if (win && name !== 'cmd.exe' && !existsSync(sh.file)) { versions[name] = 'missing'; continue; }
-  versions[name] = (await run(sh, name === 'cmd.exe' ? 'ver' : name === 'busybox-sh' ? 'busybox | head -1' : 'echo $BASH_VERSION')).out.trim().slice(0, 80);
+  versions[name] = (await run(sh, name === 'cmd.exe' ? 'ver' : name.startsWith('busybox') ? 'busybox | head -1' : 'echo $BASH_VERSION')).out.trim().slice(0, 80);
+  killRows[name] = await killTreeProbe(sh);
   results[name] = [];
   for (const c of CORPUS) {
     rmSync('sim-out', { recursive: true, force: true });
@@ -94,9 +117,10 @@ const names = Object.keys(results);
 const lines = [`# 셸 시뮬레이션 (${process.platform}) — 셸 버전: ${JSON.stringify(versions)}`, '', `| # | 계열 | 명령 | ${names.join(' | ')} |`, `|---|---|---|${names.map(() => '---').join('|')}|`];
 for (const c of CORPUS) lines.push(`| ${c.id} | ${c.cls} | \`${c.cmd.replace(/\|/g, '\\|').replace(/\n/g, '⏎').slice(0, 60)}\` | ${names.map((n) => { const r = results[n][c.id - 1]; return r.pass ? '✓' : `✗ (${r.code}: ${r.out.replace(/\|/g, '/').slice(0, 50)})`; }).join(' | ')} |`);
 lines.push('', '## 계열별 통과');
-for (const cls of ['posix', 'bashism', 'win', 'path', 'enc']) {
+for (const cls of ['posix', 'bashism', 'win', 'path', 'enc', 'pathout', 'proc']) {
   const ids = CORPUS.filter((c) => c.cls === cls).map((c) => c.id);
   lines.push(`- ${cls} (${ids.length}): ${names.map((n) => `${n} ${results[n].filter((r) => ids.includes(r.id) && r.pass).length}/${ids.length}`).join(' · ')}`);
 }
+lines.push('', `## 타임아웃 시 프로세스 트리 종료(taskkill /T): ${JSON.stringify(killRows)}`);
 const md = lines.join('\n'); console.log(md);
 mkdirSync('sim-result', { recursive: true }); writeFileSync(`sim-result/sim-${process.platform}.md`, md); writeFileSync(`sim-result/sim-${process.platform}.json`, JSON.stringify({ versions, results }, null, 1));

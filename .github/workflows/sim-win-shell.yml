@@ -13,7 +13,7 @@ jobs:
       - name: busybox-w32 (시뮬 전용 — 제품 동봉 아님, 해시는 기록만)
         shell: bash
         run: |
-          mkdir -p sim-bin && curl -fsSL -o sim-bin/busybox64.exe https://frippery.org/files/busybox/busybox64.exe && sha256sum sim-bin/busybox64.exe && ls -la sim-bin
+          mkdir -p sim-bin && curl -fsSL -o sim-bin/busybox64.exe https://frippery.org/files/busybox/busybox64.exe && curl -fsSL -o sim-bin/busybox64u.exe https://frippery.org/files/busybox/busybox64u.exe && sha256sum sim-bin/*.exe && ls -la sim-bin
       - name: 셸 정보
         shell: bash
         run: |
