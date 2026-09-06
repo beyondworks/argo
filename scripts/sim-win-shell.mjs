@@ -38,7 +38,7 @@ const CORPUS = [
   { id: 20, cls: 'posix', cmd: 'ls nonexistent 2>/dev/null || echo missing', ok: rx(/missing/) },
   { id: 21, cls: 'posix', cmd: 'set -e; false; echo notreached', ok: (out, code) => code !== 0 && !/notreached/.test(out) },
   { id: 22, cls: 'posix', cmd: 'command -v node', ok: rx(/node/) },
-  { id: 23, cls: 'posix', cmd: 'rm -rf sim-out/a && ls sim-out', ok: (out, code) => code === 0 && !/(^|\s)a(\s|$)/.test(out) },
+  { id: 23, cls: 'posix', cmd: 'mkdir -p sim-out/a sim-out/b && rm -rf sim-out/a && ls sim-out', ok: (out, code) => code === 0 && /b/.test(out) && !/(^|\s)a(\s|$)/.test(out) },
   { id: 24, cls: 'posix', cmd: 'date +%Y', ok: rx(/20\d\d/) },
   { id: 25, cls: 'posix', cmd: 'echo "a b" | awk \'{print $2}\'', ok: rx(/^b/m) },
   { id: 26, cls: 'posix', cmd: 'echo $HOME', ok: rx(/[\\/]/) },

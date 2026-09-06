@@ -1,5 +1,8 @@
 name: sim-win-shell
-on: { workflow_dispatch: {} }
+on:
+  push:
+    branches: ['sim/**']
+  workflow_dispatch: {}
 jobs:
   sim:
     runs-on: windows-latest
