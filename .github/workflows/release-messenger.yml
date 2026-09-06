@@ -1,0 +1,267 @@
+# Argo 메신저 데스크톱 릴리스 — apps/messenger(Vite 정적 dist + Tauri 2, 사이드카 없음).
+# Argo 앱 release.yml의 맥 서명·공증 절차를 그대로 쓴다(tauri v2 번들러가 --timestamp를 안 붙여 ad-hoc 빌드 뒤
+# 우리가 전 Mach-O 재서명 → notarytool → stapler). 시크릿은 Argo와 같은 것(APPLE_*, TAURI_SIGNING_PRIVATE_KEY,
+# RELEASE_TOKEN)을 재사용하되, 발행 repo만 다르다: beyondworks/argo-messenger(업데이터 latest 별칭이 앱마다 하나라
+# argo-agent와 같은 repo를 쓸 수 없다). RELEASE_TOKEN PAT에 그 repo의 contents:write가 있어야 한다.
+#
+# 트리거: messenger-v* 태그 push(예: git tag messenger-v0.1.0 && git push origin messenger-v0.1.0) 또는 수동 실행.
+# 발행 태그는 릴리스 repo에서 v0.1.0(접두 messenger- 제거). 버전 4파일 정합은 bump-version.mjs --root apps/messenger.
+# 환경: 메신저는 Supabase에 직결하므로 공개 URL·anon 키를 빌드에 인라인한다(NEXT_PUBLIC_* secrets 재사용 — 같은 프로젝트).
+# 회사 서버(셀프호스트)는 앱 안 "서버" 프로필로 바꾸므로 빌드가 하나다.
+
+name: Build messenger app
+
+on:
+  push:
+    tags: ['messenger-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: apps/messenger
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            rust_target: aarch64-apple-darwin
+          - os: macos-15-intel
+            rust_target: x86_64-apple-darwin
+          - os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/messenger/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/messenger/src-tauri
+
+      # 루트 의존성도 필요하다 — vite.config가 @argo/* 별칭으로 루트 app/ 모듈(globals.css·ui.jsx·theme.jsx)을 가져온다.
+      - name: Install (root + messenger)
+        shell: bash
+        run: |
+          (cd ../.. && npm ci --no-audit --no-fund)
+          npm ci --no-audit --no-fund
+
+      - name: Version gate (4 files match; tag match when tagged)
+        shell: bash
+        run: |
+          cd ../..
+          if [[ "${GITHUB_REF}" == refs/tags/messenger-v* ]]; then
+            node scripts/bump-version.mjs --root apps/messenger --check "v${GITHUB_REF_NAME#messenger-v}"
+          else
+            node scripts/bump-version.mjs --root apps/messenger --check
+          fi
+
+      - name: Build messenger (vite + tauri)
+        shell: bash
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          [ -n "$VITE_SUPABASE_URL" ] || { echo "::error::NEXT_PUBLIC_SUPABASE_URL secret 누락 — 서버 없는 메신저가 발행된다"; exit 1; }
+          npx tauri build --target ${{ matrix.rust_target }}
+
+      # ── macOS: 재서명·공증·스테이플 (release.yml과 같은 절차; 앱 이름·볼륨명·target 경로만 다르다) ──
+      - name: Sign, notarize & staple (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_ID:-}" ]; then
+            echo "Apple 시크릿 미설정 — 서명·공증 스킵(ad-hoc 빌드 유지)"; exit 0
+          fi
+          BUNDLE_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle"
+          APP="$(ls -d "$BUNDLE_DIR"/macos/*.app | head -1)"
+          echo "APP=$APP"
+          KEYCHAIN="$RUNNER_TEMP/msgr-signing.keychain-db"
+          P12="$RUNNER_TEMP/cert.p12"
+          ENTITLEMENTS="$RUNNER_TEMP/entitlements.plist"
+          APP_ZIP="$RUNNER_TEMP/notarize-app.zip"
+          DMG_TMP="$RUNNER_TEMP/msgr-signed.dmg"
+          cleanup() { security delete-keychain "$KEYCHAIN" 2>/dev/null || true; rm -f "$P12" "$ENTITLEMENTS" "$APP_ZIP" "$DMG_TMP"; }
+          trap cleanup EXIT
+          notarize() {
+            local f="$1" attempt sub status id
+            for attempt in 1 2 3; do
+              echo "=== 공증 시도 $attempt/3: $(basename "$f") ==="
+              sub="$(xcrun notarytool submit "$f" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --output-format json --wait --timeout 30m || true)"
+              echo "$sub"
+              status="$(printf '%s' "$sub" | jq -r '.status // "unknown"' 2>/dev/null || echo unknown)"
+              id="$(printf '%s' "$sub" | jq -r '.id // empty' 2>/dev/null || true)"
+              if [ "$status" = "Accepted" ]; then return 0; fi
+              if [ "$status" = "Invalid" ] || [ "$status" = "Rejected" ]; then
+                echo "✗ 공증 거부(status=$status) — 로그:"
+                [ -n "$id" ] && xcrun notarytool log "$id" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+                return 1
+              fi
+              echo "⚠ 공증 미완(status=$status) — 60초 후 재시도"; sleep 60
+            done
+            echo "✗ 공증 3회 모두 미완"; return 1
+          }
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/["[:space:]]//g')
+          rm -f "$P12"
+          # 사이드카·JIT 실행파일이 없는 순수 웹뷰 앱 — 하드닝 런타임만으로 충분하다(entitlements는 빈 dict)
+          printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' '<plist version="1.0"><dict></dict></plist>' > "$ENTITLEMENTS"
+          echo "=== 재서명: nested Mach-O ==="
+          while IFS= read -r f; do
+            if file -b "$f" 2>/dev/null | grep -q 'Mach-O'; then
+              codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$APPLE_SIGNING_IDENTITY" --keychain "$KEYCHAIN" "$f"
+            fi
+          done < <(find "$APP" -type f)
+          codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$APPLE_SIGNING_IDENTITY" --keychain "$KEYCHAIN" "$APP"
+          codesign --verify --verbose=2 "$APP"
+          INFO="$(codesign -dvvv "$APP" 2>&1)"; echo "$INFO"
+          echo "$INFO" | grep -q '^Timestamp='                       || { echo '✗ secure timestamp 없음'; exit 1; }
+          echo "$INFO" | grep -Eq 'flags=0x[0-9a-fA-F]+\([^)]*runtime' || { echo '✗ hardened runtime 없음'; exit 1; }
+          echo "=== 공증: .app ==="
+          ditto -c -k --keepParent --sequesterRsrc "$APP" "$APP_ZIP"
+          notarize "$APP_ZIP" || exit 1
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          echo "=== 업데이터 아티팩트 재생성 ==="
+          MACOS_DIR="$BUNDLE_DIR/macos"
+          APP_BASENAME="$(basename "$APP")"
+          rm -f "$MACOS_DIR"/*.app.tar.gz "$MACOS_DIR"/*.app.tar.gz.sig
+          ( cd "$MACOS_DIR" && COPYFILE_DISABLE=1 tar czf "${APP_BASENAME}.tar.gz" "$APP_BASENAME" )
+          npx tauri signer sign "$MACOS_DIR/${APP_BASENAME}.tar.gz" </dev/null
+          echo "=== DMG 재생성 ==="
+          DMG_DIR="$BUNDLE_DIR/dmg"
+          ORIG_DMG="$(ls "$DMG_DIR"/*.dmg 2>/dev/null | head -1 || true)"
+          DMG_STAGE="$(mktemp -d)"
+          cp -R "$APP" "$DMG_STAGE/"
+          ln -s /Applications "$DMG_STAGE/Applications"
+          hdiutil create -volname "Argo Messenger" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_TMP"
+          rm -rf "$DMG_STAGE"
+          codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" --keychain "$KEYCHAIN" "$DMG_TMP"
+          notarize "$DMG_TMP" || exit 1
+          xcrun stapler staple "$DMG_TMP"
+          xcrun stapler validate "$DMG_TMP"
+          rm -f "$DMG_DIR"/*.dmg
+          if [ -n "$ORIG_DMG" ]; then cp "$DMG_TMP" "$ORIG_DMG"; else cp "$DMG_TMP" "$DMG_DIR/argo-messenger.dmg"; fi
+          ls -la "$DMG_DIR"
+
+      - name: Collect installers
+        shell: bash
+        run: |
+          B="src-tauri/target/${{ matrix.rust_target }}/release/bundle"
+          mkdir -p dist
+          cp "$B"/dmg/*.dmg dist/ 2>/dev/null || true
+          cp "$B"/nsis/*.exe "$B"/nsis/*.sig dist/ 2>/dev/null || true
+          for f in "$B"/macos/*.app.tar.gz;     do [ -e "$f" ] && cp "$f" "dist/argo-messenger-${{ matrix.rust_target }}.app.tar.gz"; done
+          for f in "$B"/macos/*.app.tar.gz.sig; do [ -e "$f" ] && cp "$f" "dist/argo-messenger-${{ matrix.rust_target }}.app.tar.gz.sig"; done
+          # 고정 파일명 — 랜딩·마켓 카드의 releases/latest 직다운로드 링크가 버전과 무관하게 유지되도록
+          for f in "$B"/dmg/*aarch64.dmg;  do [ -e "$f" ] && cp "$f" dist/argo-messenger-macos-apple-silicon.dmg; done
+          for f in "$B"/dmg/*x64.dmg;      do [ -e "$f" ] && cp "$f" dist/argo-messenger-macos-intel.dmg; done
+          for f in "$B"/nsis/*-setup.exe;  do [ -e "$f" ] && cp "$f" dist/argo-messenger-windows-setup.exe; done
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: argo-messenger-${{ matrix.rust_target }}
+          path: apps/messenger/dist/*
+          if-no-files-found: error
+          retention-days: 3
+
+  release:
+    needs: [build]
+    if: always() && startsWith(github.ref, 'refs/tags/messenger-v')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate updater manifest (latest.json)
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          node - <<'EOS'
+          const fs = require('fs');
+          const tag = process.env.TAG.replace(/^messenger-/, ''); // 릴리스 repo 태그 = v0.1.0
+          const dir = 'dist';
+          const base = `https://github.com/beyondworks/argo-messenger/releases/download/${tag}`;
+          const entry = (f) => ({ url: `${base}/${f}`, signature: fs.readFileSync(`${dir}/${f}.sig`, 'utf8').trim() });
+          const pick = (re) => fs.readdirSync(dir).find((f) => re.test(f));
+          const platforms = {};
+          for (const [key, re] of [
+            ['darwin-aarch64', /aarch64-apple-darwin\.app\.tar\.gz$/],
+            ['darwin-x86_64', /x86_64-apple-darwin\.app\.tar\.gz$/],
+            ['windows-x86_64', /_x64-setup\.exe$/],
+          ]) {
+            const f = pick(re);
+            if (f && fs.existsSync(`${dir}/${f}.sig`)) platforms[key] = entry(f);
+            else console.warn(`[manifest] ${key} updater artifact missing`);
+          }
+          // 전부-또는-없음(release.yml G007과 같은 규칙): 부분 매니페스트는 빠진 플랫폼을 영영 굶긴다.
+          const missing = ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64'].filter((k) => !platforms[k]);
+          if (missing.length === 0) {
+            fs.writeFileSync(`${dir}/latest.json`, JSON.stringify({ version: tag.replace(/^v/, ''), pub_date: new Date().toISOString(), platforms }, null, 2));
+            console.log(fs.readFileSync(`${dir}/latest.json`, 'utf8'));
+          } else {
+            fs.writeFileSync(`${dir}/MANIFEST-INCOMPLETE.txt`, `업데이터 매니페스트 불완전 — 누락: ${missing.join(', ')}. 게시 전 복구할 것.\n`);
+            console.log(`::warning::updater manifest incomplete — missing: ${missing.join(', ')}`);
+          }
+          EOS
+      - name: Release tag (strip messenger- prefix)
+        id: tag
+        shell: bash
+        run: echo "tag=${GITHUB_REF_NAME#messenger-}" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v2
+        with:
+          repository: beyondworks/argo-messenger
+          token: ${{ secrets.RELEASE_TOKEN }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Argo Messenger ${{ steps.tag.outputs.tag }}
+          files: dist/**/*
+          draft: true
+          body: |
+            ## Argo Messenger — 팀 메신저 / Team messenger
+
+            | 내 컴퓨터 / Your machine | 받을 파일 / Download |
+            |---|---|
+            | **Mac — Apple Silicon** | argo-messenger-macos-apple-silicon.dmg |
+            | **Mac — Intel** | argo-messenger-macos-intel.dmg |
+            | **Windows 10+** | argo-messenger-windows-setup.exe |
+
+            Argo 계정으로 로그인하고 초대 링크로 조직에 들어갑니다. 크루는 Argo 앱 → 설정 → 연결 → "조직에 크루 파견"에서 보냅니다.
+            Sign in with your Argo account and join an org via invite link. Dispatch crews from the Argo app → Settings → Connections.

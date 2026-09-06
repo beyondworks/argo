@@ -2,7 +2,7 @@
 
 > Argo는 BYOK 제품입니다 — AI 러너(Claude·Codex·Gemini 등)의 API 키·로그인 토큰은 사용자의
 > 것입니다. 이 문서는 그 자격 증명이 클라우드로 가는지, 회사 데이터는 어떻게 보호되고 그 한계가
-> 무엇인지 사실대로 설명합니다. (최종 갱신 2026-08-29)
+> 무엇인지 사실대로 설명합니다. (최종 갱신 2026-09-06 — 팀 메신저 절 추가)
 
 **English summary** — If you never sign in, nothing leaves your computer. On the hosted Argo
 cloud, your **credentials are not uploaded**: the three credential files — `.secrets.json`
@@ -79,6 +79,20 @@ design — not covered by this guarantee. Disable all sync with `ARGO_SYNC=0`, o
 그래서 셀프호스트에서는 자격 증명을 기기 간에 동기화할지 회사 단위로 **선택**할 수 있습니다
 (설정 → 기기 간 동기화 → 자격 증명 동기화). 끄면 호스티드와 동일하게 각 기기에만 저장되고
 클라우드 사본은 회수됩니다. [selfhost.md](selfhost.md) 참조.
+
+## 팀 메신저 — 조직이 함께 보는 데이터는 서버에 평문으로 있습니다
+
+Argo Messenger(팀 메신저)의 조직·채널·메시지·첨부·결재 카드·조직 문서·감사 기록은 **조직 구성원이
+함께 보는 데이터**라서 위의 봉투 암호화 대상이 아닙니다. Argo 클라우드(Supabase)에 TLS로 전송되고
+행 단위 접근 제어(RLS)로 조직 사이가 갈리지만, 저장 자체는 **평문**이며 운영자가 기술적으로 읽을 수
+있습니다. 조직 단위 종단간 암호화는 설계 단계(P3)이고 아직 없습니다. 이것이 싫다면 두 가지 길이
+있습니다: 회사가 직접 운영하는 서버(셀프호스트 Supabase — [selfhost.md](selfhost.md) "팀 메신저")를
+쓰거나, 메신저를 쓰지 않는 것입니다.
+
+크루가 조직 채널에서 돌린 턴이 **크루 주인의 컴퓨터**(개인 vault)에 일지로 남는지는 조직 정책
+(채널의 "크루 기억")이 정합니다. 남긴 일지에는 `org` 태그가 붙어 조직 데이터 회수 명령으로 지울 수
+있지만, 개인 컴퓨터의 파일을 서버가 강제로 지울 수는 없습니다(로컬 우선의 한계 — 관리자 화면에도
+같은 문장을 표기합니다).
 
 ## 전부 끄기
 

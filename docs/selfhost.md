@@ -52,3 +52,25 @@ curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/in
 - 타르볼 = `scripts/stage-server.mjs`(stage-sidecar와 동일 조립 계약: standalone+static/public+SDK 네이티브+시크릿 유출 가드). CI `server` 잡(ubuntu, 릴리스 자산에 `argo-server-<ver>-linux-x64.tar.gz` + `install.sh` 동봉).
 - 2026-07-20 스모크: 타르볼 추출 → `node server.js` → ping `{"argo":true}` + 홈 200(로컬 모드) 실측.
 - 2차 예정: 맥/윈도 CLI 설치, Docker 이미지, 인증 모드 셀프호스트 가이드, `argo update` 전용 명령.
+
+## 팀 메신저 (Argo Messenger) — 회사 서버로 운영하기
+
+메신저의 서버는 **Supabase 프로젝트 하나**다(조직·채널은 그 안의 행, RLS가 조직 사이를 가른다). Argo 클라우드를
+쓰지 않고 회사가 직접 운영하려면, 회사 소유의 Supabase(호스티드 프로젝트 또는 셀프호스트 스택)에 같은
+마이그레이션을 적용하고 앱에서 서버만 바꾼다. 라이선스는 계약 기반이다(문의: 랜딩 "문의").
+
+1. **마이그레이션 적용** — 레포의 `supabase/migrations/20260903120000_msgr.sql`(+ `is_pro` 좌석 OR을 포함한 선행
+   마이그레이션 전체)을 회사 프로젝트에 순서대로 적용한다: `supabase db push` 또는 SQL 편집기. 크기가 커서
+   섹션 표지(`-- ==== ...`) 기준으로 나눠 넣어도 된다(문장 중간에서 자르지 말 것).
+2. **첨부 버킷** — 마이그레이션은 버킷을 만들지 않는다:
+   `insert into storage.buckets (id, name, public, file_size_limit) values ('msgr', 'msgr', false, 26214400);`
+3. **인증** — 이메일 OTP(매직 코드) 발송이 되도록 Supabase Auth의 SMTP를 회사 메일로 설정한다.
+4. **앱에서 서버 지정** — Argo Messenger 로그인 화면 아래 "서버"를 펼쳐 회사 프로젝트 URL과 공개(anon) 키를 넣고
+   "이 서버 사용". 값은 그 기기에만 저장된다(빌드는 하나, 프로필만 다르다). 되돌리려면 "Argo 클라우드로 되돌리기".
+5. **크루 브리지(Argo 앱)** — 크루 주인의 Argo 앱도 같은 서버를 봐야 한다: Argo 셀프호스트 서버의 `.env.local`에
+   `NEXT_PUBLIC_SUPABASE_URL`·`NEXT_PUBLIC_SUPABASE_ANON_KEY`·`SUPABASE_SERVICE_ROLE_KEY`를 회사 프로젝트 값으로.
+6. **회사 노드(선택)** — 회사 크루를 두려면 조직 카드 "회사 노드"의 연결 코드로 `node scripts/msgr-node-bootstrap.mjs`를
+   회사 서버(리눅스)에서 한 번 실행한다.
+
+확인: 로그인 → 조직 만들기 → 채널에 글 → 첨부 업로드(버킷) → Argo 앱에서 크루 파견 → @멘션 답변까지가 한 바퀴다.
+데이터는 전부 회사 프로젝트에 평문으로 남는다([privacy-sync.md](privacy-sync.md) "팀 메신저").

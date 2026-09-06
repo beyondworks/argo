@@ -17,6 +17,9 @@ import { pathToFileURL } from 'node:url';
 // 체크아웃을 보장하는 데 의존한다 — 그 줄이 지워지면 Windows에서 이 정규식만 조용히 깨진다.
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 
+/** Cargo.toml [package] name — Cargo.lock에서 우리 앱 블록을 찾는 앵커(Argo 앱 "app", 메신저 "argo-messenger"). */
+export function crateName(toml) { return toml.match(/^name = "([^"]+)"/m)?.[1] ?? 'app'; }
+
 /** 4파일의 현재 버전 읽기 — { file: version } (export: 테스트용, root 주입 가능) */
 export async function readVersions(root = process.cwd()) {
   const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
@@ -24,7 +27,8 @@ export async function readVersions(root = process.cwd()) {
   const toml = await readFile(join(root, 'src-tauri', 'Cargo.toml'), 'utf8');
   const lock = await readFile(join(root, 'src-tauri', 'Cargo.lock'), 'utf8');
   const tomlV = toml.match(/^version = "([^"]+)"/m)?.[1] ?? null;
-  const lockV = lock.match(/\[\[package\]\]\nname = "app"\nversion = "([^"]+)"/)?.[1] ?? null;
+  const crate = crateName(toml);
+  const lockV = lock.match(new RegExp(`\\[\\[package\\]\\]\\nname = "${crate}"\\nversion = "([^"]+)"`))?.[1] ?? null;
   return {
     'package.json': pkg.version ?? null,
     'src-tauri/tauri.conf.json': conf.version ?? null,
@@ -58,9 +62,10 @@ export async function bumpVersions(next, root = process.cwd()) {
   await writeFile(pkgPath, (await readFile(pkgPath, 'utf8')).replace(`"version": "${cur}"`, `"version": "${next}"`));
   await writeFile(confPath, (await readFile(confPath, 'utf8')).replace(`"version": "${cur}"`, `"version": "${next}"`));
   await writeFile(tomlPath, (await readFile(tomlPath, 'utf8')).replace(new RegExp(`^version = "${cur.replace(/\./g, '\\.')}"`, 'm'), `version = "${next}"`));
+  const crate = crateName(await readFile(tomlPath, 'utf8'));
   await writeFile(lockPath, (await readFile(lockPath, 'utf8')).replace(
-    `[[package]]\nname = "app"\nversion = "${cur}"`,
-    `[[package]]\nname = "app"\nversion = "${next}"`,
+    `[[package]]\nname = "${crate}"\nversion = "${cur}"`,
+    `[[package]]\nname = "${crate}"\nversion = "${next}"`,
   ));
 
   const after = await checkVersions(root); // 사후 재검증 — 하나라도 안 갈렸으면 여기서 불일치로 잡힌다
@@ -72,21 +77,25 @@ export async function bumpVersions(next, root = process.cwd()) {
 // pathToFileURL 필수(분리 검수 필수 지적): 문자열 결합 `file://${argv[1]}`은 Windows 드라이브·
 // 공백 경로에서 import.meta.url과 어긋나 CLI가 **무발화 exit 0** — CI 게이트가 있는 척만 하게 된다.
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const arg = process.argv[2];
+  const argv = process.argv.slice(2);
+  const ri = argv.indexOf('--root'); // 하위 앱 범프(메신저: --root apps/messenger) — 4파일 규약은 동일
+  const root = ri >= 0 ? join(process.cwd(), argv[ri + 1] ?? '') : process.cwd();
+  if (ri >= 0) argv.splice(ri, 2);
+  const arg = argv[0];
   try {
     if (arg === '--check') {
-      const v = await checkVersions();
+      const v = await checkVersions(root);
       // 태그 대조 모드(검수 권고 1): --check v0.1.32 — 태그와 파일 버전이 어긋나면 모든 기기가
       // 영구 업데이트 루프(설치해도 버전 그대로라 계속 제안)에 빠진다. 태그 경로에서 필수.
-      const expected = process.argv[3]?.replace(/^v/, '');
+      const expected = argv[1]?.replace(/^v/, '');
       if (expected && expected !== v) throw new Error(`태그-파일 버전 불일치: 태그=${expected}, 파일=${v}`);
       console.log(`버전 일치: ${v} (4파일${expected ? ` + 태그 대조` : ''})`);
     } else if (arg) {
-      const { from, to } = await bumpVersions(arg);
+      const { from, to } = await bumpVersions(arg, root);
       console.log(`범프 완료: ${from} → ${to} (4파일)`);
       console.log('다음: git diff 확인 → 커밋 → 태그 푸시(v' + to + ') 또는 workflow_dispatch');
     } else {
-      console.error('사용: node scripts/bump-version.mjs <x.y.z> | --check');
+      console.error('사용: node scripts/bump-version.mjs [--root <dir>] <x.y.z> | --check [vX.Y.Z]');
       process.exit(2);
     }
   } catch (e) {
