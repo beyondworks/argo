@@ -429,7 +429,7 @@ test('G-4 조직 문서 제안: 브리지 미러가 kind org_doc·payload를 싣
   assert.match(chatSrc, /const proposeOrgDoc = tool\(\n\s*'propose_org_doc',/, '도구 정의');
   assert.match(chatSrc, /const path = `\$\{folder\}\/\$\{docSlug\(slug \|\| title\)\}\.md`;/, '영문 slug 인자 우선(한글 제목은 시간 기반 이름)');
   assert.match(chatSrc, /if \(mirrorCtx\?\.kind !== 'msgr'\) return text\('이 도구는 팀 메신저 조직 채널의 턴에서만/, '메신저 밖 거절');
-  assert.match(chatSrc, /requestApproval, requestToolInstall, \.\.\.\(mirrorCtx\?\.kind === 'msgr' \? \[proposeOrgDoc\] : \[\]\),/, '메신저 턴에만 등록');
+  assert.match(chatSrc, /startLongTask,\n\s*\.\.\.\(mirrorCtx\?\.kind === 'msgr' \? \[proposeOrgDoc\] : \[\]\),/, '메신저 턴에만 등록(최종 배열 한 원천 — 네이티브 sink도 같은 배열, 검수 핀 유지를 위해 뒤에 붙인다)');
   assert.match(chatSrc, /kind: 'org_doc',[\s\S]{0,400}payload: \{ scope, channel_id: scope === 'channel' \? mirrorCtx\.channelId : null, path, title: String\(title\)\.slice\(0, 120\), body: String\(body\)\.slice\(0, 65536\) \}/, '제안 payload');
   const actions = readFileSync(new URL('../src/approval-actions.mjs', import.meta.url), 'utf8');
   assert.match(actions, /\} else if \(item\.kind === 'org_doc'\) \{[\s\S]*?서버가 문서에 반영했다[\s\S]*?다시 쓰거나 제안하지 마라/, '후속 문구');
