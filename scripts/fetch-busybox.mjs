@@ -28,12 +28,12 @@ async function download(url, { fetchImpl, attempts = 3, timeoutMs = 20_000, wait
   }
   throw new Error(`busybox 다운로드 실패(${attempts}회): ${String(last?.message || last)} ${url} — 오프라인이면 ARGO_BUSYBOX_PATH=<파일>`);
 }
-export async function fetchBusybox(destDir, { url = BUSYBOX_URL, sha256 = BUSYBOX_SHA256, localPath = process.env.ARGO_BUSYBOX_PATH, fetchImpl = globalThis.fetch, attempts, timeoutMs, waitMs } = {}) {
+export async function fetchBusybox(destDir, { url = BUSYBOX_URL, sha256 = BUSYBOX_SHA256, localPath = process.env.ARGO_BUSYBOX_PATH, vendorDir = VENDOR_DIR, fetchImpl = globalThis.fetch, attempts, timeoutMs, waitMs } = {}) {
   const dest = join(destDir, BUSYBOX_FILE);
   // 이미 같은 해시의 파일이 있으면 그대로(CI 캐시·재빌드 — 배포 서버를 다시 두드리지 않는다)
   if (existsSync(dest)) { const cur = readFileSync(dest); if (sha(cur) === sha256) return { dest, bytes: cur.length, sha256, cached: true }; }
   // 출처 순서: ARGO_BUSYBOX_PATH → 레포 동봉본(vendor/ — 빌드·CI가 배포 서버에 의존하지 않게: frippery.org가 GitHub 러너에서 연결 타임아웃·fetch failed로 두 번 죽었다, 2026-09-06) → URL(동봉본이 없을 때만)
-  const vendored = join(VENDOR_DIR, BUSYBOX_FILE);
+  const vendored = join(vendorDir, BUSYBOX_FILE);
   const buf = localPath ? readFileSync(localPath) : existsSync(vendored) ? readFileSync(vendored) : await download(url, { fetchImpl, attempts, timeoutMs, waitMs });
   const got = sha(buf);
   if (got !== sha256) throw new Error(`busybox 해시 불일치 — 기대 ${sha256}, 실제 ${got} (${localPath || url}). 새 릴리스면 fetch-busybox.mjs의 상수를 갱신하고 시뮬을 다시 돌릴 것`);
