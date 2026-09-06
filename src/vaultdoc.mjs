@@ -32,6 +32,7 @@ export function docKind(rel) {
     return 'other'; // 정리 산출물도 일지 원본도 아닌 것 — 인덱스에 싣지 않는다(기존 동작과 동일)
   }
   if (rel.startsWith('conversations/')) return 'legacy';
+  if (rel.startsWith('org/')) return 'org'; // 팀 메신저 조직 문서 미러(G-2) — 읽기 전용, 주제 노트처럼 검색·인덱스에 오른다
   return 'other';
 }
 

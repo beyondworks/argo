@@ -366,7 +366,7 @@ test('배선 — chat의 재귀 호출 전부가 toolHop을 싣는다(하나라�
 
 test('배선 — CLI 프롬프트가 커넥터 요약을 systemPromptFor·commonDirectives **양쪽**에 넘긴다', () => {
   // commonDirectives 쪽이 빠지면 결재 선행 규칙(connectorLine)이 CLI에만 통째로 사라진다.
-  const m = chatSrc.match(/systemPromptFor\(md, p\.root, skills, meta, lang, \{([^{}]*)\}\)\}\$\{commonDirectives\(\{([^{}]*)\}\)/);
+  const m = chatSrc.match(/systemPromptFor\(md, p\.root, skills, meta, lang, \{([^{}]*)\}\)\}(?:\$\{orgRules\})?\$\{commonDirectives\(\{([^{}]*)\}\)/); // G-3 조직 규칙 블록이 사이에 끼어도 배선 판정은 같다
   assert.ok(m, 'CLI 프롬프트 조립 지점을 못 찾았다 — 앵커가 낡았다');
   assert.match(m[1], /connectors:\s*cliConnectors/, 'systemPromptFor에 커넥터 요약 누락');
   assert.match(m[2], /connectors:\s*cliConnectors/, 'commonDirectives에 커넥터 요약 누락 = 결재 선행 규칙이 CLI에서 소실');

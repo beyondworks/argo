@@ -12,6 +12,8 @@ export const THEMES = [
   'codex-gh-light', 'codex-gh-dark', 'enjoyer', 'minimal-light', 'minimal-dark',
   // 중성 회색(유건 지정 2026-08-01). 'graphite'는 **시스템 자동** — argo와 같은 방식으로 다크/라이트를 따라간다.
   'graphite', 'graphite-light', 'graphite-dark',
+  // 웜 뉴트럴(메신저 시안 2026-09-03 승인). 'linen'은 시스템 자동, 나머지는 고정. 메신저 앱의 기본값.
+  'linen', 'linen-light', 'linen-dark',
 ];
 // 기본값 — 그래파이트(시스템 자동). 유건 지시 2026-08-23: 기본 테마를 그래파이트로, 아르고는 선택 가능하게 유지.
 // 'argo'만 data-theme 없이(:root 토큰) 렌더되므로 기본값이 바뀌어도 argo 분기는 그대로 둔다.
@@ -28,13 +30,14 @@ function apply(theme) {
 
 const ThemeCtx = createContext(null);
 
-export function ThemeProvider({ children }) {
-  const [theme, setThemeState] = useState(DEFAULT_THEME);
+// defaultTheme — 앱별 첫 페인트 기본값(메신저는 'linen'). 저장값이 있으면 그것이 이긴다. Argo 앱은 인자 없이 DEFAULT_THEME.
+export function ThemeProvider({ children, defaultTheme = DEFAULT_THEME }) {
+  const [theme, setThemeState] = useState(defaultTheme);
 
   useEffect(() => {
     const saved = localStorage.getItem(KEY);
-    if (THEMES.includes(saved)) { setThemeState(saved); apply(saved); } else apply(DEFAULT_THEME);
-  }, []);
+    if (THEMES.includes(saved)) { setThemeState(saved); apply(saved); } else apply(defaultTheme);
+  }, [defaultTheme]);
 
   const setTheme = useCallback((next) => {
     if (!THEMES.includes(next)) return;

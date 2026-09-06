@@ -1,0 +1,532 @@
+/* 메신저 컴포넌트 — 시안 v2(design/system-v2.css)를 .msgr-* 접두로 이식. 색은 토큰만(평문 금지). 모티프 4개:
+   ① 타임라인 척추 ② 사람 원 / 크루 타일 + 별 배지 ③ 2단 다크 독(.msgr-composer는 linen 차콜 스코프 — globals.css) ④ 결재 슬립.
+   Argo 부품은 .shell .side(토큰 스코프) .btn .chip과 DropUp·Markdown·imeGuardWith만 쓴다. */
+.mi { flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.mi.fill { fill: currentColor; stroke: none; }
+.msgr-klabel { font-size: 11px; font-weight: 500; letter-spacing: 0.02em; color: var(--fg-3); }
+.msgr-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--fg-3); flex: none; display: inline-block; }
+.msgr-dot.mark { background: var(--mark); } .msgr-dot.ok { background: var(--ok); }
+.msgr-kbd { font-family: var(--mono); font-size: 10px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; background: var(--card); }
+
+/* 아바타 — 사람 원 / 크루 타일(r9) + 옐로 별 */
+.msgr-av { width: 28px; height: 28px; border-radius: 999px; flex: none; display: grid; place-items: center; font-weight: 600; font-size: 11.5px; color: var(--fg); background: var(--card); border: 1px solid var(--border); position: relative; }
+.msgr-av.crew { border-radius: 9px; background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+.msgr-av.crew .star { position: absolute; right: -6px; top: -6px; width: 15px; height: 15px; border-radius: 999px; background: var(--mark); border: 2px solid var(--bg); display: grid; place-items: center; z-index: 1; }
+.msgr-av.crew .star svg { width: 8px; height: 8px; fill: var(--mark-fg); }
+.msgr-av.crew.company .star { border-radius: 4px; background: var(--primary); border-color: var(--mark); color: var(--mark); }
+.msgr-av.crew.company .star svg { width: 9px; height: 9px; }
+.msgr-tier { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); color: var(--fg-2); }
+.msgr-tier.company { border-color: var(--mark); color: var(--fg); }
+.msgr-crewsheet .note.tier { margin: 2px 0 6px; }
+.msgr-av.lg { width: 40px; height: 40px; font-size: 14px; } .msgr-av.lg.crew { border-radius: 12px; }
+.msgr-av.sm { width: 22px; height: 22px; font-size: 10px; }
+
+/* ── 레일(.side 토큰 스코프 안: linen에선 차콜) ── */
+.msgr-side { width: 268px; padding: 16px 14px 14px; gap: 4px; border-right: 1px solid var(--border-soft); overflow: hidden; } /* 스크롤은 railbody만 — 풋터는 항상 보인다(QA: 채널 30개면 풋터가 밀려 사라졌다) */
+.msgr-railbody { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
+.shell.msgr-shell { grid-template-columns: 268px minmax(0, 1fr); height: calc(100vh / var(--z, 1)); min-height: 0; }
+.msgr-brand { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; font-family: var(--mono); font-weight: 600; letter-spacing: 0.16em; font-size: 12px; }
+.msgr-brand svg { fill: var(--mark); }
+/* 조직 알약 — 아바타·이름·화살표 하나로(유건 실검수: 드롭다운 상자 룩 제거). 누르면 아래에 메뉴 */
+.msgr-orgwrap { position: relative; }
+.msgr-org { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 12px 6px 6px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); color: var(--fg); font: inherit; font-weight: 600; font-size: 13.5px; text-align: left; cursor: pointer; transition: background 120ms ease; }
+.msgr-org:hover, .msgr-org.open { background: var(--card-2); }
+.msgr-org .msgr-av { border-radius: 9px; width: 30px; height: 30px; background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+.msgr-org .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-org .caret { color: var(--fg-3); transition: transform 160ms cubic-bezier(.23,1,.32,1); }
+.msgr-org.open .caret { transform: rotate(180deg); }
+.msgr-menu-pop { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 70; padding: 6px; border-radius: 16px; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow-float); display: grid; gap: 2px; animation: msgrPopIn 160ms cubic-bezier(0.23,1,0.32,1) both; }
+.msgr-menu-pop button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-radius: 10px; padding: 7px 8px; font: inherit; font-size: 12.5px; color: var(--fg); background: none; cursor: pointer; }
+.msgr-menu-pop button:hover, .msgr-menu-pop button.on { background: var(--card-2); }
+.msgr-menu-pop button.on .label { font-weight: 600; }
+.msgr-menu-pop .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-menu-pop .sep { height: 1px; background: var(--border-soft); margin: 4px 6px; }
+.msgr-menu-pop .seatline { padding: 4px 10px 2px; }
+.msgr-av.ghost { background: transparent; border-style: dashed; color: var(--fg-3); }
+.msgr-scrim { display: none; } /* 레일 오버레이 스크림은 폰 폭에서만 — 데스크톱에서 rail 상태가 켜지면 스타일 없는 div가 그리드 첫 칸을 차지해 레일이 밀리고 본문이 다음 행으로 떨어졌다(QA 실측) */
+.msgr-scrim.clear { display: block; background: transparent; z-index: 65; position: fixed; inset: 0; }
+.msgr-group { display: flex; align-items: center; justify-content: space-between; padding: 0 6px; margin: 18px 0 8px; font-size: 11px; font-weight: 500; letter-spacing: 0.02em; color: var(--fg-3); }
+.msgr-group .btn { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--fg-3); }
+.msgr-group .btn:hover { background: var(--card-2); color: var(--fg); }
+.msgr-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px; }
+.msgr-chan { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px 0 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-2); font-size: 12.5px; font-weight: 500; background: none; cursor: pointer; transition: background 120ms ease, color 120ms ease; max-width: 100%; }
+.msgr-chan .mi { color: var(--fg-3); }
+.msgr-chan span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-chan:hover { background: var(--card-2); color: var(--fg); }
+.msgr-chan.active { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+.msgr-chan.active .mi { color: var(--primary-fg); }
+.msgr-chan.more { border-style: dashed; color: var(--fg-3); }
+.msgr-crewcard { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: center; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; padding: 10px; border-radius: 14px; background: var(--card); border: 1px solid var(--border-soft); transition: background 120ms ease; }
+.msgr-crewcard.on { border-color: var(--mark); }
+.msgr-crewcard + .msgr-crewcard { margin-top: 6px; }
+.msgr-crewcard:hover { background: var(--card-2); }
+.msgr-crewcard .msgr-av.crew .star { border-color: var(--card); }
+.msgr-crewcard .name { font-weight: 600; color: var(--fg); display: flex; align-items: center; gap: 8px; }
+.msgr-crewcard .name .st { font-size: 10.5px; font-weight: 500; color: var(--mark); margin-left: auto; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.msgr-crewcard .name .st.off { color: var(--fg-3); }
+.msgr-crewcard .name .st .msgr-dot { width: 6px; height: 6px; }
+.msgr-crewcard .sub { font-size: 11px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msgr-hint { padding: 6px 8px; font-size: 12px; color: var(--fg-3); line-height: 1.5; }
+.msgr-hint b { color: var(--fg-2); font-weight: 500; }
+.msgr-stack { display: flex; align-items: center; padding: 0 6px; min-width: 0; }
+.msgr-stack .msgr-av { background: var(--card); border-color: var(--bg); }
+.msgr-stack > * + * { margin-left: -4px; } /* 아바타가 버튼에 싸여도 겹침 유지(검수 MEDIUM-4) */
+.msgr-stack > .more { margin-left: 10px; }
+.msgr-stack .more { margin-left: 10px; font-size: 11.5px; color: var(--fg-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-foot { margin-top: auto; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 8px; padding: 12px 6px 0; border-top: 1px solid var(--border-soft); color: var(--fg-2); font-size: 12.5px; }
+.msgr-foot .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-foot .btn.ghost { border: 0; background: none; color: var(--fg-3); width: 30px; height: 30px; padding: 0; border-radius: 9px; }
+.msgr-foot .btn.ghost:hover, .msgr-foot .btn.ghost.on { background: var(--card-2); color: var(--fg); }
+
+/* ── 본문 ── */
+.msgr-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: calc(100vh / var(--z, 1)); }
+.msgr-top { display: flex; align-items: center; gap: 14px; padding: 14px 24px 12px; border-bottom: 1px solid var(--border); background: var(--bg); }
+.msgr-top .title { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; white-space: nowrap; }
+.msgr-top .title .mi { color: var(--fg-3); }
+.msgr-top .topic { font-size: 12.5px; color: var(--fg-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-top .members { display: flex; align-items: center; margin-left: auto; }
+.msgr-top .members .msgr-av { margin-left: -4px; border-color: var(--bg); }
+.msgr-top .members .msgr-av:first-child { margin-left: 0; }
+.msgr-top .members .msgr-av.crew .star { display: none; } /* 스택에선 타일 실루엣만 — 별이 옆 아바타를 덮는다 */
+.msgr-seg { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--border-soft); }
+.msgr-seg button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--fg-2); border: 0; background: none; cursor: pointer; white-space: nowrap; transition: background 120ms ease, color 120ms ease; }
+.msgr-seg button.active { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
+.msgr-seg button .n { font-family: var(--mono); font-size: 10.5px; opacity: .8; }
+.msgr-notice { display: flex; align-items: center; gap: 8px; padding: 8px 24px 0; font-size: 12.5px; }
+.msgr-thread { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable both-edges; padding: 20px max(24px, calc((100% - 720px) / 2)) 8px; overscroll-behavior: contain; }
+.msgr-spine { position: relative; display: flex; flex-direction: column; gap: 20px; }
+.msgr-spine::before { content: ''; position: absolute; left: 13px; top: 8px; bottom: 8px; width: 2px; background: var(--border); border-radius: 2px; }
+.msgr-tnode { display: flex; align-items: center; gap: 12px; position: relative; }
+.msgr-tnode .msgr-dot { width: 10px; height: 10px; margin-left: 9px; box-shadow: 0 0 0 4px var(--bg); }
+.msgr-tnode .msgr-klabel { color: var(--fg-2); } .msgr-tnode b { font-weight: 600; color: var(--fg); }
+.msgr-row { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 14px; position: relative; animation: msgrRise 250ms cubic-bezier(.23,1,.32,1) both; }
+@keyframes msgrRise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.msgr-row > .msgr-av { box-shadow: 0 0 0 4px var(--bg); }
+.msgr-row .who { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; font-weight: 600; margin: 5px 0 4px; }
+.msgr-row .who .role { font-size: 11px; font-weight: 400; color: var(--fg-3); }
+.msgr-row .who .ts { font-family: var(--mono); font-size: 10px; font-weight: 500; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.msgr-row .text { font-size: 13.5px; line-height: 1.6; max-width: 640px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msgr-sheet { background: var(--card); border: 1px solid var(--border); border-radius: 6px 20px 20px 20px; padding: 13px 16px; font-size: 13.5px; line-height: 1.6; max-width: 640px; min-width: 0; }
+.msgr-quote .q { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-quote { display: flex; gap: 8px; align-items: center; min-width: 0; color: var(--fg-3); font-size: 12px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msgr-mine .msgr-quote { color: var(--primary-fg-dim); border-color: var(--primary-fg-line); }
+.msgr-acts { display: flex; gap: 4px; margin-top: 6px; opacity: 0; transition: opacity 150ms ease; }
+.msgr-row:hover .msgr-acts, .msgr-row:focus-within .msgr-acts, .msgr-mine:hover .msgr-acts, .msgr-mine:focus-within .msgr-acts { opacity: 1; }
+.msgr-acts button { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-3); padding: 3px 8px; border-radius: 999px; border: 1px solid transparent; background: none; cursor: pointer; transition: background 120ms ease, color 120ms ease; }
+.msgr-acts button:hover { background: var(--card); border-color: var(--border); color: var(--fg); }
+.msgr-file { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 7px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--border-soft); font-family: var(--mono); font-size: 11px; color: var(--fg-2); vertical-align: middle; cursor: pointer; margin: 6px 6px 0 0; }
+.msgr-file .mi { color: var(--fg-3); }
+.msgr-mine { display: grid; justify-items: end; gap: 4px; margin-left: 42px; animation: msgrRise 250ms cubic-bezier(.23,1,.32,1) both; }
+.msgr-mine .bubble { max-width: min(88%, 620px); background: var(--primary); color: var(--primary-fg); border-radius: 20px 6px 20px 20px; padding: 10px 15px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msgr-mine .meta { font-size: 11px; color: var(--fg-3); display: flex; gap: 8px; align-items: center; }
+.msgr-mine .meta .mi { color: var(--ok); }
+.msgr-mine .meta .mono { font-size: 10px; font-weight: 500; }
+.msgr-mention { white-space: nowrap; font-weight: 600; }
+.msgr-typing { display: inline-flex; gap: 4px; padding: 11px 13px; background: var(--card); border: 1px solid var(--border); border-radius: 6px 16px 16px 16px; }
+.msgr-typing i { width: 5px; height: 5px; border-radius: 999px; background: var(--fg-3); animation: msgrPulse 1.2s ease-in-out infinite; }
+.msgr-typing i:nth-child(2) { animation-delay: .15s; } .msgr-typing i:nth-child(3) { animation-delay: .3s; }
+@keyframes msgrPulse { 0%, 100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+.msgr-sys { font-size: 12.5px; color: var(--fg-3); font-style: italic; display: flex; align-items: center; gap: 8px; }
+.msgr-skel { display: grid; gap: 8px; max-width: 640px; padding-top: 4px; }
+.msgr-skel i { display: block; height: 10px; border-radius: 999px; background: var(--secondary); }
+.msgr-skel i:nth-child(2) { width: 72%; } .msgr-skel i:nth-child(3) { width: 40%; }
+.msgr-row.ghost > .msgr-av { background: transparent; border-color: transparent; box-shadow: none; }
+
+/* 결재 슬립 — 머리띠(요청=옐로 / 확정=차콜 / 만료=회색 / 비소유자=연회색+옐로 밑줄) + 본문 + 도장 실 */
+.msgr-slip { max-width: 640px; border-radius: 6px 20px 20px 20px; overflow: hidden; border: 1px solid var(--border); background: var(--card); }
+.msgr-slip .band { display: flex; align-items: center; gap: 10px; padding: 9px 14px 9px 12px; background: var(--primary); color: var(--primary-fg); font-size: 11.5px; font-weight: 600; }
+.msgr-slip .band .risk { margin-left: 8px; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; opacity: .9; }
+.msgr-slip .band .id { margin-left: auto; font-family: var(--mono); font-size: 10.5px; font-weight: 500; opacity: .7; }
+.msgr-slip.pending .band { background: var(--mark); color: var(--mark-fg); }
+.msgr-slip.pending.wait .band { background: var(--card-2); color: var(--fg-2); box-shadow: inset 0 -1px 0 var(--mark); }
+.msgr-slip.pending.wait .band .mi { color: var(--mark-fg); background: var(--mark); border-radius: 999px; padding: 2px; }
+.msgr-slip.expired .band { background: var(--card-2); color: var(--fg-3); }
+.msgr-slip .body { padding: 13px 16px 14px; display: grid; gap: 8px; }
+.msgr-slip .action { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.msgr-slip .reason { font-size: 12.5px; color: var(--fg-2); }
+.msgr-slip .row2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.msgr-slip .row2 .note { font-size: 11.5px; color: var(--fg-3); }
+.msgr-slip.approved .action, .msgr-slip.rejected .action { color: var(--fg-2); font-weight: 500; }
+.msgr-slip.rejected .action { text-decoration: line-through; text-decoration-color: var(--fg-3); }
+.msgr-slip.expired .action { color: var(--fg-3); }
+.msgr-seal { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px 4px 5px; border-radius: 999px; border: 1.5px solid var(--fg-2); color: var(--fg-2); font-size: 11.5px; font-weight: 600; }
+.msgr-seal .mi { width: 18px; height: 18px; padding: 3px; border-radius: 999px; background: var(--fg-2); color: var(--card); stroke-width: 2.2; }
+.msgr-seal.ok { border-color: var(--ok); color: var(--ok); } .msgr-seal.ok .mi { background: var(--ok); }
+.msgr-seal.no { border-color: var(--danger); color: var(--danger); } .msgr-seal.no .mi { background: var(--danger); }
+.msgr-slip .btn { border-radius: 999px; }
+
+/* 2단 다크 독 — .msgr-composer는 linen 차콜 스코프(globals.css). 다른 테마에선 카드 표면. */
+/* 독은 overflow를 열어 둔다(멘션 팝업이 위로 뜬다 — 유건 실검수 2026-09-03: overflow-y auto가 팝업을 잘랐다).
+   스레드의 스크롤바 거터와 좌우를 맞추는 건 JS가 잰 --sbw(스크롤바 폭 절반)로. */
+.msgr-dock { padding: 14px calc(max(24px, (100% - 720px) / 2) + var(--sbw, 0px)) 16px; background: var(--bg); }
+.msgr-dock > div { position: relative; }
+.msgr-composer { background: var(--card); color: var(--fg); border-radius: 22px; padding: 12px 12px 10px 16px; display: grid; gap: 8px; box-shadow: var(--shadow-float); border: 1px solid var(--border); transition: box-shadow 150ms ease; }
+.msgr-composer:focus-within { box-shadow: var(--shadow-float), 0 0 0 2px rgba(var(--mark-rgb), .45); }
+.msgr-composer textarea { width: 100%; min-height: 44px; max-height: 200px; /* autosize 상한과 동일(검수 L9) */ resize: none; background: transparent; border: 0; outline: 0; color: inherit; font: inherit; font-size: 13.5px; line-height: 1.55; padding: 4px 0 0; }
+.msgr-composer textarea::placeholder { color: var(--fg-3); }
+.msgr-tools { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.msgr-tools .tb { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px; border-radius: 999px; color: var(--fg-2); font-size: 12px; border: 0; background: none; cursor: pointer; transition: background 120ms ease, color 120ms ease; }
+.msgr-tools .tb:hover { background: var(--card-2); color: var(--fg); }
+.msgr-tools .tb.on { background: var(--secondary); color: var(--fg); }
+.msgr-tools .tb:disabled { opacity: .4; cursor: default; }
+.msgr-tools .sep { width: 1px; height: 16px; background: var(--border); margin: 0 6px; }
+.msgr-tools .send { margin-left: auto; width: 34px; height: 34px; border-radius: 999px; background: var(--mark); color: var(--mark-fg); border: 0; display: grid; place-items: center; cursor: pointer; transition: transform 120ms ease, opacity 120ms ease; }
+.msgr-tools .send .mi { stroke-width: 2.2; }
+.msgr-tools .send:active { transform: scale(.94); }
+.msgr-tools .send:disabled { opacity: .4; cursor: default; transform: none; }
+.msgr-tools .filechip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--fg-2); }
+.msgr-tools .filechip.busy { border-color: var(--mark); } .msgr-tools .filechip.busy .msgr-klabel { color: var(--mark); animation: msgrPulse 1.2s ease-in-out infinite; }
+.msgr-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 14px 0; font-size: 11px; color: var(--fg-3); }
+.msgr-sub .typing-line { display: flex; align-items: center; gap: 6px; min-height: 16px; }
+.msgr-sub .msgr-dot { width: 6px; height: 6px; }
+.msgr-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 40; min-width: 260px; max-height: 300px; overflow-y: auto; padding: 6px; border-radius: 16px; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow-float); animation: msgrPopIn 160ms cubic-bezier(0.23,1,0.32,1) both; }
+@keyframes msgrPopIn { from { opacity: 0; transform: scale(0.97) translateY(4px); } to { opacity: 1; transform: none; } }
+.msgr-pop button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 10px; padding: 6px 8px; font-size: 12.5px; color: var(--fg); background: none; cursor: pointer; }
+.msgr-pop button.on, .msgr-pop button:hover { background: var(--card-2); }
+.msgr-pop .tag { margin-left: auto; }
+
+/* 크루 시트 — 본문 우측에 떠오르는 카드(척추 모티프와 같은 6/20 반경). 소유자만 허용 범위 편집 */
+.msgr-avbtn, .msgr-namebtn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.msgr-namebtn:hover { text-decoration: underline; text-underline-offset: 3px; }
+.msgr-sheetwrap { position: absolute; inset: 0; z-index: 50; pointer-events: none; }
+.msgr-sheetwrap > * { pointer-events: auto; }
+.msgr-sheetwrap .msgr-crewsheet { z-index: 66; } /* 투명 스크림(.msgr-scrim.clear, z 65)보다 위 — 아니면 시트 위의 휠이 스크림에 먹혀 뒤의 스레드가 스크롤된다(유건 실측 2026-09-04) */
+.msgr-crewsheet { position: absolute; top: 72px; right: 24px; width: min(380px, calc(100% - 48px)); max-height: calc(100% - 96px); overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 20px 6px 20px 20px; box-shadow: var(--shadow-float); padding: 16px 18px 18px; display: grid; gap: 14px; animation: msgrPopIn 180ms cubic-bezier(.23,1,.32,1) both; }
+.msgr-crewsheet .head { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.msgr-crewsheet .head .name { font-size: 15px; font-weight: 600; }
+.msgr-crewsheet .head .btn.ghost { border: 0; background: none; width: 30px; height: 30px; padding: 0; border-radius: 9px; color: var(--fg-3); }
+.msgr-crewsheet .facts { display: grid; gap: 8px; padding: 10px 0; border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
+.msgr-crewsheet .facts > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 12.5px; }
+.msgr-crewsheet .facts > div > span:last-child { display: inline-flex; align-items: center; gap: 6px; }
+.msgr-crewsheet section { display: grid; gap: 10px; }
+.msgr-crewsheet h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
+.msgr-crewsheet p { margin: 0; font-size: 12px; color: var(--fg-2); line-height: 1.55; }
+.msgr-crewsheet p.note { color: var(--fg-3); }
+.msgr-crewsheet .msgr-seg { justify-self: start; }
+.msgr-crewsheet .msgr-seg button:disabled { cursor: default; }
+.msgr-crewsheet .picks { display: grid; gap: 4px; }
+.msgr-crewsheet .pick { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; font-size: 12.5px; cursor: pointer; }
+.msgr-crewsheet .pick.on { background: var(--card-2); }
+.msgr-crewsheet .pick input { accent-color: var(--primary); }
+.msgr-crewsheet .pick > span:first-of-type + span { flex: 1; }
+.msgr-crewsheet .me { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; padding-top: 6px; border-top: 1px solid var(--border-soft); }
+.msgr-crewsheet .me .btn { margin-left: auto; }
+.msgr-main { position: relative; }
+
+/* 채널 시트 부품 — 크루 시트와 같은 카드, 입력 필드·스위치 행 */
+.msgr-titlebtn { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+.msgr-titlebtn .caret { color: var(--fg-3); }
+.msgr-crewsheet .field { display: grid; gap: 4px; }
+.msgr-crewsheet .field input { height: 34px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; }
+.msgr-crewsheet .field input:disabled { opacity: .6; }
+.switchrow { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; line-height: 1.5; cursor: pointer; }
+.switchrow input { accent-color: var(--primary); width: 15px; height: 15px; margin: 0; flex: none; }
+.msgr-crewsheet .switchrow { display: flex; align-items: flex-start; gap: 10px; }
+.msgr-crewsheet .switchrow input { margin-top: 3px; }
+.msgr-crewsheet .pick .btn { margin-left: auto; }
+
+/* 설정 페이지 — 카드 3장(언어·테마·계정), 세그먼트는 상단 탭과 같은 부품 */
+.msgr-settings { margin: 0 auto; width: 100%; max-width: 640px; padding: 8px 0 32px; display: grid; gap: 14px; }
+.msgr-setcard { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 18px 20px; display: grid; gap: 12px; }
+.msgr-setcard h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.msgr-setcard p { margin: -6px 0 2px; color: var(--fg-2); font-size: 12.5px; line-height: 1.55; }
+.msgr-setcard .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.msgr-setcard .row > .msgr-klabel { min-width: 64px; }
+.msgr-setcard .msgr-seg { justify-self: start; width: max-content; max-width: 100%; }
+.msgr-setcard .msgr-chips .msgr-chan { height: 28px; font-size: 12px; }
+
+/* 빈 상태 — 척추 위 단계 노드 */
+.msgr-empty { margin: auto; align-self: center; align-content: start; width: 100%; max-width: 560px; padding: 40px 0; display: grid; gap: 22px; }
+.msgr-empty h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin: 0; line-height: 1.3; }
+.msgr-empty p { margin: 0; color: var(--fg-2); font-size: 13.5px; line-height: 1.6; }
+.msgr-steps { position: relative; display: grid; gap: 14px; }
+.msgr-steps::before { content: ''; position: absolute; left: 13px; top: 14px; bottom: 14px; width: 2px; background: var(--border); border-radius: 2px; }
+.msgr-step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 14px; align-items: start; position: relative; }
+.msgr-step .num { width: 28px; height: 28px; border-radius: 999px; display: grid; place-items: center; font-family: var(--mono); font-size: 11.5px; font-weight: 600; background: var(--card); border: 1px solid var(--border); box-shadow: 0 0 0 4px var(--bg); }
+.msgr-step .num.mark { background: var(--mark); border-color: var(--mark); color: var(--mark-fg); }
+.msgr-step .card { background: var(--card); border: 1px solid var(--border); border-radius: 6px 20px 20px 20px; padding: 13px 16px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; box-shadow: none; }
+.msgr-step .card b { display: block; font-weight: 600; font-size: 13.5px; }
+.msgr-step .card span { color: var(--fg-3); font-size: 12px; }
+.msgr-center { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--fg-3); font-size: 13px; padding: 24px; }
+
+/* 로그인 — 머리띠 카드 */
+.msgr-auth { min-height: calc(100vh / var(--z, 1)); display: grid; place-items: center; padding: 24px; }
+.msgr-auth .msgr-card { width: min(420px, 100%); background: var(--card); border: 1px solid var(--border); border-radius: 22px; overflow: hidden; display: grid; }
+.msgr-auth .band { display: flex; align-items: center; gap: 10px; padding: 14px 20px; background: var(--primary); color: var(--primary-fg); font-family: var(--mono); font-weight: 600; letter-spacing: 0.16em; font-size: 12px; }
+.msgr-auth .band svg { fill: var(--mark); }
+.msgr-auth .band .tag { margin-left: auto; font-family: var(--font); letter-spacing: 0.02em; font-weight: 500; font-size: 11px; opacity: .75; }
+.msgr-auth .body { padding: 22px 22px 20px; display: grid; gap: 12px; }
+.msgr-auth h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin: 0; line-height: 1.3; }
+.msgr-auth p { margin: 0; color: var(--fg-2); font-size: 13px; line-height: 1.55; }
+.msgr-field { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 16px; border-radius: 999px; background: var(--card-2); border: 1px solid var(--border); transition: box-shadow 150ms ease; }
+.msgr-field .mi { color: var(--fg-3); }
+.msgr-field:focus-within { box-shadow: 0 0 0 2px var(--ring); }
+.msgr-field input { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; font: inherit; font-size: 13.5px; color: inherit; }
+.msgr-field input::placeholder { color: var(--fg-3); }
+.msgr-auth .btn-primary { height: 44px; font-size: 13px; border-radius: 999px; }
+.msgr-auth .foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 12px; color: var(--fg-3); }
+
+.msgr-menu { display: none; }
+@media (max-width: 720px) {
+  .shell.msgr-shell { grid-template-columns: 1fr; } .msgr-side { display: none; }
+  .msgr-menu { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border); background: none; color: var(--fg); }
+  .msgr-top { flex-wrap: wrap; padding: 10px 14px; row-gap: 8px; } .msgr-top .topic, .msgr-top .members { display: none; }
+  .msgr-seg { order: 9; width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .msgr-thread { padding: 16px 14px 8px; } .msgr-dock { padding: 10px 12px 12px; }
+  .msgr-tools .tb span { display: none; } .msgr-tools .tb.on span { display: inline; }
+  .msgr-empty { margin: 0 auto; align-self: flex-start; padding: 8px 0 24px; } .msgr-step .card { grid-template-columns: 1fr; }
+}
+/* 폰 폭 레일 — 메뉴 버튼으로 오버레이(안 될 버튼은 노출 금지: 메뉴 버튼이 실제로 연다) */
+@media (max-width: 720px) {
+  .msgr-shell.rail-open .msgr-side { display: flex; position: fixed; inset: 0 auto 0 0; z-index: 60; width: min(300px, 88vw); }
+  .msgr-scrim { display: block; position: fixed; inset: 0; z-index: 55; background: var(--overlay); }
+}
+/* ─── 조직 문서(G-1) ─── */
+.msgr-docs { margin: 0 auto; width: 100%; max-width: 980px; padding: 8px 0 32px; display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.msgr-docs .list { display: grid; gap: 4px; align-content: start; }
+.msgr-docs .list .head { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; min-height: 28px; }
+.msgr-docs .list .item { display: grid; gap: 2px; text-align: left; padding: 8px 10px; border-radius: 12px; border: 1px solid transparent; background: transparent; color: var(--fg); cursor: pointer; }
+.msgr-docs .list .item:hover { background: var(--card-2); }
+.msgr-docs .list .item.on { background: var(--card); border-color: var(--border); }
+.msgr-docs .list .item .path { font-family: var(--mono); font-size: 10.5px; color: var(--fg-3); }
+.msgr-docs .list .item .name { font-size: 13px; font-weight: 600; }
+.msgr-docs .empty { color: var(--fg-3); font-size: 12.5px; margin: 4px 0; }
+.msgr-docs .doc { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 18px 20px; min-height: 240px; display: grid; gap: 12px; align-content: start; }
+.msgr-docs .doc h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.msgr-docs .doc .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.msgr-docs .doc .meta { display: flex; align-items: center; gap: 10px; color: var(--fg-3); font-size: 11.5px; flex-wrap: wrap; }
+.msgr-docs .doc article { display: grid; gap: 12px; }
+.msgr-docs .doc header { display: grid; gap: 6px; }
+.msgr-docs .doc .new { display: grid; gap: 10px; }
+.msgr-docs .msgr-input { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--fg); padding: 8px 10px; font: inherit; font-size: 13px; }
+.msgr-docs .msgr-input.body { min-height: 260px; resize: vertical; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
+@media (max-width: 720px) { .msgr-docs { grid-template-columns: minmax(0, 1fr); } }
+.msgr-auth .devsep { display: block; margin: 6px 0 -4px; padding-top: 10px; border-top: 1px dashed var(--border); }
+/* ─── 인라인 폼(새 채널·새 조직) — 네이티브 prompt 대체. 레일(차콜)·메뉴(카드) 어디서든 토큰만 ─── */
+.msgr-inline { display: grid; gap: 8px; padding: 8px 6px 10px; }
+.msgr-inline .msgr-input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; outline: 0; }
+.msgr-inline .msgr-input:focus { box-shadow: 0 0 0 2px var(--ring); }
+.msgr-inline .msgr-input::placeholder { color: var(--fg-3); }
+.msgr-inline .msgr-seg { width: max-content; max-width: 100%; }
+.msgr-inline .msgr-seg button { height: 26px; padding: 0 10px; font-size: 12px; }
+.msgr-inline .acts { display: flex; gap: 6px; }
+@media (max-width: 720px) { .msgr-inline .msgr-seg { order: 0; width: max-content; overflow: visible; } } /* 폰 폭의 전역 .msgr-seg order:9(탭 줄바꿈용)가 폼 안 종류 선택을 버튼 뒤로 보냈다(QA) */
+.msgr-menu-pop .msgr-inline { padding: 4px 4px 6px; }
+.msgr-crewsheet .confirm { display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); }
+.msgr-crewsheet .confirm p { margin: 0; font-size: 12.5px; color: var(--fg-2); line-height: 1.5; }
+.btn.btn-primary.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+/* ─── 채널 중심 레일(2026-09-04): 세로 목록 행. 크루·멤버는 채널 구성으로 이동 ─── */
+.msgr-list { display: grid; gap: 2px; padding: 0 2px; }
+.msgr-list .item { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 10px; border: 0; background: none; color: var(--fg-2); font: inherit; font-size: 13px; text-align: left; cursor: pointer; min-width: 0; }
+.msgr-list .item .mi { color: var(--fg-3); flex: none; }
+.msgr-list .item .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-list .item:hover { background: var(--card-2); color: var(--fg); }
+.msgr-list .item.active { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
+.msgr-list .item.active .mi { color: var(--primary-fg); }
+.msgr-railhint { margin-top: auto; padding: 14px 8px 6px; font-size: 11px; line-height: 1.5; color: var(--fg-3); }
+.msgr-top .members { display: inline-flex; align-items: center; gap: 0; padding: 3px 10px 3px 4px; border-radius: 999px; border: 1px solid transparent; background: none; cursor: pointer; font: inherit; }
+.msgr-top .members:hover { background: var(--card-2); border-color: var(--border); }
+.msgr-top .members .n { margin-left: 8px; font-size: 11.5px; color: var(--fg-3); white-space: nowrap; }
+@media (max-width: 720px) { .msgr-top .members .n { display: none; } .msgr-top .members .msgr-av:nth-child(n+5) { display: none; } } /* 폰 폭: 제목 옆 공간이 좁다 — 아바타 4개만 */
+.msgr-rows { display: grid; gap: 4px; }
+.msgr-rows .msgr-klabel { margin-top: 6px; }
+.msgr-rows .row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 3px 6px; border-radius: 10px; }
+.msgr-rows .row:hover { background: var(--card-2); }
+.msgr-rows .row .name { font-weight: 600; font-size: 13px; }
+.msgr-rows .row .sub { flex: 1; min-width: 0; font-size: 11.5px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-rows .row .btn.ghost { border: 0; background: none; width: 26px; height: 26px; padding: 0; color: var(--fg-3); }
+.msgr-rows .row .btn.ghost:hover { background: var(--bg); color: var(--fg); }
+.msgr-rows .empty { margin: 0 0 4px; font-size: 12px; color: var(--fg-3); }
+.msgr-slip .docprop { display: grid; gap: 6px; margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border-soft); }
+.msgr-slip .docprop .title { font-weight: 600; font-size: 13px; }
+.msgr-slip .docprop .msgr-sheet { padding: 8px 10px; }
+/* ─── F2 조직 카드·계정 ─── */
+.msgr-setcard h3 { margin: 6px 0 0; font-size: 13px; font-weight: 600; color: var(--fg-2); }
+.msgr-input.inline { flex: 1; min-width: 160px; max-width: 320px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13px; outline: 0; }
+.msgr-input.inline:focus { box-shadow: 0 0 0 2px var(--ring); }
+.msgr-setcard .msgr-rows .row .msgr-seg { margin-left: auto; }
+.msgr-setcard .msgr-rows .row .msgr-seg button { height: 24px; padding: 0 9px; font-size: 11.5px; }
+.msgr-setcard .confirm-inline { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; color: var(--fg-2); flex-wrap: wrap; }
+.msgr-setcard .name.mono { font-family: var(--mono); font-weight: 500; font-size: 12px; }
+.msgr-audit { display: grid; gap: 2px; }
+.msgr-audit .row { display: grid; grid-template-columns: 96px 88px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: center; font-size: 12px; padding: 4px 6px; border-radius: 8px; }
+.msgr-audit .row:hover { background: var(--card-2); }
+.msgr-audit .when { font-family: var(--mono); font-size: 11px; color: var(--fg-3); }
+.msgr-audit .who { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-audit .act { font-family: var(--mono); font-size: 11.5px; }
+.msgr-audit .tgt { color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-audit .empty { margin: 0; color: var(--fg-3); font-size: 12px; }
+@media (max-width: 720px) { .msgr-audit .row { grid-template-columns: 80px minmax(0, 1fr); } .msgr-audit .who, .msgr-audit .tgt { display: none; } }
+.msgr-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); font-size: 10.5px; color: var(--fg-3); }
+.msgr-rows .row .btn.ghost.on { color: var(--fg); background: var(--card); border: 1px solid var(--mark); }
+.msgr-setcard .picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.msgr-setcard .picks .pick { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 6px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; cursor: pointer; }
+.msgr-setcard .picks .pick.on { border-color: var(--mark); background: var(--card-2); }
+.msgr-setcard .picks .pick input { margin: 0; accent-color: var(--primary); }
+
+/* I-4 회사 노드 — 조직 카드의 연결 상태 태그와 실행 명령 블록 */
+.msgr-setcard .msgr-tag.on { color: var(--ok); border-color: currentColor; }
+.msgr-node-cmd { display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--card-2); margin: 4px 0 8px; }
+.msgr-node-cmd code { display: block; font: 12px/1.6 var(--mono); word-break: break-all; user-select: all; }
+.msgr-node-cmd .acts { display: flex; gap: 6px; }
+.msgr-node-cmd .note { margin: 0; }
+
+/* I-5 회사 크루 만들기 — 채널 시트 안 인라인 폼과 요청 상태 */
+.msgr-crewnew { display: grid; gap: 6px; margin-top: 6px; }
+.msgr-inline textarea.msgr-input { height: auto; min-height: 72px; padding: 8px 12px; border-radius: 14px; resize: vertical; line-height: 1.5; }
+.msgr-crewnew .row.req { padding: 4px 6px; }
+.msgr-crewnew .row.req .sub.failed { color: var(--danger); }
+.msgr-crewnew .row.req .sub.done { color: var(--ok); }
+
+.msgr-setcard .msgr-input.inline.wide { flex: 1 1 260px; min-width: 0; }
+
+/* J-2 결제 문제 읽기 전용 배너·소유권 선택 칩 */
+.msgr-notice.locked { color: var(--warn, var(--fg)); }
+.msgr-setcard .picks .msgr-chan.active { border-color: currentColor; }
+
+/* J-3 도메인 자동 가입 — 메뉴의 가입 후보 */
+.msgr-menu-pop button.join .msgr-klabel { margin-left: auto; }
+.msgr-chips .msgr-chan .msgr-klabel { margin-left: 6px; }
+
+/* J-4 게스트 만료 표기 */
+.msgr-setcard .msgr-rows .row .sub.expired { color: var(--danger); }
+
+/* 채널 패널 재구성 — 구성 먼저, '+ 추가' 하나, 행 '…' 메뉴, 접히는 채널 설정 */
+.msgr-crewsheet .sec-head { display: flex; align-items: baseline; gap: 8px; }
+.msgr-crewsheet .sec-head h3 { margin: 0; }
+.msgr-crewsheet .sec-head .sub { color: var(--fg-3); font-size: 12px; }
+.msgr-rowmenu-wrap { position: relative; margin-left: auto; }
+.msgr-rowmenu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; min-width: 180px; max-width: 244px; display: grid; padding: 6px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+.msgr-rowmenu button { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.msgr-rowmenu button:hover { background: var(--card-2); }
+.msgr-rowmenu button.danger { color: var(--danger); }
+.msgr-rowmenu button { white-space: nowrap; }
+.msgr-rowmenu button.confirm { height: auto; min-height: 32px; align-items: flex-start; padding: 7px 10px; } /* 확인 항목은 제목+설명 2단 — 긴 문장이 버튼 안에서 흘러 행 균형이 깨지던 것을 정돈 */
+.msgr-rowmenu button.confirm .mi { margin-top: 2px; }
+.msgr-rowmenu button.confirm .cf { display: grid; gap: 1px; min-width: 0; }
+.msgr-rowmenu button.confirm .cf .note { font-size: 11px; line-height: 1.35; color: var(--fg-3); white-space: normal; }
+.msgr-addwrap { display: grid; gap: 8px; margin-top: 10px; }
+.msgr-addmenu { display: grid; gap: 2px; padding: 6px; border-radius: 14px; background: var(--card-2); }
+.msgr-addmenu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.msgr-addmenu button:hover:not(:disabled) { background: var(--card); }
+.msgr-addmenu button:disabled { opacity: .55; cursor: default; }
+.msgr-addmenu button span { display: grid; gap: 1px; min-width: 0; }
+.msgr-addmenu button b { font-weight: 600; font-size: 13px; }
+.msgr-addmenu button small { color: var(--fg-3); font-size: 12px; line-height: 1.35; }
+.msgr-addmenu button.cancel { justify-content: center; color: var(--fg-3); font-size: 12px; padding: 6px; }
+.msgr-fold .fold-head { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.msgr-fold .fold-head h3 { margin: 0; }
+.msgr-fold .fold-head .mi { color: var(--fg-3); transition: transform 160ms cubic-bezier(.23,1,.32,1); }
+.msgr-fold .fold-head .mi.open { transform: rotate(180deg); }
+.msgr-crewsheet .row.wrap { flex-wrap: wrap; }
+
+.msgr-crewsheet .msgr-rows .empty { border: 0; background: transparent; min-height: 0; padding: 6px 2px; margin: 0; text-align: left; }
+
+/* 설정 탭(UX 2/3) — 세로 카드 더미 대신 왼쪽 탭, 폰에서는 가로 스크롤 */
+.msgr-settings.tabs { max-width: 880px; display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 20px; align-items: start; }
+.msgr-setnav { display: grid; gap: 4px; position: sticky; top: 8px; }
+.msgr-setnav button { height: 34px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--fg-2); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; transition: background 120ms ease, color 120ms ease; }
+.msgr-setnav button:hover { background: var(--card-2); color: var(--fg); }
+.msgr-setnav button.on { background: var(--card); color: var(--fg); font-weight: 600; box-shadow: inset 0 0 0 1px var(--border); }
+.msgr-setbody { display: grid; gap: 14px; min-width: 0; }
+@media (max-width: 720px) {
+  .msgr-settings.tabs { grid-template-columns: 1fr; gap: 10px; }
+  .msgr-setnav { display: flex; gap: 4px; position: static; overflow-x: auto; scrollbar-width: none; }
+  .msgr-setnav button { flex: 0 0 auto; }
+}
+/* 질문형 규칙 블록 */
+.msgr-setcard .q { display: grid; gap: 8px; padding: 12px 0; border-top: 1px solid var(--border); }
+.msgr-setcard .q:first-of-type { border-top: 0; }
+.msgr-setcard .qlabel { font-weight: 600; font-size: 13.5px; }
+.msgr-setcard .msgr-fold { padding-top: 8px; border-top: 1px solid var(--border); }
+.msgr-setcard .msgr-fold .fold-head h3 { margin: 6px 0; }
+/* 서버 연결 안내 단계 */
+.msgr-node-cmd .steps { margin: 0 0 4px 18px; padding: 0; display: grid; gap: 4px; font-size: 13px; line-height: 1.5; }
+
+.msgr-setcard select.msgr-input.inline { height: 34px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; }
+
+/* 레일 행 '…' 메뉴 — 호버·열림에만 보인다 */
+.msgr-railrow { position: relative; display: flex; align-items: center; min-width: 0; }
+.msgr-railrow .item { flex: 1; min-width: 0; padding-right: 30px; }
+.msgr-railrow .more { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--fg-3); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background 120ms ease; }
+.msgr-railrow:hover .more, .msgr-railrow.open .more, .msgr-railrow .more:focus-visible { opacity: 1; }
+.msgr-railrow .more:hover { background: var(--card-2); color: var(--fg); }
+.msgr-railrow .msgr-rowmenu { right: 4px; top: calc(100% + 2px); z-index: 20; }
+.msgr-setcard .msgr-seg.right { margin-left: auto; }
+
+/* 페이지형 화면(설정·문서)은 대화의 720px 읽기 레인을 쓰지 않는다 — 데스크톱 폭을 쓴다(유건 지적 2026-09-04) */
+.msgr-thread.page { padding: 20px 32px 32px; }
+.msgr-thread.page .msgr-settings.tabs { max-width: 1240px; margin: 0; grid-template-columns: 200px minmax(0, 1fr); gap: 28px; }
+.msgr-thread.page .msgr-docs { max-width: none; margin: 0; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 24px; }
+.msgr-thread.page .msgr-setcard { padding: 22px 26px; }
+.msgr-thread.page .msgr-docs .doc { padding: 22px 26px; min-height: 420px; }
+.msgr-thread.page .msgr-docs .msgr-input.body { min-height: 420px; }
+@media (max-width: 720px) {
+  .msgr-thread.page { padding: 12px 14px 24px; }
+  .msgr-thread.page .msgr-docs { grid-template-columns: 1fr; }
+}
+
+/* 기억 그래프 색 — 노드는 흑백 계열(라이트 잉크 / 다크 밝은 회백), 판은 --bg와 같은 베이지(--graph-paper-rgb). 명시 지정이라 렌더러의 채도 검사를 면제받는다(유건 지시 2026-09-04) */
+:root[data-theme='linen'], :root[data-theme='linen-light'] { --graph-rgb: 38, 36, 31; --graph-paper-rgb: 233, 230, 223; }
+:root[data-theme='linen-dark'] { --graph-rgb: 230, 226, 216; --graph-paper-rgb: 31, 30, 27; }
+@media (prefers-color-scheme: dark) { :root[data-theme='linen'] { --graph-rgb: 230, 226, 216; --graph-paper-rgb: 31, 30, 27; } }
+.msgr-actpane .vault-tabs { overflow: hidden; } /* 스크롤은 탭 묶음(.msgr-tabscroll)만 */
+.msgr-tabscroll { flex: 1; min-width: 0; display: flex; align-items: stretch; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.msgr-tabscroll::-webkit-scrollbar { display: none; }
+.msgr-tabscroll .vault-tab { flex: none; min-width: 96px; } /* 탭은 줄어들지 않고 밀린다 — 제목이 '그…'로 뭉개지지 않게 */
+.msgr-tabact { flex: none; white-space: nowrap; margin: 0 6px 0 0; height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--fg-3); font: inherit; font-size: 12px; cursor: pointer; align-self: center; }
+.msgr-tabact:hover { color: var(--fg); background: var(--card-2); }
+.msgr-menubg { position: fixed; inset: 0; z-index: 6; }
+.msgr-tabmenu { position: absolute; right: auto; top: auto; z-index: 7; }
+/* 활동 페이지 — 아르고 기억 페이지처럼 화면 전체를 쓰는 분할(트리 | 탭 + 본문). 카드 섹션 없음(유건 지시 2026-09-04) */
+.msgr-actsplit { flex: 1; min-height: 0; display: flex; align-items: stretch; background: var(--bg); } /* 트리·탭줄·본문·그래프 캔버스가 상단 바와 같은 베이지 한 판 — 유건 지시 2026-09-04 */
+.msgr-acttree { width: 280px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--bg); }
+.msgr-acttree-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 12px; }
+.msgr-acttree .row { display: flex; align-items: center; gap: 6px; width: calc(100% - 12px); margin: 1px 6px; padding: 5px 8px 5px 6px; min-height: 30px; border: 0; border-radius: 6px; background: none; font: inherit; font-size: 13.5px; color: var(--fg-2); cursor: pointer; text-align: left; }
+.msgr-acttree .row:hover { background: var(--card-2); }
+.msgr-acttree .row.active { background: var(--border-soft, var(--card-2)); color: var(--fg); }
+.msgr-acttree .row .caret { display: inline-block; width: 10px; flex: none; text-align: center; color: var(--fg-3); font-size: 9px; transition: transform .12s; }
+.msgr-acttree .row .lbl { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.msgr-acttree .row .cnt { color: var(--fg-3); font-size: 11px; font-family: var(--mono); }
+.msgr-acttree .row .mi { color: var(--fg-3); flex: none; }
+.msgr-acttree .tree-kids { margin-left: 15px; border-left: 1px solid var(--border); }
+.msgr-acttree .tree-empty { padding: 4px 6px 4px 30px; color: var(--fg-3); font-size: 12px; }
+.msgr-actpanes { flex: 1; min-width: 0; display: flex; min-height: 0; }
+.msgr-actpane { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; position: relative; }
+.msgr-actbody { flex: 1; min-height: 0; position: relative; overflow: auto; }
+.msgr-actbody > canvas, .msgr-actbody > div:first-child > canvas { display: block; }
+.g3-zoom { position: absolute; right: 14px; bottom: 12px; display: grid; gap: 5px; }
+.g3-zoom button { width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--fg-3); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; transition: color 120ms ease, background 120ms ease; }
+.g3-zoom button:hover { color: var(--fg); background: var(--card-2); }
+.g3-hint { position: absolute; left: 18px; bottom: 12px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--fg-3); pointer-events: none; }
+.msgr-actlist { display: grid; gap: 10px; padding: 18px 28px 40px; max-width: 1100px; }
+.msgr-actlist .head { display: flex; align-items: center; gap: 10px; }
+.msgr-actlist .head h3 { margin: 0; font-size: 15px; }
+.msgr-actlist .head .sub { color: var(--fg-3); font-family: var(--mono); font-size: 11px; }
+.msgr-actlist .head .btn { margin-left: auto; }
+.msgr-actlist .day { display: grid; gap: 2px; }
+.msgr-actlist .daylabel { font-size: 11.5px; color: var(--fg-3); padding: 8px 0 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.msgr-actlist .item { display: flex; gap: 12px; align-items: baseline; padding: 5px 0; font-size: 13.5px; line-height: 1.5; }
+.msgr-actlist .item .when { flex: none; width: 64px; color: var(--fg-3); font-family: var(--mono); font-size: 11px; }
+.msgr-actlist .item .text { min-width: 0; }
+.msgr-actlist .empty { color: var(--fg-3); font-size: 13px; margin: 6px 0; }
+.msgr-memlist { display: grid; gap: 14px; }
+.msgr-memlist .folder { display: grid; gap: 4px; }
+.msgr-memlist .memitem { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--fg); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.msgr-memlist .memitem:hover { background: var(--card-2); }
+.msgr-memlist .memitem .name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.msgr-memlist .memitem .meta { color: var(--fg-3); font-size: 11.5px; white-space: nowrap; }
+.msgr-memnew { display: grid; gap: 10px; padding: 12px; border: 1px dashed var(--border); border-radius: 12px; }
+.msgr-memnew .row { display: flex; align-items: center; gap: 10px; }
+.msgr-memdoc header { display: grid; gap: 6px; margin-bottom: 12px; }
+.msgr-memdoc header h2 { margin: 0; font-size: 20px; }
+.msgr-memdoc header .meta { display: flex; align-items: center; gap: 10px; color: var(--fg-3); font-size: 12px; }
+.msgr-memdoc header .note { color: var(--fg-3); font-size: 12px; }
+.msgr-memdoc textarea.body { width: 100%; min-height: 320px; font-family: var(--mono); font-size: 13px; line-height: 1.6; resize: vertical; }
+.msgr-memdoc .row { display: flex; gap: 8px; margin-top: 8px; }
+.msgr-actfold { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.msgr-actfold > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--fg-2); font-size: 13px; list-style: none; padding: 6px 0; }
+.msgr-actfold > summary::before { content: '▸'; font-size: 9px; color: var(--fg-3); transition: transform .12s; }
+.msgr-actfold[open] > summary::before { transform: rotate(90deg); }
+.msgr-actfold > summary .sub { color: var(--fg-3); font-family: var(--mono); font-size: 11px; }
+@media (max-width: 900px) { .msgr-actsplit { flex-direction: column; } .msgr-acttree { width: auto; max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--border); } }

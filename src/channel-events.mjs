@@ -18,6 +18,8 @@
 export const CHANNEL_EVENTS = Object.freeze({
   telegram: Object.freeze(['approval', 'routine', 'job', 'crewmail', 'inbox']),
   slack: Object.freeze(['approval', 'routine']),
+  // 팀 메신저(msgr) — 결재 카드·위임 미러·후속 보고는 src/gateway/msgr.mjs msgrPush. 루틴·작업·쪽지 브리핑은 후속(문안 미준비).
+  msgr: Object.freeze(['approval', 'delegate']),
 });
 
 /** 저장 정규화 — 목록 밖 값·중복·비배열을 걸러낸다(끈 목록이 쓰레기로 커지지 않게).

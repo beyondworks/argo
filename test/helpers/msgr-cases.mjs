@@ -13,6 +13,7 @@ export const ROLE_MATRIX = Object.freeze({
   registerCrew: ['owner', 'admin', 'member'],
   readAudit: ['owner', 'admin'],
   readInvitedPrivateChannel: ['owner', 'admin', 'member', 'guest'], // 초대된 비공개 채널은 guest도 읽는다
+  editPolicy: ['owner', 'admin'],                                    // 조직 정책(msgr_org_policies)은 관리자만 — 부록 H
 });
 
 export const FREE_SEATS = 3;         // 무료 조직 좌석(guest 포함) — 마이그레이션 msgr_member_seat_gate와 동일

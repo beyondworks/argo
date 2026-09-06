@@ -11,6 +11,7 @@ import { docMeta, localDay, noteDate } from './vaultdoc.mjs';
 import { loadDocsMeta, invalidatePath } from './memindex.mjs';
 
 export { localDay, noteDate }; // 기존 호출·회귀 테스트 호환(판정 정본은 vaultdoc.mjs 한 곳)
+export { vaultDocs as vaultDocsForTest }; // 회귀 테스트용(조직 문서 미러 org/ 색인 범위 — G-2)
 
 // ── 토큰화 — 한글(2gram)+영문 단어. 짧은 조사류 노이즈를 줄이는 최소 구현.
 function tokens(text) {
@@ -49,9 +50,9 @@ const warnedVaultReadFail = new Set(); // 같은 파일 경고 반복 방지(mem
 async function vaultDocs(wsId) {
   const p = paths(wsId);
   const docs = [];
-  for (const dir of [p.journal, p.conversations, p.notes]) {
+  for (const dir of [p.journal, p.conversations, p.notes, p.org]) { // org/ = 조직 문서 미러(G-2) — 하위 폴더까지
     let names = [];
-    try { names = await readdir(dir); } catch { continue; }
+    try { names = (await readdir(dir, dir === p.org ? { recursive: true } : undefined)).map((n) => String(n).split('\\').join('/')); } catch { continue; }
     for (const n of names) {
       if (!n.endsWith('.md')) continue;
       const file = join(dir, n);
@@ -179,16 +180,19 @@ export async function appendSourceLinks(file, rels) {
 }
 
 /** 턴 핸드오버 — 크루별 하루 1파일 일지에 append(원수 층). 링크·정제는 정리 데몬이 맡는다. */
-export async function saveHandover(wsId, agentSlug, userMsg, reply, label = agentSlug) {
+export async function saveHandover(wsId, agentSlug, userMsg, reply, label = agentSlug, { tag = '' } = {}) {
   const p = paths(wsId);
   const now = new Date();
   // 일지 날짜·시각은 사용자 로컬 기준 — UTC 혼용 시 저녁 턴이 어제 일지에 적힌다
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const hm = now.toTimeString().slice(0, 5);
-  const file = join(p.journal, `${day}-${agentSlug}.md`);
+  // tag(예: org-<orgId>) = 팀 메신저 조직 채널 턴 — 같은 날 일지라도 **별도 파일**로 둔다. 하루 파일은 절(section)을
+  // 덧붙이는 구조라 절 단위 삭제가 불가능한데, 오프보딩 "조직 데이터 회수"는 파일 단위로 지워야 하기 때문(MESSENGER-DESIGN.md).
+  const safeTag = String(tag).replace(/[^a-z0-9-]/gi, '').slice(0, 60);
+  const file = join(p.journal, `${day}-${agentSlug}${safeTag ? `.${safeTag}` : ''}.md`);
   await mkdir(p.journal, { recursive: true });
   const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 48);
-  const head = existsSync(file) ? '' : `# ${day} ${label} 일지\n`;
+  const head = existsSync(file) ? '' : `# ${day} ${label} 일지${safeTag ? ` (${safeTag})` : ''}\n`;
   // 장문 응답은 절단 표시를 남긴다 — 표시 없이 자르면 크루·정리 데몬이 잘린 걸 완전한 기록으로 오인한다
   const full = reply.trim();
   const body = full.length > 1500 ? `${full.slice(0, 1500).trim()}\n…(길이 초과로 생략 — 전체 ${full.length}자, 원문은 대화 스레드에)` : full;
@@ -280,6 +284,7 @@ export async function updateIndex(wsId) {
     .sort((a, b) => dayOf(b).localeCompare(dayOf(a)) || (b.mtimeMs - a.mtimeMs) || b.rel.localeCompare(a.rel));
   const weeklies = docs.filter((d) => d.kind === 'weekly').slice(0, 8);
   const legacy = docs.filter((d) => d.kind === 'legacy').slice(0, 10);
+  const orgDocs = docs.filter((d) => d.kind === 'org').sort((a, b) => a.rel.localeCompare(b.rel)); // 팀 메신저 조직 문서 미러(G-2) — 정본은 서버, 여기서는 읽기만
   await writeJsonAtomic(p.index, `# 회사 기억 인덱스
 
 주제 노트가 정리된 지식이다 — 먼저 여기서 찾고, 상세 근거가 필요할 때만 일지를 열어라.
@@ -291,7 +296,7 @@ ${notes.map(({ d, stamp }) => line(d, stamp)).join('\n') || '(아직 없음)'}${
 
 ## 최근 일지 (턴 원본, 14일)
 ${journals.map((d) => line(d)).join('\n') || '(아직 없음)'}
-${weeklies.length ? `\n## 주간 일지 (7일 지난 기억의 요약, 최근 8주)\n${weeklies.map((d) => line(d)).join('\n')}\n` : ''}${legacy.length ? `\n## 이전 기록\n${legacy.map((d) => line(d)).join('\n')}\n` : ''}${conflicts.length ? `\n## 동기화 충돌 사본 (다른 기기와 같은 노트를 동시에 고쳐 갈라진 것 — 내용은 옛 판일 수 있다. 확인 후 병합하고 지워라)\n${conflicts.map((d) => line(d)).join('\n')}${allConflicts.length > conflicts.length ? `\n(외 ${allConflicts.length - conflicts.length}개 더 — vault/notes/ 의 .conflict- 파일을 확인하라)` : ''}\n` : ''}`);
+${orgDocs.length ? `\n## 조직 문서 (팀 메신저 조직의 규칙집·용어집·프로젝트 맥락 — 서버 정본의 읽기 전용 미러. 전사 규칙은 개인 규칙보다 우선한다)\n${orgDocs.map((d) => line(d)).join('\n')}\n` : ''}${weeklies.length ? `\n## 주간 일지 (7일 지난 기억의 요약, 최근 8주)\n${weeklies.map((d) => line(d)).join('\n')}\n` : ''}${legacy.length ? `\n## 이전 기록\n${legacy.map((d) => line(d)).join('\n')}\n` : ''}${conflicts.length ? `\n## 동기화 충돌 사본 (다른 기기와 같은 노트를 동시에 고쳐 갈라진 것 — 내용은 옛 판일 수 있다. 확인 후 병합하고 지워라)\n${conflicts.map((d) => line(d)).join('\n')}${allConflicts.length > conflicts.length ? `\n(외 ${allConflicts.length - conflicts.length}개 더 — vault/notes/ 의 .conflict- 파일을 확인하라)` : ''}\n` : ''}`);
 }
 
 /* ── 사장 프로필 — "회사가 아는 사장". 크루가 자동 기록·갱신하고, 사장이 크루 카드에서 정정한다. */

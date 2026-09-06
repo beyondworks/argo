@@ -1,0 +1,72 @@
+/* linen — 아르고 메신저 테마 가족 시안 토큰(2026-09-03). 이름 체계는 Argo globals.css와 동일, 값만 새로.
+   무드: 웜 뉴트럴 에디토리얼 — 그레이지 캔버스 · 순백 카드 · 차콜 사이드바(라이트에서도) · 형광 옐로는 --mark 한 점.
+   그림자 없음(표면 명도 단계로만 위계). 옐로는 --accent가 아니라 --mark(점·노드·결재 테두리·전송 버튼 전용). */
+@font-face { font-family: 'Pretendard Variable'; font-weight: 45 920; font-style: normal; font-display: swap; src: url('/fonts/PretendardVariable.woff2') format('woff2-variations'); }
+
+:root, :root[data-theme='linen'], :root[data-theme='linen-light'] {
+  color-scheme: light;
+  --bg: #e9e6df;            /* 캔버스 — 웜 그레이지(핀) */
+  --card: #fbfaf7;          /* 카드 — 순백에 웜 틴트(순백 금지) */
+  --card-2: #f1efe9;        /* hover */
+  --secondary: #e0dcd3;     /* active · 내 말풍선 */
+  --fg: #26241f;
+  --fg-2: #5a564d;
+  --fg-3: #6b655e;
+  --border: rgba(38, 36, 31, 0.14);
+  --border-soft: rgba(38, 36, 31, 0.07);
+  --primary: #1f1e1b;       /* 액션 = 명도(차콜 반전). 그래파이트 규칙 */
+  --primary-strong: #000000;
+  --primary-fg: #f4f2ec;
+  --primary-fg-dim: rgba(244, 242, 236, 0.72);
+  --primary-fg-line: rgba(244, 242, 236, 0.28);
+  --primary-soft: rgba(31, 30, 27, 0.07);
+  --accent: #1f1e1b; --accent-rgb: 31, 30, 27;        /* 계기판·스피너는 차콜(옐로 오염 방지) */
+  --mark: #e8e400; --mark-rgb: 232, 228, 0; --mark-fg: #1f1e1b; /* 형광 옐로 — 점·노드·결재 테두리·전송 버튼만 */
+  --ok: #3f7a52; --ok-soft: rgba(63, 122, 82, 0.12);
+  --warn: #9a6f1e; --warn-soft: rgba(154, 111, 30, 0.12);
+  --danger: #a8433a; --danger-soft: rgba(176, 71, 58, 0.1);
+  --ring: rgba(31, 30, 27, 0.32);
+  --selection: rgba(232, 228, 0, 0.35);
+  --shadow-card: none;
+  --shadow-float: 0 8px 24px rgba(31, 30, 27, 0.14);  /* 플로팅 컴포저·팝업 1단만 */
+  --mark-wash: color-mix(in srgb, var(--mark) 7%, var(--card)); /* 결재 대기 카드 배경 — 라이트만(다크는 옐로 링 13.5로 충분, 워시는 카키로 탁해짐) */
+  --r-sm: 8px; --r: 16px; --r-lg: 18px; --r-pill: 999px;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  /* 차콜 표면(사이드바·컴포저) — 라이트에서도 어둡다(핀의 프레임 문법) */
+  --dark-bg: #1f1e1b; --dark-bg-2: #2a2926; --dark-fg: #e6e2d8; --dark-fg-2: #a8a297; --dark-fg-3: #8d877c;
+  --dark-line: rgba(230, 226, 216, 0.1); --dark-hover: rgba(255, 255, 255, 0.06); --dark-active: rgba(255, 255, 255, 0.11);
+  --ink-rgb: 38, 36, 31; --paper-rgb: 251, 250, 247;
+}
+@media (prefers-color-scheme: dark) { :root[data-theme='linen'] { color-scheme: dark; } }
+:root[data-theme='linen-dark'], :root[data-theme='linen'].dark-emul {
+  color-scheme: dark;
+  --bg: #1f1e1b;
+  --card: #2a2926;
+  --card-2: #33322e;
+  --secondary: #3c3a35;
+  --fg: #e6e2d8;
+  --fg-2: #b3ada2;
+  --fg-3: #979185;
+  --border: rgba(230, 226, 216, 0.12);
+  --border-soft: rgba(230, 226, 216, 0.06);
+  --primary: #ececea;
+  --primary-strong: #ffffff;
+  --primary-fg: #1f1e1b;
+  --primary-fg-dim: rgba(31, 30, 27, 0.72);
+  --primary-fg-line: rgba(31, 30, 27, 0.35);
+  --primary-soft: rgba(236, 236, 234, 0.09);
+  --accent: #ececea; --accent-rgb: 236, 236, 234;
+  --mark: #f1ee3a; --mark-rgb: 241, 238, 58; --mark-fg: #1f1e1b;
+  --ok: #6fb387; --ok-soft: rgba(111, 179, 135, 0.14);
+  --warn: #d2a24f; --warn-soft: rgba(210, 162, 79, 0.14);
+  --danger: #e2705f; --danger-soft: rgba(226, 112, 95, 0.13);
+  --ring: rgba(236, 236, 234, 0.35);
+  --selection: rgba(241, 238, 58, 0.28);
+  --shadow-card: none;
+  --shadow-float: none;   /* 다크는 그림자 없음(그록봇·그래파이트 규칙) — 경계선으로 */
+  --mark-wash: var(--card);
+  --dark-bg: #171614; --dark-bg-2: #232220; --dark-fg: #e6e2d8; --dark-fg-2: #a8a297; --dark-fg-3: #8d877c;
+  --dark-line: rgba(230, 226, 216, 0.1); --dark-hover: rgba(255, 255, 255, 0.06); --dark-active: rgba(255, 255, 255, 0.11);
+  --ink-rgb: 230, 226, 216; --paper-rgb: 42, 41, 38;
+}

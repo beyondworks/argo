@@ -82,6 +82,9 @@ async function readWatermark(wsId) {
   return mark.v >= 2 ? mark : { v: 2, offsets: {} };
 }
 
+/** 팀 메신저 조직 태그 일지 파일명인가 — memory.saveHandover({tag}) 규약과 짝. (export: 회귀 테스트용) */
+export const isOrgTagged = (name) => /\.org-[a-z0-9-]+\.md$/i.test(name);
+
 /** 워터마크 이후의 새 일지 내용을 **청크 상한까지** 모은다(export: 순수 청킹 테스트용).
     sources = 이번 정리에 기여한 일지(근거 링크용). 청크 상한은 첫 미정리 파일의 종류(크루/가져온)가 정한다.
     파일이 상한보다 크면 상한 안의 마지막 줄바꿈에서 잘라 워터마크를 그만큼만 전진 — 다음 청크가 이어 받는다. */
@@ -89,7 +92,8 @@ export async function gatherNewJournal(wsId, mark) {
   const dir = paths(wsId).journal;
   let names = [];
   // 일별(YYYY-MM-DD-*)만 — 주간 롤업(YYYY-Wnn.md)은 정리의 산출물이라 다시 섭취하면 자기 요약을 재정리하는 루프가 된다
-  try { names = (await readdir(dir)).filter((n) => /^\d{4}-\d{2}-\d{2}-.+\.md$/.test(n)).sort(); } catch { return { text: '', next: mark, sources: [], consumed: 0, remaining: 0 }; }
+  // 조직 태그 일지(<day>-<slug>.org-<id>.md — 팀 메신저 채널 턴)는 제외: 정제해 notes에 섞이면 오프보딩 '조직 데이터 회수'(파일 단위 삭제)가 무의미해진다
+  try { names = (await readdir(dir)).filter((n) => /^\d{4}-\d{2}-\d{2}-.+\.md$/.test(n) && !isOrgTagged(n)).sort(); } catch { return { text: '', next: mark, sources: [], consumed: 0, remaining: 0 }; }
   let text = '';
   let used = 0; // 이번 청크에 담은 바이트
   let cap = 0;  // 첫 미정리 파일이 정한다
@@ -253,7 +257,7 @@ function weekLabel(dateStr) {
 export async function rollupJournals(wsId) {
   const dir = paths(wsId).journal;
   let names = [];
-  try { names = (await readdir(dir)).filter((n) => /^\d{4}-\d{2}-\d{2}-.+\.md$/.test(n)).sort(); } catch { return { rolled: 0 }; }
+  try { names = (await readdir(dir)).filter((n) => /^\d{4}-\d{2}-\d{2}-.+\.md$/.test(n) && !isOrgTagged(n)).sort(); } catch { return { rolled: 0 }; } // 조직 태그 일지는 주간 파일로도 접지 않는다(회수 단위 보존)
   const cutoff = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   const mark = await readWatermark(wsId);
   const archive = join(dir, '.archive');
