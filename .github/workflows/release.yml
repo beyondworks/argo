@@ -80,6 +80,11 @@ jobs:
 
       - run: npm ci
 
+      # 윈도우: 테스트가 Bash 도구를 실제 실행기(동봉 busybox — 사다리의 cwd/bin 후보)로 돌린다. test.yml과 같은 단계 —
+      # 빠지면 cmd.exe로 폴백해 E5 단언(`$VAR` 확장·종료 코드)이 red(v0.1.64 첫 dispatch run 34048203540 실사고, #448 갭).
+      - if: runner.os == 'Windows'
+        run: node scripts/fetch-busybox.mjs bin  # 레포 동봉본(vendor/)에서 해시 검증 뒤 복사 — 네트워크 없음
+
       # 릴리스 게이트 — 단위 테스트 실패 시 빌드 전에 차단 (2026-07-27 안정화 프로그램 Phase 0).
       # push/PR은 test.yml이 막지만, 태그 push·수동 실행은 그 게이트를 우회할 수 있어 여기서도 강제한다.
       - run: npm test
