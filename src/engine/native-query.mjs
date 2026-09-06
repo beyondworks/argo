@@ -20,6 +20,25 @@ export { NATIVE_DEFAULT_RUNNERS, nativeRunnerEnabled } from './native-flags.mjs'
 
 const stripSchema = (s) => { const { $schema, ...rest } = s ?? {}; return rest; };
 
+/** 도구 스키마 정규화(순수) — 모든 object 노드에 `required` 배열을 보장한다(중첩·items·anyOf/oneOf/allOf·$defs 포함, 입력 비파괴).
+    xAI의 Anthropic 호환 /v1/messages는 object 스키마에 required가 없으면 null로 보고 400을 낸다
+    (`Schema validation failed: /required: null is not of type "array"` — 사용자 제보 실측 2026-09-06: 같은 payload에 required:[]를 더하면 200,
+    v0.1.62의 browser_snapshot·browser_back·browser_screenshot·computer_screenshot이 그 모양이라 Grok 네이티브 턴이 전부 죽었다).
+    빈 required는 JSON Schema로 적법하고 MCP 서버들이 흔히 내보내는 모양이라 다른 벤더(Anthropic·OpenRouter·GLM·Kimi)에도 안전하다.
+    내장 도구 정의를 고치는 대신 여기(스펙 조립 단일 지점)에서 정규화하는 이유: MCP·크루 도구 스키마는 우리가 편집할 수 없다. */
+export function ensureRequired(schema, depth = 0) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema) || depth > 16) return schema;
+  const out = { ...schema };
+  const isObj = out.type === 'object' || (Array.isArray(out.type) && out.type.includes('object'));
+  if (isObj && !Array.isArray(out.required)) out.required = []; // 없음·null·true(Swagger 2.0 관례) 전부 배열로
+  if (out.properties && typeof out.properties === 'object' && !Array.isArray(out.properties)) out.properties = Object.fromEntries(Object.entries(out.properties).map(([k, v]) => [k, ensureRequired(v, depth + 1)]));
+  if (out.items && typeof out.items === 'object') out.items = Array.isArray(out.items) ? out.items.map((x) => ensureRequired(x, depth + 1)) : ensureRequired(out.items, depth + 1);
+  for (const k of ['anyOf', 'oneOf', 'allOf']) if (Array.isArray(out[k])) out[k] = out[k].map((x) => ensureRequired(x, depth + 1));
+  if (out.additionalProperties && typeof out.additionalProperties === 'object') out.additionalProperties = ensureRequired(out.additionalProperties, depth + 1);
+  for (const k of ['$defs', 'definitions']) if (out[k] && typeof out[k] === 'object' && !Array.isArray(out[k])) out[k] = Object.fromEntries(Object.entries(out[k]).map(([n, v]) => [n, ensureRequired(v, depth + 1)]));
+  return out;
+}
+
 /** makeCrewServer가 sink로 넘긴 정의({name, description, shape(zod), handler}) → 엔진 도구(순수). 이름은 SDK와 같은 mcp__crew__<name>. */
 export function crewToolSpecs(defs = []) {
   return defs.map((d) => {
@@ -97,7 +116,7 @@ async function* run(opts, ac, isInterrupted) {
   // 컴퓨터 유즈는 명시 옵트인만(회사 설정 computerUse — 분리 검수 CRITICAL-2: 화면 채널은 권한 게이트 하드라인을 우회한다)
   const tools = [...builtinTools({ cwd, env, fetchImpl, wsId, browser: opts.browser !== false, computer: opts.computer === true }), ...crewToolSpecs(crewTools), ...mcp.tools];
   const byName = new Map(tools.map((t) => [t.name, t]));
-  const specs = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
+  const specs = tools.map((t) => ({ name: t.name, description: t.description, input_schema: ensureRequired(t.input_schema) })); // 벤더로 나가는 스키마의 단일 관문
   const usage = {};
   let steps = 0;
   try {
