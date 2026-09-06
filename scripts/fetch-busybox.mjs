@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const BUSYBOX_URL = 'https://frippery.org/files/busybox/busybox64u.exe';
-export const BUSYBOX_SHA256 = '6e263d154d8548d1eb936f65d1d8312c80df31c45974e48d6335e4dcc0f4f34c'; // BusyBox v1.38.0-FRP-6075-g169694ebd (2026-05-06), 719,360B
+export const BUSYBOX_SHA256 = '6e263d154d8548d1eb936f65d1d8312c80df31c45974e48d6335e4dcc0f4f34c'; // BusyBox v1.38.0-FRP-6075-g169694ebd (2026-05-06), 675,840B
 export const BUSYBOX_FILE = 'busybox64u.exe';
 
 export async function fetchBusybox(destDir, { url = BUSYBOX_URL, sha256 = BUSYBOX_SHA256, localPath = process.env.ARGO_BUSYBOX_PATH, fetchImpl = globalThis.fetch } = {}) {
