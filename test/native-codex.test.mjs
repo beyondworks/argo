@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { mkdtemp } from './helpers/tmp.mjs';
+import { stripComments } from './helpers/strip-comments.mjs';
 
 process.env.HOME = await mkdtemp(join(tmpdir(), 'argo-codex-home-'));
 process.env.USERPROFILE = process.env.HOME;
@@ -273,8 +274,11 @@ test('C13. 락 산술 불변식(2R N1) — stale 회수·대기 상한 둘 다 �
   assert.equal(maxHold, (1 + cliAuthCandidates('x').length) * REFRESH_TIMEOUT_MS);
   assert.ok(CODEX_LOCK_STALE_MS > maxHold, `stale ${CODEX_LOCK_STALE_MS} > 최대 보유 ${maxHold} — 아니면 대기자가 잔재로 오판해 락을 탈취한다`);
   assert.ok(CODEX_LOCK_TIMEOUT_MS > maxHold, `timeout ${CODEX_LOCK_TIMEOUT_MS} > 최대 보유 ${maxHold} — 아니면 옆 턴이 503으로 죽는다`);
-  const src = await readFile(join(ROOT, 'src', 'runners', 'creds.mjs'), 'utf8');
+  assert.ok(CODEX_LOCK_TIMEOUT_MS >= CODEX_LOCK_STALE_MS, `timeout ${CODEX_LOCK_TIMEOUT_MS} ≥ stale ${CODEX_LOCK_STALE_MS} — 크래시 잔재 락은 대기자가 포기하기 전에 회수된다(3R NEW-2)`);
+  assert.ok(CODEX_LOCK_STALE_MS <= 30_000, 'stale은 mutex 기본값(30초)을 넘기지 않는다 — 잔재 회수 지연 금지(3R NEW-2)');
+  const src = stripComments(await readFile(join(ROOT, 'src', 'runners', 'creds.mjs'), 'utf8')); // 주석 속 문자열은 배선이 아니다(3R NEW-1)
   assert.match(src, /\}, \{ timeoutMs: CODEX_LOCK_TIMEOUT_MS, staleMs: CODEX_LOCK_STALE_MS \}\)/, '락 호출이 두 상수를 넘긴다');
+  assert.equal((src.match(/staleMs:/g) ?? []).length, 1, 'staleMs 지정은 그 한 곳뿐(다른 값으로 덮는 호출 없음)');
 });
 
 test('C14. 일시 장애(2R N2) — 토큰 엔드포인트 불통일 때 액세스 토큰이 아직 살아 있으면(스큐 안, 실제 만료 전) 쓰던 토큰으로 턴이 진행되고(저장 없음), 실제 만료면 503 계급(authExpired 아님)', async () => {
@@ -282,11 +286,23 @@ test('C14. 일시 장애(2R N2) — 토큰 엔드포인트 불통일 때 액세�
   process.env.CODEX_OAUTH_TOKEN_URL = 'http://127.0.0.1:1/oauth/token'; // 닫힌 포트 — 즉시 ECONNREFUSED
   try {
     await saveRunnerCred(ws, 'codex', 'oauth', authJson({ exp: Math.floor(Date.now() / 1000) + 100, refresh: 'rt-alive' })); // 120초 스큐 안이지만 살아 있음
+    const before = await readFile(join(paths(ws).root, '.secrets.json'), 'utf8');
     const t = await ensureCodexAccess(ws, await loadRunnerCred(ws, 'codex'));
-    assert.equal(t.refresh_token, 'rt-alive', '쓰던 토큰 그대로'); assert.equal(parseCodexAuth((await loadRunnerCred(ws, 'codex')).value).refresh_token, 'rt-alive', '저장본 불변');
+    assert.equal(t.refresh_token, 'rt-alive', '쓰던 토큰 그대로'); assert.equal(await readFile(join(paths(ws).root, '.secrets.json'), 'utf8'), before, '저장 없음 — 파일 바이트 동일(3R NEW-5: 봉투 동기화 대상을 회전 없이 다시 쓰지 않는다)');
     await withFlag(async () => { const env = await runnerCredEnv(ws, 'codex'); assert.equal(env.env.ARGO_WIRE, 'responses', '턴이 진행된다(grok 선례: 일시 장애는 연결 해제가 아니다)'); });
     await saveRunnerCred(ws, 'codex', 'oauth', authJson({ exp: Math.floor(Date.now() / 1000) - 10, refresh: 'rt-dead' }));
     await assert.rejects(ensureCodexAccess(ws, await loadRunnerCred(ws, 'codex')), (e) => e.status === 503 && !e.authExpired && /API Error: 503/.test(e.message), '진짜 만료 + 불통 = 503 계급(재로그인 안내 아님)');
     await assert.rejects(refreshCodexTokens('rt-x', { tokenUrl: 'http://127.0.0.1:1/oauth/token' }), (e) => e.status === 503 && e.transient === true);
   } finally { delete process.env.CODEX_OAUTH_TOKEN_URL; }
+  // 일시 장애가 아닌 것(3R NEW-3·NEW-4): 한도 429는 quota 계급 그대로(재로그인 둔갑 금지), 영구 4xx(unsupported_grant_type)·형식 오류(access_token 없는 200)는 살아 있는 토큰이어도 진행하지 않고 원문 계급으로
+  const srv = await fakeServer((c, n, res) => { if (n === 1) { res.writeHead(429, { 'content-type': 'application/json' }); res.end('{"error":"quota"}'); } else if (n === 2) respond(res, 400, JSON.stringify({ error: 'unsupported_grant_type' }), 'application/json'); else respond(res, 200, JSON.stringify({ token_type: 'bearer' }), 'application/json'); });
+  process.env.CODEX_OAUTH_TOKEN_URL = `${srv.base}/oauth/token`;
+  try {
+    const alive = () => authJson({ exp: Math.floor(Date.now() / 1000) + 100, refresh: 'rt-alive2' });
+    await saveRunnerCred(ws, 'codex', 'oauth', alive());
+    await assert.rejects(ensureCodexAccess(ws, await loadRunnerCred(ws, 'codex')), (e) => e.quota === true && !e.authExpired, '429 = 한도 계급(NEW-4)');
+    await assert.rejects(ensureCodexAccess(ws, await loadRunnerCred(ws, 'codex')), (e) => e.status === 400 && !e.authExpired && !e.quota && /unsupported_grant_type/.test(e.message), '영구 4xx는 진행하지 않고 원문(NEW-3)');
+    await assert.rejects(ensureCodexAccess(ws, await loadRunnerCred(ws, 'codex')), (e) => /missing access_token/.test(e.message) && !e.authExpired, '형식 오류도 진행하지 않는다(NEW-3)');
+    assert.equal(srv.calls.length, 3, '세 경우 모두 CLI 반입 루프를 타지 않는다(추가 호출 없음)');
+  } finally { await srv.close(); delete process.env.CODEX_OAUTH_TOKEN_URL; }
 });

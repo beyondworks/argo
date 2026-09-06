@@ -10,8 +10,9 @@ import { createRequire } from 'node:module';
 
 export const CODEX_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'; // codex CLI와 같은 client id(Hermes CODEX_OAUTH_CLIENT_ID)
 export const CODEX_OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
-/** 리프레시 HTTP 상한 — 락 보유 시간의 항(본 토큰 1회 + CLI 반입 후보 수) → creds의 락 stale·timeout 상수가 이보다 커야 한다(산술 불변식은 테스트 C13). */
-export const REFRESH_TIMEOUT_MS = 15_000;
+/** 리프레시 HTTP 상한 — 락 보유 시간의 항(본 토큰 1회 + CLI 반입 후보 2 = 3회). 8초 × 3 = 24초 < stale 30초라 잔재 락 회수(크래시 뒤)가 종전 30초 그대로다
+    (3R NEW-2: stale을 90초로 올리면 잔재 락이 다음 턴을 50초 세운다). 토큰 엔드포인트는 보통 1~2초 — 산술 불변식은 테스트 C13. */
+export const REFRESH_TIMEOUT_MS = 8_000;
 const ARGO_VERSION = (() => { try { return createRequire(import.meta.url)('../../package.json').version; } catch { return '0.0.0'; } })();
 
 /** auth.json 원문(자격 value) → 토큰(순수). 형식 아님이면 null. */
