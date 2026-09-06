@@ -3,7 +3,8 @@
     gemini-wire.mjs). gemini는 **API 키 자격일 때만** 네이티브이고 구독(oauth)·host 자격은 CLI 경로 그대로다(catalog.isCliTurn). 유건 승인 2026-09-05·09-06. */
 /** 네이티브 와이어 자격·선택 env — 크루 도구 자식(Bash)·MCP 서버 프로세스에는 절대 상속하지 않는다(shellEnv). 실행 중인 러너 자신의 자격도 도구에는
     필요 없다(printenv 한 번이면 전사·세션 파일·벤더 재전송으로 평문이 흐른다 — 분리 검수 HIGH-1). 새 와이어를 붙이면 여기 이름을 더한다. */
-export const WIRE_ENV_KEYS = Object.freeze(['ARGO_WIRE', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_BASE_URL', 'RESPONSES_BASE_URL', 'RESPONSES_TOKEN', 'RESPONSES_HEADERS']);
+export const WIRE_ENV_KEYS = Object.freeze(['ARGO_WIRE', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_BASE_URL', 'RESPONSES_BASE_URL', 'RESPONSES_TOKEN', 'RESPONSES_HEADERS',
+  'OPENAI_API_KEY']); // 호스트 셸의 OPENAI_API_KEY — 구 codex CLI 분기는 빈 값으로 덮었고 gemini는 PROVIDER_AUTH_OWNERS가 막는데 codex 네이티브 턴만 새던 것(2R N3)
 
 export const NATIVE_DEFAULT_RUNNERS = Object.freeze(['openrouter', 'glm', 'kimi', 'grok', 'gemini']);
 

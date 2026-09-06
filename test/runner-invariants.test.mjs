@@ -286,7 +286,25 @@ test('MEDIUM-4. 락 부모 디렉터리 부재에서도 save/clear가 성공하�
   await clearRunnerCred(ws, 'claude');
   assert.equal(await loadRunnerCred(ws, 'claude'), null);
   const src = await readFile(join(ROOT, 'src', 'runners', 'creds.mjs'), 'utf8');
-  assert.equal((src.match(/await withDirLock\(`\$\{secretsFile\(wsId\)\}\.lockd`/g) ?? []).length, 2, 'save·clear 둘 다 같은 락(반쪽 잠금 금지)');
+  // 비밀 파일 쓰기 지점 전수가 같은 락 안에 있어야 한다(반쪽 잠금 금지) — 쓰기 수는 정확히(save·clear·codex 토큰 회전)
+  // 락 콜백의 [시작, 끝) 구간을 중괄호 워커로 구해 모든 쓰기 오프셋이 그 합집합에 들어 있는지(fail-closed — "락 텍스트가 앞에 있기만 하면 통과"이던 핀은 쓰기만 락 밖으로 옮긴 변이에 초록, 검수 MEDIUM-4)
+  const LOCK = 'withDirLock(`${secretsFile(wsId)}.lockd`';
+  const spans = [];
+  for (let at = src.indexOf(LOCK); at >= 0; at = src.indexOf(LOCK, at + 1)) {
+    const open = src.indexOf('{', src.indexOf('=>', at)); let depth = 0; let q = null; let end = -1;
+    for (let i = open; i < src.length; i++) {
+      const ch = src[i];
+      if (q) { if (ch === '\\') i += 1; else if (ch === q) q = null; continue; }
+      if (ch === "'" || ch === '"' || ch === '`') { q = ch; continue; }
+      if (ch === '{') depth += 1; else if (ch === '}') { depth -= 1; if (depth === 0) { end = i; break; } }
+    }
+    assert.ok(open > at && end > open, '락 콜백 본문 구간을 찾는다');
+    spans.push([open, end]);
+  }
+  assert.equal(spans.length, 3, '락 지점 수(save·clear·codex 토큰 회전)');
+  const writes = [...src.matchAll(/writeJsonAtomic\(secretsFile\(wsId\)/g)].map((m) => m.index);
+  assert.equal(writes.length, 3, '비밀 파일 쓰기 지점 수(새 쓰기 지점은 락 안에 넣고 이 수를 올린다)');
+  for (const w of writes) assert.ok(spans.some(([a, b]) => w > a && w < b), `비밀 파일 쓰기(offset ${w})가 락 콜백 밖`);
 });
 
 test('R4. thread.appendTurn — failedCode/failedOrigin·modelFallback이 실제로 저장된다(배선 행동)', async () => {

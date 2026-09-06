@@ -111,7 +111,7 @@ const sumUsage = (acc, u = {}) => {
 
 async function* run(opts, ac, isInterrupted) {
   const { wsId, slug, prompt, cwd, systemPrompt, env = {}, model, crewTools = [], mcpServers = {}, canUseTool, lang = 'ko',
-    resume = null, maxTokens, maxSteps = NATIVE_MAX_STEPS, fetchImpl = globalThis.fetch, saveSession = true } = opts;
+    resume = null, maxTokens, maxSteps = NATIVE_MAX_STEPS, fetchImpl = globalThis.fetch, saveSession = true, effort = '' } = opts;
   if (!model) throw new Error('native engine: model is required');
   const { base, headers, wire } = authFromEnv(env, lang);
   const max_tokens = Number(maxTokens) || Number(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) || NATIVE_DEFAULT_MAX_TOKENS;
@@ -136,7 +136,7 @@ async function* run(opts, ac, isInterrupted) {
       }
       let res;
       try {
-        res = await callMessages({ wire, base, headers, signal: ac.signal, fetchImpl,
+        res = await callMessages({ wire, base, headers, effort, signal: ac.signal, fetchImpl,
           body: { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) } });
       } catch (e) {
         // 이미 토큰을 쓴 뒤의 실패는 SDK처럼 usage를 실은 실패 result로 낸다(분리 검수 MEDIUM-1: 던지기만 하면 appendUsage 미도달,
@@ -191,11 +191,11 @@ async function* run(opts, ac, isInterrupted) {
 
 /** 원샷(도구 없는 단발 생성 — 크루 카드 생성·직함·기억 정리·브리핑)용 — oneshot.mjs가 플래그 러너에서 SDK query 대신 쓴다(P-A').
     반환 { text, usage, model }. 실패는 callMessages가 `API Error: <status> <msg>`로 던진다(oneshot의 자가치유·안내 경로 그대로). */
-export async function nativeOneShot({ env = {}, model, prompt, systemPrompt = '', maxTokens, signal, lang = 'ko', fetchImpl = globalThis.fetch }) {
+export async function nativeOneShot({ env = {}, model, prompt, systemPrompt = '', maxTokens, signal, lang = 'ko', fetchImpl = globalThis.fetch, effort = '' }) {
   if (!model) throw new Error('native engine: model is required');
   const { base, headers, wire } = authFromEnv(env, lang);
   const max_tokens = Number(maxTokens) || Number(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) || NATIVE_DEFAULT_MAX_TOKENS;
-  const res = await callMessages({ wire, base, headers, signal, fetchImpl,
+  const res = await callMessages({ wire, base, headers, signal, fetchImpl, effort, // effort는 Responses 와이어(codex)만 싣는다 — 원샷 호출부는 크루 카드가 없어 벤더 기본 강도(2R N4)
     body: { model, max_tokens, ...(systemPrompt ? { system: systemPrompt } : {}), messages: [{ role: 'user', content: String(prompt) }] } });
   const text = (Array.isArray(res?.content) ? res.content : []).filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
   return { text, usage: sumUsage({}, res?.usage), model: res?.model || model };
