@@ -115,7 +115,8 @@ test('자가 진단 동시성·타임아웃·배선 — 동시 첫 호출은 프
   // 후보 = node 실행 파일 자체 + NODE_OPTIONS 프리로드로 10초 블로킹. 셸 스크립트(#!/bin/sh)는 윈도우 CI가 spawn을 못 해
   // reason이 ENOENT로 나왔다(run 34043531982) — 맥·윈도우 양쪽에서 같은 실행 파일을 쓴다.
   const hangPre = join(root, 'hang.cjs'); await writeFile(hangPre, 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);\n');
-  const prevOpts = process.env.NODE_OPTIONS; process.env.NODE_OPTIONS = `--require "${hangPre}"`;
+  // NODE_OPTIONS 파서는 따옴표 안 백슬래시를 이스케이프로 먹는다(맥 실측 "h\\ang"→"hang") — 윈도우 경로 D:\\a\\…는 슬래시로 넘긴다(run 34045874202: exit 1)
+  const prevOpts = process.env.NODE_OPTIONS; process.env.NODE_OPTIONS = `--require "${hangPre.replace(/\\/g, '/')}"`;
   resetShellCache(); const t0 = Date.now(); let r;
   try { r = await resolveShell({ platform: 'win32', env: { ARGO_SHELL: process.execPath }, cwd: root, argv1: null, force: true }); }
   finally { if (prevOpts === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = prevOpts; }
