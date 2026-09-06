@@ -572,6 +572,9 @@ test('드리프트: 루트 직속 도트 리터럴은 전부 BASH_GUARDED 등재
       // 고정했더니 devicesession의 `const LOG = '.device-session.log'`를 못 봤다(분리 검수 MEDIUM-3, 2026-09-02) —
       // 대문자 상수 전부로 넓힌다(규칙 vs 목록이면 목록이 뒤처진다, PR #215 계열).
       ...(/WS_ROOT/.test(code) ? [...code.matchAll(new RegExp(String.raw`const [A-Z_]+ = ${Q}${LIT}`, 'g'))].map((m) => m[1]) : []),
+      // `join(paths(x).root, CONST)`로 회사 루트 직속 파일을 여는 모듈(failure-digest 등) — WS_ROOT만 보던 스캔이 `.failure-digest.json`을 놓쳤다(#446 검수 D1: 규칙 vs 목록[x4]).
+      // 상수 이름을 join 호출부에서 잡아 그 정의만 본다(파일 전체의 대문자 상수를 훑으면 mail/ 하위 큐 파일 상수까지 오탐).
+      ...[...code.matchAll(/join\(\s*paths\(\w+\)\.root\s*,\s*([A-Z_]+)\s*\)/g)].map((m) => code.match(new RegExp(String.raw`const ${m[1]} = ${Q}${LIT}`))?.[1]).filter(Boolean),
       // daemonLease('x') → WS_ROOT/.x.lock (lock.mjs가 이름을 변수로 조립해 위 스캔이 못 본다)
       ...[...code.matchAll(/daemonLease\(\s*'([\w-]+)'/g)].map((m) => `.${m[1]}.lock`),
     ];

@@ -9,7 +9,8 @@ import { useFakeAccountKey } from './helpers/fake-account-key.mjs';
 await useFakeAccountKey();
 process.env.HOME = process.env.USERPROFILE = await mkdtemp(join(tmpdir(), 'argo-digest-home-'));
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-digest-'));
-const { errorSignature, digestFailures, runFailureDigest, DIGEST_MIN_COUNT, DIGEST_FILE_NAME } = await import('../src/failure-digest.mjs');
+const { errorSignature, errorCore, errorSample, digestFailures, runFailureDigest, DIGEST_MIN_COUNT, DIGEST_FILE_NAME } = await import('../src/failure-digest.mjs');
+import { stripComments } from './helpers/strip-comments.mjs';
 const { tickFailureDigest, DIGEST_TICK_MS } = await import('../src/scheduler.mjs');
 const { createCompany, paths } = await import('../src/workspace.mjs');
 const { appendEvent, readEvents } = await import('../src/events.mjs');
@@ -25,6 +26,19 @@ test('D1. errorSignature(순수) — 요청 id·긴 숫자·경로·따옴표 �
   assert.equal(errorSignature('ENOENT: /Users/a/b/c.md'), errorSignature('ENOENT: /Users/x/y/z.md'));
   assert.notEqual(errorSignature('API Error: 401 x'), errorSignature('API Error: 429 x'), '상태 코드는 원인');
   assert.equal(errorSignature(null), '');
+  // D2: Argo가 덧붙인 층(대체 실행 접두·`\n\n` 뒤 안내·크래시 안내)을 벗겨 자가치유 선기록(원문)과 최종 기록이 같은 서명
+  const raw = 'API Error: 401 {"code":"unauthorized","error":"invalid api key"}';
+  const surfaced = `${raw}\n\nGrok 로그인이 만료됐거나 철회됐습니다 — 설정 → AI 연결에서 다시 연결해 주세요.`;
+  const prefixed = `지정 러너 Grok가 연결돼 있지만 인증 오류가 나 Claude(으)로 대체 실행됐습니다(반복되면 Grok를 다시 연결해 주세요). ${raw}`;
+  assert.equal(errorSignature(surfaced), errorSignature(raw)); assert.equal(errorSignature(prefixed), errorSignature(raw)); assert.equal(errorSignature(`턴 실패: error_during_execution — ${raw}`), errorSignature(raw));
+  // D3: 크래시 안내(166~294자)가 앞에 붙어도 종료 코드가 살아남고, 코드가 다르면 다른 서명
+  const crash = (code) => `AI 프로그램이 이 컴퓨터에서 비정상 종료됐습니다 — Argo가 아니라 운영체제가 프로세스를 강제 종료했습니다. 연결이나 크레딧 문제가 아니며, Argo가 이미 한 번 재시도했습니다. 계속되면 앱을 재설치해 주세요. (Claude Code process exited with code ${code})`;
+  assert.match(errorSignature(crash(3221225477)), /exited with code 3221225477/); assert.notEqual(errorSignature(crash(3221225477)), errorSignature(crash(134)));
+  assert.match(errorSample(crash(3221225477)), /code 3221225477\)$/, '샘플 꼬리에 코드 보존');
+  const en400a = `The assigned runner Grok is connected but hit an authentication error this turn, so Claude ran instead (reconnect Grok if this keeps happening). API Error: 400 Invalid request content`;
+  const en400b = `The assigned runner Grok is connected but hit an authentication error this turn, so Claude ran instead (reconnect Grok if this keeps happening). API Error: 400 The model does not exist`;
+  assert.notEqual(errorSignature(en400a), errorSignature(en400b), 'EN 접두가 같아도 벤더 상세가 다르면 다른 서명');
+  assert.equal(errorCore('plain failure text'), 'plain failure text');
 });
 
 test('D2. digestFailures(순수) — 24h 창·ok:false 턴·중단 제외·N회 이상만·러너별 분리·많은 순, 크루 목록 수집', () => {
@@ -36,6 +50,7 @@ test('D2. digestFailures(순수) — 24h 창·ok:false 턴·중단 제외·N회 
     ...[1, 2, 3].map((i) => ({ type: 'turn', ok: false, runner: 'grok', slug: 'c1', aborted: true, error: '사장 지시로 중단', ts: iso(T0 - i * 1000) })), // 중단 3회 — 실패가 아니라 제외
     ...[1, 2].map((i) => ({ type: 'turn', ok: false, runner: 'kimi', slug: 'k', error: 'API Error: 429 rate limit', ts: iso(T0 - i * 2000) })), // 같은 문구 두 러너 2+2 — 러너 축이 없으면 4로 뭉쳐 보고된다
     ...[1, 2].map((i) => ({ type: 'turn', ok: false, runner: 'glm', slug: 'g', error: 'API Error: 429 rate limit', ts: iso(T0 - i * 2500) })),
+    ...[1, 2, 3].map((i) => ({ type: 'turn', ok: false, runner: 'grok', slug: 'c1', error: '사장 지시로 중단', ts: iso(T0 - i * 700) })), // 레거시 중단 문자열(aborted 필드 없음) — 제외(D8)
     { type: 'turn', ok: true, runner: 'grok', slug: 'c1', ts: iso(T0 - 2000) },
     { type: 'runner-health', runner: 'grok', ok: false, ts: iso(T0 - 3000) },
   ];
@@ -53,6 +68,7 @@ test('D3. runFailureDigest — 반복 실패는 failure-digest 이벤트 1행(�
   const r1 = await runFailureDigest(ws); assert.equal(r1.length, 1); assert.equal(r1[0].count, 3);
   let ev = await readEvents(ws); let digests = ev.filter((e) => e.type === 'failure-digest');
   assert.equal(digests.length, 1); assert.equal(digests[0].runner, 'grok'); assert.equal(digests[0].count, 3); assert.match(digests[0].sample, /required: null/); assert.deepEqual(digests[0].crews, ['crew']);
+  assert.equal(digests[0].ok, false, "'오류' 필터·오류 카운터·아침 조회에 포함(D4)");
   const state = JSON.parse(await readFile(join(paths(ws).root, DIGEST_FILE_NAME), 'utf8')); assert.equal(Object.keys(state).length, 1);
   // 같은 서명 재실행(더 늘어도) — 24h 안엔 추가 행 없음
   await appendEvent(ws, { type: 'turn', ok: false, runner: 'grok', slug: 'crew', error: GROK400('id9') });
@@ -73,6 +89,17 @@ test('D4. 스케줄러 틱 — 회사별 시간당 1회(프로세스 내 스로�
   assert.equal(tickFailureDigest('c2', { runFn, now: T0 + 1, lastRun }), true, '다른 회사는 독립');
   assert.equal(tickFailureDigest('c1', { runFn, now: T0 + DIGEST_TICK_MS, lastRun }), true);
   await new Promise((r) => setTimeout(r, 5)); assert.deepEqual(calls, ['c1', 'c2', 'c1']);
-  const src = await readFile(new URL('../src/scheduler.mjs', import.meta.url), 'utf8');
-  assert.match(src, /if \(cloudLeader\) tickFailureDigest\(cid\);/, '틱이 배선돼 있다(클라우드 리더만)');
+  const src = stripComments(await readFile(new URL('../src/scheduler.mjs', import.meta.url), 'utf8'));
+  assert.match(src, /if \(cloudLeader\) tickFailureDigest\(cid\);/, '틱이 배선돼 있다(클라우드 리더만) — 주석 속 문자열은 배선이 아니다(D10)');
+});
+
+test('D5. 방어·동기화 축 — 상태 파일은 크루 셸 1차 방어에 등재(cat·덮어쓰기 deny), 동기화 대상(회사 사실 — 리더 교체 뒤 재보고 없음)', async () => {
+  const ws = 'digest-guard'; await createCompany(ws, '방어', '사장'); const root = paths(ws).root;
+  const { makePermissionGate } = await import('../src/permission-gate.mjs');
+  const gate = makePermissionGate(ws, 's', root, null, 'ko', []);
+  assert.equal((await gate('Bash', { command: `cat ${DIGEST_FILE_NAME}` })).behavior, 'deny', '셸 읽기 deny(D1)');
+  assert.equal((await gate('Bash', { command: `echo '{}' > ${DIGEST_FILE_NAME}` })).behavior, 'deny', '셸 덮어쓰기 deny');
+  assert.equal((await gate('Read', { file_path: join(root, DIGEST_FILE_NAME) })).behavior, 'deny');
+  const { EXCLUDE } = await import('../src/sync.mjs');
+  assert.equal(EXCLUDE(DIGEST_FILE_NAME), false, '동기화 대상 — 서명별 보고 시각은 회사의 사실이라 리더가 바뀌어도 같은 서명을 다시 보고하지 않는다(D12)');
 });
