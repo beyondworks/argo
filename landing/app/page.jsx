@@ -4,6 +4,7 @@ import Hero from '@/components/Hero';
 import Chapter from '@/components/Chapter';
 import InstallSection from '@/components/InstallSection';
 import DownloadSection from '@/components/DownloadSection';
+import MessengerSection from '@/components/MessengerSection';
 import ContactSection from '@/components/ContactSection';
 import PricingSection from '@/components/PricingSection';
 import FaqSection from '@/components/FaqSection';
@@ -42,6 +43,7 @@ export default function Page() {
         );
       })}
       <DownloadSection />
+      <MessengerSection />
       <PricingSection />
       <ContactSection />
       <FaqSection />

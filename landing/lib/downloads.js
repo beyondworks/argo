@@ -15,3 +15,12 @@ export const DL = {
   intel: `${BASE}/argo-macos-intel.dmg`, // 인텔 맥 v0.1.27부터 재지원 — latest에 자산이 있다
   win: `${BASE}/argo-windows-setup.exe`,
 };
+
+// Argo Messenger(팀 메신저) — 별도 릴리스 repo(업데이터 latest 별칭이 앱마다 하나라 argo-agent와 분리). 고정 파일명은
+// release-messenger.yml Collect 스텝이 매 릴리스 갱신한다.
+export const MSGR_RELEASES = 'https://github.com/beyondworks/argo-messenger/releases/latest';
+export const MSGR_DL = {
+  silicon: `${MSGR_RELEASES}/download/argo-messenger-macos-apple-silicon.dmg`,
+  intel: `${MSGR_RELEASES}/download/argo-messenger-macos-intel.dmg`,
+  win: `${MSGR_RELEASES}/download/argo-messenger-windows-setup.exe`,
+};

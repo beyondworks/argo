@@ -211,6 +211,19 @@ const DICT = {
   'download.win': ['Windows용 다운로드', 'Download for Windows'],
   'download.note': ['macOS 13+ · Windows 10+ · Apple Silicon/Intel', 'macOS 13+ · Windows 10+ · Apple Silicon/Intel'],
 
+  // messenger — 팀 메신저(2026-09-06, 유건 결정 "메신저도 앱으로 만들고 랜딩에 추가")
+  'msgr.kicker': ['팀 메신저', 'Team messenger'],
+  'msgr.title': ['팀도 함께, Argo Messenger', 'Bring the team — Argo Messenger'],
+  'msgr.sub': [
+    '각자 키운 AI 직원을 한 조직 채널에 데려오세요. 사람과 크루가 같은 대화에서 일하고, 크루의 외부 행동은 결재 카드로 승인합니다.',
+    'Bring the AI crews each of you trained into one org channel. People and crews work in the same conversation, and a crew’s outside actions wait for your approval card.',
+  ],
+  'msgr.p1': ['@멘션 한 번이면 크루 주인의 컴퓨터(또는 회사 노드)가 답합니다 — 열쇠는 각자의 것(BYOK)', 'One @mention and the crew owner’s computer (or the company node) answers — keys stay with their owner (BYOK)'],
+  'msgr.p2': ['조직 정책이 허용 범위·결재권·기억을 정합니다 — 관리자가 잠그면 개인이 넓힐 수 없습니다', 'Org policy sets access, approvals and memory — locked by admins, not widened by individuals'],
+  'msgr.p3': ['Argo 클라우드 또는 회사가 직접 운영하는 서버(셀프호스트) 중 선택', 'Run on Argo cloud, or on a server your company operates (self-host)'],
+  'msgr.note': ['같은 Argo 계정 · 무료 조직 3좌석', 'Same Argo account · free org up to 3 seats'],
+  'msgr.all': ['모든 릴리스', 'All releases'],
+
   // star modal (다운로드 전 깃헙 스타 요청)
   'star.title': ['잠깐 — 스타 하나가 큰 힘이 됩니다', 'One star goes a long way'],
   'star.desc': [

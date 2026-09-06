@@ -106,7 +106,7 @@ export default function SmoothScroll({ children }) {
       // 핀 아닌 전체 섹션 — 상단을 뷰포트에 맞춤. 한 화면을 넘는 섹션(FAQ 아코디언 펼침 등)은
       // 내부 중간 지점을 추가해 한 제스처씩 끝까지 내려갈 수 있게 한다(2026-08-07 — 펼친 아코디언
       // 아래가 스냅에 갇혀 도달 불가하던 것). 지점 간격 0.85vh = 문맥이 겹치며 넘어가는 보폭.
-      ['.install-section', '.interlude', '.download-section', '.pricing-section', '.contact-section', '.faq-section'].forEach((sel) => {
+      ['.install-section', '.interlude', '.download-section', '.messenger-section', '.pricing-section', '.contact-section', '.faq-section'].forEach((sel) => {
         const el = document.querySelector(sel);
         if (!el) return;
         const top = el.getBoundingClientRect().top + window.scrollY;
@@ -114,7 +114,7 @@ export default function SmoothScroll({ children }) {
         const vh = window.innerHeight;
         for (let y = top + vh * 0.85; y < top + el.offsetHeight - vh * 0.5; y += vh * 0.85) pts.push(y);
       });
-      ['install', 'download', 'pricing', 'contact', 'faq'].forEach((id) => {
+      ['install', 'download', 'messenger', 'pricing', 'contact', 'faq'].forEach((id) => {
         const el = document.querySelector(`.${id}-section`);
         if (el) navTargets[id] = el.getBoundingClientRect().top + window.scrollY;
       });

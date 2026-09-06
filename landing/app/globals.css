@@ -874,6 +874,28 @@ video {
   display: block;
 }
 
+/* ── messenger — 다운로드 섹션 문법 재사용 + 요점 3줄 ── */
+.messenger-section { background: var(--bg-2, var(--bg)); }
+.messenger-points {
+  list-style: none;
+  margin: clamp(22px, 4svh, 36px) 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  max-width: 56ch;
+  color: var(--fg-2);
+  font-size: 15px;
+  line-height: 1.55;
+}
+.messenger-points li { position: relative; padding-left: 22px; }
+.messenger-points li::before {
+  content: '';
+  position: absolute; left: 0; top: 0.62em;
+  width: 8px; height: 8px;
+  background: var(--fg);
+  transform: rotate(45deg);
+}
+
 /* ── install — 히어로와 1장 사이 터미널 한 줄 인터루드 ── */
 
 /* 챕터 인트로와 동일 문법·동일 수치(chapter-intro 참조) — 풀스크린 센터 정렬, 정적 섹션 */
