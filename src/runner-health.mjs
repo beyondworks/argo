@@ -7,7 +7,8 @@
 //  ① **과금 호출 스로틀**: grok verify는 실 벤더 POST(/v1/messages)라 호출마다 청구·레이트를 먹는다
 //     (#378 분리 검수 지적). 그런 러너는 기본 간격을 6시간으로 늘리고, 실패 시 백오프를 24시간까지 민다.
 //  ② **판정 불가(ok:null)는 무해 스킵**: 오프라인·일시 오류·원격 판정 불가 방식은 실패로 세지 않는다
-//     (연속 실패 카운터를 건드리지 않아 백오프도 안 민다 — 비행기 모드 하루가 자격을 의심하게 두지 않는다).
+//     (verify의 연속 실패 카운터를 건드리지 않아 자격 백오프도 안 민다 — 비행기 모드 하루가 자격을 의심하게 두지 않는다).
+//     턴 프로브의 판정 불가는 판정·이벤트를 바꾸지 않되 프로브 자체 카운터(probeFails)로 1h→24h 물러난다(검진당 1개 슬롯 독점 방지, #445 3R).
 //  ③ **자격을 지우지 않는다**: 검진은 표시만 바꾼다. 일시 장애가 연결 해제로 둔갑하는 것이 creds.mjs가
 //     명시적으로 금지한 실패 모드다(refreshGrokOnce 주석과 같은 원칙).
 import { join } from 'node:path';
@@ -40,7 +41,7 @@ export const HEALTH_BILLED_RUNNERS = new Set(['grok']);
 // 자격 확인(verify)은 키가 유효한지만 본다. 벤더가 **Argo의 요청 형태**(도구 정의)를 거절하는 결함(xAI: object 스키마에 required 없으면 400 —
 // v0.1.62 Grok 턴 전멸)은 verify로는 절대 안 보이고 크루 턴 실패로만 드러났다. 그래서 네이티브로 도는 러너에는 실제 대화와 같은 도구
 // 목록을 실은 1턴(max_tokens 8)을 보내 카드가 먼저 말하게 한다. 비용 통제: 도구 목록·앱 버전의 지문이 바뀌었을 때(=업데이트 직후) 또는
-// 하루 1회만. 판정 불가(네트워크·5xx)는 무해 스킵(제약 ②), 자격은 지우지 않는다(제약 ③).
+// 하루 1회만. 판정 불가(네트워크·5xx)는 판정을 바꾸지 않고 프로브 카운터로만 물러난다(제약 ②), 자격은 지우지 않는다(제약 ③).
 export const HEALTH_PROBE_INTERVAL_MS = 24 * 60 * 60_000;
 export const HEALTH_PROBE_RETRY_MS = 60 * 60_000; // 프로브 실패 뒤 첫 재시도 1시간, 이후 2배씩(상한 = HEALTH_PROBE_INTERVAL_MS 24h) — 거짓 경보·일시 거절은 1시간 안에 풀리고, 영구 거절은 하루 1회로 수렴(2R N-MEDIUM-2)
 /** 검진 1회당 프로브 상한 — 회사 × 러너가 앱 업데이트 직후 한꺼번에 터지지 않게(1R MEDIUM-4). 나머지 러너는 다음 검진(30분)에. */
@@ -192,9 +193,10 @@ export async function runHealthChecks(wsId, {
     if (probe && r?.ok === true && probesThisRun < HEALTH_PROBE_PER_RUN && turnProbeApplies(runner, cred.type) && turnProbeDue(entry, probeHash, nowMs, probeIntervalMs)) {
       probesThisRun += 1;
       const probed = await probe(wsId, runner).catch(() => ({ ok: null }));
+      const prevFails = entry?.probeHash === probeHash ? (Number(entry?.probeFails) || 0) : 0; // 지문이 바뀌면(업데이트) 카운터는 새로 — 옛 백오프(최대 24h)를 물려받으면 업데이트 뒤 첫 프로브가 판정 불가일 때 옛 거절 표시가 하루 굳는다(4R N4-MEDIUM-1)
       if (probed?.ok === true) { next.probeOk = true; delete next.probeReason; delete next.probeDetail; delete next.probeFails; next.probeAt = nowMs; next.probeHash = probeHash; }
-      else if (probed?.ok === false) { next.probeOk = false; next.probeReason = probed.reason; next.probeDetail = String(probed.detail ?? '').slice(0, 300); next.probeFails = (Number(entry?.probeFails) || 0) + 1; next.probeAt = nowMs; next.probeHash = probeHash; }
-      else { next.probeFails = (Number(entry?.probeFails) || 0) + 1; next.probeAt = nowMs; next.probeHash = probeHash; } // 판정 불가(429·5xx·네트워크·합성 오류): 직전 판정은 그대로, 시각·지문·카운터만 — 같은 백오프로 물러나 슬롯을 돌려준다(3R N3-MEDIUM-1)
+      else if (probed?.ok === false) { next.probeOk = false; next.probeReason = probed.reason; next.probeDetail = String(probed.detail ?? '').slice(0, 300); next.probeFails = prevFails + 1; next.probeAt = nowMs; next.probeHash = probeHash; }
+      else { next.probeFails = prevFails + 1; next.probeAt = nowMs; next.probeHash = probeHash; } // 판정 불가(429·5xx·네트워크·합성 오류): 직전 판정은 그대로, 시각·지문·카운터만 — 같은 백오프로 물러나 슬롯을 돌려준다(3R N3-MEDIUM-1)
     }
     // 실패 = verify 실패 **또는** 프로브 실패(독립 저장). 회복 = 둘 다 아님.
     const failNow = next.ok === false || next.probeOk === false;

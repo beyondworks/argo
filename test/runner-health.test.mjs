@@ -360,6 +360,9 @@ test('runTurnProbe(실제 프로브) — 엄격 xAI 가짜 벤더는 정규화�
     const { callMessages } = await import('../src/engine/messages-http.mjs');
     await callMessages({ wire: 'gemini', base: gem.base, headers: {}, minOutputTokens: 2048, body: { model: 'gemini-2.5-flash', max_tokens: 8, min_output_tokens: 777, messages: [{ role: 'user', content: 'ok' }] } });
     assert.equal(gem.bodies[1].generationConfig.maxOutputTokens, 2048, '본문 min_output_tokens(777)보다 옵션(2048)이 우선');
+    const { GEMINI_MIN_OUTPUT_TOKENS } = await import('../src/engine/gemini-wire.mjs');
+    await callMessages({ wire: 'gemini', base: gem.base, headers: {}, body: { model: 'gemini-2.5-flash', max_tokens: 8, min_output_tokens: 777, messages: [{ role: 'user', content: 'ok' }] } });
+    assert.equal(gem.bodies[2].generationConfig.maxOutputTokens, GEMINI_MIN_OUTPUT_TOKENS, '옵션 없이 본문에만 있으면 무시(엔진 기본 하한) — 조건형 덮기 변이 red(4R INFO M8)');
   } finally { await gem.close(); delete process.env.GEMINI_BASE_URL; }
   // MEDIUM-3: 기본 프로브 안전장치 — 스파이 서버로 결정적 단언(가드 제거 변이 red)
   const spy = await startStrictVendor({ vendor: 'xai' });
@@ -371,3 +374,17 @@ test('runTurnProbe(실제 프로브) — 엄격 xAI 가짜 벤더는 정규화�
     assert.equal(spy.calls.length, 1, '프로브를 명시 주입하면 1회');
   } finally { await spy.close(); delete process.env.GROK_BASE_URL; }
 });
+
+test('업데이트(지문 변경) 뒤 첫 프로브가 판정 불가여도 옛 백오프를 물려받지 않는다 — 1h 뒤 재프로브로 회복(4R N4-MEDIUM-1: 물려받으면 옛 거절 표시가 최대 24h)', async () => {
+  const ws = 'hc-probe-update'; await seed(ws, { openrouter: ['apikey', 'or-key-u'] });
+  const verifyFn = async () => ({ ok: true }); const fail = async () => ({ ok: false, reason: 'probe', detail: 'API Error: 400 x' });
+  let t = T0; for (let i = 0; i < 5; i++) { await runHealthChecks(ws, { verifyFn, probeFn: fail, probeHash: 'h-old', nowMs: t, jitterMs: 0 }); t += HEALTH_PROBE_INTERVAL_MS; } // 옛 지문에서 5회 실패 = 16h 백오프
+  const file = join(process.env.ARGO_ROOT, ws, '.runner-health.json');
+  let st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.probeFails, 5);
+  await runHealthChecks(ws, { verifyFn, probeFn: async () => ({ ok: null }), probeHash: 'h-new', nowMs: t, jitterMs: 0 }); // 업데이트 직후 첫 프로브가 네트워크 불통
+  st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.probeFails, 1, '지문이 바뀌면 카운터는 새로 시작'); assert.equal(st.openrouter.probeOk, false, '옛 거절 표시는 아직');
+  const probes = [];
+  await runHealthChecks(ws, { verifyFn, probeFn: async (_w, r) => { probes.push(r); return { ok: true }; }, probeHash: 'h-new', nowMs: t + HEALTH_PROBE_RETRY_MS, jitterMs: 0 });
+  assert.deepEqual(probes, ['openrouter'], '옛 백오프(16h)를 물려받았다면 1h 뒤엔 안 돈다'); st = JSON.parse(await readFile(file, 'utf8')); assert.equal(st.openrouter.probeOk, true, '회복'); assert.equal(st.openrouter.probeFails, undefined);
+});
+
