@@ -175,6 +175,7 @@ test('E5. 내장 도구 — Read 줄번호·Edit 유일성·Glob·Grep 모드·B
     assert.match(await t.Bash({ command: 'copy a.txt "b c.txt" && type "b c.txt"' }), /abc/, 'cmd 갈래 verbatim — 따옴표 든 인자가 cmd에 그대로(1R L4)');
     // 타임아웃 시 자식 프로세스까지 종료 — busybox 안 sleep(애플릿)이 아니라 별도 node 자식으로(1R L5): 하트비트 파일이 멈춰야 한다
     assert.match(await t.Bash({ command: 'node -e "setInterval(()=>require(\'fs\').writeFileSync(\'hb.txt\',String(Date.now())),100)"', timeout: 1000 }), /\[timeout after 1000ms\]/);
+    await new Promise((r) => setTimeout(r, 1500)); // taskkill /T는 비동기(도구는 기다리지 않고 돌아온다) — 정착 뒤 비교
     const hb1 = await readFile(join(cwd, 'hb.txt'), 'utf8'); await new Promise((r) => setTimeout(r, 1200)); assert.equal(await readFile(join(cwd, 'hb.txt'), 'utf8'), hb1, '타임아웃 뒤 자식(node)도 죽었다');
     // Git Bash 갈래(ARGO_SHELL 강제) — 출력 경로가 MSYS(/d/…)가 아니라 Node가 여는 형태로 정규화(1R L2)
     const { resetShellCache } = await import('../src/engine/shell-backend.mjs'); const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
