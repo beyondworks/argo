@@ -100,7 +100,8 @@ export async function resolveShell(opts = {}) {
 export const resetShellCache = () => { picked = null; pickedAt = 0; };
 /** 폴백인가(순수) — 스탠드얼론(동봉 있음)에서 동봉 실행기를 못 쓰는 상태. 개발 실행(동봉 없음)은 폴백이 아니다. */
 export const isShellFallback = (sel, env = process.env) => Boolean(env.ARGO_STANDALONE) && sel?.kind !== 'busybox';
-/** Git Bash(MSYS) 출력의 `/c/Users/…`를 `C:/Users/…`로 — 모델이 pwd·find 출력을 Read·Edit 인자로 복사할 때 Node가 열 수 있게. URL(`http://x/c/y`)은 앞이 `/`라 안 걸린다. */
+/** Git Bash(MSYS) 출력의 `/c/Users/…`를 `C:/Users/…`로 — 모델이 pwd·find 출력을 Read·Edit 인자로 복사할 때 Node가 열 수 있게. URL(`http://x/c/y`)은 앞이 `/`라 안 걸린다.
+    드라이브 문자 형태만 — MSYS 가상 경로(`/tmp`·`/usr`·`/home`)는 윈도우 경로를 알 수 없어 그대로(2단계 폴백의 알려진 한계, 회사 폴더는 드라이브 아래라 해당 없음). */
 export const normalizeMsysPaths = (out) => String(out).replace(/(^|[\s"'=(:])\/([a-zA-Z])\/(?=[^\s"'/]|$)/g, (m, pre, d) => `${pre}${d.toUpperCase()}:/`);
 
 /** 실행 계획 — runBash가 그대로 spawn한다. 비윈도우는 /bin/sh. normalize: Git Bash 출력 경로 정규화, fallback: 스탠드얼론에서 동봉을 못 쓰는 상태(회사당 1회 표시). */

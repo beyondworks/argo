@@ -179,7 +179,8 @@ test('E5. 내장 도구 — Read 줄번호·Edit 유일성·Glob·Grep 모드·B
     // Git Bash 갈래(ARGO_SHELL 강제) — 출력 경로가 MSYS(/d/…)가 아니라 Node가 여는 형태로 정규화(1R L2)
     const { resetShellCache } = await import('../src/engine/shell-backend.mjs'); const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
     if (existsSync(gitBash)) {
-      resetShellCache(); const g = builtinRunners({ cwd, env: { PATH: process.env.PATH, HOME: process.env.HOME, ARGO_SHELL: gitBash } });
+      // cwd는 드라이브 경로(레포 루트) — CI 임시 폴더는 MSYS가 가상 경로 /tmp로 보여 정규화 밖(드라이브 문자 형태만 정규화한다, 2단계 폴백의 알려진 한계)
+      resetShellCache(); const g = builtinRunners({ cwd: process.cwd(), env: { PATH: process.env.PATH, HOME: process.env.HOME, ARGO_SHELL: gitBash } });
       const gp = (await g.Bash({ command: 'pwd' })).trim(); assert.match(gp, /^[A-Za-z]:\//, `MSYS 경로 정규화: ${gp}`); assert.ok(existsSync(gp), 'Node가 연다'); resetShellCache();
     }
   }
