@@ -39,6 +39,10 @@ test('D1. errorSignature(순수) — 요청 id·긴 숫자·경로·따옴표 �
   const en400b = `The assigned runner Grok is connected but hit an authentication error this turn, so Claude ran instead (reconnect Grok if this keeps happening). API Error: 400 The model does not exist`;
   assert.notEqual(errorSignature(en400a), errorSignature(en400b), 'EN 접두가 같아도 벤더 상세가 다르면 다른 서명');
   assert.equal(errorCore('plain failure text'), 'plain failure text');
+  // D3: 원문 핵심 자체가 160자를 넘을 때 — 꼬리의 벤더 상세가 서명·샘플에 살아남는다(앞 160자만 뜨면 두 원인이 한 서명으로 뭉친다)
+  const longPre = `API Error: 400 ${'Invalid request content. '.repeat(8)}`; // 215자 상수 앞부분
+  assert.notEqual(errorSignature(`${longPre}model does not exist`), errorSignature(`${longPre}context length exceeded`), '꼬리가 다르면 다른 서명');
+  assert.match(errorSignature(`${longPre}model does not exist`), /model does not exist$/); assert.match(errorSample(`${longPre}model does not exist`), /model does not exist$/, '샘플도 꼬리 보존');
 });
 
 test('D2. digestFailures(순수) — 24h 창·ok:false 턴·중단 제외·N회 이상만·러너별 분리·많은 순, 크루 목록 수집', () => {
