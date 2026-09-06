@@ -160,7 +160,7 @@ test('E5. 내장 도구 — Read 줄번호·Edit 유일성·Glob·Grep 모드·B
   if (process.platform === 'win32') {
     // 윈도우: 동봉 POSIX sh(test.yml이 bin/busybox64u.exe를 해시 고정으로 내려받는다). 2026-09-06 실측 깨짐(따옴표 손상·'-p' 디렉터리·한글·MSYS 경로)을 잠근다
     const { resolveShell } = await import('../src/engine/shell-backend.mjs');
-    const sel = resolveShell({ force: true }); assert.equal(sel.kind, 'busybox', `동봉 실행기 선택 — tried=${JSON.stringify(sel.tried)}`);
+    const sel = await resolveShell({ force: true }); assert.equal(sel.kind, 'busybox', `동봉 실행기 선택 — tried=${JSON.stringify(sel.tried)}`); // resolveShell은 비동기(1R L6)
     assert.equal((await t.Bash({ command: 'echo "a b"' })).trim(), 'a b', '따옴표가 \\"로 새지 않는다(cmd.exe 시절 손상)');
     assert.match(await t.Bash({ command: 'mkdir -p d1/d2 && ls' }), /^d1$/m); assert.doesNotMatch(await t.Bash({ command: 'ls' }), /^-p$/m, "'-p' 디렉터리 생성 없음");
     assert.match(await t.Bash({ command: 'echo 한글 && printf "한글\\n" > k.txt && cat k.txt && ls' }), /한글[\s\S]*한글[\s\S]*k\.txt/, 'UTF-8 인자·파일');
