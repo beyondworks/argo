@@ -63,7 +63,7 @@ export function lastHealthFailByRunner(events) {
   const by = {};
   for (const e of events ?? []) {
     if (e?.type !== 'runner-health' || !e.runner || (e.runner in by)) continue;
-    by[e.runner] = { ok: e.ok !== false ? true : false, reason: e.reason ?? null };
+    by[e.runner] = { ok: e.ok !== false ? true : false, reason: e.reason ?? null, ...(e.detail ? { detail: String(e.detail) } : {}) }; // detail = 벤더 원문(프로브 거절 — 제보에 쓰는 문장)
   }
   return by;
 }
@@ -74,5 +74,6 @@ export function lastHealthFailByRunner(events) {
 export function healthFailMessageKey(reason) {
   if (reason === 'gemini-license') return 'settings.runners.geminiLicenseBlocked';
   if (reason === 'credit' || reason === 'tier') return 'settings.runners.checkCreditTier';
+  if (reason === 'schema') return 'settings.runners.schemaRejected'; // 턴 모양 프로브: 자격은 유효한데 벤더가 Argo의 요청 형태를 거절
   return 'settings.runners.healthFailed';
 }

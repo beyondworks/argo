@@ -461,6 +461,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
       {!retired && (company.connected || st?.host?.optedIn) && (healthFail?.ok === false
         ? <span style={{ fontSize: 11.5, color: 'var(--danger)', whiteSpace: 'normal', minWidth: 0 }}>
             {t(healthFailMessageKey(healthFail.reason))}
+            {healthFail.detail && <><br /><span className="mono" style={{ fontSize: 10.5, opacity: 0.85, wordBreak: 'break-all' }}>{healthFail.detail}</span></>}
           </span>
         : (lastTurn && !lastTurn.ok && !lastTurn.aborted && (
             <span style={{ fontSize: 11.5, color: 'var(--danger)', whiteSpace: 'normal', minWidth: 0 }}>{t('settings.runners.lastTurnFailed')}</span>
