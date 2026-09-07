@@ -69,6 +69,23 @@ test('대화 턴 기본 상한 = 30분 — 옛 5분은 긴 사고 과정 모델�
   assert.match(e.message, /상한 30분/);
 });
 
+test('옛 5분 리터럴 잔존 금지 — externalExec·execCodexAppServer 기본값·벤더 HTTP 세 와이어 기본 상한이 같은 값(30분)', async () => {
+  const runners = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
+  assert.match(runners, /export async function externalExec\(\{ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS,/, '새 호출부가 인자를 빠뜨려도 5분으로 회귀하지 않게(검수 INFO)');
+  const appserver = await readFile(new URL('../src/runners/codex-appserver.mjs', import.meta.url), 'utf8');
+  assert.match(appserver, /export async function execCodexAppServer\(\{ model, cwd, prompt, timeoutMs = 30 \* 60_000,/);
+  assert.doesNotMatch(runners + appserver, /timeoutMs = 300_000/, '옛 5분 리터럴');
+  // 네이티브 엔진(API 키 Claude·GLM·Kimi·OpenRouter·Grok·Gemini·Codex 직결)의 벤더 HTTP 1회 상한 — 옛 10분은 확장 사고를 한 응답 안에서
+  // 도는 모델을 끊었다(검수가 잡은 PR 밖 갭 — 같은 증상이 SDK 러너 크루에서 재발할 자리). 세 와이어가 한 상수를 쓴다.
+  const { VENDOR_HTTP_TIMEOUT_MS } = await import('../src/engine/http-errors.mjs');
+  assert.equal(VENDOR_HTTP_TIMEOUT_MS, CLI_CHAT_TURN_TIMEOUT_MS, 'CLI 턴 상한과 같은 값');
+  for (const rel of ['../src/engine/messages-http.mjs', '../src/engine/responses-wire.mjs', '../src/engine/gemini-wire.mjs']) {
+    const src = await readFile(new URL(rel, import.meta.url), 'utf8');
+    assert.match(src, /timeoutMs = VENDOR_HTTP_TIMEOUT_MS, retry = 1 \}\)/, `${rel}: 기본 상한은 상수에서`);
+    assert.doesNotMatch(src, /timeoutMs = 600_000/, `${rel}: 옛 10분 리터럴`);
+  }
+});
+
 test('배선: chat.mjs — 잡 6시간·대화 CLI_CHAT_TURN_TIMEOUT_MS 상한 + kind가 두 externalExec 호출 모두에 전달', async () => {
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(src, /source === 'job' \? 21_600_000/, '잡 상한 6시간');

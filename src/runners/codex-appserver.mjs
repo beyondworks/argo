@@ -173,7 +173,7 @@ export function runAppServerSession({ input, output, prompt, model = '', effort 
 
 /** app-server 엔진 1턴 — externalExec의 codex 분기와 같은 인자 계약(홈 격리·auth 반입/회수·MCP 주입
     전부 동일 경로 재사용), 실행 방식만 exec→app-server. ARGO_CODEX_ENGINE=appserver일 때만 탄다. */
-export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko' }) {
+export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 60_000, /* runners.mjs CLI_CHAT_TURN_TIMEOUT_MS와 같은 값 — 실사용은 externalExec가 항상 명시 전달(순환 임포트 회피로 리터럴) */ cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko' }) {
   const dir = await mkdtemp(join(tmpdir(), 'argo-codex-as-'));
   const baseHome = cred?.home ? cred.home : await codexHome();
   const CODEX_HOME = join(dir, 'home');

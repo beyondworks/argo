@@ -2,7 +2,7 @@
 // 네이티브 엔진은 Anthropic Messages 형식(system·messages·tools)으로 말하고, 이 계층이 요청은 Responses(instructions·input 항목·function 도구)로,
 // 응답은 Messages 응답 모양(content 블록·stop_reason·usage)으로 되돌린다. Hermes(openai-codex 프로바이더)·OpenClaw(openai 확장)와 같은 경로.
 // 백엔드는 스트리밍만 확실히 지원하므로 stream:true로 보내고 SSE의 response.completed를 최종 응답으로 삼는다(JSON 응답도 수용).
-import { extractErrorMessage } from './http-errors.mjs';
+import { extractErrorMessage, VENDOR_HTTP_TIMEOUT_MS } from './http-errors.mjs';
 
 export const CODEX_BACKEND_BASE = 'https://chatgpt.com/backend-api/codex';
 export const OPENAI_API_BASE = 'https://api.openai.com/v1';
@@ -75,7 +75,7 @@ export function finalFromSse(text) {
 
 const RETRYABLE = new Set([500, 502, 503, 504]);
 /** POST {base}/responses 1회(+과부하·네트워크 1회 재시도). 실패는 `API Error: <status> <message>`(status 동봉 — 401은 호출부가 리프레시 판단). */
-export async function callResponses({ base, headers, body, effort, signal, fetchImpl = globalThis.fetch, timeoutMs = 600_000, retry = 1 }) {
+export async function callResponses({ base, headers, body, effort, signal, fetchImpl = globalThis.fetch, timeoutMs = VENDOR_HTTP_TIMEOUT_MS, retry = 1 }) {
   const url = `${base}/responses`;
   const req = toResponsesRequest({ ...body, effort });
   let attempt = 0;
