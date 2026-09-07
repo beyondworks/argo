@@ -501,7 +501,7 @@ export default function Room({ params }) {
               {shown.map((m, i) => m.noAdd ? (
                 // 반응 라운드 "추가 의견 없음" — 말풍선 대신 접힌 한 줄(room.mjs noAdd). 12명이면 같은 말풍선 12개가 쌓이던 것.
                 <div key={i} style={{ justifySelf: 'start', fontSize: 11.5, color: 'var(--fg-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Avatar name={nameOf(m.who)} size={18} /> {nameOf(m.who)} · {t('room.noAdd')}
+                  <Avatar name={nameOf(m.who)} sm /> {nameOf(m.who)} · {t('room.noAdd')} {/* Avatar는 size prop이 없다(sm뿐) — size={18}은 무시돼 34px 큰 원이 떴다 */}
                 </div>
               ) : m.who === 'user' ? (
                 <div key={i} style={{ justifySelf: 'end', maxWidth: '78%' }}>
@@ -531,40 +531,39 @@ export default function Room({ params }) {
                   }}>{m.text}</span>
                 </div>
               ) : (
-                <div key={i} style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
-                  {/* 발언자 아바타·이름 = '옆에 열기' 진입로 — canOpenSide일 때만 버튼(.room-speaker), 아니면 종전 평문.
+                <div key={i} style={{ maxWidth: '86%', minWidth: 0 }}>
+                  {/* 이름 행 — 아바타가 이름 바로 왼쪽(유건 2026-09-07: 종전엔 본문 옆 바깥 열에 세로 중앙으로 떠 긴 발언에서 이름과 멀어졌다).
+                      아바타·이름 = '옆에 열기' 진입로 — canOpenSide일 때만 버튼(.room-speaker), 아니면 종전 평문.
                       아바타는 이름 버튼과 같은 동작이라 탭 순서에서 뺀다(tabIndex −1) — 발언마다 정지점 둘은 키보드 중복(검수 F) */}
-                  {canOpenSide(m.who) ? (
-                    <button type="button" className="room-speaker" tabIndex={-1} onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })} aria-label={t('room.openSide', { name: nameOf(m.who) })}>
-                      <Avatar name={nameOf(m.who)} />
-                    </button>
-                  ) : <Avatar name={nameOf(m.who)} />}
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 650, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      {canOpenSide(m.who) ? (
-                        <button type="button" className="room-speaker name" onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })}>{nameOf(m.who)}</button>
-                      ) : nameOf(m.who)}
-                      {/* 반응 라운드 발언 — 1라운드 답을 읽고 낸 반응임을 표시(room.mjs round:2) */}
-                      {m.round === 2 && (
-                        <span style={{ fontSize: 10, fontWeight: 650, color: 'var(--primary)', border: '1px solid var(--primary)', borderRadius: 999, padding: '0 6px' }}>{t('room.round2')}</span>
-                      )}
-                      {/* 위임으로 들어온 발언 — 누가 무엇을 맡겨 나온 답인지 방 안에서 드러낸다(다른 창으로 새지 않는다) */}
-                      {m.via && (
-                        // 이름이 들어가는 라벨이라 .chip(uppercase)을 피한다 — 위 시스템 줄과 같은 이유
-                        <span style={{
-                          fontSize: 10.5, fontWeight: 500, color: 'var(--fg-3)',
-                          padding: '1px 7px', borderRadius: 999, border: '1px solid var(--border)',
-                        }}>{t('room.viaDelegate', { from: nameOf(m.via.from) })}</span>
-                      )}
-                    </div>
-                    {m.via?.task && (
-                      <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4, lineHeight: 1.5 }}>{m.via.task}</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 650, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                    {canOpenSide(m.who) ? (
+                      <button type="button" className="room-speaker" tabIndex={-1} onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })} aria-label={t('room.openSide', { name: nameOf(m.who) })}>
+                        <Avatar name={nameOf(m.who)} sm />
+                      </button>
+                    ) : <Avatar name={nameOf(m.who)} sm />}
+                    {canOpenSide(m.who) ? (
+                      <button type="button" className="room-speaker name" onClick={() => openSide(m.who)} title={t('room.openSide', { name: nameOf(m.who) })}>{nameOf(m.who)}</button>
+                    ) : nameOf(m.who)}
+                    {/* 반응 라운드 발언 — 1라운드 답을 읽고 낸 반응임을 표시(room.mjs round:2) */}
+                    {m.round === 2 && (
+                      <span style={{ fontSize: 10, fontWeight: 650, color: 'var(--primary)', border: '1px solid var(--primary)', borderRadius: 999, padding: '0 6px' }}>{t('room.round2')}</span>
                     )}
-                    <div style={{ fontSize: 13.5 }}><Markdown text={m.text} wsId={ws} /></div>
-                    {/* 산출물 칩 — 크루 채팅과 같은 컴포넌트(바로 보기=눈 토글, 바로 가기=칩 클릭). 방 메시지의 artifacts는
-                        room.mjs가 chat() 결과에서 실어 저장한다(개인 스레드에만 기록되던 비대칭 해소). 보관 회의 열람도 같은 경로. */}
-                    {m.artifacts?.length > 0 && <ArtifactChips ws={ws} rels={m.artifacts} />}
+                    {/* 위임으로 들어온 발언 — 누가 무엇을 맡겨 나온 답인지 방 안에서 드러낸다(다른 창으로 새지 않는다) */}
+                    {m.via && (
+                      // 이름이 들어가는 라벨이라 .chip(uppercase)을 피한다 — 위 시스템 줄과 같은 이유
+                      <span style={{
+                        fontSize: 10.5, fontWeight: 500, color: 'var(--fg-3)',
+                        padding: '1px 7px', borderRadius: 999, border: '1px solid var(--border)',
+                      }}>{t('room.viaDelegate', { from: nameOf(m.via.from) })}</span>
+                    )}
                   </div>
+                  {m.via?.task && (
+                    <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4, lineHeight: 1.5 }}>{m.via.task}</div>
+                  )}
+                  <div style={{ fontSize: 13.5 }}><Markdown text={m.text} wsId={ws} /></div>
+                  {/* 산출물 칩 — 크루 채팅과 같은 컴포넌트(바로 보기=눈 토글, 바로 가기=칩 클릭). 방 메시지의 artifacts는
+                      room.mjs가 chat() 결과에서 실어 저장한다(개인 스레드에만 기록되던 비대칭 해소). 보관 회의 열람도 같은 경로. */}
+                  {m.artifacts?.length > 0 && <ArtifactChips ws={ws} rels={m.artifacts} />}
                 </div>
               ))}
               {!viewing && (busy || serverBusy) && turn?.v === 2 && (
@@ -573,7 +572,7 @@ export default function Room({ params }) {
                 <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10 }}>
                   {turn.speakers.filter((sp) => sp.state === 'speaking').map((sp) => (
                     <div key={sp.slug} style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
-                      <Avatar name={nameOf(sp.slug)} size={26} />
+                      <Avatar name={nameOf(sp.slug)} sm />
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={{ fontSize: 11.5, fontWeight: 650, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                           {nameOf(sp.slug)}
@@ -619,7 +618,7 @@ export default function Room({ params }) {
                 turn?.slug ? (
                   // 발언 중인 크루 — 아바타·이름·단계(도구·파일)·쓰는 중인 문장·다음 발언 순서. 크루 말풍선과 같은 골격.
                   <div style={{ display: 'flex', gap: 10, maxWidth: '86%' }}>
-                    <Avatar name={nameOf(turn.slug)} size={26} />
+                    <Avatar name={nameOf(turn.slug)} sm />
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 11.5, fontWeight: 650, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         {nameOf(turn.slug)}

@@ -119,10 +119,11 @@ test('회의실 — 발언자 아바타·이름이 canOpenSide(패널 삶 + 크�
   assert.match(room, /const openSide = \(slug\) => router\.replace\(withSide\(`\$\{window\.location\.pathname\}\$\{window\.location\.search\}`, sideParam\(\{ type: 'crew', key: slug \}\)\)\);/);
   // 진입로 조건 = 두 항 모두 — 크루 실존을 빼면 해고된 크루의 옛 발언이 빈 패널로 보낸다
   assert.match(room, /const canOpenSide = \(slug\) => splitAlive && agents\.some\(\(a\) => a\.slug === slug\);/);
-  // 아바타 갈래(여는 태그 전체 앵커 — 낱개 프로퍼티 앵커는 형제 행이 대신 만족시킨다)
+  // 아바타 갈래(여는 태그 전체 앵커 — 낱개 프로퍼티 앵커는 형제 행이 대신 만족시킨다).
+  // 아바타는 이름 행(flex·alignItems center) **안에서 이름 바로 앞**·sm 크기 — 본문 옆 바깥 열이 아니다(유건 2026-09-07: 긴 발언에서 세로 중앙에 떠 이름과 멀어졌다)
   assert.match(room,
-    /<div key=\{i\} style=\{\{ display: 'flex', gap: 10, maxWidth: '86%' \}\}>\s*\n\s*(?:\{\s*\}\s*\n\s*)?\{canOpenSide\(m\.who\) \? \(\s*\n\s*<button type="button" className="room-speaker" tabIndex=\{-1\} onClick=\{\(\) => openSide\(m\.who\)\} title=\{t\('room\.openSide', \{ name: nameOf\(m\.who\) \}\)\} aria-label=\{t\('room\.openSide', \{ name: nameOf\(m\.who\) \}\)\}>\s*\n\s*<Avatar name=\{nameOf\(m\.who\)\} \/>\s*\n\s*<\/button>\s*\n\s*\) : <Avatar name=\{nameOf\(m\.who\)\} \/>\}/,
-    '아바타 진입로 — 게이트·핸들러·평문 폴백 세트');
+    /<div key=\{i\} style=\{\{ maxWidth: '86%', minWidth: 0 \}\}>\s*\n\s*(?:\{\s*\}\s*\n\s*)?<div style=\{\{ fontSize: 11\.5, fontWeight: 650, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' \}\}>\s*\n\s*\{canOpenSide\(m\.who\) \? \(\s*\n\s*<button type="button" className="room-speaker" tabIndex=\{-1\} onClick=\{\(\) => openSide\(m\.who\)\} title=\{t\('room\.openSide', \{ name: nameOf\(m\.who\) \}\)\} aria-label=\{t\('room\.openSide', \{ name: nameOf\(m\.who\) \}\)\}>\s*\n\s*<Avatar name=\{nameOf\(m\.who\)\} sm \/>\s*\n\s*<\/button>\s*\n\s*\) : <Avatar name=\{nameOf\(m\.who\)\} sm \/>\}\s*\n\s*\{canOpenSide\(m\.who\) \? \(\s*\n\s*<button type="button" className="room-speaker name"/,
+    '아바타 진입로 — 이름 행 안, 이름 바로 앞, sm, 게이트·핸들러·평문 폴백 세트');
   // 이름 갈래
   assert.match(room,
     /\{canOpenSide\(m\.who\) \? \(\s*\n\s*<button type="button" className="room-speaker name" onClick=\{\(\) => openSide\(m\.who\)\} title=\{t\('room\.openSide', \{ name: nameOf\(m\.who\) \}\)\}>\{nameOf\(m\.who\)\}<\/button>\s*\n\s*\) : nameOf\(m\.who\)\}/,
