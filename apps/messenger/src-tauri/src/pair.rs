@@ -22,20 +22,11 @@ struct Entry { verifier: String, session: Option<(String, String)>, created: Ins
 static STORE: Mutex<Option<HashMap<String, Entry>>> = Mutex::new(None);
 
 fn rand_hex(n: usize) -> String {
-    // getrandom 크레이트 없이 OS 난수 — /dev/urandom(유닉스)·BCryptGenRandom 대신 std의 RandomState 해시를 여러 번 섞는다.
-    // ponytail: 암호학적 CSPRNG는 아니지만 code는 5분 단명 + verifier 별도 + 루프백 한정이라 추측 공격 창이 없다. 필요하면 getrandom으로.
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-    let mut out = String::with_capacity(n * 2);
-    let mut i = 0u64;
-    while out.len() < n * 2 {
-        let mut h = RandomState::new().build_hasher();
-        h.write_u64(i); h.write_u128(Instant::now().elapsed().as_nanos() ^ (std::process::id() as u128));
-        out.push_str(&format!("{:016x}", h.finish()));
-        i += 1;
-    }
-    out.truncate(n * 2);
-    out
+    // OS CSPRNG(getrandom — 이미 의존성 트리에 있는 크레이트). code는 URL로 브라우저에 노출되지만 verifier는 앱만 알고,
+    // 둘 다 추측 불가여야 로컬의 다른 프로세스가 code를 맞혀 가짜 토큰을 봉인하는 경로가 닫힌다(분리 검수 관점, 2026-09-07).
+    let mut buf = vec![0u8; n];
+    getrandom::getrandom(&mut buf).expect("OS 난수원 없음");
+    buf.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 fn sweep(m: &mut HashMap<String, Entry>) { m.retain(|_, e| e.created.elapsed() < TTL && !e.done); }
