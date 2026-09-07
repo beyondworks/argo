@@ -136,7 +136,7 @@ function Shell({ session }) {
   const uid = session.user.id;
   const [orgs, setOrgs] = useState(null); const [orgId, setOrgId] = useState(null);
   const [channels, setChannels] = useState([]); const [chId, setChId] = useState(null);
-  const [members, setMembers] = useState([]); const [crews, setCrews] = useState([]);
+  const [members, setMembers] = useState([]); const [crews, setCrews] = useState([]); const [myAvailable, setMyAvailable] = useState([]); // 부록 M: 내 파견 전 크루(status available — 아르고 브리지가 미러)
   const [chMembers, setChMembers] = useState([]); // 현재 채널의 msgr_channel_members(비공개·DM)
   const [ent, setEnt] = useState(null); const [policy, setPolicy] = useState(null);
   const orgLocked = ent?.ls_status === 'past_due' || ent?.ls_status === 'unpaid'; // J-2: 결제 문제 = 읽기 전용(서버 msgr_org_locked가 최종) // msgr_org_entitlements(plan·seats) — 좌석 표시·한도 안내
@@ -179,7 +179,7 @@ function Shell({ session }) {
     const [chs, mems, crs, e, pol] = await Promise.all([
       q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name, expires_at').eq('org_id', id).is('removed_at', null)),
-      q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at').eq('org_id', id).eq('status', 'active')),
+      q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at').eq('org_id', id).in('status', ['active', 'available'])).then((rows) => { setMyAvailable(rows.filter((r) => r.status === 'available' && r.owner_user_id === uid).sort((x, y) => x.display_name.localeCompare(y.display_name, 'ko'))); return rows.filter((r) => r.status === 'active'); }),
       supabase.from('msgr_org_entitlements').select('plan, seats, ls_status').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
       supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
     ]);
@@ -191,6 +191,20 @@ function Shell({ session }) {
     if (dmIds.length) { try { const rows = await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', dmIds)); const map = {}; for (const r of rows) (map[r.channel_id] ??= []).push(r); setDmMembers(map); } catch { setDmMembers({}); } } else setDmMembers({});
   }, [orgs]);
   useEffect(() => { loadOrg(orgId).catch((e) => setErr(e.message)); }, [orgId, loadOrg]);
+  // 부록 M: 그 자리 파견 — available → active(허용 범위는 조직 정책 기본값, 잠금이면 서버 게이트가 맞춘다) → 채널 멤버(+소유자 동반). 채널 없이 부르면 조직에만 파견.
+  const dispatchCrew = useCallback(async (crew, channelId = null) => {
+    const allow = policy?.allow_default ?? 'all';
+    const up = await supabase.from('msgr_crews').update({ status: 'active', allow, allow_users: [] }).eq('id', crew.id).select('id');
+    if (up.error) throw new Error(up.error.message);
+    const ch = channels.find((c) => c.id === channelId);
+    if (channelId && ch && ch.kind !== 'public') { // 공개 채널은 파견만으로 참여(멤버 행 없음) — 비공개·DM만 멤버 행
+      const rows = [{ channel_id: channelId, member_kind: 'crew', member_id: crew.id, added_by: uid }, { channel_id: channelId, member_kind: 'user', member_id: uid, added_by: uid }];
+      const res = await supabase.from('msgr_channel_members').upsert(rows, { onConflict: 'channel_id,member_kind,member_id' });
+      if (res.error && !/msgr_channel_personal_blocked/.test(res.error.message)) throw new Error(res.error.message);
+      if (res.error) throw new Error(t('err.channelPersonalBlocked'));
+    }
+    await loadOrg(orgId);
+  }, [policy, uid, orgId, loadOrg, t, channels]);
   const loadChMembers = useCallback(async (id) => { if (!id) { setChMembers([]); return; } const rows = await q(supabase.from('msgr_channel_members').select('member_kind, member_id, added_by').eq('channel_id', id)); setChMembers(rows); }, []);
   useEffect(() => { loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setChSheet(false); }, [chId]); // 채널을 바꿀 때만 닫는다(검수 HIGH-1: tick 의존이면 15초마다 시트가 닫혔다)
@@ -397,7 +411,14 @@ function Shell({ session }) {
             </div>
           ); })}</div>
         </>)}
-        <div className="msgr-railhint">{t('rail.hint')}</div>
+        {org && (myAvailable.length > 0 || crews.some((c) => c.owner_user_id === uid)) && (<>
+          <div className="msgr-group">{t('rail.mine')}<span className="msgr-klabel">{crews.filter((c) => c.owner_user_id === uid).length}/{crews.filter((c) => c.owner_user_id === uid).length + myAvailable.length}</span></div>
+          <div className="msgr-list mine">
+            {crews.filter((c) => c.owner_user_id === uid).map((c) => <button key={c.id} type="button" className="item" onClick={() => setSheet(c.id)} title={t('rail.mine.on')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-dot mark" /></button>)}
+            {myAvailable.map((c) => <button key={c.id} type="button" className="item dim" onClick={() => setPage('chat')} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>)}
+          </div>
+        </>)}
+        <div className="msgr-railhint">{myAvailable.length || crews.some((c) => c.owner_user_id === uid) ? t('rail.hint.mine') : t('rail.hint')}</div>
         </div>
         <div className="msgr-foot">
           <Av name={me?.display_name || session.user.email} size="sm" />
@@ -409,7 +430,7 @@ function Shell({ session }) {
       </aside>
       <main className="msgr-main">
         {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
-        {chSheet && channel && <ChannelSheet channel={channel} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} nameOfUser={nameOfUser} onClose={() => setChSheet(false)} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
+        {chSheet && channel && <ChannelSheet myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} nameOfUser={nameOfUser} onClose={() => setChSheet(false)} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {(err || note) && (
           <div className="msgr-notice">
@@ -504,7 +525,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
 }
 
 /* ─── 채널 시트: 이름·주제(관리자·생성자) · 크루 기억 스위치 · 멤버(비공개·DM: 사람·크루 추가/내보내기, 크루=소유자 동반) · 보관 ─── */
-function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMembers, people = [], chCrews = [], ent, onInvite, onCrew, onDm, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
+function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMembers, people = [], chCrews = [], ent, myAvailable = [], onDispatch, onInvite, onCrew, onDm, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
   const { t } = useT();
   const chAdmins = channel.admin_user_ids ?? [];
   const canEdit = isAdmin || channel.created_by === uid || chAdmins.includes(uid); // J-1: 채널 관리자도 설정·멤버 관리(최종은 RLS msgr_can_manage_channel)
@@ -581,7 +602,8 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
     setNewCrew(null); setAdd(null); onNote(t('ch.crew.new.sent')); loadRequests().catch(() => {});
   };
   const canAddPeople = scoped && canEdit && channel.kind !== 'dm' && addableUsers.length > 0;
-  const canAddCrew = scoped && canEdit && channel.kind !== 'dm' && addableCrews.length > 0;
+  const canDispatch = channel.kind !== 'dm' && myAvailable.length > 0 && (channel.personal_crews ?? 'allowed') !== 'blocked'; // 부록 M: 내 파견 전 크루 — 공개 채널은 파견만 하면 자동 참여, 비공개는 파견+멤버
+  const canAddCrew = (scoped && canEdit && channel.kind !== 'dm' && addableCrews.length > 0) || canDispatch;
   const canGuest = channel.kind === 'private' && canEdit;
   const showNewCrewItem = channel.kind !== 'dm' && (canCreateCrew || (isAdmin && !nodeOn)); // 관리자에겐 서버가 없거나 죽어도 항목은 보이되 비활성+이유(안 될 버튼 노출 금지의 예외: 왜 안 되는지 알려줘야 하는 자리)
   const canAddAny = canAddPeople || canAddCrew || canGuest || showNewCrewItem;
@@ -658,8 +680,14 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
                 <div className="acts"><button type="button" className="btn sm" onClick={() => setAdd(null)}>{t('ui.cancel')}</button></div>
               </>)}
               {add === 'crew' && (<>
-                <div className="msgr-klabel">{t('ch.add.crew')}</div>
-                <div className="msgr-chips">{addableCrews.map((c) => <button key={c.id} type="button" className="msgr-chan" onClick={() => addMember('crew', c.id)}><I name="star" size={13} /><span>{c.display_name}</span></button>)}</div>
+                {addableCrews.length > 0 && <><div className="msgr-klabel">{t('ch.add.crew')}</div>
+                <div className="msgr-chips">{addableCrews.map((c) => <button key={c.id} type="button" className="msgr-chan" onClick={() => addMember('crew', c.id)}><I name="star" size={13} /><span>{c.display_name}</span></button>)}</div></>}
+                {!addableCrews.length && !myAvailable.length && <p className="note">{t('ch.add.crew.none')}</p>}
+                {myAvailable.length > 0 && (channel.personal_crews ?? 'allowed') !== 'blocked' && (<>
+                  <div className="msgr-klabel">{t('ch.add.mine')}</div>
+                  <div className="msgr-chips">{myAvailable.map((c) => <button key={c.id} type="button" className="msgr-chan more" disabled={busy} onClick={async () => { setBusy(true); try { await onDispatch(c, channel.id); setAdd(null); onNote?.(t('ch.add.mine.done', { name: c.display_name })); } catch (e) { onError(e.message); } finally { setBusy(false); } }}><I name="plus" size={13} /><span>{c.display_name}</span></button>)}</div>
+                  <p className="note">{t('ch.add.mine.note')}</p>
+                </>)}
                 <p className="note">{t('ch.add.crew.note')}</p>
                 <div className="acts"><button type="button" className="btn sm" onClick={() => setAdd(null)}>{t('ui.cancel')}</button></div>
               </>)}

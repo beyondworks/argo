@@ -41,6 +41,7 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], ap
     async myCrews() { rec('myCrews'); return crews; },
     async crewBySlug(uid, ws, slug) { rec('crewBySlug', slug); return crews.find((c) => c.slug === slug) ?? null; },
     async heartbeat(ids) { rec('heartbeat', ids); },
+    async myOrgIds() { return []; }, // 부록 M 인벤토리 미러 — 이 파일의 관심 밖(test/msgr-inventory.test.mjs)
     async nodeHeartbeat(org, info = null) { rec('nodeHeartbeat', org, info); },
     async pendingCrewRequests(org) { rec('pendingCrewRequests', org); return crewRequests; },
     async finishCrewRequest(id, patch) { rec('finishCrewRequest', id, patch); },

@@ -543,3 +543,13 @@
 /* ── 인앱 업데이트 막대 — 상단 한 줄(sticky), 화면 흐름을 밀지 않는다 ── */
 .msgr-updbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px; padding: 8px 14px; font-size: 12.5px; background: var(--card); border-bottom: 1px solid var(--border); }
 .msgr-updbar span { flex: 1; min-width: 0; }
+
+/* 레일 "내 크루"(부록 M) — 파견 중은 초록 점, 파견 전은 흐리게 + '대기' */
+.msgr-list.mine .item { height: 30px; }
+.msgr-list.mine .item.dim { color: var(--fg-3); }
+.msgr-list.mine .item .msgr-dot { margin-left: auto; }
+.msgr-list.mine .item .msgr-klabel { margin-left: auto; }
+.msgr-av.xs { width: 20px; height: 20px; font-size: 9.5px; }
+.msgr-av.crew.xs { border-radius: 6px; }
+.msgr-av.crew.xs .star { width: 11px; height: 11px; right: -4px; top: -4px; border-width: 1.5px; }
+.msgr-av.crew.xs .star svg { width: 6px; height: 6px; }

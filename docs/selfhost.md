@@ -63,7 +63,7 @@ curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/in
 쓰지 않고 회사가 직접 운영하려면, 회사 소유의 Supabase(호스티드 프로젝트 또는 셀프호스트 스택)에 같은
 마이그레이션을 적용하고 앱에서 서버만 바꾼다. 라이선스는 계약 기반이다(문의: 랜딩 "문의").
 
-1. **마이그레이션 적용** — 레포의 `supabase/migrations/20260903120000_msgr.sql`(+ `is_pro` 좌석 OR을 포함한 선행
+1. **마이그레이션 적용** — 레포의 `supabase/migrations/20260903120000_msgr.sql`과 `20260907120000_msgr_crew_inventory.sql`(+ `is_pro` 좌석 OR을 포함한 선행
    마이그레이션 전체)을 회사 프로젝트에 순서대로 적용한다: `supabase db push` 또는 SQL 편집기. 크기가 커서
    섹션 표지(`-- ==== ...`) 기준으로 나눠 넣어도 된다(문장 중간에서 자르지 말 것).
 2. **첨부 버킷** — 마이그레이션은 버킷을 만들지 않는다:
