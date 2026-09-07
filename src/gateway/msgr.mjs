@@ -125,6 +125,17 @@ export function makeDb(client) {
     async heartbeat(ids) {
       if (ids.length) unwrap(await client.from('msgr_crews').update({ last_seen_at: new Date().toISOString() }).in('id', ids));
     },
+    /** 크루 인벤토리(2026-09-07 유건 지시 "슬랙처럼 내 에이전트 목록"): 내가 활성 멤버인 조직 목록. */
+    async myOrgIds(uid) {
+      return (unwrap(await client.from('msgr_org_members').select('org_id').eq('user_id', uid).is('removed_at', null)) ?? []).map((r) => r.org_id);
+    },
+    /** 이 회사(ws)의 내 크루 행 전부(상태 무관) — 미러 diff의 기준. */
+    async myCrewRows(uid, wsId) {
+      return unwrap(await client.from('msgr_crews').select('id, org_id, slug, display_name, role_text, status').eq('owner_user_id', uid).eq('ws_id', wsId)) ?? [];
+    },
+    async upsertAvailable(rows) { if (rows.length) unwrap(await client.from('msgr_crews').upsert(rows, { onConflict: 'org_id,owner_user_id,ws_id,slug' })); },
+    async updateCrewInfo(id, patch) { unwrap(await client.from('msgr_crews').update(patch).eq('id', id)); },
+    async deleteCrews(ids) { if (ids.length) unwrap(await client.from('msgr_crews').delete().in('id', ids)); },
     /** G-2 조직 문서 미러용: 조직 이름·슬러그, 문서 목록(가벼운 열), 본문(바뀐 것만) — RLS가 열람 범위를 정한다(채널 문서는 열람자만). */
     async org(orgId) { return unwrap(await client.from('msgr_orgs').select('id, slug, name').eq('id', orgId).maybeSingle()); },
     async docsIndex(orgId) { return unwrap(await client.from('msgr_org_docs').select('id, channel_id, path, version, updated_at').eq('org_id', orgId)) ?? []; },
@@ -231,7 +242,35 @@ export async function nodeRunnerInfo(wsId, { status = null, catalog = null, now 
   return info;
 }
 
-export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, runnerInfo = nodeRunnerInfo } = {}) {
+async function listAgentsForInventory(wsId) { const { listAgents } = await import('../hub.mjs'); return (await listAgents(wsId)).map((a) => ({ slug: a.slug, name: a.name, role: a.role })); }
+
+/** 크루 인벤토리 미러 — 로그인한 소유자의 회사 크루(이름·역할·slug만)를 내가 속한 모든 조직에 status='available'로 올린다.
+    메신저가 "내 크루" 목록을 보여 주고 "+ 추가"에서 그 자리 파견(available→active)할 수 있게(부록 M). 키·모델·기억은 절대 싣지 않는다.
+    diff 규칙: 카드에 새로 생긴 크루 → available insert / 이름·역할 바뀜 → 갱신(상태 무관) / 카드가 사라진(해고) 크루 →
+    available이면 행 삭제, active·detached면 그대로(파견은 소유자가 설정 카드에서 해제 — 조용히 채널에서 빠지게 하지 않는다).
+    회사 노드(서비스 계정)는 미러하지 않는다 — 회사 크루는 조직이 만든다(I-5). */
+export async function mirrorInventory(wsId, { db, uid, agents, log = console.error } = {}) {
+  const orgIds = await db.myOrgIds(uid);
+  if (!orgIds.length) return { orgs: 0, inserted: 0, updated: 0, removed: 0 };
+  const rows = await db.myCrewRows(uid, wsId);
+  const bySlug = new Map(agents.map((a) => [a.slug, a]));
+  const out = { orgs: orgIds.length, inserted: 0, updated: 0, removed: 0 };
+  const inserts = [];
+  for (const orgId of orgIds) {
+    const have = new Map(rows.filter((r) => r.org_id === orgId).map((r) => [r.slug, r]));
+    for (const a of agents) {
+      const r = have.get(a.slug);
+      if (!r) { inserts.push({ org_id: orgId, owner_user_id: uid, ws_id: wsId, slug: a.slug, display_name: a.name || a.slug, role_text: a.role || null, hosting: 'local', status: 'available' }); out.inserted++; continue; }
+      if (r.display_name !== (a.name || a.slug) || (r.role_text ?? null) !== (a.role || null)) { await db.updateCrewInfo(r.id, { display_name: a.name || a.slug, role_text: a.role || null }).catch((e) => log('[argo] msgr 인벤토리 갱신 실패:', e.message)); out.updated++; }
+    }
+    const gone = [...have.values()].filter((r) => !bySlug.has(r.slug) && r.status === 'available').map((r) => r.id);
+    if (gone.length) { await db.deleteCrews(gone).catch((e) => log('[argo] msgr 인벤토리 회수 실패:', e.message)); out.removed += gone.length; }
+  }
+  if (inserts.length) await db.upsertAvailable(inserts);
+  return out;
+}
+
+export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory } = {}) {
   const crews = await db.myCrews(uid, wsId);
   const out = { crews: crews.length, queued: 0, denied: 0, stale: 0, list: crews };
   if (nodeOrgId) { // 정보(러너·모델)는 CLI 감지를 스폰하므로 3초까지만 기다린다 — 감지가 멈춰도 생존 신호는 나간다(검수 M-5: 90초 넘기면 '연결 끊김'으로 뒤집히던 결합). I-4: 크루 0명이어도 노드는 살아 있다고 알린다
@@ -239,6 +278,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     await db.nodeHeartbeat(nodeOrgId, info).catch((e) => console.error('[argo] msgr 노드 하트비트 실패:', e.message));
   }
   if (nodeOrgId) await createRequestedCrews(wsId, nodeOrgId, { db, uid }).catch((e) => console.error('[argo] msgr 크루 생성 요청 처리 실패:', e.message)); // I-5: 채널에서 만든 회사 크루(카드 → 등록 → 완료 표시)
+  if (!nodeOrgId && inventory) await mirrorInventory(wsId, { db, uid, agents: await inventory(wsId) }).catch((e) => console.error('[argo] msgr 크루 인벤토리 미러 실패:', e.message)); // 부록 M: 파견 전 크루도 메신저에 보이게
   if (!crews.length) return out;
   await db.heartbeat(crews.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
   for (const orgId of new Set(crews.map((c) => c.org_id))) { // G-2: 조직 문서 미러 — 바뀐 것만, 실패는 로그(턴 처리와 무관)

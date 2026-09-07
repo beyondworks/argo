@@ -2453,3 +2453,42 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
    2026-09-01). 규칙 내용은 위 900px 블록과 동일 — 한쪽만 고치면 두 축이 갈라지므로 함께 갱신할 것. */
 :root[data-narrow-shell] #argo-topbar-slot { display: none; }
 :root[data-narrow-shell] .crew-phone-band { display: flex; flex-wrap: wrap; }
+
+/* 팀 메신저 크루 등록 카드(settings MsgrCard) — 다른 연결 카드와 같은 머리, 크루는 같은 높이의 행 목록(2026-09-07 유건 지적: 일관성·가독성·가시성) */
+.msgr-orgbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.msgr-orgbar label { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.msgr-orgbar select.input { height: 30px; font-size: 12.5px; max-width: 260px; }
+.msgr-crews { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border-soft); border-radius: calc(var(--r) - 4px); overflow: hidden; }
+.msgr-crew + .msgr-crew { border-top: 1px solid var(--border-soft); }
+.msgr-crew .row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 12px; height: 46px; padding: 0 12px 0 10px; }
+.msgr-crew.on .row { background: color-mix(in srgb, var(--card-2) 55%, transparent); }
+.msgr-crew .who { display: flex; align-items: baseline; gap: 8px; min-width: 0; background: none; border: 0; padding: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.msgr-crew .who:disabled { cursor: default; }
+.msgr-crew .who .name { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.msgr-crew .who .role { font-size: 11.5px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.msgr-crew .state { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--fg-3); white-space: nowrap; }
+.msgr-crew .state .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--border); }
+.msgr-crew.on .state { color: var(--fg-2); }
+.msgr-crew.on .state .dot { background: var(--ok); }
+.msgr-crew .btn.sm { min-width: 52px; justify-content: center; }
+.msgr-crew .more { display: grid; gap: 10px; padding: 4px 12px 12px 47px; border-top: 1px dashed var(--border-soft); }
+.msgr-crew .more .line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.msgr-crew .more .note { font-size: 11.5px; color: var(--fg-3); }
+.msgr-crew .segs { display: inline-flex; gap: 2px; background: var(--card-2); border: 1px solid var(--border); border-radius: 999px; padding: 2px; }
+.msgr-crew .segs button { cursor: pointer; border: 0; border-radius: 999px; padding: 3px 11px; font-size: 12px; font-weight: 600; background: transparent; color: var(--fg-2); }
+.msgr-crew .segs button[aria-checked='true'] { background: var(--primary); color: var(--primary-fg); }
+.msgr-crew .segs button:disabled { cursor: default; opacity: 0.7; }
+.msgr-fine summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-2); }
+.msgr-fine summary::-webkit-details-marker { display: none; }
+.msgr-fine summary::before { content: '›'; display: inline-block; width: 10px; color: var(--fg-3); transition: transform 0.15s; }
+.msgr-fine[open] summary::before { transform: rotate(90deg); }
+.msgr-fine p { font-size: 11.5px; color: var(--fg-3); margin: 8px 0 0 18px; line-height: 1.6; }
+@media (max-width: 640px) {
+  .msgr-crew .row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .msgr-crew .state { display: none; }
+  .msgr-crew .more { padding-left: 12px; }
+}
+
+/* 크루 카드 규칙 행 — 편집 도구(순서·삭제)는 행에 올렸을 때만(2026-09-07) */
+.rulerow .ruletools { opacity: 0; transition: opacity 0.12s; }
+.rulerow:hover .ruletools, .rulerow:focus-within .ruletools { opacity: 1; }

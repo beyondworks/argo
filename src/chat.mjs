@@ -653,16 +653,19 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   const gatedIds = Object.keys(RUNNERS).flatMap((id) => effectiveModels(id).filter((m) => m.gated).map((m) => m.id)); // 오버레이 반영(MEDIUM-3)
   const updateProfile = tool(
     'update_profile',
-    `크루 프로필 변경을 사장 결재로 올린다(승인 시 시스템이 적용). 자기 자신("me") 또는 동료의 이름·역할·팀·일하는 방식 규칙 추가·러너·모델을 바꿀 수 있다. 사장이 러너/모델을 정하지 않았으면 선택지를 제시하고 물어본 뒤 올려라. 러너·모델 카탈로그: ${catalogLine}${gatedIds.length ? ` (접근권 게이트 모델 — Ultra·유료 계정 전용, 무권한 계정은 턴이 기본 모델로 자동 강등: ${gatedIds.join(', ')})` : ''}`,
+    `크루 프로필 변경을 사장 결재로 올린다(승인 시 시스템이 적용). 자기 자신("me") 또는 동료의 이름·역할·팀·러너·모델을 바꾸고, 카드 본문도 고칠 수 있다: rule(규칙 한 줄 추가) · rules("일하는 방식" 규칙 전체를 새 목록으로 교체 — 수정·삭제·순서 변경은 이걸로) · section+body("## 제목" 섹션 하나를 새 내용으로 교체, body 빈 문자열이면 섹션 삭제). 사장이 "카드의 X를 고쳐라/지워라"라고 하면 불가능하다고 답하지 말고 이 도구로 결재를 올려라. 사장이 러너/모델을 정하지 않았으면 선택지를 제시하고 물어본 뒤 올려라. 러너·모델 카탈로그: ${catalogLine}${gatedIds.length ? ` (접근권 게이트 모델 — Ultra·유료 계정 전용, 무권한 계정은 턴이 기본 모델로 자동 강등: ${gatedIds.join(', ')})` : ''}`,
     {
       target: z.string().describe('바꿀 크루 — "me"(자기 자신) 또는 동료 이름/slug'),
       name: z.string().optional(), role: z.string().optional(), team: z.string().optional(),
       rule: z.string().optional().describe('"일하는 방식"에 추가할 규칙 한 줄'),
+      rules: z.array(z.string()).optional().describe('"일하는 방식" 규칙 전체를 이 목록으로 교체(기존 규칙을 먼저 읽고 바꿀 것만 바꿔 전체를 넘겨라)'),
+      section: z.string().optional().describe('교체할 카드 섹션 제목("## " 없이 — 예: 소통, 전문성, 산출물 형식)'),
+      body: z.string().optional().describe('그 섹션의 새 본문(Markdown). 빈 문자열이면 섹션 삭제'),
       runner: z.string().optional().describe(visibleRunnerIds().join(' | ')),
       model: z.string().optional().describe('카탈로그의 모델 id'),
       why: z.string().describe('왜 바꾸는지 한 문장'),
     },
-    async ({ target, name, role, team, rule, runner, model, why }) => {
+    async ({ target, name, role, team, rule, rules, section, body, runner, model, why }) => {
       const who = findCrew(target);
       if (!who) return text(`"${target}"는 크루 명단에 없다. 가능한 대상: me, ${colleagues.map((a) => a.name).join(', ')}`);
       // 모델만 지정하고 러너를 안 바꾸면 다음 턴에서 러너/모델 불일치가 난다 —
@@ -680,16 +683,19 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         ...(team !== undefined ? { team } : {}), ...(runner !== undefined ? { runner } : {}),
         ...(model !== undefined ? { model } : {}),
       };
-      if (!Object.keys(changes).length && !rule) return text('바꿀 내용이 없다 — name/role/team/rule/runner/model 중 하나 이상을 지정하라.');
+      const sectionEdit = section !== undefined ? { section: String(section).trim(), body: String(body ?? '') } : null;
+      if (!Object.keys(changes).length && !rule && !rules && !sectionEdit) return text('바꿀 내용이 없다 — name/role/team/rule/rules/section+body/runner/model 중 하나 이상을 지정하라.');
+      if (sectionEdit && !sectionEdit.section) return text('section에는 카드의 "## 제목"을 그대로 적어라.');
       const summary = [
         name && `이름→${name}`, role && `역할→${role}`, team && `팀→${team}`,
         runner && `러너→${runner}`, model && `모델→${model}`, rule && `규칙 추가: ${rule}`,
+        rules && `규칙 전체 교체(${rules.length}개)`, sectionEdit && (sectionEdit.body.trim() ? `섹션 "${sectionEdit.section}" 교체` : `섹션 "${sectionEdit.section}" 삭제`),
       ].filter(Boolean).join(', ');
       const item = await addApproval(wsId, {
         slug: fromSlug, kind: 'profile', ...(delegatedBy ? { from: delegatedBy } : {}),
         ...(mirrorCtx?.kind === 'msgr' ? { msgr: { orgId: mirrorCtx.orgId, channelId: mirrorCtx.channelId, crewId: mirrorCtx.crewId, threadRoot: mirrorCtx.threadRoot ?? null } } : {}), // 팀 메신저 턴이면 카드 목적지를 항목에 각인(msgrPush가 본다)
         action: `프로필 변경 — ${who.name}: ${summary}`, reason: why,
-        payload: { slug: who.slug, changes, ...(rule ? { rule } : {}) },
+        payload: { slug: who.slug, changes, ...(rule ? { rule } : {}), ...(rules ? { rules } : {}), ...(sectionEdit ? sectionEdit : {}) },
       });
       return text(`결재를 올렸다(${item.id}). 사장이 승인하면 시스템이 자동 적용하고 후속 지시가 온다. 지금은 "결재를 올렸고 승인되면 적용된다"고 짧게 알리고 턴을 마무리하라.`);
     },

@@ -1755,6 +1755,27 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
     const m = (md ?? '').match(/## 일하는 방식\s*\n([\s\S]*?)(?=\n## |$)/);
     return m ? m[1].split('\n').map((l) => l.replace(/^[-*]\s*/, '').trim()).filter((l) => l && !l.startsWith('(')) : [];
   })();
+  // 규칙 편집·삭제·순서(유건 지시 2026-09-07 "카드 편집에 자유도") — 서버 PATCH { rules } 한 번으로 섹션 통째 교체(persona.setAgentRules).
+  // 원문 md는 서버 응답 뒤 다시 읽는다(로컬에서 섹션을 다시 조립하지 않는다 — 두 곳이 갈리면 규칙이 두 번 붙는다).
+  const [ruleEdit, setRuleEdit] = useState(null); // { i, text }
+  const moveItem = (arr, i, d) => { const n = [...arr]; const j = i + d; if (j < 0 || j >= n.length) return n; [n[i], n[j]] = [n[j], n[i]]; return n; };
+  async function saveRules(next) {
+    if (md === null) return;
+    setSaving(true); setMsg('');
+    try {
+      const r = await fetch(`/api/companies/${ws}/agents/${slug}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rules: next }) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `${r.status}`);
+      const d = await api(`/api/companies/${ws}/agents/${slug}`); setMd(d.md);
+      window.dispatchEvent(new Event('argo:refresh'));
+      setMsg(t('chat.saved'));
+    } catch (e) { setMsg(String(e.message)); } finally { setSaving(false); setRuleEdit(null); }
+  }
+  function commitRuleEdit() {
+    if (!ruleEdit) return;
+    const text = ruleEdit.text.trim();
+    if (!text || text === rules[ruleEdit.i]) { setRuleEdit(null); return; }
+    saveRules(rules.map((r, j) => (j === ruleEdit.i ? text : r)));
+  }
   function addRule() {
     const text = ruleInput.trim();
     if (!text || md === null) return;
@@ -1858,14 +1879,27 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
           {/* 규칙 — 카드의 "일하는 방식" 섹션을 그대로 파싱. 추가하면 카드에 불릿으로 붙고 즉시 저장 */}
           <div style={{ display: 'grid', gap: 7 }}>
             <span className="microlabel">{t('chat.card.rules')} · {rules.length}</span>
+            {rules.length > 0 && <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>{t('chat.card.rulesHint')}</span>}
             {rules.length === 0 ? (
               <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{t('chat.card.noRules')}</span>
             ) : (
-              <div style={{ display: 'grid', gap: 4 }}>
+              <div style={{ display: 'grid', gap: 2 }}>
                 {rules.map((r, i) => (
-                  <div key={i} style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', gap: 7 }}>
-                    <span style={{ color: 'var(--fg-3)', flex: 'none' }}>{i + 1}.</span>
-                    <span>{r}</span>
+                  <div key={i} className="rulerow" style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', gap: 7, alignItems: 'flex-start', minWidth: 0 }}>
+                    <span style={{ color: 'var(--fg-3)', flex: 'none', lineHeight: '24px' }}>{i + 1}.</span>
+                    {ruleEdit?.i === i ? (
+                      <input suppressHydrationWarning autoFocus value={ruleEdit.text} onChange={(e) => setRuleEdit({ i, text: e.target.value })}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); commitRuleEdit(); } if (e.key === 'Escape') setRuleEdit(null); }}
+                        onBlur={commitRuleEdit}
+                        style={{ flex: 1, height: 24, padding: '0 8px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 6, outline: 'none', fontSize: 12 }} />
+                    ) : (
+                      <span style={{ flex: 1, minWidth: 0, lineHeight: '24px', cursor: 'text' }} onClick={() => setRuleEdit({ i, text: r })} title={t('chat.card.ruleEdit')}>{r}</span>
+                    )}
+                    <span className="ruletools" style={{ flex: 'none', display: 'inline-flex', gap: 2 }}>
+                      <button type="button" className="btn sm" style={{ padding: '0 6px', height: 24, fontSize: 10.5 }} disabled={saving || i === 0} onClick={() => saveRules(moveItem(rules, i, -1))} title={t('chat.card.ruleUp')} aria-label={t('chat.card.ruleUp')}>↑</button>
+                      <button type="button" className="btn sm" style={{ padding: '0 6px', height: 24, fontSize: 10.5 }} disabled={saving || i === rules.length - 1} onClick={() => saveRules(moveItem(rules, i, 1))} title={t('chat.card.ruleDown')} aria-label={t('chat.card.ruleDown')}>↓</button>
+                      <button type="button" className="btn sm" style={{ padding: '0 8px', height: 24, fontSize: 10.5 }} disabled={saving} onClick={() => saveRules(rules.filter((_, j) => j !== i))} title={t('chat.card.ruleDelete')}>{t('chat.card.ruleDelete')}</button>
+                    </span>
                   </div>
                 ))}
               </div>
