@@ -52,9 +52,10 @@ test('H-0: 라우트가 조직별 policy를 싣고, 카드는 잠금이면 라�
   assert.match(route, /from\('msgr_org_policies'\)\.select\('org_id, allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by'\)/, '라우트가 정책을 조회하지 않는다');
   assert.match(route, /o\.policy = /, '조직에 policy가 붙지 않는다');
   const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
-  assert.match(src, /role="radio" aria-checked=\{allow === v\} disabled=\{busy === a\.slug \|\| !!org\?\.policy\?\.allow_locked\}/, '허용 범위 라디오가 정책 잠금에 비활성화되지 않는다');
-  assert.match(src, /register\(a\.slug, org\?\.policy\?\.allow_locked \? org\.policy\.allow_default : 'owner', \[\]\)/, '등록 버튼이 잠긴 기본값을 쓰지 않는다');
-  assert.match(src, /org\?\.policy\?\.allow_locked && <span[^>]*>\{t\('settings\.msgr\.allow\.locked'\)\}/, '잠금 안내 문구가 없다');
+  assert.match(src, /const locked = !!org\?\.policy\?\.allow_locked;/, '정책 잠금 판정이 없다');
+  assert.match(src, /role="radio" aria-checked=\{allow === v\} disabled=\{busy === a\.slug \|\| locked\}/, '허용 범위 라디오가 정책 잠금에 비활성화되지 않는다');
+  assert.match(src, /register\(a\.slug, locked \? org\.policy\.allow_default : 'owner', \[\]\)/, '등록 버튼이 잠긴 기본값을 쓰지 않는다');
+  assert.match(src, /\{locked && <span className="note">\{t\('settings\.msgr\.allow\.locked'\)\}/, '잠금 안내 문구가 없다');
   assert.match(i18n, /'settings\.msgr\.allow\.locked': \['[^']+', '[^']+'\]/, 'settings.msgr.allow.locked ko/en');
 });
 
@@ -134,7 +135,8 @@ test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크
 test('I-2: 아르고 설정 카드가 조직 정책 요약(허용 범위·고위험 결재권·크루 기억·잠금)과 "파견 = 개인 크루" 한계 문장을 보이고, 라우트가 정책 3항목을 더 싣는다', () => {
   assert.match(route, /select\('org_id, allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by'\)/, '라우트 정책 조회');
   const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
-  assert.match(src, /\{org\?\.policy && \(/, '정책 요약 블록');
+  assert.match(src, /const policyLine = org\?\.policy \? t\('settings\.msgr\.policy\.summary'/, '정책 요약 블록');
+  assert.match(src, /\{policyLine && <p>\{policyLine\}<\/p>\}/, '정책 요약이 화면에 실리지 않는다');
   assert.match(src, /t\('settings\.msgr\.policy\.summary', \{ allow: [^\n]*approver: t\(`settings\.msgr\.policy\.approver\.\$\{org\.policy\.approval_high_by \?\? 'admin'\}`\)[^\n]*memory: /, '요약 문장에 세 항목이 없다');
   assert.match(src, /\{t\('settings\.msgr\.tierNote'\)\}/, '파견 = 개인 크루 한계 문장이 없다');
   for (const k of ['settings.msgr.policy', 'settings.msgr.policy.summary', 'settings.msgr.policy.locked', 'settings.msgr.policy.approver.admin', 'settings.msgr.policy.approver.owner', 'settings.msgr.policy.memory.on', 'settings.msgr.policy.memory.off', 'settings.msgr.tierNote']) {

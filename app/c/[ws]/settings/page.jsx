@@ -3,7 +3,7 @@
 import { Suspense, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Tabs, useRememberedTab, Icon, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, artifactDownload, openBillingPortal, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
+import { Tabs, useRememberedTab, Icon, Avatar, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, artifactDownload, openBillingPortal, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
 import { useLang, adjustZoom } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
@@ -786,78 +786,95 @@ function MsgrCard({ ws, agents }) {
       await load();
     } catch (e) { setErr(String(e.message)); } finally { setBusy(''); }
   }
+  // 화면(2026-09-07 유건 지적 "일관성·가독성·가시성"): 다른 연결 카드와 같은 머리(card-title + chip), 크루는 아바타·이름·역할이
+  // 왼쪽 정렬된 같은 높이의 행, 상태는 오른쪽 점 하나, 허용 범위는 파견 중인 크루를 펼쳤을 때만. 설명·정책 문장은 접어 첫 화면은 목록이 보이게.
+  const [open, setOpen] = useState(''); // 펼친 크루 slug
+  const policyLine = org?.policy ? t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') }) : '';
+  const regCount = agents.filter((a) => regOf(a.slug)).length;
   return (
-    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{t('settings.msgr.title')}</strong>
-        {st?.signedIn && <span className="chip" style={{ fontSize: 10 }} title={bridgeOn ? t('settings.msgr.bridge.on') : t('settings.msgr.bridge.off')}>{bridgeOn ? t('settings.msgr.bridge.onShort') : t('settings.msgr.bridge.offShort')}</span>}
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <span className="card-title" style={{ minWidth: 0 }}>{t('settings.msgr.title')}</span>
+        {st?.signedIn && (
+          <span className="chip" title={bridgeOn ? t('settings.msgr.bridge.on') : t('settings.msgr.bridge.off')}>
+            {bridgeOn ? <><span className="dot" style={{ background: 'var(--ok)' }} />{t('settings.msgr.bridge.onShort')}</> : t('settings.msgr.bridge.offShort')}
+          </span>
+        )}
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.help')}</p>
       {st === null && <Skeleton h={44} />}
       {st && !st.signedIn && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.notSignedIn')}</p>}
       {st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noOrg')}</p>}
       {st?.signedIn && !!st.orgs?.length && (<>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5 }}>
-          <span className="microlabel">{t('settings.msgr.org')}</span>
-          <select className="input" value={orgId} onChange={(e) => setOrgId(e.target.value)} style={{ height: 30, fontSize: 12.5 }}>
-            {st.orgs.map((o) => <option key={o.id} value={o.id}>{o.name} · {t(`role.${o.role}`)}</option>)}
-          </select>
-        </label>
-        {org?.policy && (
-          <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.5 }}>
-            <span className="microlabel" style={{ marginRight: 6 }}>{t('settings.msgr.policy')}</span>
-            {t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') })}
-          </p>
-        )}
-        <p style={{ fontSize: 11.5, color: 'var(--fg-3)', margin: 0, lineHeight: 1.5 }}>{t('settings.msgr.tierNote')}</p>
+        <div className="msgr-orgbar">
+          <label>
+            <span className="microlabel">{t('settings.msgr.org')}</span>
+            <select className="input" value={orgId} onChange={(e) => setOrgId(e.target.value)}>
+              {st.orgs.map((o) => <option key={o.id} value={o.id}>{o.name} · {t(`role.${o.role}`)}</option>)}
+            </select>
+          </label>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>{t('settings.msgr.count', { n: regCount, total: agents.length })}</span>
+        </div>
         {!agents.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noCrews')}</p>}
-        {agents.map((a) => {
-          const reg = regOf(a.slug);
-          const allow = reg?.allow ?? 'owner';
-          const picked = reg?.allow_users ?? [];
-          return (
-            <div key={a.slug} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 0', borderTop: '1px solid var(--border-soft)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <div style={{ flex: 1, minWidth: 180 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>{a.name}</span>
-                  <span style={{ fontSize: 11.5, color: 'var(--fg-3)', marginLeft: 8 }}>{a.role}</span>
-                  <span className="chip" style={{ fontSize: 10, marginLeft: 8 }}>{reg ? t('settings.msgr.registered') : t('settings.msgr.notRegistered')}</span>
-                </div>
-                {reg ? (
-                  <button type="button" className="btn sm" disabled={busy === a.slug} onClick={() => unregister(a.slug)}>{busy === a.slug ? <Spinner size={12} /> : t('settings.msgr.unregister')}</button>
-                ) : (
-                  <button type="button" className="btn sm btn-primary" disabled={busy === a.slug} onClick={() => register(a.slug, org?.policy?.allow_locked ? org.policy.allow_default : 'owner', [])}>{busy === a.slug ? <Spinner size={12} /> : t('settings.msgr.register')}</button>
-                )}
-              </div>
-              {reg && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <span className="microlabel">{t('settings.msgr.allow')}</span>
-                  <div role="radiogroup" aria-label={t('settings.msgr.allow')} style={{ display: 'inline-flex', gap: 3, background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 999, padding: 3 }}>
-                    {['all', 'list', 'owner'].map((v) => (
-                      <button key={v} type="button" role="radio" aria-checked={allow === v} disabled={busy === a.slug || !!org?.policy?.allow_locked} onClick={() => register(a.slug, v, v === 'list' ? picked : [])}
-                        style={{ cursor: 'pointer', border: 0, borderRadius: 999, padding: '4px 12px', fontSize: 12, fontWeight: 600, background: allow === v ? 'var(--primary)' : 'transparent', color: allow === v ? 'var(--primary-fg)' : 'var(--fg-2)' }}>
-                        {t(`settings.msgr.allow.${v}`)}
-                      </button>
-                    ))}
+        {!!agents.length && (
+          <ul className="msgr-crews" role="list">
+            {agents.map((a) => {
+              const reg = regOf(a.slug);
+              const allow = reg?.allow ?? 'owner';
+              const picked = reg?.allow_users ?? [];
+              const isOpen = !!reg && open === a.slug;
+              const locked = !!org?.policy?.allow_locked;
+              return (
+                <li key={a.slug} className={`msgr-crew${reg ? ' on' : ''}${isOpen ? ' open' : ''}`}>
+                  <div className="row">
+                    <Avatar name={a.name} sm />
+                    <button type="button" className="who" disabled={!reg} onClick={() => setOpen(isOpen ? '' : a.slug)} aria-expanded={isOpen} title={reg ? t('settings.msgr.expand') : undefined}>
+                      <span className="name">{a.name}</span>
+                      <span className="role">{a.role}</span>
+                    </button>
+                    <span className="state" title={reg ? t('settings.msgr.registered') : t('settings.msgr.notRegistered')}>
+                      <span className="dot" aria-hidden="true" />{reg ? t(`settings.msgr.allow.${allow}`) : t('settings.msgr.notRegistered')}
+                    </span>
+                    {reg ? (
+                      <button type="button" className="btn sm" disabled={busy === a.slug} onClick={() => unregister(a.slug)}>{busy === a.slug ? <Spinner size={12} /> : t('settings.msgr.unregister')}</button>
+                    ) : (
+                      <button type="button" className="btn sm btn-primary" disabled={busy === a.slug} onClick={() => register(a.slug, locked ? org.policy.allow_default : 'owner', [])}>{busy === a.slug ? <Spinner size={12} /> : t('settings.msgr.register')}</button>
+                    )}
                   </div>
-                  {!!org?.policy?.allow_locked && <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.msgr.allow.locked')}</span>}
-                  {allow === 'list' && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-                      <span className="microlabel">{t('settings.msgr.allow.pick')}</span>
-                      {!org?.members?.length && <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{t('settings.msgr.allow.noMembers')}</span>}
-                      {org?.members?.map((m) => {
-                        const on = picked.includes(m.id);
-                        return <button key={m.id} type="button" className="chip" aria-pressed={on} disabled={busy === a.slug} onClick={() => register(a.slug, 'list', on ? picked.filter((x) => x !== m.id) : [...picked, m.id])}
-                          style={{ cursor: 'pointer', textTransform: 'none', letterSpacing: 0, background: on ? 'var(--primary)' : undefined, color: on ? 'var(--primary-fg)' : undefined }}>{m.name}</button>;
-                      })}
+                  {isOpen && (
+                    <div className="more">
+                      <div className="line">
+                        <span className="microlabel">{t('settings.msgr.allow')}</span>
+                        <div role="radiogroup" aria-label={t('settings.msgr.allow')} className="segs">
+                          {['all', 'list', 'owner'].map((v) => (
+                            <button key={v} type="button" role="radio" aria-checked={allow === v} disabled={busy === a.slug || locked} onClick={() => register(a.slug, v, v === 'list' ? picked : [])}>{t(`settings.msgr.allow.${v}`)}</button>
+                          ))}
+                        </div>
+                        {locked && <span className="note">{t('settings.msgr.allow.locked')}</span>}
+                      </div>
+                      {allow === 'list' && (
+                        <div className="line">
+                          <span className="microlabel">{t('settings.msgr.allow.pick')}</span>
+                          {!org?.members?.length && <span className="note">{t('settings.msgr.allow.noMembers')}</span>}
+                          {org?.members?.map((m) => {
+                            const on = picked.includes(m.id);
+                            return <button key={m.id} type="button" className={`chip${on ? ' fill' : ''}`} aria-pressed={on} disabled={busy === a.slug} onClick={() => register(a.slug, 'list', on ? picked.filter((x) => x !== m.id) : [...picked, m.id])} style={{ cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}>{m.name}</button>;
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        <p style={{ fontSize: 11, color: 'var(--fg-3)', margin: 0, lineHeight: 1.6 }}>{t('settings.msgr.policyNote')}</p>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <details className="msgr-fine">
+          <summary><span className="microlabel">{t('settings.msgr.policy')}</span><span>{t('settings.msgr.fine.summary')}</span></summary>
+          {policyLine && <p>{policyLine}</p>}
+          <p>{t('settings.msgr.tierNote')}</p>
+          <p>{t('settings.msgr.policyNote')}</p>
+        </details>
       </>)}
       {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
     </div>
