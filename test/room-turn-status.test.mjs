@@ -200,7 +200,7 @@ test('배선: 회의실 페이지가 발언 중인 크루의 단계·부분 텍�
   assert.match(page, /const live = busy \|\| serverBusy;/, '자기 턴·서버 턴 모두 진행');
   const live = page.slice(page.indexOf('{!viewing && (busy || serverBusy) && ('), page.indexOf('<div ref={endRef} />'));
   assert.match(live, /turn\?\.slug \? \(/, '발언자를 알면 말풍선 형태');
-  assert.match(live, /<Avatar name=\{nameOf\(turn\.slug\)\} size=\{26\} \/>/);
+  assert.match(live, /<Avatar name=\{nameOf\(turn\.slug\)\} sm \/>/); // Avatar는 size prop이 없다(sm뿐) — size={26}은 34px로 렌더됐다(2026-09-07)
   assert.match(live, /\{turn\.stage \? t\('chat\.stageEllipsis', \{ stage: stageLabel\(t, turn\.stage, turn\.detail\) \}\) : t\('room\.speaking'\)\}/,
     "단계 미상이면 '발언 중' — 'boot'를 지어내면 CLI 러너 발언이 2분 뒤 거짓 '시동 거는 중'(검수 HIGH-1)");
   assert.doesNotMatch(live, /turn\.stage \|\| 'boot'/, "'boot' 폴백 금지");
