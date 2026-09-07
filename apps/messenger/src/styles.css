@@ -191,7 +191,7 @@
 .msgr-sheetwrap { position: absolute; inset: 0; z-index: 50; pointer-events: none; }
 .msgr-sheetwrap > * { pointer-events: auto; }
 .msgr-sheetwrap .msgr-crewsheet { z-index: 66; } /* 투명 스크림(.msgr-scrim.clear, z 65)보다 위 — 아니면 시트 위의 휠이 스크림에 먹혀 뒤의 스레드가 스크롤된다(유건 실측 2026-09-04) */
-.msgr-crewsheet { position: absolute; top: 72px; right: 24px; width: min(380px, calc(100% - 48px)); max-height: calc(100% - 96px); overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 20px 6px 20px 20px; box-shadow: var(--shadow-float); padding: 16px 18px 18px; display: grid; gap: 14px; animation: msgrPopIn 180ms cubic-bezier(.23,1,.32,1) both; }
+.msgr-crewsheet { position: absolute; top: 72px; right: 24px; width: min(380px, calc(100% - 48px)); max-width: calc(100% - 48px); overflow-x: hidden; box-sizing: border-box; max-height: calc(100% - 96px); overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 20px 6px 20px 20px; box-shadow: var(--shadow-float); padding: 16px 18px 18px; display: grid; gap: 14px; animation: msgrPopIn 180ms cubic-bezier(.23,1,.32,1) both; }
 .msgr-crewsheet .head { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 .msgr-crewsheet .head .name { font-size: 15px; font-weight: 600; }
 .msgr-crewsheet .head .btn.ghost { border: 0; background: none; width: 30px; height: 30px; padding: 0; border-radius: 9px; color: var(--fg-3); }
@@ -332,9 +332,9 @@
 @media (max-width: 720px) { .msgr-top .members .n { display: none; } .msgr-top .members .msgr-av:nth-child(n+5) { display: none; } } /* 폰 폭: 제목 옆 공간이 좁다 — 아바타 4개만 */
 .msgr-rows { display: grid; gap: 4px; }
 .msgr-rows .msgr-klabel { margin-top: 6px; }
-.msgr-rows .row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 3px 6px; border-radius: 10px; }
+.msgr-rows .row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 3px 6px; border-radius: 10px; min-width: 0; overflow: hidden; } /* min-width 0 + overflow — 긴 부제(크루 역할·소유자·파견)가 행을 늘려 시트가 창 밖으로 밀리던 결함(유건 실측 2026-09-07, 1100px 창) */
 .msgr-rows .row:hover { background: var(--card-2); }
-.msgr-rows .row .name { font-weight: 600; font-size: 13px; }
+.msgr-rows .row .name { font-weight: 600; font-size: 13px; flex: none; white-space: nowrap; }
 .msgr-rows .row .sub { flex: 1; min-width: 0; font-size: 11.5px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-rows .row .btn.ghost { border: 0; background: none; width: 26px; height: 26px; padding: 0; color: var(--fg-3); }
 .msgr-rows .row .btn.ghost:hover { background: var(--bg); color: var(--fg); }
