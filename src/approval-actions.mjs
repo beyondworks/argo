@@ -30,11 +30,13 @@ export async function resolveWithFollowUp(wsId, id, approve, opts = {}) {
 async function applyPayload(wsId, item) {
   const p = item.payload ?? {};
   if (item.kind === 'profile') {
-    const { updateAgentMeta, appendAgentRule } = await import('./persona.mjs');
+    const { updateAgentMeta, appendAgentRule, setAgentRules, setAgentSection } = await import('./persona.mjs');
     const changes = p.changes ?? {};
     let after = null;
     if (Object.keys(changes).length) after = await updateAgentMeta(wsId, p.slug, changes);
+    if (Array.isArray(p.rules)) after = await setAgentRules(wsId, p.slug, p.rules); // 규칙 전체 교체가 먼저, 그 위에 한 줄 추가
     if (p.rule) after = await appendAgentRule(wsId, p.slug, p.rule);
+    if (typeof p.section === 'string' && p.section.trim()) after = await setAgentSection(wsId, p.slug, p.section, p.body ?? '');
     return `적용 완료 — ${after?.name ?? p.slug}의 프로필이 변경되었다.`;
   }
   if (item.kind === 'mcp') {

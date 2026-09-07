@@ -2488,3 +2488,7 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
   .msgr-crew .state { display: none; }
   .msgr-crew .more { padding-left: 12px; }
 }
+
+/* 크루 카드 규칙 행 — 편집 도구(순서·삭제)는 행에 올렸을 때만(2026-09-07) */
+.rulerow .ruletools { opacity: 0; transition: opacity 0.12s; }
+.rulerow:hover .ruletools, .rulerow:focus-within .ruletools { opacity: 1; }

@@ -1,4 +1,4 @@
-import { readAgentCard, saveAgentCard, removeAgentCard, updateAgentMeta } from '../../../../../../src/persona.mjs';
+import { readAgentCard, saveAgentCard, removeAgentCard, updateAgentMeta, setAgentRules, setAgentSection } from '../../../../../../src/persona.mjs';
 import { guardCompany } from '../../../../../auth.mjs';
 
 /** 카드 열람 — 카드가 곧 시스템 프롬프트(투명성) + 최근 업무·적용 스킬(크루 프로필). */
@@ -44,12 +44,15 @@ export async function PUT(req, { params }) {
   }
 }
 
-/** 신원·범위 수정 — 이름·역할·팀·모델·러너 + 능력 범위(skills/mcp — 빈 값=전체, 'none'=없음, csv=지정만). */
+/** 신원·범위 수정 — 이름·역할·팀·모델·러너 + 능력 범위(skills/mcp — 빈 값=전체, 'none'=없음, csv=지정만).
+    카드 본문 편집(유건 지시 2026-09-07 "자유도"): rules(배열 = "일하는 방식" 통째 교체) · section+body(한 섹션 교체, 빈 body = 삭제). */
 export async function PATCH(req, { params }) {
   try {
     const { ws, slug } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { name, role, team, model, runner, effort, skills, mcp } = await req.json();
+    const { name, role, team, model, runner, effort, skills, mcp, rules, section, body } = await req.json();
+    if (Array.isArray(rules)) { const meta = await setAgentRules(ws, slug, rules); return Response.json({ meta }); }
+    if (section !== undefined) { const meta = await setAgentSection(ws, slug, section, body); return Response.json({ meta }); }
     const meta = await updateAgentMeta(ws, slug, { name, role, team, model, runner, effort, skills, mcp });
     return Response.json({ meta });
   } catch (e) {

@@ -394,6 +394,69 @@ export async function appendAgentRule(wsId, slug, text) {
   return parseFrontmatter(next);
 }
 
+/** 카드 본문 섹션 파서 — "## 제목" 단위. frontmatter는 건드리지 않는다(엔진·범위 키는 PATCH가 소유). */
+function splitCardBody(md) {
+  const fm = md.match(/^---\n[\s\S]*?\n---\n?/);
+  const head = fm ? fm[0] : '';
+  const body = md.slice(head.length);
+  const parts = []; // { title|null, text }
+  const re = /^## (.+)$/gm; let last = 0; let m; let cur = null;
+  while ((m = re.exec(body))) {
+    parts.push({ title: cur, text: body.slice(last, m.index) });
+    cur = m[1].trim(); last = m.index + m[0].length;
+  }
+  parts.push({ title: cur, text: body.slice(last) });
+  return { head, parts };
+}
+// 섹션 사이는 빈 줄 하나로 정규화 — 편집 단위가 섹션이라 경계 공백은 여기서만 정한다.
+const joinCardBody = ({ head, parts }) => head + parts.map((p) => (p.title === null ? p.text.replace(/\s+$/, '') : `## ${p.title}${p.text.trim() ? `\n${p.text.trim()}` : ''}`)).filter((t) => t.trim()).join('\n\n') + '\n';
+const rulesOf = (text) => text.split('\n').map((l) => l.replace(/^[-*]\s*/, '').trim()).filter((l) => l && !l.startsWith('('));
+
+/** 카드 섹션 제목 목록(frontmatter 제외) — 화면·크루 도구가 "어디를 고칠 수 있나"를 같은 목록으로 본다. */
+export async function listAgentSections(wsId, slug) {
+  const md = await readFile(cardPath(wsId, slug), 'utf8');
+  return splitCardBody(md).parts.filter((p) => p.title !== null).map((p) => p.title);
+}
+
+/** "## 일하는 방식" 규칙을 통째로 바꾼다(수정·삭제·순서 변경의 단일 원시 연산). 빈 배열이면 섹션은 남기고 규칙만 비운다.
+    화면의 규칙 편집기와 크루 도구(update_profile rules)가 같은 함수를 쓴다 — 유건 지시 2026-09-07 "카드 편집에 자유도". */
+export async function setAgentRules(wsId, slug, rules) {
+  const file = cardPath(wsId, slug);
+  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+  const list = (Array.isArray(rules) ? rules : []).map((r) => String(r).replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const md = await readFile(file, 'utf8');
+  const doc = splitCardBody(md);
+  const h = '일하는 방식';
+  const bullets = list.map((r) => `- ${r}`).join('\n');
+  const sec = doc.parts.find((p) => p.title === h);
+  if (sec) sec.text = bullets;
+  else doc.parts.push({ title: h, text: bullets });
+  const next = joinCardBody(doc);
+  await writeJsonAtomic(file, next);
+  await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: parseFrontmatter(next).name });
+  return { ...parseFrontmatter(next), rules: rulesOf(bullets) };
+}
+
+/** 카드 본문 한 섹션(## 제목)의 내용을 교체한다. 없는 제목이면 끝에 새 섹션. 빈 body는 섹션 삭제.
+    frontmatter·다른 섹션은 그대로 — 원문 textarea 전체 저장보다 좁고 안전한 편집 단위. */
+export async function setAgentSection(wsId, slug, title, body) {
+  const file = cardPath(wsId, slug);
+  if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+  const name = String(title ?? '').replace(/^#+\s*/, '').trim();
+  if (!name) throw new Error('섹션 제목이 필요합니다');
+  const text = String(body ?? '').replace(/\r\n/g, '\n').trim();
+  const md = await readFile(file, 'utf8');
+  const doc = splitCardBody(md);
+  const i = doc.parts.findIndex((p) => p.title === name);
+  if (!text) { if (i >= 0) doc.parts.splice(i, 1); }
+  else if (i >= 0) doc.parts[i].text = text;
+  else doc.parts.push({ title: name, text });
+  const next = joinCardBody(doc);
+  await writeJsonAtomic(file, next);
+  await appendEvent(wsId, { type: 'crew', op: 'update', slug, name: parseFrontmatter(next).name });
+  return parseFrontmatter(next);
+}
+
 /** 팀 이름 변경 — 그 팀 소속 전 크루의 frontmatter를 일괄 갱신. */
 export async function renameTeam(wsId, from, to) {
   const { readdir } = await import('node:fs/promises');
