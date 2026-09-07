@@ -31,7 +31,7 @@ export function authFromEnv(env = {}, lang = 'ko') {
 
 export { extractErrorMessage } from './http-errors.mjs';
 
-import { extractErrorMessage } from './http-errors.mjs';
+import { extractErrorMessage, VENDOR_HTTP_TIMEOUT_MS } from './http-errors.mjs';
 import { callGemini, GEMINI_DEFAULT_BASE } from './gemini-wire.mjs';
 import { callResponses } from './responses-wire.mjs';
 
@@ -46,7 +46,7 @@ export function stripForeignBlocks(messages) {
 }
 
 /** POST /v1/messages 1회(+과부하·네트워크 1회 재시도). 실패는 `API Error: <status> <message>`(status 필드 동봉). */
-export async function callMessages({ wire = 'messages', base, headers, body, effort = '', minOutputTokens = 0, signal, fetchImpl = globalThis.fetch, timeoutMs = 600_000, retry = 1 }) {
+export async function callMessages({ wire = 'messages', base, headers, body, effort = '', minOutputTokens = 0, signal, fetchImpl = globalThis.fetch, timeoutMs = VENDOR_HTTP_TIMEOUT_MS, retry = 1 }) {
   // 와이어별 옵션(effort·minOutputTokens)은 body 밖 — messages 갈래는 body를 원형 그대로 보내므로 본문에 섞이면 벤더로 새어 나간다(#445 2R N-HIGH-1)
   if (wire === 'gemini') return callGemini({ base, headers, body, minOutputTokens, signal, fetchImpl, timeoutMs, retry }); // 요청·응답 모양은 Messages 그대로, 변환은 gemini-wire가
   if (wire === 'responses') return callResponses({ base, headers, body, effort, signal, fetchImpl, timeoutMs, retry }); // effort(추론 강도)는 Responses에만 실린다

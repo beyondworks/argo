@@ -91,6 +91,10 @@ export {
     timeoutMs=3000에서 3.8초 사망 + 배너 잡음 메시지, 시간 초과 언급 0). 판정은 경과 시간 기준 —
     우리 kill 타이머(timeoutMs)가 발화할 만큼 지났으면 표면 오류가 무엇으로 위장했든 원인은 시간 초과다.
     (export: 회귀 테스트용 — 순수 함수) */
+/** CLI 러너 대화 턴 기본 상한(chat.mjs가 쓴다). 30분 — 긴 사고 과정 모델이 결과 직전에 죽던 옛 5분(제보 2026-09-07)을
+    올린 값. 라우트 maxDuration(chat·room·routines)·crewmail CLAIM_STALE_MS가 이 값에서 파생되므로 여기 하나만 바꾼다. */
+export const CLI_CHAT_TURN_TIMEOUT_MS = 30 * 60_000;
+
 export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec', kind = 'chat' } = {}) {
   // 시간 초과 판정은 이중 조건 — 경과>=상한 **그리고** (우리 kill 흔적(killed) 또는 read 단계).
   // 경과만 보면 상한 직후 도착한 진짜 벤더 오류(예: 401)까지 '시간 초과'로 치환돼 AUTH_ERR_RE
@@ -104,10 +108,10 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     // "장시간 작업으로 걸어라"는 자기모순이므로 쪼개기 안내로 갈라진다.
     const guide = kind === 'job'
       ? '작업을 더 작은 단위로 쪼개서 다시 걸어 주세요. '
-      : '이 러너의 대화 턴에는 장시간 작업 도구가 없으니, 작업을 쪼개거나 SDK 러너(Claude·GLM·Kimi·OpenRouter·Grok) 크루에게 "장시간 작업으로 걸어줘"라고 맡기면 턴 밖에서 끝까지 돌아 결과가 배달됩니다. ';
+      : '같은 지시를 그대로 다시 보내면 같은 자리에서 다시 멈춥니다 — 작업을 쪼개거나 추론 강도를 낮추거나, 이 러너의 대화 턴에는 장시간 작업 도구가 없으니 SDK 러너(Claude·GLM·Kimi·OpenRouter·Grok) 크루에게 "장시간 작업으로 걸어줘"라고 맡기면 턴 밖에서 끝까지 돌아 결과가 배달됩니다. ';
     const guideEn = kind === 'job'
       ? 'Split the work into smaller pieces and queue it again.'
-      : 'This runner\'s chat turns have no long-task tool — split the work, or ask a crew on an SDK runner (Claude, GLM, Kimi, OpenRouter, Grok) to run it as a long task.';
+      : 'Resending the same instruction will stop at the same point — split the work or lower the reasoning effort; this runner\'s chat turns have no long-task tool, so you can also ask a crew on an SDK runner (Claude, GLM, Kimi, OpenRouter, Grok) to run it as a long task.';
     return Object.assign(new Error(
       `시간 초과: 이 ${kind === 'job' ? '장시간 작업' : '턴'}이 상한 ${cap}을 넘겨 중단됐습니다. ${guide}`
       + `Timed out after the ${capEn} cap — ${guideEn}`,
@@ -125,7 +129,7 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
     caps = 회사 로컬 능력({ fs, browser, shell }) — gemini 도구 게이팅·agy 반경 인자에 반영
     (codex는 2026-08-21부터 샌드박스 없음 — danger-full-access, 유건 지시 "샌드박스 없이"). */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = 300_000, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false }) {
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false }) {
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   // readOnly — 순수 텍스트 생성 턴(예: 마켓 "이게 뭐예요?" 설명)은 도구가 필요 없다. SDK 경로는
   // 이미 allowedTools:[]로 무도구지만 CLI 러너는 caps로 전권을 받아 왔다(danger-full-access/yolo).

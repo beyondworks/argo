@@ -24,10 +24,10 @@ export const CC_MAX = 4;
     조용히 사라지지 않게 한다(무증상 실패가 가장 비싸다). */
 export const MAIL_MAX_ATTEMPTS = 3;
 /** 처리 중 표시(.claimed)가 이보다 오래 방치되면 크래시 잔재로 보고 회수한다.
-    45분 = 최장 정상 턴(위임 연쇄 3단 × CLI 300s = 15분)의 3배 여유 — 진행 중 턴에는 하트비트가
+    3시간 = 최장 정상 턴(위임 연쇄 3단 × CLI 대화 턴 30분 = 90분)의 2배 여유 — 진행 중 턴에는 하트비트가
     없으므로(분리 검수 HIGH-1) 짧으면 장기 턴을 크래시로 오판해 이중 배달을 만든다. 같은 프로세스가
-    진행 중인 claim은 inFlight로 아예 회수 대상에서 뺀다. */
-const CLAIM_STALE_MS = 45 * 60_000;
+    진행 중인 claim은 inFlight로 아예 회수 대상에서 뺀다. (옛 45분 = 5분×3단×3 — CLI 상한이 30분으로 오르며 재산출) */
+const CLAIM_STALE_MS = 3 * 60 * 60_000;
 /** 예약 디렉터리 — dot 접두라 크루 slug와 충돌하지 않는다(slug는 WS_ID류 영숫자, 분리 검수 LOW). */
 const DEAD_DIR = '.dead';
 /** 배달 기록(jsonl) — 쪽지함 화면의 "배달 기록" 섹션. mail/ 아래라 동기화 제외(sync.mjs EXCLUDE). */

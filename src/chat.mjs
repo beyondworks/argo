@@ -29,7 +29,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
-import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_EFFORTS } from './runners.mjs';
+import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_EFFORTS, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -1120,13 +1120,16 @@ ${lang === 'en'
         ? '(You are the crew of the persona above. Always reply in English, even if the captain wrote to you in Korean.)'
         : '(너는 위 페르소나의 크루로서 한국어로 답하라.)'}`;
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격(API키/OAuth) 우선, 없으면 호스트 로그인
-      // CLI 턴 상한 — 대화 턴 5분(행 방지, ARGO_CLI_TURN_TIMEOUT_MS로 조정 가능), 잡(장시간 작업 큐) 턴 6시간.
+      // CLI 턴 상한 — 대화 턴 30분(행 방지, ARGO_CLI_TURN_TIMEOUT_MS로 조정 가능), 잡(장시간 작업 큐) 턴 6시간.
+      // 옛 5분은 긴 사고 과정(extended thinking·xhigh 추론)을 도는 모델을 결과 직전에 죽였고, 같은 지시를
+      // 다시 보내도 같은 자리에서 또 죽어 비용만 중복됐다(제보 2026-09-07: "5분 지나면 시간초과, 다시 시도해도
+      // 계속 실패"). 화면은 상태 파일 심박(turn-status 30초)으로 진행이 유지되므로 긴 턴이 침묵으로 보이지 않는다.
       // 기본 300초가 잡 경로까지 죽여 "10분 넘는 일은 start_long_task로"라는 설계 약속(long-job-queue-design §실행:
       // "워커 경로엔 5분 상한이 없다")이 CLI 러너에서 거짓이 되던 갭(QA P1-2와 같은 뿌리). SDK 러너는 원래 상한 없음.
-      // ⚠ 노브 권장 상한 ≤300000(검수 L2): 300s 초과는 chat 라우트 maxDuration=300(HTTP가 먼저 죽어
-      // 정직 문구 무의미), 900s 초과는 crewmail CLAIM_STALE_MS 산출 근거("CLI 300s×3단")까지 깨진다.
+      // ⚠ 노브를 올리면 crewmail CLAIM_STALE_MS(3시간 = "30분×3단×2")의 산출 근거를 같이 본다. 라우트 maxDuration(호스티드 함수 상한)은
+      // 무관 — CLI 러너는 로컬 프로세스에서만 돈다(호스티드 워커엔 CLI 없음).
       const envCap = Number(process.env.ARGO_CLI_TURN_TIMEOUT_MS);
-      const cliTimeoutMs = source === 'job' ? 21_600_000 : (Number.isFinite(envCap) && envCap > 0 ? envCap : 300_000);
+      const cliTimeoutMs = source === 'job' ? 21_600_000 : (Number.isFinite(envCap) && envCap > 0 ? envCap : CLI_CHAT_TURN_TIMEOUT_MS);
       // caps 전달 — gemini 도구 게이팅·agy 반경 인자용(codex는 danger-full-access라 caps 무관, 2026-08-21)
       // 접근권 게이트 모델 강등 가드 — gated 모델(예: Gemini 3.x = Ultra·유료 전용)에 권한 없는 계정이면
       // 턴이 "Requested entity was not found"류로 죽는다. 같은 러너의 기본 모델로 1회 자동 재시도하고

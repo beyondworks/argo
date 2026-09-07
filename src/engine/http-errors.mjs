@@ -13,3 +13,7 @@ export function extractErrorMessage(text) {
   } catch { /* 본문이 JSON이 아니다 */ }
   return s.replace(/\s+/g, ' ').trim().slice(0, 300);
 }
+/** 벤더 HTTP 호출 1회의 상한(Messages·Responses·Gemini 세 와이어 공통 기본값). 30분 — 옛 10분은 확장 사고(extended thinking·
+    높은 추론 강도)를 한 응답 안에서 도는 모델을 결과 직전에 끊었다(제보 2026-09-07 "5분 시간초과·재시도도 반복 실패"와 같은 계열,
+    CLI 러너 대화 턴 상한 CLI_CHAT_TURN_TIMEOUT_MS와 같은 값). 사장의 정지 버튼(signal)은 이 상한과 무관하게 즉시 끊는다. */
+export const VENDOR_HTTP_TIMEOUT_MS = 30 * 60_000;

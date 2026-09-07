@@ -3,7 +3,7 @@
 // Hermes·OpenClaw의 gemini 프로바이더와 같은 공개 API 키 경로(구독 CLI가 아니다). 변환기는 순수 함수라 테스트가 직접 잠근다.
 // 사고 파트·thoughtSignature는 블록에 실어 보존한다(gem_thought 블록·_gemSig 사이드채널) — 표시·도구 실행은 type으로 거르므로 새지 않고, 다음 요청이
 // 받은 그대로 되돌린다(공식 계약: 서명이 붙은 파트를 제거·수정하지 말 것 — 분리 검수 H3).
-import { extractErrorMessage } from './http-errors.mjs';
+import { extractErrorMessage, VENDOR_HTTP_TIMEOUT_MS } from './http-errors.mjs';
 
 export const GEMINI_DEFAULT_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 /** generationConfig.maxOutputTokens 하한 — Gemini는 사고(thinking) 토큰이 이 상한에 포함된다(2.5 Pro는 사고 기본 켜짐). 엔진 기본 8192(OpenRouter 402 완화용)를
@@ -144,7 +144,7 @@ export function fromGeminiResponse(json, model) {
 const RETRYABLE = new Set([500, 502, 503, 504]);
 /** POST models/{model}:generateContent 1회(+과부하·네트워크 1회 재시도). 실패는 `API Error: <status> <message>` — 무효 키(400 API_KEY_INVALID)는 401로 승격해
     인증 분류기(AUTH_TEXT_RE)·턴 전 게이트가 같은 계급으로 문다. */
-export async function callGemini({ base, headers, body, minOutputTokens = 0, signal, fetchImpl = globalThis.fetch, timeoutMs = 600_000, retry = 1 }) {
+export async function callGemini({ base, headers, body, minOutputTokens = 0, signal, fetchImpl = globalThis.fetch, timeoutMs = VENDOR_HTTP_TIMEOUT_MS, retry = 1 }) {
   const url = `${base}/models/${encodeURIComponent(body.model)}:generateContent`;
   const req = toGeminiRequest({ ...body, min_output_tokens: minOutputTokens }); // 출력 하한 오버라이드(검진 프로브)는 옵션으로만 — 본문에 같은 이름의 필드가 있어도 덮는다(생산 지점이 옵션뿐임을 구조로, 3R INFO)
   let attempt = 0;

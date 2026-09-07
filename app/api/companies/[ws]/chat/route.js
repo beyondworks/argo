@@ -6,7 +6,7 @@ import { getTurnStatus } from '../../../../../src/turn-status.mjs';
 import { nudgeSync } from '../../../../../src/sync.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
-export const maxDuration = 300; // 에이전트 턴은 vault 탐색 포함 수 분까지 허용
+export const maxDuration = 800; // 호스티드(Vercel Pro) 함수 상한 800 — SDK 턴(상한 없음)이 5분을 넘으면 옛 300은 HTTP가 먼저 죽었다. 로컬·상주·데스크톱은 무관, CLI 러너는 호스티드에서 안 돈다
 
 /** 저장된 스레드 로드 — 새로고침해도 대화가 이어진다. */
 export async function GET(req, { params }) {
