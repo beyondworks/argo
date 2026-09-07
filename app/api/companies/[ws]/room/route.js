@@ -2,7 +2,7 @@ import { loadRoom, runRoomTurn, endMeeting, getRoomTurn } from '../../../../../s
 import { guardCompany, requestLang } from '../../../../auth.mjs';
 import { apiError } from '../../../../apimsg.mjs';
 
-export const maxDuration = 300; // 여러 크루가 순차 발언 — 오래 걸릴 수 있다
+export const maxDuration = 800; // 여러 크루 발언 — 호스티드(Vercel Pro) 함수 상한 800(chat 라우트와 같은 값)
 
 export async function GET(_req, { params }) {
   const { ws } = await params;

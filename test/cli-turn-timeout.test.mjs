@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-timeout-'));
-const { cliTurnFailure } = await import('../src/runners.mjs');
+const { cliTurnFailure, CLI_CHAT_TURN_TIMEOUT_MS } = await import('../src/runners.mjs');
 
 test('시간 초과(killed): 표면 오류 불문 정직 번역 + CLI 크루 인지형 안내(start_long_task 직접 지시 금지)', () => {
   const e = cliTurnFailure(Object.assign(new Error('러너 실행 실패 (exit ?): 배너 잡음'), { killed: true }), 'codex', 300_500, 300_000, { stage: 'exec', kind: 'chat' });
@@ -26,6 +26,9 @@ test('시간 초과(killed): 표면 오류 불문 정직 번역 + CLI 크루 인
   assert.match(e.message, /SDK 러너\([^)]*\) 크루에게/, '실행 가능한 대안 안내(러너 중립)');
   assert.match(e.message, /SDK 러너\([^)]*Claude[^)]*\)/, 'SDK 러너 명단이 비어 있으면 안내가 무의미하다');
   assert.match(e.message, /Timed out/, '영어 병기');
+  // 제보 2026-09-07: 같은 지시를 그대로 다시 보내 같은 자리에서 반복 실패 — 재시도가 답이 아님을 문구가 먼저 말한다
+  assert.match(e.message, /같은 지시를 그대로 다시 보내면 같은 자리에서 다시 멈춥니다/, '재시도 무의미 안내(ko)');
+  assert.match(e.message, /Resending the same instruction will stop at the same point/, '재시도 무의미 안내(en)');
 });
 
 test('시간 초과(read 단계 ENOENT): kill 뒤 출력 부재 위장의 본체 — 시간 초과로 번역', () => {
@@ -60,11 +63,36 @@ test('read 단계 ENOENT(시간 내): "응답 없이 종료" — 생 ENOENT 노�
 });
 
 // ── 배선 트립와이어 — 상한·kind가 소스별로 externalExec까지 실제로 전달되는지 소스 텍스트로 잠근다
-test('배선: chat.mjs — 잡 6시간·대화 5분 상한 + kind가 두 externalExec 호출 모두에 전달', async () => {
+test('대화 턴 기본 상한 = 30분 — 옛 5분은 긴 사고 과정 모델을 결과 직전에 죽였다(제보 2026-09-07)', () => {
+  assert.equal(CLI_CHAT_TURN_TIMEOUT_MS, 30 * 60_000);
+  const e = cliTurnFailure(Object.assign(new Error('x'), { killed: true }), 'codex', CLI_CHAT_TURN_TIMEOUT_MS + 500, CLI_CHAT_TURN_TIMEOUT_MS, { stage: 'exec', kind: 'chat' });
+  assert.match(e.message, /상한 30분/);
+});
+
+test('배선: chat.mjs — 잡 6시간·대화 CLI_CHAT_TURN_TIMEOUT_MS 상한 + kind가 두 externalExec 호출 모두에 전달', async () => {
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(src, /source === 'job' \? 21_600_000/, '잡 상한 6시간');
+  assert.match(src, /envCap > 0 \? envCap : CLI_CHAT_TURN_TIMEOUT_MS\)/, '대화 상한은 runners.mjs 상수 하나에서 — 300_000 리터럴 금지');
+  assert.doesNotMatch(src, /: 300_000\);/, '옛 5분 리터럴 잔존 금지');
   assert.equal((src.match(/timeoutMs: cliTimeoutMs/g) ?? []).length, 2, '본 호출 + 강등 재시도 호출');
   assert.equal((src.match(/kind: source === 'job' \? 'job' : 'chat'/g) ?? []).length, 2, 'kind 인지형 안내 배선');
+});
+
+test('배선: 턴을 태우는 라우트의 maxDuration은 호스티드(Vercel Pro) 함수 상한 800 그대로 — CLI 러너는 로컬 프로세스에서만 돌아(호스티드 워커엔 CLI 없음) 두 상한이 한 실행 환경에 겹치지 않는다', async () => {
+  for (const rel of ['../app/api/companies/[ws]/chat/route.js', '../app/api/companies/[ws]/room/route.js', '../app/api/companies/[ws]/routines/run/route.js']) {
+    const src = await readFile(new URL(rel, import.meta.url), 'utf8');
+    const m = src.match(/^export const maxDuration = (\d+);/m);
+    assert.ok(m, `${rel} maxDuration`);
+    assert.equal(Number(m[1]), 800, `${rel}: 호스티드 함수 상한 = 800(SDK 턴이 5분을 넘어도 HTTP가 먼저 죽지 않게 옛 300에서 올림)`);
+  }
+});
+
+test('배선: crewmail 스테일 회수 창이 최장 정상 턴(3단 위임 × CLI 상한)보다 넉넉하다 — 짧으면 장기 턴을 크래시로 오판해 이중 배달', async () => {
+  const src = await readFile(new URL('../src/crewmail.mjs', import.meta.url), 'utf8');
+  const m = src.match(/^const CLAIM_STALE_MS = (.+);/m);
+  assert.ok(m, 'CLAIM_STALE_MS');
+  const stale = Function(`return (${m[1]})`)();
+  assert.ok(stale >= 3 * CLI_CHAT_TURN_TIMEOUT_MS * 2, `스테일 ${stale / 60_000}분 < 3단 × ${CLI_CHAT_TURN_TIMEOUT_MS / 60_000}분 × 2`);
 });
 
 test('배선: runners.mjs — 세 CLI 경로 전부 cliTurnFailure 경유 + codex는 exec/read 두 단계 구분', async () => {
