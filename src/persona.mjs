@@ -399,17 +399,20 @@ function splitCardBody(md) {
   const fm = md.match(/^---\n[\s\S]*?\n---\n?/);
   const head = fm ? fm[0] : '';
   const body = md.slice(head.length);
-  const parts = []; // { title|null, text }
-  const re = /^## (.+)$/gm; let last = 0; let m; let cur = null;
-  while ((m = re.exec(body))) {
-    parts.push({ title: cur, text: body.slice(last, m.index) });
-    cur = m[1].trim(); last = m.index + m[0].length;
+  // 줄 단위로 걷되 코드펜스(\`\`\` / ~~~) 안의 "## "는 제목이 아니다(분리 검수 관점 2026-09-07: 카드에 예시 문서를 붙여 두면 가짜 섹션이 생겼다).
+  const parts = [{ title: null, lines: [] }];
+  let fence = null;
+  for (const line of body.split('\n')) {
+    const f = line.match(/^(\`{3,}|~{3,})/);
+    if (f) { if (!fence) fence = f[1][0]; else if (f[1][0] === fence) fence = null; }
+    const h = !fence && line.match(/^## (.+)$/);
+    if (h) parts.push({ title: h[1].trim(), lines: [] });
+    else parts[parts.length - 1].lines.push(line);
   }
-  parts.push({ title: cur, text: body.slice(last) });
-  return { head, parts };
+  return { head, parts: parts.map((p) => ({ title: p.title, text: p.lines.join('\n') })) };
 }
 // 섹션 사이는 빈 줄 하나로 정규화 — 편집 단위가 섹션이라 경계 공백은 여기서만 정한다.
-const joinCardBody = ({ head, parts }) => head + parts.map((p) => (p.title === null ? p.text.replace(/\s+$/, '') : `## ${p.title}${p.text.trim() ? `\n${p.text.trim()}` : ''}`)).filter((t) => t.trim()).join('\n\n') + '\n';
+const joinCardBody = ({ head, parts }) => (head ? head.replace(/\n*$/, '\n\n') : '') + parts.map((p) => (p.title === null ? p.text.replace(/\s+$/, '') : `## ${p.title}${p.text.trim() ? `\n${p.text.trim()}` : ''}`)).filter((t) => t.trim()).join('\n\n') + '\n';
 const rulesOf = (text) => text.split('\n').map((l) => l.replace(/^[-*]\s*/, '').trim()).filter((l) => l && !l.startsWith('('));
 
 /** 카드 섹션 제목 목록(frontmatter 제외) — 화면·크루 도구가 "어디를 고칠 수 있나"를 같은 목록으로 본다. */

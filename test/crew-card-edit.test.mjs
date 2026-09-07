@@ -48,6 +48,15 @@ test('setAgentSection: 교체·생성·삭제, 제목의 "## " 관용, 빈 제�
   await assert.rejects(setAgentSection(ws, 'zzz', '소통', 'x'), /존재하지 않는/);
 });
 
+test('코드펜스 안의 "## "는 섹션 경계가 아니다(카드에 예시 문서를 붙여도 가짜 섹션·손상 없음), frontmatter 뒤 빈 줄 보존', async () => {
+  await seed();
+  await writeFile(join(paths(ws).agents, 'a.md'), '---\nname: 알파\nslug: a\n---\n\n## 전문성\n예시:\n```md\n## 펜스 안 제목\n- x\n```\n~~~\n## 물결 펜스\n~~~\n\n## 일하는 방식\n- 규칙1\n');
+  assert.deepEqual(await listAgentSections(ws, 'a'), ['전문성', '일하는 방식']);
+  await setAgentRules(ws, 'a', ['규칙1', '규칙2']);
+  const out = await md();
+  assert.match(out, /^---\nname: 알파\nslug: a\n---\n\n## 전문성\n예시:\n```md\n## 펜스 안 제목\n- x\n```\n~~~\n## 물결 펜스\n~~~\n\n## 일하는 방식\n- 규칙1\n- 규칙2\n$/);
+});
+
 test('배선 핀: API PATCH·크루 도구·승인 적용이 같은 함수를 쓴다, 화면은 규칙 편집·삭제·순서를 PATCH { rules }로', async () => {
   const route = await readFile(new URL('../app/api/companies/[ws]/agents/[slug]/route.js', import.meta.url), 'utf8');
   assert.match(route, /if \(Array\.isArray\(rules\)\) \{ const meta = await setAgentRules\(ws, slug, rules\);/);
