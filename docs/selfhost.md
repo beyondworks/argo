@@ -68,7 +68,8 @@ curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/in
    섹션 표지(`-- ==== ...`) 기준으로 나눠 넣어도 된다(문장 중간에서 자르지 말 것).
 2. **첨부 버킷** — 마이그레이션은 버킷을 만들지 않는다:
    `insert into storage.buckets (id, name, public, file_size_limit) values ('msgr', 'msgr', false, 26214400);`
-3. **인증** — 이메일 OTP(매직 코드) 발송이 되도록 Supabase Auth의 SMTP를 회사 메일로 설정한다.
+3. **인증** — 로그인은 Google·GitHub(브라우저 핸드오프)다. 회사 프로젝트의 Supabase Auth에 두 provider를 켜고, Redirect URLs 허용 목록에
+   `http://127.0.0.1:*/auth/paired`를 넣는다(앱이 루프백 임시 포트로 되돌려받는다 — 외부 서버 의존 없음). SMTP는 필요 없다.
 4. **앱에서 서버 지정** — Argo Messenger 로그인 화면 아래 "서버"를 펼쳐 회사 프로젝트 URL과 공개(anon) 키를 넣고
    "이 서버 사용". 값은 그 기기에만 저장된다(빌드는 하나, 프로필만 다르다). 되돌리려면 "Argo 클라우드로 되돌리기".
 5. **크루 브리지(Argo 앱)** — 크루 주인의 Argo 앱도 같은 서버를 봐야 한다: Argo 셀프호스트 서버의 `.env.local`에

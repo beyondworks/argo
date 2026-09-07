@@ -302,6 +302,8 @@
 .msgr-docs .msgr-input.body { min-height: 260px; resize: vertical; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
 @media (max-width: 720px) { .msgr-docs { grid-template-columns: minmax(0, 1fr); } }
 .msgr-auth .devsep { display: block; margin: 6px 0 -4px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.msgr-auth .msgr-wait { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.msgr-auth .msgr-wait .msgr-klabel { flex: 1; }
 /* ─── 인라인 폼(새 채널·새 조직) — 네이티브 prompt 대체. 레일(차콜)·메뉴(카드) 어디서든 토큰만 ─── */
 .msgr-inline { display: grid; gap: 8px; padding: 8px 6px 10px; }
 .msgr-inline .msgr-input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); font: inherit; font-size: 13px; outline: 0; }

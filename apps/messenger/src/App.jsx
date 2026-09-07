@@ -8,12 +8,14 @@ import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './pa
 import { supabase, configured, q } from './supabase.js';
 import { customServer, SB_URL } from './supabase.js';
 import { readProfile, writeProfile, clearProfile, normalizeUrl, hostOf } from './server-profile.mjs';
+import { handoff } from './oauth-handoff.mjs';
 import { UpdateBar } from './update.jsx';
 import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
 import { Markdown, imeGuardWith } from '@argo/ui';
 import { Sprite, I, STAR_D } from './icons.jsx';
+const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 const AWAY_MS = 90_000;
 /** 크루 등급(부록 I·K) — 서버 함수 msgr_crew_tier와 같은 규칙: 조직 서비스 계정이 소유하고 상주 노드에서 돌면 회사 크루, 그 외는 개인(파견) 크루. 화면 표시용이며 판정 정본은 서버. */
@@ -81,28 +83,42 @@ function ServerRow({ t, open = false }) {
   );
 }
 
-/* ─── 로그인: 머리띠 카드 + 이메일 OTP(운영). 개발 빌드에서는 비밀번호 로그인도(로컬 스택엔 메일 서버가 없다). ─── */
+/* ─── 로그인: 머리띠 카드 + 브라우저 핸드오프(Google·GitHub — Argo 앱과 같은 계정·같은 방식). 개발 빌드에서는 비밀번호 로그인도(로컬 스택엔 OAuth가 없다). ─── */
 function Auth() {
   const { t, lang, setLang } = useT();
-  const [email, setEmail] = useState(''); const [code, setCode] = useState(''); const [pw, setPw] = useState('');
-  const [sent, setSent] = useState(false); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState(''); const [pw, setPw] = useState('');
+  const [waiting, setWaiting] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
   const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
+  // 앱 웹뷰는 provider 창을 못 띄운다 → 셸이 루프백 브리지를 열고 진짜 브라우저에서 로그인, pairing code로 세션 회수(oauth-handoff.mjs·src-tauri/src/pair.rs).
+  // 브라우저(dev·vite preview)에서는 셸이 없어 버튼이 정직하게 안내한다(auth.err.notApp) — 로컬 스택 실측은 dev 비밀번호 로그인으로.
+  const viaBrowser = (provider) => run(async () => {
+    setWaiting(provider);
+    try {
+      const deps = { sleep: (ms) => new Promise((r) => setTimeout(r, ms)), now: Date.now };
+      if (inTauri()) { deps.invoke = (await import('@tauri-apps/api/core')).invoke; deps.openUrl = (await import('@tauri-apps/plugin-opener')).openUrl; }
+      const tokens = await handoff({ supabaseUrl: SB_URL, provider }, deps);
+      await q(supabase.auth.setSession(tokens)); // 세션 단일 소유자 = 이 앱(브라우저 탭은 파싱만 하고 버린다)
+      try { if (inTauri()) (await import('@tauri-apps/api/window')).getCurrentWindow().setFocus(); } catch { /* 포커스는 장식 */ }
+    } catch (e) {
+      const k = { not_app: 'auth.err.notApp', start_failed: 'auth.err.start', open_failed: 'auth.err.open', timeout: 'auth.err.timeout', expired: 'auth.err.expired' }[e.message];
+      throw new Error(k ? t(k) : e.message);
+    } finally { setWaiting(''); }
+  });
   return (
     <div className="msgr-auth"><form className="msgr-card" onSubmit={(e) => e.preventDefault()}>
       <div className="band"><svg width="14" height="14" viewBox="0 0 16 16"><path d={STAR_D} /></svg>ARGO<span className="tag">{t('auth.tag')}</span></div>
       <div className="body">
         <h1>{t('auth.title')}</h1>
         <p>{t('auth.desc')}</p>
-        <label className="msgr-field"><I name="at" /><input type="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus /></label>
-        {!sent ? (
-          <button className="btn btn-primary" disabled={busy || !email} onClick={() => run(async () => { await q(supabase.auth.signInWithOtp({ email })); setSent(true); })}>{t('auth.sendCode')} <I name="up" size={14} /></button>
+        {waiting ? (
+          <p className="msgr-wait"><span className="msgr-klabel">{t('auth.waiting')}</span><button type="button" className="btn sm ghost" onClick={() => location.reload()}>{t('auth.cancel')}</button></p>
         ) : (<>
-          <p>{t('auth.sent')}</p>
-          <label className="msgr-field"><I name="lock" /><input placeholder={t('auth.code')} value={code} onChange={(e) => setCode(e.target.value)} /></label>
-          <button className="btn btn-primary" disabled={busy || !code} onClick={() => run(async () => { await q(supabase.auth.verifyOtp({ email, token: code.trim(), type: 'email' })); })}>{t('auth.verify')}</button>
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => viaBrowser('google')}>{t('auth.google')}</button>
+          <button type="button" className="btn" disabled={busy} onClick={() => viaBrowser('github')}>{t('auth.github')}</button>
         </>)}
         {import.meta.env.DEV && (<>
           <span className="msgr-klabel devsep">{t('auth.devOnly')}</span>
+          <label className="msgr-field"><I name="at" /><input type="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
           <label className="msgr-field"><I name="lock" /><input type="password" placeholder={t('auth.password')} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
           <button className="btn" disabled={busy || !email || !pw} onClick={() => run(async () => { await q(supabase.auth.signInWithPassword({ email, password: pw })); })}>{t('auth.verify')} (dev)</button>
         </>)}
