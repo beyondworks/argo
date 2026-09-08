@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { execHttpText } from '../src/runners/http-text.mjs';
+import { execHttpText, buildHttpTextRequest, parseHttpTextResponse } from '../src/runners/http-text.mjs';
 import { externalExec } from '../src/runners.mjs';
 import { RUNNERS, RUNNER_AUTH, isCliRunner, isCliTurn, isHiddenRunner, pickRunner } from '../src/runners/catalog.mjs';
 
@@ -76,8 +76,21 @@ test('카탈로그 핀 — http는 숨김·CLI 종류·자동 선택 제외·명
 
 test('배선 핀 — chat.mjs의 externalExec 두 호출이 카드 endpoint를 넘기고, creds가 http 자격을 Bearer env로 조립한다', async () => {
   const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
-  assert.equal((chat.match(/externalExec\(\{ runner, [^\n]*endpoint: meta\.endpoint \?\? ''/g) ?? []).length, 2, 'CLI 턴 호출 2곳(본 턴·게이트 모델 강등 재시도)');
+  assert.equal((chat.match(/externalExec\(\{ runner, [^\n]*endpoint: meta\.endpoint \?\? '', format: meta\.format \?\? 'argo'/g) ?? []).length, 2, 'CLI 턴 호출 2곳(본 턴·게이트 모델 강등 재시도)');
   const creds = await readFile(new URL('../src/runners/creds.mjs', import.meta.url), 'utf8');
   assert.match(creds, /if \(runner === 'http'\) return \{ env: \{ ARGO_HTTP_KEY: v \}, authType: 'apikey' \};/);
   assert.match(creds, /if \(runner === 'http'\) return v \? \{ ok: true \} : \{ ok: false, reason: 'format' \};/);
+});
+
+test('format openai-chat — 헤르메스 API 서버(/v1/chat/completions) 모양으로 보내고 choices[0].message.content를 읽는다(헤르메스 쪽 변경 0)', async () => {
+  assert.deepEqual(buildHttpTextRequest({ format: 'openai-chat', prompt: 'p', model: '' }), { model: 'default', messages: [{ role: 'user', content: 'p' }], stream: false });
+  assert.equal(parseHttpTextResponse('openai-chat', JSON.stringify({ choices: [{ message: { role: 'assistant', content: '답' } }] })), '답');
+  assert.equal(parseHttpTextResponse('openai-chat', JSON.stringify({ choices: [{ message: { content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] } }] })), 'ab', '배열 content');
+  assert.equal(parseHttpTextResponse('argo', '{"text":"t"}'), 't');
+  const f = await fake((req, res) => json(res, 200, { id: 'x', choices: [{ index: 0, message: { role: 'assistant', content: `echo:${JSON.parse('{}') && ''}${req.headers.authorization}` } }] }));
+  try {
+    const out = await execHttpText({ endpoint: f.url, format: 'openai-chat', prompt: '안녕', model: 'hermes', timeoutMs: 5000, cred: { env: { ARGO_HTTP_KEY: 'k' } } });
+    assert.equal(out, 'echo:Bearer k'); assert.deepEqual(f.seen[0].body, { model: 'hermes', messages: [{ role: 'user', content: '안녕' }], stream: false });
+  } finally { await f.close(); }
+  await assert.rejects(execHttpText({ endpoint: 'http://127.0.0.1:9/x', format: 'nope', prompt: 'x', timeoutMs: 1000 }), /format/);
 });

@@ -130,10 +130,10 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
     caps = 회사 로컬 능력({ fs, browser, shell }) — gemini 도구 게이팅·agy 반경 인자에 반영
     (codex는 2026-08-21부터 샌드박스 없음 — danger-full-access, 유건 지시 "샌드박스 없이"). */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, endpoint = '' }) {
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, endpoint = '', format = 'argo' }) {
   if (runner === 'http') { // HTTP 텍스트 러너(부록 N) — CLI를 띄우지 않으므로 PATH 보강 전에 갈라진다. 실패 번역은 다른 텍스트 러너와 같은 cliTurnFailure.
     const t0h = Date.now();
-    try { const text = await execHttpText({ endpoint, prompt, model, cwd, kind, readOnly, timeoutMs, signal, cred }); if (!text) throw new Error('empty-reply'); return text; }
+    try { const text = await execHttpText({ endpoint, format, prompt, model, cwd, kind, readOnly, timeoutMs, signal, cred }); if (!text) throw new Error('empty-reply'); return text; }
     catch (e) { if (e.aborted || /^API Error: /.test(String(e.message))) throw e; throw cliTurnFailure(e, 'http', Date.now() - t0h, timeoutMs, { stage: 'exec', kind }); }
   }
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
