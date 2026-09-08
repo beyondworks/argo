@@ -382,7 +382,7 @@ test('동시 배달 — 회의실처럼 한 패스의 쪽지가 동시에 돌고
   const t0 = Date.now();
   await run(8);
   assert.ok(max >= 2, `동시 진행 최대 ${max} — 순차면 1`);
-  assert.ok(Date.now() - t0 < 3 * 120, `총 소요 ${Date.now() - t0}ms — 순차(≥480ms)가 아니다(윈도우 타이머 입도 여유)`);
+  assert.ok(Date.now() - t0 < 4 * 120, `총 소요 ${Date.now() - t0}ms — 순차(≥480ms)가 아니다(판별선은 순차 최소치, 상한 완화는 fs 오버헤드 여유)`);
   assert.deepEqual(await mailFiles('rc-p3'), []);
   max = 0;
   for (const s of ['rc-p1', 'rc-p2', 'rc-p3', 'rc-p4']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: s, message: '상한' });
@@ -430,4 +430,36 @@ test('예산 게이트 — 월 지출 한도에 닿았으면 그 패스는 순�
   for (const s of ['x1', 'x2', 'x3']) await mod.sendCrewMail(B, { from: 'a', fromName: '알파', to: s, message: '한도' });
   await mod.deliverCrewMail(B, async () => { inflight += 1; max = Math.max(max, inflight); await sleep(60); inflight -= 1; }, { limit: 10, concurrency: 8 });
   assert.equal(max, 1, `한도 도달 시 동시 진행 최대 ${max} — 순차여야 한다(초과 폭 1턴)`);
+});
+
+test('대기 선점분도 자기 심박 — 앞 크루 턴이 도는 동안 아직 착수 안 한 다른 크루의 .claimed mtime이 전진한다(3R 검수 조건 2, MEDIUM-4 잠금)', async () => {
+  mod._setClaimHeartbeatMsForTest(20);
+  try {
+    const { stat } = await import('node:fs/promises');
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-w1', message: '앞' });
+    await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-w2', message: '뒤(대기)' });
+    let advanced = null;
+    await mod.deliverCrewMail(WS, async (slug) => {
+      if (advanced !== null || !slug.startsWith('rc-w')) return;
+      const other = slug === 'rc-w1' ? 'rc-w2' : 'rc-w1';
+      const f = (await mailFiles(other)).find((x) => x.endsWith('.claimed'));
+      const p = join(paths(WS).root, 'mail', other, f);
+      const m0 = (await stat(p)).mtimeMs; await sleep(120);
+      advanced = (await stat(p)).mtimeMs > m0; // 대기 중인 상대의 .claimed가 심박을 받고 있는가
+    }, { limit: 10, concurrency: 1 });
+    assert.equal(advanced, true, '대기 선점분의 mtime이 멈춰 있으면 다른 프로세스가 3분 뒤 회수해 이중 배달 — 심박은 선점 시점부터');
+  } finally { mod._setClaimHeartbeatMsForTest(30_000); }
+});
+
+test('착수는 크루별 라운드로빈 — 한 크루에 밀린 백로그가 다른 크루 쪽지를 막지 않는다(3R 검수 MEDIUM-B)', async () => {
+  for (const m of ['1', '2', '3']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-rr1', message: m });
+  await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-rr2', message: 'x' });
+  const calls = [];
+  await mod.deliverCrewMail(WS, async (slug) => { if (slug.startsWith('rc-rr')) calls.push(slug); }, { limit: 2 });
+  assert.ok(calls.includes('rc-rr2'), `첫 패스(상한 2)에 rc-rr2가 포함돼야 한다 — 실제 ${calls.join(',')}`);
+  assert.equal(calls.filter((s) => s === 'rc-rr1').length, 1);
+  const order = mod.pendingRoundRobin([{ slug: 'a', file: '1' }, { slug: 'a', file: '2' }, { slug: 'b', file: '1', claimed: true }, { slug: 'b', file: '2' }, { slug: 'c', file: '1' }]).map((x) => `${x.slug}${x.claimed ? '*' : ''}${x.file}`);
+  assert.deepEqual(order, ['b*1', 'a1', 'b2', 'c1', 'a2'], '잔재 먼저, 그 뒤 슬러그별 한 건씩');
+  await mod.deliverCrewMail(WS, async () => {}, { limit: 10 }); // 잔여 정리
 });

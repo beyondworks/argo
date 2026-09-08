@@ -26,8 +26,9 @@ import { runLimited } from './run-limited.mjs';
     동시에 두 번 돌리지 않는다. 비용: chat()의 월 한도 검사는 누적 이벤트 TOCTOU라 동시 배달은 첫 웨이브 전원이 기록 전에 통과할 수
     있다 → 한도에 닿았으면 패스를 순차(1)로 접는다(deliverCrewMail 예산 게이트 — 회의실의 라운드 경계 게이트와 같은 규칙). */
 export const MAIL_CONCURRENCY = Math.min(16, Math.max(1, Number(process.env.ARGO_MAIL_CONCURRENCY) || 8));
-/** 틱(패스)당 회사별 착수 상한 = 동시 상한(이름은 옛 소비자 호환 — 순차 3건이던 시절의 상수). 이 노브를 낮추면 틱당 배수 속도도
-    같이 낮아진다 — 대기분은 선점 시점부터 자기 심박을 찍으므로(아래) 다른 프로세스가 회수하지 않는다. */
+/** 틱(패스)당 회사별 착수 상한 = 동시 상한(이름은 옛 소비자 호환 — 순차 3건이던 시절의 상수). 같은 크루는 순차이므로 실동시 턴 =
+    min(상한, 배치의 서로 다른 크루 수) — 즉 ARGO_MAIL_CONCURRENCY는 사실상 "동시에 도는 크루 수"다. 대기분은 선점 시점부터 자기 심박을
+    찍으므로 다른 프로세스가 회수하지 않는다. */
 export const MAIL_PER_TICK = MAIL_CONCURRENCY;
 /** cc 상한 — 팬아웃 총량 방어(분리 검수 MEDIUM). 쪽지 1건의 최대 턴 = 1(to) + CC_MAX. */
 export const CC_MAX = 4;
@@ -115,6 +116,15 @@ async function pendingBySlug(wsId) {
       else if (f.endsWith('.claimed')) out.push({ slug: d.name, file: f, full: join(mailDir(wsId, d.name), f), claimed: true });
     }
   }
+  return out;
+}
+
+/** 착수 순서 — 잔재(.claimed) 먼저, 그 뒤 대기분을 슬러그별로 한 건씩 돌아가며(라운드로빈). 슬러그 안 순서(파일명 = id 시각순)는 보존. (export: 테스트용 순수 함수) */
+export function pendingRoundRobin(items) {
+  const out = items.filter((it) => it.claimed);
+  const queues = new Map();
+  for (const it of items) { if (it.claimed) continue; if (!queues.has(it.slug)) queues.set(it.slug, []); queues.get(it.slug).push(it); }
+  for (let any = true; any;) { any = false; for (const q of queues.values()) { const it = q.shift(); if (it) { out.push(it); any = true; } } }
   return out;
 }
 
@@ -250,7 +260,10 @@ export function mailPrompt(msg, lang = 'ko', { hasTools = true } = {}) {
     선점은 **rename 단독** — 원자적이라 승자가 1명이다(분리 검수 CRITICAL-1: writeFile 선행 방식은
     rename으로 집힌 원본을 되살려 이중 배달을 만들었다 — 21회 중 3회 실측). 반환: 이번 틱 처리 수. */
 export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, concurrency = MAIL_CONCURRENCY, now = Date.now() } = {}) {
-  const all = await pendingBySlug(wsId);
+  // 착수 순서 = 슬러그 라운드로빈(3R 검수 MEDIUM-B): 디렉터리 순서대로 limit까지 채우면 한 크루에 밀린 백로그가 배치를 독점해
+  // (같은 크루는 순차라) 회사 패스 전체가 그 크루의 턴 합만큼 잠기고, 그 사이 다른 크루 쪽지는 다음 패스까지 기다린다 — 제보 증상의 부분 재현.
+  // 잔재(.claimed)는 앞에 두어 회수 판정을 먼저 돌린다(착수 상한에 안 센다).
+  const all = pendingRoundRobin(await pendingBySlug(wsId));
   const batch = []; // 이 패스에서 선점한 배달분 — 선점(순차·파일 원자 연산)과 실행(동시)을 분리한다
   for (const item of all) {
     if (batch.length >= limit) break;
@@ -307,13 +320,23 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, co
   if (!batch.length) return 0;
   // 예산 게이트(2R 검수 MEDIUM-2): 한도에 닿았으면 이 패스는 순차 — chat()이 안내 답변을 내고 쪽지는 소비되는 기존 설계는 그대로, 초과 폭만 1턴.
   let cap = concurrency;
-  const { budgetUsd = 0 } = await loadCompany(wsId).catch(() => ({}));
+  const co = await loadCompany(wsId).catch(() => null); // 손상·부재(null)여도 여기서 던지면 선점 배치 전원이 심박을 단 채 갇힌다(3R 검수 LOW-D)
+  const budgetUsd = Number(co?.budgetUsd) || 0;
   if (budgetUsd > 0 && (await monthCost(wsId).catch(() => ({ costUsd: 0 }))).costUsd >= budgetUsd) cap = 1;
   // 실행 — 크루 간에만 병렬, 같은 크루 앞으로 온 쪽지는 순차(2R 검수 HIGH-1: 한 크루의 동시 턴은 크루 상태 파일(크루당 하나)을 서로 지워
   // 진행 표시가 죽고 문장이 섞인다). 한 건의 실패는 자기 catch에서 정착하므로 나머지를 끊지 않는다.
   const bySlug = new Map();
   for (const b of batch) { if (!bySlug.has(b.item.slug)) bySlug.set(b.item.slug, []); bySlug.get(b.item.slug).push(b); }
-  await runLimited([...bySlug.values()], cap, async (group) => { for (const b of group) await deliverOne(wsId, runTurn, b); });
+  await runLimited([...bySlug.values()], cap, async (group) => {
+    for (const b of group) {
+      // 항목별 격리(3R 검수 MEDIUM-A): deliverOne의 정착 경로가 예외를 내면(appendLog EPIPE 등) 뒤 항목이 착수조차 못 한 채 심박을 단 .claimed로
+      // 영구 "배달 중"이 된다 — 평면 runLimited가 주던 항목별 정착을 그룹 루프에서도 유지한다.
+      await deliverOne(wsId, runTurn, b).catch((e) => {
+        clearInterval(b.hb); inFlight.delete(b.claimedPath);
+        console.error(`[argo] 크루 우편 정착 경로 예외(${wsId}/${b.item.slug}/${b.msg.id}):`, e.message);
+      });
+    }
+  });
   return batch.length;
 }
 
@@ -321,7 +344,8 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, co
 async function deliverOne(wsId, runTurn, { item, claimedPath, msg, hb }) {
   // claimedAt 각인 — 화면 "배달 중 · N분 경과"의 기준(최초 선점 시각). **실시간**이어야 한다: 주입 now는 틱 시작 시각이라
   // 뒤늦게 착수하는 쪽지(상한 초과 대기분·같은 크루 뒷순서)는 앞 턴만큼 과거로 각인된다(분리 검수 HIGH-1). 실패해도 배달은 계속.
-  await writeJsonAtomic(claimedPath, { ...msg, claimedAt: new Date().toISOString() }).catch(() => {});
+  const stamp = new Date().toISOString(); // 내 선점의 신원 — 실패 정착 때 "아직 내 것인가"를 존재가 아니라 이 값으로 본다(3R 검수 LOW-C: 회수+재선점 뒤 남의 claim을 되돌리던 창)
+  await writeJsonAtomic(claimedPath, { ...msg, claimedAt: stamp }).catch(() => {});
   try {
     await runTurn(item.slug, msg, { from: msg.from, hop: msg.hop ?? 0, chain: msg.chain ?? [] });
     await rm(claimedPath, { force: true }).catch(() => {});
@@ -332,7 +356,7 @@ async function deliverOne(wsId, runTurn, { item, claimedPath, msg, hb }) {
     await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: false, error, attempts, exhausted: attempts >= MAIL_MAX_ATTEMPTS });
     // 되돌리기·실패함 이동은 .claimed가 **아직 내 것일 때만**. 심박 정체·잠자기로 다른 프로세스가 회수(·배달)했으면 손대지 않는다 —
     // writeJsonAtomic은 없는 파일을 새로 만들어 이미 배달된 쪽지를 큐에 부활시켰다(2R 검수 MEDIUM-3 실측, 회수 창 3분이 되며 60배 잦아진 창).
-    const mine = await stat(claimedPath).then(() => true, () => false);
+    const mine = await readFile(claimedPath, 'utf8').then((t) => { const c = JSON.parse(t).claimedAt; return !c || c === stamp; }, () => false); // 각인이 실패해 claimedAt이 없으면 내 것(존재 폴백)
     if (!mine) {
       console.warn(`[argo] 크루 우편 실패 정착 생략(${wsId}/${item.slug}/${msg.id}): 다른 프로세스가 이미 회수함`);
     } else if (attempts >= MAIL_MAX_ATTEMPTS) {
