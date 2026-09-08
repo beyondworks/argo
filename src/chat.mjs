@@ -1126,7 +1126,7 @@ ${lang === 'en'
       // 계속 실패"). 화면은 상태 파일 심박(turn-status 30초)으로 진행이 유지되므로 긴 턴이 침묵으로 보이지 않는다.
       // 기본 300초가 잡 경로까지 죽여 "10분 넘는 일은 start_long_task로"라는 설계 약속(long-job-queue-design §실행:
       // "워커 경로엔 5분 상한이 없다")이 CLI 러너에서 거짓이 되던 갭(QA P1-2와 같은 뿌리). SDK 러너는 원래 상한 없음.
-      // crewmail의 .claimed 회수는 이 노브와 무관하다(고정 창이 아니라 크루 상태 파일 심박 기준 — crewmail.mjs CLAIM_RECLAIM_MS). 라우트 maxDuration(호스티드 함수 상한)은
+      // crewmail의 .claimed 회수는 이 노브와 무관하다(고정 창이 아니라 .claimed 자기 심박(mtime) 기준 — crewmail.mjs CLAIM_RECLAIM_MS). 라우트 maxDuration(호스티드 함수 상한)은
       // 무관 — CLI 러너는 로컬 프로세스에서만 돈다(호스티드 워커엔 CLI 없음).
       const envCap = Number(process.env.ARGO_CLI_TURN_TIMEOUT_MS);
       const cliTimeoutMs = source === 'job' ? 21_600_000 : (Number.isFinite(envCap) && envCap > 0 ? envCap : CLI_CHAT_TURN_TIMEOUT_MS);

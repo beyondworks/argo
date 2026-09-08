@@ -365,8 +365,8 @@ test('배달 중 자기 심박 — 턴이 도는 동안 .claimed mtime이 전진
       const p = join(paths(WS).root, 'mail', slug, `${msg.id}-to.json.claimed`);
       const m0 = (await stat(p)).mtimeMs;
       await new Promise((r) => setTimeout(r, 150)); // 심박 20ms가 여러 번 돈다
-      seen.push({ advanced: (await stat(p)).mtimeMs > m0, claimedAt: Date.parse(JSON.parse(await readFile(p, 'utf8')).claimedAt), at: Date.now() });
-    }, { limit: 10, concurrency: 1, now: t0 }); // 순차 강제 — 동시 배달(기본)에선 둘이 같이 시작해 이 시나리오가 안 생긴다
+      if (slug === 'rc-hb') seen.push({ advanced: (await stat(p)).mtimeMs > m0, claimedAt: Date.parse(JSON.parse(await readFile(p, 'utf8')).claimedAt), at: Date.now() }); // 앞 테스트 잔여분 제외(검수 LOW-3)
+    }, { limit: 10, concurrency: 1, now: t0 }); // 순차 강제 — 동시 배달(기본)에선 크루가 다르면 같이 시작해 이 시나리오가 안 생긴다
     assert.equal(seen.length, 2);
     assert.ok(seen.every((x) => x.advanced), '턴 도중 mtime 전진(자기 심박)');
     const later = seen.sort((a, b) => a.at - b.at)[1];
@@ -382,11 +382,52 @@ test('동시 배달 — 회의실처럼 한 패스의 쪽지가 동시에 돌고
   const t0 = Date.now();
   await run(8);
   assert.ok(max >= 2, `동시 진행 최대 ${max} — 순차면 1`);
-  assert.ok(Date.now() - t0 < 4 * 120, `총 소요 ${Date.now() - t0}ms — 순차(≥480ms)가 아니다`);
+  assert.ok(Date.now() - t0 < 3 * 120, `총 소요 ${Date.now() - t0}ms — 순차(≥480ms)가 아니다(윈도우 타이머 입도 여유)`);
   assert.deepEqual(await mailFiles('rc-p3'), []);
   max = 0;
   for (const s of ['rc-p1', 'rc-p2', 'rc-p3', 'rc-p4']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: s, message: '상한' });
   await run(2);
   assert.equal(max, 2, `상한 2 — 동시 진행 최대 ${max}`);
   assert.ok(mod.MAIL_CONCURRENCY >= 1 && mod.MAIL_CONCURRENCY <= 16 && mod.MAIL_PER_TICK === mod.MAIL_CONCURRENCY, '기본 상한은 1~16 클램프, 패스당 착수 상한 = 동시 상한');
+});
+
+test('같은 크루 앞으로 온 쪽지는 그 크루 안에서 순차, 크루 간에만 동시 — 한 크루의 동시 턴은 상태 파일을 서로 지운다(2R 검수 HIGH-1)', async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const inflight = {}; const max = {}; let total = 0; let totalMax = 0;
+  for (const m of ['a', 'b', 'c']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-same', message: m });
+  await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-other', message: 'x' });
+  await mod.deliverCrewMail(WS, async (slug) => {
+    inflight[slug] = (inflight[slug] ?? 0) + 1; max[slug] = Math.max(max[slug] ?? 0, inflight[slug]); total += 1; totalMax = Math.max(totalMax, total);
+    await sleep(80);
+    inflight[slug] -= 1; total -= 1;
+  }, { limit: 10, concurrency: 8 });
+  assert.equal(max['rc-same'], 1, `같은 크루 동시 턴 최대 ${max['rc-same']} — 반드시 1`);
+  assert.ok(totalMax >= 2, `크루 간 동시 진행 ${totalMax} — rc-same 그룹과 rc-other가 겹쳐야 한다`);
+  assert.deepEqual(await mailFiles('rc-same'), []);
+});
+
+test('실패 정착은 .claimed가 아직 내 것일 때만 — 다른 프로세스가 회수·배달해 사라진 쪽지를 부활시키지 않는다(2R 검수 MEDIUM-3)', async () => {
+  const { rm } = await import('node:fs/promises');
+  const id = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-gone', message: '부활 금지' });
+  await mod.deliverCrewMail(WS, async (slug, msg) => {
+    if (slug !== 'rc-gone') return;
+    await rm(join(paths(WS).root, 'mail', slug, `${msg.id}-to.json.claimed`), { force: true }); // 다른 프로세스가 회수해 배달까지 끝낸 상황
+    throw new Error('옛 소유자의 늦은 실패');
+  }, { limit: 10 });
+  assert.deepEqual(await mailFiles('rc-gone'), [], '큐에 되살아나면 안 된다(이중 배달)');
+  assert.ok(!(await readdir(join(paths(WS).root, 'mail', '.dead')).catch(() => [])).some((f) => f.includes(id)), '실패함에도 안 간다');
+});
+
+test('예산 게이트 — 월 지출 한도에 닿았으면 그 패스는 순차(동시 1)로 접는다(2R 검수 MEDIUM-2, 회의실 라운드 경계 게이트와 같은 규칙)', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { appendUsage } = await import('../src/usage.mjs');
+  const B = 'lean-test-mail-budget';
+  await mkdir(paths(B).root, { recursive: true });
+  await writeFile(paths(B).company, JSON.stringify({ id: B, name: '예산', budgetUsd: 1 }));
+  await appendUsage(B, { kind: 'chat', slug: 'x1', runner: 'claude', model: 'm', usage: {}, costUsd: 5, ms: 10, billed: true });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let inflight = 0; let max = 0;
+  for (const s of ['x1', 'x2', 'x3']) await mod.sendCrewMail(B, { from: 'a', fromName: '알파', to: s, message: '한도' });
+  await mod.deliverCrewMail(B, async () => { inflight += 1; max = Math.max(max, inflight); await sleep(60); inflight -= 1; }, { limit: 10, concurrency: 8 });
+  assert.equal(max, 1, `한도 도달 시 동시 진행 최대 ${max} — 순차여야 한다(초과 폭 1턴)`);
 });
