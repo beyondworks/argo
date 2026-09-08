@@ -5,8 +5,8 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { nativeOneShot, nativeRunnerEnabled } from './engine/native-query.mjs'; // 하네스 통일 P-A' — 플래그 러너의 원샷도 Argo 엔진으로(같은 러너 두 경로 갈림 제거)
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
-import { effectiveModels } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
-import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor, visibleRunnerNamesLine, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL } from './runners.mjs';
+import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
+import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor, visibleRunnerNamesLine, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -67,11 +67,21 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     hangGuard = setTimeout(() => ac.abort(), timeoutMs);
     // 모델 선택은 두 엔진이 같은 값을 쓴다(한 곳 정의). openrouter는 카탈로그 검증 — 호출자가 넘긴 타 러너용 모델(예: consolidate의 claude-haiku
     // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
+    // 원격 오버레이(alias·retire·add) — 여기는 항상 네이티브/SDK 턴이다(CLI 턴은 위 isCliTurn 분기에서 반환. 러너 축 isCliRunner로 거르면
+    // gemini API 키·codex 직결 네이티브 턴이 로드를 건너뛴다 — 2차 검수 지적). chat.mjs:993 크루 턴과 같은 관문(1차 검수 M-4: openrouter만
+    // 정규화하면 다음 벤더 폐기 때 같은 버그). chat.mjs와 달리 로드를 **기다린다** — 원샷(첫 영입·기억 정리)은 지연보다 정확한 모델이
+    // 중요하고, TTL 캐시라 첫 호출(≤8s) 뒤엔 즉시 반환된다. 무료 모델이 발행 사이에 죽으면(2026-09-08 minimax-m3:free 404) 오버레이만으로 산다.
+    await loadRemoteCatalog({ timeoutMs: 2000 }).catch(() => null); // /api/runners와 같은 2s(2차 검수 LOW-6) — 오버레이 없음 = 코드 목록이라 손실이 작다
+    const want = normalizeModelId(runner, model); // alias(폐기 id→현행)
+    const known = (id) => !!id && effectiveModels(runner).some((m) => m.id === id);
+    // openrouter 폴백은 chat.mjs와 같은 관문(openrouterFallbackModel) — 원샷은 항상 무료(온보딩 기본) 티어로: 상수도 alias를 지나고,
+    // alias 목적지가 카탈로그에 없으면(add 누락, 1차 검수 M-1) 첫 유효 무료 모델로.
+    const onboardFallback = () => openrouterFallbackModel(OPENROUTER_ONBOARD_MODEL);
     const osModel = runner === 'glm' ? GLM_DEFAULT_MODEL : runner === 'kimi' ? KIMI_DEFAULT_MODEL
-      : runner === 'openrouter' ? (effectiveModels('openrouter').some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL)
-      : runner === 'grok' ? (effectiveModels('grok').some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL)
-      : runner === 'gemini' ? (effectiveModels('gemini').some((m) => m.id === model) ? model : GEMINI_DEFAULT_MODEL)
-      : runner === 'codex' ? (effectiveModels('codex').some((m) => m.id === model) ? model : CODEX_DEFAULT_MODEL)
+      : runner === 'openrouter' ? (known(want) ? want : onboardFallback())
+      : runner === 'grok' ? (known(want) ? want : GROK_DEFAULT_MODEL)
+      : runner === 'gemini' ? (known(want) ? want : GEMINI_DEFAULT_MODEL)
+      : runner === 'codex' ? (known(want) ? want : CODEX_DEFAULT_MODEL)
       : (model || null);
     if (nativeRunnerEnabled(runner)) {
       // 네이티브 엔진(P-A') — 도구 없는 단발 호출. 오류는 `API Error: <status> …`로 던져 아래 catch(자가치유·안내)가 그대로 받는다.

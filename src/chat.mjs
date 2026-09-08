@@ -9,7 +9,7 @@ import { loadOrgRules, docSlug, DOC_FOLDERS } from './gateway/msgr-rules.mjs';
 import { readAgentCard, parseScopeList, scopeServers, EFFORT_LEVELS } from './persona.mjs';
 import { classifyRunnerError, subscriptionBlockedNotice } from './runners/error-class.mjs'; // 실패 코드 표(불변식 C)
 import { markRunnerAuthFail, HEALTH_BILLED_RUNNERS } from './runner-health.mjs'; // 다음 턴 차단(불변식 A)
-import { effectiveModels, normalizeModelId, loadRemoteCatalog } from './runners/catalog-remote.mjs'; // 원격 카탈로그·alias(불변식 D)
+import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel } from './runners/catalog-remote.mjs'; // 원격 카탈로그·alias(불변식 D)
 import { addRoutine } from './routines.mjs'; // schedule_task 도구 — 크루가 '나중에 하기'를 거는 유일한 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
@@ -1420,7 +1420,7 @@ ${lang === 'en'
     + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder })
     + messengerNote
     + fallbackDirective;
-  const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || OPENROUTER_DEFAULT_MODEL) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : runner === 'gemini' ? (effModel || GEMINI_DEFAULT_MODEL) : runner === 'codex' ? (effModel || CODEX_DEFAULT_MODEL) : (effModel || null);
+  const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || openrouterFallbackModel(wantModel)) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : runner === 'gemini' ? (effModel || GEMINI_DEFAULT_MODEL) : runner === 'codex' ? (effModel || CODEX_DEFAULT_MODEL) : (effModel || null);
   const q = nativeOn ? nativeQuery({
     wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root,
     systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail + nativeToolsDirective(lang), // 브라우저·컴퓨터 유즈 안내는 네이티브 턴에만(SDK 턴엔 그 도구가 없다)

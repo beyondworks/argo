@@ -12,6 +12,7 @@ import { mkdtemp } from './helpers/tmp.mjs';
 process.env.HOME = await mkdtemp(join(tmpdir(), 'argo-native-os-home-'));
 process.env.USERPROFILE = process.env.HOME;
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-native-os-'));
+process.env.ARGO_CACHE_DIR = await mkdtemp(join(tmpdir(), 'argo-native-os-cache-')); // 오버레이 디스크 캐시 격리 — 실 ~/.argo/cache 오염 금지(분리 검수 L-3)
 process.env.ARGO_MODEL_CATALOG = 'off';
 delete process.env.ARGO_NATIVE_RUNNERS; // 기본 on 경로
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -49,6 +50,56 @@ test('OS1. 기본 on 러너(openrouter)의 원샷이 네이티브 엔진으로 �
     assert.equal(b.model, OPENROUTER_ONBOARD_MODEL, '카탈로그 밖 모델(claude-haiku)은 온보딩 모델로 강등 — SDK 경로와 같은 규칙');
     assert.equal(b.tools, undefined, '원샷은 도구 없음'); assert.equal(b.messages.length, 1); assert.equal(b.messages[0].content, '직함을 추천해');
   } finally { await srv.close(); delete process.env.OPENROUTER_BASE_URL; }
+});
+
+test('OS1b. 원격 오버레이 alias가 원샷 모델을 돌려세운다 — 지정 id·온보딩 기본 상수 둘 다(2026-09-08 minimax-m3:free 404 실사고)', async () => {
+  const { loadRemoteCatalog, _resetForTest } = await import('../src/runners/catalog-remote.mjs');
+  const ws = 'os1b'; await createCompany(ws, '원샷b', '사장'); await saveRunnerCred(ws, 'openrouter', 'apikey', 'fake-or-key-1234567890');
+  // 두 alias의 목적지를 다르게 — 같으면 '지정 id alias 누락 → 온보딩 폴백'이 우연히 같은 값을 내 변이가 green이 된다(분리 검수 H-2)
+  const overlay = { schema: 1, runners: { openrouter: { add: [{ id: 'vendor/alive:free', label: 'alive' }, { id: 'vendor/alive-b:free', label: 'alive-b' }], retire: [OPENROUTER_ONBOARD_MODEL, 'x/dead:free'], alias: { [OPENROUTER_ONBOARD_MODEL]: 'vendor/alive:free', 'x/dead:free': 'vendor/alive-b:free' } } } };
+  _resetForTest();
+  await loadRemoteCatalog({ fetchImpl: async () => new Response(JSON.stringify(overlay), { status: 200, headers: { 'content-type': 'application/json' } }), now: Date.now(), url: 'http://127.0.0.1:9/never' });
+  const srv = await fakeMessages([msg('a'), msg('b')]);
+  process.env.OPENROUTER_BASE_URL = srv.base;
+  try {
+    await runOneShot(ws, 'x', { model: 'x/dead:free', timeoutMs: 20_000 }); // 카드에 적힌 폐기 id → alias
+    await runOneShot(ws, 'y', { model: 'claude-haiku-4-5', timeoutMs: 20_000 }); // 카탈로그 밖 → 온보딩 기본 → 그 상수도 alias
+    assert.equal(srv.bodies[0].model, 'vendor/alive-b:free', '지정 폐기 id는 alias 뒤 현행 id로 나간다');
+    assert.equal(srv.bodies[1].model, 'vendor/alive:free', '온보딩 기본 상수가 죽어도 오버레이 alias로 첫 영입이 산다');
+  } finally { await srv.close(); delete process.env.OPENROUTER_BASE_URL; _resetForTest(); }
+});
+
+test('OS1c. 원샷이 오버레이를 스스로 로드한다(await) — 원샷 전용 프로세스에서 alias 기구가 조용히 죽지 않게(분리 검수 H-2)', async () => {
+  const { _resetForTest } = await import('../src/runners/catalog-remote.mjs');
+  const ws = 'os1c'; await createCompany(ws, '원샷c', '사장'); await saveRunnerCred(ws, 'openrouter', 'apikey', 'fake-or-key-1234567890');
+  const overlay = { schema: 1, runners: { openrouter: { add: [{ id: 'vendor/remote:free', label: 'remote' }], retire: ['x/dead:free'], alias: { 'x/dead:free': 'vendor/remote:free' } } } };
+  const cat = createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(overlay)); });
+  await new Promise((r) => cat.listen(0, '127.0.0.1', r));
+  const srv = await fakeMessages([msg('a')]);
+  process.env.OPENROUTER_BASE_URL = srv.base;
+  const savedOff = process.env.ARGO_MODEL_CATALOG; delete process.env.ARGO_MODEL_CATALOG; // 이 테스트만 실제 로더 경로(로컬 서버)
+  process.env.ARGO_MODEL_CATALOG_URL = `http://127.0.0.1:${cat.address().port}/model-catalog.json`;
+  _resetForTest(); // 메모리 캐시 비움 — 원샷이 직접 로드해야만 alias가 보인다
+  try {
+    await runOneShot(ws, 'x', { model: 'x/dead:free', timeoutMs: 20_000 });
+    assert.equal(srv.bodies[0].model, 'vendor/remote:free', '원샷이 loadRemoteCatalog를 기다리지 않으면(fire-and-forget·삭제) 첫 턴은 코드 목록만 보고 폴백한다');
+  } finally { await srv.close(); await new Promise((r) => cat.close(r)); delete process.env.OPENROUTER_BASE_URL; delete process.env.ARGO_MODEL_CATALOG_URL; if (savedOff === undefined) delete process.env.ARGO_MODEL_CATALOG; else process.env.ARGO_MODEL_CATALOG = savedOff; _resetForTest(); }
+});
+
+test('OS1d. 온보딩 폴백의 alias 목적지가 카탈로그에 없으면(add 누락) 카탈로그 첫 무료 모델로 — 없는 id가 벤더로 나가지 않는다(분리 검수 M-1)', async () => {
+  const { loadRemoteCatalog, _resetForTest } = await import('../src/runners/catalog-remote.mjs');
+  const { RUNNERS } = await import('../src/runners/catalog.mjs');
+  const ws = 'os1d'; await createCompany(ws, '원샷d', '사장'); await saveRunnerCred(ws, 'openrouter', 'apikey', 'fake-or-key-1234567890');
+  const overlay = { schema: 1, runners: { openrouter: { add: [], retire: [OPENROUTER_ONBOARD_MODEL], alias: { [OPENROUTER_ONBOARD_MODEL]: 'vendor/never-added:free' } } } };
+  _resetForTest();
+  await loadRemoteCatalog({ fetchImpl: async () => new Response(JSON.stringify(overlay), { status: 200, headers: { 'content-type': 'application/json' } }), now: Date.now(), url: 'http://127.0.0.1:9/never' });
+  const srv = await fakeMessages([msg('a')]);
+  process.env.OPENROUTER_BASE_URL = srv.base;
+  try {
+    await runOneShot(ws, 'x', { model: 'claude-haiku-4-5', timeoutMs: 20_000 });
+    const firstFree = RUNNERS.openrouter.models.find((m) => m.free && m.id !== OPENROUTER_ONBOARD_MODEL)?.id; assert.ok(firstFree, '코드 카탈로그 무료 2종 이상 전제');
+    assert.equal(srv.bodies[0].model, firstFree, '폴백은 유효 목록 안의 첫 무료 모델');
+  } finally { await srv.close(); delete process.env.OPENROUTER_BASE_URL; _resetForTest(); }
 });
 
 test('OS2. 벤더 401은 러너별 원인 대장으로 정직하게 실패한다(자가치유 대상 러너가 없을 때) + hang 상한은 sdk-timeout 문구', async () => {

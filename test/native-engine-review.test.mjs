@@ -188,7 +188,10 @@ await s.connect(new StdioServerTransport());
   const mcp = await connectMcpServers({
     probe: { command: process.execPath, args: [server] },
     dead: { command: process.execPath, args: ['-e', `process.title='${marker}'; setInterval(() => {}, 1000)`] },
-  }, { env: { PATH: process.env.PATH, ANTHROPIC_AUTH_TOKEN: 'leak' }, cwd: dir, timeoutMs: 2500 });
+  // 접속 상한 = 프로덕션 상수(MCP_CONNECT_TIMEOUT_MS 8s) — 종전 2.5초는 인텔 CI 러너(Tauri 빌드와 동시)에서 임시 node MCP 서버 기동이
+  // 넘겨 probe:failed로 두 번 연속 red(2026-09-08 run 34103526877·34185575757). 프로덕션보다 느슨한 상한은 실서버라면 failed일 접속을
+  // green으로 통과시키므로(분리 검수 M-3) 같은 값을 쓴다. dead는 상한만큼 기다린다(≤8s).
+  }, { env: { PATH: process.env.PATH, ANTHROPIC_AUTH_TOKEN: 'leak' }, cwd: dir, timeoutMs: MCP_CONNECT_TIMEOUT_MS });
   try {
     assert.deepEqual(mcp.statuses.map((s) => `${s.name}:${s.status}`), ['probe:connected', 'dead:failed'], '상태 보고(R13)');
     const names = mcp.tools.map((t) => t.name); assert.ok(names.includes('mcp__probe__envprobe') && names.includes('mcp__probe__readpath'));

@@ -5,7 +5,8 @@
 // (20분 TTL·디스크 캐시·실패 시 stale 유지)를 받고, OpenClaw는 매니페스트의 modelIdNormalization으로
 // 별칭·폐기 id를 현행 id로 정규화한다(extensions/anthropic/claude-model-refs.ts). 둘을 합쳐 이식했다.
 //
-// 계약(스키마 1): { schema:1, runners: { <runnerId>: { add?:[{id,label,gated?}], retire?:[id], alias?:{old:new} } } }
+// 계약(스키마 1): { schema:1, runners: { <runnerId>: { add?:[{id,label,gated?,free?}], retire?:[id], alias?:{old:new} } } }
+//  · add.free — 무료 배지·무료 폴백(원샷·브리지) 판정에 쓴다. 없으면 구버전 앱은 대체 무료 모델을 무배지로 보여 유료를 고를 수 있다(2차 검수 MEDIUM-1).
 //  · add    — 카탈로그에 없는 모델을 끝에 붙인다(같은 id가 이미 있으면 무시 — 코드가 정본)
 //  · retire — 그 id를 목록에서 뺀다(지정돼 있던 크루는 chat.mjs가 modelFallback으로 고지)
 //  · alias  — 사용자가 고른/카드에 적힌 옛 id를 현행 id로 바꾼다(normalizeModelId — 저장·실행 양쪽)
@@ -14,7 +15,7 @@
 import { readFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { RUNNERS } from './catalog.mjs';
+import { RUNNERS, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL } from './catalog.mjs';
 import { writeJsonAtomic } from '../jsonstore.mjs';
 
 export const SCHEMA = 1;
@@ -40,7 +41,7 @@ export function validateOverlay(o) {
     if (!retire.every(isId)) return null;
     if (!Object.entries(alias).every(([a, b]) => isId(a) && isId(b))) return null;
     runners[rid] = {
-      add: add.map((m) => ({ id: m.id.trim(), label: typeof m.label === 'string' && m.label.trim() ? m.label.trim() : m.id.trim(), ...(m.gated ? { gated: true } : {}) })),
+      add: add.map((m) => ({ id: m.id.trim(), label: typeof m.label === 'string' && m.label.trim() ? m.label.trim() : m.id.trim(), ...(m.gated ? { gated: true } : {}), ...(m.free ? { free: true } : {}) })),
       retire: retire.map((s) => s.trim()),
       alias: Object.fromEntries(Object.entries(alias).map(([a, b]) => [a.trim(), b.trim()])),
     };
@@ -65,6 +66,18 @@ export function normalizeModelId(runnerId, id, overlay = mem.overlay) {
   if (!s) return s;
   return overlay?.runners?.[runnerId]?.alias?.[s] ?? s;
 }
+/** 카탈로그 밖 OpenRouter 모델의 강등 목적지 — chat(크루 턴)·oneshot(첫 영입·기억 정리)이 같은 관문을 쓴다(2차 검수 MEDIUM-2).
+    무료(:free) id는 무료(온보딩 기본)로, 유료는 유료 기본으로 — 무료↔유료 티어 선을 코드가 넘지 않게(1차 검수 H-1: 죽은 무료 모델의
+    크루가 claude-haiku로 조용히 강등돼 잔액 0이면 매 턴 402). 목적지 상수도 alias를 지나고, alias 목적지가 유효 목록에 없으면
+    (add 누락 — 사고 대응의 흔한 실수) 같은 티어의 첫 유효 모델로 — 없는 id가 벤더로 나가지 않게. */
+export function openrouterFallbackModel(wanted, overlay = mem.overlay) {
+  const free = /:free$/i.test(String(wanted ?? '').trim());
+  const base = free ? OPENROUTER_ONBOARD_MODEL : OPENROUTER_DEFAULT_MODEL;
+  const fb = normalizeModelId('openrouter', base, overlay);
+  if (isKnownModel('openrouter', fb, overlay) && fb !== '') return fb;
+  return effectiveModels('openrouter', overlay).find((m) => m.id !== '' && (free ? m.free : !m.free))?.id ?? base;
+}
+
 /** 이 id가 그 러너에서 유효한가(순수) — ''(기본)은 항상 유효. alias 적용 후 판정. */
 export function isKnownModel(runnerId, id, overlay = mem.overlay) {
   const n = normalizeModelId(runnerId, id, overlay);
