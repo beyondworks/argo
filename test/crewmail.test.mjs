@@ -494,24 +494,32 @@ test('선점 신원(claimBy) — 회수 → 재선점 → 아직 착수 전인 �
   await rm(claimed2, { force: true });
 });
 
-test('착수 전 소유권 검사 — 대기 중 다른 프로세스에 회수·재선점된 claim은 각인·턴을 건너뛴다(5R 검수 후속)', async () => {
-  const { writeFile } = await import('node:fs/promises');
-  await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-o1', message: '앞' });
-  const id2 = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-o2', message: '뒤(대기 중 뺏김)' });
-  const calls = [];
-  await mod.deliverCrewMail(WS, async (slug) => {
-    if (!slug.startsWith('rc-o')) return;
-    calls.push(slug);
-    if (slug === 'rc-o1') { // 앞 턴 도중 대기 중인 rc-o2가 다른 프로세스에 회수·재선점됨(다른 토큰)
-      const p = join(paths(WS).root, 'mail', 'rc-o2', `${id2}-to.json.claimed`);
-      const body = JSON.parse(await readFile(p, 'utf8'));
-      await writeFile(p, JSON.stringify({ ...body, claimBy: 'other-process' }));
-    }
-  }, { limit: 10, concurrency: 1 });
-  assert.deepEqual(calls, ['rc-o1'], 'rc-o2는 남의 것이 됐으므로 턴을 돌리지 않는다(돌리면 이중 배달)');
-  const p = join(paths(WS).root, 'mail', 'rc-o2', `${id2}-to.json.claimed`);
-  assert.equal(JSON.parse(await readFile(p, 'utf8')).claimBy, 'other-process', '남의 claim은 그대로');
-  const { rm } = await import('node:fs/promises'); await rm(p, { force: true }); // 정리
+test('착수 전 소유권 검사 — 대기 중 다른 프로세스에 회수·재선점된 claim은 각인·턴을 건너뛰고, 생략분의 심박·inFlight를 정리한다(5R 후속·6R HIGH-1)', async () => {
+  const { writeFile, utimes, stat, rm } = await import('node:fs/promises');
+  mod._setClaimHeartbeatMsForTest(20);
+  try {
+    const ids = {};
+    for (const s of ['rc-o1', 'rc-o2']) ids[s] = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: s, message: s });
+    const calls = []; let stolen = null;
+    await mod.deliverCrewMail(WS, async (slug) => {
+      if (!slug.startsWith('rc-o')) return;
+      calls.push(slug);
+      if (stolen) return;
+      stolen = slug === 'rc-o1' ? 'rc-o2' : 'rc-o1'; // 먼저 도는 턴이 "자기가 아닌 쪽"(대기 중)을 훔친다 — 슬러그 순회 순서 무관(6R 검수)
+      const p = join(paths(WS).root, 'mail', stolen, `${ids[stolen]}-to.json.claimed`);
+      await writeFile(p, JSON.stringify({ ...JSON.parse(await readFile(p, 'utf8')), claimBy: 'other-process' }));
+    }, { limit: 10, concurrency: 1 });
+    assert.equal(calls.length, 1, `뺏긴 쪽은 턴을 돌리지 않는다(돌리면 이중 배달) — 실제 ${calls.join(',')}`);
+    const p = join(paths(WS).root, 'mail', stolen, `${ids[stolen]}-to.json.claimed`);
+    assert.equal(JSON.parse(await readFile(p, 'utf8')).claimBy, 'other-process', '남의 claim은 그대로');
+    // 6R HIGH-1 핀: 생략분의 심박이 새면 남의 claim에 계속 mtime을 찍어 어떤 프로세스도 회수 못 한다 — mtime을 과거로 민 뒤 전진하지 않고, 이 프로세스가 회수할 수 있어야 한다
+    const t = new Date(Date.now() - 5 * 60_000); await utimes(p, t, t);
+    await new Promise((r) => setTimeout(r, 80));
+    assert.ok((await stat(p)).mtimeMs < t.getTime() + 1000, '생략 뒤 심박이 남의 claim을 살려 두면(mtime 전진) red'); // 파일시스템 mtime 반올림(±1ms) 허용
+    await mod.deliverCrewMail(WS, async () => {}, { limit: 10 }); // 회수 패스(limit 0은 루프 상단 break라 회수도 못 한다) — inFlight가 새면 "내 진행분"으로 보고 건너뛴다
+    assert.deepEqual(await mailFiles(stolen), [`${ids[stolen]}-to.json`], '생략분은 inFlight에서 빠져 회수 가능해야 한다');
+    await rm(join(paths(WS).root, 'mail', stolen, `${ids[stolen]}-to.json`), { force: true }); // 정리
+  } finally { mod._setClaimHeartbeatMsForTest(30_000); }
 });
 
 test('회수(reclaimClaim)는 옛 소유자의 claimBy·claimedAt을 떼고 되돌린다 — 재선점자가 각인하기 전에도 옛 신원이 남지 않는다', async () => {
