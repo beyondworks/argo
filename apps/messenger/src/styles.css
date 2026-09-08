@@ -569,3 +569,6 @@
 .msgr-railrow .dispatch:hover { background: var(--primary); color: var(--primary-fg); }
 .msgr-railrow .dispatch:disabled { cursor: progress; }
 .msgr-railrow.dim:hover .item .msgr-klabel { visibility: hidden; }
+/* 레일 스크롤바 숨김(유건 지시 2026-09-08 "스크롤바 리스") — 스크롤은 그대로, 막대만 안 그린다(오버레이 없이도 콘텐츠 폭이 안 흔들린다) */
+.msgr-railbody { scrollbar-width: none; -ms-overflow-style: none; }
+.msgr-railbody::-webkit-scrollbar { width: 0; height: 0; display: none; }
