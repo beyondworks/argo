@@ -295,6 +295,7 @@ export async function runnerCredEnv(wsId, runner) {
       ? { env: { ANTHROPIC_BASE_URL: base, CLAUDE_CODE_OAUTH_TOKEN: v, ANTHROPIC_API_KEY: '' } }
       : { env: { ANTHROPIC_BASE_URL: base, ANTHROPIC_API_KEY: v, CLAUDE_CODE_OAUTH_TOKEN: '' } };
   }
+  if (runner === 'http') return { env: { ARGO_HTTP_KEY: v }, authType: 'apikey' }; // http-text.mjs가 Bearer로 싣는다. 자식 프로세스 없음 — 다른 env 불필요
   if (runner === 'glm') {
     // CLAUDE_CODE_OAUTH_TOKEN 명시 소거 — claude 분기와 대칭. Anthropic 구독 토큰이 제3자(z.ai) 향
     // 턴 env에 남으면 자식 프로세스에서 열람 가능(감사 2026-07-20 — scrub 러너 인자와 벨트앤서스펜더).
@@ -451,6 +452,7 @@ export async function verifyRunnerCred(runner, type, value) {
       const r = await fetch(`${cbase2}/v1/models?limit=1`, { headers: { authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20' }, signal: AbortSignal.timeout(10_000) });
       return (r.status === 401 || r.status === 403) ? { ok: false, reason: 'auth' } : { ok: true }; // reason:'auth' = 턴 전 게이트·분류표의 열쇠(불변식 A)
     }
+    if (runner === 'http') return v ? { ok: true } : { ok: false, reason: 'format' }; // 엔드포인트는 크루 카드에 있어 여기서 못 두드린다 — 첫 턴의 401이 게이트(불변식 A)를 켠다
     if (runner === 'glm') {
       const base = process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic';
       const r = await fetch(`${base}/v1/models?limit=1`, { headers: { 'x-api-key': v, authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });

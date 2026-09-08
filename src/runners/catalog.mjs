@@ -69,6 +69,9 @@ export const RUNNERS = {
       { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', gated: true },
     ],
   },
+  // HTTP 텍스트 러너(부록 N, 2026-09-08) — 외부 에이전트(헤르메스·오픈클로·자체 엔드포인트)를 회사 크루의 두뇌로. 숨김: 카드에 `runner: http`와
+  // `endpoint:`를 적어야만 돈다(자동 선택·러너 목록 제외). 텍스트 러너 등급(도구·권한 게이트 없음 — 시트에 정직 표기). 어댑터: runners/http-text.mjs.
+  http: { name: 'HTTP 엔진', kind: 'cli', hidden: true, models: [{ id: '', label: '기본' }] },
   antigravity: {
     name: 'Antigravity', kind: 'cli',
     // BYOA 2호(2026-07-27) — 구글이 개인용 Gemini Code Assist OAuth를 폐기하고 Antigravity로 이전
@@ -364,6 +367,7 @@ export const RUNNER_AUTH = {
   // **정의 순 = pickRunner 자동 선택 순 — 반드시 맨 끝**: 키링이라 로그인 여부를 파일로 판정할 수 없는
   // 유일한 러너로 authed가 낙관값이다. 검증된 자격보다 앞에 두면 미로그인 antigravity가 동작하는
   // 러너를 선점해 러너 미지정 크루의 전 턴이 타임아웃으로 죽는다(분리 검수 H1 실증 2026-07-27).
+  http: { methods: ['apikey'], apikeyPrefix: '', oauthPasteable: false, keyUrl: '' }, // 회사 자격 = 엔드포인트 Bearer 키(헤르메스 API_SERVER_KEY 등). 엔드포인트는 크루 카드 endpoint:
   antigravity: { methods: ['oauth'], apikeyPrefix: '', oauthPasteable: false, hostUsable: true, keyUrl: 'https://antigravity.google/docs/cli/install' },
 };
 
