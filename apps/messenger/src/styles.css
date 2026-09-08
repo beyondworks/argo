@@ -570,6 +570,7 @@
 
 /* 레일 "내 크루"(부록 M) — 파견 중은 초록 점, 파견 전은 흐리게 + '대기' */
 .msgr-list.mine .item { height: 30px; }
+.msgr-list.mine .item .src { margin-left: auto; font-size: 10px; opacity: 0.8; } /* 출처: 아르고·헤르메스·오픈클로 */
 .msgr-list.mine .item.dim { color: var(--fg-3); }
 .msgr-list.mine .item .msgr-dot { margin-left: auto; }
 .msgr-list.mine .item .msgr-klabel { margin-left: auto; }

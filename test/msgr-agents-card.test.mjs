@@ -17,11 +17,12 @@ test('카드가 쓰는 i18n 키는 전부 ko/en 쌍 · 상태 문구는 "헤르�
   assert.doesNotMatch(i18n.slice(i18n.indexOf("'org.agents'"), i18n.indexOf("'org.node.hint'")), /HTTP/, '유건 지시: 화면 표기에 HTTP 같은 기술 용어 금지');
 });
 
-test('봇 = 회사 등급(클라이언트 crewTier) · 내 크루 레일에서 제외 · 시트 hosting 표기 · 설정 크루 탭에 카드', () => {
+test('봇 = 회사 등급(클라이언트 crewTier) · 내 에이전트 레일에 출처와 함께 포함 · 시트 hosting 표기 · 설정 크루 탭에 카드', () => {
   assert.match(app, /export const crewTier = \(crew, org\) => \(crew\?\.hosting === 'bot' \|\| /, '봇 회사 등급');
-  assert.match(app, /const myCrews = crews\.filter\(\(c\) => c\.owner_user_id === uid && c\.hosting !== 'bot'\);/, '내 크루 정의 한 곳');
-  assert.equal((app.match(/myCrews/g) ?? []).length, 6, '그룹 표시·개수·목록·힌트가 전부 myCrews를 쓴다(정의 1 + 소비 5)');
-  assert.doesNotMatch(app, /crews\.filter\(\(c\) => c\.owner_user_id === uid\)|crews\.some\(\(c\) => c\.owner_user_id === uid\)/, '봇 포함 옛 필터 잔존(실측: 한 줄에 두 번 있어 치환이 하나 남았다)');
+  assert.match(app, /const myCrews = crews\.filter\(\(c\) => c\.owner_user_id === uid\);/, '내 에이전트 = 아르고 + 내가 연결한 봇(유건 지시: 세 출처 한 목록)');
+  assert.match(app, /const sourceOf = \(c\) => c\.hosting !== 'bot' \? 'argo' : \(botKinds\.find/, '출처 판정');
+  assert.match(app, /<span className="msgr-klabel src">\{t\(`rail\.src\.\$\{sourceOf\(c\)\}`\)\}<\/span>/, '레일 행 출처 표시');
+  for (const k of ['rail.src.argo', 'rail.src.hermes', 'rail.src.openclaw', 'rail.src.custom']) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   assert.match(read('apps/messenger/src/styles.css'), /\.msgr-node-cmd code \{[^}]*white-space: pre-wrap;/, '설정 두 줄이 줄바꿈으로 보인다(실측: 한 줄로 붙어 보였다)');
   assert.match(app, /crew\.hosting === 'resident' \? 'resident' : crew\.hosting === 'bot' \? 'bot' : 'local'/, '시트 hosting 표기');
   assert.match(app, /<OrgCard part="node"[^\n]*\n\s*\{isAdmin && <OrgCard part="agents"/, '크루 탭에서 노드 카드 다음에 에이전트 카드(관리자만)');
