@@ -366,10 +366,27 @@ test('배달 중 자기 심박 — 턴이 도는 동안 .claimed mtime이 전진
       const m0 = (await stat(p)).mtimeMs;
       await new Promise((r) => setTimeout(r, 150)); // 심박 20ms가 여러 번 돈다
       seen.push({ advanced: (await stat(p)).mtimeMs > m0, claimedAt: Date.parse(JSON.parse(await readFile(p, 'utf8')).claimedAt), at: Date.now() });
-    }, { limit: 10, now: t0 });
+    }, { limit: 10, concurrency: 1, now: t0 }); // 순차 강제 — 동시 배달(기본)에선 둘이 같이 시작해 이 시나리오가 안 생긴다
     assert.equal(seen.length, 2);
     assert.ok(seen.every((x) => x.advanced), '턴 도중 mtime 전진(자기 심박)');
     const later = seen.sort((a, b) => a.at - b.at)[1];
     assert.ok(later.claimedAt >= t0 + 150 - 5, `뒤 쪽지 claimedAt은 앞 턴(≥150ms) 뒤의 실제 선점 시각이어야 한다(실측 +${later.claimedAt - t0}ms) — 틱 시작 now로 각인하면 red`);
   } finally { mod._setClaimHeartbeatMsForTest(30_000); }
+});
+
+test('동시 배달 — 회의실처럼 한 패스의 쪽지가 동시에 돌고(동시 진행 ≥2, 총 소요 ≈ 1건), 상한 2면 동시 진행이 2를 넘지 않는다(유건 지시 2026-09-08)', async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let inflight = 0; let max = 0;
+  const run = (concurrency) => mod.deliverCrewMail(WS, async () => { inflight += 1; max = Math.max(max, inflight); await sleep(120); inflight -= 1; }, { limit: 10, concurrency });
+  for (const s of ['rc-p1', 'rc-p2', 'rc-p3', 'rc-p4']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: s, message: '동시' });
+  const t0 = Date.now();
+  await run(8);
+  assert.ok(max >= 2, `동시 진행 최대 ${max} — 순차면 1`);
+  assert.ok(Date.now() - t0 < 4 * 120, `총 소요 ${Date.now() - t0}ms — 순차(≥480ms)가 아니다`);
+  assert.deepEqual(await mailFiles('rc-p3'), []);
+  max = 0;
+  for (const s of ['rc-p1', 'rc-p2', 'rc-p3', 'rc-p4']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: s, message: '상한' });
+  await run(2);
+  assert.equal(max, 2, `상한 2 — 동시 진행 최대 ${max}`);
+  assert.ok(mod.MAIL_CONCURRENCY >= 1 && mod.MAIL_CONCURRENCY <= 16 && mod.MAIL_PER_TICK === mod.MAIL_CONCURRENCY, '기본 상한은 1~16 클램프, 패스당 착수 상한 = 동시 상한');
 });
