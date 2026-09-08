@@ -116,7 +116,7 @@ function Auth() {
           <button type="button" className="btn btn-primary" disabled={busy} onClick={() => viaBrowser('google')}>{t('auth.google')}</button>
           <button type="button" className="btn" disabled={busy} onClick={() => viaBrowser('github')}>{t('auth.github')}</button>
         </>)}
-        {import.meta.env.DEV && (<>
+        {(import.meta.env.DEV || import.meta.env.VITE_DEV_LOGIN === '1') && (<> {/* VITE_DEV_LOGIN=1: 로컬 스택을 보는 검수용 번들에서만(OAuth가 없다) — 발행 빌드엔 넣지 않는다 */}
           <span className="msgr-klabel devsep">{t('auth.devOnly')}</span>
           <label className="msgr-field"><I name="at" /><input type="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
           <label className="msgr-field"><I name="lock" /><input type="password" placeholder={t('auth.password')} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
