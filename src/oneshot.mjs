@@ -5,7 +5,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { nativeOneShot, nativeRunnerEnabled } from './engine/native-query.mjs'; // 하네스 통일 P-A' — 플래그 러너의 원샷도 Argo 엔진으로(같은 러너 두 경로 갈림 제거)
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
-import { effectiveModels } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
+import { effectiveModels, normalizeModelId, loadRemoteCatalog } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
 import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor, visibleRunnerNamesLine, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
@@ -67,8 +67,12 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     hangGuard = setTimeout(() => ac.abort(), timeoutMs);
     // 모델 선택은 두 엔진이 같은 값을 쓴다(한 곳 정의). openrouter는 카탈로그 검증 — 호출자가 넘긴 타 러너용 모델(예: consolidate의 claude-haiku
     // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
+    // openrouter는 alias(폐기 id→현행)를 먼저 — 온보딩 기본 상수까지. 무료 모델이 발행 사이에 죽으면(2026-09-08 minimax-m3:free 404)
+    // 앱 발행 없이 원격 오버레이만으로 첫 영입 턴을 살릴 수 있게(chat.mjs 크루 턴과 같은 관문). chat.mjs와 달리 여기서는 로드를
+    // 기다린다 — 원샷(첫 영입·기억 정리)은 지연보다 정확한 모델이 중요하고, TTL 캐시라 첫 호출(≤8s) 뒤엔 즉시 반환된다.
+    if (runner === 'openrouter') await loadRemoteCatalog().catch(() => null);
     const osModel = runner === 'glm' ? GLM_DEFAULT_MODEL : runner === 'kimi' ? KIMI_DEFAULT_MODEL
-      : runner === 'openrouter' ? (effectiveModels('openrouter').some((m) => m.id === model) ? model : OPENROUTER_ONBOARD_MODEL)
+      : runner === 'openrouter' ? (() => { const want = normalizeModelId('openrouter', model); return effectiveModels('openrouter').some((m) => m.id === want) ? want : normalizeModelId('openrouter', OPENROUTER_ONBOARD_MODEL); })()
       : runner === 'grok' ? (effectiveModels('grok').some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL)
       : runner === 'gemini' ? (effectiveModels('gemini').some((m) => m.id === model) ? model : GEMINI_DEFAULT_MODEL)
       : runner === 'codex' ? (effectiveModels('codex').some((m) => m.id === model) ? model : CODEX_DEFAULT_MODEL)

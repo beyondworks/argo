@@ -188,7 +188,9 @@ await s.connect(new StdioServerTransport());
   const mcp = await connectMcpServers({
     probe: { command: process.execPath, args: [server] },
     dead: { command: process.execPath, args: ['-e', `process.title='${marker}'; setInterval(() => {}, 1000)`] },
-  }, { env: { PATH: process.env.PATH, ANTHROPIC_AUTH_TOKEN: 'leak' }, cwd: dir, timeoutMs: 2500 });
+  // 접속 상한 — probe는 임시 node 스크립트가 MCP SDK를 로드해 뜬다. 인텔 CI 러너(Tauri 빌드와 동시)에서 2.5초를 넘겨 probe:failed로
+  // 두 번 연속 red(2026-09-08 run 34103526877·34185575757). dead는 상한만큼 기다리므로 15초면 판정 지연 ≤15초.
+  }, { env: { PATH: process.env.PATH, ANTHROPIC_AUTH_TOKEN: 'leak' }, cwd: dir, timeoutMs: 15_000 });
   try {
     assert.deepEqual(mcp.statuses.map((s) => `${s.name}:${s.status}`), ['probe:connected', 'dead:failed'], '상태 보고(R13)');
     const names = mcp.tools.map((t) => t.name); assert.ok(names.includes('mcp__probe__envprobe') && names.includes('mcp__probe__readpath'));

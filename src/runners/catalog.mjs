@@ -113,15 +113,14 @@ export const RUNNERS = {
       // 두면 신규 키($0이 기본)의 영입·기억정리가 전부 402로 죽는다 — 검수 CRITICAL 2026-07-27).
       // 스모크 3/3 통과 실측(유료와 같은 tool_use 왕복 게이트). 무료 티어는 요청 한도(20/분,
       // 누적 구매 $10 미만이면 50/일)와 제공사 용량 편차가 있어 free 플래그로 UI에 배지 표시.
-      // 무료 3종 재편(2026-09-02 발행 전 재스모크 — 무료 목록은 제공사 사정으로 죽거나 막힌다, 발행 전 재스모크가 관문):
-      //  · minimax-m3:free — 3/3 통과(1M 컨텍스트) → **첫 항목·온보딩 기본으로 승격**
-      //  · nemotron:free — 4회 중 1회만 통과("Upstream error from Nvidia: Service temporarily overloaded" 3회) →
-      //    살아 있으나 불안정, 온보딩 기본 부적합이라 2번째로 내림
-      //  · ling-3.0-flash:free — 404 "unavailable for free"(서빙 종료) → 제거
-      //  · laguna-s-2.1:free — 단독·레이트 창 후에도 제공사 429 3/3 → 제거, minimax-m2.7:free(통과)로 교체
-      { id: 'minimax/minimax-m3:free', label: 'MiniMax M3 (Free)', free: true },
+      // 무료 재편 이력(발행 전 재스모크가 관문 — 무료 목록은 제공사 사정으로 죽거나 막힌다):
+      //  · 2026-09-02: ling-3.0-flash:free 404·laguna-s-2.1:free 429 제거, minimax-m3:free 3/3 → 온보딩 기본
+      //  · 2026-09-08(v0.1.65 발행 전): minimax-m3:free·minimax-m2.7:free 둘 다 404 "unavailable for free"(무료 종료) → 제거.
+      //    잔액 0 신규 계정의 첫 영입이 이 모델에 걸려 전멸하던 상태. nemotron-3.5-lightning:free 단독 2/2 통과(기본+tool_use) →
+      //    **첫 항목·온보딩 기본**. nemotron-3-super:free는 4회 중 2회 실패(Nvidia 업스트림) → 살려 두되 2번째.
+      //    gemma-4:free는 제공사 429 2/2, inkling:free는 403(제한) → 미등재. 발행 뒤 죽으면 원격 오버레이(alias·retire)로 먼저 막고 코드는 다음 발행에.
+      { id: 'nvidia/nemotron-3.5-lightning:free', label: 'Nemotron 3.5 Lightning (Free)', free: true },
       { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 3 Super 120B', free: true },
-      { id: 'minimax/minimax-m2.7:free', label: 'MiniMax M2.7 (Free)', free: true },
       // ── 유료 — 잔액이 있는 사용자가 명시 선택(품질·속도 우위)
       { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
       { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
@@ -132,7 +131,6 @@ export const RUNNERS = {
       { id: 'x-ai/grok-4.5', label: 'Grok 4.5' },
       { id: 'minimax/minimax-m3', label: 'MiniMax M3' },
       { id: 'qwen/qwen3.7-max', label: 'Qwen3.7 Max' },
-      { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
       { id: 'moonshotai/kimi-k3', label: 'Kimi K3 (OpenRouter)' }, // 직접 연결(kimi 러너)이 더 저렴 — 단일 키 사용자용
       { id: 'z-ai/glm-5.3', label: 'GLM-5.3 (OpenRouter)' },       // 동일 — 직접 연결(glm 러너) 우선 권장
       { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (OpenRouter)' },
@@ -285,7 +283,7 @@ export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5';
 // 온보딩·자동 실행 기본(runOneShot) — **잔액 0에서도 도는 무료 모델**. 영입·기억정리·루틴 초안은
 // 사용자가 모델을 고를 화면이 없는 자동 호출이라, 유료를 기본으로 두면 신규 키($0이 기본)가
 // 연결 직후 첫 영입부터 402로 막힌다(검수 CRITICAL 2026-07-27). 카탈로그 선두와 일치.
-export const OPENROUTER_ONBOARD_MODEL = 'minimax/minimax-m3:free';
+export const OPENROUTER_ONBOARD_MODEL = 'nvidia/nemotron-3.5-lightning:free';
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 /** Grok 기본 모델 — 카탈로그 첫 항목과 같아야 한다(러너 전환·모델 미지정의 기본값). */
 export const GROK_DEFAULT_MODEL = 'grok-4.6';

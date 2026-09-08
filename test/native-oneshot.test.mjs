@@ -51,6 +51,22 @@ test('OS1. 기본 on 러너(openrouter)의 원샷이 네이티브 엔진으로 �
   } finally { await srv.close(); delete process.env.OPENROUTER_BASE_URL; }
 });
 
+test('OS1b. 원격 오버레이 alias가 원샷 모델을 돌려세운다 — 지정 id·온보딩 기본 상수 둘 다(2026-09-08 minimax-m3:free 404 실사고)', async () => {
+  const { loadRemoteCatalog, _resetForTest } = await import('../src/runners/catalog-remote.mjs');
+  const ws = 'os1b'; await createCompany(ws, '원샷b', '사장'); await saveRunnerCred(ws, 'openrouter', 'apikey', 'fake-or-key-1234567890');
+  const overlay = { schema: 1, runners: { openrouter: { add: [{ id: 'vendor/alive:free', label: 'alive' }], retire: [OPENROUTER_ONBOARD_MODEL, 'x/dead:free'], alias: { [OPENROUTER_ONBOARD_MODEL]: 'vendor/alive:free', 'x/dead:free': 'vendor/alive:free' } } } };
+  _resetForTest();
+  await loadRemoteCatalog({ fetchImpl: async () => new Response(JSON.stringify(overlay), { status: 200, headers: { 'content-type': 'application/json' } }), now: Date.now(), url: 'http://127.0.0.1:9/never' });
+  const srv = await fakeMessages([msg('a'), msg('b')]);
+  process.env.OPENROUTER_BASE_URL = srv.base;
+  try {
+    await runOneShot(ws, 'x', { model: 'x/dead:free', timeoutMs: 20_000 }); // 카드에 적힌 폐기 id → alias
+    await runOneShot(ws, 'y', { model: 'claude-haiku-4-5', timeoutMs: 20_000 }); // 카탈로그 밖 → 온보딩 기본 → 그 상수도 alias
+    assert.equal(srv.bodies[0].model, 'vendor/alive:free', '지정 폐기 id는 alias 뒤 현행 id로 나간다');
+    assert.equal(srv.bodies[1].model, 'vendor/alive:free', '온보딩 기본 상수가 죽어도 오버레이 alias로 첫 영입이 산다');
+  } finally { await srv.close(); delete process.env.OPENROUTER_BASE_URL; _resetForTest(); }
+});
+
 test('OS2. 벤더 401은 러너별 원인 대장으로 정직하게 실패한다(자가치유 대상 러너가 없을 때) + hang 상한은 sdk-timeout 문구', async () => {
   const ws = 'os2'; await createCompany(ws, '원샷2', '사장'); await saveRunnerCred(ws, 'openrouter', 'apikey', 'fake-or-key-1234567890');
   const srv = await fakeMessages([{ status: 401, json: { error: { message: 'invalid api key' } } }]);

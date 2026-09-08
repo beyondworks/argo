@@ -22,13 +22,14 @@ test('등록: sdk-compat 계열 + BYOK apikey 단일 (CLI 래핑 금지)', () =>
   assert.ok(RUNNER_AUTH.openrouter?.keyUrl?.includes('openrouter.ai'));
 });
 
-test('카탈로그: 스모크 전수 통과 11종 + 기본 모델 포함 + 첫 항목=기본(러너 전환 관례)', () => {
+test('카탈로그: 스모크 전수 통과 유료 10종·무료 2종 + 기본 모델 포함 + 첫 항목=기본(러너 전환 관례)', () => {
   const ids = (RUNNERS.openrouter.models ?? []).map((m) => m.id);
   // 유료 = 2026-07-27 스모크 8/8 + 2026-09-01 스모크 3/3(x-ai/grok-4.6·z-ai/glm-5.3·google/gemini-3.7-flash).
   // 이 수를 올리려면 scripts/openrouter-smoke.mjs 실키 통과가 선행돼야 한다(같은 날 anthropic/claude-fable-5.1은
   // 402 잔액으로 미등재 — 통과 전엔 세지 않는다).
-  assert.equal(ids.filter((i) => !i.endsWith(':free')).length, 11, '유료 11종 — 스모크 확정본(8/8 + 3/3)');
-  assert.equal(ids.filter((i) => i.endsWith(':free')).length, 3, '무료 3종 — 크레딧 0 체험 진입로(2026-09-02 재스모크: ling 404·laguna 429 3/3 제거, minimax-m3(온보딩 기본)·m2.7 편입)');
+  // 2026-09-08: deepseek/deepseek-v4-pro 404 "Model not found"(서빙 종료) 제거 → 10.
+  assert.equal(ids.filter((i) => !i.endsWith(':free')).length, 10, '유료 10종 — 스모크 확정본(8/8 + 3/3 − deepseek-v4-pro 404)');
+  assert.equal(ids.filter((i) => i.endsWith(':free')).length, 2, '무료 2종 — 크레딧 0 체험 진입로(2026-09-08 재스모크: minimax-m3·m2.7 404 무료 종료 제거, nemotron-3.5-lightning 2/2 편입·온보딩 기본)');
   // 스모크 스크립트의 기본 후보 목록이 카탈로그와 어긋나면 "인자 없이 돌린 스모크 통과"가 거짓 안심이 된다(검수 MEDIUM-3)
   const smoke = readFileSync(new URL('../scripts/openrouter-smoke.mjs', import.meta.url), 'utf8');
   for (const id of ids) assert.ok(smoke.includes(`'${id}'`), `스모크 CANDIDATES에 카탈로그 id 누락: ${id}`);
@@ -132,7 +133,9 @@ test('배선: oneshot.mjs — 402는 성공이 아니라 실패로 승격(크루
   assert.match(src, /costUsd: runner === 'openrouter' \? null : costUsd/);
   // 2R H1: 호출자 모델을 카탈로그 검증 없이 넘기면 consolidate의 claude-haiku 하드코딩이 400으로 전멸
   // 2026-09-05 #432 MEDIUM-3: 카탈로그는 원목록(RUNNERS)이 아니라 원격 오버레이가 반영된 effectiveModels — 원목록 소비로 되돌아가면 red
-  assert.match(src, /effectiveModels\('openrouter'\)\.some\(\(m\) => m\.id === model\)/, 'openrouter 원샷은 (오버레이 반영) 카탈로그 밖 id를 기본 모델로 강등해야 한다');
+  assert.match(src, /effectiveModels\('openrouter'\)\.some\(\(m\) => m\.id === want\)/, 'openrouter 원샷은 (오버레이 반영) 카탈로그 밖 id를 기본 모델로 강등해야 한다');
+  // 2026-09-08: 온보딩 기본 상수도 alias를 지난다 — 무료 모델이 발행 사이에 죽으면 오버레이만으로 첫 영입 턴을 살린다(minimax-m3:free 404 실사고)
+  assert.match(src, /normalizeModelId\('openrouter', OPENROUTER_ONBOARD_MODEL\)/, '온보딩 기본 상수가 alias 없이 나가면 죽은 무료 모델로 첫 영입이 전멸한다');
   assert.doesNotMatch(src, /RUNNERS\.openrouter\.models\.some/, '원목록(RUNNERS) 직접 소비 회귀 — 폐기·추가 모델을 못 본다');
   // 외부 CLI 경로(externalExec)에 openrouter 분기가 생기면 BYOK 원칙 위반
   const runners = await readFile(new URL('../src/runners.mjs', import.meta.url), 'utf8');
