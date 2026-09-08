@@ -137,8 +137,9 @@ test('getUpdates: 멘션·봇이 참가한 DM·봇 글에 대한 답글만 · �
   // 관리자가 봇을 비공개 채널에 넣으면 그 채널 멘션이 보인다(기존 채널 멤버 경로 그대로)
   asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${PRIV}', 'crew', '${BOT_CREW}', '${U.admin}')`);
   const ups2 = asAnon(`select public.msgr_bot_updates('${TOKEN}', ${plain})`).split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  assert.deepEqual(ups2.map((u) => String(u.update_id)), [m1, secret]);
+  assert.deepEqual(ups2.map((u) => String(u.update_id)), [secret], 'after_id가 커서보다 낮아도 ack된 m1은 다시 오지 않는다');
   assert.equal(sql(`select cursor_msg_id from public.msgr_crews where id = '${BOT_CREW}'`), m1, '커서는 뒤로 안 간다');
+  assert.equal(asAnon(`select count(*) from public.msgr_bot_updates('${TOKEN}', 0)`).trim(), '1', 'ack 뒤 offset 0으로 다시 물어도 ack된 것(m1)은 재생되지 않고 새 것(secret)만 온다');
   // 멤버(직원)가 다른 크루를 멘션한 글은 이 봇에게 안 간다
   post(U.member, PUB, '@서윤 이거', `mentions='${q(JSON.stringify([{ kind: 'crew', id: CREW }]))}'::jsonb`);
   assert.equal(asAnon(`select count(*) from public.msgr_bot_updates('${TOKEN}', ${secret})`).trim(), '0');

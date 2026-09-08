@@ -163,12 +163,14 @@ end $$;
 -- 인바운드 대상 규칙 = 브리지와 동일(자동 라우팅 금지): 멘션 / 봇이 참가한 DM / 봇 글에 대한 답글. 읽을 수 있는 채널 = 공개 채널 또는 멤버로 들어간 채널.
 create or replace function public.msgr_bot_updates(token text, after_id bigint default 0, lim int default 50) returns setof jsonb
   language plpgsql security definer set search_path = public, pg_temp as $$
-declare b public.msgr_bots;
+declare b public.msgr_bots; lo bigint;
 begin
   b := public.msgr_bot_auth(token);
   if b.id is null then raise exception 'msgr_bot_unauthorized'; end if;
   update public.msgr_bots set last_seen_at = now() where id = b.id;
-  update public.msgr_crews set last_seen_at = now(), cursor_msg_id = greatest(cursor_msg_id, coalesce(after_id, 0)) where id = b.crew_id; -- offset = ack(텔레그램 규율)
+  -- offset = ack(텔레그램 규율): ack된 것은 다시 오지 않는다 — 클라이언트가 재시작해 offset 0으로 물어도 저장된 커서 아래는 재생하지 않는다
+  -- (실측 2026-09-08: 헤르메스 게이트웨이 재시작마다 옛 멘션 전부에 다시 답함).
+  update public.msgr_crews set last_seen_at = now(), cursor_msg_id = greatest(cursor_msg_id, coalesce(after_id, 0)) where id = b.crew_id returning cursor_msg_id into lo;
   return query
     select jsonb_build_object(
       'update_id', m.id,
@@ -183,7 +185,7 @@ begin
     from public.msgr_messages m
     join public.msgr_channels ch on ch.id = m.channel_id and ch.archived_at is null
     left join public.msgr_org_members mem on mem.org_id = m.org_id and mem.user_id = m.author_user_id and mem.removed_at is null
-    where m.org_id = b.org_id and m.id > coalesce(after_id, 0) and m.deleted_at is null and m.author_kind = 'user' and m.kind = 'text'
+    where m.org_id = b.org_id and m.id > lo and m.deleted_at is null and m.author_kind = 'user' and m.kind = 'text'
       and (ch.kind = 'public' or exists (select 1 from public.msgr_channel_members cm where cm.channel_id = ch.id and cm.member_kind = 'crew' and cm.member_id = b.crew_id))
       and (m.mentions @> jsonb_build_array(jsonb_build_object('kind', 'crew', 'id', b.crew_id::text))
            or ch.kind = 'dm'
