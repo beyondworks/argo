@@ -425,7 +425,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
       </button>
       {confirmRemove && (
         <ConfirmModal
-          title={t('settings.runners.removeConfirmTitle', { runner: RUNNER_NAMES[id] })}
+          title={t('settings.runners.removeConfirmTitle', { runner: id === 'http' ? t('runner.external') : RUNNER_NAMES[id] })}
           description={t('settings.runners.removeConfirm')}
           confirmLabel={t('settings.runners.remove')}
           tone="danger"
@@ -446,7 +446,7 @@ function RunnerRow({ ws, id, st, onChange, first, open = true, onToggle = null, 
           <Icon name="play" size={10} />
         </span>
       )}
-      <span style={{ fontSize: 13.5, fontWeight: 650 }}>{RUNNER_NAMES[id]}</span>
+      <span style={{ fontSize: 13.5, fontWeight: 650 }}>{id === 'http' ? t('runner.external') : RUNNER_NAMES[id]}</span>
       {chip}
       {st?.month?.turns > 0 && (
         <span className="chip mono" title={t('settings.runners.monthTitle')} style={{ fontSize: 10.5 }}>

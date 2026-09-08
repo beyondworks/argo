@@ -80,7 +80,7 @@ test('카탈로그 핀 — http는 숨김·CLI 종류·자동 선택 제외·명
 
 test('배선 핀 — chat.mjs의 externalExec 두 호출이 카드 endpoint를 넘기고, creds가 http 자격을 Bearer env로 조립한다', async () => {
   const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
-  assert.equal((chat.match(/externalExec\(\{ runner, [^\n]*endpoint: meta\.endpoint \?\? '', format: meta\.format \|\| 'argo'/g) ?? []).length, 2, 'CLI 턴 호출 2곳(본 턴·게이트 모델 강등 재시도)');
+  assert.equal((chat.match(/externalExec\(\{ runner, [^\n]*endpoint: meta\.endpoint \?\? '', format: externalAgentFormat\(meta\)/g) ?? []).length, 2, 'CLI 턴 호출 2곳(본 턴·게이트 모델 강등 재시도)');
   // 2차 검수 HIGH-A·HIGH-B 소비자 핀 — 카드 전용 러너는 자가치유 폴백 금지, 설정 행·/api/runners·crew-edit은 retired(제공 종료) 기준
   assert.match(chat, /if \(!aborted && !isCardOnlyRunner\(runner\) && shouldSelfHeal\(e, \{ retried: __lockupRetry \}\)\)/, '카드 전용 러너 폴백 금지');
   assert.match(chat, /runner !== 'codex' && runner !== 'http' \? `\*\*your entire home folder\*\*/, 'http 지시문은 홈 폴더 전권을 광고하지 않는다');

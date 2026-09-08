@@ -1,5 +1,6 @@
 'use client';
 // 데크 — 아르고호 계기판. 좌: 본 계기(메트릭·영입·기억·차트), 우: 보조 계기 레일(기억 그래프·명판·토큰).
+import { externalAgentLabel } from '../../../src/runners/external-agent.mjs';
 import { use, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -107,7 +108,7 @@ export default function Deck({ params }) {
         <span className="microlabel">{new Date().toLocaleDateString('sv-SE')}</span>
       </div>
 
-      <AiKeyBanner ws={ws} />
+      <AiKeyBanner ws={ws} agents={data?.agents ?? []} />
 
       <div className="deck-grid">
         {/* ── 본 계기 열 — 지표 4장·크루 영입이 맨 위(유건 2026-08-23), 그 아래 아침 조회·결재함·최근 기억 ── */}
@@ -328,8 +329,10 @@ export default function Deck({ params }) {
 /** AI 러너 배너 — 쓸 수 있는 러너가 하나도 없으면(첫 실행·재로그인·연결 끊김) 데크 상단에 안내.
     Claude만 보던 옛 판정은 Codex 등 다른 러너 연결자에게 오경보를 냈다(실사용 신고) — 러너 전체 판정으로 교체.
     클릭 시 설정의 러너 연결 섹션으로 직행(?ai=1 딥링크), 연결 직후 argo:refresh로 자동 소거. */
-function AiKeyBanner({ ws }) {
-  const { t } = useLang();
+function AiKeyBanner({ ws, agents = [] }) {
+  const { t, lang } = useLang();
+  // 외부 에이전트(카드 runner: http)만 있는 회사 — "연결된 AI가 없다"는 반쪽 사실이라 에이전트 이름·인원으로 갈라 말한다(유건 2026-09-08)
+  const externalAgents = (() => { const n = {}; for (const a of agents.filter((x) => x.runner === 'http')) { const l = externalAgentLabel({ agent: a.agent, endpoint: a.endpointHost ? `http://${a.endpointHost}` : '' }, lang); n[l] = (n[l] ?? 0) + 1; } return Object.entries(n).map(([l, c]) => lang === 'en' ? `${l} ×${c}` : `${l} ${c}명`).join(' · '); })();
   const router = useRouter();
   const [state, setState] = useState(null); // null(양호·로딩) | 'missing' | 'invalid'(끊김 — 재연결)
   useEffect(() => {
@@ -349,7 +352,7 @@ function AiKeyBanner({ ws }) {
   return (
     <div className="card fade-up" style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--accent)' }}>
       <span style={{ color: 'var(--accent)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
-      <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t(state === 'retired' ? 'deck.runner.retired' : state === 'invalid' ? 'deck.runner.reconnect' : 'deck.runner.banner')}</span>
+      <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{state === 'missing' && externalAgents ? t('deck.runner.external', { agents: externalAgents }) : t(state === 'retired' ? 'deck.runner.retired' : state === 'invalid' ? 'deck.runner.reconnect' : 'deck.runner.banner')}</span>
       <button className="btn btn-primary sm" style={{ flex: 'none' }} onClick={() => router.push(keepSide(`/c/${ws}/settings?ai=1`, window.location.search))}>
         {t('deck.aiKey.cta')}
       </button>
