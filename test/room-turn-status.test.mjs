@@ -178,7 +178,7 @@ test('배선: chat()이 상태 파일 갱신 전부에 턴 출처(turnSource)를
   assert.match(src, /const turnSource = source \?\? \(from \? 'delegate' : 'chat'\);/, '출처 파생 — room 턴은 source=room 그대로');
   const calls = src.match(/setTurnStatus\(wsId, agentSlug,[^\n]*\)/g) ?? [];
   assert.ok(calls.length >= 4, `상태 갱신 호출 ${calls.length}곳(기대 ≥4: runner·boot·memory·단계)`);
-  for (const c of calls) assert.match(c, /turnSource(, thought)?\)/, `출처 누락 호출: ${c}`);
+  for (const c of calls) assert.match(c, /turnSource(, thought(, steps)?)?\)/, `출처 누락 호출: ${c}`); // steps = 메신저 실행 카드 단계 목록(2026-09-09)
 });
 
 test('GET /room 이 발언자·다음 순서·단계·부분 텍스트를 그대로 싣는다(실호출) — 실시간 발언 표시의 유일한 원천', async () => {
