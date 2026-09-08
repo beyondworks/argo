@@ -14,6 +14,9 @@ const out = process.argv[2] || 'model-catalog.json';
     2026-09-08: minimax-m3:free·m2.7:free 무료 종료, deepseek-v4-pro 서빙 종료. */
 export const LEGACY = {
   openrouter: {
+    // add = alias 목적지. 구버전 앱(코드 카탈로그에 대체 모델이 없는 ≤v0.1.64)에서는 add가 없으면 alias 목적지가 유효 목록 밖이라
+    // chat.mjs가 기본 모델로 강등한다. 새 버전은 같은 id를 무시하므로 무해.
+    add: [{ id: 'nvidia/nemotron-3.5-lightning:free', label: 'Nemotron 3.5 Lightning (Free)' }],
     retire: ['minimax/minimax-m3:free', 'minimax/minimax-m2.7:free', 'deepseek/deepseek-v4-pro'],
     alias: { 'minimax/minimax-m3:free': 'nvidia/nemotron-3.5-lightning:free', 'minimax/minimax-m2.7:free': 'nvidia/nemotron-3.5-lightning:free' },
   },
@@ -21,7 +24,7 @@ export const LEGACY = {
 const doc = {
   schema: SCHEMA,
   generatedAt: new Date().toISOString(),
-  runners: Object.fromEntries(Object.keys(RUNNERS).map((id) => [id, { add: [], retire: [...(LEGACY[id]?.retire ?? [])], alias: { ...(LEGACY[id]?.alias ?? {}) } }])),
+  runners: Object.fromEntries(Object.keys(RUNNERS).map((id) => [id, { add: [...(LEGACY[id]?.add ?? [])], retire: [...(LEGACY[id]?.retire ?? [])], alias: { ...(LEGACY[id]?.alias ?? {}) } }])),
   baseline: Object.fromEntries(Object.entries(RUNNERS).map(([id, r]) => [id, r.models.map((m) => m.id).filter(Boolean)])),
 };
 if (!validateOverlay(doc)) throw new Error('생성한 오버레이가 스키마 검증을 통과하지 못했다');

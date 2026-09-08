@@ -214,6 +214,9 @@ test('gen-model-catalog.mjs — 발행 산출물이 폐기 모델 retire/alias(L
   assert.equal(normalizeModelId('openrouter', 'minimax/minimax-m3:free', o), OPENROUTER_ONBOARD_MODEL, '죽은 온보딩 id → 현행 온보딩 기본(구버전 앱 크루 턴 구제)');
   const ids = applyOverlay('openrouter', RUNNERS.openrouter.models, o).map((m) => m.id);
   assert.ok(!ids.includes('minimax/minimax-m3:free') && ids.includes(OPENROUTER_ONBOARD_MODEL));
-  // alias 목적지는 반드시 유효 목록 안에 — add 누락 alias는 벤더로 없는 id가 나간다(M-1)
+  // alias 목적지는 반드시 유효 목록 안에 — add 누락 alias는 벤더로 없는 id가 나간다(M-1). 구버전 앱(코드 카탈로그에 대체 모델 없음)을 위해
+  // 오버레이 자체의 add에도 있어야 한다 — 코드 카탈로그를 뺀 옛 목록에 적용해도 목적지가 남는지로 확인.
   for (const to of Object.values(o.runners.openrouter.alias)) assert.ok(ids.includes(to), `alias 목적지 미등재: ${to}`);
+  const oldIds = applyOverlay('openrouter', RUNNERS.openrouter.models.filter((m) => m.id !== OPENROUTER_ONBOARD_MODEL), o).map((m) => m.id);
+  for (const to of Object.values(o.runners.openrouter.alias)) assert.ok(oldIds.includes(to), `구버전 앱 목록에서 alias 목적지 미등재(LEGACY.add 누락): ${to}`);
 });
