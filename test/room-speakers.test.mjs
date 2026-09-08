@@ -2,6 +2,9 @@
 // 이름으로 부른 크루는 **전원** 답하고(2026-09-06부터 릴레이가 아니면 동시 발언 — test/room-parallel.test.mjs), 2명 이상이면 인원 안내 줄이 방에 남는다(턴 비용 정직 표기).
 // 이미지 임베드 캡(IMG_EMBED_MAX=3)은 상한 해제 뒤 이름 멘션 경로에도 실제로 걸린다 — 여기서 함께 잠근다.
 // 러너는 chat 스텁(helpers/room-chat-stub.mjs — 리졸브 훅)으로 격리: 파일 배치·크루 목록·방 저장·턴 마커는 실물.
+// 동시 발언(릴레이가 아닌 2명 이상)은 runLimited 워커가 각자 push()·chat()·pushRoomMsg()를 await하므로 **호출 순서·완료 순서가
+// 정해져 있지 않다** — CI 부하에서 wolf가 beast보다 먼저 chat()에 닿은 실측(2026-09-07, macOS-15). 그래서 동시 발언 단언은
+// 순서 무관(sorted)으로 잠그고, 순서는 릴레이(`@A > @B`)에서만 본다. 안내 줄 순서(speakers 배열)는 발언 시작 전에 정해져 결정적.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
@@ -28,13 +31,15 @@ async function seed(ws, { lang = 'ko' } = {}) {
   stub.state.calls.length = 0;
 }
 const whos = async (ws) => (await loadRoom(ws)).messages.map((m) => m.who);
+const sorted = (xs) => [...xs].sort();
 
 test('이름 멘션 4명 → 4명 전원이 발언한다(옛 3명 상한 폐지) + 인원 안내 줄', async () => {
   await seed('rs-four');
   const r = await runRoomTurn('rs-four', '@비스트 @울프 @슈리 @에드나 각자 한 줄씩 의견', [], { rounds: 1 });
-  assert.deepEqual(stub.state.calls.map((c) => c.slug), ['beast', 'wolf', 'shuri', 'edna'], '4명 모두 chat() 호출 — 상한이 살아 있으면 3명에서 끊긴다');
-  assert.deepEqual(r.replies.map((x) => x.slug), ['beast', 'wolf', 'shuri', 'edna']);
-  assert.deepEqual(await whos('rs-four'), ['user', 'system', 'beast', 'wolf', 'shuri', 'edna'], '안건 → 안내 줄 → 발언 4건');
+  assert.deepEqual(sorted(stub.state.calls.map((c) => c.slug)), ['beast', 'edna', 'shuri', 'wolf'], '4명 모두 chat() 호출 — 상한이 살아 있으면 3명에서 끊긴다(동시 발언이라 순서는 안 본다)');
+  assert.deepEqual(sorted(r.replies.map((x) => x.slug)), ['beast', 'edna', 'shuri', 'wolf']);
+  const w = await whos('rs-four');
+  assert.deepEqual([w.slice(0, 2), sorted(w.slice(2))], [['user', 'system'], ['beast', 'edna', 'shuri', 'wolf']], '안건 → 안내 줄 → 발언 4건(발언 순서는 완료 순)');
   const note = (await loadRoom('rs-four')).messages[1];
   assert.equal(note.kind, 'speakers');
   assert.equal(note.text, '4명 동시 발언 — 비스트, 울프, 슈리, 에드나', '인원과 방식을 사장이 보내는 즉시 본다(턴 비용 정직 표기)');
@@ -45,7 +50,7 @@ test('@전체는 크루 수만큼(5명) 발언 — 안내 줄도 실제 인원·
   await runRoomTurn('rs-all', '@전체 각자 한 줄', [], { rounds: 1 });
   const all = await listAgents('rs-all'); // 전원 호출 순서의 원천(종전과 동일) — 시드 배열 순서가 아니다
   assert.equal(all.length, 5);
-  assert.deepEqual(stub.state.calls.map((c) => c.slug), all.map((a) => a.slug));
+  assert.deepEqual(sorted(stub.state.calls.map((c) => c.slug)), sorted(all.map((a) => a.slug)), '전원 호출(동시 발언 — 순서 무관)');
   assert.equal((await loadRoom('rs-all')).messages[1].text, `5명 동시 발언 — ${all.map((a) => a.name).join(', ')}`);
 });
 
@@ -71,9 +76,9 @@ test('이미지 임베드 캡 — 이름 멘션 4명째부터는 경로 노트(i
   await seed('rs-img');
   const att = [{ rel: 'files/x.png', name: 'x.png', mime: 'image/png', isImage: true }];
   await runRoomTurn('rs-img', '@비스트 @울프 @슈리 @에드나 이 그림 봐줘', att, { rounds: 1 });
-  const flags = stub.state.calls.map((c) => c.opts.attachments.map((a) => a.isImage));
-  assert.deepEqual(flags, [[true], [true], [true], [false]], '앞 3명 임베드, 4명째는 경로만 — 상한 해제 전엔 도달 불가였던 갈래');
-  assert.equal(stub.state.calls[3].opts.attachments[0].rel, 'files/x.png', '경로 노트는 남는다(Read로 열람)');
+  const att4 = Object.fromEntries(stub.state.calls.map((c) => [c.slug, c.opts.attachments])); // 캡은 speakers 인덱스 기준(attFor(i)) — 호출 순서가 아니라 슬러그로 본다
+  assert.deepEqual(Object.fromEntries(Object.entries(att4).map(([k, v]) => [k, v.map((a) => a.isImage)])), { beast: [true], wolf: [true], shuri: [true], edna: [false] }, '앞 3명 임베드, 4명째는 경로만 — 상한 해제 전엔 도달 불가였던 갈래');
+  assert.equal(att4.edna[0].rel, 'files/x.png', '경로 노트는 남는다(Read로 열람)');
 });
 
 /* ── 분리 검수 반영(2026-09-02) — 안내 줄이 만든 새 약속·상시화의 뒷면 ── */
@@ -121,7 +126,7 @@ test('cc가 함께 있으면 참조 안내가 먼저, 인원 안내가 그다음
   await seed('rs-cc');
   await runRoomTurn('rs-cc', '@비스트 @울프 정리해줘 cc @슈리', [], { rounds: 1 });
   const msgs = (await loadRoom('rs-cc')).messages;
-  assert.deepEqual(msgs.map((m) => m.kind ?? m.who), ['user', 'cc', 'speakers', 'beast', 'wolf']);
+  assert.deepEqual([msgs.slice(0, 3).map((m) => m.kind ?? m.who), sorted(msgs.slice(3).map((m) => m.who))], [['user', 'cc', 'speakers'], ['beast', 'wolf']], '안내 2줄은 발언 시작 전 순서 고정, 발언 2건은 동시라 순서 무관');
   assert.match(msgs[2].text, /^2명 동시 발언 — 비스트, 울프$/, '참조받은 슈리는 발언 인원에 들지 않는다');
 });
 
