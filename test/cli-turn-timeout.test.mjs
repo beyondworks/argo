@@ -104,12 +104,21 @@ test('배선: 턴을 태우는 라우트의 maxDuration은 호스티드(Vercel P
   }
 });
 
-test('배선: crewmail 스테일 회수 창이 최장 정상 턴(3단 위임 × CLI 상한)보다 넉넉하다 — 짧으면 장기 턴을 크래시로 오판해 이중 배달', async () => {
+test('배선: crewmail .claimed 회수는 CLI 상한에서 파생되지 않는다 — .claimed 자기 심박(mtime)과 그 주기의 4배 이상인 회수 창', async () => {
+  // 옛 핀(스테일 창 ≥ 3단 × CLI 상한 × 2)은 상한이 30분으로 오르며 3시간이 됐고, 크래시 뒤 쪽지가 3시간 "배달 중"에 갇혔다(제보 2026-09-08).
+  // 진행 판정은 소유 프로세스의 자기 심박(mtime)이 맡는다. 행동은 test/crewmail.test.mjs가 잠그고, 여기는 존재·비율 수준만 본다(소스 문자열 정확 일치 핀 금지 — 레포 교훈).
   const src = await readFile(new URL('../src/crewmail.mjs', import.meta.url), 'utf8');
-  const m = src.match(/^const CLAIM_STALE_MS = (.+);/m);
-  assert.ok(m, 'CLAIM_STALE_MS');
-  const stale = Function(`return (${m[1]})`)();
-  assert.ok(stale >= 3 * CLI_CHAT_TURN_TIMEOUT_MS * 2, `스테일 ${stale / 60_000}분 < 3단 × ${CLI_CHAT_TURN_TIMEOUT_MS / 60_000}분 × 2`);
+  assert.doesNotMatch(src, /CLAIM_STALE_MS/, '고정 스테일 창 상수가 되살아나면 안 된다');
+  const m = src.match(/^const CLAIM_RECLAIM_MS = (.+);/m);
+  assert.ok(m, 'CLAIM_RECLAIM_MS');
+  const reclaim = Function(`return (${m[1]})`)();
+  assert.ok(reclaim <= 10 * 60_000, `회수 창 ${reclaim / 60_000}분 — 10분 이내(제보의 '1시간' 계급 재발 방지)`);
+  const hb = src.match(/^let CLAIM_HEARTBEAT_MS = (.+);/m);
+  assert.ok(hb, 'CLAIM_HEARTBEAT_MS');
+  assert.ok(reclaim >= 4 * Function(`return (${hb[1]})`)(), '회수 창은 자기 심박 주기의 4배 이상(정체·짧은 잠자기 흡수)');
+  assert.match(src, /now - mtimeMs > CLAIM_RECLAIM_MS/, '회수 판정은 mtime(자기 심박)');
+  assert.match(src, /setInterval\([^\n]*touchClaim\(claimedPath\)[^\n]*CLAIM_HEARTBEAT_MS/, '선점분 자기 심박(존재 수준)');
+  assert.doesNotMatch(src, /getTurnStatus/, '남의 상태 파일(크루당 하나)에 회수 판정을 얹지 않는다 — 분리 검수 HIGH-2');
 });
 
 test('배선: runners.mjs — 세 CLI 경로 전부 cliTurnFailure 경유 + codex는 exec/read 두 단계 구분', async () => {

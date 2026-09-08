@@ -297,3 +297,240 @@ test('경로 검증 — slug·id·파일명에 구분자·상위 경로·dot 접
   await assert.rejects(() => mod.sendCrewMail(WS, { from: 'captain', to: '../x', message: 'x' }), /slug/);
   await assert.rejects(() => mod.sendCrewMail(WS, { from: 'captain', to: 'b', cc: ['.dead'], message: 'x' }), /slug/);
 });
+
+/* ── .claimed 회수는 고정 창이 아니라 소유 프로세스의 **자기 심박(mtime)** 기준 — 제보 2026-09-08 "1시간 넘게 배달 안 됨"(크래시 뒤 3시간 갇힘).
+   분리 검수 HIGH-1(각인 시각)·HIGH-2(남의 상태 파일 의존)·MEDIUM-1(회수 시 attempts) 반영. ── */
+
+const claimAs = async (slug, { mtimeAgoMs, attempts = 0 }) => {
+  const { rename, writeFile, utimes } = await import('node:fs/promises');
+  const id = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: slug, message: '회수 시나리오' });
+  const p = join(paths(WS).root, 'mail', slug, `${id}-to.json`);
+  const body = JSON.parse(await readFile(p, 'utf8'));
+  await writeFile(p, JSON.stringify({ ...body, attempts, claimedAt: new Date(Date.now() - 12 * 60_000).toISOString() }));
+  await rename(p, `${p}.claimed`); // 다른(죽은) 프로세스가 선점한 흔적 — 이 프로세스의 inFlight에 없다
+  const t = new Date(Date.now() - mtimeAgoMs); await utimes(`${p}.claimed`, t, t); // 심박 = mtime
+  return { id, claimed: `${p}.claimed` };
+};
+const rcCalls = [];
+// 앞 테스트가 남긴 다른 슬러그의 대기분은 시나리오 밖 — rc-* 만 세고, 틱 상한도 넉넉히(검수 LOW-3: readdir 순서 의존 제거)
+const rcRun = () => mod.deliverCrewMail(WS, async (slug) => { if (slug.startsWith('rc-')) rcCalls.push(slug); }, { limit: 10 });
+
+test('.claimed 회수 — 심박(mtime) 5분 끊김 → 이 틱에 .json 복귀(attempts +1·사유), 다음 틱 배달', async () => {
+  const { id } = await claimAs('rc-dead', { mtimeAgoMs: 5 * 60_000 });
+  await rcRun();
+  assert.deepEqual(await mailFiles('rc-dead'), [`${id}-to.json`], '회수: .claimed → .json');
+  const body = JSON.parse(await readFile(join(paths(WS).root, 'mail', 'rc-dead', `${id}-to.json`), 'utf8'));
+  assert.equal(body.attempts, 1, '회수도 한 번의 시도로 센다(검수 MEDIUM-1 — 독성 쪽지 무계 재시도 방지)');
+  assert.match(body.lastError, /회수/);
+  assert.deepEqual(rcCalls, [], '회수한 틱에는 배달하지 않는다(다음 틱)');
+  await rcRun();
+  assert.deepEqual(rcCalls, ['rc-dead'], '다음 틱에 배달');
+  assert.deepEqual(await mailFiles('rc-dead'), []);
+});
+
+test('.claimed 보존 — 다른 프로세스의 자기 심박(mtime 최신)이 있으면 claimedAt이 12분 전이어도 손대지 않고, 심박이 끊기면 회수', async () => {
+  const { utimes } = await import('node:fs/promises');
+  const { id, claimed } = await claimAs('rc-live', { mtimeAgoMs: 0 });
+  await rcRun();
+  assert.deepEqual(await mailFiles('rc-live'), [`${id}-to.json.claimed`], 'mtime이 신선하면 보존(이중 배달 방지) — claimedAt(JSON)은 판정에 안 쓴다');
+  const t = new Date(Date.now() - 4 * 60_000); await utimes(claimed, t, t); // 심박 끊김
+  await rcRun();
+  assert.deepEqual(await mailFiles('rc-live'), [`${id}-to.json`], '심박 끊긴 뒤 회수');
+});
+
+test('.claimed 보존 — 심박 1분 전(선점 직후 창)은 건드리지 않는다', async () => {
+  const { id } = await claimAs('rc-fresh', { mtimeAgoMs: 60_000 });
+  await rcRun();
+  assert.deepEqual(await mailFiles('rc-fresh'), [`${id}-to.json.claimed`], '3분 미만은 보존');
+});
+
+test('회수가 시도 상한을 채우면 다음 틱에 턴 없이 .dead로 — 프로세스를 죽이는 쪽지가 3분마다 턴을 태우지 않는다', async () => {
+  const { id } = await claimAs('rc-poison', { mtimeAgoMs: 5 * 60_000, attempts: mod.MAIL_MAX_ATTEMPTS - 1 });
+  await rcRun(); // 회수 → attempts = MAX
+  await rcRun(); // 소진 선확인 → .dead, runTurn 미호출
+  assert.ok(!rcCalls.includes('rc-poison'), '턴을 태우지 않는다');
+  assert.deepEqual(await mailFiles('rc-poison'), []);
+  assert.ok((await readdir(join(paths(WS).root, 'mail', '.dead'))).includes(`rc-poison-${id}-to.json`), '실패함으로');
+});
+
+test('배달 중 자기 심박 — 턴이 도는 동안 .claimed mtime이 전진하고, claimedAt은 실제 선점 시각(틱 시작 now가 아니라)으로 각인된다(검수 HIGH-1)', async () => {
+  mod._setClaimHeartbeatMsForTest(20);
+  try {
+    const { stat } = await import('node:fs/promises');
+    await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-hb', message: '앞 턴(느림)' });
+    await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-hb', message: '뒤 쪽지' });
+    const seen = [];
+    const t0 = Date.now();
+    await mod.deliverCrewMail(WS, async (slug, msg) => {
+      const p = join(paths(WS).root, 'mail', slug, `${msg.id}-to.json.claimed`);
+      const m0 = (await stat(p)).mtimeMs;
+      await new Promise((r) => setTimeout(r, 150)); // 심박 20ms가 여러 번 돈다
+      if (slug === 'rc-hb') seen.push({ advanced: (await stat(p)).mtimeMs > m0, claimedAt: Date.parse(JSON.parse(await readFile(p, 'utf8')).claimedAt), at: Date.now() }); // 앞 테스트 잔여분 제외(검수 LOW-3)
+    }, { limit: 10, concurrency: 1, now: t0 }); // 순차 강제 — 동시 배달(기본)에선 크루가 다르면 같이 시작해 이 시나리오가 안 생긴다
+    assert.equal(seen.length, 2);
+    assert.ok(seen.every((x) => x.advanced), '턴 도중 mtime 전진(자기 심박)');
+    const later = seen.sort((a, b) => a.at - b.at)[1];
+    assert.ok(later.claimedAt >= t0 + 150 - 5, `뒤 쪽지 claimedAt은 앞 턴(≥150ms) 뒤의 실제 선점 시각이어야 한다(실측 +${later.claimedAt - t0}ms) — 틱 시작 now로 각인하면 red`);
+  } finally { mod._setClaimHeartbeatMsForTest(30_000); }
+});
+
+test('동시 배달 — 회의실처럼 한 패스의 쪽지가 동시에 돌고(동시 진행 ≥2, 총 소요 ≈ 1건), 상한 2면 동시 진행이 2를 넘지 않는다(유건 지시 2026-09-08)', async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let inflight = 0; let max = 0;
+  const run = (concurrency) => mod.deliverCrewMail(WS, async () => { inflight += 1; max = Math.max(max, inflight); await sleep(120); inflight -= 1; }, { limit: 10, concurrency });
+  for (const s of ['rc-p1', 'rc-p2', 'rc-p3', 'rc-p4']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: s, message: '동시' });
+  const t0 = Date.now();
+  await run(8);
+  assert.ok(max >= 2, `동시 진행 최대 ${max} — 순차면 1`);
+  assert.ok(Date.now() - t0 < 4 * 120, `총 소요 ${Date.now() - t0}ms — 순차(≥480ms)가 아니다(판별선은 순차 최소치, 상한 완화는 fs 오버헤드 여유)`);
+  assert.deepEqual(await mailFiles('rc-p3'), []);
+  max = 0;
+  for (const s of ['rc-p1', 'rc-p2', 'rc-p3', 'rc-p4']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: s, message: '상한' });
+  await run(2);
+  assert.equal(max, 2, `상한 2 — 동시 진행 최대 ${max}`);
+  assert.ok(mod.MAIL_CONCURRENCY >= 1 && mod.MAIL_CONCURRENCY <= 16 && mod.MAIL_PER_TICK === mod.MAIL_CONCURRENCY, '기본 상한은 1~16 클램프, 패스당 착수 상한 = 동시 상한');
+});
+
+test('같은 크루 앞으로 온 쪽지는 그 크루 안에서 순차, 크루 간에만 동시 — 한 크루의 동시 턴은 상태 파일을 서로 지운다(2R 검수 HIGH-1)', async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const inflight = {}; const max = {}; let total = 0; let totalMax = 0;
+  for (const m of ['a', 'b', 'c']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-same', message: m });
+  await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-other', message: 'x' });
+  await mod.deliverCrewMail(WS, async (slug) => {
+    inflight[slug] = (inflight[slug] ?? 0) + 1; max[slug] = Math.max(max[slug] ?? 0, inflight[slug]); total += 1; totalMax = Math.max(totalMax, total);
+    await sleep(80);
+    inflight[slug] -= 1; total -= 1;
+  }, { limit: 10, concurrency: 8 });
+  assert.equal(max['rc-same'], 1, `같은 크루 동시 턴 최대 ${max['rc-same']} — 반드시 1`);
+  assert.ok(totalMax >= 2, `크루 간 동시 진행 ${totalMax} — rc-same 그룹과 rc-other가 겹쳐야 한다`);
+  assert.deepEqual(await mailFiles('rc-same'), []);
+});
+
+test('실패 정착은 .claimed가 아직 내 것일 때만 — 다른 프로세스가 회수·배달해 사라진 쪽지를 부활시키지 않는다(2R 검수 MEDIUM-3)', async () => {
+  const { rm } = await import('node:fs/promises');
+  const id = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-gone', message: '부활 금지' });
+  await mod.deliverCrewMail(WS, async (slug, msg) => {
+    if (slug !== 'rc-gone') return;
+    await rm(join(paths(WS).root, 'mail', slug, `${msg.id}-to.json.claimed`), { force: true }); // 다른 프로세스가 회수해 배달까지 끝낸 상황
+    throw new Error('옛 소유자의 늦은 실패');
+  }, { limit: 10 });
+  assert.deepEqual(await mailFiles('rc-gone'), [], '큐에 되살아나면 안 된다(이중 배달)');
+  assert.ok(!(await readdir(join(paths(WS).root, 'mail', '.dead')).catch(() => [])).some((f) => f.includes(id)), '실패함에도 안 간다');
+});
+
+test('예산 게이트 — 월 지출 한도에 닿았으면 그 패스는 순차(동시 1)로 접는다(2R 검수 MEDIUM-2, 회의실 라운드 경계 게이트와 같은 규칙)', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { appendUsage } = await import('../src/usage.mjs');
+  const B = 'lean-test-mail-budget';
+  await mkdir(paths(B).root, { recursive: true });
+  await writeFile(paths(B).company, JSON.stringify({ id: B, name: '예산', budgetUsd: 1 }));
+  await appendUsage(B, { kind: 'chat', slug: 'x1', runner: 'claude', model: 'm', usage: {}, costUsd: 5, ms: 10, billed: true });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let inflight = 0; let max = 0;
+  for (const s of ['x1', 'x2', 'x3']) await mod.sendCrewMail(B, { from: 'a', fromName: '알파', to: s, message: '한도' });
+  await mod.deliverCrewMail(B, async () => { inflight += 1; max = Math.max(max, inflight); await sleep(60); inflight -= 1; }, { limit: 10, concurrency: 8 });
+  assert.equal(max, 1, `한도 도달 시 동시 진행 최대 ${max} — 순차여야 한다(초과 폭 1턴)`);
+});
+
+test('대기 선점분도 자기 심박 — 앞 크루 턴이 도는 동안 아직 착수 안 한 다른 크루의 .claimed mtime이 전진한다(3R 검수 조건 2, MEDIUM-4 잠금)', async () => {
+  mod._setClaimHeartbeatMsForTest(20);
+  try {
+    const { stat } = await import('node:fs/promises');
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-w1', message: '앞' });
+    await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-w2', message: '뒤(대기)' });
+    let advanced = null;
+    await mod.deliverCrewMail(WS, async (slug) => {
+      if (advanced !== null || !slug.startsWith('rc-w')) return;
+      const other = slug === 'rc-w1' ? 'rc-w2' : 'rc-w1';
+      const f = (await mailFiles(other)).find((x) => x.endsWith('.claimed'));
+      const p = join(paths(WS).root, 'mail', other, f);
+      const m0 = (await stat(p)).mtimeMs; await sleep(120);
+      advanced = (await stat(p)).mtimeMs > m0; // 대기 중인 상대의 .claimed가 심박을 받고 있는가
+    }, { limit: 10, concurrency: 1 });
+    assert.equal(advanced, true, '대기 선점분의 mtime이 멈춰 있으면 다른 프로세스가 3분 뒤 회수해 이중 배달 — 심박은 선점 시점부터');
+  } finally { mod._setClaimHeartbeatMsForTest(30_000); }
+});
+
+test('착수는 크루별 라운드로빈 — 한 크루에 밀린 백로그가 다른 크루 쪽지를 막지 않는다(3R 검수 MEDIUM-B)', async () => {
+  for (const m of ['1', '2', '3']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-rr1', message: m });
+  await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-rr2', message: 'x' });
+  const calls = [];
+  await mod.deliverCrewMail(WS, async (slug) => { if (slug.startsWith('rc-rr')) calls.push(slug); }, { limit: 2 });
+  assert.equal(new Set(calls).size, 2, `첫 패스(상한 2)에 서로 다른 크루 2명이 들어가야 한다(열거 순서 무관 — 4R 검수 LOW-2) — 실제 ${calls.join(',')}`);
+  assert.equal(calls.filter((s) => s === 'rc-rr1').length, 1);
+  const order = mod.pendingRoundRobin([{ slug: 'a', file: '1' }, { slug: 'a', file: '2' }, { slug: 'b', file: '1', claimed: true }, { slug: 'b', file: '2' }, { slug: 'c', file: '1' }]).map((x) => `${x.slug}${x.claimed ? '*' : ''}${x.file}`);
+  assert.deepEqual(order, ['b*1', 'a1', 'b2', 'c1', 'a2'], '잔재 먼저, 그 뒤 슬러그별 한 건씩');
+  await mod.deliverCrewMail(WS, async () => {}, { limit: 10 }); // 잔여 정리
+});
+
+test('선점 신원(claimBy) — 회수 → 재선점 → 아직 착수 전인 남의 claim을 옛 소유자의 늦은 실패가 되돌리지 않는다(4R 검수 MEDIUM-1)', async () => {
+  const { rename, writeFile, rm } = await import('node:fs/promises');
+  const id = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-steal', message: '신원' });
+  const dir = join(paths(WS).root, 'mail', 'rc-steal');
+  const claimed = join(dir, `${id}-to.json.claimed`);
+  await mod.deliverCrewMail(WS, async (slug) => {
+    if (slug !== 'rc-steal') return;
+    // 다른 프로세스가 회수(신원 제거·attempts+1)하고 재선점했으나 아직 각인 전 — 옛 claimedAt은 남고 claimBy만 새것
+    const body = JSON.parse(await readFile(claimed, 'utf8'));
+    await rename(claimed, join(dir, `${id}-to.json`));
+    await rename(join(dir, `${id}-to.json`), claimed);
+    await writeFile(claimed, JSON.stringify({ ...body, claimBy: 'other-process', attempts: 1 }));
+    throw new Error('옛 소유자의 늦은 실패');
+  }, { limit: 10 });
+  assert.deepEqual(await mailFiles('rc-steal'), [`${id}-to.json.claimed`], '남의 claim을 .json으로 되돌리면(뺏으면) 이중 배달');
+  assert.equal(JSON.parse(await readFile(claimed, 'utf8')).claimBy, 'other-process', '내용도 그대로');
+  await rm(claimed, { force: true }); // 뒤 테스트 상태 정리
+  // 실제 pre-stamp 모양: 회수가 신원을 뗀 뒤 재선점만 된 상태(claimBy 부재) — "부재면 내 것" 폴백을 되살리면 여기서 red(5R 검수 LOW-B)
+  const id2 = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-steal', message: '신원 부재' });
+  const claimed2 = join(dir, `${id2}-to.json.claimed`);
+  await mod.deliverCrewMail(WS, async (slug) => {
+    if (slug !== 'rc-steal') return;
+    const { claimBy: _b, claimedAt: _a, ...stripped } = JSON.parse(await readFile(claimed2, 'utf8'));
+    await writeFile(claimed2, JSON.stringify({ ...stripped, attempts: 1 }));
+    throw new Error('옛 소유자의 늦은 실패');
+  }, { limit: 10 });
+  assert.deepEqual(await mailFiles('rc-steal'), [`${id2}-to.json.claimed`], '신원이 없어도 내 것으로 단정하지 않는다');
+  await rm(claimed2, { force: true });
+});
+
+test('착수 전 소유권 검사 — 대기 중 다른 프로세스에 회수·재선점된 claim은 각인·턴을 건너뛰고, 생략분의 심박·inFlight를 정리한다(5R 후속·6R HIGH-1)', async () => {
+  const { writeFile, utimes, stat, rm } = await import('node:fs/promises');
+  mod._setClaimHeartbeatMsForTest(20);
+  try {
+    const ids = {};
+    for (const s of ['rc-o1', 'rc-o2']) ids[s] = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: s, message: s });
+    const calls = []; let stolen = null;
+    await mod.deliverCrewMail(WS, async (slug) => {
+      if (!slug.startsWith('rc-o')) return;
+      calls.push(slug);
+      if (stolen) return;
+      stolen = slug === 'rc-o1' ? 'rc-o2' : 'rc-o1'; // 먼저 도는 턴이 "자기가 아닌 쪽"(대기 중)을 훔친다 — 슬러그 순회 순서 무관(6R 검수)
+      const p = join(paths(WS).root, 'mail', stolen, `${ids[stolen]}-to.json.claimed`);
+      await writeFile(p, JSON.stringify({ ...JSON.parse(await readFile(p, 'utf8')), claimBy: 'other-process' }));
+    }, { limit: 10, concurrency: 1 });
+    assert.equal(calls.length, 1, `뺏긴 쪽은 턴을 돌리지 않는다(돌리면 이중 배달) — 실제 ${calls.join(',')}`);
+    const p = join(paths(WS).root, 'mail', stolen, `${ids[stolen]}-to.json.claimed`);
+    assert.equal(JSON.parse(await readFile(p, 'utf8')).claimBy, 'other-process', '남의 claim은 그대로');
+    // 6R HIGH-1 핀: 생략분의 심박이 새면 남의 claim에 계속 mtime을 찍어 어떤 프로세스도 회수 못 한다 — mtime을 과거로 민 뒤 전진하지 않고, 이 프로세스가 회수할 수 있어야 한다
+    const t = new Date(Date.now() - 5 * 60_000); await utimes(p, t, t);
+    await new Promise((r) => setTimeout(r, 80));
+    assert.ok((await stat(p)).mtimeMs < t.getTime() + 1000, '생략 뒤 심박이 남의 claim을 살려 두면(mtime 전진) red'); // 파일시스템 mtime 반올림(±1ms) 허용
+    await mod.deliverCrewMail(WS, async () => {}, { limit: 10 }); // 회수 패스(limit 0은 루프 상단 break라 회수도 못 한다) — inFlight가 새면 "내 진행분"으로 보고 건너뛴다
+    assert.deepEqual(await mailFiles(stolen), [`${ids[stolen]}-to.json`], '생략분은 inFlight에서 빠져 회수 가능해야 한다');
+    await rm(join(paths(WS).root, 'mail', stolen, `${ids[stolen]}-to.json`), { force: true }); // 정리
+  } finally { mod._setClaimHeartbeatMsForTest(30_000); }
+});
+
+test('회수(reclaimClaim)는 옛 소유자의 claimBy·claimedAt을 떼고 되돌린다 — 재선점자가 각인하기 전에도 옛 신원이 남지 않는다', async () => {
+  const { id } = await claimAs('rc-strip', { mtimeAgoMs: 5 * 60_000 });
+  const p = join(paths(WS).root, 'mail', 'rc-strip', `${id}-to.json`);
+  const { writeFile, rename, utimes } = await import('node:fs/promises');
+  const b0 = JSON.parse(await readFile(`${p}.claimed`, 'utf8'));
+  await writeFile(`${p}.claimed`, JSON.stringify({ ...b0, claimBy: 'dead-owner' }));
+  const t = new Date(Date.now() - 5 * 60_000); await utimes(`${p}.claimed`, t, t); // 쓰기가 갱신한 mtime을 다시 과거로(심박 끊김)
+  await rcRun();
+  const b = JSON.parse(await readFile(p, 'utf8'));
+  assert.equal(b.claimBy, undefined); assert.equal(b.claimedAt, undefined); assert.equal(b.attempts, 1);
+  await rename(p, `${p}.claimed`); const { rm } = await import('node:fs/promises'); await rm(`${p}.claimed`, { force: true }); // 정리
+});

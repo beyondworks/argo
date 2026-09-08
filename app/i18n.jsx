@@ -1225,7 +1225,7 @@ const DICT = {
 
   // ── 쪽지함
   'mail.title': ['쪽지함', 'Mailbox'],
-  'mail.intro': ['크루끼리, 그리고 사장이 크루에게 보내는 비동기 쪽지. 배달은 스케줄러가 수신 크루의 새 턴으로(약 1분 주기, 쪽지 1건 = 턴 1회).', 'Async notes between crew, and from the captain to crew. The scheduler delivers each as a new turn for the recipient (about every minute; one note = one turn).'],
+  'mail.intro': ['크루끼리, 그리고 사장이 크루에게 보내는 비동기 쪽지. 배달은 스케줄러가 수신 크루의 새 턴으로(약 1분 주기, 쪽지 1건 = 턴 1회, 여러 건은 회의실처럼 동시에).', 'Async notes between crew, and from the captain to crew. The scheduler delivers each as a new turn for the recipient (about every minute; one note = one turn; several notes run at once, like the meeting room).'],
   'mail.compose': ['쪽지 보내기', 'Send a note'],
   'mail.to': ['받는 크루', 'To'],
   'mail.from': ['보낸 이', 'From'],
@@ -1242,6 +1242,7 @@ const DICT = {
   'mail.requeue': ['재투입', 'Requeue'],
   'mail.delete': ['삭제', 'Delete'],
   'mail.claimed': ['배달 중', 'Delivering'],
+  'mail.claimedFor': ['배달 중 · {n}분 경과', 'Delivering · {n} min'],
   'mail.attempts': ['시도 {n}회', '{n} attempts'],
   'mail.kind.to': ['수신', 'To'],
   'mail.kind.cc': ['참조', 'CC'],

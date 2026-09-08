@@ -10,24 +10,45 @@
 // 두 기기가 같은 쪽지를 이중 배달한다(.gw-queue 선례와 동일 결함 계급). 세션 간 소통은 배달 결과가
 // 스레드(동기화 대상)로 남는 것으로 성립한다 — 큐 자체는 발신 기기 소유이며, 배달도 그 기기의
 // 스케줄러가 한다(클라우드 리더 게이트 미적용 — 걸면 비리더 기기 발신분이 무증상 소실, 2026-07-28).
-import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { paths } from './workspace.mjs';
+import { randomBytes } from 'node:crypto';
+import { paths, loadCompany } from './workspace.mjs';
+import { monthCost } from './billing.mjs'; // 동시 배달 착수 전 예산 게이트(2R 검수 MEDIUM-2 — 회의실 room.mjs 라운드 경계 게이트와 같은 규칙)
 import { writeJsonAtomic } from './jsonstore.mjs';
+import { runLimited } from './run-limited.mjs';
 
-/** 틱당 회사별 배달 상한. [규모 질문] 배달 1건 = LLM 턴 1개 — 상한이 없으면 크루 N명이 서로에게
-    보낸 폭주가 한 틱에 N² 턴을 만든다. 초과분은 다음 틱(60s)으로 밀린다 — 지연은 무해, 폭발은 유해. */
-export const MAIL_PER_TICK = 3;
+/** 회사별 동시 배달 상한 — 회의실 동시 발언(ROOM_CONCURRENCY)과 같은 규칙: 기본 8, ARGO_MAIL_CONCURRENCY로 1~16 클램프.
+    2026-09-08까지는 한 패스에서 최대 3건을 **순차**로 배달해(쪽지 1건 = LLM 턴 1개) 앞 턴(v0.1.65부터 최대 30분 × 재시도 3회)이
+    뒤 쪽지를 전부 막았다 — "1시간 넘게 배달 안 됨" 제보의 구조적 원인. 지금은 한 패스가 상한만큼 동시에 돌린다(유건 지시:
+    회의실처럼 동시에). [규모 질문] 상한이 없으면 크루 N명이 서로에게 보낸 폭주가 한 틱에 N² 턴을 만든다 — 초과분은 다음 틱으로.
+    **상한은 회사당**이다 — 스케줄러가 회사마다 배달 패스를 띄우므로 실동시 턴은 회사 수만큼 곱해진다(2R 검수 MEDIUM-1; 셀프호스트
+    문서에 명시). 같은 크루 앞으로 온 쪽지 여러 건은 **그 크루 안에서는 순차**다(deliverCrewMail 슬러그 그룹) — 회의실도 한 크루를
+    동시에 두 번 돌리지 않는다. 비용: chat()의 월 한도 검사는 누적 이벤트 TOCTOU라 동시 배달은 첫 웨이브 전원이 기록 전에 통과할 수
+    있다 → 한도에 닿았으면 패스를 순차(1)로 접는다(deliverCrewMail 예산 게이트 — 회의실 라운드 경계 게이트와 같은 판정, company.json null 방어만 더 강함). */
+export const MAIL_CONCURRENCY = Math.min(16, Math.max(1, Number(process.env.ARGO_MAIL_CONCURRENCY) || 8));
+/** 틱(패스)당 회사별 착수 상한 = 동시 상한(이름은 옛 소비자 호환 — 순차 3건이던 시절의 상수). 같은 크루는 순차이므로 실동시 턴 =
+    min(상한, 배치의 서로 다른 크루 수) — 즉 ARGO_MAIL_CONCURRENCY는 사실상 "동시에 도는 크루 수"다. 대기분은 선점 시점부터 자기 심박을
+    찍으므로 다른 프로세스가 회수하지 않는다. */
+export const MAIL_PER_TICK = MAIL_CONCURRENCY;
 /** cc 상한 — 팬아웃 총량 방어(분리 검수 MEDIUM). 쪽지 1건의 최대 턴 = 1(to) + CC_MAX. */
 export const CC_MAX = 4;
 /** 유계 재시도 — 무계 재시도 금지(2026-07-27 기억 정리 재설계와 같은 원칙). 소진 시 .dead/로 이동해
     조용히 사라지지 않게 한다(무증상 실패가 가장 비싸다). */
 export const MAIL_MAX_ATTEMPTS = 3;
-/** 처리 중 표시(.claimed)가 이보다 오래 방치되면 크래시 잔재로 보고 회수한다.
-    3시간 = 최장 정상 턴(위임 연쇄 3단 × CLI 대화 턴 30분 = 90분)의 2배 여유 — 진행 중 턴에는 하트비트가
-    없으므로(분리 검수 HIGH-1) 짧으면 장기 턴을 크래시로 오판해 이중 배달을 만든다. 같은 프로세스가
-    진행 중인 claim은 inFlight로 아예 회수 대상에서 뺀다. (옛 45분 = 5분×3단×3 — CLI 상한이 30분으로 오르며 재산출) */
-const CLAIM_STALE_MS = 3 * 60 * 60_000;
+/** 처리 중 표시(.claimed) 회수 — "진행 중인가"는 고정 시간 창이 아니라 **소유 프로세스의 자기 심박**으로 판정한다.
+    배달 중인 프로세스가 CLAIM_HEARTBEAT_MS마다 .claimed의 mtime을 찍고(utimes), 회수는 mtime이 CLAIM_RECLAIM_MS보다
+    오래된 것만 되돌린다. 옛 방식은 고정 창(45분 → #458에서 3시간)이었는데, 앱 재시작·크래시 뒤 쪽지가 그 시간 동안
+    "배달 중"에 갇혔다(제보 2026-09-08 "1시간 넘게 배달 안 됨"). 크루 상태 파일(turn-status 심박)에 얹지 않는 이유(분리 검수
+    HIGH-2): 그 파일은 크루당 하나라 같은 크루의 다른 턴이 끝나며 지우면 배달 턴의 증거가 사라진다(CLI 턴은 기록이 1회뿐).
+    3분 = 심박 30초의 6배 — 이벤트루프 정체·짧은 잠자기를 흡수. 같은 프로세스가 진행 중인 claim은 inFlight로 아예 회수
+    대상에서 뺀다(HIGH-1). JSON의 claimedAt은 화면 표시용(최초 선점 시각)이라 회수 판정에 쓰지 않는다. */
+const CLAIM_RECLAIM_MS = 3 * 60_000;
+let CLAIM_HEARTBEAT_MS = 30_000;
+/** 테스트 전용 — 운영 30초를 ms 단위로 줄여 자기 심박을 결정적으로 관측한다. */
+export function _setClaimHeartbeatMsForTest(ms) { CLAIM_HEARTBEAT_MS = ms; }
+/** 심박 도장 — 파일이 없으면(배달이 끝나 지웠거나 되돌렸으면) 실패할 뿐 되살리지 않는다: 늦게 도는 심박이 유령 .claimed를 만들지 않는다. */
+const touchClaim = (p) => { const t = new Date(); return utimes(p, t, t).catch(() => {}); };
 /** 예약 디렉터리 — dot 접두라 크루 slug와 충돌하지 않는다(slug는 WS_ID류 영숫자, 분리 검수 LOW). */
 const DEAD_DIR = '.dead';
 /** 배달 기록(jsonl) — 쪽지함 화면의 "배달 기록" 섹션. mail/ 아래라 동기화 제외(sync.mjs EXCLUDE). */
@@ -96,6 +117,15 @@ async function pendingBySlug(wsId) {
       else if (f.endsWith('.claimed')) out.push({ slug: d.name, file: f, full: join(mailDir(wsId, d.name), f), claimed: true });
     }
   }
+  return out;
+}
+
+/** 착수 순서 — 잔재(.claimed) 먼저, 그 뒤 대기분을 슬러그별로 한 건씩 돌아가며(라운드로빈). 슬러그 안 순서(파일명 = id 시각순)는 보존. (export: 테스트용 순수 함수) */
+export function pendingRoundRobin(items) {
+  const out = items.filter((it) => it.claimed);
+  const queues = new Map();
+  for (const it of items) { if (it.claimed) continue; if (!queues.has(it.slug)) queues.set(it.slug, []); queues.get(it.slug).push(it); }
+  for (let any = true; any;) { any = false; for (const q of queues.values()) { const it = q.shift(); if (it) { out.push(it); any = true; } } }
   return out;
 }
 
@@ -230,23 +260,21 @@ export function mailPrompt(msg, lang = 'ko', { hasTools = true } = {}) {
     (chat.mjs 직접 import는 순환이 되고, 주입이라야 단위 테스트가 배선까지 태울 수 있다).
     선점은 **rename 단독** — 원자적이라 승자가 1명이다(분리 검수 CRITICAL-1: writeFile 선행 방식은
     rename으로 집힌 원본을 되살려 이중 배달을 만들었다 — 21회 중 3회 실측). 반환: 이번 틱 처리 수. */
-export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, now = Date.now() } = {}) {
-  const all = await pendingBySlug(wsId);
-  let done = 0;
+export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, concurrency = MAIL_CONCURRENCY, now = Date.now() } = {}) {
+  // 착수 순서 = 슬러그 라운드로빈(3R 검수 MEDIUM-B): 디렉터리 순서대로 limit까지 채우면 한 크루에 밀린 백로그가 배치를 독점해
+  // (같은 크루는 순차라) 회사 패스 전체가 그 크루의 턴 합만큼 잠기고, 그 사이 다른 크루 쪽지는 다음 패스까지 기다린다 — 제보 증상의 부분 재현.
+  // 잔재(.claimed)는 앞에 두어 회수 판정을 먼저 돌린다(착수 상한에 안 센다).
+  const all = pendingRoundRobin(await pendingBySlug(wsId));
+  const batch = []; // 이 패스에서 선점한 배달분 — 선점(순차·파일 원자 연산)과 실행(동시)을 분리한다
   for (const item of all) {
-    if (done >= limit) break;
+    if (batch.length >= limit) break;
     // 크래시 잔재 회수 — 이 프로세스 진행분(inFlight)은 제외, 오래된 .claimed만 .json으로 복귀
     if (item.claimed) {
       if (inFlight.has(item.full)) continue;
-      let stampMs = 0;
-      try {
-        const st = JSON.parse(await readFile(item.full, 'utf8'));
-        stampMs = Date.parse(st.claimedAt ?? st.ts ?? 0) || 0;
-      } catch { /* 읽기 실패 — mtime 폴백 */ }
-      if (!stampMs) { try { stampMs = (await stat(item.full)).mtimeMs; } catch { continue; } }
-      if (now - stampMs > CLAIM_STALE_MS) {
-        await rename(item.full, item.full.replace(/\.claimed$/, '')).catch(() => {});
-      }
+      // 살아 있음의 증거 = mtime(소유 프로세스의 자기 심박). now(주입 가능)는 이 비교에만 쓴다 — 심박 자체는 실시간이라 시간 여행 테스트는 mtime을 utimes로 밀어야 한다.
+      let mtimeMs = 0;
+      try { mtimeMs = (await stat(item.full)).mtimeMs; } catch { continue; } // 방금 사라짐 — 소유자가 끝냈다
+      if (now - mtimeMs > CLAIM_RECLAIM_MS) await reclaimClaim(item);
       continue;
     }
     // 선점 — mkdir 뮤텍스 + rename. rename 단독은 **윈도우에서 승자가 둘**일 수 있다(MoveFileEx 내부
@@ -257,7 +285,7 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
     const lockDir = `${item.full}.lockd`;
     try { await mkdir(lockDir); } catch {
       // 잔재 락(프로세스 크래시) — 오래됐으면 치우고 다음 틱에 맡긴다
-      try { if (now - (await stat(lockDir)).mtimeMs > CLAIM_STALE_MS) await rm(lockDir, { recursive: true, force: true }); } catch { /* 이미 사라짐 */ }
+      try { if (now - (await stat(lockDir)).mtimeMs > CLAIM_RECLAIM_MS) await rm(lockDir, { recursive: true, force: true }); } catch { /* 이미 사라짐 */ }
       continue;
     }
     let won = false;
@@ -265,7 +293,8 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
     await rm(lockDir, { recursive: true, force: true }).catch(() => {});
     if (!won) continue;
     inFlight.add(claimedPath);
-    done += 1;
+    // 선점 시각 도장 — rename은 mtime을 보존해(= 발신 시각) 이대로 두면 다른 프로세스의 회수 유예가 0이다(분리 검수 MEDIUM-2). JSON 각인 성패와 무관하게 먼저 찍는다.
+    await touchClaim(claimedPath);
     let msg = null;
     try {
       msg = JSON.parse(await readFile(claimedPath, 'utf8'));
@@ -284,31 +313,98 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
       inFlight.delete(claimedPath);
       continue;
     }
-    // claimedAt 각인 — 선점 **후** 갱신(선점 프리미티브와 분리). 실패해도 배달은 계속(mtime 폴백).
-    await writeJsonAtomic(claimedPath, { ...msg, claimedAt: new Date(now).toISOString() }).catch(() => {});
-    try {
-      await runTurn(item.slug, msg, { from: msg.from, hop: msg.hop ?? 0, chain: msg.chain ?? [] });
-      await rm(claimedPath, { force: true }).catch(() => {});
-      await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: true, attempts: (msg.attempts ?? 0) + 1 });
-    } catch (e) {
-      const attempts = (msg.attempts ?? 0) + 1;
-      const error = String(e.message ?? e).slice(0, 200);
-      await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: false, error, attempts, exhausted: attempts >= MAIL_MAX_ATTEMPTS });
-      if (attempts >= MAIL_MAX_ATTEMPTS) {
-        console.error(`[argo] 크루 우편 배달 소진(${wsId}/${item.slug}/${msg.id}):`, e.message);
-        await moveToDead(wsId, item.slug, item.file, claimedPath, { ...msg, attempts, lastError: error });
-      } else {
-        console.warn(`[argo] 크루 우편 배달 실패(${attempts}/${MAIL_MAX_ATTEMPTS}) ${wsId}/${item.slug}/${msg.id}:`, e.message);
-        // 재시도 — attempts 올려 .json으로 복귀(다음 틱). 갱신 실패 시에도 복귀는 시도한다
-        // (attempts 미증가로 한 회차 더 돌 수 있으나, 소실보다 낫고 상한이 결국 잡는다).
-        await writeJsonAtomic(claimedPath, { ...msg, attempts }).catch(() => {});
-        await rename(claimedPath, item.full).catch(() => {});
-      }
-    } finally {
-      inFlight.delete(claimedPath);
-    }
+    // 선점 신원(claimBy) — **선점 시점**에 각인한다(4R 검수 MEDIUM-1): 실패 정착 때 "아직 내 것인가"를 이 토큰으로 본다. 착수 시각(claimedAt)에
+    // 얹으면 "회수 → 재선점 → 아직 각인 전"(같은 크루 앞 턴이 도는 동안이라 수십 분) 창에서 옛 소유자가 남의 claim을 되돌렸다.
+    // 회수(reclaimClaim)는 이 토큰을 떼어 되돌린다. 각인 실패 시 토큰 불일치 = 내 것 아님 → 정착을 건너뛰고 회수 경로(attempts+1)에 맡긴다(소실 없음).
+    const claimBy = `${process.pid}-${randomBytes(6).toString('hex')}`;
+    await writeJsonAtomic(claimedPath, { ...msg, claimBy }).catch(() => {});
+    // 자기 심박은 **선점 시점**부터 — 상한 초과로 대기하는 선점분도 mtime이 살아 있어야 다른 프로세스가 회수하지 않는다(2R 검수 MEDIUM-4).
+    const hb = setInterval(() => { touchClaim(claimedPath); }, CLAIM_HEARTBEAT_MS);
+    hb.unref?.(); // 프로세스 종료를 붙들지 않는다
+    batch.push({ item, claimedPath, msg, hb, claimBy });
   }
-  return done;
+  if (!batch.length) return 0;
+  // 예산 게이트(2R 검수 MEDIUM-2): 한도에 닿았으면 이 패스는 순차 — chat()이 안내 답변을 내고 쪽지는 소비되는 기존 설계는 그대로, 초과 폭만 1턴.
+  let cap = concurrency;
+  const co = await loadCompany(wsId).catch(() => null); // 손상·부재(null)여도 여기서 던지면 선점 배치 전원이 심박을 단 채 갇힌다(3R 검수 LOW-D)
+  const budgetUsd = Number(co?.budgetUsd) || 0;
+  if (budgetUsd > 0 && (await monthCost(wsId).catch(() => ({ costUsd: 0 }))).costUsd >= budgetUsd) cap = 1;
+  // 실행 — 크루 간에만 병렬, 같은 크루 앞으로 온 쪽지는 순차(2R 검수 HIGH-1: 한 크루의 동시 턴은 크루 상태 파일(크루당 하나)을 서로 지워
+  // 진행 표시가 죽고 문장이 섞인다). 한 건의 실패는 자기 catch에서 정착하므로 나머지를 끊지 않는다.
+  const bySlug = new Map();
+  for (const b of batch) { if (!bySlug.has(b.item.slug)) bySlug.set(b.item.slug, []); bySlug.get(b.item.slug).push(b); }
+  await runLimited([...bySlug.values()], cap, async (group) => {
+    for (const b of group) {
+      // 항목별 격리(3R 검수 MEDIUM-A): deliverOne이 reject하면 뒤 항목이 착수조차 못 한 채 심박을 단 .claimed로 영구 "배달 중"이 된다 —
+      // 평면 runLimited가 주던 항목별 정착을 그룹 루프에서도 유지한다. 현재 deliverOne 내부 await는 전부 자체 흡수라 **도달 불가한 구조 방어**이며
+      // 행동 핀은 없다(4R 검수 LOW-1). 흡수가 하나라도 빠지는 미래 변경에 대비한 자리.
+      await deliverOne(wsId, runTurn, b).catch((e) => {
+        clearInterval(b.hb); inFlight.delete(b.claimedPath);
+        console.error(`[argo] 크루 우편 정착 경로 예외(${wsId}/${b.item.slug}/${b.msg.id}):`, e.message);
+      });
+    }
+  });
+  return batch.length;
+}
+
+/** 선점된 쪽지 1건의 배달 — 각인·자기 심박·턴·결과 정착. deliverCrewMail이 동시 상한 안에서 병렬로 부른다. */
+async function deliverOne(wsId, runTurn, { item, claimedPath, msg, hb, claimBy }) {
+  // claimedAt 각인 — 화면 "배달 중 · N분 경과"의 기준(최초 선점 시각). **실시간**이어야 한다: 주입 now는 틱 시작 시각이라
+  // 뒤늦게 착수하는 쪽지(상한 초과 대기분·같은 크루 뒷순서)는 앞 턴만큼 과거로 각인된다(분리 검수 HIGH-1). 실패해도 배달은 계속.
+  // 착수 전 소유권 검사(5R 검수 후속): 프로세스가 3분 넘게 얼었다 깨어나면(잠자기) 이 claim은 이미 회수·재선점됐을 수 있다 — 남의 것(다른 토큰)이면
+  // 각인·턴을 건너뛴다(덮어쓰면 턴이 한 번 더 돌고 attempts가 되감긴다). 없음(null)=회수·배달까지 끝남. 부재(undefined)=내 선점 각인이 실패했거나
+  // "회수 뒤 재선점, 아직 각인 전"일 수 있다 — 후자는 재선점자의 각인이 곧 덮어 창이 ms 단위라 진행한다(6R 검수 LOW-B, 델타 이전보다 좁은 창).
+  // 생략 분기는 try/finally 밖이라 **여기서 직접** 심박·inFlight를 정리한다(6R 검수 HIGH-1: 새면 남의 claim에 계속 mtime을 찍어 어떤 프로세스도 회수 못 함).
+  const owner = await readClaimBy(claimedPath);
+  if (owner === null || (owner !== undefined && owner !== claimBy)) {
+    clearInterval(hb); inFlight.delete(claimedPath);
+    console.warn(`[argo] 크루 우편 착수 생략(${wsId}/${item.slug}/${msg.id}): claim 신원 ${owner === null ? '소멸(회수·배달됨)' : '불일치(재선점됨)'}`);
+    return;
+  }
+  await writeJsonAtomic(claimedPath, { ...msg, claimBy, claimedAt: new Date().toISOString() }).catch(() => {}); // claimBy(선점 신원)는 유지
+  try {
+    await runTurn(item.slug, msg, { from: msg.from, hop: msg.hop ?? 0, chain: msg.chain ?? [] });
+    await rm(claimedPath, { force: true }).catch(() => {});
+    await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: true, attempts: (msg.attempts ?? 0) + 1 });
+  } catch (e) {
+    const attempts = (msg.attempts ?? 0) + 1;
+    const error = String(e.message ?? e).slice(0, 200);
+    await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: false, error, attempts, exhausted: attempts >= MAIL_MAX_ATTEMPTS });
+    // 되돌리기·실패함 이동은 .claimed가 **아직 내 것일 때만**. 심박 정체·잠자기로 다른 프로세스가 회수(·배달)했으면 손대지 않는다 —
+    // writeJsonAtomic은 없는 파일을 새로 만들어 이미 배달된 쪽지를 큐에 부활시켰다(2R 검수 MEDIUM-3 실측, 회수 창 3분이 되며 60배 잦아진 창).
+    const cur = await readClaimBy(claimedPath); // 선점 신원 일치만 내 것 — 존재·시각 폴백 없음(4R 검수 MEDIUM-1). 손상·부재·소멸 전부 흡수(5R LOW-A)
+    const mine = cur === claimBy;
+    if (!mine) {
+      console.warn(`[argo] 크루 우편 실패 정착 생략(${wsId}/${item.slug}/${msg.id}): claim 신원 ${cur === null ? '소멸(회수·배달됨)' : cur === undefined ? '부재·손상(각인 실패 또는 파일 손상 — 회수 경로가 맡음)' : '불일치(재선점됨)'}`);
+    } else if (attempts >= MAIL_MAX_ATTEMPTS) {
+      console.error(`[argo] 크루 우편 배달 소진(${wsId}/${item.slug}/${msg.id}):`, e.message);
+      await moveToDead(wsId, item.slug, item.file, claimedPath, { ...msg, attempts, lastError: error });
+    } else {
+      console.warn(`[argo] 크루 우편 배달 실패(${attempts}/${MAIL_MAX_ATTEMPTS}) ${wsId}/${item.slug}/${msg.id}:`, e.message);
+      // 재시도 — attempts 올려 .json으로 복귀(다음 틱). 갱신 실패 시에도 복귀는 시도한다
+      // (attempts 미증가로 한 회차 더 돌 수 있으나, 소실보다 낫고 상한이 결국 잡는다).
+      await writeJsonAtomic(claimedPath, { ...msg, attempts }).catch(() => {}); // claimBy·claimedAt 없이 — 대기분으로 돌아간다
+      await rename(claimedPath, item.full).catch(() => {});
+    }
+  } finally {
+    clearInterval(hb);
+    inFlight.delete(claimedPath);
+  }
+}
+
+/** .claimed의 선점 신원 — null: 파일 없음(ENOENT = 회수·배달 완료) / undefined: 각인 없음·손상·일시 읽기 실패(EMFILE 등 — 소멸로 오판하면 한 번도 배달 안 된
+    쪽지가 회수 3회로 .dead에 간다, 6R 검수 LOW-C) / 문자열: 소유 토큰. 절대 던지지 않는다(deliverOne 정착 경로의 흡수 전제). */
+const readClaimBy = (p) => readFile(p, 'utf8').then((t) => { try { const v = JSON.parse(t)?.claimBy; return typeof v === 'string' ? v : undefined; } catch { return undefined; } }, (e) => (e?.code === 'ENOENT' ? null : undefined));
+
+/** 잔재 회수 — 소유 프로세스가 결과 없이 끝난 .claimed를 .json으로 되돌린다. attempts를 1 올린다(분리 검수 MEDIUM-1): 프로세스를 죽이는
+    쪽지는 catch에 닿지 못해 .dead로 못 가는데, 회수 주기가 3시간에서 3분으로 줄어 무계 재시도가 20배 빨라진다 — 상한(MAIL_MAX_ATTEMPTS)이
+    잡게 회수도 한 번의 시도로 센다(소진 선확인이 다음 틱에 .dead로 보낸다). 갱신 실패 시에도 복귀는 한다(소실보다 낫다). */
+async function reclaimClaim(item) {
+  try {
+    const { claimBy: _by, claimedAt: _at, ...body } = JSON.parse(await readFile(item.full, 'utf8')); // 옛 소유자의 신원·착수 시각을 떼고 되돌린다(requeueDead와 같은 규칙) — 남기면 옛 소유자의 늦은 실패 정착이 재선점된 claim을 자기 것으로 오인한다
+    await writeJsonAtomic(item.full, { ...body, attempts: (body.attempts ?? 0) + 1, lastError: '배달 프로세스가 결과 없이 끝나 회수됨' });
+  } catch { /* 손상·읽기 실패 — 복귀 뒤 배달 경로의 손상 처리(.dead)가 맡는다 */ }
+  await rename(item.full, item.full.replace(/\.claimed$/, '')).catch(() => {});
 }
 
 /** .dead/ 이동 — 기록이 **성공한 뒤에만** 원본을 지운다(HIGH-3①: 기록 실패 + 원본 삭제 = 무증상 소실).

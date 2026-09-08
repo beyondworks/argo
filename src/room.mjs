@@ -2,6 +2,7 @@
 // @멘션한 크루가 답하고, 뒤 순서 크루는 앞 크루의 발언을 보고 보탠다. 회의 내용은 각 턴의 일지로 회사 기억이 된다.
 import { mkdir, readFile, writeFile, readdir, rm, access } from 'node:fs/promises';
 import { join } from 'node:path';
+import { runLimited } from './run-limited.mjs';
 import { paths, loadCompany } from './workspace.mjs';
 import { listAgents } from './hub.mjs';
 import { chat } from './chat.mjs';
@@ -839,16 +840,5 @@ ${transcript}${folderLine}
 /** 반응 라운드 "보탤 것 없음" 판정 — 프롬프트가 지정한 한 줄(ko) + 영어 회사 크루가 낼 법한 동의어. 화면이 칩으로 접는다. */
 export const NO_ADD_RE = /^\s*[\[(]?\s*(추가 의견 없음|no further (comment|comments|opinion)|nothing to add)\s*[\])]?\.?\s*$/i;
 
-/** 동시 실행 상한 — items를 limit개씩 동시에, 순서대로 착수. 결과는 {ok, v|e}로 정착(한 항목의 실패가 나머지를 끊지 않는다). */
-export async function runLimited(items, limit, fn) {
-  const out = new Array(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i], i).then((v) => ({ ok: true, v }), (e) => ({ ok: false, e }));
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
-  return out;
-}
+/** 동시 실행 상한 — 정의는 run-limited.mjs(크루 우편 동시 배달과 공유). 재수출로 기존 소비자를 지킨다. */
+export { runLimited } from './run-limited.mjs';

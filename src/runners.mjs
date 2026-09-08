@@ -92,7 +92,7 @@ export {
     우리 kill 타이머(timeoutMs)가 발화할 만큼 지났으면 표면 오류가 무엇으로 위장했든 원인은 시간 초과다.
     (export: 회귀 테스트용 — 순수 함수) */
 /** CLI 러너 대화 턴 기본 상한(chat.mjs가 쓴다). 30분 — 긴 사고 과정 모델이 결과 직전에 죽던 옛 5분(제보 2026-09-07)을
-    올린 값. 라우트 maxDuration(chat·room·routines)·crewmail CLAIM_STALE_MS가 이 값에서 파생되므로 여기 하나만 바꾼다. */
+    올린 값. 라우트 maxDuration(chat·room·routines)이 이 값에서 파생되므로 여기 하나만 바꾼다(crewmail 회수는 심박 기준이라 무관). */
 export const CLI_CHAT_TURN_TIMEOUT_MS = 30 * 60_000;
 
 export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec', kind = 'chat' } = {}) {
