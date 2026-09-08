@@ -443,7 +443,7 @@ function Shell({ session }) {
         {page === 'activity' && org ? (
           <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'settings' ? (
-          <Settings session={session} me={me} uid={uid} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+          <Settings session={session} me={me} uid={uid} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
           <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} dmName={dmName} />
         ) : (
@@ -765,7 +765,7 @@ class PageBoundary extends Component {
   }
 }
 
-function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
+function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onOpenCrew, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
@@ -793,7 +793,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
           : <section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section>)}
         {tab === 'crews' && org && (<>
           {isAdmin && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
-          {isAdmin && <OrgCard part="agents" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
+          {isAdmin && <OrgCard part="agents" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
           {policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
         </>)}
         {tab === 'me' && (<>
@@ -1154,7 +1154,7 @@ function NotifyRow() {
 
 /* ─── F2-1·2·3·4 조직 카드(관리자): 조직 이름 · 멤버 역할/제거(2단계) · 초대 만들기/취소 · 감사 기록 ─── */
 const ROLES_ASSIGNABLE = ['admin', 'member', 'guest'];
-function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '' }) {
+function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '', onOpenCrew }) {
   const { t, lang } = useT();
   const [name, setName] = useState(org.name); const [busy, setBusy] = useState(false);
   const [invites, setInvites] = useState([]);
@@ -1293,7 +1293,7 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
   );
   // ── 부록 N: 외부 에이전트(헤르메스·오픈클로)는 텔레그램·슬랙에 붙듯 **봇**으로 이 메신저에 접속한다. 봇 = 회사 등급 크루 + 토큰(서버 msgr_bots).
   //    토큰 원문은 생성·회전 직후 이 화면에만 있고(setup 상태) 저장·로그하지 않는다. 가용성은 마지막 getUpdates(last_seen_at)뿐 — 종료/재시작 버튼 없음(해제 = 토큰 회수).
-  const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null);
+  const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null); const [openBot, setOpenBot] = useState(null); // 펼친 봇 상세(실측: 상태 줄이 말줄임으로 잘려 못 읽음)
   const loadBots = useCallback(async () => { if (part !== 'agents') return; setBots(await q(supabase.from('msgr_bots').select('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at').eq('org_id', org.id).order('created_at'))); }, [org.id, part]);
   useEffect(() => { loadBots().catch((e) => onError(e.message)); }, [loadBots]); // eslint-disable-line react-hooks/exhaustive-deps
   const botSetup = (token) => `ARGO_MSGR_URL=${SB_URL}/functions/v1/msgr-bot\nARGO_MSGR_BOT_TOKEN=${token}`; // 원클릭: 이 두 줄이 에이전트 쪽 설정의 전부
@@ -1336,12 +1336,29 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
       )}
       {!liveBots.length ? <p className="empty">{t('org.agents.none')}</p> : (
         <div className="msgr-rows">
-          {liveBots.map((b) => { const on = b.last_seen_at && Date.now() - Date.parse(b.last_seen_at) < AWAY_MS; return (
-            <div key={b.id} className="row">
-              <Av name={b.name} crew size="sm" company /><span className="name">{b.name}</span>
-              <span className="sub"><span className={`msgr-dot${on ? ' mark' : ''}`} /> {botStatus(b)} · {t('org.agents.by', { name: nameOfUser(b.created_by) })}</span>
-              {confirmRevoke !== b.id && <><button type="button" className="btn sm ghost" disabled={busy} onClick={() => rotateBot(b)}>{t('org.agents.rotate')}</button><button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRevoke(b.id)} title={t('org.agents.revoke')} aria-label={t('org.agents.revoke')}><I name="x" size={13} /></button></>}
-              {confirmRevoke === b.id && <span className="confirm-inline"><span>{t('org.agents.revoke.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => revokeBot(b)}>{t('org.agents.revoke')}</button><button type="button" className="btn sm ghost" onClick={() => setConfirmRevoke(null)}>{t('ui.cancel')}</button></span>}
+          {liveBots.map((b) => { const on = b.last_seen_at && Date.now() - Date.parse(b.last_seen_at) < AWAY_MS; const opened = openBot === b.id; return (
+            <div key={b.id} className={`msgr-botrow${opened ? ' open' : ''}`}>
+              <div className="row">
+                <button type="button" className="main" onClick={() => setOpenBot(opened ? null : b.id)} aria-expanded={opened} title={t('org.agents.detail.open')}>
+                  <Av name={b.name} crew size="sm" company /><span className="name">{b.name}</span>
+                  <span className="sub"><span className={`msgr-dot${on ? ' mark' : ''}`} /> {botStatus(b)} · {t('org.agents.by', { name: nameOfUser(b.created_by) })}</span>
+                </button>
+                {confirmRevoke !== b.id && <><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => rotateBot(b)}>{t('org.agents.rotate')}</button><button type="button" className="btn sm ghost" disabled={busy} onClick={() => setConfirmRevoke(b.id)} title={t('org.agents.revoke')} aria-label={t('org.agents.revoke')}><I name="x" size={13} /></button></>}
+                {confirmRevoke === b.id && <span className="confirm-inline"><span>{t('org.agents.revoke.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => revokeBot(b)}>{t('org.agents.revoke')}</button><button type="button" className="btn sm ghost text" onClick={() => setConfirmRevoke(null)}>{t('ui.cancel')}</button></span>}
+              </div>
+              {opened && (
+                <div className="msgr-node-cmd detail">
+                  <div className="facts">
+                    <div><span className="msgr-klabel">{t('org.agents.detail.status')}</span><span>{botStatus(b)}</span></div>
+                    <div><span className="msgr-klabel">{t('org.agents.detail.kind')}</span><span>{t(`org.agents.kind.${b.kind}`)}</span></div>
+                    <div><span className="msgr-klabel">{t('org.agents.by.label')}</span><span>{nameOfUser(b.created_by)}</span></div>
+                    <div><span className="msgr-klabel">{t('org.agents.detail.created')}</span><span>{fmtWhen(b.created_at, lang)}</span></div>
+                    <div><span className="msgr-klabel">{t('org.agents.detail.token')}</span><span><code>{b.token_hint}…</code>{b.rotated_at ? ` · ${t('org.agents.detail.rotated', { when: fmtWhen(b.rotated_at, lang) })}` : ''}</span></div>
+                  </div>
+                  <p className="note">{t('org.agents.detail.hint')}</p>
+                  <div className="acts">{onOpenCrew && <button type="button" className="btn sm" onClick={() => onOpenCrew(b.crew_id)}><I name="star" size={13} />{t('org.agents.detail.openCrew')}</button>}<button type="button" className="btn sm ghost text" onClick={() => setOpenBot(null)}>{t('ui.close')}</button></div>
+                </div>
+              )}
             </div>); })}
         </div>)}
     </section>
