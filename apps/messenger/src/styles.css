@@ -587,6 +587,7 @@
 .msgr-folderhead { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px 2px; font-size: 10.5px; color: var(--fg-3); letter-spacing: 0.02em; }
 .msgr-foot .me { display: flex; align-items: center; gap: 8px; min-width: 0; background: none; border: 0; padding: 2px 4px; border-radius: 9px; color: inherit; font: inherit; cursor: pointer; grid-column: 1 / span 2; }
 .msgr-foot .me:hover { background: var(--card-2); }
+.msgr-foot .me .name { flex: 0 1 auto; text-align: left; } /* 아바타·이름 사이 여백(유건 지적 2026-09-09) — 상속된 가운데 정렬로 이름이 오른쪽으로 밀리던 것 */
 .msgr-rowmenu.me { position: absolute; left: 8px; right: auto; top: auto; bottom: calc(100% + 6px); min-width: 170px; z-index: 30; display: grid; padding: 6px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35); } /* 프로필 메뉴는 하단 바 위로, 배경 명시(실측: 배경 없이 글자만 떠 가독성 저하) */
 .msgr-foot { position: relative; }
 .msgr-folderpick { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; } .msgr-folderpick .msgr-input.sm { flex: 1; }
@@ -603,7 +604,43 @@
 :root[data-theme='linen-dark'] { --primary: #cfcac0; --primary-strong: #dcd7cd; --primary-fg: #1f1e1b; }
 @media (prefers-color-scheme: dark) { :root[data-theme='linen'] { --primary: #cfcac0; --primary-strong: #dcd7cd; --primary-fg: #1f1e1b; } }
 
-/* 텔레그램식 설정 프로필 카드 (2026-09-09) — 절 접기는 PR #463 RailSection이 담당 */
-.msgr-setme { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
-.msgr-setme .who { display: grid; min-width: 0; } .msgr-setme .who b { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .msgr-setme .who .msgr-klabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msgr-setme.on { box-shadow: 0 0 0 1px var(--primary); }
+
+/* 실행 카드·궤적 드롭다운 (2026-09-09) — 클로드코드식: 요약 한 줄 + 접히는 사고 과정·도구 단계 */
+.msgr-exec, .msgr-trace { border: 1px solid var(--border); border-radius: 6px 16px 16px 16px; background: var(--card); max-width: 640px; min-width: 0; font-size: 12.5px; }
+.msgr-trace { border-radius: 10px; margin: -4px 0 10px; background: var(--card-2); }
+.msgr-exec > summary, .msgr-trace > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; color: var(--fg-2); min-width: 0; }
+.msgr-exec > summary::-webkit-details-marker, .msgr-trace > summary::-webkit-details-marker { display: none; }
+.msgr-exec > summary .st { color: var(--fg); font-weight: 600; white-space: nowrap; }
+.msgr-exec > summary .dt, .msgr-steps .dt { color: var(--fg-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.msgr-exec > summary .caret, .msgr-trace > summary .caret { margin-left: auto; transition: transform 120ms ease; opacity: 0.7; flex: none; }
+.msgr-exec[open] > summary .caret, .msgr-trace[open] > summary .caret { transform: rotate(180deg); }
+.msgr-exec .body, .msgr-trace .body { border-top: 1px solid var(--border-soft); padding: 8px 12px 10px; display: grid; gap: 10px; }
+.msgr-exec .sec, .msgr-trace .sec { display: grid; gap: 4px; }
+.msgr-exec .thought, .msgr-trace .thought { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 12px; line-height: 1.55; color: var(--fg-2); max-height: 220px; overflow: auto; }
+.msgr-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.msgr-steps li { display: grid; grid-template-columns: 44px auto minmax(0, 1fr); gap: 8px; align-items: baseline; font-size: 12px; color: var(--fg-2); }
+.msgr-steps li .mono { color: var(--fg-3); font-size: 11px; }
+.msgr-dot.pulse { animation: msgrPulse 1.2s ease-in-out infinite; }
+
+/* P0 (2026-09-09): 안 읽음 배지·새 메시지 구분선·반응·편집 */
+.msgr-badge { margin-left: auto; min-width: 18px; height: 18px; padding: 0 6px; border-radius: 999px; background: var(--card-2); color: var(--fg-2); font-size: 10.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex: none; font-variant-numeric: tabular-nums; }
+.msgr-badge.mark { background: var(--mark); color: #1a1a1a; }
+.msgr-badge.dim { opacity: 0.55; }
+.msgr-list .item.unread .name { color: var(--fg); font-weight: 600; }
+.msgr-list .item.active .msgr-badge { background: var(--primary-fg); color: var(--primary); }
+.msgr-newline { display: flex; align-items: center; gap: 10px; margin: 6px 0; color: var(--mark); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
+.msgr-newline::before, .msgr-newline::after { content: ''; flex: 1; height: 1px; background: var(--mark); opacity: 0.6; }
+.msgr-reacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.msgr-reacts button { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--fg-2); font: inherit; font-size: 12px; cursor: pointer; }
+.msgr-reacts button span { font-size: 11px; font-variant-numeric: tabular-nums; }
+.msgr-reacts button.on { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); color: var(--fg); }
+.msgr-mine .msgr-reacts { justify-content: flex-end; }
+.msgr-acts { position: relative; flex-wrap: wrap; }
+.msgr-acts button.danger { color: var(--danger, #d05a5a); }
+.msgr-picker { display: flex; gap: 2px; padding: 4px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); box-shadow: 0 6px 20px rgba(0,0,0,0.18); }
+.msgr-picker button { width: 30px; height: 30px; border: 0; border-radius: 999px; background: none; font-size: 16px; cursor: pointer; }
+.msgr-picker button:hover { background: var(--card-2); }
+.msgr-editbox { display: grid; gap: 8px; max-width: 640px; min-width: 320px; }
+.msgr-editbox textarea.msgr-input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13.5px; resize: vertical; outline: 0; }
+.msgr-editbox textarea.msgr-input:focus { box-shadow: 0 0 0 2px var(--ring); }
+.msgr-editbox .acts { display: flex; gap: 6px; justify-content: flex-end; }

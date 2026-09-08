@@ -62,7 +62,7 @@ before(() => {
   `]);
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql',
-    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql', '20260909000000_msgr_bot_external_id.sql', '20260909002000_msgr_profiles_friends.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
+    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql', '20260909000000_msgr_bot_external_id.sql', '20260909002000_msgr_profiles_friends.sql', '20260909003000_msgr_message_meta.sql', '20260909004000_msgr_p0_reads_reactions_prefs.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`); // 체험 창 밖
   // 시드: owner가 조직 생성(트리거가 owner 멤버·free 자격 생성) → admin/member/guest/removed 초대 → 공개·비공개 채널 → 크루 2개
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
@@ -244,4 +244,40 @@ test('친구(20260909002000): 이메일은 정확 일치+허용한 사람만, �
   fails(asUserRaw(U.member, `select public.msgr_friend_request('${U.owner}')`), /msgr_friend_blocked/, '차단당한 쪽은 요청 불가');
   assert.equal(last(asUser(U.member, `select count(*) from public.msgr_find_user('owner@example.test')`)), '0', '차단 관계는 검색에서도 빠진다(owner는 이메일 검색 미허용이기도 함)');
   fails(asUserRaw(U.owner, `insert into public.msgr_friends (a, b, requested_by) values (least('${U.owner}','${U.guest}')::uuid, greatest('${U.owner}','${U.guest}')::uuid, '${U.owner}')`), /permission denied|row-level security/, '직접 insert 금지');
+});
+
+test('P0(20260909003000·004000): 답글 meta.trace 저장·열람 · 안 읽음 RPC(내 글·삭제 글 제외, 멘션 수, 커서 뒤만) · 읽음 커서는 본인만 · 반응은 읽는 채널만·본인 삭제만 · 채널 음소거 본인만 · 조용한 시간 범위 체크', { skip }, () => {
+  const base = last(sql(`select coalesce(max(id), 0) from public.msgr_messages where channel_id = '${PUB}'`)); // 앞 케이스들의 글은 읽은 것으로
+  asUser(U.owner, `insert into public.msgr_reads (channel_id, user_id, last_read_id) values ('${PUB}', '${U.owner}', ${base}) on conflict (channel_id, user_id) do update set last_read_id = ${base}`);
+  const m1 = last(asUser(U.admin, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, mentions) values ('${PUB}', 'user', '${U.admin}', '안 읽음 1', '[{"kind":"user","id":"${U.owner}"}]') returning id`));
+  const m2 = last(asUser(U.admin, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body) values ('${PUB}', 'user', '${U.admin}', '안 읽음 2') returning id`));
+  const mine = last(asUser(U.owner, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body) values ('${PUB}', 'user', '${U.owner}', '내 글') returning id`));
+  const del = last(asUser(U.admin, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body) values ('${PUB}', 'user', '${U.admin}', '지울 글') returning id`));
+  asUser(U.admin, `update public.msgr_messages set deleted_at = now(), body = '' where id = ${del}`);
+  // meta.trace — 크루 답글에 실려 열람된다(브리지 insert 경로 = 소유자 명의)
+  const tr = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, reply_to, meta) values ('${PUB}', 'crew', '${CREW}', '답', ${m2}, '{"trace":{"steps":[{"t":1200,"stage":"memory","detail":"notes.md"}],"thought":"생각","ms":3400}}') returning id`));
+  assert.equal(last(asUser(U.owner, `select meta->'trace'->>'ms' from public.msgr_messages where id = ${tr}`)), '3400', '궤적 열람');
+  fails(asUserRaw(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, meta) values ('${PUB}', 'crew', '${CREW}', 'x', ('{"pad":"' || repeat('a', 70000) || '"}')::jsonb)`), /msgr_messages_meta_size/, 'meta 64KB 상한');
+  // 안 읽음: owner 기준 — admin 글 2 + 크루 답 1 = 3(내 글·삭제 글 제외), 멘션 1
+  assert.equal(last(asUser(U.owner, `select n || '|' || mention from public.msgr_unread('${ORG}') where channel_id = '${PUB}'`)), '3|1', '안 읽음·멘션 수');
+  assert.equal(last(asUser(U.owner, `update public.msgr_reads set last_read_id = ${m2} where channel_id = '${PUB}' and user_id = '${U.owner}' returning last_read_id`)), String(m2), '읽음 커서 저장');
+  assert.equal(last(asUser(U.owner, `select n || '|' || mention from public.msgr_unread('${ORG}') where channel_id = '${PUB}'`)), '1|0', '커서 뒤(크루 답)만 남는다');
+  denied(U.owner, `insert into public.msgr_reads (channel_id, user_id, last_read_id) values ('${PUB}', '${U.admin}', 1)`); // 남의 커서 금지
+  assert.equal(last(asUser(U.outsider, `select count(*) from public.msgr_unread('${ORG}')`)), '0', '조직 밖은 0행');
+  // 반응
+  asUser(U.owner, `insert into public.msgr_reactions (message_id, user_id, emoji) values (${m1}, '${U.owner}', '👍')`);
+  assert.equal(last(asUser(U.admin, `select count(*) from public.msgr_reactions where message_id = ${m1}`)), '1', '같은 채널 멤버가 본다');
+  denied(U.outsider, `insert into public.msgr_reactions (message_id, user_id, emoji) values (${m1}, '${U.outsider}', '👍')`);
+  denied(U.owner, `insert into public.msgr_reactions (message_id, user_id, emoji) values (${m1}, '${U.admin}', '👍')`); // 남 명의 금지
+  denied(U.owner, `insert into public.msgr_reactions (message_id, user_id, emoji) values (${del}, '${U.owner}', '👍')`); // 삭제 글 금지
+  asUser(U.admin, `delete from public.msgr_reactions where message_id = ${m1} and user_id = '${U.owner}'`);
+  assert.equal(last(asUser(U.admin, `select count(*) from public.msgr_reactions where message_id = ${m1}`)), '1', '남의 반응은 삭제되지 않는다(0행 영향)');
+  asUser(U.owner, `delete from public.msgr_reactions where message_id = ${m1} and user_id = '${U.owner}'`);
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_reactions where message_id = ${m1}`)), '0', '본인 반응 삭제');
+  // 음소거·조용한 시간
+  asUser(U.owner, `insert into public.msgr_channel_prefs (channel_id, user_id, muted) values ('${PUB}', '${U.owner}', true)`);
+  assert.equal(last(asUser(U.admin, `select count(*) from public.msgr_channel_prefs where channel_id = '${PUB}'`)), '0', '남의 음소거는 안 보인다');
+  denied(U.admin, `insert into public.msgr_channel_prefs (channel_id, user_id, muted) values ('${PUB}', '${U.owner}', false)`);
+  fails(asUserRaw(U.owner, `insert into public.msgr_profiles (user_id, quiet_from, quiet_to) values ('${U.owner}', 25, 7)`), /quiet_from_check/, '시 범위 밖 거절');
+  assert.equal(last(asUser(U.owner, `insert into public.msgr_profiles (user_id, quiet_from, quiet_to) values ('${U.owner}', 22, 7) on conflict (user_id) do update set quiet_from = 22, quiet_to = 7 returning quiet_from || '-' || quiet_to`)), '22-7');
 });

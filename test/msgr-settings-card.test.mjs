@@ -226,7 +226,7 @@ test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(
   const ch = app.slice(app.indexOf('function Channel('), app.indexOf('function Message('));
   assert.match(ch, /const stick = useRef\(true\);/, '바닥 고정 ref');
   assert.match(ch, /useEffect\(\(\) => \{ stick\.current = true; \}, \[chId\]\);/, '채널 전환 시 바닥부터');
-  assert.match(ch, /stick\.current = el\.scrollHeight - el\.scrollTop - el\.clientHeight < 40;/, '바닥 근접 판정 40px');
+  assert.match(ch, /const gap = el\.scrollHeight - el\.scrollTop - el\.clientHeight; if \(gap < 40\) stick\.current = true; else if \(dragging \|\| Date\.now\(\) - userAt < 600\) stick\.current = false;/, '바닥 근접 40px는 고정, 해제는 사용자 의도(휠·터치·키·드래그)가 있을 때만 — 프로그램 스크롤 경합으로 고정이 풀리던 결함(2026-09-09)');
   assert.match(ch, /const ro = new ResizeObserver\(toBottom\);/, '높이 변화 추적');
   assert.match(ch, /useEffect\(\(\) => \{ const el = feed\.current; if \(el && stick\.current\) el\.scrollTop = el\.scrollHeight; \}, \[msgs\?\.length\]\);/, '새 메시지는 고정 중일 때만 바닥');
   assert.doesNotMatch(ch, /feed\.current\?\.scrollTo\(\{ top: feed\.current\.scrollHeight \}\)/, '무조건 바닥 스크롤이 남아 있다(위로 올린 사용자를 끌어내린다)');
@@ -249,7 +249,7 @@ test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조�
   assert.match(oc, /from\('msgr_invites'\)\.delete\(\)\.eq\('id', inv\.id\)\.select\('id'\)/, '초대 취소');
   assert.match(oc, /from\('msgr_audit_log'\)\.select\([^)]*\)\.eq\('org_id', org\.id\)\.order\('at', \{ ascending: false \}\)\.limit\(50\)/, '감사 50건');
   assert.match(app, /const notifyMention = \(payload\) => \{[\s\S]*?if \(!payload \|\| payload\.author_user_id === r\.uid\) return;[\s\S]*?m\?\.kind === 'user' && m\.id === r\.uid/, '멘션 알림: 자기 글 제외·나를 부른 것만');
-  assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; return document\.visibilityState === 'hidden' \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널은 알리지 않는다');
+  assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; if \(r\.muted\.has\(channelId\) \|\| inQuiet\(r\.quiet\)\) return false; return document\.visibilityState === 'hidden' \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널·음소거 채널·조용한 시간엔 알리지 않는다(P0 2026-09-09)');
   assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/, '결재 알림은 관리자·대기 중만');
   assert.match(app, /Notification\.permission !== 'granted'\) return;/, '권한 없으면 조용히');
   assert.match(app, /\{tab === 'org' && org && \(isAdmin\s*\? <OrgCard part="org"/, '조직 카드는 관리자만(조직 탭)');

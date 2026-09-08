@@ -1505,7 +1505,7 @@ ${lang === 'en'
       const stage = tu ? stageForTool(tu.name) : 'think'; // 코드 — 클라가 번역(가장 흔한 상태라 누락 시 영어 회사에 한국어 노출)
       const detail = tu ? detailForTool(tu.name, tu.input) : '';
       for (const b of tus) step(stageForTool(b.name), detailForTool(b.name, b.input)); // 도구 하나 = 단계 하나
-      await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought);
+      await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought, steps);
     }
     if (msg.type === 'result') {
       sid = msg.session_id ?? sid;
@@ -1703,5 +1703,7 @@ ${lang === 'en'
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
   // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
   for (const r of await artDiff()) artifacts.add(r);
-  return { reply, sessionId: sid, handover, costUsd, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
+  // trace — 메신저 답글에 붙는 궤적(사고 과정·도구 단계·경과·실사용 모델). 다른 소비자(gateway·room·routine)는 무시해도 무해한 추가 필드.
+  const trace = { steps, thought: String(thought ?? '').slice(-1500), ms: Date.now() - t0, model: actualModel || null, costUsd };
+  return { reply, sessionId: sid, handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }

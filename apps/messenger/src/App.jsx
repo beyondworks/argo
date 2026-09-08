@@ -41,6 +41,8 @@ function Av({ name, crew, size, company = false }) { // company: 회사 크루(�
   return <span className={`msgr-av${crew ? ' crew' : ''}${company ? ' company' : ''}${size ? ` ${size}` : ''}`}>{(name || '?').slice(0, 1)}{crew && <span className="star">{company ? <I name="hash" size={8} /> : <svg viewBox="0 0 16 16"><path d={STAR_D} /></svg>}</span>}</span>;
 }
 /** 본문 속 @멘션을 굵게·줄바꿈 금지로(평가 1차: @와 이름 사이 줄바꿈). */
+/** 조용한 시간 판정 — from>to면 자정을 넘는 구간(22~7). */
+function inQuiet(qh) { if (!qh) return false; const h = new Date().getHours(); return qh.from <= qh.to ? (h >= qh.from && h < qh.to) : (h >= qh.from || h < qh.to); }
 function Body({ text }) {
   // 앞이 문자열 시작/공백일 때만 멘션(이메일의 @domain은 제외 — 검수 M4)
   const parts = String(text ?? '').split(/((?:^|(?<=\s))@[^\s@]+)/g);
@@ -230,7 +232,13 @@ function Shell({ session }) {
   const loadChMembers = useCallback(async (id) => { if (!id) { setChMembers([]); return; } const rows = await q(supabase.from('msgr_channel_members').select('member_kind, member_id, added_by').eq('channel_id', id)); setChMembers(rows); }, []);
   useEffect(() => { loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setChSheet(false); }, [chId]); // 채널을 바꿀 때만 닫는다(검수 HIGH-1: tick 의존이면 15초마다 시트가 닫혔다)
-  const [event, setEvent] = useState(null); const [typing, setTyping] = useState({});
+  const [unread, setUnread] = useState({}); const [muted, setMuted] = useState(() => new Set()); const [quiet, setQuiet] = useState(null); // P0(2026-09-09): 채널별 안 읽음·음소거·조용한 시간
+  const loadUnread = useCallback(async () => { if (!orgId) return; const rows = await q(supabase.rpc('msgr_unread', { org: orgId })).catch(() => null); if (rows) setUnread(Object.fromEntries(rows.map((r) => [r.channel_id, { n: r.n, mention: r.mention }]))); }, [orgId]);
+  useEffect(() => { loadUnread(); }, [loadUnread, tick]);
+  useEffect(() => { if (!uid) return; q(supabase.from('msgr_channel_prefs').select('channel_id, muted').eq('user_id', uid)).then((rows) => setMuted(new Set(rows.filter((r) => r.muted).map((r) => r.channel_id)))).catch(() => {}); q(supabase.from('msgr_profiles').select('quiet_from, quiet_to').eq('user_id', uid).maybeSingle()).then((p) => setQuiet(p && p.quiet_from != null && p.quiet_to != null ? { from: p.quiet_from, to: p.quiet_to } : null)).catch(() => {}); }, [uid, tick]);
+  const toggleMute = async (c) => { const on = !muted.has(c.id); try { await q(supabase.from('msgr_channel_prefs').upsert({ channel_id: c.id, user_id: uid, muted: on, updated_at: new Date().toISOString() })); setMuted((s) => { const n = new Set(s); if (on) n.add(c.id); else n.delete(c.id); return n; }); } catch (e) { setErr(e.message); } };
+  const markRead = useCallback(async (channelId, lastId) => { setUnread((u) => (u[channelId]?.n ? { ...u, [channelId]: { n: 0, mention: 0 } } : u)); try { await q(supabase.from('msgr_reads').upsert({ channel_id: channelId, user_id: uid, last_read_id: lastId, updated_at: new Date().toISOString() })); } catch { /* 커서 저장 실패는 다음 조회에서 다시 */ } }, [uid]);
+  const [event, setEvent] = useState(null); const [typing, setTyping] = useState({}); const [progress, setProgress] = useState({}); // progress = 실행 카드(단계·도구·사고 과정) 스냅샷, 키 channel:crew
   useEffect(() => { // Realtime — 조직 topic 하나. 방송은 id·채널만 싣는다(본문은 RLS를 지난 조회로).
     if (!orgId) return;
     let ch;
@@ -240,6 +248,9 @@ function Shell({ session }) {
         .on('broadcast', { event: 'message' }, ({ payload }) => { setEvent({ kind: 'message', ...payload, at: Date.now() }); notifyMention(payload); })
         .on('broadcast', { event: 'approval' }, ({ payload }) => { setEvent({ kind: 'approval', ...payload, at: Date.now() }); notifyApproval(payload); })
         .on('broadcast', { event: 'typing' }, ({ payload }) => setTyping((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: Date.now() })))
+        .on('broadcast', { event: 'reaction' }, ({ payload }) => setEvent({ kind: 'reaction', ...payload, at: Date.now() }))
+        .on('broadcast', { event: 'edit' }, ({ payload }) => setEvent({ kind: 'edit', ...payload, at: Date.now() }))
+        .on('broadcast', { event: 'progress' }, ({ payload }) => setProgress((m) => ({ ...m, [`${payload.channel_id}:${payload.crew_id}`]: { ...payload, at: Date.now() } })))
         .subscribe((status, e) => { if (import.meta.env.DEV) console.log('[rt]', status, e?.message ?? ''); });
       rt.current = ch;
       if (import.meta.env.DEV) window.__argoRt = ch;
@@ -247,6 +258,7 @@ function Shell({ session }) {
     return () => { ch?.unsubscribe(); rt.current = null; };
   }, [orgId, session.access_token]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
+  useEffect(() => { if (event?.kind === 'message') loadUnread(); }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!rail && !orgMenu) return; const on = (e) => { if (e.key === 'Escape') { setRail(false); setOrgMenu(false); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [rail, orgMenu]);
   useEffect(() => { if (tick % 2 === 0 && orgId) loadOrg(orgId).catch(() => {}); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const org = orgs?.find((o) => o.id === orgId);
@@ -279,10 +291,10 @@ function Shell({ session }) {
   const me = members.find((m) => m.user_id === uid);
   const isAdmin = org && ['owner', 'admin'].includes(org.role);
   // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
-  const notifyRef = useRef({ channels, members, chId, uid, isAdmin, page });
-  notifyRef.current = { channels, members, chId, uid, isAdmin, page };
+  const notifyRef = useRef({ channels, members, chId, uid, isAdmin, page, muted, quiet });
+  notifyRef.current = { channels, members, chId, uid, isAdmin, page, muted, quiet };
   const osNotify = (title, body, tag) => { try { if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return; const n = new Notification(title, { body, tag }); n.onclick = () => { window.focus(); n.close(); }; } catch { /* 알림 불가 환경 */ } };
-  const shouldNotify = (channelId) => { const r = notifyRef.current; return document.visibilityState === 'hidden' || r.page !== 'chat' || r.chId !== channelId; };
+  const shouldNotify = (channelId) => { const r = notifyRef.current; if (r.muted.has(channelId) || inQuiet(r.quiet)) return false; return document.visibilityState === 'hidden' || r.page !== 'chat' || r.chId !== channelId; }; // 음소거 채널·조용한 시간엔 OS 알림 없음(P0 2026-09-09)
   const notifyMention = (payload) => {
     const r = notifyRef.current;
     if (!payload || payload.author_user_id === r.uid) return;
@@ -438,13 +450,14 @@ function Shell({ session }) {
           <div className="msgr-list">
             {sortedCh.map((c) => { const canManage = isAdmin || c.created_by === uid || (c.admin_user_ids ?? []).includes(uid); const open = railMenu === c.id; return (
               <div key={c.id} className={`msgr-railrow${open ? ' open' : ''}`}>
-                <button type="button" className={`item${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}>
-                  <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>
+                <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}>
+                  <I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${unread[c.id].mention ? ' mark' : ''}${muted.has(c.id) ? ' dim' : ''}`}>{unread[c.id].n}</span>}
                 </button>
                 <button type="button" className="more" onClick={(e) => { e.stopPropagation(); setRailMenu(open ? null : c.id); setRailConfirm(null); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={open}><I name="dots" size={13} /></button>
                 {open && (
                   <div className="msgr-rowmenu" role="menu" onClick={(e) => e.stopPropagation()}>
                     <button type="button" role="menuitem" onClick={() => { setRailMenu(null); setChId(c.id); setPage('chat'); setRail(false); setChSheet(true); }}><I name="gear" size={13} />{t('ch.menu.settings')}</button>
+                    <button type="button" role="menuitem" onClick={() => { setRailMenu(null); toggleMute(c); }}><I name={muted.has(c.id) ? 'bell' : 'belloff'} size={13} />{t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute')}</button>
                     {c.kind === 'private' && (railConfirm === `leave:${c.id}`
                       ? <button type="button" role="menuitem" className="danger confirm" onClick={() => leaveChannel(c)}><I name="out" size={13} /><span className="cf">{t('ch.leave.confirm')}<span className="note">{t('ch.leave.confirm.note')}</span></span></button>
                       : <button type="button" role="menuitem" onClick={() => setRailConfirm(`leave:${c.id}`)}><I name="out" size={13} />{t('ch.leave')}</button>)}
@@ -461,10 +474,11 @@ function Shell({ session }) {
           <div className="msgr-group">{t('ch.dms')}</div>
           <div className="msgr-list">{dms.map((c) => { const open = railMenu === c.id; const withCrew = (dmMembers[c.id] ?? []).some((m) => m.member_kind === 'crew'); return (
             <div key={c.id} className={`msgr-railrow${open ? ' open' : ''}`}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} /><span className="name">{dmName(c)}</span></button>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} /><span className="name">{dmName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               <button type="button" className="more" onClick={(e) => { e.stopPropagation(); setRailMenu(open ? null : c.id); setRailConfirm(null); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={open}><I name="dots" size={13} /></button>
               {open && (
                 <div className="msgr-rowmenu" role="menu" onClick={(e) => e.stopPropagation()}>
+                  <button type="button" role="menuitem" onClick={() => { setRailMenu(null); toggleMute(c); }}><I name={muted.has(c.id) ? 'bell' : 'belloff'} size={13} />{t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute')}</button>
                   {railConfirm === `leave:${c.id}`
                     ? <button type="button" role="menuitem" className="danger confirm" onClick={() => leaveChannel(c)}><I name="out" size={13} /><span className="cf">{t('dm.leave.confirm')}<span className="note">{t('dm.leave.confirm.note')}</span></span></button>
                     : <button type="button" role="menuitem" onClick={() => setRailConfirm(`leave:${c.id}`)}><I name="out" size={13} />{t('dm.leave')}</button>}
@@ -514,7 +528,7 @@ function Shell({ session }) {
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
-          <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} />
+          <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} progress={progress} onRead={markRead} muted={muted.has(channel.id)} broadcast={(ev, payload) => rt.current?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} />
         ) : (
           <EmptyOrg org={org} onMenu={() => setRail(true)} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? invite : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} />
         )}
@@ -867,13 +881,13 @@ function writeInboxSeen(v) { try { localStorage.setItem(INBOX_SEEN_KEY, JSON.str
 /* ─── 프로필(계정 단위): 아이디·표시 이름·찾기 허용 스위치 — msgr_profiles(본인만 쓰기). 친구 찾기의 기준. ─── */
 function ProfileCard({ uid, onNote, onError }) {
   const { t } = useT();
-  const [p, setP] = useState(null); const [busy, setBusy] = useState(false); const [draft, setDraft] = useState({ handle: '', display_name: '', email_search: false, handle_search: true, accept_requests: true });
-  useEffect(() => { q(supabase.from('msgr_profiles').select('*').eq('user_id', uid).maybeSingle()).then((row) => { setP(row ?? {}); if (row) setDraft({ handle: row.handle ?? '', display_name: row.display_name ?? '', email_search: !!row.email_search, handle_search: row.handle_search !== false, accept_requests: row.accept_requests !== false }); }).catch((e) => onError(e.message)); }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [p, setP] = useState(null); const [busy, setBusy] = useState(false); const [draft, setDraft] = useState({ handle: '', display_name: '', email_search: false, handle_search: true, accept_requests: true, quiet_from: null, quiet_to: null });
+  useEffect(() => { q(supabase.from('msgr_profiles').select('*').eq('user_id', uid).maybeSingle()).then((row) => { setP(row ?? {}); if (row) setDraft({ handle: row.handle ?? '', display_name: row.display_name ?? '', email_search: !!row.email_search, handle_search: row.handle_search !== false, accept_requests: row.accept_requests !== false, quiet_from: row.quiet_from ?? null, quiet_to: row.quiet_to ?? null }); }).catch((e) => onError(e.message)); }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps
   const handleOk = !draft.handle || /^[a-z0-9][a-z0-9_.]{2,23}$/.test(draft.handle);
   const save = async () => {
     if (!handleOk) return onError(t('profile.handle.bad'));
     setBusy(true);
-    const res = await supabase.from('msgr_profiles').upsert({ user_id: uid, handle: draft.handle || null, display_name: draft.display_name.trim() || null, email_search: draft.email_search, handle_search: draft.handle_search, accept_requests: draft.accept_requests, updated_at: new Date().toISOString() }, { onConflict: 'user_id' }).select('*').single();
+    const res = await supabase.from('msgr_profiles').upsert({ user_id: uid, handle: draft.handle || null, display_name: draft.display_name.trim() || null, email_search: draft.email_search, handle_search: draft.handle_search, accept_requests: draft.accept_requests, quiet_from: draft.quiet_from, quiet_to: draft.quiet_to, updated_at: new Date().toISOString() }, { onConflict: 'user_id' }).select('*').single();
     setBusy(false);
     if (res.error) return onError(/msgr_profiles_handle_key|duplicate/.test(res.error.message) ? t('profile.handle.taken') : res.error.message);
     setP(res.data); onNote(t('profile.saved'));
@@ -887,6 +901,10 @@ function ProfileCard({ uid, onNote, onError }) {
       <div className="row"><label className="msgr-check"><input type="checkbox" checked={draft.email_search} onChange={(e) => setDraft({ ...draft, email_search: e.target.checked })} /> {t('profile.emailSearch')}</label></div>
       <div className="row"><label className="msgr-check"><input type="checkbox" checked={draft.handle_search} onChange={(e) => setDraft({ ...draft, handle_search: e.target.checked })} /> {t('profile.handleSearch')}</label></div>
       <div className="row"><label className="msgr-check"><input type="checkbox" checked={draft.accept_requests} onChange={(e) => setDraft({ ...draft, accept_requests: e.target.checked })} /> {t('profile.acceptRequests')}</label></div>
+      <div className="row"><span className="msgr-klabel" style={{ width: 72 }}>{t('profile.quiet')}</span><label className="msgr-check"><input type="checkbox" checked={draft.quiet_from != null} onChange={(e) => setDraft({ ...draft, quiet_from: e.target.checked ? 22 : null, quiet_to: e.target.checked ? 7 : null })} /> {t('profile.quiet.on')}</label>
+        {draft.quiet_from != null && <><select className="msgr-sort" value={draft.quiet_from} onChange={(e) => setDraft({ ...draft, quiet_from: +e.target.value })}>{Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{t('profile.quiet.hour', { h })}</option>)}</select><span className="msgr-klabel">~</span><select className="msgr-sort" value={draft.quiet_to ?? 7} onChange={(e) => setDraft({ ...draft, quiet_to: +e.target.value })}>{Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{t('profile.quiet.hour', { h })}</option>)}</select></>}
+      </div>
+      <p className="note">{t('profile.quiet.desc')}</p>
       <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !handleOk} onClick={save}>{t('ui.save')}</button>{!handleOk && <span className="note">{t('profile.handle.bad')}</span>}</div>
     </section>
   );
@@ -1006,8 +1024,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
     </div>
     <div className="msgr-thread page"><div className="msgr-settings tabs">
       <nav className="msgr-setnav" aria-label={t('ui.settings')}>
-        <button type="button" className={`msgr-setme${tab === 'me' ? ' on' : ''}`} onClick={() => setTab('me')} aria-current={tab === 'me' ? 'page' : undefined}><Av name={me?.display_name || session.user.email} size="sm" /><span className="who"><b>{me?.display_name || session.user.email}</b><span className="msgr-klabel">{session.user.email}</span></span></button>{/* 텔레그램식 상단 프로필 카드(유건 참고 2026-09-09) */}
-        {tabs.filter(([k]) => k !== 'me').map(([k, label]) => <button key={k} type="button" className={tab === k ? 'on' : ''} aria-current={tab === k ? 'page' : undefined} onClick={() => setTab(k)}>{t(label)}</button>)}
+        {tabs.map(([k, label]) => <button key={k} type="button" className={tab === k ? 'on' : ''} aria-current={tab === k ? 'page' : undefined} onClick={() => setTab(k)}>{t(label)}</button>)}
       </nav>
       <div className="msgr-setbody">
         {tab === 'members' && org && (isAdmin
@@ -1858,7 +1875,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, joinable = []
 }
 
 /* ─── 채널 본문: 상단(제목·멤버 스택·세그먼트 탭) + 척추 스레드 + 2단 독 ─── */
-function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], chCrews = [], nameOfUser, crewOf, event, typing, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName }) {
+function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], chCrews = [], nameOfUser, crewOf, event, typing, progress = {}, onRead, muted = false, broadcast, onError, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName }) {
   const { t, lang } = useT();
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
   const [tab, setTab] = useState('all');
@@ -1867,7 +1884,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
   useEffect(() => { const el = feed.current; if (!el) return; const m = () => setSbw((el.offsetWidth - el.clientWidth) / 2); m(); window.addEventListener('resize', m); return () => window.removeEventListener('resize', m); }, []);
   const chId = channel.id;
   const load = useCallback(async (afterId = 0) => {
-    const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, deleted_at')
+    const rows = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta')
       .eq('channel_id', chId).gt('id', afterId).order('id', { ascending: afterId ? true : false }).limit(PAGE));
     const list = afterId ? rows : rows.reverse();
     setMsgs((cur) => { const base = cur ?? []; const seen = new Set(base.map((m) => m.id)); return afterId ? [...base, ...list.filter((m) => !seen.has(m.id))] : list; });
@@ -1875,29 +1892,48 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
     if (ids.length) {
       const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids));
       setAtts((cur) => { const n = { ...cur }; for (const r of a) (n[r.message_id] ??= []).push(r); return n; });
+      const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').in('message_id', ids));
+      setReacts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of rx) (n[r.message_id] ??= []).push(r); return n; });
     }
+    if (!afterId) { const rd = await q(supabase.from('msgr_reads').select('last_read_id').eq('channel_id', chId).eq('user_id', uid).maybeSingle()).catch(() => null); setDivider(rd?.last_read_id ?? 0); } // 새 메시지 구분선 기준 — 열 때 한 번 고정
     const apRows = await q(supabase.from('msgr_crew_approvals').select('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id, risk, kind, payload').eq('channel_id', chId));
     setAps(Object.fromEntries(apRows.map((r) => [r.id, r])));
   }, [chId]);
   useEffect(() => { load().catch((e) => onError(e.message)); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [reacts, setReacts] = useState({}); const [divider, setDivider] = useState(0); // 반응(메시지별)·새 메시지 구분선(열 때의 읽음 커서)
+  const reloadReacts = useCallback(async (id) => { const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').eq('message_id', id)); setReacts((cur) => ({ ...cur, [id]: rx })); }, []);
+  const reloadMsg = useCallback(async (id) => { const row = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, created_at, edited_at, deleted_at, meta').eq('id', id).maybeSingle()); if (row) setMsgs((cur) => (cur ?? []).map((m) => (m.id === id ? row : m))); }, []);
+  const toggleReact = async (m, emoji) => { try { const mine = (reacts[m.id] ?? []).some((r) => r.user_id === uid && r.emoji === emoji); if (mine) await q(supabase.from('msgr_reactions').delete().eq('message_id', m.id).eq('user_id', uid).eq('emoji', emoji)); else await q(supabase.from('msgr_reactions').insert({ message_id: m.id, user_id: uid, emoji })); await reloadReacts(m.id); broadcast?.('reaction', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
+  const editMsg = async (m, body) => { try { await q(supabase.from('msgr_messages').update({ body, edited_at: new Date().toISOString() }).eq('id', m.id)); await reloadMsg(m.id); broadcast?.('edit', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
+  const deleteMsg = async (m) => { try { await q(supabase.from('msgr_messages').update({ body: '', deleted_at: new Date().toISOString() }).eq('id', m.id)); await reloadMsg(m.id); broadcast?.('edit', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
   const lastId = msgs?.at(-1)?.id ?? 0;
   useEffect(() => {
     if (!event) return;
     if ((event.kind === 'message' || event.kind === 'approval') && event.channel_id === chId) load(lastId).catch(() => {});
+    if (event.kind === 'reaction' && event.channel_id === chId && event.message_id) reloadReacts(event.message_id).catch(() => {});
+    if (event.kind === 'edit' && event.channel_id === chId && event.message_id) reloadMsg(event.message_id).catch(() => {});
   }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
   const stick = useRef(true); // 바닥 고정 여부 — 사용자가 바닥에서 40px 넘게 올려두면 false(QA: 열릴 때 30px 모자라게 멈춰 마지막 메시지가 가려졌다)
   useEffect(() => { stick.current = true; }, [chId]);
   useEffect(() => {
     const el = feed.current; if (!el) return;
-    const onScroll = () => { stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; };
+    // 고정 해제는 사용자 의도(휠·터치·키·스크롤바 드래그)가 있을 때만 — 프로그램 스크롤(toBottom) 뒤 늦게 도착한 scroll 이벤트가
+    // 그 사이 자란 내용(실행 카드·Markdown 지연 렌더) 때문에 gap≥40으로 읽혀 고정을 풀던 경합(실측 2026-09-09: gap 294px에서 멈춤).
+    let userAt = 0; let dragging = false;
+    const mark = () => { userAt = Date.now(); };
+    const onScroll = () => { const gap = el.scrollHeight - el.scrollTop - el.clientHeight; if (gap < 40) stick.current = true; else if (dragging || Date.now() - userAt < 600) stick.current = false; };
     el.addEventListener('scroll', onScroll, { passive: true });
+    el.addEventListener('wheel', mark, { passive: true }); el.addEventListener('touchmove', mark, { passive: true }); el.addEventListener('keydown', mark);
+    const down = () => { dragging = true; }; const up = () => { dragging = false; };
+    el.addEventListener('pointerdown', down); window.addEventListener('pointerup', up);
     const toBottom = () => { if (stick.current) el.scrollTop = el.scrollHeight; };
     const ro = new ResizeObserver(toBottom); // 렌더 뒤 높이 변화(Markdown·첨부·타이핑 표시)에도 바닥을 따라간다
     const spine = el.firstElementChild; if (spine) ro.observe(spine);
     toBottom();
-    return () => { el.removeEventListener('scroll', onScroll); ro.disconnect(); };
+    return () => { el.removeEventListener('scroll', onScroll); el.removeEventListener('wheel', mark); el.removeEventListener('touchmove', mark); el.removeEventListener('keydown', mark); el.removeEventListener('pointerdown', down); window.removeEventListener('pointerup', up); ro.disconnect(); };
   }, [chId]);
   useEffect(() => { const el = feed.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [msgs?.length]);
+  useEffect(() => { if (!lastId) return; const mark = () => { if (document.visibilityState !== 'hidden') onRead?.(chId, lastId); }; mark(); document.addEventListener('visibilitychange', mark); return () => document.removeEventListener('visibilitychange', mark); }, [chId, lastId]); // eslint-disable-line react-hooks/exhaustive-deps
   // 폴링 폴백(10s) — Realtime이 끊기거나 구독이 거부돼도 새 메시지가 화면에 도달한다(정본은 언제나 조회, 방송은 깨우기 신호)
   useEffect(() => { const iv = setInterval(() => load(lastId).catch(() => {}), 10_000); return () => clearInterval(iv); }, [load, lastId]);
   const decide = async (ap, status) => {
@@ -1907,6 +1943,9 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
     load(lastId).catch(() => {});
   };
   const typingCrews = Object.entries(typing).filter(([k, at]) => k.startsWith(`${chId}:`) && Date.now() - at < 6000).map(([k]) => crewOf(k.split(':')[1])).filter(Boolean);
+  // 실행 카드 — progress 방송(1.5초 주기)이 있는 크루는 점 세 개 대신 단계·도구·사고 과정 카드. 8초 무갱신이면 만료(브리지 심박 30초는 typing이 덮는다).
+  const working = Object.entries(progress).filter(([k, p]) => k.startsWith(`${chId}:`) && Date.now() - p.at < 8000 && typing[k] && Date.now() - typing[k] < 6000).map(([k, p]) => [crewOf(k.split(':')[1]), p]).filter(([c]) => c);
+  const workingIds = new Set(working.map(([c]) => c.id));
   const apOf = (m) => m.kind === 'approval_card' ? aps[(m.mentions ?? []).find((x) => x.kind === 'approval')?.id] : null;
   const isMention = (m) => (m.mentions ?? []).some((x) => x.kind === 'user' && x.id === uid);
   const all = msgs ?? [];
@@ -1914,11 +1953,12 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
   const isPending = (m) => apOf(m)?.status === 'pending';
   const counts = { mention: all.filter(isMention).length, approval: all.filter(isPending).length, crew: all.filter((m) => m.author_kind === 'crew').length };
   const shown = all.filter((m) => tab === 'all' || (tab === 'mention' && isMention(m)) || (tab === 'approval' && isPending(m)) || (tab === 'crew' && m.author_kind === 'crew'));
-  const rows = []; let day = null;
+  const rows = []; let day = null; let newLine = false;
   for (const m of shown) {
+    if (divider > 0 && !newLine && m.id > divider && !(m.author_kind === 'user' && m.author_user_id === uid)) { newLine = true; rows.push(<div key="newline" className="msgr-newline"><span>{t('msg.new')}</span></div>); }
     const k = dayKey(m.created_at);
     if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
-    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} onCrew={onCrew} onError={onError} />);
+    rows.push(<Message key={m.id} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? all.find((x) => x.id === m.reply_to) : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} />);
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'stamp', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
@@ -1926,6 +1966,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
       <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
       <button type="button" className="title msgr-titlebtn" onClick={onTitle} title={t('ch.sheet')}><I name={channel.kind === 'private' ? 'lock' : channel.kind === 'dm' ? 'at' : 'hash'} size={18} />{channel.kind === 'dm' ? dmName(channel) : channel.name}<I name="caret" size={13} className="caret" /></button>
       {channel.topic && <span className="topic">{channel.topic}</span>}
+      {muted && <span className="msgr-klabel" title={t('ch.muted')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><I name="belloff" size={13} />{t('ch.muted')}</span>}
       {channel.crew_memory === false && <span className="msgr-klabel" title={t('ch.crewMemory')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><I name="memoff" size={13} />{t('ch.memoryOff')}</span>}
       <button type="button" className="members" onClick={onTitle} title={t('ch.composition')} aria-label={t('ch.composition')}>{people.slice(0, 4).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} size="sm" />)}{chCrews.slice(0, 3).map((c) => <Av key={c.id} name={c.display_name} crew size="sm" company={crewTier(c, org) === 'company'} />)}<span className="n">{t('ch.composition.count', { p: people.length, c: chCrews.length })}</span></button>
       {channel.kind !== 'dm' && <button type="button" className="btn sm crewbtn" onClick={onCrewAdd} title={t('ch.crews.btn.title')}><I name="star" size={13} />{t('ch.crews.btn')}</button>}
@@ -1936,15 +1977,22 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
         {msgs === null && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-skel"><i /><i /><i /></div></div>}
         {msgs !== null && !all.length && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-sys">{t('ch.empty')}</div></div>}
         {rows}
-        {typingCrews.map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /></div></div></div>)}
+        {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} p={p} t={t} />)}
+        {typingCrews.filter((c) => !workingIds.has(c.id)).map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /></div></div></div>)}
       </div>
     </div>
     <Composer chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} locked={locked} sbw={sbw} typingCrews={typingCrews} mentionReq={mentionReq} onMentionDone={onMentionDone} onSent={() => load(lastId).catch(() => {})} onError={onError} />
   </>);
 }
 
-function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError }) {
+const EMOJIS = ['👍', '✅', '👀', '❤️', '😂', '🙏'];
+function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete }) {
   const [copied, setCopied] = useState(false);
+  const [pick, setPick] = useState(false); const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(''); const [confirmDel, setConfirmDel] = useState(false);
+  const groups = Object.entries(reacts.reduce((acc, r) => { (acc[r.emoji] ??= []).push(r.user_id); return acc; }, {}));
+  const chips = groups.length > 0 && <div className="msgr-reacts">{groups.map(([e, users]) => <button key={e} type="button" className={users.includes(uid) ? 'on' : ''} onClick={() => onReact?.(m, e)} title={users.map((u) => nameOfUser(u)).join(', ')}>{e}<span>{users.length}</span></button>)}</div>;
+  const picker = pick && <div className="msgr-picker" role="menu">{EMOJIS.map((e) => <button key={e} type="button" onClick={() => { setPick(false); onReact?.(m, e); }}>{e}</button>)}</div>;
+  const edited = m.edited_at && !m.deleted_at && <span className="msgr-klabel">{t('msg.edited')}</span>;
   const crew = m.crew_id ? crewOf(m.crew_id) : null;
   const name = m.author_kind === 'user' ? nameOfUser(m.author_user_id) : (crew?.display_name ?? t('org.crews'));
   const body = m.deleted_at ? '' : m.body;
@@ -1952,12 +2000,27 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
   const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {parent.body}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
   const attRow = atts.length > 0 && <div>{atts.map((a) => <Attachment key={a.id} a={a} onError={onError} />)}</div>;
-  const acts = !ap && !m.deleted_at && <div className="msgr-acts"><button type="button" onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button></div>;
+  const acts = !ap && !m.deleted_at && !editing && (
+    <div className="msgr-acts">
+      <button type="button" onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button>
+      <button type="button" onClick={() => setPick((v) => !v)} aria-expanded={pick}><I name="star" size={12} />{t('msg.react')}</button>
+      {mine && m.kind === 'text' && <button type="button" onClick={() => { setDraft(m.body); setEditing(true); }}><I name="gear" size={12} />{t('ui.edit')}</button>}
+      {mine && (confirmDel ? <button type="button" className="danger" onClick={() => { setConfirmDel(false); onDelete?.(m); }}><I name="x" size={12} />{t('msg.delete.confirm')}</button> : <button type="button" onClick={() => setConfirmDel(true)}><I name="x" size={12} />{t('ui.delete')}</button>)}
+      {picker}
+    </div>
+  );
+  const editor = editing && (
+    <form className="msgr-editbox" onSubmit={(e) => { e.preventDefault(); if (draft.trim()) onEdit?.(m, draft.trim()); setEditing(false); }}>
+      <textarea className="msgr-input" rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setEditing(false); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form.requestSubmit(); } }} autoFocus />
+      <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!draft.trim()}>{t('ui.save')}</button><button type="button" className="btn sm" onClick={() => setEditing(false)}>{t('ui.cancel')}</button></div>
+    </form>
+  );
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
     <div className="msgr-mine">
-      <div className="bubble">{quote}{m.deleted_at ? <i>{t('msg.deleted')}</i> : <Body text={body} />}</div>
+      {editing ? editor : <div className="bubble">{quote}{m.deleted_at ? <i>{t('msg.deleted')}</i> : <Body text={body} />}</div>}
       {attRow}
-      <div className="meta"><I name="check" size={12} /><span className="mono">{fmtTs(m.created_at, lang)}</span></div>
+      {chips}
+      <div className="meta">{edited}<I name="check" size={12} /><span className="mono">{fmtTs(m.created_at, lang)}</span></div>
       {acts}
     </div>
   );
@@ -1966,16 +2029,66 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
     <div className="msgr-row">
       {isCrew && crew ? <button type="button" className="msgr-avbtn" onClick={() => onCrew?.(crew.id)} title={t('crew.sheet')}><Av name={name} crew /></button> : <Av name={name} crew={isCrew} />}
       <div style={{ minWidth: 0 }}>
-        <div className="who">{isCrew && crew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew?.(crew.id)}>{name}</button> : name}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
+        <div className="who">{isCrew && crew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew?.(crew.id)}>{name}</button> : name}{edited}{crew?.role_text && <span className="role">{crew.role_text} · {t('org.crews')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
         {m.deleted_at ? <div className="msgr-sys">{t('msg.deleted')}</div>
           : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} isAdmin={isAdmin} policy={policy} />
           : m.kind === 'system' ? <div className="msgr-sys">{body}</div>
-          : isCrew ? <div className="msgr-sheet">{quote}<Markdown text={body} /></div>
+          : isCrew ? <div className="msgr-sheet">{quote}{m.meta?.trace && <Trace trace={m.meta.trace} t={t} />}<Markdown text={body} /></div>
           : <div className="text">{quote}<Body text={body} /></div>}
         {attRow}
+        {chips}
         {acts}
       </div>
     </div>
+  );
+}
+
+/** 단계 라벨 — 서버는 코드만 남기고 여기서 번역(아르고 stageLabel과 같은 규칙). */
+function stageLabel(t, stage, detail = '') { if (!stage) return t('chat.stage.work'); return stage === 'runner' ? t('chat.stage.runner', { name: detail || '' }) : t(`chat.stage.${stage}`); }
+const fmtSec = (ms) => `${Math.max(0, Math.round((ms ?? 0) / 100) / 10)}s`;
+/** 단계 목록 — 클로드코드의 도구 라벨처럼 한 줄에 단계·디테일·시각. */
+function StepList({ steps = [], t }) {
+  if (!steps.length) return null;
+  return <ol className="msgr-steps">{steps.map((s, i) => <li key={i}><span className="mono">{fmtSec(s.t)}</span><span className="st">{stageLabel(t, s.stage, s.detail)}</span>{s.detail && s.stage !== 'runner' && <span className="dt mono" title={s.detail}>{s.detail}</span>}</li>)}</ol>;
+}
+/** 실행 카드 — 크루가 일하는 동안 점 세 개 대신 단계·경과·도구 단계·사고 과정·부분 텍스트를 드롭다운으로(유건 요청 2026-09-09: 클로드코드·코덱스처럼 실시간). */
+function ExecCard({ crew, p, t }) {
+  const [, tick] = useState(0);
+  useEffect(() => { const iv = setInterval(() => tick((x) => x + 1), 1000); return () => clearInterval(iv); }, []);
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem('argo-msgr-exec-open') !== '0'; } catch { return true; } });
+  const toggle = (e) => { setOpen(e.currentTarget.open); try { localStorage.setItem('argo-msgr-exec-open', e.currentTarget.open ? '1' : '0'); } catch {} };
+  const elapsed = Math.max(0, Date.now() - (p.startedAt ?? p.at));
+  const tools = (p.steps ?? []).filter((s) => s.stage !== 'think' && s.stage !== 'boot' && s.stage !== 'runner').length;
+  return (
+    <div className="msgr-row">
+      <Av name={crew.display_name} crew />
+      <div style={{ minWidth: 0 }}>
+        <div className="who">{crew.display_name}<span className="role">{crew.role_text}</span></div>
+        <details className="msgr-exec" open={open} onToggle={toggle}>
+          <summary><span className="msgr-dot mark pulse" /><span className="st">{stageLabel(t, p.stage, p.detail)}</span>{p.detail && p.stage !== 'runner' && <span className="dt mono">{p.detail}</span>}<span className="msgr-klabel">{t('exec.meta', { s: fmtSec(elapsed), n: tools })}</span><I name="caret" size={12} className="caret" /></summary>
+          <div className="body">
+            {p.thought && <div className="sec"><div className="msgr-klabel">{t('exec.thought')}</div><pre className="thought">{p.thought}</pre></div>}
+            <div className="sec"><div className="msgr-klabel">{t('exec.steps')}</div><StepList steps={p.steps} t={t} />{!(p.steps ?? []).length && <div className="msgr-sys">{t('exec.noSteps')}</div>}</div>
+            {p.partial && <div className="sec"><div className="msgr-klabel">{t('exec.partial')}</div><Markdown text={p.partial} /></div>}
+          </div>
+        </details>
+      </div>
+    </div>
+  );
+}
+/** 궤적 — 완료된 답글 위의 접힌 '사고 과정 · 도구 N회 · 경과' 드롭다운(기본 접힘). */
+function Trace({ trace, t }) {
+  const steps = trace.steps ?? [];
+  const tools = steps.filter((s) => s.stage !== 'think' && s.stage !== 'boot' && s.stage !== 'runner').length;
+  if (!steps.length && !trace.thought) return null;
+  return (
+    <details className="msgr-trace">
+      <summary><I name="star" size={12} /><span>{t('trace.summary', { s: fmtSec(trace.ms), n: tools })}</span>{trace.model && <span className="msgr-klabel mono">{trace.model}</span>}<I name="caret" size={12} className="caret" /></summary>
+      <div className="body">
+        {trace.thought && <div className="sec"><div className="msgr-klabel">{t('exec.thought')}</div><pre className="thought">{trace.thought}</pre></div>}
+        {steps.length > 0 && <div className="sec"><div className="msgr-klabel">{t('exec.steps')}</div><StepList steps={steps} t={t} /></div>}
+      </div>
+    </details>
   );
 }
 

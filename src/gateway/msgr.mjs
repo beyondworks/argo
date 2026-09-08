@@ -36,6 +36,7 @@ import { resolveWithFollowUp } from '../approval-actions.mjs';
 import { extractFileRefs, attachFailureNote, isImagePath } from '../tg-format.mjs';
 import { createHash } from 'node:crypto';
 import { channelSends } from '../channel-events.mjs';
+import { getTurnStatus } from '../turn-status.mjs';
 
 export const MSGR_KEY = 'msgr';
 export const POLL_MS = 15_000;          // 폴 주기 = 하트비트 주기(같은 tick). 앱은 last_seen_at 90s 초과를 부재중으로 그린다
@@ -44,6 +45,7 @@ export const AWAY_NOTE_MS = 90_000;     // 이보다 늦게 처리한 답글엔 
 export const PAGE = 50;                 // 크루당 1회 drain 최대 메시지 — 비용 폭주 방지(나머지는 다음 tick)
 const MSG_MAX = 20_000;                 // msgr_messages.body check 제약과 동일
 const TYPING_MS = 4_000;
+const PROGRESS_MS = 1_500; // 실행 카드 방송 주기 — 바뀐 스냅샷만 보낸다
 const ATTACH_MAX = 25 * 1024 * 1024;   // 첨부 내려받기 상한 — 소유자 디스크 보호(앱 업로드 상한과 동일)
 const clean = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n); // 채널명·이름 세척 — 프롬프트 문맥 줄에 실린다(인젝션 표면)
 
@@ -394,8 +396,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const ctx = { chatType: 'group', kind: 'msgr', orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, uid, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '' };
     const ctxKey = `${wsId}:${job.slug}`;
     activeCtx.set(ctxKey, ctx);
-    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId);
-    let reply; let failed = false;
+    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug);
+    let reply; let failed = false; let turnTrace = null;
     try {
       const t = await loadThread(wsId, job.slug);
       const turn = await runChat(wsId, job.slug, text, t.sessionId, {
@@ -404,7 +406,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       });
       await appendTurn(wsId, job.slug, { userMsg: text, reply: turn.reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
         via: 'msgr', actor: { uid: job.authorId, name: authorName } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭)
-      reply = turn.reply;
+      reply = turn.reply; turnTrace = turn.trace ?? null;
     } catch (e) {
       failed = true;
       reply = pick(`처리 실패: ${String(e.message).slice(0, 200)}`, `Failed: ${String(e.message).slice(0, 200)}`, lang);
@@ -423,6 +425,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       row = await db.insertMessage({
         channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId,
         client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(reply ?? '').slice(0, MSG_MAX),
+        ...(turnTrace ? { meta: { trace: turnTrace } } : {}), // 궤적 — 답글의 '사고 과정·도구 사용' 드롭다운(실패 턴은 없음)
       });
     } catch (e) { console.error(`[argo] msgr 답글 insert 실패(${wsId}/${job.slug}/${job.msgId}) — 잡 종결:`, e.message); return; }
     if (!row || failed) return; // 중복(다른 기기가 먼저 답함) 또는 실패 — 첨부 없음
@@ -446,14 +449,28 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
   };
 }
 
-function startTyping(wsId, orgId, channelId, crewId) {
+function startTyping(wsId, orgId, channelId, crewId, slug = null) {
   const ch = rtChannels.get(`${wsId}:${orgId}`);
   if (!ch) return () => {};
   const send = () => ch.send({ type: 'broadcast', event: 'typing', payload: { channel_id: channelId, crew_id: crewId } }).catch?.(() => {});
   try { send(); } catch { /* 무해 */ }
   const iv = setInterval(() => { try { send(); } catch { /* 무해 */ } }, TYPING_MS);
   iv.unref?.();
-  return () => clearInterval(iv);
+  // progress — 상태 파일(chats/<slug>.status.json: 단계·도구 단계 목록·사고 과정·부분 텍스트)을 1.5초마다 읽어 바뀐 것만 방송.
+  // 클라이언트 실행 카드가 클로드코드식 드롭다운으로 실시간 표시(유건 요청 2026-09-09). typing 방송은 구클라이언트용으로 유지.
+  let last = '';
+  const pump = async () => {
+    const s = slug ? await getTurnStatus(wsId, slug).catch(() => null) : null;
+    if (!s) return;
+    const payload = { channel_id: channelId, crew_id: crewId, stage: s.stage, detail: s.detail, steps: (s.steps ?? []).slice(-40), thought: s.thought, partial: String(s.partial ?? '').slice(-1200), startedAt: s.startedAt };
+    const key = JSON.stringify(payload);
+    if (key === last) return;
+    last = key;
+    await ch.send({ type: 'broadcast', event: 'progress', payload }).catch?.(() => {});
+  };
+  const pv = slug ? setInterval(() => { pump().catch(() => {}); }, PROGRESS_MS) : null;
+  pv?.unref?.();
+  return () => { clearInterval(iv); if (pv) clearInterval(pv); };
 }
 
 /* ─── push — 코어 이벤트(onNotify)를 채널로. msgr 문맥이 없는 이벤트는 즉시 반환(클라이언트 생성 0). ─── */
