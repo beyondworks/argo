@@ -109,13 +109,15 @@ test('format openai-chat — 헤르메스 API 서버(/v1/chat/completions) 모�
 });
 
 test('목적지 가드(HIGH-3) — userinfo 금지·공인 호스트 https 강제·루프백/사설망 http 허용·호스팅 런타임 차단·리다이렉트 거절', async () => {
-  assert.equal(assertHttpTextEndpoint('http://127.0.0.1:8642/v1/chat/completions'), 'http://127.0.0.1:8642/v1/chat/completions');
-  for (const ok of ['http://localhost:8642/x', 'http://10.0.0.5/x', 'http://192.168.1.2/x', 'http://172.16.0.9/x', 'http://[::1]:1/x', 'http://hermes.local/x', 'https://agent.example.com/v1']) assert.doesNotThrow(() => assertHttpTextEndpoint(ok), ok);
-  await assert.rejects(async () => assertHttpTextEndpoint('http://agent.example.com/v1'), /https/);
-  await assert.rejects(async () => assertHttpTextEndpoint('http://8.8.8.8/v1'), /https/);
-  await assert.rejects(async () => assertHttpTextEndpoint('http://user:s3cr3t@127.0.0.1/x'), (e) => /사용자명/.test(e.message) && !/s3cr3t/.test(e.message), 'userinfo 거절 + 비밀번호 미노출');
-  await assert.rejects(async () => assertHttpTextEndpoint('ftp://127.0.0.1/x'), /http:\/\/ 또는 https:\/\//);
-  await assert.rejects(async () => assertHttpTextEndpoint('https://agent.example.com/v1', { hosted: true }), /호스팅|hosted/);
+  assert.equal(await assertHttpTextEndpoint('http://127.0.0.1:8642/v1/chat/completions', { hosted: false }), 'http://127.0.0.1:8642/v1/chat/completions');
+  assert.equal(await assertHttpTextEndpoint('"https://a.example/x"', { hosted: false }), 'https://a.example/x', '손편집 YAML 따옴표 허용(L-3)');
+  for (const ok of ['http://localhost:8642/x', 'http://10.0.0.5/x', 'http://192.168.1.2/x', 'http://172.16.0.9/x', 'http://[::1]:1/x', 'http://hermes.local/x', 'https://agent.example.com/v1']) await assert.doesNotReject(() => assertHttpTextEndpoint(ok, { hosted: false }), ok);
+  await assert.rejects(() => assertHttpTextEndpoint('http://agent.example.com/v1', { hosted: false }), /https/);
+  await assert.rejects(() => assertHttpTextEndpoint('http://8.8.8.8/v1', { hosted: false }), /https/);
+  await assert.rejects(() => assertHttpTextEndpoint('http://user:s3cr3t@127.0.0.1/x', { hosted: false }), (e) => /사용자명/.test(e.message) && !/s3cr3t/.test(e.message), 'userinfo 거절 + 비밀번호 미노출');
+  await assert.rejects(() => assertHttpTextEndpoint('ftp://127.0.0.1/x', { hosted: false }), /http:\/\/ 또는 https:\/\//);
+  await assert.rejects(() => assertHttpTextEndpoint('https://agent.example.com/v1', { hosted: true }), /호스팅|hosted/);
+  { const saved = process.env.ARGO_TENANT_OWNER; process.env.ARGO_TENANT_OWNER = 'svc'; try { await assert.rejects(() => assertHttpTextEndpoint('https://agent.example.com/v1'), /호스팅|hosted/, 'hosted 미지정이면 정본 술어(httpRunnerBlockedHere)를 탄다 — 약한 기본값 금지(M-A)'); } finally { if (saved === undefined) delete process.env.ARGO_TENANT_OWNER; else process.env.ARGO_TENANT_OWNER = saved; } }
   // 리다이렉트: 302가 POST를 GET으로 바꿔 프롬프트 없이 200을 답으로 채택하던 경로 — **도달 가능한** 목적지로 거절을 실증(2차 검수 M-1: 닿지 않는 목적지는 follow여도 status 0)
   const target = await fake((req, res) => json(res, 200, { text: 'REDIRECTED-ANSWER' }));
   const f = await fake((req, res) => { res.writeHead(302, { location: target.url }); res.end(); });
@@ -123,8 +125,8 @@ test('목적지 가드(HIGH-3) — userinfo 금지·공인 호스트 https 강�
     await assert.rejects(execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 3000 }), (e) => /^API Error: 0 /.test(e.message) && /redirect/i.test(e.message));
     assert.equal(target.seen.length, 0, '리다이렉트 목적지에 닿지 않는다');
   } finally { await f.close(); await target.close(); }
-  await assert.rejects(async () => assertHttpTextEndpoint('http://169.254.169.254/latest/meta-data'), /허용되지 않는 목적지|not an allowed/, '링크로컬 메타데이터 차단(HIGH-C)');
-  await assert.rejects(async () => assertHttpTextEndpoint('http://0.0.0.0/x'), /허용되지 않는/);
+  await assert.rejects(() => assertHttpTextEndpoint('http://169.254.169.254/latest/meta-data', { hosted: false }), /허용되지 않는 목적지|not an allowed/, '링크로컬 메타데이터 차단(HIGH-C)');
+  await assert.rejects(() => assertHttpTextEndpoint('http://0.0.0.0/x', { hosted: false }), /허용되지 않는/);
 });
 
 test('응답 상한(MEDIUM-1) — 바이트로 세며 읽다가 넘기면 끊는다(전량 버퍼링 없음), content-length 선차단, 배열 content 병합', async () => {
@@ -147,10 +149,21 @@ test('호스팅 판정은 market.mjs arbitraryMcpBlocked와 같은 술어(HIGH-C
   const { arbitraryMcpBlocked } = await import('../src/market.mjs');
   const saved = { ...process.env };
   try {
-    for (const env of [{ ARGO_TENANT_OWNER: 'svc' }, { ARGO_STANDALONE: '1' }, { ARGO_ALLOW_CUSTOM_MCP: '1' }, {}]) {
-      for (const k of ['ARGO_TENANT_OWNER', 'ARGO_STANDALONE', 'ARGO_ALLOW_CUSTOM_MCP']) delete process.env[k];
+    for (const env of [{ ARGO_TENANT_OWNER: 'svc' }, { ARGO_STANDALONE: '1' }, { ARGO_ALLOW_CUSTOM_MCP: '1' }, { SUPABASE_SERVICE_ROLE_KEY: 'x' }, { SUPABASE_SERVICE_ROLE_KEY: 'x', ARGO_STANDALONE: '1' }, {}]) { // 서비스 키 행 = 두 술어가 갈리는 유일한 행(3차 검수 M-A)
+      for (const k of ['ARGO_TENANT_OWNER', 'ARGO_STANDALONE', 'ARGO_ALLOW_CUSTOM_MCP', 'SUPABASE_SERVICE_ROLE_KEY']) delete process.env[k];
       Object.assign(process.env, env);
       assert.equal(await httpRunnerBlockedHere(), arbitraryMcpBlocked(), JSON.stringify(env));
     }
-  } finally { for (const k of ['ARGO_TENANT_OWNER', 'ARGO_STANDALONE', 'ARGO_ALLOW_CUSTOM_MCP']) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
+  } finally { for (const k of ['ARGO_TENANT_OWNER', 'ARGO_STANDALONE', 'ARGO_ALLOW_CUSTOM_MCP', 'SUPABASE_SERVICE_ROLE_KEY']) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
+});
+
+test('본문 단계 시간 초과·큰 401 본문·키 에코(3차 검수 M-B·L-1·L-5) — 헤더 200 뒤 본문이 멈춰도 timedOut, 200KB 넘는 401도 httpStatus 401, 에코된 키는 마스킹', async () => {
+  const hung = []; const hang = await fake((req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); res.write('partial'); hung.push(res); /* 끝내지 않는다 — req 'close'는 요청 본문 소비 시점이라 여기서 destroy하면 즉시 리셋('terminated')이 된다 */ });
+  try { await assert.rejects(execHttpText({ endpoint: hang.url, prompt: 'x', timeoutMs: 1000, hosted: false }), (e) => e.timedOut === true && /시간 초과/.test(e.message), '본문 정지 게이트웨이도 timedOut 분류'); } finally { for (const r of hung) r.destroy(); await hang.close(); }
+  const reset = await fake((req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); res.write('partial'); setTimeout(() => res.destroy(), 20); });
+  try { await assert.rejects(execHttpText({ endpoint: reset.url, prompt: 'x', timeoutMs: 5000, hosted: false }), (e) => e.httpStatus === 0 && /^API Error: 0 /.test(e.message), '본문 중 단절은 연결 실패와 같은 status 0(맨 terminated 아님)'); } finally { await reset.close(); }
+  const big401 = await fake((req, res) => { res.writeHead(401, { 'content-type': 'text/plain' }); res.end('unauthorized ' + 'z'.repeat(300_000)); });
+  try { await assert.rejects(execHttpText({ endpoint: big401.url, prompt: 'x', timeoutMs: 5000, hosted: false, maxBody: 100_000 }), (e) => e.httpStatus === 401 && /^API Error: 401 /.test(e.message), '상태 판정이 상한보다 먼저 — 각인(불변식 A)을 잃지 않는다'); } finally { await big401.close(); }
+  const echo = await fake((req, res) => json(res, 401, { error: `bad auth header: ${req.headers.authorization}` }));
+  try { await assert.rejects(execHttpText({ endpoint: echo.url, prompt: 'x', timeoutMs: 5000, hosted: false, cred: { env: { ARGO_HTTP_KEY: 'hermes-secret-key-123' } } }), (e) => e.httpStatus === 401 && !/hermes-secret-key-123/.test(e.message) && /\*\*\*/.test(e.message), '엔드포인트가 Authorization을 에코해도 보낸 키가 오류 문구에 남지 않는다'); } finally { await echo.close(); }
 });

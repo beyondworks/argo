@@ -865,8 +865,8 @@ export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null,
     if (!e?.knownInvalid) { // 게이트가 이미 끊은 턴은 재프로브·재각인 불요(이미 vendor 확정)
       const c = cred ?? await loadCredFn(wsId, runner).catch(() => null);
       if (c && c.type !== 'host') {
-        if (runner === 'http' && (e?.httpStatus === 401 || e?.httpStatus === 403)) { origin = 'vendor'; await markFn(wsId, runner, c.value).catch(() => {}); } // 엔드포인트가 카드에 있어 독립 프로브가 없다 — 벤더의 401·403이 곧 판정(불변식 A, 분리 검수 HIGH-1)
-        else if (runner === 'http') { origin = 'probe'; } // 그 밖의 실패는 판정 불가 — 우리 배관 탓으로 몰지 않는다
+        if (isCardOnlyRunner(runner) && (e?.httpStatus === 401 || e?.httpStatus === 403)) { origin = 'vendor'; await markFn(wsId, runner, c.value).catch(() => {}); } // 엔드포인트가 카드에 있어 독립 프로브가 없다 — 벤더의 401·403이 곧 판정(불변식 A, 분리 검수 HIGH-1)
+        else if (isCardOnlyRunner(runner)) { origin = 'probe'; } // 그 밖의 실패는 판정 불가 — 우리 배관 탓으로 몰지 않는다
         else if (HEALTH_BILLED_RUNNERS.has(runner)) { origin = 'probe'; }
         else {
           const v = await verifyFn(runner, c.type, c.value).catch(() => ({ ok: null }));
