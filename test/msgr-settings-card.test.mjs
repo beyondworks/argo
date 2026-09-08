@@ -198,7 +198,7 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
   assert.match(app, /if \(error\) return onError\?\.\(error\.message\);/, '첨부 오류 토스트');
   assert.match(app, /<span className="q">\{parent\.author_kind === 'user'/, '인용 말줄임 span');
   assert.match(app, /crs\.sort\(\(a, b\) => \(crewTier\(b, orgRow\) === 'company'\) - \(crewTier\(a, orgRow\) === 'company'\) \|\| a\.display_name\.localeCompare\(b\.display_name, 'ko'\)\);/, '크루 순서 고정');
-  assert.match(app, /\{import\.meta\.env\.DEV && \(<>/, '개발용 로그인 DEV 게이트');
+  assert.match(app, /\{\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(<>/, '개발용 로그인은 DEV 또는 검수용 번들 플래그(VITE_DEV_LOGIN=1)에서만 — 발행 빌드 env엔 이 플래그가 없다');
   const css = read('apps/messenger/src/styles.css');
   assert.match(css, /^\.msgr-quote \.q \{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/m, '인용 말줄임 CSS');
   assert.match(css, /^\.switchrow \{ display: inline-flex; align-items: center; gap: 8px;/m, '체크박스 행 간격');

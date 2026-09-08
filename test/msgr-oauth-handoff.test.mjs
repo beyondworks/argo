@@ -77,7 +77,7 @@ test('화면·셸·i18n 핀: OTP 제거, 두 provider 버튼, 셸 커맨드 등�
   assert.doesNotMatch(auth, /signInWithOtp|verifyOtp/, '이메일 OTP 경로는 화면에서 제거(코드 없는 메일·SMTP 상한)');
   assert.match(auth, /viaBrowser\('google'\)/); assert.match(auth, /viaBrowser\('github'\)/);
   assert.match(auth, /supabase\.auth\.setSession\(tokens\)/, '회수한 토큰을 이 앱의 세션으로');
-  assert.match(auth, /import\.meta\.env\.DEV && \(/, '비밀번호 로그인은 dev 빌드에만');
+  assert.match(auth, /\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(/, '비밀번호 로그인은 dev 빌드 또는 검수용 번들 플래그에서만');
   const lib = read('apps/messenger/src-tauri/src/lib.rs');
   assert.match(lib, /generate_handler!\[pair::pair_start, pair::pair_claim\]/);
   const pair = read('apps/messenger/src-tauri/src/pair.rs');
