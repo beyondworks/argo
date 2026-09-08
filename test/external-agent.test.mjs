@@ -36,6 +36,10 @@ test('배선 핀 — chat은 agent에서 포맷을 유추하고, 데크 배너·
   assert.match(deck, /<AiKeyBanner ws=\{ws\} agents=\{data\?\.agents \?\? \[\]\} \/>/);
   const crew = await readFile(new URL('../app/c/[ws]/crew/[slug]/page.jsx', import.meta.url), 'utf8');
   assert.match(crew, /sel\.runner === 'http' \? externalAgentLabel\(/, '크루 러너 메뉴 이름');
+  assert.match(crew, /^import \{ externalAgentLabel \} from '\.\.\/\.\.\/\.\.\/\.\.\/\.\.\/src\/runners\/external-agent\.mjs';/m, '크루 페이지 import(app/c/[ws]/crew/[slug] → 루트는 다섯 단계 — 넷이면 Module not found, 격리 서버 실측) — 누락 시 런타임 ReferenceError(격리 서버 실측 2026-09-08)');
+  assert.match(deck, /^import \{ externalAgentLabel \} from '\.\.\/\.\.\/\.\.\/src\/runners\/external-agent\.mjs';/m, '데크 import');
+  const hub = await readFile(new URL('../src/hub.mjs', import.meta.url), 'utf8');
+  assert.match(hub, /^import \{ endpointHost \} from '\.\/runners\/external-agent\.mjs';/m, 'hub import');
   assert.equal((crew.match(/r\.id === 'http' \? t\('runner\.external'\) : r\.name/g) ?? []).length, 2, '피커 목록 2곳');
   assert.equal((crew.match(/r\.retired \? ` — \$\{t\('runner\.retired'\)\}` : r\.hidden \? ''/g) ?? []).length, 2, '제공 종료만 retired 라벨(카드 전용 숨김은 이름만)');
   const rc = await readFile(new URL('../app/runner-connect.jsx', import.meta.url), 'utf8');

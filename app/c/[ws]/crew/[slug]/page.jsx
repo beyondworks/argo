@@ -1,6 +1,7 @@
 'use client';
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { splitEnvelope } from './envelope.mjs';
+import { externalAgentLabel } from '../../../../../src/runners/external-agent.mjs'; // 외부 에이전트 표기(유건 2026-09-08)
 import { use, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
