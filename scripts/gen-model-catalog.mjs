@@ -16,7 +16,7 @@ export const LEGACY = {
   openrouter: {
     // add = alias 목적지. 구버전 앱(코드 카탈로그에 대체 모델이 없는 ≤v0.1.64)에서는 add가 없으면 alias 목적지가 유효 목록 밖이라
     // chat.mjs가 기본 모델로 강등한다. 새 버전은 같은 id를 무시하므로 무해.
-    add: [{ id: 'nvidia/nemotron-3.5-lightning:free', label: 'Nemotron 3.5 Lightning (Free)' }],
+    add: [{ id: 'nvidia/nemotron-3.5-lightning:free', label: 'Nemotron 3.5 Lightning (Free)', free: true }], // free = 무료 배지·무료 폴백(2차 검수 MEDIUM-1)
     retire: ['minimax/minimax-m3:free', 'minimax/minimax-m2.7:free', 'deepseek/deepseek-v4-pro'],
     alias: { 'minimax/minimax-m3:free': 'nvidia/nemotron-3.5-lightning:free', 'minimax/minimax-m2.7:free': 'nvidia/nemotron-3.5-lightning:free' },
   },

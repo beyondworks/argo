@@ -287,10 +287,7 @@ export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-haiku-4.5';
 // 사용자가 모델을 고를 화면이 없는 자동 호출이라, 유료를 기본으로 두면 신규 키($0이 기본)가
 // 연결 직후 첫 영입부터 402로 막힌다(검수 CRITICAL 2026-07-27). 카탈로그 선두와 일치.
 export const OPENROUTER_ONBOARD_MODEL = 'nvidia/nemotron-3.5-lightning:free';
-/** 카탈로그 밖 OpenRouter 모델의 강등 목적지(순수) — 무료(:free) id는 무료(온보딩 기본)로, 유료는 유료 기본으로. 무료↔유료 티어 선을
-    코드가 넘지 않게: 무료 모델이 죽어(2026-09-08 minimax-m3:free 404) 카탈로그에서 빠지면 종전엔 claude-haiku(유료)로 조용히 강등돼
-    잔액 0 사용자는 매 턴 402, 잔액 있는 사용자는 무단 유료 전환이었다(분리 검수 H-1). chat.mjs(크루 턴)가 쓴다. */
-export const openrouterDowngrade = (wanted) => /:free$/i.test(String(wanted ?? '').trim()) ? OPENROUTER_ONBOARD_MODEL : OPENROUTER_DEFAULT_MODEL;
+// 카탈로그 밖 OpenRouter 모델의 강등 목적지는 catalog-remote.mjs openrouterFallbackModel(오버레이 반영) 한 곳 — chat·oneshot 공용.
 export const KIMI_DEFAULT_MODEL = 'kimi-k3';
 /** Grok 기본 모델 — 카탈로그 첫 항목과 같아야 한다(러너 전환·모델 미지정의 기본값). */
 export const GROK_DEFAULT_MODEL = 'grok-4.6';

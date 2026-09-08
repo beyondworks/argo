@@ -5,8 +5,8 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { nativeOneShot, nativeRunnerEnabled } from './engine/native-query.mjs'; // 하네스 통일 P-A' — 플래그 러너의 원샷도 Argo 엔진으로(같은 러너 두 경로 갈림 제거)
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
-import { effectiveModels, normalizeModelId, loadRemoteCatalog } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
-import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isCliRunner, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor, visibleRunnerNamesLine, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL } from './runners.mjs';
+import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
+import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor, visibleRunnerNamesLine, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
@@ -71,12 +71,12 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // gemini API 키·codex 직결 네이티브 턴이 로드를 건너뛴다 — 2차 검수 지적). chat.mjs:993 크루 턴과 같은 관문(1차 검수 M-4: openrouter만
     // 정규화하면 다음 벤더 폐기 때 같은 버그). chat.mjs와 달리 로드를 **기다린다** — 원샷(첫 영입·기억 정리)은 지연보다 정확한 모델이
     // 중요하고, TTL 캐시라 첫 호출(≤8s) 뒤엔 즉시 반환된다. 무료 모델이 발행 사이에 죽으면(2026-09-08 minimax-m3:free 404) 오버레이만으로 산다.
-    await loadRemoteCatalog().catch(() => null);
+    await loadRemoteCatalog({ timeoutMs: 2000 }).catch(() => null); // /api/runners와 같은 2s(2차 검수 LOW-6) — 오버레이 없음 = 코드 목록이라 손실이 작다
     const want = normalizeModelId(runner, model); // alias(폐기 id→현행)
     const known = (id) => !!id && effectiveModels(runner).some((m) => m.id === id);
-    // openrouter 온보딩 폴백: 상수도 alias를 지나되, alias 목적지가 카탈로그에 없으면(add 누락 — 사고 대응의 흔한 실수, 분리 검수 M-1)
-    // 카탈로그 첫 무료 모델로 — 아무 데도 없는 id가 벤더로 나가 하드 실패하지 않게.
-    const onboardFallback = () => { const fb = normalizeModelId('openrouter', OPENROUTER_ONBOARD_MODEL); return known(fb) ? fb : (effectiveModels('openrouter').find((m) => m.free)?.id ?? OPENROUTER_ONBOARD_MODEL); };
+    // openrouter 폴백은 chat.mjs와 같은 관문(openrouterFallbackModel) — 원샷은 항상 무료(온보딩 기본) 티어로: 상수도 alias를 지나고,
+    // alias 목적지가 카탈로그에 없으면(add 누락, 1차 검수 M-1) 첫 유효 무료 모델로.
+    const onboardFallback = () => openrouterFallbackModel(OPENROUTER_ONBOARD_MODEL);
     const osModel = runner === 'glm' ? GLM_DEFAULT_MODEL : runner === 'kimi' ? KIMI_DEFAULT_MODEL
       : runner === 'openrouter' ? (known(want) ? want : onboardFallback())
       : runner === 'grok' ? (known(want) ? want : GROK_DEFAULT_MODEL)

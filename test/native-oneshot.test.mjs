@@ -83,7 +83,7 @@ test('OS1c. 원샷이 오버레이를 스스로 로드한다(await) — 원샷 �
   try {
     await runOneShot(ws, 'x', { model: 'x/dead:free', timeoutMs: 20_000 });
     assert.equal(srv.bodies[0].model, 'vendor/remote:free', '원샷이 loadRemoteCatalog를 기다리지 않으면(fire-and-forget·삭제) 첫 턴은 코드 목록만 보고 폴백한다');
-  } finally { await srv.close(); await new Promise((r) => cat.close(r)); delete process.env.OPENROUTER_BASE_URL; delete process.env.ARGO_MODEL_CATALOG_URL; process.env.ARGO_MODEL_CATALOG = savedOff; _resetForTest(); }
+  } finally { await srv.close(); await new Promise((r) => cat.close(r)); delete process.env.OPENROUTER_BASE_URL; delete process.env.ARGO_MODEL_CATALOG_URL; if (savedOff === undefined) delete process.env.ARGO_MODEL_CATALOG; else process.env.ARGO_MODEL_CATALOG = savedOff; _resetForTest(); }
 });
 
 test('OS1d. 온보딩 폴백의 alias 목적지가 카탈로그에 없으면(add 누락) 카탈로그 첫 무료 모델로 — 없는 id가 벤더로 나가지 않는다(분리 검수 M-1)', async () => {
@@ -97,7 +97,7 @@ test('OS1d. 온보딩 폴백의 alias 목적지가 카탈로그에 없으면(add
   process.env.OPENROUTER_BASE_URL = srv.base;
   try {
     await runOneShot(ws, 'x', { model: 'claude-haiku-4-5', timeoutMs: 20_000 });
-    const firstFree = RUNNERS.openrouter.models.filter((m) => m.free && m.id !== OPENROUTER_ONBOARD_MODEL)[0].id;
+    const firstFree = RUNNERS.openrouter.models.find((m) => m.free && m.id !== OPENROUTER_ONBOARD_MODEL)?.id; assert.ok(firstFree, '코드 카탈로그 무료 2종 이상 전제');
     assert.equal(srv.bodies[0].model, firstFree, '폴백은 유효 목록 안의 첫 무료 모델');
   } finally { await srv.close(); delete process.env.OPENROUTER_BASE_URL; _resetForTest(); }
 });

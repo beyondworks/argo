@@ -142,7 +142,7 @@ export const DICT = {
   'set.policy.crewCreate.desc': ['채널 범위 크루 기준입니다. 조직 전체 범위 크루는 언제나 조직 관리자만 만들고, 회사 노드가 연결돼 있어야 합니다.', 'Applies to channel-scoped crews. Org-wide crews are always admins only, and a company node must be connected.'],
   'set.policy.crewEngine': ['회사 크루가 쓰는 AI', 'AI used by company crews'],
   'set.policy.crewEngine.runner': ['러너(예: openrouter)', 'Runner (e.g. openrouter)'],
-  'set.policy.crewEngine.model': ['모델 id(예: minimax/minimax-m3:free)', 'Model id (e.g. minimax/minimax-m3:free)'],
+  'set.policy.crewEngine.model': ['모델 id(예: nvidia/nemotron-3.5-lightning:free)', 'Model id (e.g. nvidia/nemotron-3.5-lightning:free)'],
   'set.policy.crewEngine.desc': ['회사 크루 서버가 이 AI로 크루를 만듭니다. 비우면 서버의 기본값을 씁니다.', 'The company crew server creates crews with this AI. Leave blank to use the server default.'],
   'set.policy.guests': ['게스트', 'Guests'],
   'set.policy.guests.seats': ['게스트도 좌석을 차지합니다', 'Guests take seats'],

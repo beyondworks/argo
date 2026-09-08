@@ -154,7 +154,7 @@ test('G8. 배선 핀 — chat·oneshot·스케줄러·카드 정보가 자격 �
   assert.match(chat, /const cliTurn = isCliTurn\(runner, await runnerCredType\(wsId, runner\)\);\n\s*if \(cliTurn\) \{/);
   assert.match(chat, /runner === 'gemini' \? \(effModel \|\| GEMINI_DEFAULT_MODEL\)/);
   const one = await readFile(join(ROOT, 'src', 'oneshot.mjs'), 'utf8');
-  assert.match(one, /if \(isCliTurn\(runner, await runnerCredType\(wsId, runner\)\)\) \{/); assert.match(one, /runner === 'gemini' \? \(known\(want\) \? want : GEMINI_DEFAULT_MODEL\)/); assert.match(one, /const known = \(id\) => !!id && effectiveModels\(runner\)\.some/, '오버레이 반영 목록(effectiveModels)으로 판정'); assert.match(one, /\n\s*await loadRemoteCatalog\(\)\.catch\(\(\) => null\);/, '네이티브/SDK 원샷은 러너 축으로 거르지 않고 오버레이를 로드한다(gemini API 키·codex 직결 포함)');
+  assert.match(one, /if \(isCliTurn\(runner, await runnerCredType\(wsId, runner\)\)\) \{/); assert.match(one, /runner === 'gemini' \? \(known\(want\) \? want : GEMINI_DEFAULT_MODEL\)/); assert.match(one, /const known = \(id\) => !!id && effectiveModels\(runner\)\.some/, '오버레이 반영 목록(effectiveModels)으로 판정'); assert.match(one, /\n\s*await loadRemoteCatalog\(\{ timeoutMs: 2000 \}\)\.catch\(\(\) => null\);/, '네이티브/SDK 원샷은 러너 축으로 거르지 않고 오버레이를 로드한다(gemini API 키·codex 직결 포함)');
   const sch = await readFile(join(ROOT, 'src', 'scheduler.mjs'), 'utf8');
   assert.match(sch, /hasTools = !isCliTurn\(resolved\.runner, await runnerCredType\(cid, resolved\.runner\)\);/);
   const fac = await readFile(join(ROOT, 'src', 'runners.mjs'), 'utf8');
