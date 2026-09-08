@@ -67,10 +67,11 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     hangGuard = setTimeout(() => ac.abort(), timeoutMs);
     // 모델 선택은 두 엔진이 같은 값을 쓴다(한 곳 정의). openrouter는 카탈로그 검증 — 호출자가 넘긴 타 러너용 모델(예: consolidate의 claude-haiku
     // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
-    // 원격 오버레이(alias·retire·add)를 SDK 계열 러너 전부에 — chat.mjs:993 크루 턴과 같은 관문(분리 검수 M-4: openrouter만 정규화하면 다음
-    // 벤더 폐기 때 같은 버그). chat.mjs와 달리 로드를 **기다린다** — 원샷(첫 영입·기억 정리)은 지연보다 정확한 모델이 중요하고, TTL 캐시라
-    // 첫 호출(≤8s) 뒤엔 즉시 반환된다. 무료 모델이 발행 사이에 죽으면(2026-09-08 minimax-m3:free 404) 앱 발행 없이 오버레이만으로 첫 영입이 산다.
-    if (!isCliRunner(runner)) await loadRemoteCatalog().catch(() => null);
+    // 원격 오버레이(alias·retire·add) — 여기는 항상 네이티브/SDK 턴이다(CLI 턴은 위 isCliTurn 분기에서 반환. 러너 축 isCliRunner로 거르면
+    // gemini API 키·codex 직결 네이티브 턴이 로드를 건너뛴다 — 2차 검수 지적). chat.mjs:993 크루 턴과 같은 관문(1차 검수 M-4: openrouter만
+    // 정규화하면 다음 벤더 폐기 때 같은 버그). chat.mjs와 달리 로드를 **기다린다** — 원샷(첫 영입·기억 정리)은 지연보다 정확한 모델이
+    // 중요하고, TTL 캐시라 첫 호출(≤8s) 뒤엔 즉시 반환된다. 무료 모델이 발행 사이에 죽으면(2026-09-08 minimax-m3:free 404) 오버레이만으로 산다.
+    await loadRemoteCatalog().catch(() => null);
     const want = normalizeModelId(runner, model); // alias(폐기 id→현행)
     const known = (id) => !!id && effectiveModels(runner).some((m) => m.id === id);
     // openrouter 온보딩 폴백: 상수도 alias를 지나되, alias 목적지가 카탈로그에 없으면(add 누락 — 사고 대응의 흔한 실수, 분리 검수 M-1)
