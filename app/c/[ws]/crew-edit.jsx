@@ -24,7 +24,7 @@ export function CrewEditModal({ ws, agent, teams: teamsProp = null, onClose, onS
   }, [ws, teamsProp]);
   const teams = teamsProp ?? teamsFetched;
   const curRunner = runners?.find((r) => r.id === form.runner);
-  const runnerLabel = (r) => r.name + (r.hidden ? ` — ${t('runner.retired')}` : r.authed ? '' : r.installed ? ` — ${t('runner.needLogin')}` : ` — ${t('runner.notInstalled')}`);
+  const runnerLabel = (r) => r.name + (r.retired ? ` — ${t('runner.retired')}` : r.hidden ? '' : r.authed ? '' : r.installed ? ` — ${t('runner.needLogin')}` : ` — ${t('runner.notInstalled')}`); // 제공 종료(retired)만 — 카드 전용 숨김(http)은 이름만
   // 숨김 러너(gemini)는 선택지에서 뺀다 — 현재 값일 때만 남겨 정직 표기(분리 검수 HIGH-2: 빠지면 브라우저가 첫 옵션 '자동'을 골라 오표시)
   const pickable = (runners ?? []).filter((r) => !r.hidden || r.id === form.runner);
 

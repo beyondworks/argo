@@ -50,4 +50,20 @@ test('chat() — 자격이 틀리면 401이 정직한 실패로 표면화된다(
   assert.match(String(r2.reply), /401|인증|자격|known-invalid|API Error|재연결/, String(r2.reply).slice(0, 120));
 });
 
+test('chat() — 다른 러너(claude)가 연결돼 있어도 http 크루는 폴백하지 않고(2차 검수 HIGH-A) 401을 각인해 다음 턴을 끊는다', async () => {
+  const WS = 'e2e-http-nofb'; await mkws(WS);
+  await saveRunnerCred(WS, 'http', 'apikey', 'wrong');
+  await saveRunnerCred(WS, 'claude', 'apikey', 'sk-ant-fake-not-real-000000');
+  process.env.ARGO_CLAUDE_BASE_URL = 'http://127.0.0.1:9'; // 폴백이 일어나면 여기로 나가 status 0 — 답에 흔적이 남는다
+  try {
+    const before = seen.length;
+    const r = await chat(WS, 'hermes', '안녕').catch((e2) => ({ reply: String(e2.message) }));
+    assert.equal(seen.length, before + 1, '엔드포인트 1회');
+    assert.doesNotMatch(String(r.reply), /Claude|claude/, `외부 두뇌 크루가 Claude로 대체 답변하지 않는다: ${String(r.reply).slice(0, 120)}`);
+    const r2 = await chat(WS, 'hermes', '다시').catch((e2) => ({ reply: String(e2.message) }));
+    assert.equal(seen.length, before + 1, '401 각인 → 두 번째 턴은 실행 전에 끊긴다(다른 러너가 있어도)');
+    assert.match(String(r2.reply), /401|인증|자격|known-invalid|API Error|재연결/, String(r2.reply).slice(0, 120));
+  } finally { delete process.env.ARGO_CLAUDE_BASE_URL; }
+});
+
 test.after(() => new Promise((r) => srv.close(r)));

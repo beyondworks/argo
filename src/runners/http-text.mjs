@@ -14,7 +14,8 @@ export const HTTP_TEXT_FORMATS = ['argo', 'openai-chat'];
 export const HTTP_TEXT_NO_AUTH = 'none'; // 회사 자격 값이 이것이면 Bearer를 만들지 않는다
 
 const ko_en = (ko, en) => `${ko} ${en}`;
-const PRIVATE_V4 = [/^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./, /^169\.254\./, /^0\.0\.0\.0$/];
+const PRIVATE_V4 = [/^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./]; // 169.254/16(클라우드 메타데이터)·0.0.0.0은 사설이 아니라 차단(2차 검수 HIGH-C)
+const BLOCKED_V4 = [/^169\.254\./, /^0\.0\.0\.0$/, /^0\./];
 const isPrivateHost = (h) => {
   const host = h.replace(/^\[|\]$/g, '').toLowerCase();
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
@@ -24,6 +25,9 @@ const isPrivateHost = (h) => {
 };
 
 /** 엔드포인트 가드(순수) — 통과하면 정규화된 URL 문자열, 아니면 던진다. */
+const isBlockedHost = (h) => { const host = h.replace(/^\[|\]$/g, '').toLowerCase(); return BLOCKED_V4.some((re) => re.test(host)); };
+/** 호스팅 런타임 판정 — market.mjs arbitraryMcpBlocked와 **같은 술어**(임의 목적지로 나가는 능력 = 서비스 키 곁 유출 표면, 2차 검수 HIGH-C). 동적 import로 순환 회피. */
+export async function httpRunnerBlockedHere() { const { arbitraryMcpBlocked } = await import('../market.mjs'); return arbitraryMcpBlocked(); }
 export function assertHttpTextEndpoint(endpoint, { hosted = !!process.env.ARGO_TENANT_OWNER } = {}) {
   const raw = String(endpoint ?? '').trim();
   if (!raw) throw new Error(ko_en('http 러너: 크루 카드에 endpoint(http(s)://…)가 없습니다 — 카드 frontmatter에 `endpoint:`를 적어 주세요.', 'http runner: the crew card has no `endpoint:` (http(s)://…) in its frontmatter.'));
@@ -31,6 +35,7 @@ export function assertHttpTextEndpoint(endpoint, { hosted = !!process.env.ARGO_T
   if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error(ko_en('http 러너: endpoint는 http:// 또는 https://여야 합니다.', 'http runner: endpoint must be http:// or https://.'));
   if (u.username || u.password) throw new Error(ko_en('http 러너: endpoint에 사용자명·비밀번호를 넣을 수 없습니다 — 키는 설정의 러너 자격으로.', 'http runner: userinfo in endpoint is not allowed — put the key in the runner credential.'));
   if (hosted) throw new Error(ko_en('http 러너는 호스팅 런타임에서 쓸 수 없습니다(서버발 요청 표면) — 로컬 아르고·회사 노드에서만.', 'http runner is unavailable in the hosted runtime (server-side request surface) — use local Argo or a company node.'));
+  if (isBlockedHost(u.hostname)) throw new Error(ko_en(`http 러너: ${u.hostname}은(는) 허용되지 않는 목적지입니다(링크로컬·메타데이터·0.0.0.0).`, `http runner: ${u.hostname} is not an allowed destination (link-local/metadata/0.0.0.0).`));
   if (u.protocol === 'http:' && !isPrivateHost(u.hostname)) throw new Error(ko_en(`http 러너: 공인 호스트(${u.hostname})는 https만 허용합니다.`, `http runner: public host ${u.hostname} requires https.`));
   return u.toString();
 }
@@ -63,7 +68,7 @@ async function readCapped(r, cap) {
 
 export async function execHttpText({ endpoint, format = 'argo', prompt, model = '', kind = 'chat', readOnly = false, timeoutMs, signal = null, cred = null, fetchImpl = globalThis.fetch, hosted = undefined, maxBody = HTTP_TEXT_MAX_BODY }) {
   if (!HTTP_TEXT_FORMATS.includes(format)) throw new Error(ko_en(`http 러너: 모르는 format "${format}" — ${HTTP_TEXT_FORMATS.join('|')} 중 하나여야 합니다.`, `http runner: unknown format "${format}" — use ${HTTP_TEXT_FORMATS.join('|')}.`));
-  const url = assertHttpTextEndpoint(endpoint, hosted === undefined ? {} : { hosted });
+  const url = assertHttpTextEndpoint(endpoint, { hosted: hosted === undefined ? await httpRunnerBlockedHere() : hosted });
   const keyRaw = cred?.env?.ARGO_HTTP_KEY ? String(cred.env.ARGO_HTTP_KEY).trim() : '';
   const key = keyRaw && keyRaw !== HTTP_TEXT_NO_AUTH ? keyRaw : '';
   const ms = Math.max(1000, Number(timeoutMs) || 30_000);
@@ -87,8 +92,8 @@ export async function execHttpText({ endpoint, format = 'argo', prompt, model = 
       const why = String(e?.cause?.code || e?.cause?.message || e?.name || e?.message || e).replace(/[?&]?(key|token|secret)=[^&\s]+/gi, '');
       throw Object.assign(new Error(`API Error: 0 ${why} (${new URL(url).host})`), { httpStatus: 0 }); // 연결 실패·리다이렉트 거절 — 벤더 거절과 구분되는 status 0
     }
+    if (!r.ok) { const head = await readCapped(r, 4000).catch(() => ''); throw Object.assign(new Error(`API Error: ${r.status} ${head.slice(0, 300).replace(/\s+/g, ' ')}`), { httpStatus: r.status }); } // 상태 판정이 상한보다 먼저 — 큰 401 본문이 각인을 잃지 않게(LOW-1)
     const raw = await readCapped(r, maxBody);
-    if (!r.ok) throw Object.assign(new Error(`API Error: ${r.status} ${raw.slice(0, 300).replace(/\s+/g, ' ')}`), { httpStatus: r.status });
     return parseHttpTextResponse(format, raw).trim();
   } finally { clearTimeout(timer); if (signal) signal.removeEventListener('abort', onOuter); }
 }
