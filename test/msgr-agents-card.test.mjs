@@ -7,7 +7,7 @@ import { t } from '../apps/messenger/src/i18n.js';
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const app = read('apps/messenger/src/App.jsx');
 const i18n = read('apps/messenger/src/i18n.js');
-const KEYS = ['crew.hosting.bot', 'org.agents', 'org.agents.desc', 'org.agents.none', 'org.agents.add.hermes', 'org.agents.add.openclaw', 'org.agents.add.custom', 'org.agents.kind.hermes', 'org.agents.kind.openclaw', 'org.agents.kind.custom', 'org.agents.waiting', 'org.agents.on', 'org.agents.off', 'org.agents.by', 'org.agents.made', 'org.agents.rotated', 'org.agents.setup.h', 'org.agents.copy', 'org.agents.copied', 'org.agents.setup.hint', 'org.agents.rotate', 'org.agents.revoke', 'org.agents.revoke.confirm', 'org.agents.revoke.done', 'org.agents.setup.hermes.1', 'org.agents.setup.hermes.2', 'org.agents.setup.hermes.3', 'org.agents.setup.openclaw.1', 'org.agents.setup.openclaw.2', 'org.agents.setup.openclaw.3', 'org.agents.setup.custom.1', 'org.agents.setup.custom.2', 'org.agents.setup.custom.3', 'org.agents.auto.running', 'org.agents.auto.done', 'org.agents.auto.after', 'org.agents.auto.failed', 'org.agents.auto.missing', 'org.agents.auto.retry', 'org.agents.auto.step.plugin', 'org.agents.auto.step.env', 'org.agents.auto.step.enable', 'org.agents.auto.step.gateway', 'org.agents.setup.manual'];
+const KEYS = ['crew.hosting.bot', 'org.agents', 'org.agents.desc', 'org.agents.none', 'org.agents.add.hermes', 'org.agents.add.openclaw', 'org.agents.add.custom', 'org.agents.kind.hermes', 'org.agents.kind.openclaw', 'org.agents.kind.custom', 'org.agents.waiting', 'org.agents.on', 'org.agents.off', 'org.agents.by', 'org.agents.made', 'org.agents.rotated', 'org.agents.setup.h', 'org.agents.copy', 'org.agents.copied', 'org.agents.setup.hint', 'org.agents.rotate', 'org.agents.revoke', 'org.agents.revoke.confirm', 'org.agents.revoke.done', 'org.agents.setup.hermes.1', 'org.agents.setup.hermes.2', 'org.agents.setup.hermes.3', 'org.agents.setup.openclaw.1', 'org.agents.setup.openclaw.2', 'org.agents.setup.openclaw.3', 'org.agents.setup.custom.1', 'org.agents.setup.custom.2', 'org.agents.setup.custom.3', 'org.agents.auto.running', 'org.agents.auto.done', 'org.agents.auto.after', 'org.agents.auto.failed', 'org.agents.auto.missing', 'org.agents.auto.retry', 'org.agents.auto.step.plugin', 'org.agents.auto.step.env', 'org.agents.auto.step.enable', 'org.agents.auto.step.gateway', 'org.agents.setup.manual', 'org.agents.reconnect', 'org.agents.reconnect.title', 'org.agents.another', 'org.agents.name.mine'];
 
 test('카드가 쓰는 i18n 키는 전부 ko/en 쌍 · 상태 문구는 "헤르메스 에이전트 연결중/연결됨/응답 없음"(유건 지정 표기)', () => {
   for (const k of KEYS) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
@@ -29,7 +29,10 @@ test('봇 = 회사 등급(클라이언트 crewTier) · 내 크루 레일에서 �
 
 test('카드: 생성·회전은 RPC(토큰은 응답에서 setup 상태로만) · 설정 두 줄 = URL+토큰 · 해제는 인라인 확인 · 표는 폐기 제외', () => {
   const card = app.slice(app.indexOf('// ── 부록 N: 외부 에이전트'), app.indexOf("if (part === 'node') return ("));
-  assert.match(card, /supabase\.rpc\('msgr_bot_create', \{ org: org\.id, kind, name: t\(`org\.agents\.kind\.\$\{kind\}`\) \}\)/);
+  assert.match(card, /supabase\.rpc\('msgr_bot_create', \{ org: org\.id, kind, name \}\)/);
+  assert.match(card, /if \(mine && !another && kind !== 'custom'\) return rotateBot\(mine\);/, '같은 종류의 내 봇이 있으면 새로 만들지 않고 다시 연결(유건 지적: 누를 때마다 추가됨)');
+  assert.match(card, /t\('org\.agents\.name\.mine', \{ who: nameOfUser\(uid\), kind:/, '봇 이름에 만든 사람');
+  assert.match(card, /addBot\('hermes', \{ another: true \}\)/, '다른 컴퓨터용 추가는 별도 항목');
   assert.match(card, /supabase\.rpc\('msgr_bot_rotate', \{ bot: b\.id \}\)/);
   assert.match(card, /supabase\.rpc\('msgr_bot_revoke', \{ bot: b\.id \}\)/);
   assert.match(card, /setSetup\(\{ id: r\.data\.bot_id, token: r\.data\.token, kind \}\)/, '생성 토큰은 화면 상태로만(종류 포함 — 종류별 설치 단계)');

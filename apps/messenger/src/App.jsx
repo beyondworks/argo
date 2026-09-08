@@ -1390,8 +1390,14 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
   const loadBots = useCallback(async () => { if (part !== 'agents') return; setBots(await q(supabase.from('msgr_bots').select('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at').eq('org_id', org.id).order('created_at'))); }, [org.id, part]);
   useEffect(() => { loadBots().catch((e) => onError(e.message)); }, [loadBots]); // eslint-disable-line react-hooks/exhaustive-deps
   const botSetup = (token) => `ARGO_MSGR_URL=${SB_URL}/functions/v1/msgr-bot\nARGO_MSGR_BOT_TOKEN=${token}`; // 원클릭: 이 두 줄이 에이전트 쪽 설정의 전부
-  const addBot = async (kind) => {
-    setBusy(true); const r = await supabase.rpc('msgr_bot_create', { org: org.id, kind, name: t(`org.agents.kind.${kind}`) }); setBusy(false);
+  // 봇 하나 = 에이전트 한 대(컴퓨터 한 대). 유건 지적 2026-09-08: 같은 컴퓨터에서 다시 누르면 새로 만들지 말고 **기존 봇에 다시 연결**(토큰 재발급 → 자동 설정).
+  // 다른 컴퓨터·다른 사람의 에이전트는 "하나 더 추가"로만. 봇 이름은 "유건의 헤르메스"처럼 만든 사람을 붙여 누구 것인지 보이게.
+  const mineOf = (kind) => bots.find((b) => !b.revoked_at && b.kind === kind && b.created_by === uid);
+  const addBot = async (kind, { another = false } = {}) => {
+    const mine = mineOf(kind);
+    if (mine && !another && kind !== 'custom') return rotateBot(mine); // 다시 연결
+    const name = kind === 'custom' ? t('org.agents.kind.custom') : t('org.agents.name.mine', { who: nameOfUser(uid), kind: t(`org.agents.kind.${kind}`) });
+    setBusy(true); const r = await supabase.rpc('msgr_bot_create', { org: org.id, kind, name }); setBusy(false);
     if (r.error) return onError(r.error.message);
     setSetup({ id: r.data.bot_id, token: r.data.token, kind }); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.(); autoConnect(kind, r.data.token);
   };
@@ -1415,9 +1421,10 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
     <section className="msgr-setcard">
       <h2>{t('org.agents')}</h2><p>{t('org.agents.desc')}</p>
       <div className="row">
-        <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => addBot('hermes')}><I name="plus" size={13} />{t('org.agents.add.hermes')}</button>
-        <button type="button" className="btn sm" disabled={busy} onClick={() => addBot('openclaw')}>{t('org.agents.add.openclaw')}</button>
+        <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => addBot('hermes')} title={mineOf('hermes') ? t('org.agents.reconnect.title') : undefined}><I name={mineOf('hermes') ? 'at' : 'plus'} size={13} />{mineOf('hermes') ? t('org.agents.reconnect', { kind: t('org.agents.kind.hermes') }) : t('org.agents.add.hermes')}</button>
+        <button type="button" className="btn sm" disabled={busy} onClick={() => addBot('openclaw')} title={mineOf('openclaw') ? t('org.agents.reconnect.title') : undefined}>{mineOf('openclaw') ? t('org.agents.reconnect', { kind: t('org.agents.kind.openclaw') }) : t('org.agents.add.openclaw')}</button>
         <button type="button" className="btn sm ghost" disabled={busy} onClick={() => addBot('custom')}>{t('org.agents.add.custom')}</button>
+        {(mineOf('hermes') || mineOf('openclaw')) && <span className="msgr-klabel">{t('org.agents.another')} {mineOf('hermes') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addBot('hermes', { another: true })}>{t('org.agents.kind.hermes')}</button>}{mineOf('openclaw') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addBot('openclaw', { another: true })}>{t('org.agents.kind.openclaw')}</button>}</span>}
       </div>
       {setup && (
         <div className="msgr-node-cmd">
