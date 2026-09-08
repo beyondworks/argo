@@ -14,6 +14,7 @@ import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } fro
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { writeJsonAtomic } from './jsonstore.mjs';
+import { getTurnStatus } from './turn-status.mjs';
 
 /** 틱당 회사별 배달 상한. [규모 질문] 배달 1건 = LLM 턴 1개 — 상한이 없으면 크루 N명이 서로에게
     보낸 폭주가 한 틱에 N² 턴을 만든다. 초과분은 다음 틱(60s)으로 밀린다 — 지연은 무해, 폭발은 유해. */
@@ -23,11 +24,14 @@ export const CC_MAX = 4;
 /** 유계 재시도 — 무계 재시도 금지(2026-07-27 기억 정리 재설계와 같은 원칙). 소진 시 .dead/로 이동해
     조용히 사라지지 않게 한다(무증상 실패가 가장 비싸다). */
 export const MAIL_MAX_ATTEMPTS = 3;
-/** 처리 중 표시(.claimed)가 이보다 오래 방치되면 크래시 잔재로 보고 회수한다.
-    3시간 = 최장 정상 턴(위임 연쇄 3단 × CLI 대화 턴 30분 = 90분)의 2배 여유 — 진행 중 턴에는 하트비트가
-    없으므로(분리 검수 HIGH-1) 짧으면 장기 턴을 크래시로 오판해 이중 배달을 만든다. 같은 프로세스가
-    진행 중인 claim은 inFlight로 아예 회수 대상에서 뺀다. (옛 45분 = 5분×3단×3 — CLI 상한이 30분으로 오르며 재산출) */
-const CLAIM_STALE_MS = 3 * 60 * 60_000;
+/** 처리 중 표시(.claimed) 회수 — "진행 중인가"는 시간이 아니라 **크루 상태 파일의 심박**으로 판정한다.
+    배달 턴은 chat()이 setTurnStatus로 30초 심박을 남기고(turn-status.mjs, #447) 프로세스가 죽으면 120초 뒤 만료된다.
+    옛 방식은 고정 창(45분 → #458에서 3시간)이었는데, 앱 재시작·크래시 뒤 쪽지가 그 시간 동안 "배달 중"에 갇혔다
+    (제보 2026-09-08 "1시간 넘게 배달 안 됨"). 심박이 살아 있으면 — 출처가 무엇이든: 상태 파일은 크루당 하나라
+    같은 크루의 다른 턴(개인 채팅)과 구분이 불안정하고, 그 경우도 몇 분 뒤 다시 본다 — 손대지 않는다.
+    심박이 없고 선점 뒤 CLAIM_RECLAIM_MS가 지났으면 회수한다. 3분 = 선점 → chat() boot 상태 착지 사이 창(초 단위)과
+    상태 만료 120초를 덮는 값. 같은 프로세스가 진행 중인 claim은 inFlight로 아예 회수 대상에서 뺀다(HIGH-1). */
+const CLAIM_RECLAIM_MS = 3 * 60_000;
 /** 예약 디렉터리 — dot 접두라 크루 slug와 충돌하지 않는다(slug는 WS_ID류 영숫자, 분리 검수 LOW). */
 const DEAD_DIR = '.dead';
 /** 배달 기록(jsonl) — 쪽지함 화면의 "배달 기록" 섹션. mail/ 아래라 동기화 제외(sync.mjs EXCLUDE). */
@@ -244,7 +248,8 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
         stampMs = Date.parse(st.claimedAt ?? st.ts ?? 0) || 0;
       } catch { /* 읽기 실패 — mtime 폴백 */ }
       if (!stampMs) { try { stampMs = (await stat(item.full)).mtimeMs; } catch { continue; } }
-      if (now - stampMs > CLAIM_STALE_MS) {
+      // 다른 살아 있는 프로세스가 이 크루의 턴을 돌리는 중이면(상태 파일 2분 신선 창) 손대지 않는다 — orphan-turns와 같은 판정
+      if (now - stampMs > CLAIM_RECLAIM_MS && !(await getTurnStatus(wsId, item.slug))) {
         await rename(item.full, item.full.replace(/\.claimed$/, '')).catch(() => {});
       }
       continue;
@@ -257,7 +262,7 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
     const lockDir = `${item.full}.lockd`;
     try { await mkdir(lockDir); } catch {
       // 잔재 락(프로세스 크래시) — 오래됐으면 치우고 다음 틱에 맡긴다
-      try { if (now - (await stat(lockDir)).mtimeMs > CLAIM_STALE_MS) await rm(lockDir, { recursive: true, force: true }); } catch { /* 이미 사라짐 */ }
+      try { if (now - (await stat(lockDir)).mtimeMs > CLAIM_RECLAIM_MS) await rm(lockDir, { recursive: true, force: true }); } catch { /* 이미 사라짐 */ }
       continue;
     }
     let won = false;

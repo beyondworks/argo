@@ -297,3 +297,46 @@ test('경로 검증 — slug·id·파일명에 구분자·상위 경로·dot 접
   await assert.rejects(() => mod.sendCrewMail(WS, { from: 'captain', to: '../x', message: 'x' }), /slug/);
   await assert.rejects(() => mod.sendCrewMail(WS, { from: 'captain', to: 'b', cc: ['.dead'], message: 'x' }), /slug/);
 });
+
+/* ── .claimed 회수는 고정 창이 아니라 심박 기준(제보 2026-09-08 "1시간 넘게 배달 안 됨" — 크래시 뒤 3시간 갇힘) ── */
+
+test('.claimed 회수 — 심박 없고 3분 지나면 다음 틱에 되살리고, 심박이 살아 있으면 오래돼도 보존, 3분 미만이면 보존', async () => {
+  const { rename, writeFile } = await import('node:fs/promises');
+  const { setTurnStatus, clearTurnStatus } = await import('../src/turn-status.mjs');
+  const claimAs = async (slug, ageMs) => {
+    const id = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: slug, message: '회수 시나리오' });
+    const p = join(paths(WS).root, 'mail', slug, `${id}-to.json`);
+    const body = JSON.parse(await readFile(p, 'utf8'));
+    await writeFile(p, JSON.stringify({ ...body, claimedAt: new Date(Date.now() - ageMs).toISOString() }));
+    await rename(p, `${p}.claimed`); // 다른(죽은) 프로세스가 선점한 흔적 — inFlight에 없다
+    return id;
+  };
+  const calls = []; // 앞 테스트가 남긴 다른 슬러그의 대기분(log2 등)은 이 시나리오 밖 — rc-* 만 본다
+  const run = () => mod.deliverCrewMail(WS, async (slug) => { if (slug.startsWith('rc-')) calls.push(slug); });
+
+  // ① 5분 전 선점 + 심박 없음 → 이 틱에 .json으로 복귀(배달은 다음 틱), 다음 틱에 배달
+  const id1 = await claimAs('rc-dead', 5 * 60_000);
+  await run();
+  assert.deepEqual(await mailFiles('rc-dead'), [`${id1}-to.json`], '회수: .claimed → .json');
+  assert.deepEqual(calls, [], '회수한 틱에는 배달하지 않는다(다음 틱)');
+  await run();
+  assert.deepEqual(calls, ['rc-dead'], '다음 틱에 배달');
+  assert.deepEqual(await mailFiles('rc-dead'), []);
+
+  // ② 5분 전 선점 + 이 크루의 상태 파일 심박이 살아 있음(다른 프로세스가 진행 중) → 보존
+  const id2 = await claimAs('rc-live', 5 * 60_000);
+  await setTurnStatus(WS, 'rc-live', 'runner', 'Claude', undefined, 'crewmail');
+  try {
+    await run();
+    assert.deepEqual(await mailFiles('rc-live'), [`${id2}-to.json.claimed`], '심박이 있으면 오래돼도 회수하지 않는다(이중 배달 방지)');
+    assert.deepEqual(calls, ['rc-dead']);
+  } finally { await clearTurnStatus(WS, 'rc-live'); }
+  // 심박이 꺼진 뒤(상태 파일 삭제)에는 회수된다
+  await run();
+  assert.deepEqual(await mailFiles('rc-live'), [`${id2}-to.json`], '심박 종료 뒤 회수');
+
+  // ③ 1분 전 선점 + 심박 없음(선점 → boot 상태 착지 사이 창) → 보존
+  const id3 = await claimAs('rc-fresh', 60_000);
+  await run();
+  assert.deepEqual(await mailFiles('rc-fresh'), [`${id3}-to.json.claimed`], '3분 미만은 건드리지 않는다');
+});

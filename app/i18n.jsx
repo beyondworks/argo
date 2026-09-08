@@ -1242,6 +1242,7 @@ const DICT = {
   'mail.requeue': ['재투입', 'Requeue'],
   'mail.delete': ['삭제', 'Delete'],
   'mail.claimed': ['배달 중', 'Delivering'],
+  'mail.claimedFor': ['배달 중 · {n}분 경과', 'Delivering · {n} min'],
   'mail.attempts': ['시도 {n}회', '{n} attempts'],
   'mail.kind.to': ['수신', 'To'],
   'mail.kind.cc': ['참조', 'CC'],

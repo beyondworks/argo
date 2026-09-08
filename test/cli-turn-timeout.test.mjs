@@ -104,12 +104,16 @@ test('배선: 턴을 태우는 라우트의 maxDuration은 호스티드(Vercel P
   }
 });
 
-test('배선: crewmail 스테일 회수 창이 최장 정상 턴(3단 위임 × CLI 상한)보다 넉넉하다 — 짧으면 장기 턴을 크래시로 오판해 이중 배달', async () => {
+test('배선: crewmail .claimed 회수는 CLI 상한에서 파생되지 않는다 — 심박(getTurnStatus) 가드 + 상태 만료(120초)를 덮는 최소 창', async () => {
+  // 옛 핀(스테일 창 ≥ 3단 × CLI 상한 × 2)은 상한이 30분으로 오르며 3시간이 됐고, 크래시 뒤 쪽지가 3시간 "배달 중"에 갇혔다(제보 2026-09-08).
+  // 진행 판정은 turn-status 심박이 맡으므로 고정 창은 상태 만료보다 크기만 하면 된다. 행동은 test/crewmail.test.mjs가 잠근다.
   const src = await readFile(new URL('../src/crewmail.mjs', import.meta.url), 'utf8');
-  const m = src.match(/^const CLAIM_STALE_MS = (.+);/m);
-  assert.ok(m, 'CLAIM_STALE_MS');
-  const stale = Function(`return (${m[1]})`)();
-  assert.ok(stale >= 3 * CLI_CHAT_TURN_TIMEOUT_MS * 2, `스테일 ${stale / 60_000}분 < 3단 × ${CLI_CHAT_TURN_TIMEOUT_MS / 60_000}분 × 2`);
+  assert.doesNotMatch(src, /CLAIM_STALE_MS/, '고정 스테일 창 상수가 되살아나면 안 된다');
+  const m = src.match(/^const CLAIM_RECLAIM_MS = (.+);/m);
+  assert.ok(m, 'CLAIM_RECLAIM_MS');
+  const reclaim = Function(`return (${m[1]})`)();
+  assert.ok(reclaim > 120_000 && reclaim <= 10 * 60_000, `회수 창 ${reclaim / 60_000}분 — 상태 만료(2분)보다 크고 10분 이내`);
+  assert.match(src, /now - stampMs > CLAIM_RECLAIM_MS && !\(await getTurnStatus\(wsId, item\.slug\)\)/, '회수 조건에 심박 가드');
 });
 
 test('배선: runners.mjs — 세 CLI 경로 전부 cliTurnFailure 경유 + codex는 exec/read 두 단계 구분', async () => {
