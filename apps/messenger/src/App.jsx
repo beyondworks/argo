@@ -1376,19 +1376,29 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
   );
   // ── 부록 N: 외부 에이전트(헤르메스·오픈클로)는 텔레그램·슬랙에 붙듯 **봇**으로 이 메신저에 접속한다. 봇 = 회사 등급 크루 + 토큰(서버 msgr_bots).
   //    토큰 원문은 생성·회전 직후 이 화면에만 있고(setup 상태) 저장·로그하지 않는다. 가용성은 마지막 getUpdates(last_seen_at)뿐 — 종료/재시작 버튼 없음(해제 = 토큰 회수).
-  const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null); const [openBot, setOpenBot] = useState(null); // 펼친 봇 상세(실측: 상태 줄이 말줄임으로 잘려 못 읽음)
+  const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null); const [openBot, setOpenBot] = useState(null);
+  const [auto, setAuto] = useState(null); // 원클릭 연결(앱 안에서만): null | { status: 'running'|'done'|'missing'|'failed', steps, reason } — 앱이 이 컴퓨터의 에이전트에 플러그인·설정·게이트웨이까지 처리(agents.rs)
+  const autoConnect = async (kind, token) => {
+    if (!inTauri() || !['hermes', 'openclaw'].includes(kind)) { setAuto(null); return; }
+    setAuto({ status: 'running' });
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const r = await invoke('agent_connect', { kind, url: `${SB_URL}/functions/v1/msgr-bot`, token });
+      setAuto(r?.ok ? { status: 'done', steps: r.steps ?? [] } : { status: r?.reason === 'cli_missing' ? 'missing' : 'failed', steps: r?.steps ?? [], reason: r?.reason ?? '' });
+    } catch (e) { setAuto({ status: 'failed', steps: [], reason: String(e?.message ?? e) }); }
+  }; // 펼친 봇 상세(실측: 상태 줄이 말줄임으로 잘려 못 읽음)
   const loadBots = useCallback(async () => { if (part !== 'agents') return; setBots(await q(supabase.from('msgr_bots').select('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at').eq('org_id', org.id).order('created_at'))); }, [org.id, part]);
   useEffect(() => { loadBots().catch((e) => onError(e.message)); }, [loadBots]); // eslint-disable-line react-hooks/exhaustive-deps
   const botSetup = (token) => `ARGO_MSGR_URL=${SB_URL}/functions/v1/msgr-bot\nARGO_MSGR_BOT_TOKEN=${token}`; // 원클릭: 이 두 줄이 에이전트 쪽 설정의 전부
   const addBot = async (kind) => {
     setBusy(true); const r = await supabase.rpc('msgr_bot_create', { org: org.id, kind, name: t(`org.agents.kind.${kind}`) }); setBusy(false);
     if (r.error) return onError(r.error.message);
-    setSetup({ id: r.data.bot_id, token: r.data.token, kind }); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.();
+    setSetup({ id: r.data.bot_id, token: r.data.token, kind }); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.(); autoConnect(kind, r.data.token);
   };
   const rotateBot = async (b) => {
     setBusy(true); const r = await supabase.rpc('msgr_bot_rotate', { bot: b.id }); setBusy(false);
     if (r.error) return onError(r.error.message);
-    setSetup({ id: b.id, token: r.data, kind: b.kind }); onNote(t('org.agents.rotated')); loadBots().catch(() => {});
+    setSetup({ id: b.id, token: r.data, kind: b.kind }); onNote(t('org.agents.rotated')); loadBots().catch(() => {}); autoConnect(b.kind, r.data);
   };
   const revokeBot = async (b) => {
     setBusy(true); const r = await supabase.rpc('msgr_bot_revoke', { bot: b.id }); setBusy(false); setConfirmRevoke(null);
@@ -1414,12 +1424,26 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
           <span className="msgr-klabel">{t('org.agents.setup.h')}</span>
           <code>{botSetup(setup.token)}</code>
           <div className="acts"><button type="button" className="btn sm" onClick={copySetup}><I name="copy" size={13} />{t('org.agents.copy')}</button><button type="button" className="btn sm ghost" onClick={() => setSetup(null)}>{t('ui.close')}</button></div>
-          <ol className="steps">{/* 유건 질문 2026-09-08 "두 줄을 어디에 넣나" — 에이전트 종류별로 설치·붙여 넣을 파일·재시작을 화면에서 바로 보인다 */}
-            <li>{t(`org.agents.setup.${setup.kind ?? 'custom'}.1`)}</li>
-            <li>{t(`org.agents.setup.${setup.kind ?? 'custom'}.2`)}</li>
-            <li>{t(`org.agents.setup.${setup.kind ?? 'custom'}.3`)}</li>
-          </ol>
-          <p className="note">{t('org.agents.setup.hint')}</p>
+          {auto?.status === 'running' && <p className="msgr-auto running"><span className="msgr-dot mark" /> {t('org.agents.auto.running', { kind: t(`org.agents.kind.${setup.kind}`) })}</p>}
+          {auto?.status === 'done' && (<div className="msgr-auto done">
+            <p><span className="msgr-dot ok" /> {t('org.agents.auto.done', { kind: t(`org.agents.kind.${setup.kind}`) })}</p>
+            <ul>{(auto.steps ?? []).map((s) => <li key={s.name}>{s.ok ? '✓' : '✗'} {t(`org.agents.auto.step.${s.name}`)}</li>)}</ul>
+          </div>)}
+          {auto?.status === 'failed' && (<div className="msgr-auto failed">
+            <p>{t('org.agents.auto.failed', { kind: t(`org.agents.kind.${setup.kind}`) })}</p>
+            <ul>{(auto.steps ?? []).map((s) => <li key={s.name}>{s.ok ? '✓' : '✗'} {t(`org.agents.auto.step.${s.name}`)}{!s.ok && s.detail ? ` — ${String(s.detail).slice(0, 200)}` : ''}</li>)}</ul>
+            <div className="acts"><button type="button" className="btn sm" onClick={() => autoConnect(setup.kind, setup.token)}>{t('org.agents.auto.retry')}</button></div>
+          </div>)}
+          {auto?.status === 'missing' && <p className="msgr-auto missing">{t('org.agents.auto.missing', { kind: t(`org.agents.kind.${setup.kind}`) })}</p>}
+          {auto?.status !== 'done' && auto?.status !== 'running' && (<>
+            <span className="msgr-klabel">{t('org.agents.setup.manual')}</span>
+            <ol className="steps">{/* 유건 질문 2026-09-08 "두 줄을 어디에 넣나" — 앱 밖(브라우저)이거나 이 컴퓨터에 에이전트가 없을 때의 수동 안내 */}
+              <li>{t(`org.agents.setup.${setup.kind ?? 'custom'}.1`)}</li>
+              <li>{t(`org.agents.setup.${setup.kind ?? 'custom'}.2`)}</li>
+              <li>{t(`org.agents.setup.${setup.kind ?? 'custom'}.3`)}</li>
+            </ol>
+          </>)}
+          <p className="note">{auto?.status === 'done' ? t('org.agents.auto.after') : t('org.agents.setup.hint')}</p>
         </div>
       )}
       {!liveBots.length ? <p className="empty">{t('org.agents.none')}</p> : (

@@ -34,7 +34,11 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../../../integrations/hermes-argo-msgr/": "agents/hermes-argo-msgr/",
+      "../../../integrations/openclaw-argo-msgr/": "agents/openclaw-argo-msgr/"
+    }
   },
   "plugins": {
     "updater": {

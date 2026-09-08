@@ -7,7 +7,7 @@ import { t } from '../apps/messenger/src/i18n.js';
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const app = read('apps/messenger/src/App.jsx');
 const i18n = read('apps/messenger/src/i18n.js');
-const KEYS = ['crew.hosting.bot', 'org.agents', 'org.agents.desc', 'org.agents.none', 'org.agents.add.hermes', 'org.agents.add.openclaw', 'org.agents.add.custom', 'org.agents.kind.hermes', 'org.agents.kind.openclaw', 'org.agents.kind.custom', 'org.agents.waiting', 'org.agents.on', 'org.agents.off', 'org.agents.by', 'org.agents.made', 'org.agents.rotated', 'org.agents.setup.h', 'org.agents.copy', 'org.agents.copied', 'org.agents.setup.hint', 'org.agents.rotate', 'org.agents.revoke', 'org.agents.revoke.confirm', 'org.agents.revoke.done', 'org.agents.setup.hermes.1', 'org.agents.setup.hermes.2', 'org.agents.setup.hermes.3', 'org.agents.setup.openclaw.1', 'org.agents.setup.openclaw.2', 'org.agents.setup.openclaw.3', 'org.agents.setup.custom.1', 'org.agents.setup.custom.2', 'org.agents.setup.custom.3'];
+const KEYS = ['crew.hosting.bot', 'org.agents', 'org.agents.desc', 'org.agents.none', 'org.agents.add.hermes', 'org.agents.add.openclaw', 'org.agents.add.custom', 'org.agents.kind.hermes', 'org.agents.kind.openclaw', 'org.agents.kind.custom', 'org.agents.waiting', 'org.agents.on', 'org.agents.off', 'org.agents.by', 'org.agents.made', 'org.agents.rotated', 'org.agents.setup.h', 'org.agents.copy', 'org.agents.copied', 'org.agents.setup.hint', 'org.agents.rotate', 'org.agents.revoke', 'org.agents.revoke.confirm', 'org.agents.revoke.done', 'org.agents.setup.hermes.1', 'org.agents.setup.hermes.2', 'org.agents.setup.hermes.3', 'org.agents.setup.openclaw.1', 'org.agents.setup.openclaw.2', 'org.agents.setup.openclaw.3', 'org.agents.setup.custom.1', 'org.agents.setup.custom.2', 'org.agents.setup.custom.3', 'org.agents.auto.running', 'org.agents.auto.done', 'org.agents.auto.after', 'org.agents.auto.failed', 'org.agents.auto.missing', 'org.agents.auto.retry', 'org.agents.auto.step.plugin', 'org.agents.auto.step.env', 'org.agents.auto.step.enable', 'org.agents.auto.step.gateway', 'org.agents.setup.manual'];
 
 test('카드가 쓰는 i18n 키는 전부 ko/en 쌍 · 상태 문구는 "헤르메스 에이전트 연결중/연결됨/응답 없음"(유건 지정 표기)', () => {
   for (const k of KEYS) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
@@ -40,4 +40,21 @@ test('카드: 생성·회전은 RPC(토큰은 응답에서 setup 상태로만) �
   assert.match(card, /const liveBots = bots\.filter\(\(b\) => !b\.revoked_at\)/, '폐기 봇 제외');
   assert.match(card, /confirmRevoke === b\.id && <span className="confirm-inline">/, '해제 인라인 확인(네이티브 confirm 금지)');
   assert.doesNotMatch(card, /window\.confirm|onClick=\{[^}]*(restart|kill)/, 'Buzz 대조: 종료·재시작 버튼 없음, 네이티브 confirm 없음');
+});
+
+test('원클릭 연결(유건 지시 "이렇게 어려우면 안 돼"): 앱 안에서 만들기/회전 직후 agent_connect(플러그인 설치·.env·게이트웨이)를 부르고, CLI가 없으면 수동 안내로', () => {
+  const card = app.slice(app.indexOf('// ── 부록 N: 외부 에이전트'), app.indexOf("if (part === 'node') return ("));
+  assert.match(card, /invoke\('agent_connect', \{ kind, url: `\$\{SB_URL\}\/functions\/v1\/msgr-bot`, token \}\)/, '앱 커맨드 호출');
+  assert.match(card, /autoConnect\(kind, r\.data\.token\);/, '만들기 직후 자동 연결'); assert.match(card, /autoConnect\(b\.kind, r\.data\);/, '회전 직후 자동 연결');
+  assert.match(card, /if \(!inTauri\(\) \|\| !\['hermes', 'openclaw'\]\.includes\(kind\)\) \{ setAuto\(null\); return; \}/, '앱 밖·기타 종류는 수동');
+  assert.match(card, /r\?\.reason === 'cli_missing' \? 'missing' : 'failed'/, 'CLI 없음 분기');
+  const rs = read('apps/messenger/src-tauri/src/agents.rs');
+  assert.match(rs, /pub fn agent_connect\(app: tauri::AppHandle, kind: String, url: String, token: String\)/, 'Rust 커맨드');
+  assert.match(rs, /token\.starts_with\("argo_bot_"\) && token\.len\(\) == 57/, '토큰 형식 검사');
+  assert.match(rs, /"cli_missing"/, 'CLI 없음 사유'); assert.match(rs, /from_mode\(0o600\)/, '.env 0600');
+  assert.doesNotMatch(rs, /println!|eprintln!/, '토큰이 로그로 새지 않게 — 출력 없음');
+  const conf = read('apps/messenger/src-tauri/tauri.conf.json');
+  assert.match(conf, /"\.\.\/\.\.\/\.\.\/integrations\/hermes-argo-msgr\/": "agents\/hermes-argo-msgr\/"/, '헤르메스 플러그인 동봉');
+  assert.match(conf, /"\.\.\/\.\.\/\.\.\/integrations\/openclaw-argo-msgr\/": "agents\/openclaw-argo-msgr\/"/, '오픈클로 플러그인 동봉');
+  assert.match(read('apps/messenger/src-tauri/src/lib.rs'), /agents::agent_connect/, '핸들러 등록');
 });

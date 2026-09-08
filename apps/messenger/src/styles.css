@@ -359,6 +359,7 @@
 .msgr-botrow .detail .facts > div { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 .msgr-botrow .detail .facts .msgr-klabel { min-width: 64px; }
 .msgr-botrow .detail code { font: 12px var(--mono); }
+.msgr-auto { margin: 0; font-size: 12.5px; } .msgr-auto p { margin: 0 0 4px; display: flex; align-items: center; gap: 6px; } .msgr-auto ul { margin: 0 0 6px 18px; padding: 0; font-size: 12px; color: var(--fg-2); display: grid; gap: 2px; } .msgr-auto.failed { color: var(--danger); } .msgr-auto.missing { color: var(--fg-2); }
 .msgr-crewsheet .facts > div.confirm-row { grid-template-columns: 1fr; } /* 파견 해제 확인은 사실 행 아래 한 줄로(실측: 값 칸에 넣으면 '파견 중'이 줄바꿈됐다) */
 .msgr-crewsheet .facts .confirm-row .confirm-inline { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
 .msgr-rows .empty { margin: 0 0 4px; font-size: 12px; color: var(--fg-3); }
