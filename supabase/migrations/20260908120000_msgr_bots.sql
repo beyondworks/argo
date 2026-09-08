@@ -95,7 +95,7 @@ revoke all on function public.msgr_bot_hash(text) from public;
 
 -- 5) 관리자 RPC — 만들기·회전·폐기
 create or replace function public.msgr_bot_create(org uuid, kind text, name text, role_text text default null) returns jsonb
-  language plpgsql security definer set search_path = public, pg_temp as $$
+  language plpgsql security definer set search_path = public, extensions, pg_temp as $$
 declare me uuid := auth.uid(); token text; crew uuid; bid uuid; nm text := btrim(coalesce(name, ''));
 begin
   if me is null or public.msgr_is_admin(org) is not true then raise exception 'msgr_admin_only' using detail = 'only org owner/admin can add an agent bot'; end if;
@@ -113,7 +113,7 @@ begin
   return jsonb_build_object('bot_id', bid, 'crew_id', crew, 'token', token); -- 토큰은 여기서만 보인다
 end $$;
 create or replace function public.msgr_bot_rotate(bot uuid) returns text
-  language plpgsql security definer set search_path = public, pg_temp as $$
+  language plpgsql security definer set search_path = public, extensions, pg_temp as $$
 declare b public.msgr_bots; token text;
 begin
   select * into b from public.msgr_bots where id = bot;
