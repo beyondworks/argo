@@ -83,6 +83,21 @@ function ServerRow({ t, open = false }) {
   );
 }
 
+/* ─── 레일 섹션(채널·1:1·내 크루) — 네이티브 details로 접고 펼친다(유건 지시 2026-09-08). 접힘 상태는 이 브라우저에만(localStorage argo-msgr-rail-fold).
+   summary 안의 버튼(새 채널 +)은 클릭 기본 동작을 막아 접힘을 건드리지 않는다. ─── */
+const FOLD_KEY = 'argo-msgr-rail-fold';
+const readFold = () => { try { const v = JSON.parse(localStorage.getItem(FOLD_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
+function RailSection({ id, label, right = null, children }) {
+  const [open, setOpen] = useState(() => readFold()[id] !== true ? true : false); // 기본 펼침 — 저장된 값이 '접힘'일 때만 접는다
+  const onToggle = (e) => { const next = e.currentTarget.open; setOpen(next); try { localStorage.setItem(FOLD_KEY, JSON.stringify({ ...readFold(), [id]: !next })); } catch { /* 저장 못 해도 동작 */ } };
+  return (
+    <details className="msgr-sec" open={open} onToggle={onToggle}>
+      <summary className="msgr-group"><span className="lbl">{label}</span>{right && <span className="right" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>{right}</span>}</summary>
+      {children}
+    </details>
+  );
+}
+
 /* ─── 로그인: 머리띠 카드 + 브라우저 핸드오프(Google·GitHub — Argo 앱과 같은 계정·같은 방식). 개발 빌드에서는 비밀번호 로그인도(로컬 스택엔 OAuth가 없다). ─── */
 function Auth() {
   const { t, lang, setLang } = useT();
@@ -253,7 +268,7 @@ function Shell({ session }) {
   const crewOf = (id) => crews.find((c) => c.id === id);
   const [newOrg, setNewOrg] = useState(null); // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
   const [joinable, setJoinable] = useState([]); // J-3 도메인 자동 가입 후보
-  const [railMenu, setRailMenu] = useState(null); const [railConfirm, setRailConfirm] = useState(null); // 레일 행 '…' 메뉴(채널 설정·나가기·보관, 1:1 나가기) — 유건 지적 2026-09-04
+  const [railMenu, setRailMenu] = useState(null); const [railConfirm, setRailConfirm] = useState(null); const [railBusy, setRailBusy] = useState(null); // 레일 목록 파견 진행 중 크루 id // 레일 행 '…' 메뉴(채널 설정·나가기·보관, 1:1 나가기) — 유건 지적 2026-09-04
   useEffect(() => { if (!railMenu) return; const off = () => { setRailMenu(null); setRailConfirm(null); }; window.addEventListener('click', off); return () => window.removeEventListener('click', off); }, [railMenu]);
   const leaveChannel = async (c) => {
     setRailMenu(null); setRailConfirm(null);
@@ -362,7 +377,7 @@ function Shell({ session }) {
           </>)}
         </div>
         <div className="msgr-railbody">
-        <div className="msgr-group">{t('ch.list')}<button type="button" className="btn" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button></div>
+        <RailSection id="channels" label={t('ch.list')} right={<button type="button" className="btn" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button>}>
         {newCh && (
           <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); createChannel(); }}>
             <input className="msgr-input" placeholder={t('ch.name')} value={newCh.name} onChange={(e) => setNewCh((c) => ({ ...c, name: e.target.value }))} autoFocus maxLength={80} />
@@ -395,8 +410,8 @@ function Shell({ session }) {
             ); })}
           </div>
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
-        {dms.length > 0 && (<>
-          <div className="msgr-group">{t('ch.dms')}</div>
+        </RailSection>
+        {dms.length > 0 && (<RailSection id="dms" label={t('ch.dms')}>
           <div className="msgr-list">{dms.map((c) => { const open = railMenu === c.id; return (
             <div key={c.id} className={`msgr-railrow${open ? ' open' : ''}`}>
               <button type="button" className={`item${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}><I name="at" size={14} /><span className="name">{dmName(c)}</span></button>
@@ -410,14 +425,21 @@ function Shell({ session }) {
               )}
             </div>
           ); })}</div>
-        </>)}
-        {org && (myAvailable.length > 0 || crews.some((c) => c.owner_user_id === uid)) && (<>
-          <div className="msgr-group">{t('rail.mine')}<span className="msgr-klabel">{crews.filter((c) => c.owner_user_id === uid).length}/{crews.filter((c) => c.owner_user_id === uid).length + myAvailable.length}</span></div>
+        </RailSection>)}
+        {org && (myAvailable.length > 0 || crews.some((c) => c.owner_user_id === uid)) && (<RailSection id="mine" label={t('rail.mine')} right={<span className="msgr-klabel">{crews.filter((c) => c.owner_user_id === uid).length}/{crews.filter((c) => c.owner_user_id === uid).length + myAvailable.length}</span>}>
           <div className="msgr-list mine">
             {crews.filter((c) => c.owner_user_id === uid).map((c) => <button key={c.id} type="button" className="item" onClick={() => setSheet(c.id)} title={t('rail.mine.on')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-dot mark" /></button>)}
-            {myAvailable.map((c) => <button key={c.id} type="button" className="item dim" onClick={() => setPage('chat')} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>)}
+            {myAvailable.map((c) => { // 목록에서 그 자리 파견(유건 지시 2026-09-08) — 채널을 보고 있으면 그 채널까지(DM은 조직만), 아니면 조직만
+              const target = channel && channel.kind !== 'dm' && (channel.personal_crews ?? 'allowed') !== 'blocked' ? channel : null;
+              const go = async () => { if (railBusy) return; setRailBusy(c.id); try { await dispatchCrew(c, target?.id ?? null); setNote(t(target ? 'ch.add.mine.done' : 'rail.mine.dispatched', { name: c.display_name })); } catch (e) { setErr(e.message); } finally { setRailBusy(null); } };
+              return (
+                <div key={c.id} className="msgr-railrow dim">
+                  <button type="button" className="item dim" onClick={go} disabled={railBusy === c.id} title={target ? t('rail.mine.off.ch', { ch: target.name }) : t('rail.mine.off')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>
+                  <button type="button" className="dispatch" onClick={go} disabled={railBusy === c.id} aria-label={t('rail.mine.dispatch')}><I name="plus" size={12} />{railBusy === c.id ? t('rail.mine.dispatching') : t('rail.mine.dispatch')}</button>
+                </div>
+              ); })}
           </div>
-        </>)}
+        </RailSection>)}
         <div className="msgr-railhint">{myAvailable.length || crews.some((c) => c.owner_user_id === uid) ? t('rail.hint.mine') : t('rail.hint')}</div>
         </div>
         <div className="msgr-foot">

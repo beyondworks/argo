@@ -230,7 +230,7 @@ test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(
   assert.match(ch, /const ro = new ResizeObserver\(toBottom\);/, '높이 변화 추적');
   assert.match(ch, /useEffect\(\(\) => \{ const el = feed\.current; if \(el && stick\.current\) el\.scrollTop = el\.scrollHeight; \}, \[msgs\?\.length\]\);/, '새 메시지는 고정 중일 때만 바닥');
   assert.doesNotMatch(ch, /feed\.current\?\.scrollTo\(\{ top: feed\.current\.scrollHeight \}\)/, '무조건 바닥 스크롤이 남아 있다(위로 올린 사용자를 끌어내린다)');
-  assert.match(app, /<div className="msgr-railbody">\n\s*<div className="msgr-group">\{t\('ch\.list'\)\}/, '레일 본문 스크롤 영역');
+  assert.match(app, /<div className="msgr-railbody">\n\s*<RailSection id="channels" label=\{t\('ch\.list'\)\}/, '레일 본문 스크롤 영역(2026-09-08부터 섹션은 details — RailSection)');
   const css = read('apps/messenger/src/styles.css');
   assert.match(css, /^\.msgr-side \{[^\n]*overflow: hidden; \}/m, '레일 자체 스크롤 금지(풋터 고정)');
   assert.match(css, /^\.msgr-railbody \{ flex: 1; min-height: 0; overflow-y: auto;/m, '레일 본문만 스크롤');

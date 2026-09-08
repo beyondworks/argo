@@ -553,3 +553,19 @@
 .msgr-av.crew.xs { border-radius: 6px; }
 .msgr-av.crew.xs .star { width: 11px; height: 11px; right: -4px; top: -4px; border-width: 1.5px; }
 .msgr-av.crew.xs .star svg { width: 6px; height: 6px; }
+
+/* ─── 레일 섹션 접기·펼치기(네이티브 details, 2026-09-08) — 머리는 기존 .msgr-group 문법 그대로, 왼쪽 쐐기만 회전 ─── */
+.msgr-sec > summary { list-style: none; cursor: pointer; user-select: none; }
+.msgr-sec > summary::-webkit-details-marker { display: none; }
+.msgr-sec > summary .lbl { display: inline-flex; align-items: center; gap: 7px; }
+.msgr-sec > summary .lbl::before { content: ''; width: 5px; height: 5px; margin-left: 1px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg) translate(-1px, -1px); transition: transform 0.15s ease; }
+.msgr-sec:not([open]) > summary .lbl::before { transform: rotate(-45deg) translate(-1px, 1px); }
+.msgr-sec > summary:hover { color: var(--fg); }
+.msgr-sec > summary .right { display: inline-flex; align-items: center; }
+/* 내 크루 대기 행 — 호버·포커스에 "파견" 버튼(목록에서 그 자리 파견) */
+.msgr-railrow.dim .item { padding-right: 62px; }
+.msgr-railrow .dispatch { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); height: 22px; padding: 0 8px; border: 0; border-radius: 8px; background: var(--card-2); color: var(--fg); font: inherit; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; gap: 3px; opacity: 0; cursor: pointer; white-space: nowrap; }
+.msgr-railrow:hover .dispatch, .msgr-railrow .dispatch:focus-visible, .msgr-railrow .dispatch:disabled { opacity: 1; }
+.msgr-railrow .dispatch:hover { background: var(--primary); color: var(--primary-fg); }
+.msgr-railrow .dispatch:disabled { cursor: progress; }
+.msgr-railrow.dim:hover .item .msgr-klabel { visibility: hidden; }
