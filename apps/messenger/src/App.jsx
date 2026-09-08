@@ -153,7 +153,21 @@ function Shell({ session }) {
   const [inbox, setInbox] = useState([]); const [inboxSeen, setInboxSeen] = useState(() => readInboxSeen()); const [inboxPrev, setInboxPrev] = useState(0); // 알림함 v1
   const [railSort, setRailSort] = useState(() => { try { return localStorage.getItem('argo-msgr-rail-sort') || 'source'; } catch { return 'source'; } }); // 내 에이전트 정렬: source(소속별) | name(이름순) | added(추가순)
   const pickSort = (v) => { setRailSort(v); try { localStorage.setItem('argo-msgr-rail-sort', v); } catch {} };
-  const [meMenu, setMeMenu] = useState(false); // 하단 프로필(이름) 클릭 → 메뉴(내 계정·로그아웃) — 로그아웃 버튼은 여기로(유건 지시 2026-09-09)
+  const [meMenu, setMeMenu] = useState(false);
+  const [settingsTab, setSettingsTab] = useState(null); // 알림함·프로필 메뉴에서 설정의 특정 탭으로
+  const [searchQ, setSearchQ] = useState(''); const [searchRes, setSearchRes] = useState(null); const searchRef = useRef(null); // 앱 내 검색(유건 지시 2026-09-09): 메시지 본문·사람·에이전트, ⌘K
+  useEffect(() => { const on = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setRail(true); searchRef.current?.focus(); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, []);
+  const runSearch = async (raw) => {
+    const qs = raw.trim(); if (!qs || !org) { setSearchRes(null); return; }
+    setPage('search'); setRail(false);
+    const like = `%${qs.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
+    const msgs = await q(supabase.from('msgr_messages').select('id, channel_id, author_kind, author_user_id, crew_id, body, created_at').eq('org_id', org.id).is('deleted_at', null).ilike('body', like).order('id', { ascending: false }).limit(60)).catch(() => []);
+    const lc = qs.toLowerCase();
+    setSearchRes({ q: qs, msgs, people: members.filter((m) => (m.display_name || '').toLowerCase().includes(lc)), agents: crews.filter((c) => c.display_name.toLowerCase().includes(lc) || (c.role_text || '').toLowerCase().includes(lc)), channels: channels.filter((c) => c.kind !== 'dm' && (c.name || '').toLowerCase().includes(lc)) });
+  }; // 하단 프로필(이름) 클릭 → 메뉴(내 계정·로그아웃) — 로그아웃 버튼은 여기로(유건 지시 2026-09-09)
+  const [friends, setFriends] = useState([]); // 친구·요청(msgr_my_friends) — 레일 '친구' 절·알림함·설정 카드가 같이 쓴다
+  const loadFriends = useCallback(async () => { setFriends(await q(supabase.rpc('msgr_my_friends')).catch(() => [])); }, []);
+  useEffect(() => { if (uid) loadFriends(); }, [uid, tick, loadFriends]);
   const [botKinds, setBotKinds] = useState([]); // 내 에이전트 출처(헤르메스·오픈클로) — 훅은 조기 return보다 앞에(실측: 순서 오류로 빈 화면)
   useEffect(() => { if (!orgId) { setBotKinds([]); return; } q(supabase.from('msgr_bots').select('crew_id, kind').eq('org_id', orgId).is('revoked_at', null)).then(setBotKinds).catch(() => setBotKinds([])); }, [orgId, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const rt = useRef(null);
@@ -253,12 +267,13 @@ function Shell({ session }) {
       if (dead) return;
       const item = (kind, m) => ({ kind, key: `${kind}:${m.id}`, channel_id: m.channel_id, at: m.created_at, who: m.author_kind === 'crew' ? m.crew_id : m.author_user_id, whoKind: m.author_kind === 'crew' ? 'crew' : 'user', text: m.body ?? '' });
       const list = [...ments.map((m) => item('mention', m)), ...replies.map((m) => item('reply', m)), ...dms.map((m) => item('dm', m)),
+        ...friends.filter((f) => f.status === 'pending' && f.requested_by !== uid).map((f) => ({ kind: 'friend', key: `friend:${f.user_id}`, channel_id: null, at: f.created_at, who: f.user_id, whoKind: 'user', text: t('inbox.friend.text', { name: f.display_name || f.handle || '' }), friendName: f.display_name || f.handle })),
         ...aps.map((a) => ({ kind: 'approval', key: `approval:${a.id}`, channel_id: a.channel_id, at: a.created_at, who: a.crew_id, whoKind: 'crew', text: a.reason ? `${a.action} — ${a.reason}` : a.action }))];
       const seenKeys = new Set();
       setInbox(list.filter((it) => !seenKeys.has(it.key) && seenKeys.add(it.key)).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 80));
     })();
     return () => { dead = true; };
-  }, [org?.id, uid, tick, channels]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [org?.id, uid, tick, channels, friends]); // eslint-disable-line react-hooks/exhaustive-deps
   const inboxUnread = org ? inbox.filter((it) => Date.parse(it.at) > (inboxSeen[org.id] ?? 0)).length : 0;
   const openInbox = () => { if (!org) return; setInboxPrev(inboxSeen[org.id] ?? 0); const next = { ...inboxSeen, [org.id]: Date.now() }; setInboxSeen(next); writeInboxSeen(next); setPage('inbox'); setRail(false); };
   const me = members.find((m) => m.user_id === uid);
@@ -385,6 +400,7 @@ function Shell({ session }) {
           <button type="button" className={`msgr-org${orgMenu ? ' open' : ''}`} onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} title={t('org.switch')}>
             <Av name={org?.name ?? '?'} /><span className="name">{org?.name ?? t('org.pick')}</span><I name="caret" size={14} className="caret" />
           </button>
+          <form className="msgr-search" onSubmit={(e) => { e.preventDefault(); runSearch(searchQ); }}><I name="at" size={13} /><input ref={searchRef} value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder={t('search.ph')} aria-label={t('search.title')} />{searchQ && <button type="button" className="clear" onClick={() => { setSearchQ(''); setSearchRes(null); if (page === 'search') setPage('chat'); }} aria-label={t('ui.close')}><I name="x" size={12} /></button>}</form>
           {orgMenu && (<>
             <div className="msgr-scrim clear" onClick={() => setOrgMenu(false)} />
             <div className="msgr-menu-pop" role="menu">
@@ -453,6 +469,22 @@ function Shell({ session }) {
             </div>
           ); })}</div>
         </>)}
+        {friends.length > 0 && (<>
+          <div className="msgr-group">{t('rail.friends')}<span className="msgr-klabel">{friends.filter((f) => f.status === 'accepted').length}{friends.some((f) => f.status === 'pending' && f.requested_by !== uid) ? ` · ${t('rail.friends.pending', { n: friends.filter((f) => f.status === 'pending' && f.requested_by !== uid).length })}` : ''}</span></div>
+          <div className="msgr-list members">{/* 친구는 조직 밖 관계 — 같은 조직에 있으면 1:1 대화, 아니면 설정 > 내 계정 > 친구에서 초대 */}
+            {friends.filter((f) => f.status === 'accepted').map((f) => { const inOrg = members.some((m) => m.user_id === f.user_id); return <button key={f.user_id} type="button" className="item" onClick={() => inOrg ? openDm('user', f.user_id) : (setSettingsTab('me'), setPage('settings'), setRail(false))} title={inOrg ? t('rail.members.dm') : t('rail.friends.notHere')}><Av name={nameOfUser(f.user_id) !== f.user_id.slice(0, 8) ? nameOfUser(f.user_id) : (f.display_name || f.handle || '?')} size="xs" /><span className="name">{members.some((m) => m.user_id === f.user_id) ? nameOfUser(f.user_id) : (f.display_name || f.handle)}</span><span className="msgr-klabel src">{inOrg ? t('rail.friends.here') : t('rail.friends.away')}</span></button>; })}
+            {friends.some((f) => f.status === 'pending' && f.requested_by !== uid) && <button type="button" className="item dim" onClick={() => { setSettingsTab('me'); setPage('settings'); setRail(false); }}><I name="bell" size={12} /><span className="name">{t('rail.friends.review')}</span></button>}
+          </div>
+        </>)}
+        {org && members.length > 0 && (<>
+          <div className="msgr-group">{t('rail.members')}<span className="msgr-klabel">{members.filter((m) => m.user_id !== org.service_user_id).length}</span></div>
+          <div className="msgr-list members">{/* 사람은 역할별로(소유자·관리자 → 멤버 → 게스트). 누르면 1:1 대화. 회사 노드(서비스 계정)는 사람이 아니라 뺀다(유건 질문 2026-09-09) */}
+            {[['admin', (m) => m.role === 'owner' || m.role === 'admin'], ['member', (m) => m.role === 'member'], ['guest', (m) => m.role === 'guest']].map(([k, f]) => { const list = members.filter((m) => m.user_id !== org.service_user_id && f(m)).sort((a, b) => (a.display_name || '').localeCompare(b.display_name || '', 'ko')); return list.length ? (
+              <div key={k} className="msgr-folder"><div className="msgr-folderhead">{t(`rail.members.${k}`)}<span className="msgr-klabel">{list.length}</span></div>
+                {list.map((m) => <button key={m.user_id} type="button" className="item" onClick={() => { if (m.user_id !== uid) openDm('user', m.user_id); }} title={m.user_id === uid ? t('ui.me') : t('rail.members.dm')}><Av name={m.display_name || m.user_id} size="xs" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="msgr-klabel src">{m.user_id === uid ? t('ui.me') : t(`role.${m.role}`)}</span></button>)}
+              </div>) : null; })}
+          </div>
+        </>)}
         {org && (myAvailable.length > 0 || myCrews.length > 0) && (<>
           <div className="msgr-group">{t('rail.mine')}<span className="right"><select className="msgr-sort" value={railSort} onChange={(e) => pickSort(e.target.value)} aria-label={t('rail.sort')} title={t('rail.sort')}>{['source', 'name', 'added'].map((v) => <option key={v} value={v}>{t(`rail.sort.${v}`)}</option>)}</select><span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span></span></div>
           <div className="msgr-list mine">
@@ -470,7 +502,7 @@ function Shell({ session }) {
             <Av name={me?.display_name || session.user.email} size="sm" /><span className="name">{me?.display_name || session.user.email}</span>
           </button>
           {meMenu && (<div className="msgr-rowmenu me" role="menu" onMouseLeave={() => setMeMenu(false)}>
-            <button type="button" role="menuitem" onClick={() => { setMeMenu(false); setPage('settings'); setRail(false); }}><I name="gear" size={13} />{t('set.tab.me')}</button>
+            <button type="button" role="menuitem" onClick={() => { setMeMenu(false); setSettingsTab('me'); setPage('settings'); setRail(false); }}><I name="gear" size={13} />{t('set.tab.me')}</button>
             <button type="button" role="menuitem" className="danger" onClick={() => { setMeMenu(false); supabase.auth.signOut({ scope: 'local' }); }}><I name="out" size={13} />{t('auth.signOut')}</button>
           </div>)}
           {org && <button type="button" className={`btn ghost bell${page === 'inbox' ? ' on' : ''}`} onClick={() => page === 'inbox' ? setPage('chat') : openInbox()} title={t('inbox.title')} aria-label={t('inbox.title')}><I name="bell" size={15} />{inboxUnread > 0 && <span className="n">{inboxUnread > 99 ? '99+' : inboxUnread}</span>}</button>}
@@ -491,10 +523,12 @@ function Shell({ session }) {
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
         {page === 'activity' && org ? (
           <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
+        ) : page === 'search' && org ? (
+          <SearchPage res={searchRes} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onCrew={setSheet} onDm={(id) => openDm('user', id)} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : page === 'inbox' && org ? (
-          <Inbox items={inbox} prevSeen={inboxPrev} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+          <Inbox items={inbox} prevSeen={inboxPrev} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('me'); return; } setChId(id); setPage('chat'); }} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : page === 'settings' ? (
-          <Settings session={session} me={me} uid={uid} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+          <Settings session={session} me={me} uid={uid} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
           <Channel key={chId} channel={channel} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} onError={setErr} onMenu={() => setRail(true)} onCrew={setSheet} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} />
         ) : (
@@ -846,6 +880,104 @@ class PageBoundary extends Component {
 const INBOX_SEEN_KEY = 'argo-msgr-inbox-seen';
 function readInboxSeen() { try { return JSON.parse(localStorage.getItem(INBOX_SEEN_KEY) || '{}') || {}; } catch { return {}; } }
 function writeInboxSeen(v) { try { localStorage.setItem(INBOX_SEEN_KEY, JSON.stringify(v)); } catch {} }
+/* ─── 프로필(계정 단위): 아이디·표시 이름·찾기 허용 스위치 — msgr_profiles(본인만 쓰기). 친구 찾기의 기준. ─── */
+function ProfileCard({ uid, onNote, onError }) {
+  const { t } = useT();
+  const [p, setP] = useState(null); const [busy, setBusy] = useState(false); const [draft, setDraft] = useState({ handle: '', display_name: '', email_search: false, handle_search: true, accept_requests: true });
+  useEffect(() => { q(supabase.from('msgr_profiles').select('*').eq('user_id', uid).maybeSingle()).then((row) => { setP(row ?? {}); if (row) setDraft({ handle: row.handle ?? '', display_name: row.display_name ?? '', email_search: !!row.email_search, handle_search: row.handle_search !== false, accept_requests: row.accept_requests !== false }); }).catch((e) => onError(e.message)); }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps
+  const handleOk = !draft.handle || /^[a-z0-9][a-z0-9_.]{2,23}$/.test(draft.handle);
+  const save = async () => {
+    if (!handleOk) return onError(t('profile.handle.bad'));
+    setBusy(true);
+    const res = await supabase.from('msgr_profiles').upsert({ user_id: uid, handle: draft.handle || null, display_name: draft.display_name.trim() || null, email_search: draft.email_search, handle_search: draft.handle_search, accept_requests: draft.accept_requests, updated_at: new Date().toISOString() }, { onConflict: 'user_id' }).select('*').single();
+    setBusy(false);
+    if (res.error) return onError(/msgr_profiles_handle_key|duplicate/.test(res.error.message) ? t('profile.handle.taken') : res.error.message);
+    setP(res.data); onNote(t('profile.saved'));
+  };
+  if (p === null) return null;
+  return (
+    <section className="msgr-setcard">
+      <h2>{t('profile.title')}</h2><p>{t('profile.desc')}</p>
+      <div className="row"><span className="msgr-klabel" style={{ width: 72 }}>{t('profile.handle')}</span><input className="msgr-input sm" value={draft.handle} onChange={(e) => setDraft({ ...draft, handle: e.target.value.toLowerCase() })} placeholder={t('profile.handle.ph')} maxLength={24} aria-invalid={!handleOk} /></div>
+      <div className="row"><span className="msgr-klabel" style={{ width: 72 }}>{t('profile.name')}</span><input className="msgr-input sm" value={draft.display_name} onChange={(e) => setDraft({ ...draft, display_name: e.target.value })} placeholder={t('profile.name.ph')} maxLength={40} /></div>
+      <div className="row"><label className="msgr-check"><input type="checkbox" checked={draft.email_search} onChange={(e) => setDraft({ ...draft, email_search: e.target.checked })} /> {t('profile.emailSearch')}</label></div>
+      <div className="row"><label className="msgr-check"><input type="checkbox" checked={draft.handle_search} onChange={(e) => setDraft({ ...draft, handle_search: e.target.checked })} /> {t('profile.handleSearch')}</label></div>
+      <div className="row"><label className="msgr-check"><input type="checkbox" checked={draft.accept_requests} onChange={(e) => setDraft({ ...draft, accept_requests: e.target.checked })} /> {t('profile.acceptRequests')}</label></div>
+      <div className="row"><button type="button" className="btn btn-primary sm" disabled={busy || !handleOk} onClick={save}>{t('ui.save')}</button>{!handleOk && <span className="note">{t('profile.handle.bad')}</span>}</div>
+    </section>
+  );
+}
+
+/* ─── 친구(디스코드·슬랙·텔레그램식): 이메일(정확 일치, 상대가 허용) 또는 아이디로 찾아 요청 → 수락. 판정은 전부 서버 RPC(msgr_find_user·msgr_friend_*). ─── */
+function FriendsCard({ uid, friends, members, onChanged, onDm, onNote, onError }) {
+  const { t, lang } = useT();
+  const [qs, setQs] = useState(''); const [res, setRes] = useState(null); const [busy, setBusy] = useState(false);
+  const find = async () => { const v = qs.trim(); if (v.length < 3) return setRes([]); setBusy(true); try { setRes(await q(supabase.rpc('msgr_find_user', { q: v }))); } catch (e) { onError(e.message); } finally { setBusy(false); } };
+  const call = async (fn, args, ok) => { setBusy(true); try { await q(supabase.rpc(fn, args)); onNote(ok); await onChanged?.(); if (res) await find(); } catch (e) { onError(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : /msgr_friend_blocked/.test(e.message) ? t('friends.err.blocked') : e.message); } finally { setBusy(false); } };
+  const received = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
+  const sent = friends.filter((f) => f.status === 'pending' && f.requested_by === uid);
+  const accepted = friends.filter((f) => f.status === 'accepted');
+  const nameOf = (f) => members.find((m) => m.user_id === f.user_id)?.display_name || f.display_name || f.handle || f.user_id.slice(0, 8); // 같은 조직이면 조직 이름 우선(프로필 미설정 시 이메일 앞부분 대신)
+  return (
+    <section className="msgr-setcard">
+      <h2>{t('friends.title')} · {accepted.length}</h2><p>{t('friends.desc')}</p>
+      <form className="row" onSubmit={(e) => { e.preventDefault(); find(); }}><input className="msgr-input sm" value={qs} onChange={(e) => setQs(e.target.value)} placeholder={t('friends.find.ph')} /><button type="submit" className="btn sm" disabled={busy || qs.trim().length < 3}>{t('friends.find')}</button></form>
+      {res && (<div className="msgr-rows">
+        {!res.length && <p className="empty">{t('friends.find.none')}</p>}
+        {res.map((r) => <div key={r.user_id} className="row"><Av name={r.display_name || r.handle || '?'} size="sm" /><span className="name">{r.display_name || r.handle}</span><span className="sub">{r.handle ? `@${r.handle}` : ''}</span>
+          {r.relation === 'none' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_request', { target: r.user_id }, t('friends.sent'))}>{t('friends.request')}</button>}
+          {r.relation === 'sent' && <span className="msgr-klabel">{t('friends.state.sent')}</span>}
+          {r.relation === 'received' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: r.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>}
+          {r.relation === 'friend' && <span className="msgr-klabel">{t('friends.state.friend')}</span>}
+        </div>)}
+      </div>)}
+      {received.length > 0 && (<><h3>{t('friends.received')} · {received.length}</h3><div className="msgr-rows">{received.map((f) => <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" /><span className="name">{nameOf(f)}</span><span className="sub">{fmtWhen(f.created_at, lang)}</span>
+        <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: f.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>
+        <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => call('msgr_friend_decide', { other: f.user_id, accept: false }, t('friends.declined'))}>{t('friends.decline')}</button></div>)}</div></>)}
+      {sent.length > 0 && (<><h3>{t('friends.sent.h')} · {sent.length}</h3><div className="msgr-rows">{sent.map((f) => <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" /><span className="name">{nameOf(f)}</span><span className="sub">{t('friends.state.sent')}</span><button type="button" className="btn sm ghost" disabled={busy} onClick={() => call('msgr_friend_remove', { other: f.user_id, block: false }, t('friends.removed'))} title={t('friends.cancel')} aria-label={t('friends.cancel')}><I name="x" size={13} /></button></div>)}</div></>)}
+      <h3>{t('friends.list')}</h3>
+      <div className="msgr-rows">
+        {!accepted.length && <p className="empty">{t('friends.none')}</p>}
+        {accepted.map((f) => { const inOrg = members.some((m) => m.user_id === f.user_id); return (
+          <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" /><span className="name">{nameOf(f)}</span><span className="sub">{f.handle ? `@${f.handle} · ` : ''}{inOrg ? t('rail.friends.here') : t('friends.notHere')}</span>
+            {inOrg ? <button type="button" className="btn sm" onClick={() => onDm?.(f.user_id)}><I name="at" size={13} />{t('ui.dm')}</button> : <span className="msgr-klabel">{t('friends.inviteHint')}</span>}
+            <button type="button" className="btn sm ghost" disabled={busy} onClick={() => call('msgr_friend_remove', { other: f.user_id, block: false }, t('friends.removed'))} title={t('friends.remove')} aria-label={t('friends.remove')}><I name="x" size={13} /></button>
+          </div>); })}
+      </div>
+    </section>
+  );
+}
+
+/* ─── 검색 결과 페이지 — 메시지(본문 부분 일치, 이 조직·읽을 수 있는 채널만)·사람·에이전트·채널. 전문 검색(tsvector)은 규모가 커지면 v2. ─── */
+function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, onDm, onBack, onMenu }) {
+  const { t, lang } = useT();
+  const chName = (id) => { const c = channels.find((x) => x.id === id); return !c ? '' : c.kind === 'dm' ? dmName(c) : `#${c.name}`; };
+  const who = (m) => m.author_kind === 'crew' ? (crews.find((c) => c.id === m.crew_id)?.display_name ?? t('org.crews')) : nameOfUser(m.author_user_id);
+  const mark = (text) => { if (!res?.q) return text; const i = text.toLowerCase().indexOf(res.q.toLowerCase()); if (i < 0) return text.slice(0, 160); const s = Math.max(0, i - 40); return <>{s > 0 ? '…' : ''}{text.slice(s, i)}<mark>{text.slice(i, i + res.q.length)}</mark>{text.slice(i + res.q.length, i + res.q.length + 120)}</>; };
+  const total = res ? res.msgs.length + res.people.length + res.agents.length + res.channels.length : 0;
+  return (<>
+    <div className="msgr-top">
+      <button type="button" className="msgr-menu" onClick={onMenu} aria-label={t('ui.menu')}><I name="menu" /></button>
+      <span className="title"><I name="at" size={18} />{t('search.title')}{res && <span className="msgr-klabel">“{res.q}” · {t('search.count', { n: total })}</span>}</span>
+      <button type="button" className="btn sm" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
+    </div>
+    <div className="msgr-thread page"><div className="msgr-inbox msgr-searchres">
+      {!res && <p className="empty">{t('search.hint')}</p>}
+      {res && !total && <p className="empty">{t('search.none')}</p>}
+      {res?.channels.length > 0 && <><div className="msgr-klabel">{t('search.channels')}</div><div className="msgr-chips">{res.channels.map((c) => <button key={c.id} type="button" className="msgr-chan" onClick={() => onOpen(c.id)}><I name={c.kind === 'private' ? 'lock' : 'hash'} size={13} /><span>{c.name}</span></button>)}</div></>}
+      {res?.people.length > 0 && <><div className="msgr-klabel">{t('search.people')}</div><div className="msgr-chips">{res.people.map((m) => <button key={m.user_id} type="button" className="msgr-chan" onClick={() => onDm(m.user_id)}><span>{m.display_name || m.user_id.slice(0, 8)}</span></button>)}</div></>}
+      {res?.agents.length > 0 && <><div className="msgr-klabel">{t('search.agents')}</div><div className="msgr-chips">{res.agents.map((c) => <button key={c.id} type="button" className="msgr-chan" onClick={() => onCrew(c.id)}><I name="star" size={13} /><span>{c.display_name}</span></button>)}</div></>}
+      {res?.msgs.length > 0 && <div className="msgr-klabel">{t('search.messages')} · {res.msgs.length}</div>}
+      {res?.msgs.map((m) => (
+        <button key={m.id} type="button" className="msgr-inboxrow" onClick={() => onOpen(m.channel_id)}>
+          <Av name={who(m)} crew={m.author_kind === 'crew'} size="sm" />
+          <span className="body"><span className="line1"><b>{who(m)}</b><span className="msgr-klabel">{chName(m.channel_id)} · {fmtWhen(m.created_at, lang)}</span></span><span className="text">{mark(m.body ?? '')}</span></span>
+        </button>
+      ))}
+    </div></div>
+  </>);
+}
+
 function Inbox({ items, prevSeen = 0, channels, crews, nameOfUser, dmName, onOpen, onBack, onMenu }) {
   const { t, lang } = useT();
   const [kind, setKind] = useState('all');
@@ -872,7 +1004,7 @@ function Inbox({ items, prevSeen = 0, channels, crews, nameOfUser, dmName, onOpe
   </>);
 }
 
-function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onOpenCrew, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
+function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOfUser, onOpenCrew, friends = [], onFriendsChanged, onDm, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu }) {
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
@@ -880,6 +1012,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
   const skins = THEMES.filter((c) => !FAMILY_CODES.includes(c));
   const tabs = [org && ['members', 'set.tab.members'], org && ['org', 'set.tab.org'], org && ['crews', 'set.tab.crews'], ['me', 'set.tab.me']].filter(Boolean); // 기록은 활동 페이지(트리+그래프)로 — 유건 지시 2026-09-04 // UX 2/3: 세로 3천px 카드 더미 대신 탭 — 자주 쓰는 멤버가 첫 화면
   const [tab, setTab] = useState(org ? 'members' : 'me');
+  useEffect(() => { if (initialTab) { setTab(initialTab); onTabUsed?.(); } }, [initialTab]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]); }, [org?.id, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   return (<>
     <div className="msgr-top">
@@ -910,6 +1043,8 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
             {org && me && <DisplayNameRow org={org} me={me} onChanged={onChanged} onNote={onNote} onError={onError} />}
             <div className="row"><NotifyRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
           </section>
+          <ProfileCard uid={uid} onNote={onNote} onError={onError} />
+          <FriendsCard uid={uid} friends={friends} members={members} onChanged={onFriendsChanged} onDm={onDm} onNote={onNote} onError={onError} />
           <section className="msgr-setcard">
             <h2>{t('set.lang')}</h2>
             <div className="msgr-seg" role="radiogroup" aria-label={t('set.lang')}>

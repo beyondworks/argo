@@ -576,10 +576,17 @@
 .msgr-group .right { display: inline-flex; align-items: center; gap: 6px; }
 .msgr-sort { font: inherit; font-size: 10.5px; color: var(--fg-3); background: transparent; border: 0; padding: 0; cursor: pointer; }
 .msgr-folder { display: grid; gap: 2px; margin-bottom: 4px; }
+.msgr-list.members .item .name { flex: 1; } .msgr-list.members .item .src { flex: none; width: 48px; text-align: left; font-size: 10px; opacity: 0.8; }
+.msgr-search { display: flex; align-items: center; gap: 6px; margin: 8px 6px 2px; padding: 0 8px; height: 30px; border-radius: 10px; background: var(--card-2); color: var(--fg-3); }
+.msgr-search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--fg); font: inherit; font-size: 12.5px; outline: none; }
+.msgr-search .clear { border: 0; background: none; color: var(--fg-3); padding: 2px; cursor: pointer; display: inline-flex; }
+.msgr-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.msgr-setcard form.row .msgr-input.sm { flex: 1; }
+.msgr-searchres mark { background: var(--mark); color: #1a1a1a; border-radius: 3px; padding: 0 2px; }
 .msgr-folderhead { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px 2px; font-size: 10.5px; color: var(--fg-3); letter-spacing: 0.02em; }
 .msgr-foot .me { display: flex; align-items: center; gap: 8px; min-width: 0; background: none; border: 0; padding: 2px 4px; border-radius: 9px; color: inherit; font: inherit; cursor: pointer; grid-column: 1 / span 2; }
 .msgr-foot .me:hover { background: var(--card-2); }
-.msgr-rowmenu.me { position: absolute; left: 8px; right: auto; top: auto; bottom: calc(100% + 6px); min-width: 160px; z-index: 30; } /* 프로필 메뉴는 하단 바 위로 */
+.msgr-rowmenu.me { position: absolute; left: 8px; right: auto; top: auto; bottom: calc(100% + 6px); min-width: 170px; z-index: 30; display: grid; padding: 6px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35); } /* 프로필 메뉴는 하단 바 위로, 배경 명시(실측: 배경 없이 글자만 떠 가독성 저하) */
 .msgr-foot { position: relative; }
 .msgr-folderpick { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; } .msgr-folderpick .msgr-input.sm { flex: 1; }
 .msgr-input.sm { border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px; font: inherit; font-size: 12.5px; background: var(--card-2); color: var(--fg); }

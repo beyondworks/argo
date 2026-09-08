@@ -62,7 +62,7 @@ before(() => {
   `]);
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql',
-    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql', '20260909000000_msgr_bot_external_id.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
+    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql', '20260909000000_msgr_bot_external_id.sql', '20260909002000_msgr_profiles_friends.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`); // 체험 창 밖
   // 시드: owner가 조직 생성(트리거가 owner 멤버·free 자격 생성) → admin/member/guest/removed 초대 → 공개·비공개 채널 → 크루 2개
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
@@ -215,4 +215,33 @@ test('external_id(20260909000000): 에이전트마다 봇 하나 — 같은 조�
   const b = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'openclaw', 'Support', null, 'openclaw:support')`)));
   assert.notEqual(b.bot_id, a.bot_id, '폐기 뒤 재생성');
   assert.equal(sql(`select count(*) from public.msgr_bots where org_id = '${ORG}' and external_id = 'openclaw:support' and revoked_at is null`), '1');
+});
+
+test('친구(20260909002000): 이메일은 정확 일치+허용한 사람만, 아이디는 앞부분+허용, 이메일은 결과에 없음 · 요청→수락 · 맞요청=수락 · 거절 삭제 · 차단은 검색·요청 차단', { skip }, () => {
+  asUser(U.member, `insert into public.msgr_profiles (user_id, handle, display_name, email_search) values ('${U.member}', 'seoyun_dev', '서윤 개발', true)`);
+  asUser(U.guest, `insert into public.msgr_profiles (user_id, handle, display_name, email_search, handle_search) values ('${U.guest}', 'ghost', '유령', false, false)`);
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('member@example.test')`)), '1', '이메일 정확 일치(허용)');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('MEMBER@EXAMPLE.TEST')`)), '1', '대소문자 무시');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('member@example')`)), '0', '부분 이메일은 안 찾아진다');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('guest@example.test')`)), '0', '이메일 검색 안 허용');
+  assert.equal(last(asUser(U.owner, `select handle from public.msgr_find_user('seo')`)), 'seoyun_dev', '아이디 앞부분');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('gho')`)), '0', '아이디 검색 안 허용');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('se')`)), '0', '3자 미만은 안 찾는다');
+  assert.doesNotMatch(sql(`select pg_get_function_result('public.msgr_find_user'::regproc)`), /email/, '결과에 이메일 열 없음');
+  assert.equal(last(asUser(U.owner, `select public.msgr_friend_request('${U.member}')`)), 'sent');
+  assert.equal(last(asUser(U.owner, `select relation from public.msgr_find_user('seo')`)), 'sent');
+  assert.equal(last(asUser(U.member, `select status || '|' || (requested_by = '${U.owner}') from public.msgr_my_friends()`)), 'pending|true', '상대는 받은 요청으로 본다');
+  fails(asUserRaw(U.owner, `select public.msgr_friend_decide('${U.member}', true)`), /msgr_friend_no_request/, '보낸 쪽은 수락 못 한다');
+  assert.equal(last(asUser(U.member, `select public.msgr_friend_decide('${U.owner}', true)`)), 'friend');
+  assert.equal(last(asUser(U.owner, `select status from public.msgr_my_friends() where user_id = '${U.member}'`)), 'accepted');
+  assert.equal(last(asUser(U.member, `select display_name from public.msgr_profiles where user_id = '${U.owner}'`)), '', '친구가 돼도 상대가 프로필을 안 만들었으면 없음(정책은 읽기 허용)');
+  // 맞요청 = 수락
+  asUser(U.admin, `select public.msgr_friend_request('${U.guest}')`); assert.equal(last(asUser(U.guest, `select public.msgr_friend_request('${U.admin}')`)), 'friend');
+  // 거절·차단
+  asUser(U.extra, `select public.msgr_friend_request('${U.owner}')`); assert.equal(last(asUser(U.owner, `select public.msgr_friend_decide('${U.extra}', false)`)), 'declined');
+  assert.equal(sql(`select count(*) from public.msgr_friends where a = least('${U.owner}','${U.extra}')::uuid and b = greatest('${U.owner}','${U.extra}')::uuid`), '0');
+  asUser(U.owner, `select public.msgr_friend_remove('${U.member}', true)`);
+  fails(asUserRaw(U.member, `select public.msgr_friend_request('${U.owner}')`), /msgr_friend_blocked/, '차단당한 쪽은 요청 불가');
+  assert.equal(last(asUser(U.member, `select count(*) from public.msgr_find_user('owner@example.test')`)), '0', '차단 관계는 검색에서도 빠진다(owner는 이메일 검색 미허용이기도 함)');
+  fails(asUserRaw(U.owner, `insert into public.msgr_friends (a, b, requested_by) values (least('${U.owner}','${U.guest}')::uuid, greatest('${U.owner}','${U.guest}')::uuid, '${U.owner}')`), /permission denied|row-level security/, '직접 insert 금지');
 });
