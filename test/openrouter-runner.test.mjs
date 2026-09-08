@@ -206,7 +206,8 @@ test('gen-model-catalog.mjs — 발행 산출물이 폐기 모델 retire/alias(L
   const { mkdtemp } = await import('./helpers/tmp.mjs');
   const { join } = await import('node:path'); const { tmpdir } = await import('node:os');
   const out = join(await mkdtemp(join(tmpdir(), 'argo-gen-catalog-')), 'model-catalog.json');
-  execFileSync(process.execPath, [new URL('../scripts/gen-model-catalog.mjs', import.meta.url).pathname, out], { stdio: 'pipe' });
+  const { fileURLToPath } = await import('node:url'); // .pathname은 윈도우에서 '/D:/…'라 'D:\\D:\\…'로 깨진다(CI 실측 2026-09-08)
+  execFileSync(process.execPath, [fileURLToPath(new URL('../scripts/gen-model-catalog.mjs', import.meta.url)), out], { stdio: 'pipe' });
   const doc = JSON.parse(await readFile(out, 'utf8'));
   const { validateOverlay, applyOverlay, normalizeModelId } = await import('../src/runners/catalog-remote.mjs');
   const o = validateOverlay(doc); assert.ok(o, '스키마 통과');
