@@ -21,7 +21,7 @@ const { createCompany, updateCompany, paths } = await import('../src/workspace.m
 const { saveRunnerCred } = await import('../src/runners/creds.mjs');
 const { saveDeviceSession } = await import('../src/devicesession.mjs');
 const { RUNNERS } = await import('../src/runners/catalog.mjs').catch(() => ({ RUNNERS: null }));
-const freeModel = process.env.OPENROUTER_MODEL || RUNNERS?.openrouter?.models?.find((m) => m.free)?.id || 'minimax/minimax-m3:free';
+const freeModel = process.env.OPENROUTER_MODEL || RUNNERS?.openrouter?.models?.find((m) => m.free)?.id || 'nvidia/nemotron-3.5-lightning:free';
 const ws = 'lean-ax-dev';
 await createCompany(ws, '린 컴퍼니', '유건', owner.id, 'ko');
 await writeFile(join(paths(ws).agents, 'seoyun.md'), `---\nname: 서윤\nrole: 마케터\nrunner: openrouter\nmodel: ${freeModel}\n---\n마케팅 담당. 답은 한국어로 짧게(3문장 이내).\n`);

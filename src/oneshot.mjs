@@ -67,15 +67,20 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     hangGuard = setTimeout(() => ac.abort(), timeoutMs);
     // 모델 선택은 두 엔진이 같은 값을 쓴다(한 곳 정의). openrouter는 카탈로그 검증 — 호출자가 넘긴 타 러너용 모델(예: consolidate의 claude-haiku
     // 하드코딩)이 그대로 나가면 OpenRouter에 없는 id라 400으로 전멸한다(2R 검수 H1). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
-    // openrouter는 alias(폐기 id→현행)를 먼저 — 온보딩 기본 상수까지. 무료 모델이 발행 사이에 죽으면(2026-09-08 minimax-m3:free 404)
-    // 앱 발행 없이 원격 오버레이만으로 첫 영입 턴을 살릴 수 있게(chat.mjs 크루 턴과 같은 관문). chat.mjs와 달리 여기서는 로드를
-    // 기다린다 — 원샷(첫 영입·기억 정리)은 지연보다 정확한 모델이 중요하고, TTL 캐시라 첫 호출(≤8s) 뒤엔 즉시 반환된다.
-    if (runner === 'openrouter') await loadRemoteCatalog().catch(() => null);
+    // 원격 오버레이(alias·retire·add)를 SDK 계열 러너 전부에 — chat.mjs:993 크루 턴과 같은 관문(분리 검수 M-4: openrouter만 정규화하면 다음
+    // 벤더 폐기 때 같은 버그). chat.mjs와 달리 로드를 **기다린다** — 원샷(첫 영입·기억 정리)은 지연보다 정확한 모델이 중요하고, TTL 캐시라
+    // 첫 호출(≤8s) 뒤엔 즉시 반환된다. 무료 모델이 발행 사이에 죽으면(2026-09-08 minimax-m3:free 404) 앱 발행 없이 오버레이만으로 첫 영입이 산다.
+    if (!isCliRunner(runner)) await loadRemoteCatalog().catch(() => null);
+    const want = normalizeModelId(runner, model); // alias(폐기 id→현행)
+    const known = (id) => !!id && effectiveModels(runner).some((m) => m.id === id);
+    // openrouter 온보딩 폴백: 상수도 alias를 지나되, alias 목적지가 카탈로그에 없으면(add 누락 — 사고 대응의 흔한 실수, 분리 검수 M-1)
+    // 카탈로그 첫 무료 모델로 — 아무 데도 없는 id가 벤더로 나가 하드 실패하지 않게.
+    const onboardFallback = () => { const fb = normalizeModelId('openrouter', OPENROUTER_ONBOARD_MODEL); return known(fb) ? fb : (effectiveModels('openrouter').find((m) => m.free)?.id ?? OPENROUTER_ONBOARD_MODEL); };
     const osModel = runner === 'glm' ? GLM_DEFAULT_MODEL : runner === 'kimi' ? KIMI_DEFAULT_MODEL
-      : runner === 'openrouter' ? (() => { const want = normalizeModelId('openrouter', model); return effectiveModels('openrouter').some((m) => m.id === want) ? want : normalizeModelId('openrouter', OPENROUTER_ONBOARD_MODEL); })()
-      : runner === 'grok' ? (effectiveModels('grok').some((m) => m.id === model) ? model : GROK_DEFAULT_MODEL)
-      : runner === 'gemini' ? (effectiveModels('gemini').some((m) => m.id === model) ? model : GEMINI_DEFAULT_MODEL)
-      : runner === 'codex' ? (effectiveModels('codex').some((m) => m.id === model) ? model : CODEX_DEFAULT_MODEL)
+      : runner === 'openrouter' ? (known(want) ? want : onboardFallback())
+      : runner === 'grok' ? (known(want) ? want : GROK_DEFAULT_MODEL)
+      : runner === 'gemini' ? (known(want) ? want : GEMINI_DEFAULT_MODEL)
+      : runner === 'codex' ? (known(want) ? want : CODEX_DEFAULT_MODEL)
       : (model || null);
     if (nativeRunnerEnabled(runner)) {
       // 네이티브 엔진(P-A') — 도구 없는 단발 호출. 오류는 `API Error: <status> …`로 던져 아래 catch(자가치유·안내)가 그대로 받는다.

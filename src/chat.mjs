@@ -29,6 +29,7 @@ import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커�
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn } from './turn-abort.mjs';
+import { openrouterDowngrade } from './runners/catalog.mjs'; // 카탈로그 밖 :free id는 무료로 강등(분리 검수 H-1 — 유료 무단 전환 차단)
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_EFFORTS, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
 import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
@@ -1420,7 +1421,7 @@ ${lang === 'en'
     + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder })
     + messengerNote
     + fallbackDirective;
-  const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || OPENROUTER_DEFAULT_MODEL) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : runner === 'gemini' ? (effModel || GEMINI_DEFAULT_MODEL) : runner === 'codex' ? (effModel || CODEX_DEFAULT_MODEL) : (effModel || null);
+  const sdkModel = runner === 'glm' ? (effModel || GLM_DEFAULT_MODEL) : runner === 'kimi' ? (effModel || KIMI_DEFAULT_MODEL) : runner === 'openrouter' ? (effModel || openrouterDowngrade(wantModel)) : runner === 'grok' ? (effModel || GROK_DEFAULT_MODEL) : runner === 'gemini' ? (effModel || GEMINI_DEFAULT_MODEL) : runner === 'codex' ? (effModel || CODEX_DEFAULT_MODEL) : (effModel || null);
   const q = nativeOn ? nativeQuery({
     wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root,
     systemPrompt: systemPromptFor(md, p.root, skills, meta, lang) + sysTail + nativeToolsDirective(lang), // 브라우저·컴퓨터 유즈 안내는 네이티브 턴에만(SDK 턴엔 그 도구가 없다)

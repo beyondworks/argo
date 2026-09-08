@@ -133,7 +133,8 @@ test('배선: oneshot.mjs — 402는 성공이 아니라 실패로 승격(크루
   assert.match(src, /costUsd: runner === 'openrouter' \? null : costUsd/);
   // 2R H1: 호출자 모델을 카탈로그 검증 없이 넘기면 consolidate의 claude-haiku 하드코딩이 400으로 전멸
   // 2026-09-05 #432 MEDIUM-3: 카탈로그는 원목록(RUNNERS)이 아니라 원격 오버레이가 반영된 effectiveModels — 원목록 소비로 되돌아가면 red
-  assert.match(src, /effectiveModels\('openrouter'\)\.some\(\(m\) => m\.id === want\)/, 'openrouter 원샷은 (오버레이 반영) 카탈로그 밖 id를 기본 모델로 강등해야 한다');
+  assert.match(src, /const known = \(id\) => !!id && effectiveModels\(runner\)\.some\(\(m\) => m\.id === id\);/, 'openrouter 원샷은 (오버레이 반영) 카탈로그 밖 id를 기본 모델로 강등해야 한다');
+  assert.match(src, /runner === 'openrouter' \? \(known\(want\) \? want : onboardFallback\(\)\)/);
   // 2026-09-08: 온보딩 기본 상수도 alias를 지난다 — 무료 모델이 발행 사이에 죽으면 오버레이만으로 첫 영입 턴을 살린다(minimax-m3:free 404 실사고)
   assert.match(src, /normalizeModelId\('openrouter', OPENROUTER_ONBOARD_MODEL\)/, '온보딩 기본 상수가 alias 없이 나가면 죽은 무료 모델로 첫 영입이 전멸한다');
   assert.doesNotMatch(src, /RUNNERS\.openrouter\.models\.some/, '원목록(RUNNERS) 직접 소비 회귀 — 폐기·추가 모델을 못 본다');
@@ -186,4 +187,33 @@ test('배선: PICK_ORDER ↔ RUNNER_AUTH 동기화 (다음 러너 추가 때 또
   const { PICK_ORDER } = await import('../app/runner-usable.mjs');
   const { isHiddenRunner } = await import('../src/runners/catalog.mjs');
   assert.deepEqual([...PICK_ORDER].sort(), Object.keys(RUNNER_AUTH).filter((id) => !isHiddenRunner(id)).sort(), 'PICK_ORDER에 빠진 러너는 명판·가용 판정에서 유령이 된다(숨김 러너는 의도적 제외)');
+});
+
+test('강등 목적지(순수) — :free id는 무료(온보딩 기본)로, 유료 id는 유료 기본으로 — 무료↔유료 선을 넘지 않는다(분리 검수 H-1 2026-09-08)', async () => {
+  const { openrouterDowngrade } = await import('../src/runners/catalog.mjs');
+  assert.equal(openrouterDowngrade('minimax/minimax-m3:free'), OPENROUTER_ONBOARD_MODEL, '죽은 무료 id의 크루는 무료로 — 잔액 0 사용자가 매 턴 402가 되지 않게');
+  assert.equal(openrouterDowngrade('vendor/x:FREE '), OPENROUTER_ONBOARD_MODEL, '대소문자·공백 무관');
+  assert.equal(openrouterDowngrade('deepseek/deepseek-v4-pro'), OPENROUTER_DEFAULT_MODEL, '유료 id는 유료 기본');
+  assert.equal(openrouterDowngrade(''), OPENROUTER_DEFAULT_MODEL, '미지정은 종전과 같이 유료 기본(잔액 판단은 사용자 선택)');
+  assert.equal(openrouterDowngrade(undefined), OPENROUTER_DEFAULT_MODEL);
+  const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
+  assert.match(chat, /runner === 'openrouter' \? \(effModel \|\| openrouterDowngrade\(wantModel\)\)/, 'chat.mjs SDK 모델 강등이 순수 함수를 거친다');
+  assert.doesNotMatch(chat, /runner === 'openrouter' \? \(effModel \|\| OPENROUTER_DEFAULT_MODEL\)/, '유료 기본 직행 회귀');
+});
+
+test('gen-model-catalog.mjs — 발행 산출물이 폐기 모델 retire/alias(LEGACY)를 담아 손으로 올린 핫픽스를 덮어쓰지 않는다(분리 검수 H-1)', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { mkdtemp } = await import('./helpers/tmp.mjs');
+  const { join } = await import('node:path'); const { tmpdir } = await import('node:os');
+  const out = join(await mkdtemp(join(tmpdir(), 'argo-gen-catalog-')), 'model-catalog.json');
+  execFileSync(process.execPath, [new URL('../scripts/gen-model-catalog.mjs', import.meta.url).pathname, out], { stdio: 'pipe' });
+  const doc = JSON.parse(await readFile(out, 'utf8'));
+  const { validateOverlay, applyOverlay, normalizeModelId } = await import('../src/runners/catalog-remote.mjs');
+  const o = validateOverlay(doc); assert.ok(o, '스키마 통과');
+  for (const dead of ['minimax/minimax-m3:free', 'minimax/minimax-m2.7:free', 'deepseek/deepseek-v4-pro']) assert.ok(o.runners.openrouter.retire.includes(dead), `retire ${dead}`);
+  assert.equal(normalizeModelId('openrouter', 'minimax/minimax-m3:free', o), OPENROUTER_ONBOARD_MODEL, '죽은 온보딩 id → 현행 온보딩 기본(구버전 앱 크루 턴 구제)');
+  const ids = applyOverlay('openrouter', RUNNERS.openrouter.models, o).map((m) => m.id);
+  assert.ok(!ids.includes('minimax/minimax-m3:free') && ids.includes(OPENROUTER_ONBOARD_MODEL));
+  // alias 목적지는 반드시 유효 목록 안에 — add 누락 alias는 벤더로 없는 id가 나간다(M-1)
+  for (const to of Object.values(o.runners.openrouter.alias)) assert.ok(ids.includes(to), `alias 목적지 미등재: ${to}`);
 });
