@@ -1383,12 +1383,12 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
   const addBot = async (kind) => {
     setBusy(true); const r = await supabase.rpc('msgr_bot_create', { org: org.id, kind, name: t(`org.agents.kind.${kind}`) }); setBusy(false);
     if (r.error) return onError(r.error.message);
-    setSetup({ id: r.data.bot_id, token: r.data.token }); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.();
+    setSetup({ id: r.data.bot_id, token: r.data.token, kind }); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.();
   };
   const rotateBot = async (b) => {
     setBusy(true); const r = await supabase.rpc('msgr_bot_rotate', { bot: b.id }); setBusy(false);
     if (r.error) return onError(r.error.message);
-    setSetup({ id: b.id, token: r.data }); onNote(t('org.agents.rotated')); loadBots().catch(() => {});
+    setSetup({ id: b.id, token: r.data, kind: b.kind }); onNote(t('org.agents.rotated')); loadBots().catch(() => {});
   };
   const revokeBot = async (b) => {
     setBusy(true); const r = await supabase.rpc('msgr_bot_revoke', { bot: b.id }); setBusy(false); setConfirmRevoke(null);
@@ -1414,6 +1414,11 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
           <span className="msgr-klabel">{t('org.agents.setup.h')}</span>
           <code>{botSetup(setup.token)}</code>
           <div className="acts"><button type="button" className="btn sm" onClick={copySetup}><I name="copy" size={13} />{t('org.agents.copy')}</button><button type="button" className="btn sm ghost" onClick={() => setSetup(null)}>{t('ui.close')}</button></div>
+          <ol className="steps">{/* 유건 질문 2026-09-08 "두 줄을 어디에 넣나" — 에이전트 종류별로 설치·붙여 넣을 파일·재시작을 화면에서 바로 보인다 */}
+            <li>{t(`org.agents.setup.${setup.kind ?? 'custom'}.1`)}</li>
+            <li>{t(`org.agents.setup.${setup.kind ?? 'custom'}.2`)}</li>
+            <li>{t(`org.agents.setup.${setup.kind ?? 'custom'}.3`)}</li>
+          </ol>
           <p className="note">{t('org.agents.setup.hint')}</p>
         </div>
       )}
