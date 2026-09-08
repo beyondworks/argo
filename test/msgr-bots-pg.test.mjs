@@ -62,7 +62,7 @@ before(() => {
   `]);
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql',
-    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
+    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`); // 체험 창 밖
   // 시드: owner가 조직 생성(트리거가 owner 멤버·free 자격 생성) → admin/member/guest/removed 초대 → 공개·비공개 채널 → 크루 2개
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
@@ -191,4 +191,18 @@ test('회전·폐기: 회전하면 옛 토큰 즉시 무효 · 폐기하면 크�
   for (const call of [`msgr_bot_me('${t2}')`, `msgr_bot_updates('${t2}')`, `msgr_bot_send('${t2}', '${PUB}', 'x')`]) fails(asAnonRaw(`select public.${call}`), /msgr_bot_unauthorized/, call);
   fails(asUserRaw(U.admin, `select public.msgr_bot_rotate('${BOT}')`), /msgr_bot_revoked/, '폐기 뒤 회전');
   assert.equal(sql(`select string_agg(action, ',' order by id) from public.msgr_audit_log where org_id = '${ORG}' and action like 'bot.%'`), 'bot.create,bot.rotate,bot.revoke');
+});
+
+test('기본 파견(20260908140000): 소유자가 파견 해제하면 서버가 채널 멤버를 지우고(모든 채널에서 빠짐) 지시 판정은 inactive, 다시 파견하면 다시 넣어야 한다', { skip }, () => {
+  const priv2 = last(asUser(U.admin, `select public.msgr_create_channel('${ORG}', 'private', 'recall-test')`));
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${priv2}', 'crew', '${CREW}', '${U.admin}')`);
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where member_kind = 'crew' and member_id = '${CREW}'`), '1');
+  assert.equal(last(asUser(U.member, `update public.msgr_crews set status = 'available' where id = '${CREW}' returning status`)), 'available', '소유자(member)가 해제');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where member_kind = 'crew' and member_id = '${CREW}'`), '0', '해제 = 채널에서 빠짐(서버 sweep)');
+  assert.equal(sql(`select public.msgr_instruct_check('${CREW}', '${U.member}', null)`), 'inactive', '해제된 크루는 지시 불가');
+  assert.equal(sql(`select string_agg(action, ',' order by id) from public.msgr_audit_log where target_id = '${CREW}' and action like 'crew.%'`), 'crew.recall');
+  fails(asUserRaw(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${priv2}', 'crew', '${CREW}', '${U.admin}')`), /msgr_crew_not_active|msgr_channel/, '해제된 크루는 채널에 못 넣는다');
+  assert.equal(last(asUser(U.member, `update public.msgr_crews set status = 'active', allow = 'all', allow_users = '{}' where id = '${CREW}' returning status`)), 'active', '다시 파견');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where member_kind = 'crew' and member_id = '${CREW}'`), '0', '되살려도 채널은 자동 복귀하지 않는다');
+  assert.equal(sql(`select public.msgr_instruct_check('${CREW}', '${U.member}', null)`), 'ok');
 });

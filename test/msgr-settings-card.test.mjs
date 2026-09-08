@@ -35,7 +35,7 @@ test('카드가 쓰는 i18n 키는 전부 ko/en 쌍으로 있다', () => {
   const keys = new Set([...src.matchAll(/t\('([A-Za-z0-9._-]+)'\)/g)].map((m) => m[1])); // 대소문자 — noCrews·notSignedIn 같은 키를 놓치던 수집기(검수 LOW-1)
   for (const v of ['all', 'list', 'owner']) keys.add(`settings.msgr.allow.${v}`);
   for (const r of ['owner', 'admin', 'member', 'guest']) keys.add(`role.${r}`);
-  assert.ok(keys.size >= 18, `키 수집이 너무 적다(${keys.size})`);
+  assert.ok(keys.size >= 14, `키 수집이 너무 적다(${keys.size})`);
   for (const k of keys) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} 라벨이 ko·en 둘 다 있어야 한다`);
 });
 
@@ -52,10 +52,10 @@ test('H-0: 라우트가 조직별 policy를 싣고, 카드는 잠금이면 라�
   assert.match(route, /from\('msgr_org_policies'\)\.select\('org_id, allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by'\)/, '라우트가 정책을 조회하지 않는다');
   assert.match(route, /o\.policy = /, '조직에 policy가 붙지 않는다');
   const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
-  assert.match(src, /const locked = !!org\?\.policy\?\.allow_locked;/, '정책 잠금 판정이 없다');
-  assert.match(src, /role="radio" aria-checked=\{allow === v\} disabled=\{busy === a\.slug \|\| locked\}/, '허용 범위 라디오가 정책 잠금에 비활성화되지 않는다');
-  assert.match(src, /register\(a\.slug, locked \? org\.policy\.allow_default : 'owner', \[\]\)/, '등록 버튼이 잠긴 기본값을 쓰지 않는다');
-  assert.match(src, /\{locked && <span className="note">\{t\('settings\.msgr\.allow\.locked'\)\}/, '잠금 안내 문구가 없다');
+  // 2026-09-08 유건 지시: 파견·허용 범위·해제는 메신저에서 — 아르고 카드는 연결 상태 + 읽기 전용 목록만(등록·해제·라디오 없음)
+  assert.doesNotMatch(src, /register\(|unregister\(|role="radio"|method: 'DELETE'/, '아르고 카드에 등록·해제·허용 범위 조작이 남아 있다');
+  assert.match(src, /\{reg \? `\$\{t\('settings\.msgr\.registered'\)\} · \$\{t\(`settings\.msgr\.allow\.\$\{reg\.allow\}`\)\}` : t\('settings\.msgr\.notRegistered'\)\}/, '행은 파견 상태·허용 범위를 읽기 전용으로 보인다');
+  assert.match(src, /t\('settings\.msgr\.manage'\)/, '메신저에서 관리한다는 안내가 없다');
   assert.match(i18n, /'settings\.msgr\.allow\.locked': \['[^']+', '[^']+'\]/, 'settings.msgr.allow.locked ko/en');
 });
 

@@ -133,7 +133,12 @@ export function makeDb(client) {
     async myCrewRows(uid, wsId) {
       return unwrap(await client.from('msgr_crews').select('id, org_id, slug, display_name, role_text, status').eq('owner_user_id', uid).eq('ws_id', wsId)) ?? [];
     },
-    async upsertAvailable(rows) { if (rows.length) unwrap(await client.from('msgr_crews').upsert(rows, { onConflict: 'org_id,owner_user_id,ws_id,slug' })); },
+    async upsertAvailable(rows) { if (rows.length) unwrap(await client.from('msgr_crews').upsert(rows, { onConflict: 'org_id,owner_user_id,ws_id,slug' })); }, // 이름은 옛것(available 시절) — 지금은 기본 파견(active) 행을 넣는다
+    /** 조직별 허용 범위 기본값(msgr_org_policies.allow_default) — 기본 파견 행의 allow. 정책 행이 없으면 'owner'. */
+    async orgAllowDefaults(orgIds) {
+      const rows = unwrap(await client.from('msgr_org_policies').select('org_id, allow_default').in('org_id', orgIds)) ?? [];
+      return Object.fromEntries(rows.map((r) => [r.org_id, r.allow_default]));
+    },
     async updateCrewInfo(id, patch) { unwrap(await client.from('msgr_crews').update(patch).eq('id', id)); },
     async deleteCrews(ids) { if (ids.length) unwrap(await client.from('msgr_crews').delete().in('id', ids)); },
     /** G-2 조직 문서 미러용: 조직 이름·슬러그, 문서 목록(가벼운 열), 본문(바뀐 것만) — RLS가 열람 범위를 정한다(채널 문서는 열람자만). */
@@ -244,15 +249,17 @@ export async function nodeRunnerInfo(wsId, { status = null, catalog = null, now 
 
 async function listAgentsForInventory(wsId) { const { listAgents } = await import('../hub.mjs'); return (await listAgents(wsId)).map((a) => ({ slug: a.slug, name: a.name, role: a.role })); }
 
-/** 크루 인벤토리 미러 — 로그인한 소유자의 회사 크루(이름·역할·slug만)를 내가 속한 모든 조직에 status='available'로 올린다.
-    메신저가 "내 크루" 목록을 보여 주고 "+ 추가"에서 그 자리 파견(available→active)할 수 있게(부록 M). 키·모델·기억은 절대 싣지 않는다.
-    diff 규칙: 카드에 새로 생긴 크루 → available insert / 이름·역할 바뀜 → 갱신(상태 무관) / 카드가 사라진(해고) 크루 →
-    available이면 행 삭제, active·detached면 그대로(파견은 소유자가 설정 카드에서 해제 — 조용히 채널에서 빠지게 하지 않는다).
+/** 크루 인벤토리 미러 — 로그인한 소유자의 회사 크루(이름·역할·slug만)를 내가 속한 모든 조직에 **기본 파견(active)**으로 올린다
+    (유건 지시 2026-09-08: "연결하면 내 크루 전부가 목록에 세팅, 허용 범위·해제는 메신저에서"). allow = 조직 기본 허용 범위(정책), 없으면 'owner'.
+    'available'은 이제 "소유자가 메신저에서 파견 해제한 상태"다 — 미러는 그 행을 다시 올리지 않는다(diff는 새 slug만 insert). 키·모델·기억은 절대 싣지 않는다.
+    diff 규칙: 카드에 새로 생긴 크루 → active insert / 이름·역할 바뀜 → 갱신(상태 무관) / 카드가 사라진(해고) 크루 →
+    available(해제)이면 행 삭제, active·detached면 그대로(조용히 채널에서 빠지게 하지 않는다 — 소유자가 메신저 크루 카드에서 해제).
     회사 노드(서비스 계정)는 미러하지 않는다 — 회사 크루는 조직이 만든다(I-5). */
 export async function mirrorInventory(wsId, { db, uid, agents, log = console.error } = {}) {
   const orgIds = await db.myOrgIds(uid);
   if (!orgIds.length) return { orgs: 0, inserted: 0, updated: 0, removed: 0 };
   const rows = await db.myCrewRows(uid, wsId);
+  const allowDefaults = await db.orgAllowDefaults(orgIds).catch((e) => { log('[argo] msgr 조직 정책 조회 실패 — 허용 범위 owner로 파견:', e.message); return {}; });
   const bySlug = new Map(agents.map((a) => [a.slug, a]));
   const out = { orgs: orgIds.length, inserted: 0, updated: 0, removed: 0 };
   const inserts = [];
@@ -260,7 +267,7 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
     const have = new Map(rows.filter((r) => r.org_id === orgId).map((r) => [r.slug, r]));
     for (const a of agents) {
       const r = have.get(a.slug);
-      if (!r) { inserts.push({ org_id: orgId, owner_user_id: uid, ws_id: wsId, slug: a.slug, display_name: a.name || a.slug, role_text: a.role || null, hosting: 'local', status: 'available' }); out.inserted++; continue; }
+      if (!r) { inserts.push({ org_id: orgId, owner_user_id: uid, ws_id: wsId, slug: a.slug, display_name: a.name || a.slug, role_text: a.role || null, hosting: 'local', status: 'active', allow: allowDefaults[orgId] ?? 'owner', allow_users: [] }); out.inserted++; continue; }
       if (r.display_name !== (a.name || a.slug) || (r.role_text ?? null) !== (a.role || null)) { await db.updateCrewInfo(r.id, { display_name: a.name || a.slug, role_text: a.role || null }).catch((e) => log('[argo] msgr 인벤토리 갱신 실패:', e.message)); out.updated++; }
     }
     const gone = [...have.values()].filter((r) => !bySlug.has(r.slug) && r.status === 'available').map((r) => r.id);

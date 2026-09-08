@@ -250,7 +250,7 @@ function Shell({ session }) {
     osNotify(t('notify.approval', { channel: ch?.name ?? '' }), '', `a:${payload.id}`);
   };
   const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || id?.slice(0, 8) || '?';
-  const crewOf = (id) => crews.find((c) => c.id === id);
+  const crewOf = (id) => crews.find((c) => c.id === id) ?? myAvailable.find((c) => c.id === id); // 파견 해제된 내 크루도 시트로 연다(다시 파견·허용 범위)
   const [newOrg, setNewOrg] = useState(null); // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
   const [joinable, setJoinable] = useState([]); // J-3 도메인 자동 가입 후보
   const [railMenu, setRailMenu] = useState(null); const [railConfirm, setRailConfirm] = useState(null); // 레일 행 '…' 메뉴(채널 설정·나가기·보관, 1:1 나가기) — 유건 지적 2026-09-04
@@ -416,7 +416,7 @@ function Shell({ session }) {
           <div className="msgr-group">{t('rail.mine')}<span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span></div>
           <div className="msgr-list mine">
             {myCrews.map((c) => <button key={c.id} type="button" className="item" onClick={() => setSheet(c.id)} title={t('rail.mine.on')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-dot mark" /></button>)}
-            {myAvailable.map((c) => <button key={c.id} type="button" className="item dim" onClick={() => setPage('chat')} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>)}
+            {myAvailable.map((c) => <button key={c.id} type="button" className="item dim" onClick={() => setSheet(c.id)} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>)}
           </div>
         </>)}
         <div className="msgr-railhint">{myAvailable.length || myCrews.length > 0 ? t('rail.hint.mine') : t('rail.hint')}</div>
@@ -466,6 +466,17 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
   useEffect(() => { const on = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [onClose]);
   const on = crew.last_seen_at && Date.now() - Date.parse(crew.last_seen_at) < AWAY_MS;
   const canMe = owner || crew.allow === 'all' || (crew.allow === 'list' && (crew.allow_users ?? []).includes(uid));
+  // 파견·해제는 메신저에서(유건 지시 2026-09-08). 서버는 status만 본다: available = 지시·답글·채널 멤버 불가(20260907120000 게이트), active = 파견 중.
+  const dispatched = crew.status !== 'available'; const [confirmRecall, setConfirmRecall] = useState(false);
+  const setDispatch = async (next) => {
+    setBusy(true); setConfirmRecall(false);
+    const patch = next ? { status: 'active', allow: policy?.allow_default ?? 'owner', allow_users: [] } : { status: 'available' };
+    const res = await supabase.from('msgr_crews').update(patch).eq('id', crew.id).select('id');
+    setBusy(false);
+    if (res.error) return onError(res.error.message);
+    if (!res.data?.length) return onError(t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) }));
+    onNote(t(next ? 'crew.dispatch.done' : 'crew.recall.done', { name: crew.display_name })); onChanged();
+  };
   const save = async (nextAllow, nextList) => {
     setBusy(true);
     const res = await supabase.from('msgr_crews').update({ allow: nextAllow, allow_users: nextAllow === 'list' ? nextList : [] }).eq('id', crew.id).select('id');
@@ -498,6 +509,12 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
           <div><span className="msgr-klabel">{t('crew.tier')}</span><span className={`msgr-tier ${tier}`}>{tier === 'company' ? t('crew.tier.company') : t('crew.tier.personal')}</span></div>
           <div><span className="msgr-klabel">{t('crew.owner')}</span><span><Av name={nameOfUser(crew.owner_user_id)} size="sm" /> {tier === 'company' ? t('crew.tier.company.owner', { org: org?.name ?? '' }) : nameOfUser(crew.owner_user_id)}</span></div>
           <div><span className="msgr-klabel">{t('tab.crew')}</span><span>{t(`crew.hosting.${crew.hosting === 'resident' ? 'resident' : crew.hosting === 'bot' ? 'bot' : 'local'}`)}</span></div>
+          <div><span className="msgr-klabel">{t('crew.dispatch.state')}</span><span><span className={`msgr-dot${dispatched ? ' ok' : ''}`} /> {dispatched ? t('crew.status.active') : t('crew.status.available')}
+            {owner && crew.hosting !== 'bot' && !confirmRecall && (dispatched
+              ? <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => setConfirmRecall(true)}>{t('crew.recall')}</button>
+              : <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => setDispatch(true)}>{t('crew.dispatch')}</button>)}
+          </span></div>
+          {confirmRecall && <div className="confirm-row"><span className="confirm-inline"><span>{t('crew.recall.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => setDispatch(false)}>{t('crew.recall')}</button><button type="button" className="btn sm ghost text" onClick={() => setConfirmRecall(false)}>{t('ui.cancel')}</button></span></div>}
           <div><span className="msgr-klabel">{on ? t('crew.online') : t('crew.away')}</span><span><span className={`msgr-dot${on ? ' mark' : ''}`} /> {crew.last_seen_at ? t('crew.lastSeen', { when: fmtTs(crew.last_seen_at, lang) }) : '—'}</span></div>
         </div>
         <p className="note tier">{tier === 'company' ? t('crew.tier.company.note', { org: org?.name ?? '' }) : t('crew.tier.personal.note', { name: nameOfUser(crew.owner_user_id) })}</p>
