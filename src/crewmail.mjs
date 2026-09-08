@@ -351,6 +351,10 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, co
 async function deliverOne(wsId, runTurn, { item, claimedPath, msg, hb, claimBy }) {
   // claimedAt 각인 — 화면 "배달 중 · N분 경과"의 기준(최초 선점 시각). **실시간**이어야 한다: 주입 now는 틱 시작 시각이라
   // 뒤늦게 착수하는 쪽지(상한 초과 대기분·같은 크루 뒷순서)는 앞 턴만큼 과거로 각인된다(분리 검수 HIGH-1). 실패해도 배달은 계속.
+  // 착수 전 소유권 검사(5R 검수 후속): 프로세스가 3분 넘게 얼었다 깨어나면(잠자기) 이 claim은 이미 회수·재선점됐을 수 있다 — 남의 것(다른 토큰)이면
+  // 각인·턴을 건너뛴다(덮어쓰면 턴이 한 번 더 돌고 attempts가 되감긴다). 없음(null)=회수·배달까지 끝남, 부재(undefined)=내 선점 각인이 실패한 것이라 진행.
+  const owner = await readClaimBy(claimedPath);
+  if (owner === null || (owner !== undefined && owner !== claimBy)) { console.warn(`[argo] 크루 우편 착수 생략(${wsId}/${item.slug}/${msg.id}): claim 신원 ${owner === null ? '소멸' : '불일치'} — 다른 프로세스가 회수함`); return; }
   await writeJsonAtomic(claimedPath, { ...msg, claimBy, claimedAt: new Date().toISOString() }).catch(() => {}); // claimBy(선점 신원)는 유지
   try {
     await runTurn(item.slug, msg, { from: msg.from, hop: msg.hop ?? 0, chain: msg.chain ?? [] });
@@ -362,9 +366,10 @@ async function deliverOne(wsId, runTurn, { item, claimedPath, msg, hb, claimBy }
     await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: false, error, attempts, exhausted: attempts >= MAIL_MAX_ATTEMPTS });
     // 되돌리기·실패함 이동은 .claimed가 **아직 내 것일 때만**. 심박 정체·잠자기로 다른 프로세스가 회수(·배달)했으면 손대지 않는다 —
     // writeJsonAtomic은 없는 파일을 새로 만들어 이미 배달된 쪽지를 큐에 부활시켰다(2R 검수 MEDIUM-3 실측, 회수 창 3분이 되며 60배 잦아진 창).
-    const mine = await readFile(claimedPath, 'utf8').then((t) => JSON.parse(t).claimBy === claimBy, () => false); // 선점 신원 일치만 내 것 — 존재·시각 폴백 없음(4R 검수 MEDIUM-1)
+    const cur = await readClaimBy(claimedPath); // 선점 신원 일치만 내 것 — 존재·시각 폴백 없음(4R 검수 MEDIUM-1). 손상·부재·소멸 전부 흡수(5R LOW-A)
+    const mine = cur === claimBy;
     if (!mine) {
-      console.warn(`[argo] 크루 우편 실패 정착 생략(${wsId}/${item.slug}/${msg.id}): 다른 프로세스가 이미 회수함`);
+      console.warn(`[argo] 크루 우편 실패 정착 생략(${wsId}/${item.slug}/${msg.id}): claim 신원 ${cur === null ? '소멸(회수·배달됨)' : cur === undefined ? '부재(각인 실패 — 회수 경로가 맡음)' : '불일치(재선점됨)'}`);
     } else if (attempts >= MAIL_MAX_ATTEMPTS) {
       console.error(`[argo] 크루 우편 배달 소진(${wsId}/${item.slug}/${msg.id}):`, e.message);
       await moveToDead(wsId, item.slug, item.file, claimedPath, { ...msg, attempts, lastError: error });
@@ -380,6 +385,9 @@ async function deliverOne(wsId, runTurn, { item, claimedPath, msg, hb, claimBy }
     inFlight.delete(claimedPath);
   }
 }
+
+/** .claimed의 선점 신원 — null: 파일 없음(회수·배달 완료) / undefined: 각인 없음·손상 / 문자열: 소유 토큰. 절대 던지지 않는다(deliverOne 정착 경로의 흡수 전제). */
+const readClaimBy = (p) => readFile(p, 'utf8').then((t) => { try { const v = JSON.parse(t)?.claimBy; return typeof v === 'string' ? v : undefined; } catch { return undefined; } }, () => null);
 
 /** 잔재 회수 — 소유 프로세스가 결과 없이 끝난 .claimed를 .json으로 되돌린다. attempts를 1 올린다(분리 검수 MEDIUM-1): 프로세스를 죽이는
     쪽지는 catch에 닿지 못해 .dead로 못 가는데, 회수 주기가 3시간에서 3분으로 줄어 무계 재시도가 20배 빨라진다 — 상한(MAIL_MAX_ATTEMPTS)이

@@ -481,6 +481,37 @@ test('선점 신원(claimBy) — 회수 → 재선점 → 아직 착수 전인 �
   assert.deepEqual(await mailFiles('rc-steal'), [`${id}-to.json.claimed`], '남의 claim을 .json으로 되돌리면(뺏으면) 이중 배달');
   assert.equal(JSON.parse(await readFile(claimed, 'utf8')).claimBy, 'other-process', '내용도 그대로');
   await rm(claimed, { force: true }); // 뒤 테스트 상태 정리
+  // 실제 pre-stamp 모양: 회수가 신원을 뗀 뒤 재선점만 된 상태(claimBy 부재) — "부재면 내 것" 폴백을 되살리면 여기서 red(5R 검수 LOW-B)
+  const id2 = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-steal', message: '신원 부재' });
+  const claimed2 = join(dir, `${id2}-to.json.claimed`);
+  await mod.deliverCrewMail(WS, async (slug) => {
+    if (slug !== 'rc-steal') return;
+    const { claimBy: _b, claimedAt: _a, ...stripped } = JSON.parse(await readFile(claimed2, 'utf8'));
+    await writeFile(claimed2, JSON.stringify({ ...stripped, attempts: 1 }));
+    throw new Error('옛 소유자의 늦은 실패');
+  }, { limit: 10 });
+  assert.deepEqual(await mailFiles('rc-steal'), [`${id2}-to.json.claimed`], '신원이 없어도 내 것으로 단정하지 않는다');
+  await rm(claimed2, { force: true });
+});
+
+test('착수 전 소유권 검사 — 대기 중 다른 프로세스에 회수·재선점된 claim은 각인·턴을 건너뛴다(5R 검수 후속)', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-o1', message: '앞' });
+  const id2 = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-o2', message: '뒤(대기 중 뺏김)' });
+  const calls = [];
+  await mod.deliverCrewMail(WS, async (slug) => {
+    if (!slug.startsWith('rc-o')) return;
+    calls.push(slug);
+    if (slug === 'rc-o1') { // 앞 턴 도중 대기 중인 rc-o2가 다른 프로세스에 회수·재선점됨(다른 토큰)
+      const p = join(paths(WS).root, 'mail', 'rc-o2', `${id2}-to.json.claimed`);
+      const body = JSON.parse(await readFile(p, 'utf8'));
+      await writeFile(p, JSON.stringify({ ...body, claimBy: 'other-process' }));
+    }
+  }, { limit: 10, concurrency: 1 });
+  assert.deepEqual(calls, ['rc-o1'], 'rc-o2는 남의 것이 됐으므로 턴을 돌리지 않는다(돌리면 이중 배달)');
+  const p = join(paths(WS).root, 'mail', 'rc-o2', `${id2}-to.json.claimed`);
+  assert.equal(JSON.parse(await readFile(p, 'utf8')).claimBy, 'other-process', '남의 claim은 그대로');
+  const { rm } = await import('node:fs/promises'); await rm(p, { force: true }); // 정리
 });
 
 test('회수(reclaimClaim)는 옛 소유자의 claimBy·claimedAt을 떼고 되돌린다 — 재선점자가 각인하기 전에도 옛 신원이 남지 않는다', async () => {
