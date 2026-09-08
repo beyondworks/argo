@@ -457,9 +457,41 @@ test('착수는 크루별 라운드로빈 — 한 크루에 밀린 백로그가 
   await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-rr2', message: 'x' });
   const calls = [];
   await mod.deliverCrewMail(WS, async (slug) => { if (slug.startsWith('rc-rr')) calls.push(slug); }, { limit: 2 });
-  assert.ok(calls.includes('rc-rr2'), `첫 패스(상한 2)에 rc-rr2가 포함돼야 한다 — 실제 ${calls.join(',')}`);
+  assert.equal(new Set(calls).size, 2, `첫 패스(상한 2)에 서로 다른 크루 2명이 들어가야 한다(열거 순서 무관 — 4R 검수 LOW-2) — 실제 ${calls.join(',')}`);
   assert.equal(calls.filter((s) => s === 'rc-rr1').length, 1);
   const order = mod.pendingRoundRobin([{ slug: 'a', file: '1' }, { slug: 'a', file: '2' }, { slug: 'b', file: '1', claimed: true }, { slug: 'b', file: '2' }, { slug: 'c', file: '1' }]).map((x) => `${x.slug}${x.claimed ? '*' : ''}${x.file}`);
   assert.deepEqual(order, ['b*1', 'a1', 'b2', 'c1', 'a2'], '잔재 먼저, 그 뒤 슬러그별 한 건씩');
   await mod.deliverCrewMail(WS, async () => {}, { limit: 10 }); // 잔여 정리
+});
+
+test('선점 신원(claimBy) — 회수 → 재선점 → 아직 착수 전인 남의 claim을 옛 소유자의 늦은 실패가 되돌리지 않는다(4R 검수 MEDIUM-1)', async () => {
+  const { rename, writeFile, rm } = await import('node:fs/promises');
+  const id = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-steal', message: '신원' });
+  const dir = join(paths(WS).root, 'mail', 'rc-steal');
+  const claimed = join(dir, `${id}-to.json.claimed`);
+  await mod.deliverCrewMail(WS, async (slug) => {
+    if (slug !== 'rc-steal') return;
+    // 다른 프로세스가 회수(신원 제거·attempts+1)하고 재선점했으나 아직 각인 전 — 옛 claimedAt은 남고 claimBy만 새것
+    const body = JSON.parse(await readFile(claimed, 'utf8'));
+    await rename(claimed, join(dir, `${id}-to.json`));
+    await rename(join(dir, `${id}-to.json`), claimed);
+    await writeFile(claimed, JSON.stringify({ ...body, claimBy: 'other-process', attempts: 1 }));
+    throw new Error('옛 소유자의 늦은 실패');
+  }, { limit: 10 });
+  assert.deepEqual(await mailFiles('rc-steal'), [`${id}-to.json.claimed`], '남의 claim을 .json으로 되돌리면(뺏으면) 이중 배달');
+  assert.equal(JSON.parse(await readFile(claimed, 'utf8')).claimBy, 'other-process', '내용도 그대로');
+  await rm(claimed, { force: true }); // 뒤 테스트 상태 정리
+});
+
+test('회수(reclaimClaim)는 옛 소유자의 claimBy·claimedAt을 떼고 되돌린다 — 재선점자가 각인하기 전에도 옛 신원이 남지 않는다', async () => {
+  const { id } = await claimAs('rc-strip', { mtimeAgoMs: 5 * 60_000 });
+  const p = join(paths(WS).root, 'mail', 'rc-strip', `${id}-to.json`);
+  const { writeFile, rename, utimes } = await import('node:fs/promises');
+  const b0 = JSON.parse(await readFile(`${p}.claimed`, 'utf8'));
+  await writeFile(`${p}.claimed`, JSON.stringify({ ...b0, claimBy: 'dead-owner' }));
+  const t = new Date(Date.now() - 5 * 60_000); await utimes(`${p}.claimed`, t, t); // 쓰기가 갱신한 mtime을 다시 과거로(심박 끊김)
+  await rcRun();
+  const b = JSON.parse(await readFile(p, 'utf8'));
+  assert.equal(b.claimBy, undefined); assert.equal(b.claimedAt, undefined); assert.equal(b.attempts, 1);
+  await rename(p, `${p}.claimed`); const { rm } = await import('node:fs/promises'); await rm(`${p}.claimed`, { force: true }); // 정리
 });
