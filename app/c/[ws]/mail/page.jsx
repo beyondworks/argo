@@ -175,7 +175,7 @@ export default function Mail({ params }) {
                   <td><span style={{ fontSize: 12.5, display: 'block', maxWidth: 420, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }} title={m.message}>{m.message}</span></td>
                   <td style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
                     {m.ts ? timeAgo(m.ts, lang) : '—'} · {t('mail.attempts', { n: m.attempts })}
-                    {m.claimed && <span className="chip primary" style={{ marginLeft: 6, fontSize: 10.5 }}><span className="dot" />{m.claimedAt ? t('mail.claimedFor', { n: Math.max(1, Math.floor((Date.now() - Date.parse(m.claimedAt)) / 60_000)) }) : t('mail.claimed')}</span>}
+                    {m.claimed && <span className="chip primary" style={{ marginLeft: 6, fontSize: 10.5 }}><span className="dot" />{Number.isFinite(Date.parse(m.claimedAt)) ? t('mail.claimedFor', { n: Math.max(1, Math.floor((Date.now() - Date.parse(m.claimedAt)) / 60_000)) }) : t('mail.claimed')}</span>}
                   </td>
                   <td style={{ textAlign: 'right' }}>
                     <button className="btn sm" disabled={m.claimed || busy === `c:${m.to}:${m.id}`} onClick={() => cancel(m)}>{t('mail.cancel')}</button>

@@ -113,7 +113,12 @@ test('배선: crewmail .claimed 회수는 CLI 상한에서 파생되지 않는�
   assert.ok(m, 'CLAIM_RECLAIM_MS');
   const reclaim = Function(`return (${m[1]})`)();
   assert.ok(reclaim > 120_000 && reclaim <= 10 * 60_000, `회수 창 ${reclaim / 60_000}분 — 상태 만료(2분)보다 크고 10분 이내`);
-  assert.match(src, /now - stampMs > CLAIM_RECLAIM_MS && !\(await getTurnStatus\(wsId, item\.slug\)\)/, '회수 조건에 심박 가드');
+  const hb = src.match(/^let CLAIM_HEARTBEAT_MS = (.+);/m);
+  assert.ok(hb, 'CLAIM_HEARTBEAT_MS');
+  assert.ok(reclaim >= 4 * Function(`return (${hb[1]})`)(), '회수 창은 자기 심박 주기의 4배 이상(정체·짧은 잠자기 흡수)');
+  assert.match(src, /now - mtimeMs > CLAIM_RECLAIM_MS/, '회수 판정은 mtime(자기 심박)');
+  assert.match(src, /setInterval\(\(\) => \{ touchClaim\(claimedPath\); \}, CLAIM_HEARTBEAT_MS\)/, '배달 중 자기 심박');
+  assert.doesNotMatch(src, /getTurnStatus/, '남의 상태 파일(크루당 하나)에 회수 판정을 얹지 않는다 — 분리 검수 HIGH-2');
 });
 
 test('배선: runners.mjs — 세 CLI 경로 전부 cliTurnFailure 경유 + codex는 exec/read 두 단계 구분', async () => {

@@ -10,11 +10,10 @@
 // 두 기기가 같은 쪽지를 이중 배달한다(.gw-queue 선례와 동일 결함 계급). 세션 간 소통은 배달 결과가
 // 스레드(동기화 대상)로 남는 것으로 성립한다 — 큐 자체는 발신 기기 소유이며, 배달도 그 기기의
 // 스케줄러가 한다(클라우드 리더 게이트 미적용 — 걸면 비리더 기기 발신분이 무증상 소실, 2026-07-28).
-import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { writeJsonAtomic } from './jsonstore.mjs';
-import { getTurnStatus } from './turn-status.mjs';
 
 /** 틱당 회사별 배달 상한. [규모 질문] 배달 1건 = LLM 턴 1개 — 상한이 없으면 크루 N명이 서로에게
     보낸 폭주가 한 틱에 N² 턴을 만든다. 초과분은 다음 틱(60s)으로 밀린다 — 지연은 무해, 폭발은 유해. */
@@ -24,14 +23,19 @@ export const CC_MAX = 4;
 /** 유계 재시도 — 무계 재시도 금지(2026-07-27 기억 정리 재설계와 같은 원칙). 소진 시 .dead/로 이동해
     조용히 사라지지 않게 한다(무증상 실패가 가장 비싸다). */
 export const MAIL_MAX_ATTEMPTS = 3;
-/** 처리 중 표시(.claimed) 회수 — "진행 중인가"는 시간이 아니라 **크루 상태 파일의 심박**으로 판정한다.
-    배달 턴은 chat()이 setTurnStatus로 30초 심박을 남기고(turn-status.mjs, #447) 프로세스가 죽으면 120초 뒤 만료된다.
-    옛 방식은 고정 창(45분 → #458에서 3시간)이었는데, 앱 재시작·크래시 뒤 쪽지가 그 시간 동안 "배달 중"에 갇혔다
-    (제보 2026-09-08 "1시간 넘게 배달 안 됨"). 심박이 살아 있으면 — 출처가 무엇이든: 상태 파일은 크루당 하나라
-    같은 크루의 다른 턴(개인 채팅)과 구분이 불안정하고, 그 경우도 몇 분 뒤 다시 본다 — 손대지 않는다.
-    심박이 없고 선점 뒤 CLAIM_RECLAIM_MS가 지났으면 회수한다. 3분 = 선점 → chat() boot 상태 착지 사이 창(초 단위)과
-    상태 만료 120초를 덮는 값. 같은 프로세스가 진행 중인 claim은 inFlight로 아예 회수 대상에서 뺀다(HIGH-1). */
+/** 처리 중 표시(.claimed) 회수 — "진행 중인가"는 고정 시간 창이 아니라 **소유 프로세스의 자기 심박**으로 판정한다.
+    배달 중인 프로세스가 CLAIM_HEARTBEAT_MS마다 .claimed의 mtime을 찍고(utimes), 회수는 mtime이 CLAIM_RECLAIM_MS보다
+    오래된 것만 되돌린다. 옛 방식은 고정 창(45분 → #458에서 3시간)이었는데, 앱 재시작·크래시 뒤 쪽지가 그 시간 동안
+    "배달 중"에 갇혔다(제보 2026-09-08 "1시간 넘게 배달 안 됨"). 크루 상태 파일(turn-status 심박)에 얹지 않는 이유(분리 검수
+    HIGH-2): 그 파일은 크루당 하나라 같은 크루의 다른 턴이 끝나며 지우면 배달 턴의 증거가 사라진다(CLI 턴은 기록이 1회뿐).
+    3분 = 심박 30초의 6배 — 이벤트루프 정체·짧은 잠자기를 흡수. 같은 프로세스가 진행 중인 claim은 inFlight로 아예 회수
+    대상에서 뺀다(HIGH-1). JSON의 claimedAt은 화면 표시용(최초 선점 시각)이라 회수 판정에 쓰지 않는다. */
 const CLAIM_RECLAIM_MS = 3 * 60_000;
+let CLAIM_HEARTBEAT_MS = 30_000;
+/** 테스트 전용 — 운영 30초를 ms 단위로 줄여 자기 심박을 결정적으로 관측한다. */
+export function _setClaimHeartbeatMsForTest(ms) { CLAIM_HEARTBEAT_MS = ms; }
+/** 심박 도장 — 파일이 없으면(배달이 끝나 지웠거나 되돌렸으면) 실패할 뿐 되살리지 않는다: 늦게 도는 심박이 유령 .claimed를 만들지 않는다. */
+const touchClaim = (p) => { const t = new Date(); return utimes(p, t, t).catch(() => {}); };
 /** 예약 디렉터리 — dot 접두라 크루 slug와 충돌하지 않는다(slug는 WS_ID류 영숫자, 분리 검수 LOW). */
 const DEAD_DIR = '.dead';
 /** 배달 기록(jsonl) — 쪽지함 화면의 "배달 기록" 섹션. mail/ 아래라 동기화 제외(sync.mjs EXCLUDE). */
@@ -242,16 +246,10 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
     // 크래시 잔재 회수 — 이 프로세스 진행분(inFlight)은 제외, 오래된 .claimed만 .json으로 복귀
     if (item.claimed) {
       if (inFlight.has(item.full)) continue;
-      let stampMs = 0;
-      try {
-        const st = JSON.parse(await readFile(item.full, 'utf8'));
-        stampMs = Date.parse(st.claimedAt ?? st.ts ?? 0) || 0;
-      } catch { /* 읽기 실패 — mtime 폴백 */ }
-      if (!stampMs) { try { stampMs = (await stat(item.full)).mtimeMs; } catch { continue; } }
-      // 다른 살아 있는 프로세스가 이 크루의 턴을 돌리는 중이면(상태 파일 2분 신선 창) 손대지 않는다 — orphan-turns와 같은 판정
-      if (now - stampMs > CLAIM_RECLAIM_MS && !(await getTurnStatus(wsId, item.slug))) {
-        await rename(item.full, item.full.replace(/\.claimed$/, '')).catch(() => {});
-      }
+      // 살아 있음의 증거 = mtime(소유 프로세스의 자기 심박). now(주입 가능)는 이 비교에만 쓴다 — 심박 자체는 실시간이라 시간 여행 테스트는 mtime을 utimes로 밀어야 한다.
+      let mtimeMs = 0;
+      try { mtimeMs = (await stat(item.full)).mtimeMs; } catch { continue; } // 방금 사라짐 — 소유자가 끝냈다
+      if (now - mtimeMs > CLAIM_RECLAIM_MS) await reclaimClaim(item);
       continue;
     }
     // 선점 — mkdir 뮤텍스 + rename. rename 단독은 **윈도우에서 승자가 둘**일 수 있다(MoveFileEx 내부
@@ -271,6 +269,8 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
     if (!won) continue;
     inFlight.add(claimedPath);
     done += 1;
+    // 선점 시각 도장 — rename은 mtime을 보존해(= 발신 시각) 이대로 두면 다른 프로세스의 회수 유예가 0이다(분리 검수 MEDIUM-2). JSON 각인 성패와 무관하게 먼저 찍는다.
+    await touchClaim(claimedPath);
     let msg = null;
     try {
       msg = JSON.parse(await readFile(claimedPath, 'utf8'));
@@ -289,8 +289,12 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
       inFlight.delete(claimedPath);
       continue;
     }
-    // claimedAt 각인 — 선점 **후** 갱신(선점 프리미티브와 분리). 실패해도 배달은 계속(mtime 폴백).
-    await writeJsonAtomic(claimedPath, { ...msg, claimedAt: new Date(now).toISOString() }).catch(() => {});
+    // claimedAt 각인 — 화면 "배달 중 · N분 경과"의 기준(최초 선점 시각). **실시간**이어야 한다: 주입 now는 틱 시작 시각이라 한 틱에서
+    // 순차로 도는 2·3번째 쪽지는 앞 턴만큼 과거로 각인된다(분리 검수 HIGH-1 실측 1.5초 → 운영 최대 수십 분). 실패해도 배달은 계속.
+    await writeJsonAtomic(claimedPath, { ...msg, claimedAt: new Date().toISOString() }).catch(() => {});
+    // 자기 심박 — 배달 턴이 도는 동안 mtime을 갱신해 다른 프로세스에 "살아 있음"을 스스로 증명한다(위 CLAIM_RECLAIM_MS 주석).
+    const hb = setInterval(() => { touchClaim(claimedPath); }, CLAIM_HEARTBEAT_MS);
+    hb.unref?.(); // 프로세스 종료를 붙들지 않는다
     try {
       await runTurn(item.slug, msg, { from: msg.from, hop: msg.hop ?? 0, chain: msg.chain ?? [] });
       await rm(claimedPath, { force: true }).catch(() => {});
@@ -310,10 +314,22 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, no
         await rename(claimedPath, item.full).catch(() => {});
       }
     } finally {
+      clearInterval(hb);
       inFlight.delete(claimedPath);
     }
   }
   return done;
+}
+
+/** 잔재 회수 — 소유 프로세스가 결과 없이 끝난 .claimed를 .json으로 되돌린다. attempts를 1 올린다(분리 검수 MEDIUM-1): 프로세스를 죽이는
+    쪽지는 catch에 닿지 못해 .dead로 못 가는데, 회수 주기가 3시간에서 3분으로 줄어 무계 재시도가 20배 빨라진다 — 상한(MAIL_MAX_ATTEMPTS)이
+    잡게 회수도 한 번의 시도로 센다(소진 선확인이 다음 틱에 .dead로 보낸다). 갱신 실패 시에도 복귀는 한다(소실보다 낫다). */
+async function reclaimClaim(item) {
+  try {
+    const body = JSON.parse(await readFile(item.full, 'utf8'));
+    await writeJsonAtomic(item.full, { ...body, attempts: (body.attempts ?? 0) + 1, lastError: '배달 프로세스가 결과 없이 끝나 회수됨' });
+  } catch { /* 손상·읽기 실패 — 복귀 뒤 배달 경로의 손상 처리(.dead)가 맡는다 */ }
+  await rename(item.full, item.full.replace(/\.claimed$/, '')).catch(() => {});
 }
 
 /** .dead/ 이동 — 기록이 **성공한 뒤에만** 원본을 지운다(HIGH-3①: 기록 실패 + 원본 삭제 = 무증상 소실).

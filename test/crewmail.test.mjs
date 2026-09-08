@@ -298,45 +298,78 @@ test('경로 검증 — slug·id·파일명에 구분자·상위 경로·dot 접
   await assert.rejects(() => mod.sendCrewMail(WS, { from: 'captain', to: 'b', cc: ['.dead'], message: 'x' }), /slug/);
 });
 
-/* ── .claimed 회수는 고정 창이 아니라 심박 기준(제보 2026-09-08 "1시간 넘게 배달 안 됨" — 크래시 뒤 3시간 갇힘) ── */
+/* ── .claimed 회수는 고정 창이 아니라 소유 프로세스의 **자기 심박(mtime)** 기준 — 제보 2026-09-08 "1시간 넘게 배달 안 됨"(크래시 뒤 3시간 갇힘).
+   분리 검수 HIGH-1(각인 시각)·HIGH-2(남의 상태 파일 의존)·MEDIUM-1(회수 시 attempts) 반영. ── */
 
-test('.claimed 회수 — 심박 없고 3분 지나면 다음 틱에 되살리고, 심박이 살아 있으면 오래돼도 보존, 3분 미만이면 보존', async () => {
-  const { rename, writeFile } = await import('node:fs/promises');
-  const { setTurnStatus, clearTurnStatus } = await import('../src/turn-status.mjs');
-  const claimAs = async (slug, ageMs) => {
-    const id = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: slug, message: '회수 시나리오' });
-    const p = join(paths(WS).root, 'mail', slug, `${id}-to.json`);
-    const body = JSON.parse(await readFile(p, 'utf8'));
-    await writeFile(p, JSON.stringify({ ...body, claimedAt: new Date(Date.now() - ageMs).toISOString() }));
-    await rename(p, `${p}.claimed`); // 다른(죽은) 프로세스가 선점한 흔적 — inFlight에 없다
-    return id;
-  };
-  const calls = []; // 앞 테스트가 남긴 다른 슬러그의 대기분(log2 등)은 이 시나리오 밖 — rc-* 만 본다
-  const run = () => mod.deliverCrewMail(WS, async (slug) => { if (slug.startsWith('rc-')) calls.push(slug); });
+const claimAs = async (slug, { mtimeAgoMs, attempts = 0 }) => {
+  const { rename, writeFile, utimes } = await import('node:fs/promises');
+  const id = await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: slug, message: '회수 시나리오' });
+  const p = join(paths(WS).root, 'mail', slug, `${id}-to.json`);
+  const body = JSON.parse(await readFile(p, 'utf8'));
+  await writeFile(p, JSON.stringify({ ...body, attempts, claimedAt: new Date(Date.now() - 12 * 60_000).toISOString() }));
+  await rename(p, `${p}.claimed`); // 다른(죽은) 프로세스가 선점한 흔적 — 이 프로세스의 inFlight에 없다
+  const t = new Date(Date.now() - mtimeAgoMs); await utimes(`${p}.claimed`, t, t); // 심박 = mtime
+  return { id, claimed: `${p}.claimed` };
+};
+const rcCalls = [];
+// 앞 테스트가 남긴 다른 슬러그의 대기분은 시나리오 밖 — rc-* 만 세고, 틱 상한도 넉넉히(검수 LOW-3: readdir 순서 의존 제거)
+const rcRun = () => mod.deliverCrewMail(WS, async (slug) => { if (slug.startsWith('rc-')) rcCalls.push(slug); }, { limit: 10 });
 
-  // ① 5분 전 선점 + 심박 없음 → 이 틱에 .json으로 복귀(배달은 다음 틱), 다음 틱에 배달
-  const id1 = await claimAs('rc-dead', 5 * 60_000);
-  await run();
-  assert.deepEqual(await mailFiles('rc-dead'), [`${id1}-to.json`], '회수: .claimed → .json');
-  assert.deepEqual(calls, [], '회수한 틱에는 배달하지 않는다(다음 틱)');
-  await run();
-  assert.deepEqual(calls, ['rc-dead'], '다음 틱에 배달');
+test('.claimed 회수 — 심박(mtime) 5분 끊김 → 이 틱에 .json 복귀(attempts +1·사유), 다음 틱 배달', async () => {
+  const { id } = await claimAs('rc-dead', { mtimeAgoMs: 5 * 60_000 });
+  await rcRun();
+  assert.deepEqual(await mailFiles('rc-dead'), [`${id}-to.json`], '회수: .claimed → .json');
+  const body = JSON.parse(await readFile(join(paths(WS).root, 'mail', 'rc-dead', `${id}-to.json`), 'utf8'));
+  assert.equal(body.attempts, 1, '회수도 한 번의 시도로 센다(검수 MEDIUM-1 — 독성 쪽지 무계 재시도 방지)');
+  assert.match(body.lastError, /회수/);
+  assert.deepEqual(rcCalls, [], '회수한 틱에는 배달하지 않는다(다음 틱)');
+  await rcRun();
+  assert.deepEqual(rcCalls, ['rc-dead'], '다음 틱에 배달');
   assert.deepEqual(await mailFiles('rc-dead'), []);
+});
 
-  // ② 5분 전 선점 + 이 크루의 상태 파일 심박이 살아 있음(다른 프로세스가 진행 중) → 보존
-  const id2 = await claimAs('rc-live', 5 * 60_000);
-  await setTurnStatus(WS, 'rc-live', 'runner', 'Claude', undefined, 'crewmail');
+test('.claimed 보존 — 다른 프로세스의 자기 심박(mtime 최신)이 있으면 claimedAt이 12분 전이어도 손대지 않고, 심박이 끊기면 회수', async () => {
+  const { utimes } = await import('node:fs/promises');
+  const { id, claimed } = await claimAs('rc-live', { mtimeAgoMs: 0 });
+  await rcRun();
+  assert.deepEqual(await mailFiles('rc-live'), [`${id}-to.json.claimed`], 'mtime이 신선하면 보존(이중 배달 방지) — claimedAt(JSON)은 판정에 안 쓴다');
+  const t = new Date(Date.now() - 4 * 60_000); await utimes(claimed, t, t); // 심박 끊김
+  await rcRun();
+  assert.deepEqual(await mailFiles('rc-live'), [`${id}-to.json`], '심박 끊긴 뒤 회수');
+});
+
+test('.claimed 보존 — 심박 1분 전(선점 직후 창)은 건드리지 않는다', async () => {
+  const { id } = await claimAs('rc-fresh', { mtimeAgoMs: 60_000 });
+  await rcRun();
+  assert.deepEqual(await mailFiles('rc-fresh'), [`${id}-to.json.claimed`], '3분 미만은 보존');
+});
+
+test('회수가 시도 상한을 채우면 다음 틱에 턴 없이 .dead로 — 프로세스를 죽이는 쪽지가 3분마다 턴을 태우지 않는다', async () => {
+  const { id } = await claimAs('rc-poison', { mtimeAgoMs: 5 * 60_000, attempts: mod.MAIL_MAX_ATTEMPTS - 1 });
+  await rcRun(); // 회수 → attempts = MAX
+  await rcRun(); // 소진 선확인 → .dead, runTurn 미호출
+  assert.ok(!rcCalls.includes('rc-poison'), '턴을 태우지 않는다');
+  assert.deepEqual(await mailFiles('rc-poison'), []);
+  assert.ok((await readdir(join(paths(WS).root, 'mail', '.dead'))).includes(`rc-poison-${id}-to.json`), '실패함으로');
+});
+
+test('배달 중 자기 심박 — 턴이 도는 동안 .claimed mtime이 전진하고, claimedAt은 실제 선점 시각(틱 시작 now가 아니라)으로 각인된다(검수 HIGH-1)', async () => {
+  mod._setClaimHeartbeatMsForTest(20);
   try {
-    await run();
-    assert.deepEqual(await mailFiles('rc-live'), [`${id2}-to.json.claimed`], '심박이 있으면 오래돼도 회수하지 않는다(이중 배달 방지)');
-    assert.deepEqual(calls, ['rc-dead']);
-  } finally { await clearTurnStatus(WS, 'rc-live'); }
-  // 심박이 꺼진 뒤(상태 파일 삭제)에는 회수된다
-  await run();
-  assert.deepEqual(await mailFiles('rc-live'), [`${id2}-to.json`], '심박 종료 뒤 회수');
-
-  // ③ 1분 전 선점 + 심박 없음(선점 → boot 상태 착지 사이 창) → 보존
-  const id3 = await claimAs('rc-fresh', 60_000);
-  await run();
-  assert.deepEqual(await mailFiles('rc-fresh'), [`${id3}-to.json.claimed`], '3분 미만은 건드리지 않는다');
+    const { stat } = await import('node:fs/promises');
+    await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-hb', message: '앞 턴(느림)' });
+    await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: 'rc-hb', message: '뒤 쪽지' });
+    const seen = [];
+    const t0 = Date.now();
+    await mod.deliverCrewMail(WS, async (slug, msg) => {
+      const p = join(paths(WS).root, 'mail', slug, `${msg.id}-to.json.claimed`);
+      const m0 = (await stat(p)).mtimeMs;
+      await new Promise((r) => setTimeout(r, 150)); // 심박 20ms가 여러 번 돈다
+      seen.push({ advanced: (await stat(p)).mtimeMs > m0, claimedAt: Date.parse(JSON.parse(await readFile(p, 'utf8')).claimedAt), at: Date.now() });
+    }, { limit: 10, now: t0 });
+    assert.equal(seen.length, 2);
+    assert.ok(seen.every((x) => x.advanced), '턴 도중 mtime 전진(자기 심박)');
+    const later = seen.sort((a, b) => a.at - b.at)[1];
+    assert.ok(later.claimedAt >= t0 + 150 - 5, `뒤 쪽지 claimedAt은 앞 턴(≥150ms) 뒤의 실제 선점 시각이어야 한다(실측 +${later.claimedAt - t0}ms) — 틱 시작 now로 각인하면 red`);
+  } finally { mod._setClaimHeartbeatMsForTest(30_000); }
 });
