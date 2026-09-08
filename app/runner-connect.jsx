@@ -22,7 +22,7 @@ import { invalidChipKey, lastTurnByRunner, lastHealthFailByRunner, healthFailMes
 /** AI 연결(러너별 BYOK/BYOA) — 4러너(Claude·Codex·Gemini·GLM) 각각을 회사 계정에 연결하는 관문.
     러너마다 (a) 상태 칩(회사 연결됨/이 컴퓨터 로그인/미연결) (b) 인증 방식 선택(API키·OAuth)
     (c) 방식별 입력·저장·검증·제거 또는 CLI 로그인 안내. 응답엔 마스킹만 실린다(보안 규칙). */
-const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
+const RUNNER_NAMES = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok', http: 'HTTP 엔진' }; // http = 부록 N 외부 에이전트(숨김 — 목록은 status.hidden이 거른다)
 // 화면에 그릴 순서 — **이 목록에 없으면 카드가 아예 안 뜬다**(러너를 추가하고 여기를 빠뜨리면
 // 연결 수단이 UI에서 사라진다. 분리 검수 2026-08-03이 grok 누락으로 실제 적발).
 // test/runner-order-sync.test.mjs가 RUNNER_AUTH(숨김 제외)와의 동기화를 잠근다. gemini는 숨김(카탈로그 hidden — 유건 결정 2026-09-03).
