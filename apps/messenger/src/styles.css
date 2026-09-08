@@ -73,10 +73,22 @@
 .msgr-stack > * + * { margin-left: -4px; } /* 아바타가 버튼에 싸여도 겹침 유지(검수 MEDIUM-4) */
 .msgr-stack > .more { margin-left: 10px; }
 .msgr-stack .more { margin-left: 10px; font-size: 11.5px; color: var(--fg-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msgr-foot { margin-top: auto; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 8px; padding: 12px 6px 0; border-top: 1px solid var(--border-soft); color: var(--fg-2); font-size: 12.5px; }
+.msgr-foot { margin-top: auto; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto auto; align-items: center; gap: 8px; padding: 12px 6px 0; border-top: 1px solid var(--border-soft); color: var(--fg-2); font-size: 12.5px; }
 .msgr-foot .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-foot .btn.ghost { border: 0; background: none; color: var(--fg-3); width: 30px; height: 30px; padding: 0; border-radius: 9px; }
 .msgr-foot .btn.ghost:hover, .msgr-foot .btn.ghost.on { background: var(--card-2); color: var(--fg); }
+.msgr-foot .btn.bell { position: relative; }
+.msgr-foot .btn.bell .n { position: absolute; top: -3px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--mark); color: #1a1a1a; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.msgr-top .crewbtn { white-space: nowrap; }
+.msgr-inbox { display: grid; gap: 6px; max-width: 880px; margin: 0 auto; padding: 18px 24px; }
+.msgr-inbox .msgr-seg { margin-bottom: 6px; }
+.msgr-inbox .empty, .msgr-inbox .note { margin: 6px 2px; font-size: 12px; color: var(--fg-3); }
+.msgr-inboxrow { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; color: inherit; font: inherit; cursor: pointer; }
+.msgr-inboxrow:hover { background: var(--card-2); }
+.msgr-inboxrow.new { border-color: var(--mark); }
+.msgr-inboxrow .body { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.msgr-inboxrow .line1 { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 13px; }
+.msgr-inboxrow .text { font-size: 13px; color: var(--fg-2); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
 /* ── 본문 ── */
 .msgr-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: calc(100vh / var(--z, 1)); }

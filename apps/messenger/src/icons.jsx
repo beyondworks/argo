@@ -13,6 +13,7 @@ const PATHS = {
   up: '<path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/>',
   check: '<path d="m3 8.5 3.2 3L13 4.5"/>',
   x: '<path d="m4 4 8 8M12 4l-8 8"/>',
+  bell: '<path d="M4 11V7.5a4 4 0 0 1 8 0V11l1 1.5H3z"/><path d="M6.5 13.5a1.5 1.5 0 0 0 3 0"/>',
   clock: '<circle cx="8" cy="8" r="5.8"/><path d="M8 4.8V8l2.2 1.4"/>',
   stamp: '<path d="M5.5 9V6.5a2.5 2.5 0 0 1 5 0V9M3 9h10v2.5H3zM4 13.5h8"/>',
   reply: '<path d="M6.5 4 3 7.5 6.5 11M3.5 7.5H10a3 3 0 0 1 3 3V12"/>',
