@@ -49,13 +49,13 @@ test('배선 — 목록을 만드는 자리 전부가 숨김 판정을 쓴다(�
   assert.match(deck, /setState\(onlyHiddenConnected\(k\.runners\) \? 'retired' :/, '데크 배너 — 숨김만 연결 상태 전용 안내(재검수 MEDIUM-5)');
   assert.match(deck, /state === 'retired' \? 'deck\.runner\.retired'/, '배너 문구 분기');
   const acct = await load('../app/api/account/keys/route.js');
-  assert.match(acct, /if \(isHiddenRunner\(runner\)\) throw new Error\('더 이상 제공되지 않는 러너입니다'\);/, '계정 keys PUT 거절(재검수 MEDIUM-2)');
+  assert.match(acct, /if \(isRetiredRunner\(runner\)\) throw new Error\('더 이상 제공되지 않는 러너입니다'\);/, '계정 keys PUT 거절(재검수 MEDIUM-2) — 제공 종료만(카드 전용 숨김 http는 저장 허용, 부록 N)');
   const connectRoute = await load('../app/api/companies/[ws]/keys/connect/route.js');
-  assert.equal((connectRoute.match(/if \(isHiddenRunner\(runner\)\) return Response\.json\(\{ ok: false, reason: 'retired'/g) ?? []).length, 2, '웹 브리지 POST·GET 둘 다 거절(재검수 MEDIUM-2)');
+  assert.equal((connectRoute.match(/if \(isRetiredRunner\(runner\)\) return Response\.json\(\{ ok: false, reason: 'retired'/g) ?? []).length, 2, '웹 브리지 POST·GET 둘 다 거절(재검수 MEDIUM-2)');
   const compete = await load('../app/c/[ws]/compete/page.jsx');
   assert.match(compete, /filter\(\(r\) => r\.authed && !r\.hidden && r\.models\?\.length\)/, '경쟁 슬롯');
   const keys = await load('../app/api/companies/[ws]/keys/route.js');
-  assert.match(keys, /if \(isHiddenRunner\(runner\)\) throw new Error\('더 이상 제공되지 않는 러너입니다'\);/, 'keys PUT 신규 저장 거절(검수 LOW-5)');
+  assert.match(keys, /if \(isRetiredRunner\(runner\)\) throw new Error\('더 이상 제공되지 않는 러너입니다'\);/, 'keys PUT 신규 저장 거절(검수 LOW-5) — 제공 종료만');
   // 안내문 4곳(chat/oneshot/persona/trial)이 하드코딩 러너 줄 대신 가시 러너 줄을 쓴다(검수 MEDIUM-2)
   const { visibleRunnerNamesLine } = await import('../src/runners/catalog.mjs');
   for (const lang of ['ko', 'en']) {
@@ -138,9 +138,10 @@ test('제공 종료 전용 턴 안내 — chat.mjs 분기 핀 + 서버·클라 �
 
 test('가용 판정 — anyRunnerUsable은 숨김 러너를 세지 않고, onlyHiddenConnected가 그 상태를 가려낸다(검수 HIGH-1 모순 해소)', async () => {
   const { anyRunnerUsable, onlyHiddenConnected, PICK_ORDER } = await import('../app/runner-usable.mjs');
-  const st = { gemini: { company: { connected: true, invalid: false }, hidden: true } };
+  const st = { gemini: { company: { connected: true, invalid: false }, hidden: true, retired: true } };
   assert.equal(anyRunnerUsable(st), false);
   assert.equal(onlyHiddenConnected(st), true);
+  assert.equal(onlyHiddenConnected({ http: { company: { connected: true, invalid: false }, hidden: true, retired: false } }), false, '카드 전용 숨김(http)은 제공 종료가 아니다 — 배너 금지(부록 N, 분리 검수 MEDIUM-3)');
   assert.equal(anyRunnerUsable({ ...st, claude: { company: { connected: true, invalid: false }, hidden: false } }), true);
   assert.ok(PICK_ORDER.includes('gemini'), 'PICK_ORDER(자동 표시 순서)에 포함 — 카탈로그 정의 순과 한 벌(검수 LOW-1)');
 });

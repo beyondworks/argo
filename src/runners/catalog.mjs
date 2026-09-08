@@ -71,7 +71,7 @@ export const RUNNERS = {
   },
   // HTTP 텍스트 러너(부록 N, 2026-09-08) — 외부 에이전트(헤르메스·오픈클로·자체 엔드포인트)를 회사 크루의 두뇌로. 숨김: 카드에 `runner: http`와
   // `endpoint:`를 적어야만 돈다(자동 선택·러너 목록 제외). 텍스트 러너 등급(도구·권한 게이트 없음 — 시트에 정직 표기). 어댑터: runners/http-text.mjs.
-  http: { name: 'HTTP 엔진', kind: 'cli', hidden: true, models: [{ id: '', label: '기본' }] },
+  http: { name: 'HTTP 엔진', kind: 'cli', hidden: true, cardOnly: true, models: [{ id: '', label: '기본' }] }, // cardOnly: 숨김이지만 제공 종료가 아니다 — 자격 저장은 받고 목록만 뺀다
   antigravity: {
     name: 'Antigravity', kind: 'cli',
     // BYOA 2호(2026-07-27) — 구글이 개인용 Gemini Code Assist OAuth를 폐기하고 Antigravity로 이전
@@ -303,6 +303,8 @@ export const GROK_DEFAULT_MODEL = 'grok-4.6';
 //   oauthPasteable 토큰 붙여넣기로, gemini는 CLI 설치 후 로그인 안내로 대체한다.
 /** 숨김 러너 — 새로 고르거나 자동으로 잡히지 않는다(기존 지정·자격은 유효). 목록을 만드는 모든 자리가 이 판정을 쓴다. */
 export const isHiddenRunner = (id) => !!RUNNERS[id]?.hidden;
+/** 제공 종료 러너(gemini 구독 CLI) — 숨김 중에서 cardOnly가 아닌 것. 자격 저장 거절·'더 이상 제공되지 않음' 안내는 이것만(분리 검수 HIGH-2·MEDIUM-3: http는 숨김이되 제공 종료가 아니다). */
+export const isRetiredRunner = (id) => !!RUNNERS[id]?.hidden && !RUNNERS[id]?.cardOnly;
 export const visibleRunnerIds = () => Object.keys(RUNNERS).filter((id) => !isHiddenRunner(id));
 /** 안내문용 가시 러너 이름 줄 — ko "Claude·Codex·…", en "Claude, Codex, …, or Grok". 하드코딩 4곳(chat/oneshot/persona/trial)이
     숨김 러너를 권하던 것의 단일 원천. **반드시 템플릿 리터럴 안에서** 보간할 것(작은따옴표 안이면 원문이 사용자에게 노출 — 재검수 HIGH 실사고). */
@@ -314,7 +316,7 @@ export const visibleRunnerNamesLine = (lang = 'ko', exclude = []) => {
 /** 연결된 것이 숨김 러너뿐인가(runnerStatus dict) — "연결은 됐는데 제공 종료" 전용 안내 분기(재검수 MEDIUM-5) */
 export const onlyHiddenConnectedStatus = (st) => {
   const on = Object.entries(st ?? {}).filter(([, r]) => r?.company?.connected && !r?.company?.invalid);
-  return on.length > 0 && on.every(([id]) => isHiddenRunner(id));
+  return on.length > 0 && on.every(([id]) => isRetiredRunner(id)); // 제공 종료만 — 카드 전용 숨김(http)은 정상 연결
 };
 
 /** 저장 자격의 연결 방식이 더 이상 제공되지 않는 러너(runnerStatus가 unsupportedMethod를 단 것)만 있고 가용 러너가 없는가 — 그 러너 id 목록(빈 배열=해당 없음).

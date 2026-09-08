@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 
 const ROOT = await mkdtemp(join(tmpdir(), 'argo-http-e2e-'));
 process.env.ARGO_ROOT = ROOT; delete process.env.NEXT_PUBLIC_SUPABASE_URL; delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-process.env.ARGO_MODEL_CATALOG = 'off';
+process.env.ARGO_MODEL_CATALOG = 'off'; process.env.ARGO_CACHE_DIR = await mkdtemp(join(tmpdir(), 'argo-http-e2e-cache-')); // 실 ~/.argo/cache 미접촉(readCache는 off 게이트보다 먼저)
 const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;
 const { chat } = await import('../src/chat.mjs');
@@ -43,6 +43,11 @@ test('chat() — 자격이 틀리면 401이 정직한 실패로 표면화된다(
   const r = await chat(WS, 'hermes', '안녕').catch((e) => ({ reply: String(e.message) }));
   assert.match(String(r.reply), /401|인증|자격|API Error/, `401이 삼켜지지 않는다: ${String(r.reply).slice(0, 120)}`);
   assert.equal(seen.at(-1).auth, 'Bearer wrong');
+  // 불변식 A(분리 검수 HIGH-1): 벤더 401이 각인돼 **다음 턴은 엔드포인트를 두드리지 않고** 실행 전에 끊긴다
+  const before = seen.length;
+  const r2 = await chat(WS, 'hermes', '다시').catch((e) => ({ reply: String(e.message), authExpired: e.authExpired }));
+  assert.equal(seen.length, before, '게이트가 실행 전에 끊는다 — 틀린 키로 외부 엔드포인트를 계속 두드리지 않는다');
+  assert.match(String(r2.reply), /401|인증|자격|known-invalid|API Error|재연결/, String(r2.reply).slice(0, 120));
 });
 
 test.after(() => new Promise((r) => srv.close(r)));

@@ -452,7 +452,7 @@ export async function verifyRunnerCred(runner, type, value) {
       const r = await fetch(`${cbase2}/v1/models?limit=1`, { headers: { authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'oauth-2025-04-20' }, signal: AbortSignal.timeout(10_000) });
       return (r.status === 401 || r.status === 403) ? { ok: false, reason: 'auth' } : { ok: true }; // reason:'auth' = 턴 전 게이트·분류표의 열쇠(불변식 A)
     }
-    if (runner === 'http') return v ? { ok: true } : { ok: false, reason: 'format' }; // 엔드포인트는 크루 카드에 있어 여기서 못 두드린다 — 첫 턴의 401이 게이트(불변식 A)를 켠다
+    if (runner === 'http') return v ? { ok: true } : { ok: false, reason: 'format' }; // 형식만('none' = 무인증 엔드포인트). 엔드포인트는 크루 카드에 있어 여기서 못 두드린다 — 401은 턴에서 각인(surfaceRunnerFailure), 검진 루프는 http 제외
     if (runner === 'glm') {
       const base = process.env.GLM_BASE_URL || 'https://api.z.ai/api/anthropic';
       const r = await fetch(`${base}/v1/models?limit=1`, { headers: { 'x-api-key': v, authorization: `Bearer ${v}`, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10_000) });

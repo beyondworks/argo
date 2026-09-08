@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { execHttpText, buildHttpTextRequest, parseHttpTextResponse } from '../src/runners/http-text.mjs';
+import { execHttpText, buildHttpTextRequest, parseHttpTextResponse, assertHttpTextEndpoint, HTTP_TEXT_NO_AUTH } from '../src/runners/http-text.mjs';
 import { externalExec } from '../src/runners.mjs';
 import { RUNNERS, RUNNER_AUTH, isCliRunner, isCliTurn, isHiddenRunner, pickRunner } from '../src/runners/catalog.mjs';
 
@@ -21,9 +21,11 @@ test('요청 모양 — POST JSON {prompt, model, cwd, kind, readOnly} + 회사 
   try {
     const out = await execHttpText({ endpoint: f.url, prompt: '안녕', model: 'm1', cwd: '/w', kind: 'chat', timeoutMs: 5000, cred: { env: { ARGO_HTTP_KEY: 'k-1' } } });
     assert.equal(out, '답변입니다');
-    assert.equal(f.seen[0].headers.authorization, 'Bearer k-1'); assert.deepEqual(f.seen[0].body, { prompt: '안녕', model: 'm1', cwd: '/w', kind: 'chat', readOnly: false });
+    assert.equal(f.seen[0].headers.authorization, 'Bearer k-1'); assert.deepEqual(f.seen[0].body, { prompt: '안녕', model: 'm1', kind: 'chat', readOnly: false }, 'cwd 같은 로컬 경로는 보내지 않는다(최소 정보)');
     await execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 5000, cred: null });
     assert.equal(f.seen[1].headers.authorization, undefined, '자격 없으면 Bearer를 만들지 않는다'); assert.equal(f.seen[1].body.model, undefined, '모델 미지정은 필드 생략');
+    await execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 5000, cred: { env: { ARGO_HTTP_KEY: HTTP_TEXT_NO_AUTH } } });
+    assert.equal(f.seen[2].headers.authorization, undefined, "자격 값 'none' = 무인증 엔드포인트(로컬 헤르메스·오픈클로) — Bearer 없음(MEDIUM-2)");
   } finally { await f.close(); }
 });
 
@@ -47,7 +49,7 @@ test('오류 계급 — 401은 `API Error: 401 …`(불변식 A 게이트·자�
 test('상한·중단·엔드포인트 부재 — 느린 서버는 timeoutMs에 끊기고, 외부 signal 중단은 aborted, endpoint 없으면 정직한 안내로 실패', async () => {
   const f = await fake((req, res) => setTimeout(() => json(res, 200, { text: 'late' }), 3000));
   try {
-    const t0 = Date.now(); await assert.rejects(execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 1000 }), (e) => /API Error: 0 (TimeoutError|AbortError)/.test(e.message)); assert.ok(Date.now() - t0 < 2500);
+    const t0 = Date.now(); await assert.rejects(execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 1000 }), (e) => e.timedOut === true && /시간 초과/.test(e.message) && /Timed out/.test(e.message)); assert.ok(Date.now() - t0 < 2500, '상한에서 끊긴다 — CLI 러너와 같은 timedOut 갈래(MEDIUM-5)');
     const ac = new AbortController(); setTimeout(() => ac.abort(), 200);
     await assert.rejects(execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 5000, signal: ac.signal }), (e) => e.aborted === true);
   } finally { await f.close(); }
@@ -59,7 +61,7 @@ test('externalExec 배선 — runner http는 CLI를 띄우지 않고 어댑터�
   const f = await fake((req, res) => json(res, 200, { text: req.headers.authorization === 'Bearer k' ? 'ok' : '' }));
   try {
     assert.equal(await externalExec({ runner: 'http', model: '', cwd: '/w', prompt: 'p', timeoutMs: 5000, cred: { env: { ARGO_HTTP_KEY: 'k' } }, endpoint: f.url }), 'ok');
-    await assert.rejects(externalExec({ runner: 'http', model: '', cwd: '/w', prompt: 'p', timeoutMs: 5000, cred: null, endpoint: f.url }), /empty-reply|응답/);
+    await assert.rejects(externalExec({ runner: 'http', model: '', cwd: '/w', prompt: 'p', timeoutMs: 5000, cred: null, endpoint: f.url }), (e) => /빈 답/.test(e.message) && /empty reply/.test(e.message) && !/exit/.test(e.message), 'CLI 껍질(exit 코드) 없이 ko+en');
   } finally { await f.close(); }
   const g = await fake((req, res) => json(res, 401, { error: 'nope' }));
   try { await assert.rejects(externalExec({ runner: 'http', model: '', cwd: '/w', prompt: 'p', timeoutMs: 5000, cred: null, endpoint: g.url }), (e) => /^API Error: 401/.test(e.message)); } finally { await g.close(); }
@@ -76,7 +78,7 @@ test('카탈로그 핀 — http는 숨김·CLI 종류·자동 선택 제외·명
 
 test('배선 핀 — chat.mjs의 externalExec 두 호출이 카드 endpoint를 넘기고, creds가 http 자격을 Bearer env로 조립한다', async () => {
   const chat = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
-  assert.equal((chat.match(/externalExec\(\{ runner, [^\n]*endpoint: meta\.endpoint \?\? '', format: meta\.format \?\? 'argo'/g) ?? []).length, 2, 'CLI 턴 호출 2곳(본 턴·게이트 모델 강등 재시도)');
+  assert.equal((chat.match(/externalExec\(\{ runner, [^\n]*endpoint: meta\.endpoint \?\? '', format: meta\.format \|\| 'argo'/g) ?? []).length, 2, 'CLI 턴 호출 2곳(본 턴·게이트 모델 강등 재시도)');
   const creds = await readFile(new URL('../src/runners/creds.mjs', import.meta.url), 'utf8');
   assert.match(creds, /if \(runner === 'http'\) return \{ env: \{ ARGO_HTTP_KEY: v \}, authType: 'apikey' \};/);
   assert.match(creds, /if \(runner === 'http'\) return v \? \{ ok: true \} : \{ ok: false, reason: 'format' \};/);
@@ -93,4 +95,32 @@ test('format openai-chat — 헤르메스 API 서버(/v1/chat/completions) 모�
     assert.equal(out, 'echo:Bearer k'); assert.deepEqual(f.seen[0].body, { model: 'hermes', messages: [{ role: 'user', content: '안녕' }], stream: false });
   } finally { await f.close(); }
   await assert.rejects(execHttpText({ endpoint: 'http://127.0.0.1:9/x', format: 'nope', prompt: 'x', timeoutMs: 1000 }), /format/);
+});
+
+test('목적지 가드(HIGH-3) — userinfo 금지·공인 호스트 https 강제·루프백/사설망 http 허용·호스팅 런타임 차단·리다이렉트 거절', async () => {
+  assert.equal(assertHttpTextEndpoint('http://127.0.0.1:8642/v1/chat/completions'), 'http://127.0.0.1:8642/v1/chat/completions');
+  for (const ok of ['http://localhost:8642/x', 'http://10.0.0.5/x', 'http://192.168.1.2/x', 'http://172.16.0.9/x', 'http://[::1]:1/x', 'http://hermes.local/x', 'https://agent.example.com/v1']) assert.doesNotThrow(() => assertHttpTextEndpoint(ok), ok);
+  await assert.rejects(async () => assertHttpTextEndpoint('http://agent.example.com/v1'), /https/);
+  await assert.rejects(async () => assertHttpTextEndpoint('http://8.8.8.8/v1'), /https/);
+  await assert.rejects(async () => assertHttpTextEndpoint('http://user:s3cr3t@127.0.0.1/x'), (e) => /사용자명/.test(e.message) && !/s3cr3t/.test(e.message), 'userinfo 거절 + 비밀번호 미노출');
+  await assert.rejects(async () => assertHttpTextEndpoint('ftp://127.0.0.1/x'), /http:\/\/ 또는 https:\/\//);
+  await assert.rejects(async () => assertHttpTextEndpoint('https://agent.example.com/v1', { hosted: true }), /호스팅|hosted/);
+  // 리다이렉트: 302가 POST를 GET으로 바꿔 프롬프트 없이 200을 답으로 채택하던 경로 — 거절
+  const f = await fake((req, res) => { res.writeHead(302, { location: 'http://127.0.0.1:9/elsewhere' }); res.end(); });
+  try { await assert.rejects(execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 3000 }), (e) => /^API Error: 0 /.test(e.message)); } finally { await f.close(); }
+});
+
+test('응답 상한(MEDIUM-1) — 바이트로 세며 읽다가 넘기면 끊는다(전량 버퍼링 없음), content-length 선차단, 배열 content 병합', async () => {
+  const big = 'x'.repeat(50_000);
+  let sent = 0; let closed = false;
+  const f = await fake((req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); const iv = setInterval(() => { if (closed) return clearInterval(iv); if (!res.write(big)) return; sent++; if (sent >= 400) { clearInterval(iv); res.end(); } }, 1); req.on('close', () => { closed = true; clearInterval(iv); }); });
+  try {
+    await assert.rejects(execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 20_000, maxBody: 120_000 }), (e) => /상한/.test(e.message) && /cap/.test(e.message));
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(closed && sent < 400, `상한에서 연결을 끊는다 — 서버가 400건(20MB)을 다 보내기 전에 닫힘(sent=${sent}, closed=${closed})`);
+  } finally { await f.close(); }
+  const g = await fake((req, res) => { res.writeHead(200, { 'content-type': 'text/plain', 'content-length': '999999' }); res.end('short'); });
+  try { await assert.rejects(execHttpText({ endpoint: g.url, prompt: 'x', timeoutMs: 5000, maxBody: 1000 }), /상한/); } finally { await g.close(); }
+  assert.equal(parseHttpTextResponse('argo', JSON.stringify({ content: [{ type: 'text', text: 'a' }, 'b'] })), 'ab');
+  assert.equal(parseHttpTextResponse('argo', JSON.stringify(['x', { text: 'y' }])), 'xy', '최상위 배열도 텍스트로');
 });

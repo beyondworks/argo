@@ -13,7 +13,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존 — 순환 없음
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
-import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isCliTurn, pickRunner, oauthFormatError, isHiddenRunner } from './runners/catalog.mjs';
+import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isCliTurn, pickRunner, oauthFormatError, isHiddenRunner, isRetiredRunner } from './runners/catalog.mjs';
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli } from './runners/codex.mjs';
 import { execHttpText } from './runners/http-text.mjs';
 import { execCodexAppServer } from './runners/codex-appserver.mjs';
@@ -132,9 +132,8 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     (codex는 2026-08-21부터 샌드박스 없음 — danger-full-access, 유건 지시 "샌드박스 없이"). */
 export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, endpoint = '', format = 'argo' }) {
   if (runner === 'http') { // HTTP 텍스트 러너(부록 N) — CLI를 띄우지 않으므로 PATH 보강 전에 갈라진다. 실패 번역은 다른 텍스트 러너와 같은 cliTurnFailure.
-    const t0h = Date.now();
-    try { const text = await execHttpText({ endpoint, format, prompt, model, cwd, kind, readOnly, timeoutMs, signal, cred }); if (!text) throw new Error('empty-reply'); return text; }
-    catch (e) { if (e.aborted || /^API Error: /.test(String(e.message))) throw e; throw cliTurnFailure(e, 'http', Date.now() - t0h, timeoutMs, { stage: 'exec', kind }); }
+    try { const text = await execHttpText({ endpoint, format, prompt, model, kind, readOnly, timeoutMs, signal, cred }); if (!text) throw new Error('외부 엔진이 빈 답을 보냈습니다(응답 JSON에 text/reply/content가 없음). The external engine returned an empty reply.'); return text; }
+    catch (e) { if (e.aborted || e.timedOut || e.httpStatus !== undefined || /^API Error: /.test(String(e.message))) throw e; throw Object.assign(new Error(String(e.message || e)), { cause: e }); } // CLI 껍질(exit 코드 문구) 금지 — 분리 검수 MEDIUM-5. t0h는 진단용
   }
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   // readOnly — 순수 텍스트 생성 턴(예: 마켓 "이게 뭐예요?" 설명)은 도구가 필요 없다. SDK 경로는
@@ -339,7 +338,8 @@ export async function runnerStatus(wsId) {
       hostInstalled: host[id]?.installed ?? false,
       hostAuthed: host[id]?.authed ?? false, // 호스트 CLI 로그인/env (OAuth 폴백 경로)
       hostAuthUnknown: host[id]?.authUnknown ?? false, // 키링 자격(antigravity) — 로그인 판정 불가, UI는 단정 금지
-      hidden: isHiddenRunner(id), // 숨김 러너(gemini) — 명판·목록은 빼고, 판정(pickRunner 명시 지정)은 그대로 쓴다
+      hidden: isHiddenRunner(id), // 숨김 러너(gemini·http) — 명판·목록은 빼고, 판정(pickRunner 명시 지정)은 그대로 쓴다
+      retired: isRetiredRunner(id), // 제공 종료(gemini 구독 CLI)만 — 데크 배너·재연결 안내의 열쇠. http는 숨김이되 정상
       company: cred?.value ? {
         connected: true,
         type: credType(cred.type),

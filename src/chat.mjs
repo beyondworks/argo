@@ -864,7 +864,9 @@ export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null,
     if (!e?.knownInvalid) { // 게이트가 이미 끊은 턴은 재프로브·재각인 불요(이미 vendor 확정)
       const c = cred ?? await loadCredFn(wsId, runner).catch(() => null);
       if (c && c.type !== 'host') {
-        if (HEALTH_BILLED_RUNNERS.has(runner)) { origin = 'probe'; }
+        if (runner === 'http' && (e?.httpStatus === 401 || e?.httpStatus === 403)) { origin = 'vendor'; await markFn(wsId, runner, c.value).catch(() => {}); } // 엔드포인트가 카드에 있어 독립 프로브가 없다 — 벤더의 401·403이 곧 판정(불변식 A, 분리 검수 HIGH-1)
+        else if (runner === 'http') { origin = 'probe'; } // 그 밖의 실패는 판정 불가 — 우리 배관 탓으로 몰지 않는다
+        else if (HEALTH_BILLED_RUNNERS.has(runner)) { origin = 'probe'; }
         else {
           const v = await verifyFn(runner, c.type, c.value).catch(() => ({ ok: null }));
           origin = v?.ok === false ? 'vendor' : v?.ok === true ? 'argo' : 'probe';
@@ -1137,13 +1139,13 @@ ${lang === 'en'
       let usedModel = effModel;
       let reply;
       try {
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, endpoint: meta.endpoint ?? '', format: meta.format ?? 'argo', effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, endpoint: meta.endpoint ?? '', format: meta.format || 'argo', effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
       } catch (e) {
         const gated = !!(effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated); // 오버레이 반영(MEDIUM-3)
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, endpoint: meta.endpoint ?? '', format: meta.format ?? 'argo', effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt, cred, signal: ac.signal, caps: cliCaps, endpoint: meta.endpoint ?? '', format: meta.format || 'argo', effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`

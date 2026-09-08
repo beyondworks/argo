@@ -1,11 +1,12 @@
 // 계정 스코프 러너 연결(온보딩) — 회사 생성 전 "로그인 → 러너 연결 → 회사 만들기" 순서를 위한 관문.
+import { isRetiredRunner } from '../../../../src/runners/catalog.mjs'; // 제공 종료 러너만 거절(숨김≠종료 — http는 카드 전용 숨김)
 // 회사 keys 라우트(companies/[ws]/keys)와 같은 계약이되, 가드가 로그인만 요구하고(회사 불요)
 // 저장 대상이 그 사용자의 계정 스코프(WS_ROOT/.account-secrets-{uid}.json)다. 회사 생성 시 seedRunnerCreds가 복사한다.
 // 응답에는 평문 대신 마스킹만 실린다(보안 규칙).
 import {
   accountScope, runnerStatus, saveRunnerCred, clearRunnerCred,
   maskCred, verifyRunnerCred, oauthFormatError, detectRunners, RUNNER_AUTH, hostOptInAllowed, normalizePastedCred,
-  probeGeminiHostOAuth, isHiddenRunner } from '../../../../src/runners.mjs';
+  probeGeminiHostOAuth } from '../../../../src/runners.mjs';
 import { currentUser, tenantDenied, authError, requestLang } from '../../../auth.mjs';
 
 /** 로그인 가드 — 회사 소유권 검사 없이 인증만(companies POST와 동일 패턴).
@@ -31,7 +32,7 @@ export async function PUT(req) {
     const { runner, type = 'apikey', value, verify, lang = 'ko' } = await req.json();
     const meta = RUNNER_AUTH[runner];
     if (!meta) throw new Error('알 수 없는 러너');
-    if (isHiddenRunner(runner)) throw new Error('더 이상 제공되지 않는 러너입니다'); // 숨김(gemini) — 회사 라우트와 같은 거절(재검수 MEDIUM-2)
+    if (isRetiredRunner(runner)) throw new Error('더 이상 제공되지 않는 러너입니다'); // 숨김(gemini) — 회사 라우트와 같은 거절(재검수 MEDIUM-2)
     // host — "이 컴퓨터 로그인 사용" 명시 옵트인(codex/gemini). 회사 라우트와 동일 검증·마커 저장.
     if (type === 'host') {
       if (!hostOptInAllowed(runner)) throw new Error('이 환경에서는 이 컴퓨터 로그인 사용을 쓸 수 없습니다'); // claude는 데스크톱 번들에서 제외(키체인)

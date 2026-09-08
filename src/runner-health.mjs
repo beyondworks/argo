@@ -170,6 +170,7 @@ export async function runHealthChecks(wsId, {
   let changed = false;
   const checked = [];
   for (const runner of Object.keys(RUNNER_AUTH)) {
+    if (runner === 'http') continue; // 엔드포인트가 크루 카드에 있어 자격만으로는 판정 불가 — 영구 초록(거짓) 대신 검진 제외, 401은 턴에서 각인(분리 검수 HIGH-1)
     const entry = state[runner];
     if (!healthDue(entry, runner, nowMs, { intervalMs, billedIntervalMs, jitterMs: jitterMs ?? jitterFor(wsId, runner) })) continue;
     const cred = await loadCredFn(wsId, runner).catch(() => null);
