@@ -79,7 +79,7 @@ test('화면·셸·i18n 핀: OTP 제거, 두 provider 버튼, 셸 커맨드 등�
   assert.match(auth, /supabase\.auth\.setSession\(tokens\)/, '회수한 토큰을 이 앱의 세션으로');
   assert.match(auth, /\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(/, '비밀번호 로그인은 dev 빌드 또는 검수용 번들 플래그에서만');
   const lib = read('apps/messenger/src-tauri/src/lib.rs');
-  assert.match(lib, /generate_handler!\[pair::pair_start, pair::pair_claim, agents::agent_connect\]/, '셸 커맨드 = 페어링 2종 + 외부 에이전트 원클릭 연결');
+  assert.match(lib, /generate_handler!\[pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list\]/, '셸 커맨드 = 페어링 2종 + 외부 에이전트 원클릭 연결');
   const pair = read('apps/messenger/src-tauri/src/pair.rs');
   assert.match(pair, /TcpListener::bind\(\("127\.0\.0\.1", 0\)\)/, '루프백·임시 포트');
   assert.match(pair, /e\.verifier == verifier/, '회수는 verifier 일치');

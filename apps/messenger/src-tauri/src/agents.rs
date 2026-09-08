@@ -29,8 +29,10 @@ fn spawn_path() -> String {
 }
 
 /// 명령 실행(상한 90초). 출력은 앞 2000자만 돌려준다.
-fn run(cli: &Path, args: &[&str]) -> (bool, String) {
-    let mut child = match Command::new(cli).args(args).env("PATH", spawn_path()).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+fn run(cli: &Path, args: &[&str]) -> (bool, String) { run_env(cli, args, &[]) }
+fn run_env(cli: &Path, args: &[&str], extra: &[(&str, String)]) -> (bool, String) {
+    let mut cmd = Command::new(cli); cmd.args(args).env("PATH", spawn_path()); for (k, v) in extra { cmd.env(k, v); }
+    let mut child = match cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
         Ok(c) => c,
         Err(e) => return (false, format!("spawn failed: {e}")),
     };
@@ -82,48 +84,133 @@ fn write_env(path: &Path, pairs: &[(&str, &str)]) -> Result<(), String> {
 
 fn step(name: &str, ok: bool, detail: impl Into<String>) -> serde_json::Value { serde_json::json!({ "name": name, "ok": ok, "detail": detail.into() }) }
 
+/// `hermes profile list` 표에서 프로필 이름을 뽑는다(◆ = 기본 프로필). 표 머리·구분선은 건너뛴다.
+pub fn parse_hermes_profiles(out: &str) -> Vec<(String, bool)> {
+    let mut v = Vec::new();
+    for line in out.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("Profile") || t.starts_with('─') || t.starts_with('-') { continue; }
+        let (is_default, rest) = if let Some(r) = t.strip_prefix('◆') { (true, r.trim()) } else { (false, t) };
+        let name = rest.split_whitespace().next().unwrap_or("").trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '_' && c != '.');
+        if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.') { v.push((name.to_string(), is_default)); }
+    }
+    v
+}
+
+/// `openclaw agents list` 출력의 "- <id> (default)" 줄에서 에이전트 id를 뽑는다.
+pub fn parse_openclaw_agents(out: &str) -> Vec<(String, bool)> {
+    let mut v = Vec::new();
+    for line in out.lines() {
+        let t = line.trim();
+        let Some(rest) = t.strip_prefix("- ") else { continue };
+        let is_default = rest.contains("(default)");
+        let id = rest.split_whitespace().next().unwrap_or("").to_string();
+        if !id.is_empty() && id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.') { v.push((id, is_default)); }
+    }
+    v
+}
+
+fn hermes_profile_path(cli: &Path, name: &str, h: &Path) -> PathBuf {
+    let (_, out) = run(cli, &["profile", "show", name]);
+    out.lines().find_map(|l| l.trim().strip_prefix("Path:").map(|p| PathBuf::from(p.trim()))).unwrap_or_else(|| if name == "default" { h.join(".hermes") } else { h.join(".hermes/profiles").join(name) })
+}
+
+/// 이 컴퓨터에 있는 에이전트 전원 — 헤르메스는 프로필(각각 격리된 인스턴스), 오픈클로는 등록된 에이전트. 앱은 이 목록으로 봇을 하나씩 만든다.
 #[tauri::command]
-pub fn agent_connect(app: tauri::AppHandle, kind: String, url: String, token: String) -> Result<serde_json::Value, String> {
+pub fn agent_list(kind: String) -> Result<serde_json::Value, String> {
+    if !(kind == "hermes" || kind == "openclaw") { return Err("kind".into()); }
+    let cli_name = if kind == "hermes" { "hermes" } else { "openclaw" };
+    let Some(cli) = find_cli(cli_name) else { return Ok(serde_json::json!({ "ok": false, "reason": "cli_missing", "agents": [] })); };
+    let h = home()?;
+    let agents: Vec<serde_json::Value> = if kind == "hermes" {
+        let (_, out) = run(&cli, &["profile", "list"]);
+        parse_hermes_profiles(&out).into_iter().map(|(name, def)| {
+            let path = hermes_profile_path(&cli, &name, &h);
+            serde_json::json!({ "id": name, "name": if name == "default" { "Hermes".to_string() } else { name.clone() }, "default": def, "home": path.display().to_string() })
+        }).collect()
+    } else {
+        let (_, out) = run(&cli, &["agents", "list"]);
+        parse_openclaw_agents(&out).into_iter().map(|(id, def)| serde_json::json!({ "id": id, "name": if id == "main" { "OpenClaw".to_string() } else { id.clone() }, "default": def })).collect()
+    };
+    Ok(serde_json::json!({ "ok": true, "cli": cli.display().to_string(), "agents": agents }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct AgentSetup { pub id: String, pub token: String, #[serde(default)] pub home: String }
+
+/// 에이전트 전원 연결: 헤르메스는 프로필 홈(HERMES_HOME)마다 플러그인·.env·게이트웨이, 오픈클로는 플러그인 한 번 + 에이전트별 채널 계정·바인딩 + 게이트웨이 재시작.
+#[tauri::command]
+pub fn agent_connect(app: tauri::AppHandle, kind: String, url: String, agents: Vec<AgentSetup>) -> Result<serde_json::Value, String> {
     if !(kind == "hermes" || kind == "openclaw") { return Err("kind".into()); }
     if !(url.starts_with("http://") || url.starts_with("https://")) || url.len() > 400 { return Err("url".into()); }
-    if !(token.starts_with("argo_bot_") && token.len() == 57 && token[9..].chars().all(|c| c.is_ascii_hexdigit())) { return Err("token".into()); }
+    if agents.is_empty() { return Err("agents".into()); }
+    for a in &agents {
+        if !(a.token.starts_with("argo_bot_") && a.token.len() == 57 && a.token[9..].chars().all(|c| c.is_ascii_hexdigit())) { return Err("token".into()); }
+        if a.id.is_empty() || !a.id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.') { return Err("agent id".into()); }
+    }
     let cli_name = if kind == "hermes" { "hermes" } else { "openclaw" };
-    let Some(cli) = find_cli(cli_name) else { return Ok(serde_json::json!({ "ok": false, "reason": "cli_missing", "cli": cli_name, "steps": [] })); };
+    let Some(cli) = find_cli(cli_name) else { return Ok(serde_json::json!({ "ok": false, "reason": "cli_missing", "cli": cli_name, "results": [] })); };
     let h = home()?;
     let res_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
-    let mut steps = Vec::new();
-    let (src, dst, env_path) = if kind == "hermes" {
-        (res_dir.join("agents/hermes-argo-msgr"), h.join(".hermes/plugins/argo-msgr"), h.join(".hermes/.env"))
-    } else {
-        (res_dir.join("agents/openclaw-argo-msgr"), h.join(".openclaw/extensions/openclaw-argo-msgr"), h.join(".openclaw/.env"))
-    };
-    // 1) 플러그인 파일
-    match copy_dir(&src, &dst) { Ok(n) => steps.push(step("plugin", true, format!("{} files → {}", n, dst.display()))), Err(e) => { steps.push(step("plugin", false, e)); return Ok(serde_json::json!({ "ok": false, "reason": "plugin", "cli": cli_name, "steps": steps })); } }
-    // 2) 설정(.env) — 토큰은 여기에만
-    match write_env(&env_path, &[("ARGO_MSGR_URL", url.as_str()), ("ARGO_MSGR_BOT_TOKEN", token.as_str())]) { Ok(()) => steps.push(step("env", true, env_path.display().to_string())), Err(e) => { steps.push(step("env", false, e)); return Ok(serde_json::json!({ "ok": false, "reason": "env", "cli": cli_name, "steps": steps })); } }
-    // 3) 활성화 + 게이트웨이
-    let mut ok = true;
+    let mut results = Vec::new();
+    let mut all_ok = true;
     if kind == "hermes" {
-        let (e_ok, e_out) = run(&cli, &["plugins", "enable", "argo-msgr-platform", "--no-allow-tool-override"]);
-        steps.push(step("enable", e_ok || e_out.contains("already"), e_out));
-        let (_, st) = run(&cli, &["gateway", "status"]);
-        let running = st.contains("Gateway is running");
-        let (g_ok, g_out) = if running { run(&cli, &["gateway", "restart"]) } else {
-            let (i_ok, i_out) = run(&cli, &["gateway", "install"]);
-            if i_ok || i_out.contains("already") { run(&cli, &["gateway", "start"]) } else { (false, i_out) }
-        };
-        ok = g_ok; steps.push(step("gateway", g_ok, g_out));
+        for a in &agents {
+            let hh = if a.home.is_empty() { h.join(".hermes") } else { PathBuf::from(&a.home) };
+            let mut steps = Vec::new();
+            let ok = (|| -> bool {
+                match copy_dir(&res_dir.join("agents/hermes-argo-msgr"), &hh.join("plugins/argo-msgr")) { Ok(n) => steps.push(step("plugin", true, format!("{n} files"))), Err(e) => { steps.push(step("plugin", false, e)); return false; } }
+                match write_env(&hh.join(".env"), &[("ARGO_MSGR_URL", url.as_str()), ("ARGO_MSGR_BOT_TOKEN", a.token.as_str())]) { Ok(()) => steps.push(step("env", true, hh.join(".env").display().to_string())), Err(e) => { steps.push(step("env", false, e)); return false; } }
+                let env = [("HERMES_HOME", hh.display().to_string())];
+                let (e_ok, e_out) = run_env(&cli, &["plugins", "enable", "argo-msgr-platform", "--no-allow-tool-override"], &env);
+                steps.push(step("enable", e_ok || e_out.contains("already"), e_out));
+                let (_, st) = run_env(&cli, &["gateway", "status"], &env);
+                let (g_ok, g_out) = if st.contains("Gateway is running") { run_env(&cli, &["gateway", "restart"], &env) } else {
+                    let (i_ok, i_out) = run_env(&cli, &["gateway", "install"], &env);
+                    if i_ok || i_out.contains("already") { run_env(&cli, &["gateway", "start"], &env) } else { (false, i_out) }
+                };
+                steps.push(step("gateway", g_ok, g_out)); g_ok
+            })();
+            all_ok &= ok;
+            results.push(serde_json::json!({ "id": a.id, "ok": ok, "steps": steps }));
+        }
     } else {
+        let mut common = Vec::new();
+        let plugin_ok = match copy_dir(&res_dir.join("agents/openclaw-argo-msgr"), &h.join(".openclaw/extensions/openclaw-argo-msgr")) { Ok(n) => { common.push(step("plugin", true, format!("{n} files"))); true }, Err(e) => { common.push(step("plugin", false, e)); false } };
+        for a in &agents {
+            let mut steps = common.clone();
+            let ok = plugin_ok && (|| -> bool {
+                let base = format!("channels.argo-msgr.accounts.{}", a.id);
+                for (k, v) in [("url", url.as_str()), ("token", a.token.as_str()), ("enabled", "true")] {
+                    let (ok, out) = run(&cli, &["config", "set", &format!("{base}.{k}"), v]);
+                    if !ok { steps.push(step("env", false, out)); return false; }
+                }
+                steps.push(step("env", true, format!("openclaw.json {base}")));
+                // 라우팅: 이 채널 계정 → 이 에이전트(기본 에이전트는 바인딩 없이도 기본 라우팅)
+                let (b_ok, b_out) = run(&cli, &["config", "set", "bindings", &format!("[{{ match: {{ channel: \"argo-msgr\", accountId: \"{}\" }}, agentId: \"{}\" }}]", a.id, a.id)]);
+                steps.push(step("enable", b_ok, b_out)); true
+            })();
+            all_ok &= ok;
+            results.push(serde_json::json!({ "id": a.id, "ok": ok, "steps": steps }));
+        }
         let (g_ok, g_out) = run(&cli, &["gateway", "restart"]);
         let (g_ok, g_out) = if g_ok { (g_ok, g_out) } else { let (i_ok, i_out) = run(&cli, &["gateway", "install"]); if i_ok { run(&cli, &["gateway", "start"]) } else { (false, format!("{g_out}\n{i_out}")) } };
-        ok = g_ok; steps.push(step("gateway", g_ok, g_out));
+        all_ok &= g_ok;
+        for r in results.iter_mut() { if let Some(arr) = r.get_mut("steps").and_then(|s| s.as_array_mut()) { arr.push(step("gateway", g_ok, g_out.clone())); } }
     }
-    Ok(serde_json::json!({ "ok": ok, "reason": if ok { "" } else { "gateway" }, "cli": cli.display().to_string(), "steps": steps }))
+    Ok(serde_json::json!({ "ok": all_ok, "reason": if all_ok { "" } else { "gateway" }, "cli": cli.display().to_string(), "results": results }))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::upsert_env;
+    use super::{upsert_env, parse_hermes_profiles, parse_openclaw_agents};
+    #[test]
+    fn parses_agent_lists() {
+        let h = " Profile          Model      Gateway\n ───────  ────  ────\n ◆default         claude-opus-5   running\n  research        gpt-6-astra   stopped\n";
+        assert_eq!(parse_hermes_profiles(h), vec![("default".to_string(), true), ("research".to_string(), false)]);
+        let o = "Agents:\n- main (default)\n  Workspace: ~/.openclaw/workspace\n- support\n  Workspace: x\nRouting rules map…\n";
+        assert_eq!(parse_openclaw_agents(o), vec![("main".to_string(), true), ("support".to_string(), false)]);
+    }
     #[test]
     fn upsert_replaces_only_matching_keys() {
         let cur = "OTHER=1\nARGO_MSGR_URL=old\n# note\n";

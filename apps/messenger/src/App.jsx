@@ -1381,41 +1381,75 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
   // ── 부록 N: 외부 에이전트(헤르메스·오픈클로)는 텔레그램·슬랙에 붙듯 **봇**으로 이 메신저에 접속한다. 봇 = 회사 등급 크루 + 토큰(서버 msgr_bots).
   //    토큰 원문은 생성·회전 직후 이 화면에만 있고(setup 상태) 저장·로그하지 않는다. 가용성은 마지막 getUpdates(last_seen_at)뿐 — 종료/재시작 버튼 없음(해제 = 토큰 회수).
   const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null); const [openBot, setOpenBot] = useState(null);
-  const [auto, setAuto] = useState(null); // 원클릭 연결(앱 안에서만): null | { status: 'running'|'done'|'missing'|'failed', steps, reason } — 앱이 이 컴퓨터의 에이전트에 플러그인·설정·게이트웨이까지 처리(agents.rs)
-  const autoConnect = async (kind, token) => {
-    if (!inTauri() || !['hermes', 'openclaw'].includes(kind)) { setAuto(null); return; }
-    setAuto({ status: 'running' });
+  const [auto, setAuto] = useState(null); // 원클릭 연결(앱 안에서만): null | { status: 'running'|'done'|'missing'|'failed', results:[{id,name,ok,steps}], reason }
+  const [setups, setSetups] = useState([]); // 이번에 만든/회전한 봇들의 설정(이름·두 줄) — 토큰은 화면 상태로만
+  const botOf = (kind, extId) => bots.find((b) => !b.revoked_at && b.kind === kind && b.external_id === extId);
+  const mineOf = (kind) => bots.find((b) => !b.revoked_at && b.kind === kind && b.created_by === uid);
+  const botUrl = `${SB_URL}/functions/v1/msgr-bot`;
+  const botSetup = (token) => `ARGO_MSGR_URL=${botUrl}\nARGO_MSGR_BOT_TOKEN=${token}`; // 다른 컴퓨터용 두 줄(설정 복사)
+  const mkOrRotate = async (kind, name, extId) => { // 같은 에이전트(external_id)의 봇이 있으면 회전, 없으면 생성 — 둘 다 토큰 원문은 지금만
+    const cur = extId ? botOf(kind, extId) : null;
+    if (cur) { const r = await supabase.rpc('msgr_bot_rotate', { bot: cur.id }); if (r.error) throw new Error(r.error.message); return { id: cur.id, token: r.data, name: cur.name }; }
+    const r = await supabase.rpc('msgr_bot_create', { org: org.id, kind, name, external_id: extId ?? null }); if (r.error) throw new Error(r.error.message);
+    return { id: r.data.bot_id, token: r.data.token, name };
+  };
+  // [헤르메스 연결하기] = 이 컴퓨터의 헤르메스 프로필(오픈클로는 등록 에이전트) **전원**을 읽어 각각 봇을 만들고(이름 = 그 에이전트 이름) 한 번에 연결(유건 지시 2026-09-08).
+  // 앱 밖(브라우저)이거나 CLI가 없으면 봇 하나만 만들고 수동 안내를 보인다.
+  const connectAll = async (kind) => {
+    setBusy(true); setAuto(null); setSetups([]);
+    try {
+      let agents = null;
+      if (inTauri() && ['hermes', 'openclaw'].includes(kind)) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const l = await invoke('agent_list', { kind });
+        if (l?.ok && l.agents?.length) agents = l.agents; else if (l?.reason === 'cli_missing') setAuto({ status: 'missing', results: [] });
+      }
+      if (!agents) { // 수동: 이 컴퓨터에 에이전트가 없거나 앱 밖 — 봇 하나(다른 컴퓨터용)
+        const made = await mkOrRotate(kind, kind === 'custom' ? t('org.agents.kind.custom') : t('org.agents.name.mine', { who: nameOfUser(uid), kind: t(`org.agents.kind.${kind}`) }), null);
+        setSetups([{ ...made, kind }]); setSetup({ id: made.id, token: made.token, kind }); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.();
+        return;
+      }
+      const made = [];
+      for (const a of agents) made.push({ ...(await mkOrRotate(kind, a.name, `${kind}:${a.id}`)), kind, agentId: a.id, home: a.home ?? '' });
+      setSetups(made); setSetup({ id: made[0].id, token: made[0].token, kind }); loadBots().catch(() => {}); onChanged?.();
+      setAuto({ status: 'running', results: [] });
+      const { invoke } = await import('@tauri-apps/api/core');
+      const r = await invoke('agent_connect', { kind, url: botUrl, agents: made.map((m) => ({ id: m.agentId, token: m.token, home: m.home })) });
+      const results = (r?.results ?? []).map((x) => ({ ...x, name: made.find((m) => m.agentId === x.id)?.name ?? x.id }));
+      setAuto(r?.ok ? { status: 'done', results } : { status: r?.reason === 'cli_missing' ? 'missing' : 'failed', results, reason: r?.reason ?? '' });
+      onNote(t('org.agents.made.n', { n: made.length }));
+    } catch (e) { onError(String(e?.message ?? e)); setAuto((a) => a?.status === 'running' ? { status: 'failed', results: [], reason: String(e?.message ?? e) } : a); }
+    finally { setBusy(false); }
+  };
+  const autoConnect = async (kind, token, bot) => { // 회전 뒤 다시 연결(봇 하나) — external_id가 있는 봇만 이 컴퓨터에 자동 설정
+    if (!inTauri() || !['hermes', 'openclaw'].includes(kind) || !bot?.external_id) { setAuto(null); return; }
+    setAuto({ status: 'running', results: [] });
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const r = await invoke('agent_connect', { kind, url: `${SB_URL}/functions/v1/msgr-bot`, token });
-      setAuto(r?.ok ? { status: 'done', steps: r.steps ?? [] } : { status: r?.reason === 'cli_missing' ? 'missing' : 'failed', steps: r?.steps ?? [], reason: r?.reason ?? '' });
-    } catch (e) { setAuto({ status: 'failed', steps: [], reason: String(e?.message ?? e) }); }
-  }; // 펼친 봇 상세(실측: 상태 줄이 말줄임으로 잘려 못 읽음)
-  const loadBots = useCallback(async () => { if (part !== 'agents') return; setBots(await q(supabase.from('msgr_bots').select('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at').eq('org_id', org.id).order('created_at'))); }, [org.id, part]);
-  useEffect(() => { loadBots().catch((e) => onError(e.message)); }, [loadBots]); // eslint-disable-line react-hooks/exhaustive-deps
-  const botSetup = (token) => `ARGO_MSGR_URL=${SB_URL}/functions/v1/msgr-bot\nARGO_MSGR_BOT_TOKEN=${token}`; // 원클릭: 이 두 줄이 에이전트 쪽 설정의 전부
-  // 봇 하나 = 에이전트 한 대(컴퓨터 한 대). 유건 지적 2026-09-08: 같은 컴퓨터에서 다시 누르면 새로 만들지 말고 **기존 봇에 다시 연결**(토큰 재발급 → 자동 설정).
-  // 다른 컴퓨터·다른 사람의 에이전트는 "하나 더 추가"로만. 봇 이름은 "유건의 헤르메스"처럼 만든 사람을 붙여 누구 것인지 보이게.
-  const mineOf = (kind) => bots.find((b) => !b.revoked_at && b.kind === kind && b.created_by === uid);
-  const addBot = async (kind, { another = false } = {}) => {
-    const mine = mineOf(kind);
-    if (mine && !another && kind !== 'custom') return rotateBot(mine); // 다시 연결
-    const name = kind === 'custom' ? t('org.agents.kind.custom') : t('org.agents.name.mine', { who: nameOfUser(uid), kind: t(`org.agents.kind.${kind}`) });
-    setBusy(true); const r = await supabase.rpc('msgr_bot_create', { org: org.id, kind, name }); setBusy(false);
-    if (r.error) return onError(r.error.message);
-    setSetup({ id: r.data.bot_id, token: r.data.token, kind }); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.(); autoConnect(kind, r.data.token);
+      const id = bot.external_id.split(':').slice(1).join(':');
+      const l = await invoke('agent_list', { kind }); const home = l?.agents?.find((a) => a.id === id)?.home ?? '';
+      const r = await invoke('agent_connect', { kind, url: botUrl, agents: [{ id, token, home }] });
+      const results = (r?.results ?? []).map((x) => ({ ...x, name: bot.name }));
+      setAuto(r?.ok ? { status: 'done', results } : { status: r?.reason === 'cli_missing' ? 'missing' : 'failed', results, reason: r?.reason ?? '' });
+    } catch (e) { setAuto({ status: 'failed', results: [], reason: String(e?.message ?? e) }); }
+  };
+  const addBot = (kind) => connectAll(kind);
+  const addAnother = async (kind) => { // 다른 컴퓨터·다른 사람의 에이전트: external_id 없는 봇 하나 + 수동 안내
+    setBusy(true);
+    try { const made = await mkOrRotate(kind, t('org.agents.name.other', { kind: t(`org.agents.kind.${kind}`) }), null); setSetups([{ ...made, kind }]); setSetup({ id: made.id, token: made.token, kind }); setAuto(null); onNote(t('org.agents.made')); loadBots().catch(() => {}); onChanged?.(); }
+    catch (e) { onError(String(e?.message ?? e)); } finally { setBusy(false); }
   };
   const rotateBot = async (b) => {
     setBusy(true); const r = await supabase.rpc('msgr_bot_rotate', { bot: b.id }); setBusy(false);
     if (r.error) return onError(r.error.message);
-    setSetup({ id: b.id, token: r.data, kind: b.kind }); onNote(t('org.agents.rotated')); loadBots().catch(() => {}); autoConnect(b.kind, r.data);
+    setSetups([{ id: b.id, token: r.data, name: b.name, kind: b.kind }]); setSetup({ id: b.id, token: r.data, kind: b.kind }); onNote(t('org.agents.rotated')); loadBots().catch(() => {}); autoConnect(b.kind, r.data, b);
   };
   const revokeBot = async (b) => {
     setBusy(true); const r = await supabase.rpc('msgr_bot_revoke', { bot: b.id }); setBusy(false); setConfirmRevoke(null);
     if (r.error) return onError(r.error.message);
     if (setup?.id === b.id) setSetup(null); onNote(t('org.agents.revoke.done')); loadBots().catch(() => {}); onChanged?.();
   };
-  const copySetup = async () => { await navigator.clipboard?.writeText(botSetup(setup.token)).catch(() => {}); onNote(t('org.agents.copied')); };
+  const copyAll = async () => { const txt = (setups.length ? setups : [setup]).map((m) => (setups.length > 1 ? `# ${m.name}\n` : '') + botSetup(m.token)).join('\n\n'); await navigator.clipboard?.writeText(txt).catch(() => {}); onNote(t('org.agents.copied')); };
   const botStatus = (b) => {
     const kind = t(`org.agents.kind.${b.kind}`);
     if (!b.last_seen_at) return t('org.agents.waiting', { kind });
@@ -1428,22 +1462,22 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
         <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => addBot('hermes')} title={mineOf('hermes') ? t('org.agents.reconnect.title') : undefined}><I name={mineOf('hermes') ? 'at' : 'plus'} size={13} />{mineOf('hermes') ? t('org.agents.reconnect', { kind: t('org.agents.kind.hermes') }) : t('org.agents.add.hermes')}</button>
         <button type="button" className="btn sm" disabled={busy} onClick={() => addBot('openclaw')} title={mineOf('openclaw') ? t('org.agents.reconnect.title') : undefined}>{mineOf('openclaw') ? t('org.agents.reconnect', { kind: t('org.agents.kind.openclaw') }) : t('org.agents.add.openclaw')}</button>
         <button type="button" className="btn sm ghost" disabled={busy} onClick={() => addBot('custom')}>{t('org.agents.add.custom')}</button>
-        {(mineOf('hermes') || mineOf('openclaw')) && <span className="msgr-klabel">{t('org.agents.another')} {mineOf('hermes') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addBot('hermes', { another: true })}>{t('org.agents.kind.hermes')}</button>}{mineOf('openclaw') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addBot('openclaw', { another: true })}>{t('org.agents.kind.openclaw')}</button>}</span>}
+        {(mineOf('hermes') || mineOf('openclaw')) && <span className="msgr-klabel">{t('org.agents.another')} {mineOf('hermes') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addAnother('hermes')}>{t('org.agents.kind.hermes')}</button>}{mineOf('openclaw') && <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => addAnother('openclaw')}>{t('org.agents.kind.openclaw')}</button>}</span>}
       </div>
       {setup && (
         <div className="msgr-node-cmd">
           <span className="msgr-klabel">{t('org.agents.setup.h')}</span>
-          <code>{botSetup(setup.token)}</code>
-          <div className="acts"><button type="button" className="btn sm" onClick={copySetup}><I name="copy" size={13} />{t('org.agents.copy')}</button><button type="button" className="btn sm ghost" onClick={() => setSetup(null)}>{t('ui.close')}</button></div>
+          {(setups.length ? setups : [{ ...setup, name: '' }]).map((m) => <div key={m.id} className="one">{setups.length > 1 && <span className="msgr-klabel">{m.name}</span>}<code>{botSetup(m.token)}</code></div>)}
+          <div className="acts"><button type="button" className="btn sm" onClick={() => copyAll()}><I name="copy" size={13} />{t('org.agents.copy')}</button><button type="button" className="btn sm ghost" onClick={() => setSetup(null)}>{t('ui.close')}</button></div>
           {auto?.status === 'running' && <p className="msgr-auto running"><span className="msgr-dot mark" /> {t('org.agents.auto.running', { kind: t(`org.agents.kind.${setup.kind}`) })}</p>}
           {auto?.status === 'done' && (<div className="msgr-auto done">
-            <p><span className="msgr-dot ok" /> {t('org.agents.auto.done', { kind: t(`org.agents.kind.${setup.kind}`) })}</p>
-            <ul>{(auto.steps ?? []).map((s) => <li key={s.name}>{s.ok ? '✓' : '✗'} {t(`org.agents.auto.step.${s.name}`)}</li>)}</ul>
+            <p><span className="msgr-dot ok" /> {t('org.agents.auto.done.n', { kind: t(`org.agents.kind.${setup.kind}`), n: (auto.results ?? []).length })}</p>
+            <ul>{(auto.results ?? []).map((r) => <li key={r.id}><b>{r.name}</b>: {(r.steps ?? []).map((s) => `${s.ok ? '✓' : '✗'} ${t(`org.agents.auto.step.${s.name}`)}`).join(' · ')}</li>)}</ul>
           </div>)}
           {auto?.status === 'failed' && (<div className="msgr-auto failed">
             <p>{t('org.agents.auto.failed', { kind: t(`org.agents.kind.${setup.kind}`) })}</p>
-            <ul>{(auto.steps ?? []).map((s) => <li key={s.name}>{s.ok ? '✓' : '✗'} {t(`org.agents.auto.step.${s.name}`)}{!s.ok && s.detail ? ` — ${String(s.detail).slice(0, 200)}` : ''}</li>)}</ul>
-            <div className="acts"><button type="button" className="btn sm" onClick={() => autoConnect(setup.kind, setup.token)}>{t('org.agents.auto.retry')}</button></div>
+            <ul>{(auto.results ?? []).map((r) => <li key={r.id}><b>{r.name}</b>: {(r.steps ?? []).map((s) => `${s.ok ? '✓' : '✗'} ${t(`org.agents.auto.step.${s.name}`)}${!s.ok && s.detail ? ` — ${String(s.detail).slice(0, 160)}` : ''}`).join(' · ')}</li>)}</ul>
+            <div className="acts"><button type="button" className="btn sm" onClick={() => connectAll(setup.kind)}>{t('org.agents.auto.retry')}</button></div>
           </div>)}
           {auto?.status === 'missing' && <p className="msgr-auto missing">{t('org.agents.auto.missing', { kind: t(`org.agents.kind.${setup.kind}`) })}</p>}
           {auto?.status !== 'done' && auto?.status !== 'running' && (<>

@@ -10,7 +10,7 @@ mod agents; // 외부 에이전트 원클릭 연결(헤르메스·오픈클로 �
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![pair::pair_start, pair::pair_claim, agents::agent_connect])
+        .invoke_handler(tauri::generate_handler![pair::pair_start, pair::pair_claim, agents::agent_connect, agents::agent_list])
         .setup(|app| {
             // 인앱 업데이터 + 설치 뒤 재시작 — 데스크톱만(모바일 타깃에는 크레이트 자체가 없다)
             #[cfg(desktop)]

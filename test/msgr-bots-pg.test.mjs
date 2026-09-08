@@ -62,7 +62,7 @@ before(() => {
   `]);
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql',
-    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
+    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql', '20260909000000_msgr_bot_external_id.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`); // 체험 창 밖
   // 시드: owner가 조직 생성(트리거가 owner 멤버·free 자격 생성) → admin/member/guest/removed 초대 → 공개·비공개 채널 → 크루 2개
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
@@ -205,4 +205,14 @@ test('기본 파견(20260908140000): 소유자가 파견 해제하면 서버가 
   assert.equal(last(asUser(U.member, `update public.msgr_crews set status = 'active', allow = 'all', allow_users = '{}' where id = '${CREW}' returning status`)), 'active', '다시 파견');
   assert.equal(sql(`select count(*) from public.msgr_channel_members where member_kind = 'crew' and member_id = '${CREW}'`), '0', '되살려도 채널은 자동 복귀하지 않는다');
   assert.equal(sql(`select public.msgr_instruct_check('${CREW}', '${U.member}', null)`), 'ok');
+});
+
+test('external_id(20260909000000): 에이전트마다 봇 하나 — 같은 조직·같은 external_id는 두 번 못 만든다(회전으로), 폐기 뒤엔 다시 만들 수 있다', { skip }, () => {
+  const a = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'openclaw', 'Support', null, 'openclaw:support')`)));
+  assert.equal(sql(`select external_id from public.msgr_bots where id = '${a.bot_id}'`), 'openclaw:support');
+  fails(asUserRaw(U.admin, `select public.msgr_bot_create('${ORG}', 'openclaw', 'Support again', null, 'openclaw:support')`), /msgr_bot_exists/, '중복 생성');
+  asUser(U.admin, `select public.msgr_bot_revoke('${a.bot_id}')`);
+  const b = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'openclaw', 'Support', null, 'openclaw:support')`)));
+  assert.notEqual(b.bot_id, a.bot_id, '폐기 뒤 재생성');
+  assert.equal(sql(`select count(*) from public.msgr_bots where org_id = '${ORG}' and external_id = 'openclaw:support' and revoked_at is null`), '1');
 });
