@@ -11,10 +11,10 @@ test('검색: 레일 검색 칸·⌘K·ilike 이스케이프·결과 페이지(�
   assert.match(app, /const like = `%\$\{qs\.replace\(\/\[%_\\\\\]\/g/, 'ilike 와일드카드 이스케이프');
   assert.match(app, /\) : page === 'search' && org \? \(\n\s*<SearchPage res=\{searchRes\}/, '페이지 분기'); assert.match(app, /function SearchPage\(\{ res, channels, crews/, '결과 페이지');
 });
-test('레일 멤버 절: 역할별(소유자·관리자/멤버/게스트), 서비스 계정 제외, 누르면 1:1 대화; 프로필 메뉴는 배경 명시', () => {
-  for (const k of ['rail.members', 'rail.members.admin', 'rail.members.member', 'rail.members.guest', 'rail.members.dm']) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
-  assert.match(app, /\[\['admin', \(m\) => m\.role === 'owner' \|\| m\.role === 'admin'\], \['member', \(m\) => m\.role === 'member'\], \['guest', \(m\) => m\.role === 'guest'\]\]/, '역할 묶음');
-  assert.match(app, /members\.filter\(\(m\) => m\.user_id !== org\.service_user_id && f\(m\)\)/, '서비스 계정 제외');
-  assert.match(app, /if \(m\.user_id !== uid\) openDm\('user', m\.user_id\);/, '누르면 DM');
+test('레일은 이동만(검색·채널·1:1·내 에이전트): 멤버·친구 절 없음, 행은 아바타·이름·상태점, 소속별은 소제목; 친구는 설정 탭; 프로필 메뉴는 배경 명시', () => {
+  assert.doesNotMatch(app, /t\('rail\.members'\)|t\('rail\.friends'\)|msgr-railhint/, '레일에 멤버·친구 절·안내문 없음(유건 지적: 복잡)');
+  assert.match(app, /const railGroups = folders\.length \? /, '그룹 또는 소속별 소제목'); assert.doesNotMatch(app.slice(app.indexOf('const railRow'), app.indexOf('const railGroups')), /msgr-klabel src/, '행에 출처 글자 없음');
+  assert.match(app, /\['friends', 'set\.tab\.friends'\]/, '설정 친구 탭'); assert.match(app, /\{tab === 'friends' && <FriendsCard/, '친구 카드는 친구 탭');
+  assert.match(i18n, /'set\.tab\.friends': \['[^']+', '[^']+'\]/);
   assert.match(css, /\.msgr-rowmenu\.me \{[^}]*background: var\(--card\); border: 1px solid var\(--border\);/, '프로필 메뉴 배경(실측: 배경 없이 글자만)');
 });

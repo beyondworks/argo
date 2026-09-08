@@ -574,7 +574,8 @@
 .msgr-list.mine .item .name { flex: 1; }
 .msgr-list.mine .item .src { flex: none; width: 48px; text-align: left; font-size: 10px; opacity: 0.8; } /* 출처 열 — 왼쪽 정렬로 줄 맞춤(유건 지시 2026-09-09) */
 .msgr-group .right { display: inline-flex; align-items: center; gap: 6px; }
-.msgr-sort { font: inherit; font-size: 10.5px; color: var(--fg-3); background: transparent; border: 0; padding: 0; cursor: pointer; }
+.msgr-sort { font: inherit; font-size: 10px; color: var(--fg-3); background: transparent; border: 0; padding: 0; cursor: pointer; opacity: 0.75; } .msgr-sort:hover { opacity: 1; }
+.msgr-folderhead { padding-top: 8px; }
 .msgr-folder { display: grid; gap: 2px; margin-bottom: 4px; }
 .msgr-list.members .item .name { flex: 1; } .msgr-list.members .item .src { flex: none; width: 48px; text-align: left; font-size: 10px; opacity: 0.8; }
 .msgr-search { display: flex; align-items: center; gap: 6px; margin: 8px 6px 2px; padding: 0 8px; height: 30px; border-radius: 10px; background: var(--card-2); color: var(--fg-3); }
@@ -601,3 +602,8 @@
 /* 다크 모드의 순백 영역(내 말풍선·선택된 채널·기본 버튼)은 눈이 아프다(유건 지적 2026-09-09) — 공용 토큰(@argo/globals.css: --primary #ececea, --primary-strong #fff)을 메신저에서만 덜 밝게 덮어쓴다 */
 :root[data-theme='linen-dark'] { --primary: #cfcac0; --primary-strong: #dcd7cd; --primary-fg: #1f1e1b; }
 @media (prefers-color-scheme: dark) { :root[data-theme='linen'] { --primary: #cfcac0; --primary-strong: #dcd7cd; --primary-fg: #1f1e1b; } }
+
+/* 텔레그램식 설정 프로필 카드 (2026-09-09) — 절 접기는 PR #463 RailSection이 담당 */
+.msgr-setme { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.msgr-setme .who { display: grid; min-width: 0; } .msgr-setme .who b { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .msgr-setme .who .msgr-klabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-setme.on { box-shadow: 0 0 0 1px var(--primary); }

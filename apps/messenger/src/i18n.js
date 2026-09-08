@@ -226,6 +226,7 @@ export const DICT = {
   'set.tab.org': ['조직', 'Organization'],
   'set.tab.crews': ['에이전트와 서버', 'Agents & server'],
   'set.tab.audit': ['기록', 'Activity'],
+  'set.tab.friends': ['친구', 'Friends'],
   'set.tab.me': ['내 계정', 'My account'],
   'set.policy.q.allow': ['새 에이전트에게 일을 시킬 수 있는 사람은?', 'Who can give work to a new agent?'],
   'set.policy.q.approval': ['에이전트의 큰 결정은 누가 승인하나요?', 'Who approves a agent’s big decisions?'],

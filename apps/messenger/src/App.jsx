@@ -379,7 +379,8 @@ function Shell({ session }) {
   const chCrews = !channel ? [] : channel.kind === 'public' ? usableCrews : crews.filter((c) => chMembers.some((x) => x.member_kind === 'crew' && x.member_id === c.id));
   // 채널 칩 — 정렬: 현재 → 이름순. 6개 초과는 '+N'(펼치기)
   // DM 라벨 = 나 아닌 참가자(검수 MEDIUM-2: 저장된 이름은 생성자 시점). 크루 DM에 다른 사람도 있으면(소유자 동반) '서윤 · 민수'처럼 병기
-  const dmName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); if (crew) return [crewOf(crew.member_id)?.display_name ?? c.name.replace(/^dm:/, ''), other ? nameOfUser(other.member_id) : null].filter(Boolean).join(' · '); return other ? nameOfUser(other.member_id) : c.name.replace(/^dm:/, ''); };
+  const dmName = (c) => { const ms = dmMembers[c.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew'); const other = ms.find((m) => m.member_kind === 'user' && m.member_id !== uid); const base = c.name.replace(/^dm:/, ''); const crewName = crew ? (crewOf(crew.member_id)?.display_name ?? base) : (crews.some((k) => k.display_name === base) ? base : null); // 해제 sweep으로 크루가 빠진 1:1도 크루명 유지(사람 1:1과 이름이 겹치던 실측 2026-09-09)
+    return [crewName, other ? nameOfUser(other.member_id) : null].filter(Boolean).join(' · ') || base; };
   const dms = channels.filter((c) => c.kind === 'dm');
   const sortedCh = [...channels].filter((c) => c.kind !== 'dm').sort((a, b) => (a.kind === 'private') - (b.kind === 'private') || a.name.localeCompare(b.name)); // 공개 먼저·이름순 고정(선택한 채널을 위로 끌어올리면 목록이 뛴다)
   // '내 에이전트' = 세 출처 한 목록(유건 지시 2026-09-08): 아르고 에이전트 + 내가 연결한 헤르메스·오픈클로(봇). 출처 표시는 msgr_bots.kind.
@@ -390,7 +391,10 @@ function Shell({ session }) {
     : (SRC_ORDER[sourceOf(a)] - SRC_ORDER[sourceOf(b)]) || a.display_name.localeCompare(b.display_name, 'ko'));
   const myCrews = sortCrews(crews.filter((c) => c.owner_user_id === uid));
   const folders = [...new Set(myCrews.map((c) => c.folder).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); // 그룹(폴더) — 하나라도 있으면 묶어 보인다
-  const railRow = (c) => <button key={c.id} type="button" className="item" onClick={() => setSheet(c.id)} title={t('rail.mine.on')}><Av name={c.display_name} crew size="xs" company={c.hosting === 'bot'} /><span className="name">{c.display_name}</span><span className="msgr-klabel src">{t(`rail.src.${sourceOf(c)}`)}</span><span className={`msgr-dot${c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS ? ' mark' : ''}`} /></button>;
+  // 행은 아바타·이름·상태점만(유건 지적 2026-09-09 "레일이 복잡"). 출처는 글자 대신 소속별 정렬일 때 소제목으로.
+  const railRow = (c) => <button key={c.id} type="button" className="item" onClick={() => setSheet(c.id)} title={`${c.display_name} · ${t(`rail.src.${sourceOf(c)}`)}${c.role_text ? ` · ${c.role_text}` : ''}`}><Av name={c.display_name} crew size="xs" company={c.hosting === 'bot'} /><span className="name">{c.display_name}</span><span className={`msgr-dot${c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS ? ' mark' : ''}`} /></button>;
+  const railGroups = folders.length ? [...folders.map((f) => [f, myCrews.filter((c) => c.folder === f)]), [t('rail.folder.none'), myCrews.filter((c) => !c.folder)]].filter(([, l]) => l.length)
+    : railSort === 'source' ? ['argo', 'hermes', 'openclaw', 'custom'].map((k) => [t(`rail.src.${k}`), myCrews.filter((c) => sourceOf(c) === k)]).filter(([, l]) => l.length) : null;
   return (
     <div className={`shell msgr-shell${rail ? ' rail-open' : ''}`}>
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
@@ -455,9 +459,9 @@ function Shell({ session }) {
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
         {dms.length > 0 && (<>
           <div className="msgr-group">{t('ch.dms')}</div>
-          <div className="msgr-list">{dms.map((c) => { const open = railMenu === c.id; return (
+          <div className="msgr-list">{dms.map((c) => { const open = railMenu === c.id; const withCrew = (dmMembers[c.id] ?? []).some((m) => m.member_kind === 'crew'); return (
             <div key={c.id} className={`msgr-railrow${open ? ' open' : ''}`}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}><I name="at" size={14} /><span className="name">{dmName(c)}</span></button>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} /><span className="name">{dmName(c)}</span></button>
               <button type="button" className="more" onClick={(e) => { e.stopPropagation(); setRailMenu(open ? null : c.id); setRailConfirm(null); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={open}><I name="dots" size={13} /></button>
               {open && (
                 <div className="msgr-rowmenu" role="menu" onClick={(e) => e.stopPropagation()}>
@@ -469,33 +473,13 @@ function Shell({ session }) {
             </div>
           ); })}</div>
         </>)}
-        {friends.length > 0 && (<>
-          <div className="msgr-group">{t('rail.friends')}<span className="msgr-klabel">{friends.filter((f) => f.status === 'accepted').length}{friends.some((f) => f.status === 'pending' && f.requested_by !== uid) ? ` · ${t('rail.friends.pending', { n: friends.filter((f) => f.status === 'pending' && f.requested_by !== uid).length })}` : ''}</span></div>
-          <div className="msgr-list members">{/* 친구는 조직 밖 관계 — 같은 조직에 있으면 1:1 대화, 아니면 설정 > 내 계정 > 친구에서 초대 */}
-            {friends.filter((f) => f.status === 'accepted').map((f) => { const inOrg = members.some((m) => m.user_id === f.user_id); return <button key={f.user_id} type="button" className="item" onClick={() => inOrg ? openDm('user', f.user_id) : (setSettingsTab('me'), setPage('settings'), setRail(false))} title={inOrg ? t('rail.members.dm') : t('rail.friends.notHere')}><Av name={nameOfUser(f.user_id) !== f.user_id.slice(0, 8) ? nameOfUser(f.user_id) : (f.display_name || f.handle || '?')} size="xs" /><span className="name">{members.some((m) => m.user_id === f.user_id) ? nameOfUser(f.user_id) : (f.display_name || f.handle)}</span><span className="msgr-klabel src">{inOrg ? t('rail.friends.here') : t('rail.friends.away')}</span></button>; })}
-            {friends.some((f) => f.status === 'pending' && f.requested_by !== uid) && <button type="button" className="item dim" onClick={() => { setSettingsTab('me'); setPage('settings'); setRail(false); }}><I name="bell" size={12} /><span className="name">{t('rail.friends.review')}</span></button>}
-          </div>
-        </>)}
-        {org && members.length > 0 && (<>
-          <div className="msgr-group">{t('rail.members')}<span className="msgr-klabel">{members.filter((m) => m.user_id !== org.service_user_id).length}</span></div>
-          <div className="msgr-list members">{/* 사람은 역할별로(소유자·관리자 → 멤버 → 게스트). 누르면 1:1 대화. 회사 노드(서비스 계정)는 사람이 아니라 뺀다(유건 질문 2026-09-09) */}
-            {[['admin', (m) => m.role === 'owner' || m.role === 'admin'], ['member', (m) => m.role === 'member'], ['guest', (m) => m.role === 'guest']].map(([k, f]) => { const list = members.filter((m) => m.user_id !== org.service_user_id && f(m)).sort((a, b) => (a.display_name || '').localeCompare(b.display_name || '', 'ko')); return list.length ? (
-              <div key={k} className="msgr-folder"><div className="msgr-folderhead">{t(`rail.members.${k}`)}<span className="msgr-klabel">{list.length}</span></div>
-                {list.map((m) => <button key={m.user_id} type="button" className="item" onClick={() => { if (m.user_id !== uid) openDm('user', m.user_id); }} title={m.user_id === uid ? t('ui.me') : t('rail.members.dm')}><Av name={m.display_name || m.user_id} size="xs" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="msgr-klabel src">{m.user_id === uid ? t('ui.me') : t(`role.${m.role}`)}</span></button>)}
-              </div>) : null; })}
-          </div>
-        </>)}
         {org && (myAvailable.length > 0 || myCrews.length > 0) && (<>
           <div className="msgr-group">{t('rail.mine')}<span className="right"><select className="msgr-sort" value={railSort} onChange={(e) => pickSort(e.target.value)} aria-label={t('rail.sort')} title={t('rail.sort')}>{['source', 'name', 'added'].map((v) => <option key={v} value={v}>{t(`rail.sort.${v}`)}</option>)}</select><span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span></span></div>
           <div className="msgr-list mine">
-            {folders.length === 0 ? myCrews.map(railRow) : (<>
-              {folders.map((f) => <div key={f} className="msgr-folder"><div className="msgr-folderhead">{f}<span className="msgr-klabel">{myCrews.filter((c) => c.folder === f).length}</span></div>{myCrews.filter((c) => c.folder === f).map(railRow)}</div>)}
-              {myCrews.some((c) => !c.folder) && <div className="msgr-folder"><div className="msgr-folderhead">{t('rail.folder.none')}</div>{myCrews.filter((c) => !c.folder).map(railRow)}</div>}
-            </>)}
+            {railGroups ? railGroups.map(([label, list]) => <div key={label} className="msgr-folder"><div className="msgr-folderhead">{label}<span className="msgr-klabel">{list.length}</span></div>{list.map(railRow)}</div>) : myCrews.map(railRow)}
             {myAvailable.map((c) => <button key={c.id} type="button" className="item dim" onClick={() => setSheet(c.id)} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>)}
           </div>
         </>)}
-        <div className="msgr-railhint">{myAvailable.length || myCrews.length > 0 ? t('rail.hint.mine') : t('rail.hint')}</div>
         </div>
         <div className="msgr-foot">
           <button type="button" className="me" onClick={() => setMeMenu((v) => !v)} aria-haspopup="menu" aria-expanded={meMenu} title={t('ui.me.menu')}>
@@ -526,7 +510,7 @@ function Shell({ session }) {
         ) : page === 'search' && org ? (
           <SearchPage res={searchRes} channels={channels} members={members} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { setChId(id); setPage('chat'); }} onCrew={setSheet} onDm={(id) => openDm('user', id)} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : page === 'inbox' && org ? (
-          <Inbox items={inbox} prevSeen={inboxPrev} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('me'); return; } setChId(id); setPage('chat'); }} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
+          <Inbox items={inbox} prevSeen={inboxPrev} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id) => { if (!id) { setPage('settings'); setSettingsTab('friends'); return; } setChId(id); setPage('chat'); }} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : page === 'settings' ? (
           <Settings session={session} me={me} uid={uid} org={org} isAdmin={!!isAdmin} policy={policy} members={members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={loadFriends} onDm={(id) => openDm('user', id)} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => loadOrg(orgId).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={() => setPage('chat')} onMenu={() => setRail(true)} />
         ) : chId ? (
@@ -1010,7 +994,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
   const family = FAMILIES.map(([f]) => f).find((f) => theme === f || theme.startsWith(`${f}-`)) ?? null;
   const mode = family ? theme.slice(family.length) : null;
   const skins = THEMES.filter((c) => !FAMILY_CODES.includes(c));
-  const tabs = [org && ['members', 'set.tab.members'], org && ['org', 'set.tab.org'], org && ['crews', 'set.tab.crews'], ['me', 'set.tab.me']].filter(Boolean); // 기록은 활동 페이지(트리+그래프)로 — 유건 지시 2026-09-04 // UX 2/3: 세로 3천px 카드 더미 대신 탭 — 자주 쓰는 멤버가 첫 화면
+  const tabs = [org && ['members', 'set.tab.members'], org && ['org', 'set.tab.org'], org && ['crews', 'set.tab.crews'], ['friends', 'set.tab.friends'], ['me', 'set.tab.me']].filter(Boolean); // 친구는 설정의 별도 분류(유건 지시 2026-09-09) // 기록은 활동 페이지(트리+그래프)로 — 유건 지시 2026-09-04 // UX 2/3: 세로 3천px 카드 더미 대신 탭 — 자주 쓰는 멤버가 첫 화면
   const [tab, setTab] = useState(org ? 'members' : 'me');
   useEffect(() => { if (initialTab) { setTab(initialTab); onTabUsed?.(); } }, [initialTab]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!tabs.some(([k]) => k === tab)) setTab(tabs[0][0]); }, [org?.id, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1022,7 +1006,8 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
     </div>
     <div className="msgr-thread page"><div className="msgr-settings tabs">
       <nav className="msgr-setnav" aria-label={t('ui.settings')}>
-        {tabs.map(([k, label]) => <button key={k} type="button" className={tab === k ? 'on' : ''} aria-current={tab === k ? 'page' : undefined} onClick={() => setTab(k)}>{t(label)}</button>)}
+        <button type="button" className={`msgr-setme${tab === 'me' ? ' on' : ''}`} onClick={() => setTab('me')} aria-current={tab === 'me' ? 'page' : undefined}><Av name={me?.display_name || session.user.email} size="sm" /><span className="who"><b>{me?.display_name || session.user.email}</b><span className="msgr-klabel">{session.user.email}</span></span></button>{/* 텔레그램식 상단 프로필 카드(유건 참고 2026-09-09) */}
+        {tabs.filter(([k]) => k !== 'me').map(([k, label]) => <button key={k} type="button" className={tab === k ? 'on' : ''} aria-current={tab === k ? 'page' : undefined} onClick={() => setTab(k)}>{t(label)}</button>)}
       </nav>
       <div className="msgr-setbody">
         {tab === 'members' && org && (isAdmin
@@ -1036,6 +1021,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
           {isAdmin && <OrgCard part="agents" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
           {policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
         </>)}
+        {tab === 'friends' && <FriendsCard uid={uid} friends={friends} members={members} onChanged={onFriendsChanged} onDm={onDm} onNote={onNote} onError={onError} />}
         {tab === 'me' && (<>
           <section className="msgr-setcard">
             <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
@@ -1044,7 +1030,6 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
             <div className="row"><NotifyRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
           </section>
           <ProfileCard uid={uid} onNote={onNote} onError={onError} />
-          <FriendsCard uid={uid} friends={friends} members={members} onChanged={onFriendsChanged} onDm={onDm} onNote={onNote} onError={onError} />
           <section className="msgr-setcard">
             <h2>{t('set.lang')}</h2>
             <div className="msgr-seg" role="radiogroup" aria-label={t('set.lang')}>
