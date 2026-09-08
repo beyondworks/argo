@@ -66,4 +66,17 @@ test('chat() — 다른 러너(claude)가 연결돼 있어도 http 크루는 폴
   } finally { delete process.env.ARGO_CLAUDE_BASE_URL; }
 });
 
+test('chat() — 회사 http 자격이 없어도(무인증 엔드포인트) 카드만으로 그 엔드포인트에 간다 — claude가 연결돼 있어도 대체하지 않는다', async () => {
+  const WS = 'e2e-http-nocred'; await mkws(WS);
+  await saveRunnerCred(WS, 'claude', 'apikey', 'sk-ant-fake-not-real-000000');
+  process.env.ARGO_CLAUDE_BASE_URL = 'http://127.0.0.1:9';
+  try {
+    const before = seen.length;
+    const r = await chat(WS, 'hermes', '자격 없이').catch((e2) => ({ reply: String(e2.message) }));
+    assert.equal(seen.length, before + 1, '엔드포인트 1회(대체 없음)');
+    assert.equal(seen.at(-1).auth, undefined, 'Bearer 없음');
+    assert.doesNotMatch(String(r.reply), /Claude|claude|대체/, String(r.reply).slice(0, 120));
+  } finally { delete process.env.ARGO_CLAUDE_BASE_URL; }
+});
+
 test.after(() => new Promise((r) => srv.close(r)));

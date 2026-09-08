@@ -3,7 +3,7 @@
 //   format 'argo'(기본):   POST <endpoint> { prompt, model, kind, readOnly } → 200 { text|reply|content|output } 또는 text/plain
 //   format 'openai-chat':  POST <endpoint> { model, messages:[{role:'user',content}], stream:false } → choices[0].message.content
 //                          (헤르메스 게이트웨이 API 서버 /v1/chat/completions가 이 모양 — ~/.hermes/hermes-agent/gateway/platforms/api_server.py 실물 2026-09-08)
-//   헤더 authorization: Bearer <회사 http 자격>. 자격 값이 'none'이면 무인증 엔드포인트(로컬 헤르메스·오픈클로) — 헤더 없음(분리 검수 MEDIUM-2).
+//   헤더 authorization: Bearer <회사 http 자격> — 자격은 선택이다. 없으면 헤더 없음(무인증 로컬 엔드포인트). 카드 전용 러너라 자격 유무가 러너 선택에 영향을 주지 않는다(pickRunner).
 // 오류: 비-2xx는 `API Error: <status> …`(+ httpStatus)로 던져 error-class·자가치유가 CLI 러너와 같은 자리에서 문다. 401·403은 chat.mjs의
 // surfaceRunnerFailure가 **벤더 확정**으로 각인해 다음 턴을 실행 전에 끊는다(불변식 A — 이 러너는 엔드포인트가 카드에 있어 독립 프로브가
 // 없다, 분리 검수 HIGH-1). 시간 초과는 timedOut 오류(CLI 러너와 같은 안내), 연결 실패는 status 0.
@@ -11,7 +11,6 @@
 // 호스팅 런타임(ARGO_TENANT_OWNER)은 서버발 SSRF 표면이라 러너 자체를 막는다. 도구·권한 게이트는 없다(텍스트 러너 등급 — 시트 정직 표기는 N-3).
 export const HTTP_TEXT_MAX_BODY = 200_000; // 응답 상한(바이트) — 스트림으로 세며 넘기면 끊는다(전량 버퍼링 금지, 분리 검수 MEDIUM-1)
 export const HTTP_TEXT_FORMATS = ['argo', 'openai-chat'];
-export const HTTP_TEXT_NO_AUTH = 'none'; // 회사 자격 값이 이것이면 Bearer를 만들지 않는다
 
 const ko_en = (ko, en) => `${ko} ${en}`;
 const PRIVATE_V4 = [/^127\./, /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./]; // 169.254/16(클라우드 메타데이터)·0.0.0.0은 사설이 아니라 차단(2차 검수 HIGH-C)
@@ -71,7 +70,7 @@ export async function execHttpText({ endpoint, format = 'argo', prompt, model = 
   if (!HTTP_TEXT_FORMATS.includes(format)) throw new Error(ko_en(`http 러너: 모르는 format "${format}" — ${HTTP_TEXT_FORMATS.join('|')} 중 하나여야 합니다.`, `http runner: unknown format "${format}" — use ${HTTP_TEXT_FORMATS.join('|')}.`));
   const url = await assertHttpTextEndpoint(endpoint, hosted === undefined ? {} : { hosted });
   const keyRaw = cred?.env?.ARGO_HTTP_KEY ? String(cred.env.ARGO_HTTP_KEY).trim() : '';
-  const key = keyRaw && keyRaw !== HTTP_TEXT_NO_AUTH ? keyRaw : '';
+  const key = keyRaw;
   const ms = Math.max(1000, Number(timeoutMs) || 30_000);
   const ac = new AbortController(); const timer = setTimeout(() => ac.abort(new Error('timeout')), ms); // AbortSignal.any 미사용(Node 20.3 미만 셀프호스트, 분리 검수 LOW-4)
   const onOuter = () => ac.abort(new Error('aborted')); if (signal) { if (signal.aborted) onOuter(); else signal.addEventListener('abort', onOuter, { once: true }); }

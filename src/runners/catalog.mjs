@@ -405,6 +405,7 @@ export function pickRunner(st, want, exclude = null, { defaultRunner = null } = 
   // Google이 막은 구독 CLI 경로로 유도됐다). 명시 지정(want)은 종전대로 자격 종류를 묻지 않는다 — 이미 그 러너로 굳힌 크루는 계속 돈다.
   const credAutoOk = (id) => { const type = st[id]?.company?.type; const m = RUNNER_AUTH[id]; return !type || !m || m.methods.includes(type) || (type === 'host' && !!m.hostUsable); };
   const autoUsable = (id) => usable(id) && !isHiddenRunner(id) && credAutoOk(id);
+  if (want && isCardOnlyRunner(want)) return { runner: want, fellBack: false, available: true }; // 카드 전용(http): 회사 자격은 선택(있으면 Bearer) — 미연결이라고 다른 러너로 대체하지 않는다(유건 2026-09-08 "왜 대체가 되지"). 엔드포인트 문제는 턴에서 정직 실패
   if (want && usable(want)) return { runner: want, fellBack: false, available: true };
   // ponytail: 회사 기본 러너 — "자동일 때 이 러너부터"(K1 해소, 유건 제보 2026-08-08: Grok만
   // 연결했는데 하드코딩 순서가 claude를 먼저 잡는다). 가용하면 우선, 아니면 기존 순서 폴백.

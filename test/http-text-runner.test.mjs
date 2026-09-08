@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { execHttpText, buildHttpTextRequest, parseHttpTextResponse, assertHttpTextEndpoint, HTTP_TEXT_NO_AUTH } from '../src/runners/http-text.mjs';
+import { execHttpText, buildHttpTextRequest, parseHttpTextResponse, assertHttpTextEndpoint } from '../src/runners/http-text.mjs';
 import { externalExec } from '../src/runners.mjs';
 import { RUNNERS, RUNNER_AUTH, isCliRunner, isCliTurn, isHiddenRunner, isRetiredRunner, isCardOnlyRunner, pickRunner } from '../src/runners/catalog.mjs';
 
@@ -24,8 +24,6 @@ test('요청 모양 — POST JSON {prompt, model, cwd, kind, readOnly} + 회사 
     assert.equal(f.seen[0].headers.authorization, 'Bearer k-1'); assert.deepEqual(f.seen[0].body, { prompt: '안녕', model: 'm1', kind: 'chat', readOnly: false }, 'cwd 같은 로컬 경로는 보내지 않는다(최소 정보)');
     await execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 5000, cred: null });
     assert.equal(f.seen[1].headers.authorization, undefined, '자격 없으면 Bearer를 만들지 않는다'); assert.equal(f.seen[1].body.model, undefined, '모델 미지정은 필드 생략');
-    await execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 5000, cred: { env: { ARGO_HTTP_KEY: HTTP_TEXT_NO_AUTH } } });
-    assert.equal(f.seen[2].headers.authorization, undefined, "자격 값 'none' = 무인증 엔드포인트(로컬 헤르메스·오픈클로) — Bearer 없음(MEDIUM-2)");
   } finally { await f.close(); }
 });
 
@@ -76,6 +74,8 @@ test('카탈로그 핀 — http는 숨김·CLI 종류·자동 선택 제외·명
   const st = { http: { company: { connected: true, type: 'apikey' } }, claude: { company: { connected: false } } };
   assert.equal(pickRunner(st, null).available, false, '자동 선택은 숨김 http를 잡지 않는다');
   assert.equal(pickRunner(st, 'http').runner, 'http', '카드가 명시하면 돈다');
+  const noCred = { claude: { company: { connected: true, invalid: false, type: 'apikey' } } };
+  assert.deepEqual(pickRunner(noCred, 'http'), { runner: 'http', fellBack: false, available: true }, '카드 전용 러너는 회사 자격이 없어도 그 러너로 — 다른 러너로 대체하지 않는다(규칙 하나)');
 });
 
 test('배선 핀 — chat.mjs의 externalExec 두 호출이 카드 endpoint를 넘기고, creds가 http 자격을 Bearer env로 조립한다', async () => {
