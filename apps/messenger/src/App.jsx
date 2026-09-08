@@ -9,6 +9,7 @@ import { supabase, configured, q } from './supabase.js';
 import { customServer, SB_URL } from './supabase.js';
 import { readProfile, writeProfile, clearProfile, normalizeUrl, hostOf } from './server-profile.mjs';
 import { handoff } from './oauth-handoff.mjs';
+import { parseInviteCode, inviteShareText } from './invite.mjs';
 import { UpdateBar } from './update.jsx';
 import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
@@ -266,7 +267,13 @@ function Shell({ session }) {
   };
   const nameOfUser = (id) => members.find((m) => m.user_id === id)?.display_name || id?.slice(0, 8) || '?';
   const crewOf = (id) => crews.find((c) => c.id === id);
-  const [newOrg, setNewOrg] = useState(null); // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
+  const [newOrg, setNewOrg] = useState(null);
+  const [joinCode, setJoinCode] = useState(null); // 초대 코드로 가입 — 앱에는 링크가 열릴 오리진이 없어 코드를 직접 붙여 넣는다(invite.mjs)
+  const joinByCode = async (raw) => {
+    const code = parseInviteCode(raw); if (!code) return setErr(t('org.join.code.bad'));
+    try { const id = await q(supabase.rpc('msgr_accept_invite', { code })); setJoinCode(null); setOrgMenu(false); setNote(t('org.joined')); await loadOrgs(); if (id) setOrgId(id); }
+    catch (e) { setErr(friendlyErr(e.message, t)); }
+  }; // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
   const [joinable, setJoinable] = useState([]); // J-3 도메인 자동 가입 후보
   const [railMenu, setRailMenu] = useState(null); const [railConfirm, setRailConfirm] = useState(null); const [railBusy, setRailBusy] = useState(null); // 레일 목록 파견 진행 중 크루 id // 레일 행 '…' 메뉴(채널 설정·나가기·보관, 1:1 나가기) — 유건 지적 2026-09-04
   useEffect(() => { if (!railMenu) return; const off = () => { setRailMenu(null); setRailConfirm(null); }; window.addEventListener('click', off); return () => window.removeEventListener('click', off); }, [railMenu]);
@@ -304,9 +311,9 @@ function Shell({ session }) {
   const invite = async () => {
     try {
       const row = await q(supabase.from('msgr_invites').insert({ org_id: orgId, role: 'member', created_by: uid }).select('code').single());
-      const link = `${location.origin}${location.pathname}?invite=${row.code}`;
-      await navigator.clipboard?.writeText(link).catch(() => {});
-      setNote(`${t('org.inviteMade')} ${link}`);
+      const share = inviteShareText(row.code, { origin: location.origin, pathname: location.pathname, t });
+      await navigator.clipboard?.writeText(share).catch(() => {});
+      setNote(`${t('org.inviteMade')} ${share}`);
     } catch (e) { setErr(e.message); }
   };
   // 1:1 대화 — 사람(user) 또는 크루(crew)와. 이미 있으면 열고, 없으면 dm 채널 + 멤버(나·상대·크루면 소유자까지) 생성
@@ -367,6 +374,12 @@ function Shell({ session }) {
               {ent && <div className="seatline"><span className="msgr-klabel">{t('seat.status', { used: members.length, seats: ent.seats, plan: t(`plan.${ent.plan}`) })}</span></div>}
               <div className="sep" />
               {isAdmin && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); invite(); }}><span className="msgr-av sm ghost"><I name="copy" size={13} /></span><span className="label">{t('org.invite')}</span></button>}
+              {joinCode === null
+                ? <button type="button" role="menuitem" onClick={() => { setJoinCode(''); setNewOrg(null); }}><span className="msgr-av sm ghost"><I name="at" size={13} /></span><span className="label">{t('org.join.code')}</span></button>
+                : <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); joinByCode(joinCode); }}>
+                    <input className="msgr-input" placeholder={t('org.join.code.ph')} value={joinCode} onChange={(e) => setJoinCode(e.target.value)} autoFocus />
+                    <div className="acts"><button type="submit" className="btn btn-primary sm" disabled={!parseInviteCode(joinCode)}><I name="check" size={13} />{t('org.join.code.go')}</button><button type="button" className="btn sm" onClick={() => setJoinCode(null)}>{t('ui.cancel')}</button></div>
+                  </form>}
               {newOrg === null
                 ? <button type="button" role="menuitem" onClick={() => setNewOrg('')}><span className="msgr-av sm ghost"><I name="plus" size={13} /></span><span className="label">{t('org.new')}</span></button>
                 : <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); createOrg(newOrg); }}>
@@ -604,9 +617,9 @@ function ChannelSheet({ channel, org, uid, isAdmin, policy, members, crews, chMe
     const res = await supabase.from('msgr_invites').insert({ org_id: org.id, role: 'guest', channel_id: channel.id, guest_days: guestDays, created_by: uid }).select('code').single();
     setBusy(false);
     if (res.error) return onError(friendlyErr(res.error.message, t));
-    const link = `${location.origin}${location.pathname}?invite=${res.data.code}`;
-    await navigator.clipboard?.writeText(link).catch(() => {});
-    onNote(`${t('ch.guest.made', { days: guestDays })} ${link}`);
+    const share = inviteShareText(res.data.code, { origin: location.origin, pathname: location.pathname, t });
+    await navigator.clipboard?.writeText(share).catch(() => {});
+    onNote(`${t('ch.guest.made', { days: guestDays })} ${share}`);
   };
   const loadRequests = useCallback(async () => {
     const rows = await q(supabase.from('msgr_crew_requests').select('id, name, status, error, crew_id, created_at, done_at').eq('org_id', org.id).eq('channel_id', channel.id).order('created_at', { ascending: false }).limit(10));
@@ -1242,9 +1255,9 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
     const res = await supabase.from('msgr_invites').insert({ org_id: org.id, role, created_by: uid }).select('code').single();
     setBusy(false);
     if (res.error) return onError(res.error.message);
-    const link = `${location.origin}${location.pathname}?invite=${res.data.code}`;
-    await navigator.clipboard?.writeText(link).catch(() => {});
-    onNote(`${t('org.inviteMade')} ${link}`); loadInvites().catch(() => {});
+    const share = inviteShareText(res.data.code, { origin: location.origin, pathname: location.pathname, t });
+    await navigator.clipboard?.writeText(share).catch(() => {});
+    onNote(`${t('org.inviteMade')} ${share}`); loadInvites().catch(() => {});
   };
   const revoke = async (inv) => {
     setBusy(true);
@@ -1257,7 +1270,7 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
     const rows = await q(supabase.from('msgr_audit_log').select('id, actor_user_id, actor_crew_id, action, target_kind, target_id, meta, at').eq('org_id', org.id).order('at', { ascending: false }).limit(50));
     setAudit(rows);
   };
-  const copyLink = async (inv) => { const link = `${location.origin}${location.pathname}?invite=${inv.code}`; await navigator.clipboard?.writeText(link).catch(() => {}); onNote(`${t('org.invite.copied')} ${link}`); };
+  const copyLink = async (inv) => { const share = inviteShareText(inv.code, { origin: location.origin, pathname: location.pathname, t }); await navigator.clipboard?.writeText(share).catch(() => {}); onNote(`${t('org.invite.copied')} ${share}`); };
   const live = invites.filter((i) => !i.accepted_at && Date.parse(i.expires_at) > Date.now());
   const open = live.filter((i) => !i.for_node); const nodeInvite = live.find((i) => i.for_node) ?? null; // I-4: 노드용 코드는 사람 초대 목록에 섞지 않는다(노드 섹션에서 명령으로)
   const nodeCmd = nodeInvite ? `ARGO_NODE_CODE=${nodeInvite.code} node scripts/msgr-node-bootstrap.mjs` : '';
