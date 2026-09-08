@@ -129,19 +129,25 @@ test('목적지 가드(HIGH-3) — userinfo 금지·공인 호스트 https 강�
   await assert.rejects(() => assertHttpTextEndpoint('http://0.0.0.0/x', { hosted: false }), /허용되지 않는/);
 });
 
-test('응답 상한(MEDIUM-1) — 바이트로 세며 읽다가 넘기면 끊는다(전량 버퍼링 없음), content-length 선차단, 배열 content 병합', async () => {
+test('응답 상한(MEDIUM-1) — 유한한 초과 응답은 캡 오류(플랫폼 무관), content-length 선차단, 배열 content 병합', async () => {
+  const big = 'x'.repeat(50_000);
+  const f = await fake((req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end(big + big + big); }); // 150KB > 120KB — 백프레셔·소켓 타이밍에 안 기댄다(윈도우 CI red 2026-09-08)
+  try { await assert.rejects(execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 20_000, hosted: false, maxBody: 120_000 }), (e) => e.timedOut !== true && e.httpStatus === undefined && /상한/.test(e.message) && /cap/.test(e.message), '캡 오류(시간 초과 아님 — 2차 검수 M-1: 시간 초과 문구도 "상한"을 포함해 술어를 통과시켰다)'); } finally { await f.close(); }
+  const g = await fake((req, res) => { res.writeHead(200, { 'content-type': 'text/plain', 'content-length': '999999' }); res.end('short'); });
+  try { await assert.rejects(execHttpText({ endpoint: g.url, prompt: 'x', timeoutMs: 5000, hosted: false, maxBody: 1000 }), /상한/); } finally { await g.close(); }
+  assert.equal(parseHttpTextResponse('argo', JSON.stringify({ content: [{ type: 'text', text: 'a' }, 'b'] })), 'ab');
+  assert.equal(parseHttpTextResponse('argo', JSON.stringify(['x', { text: 'y' }])), 'xy', '최상위 배열도 텍스트로');
+});
+
+test('응답 상한 — 스트림 중 초과 시 연결을 끊는다(전량 버퍼링 없음)', { skip: process.platform === 'win32' ? '소켓 백프레셔 타이밍 — POSIX CI가 담당' : false }, async () => {
   const big = 'x'.repeat(50_000);
   let sent = 0; let closed = false;
   const f = await fake((req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); req.on('close', () => { closed = true; }); const pump = () => { while (!closed && sent < 400) { sent++; if (!res.write(big)) { res.once('drain', pump); return; } } if (!closed) res.end(); }; pump(); });
   try {
-    await assert.rejects(execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 20_000, maxBody: 120_000 }), (e) => e.timedOut !== true && e.httpStatus === undefined && /상한/.test(e.message) && /cap/.test(e.message), '캡 오류(시간 초과 아님 — 2차 검수 M-1: 시간 초과 문구도 "상한"을 포함해 술어를 통과시켰다)');
+    await assert.rejects(execHttpText({ endpoint: f.url, prompt: 'x', timeoutMs: 20_000, hosted: false, maxBody: 120_000 }), (e) => e.timedOut !== true && e.httpStatus === undefined && /상한/.test(e.message));
     await new Promise((r) => setTimeout(r, 300));
     assert.ok(closed && sent < 400, `상한에서 연결을 끊는다 — 서버가 400건(20MB)을 다 보내기 전에 닫힘(sent=${sent}, closed=${closed})`);
   } finally { await f.close(); }
-  const g = await fake((req, res) => { res.writeHead(200, { 'content-type': 'text/plain', 'content-length': '999999' }); res.end('short'); });
-  try { await assert.rejects(execHttpText({ endpoint: g.url, prompt: 'x', timeoutMs: 5000, maxBody: 1000 }), /상한/); } finally { await g.close(); }
-  assert.equal(parseHttpTextResponse('argo', JSON.stringify({ content: [{ type: 'text', text: 'a' }, 'b'] })), 'ab');
-  assert.equal(parseHttpTextResponse('argo', JSON.stringify(['x', { text: 'y' }])), 'xy', '최상위 배열도 텍스트로');
 });
 
 test('호스팅 판정은 market.mjs arbitraryMcpBlocked와 같은 술어(HIGH-C) — env 행렬에서 일치', async () => {
