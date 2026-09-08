@@ -151,6 +151,9 @@ function Shell({ session }) {
   const [chSheetAdd, setChSheetAdd] = useState(null); // 시트를 열 때 바로 펼칠 패널('crew') — 상단 "크루" 버튼(유건 지적 2026-09-08: 크루를 채널에 넣는 UI가 안 보임)
   const [mentionReq, setMentionReq] = useState(null); // 시트 "@로 부르기" → 작성창에 멘션 삽입
   const [inbox, setInbox] = useState([]); const [inboxSeen, setInboxSeen] = useState(() => readInboxSeen()); const [inboxPrev, setInboxPrev] = useState(0); // 알림함 v1
+  const [railSort, setRailSort] = useState(() => { try { return localStorage.getItem('argo-msgr-rail-sort') || 'source'; } catch { return 'source'; } }); // 내 에이전트 정렬: source(소속별) | name(이름순) | added(추가순)
+  const pickSort = (v) => { setRailSort(v); try { localStorage.setItem('argo-msgr-rail-sort', v); } catch {} };
+  const [meMenu, setMeMenu] = useState(false); // 하단 프로필(이름) 클릭 → 메뉴(내 계정·로그아웃) — 로그아웃 버튼은 여기로(유건 지시 2026-09-09)
   const [botKinds, setBotKinds] = useState([]); // 내 에이전트 출처(헤르메스·오픈클로) — 훅은 조기 return보다 앞에(실측: 순서 오류로 빈 화면)
   useEffect(() => { if (!orgId) { setBotKinds([]); return; } q(supabase.from('msgr_bots').select('crew_id, kind').eq('org_id', orgId).is('revoked_at', null)).then(setBotKinds).catch(() => setBotKinds([])); }, [orgId, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const rt = useRef(null);
@@ -184,7 +187,7 @@ function Shell({ session }) {
     const [chs, mems, crs, e, pol] = await Promise.all([
       q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids').eq('org_id', id).is('archived_at', null).order('created_at')),
       q(supabase.from('msgr_org_members').select('user_id, role, display_name, expires_at').eq('org_id', id).is('removed_at', null)),
-      q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at').eq('org_id', id).in('status', ['active', 'available'])).then((rows) => { setMyAvailable(rows.filter((r) => r.status === 'available' && r.owner_user_id === uid).sort((x, y) => x.display_name.localeCompare(y.display_name, 'ko'))); return rows.filter((r) => r.status === 'active'); }),
+      q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at').eq('org_id', id).in('status', ['active', 'available'])).then((rows) => { setMyAvailable(rows.filter((r) => r.status === 'available' && r.owner_user_id === uid).sort((x, y) => x.display_name.localeCompare(y.display_name, 'ko'))); return rows.filter((r) => r.status === 'active'); }),
       supabase.from('msgr_org_entitlements').select('plan, seats, ls_status').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
       supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음)
     ]);
@@ -366,7 +369,13 @@ function Shell({ session }) {
   const sortedCh = [...channels].filter((c) => c.kind !== 'dm').sort((a, b) => (a.kind === 'private') - (b.kind === 'private') || a.name.localeCompare(b.name)); // 공개 먼저·이름순 고정(선택한 채널을 위로 끌어올리면 목록이 뛴다)
   // '내 에이전트' = 세 출처 한 목록(유건 지시 2026-09-08): 아르고 에이전트 + 내가 연결한 헤르메스·오픈클로(봇). 출처 표시는 msgr_bots.kind.
   const sourceOf = (c) => c.hosting !== 'bot' ? 'argo' : (botKinds.find((b) => b.crew_id === c.id)?.kind ?? 'custom');
-  const myCrews = crews.filter((c) => c.owner_user_id === uid);
+  const SRC_ORDER = { argo: 0, hermes: 1, openclaw: 2, custom: 3 };
+  const sortCrews = (list) => [...list].sort((a, b) => railSort === 'name' ? a.display_name.localeCompare(b.display_name, 'ko')
+    : railSort === 'added' ? Date.parse(a.created_at ?? 0) - Date.parse(b.created_at ?? 0)
+    : (SRC_ORDER[sourceOf(a)] - SRC_ORDER[sourceOf(b)]) || a.display_name.localeCompare(b.display_name, 'ko'));
+  const myCrews = sortCrews(crews.filter((c) => c.owner_user_id === uid));
+  const folders = [...new Set(myCrews.map((c) => c.folder).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); // 그룹(폴더) — 하나라도 있으면 묶어 보인다
+  const railRow = (c) => <button key={c.id} type="button" className="item" onClick={() => setSheet(c.id)} title={t('rail.mine.on')}><Av name={c.display_name} crew size="xs" company={c.hosting === 'bot'} /><span className="name">{c.display_name}</span><span className="msgr-klabel src">{t(`rail.src.${sourceOf(c)}`)}</span><span className={`msgr-dot${c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS ? ' mark' : ''}`} /></button>;
   return (
     <div className={`shell msgr-shell${rail ? ' rail-open' : ''}`}>
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
@@ -445,25 +454,32 @@ function Shell({ session }) {
           ); })}</div>
         </>)}
         {org && (myAvailable.length > 0 || myCrews.length > 0) && (<>
-          <div className="msgr-group">{t('rail.mine')}<span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span></div>
+          <div className="msgr-group">{t('rail.mine')}<span className="right"><select className="msgr-sort" value={railSort} onChange={(e) => pickSort(e.target.value)} aria-label={t('rail.sort')} title={t('rail.sort')}>{['source', 'name', 'added'].map((v) => <option key={v} value={v}>{t(`rail.sort.${v}`)}</option>)}</select><span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span></span></div>
           <div className="msgr-list mine">
-            {myCrews.map((c) => <button key={c.id} type="button" className="item" onClick={() => setSheet(c.id)} title={t('rail.mine.on')}><Av name={c.display_name} crew size="xs" company={c.hosting === 'bot'} /><span className="name">{c.display_name}</span><span className="msgr-klabel src">{t(`rail.src.${sourceOf(c)}`)}</span><span className={`msgr-dot${c.last_seen_at && Date.now() - Date.parse(c.last_seen_at) < AWAY_MS ? ' mark' : ''}`} /></button>)}
+            {folders.length === 0 ? myCrews.map(railRow) : (<>
+              {folders.map((f) => <div key={f} className="msgr-folder"><div className="msgr-folderhead">{f}<span className="msgr-klabel">{myCrews.filter((c) => c.folder === f).length}</span></div>{myCrews.filter((c) => c.folder === f).map(railRow)}</div>)}
+              {myCrews.some((c) => !c.folder) && <div className="msgr-folder"><div className="msgr-folderhead">{t('rail.folder.none')}</div>{myCrews.filter((c) => !c.folder).map(railRow)}</div>}
+            </>)}
             {myAvailable.map((c) => <button key={c.id} type="button" className="item dim" onClick={() => setSheet(c.id)} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>)}
           </div>
         </>)}
         <div className="msgr-railhint">{myAvailable.length || myCrews.length > 0 ? t('rail.hint.mine') : t('rail.hint')}</div>
         </div>
         <div className="msgr-foot">
-          <Av name={me?.display_name || session.user.email} size="sm" />
-          <span className="name">{me?.display_name || session.user.email}</span>
+          <button type="button" className="me" onClick={() => setMeMenu((v) => !v)} aria-haspopup="menu" aria-expanded={meMenu} title={t('ui.me.menu')}>
+            <Av name={me?.display_name || session.user.email} size="sm" /><span className="name">{me?.display_name || session.user.email}</span>
+          </button>
+          {meMenu && (<div className="msgr-rowmenu me" role="menu" onMouseLeave={() => setMeMenu(false)}>
+            <button type="button" role="menuitem" onClick={() => { setMeMenu(false); setPage('settings'); setRail(false); }}><I name="gear" size={13} />{t('set.tab.me')}</button>
+            <button type="button" role="menuitem" className="danger" onClick={() => { setMeMenu(false); supabase.auth.signOut({ scope: 'local' }); }}><I name="out" size={13} />{t('auth.signOut')}</button>
+          </div>)}
           {org && <button type="button" className={`btn ghost bell${page === 'inbox' ? ' on' : ''}`} onClick={() => page === 'inbox' ? setPage('chat') : openInbox()} title={t('inbox.title')} aria-label={t('inbox.title')}><I name="bell" size={15} />{inboxUnread > 0 && <span className="n">{inboxUnread > 99 ? '99+' : inboxUnread}</span>}</button>}
           {org && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="memory" size={15} /></button>}
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
-          <button type="button" className="btn ghost" onClick={() => supabase.auth.signOut({ scope: 'local' })} title={t('auth.signOut')} aria-label={t('auth.signOut')}><I name="out" size={15} /></button>
         </div>
       </aside>
       <main className="msgr-main">
-        {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
+        {sheet && crewOf(sheet) && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} nameOfUser={nameOfUser} crewsForFolders={crews} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => openDm('crew', sheet)} />}
         {chSheet && channel && <ChannelSheet myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? invite : null} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await loadOrg(orgId).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {(err || note) && (
@@ -491,7 +507,7 @@ function Shell({ session }) {
 }
 
 /* ─── 크루 시트: 소유자·실행 위치·접속 + 누가 시킬 수 있나(소유자만 편집, RLS msgr_crews_update_owner) + 허용 요청 ─── */
-function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser, onClose, onChanged, onPosted, onNote, onError, onDm }) {
+function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser, crewsForFolders = [], onClose, onChanged, onPosted, onNote, onError, onDm }) {
   const { t, lang } = useT();
   const owner = crew.owner_user_id === uid;
   const tier = crewTier(crew, org); // H-3: 회사 크루 / 개인(파견) 크루 — 판정 정본은 서버 msgr_crew_tier
@@ -554,6 +570,10 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
         </div>
         <p className="note tier">{tier === 'company' ? t('crew.tier.company.note', { org: org?.name ?? '' }) : t('crew.tier.personal.note', { name: nameOfUser(crew.owner_user_id) })}</p>
         <section>
+          {owner && (<div className="msgr-folderpick"><span className="msgr-klabel">{t('crew.folder')}</span>
+            <input className="msgr-input sm" list="msgr-folders" defaultValue={crew.folder ?? ''} placeholder={t('crew.folder.ph')} maxLength={40} onBlur={async (e) => { const v = e.target.value.trim() || null; if (v === (crew.folder ?? null)) return; const r = await supabase.from('msgr_crews').update({ folder: v }).eq('id', crew.id).select('id'); if (r.error) return onError(r.error.message); onNote(t('crew.folder.saved')); onChanged(); }} />
+            <datalist id="msgr-folders">{[...new Set((crewsForFolders ?? []).map((c) => c.folder).filter(Boolean))].map((f) => <option key={f} value={f} />)}</datalist>
+          </div>)}
           <h3>{t('crew.allow')}</h3>
           <p>{t('crew.allow.desc')}</p>
           <div className="msgr-seg" role="radiogroup" aria-label={t('crew.allow')}>
@@ -1245,7 +1265,7 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
   const { t, lang } = useT();
   const [name, setName] = useState(org.name); const [busy, setBusy] = useState(false);
   const [invites, setInvites] = useState([]);
-  const [confirmRemove, setConfirmRemove] = useState(null); const [audit, setAudit] = useState(null);
+  const [confirmRemove, setConfirmRemove] = useState(null); const [audit, setAudit] = useState(null); const [memberQ, setMemberQ] = useState(''); const [memberN, setMemberN] = useState(30);
   const isOwner = org.role === 'owner';
   const admins = members.filter((m) => m.role === 'admin' && m.user_id !== org.service_user_id); // J-2: 이전 제안·승계 대상은 활성 관리자만(서버 트리거와 같은 규칙), 서비스 계정 제외
   const iAmNominee = org.pending_owner_user_id === uid;
@@ -1343,11 +1363,13 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
     <code>{nodeCmd}</code>
     <div className="acts"><button type="button" className="btn sm" onClick={copyNodeCmd}><I name="copy" size={13} />{t('org.node.copy')}</button><span className="msgr-klabel">{t('org.invite.expires', { when: fmtWhen(nodeInvite.expires_at, lang) })}</span></div>
   </>);
-  if (part === 'members') return (
+  // 멤버가 50·100명이 되어도 한 화면에 다 쌓지 않는다(유건 질문 2026-09-09): 검색 + 30명씩 더 보기. 목록 자체는 조직 멤버 표 전체를 이미 받아 두므로 서버 페이징은 1,000명 넘을 때(v2).
+  if (part === 'members') { const q = memberQ.trim().toLowerCase(); const shown = members.filter((m) => !q || (m.display_name || '').toLowerCase().includes(q) || (m.user_id || '').includes(q)); return (
     <section className="msgr-setcard">
       <h2>{t('org.members')} · {members.length}</h2>
+      {members.length > 8 && <input className="msgr-input sm" value={memberQ} onChange={(e) => { setMemberQ(e.target.value); setMemberN(30); }} placeholder={t('org.members.search')} aria-label={t('org.members.search')} />}
       <div className="msgr-rows">
-        {members.map((m) => { const isMe = m.user_id === uid; const isSvc = m.user_id === org.service_user_id; const canEdit = !isMe && !isSvc && m.role !== 'owner'; return (
+        {shown.slice(0, memberN).map((m) => { const isMe = m.user_id === uid; const isSvc = m.user_id === org.service_user_id; const canEdit = !isMe && !isSvc && m.role !== 'owner'; return (
           <div key={m.user_id} className="row">
             <Av name={m.display_name || m.user_id} size="sm" /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span>
             {m.expires_at && <span className={`sub${Date.parse(m.expires_at) < Date.now() ? ' expired' : ''}`}>{Date.parse(m.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(m.expires_at, lang) })}</span>}
@@ -1357,6 +1379,8 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
             {canEdit && confirmRemove === m.user_id && <span className="confirm-inline"><span>{t('org.member.remove.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => remove(m)}>{t('org.member.remove')}</button><button type="button" className="btn sm" onClick={() => setConfirmRemove(null)}>{t('ui.cancel')}</button></span>}
           </div>
         ); })}
+        {shown.length > memberN && <div className="row"><button type="button" className="btn sm" onClick={() => setMemberN((n) => n + 30)}>{t('org.members.more', { n: shown.length - memberN })}</button></div>}
+        {!shown.length && <p className="empty">{t('org.members.noMatch')}</p>}
       </div>
       <h3>{t('org.invites.h')}</h3>
       <p>{t('org.invites.desc2')}</p>
@@ -1377,10 +1401,13 @@ function OrgCard({ org, uid, members, nameOfUser, onChanged, onOrgsChanged, onNo
         </div>
       )}
     </section>
-  );
+  ); }
+
   // ── 부록 N: 외부 에이전트(헤르메스·오픈클로)는 텔레그램·슬랙에 붙듯 **봇**으로 이 메신저에 접속한다. 봇 = 회사 등급 크루 + 토큰(서버 msgr_bots).
   //    토큰 원문은 생성·회전 직후 이 화면에만 있고(setup 상태) 저장·로그하지 않는다. 가용성은 마지막 getUpdates(last_seen_at)뿐 — 종료/재시작 버튼 없음(해제 = 토큰 회수).
   const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null); const [openBot, setOpenBot] = useState(null);
+  const loadBots = useCallback(async () => { if (part !== 'agents') return; setBots(await q(supabase.from('msgr_bots').select('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at, external_id').eq('org_id', org.id).order('created_at'))); }, [org.id, part]);
+  useEffect(() => { loadBots().catch((e) => onError(e.message)); }, [loadBots]); // eslint-disable-line react-hooks/exhaustive-deps
   const [auto, setAuto] = useState(null); // 원클릭 연결(앱 안에서만): null | { status: 'running'|'done'|'missing'|'failed', results:[{id,name,ok,steps}], reason }
   const [setups, setSetups] = useState([]); // 이번에 만든/회전한 봇들의 설정(이름·두 줄) — 토큰은 화면 상태로만
   const botOf = (kind, extId) => bots.find((b) => !b.revoked_at && b.kind === kind && b.external_id === extId);

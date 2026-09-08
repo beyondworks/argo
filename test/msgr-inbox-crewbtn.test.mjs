@@ -19,7 +19,7 @@ test('알림함 v1: 레일 하단 종(안 읽은 수) · 페이지 분기 · 집
   assert.match(app, /from\('msgr_crew_approvals'\)\.select\('id, channel_id, crew_id, action, reason, created_at'\)\.eq\('org_id', org\.id\)\.eq\('status', 'pending'\)/, '대기 결재');
   assert.match(app, /\.or\(`author_user_id\.neq\.\$\{uid\},author_user_id\.is\.null`\)/, 'DM 새 글 — 크루 글(author null)도 포함');
   assert.match(app, /const INBOX_SEEN_KEY = 'argo-msgr-inbox-seen';/, '읽음 키');
-  assert.match(css, /\.msgr-foot \{ margin-top: auto; display: grid; grid-template-columns: auto minmax\(0, 1fr\) auto auto auto auto;/, '하단 바 열 하나 추가(종)');
+  assert.match(css, /\.msgr-foot \{ margin-top: auto; display: grid; grid-template-columns: auto minmax\(0, 1fr\) auto auto auto;/, '하단 바 = 프로필(2열 span) + 종·기억·설정');
 });
 
 test('채널 상단 "크루" 버튼 → 시트를 크루 패널로 열고, 공개 채널은 파견 크루 전원을 "@로 부르기"로 보인다', () => {

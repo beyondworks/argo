@@ -19,7 +19,13 @@ test('카드가 쓰는 i18n 키는 전부 ko/en 쌍 · 상태 문구는 "헤르�
 
 test('봇 = 회사 등급(클라이언트 crewTier) · 내 에이전트 레일에 출처와 함께 포함 · 시트 hosting 표기 · 설정 크루 탭에 카드', () => {
   assert.match(app, /export const crewTier = \(crew, org\) => \(crew\?\.hosting === 'bot' \|\| /, '봇 회사 등급');
-  assert.match(app, /const myCrews = crews\.filter\(\(c\) => c\.owner_user_id === uid\);/, '내 에이전트 = 아르고 + 내가 연결한 봇(유건 지시: 세 출처 한 목록)');
+  assert.match(app, /const myCrews = sortCrews\(crews\.filter\(\(c\) => c\.owner_user_id === uid\)\);/, '내 에이전트 = 아르고 + 내가 연결한 봇(세 출처 한 목록) + 정렬(소속별·이름순·추가순)');
+  assert.match(app, /const folders = \[\.\.\.new Set\(myCrews\.map\(\(c\) => c\.folder\)/, '그룹(폴더) 묶음');
+  assert.match(app, /<select className="msgr-sort" value=\{railSort\}/, '정렬 선택');
+  assert.match(app, /<button type="button" className="me" onClick=\{\(\) => setMeMenu/, '프로필 클릭 메뉴(로그아웃은 여기)');
+  assert.doesNotMatch(app, /className="btn ghost" onClick=\{\(\) => supabase\.auth\.signOut/, '하단 바의 로그아웃 아이콘 버튼 제거');
+  assert.match(app, /placeholder=\{t\('org\.members\.search'\)\}/, '멤버 검색'); assert.match(app, /shown\.slice\(0, memberN\)/, '멤버 30명씩');
+  assert.match(read('apps/messenger/src/styles.css'), /:root\[data-theme='linen-dark'\] \{ --primary: #cfcac0;/, '다크 순백 완화');
   assert.match(app, /const sourceOf = \(c\) => c\.hosting !== 'bot' \? 'argo' : \(botKinds\.find/, '출처 판정');
   assert.match(app, /<span className="msgr-klabel src">\{t\(`rail\.src\.\$\{sourceOf\(c\)\}`\)\}<\/span>/, '레일 행 출처 표시');
   for (const k of ['rail.src.argo', 'rail.src.hermes', 'rail.src.openclaw', 'rail.src.custom']) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
@@ -41,7 +47,7 @@ test('카드: 생성·회전은 RPC(토큰은 응답에서 setup 상태로만) �
   assert.match(card, /<li>\{t\(`org\.agents\.setup\.\$\{setup\.kind \?\? 'custom'\}\.1`\)\}<\/li>/, '종류별 3단계 안내(유건 질문: 두 줄을 어디에 넣나)');
   assert.match(card, /const botSetup = \(token\) => `ARGO_MSGR_URL=\$\{botUrl\}\\nARGO_MSGR_BOT_TOKEN=\$\{token\}`;/, '설정 덩어리 두 줄');
   assert.doesNotMatch(card, /localStorage|console\.log|token_hash/, '토큰 저장·로그 금지');
-  assert.match(card, /from\('msgr_bots'\)\.select\('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at'\)/, '봇 표 열(해시 없음)');
+  assert.match(card, /from\('msgr_bots'\)\.select\('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at, external_id'\)/, '봇 표 열(해시 없음)');
   assert.match(card, /const liveBots = bots\.filter\(\(b\) => !b\.revoked_at\)/, '폐기 봇 제외');
   assert.match(card, /confirmRevoke === b\.id && <span className="confirm-inline">/, '해제 인라인 확인(네이티브 confirm 금지)');
   assert.doesNotMatch(card, /window\.confirm|onClick=\{[^}]*(restart|kill)/, 'Buzz 대조: 종료·재시작 버튼 없음, 네이티브 confirm 없음');

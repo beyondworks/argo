@@ -73,7 +73,7 @@
 .msgr-stack > * + * { margin-left: -4px; } /* 아바타가 버튼에 싸여도 겹침 유지(검수 MEDIUM-4) */
 .msgr-stack > .more { margin-left: 10px; }
 .msgr-stack .more { margin-left: 10px; font-size: 11.5px; color: var(--fg-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msgr-foot { margin-top: auto; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto auto; align-items: center; gap: 8px; padding: 12px 6px 0; border-top: 1px solid var(--border-soft); color: var(--fg-2); font-size: 12.5px; }
+.msgr-foot { margin-top: auto; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 8px; padding: 12px 6px 0; border-top: 1px solid var(--border-soft); color: var(--fg-2); font-size: 12.5px; }
 .msgr-foot .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msgr-foot .btn.ghost { border: 0; background: none; color: var(--fg-3); width: 30px; height: 30px; padding: 0; border-radius: 9px; }
 .msgr-foot .btn.ghost:hover, .msgr-foot .btn.ghost.on { background: var(--card-2); color: var(--fg); }
@@ -571,7 +571,18 @@
 
 /* 레일 "내 크루"(부록 M) — 파견 중은 초록 점, 파견 전은 흐리게 + '대기' */
 .msgr-list.mine .item { height: 30px; }
-.msgr-list.mine .item .src { margin-left: auto; font-size: 10px; opacity: 0.8; } /* 출처: 아르고·헤르메스·오픈클로 */
+.msgr-list.mine .item .name { flex: 1; }
+.msgr-list.mine .item .src { flex: none; width: 48px; text-align: left; font-size: 10px; opacity: 0.8; } /* 출처 열 — 왼쪽 정렬로 줄 맞춤(유건 지시 2026-09-09) */
+.msgr-group .right { display: inline-flex; align-items: center; gap: 6px; }
+.msgr-sort { font: inherit; font-size: 10.5px; color: var(--fg-3); background: transparent; border: 0; padding: 0; cursor: pointer; }
+.msgr-folder { display: grid; gap: 2px; margin-bottom: 4px; }
+.msgr-folderhead { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px 2px; font-size: 10.5px; color: var(--fg-3); letter-spacing: 0.02em; }
+.msgr-foot .me { display: flex; align-items: center; gap: 8px; min-width: 0; background: none; border: 0; padding: 2px 4px; border-radius: 9px; color: inherit; font: inherit; cursor: pointer; grid-column: 1 / span 2; }
+.msgr-foot .me:hover { background: var(--card-2); }
+.msgr-rowmenu.me { position: absolute; left: 8px; right: auto; top: auto; bottom: calc(100% + 6px); min-width: 160px; z-index: 30; } /* 프로필 메뉴는 하단 바 위로 */
+.msgr-foot { position: relative; }
+.msgr-folderpick { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; } .msgr-folderpick .msgr-input.sm { flex: 1; }
+.msgr-input.sm { border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px; font: inherit; font-size: 12.5px; background: var(--card-2); color: var(--fg); }
 .msgr-list.mine .item.dim { color: var(--fg-3); }
 .msgr-list.mine .item .msgr-dot { margin-left: auto; }
 .msgr-list.mine .item .msgr-klabel { margin-left: auto; }
@@ -579,3 +590,7 @@
 .msgr-av.crew.xs { border-radius: 6px; }
 .msgr-av.crew.xs .star { width: 11px; height: 11px; right: -4px; top: -4px; border-width: 1.5px; }
 .msgr-av.crew.xs .star svg { width: 6px; height: 6px; }
+
+/* 다크 모드의 순백 영역(내 말풍선·선택된 채널·기본 버튼)은 눈이 아프다(유건 지적 2026-09-09) — 공용 토큰(@argo/globals.css: --primary #ececea, --primary-strong #fff)을 메신저에서만 덜 밝게 덮어쓴다 */
+:root[data-theme='linen-dark'] { --primary: #cfcac0; --primary-strong: #dcd7cd; --primary-fg: #1f1e1b; }
+@media (prefers-color-scheme: dark) { :root[data-theme='linen'] { --primary: #cfcac0; --primary-strong: #dcd7cd; --primary-fg: #1f1e1b; } }
