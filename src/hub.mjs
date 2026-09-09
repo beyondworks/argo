@@ -1,6 +1,7 @@
 // 웹 UI 전용 읽기 뷰 — 워크스페이스/크루/vault를 화면이 먹기 좋은 형태로 가공한다.
 // 쓰기는 전부 기존 코어(workspace/persona/chat/memory)를 그대로 쓴다.
 import { readdir, readFile, stat } from 'node:fs/promises';
+import { endpointHost } from './runners/external-agent.mjs';
 import { join, relative, resolve, sep } from 'node:path';
 
 // Windows relative()는 백슬래시 — rel은 논리 경로('/' 고정)로 통일해야 notes/·journal/ 필터가 산다
@@ -108,6 +109,8 @@ export async function listAgents(wsId) {
       team: meta.team || '',
       model: meta.model || '',
       runner: meta.runner || '',
+      agent: meta.agent || '', // 외부 에이전트 종류(hermes·openclaw·custom) — 표기 층(external-agent.mjs)의 원천
+      endpointHost: endpointHost(meta.endpoint), // 외부 엔드포인트 호스트만(전체 URL·키는 카드 밖으로 안 나간다)
       effort: meta.effort || '', // 크루별 추론 강도('' = 모델 기본) — 카드 셀렉터의 원천
 
       expertise: sectionBullets(md, '전문성'),
