@@ -9,7 +9,7 @@
     "demo": "node demo.mjs",
     "service": "node scripts/service.mjs",
     "stage:sidecar": "node scripts/stage-sidecar.mjs",
-    "app:build": "node scripts/stage-sidecar.mjs && cd src-tauri && npx @tauri-apps/cli@^2 build",
+    "app:build": "node scripts/stage-sidecar.mjs && cd src-tauri && npx @tauri-apps/cli@2.11.4 build",
     "test": "node --test test/*.test.mjs",
     "smoke:standalone": "node scripts/native-standalone-smoke.mjs --rebuild",
     "test:pg": "bash scripts/billing-pg-drill.sh",

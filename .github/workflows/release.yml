@@ -278,7 +278,7 @@ jobs:
           APP_BASENAME="$(basename "$APP")"                          # 예: argo.app
           rm -f "$MACOS_DIR"/*.app.tar.gz "$MACOS_DIR"/*.app.tar.gz.sig
           ( cd "$MACOS_DIR" && COPYFILE_DISABLE=1 tar czf "${APP_BASENAME}.tar.gz" "$APP_BASENAME" )
-          npx @tauri-apps/cli@^2 signer sign "$MACOS_DIR/${APP_BASENAME}.tar.gz" </dev/null   # 키·비번은 env에서
+          npx @tauri-apps/cli@2.11.4 signer sign "$MACOS_DIR/${APP_BASENAME}.tar.gz" </dev/null   # 키·비번은 env에서
           ls -la "$MACOS_DIR"/*.app.tar.gz*
 
           # (4b) DMG 재생성 — 스테이플된 .app으로 새로 말아 서명·공증·스테이플. 미공증 원본 dmg는 폐기
