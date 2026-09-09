@@ -318,3 +318,128 @@ test('크루→크루 @넘김(2026-09-09) — 크루 답글에 mentions·meta(ho
   // 남의 크루 명의 넘김 답글은 여전히 거부(작성자 축)
   denied(U.admin, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to) values ('${PUB}', 'crew', '${CREW}', 'x', 'reply:${CREW}:${r1}x', ${r1})`);
 });
+
+let RELAY_BOT, RELAY_ROOT;
+const relayPost = (author, text = 'relay') => last(asUser(author, `insert into public.msgr_messages(channel_id, author_kind, author_user_id, body, mentions) values ('${PUB}', 'user', '${author}', '${q(text)}', '[{"kind":"crew","id":"${RELAY_BOT.crew_id}"}]') returning id`));
+const relayUpdates = () => asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${RELAY_BOT.token}') x`);
+const finishBot = (message, body, disposition = 'done', mentions = []) => asAnon(`select public.msgr_bot_finish('${RELAY_BOT.token}', '${message.chat.id}', '${q(body)}', ${message.message_id}, '${message.execution_attempt}', '${disposition}', '${q(JSON.stringify(mentions))}')`);
+
+test('bot orchestration migration: owner/list/removed-user/locked-org policy before execution, then authorized positive', { skip }, () => {
+  psql(['-f', mig('20260909120000_msgr_execution_claims.sql')]);
+  psql(['-f', mig('20260909230000_msgr_bot_execution.sql')]);
+  RELAY_BOT = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'hermes', 'Relay')`)));
+  RELAY_ROOT = relayPost(U.owner);
+  sql(`update public.msgr_crews set allow = 'owner' where id = '${RELAY_BOT.crew_id}'`);
+  assert.deepEqual(JSON.parse(relayUpdates()), []);
+  sql(`update public.msgr_crews set allow = 'list', allow_users = array['${U.member}']::uuid[] where id = '${RELAY_BOT.crew_id}'`);
+  assert.deepEqual(JSON.parse(relayUpdates()), []);
+  sql(`update public.msgr_crews set allow = 'all' where id = '${RELAY_BOT.crew_id}'; update public.msgr_org_entitlements set ls_status = 'past_due' where org_id = '${ORG}'`);
+  assert.deepEqual(JSON.parse(relayUpdates()), []);
+  assert.equal(sql(`select count(*) from public.msgr_executions where crew_id = '${RELAY_BOT.crew_id}'`), '0');
+  sql(`update public.msgr_org_entitlements set ls_status = null where org_id = '${ORG}'`);
+  const removedMsg = relayPost(U.member);
+  sql(`update public.msgr_org_members set removed_at = now() where org_id = '${ORG}' and user_id = '${U.member}'`);
+  const ups = JSON.parse(relayUpdates());
+  assert.equal(ups.length, 1); assert.equal(ups[0].message.message_id, Number(RELAY_ROOT));
+  assert.equal(ups[0].message.origin_user_id, U.owner);
+  assert.equal(sql(`select count(*) from public.msgr_executions where source_msg_id = ${removedMsg}`), '0');
+  sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}' and user_id = '${U.member}'`);
+  // Legacy client can finish only the permanently claimed input, and cannot start a relay.
+  const reply = asAnon(`select public.msgr_bot_send('${RELAY_BOT.token}', '${PUB}', '@서윤 complete', ${RELAY_ROOT})`);
+  assert.equal(sql(`select meta->>'disposition' || '|' || mentions::text from public.msgr_messages where id = ${reply}`), 'done|[]');
+  fails(asAnonRaw(`select public.msgr_bot_send('${RELAY_BOT.token}', '${PUB}', 'unclaimed', ${removedMsg})`), /msgr_execution_not_owner/, 'unclaimed legacy source');
+});
+
+test('two pollers get one permanent execution, bot→crew same original channel/thread and final done suppresses mentions', { skip }, async () => {
+  // Drain earlier authorized pending message.
+  for (const up of JSON.parse(relayUpdates())) finishBot(up.message, 'done');
+  const root = relayPost(U.owner);
+  const query = `set role anon; select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${RELAY_BOT.token}') x`;
+  const run = () => new Promise((resolve, reject) => {
+    const p = spawn('psql', [DB, '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c', query]);
+    let out = '', err = ''; p.stdout.on('data', (v) => { out += v; }); p.stderr.on('data', (v) => { err += v; });
+    p.on('exit', (code) => code === 0 ? resolve(JSON.parse(out.trim())) : reject(new Error(err)));
+  });
+  const batches = await Promise.all([run(), run()]);
+  assert.equal(batches.flat().length, 1);
+  const m = batches.flat()[0].message; assert.equal(m.message_id, Number(root));
+  assert.deepEqual(JSON.parse(relayUpdates()), [], 'no lease takeover or repeated dispatch');
+  const outbound = finishBot(m, '@서윤 next', 'handoff', [{ kind: 'crew', id: CREW }]);
+  assert.equal(sql(`select thread_root || '|' || (meta->>'origin') || '|' || channel_id from public.msgr_messages where id = ${outbound}`), `${root}|${U.owner}|${PUB}`);
+  const claim = JSON.parse(last(asUser(U.member, `select public.msgr_execution_claim('lean-ax-abcd', '${CREW}', ${outbound}, '${PUB}', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')`)));
+  assert.equal(claim.acquired, true, 'resident can continue bot handoff');
+  const reply = {channel_id:PUB, crew_id:CREW, author_kind:'crew', kind:'text', client_msg_id:`reply:${CREW}:${outbound}`, reply_to:Number(outbound), thread_root:Number(root), body:'@Relay continue', mentions:[{kind:'crew',id:RELAY_BOT.crew_id}], meta:{origin:U.member,disposition:'handoff'}};
+  asUser(U.member, `select public.msgr_execution_finish('lean-ax-abcd','${CREW}',${outbound},'${PUB}','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','${q(JSON.stringify(reply))}')`);
+  const incoming = JSON.parse(relayUpdates()); assert.equal(incoming.length, 1); assert.equal(incoming[0].message.from.kind, 'crew');
+  assert.equal(incoming[0].message.origin_user_id, U.owner);
+  const done = finishBot(incoming[0].message, '@서윤 thanks', 'done', [{kind:'crew',id:CREW}]);
+  assert.equal(sql(`select mentions::text || '|' || (meta->>'disposition') || '|' || thread_root from public.msgr_messages where id = ${done}`), `[]|done|${root}`);
+  assert.deepEqual(JSON.parse(relayUpdates()), []);
+});
+
+test('bot finish rechecks policy and rejects stolen attempt, cross-channel and arbitrary target crews', { skip }, () => {
+  const root = relayPost(U.owner);
+  const m = JSON.parse(relayUpdates())[0].message;
+  const raw = (channel, attempt, mentions='[]') => asAnonRaw(`select public.msgr_bot_finish('${RELAY_BOT.token}','${channel}','answer',${root},'${attempt}','handoff','${mentions}')`);
+  fails(raw(PUB, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'), /msgr_execution_not_owner/, 'wrong attempt');
+  fails(raw(PRIV, m.execution_attempt), /msgr_not_allowed/, 'cross channel');
+  fails(raw(PUB, m.execution_attempt, '[{"kind":"crew","id":"99999999-9999-4999-8999-999999999999"}]'), /msgr_not_allowed/, 'unknown crew');
+  sql(`update public.msgr_crews set allow = 'owner' where id = '${RELAY_BOT.crew_id}'`);
+  fails(raw(PUB, m.execution_attempt), /msgr_not_allowed/, 'policy revoked after claim');
+  sql(`update public.msgr_crews set allow = 'all' where id = '${RELAY_BOT.crew_id}'`);
+  finishBot(m, 'done');
+});
+
+
+test('ordered two-bot and mixed resident/bot root folds earlier handoff into context; blocked predecessor does not stall', { skip }, () => {
+  const second = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'openclaw', 'Second')`)));
+  const getSecond = () => JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${second.token}') x`));
+  const postOrdered = (first) => last(asUser(U.owner, `insert into public.msgr_messages(channel_id,author_kind,author_user_id,body,mentions) values ('${PUB}','user','${U.owner}','take turns','[{"kind":"crew","id":"${first}"},{"kind":"crew","id":"${second.crew_id}"}]') returning id`));
+  const root = postOrdered(RELAY_BOT.crew_id);
+  assert.deepEqual(getSecond(), [], 'second bot waits for first');
+  const first = JSON.parse(relayUpdates()).find((u) => u.message.message_id === Number(root)).message;
+  const handoff = finishBot(first, '@Second next', 'handoff', [{kind:'crew',id:second.crew_id}]);
+  const updates = getSecond();
+  assert.equal(updates.length,1); assert.equal(updates[0].message.message_id,Number(root));
+  assert.ok(updates[0].message.context.some((r)=>r.message_id===Number(handoff)), 'root turn receives predecessor response');
+  const m=updates[0].message;
+  asAnon(`select public.msgr_bot_finish('${second.token}','${PUB}','done',${root},'${m.execution_attempt}','done','[]')`);
+  assert.deepEqual(getSecond(),[], 'the same earlier handoff does not run again after the root reply');
+  sql(`update public.msgr_crews set allow='owner' where id='${RELAY_BOT.crew_id}'`);
+  const blocked = postOrdered(RELAY_BOT.crew_id);
+  const allowed = getSecond(); assert.equal(allowed.length,1); assert.equal(allowed[0].message.message_id,Number(blocked));
+  asAnon(`select public.msgr_bot_finish('${second.token}','${PUB}','done',${blocked},'${allowed[0].message.execution_attempt}','done','[]')`);
+  sql(`update public.msgr_crews set allow='all' where id='${RELAY_BOT.crew_id}'`);
+  const mixed = postOrdered(CREW);
+  assert.deepEqual(getSecond(), [], 'bot waits for resident predecessor');
+  const before = last(asUser(U.member, `insert into public.msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,client_msg_id,mentions,meta) values ('${PUB}','crew','${CREW}','@Second next',${mixed},${mixed},'reply:${CREW}:${mixed}','[{"kind":"crew","id":"${second.crew_id}"}]','{"origin":"${U.member}","disposition":"handoff"}') returning id`));
+  const mixedUp = getSecond(); assert.equal(mixedUp.length,1); assert.equal(mixedUp[0].message.message_id,Number(mixed));
+  assert.ok(mixedUp[0].message.context.some(r=>r.message_id===Number(before)));
+});
+
+
+test('interrupted bot claim surfaces unknown status once without granting execution again', {skip}, () => {
+  // Drain any earlier root left pending by the ordering fixture.
+  for (const up of JSON.parse(relayUpdates())) finishBot(up.message,'done');
+  const root=relayPost(U.owner);
+  const m=JSON.parse(relayUpdates()).find(u=>u.message.message_id===Number(root)).message;
+  sql(`update public.msgr_executions set heartbeat_at=now()-interval '11 minutes' where crew_id='${RELAY_BOT.crew_id}' and source_msg_id=${root}`);
+  assert.deepEqual(JSON.parse(relayUpdates()),[]);
+  assert.deepEqual(JSON.parse(relayUpdates()),[]);
+  assert.equal(sql(`select count(*) from public.msgr_messages where client_msg_id='unknown:${RELAY_BOT.crew_id}:${root}' and meta->>'execution_status'='unknown'`),'1');
+  assert.equal(sql(`select state from public.msgr_executions where crew_id='${RELAY_BOT.crew_id}' and source_msg_id=${root}`),'running');
+  finishBot(m,'late result');
+});
+
+test('waiting older ordered root cannot be skipped by acknowledging a newer independent message', {skip}, () => {
+  const b=JSON.parse(last(asUser(U.admin,`select public.msgr_bot_create('${ORG}','hermes','OrderedAck')`)));
+  const post=(mentions)=>last(asUser(U.owner,`insert into public.msgr_messages(channel_id,author_kind,author_user_id,body,mentions) values ('${PUB}','user','${U.owner}','request','${q(JSON.stringify(mentions))}') returning id`));
+  const older=post([{kind:'crew',id:CREW},{kind:'crew',id:b.crew_id}]);
+  const newer=post([{kind:'crew',id:b.crew_id}]);
+  const before=JSON.parse(asAnon(`select coalesce(jsonb_agg(x),'[]') from public.msgr_bot_updates('${b.token}') x`));
+  assert.deepEqual(before,[], 'hold later work until oldest eligible request settles or bounded wait expires');
+  const afterId=Math.max(0,...before.map(x=>x.update_id));
+  asUser(U.member,`insert into public.msgr_messages(channel_id,author_kind,crew_id,body,reply_to,thread_root,client_msg_id) values ('${PUB}','crew','${CREW}','ready',${older},${older},'reply:${CREW}:${older}')`);
+  const after=JSON.parse(asAnon(`select coalesce(jsonb_agg(x),'[]') from public.msgr_bot_updates('${b.token}',${afterId}) x`));
+  assert.deepEqual(after.map(x=>x.update_id),[Number(older),Number(newer)]);
+});

@@ -3,11 +3,11 @@
 // 메신저 설정 → 외부 에이전트 카드가 보여주는 두 줄 그대로). 누가 봇에게 일을 시킬 수 있는지·어느 채널을 읽는지·채널 정책은 전부
 // 아르고 서버가 판정한다(getUpdates는 멘션·DM·답글만, sendMessage는 답글마다 재판정) — 그래서 여기엔 허용 목록·페어링이 없다(dmPolicy open).
 import {
-  buildBaseAccountStatusSnapshot, buildBaseChannelStatusSummary, createNormalizedOutboundDeliverer, createReplyPrefixOptions,
+  buildBaseAccountStatusSnapshot, buildBaseChannelStatusSummary, createReplyPrefixOptions,
   DEFAULT_ACCOUNT_ID, deleteAccountFromConfigSection, formatTextWithAttachmentLinks, resolveOutboundMediaUrls,
   setAccountEnabledInConfigSection, type ChannelPlugin, type PluginRuntime,
 } from "openclaw/plugin-sdk";
-import { makeApi, MAX_LEN, pollLoop } from "./api.js";
+import { makeApi, MAX_LEN, pollLoop, relayPrompt, relayReply } from "./api.js";
 
 export const CHANNEL_ID = "argo-msgr" as const;
 let runtime: PluginRuntime | null = null;
@@ -63,7 +63,7 @@ async function handleInbound(params: { m: any; account: ResolvedAccount; cfg: an
   const previousTimestamp = c.channel.session.readSessionUpdatedAt({ storePath, sessionKey: route.sessionKey });
   const body = c.channel.reply.formatAgentEnvelope({
     channel: "Argo Messenger", from: isGroup ? `#${chatName} · ${senderName}` : senderName, timestamp, previousTimestamp,
-    envelope: c.channel.reply.resolveEnvelopeFormatOptions(cfg), body: rawBody,
+    envelope: c.channel.reply.resolveEnvelopeFormatOptions(cfg), body: relayPrompt(m),
   });
   const ctxPayload = c.channel.reply.finalizeInboundContext({
     Body: body, RawBody: rawBody, CommandBody: rawBody,
@@ -78,23 +78,30 @@ async function handleInbound(params: { m: any; account: ResolvedAccount; cfg: an
   await c.channel.session.recordInboundSession({ storePath, sessionKey: ctxPayload.SessionKey ?? route.sessionKey, ctx: ctxPayload,
     onRecordError: (err: unknown) => log(`argo-msgr: session meta failed: ${String(err)}`) });
   const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({ cfg, agentId: route.agentId, channel: CHANNEL_ID, accountId: account.accountId });
-  const deliver = createNormalizedOutboundDeliverer(async (payload: any) => {
+  const chunks: string[] = [];
+  const deliver = async (payload: any, info: { kind: string }) => {
+    if (info.kind !== "final" || payload.isReasoning) return;
     const text = formatTextWithAttachmentLinks(payload.text, resolveOutboundMediaUrls(payload));
     if (!text) return;
-    await sendText(account, chatId, text, messageId || undefined);
-    params.statusSink?.({ lastOutboundAt: Date.now() });
-  });
+    chunks.push(text);
+  };
   await c.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload, cfg, dispatcherOptions: { ...prefixOptions, deliver, onError: (err: unknown, info: any) => log(`argo-msgr ${info?.kind} reply failed: ${String(err)}`) },
-    replyOptions: { onModelSelected },
+    replyOptions: { onModelSelected, disableBlockStreaming: true },
   });
+  if (chunks.length) {
+    const answer = relayReply(chunks.join("\n\n"), m);
+    if (answer.text.length > MAX_LEN) throw new Error("Argo Messenger reply exceeds the channel message limit");
+    await makeApi({ url: account.url, token: account.token }).sendMessage(chatId, answer.text, messageId, answer.execution);
+    params.statusSink?.({ lastOutboundAt: Date.now() });
+  }
 }
 
 export const argoMsgrPlugin: ChannelPlugin<ResolvedAccount> = {
   id: CHANNEL_ID,
   meta: { id: CHANNEL_ID, label: "Argo Messenger", selectionLabel: "Argo Messenger (bot API)", docsPath: "/channels/argo-msgr",
     blurb: "Company team messenger with AI crews; OpenClaw joins as an external agent bot.", aliases: ["argo"] },
-  capabilities: { chatTypes: ["direct", "group"], media: false, blockStreaming: true },
+  capabilities: { chatTypes: ["direct", "group"], media: false, blockStreaming: false },
   reload: { configPrefixes: [`channels.${CHANNEL_ID}`] },
   config: {
     listAccountIds, resolveAccount, defaultAccountId: () => DEFAULT_ACCOUNT_ID,

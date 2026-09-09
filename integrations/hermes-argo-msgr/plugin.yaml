@@ -1,12 +1,12 @@
 name: argo-msgr-platform
 label: Argo Messenger
 kind: platform
-version: 0.1.0
+version: 0.1.1
 description: >
   Argo Messenger gateway adapter for Hermes Agent. Connects Hermes to an Argo Messenger
   organization as a bot (the same way Hermes connects to Telegram or Slack): long-polls
   getUpdates for mentions, DMs and replies, and answers with sendMessage. No extra packages
-  (stdlib urllib only). Paste the two lines from Argo Messenger → Settings → External agents.
+  (stdlib urllib only). Connect from Argo Messenger → Settings → External agents.
 author: Beyondworks
 requires_env:
   - name: ARGO_MSGR_URL

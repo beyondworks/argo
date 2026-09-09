@@ -67,3 +67,13 @@ test('오류 매핑: DB raise 이름 → 401/403/400 · 미지 오류 500(본문
   const r = await handle({ token: T, method: 'getMe' }, fakeRpc({ msgr_bot_me: new Error('x'.repeat(500)) }));
   assert.equal(r.status, 500); assert.ok(r.body.description.length < 220);
 });
+
+test('claim-bound responses forward attempt/disposition/mentions without accepting client origin or thread', async () => {
+  const attempt = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const rpc = fakeRpc({ msgr_bot_finish: 99 });
+  const mentions = [{ kind: 'crew', id: CH }];
+  const result = await handle({token:T,method:'sendMessage',params:{chat_id:CH,text:'next',reply_to_message_id:7,execution_attempt:attempt,disposition:'handoff',mentions,origin:'forged',thread_root:999}},rpc);
+  assert.equal(result.status,200);
+  assert.deepEqual(rpc.calls,[['msgr_bot_finish',{token:T,channel:CH,body:'next',src_id:7,attempt,disposition:'handoff',mentions}]]);
+  assert.equal((await handle({token:T,method:'sendMessage',params:{chat_id:CH,text:'x',execution_attempt:attempt}},rpc)).status,400);
+});

@@ -1,6 +1,6 @@
 {
   "name": "@beyondworks/openclaw-argo-msgr",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenClaw channel plugin for Argo Messenger (bot API)",
   "type": "module",
   "openclaw": {

@@ -8,6 +8,10 @@ const POLL_MS = 1_000;
 
 // PostgREST 오류 메시지(P0001 raise 이름) → HTTP 상태
 const ERR = {
+  msgr_execution_not_owner: [409, 'Conflict: response has no matching execution claim'],
+  msgr_bot_bad_disposition: [400, 'Bad Request: disposition must be handoff or done'],
+  msgr_bot_bad_body: [400, 'Bad Request: body must contain 1 to 20000 characters'],
+  msgr_bot_handoff_limit: [409, 'Conflict: conversation handoff limit reached'],
   msgr_bot_unauthorized: [401, 'Unauthorized: bad or revoked bot token'],
   msgr_not_allowed: [403, 'Forbidden: crew allow policy or channel policy rejects this author'],
   msgr_bot_not_member: [403, 'Forbidden: add the bot to this channel first'],
@@ -56,7 +60,12 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
     if (!text.trim()) return fail(400, 'Bad Request: text is empty');
     const src = params.reply_to_message_id != null ? Number(params.reply_to_message_id) : null;
     if (src != null && !Number.isInteger(src)) return fail(400, 'Bad Request: reply_to_message_id must be an integer');
-    const id = await rpc('msgr_bot_send', { token, channel: chat, body: text, src_id: src });
+    const attempt = params.execution_attempt;
+    if (attempt != null && (!src || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(attempt)))) return fail(400, 'Bad Request: execution_attempt requires a valid reply and UUID');
+    const id = attempt == null
+      ? await rpc('msgr_bot_send', { token, channel: chat, body: text, src_id: src })
+      : await rpc('msgr_bot_finish', { token, channel: chat, body: text, src_id: src, attempt,
+        disposition: params.disposition ?? 'done', mentions: params.mentions ?? [] });
     return reply(200, { message_id: Number(id), chat: { id: chat }, text, reply_to_message_id: src ?? undefined });
   } catch (e) {
     const name = String(e?.message ?? '').match(/msgr_[a-z_]+/)?.[0];
