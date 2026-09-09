@@ -510,9 +510,9 @@ function Shell({ session }) {
         ) : <div className="msgr-hint">{orgId ? t('ch.empty') : t('org.none')}</div>}
         {dms.length > 0 && (<>
           <div className="msgr-group">{t('ch.dms')}</div>
-          <div className="msgr-list">{dms.map((c) => { const open = railMenu === c.id; const withCrew = (dmMembers[c.id] ?? []).some((m) => m.member_kind === 'crew'); return (
+          <div className="msgr-list">{dms.map((c) => { const open = railMenu === c.id; const dmMs = dmMembers[c.id] ?? []; const dmCrew = dmMs.find((m) => m.member_kind === 'crew'); const dmOther = dmMs.find((m) => m.member_kind === 'user' && m.member_id !== uid); const withCrew = !!dmCrew; return (
             <div key={c.id} className={`msgr-railrow${open ? ' open' : ''}`}>
-              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} /><span className="name">{dmName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
+              <button type="button" className={`item${c.id === chId ? ' active' : ''}${unread[c.id]?.n && !muted.has(c.id) ? ' unread' : ''}`} onClick={() => { setChId(c.id); setRail(false); setPage('chat'); }}><Av name={dmName(c)} size="xs" crew={withCrew} crewId={dmCrew?.member_id ?? null} userId={dmCrew ? null : (dmOther?.member_id ?? null)} /><span className="name">{dmName(c)}</span>{muted.has(c.id) && <I name="belloff" size={12} className="mi" />}{unread[c.id]?.n > 0 && <span className={`msgr-badge${muted.has(c.id) ? ' dim' : ' mark'}`}>{unread[c.id].n}</span>}</button>
               <button type="button" className="more" onClick={(e) => { e.stopPropagation(); setRailMenu(open ? null : c.id); setRailConfirm(null); }} title={t('ch.row.more')} aria-label={t('ch.row.more')} aria-expanded={open}><I name="dots" size={13} /></button>
               {open && (
                 <div className="msgr-rowmenu" role="menu" onClick={(e) => e.stopPropagation()}>
@@ -530,7 +530,7 @@ function Shell({ session }) {
           <div className="msgr-list mine">
             {railArgo.map(railRow)}
             {railExt.length > 0 && <div className="msgr-folder"><div className="msgr-folderhead"><span className="lbl">{t('rail.src.custom')}</span><span className="msgr-klabel">{railExt.length}</span></div>{railExt.map(railRow)}</div>}
-            {myAvailable.map((c) => <button key={c.id} type="button" className="item dim" onClick={() => setSheet(c.id)} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>)}
+            {myAvailable.map((c) => <button key={c.id} type="button" className="item dim" onClick={() => setSheet(c.id)} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" crewId={c.id} /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>)}
           </div>
         </>)}
         </div>
@@ -656,7 +656,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
           {allow === 'list' && (
             <div className="picks">
               <span className="msgr-klabel">{t('crew.allow.pick')}</span>
-              {others.map((m) => <label key={m.user_id} className={`pick${list.includes(m.user_id) ? ' on' : ''}`}><input type="checkbox" checked={list.includes(m.user_id)} disabled={!owner || busy} onChange={() => toggle(m.user_id)} /><Av name={m.display_name || m.user_id} size="sm" /><span>{m.display_name || m.user_id.slice(0, 8)}</span><span className="msgr-klabel">{t(`role.${m.role}`)}</span></label>)}
+              {others.map((m) => <label key={m.user_id} className={`pick${list.includes(m.user_id) ? ' on' : ''}`}><input type="checkbox" checked={list.includes(m.user_id)} disabled={!owner || busy} onChange={() => toggle(m.user_id)} /><Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span>{m.display_name || m.user_id.slice(0, 8)}</span><span className="msgr-klabel">{t(`role.${m.role}`)}</span></label>)}
             </div>
           )}
           {locked ? <p className="note">{t('crew.allow.locked')}</p> : !owner && <p className="note">{t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) })}</p>}
@@ -972,22 +972,22 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onNote, onError }
       <form className="row" onSubmit={(e) => { e.preventDefault(); find(); }}><input className="msgr-input sm" value={qs} onChange={(e) => setQs(e.target.value)} placeholder={t('friends.find.ph')} /><button type="submit" className="btn sm" disabled={busy || qs.trim().length < 3}>{t('friends.find')}</button></form>
       {res && (<div className="msgr-rows">
         {!res.length && <p className="empty">{t('friends.find.none')}</p>}
-        {res.map((r) => <div key={r.user_id} className="row"><Av name={r.display_name || r.handle || '?'} size="sm" /><span className="name">{r.display_name || r.handle}</span><span className="sub">{r.handle ? `@${r.handle}` : ''}</span>
+        {res.map((r) => <div key={r.user_id} className="row"><Av name={r.display_name || r.handle || '?'} size="sm" userId={r.user_id} /><span className="name">{r.display_name || r.handle}</span><span className="sub">{r.handle ? `@${r.handle}` : ''}</span>
           {r.relation === 'none' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_request', { target: r.user_id }, t('friends.sent'))}>{t('friends.request')}</button>}
           {r.relation === 'sent' && <span className="msgr-klabel">{t('friends.state.sent')}</span>}
           {r.relation === 'received' && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: r.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>}
           {r.relation === 'friend' && <span className="msgr-klabel">{t('friends.state.friend')}</span>}
         </div>)}
       </div>)}
-      {received.length > 0 && (<><h3>{t('friends.received')} · {received.length}</h3><div className="msgr-rows">{received.map((f) => <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" /><span className="name">{nameOf(f)}</span><span className="sub">{fmtWhen(f.created_at, lang)}</span>
+      {received.length > 0 && (<><h3>{t('friends.received')} · {received.length}</h3><div className="msgr-rows">{received.map((f) => <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" userId={f.user_id} /><span className="name">{nameOf(f)}</span><span className="sub">{fmtWhen(f.created_at, lang)}</span>
         <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => call('msgr_friend_decide', { other: f.user_id, accept: true }, t('friends.accepted'))}>{t('friends.accept')}</button>
         <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => call('msgr_friend_decide', { other: f.user_id, accept: false }, t('friends.declined'))}>{t('friends.decline')}</button></div>)}</div></>)}
-      {sent.length > 0 && (<><h3>{t('friends.sent.h')} · {sent.length}</h3><div className="msgr-rows">{sent.map((f) => <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" /><span className="name">{nameOf(f)}</span><span className="sub">{t('friends.state.sent')}</span><button type="button" className="btn sm ghost" disabled={busy} onClick={() => call('msgr_friend_remove', { other: f.user_id, block: false }, t('friends.removed'))} title={t('friends.cancel')} aria-label={t('friends.cancel')}><I name="x" size={13} /></button></div>)}</div></>)}
+      {sent.length > 0 && (<><h3>{t('friends.sent.h')} · {sent.length}</h3><div className="msgr-rows">{sent.map((f) => <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" userId={f.user_id} /><span className="name">{nameOf(f)}</span><span className="sub">{t('friends.state.sent')}</span><button type="button" className="btn sm ghost" disabled={busy} onClick={() => call('msgr_friend_remove', { other: f.user_id, block: false }, t('friends.removed'))} title={t('friends.cancel')} aria-label={t('friends.cancel')}><I name="x" size={13} /></button></div>)}</div></>)}
       <h3>{t('friends.list')}</h3>
       <div className="msgr-rows">
         {!accepted.length && <p className="empty">{t('friends.none')}</p>}
         {accepted.map((f) => { const inOrg = members.some((m) => m.user_id === f.user_id); return (
-          <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" /><span className="name">{nameOf(f)}</span><span className="sub">{f.handle ? `@${f.handle} · ` : ''}{inOrg ? t('rail.friends.here') : t('friends.notHere')}</span>
+          <div key={f.user_id} className="row"><Av name={nameOf(f)} size="sm" userId={f.user_id} /><span className="name">{nameOf(f)}</span><span className="sub">{f.handle ? `@${f.handle} · ` : ''}{inOrg ? t('rail.friends.here') : t('friends.notHere')}</span>
             {inOrg ? <button type="button" className="btn sm" onClick={() => onDm?.(f.user_id)}><I name="at" size={13} />{t('ui.dm')}</button> : <span className="msgr-klabel">{t('friends.inviteHint')}</span>}
             <button type="button" className="btn sm ghost" disabled={busy} onClick={() => call('msgr_friend_remove', { other: f.user_id, block: false }, t('friends.removed'))} title={t('friends.remove')} aria-label={t('friends.remove')}><I name="x" size={13} /></button>
           </div>); })}
@@ -1018,7 +1018,7 @@ function SearchPage({ res, channels, crews, nameOfUser, dmName, onOpen, onCrew, 
       {res?.msgs.length > 0 && <div className="msgr-klabel">{t('search.messages')} · {res.msgs.length}</div>}
       {res?.msgs.map((m) => (
         <button key={m.id} type="button" className="msgr-inboxrow" onClick={() => onOpen(m.channel_id)}>
-          <Av name={who(m)} crew={m.author_kind === 'crew'} size="sm" />
+          <Av name={who(m)} crew={m.author_kind === 'crew'} size="sm" crewId={m.author_kind === 'crew' ? m.crew_id : null} userId={m.author_kind === 'crew' ? null : m.author_user_id} />
           <span className="body"><span className="line1"><b>{who(m)}</b><span className="msgr-klabel">{chName(m.channel_id)} · {fmtWhen(m.created_at, lang)}</span></span><span className="text">{mark(m.body ?? '')}</span></span>
         </button>
       ))}
@@ -1043,7 +1043,7 @@ function Inbox({ items, prevSeen = 0, channels, crews, nameOfUser, dmName, onOpe
       {!shown.length && <p className="empty">{t('inbox.empty')}</p>}
       {shown.map((it) => (
         <button key={it.key} type="button" className={`msgr-inboxrow${Date.parse(it.at) > prevSeen ? ' new' : ''}`} onClick={() => onOpen(it.channel_id)}>
-          <Av name={who(it)} crew={it.whoKind === 'crew'} size="sm" />
+          <Av name={who(it)} crew={it.whoKind === 'crew'} size="sm" crewId={it.whoKind === 'crew' ? it.who : null} userId={it.whoKind === 'crew' ? null : it.who} />
           <span className="body"><span className="line1"><b>{who(it)}</b><span className="msgr-klabel">{t(`inbox.kind.${it.kind}`)} · {chName(it.channel_id)} · {fmtWhen(it.at, lang)}</span></span><span className="text">{it.text.slice(0, 160)}</span></span>
         </button>
       ))}
@@ -1088,7 +1088,7 @@ function Settings({ session, me, uid, org, isAdmin, policy, members = [], nameOf
         {tab === 'me' && (<>
           <section className="msgr-setcard">
             <h2>{t('set.account')}</h2><p>{t('set.account.desc')}</p>
-            <div className="row"><Av name={me?.display_name || session.user.email} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
+            <div className="row"><Av name={me?.display_name || session.user.email} userId={uid} /><span style={{ fontWeight: 600 }}>{me?.display_name || '—'}</span><span className="msgr-klabel">{session.user.email}</span></div>
             {org && me && <DisplayNameRow org={org} me={me} onChanged={onChanged} onNote={onNote} onError={onError} />}
             <div className="row"><NotifyRow /><button type="button" className="btn sm" onClick={() => supabase.auth.signOut({ scope: 'local' })}><I name="out" size={13} />{t('auth.signOut')}</button></div>
           </section>
@@ -2015,7 +2015,7 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
       {/* 켜고 끄는 자리가 안 보인다(유건 2026-09-09) → 표지 자체가 토글. 켜짐 = 아이콘만, 꺼짐 = 아이콘+글자 */}
       <button type="button" className={`msgr-hchip${muted ? ' off' : ''}`} onClick={onToggleMute} title={t(muted ? 'ch.mute.off.tip' : 'ch.mute.on.tip')} aria-pressed={muted}><I name={muted ? 'belloff' : 'bell'} size={13} />{muted && t('ch.muted')}</button>
       {channel.kind !== 'dm' && <button type="button" className={`msgr-hchip${channel.crew_memory === false ? ' off' : ''}`} onClick={onToggleMemory} title={t(channel.crew_memory === false ? 'ch.memory.off.tip' : 'ch.memory.on.tip')} aria-pressed={channel.crew_memory === false}><I name={channel.crew_memory === false ? 'memoff' : 'memory'} size={13} />{channel.crew_memory === false && t('ch.memoryOff')}</button>}
-      <button type="button" className="members" onClick={onTitle} title={t('ch.composition')} aria-label={t('ch.composition')}>{people.slice(0, 4).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} size="sm" />)}{chCrews.slice(0, 3).map((c) => <Av key={c.id} name={c.display_name} crew size="sm" company={crewTier(c, org) === 'company'} />)}<span className="n">{t('ch.composition.count', { p: people.length, c: chCrews.length })}</span></button>
+      <button type="button" className="members" onClick={onTitle} title={t('ch.composition')} aria-label={t('ch.composition')}>{people.slice(0, 4).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} size="sm" userId={m.user_id} />)}{chCrews.slice(0, 3).map((c) => <Av key={c.id} name={c.display_name} crew size="sm" company={crewTier(c, org) === 'company'} crewId={c.id} />)}<span className="n">{t('ch.composition.count', { p: people.length, c: chCrews.length })}</span></button>
       <div className="msgr-seg" role="tablist">{tabs.map(([k, ic, n]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{ic && <I name={ic} size={13} />}{t(`tab.${k}`)}{n > 0 && <span className="n">{n}</span>}</button>)}</div>
     </div>
     <div className="msgr-thread" ref={feed}>
@@ -2288,7 +2288,7 @@ function Composer({ chId, orgId, org, uid, members, crews, channel, locked = fal
       {pop && candidates.length > 0 && (
         <div className="msgr-pop" role="listbox">
           {candidates.map((c, i) => <button key={`${c.kind}:${c.id}`} type="button" role="option" aria-selected={i === sel} className={i === sel ? 'on' : ''} onMouseDown={(e) => { e.preventDefault(); pick(c); }}>
-            <Av name={c.name} crew={c.kind === 'crew'} size="sm" /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.kind === 'crew' ? t('org.crews') : t(`role.${c.sub}`)}</span>
+            <Av name={c.name} crew={c.kind === 'crew'} size="sm" crewId={c.kind === 'crew' ? c.id : null} userId={c.kind === 'crew' ? null : c.id} /><span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span><span className="msgr-klabel tag">{c.kind === 'crew' ? t('org.crews') : t(`role.${c.sub}`)}</span>
           </button>)}
         </div>
       )}
