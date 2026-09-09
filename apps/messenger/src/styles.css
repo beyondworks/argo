@@ -687,6 +687,13 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .mi g[transform] path, .mi g[transform] circle { vector-effect: non-scaling-stroke; }
 
 /* 헤더 토글 표지(2026-09-09): 알림·기억 — 켜짐은 아이콘만, 꺼짐은 아이콘+글자 */
-.msgr-hchip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 6px; border: 0; border-radius: 8px; background: none; color: var(--fg-3); font: inherit; font-size: 11.5px; cursor: pointer; }
+.msgr-hchip { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--fg-3); cursor: pointer; margin-left: -2px; } /* 아이콘만·간격 좁게(유건 2026-09-09) */
+.msgr-hchip + .msgr-hchip { margin-left: -4px; }
 .msgr-hchip:hover { background: var(--card-2); color: var(--fg); }
-.msgr-hchip.off { color: var(--fg-2); background: var(--card-2); }
+.msgr-hchip.off { color: var(--danger, #d05a5a); } /* 꺼짐 = 취소선 아이콘 + 붉은색 */
+.msgr-hchip.off:hover { background: color-mix(in srgb, var(--danger, #d05a5a) 12%, transparent); }
+
+/* 토스트(2026-09-09): 상단 안내 바 대체 — 레이아웃 불변, 자동 소멸, 클릭 시 즉시 */
+.msgr-toast { position: fixed; z-index: 80; top: 14px; left: 50%; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px)); padding: 9px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; box-shadow: 0 10px 28px rgba(0,0,0,0.22); cursor: pointer; text-align: left; animation: msgrToastIn 160ms ease; }
+.msgr-toast.err { color: var(--danger, #d05a5a); border-color: color-mix(in srgb, var(--danger, #d05a5a) 40%, var(--border)); }
+@keyframes msgrToastIn { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }
