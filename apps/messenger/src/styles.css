@@ -637,11 +637,21 @@
 .msgr-mine .msgr-reacts { justify-content: flex-end; }
 .msgr-acts { position: relative; flex-wrap: wrap; }
 .msgr-acts button.danger { color: var(--danger, #d05a5a); }
-.msgr-picker { display: flex; gap: 2px; padding: 4px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); box-shadow: 0 6px 20px rgba(0,0,0,0.18); }
-.msgr-picker button { width: 30px; height: 30px; border: 0; border-radius: 999px; background: none; font-size: 16px; cursor: pointer; }
-.msgr-picker button:hover { background: var(--card-2); }
 .msgr-editbox { display: grid; gap: 8px; max-width: 640px; min-width: 320px; }
 .msgr-editbox textarea.msgr-input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13.5px; resize: vertical; outline: 0; }
 .msgr-editbox textarea.msgr-input:focus { box-shadow: 0 0 0 2px var(--ring); }
 .msgr-editbox .acts { display: flex; gap: 6px; justify-content: flex-end; }
 
+
+/* 슬랙식 반응 피커(2026-09-09): hover 즉시 반응 3개 + 검색·분류 드롭다운 */
+.msgr-acts button.quick { font-size: 15px; padding: 2px 6px; line-height: 1; }
+.msgr-emojipop { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: 300px; max-height: 340px; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px; padding: 10px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 12px 32px rgba(0,0,0,0.22); }
+.msgr-mine .msgr-emojipop { left: auto; right: 0; }
+.msgr-emojipop .msgr-input.sm { height: 30px; width: 100%; }
+.msgr-emojipop .body { overflow-y: auto; display: grid; gap: 8px; min-height: 0; }
+.msgr-emojipop .sec { display: grid; gap: 4px; }
+.msgr-emojipop .grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.msgr-emojipop .grid button { height: 32px; border: 0; border-radius: 8px; background: none; font-size: 18px; cursor: pointer; }
+.msgr-emojipop .grid button:hover { background: var(--card-2); }
+
+.msgr-mine:has(.msgr-emojipop), .msgr-row:has(.msgr-emojipop) { position: relative; z-index: 30; } /* 피커가 아래 메시지 시트에 가려지던 것(실측 2026-09-09) — 연 행을 위로 */

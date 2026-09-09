@@ -14,6 +14,7 @@ import { t as tm } from './i18n.js';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
 import { Markdown, imeGuardWith } from '@argo/ui';
+import { EMOJI_GROUPS, bumpEmoji, topEmoji, searchEmoji } from './emoji.js';
 import { Sprite, I, STAR_D } from './icons.jsx';
 const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -1978,13 +1979,32 @@ function Channel({ channel, orgId, org, uid, isAdmin, locked = false, policy, me
   </>);
 }
 
-const EMOJIS = ['👍', '✅', '👀', '❤️', '😂', '🙏'];
+/** 슬랙식 반응 피커 — 검색 + 자주 사용 + 분류. 선택·Esc·바깥 클릭으로 닫힘. */
+function EmojiPicker({ t, onPick, onClose }) {
+  const [q, setQ] = useState(''); const ref = useRef(null);
+  useEffect(() => { const off = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); }; const key = (e) => { if (e.key === 'Escape') onClose(); }; document.addEventListener('mousedown', off); document.addEventListener('keydown', key); return () => { document.removeEventListener('mousedown', off); document.removeEventListener('keydown', key); }; }, [onClose]);
+  const hits = searchEmoji(q);
+  const grid = (list, key) => <div key={key} className="grid">{list.map((e) => <button key={e} type="button" onClick={() => onPick(e)} title={e}>{e}</button>)}</div>;
+  return (
+    <div className="msgr-emojipop" ref={ref} role="dialog" aria-label={t('msg.react')} onClick={(e) => e.stopPropagation()}>
+      <input className="msgr-input sm" placeholder={t('emoji.search')} value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+      <div className="body">
+        {hits ? (hits.length ? grid(hits, 'hits') : <p className="msgr-sys">{t('emoji.none')}</p>) : (<>
+          <div className="msgr-klabel">{t('emoji.frequent')}</div>{grid(topEmoji(8), 'freq')}
+          {EMOJI_GROUPS.map((g) => <div key={g.key} className="sec"><div className="msgr-klabel">{t(`emoji.${g.key}`)}</div>{grid(g.items.map(([e]) => e), g.key)}</div>)}
+        </>)}
+      </div>
+    </div>
+  );
+}
 function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete }) {
   const [copied, setCopied] = useState(false);
   const [pick, setPick] = useState(false); const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(''); const [confirmDel, setConfirmDel] = useState(false);
   const groups = Object.entries(reacts.reduce((acc, r) => { (acc[r.emoji] ??= []).push(r.user_id); return acc; }, {}));
   const chips = groups.length > 0 && <div className="msgr-reacts">{groups.map(([e, users]) => <button key={e} type="button" className={users.includes(uid) ? 'on' : ''} onClick={() => onReact?.(m, e)} title={users.map((u) => nameOfUser(u)).join(', ')}>{e}<span>{users.length}</span></button>)}</div>;
-  const picker = pick && <div className="msgr-picker" role="menu">{EMOJIS.map((e) => <button key={e} type="button" onClick={() => { setPick(false); onReact?.(m, e); }}>{e}</button>)}</div>;
+  const react = (e) => { bumpEmoji(e); onReact?.(m, e); };
+  const picker = pick && <EmojiPicker t={t} onPick={(e) => { setPick(false); react(e); }} onClose={() => setPick(false)} />;
+  const quick = topEmoji(3);
   const edited = m.edited_at && !m.deleted_at && <span className="msgr-klabel">{t('msg.edited')}</span>;
   const crew = m.crew_id ? crewOf(m.crew_id) : null;
   const name = m.author_kind === 'user' ? nameOfUser(m.author_user_id) : (crew?.display_name ?? t('org.crews'));
@@ -1996,6 +2016,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const acts = !ap && !m.deleted_at && !editing && (
     <div className="msgr-acts">
       <button type="button" onClick={copy}><I name="copy" size={12} />{copied ? t('ui.copied') : t('ui.copy')}</button>
+      {quick.map((e) => <button key={e} type="button" className="quick" onClick={() => react(e)} title={t('msg.react')}>{e}</button>)}
       <button type="button" onClick={() => setPick((v) => !v)} aria-expanded={pick}><I name="star" size={12} />{t('msg.react')}</button>
       {mine && m.kind === 'text' && <button type="button" onClick={() => { setDraft(m.body); setEditing(true); }}><I name="gear" size={12} />{t('ui.edit')}</button>}
       {mine && (confirmDel ? <button type="button" className="danger" onClick={() => { setConfirmDel(false); onDelete?.(m); }}><I name="x" size={12} />{t('msg.delete.confirm')}</button> : <button type="button" onClick={() => setConfirmDel(true)}><I name="x" size={12} />{t('ui.delete')}</button>)}
