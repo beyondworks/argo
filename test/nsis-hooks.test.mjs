@@ -6,29 +6,76 @@
 //   ③무로그(taskkill '프로세스 없음'이 설치 화면에 오류로 오인 노출) 계약으로 전환.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, copyFile, rm } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const s = await readFile(new URL('../src-tauri/windows/hooks.nsh', import.meta.url), 'utf8');
 
-test('hooks.nsh — taskkill은 하드코딩 이름이 아니라 ${MAINBINARYNAME}.exe를 겨냥한다', () => {
-  const kills = [...s.matchAll(/taskkill[^\n']*\/IM\s+([^\s']+)/g)].map((m) => m[1]);
-  assert.ok(kills.length >= 2, 'PREINSTALL·PREUNINSTALL 양쪽에 taskkill이 있어야 한다');
-  for (const k of kills) assert.equal(k, '${MAINBINARYNAME}.exe', `하드코딩된 프로세스명: ${k}`);
+test('hooks.nsh — 설치·제거는 같은 정확한 경로 정리를 호출한다', () => {
+  for (const name of ['PREINSTALL', 'PREUNINSTALL']) {
+    assert.match(s, new RegExp(`!macro NSIS_HOOK_${name}\\s+!insertmacro ARGO_STOP_INSTALLED_PROCESSES`));
+  }
+  assert.match(s, /StrCpy \$2 "\$INSTDIR\\\$\{MAINBINARYNAME\}\.exe"/);
+  assert.match(s, /StrCpy \$3 "\$INSTDIR\\node\.exe"/);
+  assert.doesNotMatch(s, /taskkill|\s-like\s|Stop-Process\s+-Name/i);
+  assert.match(s, /\$\$targets -contains \$\$_\.Path/);
 });
 
-test('hooks.nsh — 트리킬(/T) 금지: 업데이터(구버전 앱)의 자식인 설치기 자신을 죽인다', () => {
-  assert.doesNotMatch(s, /taskkill[^\n]*\/T\b/, '/T 재도입 금지 — 사이드카는 경로 필터 node 정리가 맡는다(아래 테스트)');
-  assert.match(s, /Get-Process node[^\n]*\$INSTDIR/, '경로 필터 node.exe 정리가 트리킬의 대체 수단으로 존재해야 한다');
+test('hooks.nsh — 경로는 프로세스 환경으로 전달하고 정리 후 복원한다', () => {
+  for (const [name, saved, value] of [['MAIN', 0, 2], ['NODE', 1, 3]]) {
+    assert.match(s, new RegExp(`ReadEnvStr \\$${saved} "ARGO_NSIS_${name}_EXE"`));
+    assert.ok(s.includes(`SetEnvironmentVariableW(w "ARGO_NSIS_${name}_EXE", w r${value})`));
+    assert.ok(s.includes(`SetEnvironmentVariableW(w "ARGO_NSIS_${name}_EXE", w r${saved})`));
+  }
+  const command = s.split('\n').find((line) => /nsExec::Exec .*powershell/.test(line));
+  assert.ok(command);
+  assert.doesNotMatch(command, /\$INSTDIR/);
+  assert.match(command, /cmd \/c start/);
+  assert.match(s, /Sleep 1500/);
+  assert.doesNotMatch(s, /ExecToLog|taskkill[^\n]*\/T\b/);
 });
 
-test('hooks.nsh — 무기한 대기 금지: node 정리는 분리 실행(start) + 고정 Sleep', () => {
-  // nsExec는 자식 종료까지 기다린다 — powershell이 기기 정책·AV에 물리면 설치가 통째로 멈춘다(실사고 2).
-  const psLines = s.split('\n').filter((l) => /nsExec::\w+ .*powershell/.test(l));
-  assert.ok(psLines.length >= 2, 'PREINSTALL·PREUNINSTALL 양쪽에 node 정리가 있어야 한다');
-  for (const l of psLines) assert.match(l, /cmd \/c start/, `powershell 직접 대기 금지(분리 실행이어야): ${l.trim().slice(0, 60)}`);
-  assert.match(s, /Sleep \d+/, '분리 실행 뒤 고정 대기가 있어야 정리 시간이 확보된다');
-});
-
-test('hooks.nsh — 무로그(Exec): taskkill "프로세스 없음"이 설치 화면에 노출되지 않는다', () => {
-  assert.doesNotMatch(s, /ExecToLog/, 'ExecToLog 재도입 금지(오류 오인 노출 — 실사용 제보 2026-08-27)');
+// Windows CI에서도 실제 격리 프로세스로 확인한다. 현재 Node나 사용자 앱은 종료 대상에 넣지 않는다.
+test('hooks.nsh — Windows에서 특수문자 경로만 종료하고 다른 app.exe·node.exe를 보존한다', {
+  skip: process.platform !== 'win32', timeout: 30000,
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-nsis-'));
+  const target = join(root, "Argo O'Brien [review]");
+  const foreign = join(root, "Argo O'Brien r");
+  const children = [];
+  try {
+    for (const dir of [target, foreign]) {
+      await mkdir(dir);
+      for (const name of ['app.exe', 'node.exe']) {
+        const exe = join(dir, name);
+        await copyFile(process.execPath, exe);
+        const child = spawn(exe, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+        children.push(child);
+        await once(child, 'spawn');
+      }
+    }
+    const payload = s.match(/-Command "([^\n]+)"'/)[1].replaceAll('$$', '$');
+    const cleanup = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', payload], {
+      stdio: 'ignore',
+      env: { ...process.env, ARGO_NSIS_MAIN_EXE: join(target, 'app.exe'), ARGO_NSIS_NODE_EXE: join(target, 'node.exe') },
+    });
+    const [code] = await once(cleanup, 'exit');
+    assert.equal(code, 0);
+    for (let i = 0; i < 50 && children.slice(0, 2).some((c) => c.exitCode === null); i++) await delay(100);
+    assert.ok(children.slice(0, 2).every((c) => c.exitCode !== null), '설치 경로의 두 프로세스는 종료되어야 한다');
+    assert.ok(children.slice(2).every((c) => c.exitCode === null), '다른 경로의 동명 프로세스는 살아 있어야 한다');
+  } finally {
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill();
+        await exited;
+      }
+    }
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
 });
