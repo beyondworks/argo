@@ -601,7 +601,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       try {
         const { sendCrewMail } = await import('./crewmail.mjs');
         // 메신저 턴에서 보낸 쪽지는 채널 문맥을 싣는다 — 배달·회신이 텔레그램이 아니라 그 채널에 나타난다(실사고 2026-09-09: '@슈리 @카맥 번갈아 세기'가 텔레그램으로 샘)
-        const msgr = mirrorCtx?.kind === 'msgr' ? { orgId: mirrorCtx.orgId, channelId: mirrorCtx.channelId, crewId: mirrorCtx.crewId, threadRoot: mirrorCtx.threadRoot ?? null } : null;
+        const msgr = mirrorCtx?.kind === 'msgr' ? { orgId: mirrorCtx.orgId, channelId: mirrorCtx.channelId, crewId: mirrorCtx.crewId, threadRoot: mirrorCtx.threadRoot ?? null, orgSlug: mirrorCtx.orgSlug ?? null, channelName: mirrorCtx.channelName ?? '', memoryOff: journal?.off === true } : null; // 배달 턴이 같은 조직 규칙·채널 기억 정책을 받도록(검수 M-3)
         const id = await sendCrewMail(wsId, { from: fromSlug, fromName, to: target.slug, cc: ccSlugs, message, hop: hop + 1, chain: [...chain, fromSlug], msgr });
         mailSent += 1;
         return text(`쪽지를 보냈다(${id} → ${target.name}${ccSlugs.length ? `, 참조 ${ccSlugs.length}명` : ''}). 상대는 잠시 뒤 자기 턴에서 읽는다 — 결과를 기다리지 말고 지금 할 일을 마무리하라.`);

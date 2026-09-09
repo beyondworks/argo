@@ -85,3 +85,19 @@ test('선점(2026-09-09 실사고): 같은 큐 폴더를 보는 워커 둘이 �
   stopD();
   assert.deepEqual(ran2, ['고아'], '오래된 선점 회수 → 재실행');
 });
+
+test('DEFER(순서 대기)·선점 경로 전달: 핸들러가 DEFER를 반환하면 선점을 풀고 다음 틱에 다시 집는다(오류 로그 없음), 핸들러는 두 번째 인자로 선점된 실제 파일 경로를 받는다', async () => {
+  const { DEFER } = await import('../src/gateway/queue.mjs');
+  const WS = 'qco-defer';
+  await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
+  const dir = queueDir(WS, 'msgr');
+  await enqueueJob(WS, 'msgr', '50-pepper', { text: '대기' });
+  const seen = []; let n = 0; const errs = []; const origErr = console.error; console.error = (...a) => { errs.push(a.join(' ')); };
+  const stop = startQueueWorker(WS, 'msgr', async (job, meta) => { seen.push(meta?.path); return ++n < 3 ? DEFER : undefined; });
+  await new Promise((r) => setTimeout(r, 4500));
+  stop(); console.error = origErr;
+  assert.equal(n, 3, 'DEFER 두 번 뒤 세 번째 틱에 실행');
+  assert.ok(seen.every((p) => p === join(dir, '50-pepper.json.claimed')), `선점 파일 경로 전달: ${seen[0]}`);
+  assert.equal(errs.filter((e) => e.includes('큐 처리 실패')).length, 0, 'DEFER는 오류가 아니다');
+  assert.equal((await readdir(dir).catch(() => [])).filter((x) => /\.json(\.claimed)?$/.test(x)).length, 0, '완료 뒤 흔적 없음');
+});

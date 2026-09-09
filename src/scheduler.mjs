@@ -229,8 +229,8 @@ export function ensureScheduler() {
               } catch { /* 크루 카드·러너 상태 읽기 실패 — 기본값 유지, 실행은 chat()이 판단 */ }
               const prompt = mailPrompt(msg, 'ko', { hasTools });
               // 메신저에서 시작된 쪽지면 수신 턴도 그 채널 문맥으로(결재·후속 위임이 채널로 미러) — crewId는 수신 크루의 메신저 id
-              const mirrorCtx = msg.msgr?.channelId ? { kind: 'msgr', orgId: msg.msgr.orgId, channelId: msg.msgr.channelId, threadRoot: msg.msgr.threadRoot ?? null, crewId: msgrCrewIdBySlug(cid, slug) ?? null } : null;
-              const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx } : {}) });
+              const mirrorCtx = msg.msgr?.channelId ? { kind: 'msgr', orgId: msg.msgr.orgId, channelId: msg.msgr.channelId, threadRoot: msg.msgr.threadRoot ?? null, crewId: msgrCrewIdBySlug(cid, slug) ?? null, orgSlug: msg.msgr.orgSlug ?? null, channelName: msg.msgr.channelName ?? '' } : null;
+              const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: { off: msg.msgr.memoryOff === true, tag: `org-${msg.msgr.orgId}` } } : {}) }); // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
               // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
               await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail', artifacts: t.artifacts })
                 .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));

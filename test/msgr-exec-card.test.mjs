@@ -15,7 +15,8 @@ test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace(steps·thought�
   assert.match(bridge, /import \{ getTurnStatus \} from '\.\.\/turn-status\.mjs';/, '브리지가 상태 파일을 읽는다');
   assert.match(bridge, /const PROGRESS_MS = 1_500;/, '방송 주기');
   assert.match(bridge, /if \(key === last\) return;\n\s*last = key;\n\s*await ch\.send\(\{ type: 'broadcast', event: 'progress', payload \}\)/, '바뀐 스냅샷만 방송');
-  assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug\)/, 'slug 전달');
+  assert.match(bridge, /if \(!s \|\| s\.source !== 'messenger'\) return;/, '상태 파일 source 게이트(검수 M-6)');
+  assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug, \{ full: ch\.kind === 'public' \}\)/, 'slug 전달 + 본문·사고 방송은 공개 채널만(검수 C-1)');
   assert.match(bridge, /meta: \{ \.\.\.\(turnTrace \? \{ trace: turnTrace \} : \{\}\), hop: job\.hop \?\? 0, origin:/, '답글 meta.trace(실패 턴은 없음) + hop/origin');
   assert.match(read('supabase/migrations/20260909003000_msgr_message_meta.sql'), /add column if not exists meta jsonb not null default '\{\}'::jsonb/, 'meta 열');
 });

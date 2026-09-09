@@ -2,7 +2,7 @@
 // 파일 I/O·1초 워커 타이머만 있어 네트워크·텔레그램 없이 임시 ARGO_ROOT로 단위 테스트 가능한 이음매.
 // 잡 실행 핸들러(makeTgGatewayHandler·makeJobHandler 등)는 네트워크·chat 의존이라 gateway.mjs에 남는다.
 // 옮긴 코드는 gateway.mjs 원문 그대로(행동 불변) — 설계 주석 동반 이동.
-import { readdir, rename, stat, unlink } from 'node:fs/promises';
+import { readdir, rename, stat, unlink, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths, getDeviceId } from '../workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from '../jsonstore.mjs';
@@ -32,6 +32,8 @@ export async function enqueueJob(wsId, key, id, job) { // (export: 회귀 테스
   await writeJsonAtomic(join(queueDir(wsId, key), `${id}.json`), dev ? { ...job, dev } : job); // 원자적 — 부분 쓰기가 워커에 보이지 않는다
 }
 /** 큐 드레인 워커 — 1초 폴. handler(job)이 정상 반환하면 파일 삭제(처리 완료), 던지면 유지(다음 틱 재시도·재기동 복구). (export: 회귀 테스트용) */
+/** 핸들러가 이 값을 반환하면 "아직 차례가 아니다" — 선점을 풀어 다음 틱에 다시 집는다(로그 없음, 슬롯 점유 없음). 순서 대기(msgr after)용. */
+export const DEFER = Symbol('queue.defer');
 export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFLIGHT } = {}) {
   let stopped = false;
   let me = null; // 이 기기 id — 해석 전(null)에는 잡을 집지 않는다(남의 사본 오실행 방지). 실패 시 ''(판정 생략, 전부 실행)
@@ -59,6 +61,7 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
         const fp = `${fp0}.claimed`;
         try { await rename(fp0, fp); } catch { busy.delete(n); return; } // 이미 다른 워커가 선점(ENOENT) — 조용히 물러난다
         let done = false;
+        const hb = setInterval(() => { const t = new Date(); utimes(fp, t, t).catch(() => {}); }, 60_000); hb.unref?.(); // 선점 심박 — 살아 있는 긴 턴(30분 넘는 사고 과정·장시간 잡)이 CLAIM_MAX_AGE_MS 회수에 걸리지 않게
         try {
           const job = await readJsonLenient(fp, null); // 손상 잡은 null → 처리 스킵 후 삭제(무한 재시도 방지)
           if (job?.dev && me && job.dev !== me) {
@@ -68,13 +71,14 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
             // dev 태그 없는 구형식 잡이 너무 오래됨 — 어느 기기 것인지 알 수 없어 좀비 실행 대신 폐기(로그로 관측)
             console.log(`[argo] 큐 정리(${wsId}/${key}/${n}): ${Math.round(LEGACY_JOB_MAX_AGE_MS / 3_600_000)}시간 넘은 구형식 잡 — 실행 없이 제거`);
           } else if (job) {
-            await handler(job); // handler는 턴 실패를 내부 처리(에러 회신)하고 정상 반환 → 아래서 삭제
+            if (await handler(job, { path: fp }) === DEFER) return; // 차례 아님 — finally가 선점을 풀고 다음 틱에 다시 집는다. path = 선점 뒤 실제 파일(장시간 잡 tries 마커가 원래 이름에 쓰이던 회귀 방지)
           }
           done = true;
           await unlink(fp).catch(() => {}); // 처리 완료분만 제거. 처리 중 크래시면 .claimed가 남아 CLAIM_MAX_AGE_MS 뒤 회수·재처리
         } catch (e) {
           console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}):`, e.message); // 인프라 예외 — 선점을 풀어 다음 틱 재시도
         } finally {
+          clearInterval(hb);
           if (!done) await rename(fp, fp0).catch(() => {});
           busy.delete(n);
         }
