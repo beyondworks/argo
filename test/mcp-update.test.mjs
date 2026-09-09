@@ -9,6 +9,7 @@ import { mkdtemp } from './helpers/tmp.mjs';
 const root = await mkdtemp(join(tmpdir(), 'argo-mcp-update-'));
 process.env.ARGO_ROOT = root;
 process.env.HOME = await mkdtemp(join(tmpdir(), 'argo-mcp-home-'));
+process.env.USERPROFILE = process.env.HOME;
 process.env.ARGO_STANDALONE = '1';
 delete process.env.ARGO_TENANT_OWNER;
 const market = await import('../src/market.mjs');
