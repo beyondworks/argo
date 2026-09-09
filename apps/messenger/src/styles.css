@@ -644,3 +644,11 @@
 .msgr-editbox textarea.msgr-input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13.5px; resize: vertical; outline: 0; }
 .msgr-editbox textarea.msgr-input:focus { box-shadow: 0 0 0 2px var(--ring); }
 .msgr-editbox .acts { display: flex; gap: 6px; justify-content: flex-end; }
+
+/* 그룹 제목 관리(2026-09-09): 호버 시 이름 바꾸기·해제 */
+.msgr-folderhead .right { display: inline-flex; align-items: center; gap: 4px; }
+.msgr-folderhead .fbtn { width: 18px; height: 18px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg-3); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity 120ms ease, background 120ms ease; }
+.msgr-folderhead.can:hover .fbtn, .msgr-folderhead .fbtn:focus-visible { opacity: 1; }
+.msgr-folderhead .fbtn:hover { background: var(--card-2); color: var(--fg); }
+.msgr-folderhead .msgr-input.sm { height: 24px; font-size: 12px; width: 100%; }
+.msgr-folderpick { flex-wrap: wrap; }

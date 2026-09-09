@@ -313,6 +313,11 @@ function Shell({ session }) {
   const crewOf = (id) => crews.find((c) => c.id === id) ?? myAvailable.find((c) => c.id === id); // 파견 해제된 내 크루도 시트로 연다(다시 파견·허용 범위)
   const [newOrg, setNewOrg] = useState(null); // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
   const [joinable, setJoinable] = useState([]); // J-3 도메인 자동 가입 후보
+  // 그룹 관리(유건 질문 2026-09-09 "그룹 추가·수정·편집 어디서?") — 만들기·옮기기는 에이전트 시트의 '그룹' 입력, 이름 바꾸기·해제는 레일 그룹 제목에서.
+  const [folderEdit, setFolderEdit] = useState(null); const [folderDraft, setFolderDraft] = useState('');
+  const setFolderAll = async (from, to) => { const r = await supabase.from('msgr_crews').update({ folder: to }).eq('owner_user_id', uid).eq('folder', from).select('id'); if (r.error) return setErr(r.error.message); setFolderEdit(null); setNote(t('crew.folder.saved')); loadOrg(orgId).catch(() => {}); };
+  const folderHead = (label, list) => { const real = folders.includes(label); if (folderEdit === label) return <div className="msgr-folderhead"><input className="msgr-input sm" autoFocus value={folderDraft} maxLength={40} onChange={(e) => setFolderDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setFolderEdit(null); if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); const v = folderDraft.trim(); if (!v || v === label) setFolderEdit(null); else setFolderAll(label, v); } }} onBlur={() => setFolderEdit(null)} aria-label={t('crew.folder.rename')} /></div>;
+    return <div className={`msgr-folderhead${real ? ' can' : ''}`}><span className="lbl">{label}</span><span className="right"><span className="msgr-klabel">{list.length}</span>{real && <><button type="button" className="fbtn" title={t('crew.folder.rename')} aria-label={t('crew.folder.rename')} onClick={() => { setFolderEdit(label); setFolderDraft(label); }}><I name="gear" size={11} /></button><button type="button" className="fbtn" title={t('crew.folder.dissolve')} aria-label={t('crew.folder.dissolve')} onClick={() => setFolderAll(label, null)}><I name="x" size={11} /></button></>}</span></div>; };
   const [railMenu, setRailMenu] = useState(null); const [railConfirm, setRailConfirm] = useState(null); // 레일 행 '…' 메뉴(채널 설정·나가기·보관, 1:1 나가기) — 유건 지적 2026-09-04
   useEffect(() => { if (!railMenu) return; const off = () => { setRailMenu(null); setRailConfirm(null); }; window.addEventListener('click', off); return () => window.removeEventListener('click', off); }, [railMenu]);
   const leaveChannel = async (c) => {
@@ -490,7 +495,7 @@ function Shell({ session }) {
         {org && (myAvailable.length > 0 || myCrews.length > 0) && (<>
           <div className="msgr-group">{t('rail.mine')}<span className="right"><select className="msgr-sort" value={railSort} onChange={(e) => pickSort(e.target.value)} aria-label={t('rail.sort')} title={t('rail.sort')}>{['source', 'name', 'added'].map((v) => <option key={v} value={v}>{t(`rail.sort.${v}`)}</option>)}</select><span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span></span></div>
           <div className="msgr-list mine">
-            {railGroups ? railGroups.map(([label, list]) => <div key={label} className="msgr-folder"><div className="msgr-folderhead">{label}<span className="msgr-klabel">{list.length}</span></div>{list.map(railRow)}</div>) : myCrews.map(railRow)}
+            {railGroups ? railGroups.map(([label, list]) => <div key={label} className="msgr-folder">{folderHead(label, list)}{list.map(railRow)}</div>) : myCrews.map(railRow)}
             {myAvailable.map((c) => <button key={c.id} type="button" className="item dim" onClick={() => setSheet(c.id)} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>)}
           </div>
         </>)}
@@ -604,6 +609,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, nameOfUser,
         <section>
           {owner && (<div className="msgr-folderpick"><span className="msgr-klabel">{t('crew.folder')}</span>
             <input className="msgr-input sm" list="msgr-folders" defaultValue={crew.folder ?? ''} placeholder={t('crew.folder.ph')} maxLength={40} onBlur={async (e) => { const v = e.target.value.trim() || null; if (v === (crew.folder ?? null)) return; const r = await supabase.from('msgr_crews').update({ folder: v }).eq('id', crew.id).select('id'); if (r.error) return onError(r.error.message); onNote(t('crew.folder.saved')); onChanged(); }} />
+            <span className="note" style={{ flexBasis: '100%' }}>{t('crew.folder.help')}</span>
             <datalist id="msgr-folders">{[...new Set((crewsForFolders ?? []).map((c) => c.folder).filter(Boolean))].map((f) => <option key={f} value={f} />)}</datalist>
           </div>)}
           <h3>{t('crew.allow')}</h3>
