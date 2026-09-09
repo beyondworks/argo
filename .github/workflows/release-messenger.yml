@@ -39,6 +39,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Hermes adapter behavioral tests execute Python on every test platform.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -70,6 +75,14 @@ jobs:
             node scripts/bump-version.mjs --root apps/messenger --check
           fi
 
+      - name: Messenger regression tests
+        shell: bash
+        run: cd ../.. && node --test test/msgr-*.test.mjs
+
+      - name: Native external-agent tests (host OS)
+        shell: bash
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib agents::tests
+
       - name: Build messenger (vite + tauri)
         shell: bash
         env:
@@ -78,8 +91,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: |
-          [ -n "$VITE_SUPABASE_URL" ] || { echo "::error::NEXT_PUBLIC_SUPABASE_URL secret 누락 — 서버 없는 메신저가 발행된다"; exit 1; }
+          for required in VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY TAURI_SIGNING_PRIVATE_KEY; do
+            [ -n "${!required:-}" ] || { echo "::error::Required release variable missing: $required"; exit 1; }
+          done
           npx tauri build --target ${{ matrix.rust_target }}
+
+      - name: Messenger distribution HTTP smoke
+        shell: bash
+        run: cd ../.. && node scripts/messenger-dist-smoke.mjs
 
       # ── macOS: 재서명·공증·스테이플 (release.yml과 같은 절차; 앱 이름·볼륨명·target 경로만 다르다) ──
       - name: Sign, notarize & staple (macOS)
@@ -96,9 +115,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: |
           set -euo pipefail
-          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_ID:-}" ]; then
-            echo "Apple 시크릿 미설정 — 서명·공증 스킵(ad-hoc 빌드 유지)"; exit 0
-          fi
+          for required in APPLE_CERTIFICATE APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY; do
+            [ -n "${!required:-}" ] || { echo "::error::Required signing variable missing: $required"; exit 1; }
+          done
           BUNDLE_DIR="src-tauri/target/${{ matrix.rust_target }}/release/bundle"
           APP="$(ls -d "$BUNDLE_DIR"/macos/*.app | head -1)"
           echo "APP=$APP"
@@ -191,6 +210,7 @@ jobs:
           for f in "$B"/dmg/*aarch64.dmg;  do [ -e "$f" ] && cp "$f" installers/argo-messenger-macos-apple-silicon.dmg; done
           for f in "$B"/dmg/*x64.dmg;      do [ -e "$f" ] && cp "$f" installers/argo-messenger-macos-intel.dmg; done
           for f in "$B"/nsis/*-setup.exe;  do [ -e "$f" ] && cp "$f" installers/argo-messenger-windows-setup.exe; done
+          node ../../scripts/release-assets.mjs installers argo-messenger "$(node -p 'require("./package.json").version')" "${{ matrix.rust_target }}"
           ls -la installers
 
       - uses: actions/upload-artifact@v4
@@ -202,12 +222,13 @@ jobs:
 
   release:
     needs: [build]
-    if: always() && startsWith(github.ref, 'refs/tags/messenger-v')
+    if: success() && startsWith(github.ref, 'refs/tags/messenger-v')
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: .
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -217,33 +238,8 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          node - <<'EOS'
-          const fs = require('fs');
-          const tag = process.env.TAG.replace(/^messenger-/, ''); // 릴리스 repo 태그 = v0.1.0
-          const dir = 'dist';
-          const base = `https://github.com/beyondworks/argo-messenger/releases/download/${tag}`;
-          const entry = (f) => ({ url: `${base}/${f}`, signature: fs.readFileSync(`${dir}/${f}.sig`, 'utf8').trim() });
-          const pick = (re) => fs.readdirSync(dir).find((f) => re.test(f));
-          const platforms = {};
-          for (const [key, re] of [
-            ['darwin-aarch64', /aarch64-apple-darwin\.app\.tar\.gz$/],
-            ['darwin-x86_64', /x86_64-apple-darwin\.app\.tar\.gz$/],
-            ['windows-x86_64', /_x64-setup\.exe$/],
-          ]) {
-            const f = pick(re);
-            if (f && fs.existsSync(`${dir}/${f}.sig`)) platforms[key] = entry(f);
-            else console.warn(`[manifest] ${key} updater artifact missing`);
-          }
-          // 전부-또는-없음(release.yml G007과 같은 규칙): 부분 매니페스트는 빠진 플랫폼을 영영 굶긴다.
-          const missing = ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64'].filter((k) => !platforms[k]);
-          if (missing.length === 0) {
-            fs.writeFileSync(`${dir}/latest.json`, JSON.stringify({ version: tag.replace(/^v/, ''), pub_date: new Date().toISOString(), platforms }, null, 2));
-            console.log(fs.readFileSync(`${dir}/latest.json`, 'utf8'));
-          } else {
-            fs.writeFileSync(`${dir}/MANIFEST-INCOMPLETE.txt`, `업데이터 매니페스트 불완전 — 누락: ${missing.join(', ')}. 게시 전 복구할 것.\n`);
-            console.log(`::warning::updater manifest incomplete — missing: ${missing.join(', ')}`);
-          }
-          EOS
+          node scripts/release-assets.mjs dist argo-messenger "${TAG#messenger-v}"
+
       - name: Release tag (strip messenger- prefix)
         id: tag
         shell: bash

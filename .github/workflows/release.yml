@@ -19,7 +19,7 @@
 #   ※ macOS 서명·공증 흐름: tauri v2 번들러는 codesign에 --timestamp(secure timestamp)를 안 붙여 애플
 #     공증이 거부한다(설정으로 못 고치는 갭). 그래서 tauri는 ad-hoc으로 빌드하게 두고, 빌드 후 전용 스텝에서
 #     이 인증서로 번들 내 전 Mach-O를 --timestamp --options runtime 재서명 → notarytool 공증 → stapler 스테이플한다.
-#   ※ APPLE_* 6종 중 인증서/APPLE_ID가 없으면 그 스텝을 스킵해 ad-hoc(미공증) 빌드로 남는다 — Gatekeeper 경고.
+#   ※ macOS 서명·공증 자격이 없으면 릴리스 빌드를 실패시킨다(미공증본 발행 금지).
 #   ※ SUPABASE_SERVICE_ROLE_KEY 등 서버 시크릿은 데스크톱 빌드에 넣지 않는다(설치본 유출 방지).
 #
 # 주의(후속):
@@ -51,6 +51,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      # Hermes adapter behavioral tests execute Python on every test platform.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - uses: actions/setup-node@v4
         with:
@@ -126,7 +131,11 @@ jobs:
           # 인앱 업데이터 서명 — 키는 ~/.tauri/argo-updater.key에서 생성(비밀번호 없음 → 빈 문자열 고정)
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
-        run: npm run app:build
+        run: |
+          for required in NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY TAURI_SIGNING_PRIVATE_KEY; do
+            [ -n "${!required:-}" ] || { echo "::error::Required release variable missing: $required"; exit 1; }
+          done
+          npm run app:build
 
       # 결제 링크 게이트 — 체크아웃 URL은 빌드 시점 인라인이라 CI secrets가 낡으면 발행본이 조용히
       # 옛 테스트 체크아웃을 연다(실사고 2026-09-01: 상주 .env.local만 라이브로 갱신되고 secrets가
@@ -172,10 +181,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 인증서/APPLE_ID 미설정이면 스킵 — ad-hoc(미공증) 빌드 유지 (fork·시크릿 없는 실행 안전장치)
-          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_ID:-}" ]; then
-            echo "Apple 시크릿 미설정 — 서명·공증 스킵(ad-hoc 빌드 유지)"; exit 0
-          fi
+          for required in APPLE_CERTIFICATE APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY; do
+            [ -n "${!required:-}" ] || { echo "::error::Required signing variable missing: $required"; exit 1; }
+          done
 
           BUNDLE_DIR="src-tauri/target/release/bundle"
           APP="$(ls -d "$BUNDLE_DIR"/macos/*.app | head -1)"
@@ -319,13 +327,14 @@ jobs:
           for f in src-tauri/target/release/bundle/nsis/*-setup.exe; do
             if [ -e "$f" ]; then cp "$f" dist/argo-windows-setup.exe; fi
           done
+          node scripts/release-assets.mjs dist argo "$(node -p 'require("./package.json").version')" "${{ matrix.rust_target }}"
           ls -la dist
 
       - uses: actions/upload-artifact@v4
         with:
           name: argo-${{ matrix.rust_target }}
           path: dist/*
-          if-no-files-found: warn
+          if-no-files-found: error
           # 발행본은 argo-agent 릴리스에 영구 보관 — CI 아티팩트를 90일 쌓으면 저장 용량(무료 500MB)만
           # 태운다(빌드 1회 ~730MB). 발행 드릴 완료까지만 있으면 되므로 3일.
           retention-days: 3
@@ -344,6 +353,10 @@ jobs:
       - run: npm ci
       - name: Stage server tarball
         run: node scripts/stage-server.mjs
+      - name: Fresh-home tarball HTTP, auth and local import smoke
+        shell: bash
+        run: |
+          node scripts/server-tarball-smoke.mjs "dist-server/argo-server-$(node -p 'require("./package.json").version')-linux-x64.tar.gz"
       - name: Attach install script
         run: cp scripts/install.sh dist-server/install.sh
       # 원격 모델 카탈로그 오버레이(src/runners/catalog-remote.mjs) — 릴리스 자산 model-catalog.json.
@@ -362,12 +375,12 @@ jobs:
           retention-days: 3
 
   release:
-    needs: [build, server] # server 타르볼 없이 릴리스가 먼저 만들어지는 레이스 방지(검수 MEDIUM) — if:always()로 실패 시에도 draft는 유지
-    # always() — build matrix 일부(예: Windows)가 실패해도 성공한 OS 산출물로 draft를 만든다.
-    # (없으면 needs 하나라도 실패 시 release가 스킵돼 draft가 안 생긴다 — v0.1.0 실측 이슈)
-    if: always() && startsWith(github.ref, 'refs/tags/')
+    needs: [build, server]
+    # No partial release: every supported platform and the Linux tarball must pass.
+    if: success() && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -379,47 +392,8 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          node - <<'EOF'
-          const fs = require('fs');
-          const tag = process.env.TAG;
-          const dir = 'dist';
-          const base = `https://github.com/beyondworks/argo-agent/releases/download/${tag}`;
-          const entry = (f) => ({ url: `${base}/${f}`, signature: fs.readFileSync(`${dir}/${f}.sig`, 'utf8').trim() });
-          const pick = (re) => fs.readdirSync(dir).find((f) => re.test(f));
-          const platforms = {};
-          for (const [key, re] of [
-            ['darwin-aarch64', /aarch64-apple-darwin\.app\.tar\.gz$/],
-            ['darwin-x86_64', /x86_64-apple-darwin\.app\.tar\.gz$/],
-            ['windows-x86_64', /_x64-setup\.exe$/], // 고정 파일명(argo-windows-setup.exe, sig 없음)과 구분 — 버전명 파일만
-          ]) {
-            const f = pick(re);
-            if (f && fs.existsSync(`${dir}/${f}.sig`)) platforms[key] = entry(f);
-            else console.warn(`[manifest] ${key} updater artifact missing`);
-          }
-          // 전부-또는-없음(안정화 G007 — Phase0 검수 이월 MED): 부분 매니페스트를 쓰면 빠진 플랫폼의
-          // 기기들이 업데이트를 영영 못 보는 무증상 사고가 된다. 3타깃이 다 있을 때만 latest.json을 쓰고,
-          // 아니면 draft에 MANIFEST-INCOMPLETE.txt를 실어 사람이 게시 전에 반드시 보게 한다.
-          // ⚠ 안전은 draft 상태까지만이다 — 불완전 draft를 **게시해버리면** 그 릴리스가 latest가 되어
-          // latest.json 404 → 전 플랫폼 업데이트가 끊긴다(검수 권고 3). MANIFEST-INCOMPLETE.txt가 draft에
-          // 실리는 이유가 그것이다: 게시 전 마지막 사람 게이트.
-          // 잡은 성공 유지 — always()+draft(부분 산출물이라도 draft 생성)라는 기존 설계를 존중한다.
-          // EXPECTED는 위 build 매트릭스 3잡(rust_target)과 1:1 — 매트릭스를 바꾸면 여기도 같이(상호 참조.
-          // 라벨 하드코딩으로 스모크가 4릴리스 무음 스킵된 사고(위 주석)와 같은 계열이라 명시해 둔다).
-          const EXPECTED = ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64'];
-          const missing = EXPECTED.filter((k) => !platforms[k]);
-          if (missing.length === 0) {
-            fs.writeFileSync(`${dir}/latest.json`, JSON.stringify({
-              version: tag.replace(/^v/, ''),
-              pub_date: new Date().toISOString(),
-              platforms,
-            }, null, 2));
-            console.log(fs.readFileSync(`${dir}/latest.json`, 'utf8'));
-          } else {
-            const note = `이 draft는 업데이터 매니페스트가 불완전해 latest.json을 싣지 않았다.\n누락: ${missing.join(', ')}\n게시 전 해당 플랫폼 빌드를 복구해 재실행할 것 — 이대로 게시하면 그 플랫폼 기기들이 업데이트를 못 받는다.\n`;
-            fs.writeFileSync(`${dir}/MANIFEST-INCOMPLETE.txt`, note);
-            console.log(`::warning::updater manifest incomplete — missing: ${missing.join(', ')} (latest.json 미생성, MANIFEST-INCOMPLETE.txt 첨부)`);
-          }
-          EOF
+          node scripts/release-assets.mjs dist argo "${TAG#v}"
+
       # 배포 repo(beyondworks/argo-agent)에 발행 — 소스 레포와 배포 레포 분리(릴리스 자산만 저쪽에).
       # ※ argo 소스 레포는 public이다(2026-07-23 전환, 2026-09-07 하루 private 뒤 복귀 — 프라이빗 플랜 릴리스 한도).
       #   "private라 유출 없음" 옛 전제는 폐기 상태 그대로. argo-agent도 public(다운로드·업데이터).
@@ -444,7 +418,5 @@ jobs:
             기존 설치 사용자는 앱 안에서: **설정 → 기기 → 앱 업데이트**. / Existing users: **Settings → Devices → App updates**.
 
             ## 설치 — 첫 실행 안내 / First-run notes
-            현재 빌드는 코드 서명 전이라 처음 실행 시 OS 보안 경고가 뜹니다. 정상이며 안전합니다.
-            Builds are not yet code-signed; the one-time OS prompt is expected and safe.
-            - **macOS**: 앱 우클릭 → 열기 → 다시 열기 (또는 시스템 설정 → 개인정보 보호 및 보안 → 확인 없이 열기) / Right-click → Open → Open (or Privacy & Security → "Open Anyway")
-            - **Windows**: SmartScreen에서 추가 정보 → 실행 / More info → Run anyway
+            - **macOS**: Developer ID 서명·Apple 공증을 거친 설치본입니다. / Developer ID signed and Apple notarized.
+            - **Windows**: 현재 Authenticode 인증서가 없어 SmartScreen 경고가 나타날 수 있습니다. / Windows installers are not Authenticode signed and may show a SmartScreen warning.

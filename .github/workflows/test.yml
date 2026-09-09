@@ -41,6 +41,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Hermes adapter behavioral tests execute Python on every test platform.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -58,6 +63,18 @@ jobs:
 
       # Windows에서도 glob이 동작한다 — cmd는 글롭 확장을 안 하지만 node --test가 패턴을 직접 해석(Node 21+)
       - run: npm test
+
+      - name: Messenger version and production build
+        shell: bash
+        env:
+          # Public placeholder config: CI verifies a configured frontend without live credentials.
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: ci-public-placeholder
+        run: |
+          node scripts/bump-version.mjs --root apps/messenger --check
+          npm ci --prefix apps/messenger --no-audit --no-fund
+          npm run build --prefix apps/messenger
+          node scripts/messenger-dist-smoke.mjs
 
       # 네이티브 엔진 산출물 검사(분리 검수 2026-09-05 NEW-HIGH-2·T8) — 소스만 임포트하는 스위트가 못 보는 축: webpack이 워커 URL을
       # 청크 에셋으로 재작성해 프로덕션·standalone에서만 MODULE_NOT_FOUND가 났다. standalone을 로컬 모드로 재빌드해 실제로 부팅·Grep 턴을 완주한다.
