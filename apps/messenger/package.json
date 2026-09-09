@@ -1,6 +1,6 @@
 {
   "name": "argo-messenger",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Argo 팀 메신저 — 사람과 크루가 같은 채널에서 일하는 조직 공간(설계: 루트 MESSENGER-DESIGN.md)",
   "type": "module",
