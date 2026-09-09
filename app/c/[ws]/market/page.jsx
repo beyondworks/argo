@@ -6,6 +6,7 @@ import { Icon, Spinner, Skeleton, useScrollLock, api, imeGuard } from '../../../
 import { useLang } from '../../../i18n';
 
 const fmtN = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
+const errorText = (t, error) => String(error).startsWith('market.') ? t(error) : error;
 const safeId = (item) => String(item.name ?? '').toLowerCase().replace(/[^a-z0-9가-힣-]/g, '-').replace(/^-+|-+$/g, '');
 
 // Argo Messenger(팀 메신저) 설치파일 — 릴리스 repo의 고정 파일명(release-messenger.yml Collect 스텝이 매 릴리스 갱신).
@@ -67,7 +68,10 @@ function TopList({ ws, kind, installedIds, onInstalled, onDetail, customMcpAllow
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ kind: kind === 'skills' ? 'remote-skill' : 'remote-mcp', item }),
       });
-      if (!res.ok) throw new Error((await res.json()).error);
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.uiKey || error.error);
+      }
       onInstalled();
     } catch (e2) {
       setErr(String(e2.message));
@@ -81,7 +85,7 @@ function TopList({ ws, kind, installedIds, onInstalled, onDetail, customMcpAllow
       <div className="microlabel" style={{ margin: '4px 0 8px' }}>
         {t('market.topLabel', { source: kind === 'skills' ? t('market.sourceSkills') : t('market.sourceMcp') })}
       </div>
-      {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
+      {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{errorText(t, err)}</span>}
       {items === null ? (
         <Skeleton h={120} />
       ) : (
@@ -165,7 +169,10 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose, customMcpAl
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error((await res.json()).error);
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.uiKey || error.error);
+      }
       onInstalled();
     } catch (e2) {
       setErr(String(e2.message));
@@ -192,7 +199,7 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose, customMcpAl
           </div>
 
           {item.desc && <p style={{ fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.6 }}>{item.desc}</p>}
-          {err && <p style={{ fontSize: 12.5, color: 'var(--danger)' }}>{err}</p>}
+          {err && <p style={{ fontSize: 12.5, color: 'var(--danger)' }}>{errorText(t, err)}</p>}
           {!exp && !err && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: 'var(--fg-2)', fontSize: 12.5, padding: '6px 0' }}>
               <Spinner size={13} /> {t('market.preparingExplain')}
@@ -289,7 +296,10 @@ function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInst
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ kind: kind === 'skills' ? 'remote-skill' : 'remote-mcp', item }),
       });
-      if (!res.ok) throw new Error((await res.json()).error);
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.uiKey || error.error);
+      }
       onInstalled();
     } catch (e2) {
       setErr(String(e2.message));
@@ -315,7 +325,7 @@ function RemoteSearch({ ws, kind, placeholder, sourceLabel, installedIds, onInst
           {searching ? <Spinner size={11} /> : <Icon name="search" size={13} />} {t('market.remoteSearchBtn')}
         </button>
       </form>
-      {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
+      {err && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{errorText(t, err)}</span>}
       {results !== null && (
         results.length === 0 ? (
           <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{t('market.noResults')}</span>
@@ -383,7 +393,10 @@ export default function Market({ params }) {
         method,
         ...(body ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}),
       });
-      if (!res.ok) throw new Error((await res.json()).error);
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.uiKey || error.error);
+      }
       load();
     } catch (e) {
       setError(String(e.message));
@@ -418,6 +431,7 @@ export default function Market({ params }) {
   // 'omitted' = 참조 상한(SKILL_REF_CAP)까지 초과 — 크루 지침에 이름조차 안 들어간다(검수 R2:
   // 이 상태를 'ref'로 뭉개면 "참조 주입됨" 배지가 거짓).
   const skillInjection = new Map((data?.installedSkills ?? []).map((s) => [s.id, s.injected ?? 'full']));
+  const skillPaths = new Map((data?.installedSkills ?? []).map((s) => [s.id, s.path ?? `skills/${s.id}.md`]));
   const injectionBadge = (state) => state === 'ref' ? (
     <span className="pill" style={{ color: 'var(--warn, #b5893a)' }} title={t('market.skillRefHint')}>{t('market.skillRefBadge')}</span>
   ) : state === 'omitted' ? (
@@ -432,7 +446,7 @@ export default function Market({ params }) {
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span className="microlabel">{t('market.header')}</span>
-        {error && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</span>}
+        {error && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{errorText(t, error)}</span>}
       </div>
 
       {/* ── 앱 — Argo 메신저 ── */}
@@ -472,7 +486,7 @@ export default function Market({ params }) {
                     )}
                   </div>
                   <span style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.55 }}>{s.desc}</span>
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>skills/{s.id}.md</span>
+                  <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>{skillPaths.get(s.id) ?? `skills/${s.id}.md`}</span>
                   {on && injectionBadge(skillInjection.get(s.id))}
                 </div>
               );
@@ -500,7 +514,7 @@ export default function Market({ params }) {
               <div key={s.id} className="row" style={{ borderRadius: 10 }}>
                 <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600 }}>{s.title}</span>
                 {injectionBadge(s.injected)}
-                <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>skills/{s.id}.md</span>
+                <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>{skillPaths.get(s.id)}</span>
                 <button className="btn sm btn-icon" style={{ width: 26 }} onClick={() => remove('skill', s.id)}><Icon name="trash" size={12} /></button>
               </div>
             ))}

@@ -1,9 +1,11 @@
 // 스킬·MCP 마켓 — 카탈로그 + 원클릭 설치/제거. 설치는 워크스페이스 파일에 남아
 // 스킬은 다음 턴 시스템 프롬프트에, MCP는 다음 턴 mcpServers에 자동 반영된다.
-import { chmod, mkdir, readFile, writeFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, rm, stat, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { paths } from './workspace.mjs';
+import { writeJsonAtomic } from './jsonstore.mjs';
+import { withDirLock } from './mutex.mjs';
 import { loadDeviceSession } from './devicesession.mjs'; // 기기 세션 = "사용자 본인 기기" 신호(호스팅 오분류 방지)
 // 커넥터는 스킬·MCP와 같은 마켓 표면에 산다(설계서 §2-3) — 카탈로그·설치(=연결)·제거(=해제)가 한 자리.
 // 코어(연결 왕복·토큰·도구 호출)는 connectors.mjs가 전담하고, 여기는 "카탈로그 항목 → 코어 인자" 변환만 한다.
@@ -396,23 +398,39 @@ export function planSkillInjection(entries, cap = SKILL_INJECT_CAP, refCap = SKI
   return { full, ref, omitted };
 }
 
-export async function listInstalledSkills(wsId) {
+/** Internal inventory: only entry documents are read; supporting files stay on disk. */
+export async function readInstalledSkills(wsId, allow = null) {
   const dir = paths(wsId).skills;
-  let names = [];
-  try { names = (await readdir(dir)).filter((f) => f.endsWith('.md')); } catch { return []; }
+  let names;
+  try { names = await readdir(dir, { withFileTypes: true }); } catch { return []; }
+  const flatNames = new Set(names.filter((e) => e.name.endsWith('.md')).map((e) => e.name));
   const out = [];
-  for (const n of names.sort()) {
-    // 항목별 관용 — #203이 턴 경로(loadSkills, 검수 M3)만 닫은 창의 마켓 대칭: 디렉터리(EISDIR)·
-    // 권한(EACCES) 항목 하나가 여기서 throw하면 마켓 GET 전체가 500(검수 라이브 확인). 건너뛴다.
-    const text = await readFile(join(dir, n), 'utf8').catch(() => null);
+  for (const entry of names) {
+    const n = entry.name;
+    const flat = n.endsWith('.md');
+    const id = flat ? n.slice(0, -3) : n;
+    if (allow && !allow.includes(id)) continue;
+    // Existing flat IDs win even when unreadable; a hidden duplicate must not silently activate.
+    if (!flat && (!entry.isDirectory() || n.startsWith('.') || flatNames.has(`${id}.md`))) continue;
+    if (flat && !entry.isFile() && !entry.isSymbolicLink()) continue;
+    const file = flat ? join(dir, n) : join(dir, n, 'SKILL.md');
+    if (!flat && !(await lstat(file).catch(() => null))?.isFile()) continue;
+    const text = await readFile(file, 'utf8').catch(() => null);
     if (text === null) continue;
     out.push({
-      id: n.replace(/\.md$/, ''),
-      title: text.match(/^#\s*(.+)$/m)?.[1] ?? n,
+      id,
+      title: text.match(/^#\s*(.+)$/m)?.[1] ?? (flat ? n : id),
       size: text.length,
+      ...(!flat ? { path: `skills/${id}/SKILL.md`, format: 'package' } : {}),
+      text,
     });
   }
-  return out;
+  // Match the legacy filename ordering, including IDs containing punctuation.
+  return out.sort((a, b) => `${a.id}.md` < `${b.id}.md` ? -1 : `${a.id}.md` > `${b.id}.md` ? 1 : 0);
+}
+
+export async function listInstalledSkills(wsId) {
+  return (await readInstalledSkills(wsId)).map(({ text, ...metadata }) => metadata);
 }
 
 export async function installSkill(wsId, id, lang = 'ko') {
@@ -436,23 +454,59 @@ export async function saveCustomSkill(wsId, { name, md }) {
 }
 
 export async function removeSkill(wsId, id) {
-  const safe = id.replace(/[^a-z0-9가-힣-]/gi, '');
-  await rm(join(paths(wsId).skills, `${safe}.md`), { force: true });
+  // Validate, never sanitize: stripping traversal characters can delete a different ID.
+  if (typeof id !== 'string' || !id || id.startsWith('.') || /[/\\\0]/.test(id)) {
+    throw marketError('market.skillInvalidId');
+  }
+  const dir = paths(wsId).skills;
+  const root = await lstat(dir).catch((e) => { if (e.code !== 'ENOENT') throw e; return null; });
+  if (!root) return;
+  if (!root.isDirectory()) throw marketError('market.skillInvalidDirectory');
+  const flat = join(dir, `${id}.md`);
+  const pkg = join(dir, id);
+  const exists = async (file) => lstat(file).catch((e) => { if (e.code !== 'ENOENT') throw e; return null; });
+  const flatStat = await exists(flat);
+  const pkgStat = await exists(pkg);
+  if (flatStat && pkgStat) throw marketError('market.skillAmbiguous');
+  if (flatStat) {
+    await rm(flat, { force: true });
+  } else if (pkgStat) {
+    if (!pkgStat.isDirectory() || !(await exists(join(pkg, 'SKILL.md')))?.isFile()) {
+      throw marketError('market.skillInvalidPackage');
+    }
+    // rm unlinks nested symlinks rather than following them outside this package.
+    await rm(pkg, { recursive: true, force: true });
+  }
 }
+
+// Stable error keys keep file contents and OS errors out of the response; the market translates them.
+function marketError(uiKey) { return Object.assign(new Error(uiKey), { uiKey }); }
 
 /* ─── MCP 설정 (mcp.json) ─── */
 export async function loadMcp(wsId) {
   try { return JSON.parse(await readFile(paths(wsId).mcp, 'utf8')); } catch { return { servers: {} }; }
 }
 
-async function saveMcp(wsId, cfg) {
-  // 0600 — mcp.json은 서버 정의(임의 command)와 env(토큰)를 담아 isSecretRel이 시크릿으로 분류하는
-  // 파일이다. 동기화로 내려오면 sync가 0600으로 쓰는데(sync.mjs) 로컬 저장만 mode를 안 줘 0644로
-  // 생겼다 — 같은 파일의 권한이 경로에 따라 갈렸다(실측 2026-08-19). 로컬 우선 제품에서 OS 사용자
-  // 경계가 마지막 경계라, 같은 기기의 다른 도구·계정이 읽을 수 있으면 그게 유출이다.
-  // 기존 파일은 mode 인자가 무시되므로 chmod로 함께 조인다.
-  await writeFile(paths(wsId).mcp, JSON.stringify(cfg, null, 2), { mode: 0o600 });
-  await chmod(paths(wsId).mcp, 0o600).catch(() => {});
+/** 모든 로컬 MCP 쓰기는 읽기부터 같은 잠금 안에서 수행한다. 가져오기와 기존 설치가
+    경쟁해도 다른 요청의 설정을 잃지 않는다. mutate는 파일/네트워크 I/O 없는 동기 수정만 한다. */
+export async function updateMcp(wsId, mutate) {
+  const file = paths(wsId).mcp;
+  return withDirLock(`${file}.lock`, async () => {
+    let cfg;
+    try {
+      cfg = JSON.parse(await readFile(file, 'utf8'));
+    } catch (e) {
+      if (e.code === 'ENOENT') cfg = { servers: {} };
+      else throw marketError('market.mcpReadFailed');
+    }
+    // loadMcp의 런타임 fallback을 쓰기에는 쓰지 않는다. 손상 파일을 빈 설정으로 덮을 수 있다.
+    const isObject = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+    if (!isObject(cfg) || !isObject(cfg.servers)) throw marketError('market.mcpInvalidConfig');
+    const result = mutate(cfg);
+    if (result?.then) throw new TypeError('MCP update must be synchronous');
+    await writeJsonAtomic(file, cfg); // 새 파일과 교체 파일 모두 0600 + fsync/rename
+    return result;
+  });
 }
 
 const NAME_RE = /^[a-z0-9-]{1,32}$/;
@@ -484,9 +538,7 @@ export function assertArbitraryMcpAllowed() {
 export async function installMcp(wsId, id) {
   const item = MCP_CATALOG.find((s) => s.id === id);
   if (!item) throw new Error('카탈로그에 없는 MCP입니다');
-  const cfg = await loadMcp(wsId);
-  cfg.servers[item.id] = item.def;
-  await saveMcp(wsId, cfg);
+  await updateMcp(wsId, cfg => { cfg.servers[item.id] = item.def; });
 }
 
 /** 커스텀 MCP — command/args만 허용, env 평문 시크릿은 받지 않는다(참조는 P1 서버측에서). */
@@ -494,15 +546,13 @@ export async function addCustomMcp(wsId, { name, command, args = [] }) {
   assertArbitraryMcpAllowed(); // 호스팅 모드 차단(P0-2) — 임의 command 프로세스가 서비스 키 곁에서 실행되는 것 방지
   if (!NAME_RE.test(name || '')) throw new Error('이름은 영소문자·숫자·하이픈 1~32자');
   if (!command?.trim()) throw new Error('command가 필요합니다');
-  const cfg = await loadMcp(wsId);
-  cfg.servers[name] = { command: command.trim(), args: args.filter((a) => a?.trim()).map((a) => a.trim()) };
-  await saveMcp(wsId, cfg);
+  await updateMcp(wsId, cfg => {
+    cfg.servers[name] = { command: command.trim(), args: args.filter((a) => a?.trim()).map((a) => a.trim()) };
+  });
 }
 
 export async function removeMcp(wsId, name) {
-  const cfg = await loadMcp(wsId);
-  delete cfg.servers[name];
-  await saveMcp(wsId, cfg);
+  await updateMcp(wsId, cfg => { delete cfg.servers[name]; });
 }
 
 /* ─── 호스트(이 컴퓨터) Claude Code MCP 가져오기 — 로컬 앱 전용 ───
@@ -553,9 +603,7 @@ export async function importHostMcp(wsId, name) {
   if (!src || typeof src !== 'object') throw new Error(`이 컴퓨터의 Claude Code에 "${name}" MCP가 없습니다`);
   const safe = String(name).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
   if (!NAME_RE.test(safe)) throw new Error('가져올 수 없는 이름입니다');
-  const company = await loadMcp(wsId);
   // 설정 원형 보존(command/args/env/type/url/headers) — SDK mcpServers가 그대로 먹는 형태
-  company.servers[safe] = JSON.parse(JSON.stringify(src));
-  await saveMcp(wsId, company);
+  await updateMcp(wsId, company => { company.servers[safe] = JSON.parse(JSON.stringify(src)); });
   return { name: safe, hasEnv: !!(src.env && Object.keys(src.env).length) };
 }

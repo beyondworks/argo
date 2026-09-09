@@ -4,14 +4,15 @@
 // 그게 유출이다(고객 기기의 코딩 에이전트가 Argo 파일을 읽은 사고와 같은 계열).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stat, readFile, mkdir } from 'node:fs/promises';
+import { stat, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+const root = await mkdtemp(join(tmpdir(), 'argo-mcpmode-'));
+process.env.ARGO_ROOT = root;
+
 test('installMcp: mcp.json이 0600으로 저장된다', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'argo-mcpmode-'));
-  process.env.ARGO_ROOT = root;
   const { createCompany, paths } = await import('../src/workspace.mjs');
   const { installMcp, MCP_CATALOG } = await import('../src/market.mjs');
   const wsId = 'modedrill';
@@ -25,9 +26,13 @@ test('installMcp: mcp.json이 0600으로 저장된다', async () => {
   assert.equal(st.mode & 0o777, 0o600, `mcp.json 권한: ${(st.mode & 0o777).toString(8)} (0600이어야)`);
 });
 
-test('계약: saveMcp가 mode 0600 + chmod를 함께 건다', async () => {
-  const src = await readFile(new URL('../src/market.mjs', import.meta.url), 'utf8');
-  const fn = src.split('async function saveMcp')[1]?.split('\n}')[0] ?? '';
-  assert.ok(fn.includes('0o600'), 'writeFile mode 0600');
-  assert.ok(fn.includes('chmod'), '기존 파일도 조인다 — mode 인자는 기존 파일에 무시된다');
+test('installMcp: 기존 0644 파일도 다음 저장에 0600으로 조인다', async () => {
+  const { paths } = await import('../src/workspace.mjs');
+  const { installMcp, MCP_CATALOG } = await import('../src/market.mjs');
+  const file = paths('mode-existing').mcp;
+  await mkdir(join(root, 'mode-existing'), { recursive: true });
+  await writeFile(file, JSON.stringify({ servers: {} }));
+  await chmod(file, 0o644);
+  await installMcp('mode-existing', MCP_CATALOG[0].id);
+  if (process.platform !== 'win32') assert.equal((await stat(file)).mode & 0o777, 0o600);
 });

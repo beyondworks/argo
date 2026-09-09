@@ -31,7 +31,7 @@ import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './t
 import { registerTurn } from './turn-abort.mjs';
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_EFFORTS, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { loadThread, takeSharedNotes, restoreSharedNotes } from './thread.mjs';
-import { planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
+import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
 /** 회사 스킬(skills/*.md) — 지시형 md를 시스템 프롬프트에 주입 (기둥 3). 총량 캡으로 폭주 방지.
@@ -68,33 +68,24 @@ export function mcpRecoveries(initMsg, recent) {
 }
 
 export async function loadSkills(wsId, cap = SKILL_INJECT_CAP, lang = 'ko', allow = null) {
-  const dir = paths(wsId).skills;
-  let names = [];
-  try { names = (await readdir(dir)).filter((f) => f.endsWith('.md')).sort(); } catch { return ''; }
-  if (allow) names = names.filter((n) => allow.includes(n.replace(/\.md$/, '')));
-  const texts = new Map();
-  // 항목별 관용(검수 M3) — 이전 break 구현은 뒤쪽 손상 항목에 도달조차 안 했는데, 전량 선행
-  // 읽기로 바꾸면서 디렉터리(EISDIR)·권한(EACCES) 하나가 턴 전체를 죽이는 창이 열렸다. 건너뛴다.
-  for (const n of names) {
-    const text = await readFile(join(dir, n), 'utf8').catch(() => null);
-    if (text !== null) texts.set(n, text);
-  }
-  names = names.filter((n) => texts.has(n));
-  // 3상태 계획(full/ref/omitted)을 **계획대로만** 주입 — ref 상한(검수 M4: 스킬 수백 개면 참조
-  // 라인만으로 프롬프트 비대, 실측 501개=46KB)이 chat만 아는 값이던 것을 계획으로 이관(검수 R2:
-  // 21번째부터 이름조차 미주입인데 마켓은 'ref' 배지를 달던 갭).
-  const { full, ref, omitted } = planSkillInjection(names.map((n) => ({ id: n, size: texts.get(n).length })), cap);
+  const entries = await readInstalledSkills(wsId, allow);
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const { full, ref, omitted } = planSkillInjection(entries, cap);
+  const baseInstruction = (entry) => entry.format !== 'package' ? '' : lang === 'en'
+    ? `(Base path: skills/${entry.id}/ — resolve relative scripts, references and other files from this directory.)\n`
+    : `(기준 경로: skills/${entry.id}/ — 상대 경로의 스크립트·참조 문서·파일은 이 디렉터리를 기준으로 열어라.)\n`;
   let out = '';
-  for (const n of full) {
-    out += `\n### ${lang === 'en' ? 'Skill' : '스킬'}: ${n.replace(/\.md$/, '')}\n${texts.get(n).trim()}\n`;
+  for (const id of full) {
+    const entry = byId.get(id);
+    out += `\n### ${lang === 'en' ? 'Skill' : '스킬'}: ${id}\n${baseInstruction(entry)}${entry.text.trim()}\n`;
   }
-  // 예산 초과분은 **참조로라도 반드시 알린다** — 존재를 모르면 크루가 "그런 스킬 없다"고 답한다.
-  // skills/는 크루 책상이라 게이트가 열려 있어 Read로 전문을 열 수 있다(그 계약을 여기서 준다).
-  for (const n of ref) {
-    const id = n.replace(/\.md$/, '');
+  for (const id of ref) {
+    const entry = byId.get(id);
+    const path = entry.path ?? `skills/${id}.md`;
     out += lang === 'en'
-      ? `\n### Skill: ${id}\n(Body omitted — injection budget exceeded. Read skills/${n} for the full text and apply it when relevant.)\n`
-      : `\n### 스킬: ${id}\n(본문 생략 — 주입 예산 초과. 해당 작업이면 skills/${n} 을 Read로 열어 전문을 적용하라.)\n`;
+      ? `\n### Skill: ${id}\n(Body omitted — injection budget exceeded. Read ${path} for the full text and apply it when relevant.)\n`
+      : `\n### 스킬: ${id}\n(본문 생략 — 주입 예산 초과. 해당 작업이면 ${path} 을 Read로 열어 전문을 적용하라.)\n`;
+    out += baseInstruction(entry);
   }
   if (omitted.length) {
     out += lang === 'en'
