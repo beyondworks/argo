@@ -93,10 +93,12 @@ test('DEFER(순서 대기)·선점 경로 전달: 핸들러가 DEFER를 반환�
   const dir = queueDir(WS, 'msgr');
   await enqueueJob(WS, 'msgr', '50-pepper', { text: '대기' });
   const seen = []; let n = 0; const errs = []; const origErr = console.error; console.error = (...a) => { errs.push(a.join(' ')); };
-  const stop = startQueueWorker(WS, 'msgr', async (job, meta) => { seen.push(meta?.path); return ++n < 3 ? DEFER : undefined; });
-  await new Promise((r) => setTimeout(r, 4500));
+  await enqueueJob(WS, 'msgr', '51-zed', { text: '뒤 잡' }); const later = [];
+  const stop = startQueueWorker(WS, 'msgr', async (job, meta) => { if (job.text === '뒤 잡') { later.push(Date.now()); return; } seen.push(meta?.path); return ++n < 3 ? DEFER : undefined; }, { maxInflight: 1 });
+  await new Promise((r) => setTimeout(r, 9000));
   stop(); console.error = origErr;
-  assert.equal(n, 3, 'DEFER 두 번 뒤 세 번째 틱에 실행');
+  assert.equal(n, 3, 'DEFER 두 번(3초 백오프) 뒤 세 번째 검사에서 실행');
+  assert.equal(later.length, 1, 'DEFER 잡이 앞에 있어도 뒤 잡은 굶지 않는다(백오프 중 스캔 제외·검사 차례는 맨 뒤)');
   assert.ok(seen.every((p) => p === join(dir, '50-pepper.json.claimed')), `선점 파일 경로 전달: ${seen[0]}`);
   assert.equal(errs.filter((e) => e.includes('큐 처리 실패')).length, 0, 'DEFER는 오류가 아니다');
   assert.equal((await readdir(dir).catch(() => [])).filter((x) => /\.json(\.claimed)?$/.test(x)).length, 0, '완료 뒤 흔적 없음');

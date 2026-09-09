@@ -34,11 +34,13 @@ export async function enqueueJob(wsId, key, id, job) { // (export: 회귀 테스
 /** 큐 드레인 워커 — 1초 폴. handler(job)이 정상 반환하면 파일 삭제(처리 완료), 던지면 유지(다음 틱 재시도·재기동 복구). (export: 회귀 테스트용) */
 /** 핸들러가 이 값을 반환하면 "아직 차례가 아니다" — 선점을 풀어 다음 틱에 다시 집는다(로그 없음, 슬롯 점유 없음). 순서 대기(msgr after)용. */
 export const DEFER = Symbol('queue.defer');
+export const DEFER_BACKOFF_MS = 3000; // DEFER 잡의 재검사 간격(순서 대기의 DB 조회 = 잡당 3초에 한 번)
 export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFLIGHT } = {}) {
   let stopped = false;
   let me = null; // 이 기기 id — 해석 전(null)에는 잡을 집지 않는다(남의 사본 오실행 방지). 실패 시 ''(판정 생략, 전부 실행)
   getDeviceId().then((d) => { me = d; }).catch(() => { me = ''; });
   const busy = new Set();
+  const deferUntil = new Map(); // DEFER 반환 잡 → 다음 검사 시각. 백오프 동안은 스캔에서 빠지고, 검사 차례도 일반 잡 뒤로(슬롯 굶김 방지 — 검수 2R M-5)
   const iv = setInterval(async () => {
     if (stopped || me === null) return;
     let names = [];
@@ -48,8 +50,12 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
       const fp = join(queueDir(wsId, key), n); const mt = (await stat(fp).catch(() => null))?.mtimeMs ?? 0;
       if (mt && Date.now() - mt > CLAIM_MAX_AGE_MS) { await rename(fp, fp.replace(/\.claimed$/, '')).catch(() => {}); console.log(`[argo] 큐 선점 회수(${wsId}/${key}/${n}): ${Math.round(CLAIM_MAX_AGE_MS / 60_000)}분 넘은 선점 — 재실행`); }
     }
+    const tick = Date.now();
+    for (const [n, t] of deferUntil) if (t <= tick) deferUntil.delete(n);
     names = names.filter((n) => n.endsWith('.json') && !n.startsWith('.'))
       .sort((a, b) => ((parseInt(a, 10) || 0) - (parseInt(b, 10) || 0)) || a.localeCompare(b)); // 도착 순서 근사(동값은 사전순 고정)
+    const waiting = new Set([...deferUntil.keys()]);
+    names = [...names.filter((n) => !waiting.has(n)), ...names.filter((n) => waiting.has(n) && deferUntil.get(n) <= tick)]; // 백오프 중인 잡은 제외, 검사 차례는 맨 뒤
     for (const n of names) {
       if (busy.has(n)) continue;
       if (busy.size >= maxInflight) break; // 상한 도달 — 남은 잡은 다음 틱(큐별로 다르다: 장시간 작업은 1)
@@ -71,7 +77,7 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
             // dev 태그 없는 구형식 잡이 너무 오래됨 — 어느 기기 것인지 알 수 없어 좀비 실행 대신 폐기(로그로 관측)
             console.log(`[argo] 큐 정리(${wsId}/${key}/${n}): ${Math.round(LEGACY_JOB_MAX_AGE_MS / 3_600_000)}시간 넘은 구형식 잡 — 실행 없이 제거`);
           } else if (job) {
-            if (await handler(job, { path: fp }) === DEFER) return; // 차례 아님 — finally가 선점을 풀고 다음 틱에 다시 집는다. path = 선점 뒤 실제 파일(장시간 잡 tries 마커가 원래 이름에 쓰이던 회귀 방지)
+            if (await handler(job, { path: fp }) === DEFER) { deferUntil.set(n, Date.now() + DEFER_BACKOFF_MS); return; } // 차례 아님 — finally가 선점을 풀고 백오프 뒤 다시 집는다. path = 선점 뒤 실제 파일(장시간 잡 tries 마커가 원래 이름에 쓰이던 회귀 방지)
           }
           done = true;
           await unlink(fp).catch(() => {}); // 처리 완료분만 제거. 처리 중 크래시면 .claimed가 남아 CLAIM_MAX_AGE_MS 뒤 회수·재처리

@@ -226,8 +226,14 @@ export function makeDb(client) {
       return rows.length > 0;
     },
     /** 이 스레드에서 크루가 크루 넘김으로 돈 턴 수(브리지가 답글 meta.hop≥1로 표시) — 연쇄 상한의 근거. meta는 사용자가 쓸 수 있어도 늘리는 방향으로만 속일 수 있다. */
-    async autoTurnsIn(rootId) {
-      return unwrap(await client.from('msgr_messages').select('id', { count: 'exact', head: true }).eq('thread_root', rootId).eq('author_kind', 'crew').eq('kind', 'text').gte('meta->>hop', '1')).count ?? 0;
+    async autoTurnsIn(rootId) { // HEAD 카운트 응답은 { data: null, count } — data 대신 count를 읽는다(검수 2R C-1)
+      const { count, error } = await client.from('msgr_messages').select('id', { count: 'exact', head: true }).eq('thread_root', rootId).eq('author_kind', 'crew').eq('kind', 'text').gte('meta->>hop', '1');
+      if (error) throw new Error(`msgr db: ${error.message}`);
+      return count ?? 0;
+    },
+    /** 크루 소유자 — 크루 발 넘김의 권한 주체(크루 글 insert는 RLS가 소유자에게만 허용하므로 위조 불가). */
+    async crewOwner(crewId) {
+      return (unwrap(await client.from('msgr_crews').select('owner_user_id').eq('id', crewId).maybeSingle()))?.owner_user_id ?? null;
     },
     /** 답글·카드 insert. 중복(client_msg_id unique) → null. */
     async insertMessage(row) {
@@ -346,22 +352,26 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       max = Math.max(max, m.id);
       if (!targetsCrew(m, crew, dm)) continue;
       const fromCrew = m.author_kind === 'crew';
-      let hop = 0; let origin = m.author_user_id;
+      let hop = 0; let origin = m.author_user_id; let rootAuthor = null;
       if (fromCrew) {
-        // 크루 넘김의 사람 출처(origin)·연쇄 단계(hop)는 meta가 아니라 서버 행에서 도출한다 — meta는 조직 멤버가 자기 크루 명의로 쓸 수 있어 위조 가능(검수 C-2)
+        // 권한 주체 = 발신 크루의 소유자(크루는 소유자의 권한으로 말한다). 크루 글 insert는 RLS가 소유자에게만 허용하므로 위조 불가.
+        // meta.origin·thread_root·reply_to는 멤버가 쓸 수 있는 값이라 권한 판정에 쓰지 않는다(검수 1R C-2·2R H-3).
+        origin = await db.crewOwner(m.crew_id).catch(() => null);
+        if (!origin) continue;
+        // 뿌리(사람 글, 같은 채널)는 프레이밍·접기·연쇄 집계에만 쓴다. 다른 채널·크루 글·없음이면 접기 없이 hop만 집계
         const root = m.thread_root ? await db.message(m.thread_root).catch(() => null) : null;
-        if (!root || root.author_kind !== 'user' || !root.author_user_id) continue; // 뿌리가 사람 글이 아니면(삭제·크루 글) 넘김 없음
-        if (targetsCrew(root, crew, dm) && !(await db.settled(crew.id, root.id).catch(() => true))) continue; // 뿌리가 이 크루도 겨냥했는데 그 턴이 아직이면 접는다 — 그 턴이 곧 문맥을 안고 돈다(겹침 방지). ponytail: 접힌 넘김은 재고하지 않는다(뿌리 턴이 문맥을 본다)
-        origin = root.author_user_id;
-        hop = 1 + (await db.autoTurnsIn(root.id).catch(() => HOP_MAX)); // 조회 실패 = 상한 취급(fail-closed)
+        const rootOk = root && root.author_kind === 'user' && root.channel_id === m.channel_id;
+        if (rootOk && targetsCrew(root, crew, dm) && !(await db.settled(crew.id, root.id).catch(() => true))) continue; // 뿌리가 이 크루도 겨냥했는데 그 턴이 아직이면 접는다 — 그 턴이 곧 문맥을 안고 돈다(겹침 방지). ponytail: 접힌 넘김은 재고하지 않는다
+        rootAuthor = rootOk ? root.author_user_id : null;
+        hop = 1 + (await db.autoTurnsIn(m.thread_root ?? m.id).catch(() => HOP_MAX)); // 조회 실패 = 상한 취급(fail-closed)
       }
       if (fromCrew && hop > HOP_MAX) {
-        await db.insertMessage({ channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, client_msg_id: `hopcap:${crew.id}:${m.id}`,
+        await db.insertMessage({ channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `hopcap:${crew.id}:${m.id}`,
           body: pick(`크루끼리 넘기기가 ${HOP_MAX}단계를 넘어 여기서 멈춥니다 — 이어가려면 사람이 다시 지시해 주세요.`, `Crew-to-crew handoff exceeded ${HOP_MAX} hops and stops here — a person needs to re-instruct to continue.`, lang) }).catch((e) => console.error('[argo] msgr 넘김 상한 안내 실패:', e.message));
         continue;
       }
       if (fromCrew && !autoOk(wsId, now())) {
-        await db.insertMessage({ channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, client_msg_id: `ratecap:${crew.id}:${m.id}`,
+        await db.insertMessage({ channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `ratecap:${crew.id}:${m.id}`,
           body: pick(`10분 안에 자동 턴이 ${AUTO_MAX}회를 넘어 이 넘김은 실행하지 않았습니다 — 잠시 뒤 사람이 다시 지시해 주세요.`, `Over ${AUTO_MAX} automatic turns in 10 minutes — this handoff was not run; a person can re-instruct shortly.`, lang) }).catch((e) => console.error('[argo] msgr 자동 턴 상한 안내 실패:', e.message));
         continue;
       }
@@ -369,7 +379,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       if (why !== 'ok') {
         out.denied++;
         await db.insertMessage({
-          channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, client_msg_id: `deny:${crew.id}:${m.id}`,
+          channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `deny:${crew.id}:${m.id}`,
           body: why === 'channel_policy'
             ? pick(`이 채널은 회사 크루만 일할 수 있습니다(채널 정책). ${crew.display_name}은(는) 개인 크루라 여기서는 지시를 받지 않습니다.`,
               `Only company crews can work in this channel (channel policy). ${crew.display_name} is a personal crew and does not take instructions here.`, lang)
@@ -381,7 +391,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       if (now() - Date.parse(m.created_at) > STALE_MS) {
         out.stale++;
         await db.insertMessage({
-          channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, client_msg_id: `stale:${crew.id}:${m.id}`,
+          channel_id: m.channel_id, author_kind: 'crew', crew_id: crew.id, kind: 'system', reply_to: m.id, thread_root: m.thread_root ?? m.id, client_msg_id: `stale:${crew.id}:${m.id}`,
           body: pick('대기 시간이 24시간을 넘어 이 지시는 실행하지 않았습니다 — 다시 지시해 주세요.', 'This request waited over 24 hours and was not run — please ask again.', lang),
         }).catch((e) => console.error('[argo] msgr 만료 안내 실패:', e.message));
         continue;
@@ -393,7 +403,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       await enqueue(wsId, MSGR_KEY, `${m.id}-${String(order).padStart(2, '0')}-${crew.slug}`, {
         msgId: m.id, orgId: crew.org_id, channelId: m.channel_id, crewId: crew.id, slug: crew.slug, text: m.body,
         authorId: origin, replyTo: m.reply_to, threadRoot: m.thread_root ?? m.id, createdAt: m.created_at,
-        hop, origin, fromCrewId: fromCrew ? m.crew_id : null, after,
+        hop, origin, rootAuthor, fromCrewId: fromCrew ? m.crew_id : null, after,
       });
       out.queued++;
     }
@@ -435,17 +445,19 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     if (!c) { throw new Error('기기 세션 없음 — 다음 틱 재시도'); } // 인프라 예외 = 파일 유지·재시도(queue.mjs 계약)
     const { db, uid } = c;
     const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
-    const ch = await db.channel(job.channelId).catch(() => null);
-    if (!ch) return; // 채널 삭제 — 잡 폐기
-    if (await db.settled(job.crewId, job.msgId).catch(() => false)) { console.log(`[argo] msgr 잡 중복(${wsId}/${job.slug}/${job.msgId}) — 이미 답함, 실행 생략`); return; } // 선점 중 재적재된 사본(검수 M-2) — 유료 턴 두 번 방지
-    for (const prev of job.after ?? []) { // 앞 크루가 끝날 때까지 이 잡은 차례를 미룬다(DEFER = 선점 해제, 슬롯 점유 없음). 상한(ORDER_WAIT_MS, 적재 시각 기준) 뒤엔 그냥 진행
+    const ctxKey = `${wsId}:${job.slug}`;
+    for (const prev of job.after ?? []) { // 앞 크루가 끝날 때까지 이 잡은 차례를 미룬다(DEFER = 선점 해제·백오프, 슬롯 점유 없음). 상한(ORDER_WAIT_MS, 적재 시각 기준) 뒤엔 그냥 진행
       if (!(await db.settled(prev, job.msgId).catch(() => true)) && now() - Date.parse(job.createdAt) < ORDER_WAIT_MS) return DEFER;
     }
+    if (activeCtx.has(ctxKey) && now() - Date.parse(job.createdAt) < ORDER_WAIT_MS) return DEFER; // 같은 크루는 한 번에 한 턴 — 상태 파일이 크루당 하나라 동시 턴이면 다른 채널(DM)의 사고·본문이 이 채널 방송에 섞인다(검수 2R H-4)
+    if (await db.settled(job.crewId, job.msgId).catch(() => false)) { console.log(`[argo] msgr 잡 중복(${wsId}/${job.slug}/${job.msgId}) — 이미 답함, 실행 생략`); return; } // 선점 중 재적재된 사본(검수 M-2) — 유료 턴 두 번 방지
+    const ch = await db.channel(job.channelId).catch(() => null);
+    if (!ch) return; // 채널 삭제 — 잡 폐기
     const started = now();
     const waited = started - Date.parse(job.createdAt); // 큐 대기(부재중) — 턴 소요 시간은 포함하지 않는다(검수 MEDIUM-3)
     const peers = await db.orgCrews(job.orgId).catch(() => []);
     const crewName = (id) => peers.find((p) => p.id === id)?.display_name ?? pick('크루', 'crew', lang);
-    const humanName = clean((await db.memberName(job.orgId, job.authorId).catch(() => null)) ?? pick('멤버', 'member', lang), 40);
+    const humanName = clean((await db.memberName(job.orgId, job.fromCrewId ? (job.rootAuthor ?? job.authorId) : job.authorId).catch(() => null)) ?? pick('멤버', 'member', lang), 40); // 넘긴 턴의 '지시를 이어'는 뿌리 사람(표시용) — 권한 주체(authorId)는 발신 크루 소유자
     const authorName = job.fromCrewId ? clean(crewName(job.fromCrewId), 40) : humanName;
     const chName = clean(ch.name, 40);
     const others = peers.filter((p) => p.id !== job.crewId).map((p) => `@${clean(p.display_name, 40)}`);
@@ -491,7 +503,6 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     }
     const orgRow = await db.org(job.orgId).catch(() => null); // G-3 규칙 주입 키(미러 폴더 = org slug)·채널 이름(채널 범위 규칙)
     const ctx = { chatType: 'group', kind: 'msgr', orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, uid, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '' };
-    const ctxKey = `${wsId}:${job.slug}`;
     activeCtx.set(ctxKey, ctx);
     const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public' }); // 본문·사고·단계는 공개 채널만(조직 토픽은 조직 전원이 듣는다 — 검수 C-1)
     let reply; let failed = false; let turnTrace = null;
@@ -520,7 +531,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     let row = null;
     try {
       row = await db.insertMessage({
-        channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId,
+        channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId, thread_root: job.threadRoot ?? job.msgId, // 명시 — 트리거는 null일 때 reply_to(크루 글)로 채워 스레드가 끊긴다(검수 2R C-2)
         client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(reply ?? '').slice(0, MSG_MAX),
         mentions: failed ? [] : mentionsIn(String(reply ?? ''), peers, job.crewId), // 답변 속 @크루 → 그 크루가 이어받는다(drain의 targetsCrew)
         meta: { ...(turnTrace ? { trace: turnTrace } : {}), hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null }, // trace=궤적 드롭다운(실패 턴은 없음) · hop/origin=연쇄 상한·정책 기준
@@ -563,7 +574,7 @@ function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false
     // 조직 토픽(org:<id>)은 조직 멤버 전원이 듣는다 — 비공개·DM 채널의 본문·사고·도구 단계는 방송하지 않고 단계만(최종 궤적은 메시지 meta로 열람 RLS를 탄다)
     const payload = full
       ? { channel_id: channelId, crew_id: crewId, stage: s.stage, detail: s.detail, steps: (s.steps ?? []).slice(-40), thought: s.thought, partial: String(s.partial ?? '').slice(-1200), startedAt: s.startedAt }
-      : { channel_id: channelId, crew_id: crewId, stage: s.stage, detail: s.detail, steps: [], thought: '', partial: '', startedAt: s.startedAt };
+      : { channel_id: channelId, crew_id: crewId, stage: s.stage, detail: '', steps: [], thought: '', partial: '', startedAt: s.startedAt }; // detail(파일명·명령 앞부분)도 비공개·DM은 뺀다(검수 2R M-6)
     const key = JSON.stringify(payload);
     if (key === last) return;
     last = key;
@@ -644,19 +655,20 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
   // 크루 쪽지 — 메신저 턴에서 보낸 쪽지(event.msgr)는 텔레그램이 아니라 그 채널에: 쪽지 본문은 발신 크루 이름으로(@수신자), 회신은 수신 크루 이름으로.
   // 실사고 2026-09-09: 채널에서 "@슈리 @카맥 번갈아 세기"를 시키자 둘이 쪽지로 이어 세었는데 그 릴레이가 전부 텔레그램 봇으로 나갔다.
   if (event.type === 'crewmail' && event.msgr?.channelId) {
-    if (muted('crewmail')) return false;
+    if (muted('crewmail')) return true; // 음소거 = 처리됨 — 텔레그램 폴백으로 되살리지 않는다(검수 2R L-7)
     const c = await session(); if (!c) return false;
     const [sender, receiver] = await Promise.all([c.db.crewBySlug(c.uid, event.wsId, event.from).catch(() => null), c.db.crewBySlug(c.uid, event.wsId, event.slug).catch(() => null)]);
     if (!receiver || receiver.org_id !== event.msgr.orgId) return false;
     const root = event.msgr.threadRoot ?? null;
+    let ok = 0; // 부분 성공도 처리됨(true) — 둘 다 실패했을 때만 텔레그램 폴백(검수 2R L-7 이중 배달 방지)
     if (sender && sender.org_id === event.msgr.orgId && event.message && event.kind !== 'cc') {
-      await c.db.insertMessage({ channel_id: event.msgr.channelId, author_kind: 'crew', crew_id: sender.id, kind: 'text', reply_to: root, client_msg_id: `mail:${event.id}:${sender.id}`,
-        mentions: [{ kind: 'crew', id: receiver.id }], body: `@${receiver.display_name} ${String(event.message).trim()}` });
+      try { await c.db.insertMessage({ channel_id: event.msgr.channelId, author_kind: 'crew', crew_id: sender.id, kind: 'text', reply_to: root, thread_root: root, client_msg_id: `mail:${event.id}:${sender.id}`,
+        mentions: [{ kind: 'crew', id: receiver.id }], body: `@${receiver.display_name} ${String(event.message).trim()}` }); ok++; } catch (e) { console.error('[argo] msgr 쪽지 미러 실패:', e.message); }
     }
     if (event.reply) {
-      await c.db.insertMessage({ channel_id: event.msgr.channelId, author_kind: 'crew', crew_id: receiver.id, kind: 'text', reply_to: root, client_msg_id: `mailreply:${event.id}:${receiver.id}`, body: String(event.reply).slice(0, MSG_MAX) });
+      try { await c.db.insertMessage({ channel_id: event.msgr.channelId, author_kind: 'crew', crew_id: receiver.id, kind: 'text', reply_to: root, thread_root: root, client_msg_id: `mailreply:${event.id}:${receiver.id}`, body: String(event.reply).slice(0, MSG_MAX) }); ok++; } catch (e) { console.error('[argo] msgr 쪽지 회신 미러 실패:', e.message); }
     }
-    return true;
+    return ok > 0 || (!event.reply && !event.message);
   }
   return false;
 }

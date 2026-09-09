@@ -308,6 +308,10 @@ test('크루→크루 @넘김(2026-09-09) — 크루 답글에 mentions·meta(ho
   // 서윤이 제드의 글에 답(원문 author_kind=crew) — 게이트 통과, thread_root는 뿌리로
   const r2 = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to, mentions, meta) values ('${PUB}', 'crew', '${CREW}', '2. @제드 다음', 'reply:${CREW}:${r1}', ${r1}, '[{"kind":"crew","id":"${ZED}"}]', '{"hop":1,"origin":"${U.owner}"}') returning id`));
   assert.match(r2, /^\d+$/);
+  assert.equal(last(asUser(U.member, `select thread_root from public.msgr_messages where id = ${r2}`)), r1, '트리거는 thread_root를 reply_to(크루 글)로 채운다 — 브리지가 뿌리를 명시해야 한다(2R C-2)');
+  const r3 = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to, thread_root, meta) values ('${PUB}', 'crew', '${ZED}', '3', 'reply:${ZED}:${r2}', ${r2}, ${m}, '{"hop":2,"origin":"${U.owner}"}') returning id`));
+  assert.equal(last(asUser(U.member, `select thread_root from public.msgr_messages where id = ${r3}`)), m, '명시한 뿌리는 유지');
+  assert.equal(last(asUser(U.member, `select count(*) from public.msgr_messages where thread_root = ${m} and author_kind = 'crew' and kind = 'text' and (meta->>'hop') >= '1'`)), '1', 'autoTurnsIn 집계(hop≥1 텍스트 비교) — 뿌리를 명시한 r3만 잡히고 트리거가 채운 r2(뿌리=r1)는 빠진다: 브리지가 thread_root를 명시해야 하는 이유');
   // contextOf: 이 채널의 r2 이전 text 글을 오래된 순으로 — 최소 m·r1 포함
   const ctx = asUser(U.member, `select string_agg(id::text, ',' order by id) from (select id from public.msgr_messages where channel_id = '${PUB}' and id < ${r2} and kind = 'text' and deleted_at is null order by id desc limit 12) s`).split('\n').pop();
   assert.ok(ctx.split(',').includes(m) && ctx.split(',').includes(r1), `문맥에 원문·앞 답글 포함: ${ctx}`);
