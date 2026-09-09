@@ -665,3 +665,12 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-side .msgr-badge { font-size: 11.5px; min-width: 20px; height: 20px; }
 .msgr-sort { font-size: 13px; opacity: 1; height: 26px; padding: 0 8px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--card-2); color: var(--fg-2); }
 .msgr-sort:hover { color: var(--fg); border-color: var(--border); }
+
+/* 정렬 아이콘 버튼 + 메뉴(2026-09-09) */
+.msgr-sortwrap { position: relative; display: inline-flex; }
+.msgr-sortbtn { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--fg-3); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.msgr-sortbtn:hover, .msgr-sortbtn.on { background: var(--card-2); color: var(--fg); }
+.msgr-sortwrap .msgr-rowmenu { left: auto; right: 0; top: calc(100% + 4px); min-width: 130px; }
+/* 접힌 절 캐럿 정렬(#463 RailSection의 .lbl::before) — 접힘 상태의 translate(-1px, 1px)가 글자보다 1~2px 아래로 내려앉던 것 */
+.msgr-sec > summary .lbl::before { transform: rotate(45deg) translate(-1px, -1px); }
+.msgr-sec:not([open]) > summary .lbl::before { transform: rotate(-45deg) translate(-1px, -1px); }

@@ -14,6 +14,7 @@ const PATHS = {
   check: '<path d="m3 8.5 3.2 3L13 4.5"/>',
   x: '<path d="m4 4 8 8M12 4l-8 8"/>',
   bell: '<path d="M4 11V7.5a4 4 0 0 1 8 0V11l1 1.5H3z"/><path d="M6.5 13.5a1.5 1.5 0 0 0 3 0"/>',
+  sort: '<path d="M2.5 4h11"/><path d="M4.5 8h7"/><path d="M6.5 12h3"/>',
   belloff: '<path d="M5.5 5.2A4 4 0 0 1 12 7.5V11l1 1.5H6"/><path d="M4 7.8V11l-1 1.5h4"/><path d="M6.5 13.5a1.5 1.5 0 0 0 3 0"/><path d="M2.5 2.5l11 11"/>',
   clock: '<circle cx="8" cy="8" r="5.8"/><path d="M8 4.8V8l2.2 1.4"/>',
   stamp: '<path d="M5.5 9V6.5a2.5 2.5 0 0 1 5 0V9M3 9h10v2.5H3zM4 13.5h8"/>',

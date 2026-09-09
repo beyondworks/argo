@@ -21,7 +21,7 @@ test('봇 = 회사 등급(클라이언트 crewTier) · 내 에이전트 레일�
   assert.match(app, /export const crewTier = \(crew, org\) => \(crew\?\.hosting === 'bot' \|\| /, '봇 회사 등급');
   assert.match(app, /const myCrews = sortCrews\(crews\.filter\(\(c\) => c\.owner_user_id === uid\)\);/, '내 에이전트 = 아르고 + 내가 연결한 봇(세 출처 한 목록) + 정렬(소속별·이름순·추가순)');
   assert.doesNotMatch(app, /const folders = \[\.\.\.new Set\(myCrews\.map\(\(c\) => c\.folder\)/, '그룹(폴더) 묶음은 뺐다(유건 결정 2026-09-09: 평평한 목록)');
-  assert.match(app, /<select className="msgr-sort" value=\{railSort\}/, '정렬 선택');
+  assert.match(app, /<button type="button" className=\{`msgr-sortbtn\$\{sortMenu \? ' on' : ''\}`\}/, '정렬 아이콘 버튼 → 메뉴(유건 지시)');
   assert.match(app, /<button type="button" className="me" onClick=\{\(\) => setMeMenu/, '프로필 클릭 메뉴(로그아웃은 여기)');
   assert.doesNotMatch(app, /className="btn ghost" onClick=\{\(\) => supabase\.auth\.signOut/, '하단 바의 로그아웃 아이콘 버튼 제거');
   assert.match(app, /placeholder=\{t\('org\.members\.search'\)\}/, '멤버 검색'); assert.match(app, /shown\.slice\(0, memberN\)/, '멤버 30명씩');
