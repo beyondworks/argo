@@ -42,7 +42,7 @@ test('P0: 안 읽음 RPC → 레일 배지(멘션은 mark·음소거는 dim)·�
   assert.match(app, /\{mine && m\.kind === 'text' && <button type="button" onClick=\{\(\) => \{ setDraft\(m\.body\); setEditing\(true\); \}\}>/, '편집은 내 글만');
   assert.match(app, /\{mine && \(confirmDel \? <button type="button" className="danger"/, '삭제는 2단계 확인');
   assert.match(app, /update\(\{ body: '', deleted_at: new Date\(\)\.toISOString\(\) \}\)/, '삭제 = deleted_at + 본문 비움');
-  assert.match(app, /const quick = topEmoji\(3\);/, 'hover 즉시 반응 3개(빈도순)'); assert.match(app, /function EmojiPicker\(\{ t, onPick, onClose \}\)[\s\S]*?searchEmoji\(q\)[\s\S]*?EMOJI_GROUPS\.map/, '슬랙식 피커: 검색·자주 사용·분류');
+  assert.match(app, /const quick = topEmoji\(3\);/, 'hover 즉시 반응 3개(빈도순)'); assert.match(app, /function EmojiPicker\(\{ t, anchor, onPick, onClose \}\)[\s\S]*?searchEmoji\(q\)[\s\S]*?EMOJI_GROUPS\.map/, '슬랙식 피커: 검색·자주 사용·분류'); assert.match(app, /className="msgr-emojipop" ref=\{ref\}[^\n]*style=\{\{ left, top, width: W, maxHeight: H \}\}/, '피커는 화면 고정(스크롤 무관)'); assert.match(read('apps/messenger/src/styles.css'), /^\.msgr-emojipop \{ position: fixed;/m, 'fixed');
   assert.match(app, /broadcast\?\.\('reaction', \{ channel_id: chId, message_id: m\.id \}\)/, '반응 방송');
   assert.match(app, /if \(event\.kind === 'reaction' && event\.channel_id === chId && event\.message_id\) reloadReacts/, '반응 수신');
   assert.match(app, /\{t\(muted\.has\(c\.id\) \? 'ch\.unmute' : 'ch\.mute'\)\}/, '음소거 메뉴');
