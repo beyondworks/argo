@@ -297,3 +297,20 @@ test('아바타(20260909005000): 프로필 avatar_url 본인만 · 같은 조직
   denied(U.member, `insert into storage.objects (bucket_id, name, owner) values ('msgr-avatars', 'avatars/${U.owner}/me-2.jpg', '${U.member}')`); // 남의 폴더 금지
   denied(U.member, `insert into storage.objects (bucket_id, name, owner) values ('msgr-avatars', 'other/${U.member}/x.jpg', '${U.member}')`); // avatars/ 밖 금지
 });
+
+test('크루→크루 @넘김(2026-09-09) — 크루 답글에 mentions·meta(hop/origin) 저장, 넘겨받은 크루의 reply:<크루>:<크루 글> 은 답글 게이트를 지나고(원문이 크루 글이면 정책 재판정 없음), settled·contextOf 조회가 RLS 아래에서 읽힌다', { skip }, () => {
+  const ZED = last(asUser(U.member, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.member}', 'lean-ax-abcd', 'zed', '제드') returning id`));
+  const m = last(asUser(U.owner, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, mentions) values ('${PUB}', 'user', '${U.owner}', '@제드 @서윤 번갈아 세어줘', '[{"kind":"crew","id":"${ZED}"},{"kind":"crew","id":"${CREW}"}]') returning id`));
+  // 제드 답글(멘션 서윤 + meta)
+  const r1 = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to, mentions, meta) values ('${PUB}', 'crew', '${ZED}', '1. @서윤 다음', 'reply:${ZED}:${m}', ${m}, '[{"kind":"crew","id":"${CREW}"}]', '{"hop":0,"origin":"${U.owner}"}') returning id`));
+  assert.equal(asUser(U.member, `select meta->>'origin' from public.msgr_messages where id = ${r1}`).split('\n').pop(), U.owner);
+  assert.equal(last(asUser(U.member, `select count(*) from public.msgr_messages where client_msg_id in ('reply:${ZED}:${m}', 'deny:${ZED}:${m}', 'stale:${ZED}:${m}')`)), '1', 'settled 조회(앞 크루 끝남)');
+  // 서윤이 제드의 글에 답(원문 author_kind=crew) — 게이트 통과, thread_root는 뿌리로
+  const r2 = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to, mentions, meta) values ('${PUB}', 'crew', '${CREW}', '2. @제드 다음', 'reply:${CREW}:${r1}', ${r1}, '[{"kind":"crew","id":"${ZED}"}]', '{"hop":1,"origin":"${U.owner}"}') returning id`));
+  assert.match(r2, /^\d+$/);
+  // contextOf: 이 채널의 r2 이전 text 글을 오래된 순으로 — 최소 m·r1 포함
+  const ctx = asUser(U.member, `select string_agg(id::text, ',' order by id) from (select id from public.msgr_messages where channel_id = '${PUB}' and id < ${r2} and kind = 'text' and deleted_at is null order by id desc limit 12) s`).split('\n').pop();
+  assert.ok(ctx.split(',').includes(m) && ctx.split(',').includes(r1), `문맥에 원문·앞 답글 포함: ${ctx}`);
+  // 남의 크루 명의 넘김 답글은 여전히 거부(작성자 축)
+  denied(U.admin, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to) values ('${PUB}', 'crew', '${CREW}', 'x', 'reply:${CREW}:${r1}x', ${r1})`);
+});
