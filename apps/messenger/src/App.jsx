@@ -1985,7 +1985,7 @@ function EmojiPicker({ t, anchor, onPick, onClose }) {
   const [q, setQ] = useState(''); const ref = useRef(null);
   // 화면 고정(fixed) + 열린 동안 스레드 스크롤 잠금(유건 지시 2026-09-09 "드롭박스 열렸을 때는 스크롤 고정, 닫히고 스크롤"). 위치는 창 크기(clientWidth/Height) 기준으로
   // 버튼 아래(자리 없으면 위), 가로는 버튼 왼쪽에 맞추되 창 밖이면 버튼 오른쪽 끝에 맞춘다 — 오른쪽 정렬된 내 글에서 창 밖으로 나가던 결함.
-  const W = 296, H = 320, COLS = 9; // COLS = 격자 열 수 — 자주 사용 줄은 이 수만큼
+  const W = 322, H = 320, COLS = 9; // 322 = 격자 9×30 + 틈 8 + 안쪽 여백 16 + 세로 스크롤바 자리 ≤ 18 — 가로 스크롤 없음 // COLS = 격자 열 수 — 자주 사용 줄은 이 수만큼
   const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
   const left = Math.max(8, anchor.left + W + 8 <= vw ? anchor.left : Math.min(anchor.right - W, vw - W - 8));
   const top = anchor.bottom + H + 8 <= vh ? anchor.bottom + 6 : Math.max(8, anchor.top - H - 6);

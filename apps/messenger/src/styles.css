@@ -644,10 +644,10 @@
 
 
 /* 슬랙식 반응 피커(2026-09-09): hover 즉시 반응 3개 + 검색·분류 드롭다운 */
-body.msgr-lock .msgr-thread { overflow-y: hidden; } /* 반응 피커가 열린 동안 스레드 스크롤 잠금 */
+body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린 동안 스레드 스크롤 잠금 — overflow를 바꾸면 스크롤바 자리가 사라져 본문이 옆으로 밀린다(유건 제보 2026-09-09) → 입력만 막는다(레이아웃 불변) */
 .msgr-emojipop { position: fixed; z-index: 60; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; padding: 8px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 12px 32px rgba(0,0,0,0.22); }
 .msgr-emojipop .msgr-input.sm { height: 28px; width: 100%; }
-.msgr-emojipop .body { overflow-y: auto; display: grid; gap: 6px; min-height: 0; }
+.msgr-emojipop .body { overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; display: grid; gap: 6px; min-height: 0; }
 .msgr-emojipop .sec { display: grid; gap: 2px; }
 .msgr-emojipop .grid { display: grid; grid-template-columns: repeat(9, 30px); gap: 1px; }
 .msgr-emojipop .grid button { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; background: none; font-size: 19px; line-height: 1; cursor: pointer; }
