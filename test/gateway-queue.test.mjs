@@ -95,11 +95,28 @@ test('DEFER(순서 대기)·선점 경로 전달: 핸들러가 DEFER를 반환�
   const seen = []; let n = 0; const errs = []; const origErr = console.error; console.error = (...a) => { errs.push(a.join(' ')); };
   await enqueueJob(WS, 'msgr', '51-zed', { text: '뒤 잡' }); const later = [];
   const stop = startQueueWorker(WS, 'msgr', async (job, meta) => { if (job.text === '뒤 잡') { later.push(Date.now()); return; } seen.push(meta?.path); return ++n < 3 ? DEFER : undefined; }, { maxInflight: 1 });
-  await new Promise((r) => setTimeout(r, 9000));
+  for (let i = 0; i < 40 && n < 3; i++) await new Promise((r) => setTimeout(r, 500)); // 3초 백오프 × 2 + 틱 — 부하에서도 20초 안
+  await new Promise((r) => setTimeout(r, 1500));
   stop(); console.error = origErr;
   assert.equal(n, 3, 'DEFER 두 번(3초 백오프) 뒤 세 번째 검사에서 실행');
   assert.equal(later.length, 1, 'DEFER 잡이 앞에 있어도 뒤 잡은 굶지 않는다(백오프 중 스캔 제외·검사 차례는 맨 뒤)');
   assert.ok(seen.every((p) => p === join(dir, '50-pepper.json.claimed')), `선점 파일 경로 전달: ${seen[0]}`);
   assert.equal(errs.filter((e) => e.includes('큐 처리 실패')).length, 0, 'DEFER는 오류가 아니다');
   assert.equal((await readdir(dir).catch(() => [])).filter((x) => /\.json(\.claimed)?$/.test(x)).length, 0, '완료 뒤 흔적 없음');
+});
+
+test('선점 mtime(4R C-1): 35분 넘게 큐에 있던 잡을 선점해도 죽은 선점으로 오인·회수되지 않는다 — 한 번만 실행되고 파일이 남지 않는다', async () => {
+  const { CLAIM_MAX_AGE_MS } = await import('../src/gateway/queue.mjs');
+  const { utimes } = await import('node:fs/promises');
+  const WS = 'qco-oldjob';
+  await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
+  const dir = queueDir(WS, 'msgr');
+  await enqueueJob(WS, 'msgr', '77-p', { text: '오래 기다림' });
+  const old = new Date(Date.now() - CLAIM_MAX_AGE_MS - 120_000); await utimes(join(dir, '77-p.json'), old, old);
+  let n = 0;
+  const stop = startQueueWorker(WS, 'msgr', async () => { n++; await new Promise((r) => setTimeout(r, 2500)); });
+  await new Promise((r) => setTimeout(r, 6500));
+  stop();
+  assert.equal(n, 1, '오래된 잡도 한 번만');
+  assert.equal((await readdir(dir).catch(() => [])).filter((x) => /\.json(\.claimed)?$/.test(x)).length, 0, '완료 뒤 파일·선점 흔적 없음');
 });

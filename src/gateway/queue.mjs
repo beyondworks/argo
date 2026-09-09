@@ -47,6 +47,7 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
     try { names = await readdir(queueDir(wsId, key)); } catch { return; } // 큐 디렉터리 없음 — 할 일 없음
     // 죽은 워커의 선점 잔재 회수 — .claimed가 CLAIM_MAX_AGE_MS를 넘으면 .json으로 되돌려 다음 틱에 재실행
     for (const n of names.filter((x) => x.endsWith('.json.claimed'))) {
+      if (busy.has(n.replace(/\.claimed$/, ''))) continue; // 이 워커가 지금 돌리는 잡 — 회수 대상 아님(검수 4R C-1)
       const fp = join(queueDir(wsId, key), n); const mt = (await stat(fp).catch(() => null))?.mtimeMs ?? 0;
       if (mt && Date.now() - mt > CLAIM_MAX_AGE_MS) { await rename(fp, fp.replace(/\.claimed$/, '')).catch(() => {}); console.log(`[argo] 큐 선점 회수(${wsId}/${key}/${n}): ${Math.round(CLAIM_MAX_AGE_MS / 60_000)}분 넘은 선점 — 재실행`); }
     }
@@ -66,6 +67,8 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
         // 같은 멘션이 두 번(유료 턴 ×2, 두 번째 답글은 멱등 키로 버려지고 '입력 중'만 남는다 — 실사고 2026-09-09 페퍼 50s+124s). rename은 원자적이라 한쪽만 이긴다.
         const fp = `${fp0}.claimed`;
         try { await rename(fp0, fp); } catch { busy.delete(n); return; } // 이미 다른 워커가 선점(ENOENT) — 조용히 물러난다
+        const st0 = await stat(fp).catch(() => null); // 적재 시각(선점 전 mtime) — 아래 구형식 잡 나이 판정용
+        { const t = new Date(); await utimes(fp, t, t).catch(() => {}); } // rename은 mtime을 옮긴다 — 35분 넘게 대기한 잡이 선점 직후 '죽은 선점'으로 오인·회수되어 무한 재실행되던 결함(검수 4R C-1 실증)
         let done = false;
         const hb = setInterval(() => { const t = new Date(); utimes(fp, t, t).catch(() => {}); }, 60_000); hb.unref?.(); // 선점 심박 — 살아 있는 긴 턴(30분 넘는 사고 과정·장시간 잡)이 CLAIM_MAX_AGE_MS 회수에 걸리지 않게
         try {
@@ -73,7 +76,7 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
           if (job?.dev && me && job.dev !== me) {
             // 다른 기기가 적재한 잡의 사본(과거 큐가 동기화되던 시절의 잔재) — 원 기기가 실행하므로 정리만
             console.log(`[argo] 큐 정리(${wsId}/${key}/${n}): 다른 기기(${String(job.dev).slice(0, 8)})의 잡 사본 — 실행 없이 제거`);
-          } else if (job && !job.dev && Date.now() - (((await stat(fp).catch(() => null))?.mtimeMs) ?? 0) > LEGACY_JOB_MAX_AGE_MS) {
+          } else if (job && !job.dev && Date.now() - (st0?.mtimeMs ?? 0) > LEGACY_JOB_MAX_AGE_MS) {
             // dev 태그 없는 구형식 잡이 너무 오래됨 — 어느 기기 것인지 알 수 없어 좀비 실행 대신 폐기(로그로 관측)
             console.log(`[argo] 큐 정리(${wsId}/${key}/${n}): ${Math.round(LEGACY_JOB_MAX_AGE_MS / 3_600_000)}시간 넘은 구형식 잡 — 실행 없이 제거`);
           } else if (job) {

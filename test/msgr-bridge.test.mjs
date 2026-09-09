@@ -55,7 +55,7 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], attachments = [], ap
     async memberName() { return '민수'; },
     async contextOf(ch, before, n) { rec('contextOf', ch, before, n); return context; },
     async orgCrews(org) { rec('orgCrews', org); return peers ?? crews.map((c) => ({ id: c.id, slug: c.slug, display_name: c.display_name })); },
-    async settled(crewId, msgId) { rec('settled', crewId, msgId); return settledFn(crewId, msgId); },
+    async settled(crewId, msgId, channelId) { rec('settled', crewId, msgId, channelId); return settledFn(crewId, msgId); },
     async autoTurnsIn(rootId) { rec('autoTurnsIn', rootId); return autoTurns; },
     async crewOwner(id) { rec('crewOwner', id); return crews.find((c) => c.id === id)?.owner_user_id ?? OWNER; },
     async insertMessage(row) { rec('insertMessage', row); return dupReply && row.client_msg_id?.startsWith('reply:') ? null : { id: 900 + calls.length }; },
@@ -535,8 +535,9 @@ test('drain: 크루 답글의 @멘션 → 상대 크루 턴(origin·hop은 meta�
   assert.equal(enq4.calls.length, 0); assert.deepEqual(db4.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1].client_msg_id), [`deny:${CREW}:27`], '뿌리 사람(MEMBER)이 목록 밖 → 거절 안내');
   // crewOwner 순단은 던져서 커서를 올리지 않는다(다음 틱 재시도)
   const db5 = fakeDb({ crews: [crew(), zed], parent, messages: [fromZed(28)] }); db5.crewOwner = async () => { throw new Error('rpc down'); };
-  await assert.rejects(M.drain(WS, { db: db5, uid: OWNER, enqueue: fakeEnqueue() }), /rpc down/);
-  assert.equal(db5.calls.some((x) => x[0] === 'setCursor'), false, '순단이면 커서 보류(3R L-9)');
+  await M.drain(WS, { db: db5, uid: OWNER, enqueue: fakeEnqueue() });
+  assert.equal(db5.calls.some((x) => x[0] === 'setCursor' && x[1] === CREW), false, '순단이면 그 크루 커서 보류(3R L-9)'); assert.equal(db5.calls.some((x) => x[0] === 'setCursor' && x[1] === ZED), true, '다른 크루 커서는 전진');
+  assert.equal(db5.calls.some((x) => x[0] === 'approvalsByIds' || x[0] === 'heartbeat'), true, '다른 단계(하트비트·결재 동기화)는 계속(4R M-3)');
   assert.equal(db.calls.filter((x) => x[0] === 'insertMessage').length, 0);
   // 8단계 초과: 스레드 자동 턴 8 → 9단계 → hopcap 안내 1건, 적재 없음
   const db2 = fakeDb({ crews: [crew(), zed], parent, messages: [fromZed(25)], autoTurns: 8 }); const enq2 = fakeEnqueue();
