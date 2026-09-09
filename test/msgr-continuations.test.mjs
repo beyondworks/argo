@@ -105,6 +105,27 @@ test('failures and interrupted jobs remain Messenger-only without executing a ne
   } finally { f.stop(); }
 });
 
+test('completed continuations cancel prepared handoffs and preserve the independent LOOP verdict', async () => {
+  const f = await setup();
+  try {
+    const loop = await addRoutine(f.ws, { agentSlug: 'alpha', title: '종료', prompt: '완료하면 종료', schedule: { type: 'interval', everyMinutes: 10 }, loop: {}, msgr: f.origin });
+    const result = await runRoutine(f.ws, loop.id, { session: f.session, chatFn: async (...args) => ({
+      ...(await f.runChat('SDK')(...args)), reply: '완료. @베타 수고했어요.\nLOOP: done\nMSGR: done',
+    }) });
+    assert.equal(result.stopped, 'done');
+    const event = f.events.find((e) => e.type === 'routine' && e.reply?.includes('수고했어요'));
+    assert.ok(event);
+    assert.equal(event.msgrReply.meta.disposition, 'done');
+    assert.deepEqual(event.msgrReply.mentions, []);
+    await msgrPush(event, { session: f.session });
+    assert.equal(f.rows.length, 1);
+    assert.deepEqual(f.rows[0].mentions, []);
+    assert.equal(f.rows[0].meta.disposition, 'done');
+    assert.doesNotMatch(f.rows[0].body, /MSGR:|이어 할 일/);
+    assert.match(f.rows[0].body, /완료/);
+  } finally { f.stop(); }
+});
+
 test('an unavailable or muted Messenger destination never falls back to Telegram for any continuation event', async () => {
   const f = await setup();
   const { updateConnection } = await import('../src/connections.mjs');

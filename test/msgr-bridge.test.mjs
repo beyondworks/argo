@@ -656,7 +656,7 @@ test('handler: after는 앞 크루가 끝날 때까지 기다림 · 최근 대�
     { id: 2, author_kind: 'crew', author_user_id: null, crew_id: ZED, body: '2' },
   ] });
   const chatCalls = [];
-  const runChat = async (ws, slug, text) => { chatCalls.push(text); return { reply: '3. @제드 다음 숫자.', handover: null, sessionId: 's1', artifacts: [] }; };
+  const runChat = async (ws, slug, text) => { chatCalls.push(text); return { reply: '3. @제드 다음 숫자.\nMSGR: handoff', handover: null, sessionId: 's1', artifacts: [] }; };
   const h = M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat });
   const job = { msgId: 31, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '@제드 @서윤 번갈아 세어줘', authorId: MEMBER, replyTo: null, threadRoot: 31, createdAt: new Date().toISOString(), hop: 0, origin: MEMBER, fromCrewId: null, after: [ZED] };
   const { DEFER } = await import('../src/gateway/queue.mjs');
@@ -757,7 +757,7 @@ for (const via of ['mention', 'tool']) test(`relay ${via}: 같은 원본에 두 
     turns.push([slug, number]);
     const next = slug === 'seoyun' ? '제드' : '서윤';
     if (via === 'tool' && number < 6) stageMessengerHandoff(opts.mirrorCtx, { to: slug === 'seoyun' ? 'zed' : 'seoyun', message: `${number} 다음 숫자를 이어줘` });
-    return { reply: `${number}${via === 'mention' && number < 6 ? ` @${next} 다음 숫자` : ''}`, sessionId: null, artifacts: [] };
+    return { reply: `${number}${via === 'mention' ? ` @${next} ${number < 6 ? '다음 숫자' : '수고했어. 끝.'}` : ''}\nMSGR: ${number < 6 ? 'handoff' : 'done'}`, sessionId: null, artifacts: [] };
   } });
   for (let tick = 0; tick < 8; tick++) {
     await M.drain(WS, { db, uid: OWNER, inventory: null, enqueue: async (_ws, _key, _id, job) => queued.push(job) });
@@ -768,6 +768,17 @@ for (const via of ['mention', 'tool']) test(`relay ${via}: 같은 원본에 두 
   assert.deepEqual(turns, [['seoyun', 1], ['zed', 2], ['seoyun', 3], ['zed', 4], ['seoyun', 5], ['zed', 6]]);
   assert.equal(rows.filter((r) => r.author_kind === 'crew').length, 6);
   M._autoLogForTest.clear();
+});
+
+for (const reply of ['완료. @제드 수고했어.\nMSGR: done', '완료. @제드 수고했어.']) test(`handler: 종료 인사는 동료를 깨우지 않는다 (${reply.includes('MSGR') ? 'done' : '마커 누락'})`, async () => {
+  const db = fakeDb({ peers: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드' })] });
+  await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, _text, _sid, opts) => {
+    if (reply.includes('MSGR')) stageMessengerHandoff(opts.mirrorCtx, { to: 'zed', message: '마지막 판정 전에 수집된 넘김' });
+    return { reply, sessionId: null, artifacts: [] };
+  } })({ msgId: 401, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '마무리', authorId: MEMBER, threadRoot: 401, createdAt: new Date().toISOString() });
+  const row = db.calls.find((c) => c[0] === 'insertMessage')[1];
+  assert.deepEqual(row.mentions, []);
+  assert.equal(row.body, '완료. @제드 수고했어.');
 });
 
 test('handler: 도구 넘김은 긴 답변에서도 보존하고, 저장된 본문에만 멘션을 붙이며 실패 턴에서는 버린다', async () => {

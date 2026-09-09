@@ -165,10 +165,11 @@ try {
           const parsed = parseDirectives(`\`\`\`argo\n${JSON.stringify({ action: 'mail', to, message })}\n\`\`\``);
           assert.equal(parsed.directives.length, 1, 'CLI 지시 블록 파싱');
           const result = await runDirectives(ws, slug, parsed.directives, { mirrorCtx: opts.mirrorCtx });
-          assert.match(JSON.stringify(result), /예약/);
+          assert.deepEqual(result, []);
+          assert.equal(opts.mirrorCtx.handoffs.at(-1).to.slug, to);
         }
       }
-      return { reply: String(n), sessionId: null };
+      return { reply: `${n}${n === 6 ? ' @알파 완료. 수고했어요.' : ''}\nMSGR: ${n === 6 ? 'done' : 'handoff'}`, sessionId: null };
     } });
     const trackedHandler = (job, info) => {
       const promise = rawHandler(job, info); active.add(promise);
