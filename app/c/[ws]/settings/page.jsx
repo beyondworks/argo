@@ -12,6 +12,14 @@ import LocalAssetImport from '../../../components/LocalAssetImport';
 import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
 import { CHANNEL_EVENTS } from '../../../../src/channel-events.mjs'; // 순수 상수 — connections.mjs는 fs를 끌어 클라 번들이 깨진다
 
+// Argo Messenger(팀 메신저) 설치파일 — 릴리스 repo의 고정 파일명(release-messenger.yml Collect 스텝이 매 릴리스 갱신).
+const MSGR_RELEASES = 'https://github.com/beyondworks/argo-messenger/releases/latest';
+const MSGR_DL = {
+  silicon: `${MSGR_RELEASES}/download/argo-messenger-macos-apple-silicon.dmg`,
+  intel: `${MSGR_RELEASES}/download/argo-messenger-macos-intel.dmg`,
+  win: `${MSGR_RELEASES}/download/argo-messenger-windows-setup.exe`,
+};
+
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 // 설정 탭 — 각 카드는 정확히 한 탭에만 속한다(test/tabs-layout). 렌더 순서: 작은 카드 → 전폭(.wide) 카드.
 const SETTINGS_TABS = ['general', 'ai', 'connections', 'devices', 'danger'];
@@ -176,6 +184,7 @@ function Settings({ params }) {
 
       {tab === 'connections' && (
       <div className="cardcols" data-tab-pane="connections">
+      <div className="cardrow"><MsgrCard ws={ws} agents={data?.agents ?? []} /></div>
       <div className="cardrow">
       <ConnectionCard ws={ws} kind="telegram" title={t('activity.telegram')}
         help={t('settings.conn.tgHelp')}
@@ -186,7 +195,6 @@ function Settings({ params }) {
         help={t('settings.conn.slackHelp')}
         agents={data?.agents ?? []} />
       </div>
-      <div className="cardrow"><MsgrCard ws={ws} agents={data?.agents ?? []} /></div>
       <div className="cardrow"><ConnectorsCard ws={ws} /></div>
       </div>
       )}
@@ -787,6 +795,13 @@ function MsgrCard({ ws, agents }) {
             {bridgeOn ? <><span className="dot" style={{ background: 'var(--ok)' }} />{t('settings.msgr.bridge.onShort')}</> : t('settings.msgr.bridge.offShort')}
           </span>
         )}
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.downloadHelp')}</p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        <a className="btn sm" href={MSGR_DL.silicon} target="_blank" rel="noopener noreferrer">{t('settings.msgr.silicon')}</a>
+        <a className="btn sm" href={MSGR_DL.intel} target="_blank" rel="noopener noreferrer">{t('settings.msgr.intel')}</a>
+        <a className="btn sm" href={MSGR_DL.win} target="_blank" rel="noopener noreferrer">{t('settings.msgr.win')}</a>
+        <a className="btn sm" href={MSGR_RELEASES} target="_blank" rel="noopener noreferrer">{t('settings.msgr.all')}</a>
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.help')}</p>
       {st === null && <Skeleton h={44} />}

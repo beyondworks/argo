@@ -1,5 +1,5 @@
 // 팀 메신저 크루 등록 카드(F1-1) — 배선·라벨·기본값 핀. 화면 동작은 Aside 실측(로컬 스택)로.
-//  · 카드가 설정의 "연결" 섹션에 실제로 렌더된다(슬랙 카드 뒤, 커넥터 카드 앞) — 컴포넌트만 있고 안 꽂히면 화면에 없다
+//  · 카드가 설정의 "연결" 섹션에 실제로 렌더된다(연결 탭 맨 위) — 컴포넌트만 있고 안 꽂히면 화면에 없다
 //  · 라우트 기본 허용 범위 'owner'(부록 H: 정책 테이블 전까지 가장 좁게) + GET이 조직별 멤버(지정 멤버 선택지)를 준다
 //  · 카드가 쓰는 i18n 키가 ko/en 둘 다 있다(다국어 상시 규칙)
 import { test } from 'node:test';
@@ -14,12 +14,12 @@ const i18n = read('app/i18n.jsx');
 const app = stripComments(read('apps/messenger/src/App.jsx'));
 const msgrI18n = read('apps/messenger/src/i18n.js');
 
-test('MsgrCard가 연결 섹션에 꽂혀 있다 — 슬랙 카드 뒤·커넥터 카드 앞', () => {
+test('MsgrCard가 연결 섹션에 꽂혀 있다 — 연결 탭 맨 위', () => {
   const slack = page.indexOf('kind="slack"');
   const card = page.indexOf('<MsgrCard ws={ws} agents={data?.agents ?? []} />');
   const conn = page.indexOf('<ConnectorsCard ws={ws} />');
   assert.ok(slack > 0 && card > 0 && conn > 0, '세 카드가 모두 있어야 한다');
-  assert.ok(slack < card && card < conn, 'MsgrCard 위치가 어긋났다(슬랙 뒤·커넥터 앞)');
+  assert.ok(card < page.indexOf('kind="telegram"') && card < slack && card < conn, 'MsgrCard는 연결 탭 맨 위에 있어야 한다');
   assert.match(page, /function MsgrCard\(\{ ws, agents \}\)/, '컴포넌트 시그니처');
 });
 

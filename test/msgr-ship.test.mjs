@@ -90,12 +90,11 @@ test('release-messenger.yml: 3타깃·작업 디렉터리·버전 게이트·고
   assert.doesNotMatch(y, /SERVICE_ROLE/, '서버 시크릿은 데스크톱 빌드에 넣지 않는다');
 });
 
-test('마켓 카드·메신저 새 i18n 키는 ko/en 쌍', () => {
-  const page = read('app/c/[ws]/market/page.jsx');
-  assert.match(page, /function MessengerAppCard\(\{ t \}\)/);
-  assert.match(page, /<MessengerAppCard t=\{t\} \/>\n\n\s*\{\/\* ── 스킬 ── \*\/\}/, '스킬 카드 앞');
+test('설정 연결 카드·메신저 새 i18n 키는 ko/en 쌍', () => {
+  const page = read('app/c/[ws]/settings/page.jsx');
+  assert.doesNotMatch(read('app/c/[ws]/market/page.jsx'), /MessengerAppCard|MSGR_DL/, '다운로드 카드는 설정 연결에만 둔다');
   const i18n = read('app/i18n.jsx');
-  const keys = new Set([...page.slice(page.indexOf('function MessengerAppCard('), page.indexOf('/** 추천')).matchAll(/t\('([A-Za-z0-9._-]+)'\)/g)].map((m) => m[1]));
+  const keys = new Set([...page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard(')).matchAll(/t\('([A-Za-z0-9._-]+)'\)/g)].map((m) => m[1]));
   assert.ok(keys.size >= 6, `키 수집 ${keys.size}`);
   for (const k of keys) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko·en`);
   const m = read('apps/messenger/src/i18n.js');
