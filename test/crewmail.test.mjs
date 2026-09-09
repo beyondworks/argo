@@ -374,20 +374,58 @@ test('배달 중 자기 심박 — 턴이 도는 동안 .claimed mtime이 전진
   } finally { mod._setClaimHeartbeatMsForTest(30_000); }
 });
 
-test('동시 배달 — 회의실처럼 한 패스의 쪽지가 동시에 돌고(동시 진행 ≥2, 총 소요 ≈ 1건), 상한 2면 동시 진행이 2를 넘지 않는다(유건 지시 2026-09-08)', async () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  let inflight = 0; let max = 0;
-  const run = (concurrency) => mod.deliverCrewMail(WS, async () => { inflight += 1; max = Math.max(max, inflight); await sleep(120); inflight -= 1; }, { limit: 10, concurrency });
-  for (const s of ['rc-p1', 'rc-p2', 'rc-p3', 'rc-p4']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: s, message: '동시' });
-  const t0 = Date.now();
-  await run(8);
-  assert.ok(max >= 2, `동시 진행 최대 ${max} — 순차면 1`);
-  assert.ok(Date.now() - t0 < 4 * 120, `총 소요 ${Date.now() - t0}ms — 순차(≥480ms)가 아니다(판별선은 순차 최소치, 상한 완화는 fs 오버헤드 여유)`);
-  assert.deepEqual(await mailFiles('rc-p3'), []);
-  max = 0;
-  for (const s of ['rc-p1', 'rc-p2', 'rc-p3', 'rc-p4']) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: s, message: '상한' });
-  await run(2);
-  assert.equal(max, 2, `상한 2 — 동시 진행 최대 ${max}`);
+test('동시 배달 — 완료 전 다른 크루가 착수하고, 상한 2는 두 턴만 허용한다', async () => {
+  const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
+  const recipients = ['rc-p1', 'rc-p2', 'rc-p3', 'rc-p4'];
+  for (const s of recipients) await mod.sendCrewMail(WS, { from: 'a', fromName: '알파', to: s, message: '동시' });
+  const allStarted = deferred(); const release = deferred();
+  const started = []; const completed = [];
+  let timedOut = false;
+  // 고장 난 직렬 구현만 교착을 풀어 실패시킨다. 정상 여부는 ms가 아닌 착수/완료 순서로 판정한다.
+  const watchdog = setTimeout(() => { timedOut = true; allStarted.resolve(); release.resolve(); }, 10_000);
+  const delivery = mod.deliverCrewMail(WS, async (slug) => {
+    if (!recipients.includes(slug)) return;
+    started.push(slug);
+    if (started.length === recipients.length) allStarted.resolve();
+    await release.promise;
+    completed.push(slug);
+  }, { limit: 10, concurrency: 8 });
+  try {
+    await allStarted.promise;
+    assert.equal(timedOut, false, '다른 크루 착수를 기다리는 장벽에 갇힘 — 직렬 배달');
+    assert.deepEqual([...started].sort(), recipients);
+    assert.deepEqual(completed, [], '어느 턴도 완료하지 않은 상태에서 네 크루가 모두 착수');
+  } finally {
+    clearTimeout(watchdog); release.resolve(); await delivery;
+  }
+  for (const s of recipients) assert.deepEqual(await mailFiles(s), []);
+
+  // 파일 I/O가 있는 배달 콜백의 짧은 시간 창 대신 실제 공용 실행기의 슬롯을 직접 붙든다.
+  const { runLimited } = await import('../src/run-limited.mjs');
+  const gates = recipients.map(deferred); const thirdStarted = deferred();
+  const entered = []; let inflight = 0; let max = 0;
+  let slotTimedOut = false;
+  const slotWatchdog = setTimeout(() => {
+    slotTimedOut = true; thirdStarted.resolve();
+    for (const gate of gates) gate.resolve();
+  }, 10_000);
+  const pool = runLimited(recipients, 2, async (_, i) => {
+    entered.push(i); inflight += 1; max = Math.max(max, inflight);
+    if (i === 2) thirdStarted.resolve();
+    await gates[i].promise; inflight -= 1;
+  });
+  try {
+    assert.deepEqual(entered, [0, 1], '상한 2 — 미완료인 두 슬롯 외에는 착수하지 않는다');
+    gates[0].resolve();
+    await thirdStarted.promise;
+    assert.equal(slotTimedOut, false, '빈 슬롯 뒤 대기 중인 다음 턴이 착수하지 않음');
+    assert.deepEqual(entered, [0, 1, 2], '슬롯 하나가 비면 대기 중인 한 건만 착수한다');
+    assert.equal(max, 2);
+  } finally { clearTimeout(slotWatchdog); for (const gate of gates) gate.resolve(); await pool; }
+  // 위 슬롯 계약이 배달 경로에 그대로 연결되는지도 잠근다(공용 실행기만 통과하는 거짓 양성 방지).
+  const source = readFileSync(join(root, 'src/crewmail.mjs'), 'utf8');
+  assert.match(source, /let cap = concurrency;/);
+  assert.match(source, /runLimited\(\[\.\.\.bySlug\.values\(\)\], cap,/);
   assert.ok(mod.MAIL_CONCURRENCY >= 1 && mod.MAIL_CONCURRENCY <= 16 && mod.MAIL_PER_TICK === mod.MAIL_CONCURRENCY, '기본 상한은 1~16 클램프, 패스당 착수 상한 = 동시 상한');
 });
 
