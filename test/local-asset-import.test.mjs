@@ -68,10 +68,10 @@ test('preview writes only private metadata; selected tools/memory usable and sou
   assert.match(card, /vault\/imported\/hermes-/);
   const mcp = JSON.parse(await readFile(paths(f.wsId).mcp, 'utf8'));
   assert.deepEqual(Object.keys(mcp.servers), ['demo']);
-  assert.equal((await stat(paths(f.wsId).mcp)).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal((await stat(paths(f.wsId).mcp)).mode & 0o777, 0o600);
   const script = join(paths(f.wsId).skills, 'editor/scripts/check.sh');
   assert.equal(await readFile(script, 'utf8'), before['.hermes/skills/editor/scripts/check.sh']);
-  assert.ok((await stat(script)).mode & 0o111);
+  if (process.platform !== 'win32') assert.ok((await stat(script)).mode & 0o111);
   assert.deepEqual(await tree(f.home), before);
   const notes = await readdir(paths(f.wsId).notes);
   assert.equal(notes.length, 2);
@@ -262,4 +262,21 @@ test('OpenClaw selected shared tools reach each imported profile and rules stay 
   assert.equal(rule.status, 'needs-setup');
   assert.equal(rule.reason, 'reference-only');
   assert.ok(Object.values(await tree(paths(f.wsId).root)).some(text => text.includes('Project-specific rules.')));
+});
+
+
+test('OpenClaw nested memory imports portable relative paths with original content intact', async () => {
+  const f = await fixture();
+  await f.put('.openclaw/openclaw.json', '{agents:{entries:{main:{}}}}');
+  await f.put('.openclaw/workspace/memory/nested/today.md', 'Portable nested memory.');
+  const before = await tree(f.home);
+  const p = await api.previewLocalAssets(f.wsId, context, {}, f.options);
+  const memory = p.items.find(i => i.source === 'openclaw' && i.kind === 'memory');
+  assert.ok(memory);
+  const result = await api.executeLocalAssets(f.wsId, context, { ...request(p), selectedIds: [memory.id] }, f.options);
+  const imported = result.items.find(i => i.id === memory.id);
+  assert.equal(imported.status, 'imported');
+  const files = await tree(join(paths(f.wsId).root, imported.target));
+  assert.equal(files['memory/nested/today.md'], 'Portable nested memory.');
+  assert.deepEqual(await tree(f.home), before);
 });

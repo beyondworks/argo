@@ -325,7 +325,7 @@ export async function scanLocalAssetSources({ home = homedir(), env = process.en
           if (excluded(entry.name)) continue;
           const from = path.join(dir, entry.name);
           if (entry.isDirectory()) await memory(from, depth + 1, new Set([...parents, real]));
-          else if (entry.name.endsWith('.md')) await textAsset('openclaw', group, id, workspaceRoot, path.relative(workspaceRoot, from), 'memory');
+          else if (entry.name.endsWith('.md')) await textAsset('openclaw', group, id, workspaceRoot, path.relative(workspaceRoot, from).split(path.sep).join('/'), 'memory');
         }
       }
       try { await memory(path.join(workspaceRoot, 'memory')); } catch (error) { if (error.code !== 'ENOENT') issue('openclaw', error.reason || 'source-unreadable'); }

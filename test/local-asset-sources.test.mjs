@@ -66,7 +66,7 @@ test('all five sources, Hermes named profiles, OpenClaw entries, read-only origi
   assert.equal(result.items.find(i => i.source === 'openclaw' && i.kind === 'profile').files.length, 2);
   const skill = result.items.find(i => i.source === 'claude' && i.kind === 'skill');
   assert.equal(skill.compatibility, 'available');
-  assert.equal(skill.files.find(file => file.rel === 'scripts/go.sh').mode, 0o755);
+  assert.equal(skill.files.find(file => file.rel === 'scripts/go.sh').mode, (await fs.stat(path.join(f.home, '.claude/skills/demo/scripts/go.sh'))).mode & 0o777);
   assert.match((await readLocalAssetFile(skill, skill.files.find(file => file.rel === 'SKILL.md'))).toString(), /Demo/);
   const metadata = JSON.stringify(result.items.map(localAssetMetadata));
   assert.ok(!metadata.includes(canary)); assert.ok(!metadata.includes(f.home)); assert.ok(!metadata.includes('--version'));
@@ -102,8 +102,9 @@ test('preview read detects changed body, target, mode and bounded file growth', 
   const { items } = await f.scan(); const item = items[0];
   await fs.writeFile(file, '# Bad!');
   await assert.rejects(readLocalAssetFile(item, item.files[0]), /source-changed/);
-  await fs.writeFile(file, '# Good'); await fs.chmod(file, 0o700);
-  await assert.rejects(readLocalAssetFile(item, item.files[0]), /source-changed/);
+  await fs.writeFile(file, '# Good'); await fs.chmod(file, 0o444);
+  try { await assert.rejects(readLocalAssetFile(item, item.files[0]), /source-changed/); }
+  finally { await fs.chmod(file, 0o600); }
 });
 
 test('external workspace is metadata-only before exact approval; home and protected trees denied', async t => {
