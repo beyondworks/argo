@@ -12,7 +12,8 @@ async function fake(handler) {
   const seen = [];
   const srv = createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => { seen.push({ headers: req.headers, body: b ? JSON.parse(b) : null }); handler(req, res, seen.length); }); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
-  return { url: `http://127.0.0.1:${srv.address().port}/turn`, seen, close: () => new Promise((r) => srv.close(r)) };
+  // Cancellation tests can leave sockets open; fixture teardown must close every connection.
+  return { url: `http://127.0.0.1:${srv.address().port}/turn`, seen, close: () => new Promise((r) => { srv.close(r); srv.closeAllConnections(); }) };
 }
 const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
 
