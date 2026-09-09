@@ -4,6 +4,49 @@
 ; 정리가 늦거나 실패하면 NSIS의 "파일 사용 중" 재시도 화면이 처리한다.
 !include LogicLib.nsh
 
+; 분리된 정리가 늦거나 실패해도 제거가 등록 정보를 지우며 성공한 척하면 안 된다.
+; 실행 중인 파일에 append 권한으로 열기만 시도한다(쓰기 없음). 10초 뒤에도 잠겨 있으면
+; 사용자 Retry/Cancel, silent 설치는 취소한다. 다른 경로의 프로세스를 조회/종료하지 않는다.
+!macro ARGO_ENSURE_FILE_UNLOCKED filePath
+  Push $0
+  Push $1
+  Push $2
+  StrCpy $0 "${filePath}"
+  StrCpy $2 0
+  ${Do}
+    ${IfNot} ${FileExists} "$0"
+      ${ExitDo}
+    ${EndIf}
+    ClearErrors
+    FileOpen $1 "$0" a
+    ${IfNot} ${Errors}
+      FileClose $1
+      ${ExitDo}
+    ${EndIf}
+    IntOp $2 $2 + 1
+    ${If} $2 >= 50
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(^FileError_NoIgnore)" /SD IDCANCEL IDRETRY +3
+      SetErrorLevel 2
+      Abort
+      StrCpy $2 0
+    ${EndIf}
+    Sleep 200
+  ${Loop}
+  Pop $2
+  Pop $1
+  Pop $0
+!macroend
+
+; Tauri는 utils.nsh → 이 훅 순서로 include하고, 각 PRE 훅 뒤에 이름 기반
+; CheckIfAppIsRunning을 호출한다. 동명 종료 대신 본체·node의 파일 잠금만 확인한다.
+!ifmacrodef CheckIfAppIsRunning
+  !macroundef CheckIfAppIsRunning
+!endif
+!macro CheckIfAppIsRunning executableName productName
+  !insertmacro ARGO_ENSURE_FILE_UNLOCKED "$INSTDIR\${executableName}"
+  !insertmacro ARGO_ENSURE_FILE_UNLOCKED "$INSTDIR\node.exe"
+!macroend
+
 !macro ARGO_STOP_INSTALLED_PROCESSES
   Push $0
   Push $1
