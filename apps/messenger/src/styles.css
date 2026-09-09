@@ -674,3 +674,19 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 /* 접힌 절 캐럿 정렬(#463 RailSection의 .lbl::before) — 접힘 상태의 translate(-1px, 1px)가 글자보다 1~2px 아래로 내려앉던 것 */
 .msgr-sec > summary .lbl::before { transform: rotate(45deg) translate(-1px, -1px); }
 .msgr-sec:not([open]) > summary .lbl::before { transform: rotate(-45deg) translate(-1px, -1px); }
+
+/* 프로필 이미지(2026-09-09): 사람·에이전트 아바타 이미지 + 편집 줄 + 에이전트 소개 */
+.msgr-av.img { overflow: hidden; padding: 0; }
+.msgr-av.img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.msgr-avatar-edit { display: flex; align-items: center; gap: 12px; }
+.msgr-avatar-edit .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.msgr-avatar-edit .note { flex-basis: 100%; }
+.msgr-crewprofile { display: grid; gap: 8px; }
+.msgr-crewprofile textarea.msgr-input { width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13px; resize: vertical; outline: 0; }
+.msgr-crewsheet .head .bio { margin: 4px 0 0; font-size: 12.5px; color: var(--fg-2); line-height: 1.45; white-space: pre-wrap; }
+.mi g[transform] path, .mi g[transform] circle { vector-effect: non-scaling-stroke; }
+
+/* 헤더 토글 표지(2026-09-09): 알림·기억 — 켜짐은 아이콘만, 꺼짐은 아이콘+글자 */
+.msgr-hchip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 6px; border: 0; border-radius: 8px; background: none; color: var(--fg-3); font: inherit; font-size: 11.5px; cursor: pointer; }
+.msgr-hchip:hover { background: var(--card-2); color: var(--fg); }
+.msgr-hchip.off { color: var(--fg-2); background: var(--card-2); }

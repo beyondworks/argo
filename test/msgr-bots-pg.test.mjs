@@ -46,6 +46,7 @@ before(() => {
     -- storage 스텁(정책 문법·foldername 계약만) — 실 Supabase의 storage.objects와 같은 열 이름
     create schema if not exists storage;
     create table if not exists storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, owner uuid);
+    create table if not exists storage.buckets (id text primary key, name text, public boolean not null default false); -- 아바타 버킷(20260909005000)
     create or replace function storage.foldername(name text) returns text[] language sql immutable as $$ select (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1] $$;
     alter table storage.objects enable row level security;
     grant usage on schema storage to authenticated; grant select, insert, delete on storage.objects to authenticated;
@@ -62,7 +63,7 @@ before(() => {
   `]);
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql',
-    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql', '20260909000000_msgr_bot_external_id.sql', '20260909002000_msgr_profiles_friends.sql', '20260909003000_msgr_message_meta.sql', '20260909004000_msgr_p0_reads_reactions_prefs.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
+    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql', '20260909000000_msgr_bot_external_id.sql', '20260909002000_msgr_profiles_friends.sql', '20260909003000_msgr_message_meta.sql', '20260909004000_msgr_p0_reads_reactions_prefs.sql', '20260909005000_msgr_avatars.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`); // 체험 창 밖
   // 시드: owner가 조직 생성(트리거가 owner 멤버·free 자격 생성) → admin/member/guest/removed 초대 → 공개·비공개 채널 → 크루 2개
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
@@ -280,4 +281,19 @@ test('P0(20260909003000·004000): 답글 meta.trace 저장·열람 · 안 읽음
   denied(U.admin, `insert into public.msgr_channel_prefs (channel_id, user_id, muted) values ('${PUB}', '${U.owner}', false)`);
   fails(asUserRaw(U.owner, `insert into public.msgr_profiles (user_id, quiet_from, quiet_to) values ('${U.owner}', 25, 7)`), /quiet_from_check/, '시 범위 밖 거절');
   assert.equal(last(asUser(U.owner, `insert into public.msgr_profiles (user_id, quiet_from, quiet_to) values ('${U.owner}', 22, 7) on conflict (user_id) do update set quiet_from = 22, quiet_to = 7 returning quiet_from || '-' || quiet_to`)), '22-7');
+});
+
+test('아바타(20260909005000): 프로필 avatar_url 본인만 · 같은 조직 사람만 RPC로 아바타 조회(조직 밖 0행) · 크루 avatar_url·bio 소유자만 · 버킷 msgr-avatars 공개 + 자기 폴더만 쓰기', { skip }, () => {
+  asUser(U.owner, `insert into public.msgr_profiles (user_id, avatar_url) values ('${U.owner}', 'https://x.test/a.jpg') on conflict (user_id) do update set avatar_url = excluded.avatar_url`);
+  assert.equal(last(asUser(U.member, `select avatar_url from public.msgr_avatars(array['${U.owner}']::uuid[])`)), 'https://x.test/a.jpg', '같은 조직 멤버가 본다');
+  assert.equal(last(asUser(U.outsider, `select count(*) from public.msgr_avatars(array['${U.owner}']::uuid[])`)), '0', '조직 밖은 0행');
+  assert.equal(last(asUserRaw(U.member, `update public.msgr_profiles set avatar_url = 'x' where user_id = '${U.owner}' returning user_id`).stdout), '', '남의 프로필은 update 0행(RLS using)');
+  assert.equal(last(asUser(U.member, `update public.msgr_crews set avatar_url = 'https://x.test/c.jpg', bio = '마케팅 담당' where id = '${CREW}' returning bio`)), '마케팅 담당', '소유자는 크루 프로필 편집');
+  assert.equal(last(asUser(U.admin, `update public.msgr_crews set bio = '관리자가 고침' where id = '${CREW}' returning bio`)), '관리자가 고침', '조직 관리자는 기존 정책(msgr_crews_update_admin)대로 바꿀 수 있다 — 화면은 소유자에게만 편집을 보인다');
+  assert.equal(last(asUserRaw(U.guest, `update public.msgr_crews set bio = '게스트' where id = '${CREW}' returning id`).stdout), '', '일반 멤버·게스트는 0행');
+  fails(asUserRaw(U.member, `update public.msgr_crews set bio = repeat('a', 301) where id = '${CREW}'`), /msgr_crews_bio_check/, '소개 300자 상한');
+  assert.equal(last(sql(`select public::text from storage.buckets where id = 'msgr-avatars'`)), 'true', '공개 버킷');
+  asUser(U.member, `insert into storage.objects (bucket_id, name, owner) values ('msgr-avatars', 'avatars/${U.member}/me-1.jpg', '${U.member}')`);
+  denied(U.member, `insert into storage.objects (bucket_id, name, owner) values ('msgr-avatars', 'avatars/${U.owner}/me-2.jpg', '${U.member}')`); // 남의 폴더 금지
+  denied(U.member, `insert into storage.objects (bucket_id, name, owner) values ('msgr-avatars', 'other/${U.member}/x.jpg', '${U.member}')`); // avatars/ 밖 금지
 });

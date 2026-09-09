@@ -118,7 +118,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
 test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크루(서버 msgr_crew_tier와 같은 규칙), 레일 카드·시트에 등급 배지·소유 표기·한계 문장', () => {
   assert.match(app, /export const crewTier = \(crew, org\) => \(crew\?\.hosting === 'bot' \|\| \(org\?\.service_user_id && crew\?\.owner_user_id === org\.service_user_id && crew\?\.hosting === 'resident'\)\) \? 'company' : 'personal';/, '등급 규칙이 서버 함수와 다르다(봇 포함 — 부록 N)');
   assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info\)/, '조직 조회에 service_user_id가 없다'); // I-4·J-2가 열 추가
-  assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다');
+  assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} crewId=\{c\.id\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다(이미지는 crewId로)');
   assert.match(app, /\{company \? t\('crew\.tier\.company\.sub'/, '구성 행 부제가 등급별이 아니다');
   const crewSheet = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
   assert.match(crewSheet, /const tier = crewTier\(crew, org\);/, '시트 등급 판정');
