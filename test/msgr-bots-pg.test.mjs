@@ -46,6 +46,7 @@ before(() => {
     -- storage 스텁(정책 문법·foldername 계약만) — 실 Supabase의 storage.objects와 같은 열 이름
     create schema if not exists storage;
     create table if not exists storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, owner uuid);
+    create table if not exists storage.buckets (id text primary key, name text, public boolean not null default false); -- 아바타 버킷(20260909005000)
     create or replace function storage.foldername(name text) returns text[] language sql immutable as $$ select (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1] $$;
     alter table storage.objects enable row level security;
     grant usage on schema storage to authenticated; grant select, insert, delete on storage.objects to authenticated;
@@ -62,7 +63,7 @@ before(() => {
   `]);
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql',
-    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
+    '20260903120000_msgr.sql', '20260907120000_msgr_crew_inventory.sql', '20260908120000_msgr_bots.sql', '20260908140000_msgr_crew_autodispatch.sql', '20260909000000_msgr_bot_external_id.sql', '20260909002000_msgr_profiles_friends.sql', '20260909003000_msgr_message_meta.sql', '20260909004000_msgr_p0_reads_reactions_prefs.sql', '20260909005000_msgr_avatars.sql']) psql(['-f', mig(f)]); // 배포될 그 파일을 그대로 적용
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`); // 체험 창 밖
   // 시드: owner가 조직 생성(트리거가 owner 멤버·free 자격 생성) → admin/member/guest/removed 초대 → 공개·비공개 채널 → 크루 2개
   ORG = last(asUser(U.owner, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.owner}') returning id`));
@@ -191,4 +192,129 @@ test('회전·폐기: 회전하면 옛 토큰 즉시 무효 · 폐기하면 크�
   for (const call of [`msgr_bot_me('${t2}')`, `msgr_bot_updates('${t2}')`, `msgr_bot_send('${t2}', '${PUB}', 'x')`]) fails(asAnonRaw(`select public.${call}`), /msgr_bot_unauthorized/, call);
   fails(asUserRaw(U.admin, `select public.msgr_bot_rotate('${BOT}')`), /msgr_bot_revoked/, '폐기 뒤 회전');
   assert.equal(sql(`select string_agg(action, ',' order by id) from public.msgr_audit_log where org_id = '${ORG}' and action like 'bot.%'`), 'bot.create,bot.rotate,bot.revoke');
+});
+
+test('기본 파견(20260908140000): 소유자가 파견 해제하면 서버가 채널 멤버를 지우고(모든 채널에서 빠짐) 지시 판정은 inactive, 다시 파견하면 다시 넣어야 한다', { skip }, () => {
+  const priv2 = last(asUser(U.admin, `select public.msgr_create_channel('${ORG}', 'private', 'recall-test')`));
+  asUser(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${priv2}', 'crew', '${CREW}', '${U.admin}')`);
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where member_kind = 'crew' and member_id = '${CREW}'`), '1');
+  assert.equal(last(asUser(U.member, `update public.msgr_crews set status = 'available' where id = '${CREW}' returning status`)), 'available', '소유자(member)가 해제');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where member_kind = 'crew' and member_id = '${CREW}'`), '0', '해제 = 채널에서 빠짐(서버 sweep)');
+  assert.equal(sql(`select public.msgr_instruct_check('${CREW}', '${U.member}', null)`), 'inactive', '해제된 크루는 지시 불가');
+  assert.equal(sql(`select string_agg(action, ',' order by id) from public.msgr_audit_log where target_id = '${CREW}' and action like 'crew.%'`), 'crew.recall');
+  fails(asUserRaw(U.admin, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${priv2}', 'crew', '${CREW}', '${U.admin}')`), /msgr_crew_not_active|msgr_channel/, '해제된 크루는 채널에 못 넣는다');
+  assert.equal(last(asUser(U.member, `update public.msgr_crews set status = 'active', allow = 'all', allow_users = '{}' where id = '${CREW}' returning status`)), 'active', '다시 파견');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where member_kind = 'crew' and member_id = '${CREW}'`), '0', '되살려도 채널은 자동 복귀하지 않는다');
+  assert.equal(sql(`select public.msgr_instruct_check('${CREW}', '${U.member}', null)`), 'ok');
+});
+
+test('external_id(20260909000000): 에이전트마다 봇 하나 — 같은 조직·같은 external_id는 두 번 못 만든다(회전으로), 폐기 뒤엔 다시 만들 수 있다', { skip }, () => {
+  const a = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'openclaw', 'Support', null, 'openclaw:support')`)));
+  assert.equal(sql(`select external_id from public.msgr_bots where id = '${a.bot_id}'`), 'openclaw:support');
+  fails(asUserRaw(U.admin, `select public.msgr_bot_create('${ORG}', 'openclaw', 'Support again', null, 'openclaw:support')`), /msgr_bot_exists/, '중복 생성');
+  asUser(U.admin, `select public.msgr_bot_revoke('${a.bot_id}')`);
+  const b = JSON.parse(last(asUser(U.admin, `select public.msgr_bot_create('${ORG}', 'openclaw', 'Support', null, 'openclaw:support')`)));
+  assert.notEqual(b.bot_id, a.bot_id, '폐기 뒤 재생성');
+  assert.equal(sql(`select count(*) from public.msgr_bots where org_id = '${ORG}' and external_id = 'openclaw:support' and revoked_at is null`), '1');
+});
+
+test('친구(20260909002000): 이메일은 정확 일치+허용한 사람만, 아이디는 앞부분+허용, 이메일은 결과에 없음 · 요청→수락 · 맞요청=수락 · 거절 삭제 · 차단은 검색·요청 차단', { skip }, () => {
+  asUser(U.member, `insert into public.msgr_profiles (user_id, handle, display_name, email_search) values ('${U.member}', 'seoyun_dev', '서윤 개발', true)`);
+  asUser(U.guest, `insert into public.msgr_profiles (user_id, handle, display_name, email_search, handle_search) values ('${U.guest}', 'ghost', '유령', false, false)`);
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('member@example.test')`)), '1', '이메일 정확 일치(허용)');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('MEMBER@EXAMPLE.TEST')`)), '1', '대소문자 무시');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('member@example')`)), '0', '부분 이메일은 안 찾아진다');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('guest@example.test')`)), '0', '이메일 검색 안 허용');
+  assert.equal(last(asUser(U.owner, `select handle from public.msgr_find_user('seo')`)), 'seoyun_dev', '아이디 앞부분');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('gho')`)), '0', '아이디 검색 안 허용');
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_find_user('se')`)), '0', '3자 미만은 안 찾는다');
+  assert.doesNotMatch(sql(`select pg_get_function_result('public.msgr_find_user'::regproc)`), /email/, '결과에 이메일 열 없음');
+  assert.equal(last(asUser(U.owner, `select public.msgr_friend_request('${U.member}')`)), 'sent');
+  assert.equal(last(asUser(U.owner, `select relation from public.msgr_find_user('seo')`)), 'sent');
+  assert.equal(last(asUser(U.member, `select status || '|' || (requested_by = '${U.owner}') from public.msgr_my_friends()`)), 'pending|true', '상대는 받은 요청으로 본다');
+  fails(asUserRaw(U.owner, `select public.msgr_friend_decide('${U.member}', true)`), /msgr_friend_no_request/, '보낸 쪽은 수락 못 한다');
+  assert.equal(last(asUser(U.member, `select public.msgr_friend_decide('${U.owner}', true)`)), 'friend');
+  assert.equal(last(asUser(U.owner, `select status from public.msgr_my_friends() where user_id = '${U.member}'`)), 'accepted');
+  assert.equal(last(asUser(U.member, `select display_name from public.msgr_profiles where user_id = '${U.owner}'`)), '', '친구가 돼도 상대가 프로필을 안 만들었으면 없음(정책은 읽기 허용)');
+  // 맞요청 = 수락
+  asUser(U.admin, `select public.msgr_friend_request('${U.guest}')`); assert.equal(last(asUser(U.guest, `select public.msgr_friend_request('${U.admin}')`)), 'friend');
+  // 거절·차단
+  asUser(U.extra, `select public.msgr_friend_request('${U.owner}')`); assert.equal(last(asUser(U.owner, `select public.msgr_friend_decide('${U.extra}', false)`)), 'declined');
+  assert.equal(sql(`select count(*) from public.msgr_friends where a = least('${U.owner}','${U.extra}')::uuid and b = greatest('${U.owner}','${U.extra}')::uuid`), '0');
+  asUser(U.owner, `select public.msgr_friend_remove('${U.member}', true)`);
+  fails(asUserRaw(U.member, `select public.msgr_friend_request('${U.owner}')`), /msgr_friend_blocked/, '차단당한 쪽은 요청 불가');
+  assert.equal(last(asUser(U.member, `select count(*) from public.msgr_find_user('owner@example.test')`)), '0', '차단 관계는 검색에서도 빠진다(owner는 이메일 검색 미허용이기도 함)');
+  fails(asUserRaw(U.owner, `insert into public.msgr_friends (a, b, requested_by) values (least('${U.owner}','${U.guest}')::uuid, greatest('${U.owner}','${U.guest}')::uuid, '${U.owner}')`), /permission denied|row-level security/, '직접 insert 금지');
+});
+
+test('P0(20260909003000·004000): 답글 meta.trace 저장·열람 · 안 읽음 RPC(내 글·삭제 글 제외, 멘션 수, 커서 뒤만) · 읽음 커서는 본인만 · 반응은 읽는 채널만·본인 삭제만 · 채널 음소거 본인만 · 조용한 시간 범위 체크', { skip }, () => {
+  const base = last(sql(`select coalesce(max(id), 0) from public.msgr_messages where channel_id = '${PUB}'`)); // 앞 케이스들의 글은 읽은 것으로
+  asUser(U.owner, `insert into public.msgr_reads (channel_id, user_id, last_read_id) values ('${PUB}', '${U.owner}', ${base}) on conflict (channel_id, user_id) do update set last_read_id = ${base}`);
+  const m1 = last(asUser(U.admin, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, mentions) values ('${PUB}', 'user', '${U.admin}', '안 읽음 1', '[{"kind":"user","id":"${U.owner}"}]') returning id`));
+  const m2 = last(asUser(U.admin, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body) values ('${PUB}', 'user', '${U.admin}', '안 읽음 2') returning id`));
+  const mine = last(asUser(U.owner, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body) values ('${PUB}', 'user', '${U.owner}', '내 글') returning id`));
+  const del = last(asUser(U.admin, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body) values ('${PUB}', 'user', '${U.admin}', '지울 글') returning id`));
+  asUser(U.admin, `update public.msgr_messages set deleted_at = now(), body = '' where id = ${del}`);
+  // meta.trace — 크루 답글에 실려 열람된다(브리지 insert 경로 = 소유자 명의)
+  const tr = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, reply_to, meta) values ('${PUB}', 'crew', '${CREW}', '답', ${m2}, '{"trace":{"steps":[{"t":1200,"stage":"memory","detail":"notes.md"}],"thought":"생각","ms":3400}}') returning id`));
+  assert.equal(last(asUser(U.owner, `select meta->'trace'->>'ms' from public.msgr_messages where id = ${tr}`)), '3400', '궤적 열람');
+  fails(asUserRaw(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, meta) values ('${PUB}', 'crew', '${CREW}', 'x', ('{"pad":"' || repeat('a', 70000) || '"}')::jsonb)`), /msgr_messages_meta_size/, 'meta 64KB 상한');
+  // 안 읽음: owner 기준 — admin 글 2 + 크루 답 1 = 3(내 글·삭제 글 제외), 멘션 1
+  assert.equal(last(asUser(U.owner, `select n || '|' || mention from public.msgr_unread('${ORG}') where channel_id = '${PUB}'`)), '3|1', '안 읽음·멘션 수');
+  assert.equal(last(asUser(U.owner, `update public.msgr_reads set last_read_id = ${m2} where channel_id = '${PUB}' and user_id = '${U.owner}' returning last_read_id`)), String(m2), '읽음 커서 저장');
+  assert.equal(last(asUser(U.owner, `select n || '|' || mention from public.msgr_unread('${ORG}') where channel_id = '${PUB}'`)), '1|0', '커서 뒤(크루 답)만 남는다');
+  denied(U.owner, `insert into public.msgr_reads (channel_id, user_id, last_read_id) values ('${PUB}', '${U.admin}', 1)`); // 남의 커서 금지
+  assert.equal(last(asUser(U.outsider, `select count(*) from public.msgr_unread('${ORG}')`)), '0', '조직 밖은 0행');
+  // 반응
+  asUser(U.owner, `insert into public.msgr_reactions (message_id, user_id, emoji) values (${m1}, '${U.owner}', '👍')`);
+  assert.equal(last(asUser(U.admin, `select count(*) from public.msgr_reactions where message_id = ${m1}`)), '1', '같은 채널 멤버가 본다');
+  denied(U.outsider, `insert into public.msgr_reactions (message_id, user_id, emoji) values (${m1}, '${U.outsider}', '👍')`);
+  denied(U.owner, `insert into public.msgr_reactions (message_id, user_id, emoji) values (${m1}, '${U.admin}', '👍')`); // 남 명의 금지
+  denied(U.owner, `insert into public.msgr_reactions (message_id, user_id, emoji) values (${del}, '${U.owner}', '👍')`); // 삭제 글 금지
+  asUser(U.admin, `delete from public.msgr_reactions where message_id = ${m1} and user_id = '${U.owner}'`);
+  assert.equal(last(asUser(U.admin, `select count(*) from public.msgr_reactions where message_id = ${m1}`)), '1', '남의 반응은 삭제되지 않는다(0행 영향)');
+  asUser(U.owner, `delete from public.msgr_reactions where message_id = ${m1} and user_id = '${U.owner}'`);
+  assert.equal(last(asUser(U.owner, `select count(*) from public.msgr_reactions where message_id = ${m1}`)), '0', '본인 반응 삭제');
+  // 음소거·조용한 시간
+  asUser(U.owner, `insert into public.msgr_channel_prefs (channel_id, user_id, muted) values ('${PUB}', '${U.owner}', true)`);
+  assert.equal(last(asUser(U.admin, `select count(*) from public.msgr_channel_prefs where channel_id = '${PUB}'`)), '0', '남의 음소거는 안 보인다');
+  denied(U.admin, `insert into public.msgr_channel_prefs (channel_id, user_id, muted) values ('${PUB}', '${U.owner}', false)`);
+  fails(asUserRaw(U.owner, `insert into public.msgr_profiles (user_id, quiet_from, quiet_to) values ('${U.owner}', 25, 7)`), /quiet_from_check/, '시 범위 밖 거절');
+  assert.equal(last(asUser(U.owner, `insert into public.msgr_profiles (user_id, quiet_from, quiet_to) values ('${U.owner}', 22, 7) on conflict (user_id) do update set quiet_from = 22, quiet_to = 7 returning quiet_from || '-' || quiet_to`)), '22-7');
+});
+
+test('아바타(20260909005000): 프로필 avatar_url 본인만 · 같은 조직 사람만 RPC로 아바타 조회(조직 밖 0행) · 크루 avatar_url·bio 소유자만 · 버킷 msgr-avatars 공개 + 자기 폴더만 쓰기', { skip }, () => {
+  asUser(U.owner, `insert into public.msgr_profiles (user_id, avatar_url) values ('${U.owner}', 'https://x.test/a.jpg') on conflict (user_id) do update set avatar_url = excluded.avatar_url`);
+  assert.equal(last(asUser(U.member, `select avatar_url from public.msgr_avatars(array['${U.owner}']::uuid[])`)), 'https://x.test/a.jpg', '같은 조직 멤버가 본다');
+  assert.equal(last(asUser(U.outsider, `select count(*) from public.msgr_avatars(array['${U.owner}']::uuid[])`)), '0', '조직 밖은 0행');
+  assert.equal(last(asUserRaw(U.member, `update public.msgr_profiles set avatar_url = 'x' where user_id = '${U.owner}' returning user_id`).stdout), '', '남의 프로필은 update 0행(RLS using)');
+  assert.equal(last(asUser(U.member, `update public.msgr_crews set avatar_url = 'https://x.test/c.jpg', bio = '마케팅 담당' where id = '${CREW}' returning bio`)), '마케팅 담당', '소유자는 크루 프로필 편집');
+  assert.equal(last(asUser(U.admin, `update public.msgr_crews set bio = '관리자가 고침' where id = '${CREW}' returning bio`)), '관리자가 고침', '조직 관리자는 기존 정책(msgr_crews_update_admin)대로 바꿀 수 있다 — 화면은 소유자에게만 편집을 보인다');
+  assert.equal(last(asUserRaw(U.guest, `update public.msgr_crews set bio = '게스트' where id = '${CREW}' returning id`).stdout), '', '일반 멤버·게스트는 0행');
+  fails(asUserRaw(U.member, `update public.msgr_crews set bio = repeat('a', 301) where id = '${CREW}'`), /msgr_crews_bio_check/, '소개 300자 상한');
+  assert.equal(last(sql(`select public::text from storage.buckets where id = 'msgr-avatars'`)), 'true', '공개 버킷');
+  asUser(U.member, `insert into storage.objects (bucket_id, name, owner) values ('msgr-avatars', 'avatars/${U.member}/me-1.jpg', '${U.member}')`);
+  denied(U.member, `insert into storage.objects (bucket_id, name, owner) values ('msgr-avatars', 'avatars/${U.owner}/me-2.jpg', '${U.member}')`); // 남의 폴더 금지
+  denied(U.member, `insert into storage.objects (bucket_id, name, owner) values ('msgr-avatars', 'other/${U.member}/x.jpg', '${U.member}')`); // avatars/ 밖 금지
+});
+
+test('크루→크루 @넘김(2026-09-09) — 크루 답글에 mentions·meta(hop/origin) 저장, 넘겨받은 크루의 reply:<크루>:<크루 글> 은 답글 게이트를 지나고(원문이 크루 글이면 정책 재판정 없음), settled·contextOf 조회가 RLS 아래에서 읽힌다', { skip }, () => {
+  const ZED = last(asUser(U.member, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.member}', 'lean-ax-abcd', 'zed', '제드') returning id`));
+  const m = last(asUser(U.owner, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, mentions) values ('${PUB}', 'user', '${U.owner}', '@제드 @서윤 번갈아 세어줘', '[{"kind":"crew","id":"${ZED}"},{"kind":"crew","id":"${CREW}"}]') returning id`));
+  // 제드 답글(멘션 서윤 + meta)
+  const r1 = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to, mentions, meta) values ('${PUB}', 'crew', '${ZED}', '1. @서윤 다음', 'reply:${ZED}:${m}', ${m}, '[{"kind":"crew","id":"${CREW}"}]', '{"hop":0,"origin":"${U.owner}"}') returning id`));
+  assert.equal(asUser(U.member, `select meta->>'origin' from public.msgr_messages where id = ${r1}`).split('\n').pop(), U.owner);
+  assert.equal(last(asUser(U.member, `select count(*) from public.msgr_messages where channel_id = '${PUB}' and client_msg_id in ('reply:${ZED}:${m}', 'deny:${ZED}:${m}', 'stale:${ZED}:${m}')`)), '1', 'settled 조회(앞 크루 끝남)');
+  // 서윤이 제드의 글에 답(원문 author_kind=crew) — 게이트 통과, thread_root는 뿌리로
+  const r2 = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to, mentions, meta) values ('${PUB}', 'crew', '${CREW}', '2. @제드 다음', 'reply:${CREW}:${r1}', ${r1}, '[{"kind":"crew","id":"${ZED}"}]', '{"hop":1,"origin":"${U.owner}"}') returning id`));
+  assert.match(r2, /^\d+$/);
+  assert.equal(last(asUser(U.member, `select thread_root from public.msgr_messages where id = ${r2}`)), r1, '트리거는 thread_root를 reply_to(크루 글)로 채운다 — 브리지가 뿌리를 명시해야 한다(2R C-2)');
+  const r3 = last(asUser(U.member, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to, thread_root, meta) values ('${PUB}', 'crew', '${ZED}', '3', 'reply:${ZED}:${r2}', ${r2}, ${m}, '{"hop":2,"origin":"${U.owner}"}') returning id`));
+  assert.equal(last(asUser(U.member, `select thread_root from public.msgr_messages where id = ${r3}`)), m, '명시한 뿌리는 유지');
+  assert.equal(last(asUser(U.member, `select count(*) from public.msgr_messages where channel_id = '${PUB}' and thread_root = ${m} and author_kind = 'crew' and kind = 'text' and (meta->>'hop') >= '1'`)), '1', 'autoTurnsIn 집계(hop≥1 텍스트 비교) — 뿌리를 명시한 r3만 잡히고 트리거가 채운 r2(뿌리=r1)는 빠진다: 브리지가 thread_root를 명시해야 하는 이유');
+  // contextOf: 이 채널의 r2 이전 text 글을 오래된 순으로 — 최소 m·r1 포함
+  const ctx = asUser(U.member, `select string_agg(id::text, ',' order by id) from (select id from public.msgr_messages where channel_id = '${PUB}' and id < ${r2} and kind = 'text' and deleted_at is null order by id desc limit 12) s`).split('\n').pop();
+  assert.ok(ctx.split(',').includes(m) && ctx.split(',').includes(r1), `문맥에 원문·앞 답글 포함: ${ctx}`);
+  // 남의 크루 명의 넘김 답글은 여전히 거부(작성자 축)
+  denied(U.admin, `insert into public.msgr_messages (channel_id, author_kind, crew_id, body, client_msg_id, reply_to) values ('${PUB}', 'crew', '${CREW}', 'x', 'reply:${CREW}:${r1}x', ${r1})`);
 });
