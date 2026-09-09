@@ -2,7 +2,7 @@
 // 파일 I/O·1초 워커 타이머만 있어 네트워크·텔레그램 없이 임시 ARGO_ROOT로 단위 테스트 가능한 이음매.
 // 잡 실행 핸들러(makeTgGatewayHandler·makeJobHandler 등)는 네트워크·chat 의존이라 gateway.mjs에 남는다.
 // 옮긴 코드는 gateway.mjs 원문 그대로(행동 불변) — 설계 주석 동반 이동.
-import { readdir, stat, unlink } from 'node:fs/promises';
+import { readdir, rename, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths, getDeviceId } from '../workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from '../jsonstore.mjs';
@@ -25,6 +25,7 @@ import { writeJsonAtomic, readJsonLenient } from '../jsonstore.mjs';
    과거 동기화로 흘러든 다른 기기의 잡 사본이 이중 실행되는 것을 막는다. */
 const GW_MAX_INFLIGHT = 2; // 동시 크루 턴 상한 — 큐가 쌓여도 비용 폭주를 막는다
 const LEGACY_JOB_MAX_AGE_MS = 24 * 3_600_000; // dev 태그 없는 구형식 잡의 실행 허용 연령 — 넘으면 좀비 실행 방지 위해 폐기
+export const CLAIM_MAX_AGE_MS = 35 * 60_000; // 선점(.claimed) 최대 연령 — 턴 상한(30분)보다 길게. 넘으면 죽은 워커의 잔재로 보고 되돌린다(재실행 = at-least-once 유지)
 export function queueDir(wsId, key) { return join(paths(wsId).root, `.gw-queue-${key}`); } // (export: 회귀 테스트용)
 export async function enqueueJob(wsId, key, id, job) { // (export: 회귀 테스트용)
   const dev = await getDeviceId().catch(() => null); // 적재 기기 태그 — 이 기기의 워커만 이 잡을 실행한다
@@ -40,6 +41,11 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
     if (stopped || me === null) return;
     let names = [];
     try { names = await readdir(queueDir(wsId, key)); } catch { return; } // 큐 디렉터리 없음 — 할 일 없음
+    // 죽은 워커의 선점 잔재 회수 — .claimed가 CLAIM_MAX_AGE_MS를 넘으면 .json으로 되돌려 다음 틱에 재실행
+    for (const n of names.filter((x) => x.endsWith('.json.claimed'))) {
+      const fp = join(queueDir(wsId, key), n); const mt = (await stat(fp).catch(() => null))?.mtimeMs ?? 0;
+      if (mt && Date.now() - mt > CLAIM_MAX_AGE_MS) { await rename(fp, fp.replace(/\.claimed$/, '')).catch(() => {}); console.log(`[argo] 큐 선점 회수(${wsId}/${key}/${n}): ${Math.round(CLAIM_MAX_AGE_MS / 60_000)}분 넘은 선점 — 재실행`); }
+    }
     names = names.filter((n) => n.endsWith('.json') && !n.startsWith('.'))
       .sort((a, b) => ((parseInt(a, 10) || 0) - (parseInt(b, 10) || 0)) || a.localeCompare(b)); // 도착 순서 근사(동값은 사전순 고정)
     for (const n of names) {
@@ -47,7 +53,12 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
       if (busy.size >= maxInflight) break; // 상한 도달 — 남은 잡은 다음 틱(큐별로 다르다: 장시간 작업은 1)
       busy.add(n);
       (async () => {
-        const fp = join(queueDir(wsId, key), n);
+        const fp0 = join(queueDir(wsId, key), n);
+        // 선점 — 같은 큐 폴더를 보는 워커가 둘이면(상주 서버 + 같은 워크스페이스의 개발 서버) 한쪽이 처리하는 동안 다른 쪽이 같은 파일을 집어
+        // 같은 멘션이 두 번(유료 턴 ×2, 두 번째 답글은 멱등 키로 버려지고 '입력 중'만 남는다 — 실사고 2026-09-09 페퍼 50s+124s). rename은 원자적이라 한쪽만 이긴다.
+        const fp = `${fp0}.claimed`;
+        try { await rename(fp0, fp); } catch { busy.delete(n); return; } // 이미 다른 워커가 선점(ENOENT) — 조용히 물러난다
+        let done = false;
         try {
           const job = await readJsonLenient(fp, null); // 손상 잡은 null → 처리 스킵 후 삭제(무한 재시도 방지)
           if (job?.dev && me && job.dev !== me) {
@@ -59,10 +70,12 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
           } else if (job) {
             await handler(job); // handler는 턴 실패를 내부 처리(에러 회신)하고 정상 반환 → 아래서 삭제
           }
-          await unlink(fp).catch(() => {}); // 처리 완료분만 제거. 처리 중 크래시면 파일이 남아 재기동 시 재처리
+          done = true;
+          await unlink(fp).catch(() => {}); // 처리 완료분만 제거. 처리 중 크래시면 .claimed가 남아 CLAIM_MAX_AGE_MS 뒤 회수·재처리
         } catch (e) {
-          console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}):`, e.message); // 인프라 예외 — 파일 유지, 다음 틱 재시도
+          console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}):`, e.message); // 인프라 예외 — 선점을 풀어 다음 틱 재시도
         } finally {
+          if (!done) await rename(fp, fp0).catch(() => {});
           busy.delete(n);
         }
       })();

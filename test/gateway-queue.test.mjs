@@ -52,3 +52,36 @@ test('픽업 순서: update_id 숫자 오름차순(도착 순서 근사), 비숫
   assert.deepEqual(ran, ['alb-a', 'alb-b', '2', '9', '10'],
     'parseInt(NaN→0)인 앨범 잡이 먼저(사전순), 숫자 잡은 수치 오름차순 — 지시가 도착 순서로 실행된다');
 });
+
+test('선점(2026-09-09 실사고): 같은 큐 폴더를 보는 워커 둘이 같은 잡을 두 번 돌리지 않는다 — rename 선점, 실패 시 선점 해제·재시도, 오래된 선점은 회수', async () => {
+  const { CLAIM_MAX_AGE_MS } = await import('../src/gateway/queue.mjs');
+  const { rename, utimes } = await import('node:fs/promises');
+  const WS = 'qco-claim';
+  await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
+  const dir = queueDir(WS, 'msgr');
+  await enqueueJob(WS, 'msgr', '44-pepper', { text: '멘션' });
+  const ran = [];
+  const slow = async (job) => { ran.push(job.text); await new Promise((r) => setTimeout(r, 2500)); };
+  const stopA = startQueueWorker(WS, 'msgr', slow); const stopB = startQueueWorker(WS, 'msgr', slow);
+  await new Promise((r) => setTimeout(r, 4500));
+  stopA(); stopB();
+  assert.deepEqual(ran, ['멘션'], '워커가 둘이어도 한 번만 실행');
+  assert.equal((await readdir(dir).catch(() => [])).filter((n) => /\.json(\.claimed)?$/.test(n)).length, 0, '완료 뒤 파일·선점 흔적 없음');
+  // 인프라 예외 → 선점 해제(.json 복귀) → 재시도
+  await enqueueJob(WS, 'msgr', '45-pepper', { text: '재시도' });
+  let calls = 0;
+  const flaky = async () => { calls++; if (calls === 1) throw new Error('infra'); };
+  const stopC = startQueueWorker(WS, 'msgr', flaky);
+  await new Promise((r) => setTimeout(r, 3500));
+  stopC();
+  assert.equal(calls, 2, '첫 실패 뒤 다음 틱에 재시도(선점이 풀렸다)');
+  // 죽은 워커의 오래된 선점은 회수된다
+  await enqueueJob(WS, 'msgr', '46-pepper', { text: '고아' });
+  await rename(join(dir, '46-pepper.json'), join(dir, '46-pepper.json.claimed'));
+  const old = new Date(Date.now() - CLAIM_MAX_AGE_MS - 60_000); await utimes(join(dir, '46-pepper.json.claimed'), old, old);
+  const ran2 = [];
+  const stopD = startQueueWorker(WS, 'msgr', async (job) => { ran2.push(job.text); });
+  await new Promise((r) => setTimeout(r, 3500));
+  stopD();
+  assert.deepEqual(ran2, ['고아'], '오래된 선점 회수 → 재실행');
+});
