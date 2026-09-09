@@ -25,7 +25,7 @@ import { writeJsonAtomic, readJsonLenient } from '../jsonstore.mjs';
    과거 동기화로 흘러든 다른 기기의 잡 사본이 이중 실행되는 것을 막는다. */
 const GW_MAX_INFLIGHT = 2; // 동시 크루 턴 상한 — 큐가 쌓여도 비용 폭주를 막는다
 const LEGACY_JOB_MAX_AGE_MS = 24 * 3_600_000; // dev 태그 없는 구형식 잡의 실행 허용 연령 — 넘으면 좀비 실행 방지 위해 폐기
-export const CLAIM_MAX_AGE_MS = 35 * 60_000; // 선점(.claimed) 최대 연령 — 턴 상한(30분)보다 길게. 넘으면 죽은 워커의 잔재로 보고 되돌린다(재실행 = at-least-once 유지)
+export const CLAIM_MAX_AGE_MS = 5 * 60_000; // 선점(.claimed) 최대 연령 — 살아 있는 선점은 60초 심박으로 mtime이 늘 신선하므로 5분이면 충분(35분이던 때는 재기동 뒤 진행 중이던 잡이 35분 침묵 — 검수 5R). 넘으면 죽은 워커의 잔재로 보고 되돌린다(재실행 = at-least-once)
 export function queueDir(wsId, key) { return join(paths(wsId).root, `.gw-queue-${key}`); } // (export: 회귀 테스트용)
 export async function enqueueJob(wsId, key, id, job) { // (export: 회귀 테스트용)
   const dev = await getDeviceId().catch(() => null); // 적재 기기 태그 — 이 기기의 워커만 이 잡을 실행한다

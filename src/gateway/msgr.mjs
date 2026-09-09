@@ -410,7 +410,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       out.queued++;
     };
     for (const m of msgs) {
-      try { await step(m); } catch (e) { console.error(`[argo] msgr 메시지 처리 실패(${wsId}/${crew.slug}/${m.id}) — 이 크루 커서 보류, 다음 틱 재시도:`, e?.message ?? e); break; }
+      try { await step(m); } catch (e) { const fk = `${wsId}:${crew.id}`; if (Date.now() - (failWarn.get(fk) ?? 0) > 300_000) { failWarn.set(fk, Date.now()); console.error(`[argo] msgr 메시지 처리 실패(${wsId}/${crew.slug}/${m.id}) — 이 크루 커서 보류, 다음 틱 재시도(같은 로그는 5분에 한 번):`, e?.message ?? e); } break; }
       max = Math.max(max, m.id);
     }
     if (max > (crew.cursor_msg_id ?? 0)) await db.setCursor(crew.id, max); // 적재 후에만 전진(at-least-once)
@@ -437,6 +437,7 @@ export async function syncApprovals(wsId, { db, uid, resolve = resolveWithFollow
 }
 
 /* ─── 턴 문맥 — 턴 중 request_approval·delegate가 어느 채널에서 왔는지(push가 본다). 전역 맵 대신 wsId:slug 단위. ─── */
+const failWarn = new Map(); // `${wsId}:${crewId}` → 마지막 처리 실패 로그 시각(폭주 방지)
 const crewIds = new Map(); // `${wsId}:${orgId}:${slug}` → msgr_crews.id (drain이 채운다) — 쪽지 배달 턴의 문맥 크루 id
 export function msgrCrewIdBySlug(wsId, slug, orgId) { return crewIds.get(`${wsId}:${orgId}:${slug}`) ?? null; }
 const activeCtx = new Map(); // `${wsId}:${slug}` → ctx. 정본은 결재 항목에 각인된 item.msgr(chat.mjs addApproval) — 이 맵은 각인 없는 경로(CLI 지시 블록 등)의 폴백
