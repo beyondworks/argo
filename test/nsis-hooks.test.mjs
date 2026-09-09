@@ -22,7 +22,7 @@ test('hooks.nsh — 설치·제거는 같은 정확한 경로 정리를 호출�
   assert.match(s, /StrCpy \$2 "\$INSTDIR\\\$\{MAINBINARYNAME\}\.exe"/);
   assert.match(s, /StrCpy \$3 "\$INSTDIR\\node\.exe"/);
   assert.doesNotMatch(s, /taskkill|\s-like\s|Stop-Process\s+-Name/i);
-  assert.match(s, /\$\$targets -contains \$\$_\.Path/);
+  assert.match(s, /\$\$targets -contains \$\$_\.ExecutablePath/);
 });
 
 test('hooks.nsh — 경로는 프로세스 환경으로 전달하고 정리 후 복원한다', () => {
@@ -33,6 +33,8 @@ test('hooks.nsh — 경로는 프로세스 환경으로 전달하고 정리 후 
   }
   const command = s.split('\n').find((line) => /nsExec::Exec .*powershell/.test(line));
   assert.ok(command);
+  assert.match(command, /Get-CimInstance Win32_Process/);
+  assert.doesNotMatch(command, /Get-Process/);
   assert.doesNotMatch(command, /\$INSTDIR/);
   assert.match(command, /cmd \/c start/);
   assert.match(s, /Sleep 1500/);
@@ -59,7 +61,8 @@ test('hooks.nsh — Windows에서 특수문자 경로만 종료하고 다른 app
       }
     }
     const payload = s.match(/-Command "([^\n]+)"'/)[1].replaceAll('$$', '$');
-    const cleanup = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', payload], {
+    const powershell = join(process.env.WINDIR, 'SysWOW64', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const cleanup = spawn(powershell, ['-NoProfile', '-NonInteractive', '-Command', payload], {
       stdio: 'ignore',
       env: { ...process.env, ARGO_NSIS_MAIN_EXE: join(target, 'app.exe'), ARGO_NSIS_NODE_EXE: join(target, 'node.exe') },
     });

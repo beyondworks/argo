@@ -21,8 +21,9 @@
   ${If} $4 != 0
     System::Call 'kernel32::SetEnvironmentVariableW(w "ARGO_NSIS_NODE_EXE", w r3) i .r4'
     ${If} $4 != 0
+      ; x86 설치기의 PowerShell에서도 x64 실행 경로를 읽도록 CIM을 쓴다.
       ; -contains는 문자열 동등 비교다. 다른 경로의 동명 본체·node에는 적용하지 않는다.
-      nsExec::Exec 'cmd /c start "" /min powershell -NoProfile -NonInteractive -Command "$$targets=@($$env:ARGO_NSIS_MAIN_EXE,$$env:ARGO_NSIS_NODE_EXE); Get-Process -ErrorAction SilentlyContinue | Where-Object { $$_.Path -and $$targets -contains $$_.Path } | Stop-Process -Force -ErrorAction SilentlyContinue"'
+      nsExec::Exec 'cmd /c start "" /min powershell -NoProfile -NonInteractive -Command "$$targets=@($$env:ARGO_NSIS_MAIN_EXE,$$env:ARGO_NSIS_NODE_EXE); Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $$_.ExecutablePath -and $$targets -contains $$_.ExecutablePath } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"'
       Pop $4
     ${EndIf}
   ${EndIf}
